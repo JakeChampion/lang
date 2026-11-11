@@ -1,0 +1,307 @@
+// The music player: its state, its screens and its messages. It has no
+// Android code. `update` puts what the device must do in `wants`, and
+// player.fern does it. So tune_test.fern runs the player on the host.
+import "std/android/draw";
+import "std/android/ui";
+import "std/i32";
+import "std/i64";
+import "std/option";
+import "std/unicode";
+import "./engine";
+
+// A file of the library: its title, its format, and its length in ms.
+pub struct Track { path: string, title: string, format: string, ms: i64 }
+
+// A stream of sound of the device. `ptr` is 0 when the player has none.
+pub struct Sound { ptr: usize, rate: i32, channels: i32 }
+
+pub function no_sound(): Sound {
+  return Sound { ptr: 0 as usize, rate: 0, channels: 0 };
+}
+
+// What the device must do: load the track of a number and play it, play
+// on, stop the sound, or go to a part of the track from 0 to 1.
+pub enum Want { Load(i32), Resume, Hold, Seek(f64) }
+
+// `open` tells that the screen of the track shows. `current` is the number
+// of the track that plays, or -1. `deck` reads its file, `sound` plays it,
+// and `pending` has the samples that the sound did not take yet.
+pub struct Model {
+  tracks: Track[],
+  query: string,
+  open: boolean,
+  current: i32,
+  playing: boolean,
+  at_ms: i64,
+  length_ms: i64,
+  shuffle: boolean,
+  repeat: boolean,
+  error: string,
+  wants: Want[],
+  deck: Option[engine.Deck],
+  sound: Sound,
+  pending: i32[],
+}
+
+pub function start(tracks: Track[]): Model {
+  return Model { tracks: tracks, query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: false, error: "", wants: [], deck: None, sound: no_sound(), pending: [] };
+}
+
+// What a person can do, and what the player tells: `Beat` comes many times
+// a second while a track plays, `Finished` comes at the end of a track,
+// and `Failed` comes for a file that the player cannot read.
+pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string) }
+
+// A time in ms as minutes and seconds.
+pub function clock(ms: i64): string {
+  let s = (ms / 1000i64) as i32;
+  let rest = (s % 60).to_string();
+  if (rest.len() < 2) {
+    rest = "0" + rest;
+  }
+  return (s / 60).to_string() + ":" + rest;
+}
+
+// The numbers of the tracks whose title has the text of the search.
+pub function found(m: Model): i32[] {
+  let want = m.query.trim().to_lower();
+  let out: i32[] = [];
+  for i in 0..m.tracks.len() {
+    if (want.len() == 0 || m.tracks[i].title.to_lower().contains(want)) {
+      out = out.append(i);
+    }
+  }
+  return out;
+}
+
+// The part of the track that played, from 0 to 1.
+pub function part(m: Model): f64 {
+  if (m.length_ms <= 0i64) {
+    return 0.0;
+  }
+  return (m.at_ms as f64 / (m.length_ms as f64)).max(0.0).min(1.0);
+}
+
+function title(m: Model): string {
+  if (m.current < 0 || m.current >= m.tracks.len()) {
+    return "";
+  }
+  return m.tracks[m.current].title;
+}
+
+function play_label(m: Model): string {
+  if (m.playing) {
+    return "Pause";
+  }
+  return "Play";
+}
+
+function track_row(m: Model, i: i32): ui.El[Msg] {
+  let t = m.tracks[i];
+  let color = ui.INK;
+  if (i == m.current) {
+    color = ui.PRIMARY;
+  }
+  let detail = t.format;
+  if (t.ms > 0i64) {
+    detail = t.format + " · " + clock(t.ms);
+  }
+  return ui.column([ui.text(t.title).sized(16.0).colored(color).clamped(1), ui.text(detail).sized(13.0).colored(ui.MUTED)]).spaced(2.0).justified(ui.CENTER).padding_xy(16.0, 0.0).wide().tall().on_tap(Pick(i));
+}
+
+// The bar at the foot of the library, for the track that plays.
+function mini(m: Model): ui.El[Msg] {
+  return ui.column([ui.progress(part(m)), ui.row([ui.column([ui.text(title(m)).weighted(500).clamped(1), ui.text(clock(m.at_ms) + " / " + clock(m.length_ms)).sized(12.0).colored(ui.MUTED)]).spaced(2.0).wide(), ui.text_button(play_label(m), Toggle)]).spaced(12.0).aligned(ui.CENTER).padding_xy(16.0, 8.0)]).background(ui.SURFACE).on_tap(Opened).described("Now playing, " + title(m));
+}
+
+function library(m: Model): ui.El[Msg] {
+  let shown = found(m);
+  let summary = shown.len().to_string() + " tracks";
+  if (m.error.len() > 0) {
+    summary = m.error;
+  }
+  let kids: ui.El[Msg][] = [
+    ui.column([ui.text("Tune").sized(28.0).weighted(700), ui.text(summary).colored(ui.MUTED)]).spaced(4.0).padding_xy(16.0, 0.0),
+    ui.row([ui.field("search", m.query, "Search the library").on_edit((text: string): Msg => Search(text))]).padding_xy(16.0, 0.0),
+    ui.list("tracks", shown.len(), 64.0, (row: i32): ui.El[Msg] => track_row(m, shown[row])),
+  ];
+  if (m.current >= 0) {
+    kids = kids.append(mini(m));
+  }
+  return ui.column(kids).spaced(12.0).padding_xy(0.0, 16.0).aligned(ui.STRETCH);
+}
+
+// A picture for a track, from the letters of its title: rings in two
+// colors.
+function art(name: string): (draw.Frame, i32, i32, i32, i32) => void {
+  let seed = 7;
+  for i in 0..name.len() {
+    seed = (seed * 31 + name[i] as i32) % 65521;
+  }
+  let a = draw.rgb(60 + seed % 120, 90 + seed / 7 % 120, 120 + seed / 49 % 120);
+  let b = draw.rgb(200 - seed % 90, 120 + seed / 11 % 100, 90 + seed / 5 % 80);
+  return (f: draw.Frame, x: i32, y: i32, w: i32, h: i32): void => {
+    let r = w.min(h) / 2;
+    let rings = 5;
+    for k in 0..rings {
+      let color = a;
+      if (k % 2 == 1) {
+        color = b;
+      }
+      f.disc(x + w / 2, y + h / 2, r * (rings - k) / rings, color);
+    }
+  };
+}
+
+function toggle_label(name: string, on: boolean): string {
+  if (on) {
+    return name + " on";
+  }
+  return name + " off";
+}
+
+function now_playing(m: Model): ui.El[Msg] {
+  let name = title(m);
+  let format = "";
+  if (m.current >= 0) {
+    format = m.tracks[m.current].format;
+  }
+  return ui.column(
+    [
+      ui.row([ui.text_button("Library", Closed)]),
+      ui.column([ui.canvas("art:" + name, art(name)).width(240.0).height(240.0)]).centered().grow(1.0),
+      ui.column([ui.text(name).sized(22.0).weighted(700).clamped(2), ui.text(format).colored(ui.MUTED)]).spaced(4.0),
+      ui.column([ui.slider(part(m), (at: f64): Msg => Sought((at * 1000.0 + 0.5) as i32)).described("Position"), ui.row([ui.text(clock(m.at_ms)).sized(12.0).colored(ui.MUTED), ui.space(), ui.text(clock(m.length_ms)).sized(12.0).colored(ui.MUTED)])]),
+      ui.row([ui.text_button("Previous", Previous), ui.button(play_label(m), Toggle), ui.text_button("Next", Next)]).spaced(8.0).justified(ui.CENTER).aligned(ui.CENTER),
+      ui.row([ui.text_button(toggle_label("Shuffle", m.shuffle), Shuffled), ui.text_button(toggle_label("Repeat", m.repeat), Repeated)]).spaced(8.0).justified(ui.CENTER),
+    ],
+  ).spaced(16.0).padding(16.0).aligned(ui.STRETCH);
+}
+
+pub function view(m: Model, s: ui.Screen): ui.El[Msg] {
+  if (m.open && m.current >= 0) {
+    return now_playing(m);
+  }
+  return library(m);
+}
+
+function picked(m: Model, i: i32): Model {
+  if (i < 0 || i >= m.tracks.len()) {
+    return m;
+  }
+  return Model { ...m, current: i, playing: true, at_ms: 0i64, length_ms: m.tracks[i].ms, error: "", wants: m.wants.append(Load(i)) };
+}
+
+// The number of the track after `current`. With shuffle, the numbers go in
+// an order that reaches each track.
+function after(m: Model): i32 {
+  let n = m.tracks.len();
+  if (n == 0) {
+    return -1;
+  }
+  if (m.shuffle && n > 2) {
+    return (m.current + n / 2 + 1) % n;
+  }
+  return (m.current + 1) % n;
+}
+
+function toggled(m: Model): Model {
+  if (m.current < 0) {
+    return picked(m, 0);
+  }
+  if (m.playing) {
+    return Model { ...m, playing: false, wants: m.wants.append(Hold) };
+  }
+  return Model { ...m, playing: true, wants: m.wants.append(Resume) };
+}
+
+// The start of the track again, or the track before it in the first 3
+// seconds.
+function went_back(m: Model): Model {
+  if (m.current < 0) {
+    return m;
+  }
+  if (m.at_ms > 3000i64) {
+    return Model { ...m, at_ms: 0i64, wants: m.wants.append(Seek(0.0)) };
+  }
+  return picked(m, (m.current + m.tracks.len() - 1) % m.tracks.len());
+}
+
+function finished(m: Model): Model {
+  if (m.repeat) {
+    return picked(m, m.current);
+  }
+  if (!m.shuffle && m.current == m.tracks.len() - 1) {
+    return Model { ...m, playing: false, at_ms: 0i64, wants: m.wants.append(Hold).append(Seek(0.0)) };
+  }
+  return picked(m, after(m));
+}
+
+// fern-lint: allow cyclomatic-complexity
+// One arm for each message.
+pub function update(own m: Model, msg: Msg): Model {
+  match (msg) {
+    Search(text) => {
+      return Model { ...m, query: text };
+    },
+    Pick(i) => {
+      return picked(m, i);
+    },
+    Toggle => {
+      return toggled(m);
+    },
+    Next => {
+      return picked(m, after(m));
+    },
+    Previous => {
+      return went_back(m);
+    },
+    Sought(permille) => {
+      let to = permille as f64 / 1000.0;
+      return Model { ...m, at_ms: (m.length_ms as f64 * to) as i64, wants: m.wants.append(Seek(to)) };
+    },
+    Opened => {
+      return Model { ...m, open: true };
+    },
+    Closed => {
+      return Model { ...m, open: false };
+    },
+    Shuffled => {
+      return Model { ...m, shuffle: !m.shuffle };
+    },
+    Repeated => {
+      return Model { ...m, repeat: !m.repeat };
+    },
+    Beat => {
+      return m;
+    },
+    Finished => {
+      return finished(m);
+    },
+    Failed(why) => {
+      return Model { ...m, playing: false, error: why };
+    }
+  }
+}
+
+// The milliseconds to the next Beat: the player gives the sound its
+// samples at each one.
+function beat(m: Model): i32 {
+  if (m.playing) {
+    return 20;
+  }
+  return -1;
+}
+
+function back(m: Model): Option[Msg] {
+  if (m.open) {
+    return Some(Closed);
+  }
+  return None;
+}
+
+// The program with no device: `update` only puts what it wants in the
+// state.
+pub function program(): ui.Program[Model, Msg] {
+  return ui.program(view, update).with_tick(beat, Beat).with_back(back);
+}

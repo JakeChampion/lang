@@ -1,0 +1,88 @@
+// The library of the player: the tracks of a directory, and the tunes that
+// the player makes when the directory has none.
+import "core/cmp";
+import "std/audio/flac";
+import "std/audio/pcm";
+import "std/audio/wav";
+import "std/result";
+import "std/unicode";
+import "./demo";
+import "./engine";
+import "./tune";
+
+function limits(): pcm.Limits {
+  return pcm.Limits { max_input_bytes: 1073741824, max_samples: 16777216 };
+}
+
+// The format of a file that the player reads, from the end of its name, or
+// "".
+pub function format_of(name: string): string {
+  let lower = name.to_lower();
+  if (lower.ends_with(".flac")) {
+    return "FLAC";
+  }
+  if (lower.ends_with(".wav")) {
+    return "WAV";
+  }
+  if (lower.ends_with(".mp3")) {
+    return "MP3";
+  }
+  return "";
+}
+
+// The title of a file: its name with no format at the end, and a space for
+// each low line.
+pub function title_of(name: string): string {
+  let dot = name.len();
+  for i in 0..name.len() {
+    if (name[i] == b'.') {
+      dot = i;
+    }
+  }
+  return name.take(dot).replace("_", " ");
+}
+
+// The track of the file `name` in `dir`, or None for a file that is not
+// sound. `read` gives the bytes of a file.
+pub function track(dir: string, name: string, read: (string) => u8[]): Option[tune.Track] {
+  let format = format_of(name);
+  if (format.len() == 0) {
+    return None;
+  }
+  let path = dir + "/" + name;
+  let Some(deck) = engine.open(read(path)) else {
+    return None;
+  };
+  return Some(tune.Track { path: path, title: title_of(name), format: format, ms: deck.duration_ms() });
+}
+
+// The tracks of the files `names` of `dir`, in the order of their titles.
+pub function tracks(dir: string, names: string[], read: (string) => u8[]): tune.Track[] {
+  let out: tune.Track[] = [];
+  for name in cmp.sort(names) {
+    if let Some(t) = track(dir, name, read) {
+      out = out.append(t);
+    }
+  }
+  return out;
+}
+
+// The file of the tune of a number: the first one is a FLAC file, and each
+// other one is a WAV file.
+pub function demo_file(which: i32): Result[u8[], pcm.AudioError] {
+  let samples = demo.render(demo.melody(which), 96 + which * 24);
+  let format = pcm.Format { sample_rate: demo.RATE, channels: 2, bits_per_sample: 16 };
+  if (which == 0) {
+    return flac.encode(samples, format, limits());
+  }
+  return wav.encode(samples, format, limits());
+}
+
+// The name of the file of the tune of a number.
+pub function demo_name(which: i32): string {
+  let name = demo.names()[which].replace(" ", "_");
+  if (which == 0) {
+    return name + ".flac";
+  }
+  return name + ".wav";
+}

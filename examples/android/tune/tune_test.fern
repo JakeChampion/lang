@@ -1,0 +1,152 @@
+// Runs the music player on the simulator of std/android/ui/sim, on the
+// host, with a device that plays nothing. The device takes the samples of
+// 20 ms at each write, as a stream of sound does in the time between two
+// writes. With TUNE_UI_PNG set to a directory, the test writes the screens
+// there as PNG files.
+import "std/android/draw";
+import "std/android/fonts";
+import "std/android/testkit";
+import "std/android/text";
+import "std/android/ui/sim";
+import "std/i32";
+import "std/i64";
+import "std/result";
+import "std/test";
+import "./library";
+import "./player";
+import "./tune";
+
+function font_dir(): string {
+  if let Ok(_) = read_file_bytes("examples/android/paper/testfonts/Roboto-Regular.ttf") {
+    return "examples/android/paper/testfonts";
+  }
+  return "../paper/testfonts";
+}
+
+function test_fonts(): text.Fonts {
+  let ws = [400, 500, 700];
+  let found: Option[fonts.Found][] = [];
+  for w in ws {
+    found = found.append(fonts.find_in(font_dir(), "Roboto", w));
+  }
+  return text.load(found, ws, (path: string): u8[] => read_file_bytes(path).unwrap_or([]));
+}
+
+// The files of the test: the three tunes of the player, and one file that
+// is not sound.
+function read(path: string): u8[] {
+  for which in 0..3 {
+    if (path.ends_with(library.demo_name(which))) {
+      return library.demo_file(which).unwrap_or([]);
+    }
+  }
+  return [110u8, 111u8, 116u8, 32u8, 115u8, 111u8, 117u8, 110u8, 100u8];
+}
+
+function device(): player.Device {
+  return player.Device {
+    read: (path: string): u8[] => read(path),
+    open: (rate: i32, channels: i32): tune.Sound => tune.Sound { ptr: 1 as usize, rate: rate, channels: channels },
+    start: (s: tune.Sound): void => {},
+    pause: (s: tune.Sound): void => {},
+    flush: (s: tune.Sound): void => {},
+    close: (s: tune.Sound): void => {},
+    write: (s: tune.Sound, samples: [i32]): i32 => samples.len().min(s.rate * s.channels / 50),
+  };
+}
+
+function tracks(): tune.Track[] {
+  let found = library.tracks("music", [library.demo_name(0), library.demo_name(1), library.demo_name(2), "notes.txt"], read);
+  return found.append(tune.Track { path: "music/Broken.mp3", title: "Broken", format: "MP3", ms: 0i64 });
+}
+
+// A phone of 1080 by 2400 pixels at 2.75 pixels to the dp.
+function started(): sim.Sim[tune.Model, tune.Msg] {
+  return sim.start(tune.start(tracks()), player.program(device()), test_fonts(), 1080, 2400, 2.75);
+}
+
+function saved(s: sim.Sim[tune.Model, tune.Msg], name: string): void {
+  if let Some(out) = env("TUNE_UI_PNG") {
+    let fr = sim.picture(s);
+    let ok = testkit.save_png(fr, out + "/" + name + ".png");
+    draw.release(fr);
+  }
+}
+
+function near(got: i64, want: i64, by: i64): boolean {
+  return got >= want - by && got <= want + by;
+}
+
+function test_library(): test.TestOutcome {
+  let s = started();
+  let all = sim.shows(s, "4 tracks").to_string() + " " + sim.shows(s, "Morning Fern").to_string() + " " + sim.shows(s, "FLAC · 0:07").to_string() + " " + sim.shows(s, "notes").to_string();
+  s = sim.type_in(s, "search", "slow");
+  return test.assert_eq(all + " " + sim.shows(s, "1 tracks").to_string() + " " + sim.shows(s, "Slow Water").to_string() + " " + sim.shows(s, "Morning Fern").to_string(), "true true true false true true false");
+}
+
+function test_a_tap_plays_a_track(): test.TestOutcome {
+  let s = sim.tap(started(), "Quick Light");
+  let m = s.shell.app;
+  let first = m.current.to_string() + " " + m.playing.to_string() + " " + m.sound.rate.to_string() + " " + m.sound.channels.to_string() + " " + (m.length_ms > 1500i64).to_string();
+  s = sim.after(s, 1000i64);
+  saved(s, "tune-library");
+  let at = s.shell.app.at_ms;
+  return test.assert_eq(first + " " + near(at, 1000i64, 250i64).to_string() + " " + sim.shows(s, "Pause").to_string(), "1 true 44100 2 true true true");
+}
+
+function test_pause_and_seek(): test.TestOutcome {
+  let s = sim.after(sim.tap(started(), "Slow Water"), 500i64);
+  s = sim.tap(s, "Pause");
+  let held = s.shell.app.at_ms;
+  s = sim.after(s, 500i64);
+  let still = s.shell.app.at_ms == held && !s.shell.app.playing;
+  s = sim.tap(s, "Now playing, Slow Water");
+  let length = s.shell.app.length_ms;
+  s = sim.slide(s, "Position", 0.5);
+  saved(s, "tune-now-playing");
+  let sought = near(s.shell.app.at_ms, length / 2i64, 300i64);
+  s = sim.after(sim.tap(s, "Play"), 400i64);
+  let after = near(s.shell.app.at_ms, length / 2i64 + 400i64, 300i64);
+  return test.assert_eq(still.to_string() + " " + sim.shows(s, "Slow Water").to_string() + " " + sought.to_string() + " " + after.to_string(), "true true true true");
+}
+
+function test_the_next_track_plays_at_the_end(): test.TestOutcome {
+  // The track after this one is the last one, and its file is not sound.
+  let s = sim.tap(started(), "Slow Water");
+  let length = s.shell.app.length_ms;
+  s = sim.after(s, length + 300i64);
+  let next = s.shell.app.current.to_string() + " " + s.shell.app.playing.to_string();
+  // The player tells that it cannot play the file, and stops.
+  return test.assert_eq(next + " " + sim.shows(s, "Tune cannot play Broken").to_string(), "3 false true");
+}
+
+function test_repeat_and_previous(): test.TestOutcome {
+  let s = sim.tap(sim.tap(started(), "Quick Light"), "Now playing, Quick Light");
+  s = sim.tap(s, "Repeat off");
+  let length = s.shell.app.length_ms;
+  s = sim.after(s, length + 300i64);
+  let repeated = s.shell.app.current.to_string() + " " + near(s.shell.app.at_ms, 300i64, 250i64).to_string();
+  s = sim.tap(s, "Previous");
+  let before = s.shell.app.current;
+  s = sim.tap(sim.after(s, 3500i64), "Previous");
+  return test.assert_eq(repeated + " " + before.to_string() + " " + s.shell.app.current.to_string() + " " + near(s.shell.app.at_ms, 0i64, 100i64).to_string(), "1 true 0 0 true");
+}
+
+function test_back_closes_the_track_then_the_app(): test.TestOutcome {
+  let s = sim.tap(sim.tap(started(), "Slow Water"), "Now playing, Slow Water");
+  let open = s.shell.app.open;
+  s = sim.back(s);
+  let closed = !s.shell.app.open && !sim.finished(s);
+  return test.assert_eq(open.to_string() + " " + closed.to_string() + " " + sim.finished(sim.back(s)).to_string(), "true true true");
+}
+
+function main(): i32 {
+  let r = test.new("examples/android/tune");
+  r = r.it("the library shows its tracks and the search finds one", test_library);
+  r = r.it("a tap plays a track in time", test_a_tap_plays_a_track);
+  r = r.it("a track stops, and goes to a part of its length", test_pause_and_seek);
+  r = r.it("the next track plays at the end, and a bad file stops the player", test_the_next_track_plays_at_the_end);
+  r = r.it("a track plays again, and the track before it plays", test_repeat_and_previous);
+  r = r.it("the back key closes the track, then the app", test_back_closes_the_track_then_the_app);
+  return r.finish();
+}
