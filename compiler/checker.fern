@@ -8683,28 +8683,26 @@ function slc_string_roots(e: ast.Expr, cur: Scope, params: string[], localarr: s
   return ViewRoots { local: true, params: none };
 }
 
-// A call result, or a part of one. When it is owned storage, the function that
-// makes the call releases it when it returns.
+// Owned array storage that a call returns, or a part of it. The function that
+// makes the call releases that storage when it returns.
+function slc_owned_call_storage(e: ast.Expr, cur: Scope): boolean {
+  return slc_of_call_result(e) && typeinfo.is_owned_array(check_expr(e, cur));
+}
+
 function slc_of_call_result(e: ast.Expr): boolean {
-  match (e) {
-    ast.ExprFieldAccess(fa) => {
-      return slc_of_call_result(fa.obj);
-    },
-    ast.ExprIndex(ix) => {
-      return slc_of_call_result(ix.array);
-    },
-    ast.ExprCall(_) => {
-      return true;
-    },
-    _ => {}
+  if let ast.ExprFieldAccess(fa) = e {
+    return slc_of_call_result(fa.obj);
+  }
+  if let ast.ExprIndex(ix) = e {
+    return slc_of_call_result(ix.array);
+  }
+  if let ast.ExprCall(_) = e {
+    return true;
   }
   return false;
 }
 
 function slc_src_roots(e: ast.Expr, cur: Scope, params: string[], localarr: string[], tainted: string[], sums: ViewSum[], vix: ViewIndex): ViewRoots {
-  if (slc_of_call_result(e) && typeinfo.is_owned_array(check_expr(e, cur))) {
-    return ViewRoots { local: true, params: [] };
-  }
   match (e) {
     ast.ExprBytes(_) => {
       return ViewRoots { local: true, params: [] };
@@ -8714,6 +8712,9 @@ function slc_src_roots(e: ast.Expr, cur: Scope, params: string[], localarr: stri
       return ViewRoots { local: true, params: none };
     },
     ast.ExprSlice(s2) => {
+      if (slc_owned_call_storage(s2.array, cur)) {
+        return ViewRoots { local: true, params: [] };
+      }
       return slc_src_roots(s2.array, cur, params, localarr, tainted, sums, vix);
     },
     ast.ExprCall(c2) => {
@@ -8748,6 +8749,8 @@ function slc_call_roots(c: ast.ExprCall, cur: Scope, params: string[], localarr:
   while (i < flags.len() && i < callee.args.len()) {
     if (flags[i] && is_owned_string(check_expr(callee.args[i], cur))) {
       out = merge_view_roots(out, slc_string_roots(callee.args[i], cur, params, localarr, tainted, sums, vix));
+    } else if (flags[i] && slc_owned_call_storage(callee.args[i], cur)) {
+      out = ViewRoots { local: true, params: out.params };
     } else if (flags[i]) {
       out = merge_view_roots(out, slc_src_roots(callee.args[i], cur, params, localarr, tainted, sums, vix));
     }
@@ -8768,6 +8771,9 @@ function slc_expr_roots(e: ast.Expr, cur: Scope, params: string[], localarr: str
           return no_view_roots();
         },
         _ => {}
+      }
+      if (slc_owned_call_storage(sl.array, cur)) {
+        return ViewRoots { local: true, params: [] };
       }
       return slc_src_roots(sl.array, cur, params, localarr, tainted, sums, vix);
     },
