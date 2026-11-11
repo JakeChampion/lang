@@ -4,7 +4,9 @@ This module writes a Fern module of typed wrappers for Java classes. A wrapper c
 
 ## Model
 
-`generate` takes the classes that `std/classfile` read, and a list of requests. A `Request` names one class and the members that the app uses. With no member, the request is for each public member of the class. A member is a name, such as `setAction`, or a name with its descriptor, such as `setAction(Ljava/lang/String;)Landroid/content/Intent;`. A constructor has the name `<init>`. The member `-` alone is a request for the struct of the class with no member. Use it for a class that is only the type of an argument or of a result.
+`generate` takes the classes that `std/classfile` read, and a list of requests. A `Request` names one class and the members that the app uses. With no member, the request is for each public member of the class. A member is a name, such as `setAction`, or a name with its descriptor, such as `setAction(Ljava/lang/String;)Landroid/content/Intent;`. A constructor has the name `<init>`.
+
+The member `-` alone is a request for the struct of the class with no member. Use it for a class that is only the type of an argument or of a result.
 
 The result is the text of one Fern module. For a class such as `android/content/Intent`, the module has these parts:
 
