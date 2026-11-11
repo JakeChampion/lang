@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jakechampion/lang/internal/testing/corpus"
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
@@ -21,7 +22,11 @@ func TestExamplesNoCrashX86_64(t *testing.T) {
 	_, runner := x86_64Tooling(t)
 	e2eharness.SelfHostCLI(t)
 	e2eharness.SelfHostStdlibRoot(t)
-	corpus := examplesCorpus(t)
+	all := examplesCorpus(t)
+	programs, err := corpus.Shard(all, os.Getenv("FERN_EXAMPLES_CENSUS_SHARD"))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	var mu sync.Mutex
 	var crashed []string
@@ -29,7 +34,7 @@ func TestExamplesNoCrashX86_64(t *testing.T) {
 	var ran, unpaired, unmeasured int
 	sem := make(chan struct{}, 4)
 	var wg sync.WaitGroup
-	for _, rel := range corpus {
+	for _, rel := range programs {
 		wg.Add(1)
 		go func(rel string) {
 			defer wg.Done()
@@ -56,12 +61,13 @@ func TestExamplesNoCrashX86_64(t *testing.T) {
 
 	sort.Strings(leaky)
 	t.Logf("%d programs: %d ran (%d leaking, %d unpaired allocs), %d unmeasured, %d crashed",
-		len(corpus), ran, len(leaky), unpaired, unmeasured, len(crashed))
+		len(programs), ran, len(leaky), unpaired, unmeasured, len(crashed))
 	if len(leaky) > 0 {
 		t.Logf("leaking: %s", strings.Join(leaky, ", "))
 	}
 
-	if ran < 200 {
+	// A shard must run its share of the 200 programs that the full corpus must run.
+	if minRan := 200 * len(programs) / len(all); ran < minRan {
 		t.Fatalf("only %d programs ran; this is measuring almost nothing", ran)
 	}
 	if len(crashed) > 0 {
