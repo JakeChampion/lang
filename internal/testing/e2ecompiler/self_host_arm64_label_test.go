@@ -211,10 +211,8 @@ func TestSelfHostArm64BranchRange(t *testing.T) {
 	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
 		t.Fatalf("write wat: %v", err)
 	}
-	cmd := exec.Command("wasmtime", "run", watPath)
-	_ = cmd.Run()
-	if code := cmd.ProcessState.ExitCode(); code != 0 {
-		t.Errorf("arm64 branch-range self-test failed at check %d\n--- WAT ---\n%s", code, wat)
+	if output, err := exec.Command("wasmtime", "run", watPath).CombinedOutput(); err != nil {
+		t.Fatalf("arm64 branch-range self-test: %v\n%s", err, output)
 	}
 }
 
@@ -260,12 +258,10 @@ function main(): i32 {
     }
     let before: i32 = buf_len(a.code);
     a = arm64_asm_tbz(a, arm64_x1(), 0, "far");
-    if (a.oor.len() != 1) { return 19; }
-    // The placeholder is still there (the instruction was emitted, not patched)
-    // and neither a fixup nor a patch was queued, so nothing downstream will
-    // encode it either.
-    if (buf_len(a.code) != before + 4) { return 20; }
-    if (arm64_fix_count(a) != 0 || a.patq != 0 as usize) { return 21; }
+    // The known target uses the inverted test over an unconditional branch.
+    if (a.oor.len() != 0) { return 19; }
+    if (buf_len(a.code) != before + 8) { return 20; }
+    if (arm64_fix_count(a) != 0 || a.patq == 0 as usize) { return 21; }
 
     // ---- integration, FORWARD (resolved later) ----
     let b: Arm64Asm = arm64_asm_new();
@@ -279,7 +275,8 @@ function main(): i32 {
     b = arm64_asm_label(b, "ahead");
     if (b.oor.len() != 0) { return 23; }        // still unresolved at this point
     b = arm64_asm_resolve(b);
-    if (b.oor.len() != 1) { return 24; }
+    // Resolution requests another pass with room for the long form.
+    if (b.oor.len() != 0 || b.far_next.len() != 1) { return 24; }
 
     // An in-range branch is unaffected: same shape, 8 instructions apart.
     let c: Arm64Asm = arm64_asm_new();
