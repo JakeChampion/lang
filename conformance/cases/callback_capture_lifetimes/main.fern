@@ -17,7 +17,11 @@ function (own h: Handle) close(): i32 {
 function reads(own h: Handle): i32 {
   let read = (): i32 => h.read();
   let n = read();
-  return n + read() + h.close();
+  return invoke((): i32 => n + read(), 0) + h.close();
+}
+
+function invoke(read: () => i32, ignored: i32): i32 {
+  return read();
 }
 
 function change(own xs: i32[]): void {
@@ -26,8 +30,12 @@ function change(own xs: i32[]): void {
 
 function copied_array(own xs: i32[]): i32 {
   let read = (): i32 => xs[0];
+  return invoke((): i32 => read(), changed(xs));
+}
+
+function changed(own xs: i32[]): i32 {
   change(xs);
-  return read();
+  return 0;
 }
 
 @value
