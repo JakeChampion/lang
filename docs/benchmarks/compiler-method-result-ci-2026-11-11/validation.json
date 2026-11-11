@@ -1,0 +1,83 @@
+{
+  "source": "29b1234d0699d6b42d7d85bbcd82dbfb92c6dce2",
+  "head": "8440203b0ce52b7d1fbe07a9e23a1c9eb0307b03",
+  "runs": [
+    {
+      "label": "alloc-old-gate",
+      "args": [
+        "/workspace/lang-indirect-method-result-20261110-2255/scripts/ci-check-perf",
+        "/workspace/lang-checker-union-index-20261110-1540/build/baseline-bank-20261111-0010/before-alloc-baseline.txt",
+        "/workspace/lang-checker-union-index-20261110-1540/build/baseline-bank-20261111-0010/alloc-ci-values.report"
+      ],
+      "expected_exit": 1,
+      "started": "2026-11-11T00:13:36.337526+00:00",
+      "exit_code": 1,
+      "finished": "2026-11-11T00:13:36.370130+00:00"
+    },
+    {
+      "label": "alloc-new-gate",
+      "args": [
+        "/workspace/lang-indirect-method-result-20261110-2255/scripts/ci-check-perf",
+        "/workspace/lang-indirect-method-result-20261110-2255/.github/alloc-baseline.txt",
+        "/workspace/lang-checker-union-index-20261110-1540/build/baseline-bank-20261111-0010/alloc-ci-values.report"
+      ],
+      "expected_exit": 0,
+      "started": "2026-11-11T00:13:36.370701+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T00:13:36.406427+00:00"
+    },
+    {
+      "label": "cliff-old-gate",
+      "args": [
+        "/workspace/lang-indirect-method-result-20261110-2255/scripts/ci-check-perf",
+        "/workspace/lang-checker-union-index-20261110-1540/build/baseline-bank-20261111-0010/before-cliff-baseline.txt",
+        "/workspace/lang-checker-union-index-20261110-1540/build/baseline-bank-20261111-0010/cliff-ci-values.report"
+      ],
+      "expected_exit": 1,
+      "started": "2026-11-11T00:13:36.406802+00:00",
+      "exit_code": 1,
+      "finished": "2026-11-11T00:13:36.439474+00:00"
+    },
+    {
+      "label": "cliff-new-gate",
+      "args": [
+        "/workspace/lang-indirect-method-result-20261110-2255/scripts/ci-check-perf",
+        "/workspace/lang-indirect-method-result-20261110-2255/.github/cliff-baseline.txt",
+        "/workspace/lang-checker-union-index-20261110-1540/build/baseline-bank-20261111-0010/cliff-ci-values.report"
+      ],
+      "expected_exit": 0,
+      "started": "2026-11-11T00:13:36.439839+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T00:13:36.456401+00:00"
+    },
+    {
+      "label": "canonical-negative-controls",
+      "args": [
+        "/workspace/scratch/lang-node22-20261110-2320/node-v22.23.4-linux-x64/bin/node",
+        "--import",
+        "/workspace/lang-checker-union-index-20261110-1540/build/baseline-bank-20261111-0010/preserve-controls.mjs",
+        "/workspace/lang-indirect-method-result-20261110-2255/scripts/perf-gate-selftest.mjs"
+      ],
+      "expected_exit": 0,
+      "started": "2026-11-11T00:13:36.457079+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T00:13:36.923309+00:00"
+    },
+    {
+      "label": "whitespace",
+      "args": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "expected_exit": 0,
+      "started": "2026-11-11T00:13:36.924970+00:00",
+      "exit_code": 0,
+      "finished": "2026-11-11T00:13:36.996340+00:00"
+    }
+  ],
+  "scope": "Replay exact CI corrective rows against old and updated baselines. Negative controls retain the unchanged canonical comparator assertions. No compiler benchmark rerun or performance claim.",
+  "captured_comparator_children": 22,
+  "exit_code": 0,
+  "finished": "2026-11-11T00:13:36.997023+00:00"
+}
