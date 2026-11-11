@@ -1,0 +1,16 @@
+main.fern:12:31: error[E034]: array element: expected f64[], got i32[]
+main.fern:14:5: error[E003]: variable "ws": expected f64[][], got i32[][]
+main.fern:16:5: error[E003]: variable "ys": expected f64[][], got i32[][]
+main.fern:16:29: error[E034]: array element: expected i32[], got f64[]
+main.fern:18:28: error[E034]: array element: expected f64, got i32
+main.fern:18:32: error[E034]: array element: expected f64[], got i32[]
+main.fern:20:5: error[E003]: variable "rs": expected f64[][], got i32[][]
+main.fern:20:28: error[E034]: array element: expected i32, got f64
+main.fern:22:35: error[E034]: array element: expected f64[][], got i32[][]
+main.fern:24:5: error[E003]: variable "ps": expected f64[], got i32[]
+main.fern:25:8: error[E038]: argument 1 to "sf": expected f64[], got i32[]
+main.fern:27:5: error[E003]: variable "ts": expected f32[], got i32[]
+main.fern:27:25: error[E034]: array element: expected i32, got f64
+main.fern:27:28: error[E034]: array element: expected i32, got f64
+main.fern:28:25: error[E034]: array element: expected f64, got i32
+main.fern:28:30: error[E034]: array element: expected f64, got i32

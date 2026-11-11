@@ -68,7 +68,7 @@ const STDLIB_GROUPS = [
   ["WebAssembly", ["wasm_component", "wasm_convert", "wasm_encode",
     "wasm_imports", "wasm_inst", "wasm_leb128", "wasm_memory",
     "wasm_module", "wasm_numeric", "wasm_sections"]],
-  ["Interop", ["android", "android_access", "android_audio", "android_draw", "android_focus", "android_font", "android_fonts", "android_gl", "android_image", "android_keyboard", "android_motion", "android_p2p", "android_player", "android_property", "android_service", "android_testkit", "android_text", "android_trace", "android_ui", "android_ui_app", "android_ui_painter", "android_ui_scene", "android_ui_sim", "android_video", "android_video_capabilities", "android_video_extractor", "android_video_muxer", "android_video_player", "android_video_source", "classfile", "ffi", "jni"]],
+  ["Interop", ["android", "android_access", "android_audio", "android_draw", "android_focus", "android_font", "android_fonts", "android_gl", "android_image", "android_keyboard", "android_motion", "android_p2p", "android_player", "android_property", "android_service", "android_testkit", "android_text", "android_trace", "android_ui", "android_ui_app", "android_ui_painter", "android_ui_scene", "android_ui_sim", "android_video", "android_video_capabilities", "android_video_extractor", "android_video_muxer", "android_video_player", "android_video_source", "classfile", "ffi", "jni", "jni_bind"]],
 ];
 
 // Reads what `fern -doc` actually emitted rather than trusting the table

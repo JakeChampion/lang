@@ -1,0 +1,138 @@
+// jnibind — typed Fern bindings for the Java classes of a JAR file
+// (#14737).
+//
+// Usage: jnibind JAR SPEC
+//
+//   JAR   a JAR file, such as the android.jar of an Android SDK
+//   SPEC  a text file that names the classes and the members to bind
+//
+// Each line of SPEC is the name of a class, with "/" or "." between its
+// parts, and then the members to bind. A line with no member binds each
+// public member of the class. A member is a name, or a name and its
+// descriptor. A constructor has the name <init>. A line that starts with
+// "#" is a comment.
+//
+//   android.content.Intent <init>(Ljava/lang/String;)V addCategory
+//   android.content.Context
+//
+// Output: the text of one Fern module, which std/jni/bind writes. Exits 1
+// with a message when the JAR, the SPEC or a request is not correct.
+import "std/classfile";
+import "std/jni/bind";
+import "std/option";
+import "std/string";
+import "std/zip";
+
+// The requests of the text `spec`.
+function requests(spec: string): bind.Request[] {
+  let out: bind.Request[] = [];
+  for line in spec.split("\n") {
+    let words: string[] = [];
+    for w in line.replace("\t", " ").replace("\r", "").split(" ") {
+      if (w.len() > 0) {
+        words = words.append(w);
+      }
+    }
+    if (words.len() > 0 && !words[0].starts_with("#")) {
+      let members: string[] = [];
+      for i in 1..words.len() {
+        members = members.append(words[i]);
+      }
+      out = out.append(bind.Request { class: words[0].replace(".", "/"), members: members });
+    }
+  }
+  return out;
+}
+
+function known(classes: classfile.Class[], name: string): boolean {
+  for c in classes {
+    if (c.name == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The class `name` of the archive, or None when the archive does not have
+// it.
+function load(jar: [u8], archive: zip.Archive, name: string): Result[Option[classfile.Class], string] {
+  let Some(entry) = archive.find(name + ".class") else {
+    return Ok(None);
+  };
+  let bytes = match (zip.read(jar, entry)) {
+    Ok(b) => b,
+    Err(e) => {
+      return Err(name + ": " + e.message());
+    },
+  };
+  return match (classfile.parse(bytes)) {
+    Ok(c) => Ok(Some(c)),
+    Err(e) => Err(name + ": " + e.message()),
+  };
+}
+
+// The classes of the requests, and each parent class and interface of
+// them that the archive has.
+function classes_of(jar: [u8], archive: zip.Archive, wanted: bind.Request[]): Result[classfile.Class[], string] {
+  let out: classfile.Class[] = [];
+  let todo: string[] = [];
+  for r in wanted {
+    todo = todo.append(r.class);
+  }
+  let next = 0;
+  while (next < todo.len()) {
+    let name = todo[next];
+    next += 1;
+    if (name.len() > 0 && !known(out, name)) {
+      if let Some(c) = load(jar, archive, name)? {
+        todo = todo.concat(c.interfaces).append(c.parent);
+        out = out.append(c);
+      }
+    }
+  }
+  return Ok(out);
+}
+
+function run(jar_path: string, spec_path: string): Result[string, string] {
+  let jar = match (read_file_bytes(jar_path)) {
+    Ok(b) => b,
+    Err(e) => {
+      return Err("cannot read " + jar_path);
+    },
+  };
+  let spec = match (read_file(spec_path)) {
+    Ok(s) => s,
+    Err(e) => {
+      return Err("cannot read " + spec_path);
+    },
+  };
+  let archive = match (zip.parse(jar)) {
+    Ok(a) => a,
+    Err(e) => {
+      return Err(jar_path + ": " + e.message());
+    },
+  };
+  let wanted = requests(spec);
+  let classes = classes_of(jar, archive, wanted)?;
+  return bind.generate(classes, wanted);
+}
+
+function main(): i32 {
+  // The name of the program is the first argument.
+  let a = args();
+  if (a.len() != 3) {
+    eprint("usage: jnibind JAR SPEC");
+    return 2;
+  }
+  match (run(a[1], a[2])) {
+    Ok(text) => {
+      // print adds the newline that ends the module.
+      print(slice_unchecked(text, 0, text.len() - 1) + "");
+      return 0;
+    },
+    Err(message) => {
+      eprint("jnibind: " + message);
+      return 1;
+    }
+  }
+}

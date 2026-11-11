@@ -6,6 +6,7 @@
 // the last frame of each case there as a PNG file.
 import "std/android";
 import "std/android/draw";
+import "std/android/ui/scene";
 import "std/png";
 import "std/test";
 import "std/worker";
@@ -216,13 +217,13 @@ function shown(log: Log, f: draw.Frame, server: string, token: string): control.
   return settle(at(s, log, 0i64, f, android.WindowCreated(android.Window { ptr: 1 as usize })), log, 0i64, f);
 }
 
-function centre(n: ui.Node): (i32, i32) {
+function centre(n: scene.Node): (i32, i32) {
   return (n.x + n.w / 2, n.y + n.h / 2);
 }
 
-function node(s: control.App, act: string): Option[ui.Node] {
+function node(s: control.App, act: string): Option[scene.Node] {
   for n in s.nodes {
-    if (n.act == act) {
+    if (n.tap.name == act) {
       return Some(n);
     }
   }

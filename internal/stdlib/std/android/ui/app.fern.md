@@ -89,6 +89,15 @@ function present(own p: painter.Painter, window: usize, nodes: scene.Node[], bac
   return painter.present_cpu(p, window, nodes, background);
 }
 
+// Shows the keyboard on `text`, for a field of one line or of more lines.
+function show_keyboard(ctx: usize, text: string, lines: boolean): void {
+  if (lines) {
+    keyboard.show(ctx, text, android.INPUT_LINES, android.ACTION_DONE);
+  } else {
+    keyboard.show(ctx, text, android.INPUT_TEXT, android.ACTION_DONE);
+  }
+}
+
 // The device of the activity of the context `ctx`.
 function device(ctx: usize): ui.Device {
   return ui.Device {
@@ -107,8 +116,8 @@ function device(ctx: usize): ui.Device {
     close: (p: painter.Painter): painter.Painter => painter.close(p),
     present: (own p: painter.Painter, window: usize, nodes: scene.Node[], background: i32): painter.Painter => present(p, window, nodes, background),
     publish: (items: android.AccessItem[]): void => access.publish(ctx, items),
-    show_keyboard: (text: string): void => keyboard.show(ctx, text, android.INPUT_TEXT, android.ACTION_DONE),
-    set_keyboard: (text: string): void => keyboard.set_text(ctx, text),
+    show_keyboard: (text: string, lines: boolean): void => show_keyboard(ctx, text, lines),
+    set_keyboard: (text: string, caret: i32): void => keyboard.set_text_at(ctx, text, caret),
     hide_keyboard: (): void => keyboard.hide(ctx),
   };
 }

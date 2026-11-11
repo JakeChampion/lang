@@ -64,3 +64,38 @@ function main(): i32 {
 		t.Fatalf("options=%v, cloned enum constructions=%d", options, wrapped)
 	}
 }
+
+func TestQualifiedVariantOfAClonedEnum(t *testing.T) {
+	prog, err := parser.Parse(`enum Tree[T] { Hollow, Leaf(T), Fork(Tree[T], Tree[T]) }
+function tree[T](vs: T[], lo: i32, hi: i32): Tree[T] {
+    if (hi <= lo) { return Tree.Hollow; }
+    if (hi - lo == 1) { return Tree.Leaf(vs[lo]); }
+    let mid = lo + (hi - lo) / 2;
+    return Fork(tree(vs, lo, mid), tree(vs, mid, hi));
+}
+function main(): i32 {
+    let a = tree([1, 2, 3], 0, 3);
+    let b = tree(["x"], 0, 0);
+    return 0;
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatal(err)
+	}
+	clones := 0
+	for _, construction := range info.EnumConstructions {
+		decl := info.Enums[construction.Type.Name]
+		if decl != nil && construction.VariantIndex == 0 && strings.HasPrefix(construction.Type.Name, "Tree__") {
+			clones++
+		}
+	}
+	if clones != 2 {
+		t.Fatalf("Tree.Hollow constructions of a clone = %d, want 2", clones)
+	}
+}

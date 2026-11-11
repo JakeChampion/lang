@@ -10,6 +10,8 @@
 import "std/android";
 import "std/android/draw";
 import "std/android/player";
+import "std/android/text";
+import "std/android/ui/scene";
 import "std/log";
 import "std/string";
 import "std/utf8";
@@ -131,7 +133,7 @@ pub struct App {
   reports: plex.Request[],
   play: Play,
   press: Press,
-  nodes: ui.Node[],
+  nodes: scene.Node[],
   dirty: boolean,
 }
 
@@ -1145,7 +1147,7 @@ function play_tick(own s: App, now: i64): App {
   return t;
 }
 
-function player_act(own s: App, act: string, n: ui.Node, x: i32): App {
+function player_act(own s: App, act: string, n: scene.Node, x: i32): App {
   let p = s.play;
   if (act == "overlay") {
     return pause_play(s);
@@ -1245,7 +1247,7 @@ function touch(own s: App, action: i32, x: f32, y: f32): App {
   let slop = (8 * m.u) as f32;
   let p = s.press;
   if (action == 0) {
-    let group = ui.group_at(s.nodes, x as i32, y as i32);
+    let group = scene.group_at(s.nodes, x as i32, y as i32);
     return App { ...s, press: Press { active: true, x0: x, y0: y, x: x, y: y, axis: 0, group: group, scroll0: s.scroll, row0: row_offset(s.rows, row_index(group)) } };
   }
   if (!p.active) {
@@ -1291,18 +1293,18 @@ function abs_f(v: f32): f32 {
 }
 
 function tapped(own s: App, x: i32, y: i32): App {
-  let Some(n) = ui.hit(s.nodes, x, y) else {
+  let Some(n) = scene.hit(s.nodes, x, y) else {
     if (s.typing) {
       s.dev.hide_field();
       return App { ...s, typing: false, dirty: true };
     }
     return s;
   };
-  return act(s, n.act, n, x);
+  return act(s, n.tap.name, n, x);
 }
 
 // Runs the action of a tapped node.
-pub function act(own s: App, a: string, n: ui.Node, x: i32): App {
+pub function act(own s: App, a: string, n: scene.Node, x: i32): App {
   if (s.screen == ui.PLAYER) {
     return player_act(s, a, n, x);
   }
@@ -1476,7 +1478,7 @@ pub function view(s: App): ui.View {
     pin_code: s.pin.code, error: s.error, servers: s.servers, server_states: s.states,
     query: s.query, typing: s.typing, account: s.account, server_name: s.server.name,
     quality: plex.qualities()[s.quality].name, player: pv, base: s.base,
-    loading: busy(s),
+    loading: busy(s), cache: s.cache,
   };
 }
 
@@ -1610,7 +1612,7 @@ function draw_screen(own s: App): App {
   }
   let f = s.dev.lock(s.window);
   if (f.width > 0) {
-    ui.render(f, ns, s.cache);
+    let c = scene.render(f, text.Fonts { faces: [], weights: [] }, text.new_cache(), ns);
   }
   s.dev.post(f);
   return App { ...s, nodes: ns, dirty: false };

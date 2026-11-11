@@ -82,6 +82,10 @@ func TestLiteralLocalTakesOneType(t *testing.T) {
 		{"an integer local before a float in an array literal", "let b = 1; let zs = [b, 1.5];", "E034"},
 		{"an integer local in an array literal in a float destination", "let b = 1; let zs: f64[] = [1, b];", "E034"},
 		{"an integer local in a nested float array literal", "let b = 1; let zs = [[1.5], [b]];", "E034"},
+		{"an integer local in a nested array literal in a float destination", "let b = 1; let zs: f64[][] = [[1.5], [b]];", "E034"},
+		{"an array literal of integer locals in a float destination", "let b = 1; let zs: f64[] = [b, b + 1];", "E003"},
+		{"a nested array literal of integer locals in a float destination", "let b = 1; let zs: f64[][] = [[b]];", "E003"},
+		{"an integer local before a literal in a float destination", "let b = 1; let zs: f64[] = [b, 1];", "E003,E034"},
 		{"an integer literal in an append on a float array literal", "let zs = [1.5, 2.5].append(1); let ws = [1.5, 2.5].with(0, 1 + 2);", ""},
 		{"an integer literal in an append on a float array local", "let ys = [1.5, 2.5]; let xs = ys.append(1); let q: f32[] = ys;", ""},
 		{"a float destination of an append on an array literal", "let zs: f32[] = [1.5, 2.5].append(3); let ws: f64[] = [1, 2].append(1.5);", ""},
@@ -142,6 +146,44 @@ func TestAppendOnAnEmptyArrayLiteralIsOneDiagnostic(t *testing.T) {
 	err := checkSource(t, "function main(): i32 {\nlet ys = [].append(2);\nreturn 0;\n}\n")
 	if err == nil || strings.Contains(err.Error(), "E043") || strings.Contains(err.Error(), "E038") {
 		t.Fatalf("got %v, want E020 only", err)
+	}
+}
+
+// An integer literal that does not fit in i32 widens the narrower value
+// beside it in an array literal.
+func TestArrayLiteralWideIntegerLiteralWidensTheValueBesideIt(t *testing.T) {
+	const head = "function main(): i32 {\nlet i: i32 = 1; let u: u32 = 2; let w: u64 = 3;\n"
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"an i32 value before the literal", "let ms = [i, 5000000000]; let k: i64 = ms[0];", ""},
+		{"an i32 value after the literal", "let ms = [5000000000, i]; let k: i64 = ms[1];", ""},
+		{"a literal that fits between them", "let ms = [i, 1, 5000000000]; let k: i64 = ms[1];", ""},
+		{"a negative literal beside a u32 value", "let ms = [u, -5000000000]; let k: i64 = ms[0];", ""},
+		{"a typed destination", "let ms: i64[] = [i, 5000000000];", ""},
+		{"a u64 value keeps its type", "let ms = [w, 5000000000]; let k: u64 = ms[1];", ""},
+		{"a literal that fits in u32 keeps u32", "let ms = [u, 4000000000]; let k: u32 = ms[1];", ""},
+		{"two inner literals", "let ms = [[i], [5000000000]]; let k: i64 = ms[0][0];", ""},
+		{"three levels", "let ms = [[[i]], [[5000000000]]]; let k: i64 = ms[0][0][0];", ""},
+		{"the element type is i64", "let ms = [i, 5000000000]; let k: i32 = ms[0];", "expected i32, got i64"},
+		{"the nested element type is i64", "let ms = [[i], [5000000000]]; let k: i32 = ms[0][0];", "expected i32, got i64"},
+		{"a literal that fits keeps i32", "let ms = [i, 5]; let k: i32 = ms[1];", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := checkSource(t, head+c.body+"\nreturn 0;\n}\n")
+			if c.want == "" {
+				if err != nil {
+					t.Fatalf("rejected, want accepted: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("got %v, want an error with %q", err, c.want)
+			}
+		})
 	}
 }
 

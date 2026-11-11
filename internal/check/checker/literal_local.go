@@ -427,6 +427,43 @@ func litWidthIn(t ast.Type, w ast.NumberType) ast.Type {
 	return t
 }
 
+// litLocalsInFloatDest reports the elements of lit that have another type
+// than its first element, when an element reads an integer literal local in
+// the float destination want. The first element gives the array its type, as
+// it does when the local has the annotation i32. The result is the type of
+// the array, or nil when no element reads such a local.
+func (c *checker) litLocalsInFloatDest(lit *ast.ArrayLit, types []ast.Type, want ast.FloatType) ast.Type {
+	first := c.intLitLocalIn(lit.Elems[0], want)
+	mixed := false
+	for i, el := range lit.Elems[1:] {
+		ll := c.intLitLocalIn(el, want)
+		switch {
+		case first == nil && ll != nil:
+			c.afterLitFix(ll, func() {
+				c.errfCode(el.Pos(), "E034", "array element: expected %s, got %s", want, ll.width)
+			})
+			mixed = true
+		case first != nil && ll == nil:
+			got := ast.Type(ast.FloatType{Width: 64})
+			if f, ok := types[i+1].(ast.FloatType); ok && !f.Polymorphic {
+				got = f
+			}
+			c.afterLitFix(first, func() {
+				c.errfCode(el.Pos(), "E034", "array element: expected %s, got %s", first.width, got)
+			})
+		}
+	}
+	switch {
+	case first != nil && first.fixed:
+		return ast.ArrayType{Elem: first.width}
+	case first != nil:
+		return ast.ArrayType{Elem: ast.NumberType{Width: 32, Signed: true}}
+	case mixed:
+		return ast.ArrayType{Elem: want}
+	}
+	return nil
+}
+
 // afterLitFix runs f when ll has its width.
 func (c *checker) afterLitFix(ll *litLocal, f func()) {
 	if ll.fixed {

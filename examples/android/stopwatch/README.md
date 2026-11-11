@@ -46,7 +46,7 @@ beeps.
 |---|---|
 | `stopwatch.fern` | The behaviour: the state changes, the text, the colours of the dial, when to update next, the burn-in position, the beep times and samples, the files of the app and the settings table. Every function is pure. |
 | `screen.fern` | The layout of each screen. |
-| `ui.fern` | The look of each screen and of the launcher icon. It draws on a frame and does no other I/O. |
+| `ui.fern` | The look of each screen and of the launcher icon. `nodes` gives a screen as nodes of `std/android/ui/scene`: one node that draws the screen, and one node for each part that takes a tap. It does no other I/O. |
 | `control.fern` | The behaviour of the app on its events: the touches, the keys, the timers, the files, the beeper and the window. Each input and output goes through a `Device`. |
 | `app.fern` | The NativeActivity, and the `Device` of the phone. |
 | `stopwatch_test.fern` | The tests for `stopwatch.fern` (`std/test`). |

@@ -18,7 +18,7 @@ Each element has a width and a height: `Hug` takes the size of what the element 
 
 `on_tap` gives an element the name of an action, and a number when one name is not enough: the row of a list, for example. A tap on the element comes to `update` as `Tap` with that name and number. `on_long` does the same for a long press.
 
-`field` is a text field. A tap gives it the focus and shows the keyboard of the system. The program keeps the text: each change comes to `update` as `Edit` with the name of the field and the new text, and `view` gives the field the text that it shows.
+`field` is a text field of one line, and `area` is a text field of more than one line. A tap gives a field the focus and shows the keyboard of the system, and a tap on its text puts the caret there. The program keeps the text: each change comes to `update` as `Edit` with the name of the field and the new text, and `view` gives the field the text that it shows.
 
 `scroll` makes a column a list that scrolls down, and a row a list that scrolls across, with the fling of an Android list and a spring at each end. `list` is a list that makes only the rows that show, so a list of many rows costs as much as a short one. Each list has a name, which keeps its position from frame to frame.
 
@@ -68,7 +68,7 @@ function update(own m: Model, msg: ui.Msg): Model {
 
 function main(): i32 {
   let screen = ui.Screen { w: 400, h: 800, d: 2.0, dark: false, theme: ui.theme(false), left: 0, top: 0, right: 0, bottom: 0, font: 1.0 };
-  let lay = ui.layout(view(Model { count: 0 }, screen), text.Fonts { faces: [], weights: [] }, screen, map_new(4), "");
+  let lay = ui.layout(view(Model { count: 0 }, screen), text.Fonts { faces: [], weights: [] }, screen, map_new(4), ui.no_focus());
   let next = update(Model { count: 0 }, ui.Tap("add", 0));
   if (lay.nodes.len() == 3 && next.count == 1) {
     return 0;
@@ -334,7 +334,9 @@ pub function list(name: string, count: i32, row: f64, build: (i32) => El): El {
 
 ### `text fields`
 
-A field is 56 dp high, as a text field of Material 3. The line below it is in the primary color while the field has the focus, and a caret stands after the text. A text that is wider than the field shows its end.
+A field is 56 dp high, as a text field of Material 3. The line below it is in the primary color while the field has the focus, and a caret stands where the next character goes. A text that is wider than the field shows the part around the caret. Out of focus, it shows its end.
+
+An `area` wraps its text. When the text has more lines than the area, the area shows the lines around the caret.
 
 The node of a field has a tap action with the name of the field after `FIELD_ACTION`. The shell gives the focus to the field for that action, and does not give the action to the program.
 
@@ -351,17 +353,31 @@ pub function field(name: string, value: string, hint: string): El {
   return El { ...element(FIELD, []), field: name, content: value, hint: hint, size: 16.0, w: Grow(1.0), h: Exact(56.0), pad: Edges { left: 16.0, top: 0.0, right: 16.0, bottom: 0.0 }, bg: SURFACE, radius: 4.0 };
 }
 
-// The text of the field `name` in the tree `e`.
-function field_text(e: El, name: string): Option[string] {
+// A text field of `rows` lines. Its text wraps, and the enter key of the
+// keyboard starts a new line, so it gives no Submit message.
+pub function area(name: string, value: string, hint: string, rows: i32): El {
+  return El { ...field(name, value, hint), lines: rows.max(2), h: Hug, pad: Edges { left: 16.0, top: 16.0, right: 16.0, bottom: 16.0 } };
+}
+
+// The field `name` in the tree `e`.
+function field_el(e: El, name: string): Option[El] {
   if (e.kind == FIELD && e.field == name) {
-    return Some(e.content);
+    return Some(e);
   }
   for k in e.kids {
-    if let Some(t) = field_text(k, name) {
-      return Some(t);
+    if let Some(f) = field_el(k, name) {
+      return Some(f);
     }
   }
   return None;
+}
+
+// The field that has the focus, or "", and the character that its caret
+// is before.
+pub struct Focus { field: string, caret: i32 }
+
+pub function no_focus(): Focus {
+  return Focus { field: "", caret: 0 };
 }
 ```
 
@@ -560,7 +576,7 @@ function bounded(v: i32): boolean {
   return v < UNBOUNDED / 2;
 }
 
-struct Env { fonts: text.Fonts, d: f64, font: f64, theme: Theme, offsets: Map[string, i32], focus: string }
+struct Env { fonts: text.Fonts, d: f64, font: f64, theme: Theme, offsets: Map[string, i32], focus: Focus }
 
 function px(env: Env, dp: f64): i32 {
   return (dp * env.d).round() as i32;
@@ -744,7 +760,7 @@ function content(env: Env, e: El, iw: i32, ih: i32): (i32, i32) {
     return (0, e.count * px(env, e.row));
   }
   if (e.kind == FIELD) {
-    return (0, 0);
+    return (0, e.lines.max(1) * text.line(env.fonts, text.face_for(env.fonts, e.weight), sp(env, e.size)));
   }
   if (e.kind == COLUMN || e.kind == ROW) {
     return flow_size(env, e, iw, ih);
@@ -903,36 +919,138 @@ function place_text(env: Env, e: El, x: i32, y: i32, w: i32, clip: Clip, own out
   return Layout { nodes: nodes, scrollers: out.scrollers };
 }
 
+// What a field shows: its lines, the index of the first character of each
+// line, and the line and the x of the caret. The line of the caret is -1
+// for a field that does not have the focus.
+struct FieldView { lines: string[], starts: i32[], caret_line: i32, caret_x: i32 }
+
+// The pixels of the em, the face and the height of a line of the field.
+function field_type(env: Env, e: El): (i32, i32, i32) {
+  let size = sp(env, e.size);
+  let face = text.face_for(env.fonts, e.weight);
+  return (size, face, text.line(env.fonts, face, size));
+}
+
+// A field of one line in `w` pixels. In focus it shows the part of its
+// text around the caret. Out of focus it shows the end of its text.
+function line_view(env: Env, e: El, w: i32, focused: boolean): FieldView {
+  let (size, face, _) = field_type(env, e);
+  if (!focused) {
+    return FieldView { lines: [text.fit_end(env.fonts, face, size, e.content, w)], starts: [0], caret_line: -1, caret_x: 0 };
+  }
+  let cs = text.letters(e.content);
+  let caret = env.focus.caret.max(0).min(cs.len());
+  let from = 0;
+  while (from < caret && text.width(env.fonts, face, size, text.span(cs, from, caret)) > w) {
+    from += 1;
+  }
+  let to = cs.len();
+  while (to > caret && text.width(env.fonts, face, size, text.span(cs, from, to)) > w) {
+    to -= 1;
+  }
+  return FieldView { lines: [text.span(cs, from, to)], starts: [from], caret_line: 0, caret_x: text.width(env.fonts, face, size, text.span(cs, from, caret)) };
+}
+
+// A field of more than one line in `w` pixels. In focus it shows the lines
+// around the caret. Out of focus it shows its first lines.
+function area_view(env: Env, e: El, w: i32, focused: boolean): FieldView {
+  let (size, face, _) = field_type(env, e);
+  let cs = text.letters(e.content);
+  let ranges = text.wrap_ranges(env.fonts, face, size, e.content, w);
+  let caret = env.focus.caret.max(0).min(cs.len());
+  let at = 0;
+  for i in 0..ranges.len() {
+    let (a, _) = ranges[i];
+    if (caret >= a) {
+      at = i;
+    }
+  }
+  let first = 0;
+  if (focused) {
+    first = (at - e.lines + 1).max(0);
+  }
+  let lines: string[] = [];
+  let starts: i32[] = [];
+  for i in first..(first + e.lines).min(ranges.len()) {
+    let (a, b) = ranges[i];
+    lines = lines.append(text.span(cs, a, b));
+    starts = starts.append(a);
+  }
+  if (!focused) {
+    return FieldView { lines: lines, starts: starts, caret_line: -1, caret_x: 0 };
+  }
+  let (a, _) = ranges[at];
+  return FieldView { lines: lines, starts: starts, caret_line: at - first, caret_x: text.width(env.fonts, face, size, text.span(cs, a, caret)) };
+}
+
+// What the field `e` shows in `w` pixels. An empty field shows its hint.
+function field_view(env: Env, e: El, w: i32): FieldView {
+  let focused = e.field == env.focus.field;
+  if (e.content.len() == 0) {
+    let (size, face, _) = field_type(env, e);
+    let caret_line = -1;
+    if (focused) {
+      caret_line = 0;
+    }
+    return FieldView { lines: [text.fit(env.fonts, face, size, e.hint, w)], starts: [0], caret_line: caret_line, caret_x: 0 };
+  }
+  if (e.lines > 1) {
+    return area_view(env, e, w, focused);
+  }
+  return line_view(env, e, w, focused);
+}
+
+// The row of the first line of the field `e` in the box from y, of height
+// h: a field of one line has its text in the middle.
+function field_top(env: Env, e: El, y: i32, h: i32): i32 {
+  if (e.lines > 1) {
+    return y;
+  }
+  let (_, _, line) = field_type(env, e);
+  return y + (h - line) / 2;
+}
+
+// The character of the field `e` that the caret goes before, for a tap at
+// tx and ty. The text of the field is in the box x, y, w, h.
+function caret_at(env: Env, e: El, x: i32, y: i32, w: i32, h: i32, tx: i32, ty: i32): i32 {
+  if (e.content.len() == 0) {
+    return 0;
+  }
+  let (size, face, line) = field_type(env, e);
+  let v = field_view(env, e, w);
+  let row = ((ty - field_top(env, e, y, h)) / line).max(0).min(v.lines.len() - 1);
+  let cs = text.letters(v.lines[row]);
+  let k = 0;
+  while (k < cs.len() && text.width(env.fonts, face, size, text.span(cs, 0, k)) + text.width(env.fonts, face, size, cs[k]) / 2 < tx - x) {
+    k += 1;
+  }
+  return v.starts[row] + k;
+}
+
 // The text of a field or its hint, the line below it, and the caret of the
 // field that has the focus.
 function place_field(env: Env, e: El, x: i32, y: i32, w: i32, h: i32, clip: Clip, own out: Layout): Layout {
-  let focused = e.field == env.focus;
-  let size = sp(env, e.size);
-  let face = text.face_for(env.fonts, e.weight);
-  let line = text.line(env.fonts, face, size);
-  let shown = text.fit_end(env.fonts, face, size, e.content, w);
+  let focused = e.field == env.focus.field;
+  let (size, face, line) = field_type(env, e);
+  let v = field_view(env, e, w);
   let color = env.theme.ink;
   if (e.content.len() == 0) {
-    shown = text.fit(env.fonts, face, size, e.hint, w);
     color = env.theme.muted;
   }
-  let ty = y + (h - line) / 2;
-  let tw = text.width(env.fonts, face, size, shown);
-  let ns = [scene.node(x, ty, tw, line, scene.Label(shown, size, face, 0, color))];
+  let top = field_top(env, e, y, h);
+  let ns: scene.Node[] = [];
+  for i in 0..v.lines.len() {
+    ns = ns.append(scene.node(x, top + i * line, text.width(env.fonts, face, size, v.lines[i]), line, scene.Label(v.lines[i], size, face, 0, color)));
+  }
   let rule = px(env, 1.0).max(1);
   let rule_color = env.theme.outline;
-  let left = x - px(env, e.pad.left);
-  let wide = w + px(env, e.pad.left) + px(env, e.pad.right);
   if (focused) {
     rule = px(env, 2.0).max(1);
     rule_color = env.theme.primary;
-    let after = 0;
-    if (e.content.len() > 0) {
-      after = tw;
-    }
-    ns = ns.append(scene.node(x + after + px(env, 1.0), ty, px(env, 2.0).max(1), line, scene.Fill(env.theme.primary, 0)));
+    ns = ns.append(scene.node(x + v.caret_x + px(env, 1.0), top + v.caret_line * line, px(env, 2.0).max(1), line, scene.Fill(env.theme.primary, 0)));
   }
-  ns = ns.append(scene.node(left, y + h - rule, wide, rule, scene.Fill(rule_color, 0)));
+  let below = y + h + px(env, e.pad.bottom);
+  ns = ns.append(scene.node(x - px(env, e.pad.left), below - rule, w + px(env, e.pad.left) + px(env, e.pad.right), rule, scene.Fill(rule_color, 0)));
   let nodes = out.nodes;
   for n in ns {
     nodes = nodes.append(clipped(n, clip));
@@ -1085,9 +1203,9 @@ function place(env: Env, e: El, x: i32, y: i32, w: i32, h: i32, clip: Clip, own 
 
 // The nodes and the lists of the tree `root` on the screen `s`. The tree
 // takes the part of the screen that is free, or its exact size. `offsets`
-// has how far each list scrolls, by its name. `focus` is the name of the
-// field that has the focus, or "".
-pub function layout(root: El, fonts: text.Fonts, s: Screen, offsets: Map[string, i32], focus: string): Layout {
+// has how far each list scrolls, by its name. `focus` has the field that
+// has the focus, and its caret.
+pub function layout(root: El, fonts: text.Fonts, s: Screen, offsets: Map[string, i32], focus: Focus): Layout {
   let env = Env { fonts: fonts, d: s.d, font: s.font, theme: s.theme, offsets: offsets, focus: focus };
   let w = (s.w - s.left - s.right).max(0);
   let h = (s.h - s.top - s.bottom).max(0);
@@ -1504,8 +1622,9 @@ A change asks for a frame, and the frame draws at the next vsync. So many change
 // the scale of the text of the system. `now` gives the time
 // on the monotonic clock in ns. `present` draws the nodes on the window
 // over a background color. `show_keyboard` shows the keyboard of the system
-// on a text, `set_keyboard` gives it another text, and `hide_keyboard`
-// takes it away.
+// on a text, which has more than one line when the flag is true.
+// `set_keyboard` gives it another text, with the cursor before a
+// character. `hide_keyboard` takes it away.
 pub struct Device {
   size: (usize) => (i32, i32),
   density: () => f64,
@@ -1519,22 +1638,23 @@ pub struct Device {
   close: (painter.Painter) => painter.Painter,
   present: (own painter.Painter, usize, scene.Node[], i32) => painter.Painter,
   publish: (android.AccessItem[]) => void,
-  show_keyboard: (string) => void,
-  set_keyboard: (string) => void,
+  show_keyboard: (string, boolean) => void,
+  set_keyboard: (string, i32) => void,
   hide_keyboard: () => void,
 }
 
 // What the shell keeps for the app. `lay` is the layout of the last frame.
-// `focus` is the name of the field that has the focus, or "", and `typed`
-// is the text that the keyboard holds for it.
-pub struct Host { dev: Device, fonts: text.Fonts, paint: painter.Painter, window: usize, screen: Screen, input: Input, lay: Layout, frames: i32, focus: string, typed: string }
+// `focus` is the name of the field that has the focus, or "". `typed` is
+// the text that the keyboard holds for it, `caret` is the character that
+// its caret is before, and `area` tells that it has more than one line.
+pub struct Host { dev: Device, fonts: text.Fonts, paint: painter.Painter, window: usize, screen: Screen, input: Input, lay: Layout, frames: i32, focus: string, typed: string, caret: i32, area: boolean }
 
 pub struct Shell[S] { app: S, host: Host }
 
 // A shell for the state `state`, which draws text with `fonts`.
 pub function shell[S](own state: S, fonts: text.Fonts, dev: Device): Shell[S] {
   let screen = Screen { w: 0, h: 0, d: dev.density(), dark: dev.dark(), theme: theme(false), left: 0, top: 0, right: 0, bottom: 0, font: dev.font_scale() };
-  return Shell { app: state, host: Host { dev: dev, fonts: fonts, paint: painter.new(fonts), window: 0 as usize, screen: screen, input: no_input(), lay: no_layout(), frames: 0, focus: "", typed: "" } };
+  return Shell { app: state, host: Host { dev: dev, fonts: fonts, paint: painter.new(fonts), window: 0 as usize, screen: screen, input: no_input(), lay: no_layout(), frames: 0, focus: "", typed: "", caret: 0, area: false } };
 }
 
 function changed(h: Host): Host {
@@ -1579,29 +1699,31 @@ function blurred(h: Host): Host {
     h.dev.hide_keyboard();
     h.dev.request_frame();
   }
-  return Host { ...h, focus: "", typed: "" };
+  return Host { ...h, focus: "", typed: "", caret: 0, area: false };
 }
 
 // The host with the keyboard on the text that the tree `root` has for the
-// field in focus. A field that the tree no longer has loses the focus.
+// field in focus, with the caret at its end. A field that the tree no
+// longer has loses the focus.
 function synced(own h: Host, root: El): Host {
   if (h.focus.len() == 0) {
     return h;
   }
-  let Some(value) = field_text(root, h.focus) else {
+  let Some(f) = field_el(root, h.focus) else {
     return blurred(h);
   };
-  if (value == h.typed) {
+  if (f.content == h.typed) {
     return h;
   }
-  h.dev.set_keyboard(value);
-  return Host { ...h, typed: value };
+  let end = text.letters(f.content).len();
+  h.dev.set_keyboard(f.content, end);
+  return Host { ...h, typed: f.content, caret: end };
 }
 
 // Draws the tree `root` on the screen `screen` at the time `ns`.
 function painted(own h: Host, root: El, screen: Screen, ns: i64, animating: boolean): Host {
   let input = advance(h.input, h.lay, ns);
-  let lay = layout(root, h.fonts, screen, input.offsets, h.focus);
+  let lay = layout(root, h.fonts, screen, input.offsets, Focus { field: h.focus, caret: h.caret });
   let paint = h.dev.present(h.paint, h.window, shown(input, lay, screen.theme.pressed), screen.theme.background);
   h.dev.publish(scene.access_items(lay.nodes));
   if (input.flinging() || animating) {
@@ -1633,11 +1755,17 @@ function field_of(name: string): string {
   return "";
 }
 
-// The host with the focus on the field `name`, and the keyboard on its
-// text `value`.
-function focused(h: Host, name: string, value: string): Host {
-  h.dev.show_keyboard(value);
-  return changed(Host { ...h, focus: name, typed: value });
+// The host with the focus on the field `f` and the caret before the
+// character `caret`. A field that gets the focus shows the keyboard on its
+// text.
+function focused(h: Host, f: El, caret: i32): Host {
+  if (h.focus != f.field) {
+    h.dev.show_keyboard(f.content, f.lines > 1);
+  }
+  if (h.focus == f.field || caret < text.letters(f.content).len()) {
+    h.dev.set_keyboard(f.content, caret);
+  }
+  return changed(Host { ...h, focus: f.field, typed: f.content, caret: caret, area: f.lines > 1 });
 }
 
 // The host after a finger went down: a finger on something other than the
@@ -1653,8 +1781,20 @@ function pressed(own h: Host): Host {
   return blurred(h);
 }
 
+// The host after a tap at x and y on the node `n` of the field `f`: the
+// field has the focus, with its caret where the tap was.
+function field_tapped(h: Host, f: El, n: scene.Node, x: i32, y: i32): Host {
+  let sc = h.screen;
+  let env = Env { fonts: h.fonts, d: sc.d, font: sc.font, theme: sc.theme, offsets: h.input.offsets, focus: Focus { field: h.focus, caret: h.caret } };
+  let left = px(env, f.pad.left);
+  let top = px(env, f.pad.top);
+  let caret = caret_at(env, f, n.x + left, n.y + top, n.w - left - px(env, f.pad.right), n.h - top - px(env, f.pad.bottom), x, y);
+  return focused(h, f, caret);
+}
+
 function touched[S](own s: Shell[S], p: Program[S], action: i32, x: i32, y: i32): Shell[S] {
   let h = s.host;
+  let target = h.input.press.target;
   let (input, m) = touch(h.input, h.lay, action, x, y, h.dev.now(), h.screen.d);
   let host = Host { ...h, input: input };
   if (action == 0) {
@@ -1665,27 +1805,62 @@ function touched[S](own s: Shell[S], p: Program[S], action: i32, x: i32, y: i32)
     name = field_of(tapped);
   }
   if (name.len() > 0) {
-    let value = field_text(p.view(s.app, host.screen), name).unwrap_or("");
-    return Shell { app: s.app, host: focused(host, name, value) };
+    let found = field_el(p.view(s.app, host.screen), name);
+    if let (Some(f), Some(n)) = (found, target) {
+      return Shell { app: s.app, host: field_tapped(host, f, n, x, y) };
+    }
+    return Shell { app: s.app, host: changed(host) };
   }
   return told_maybe(Shell { app: s.app, host: changed(host) }, p, m);
 }
 
-// `text` with no last character.
-function without_last(text: string): string {
-  let cs: string[] = [];
-  for c in text.chars() {
-    cs = cs.append(c.to_string());
+// The caret after the keyboard changed the text `old`, with the caret
+// before the character `caret`, to `new`: the characters after the caret
+// stay after it.
+function caret_after(old: string, new: string, caret: i32): i32 {
+  let a = text.letters(old);
+  let b = text.letters(new);
+  let same = 0;
+  while (same < a.len() - caret && same < b.len() && a[a.len() - 1 - same] == b[b.len() - 1 - same]) {
+    same += 1;
   }
-  return cs.take((cs.len() - 1).max(0)).join("");
+  return b.len() - same;
 }
 
 // The shell after a key of a hardware keyboard changed the text of the
-// field in focus to `text`. The keyboard of the system gets the same text.
-function retyped[S](own s: Shell[S], p: Program[S], text: string): Shell[S] {
+// field in focus to `text`, with the caret before the character `caret`.
+// The keyboard of the system gets the same text.
+function retyped[S](own s: Shell[S], p: Program[S], text: string, caret: i32): Shell[S] {
   let h = s.host;
-  h.dev.set_keyboard(text);
-  return told(Shell { app: s.app, host: Host { ...h, typed: text } }, p, Edit(h.focus, text));
+  h.dev.set_keyboard(text, caret);
+  return told(Shell { app: s.app, host: Host { ...h, typed: text, caret: caret } }, p, Edit(h.focus, text));
+}
+
+// The shell after a key of a hardware keyboard typed `typed` at the caret.
+function inserted[S](own s: Shell[S], p: Program[S], typed: string): Shell[S] {
+  let cs = text.letters(s.host.typed);
+  let caret = s.host.caret.max(0).min(cs.len());
+  let next = text.span(cs, 0, caret) + typed + text.span(cs, caret, cs.len());
+  return retyped(s, p, next, caret + 1);
+}
+
+// The shell after the delete key took the character before the caret.
+function deleted[S](own s: Shell[S], p: Program[S]): Shell[S] {
+  let cs = text.letters(s.host.typed);
+  let caret = s.host.caret.max(0).min(cs.len());
+  if (caret == 0) {
+    return s;
+  }
+  let next = text.span(cs, 0, caret - 1) + text.span(cs, caret, cs.len());
+  return retyped(s, p, next, caret - 1);
+}
+
+// The shell with the caret `by` characters to the right.
+function stepped[S](own s: Shell[S], by: i32): Shell[S] {
+  let h = s.host;
+  let caret = (h.caret + by).max(0).min(text.letters(h.typed).len());
+  h.dev.set_keyboard(h.typed, caret);
+  return Shell { app: s.app, host: changed(Host { ...h, caret: caret }) };
 }
 
 // The event is one that changes the text of a field.
@@ -1716,29 +1891,37 @@ function submitted[S](own s: Shell[S], p: Program[S]): Shell[S] {
   return told(Shell { app: s.app, host: blurred(s.host) }, p, Submit(name));
 }
 
-// The shell after a key, while a field has the focus. The back key takes
-// the focus away. Key code 66 is the enter key, which submits the field as
-// the action key of the keyboard does. Key code 67 is the delete key.
-function key_edited[S](own s: Shell[S], p: Program[S], code: i32, action: i32): Shell[S] {
-  if (code == 4 && action == 1) {
-    return Shell { app: s.app, host: blurred(s.host) };
+// The shell after a key went down, while a field has the focus. Key code
+// 66 is the enter key: it starts a new line in a field of more than one
+// line, and it submits a field of one line as the action key of the
+// keyboard does. Key code 67 is the delete key, and the key codes 21 and
+// 22 are the left and the right arrow.
+function key_edited[S](own s: Shell[S], p: Program[S], code: i32): Shell[S] {
+  if (code == 66 && s.host.area) {
+    return inserted(s, p, "\n");
   }
-  if (code == 66 && action == 0) {
+  if (code == 66) {
     return submitted(s, p);
   }
-  if (code == 67 && action == 0) {
-    let text = without_last(s.host.typed);
-    return retyped(s, p, text);
+  if (code == 67) {
+    return deleted(s, p);
+  }
+  if (code == 21) {
+    return stepped(s, -1);
+  }
+  if (code == 22) {
+    return stepped(s, 1);
   }
   return s;
 }
 
-// The shell after the keyboard event `e`, while a field has the focus.
+// The shell after the keyboard event `e`, while a field has the focus. The
+// back key takes the focus away.
 function edited[S](own s: Shell[S], p: Program[S], e: android.Event): Shell[S] {
   let h = s.host;
   match (e) {
     android.Text(t) => {
-      return told(Shell { app: s.app, host: Host { ...h, typed: t } }, p, Edit(h.focus, t));
+      return told(Shell { app: s.app, host: Host { ...h, typed: t, caret: caret_after(h.typed, t, h.caret) } }, p, Edit(h.focus, t));
     },
     android.TextAction(_) => {
       return submitted(s, p);
@@ -1747,10 +1930,16 @@ function edited[S](own s: Shell[S], p: Program[S], e: android.Event): Shell[S] {
       if (c < 32 || c == 127) {
         return s;
       }
-      return retyped(s, p, h.typed + (c as char).to_string());
+      return inserted(s, p, (c as char).to_string());
     },
     android.Key(code, action) => {
-      return key_edited(s, p, code, action);
+      if (code == 4 && action == 1) {
+        return Shell { app: s.app, host: blurred(h) };
+      }
+      if (action == 0) {
+        return key_edited(s, p, code);
+      }
+      return s;
     },
     _ => {
       return s;
