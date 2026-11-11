@@ -24,15 +24,7 @@ function render_lock(label: string, src: string): string {
 }
 
 function crlf(s: string): string {
-  let out = "";
-  for i in 0..s.len() {
-    if (s[i] == b'\n') {
-      out += "\r\n";
-    } else {
-      out += slice_unchecked(s, i, i + 1);
-    }
-  }
-  return out;
+  return s.replace("\n", "\r\n");
 }
 
 function main(): i32 {
