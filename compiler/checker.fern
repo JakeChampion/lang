@@ -18633,7 +18633,7 @@ function ocl_unknown(name: string): OclDef {
 }
 
 function ocl_var(v: ast.StmtVar, own defs: OclDef[]): OclDef[] {
-  let names = lu_var_names(ast.StmtVar(v), []);
+  let names = lu_var_names(v, []);
   if (names.len() == 1 && names[0] == v.name) {
     return defs.append(OclDef { name: v.name, value: v.init });
   }
