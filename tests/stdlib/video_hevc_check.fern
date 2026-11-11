@@ -1,0 +1,16 @@
+import "std/video/hevc";
+
+pub function values(s: hevc.Sequence): i64[] {
+  let v = s.vui;
+  return [
+    s.profile_space as i64, if (s.tier) { 1i64 } else { 0i64 }, s.profile_idc as i64, s.level_idc as i64, s.compatibility_flags as i64,
+    s.vps_id as i64, s.sequence_id as i64, s.max_sub_layers as i64, if (s.temporal_nesting) { 1i64 } else { 0i64 }, s.chroma_format_idc as i64,
+    if (s.separate_colour_plane) { 1i64 } else { 0i64 }, s.bit_depth_luma as i64, s.bit_depth_chroma as i64,
+    s.coded.width as i64, s.coded.height as i64, s.visible.width as i64, s.visible.height as i64,
+    s.crop.left as i64, s.crop.top as i64, s.crop.right as i64, s.crop.bottom as i64, s.log2_max_poc_lsb as i64,
+    s.max_dec_pic_buffering as i64, s.max_num_reorder_pics as i64, v.aspect_ratio.numerator as i64, v.aspect_ratio.denominator as i64,
+    if (v.video_signal_present) { 1i64 } else { 0i64 }, if (v.colour_description_present) { 1i64 } else { 0i64 }, v.video_format as i64,
+    if (v.full_range) { 1i64 } else { 0i64 }, v.colour_primaries as i64, v.transfer_characteristics as i64, v.matrix_coefficients as i64,
+    if (v.field_sequence) { 1i64 } else { 0i64 }, v.num_units_in_tick as i64, v.time_scale as i64,
+  ];
+}

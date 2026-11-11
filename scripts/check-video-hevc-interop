@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+"""Compare HEVC SPS metadata with FFmpeg CBS and lossless source planes."""
+import importlib.util
+import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+os.chdir(ROOT)
+spec = importlib.util.spec_from_file_location('hevc_fixtures', ROOT / 'scripts/gen-video-hevc-fixtures.py')
+fixtures = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fixtures)
+compiler = os.environ.get('FERN') or subprocess.check_output(['./bootstrap/bootstrap.sh', 'stage0'], text=True).strip()
+target = {'x86_64': 'x86-64-linux', 'aarch64': 'arm64-linux', 'arm64': 'arm64-darwin'}[os.uname().machine]
+binary = ROOT / 'build/video/hevc-sps-reference'
+binary.parent.mkdir(parents=True, exist_ok=True)
+wasm = binary.with_suffix('.wasm')
+for output, architecture, flags in ((binary, target, ['-sanitize']), (wasm, 'wasm32-wasi', [])):
+    subprocess.run([compiler, '-stdlib', str(ROOT / 'internal/stdlib'), '-target', architecture, *flags,
+                    '-o', str(output), 'scripts/video-reference/hevc-sps.fern'], check=True)
+
+
+def run(directory, name, data, error=None):
+    path = directory / (name + '.sps')
+    path.write_bytes(data)
+    native = subprocess.run([str(binary), str(path)], text=True, capture_output=True)
+    wasi = subprocess.run(['wasmtime', 'run', '--dir', '.', str(wasm), path.name], cwd=directory, text=True, capture_output=True)
+    assert native.returncode == (3 if error else 0), (name, native)
+    assert wasi.returncode == (1 if error else 0), (name, wasi)
+    assert 'live_bytes=0' in native.stderr and 'fern-sanitizer:' not in native.stderr, native.stderr
+    assert native.stdout == wasi.stdout, name
+    if error:
+        assert native.stderr.splitlines()[0] == wasi.stderr.splitlines()[0] == error, (name, native.stderr, wasi.stderr)
+        return []
+    values = list(map(int, native.stdout.splitlines()))
+    assert len(values) == 36, (name, values)
+    return values
+
+
+def decoded_planes(path, pixel_format):
+    return subprocess.check_output(['ffmpeg', '-v', 'error', '-xerror', '-c:v', 'hevc', '-i', str(path),
+                                    '-threads', '1', '-pix_fmt', pixel_format, '-f', 'rawvideo', '-'])
+
+
+trace = fixtures.syntax.build_trace('HEVC', 'hevc-sps-trace')
+with tempfile.TemporaryDirectory() as temporary:
+    directory = Path(temporary)
+    for name, path in fixtures.generate(directory):
+        units = fixtures.units(path.read_bytes())
+        sps = next(x for x in units if x[0] >> 1 & 63 == 33)
+        vps = next(x for x in units if x[0] >> 1 & 63 == 32)
+        expected = fixtures.reference(trace, directory, name, sps, vps)
+        actual = run(directory, name, sps)
+        assert actual == expected, (name, actual, expected)
+        info = json.loads(subprocess.check_output(['ffprobe', '-v', 'error', '-show_entries',
+                                                  'stream=width,height,pix_fmt', '-of', 'json', str(path)]))['streams'][0]
+        assert [info['width'], info['height']] == actual[15:17] == [66, 50]
+        pixel_format = info['pix_fmt']
+        depth = 12 if '12' in pixel_format else 10 if '10' in pixel_format else 8
+        chroma = 0 if pixel_format.startswith('gray') else 3 if '444' in pixel_format else 2 if '422' in pixel_format else 1
+        assert [actual[9], actual[11]] == [chroma, depth], (name, actual, info)
+        source = path.with_suffix('.yuv').read_bytes()
+        samples = 66 * 50 * {0: 1, 1: 1.5, 2: 2, 3: 3}[chroma]
+        assert len(source) == int(samples) * (1 if depth == 8 else 2) * 3
+        assert decoded_planes(path, pixel_format) == source, name
+        print(name + ': 36 native/real-WASI fields match CBS; FFprobe and all three lossless source frames agree', flush=True)
+    for name, data in fixtures.controls():
+        expected = fixtures.reference(trace, directory, name, data)
+        assert run(directory, name, data) == expected, name
+        print(name + ': 36 native/real-WASI fields match independent SPS-only CBS syntax', flush=True)
+    negative = [('sequence-id', {'id': 16}, 'sps_seq_parameter_set_id'), ('chroma', {'chroma': 4}, 'chroma_format_idc'),
+                ('tick-zero', {'vui': 'metadata', 'tick': 0}, 'vui_num_units_in_tick'),
+                ('cpb-count', {'vui': 'hrd', 'cpb_count': 32}, 'cpb_cnt_minus1')]
+    for name, options, diagnostic in negative:
+        data = fixtures.make(**options)
+        run(directory, name, data, 'invalid video header or packet')
+        path = directory / (name + '.context')
+        path.write_bytes(fixtures.vps() + b'\x00\x00\x00\x01' + data)
+        result = subprocess.run([str(trace), str(path)], text=True, capture_output=True)
+        assert diagnostic in result.stderr and 'out of range' in result.stderr and 'Failed to read unit' in result.stderr, (name, result)
+    print('Four malformed SPS controls fail independent parsing with explicit diagnostics', flush=True)

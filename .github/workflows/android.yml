@@ -107,6 +107,7 @@ jobs:
           FERN="$PWD/bin/fern-selfhost" scripts/check-video-av1-sequence-interop
           FERN="$PWD/bin/fern-selfhost" scripts/check-video-annex-b-interop
           FERN="$PWD/bin/fern-selfhost" scripts/check-video-avc-interop
+          FERN="$PWD/bin/fern-selfhost" scripts/check-video-hevc-interop
           FERN="$PWD/bin/fern-selfhost" scripts/check-video-avc-pps-interop
           FERN="$PWD/bin/fern-selfhost" scripts/check-video-qtrle-mov-interop
           FERN="$PWD/bin/fern-selfhost" scripts/compare-video-qtrle --smoke --wasi --output build/android-stopwatch/qtrle-comparison-smoke.json
