@@ -1,0 +1,47 @@
+// The expected type of a generic call gives the element type to an array
+// literal argument. Each element is a generic call that has no other source
+// for its type parameter.
+struct El[M] { kids: El[M][], tap: Option[M], pad: f64 }
+
+function text[M](s: string): El[M] {
+    return El { kids: [], tap: None, pad: 0.0 };
+}
+
+function column[M](kids: El[M][]): El[M] {
+    return El { kids: kids, tap: None, pad: 0.0 };
+}
+
+function button[M](s: string, m: M): El[M] {
+    return El { kids: [], tap: Some(m), pad: 0.0 };
+}
+
+enum Msg { Inc, Dec }
+
+function texts(): El[Msg] {
+    return column([text("a"), text("b")]);
+}
+
+function mixed(): El[Msg] {
+    return column([text("a"), button("+", Inc), button("-", Dec)]);
+}
+
+function taps(e: El[Msg]): i32 {
+    let n = 0;
+    for kid in e.kids {
+        match (kid.tap) {
+            Some(m) => { n += 1; },
+            None => {}
+        }
+    }
+    return n;
+}
+
+function main(): i32 {
+    let local: El[Msg] = column([text("a")]);
+    print(texts().kids.len());
+    print(taps(texts()));
+    print(mixed().kids.len());
+    print(taps(mixed()));
+    print(local.kids.len());
+    return 0;
+}
