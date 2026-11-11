@@ -8677,19 +8677,34 @@ function slc_string_roots(e: ast.Expr, cur: Scope, params: string[], localarr: s
       let none: string[] = [];
       return ViewRoots { local: name_in(id.name, tainted), params: none };
     },
-    ast.ExprCall(c) => {
-      let callee = view_callee(c, cur);
-      if (view_sum_known(sums, vix, callee.key)) {
-        return slc_call_roots(c, cur, params, localarr, tainted, sums, vix);
-      }
-    },
     _ => {}
   }
   let none: string[] = [];
   return ViewRoots { local: true, params: none };
 }
 
+// Storage that a call returns owned, or a part of it. The function that makes
+// the call releases that storage when it returns.
+function slc_owned_call_result(e: ast.Expr, cur: Scope): boolean {
+  match (e) {
+    ast.ExprFieldAccess(fa) => {
+      return slc_owned_call_result(fa.obj, cur);
+    },
+    ast.ExprIndex(ix) => {
+      return slc_owned_call_result(ix.array, cur);
+    },
+    ast.ExprCall(c) => {
+      return !slc_views_string(c, cur) && !typeinfo.is_array_view(check_expr(e, cur));
+    },
+    _ => {}
+  }
+  return false;
+}
+
 function slc_src_roots(e: ast.Expr, cur: Scope, params: string[], localarr: string[], tainted: string[], sums: ViewSum[], vix: ViewIndex): ViewRoots {
+  if (slc_owned_call_result(e, cur)) {
+    return ViewRoots { local: true, params: [] };
+  }
   match (e) {
     ast.ExprBytes(_) => {
       return ViewRoots { local: true, params: [] };
@@ -8727,9 +8742,6 @@ function slc_call_roots(c: ast.ExprCall, cur: Scope, params: string[], localarr:
   let callee = view_callee(c, cur);
   if (callee.key.len() == 0) {
     return out;
-  }
-  if (view_sum_fresh(sums, vix, callee.key)) {
-    out = ViewRoots { local: true, params: out.params };
   }
   let flags = view_sum_flags(sums, vix, callee.key);
   let i = 0;
@@ -8780,12 +8792,11 @@ function slc_expr_roots(e: ast.Expr, cur: Scope, params: string[], localarr: str
   return no_view_roots();
 }
 
-pub struct SlcWalk { diags: util.Diag[], viewed: string[], owns: boolean }
+pub struct SlcWalk { diags: util.Diag[], viewed: string[] }
 
 function slc_walk(stmts: ast.Stmt[], fname: string, s: Scope, params: string[], localarr: string[], tainted: string[], held: string[], sums: ViewSum[], vix: ViewIndex, ret_is_view: boolean): SlcWalk {
   let out: util.Diag[] = [];
   let viewed: string[] = [];
-  let owns = false;
   let cur = s;
   for st in stmts {
     match (st) {
@@ -8818,11 +8829,6 @@ function slc_walk(stmts: ast.Stmt[], fname: string, s: Scope, params: string[], 
             out = out.append(slc_escape_diag(fname, r.line, r.col));
           }
         } else {
-          let sroots = slc_src_roots(r.value, cur, params, localarr, tainted, sums, vix);
-          viewed = merge_view_names(viewed, sroots.params);
-          if (sroots.local) {
-            owns = true;
-          }
           let aroots = slc_agg_roots(r.value, cur.ret_type, cur, params, localarr, tainted, held, sums, vix);
           viewed = merge_view_names(viewed, aroots.params);
           out = util.append_diags(out, slc_escape_diags_if(aroots.local, fname, r.line, r.col));
@@ -8832,30 +8838,25 @@ function slc_walk(stmts: ast.Stmt[], fname: string, s: Scope, params: string[], 
         let wt = slc_walk(f.then_body, fname, cur, params, localarr, tainted, held, sums, vix, ret_is_view);
         out = util.append_diags(out, wt.diags);
         viewed = merge_view_names(viewed, wt.viewed);
-        owns = owns || wt.owns;
         let we = slc_walk(f.else_body, fname, cur, params, localarr, tainted, held, sums, vix, ret_is_view);
         out = util.append_diags(out, we.diags);
         viewed = merge_view_names(viewed, we.viewed);
-        owns = owns || we.owns;
       },
       ast.StmtWhile(w) => {
         let ww = slc_walk(w.body, fname, cur, params, localarr, tainted, held, sums, vix, ret_is_view);
         out = util.append_diags(out, ww.diags);
         viewed = merge_view_names(viewed, ww.viewed);
-        owns = owns || ww.owns;
       },
       ast.StmtFor(fr) => {
         let wf = slc_walk(fr.body, fname, for_body_scope(fr, cur), params, localarr, tainted, held, sums, vix, ret_is_view);
         out = util.append_diags(out, wf.diags);
         viewed = merge_view_names(viewed, wf.viewed);
-        owns = owns || wf.owns;
       },
       ast.StmtMatch(m) => {
         for arm in m.arms {
           let wa = slc_walk(arm.body, fname, cur, params, localarr, tainted, held, sums, vix, ret_is_view);
           out = util.append_diags(out, wa.diags);
           viewed = merge_view_names(viewed, wa.viewed);
-          owns = owns || wa.owns;
         }
       },
       ast.StmtDefer(d) => {
@@ -8863,13 +8864,12 @@ function slc_walk(stmts: ast.Stmt[], fname: string, s: Scope, params: string[], 
         let wd = slc_walk(one, fname, cur, params, localarr, tainted, held, sums, vix, ret_is_view);
         out = util.append_diags(out, wd.diags);
         viewed = merge_view_names(viewed, wd.viewed);
-        owns = owns || wd.owns;
       },
       _ => {}
     }
     cur = bind_stmt(st, cur);
   }
-  return SlcWalk { diags: out, viewed: viewed, owns: owns };
+  return SlcWalk { diags: out, viewed: viewed };
 }
 
 function slc_call_names(fn: parser.FuncDecl): string[] {
@@ -29358,17 +29358,12 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
         }
         sp += 1;
       }
-      let slc_fresh = slc_cur.fresh;
-      if (!slc_fresh && sjw.owns) {
-        slc_fresh = true;
-        slc_changed = true;
-      }
       if (slc_changed) {
         slc_clock += 1;
         slc_changed_at = slc_changed_at.with(slc_names.find(mod.funcs[sj].name), slc_clock);
         slc_again = true;
       }
-      slc_sums = slc_sums.with(sj, ViewSum { key: slc_cur.key, flags: slc_next, fresh: slc_fresh });
+      slc_sums = slc_sums.with(sj, ViewSum { key: slc_cur.key, flags: slc_next, fresh: false });
     }
   }
   let const_inits = const_init(mod);

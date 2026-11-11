@@ -10183,7 +10183,7 @@ func (c *checker) checkSliceEscapes(prog *ast.Program) {
 		if c.holdsViewAggregate(fn.ReturnType) {
 			return c.aggregateViewRoots(ret, fn.ReturnType, envs[fn], sums, c.sliceLeaf(envs[fn], sums))
 		}
-		return c.sliceSourceRoots(ret, envs[fn], sums)
+		return viewRoots{params: map[int]bool{}}
 	})
 	for _, fn := range prog.Funcs {
 		env, ok := envs[fn]
@@ -10255,11 +10255,37 @@ func (c *checker) bytesSourceRoots(str ast.Expr, env *escapeEnv, sums map[string
 	if id, ok := str.(*ast.Ident); ok && env.reassigned[id.Name] {
 		return viewRoots{params: map[int]bool{}}
 	}
+	if c.ownedCallResult(str) {
+		return viewRoots{params: map[int]bool{}, local: true}
+	}
 	return c.stringSourceRoots(str, env, sums)
+}
+
+// ownedCallResult reports storage that a call returns owned, or a part of it:
+// the function that makes the call releases that storage when it returns.
+func (c *checker) ownedCallResult(e ast.Expr) bool {
+	switch v := e.(type) {
+	case *ast.FieldAccess:
+		return c.ownedCallResult(v.Target)
+	case *ast.Index:
+		return c.ownedCallResult(v.Array)
+	case *ast.Call:
+		id, ok := v.Callee.(*ast.Ident)
+		if !ok || id.Name == "__method_string_as_bytes" {
+			return false
+		}
+		sig := c.info.FuncSigs[id.Name]
+		return sig != nil && !isViewReturn(sig.Result)
+	}
+	return false
 }
 
 func (c *checker) sliceSourceRoots(src ast.Expr, env *escapeEnv, sums map[string]viewSummary) viewRoots {
 	out := viewRoots{params: map[int]bool{}}
+	if c.ownedCallResult(src) {
+		out.local = true
+		return out
+	}
 	switch s := src.(type) {
 	case *ast.ArrayLit:
 		out.local = true
@@ -10273,9 +10299,7 @@ func (c *checker) sliceSourceRoots(src ast.Expr, env *escapeEnv, sums map[string
 			if id.Name == "__method_string_as_bytes" && len(s.Args) == 1 {
 				return c.bytesSourceRoots(s.Args[0], env, sums)
 			}
-			sum := sums[id.Name]
-			out.local = out.local || sum.fresh
-			for i := range sum.params {
+			for i := range sums[id.Name].params {
 				if i < len(s.Args) {
 					out.merge(c.viewArgRoots(id.Name, i, s.Args[i], env, sums))
 				}

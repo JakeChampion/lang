@@ -1,0 +1,79 @@
+// spec: ML-03
+// A call returns its result owned, and the caller releases that result when
+// it returns. A view of the result, or of a part of it, may not be returned.
+// A call that returns a view of its parameter gives no new storage.
+
+struct Own { items: i32[], n: i32 }
+
+struct Deep { rows: i32[][] }
+
+function idarr(a: i32[]): i32[] {
+  return a;
+}
+
+function pick(o: Own): i32[] {
+  return o.items;
+}
+
+function id(o: Own): Own {
+  return o;
+}
+
+function rows(o: Deep): i32[][] {
+  return o.rows;
+}
+
+function idstr(s: string): string {
+  return s;
+}
+
+function window(a: i32[]): [i32] {
+  return a[0:2];
+}
+
+function of_identity(a: i32[]): [i32] {
+  return idarr(a)[0:1];
+}
+
+function of_field_result(o: Own): [i32] {
+  return pick(o)[0:1];
+}
+
+function of_result_field(o: Own): [i32] {
+  return id(o).items[0:1];
+}
+
+function of_result_element(o: Deep): [i32] {
+  return rows(o)[0][0:1];
+}
+
+function of_new_array(a: i32[]): [i32] {
+  return a.append(1)[0:1];
+}
+
+function of_result_argument(a: i32[]): [i32] {
+  return window(idarr(a));
+}
+
+function of_result_bytes(s: string): [u8] {
+  return idstr(s).as_bytes();
+}
+
+function of_view_result(a: i32[]): [i32] {
+  return window(a)[0:1];
+}
+
+function of_parameter_field(o: Own): [i32] {
+  return o.items[0:1];
+}
+
+function used_locally(a: i32[]): i32 {
+  let s = idarr(a)[0:1];
+  return s[0];
+}
+
+function main(): i32 {
+  let a: i32[] = [1, 2, 3];
+  let o = Own { items: a, n: 3 };
+  return of_view_result(a).len() + of_parameter_field(o).len() + used_locally(a) - 3;
+}
