@@ -596,6 +596,13 @@ function main(): i32 {
   let ds_read_again: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(0), ir.op_load_local(0), ir.op_store_local(1), ir.op_load_local(0), ir.op_return()];
   out = out + "ds_read_again: " + render(ir.eliminate_dead_stores(ds_read_again)) + "\n";
 
+  let ds_f32_cast: ir.Op[] = [ir.op_load_local(0), ir.op_f32_bits(), ir.op_f32_from_bits(), ir.op_drop()];
+  out += "ds_f32_cast: " + render(ir.eliminate_dead_stores(ds_f32_cast)) + "\n";
+  let ds_f32_effect: ir.Op[] = [ir.op_call_direct("side", 0), ir.op_f32_bits(), ir.op_f32_from_bits(), ir.op_drop()];
+  out += "ds_f32_effect: " + render(ir.eliminate_dead_stores(ds_f32_effect)) + "\n";
+  let ds_f32_live: ir.Op[] = [ir.op_load_local(0), ir.op_f32_bits(), ir.op_f32_from_bits(), ir.op_return()];
+  out += "ds_f32_live: " + render(ir.eliminate_dead_stores(ds_f32_live)) + "\n";
+
   write(out);
 
   return 1 - stable;
