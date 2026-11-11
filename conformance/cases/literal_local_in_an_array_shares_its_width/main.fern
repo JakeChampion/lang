@@ -1,0 +1,29 @@
+// A literal local that is an element of a literal array, or of a literal
+// tuple, has one type with that element. The use that gives the array its
+// element type gives the local the same type, also when that use is on the
+// result of `append` or `with`. A later use of the local at another width is an E003.
+function s64(xs: i64[]): i64 {
+    return xs[0];
+}
+
+function t64(t: (i64, i32)): i64 {
+    return t.0;
+}
+
+function main(): i32 {
+    let a = 1;
+    let xs = [a, 2, 3];
+    let ys = xs.append(4);
+    s64(ys);
+    let u: u8 = a;
+    let b = 1;
+    let zs = [b, 2];
+    let ws = zs.with(1, 5);
+    s64(ws);
+    let v: u8 = b;
+    let c = 1;
+    let t = (c, 2);
+    t64(t);
+    let w: u8 = c;
+    return 0;
+}
