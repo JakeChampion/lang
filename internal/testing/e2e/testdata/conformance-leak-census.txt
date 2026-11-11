@@ -1402,3 +1402,5 @@ value_cleanup_keeps_cow_aliases                    0
 
 # 2026-11-11: Main 38399ecf removed the raw-builtin shadow fixture.
 # Its zero row and original measurement remain in commit 102403811dcc.
+# 2026-11-11: a_function_named_like_a_safe_intrinsic_shadows_it is clean under RC trace.
+a_function_named_like_a_safe_intrinsic_shadows_it    0

@@ -1,0 +1,31 @@
+// Each function has the name of an intrinsic that needs no unsafe block. In
+// the entry module the function of the program is the one that a call names.
+// Each one recurses, so no pass inlines it.
+
+function __wfi(n: i32): i32 {
+  if (n <= 0) {
+    return 7;
+  }
+  return __wfi(n - 1) + 1;
+}
+
+function __bytes_range(text: string): string {
+  if (text.len() >= 6) {
+    return text;
+  }
+  return __bytes_range(text + "!");
+}
+
+function __sha256_hw(n: i32): i32 {
+  if (n <= 0) {
+    return 0;
+  }
+  return __sha256_hw(n - 1) + 3;
+}
+
+function main(): i32 {
+  print(__wfi(3).to_string());
+  print(__bytes_range("own"));
+  print(__sha256_hw(4).to_string());
+  return 0;
+}

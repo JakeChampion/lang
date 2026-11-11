@@ -59,8 +59,14 @@ This record establishes no compiler speedup, normal leak freedom, or external ra
 Run from the repository root at this publication:
 
 ```sh
-python3 docs/benchmarks/compiler-refusal-restoration-2026-11-11/verify.py --commit HEAD
+python3 docs/benchmarks/compiler-refusal-restoration-2026-11-11/verify.py --commit ee49011154090b713533a402dbbf6a73c0c9c3f1
 ```
 
 The verifier checks the restored records, refusal harness, current source trees, baselines, controls, and raw gzip identities.
 After another source change, pin this command to the original publication commit.
+
+## Later source integration
+
+The later merge retains main `d775b3e9`, with the owner changes intact.
+The records above still qualify publication `ee490111` and its original source.
+The verifier and all 75 data records remain unchanged.
