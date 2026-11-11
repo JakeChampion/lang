@@ -1,4 +1,5 @@
 # 2026-11-11: array_of_tuple_literals_takes_its_destination_and_float_literals and literal_composite_takes_the_type_of_a_nested_part are clean under RC trace.
+# 2026-11-11: generic_struct_literal_with_a_function_field_is_an_argument is clean under RC trace.
 # 2026-11-11: a_struct_name_call_wraps_a_union_member_across_modules is clean under RC trace.
 # 2026-11-11: generic_call_takes_its_type_from_its_destination_inside_a_value is clean under RC trace.
 # 2026-11-11: generic_call_takes_its_type_from_an_append_receiver is clean under RC trace.
@@ -493,6 +494,7 @@ generic_return_pin_in_assoc_fn                       0
 generic_struct_argument_from_a_some_literal          0
 generic_struct_infers_concrete_local                0
 generic_struct_literal_in_append                     0
+generic_struct_literal_with_a_function_field_is_an_argument 0
 generic_struct_method_at_tuple_type                  0
 generic_struct_method_map_arg                        0
 generic_view_methods                                 0
@@ -736,6 +738,7 @@ nested_pattern_tuple_in_payload_irrefutable_with_fallthrough 0
 nested_pattern_wildcard_fallthrough                  0
 nested_payloadless_constructor                       0
 nested_value_expr_width                              0
+nested_workers_keep_private_heaps                   0
 none_branch                                          0
 none_equal_none                                      0
 nul_byte_in_a_path_is_refused                        0

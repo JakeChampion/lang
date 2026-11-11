@@ -15808,6 +15808,9 @@ function fn_value_at(e: ast.Expr, dest: typeinfo.Type, s: Scope): typeinfo.Type 
           return check_expr(e, s);
         };
         let (names, types) = fn_value_binds(sig, want, s);
+        if (names.len() != sig.all_type_params.len()) {
+          return t_unknown("generic function value needs a complete instance");
+        }
         return fn_value_instance(sig, names, types, s);
       }
     }
@@ -16055,6 +16058,30 @@ function member_dest(name: string, dest: typeinfo.Type, s: Scope): typeinfo.Type
   return type_from_ref_subst(member, u.type_params, du.args, s.type_names());
 }
 
+// A type argument that the destination leaves open comes from the fields of the literal.
+function lit_dest_args(sl: ast.ExprStructLit, dest_args: typeinfo.Type[], s: Scope): typeinfo.Type[] {
+  let Some(ssig) = s.lookup_struct(sl.type_name) else {
+    return dest_args;
+  };
+  let open = false;
+  for a in dest_args {
+    open = open || type_contains_unknown(a);
+  }
+  if (!open || dest_args.len() != ssig.type_params.len()) {
+    return dest_args;
+  }
+  let own = struct_lit_args(sl, ssig, s);
+  let out: typeinfo.Type[] = [];
+  for i in 0..dest_args.len() {
+    if (type_contains_unknown(dest_args[i])) {
+      out = out.append(own[i]);
+    } else {
+      out = out.append(dest_args[i]);
+    }
+  }
+  return out;
+}
+
 // The type that a call in receiver position must have for its method to
 // give `dest`: the result type of the method binds its type variables, and
 // they give the receiver type. A receiver with no type of its own has the
@@ -16106,7 +16133,7 @@ function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[
   if let ast.ExprStructLit(sl) = e {
     if let typeinfo.TypeStruct(ds) = member_dest(sl.type_name, dest, s) {
       if (ds.name == sl.type_name) {
-        return call_diags_struct_lit(sl, ds.args, s, []);
+        return call_diags_struct_lit(sl, lit_dest_args(sl, ds.args, s), s, []);
       }
     }
   }
@@ -17568,7 +17595,7 @@ function stmts_assign_diags_mode(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]
       ast.StmtVar(v) => {
         if (v.type_name.len() > 0 && !parser.is_destr_marker(v.type_name) && !vb_placeholder_decl(v)) {
           let declared = var_declared_type(v, cur);
-          let initt = check_expr(v.init, cur);
+          let initt = fn_value_at(v.init, declared, cur);
           if (!mlit_is_desugared(v.init)) {
             out = util.append_diags(out, e045_annot_diags(v.type_name, expr_line(v.init), expr_col(v.init), cur));
           }
@@ -17576,7 +17603,7 @@ function stmts_assign_diags_mode(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]
           out = util.append_diags(out, ctor_payload_diags(v.init, declared, cur));
           let vbound = dest_bound_diags(v.init, declared, cur);
           out = util.append_diags(out, vbound);
-          if (vbound.len() == 0 && !is_unknown(declared) && !is_unknown(initt) && !generic_fn_value_arg(v.init, cur) && !init_fits(v.init, initt, declared, cur)) {
+          if (vbound.len() == 0 && !is_unknown(declared) && !is_unknown(initt) && !init_fits(v.init, initt, declared, cur)) {
             out = out.append(dg_at("E003", "variable \"" + v.name + "\": expected " + type_label(declared) + ", got " + type_label(initt) + str_copy_hint(initt, declared), v.line, v.col));
           }
           if (vbound.len() == 0 && is_unknown(declared) && !is_unknown(initt) && util.index_of_str(cur.tparams, v.type_name) < 0 && e064_unknown_bare(v.type_name, cur.type_names())) {

@@ -1,0 +1,92 @@
+[
+  {
+    "name": "contradictory result",
+    "source": "function id[T](x: T): T { return x; } function run(): void { let f: (i32) => string = id; }",
+    "want": "E003"
+  },
+  {
+    "name": "matching integer instance",
+    "source": "function id[T](x: T): T { return x; } function run(): i32 { let f: (i32) => i32 = id; return f(7); }",
+    "want": ""
+  },
+  {
+    "name": "matching string instance",
+    "source": "function id[T](x: T): T { return x; } function run(): string { let f: (string) => string = id; return f(\"ok\"); }",
+    "want": ""
+  },
+  {
+    "name": "repeated parameter conflict",
+    "source": "function first[T](x: T, y: T): T { return x; } function run(): void { let f: (i32, string) => i32 = first; }",
+    "want": "E003"
+  },
+  {
+    "name": "matching repeated parameters",
+    "source": "function first[T](x: T, y: T): T { return x; } function run(): i32 { let f: (i32, i32) => i32 = first; return f(1, 2); }",
+    "want": ""
+  },
+  {
+    "name": "nested array result conflict",
+    "source": "function id[T](x: T): T { return x; } function run(): void { let f: (i32[]) => string[] = id; }",
+    "want": "E003"
+  },
+  {
+    "name": "nested tuple result conflict",
+    "source": "function id[T](x: T): T { return x; } function run(): void { let f: ((i32, boolean)) => (string, boolean) = id; }",
+    "want": "E003"
+  },
+  {
+    "name": "different independent parameters",
+    "source": "function second[A, B](a: A, b: B): B { return b; } function run(): i32 { let f: (string, i32) => i32 = second; return f(\"x\", 3); }",
+    "want": ""
+  },
+  {
+    "name": "generic outer instance",
+    "source": "function id[T](x: T): T { return x; } function run[A](a: A): A { let f: (A) => A = id; return f(a); }",
+    "want": ""
+  },
+  {
+    "name": "arity has only inference diagnostic",
+    "source": "function id[T](x: T): T { return x; } function run(): void { let f: (i32, i32) => i32 = id; }",
+    "want": "E040"
+  },
+  {
+    "name": "phantom has only inference diagnostic",
+    "source": "function phantom[T, U](x: T): T { return x; } function run(): void { let f: (i32) => i32 = phantom; }",
+    "want": "E040"
+  },
+  {
+    "name": "owned parameter retained",
+    "source": "function count[T](own xs: T[]): i32 { return xs.len(); } function run(): i32 { let f: (own i32[]) => i32 = count; return f([1, 2]); }",
+    "want": ""
+  },
+  {
+    "name": "owned parameter cannot become borrowed",
+    "source": "function count[T](own xs: T[]): i32 { return xs.len(); } function run(): void { let f: (i32[]) => i32 = count; }",
+    "want": "E003"
+  },
+  {
+    "name": "assignment destination",
+    "source": "function id[T](x: T): T { return x; } function run(f: (i32) => string): void { f = id; }",
+    "want": "E003"
+  },
+  {
+    "name": "return destination",
+    "source": "function id[T](x: T): T { return x; } function run(): (i32) => string { return id; }",
+    "want": "E002"
+  },
+  {
+    "name": "callback argument destination",
+    "source": "function id[T](x: T): T { return x; } function take(f: (i32) => string): void {} function run(): void { take(id); }",
+    "want": "E038"
+  },
+  {
+    "name": "struct field destination",
+    "source": "function id[T](x: T): T { return x; } struct W { f: (i32) => string } function run(): void { let w = W { f: id }; }",
+    "want": "E043"
+  },
+  {
+    "name": "array element destination",
+    "source": "function id[T](x: T): T { return x; } function run(): void { let fs: ((i32) => string)[] = [id]; }",
+    "want": "E003"
+  }
+]

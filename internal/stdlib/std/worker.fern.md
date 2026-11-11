@@ -118,9 +118,9 @@ pub function spawn[T: Send](send body: () => T): Worker[T] {
 
 ### `4 function __spawn_process[T: Send](own body: () => T): Worker[T]`
 
-The region is a shared anonymous mapping that the fork inherits at the same address. Its header holds the root address of the result and the leak-check counters, and the child's heap starts one line past it. A fork that the kernel refuses runs the body inline.
+The region is a shared anonymous mapping that the fork inherits at the same address. Its header holds the result address and the leak-check counters. The child runs the body in its private heap. It adopts the shared region only for the result copy. A fork that the kernel refuses runs the body inline.
 
-The child copies its result, because a box the body built can point at a box the parent owns. A copy built from the child's cursor lies inside the region. The copy is wrapped in `Some`, so a scalar result crosses as a box too. The body frees boxes of the parent's image into the child's free lists, and a copy must not land in one. So the lists are cleared again at the mark before the copy. The child exits through `__worker_exit`, so neither the leak census nor the parent's at-exit work runs twice.
+The child copies its result, because a box the body built can point at a box the parent owns. The copy is wrapped in `Some`, so a scalar result crosses as a box too. The heap adoption clears the free lists before the copy. Thus every copied box lies inside the shared region. The child exits through `__worker_exit`, so neither the leak census nor the parent's at-exit work runs twice.
 
 ```fern
 <<4 function __spawn_process[T: Send](own body: () => T): Worker[T]>>=
@@ -151,9 +151,8 @@ function __spawn_process[T: Send](own body: () => T): Worker[T] {
       }
     }
     unsafe {
-      __heap_adopt(region + 64i64, region + size);
       let out = body();
-      __heap_adopt(__heap_mark(), region + size);
+      __heap_adopt(region + 64i64, region + size);
       let root = __send_root(__send_copy(Some(out)));
       __worker_exit(region, root);
     }

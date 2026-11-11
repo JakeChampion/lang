@@ -77,3 +77,31 @@ func castOperandBinary(t *testing.T, prog *ast.Program, name string) *ast.Binary
 	t.Fatalf("no `let %s` in main", name)
 	return nil
 }
+
+func TestCastOperandTakesNoTypeFromTheDestination(t *testing.T) {
+	const decls = "struct P[S, M] { view: (S) => M }\n" +
+		"function run[S, M](p: P[S, M], s: S): M { return p.view(s); }\n" +
+		"function double(n: i32): i64 { return (n * 2) as i64; }\n" +
+		"function first[T](xs: T[]): T { return xs[0]; }\n"
+	cases := []struct {
+		name string
+		body string
+		code string
+	}{
+		{"the literal binds the result type", "return run(P { view: double }, 1) as i32 - 2;", ""},
+		{"the binding type does not reach the call", "let k: i32 = first([]) as i32; return k;", "E040"},
+		{"the return type does not reach the call", "return first([]) as i32;", "E040"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			prog, err := parser.Parse(decls + "function main(): i32 { " + c.body + " }\n")
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			_, err = Check(prog)
+			if got := errCodes(err); got != c.code {
+				t.Errorf("codes %q, want %q: %v", got, c.code, err)
+			}
+		})
+	}
+}

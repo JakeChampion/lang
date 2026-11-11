@@ -129,21 +129,22 @@ process, not a thread. `RC-DESIGN.md` section 2.1 already holds the
 one-context-per-heap guarantee at the `proc_fork` and `subprocess`
 boundaries with separate processes, and a worker takes the same row.
 
-`spawn` maps a shared region and forks. The child adopts the region as its
-heap: the cursor and the end move into the region, and both free lists are
-cleared, so the child allocates only inside the region. The child runs the
-body, copies the result into the region with `__send_copy`, writes the root
-address at the start of the region, and exits. The parent keeps the child's
-pid and the region.
+`spawn` maps a shared region and forks. The child runs the body on its private
+copy-on-write heap. A nested worker thus cannot change its parent's reference
+counts or free lists. After the body returns, the child adopts the shared
+region and clears its free lists. It copies the result into that region with
+`__send_copy`, writes the root address at its start, and exits. The parent
+keeps the child's pid and the region.
 
 `join` waits for the child, reads the root, and copies the result into the
 parent heap. It then removes the entire worker region with `munmap`.
 The returned result has no pointer into the removed region.
 Later joins and parent allocations cannot invalidate it.
 
-The region is the child's whole heap: four gigabytes of address space that
-the kernel backs page by page. A body that needs more aborts with the
-out-of-memory trap, and the parent reports the exit.
+The region holds only the result copy. It reserves four gigabytes of address
+space that the kernel backs page by page. A result copy that needs more aborts
+with the out-of-memory trap, and the parent reports the exit. The body uses
+the ordinary private heap before this copy.
 
 The copy at the end of the body is what makes this sound. The child's heap
 is a copy-on-write image of the parent's, so a box the body builds can point

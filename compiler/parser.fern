@@ -2278,9 +2278,7 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
   let pending_type_args = "";
   let path_sep_line = 0;
   let path_sep_col = 0;
-  let links = 0;
-  while (true) {
-    links += 1;
+  for links in 1..MAX_NEST_DEPTH + 2 {
     if (p.too_deep_by(links)) {
       return (e_unknown_at("nest:too-deep", p.peek_line(), p.peek_col()), p.bail());
     }
@@ -2860,16 +2858,14 @@ function parse_binary(p: Par, min_prec: i32): (ast.Expr, Par) {
 function parse_binary_nested(p: Par, min_prec: i32): (ast.Expr, Par) {
   let (lhs_expr, lhs_p) = parse_primary(p);
   p = lhs_p;
-  let links = 0;
-  while (true) {
+  for links in 1..MAX_NEST_DEPTH + 2 {
     let op = p.peek_punct();
     let prec = precedence(op);
     if (prec < min_prec) {
       return (lhs_expr, p);
     }
-    links += 1;
     if (p.too_deep_by(links)) {
-      return (e_unknown_at("nest:too-deep", p.peek_line(), p.peek_col()), p.bail());
+      break;
     }
     let opline = p.peek_line();
     let opcol = p.peek_col();
@@ -2878,6 +2874,7 @@ function parse_binary_nested(p: Par, min_prec: i32): (ast.Expr, Par) {
     p = rhs_p;
     lhs_expr = e_binary_at(op, lhs_expr, rhs_expr, opline, opcol);
   }
+  return (e_unknown_at("nest:too-deep", p.peek_line(), p.peek_col()), p.bail());
 }
 
 function parse_expr(p: Par): (ast.Expr, Par) {
@@ -11649,8 +11646,12 @@ function mono_struct_lit(s: ast.ExprStructLit, written: string, env: MEnv, funcs
 // function spells the whole function type, which mono_infer gives as `fn`.
 function literal_field_type(e: ast.Expr, env: MEnv, funcs: MFns): string {
   let t = mono_infer(e, env, funcs);
-  if (t != "fn") {
+  if (t.len() > 0 && t != "fn") {
     return t;
+  }
+  let named = fn_name_spelling(e, env, funcs);
+  if (named.len() > 0) {
+    return named;
   }
   let ast.ExprCall(c) = e else {
     return t;
@@ -11667,6 +11668,30 @@ function literal_field_type(e: ast.Expr, env: MEnv, funcs: MFns): string {
     return t;
   }
   return fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types);
+}
+
+// fn_name_spelling spells the function type of a value that names a function
+// with no type parameters.
+function fn_name_spelling(e: ast.Expr, env: MEnv, funcs: MFns): string {
+  let ast.ExprIdent(id) = e else {
+    return "";
+  };
+  let k = funcs.pix.find(id.name);
+  if (k < 0 || env.elook(id.name).len() > 0) {
+    return "";
+  }
+  let fd = funcs.decls[funcs.pat[k]];
+  if (fd.type_params.len() > 0 || fd.receiver_type.len() > 0) {
+    return "";
+  }
+  let ps = "";
+  for i in 0..fd.params.len() {
+    if (i > 0) {
+      ps += ", ";
+    }
+    ps += param_spelling(fd.params[i]);
+  }
+  return "(" + ps + ") => " + fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types);
 }
 
 // literal_written is the type of a generic struct literal with its type

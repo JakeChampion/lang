@@ -147,3 +147,29 @@ func TestSelfHostCLIByteViewEscape(t *testing.T) {
 		})
 	}
 }
+
+// A build reports a view that escapes its source as the diagnostic of the
+// program, with its file and its position, as -check does. It does not print
+// the rows of the lowering's refusal.
+func TestSelfHostCLIBuildReportsViewEscape(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	source := "import \"std/string\";\n" +
+		`function f(): str[] { let owned = "a" + args()[0]; let xs: str[] = []; xs = xs.append(owned.trim()); return xs; } function main(): i32 { return f().len(); }`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			cmd := runX86_64Bin(cli.runner, cli.bin, "-target", target, "-o", filepath.Join(dir, "out-"+target), path, cli.stdlib)
+			out, err := cmd.CombinedOutput()
+			if err == nil || cmd.ProcessState.ExitCode() != 1 {
+				t.Fatalf("build: %v, exit %d, want 1\n%s", err, cmd.ProcessState.ExitCode(), out)
+			}
+			if strings.Count(string(out), "main.fern:2:1: error[E065]") != 1 || strings.Contains(string(out), "FERN_SEM_IR") {
+				t.Fatalf("want one E065 at main.fern:2:1 and no refusal rows, got:\n%s", out)
+			}
+		})
+	}
+}

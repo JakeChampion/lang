@@ -1,0 +1,28 @@
+// A constant expression makes a string of 1048576 bytes at most. Each const
+// here joins the const before with itself, so the string doubles at each
+// step. S16 has 1048576 bytes and S17 is the E093. A const that reads the
+// refused const is an E093 too.
+const S0: string = "aaaaaaaaaaaaaaaa";
+const S1: string = S0 + S0;
+const S2: string = S1 + S1;
+const S3: string = S2 + S2;
+const S4: string = S3 + S3;
+const S5: string = S4 + S4;
+const S6: string = S5 + S5;
+const S7: string = S6 + S6;
+const S8: string = S7 + S7;
+const S9: string = S8 + S8;
+const S10: string = S9 + S9;
+const S11: string = S10 + S10;
+const S12: string = S11 + S11;
+const S13: string = S12 + S12;
+const S14: string = S13 + S13;
+const S15: string = S14 + S14;
+const S16: string = S15 + S15;
+const S17: string = S16 + S16;
+const S18: string = S17 + S17;
+
+function main(): i32 {
+    print(S16.len());
+    return 0;
+}

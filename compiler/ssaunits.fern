@@ -2803,17 +2803,31 @@ function likely_unique(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
 
 function field_grow_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], bi: i32, pos: i32): i32 {
   let ins = f.graph.blocks[bi].insts[pos];
-  if (string_append(f, ins)) {
-    let root = projection_root(f, a, owned, defs, bi, pos, ins.args[0]);
-    if (root >= 0 && owned[root]) {
-      return root;
+  if (!string_append(f, ins) && !box_update(ins)) {
+    return -1;
+  }
+  let root = projection_root(f, a, owned, defs, bi, pos, ins.args[0]);
+  if (root < 0 || string_append(f, ins) && !owned[root] || spent_in_another_block(f, a, root, bi)) {
+    return -1;
+  }
+  return root;
+}
+
+// The grow tests the count of the box of `root` and writes its field. A use
+// in another block that is not a field read can move or release the box
+// before the grow runs.
+function spent_in_another_block(f: ssasem.Func, a: ssasem.Analysis, root: i32, bi: i32): boolean {
+  for u in a.uses.start[root]..a.uses.start[root + 1] {
+    if (a.uses.block[u] != bi) {
+      if (a.uses.kinds[u] == ssasem.term_use()) {
+        return true;
+      }
+      if (f.graph.blocks[a.uses.block[u]].insts[a.uses.at[u]].kind_tag != ssasem.record_get()) {
+        return true;
+      }
     }
-    return -1;
   }
-  if (!box_update(ins)) {
-    return -1;
-  }
-  return projection_root(f, a, owned, defs, bi, pos, ins.args[0]);
+  return false;
 }
 
 pub function occurrences(xs: i32[], v: i32): i32 {
