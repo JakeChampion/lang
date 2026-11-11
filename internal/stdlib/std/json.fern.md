@@ -262,7 +262,7 @@ function __json_index_new(n: i32): i32[] {
 
 function __json_index_slot(index: i32[], keys: string[], key: string, seed: i32): i32 {
   let mask = index.len() - 1;
-  let h = __map_fnv_str_seeded(key, seed) & mask;
+  let h = __map_str_hash(key, seed) & mask;
   while (true) {
     let at = index[h];
     if (at == 0 || keys[at - 1] == key) {
