@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""Compare HEVC PPS metadata with FFmpeg CBS and actual lossless streams."""
+import importlib.util
+import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+os.chdir(ROOT)
+spec = importlib.util.spec_from_file_location('hevc_pps', ROOT / 'scripts/gen-video-hevc-pps-fixtures.py')
+fixtures = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fixtures)
+compiler = os.environ.get('FERN') or subprocess.check_output(['./bootstrap/bootstrap.sh', 'stage0'], text=True).strip()
+target = {'x86_64': 'x86-64-linux', 'aarch64': 'arm64-linux', 'arm64': 'arm64-darwin'}[os.uname().machine]
+binary = ROOT / 'build/video/hevc-pps-reference'
+wasm = binary.with_suffix('.wasm')
+binary.parent.mkdir(parents=True, exist_ok=True)
+for output, architecture, flags in ((binary, target, ['-sanitize']), (wasm, 'wasm32-wasi', [])):
+    subprocess.run([compiler, '-stdlib', str(ROOT / 'internal/stdlib'), '-target', architecture, *flags,
+                    '-o', str(output), 'scripts/video-reference/hevc-pps.fern'], check=True)
+
+
+def run(directory, name, pps, sps, error=None):
+    path = directory / (name + '.pps')
+    sequence = directory / (name + '.sps')
+    path.write_bytes(pps)
+    sequence.write_bytes(sps)
+    native = subprocess.run([str(binary), str(path), str(sequence)], text=True, capture_output=True)
+    wasi = subprocess.run(['wasmtime', 'run', '--dir', '.', str(wasm), path.name, sequence.name],
+                          cwd=directory, text=True, capture_output=True)
+    assert native.returncode == (3 if error else 0), (name, native)
+    assert wasi.returncode == (1 if error else 0), (name, wasi)
+    assert 'live_bytes=0' in native.stderr and 'fern-sanitizer:' not in native.stderr, native.stderr
+    assert native.stdout == wasi.stdout, (name, native, wasi)
+    if error:
+        assert native.stderr.splitlines()[0] == wasi.stderr.splitlines()[0] == error, (name, native, wasi)
+        return None
+    values = list(map(int, native.stdout.splitlines()))
+    assert len(values) == len(fixtures.FIELDS)
+    return values
+
+
+with tempfile.TemporaryDirectory(prefix='fern-hevc-pps-interop-') as tmp:
+    directory = Path(tmp)
+    trace = fixtures.hevc.syntax.build_trace('HEVC', 'hevc-pps-trace')
+    count = 0
+    for name, path in fixtures.hevc.generate(directory):
+        units = fixtures.hevc.units(path.read_bytes())
+        sps = next(x for x in units if x[0] >> 1 & 63 == 33)
+        pps = next(x for x in units if x[0] >> 1 & 63 == 34)
+        vps = next(x for x in units if x[0] >> 1 & 63 == 32)
+        expected = fixtures.reference(trace, directory, name, pps, sps, b'\0\0\0\1' + vps)
+        assert run(directory, name, pps, sps) == expected, name
+        probe = json.loads(subprocess.check_output(['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+                            '-count_frames', '-show_entries', 'stream=width,height,pix_fmt,nb_read_frames', '-of', 'json', str(path)]))
+        assert len(probe['streams']) == 1
+        stream = probe['streams'][0]
+        assert (stream['width'], stream['height'], stream['nb_read_frames']) == (66, 50, '3'), stream
+        source = path.with_suffix('.yuv').read_bytes()
+        decoded = subprocess.check_output(['ffmpeg', '-v', 'error', '-xerror', '-i', str(path),
+                        '-threads', '1', '-pix_fmt', stream['pix_fmt'], '-f', 'rawvideo', '-'])
+        assert decoded == source, name
+        print(name + ': 44 native/real-WASI PPS values match CBS; three lossless source frames agree', flush=True)
+        count += 1
+    for name, pps, sps in fixtures.controls():
+        assert run(directory, name, pps, sps) == fixtures.reference(trace, directory, name, pps, sps), name
+        count += 1
+        print(name + ': 44 native/real-WASI values match independent parameter-only CBS syntax', flush=True)
+    negative = [('picture-id', {'id': 64}, 'pps_pic_parameter_set_id'), ('reference-count', {'l0': 15}, 'num_ref_idx_l0_default_active_minus1'),
+                ('quantizer', {'qp': 26}, 'init_qp_minus26'), ('chroma-offset', {'cr': 13}, 'pps_cr_qp_offset')]
+    for name, options, field in negative:
+        pps, sps = fixtures.make(**options), fixtures.hevc.make(width=256, height=192)
+        run(directory, name, pps, sps, 'invalid video header or packet')
+        path = directory / (name + '.invalid-context')
+        path.write_bytes(fixtures.hevc.vps() + b'\0\0\0\1' + sps + b'\0\0\0\1' + pps)
+        process = subprocess.run([str(trace), str(path)], text=True, capture_output=True)
+        assert field in process.stderr and 'out of range' in process.stderr and 'Failed to read unit' in process.stderr, (name, process)
+    print(count, 'fresh PPS comparisons and four independent diagnostic refusals passed', flush=True)

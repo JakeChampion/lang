@@ -49,7 +49,9 @@ struct Picture { at: i64, id: i32, chroma: i32, separate: boolean, luma: i32, ch
 
 struct Ordering { at: i64, buffering: i32, reorder: i32 }
 
-struct Blocks { at: i64, minimum: i32, ctb: i32 }
+struct Blocks { at: i64, minimum: i32, ctb: i32, transform: i32 }
+
+pub(package) struct SequenceContext { sequence: Sequence, minimum: i32, ctb: i32, transform: i32 }
 
 struct Hrd { at: i64, nal: boolean, vcl: boolean, sub_picture: boolean }
 
@@ -225,10 +227,10 @@ function blocks(input: [u8], at: i64, format: frame.Format): Result[Blocks, fram
   let (c, min_tb) = bits.bounded_ue(input, b, min_cb)?;
   let transform = min_tb as i32 + 2;
   let max_tb = if (ctb < 5) { ctb } else { 5 };
-  let (d, _) = bits.bounded_ue(input, c, (max_tb - transform) as u32)?;
+  let (d, diff_tb) = bits.bounded_ue(input, c, (max_tb - transform) as u32)?;
   let (e, _) = bits.bounded_ue(input, d, (ctb - transform) as u32)?;
   let (f, _) = bits.bounded_ue(input, e, (ctb - transform) as u32)?;
-  return Ok(Blocks { at: f, minimum: minimum, ctb: ctb });
+  return Ok(Blocks { at: f, minimum: minimum, ctb: ctb, transform: transform + diff_tb as i32 });
 }
 
 function coefficients(input: [u8], at: i64, size: i32): Result[i64, frame.VideoError] {
@@ -250,7 +252,7 @@ function coefficients(input: [u8], at: i64, size: i32): Result[i64, frame.VideoE
   return Ok(at);
 }
 
-function scaling_lists(input: [u8], at: i64): Result[i64, frame.VideoError] {
+pub(package) function scaling_lists(input: [u8], at: i64): Result[i64, frame.VideoError] {
   for size in 0..4 {
     let matrix = 0;
     while (matrix < 6) {
@@ -591,7 +593,7 @@ function extensions(input: [u8], at: i64): Result[i64, frame.VideoError] {
   return if ((flags & 128u32) != 0u32) { skip(input, next, 9) } else { Ok(next) };
 }
 
-function body(bytes: [u8], p: Prefix, picture: Picture): Result[(i64, Ordering), frame.VideoError] {
+function body(bytes: [u8], p: Prefix, picture: Picture): Result[(i64, Ordering, Blocks), frame.VideoError] {
   let order = ordering(bytes, picture.at, p.sub)?;
   let block = blocks(bytes, order.at, picture.coded)?;
   let at = scaling(bytes, block.at)?;
@@ -599,17 +601,23 @@ function body(bytes: [u8], p: Prefix, picture: Picture): Result[(i64, Ordering),
   at = reference_sets(bytes, at, order.buffering - 1)?;
   at = long_term(bytes, at, picture.poc)?;
   at = skip(bytes, at, 2)?;
-  return Ok((at, order));
+  return Ok((at, order, block));
 }
 
-pub function inspect_sps(input: [u8], limits: frame.Limits): Result[Sequence, frame.VideoError] {
+pub(package) function sequence_context(input: [u8], limits: frame.Limits): Result[SequenceContext, frame.VideoError] {
   let bytes = parameter_bytes(input, limits)?;
   let p = prefix(bytes)?;
   let picture = picture(bytes, p.at, limits)?;
-  let (at, order) = body(bytes, p, picture)?;
+  let (at, order, block) = body(bytes, p, picture)?;
   let (next, vui) = vui(bytes, at, p.sub)?;
   let end = extensions(bytes, next)?;
   bits.trailing(bytes, end)?;
-  return Ok(Sequence { profile_space: p.space, tier: p.tier, profile_idc: p.profile, level_idc: p.level, compatibility_flags: p.compatibility, vps_id: p.vps, sequence_id: picture.id, max_sub_layers: p.sub + 1, temporal_nesting: p.nesting, chroma_format_idc: picture.chroma, separate_colour_plane: picture.separate, bit_depth_luma: picture.luma, bit_depth_chroma: picture.chroma_depth, coded: picture.coded, visible: picture.visible, crop: picture.crop, log2_max_poc_lsb: picture.poc, max_dec_pic_buffering: order.buffering, max_num_reorder_pics: order.reorder, vui: vui });
+  let sequence = Sequence { profile_space: p.space, tier: p.tier, profile_idc: p.profile, level_idc: p.level, compatibility_flags: p.compatibility, vps_id: p.vps, sequence_id: picture.id, max_sub_layers: p.sub + 1, temporal_nesting: p.nesting, chroma_format_idc: picture.chroma, separate_colour_plane: picture.separate, bit_depth_luma: picture.luma, bit_depth_chroma: picture.chroma_depth, coded: picture.coded, visible: picture.visible, crop: picture.crop, log2_max_poc_lsb: picture.poc, max_dec_pic_buffering: order.buffering, max_num_reorder_pics: order.reorder, vui: vui };
+  return Ok(SequenceContext { sequence: sequence, minimum: block.minimum, ctb: block.ctb, transform: block.transform });
+}
+
+pub function inspect_sps(input: [u8], limits: frame.Limits): Result[Sequence, frame.VideoError] {
+  let context = sequence_context(input, limits)?;
+  return Ok(context.sequence);
 }
 ```
