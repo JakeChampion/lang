@@ -1,0 +1,15 @@
+// An integer literal local does not become a float. A float literal array
+// refuses it as the argument of `append` or `with`, as a typed float array
+// does. The array is an array literal that is the receiver of the call, or a
+// literal array local.
+function main(): i32 {
+    let b = 1;
+    let zs = [1.5, 2.5].append(b);
+    let ws = [1.5, 2.5].with(0, b);
+    let ys = [1.5, 2.5];
+    let xs = ys.append(b);
+    let rs = ys.with(0, b + 1);
+    let ts: f64[] = [1.5];
+    let qs = ts.append(b);
+    return 0;
+}

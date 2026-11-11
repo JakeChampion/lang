@@ -1,0 +1,4 @@
+main.fern:5:5: error[E020]: empty array literal needs a type annotation
+main.fern:6:5: error[E020]: empty array literal needs a type annotation
+main.fern:8:5: error[E020]: empty array literal needs a type annotation
+main.fern:9:5: error[E020]: empty array literal needs a type annotation

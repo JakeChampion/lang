@@ -15317,6 +15317,12 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			if tt == nil {
 				return nil
 			}
+			if at, ok := tt.(ast.ArrayType); ok && at.Elem == nil && litArrayStepArg(n, fa) >= 0 {
+				for _, arg := range n.Args {
+					c.checkExpr(arg, s)
+				}
+				return tt
+			}
 			vlanes, isVec := c.genericVec(tt)
 			if pt, ok := tt.(ast.ParamType); ok || isVec {
 				var tm ast.TraitMethod
@@ -15621,7 +15627,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 					} else if st, isStruct := pt.(ast.StructType); isStruct && len(st.Args) > 0 {
 						c.expectedType = pt
 					} else if _, isArray := pt.(ast.ArrayType); isArray {
-						if litArrayRooted(n.Args[i]) {
+						if litArrayRooted(n.Args[i]) || c.litStepOnLocal(n.Args[i], s) {
 							c.expectedType = pt
 						}
 					} else if _, isFn := pt.(*ast.FuncType); isFn {
