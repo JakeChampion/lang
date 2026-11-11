@@ -223,6 +223,18 @@ function pack_chars(alpha: usize, v: i64, bits: i32): i64 {
   }
 }
 
+function hex_expansions(alpha: usize): u8[] {
+  unsafe {
+    let table = __alloc_u8(2048);
+    for b in 0..256 {
+      table = table.with(b * 8, 2 as u8);
+      table = table.with(b * 8 + 1, __load_u8(alpha + (b >> 4) as usize) as u8);
+      table = table.with(b * 8 + 2, __load_u8(alpha + (b & 15) as usize) as u8);
+    }
+    return table;
+  }
+}
+
 function bit_table(c: Codec): usize {
   unsafe {
     let t = __alloc(256 * 8);
@@ -546,6 +558,7 @@ function encode(r: Reader, c: Codec, wrap: i64, own o: io_buffered.BufWriter): v
     let wrapping = wrap > 0 as i64;
     let col: i64 = 0;
     let table = 0 as usize;
+    let expansions: u8[] = [];
     if (bits == 1) {
       table = bit_table(c);
     }
@@ -561,7 +574,13 @@ function encode(r: Reader, c: Codec, wrap: i64, own o: io_buffered.BufWriter): v
       let bs = chunk;
       let i = 0;
       let p = pack_bytes(c);
-      if (c.kernel_alphabet.len() > 0) {
+      if (bits == 4 && !wrapping && n >= 256) {
+        if (expansions.len() == 0) {
+          expansions = hex_expansions(alpha);
+        }
+        out = gnu.check(out.write_bytes_expanded(bs, expansions));
+        i = n;
+      } else if (c.kernel_alphabet.len() > 0) {
         let whole = n - n % inb;
         col = encode_kernel(out.handle(), bs, whole, bits, c.kernel_alphabet, wrap, col);
         i = whole;

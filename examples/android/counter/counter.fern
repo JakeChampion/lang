@@ -1,0 +1,41 @@
+// The counter: its state, its screen and its messages. It has no Android
+// code, so counter_test.fern runs it on the host.
+import "std/android/ui";
+
+pub struct Model { count: i32 }
+
+pub function view(m: Model, s: ui.Screen): ui.El {
+  return ui.column(
+    [
+      ui.text("You pressed the button").colored(ui.MUTED),
+      ui.text(m.count.to_string()).sized(96.0).weighted(700),
+      ui.text(times(m.count)).colored(ui.MUTED),
+      ui.row([ui.outlined_button("Reset", "reset"), ui.button("Add one", "add")]).spaced(12.0),
+    ],
+  ).spaced(16.0).centered();
+}
+
+function times(n: i32): string {
+  if (n == 1) {
+    return "time";
+  }
+  return "times";
+}
+
+pub function update(own m: Model, msg: ui.Msg): Model {
+  match (msg) {
+    ui.Tap("add", _) => {
+      return Model { count: m.count + 1 };
+    },
+    ui.Tap("reset", _) => {
+      return Model { count: 0 };
+    },
+    _ => {
+      return m;
+    }
+  }
+}
+
+pub function program(): ui.Program[Model] {
+  return ui.program((m: Model, s: ui.Screen): ui.El => view(m, s), (own m: Model, msg: ui.Msg): Model => update(m, msg));
+}

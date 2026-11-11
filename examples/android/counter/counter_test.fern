@@ -1,0 +1,76 @@
+// Runs the counter on the simulator of std/android/ui/sim, on the host.
+// With COUNTER_UI_PNG set to a directory, it writes the screen there as a
+// PNG file, in the light theme and in the dark theme.
+import "std/android/draw";
+import "std/android/fonts";
+import "std/android/testkit";
+import "std/android/text";
+import "std/android/ui/sim";
+import "std/result";
+import "std/test";
+import "./counter";
+
+// The directory of the Roboto files of the Paper tests: the tests run from
+// the root of the repository or from the directory of this file.
+function font_dir(): string {
+  if let Ok(_) = read_file_bytes("examples/android/paper/testfonts/Roboto-Regular.ttf") {
+    return "examples/android/paper/testfonts";
+  }
+  return "../paper/testfonts";
+}
+
+function test_fonts(): text.Fonts {
+  let ws = [400, 500, 700];
+  let found: Option[fonts.Found][] = [];
+  for w in ws {
+    found = found.append(fonts.find_in(font_dir(), "Roboto", w));
+  }
+  return text.load(found, ws, (path: string): u8[] => read_file_bytes(path).unwrap_or([]));
+}
+
+// A phone of 1080 by 2400 pixels at 2.75 pixels to the dp.
+function started(): sim.Sim[counter.Model] {
+  return sim.start(counter.Model { count: 0 }, counter.program(), test_fonts(), 1080, 2400, 2.75);
+}
+
+function saved(s: sim.Sim[counter.Model], name: string): void {
+  if let Some(out) = env("COUNTER_UI_PNG") {
+    let fr = sim.picture(s);
+    let ok = testkit.save_png(fr, out + "/" + name + ".png");
+    draw.release(fr);
+  }
+}
+
+function test_starts_at_zero(): test.TestOutcome {
+  let s = started();
+  saved(s, "counter");
+  return test.assert_eq(sim.texts(s).join("|"), "You pressed the button|0|times|Reset|Add one");
+}
+
+function test_add_and_reset(): test.TestOutcome {
+  let s = sim.tap(started(), "add");
+  let one = sim.texts(s).join("|");
+  s = sim.tap(sim.tap(s, "add"), "add");
+  let three = s.shell.app.count;
+  s = sim.themed(s, true);
+  saved(s, "counter-dark");
+  s = sim.tap(s, "reset");
+  return test.assert_eq(one + " " + three.to_string() + " " + s.shell.app.count.to_string(), "You pressed the button|1|time|Reset|Add one 3 0");
+}
+
+function test_talkback_reads_the_buttons(): test.TestOutcome {
+  return test.assert_eq(sim.spoken(started()).join("|"), "Reset|Add one|You pressed the button|0|times");
+}
+
+function test_back_closes(): test.TestOutcome {
+  return test.assert_eq(sim.finished(sim.back(started())), true);
+}
+
+function main(): i32 {
+  let r = test.new("examples/android/counter");
+  r = r.it("the counter starts at zero", test_starts_at_zero);
+  r = r.it("the buttons add and reset", test_add_and_reset);
+  r = r.it("an accessibility service reads the buttons and the texts", test_talkback_reads_the_buttons);
+  r = r.it("the back key closes the app", test_back_closes);
+  return r.finish();
+}

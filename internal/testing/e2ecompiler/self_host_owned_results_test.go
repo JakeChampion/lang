@@ -18,6 +18,14 @@ function take(own box: Box): Box { return box; }
 function (own box: Box) close(): void {}
 `
 	for _, tc := range []struct{ name, body, code string }{
+		{"owned enum state", `enum State { Plain, Secured(Box), Awaiting(Option[Box]) } function awaiting(own state: State): own State { match (state) { Secured(box) => { return Awaiting(Some(box)); }, _ => { return Awaiting(None); } } return Awaiting(None); }`, ""},
+		{"borrowed enum state", `enum State { Plain, Secured(Box), Awaiting(Option[Box]) } function awaiting(state: State): own State { match (state) { Secured(box) => { return Awaiting(Some(box)); }, _ => { return Awaiting(None); } } return Awaiting(None); }`, "E051"},
+		{"fresh match result", `enum State { Plain, Secured(Box) } function fresh(state: State): own Box { match (state) { Secured(box) => { return Box { values: [box.values.len() as u8] }; }, _ => { return Box { values: [] }; } } return Box { values: [] }; }`, ""},
+		{"fresh match shadow", `enum State { Plain, Secured(Box) } function fresh(state: State): own Box { match (state) { Secured(box) => { let box = Box { values: [] }; return box; }, _ => { return Box { values: [] }; } } return Box { values: [] }; }`, ""},
+		{"borrowed match alias", `enum State { Plain, Secured(Box) } function unwrap(state: State): own Box { match (state) { Secured(box) => { let local = box; return local; }, _ => { return Box { values: [] }; } } return Box { values: [] }; }`, "E051"},
+		{"borrowed nested match", `enum State { Plain, Secured(Box) } function unwrap(state: Option[State]): own Box { match (state) { Some(s) => { match (s) { Secured(box) => { return box; }, _ => {} } }, _ => {} } return Box { values: [] }; }`, "E051"},
+		{"borrowed match shadow", `enum State { Plain, Secured(Box) } function unwrap(state: State, own box: Box): own Box { match (state) { Secured(box) => { return box; }, _ => { return box; } } return box; }`, "E051"},
+		{"borrowed match capture", `enum State { Plain, Secured(Box) } function outer(state: State): void { let get = (): own Box => { match (state) { Secured(box) => { return box; }, _ => { return Box { values: [] }; } } return Box { values: [] }; }; }`, "E051"},
 		{"fresh scalar field", `function fresh(x: Box): own Box { return Box { values: [x.values.len() as u8] }; }`, ""},
 		{"checked value copy", `@value struct Key { bytes: u8[] } function (own k: Key) erase(): void {} function copy(k: Key): own Key { return k; }`, ""},
 		{"method result", `function (x: Box) fresh(): own Box { return Box { values: [] }; } function pass(x: Box): own Box { return x.fresh(); }`, ""},
@@ -180,6 +188,16 @@ function borrowed_source(source: H[]): i32 { return keep(firsts(source)); }
 		{"borrowed lambda input", `function run(): void { let f = (x: Box): own Box => x; }`, "E051"},
 		{"borrowed capture", `function run(x: Box): void { let f = (): own Box => x; }`, "E051"},
 		{"owned capture", `function run(own x: Box): void { let f = (): own Box => x; }`, "E051"},
+		{"value cell scalar argument", `function take_cell(own c: Cell[i32]): i32 { return c.get(); } function f(): i32 { return take_cell(cell_new(7)); }`, ""},
+		{"value cell scalar result", `function f(): own Cell[i32] { return cell_new(7); }`, ""},
+		{"value cell array payload", `function f(xs: i32[]): own Cell[i32[]] { return cell_new(xs); }`, ""},
+		{"value cell record payload", `struct Data { bytes: u8[] } function f(data: Data): own Cell[Data] { return cell_new(data); }`, ""},
+		{"value cell resource payload", `function f(box: Box): own Cell[Box] { return cell_new(box); }`, "E051"},
+		{"value cell generic payload", `function f[T](x: T): own Cell[T] { return cell_new(x); }`, "E051"},
+		{"value cell mutable payload", `function f(x: Cell[i32]): own Cell[Cell[i32]] { return cell_new(x); }`, "E051"},
+		{"value cell callback payload", `function f(x: () => i32): own Cell[() => i32] { return cell_new(x); }`, "E051"},
+		{"value cell local shadow", `function take_cell(own c: Cell[i32]): i32 { return c.get(); } function f(borrowed: Cell[i32]): i32 { let cell_new = (n: i32): Cell[i32] => borrowed; return take_cell(cell_new(7)); }`, "E051"},
+		{"value cell parameter shadow", `function take_cell(own c: Cell[i32]): i32 { return c.get(); } function f(cell_new: (i32) => Cell[i32]): i32 { return take_cell(cell_new(7)); }`, "E051"},
 		{"strengthen callback", `function pass(own x: Box): Box { return x; } function run(): void { let f: (own Box) => own Box = pass; }`, "E003"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -212,6 +230,7 @@ func checkedOwnedResultBorrowFixtures(t *testing.T, bin string, runner []string,
 	for _, name := range []string{
 		"diag_e051_literal_match_arm_returns_a_borrow",
 		"diag_e051_match_binder_of_a_borrowed_scrutinee",
+		"diag_e051_owned_result_borrowed_match_payload",
 		"diag_e051_through_a_type_parameter",
 	} {
 		t.Run(name, func(t *testing.T) {

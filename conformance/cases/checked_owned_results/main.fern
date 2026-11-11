@@ -43,6 +43,20 @@ function choose(own pair: Pair): own Token {
   return pair.second;
 }
 
+enum TokenState { PlainToken, SecuredToken(Token), AwaitingToken(Option[Token]) }
+
+function awaiting_token(own state: TokenState): own TokenState {
+  match (state) {
+    SecuredToken(token) => {
+      return AwaitingToken(Some(token));
+    },
+    _ => {
+      return AwaitingToken(None);
+    }
+  }
+  return AwaitingToken(None);
+}
+
 function copy_map(m: Map[string, i32]): own Map[string, i32] {
   return m;
 }
@@ -87,5 +101,20 @@ function main(): i32 {
   print(saved.get_or("k", 0));
   print(updated.get_or("k", 0));
   print(base.get_or("k", 0));
+  match (awaiting_token(SecuredToken(make_token(13, closed)))) {
+    AwaitingToken(Some(token)) => {
+      assert(token.close() == 13);
+    },
+    _ => {
+      assert(false);
+    }
+  }
+  assert(closed.get() == 3);
+  match (awaiting_token(PlainToken)) {
+    AwaitingToken(None()) => {},
+    _ => {
+      assert(false);
+    }
+  }
   return 0;
 }

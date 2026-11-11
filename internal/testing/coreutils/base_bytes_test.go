@@ -9,7 +9,12 @@ import (
 func TestBaseBytes(t *testing.T) {
 	for _, utility := range []string{"base64", "base32", "basenc"} {
 		t.Run(utility, func(t *testing.T) {
-			e2eharness.RunBaseByteCases(t, utility, fernBin(t, utility), crossPrefix(), nil)
+			e2eharness.RunBaseByteCasesAgainst(t, utility, fernBin(t, utility), crossPrefix(), crossArgv(referenceBin(t, utility)), nil)
 		})
 	}
+}
+
+func TestBaseBytesReferenceCommand(t *testing.T) {
+	oracle := append([]string{"sh", "-c", `exec "$@"`, "gnu-reference"}, crossArgv(referenceBin(t, "basenc"))...)
+	e2eharness.RunBaseByteCasesAgainst(t, "basenc", fernBin(t, "basenc"), crossPrefix(), oracle, nil)
 }

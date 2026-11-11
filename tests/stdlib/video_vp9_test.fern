@@ -1,0 +1,163 @@
+import "std/video/vp9";
+import "std/video/frame";
+import "std/hex";
+import "std/test";
+import "video_vp9_vectors";
+import "video_vp9_check" as check;
+
+function fixture(name: string): Result[u8[], string] {
+  for v in video_vp9_vectors.vectors() {
+    if (v.name == name) {
+      return match (hex.decode(v.bytes)) { Ok(value) => Ok(value), Err(_) => Err("hex") };
+    }
+  }
+  return Err("fixture");
+}
+
+function reference(): test.TestOutcome {
+  for v in video_vp9_vectors.vectors() {
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("hex");
+    };
+    let Ok(header) = vp9.inspect_keyframe(bytes, frame.default_limits()) else {
+      return test.fail(v.name);
+    };
+    if (check.values(header) != v.fields) {
+      return test.fail("independent fields " + v.name);
+    }
+  }
+  return test.pass();
+}
+
+function prefix_case(bytes: [u8], fields: i64[]): boolean {
+  let extent = fields[20] as i32;
+  for cut in 0..extent + 1 {
+    match (vp9.inspect_keyframe(bytes[:cut], frame.default_limits())) {
+      Err(frame.Truncated) => {
+        if (cut >= extent) {
+          return false;
+        }
+      },
+      Ok(header) => {
+        if (cut < extent || check.values(header) != fields) {
+          return false;
+        }
+      },
+      _ => {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function prefixes(): test.TestOutcome {
+  for v in video_vp9_vectors.vectors() {
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("hex");
+    };
+    if (!prefix_case(bytes, v.fields)) {
+      return test.fail("header and declared-range prefixes " + v.name);
+    }
+  }
+  return test.pass();
+}
+
+function malformed(): test.TestOutcome {
+  let Ok(p0) = fixture("p0-420") else {
+    return test.fail("profile zero");
+  };
+  let Ok(p1) = fixture("p1-422") else {
+    return test.fail("profile one");
+  };
+  let Ok(p3) = fixture("p3-12") else {
+    return test.fail("profile three");
+  };
+  for bytes in [p0.with(0, p0[0] & 63u8), p0.with(1, 0u8), p0.with(4, p0[4] | 224u8), p1.with(4, p1[4] | 2u8), p1.with(4, p1[4] | 12u8), p3.with(0, p3[0] | 8u8)] {
+    if let Err(frame.Header) = vp9.inspect_keyframe(bytes, frame.default_limits()) {} else {
+      return test.fail("marker, sync, reserved bits, or profile chroma");
+    }
+  }
+  return test.pass();
+}
+
+function unsupported(): test.TestOutcome {
+  let Ok(bytes) = fixture("p0-420") else {
+    return test.fail("fixture");
+  };
+  for command in [bytes.with(0, bytes[0] | 8u8), bytes.with(0, bytes[0] | 4u8)] {
+    if let Err(frame.Unsupported) = vp9.inspect_keyframe(command, frame.default_limits()) {} else {
+      return test.fail("reference-dependent commands");
+    }
+  }
+  return test.pass();
+}
+
+function budget_case(bytes: [u8], fields: [i64]): boolean {
+  let coded = fields[1] * fields[2];
+  let render = fields[3] * fields[4];
+  let pixels = (if (coded > render) { coded } else { render }) as i32;
+  let exact = frame.Limits { max_pixels: pixels, max_packet_bytes: bytes.len() };
+  if let Ok(_) = vp9.inspect_keyframe(bytes, exact) {} else {
+    return false;
+  }
+  for limited in [frame.Limits { ...exact, max_pixels: pixels - 1 }, frame.Limits { ...exact, max_packet_bytes: bytes.len() - 1 }, frame.Limits { ...exact, max_packet_bytes: -1 }] {
+    if let Err(frame.Limit) = vp9.inspect_keyframe(bytes, limited) {} else {
+      return false;
+    }
+  }
+  return true;
+}
+
+function budgets(): test.TestOutcome {
+  for v in video_vp9_vectors.vectors() {
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("hex");
+    };
+    if (!budget_case(bytes, v.fields)) {
+      return test.fail("exact or exceeded packet/coded/render budget " + v.name);
+    }
+  }
+  return test.pass();
+}
+
+function overwrite(bytes: u8[], at: i32, width: i32, value: u32): u8[] {
+  for i in 0..width {
+    let bit = at + i;
+    let mask = (1u32 << (7 - bit % 8) as u32) as u8;
+    let set = (value >> (width - 1 - i) as u32 & 1u32) != 0u32;
+    bytes = bytes.with(bit / 8, if (set) { bytes[bit / 8] | mask } else { bytes[bit / 8] & (255u8 ^ mask) });
+  }
+  return bytes;
+}
+
+function alignment_and_ranges(): test.TestOutcome {
+  for v in video_vp9_vectors.vectors() {
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("hex");
+    };
+    let bad = overwrite(bytes, v.size_bit, 16, 65535u32);
+    if let Err(frame.Truncated) = vp9.inspect_keyframe(bad, frame.default_limits()) {} else {
+      return test.fail("declared compressed-header extent");
+    }
+    if ((v.size_bit + 16) % 8 != 0) {
+      let last = v.fields[18] as i32 - 1;
+      let padding = bytes.with(last, bytes[last] | 1u8);
+      if let Err(frame.Header) = vp9.inspect_keyframe(padding, frame.default_limits()) {} else {
+        return test.fail("independent zero-alignment rejection");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let r = test.new("native VP9 keyframe headers");
+  r = r.it("all metadata matches independent encoded and synthetic headers", reference);
+  r = r.it("prefix admission covers the header and declared compressed range", prefixes);
+  r = r.it("malformed markers, reserved bits, and color configurations", malformed);
+  r = r.it("inter and show-existing frames require reference state", unsupported);
+  r = r.it("packet and coded/render pixel budgets apply exactly", budgets);
+  r = r.it("zero alignment and declared compressed ranges are bounded", alignment_and_ranges);
+  return r.finish();
+}

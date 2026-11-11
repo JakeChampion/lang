@@ -298,6 +298,15 @@ The input-buffer limit excludes retained packet events and does not define an ex
 Blocking source reads must run outside the Android loop callback.
 
 IVF support does not establish VP8, VP9, or AV1 software decode support.
+`std/video/vp9.inspect_keyframe` reads coded and render dimensions, precision, color fields, and tile-header metadata from one VP9 keyframe.
+It validates the complete uncompressed syntax through zero alignment and bounds the declared compressed-header range.
+The packet budget applies before inspection. The pixel budget covers both coded and render dimensions.
+
+The reader retains no input bytes and uses fixed syntax loops within a 128-byte header window.
+It does not parse entropy-coded headers or tiles, establish complete frame boundaries, or decode pixels.
+Inter frames and show-existing commands require reference state and return `Unsupported`.
+The caller supplies a single frame without an IVF header or superframe index.
+
 AV1 temporal units can require further packet handling for a particular platform decoder.
 Android MediaExtractor supplies its supported containers through the Android adapter.
 The native MP4 indexer above supports self-contained AVC and HEVC tracks.

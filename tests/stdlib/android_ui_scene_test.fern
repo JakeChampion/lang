@@ -1,0 +1,177 @@
+// Tests of std/android/ui/scene on frames in memory. The test font has
+// 1000 units to the em, and "A" is a square of half an em.
+import "std/android";
+import "std/android/draw";
+import "std/android/text";
+import "std/android/ui/scene";
+import "std/test";
+import "std/truetype";
+import "./image_vectors";
+
+function fonts(): text.Fonts {
+  if let Some(f) = truetype.parse(image_vectors.font()) {
+    return text.Fonts { faces: [f], weights: [400] };
+  }
+  return text.Fonts { faces: [], weights: [] };
+}
+
+const WHITE: i32 = -1;
+
+function red(): i32 {
+  return draw.rgb(255, 0, 0);
+}
+
+function tapped(n: scene.Node, name: string, arg: i32): scene.Node {
+  return scene.Node { ...n, tap: scene.Action { name: name, arg: arg } };
+}
+
+function name_at(ns: scene.Node[], x: i32, y: i32): string {
+  if let Some(n) = scene.hit(ns, x, y) {
+    return n.tap.name + n.tap.arg.to_string();
+  }
+  return "none";
+}
+
+function test_hit_takes_the_top_node(): test.TestOutcome {
+  let ns = [tapped(scene.node(0, 0, 100, 100, scene.Fill(WHITE, 0)), "under", 1), scene.node(10, 10, 20, 20, scene.Fill(red(), 0)), tapped(scene.node(40, 40, 20, 20, scene.Fill(red(), 0)), "over", 2)];
+  return test.assert_eq(name_at(ns, 15, 15) + " " + name_at(ns, 45, 45) + " " + name_at(ns, 100, 5), "under1 over2 none");
+}
+
+function test_barrier_hides_the_nodes_below(): test.TestOutcome {
+  let scrim = scene.Node { ...scene.node(0, 0, 100, 100, scene.Fill(red(), 0)), barrier: true };
+  let ns = [tapped(scene.node(0, 0, 100, 100, scene.Blank), "under", 0), scrim, tapped(scene.node(40, 40, 20, 20, scene.Blank), "ok", 0)];
+  return test.assert_eq(name_at(ns, 5, 5) + " " + name_at(ns, 45, 45), "none ok0");
+}
+
+function test_clip_limits_the_hit_and_the_group(): test.TestOutcome {
+  let row = scene.Node { ...tapped(scene.node(0, 40, 100, 40, scene.Blank), "row", 0), group: "list", clip0: 50, clip1: 70 };
+  let ns = [row];
+  let got = name_at(ns, 5, 45) + " " + name_at(ns, 5, 55) + " " + name_at(ns, 5, 75) + " [" + scene.group_at(ns, 5, 45) + "] [" + scene.group_at(ns, 5, 60) + "]";
+  return test.assert_eq(got, "none row0 none [] [list]");
+}
+
+function test_access_items(): test.TestOutcome {
+  let f = fonts();
+  let button = tapped(scene.node(10, 10, 80, 30, scene.Fill(red(), 4)), "save", 0);
+  let label = scene.node(20, 15, 30, 10, scene.Label("AA", 10, 0, 0, WHITE));
+  let lone = scene.node(10, 60, 30, 10, scene.Label("VA", 10, 0, 0, WHITE));
+  let icon = scene.Node { ...tapped(scene.node(10, 80, 20, 20, scene.Blank), "close", 0), say: "Close", long: scene.Action { name: "more", arg: 0 } };
+  let items = scene.access_items([button, label, lone, icon]);
+  let got = items.len().to_string();
+  for it in items {
+    got = got + " " + it.text + ":" + it.actions.to_string() + "@" + it.x.to_string() + "," + it.y.to_string();
+  }
+  let back = "none";
+  if let Some(n) = scene.access_node([button, label, lone, icon], items[1].id) {
+    back = n.tap.name;
+  }
+  return test.assert_eq(got + " " + back, "3 AA:16@10,10 Close:48@10,80 VA:0@10,60 close");
+}
+
+function test_access_ids_are_stable_and_differ(): test.TestOutcome {
+  let a = tapped(scene.node(0, 0, 10, 10, scene.Blank), "open", 1);
+  let b = tapped(scene.node(0, 20, 10, 10, scene.Blank), "open", 2);
+  let one = scene.access_items([a, b]);
+  let two = scene.access_items([b, a]);
+  return test.assert_eq((one[0].id != one[1].id).to_string() + " " + (one[0].id == two[1].id).to_string(), "true true");
+}
+
+function count(f: draw.Frame, color: i32): i32 {
+  let n = 0;
+  for y in 0..f.height {
+    for x in 0..f.width {
+      if (f.pixel(x, y) == color) {
+        n += 1;
+      }
+    }
+  }
+  return n;
+}
+
+function test_render_fill_and_clip(): test.TestOutcome {
+  let fr = draw.offscreen(40, 40);
+  defer draw.release(fr);
+  fr.fill(0, 0, 40, 40, draw.rgb(0, 0, 0));
+  let n = scene.Node { ...scene.node(10, 10, 20, 20, scene.Fill(red(), 0)), clip0: 15, clip1: 25 };
+  let c = scene.render(fr, fonts(), text.new_cache(), [n, scene.node(0, 0, 5, 5, scene.Fill(WHITE, 0))]);
+  return test.assert_eq(count(fr, red()).to_string() + " " + count(fr, WHITE).to_string() + " " + (fr.pixel(10, 14) == red()).to_string(), "200 25 false");
+}
+
+function test_render_label(): test.TestOutcome {
+  // At 20 pixels to the em, "A" is a square of 10 pixels on the baseline,
+  // which is 16 rows below the top of the node.
+  let fr = draw.offscreen(40, 40);
+  defer draw.release(fr);
+  fr.fill(0, 0, 40, 40, draw.rgb(0, 0, 0));
+  let c = scene.render(fr, fonts(), text.new_cache(), [scene.node(5, 5, 12, 20, scene.Label("A", 20, 0, 0, WHITE))]);
+  let got = count(fr, WHITE).to_string() + " " + (fr.pixel(5, 11) == WHITE).to_string() + " " + (fr.pixel(14, 20) == WHITE).to_string() + " " + (fr.pixel(15, 20) == WHITE).to_string() + " " + (fr.pixel(5, 21) == WHITE).to_string();
+  return test.assert_eq(got, "100 true true false false");
+}
+
+function test_outline_is_a_ring(): test.TestOutcome {
+  let fr = draw.offscreen(40, 40);
+  defer draw.release(fr);
+  fr.fill(0, 0, 40, 40, draw.rgb(0, 0, 0));
+  let c = scene.render(fr, fonts(), text.new_cache(), [scene.node(4, 4, 32, 32, scene.Outline(WHITE, 0, 2))]);
+  // A square ring of 32 by 32 with a line of 2 pixels has 240 pixels.
+  let got = count(fr, WHITE).to_string() + " " + (fr.pixel(20, 20) == WHITE).to_string() + " " + (fr.pixel(5, 20) == WHITE).to_string();
+  return test.assert_eq(got, "240 false true");
+}
+
+function test_round_outline_leaves_the_corner(): test.TestOutcome {
+  let fr = draw.offscreen(40, 40);
+  defer draw.release(fr);
+  fr.fill(0, 0, 40, 40, draw.rgb(0, 0, 0));
+  let c = scene.render(fr, fonts(), text.new_cache(), [scene.node(4, 4, 32, 32, scene.Outline(WHITE, 8, 2))]);
+  let got = (fr.pixel(4, 4) == WHITE).to_string() + " " + (fr.pixel(20, 4) == WHITE).to_string() + " " + (fr.pixel(4, 20) == WHITE).to_string() + " " + (fr.pixel(20, 20) == WHITE).to_string();
+  return test.assert_eq(got, "false true true false");
+}
+
+function test_raster_gives_a_transparent_image(): test.TestOutcome {
+  let fr = draw.offscreen(24, 24);
+  defer draw.release(fr);
+  let n = scene.node(100, 200, 16, 16, scene.Fill(red(), 8));
+  let c = scene.raster(fr, fonts(), text.new_cache(), n, 4);
+  let got = fr.pixel(0, 0).to_string() + " " + fr.pixel(4, 4).to_string() + " " + (fr.pixel(12, 12) == red()).to_string();
+  return test.assert_eq(got, "0 0 true");
+}
+
+function test_custom_paint_gets_its_box(): test.TestOutcome {
+  let fr = draw.offscreen(40, 40);
+  defer draw.release(fr);
+  fr.fill(0, 0, 40, 40, draw.rgb(0, 0, 0));
+  let n = scene.node(8, 6, 10, 12, scene.Custom("dot", (f: draw.Frame, x: i32, y: i32, w: i32, h: i32): void => f.fill(x + 1, y + 1, w - 2, h - 2, WHITE)));
+  let c = scene.render(fr, fonts(), text.new_cache(), [n]);
+  return test.assert_eq(count(fr, WHITE).to_string() + " " + scene.paint_key(n), "80 custom|dot|10x12");
+}
+
+function test_picture_covers_its_box(): test.TestOutcome {
+  let px: u8[] = [];
+  for i in 0..4 * 8 {
+    px = px.append(255u8).append(0u8).append(0u8).append(255u8);
+  }
+  let img = draw.Image { width: 4, height: 8, pixels: px };
+  let fr = draw.offscreen(40, 40);
+  defer draw.release(fr);
+  fr.fill(0, 0, 40, 40, draw.rgb(0, 0, 0));
+  let c = scene.render(fr, fonts(), text.new_cache(), [scene.node(10, 10, 16, 16, scene.Picture("p", img, 8))]);
+  let got = (fr.pixel(18, 18) == red()).to_string() + " " + (fr.pixel(10, 10) == red()).to_string() + " " + (count(fr, red()) > 150 && count(fr, red()) < 256).to_string();
+  return test.assert_eq(got, "true false true");
+}
+
+function main(): i32 {
+  let r = test.new("std/android/ui/scene");
+  r = r.it("hit takes the topmost node that acts", test_hit_takes_the_top_node);
+  r = r.it("a barrier hides the nodes below it", test_barrier_hides_the_nodes_below);
+  r = r.it("the clip rows limit the hit and the group", test_clip_limits_the_hit_and_the_group);
+  r = r.it("each node that acts and each lone text is an item", test_access_items);
+  r = r.it("the id of an item follows its action", test_access_ids_are_stable_and_differ);
+  r = r.it("render draws a fill between its clip rows", test_render_fill_and_clip);
+  r = r.it("render draws a label on its baseline", test_render_label);
+  r = r.it("an outline is a ring", test_outline_is_a_ring);
+  r = r.it("a round outline leaves the corner", test_round_outline_leaves_the_corner);
+  r = r.it("raster gives a transparent image", test_raster_gives_a_transparent_image);
+  r = r.it("a custom paint draws in its box", test_custom_paint_gets_its_box);
+  r = r.it("a picture covers its box", test_picture_covers_its_box);
+  return r.finish();
+}

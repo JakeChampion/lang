@@ -5923,6 +5923,7 @@ type checker struct {
 	current           *ast.FuncDecl
 	loopDepth         int
 	unsafeDepth       int
+	addressArgs       map[*ast.Call]bool
 	unsafeFuncs       map[string]string
 	// builtinFuncs holds the builtin functions, which a program may call but not name as a value.
 	builtinFuncs map[string]bool
@@ -5948,6 +5949,7 @@ type checker struct {
 	consumingTypes      map[string]bool
 	callOwnFlags        map[*ast.Call][]bool
 	callOwnResults      map[*ast.Call]bool
+	callValueCallees    map[*ast.Call]bool
 	callCopyTypes       map[string]bool
 	resultCopyParts     map[ast.Expr]bool
 	resultCallbackParts map[ast.Expr]bool
@@ -9504,10 +9506,37 @@ var StdlibOnlyBuiltins = map[string]string{
 	"random_bytes": "rand.bytes from \"std/rand\"",
 }
 
+func (c *checker) bytesDataCall(n *ast.Call, s *scope) bool {
+	id, ok := n.Callee.(*ast.Ident)
+	if !ok || id.Name != "__bytes_data" {
+		return false
+	}
+	_, local := c.calleeBinding(id, s)
+	return !local
+}
+
+// The address from __bytes_data is valid for the call that takes it as an
+// argument, so that place is the only one it has. compiler/checker.fern's
+// unsafe_argument holds the same rule.
+func (c *checker) markAddressArgs(n *ast.Call, s *scope) {
+	for _, arg := range n.Args {
+		if inner, ok := arg.(*ast.Call); ok && c.bytesDataCall(inner, s) {
+			if c.addressArgs == nil {
+				c.addressArgs = map[*ast.Call]bool{}
+			}
+			c.addressArgs[inner] = true
+		}
+	}
+}
+
 // The unsafe boundary: an unsafe declaration states caller obligations, and only an
 // unsafe block accepts them. docs/SAFETY-CONTRACT.md has the contract.
 func (c *checker) checkUnsafeCallee(n *ast.Call, s *scope) {
 	if c.unsafeDepth > 0 {
+		// Outside an unsafe block the call has its own diagnostic.
+		if c.bytesDataCall(n, s) && !c.addressArgs[n] {
+			c.errfCode(n.P, "E095", "the address from %q is kept after its call; write the call as an argument of the call that uses the address", "__bytes_data")
+		}
 		return
 	}
 	id, ok := n.Callee.(*ast.Ident)
@@ -10773,7 +10802,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		case *ast.BlockExpr:
 			return x.Unsafe && len(x.Stmts) == 0 && x.Tail != nil && isOwnedExpr(x.Tail)
 		case *ast.Ident:
-			if _, vrOk, _ := c.resolveVariant(x.Name, x.EnumName); vrOk {
+			if _, isVariant := c.info.EnumConstructions[x]; isVariant {
 				return true
 			}
 			return owned[x.Name] || selfMoveArgs[e] || !borrowedParam[x.Name] && atLastUse(e) && (!looseUse[e] || c.handleFreeArgs[e]) || c.scalarArgs[e]
@@ -10797,11 +10826,14 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			if freshAssociatedResult(x) {
 				return true
 			}
+			if c.callValueCallees[x] {
+				return false
+			}
 			if id, ok := x.Callee.(*ast.Ident); ok {
 				if c.arrayUpdateOwned(x, isOwnedExpr, isOwnedExpr) {
 					return true
 				}
-				if _, vrOk, _ := c.resolveVariant(id.Name, id.EnumName); vrOk {
+				if _, isVariant := c.info.EnumConstructions[x]; isVariant {
 					return true
 				}
 				if id.Name == "share_unchecked" {
@@ -14866,6 +14898,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		}
 		return nil
 	case *ast.Call:
+		c.markAddressArgs(n, s)
 		c.laneIndexArg(n)
 		c.sysregNameArg(n)
 		delete(c.info.IntrinsicCalls, n)
@@ -14985,6 +15018,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				}
 				c.cellElemError(n.Args[0].Pos(), at)
 				n.TypeArgs = []ast.Type{at}
+				c.recordOwnedResult(n, c.copyableCallResult(at))
 				return ast.StructType{Name: "Cell", Args: []ast.Type{at}}
 			}
 		}
@@ -15466,6 +15500,14 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			} else {
 				calleeOwnFlags = c.info.OwnFuncs[cid.Name]
 			}
+		}
+		if calleeIsValue {
+			if c.callValueCallees == nil {
+				c.callValueCallees = map[*ast.Call]bool{}
+			}
+			c.callValueCallees[n] = true
+		} else {
+			delete(c.callValueCallees, n)
 		}
 		if len(calleeOwnFlags) == 0 && ft != nil {
 			calleeOwnFlags = ft.ParamOwn

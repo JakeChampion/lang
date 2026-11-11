@@ -74,3 +74,10 @@ func TestAndroidGLCanvas(t *testing.T) {
 func TestAndroidPaperGPU(t *testing.T) {
 	runGLCheck(t, "examples/android/paper/gpu_test.fern", "1111")
 }
+
+// The painter of std/android/ui draws a page of elements, the page with
+// its list scrolled, the page in the dark theme, and a page at half alpha
+// over another, as the CPU draws them.
+func TestAndroidUIPainter(t *testing.T) {
+	runGLCheck(t, "tests/android/ui/check.fern", "1111")
+}
