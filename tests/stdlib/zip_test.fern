@@ -1,0 +1,148 @@
+// Tests of std/zip with archives that the zipfile module of Python wrote.
+import "std/option";
+import "std/string";
+import "std/test";
+import "std/utf8";
+import "std/zip";
+import "./zip_vectors";
+
+function archive(): zip.Archive {
+  let Ok(a) = zip.parse(zip_vectors.mixed()) else {
+    exit(90);
+  };
+  return a;
+}
+
+function test_entries(): test.TestOutcome {
+  let got: string[] = [];
+  for e in archive().entries {
+    got = got.append(e.name + " " + e.method.to_string() + " " + e.size.to_string() + " " + e.is_dir().to_string());
+  }
+  return test.assert_eq(got.join("; "), "dir/ 0 0 true; dir/stored.txt 0 13 false; dir/packed.txt 8 570 false; empty 0 0 false; café.txt 8 11 false");
+}
+
+function text_of(name: string): string {
+  let bytes = zip_vectors.mixed();
+  let Some(e) = archive().find(name) else {
+    return "no entry";
+  };
+  return match (zip.read(bytes, e)) {
+    Ok(data) => utf8.from_bytes_lossy(data),
+    Err(err) => err.message(),
+  };
+}
+
+function test_read_stored(): test.TestOutcome {
+  return test.assert_eq(text_of("dir/stored.txt") + text_of("empty") + text_of("café.txt") + text_of("absent"), "stored bytes\nutf-8 name\nno entry");
+}
+
+function test_read_packed(): test.TestOutcome {
+  let want = "";
+  for i in 0..30 {
+    want += "line " + (i % 7).to_string() + " of the file\n";
+  }
+  let Some(e) = archive().find("dir/packed.txt") else {
+    return test.fail("no entry");
+  };
+  if (e.packed >= e.size) {
+    return test.fail("the file is not compressed");
+  }
+  return test.assert_eq(text_of("dir/packed.txt"), want);
+}
+
+function test_empty_archive(): test.TestOutcome {
+  let Ok(a) = zip.parse(zip_vectors.none()) else {
+    return test.fail("the archive does not parse");
+  };
+  return test.assert_eq(a.entries.len(), 0);
+}
+
+function refusal(bytes: [u8]): string {
+  return match (zip.parse(bytes)) {
+    Ok(a) => "ok " + a.entries.len().to_string(),
+    Err(e) => e.reason,
+  };
+}
+
+// The offset of the first signature "PK" `c` `d` in `b`.
+function signature_at(b: [u8], c: i32, d: i32): i32 {
+  for i in 0..b.len() - 3 {
+    if (b[i] == 80 as u8 && b[i + 1] == 75 as u8 && b[i + 2] as i32 == c && b[i + 3] as i32 == d) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function test_parse_refusals(): test.TestOutcome {
+  let good = zip_vectors.mixed();
+  let directory = signature_at(good, 1, 2);
+  // The last byte is in the comment, so the length of the comment is then
+  // wrong for each record that the search finds.
+  let got = refusal(good[0:0]) + "; " + refusal(good[0:good.len() - 1]) + "; " + refusal(good.with(directory, 0 as u8)) + "; " + refusal(good.with(directory + 46, 255 as u8)) + "; " + refusal(good.with(directory + 23, 255 as u8));
+  return test.assert_eq(got, "the archive has no central directory; the archive has no central directory; the record of the central directory has a bad signature; the name is not UTF-8; the value is 2 GiB or more, or the archive is ZIP64");
+}
+
+function read_refusal(bytes: [u8], name: string): string {
+  let Some(e) = archive().find(name) else {
+    return "no entry";
+  };
+  return match (zip.read(bytes, e)) {
+    Ok(data) => "ok " + data.len().to_string(),
+    Err(err) => err.reason,
+  };
+}
+
+function test_read_refusals(): test.TestOutcome {
+  let good = zip_vectors.mixed();
+  let Some(stored) = archive().find("dir/stored.txt") else {
+    return test.fail("no entry");
+  };
+  let Some(packed) = archive().find("dir/packed.txt") else {
+    return test.fail("no entry");
+  };
+  // The bytes of a file start after the 30 bytes of the local header and
+  // the name.
+  let stored_data = stored.header + 30 + stored.name.len();
+  let packed_data = packed.header + 30 + packed.name.len();
+  let got: string[] = [];
+  got = got.append(read_refusal(good.with(stored_data, 83 as u8), "dir/stored.txt"));
+  got = got.append(read_refusal(good.with(stored.header, 0 as u8), "dir/stored.txt"));
+  got = got.append(read_refusal(good.with(packed_data + 5, 255 as u8), "dir/packed.txt"));
+  let method = zip.Entry { ...stored, method: 12 };
+  let encrypted = zip.Entry { ...stored, flags: 1 };
+  let long = zip.Entry { ...packed, size: 571 };
+  let short = zip.Entry { ...packed, size: 569 };
+  let past = zip.Entry { ...packed, header: good.len() - 10 };
+  for e in [method, encrypted, long, short, past] {
+    got = got.append(match (zip.read(good, e)) {
+      Ok(data) => "ok " + data.len().to_string(),
+      Err(err) => err.reason,
+    });
+  }
+  return test.assert_eq(got.join("; "), "the checksum does not match the file; the local header has a bad signature; malformed compressed data: a distance before the start of the output; the compression method is not stored or DEFLATE; the file is encrypted; the size is not the size of the central directory; the decompressed data is past its limit; the record ends past the bytes");
+}
+
+// No prefix of an archive makes parse read past its bytes.
+function test_each_prefix(): test.TestOutcome {
+  let good = zip_vectors.mixed();
+  let parsed = 0;
+  for n in 0..good.len() {
+    if let Ok(a) = zip.parse(good[0:n]) {
+      parsed += 1;
+    }
+  }
+  return test.assert_eq(parsed, 0);
+}
+
+function main(): i32 {
+  let r = test.new("std/zip");
+  r = r.it("parse gives each entry of the central directory", test_entries);
+  r = r.it("read gives a stored file", test_read_stored);
+  r = r.it("read decompresses a file", test_read_packed);
+  r = r.it("parse reads an archive with no entry", test_empty_archive);
+  r = r.it("parse refuses a damaged archive", test_parse_refusals);
+  r = r.it("read refuses a damaged file", test_read_refusals);
+  r = r.it("parse is safe on each prefix of an archive", test_each_prefix);
+  return r.finish();
+}
