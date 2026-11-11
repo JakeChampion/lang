@@ -278,6 +278,10 @@ func TestSelfHostCheckedOwnedResultsRun(t *testing.T) {
 	ownedResultRuntimeCase(t, "checked_owned_results")
 }
 
+func TestSelfHostCheckedOwnedNestedResultsRun(t *testing.T) {
+	ownedResultRuntimeCase(t, "checked_owned_nested_results")
+}
+
 func TestSelfHostCopiedCallResultsRun(t *testing.T) {
 	ownedResultRuntimeCase(t, "copied_call_results")
 }

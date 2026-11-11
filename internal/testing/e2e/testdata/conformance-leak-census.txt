@@ -238,6 +238,8 @@ char_cast_receiver                                   0
 char_eq_ord_hash                                     0
 char_ordering                                        0
 checked_int_conversion                               0
+# 2026-11-11: checked_owned_nested_results has zero unpaired allocations under native RC trace.
+checked_owned_nested_results                         0
 checked_owned_results                                0
 copied_call_results                                  0
 closing_a_socket_two_reactors_watch                  0

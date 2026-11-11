@@ -153,5 +153,105 @@
     "name": "deferred data copy",
     "source": "struct H { fd:i32 } function (own h:H) close():void {} struct S { h:H, n:i32 } function consume(own s:S):void {s.h.close();}\nfunction f(own h:H,xs:i32[]):own i32[]{defer h.close();return xs;} function main():i32{return 0;}",
     "want": ""
+  },
+  {
+    "name": "checked nested local field",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own h:H):void{let p=pair(h);p.0.h.close();} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "checked nested scalar copy",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own h:H):void{let p=pair(h);let n=p.0.h.fd;p.0.h.close();} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "checked nested owned parameter",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own p:(Wrap,i32)):void{let n=p.0.h.fd;p.0.h.close();} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "checked nested siblings",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function both(own a:H,own b:H):own(Wrap,Wrap){return(Wrap{h:a},Wrap{h:b});} function f(own a:H,own b:H):void{let p=both(a,b);let n=p.0.h.fd;let m=p.1.h.fd;p.0.h.close();p.1.h.close();} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "checked nested field alias",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own h:H):void{let p=pair(h);let alias=p.0.h;p.0.h.close();alias.close();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "checked nested holder alias",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own h:H):void{let p=pair(h);let alias=p;p.0.h.close();alias.0.h.close();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "checked nested duplicate close",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own h:H):void{let p=pair(h);p.0.h.close();p.0.h.close();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "checked nested later read",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own h:H):i32{let p=pair(h);p.0.h.close();return p.0.h.fd;} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "checked nested deferred close",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own h:H):void{let p=pair(h);defer p.0.h.close();p.0.h.close();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "checked nested resource borrow",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function read(h:H):void{} function f(own h:H):void{let p=pair(h);read(p.0.h);p.0.h.close();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "checked nested reassigned holder",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own a:H,own b:H):void{let p=pair(a);p=pair(b);p.0.h.close();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "checked nested borrowed result",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function lend(w:Wrap):(Wrap,i32){return(w,0);} function f(w:Wrap):void{let p=lend(w);p.0.h.close();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "checked nested callback parameter",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own h:H,make:(own H)=>own(Wrap,i32)):void{let p=make(h);let n=p.0.h.fd;p.0.h.close();} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "checked nested generic callback",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f[T](own h:H,make:(own H)=>own(Wrap,T)):void{let p=make(h);let n=p.0.h.fd;p.0.h.close();} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "checked nested callback shadows function",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own h:H,pair:(H)=>(Wrap,i32)):void{let p=pair(h);p.0.h.close();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "checked nested local shadows function",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own h:H):void{let pair=(x:H):(Wrap,i32)=>(Wrap{h:x},0);let p=pair(h);p.0.h.close();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "checked nested callback alias",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own h:H,make:(own H)=>own(Wrap,i32)):void{let alias=make;let p=alias(h);let n=p.0.h.fd;p.0.h.close();} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "checked nested function alias",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own h:H):void{let alias=pair;let p=alias(h);let n=p.0.h.fd;p.0.h.close();} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "checked nested local lambda",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own h:H):void{let make=(own x:H):own(Wrap,i32)=>(Wrap{h:x},1);let p=make(h);let n=p.0.h.fd;p.0.h.close();} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "checked nested weakened function",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Wrap{h:H} function pair(own h:H):own(Wrap,i32){return(Wrap{h:h},1);} function f(own h:H):void{let alias:(own H)=>(Wrap,i32)=pair;let p=alias(h);p.0.h.close();} function main():i32{return 0;}",
+    "want": "E051"
   }
 ]

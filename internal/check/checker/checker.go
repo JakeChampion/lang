@@ -60,6 +60,8 @@ type Info struct {
 	// CallBorrows reports a plain call whose result can borrow from one of
 	// its arguments at this site.
 	CallBorrows func(*ast.Call) bool
+	// CallOwnedResult reports the checked type or immutable-data copy contract.
+	CallOwnedResult func(*ast.Call) bool
 	// CallSignatureBorrows reports a signature with a borrowed handle-bearing parameter.
 	CallSignatureBorrows func(*ast.Call) bool
 	TypeHoldsNoHandle    func(ast.Type) bool
@@ -3079,6 +3081,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.checkValueTypes(prog)
 	c.computeResultBorrows(prog)
 	c.info.CallBorrows = c.callSiteBorrows
+	c.info.CallOwnedResult = func(call *ast.Call) bool { return c.callOwnResults[call] }
 	c.info.TypeHoldsNoHandle = c.holdsNoHandle
 	c.info.CallSignatureBorrows = func(call *ast.Call) bool {
 		if id, ok := call.Callee.(*ast.Ident); ok {
@@ -14424,6 +14427,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 	if call, ok := e.(*ast.Call); ok && c.copyableCallResult(t) {
 		c.recordOwnedResult(call, true)
 	}
+	if definitelyScalar(t) {
+		if c.scalarArgs == nil {
+			c.scalarArgs = map[ast.Expr]bool{}
+		}
+		c.scalarArgs[e] = true
+	}
 	if c.current != nil && c.current.ReturnOwn {
 		// Callbacks can lend captured resources, even when their representation
 		// holds no resource handle. Only immutable data has a copy contract.
@@ -14440,12 +14449,6 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				c.resultCallbackParts = map[ast.Expr]bool{}
 			}
 			c.resultCallbackParts[e] = true
-		}
-		if definitelyScalar(t) {
-			if c.scalarArgs == nil {
-				c.scalarArgs = map[ast.Expr]bool{}
-			}
-			c.scalarArgs[e] = true
 		}
 		if st, ok := t.(ast.StructType); ok && c.valueType(st.Name) && c.valueData(t, map[string]bool{}) {
 			if c.valueArgs == nil {

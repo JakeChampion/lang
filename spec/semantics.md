@@ -226,7 +226,7 @@ of them.
 | `RH-38` | `docs/security/HANDLE-AUDIT.md` | A local holder and a global callee with the same name keep separate identities in the ownership analysis | `field_holder_shadows_callee` |
 | `RH-40` | `docs/security/HANDLE-AUDIT.md` | An empty None is fresh, so a match that consumes an owned source can retain its owned result as a field of an owned literal | `owned_match_results_rebuild_literal` |
 
-| `OR-01` | `docs/OWNED-RESULTS.md` | A checked owned result remains available through a generic callback and a function-valued field | `checked_owned_results` |
+| `OR-01` | `docs/OWNED-RESULTS.md` | A checked owned result remains available through generic callbacks, function-valued fields, and nested fields of named locals. `checked_owned_nested_results` covers scalar copies before a field transfer | `checked_owned_results` |
 | `OR-02` | `docs/OWNED-RESULTS.md` | An owned generic result cannot transfer a borrowed parameter without a copy contract (`E051`) | `diag_e051_checked_result_borrows` |
 | `OR-03` | `docs/OWNED-RESULTS.md` | An ordinary-result function cannot satisfy an owned-result function type (`E003`) | `diag_e003_checked_result_strengthening` |
 | `OR-04` | `docs/OWNED-RESULTS.md` | Ordinary call results containing only immutable copyable data can transfer their own reference while COW preserves borrowed sources | `copied_call_results` |

@@ -1,0 +1,32 @@
+// spec: OR-01
+
+struct Handle { n: i32, closed: Cell[i32] }
+
+function (own h: Handle) close(): i32 {
+  h.closed.set(h.closed.get() + 1);
+  return h.n;
+}
+
+struct Wrap { h: Handle }
+
+function make_handle(n: i32, own closed: Cell[i32]): own Handle {
+  return Handle { n: n, closed: closed };
+}
+
+function make_pair(own left: Handle, own right: Handle): own (Wrap, Wrap) {
+  return (Wrap { h: left }, Wrap { h: right });
+}
+
+function main(): i32 {
+  let closed = cell_new(0);
+  let pair = make_pair(make_handle(7, unsafe { share_unchecked(closed) }), make_handle(9, unsafe { share_unchecked(closed) }));
+  let left = pair.0.h.n;
+  let right = pair.1.h.n;
+  assert(pair.0.h.close() == left);
+  assert(pair.1.h.close() == right);
+  assert(closed.get() == 2);
+  print(left);
+  print(right);
+  print(closed.get());
+  return 0;
+}
