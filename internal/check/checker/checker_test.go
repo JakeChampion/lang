@@ -6815,6 +6815,28 @@ function main(): i32 { let v = has(I64Iter { cur: 0 }, 2); let w: i64 = v; if (w
 	}
 }
 
+func TestUnimplementedBoundBeatsUninferredParam(t *testing.T) {
+	const feed = "trait Feed[T] { function head(self: Self): T; }\nstruct Wide { v: f64 }\n"
+	cases := []struct{ name, src, want string }{
+		{"under a cast", feed + `function first[T, I: Feed[T]](it: I): T { return it.head(); }
+function main(): i32 { return first(Wide { v: 6.5 }) as i32; }`, "E021"},
+		{"untyped local", feed + `function first[T, I: Feed[T]](it: I): T { return it.head(); }
+function main(): i32 { let d = first(Wide { v: 6.5 }); return 0; }`, "E021"},
+		{"statement", feed + `function first[T, I: Feed[T]](it: I): T { return it.head(); }
+function main(): i32 { first(Wide { v: 6.5 }); return 0; }`, "E021"},
+		{"bound holds", `trait Mark { function id(self: Self): i32; }
+struct Wide { v: f64 }
+impl Mark for Wide { function id(self: Self): i32 { return 1; } }
+function make[T, I: Mark](it: I): T[] { return []; }
+function main(): i32 { make(Wide { v: 6.5 }); return 0; }`, "E040"},
+	}
+	for _, tc := range cases {
+		if got := errCodes(checkSource(t, tc.src)); got != tc.want {
+			t.Errorf("%s: codes %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestCheckPrintDisplayGeneric(t *testing.T) {
 	src := `trait Display { function to_string(self: Self): string; }
 function show[T: Display](v: T): void { print(v); }

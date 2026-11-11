@@ -404,7 +404,7 @@ An unsupported operation, unknown layout or unresolved element function
 therefore keeps the same reason with the pass enabled or disabled.
 
 `fern -array-report FILE.fern` prints the same report on stdout: it compiles
-the file for the target (`-target`, default `arm64-linux`) through the typed
+the file for the target (`-target`, default the host) through the typed
 lowering and writes no output, so it takes neither `-o` nor `-run`.
 
 Every verdict comes from the planner that performs the rewrite, not from a
