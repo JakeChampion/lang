@@ -633,3 +633,185 @@ pub function (c: SystemClass) out(e: usize): Result[jni.Object, jni.JavaError] {
   jni.check(e)?;
   return Ok(jni.Object { ref: got });
 }
+
+// The struct of IDs of each class of this module.
+pub struct Classes { activity: ActivityClass, context: ContextClass, package_manager: PackageManagerClass, intent: IntentClass, component_name: ComponentNameClass, point: PointClass, system_clock: SystemClockClass, date_format: DateFormatClass, list: ListClass, integer: IntegerClass, math: MathClass, float: FloatClass, system: SystemClass }
+
+// Makes the struct of IDs of each class. Call it one time, and call
+// `release` when the app does not call Java again.
+pub function classes(e: usize): Result[Classes, jni.JavaError] {
+  let activity = match (activity_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      return Err(err);
+    },
+  };
+  let context = match (context_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      return Err(err);
+    },
+  };
+  let package_manager = match (package_manager_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      context.release(e);
+      return Err(err);
+    },
+  };
+  let intent = match (intent_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      context.release(e);
+      package_manager.release(e);
+      return Err(err);
+    },
+  };
+  let component_name = match (component_name_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      context.release(e);
+      package_manager.release(e);
+      intent.release(e);
+      return Err(err);
+    },
+  };
+  let point = match (point_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      context.release(e);
+      package_manager.release(e);
+      intent.release(e);
+      component_name.release(e);
+      return Err(err);
+    },
+  };
+  let system_clock = match (system_clock_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      context.release(e);
+      package_manager.release(e);
+      intent.release(e);
+      component_name.release(e);
+      point.release(e);
+      return Err(err);
+    },
+  };
+  let date_format = match (date_format_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      context.release(e);
+      package_manager.release(e);
+      intent.release(e);
+      component_name.release(e);
+      point.release(e);
+      system_clock.release(e);
+      return Err(err);
+    },
+  };
+  let list = match (list_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      context.release(e);
+      package_manager.release(e);
+      intent.release(e);
+      component_name.release(e);
+      point.release(e);
+      system_clock.release(e);
+      date_format.release(e);
+      return Err(err);
+    },
+  };
+  let integer = match (integer_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      context.release(e);
+      package_manager.release(e);
+      intent.release(e);
+      component_name.release(e);
+      point.release(e);
+      system_clock.release(e);
+      date_format.release(e);
+      list.release(e);
+      return Err(err);
+    },
+  };
+  let math = match (math_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      context.release(e);
+      package_manager.release(e);
+      intent.release(e);
+      component_name.release(e);
+      point.release(e);
+      system_clock.release(e);
+      date_format.release(e);
+      list.release(e);
+      integer.release(e);
+      return Err(err);
+    },
+  };
+  let float = match (float_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      context.release(e);
+      package_manager.release(e);
+      intent.release(e);
+      component_name.release(e);
+      point.release(e);
+      system_clock.release(e);
+      date_format.release(e);
+      list.release(e);
+      integer.release(e);
+      math.release(e);
+      return Err(err);
+    },
+  };
+  let system = match (system_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      context.release(e);
+      package_manager.release(e);
+      intent.release(e);
+      component_name.release(e);
+      point.release(e);
+      system_clock.release(e);
+      date_format.release(e);
+      list.release(e);
+      integer.release(e);
+      math.release(e);
+      float.release(e);
+      return Err(err);
+    },
+  };
+  return Ok(Classes { activity: activity, context: context, package_manager: package_manager, intent: intent, component_name: component_name, point: point, system_clock: system_clock, date_format: date_format, list: list, integer: integer, math: math, float: float, system: system });
+}
+
+// Deletes the reference to each class. Do not use `c` after this call.
+pub function (c: Classes) release(e: usize): void {
+  c.activity.release(e);
+  c.context.release(e);
+  c.package_manager.release(e);
+  c.intent.release(e);
+  c.component_name.release(e);
+  c.point.release(e);
+  c.system_clock.release(e);
+  c.date_format.release(e);
+  c.list.release(e);
+  c.integer.release(e);
+  c.math.release(e);
+  c.float.release(e);
+  c.system.release(e);
+}

@@ -10,8 +10,9 @@
 // Each line of SPEC is the name of a class, with "/" or "." between its
 // parts, and then the members to bind. A line with no member binds each
 // public member of the class. A member is a name, or a name and its
-// descriptor. A constructor has the name <init>. A line that starts with
-// "#" is a comment.
+// descriptor. A constructor has the name <init>. The member "-" binds the
+// struct of the class with no member. A line that starts with "#" is a
+// comment.
 //
 //   android.content.Intent <init>(Ljava/lang/String;)V addCategory
 //   android.content.Context

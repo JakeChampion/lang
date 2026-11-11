@@ -327,3 +327,40 @@ pub function (c: SampleClass) total(e: usize, a0: jni.Object, a1: f64, a2: jni.O
   jni.check(e)?;
   return Ok(got as i64);
 }
+
+// The struct of IDs of each class of this module.
+pub struct Classes { point: PointClass, shape: ShapeClass, sample: SampleClass }
+
+// Makes the struct of IDs of each class. Call it one time, and call
+// `release` when the app does not call Java again.
+pub function classes(e: usize): Result[Classes, jni.JavaError] {
+  let point = match (point_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      return Err(err);
+    },
+  };
+  let shape = match (shape_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      point.release(e);
+      return Err(err);
+    },
+  };
+  let sample = match (sample_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      point.release(e);
+      shape.release(e);
+      return Err(err);
+    },
+  };
+  return Ok(Classes { point: point, shape: shape, sample: sample });
+}
+
+// Deletes the reference to each class. Do not use `c` after this call.
+pub function (c: Classes) release(e: usize): void {
+  c.point.release(e);
+  c.shape.release(e);
+  c.sample.release(e);
+}
