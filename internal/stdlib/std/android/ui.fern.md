@@ -18,23 +18,25 @@ Each element has a width and a height: `Hug` takes the size of what the element 
 
 `on_tap` gives an element the name of an action, and a number when one name is not enough: the row of a list, for example. A tap on the element comes to `update` as `Tap` with that name and number. `on_long` does the same for a long press.
 
+`field` is a text field. A tap gives it the focus and shows the keyboard of the system. The program keeps the text: each change comes to `update` as `Edit` with the name of the field and the new text, and `view` gives the field the text that it shows.
+
 `scroll` makes a column a list that scrolls, with the fling of an Android list. `list` is a list that makes only the rows that show, so a list of many rows costs as much as a short one. Each list has a name, which keeps its position from frame to frame.
 
 A color is a pixel word of `std/android/draw`, or a role: `PRIMARY`, `ON_PRIMARY`, `INK`, `MUTED`, `SURFACE`, `OUTLINE`, `BACKGROUND` and `TRACK`. A role takes its color from the `Theme`, which is light or dark as the system is. `button`, `outlined_button`, `card`, `toggle`, `progress` and `divider` are elements in the look of Material 3.
 
 ### Messages
 
-`Tap` and `LongPress` have the name and the number of the action. `Back` comes for the back key when the program handles it. `Tick` comes when the time of `wait` goes by, and `Frame` comes for each frame while `animating` is true, with the time of the frame. `System` has each event of `std/android` that this module does not use itself.
+`Tap` and `LongPress` have the name and the number of the action. `Edit` has the name of a field and its new text, and `Submit` has the name of the field when the action key of the keyboard goes down. `Back` comes for the back key when the program handles it. `Tick` comes when the time of `wait` goes by, and `Frame` comes for each frame while `animating` is true, with the time of the frame. `System` has each event of `std/android` that this module does not use itself.
 
 ### What the module does
 
-`layout` gives each element its box and makes the nodes of `std/android/ui/scene`. The shell draws the nodes with `std/android/ui/painter`, and gives the items of the nodes to the accessibility service. It keeps the content out from under the status bar and the navigation bar. A touch on an element with an action shows it pressed. A drag on a list scrolls it, and a fast drag flings it.
+`layout` gives each element its box and makes the nodes of `std/android/ui/scene`. The shell draws the nodes with `std/android/ui/painter`, and gives the items of the nodes to the accessibility service. It keeps the content out from under the status bar and the navigation bar. A touch on an element with an action shows it pressed. A drag on a list scrolls it, and a fast drag flings it. The field in focus loses the focus when a finger goes down on something else, when the back key goes down, and after `Submit`.
 
 ## Contracts
 
 `view` must be pure: it gives the same tree for the same state and screen. The shell calls it for each frame that it draws.
 
-The name of an action is not "". A list has a name that no other list of the same screen has.
+The name of an action is not "", and it does not start with `FIELD_ACTION`. A list has a name that no other list of the same screen has, and so has a field.
 
 `step` takes the events of `android.run` on the loop thread. Each function of a `Device` runs on that thread.
 
@@ -66,7 +68,7 @@ function update(own m: Model, msg: ui.Msg): Model {
 
 function main(): i32 {
   let screen = ui.Screen { w: 400, h: 800, d: 2.0, dark: false, theme: ui.theme(false), left: 0, top: 0, right: 0, bottom: 0 };
-  let lay = ui.layout(view(Model { count: 0 }, screen), text.Fonts { faces: [], weights: [] }, screen, map_new(4));
+  let lay = ui.layout(view(Model { count: 0 }, screen), text.Fonts { faces: [], weights: [] }, screen, map_new(4), "");
   let next = update(Model { count: 0 }, ui.Tap("add", 0));
   if (lay.nodes.len() == 3 && next.count == 1) {
     return 0;
@@ -84,6 +86,8 @@ function main(): i32 {
 <<theme>>
 
 <<elements>>
+
+<<text fields>>
 
 <<element methods>>
 
@@ -216,6 +220,8 @@ pub const CANVAS: i32 = 5;
 
 pub const LIST: i32 = 6;
 
+pub const FIELD: i32 = 7;
+
 pub const START: i32 = 0;
 
 pub const CENTER: i32 = 1;
@@ -264,10 +270,14 @@ pub struct El {
   count: i32,
   row: f64,
   build: Option[(i32) => El],
+  // A text field: its name and the text that it shows while it is empty.
+  // `content` is its text.
+  field: string,
+  hint: string,
 }
 
 function element(kind: i32, kids: El[]): El {
-  return El { kind: kind, kids: kids, w: Hug, h: Hug, pad: Edges { left: 0.0, top: 0.0, right: 0.0, bottom: 0.0 }, gap: 0.0, align: START, justify: START, bg: 0, radius: 0.0, edge: 0, edge_width: 0.0, tap: scene.no_action(), long: scene.no_action(), barrier: false, say: "", list: "", content: "", size: 14.0, weight: 400, ink: INK, lines: 0, key: "", image: None, paint: None, count: 0, row: 0.0, build: None };
+  return El { kind: kind, kids: kids, w: Hug, h: Hug, pad: Edges { left: 0.0, top: 0.0, right: 0.0, bottom: 0.0 }, gap: 0.0, align: START, justify: START, bg: 0, radius: 0.0, edge: 0, edge_width: 0.0, tap: scene.no_action(), long: scene.no_action(), barrier: false, say: "", list: "", content: "", size: 14.0, weight: 400, ink: INK, lines: 0, key: "", image: None, paint: None, count: 0, row: 0.0, build: None, field: "", hint: "" };
 }
 
 // The elements one below the other.
@@ -317,6 +327,39 @@ pub function canvas(key: string, paint: (draw.Frame, i32, i32, i32, i32) => void
 // show.
 pub function list(name: string, count: i32, row: f64, build: (i32) => El): El {
   return El { ...element(LIST, []), list: name, count: count, row: row, build: Some(build), w: Grow(1.0), h: Grow(1.0) };
+}
+```
+
+### `text fields`
+
+A field is 56 dp high, as a text field of Material 3. The line below it is in the primary color while the field has the focus, and a caret stands after the text. A text that is wider than the field shows its end.
+
+The node of a field has a tap action with the name of the field after `FIELD_ACTION`. The shell gives the focus to the field for that action, and does not give the action to the program.
+
+```fern
+<<text fields>>=
+// The start of the name of the tap action of the node of a field.
+pub const FIELD_ACTION: string = "std/android/ui.field:";
+
+// A text field with the name `name`, which shows `value`, or `hint` while
+// `value` is empty. A tap gives it the focus and shows the keyboard. Each
+// change of the text gives the message Edit(name, text), and the action
+// key of the keyboard gives Submit(name).
+pub function field(name: string, value: string, hint: string): El {
+  return El { ...element(FIELD, []), field: name, content: value, hint: hint, size: 16.0, w: Grow(1.0), h: Exact(56.0), pad: Edges { left: 16.0, top: 0.0, right: 16.0, bottom: 0.0 }, bg: SURFACE, radius: 4.0 };
+}
+
+// The text of the field `name` in the tree `e`.
+function field_text(e: El, name: string): Option[string] {
+  if (e.kind == FIELD && e.field == name) {
+    return Some(e.content);
+  }
+  for k in e.kids {
+    if let Some(t) = field_text(k, name) {
+      return Some(t);
+    }
+  }
+  return None;
 }
 ```
 
@@ -514,7 +557,7 @@ function bounded(v: i32): boolean {
   return v < UNBOUNDED / 2;
 }
 
-struct Env { fonts: text.Fonts, d: f64, theme: Theme, offsets: Map[string, i32] }
+struct Env { fonts: text.Fonts, d: f64, theme: Theme, offsets: Map[string, i32], focus: string }
 
 function px(env: Env, dp: f64): i32 {
   return (dp * env.d).round() as i32;
@@ -687,6 +730,9 @@ function content(env: Env, e: El, iw: i32, ih: i32): (i32, i32) {
   if (e.kind == LIST) {
     return (0, e.count * px(env, e.row));
   }
+  if (e.kind == FIELD) {
+    return (0, 0);
+  }
   if (e.kind == COLUMN || e.kind == ROW) {
     return flow_size(env, e, iw, ih);
   }
@@ -782,8 +828,22 @@ function takes_part(e: El): boolean {
   return e.tap.name.len() > 0 || e.long.name.len() > 0 || e.barrier || e.say.len() > 0 || e.list.len() > 0;
 }
 
+// The element as the shell and an accessibility service use it: a field
+// has the action that gives it the focus, and a service reads its hint.
+function with_field_action(e: El): El {
+  if (e.kind != FIELD) {
+    return e;
+  }
+  let say = e.say;
+  if (say.len() == 0 && e.content.len() > 0) {
+    say = e.hint + ", " + e.content;
+  }
+  return El { ...e, tap: scene.Action { name: FIELD_ACTION + e.field, arg: 0 }, say: say };
+}
+
 // The nodes of the element itself. The first one has its actions.
-function own_nodes(env: Env, e: El, x: i32, y: i32, w: i32, h: i32, clip: Clip): scene.Node[] {
+function own_nodes(env: Env, e0: El, x: i32, y: i32, w: i32, h: i32, clip: Clip): scene.Node[] {
+  let e = with_field_action(e0);
   let ns = paints(env, e, x, y, w, h);
   if (ns.len() == 0 && takes_part(e)) {
     ns = ns.append(scene.node(x, y, w, h, scene.Blank));
@@ -816,6 +876,43 @@ function place_text(env: Env, e: El, x: i32, y: i32, w: i32, clip: Clip, own out
     let l = t.lines[i];
     let lw = text.width(env.fonts, t.face, t.px, l);
     let n = scene.node(x + shift(e.align, w - lw), y + i * t.line, lw, t.line, scene.Label(l, t.px, t.face, 0, color));
+    nodes = nodes.append(scene.Node { ...n, group: clip.group, clip0: clip.c0, clip1: clip.c1 });
+  }
+  return Layout { nodes: nodes, scrollers: out.scrollers };
+}
+
+// The text of a field or its hint, the line below it, and the caret of the
+// field that has the focus.
+function place_field(env: Env, e: El, x: i32, y: i32, w: i32, h: i32, clip: Clip, own out: Layout): Layout {
+  let focused = e.field == env.focus;
+  let size = px(env, e.size).max(1);
+  let face = text.face_for(env.fonts, e.weight);
+  let line = text.line(env.fonts, face, size);
+  let shown = text.fit_end(env.fonts, face, size, e.content, w);
+  let color = env.theme.ink;
+  if (e.content.len() == 0) {
+    shown = text.fit(env.fonts, face, size, e.hint, w);
+    color = env.theme.muted;
+  }
+  let ty = y + (h - line) / 2;
+  let tw = text.width(env.fonts, face, size, shown);
+  let ns = [scene.node(x, ty, tw, line, scene.Label(shown, size, face, 0, color))];
+  let rule = px(env, 1.0).max(1);
+  let rule_color = env.theme.outline;
+  let left = x - px(env, e.pad.left);
+  let wide = w + px(env, e.pad.left) + px(env, e.pad.right);
+  if (focused) {
+    rule = px(env, 2.0).max(1);
+    rule_color = env.theme.primary;
+    let after = 0;
+    if (e.content.len() > 0) {
+      after = tw;
+    }
+    ns = ns.append(scene.node(x + after + px(env, 1.0), ty, px(env, 2.0).max(1), line, scene.Fill(env.theme.primary, 0)));
+  }
+  ns = ns.append(scene.node(left, y + h - rule, wide, rule, scene.Fill(rule_color, 0)));
+  let nodes = out.nodes;
+  for n in ns {
     nodes = nodes.append(scene.Node { ...n, group: clip.group, clip0: clip.c0, clip1: clip.c1 });
   }
   return Layout { nodes: nodes, scrollers: out.scrollers };
@@ -930,6 +1027,9 @@ function place(env: Env, e: El, x: i32, y: i32, w: i32, h: i32, clip: Clip, own 
   if (e.kind == LIST) {
     return place_rows(env, e, ix, iy, iw, ih, clip, o);
   }
+  if (e.kind == FIELD) {
+    return place_field(env, e, ix, iy, iw, ih, clip, o);
+  }
   if (e.kind == COLUMN) {
     return place_column(env, e, ix, iy, iw, ih, clip, o);
   }
@@ -945,9 +1045,10 @@ function place(env: Env, e: El, x: i32, y: i32, w: i32, h: i32, clip: Clip, own 
 
 // The nodes and the lists of the tree `root` on the screen `s`. The tree
 // takes the part of the screen that is free, or its exact size. `offsets`
-// has how far each list scrolls, by its name.
-pub function layout(root: El, fonts: text.Fonts, s: Screen, offsets: Map[string, i32]): Layout {
-  let env = Env { fonts: fonts, d: s.d, theme: s.theme, offsets: offsets };
+// has how far each list scrolls, by its name. `focus` is the name of the
+// field that has the focus, or "".
+pub function layout(root: El, fonts: text.Fonts, s: Screen, offsets: Map[string, i32], focus: string): Layout {
+  let env = Env { fonts: fonts, d: s.d, theme: s.theme, offsets: offsets, focus: focus };
   let w = (s.w - s.left - s.right).max(0);
   let h = (s.h - s.top - s.bottom).max(0);
   if (exact(env, root.w) >= 0) {
@@ -971,6 +1072,8 @@ A touch that starts on a list and drags scrolls the list. When the finger lifts,
 pub enum Msg {
   Tap(string, i32),
   LongPress(string, i32),
+  Edit(string, string),
+  Submit(string),
   Back,
   Tick,
   Frame(i64),
@@ -1240,7 +1343,9 @@ A change asks for a frame, and the frame draws at the next vsync. So many change
 // What the shell does on the device. `size` gives the width and the height
 // of a window. `density` gives the pixels of one dp. `now` gives the time
 // on the monotonic clock in ns. `present` draws the nodes on the window
-// over a background color.
+// over a background color. `show_keyboard` shows the keyboard of the system
+// on a text, `set_keyboard` gives it another text, and `hide_keyboard`
+// takes it away.
 pub struct Device {
   size: (usize) => (i32, i32),
   density: () => f64,
@@ -1253,17 +1358,22 @@ pub struct Device {
   close: (painter.Painter) => painter.Painter,
   present: (own painter.Painter, usize, scene.Node[], i32) => painter.Painter,
   publish: (android.AccessItem[]) => void,
+  show_keyboard: (string) => void,
+  set_keyboard: (string) => void,
+  hide_keyboard: () => void,
 }
 
 // What the shell keeps for the app. `lay` is the layout of the last frame.
-pub struct Host { dev: Device, fonts: text.Fonts, paint: painter.Painter, window: usize, screen: Screen, input: Input, lay: Layout, frames: i32 }
+// `focus` is the name of the field that has the focus, or "", and `typed`
+// is the text that the keyboard holds for it.
+pub struct Host { dev: Device, fonts: text.Fonts, paint: painter.Painter, window: usize, screen: Screen, input: Input, lay: Layout, frames: i32, focus: string, typed: string }
 
 pub struct Shell[S] { app: S, host: Host }
 
 // A shell for the state `state`, which draws text with `fonts`.
 pub function shell[S](own state: S, fonts: text.Fonts, dev: Device): Shell[S] {
   let screen = Screen { w: 0, h: 0, d: dev.density(), dark: dev.dark(), theme: theme(false), left: 0, top: 0, right: 0, bottom: 0 };
-  return Shell { app: state, host: Host { dev: dev, fonts: fonts, paint: painter.new(fonts), window: 0 as usize, screen: screen, input: no_input(), lay: no_layout(), frames: 0 } };
+  return Shell { app: state, host: Host { dev: dev, fonts: fonts, paint: painter.new(fonts), window: 0 as usize, screen: screen, input: no_input(), lay: no_layout(), frames: 0, focus: "", typed: "" } };
 }
 
 function changed(h: Host): Host {
@@ -1302,10 +1412,35 @@ function animated[S](own s: Shell[S], p: Program[S], ns: i64): Shell[S] {
   return Shell { app: p.update(s.app, Frame(ns)), host: s.host };
 }
 
+// The host with no field in focus and no keyboard.
+function blurred(h: Host): Host {
+  if (h.focus.len() > 0) {
+    h.dev.hide_keyboard();
+    h.dev.request_frame();
+  }
+  return Host { ...h, focus: "", typed: "" };
+}
+
+// The host with the keyboard on the text that the tree `root` has for the
+// field in focus. A field that the tree no longer has loses the focus.
+function synced(own h: Host, root: El): Host {
+  if (h.focus.len() == 0) {
+    return h;
+  }
+  let Some(value) = field_text(root, h.focus) else {
+    return blurred(h);
+  };
+  if (value == h.typed) {
+    return h;
+  }
+  h.dev.set_keyboard(value);
+  return Host { ...h, typed: value };
+}
+
 // Draws the tree `root` on the screen `screen` at the time `ns`.
 function painted(own h: Host, root: El, screen: Screen, ns: i64, animating: boolean): Host {
   let input = advance(h.input, h.lay, ns);
-  let lay = layout(root, h.fonts, screen, input.offsets);
+  let lay = layout(root, h.fonts, screen, input.offsets, h.focus);
   let paint = h.dev.present(h.paint, h.window, shown(input, lay, screen.theme.pressed), screen.theme.background);
   h.dev.publish(scene.access_items(lay.nodes));
   if (input.flinging() || animating) {
@@ -1322,17 +1457,144 @@ function drawn[S](own s: Shell[S], p: Program[S], ns: i64): Shell[S] {
   let screen = Screen { ...s.host.screen, theme: p.theme(s.host.screen.dark) };
   let root = p.view(s.app, screen);
   let animating = p.animating(s.app);
-  return Shell { app: s.app, host: painted(s.host, root, screen, ns, animating) };
+  return Shell { app: s.app, host: painted(synced(s.host, root), root, screen, ns, animating) };
 }
 
 function frame[S](own s: Shell[S], p: Program[S], ns: i64): Shell[S] {
   return drawn(animated(s, p, ns), p, ns);
 }
 
+// The name of the field of the tap action `name`, or "".
+function field_of(name: string): string {
+  if (name.starts_with(FIELD_ACTION)) {
+    return name.drop(FIELD_ACTION.len()).to_owned();
+  }
+  return "";
+}
+
+// The host with the focus on the field `name`, and the keyboard on its
+// text `value`.
+function focused(h: Host, name: string, value: string): Host {
+  h.dev.show_keyboard(value);
+  return changed(Host { ...h, focus: name, typed: value });
+}
+
+// The host after a finger went down: a finger on something other than the
+// field in focus takes the focus away.
+function pressed(own h: Host): Host {
+  let on = "";
+  if let Some(n) = h.input.press.target {
+    on = field_of(n.tap.name);
+  }
+  if (on == h.focus) {
+    return h;
+  }
+  return blurred(h);
+}
+
 function touched[S](own s: Shell[S], p: Program[S], action: i32, x: i32, y: i32): Shell[S] {
   let h = s.host;
   let (input, m) = touch(h.input, h.lay, action, x, y, h.dev.now(), h.screen.d);
-  return told_maybe(Shell { app: s.app, host: changed(Host { ...h, input: input }) }, p, m);
+  let host = Host { ...h, input: input };
+  if (action == 0) {
+    host = pressed(Host { ...h, input: input });
+  }
+  let name = "";
+  if let Some(Tap(tapped, _)) = m {
+    name = field_of(tapped);
+  }
+  if (name.len() > 0) {
+    let value = field_text(p.view(s.app, host.screen), name).unwrap_or("");
+    return Shell { app: s.app, host: focused(host, name, value) };
+  }
+  return told_maybe(Shell { app: s.app, host: changed(host) }, p, m);
+}
+
+// `text` with no last character.
+function without_last(text: string): string {
+  let cs: string[] = [];
+  for c in text.chars() {
+    cs = cs.append(c.to_string());
+  }
+  return cs.take((cs.len() - 1).max(0)).join("");
+}
+
+// The shell after a key of a hardware keyboard changed the text of the
+// field in focus to `text`. The keyboard of the system gets the same text.
+function retyped[S](own s: Shell[S], p: Program[S], text: string): Shell[S] {
+  let h = s.host;
+  h.dev.set_keyboard(text);
+  return told(Shell { app: s.app, host: Host { ...h, typed: text } }, p, Edit(h.focus, text));
+}
+
+// The event is one that changes the text of a field.
+function types(e: android.Event): boolean {
+  match (e) {
+    android.Text(_) => {
+      return true;
+    },
+    android.TextAction(_) => {
+      return true;
+    },
+    android.Char(_) => {
+      return true;
+    },
+    android.Key(_, _) => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
+// The shell after the field in focus lost the focus and `update` took its
+// Submit message.
+function submitted[S](own s: Shell[S], p: Program[S]): Shell[S] {
+  let name = s.host.focus;
+  return told(Shell { app: s.app, host: blurred(s.host) }, p, Submit(name));
+}
+
+// The shell after a key, while a field has the focus. The back key takes
+// the focus away. Key code 66 is the enter key, which submits the field as
+// the action key of the keyboard does. Key code 67 is the delete key.
+function key_edited[S](own s: Shell[S], p: Program[S], code: i32, action: i32): Shell[S] {
+  if (code == 4 && action == 1) {
+    return Shell { app: s.app, host: blurred(s.host) };
+  }
+  if (code == 66 && action == 0) {
+    return submitted(s, p);
+  }
+  if (code == 67 && action == 0) {
+    let text = without_last(s.host.typed);
+    return retyped(s, p, text);
+  }
+  return s;
+}
+
+// The shell after the keyboard event `e`, while a field has the focus.
+function edited[S](own s: Shell[S], p: Program[S], e: android.Event): Shell[S] {
+  let h = s.host;
+  match (e) {
+    android.Text(t) => {
+      return told(Shell { app: s.app, host: Host { ...h, typed: t } }, p, Edit(h.focus, t));
+    },
+    android.TextAction(_) => {
+      return submitted(s, p);
+    },
+    android.Char(c) => {
+      if (c < 32 || c == 127) {
+        return s;
+      }
+      return retyped(s, p, h.typed + (c as char).to_string());
+    },
+    android.Key(code, action) => {
+      return key_edited(s, p, code, action);
+    },
+    _ => {
+      return s;
+    }
+  }
 }
 
 function ticked[S](own s: Shell[S], p: Program[S]): Shell[S] {
@@ -1410,6 +1672,9 @@ function arranged[S](own s: Shell[S], p: Program[S], e: android.Event): Shell[S]
 
 // The shell after the event `e` of android.run.
 pub function step[S](own s: Shell[S], p: Program[S], e: android.Event): Shell[S] {
+  if (s.host.focus.len() > 0 && types(e)) {
+    return edited(s, p, e);
+  }
   match (e) {
     android.Vsync(ns) => {
       return frame(s, p, ns);

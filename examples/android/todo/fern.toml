@@ -1,0 +1,9 @@
+# The settings of `fern -apk` for the list of things to do.
+[package]
+name = "todo"
+lib = "app.fern"
+
+[android]
+package = "dev.fern.todo"
+label = "Fern To Do"
+min_sdk = 26

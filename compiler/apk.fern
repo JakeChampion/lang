@@ -376,11 +376,12 @@ pub function manifest(app: App): u8[] {
       activity_attrs = activity_attrs.append(a);
     }
   }
-  activity_attrs = activity_attrs.append(attr_int(S_CONFIG_CHANGES, 17, 1184));
+  // SOFT_INPUT_ADJUST_RESIZE, so the content rectangle leaves out the
+  // keyboard.
+  activity_attrs = activity_attrs.append(attr_int(S_CONFIG_CHANGES, 17, 1184)).append(attr_int(S_SOFT_INPUT, 17, 16));
   if (app.home) {
-    // SOFT_INPUT_ADJUST_RESIZE, so the content rectangle leaves out the
-    // keyboard, and resumeWhilePausing, so home shows at once.
-    activity_attrs = activity_attrs.append(attr_int(S_SOFT_INPUT, 17, 16)).append(attr_int(S_RESUME_WHILE_PAUSING, 18, -1));
+    // resumeWhilePausing, so home shows at once.
+    activity_attrs = activity_attrs.append(attr_int(S_RESUME_WHILE_PAUSING, 18, -1));
   }
   body = start(body, 4, activity, activity_attrs);
   body = end(start(body, 5, at(s, "meta-data"), [attr_str(S_NAME, at(s, "android.app.lib_name")), attr_str(S_VALUE, at(s, app.lib))]), 5, at(s, "meta-data"));

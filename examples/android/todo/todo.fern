@@ -1,0 +1,103 @@
+// A list of things to do: its state, its screen and its messages. It has no
+// Android code, so todo_test.fern runs it on the host.
+import "std/android/ui";
+
+pub struct Item { text: string, done: boolean }
+
+pub struct Model { items: Item[], draft: string }
+
+pub function start(): Model {
+  return Model { items: [], draft: "" };
+}
+
+// How many items are not done.
+pub function left(m: Model): i32 {
+  let n = 0;
+  for it in m.items {
+    if (!it.done) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
+function summary(m: Model): string {
+  if (m.items.len() == 0) {
+    return "Nothing to do";
+  }
+  return left(m).to_string() + " of " + m.items.len().to_string() + " left";
+}
+
+// One item: a switch for done, its text, and a button that removes it.
+function row(m: Model, i: i32): ui.El {
+  let it = m.items[i];
+  let color = ui.INK;
+  if (it.done) {
+    color = ui.MUTED;
+  }
+  return ui.row([ui.toggle(it.done, "done").on_tap_with("done", i), ui.text(it.text).sized(16.0).colored(color).clamped(1).wide(), ui.text_button("Remove", "remove").on_tap_with("remove", i)]).spaced(12.0).aligned(ui.CENTER).padding_xy(16.0, 0.0);
+}
+
+pub function view(m: Model, s: ui.Screen): ui.El {
+  return ui.column(
+    [
+      ui.column([ui.text("To do").sized(28.0).weighted(700), ui.text(summary(m)).colored(ui.MUTED)]).spaced(4.0).padding_xy(16.0, 0.0),
+      ui.row([ui.field("draft", m.draft, "What is next?"), ui.button("Add", "add")]).spaced(12.0).aligned(ui.CENTER).padding_xy(16.0, 0.0),
+      ui.divider(),
+      ui.list("items", m.items.len(), 56.0, (i: i32): ui.El => row(m, i)),
+    ],
+  ).spaced(16.0).padding_xy(0.0, 16.0).aligned(ui.STRETCH);
+}
+
+function added(m: Model): Model {
+  let text = m.draft.trim().to_owned();
+  if (text.len() == 0) {
+    return m;
+  }
+  return Model { items: m.items.append(Item { text: text, done: false }), draft: "" };
+}
+
+function toggled(m: Model, i: i32): Model {
+  if (i < 0 || i >= m.items.len()) {
+    return m;
+  }
+  let it = m.items[i];
+  return Model { ...m, items: m.items.with(i, Item { ...it, done: !it.done }) };
+}
+
+function removed(m: Model, i: i32): Model {
+  let rest: Item[] = [];
+  for k in 0..m.items.len() {
+    if (k != i) {
+      rest = rest.append(m.items[k]);
+    }
+  }
+  return Model { ...m, items: rest };
+}
+
+pub function update(own m: Model, msg: ui.Msg): Model {
+  match (msg) {
+    ui.Edit("draft", text) => {
+      return Model { ...m, draft: text };
+    },
+    ui.Submit("draft") => {
+      return added(m);
+    },
+    ui.Tap("add", _) => {
+      return added(m);
+    },
+    ui.Tap("done", i) => {
+      return toggled(m, i);
+    },
+    ui.Tap("remove", i) => {
+      return removed(m, i);
+    },
+    _ => {
+      return m;
+    }
+  }
+}
+
+pub function program(): ui.Program[Model] {
+  return ui.program((m: Model, s: ui.Screen): ui.El => view(m, s), (own m: Model, msg: ui.Msg): Model => update(m, msg));
+}
