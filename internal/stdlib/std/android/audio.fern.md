@@ -6,7 +6,9 @@ This module captures and plays mono 16-bit audio through AAudio.
 
 A `Stream` is one AAudio stream: a capture stream from the microphone, or a playback stream to the loudspeaker.
 
-A capture stream uses the voice-communication input preset. This preset turns on the noise suppressor and the gain control of the device. A playback stream from `playback` carries speech with the media usage, so it plays on the loudspeaker at the media volume. `playback_for` gives a stream with another usage: `USAGE_ALARM` plays at the alarm volume, also when the phone is silent, and `USAGE_NOTIFICATION` at the notification volume. These two streams carry sounds, not speech. The voice-communication usage plays on the earpiece. The earpiece is too quiet when the phone is not at the ear.
+A capture stream uses the voice-communication input preset. This preset turns on the noise suppressor and the gain control of the device. A playback stream from `playback` carries speech with the media usage, so it plays on the loudspeaker at the media volume.
+
+`playback_for` gives a stream with another usage: `USAGE_ALARM` plays at the alarm volume, also when the phone is silent, and `USAGE_NOTIFICATION` at the notification volume. These two streams carry sounds, not speech. The voice-communication usage plays on the earpiece. The earpiece is too quiet when the phone is not at the ear.
 
 Each stream uses the full capacity of its buffer and not the low-latency mode. In the low-latency mode, a buffer can hold less than 10 ms. Then one frame of speech does not fit in it.
 
@@ -17,6 +19,19 @@ The module needs API level 28, for the usage, the content type and the input pre
 ## Contracts
 
 A stream with `ptr` 0 did not open. Close each other stream once.
+
+`timestamp` returns a frame position and its `CLOCK_MONOTONIC` time in nanoseconds.
+Frame zero is the first frame played or captured by the stream.
+The stream's actual sample rate supplies the units for later frame-to-media-time conversion.
+The query does not start, stop, read, or write the stream.
+
+The platform supplies timestamps only while the stream is started, after an initial delay.
+An unavailable timestamp or invalid platform result returns `None`.
+Retry after an asynchronous start. Keep the stream open throughout the call.
+This query allocates memory. Call it outside a real-time audio callback.
+
+The anchor can support future audio/video synchronization.
+It does not assign media timestamps, synchronize the video controller, or measure acoustic lip-sync error.
 
 ## Module assembly
 
@@ -34,6 +49,7 @@ A stream with `ptr` 0 did not open. Close each other stream once.
 ```fern
 <<module introduction>>=
 // This module captures and plays mono 16-bit audio through AAudio.
+import "std/ffi";
 ```
 
 ### `C functions`
@@ -96,6 +112,9 @@ function c_buffer_capacity(stream: usize): i32;
 
 @import("libaaudio.so", "AAudioStream_setBufferSizeInFrames")
 function c_set_buffer_size(stream: usize, frames: i32): i32;
+
+@import("libaaudio.so", "AAudioStream_getTimestamp")
+function c_timestamp(stream: usize, clock: i32, position: usize, time_ns: usize): i32;
 ```
 
 ### `streams`
@@ -105,6 +124,9 @@ The AAudio constants: the direction is 0 for output and 1 for input, and the for
 ```fern
 <<streams>>=
 pub struct Stream { ptr: usize, rate: i32 }
+
+@derive(ffi.CLayout)
+pub struct Timestamp { frame_position: i64, monotonic_ns: i64 }
 
 pub const USAGE_MEDIA: i32 = 1;
 
@@ -183,6 +205,25 @@ pub function (s: Stream) stop(): void {
 pub function (s: Stream) close(): void {
   if (s.ptr != 0 as usize) {
     let closed: i32 = c_close(s.ptr);
+  }
+}
+
+// Query the platform audio anchor in CLOCK_MONOTONIC units.
+pub function (s: Stream) timestamp(): Option[Timestamp] {
+  if (s.ptr == 0 as usize) {
+    return None;
+  }
+  unsafe {
+    let bytes = Timestamp.c_size() as i32;
+    let slot = __alloc(bytes);
+    Timestamp { frame_position: -1i64, monotonic_ns: -1i64 }.c_store(slot);
+    let status = c_timestamp(s.ptr, 1, slot + Timestamp.c_offset_frame_position(), slot + Timestamp.c_offset_monotonic_ns());
+    let value = Timestamp.c_load(slot);
+    __free(slot, bytes);
+    if (status != 0 || value.frame_position < 0i64 || value.monotonic_ns < 0i64) {
+      return None;
+    }
+    return Some(value);
   }
 }
 

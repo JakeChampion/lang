@@ -42,6 +42,24 @@ for name in ('android', 'hardware'):
 PY
 fi
 
+# The AAudio anchor is a read-only prerequisite for later A/V synchronization.
+"$fern_video_compiler" -target arm64-android -shared -export main -o build/video/audio-timestamp-api.so tests/stdlib/android_audio_timestamp_mock_test.fern internal/stdlib
+if [ -n "$android_target" ]; then
+  mkdir -p build/video/audio
+  cc -shared -fPIC -Wall -Wextra -Werror -o build/video/audio/libaaudio.so scripts/audio-reference/aaudio-mock.c
+  "$fern_video_compiler" -target "$android_target" -shared -export main -o build/video/audio/mock.so tests/stdlib/android_audio_timestamp_mock_test.fern internal/stdlib
+  "$fern_video_compiler" -target "$android_target" -shared -sanitize -export main -o build/video/audio/mock-sanitize.so tests/stdlib/android_audio_timestamp_mock_test.fern internal/stdlib
+  LD_LIBRARY_PATH="$PWD/build/video/audio${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" python3 - <<'PYTHON'
+import ctypes
+for name in ('mock', 'mock-sanitize'):
+    result = ctypes.CDLL(f'./build/video/audio/{name}.so').main()
+    if result != 0:
+        raise SystemExit(f'Android audio timestamp test failed at check {result}')
+print('Android audio timestamp clock, ABI, and unavailable-result checks passed')
+PYTHON
+fi
+python3 -m unittest discover -s tests/android/audio -p test_emulator_check.py
+
 # Content assets use libc descriptors and a separate JNI test double.
 "$fern_video_compiler" -target arm64-android -shared -export main -o build/video/source-api.so tests/stdlib/android_video_source_mock_test.fern internal/stdlib
 if [ -n "$android_target" ]; then

@@ -66,10 +66,20 @@ func RunFmtByteCases(t *testing.T, bin string, runner []string, census func(*tes
 	if err != nil {
 		t.Skip("requires GNU fmt")
 	}
-	version, err := exec.Command(oracle, "--version").Output()
+	RunFmtByteCasesAgainst(t, bin, runner, []string{oracle}, census)
+}
+
+func RunFmtByteCasesAgainst(t *testing.T, bin string, runner, oracle []string, census func(*testing.T, string)) {
+	t.Helper()
+	if len(oracle) == 0 {
+		t.Fatal("missing GNU fmt reference command")
+	}
+	versionArgs := append(append([]string{}, oracle...), "--version")
+	version, err := exec.Command(versionArgs[0], versionArgs[1:]...).Output()
 	if err != nil || !bytes.Contains(version, []byte("GNU coreutils")) {
 		t.Skip("requires GNU fmt")
 	}
+	oracleBin := oracle[len(oracle)-1]
 	for _, tc := range FmtByteCases() {
 		for _, file := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/file=%t", tc.Name, file), func(t *testing.T) {
@@ -96,7 +106,7 @@ func RunFmtByteCases(t *testing.T, bin string, runner []string, census func(*tes
 					}
 					return out.String(), diagnostic.String(), cmd.ProcessState.ExitCode()
 				}
-				want, wantErr, wantCode := run([]string{oracle})
+				want, wantErr, wantCode := run(oracle)
 				got, diagnostic, code := run(append(append([]string{}, runner...), bin))
 				if code != wantCode || got != want {
 					t.Fatalf("exit/stdout differ: exit %d/%d, output bytes %d/%d\n%s", code, wantCode, len(got), len(want), diagnostic)
@@ -116,8 +126,8 @@ func RunFmtByteCases(t *testing.T, bin string, runner []string, census func(*tes
 				}
 				actualErr := strings.ReplaceAll(strings.Join(clean, ""), bin+":", "fmt:")
 				actualErr = strings.ReplaceAll(actualErr, filepath.Base(bin)+":", "fmt:")
-				wantErr = strings.ReplaceAll(wantErr, oracle+":", "fmt:")
-				wantErr = strings.ReplaceAll(wantErr, filepath.Base(oracle)+":", "fmt:")
+				wantErr = strings.ReplaceAll(wantErr, oracleBin+":", "fmt:")
+				wantErr = strings.ReplaceAll(wantErr, filepath.Base(oracleBin)+":", "fmt:")
 				if actualErr != wantErr {
 					t.Fatalf("stderr differs:\ngot  %q\nwant %q", actualErr, wantErr)
 				}

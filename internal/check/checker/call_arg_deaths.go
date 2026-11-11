@@ -495,7 +495,23 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 		}
 		return true
 	})
-	exclusiveFields := exclusiveOwnedFields(body, ownParam, fieldOf, occurrences)
+	exclusiveOwners := map[string]bool{}
+	for name := range occurrences {
+		exclusiveOwners[name] = ownParam[name]
+	}
+	ast.Walk(body, func(node ast.Node) bool {
+		if v, local := node.(*ast.Var); local && fieldOwner(v.Name) && declCount[v.Name] == 1 {
+			if call, named := v.Init.(*ast.Call); named && info != nil && info.CallOwnedResult != nil && info.CallOwnedResult(call) {
+				exclusiveOwners[v.Name] = true
+			}
+		}
+		return true
+	})
+	var arrayCopies map[*ast.FieldAccess]bool
+	if info != nil {
+		arrayCopies = info.ArrayFieldCopies
+	}
+	exclusiveFields := exclusiveOwnedFields(body, exclusiveOwners, fieldOf, occurrences, scalar, arrayCopies)
 
 	// A deferred action runs at the exit, so a path it mentions is live until
 	// then: a bare mention of q holds every field, and `q.g` holds g alone.
@@ -969,11 +985,17 @@ func argParts(c *ast.Call) []ast.Expr {
 	return out
 }
 
-// One read of an unchanged owned field, without a whole-owner read, leaves
-// no earlier projection that could lend the handle being consumed.
-func exclusiveOwnedFields(body ast.Node, own map[string]bool, fields map[*ast.Ident]string, occurrences map[string]int) map[[2]string]bool {
+// One resource read of an unchanged owned field leaves no earlier alias.
+// Scalar and primitive COW array copies do not borrow resources.
+func exclusiveOwnedFields(body ast.Node, own map[string]bool, fields map[*ast.Ident]string, occurrences map[string]int, scalar map[ast.Expr]bool, arrays map[*ast.FieldAccess]bool) map[[2]string]bool {
 	assigned := map[string]bool{}
+	copied := map[*ast.Ident]bool{}
 	ast.Walk(body, func(n ast.Node) bool {
+		if fa, field := n.(*ast.FieldAccess); field && (scalar[fa] || arrays[fa]) {
+			if root, plain := enclosingField(fa).Target.(*ast.Ident); plain {
+				copied[root] = true
+			}
+		}
 		if a, ok := n.(*ast.Assign); ok {
 			if id, ok := a.Target.(*ast.Ident); ok {
 				assigned[id.Name] = true
@@ -985,7 +1007,9 @@ func exclusiveOwnedFields(body ast.Node, own map[string]bool, fields map[*ast.Id
 	reads := map[[2]string]int{}
 	for id, field := range fields {
 		selected[id.Name]++
-		reads[[2]string{id.Name, field}]++
+		if !copied[id] {
+			reads[[2]string{id.Name, field}]++
+		}
 	}
 	out := map[[2]string]bool{}
 	for field, count := range reads {

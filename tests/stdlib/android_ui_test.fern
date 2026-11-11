@@ -25,12 +25,12 @@ function screen(): ui.Screen {
 }
 
 function laid(root: ui.El): ui.Layout {
-  return ui.layout(root, fonts(), screen(), map_new(4));
+  return ui.layout(root, fonts(), screen(), map_new(4), "");
 }
 
 function scrolled(root: ui.El, name: string, to: i32): ui.Layout {
   let offsets: Map[string, i32] = map_new(4);
-  return ui.layout(root, fonts(), screen(), offsets.insert(name, to));
+  return ui.layout(root, fonts(), screen(), offsets.insert(name, to), "");
 }
 
 function label(s: string): ui.El {
@@ -94,7 +94,7 @@ function test_text_wraps(): test.TestOutcome {
 
 function test_roles_take_the_theme(): test.TestOutcome {
   let dark = ui.Screen { ...screen(), theme: ui.theme(true) };
-  let lay = ui.layout(ui.box().grow(1.0).background(ui.SURFACE), fonts(), dark, map_new(4));
+  let lay = ui.layout(ui.box().grow(1.0).background(ui.SURFACE), fonts(), dark, map_new(4), "");
   let own_color = laid(ui.box().grow(1.0).background(draw.rgb(1, 2, 3)));
   let got = "";
   match (lay.nodes[0].paint) {
@@ -114,7 +114,7 @@ function test_roles_take_the_theme(): test.TestOutcome {
 
 function test_safe_area(): test.TestOutcome {
   let s = ui.Screen { ...screen(), top: 24, bottom: 48 };
-  let lay = ui.layout(ui.box().grow(1.0).background(ui.SURFACE), fonts(), s, map_new(4));
+  let lay = ui.layout(ui.box().grow(1.0).background(ui.SURFACE), fonts(), s, map_new(4), "");
   return test.assert_eq(boxes(lay.nodes) + " " + s.height().to_string(), "0,24,200,328 328");
 }
 
@@ -361,6 +361,102 @@ function test_theme_follows_the_system(): test.TestOutcome {
   return test.assert_eq(got, "true true true");
 }
 
+// --- text fields
+
+struct Form { name: string, sent: string, backs: i32, upper: boolean, gone: boolean }
+
+function form_view(m: Form, s: ui.Screen): ui.El {
+  if (m.gone) {
+    return ui.column([ui.button("A", "other")]);
+  }
+  return ui.column([ui.field("name", m.name, "AV"), ui.button("A", "other")]).spaced(10.0);
+}
+
+function form_update(own m: Form, msg: ui.Msg): Form {
+  match (msg) {
+    ui.Edit("name", t) => {
+      if (m.upper) {
+        return Form { ...m, name: t.to_upper() };
+      }
+      return Form { ...m, name: t };
+    },
+    ui.Submit("name") => {
+      return Form { ...m, sent: m.name, name: "" };
+    },
+    ui.Tap("other", _) => {
+      return Form { ...m, gone: m.upper };
+    },
+    ui.Back => {
+      return Form { ...m, backs: m.backs + 1 };
+    },
+    _ => {
+      return m;
+    }
+  }
+}
+
+function form(upper: boolean): sim.Sim[Form] {
+  let p = ui.program((m: Form, s: ui.Screen): ui.El => form_view(m, s), (own m: Form, msg: ui.Msg): Form => form_update(m, msg));
+  return sim.start(Form { name: "", sent: "", backs: 0, upper: upper, gone: false }, p, fonts(), 200, 400, 1.0);
+}
+
+function test_field_layout(): test.TestOutcome {
+  // The field is 56 dp high: its background, its hint at 16 sp, which is
+  // 19 pixels wide and 17 high, and its line of 1 dp. In focus it has a
+  // caret before the hint, and its line is 2 dp.
+  let root = ui.column([ui.field("name", "", "AV")]);
+  let plain = laid(root);
+  let focused = ui.layout(root, fonts(), screen(), map_new(4), "name");
+  let tap = plain.nodes[0].tap.name;
+  return test.assert_eq(boxes(plain.nodes) + " | " + boxes(focused.nodes) + " | " + (tap == ui.FIELD_ACTION + "name").to_string(), "0,0,200,56 16,19,19,17 0,55,200,1 | 0,0,200,56 16,19,19,17 17,19,2,17 0,54,200,2 | true");
+}
+
+function test_field_takes_text(): test.TestOutcome {
+  let s = form(false);
+  let before = sim.keyboard(s).is_none();
+  s = sim.type_in(s, "name", "AVA");
+  let got = before.to_string() + " " + s.shell.app.name + " " + s.shell.host.focus + " " + sim.keyboard(s).unwrap_or("none") + " " + sim.shows(s, "AVA").to_string();
+  return test.assert_eq(got, "true AVA name  true");
+}
+
+function test_field_submits_and_clears(): test.TestOutcome {
+  let s = sim.enter(sim.type_in(form(false), "name", "AVA"));
+  let got = s.shell.app.sent + " [" + s.shell.app.name + "] [" + s.shell.host.focus + "] " + sim.keyboard(s).is_none().to_string() + " " + sim.shows(s, "AV").to_string();
+  return test.assert_eq(got, "AVA [] [] true true");
+}
+
+function test_program_changes_the_text(): test.TestOutcome {
+  // The program makes the text upper case, so the keyboard gets that text.
+  let s = sim.type_in(form(true), "name", "ava");
+  return test.assert_eq(s.shell.app.name + " " + sim.keyboard(s).unwrap_or("none") + " " + s.shell.host.typed, "AVA AVA AVA");
+}
+
+function test_focus_goes_away(): test.TestOutcome {
+  let tapped = sim.tap(sim.type_in(form(false), "name", "A"), "other");
+  let backed = sim.back(sim.type_in(form(false), "name", "A"));
+  let once = "[" + backed.shell.host.focus + "] " + sim.finished(backed).to_string();
+  let again = sim.back(backed);
+  let removed = sim.tap(sim.type_in(form(true), "name", "A"), "other");
+  let got = "[" + tapped.shell.host.focus + "] " + sim.keyboard(tapped).is_none().to_string() + " " + once + " " + sim.finished(again).to_string() + " [" + removed.shell.host.focus + "] " + sim.keyboard(removed).is_none().to_string();
+  return test.assert_eq(got, "[] true [] false true [] true");
+}
+
+function test_hardware_keys_type(): test.TestOutcome {
+  let s = sim.type_in(form(false), "name", "A");
+  s = sim.event(sim.event(s, android.Char(86)), android.Char(65));
+  let typed = s.shell.app.name;
+  s = sim.event(sim.event(s, android.Key(67, 0)), android.Key(67, 1));
+  let deleted = s.shell.app.name + " " + sim.keyboard(s).unwrap_or("none");
+  s = sim.event(sim.event(s, android.Key(66, 0)), android.Key(66, 1));
+  return test.assert_eq(typed + " " + deleted + " " + s.shell.app.sent + " [" + s.shell.host.focus + "]", "AVA AV AV AV []");
+}
+
+function test_field_is_spoken(): test.TestOutcome {
+  let empty = sim.spoken(form(false)).join("|");
+  let filled = sim.spoken(sim.type_in(form(false), "name", "A")).join("|");
+  return test.assert_eq(empty + " / " + filled, "AV|A / AV, A|A");
+}
+
 function main(): i32 {
   let r = test.new("std/android/ui");
   r = r.it("a column puts its elements one below the other", test_column);
@@ -387,5 +483,12 @@ function main(): i32 {
   r = r.it("a program scrolls and flings its list", test_program_scrolls_and_flings);
   r = r.it("a program that animates gets frames", test_animating_gives_frames);
   r = r.it("the theme follows the system", test_theme_follows_the_system);
+  r = r.it("a field has its text, its line and its caret", test_field_layout);
+  r = r.it("a field takes the text of the keyboard", test_field_takes_text);
+  r = r.it("the action key submits and the program clears the field", test_field_submits_and_clears);
+  r = r.it("the keyboard gets the text that the program keeps", test_program_changes_the_text);
+  r = r.it("the focus goes away", test_focus_goes_away);
+  r = r.it("the keys of a hardware keyboard type", test_hardware_keys_type);
+  r = r.it("an accessibility service reads a field", test_field_is_spoken);
   return r.finish();
 }

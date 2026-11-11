@@ -31,10 +31,11 @@ function app_main(ctx: usize): usize {
 - A frame draws at the vsync after a change, through `android.request_frame`.
 - The items of each frame go to the accessibility service through `std/android/access`. So TalkBack reads the screen, and a double tap on an item is a tap on its element.
 - The theme is dark when the system is in night mode.
+- A text field types with the keyboard of the system, through `std/android/keyboard`.
 
 ## Contracts
 
-Call `run` on the loop thread. This module imports `std/android/access`, which declares Java classes. So `fern -apk` writes a `classes.dex` for the app, and a program for the host cannot import this module. The tests of an app on the host use `std/android/ui/sim`.
+Call `run` on the loop thread. This module imports `std/android/access` and `std/android/keyboard`, which declare Java classes. So `fern -apk` writes a `classes.dex` for the app, and a program for the host cannot import this module. The tests of an app on the host use `std/android/ui/sim`.
 
 ## Module assembly
 
@@ -54,6 +55,7 @@ Call `run` on the loop thread. This module imports `std/android/access`, which d
 // This module runs a program of std/android/ui in a NativeActivity app.
 import "std/android";
 import "std/android/access";
+import "std/android/keyboard";
 import "std/android/text";
 import "std/android/ui";
 import "std/android/ui/painter";
@@ -103,6 +105,9 @@ function device(ctx: usize): ui.Device {
     close: (p: painter.Painter): painter.Painter => painter.close(p),
     present: (own p: painter.Painter, window: usize, nodes: scene.Node[], background: i32): painter.Painter => present(p, window, nodes, background),
     publish: (items: android.AccessItem[]): void => access.publish(ctx, items),
+    show_keyboard: (text: string): void => keyboard.show(ctx, text, android.INPUT_TEXT, android.ACTION_DONE),
+    set_keyboard: (text: string): void => keyboard.set_text(ctx, text),
+    hide_keyboard: (): void => keyboard.hide(ctx),
   };
 }
 ```

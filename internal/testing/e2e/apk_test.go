@@ -55,6 +55,9 @@ func TestApkWriter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !bytes.Contains(readZipEntry(t, zr, "AndroidManifest.xml"), utf16le("windowSoftInputMode")) {
+		t.Error("the activity has no windowSoftInputMode, so the content rectangle does not leave out the keyboard")
+	}
 	var names []string
 	for _, f := range zr.File {
 		names = append(names, f.Name)

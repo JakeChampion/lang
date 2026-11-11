@@ -1,0 +1,9 @@
+=== RUN   TestSelfHostWarmStockDriver
+=== RUN   TestSelfHostWarmStockDriver/drivers/runtime_run.fern
+=== PAUSE TestSelfHostWarmStockDriver/drivers/runtime_run.fern
+=== CONT  TestSelfHostWarmStockDriver/drivers/runtime_run.fern
+    self_host_warm_stock_test.go:100: warmed driver drivers/runtime_run.fern: 16668464 bytes
+--- PASS: TestSelfHostWarmStockDriver (0.08s)
+    --- PASS: TestSelfHostWarmStockDriver/drivers/runtime_run.fern (55.59s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	55.692s

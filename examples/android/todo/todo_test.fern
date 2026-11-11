@@ -1,0 +1,92 @@
+// Runs the list of things to do on the simulator of std/android/ui/sim, on
+// the host. With TODO_UI_PNG set to a directory, it writes the screen
+// there as a PNG file.
+import "std/android/draw";
+import "std/android/fonts";
+import "std/android/testkit";
+import "std/android/text";
+import "std/android/ui/sim";
+import "std/result";
+import "std/test";
+import "./todo";
+
+// The directory of the Roboto files of the Paper tests: the tests run from
+// the root of the repository or from the directory of this file.
+function font_dir(): string {
+  if let Ok(_) = read_file_bytes("examples/android/paper/testfonts/Roboto-Regular.ttf") {
+    return "examples/android/paper/testfonts";
+  }
+  return "../paper/testfonts";
+}
+
+function test_fonts(): text.Fonts {
+  let ws = [400, 500, 700];
+  let found: Option[fonts.Found][] = [];
+  for w in ws {
+    found = found.append(fonts.find_in(font_dir(), "Roboto", w));
+  }
+  return text.load(found, ws, (path: string): u8[] => read_file_bytes(path).unwrap_or([]));
+}
+
+// A phone of 1080 by 2400 pixels at 2.75 pixels to the dp.
+function started(): sim.Sim[todo.Model] {
+  return sim.start(todo.start(), todo.program(), test_fonts(), 1080, 2400, 2.75);
+}
+
+// The simulator after a person types `text` and taps Add.
+function add(own s: sim.Sim[todo.Model], text: string): sim.Sim[todo.Model] {
+  return sim.tap(sim.type_in(s, "draft", text), "add");
+}
+
+function saved(s: sim.Sim[todo.Model], name: string): void {
+  if let Some(out) = env("TODO_UI_PNG") {
+    let fr = sim.picture(s);
+    let ok = testkit.save_png(fr, out + "/" + name + ".png");
+    draw.release(fr);
+  }
+}
+
+function test_starts_empty(): test.TestOutcome {
+  let s = started();
+  return test.assert_eq(sim.texts(s).join("|"), "To do|Nothing to do|What is next?|Add");
+}
+
+function test_add_with_the_button_and_the_keyboard(): test.TestOutcome {
+  let s = add(started(), "Water the fern");
+  let cleared = s.shell.app.draft;
+  s = sim.enter(sim.type_in(s, "draft", "  Read  "));
+  s = sim.enter(sim.type_in(s, "draft", "   "));
+  saved(s, "todo");
+  let got = "[" + cleared + "] " + s.shell.app.items.len().to_string() + " " + sim.shows(s, "Water the fern").to_string() + " " + sim.shows(s, "Read").to_string() + " " + sim.shows(s, "2 of 2 left").to_string();
+  return test.assert_eq(got, "[] 2 true true true");
+}
+
+function test_done_and_remove(): test.TestOutcome {
+  let s = add(add(add(started(), "One"), "Two"), "Three");
+  s = sim.tap_with(s, "done", 1);
+  let left = todo.left(s.shell.app);
+  s = sim.tap_with(s, "remove", 0);
+  let got = left.to_string() + " " + sim.shows(s, "One").to_string() + " " + sim.shows(s, "1 of 2 left").to_string() + " " + s.shell.app.items[0].text + s.shell.app.items[0].done.to_string();
+  return test.assert_eq(got, "2 false true Twotrue");
+}
+
+function test_a_long_list_scrolls(): test.TestOutcome {
+  let s = started();
+  for i in 0..60 {
+    s = add(s, "Item " + i.to_string());
+  }
+  let top = sim.shows(s, "Item 0").to_string() + " " + sim.shows(s, "Item 59").to_string();
+  s = sim.settle(sim.drag(s, 540, 2200, 540, 700, 96i64));
+  s = sim.settle(sim.drag(s, 540, 2200, 540, 700, 96i64));
+  s = sim.settle(sim.drag(s, 540, 2200, 540, 700, 96i64));
+  return test.assert_eq(top + " " + sim.shows(s, "Item 0").to_string() + " " + sim.shows(s, "Item 59").to_string(), "true false false true");
+}
+
+function main(): i32 {
+  let r = test.new("examples/android/todo");
+  r = r.it("the list starts empty", test_starts_empty);
+  r = r.it("the button and the action key add an item", test_add_with_the_button_and_the_keyboard);
+  r = r.it("an item can be done and removed", test_done_and_remove);
+  r = r.it("a long list scrolls to its end", test_a_long_list_scrolls);
+  return r.finish();
+}
