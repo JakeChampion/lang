@@ -752,6 +752,52 @@ function test_connect_pseudo_headers(): test.TestOutcome {
   return test.assert_eq(one_request([method, authority]), "request 1 CONNECT  host=a.test:443 body= trailer=-\n");
 }
 
+function test_settings_above_i32(): test.TestOutcome {
+  let o = opened(h2.config());
+  let big = 0 - 1;
+  let step = o.conn.read(frame.encode(frame.Settings(false, [frame.Setting { id: frame.SETTINGS_MAX_HEADER_LIST_SIZE, value: big }, frame.Setting { id: 0x99, value: big }, frame.Setting { id: frame.SETTINGS_HEADER_TABLE_SIZE, value: big }])));
+  let got = shown(o.client, step.output).text + events_text(step.events);
+  let window = h2.server(h2.config()).conn.read(frame.preface().concat(frame.encode(frame.Settings(false, [frame.Setting { id: frame.SETTINGS_INITIAL_WINDOW_SIZE, value: big }]))));
+  return test.assert_eq(got + shown(o.client, window.output).text + events_text(window.events), "SETTINGS ACK\nGOAWAY last 0 3 SETTINGS_INITIAL_WINDOW_SIZE over 2^31-1\nclosed 3 SETTINGS_INITIAL_WINDOW_SIZE over 2^31-1\n");
+}
+
+function test_field_value_outer_space(): test.TestOutcome {
+  let none: hpack.Field[] = [];
+  let cases: hpack.Field[][] = [
+    with_pseudo("GET", "http", "/", "a.test", [hpack.field("x-a", " a")]),
+    with_pseudo("GET", "http", "/", "a.test", [hpack.field("x-a", "a ")]),
+    with_pseudo("GET", "http", "/", "a.test", [hpack.field("x-a", "\ta")]),
+    with_pseudo("GET", "http", "/", "a.test", [hpack.field("x-a", "a\t")]),
+    with_pseudo("GET", "http", "/ ", "a.test", none),
+  ];
+  let i = 0;
+  for fields in cases {
+    let got = one_request(fields);
+    if (got != "RST_STREAM 1 1\n") {
+      return test.fail("case " + i.to_string() + ": " + got);
+    }
+    i += 1;
+  }
+  let inner = one_request(with_pseudo("GET", "http", "/", "a.test", [hpack.field("x-a", "a b"), hpack.field("x-b", "")]));
+  return test.assert_eq(inner, "request 1 GET / host=a.test body= trailer=-\n");
+}
+
+function test_cookie_crumbs_are_joined(): test.TestOutcome {
+  let o = opened(h2.config());
+  let fields = with_pseudo("GET", "http", "/", "a.test", [hpack.field("cookie", "a=1"), hpack.field("x-a", "b"), hpack.field("cookie", "c=2"), hpack.field("cookie", "d=3")]);
+  let (cl, bytes) = request(o.client, 1, fields, true);
+  let step = o.conn.read(bytes);
+  for e in step.events {
+    match (e) {
+      h2.Request(stream, req) => {
+        return test.assert_eq(req.headers.get_all("cookie").join("|"), "a=1; c=2; d=3");
+      },
+      _ => {}
+    }
+  }
+  return test.fail("no request: " + shown(cl, step.output).text + events_text(step.events));
+}
+
 function test_trailer_fields_are_checked(): test.TestOutcome {
   let got = "";
   for bad in [hpack.field("Bad Name", "a"), hpack.field("x-a", "a\r\nb"), hpack.field("connection", "close")] {
@@ -782,6 +828,9 @@ function main(): i32 {
   r = r.it("the field names and values HTTP/2 admits", test_field_rules);
   r = r.it("pseudo-header values, host and content-length are checked", test_pseudo_header_values);
   r = r.it("a CONNECT request has :authority and no :scheme or :path", test_connect_pseudo_headers);
+  r = r.it("a setting above 2^31-1 is not an error where the setting has no limit", test_settings_above_i32);
+  r = r.it("a field value does not start or end with a space or a tab", test_field_value_outer_space);
+  r = r.it("the cookie fields of a request become one field", test_cookie_crumbs_are_joined);
   r = r.it("trailer fields are checked", test_trailer_fields_are_checked);
   r = r.it("idle streams and self-dependency", test_idle_and_self_dependency);
   r = r.it("HEADERS on a stream that has closed", test_headers_on_closed_streams);
