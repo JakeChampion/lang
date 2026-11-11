@@ -2044,7 +2044,7 @@ function __serve_ready[D: async.Driver](drv: D, own c: __Conns, at: i32, opts: C
 
 ```fern
 <<34 function __serve_continue[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Config): __Conns>>=
-function __serve_continue[D: async.Driver](drv: D, own c: __Conns, at: i32, opts: Config): __Conns {
+function __serve_continue[D: async.Driver](drv: D, own c: __Conns, at: i32, opts: Config): own __Conns {
   if (c.continued[at]) {
     return __serve_next(c, at, opts);
   }
@@ -3028,7 +3028,7 @@ enum __Sent { Whole, Partial, Failed }
 
 ```fern
 <<46 function __serve_send[D: async.Driver](drv: D, c: __Conns, at: i32, payload: u8[], opts: Config): (__Conns,...>>=
-function __serve_send[D: async.Driver](drv: D, own c: __Conns, at: i32, payload: u8[], opts: Config): (__Conns, __Sent) {
+function __serve_send[D: async.Driver](drv: D, own c: __Conns, at: i32, payload: u8[], opts: Config): own (__Conns, __Sent) {
   match (c.tls[at]) {
     Secured(sess) => {
       c = __Conns { ...c, tls: c.tls.with(at, Plain) };
@@ -3100,7 +3100,7 @@ function __lent_sealed(c: __Conns, at: i32, payload: u8[]): Option[u8[]] {
   return None;
 }
 
-function __serve_send_raw[D: async.Driver](drv: D, own c: __Conns, at: i32, payload: u8[], opts: Config): (__Conns, __Sent) {
+function __serve_send_raw[D: async.Driver](drv: D, own c: __Conns, at: i32, payload: u8[], opts: Config): own (__Conns, __Sent) {
   match (net.write_rest(c.socks[at], payload)) {
     Ok(rest) => {
       if (rest.len() == 0) {
@@ -3133,7 +3133,7 @@ function __out_reset(b: usize): void {
   buf_push(b, OUT_HEAD);
 }
 
-function __serve_send_out[D: async.Driver](drv: D, own c: __Conns, at: i32, opts: Config): (__Conns, __Sent) {
+function __serve_send_out[D: async.Driver](drv: D, own c: __Conns, at: i32, opts: Config): own (__Conns, __Sent) {
   match (c.tls[at]) {
     Secured(sess) => {
       buf_push(c.out, OUT_TAIL);
@@ -3200,7 +3200,7 @@ function __tls_reads(opts: Config): i32 {
 
 ```fern
 <<47 function __serve_pend[D: async.Driver](drv: D, c: __Conns, at: i32, rest: u8[], opts: Config): __Conns>>=
-function __serve_pend[D: async.Driver](drv: D, own c: __Conns, at: i32, rest: u8[], opts: Config): __Conns {
+function __serve_pend[D: async.Driver](drv: D, own c: __Conns, at: i32, rest: u8[], opts: Config): own __Conns {
   drv.watch(c.fds[at], __pending_interest(c, at));
   let first = c.pending[at].len() == 0;
   return __drain_deadline(__Conns { ...c, pending: c.pending.with(at, rest) }, at, opts, first);
