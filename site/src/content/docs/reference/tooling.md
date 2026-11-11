@@ -162,6 +162,9 @@ fern -target x86-64-linux -cover -o prog src/main.fern
 fern -lint -lint-cover cov.txt src/   # change-risk: complexity against the lines that run hit
 ```
 
+The findings go to stderr, as the diagnostics of the checker do. `-q`
+prints one line for each finding.
+
 `change-risk` scores each function `complexity^2 * (1 - coverage)^3 +
 complexity` from a saved `-cover` run (see [Coverage](#coverage)) and
 reports those over 30: the complex code nothing tests. It runs only when

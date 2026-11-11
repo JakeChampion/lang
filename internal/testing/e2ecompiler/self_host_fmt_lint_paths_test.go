@@ -97,7 +97,7 @@ func TestSelfHostFmtLintPaths(t *testing.T) {
 	t.Run("lint-stdin", func(t *testing.T) {
 		src := "function f(a: i32): i32 {\n  if (a == 1) {\n    return 1;\n  }\n  return 0;\n}\n"
 		out, errs, code := run(src, "-lint", "-lint-opt", "cyclomatic-complexity.max=1", "-")
-		if code != 0 || !strings.HasPrefix(out, "<stdin>:1:1: warning[cyclomatic-complexity]") {
+		if code != 0 || out != "" || !strings.HasPrefix(errs, "<stdin>:1:1: warning[cyclomatic-complexity]") {
 			t.Errorf("exit %d, stdout %q, stderr %q", code, out, errs)
 		}
 	})
