@@ -1,0 +1,1 @@
+main.fern:8:32: error[E040]: generic function id cannot be used as a value — nothing here determines its type parameter T. Wrap it in a lambda, which does: (x: T) => id(x)

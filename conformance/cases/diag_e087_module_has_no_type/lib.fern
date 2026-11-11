@@ -1,0 +1,1 @@
+pub struct Shown { v: i32 }

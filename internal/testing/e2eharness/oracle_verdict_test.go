@@ -50,6 +50,10 @@ func TestOracleVerdictCachesByInputs(t *testing.T) {
 	check(2)
 	t.Setenv("FERN_INTERP_VERDICT_PROBE", "on")
 	check(3)
+	t.Setenv("FERN_STDTEST_SHARD", "5/8")
+	check(3)
+	t.Setenv("FERN_STDTEST_SHARD", "2/8")
+	check(3)
 
 	out, exit := CheckVerdict(t, fake, src)
 	if exit != 3 || !strings.Contains(string(out), "verdict for "+src) || !strings.Contains(string(out), "note from -check") {

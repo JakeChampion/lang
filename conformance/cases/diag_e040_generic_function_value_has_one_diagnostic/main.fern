@@ -1,0 +1,10 @@
+// A generic function that no use gives its type parameter is an E040. The
+// declared type of the local adds no second diagnostic.
+function id[T](x: T): T {
+    return x;
+}
+
+function main(): i32 {
+    let f: (i32, i32) => i32 = id;
+    return 0;
+}

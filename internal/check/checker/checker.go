@@ -10892,6 +10892,22 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	}
 
 	type movedSet = map[string]ast.Position
+	var callbackCaptures map[string][]ast.Param
+	callbackCapturesKnown := false
+	checkCallbackCaptures := func(id *ast.Ident, moved movedSet) {
+		if id == nil || id.Builtin || !id.Local || owned[id.Name] || len(moved) == 0 {
+			return
+		}
+		if !callbackCapturesKnown {
+			callbackCaptures = c.localCallbackCaptures(fn)
+			callbackCapturesKnown = true
+		}
+		for _, capture := range callbackCaptures[id.Name] {
+			if at, consumed := moved[capture.Name]; consumed {
+				c.errfCode(id.Pos(), "E050", "callback %q uses captured owned parameter %q after it was consumed (moved at line %d)", id.Name, capture.Name, at.Line)
+			}
+		}
+	}
 
 	// A deferred call consumes its arguments at the function's exit, after
 	// every other use. deferMoved holds those names and field paths.
@@ -11276,8 +11292,33 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		for id := range dynConsumed {
 			delete(borrow, id)
 		}
-		ast.Walk(e, func(n ast.Node) bool {
+		operands := map[*ast.Ident]bool{}
+		var recordUse func(ast.Node) bool
+		walkOperand := func(value ast.Expr) {
+			id, direct := value.(*ast.Ident)
+			if direct {
+				operands[id] = true
+			}
+			ast.Walk(value, recordUse)
+			if direct {
+				delete(operands, id)
+			}
+		}
+		recordUse = func(n ast.Node) bool {
 			switch x := n.(type) {
+			case *ast.Call:
+				walkOperand(x.Callee)
+				for _, arg := range x.Args {
+					walkOperand(arg)
+				}
+				id, _ := x.Callee.(*ast.Ident)
+				checkCallbackCaptures(id, moved)
+				for _, arg := range x.Args {
+					id, _ := arg.(*ast.Ident)
+					checkCallbackCaptures(id, moved)
+				}
+				return false
+
 			case *ast.Lambda:
 				return false
 			case *ast.MatchExpr:
@@ -11318,7 +11359,13 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				return true
 			}
 			id, ok := n.(*ast.Ident)
-			if !ok || id.Builtin || !owned[id.Name] {
+			if !ok || id.Builtin {
+				return true
+			}
+			if !operands[id] {
+				checkCallbackCaptures(id, moved)
+			}
+			if !owned[id.Name] {
 				return true
 			}
 			if at, isMoved := moved[id.Name]; isMoved {
@@ -11343,7 +11390,8 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				moved[id.Name] = id.Pos()
 			}
 			return true
-		})
+		}
+		ast.Walk(e, recordUse)
 		for _, lam := range lambdas {
 			if lam.ReturnOwn {
 				synth := &ast.FuncDecl{Params: append(append([]ast.Param(nil), lam.Captures...), lam.Params...), ReturnType: lam.ReturnType, Body: lam.Body}
@@ -14903,13 +14951,14 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		invalid := false
 		floatDest, toFloat := elemExpected.(ast.FloatType)
 		toFloat = toFloat && !floatDest.Polymorphic
+		var prefix litPrefixScan
 		for i, el := range n.Elems[1:] {
 			t := c.wideLiteralElem(checkElem(el), elemT, el)
 			elemTypes = append(elemTypes, t)
 			if t == nil || elemT == nil {
 				continue
 			}
-			if ll := c.intLitLocalBesideFloat(n.Elems[:i+1], el, elemT, t); ll != nil && !toFloat {
+			if ll := c.intLitLocalBesideFloat(&prefix, n.Elems[:i+1], el, elemT, t); ll != nil && !toFloat {
 				want, got := elemT, t
 				c.afterLitFix(ll, func() {
 					c.errfCode(el.Pos(), "E034", "array element: expected %s, got %s", litWidthIn(want, ll.width), litWidthIn(got, ll.width))

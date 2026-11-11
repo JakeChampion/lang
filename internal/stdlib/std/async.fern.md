@@ -608,7 +608,7 @@ function __sum[T](t: __Tree[T]): __Sum {
   return __Sum { count: 0, pairs: 0, pending: 0, ready: 0, until: None };
 }
 
-function __values_into[T](t: __Tree[T], own out: T[]): T[] {
+function __values_into[T](t: __Tree[T], out: T[]): T[] {
   match (t) {
     Fork(s, l, r) => {
       return __values_into(r, __values_into(l, out));
@@ -628,7 +628,7 @@ function __slots[T](t: __Tree[T]): Option[T][] {
   return __slots_into(t, none);
 }
 
-function __slots_into[T](t: __Tree[T], own out: Option[T][]): Option[T][] {
+function __slots_into[T](t: __Tree[T], out: Option[T][]): Option[T][] {
   match (t) {
     Fork(s, l, r) => {
       return __slots_into(r, __slots_into(l, out));

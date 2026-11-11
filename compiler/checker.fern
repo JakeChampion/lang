@@ -9130,7 +9130,7 @@ function slc_agg_call_roots(c: ast.ExprCall, cur: Scope, params: string[], local
   let flags = view_sum_flags(sums, vix, callee.key);
   for i in 0..flags.len() {
     if (flags[i] && i < callee.args.len()) {
-      let at = check_expr(callee.args[i], cur);
+      let at = view_arg_type(c, i, callee.args[i], cur);
       if (holds_view_aggregate(at, cur)) {
         out = merge_view_roots(out, slc_agg_roots(callee.args[i], at, cur, params, localarr, tainted, held, sums, vix));
       } else {
@@ -9139,6 +9139,19 @@ function slc_agg_call_roots(c: ast.ExprCall, cur: Scope, params: string[], local
     }
   }
   return out;
+}
+
+// An argument that has no type of its own, such as `[]`, has the type of its parameter.
+function view_arg_type(c: ast.ExprCall, i: i32, arg: ast.Expr, s: Scope): typeinfo.Type {
+  let at = check_expr(arg, s);
+  if (!type_contains_unknown(at)) {
+    return at;
+  }
+  let pts = call_param_types(c, s);
+  if (i < pts.len()) {
+    return pts[i];
+  }
+  return at;
 }
 
 // These facts depend on the function and scope, not the call summaries.
@@ -17445,7 +17458,7 @@ function stmts_assign_diags_mode(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]
           out = util.append_diags(out, ctor_payload_diags(v.init, declared, cur));
           let vbound = dest_bound_diags(v.init, declared, cur);
           out = util.append_diags(out, vbound);
-          if (vbound.len() == 0 && !is_unknown(declared) && !is_unknown(initt) && !init_fits(v.init, initt, declared, cur)) {
+          if (vbound.len() == 0 && !is_unknown(declared) && !is_unknown(initt) && !generic_fn_value_arg(v.init, cur) && !init_fits(v.init, initt, declared, cur)) {
             out = out.append(dg_at("E003", "variable \"" + v.name + "\": expected " + type_label(declared) + ", got " + type_label(initt) + str_copy_hint(initt, declared), v.line, v.col));
           }
           if (vbound.len() == 0 && is_unknown(declared) && !is_unknown(initt) && util.index_of_str(cur.tparams, v.type_name) < 0 && e064_unknown_bare(v.type_name, cur.type_names())) {
@@ -18493,12 +18506,176 @@ struct OwnJump { target: i32, breaks: boolean, moved: MovedEntry[] }
 
 struct OwnReturns { synthetic: boolean, moved: MovedEntry[] }
 
-// The last-use facts of one function, decided at the first question.
-struct LastUses { known: boolean, keys: util.NameIndex, fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex }
+// Only single-definition local callbacks and aliases participate.
+struct OclDef { name: string, value: ast.Expr }
+
+struct OclCapture { name: string, type_name: string }
+
+struct OclFacts { names: util.NameIndex, rows: OclCapture[][] }
+
+function ocl_unknown(name: string): OclDef {
+  return OclDef { name: name, value: ast.ExprUnknown { kind: "", line: 0, col: 0 } };
+}
+
+function ocl_var(v: ast.StmtVar, own defs: OclDef[]): OclDef[] {
+  let names = lu_var_names(ast.StmtVar(v), []);
+  if (names.len() == 1 && names[0] == v.name) {
+    return defs.append(OclDef { name: v.name, value: v.init });
+  }
+  for name in names {
+    defs = defs.append(ocl_unknown(name));
+  }
+  return defs;
+}
+
+function ocl_stmt(st: ast.Stmt, own defs: OclDef[]): OclDef[] {
+  match (st) {
+    ast.StmtVar(v) => {
+      return ocl_var(v, defs);
+    },
+    ast.StmtAssign(a) => {
+      return defs.append(OclDef { name: a.target, value: a.value });
+    },
+    ast.StmtFor(f) => {
+      return defs.append(ocl_unknown(f.var_name));
+    },
+    _ => {}
+  }
+  for name in lu_arm_binders(st, []) {
+    defs = defs.append(ocl_unknown(name));
+  }
+  return defs;
+}
+
+function ocl_expr(e: ast.Expr, own defs: OclDef[]): OclDef[] {
+  if let ast.ExprLambda(lm) = e {
+    for param in lm.params {
+      defs = defs.append(ocl_unknown(param.name));
+    }
+  }
+  return defs;
+}
+
+function ocl_unique(names: util.NameIndex, name: string): boolean {
+  let i = names.chain(name);
+  let count = 0;
+  while (i >= 0) {
+    if (names.names[i] == name) {
+      count += 1;
+      if (count > 1) {
+        return false;
+      }
+    }
+    i = names.next[i];
+  }
+  return true;
+}
+
+function ocl_merge(into: OclCapture[], from: OclCapture[]): OclCapture[] {
+  let names: string[] = [];
+  for capture in into {
+    names = names.append(capture.name);
+  }
+  for capture in from {
+    if (!util.has_str(names, capture.name)) {
+      into = into.append(capture);
+      names = names.append(capture.name);
+    }
+  }
+  return into;
+}
+
+function ocl_lookup(facts: OclFacts, name: string): OclCapture[] {
+  let at = facts.names.find(name);
+  if (at >= 0 && ocl_unique(facts.names, name)) {
+    return facts.rows[at];
+  }
+  return [];
+}
+
+function ocl_lambda(lm: ast.ExprLambda, facts: OclFacts): OclCapture[] {
+  let out: OclCapture[] = [];
+  for capture in lm.captures {
+    if (ocl_unique(facts.names, capture.name)) {
+      out = ocl_merge(out, [OclCapture { name: capture.name, type_name: typeinfo.spelling(capture.ty) }]);
+      out = ocl_merge(out, ocl_lookup(facts, capture.name));
+    }
+  }
+  return out;
+}
+
+function ocl_value(value: ast.Expr, facts: OclFacts): OclCapture[] {
+  match (value) {
+    ast.ExprIdent(id) => {
+      return ocl_lookup(facts, id.name);
+    },
+    ast.ExprLambda(lm) => {
+      return ocl_lambda(lm, facts);
+    },
+    _ => {}
+  }
+  return [];
+}
+
+function ocl_facts(fn: parser.FuncDecl): OclFacts {
+  let defs: OclDef[] = [];
+  for param in fn.params {
+    defs = defs.append(ocl_unknown(param.name));
+  }
+  for st in fn.body {
+    defs = astwalk.fold_stmt_nodes(st, defs, ocl_stmt, ocl_expr, astwalk.descend_all);
+  }
+  let names: string[] = [];
+  let rows: OclCapture[][] = [];
+  for def in defs {
+    names = names.append(def.name);
+    rows = rows.append([]);
+  }
+  let facts = OclFacts { names: util.name_index(names), rows: rows };
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for i in 0..defs.len() {
+      if (ocl_unique(facts.names, defs[i].name)) {
+        let grown = ocl_merge(facts.rows[i], ocl_value(defs[i].value, facts));
+        if (grown.len() > facts.rows[i].len()) {
+          facts = OclFacts { ...facts, rows: facts.rows.with(i, grown) };
+          changed = true;
+        }
+      }
+    }
+  }
+  return facts;
+}
+
+// The last-use and capture facts are computed on their first question.
+struct LastUses { known: boolean, keys: util.NameIndex, fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex, captures_known: boolean, capture_names: util.NameIndex, capture_rows: OclCapture[][] }
 
 function lu_pending(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex): Cell[LastUses] {
   let none: string[] = [];
-  return cell_new(LastUses { known: false, keys: util.name_index(none), fn: fn, ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret });
+  return cell_new(LastUses { known: false, keys: util.name_index(none), fn: fn, ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, captures_known: false, capture_names: util.name_index(none), capture_rows: [] });
+}
+
+function ow_callback_capture_diags(id: ast.ExprIdent, moved: MovedEntry[], ctx: OwnCtx): util.Diag[] {
+  if (id.builtin || moved.len() == 0 || ow_is_owned(ctx, id.name) || !util.has_str(ctx.bound, id.name)) {
+    return [];
+  }
+  let lu = ctx.last_use.get();
+  if (!lu.captures_known) {
+    let facts = ocl_facts(lu.fn);
+    lu = LastUses { ...lu, captures_known: true, capture_names: facts.names, capture_rows: facts.rows };
+    ctx.last_use.set(lu);
+  }
+  let at = lu.capture_names.find(id.name);
+  let out: util.Diag[] = [];
+  if (at >= 0) {
+    for capture in lu.capture_rows[at] {
+      if (ow_moved_has(moved, capture.name) && !ow_cached_value_data(capture.type_name, ctx.decls, ctx.value_proofs)) {
+        out = out.append(dg_at("E050", "callback \"" + id.name + "\" uses captured owned parameter \"" + capture.name + "\" after it was consumed (moved at line " + ow_line_text(ow_moved_line(moved, capture.name)) + ")", id.line, id.col));
+      }
+    }
+  }
+  return out;
 }
 
 function lu_has(ctx: OwnCtx, key: string): boolean {
@@ -22901,6 +23078,22 @@ function send_unsafe_reason_list(ts: typeinfo.Type[], s: Scope, seen: string[]):
   return "";
 }
 
+function ow_call_capture_diags(c: ast.ExprCall, moved: MovedEntry[], ctx: OwnCtx, prior: util.Diag[]): util.Diag[] {
+  if (prior.len() > 0) {
+    return prior;
+  }
+  let out: util.Diag[] = [];
+  if let ast.ExprIdent(id) = c.callee {
+    out = util.append_diags(out, ow_callback_capture_diags(id, moved, ctx));
+  }
+  for arg in c.args {
+    if let ast.ExprIdent(id) = arg {
+      out = util.append_diags(out, ow_callback_capture_diags(id, moved, ctx));
+    }
+  }
+  return out;
+}
+
 function ow_walk_call(c: ast.ExprCall, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
   let d = ow_guard_call(c, ctx);
   let oc = ow_own_call(c, ctx);
@@ -22922,6 +23115,7 @@ function ow_walk_call(c: ast.ExprCall, moved: MovedEntry[], ctx: OwnCtx): OwnWal
     m = ra.moved;
     d = util.append_diags(d, ra.diags);
   }
+  d = ow_call_capture_diags(c, m, ctx, d);
   if let ast.ExprLambda(lm) = c.callee {
     let lctx = ow_nested_ctx(ctx, lm, false);
     let inner = ow_stmts(lm.body, ow_nested_moved(m, lm.params), lctx);
@@ -22993,7 +23187,7 @@ function ow_path_field_or_empty(path: string, name: string): string {
 function ru_borrow(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
   match (e) {
     ast.ExprIdent(id) => {
-      let d: util.Diag[] = [];
+      let d = ow_callback_capture_diags(id, moved, ctx);
       if (!id.builtin && ow_is_owned(ctx, id.name)) {
         d = ow_bare_use_diags(moved, id);
       }
@@ -23008,7 +23202,7 @@ function ru_borrow(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
 function ru_expr(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
   match (e) {
     ast.ExprIdent(id) => {
-      let d: util.Diag[] = [];
+      let d = ow_callback_capture_diags(id, moved, ctx);
       let m = moved;
       if (ow_is_owned(ctx, id.name)) {
         d = ow_bare_use_diags(moved, id);
