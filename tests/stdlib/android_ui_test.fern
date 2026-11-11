@@ -147,10 +147,11 @@ function test_scroll_column(): test.TestOutcome {
   let past = scrolled(root, "items", 5000);
   let s = top.scrollers[0];
   // The list is 300 pixels high and its rows are 1000: it scrolls 700. Six
-  // rows show at the top, and seven after 120 pixels.
+  // rows show at the top, and seven after 120 pixels. A list goes at most
+  // its own height past its end.
   let first = moved.nodes[1];
   let got = s.name + " " + s.y.to_string() + " " + s.h.to_string() + " " + s.limit.to_string() + " " + top.nodes.len().to_string() + " " + moved.nodes.len().to_string() + " " + first.tap.arg.to_string() + " " + first.y.to_string() + " " + first.clip0.to_string() + " " + first.clip1.to_string() + " " + first.group + " " + past.nodes[past.nodes.len() - 1].y.to_string();
-  return test.assert_eq(got, "items 100 300 700 13 15 2 80 100 400 items 350");
+  return test.assert_eq(got, "items 100 300 700 13 15 2 80 100 400 items 100");
 }
 
 function test_list_builds_the_rows_that_show(): test.TestOutcome {
@@ -161,6 +162,103 @@ function test_list_builds_the_rows_that_show(): test.TestOutcome {
   let n = far.nodes[1];
   let got = top.scrollers[0].limit.to_string() + " " + top.nodes.len().to_string() + " " + far.nodes.len().to_string() + " " + n.tap.arg.to_string() + " " + n.y.to_string() + " " + n.h.to_string();
   return test.assert_eq(got, "3999600 21 23 50000 -10 40");
+}
+
+function cells(n: i32): ui.El[] {
+  let out: ui.El[] = [];
+  for i in 0..n {
+    out = out.append(ui.box().width(80.0).height(60.0).background(ui.SURFACE).on_tap_with("cell", i));
+  }
+  return out;
+}
+
+function test_row_scrolls_across(): test.TestOutcome {
+  // Ten cells of 80 pixels in a row of 200: the row scrolls 600. After 100
+  // pixels, the cells 1 to 3 show, between the columns 0 and 200.
+  let root = ui.column([ui.row(cells(10)).scroll("strip").wide()]).padding_xy(0.0, 20.0);
+  let top = laid(root);
+  let moved = scrolled(root, "strip", 100);
+  let s = top.scrollers[0];
+  let first = moved.nodes[1];
+  let got = s.across.to_string() + " " + s.limit.to_string() + " " + top.nodes.len().to_string() + " " + moved.nodes.len().to_string() + " " + first.tap.arg.to_string() + " " + first.x.to_string() + " " + first.left.to_string() + " " + first.right.to_string() + " " + down_up(moved, 10, 30) + " " + down_up(moved, 70, 30);
+  return test.assert_eq(got, "true 600 4 4 1 -20 0 200 cell1 cell2");
+}
+
+// A list that scrolls down, with a row that scrolls across as its second
+// element.
+function nested(): ui.El {
+  let kids = rows(20);
+  return ui.column([kids[0], ui.row(cells(10)).scroll("strip").wide(), ui.column(kids).wide()]).scroll("page");
+}
+
+function drag(lay: ui.Layout, x0: i32, y0: i32, x1: i32, y1: i32): ui.Input {
+  let (inp, _) = ui.touch(ui.no_input(), lay, 0, x0, y0, 0i64, 1.0);
+  for i in 1..11 {
+    let (next, _) = ui.touch(inp, lay, 2, x0 + (x1 - x0) * i / 10, y0 + (y1 - y0) * i / 10, i as i64 * 16000000i64, 1.0);
+    inp = next;
+  }
+  return inp;
+}
+
+function test_a_drag_takes_the_list_of_its_direction(): test.TestOutcome {
+  let lay = laid(nested());
+  let across = drag(lay, 150, 80, 50, 85);
+  let down = drag(lay, 150, 80, 155, 30);
+  let got = across.offset("strip").to_string() + " " + across.offset("page").to_string() + " " + down.offset("strip").to_string() + " " + down.offset("page").to_string() + " " + lay.scrollers[1].parent;
+  return test.assert_eq(got, "90 0 0 40 page");
+}
+
+function test_a_list_springs_back_from_its_end(): test.TestOutcome {
+  let lay = laid(ui.column(rows(20)).scroll("items"));
+  // The finger pulls the top of the list 99 pixels down after the slop: the
+  // list goes half as far past its end.
+  let pull = drag(lay, 100, 100, 100, 210);
+  let pulled = pull.offset("items");
+  let (lifted, _) = ui.touch(pull, lay, 1, 100, 210, 200000000i64, 1.0);
+  let mid = ui.advance(lifted, lay, 250000000i64);
+  let end = ui.advance(mid, lay, 2000000000i64);
+  let got = pulled.to_string() + " " + lifted.flinging().to_string() + " " + (mid.offset("items") > pulled && mid.offset("items") < 0).to_string() + " " + end.offset("items").to_string() + " " + end.flinging().to_string();
+  return test.assert_eq(got, "-49 true true 0 false");
+}
+
+function test_a_fling_passes_its_end_and_springs_back(): test.TestOutcome {
+  let lay = laid(ui.column(rows(20)).scroll("items"));
+  let (inp, _) = ui.touch(ui.no_input(), lay, 0, 100, 100, 0i64, 1.0);
+  for i in 1..6 {
+    let (next, _) = ui.touch(inp, lay, 2, 100, 100 + i * 4, i as i64 * 10000000i64, 1.0);
+    inp = next;
+  }
+  // The list is 6 pixels past its top. A list past its end springs back
+  // and does not fling.
+  let (lifted, _) = ui.touch(inp, lay, 1, 100, 120, 50000000i64, 1.0);
+  let low = scrolled_input(lay);
+  let flings = low.flung + " " + (low.offset("items") < 600).to_string();
+  let hit = ui.advance(low, lay, 80000000i64);
+  let far = hit.offset("items");
+  let over = ui.advance(hit, lay, 110000000i64).offset("items");
+  let rest = ui.advance(ui.advance(hit, lay, 110000000i64), lay, 3000000000i64);
+  let got = lifted.sprung + " " + flings + " " + far.to_string() + " " + (over > 600).to_string() + " " + hit.sprung + " " + rest.offset("items").to_string() + " " + rest.flinging().to_string();
+  return test.assert_eq(got, "items items true 600 true items 600 false");
+}
+
+// A fast fling up from 500 pixels down the list, which has 100 pixels
+// left: the finger moves 81 pixels in 20 ms.
+function scrolled_input(lay: ui.Layout): ui.Input {
+  let start = ui.Input { ...ui.no_input(), offsets: ui.no_input().offsets.insert("items", 500) };
+  let (inp, _) = ui.touch(start, lay, 0, 100, 380, 0i64, 1.0);
+  for i in 1..11 {
+    let (next, _) = ui.touch(inp, lay, 2, 100, 380 - i * 9, i as i64 * 2000000i64, 1.0);
+    inp = next;
+  }
+  let (lifted, _) = ui.touch(inp, lay, 1, 100, 290, 20000000i64, 1.0);
+  return lifted;
+}
+
+function test_a_shorter_list_goes_back_to_its_end(): test.TestOutcome {
+  let long = laid(ui.column(rows(20)).scroll("items"));
+  let short = laid(ui.column(rows(8)).scroll("items"));
+  let at_end = ui.Input { ...ui.no_input(), offsets: ui.no_input().offsets.insert("items", 600) };
+  return test.assert_eq(ui.advance(at_end, long, 0i64).offset("items").to_string() + " " + ui.advance(at_end, short, 0i64).offset("items").to_string(), "600 0");
 }
 
 function down_up(lay: ui.Layout, x: i32, y: i32): string {
@@ -479,6 +577,11 @@ function main(): i32 {
   r = r.it("a button has the size of Material", test_button);
   r = r.it("a column that scrolls clips and moves its rows", test_scroll_column);
   r = r.it("a list builds only the rows that show", test_list_builds_the_rows_that_show);
+  r = r.it("a row that is a list scrolls across", test_row_scrolls_across);
+  r = r.it("a drag takes the list of its direction", test_a_drag_takes_the_list_of_its_direction);
+  r = r.it("a list springs back from its end", test_a_list_springs_back_from_its_end);
+  r = r.it("a fling passes its end and springs back", test_a_fling_passes_its_end_and_springs_back);
+  r = r.it("a shorter list goes back to its end", test_a_shorter_list_goes_back_to_its_end);
   r = r.it("a touch that stays is a tap", test_tap);
   r = r.it("a drag scrolls and does not tap", test_drag_scrolls_and_does_not_tap);
   r = r.it("a fling goes on and stops at the end", test_fling_goes_on_and_stops_at_the_end);

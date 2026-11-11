@@ -8,7 +8,7 @@ A `Node` is a rectangle of the window in pixels, with a `Paint` that tells what 
 
 A node can have an action for a tap and an action for a long press. An `Action` is a name and a number. `hit` gives the topmost node with an action under a point. A node that is a barrier stops the search, so a dialog keeps the touches off the screen behind it.
 
-A node can be part of a group: a list that scrolls. The node draws only in the rows from `clip0` to `clip1`, which are the edges of its list. `group_at` gives the group under a point.
+A node can be part of a group: a list that scrolls. The node draws only in the rows from `clip0` to `clip1` and in the columns from `left` to `right`, which are the edges of its list. `group_at` gives the group under a point.
 
 `access_items` gives one item for each node with an action, and one for each text in no such node. The text of an item is the description of the node, or the texts that the node holds. A node with a description and no action counts as a text. A service reaches only the nodes after the last barrier.
 
@@ -86,6 +86,9 @@ pub struct Node {
   group: string,
   clip0: i32,
   clip1: i32,
+  // The columns that the node draws on, for a list that scrolls across.
+  left: i32,
+  right: i32,
   // Touches do not go to the nodes below a barrier.
   barrier: boolean,
   // What an accessibility service reads for the node, or "".
@@ -93,7 +96,7 @@ pub struct Node {
 }
 
 pub function node(x: i32, y: i32, w: i32, h: i32, paint: Paint): Node {
-  return Node { x: x, y: y, w: w, h: h, paint: paint, tap: no_action(), long: no_action(), group: "", clip0: 0, clip1: NO_CLIP, barrier: false, say: "" };
+  return Node { x: x, y: y, w: w, h: h, paint: paint, tap: no_action(), long: no_action(), group: "", clip0: 0, clip1: NO_CLIP, left: 0, right: NO_CLIP, barrier: false, say: "" };
 }
 
 // A node acts when it has an action for a tap or for a long press.
@@ -103,7 +106,7 @@ pub function (n: Node) acts(): boolean {
 
 // The part of the node that shows holds the point x and y.
 pub function (n: Node) holds(x: i32, y: i32): boolean {
-  return x >= n.x && x < n.x + n.w && y >= n.y && y < n.y + n.h && y >= n.clip0 && y < n.clip1;
+  return x >= n.x && x < n.x + n.w && y >= n.y && y < n.y + n.h && y >= n.clip0 && y < n.clip1 && x >= n.left && x < n.right;
 }
 
 // The nodes of one screen, moved down `dy` rows, with one alpha for all of
@@ -184,11 +187,14 @@ function shown_text(n: Node): string {
   }
 }
 
-// The part of node `n` that shows, between its clip rows, as x, y, w, h.
+// The part of node `n` that shows, between its clip rows and columns, as
+// x, y, w, h.
 function visible(n: Node): (i32, i32, i32, i32) {
   let y0 = n.y.max(n.clip0);
   let y1 = (n.y + n.h).min(n.clip1);
-  return (n.x, y0, n.w, (y1 - y0).max(0));
+  let x0 = n.x.max(n.left);
+  let x1 = (n.x + n.w).min(n.right);
+  return (x0, y0, (x1 - x0).max(0), (y1 - y0).max(0));
 }
 
 // The middle of node `n` is in the box `r`.
@@ -268,7 +274,7 @@ function access_pairs(ns: Node[]): (android.AccessItem, Node)[] {
   for n in reach {
     let r = visible(n);
     let (x, y, w, h) = r;
-    if (!n.acts() || h == 0) {
+    if (!n.acts() || w * h == 0) {
       continue;
     }
     let (text, marks) = said(reach, n, r, named);
@@ -281,7 +287,7 @@ function access_pairs(ns: Node[]): (android.AccessItem, Node)[] {
     let n = reach[k];
     let t = shown_text(n);
     let (x, y, w, h) = visible(n);
-    if (t.len() == 0 || named[k] || n.acts() || h == 0) {
+    if (t.len() == 0 || named[k] || n.acts() || w * h == 0) {
       continue;
     }
     let id = access_id("text|" + t, used);
@@ -478,29 +484,33 @@ function paint(fr: draw.Frame, f: text.Fonts, own c: text.Cache, n: Node): text.
 // frame are then premultiplied.
 pub function raster(fr: draw.Frame, f: text.Fonts, own c: text.Cache, n: Node, m: i32): text.Cache {
   fr.store(0, 0, fr.width, fr.height, 0);
-  return paint(fr, f, c, Node { ...n, x: m, y: m, clip0: 0, clip1: NO_CLIP });
+  return paint(fr, f, c, Node { ...n, x: m, y: m, clip0: 0, clip1: NO_CLIP, left: 0, right: NO_CLIP });
 }
 
-// The rows of `fr` from y0 to y1, as a frame of its own.
-function band(fr: draw.Frame, y0: i32, y1: i32): draw.Frame {
+// The rows of `fr` from y0 to y1 and its columns from x0 to x1, as a frame
+// of its own.
+function part(fr: draw.Frame, x0: i32, x1: i32, y0: i32, y1: i32): draw.Frame {
   let a = y0.max(0);
   let b = y1.min(fr.height);
-  if (b <= a) {
-    return draw.Frame { ...fr, height: 0 };
+  let l = x0.max(0);
+  let r = x1.min(fr.width);
+  if (b <= a || r <= l) {
+    return draw.Frame { ...fr, width: 0, height: 0 };
   }
-  return draw.Frame { ...fr, bits: fr.bits + (a * fr.stride * 4) as usize, height: b - a };
+  return draw.Frame { ...fr, bits: fr.bits + ((a * fr.stride + l) * 4) as usize, width: r - l, height: b - a };
 }
 
-// Draws the nodes on the frame, each one between its clip rows. It gives
-// the cache with the sprites that it made.
+// Draws the nodes on the frame, each one between its clip rows and
+// columns. It gives the cache with the sprites that it made.
 pub function render(fr: draw.Frame, f: text.Fonts, own c: text.Cache, ns: Node[]): text.Cache {
   let cache = c;
   for n in ns {
-    if (n.clip0 > 0 || n.clip1 < fr.height) {
+    if (n.clip0 > 0 || n.clip1 < fr.height || n.left > 0 || n.right < fr.width) {
       let top = n.clip0.max(0);
-      let b = band(fr, top, n.clip1);
+      let left = n.left.max(0);
+      let b = part(fr, left, n.right, top, n.clip1);
       if (b.height > 0) {
-        cache = paint(b, f, cache, Node { ...n, y: n.y - top });
+        cache = paint(b, f, cache, Node { ...n, x: n.x - left, y: n.y - top });
       }
     } else {
       cache = paint(fr, f, cache, n);

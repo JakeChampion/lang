@@ -20,7 +20,7 @@ Each element has a width and a height: `Hug` takes the size of what the element 
 
 `field` is a text field. A tap gives it the focus and shows the keyboard of the system. The program keeps the text: each change comes to `update` as `Edit` with the name of the field and the new text, and `view` gives the field the text that it shows.
 
-`scroll` makes a column a list that scrolls, with the fling of an Android list. `list` is a list that makes only the rows that show, so a list of many rows costs as much as a short one. Each list has a name, which keeps its position from frame to frame.
+`scroll` makes a column a list that scrolls down, and a row a list that scrolls across, with the fling of an Android list and a spring at each end. `list` is a list that makes only the rows that show, so a list of many rows costs as much as a short one. Each list has a name, which keeps its position from frame to frame.
 
 A color is a pixel word of `std/android/draw`, or a role: `PRIMARY`, `ON_PRIMARY`, `INK`, `MUTED`, `SURFACE`, `OUTLINE`, `BACKGROUND` and `TRACK`. A role takes its color from the `Theme`, which is light or dark as the system is. `button`, `outlined_button`, `card`, `toggle`, `progress` and `divider` are elements in the look of Material 3.
 
@@ -466,7 +466,8 @@ pub function (e: El) described(say: string): El {
   return El { ...e, say: say };
 }
 
-// A column that scrolls as the list `name`.
+// A column that scrolls down, or a row that scrolls across, as the list
+// `name`.
 pub function (e: El) scroll(name: string): El {
   return El { ...e, list: name };
 }
@@ -702,13 +703,17 @@ function stack_size(env: Env, e: El, iw: i32, ih: i32): (i32, i32) {
 
 // The size of the elements of the column or the row `e`, with their gaps.
 function flow_size(env: Env, e: El, iw: i32, ih: i32): (i32, i32) {
-  let room = ih;
-  if (e.kind == COLUMN && e.list.len() > 0) {
-    room = UNBOUNDED;
+  let (rw, rh) = (iw, ih);
+  if (e.list.len() > 0) {
+    if (e.kind == ROW) {
+      rw = UNBOUNDED;
+    } else {
+      rh = UNBOUNDED;
+    }
   }
   let gaps = px(env, e.gap) * (e.kids.len() - 1).max(0);
   let (w, h) = (0, 0);
-  for s in sizes(env, e, iw, room) {
+  for s in sizes(env, e, rw, rh) {
     let (kw, kh) = s;
     if (e.kind == ROW) {
       w += kw;
@@ -786,8 +791,10 @@ The elements of a list get the name of the list as their group, and the rows of 
 
 ```fern
 <<placement>>=
-// A list that scrolls: its name, its box, and how far it can scroll.
-pub struct Scroller { name: string, x: i32, y: i32, w: i32, h: i32, limit: i32 }
+// A list that scrolls: its name, its box, and how far it can scroll. It
+// scrolls across when `across` is true, and down when it is false.
+// `parent` is the name of the list that it is in, or "".
+pub struct Scroller { name: string, x: i32, y: i32, w: i32, h: i32, limit: i32, across: boolean, parent: string }
 
 // The nodes of a screen, and its lists.
 pub struct Layout { nodes: scene.Node[], scrollers: Scroller[] }
@@ -796,8 +803,14 @@ pub function no_layout(): Layout {
   return Layout { nodes: [], scrollers: [] };
 }
 
-// The list that the nodes of an element are in, and its rows.
-struct Clip { group: string, c0: i32, c1: i32 }
+// The list that the nodes of an element are in, with its rows and its
+// columns.
+struct Clip { group: string, c0: i32, c1: i32, left: i32, right: i32 }
+
+// The node `n` in the list of `clip`.
+function clipped(n: scene.Node, clip: Clip): scene.Node {
+  return scene.Node { ...n, group: clip.group, clip0: clip.c0, clip1: clip.c1, left: clip.left, right: clip.right };
+}
 
 // Where `rest` pixels of free room go before an element, for an alignment.
 function shift(a: i32, rest: i32): i32 {
@@ -856,13 +869,13 @@ function own_nodes(env: Env, e0: El, x: i32, y: i32, w: i32, h: i32, clip: Clip)
   if (ns.len() == 0 && takes_part(e)) {
     ns = ns.append(scene.node(x, y, w, h, scene.Blank));
   }
-  let group = clip.group;
+  let own = clip;
   if (e.list.len() > 0) {
-    group = e.list;
+    own = Clip { ...clip, group: e.list };
   }
   let out: scene.Node[] = [];
   for i in 0..ns.len() {
-    let n = scene.Node { ...ns[i], group: group, clip0: clip.c0, clip1: clip.c1 };
+    let n = clipped(ns[i], own);
     if (i == 0) {
       n = scene.Node { ...n, tap: e.tap, long: e.long, barrier: e.barrier, say: e.say };
     }
@@ -871,9 +884,10 @@ function own_nodes(env: Env, e0: El, x: i32, y: i32, w: i32, h: i32, clip: Clip)
   return out;
 }
 
-// How far the list `name` scrolls, from 0 to `limit`.
-function offset_of(env: Env, name: string, limit: i32): i32 {
-  return env.offsets.get(name).unwrap_or(0).max(0).min(limit);
+// How far the list `name` scrolls: from 0 to `limit`, or as far as `room`
+// pixels past an end while a finger pulls it there.
+function offset_of(env: Env, name: string, limit: i32, room: i32): i32 {
+  return env.offsets.get(name).unwrap_or(0).max(0 - room).min(limit + room);
 }
 
 function place_text(env: Env, e: El, x: i32, y: i32, w: i32, clip: Clip, own out: Layout): Layout {
@@ -884,7 +898,7 @@ function place_text(env: Env, e: El, x: i32, y: i32, w: i32, clip: Clip, own out
     let l = t.lines[i];
     let lw = text.width(env.fonts, t.face, t.px, l);
     let n = scene.node(x + shift(e.align, w - lw), y + i * t.line, lw, t.line, scene.Label(l, t.px, t.face, 0, color));
-    nodes = nodes.append(scene.Node { ...n, group: clip.group, clip0: clip.c0, clip1: clip.c1 });
+    nodes = nodes.append(clipped(n, clip));
   }
   return Layout { nodes: nodes, scrollers: out.scrollers };
 }
@@ -921,7 +935,7 @@ function place_field(env: Env, e: El, x: i32, y: i32, w: i32, h: i32, clip: Clip
   ns = ns.append(scene.node(left, y + h - rule, wide, rule, scene.Fill(rule_color, 0)));
   let nodes = out.nodes;
   for n in ns {
-    nodes = nodes.append(scene.Node { ...n, group: clip.group, clip0: clip.c0, clip1: clip.c1 });
+    nodes = nodes.append(clipped(n, clip));
   }
   return Layout { nodes: nodes, scrollers: out.scrollers };
 }
@@ -930,23 +944,47 @@ function place_field(env: Env, e: El, x: i32, y: i32, w: i32, h: i32, clip: Clip
 function place_rows(env: Env, e: El, x: i32, y: i32, w: i32, h: i32, clip: Clip, own out: Layout): Layout {
   let row = px(env, e.row).max(1);
   let limit = (e.count * row - h).max(0);
-  let at = offset_of(env, e.list, limit);
-  let inner = Clip { group: e.list, c0: clip.c0.max(y), c1: clip.c1.min(y + h) };
-  let o = Layout { nodes: out.nodes, scrollers: out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit }) };
+  let at = offset_of(env, e.list, limit, h);
+  let inner = Clip { ...clip, group: e.list, c0: clip.c0.max(y), c1: clip.c1.min(y + h) };
+  let o = Layout { nodes: out.nodes, scrollers: out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit, across: false, parent: clip.group }) };
   let Some(build) = e.build else {
     return o;
   };
-  let first = (at / row).max(0);
-  let last = ((at + h + row - 1) / row).min(e.count);
+  let first = (at / row).max(0).min(e.count);
+  let last = ((at + h + row - 1) / row).max(first).min(e.count);
   for i in first..last {
     o = place(env, build(i), x, y + i * row - at, w, row, inner, o);
   }
   return o;
 }
 
-// The elements of a row, each in its box, from left to right.
+// The elements of a row, each in its box, from the column `left` on. An
+// element outside the columns of `clip` gets no nodes.
+function place_along(env: Env, e: El, ss: (i32, i32)[], left: i32, y: i32, h: i32, gap: i32, clip: Clip, own out: Layout): Layout {
+  let o = out;
+  let at = left;
+  for i in 0..e.kids.len() {
+    let (kw, kh) = ss[i];
+    if (e.align == STRETCH) {
+      kh = h;
+    }
+    if (at + kw > clip.left && at < clip.right) {
+      o = place(env, e.kids[i], at, y + shift(e.align, h - kh), kw, kh, clip, o);
+    }
+    at += kw + gap;
+  }
+  return o;
+}
+
+// The elements of a row, each in its box. A row that is a list scrolls
+// them across.
 function place_row(env: Env, e: El, x: i32, y: i32, w: i32, h: i32, clip: Clip, own out: Layout): Layout {
-  let ss = sizes(env, e, w, h);
+  let scrolls = e.list.len() > 0;
+  let room = w;
+  if (scrolls) {
+    room = UNBOUNDED;
+  }
+  let ss = sizes(env, e, room, h);
   let n = e.kids.len();
   let gap = px(env, e.gap);
   let total = gap * (n - 1).max(0);
@@ -954,22 +992,16 @@ function place_row(env: Env, e: El, x: i32, y: i32, w: i32, h: i32, clip: Clip, 
     let (kw, _) = s;
     total += kw;
   }
-  let at = x;
+  if (scrolls) {
+    let limit = (total - w).max(0);
+    let o = Layout { nodes: out.nodes, scrollers: out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit, across: true, parent: clip.group }) };
+    let inner = Clip { ...clip, group: e.list, left: clip.left.max(x), right: clip.right.min(x + w) };
+    return place_along(env, e, ss, x - offset_of(env, e.list, limit, w), y, h, gap, inner, o);
+  }
   if (e.justify == BETWEEN && n > 1) {
-    gap += (w - total).max(0) / (n - 1);
-  } else {
-    at += shift(e.justify, w - total);
+    return place_along(env, e, ss, x, y, h, gap + (w - total).max(0) / (n - 1), clip, out);
   }
-  let o = out;
-  for i in 0..n {
-    let (kw, kh) = ss[i];
-    if (e.align == STRETCH) {
-      kh = h;
-    }
-    o = place(env, e.kids[i], at, y + shift(e.align, h - kh), kw, kh, clip, o);
-    at += kw + gap;
-  }
-  return o;
+  return place_along(env, e, ss, x + shift(e.justify, w - total), y, h, gap, clip, out);
 }
 
 // The elements of a column, each in its box, from the row `top` down. An
@@ -1008,9 +1040,9 @@ function place_column(env: Env, e: El, x: i32, y: i32, w: i32, h: i32, clip: Cli
   }
   if (scrolls) {
     let limit = (total - h).max(0);
-    let o = Layout { nodes: out.nodes, scrollers: out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit }) };
-    let inner = Clip { group: e.list, c0: clip.c0.max(y), c1: clip.c1.min(y + h) };
-    return place_down(env, e, ss, x, y - offset_of(env, e.list, limit), w, gap, inner, o);
+    let o = Layout { nodes: out.nodes, scrollers: out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit, across: false, parent: clip.group }) };
+    let inner = Clip { ...clip, group: e.list, c0: clip.c0.max(y), c1: clip.c1.min(y + h) };
+    return place_down(env, e, ss, x, y - offset_of(env, e.list, limit, h), w, gap, inner, o);
   }
   if (e.justify == BETWEEN && n > 1) {
     return place_down(env, e, ss, x, y, w, gap + (h - total).max(0) / (n - 1), clip, out);
@@ -1065,7 +1097,7 @@ pub function layout(root: El, fonts: text.Fonts, s: Screen, offsets: Map[string,
   if (exact(env, root.h) >= 0) {
     h = exact(env, root.h);
   }
-  return place(env, root, s.left, s.top, w, h, Clip { group: "", c0: 0, c1: scene.NO_CLIP }, no_layout());
+  return place(env, root, s.left, s.top, w, h, Clip { group: "", c0: 0, c1: scene.NO_CLIP, left: 0, right: scene.NO_CLIP }, no_layout());
 }
 ```
 
@@ -1073,7 +1105,9 @@ pub function layout(root: El, fonts: text.Fonts, s: Screen, offsets: Map[string,
 
 The times and the distances are those of the `ViewConfiguration` of Android: a finger that moves more than 8 dp drags, and a finger that stays for 400 ms presses long.
 
-A touch that starts on a list and drags scrolls the list. When the finger lifts, the list flings at the speed of the finger, as `std/android/motion` works it out.
+A touch that starts on a list and drags scrolls the list. A drag across scrolls the nearest list that scrolls across, and a drag down scrolls the nearest list that scrolls down. So a row that scrolls across can be in a list that scrolls down. When the finger lifts, the list flings at the speed of the finger, as `std/android/motion` works it out.
+
+A finger can pull a list past its end, and the list goes half as far as the finger. When the finger lifts, the list springs back. A fling that reaches the end of its list goes past it by its speed and springs back too.
 
 ```fern
 <<gestures>>=
@@ -1093,29 +1127,60 @@ const SLOP_DP: f64 = 8.0;
 const LONG_PRESS_NS: i64 = 400000000i64;
 
 // A finger on the screen: where it went down and where it is, the time
-// that it went down, the node that it went down on, and the list that it
-// drags with how far the list scrolled before.
-pub struct Press { active: boolean, x0: i32, y0: i32, x: i32, y: i32, at: i64, moved: boolean, fired: boolean, target: Option[scene.Node], group: string, scroll0: i32, samples: motion.Sample[] }
+// that it went down, and the node that it went down on. `inner` is the
+// list under the finger. After the finger passes the slop, `group` is the
+// list that it drags, across or down, and `scroll0` is how far that list
+// was pulled when the drag started.
+pub struct Press { active: boolean, x0: i32, y0: i32, x: i32, y: i32, at: i64, moved: boolean, fired: boolean, target: Option[scene.Node], inner: string, group: string, across: boolean, scroll0: i32, samples: motion.Sample[] }
 
-// The finger, the list that flings, and how far each list scrolls.
-pub struct Input { press: Press, flung: string, fling: motion.Fling, offsets: Map[string, i32] }
+// The finger, the list that flings, the list that springs back to its end,
+// and how far each list scrolls.
+pub struct Input { press: Press, flung: string, fling: motion.Fling, sprung: string, spring: motion.Spring, offsets: Map[string, i32] }
 
 function no_press(): Press {
-  return Press { active: false, x0: 0, y0: 0, x: 0, y: 0, at: 0i64, moved: false, fired: false, target: None, group: "", scroll0: 0, samples: [] };
+  return Press { active: false, x0: 0, y0: 0, x: 0, y: 0, at: 0i64, moved: false, fired: false, target: None, inner: "", group: "", across: false, scroll0: 0, samples: [] };
+}
+
+function no_spring(): motion.Spring {
+  return motion.spring(0.0, 0.0, 0.0, 0i64);
 }
 
 pub function no_input(): Input {
-  return Input { press: no_press(), flung: "", fling: motion.no_fling(), offsets: map_new(8) };
+  return Input { press: no_press(), flung: "", fling: motion.no_fling(), sprung: "", spring: no_spring(), offsets: map_new(8) };
+}
+
+// The list `name` of `lay`.
+function scroller_of(lay: Layout, name: string): Option[Scroller] {
+  for s in lay.scrollers {
+    if (s.name == name) {
+      return Some(s);
+    }
+  }
+  return None;
 }
 
 // How far the list `name` of `lay` can scroll.
 function limit_of(lay: Layout, name: string): i32 {
-  for s in lay.scrollers {
-    if (s.name == name) {
-      return s.limit;
-    }
+  if let Some(s) = scroller_of(lay, name) {
+    return s.limit;
   }
   return 0;
+}
+
+// The list that a drag scrolls, across or down: the list `name`, or the
+// nearest list around it that scrolls that way, or "".
+function list_for(lay: Layout, name: string, across: boolean): string {
+  let at = name;
+  for turn in 0..32 {
+    let Some(s) = scroller_of(lay, at) else {
+      return "";
+    };
+    if (s.across == across) {
+      return at;
+    }
+    at = s.parent;
+  }
+  return "";
 }
 
 // How far the list `name` scrolls.
@@ -1123,34 +1188,87 @@ pub function (inp: Input) offset(name: string): i32 {
   return inp.offsets.get(name).unwrap_or(0);
 }
 
-function scrolled(inp: Input, lay: Layout, name: string, to: i32): Input {
-  return Input { ...inp, offsets: inp.offsets.insert(name, to.max(0).min(limit_of(lay, name))) };
+function scrolled(inp: Input, name: string, to: i32): Input {
+  return Input { ...inp, offsets: inp.offsets.insert(name, to) };
+}
+
+// Where a list is when a finger pulls it to `raw`: past an end, the list
+// goes half as far as the finger.
+function resisted(raw: i32, limit: i32): i32 {
+  if (raw < 0) {
+    return raw / 2;
+  }
+  if (raw > limit) {
+    return limit + (raw - limit) / 2;
+  }
+  return raw;
+}
+
+// Where a finger pulled a list that is at `at`: the opposite of resisted.
+function pulled(at: i32, limit: i32): i32 {
+  if (at < 0) {
+    return at * 2;
+  }
+  if (at > limit) {
+    return limit + (at - limit) * 2;
+  }
+  return at;
 }
 
 function down(inp: Input, lay: Layout, x: i32, y: i32, now: i64): Input {
-  let group = scene.group_at(lay.nodes, x, y);
-  let press = Press { active: true, x0: x, y0: y, x: x, y: y, at: now, moved: false, fired: false, target: scene.hit(lay.nodes, x, y), group: group, scroll0: inp.offset(group), samples: [motion.Sample { t: now, y: y as f64 }] };
-  return Input { ...inp, press: press, flung: "", fling: motion.no_fling() };
+  let press = Press { ...no_press(), active: true, x0: x, y0: y, x: x, y: y, at: now, target: scene.hit(lay.nodes, x, y), inner: scene.group_at(lay.nodes, x, y) };
+  return Input { ...inp, press: press, flung: "", fling: motion.no_fling(), sprung: "", spring: no_spring() };
+}
+
+// The press when the finger passes the slop at x and y: the drag starts
+// there, so the list does not jump. The finger drags across when it moved
+// farther across than down.
+function dragged(inp: Input, lay: Layout, x: i32, y: i32): Press {
+  let p = inp.press;
+  let across = (x - p.x0).abs() > (y - p.y0).abs();
+  let group = list_for(lay, p.inner, across);
+  return Press { ...p, x0: x, y0: y, moved: true, across: across, group: group, scroll0: pulled(inp.offset(group), limit_of(lay, group)), samples: [] };
+}
+
+// The place of the finger of `p` along its drag.
+function along(p: Press, x: i32, y: i32): i32 {
+  if (p.across) {
+    return x;
+  }
+  return y;
 }
 
 function moved(inp: Input, lay: Layout, x: i32, y: i32, now: i64, d: f64): Input {
   let p = inp.press;
   let slop = (SLOP_DP * d) as i32;
-  let samples = motion.track(p.samples, motion.Sample { t: now, y: y as f64 });
   if (!p.moved && (x - p.x0).abs() <= slop && (y - p.y0).abs() <= slop) {
-    return Input { ...inp, press: Press { ...p, x: x, y: y, samples: samples } };
+    return Input { ...inp, press: Press { ...p, x: x, y: y } };
   }
-  let y0 = p.y0;
   if (!p.moved) {
-    // The drag starts where the finger passes the slop, so the list does
-    // not jump.
-    y0 = y;
+    p = dragged(inp, lay, x, y);
   }
-  let next = Input { ...inp, press: Press { ...p, x: x, y: y, y0: y0, moved: true, samples: samples } };
+  let at = along(p, x, y);
+  let next = Input { ...inp, press: Press { ...p, x: x, y: y, samples: motion.track(p.samples, motion.Sample { t: now, y: at as f64 }) } };
   if (p.group.len() == 0) {
     return next;
   }
-  return scrolled(next, lay, p.group, p.scroll0 + y0 - y);
+  return scrolled(next, p.group, resisted(p.scroll0 + along(p, p.x0, p.y0) - at, limit_of(lay, p.group)));
+}
+
+// The input after the finger lifts from a list: a list past its end
+// springs back, and a list that the finger moved fast flings.
+function released(inp: Input, lay: Layout, p: Press, x: i32, y: i32, now: i64, d: f64): Input {
+  let at = inp.offset(p.group);
+  let limit = limit_of(lay, p.group);
+  if (at < 0 || at > limit) {
+    return Input { ...inp, sprung: p.group, spring: motion.spring(at as f64, at.max(0).min(limit) as f64, 0.0, now) };
+  }
+  let v = motion.velocity(motion.track(p.samples, motion.Sample { t: now, y: along(p, x, y) as f64 }));
+  let f = motion.fling(at, 0.0 - v, d, now);
+  if (motion.moving(f)) {
+    return Input { ...inp, flung: p.group, fling: f };
+  }
+  return inp;
 }
 
 function up(inp: Input, lay: Layout, x: i32, y: i32, now: i64, d: f64): (Input, Option[Msg]) {
@@ -1160,12 +1278,7 @@ function up(inp: Input, lay: Layout, x: i32, y: i32, now: i64, d: f64): (Input, 
     if (p.group.len() == 0) {
       return (rest, None);
     }
-    let v = motion.velocity(motion.track(p.samples, motion.Sample { t: now, y: y as f64 }));
-    let f = motion.fling(inp.offset(p.group), 0.0 - v, d, now);
-    if (motion.moving(f)) {
-      return (Input { ...rest, flung: p.group, fling: f }, None);
-    }
-    return (rest, None);
+    return (released(rest, lay, p, x, y, now, d), None);
   }
   if (p.fired) {
     return (rest, None);
@@ -1240,25 +1353,63 @@ pub function long_press(inp: Input, now: i64): (Input, Option[Msg]) {
   return (Input { ...inp, press: Press { ...inp.press, fired: true } }, Some(LongPress(a.name, a.arg)));
 }
 
-// A list flings.
+// A list flings, or springs back to its end.
 pub function (inp: Input) flinging(): boolean {
-  return motion.moving(inp.fling);
+  return motion.moving(inp.fling) || inp.sprung.len() > 0;
 }
 
-// The input at the frame time `now`: the list that flings moves, and it
-// stops at its end.
-pub function advance(inp: Input, lay: Layout, now: i64): Input {
-  if (!inp.flinging()) {
+// The input with the list that flings at its place at the time `now`. A
+// fling that passes an end of its list becomes a spring at that end, with
+// the speed of the fling.
+function flung(inp: Input, lay: Layout, now: i64): Input {
+  if (!motion.moving(inp.fling)) {
     return inp;
   }
   let (pos, done) = motion.position(inp.fling, now);
   let limit = limit_of(lay, inp.flung);
   let to = pos.round() as i32;
-  let next = scrolled(inp, lay, inp.flung, to);
-  if (done || to <= 0 || to >= limit) {
-    return Input { ...next, flung: "", fling: motion.no_fling() };
+  let stopped = Input { ...inp, flung: "", fling: motion.no_fling() };
+  if (to < 0 || to > limit) {
+    let (before, _) = motion.position(inp.fling, now - 1000000i64);
+    let end = to.max(0).min(limit);
+    return scrolled(Input { ...stopped, sprung: inp.flung, spring: motion.spring(end as f64, end as f64, (pos - before) * 1000.0, now) }, inp.flung, end);
   }
-  return next;
+  if (done) {
+    return scrolled(stopped, inp.flung, to);
+  }
+  return scrolled(inp, inp.flung, to);
+}
+
+// The input with the list that springs at its place at the time `now`.
+function sprung(inp: Input, now: i64): Input {
+  if (inp.sprung.len() == 0) {
+    return inp;
+  }
+  let (pos, done) = motion.spring_position(inp.spring, now);
+  if (done) {
+    return scrolled(Input { ...inp, sprung: "", spring: no_spring() }, inp.sprung, inp.spring.to.round() as i32);
+  }
+  return scrolled(inp, inp.sprung, pos.round() as i32);
+}
+
+// The input with each list that nothing moves between its ends: a list
+// that got shorter does not stay past its end.
+function settled(inp: Input, lay: Layout): Input {
+  let out = inp;
+  for s in lay.scrollers {
+    let at = out.offset(s.name);
+    let held = out.press.active && out.press.group == s.name;
+    if ((at < 0 || at > s.limit) && !held && out.sprung != s.name && out.flung != s.name) {
+      out = scrolled(out, s.name, at.max(0).min(s.limit));
+    }
+  }
+  return out;
+}
+
+// The input at the frame time `now`: the list that flings moves, and the
+// list that is past its end springs back.
+pub function advance(inp: Input, lay: Layout, now: i64): Input {
+  return settled(sprung(flung(inp, lay, now), now), lay);
 }
 
 // The corner radius of what `n` shows.

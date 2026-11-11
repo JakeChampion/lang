@@ -50,6 +50,17 @@ function test_clip_limits_the_hit_and_the_group(): test.TestOutcome {
   return test.assert_eq(got, "none row0 none [] [list]");
 }
 
+function test_columns_limit_the_hit_and_the_drawing(): test.TestOutcome {
+  let cell = scene.Node { ...tapped(scene.node(0, 0, 40, 40, scene.Fill(red(), 0)), "cell", 0), left: 10, right: 30 };
+  let fr = draw.offscreen(40, 40);
+  defer draw.release(fr);
+  fr.fill(0, 0, 40, 40, draw.rgb(0, 0, 0));
+  let c = scene.render(fr, fonts(), text.new_cache(), [cell]);
+  let items = scene.access_items([cell]);
+  let got = name_at([cell], 5, 5) + " " + name_at([cell], 15, 5) + " " + name_at([cell], 30, 5) + " " + count(fr, red()).to_string() + " " + items[0].x.to_string() + "," + items[0].w.to_string();
+  return test.assert_eq(got, "none cell0 none 800 10,20");
+}
+
 function test_access_items(): test.TestOutcome {
   let f = fonts();
   let button = tapped(scene.node(10, 10, 80, 30, scene.Fill(red(), 4)), "save", 0);
@@ -193,6 +204,7 @@ function main(): i32 {
   r = r.it("hit takes the topmost node that acts", test_hit_takes_the_top_node);
   r = r.it("a barrier hides the nodes below it", test_barrier_hides_the_nodes_below);
   r = r.it("the clip rows limit the hit and the group", test_clip_limits_the_hit_and_the_group);
+  r = r.it("the clip columns limit the hit and the drawing", test_columns_limit_the_hit_and_the_drawing);
   r = r.it("each node that acts and each lone text is an item", test_access_items);
   r = r.it("the id of an item follows its action", test_access_ids_are_stable_and_differ);
   r = r.it("a service reaches only the nodes after a barrier", test_access_stops_at_a_barrier);
