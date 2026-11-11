@@ -167,6 +167,20 @@ function exchanged(s: client.Session, server: handshake.Server): string {
   return "";
 }
 
+function ticket(n: i32): client.Ticket {
+  return client.Ticket { identity: [n as u8], psk: [], suite: 0, lifetime: time.duration_seconds(60), age_add: 0 as u32, received: time.timestamp_from_unix(0), server_name: "", max_early: 0 as u32 };
+}
+
+function test_tickets_have_a_limit(): test.TestOutcome {
+  let held: client.Ticket[] = [];
+  let n = 0;
+  while (n < client.MAX_TICKETS + 5) {
+    held = client.more_tickets(held, [ticket(n)]);
+    n += 1;
+  }
+  return test.assert_eq(held.len().to_string() + " " + held[0].identity[0].to_string() + " " + held[held.len() - 1].identity[0].to_string(), "8 5 12");
+}
+
 function test_trusted(): test.TestOutcome {
   let cfg = client.config("tls.example", roots(ROOT)).with_alpn(["h2", "http/1.1"]);
   match (connect(cfg, ["http/1.1"], false)) {
@@ -571,6 +585,7 @@ function pem_of(der_hex: string): string {
 function main(): i32 {
   let r = test.new("std/tls/client");
   r = r.it("a trusted server", test_trusted);
+  r = r.it("a connection keeps a limited count of tickets", test_tickets_have_a_limit);
   r = r.it("names", test_names);
   r = r.it("an untrusted root", test_untrusted);
   r = r.it("the certificate validity window, at the given time", test_validity_window);
