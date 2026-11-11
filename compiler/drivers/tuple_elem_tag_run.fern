@@ -16,7 +16,7 @@ function ref_trim(s: string): string {
 
 function ref_elem_tag(t: string, n: i32): string {
   let len = t.len();
-  if (len < 3 || slice_unchecked(t, 0, 1) != "(" || slice_unchecked(t, len - 1, len) != ")") {
+  if (len < 3 || !t.starts_with("(") || !t.ends_with(")")) {
     return "";
   }
   let inner = slice_unchecked(t, 1, len - 1);

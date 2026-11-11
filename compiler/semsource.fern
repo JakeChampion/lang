@@ -256,7 +256,7 @@ function spelled_typevar(spelling: string): boolean {
   while (i < spelling.len()) {
     let start = i;
     i = ident_end(spelling, i);
-    if (i > start && slice_unchecked(spelling, start, i) == "dyn") {
+    if (i > start && util.str_range_eq(spelling, start, i, "dyn")) {
       i = dyn_set_end(spelling, i);
     } else if (i > start && parser.looks_type_var(slice_unchecked(spelling, start, i).to_owned())) {
       return true;
@@ -1916,7 +1916,7 @@ function unary(e: ast.Expr, u: ast.ExprUnary, s: State, expected: typeinfo.Type)
   if (u.op == "try_") {
     return try_expr(u, s, expected);
   }
-  if (u.op.len() > 4 && slice_unchecked(u.op, 0, 4) == "as?_") {
+  if (u.op.len() > 4 && u.op.starts_with("as?_")) {
     return downcast(e, u, s);
   }
   if (parser.is_cast_op(u.op)) {
@@ -4216,7 +4216,7 @@ function destructure_record(encoded: string, tag: string, whole: i32, s: State, 
   let Some(sig) = record_sig(s.values[whole], s) else {
     return fail(s, "unsupported destructuring declaration");
   };
-  if (sig.name != slice_unchecked(rest, 0, colon) || fields.len() != names.len()) {
+  if (!util.str_range_eq(rest, 0, colon, sig.name) || fields.len() != names.len()) {
     return fail(s, "unsupported destructuring declaration");
   }
   for i in 0..names.len() {
@@ -4696,7 +4696,7 @@ function unqualified(pv: ast.PatVariant, owner: string): ast.PatVariant {
     return pv;
   }
   let dot = util.index_of_sub(pv.type_name, ".");
-  if (slice_unchecked(pv.type_name, 0, dot) != owner) {
+  if (!util.str_range_eq(pv.type_name, 0, dot, owner)) {
     return pv;
   }
   return ast.PatVariant { ...pv, type_name: slice_unchecked(pv.type_name, dot + 1, pv.type_name.len()).to_owned() };
@@ -9157,7 +9157,7 @@ pub function dyn_arms(funcs: parser.FuncDecl[], impls: parser.ImplInfo[], method
   let out: string[] = [];
   for fd in funcs {
     let n = fd.receiver_type.len();
-    if (generic_decl(fd) || n == 0 || n >= 2 && slice_unchecked(fd.receiver_type, n - 2, n) == "[]") {
+    if (generic_decl(fd) || n == 0 || n >= 2 && fd.receiver_type.ends_with("[]")) {
       continue;
     }
     if (!arm_receiver_implements(impls, parser.receiver_base(fd.receiver_type), traits)) {

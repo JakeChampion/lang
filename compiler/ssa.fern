@@ -144,7 +144,7 @@ function semantic_names_symbol(id: i32): boolean {
 }
 
 pub function plain_str(ins: SInst): string {
-  if ((ins.kind_tag == LD_AT || ins.kind_tag == ARR_AT) && ins.str.len() >= 2 && slice_unchecked(ins.str, ins.str.len() - 2, ins.str.len()) == "rc") {
+  if ((ins.kind_tag == LD_AT || ins.kind_tag == ARR_AT) && ins.str.len() >= 2 && ins.str.ends_with("rc")) {
     return slice_unchecked(ins.str, 0, ins.str.len() - 2).to_owned();
   }
   return ins.str;

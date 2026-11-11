@@ -11,7 +11,7 @@ pub struct ResolvedFunction { func: parser.FuncDecl, bindings: Binding[] }
 struct Scope { bindings: Binding[], visible: i32[], reserved: string[] }
 
 pub function source_name(symbol: string): string {
-  if (symbol.len() < 12 || slice_unchecked(symbol, 0, 9) != "$binding$") {
+  if (symbol.len() < 12 || !symbol.starts_with("$binding$")) {
     return symbol;
   }
   let end = 9;
@@ -248,7 +248,7 @@ function stmt_at(st: ast.Stmt, s: Scope): (ast.Stmt, Scope, boolean) {
 }
 
 function reserve(name: string, own acc: string[]): string[] {
-  if (name.len() >= 9 && slice_unchecked(name, 0, 9) == "$binding$") {
+  if (name.len() >= 9 && name.starts_with("$binding$")) {
     return acc.append(name);
   }
   return acc;

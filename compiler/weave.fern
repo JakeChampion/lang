@@ -596,7 +596,7 @@ function delimited(s: string, d: string, open: string, close: string): string {
 }
 
 function at(s: string, i: i32, d: string): boolean {
-  return i + d.len() <= s.len() && slice_unchecked(s, i, i + d.len()) == d;
+  return i + d.len() <= s.len() && util.str_eq_at(s, i, d);
 }
 
 function links(s: string): string {

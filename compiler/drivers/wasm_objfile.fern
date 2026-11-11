@@ -36,7 +36,7 @@ pub function is_current(s: string): boolean {
   if (s.len() < magic().len()) {
     return false;
   }
-  return slice_unchecked(s, 0, magic().len()).to_owned() == magic();
+  return s.starts_with(magic());
 }
 
 pub function encode(u: UnitObj): string {

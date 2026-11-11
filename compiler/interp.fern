@@ -4549,7 +4549,7 @@ function eval_unary(op: string, ov: Value): Value {
       }
     }
   }
-  let is_as_opt = op.len() > 4 && slice_unchecked(op, 0, 4) == "as?_";
+  let is_as_opt = op.len() > 4 && op.starts_with("as?_");
   if (is_as_opt && util.has_str(["u8", "i32", "u32", "i64", "u64", "usize"], slice_unchecked(op, 4, op.len())) && is_int_like(ov)) {
     let t = eval_unary("as_" + slice_unchecked(op, 4, op.len()), ov);
     if (vint_as_i64(t) == vint_as_i64(ov) && int_is_negative(t) == int_is_negative(ov)) {
@@ -4565,7 +4565,7 @@ function eval_unary(op: string, ov: Value): Value {
     let none: Value[] = [];
     return v_variant("None", none);
   }
-  if (op.len() > 3 && slice_unchecked(op, 0, 3) == "as_") {
+  if (op.len() > 3 && op.starts_with("as_")) {
     return ov;
   }
   return v_err("unknown unary op: " + op);
@@ -5471,7 +5471,7 @@ function name_ends_with(nm: string, suffix: string): boolean {
   if (nm.len() <= suffix.len()) {
     return false;
   }
-  return slice_unchecked(nm, nm.len() - suffix.len(), nm.len()) == suffix;
+  return nm.ends_with(suffix);
 }
 
 function enum_type_params(enums: parser.EnumDecl[], name: string): string[] {

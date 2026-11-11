@@ -10345,7 +10345,7 @@ pub function is_extern_composite_ret(mod: parser.Module, t: string): boolean {
 }
 
 pub function extern_array_param_supported(t: string): boolean {
-  if (t.len() <= 2 || slice_unchecked(t, t.len() - 2, t.len()) != "[]") {
+  if (t.len() <= 2 || !t.ends_with("[]")) {
     return false;
   }
   let k = slice_unchecked(t, 0, t.len() - 2);
@@ -11268,7 +11268,7 @@ pub function extern_sum_heap_payload(t: string): string {
 }
 
 pub function extern_string_tuple_array_result(t: string): boolean {
-  if (t.len() <= 2 || slice_unchecked(t, t.len() - 2, t.len()) != "[]") {
+  if (t.len() <= 2 || !t.ends_with("[]")) {
     return false;
   }
   let et = slice_unchecked(t, 0, t.len() - 2);
