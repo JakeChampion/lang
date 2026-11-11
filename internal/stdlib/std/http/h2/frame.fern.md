@@ -424,8 +424,10 @@ function __setting(id: i32, value: i32): Result[Setting, FrameError] {
   if (id == SETTINGS_MAX_FRAME_SIZE && (value < MIN_FRAME_SIZE || value > MAX_FRAME_SIZE)) {
     return Err(__connection(PROTOCOL_ERROR, "SETTINGS_MAX_FRAME_SIZE of " + value.to_string()));
   }
+  // The other settings have no upper limit, and an unknown setting is
+  // ignored. A value above 2^31-1 is held as 2^31-1.
   if (value < 0) {
-    return Err(__connection(PROTOCOL_ERROR, "setting " + id.to_string() + " over 2^31-1"));
+    return Ok(Setting { id: id, value: MAX_WINDOW });
   }
   return Ok(Setting { id: id, value: value });
 }

@@ -1,4 +1,5 @@
 # 2026-11-11: append_on_an_array_literal_takes_the_width_of_its_use is clean under RC trace.
+# 2026-11-11: remove the raw-builtin fixture row after main reverted that fixture.
 # 2026-11-11: hotp_digits_out_of_range_stops stops through exit(134) with one buffer live.
 # 2026-11-10: copied_call_results has zero unpaired allocations under native RC trace.
 # 2026-11-10: nul_byte_in_a_path_is_refused is clean under RC trace.
@@ -239,6 +240,8 @@ char_cast_receiver                                   0
 char_eq_ord_hash                                     0
 char_ordering                                        0
 checked_int_conversion                               0
+# 2026-11-11: checked_owned_nested_results has zero unpaired allocations under native RC trace.
+checked_owned_nested_results                         0
 checked_owned_results                                0
 copied_call_results                                  0
 closing_a_socket_two_reactors_watch                  0

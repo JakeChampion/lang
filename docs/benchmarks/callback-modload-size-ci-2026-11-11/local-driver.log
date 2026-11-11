@@ -1,0 +1,9 @@
+=== RUN   TestSelfHostWarmStockDriver
+=== RUN   TestSelfHostWarmStockDriver/drivers/asm_modload_run.fern
+=== PAUSE TestSelfHostWarmStockDriver/drivers/asm_modload_run.fern
+=== CONT  TestSelfHostWarmStockDriver/drivers/asm_modload_run.fern
+    self_host_warm_stock_test.go:100: warmed driver drivers/asm_modload_run.fern: 11387376 bytes
+--- PASS: TestSelfHostWarmStockDriver (0.07s)
+    --- PASS: TestSelfHostWarmStockDriver/drivers/asm_modload_run.fern (32.76s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	32.840s

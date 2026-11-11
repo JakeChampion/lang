@@ -60,7 +60,7 @@ function page(): ui.El {
 
 function nodes_of(s: ui.Screen, scrolled: i32): scene.Node[] {
   let offsets: Map[string, i32] = map_new(4);
-  return ui.layout(page(), test_fonts(), s, offsets.insert("rows", scrolled)).nodes;
+  return ui.layout(page(), test_fonts(), s, offsets.insert("rows", scrolled), "").nodes;
 }
 
 function cpu(fs: text.Fonts, nodes: scene.Node[], background: i32): draw.Frame {

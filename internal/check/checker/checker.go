@@ -49,17 +49,21 @@ func (e *Error) Labels() []diag.Label {
 var _ diag.FileSetter = (*Error)(nil)
 
 type Info struct {
-	VarTypes        map[*ast.Var]ast.Type
-	Target          string
-	IntrinsicCalls  map[*ast.Call]IntrinsicCall
-	StatefulHandler bool
-	BoxedCells      map[string]bool
-	Locals          map[*ast.FuncDecl][]*ast.Var
-	FuncSigs        map[string]*ast.FuncType
-	OwnFuncs        map[string][]bool
+	// ArrayFieldCopies records primitive COW array fields that cannot retain a resource alias.
+	ArrayFieldCopies map[*ast.FieldAccess]bool
+	VarTypes         map[*ast.Var]ast.Type
+	Target           string
+	IntrinsicCalls   map[*ast.Call]IntrinsicCall
+	StatefulHandler  bool
+	BoxedCells       map[string]bool
+	Locals           map[*ast.FuncDecl][]*ast.Var
+	FuncSigs         map[string]*ast.FuncType
+	OwnFuncs         map[string][]bool
 	// CallBorrows reports a plain call whose result can borrow from one of
 	// its arguments at this site.
 	CallBorrows func(*ast.Call) bool
+	// CallOwnedResult reports the checked type or immutable-data copy contract.
+	CallOwnedResult func(*ast.Call) bool
 	// CallSignatureBorrows reports a signature with a borrowed handle-bearing parameter.
 	CallSignatureBorrows func(*ast.Call) bool
 	TypeHoldsNoHandle    func(ast.Type) bool
@@ -3084,6 +3088,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.checkValueTypes(prog)
 	c.computeResultBorrows(prog)
 	c.info.CallBorrows = c.callSiteBorrows
+	c.info.CallOwnedResult = func(call *ast.Call) bool { return c.callOwnResults[call] }
 	c.info.TypeHoldsNoHandle = c.holdsNoHandle
 	c.info.CallSignatureBorrows = func(call *ast.Call) bool {
 		if id, ok := call.Callee.(*ast.Ident); ok {
@@ -5952,14 +5957,15 @@ type checker struct {
 	handleFreeTypes   map[handleTypeKey]bool
 	// consumingTypes names the types with a method that consumes its
 	// receiver. Such a type is a user-defined handle.
-	consumingTypes   map[string]bool
-	callOwnFlags     map[*ast.Call][]bool
-	callOwnResults   map[*ast.Call]bool
-	callValueCallees map[*ast.Call]bool
-	callCopyTypes    map[string]bool
-	resultCopyParts  map[ast.Expr]bool
-	scalarArgs       map[ast.Expr]bool
-	valueArgs        map[ast.Expr]bool
+	consumingTypes      map[string]bool
+	callOwnFlags        map[*ast.Call][]bool
+	callOwnResults      map[*ast.Call]bool
+	callValueCallees    map[*ast.Call]bool
+	callCopyTypes       map[string]bool
+	resultCopyParts     map[ast.Expr]bool
+	resultCallbackParts map[ast.Expr]bool
+	scalarArgs          map[ast.Expr]bool
+	valueArgs           map[ast.Expr]bool
 	// handleFreeArgs holds the name arguments whose type cannot hold a handle.
 	handleFreeArgs map[ast.Expr]bool
 
@@ -11456,7 +11462,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			}
 		case *ast.Return:
 			admitSupersededFields(x.Value, true)
-			if resultOwn && x.Value != nil && !c.valueData(resultType, map[string]bool{}) && !isOwnedExpr(x.Value) {
+			if resultOwn && x.Value != nil && !c.valueData(resultType, map[string]bool{}) && (!isOwnedExpr(x.Value) || c.resultPendingCleanup(x.Value, deferMoved)) {
 				c.errfCode(x.Pos(), "E051", "an `own` result must return an owned value")
 			}
 			recordExprUses(x.Value, moved)
@@ -14461,23 +14467,45 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		c.numericTypes[e] = t
 	}
 	t = c.postNumericType(e, t)
+	if field, ok := e.(*ast.FieldAccess); ok {
+		if primitiveArrayCopy(t) {
+			if c.info.ArrayFieldCopies == nil {
+				c.info.ArrayFieldCopies = map[*ast.FieldAccess]bool{}
+			}
+			c.info.ArrayFieldCopies[field] = true
+		} else {
+			delete(c.info.ArrayFieldCopies, field)
+		}
+	}
 	// A call returns its own reference to immutable data, even when the
 	// returned value shares storage with a borrowed input.
 	if call, ok := e.(*ast.Call); ok && c.copyableCallResult(t) {
 		c.recordOwnedResult(call, true)
 	}
+	if definitelyScalar(t) {
+		if c.scalarArgs == nil {
+			c.scalarArgs = map[ast.Expr]bool{}
+		}
+		c.scalarArgs[e] = true
+	} else {
+		delete(c.scalarArgs, e)
+	}
 	if c.current != nil && c.current.ReturnOwn {
-		if t != nil && c.holdsNoHandle(t) {
+		// Callbacks can lend captured resources, even when their representation
+		// holds no resource handle. Only immutable data has a copy contract.
+		callback, isCallback := t.(*ast.FuncType)
+		callbackCopies := isCallback && (callback.ResultOwn || c.copyableCallResult(callback.Result))
+		if c.copyableCallResult(t) || callbackCopies {
 			if c.resultCopyParts == nil {
 				c.resultCopyParts = map[ast.Expr]bool{}
 			}
 			c.resultCopyParts[e] = true
 		}
-		if definitelyScalar(t) {
-			if c.scalarArgs == nil {
-				c.scalarArgs = map[ast.Expr]bool{}
+		if c.callbackCanLend(t) {
+			if c.resultCallbackParts == nil {
+				c.resultCallbackParts = map[ast.Expr]bool{}
 			}
-			c.scalarArgs[e] = true
+			c.resultCallbackParts[e] = true
 		}
 		if st, ok := t.(ast.StructType); ok && c.valueType(st.Name) && c.valueData(t, map[string]bool{}) {
 			if c.valueArgs == nil {

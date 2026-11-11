@@ -3,9 +3,9 @@
 
 Usage: emulator_check.py APK OUT_DIR
 
-It grants RECORD_AUDIO, starts the app, and requires its three lines in
+It grants RECORD_AUDIO, starts the app, and requires its four lines in
 logcat: the permission seen through JNI from the loop thread, a capture
-stream that read samples, and a playback stream that wrote them. It fails on
+stream that read samples, a playback stream that wrote them, and a timestamp diagnostic. It fails on
 a crash. OUT_DIR gets logcat.
 """
 
@@ -19,6 +19,7 @@ LINES = (
     re.compile(r"audiotest: sdk (\d+), record permission true"),
     re.compile(r"audiotest: capture rate ([1-9]\d*), read ([1-9]\d*) samples"),
     re.compile(r"audiotest: playback rate ([1-9]\d*), wrote ([1-9]\d*) samples"),
+    re.compile(r"audiotest: timestamp (?:unavailable|frames \d+ monotonic_ns \d+)$", re.MULTILINE),
 )
 CRASH = re.compile(r"Fatal signal|UnsatisfiedLinkError|java\.lang\.\w+Exception|fern: ")
 

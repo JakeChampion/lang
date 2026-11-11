@@ -1,0 +1,71 @@
+import "std/android/audio";
+
+@import("libaaudio.so", "mock_timestamp_mode")
+function mode(value: i32): void;
+
+@import("libaaudio.so", "mock_timestamp_calls")
+function calls(): i32;
+
+function available(value: i32, position: i64, time_ns: i64): boolean {
+  mode(value);
+  let stream = audio.Stream { ptr: 123 as usize, rate: 48000 };
+  let Some(anchor) = stream.timestamp() else {
+    return false;
+  };
+  return anchor.frame_position == position && anchor.monotonic_ns == time_ns && calls() == 1;
+}
+
+function unavailable(value: i32): boolean {
+  mode(value);
+  let stream = audio.Stream { ptr: 123 as usize, rate: 48000 };
+  if let Some(_) = stream.timestamp() {
+    return false;
+  }
+  return calls() == 1;
+}
+
+function results(): i32 {
+  if (!available(0, 1099511627776i64, 1125899906842624i64)) {
+    return 201;
+  }
+  if (!available(1, 0i64, 0i64)) {
+    return 202;
+  }
+  if (!available(8, 9223372036854775807i64, 9223372036854775807i64)) {
+    return 203;
+  }
+  for value in [2, 3, 4, 5, 6, 7, 9] {
+    if (!unavailable(value)) {
+      return 300 + value;
+    }
+  }
+  return 0;
+}
+
+function repeated(): i32 {
+  for _ in 0..512 {
+    if (!available(0, 1099511627776i64, 1125899906842624i64)) {
+      return 401;
+    }
+    if (!unavailable(2) || !unavailable(6) || !unavailable(7)) {
+      return 402;
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  mode(0);
+  let missing = audio.Stream { ptr: 0 as usize, rate: 0 };
+  if let Some(_) = missing.timestamp() {
+    return 101;
+  }
+  if (calls() != 0) {
+    return 102;
+  }
+  let result = results();
+  if (result != 0) {
+    return result;
+  }
+  return repeated();
+}

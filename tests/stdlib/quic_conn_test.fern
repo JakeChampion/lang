@@ -913,6 +913,60 @@ function test_refused_frames(): test.TestOutcome {
   return test.assert_eq(out, "server closed local 10 RETIRE_CONNECTION_ID for a sequence number never issued; server closed local 10 RETIRE_CONNECTION_ID names the connection ID it arrived on; server closed local 9 more connection IDs than active_connection_id_limit allows; server closed local 10 NEW_CONNECTION_ID repeats a sequence number with another connection ID; server closed local 13 CRYPTO data past what this side holds out of order; server closed local 266 tls handshake: unexpected handshake message 24; ");
 }
 
+function test_one_path_response(): test.TestOutcome {
+  let Ok(p) = settled_pair() else {
+    return test.fail("start failed");
+  };
+  let payload = frames.encode(frames.PathChallenge(entropy(1, 8))).concat(frames.encode(frames.PathChallenge(entropy(2, 8)))).concat(frames.encode(frames.PathChallenge(entropy(3, 8))));
+  let step = server_of(p).receive(peer_frame(p, payload), at_ns(p.now));
+  let got = "";
+  for f in step.pending {
+    match (f) {
+      frames.PathResponse(data) => {
+        got = got + hex.encode(data) + ";";
+      },
+      _ => {}
+    }
+  }
+  return test.assert_eq(got, hex.encode(entropy(3, 8)) + ";");
+}
+
+// The peer retires the two connection IDs in use, and then gives IDs that
+// are below its own mark. Each of those must be retired at once.
+function test_retire_limit(): test.TestOutcome {
+  let first = new_cid_frame(10 as i64, 10 as i64, 50);
+  let held = first.concat(new_cid_frame(2 as i64, 0 as i64, 60)).concat(new_cid_frame(3 as i64, 0 as i64, 70));
+  let over = held.concat(new_cid_frame(4 as i64, 0 as i64, 80));
+  return test.assert_eq(refused_by_server(held) + "| " + refused_by_server(over), "| server closed local 9 more connection IDs to retire than this side holds; ");
+}
+
+function test_crypto_gap_limit(): test.TestOutcome {
+  let Ok(p) = settled_pair() else {
+    return test.fail("start failed");
+  };
+  let Some(k) = p.client.spaces[2].send else {
+    return test.fail("no key");
+  };
+  let s = server_of(p);
+  let base = s.spaces[2].crypto_in.delivered() + 10;
+  let out = "";
+  let i = 0;
+  let sent = 0;
+  while (i <= streams.MAX_HELD_SPANS) {
+    let payload: u8[] = [];
+    let n = 0;
+    while (n < 150 && i <= streams.MAX_HELD_SPANS) {
+      payload = payload.concat(frames.encode(frames.Crypto(base + 2 * (i as i64), [1u8])));
+      i += 1;
+      n += 1;
+    }
+    s = s.receive(packet.seal_short(s.scid, p.client.spaces[2].next_pn + sent as i64, 2, false, false, payload, k), at_ns(p.now));
+    out += noted("server", s);
+    sent += 1;
+  }
+  return test.assert_eq(out, "server closed local 13 more ranges of CRYPTO data out of order than this side holds; ");
+}
+
 function new_cid_frame(seq: i64, prior: i64, fill: i32): u8[] {
   return frames.encode(frames.NewConnectionIdFrame(frames.NewConnectionId { sequence: seq, retire_prior_to: prior, id: entropy(fill, 8), reset_token: entropy(fill + 1, 16) }));
 }
@@ -1294,6 +1348,9 @@ function main(): i32 {
   r = r.it("the encryption limit rotates or closes before overuse", test_key_encryption_limit);
   r = r.it("the ChaCha authentication limit is cumulative", test_chacha_authentication_limit);
   r = r.it("frames a server refuses in 1-RTT", test_refused_frames);
+  r = r.it("one PATH_RESPONSE is owed at a time", test_one_path_response);
+  r = r.it("the connection IDs that wait to be retired have a limit", test_retire_limit);
+  r = r.it("the ranges of CRYPTO data out of order have a limit", test_crypto_gap_limit);
   r = r.it("each side issues connection IDs up to the peer's limit", test_connection_ids_issued);
   r = r.it("a client moves to the next connection ID mid-stream", test_rotated_connection_id);
   r = r.it("a server follows a client to a new address and validates the path", test_rebinding);
