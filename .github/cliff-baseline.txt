@@ -160,5 +160,7 @@
 # 2026-11-11: PR #15215 records main 29b1234d06, CI 42916398671, job 130211808249.
 # The checker workload reports 39,116,232 copied bytes and 373,694 append crossings.
 # This is an inherited main cost. The 1% tolerance is unchanged.
+# 2026-11-11: main 2ca148c675 measured 378,075 checker append crossings in CI 42942829694, job 130273056431.
+# Record the exact corrective count. All tolerances stay unchanged.
 x86_64/checker.cliff_bytes	39116232
-x86_64/checker.cliff_count	373694
+x86_64/checker.cliff_count	378075
