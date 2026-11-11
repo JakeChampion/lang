@@ -39,6 +39,16 @@ func checkJnibind(t *testing.T, run func(args ...string) *exec.Cmd) {
 		t.Fatalf("jnibind wrote a module that is not tests/stdlib/jni_bind_sample.fern. Write the file again with the tool.\n%s", got)
 	}
 
+	// An archive with no entry. The tool then takes each class from the
+	// second JAR.
+	empty := filepath.Join(t.TempDir(), "empty.jar")
+	if err := os.WriteFile(empty, append([]byte("PK\x05\x06"), make([]byte, 18)...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := run(empty, jar, jnibindPath(t, "tools/jnibind/testdata/sample.spec")).Output(); err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("jnibind with two JAR files: %v\n%s", err, got)
+	}
+
 	bad := filepath.Join(t.TempDir(), "bad.spec")
 	if err := os.WriteFile(bad, []byte("dev.fern.Point nothing\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -51,7 +61,8 @@ func checkJnibind(t *testing.T, run func(args ...string) *exec.Cmd) {
 	}{
 		{"a member that the class does not have", []string{jar, bad}, 1, "jnibind: dev/fern/Point has no public member nothing"},
 		{"a file that is not a JAR", []string{bad, bad}, 1, "zip: the archive has no central directory"},
-		{"no SPEC", []string{jar}, 2, "usage: jnibind JAR SPEC"},
+		{"a bad member of the second JAR", []string{empty, jar, bad}, 1, "jnibind: dev/fern/Point has no public member nothing"},
+		{"no SPEC", []string{jar}, 2, "usage: jnibind JAR... SPEC"},
 	} {
 		out, err := run(tc.args...).CombinedOutput()
 		code := 0

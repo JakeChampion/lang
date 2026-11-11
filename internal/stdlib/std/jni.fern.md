@@ -675,6 +675,11 @@ The bindings that `std/jni/bind` writes use these functions. A JNI function that
 // A Java object of a class that has no Fern type of its own.
 pub struct Object { ref: usize }
 
+// True for the Java value null.
+pub function (x: Object) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
 // The exception that a Java method threw. `text` is the result of its
 // toString method.
 pub struct JavaError { text: string }
