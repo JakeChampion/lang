@@ -6,8 +6,9 @@ sidebar:
 ---
 
 `view` returns one element, which holds other elements. This page lists
-the elements and the methods that change them. Sizes are in dp, and text
-sizes are in sp, so a screen has the same size on each phone.
+the elements and the methods that change them. Sizes are in dp, so a
+screen has the same size on each phone. Text sizes are in sp: a text
+grows with the font size that the person set for the system.
 
 ## Columns, rows and stacks
 

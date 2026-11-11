@@ -1,0 +1,17 @@
+// An integer literal that does not fit i32 gives a literal array the element
+// type i64 when `append` or `with` puts it in the array. The array is an array
+// literal that is the receiver of the call, or a literal array local. A later
+// use of an element as an i32 is an E003.
+function main(): i32 {
+    let zs = [1, 2].append(5000000000);
+    let a: i32 = zs[0];
+    let ws = [1, 2].with(0, 5000000000);
+    let b: i32 = ws[0];
+    let ys = [1, 2];
+    let xs = ys.append(5000000000);
+    let c: i32 = ys[0];
+    let d = 1;
+    let rs = [1, d].append(5000000000);
+    let e: i32 = d;
+    return 0;
+}

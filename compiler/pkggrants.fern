@@ -203,7 +203,7 @@ pub struct ModuleAt { dir: string, owner_dir: string, name: string, stdlib: bool
 pub struct Checked { pkgs: caps.Pkg[], refused: Refusal[] }
 
 function within(dir: string, parent: string): boolean {
-  return dir == parent || dir.len() > parent.len() && slice_unchecked(dir, 0, parent.len()) == parent && dir[parent.len()] == b'/';
+  return dir == parent || dir.len() > parent.len() && dir.starts_with(parent) && dir[parent.len()] == b'/';
 }
 
 pub function checked(mans: ManifestAt[], root: caps.Pkg, modules: ModuleAt[], prefixes: string[]): Checked {

@@ -1,0 +1,11 @@
+// An `append` or a `with` call on an empty array literal is an empty array
+// literal for a local with no type annotation. No use gives it an element
+// type, so the local is an E020.
+function main(): i32 {
+    let ys = [].append(2);
+    let ws = [].with(0, 2);
+    let s = "x";
+    let zs = [].append(s);
+    let rs = [].append(1).append(2);
+    return 0;
+}

@@ -1,0 +1,59 @@
+// spec: OR-01
+
+struct Handle { n: i32 }
+
+function (own h: Handle) close(): i32 {
+  return h.n;
+}
+
+struct Producer { next: (i32) => i32 }
+
+enum Payload { Bytes(u8[]), Chunks(Producer) }
+
+struct Reply { status: i32, body: Payload }
+
+enum Tail { Empty, File(Handle), Chunk(Producer) }
+
+function inspect(reply: Reply): void {
+  assert(reply.status == 200);
+}
+
+function emit(own producer: Producer): own Tail {
+  return Chunk(producer);
+}
+
+function wire(own reply: Reply): own Tail {
+  match (reply.body) {
+    Chunks(producer) => {
+      inspect(reply);
+      return emit(producer);
+    },
+    _ => {}
+  }
+  return Empty;
+}
+
+function read(own tail: Tail): i32 {
+  match (tail) {
+    File(h) => {
+      return h.close();
+    },
+    Chunk(producer) => {
+      return producer.next(0);
+    },
+    Empty => {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let bytes = [7 as u8, 8 as u8];
+  let reply = Reply { status: 200, body: Chunks(Producer { next: (at: i32): i32 => bytes[at] as i32 }) };
+  let tail = wire(reply);
+  assert(bytes[0] == 7 as u8);
+  let value = read(tail) + read(File(Handle { n: 9 })) + read(Empty);
+  print(value);
+  return 0;
+}

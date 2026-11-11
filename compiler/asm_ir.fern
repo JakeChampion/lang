@@ -8622,7 +8622,7 @@ function ssa_line_reg(text: string, at: i32, prefix: string): string {
   if (at + prefix.len() > text.len()) {
     return "";
   }
-  if (slice_unchecked(text, at, at + prefix.len()) != prefix) {
+  if (!util.str_eq_at(text, at, prefix)) {
     return "";
   }
   let end = at + prefix.len();

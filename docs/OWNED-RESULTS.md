@@ -76,3 +76,8 @@ A resource alias, a deferred action, or a later read can prevent that transfer.
 This rule includes checked callback results and local callback aliases.
 An ordinary-result function type retains its ordinary result contract.
 The `checked_owned_nested_results` case checks this guarantee.
+
+A handle-free match payload can retain the contract of an unchanged owned input.
+A completed borrowed read of that input does not remove this contract.
+The `owned_field_match_data` case covers callback payloads.
+Resource payloads still need the last-use transfer proof.

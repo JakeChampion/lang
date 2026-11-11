@@ -16,11 +16,11 @@ function ref_trim(s: string): string {
 }
 
 function ref_sum_supported(t: string): boolean {
-  if (t.len() > 8 && slice_unchecked(t, 0, 7) == "Option[" && t[t.len() - 1] == b']') {
+  if (t.len() > 8 && t.starts_with("Option[") && t[t.len() - 1] == b']') {
     let p = ref_trim(slice_unchecked(t, 7, t.len() - 1));
     return p == "i32" || p == "u32";
   }
-  if (t.len() > 8 && slice_unchecked(t, 0, 7) == "Result[" && t[t.len() - 1] == b']') {
+  if (t.len() > 8 && t.starts_with("Result[") && t[t.len() - 1] == b']') {
     let inner = slice_unchecked(t, 7, t.len() - 1);
     let i = 0;
     let depth = 0;
@@ -43,7 +43,7 @@ function ref_sum_supported(t: string): boolean {
 }
 
 function ref_is_option(t: string): boolean {
-  return t.len() > 7 && slice_unchecked(t, 0, 7) == "Option[";
+  return t.len() > 7 && t.starts_with("Option[");
 }
 
 function b(x: boolean): string {

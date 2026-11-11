@@ -426,7 +426,7 @@ pub function base_type_name(t: string): string {
 }
 
 pub function is_tuple_type_name(t: string): boolean {
-  return t.len() >= 2 && slice_unchecked(t, 0, 1) == "(";
+  return t.len() >= 2 && t.starts_with("(");
 }
 
 pub function mangled_module(name: string): string {
@@ -462,6 +462,20 @@ pub function str_less(a: string, b: string): boolean {
     }
   }
   return a.len() < b.len();
+}
+
+// True when the bytes of `t` are in `s` at byte offset `at`.
+pub function str_eq_at(s: string, at: i32, t: string): boolean {
+  let n = t.len();
+  if (at < 0 || at > s.len() - n) {
+    return false;
+  }
+  return __mismatch(s, at, t, 0, n) == n;
+}
+
+// True when the byte range `lo..hi` of `s` is equal to `t`.
+pub function str_range_eq(s: string, lo: i32, hi: i32, t: string): boolean {
+  return hi - lo == t.len() && str_eq_at(s, lo, t);
 }
 
 pub function index_of_str(xs: string[], s: string): i32 {
@@ -1485,7 +1499,7 @@ pub function resolve_path(import_path: string, entry_dir: string, root: string):
     return clean_path(root + "/" + without_fern_ext(import_path) + ".fern");
   }
   let rel = without_fern_ext(import_path);
-  if (rel.len() >= 2 && slice_unchecked(rel, 0, 2) == "./") {
+  if (rel.len() >= 2 && rel.starts_with("./")) {
     rel = slice_unchecked(rel, 2, rel.len()).to_owned();
   }
   return clean_path(module_path_join(entry_dir, rel));

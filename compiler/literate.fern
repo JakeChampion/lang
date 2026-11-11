@@ -5,23 +5,6 @@ function is_backtick(b: u8): boolean {
   return b == b'`';
 }
 
-function starts_with(s: string, prefix: string): boolean {
-  let pn = prefix.len();
-  if (pn > s.len()) {
-    return false;
-  }
-  return slice_unchecked(s, 0, pn) == prefix;
-}
-
-function ends_with(s: string, suffix: string): boolean {
-  let sn = suffix.len();
-  let n = s.len();
-  if (sn > n) {
-    return false;
-  }
-  return slice_unchecked(s, n - sn, n) == suffix;
-}
-
 pub function leading_ws(s: string): string {
   let k = 0;
   let n = s.len();
@@ -137,9 +120,9 @@ struct Directives { file: string, name: string, entry: boolean, test: boolean }
 function directives(line: string): Directives {
   let d = Directives { file: "", name: "", entry: false, test: false };
   for w in split_ws(fence_info(line)) {
-    if (starts_with(w, "file=")) {
+    if (w.starts_with("file=")) {
       d = Directives { ...d, file: trim_quotes(slice_unchecked(w, 5, w.len()).to_owned()) };
-    } else if (starts_with(w, "name=")) {
+    } else if (w.starts_with("name=")) {
       d = Directives { ...d, name: trim_quotes(slice_unchecked(w, 5, w.len()).to_owned()) };
     } else if (w == "entry") {
       d = Directives { ...d, entry: true };
@@ -177,7 +160,7 @@ function is_fence_close(line: string, open_len: i32): boolean {
 }
 
 function is_header(t: string): boolean {
-  if (!starts_with(t, "<<") || !ends_with(t, ">>=")) {
+  if (!t.starts_with("<<") || !t.ends_with(">>=")) {
     return false;
   }
   let inner = slice_unchecked(t, 2, t.len() - 3);
@@ -192,7 +175,7 @@ function header_name(t: string): string {
 }
 
 pub function is_ref(t: string): boolean {
-  if (!starts_with(t, "<<") || !ends_with(t, ">>")) {
+  if (!t.starts_with("<<") || !t.ends_with(">>")) {
     return false;
   }
   let inner = slice_unchecked(t, 2, t.len() - 2);
@@ -211,7 +194,7 @@ pub function ref_name(t: string): string {
 
 pub function de_escape(text: string): string {
   let ws = leading_ws(text);
-  if (starts_with(slice_unchecked(text, ws.len(), text.len()).to_owned(), "\\<<")) {
+  if (util.str_eq_at(text, ws.len(), "\\<<")) {
     return ws + slice_unchecked(text, ws.len() + 1, text.len());
   }
   return text;
@@ -739,7 +722,7 @@ function defines_main(code: string): boolean {
 }
 
 function is_main_name(word: string): boolean {
-  if (!starts_with(word, "main")) {
+  if (!word.starts_with("main")) {
     return false;
   }
   if (word.len() == 4) {

@@ -1,3 +1,4 @@
+import "std/string";
 import "./util";
 import "./watbin";
 import "./wit_decode";
@@ -152,7 +153,7 @@ function stream_op(name: string): (i32, string) {
   let ops: string[] = ["[stream-read]", "[stream-write]", "[stream-new]", "[stream-drop-readable]", "[stream-drop-writable]"];
   for j in 0..ops.len() {
     let pre = ops[j];
-    if (name.len() > pre.len() && slice_unchecked(name, 0, pre.len()) == pre) {
+    if (name.len() > pre.len() && name.starts_with(pre)) {
       return (9 + j, name_from(name, pre.len()));
     }
   }

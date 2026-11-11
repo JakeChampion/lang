@@ -33,7 +33,7 @@ function test_fonts(): text.Fonts {
 }
 
 function screen(dark: boolean): ui.Screen {
-  return ui.Screen { w: W, h: H, d: 2.0, dark: dark, theme: ui.theme(dark), left: 0, top: 24, right: 0, bottom: 48 };
+  return ui.Screen { w: W, h: H, d: 2.0, dark: dark, theme: ui.theme(dark), left: 0, top: 24, right: 0, bottom: 48, font: 1.0 };
 }
 
 function dot(f: draw.Frame, x: i32, y: i32, w: i32, h: i32): void {

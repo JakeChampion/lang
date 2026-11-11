@@ -22,6 +22,7 @@ var stdModuleReach = map[string]string{
 	"std/binary":        "",
 	"std/brotli":        "",
 	"std/cli":           "env",
+	"std/classfile":     "",
 	"std/clock":         "now",
 	"std/codec":         "",
 	"std/constmap":      "",
@@ -117,6 +118,7 @@ var stdModuleReach = map[string]string{
 	"std/uuid":          "now,random",
 	"std/worker":        "arena,log,proc",
 	"std/wasi_http":     "config,env,fs,host,ktls,log,mmio,mmsg,now,pollable,privileged,random,reactor,tcp,unix,uring",
+	"std/zip":           "",
 	"std/zstd":          "",
 }
 

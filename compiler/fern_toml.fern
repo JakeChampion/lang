@@ -406,7 +406,7 @@ pub function validate_hash(hash: string): Result[string, string] {
 // The hex digits after the prefix, or `bad` when the text is not the
 // prefix plus 64 lowercase hex digits.
 function tagged_hex(text: string, prefix: string, bad: string): Result[string, string] {
-  if (text.len() < prefix.len() || slice_unchecked(text, 0, prefix.len()) != prefix) {
+  if (text.len() < prefix.len() || !text.starts_with(prefix)) {
     return Err(bad);
   }
   let hex = slice_unchecked(text, prefix.len(), text.len()).to_owned();

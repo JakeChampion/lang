@@ -1,0 +1,17 @@
+import "std/video/av1/sequence";
+
+function bit(value: boolean): i32 {
+  return if (value) { 1 } else { 0 };
+}
+
+pub function values(value: sequence.Header): i32[] {
+  return [
+    value.profile, value.maximum.width, value.maximum.height, value.bit_depth,
+    bit(value.monochrome), value.subsampling_x, value.subsampling_y, value.chroma_sample_position,
+    value.color_primaries, value.transfer_characteristics, value.matrix_coefficients,
+    bit(value.full_range), bit(value.still_picture), bit(value.reduced_still_picture),
+    value.operating_points, value.frame_id_bits, value.order_hint_bits,
+    bit(value.use_128x128_superblock), bit(value.enable_superres), bit(value.enable_cdef),
+    bit(value.enable_restoration), bit(value.film_grain),
+  ];
+}

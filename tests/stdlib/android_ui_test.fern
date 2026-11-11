@@ -21,7 +21,7 @@ function fonts(): text.Fonts {
 }
 
 function screen(): ui.Screen {
-  return ui.Screen { w: 200, h: 400, d: 1.0, dark: false, theme: ui.theme(false), left: 0, top: 0, right: 0, bottom: 0 };
+  return ui.Screen { w: 200, h: 400, d: 1.0, dark: false, theme: ui.theme(false), left: 0, top: 0, right: 0, bottom: 0, font: 1.0 };
 }
 
 function laid(root: ui.El): ui.Layout {
@@ -361,6 +361,15 @@ function test_theme_follows_the_system(): test.TestOutcome {
   return test.assert_eq(got, "true true true");
 }
 
+function test_text_follows_the_font_scale(): test.TestOutcome {
+  // At twice the font size, "AAA" at 10 sp is 36 pixels wide and 20 high.
+  // A size in dp does not change.
+  let big = ui.Screen { ...screen(), font: 2.0 };
+  let lay = ui.layout(ui.column([label("AAA"), ui.box().width(10.0).height(10.0).background(ui.PRIMARY)]), fonts(), big, map_new(4), "");
+  let s = sim.scaled(sim.start(new_counter(), counter(), fonts(), 200, 400, 1.0), 1.5);
+  return test.assert_eq(boxes(lay.nodes) + " " + s.shell.host.screen.font.to_string(), "0,0,36,20 0,20,10,10 1.5");
+}
+
 // --- text fields
 
 struct Form { name: string, sent: string, backs: i32, upper: boolean, gone: boolean }
@@ -483,6 +492,7 @@ function main(): i32 {
   r = r.it("a program scrolls and flings its list", test_program_scrolls_and_flings);
   r = r.it("a program that animates gets frames", test_animating_gives_frames);
   r = r.it("the theme follows the system", test_theme_follows_the_system);
+  r = r.it("a text follows the font size of the system", test_text_follows_the_font_scale);
   r = r.it("a field has its text, its line and its caret", test_field_layout);
   r = r.it("a field takes the text of the keyboard", test_field_takes_text);
   r = r.it("the action key submits and the program clears the field", test_field_submits_and_clears);

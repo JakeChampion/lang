@@ -86,7 +86,7 @@ pub function is_runtime_helper_name(name: string): boolean {
   if (name == "map_new_impl") {
     return true;
   }
-  if (name.len() >= 6 && slice_unchecked(name, 0, 6) == "__map_") {
+  if (name.len() >= 6 && name.starts_with("__map_")) {
     return true;
   }
   return false;
@@ -227,7 +227,7 @@ function cycle_from(k: i32, w: CycleWalk, state: i32[]): (i32, i32, i32[]) {
 }
 
 pub function under_root(ident: string, root: string): boolean {
-  return root.len() > 0 && ident.len() > root.len() && slice_unchecked(ident, 0, root.len() + 1) == root + "/";
+  return root.len() > 0 && ident.len() > root.len() && ident.starts_with(root) && ident[root.len()] == b'/';
 }
 
 function variant_scope(mod: parser.Module, g: ImportGraph, ids: string[], pfxs: string[]): string[] {
@@ -356,7 +356,7 @@ pub function mod_names(mod: parser.Module): string[] {
 
 pub function module_ident(mpath: string): string {
   if (mpath.len() > 5) {
-    if (slice_unchecked(mpath, mpath.len() - 5, mpath.len()).to_owned() == ".fern") {
+    if (mpath.ends_with(".fern")) {
       return slice_unchecked(mpath, 0, mpath.len() - 5).to_owned();
     }
   }
@@ -552,12 +552,12 @@ function loaded_prefix(imports: LoadedModule[], pfxs: string[], path: string): s
 }
 
 function path_is(p: string, want: string): boolean {
-  return p == want || p.len() > want.len() + 1 && slice_unchecked(p, p.len() - want.len() - 1, p.len()).to_owned() == "/" + want;
+  return p == want || p.len() > want.len() + 1 && p.ends_with(want) && p[p.len() - want.len() - 1] == b'/';
 }
 
 function result_of_response(t: string): boolean {
   let s = parser.strip_type_spaces(t);
-  return s.len() > 20 && slice_unchecked(s, 0, 20).to_owned() == "Result[HttpResponse,";
+  return s.len() > 20 && s.starts_with("Result[HttpResponse,");
 }
 
 function tuple_halves(t: string): (string, string) {
@@ -1873,7 +1873,7 @@ function with_reexported_variants(rx: ReexportTable, imports: LoadedModule[], pf
 // The name after the last "__" of a mangled name, with that "__".
 function mangled_tail(mangled: string): string {
   let at = mangled.len() - 2;
-  while (at > 0 && slice_unchecked(mangled, at, at + 2) != "__") {
+  while (at > 0 && !util.str_eq_at(mangled, at, "__")) {
     at -= 1;
   }
   return slice_unchecked(mangled, at, mangled.len()).to_owned();

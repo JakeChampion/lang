@@ -1,3 +1,4 @@
+import "std/string";
 import "../ir";
 import "../irverify";
 import "../util";
@@ -58,17 +59,17 @@ pub function provided_names(): string[] {
 }
 
 pub function is_generated_helper(name: string): boolean {
-  if (name.len() > 11 && slice_unchecked(name, 0, 11) == "__sem_drop_") {
+  if (name.len() > 11 && name.starts_with("__sem_drop_")) {
     return true;
   }
-  return name.len() > 14 && slice_unchecked(name, 0, 14) == "__sem_release_";
+  return name.len() > 14 && name.starts_with("__sem_release_");
 }
 
 pub function is_c_call_shim(name: string): boolean {
   if (name.len() < 9) {
     return false;
   }
-  if (slice_unchecked(name, 0, 8) != "__c_call") {
+  if (!name.starts_with("__c_call")) {
     return false;
   }
   let d = slice_unchecked(name, 8, 9);

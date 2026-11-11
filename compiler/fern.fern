@@ -3537,10 +3537,10 @@ function is_vendorable(name: string): boolean {
   if (name == "fern.toml") {
     return true;
   }
-  if (name.len() >= 8 && slice_unchecked(name, name.len() - 8, name.len()) == ".fern.md") {
+  if (name.len() >= 8 && name.ends_with(".fern.md")) {
     return true;
   }
-  if (name.len() >= 5 && slice_unchecked(name, name.len() - 5, name.len()) == ".fern") {
+  if (name.len() >= 5 && name.ends_with(".fern")) {
     return true;
   }
   return false;
@@ -4425,7 +4425,7 @@ function is_doc_module(name: string): boolean {
   if (!name.ends_with(".fern") && !is_literate(name)) {
     return false;
   }
-  return !(name.len() >= 6 && slice_unchecked(name, 0, 6) == "_test_");
+  return !(name.len() >= 6 && name.starts_with("_test_"));
 }
 
 // The Fern source of a module, a literate one tangled, and the map from its
@@ -4442,7 +4442,7 @@ function doc_stem(p: string): string {
   if (is_literate(p)) {
     return slice_unchecked(p, 0, p.len() - 8).to_owned();
   }
-  if (p.len() >= 5 && slice_unchecked(p, p.len() - 5, p.len()) == ".fern") {
+  if (p.len() >= 5 && p.ends_with(".fern")) {
     return slice_unchecked(p, 0, p.len() - 5).to_owned();
   }
   return p;
@@ -5095,7 +5095,7 @@ function lsp_fix_data(t: lsp.Text, d: util.Diag): string {
 }
 
 function lsp_message(msg: string): string {
-  if (msg.len() > 6 && slice_unchecked(msg, 0, 6) == "fern: ") {
+  if (msg.len() > 6 && msg.starts_with("fern: ")) {
     return slice_unchecked(msg, 6, msg.len()).to_owned();
   }
   return msg;
@@ -5275,7 +5275,7 @@ function explain(dir: string, code: string): i32 {
   let codes: string[] = [];
   if let Ok(names) = read_dir(dir) {
     for n in names {
-      if (n.len() > 3 && slice_unchecked(n, n.len() - 3, n.len()) == ".md") {
+      if (n.len() > 3 && n.ends_with(".md")) {
         codes = literate.insert_sorted(codes, slice_unchecked(n, 0, n.len() - 3).to_owned());
       }
     }

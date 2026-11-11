@@ -329,6 +329,15 @@ It checks header bits, extension identifiers, eight-byte size fields, and unsign
 An absent size field or reserved OBU type returns `Unsupported`.
 Annex B framing, payload syntax, temporal-unit ordering, complete frame boundaries, and pixel decode remain outside this API.
 
+`std/video/av1/sequence.inspect` reads one complete sequence-header OBU through the same framing reader.
+It reports maximum frame dimensions, precision, color fields, and sequence tool flags without a payload copy.
+The pixel budget applies to the maximum frame area. A separate 512-byte payload ceiling bounds header work.
+Fixed loops cover up to 32 operating points, timing fields, and trailing bits.
+
+These maximum dimensions do not supply each frame's coded or render dimensions.
+Operating-point relationships, profile/level conformance, reference state, and reconstructed pictures remain outside this metadata API.
+The native AV1 decode column remains unchanged.
+
 Android MediaExtractor supplies its supported containers through the Android adapter.
 The native MP4 indexer above supports self-contained AVC and HEVC tracks.
 Other MOV codecs, Matroska, WebM, MPEG-TS, and fragmented streams remain future work.
@@ -394,6 +403,11 @@ The checked-in vectors need no external codec during normal native or WASI tests
 Six fresh streams cover 8-, 10-, and 12-bit output across 4:2:0, 4:2:2, and 4:4:4 chroma.
 Both libaom and dav1d must decode identical planes before and after Fern identifies the padding for removal.
 These external decoders supply the pixel comparison. Fern supplies packet framing only.
+
+`scripts/check-video-av1-sequence-interop` compares 22 native and real WASI metadata values with FFmpeg CBS.
+Six encoder headers cover 8-, 10-, and 12-bit precision. Fifteen synthetic headers cover timing, decoder models, 32 operating points, and color branches.
+The real streams also match FFprobe metadata and every decoded plane through libaom and dav1d.
+Synthetic sequence-only carriers establish header syntax, without coded pictures or a pixel-decode claim.
 
 Twenty-four FFmpeg packets cover RGB24, ARGB32, alpha, keyframes, partial rows, and unchanged frames.
 

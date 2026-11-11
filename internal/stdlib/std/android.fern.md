@@ -1072,6 +1072,24 @@ pub function density(ctx: usize): i32 {
 // ACONFIGURATION_UI_MODE_NIGHT_YES.
 const UI_MODE_NIGHT_YES: i32 = 2;
 
+// The scale of the text of the system, which the person sets as the font
+// size: 1 is the default, and 1.3 makes text 30% larger. Multiply a size
+// in sp by the scale and by the pixels of one dp.
+pub function font_scale(ctx: usize): f64 {
+  let e: usize = env(ctx);
+  let resources: usize = jni.call_object(e, activity_object(ctx), "getResources", "()Landroid/content/res/Resources;", []);
+  let config: usize = jni.call_object(e, resources, "getConfiguration", "()Landroid/content/res/Configuration;", []);
+  let class: usize = jni.get_object_class(e, config);
+  let scale: f32 = jni.get_float_field(e, config, jni.get_field_id(e, class, "fontScale", "F"));
+  let c: usize = jni.delete_local_ref(e, class);
+  let b: usize = jni.delete_local_ref(e, config);
+  let a: usize = jni.delete_local_ref(e, resources);
+  if (scale <= 0.0 as f32) {
+    return 1.0;
+  }
+  return scale as f64;
+}
+
 // The system uses the dark theme. Android starts an activity again when the
 // theme changes, unless its manifest handles the change of uiMode itself.
 pub function night_mode(ctx: usize): boolean {
