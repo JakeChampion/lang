@@ -14,7 +14,8 @@ of the phone.
 The player has a media session of `std/android/session`. So Android shows
 its track with the media controls of the notification panel and of the
 lock screen. The buttons there play, stop, go to the next track and go to
-a time. A foreground service of `std/android/service` and a wake lock keep
+a time. The player asks for the audio focus of `std/android/focus`: a
+different app that plays stops, and the player stops for a call. A foreground service of `std/android/service` and a wake lock keep
 the sound on while the window of the app is away.
 
 The "Folder" button shows the directories of the phone. The person goes

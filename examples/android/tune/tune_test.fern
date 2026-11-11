@@ -318,6 +318,18 @@ function test_the_media_buttons_of_android(): test.TestOutcome {
   return test.assert_eq(on + " | " + same.to_string() + " | " + off + " | " + near(at, length / 2i64, 200i64).to_string() + " " + back.shell.app.playing.to_string() + " " + back.shell.app.told, "2|true true | true | 2|false false false | true true 2|true");
 }
 
+// A call takes the sound of the phone: the player stops, and plays again
+// when the call ends. A player that the person stopped does not start.
+function test_the_audio_focus(): test.TestOutcome {
+  let s = sim.after(sim.tap(started(), "Slow Water"), 100i64);
+  let away = sim.send(s, tune.Focus(false));
+  let stopped = away.shell.app.playing;
+  let again = sim.send(away, tune.Focus(true));
+  let plays = again.shell.app.playing;
+  let held = sim.send(sim.send(again, tune.Play(false)), tune.Focus(true));
+  return test.assert_eq(stopped.to_string() + " " + plays.to_string() + " " + held.shell.app.playing.to_string(), "false true false");
+}
+
 function main(): i32 {
   let r = test.new("examples/android/tune");
   r = r.it("the scan reads the tags and the paths of its files", test_scan_reads_tags_and_paths);
@@ -332,5 +344,6 @@ function main(): i32 {
   r = r.it("a scan adds no track two times", test_a_scan_adds_no_track_two_times);
   r = r.it("a person chooses the folder of the library", test_a_person_chooses_the_folder_of_the_library);
   r = r.it("the media buttons of Android play, stop and go to a time", test_the_media_buttons_of_android);
+  r = r.it("the player stops for a call and plays again after it", test_the_audio_focus);
   return r.finish();
 }

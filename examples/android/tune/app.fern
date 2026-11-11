@@ -5,6 +5,7 @@
 import "core/cmp";
 import "std/android";
 import "std/android/audio";
+import "std/android/focus";
 import "std/android/service";
 import "std/android/session";
 import "std/android/ui/app";
@@ -53,6 +54,11 @@ pub function controls_seek(env: usize, thiz: usize, ms: i64): void {
   session.seek_to(env, ms);
 }
 
+@jni("dev.fern.tune.Focus implements android.media.AudioManager$OnAudioFocusChangeListener", "void onAudioFocusChange(int)")
+pub function focus_change(env: usize, thiz: usize, change: i32): void {
+  focus.changed(env, thiz, change);
+}
+
 // The foreground service that keeps the player at work while its window
 // is away.
 @jni("dev.fern.tune.Playing extends android.app.Service", "android.os.IBinder onBind(android.content.Intent)")
@@ -68,11 +74,17 @@ pub function playing_command(env: usize, thiz: usize, intent: usize, flags: i32,
 const SERVICE: string = "dev.fern.tune.Playing";
 
 // The session of the player and its token, or 0 when Android gave none.
-struct Media { session: Option[session.Session], token: usize }
+// `focus` is the request for the sound of the phone.
+struct Media { session: Option[session.Session], token: usize, focus: Option[focus.Focus] }
 
 // Tells Android the track and the state of the player. A track that plays
 // starts the foreground service with the media controls.
 function show(ctx: usize, media: Media, now: tune.Now): void {
+  if (now.playing) {
+    if let Some(f) = media.focus {
+      let granted = focus.request(ctx, f);
+    }
+  }
   let Some(s) = media.session else {
     return;
   };
@@ -245,6 +257,19 @@ function system(e: android.Event): Option[tune.Msg] {
   if let Some(command) = session.event(e) {
     return Some(of_command(command));
   }
+  if let Some(change) = focus.event(e) {
+    match (change) {
+      focus.Gain => {
+        return Some(tune.Focus(true));
+      },
+      focus.Loss => {
+        return Some(tune.Focus(false));
+      },
+      focus.Duck => {
+        return None;
+      }
+    }
+  }
   match (e) {
     android.Resume => {
       return Some(tune.Returned);
@@ -259,9 +284,9 @@ function app_main(ctx: usize): usize {
   let own_music = android.data_dir(ctx) + "/music";
   let made = create_dir_all(own_music);
   let roots = [own_music, "/sdcard/Music", "/sdcard/Download"];
-  let media = Media { session: session.new(ctx, "dev.fern.tune.Controls", "Fern Tune"), token: 0 as usize };
+  let media = Media { session: session.new(ctx, "dev.fern.tune.Controls", "Fern Tune"), token: 0 as usize, focus: focus.music(ctx, "dev.fern.tune.Focus") };
   if let Some(s) = media.session {
-    media = Media { session: media.session, token: session.token(ctx, s) };
+    media = Media { session: media.session, token: session.token(ctx, s), focus: media.focus };
   } else {
     log.info("tune: Android gave no media session");
   }
@@ -278,6 +303,9 @@ function app_main(ctx: usize): usize {
   service.stop(ctx, SERVICE);
   if let Some(s) = media.session {
     session.close(ctx, s);
+  }
+  if let Some(f) = media.focus {
+    focus.close(ctx, f);
   }
   log.info("tune: closed with " + last.tracks.len().to_string() + " tracks at track " + last.current.to_string() + ", " + tune.clock(last.at_ms) + " of " + tune.clock(last.length_ms) + ", playing " + last.playing.to_string());
   return 0 as usize;

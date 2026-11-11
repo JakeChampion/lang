@@ -72,6 +72,8 @@ pub enum Want { Load(i32), Resume, Hold, Seek(f64), Scan, Grant, List(string), K
 // player told Android last, and `awake` has the locks that keep the phone
 // awake. `asked` tells that the player asked for the permission and did
 // not look again after it. `made` tells that the player made its tunes.
+// `lost` tells that the player stopped because a call or a different app
+// took the sound of the phone.
 pub struct Model {
   fresh: boolean,
   tracks: Track[],
@@ -101,11 +103,12 @@ pub struct Model {
   awake: Awake,
   asked: boolean,
   made: boolean,
+  lost: boolean,
 }
 
 // A player with no track yet, which reads the files `scan`.
 pub function start(scan: string[]): Model {
-  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: false, error: "", wants: [], deck: None, sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false };
+  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: false, error: "", wants: [], deck: None, sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false };
 }
 
 // A player whose library is in `folder`, and whose person chooses a folder
@@ -124,8 +127,9 @@ pub function start_in(home: string, folder: string): Model {
 // goes to the directory above it, and `Dirs` comes with the directories of
 // a directory. `Use` makes the directory that shows the folder of the
 // library. `Play` and `SeekMs` come from the media buttons of Android:
-// play or stop, and go to a time in ms.
-pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64) }
+// play or stop, and go to a time in ms. `Focus` comes when a call or a
+// different app takes the sound of the phone, and when it gives it back.
+pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean) }
 
 // A time in ms as minutes and seconds.
 pub function clock(ms: i64): string {
@@ -500,9 +504,9 @@ function toggled(m: Model): Model {
     return picked(m, 0);
   }
   if (m.playing) {
-    return Model { ...m, playing: false, wants: m.wants.append(Hold) };
+    return Model { ...m, playing: false, lost: false, wants: m.wants.append(Hold) };
   }
-  return Model { ...m, playing: true, wants: m.wants.append(Resume) };
+  return Model { ...m, playing: true, lost: false, wants: m.wants.append(Resume) };
 }
 
 // The start of the track again, or the track before it in the first 3
@@ -675,9 +679,15 @@ pub function update(own m: Model, msg: Msg): Model {
     },
     Play(on) => {
       if (on == m.playing) {
-        return m;
+        return Model { ...m, lost: false };
       }
       return toggled(m);
+    },
+    Focus(have) => {
+      if (have == m.playing || have && !m.lost) {
+        return m;
+      }
+      return Model { ...toggled(m), lost: !have };
     },
     SeekMs(ms) => {
       if (m.length_ms <= 0i64) {
