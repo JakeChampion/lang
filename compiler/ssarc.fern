@@ -2653,15 +2653,15 @@ function dbg_member(out: string, name: string, ty: string, slot: i32): string {
 
 function dbg_type_name(s: string): string {
   let out = "";
+  let run = 0;
   for i in 0..s.len() {
     let c = s[i];
     if (c == b'@' || c == b'{' || c == b'}' || c == b',' || c == b':' || c == b'|' || c == b'*' || c == b'%' || c == b'=') {
-      out += "_";
-    } else {
-      out += slice_unchecked(s, i, i + 1);
+      out = out + slice_unchecked(s, run, i) + "_";
+      run = i + 1;
     }
   }
-  return out;
+  return out + slice_unchecked(s, run, s.len());
 }
 
 function binary_kind(op: string): string {

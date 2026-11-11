@@ -44,14 +44,25 @@ function row(i: i32): ui.El {
   return ui.row([ui.text("Row " + i.to_string()), ui.space(), ui.toggle(i % 2 == 0, "switch")]).aligned(ui.CENTER).padding_xy(16.0, 0.0);
 }
 
+// A row of chips that is wider than the screen.
+function chips(): ui.El[] {
+  let out: ui.El[] = [];
+  for i in 0..12 {
+    out = out.append(ui.row([ui.text("Chip " + i.to_string()).colored(ui.ON_PRIMARY)]).centered().padding_xy(14.0, 0.0).height(32.0).background(ui.PRIMARY).rounded(16.0));
+  }
+  return out;
+}
+
 // A screen with each paint: fills, round fills, an outline, texts in three
-// weights, a canvas, and a list that scrolled.
+// weights, a canvas, a row that scrolled across, and a list that scrolled
+// down.
 function page(): ui.El {
   return ui.column(
     [
       ui.text("Title").sized(28.0).weighted(700),
       ui.text("A longer text that wraps onto the next line of the card.").colored(ui.MUTED),
       ui.card([ui.row([ui.button("Save", "save"), ui.outlined_button("Cancel", "cancel"), ui.canvas("dot", (f: draw.Frame, x: i32, y: i32, w: i32, h: i32): void => dot(f, x, y, w, h)).width(24.0).height(24.0)]).spaced(8.0).aligned(ui.CENTER), ui.progress(0.4)]).spaced(12.0),
+      ui.row(chips()).spaced(8.0).scroll("chips"),
       ui.divider(),
       ui.list("rows", 40, 48.0, (i: i32): ui.El => row(i)),
     ],
@@ -60,7 +71,8 @@ function page(): ui.El {
 
 function nodes_of(s: ui.Screen, scrolled: i32): scene.Node[] {
   let offsets: Map[string, i32] = map_new(4);
-  return ui.layout(page(), test_fonts(), s, offsets.insert("rows", scrolled), "").nodes;
+  // The chips scroll across as far as the list scrolls down.
+  return ui.layout(page(), test_fonts(), s, offsets.insert("rows", scrolled).insert("chips", scrolled), "").nodes;
 }
 
 function cpu(fs: text.Fonts, nodes: scene.Node[], background: i32): draw.Frame {

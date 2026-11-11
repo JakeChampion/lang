@@ -1606,6 +1606,29 @@ function __not_encrypted(k: i32): boolean {
   return k == message.EXT_KEY_SHARE || k == message.EXT_SUPPORTED_VERSIONS || k == message.EXT_PRE_SHARED_KEY || k == message.EXT_SIGNATURE_ALGORITHMS;
 }
 
+// RFC 8446 section 4.2: CertificateRequest and NewSessionTicket each hold
+// one of the extensions that this implementation knows. `extensions_placed`
+// answers false when `exts` has another one of them. An extension that this
+// implementation does not know is ignored.
+pub function extensions_placed(exts: message.Extension[], allowed: i32): boolean {
+  for e in exts {
+    if (e.kind != allowed && __known_extension(e.kind)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function __known_extension(k: i32): boolean {
+  if (k == message.EXT_SERVER_NAME || k == message.EXT_SUPPORTED_GROUPS || k == message.EXT_SIGNATURE_ALGORITHMS || k == message.EXT_ALPN) {
+    return true;
+  }
+  if (k == message.EXT_EARLY_DATA || k == message.EXT_QUIC_TRANSPORT_PARAMETERS) {
+    return true;
+  }
+  return __not_encrypted(k);
+}
+
 function __offered_kinds(c: Client): i32[] {
   let offered: i32[] = [];
   for e in c.hello.extensions {
@@ -1762,7 +1785,9 @@ function __client_finish(c: Client, conn: Conn, flight: u8[], out: Out): Result[
   let w = __write(next, record.Handshake, __cat(__copy(flight), fin))?;
   next = __with_read(__with_write(w.conn, c.client_ap, 2), c.server_ap, 2);
   let done = Out { ...out, output: __join(out.output, w.bytes), events: out.events.append(Connected) };
-  return Ok(ClientRun { client: Client { ...c, conn: next, state: C_CONNECTED, res_master: res_master, flight: [], client_ap: [], server_ap: [] }, out: done });
+  // The key shares and the handshake secrets have no use after this point.
+  let spent = keyshare.ClientShare { ...c.share, scalar: [], decapsulation_key: [] };
+  return Ok(ClientRun { client: Client { ...c, conn: next, state: C_CONNECTED, res_master: res_master, flight: [], client_ap: [], server_ap: [], share: spent, more_shares: [], hs: keyschedule.HandshakeSecret { ...c.hs, secret: [] }, client_hs: [], server_hs: [] }, out: done });
 }
 ```
 
@@ -1822,6 +1847,9 @@ function __on_certificate(c: Client, kind: i32, m: message.Message, out: Out): R
   match (m) {
     message.CertificateRequestMsg(r) => {
       if (c.state == C_WAIT_CERTIFICATE_OR_REQUEST) {
+        if (!extensions_placed(r.extensions, message.EXT_SIGNATURE_ALGORITHMS)) {
+          return Err(Illegal("extension in CertificateRequest"));
+        }
         let schemes = __codes(message.signature_algorithms(__ext(r.extensions, message.EXT_SIGNATURE_ALGORITHMS, "signature_algorithms")?))?;
         return Ok(ClientRun { client: Client { ...c, requested: true, request_context: r.context, request_schemes: schemes, state: C_WAIT_CERTIFICATE }, out: out });
       }
@@ -1846,6 +1874,11 @@ function __chain(cert: message.Certificate): Result[u8[][], HandshakeError] {
   let chain: u8[][] = [];
   let i = 0;
   while (i < cert.entries.len()) {
+    // RFC 8446 section 4.4.2: an entry has only the extensions that the
+    // ClientHello asked for, and this client asks for none.
+    if (cert.entries[i].extensions.len() != 0) {
+      return Err(Illegal("certificate entry extension"));
+    }
     chain = chain.append(cert.entries[i].data);
     i += 1;
   }
@@ -1872,6 +1905,9 @@ function __on_certificate_verify(c: Client, next: Client, kind: i32, m: message.
 function __client_after(c: Client, kind: i32, m: message.Message, out: Out): Result[ClientRun, HandshakeError] {
   match (m) {
     message.NewSessionTicketMsg(t) => {
+      if (!extensions_placed(t.extensions, message.EXT_EARLY_DATA)) {
+        return Err(Illegal("extension in NewSessionTicket"));
+      }
       return Ok(ClientRun { client: c, out: Out { ...out, events: out.events.append(Ticket(t)) } });
     },
     message.KeyUpdate(request) => {
@@ -2466,7 +2502,7 @@ function __saved_fields(saved: [u8], from: i32): Result[u8[][], HandshakeError] 
 
 ```fern
 <<46 pub struct ServerConfig>>=
-pub struct ServerConfig { chain: u8[][], schemes: i32[], suites: keyschedule.CipherSuite[], groups: keyshare.Group[], alpn: string[], request_client_certificate: boolean, quic: boolean, extensions: message.Extension[], early_data: boolean }
+pub struct ServerConfig { chain: u8[][], schemes: i32[], suites: keyschedule.CipherSuite[], groups: keyshare.Group[], alpn: string[], request_client_certificate: boolean, quic: boolean, extensions: message.Extension[], early_data: boolean, entry_extensions: message.Extension[] }
 ```
 
 ### `47 pub function server_config(chain: u8[][], schemes: i32[]): ServerConfig`
@@ -2474,7 +2510,7 @@ pub struct ServerConfig { chain: u8[][], schemes: i32[], suites: keyschedule.Cip
 ```fern
 <<47 pub function server_config(chain: u8[][], schemes: i32[]): ServerConfig>>=
 pub function server_config(chain: u8[][], schemes: i32[]): ServerConfig {
-  return ServerConfig { chain: chain, schemes: schemes, suites: [keyschedule.Aes128GcmSha256, keyschedule.Aes256GcmSha384, keyschedule.ChaCha20Poly1305Sha256], groups: [keyshare.X25519MlKem768, keyshare.X25519, keyshare.Secp256r1, keyshare.Secp256r1MlKem768], alpn: [], request_client_certificate: false, quic: false, extensions: [], early_data: false };
+  return ServerConfig { chain: chain, schemes: schemes, suites: [keyschedule.Aes128GcmSha256, keyschedule.Aes256GcmSha384, keyschedule.ChaCha20Poly1305Sha256], groups: [keyshare.X25519MlKem768, keyshare.X25519, keyshare.Secp256r1, keyshare.Secp256r1MlKem768], alpn: [], request_client_certificate: false, quic: false, extensions: [], early_data: false, entry_extensions: [] };
 }
 ```
 
@@ -2802,7 +2838,13 @@ function __server_flight(s: Server, alpn: string): u8[] {
   let entries: message.CertificateEntry[] = [];
   let i = 0;
   while (i < s.config.chain.len()) {
-    entries = entries.append(message.CertificateEntry { data: s.config.chain[i], extensions: [] });
+    // The extensions of the entry of the leaf, such as a stapled status.
+    // The caller gives them only when the ClientHello asked for them.
+    let exts: message.Extension[] = [];
+    if (i == 0) {
+      exts = s.config.entry_extensions;
+    }
+    entries = entries.append(message.CertificateEntry { data: s.config.chain[i], extensions: exts });
     i += 1;
   }
   return __cat(out, message.encode(message.CertificateMsg(message.Certificate { context: [], entries: entries })));
@@ -2996,7 +3038,8 @@ function __client_finished(s: Server, raw: message.Raw, verify_data: u8[], out: 
   __at_key_change(conn)?;
   let master = s.hs.master_secret();
   conn = __with_read(conn, master.client_traffic(s.finished_hash), 2);
-  return Ok(ServerRun { server: Server { ...s, conn: conn, state: S_CONNECTED, res_master: master.resumption(__hash(conn)) }, out: Out { ...out, events: out.events.append(Connected) } });
+  // The entropy and the handshake secrets have no use after this point.
+  return Ok(ServerRun { server: Server { ...s, conn: conn, state: S_CONNECTED, res_master: master.resumption(__hash(conn)), entropy: [], hs: keyschedule.HandshakeSecret { ...s.hs, secret: [] }, client_hs: [], server_hs: [] }, out: Out { ...out, events: out.events.append(Connected) } });
 }
 
 function __client_certificate(s: Server, raw: message.Raw, cert: message.Certificate, out: Out): Result[ServerRun, HandshakeError] {

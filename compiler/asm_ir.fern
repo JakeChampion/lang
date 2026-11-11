@@ -6638,15 +6638,7 @@ function ssa_alu_ir(s: asmcore.EmitState, ext: i32, size: i32, imm: i64, dst: st
 // A -pie image carries no absolute immediate: the compare reads a data word that
 // holds the symbol's address and that the startup relocation moves with the image.
 function sym_addr_label(sym: string): string {
-  let out = ".Lsa";
-  for i in 0..sym.len() {
-    if (sym[i] == b'.') {
-      out += "_";
-    } else {
-      out += slice_unchecked(sym, i, i + 1);
-    }
-  }
-  return out;
+  return ".Lsa" + sym.replace(".", "_");
 }
 
 function with_sym_addr(s: asmcore.EmitState, sym: string): asmcore.EmitState {

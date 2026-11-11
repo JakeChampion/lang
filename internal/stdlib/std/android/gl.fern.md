@@ -334,7 +334,7 @@ struct TextPlaces { program: i32, screen: i32, color: i32, atlas: i32 }
 // `pbuffer` is the surface of one pixel that keeps the context current.
 // `surface` is the surface that the canvas draws on: a window, an image, or
 // `pbuffer` when the canvas is detached. `window` is 0 off a window.
-pub struct Canvas { display: usize, config: usize, context: usize, pbuffer: usize, surface: usize, window: usize, program: i32, places: Places, text: TextPlaces, quad: usize, width: i32, height: i32, layer: Texture, framebuffer: i32 }
+pub struct Canvas { display: usize, config: usize, context: usize, pbuffer: usize, surface: usize, window: usize, program: i32, places: Places, text: TextPlaces, quad: usize, width: i32, height: i32, layer: Texture, framebuffer: i32, left: i32, right: i32 }
 
 // What `present` did: it showed the frame, the canvas has no window, or the
 // device lost the context.
@@ -586,7 +586,7 @@ function start(d: usize, config: usize, pbuffer: usize, ctx: usize): Option[Canv
     gl_enable(GL_BLEND);
     gl_blend_func(1, GL_ONE_MINUS_SRC_ALPHA);
     gl_enable(GL_SCISSOR_TEST);
-    let c = Canvas { display: d, config: config, context: ctx, pbuffer: pbuffer, surface: pbuffer, window: 0 as usize, program: p, places: places, text: text, quad: quad, width: 0, height: 0, layer: Texture { id: 0, width: 0, height: 0 }, framebuffer: 0 };
+    let c = Canvas { display: d, config: config, context: ctx, pbuffer: pbuffer, surface: pbuffer, window: 0 as usize, program: p, places: places, text: text, quad: quad, width: 0, height: 0, layer: Texture { id: 0, width: 0, height: 0 }, framebuffer: 0, left: 0, right: 1 << 30 };
     return Some(c.sized(1, 1));
   }
 }
@@ -669,7 +669,7 @@ pub function close(c: Canvas): void {
 
 ### `drawing`
 
-A texture keeps the nearest texel at each pixel, and its edges do not repeat. `texture` copies the frame, so the app can release the frame after the call. The scissor test keeps each draw to its band of rows. The rows of OpenGL go from the bottom, so the band is turned over first.
+A texture keeps the nearest texel at each pixel, and its edges do not repeat. `texture` copies the frame, so the app can release the frame after the call. The scissor test keeps each draw to its band of rows, and to the columns that `columns` set. The rows of OpenGL go from the bottom, so the band is turned over first.
 
 ```fern
 <<drawing>>=
@@ -787,13 +787,20 @@ pub function (c: Canvas) draw_layer(x: i32, y: i32, alpha: f64): void {
   c.quad_of(c.layer.id, Part { x: x, y: y, w: c.width, h: c.height }, 0.0 as f32, 1.0 as f32, 1.0 as f32, 0.0 as f32, alpha, no_fade(), 0, c.height);
 }
 
+// The canvas that draws only on the columns from x0 up to x1.
+pub function (c: Canvas) columns(x0: i32, x1: i32): Canvas {
+  return Canvas { ...c, left: x0, right: x1 };
+}
+
 function (c: Canvas) quad_of(id: i32, to: Part, u0: f32, v0: f32, u1: f32, v1: f32, alpha: f64, fade: Fade, clip0: i32, clip1: i32): void {
   let top = clip0.max(0);
   let bottom = clip1.min(c.height);
-  if (bottom <= top || alpha <= 0.0) {
+  let left = c.left.max(0);
+  let right = c.right.min(c.width);
+  if (bottom <= top || right <= left || alpha <= 0.0) {
     return;
   }
-  gl_scissor(0, c.height - bottom, c.width, bottom - top);
+  gl_scissor(left, c.height - bottom, right - left, bottom - top);
   gl_bind_texture(GL_TEXTURE_2D, id);
   gl_uniform4f(c.places.dst, to.x as f32, to.y as f32, to.w as f32, to.h as f32);
   gl_uniform4f(c.places.src, u0, v0, u1, v1);
@@ -904,10 +911,12 @@ function upload_glyph(id: i32, x: i32, y: i32, w: i32, h: i32, cov: [u8]): void 
 pub function (c: Canvas) draw_glyphs(a: Atlas, gs: Glyph[], color: i32, alpha: f64, clip0: i32, clip1: i32): void {
   let top = clip0.max(0);
   let bottom = clip1.min(c.height);
-  if (bottom <= top || alpha <= 0.0 || gs.len() == 0) {
+  let left = c.left.max(0);
+  let right = c.right.min(c.width);
+  if (bottom <= top || right <= left || alpha <= 0.0 || gs.len() == 0) {
     return;
   }
-  gl_scissor(0, c.height - bottom, c.width, bottom - top);
+  gl_scissor(left, c.height - bottom, right - left, bottom - top);
   gl_use_program(c.text.program);
   let k = (color >> 24 & 255) as f64 / 255.0 * alpha;
   gl_uniform4f(c.text.color, ((color & 255) as f64 / 255.0 * k) as f32, ((color >> 8 & 255) as f64 / 255.0 * k) as f32, ((color >> 16 & 255) as f64 / 255.0 * k) as f32, k as f32);

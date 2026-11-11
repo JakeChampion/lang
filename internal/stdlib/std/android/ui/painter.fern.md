@@ -186,7 +186,7 @@ pub function present_cpu(own p: Painter, window: usize, nodes: scene.Node[], bac
 
 ### `nodes`
 
-A node that is wholly outside its clip rows or the window draws nothing.
+A node that is wholly outside its clip rows, its clip columns or the window draws nothing.
 
 ```fern
 <<nodes>>=
@@ -198,13 +198,17 @@ function draw_nodes(own p: Painter, c: gl.Canvas, ns: scene.Node[], dy: i32): Pa
   return q;
 }
 
-function draw_node(own p: Painter, c: gl.Canvas, n: scene.Node, dy: i32): Painter {
+function draw_node(own p: Painter, c0: gl.Canvas, n: scene.Node, dy: i32): Painter {
   let clip0 = n.clip0 + dy;
   let clip1 = n.clip1 + dy;
   let pad = scene.margin(n);
   if (n.y + dy + n.h + pad <= clip0.max(0) || n.y + dy - pad >= clip1.min(p.h)) {
     return p;
   }
+  if (n.x + n.w + pad <= n.left.max(0) || n.x - pad >= n.right.min(p.w)) {
+    return p;
+  }
+  let c = c0.columns(n.left, n.right);
   match (n.paint) {
     scene.Blank => {
       return p;

@@ -490,6 +490,58 @@ function refused_in_encrypted_extensions(extra: message.Extension): string {
   return "";
 }
 
+// RFC 8446 section 4.4.2: the client asked for no extension of an entry.
+function test_certificate_entry_extension_is_refused(): test.TestOutcome {
+  let status = message.Extension { kind: 5, data: [1u8, 0u8, 0u8, 0u8, 0u8] };
+  let sc = handshake.ServerConfig { ...handshake.server_config([ed_public()], [0x0807]), entry_extensions: [status] };
+  match (handshake_between(handshake.client_config("example.com"), sc)) {
+    Ok(_) => {
+      return test.fail("connected");
+    },
+    Err(e) => {
+      return test.assert_eq(e.message(), handshake.Illegal("certificate entry extension").message());
+    }
+  }
+  return test.fail("no result");
+}
+
+// RFC 8446 section 4.2: the extensions of CertificateRequest and of
+// NewSessionTicket.
+function test_extensions_of_request_and_ticket(): test.TestOutcome {
+  let algorithms = message.Extension { kind: message.EXT_SIGNATURE_ALGORITHMS, data: [] };
+  let early = message.Extension { kind: message.EXT_EARLY_DATA, data: [] };
+  let name = message.Extension { kind: message.EXT_SERVER_NAME, data: [] };
+  let unknown = message.Extension { kind: 0x7a7a, data: [] };
+  let got = "";
+  for exts in [[algorithms, unknown], [algorithms, name], [algorithms, early]] {
+    got = got + handshake.extensions_placed(exts, message.EXT_SIGNATURE_ALGORITHMS).to_string() + " ";
+  }
+  for exts in [[early, unknown], [early, name], [algorithms]] {
+    got = got + handshake.extensions_placed(exts, message.EXT_EARLY_DATA).to_string() + " ";
+  }
+  return test.assert_eq(got, "true false false true false false ");
+}
+
+// The key shares, the entropy and the handshake secrets do not stay in the
+// state of a connection after the handshake.
+function test_handshake_secrets_do_not_stay(): test.TestOutcome {
+  match (handshake_between(handshake.client_config("example.com"), handshake.server_config([ed_public()], [0x0807]))) {
+    Ok(p) => {
+      let c = p.client;
+      let s = p.server;
+      let held = c.share.scalar.len() + c.share.decapsulation_key.len() + c.more_shares.len() + c.hs.secret.len() + c.client_hs.len() + c.server_hs.len() + s.entropy.len() + s.hs.secret.len() + s.client_hs.len() + s.server_hs.len();
+      if (c.res_master.len() == 0 || s.res_master.len() == 0) {
+        return test.fail("the resumption secret is gone");
+      }
+      return test.assert_eq(held, 0);
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("no result");
+}
+
 // RFC 8446 section 4.2 and RFC 6066 section 3.
 function test_extensions_that_encrypted_extensions_cannot_hold(): test.TestOutcome {
   let refused = "tls handshake: illegal extension in EncryptedExtensions";
@@ -1470,6 +1522,9 @@ function main(): i32 {
   r = r.it("defaults, server name and ALPN", test_defaults_and_alpn);
   r = r.it("no record comes between the parts of a handshake message", test_no_record_between_the_parts_of_a_message);
   r = r.it("extensions that EncryptedExtensions cannot hold", test_extensions_that_encrypted_extensions_cannot_hold);
+  r = r.it("an extension of a certificate entry that the client did not ask for", test_certificate_entry_extension_is_refused);
+  r = r.it("the handshake secrets do not stay after the handshake", test_handshake_secrets_do_not_stay);
+  r = r.it("the extensions of CertificateRequest and NewSessionTicket", test_extensions_of_request_and_ticket);
   r = r.it("the server name goes out with no trailing dot", test_the_name_goes_out_with_no_trailing_dot);
   r = r.it("HelloRetryRequest", test_hello_retry);
   r = r.it("key shares in two groups", test_two_shares);
