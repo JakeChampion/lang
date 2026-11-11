@@ -25,7 +25,7 @@ function screen(): ui.Screen {
 }
 
 // The messages of the elements and of the programs of these tests.
-enum Msg { Go, Row(i32), Cell(i32), Pick(i32), Open, Menu(i32), Under, Agree, Add, Switch, Clear, Left, Beat, Frame, Name(string), Sent, Next, Note(string) }
+enum Msg { Go, Row(i32), Cell(i32), Pick(i32), Open, Menu(i32), Under, Agree, Add, Switch, Clear, Left, Beat, Frame, Name(string), Sent, Next, Note(string), Slid(i32) }
 
 // The name of the message and its number, as one word.
 function name_of(m: Msg): string {
@@ -127,6 +127,13 @@ function test_row_shares_the_room(): test.TestOutcome {
 function test_stretch(): test.TestOutcome {
   let lay = laid(ui.column([ui.box().height(10.0).background(ui.PRIMARY)]).aligned(ui.STRETCH).padding_xy(20.0, 0.0));
   return test.assert_eq(boxes(lay.nodes), "20,0,160,10");
+}
+
+function test_a_space_in_a_row_adds_no_height(): test.TestOutcome {
+  // The space grows across the row too. The row is as high as its texts,
+  // so the box below it is 10 pixels down, and the space is not a node.
+  let lay = laid(ui.column([ui.row([label("A"), ui.space(), label("A")]), ui.box().width(20.0).height(20.0).background(ui.PRIMARY)]));
+  return test.assert_eq(boxes(lay.nodes), "0,0,6,10 194,0,6,10 0,10,20,20");
 }
 
 function test_stack(): test.TestOutcome {
@@ -541,6 +548,55 @@ function test_text_follows_the_font_scale(): test.TestOutcome {
   return test.assert_eq(boxes(lay.nodes) + " " + s.shell.host.screen.font.to_string(), "0,0,36,20 0,20,10,10 1.5");
 }
 
+// --- sliders and effects
+
+struct Dial { part: f64, asked: string[], done: i32 }
+
+function dial_view(m: Dial, s: ui.Screen): ui.El[Msg] {
+  return ui.column([ui.slider(m.part, (part: f64): Msg => Slid((part * 100.0 + 0.5) as i32)).described("level"), ui.column(rows(20)).scroll("items").grow(1.0)]);
+}
+
+function dial_update(own m: Dial, msg: Msg): Dial {
+  match (msg) {
+    Slid(percent) => {
+      return Dial { ...m, part: percent as f64 / 100.0, asked: m.asked.append("set " + percent.to_string()) };
+    },
+    _ => {
+      return m;
+    }
+  }
+}
+
+function new_dial(): Dial {
+  return Dial { part: 0.5, asked: [], done: 0 };
+}
+
+function test_slider_layout(): test.TestOutcome {
+  // The slider is 48 pixels high. Its track of 4 pixels is 10 pixels in
+  // from each side, and its thumb of 20 pixels is at the middle.
+  let lay = laid(ui.column([ui.slider(0.5, (part: f64): Msg => Slid(0))]));
+  let thumb = lay.nodes[lay.nodes.len() - 1];
+  return test.assert_eq(boxes([lay.nodes[0], lay.nodes[1]]) + " " + thumb.x.to_string() + "," + thumb.y.to_string() + "," + thumb.w.to_string() + " " + lay.nodes[0].tap.name + " " + lay.slides.len().to_string(), "0,0,200,48 10,22,180,4 90,14,20 slider 1");
+}
+
+function test_a_finger_moves_a_slider(): test.TestOutcome {
+  let s = sim.start(new_dial(), ui.program(dial_view, dial_update), fonts(), 200, 400, 1.0);
+  s = sim.slide(s, "level", 0.25);
+  let tapped = s.shell.app.asked.join("|");
+  // A drag from the slider down into the list moves the thumb, and does
+  // not scroll the list.
+  s = sim.drag(s, 100, 24, 190, 300, 64i64);
+  let got = tapped + " / " + s.shell.app.part.to_string() + " " + s.shell.host.input.offset("items").to_string() + " " + s.shell.app.asked.len().to_string();
+  return test.assert_eq(got, "set 25|set 25 / 1 0 8");
+}
+
+function test_effects_run_after_each_message(): test.TestOutcome {
+  // The effects take what the state asks, as a device does.
+  let p = ui.program(dial_view, dial_update).with_effects((m: Dial): Dial => Dial { ...m, asked: [], done: m.done + m.asked.len() });
+  let s = sim.slide(sim.start(new_dial(), p, fonts(), 200, 400, 1.0), "level", 0.75);
+  return test.assert_eq(s.shell.app.done.to_string() + " " + s.shell.app.asked.len().to_string() + " " + s.shell.app.part.to_string(), "2 0 0.75");
+}
+
 // --- text fields
 
 struct Form { name: string, sent: string, backs: i32, upper: boolean, gone: boolean }
@@ -764,6 +820,7 @@ function main(): i32 {
   r = r.it("a column aligns and justifies its elements", test_column_alignment);
   r = r.it("a row shares its room by the weights", test_row_shares_the_room);
   r = r.it("STRETCH gives each element the whole width", test_stretch);
+  r = r.it("a space in a row adds no height to the row", test_a_space_in_a_row_adds_no_height);
   r = r.it("a stack puts its elements one over the other", test_stack);
   r = r.it("a text wraps and clamps", test_text_wraps);
   r = r.it("a role takes its color from the theme", test_roles_take_the_theme);
@@ -802,5 +859,8 @@ function main(): i32 {
   r = r.it("a long text shows the part at the caret", test_a_long_text_shows_the_part_at_the_caret);
   r = r.it("an area wraps its text and takes new lines", test_an_area_wraps_and_takes_new_lines);
   r = r.it("an area shows the lines at the caret", test_an_area_shows_the_lines_at_the_caret);
+  r = r.it("a slider has a track and a thumb", test_slider_layout);
+  r = r.it("a finger moves a slider and scrolls no list", test_a_finger_moves_a_slider);
+  r = r.it("the effects run after each message", test_effects_run_after_each_message);
   return r.finish();
 }

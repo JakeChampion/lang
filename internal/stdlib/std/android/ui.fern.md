@@ -18,7 +18,7 @@ The executable example below is such an app.
 
 Each element has a width and a height: `Hug` takes the size of what the element holds, `Grow` takes a share of the room that is left, and `Exact` is a size in dp. The methods of `El` set them, and they set the padding, the gap, the background, the corners and the border. Sizes are in dp, and text sizes are in sp: a text grows with the font size that the person set for the system. `align` sets where a column or a row puts its elements across it, and `justify` sets where it puts them along it.
 
-`on_tap` gives an element a message. A tap on the element gives that message to `update`. A message can hold values: the row of a list, for example. `on_long` does the same for a long press.
+`on_tap` gives an element a message. A tap on the element gives that message to `update`. A message can hold values: the row of a list, for example. `on_long` does the same for a long press. `slider` is a bar with a thumb, and `on_slide` gives each element the message of a finger that moves across it.
 
 `field` is a text field of one line, and `area` is a text field of more than one line. A tap gives a field the focus and shows the keyboard of the system, and a tap on its text puts the caret there. The program keeps the text. `on_edit` gives the field a function that makes a message from the new text, and each change gives that message to `update`. `view` gives the field the text that it shows. `on_submit` gives the field the message of the action key of the keyboard.
 
@@ -29,6 +29,8 @@ A color is a pixel word of `std/android/draw`, or a role: `PRIMARY`, `ON_PRIMARY
 ### Messages
 
 An element gives the messages of `on_tap`, `on_long`, `on_edit` and `on_submit`. A program gives the others. `with_tick` gives a message each time the time of its `wait` goes by. `with_frames` gives a message for each frame while its `animating` is true, with the time of the frame. `with_back` gives a message for the back key, or lets the back key close the app. `with_system` gives a message for an event of `std/android` that this module does not use itself.
+
+`update` does nothing to the device. A program that plays a sound or reads a file puts that request in its state, and `with_effects` gives the function that does it.
 
 ### What the module does
 
@@ -225,6 +227,8 @@ pub const LIST: i32 = 6;
 
 pub const FIELD: i32 = 7;
 
+pub const SPACE: i32 = 8;
+
 pub const START: i32 = 0;
 
 pub const CENTER: i32 = 1;
@@ -282,10 +286,13 @@ pub struct El[M] {
   // the action key of the keyboard.
   edit: Option[(string) => M],
   submit: Option[M],
+  // The message of a finger that is down on the element or moves on it,
+  // from the part of the width that the finger is at.
+  slide: Option[(f64) => M],
 }
 
 function element[M](kind: i32, kids: El[M][]): El[M] {
-  return El { kind: kind, kids: kids, w: Hug, h: Hug, pad: Edges { left: 0.0, top: 0.0, right: 0.0, bottom: 0.0 }, gap: 0.0, align: START, justify: START, bg: 0, radius: 0.0, edge: 0, edge_width: 0.0, tap: None, long: None, barrier: false, say: "", list: "", content: "", size: 14.0, weight: 400, ink: INK, lines: 0, key: "", image: None, paint: None, count: 0, row: 0.0, build: None, field: "", hint: "", edit: None, submit: None };
+  return El { kind: kind, kids: kids, w: Hug, h: Hug, pad: Edges { left: 0.0, top: 0.0, right: 0.0, bottom: 0.0 }, gap: 0.0, align: START, justify: START, bg: 0, radius: 0.0, edge: 0, edge_width: 0.0, tap: None, long: None, barrier: false, say: "", list: "", content: "", size: 14.0, weight: 400, ink: INK, lines: 0, key: "", image: None, paint: None, count: 0, row: 0.0, build: None, field: "", hint: "", edit: None, submit: None, slide: None };
 }
 
 // The elements one below the other.
@@ -310,7 +317,7 @@ pub function box[M](): El[M] {
 
 // An element that takes the room that is left in a column or a row.
 pub function space[M](): El[M] {
-  return El { ...element(STACK, []), w: Grow(1.0), h: Grow(1.0) };
+  return El { ...element(SPACE, []), w: Grow(1.0), h: Grow(1.0) };
 }
 
 // The text `s`, at 14 sp in the ink of the theme.
@@ -478,6 +485,14 @@ pub function (e: El[M]) on_tap(m: M): El[M] {
   return El { ...e, tap: Some(m) };
 }
 
+// A finger that goes down on the element, or moves on it, gives the message
+// that `slide` makes from where the finger is across the element: 0 at the
+// left and 1 at the right. A drag that starts on the element scrolls no
+// list.
+pub function (e: El[M]) on_slide(slide: (f64) => M): El[M] {
+  return El { ...e, slide: Some(slide) };
+}
+
 // A long press gives the message `m`.
 pub function (e: El[M]) on_long(m: M): El[M] {
   return El { ...e, long: Some(m) };
@@ -564,6 +579,25 @@ pub function toggle[M](on: boolean, say: string, m: M): El[M] {
     state = "on";
   }
   return track.aligned(CENTER).width(52.0).height(32.0).rounded(16.0).on_tap(m).described(say + ", " + state);
+}
+
+// The width and the height of the thumb of a slider, in dp.
+const THUMB_DP: f64 = 20.0;
+
+// A bar with a thumb that a finger moves. `part` is where the thumb is,
+// from 0 to 1. A touch or a drag gives the message that `slide` makes from
+// the part under the finger. The slider is 48 dp high, so a finger finds
+// it.
+pub function slider[M](part: f64, slide: (f64) => M): El[M] {
+  let at = part.max(0.0).min(1.0);
+  let filled: El[M] = El { ...box(), w: Grow(at + 0.0001), h: Grow(1.0) };
+  let rest: El[M] = El { ...box(), w: Grow(1.0001 - at), h: Grow(1.0) };
+  let track: El[M] = row([filled.background(PRIMARY).rounded(2.0), rest]).wide().height(4.0).background(TRACK).rounded(2.0);
+  let before: El[M] = El { ...box(), w: Grow(at + 0.0001) };
+  let after: El[M] = El { ...box(), w: Grow(1.0001 - at) };
+  let thumb: El[M] = box().width(THUMB_DP).height(THUMB_DP).rounded(THUMB_DP / 2.0).background(PRIMARY);
+  let bar: El[M] = stack([row([track]).aligned(CENTER).padding_xy(THUMB_DP / 2.0, 0.0).wide().tall(), row([before, thumb, after]).aligned(CENTER).wide().tall()]);
+  return bar.wide().height(48.0).on_slide(slide);
 }
 
 // A bar that shows the part of a task that is done, from 0 to 1.
@@ -742,13 +776,21 @@ function flow_size[M](env: Env, e: El[M], iw: i32, ih: i32): (i32, i32) {
   }
   let gaps = px(env, e.gap) * (e.kids.len() - 1).max(0);
   let (w, h) = (0, 0);
-  for s in sizes(env, e, rw, rh) {
-    let (kw, kh) = s;
+  let ss = sizes(env, e, rw, rh);
+  for i in 0..ss.len() {
+    let (kw, kh) = ss[i];
+    // A space takes room along the flow only, so it adds nothing to the
+    // size of the flow across.
+    let across = e.kids[i].kind != SPACE;
     if (e.kind == ROW) {
       w += kw;
-      h = h.max(kh);
+      if (across) {
+        h = h.max(kh);
+      }
     } else {
-      w = w.max(kw);
+      if (across) {
+        w = w.max(kw);
+      }
       h += kh;
     }
   }
@@ -837,11 +879,15 @@ pub struct FieldMessages[M] { name: string, edit: Option[(string) => M], submit:
 
 // The messages of a screen. The tap action or the long press action of a
 // node that gives a message has the name `MESSAGE_ACTION` and the index of
-// the message in `taps`.
-pub struct Messages[M] { taps: M[], fields: FieldMessages[M][] }
+// the message in `taps`. The tap action of a node that a finger slides on
+// has the name `SLIDER_ACTION` and the index of its function in `slides`.
+pub struct Messages[M] { taps: M[], fields: FieldMessages[M][], slides: ((f64) => M)[] }
+
+// The name of the tap action of a node that a finger slides on.
+pub const SLIDER_ACTION: string = "slider";
 
 pub function no_messages[M](): Messages[M] {
-  return Messages { taps: [], fields: [] };
+  return Messages { taps: [], fields: [], slides: [] };
 }
 
 // The name of the action of a node that gives a message. An accessibility
@@ -849,7 +895,7 @@ pub function no_messages[M](): Messages[M] {
 pub const MESSAGE_ACTION: string = "button";
 
 // A screen: its nodes, its lists and its messages.
-pub struct Built[M] { nodes: scene.Node[], scrollers: Scroller[], taps: M[], fields: FieldMessages[M][] }
+pub struct Built[M] { nodes: scene.Node[], scrollers: Scroller[], taps: M[], fields: FieldMessages[M][], slides: ((f64) => M)[] }
 
 // The nodes and the lists of the screen.
 pub function (b: Built[M]) layout(): Layout {
@@ -858,7 +904,7 @@ pub function (b: Built[M]) layout(): Layout {
 
 // The messages of the screen.
 pub function (b: Built[M]) messages(): Messages[M] {
-  return Messages { taps: b.taps, fields: b.fields };
+  return Messages { taps: b.taps, fields: b.fields, slides: b.slides };
 }
 
 // The screen with the message `m`, and the action that gives it. No
@@ -866,7 +912,7 @@ pub function (b: Built[M]) messages(): Messages[M] {
 function with_message[M](own out: Built[M], m: Option[M]): (Built[M], scene.Action) {
   if let Some(message) = m {
     let at = out.taps.len();
-    return (Built { nodes: out.nodes, scrollers: out.scrollers, taps: out.taps.append(message), fields: out.fields }, scene.Action { name: MESSAGE_ACTION, arg: at });
+    return (Built { nodes: out.nodes, scrollers: out.scrollers, taps: out.taps.append(message), fields: out.fields, slides: out.slides }, scene.Action { name: MESSAGE_ACTION, arg: at });
   }
   return (out, scene.no_action());
 }
@@ -914,7 +960,7 @@ function paints[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32): scene.No
 
 // The element takes touches, or an accessibility service reads it.
 function takes_part[M](e: El[M]): boolean {
-  return e.tap.is_some() || e.long.is_some() || e.kind == FIELD || e.barrier || e.say.len() > 0 || e.list.len() > 0;
+  return e.tap.is_some() || e.long.is_some() || e.slide.is_some() || e.kind == FIELD || e.barrier || e.say.len() > 0 || e.list.len() > 0;
 }
 
 // What an accessibility service reads for the element: a field with a
@@ -964,7 +1010,7 @@ function place_text[M](env: Env, e: El[M], x: i32, y: i32, w: i32, clip: Clip, o
     let n = scene.node(x + shift(e.align, w - lw), y + i * t.line, lw, t.line, scene.Label(l, t.px, t.face, 0, color));
     nodes = nodes.append(clipped(n, clip));
   }
-  return Built { nodes: nodes, scrollers: out.scrollers, taps: out.taps, fields: out.fields };
+  return Built { nodes: nodes, scrollers: out.scrollers, taps: out.taps, fields: out.fields, slides: out.slides };
 }
 
 // What a field shows: its lines, the index of the first character of each
@@ -1103,7 +1149,7 @@ function place_field[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, clip
   for n in ns {
     nodes = nodes.append(clipped(n, clip));
   }
-  return Built { nodes: nodes, scrollers: out.scrollers, taps: out.taps, fields: out.fields };
+  return Built { nodes: nodes, scrollers: out.scrollers, taps: out.taps, fields: out.fields, slides: out.slides };
 }
 
 // The rows of a list that show, each in its box.
@@ -1112,7 +1158,7 @@ function place_rows[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, clip:
   let limit = (e.count * row - h).max(0);
   let at = offset_of(env, e.list, limit, h);
   let inner = Clip { ...clip, group: e.list, c0: clip.c0.max(y), c1: clip.c1.min(y + h) };
-  let o = Built { nodes: out.nodes, scrollers: out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit, across: false, parent: clip.group }), taps: out.taps, fields: out.fields };
+  let o = Built { nodes: out.nodes, scrollers: out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit, across: false, parent: clip.group }), taps: out.taps, fields: out.fields, slides: out.slides };
   let Some(build) = e.build else {
     return o;
   };
@@ -1160,7 +1206,7 @@ function place_row[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, clip: 
   }
   if (scrolls) {
     let limit = (total - w).max(0);
-    let o = Built { nodes: out.nodes, scrollers: out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit, across: true, parent: clip.group }), taps: out.taps, fields: out.fields };
+    let o = Built { nodes: out.nodes, scrollers: out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit, across: true, parent: clip.group }), taps: out.taps, fields: out.fields, slides: out.slides };
     let inner = Clip { ...clip, group: e.list, left: clip.left.max(x), right: clip.right.min(x + w) };
     return place_along(env, e, ss, x - offset_of(env, e.list, limit, w), y, h, gap, inner, o);
   }
@@ -1206,7 +1252,7 @@ function place_column[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, cli
   }
   if (scrolls) {
     let limit = (total - h).max(0);
-    let o = Built { nodes: out.nodes, scrollers: out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit, across: false, parent: clip.group }), taps: out.taps, fields: out.fields };
+    let o = Built { nodes: out.nodes, scrollers: out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit, across: false, parent: clip.group }), taps: out.taps, fields: out.fields, slides: out.slides };
     let inner = Clip { ...clip, group: e.list, c0: clip.c0.max(y), c1: clip.c1.min(y + h) };
     return place_down(env, e, ss, x, y - offset_of(env, e.list, limit, h), w, gap, inner, o);
   }
@@ -1225,11 +1271,16 @@ function place[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, clip: Clip
     tap = scene.Action { name: FIELD_ACTION + e.field, arg: 0 };
     fields = fields.append(FieldMessages { name: e.field, edit: e.edit, submit: e.submit });
   }
+  let slides = both.slides;
+  if let Some(slide) = e.slide {
+    tap = scene.Action { name: SLIDER_ACTION, arg: slides.len() };
+    slides = slides.append(slide);
+  }
   let nodes = both.nodes;
   for n in own_nodes(env, e, x, y, w, h, clip, tap, long) {
     nodes = nodes.append(n);
   }
-  let o = Built { nodes: nodes, scrollers: both.scrollers, taps: both.taps, fields: fields };
+  let o = Built { nodes: nodes, scrollers: both.scrollers, taps: both.taps, fields: fields, slides: slides };
   let ix = x + px(env, e.pad.left);
   let iy = y + px(env, e.pad.top);
   let iw = (w - px(env, e.pad.left) - px(env, e.pad.right)).max(0);
@@ -1270,7 +1321,7 @@ pub function layout[M](root: El[M], fonts: text.Fonts, s: Screen, offsets: Map[s
   if (exact(env, root.h) >= 0) {
     h = exact(env, root.h);
   }
-  return place(env, root, s.left, s.top, w, h, Clip { group: "", c0: 0, c1: scene.NO_CLIP, left: 0, right: scene.NO_CLIP }, Built { nodes: [], scrollers: [], taps: [], fields: [] });
+  return place(env, root, s.left, s.top, w, h, Clip { group: "", c0: 0, c1: scene.NO_CLIP, left: 0, right: scene.NO_CLIP }, Built { nodes: [], scrollers: [], taps: [], fields: [], slides: [] });
 }
 ```
 
@@ -1382,6 +1433,14 @@ function down(inp: Input, lay: Layout, x: i32, y: i32, now: i64): Input {
   return Input { ...inp, press: press, flung: "", fling: motion.no_fling(), sprung: "", spring: no_spring() };
 }
 
+// The finger of `p` went down on a node that it slides on.
+function on_slider(p: Press): boolean {
+  if let Some(n) = p.target {
+    return n.tap.name == SLIDER_ACTION;
+  }
+  return false;
+}
+
 // The press when the finger passes the slop at x and y: the drag starts
 // there, so the list does not jump. The finger drags across when it moved
 // farther across than down.
@@ -1389,6 +1448,9 @@ function dragged(inp: Input, lay: Layout, x: i32, y: i32): Press {
   let p = inp.press;
   let across = (x - p.x0).abs() > (y - p.y0).abs();
   let group = list_for(lay, p.inner, across);
+  if (on_slider(p)) {
+    group = "";
+  }
   return Press { ...p, x0: x, y0: y, moved: true, across: across, group: group, scroll0: pulled(inp.offset(group), limit_of(lay, group)), samples: [] };
 }
 
@@ -1611,6 +1673,24 @@ function message[M](said: Messages[M], lay: Layout, t: scene.Node, a: scene.Acti
   return None;
 }
 
+// The x of a finger that puts the thumb of the slider node `n` at `part`,
+// on a screen of `d` pixels to the dp.
+pub function slide_x(n: scene.Node, part: f64, d: f64): i32 {
+  let r = (THUMB_DP * d / 2.0) as i32;
+  return n.x + r + (part.max(0.0).min(1.0) * ((n.w - 2 * r).max(1) as f64)) as i32;
+}
+
+// The message of a finger at `x` on the slider node `n`.
+pub function slide_message[M](said: Messages[M], n: scene.Node, x: i32, d: f64): Option[M] {
+  if (n.tap.name != SLIDER_ACTION || n.tap.arg < 0 || n.tap.arg >= said.slides.len()) {
+    return None;
+  }
+  let r = (THUMB_DP * d / 2.0) as i32;
+  let part = ((x - n.x - r) as f64 / ((n.w - 2 * r).max(1) as f64)).max(0.0).min(1.0);
+  let slide = said.slides[n.tap.arg];
+  return Some(slide(part));
+}
+
 // The message of a tap on the node `n` of `lay`.
 pub function tap_message[M](said: Messages[M], lay: Layout, n: scene.Node): Option[M] {
   return message(said, lay, n, n.tap);
@@ -1628,7 +1708,7 @@ pub function shown(inp: Input, lay: Layout, pressed: i32): scene.Node[] {
   let Some(t) = p.target else {
     return lay.nodes;
   };
-  if (!p.active || p.moved) {
+  if (!p.active || p.moved || on_slider(p)) {
     return lay.nodes;
   }
   let out: scene.Node[] = [];
@@ -1665,13 +1745,22 @@ pub struct Program[S, M] {
   frame: Option[(i64) => M],
   back: (S) => Option[M],
   system: (android.Event) => Option[M],
+  effects: (S) => S,
   theme: (boolean) => Theme,
 }
 
 // A program with no messages of its own, which the back key closes, in the
 // colors of `theme`.
 pub function program[S, M](view: (S, Screen) => El[M], update: (own S, M) => S): Program[S, M] {
-  return Program { view: view, update: update, wait: (s: S): i32 => -1, tick: None, animating: (s: S): boolean => false, frame: None, back: (s: S): Option[M] => None, system: (e: android.Event): Option[M] => None, theme: (dark: boolean): Theme => theme(dark) };
+  return Program { view: view, update: update, wait: (s: S): i32 => -1, tick: None, animating: (s: S): boolean => false, frame: None, back: (s: S): Option[M] => None, system: (e: android.Event): Option[M] => None, effects: (s: S): S => s, theme: (dark: boolean): Theme => theme(dark) };
+}
+
+// After each message, the shell gives the state to `effects`, which does
+// what the state asks of the device and gives the state back. `update`
+// stays a function with no effect: it puts what it wants done in the
+// state, and a test reads that from the state.
+pub function (p: Program[S, M]) with_effects(effects: (S) => S): Program[S, M] {
+  return Program { ...p, effects: effects };
 }
 
 // `update` gets the message `m` each time the milliseconds of `wait` go by.
@@ -1764,7 +1853,8 @@ function on_window(h: Host, window: usize): Host {
 
 // The shell after `update` took the message `m`.
 pub function send[S, M](own s: Shell[S, M], p: Program[S, M], m: M): Shell[S, M] {
-  return Shell { app: p.update(s.app, m), host: changed(s.host), said: s.said };
+  let next = p.update(s.app, m);
+  return Shell { app: p.effects(next), host: changed(s.host), said: s.said };
 }
 
 function told_maybe[S, M](own s: Shell[S, M], p: Program[S, M], m: Option[M]): Shell[S, M] {
@@ -1783,7 +1873,8 @@ function animated[S, M](own s: Shell[S, M], p: Program[S, M], ns: i64): Shell[S,
   let Some(frame) = p.frame else {
     return s;
   };
-  return Shell { app: p.update(s.app, frame(ns)), host: s.host, said: s.said };
+  let next = p.update(s.app, frame(ns));
+  return Shell { app: p.effects(next), host: s.host, said: s.said };
 }
 
 // The host with no field in focus and no keyboard.
@@ -1890,10 +1981,30 @@ function field_tapped[M](h: Host, f: El[M], n: scene.Node, x: i32, y: i32): Host
   return focused(h, f, caret);
 }
 
+// The shell after a finger at `x` on the slider node `n`. `down` tells
+// that the finger went down now.
+function slid[S, M](own s: Shell[S, M], p: Program[S, M], input: Input, n: scene.Node, x: i32, down: boolean): Shell[S, M] {
+  let m = slide_message(s.said, n, x, s.host.screen.d);
+  let host = Host { ...s.host, input: input };
+  if (down) {
+    host = pressed(Host { ...s.host, input: input });
+  }
+  return told_maybe(Shell { app: s.app, host: changed(host), said: s.said }, p, m);
+}
+
 function touched[S, M](own s: Shell[S, M], p: Program[S, M], action: i32, x: i32, y: i32): Shell[S, M] {
   let h = s.host;
   let target = h.input.press.target;
   let (input, tapped) = touch(h.input, h.lay, action, x, y, h.dev.now(), h.screen.d);
+  let held = target;
+  if (action == 0) {
+    held = input.press.target;
+  }
+  if let Some(n) = held {
+    if (n.tap.name == SLIDER_ACTION && action <= 2) {
+      return slid(s, p, input, n, x, action == 0);
+    }
+  }
   let host = Host { ...h, input: input };
   if (action == 0) {
     host = pressed(Host { ...h, input: input });
