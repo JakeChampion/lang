@@ -772,7 +772,7 @@ function paints(env: Env, e: El, x: i32, y: i32, w: i32, h: i32): scene.Node[] {
     ns = ns.append(scene.node(x, y, w, h, scene.Picture(e.key, img, r)));
   }
   if let Some(f) = e.paint {
-    ns = ns.append(scene.node(x, y, w, h, scene.Custom(e.key, f)));
+    ns = ns.append(scene.node(x, y, w, h, scene.Custom(e.key, 0, f)));
   }
   return ns;
 }

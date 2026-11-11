@@ -1,0 +1,27 @@
+// Emit AV1 OBU metadata and payloads for independent reference checks.
+import "std/video/av1";
+import "std/video/frame";
+import "std/hex";
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 2) {
+    return 1;
+  }
+  let Ok(bytes) = read_file_bytes(argv[1]) else {
+    return 2;
+  };
+  let at = 0;
+  loop {
+    let result = match (av1.next_obu(bytes, at, frame.default_limits())) {
+      Ok(value) => value,
+      Err(error) => { eprint(error.message()); return 3; },
+    };
+    let Some(unit) = result else {
+      return 0;
+    };
+    print(unit.kind.to_string() + " " + unit.offset.to_string() + " " + unit.size.to_string() + " " + unit.temporal_id.to_string() + " " + unit.spatial_id.to_string() + " " + (if (unit.extension) { "1" } else { "0" }));
+    print(hex.encode(bytes[unit.offset:unit.next_offset]));
+    at = unit.next_offset;
+  }
+}

@@ -5,10 +5,11 @@
 import "std/android";
 import "std/android/draw";
 import "std/android/testkit";
+import "std/android/ui/painter";
+import "std/android/ui/scene";
 import "std/test";
 import "std/worker";
 import "./control";
-import "./gpu";
 import "./paper";
 import "./ui";
 import "./ui_test";
@@ -89,7 +90,7 @@ function log_line(dir: string, line: string): void {
 
 // A frame that the fake device presents, as a line of its frame log: the
 // number of passes, and how much of the top pass shows.
-function frame_line(passes: ui.Pass[]): string {
+function frame_line(passes: scene.Pass[]): string {
   let top = passes[passes.len() - 1];
   if (passes.len() == 1) {
     return "1";
@@ -142,19 +143,19 @@ function fake(dir: string, now: i64): control.Device {
     open_held: (pkg: string, key: string): void => log_line(dir, "held " + key),
     request_frame: (): void => {},
     property: (name: string): string => prop(dir, name),
-    attach_gpu: (p: gpu.Painter, window: usize): gpu.Painter => {
+    attach_gpu: (p: painter.Painter, window: usize): painter.Painter => {
       gpu_line(dir, "attach");
       return p;
     },
-    present: (own p: gpu.Painter, passes: ui.Pass[]): gpu.Painter => {
+    present: (own p: painter.Painter, passes: scene.Pass[], background: i32): painter.Painter => {
       let ok = write_file(dir + "/frames", testkit.read_text(dir + "/frames") + frame_line(passes) + "\n");
       return p;
     },
-    detach_gpu: (p: gpu.Painter): gpu.Painter => {
+    detach_gpu: (p: painter.Painter): painter.Painter => {
       gpu_line(dir, "detach");
       return p;
     },
-    close_gpu: (p: gpu.Painter): gpu.Painter => {
+    close_gpu: (p: painter.Painter): painter.Painter => {
       gpu_line(dir, "close");
       return p;
     },
@@ -196,13 +197,13 @@ function shown_apps(name: string, props: string, extra: string): Run {
   return at(r, 0, android.ContentRect(0, 66, W, H - 132));
 }
 
-function find(r: Run, act: string): ui.Node {
+function find(r: Run, act: string): scene.Node {
   for n in r.s.nodes {
-    if (n.act == act || n.long == act) {
+    if (n.tap.name == act || n.long.name == act) {
       return n;
     }
   }
-  return ui.Node { x: -100, y: -100, w: 0, h: 0, paint: ui.Blank, act: "", long: "", group: "", clip0: 0, clip1: 0 };
+  return scene.Node { ...scene.node(-100, -100, 0, 0, scene.Blank), clip1: 0 };
 }
 
 function tap_at(own r: Run, x: i32, y: i32): Run {
@@ -557,14 +558,14 @@ function test_held_notifications(): test.TestOutcome {
 // waits for the next minute.
 function test_wallpaper_from_worker(): test.TestOutcome {
   let r = shown("wallpaper");
-  let first = gpu.wall_width(r.s.painter).to_string() + " " + r.s.wall_job.is_some().to_string() + " " + (control.timeout(r.s, r.now) <= 20).to_string();
+  let first = r.s.wall.width.to_string() + " " + r.s.wall_job.is_some().to_string() + " " + (control.timeout(r.s, r.now) <= 20).to_string();
   let steps = 0;
   while (r.s.wall_job.is_some() && steps < 3000) {
     sleep_ms(10i64);
     r = at(r, 10, android.Tick);
     steps += 1;
   }
-  let then = gpu.wall_width(r.s.painter).to_string() + " " + (control.timeout(r.s, r.now) > 20).to_string();
+  let then = r.s.wall.width.to_string() + " " + (control.timeout(r.s, r.now) > 20).to_string();
   control.close(r.s);
   return test.assert_eq(first + ", " + then, "0 true true, " + W.to_string() + " true");
 }

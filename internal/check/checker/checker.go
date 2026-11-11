@@ -5915,6 +5915,7 @@ type checker struct {
 	// litRecvCalls maps a method call on an open literal receiver to the
 	// numeric arguments that wait for the method of the settled width.
 	litRecvCalls      map[*ast.Call][]int
+	litArraySteps     map[*ast.Call]litArrayStep
 	litIdents         map[*ast.Ident]*litLocal
 	litCompositeOf    map[*ast.Var][]*litLocal
 	litNestedOf       map[*ast.Var][]*litLocal
@@ -16149,6 +16150,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		c.expectedType = nil
 		c.elemHint = nil
 		if id, ok := n.Target.(*ast.Ident); ok && (c.holdsOpenEnum(lt) || c.litNestedOf[s.lookupVarDecl(id.Name)] != nil) {
+			c.linkLitNestedParts(s.lookupVarDecl(id.Name), n.Value, n.P)
 			// A use of the open local on the right side can give it its type.
 			lt, _ = s.lookup(id.Name)
 		}

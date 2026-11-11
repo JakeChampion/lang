@@ -11821,11 +11821,11 @@ function a64_aes_expand_key(s: asmcore.EmitState): string {
   return "    .global __fern_aes_expand_key\n    .type __fern_aes_expand_key, %function\n__fern_aes_expand_key:\n"
     + rt_frame_of(s, 48) + "    mov x29, sp\n" + a64_aes_view("x0", "x3", "x4", ".Laesk_key")
     + "    str x3, [x29, #16]\n    mov x0, #0\n    cmp x4, #16\n    b.ne .Laesk_n32\n    mov x0, #176\n.Laesk_n32:\n"
-    + "    cmp x4, #32\n    b.ne .Laesk_box\n    mov x0, #240\n.Laesk_box:\n" + a64_aes_alloc("32")
+    + "    cmp x4, #32\n    b.ne .Laesk_box\n    mov x0, #240\n.Laesk_box:\n    cbz x0, .Laesk_bad\n" + a64_aes_alloc("32")
     + "    ldr x5, [x0]\n    ldr x1, [x29, #16]\n    add x3, x0, #8\n    movi v17.2d, #0\n"
-    + "    cmp x5, #176\n    b.eq .Laesk_128\n    cmp x5, #240\n    b.eq .Laesk_256\n    b .Laesk_ret\n"
+    + "    cmp x5, #240\n    b.eq .Laesk_256\n"
     + a64_aes_schedule128() + a64_aes_schedule256()
-    + ".Laesk_ret:\n    ldr x0, [x29, #32]\n" + rt_unframe_of(s, 48) + "    ret\n    .size __fern_aes_expand_key, .-__fern_aes_expand_key\n";
+    + ".Laesk_ret:\n    ldr x0, [x29, #32]\n" + rt_unframe_of(s, 48) + "    ret\n.Laesk_bad:\n    b __fern_slice_abort\n    .size __fern_aes_expand_key, .-__fern_aes_expand_key\n";
 }
 
 function a64_aes_rounds(label: string, n: i32): string {
@@ -11902,12 +11902,12 @@ function a64_aes_ctr32(s: asmcore.EmitState): string {
     + a64_aes_view("x2", "x3", "x4", ".Lctr_data") + "    str x3, [x29, #16]\n    str x4, [x29, #24]\n"
     + a64_aes_view("x1", "x3", "x5", ".Lctr_ctr") + "    str x3, [x29, #32]\n"
     + a64_aes_view("x0", "x3", "x6", ".Lctr_rk") + "    str x3, [x29, #40]\n";
-  o = o + "    mov x7, #0\n    cmp x6, #176\n    b.lo .Lctr_rounds\n    mov x7, #10\n    cmp x6, #240\n    b.lo .Lctr_rounds\n    mov x7, #14\n.Lctr_rounds:\n"
-    + "    cmp x5, #16\n    b.hs .Lctr_ctrok\n    mov x7, #0\n.Lctr_ctrok:\n    str x7, [x29, #48]\n    ldr x0, [x29, #24]\n    cbnz x7, .Lctr_box\n    mov x0, #0\n.Lctr_box:\n"
+  o = o + "    cmp x6, #176\n    b.lo .Lctr_bad\n    mov x7, #10\n    cmp x6, #240\n    b.lo .Lctr_rounds\n    mov x7, #14\n.Lctr_rounds:\n"
+    + "    cmp x5, #16\n    b.lo .Lctr_bad\n    str x7, [x29, #48]\n    ldr x0, [x29, #24]\n"
     + a64_aes_alloc("64") + "    ldr x4, [x0]\n    cbz x4, .Lctr_ret\n    add x2, x0, #8\n    ldr x1, [x29, #16]\n    ldr x8, [x29, #40]\n    ldr x7, [x29, #48]\n    ldr x3, [x29, #32]\n"
     + a64_aes_load_keys() + "    ld1 {v6.16b}, [x3]\n    rev32 v6.16b, v6.16b\n    movi v7.2d, #0\n    mov w9, #1\n    ins v7.s[3], w9\n";
   return o + a64_aes_ctr_blocks() + a64_aes_rounds(".Lctr_enc4", 4) + a64_aes_rounds(".Lctr_enc1", 1)
-    + ".Lctr_ret:\n    ldr x0, [x29, #64]\n" + rt_unframe_of(s, 112) + "    ret\n    .size __fern_aes_ctr32, .-__fern_aes_ctr32\n";
+    + ".Lctr_ret:\n    ldr x0, [x29, #64]\n" + rt_unframe_of(s, 112) + "    ret\n.Lctr_bad:\n    b __fern_slice_abort\n    .size __fern_aes_ctr32, .-__fern_aes_ctr32\n";
 }
 
 function a64_ghash_rev(v: string): string {
@@ -12027,13 +12027,13 @@ function a64_ghash(s: asmcore.EmitState): string {
     + a64_aes_view("x2", "x3", "x4", ".Lgh_data") + "    str x3, [x29, #16]\n    str x4, [x29, #24]\n"
     + a64_aes_view("x1", "x3", "x5", ".Lgh_y") + "    str x3, [x29, #32]\n"
     + a64_aes_view("x0", "x3", "x6", ".Lgh_h") + "    str x3, [x29, #40]\n"
-    + "    mov x0, #16\n    cmp x6, #16\n    b.hs .Lgh_hok\n    mov x0, #0\n.Lgh_hok:\n    cmp x5, #16\n    b.hs .Lgh_yok\n    mov x0, #0\n.Lgh_yok:\n"
-    + a64_aes_alloc("48") + "    ldr x4, [x0]\n    cbz x4, .Lgh_ret\n    movi v31.2d, #0\n"
+    + "    cmp x6, #16\n    b.lo .Lgh_bad\n    cmp x5, #16\n    b.lo .Lgh_bad\n    mov x0, #16\n"
+    + a64_aes_alloc("48") + "    movi v31.2d, #0\n"
     + "    ldr x3, [x29, #40]\n    ld1 {v1.16b}, [x3]\n" + a64_ghash_rev("v1") + "    ldr x3, [x29, #32]\n    ld1 {v0.16b}, [x3]\n" + a64_ghash_rev("v0")
     + "    ldr x1, [x29, #16]\n    ldr x4, [x29, #24]\n";
   o += a64_ghash_blocks_at(".Lgh", ".Lgh_out", 64);
   return o + ".Lgh_out:\n" + a64_ghash_rev("v0") + "    ldr x0, [x29, #48]\n    add x3, x0, #8\n    st1 {v0.16b}, [x3]\n"
-    + ".Lgh_ret:\n    ldr x0, [x29, #48]\n" + rt_unframe_of(s, 80) + "    ret\n" + a64_ghash_mul() + "    .size __fern_ghash, .-__fern_ghash\n";
+    + "    ldr x0, [x29, #48]\n" + rt_unframe_of(s, 80) + "    ret\n.Lgh_bad:\n    b __fern_slice_abort\n" + a64_ghash_mul() + "    .size __fern_ghash, .-__fern_ghash\n";
 }
 
 function emit_aes_gcm_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
