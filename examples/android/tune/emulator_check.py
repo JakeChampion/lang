@@ -55,9 +55,9 @@ def main(apk, out):
     adb("shell", "input", "keyevent", "111")
     time.sleep(2)
     width, height, _ = screen(out, "library")
-    # The first rows of the list are below the title, the search field and
-    # the tabs.
-    adb("shell", "input", "tap", str(width // 2), str(height * 45 // 100))
+    # The first row of the list is below the title, the search field and
+    # the tabs. The queue is then the three tunes, which play for 18 seconds.
+    adb("shell", "input", "tap", str(width // 2), str(height * 38 // 100))
     time.sleep(4)
     screen(out, "playing")
 

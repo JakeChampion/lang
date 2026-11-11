@@ -191,7 +191,7 @@ function c_pthread_detach(thread: usize): i32;
 
 ### `events`
 
-`Touch` has the action of the pointer: 0 down, 1 up, 2 move and 3 cancel. While TalkBack explores by touch, a finger on the screen comes as a hover pointer instead: 7 hover move, 9 hover enter and 10 hover exit. `Key` has the Android key code and the action: 0 down and 1 up. Key code 4 is the back key. The volume keys and the mute key (24, 25 and 164) come as `Key` events too, and then the system changes the volume.
+`Touch` has the action of the pointer: 0 down, 1 up, 2 move and 3 cancel. While TalkBack explores by touch, a finger on the screen comes as a hover pointer instead: 7 hover move, 9 hover enter and 10 hover exit. `Key` has the Android key code and the action: 0 down and 1 up. Key code 4 is the back key. The volume keys and the mute key (24, 25 and 164) come as `Key` events too, and then the system changes the volume. The headset hook and the media keys (79, 85 to 90, 126 and 127) come as `Key` events too, and then the system gives them to the media session that plays.
 
 `Char` follows the `Key` event of a key that goes down and types a character: the code point that the key map of the keyboard gives for the key and its shift state. A hardware keyboard types through these events.
 
@@ -810,9 +810,12 @@ function key_char(ctx: usize, device: i32, code: i32, meta: i32): i32 {
   return c;
 }
 
-// The volume keys and the mute key, which the system handles after the app.
+// The keys that the system handles after the app: the volume keys, the
+// mute key, the headset hook, and the media keys from play/pause (85) to
+// fast forward (90), play (126) and pause (127). The system gives a media
+// key to the media session that plays.
 function system_key(code: i32): boolean {
-  return code == 24 || code == 25 || code == 164;
+  return code == 24 || code == 25 || code == 164 || code == 79 || code >= 85 && code <= 90 || code == 126 || code == 127;
 }
 
 // JNIInvokeInterface of jni.h, the functions of a JavaVM.
