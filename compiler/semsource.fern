@@ -8790,7 +8790,7 @@ function outside_names(all: Produced[], mod: parser.Module): string[] {
 }
 
 function entry_decl(fd: parser.FuncDecl, mod: parser.Module): boolean {
-  return parser.named_outside(mod, fd.name) || fd.import_iface != "" || fd.async;
+  return parser.decl_named_outside(mod, fd) || fd.import_iface != "";
 }
 
 function rooted_method(fd: parser.FuncDecl, mod: parser.Module): boolean {
@@ -8892,7 +8892,7 @@ function outside_uncalled(p: Produced, name: string, i: i32, mod: parser.Module,
     return false;
   }
   let fd = mod.funcs[i];
-  return fd.receiver_type.len() > 0 && fd.import_iface == "" && !parser.named_outside(mod, fd.name) && !rooted_method(fd, mod);
+  return fd.receiver_type.len() > 0 && fd.import_iface == "" && !parser.decl_named_outside(mod, fd) && !rooted_method(fd, mod);
 }
 
 // A method's body joins the once set only when it is one block. A branch in
@@ -8907,7 +8907,7 @@ function spliceable_body(p: Produced, name: string, i: i32, mod: parser.Module):
 }
 
 function decl_unnamed(fd: parser.FuncDecl, mod: parser.Module): boolean {
-  return fd.receiver_type.len() == 0 && fd.import_iface == "" && !parser.named_outside(mod, fd.name);
+  return fd.receiver_type.len() == 0 && fd.import_iface == "" && !parser.decl_named_outside(mod, fd);
 }
 
 // roots[i] is the entry that all[i] is a clone of, or i.

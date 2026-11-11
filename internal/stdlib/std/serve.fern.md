@@ -1516,7 +1516,7 @@ function __backlog_due(c: __Conns, at: i32): i64 {
 
 ```fern
 <<29 function __serve_accept[D: async.Driver](drv: D, listener: Socket, c: __Conns, opts: Config)>>=
-function __serve_accept[D: async.Driver](drv: D, listener: Socket, own c: __Conns, opts: Config): __Conns {
+function __serve_accept[D: async.Driver](drv: D, listener: Socket, own c: __Conns, opts: Config): own __Conns {
   let sock = tcp_accept_with(listener, true);
   if (sock.fd < 0) {
     return c;
@@ -2065,7 +2065,7 @@ function __serve_continue[D: async.Driver](drv: D, own c: __Conns, at: i32, opts
   return sent_c;
 }
 
-function __serve_refuse[D: async.Driver](drv: D, own c: __Conns, at: i32, status: i32, opts: Config, clk: __Clock): __Conns {
+function __serve_refuse[D: async.Driver](drv: D, own c: __Conns, at: i32, status: i32, opts: Config, clk: __Clock): own __Conns {
   c = __Conns { ...c, metrics: c.metrics.request("", status, time.DURATION_ZERO) };
   __serve_wire(c.out, "GET", "HTTP/1.1", http.text(status, ""), false, clk);
   let (sent_c, sent_how) = __serve_send_out(drv, __Conns { ...c, keep: c.keep.with(at, false) }, at, opts);
@@ -2149,7 +2149,7 @@ function __corks(rest: __Tail, persists: boolean, answered: i32, behind: __Behin
   return false;
 }
 
-function __drain_pending[D: async.Driver](drv: D, own c: __Conns, at: i32, opts: Config): (__Conns, __Sent) {
+function __drain_pending[D: async.Driver](drv: D, own c: __Conns, at: i32, opts: Config): own (__Conns, __Sent) {
   if (c.pending[at].len() == 0) {
     return (c, Whole);
   }
@@ -2666,7 +2666,7 @@ function __h2_body_ended(own c: __Conns, fd: i32, sid: i32): own __Conns {
   return __pull_tidied(c, pi);
 }
 
-function __pull_tidied(own c: __Conns, pi: i32): __Conns {
+function __pull_tidied(own c: __Conns, pi: i32): own __Conns {
   let body = c.pulls[pi].body;
   if (body.ended.get() != 0 && body.done.get()) {
     return __Conns { ...c, pulls: __pull_removed(c.pulls, pi) };
@@ -2931,7 +2931,7 @@ function __h2_answer[D: async.Driver](drv: D, own c: __Conns, own fls: __Flights
   return (c, fls);
 }
 
-function __serve_eof[D: async.Driver](drv: D, own c: __Conns, at: i32, opts: Config, clk: __Clock): __Conns {
+function __serve_eof[D: async.Driver](drv: D, own c: __Conns, at: i32, opts: Config, clk: __Clock): own __Conns {
   if (__in_flight(c, at)) {
     return __Conns { ...c, keep: c.keep.with(at, false) };
   }
