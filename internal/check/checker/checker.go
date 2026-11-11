@@ -10209,7 +10209,7 @@ func (c *checker) sliceViewRoots(expr ast.Expr, env *escapeEnv, sums map[string]
 		if e.IsString {
 			return out
 		}
-		out.merge(c.sliceSourceRoots(e.Source, env, sums))
+		out.merge(c.slicedStorageRoots(e, env, sums))
 	case *ast.Call:
 		if id, ok := e.Callee.(*ast.Ident); ok {
 			if id.Name == "__method_string_as_bytes" && len(e.Args) == 1 {
@@ -10244,8 +10244,19 @@ func (c *checker) viewArgRoots(callee string, i int, arg ast.Expr, env *escapeEn
 		if _, isString := sig.Params[i].(ast.StringType); isString {
 			return c.bytesSourceRoots(arg, env, sums)
 		}
+		if _, isArray := sig.Params[i].(ast.ArrayType); isArray && c.ownedCallResult(arg) {
+			return viewRoots{params: map[int]bool{}, local: true}
+		}
 	}
 	return c.sliceSourceRoots(arg, env, sums)
+}
+
+// slicedStorageRoots is the storage that the source of a slice expression lends.
+func (c *checker) slicedStorageRoots(e *ast.SliceExpr, env *escapeEnv, sums map[string]viewSummary) viewRoots {
+	if !e.SourceIsSlice && c.ownedCallResult(e.Source) {
+		return viewRoots{params: map[int]bool{}, local: true}
+	}
+	return c.sliceSourceRoots(e.Source, env, sums)
 }
 
 // bytesSourceRoots is the storage a `string` lends to a view of its bytes. A
@@ -10282,10 +10293,6 @@ func (c *checker) ownedCallResult(e ast.Expr) bool {
 
 func (c *checker) sliceSourceRoots(src ast.Expr, env *escapeEnv, sums map[string]viewSummary) viewRoots {
 	out := viewRoots{params: map[int]bool{}}
-	if c.ownedCallResult(src) {
-		out.local = true
-		return out
-	}
 	switch s := src.(type) {
 	case *ast.ArrayLit:
 		out.local = true
@@ -10293,7 +10300,7 @@ func (c *checker) sliceSourceRoots(src ast.Expr, env *escapeEnv, sums map[string
 		if s.IsString {
 			return out
 		}
-		out.merge(c.sliceSourceRoots(s.Source, env, sums))
+		out.merge(c.slicedStorageRoots(s, env, sums))
 	case *ast.Call:
 		if id, ok := s.Callee.(*ast.Ident); ok {
 			if id.Name == "__method_string_as_bytes" && len(s.Args) == 1 {

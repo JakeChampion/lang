@@ -8683,18 +8683,18 @@ function slc_string_roots(e: ast.Expr, cur: Scope, params: string[], localarr: s
   return ViewRoots { local: true, params: none };
 }
 
-// Storage that a call returns owned, or a part of it. The function that makes
-// the call releases that storage when it returns.
-function slc_owned_call_result(e: ast.Expr, cur: Scope): boolean {
+// A call result, or a part of one. When it is owned storage, the function that
+// makes the call releases it when it returns.
+function slc_of_call_result(e: ast.Expr): boolean {
   match (e) {
     ast.ExprFieldAccess(fa) => {
-      return slc_owned_call_result(fa.obj, cur);
+      return slc_of_call_result(fa.obj);
     },
     ast.ExprIndex(ix) => {
-      return slc_owned_call_result(ix.array, cur);
+      return slc_of_call_result(ix.array);
     },
-    ast.ExprCall(c) => {
-      return !slc_views_string(c, cur) && !typeinfo.is_array_view(check_expr(e, cur));
+    ast.ExprCall(_) => {
+      return true;
     },
     _ => {}
   }
@@ -8702,7 +8702,7 @@ function slc_owned_call_result(e: ast.Expr, cur: Scope): boolean {
 }
 
 function slc_src_roots(e: ast.Expr, cur: Scope, params: string[], localarr: string[], tainted: string[], sums: ViewSum[], vix: ViewIndex): ViewRoots {
-  if (slc_owned_call_result(e, cur)) {
+  if (slc_of_call_result(e) && typeinfo.is_owned_array(check_expr(e, cur))) {
     return ViewRoots { local: true, params: [] };
   }
   match (e) {
