@@ -237,8 +237,8 @@ function expand_key_func(): string {
     + "    (local.set $n (call $__fern_aes_view_len (local.get $key)))\n"
     + "    (if (i32.eq (local.get $n) (i32.const 16)) (then (local.set $size (i32.const 176))))\n"
     + "    (if (i32.eq (local.get $n) (i32.const 32)) (then (local.set $size (i32.const 240))))\n"
+    + abort_unless("(local.get $size)")
     + "    (local.set $out (call $__fern_aes_bytes (local.get $size)))\n"
-    + "    (if (i32.eqz (local.get $size)) (then (return (local.get $out))))\n"
     + "    (local.set $w (i32.add (local.get $out) (i32.const 8)))\n"
     + "    (memory.copy (local.get $w) (call $__fern_aes_view_data (local.get $key)) (local.get $n))\n"
     + "    (local.set $tmp (call $__fern_aes_bytes (i32.const 64)))\n"
@@ -256,11 +256,11 @@ function expand_key_func(): string {
 }
 
 function ctr_rounds_wat(): string {
-  return "    (if (i32.ge_u (call $__fern_aes_view_len (local.get $rk)) (i32.const 176)) (then (local.set $rounds (i32.const 10))))\n"
+  return abort_unless("(i32.ge_u (call $__fern_aes_view_len (local.get $rk)) (i32.const 176))")
+    + abort_unless("(i32.ge_u (call $__fern_aes_view_len (local.get $ctr)) (i32.const 16))")
+    + "    (local.set $rounds (i32.const 10))\n"
     + "    (if (i32.ge_u (call $__fern_aes_view_len (local.get $rk)) (i32.const 240)) (then (local.set $rounds (i32.const 14))))\n"
-    + "    (if (i32.lt_u (call $__fern_aes_view_len (local.get $ctr)) (i32.const 16)) (then (local.set $rounds (i32.const 0))))\n"
-    + "    (local.set $n (call $__fern_aes_view_len (local.get $data)))\n"
-    + "    (if (i32.eqz (local.get $rounds)) (then (local.set $n (i32.const 0))))\n";
+    + "    (local.set $n (call $__fern_aes_view_len (local.get $data)))\n";
 }
 
 function ctr_keys_wat(): string {
@@ -369,9 +369,10 @@ function ghash_at_func(): string {
 
 function ghash_func(): string {
   return "  (func $__fern_ghash (param $h i32) (param $y i32) (param $data i32) (result i32)\n"
-    + "    (local $size i32) (local $out i32)\n"
-    + "    (if (i32.and (i32.ge_u (call $__fern_aes_view_len (local.get $h)) (i32.const 16)) (i32.ge_u (call $__fern_aes_view_len (local.get $y)) (i32.const 16))) (then (local.set $size (i32.const 16))))\n"
-    + "    (local.set $out (call $__fern_aes_bytes (local.get $size)))\n    (if (i32.eqz (local.get $size)) (then (return (local.get $out))))\n"
+    + "    (local $out i32)\n"
+    + abort_unless("(i32.ge_u (call $__fern_aes_view_len (local.get $h)) (i32.const 16))")
+    + abort_unless("(i32.ge_u (call $__fern_aes_view_len (local.get $y)) (i32.const 16))")
+    + "    (local.set $out (call $__fern_aes_bytes (i32.const 16)))\n"
     + "    (memory.copy (i32.add (local.get $out) (i32.const 8)) (call $__fern_aes_view_data (local.get $y)) (i32.const 16))\n"
     + "    (call $__fern_ghash_at (call $__fern_aes_view_data (local.get $h)) (i32.add (local.get $out) (i32.const 8))\n"
     + "      (call $__fern_aes_view_data (local.get $data)) (call $__fern_aes_view_len (local.get $data)))\n"

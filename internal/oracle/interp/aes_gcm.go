@@ -1,11 +1,11 @@
 package interp
 
 import (
-	"crypto/aes"
 	"crypto/cipher"
 	"crypto/subtle"
 	"encoding/binary"
 	"fmt"
+	"sync"
 )
 
 func registerAESGCM(i *Interp) {
@@ -126,9 +126,69 @@ func builtinAESExpandKey(_ *Interp, args []Value) (Value, error) {
 		return nil, err
 	}
 	if len(v[0]) != 16 && len(v[0]) != 32 {
-		return newArray(0), nil
+		return nil, fmt.Errorf("__aes_expand_key: a key of %d bytes", len(v[0]))
 	}
 	return byteArray(aesExpandKey(v[0])), nil
+}
+
+var aesSbox = sync.OnceValue(func() [256]byte {
+	var t [256]byte
+	for x := range t {
+		t[x] = sbox(byte(x))
+	}
+	return t
+})
+
+// roundKeyBlock is AES over the round keys of the caller, as the compiled
+// kernels use them. It does not make the schedule again from the first bytes.
+type roundKeyBlock struct {
+	rk     []byte
+	rounds int
+}
+
+func newRoundKeyBlock(rk []byte) (roundKeyBlock, bool) {
+	switch {
+	case len(rk) >= 240:
+		return roundKeyBlock{rk, 14}, true
+	case len(rk) >= 176:
+		return roundKeyBlock{rk, 10}, true
+	}
+	return roundKeyBlock{}, false
+}
+
+func (b roundKeyBlock) BlockSize() int { return 16 }
+
+func (b roundKeyBlock) Decrypt(_, _ []byte) {
+	panic("roundKeyBlock: counter modes do not decrypt a block")
+}
+
+func (b roundKeyBlock) Encrypt(dst, src []byte) {
+	sb := aesSbox()
+	var s [16]byte
+	for i := range s {
+		s[i] = src[i] ^ b.rk[i]
+	}
+	for r := 1; r <= b.rounds; r++ {
+		var t [16]byte
+		for c := 0; c < 4; c++ {
+			for row := 0; row < 4; row++ {
+				t[4*c+row] = sb[s[4*((c+row)%4)+row]]
+			}
+		}
+		if r < b.rounds {
+			for c := 0; c < 4; c++ {
+				a0, a1, a2, a3 := t[4*c], t[4*c+1], t[4*c+2], t[4*c+3]
+				t[4*c] = gfMul(a0, 2) ^ gfMul(a1, 3) ^ a2 ^ a3
+				t[4*c+1] = a0 ^ gfMul(a1, 2) ^ gfMul(a2, 3) ^ a3
+				t[4*c+2] = a0 ^ a1 ^ gfMul(a2, 2) ^ gfMul(a3, 3)
+				t[4*c+3] = gfMul(a0, 3) ^ a1 ^ a2 ^ gfMul(a3, 2)
+			}
+		}
+		for i := range s {
+			s[i] = t[i] ^ b.rk[16*r+i]
+		}
+	}
+	copy(dst, s[:])
 }
 
 func builtinAESCtr32(_ *Interp, args []Value) (Value, error) {
@@ -137,19 +197,9 @@ func builtinAESCtr32(_ *Interp, args []Value) (Value, error) {
 		return nil, err
 	}
 	rk, ctr, data := v[0], v[1], v[2]
-	keyLen := 0
-	switch {
-	case len(rk) >= 240:
-		keyLen = 32
-	case len(rk) >= 176:
-		keyLen = 16
-	}
-	if keyLen == 0 || len(ctr) < 16 {
-		return newArray(0), nil
-	}
-	block, err := aes.NewCipher(rk[:keyLen])
-	if err != nil {
-		return nil, fmt.Errorf("__aes_ctr32: %v", err)
+	block, ok := newRoundKeyBlock(rk)
+	if !ok || len(ctr) < 16 {
+		return nil, fmt.Errorf("__aes_ctr32: round keys of %d bytes and a counter of %d bytes", len(rk), len(ctr))
 	}
 	var cb, ks [16]byte
 	copy(cb[:], ctr[:16])
@@ -192,7 +242,7 @@ func builtinGHASH(_ *Interp, args []Value) (Value, error) {
 	}
 	h, y, data := v[0], v[1], v[2]
 	if len(h) < 16 || len(y) < 16 {
-		return newArray(0), nil
+		return nil, fmt.Errorf("__ghash: a hash key of %d bytes and a block of %d bytes", len(h), len(y))
 	}
 	var hb, yb [16]byte
 	copy(hb[:], h)
@@ -230,20 +280,10 @@ func aesGCMInto(name string, args []Value, seal bool) (Value, error) {
 		ints[k] = int64(n)
 	}
 	seq, aadAt, aadN, at, n := uint64(ints[0]), ints[1], ints[2], ints[3], ints[4]
-	keyLen := 0
-	switch {
-	case len(rk) >= 240:
-		keyLen = 32
-	case len(rk) >= 176:
-		keyLen = 16
-	}
+	block, ok := newRoundKeyBlock(rk)
 	size := int64(len(buf))
-	if keyLen == 0 || len(h) < 16 || len(iv) != 12 || aadAt < 0 || aadN < 0 || at < 0 || n < 0 || at+n+16 > size || aadAt+aadN > size {
+	if !ok || len(h) < 16 || len(iv) != 12 || aadAt < 0 || aadN < 0 || at < 0 || n < 0 || at+n+16 > size || aadAt+aadN > size {
 		return nil, fmt.Errorf("%s: range out of bounds", name)
-	}
-	block, err := aes.NewCipher(rk[:keyLen])
-	if err != nil {
-		return nil, fmt.Errorf("%s: %v", name, err)
 	}
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
