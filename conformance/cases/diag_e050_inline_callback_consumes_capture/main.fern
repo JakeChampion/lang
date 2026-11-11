@@ -1,0 +1,23 @@
+// spec: RH-04
+
+struct Handle { n: i32 }
+
+function (h: Handle) read(): i32 {
+  return h.n;
+}
+
+function (own h: Handle) close(): i32 {
+  return 0;
+}
+
+function invoke(read: () => i32, ignored: i32): i32 {
+  return read();
+}
+
+function run(own h: Handle): i32 {
+  return invoke((): i32 => h.read(), h.close());
+}
+
+function main(): i32 {
+  return run(Handle { n: 7 });
+}
