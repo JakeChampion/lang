@@ -303,6 +303,8 @@ func basencCases(t *testing.T) []invocation {
 		{name: "stdout full with nothing to write", args: []string{"--base64"}, stdin: "", stdout: stdoutFull},
 		{name: "stdout closed with a large output", args: []string{"--base64", f.short}, stdout: stdoutClosed},
 		{name: "stdout full with a large output", args: []string{"--base64", f.short}, stdout: stdoutFull},
+		{name: "base16 stdout closed with a large output", args: []string{"--base16", "-w0", f.short}, stdout: stdoutClosed},
+		{name: "base16 stdout full with a large output", args: []string{"--base16", "-w0", f.short}, stdout: stdoutFull},
 		{name: "stdout closed with a missing file", args: []string{"--base64", f.nosuch}, stdout: stdoutClosed},
 		{name: "stdout closed with a directory", args: []string{"--base64", f.subdir}, stdout: stdoutClosed},
 		{name: "stdout closed with a bad wrap", args: []string{"--base64", "-w", "x"}, stdout: stdoutClosed},
