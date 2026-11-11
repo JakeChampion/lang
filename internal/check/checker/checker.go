@@ -697,7 +697,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 
 	for _, sd := range prog.Structs {
 		if _, dup := c.info.Structs[sd.Name]; dup {
-			c.errfCode(sd.P, "E006", "struct %q redeclared", sd.Name)
+			c.report(sd.SourceModule, sd.P, "E006", fmt.Sprintf("struct %q redeclared", sd.Name))
 			continue
 		}
 		seen := map[string]bool{}
@@ -773,7 +773,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 
 	for _, ed := range prog.Enums {
 		if _, dup := c.info.Enums[ed.Name]; dup {
-			c.errfCode(ed.P, "E006", "enum %q redeclared", ed.Name)
+			c.report(ed.SourceModule, ed.P, "E006", fmt.Sprintf("enum %q redeclared", ed.Name))
 			continue
 		}
 		c.info.Enums[ed.Name] = ed
@@ -797,15 +797,15 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 
 	for _, rd := range prog.Resources {
 		if _, dup := c.info.Resources[rd.Name]; dup {
-			c.errfCode(rd.P, "E006", "resource %q redeclared", rd.Name)
+			c.report(rd.SourceModule, rd.P, "E006", fmt.Sprintf("resource %q redeclared", rd.Name))
 			continue
 		}
 		if _, isStruct := c.info.Structs[rd.Name]; isStruct {
-			c.errfCode(rd.P, "E006", "resource %q conflicts with a struct of the same name", rd.Name)
+			c.report(rd.SourceModule, rd.P, "E006", fmt.Sprintf("resource %q conflicts with a struct of the same name", rd.Name))
 			continue
 		}
 		if _, isEnum := c.info.Enums[rd.Name]; isEnum {
-			c.errfCode(rd.P, "E006", "resource %q conflicts with an enum of the same name", rd.Name)
+			c.report(rd.SourceModule, rd.P, "E006", fmt.Sprintf("resource %q conflicts with an enum of the same name", rd.Name))
 			continue
 		}
 		c.info.Resources[rd.Name] = rd
@@ -2511,13 +2511,13 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 
 	for _, td := range prog.Traits {
 		if _, dup := c.info.Traits[td.Name]; dup {
-			c.errfCode(td.P, "E006", "trait %q redeclared", td.Name)
+			c.report(td.SourceModule, td.P, "E006", fmt.Sprintf("trait %q redeclared", td.Name))
 			continue
 		}
 		seenMethod := map[string]bool{}
 		for _, m := range td.Methods {
 			if seenMethod[m.Name] {
-				c.errfCode(m.P, "E006", "trait method %q redeclared in trait %q", m.Name, td.Name)
+				c.report(td.SourceModule, m.P, "E006", fmt.Sprintf("trait method %q redeclared in trait %q", m.Name, td.Name))
 				continue
 			}
 			seenMethod[m.Name] = true
@@ -2557,7 +2557,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			typeName := fn.AssocType
 			switch kind, other := c.methodDeclConflict(typeName, fn.Name, fn.ImplTrait); kind {
 			case declDup:
-				c.errfCode(fn.P, "E006", "associated function %q on %s redeclared", fn.Name, typeName)
+				c.report(fn.BodyModule(), fn.P, "E006", fmt.Sprintf("associated function %q on %s redeclared", fn.Name, typeName))
 				continue
 			case declAmbiguous:
 				c.errAmbiguousDecl(typeName, fn.Name,
@@ -2619,7 +2619,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			suffix := c.inherentModuleSuffix(typeName, methodName, fn.ImplTrait, fn.SourceModule)
 			if kind, other := c.methodDeclConflict(typeName, methodName, fn.ImplTrait); kind != declOK && suffix == "" {
 				if kind == declDup {
-					c.errfCode(fn.P, "E006", "method %q on %s redeclared", fn.Name, typeName)
+					c.report(fn.BodyModule(), fn.P, "E006", fmt.Sprintf("method %q on %s redeclared", fn.Name, typeName))
 				} else {
 					c.errAmbiguousDecl(typeName, fn.Name,
 						[]methodCand{{Trait: fn.ImplTrait, Pos: fn.P, Module: fn.BodyModule()}, other})
@@ -2760,7 +2760,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			c.info.Impls[impl.Trait] = map[string]bool{}
 		}
 		if c.info.Impls[impl.Trait][typeName] {
-			c.errfCode(impl.P, "E006", "duplicate impl: %s is already implemented for %s", demangle(impl.Trait), demangle(typeName))
+			c.report(impl.SourceModule, impl.P, "E006", fmt.Sprintf("duplicate impl: %s is already implemented for %s", demangle(impl.Trait), demangle(typeName)))
 			continue
 		}
 		traitMethods := map[string]bool{}
