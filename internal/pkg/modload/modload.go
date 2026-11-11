@@ -1727,6 +1727,8 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 		}
 		if ix, ok := x.Callee.(*ast.Index); ok && r.rewriteTypeArgIndex(&ix.Idx) {
 			r.rewriteExpr(&ix.Array)
+		} else if id, ok := x.Callee.(*ast.Ident); ok && r.wrapsOwnStruct(id.Name) {
+			id.Name = r.selfPrefix + id.Name
 		} else {
 			r.rewriteExpr(&x.Callee)
 		}
@@ -1947,6 +1949,17 @@ func (r *rewriter) rewritePatElem(el *ast.TuplePatElem, pos ast.Position) {
 		r.rewriteVariantPattern(&el.VariantModule, &el.VariantName, el.VariantFieldNames != nil, pos)
 	}
 	r.rewritePatElems(el.VariantPayloads, el.Nested, pos)
+}
+
+// A call that names a struct of the module wraps the value in a union that
+// has the struct as a member. The variant of the union has the qualified name
+// of the struct.
+func (r *rewriter) wrapsOwnStruct(name string) bool {
+	if r.localVars[name] || r.ownFuncs[name] {
+		return false
+	}
+	_, enumVariant := r.ownVariants[name]
+	return r.ownStructs[name] && !enumVariant
 }
 
 func (r *rewriter) qualifiedVariant(mod *module, prefix, name string, pos ast.Position) (string, bool) {
