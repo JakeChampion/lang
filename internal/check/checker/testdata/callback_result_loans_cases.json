@@ -108,5 +108,10 @@
     "name": "owned cell field",
     "source": "struct Token { closed: Cell[i32] } function (own t: Token) close(): void { t.closed.set(t.closed.get() + 1); }\nfunction f(own closed: Cell[i32]): own Token { let t = Token { closed: closed }; return t; } function main(): i32 { return 0; }\n",
     "want": ""
+  },
+  {
+    "name": "background callback has no result loan",
+    "source": "struct H { fd: i32 } function (own h: H) close(): void {}\nstruct State { h: H, work: (() => void)[] } function append(own state: State, work: () => void): own State { return State { ...state, work: state.work.append(work) }; } function main(): i32 { return 0; }\n",
+    "want": ""
   }
 ]

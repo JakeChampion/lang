@@ -24378,6 +24378,11 @@ function ow_expr_borrows(e: ast.Expr, ofuncs: OwnFuncs, borrowed: string[], loca
     if (ow_borrow_value_copy(ty, lenders)) {
       return false;
     }
+    if let typeinfo.TypeFunc(ft) = ty {
+      if (ft.ret_own || ow_borrow_value_copy(ft.ret_type, lenders)) {
+        return false;
+      }
+    }
     let children: ast.Expr[] = [];
     match (e) {
       ast.ExprStructLit(sl) => {

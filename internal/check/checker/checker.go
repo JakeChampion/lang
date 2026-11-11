@@ -14395,7 +14395,9 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 	if c.current != nil && c.current.ReturnOwn {
 		// Callbacks can lend captured resources, even when their representation
 		// holds no resource handle. Only immutable data has a copy contract.
-		if c.copyableCallResult(t) {
+		callback, isCallback := t.(*ast.FuncType)
+		callbackCopies := isCallback && (callback.ResultOwn || c.copyableCallResult(callback.Result))
+		if c.copyableCallResult(t) || callbackCopies {
 			if c.resultCopyParts == nil {
 				c.resultCopyParts = map[ast.Expr]bool{}
 			}
