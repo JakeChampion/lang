@@ -22,6 +22,38 @@ function grid(own cosine: f64[], own sine: f64[], offset: i32, count: i32, start
   let ds_value = step.sin();
   let ds = __f64x2_of(-ds_value, ds_value);
   let base = 0;
+  // Four independent groups retain the same 32-step recurrence resets.
+  while (base + 128 <= count) {
+    let angle0 = start + step * (base as f64);
+    let angle1 = start + step * ((base + 32) as f64);
+    let angle2 = start + step * ((base + 64) as f64);
+    let angle3 = start + step * ((base + 96) as f64);
+    let phase0 = __f64x2_of(angle0.cos(), angle0.sin());
+    let phase1 = __f64x2_of(angle1.cos(), angle1.sin());
+    let phase2 = __f64x2_of(angle2.cos(), angle2.sin());
+    let phase3 = __f64x2_of(angle3.cos(), angle3.sin());
+    let i = 0;
+    while (i < 32) {
+      let next0 = phase0 * dc + __f64x2_reverse(phase0) * ds;
+      cosine = __f64x2_with(cosine, offset + base + i, __f64x2_zip_lo(phase0, next0));
+      sine = __f64x2_with(sine, offset + base + i, __f64x2_zip_hi(phase0, next0));
+      phase0 = next0 * dc + __f64x2_reverse(next0) * ds;
+      let next1 = phase1 * dc + __f64x2_reverse(phase1) * ds;
+      cosine = __f64x2_with(cosine, offset + base + 32 + i, __f64x2_zip_lo(phase1, next1));
+      sine = __f64x2_with(sine, offset + base + 32 + i, __f64x2_zip_hi(phase1, next1));
+      phase1 = next1 * dc + __f64x2_reverse(next1) * ds;
+      let next2 = phase2 * dc + __f64x2_reverse(phase2) * ds;
+      cosine = __f64x2_with(cosine, offset + base + 64 + i, __f64x2_zip_lo(phase2, next2));
+      sine = __f64x2_with(sine, offset + base + 64 + i, __f64x2_zip_hi(phase2, next2));
+      phase2 = next2 * dc + __f64x2_reverse(next2) * ds;
+      let next3 = phase3 * dc + __f64x2_reverse(phase3) * ds;
+      cosine = __f64x2_with(cosine, offset + base + 96 + i, __f64x2_zip_lo(phase3, next3));
+      sine = __f64x2_with(sine, offset + base + 96 + i, __f64x2_zip_hi(phase3, next3));
+      phase3 = next3 * dc + __f64x2_reverse(next3) * ds;
+      i += 2;
+    }
+    base += 128;
+  }
   while (base < count) {
     let angle = start + step * (base as f64);
     let phase = __f64x2_of(angle.cos(), angle.sin());
