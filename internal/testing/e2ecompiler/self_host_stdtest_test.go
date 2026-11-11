@@ -267,7 +267,7 @@ type selfHostStdTestCase struct {
 
 func selfHostStdTestShard(t *testing.T, cases []selfHostStdTestCase) []selfHostStdTestCase {
 	t.Helper()
-	selected, err := corpus.Shard(cases, os.Getenv("FERN_STDTEST_SHARD"))
+	selected, err := corpus.ShardBy(cases, os.Getenv("FERN_STDTEST_SHARD"), func(tc selfHostStdTestCase) string { return tc.name })
 	if err != nil {
 		t.Fatal(err)
 	}
