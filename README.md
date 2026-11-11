@@ -95,8 +95,8 @@ fern -repl                           # interactive session
 
 `fern` is the self-hosted compiler, one binary with the standard library
 inside it. It assembles, links and (for Darwin) code-signs in-process with no
-external toolchain. `fern -targets` lists every target with the capabilities
-its host provides; `fern -explain E030` explains an error code; `fern -h`
+external toolchain. With no `-target`, it builds for the machine that runs it.
+`fern -targets` lists every target with the capabilities its host provides; `fern -explain E030` explains an error code; `fern -h`
 lists every flag.
 
 Diagnostics include source context, related locations and applicable fixes.
@@ -107,7 +107,7 @@ diagnostic, without source context, notes, fixes or colour.
 
 | Target | Output | Baseline |
 | --- | --- | --- |
-| `arm64-linux` (default) | static ELF | ARMv8.2-A with the crypto extensions |
+| `arm64-linux` | static ELF | ARMv8.2-A with the crypto extensions |
 | `arm64-android` | static position-independent ELF | as `arm64-linux` |
 | `arm64-darwin` | static Mach-O, signed | Apple Silicon, latest macOS |
 | `x86-64-linux` | static ELF | x86-64-v3 with AES-NI (Haswell, 2013) |
