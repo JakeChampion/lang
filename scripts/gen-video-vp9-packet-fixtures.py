@@ -28,13 +28,15 @@ def packets(data):
 
 def generate(directory):
     path = directory / 'altref.ivf'
-    command = ['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=64x36:rate=30',
-               '-frames:v', '90', '-c:v', 'libvpx-vp9', '-threads', '1', '-cpu-used', '4',
+    # A finite source lets pass one flush its EOS statistics on FFmpeg 6.
+    command = ['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=64x36:rate=30:duration=3',
+               '-c:v', 'libvpx-vp9', '-threads', '1', '-cpu-used', '4',
                '-b:v', '100k', '-g', '60', '-lag-in-frames', '25', '-auto-alt-ref', '1',
                '-passlogfile', str(directory / 'encoder-pass')]
     subprocess.run(command + ['-pass', '1', '-f', 'null', os.devnull], check=True)
     subprocess.run(command + ['-pass', '2', '-f', 'ivf', str(path)], check=True)
     values = packets(path.read_bytes())
+    assert len(values) == 90
     indexed = [(t, p) for t, p in values if p[-1] & 224 == 192]
     assert indexed and all((p[-1] & 7) + 1 >= 2 for _, p in indexed)
     return path, [('plain-keyframe', values[0][1])] + [(f'altref-{t}', p) for t, p in indexed]
