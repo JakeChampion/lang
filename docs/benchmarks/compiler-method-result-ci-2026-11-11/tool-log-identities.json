@@ -1,0 +1,22 @@
+{
+  "run": 42916398671,
+  "head": "29b1234d0699d6b42d7d85bbcd82dbfb92c6dce2",
+  "format": "Exact decoded UTF-8 GitHub tool logs",
+  "logs": [
+    {
+      "job": 130211807691,
+      "bytes": 103921,
+      "sha256": "4cc7b3f686d32955d6d77af647010aed708d4525e58fbc84ff26de58a1b84323"
+    },
+    {
+      "job": 130211808249,
+      "bytes": 123658,
+      "sha256": "f29a3f74a024ecbe3a7f8d8ae930ad471b3980373a84d703dce4da3942f1e010"
+    },
+    {
+      "job": 130211808285,
+      "bytes": 77724,
+      "sha256": "2e9912e74d41283c3fd069de2d962608b4348c913713fc0f5c9c035e188c01e1"
+    }
+  ]
+}

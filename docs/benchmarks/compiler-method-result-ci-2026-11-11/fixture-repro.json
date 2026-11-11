@@ -1,0 +1,24 @@
+{
+  "source": "29b1234d0699d6b42d7d85bbcd82dbfb92c6dce2",
+  "scope": "Read-only reproduction of the exact failed current fixture. Expected failure is not a passing control. No source edit.",
+  "started": "2026-11-10T22:54:52.334845+00:00",
+  "args": [
+    "go",
+    "test",
+    "./internal/testing/e2ecompiler",
+    "-run",
+    "^TestSelfHostIndirectOwnContracts$/borrowed_method_result$",
+    "-count=1",
+    "-timeout=28m",
+    "-json"
+  ],
+  "command_exit_code": 1,
+  "skips": 0,
+  "failed_tests": [
+    "TestSelfHostIndirectOwnContracts/borrowed_method_result",
+    "TestSelfHostIndirectOwnContracts",
+    null
+  ],
+  "finished": "2026-11-10T22:56:42.272796+00:00",
+  "collector_exit_code": 0
+}
