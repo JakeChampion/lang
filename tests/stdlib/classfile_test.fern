@@ -1,0 +1,177 @@
+// Tests of std/classfile with class files that javac wrote. `javap -p -s
+// -constants` gives the expected names, descriptors and values.
+import "std/classfile";
+import "std/option";
+import "std/string";
+import "std/test";
+import "./classfile_vectors";
+
+function sample(): classfile.Class {
+  let Ok(c) = classfile.parse(classfile_vectors.sample()) else {
+    exit(90);
+  };
+  return c;
+}
+
+function test_names(): test.TestOutcome {
+  let c = sample();
+  let got = c.name + " < " + c.parent + " : " + c.interfaces.join(",") + " v" + c.version.to_string() + " " + classfile.has(c.access, classfile.PUBLIC).to_string() + " " + classfile.has(c.access, classfile.INTERFACE).to_string();
+  return test.assert_eq(got, "dev/fern/Sample < java/util/AbstractList : java/lang/Runnable,java/lang/Comparable v52 true false");
+}
+
+function test_fields(): test.TestOutcome {
+  let got: string[] = [];
+  for f in sample().fields {
+    got = got.append(f.name + " " + f.descriptor);
+  }
+  return test.assert_eq(got.join("; "), "COUNT I; BIG J; HALF F; THIRD D; NAME Ljava/lang/String;; ON Z; LETTER C; counts [I; label Ljava/lang/String;");
+}
+
+function shown(v: Option[classfile.Constant]): string {
+  return match (v) {
+    None => "none",
+    Some(Int(n)) => "int " + n.to_string(),
+    Some(Long(n)) => "long " + n.to_string(),
+    Some(Float(x)) => "float " + (x as f64).to_string(),
+    Some(Double(x)) => "double " + x.to_string(),
+    Some(Text(s)) => "text " + s,
+  };
+}
+
+function test_constants(): test.TestOutcome {
+  let got: string[] = [];
+  for f in sample().fields {
+    got = got.append(shown(f.constant));
+  }
+  // The text has a character of two bytes, a character above U+FFFF and a
+  // NUL.
+  return test.assert_eq(got.join("; "), "int -7; long 5000000000; float 0.5; double 0.25; text fern é 🌿 \x00 end; int 1; int 65; none; none");
+}
+
+function test_field_flags(): test.TestOutcome {
+  let fields = sample().fields;
+  let count = fields[0];
+  let counts = fields[7];
+  let label = fields[8];
+  let got = classfile.has(count.access, classfile.STATIC).to_string() + " " + classfile.has(count.access, classfile.FINAL).to_string() + " " + classfile.has(counts.access, classfile.PROTECTED).to_string() + " " + classfile.has(counts.access, classfile.STATIC).to_string() + " " + classfile.has(label.access, classfile.PRIVATE).to_string();
+  return test.assert_eq(got, "true true true false true");
+}
+
+function test_methods(): test.TestOutcome {
+  let got: string[] = [];
+  for m in sample().methods {
+    let flags = "";
+    if (classfile.has(m.access, classfile.STATIC)) {
+      flags += " static";
+    }
+    if (classfile.has(m.access, classfile.VARARGS)) {
+      flags += " varargs";
+    }
+    if (classfile.has(m.access, classfile.BRIDGE)) {
+      flags += " bridge";
+    }
+    got = got.append(m.name + m.descriptor + flags);
+  }
+  return test.assert_eq(got.join(" "), "<init>(Ljava/lang/String;I)V run()V compareTo(Ldev/fern/Sample;)I get(I)Ljava/lang/String; size()I total([JD[Ljava/lang/Object;)J static varargs rows(SCBZF)[[B get(I)Ljava/lang/Object; bridge compareTo(Ljava/lang/Object;)I bridge");
+}
+
+function test_interface(): test.TestOutcome {
+  let Ok(c) = classfile.parse(classfile_vectors.shape()) else {
+    return test.fail("the interface does not parse");
+  };
+  let got = c.name + " < " + c.parent + " " + classfile.has(c.access, classfile.INTERFACE).to_string() + " " + c.fields[0].name + "=" + shown(c.fields[0].constant) + " " + c.methods[0].name + c.methods[0].descriptor + " " + classfile.has(c.methods[0].access, classfile.ABSTRACT).to_string();
+  return test.assert_eq(got, "dev/fern/Shape < java/lang/Object true SIDES=int 4 area()D true");
+}
+
+function type_text(t: classfile.Type): string {
+  return t.base + t.class + "*" + t.dims.to_string();
+}
+
+function signature_text(d: string): string {
+  let Some(sig) = classfile.signature(d) else {
+    return "none";
+  };
+  let out = "";
+  for p in sig.params {
+    out += type_text(p) + " ";
+  }
+  return out + "-> " + type_text(sig.result);
+}
+
+function test_signature(): test.TestOutcome {
+  let got = signature_text("()V") + ", " + signature_text("([JD[Ljava/lang/Object;)J") + ", " + signature_text("(SCBZF)[[B");
+  return test.assert_eq(got, "-> V*0, J*1 D*0 Ljava/lang/Object*1 -> J*0, S*0 C*0 B*0 Z*0 F*0 -> B*2");
+}
+
+function test_signature_refusals(): test.TestOutcome {
+  let got: string[] = [];
+  for d in ["", "I", "()", "(", "(I", "(V)V", "(Ljava/lang/String)V", "(L;)V", "()VV", "()II", "(Q)V", "()["] {
+    got = got.append(signature_text(d));
+  }
+  return test.assert_eq(got.join(" "), "none none none none none none none none none none none none");
+}
+
+function field_text(d: string): string {
+  let Some(t) = classfile.field_type(d) else {
+    return "none";
+  };
+  return type_text(t);
+}
+
+function test_field_type(): test.TestOutcome {
+  let got = field_text("I") + " " + field_text("[[Ljava/util/List;") + " " + field_text("V") + " " + field_text("II") + " " + field_text("[") + " " + field_text("");
+  return test.assert_eq(got, "I*0 Ljava/util/List*2 none none none none");
+}
+
+function refusal(bytes: [u8]): string {
+  return match (classfile.parse(bytes)) {
+    Ok(c) => "ok " + c.name,
+    Err(e) => e.message(),
+  };
+}
+
+function test_refusals(): test.TestOutcome {
+  let good = classfile_vectors.shape();
+  let magic = good.with(0, 0 as u8);
+  // Constant 1 starts at byte 10.
+  let tag = good.with(10, 99 as u8);
+  let got = refusal(good[0:0]) + "; " + refusal(magic) + "; " + refusal(tag) + "; " + refusal(good[0:40]);
+  return test.assert_eq(got, "classfile: the bytes end inside the class at byte 0; classfile: the magic is not CAFEBABE at byte 0; classfile: the constant has an unknown tag at byte 10; classfile: the bytes end inside the class at byte 34");
+}
+
+// No prefix of a class file parses to its end, and none reads past its
+// bytes.
+function test_each_prefix(): test.TestOutcome {
+  let good = classfile_vectors.sample();
+  let Ok(whole) = classfile.parse(good) else {
+    return test.fail("the class does not parse");
+  };
+  let parsed = 0;
+  for n in 0..good.len() {
+    if let Ok(c) = classfile.parse(good[0:n]) {
+      // The attributes of the class come after the last method, and parse
+      // does not read them.
+      if (c.methods.len() != whole.methods.len()) {
+        return test.fail("a prefix of " + n.to_string() + " bytes gave a different class");
+      }
+      parsed += 1;
+    }
+  }
+  return test.assert_true(parsed < 200);
+}
+
+function main(): i32 {
+  let r = test.new("std/classfile");
+  r = r.it("parse gives the class, its parent and its interfaces", test_names);
+  r = r.it("parse gives each field with its descriptor", test_fields);
+  r = r.it("a constant field has its value", test_constants);
+  r = r.it("a field has its access flags", test_field_flags);
+  r = r.it("parse gives each method with its descriptor and flags", test_methods);
+  r = r.it("parse reads an interface", test_interface);
+  r = r.it("signature reads the descriptor of a method", test_signature);
+  r = r.it("signature refuses a text that is not a descriptor", test_signature_refusals);
+  r = r.it("field_type reads the descriptor of a field", test_field_type);
+  r = r.it("parse refuses a damaged class file", test_refusals);
+  r = r.it("parse is safe on each prefix of a class file", test_each_prefix);
+  return r.finish();
+}
