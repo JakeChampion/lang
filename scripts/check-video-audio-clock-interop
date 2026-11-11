@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+"""Compare native and real WASI audio anchors with exact rational arithmetic."""
+from fractions import Fraction
+import importlib.util
+import os
+from pathlib import Path
+import random
+import subprocess
+
+ROOT = Path(__file__).resolve().parent.parent
+os.chdir(ROOT)
+spec = importlib.util.spec_from_file_location('audio_clock_controls', ROOT / 'scripts/gen-video-audio-clock-fixtures.py')
+fixtures = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fixtures)
+compiler = os.environ.get('FERN') or subprocess.check_output(['./bootstrap/bootstrap.sh', 'stage0'], text=True).strip()
+target = {'x86_64': 'x86-64-linux', 'aarch64': 'arm64-linux', 'arm64': 'arm64-darwin'}[os.uname().machine]
+binary = ROOT / 'build/video/audio-clock-reference'
+binary.parent.mkdir(parents=True, exist_ok=True)
+wasm = binary.with_suffix('.wasm')
+for output, architecture, flags in ((binary, target, ['-sanitize']), (wasm, 'wasm32-wasi', [])):
+    subprocess.run([compiler, '-stdlib', str(ROOT / 'internal/stdlib'), '-target', architecture, *flags,
+                    '-o', str(output), 'scripts/video-reference/audio-clock.fern'], check=True)
+
+
+def run(arguments, expected, error=None):
+    args = list(map(str, arguments))
+    native = subprocess.run([str(binary), *args], text=True, capture_output=True)
+    wasi = subprocess.run(['wasmtime', 'run', str(wasm), *args], text=True, capture_output=True)
+    assert native.returncode == (3 if error else 0), (args, native)
+    assert wasi.returncode == (1 if error else 0), (args, wasi)
+    assert 'live_bytes=0' in native.stderr and 'fern-sanitizer:' not in native.stderr, native.stderr
+    assert native.stdout == wasi.stdout, args
+    if error:
+        assert native.stderr.splitlines()[0] == wasi.stderr.splitlines()[0] == error, (args, native, wasi)
+    else:
+        assert list(map(int, native.stdout.splitlines())) == expected, (args, native.stdout, expected)
+
+
+rows = fixtures.controls()
+rng = random.Random(20261111)
+for _ in range(96):
+    rate = rng.choice((8000, 44100, 48000, 96000, 192000, 2147483647))
+    first_frame, first_us = rng.randrange(1 << 36), rng.randrange(1 << 40)
+    delta = rng.randrange(1 << 40)
+    ns = rng.randrange(1 << 62)
+    result = first_us + Fraction(delta * 1000000, rate).__floor__()
+    rows.append((first_frame, first_us, first_frame + delta, rate, ns, result))
+for first_frame, first_us, position, rate, ns, media in rows:
+    run((first_frame, first_us, position, rate, ns), [media, ns])
+print(len(rows), 'native/real-WASI audio anchors match independent exact rational results', flush=True)
+for args in ((-1, 0, 0, 48000, 0), (0, -1, 0, 48000, 0), (10, 0, 9, 48000, 0),
+             (0, 0, 0, 0, 0), (0, 0, 0, -1, 0), (0, 0, 0, 48000, -1)):
+    run(args, [], 'invalid video header or packet')
+for args in ((0, 0, fixtures.MAXIMUM, 1, 0), (0, fixtures.MAXIMUM, 1, 48000, 0)):
+    run(args, [], 'video exceeds the configured limit')
+print('Six invalid/stale controls and two overflow controls match exact error classes', flush=True)

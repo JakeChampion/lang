@@ -134,6 +134,7 @@ function thrown_part(e: usize): Result[void, jni.JavaError] {
     Err(err) => err.message(),
   };
   let after = integers.parse_int(e, "7")?;
+  integers.release(e);
   log.warn("jnibind: thrown " + thrown + " then " + after.to_string());
   return Ok(());
 }

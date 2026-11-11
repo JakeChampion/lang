@@ -9,7 +9,7 @@ This module writes a Fern module of typed wrappers for Java classes. A wrapper c
 The result is the text of one Fern module. For a class such as `android/content/Intent`, the module has these parts:
 
 - A struct `Intent` that holds the reference to one Java object.
-- A struct `IntentClass` that holds the class and the ID of each member. `intent_class` finds them one time, so a call does no lookup by name.
+- A struct `IntentClass` that holds the class and the ID of each member. `intent_class` finds them one time, so a call does no lookup by name. `release` deletes the reference to the class.
 - A function of `IntentClass` for each method, each constructor and each field.
 - A constant for each field that is a compile-time constant.
 
@@ -27,7 +27,7 @@ Each function gives a `Result`. The error is the exception that the Java code th
 
 An object that a function gives is a local reference. The caller deletes it with `jni.delete_local_ref`. A function deletes the local references that it makes for its `string` arguments and results.
 
-`intent_class` finds a class with `FindClass`. On Android, a thread that native code started finds only the classes of the system that way.
+`intent_class` makes a global reference to the class, and only `release` deletes it. Make each struct of IDs one time for the app, not one time for each call. `intent_class` finds a class with `FindClass`. On Android, a thread that native code started finds only the classes of the system that way.
 
 `generate` gives an error for a request whose class is not in the classes, and for a member that the class does not have. It also gives an error for two requests whose classes have one simple name. It writes no setter for a field, and no constant for a `float` or a `double`.
 
@@ -385,7 +385,8 @@ function is_constant(f: classfile.Field): boolean {
 // constants.
 function bound_members(methods: classfile.Method[], fields: classfile.Field[]): Bound[] {
   let out: Bound[] = [];
-  let used: string[] = [];
+  // Each struct of IDs has a function with the name `release`.
+  let used: string[] = ["release"];
   for m in methods {
     let name = free_name(method_name(m, count_named(methods, m.name) > 1), used);
     used = used.append(name);
@@ -459,13 +460,15 @@ function class_struct(c: classfile.Class, members: Bound[]): string {
   for m in members {
     fields += ", id_" + m.name + ": usize";
     values += ", id_" + m.name + ": id_" + m.name;
-    finds += "  let id_" + m.name + " = jni." + finder(m) + "(e, class, " + quoted(m.java) + ", " + quoted(m.descriptor) + ");\n  jni.check(e)?;\n";
+    finds += "  let id_" + m.name + " = jni.checked_id(e, class, jni." + finder(m) + "(e, class, " + quoted(m.java) + ", " + quoted(m.descriptor) + "))?;\n";
   }
   let out = "// The class " + java_name(c.name) + " and the IDs of its members.\npub struct " + t + "Class { " + fields + " }\n\n";
   out += "pub function " + snake(t) + "_class(e: usize): Result[" + t + "Class, jni.JavaError] {\n";
   out += "  let local = jni.find_class(e, " + quoted(c.name) + ");\n  jni.check(e)?;\n";
   out += "  let class = jni.new_global_ref(e, local);\n  jni.delete_local_ref(e, local);\n";
-  return out + finds + "  return Ok(" + t + "Class { " + values + " });\n}\n\n";
+  out += finds + "  return Ok(" + t + "Class { " + values + " });\n}\n\n";
+  out += "// Deletes the reference to the class. Do not use `c` after this call.\n";
+  return out + "pub function (c: " + t + "Class) release(e: usize): void {\n  jni.delete_global_ref(e, c.class);\n}\n\n";
 }
 
 // The function of std/jni that finds the ID of `m`.
