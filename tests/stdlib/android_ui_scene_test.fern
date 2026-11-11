@@ -76,6 +76,35 @@ function test_access_ids_are_stable_and_differ(): test.TestOutcome {
   return test.assert_eq((one[0].id != one[1].id).to_string() + " " + (one[0].id == two[1].id).to_string(), "true true");
 }
 
+function test_access_stops_at_a_barrier(): test.TestOutcome {
+  let under = tapped(scene.node(0, 0, 100, 20, scene.Blank), "under", 0);
+  let scrim = scene.Node { ...tapped(scene.node(0, 0, 100, 100, scene.Fill(red(), 0)), "dismiss", 0), barrier: true };
+  let ok = tapped(scene.node(40, 40, 20, 20, scene.Blank), "ok", 0);
+  let items = scene.access_items([under, scrim, ok]);
+  return test.assert_eq(items.len().to_string() + " " + items[0].text, "1 ok");
+}
+
+function test_a_description_is_a_text(): test.TestOutcome {
+  let dot = (f: draw.Frame, x: i32, y: i32, w: i32, h: i32): void => f.fill(x, y, w, h, WHITE);
+  let title = scene.Node { ...scene.node(10, 10, 30, 10, scene.Custom("title", 0, dot)), say: "Inbox" };
+  let row = tapped(scene.node(0, 40, 100, 20, scene.Blank), "open", 0);
+  let name = scene.Node { ...scene.node(10, 45, 30, 10, scene.Custom("name", 0, dot)), say: "Ada" };
+  let items = scene.access_items([title, row, name]);
+  let got = items.len().to_string();
+  for it in items {
+    got = got + " " + it.text + ":" + it.actions.to_string();
+  }
+  return test.assert_eq(got, "2 Ada:16 Inbox:0");
+}
+
+function test_custom_margin(): test.TestOutcome {
+  let n = scene.node(0, 0, 10, 10, scene.Custom("ring", 6, (f: draw.Frame, x: i32, y: i32, w: i32, h: i32): void => f.fill(x - 6, y - 6, w + 12, h + 12, WHITE)));
+  let fr = draw.offscreen(22, 22);
+  defer draw.release(fr);
+  let c = scene.raster(fr, fonts(), text.new_cache(), n, scene.margin(n));
+  return test.assert_eq(scene.margin(n).to_string() + " " + count(fr, WHITE).to_string(), "6 484");
+}
+
 function count(f: draw.Frame, color: i32): i32 {
   let n = 0;
   for y in 0..f.height {
@@ -140,7 +169,7 @@ function test_custom_paint_gets_its_box(): test.TestOutcome {
   let fr = draw.offscreen(40, 40);
   defer draw.release(fr);
   fr.fill(0, 0, 40, 40, draw.rgb(0, 0, 0));
-  let n = scene.node(8, 6, 10, 12, scene.Custom("dot", (f: draw.Frame, x: i32, y: i32, w: i32, h: i32): void => f.fill(x + 1, y + 1, w - 2, h - 2, WHITE)));
+  let n = scene.node(8, 6, 10, 12, scene.Custom("dot", 0, (f: draw.Frame, x: i32, y: i32, w: i32, h: i32): void => f.fill(x + 1, y + 1, w - 2, h - 2, WHITE)));
   let c = scene.render(fr, fonts(), text.new_cache(), [n]);
   return test.assert_eq(count(fr, WHITE).to_string() + " " + scene.paint_key(n), "80 custom|dot|10x12");
 }
@@ -166,6 +195,9 @@ function main(): i32 {
   r = r.it("the clip rows limit the hit and the group", test_clip_limits_the_hit_and_the_group);
   r = r.it("each node that acts and each lone text is an item", test_access_items);
   r = r.it("the id of an item follows its action", test_access_ids_are_stable_and_differ);
+  r = r.it("a service reaches only the nodes after a barrier", test_access_stops_at_a_barrier);
+  r = r.it("a description with no action is a text", test_a_description_is_a_text);
+  r = r.it("a custom paint draws in its margin", test_custom_margin);
   r = r.it("render draws a fill between its clip rows", test_render_fill_and_clip);
   r = r.it("render draws a label on its baseline", test_render_label);
   r = r.it("an outline is a ring", test_outline_is_a_ring);

@@ -5,8 +5,9 @@
 import "std/android/draw";
 import "std/android/gl";
 import "std/android/testkit";
+import "std/android/ui/painter";
+import "std/android/ui/scene";
 import "./face";
-import "./gpu";
 import "./ui";
 import "./ui_test";
 
@@ -15,17 +16,16 @@ import "./ui_test";
 const TOLERANCE: i32 = 6;
 
 // The screen of `nodes` on the CPU.
-function cpu(fs: face.Fonts, nodes: ui.Node[], m: ui.Metrics): draw.Frame {
+function cpu(fs: face.Fonts, nodes: scene.Node[], m: ui.Metrics): draw.Frame {
   let f = draw.offscreen(m.w, m.h);
-  let wall = ui.wallpaper_layer(ui.themed(ui_test.wallpaper(m.w), m.pal));
-  let c = ui.render(f, fs, face.new_cache(), nodes, wall, m.d, m.pal);
-  draw.release(wall);
+  f.fill(0, 0, m.w, m.h, m.pal.paper);
+  let c = scene.render(f, fs, face.new_cache(), nodes);
   return f;
 }
 
 // The frame that the painter shows for `passes`, and the painter.
-function gpu_frame(own p: gpu.Painter, passes: ui.Pass[]): (draw.Frame, gpu.Painter) {
-  let q = gpu.present(p, passes);
+function gpu_frame(own p: painter.Painter, passes: scene.Pass[], background: i32): (draw.Frame, painter.Painter) {
+  let q = painter.present(p, passes, background);
   if let Some(c) = q.canvas {
     return (c.read(), q);
   }
@@ -50,17 +50,17 @@ pub function check(): i32 {
   if (canvas.is_none()) {
     return 9;
   }
-  let p = gpu.on_canvas(gpu.with_screen(gpu.painter(fs), ui.wallpaper_layer(ui_test.wallpaper(m.w)), m.w, m.h, m.d, m.pal), canvas);
+  let p = painter.on_canvas(painter.with_size(painter.new(fs), m.w, m.h), canvas);
   let n = 0;
   let home = ui.nodes(fs, v);
-  let (got, p1) = gpu_frame(p, [ui.Pass { nodes: home, dy: 0, alpha: 1.0 }]);
+  let (got, p1) = gpu_frame(p, [scene.Pass { nodes: home, dy: 0, alpha: 1.0 }], m.pal.paper);
   let want = cpu(fs, home, m);
   if (testkit.differ(got, want, TOLERANCE) == 0) {
     n += 1;
   }
   draw.release(got);
   let list = ui.nodes(fs, ui.View { ...v, layer: ui.DRAWER });
-  let (slid, p2) = gpu_frame(p1, [ui.Pass { nodes: home, dy: 0, alpha: 1.0 }, ui.Pass { nodes: list, dy: 96, alpha: 0.5 }]);
+  let (slid, p2) = gpu_frame(p1, [scene.Pass { nodes: home, dy: 0, alpha: 1.0 }, scene.Pass { nodes: list, dy: 96, alpha: 0.5 }], m.pal.paper);
   let over = cpu(fs, list, m);
   want.blend_frame(over, 0, 96, 128);
   if (testkit.differ(slid, want, TOLERANCE) == 0) {
@@ -70,26 +70,26 @@ pub function check(): i32 {
   draw.release(want);
   draw.release(over);
   let dialog = ui.nodes(fs, ui.View { ...v, layer: ui.DRAWER, sheet: Some(sheet()) });
-  let (shown, p3) = gpu_frame(p2, [ui.Pass { nodes: dialog, dy: 0, alpha: 1.0 }]);
+  let (shown, p3) = gpu_frame(p2, [scene.Pass { nodes: dialog, dy: 0, alpha: 1.0 }], m.pal.paper);
   let expect = cpu(fs, dialog, m);
   if (testkit.differ(shown, expect, TOLERANCE) == 0) {
     n += 100;
   }
   draw.release(shown);
   draw.release(expect);
-  let q = gpu.detach(p3);
+  let q = painter.detach(p3);
   let dm = ui.Metrics { ...m, pal: ui.palette(true) };
-  let dv = ui.View { ...v, m: dm };
-  let dp = gpu.on_canvas(gpu.with_screen(gpu.painter(fs), ui.wallpaper_layer(ui.themed(ui_test.wallpaper(m.w), dm.pal)), m.w, m.h, m.d, dm.pal), gl.open_offscreen(m.w, m.h));
+  let dv = ui.View { ...v, m: dm, wall: ui.wallpaper_layer(ui.themed(ui_test.wallpaper(m.w), dm.pal)) };
+  let dp = painter.on_canvas(painter.with_size(painter.new(fs), m.w, m.h), gl.open_offscreen(m.w, m.h));
   let dark_home = ui.nodes(fs, dv);
-  let (dark_got, dp1) = gpu_frame(dp, [ui.Pass { nodes: dark_home, dy: 0, alpha: 1.0 }]);
+  let (dark_got, dp1) = gpu_frame(dp, [scene.Pass { nodes: dark_home, dy: 0, alpha: 1.0 }], dm.pal.paper);
   let dark_want = cpu(fs, dark_home, dm);
   if (testkit.differ(dark_got, dark_want, TOLERANCE) == 0 && dark_got.pixel(m.w / 2, 2) == dm.pal.paper) {
     n += 1000;
   }
   draw.release(dark_got);
   draw.release(dark_want);
-  let dq = gpu.detach(dp1);
+  let dq = painter.detach(dp1);
   return n;
 }
 
