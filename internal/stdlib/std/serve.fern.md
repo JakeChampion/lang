@@ -190,6 +190,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<dependencies 2>>=
 import "std/i32";
 import "std/async";
+import "std/signal";
 import "core/error";
 import "core/cmp";
 import "std/platform";
@@ -5347,7 +5348,7 @@ function __supervise(port: i32, opts: Config, worker: (__Listen, Config, Option[
   }
   let sup = __Supervisor { pids: [], spawned: [], pipes: [], readers: [], partial: [], snaps: [], quic: [], h3_free: __h3_pool(bound_fd, resolved), tcp: [], tcp_free: pool, backoff_ms: 100 as i64, fork_after: 0 as i64, fast_deaths: 0, stopping: false, worst: 0, crashed: 0 };
   let drv = async.real_driver();
-  let chld = drv.watch_signal(17);
+  let chld = drv.watch_signal(signal.sigchld());
   if (chld < 0) {
     drv.close();
     __supervisor_release(shared, sup);
@@ -5416,7 +5417,7 @@ function __supervisor_events(sup: __Supervisor, events: i32[]): __Supervisor {
     if (sig != 0) {
       sup = __supervisor_stop(sup, sig);
     }
-    if (fd == 0 - 17) {
+    if (fd == -signal.sigchld()) {
       sup = __supervisor_reap(sup);
     }
     let pipe: i32 = __index_of_i32(sup.pipes, fd);
@@ -5483,7 +5484,7 @@ function __supervisor_fork(drv: async.RealDriver, own: __Listen, listener: i32, 
   if (pid == -38) {
     eprint("serve: supervision unavailable; serving single-process");
     __snapshot_pipe_close(snap);
-    drv.unwatch_signal(17);
+    drv.unwatch_signal(signal.sigchld());
     drv.unwatch_signal(15);
     drv.unwatch_signal(2);
     drv.close();

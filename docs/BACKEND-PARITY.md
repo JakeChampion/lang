@@ -560,15 +560,14 @@ An arm64 ELF image and each `-shared` object align their load segments to
 uses 16 KiB, because an Android kernel can use 16 KiB pages
 (`elf_x86_android_page_align` in `elf.fern`).
 
-### Signal numbers are the Linux numbers, and Darwin converts the watched ones
+### A signal number is the number of the host
 
-`RealDriver.watch_signal` takes a signal number in the runtime convention,
-which is the Linux number. On arm64-darwin the reactor converts the number
-(`__fern_signal_host`), and reports the event with the runtime number
-(`__fern_signal_runtime`). It leaves the child-exit signal at its default
-action, because Darwin reaps each child itself when that signal is ignored.
-The helpers of `std/signal` do not convert a number on Darwin (#15336). The
-constants of that module have one number on both systems.
+`RealDriver.watch_signal` and the helpers of `std/signal` take the signal
+number of the host, with no conversion. A caller gets a number that differs
+between Linux and Darwin from `target_os()`, as `signal.sigchld()` does. On
+arm64-darwin the reactor ignores a watched signal, but it leaves the
+child-exit signal at its default action, because Darwin reaps each child
+itself when that signal is ignored.
 
 ### Heap exhaustion exits 125 on the natives, traps on wasm
 
