@@ -4,7 +4,7 @@ This module writes a Fern module of typed wrappers for Java classes. A wrapper c
 
 ## Model
 
-`generate` takes the classes that `std/classfile` read, and a list of requests. A `Request` names one class and the members that the app uses. With no member, the request is for each public member of the class. A member is a name, such as `setAction`, or a name with its descriptor, such as `setAction(Ljava/lang/String;)Landroid/content/Intent;`. A constructor has the name `<init>`.
+`generate` takes the classes that `std/classfile` read, and a list of requests. A `Request` names one class and the members that the app uses. With no member, the request is for each public member of the class. A member is a name, such as `setAction`, or a name with its descriptor, such as `setAction(Ljava/lang/String;)Landroid/content/Intent;`. A constructor has the name `<init>`. The member `-` alone is a request for the struct of the class with no member. Use it for a class that is only the type of an argument or of a result.
 
 The result is the text of one Fern module. For a class such as `android/content/Intent`, the module has these parts:
 
@@ -12,6 +12,8 @@ The result is the text of one Fern module. For a class such as `android/content/
 - A struct `IntentClass` that holds the class and the ID of each member. `intent_class` finds them one time, so a call does no lookup by name. `release` deletes the reference to the class.
 - A function of `IntentClass` for each method, each constructor and each field.
 - A constant for each field that is a compile-time constant.
+
+The module also has a struct `Classes` with the struct of IDs of each class. `classes` makes it, and its `release` deletes each reference. An app makes it one time and gives it to the functions that call Java.
 
 The members of a class are in the order of their names, so the module does not change with the order of the JAR. A function has the name of its Java member in snake case. A constructor has the name `new`. Two methods of a request can have one name. Each function then also has the types of its parameters, as in `put_extra_string_int`.
 
@@ -61,7 +63,8 @@ import "std/string";
 import "std/utf8";
 
 // One class and the members to bind. No member is a request for each
-// public member. A member is a name, or a name and its descriptor.
+// public member. A member is a name, or a name and its descriptor. The
+// member "-" alone is a request for the struct with no member.
 pub struct Request { class: string, members: string[] }
 ```
 
@@ -307,7 +310,7 @@ function has_member(c: classfile.Class, want: string): boolean {
 // The member of `r` that `c` does not have, or "".
 function missing(c: classfile.Class, r: Request): string {
   for want in r.members {
-    if (!has_member(c, want)) {
+    if (want != "-" && !has_member(c, want)) {
       return want;
     }
   }
@@ -670,6 +673,38 @@ function class_text(classes: classfile.Class[], r: Request, bound: string[]): Re
   return Ok(out);
 }
 
+// The struct `Classes`, which holds the struct of IDs of each class, the
+// function that makes it, and its `release`. When a class of the module
+// gives an error, the function releases the classes that it made before.
+function all_classes(bound: string[]): string {
+  let names: string[] = [];
+  let fields = "";
+  let values = "";
+  let makes = "";
+  let releases = "";
+  for class in bound {
+    let t = type_name(class);
+    let name = free_name(snake(t), names);
+    let undo = "";
+    for made in names {
+      undo += "      " + made + ".release(e);\n";
+    }
+    makes += "  let " + name + " = match (" + snake(t) + "_class(e)) {\n    Ok(c) => c,\n    Err(err) => {\n" + undo + "      return Err(err);\n    },\n  };\n";
+    if (names.len() > 0) {
+      fields += ", ";
+      values += ", ";
+    }
+    fields += name + ": " + t + "Class";
+    values += name + ": " + name;
+    releases += "  c." + name + ".release(e);\n";
+    names = names.append(name);
+  }
+  let out = "// The struct of IDs of each class of this module.\npub struct Classes { " + fields + " }\n\n";
+  out += "// Makes the struct of IDs of each class. Call it one time, and call\n// `release` when the app does not call Java again.\n";
+  out += "pub function classes(e: usize): Result[Classes, jni.JavaError] {\n" + makes + "  return Ok(Classes { " + values + " });\n}\n\n";
+  return out + "// Deletes the reference to each class. Do not use `c` after this call.\npub function (c: Classes) release(e: usize): void {\n" + releases + "}\n\n";
+}
+
 // The text of a Fern module with the wrappers of `requests`. `classes`
 // holds the class of each request, and the parents that conversions are
 // for.
@@ -679,6 +714,7 @@ pub function generate(classes: classfile.Class[], requests: Request[]): Result[s
   for r in requests {
     out += class_text(classes, r, bound)?;
   }
+  out += all_classes(bound);
   // Each part ends with an empty line, and a module ends with none.
   return Ok(slice_unchecked(out, 0, out.len() - 1) + "");
 }

@@ -1,0 +1,892 @@
+// Typed JNI bindings. std/jni/bind wrote this module. Do not edit it.
+import "std/jni";
+
+// A android.app.Activity.
+pub struct Activity { ref: usize }
+
+pub function (x: Activity) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Activity) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub function (x: Activity) as_context(): Context {
+  return Context { ref: x.ref };
+}
+
+// The class android.app.Activity and the IDs of its members.
+pub struct ActivityClass { class: usize, id_get_window: usize }
+
+pub function activity_class(e: usize): Result[ActivityClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/app/Activity");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_get_window = jni.checked_id(e, class, jni.get_method_id(e, class, "getWindow", "()Landroid/view/Window;"))?;
+  return Ok(ActivityClass { class: class, id_get_window: id_get_window });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ActivityClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.app.Activity.getWindow()Landroid/view/Window;
+pub function (c: ActivityClass) get_window(e: usize, self: Activity): Result[Window, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_window, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Window { ref: got });
+}
+
+// A android.app.ActivityOptions.
+pub struct ActivityOptions { ref: usize }
+
+pub function (x: ActivityOptions) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: ActivityOptions) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.app.ActivityOptions and the IDs of its members.
+pub struct ActivityOptionsClass { class: usize, id_make_clip_reveal_animation: usize, id_to_bundle: usize }
+
+pub function activity_options_class(e: usize): Result[ActivityOptionsClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/app/ActivityOptions");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_make_clip_reveal_animation = jni.checked_id(e, class, jni.get_static_method_id(e, class, "makeClipRevealAnimation", "(Landroid/view/View;IIII)Landroid/app/ActivityOptions;"))?;
+  let id_to_bundle = jni.checked_id(e, class, jni.get_method_id(e, class, "toBundle", "()Landroid/os/Bundle;"))?;
+  return Ok(ActivityOptionsClass { class: class, id_make_clip_reveal_animation: id_make_clip_reveal_animation, id_to_bundle: id_to_bundle });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ActivityOptionsClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.app.ActivityOptions.makeClipRevealAnimation(Landroid/view/View;IIII)Landroid/app/ActivityOptions;
+pub function (c: ActivityOptionsClass) make_clip_reveal_animation(e: usize, a0: View, a1: i32, a2: i32, a3: i32, a4: i32): Result[ActivityOptions, jni.JavaError] {
+  let args = jni.jvalue_alloc(5);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, a1 as usize);
+  jni.jvalue_set_int(args, 2, a2 as usize);
+  jni.jvalue_set_int(args, 3, a3 as usize);
+  jni.jvalue_set_int(args, 4, a4 as usize);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_make_clip_reveal_animation, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(ActivityOptions { ref: got });
+}
+
+// android.app.ActivityOptions.toBundle()Landroid/os/Bundle;
+pub function (c: ActivityOptionsClass) to_bundle(e: usize, self: ActivityOptions): Result[Bundle, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_to_bundle, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Bundle { ref: got });
+}
+
+// A android.content.ComponentName.
+pub struct ComponentName { ref: usize }
+
+pub function (x: ComponentName) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: ComponentName) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.ComponentName and the IDs of its members.
+pub struct ComponentNameClass { class: usize, id_unflatten_from_string: usize }
+
+pub function component_name_class(e: usize): Result[ComponentNameClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/content/ComponentName");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_unflatten_from_string = jni.checked_id(e, class, jni.get_static_method_id(e, class, "unflattenFromString", "(Ljava/lang/String;)Landroid/content/ComponentName;"))?;
+  return Ok(ComponentNameClass { class: class, id_unflatten_from_string: id_unflatten_from_string });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ComponentNameClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.content.ComponentName.unflattenFromString(Ljava/lang/String;)Landroid/content/ComponentName;
+pub function (c: ComponentNameClass) unflatten_from_string(e: usize, a0: string): Result[ComponentName, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_unflatten_from_string, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.check(e)?;
+  return Ok(ComponentName { ref: got });
+}
+
+// A android.content.Context.
+pub struct Context { ref: usize }
+
+pub function (x: Context) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Context) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.Context and the IDs of its members.
+pub struct ContextClass { class: usize, id_get_package_manager: usize, id_start_activity: usize }
+
+pub function context_class(e: usize): Result[ContextClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/content/Context");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_get_package_manager = jni.checked_id(e, class, jni.get_method_id(e, class, "getPackageManager", "()Landroid/content/pm/PackageManager;"))?;
+  let id_start_activity = jni.checked_id(e, class, jni.get_method_id(e, class, "startActivity", "(Landroid/content/Intent;Landroid/os/Bundle;)V"))?;
+  return Ok(ContextClass { class: class, id_get_package_manager: id_get_package_manager, id_start_activity: id_start_activity });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ContextClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.content.Context.getPackageManager()Landroid/content/pm/PackageManager;
+pub function (c: ContextClass) get_package_manager(e: usize, self: Context): Result[PackageManager, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_package_manager, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(PackageManager { ref: got });
+}
+
+// android.content.Context.startActivity(Landroid/content/Intent;Landroid/os/Bundle;)V
+pub function (c: ContextClass) start_activity(e: usize, self: Context, a0: Intent, a1: Bundle): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_start_activity, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// A android.content.Intent.
+pub struct Intent { ref: usize }
+
+pub function (x: Intent) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Intent) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub const INTENT_ACTION_DELETE: string = "android.intent.action.DELETE";
+
+pub const INTENT_ACTION_MAIN: string = "android.intent.action.MAIN";
+
+pub const INTENT_ACTION_VIEW: string = "android.intent.action.VIEW";
+
+pub const INTENT_ACTION_WEB_SEARCH: string = "android.intent.action.WEB_SEARCH";
+
+pub const INTENT_CATEGORY_APP_MUSIC: string = "android.intent.category.APP_MUSIC";
+
+pub const INTENT_CATEGORY_LAUNCHER: string = "android.intent.category.LAUNCHER";
+
+pub const INTENT_FLAG_ACTIVITY_NEW_TASK: i32 = 268435456;
+
+pub const INTENT_FLAG_ACTIVITY_RESET_TASK_IF_NEEDED: i32 = 2097152;
+
+// The class android.content.Intent and the IDs of its members.
+pub struct IntentClass { class: usize, id_new_string: usize, id_new_string_uri: usize, id_add_category: usize, id_add_flags: usize, id_make_main_selector_activity: usize, id_put_extra: usize, id_set_component: usize }
+
+pub function intent_class(e: usize): Result[IntentClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/content/Intent");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_new_string = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Ljava/lang/String;)V"))?;
+  let id_new_string_uri = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Ljava/lang/String;Landroid/net/Uri;)V"))?;
+  let id_add_category = jni.checked_id(e, class, jni.get_method_id(e, class, "addCategory", "(Ljava/lang/String;)Landroid/content/Intent;"))?;
+  let id_add_flags = jni.checked_id(e, class, jni.get_method_id(e, class, "addFlags", "(I)Landroid/content/Intent;"))?;
+  let id_make_main_selector_activity = jni.checked_id(e, class, jni.get_static_method_id(e, class, "makeMainSelectorActivity", "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;"))?;
+  let id_put_extra = jni.checked_id(e, class, jni.get_method_id(e, class, "putExtra", "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;"))?;
+  let id_set_component = jni.checked_id(e, class, jni.get_method_id(e, class, "setComponent", "(Landroid/content/ComponentName;)Landroid/content/Intent;"))?;
+  return Ok(IntentClass { class: class, id_new_string: id_new_string, id_new_string_uri: id_new_string_uri, id_add_category: id_add_category, id_add_flags: id_add_flags, id_make_main_selector_activity: id_make_main_selector_activity, id_put_extra: id_put_extra, id_set_component: id_set_component });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: IntentClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.content.Intent.<init>(Ljava/lang/String;)V
+pub function (c: IntentClass) new_string(e: usize, a0: string): Result[Intent, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, 30, c.class, c.id_new_string, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.check(e)?;
+  return Ok(Intent { ref: got });
+}
+
+// android.content.Intent.<init>(Ljava/lang/String;Landroid/net/Uri;)V
+pub function (c: IntentClass) new_string_uri(e: usize, a0: string, a1: Uri): Result[Intent, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  let got = jni.invoke(e, 30, c.class, c.id_new_string_uri, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.check(e)?;
+  return Ok(Intent { ref: got });
+}
+
+// android.content.Intent.addCategory(Ljava/lang/String;)Landroid/content/Intent;
+pub function (c: IntentClass) add_category(e: usize, self: Intent, a0: string): Result[Intent, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_add_category, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.check(e)?;
+  return Ok(Intent { ref: got });
+}
+
+// android.content.Intent.addFlags(I)Landroid/content/Intent;
+pub function (c: IntentClass) add_flags(e: usize, self: Intent, a0: i32): Result[Intent, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_add_flags, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Intent { ref: got });
+}
+
+// android.content.Intent.makeMainSelectorActivity(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;
+pub function (c: IntentClass) make_main_selector_activity(e: usize, a0: string, a1: string): Result[Intent, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  let s1 = jni.new_string(e, a1);
+  jni.jvalue_set_int(args, 1, s1);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_make_main_selector_activity, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.delete_local_ref(e, s1);
+  jni.check(e)?;
+  return Ok(Intent { ref: got });
+}
+
+// android.content.Intent.putExtra(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;
+pub function (c: IntentClass) put_extra(e: usize, self: Intent, a0: string, a1: string): Result[Intent, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  let s1 = jni.new_string(e, a1);
+  jni.jvalue_set_int(args, 1, s1);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_put_extra, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.delete_local_ref(e, s1);
+  jni.check(e)?;
+  return Ok(Intent { ref: got });
+}
+
+// android.content.Intent.setComponent(Landroid/content/ComponentName;)Landroid/content/Intent;
+pub function (c: IntentClass) set_component(e: usize, self: Intent, a0: ComponentName): Result[Intent, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_component, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Intent { ref: got });
+}
+
+// A android.content.pm.ActivityInfo.
+pub struct ActivityInfo { ref: usize }
+
+pub function (x: ActivityInfo) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: ActivityInfo) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub function (x: ActivityInfo) as_package_item_info(): PackageItemInfo {
+  return PackageItemInfo { ref: x.ref };
+}
+
+// The class android.content.pm.ActivityInfo and the IDs of its members.
+pub struct ActivityInfoClass { class: usize }
+
+pub function activity_info_class(e: usize): Result[ActivityInfoClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/content/pm/ActivityInfo");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  return Ok(ActivityInfoClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ActivityInfoClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// A android.content.pm.PackageItemInfo.
+pub struct PackageItemInfo { ref: usize }
+
+pub function (x: PackageItemInfo) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: PackageItemInfo) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.pm.PackageItemInfo and the IDs of its members.
+pub struct PackageItemInfoClass { class: usize, id_name: usize, id_package_name: usize }
+
+pub function package_item_info_class(e: usize): Result[PackageItemInfoClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/content/pm/PackageItemInfo");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_name = jni.checked_id(e, class, jni.get_field_id(e, class, "name", "Ljava/lang/String;"))?;
+  let id_package_name = jni.checked_id(e, class, jni.get_field_id(e, class, "packageName", "Ljava/lang/String;"))?;
+  return Ok(PackageItemInfoClass { class: class, id_name: id_name, id_package_name: id_package_name });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: PackageItemInfoClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.content.pm.PackageItemInfo.name
+pub function (c: PackageItemInfoClass) name(e: usize, self: PackageItemInfo): Result[string, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 0, self.ref, c.id_name, 0 as usize);
+  jni.check(e)?;
+  let text = jni.string_of(e, got);
+  jni.delete_local_ref(e, got);
+  return Ok(text);
+}
+
+// android.content.pm.PackageItemInfo.packageName
+pub function (c: PackageItemInfoClass) package_name(e: usize, self: PackageItemInfo): Result[string, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 0, self.ref, c.id_package_name, 0 as usize);
+  jni.check(e)?;
+  let text = jni.string_of(e, got);
+  jni.delete_local_ref(e, got);
+  return Ok(text);
+}
+
+// A android.content.pm.PackageManager.
+pub struct PackageManager { ref: usize }
+
+pub function (x: PackageManager) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: PackageManager) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub const PACKAGE_MANAGER_MATCH_DEFAULT_ONLY: i32 = 65536;
+
+// The class android.content.pm.PackageManager and the IDs of its members.
+pub struct PackageManagerClass { class: usize, id_get_launch_intent_for_package: usize, id_query_intent_activities: usize, id_resolve_activity: usize }
+
+pub function package_manager_class(e: usize): Result[PackageManagerClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/content/pm/PackageManager");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_get_launch_intent_for_package = jni.checked_id(e, class, jni.get_method_id(e, class, "getLaunchIntentForPackage", "(Ljava/lang/String;)Landroid/content/Intent;"))?;
+  let id_query_intent_activities = jni.checked_id(e, class, jni.get_method_id(e, class, "queryIntentActivities", "(Landroid/content/Intent;I)Ljava/util/List;"))?;
+  let id_resolve_activity = jni.checked_id(e, class, jni.get_method_id(e, class, "resolveActivity", "(Landroid/content/Intent;I)Landroid/content/pm/ResolveInfo;"))?;
+  return Ok(PackageManagerClass { class: class, id_get_launch_intent_for_package: id_get_launch_intent_for_package, id_query_intent_activities: id_query_intent_activities, id_resolve_activity: id_resolve_activity });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: PackageManagerClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.content.pm.PackageManager.getLaunchIntentForPackage(Ljava/lang/String;)Landroid/content/Intent;
+pub function (c: PackageManagerClass) get_launch_intent_for_package(e: usize, self: PackageManager, a0: string): Result[Intent, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_launch_intent_for_package, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.check(e)?;
+  return Ok(Intent { ref: got });
+}
+
+// android.content.pm.PackageManager.queryIntentActivities(Landroid/content/Intent;I)Ljava/util/List;
+pub function (c: PackageManagerClass) query_intent_activities(e: usize, self: PackageManager, a0: Intent, a1: i32): Result[List, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, a1 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_query_intent_activities, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(List { ref: got });
+}
+
+// android.content.pm.PackageManager.resolveActivity(Landroid/content/Intent;I)Landroid/content/pm/ResolveInfo;
+pub function (c: PackageManagerClass) resolve_activity(e: usize, self: PackageManager, a0: Intent, a1: i32): Result[ResolveInfo, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, a1 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_resolve_activity, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(ResolveInfo { ref: got });
+}
+
+// A android.content.pm.ResolveInfo.
+pub struct ResolveInfo { ref: usize }
+
+pub function (x: ResolveInfo) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: ResolveInfo) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.pm.ResolveInfo and the IDs of its members.
+pub struct ResolveInfoClass { class: usize, id_load_label: usize, id_activity_info: usize }
+
+pub function resolve_info_class(e: usize): Result[ResolveInfoClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/content/pm/ResolveInfo");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_load_label = jni.checked_id(e, class, jni.get_method_id(e, class, "loadLabel", "(Landroid/content/pm/PackageManager;)Ljava/lang/CharSequence;"))?;
+  let id_activity_info = jni.checked_id(e, class, jni.get_field_id(e, class, "activityInfo", "Landroid/content/pm/ActivityInfo;"))?;
+  return Ok(ResolveInfoClass { class: class, id_load_label: id_load_label, id_activity_info: id_activity_info });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ResolveInfoClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.content.pm.ResolveInfo.loadLabel(Landroid/content/pm/PackageManager;)Ljava/lang/CharSequence;
+pub function (c: ResolveInfoClass) load_label(e: usize, self: ResolveInfo, a0: PackageManager): Result[jni.Object, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_load_label, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// android.content.pm.ResolveInfo.activityInfo
+pub function (c: ResolveInfoClass) activity_info(e: usize, self: ResolveInfo): Result[ActivityInfo, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 0, self.ref, c.id_activity_info, 0 as usize);
+  jni.check(e)?;
+  return Ok(ActivityInfo { ref: got });
+}
+
+// A android.net.Uri.
+pub struct Uri { ref: usize }
+
+pub function (x: Uri) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Uri) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.net.Uri and the IDs of its members.
+pub struct UriClass { class: usize, id_parse: usize }
+
+pub function uri_class(e: usize): Result[UriClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/net/Uri");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_parse = jni.checked_id(e, class, jni.get_static_method_id(e, class, "parse", "(Ljava/lang/String;)Landroid/net/Uri;"))?;
+  return Ok(UriClass { class: class, id_parse: id_parse });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: UriClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.net.Uri.parse(Ljava/lang/String;)Landroid/net/Uri;
+pub function (c: UriClass) parse(e: usize, a0: string): Result[Uri, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_parse, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.check(e)?;
+  return Ok(Uri { ref: got });
+}
+
+// A android.os.Bundle.
+pub struct Bundle { ref: usize }
+
+pub function (x: Bundle) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Bundle) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.os.Bundle and the IDs of its members.
+pub struct BundleClass { class: usize }
+
+pub function bundle_class(e: usize): Result[BundleClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/os/Bundle");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  return Ok(BundleClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: BundleClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// A android.view.View.
+pub struct View { ref: usize }
+
+pub function (x: View) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: View) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.view.View and the IDs of its members.
+pub struct ViewClass { class: usize }
+
+pub function view_class(e: usize): Result[ViewClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/view/View");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  return Ok(ViewClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ViewClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// A android.view.Window.
+pub struct Window { ref: usize }
+
+pub function (x: Window) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Window) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.view.Window and the IDs of its members.
+pub struct WindowClass { class: usize, id_get_decor_view: usize }
+
+pub function window_class(e: usize): Result[WindowClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/view/Window");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_get_decor_view = jni.checked_id(e, class, jni.get_method_id(e, class, "getDecorView", "()Landroid/view/View;"))?;
+  return Ok(WindowClass { class: class, id_get_decor_view: id_get_decor_view });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: WindowClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.view.Window.getDecorView()Landroid/view/View;
+pub function (c: WindowClass) get_decor_view(e: usize, self: Window): Result[View, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_decor_view, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(View { ref: got });
+}
+
+// A java.util.List.
+pub struct List { ref: usize }
+
+pub function (x: List) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: List) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.util.List and the IDs of its members.
+pub struct ListClass { class: usize, id_get: usize, id_size: usize }
+
+pub function list_class(e: usize): Result[ListClass, jni.JavaError] {
+  let local = jni.find_class(e, "java/util/List");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_get = jni.checked_id(e, class, jni.get_method_id(e, class, "get", "(I)Ljava/lang/Object;"))?;
+  let id_size = jni.checked_id(e, class, jni.get_method_id(e, class, "size", "()I"))?;
+  return Ok(ListClass { class: class, id_get: id_get, id_size: id_size });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ListClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// java.util.List.get(I)Ljava/lang/Object;
+pub function (c: ListClass) get(e: usize, self: List, a0: i32): Result[jni.Object, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// java.util.List.size()I
+pub function (c: ListClass) size(e: usize, self: List): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_size, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// The struct of IDs of each class of this module.
+pub struct Classes { activity: ActivityClass, activity_options: ActivityOptionsClass, component_name: ComponentNameClass, context: ContextClass, intent: IntentClass, activity_info: ActivityInfoClass, package_item_info: PackageItemInfoClass, package_manager: PackageManagerClass, resolve_info: ResolveInfoClass, uri: UriClass, bundle: BundleClass, view: ViewClass, window: WindowClass, list: ListClass }
+
+// Makes the struct of IDs of each class. Call it one time, and call
+// `release` when the app does not call Java again.
+pub function classes(e: usize): Result[Classes, jni.JavaError] {
+  let activity = match (activity_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      return Err(err);
+    },
+  };
+  let activity_options = match (activity_options_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      return Err(err);
+    },
+  };
+  let component_name = match (component_name_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      activity_options.release(e);
+      return Err(err);
+    },
+  };
+  let context = match (context_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      activity_options.release(e);
+      component_name.release(e);
+      return Err(err);
+    },
+  };
+  let intent = match (intent_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      activity_options.release(e);
+      component_name.release(e);
+      context.release(e);
+      return Err(err);
+    },
+  };
+  let activity_info = match (activity_info_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      activity_options.release(e);
+      component_name.release(e);
+      context.release(e);
+      intent.release(e);
+      return Err(err);
+    },
+  };
+  let package_item_info = match (package_item_info_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      activity_options.release(e);
+      component_name.release(e);
+      context.release(e);
+      intent.release(e);
+      activity_info.release(e);
+      return Err(err);
+    },
+  };
+  let package_manager = match (package_manager_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      activity_options.release(e);
+      component_name.release(e);
+      context.release(e);
+      intent.release(e);
+      activity_info.release(e);
+      package_item_info.release(e);
+      return Err(err);
+    },
+  };
+  let resolve_info = match (resolve_info_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      activity_options.release(e);
+      component_name.release(e);
+      context.release(e);
+      intent.release(e);
+      activity_info.release(e);
+      package_item_info.release(e);
+      package_manager.release(e);
+      return Err(err);
+    },
+  };
+  let uri = match (uri_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      activity_options.release(e);
+      component_name.release(e);
+      context.release(e);
+      intent.release(e);
+      activity_info.release(e);
+      package_item_info.release(e);
+      package_manager.release(e);
+      resolve_info.release(e);
+      return Err(err);
+    },
+  };
+  let bundle = match (bundle_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      activity_options.release(e);
+      component_name.release(e);
+      context.release(e);
+      intent.release(e);
+      activity_info.release(e);
+      package_item_info.release(e);
+      package_manager.release(e);
+      resolve_info.release(e);
+      uri.release(e);
+      return Err(err);
+    },
+  };
+  let view = match (view_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      activity_options.release(e);
+      component_name.release(e);
+      context.release(e);
+      intent.release(e);
+      activity_info.release(e);
+      package_item_info.release(e);
+      package_manager.release(e);
+      resolve_info.release(e);
+      uri.release(e);
+      bundle.release(e);
+      return Err(err);
+    },
+  };
+  let window = match (window_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      activity_options.release(e);
+      component_name.release(e);
+      context.release(e);
+      intent.release(e);
+      activity_info.release(e);
+      package_item_info.release(e);
+      package_manager.release(e);
+      resolve_info.release(e);
+      uri.release(e);
+      bundle.release(e);
+      view.release(e);
+      return Err(err);
+    },
+  };
+  let list = match (list_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      activity_options.release(e);
+      component_name.release(e);
+      context.release(e);
+      intent.release(e);
+      activity_info.release(e);
+      package_item_info.release(e);
+      package_manager.release(e);
+      resolve_info.release(e);
+      uri.release(e);
+      bundle.release(e);
+      view.release(e);
+      window.release(e);
+      return Err(err);
+    },
+  };
+  return Ok(Classes { activity: activity, activity_options: activity_options, component_name: component_name, context: context, intent: intent, activity_info: activity_info, package_item_info: package_item_info, package_manager: package_manager, resolve_info: resolve_info, uri: uri, bundle: bundle, view: view, window: window, list: list });
+}
+
+// Deletes the reference to each class. Do not use `c` after this call.
+pub function (c: Classes) release(e: usize): void {
+  c.activity.release(e);
+  c.activity_options.release(e);
+  c.component_name.release(e);
+  c.context.release(e);
+  c.intent.release(e);
+  c.activity_info.release(e);
+  c.package_item_info.release(e);
+  c.package_manager.release(e);
+  c.resolve_info.release(e);
+  c.uri.release(e);
+  c.bundle.release(e);
+  c.view.release(e);
+  c.window.release(e);
+  c.list.release(e);
+}
