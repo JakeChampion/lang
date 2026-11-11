@@ -26,7 +26,8 @@ name: Android
 # writes: a constructor, methods, fields and static members of classes of
 # the system, and a Java exception as an error. The job also writes the
 # wrappers again from the android.jar of the SDK, and they must be the
-# committed bindings.fern.
+# committed bindings.fern. It does the same for the bindings.fern of
+# examples/android/paper.
 # examples/android/counter is an app of std/android/ui: its check taps the
 # button that the GPU painter draws, and reads the count when the back key
 # closes the app.
@@ -197,6 +198,7 @@ jobs:
             python3 tests/android/jnibind/emulator_check.py build/android-stopwatch/fern-jnibindtest.apk build/android-stopwatch/emulator/jnibind
             chmod +x build/android-stopwatch/jnibind
             build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" tests/android/jnibind/bindings.spec | diff -u tests/android/jnibind/bindings.fern -
+            build/android-stopwatch/jnibind "$ANDROID_HOME/platforms/android-34/android.jar" examples/android/paper/bindings.spec | diff -u examples/android/paper/bindings.fern -
             python3 examples/android/counter/emulator_check.py build/android-stopwatch/fern-counter.apk build/android-stopwatch/emulator/counter
             python3 examples/android/todo/emulator_check.py build/android-stopwatch/fern-todo.apk build/android-stopwatch/emulator/todo
             python3 examples/android/tune/emulator_check.py build/android-stopwatch/fern-tune.apk build/android-stopwatch/emulator/tune
