@@ -545,6 +545,16 @@ kernel loads at a random base, and a startup loop relocates the absolute
 data words (`docs/security/PIE.md`). Android is position-independent
 without the flag. Darwin, wasm and `-shared` refuse it with exit 2.
 
+### Signal numbers are the Linux numbers, and Darwin converts the watched ones
+
+`RealDriver.watch_signal` takes a signal number in the runtime convention,
+which is the Linux number. On arm64-darwin the reactor converts the number
+(`__fern_signal_host`), and reports the event with the runtime number
+(`__fern_signal_runtime`). It leaves the child-exit signal at its default
+action, because Darwin reaps each child itself when that signal is ignored.
+The helpers of `std/signal` do not convert a number on Darwin (#15336). The
+constants of that module have one number on both systems.
+
 ### Heap exhaustion exits 125 on the natives, traps on wasm
 
 The native targets exit 125 when the arena runs out (`.Lalloc_oom` in

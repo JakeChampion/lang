@@ -31,7 +31,7 @@ function __fern_reactor_wait(r_fd: i32, events: i32[], timeout_ms: i32): i32 {
     let fd = __raw_load8(buf, e) | __raw_load8(buf, e + 1) << 8 | __raw_load8(buf, e + 2) << 16 | __raw_load8(buf, e + 3) << 24;
     if (__raw_load8(buf, e + 8) == 250) {
       ready = 1;
-      fd = -fd;
+      fd = -__fern_signal_runtime(fd);
     }
     if (__raw_load8(buf, e + 8) == 251) {
       ready = 1;
