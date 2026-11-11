@@ -7,8 +7,9 @@ Start a new app with `std/android/ui`. The app gives a state, a `view` that
 makes a tree of elements from the state, and an `update` that changes the
 state for each message. The module does the layout, the drawing on the GPU,
 the touches, the lists that scroll, the dark theme and the accessibility
-tree. [`counter/`](counter/README.md) is such an app, and
-`std/android/ui/sim` runs it in a test on the host.
+tree. [`counter/`](counter/README.md) is the smallest such app, and
+[`todo/`](todo/README.md) has a text field and a list that scrolls.
+`std/android/ui/sim` runs both in tests on the host.
 
 `native/` is the smallest app that draws its own pixels. [`stopwatch/`](stopwatch/README.md),
 [`walkie/`](walkie/README.md), [`plex/`](plex/README.md), a Plex client,

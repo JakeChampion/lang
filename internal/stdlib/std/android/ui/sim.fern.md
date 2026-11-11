@@ -4,11 +4,11 @@ This module runs a program of `std/android/ui` on the host with no phone, for th
 
 ## Model
 
-A `Sim` holds the shell of a program and a `Device` that draws nothing. `start` gives the program a window and draws its first frame. Each function then does what a person does: `tap` and `hold` find an element by the name of its action, `drag` moves a finger, `back` presses the back key, and `after` lets time go by.
+A `Sim` holds the shell of a program and a `Device` that draws nothing. `start` gives the program a window and draws its first frame. Each function then does what a person does: `tap` and `hold` find an element by the name of its action, `drag` moves a finger, `type_in` types a text into a field, `enter` presses the action key of the keyboard, `back` presses the back key, and `after` lets time go by.
 
 After each event, the simulator draws a frame, as the display does at the next vsync. So the layout that the test reads is the layout that the person sees.
 
-`texts` gives the texts that the screen shows, and `shows` tells whether it shows one text. `finished` tells whether the program closed the app. `spoken` gives what an accessibility service reads. `picture` draws the screen on a frame, which `testkit.save_png` writes as a PNG file.
+`texts` gives the texts that the screen shows, and `shows` tells whether it shows one text. `finished` tells whether the program closed the app, and `keyboard` gives the text that the keyboard of the system shows. `spoken` gives what an accessibility service reads. `picture` draws the screen on a frame, which `testkit.save_png` writes as a PNG file.
 
 The simulator keeps the clock. A touch, a frame and a wait each take the time that they take on a phone: a frame is 16 ms.
 
@@ -83,6 +83,9 @@ function device(dir: string, w: i32, h: i32, d: f64, dark: boolean, now: i64): u
     close: (p: painter.Painter): painter.Painter => p,
     present: (own p: painter.Painter, window: usize, nodes: scene.Node[], background: i32): painter.Painter => p,
     publish: (items: android.AccessItem[]): void => { let ok = write_file(dir + "/spoken", said(items)); },
+    show_keyboard: (text: string): void => note(dir, "calls", "keyboard " + text),
+    set_keyboard: (text: string): void => note(dir, "calls", "keyboard " + text),
+    hide_keyboard: (): void => note(dir, "calls", "no keyboard"),
   };
 }
 
@@ -231,6 +234,17 @@ pub function drag[S](own s: Sim[S], x0: i32, y0: i32, x1: i32, y1: i32, ms: i64)
   return event(t, android.Touch(1, x1 as f32, y1 as f32));
 }
 
+// A tap on the field `name`, then the keyboard of the system gives it the
+// text `text`.
+pub function type_in[S](own s: Sim[S], name: string, text: string): Sim[S] {
+  return event(tap(s, ui.FIELD_ACTION + name), android.Text(text));
+}
+
+// The action key of the keyboard goes down.
+pub function enter[S](own s: Sim[S]): Sim[S] {
+  return event(s, android.TextAction(android.ACTION_DONE));
+}
+
 // The back key goes down and up.
 pub function back[S](own s: Sim[S]): Sim[S] {
   return event(event(s, android.Key(4, 0)), android.Key(4, 1));
@@ -266,6 +280,21 @@ pub function shows[S](s: Sim[S], t: string): boolean {
 // The program closed the app.
 pub function finished[S](s: Sim[S]): boolean {
   return testkit.read_text(s.dir + "/calls").contains("finish");
+}
+
+// The text that the keyboard of the system shows, or None while the
+// keyboard does not show.
+pub function keyboard[S](s: Sim[S]): Option[string] {
+  let last = "no keyboard";
+  for line in testkit.read_text(s.dir + "/calls").split("\n") {
+    if (line == "no keyboard" || line.starts_with("keyboard ")) {
+      last = line.to_owned();
+    }
+  }
+  if (last == "no keyboard") {
+    return None;
+  }
+  return Some(last.drop(9).to_owned());
 }
 
 // What an accessibility service reads on the screen, one item for each
