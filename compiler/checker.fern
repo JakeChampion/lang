@@ -6491,7 +6491,7 @@ function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
       }
     }
     let scalar = scalar_numeric_join(first, et);
-    if (!is_unknown(scalar) && !int_literal_tree(first_expr) && !int_literal_tree(a.elements[i])) {
+    if (!is_unknown(scalar) && !int_literal_tree(first_expr) && (!int_literal_tree(a.elements[i]) || wide_literal_widens(a.elements[i], et, first))) {
       first = scalar;
       first_lit = 0;
       first_expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
@@ -6505,6 +6505,11 @@ function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
     }
   }
   return t_array(first);
+}
+
+// wide_literal_widens is true when the integer literal e of the type et fits in neither i32 nor the narrower type beside.
+function wide_literal_widens(e: ast.Expr, et: typeinfo.Type, beside: typeinfo.Type): boolean {
+  return wide_int_tree(e) && typeinfo.lossless_widen(beside, et) && int_range_diags(e, type_to_irtag(beside), false).len() > 0;
 }
 
 function struct_lit_gives_way(e: ast.Expr, from: typeinfo.Type, to: typeinfo.Type, s: Scope): boolean {
@@ -15178,7 +15183,25 @@ function call_diags_array(a: ast.ExprArray, s: Scope, out: util.Diag[]): util.Di
   for element in a.elements {
     out = util.append_diags(out, call_diags(element, s));
   }
-  return array_mix_diags(a, s, out);
+  let before = out.len();
+  out = array_mix_diags(a, s, out);
+  if (out.len() == before && holds_typed_value(a)) {
+    out = util.append_diags(out, int_dest_range_diags(a, check_expr(a, s)));
+  }
+  return out;
+}
+
+// holds_typed_value is true when an element of the array literal e, at any depth, is not a numeric literal.
+function holds_typed_value(e: ast.Expr): boolean {
+  if let ast.ExprArray(a) = e {
+    for element in a.elements {
+      if (holds_typed_value(element)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  return numeric_literal_kind(e) == 0;
 }
 
 function array_mix_diags(a: ast.ExprArray, s: Scope, out: util.Diag[]): util.Diag[] {
@@ -30534,6 +30557,11 @@ function settle_array_literals(a: ast.ExprArray, s: Scope): ast.Expr {
   }
   if (tag.len() == 0) {
     return settle_array_struct_literals(a, s);
+  }
+  if let typeinfo.TypeArray(at) = check_expr(a, s) {
+    if (is_integer(at.elem) || is_float(at.elem)) {
+      tag = type_to_irtag(at.elem);
+    }
   }
   let els: ast.Expr[] = [];
   for element in a.elements {

@@ -14897,7 +14897,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		toFloat = toFloat && !floatDest.Polymorphic
 		clean := map[string]int{}
 		for i, el := range n.Elems[1:] {
-			t := checkElem(el)
+			t := c.wideLiteralElem(checkElem(el), elemT, el)
 			elemTypes = append(elemTypes, t)
 			if t == nil || elemT == nil {
 				continue
@@ -17746,7 +17746,7 @@ func (c *checker) postSettleType(e ast.Expr, prior ast.Type) ast.Type {
 
 func (c *checker) polymorphicIntDefault(es ...ast.Expr) ast.NumberType {
 	for _, e := range es {
-		if c.unsettledIntLitExceedsI32(e, false) {
+		if c.unsettledIntLitExceeds(e, false, i32Type) {
 			return ast.NumberType{Width: 64, Signed: true}
 		}
 	}
@@ -17921,7 +17921,7 @@ func (c *checker) widenGenericCallByLiterals(call *ast.Call) ast.Type {
 					pinned = true
 				}
 				bound = append(bound, call.Args[j])
-				wide = wide || c.unsettledIntLitExceedsI32(call.Args[j], false)
+				wide = wide || c.unsettledIntLitExceeds(call.Args[j], false, i32Type)
 			} else if typeMentionsParam(p.Type, tp) {
 				pinned = true
 			}
@@ -18099,19 +18099,19 @@ func (c *checker) genericResultBinding(declared ast.Type, hint ast.Type, tp stri
 	return nil, false
 }
 
-func (c *checker) unsettledIntLitExceedsI32(e ast.Expr, negated bool) bool {
+func (c *checker) unsettledIntLitExceeds(e ast.Expr, negated bool, t ast.NumberType) bool {
 	switch x := e.(type) {
 	case *ast.NumberLit:
 		if x.IsFloat || x.Width != 0 {
 			return false
 		}
-		return ast.IntLitOutOfRange(x, negated, ast.NumberType{Width: 32, Signed: true}) != ""
+		return ast.IntLitOutOfRange(x, negated, t) != ""
 	case *ast.Unary:
 		switch x.Op {
 		case "-":
-			return c.unsettledIntLitExceedsI32(x.Operand, !negated)
+			return c.unsettledIntLitExceeds(x.Operand, !negated, t)
 		case "+":
-			return c.unsettledIntLitExceedsI32(x.Operand, negated)
+			return c.unsettledIntLitExceeds(x.Operand, negated, t)
 		}
 	case *ast.Binary:
 		if x.IntWidth != 0 || x.FloatWidth != 0 || x.IsStringConcat {
@@ -18119,18 +18119,18 @@ func (c *checker) unsettledIntLitExceedsI32(e ast.Expr, negated bool) bool {
 		}
 		switch x.Op {
 		case "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "+|", "-|", "*|", "<<|":
-			return c.unsettledIntLitExceedsI32(x.Left, false) || c.unsettledIntLitExceedsI32(x.Right, false)
+			return c.unsettledIntLitExceeds(x.Left, false, t) || c.unsettledIntLitExceeds(x.Right, false, t)
 		}
 	case *ast.IfExpr:
-		return c.unsettledIntLitExceedsI32(x.Then, false) || c.unsettledIntLitExceedsI32(x.Else, false)
+		return c.unsettledIntLitExceeds(x.Then, false, t) || c.unsettledIntLitExceeds(x.Else, false, t)
 	case *ast.MatchExpr:
 		for _, arm := range x.Arms {
-			if arm != nil && c.unsettledIntLitExceedsI32(arm.Body, false) {
+			if arm != nil && c.unsettledIntLitExceeds(arm.Body, false, t) {
 				return true
 			}
 		}
 	case *ast.BlockExpr:
-		return c.unsettledIntLitExceedsI32(x.Tail, false)
+		return c.unsettledIntLitExceeds(x.Tail, false, t)
 	case *ast.Call, *ast.FieldAccess:
 		call, fn, declared := c.genericCallProjection(x)
 		if call == nil {
@@ -18140,7 +18140,7 @@ func (c *checker) unsettledIntLitExceedsI32(e ast.Expr, negated bool) bool {
 			if i >= len(call.Args) {
 				break
 			}
-			if pt, ok := p.Type.(ast.ParamType); ok && typeMentionsParam(declared, pt.Name) && c.unsettledIntLitExceedsI32(call.Args[i], false) {
+			if pt, ok := p.Type.(ast.ParamType); ok && typeMentionsParam(declared, pt.Name) && c.unsettledIntLitExceeds(call.Args[i], false, t) {
 				return true
 			}
 		}

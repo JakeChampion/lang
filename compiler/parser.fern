@@ -229,6 +229,11 @@ pub function named_outside(mod: Module, name: string): boolean {
   return false;
 }
 
+// An async export is named outside too: its lift wrapper calls it.
+pub function decl_named_outside(mod: Module, fd: FuncDecl): boolean {
+  return fd.async && fd.import_iface == "" || named_outside(mod, fd.name);
+}
+
 pub function marked(mod: Module, attr: string): FuncMark[] {
   let out: FuncMark[] = [];
   for m in mod.marks {

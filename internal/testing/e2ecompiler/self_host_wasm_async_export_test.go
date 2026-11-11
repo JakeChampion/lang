@@ -50,6 +50,27 @@ function main(): i32 { print("main ran"); return 0; }
 	}
 }
 
+func TestSelfHostWasmAsyncExportCalledByMain(t *testing.T) {
+	requireWasmTools(t)
+	cli := buildSelfHostCLI(t)
+	comp, _ := buildAsyncComponent(t, cli, t.TempDir(), `async function add(a: i32, b: i32): i32 { return a + b; }
+function main(): i32 { print(add(40, 2)); return 0; }
+`)
+	for _, c := range []struct {
+		name string
+		args []string
+	}{
+		{"main", nil},
+		{"the export", []string{"--invoke", "add(20, 22)"}},
+	} {
+		args := append(append(append([]string{"run"}, asyncFeatures...), c.args...), comp)
+		out, err := exec.Command("wasmtime", args...).CombinedOutput()
+		if err != nil || strings.TrimSpace(string(out)) != "42" {
+			t.Errorf("%s = %q (err = %v), want 42", c.name, out, err)
+		}
+	}
+}
+
 func buildAsyncComponent(t *testing.T, cli *selfHostCLI, dir, src string) (string, string) {
 	t.Helper()
 	srcPath, comp := filepath.Join(dir, "main.fern"), filepath.Join(dir, "main.wasm")

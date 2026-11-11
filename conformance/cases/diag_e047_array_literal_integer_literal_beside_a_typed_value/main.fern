@@ -1,0 +1,11 @@
+// An integer literal beside a typed integer value in an array literal takes
+// the type of that value, so it must fit in that type.
+function main(): i32 {
+    let b: u8 = 3;
+    let bs = [b, 300];
+    let u: u32 = 2;
+    let us = [u, -1];
+    let w: u64 = 4;
+    let ws = [w, 1, -1];
+    return bs.len() + us.len() + ws.len();
+}
