@@ -282,6 +282,112 @@ function test_sim_deadline_is_exact(): test.TestOutcome {
   return test.assert_eq(d.elapsed().as_nanos(), 25000000 as i64);
 }
 
+// A pending future on `pairs` (fd, interest) pairs. A wake stores the index of
+// its pair, plus 1, in `got` and ends the future with `v`.
+function watcher(pairs: i32, v: i32, got: Cell[i32]): async.Future[i32] {
+  let set: i32[] = [];
+  for i in 0..pairs {
+    set = set.append(100 * v + i).append(1);
+  }
+  return Pending(async.Wait { set: set, until: None }, (wake: async.Wake): async.Future[i32] => {
+    if let Woke(at) = wake {
+      got.set(at + 1);
+      return Ready(v);
+    }
+    return async.Future.Cancelled;
+  });
+}
+
+function waits_on(f: async.Future[i32[]]): i32[] {
+  if let Pending(w, k) = f {
+    return w.set;
+  }
+  let none: i32[] = [];
+  return none;
+}
+
+function woken(f: async.Future[i32[]], at: i32): async.Future[i32[]] {
+  if let Pending(w, k) = f {
+    return k(Woke(at));
+  }
+  return async.Future.Cancelled;
+}
+
+function test_wake_reaches_the_owner_of_its_pair(): test.TestOutcome {
+  let a = cell_new(0);
+  let b = cell_new(0);
+  let c = cell_new(0);
+  let fs: async.Future[i32][] = [watcher(1, 1, a), Ready(9), watcher(3, 2, b), watcher(2, 3, c)];
+  let first = async.gather(fs);
+  let set = waits_on(first);
+  if (set.len() != 12 || set[0] != 100 || set[2] != 200 || set[6] != 202 || set[8] != 300) {
+    return test.fail("the wait is not the pairs of the inputs in input order");
+  }
+  let second = woken(first, 3);
+  if (a.get() != 0 || b.get() != 3 || c.get() != 0) {
+    return test.fail("pair 3 did not wake the third pair of the second watcher");
+  }
+  set = waits_on(second);
+  if (set.len() != 6 || set[0] != 100 || set[2] != 300) {
+    return test.fail("a ready input kept its pairs in the wait");
+  }
+  let third = woken(woken(second, 9), 2);
+  if (a.get() != 0 || c.get() != 2) {
+    return test.fail("pair 2 did not wake the second pair of the last watcher");
+  }
+  if let Ready(got) = woken(third, 0) {
+    return test.assert_eq(got[0] * 1000 + got[1] * 100 + got[2] * 10 + got[3], 1923);
+  }
+  return test.fail("gather was not ready after its last wake");
+}
+
+function test_gather_of_many_keeps_input_order(): test.TestOutcome {
+  let n = 20000;
+  let base = clock.instant().add(ms(5));
+  let fs: async.Future[i32][] = [];
+  for i in 0..n {
+    let at = base.add(time.duration_nanos((n - i) as i64 * 100));
+    let v = i;
+    fs = fs.append(async.spawn((): i32 => {
+      let none: i32[] = [];
+      let wake = async.wait_any(none, Some(at));
+      return v;
+    }));
+  }
+  match (async.block_on(async.gather(fs))) {
+    Some(got) => {
+      if (got.len() != n) {
+        return test.fail("gather lost an input");
+      }
+      for i in 0..n {
+        if (got[i] != i) {
+          return test.fail("results not in input order");
+        }
+      }
+    },
+    None => {
+      return test.fail("gather ended cancelled");
+    }
+  }
+  return test.pass();
+}
+
+function test_race_of_many_answers_the_lowest_ready_index(): test.TestOutcome {
+  let woke = cell_new(0);
+  let fs: async.Future[i32][] = [];
+  for i in 0..5000 {
+    if (i == 4321 || i == 4700) {
+      fs = fs.append(Ready(i));
+    } else {
+      fs = fs.append(watcher(1, i, woke));
+    }
+  }
+  if let Ready(won) = async.race(fs) {
+    return test.assert_eq(won.0 * 10000 + won.1, 43214321);
+  }
+  return test.fail("race with a ready input was not ready");
+}
+
 function test_sim_gather_and_race(): test.TestOutcome {
   let d = sim.new(1);
   let fs: async.Future[i32][] = [sim.future_at(sim.at(ms(30)), 10), sim.future_chain(sim.at(ms(10)), ms(5), 3, 20)];
@@ -344,6 +450,9 @@ function main(): i32 {
   r = r.it("wait inside a task", test_wait_inside_a_task);
   r = r.it("a cancelled task cancels its children", test_cancel_reaches_the_children);
   r = r.it("sim: with_deadline is exact", test_sim_deadline_is_exact);
+  r = r.it("a wake reaches the owner of its pair", test_wake_reaches_the_owner_of_its_pair);
+  r = r.it("gather of many keeps input order", test_gather_of_many_keeps_input_order);
+  r = r.it("race of many answers the lowest ready index", test_race_of_many_answers_the_lowest_ready_index);
   r = r.it("sim: gather and race", test_sim_gather_and_race);
   r = r.it("parks agrees with a parked task", test_parks_agrees);
   return r.finish();

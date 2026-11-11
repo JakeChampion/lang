@@ -150,6 +150,18 @@ ui.Submit("name") => {
 `ui.Submit` comes when the person presses the action key of the
 keyboard. To clear the field, set its text to `""` in your state.
 
+A tap on the text of a field puts the caret there. A text that is wider
+than the field shows the part around the caret.
+
+`ui.area` is a field of more than one line. Its text wraps, and the
+enter key starts a new line:
+
+```fern
+ui.area("note", m.note, "Write a note", 4)
+```
+
+The last argument is the number of lines that the area shows.
+
 ## Pictures and your own drawing
 
 `ui.picture(key, image)` shows a `draw.Image`, scaled to cover its box.

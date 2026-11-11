@@ -8,7 +8,7 @@ A `Fonts` holds one font for each weight that the app uses. `system` finds the f
 
 Each function takes a face: the index of a weight in the `Fonts`. `face_for` gives the index of the weight that is nearest to a number from 100 to 900.
 
-`width` and `line` measure a text with no drawing. `fit` cuts a text to a width, and `wrap` breaks it into lines.
+`width` and `line` measure a text with no drawing. `fit` cuts a text to a width, and `wrap` breaks it into lines. `wrap_ranges` gives the lines as ranges of characters, for a text field that must know where its cursor is.
 
 `std/truetype` draws each glyph one time for each size, weight and quarter of a pixel. A `Cache` keeps the glyphs. It also keeps a `Sprite` for each text: the coverage of the whole text, which `put` draws on a frame in a color. `layout` gives the glyphs of a text with their positions, for a painter that draws glyphs from an atlas on the GPU.
 
@@ -289,6 +289,63 @@ function wrap_paragraph(fs: Fonts, w: i32, px: i32, para: string, room: i32, own
     }
   }
   return lines.append(line);
+}
+
+// Each character of `s` as a string.
+pub function letters(s: string): string[] {
+  let cs: string[] = [];
+  for c in s.chars() {
+    cs = cs.append(c.to_string());
+  }
+  return cs;
+}
+
+// The characters of `cs` from `a` up to `b`, as one string.
+pub function span(cs: string[], a: i32, b: i32): string {
+  return cs.take(b.max(a)).drop(a).join("");
+}
+
+// The lines of `s` in `room` pixels, each as the index of its first
+// character and the index after its last one. A line breaks at a space or
+// at a line feed, and that character is in no line. A word that is wider
+// than the room breaks between two characters.
+pub function wrap_ranges(fs: Fonts, w: i32, px: i32, s: string, room: i32): (i32, i32)[] {
+  let cs = letters(s);
+  let out: (i32, i32)[] = [];
+  let start = 0;
+  let space = -1;
+  let i = 0;
+  while (i < cs.len()) {
+    if (cs[i] == "\n") {
+      out = out.append((start, i));
+      start = i + 1;
+      space = -1;
+      i += 1;
+      continue;
+    }
+    if (cs[i] == " ") {
+      space = i;
+    }
+    if (i > start && width(fs, w, px, span(cs, start, i + 1)) > room) {
+      let (line, next) = broken(start, space, i);
+      out = out.append(line);
+      start = next;
+      space = -1;
+      i = i.max(start);
+      continue;
+    }
+    i += 1;
+  }
+  return out.append((start, cs.len()));
+}
+
+// The line that ends when the character `i` does not fit, and the start of
+// the next line: the line breaks at the last space, or before `i`.
+function broken(start: i32, space: i32, i: i32): ((i32, i32), i32) {
+  if (space > start) {
+    return ((start, space), space + 1);
+  }
+  return ((start, i), i);
 }
 
 // The longest start of `word` that fits in `room` pixels: one character or

@@ -523,5 +523,125 @@
     "name": "owned_field_match_payload_reassigned_result",
     "source": "struct H{fd:i32} function(own h:H)close():void{} enum Tail{Empty,File(H),Chunk(ChunkProducer)} function touch(r:HttpResponse):void{} function emit(own p:ChunkProducer):own Tail{return Chunk(p);} function wire(own answer:HttpResponse,other:ChunkProducer):own Tail{match(answer.body){BodyChunks(p)=>{touch(answer);p=other;return Chunk(p);},_=>{}}return Empty;} function main():i32{return 0;}",
     "want": "E051"
+  },
+  {
+    "name": "captured owned parameter consumption",
+    "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;} function make(own h:H):own()=>i32{return ():i32=>h.close();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "captured owned parameter named function",
+    "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;} function make(own h:H):own()=>i32{function run():i32{return h.close();}return run;} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "captured owned receiver consumption",
+    "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;} function(own h:H)make():own()=>i32{return ():i32=>h.close();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "captured owned resource field",
+    "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;} struct W{h:H}function make(own w:W):own()=>i32{return ():i32=>w.h.close();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "captured owned resource array",
+    "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;} function consume(own hs:H[]):i32{return hs.len();}function make(own hs:H[]):own()=>i32{return ():i32=>consume(hs);} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "captured owned helper argument",
+    "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;} function consume(own h:H):i32{return h.close();}function make(own h:H):own()=>i32{return ():i32=>consume(h);} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "captured mutable Cell",
+    "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;} function consume(own c:Cell[i32]):i32{return c.get();}function make(own c:Cell[i32]):own()=>i32{return ():i32=>consume(c);} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "captured generic resource",
+    "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;} function make[T](own h:T,consume:(own T)=>i32):own()=>i32{return ():i32=>consume(h);} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "captured deferred consumption",
+    "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;} function make(own h:H):own()=>i32{return ():i32=>{defer h.close();return 0;};} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "captured owned parameter read",
+    "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;} function make(own h:H):own()=>i32{return ():i32=>h.n;} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "repeatable fresh local consumption",
+    "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;} function make():own()=>i32{return ():i32=>{let h=H{n:7};return h.close();};} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "repeatable owned input consumption",
+    "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;} function make():own(own H)=>i32{return (own h:H):i32=>h.close();} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "owned capture parameter shadow",
+    "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;} function make(own h:H):i32{let cb=(own h:H):i32=>h.close();let n=cb(H{n:1});return n+h.close();} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "captured scalar copy",
+    "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;} function make(own n:i32):own()=>i32{return ():i32=>n;} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "captured immutable array copy",
+    "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;} function consume(own xs:u8[]):i32{return xs.len();}function make(own xs:u8[]):own()=>i32{return ():i32=>consume(xs);} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "captured checked value cleanup",
+    "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;} @value struct V{xs:u8[]}function(own v:V)close():i32{return v.xs.len();}function make(own v:V):own()=>i32{return ():i32=>v.close();} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "immediate consuming closure",
+    "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;} function run(own h:H):i32{return (():i32=>h.close())();} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "immediate consuming closure with value argument",
+    "source": "struct H { n: i32 } function (own h: H) close(): i32 { return h.n; } function f(own h: H): i32 { return ((n: i32): i32 => h.close() + n)(1); }",
+    "want": ""
+  },
+  {
+    "name": "immediate consuming owned input",
+    "source": "struct H { n: i32 } function (own h: H) close(): i32 { return h.n; } function f(own h: H): i32 { return ((own p: H): i32 => p.close())(h); }",
+    "want": ""
+  },
+  {
+    "name": "immediate borrowed input consumption",
+    "source": "struct H { n: i32 } function (own h: H) close(): i32 { return h.n; } function f(h: H): i32 { return ((p: H): i32 => p.close())(h); }",
+    "want": "E051"
+  },
+  {
+    "name": "immediate capture use after consumption",
+    "source": "struct H { n: i32 } function (own h: H) close(): i32 { return h.n; } function f(own h: H): i32 { let n = ((x: i32): i32 => h.close() + x)(1); return n + h.close(); }",
+    "want": "E050"
+  },
+  {
+    "name": "immediate argument consumes capture",
+    "source": "struct H { n: i32 } function (own h: H) close(): i32 { return h.n; } function f(own h: H): i32 { return ((own p: H): i32 => h.close() + p.close())(h); }",
+    "want": "E050"
+  },
+  {
+    "name": "immediate owned input shadows capture",
+    "source": "struct H { n: i32 } function (own h: H) close(): i32 { return h.n; } function f(own h: H): i32 { return ((own h: H): i32 => h.close())(h); }",
+    "want": ""
+  },
+  {
+    "name": "immediate borrowed input rejects ownership",
+    "source": "struct H { n: i32 } function (own h: H) close(): i32 { return h.n; } function f(h: H): i32 { return ((own p: H): i32 => p.close())(h); }",
+    "want": "E051"
   }
 ]

@@ -28,6 +28,8 @@ pub function message_fd(ctx: usize): i32 { unsafe { return Context.c_load_messag
 pub function reply_fd(ctx: usize): i32 { unsafe { return Context.c_load_reply_write(ctx); } }
 pub function show(ctx: usize): void { show_field(ctx, "ab", 1, 2); }
 pub function set(ctx: usize): void { set_field(ctx, "xyz"); }
+pub function set_at(ctx: usize): void { set_field_at(ctx, "xyz", 1); }
+pub function show_lines(ctx: usize): void { show_field(ctx, "a", INPUT_LINES, 6); }
 pub function hide(ctx: usize): void { hide_field(ctx); }
 pub function pump(ctx: usize): i32 { unsafe { return on_ui_request(Context.c_load_ui_read(ctx), 1, ctx); } }
 pub function changed(env: usize, thiz: usize, editable: usize): void { text_changed(env, thiz, editable); }
@@ -139,6 +141,8 @@ int main(int argc, char **argv) {
   int (*reply_fd)(uintptr_t) = dlsym(lib, "reply_fd");
   void (*show)(uintptr_t) = dlsym(lib, "show");
   void (*set)(uintptr_t) = dlsym(lib, "set");
+  void (*set_at)(uintptr_t) = dlsym(lib, "set_at");
+  void (*show_lines)(uintptr_t) = dlsym(lib, "show_lines");
   void (*hide)(uintptr_t) = dlsym(lib, "hide");
   int (*pump)(uintptr_t) = dlsym(lib, "pump");
   changed = dlsym(lib, "changed");
@@ -174,7 +178,7 @@ int main(int argc, char **argv) {
   show(ctx_);
   require(log_[0] == 0, "a request waits for the UI thread");
   require(pump(ctx_) == 1 && locals == 0 && globals == 2, "the first request adds the field");
-  require(!strcmp(log_, "new EditText;setSingleLine 300 1;addContentView 100 300;new TextField;addTextChangedListener 300 302;setOnEditorActionListener 300 302;setInputType 900 1;setImeOptions 900 268435458;setText ab;setSelection 900 2;requestFocus 900;showSoftInput 900;"), "show");
+  require(!strcmp(log_, "new EditText;setSingleLine 300 1;addContentView 100 300;new TextField;addTextChangedListener 300 302;setOnEditorActionListener 300 302;setSingleLine 900 1;setInputType 900 1;setImeOptions 900 268435458;setText ab;setSelection 900 2;requestFocus 900;showSoftInput 900;"), "show");
   require(fern_field == ctx_ && !ready(message_fd(ctx_)), "a request changes the text with no message");
 
   log_[0] = 0;
@@ -193,8 +197,14 @@ int main(int argc, char **argv) {
   require(pump(ctx_) == 1 && locals == 0 && globals == 2, "two requests in one pump");
   require(!strcmp(log_, "setText xyz;setSelection 900 3;hideSoftInputFromWindow 600;clearFocus 900;"), "set and hide");
   require(!ready(message_fd(ctx_)), "set_field sends no Text message");
+
+  log_[0] = 0;
+  set_at(ctx_);
+  show_lines(ctx_);
+  require(pump(ctx_) == 1 && locals == 0, "a cursor and a field of lines");
+  require(!strcmp(log_, "setText xyz;setSelection 900 1;setSingleLine 900 0;setInputType 900 131073;setImeOptions 900 268435462;setText a;setSelection 900 1;requestFocus 900;showSoftInput 900;"), "the cursor of set_field_at, and a field of more than one line");
   return 0;
 }
 `
-	androidJNIMockCheck(t, src, "field_ctx,message_fd,reply_fd,show,set,hide,pump,changed", check)
+	androidJNIMockCheck(t, src, "field_ctx,message_fd,reply_fd,show,set,set_at,show_lines,hide,pump,changed", check)
 }

@@ -44,7 +44,7 @@ and trackers. This app does not.
 | file | what it does |
 |---|---|
 | `plex.fern` | The model: the requests to plex.tv and to a server, and the records in their JSON replies. Every function is pure. |
-| `ui.fern` | The look. `nodes` lays out a screen as a list of nodes, each with a rectangle, what it shows, and the action of a tap. `render` draws the nodes and `hit` finds the node under a touch, so one layout serves both. |
+| `ui.fern` | The look. `nodes` lays out a screen as a list of nodes of `std/android/ui/scene`, each with a rectangle, what it shows, and the action of a tap. The scene module draws the nodes and finds the node under a touch, so one layout serves both. |
 | `control.fern` | The behaviour on each event: the touches, the keys, the replies, the player and the window. Each input and output goes through a `Device`. |
 | `app.fern` | The NativeActivity, the `Device` of the phone, and the @jni listener of the media player. |
 | `plex_test.fern` | The tests of `plex.fern`, with replies in the shape that plex.tv and a server send. |

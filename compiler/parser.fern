@@ -10395,6 +10395,13 @@ function arg_wants_expected(a: ast.Expr, env: MEnv, funcs: MFns): boolean {
       }
     }
   }
+  if let ast.ExprArray(arr) = a {
+    for x in arr.elements {
+      if (arg_wants_expected(x, env, funcs)) {
+        return true;
+      }
+    }
+  }
   return false;
 }
 
@@ -11664,10 +11671,26 @@ function mono_call_expected(e: ast.Expr, expected: string, env: MEnv, funcs: MFn
           return mono_struct_lit(sl, expected, env, funcs, ins);
         }
       },
+      ast.ExprArray(a) => {
+        if (type_ends_arr(expected)) {
+          return mono_array_expected(a, elem_spelling(expected), env, funcs, ins);
+        }
+      },
       _ => {}
     }
   }
   return mono_expr(e, env, funcs, ins);
+}
+
+function mono_array_expected(a: ast.ExprArray, elem: string, env: MEnv, funcs: MFns, ins: Insts): RExpr {
+  let els: ast.Expr[] = [];
+  let cur = ins;
+  for x in a.elements {
+    let re = mono_call_expected(x, elem, env, funcs, cur);
+    cur = re.rins;
+    els = els.append(re.rexpr);
+  }
+  return RExpr { rexpr: ast.ExprArray { ...a, elements: els }, rins: cur };
 }
 
 function inserted_map(cfa: ast.ExprFieldAccess, args: ast.Expr[], env: MEnv, funcs: MFns): string {

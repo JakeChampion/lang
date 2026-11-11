@@ -1,9 +1,13 @@
 // The look of the stopwatch screens, in the dot-matrix style of look.fern.
 // The main screen is a clock above a dark disc in a ring of 60 dots, with
 // the time in large dots and the state in small dots below it. The settings
-// and the About screen are cards that scroll. It draws a View on a frame and
-// does no other I/O, so the host tests it on a frame in memory.
+// and the About screen are cards that scroll. `nodes` gives a screen as
+// nodes of std/android/ui/scene: one node that draws the View, and one node
+// for each part that takes a tap. It does no other I/O, so the host tests
+// it on a frame in memory.
 import "std/android/draw";
+import "std/android/text";
+import "std/android/ui/scene";
 import "std/string";
 import "../look";
 import "../matrix";
@@ -132,7 +136,8 @@ pub function about_max_scroll(w: i32, h: i32, text: string): i32 {
   return screen.max_scroll(h, last.y + last.h, screen.dp(w, h, 32));
 }
 
-pub function render(f: draw.Frame, v: View): void {
+// Draws the view `v` on the whole frame.
+function paint(f: draw.Frame, v: View): void {
   f.fill(0, 0, f.width, f.height, look.bg());
   if (v.page == screen.SETTINGS) {
     settings(f, v);
@@ -141,6 +146,65 @@ pub function render(f: draw.Frame, v: View): void {
   } else {
     main_screen(f, v);
   }
+}
+
+// A node with no pixels that takes a tap: the action `name` with the
+// number `arg`.
+function target(r: screen.Rect, name: string, arg: i32): scene.Node {
+  return scene.Node { ...scene.node(r.x, r.y, r.w, r.h, scene.Blank), tap: scene.Action { name: name, arg: arg } };
+}
+
+// The rectangle `r` of a list, moved up by how far the list scrolls.
+function scrolled(r: screen.Rect, scroll: i32): screen.Rect {
+  return screen.Rect { ...r, y: r.y - scroll };
+}
+
+// The parts of the main screen that take a tap: the MENU button while the
+// title shows, and the menu with its two items while it is open. A tap on
+// the menu outside its items does nothing.
+function main_targets(v: View, w: i32, h: i32): scene.Node[] {
+  let ns: scene.Node[] = [];
+  if (v.chrome) {
+    ns = ns.append(target(screen.corner_button(w, h, "MENU"), "menu", 0));
+  }
+  if (v.menu) {
+    ns = ns.append(target(screen.menu_panel(w, h), "panel", 0)).append(target(screen.menu_item(w, h, 0), "settings", 0)).append(target(screen.menu_item(w, h, 1), "about", 0));
+  }
+  return ns;
+}
+
+// The parts of the settings that take a tap: the card of each switch, and
+// the BACK button, which scrolls with the list.
+function settings_targets(v: View, w: i32, h: i32): scene.Node[] {
+  let ns: scene.Node[] = [];
+  let all = stopwatch.settings();
+  for k in 0..all.len() {
+    if (all[k].toggle) {
+      ns = ns.append(target(scrolled(setting_card(w, h, k), v.scroll), "toggle", k));
+    }
+  }
+  return ns.append(target(scrolled(screen.corner_button(w, h, "BACK"), v.scroll), "back", 0));
+}
+
+// The nodes of the view `v` on a window of `w` by `h`: the node that draws
+// the screen, then the parts that take a tap.
+pub function nodes(v: View, w: i32, h: i32): scene.Node[] {
+  let ns = [scene.node(0, 0, w, h, scene.Custom("screen", 0, (f: draw.Frame, x: i32, y: i32, bw: i32, bh: i32): void => paint(f, v)))];
+  let targets = main_targets(v, w, h);
+  if (v.page == screen.SETTINGS) {
+    targets = settings_targets(v, w, h);
+  } else if (v.page == screen.ABOUT) {
+    targets = [target(scrolled(screen.corner_button(w, h, "BACK"), v.scroll), "back", 0)];
+  }
+  for n in targets {
+    ns = ns.append(n);
+  }
+  return ns;
+}
+
+// Draws the view `v` on the frame.
+pub function render(f: draw.Frame, v: View): void {
+  let c = scene.render(f, text.Fonts { faces: [], weights: [] }, text.new_cache(), nodes(v, f.width, f.height));
 }
 
 // The radius of a dot of text with `pitch`, for the thin font or the normal

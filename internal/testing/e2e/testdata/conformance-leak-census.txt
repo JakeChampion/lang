@@ -1,3 +1,5 @@
+# 2026-11-11: generic_call_gives_its_expected_type_to_an_array_argument is clean under RC trace.
+# 2026-11-11: repeatable_closure_owned_inputs has zero unpaired allocations under native RC trace.
 # 2026-11-11: a_function_named_like_a_raw_builtin_shadows_it is clean under RC trace.
 # 2026-11-11: nested_array_literals_take_the_wider_element_type is clean under RC trace.
 # 2026-11-11: integer_literal_in_an_append_on_a_float_array_is_a_float is clean under RC trace.
@@ -437,6 +439,7 @@ generic_assoc_through_type_param                     0
 generic_associated_fn                                0
 generic_box                                          0
 generic_call_binds_through_closure_array_param       0
+generic_call_gives_its_expected_type_to_an_array_argument 0
 generic_call_in_struct_field                         0
 generic_call_infers_from_variant_argument            0
 generic_call_through_fn_value                        0
@@ -1183,6 +1186,7 @@ regex_ops                                            0
 regex_replace_edge                                   0
 regex_replace_groups                                 0
 regex_wordbound                                      0
+repeatable_closure_owned_inputs                       0
 result_combinators_accept_unit_payloads               0
 result_err_path                                      0
 result_match                                         0

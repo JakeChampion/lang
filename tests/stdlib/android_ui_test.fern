@@ -25,12 +25,12 @@ function screen(): ui.Screen {
 }
 
 function laid(root: ui.El): ui.Layout {
-  return ui.layout(root, fonts(), screen(), map_new(4), "");
+  return ui.layout(root, fonts(), screen(), map_new(4), ui.no_focus());
 }
 
 function scrolled(root: ui.El, name: string, to: i32): ui.Layout {
   let offsets: Map[string, i32] = map_new(4);
-  return ui.layout(root, fonts(), screen(), offsets.insert(name, to), "");
+  return ui.layout(root, fonts(), screen(), offsets.insert(name, to), ui.no_focus());
 }
 
 function label(s: string): ui.El {
@@ -94,7 +94,7 @@ function test_text_wraps(): test.TestOutcome {
 
 function test_roles_take_the_theme(): test.TestOutcome {
   let dark = ui.Screen { ...screen(), theme: ui.theme(true) };
-  let lay = ui.layout(ui.box().grow(1.0).background(ui.SURFACE), fonts(), dark, map_new(4), "");
+  let lay = ui.layout(ui.box().grow(1.0).background(ui.SURFACE), fonts(), dark, map_new(4), ui.no_focus());
   let own_color = laid(ui.box().grow(1.0).background(draw.rgb(1, 2, 3)));
   let got = "";
   match (lay.nodes[0].paint) {
@@ -114,7 +114,7 @@ function test_roles_take_the_theme(): test.TestOutcome {
 
 function test_safe_area(): test.TestOutcome {
   let s = ui.Screen { ...screen(), top: 24, bottom: 48 };
-  let lay = ui.layout(ui.box().grow(1.0).background(ui.SURFACE), fonts(), s, map_new(4), "");
+  let lay = ui.layout(ui.box().grow(1.0).background(ui.SURFACE), fonts(), s, map_new(4), ui.no_focus());
   return test.assert_eq(boxes(lay.nodes) + " " + s.height().to_string(), "0,24,200,328 328");
 }
 
@@ -463,7 +463,7 @@ function test_text_follows_the_font_scale(): test.TestOutcome {
   // At twice the font size, "AAA" at 10 sp is 36 pixels wide and 20 high.
   // A size in dp does not change.
   let big = ui.Screen { ...screen(), font: 2.0 };
-  let lay = ui.layout(ui.column([label("AAA"), ui.box().width(10.0).height(10.0).background(ui.PRIMARY)]), fonts(), big, map_new(4), "");
+  let lay = ui.layout(ui.column([label("AAA"), ui.box().width(10.0).height(10.0).background(ui.PRIMARY)]), fonts(), big, map_new(4), ui.no_focus());
   let s = sim.scaled(sim.start(new_counter(), counter(), fonts(), 200, 400, 1.0), 1.5);
   return test.assert_eq(boxes(lay.nodes) + " " + s.shell.host.screen.font.to_string(), "0,0,36,20 0,20,10,10 1.5");
 }
@@ -513,7 +513,7 @@ function test_field_layout(): test.TestOutcome {
   // caret before the hint, and its line is 2 dp.
   let root = ui.column([ui.field("name", "", "AV")]);
   let plain = laid(root);
-  let focused = ui.layout(root, fonts(), screen(), map_new(4), "name");
+  let focused = ui.layout(root, fonts(), screen(), map_new(4), ui.Focus { field: "name", caret: 0 });
   let tap = plain.nodes[0].tap.name;
   return test.assert_eq(boxes(plain.nodes) + " | " + boxes(focused.nodes) + " | " + (tap == ui.FIELD_ACTION + "name").to_string(), "0,0,200,56 16,19,19,17 0,55,200,1 | 0,0,200,56 16,19,19,17 17,19,2,17 0,54,200,2 | true");
 }
@@ -564,6 +564,118 @@ function test_field_is_spoken(): test.TestOutcome {
   return test.assert_eq(empty + " / " + filled, "AV|A / AV, A|A");
 }
 
+// The x of the caret of the layout: the fill of 2 pixels in the primary
+// color, or -1.
+function caret_x(lay: ui.Layout): i32 {
+  for n in lay.nodes {
+    match (n.paint) {
+      scene.Fill(c, _) => {
+        if (n.w == 2 && c == ui.theme(false).primary) {
+          return n.x;
+        }
+      },
+      _ => {}
+    }
+  }
+  return -1;
+}
+
+function test_a_tap_puts_the_caret(): test.TestOutcome {
+  // At 16 sp an "A" is 9.6 pixels wide, and the text starts at 16. A tap
+  // at 36 is nearest to the edge after the second "A".
+  let s = sim.type_in(form(false), "name", "AAAA");
+  let end = s.shell.host.caret;
+  s = sim.tap_at(s, 36, 28);
+  let tapped = s.shell.host.caret;
+  let at = caret_x(s.shell.host.lay);
+  // The keyboard puts a "V" at its cursor: the two characters after the
+  // caret stay after it.
+  s = sim.event(s, android.Text("AAVAA"));
+  let got = end.to_string() + " " + tapped.to_string() + " " + at.to_string() + " " + s.shell.host.caret.to_string() + " " + s.shell.host.focus;
+  return test.assert_eq(got, "4 2 37 3 name");
+}
+
+function test_hardware_keys_edit_at_the_caret(): test.TestOutcome {
+  let s = sim.tap_at(sim.type_in(form(false), "name", "AAAA"), 36, 28);
+  s = sim.event(s, android.Char(86));
+  let typed = s.shell.app.name + s.shell.host.caret.to_string();
+  s = sim.key(sim.key(s, 22), 67);
+  let deleted = s.shell.app.name + s.shell.host.caret.to_string();
+  s = sim.key(sim.key(sim.key(sim.key(s, 21), 21), 21), 67);
+  return test.assert_eq(typed + " " + deleted + " " + s.shell.app.name + s.shell.host.caret.to_string() + " " + sim.keyboard(s).unwrap_or("none"), "AAVAA3 AAVA3 AAVA0 AAVA");
+}
+
+// The text is at most as wide as the room of the field of the tests.
+function n_fits(t: string): boolean {
+  return text.width(fonts(), 0, 16, t) <= 168;
+}
+
+function test_a_long_text_shows_the_part_at_the_caret(): test.TestOutcome {
+  // The field has 168 pixels for its text, which is less than the text.
+  let root = ui.column([ui.field("name", "V".repeat(10) + "A".repeat(20), "AV")]);
+  let at_end = ui.layout(root, fonts(), screen(), map_new(4), ui.Focus { field: "name", caret: 30 });
+  let at_start = ui.layout(root, fonts(), screen(), map_new(4), ui.Focus { field: "name", caret: 0 });
+  let got = "";
+  for lay in [at_end, at_start] {
+    match (lay.nodes[1].paint) {
+      scene.Label(t, _, _, _, _) => {
+        got = got + t.take(1) + (t.len() >= 12 && n_fits(t)).to_string() + " " + (caret_x(lay) <= 184).to_string() + " ";
+      },
+      _ => {}
+    }
+  }
+  return test.assert_eq(got.trim(), "Atrue true Vtrue true");
+}
+
+struct Note { text: string, sent: i32 }
+
+function note_program(): ui.Program[Note] {
+  return ui.program((m: Note, s: ui.Screen): ui.El => ui.column([ui.area("note", m.text, "AV", 3)]), (own m: Note, msg: ui.Msg): Note => {
+    match (msg) {
+      ui.Edit("note", t) => {
+        return Note { ...m, text: t };
+      },
+      ui.Submit(_) => {
+        return Note { ...m, sent: m.sent + 1 };
+      },
+      _ => {
+        return m;
+      }
+    }
+  });
+}
+
+function test_an_area_wraps_and_takes_new_lines(): test.TestOutcome {
+  let s = sim.start(Note { text: "", sent: 0 }, note_program(), fonts(), 200, 400, 1.0);
+  // Three lines of 17 pixels and 16 dp above and below them.
+  let box = s.shell.host.lay.nodes[0].h;
+  s = sim.type_in(s, "note", "AAAA AAAA AAAA AAAA AAAA AAAA");
+  let wrapped = sim.texts(s).join("|");
+  s = sim.key(s, 66);
+  s = sim.event(s, android.Char(86));
+  let got = box.to_string() + " " + wrapped + " " + s.shell.app.sent.to_string() + " " + s.shell.app.text.ends_with("AAAA\nV").to_string() + " " + sim.texts(s).join("|");
+  return test.assert_eq(got, "83 AAAA AAAA AAAA|AAAA AAAA AAAA 0 true AAAA AAAA AAAA|AAAA AAAA AAAA|V");
+}
+
+function test_an_area_shows_the_lines_at_the_caret(): test.TestOutcome {
+  let root = ui.column([ui.area("note", "A\nAA\nAAA\nAAAA\nAAAAA", "AV", 3)]);
+  let out = laid(root);
+  let at_end = ui.layout(root, fonts(), screen(), map_new(4), ui.Focus { field: "note", caret: 19 });
+  let texts = (lay: ui.Layout): string => {
+    let parts: string[] = [];
+    for n in lay.nodes {
+      match (n.paint) {
+        scene.Label(t, _, _, _, _) => {
+          parts = parts.append(t);
+        },
+        _ => {}
+      }
+    }
+    return parts.join("|");
+  };
+  return test.assert_eq(texts(out) + " " + texts(at_end), "A|AA|AAA AAA|AAAA|AAAAA");
+}
+
 function main(): i32 {
   let r = test.new("std/android/ui");
   r = r.it("a column puts its elements one below the other", test_column);
@@ -603,5 +715,10 @@ function main(): i32 {
   r = r.it("the focus goes away", test_focus_goes_away);
   r = r.it("the keys of a hardware keyboard type", test_hardware_keys_type);
   r = r.it("an accessibility service reads a field", test_field_is_spoken);
+  r = r.it("a tap on the text puts the caret there", test_a_tap_puts_the_caret);
+  r = r.it("the keys of a hardware keyboard edit at the caret", test_hardware_keys_edit_at_the_caret);
+  r = r.it("a long text shows the part at the caret", test_a_long_text_shows_the_part_at_the_caret);
+  r = r.it("an area wraps its text and takes new lines", test_an_area_wraps_and_takes_new_lines);
+  r = r.it("an area shows the lines at the caret", test_an_area_shows_the_lines_at_the_caret);
   return r.finish();
 }

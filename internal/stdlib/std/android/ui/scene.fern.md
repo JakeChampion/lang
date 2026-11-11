@@ -409,43 +409,69 @@ function outline(fr: draw.Frame, n: Node, color: i32, r0: i32, width: i32): void
   }
 }
 
-// Takes the pixels of the box of `n` outside its rounded corners away.
-function round_off(fr: draw.Frame, n: Node, r0: i32): void {
-  let r = radius_in(r0, n.w, n.h);
-  if (r == 0) {
-    return;
-  }
+// The pixel at px and py of the box of `n` is in one of its four corner
+// squares of side `r`.
+function in_corner(n: Node, r: i32, px: i32, py: i32): boolean {
+  return (py < r || py >= n.h - r) && (px < r || px >= n.w - r);
+}
+
+// The pixels of the corner squares of side `r` of the box of `n`, row by
+// row.
+function corner_pixels(fr: draw.Frame, n: Node, r: i32): i32[] {
+  let out: i32[] = [];
   for py in 0..n.h {
-    if (py >= r && py < n.h - r) {
-      continue;
-    }
     for px in 0..n.w {
-      if (px >= r && px < n.w - r) {
+      if (in_corner(n, r, px, py)) {
+        out = out.append(fr.pixel(n.x + px, n.y + py));
+      }
+    }
+  }
+  return out;
+}
+
+// One channel of a pixel that the shape covers by `a` of 255, over the
+// channel `under`.
+function mixed(over: i32, under: i32, a: i32): i32 {
+  return (over * a + under * (255 - a)) / 255;
+}
+
+// Puts the pixels `under` back outside the rounded corners of the box of
+// `n`, with a smooth edge. `under` has the corner squares as they were
+// before the picture.
+function round_over(fr: draw.Frame, n: Node, r: i32, under: i32[]): void {
+  let k = 0;
+  for py in 0..n.h {
+    for px in 0..n.w {
+      if (!in_corner(n, r, px, py)) {
         continue;
       }
       let a = inside(px, py, n.w, n.h, r);
       if (a < 255) {
         let p = fr.pixel(n.x + px, n.y + py);
-        let c = draw.rgba((p & 255) * a / 255, (p >> 8 & 255) * a / 255, (p >> 16 & 255) * a / 255, (p >> 24 & 255) * a / 255);
-        fr.store(n.x + px, n.y + py, 1, 1, c);
+        let u = under[k];
+        fr.store(n.x + px, n.y + py, 1, 1, draw.rgba(mixed(p & 255, u & 255, a), mixed(p >> 8 & 255, u >> 8 & 255, a), mixed(p >> 16 & 255, u >> 16 & 255, a), mixed(p >> 24 & 255, u >> 24 & 255, a)));
       }
+      k += 1;
     }
   }
 }
 
 // The image scaled to cover the box of `n`, with the middle of it in the
-// box.
-function picture(fr: draw.Frame, n: Node, img: draw.Image, r: i32): void {
+// box and round corners of `r0`. The pixels that were outside the corners
+// stay.
+function picture(fr: draw.Frame, n: Node, img: draw.Image, r0: i32): void {
   if (img.width <= 0 || img.height <= 0 || n.w <= 0 || n.h <= 0) {
     return;
   }
+  let r = radius_in(r0, n.w, n.h);
+  let under = corner_pixels(fr, n, r);
   let (w, h) = draw.cover_size(img.width, img.height, n.w, n.h);
   if (w == img.width && h == img.height) {
     fr.image(n.x, n.y, n.w, n.h, img);
   } else {
     fr.image(n.x, n.y, n.w, n.h, img.scaled(w, h));
   }
-  round_off(fr, n, r);
+  round_over(fr, n, r, under);
 }
 
 function paint(fr: draw.Frame, f: text.Fonts, own c: text.Cache, n: Node): text.Cache {

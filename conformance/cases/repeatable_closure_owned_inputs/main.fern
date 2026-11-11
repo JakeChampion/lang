@@ -1,0 +1,33 @@
+// spec: RH-04
+
+struct Handle { n: i32, closed: Cell[i32] }
+
+function (own h: Handle) close(): i32 {
+  h.closed.set(h.closed.get() + 1);
+  return h.n;
+}
+
+function make(own closed: Cell[i32]): own () => i32 {
+  return (): i32 => {
+    let h = Handle { n: 7, closed: unsafe { share_unchecked(closed) } };
+    return h.close();
+  };
+}
+
+function immediate(own h: Handle): i32 {
+  return ((n: i32): i32 => h.close() + n)(0);
+}
+
+function main(): i32 {
+  let closed = cell_new(0);
+  let cb = make(unsafe { share_unchecked(closed) });
+  let total = cb() + cb();
+  let consume = (own h: Handle): i32 => h.close();
+  total += consume(Handle { n: 3, closed: unsafe { share_unchecked(closed) } });
+  total += consume(Handle { n: 5, closed: unsafe { share_unchecked(closed) } });
+  total += immediate(Handle { n: 9, closed: unsafe { share_unchecked(closed) } });
+  assert(closed.get() == 5);
+  print(total);
+  print(closed.get());
+  return 0;
+}
