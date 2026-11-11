@@ -90,6 +90,17 @@ function start_content(own s: App, window: android.Window, uri: string): App {
   return App { ...s, playback: Some(p), content: Some(src), started_ns: monotonic_ns() };
 }
 
+function pause_and_replace(own s: App, own p: player.Player, now: i64): App {
+  let window = p.window;
+  let paused = p.pause(now);
+  let replaced = paused.player.replace_surface(window);
+  if let player.Failure(error) = replaced.event {
+    return fail(App { ...s, playback: Some(replaced.player) }, error);
+  }
+  log.warn("videotest: same surface accepted while paused");
+  return App { ...s, playback: Some(replaced.player), stage: 1, resume_ns: now + 100000000i64 };
+}
+
 function tick(own s: App): App {
   if (s.done) {
     return s;
@@ -103,8 +114,7 @@ function tick(own s: App): App {
     return fail(s, frame.Platform);
   }
   if (s.stage == 0 && p.scheduled_frames >= 3i64) {
-    let paused = player.Player { ...p }.pause(now);
-    return App { ...s, playback: Some(paused.player), stage: 1, resume_ns: now + 100000000i64 };
+    return pause_and_replace(s, player.Player { ...p }, now);
   }
   if (s.stage == 1) {
     if (now < s.resume_ns) {

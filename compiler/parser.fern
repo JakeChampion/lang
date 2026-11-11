@@ -2278,7 +2278,12 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
   let pending_type_args = "";
   let path_sep_line = 0;
   let path_sep_col = 0;
+  let links = 0;
   while (true) {
+    links += 1;
+    if (p.too_deep_by(links)) {
+      return (e_unknown_at("nest:too-deep", p.peek_line(), p.peek_col()), p.bail());
+    }
     let pk = p.peek_punct();
     if (pk == "(") {
       let oline = p.peek_line();
@@ -2855,11 +2860,16 @@ function parse_binary(p: Par, min_prec: i32): (ast.Expr, Par) {
 function parse_binary_nested(p: Par, min_prec: i32): (ast.Expr, Par) {
   let (lhs_expr, lhs_p) = parse_primary(p);
   p = lhs_p;
+  let links = 0;
   while (true) {
     let op = p.peek_punct();
     let prec = precedence(op);
     if (prec < min_prec) {
       return (lhs_expr, p);
+    }
+    links += 1;
+    if (p.too_deep_by(links)) {
+      return (e_unknown_at("nest:too-deep", p.peek_line(), p.peek_col()), p.bail());
     }
     let opline = p.peek_line();
     let opcol = p.peek_col();
@@ -10868,7 +10878,7 @@ pub function int_literal_tree(e: ast.Expr): boolean {
       return false;
     },
     ast.ExprBinary(b) => {
-      return int_literal_op(b.op) && int_literal_tree(b.left) && int_literal_tree(b.right);
+      return int_literal_op(b.op) && int_literal_tree(b.right) && int_literal_tree(b.left);
     },
     _ => {
       return false;
@@ -10892,7 +10902,7 @@ pub function float_literal_tree(e: ast.Expr): boolean {
     },
     ast.ExprBinary(b) => {
       if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/") {
-        return float_literal_tree(b.left) && float_literal_tree(b.right);
+        return float_literal_tree(b.right) && float_literal_tree(b.left);
       }
       return false;
     },

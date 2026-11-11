@@ -23,6 +23,16 @@ func TestDeepNestingIsADiagnosticNotACrash(t *testing.T) {
 		{"unary not", "function f(): i32 { return " + strings.Repeat("!", n) + "1; }"},
 		{"slice types", "function f(): " + strings.Repeat("[", n) + "i32" + strings.Repeat("]", n) + " { return 1; }"},
 		{"tuple patterns", "function f(): i32 { match (x) { " + strings.Repeat("(", n) + "a" + strings.Repeat(", b)", n) + " => 1 } }"},
+		{"operator chain", "function f(): i32 { return 1" + strings.Repeat(" + 1", n) + "; }"},
+		{"mixed operator chain", "function f(): i32 { return 1" + strings.Repeat(" + 1 * 2", n) + "; }"},
+		{"comparison chain", "function f(): boolean { return a" + strings.Repeat(" == a", n) + "; }"},
+		{"logic chain", "function f(): boolean { return a" + strings.Repeat(" && a", n) + "; }"},
+		{"call chain", "function f(): i32 { return g" + strings.Repeat("()", n) + "; }"},
+		{"index chain", "function f(): i32 { return xs" + strings.Repeat("[0]", n) + "; }"},
+		{"field chain", "function f(): i32 { return p" + strings.Repeat(".q", n) + "; }"},
+		{"try chain", "function f(): i32 { return a" + strings.Repeat("?", n) + "; }"},
+		{"cast chain", "function f(): i32 { return a" + strings.Repeat(" as i32", n) + "; }"},
+		{"cast chain after a call chain", "function f(): i32 { return g" + strings.Repeat("()", 3000) + strings.Repeat(" as i32", 3000) + "; }"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -34,6 +44,22 @@ func TestDeepNestingIsADiagnosticNotACrash(t *testing.T) {
 				t.Fatalf("got %v, want the P005 nesting-depth diagnostic", err)
 			}
 		})
+	}
+}
+
+// A chain of operators or postfix forms inside the bound parses. Each link
+// makes the tree one level deeper, so the chain has the limit of nesting.
+func TestChainsWellInsideTheBoundStillParse(t *testing.T) {
+	for _, n := range []int{1, 100, 4000} {
+		for _, src := range []string{
+			"function f(): i32 { return 1" + strings.Repeat(" + 1", n) + "; }",
+			"function f(): i32 { return g" + strings.Repeat("()", n) + "; }",
+			"function f(): i32 { return a" + strings.Repeat(" as i32", n) + "; }",
+		} {
+			if _, err := Parse(src); err != nil {
+				t.Errorf("a chain of %d links: %v", n, err)
+			}
+		}
 	}
 }
 

@@ -18,6 +18,8 @@ static int format_token, codec_token;
 static int output_width = 16, output_height = 8, output_right, output_bottom, custom_output;
 static int custom_deadline;
 static int64_t expected_deadline, last_deadline;
+static int surface_calls, surface_status, flush_calls;
+static void *current_window, *configured_window, *render_window, *expected_window;
 
 void mock_mode(int m) {
     assert(live_formats == 0 && live_codecs == 0);
@@ -27,7 +29,16 @@ void mock_mode(int m) {
     allow_hardware = 0; last_seek_time = -1;
     output_width = 16; output_height = 8; custom_output = 0;
     custom_deadline = 0; last_deadline = -1;
+    surface_calls = surface_status = flush_calls = 0;
+    current_window = configured_window = render_window = expected_window = NULL;
 }
+void mock_surface_status(int value) { surface_status = value; }
+void mock_expected_window(void *value) { expected_window = value; }
+int mock_surface_calls(void) { return surface_calls; }
+int mock_flush_calls(void) { return flush_calls; }
+void *mock_current_window(void) { return current_window; }
+void *mock_configured_window(void) { return configured_window; }
+void *mock_render_window(void) { return render_window; }
 void mock_expected_deadline(int64_t value) { custom_deadline = 1; expected_deadline = value; }
 int64_t mock_last_deadline(void) { return last_deadline; }
 void mock_output_format(int width, int height, int right, int bottom) {
@@ -103,13 +114,24 @@ void *AMediaCodec_createCodecByName(const char *name) {
 }
 int AMediaCodec_configure(void *c, void *f, void *w, void *crypto, uint32_t flags) {
     assert(c == &codec_token && f == &format_token && !crypto && live_codecs == 1);
-    assert(active_encoder ? (!w && flags == 1) : ((!w || w == (void *)123) && flags == 0));
+    assert(active_encoder ? (!w && flags == 1) : ((!w || w == (void *)123 || (expected_window && w == expected_window)) && flags == 0));
+    configured_window = current_window = w;
     return mode == 3 || (named_hardware && mode != 10 && !allow_hardware) ? -10000 : 0;
 }
 int AMediaCodec_start(void *c) { assert(c == &codec_token); return mode == 4 ? -10000 : 0; }
 int AMediaCodec_stop(void *c) { assert(c == &codec_token); return mode == 5 ? -10000 : 0; }
 int AMediaCodec_delete(void *c) { assert(c == &codec_token); live_codecs--; return 0; }
-int AMediaCodec_flush(void *c) { assert(c == &codec_token); output_step = 0; return 0; }
+int AMediaCodec_flush(void *c) { assert(c == &codec_token); flush_calls++; output_step = 0; return 0; }
+typedef struct AMediaCodec AMediaCodec;
+typedef struct ANativeWindow ANativeWindow;
+int32_t AMediaCodec_setOutputSurface(AMediaCodec *c, ANativeWindow *window) {
+    assert((void *)c == &codec_token && live_codecs == 1 && window && !active_encoder);
+    assert(window == (void *)123 || window == (void *)456);
+    surface_calls++;
+    if (!current_window || surface_status) return -10000;
+    current_window = window;
+    return 0;
+}
 ssize_t AMediaCodec_dequeueInputBuffer(void *c, int64_t timeout) {
     assert(c == &codec_token && timeout >= 0);
     return timeout == 0 && mode != 16 && mode != 17 ? -1 : 3;
@@ -151,6 +173,7 @@ int AMediaCodec_releaseOutputBuffer(void *c, size_t index, bool render) {
     assert(c == &codec_token && index == 2 && !render); released++; return 0;
 }
 int AMediaCodec_releaseOutputBufferAtTime(void *c, size_t index, int64_t time) {
+    render_window = current_window;
     assert(c == &codec_token && index == 2);
     if (custom_deadline) assert(time == expected_deadline);
     else assert(time == 9876543210LL || (mode == 17 && time == 10976543210LL));

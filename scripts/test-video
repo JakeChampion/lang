@@ -80,6 +80,24 @@ PYTHON
 fi
 
 
+# Surface replacement preserves pending buffers and the recovery window.
+"$fern_video_compiler" -target arm64-android -shared -export main -o build/video/video-surface-api.so tests/stdlib/android_video_surface_mock_test.fern internal/stdlib
+if [ -n "$android_target" ]; then
+  for variant in normal sanitize; do
+    flags=()
+    if [ "$variant" = sanitize ]; then flags=(-sanitize); fi
+    "$fern_video_compiler" -target "$android_target" -shared "${flags[@]}" -export main -o "build/video/surface-$variant.so" tests/stdlib/android_video_surface_mock_test.fern internal/stdlib
+  done
+  LD_LIBRARY_PATH="$PWD/build/video/audio:$PWD/build/video${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" python3 - <<'PYTHON'
+import ctypes
+for variant in ('normal', 'sanitize'):
+    result = ctypes.CDLL(f'./build/video/surface-{variant}.so').main()
+    if result != 0:
+        raise SystemExit(f'Android surface replacement test failed at check {result}')
+print('Android surface replacement, pending buffers, pause, errors, and recovery checks passed')
+PYTHON
+fi
+
 # Content assets use libc descriptors and a separate JNI test double.
 "$fern_video_compiler" -target arm64-android -shared -export main -o build/video/source-api.so tests/stdlib/android_video_source_mock_test.fern internal/stdlib
 if [ -n "$android_target" ]; then

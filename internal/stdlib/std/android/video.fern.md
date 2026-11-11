@@ -40,6 +40,14 @@ Release each output buffer exactly once, including discarded frames and EOS buff
 
 A flush invalidates all outstanding buffers. A close also invalidates the codec.
 
+`set_output_surface` changes the destination of a decoder that already uses surface output.
+The replacement must have a compatible usage type. Android checks this compatibility.
+
+The method rejects a null window and performs no flush, stop, or buffer release.
+The caller keeps both windows valid through the call and retains ownership of them.
+After success, the caller can release its old window reference.
+This method does not detach a surface or convert byte-buffer output into surface output.
+
 Timeouts use microseconds. Negative timeouts return `Header`.
 `None`, `Retry`, and `EncodingRetry` indicate platform backpressure.
 After input EOS, drain output through a buffer with the EOS flag.
@@ -136,6 +144,9 @@ pub const COLOR_SURFACE: i32 = 2130708361;
 
 @import("libmediandk.so", "AMediaCodec_createCodecByName")
 function c_create_name(name: usize): usize;
+
+@import("libmediandk.so", "AMediaCodec_setOutputSurface")
+function c_output_surface(codec: usize, window: usize): i32;
 
 @import("libmediandk.so", "AMediaFormat_getBuffer")
 function c_get_buffer(format: usize, name: usize, data: usize, size: usize): u8;
@@ -322,6 +333,19 @@ function open_impl(config: Config, window: usize, name: string, require_window: 
 
 pub function open(config: Config, window: usize, limits: frame.Limits): Result[Decoder, frame.VideoError] {
   return open_impl(config, window, "", true, limits);
+}
+
+pub function (decoder: Decoder) set_output_surface(window: usize): Result[void, frame.VideoError] {
+  if (window == 0 as usize) {
+    return Err(frame.Header);
+  }
+  if (decoder.handle == 0 as usize) {
+    return Err(frame.State);
+  }
+  if (c_output_surface(decoder.handle, window) != 0) {
+    return Err(frame.Platform);
+  }
+  return Ok(());
 }
 
 // A zero window selects byte-buffer output. A nonzero window selects a surface.

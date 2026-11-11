@@ -1,0 +1,289 @@
+import "std/android/video";
+import "std/android/video/player";
+import "std/android/video/capabilities";
+import "std/video/frame";
+import "std/option";
+
+@import("libmediandk.so", "mock_mode")
+function mode(value: i32): void;
+
+@import("libmediandk.so", "mock_jni_mode")
+function jni_mode(value: i32): void;
+
+@import("libmediandk.so", "mock_jni_env")
+function env(): usize;
+
+@import("libmediandk.so", "mock_allow_hardware")
+function allow_hardware(): void;
+
+@import("libmediandk.so", "mock_live")
+function live(): i32;
+
+@import("libmediandk.so", "mock_surface_status")
+function status(value: i32): void;
+
+@import("libmediandk.so", "mock_expected_window")
+function expect_window(value: usize): void;
+
+@import("libmediandk.so", "mock_surface_calls")
+function calls(): i32;
+
+@import("libmediandk.so", "mock_flush_calls")
+function flushes(): i32;
+
+@import("libmediandk.so", "mock_queued")
+function queued(): i32;
+
+@import("libmediandk.so", "mock_released")
+function released(): i32;
+
+@import("libmediandk.so", "mock_current_window")
+function current_window(): usize;
+
+@import("libmediandk.so", "mock_configured_window")
+function configured_window(): usize;
+
+@import("libmediandk.so", "mock_render_window")
+function render_window(): usize;
+
+@import("libmediandk.so", "mock_expected_deadline")
+function expect_deadline(value: i64): void;
+
+function opened(): Result[player.Player, frame.VideoError] {
+  mode(17);
+  jni_mode(0);
+  allow_hardware();
+  return player.open(env(), 29, 77, 0i64, 100i64, 123 as usize, capabilities.PreferHardware, frame.Limits { max_pixels: 128, max_packet_bytes: 512 });
+}
+
+function pending(): Result[player.Player, frame.VideoError] {
+  let p = opened()?;
+  for _ in 0..5 {
+    let result = p.tick(9876543210i64);
+    if let player.Failure(error) = result.event {
+      return Err(error);
+    }
+    p = result.player;
+  }
+  return Ok(p);
+}
+
+function idle(event: player.Event): boolean {
+  return match (event) { player.Idle => true, _ => false };
+}
+
+function failure(event: player.Event, error: frame.VideoError): boolean {
+  return match (event) { player.Failure(value) => value == error, _ => false };
+}
+
+function snapshot(p: player.Player): i64[] {
+  let values: i64[] = [p.config_next as i64, p.target_us, p.last_input_us, p.last_frame_us, p.recovery_us, p.scheduled_frames, p.dropped_frames];
+  if let Some(c) = p.clock {
+    values = values.append(c.media_us).append(c.monotonic_ns).append(c.paused_ns).append(if (c.paused) { 1i64 } else { 0i64 });
+  }
+  if let Some(b) = p.pending {
+    values = values.append(b.index as i64).append(b.offset as i64).append(b.size as i64).append(b.presentation_time_us).append(b.flags as i64);
+  }
+  return values;
+}
+
+function finish(own p: player.Player, code: i32): i32 {
+  let Ok(_) = p.close() else {
+    return code;
+  };
+  return if (live() == 0) { 0 } else { code + 1 };
+}
+
+function renders(own p: player.Player, code: i32): i32 {
+  expect_deadline(9976543210i64);
+  let result = p.tick(9976543210i64);
+  let event = match (result.event) { player.FrameScheduled(value) => value == 223456i64, _ => false };
+  if (!event || render_window() != 456 as usize || result.player.scheduled_frames != 2 || released() != 2) {
+    return code;
+  }
+  return finish(result.player, code + 1);
+}
+
+function switched(result: player.Tick, before: i64[]): boolean {
+  return idle(result.event) && snapshot(result.player) == before && result.player.window == 456 as usize && current_window() == 456 as usize;
+}
+
+function replacement(): i32 {
+  let Ok(p) = pending() else {
+    return 101;
+  };
+  let before = snapshot(p);
+  let count = queued();
+  let result = p.replace_surface(456 as usize);
+  if (!switched(result, before)) {
+    return 102;
+  }
+  if (calls() != 1 || flushes() != 0 || released() != 1 || queued() != count || result.player.failed) {
+    return 103;
+  }
+  return renders(result.player, 104);
+}
+
+function paused(): i32 {
+  let Ok(p) = pending() else {
+    return 201;
+  };
+  let result = p.pause(9876543210i64);
+  let before = snapshot(result.player);
+  let changed = result.player.replace_surface(456 as usize);
+  if (!idle(changed.event) || !changed.player.paused || snapshot(changed.player) != before || calls() != 1 || flushes() != 0) {
+    return 202;
+  }
+  let resumed = changed.player.resume(9876543210i64);
+  return renders(resumed.player, 203);
+}
+
+function recovery(): i32 {
+  let Ok(p) = pending() else {
+    return 301;
+  };
+  let changed = p.replace_surface(456 as usize);
+  if (!idle(changed.event)) {
+    return 302;
+  }
+  expect_window(456 as usize);
+  let recovered = changed.player.recover_software(env(), 29);
+  let event = match (recovered.event) { player.Recovered(_) => true, _ => false };
+  if (!event || recovered.player.window != 456 as usize || configured_window() != 456 as usize || calls() != 1 || flushes() != 1) {
+    return 303;
+  }
+  return finish(recovered.player, 304);
+}
+
+function retained_failure(result: player.Tick): boolean {
+  return failure(result.event, frame.Platform) && result.player.failed && result.player.window == 123 as usize && current_window() == 123 as usize;
+}
+
+function recover_failed(own p: player.Player, count: i32): i32 {
+  let stopped = p.tick(9976543210i64);
+  if (!failure(stopped.event, frame.State) || released() != 1 || queued() != count) {
+    return 404;
+  }
+  status(0);
+  let recovered = stopped.player.recover_software(env(), 29);
+  let event = match (recovered.event) { player.Recovered(_) => true, _ => false };
+  if (!event || configured_window() != 123 as usize || recovered.player.window != 123 as usize) {
+    return 405;
+  }
+  return finish(recovered.player, 406);
+}
+
+function platform_error(): i32 {
+  let Ok(p) = pending() else {
+    return 401;
+  };
+  let before = snapshot(p);
+  let count = queued();
+  status(-10000);
+  let result = p.replace_surface(456 as usize);
+  if (!retained_failure(result)) {
+    return 402;
+  }
+  if (snapshot(result.player) != before || flushes() != 0 || calls() != 1 || queued() != count || released() != 1) {
+    return 403;
+  }
+  return recover_failed(result.player, count);
+}
+
+function invalid(): i32 {
+  let Ok(p) = pending() else {
+    return 501;
+  };
+  let before = snapshot(p);
+  let result = p.replace_surface(0 as usize);
+  if (!failure(result.event, frame.Header) || result.player.failed || snapshot(result.player) != before || calls() != 0 || result.player.window != 123 as usize) {
+    return 502;
+  }
+  let changed = result.player.replace_surface(456 as usize);
+  if (!idle(changed.event) || calls() != 1) {
+    return 503;
+  }
+  return finish(changed.player, 504);
+}
+
+function inactive(): i32 {
+  let Ok(p) = pending() else {
+    return 601;
+  };
+  let closed = player.Player { ...p, decoder_live: false };
+  let result = closed.replace_surface(456 as usize);
+  if (!failure(result.event, frame.State) || calls() != 0 || result.player.decoder_live || result.player.failed) {
+    return 602;
+  }
+  let failed = player.Player { ...result.player, decoder_live: true, failed: true };
+  let changed = player.Player { ...failed }.replace_surface(456 as usize);
+  if (!failure(changed.event, frame.State) || calls() != 0 || !changed.player.failed) {
+    return 603;
+  }
+  return finish(changed.player, 604);
+}
+
+function repeated(): i32 {
+  let Ok(p) = pending() else {
+    return 701;
+  };
+  let before = snapshot(p);
+  for i in 0..256 {
+    let result = p.replace_surface(if (i % 2 == 0) { 456 as usize } else { 123 as usize });
+    if (!idle(result.event)) {
+      return 702;
+    }
+    p = result.player;
+  }
+  if (calls() != 256 || flushes() != 0 || released() != 1 || snapshot(p) != before || p.window != 123 as usize) {
+    return 703;
+  }
+  return finish(p, 704);
+}
+
+function invalid_decoder(decoder: video.Decoder): i32 {
+  let Err(invalid) = decoder.set_output_surface(0 as usize) else {
+    return 804;
+  };
+  let empty = video.Decoder { ...decoder, handle: 0 as usize };
+  let Err(closed) = empty.set_output_surface(123 as usize) else {
+    return 805;
+  };
+  if (invalid != frame.Header || closed != frame.State || calls() != 1 || flushes() != 0) {
+    return 806;
+  }
+  return 0;
+}
+
+function byte_buffers(): i32 {
+  mode(0);
+  let config = video.Config { codec: video.H264, format: frame.Format { width: 16, height: 8 }, csd0: [], csd1: [] };
+  let Ok(decoder) = video.open_named(config, 0 as usize, "c2.android.avc.decoder", frame.Limits { max_pixels: 128, max_packet_bytes: 512 }) else {
+    return 801;
+  };
+  let Err(error) = decoder.set_output_surface(456 as usize) else {
+    return 802;
+  };
+  if (error != frame.Platform || calls() != 1 || current_window() != 0 as usize) {
+    return 803;
+  }
+  let check = invalid_decoder(decoder);
+  if (check != 0) {
+    return check;
+  }
+  let Ok(_) = decoder.close() else {
+    return 807;
+  };
+  return if (live() == 0) { 0 } else { 808 };
+}
+
+function main(): i32 {
+  let checks = [replacement, paused, recovery, platform_error, invalid, inactive, repeated, byte_buffers];
+  for check in checks {
+    let result = check();
+    if (result != 0) {
+      return result;
+    }
+  }
+  return 0;
+}
