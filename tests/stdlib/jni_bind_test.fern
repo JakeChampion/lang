@@ -1,0 +1,186 @@
+// Tests of std/jni/bind with the class files of classfile_vectors.fern.
+// jni_bind_sample.fern is the module that tools/jnibind writes for these
+// classes. TestJnibind compares the two, and this file imports it, so the
+// checker reads each wrapper.
+import "std/classfile";
+import "std/jni/bind";
+import "std/option";
+import "std/string";
+import "std/test";
+import "./classfile_vectors";
+import "./jni_bind_sample";
+
+function classes(): classfile.Class[] {
+  let out: classfile.Class[] = [];
+  for bytes in [classfile_vectors.sample(), classfile_vectors.shape(), classfile_vectors.point()] {
+    let Ok(c) = classfile.parse(bytes) else {
+      exit(90);
+    };
+    out = out.append(c);
+  }
+  return out;
+}
+
+function generated(requests: bind.Request[]): string {
+  return match (bind.generate(classes(), requests)) {
+    Ok(text) => text,
+    Err(e) => "error: " + e,
+  };
+}
+
+function all(class: string): bind.Request {
+  return bind.Request { class: class, members: [] };
+}
+
+// The names of `parts` that `text` does not have.
+function absent(text: string, parts: string[]): string {
+  let out: string[] = [];
+  for p in parts {
+    if (!text.contains(p)) {
+      out = out.append(p);
+    }
+  }
+  return out.join(" | ");
+}
+
+function test_snake(): test.TestOutcome {
+  let got = bind.snake("setAction") + " " + bind.snake("getURL") + " " + bind.snake("is24HourFormat") + " " + bind.snake("<init>") + " " + bind.snake("x") + " " + bind.snake("MemoryInfo");
+  return test.assert_eq(got, "set_action get_url is24_hour_format init x memory_info");
+}
+
+function test_type_name(): test.TestOutcome {
+  return test.assert_eq(bind.type_name("android/content/Intent") + " " + bind.type_name("android/app/ActivityManager$MemoryInfo") + " " + bind.type_name("Plain"), "Intent ActivityManager_MemoryInfo Plain");
+}
+
+function test_structs(): test.TestOutcome {
+  let text = generated([all("dev/fern/Point"), all("dev/fern/Shape")]);
+  return test.assert_eq(
+    absent(text, [
+      "import \"std/jni\";",
+      "pub struct Point { ref: usize }",
+      "pub function (x: Point) as_shape(): Shape {",
+      "pub struct ShapeClass { class: usize, id_area: usize }",
+      "pub function point_class(e: usize): Result[PointClass, jni.JavaError] {",
+      "jni.find_class(e, \"dev/fern/Point\");",
+      "jni.get_static_method_id(e, class, \"parse\", \"(Ljava/lang/String;)Ldev/fern/Point;\");",
+      "jni.get_field_id(e, class, \"x\", \"I\");",
+      "jni.get_static_field_id(e, class, \"made\", \"J\");",
+    ]),
+    "",
+  );
+}
+
+// A parent with no request gives no conversion, and its type is
+// jni.Object.
+function test_unbound_class(): test.TestOutcome {
+  let text = generated([all("dev/fern/Point")]);
+  if (text.contains("as_shape") || text.contains("pub struct Shape")) {
+    return test.fail("a class with no request has a struct");
+  }
+  return test.assert_eq(absent(text, ["pub function (c: PointClass) outline(e: usize, self: Point): Result[jni.Object, jni.JavaError] {"]), "");
+}
+
+function test_signatures(): test.TestOutcome {
+  let text = generated([all("dev/fern/Point"), all("dev/fern/Shape")]);
+  return test.assert_eq(
+    absent(text, [
+      "pub function (c: PointClass) new(e: usize): Result[Point, jni.JavaError] {",
+      "pub function (c: PointClass) new_int_string(e: usize, a0: i32, a1: string): Result[Point, jni.JavaError] {",
+      "pub function (c: PointClass) set_int(e: usize, self: Point, a0: i32): Result[void, jni.JavaError] {",
+      "pub function (c: PointClass) set_string_long(e: usize, self: Point, a0: string, a1: i64): Result[void, jni.JavaError] {",
+      "pub function (c: PointClass) match_(e: usize, self: Point, a0: Point, a1: f32): Result[boolean, jni.JavaError] {",
+      "pub function (c: PointClass) parts(e: usize, self: Point, a0: jni.Object): Result[jni.Object, jni.JavaError] {",
+      "pub function (c: PointClass) parse(e: usize, a0: string): Result[Point, jni.JavaError] {",
+      "pub function (c: PointClass) outline(e: usize, self: Point): Result[Shape, jni.JavaError] {",
+      "pub function (c: PointClass) made(e: usize): Result[i64, jni.JavaError] {",
+      "pub function (c: ShapeClass) area(e: usize, self: Shape): Result[f64, jni.JavaError] {",
+    ]),
+    "",
+  );
+}
+
+// The entry of the JNI table is for the kind of the result, and a
+// constructor calls NewObjectA, which is entry 30.
+function test_calls(): test.TestOutcome {
+  let text = generated([all("dev/fern/Point"), all("dev/fern/Shape")]);
+  return test.assert_eq(
+    absent(text, [
+      "let got = jni.invoke(e, 30, c.class, c.id_new_int_string, args);",
+      "jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_set_int, args);",
+      "let got = jni.invoke(e, jni.CALL_METHOD + 3, self.ref, c.id_match_, args);",
+      "let got = jni.invoke_f32(e, jni.CALL_METHOD + 21, self.ref, c.id_half, args);",
+      "let got = jni.invoke_f64(e, jni.CALL_METHOD + 24, self.ref, c.id_area, args);",
+      "let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_parse, args);",
+      "let got = jni.invoke(e, jni.GET_FIELD + 5, self.ref, c.id_x, 0 as usize);",
+      "let got = jni.invoke(e, jni.GET_STATIC_FIELD + 6, c.class, c.id_made, 0 as usize);",
+      "jni.jvalue_set_long(args, 1, a1);",
+      "jni.jvalue_set_f32(args, 1, a1);",
+      "let s0 = jni.new_string(e, a0);",
+      "jni.delete_local_ref(e, s0);",
+      "return Ok(got as i32 << 24 >> 24);",
+      "return Ok((got & 65535 as usize) as i32);",
+      "return Ok((got & 255 as usize) != 0 as usize);",
+    ]),
+    "",
+  );
+}
+
+function test_constants(): test.TestOutcome {
+  let text = generated([all("dev/fern/Sample"), all("dev/fern/Point"), all("dev/fern/Shape")]);
+  let lost = absent(text, [
+    "pub const SAMPLE_COUNT: i32 = -7;",
+    "pub const SAMPLE_BIG: i64 = 5000000000;",
+    "pub const SAMPLE_ON: boolean = true;",
+    "pub const SAMPLE_LETTER: i32 = 65;",
+    "pub const POINT_ORIGIN: string = \"0,0\";",
+    "pub const SHAPE_SIDES: i32 = 4;",
+  ]);
+  // A float has no constant, and a constant has no function.
+  if (text.contains("SAMPLE_HALF") || text.contains("id_count")) {
+    return test.fail("a constant that the module must not have");
+  }
+  return test.assert_eq(lost, "");
+}
+
+// The module of the sample has the values of the Java constants. The text
+// has a character of two bytes, a character above U+FFFF and a NUL.
+function test_sample_module(): test.TestOutcome {
+  let null = jni_bind_sample.Point { ref: 0 as usize };
+  let got = jni_bind_sample.SAMPLE_COUNT.to_string() + " " + jni_bind_sample.POINT_ORIGIN + " " + jni_bind_sample.SHAPE_SIDES.to_string() + " " + null.is_null().to_string() + " " + null.as_shape().is_null().to_string() + " " + (jni_bind_sample.SAMPLE_NAME == "fern é 🌿 \x00 end").to_string();
+  return test.assert_eq(got, "-7 0,0 4 true true true");
+}
+
+function test_members(): test.TestOutcome {
+  let text = generated([bind.Request { class: "dev/fern/Point", members: ["set(I)V", "area", "x", "ORIGIN"] }]);
+  if (text.contains("set_string_long") || text.contains("id_label") || text.contains("id_new")) {
+    return test.fail("a member with no request has a function");
+  }
+  // One method with the name is not overloaded, so it has the short name.
+  return test.assert_eq(
+    absent(text, [
+      "pub struct PointClass { class: usize, id_area: usize, id_set: usize, id_x: usize }",
+      "pub const POINT_ORIGIN: string = \"0,0\";",
+    ]),
+    "",
+  );
+}
+
+function test_errors(): test.TestOutcome {
+  let got = generated([all("dev/fern/Absent")]) + "; " + generated([bind.Request { class: "dev/fern/Point", members: ["nothing"] }]) + "; " + generated([bind.Request { class: "dev/fern/Sample", members: ["rows"] }]) + "; " + generated([all("dev/fern/Point"), all("dev/fern/Point")]);
+  return test.assert_eq(got, "error: the classes do not have dev/fern/Absent; error: dev/fern/Point has no public member nothing; error: dev/fern/Sample has no public member rows; error: two requests have a class with the name Point");
+}
+
+function main(): i32 {
+  let r = test.new("std/jni/bind");
+  r = r.it("snake gives a Java name in snake case", test_snake);
+  r = r.it("type_name gives the name of a class with no package", test_type_name);
+  r = r.it("a class has a struct, conversions and a struct of IDs", test_structs);
+  r = r.it("a class with no request is a jni.Object", test_unbound_class);
+  r = r.it("a function has the Fern types of its Java member", test_signatures);
+  r = r.it("a function calls the entry for its kind of result", test_calls);
+  r = r.it("a constant field is a constant of the module", test_constants);
+  r = r.it("the module of the sample has its constants", test_sample_module);
+  r = r.it("a request with members binds only them", test_members);
+  r = r.it("generate refuses a request that is not correct", test_errors);
+  return r.finish();
+}
