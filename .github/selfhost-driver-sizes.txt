@@ -1,3 +1,7 @@
+# 2026-11-11: PR #15285 at b7a115a043, driver-sizes-x86_64 job 130523491654.
+# The PR changes one test and one document. The drift of main grew checker_codes_run 5.1%,
+# checker_modload_run 6.0%, asm_run 5.4% and asm_ir_run 5.5%. Each moves to its measured value.
+# The 5% tolerance is unchanged.
 # 2026-11-11: PR #15233 at c9ce8161bd, driver-sizes-x86_64 job 130271740223.
 # Pin runtime_run to 16668464 bytes. The local stock build agrees. The 5% tolerance is unchanged.
 # Evidence: docs/benchmarks/callback-result-ci-2026-11-11/.
