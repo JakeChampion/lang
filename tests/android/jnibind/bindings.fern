@@ -24,11 +24,14 @@ pub function activity_class(e: usize): Result[ActivityClass, jni.JavaError] {
   jni.check(e)?;
   let class = jni.new_global_ref(e, local);
   jni.delete_local_ref(e, local);
-  let id_get_local_class_name = jni.get_method_id(e, class, "getLocalClassName", "()Ljava/lang/String;");
-  jni.check(e)?;
-  let id_is_finishing = jni.get_method_id(e, class, "isFinishing", "()Z");
-  jni.check(e)?;
+  let id_get_local_class_name = jni.checked_id(e, class, jni.get_method_id(e, class, "getLocalClassName", "()Ljava/lang/String;"))?;
+  let id_is_finishing = jni.checked_id(e, class, jni.get_method_id(e, class, "isFinishing", "()Z"))?;
   return Ok(ActivityClass { class: class, id_get_local_class_name: id_get_local_class_name, id_is_finishing: id_is_finishing });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ActivityClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
 }
 
 // android.app.Activity.getLocalClassName()Ljava/lang/String;
@@ -70,11 +73,14 @@ pub function context_class(e: usize): Result[ContextClass, jni.JavaError] {
   jni.check(e)?;
   let class = jni.new_global_ref(e, local);
   jni.delete_local_ref(e, local);
-  let id_get_package_manager = jni.get_method_id(e, class, "getPackageManager", "()Landroid/content/pm/PackageManager;");
-  jni.check(e)?;
-  let id_get_package_name = jni.get_method_id(e, class, "getPackageName", "()Ljava/lang/String;");
-  jni.check(e)?;
+  let id_get_package_manager = jni.checked_id(e, class, jni.get_method_id(e, class, "getPackageManager", "()Landroid/content/pm/PackageManager;"))?;
+  let id_get_package_name = jni.checked_id(e, class, jni.get_method_id(e, class, "getPackageName", "()Ljava/lang/String;"))?;
   return Ok(ContextClass { class: class, id_get_package_manager: id_get_package_manager, id_get_package_name: id_get_package_name });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ContextClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
 }
 
 // android.content.Context.getPackageManager()Landroid/content/pm/PackageManager;
@@ -116,9 +122,13 @@ pub function package_manager_class(e: usize): Result[PackageManagerClass, jni.Ja
   jni.check(e)?;
   let class = jni.new_global_ref(e, local);
   jni.delete_local_ref(e, local);
-  let id_query_intent_activities = jni.get_method_id(e, class, "queryIntentActivities", "(Landroid/content/Intent;I)Ljava/util/List;");
-  jni.check(e)?;
+  let id_query_intent_activities = jni.checked_id(e, class, jni.get_method_id(e, class, "queryIntentActivities", "(Landroid/content/Intent;I)Ljava/util/List;"))?;
   return Ok(PackageManagerClass { class: class, id_query_intent_activities: id_query_intent_activities });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: PackageManagerClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
 }
 
 // android.content.pm.PackageManager.queryIntentActivities(Landroid/content/Intent;I)Ljava/util/List;
@@ -157,17 +167,17 @@ pub function intent_class(e: usize): Result[IntentClass, jni.JavaError] {
   jni.check(e)?;
   let class = jni.new_global_ref(e, local);
   jni.delete_local_ref(e, local);
-  let id_new = jni.get_method_id(e, class, "<init>", "(Ljava/lang/String;)V");
-  jni.check(e)?;
-  let id_add_category = jni.get_method_id(e, class, "addCategory", "(Ljava/lang/String;)Landroid/content/Intent;");
-  jni.check(e)?;
-  let id_add_flags = jni.get_method_id(e, class, "addFlags", "(I)Landroid/content/Intent;");
-  jni.check(e)?;
-  let id_get_action = jni.get_method_id(e, class, "getAction", "()Ljava/lang/String;");
-  jni.check(e)?;
-  let id_get_flags = jni.get_method_id(e, class, "getFlags", "()I");
-  jni.check(e)?;
+  let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Ljava/lang/String;)V"))?;
+  let id_add_category = jni.checked_id(e, class, jni.get_method_id(e, class, "addCategory", "(Ljava/lang/String;)Landroid/content/Intent;"))?;
+  let id_add_flags = jni.checked_id(e, class, jni.get_method_id(e, class, "addFlags", "(I)Landroid/content/Intent;"))?;
+  let id_get_action = jni.checked_id(e, class, jni.get_method_id(e, class, "getAction", "()Ljava/lang/String;"))?;
+  let id_get_flags = jni.checked_id(e, class, jni.get_method_id(e, class, "getFlags", "()I"))?;
   return Ok(IntentClass { class: class, id_new: id_new, id_add_category: id_add_category, id_add_flags: id_add_flags, id_get_action: id_get_action, id_get_flags: id_get_flags });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: IntentClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
 }
 
 // android.content.Intent.<init>(Ljava/lang/String;)V
@@ -243,11 +253,14 @@ pub function component_name_class(e: usize): Result[ComponentNameClass, jni.Java
   jni.check(e)?;
   let class = jni.new_global_ref(e, local);
   jni.delete_local_ref(e, local);
-  let id_new = jni.get_method_id(e, class, "<init>", "(Ljava/lang/String;Ljava/lang/String;)V");
-  jni.check(e)?;
-  let id_flatten_to_short_string = jni.get_method_id(e, class, "flattenToShortString", "()Ljava/lang/String;");
-  jni.check(e)?;
+  let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Ljava/lang/String;Ljava/lang/String;)V"))?;
+  let id_flatten_to_short_string = jni.checked_id(e, class, jni.get_method_id(e, class, "flattenToShortString", "()Ljava/lang/String;"))?;
   return Ok(ComponentNameClass { class: class, id_new: id_new, id_flatten_to_short_string: id_flatten_to_short_string });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ComponentNameClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
 }
 
 // android.content.ComponentName.<init>(Ljava/lang/String;Ljava/lang/String;)V
@@ -295,15 +308,16 @@ pub function point_class(e: usize): Result[PointClass, jni.JavaError] {
   jni.check(e)?;
   let class = jni.new_global_ref(e, local);
   jni.delete_local_ref(e, local);
-  let id_new = jni.get_method_id(e, class, "<init>", "(II)V");
-  jni.check(e)?;
-  let id_offset = jni.get_method_id(e, class, "offset", "(II)V");
-  jni.check(e)?;
-  let id_x = jni.get_field_id(e, class, "x", "I");
-  jni.check(e)?;
-  let id_y = jni.get_field_id(e, class, "y", "I");
-  jni.check(e)?;
+  let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(II)V"))?;
+  let id_offset = jni.checked_id(e, class, jni.get_method_id(e, class, "offset", "(II)V"))?;
+  let id_x = jni.checked_id(e, class, jni.get_field_id(e, class, "x", "I"))?;
+  let id_y = jni.checked_id(e, class, jni.get_field_id(e, class, "y", "I"))?;
   return Ok(PointClass { class: class, id_new: id_new, id_offset: id_offset, id_x: id_x, id_y: id_y });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: PointClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
 }
 
 // android.graphics.Point.<init>(II)V
@@ -361,9 +375,13 @@ pub function system_clock_class(e: usize): Result[SystemClockClass, jni.JavaErro
   jni.check(e)?;
   let class = jni.new_global_ref(e, local);
   jni.delete_local_ref(e, local);
-  let id_uptime_millis = jni.get_static_method_id(e, class, "uptimeMillis", "()J");
-  jni.check(e)?;
+  let id_uptime_millis = jni.checked_id(e, class, jni.get_static_method_id(e, class, "uptimeMillis", "()J"))?;
   return Ok(SystemClockClass { class: class, id_uptime_millis: id_uptime_millis });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: SystemClockClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
 }
 
 // android.os.SystemClock.uptimeMillis()J
@@ -394,9 +412,13 @@ pub function date_format_class(e: usize): Result[DateFormatClass, jni.JavaError]
   jni.check(e)?;
   let class = jni.new_global_ref(e, local);
   jni.delete_local_ref(e, local);
-  let id_is24_hour_format = jni.get_static_method_id(e, class, "is24HourFormat", "(Landroid/content/Context;)Z");
-  jni.check(e)?;
+  let id_is24_hour_format = jni.checked_id(e, class, jni.get_static_method_id(e, class, "is24HourFormat", "(Landroid/content/Context;)Z"))?;
   return Ok(DateFormatClass { class: class, id_is24_hour_format: id_is24_hour_format });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: DateFormatClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
 }
 
 // android.text.format.DateFormat.is24HourFormat(Landroid/content/Context;)Z
@@ -428,11 +450,14 @@ pub function list_class(e: usize): Result[ListClass, jni.JavaError] {
   jni.check(e)?;
   let class = jni.new_global_ref(e, local);
   jni.delete_local_ref(e, local);
-  let id_get = jni.get_method_id(e, class, "get", "(I)Ljava/lang/Object;");
-  jni.check(e)?;
-  let id_size = jni.get_method_id(e, class, "size", "()I");
-  jni.check(e)?;
+  let id_get = jni.checked_id(e, class, jni.get_method_id(e, class, "get", "(I)Ljava/lang/Object;"))?;
+  let id_size = jni.checked_id(e, class, jni.get_method_id(e, class, "size", "()I"))?;
   return Ok(ListClass { class: class, id_get: id_get, id_size: id_size });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ListClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
 }
 
 // java.util.List.get(I)Ljava/lang/Object;
@@ -475,9 +500,13 @@ pub function integer_class(e: usize): Result[IntegerClass, jni.JavaError] {
   jni.check(e)?;
   let class = jni.new_global_ref(e, local);
   jni.delete_local_ref(e, local);
-  let id_parse_int = jni.get_static_method_id(e, class, "parseInt", "(Ljava/lang/String;)I");
-  jni.check(e)?;
+  let id_parse_int = jni.checked_id(e, class, jni.get_static_method_id(e, class, "parseInt", "(Ljava/lang/String;)I"))?;
   return Ok(IntegerClass { class: class, id_parse_int: id_parse_int });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: IntegerClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
 }
 
 // java.lang.Integer.parseInt(Ljava/lang/String;)I
@@ -511,9 +540,13 @@ pub function math_class(e: usize): Result[MathClass, jni.JavaError] {
   jni.check(e)?;
   let class = jni.new_global_ref(e, local);
   jni.delete_local_ref(e, local);
-  let id_sqrt = jni.get_static_method_id(e, class, "sqrt", "(D)D");
-  jni.check(e)?;
+  let id_sqrt = jni.checked_id(e, class, jni.get_static_method_id(e, class, "sqrt", "(D)D"))?;
   return Ok(MathClass { class: class, id_sqrt: id_sqrt });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: MathClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
 }
 
 // java.lang.Math.sqrt(D)D
@@ -545,9 +578,13 @@ pub function float_class(e: usize): Result[FloatClass, jni.JavaError] {
   jni.check(e)?;
   let class = jni.new_global_ref(e, local);
   jni.delete_local_ref(e, local);
-  let id_parse_float = jni.get_static_method_id(e, class, "parseFloat", "(Ljava/lang/String;)F");
-  jni.check(e)?;
+  let id_parse_float = jni.checked_id(e, class, jni.get_static_method_id(e, class, "parseFloat", "(Ljava/lang/String;)F"))?;
   return Ok(FloatClass { class: class, id_parse_float: id_parse_float });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: FloatClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
 }
 
 // java.lang.Float.parseFloat(Ljava/lang/String;)F
@@ -581,9 +618,13 @@ pub function system_class(e: usize): Result[SystemClass, jni.JavaError] {
   jni.check(e)?;
   let class = jni.new_global_ref(e, local);
   jni.delete_local_ref(e, local);
-  let id_out = jni.get_static_field_id(e, class, "out", "Ljava/io/PrintStream;");
-  jni.check(e)?;
+  let id_out = jni.checked_id(e, class, jni.get_static_field_id(e, class, "out", "Ljava/io/PrintStream;"))?;
   return Ok(SystemClass { class: class, id_out: id_out });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: SystemClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
 }
 
 // java.lang.System.out

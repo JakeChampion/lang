@@ -112,6 +112,9 @@ public class Point implements Shape {
         return null;
     }
 
+    public void release() {
+    }
+
     public static Point parse(String text) throws Exception {
         return new Point();
     }

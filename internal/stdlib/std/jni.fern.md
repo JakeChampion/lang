@@ -732,6 +732,21 @@ pub function check(env: usize): Result[void, JavaError] {
   return Err(JavaError { text: out });
 }
 
+// The ID `id` that a lookup in the class `class` gave. When the lookup
+// threw, the result is the error, and the global reference `class` is
+// deleted, because the struct that would hold it does not exist.
+pub function checked_id(env: usize, class: usize, id: usize): Result[usize, JavaError] {
+  match (check(env)) {
+    Ok(_) => {
+      return Ok(id);
+    },
+    Err(e) => {
+      delete_global_ref(env, class);
+      return Err(e);
+    }
+  }
+}
+
 // Calls entry `index` of the JNI table with an object or a class, a
 // method or a field, and a jvalue array.
 pub function invoke(env: usize, index: i32, target: usize, member: usize, args: usize): usize {
