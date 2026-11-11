@@ -2,6 +2,7 @@
 // the format puts them in a file.
 import "std/audio/tags";
 import "std/audio/wire";
+import "std/base64";
 import "std/test";
 
 function bytes_of(s: string): u8[] {
@@ -174,6 +175,44 @@ function test_ogg(): test.TestOutcome {
   return test.assert_eq(show(tags.read(vorbis)) + " / " + show(tags.read(opus)), "Morning Fern|Fern|||4|0 / Morning Fern|Fern|||4|0");
 }
 
+function image(): u8[] {
+  return [255u8, 216u8, 255u8, 224u8, 1u8, 2u8, 3u8];
+}
+
+function shown(p: u8[]): string {
+  let out: string[] = [];
+  for b in p {
+    out = out.append(b.to_string());
+  }
+  return out.join(",");
+}
+
+// A FLAC picture block: the type 3, a MIME type, a description, four
+// numbers, and the image after its length.
+function picture_block(): u8[] {
+  return joined([wire.put_be([], 3u64, 4), wire.put_be([], 10u64, 4), bytes_of("image/jpeg"), wire.put_be([], 5u64, 4), bytes_of("front"), wire.put_be([], 0u64, 4), wire.put_be([], 0u64, 4), wire.put_be([], 0u64, 4), wire.put_be([], 0u64, 4), wire.put_be([], image().len() as u64, 4), image()]);
+}
+
+function test_pictures(): test.TestOutcome {
+  // An APIC frame of ID3v2.3 with a description in UTF-16, and a PIC frame
+  // of ID3v2.2 with a format of three letters.
+  let apic = joined([[1u8], bytes_of("image/jpeg"), [0u8, 3u8], utf16le("x"), [0u8, 0u8], image()]);
+  let v23 = id3(3u8, 0u8, joined([frame3("TIT2", 0u8, bytes_of("Fern")), bytes_of("APIC"), wire.put_be([], apic.len() as u64, 4), [0u8, 0u8], apic]));
+  let pic = joined([[0u8], bytes_of("JPG"), [3u8, 0u8], image()]);
+  let v22 = id3(2u8, 0u8, joined([bytes_of("PIC"), wire.put_be([], pic.len() as u64, 3), pic]));
+  let info: u8[] = [];
+  for i in 0..34 {
+    info = info.append(0u8);
+  }
+  let block = picture_block();
+  let flac = joined([bytes_of("fLaC"), [0u8, 0u8, 0u8, 34u8], info, [134u8], wire.put_be([], block.len() as u64, 3), block]);
+  let moov = box(bytes_of("moov"), box(bytes_of("udta"), box(bytes_of("meta"), joined([[0u8, 0u8, 0u8, 0u8], box(bytes_of("ilst"), item(bytes_of("covr"), image()))]))));
+  let list = joined([comment("fern encoder"), wire.put_le([], 2u64, 4), comment("TITLE=Fern"), comment("metadata_block_picture=" + base64.encode(block))]);
+  let ogg = joined([page([bytes_of("OpusHead")]), page([joined([bytes_of("OpusTags"), list])])]);
+  let got = [shown(tags.picture(v23)), shown(tags.picture(v22)), shown(tags.picture(flac)), shown(tags.picture(moov)), shown(tags.picture(ogg)), shown(tags.picture(bytes_of("not a tag")))];
+  return test.assert_eq(got.join(" / "), "255,216,255,224,1,2,3 / 255,216,255,224,1,2,3 / 255,216,255,224,1,2,3 / 255,216,255,224,1,2,3 / 255,216,255,224,1,2,3 / ");
+}
+
 function main(): i32 {
   let r = test.new("std/audio/tags");
   r = r.it("an ID3v2.3 tag has texts in UTF-16 and in Latin-1", test_id3v23);
@@ -184,6 +223,7 @@ function main(): i32 {
   r = r.it("a WAV file has an INFO list or an id3 chunk", test_wav);
   r = r.it("an MP4 file has items in an ilst box", test_mp4);
   r = r.it("an Ogg file has Vorbis comments in its second packet", test_ogg);
+  r = r.it("a file holds the picture of its album", test_pictures);
   r = r.it("bytes that are not tags give empty tags", test_bytes_that_are_not_tags);
   return r.finish();
 }

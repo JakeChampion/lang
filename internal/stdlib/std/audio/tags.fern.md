@@ -12,7 +12,7 @@ This module reads the title, the artist, the album and the track number that an 
 - An MP4 or M4A file has an `ilst` box in its `moov` box. `mp4` reads it from the whole file, or from the `moov` box only.
 - An Ogg file with Vorbis or Opus sound has its Vorbis comments in its second packet.
 
-A field that the file does not give is "" or 0. The module reads texts only. It reads no picture, and it does not decode the sound.
+A field that the file does not give is "" or 0. `picture` gives the bytes of the image that the file holds for its album, as a JPEG or a PNG image. The module does not decode that image or the sound.
 
 ## Contracts
 
@@ -75,6 +75,8 @@ function main(): i32 {
 
 <<Ogg>>
 
+<<pictures>>
+
 <<files>>
 ```
 
@@ -84,6 +86,8 @@ function main(): i32 {
 <<module introduction>>=
 // This module reads the tags of an MP3, a FLAC or a WAV file.
 import "std/audio/wire";
+import "std/base64";
+import "std/result";
 import "std/i32";
 import "std/option";
 import "std/unicode";
@@ -546,17 +550,22 @@ function mp4_field(input: [u8], at: i32): i32 {
   return -1;
 }
 
-// The tags of the `ilst` box of an MP4 file. The input is the file, or its
-// `moov` box.
-pub function mp4(input: [u8]): Tags {
-  let t = none();
+// The content of the `ilst` box of an MP4 file, or -1 and -1.
+function ilst(input: [u8]): (i32, i32) {
   let (moov, moov_end) = box_in(input, 0, input.len(), "moov");
   let (udta, udta_end) = box_in(input, moov, moov_end, "udta");
   let (meta, meta_end) = box_in(input, udta, udta_end, "meta");
   if (moov < 0 || udta < 0 || meta < 0) {
-    return t;
+    return (-1, -1);
   }
-  let (at, end) = box_in(input, meta + 4, meta_end, "ilst");
+  return box_in(input, meta + 4, meta_end, "ilst");
+}
+
+// The tags of the `ilst` box of an MP4 file. The input is the file, or its
+// `moov` box.
+pub function mp4(input: [u8]): Tags {
+  let t = none();
+  let (at, end) = ilst(input);
   while (at >= 0 && at + 8 <= end) {
     let size = wire.be(input, at, 4) as i32;
     if (size < 8) {
@@ -624,6 +633,191 @@ pub function ogg(input: [u8]): Tags {
     return comments(packet, 7, packet.len());
   }
   return none();
+}
+```
+
+### `pictures`
+
+A file can hold the picture of its album as a JPEG or a PNG image. An ID3v2 tag has it in an `APIC` frame, or a `PIC` frame in the version 2.2. A FLAC file has a picture block, and an Ogg file has the same block in base64 in the comment `METADATA_BLOCK_PICTURE`. An MP4 file has the item `covr`.
+
+```fern
+<<pictures>>=
+function range(input: [u8], from: i32, to: i32): u8[] {
+  let out: u8[] = [];
+  for i in from.max(0)..to.min(input.len()) {
+    out = out.append(input[i]);
+  }
+  return out;
+}
+
+// The byte after the end of the text that starts at `at`: a zero byte, or
+// two zero bytes for a text in UTF-16.
+function after_text(input: [u8], at: i32, to: i32, wide: boolean): i32 {
+  let p = at;
+  while (p < to) {
+    if (!wide && input[p] == 0u8) {
+      return p + 1;
+    }
+    if (wide && p + 1 < to && input[p] == 0u8 && input[p + 1] == 0u8) {
+      return p + 2;
+    }
+    p += if (wide) { 2 } else { 1 };
+  }
+  return to;
+}
+
+// The image of the picture frame from `from` to `to` of an ID3v2 tag. A
+// frame of the version 2.2 has a format of three letters where the others
+// have a MIME type.
+function frame_picture(input: [u8], from: i32, to: i32, version: i32): u8[] {
+  if (from + 6 > to) {
+    return [];
+  }
+  let wide = input[from] == 1u8 || input[from] == 2u8;
+  let p = from + 4;
+  if (version > 2) {
+    p = after_text(input, from + 1, to, false);
+  }
+  return range(input, after_text(input, p + 1, to, wide), to);
+}
+
+// The image of the first picture frame of the ID3v2 tag at `start`.
+function id3_picture(input: [u8], start: i32): u8[] {
+  if (start < 0 || start + 10 > input.len() || !wire.tag(input, start, "ID3")) {
+    return [];
+  }
+  let end = (start + 10 + syncsafe(input, start + 6)).min(input.len());
+  let version = input[start + 3] as i32;
+  let name = if (version == 2) { 3 } else { 4 };
+  let head = if (version == 2) { 6 } else { 10 };
+  let at = frames_start(input, start, end);
+  while (at + head <= end) {
+    let id = frame_name(input, at, name);
+    let size = wire.be(input, at + name, name) as i32;
+    if (version == 4) {
+      size = syncsafe(input, at + 4);
+    }
+    if (id.len() == 0 || size <= 0) {
+      return [];
+    }
+    if (id == "APIC" || id == "PIC") {
+      return frame_picture(input, at + head, (at + head + size).min(end), version);
+    }
+    at += head + size;
+  }
+  return [];
+}
+
+// The image of a FLAC picture block from `from` to `to`: its type, its
+// MIME type, its description, four numbers, and then the image after its
+// length.
+function block_picture(input: [u8], from: i32, to: i32): u8[] {
+  let p = from + 4;
+  for part in 0..2 {
+    if (p + 4 > to) {
+      return [];
+    }
+    p += 4 + wire.be(input, p, 4) as i32;
+  }
+  p += 16;
+  if (p < from || p + 4 > to) {
+    return [];
+  }
+  let n = wire.be(input, p, 4) as i32;
+  return range(input, p + 4, (p + 4 + n).min(to));
+}
+
+function flac_picture(input: [u8]): u8[] {
+  let at = 4;
+  while (at + 4 <= input.len()) {
+    let head = input[at] as i32;
+    let size = wire.be(input, at + 1, 3) as i32;
+    if ((head & 127) == 6) {
+      return block_picture(input, at + 4, (at + 4 + size).min(input.len()));
+    }
+    if ((head & 128) != 0) {
+      return [];
+    }
+    at += 4 + size;
+  }
+  return [];
+}
+
+// The image of the comment METADATA_BLOCK_PICTURE of the Vorbis comments
+// from `from` to `to`.
+function comment_picture(input: [u8], from: i32, to: i32): u8[] {
+  let name = "METADATA_BLOCK_PICTURE=";
+  if (from + 8 > to) {
+    return [];
+  }
+  let at = from + 4 + wire.le(input, from, 4) as i32;
+  if (at < from || at + 4 > to) {
+    return [];
+  }
+  let count = wire.le(input, at, 4) as i32;
+  at += 4;
+  let seen = 0;
+  while (seen < count && at + 4 <= to) {
+    let n = wire.le(input, at, 4) as i32;
+    at += 4;
+    if (n < 0 || at + n > to) {
+      return [];
+    }
+    if (n > name.len() && utf8_text(input, at, at + name.len()).to_upper() == name) {
+      let Ok(block) = base64.decode(utf8_text(input, at + name.len(), at + n)) else {
+        return [];
+      };
+      return block_picture(block, 0, block.len());
+    }
+    at += n;
+    seen += 1;
+  }
+  return [];
+}
+
+function ogg_picture(input: [u8]): u8[] {
+  let packet = second_packet(input);
+  if (packet.len() > 8 && wire.tag(packet, 0, "OpusTags")) {
+    return comment_picture(packet, 8, packet.len());
+  }
+  if (packet.len() > 7 && packet[0] == 3u8 && wire.tag(packet, 1, "vorbis")) {
+    return comment_picture(packet, 7, packet.len());
+  }
+  return [];
+}
+
+function mp4_picture(input: [u8]): u8[] {
+  let (at, end) = ilst(input);
+  while (at >= 0 && at + 8 <= end) {
+    let size = wire.be(input, at, 4) as i32;
+    if (size < 8) {
+      return [];
+    }
+    if (wire.tag(input, at + 4, "covr")) {
+      let (value, value_end) = box_in(input, at + 8, (at + size).min(end), "data");
+      if (value >= 0) {
+        return range(input, value + 8, value_end);
+      }
+    }
+    at += size;
+  }
+  return [];
+}
+
+// The bytes of the picture that the file `input` holds: a JPEG or a PNG
+// image as the file has it, or no bytes. The input is the file as far as
+// the end of its tags, or the `moov` box of an MP4 file.
+pub function picture(input: [u8]): u8[] {
+  if (wire.tag(input, 0, "fLaC")) {
+    return flac_picture(input);
+  }
+  if (wire.tag(input, 0, "OggS")) {
+    return ogg_picture(input);
+  }
+  if (input.len() >= 8 && (wire.tag(input, 4, "ftyp") || wire.tag(input, 4, "moov"))) {
+    return mp4_picture(input);
+  }
+  return id3_picture(input, 0);
 }
 ```
 
