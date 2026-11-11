@@ -1,0 +1,8 @@
+// A module declares `total` two times, and only the second declaration
+// is exported. The diagnostic is the redeclaration. It is not E087 for
+// the call: the name has an exported declaration.
+import "./lib";
+
+function main(): i32 {
+  return lib.total(1, 2) - 3;
+}
