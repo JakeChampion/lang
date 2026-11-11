@@ -1,3 +1,4 @@
+# 2026-11-11: array_of_tuple_literals_takes_its_destination_and_float_literals and literal_composite_takes_the_type_of_a_nested_part are clean under RC trace.
 # 2026-11-11: generic_struct_literal_with_a_function_field_is_an_argument is clean under RC trace.
 # 2026-11-11: a_struct_name_call_wraps_a_union_member_across_modules is clean under RC trace.
 # 2026-11-11: generic_call_takes_its_type_from_its_destination_inside_a_value is clean under RC trace.
@@ -176,6 +177,7 @@ array_none_basic                                     0
 array_none_empty_and_all_match                       0
 array_none_module                                    0
 array_of_structs                                     0
+array_of_tuple_literals_takes_its_destination_and_float_literals 0
 array_pair_truncates                                 0
 array_param_threaded_reassign                        0
 array_reverse                                        0
@@ -628,6 +630,7 @@ let_else_pattern_forms                               0
 let_else_payload_copy                                0
 let_else_qualified_variant                           0
 let_else_variant_binding_outlives_stmt               0
+literal_composite_takes_the_type_of_a_nested_part    0
 literal_local_read_at_two_widths                    0
 literal_local_settles_from_every_use                 0
 literal_local_takes_its_use_width                    0

@@ -15306,13 +15306,16 @@ function tuple_literal_join(a: ast.ExprArray, k: i32, anchor: typeinfo.Type, etk
   return joined.t;
 }
 
-// literal_parts_take is true when e of the type from can take the type to, and only its integer literals change type.
+// literal_parts_take is true when e of the type from can take the type to, and only its number literals change type.
 function literal_parts_take(e: ast.Expr, from: typeinfo.Type, to: typeinfo.Type): boolean {
   if (type_eq(from, to)) {
     return true;
   }
   if (int_literal_tree(e)) {
-    return is_integer(to);
+    return is_integer(to) || is_float(to);
+  }
+  if (float_literal_tree(e)) {
+    return is_float(to);
   }
   if let ast.ExprTuple(te) = e {
     if let typeinfo.TypeTuple(ft) = from {
@@ -30880,6 +30883,22 @@ function settle_float_literals(e: ast.Expr, t: typeinfo.Type): ast.Expr {
       return ast.ExprArray { ...ea, elements: ne };
     }
   }
+  if let typeinfo.TypeTuple(tt) = t {
+    if let ast.ExprTuple(et) = e {
+      if (et.elements.len() != tt.elements.len()) {
+        return e;
+      }
+      let ne: ast.Expr[] = [];
+      for k in 0..et.elements.len() {
+        if (is_float(tt.elements[k]) && !settled_number(tt.elements[k]) && int_literal_tree(et.elements[k])) {
+          ne = ne.append(lit_float_read(et.elements[k], parser.parse_type_ref("f64")));
+        } else {
+          ne = ne.append(settle_float_literals(et.elements[k], tt.elements[k]));
+        }
+      }
+      return ast.ExprTuple { ...et, elements: ne };
+    }
+  }
   return e;
 }
 
@@ -30991,12 +31010,16 @@ function settle_array_literals(a: ast.ExprArray, s: Scope): ast.Expr {
 
 function settle_array_struct_literals(a: ast.ExprArray, s: Scope): ast.Expr {
   if let typeinfo.TypeArray(at) = check_expr(a, s) {
-    if (!reads_i64(at.elem)) {
-      return a;
-    }
     let els: ast.Expr[] = [];
     for element in a.elements {
-      els = els.append(settle_struct_lit_wide(settle_wide_literals(element, at.elem), at.elem, s));
+      let settled = element;
+      if (typeinfo.is_tuple(at.elem)) {
+        settled = settle_float_literals(settled, at.elem);
+      }
+      if (reads_i64(at.elem)) {
+        settled = settle_struct_lit_wide(settle_wide_literals(settled, at.elem), at.elem, s);
+      }
+      els = els.append(settled);
     }
     return ast.ExprArray { ...a, elements: els };
   }
@@ -33835,13 +33858,33 @@ function lit_demand(e: ast.Expr, want: typeinfo.Type, s: Scope, st: LitInfer): L
   return lit_other_demand(e, want, s, st);
 }
 
+// lit_place_type is the type, with its literal markers, of a local or of an element or a tuple part of one.
+function lit_place_type(e: ast.Expr, s: Scope): typeinfo.Type {
+  if let ast.ExprIdent(id) = e {
+    return s.lookup(id.name);
+  }
+  if let ast.ExprIndex(ix) = e {
+    if let typeinfo.TypeArray(a) = lit_place_type(ix.array, s) {
+      return a.elem;
+    }
+  }
+  if let ast.ExprFieldAccess(fa) = e {
+    if let typeinfo.TypeTuple(t) = lit_place_type(fa.obj, s) {
+      if (util.is_all_digits(fa.field)) {
+        let i = digit_string_to_i32(fa.field);
+        if (i >= 0 && i < t.elements.len()) {
+          return t.elements[i];
+        }
+      }
+    }
+  }
+  return t_unknown("not a literal place");
+}
+
 // lit_index_demand gives a literal array local the type of a typed
 // destination of one of its elements, such as `let m: u8 = z[0];`.
 function lit_index_demand(ix: ast.ExprIndex, want: typeinfo.Type, s: Scope, st: LitInfer): LitInfer {
-  let ast.ExprIdent(id) = ix.array else {
-    return st;
-  };
-  let typeinfo.TypeArray(a) = s.lookup(id.name) else {
+  let typeinfo.TypeArray(a) = lit_place_type(ix.array, s) else {
     return st;
   };
   let k = lit_id(a.elem);
@@ -33854,10 +33897,7 @@ function lit_index_demand(ix: ast.ExprIndex, want: typeinfo.Type, s: Scope, st: 
 // lit_tuple_field_demand gives a literal tuple local the type of a typed
 // destination of one of its elements, such as `let y: u8 = t.0;`.
 function lit_tuple_field_demand(fa: ast.ExprFieldAccess, want: typeinfo.Type, s: Scope, st: LitInfer): LitInfer {
-  let ast.ExprIdent(id) = fa.obj else {
-    return st;
-  };
-  let typeinfo.TypeTuple(t) = s.lookup(id.name) else {
+  let typeinfo.TypeTuple(t) = lit_place_type(fa.obj, s) else {
     return st;
   };
   if (!util.is_all_digits(fa.field) || !settled_number(want)) {

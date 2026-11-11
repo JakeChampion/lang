@@ -1,0 +1,9 @@
+// A narrow use of one element gives a nested literal local that element
+// type, so each literal must fit in it.
+function main(): i32 {
+    let rows = [[200], [300]];
+    let k: u8 = rows[0][0];
+    let pairs = [(1, 2), (3, 400)];
+    let p: u8 = pairs[0].1;
+    return 0;
+}

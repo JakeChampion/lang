@@ -17295,7 +17295,7 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 				c.fixLitLocal(ll, hn, fa.P)
 			}
 		}
-		c.settleLitTupleByField(fa, hint)
+		c.settleLitPlace(fa, hint)
 		c.settleGenericCallByHint(fa, hint)
 		return
 	}
@@ -17303,7 +17303,7 @@ func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
 		c.settleLitCompositeLocal(id, hint)
 	}
 	if ix, ok := e.(*ast.Index); ok && !ix.IsString && !ix.IsSlice {
-		c.settleLitArrayByIndex(ix, hint)
+		c.settleLitPlace(ix, hint)
 	}
 	switch hn := hint.(type) {
 	case ast.NumberType:
@@ -17575,6 +17575,16 @@ func (c *checker) elemSettleable(have, want ast.Type) bool {
 		if w, ok := want.(ast.StructType); ok && h.Name == w.Name && len(h.Args) == len(w.Args) && len(h.Args) > 0 {
 			for i := range h.Args {
 				if !c.elemSettleable(h.Args[i], w.Args[i]) {
+					return false
+				}
+			}
+			return true
+		}
+	}
+	if h, ok := have.(ast.TupleType); ok {
+		if w, ok := want.(ast.TupleType); ok && len(h.Elems) == len(w.Elems) {
+			for i := range h.Elems {
+				if !c.elemSettleable(h.Elems[i], w.Elems[i]) {
 					return false
 				}
 			}
