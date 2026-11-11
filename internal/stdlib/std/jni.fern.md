@@ -23,6 +23,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<3 pub function get_string_utf_length(env: usize, jstr: usize): i32>>
 
 <<4 pub function get_static_int_field(env: usize, clazz: usize, field: usize): i32>>
+
+<<typed calls>>
 ```
 
 ### `module introduction`
@@ -30,6 +32,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<module introduction>>=
 // This module calls JNI methods from Fern.
+import "core/cmp";
+import "core/error";
 import "std/utf8";
 ```
 
@@ -659,5 +663,89 @@ pub function string_of(env: usize, jstr: usize): string {
   }
   let released: usize = release_string_utf_chars(env, jstr, chars);
   return utf8.from_bytes_lossy(bytes);
+}
+```
+
+### `typed calls`
+
+The bindings that `std/jni/bind` writes use these functions. A JNI function that calls a method has one entry in the table for each kind of result. The entries of one group are 3 apart, in the order of `RESULTS`. `CALL_METHOD` is the first entry for a method of an object. `CALL_STATIC` is the first entry for a static method. The entries that read a field are 1 apart, in the same order with no `V`.
+
+```fern
+<<typed calls>>=
+// A Java object of a class that has no Fern type of its own.
+pub struct Object { ref: usize }
+
+// The exception that a Java method threw. `text` is the result of its
+// toString method.
+pub struct JavaError { text: string }
+
+impl error.Error for JavaError {}
+
+impl cmp.Display for JavaError {}
+
+pub function (e: JavaError) message(): string {
+  return "java: " + e.text;
+}
+
+pub function (e: JavaError) to_string(): string {
+  return e.message();
+}
+
+// The letters of the kinds of result, in the order of the JNI table: an
+// object, then the primitive types, then void.
+pub const RESULTS: string = "LZBCSIJFDV";
+
+// The entry of CallObjectMethodA.
+pub const CALL_METHOD: i32 = 36;
+
+// The entry of CallStaticObjectMethodA.
+pub const CALL_STATIC: i32 = 116;
+
+// The entry of GetObjectField.
+pub const GET_FIELD: i32 = 95;
+
+// The entry of GetStaticObjectField.
+pub const GET_STATIC_FIELD: i32 = 145;
+
+// Gives an error when a Java exception is pending, and clears the
+// exception.
+pub function check(env: usize): Result[void, JavaError] {
+  let thrown = exception_occurred(env);
+  if (thrown == 0 as usize) {
+    return Ok(());
+  }
+  exception_clear(env);
+  let text = call_object(env, thrown, "toString", "()Ljava/lang/String;", []);
+  let out = "";
+  if (exception_occurred(env) != 0 as usize) {
+    exception_clear(env);
+  } else {
+    out = string_of(env, text);
+    delete_local_ref(env, text);
+  }
+  delete_local_ref(env, thrown);
+  return Err(JavaError { text: out });
+}
+
+// Calls entry `index` of the JNI table with an object or a class, a
+// method or a field, and a jvalue array.
+pub function invoke(env: usize, index: i32, target: usize, member: usize, args: usize): usize {
+  return call3(env, index, target, member, args);
+}
+
+pub function invoke_f32(env: usize, index: i32, target: usize, member: usize, args: usize): f32 {
+  return call3_f32(env, index, target, member, args);
+}
+
+pub function invoke_f64(env: usize, index: i32, target: usize, member: usize, args: usize): f64 {
+  return call3_f64(env, index, target, member, args);
+}
+
+// The value 1 for true and 0 for false, as a jvalue holds a boolean.
+pub function jbool(b: boolean): usize {
+  if (b) {
+    return 1 as usize;
+  }
+  return 0 as usize;
 }
 ```
