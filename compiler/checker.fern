@@ -12925,6 +12925,19 @@ function array_literal_settles(e: ast.Expr, elem: typeinfo.Type, s: Scope): bool
   }
 }
 
+// array_step is the receiver and the stored argument of an append or a with call.
+function array_step(c: ast.ExprCall): (ast.Expr, ast.Expr, boolean) {
+  if let ast.ExprFieldAccess(fa) = c.callee {
+    if (fa.field == "append" && c.args.len() == 1) {
+      return (fa.obj, c.args[0], true);
+    }
+    if (fa.field == "with" && c.args.len() == 2) {
+      return (fa.obj, c.args[1], true);
+    }
+  }
+  return (c.callee, c.callee, false);
+}
+
 // A mixed literal already has its E034, so it takes no destination error when its first element could settle there.
 function mixed_literal_settles(e: ast.Expr, elem: typeinfo.Type, s: Scope): boolean {
   if let ast.ExprArray(a) = e {
@@ -30277,6 +30290,26 @@ function settle_wide_literals(e: ast.Expr, t: typeinfo.Type): ast.Expr {
   return e;
 }
 
+// settle_array_step gives the literals of an append or a with call on an
+// array literal the element type of t.
+function settle_array_step(e: ast.Expr, t: typeinfo.Type): ast.Expr {
+  let ast.ExprCall(c) = e else {
+    return e;
+  };
+  let typeinfo.TypeArray(at) = t else {
+    return e;
+  };
+  let ast.ExprFieldAccess(fa) = c.callee else {
+    return e;
+  };
+  let (recv, arg, step) = array_step(c);
+  if (!step || !lit_array_rooted(recv)) {
+    return e;
+  }
+  let obj = settle_array_step(settle_wide_literals(recv, t), t);
+  return ast.ExprCall { ...c, callee: ast.ExprFieldAccess { ...fa, obj: obj }, args: c.args.with(c.args.len() - 1, settle_wide_literals(arg, at.elem)) };
+}
+
 function settle_int_tree(e: ast.Expr, tag: string): ast.Expr {
   return parser.settle_int_tree(e, tag);
 }
@@ -33296,6 +33329,13 @@ function lit_array_demand(e: ast.Expr, wa: typeinfo.TypeArray, s: Scope, st: Lit
     }
     return out;
   }
+  if let ast.ExprCall(c) = e {
+    let (recv, arg, step) = array_step(c);
+    if (step && lit_array_rooted(recv) && is_integer(wa.elem)) {
+      let out = lit_demand(arg, wa.elem, s, lit_array_demand(recv, wa, s, lit_step_index(c, s, st)));
+      return LitInfer { ...out, pargs: out.pargs.append(gcall_arg_key(c, LIT_STEP_RECV)), ptypes: out.ptypes.append(wa) };
+    }
+  }
   return lit_other_demand(e, wa, s, st);
 }
 
@@ -33572,6 +33612,10 @@ function gcall_settle(c: ast.ExprCall, sig: FuncSig, tp: string, w: typeinfo.Typ
   return out;
 }
 
+// The argument index that names the receiver of an append or a with call on
+// an array literal.
+const LIT_STEP_RECV: i32 = -1;
+
 function gcall_arg_key(c: ast.ExprCall, k: i32): string {
   return "c" + util.i32_to_string(c.line) + ":" + util.i32_to_string(c.col) + "#" + util.i32_to_string(k);
 }
@@ -33667,21 +33711,26 @@ function lit_method_receiver(c: ast.ExprCall, method: string, name: string, have
 // argument to `append` or `with`, as a literal takes the type of the other
 // operand of a binary operator.
 function lit_array_receiver(c: ast.ExprCall, s: Scope, st: LitInfer): LitInfer {
-  let ast.ExprFieldAccess(fa) = c.callee else {
-    return st;
-  };
-  let ast.ExprIdent(id) = fa.obj else {
+  let (recv, arg, step) = array_step(c);
+  let ast.ExprIdent(id) = recv else {
     return st;
   };
   let typeinfo.TypeArray(a) = s.lookup(id.name) else {
     return st;
   };
-  let k = lit_id(a.elem);
-  let at = if (fa.field == "append") { 0 } else if (fa.field == "with") { 1 } else { -1 };
-  if (k < 0 || at < 0 || c.args.len() != at + 1 || open_tree(c.args[at], s)) {
+  if (!step || !lit_marked(a.elem)) {
     return st;
   }
-  let have = check_expr(c.args[at], s);
+  let (seed, ids) = lit_tree(arg, s, []);
+  if (seed || lit_composite(arg)) {
+    let (part, linked, found) = lit_composite_local(arg, s, st);
+    return lit_type_link(a.elem, part, linked);
+  }
+  let k = lit_id(a.elem);
+  if (k < 0 || open_tree(arg, s)) {
+    return st;
+  }
+  let have = check_expr(arg, s);
   if (settled_number(have)) {
     return lit_fix(st, [k], have);
   }
@@ -34008,6 +34057,17 @@ function lit_composite_local(e: ast.Expr, s: Scope, st: LitInfer): (typeinfo.Typ
       return (t_array(elem), st, any);
     }
   }
+  if let ast.ExprCall(c) = e {
+    let (recv, arg, step) = array_step(c);
+    if (step && lit_array_rooted(recv)) {
+      let (whole, next, any) = lit_composite_local(recv, s, lit_step_index(c, s, st));
+      if let typeinfo.TypeArray(ra) = whole {
+        let (part, more, found) = lit_composite_local(arg, s, next);
+        let linked = lit_type_link(ra.elem, part, more);
+        return (whole, LitInfer { ...linked, pargs: linked.pargs.append(gcall_arg_key(c, LIT_STEP_RECV)), ptypes: linked.ptypes.append(whole) }, any || found);
+      }
+    }
+  }
   return (check_expr(e, lit_typed_scope(s, st)), st, false);
 }
 
@@ -34019,9 +34079,30 @@ function lit_composite(e: ast.Expr): boolean {
     return true;
   }
   if let ast.ExprCall(c) = e {
-    return parser.is_value_block(c);
+    return parser.is_value_block(c) || lit_array_rooted(e);
   }
   return false;
+}
+
+// lit_array_rooted is true for an array literal that has elements, and for an
+// append or a with call on one.
+function lit_array_rooted(e: ast.Expr): boolean {
+  if let ast.ExprArray(a) = e {
+    return a.elements.len() > 0;
+  }
+  if let ast.ExprCall(c) = e {
+    let (recv, arg, step) = array_step(c);
+    return step && lit_array_rooted(recv);
+  }
+  return false;
+}
+
+// lit_step_index gives the index of a with call the type i32.
+function lit_step_index(c: ast.ExprCall, s: Scope, st: LitInfer): LitInfer {
+  if (c.args.len() == 2) {
+    return lit_demand(c.args[0], typeinfo.t_i32(), s, st);
+  }
+  return st;
 }
 
 function lit_array(arr: ast.ExprArray, s: Scope, st: LitInfer): LitInfer {
@@ -34133,6 +34214,10 @@ function lit_expr(e: ast.Expr, s: Scope, st: LitInfer): LitInfer {
       return lit_arg(u.operand, s, st);
     },
     ast.ExprCall(c) => {
+      if (lit_array_rooted(e)) {
+        let (whole, linked, found) = lit_composite_local(e, s, st);
+        return linked;
+      }
       return lit_call(c, s, st);
     },
     ast.ExprArray(arr) => {
@@ -34790,6 +34875,9 @@ function lit_float_read(e: ast.Expr, want: parser.TypeRef): ast.Expr {
 }
 
 function lit_call_settled(c: ast.ExprCall, rw: LitRewrite): boolean {
+  if (util.index_of_str(rw.pargs, gcall_arg_key(c, LIT_STEP_RECV)) >= 0) {
+    return true;
+  }
   for k in 0..c.args.len() {
     if (util.index_of_str(rw.cargs, gcall_arg_key(c, k)) >= 0 || util.index_of_str(rw.pargs, gcall_arg_key(c, k)) >= 0) {
       return true;
@@ -34814,6 +34902,10 @@ function lit_rewrite_call(c: ast.ExprCall, rw: LitRewrite): ast.Expr {
     args = args.append(ae);
   }
   let (ce, ca, ch) = astwalk.map_expr_where(c.callee, rw, lit_rewrite_stmt, lit_rewrite_expr, astwalk.descend_all);
+  let rt = util.index_of_str(rw.pargs, gcall_arg_key(c, LIT_STEP_RECV));
+  if (rt >= 0) {
+    return settle_array_step(ast.ExprCall { ...c, callee: ce, args: args }, rw.ptypes[rt]);
+  }
   return ast.ExprCall { ...c, callee: ce, args: args };
 }
 
@@ -34848,6 +34940,9 @@ function lit_scan_expr(e: ast.Expr, own sc: LitScan): LitScan {
       if (lit_any_int_literal(c.args) && util.has_str(sc.generics, cid.name)) {
         return LitScan { ...sc, found: true };
       }
+    }
+    if (lit_array_rooted(e)) {
+      return LitScan { ...sc, found: true };
     }
   }
   return sc;
