@@ -26,6 +26,7 @@ A `Worker` is `@must_consume`: a program joins every worker it spawns (E067).
 `join` consumes the worker and returns its result. A second join is refused (E051).
 `poll` never waits. It consumes the worker and returns `Finished` with the result, or `Running` with the worker, which the caller polls or joins later.
 A worker that exits with a signal or without a result stops the program with exit 134.
+A process worker ends when its parent ends: the kernel sends it SIGTERM.
 
 ## Executable example
 
@@ -55,6 +56,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<3 pub function spawn[T: Send](send body: () => T): Worker[T]>>
 
 <<4 function __spawn_process[T: Send](own body: () => T): Worker[T]>>
+
+<<14 function __stat_pid(of_parent: boolean): i32>>
 
 <<5 pub function (own w: Worker[T: Send]) join(): T>>
 
@@ -130,12 +133,23 @@ function __spawn_process[T: Send](own body: () => T): Worker[T] {
   if (region <= 0i64) {
     return __spawn_on(inline(), body);
   }
+  let parent = __stat_pid(false);
   let pid = proc_fork();
   if (pid < 0) {
     __unmap_region(region, size, false);
     return __spawn_on(inline(), body);
   }
   if (pid == 0) {
+    // The kernel ends the worker when its parent ends, so no worker runs
+    // detached. A parent that ended before this call sends nothing, so the
+    // worker also ends when its parent is not the process that made it.
+    let linked = reactor_ctl(0 - 1, 6, 0, 0);
+    let now = __stat_pid(true);
+    if (parent > 0 && now > 0 && now != parent) {
+      unsafe {
+        __worker_exit(region, 0 as usize);
+      }
+    }
     unsafe {
       __heap_adopt(region + 64i64, region + size);
       let out = body();
@@ -145,6 +159,50 @@ function __spawn_process[T: Send](own body: () => T): Worker[T] {
     }
   }
   return Worker { sched: None, index: 0, pid: pid, region: region, size: size };
+}
+```
+
+### `14 function __stat_pid(of_parent: boolean): i32`
+
+`/proc/self/stat` starts with the pid, the command name in parentheses, the state and the pid of the parent. The command name can hold a space or a parenthesis, so the fields after it start at the last `)`. The answer is 0 when the file cannot be read, and for a field that an emulator leaves at 0.
+
+```fern
+<<14 function __stat_pid(of_parent: boolean): i32>>=
+function __stat_pid(of_parent: boolean): i32 {
+  let stat = "";
+  match (read_file("/proc/self/stat")) {
+    Ok(text) => {
+      stat = text;
+    },
+    Err(_) => {
+      return 0;
+    }
+  }
+  if (!of_parent) {
+    return __number_at(stat, 0);
+  }
+  let close = -1;
+  for i in 0..stat.len() {
+    if (stat[i] == b')') {
+      close = i;
+    }
+  }
+  if (close < 0) {
+    return 0;
+  }
+  // After the name: a space, the state letter and a space.
+  return __number_at(stat, close + 4);
+}
+
+// The decimal number that starts at `at`, or 0.
+function __number_at(text: string, at: i32): i32 {
+  let n = 0;
+  let i = at;
+  while (i >= 0 && i < text.len() && text[i] >= b'0' && text[i] <= b'9') {
+    n = n * 10 + (text[i] - b'0') as i32;
+    i += 1;
+  }
+  return n;
 }
 ```
 
