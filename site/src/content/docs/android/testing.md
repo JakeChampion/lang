@@ -82,6 +82,8 @@ Each function takes the simulator and returns the next one.
 | `sim.enter(s)` | The action key of the keyboard |
 | `sim.back(s)` | The back key |
 | `sim.after(s, ms)` | Lets time go by, with each `ui.Tick` on the way |
+| `sim.themed(s, dark)` | The dark theme or the light theme |
+| `sim.scaled(s, font)` | The font size of the system: 1 is the default |
 | `sim.event(s, e)` | Any `android.Event` |
 
 ## What a test can read

@@ -8,6 +8,8 @@ A `Sim` holds the shell of a program and a `Device` that draws nothing. `start` 
 
 After each event, the simulator draws a frame, as the display does at the next vsync. So the layout that the test reads is the layout that the person sees.
 
+`themed` sets the dark theme, and `scaled` sets the font size of the system.
+
 `texts` gives the texts that the screen shows, and `shows` tells whether it shows one text. `finished` tells whether the program closed the app, and `keyboard` gives the text that the keyboard of the system shows. `spoken` gives what an accessibility service reads. `picture` draws the screen on a frame, which `testkit.save_png` writes as a PNG file.
 
 The simulator keeps the clock. A touch, a frame and a wait each take the time that they take on a phone: a frame is 16 ms.
@@ -53,7 +55,7 @@ import "std/result";
 <<device>>=
 // The program, its shell, the directory of the device, the size of the
 // window, and the time in ms.
-pub struct Sim[S] { p: ui.Program[S], shell: ui.Shell[S], dir: string, w: i32, h: i32, d: f64, dark: boolean, now: i64 }
+pub struct Sim[S] { p: ui.Program[S], shell: ui.Shell[S], dir: string, w: i32, h: i32, d: f64, dark: boolean, font: f64, now: i64 }
 
 const FRAME_MS: i64 = 16i64;
 
@@ -70,11 +72,12 @@ function said(items: android.AccessItem[]): string {
 }
 
 // A device with a window of w by h pixels at the time `now` in ms.
-function device(dir: string, w: i32, h: i32, d: f64, dark: boolean, now: i64): ui.Device {
+function device(dir: string, w: i32, h: i32, d: f64, dark: boolean, font: f64, now: i64): ui.Device {
   return ui.Device {
     size: (window: usize): (i32, i32) => (w, h),
     density: (): f64 => d,
     dark: (): boolean => dark,
+    font_scale: (): f64 => font,
     now: (): i64 => now * 1000000i64,
     request_frame: (): void => {},
     finish: (): void => note(dir, "calls", "finish"),
@@ -94,29 +97,37 @@ function device(dir: string, w: i32, h: i32, d: f64, dark: boolean, now: i64): u
 // the first frame.
 pub function start[S](own state: S, p: ui.Program[S], fonts: text.Fonts, w: i32, h: i32, d: f64): Sim[S] {
   let dir = temp_dir("fern-ui-sim").unwrap_or(".");
-  let s = Sim { p: p, shell: ui.shell(state, fonts, device(dir, w, h, d, false, 0i64)), dir: dir, w: w, h: h, d: d, dark: false, now: 0i64 };
+  let s = Sim { p: p, shell: ui.shell(state, fonts, device(dir, w, h, d, false, 1.0, 0i64)), dir: dir, w: w, h: h, d: d, dark: false, font: 1.0, now: 0i64 };
   return event(event(s, android.Start), android.WindowCreated(android.Window { ptr: 1 as usize }));
+}
+
+// The simulator with the text of the system at the scale `font`: 1 is the
+// default font size.
+pub function scaled[S](own s: Sim[S], font: f64): Sim[S] {
+  return event(Sim { p: s.p, shell: s.shell, dir: s.dir, w: s.w, h: s.h, d: s.d, dark: s.dark, font: font, now: s.now }, android.WindowResized(android.Window { ptr: 1 as usize }));
 }
 
 // The simulator in the dark theme, or in the light theme.
 pub function themed[S](own s: Sim[S], dark: boolean): Sim[S] {
-  return frame(Sim { p: s.p, shell: s.shell, dir: s.dir, w: s.w, h: s.h, d: s.d, dark: dark, now: s.now });
+  return frame(Sim { p: s.p, shell: s.shell, dir: s.dir, w: s.w, h: s.h, d: s.d, dark: dark, font: s.font, now: s.now });
 }
 ```
 
 ### `events`
 
+`scaled` sends a new size of the window, because the shell reads the font size when the window changes.
+
 ```fern
 <<events>>=
 // The shell with the device of the time of the simulator.
 function at_now[S](own s: Sim[S]): Sim[S] {
-  let dev = device(s.dir, s.w, s.h, s.d, s.dark, s.now);
-  return Sim { p: s.p, shell: ui.Shell { app: s.shell.app, host: ui.Host { ...s.shell.host, dev: dev } }, dir: s.dir, w: s.w, h: s.h, d: s.d, dark: s.dark, now: s.now };
+  let dev = device(s.dir, s.w, s.h, s.d, s.dark, s.font, s.now);
+  return Sim { p: s.p, shell: ui.Shell { app: s.shell.app, host: ui.Host { ...s.shell.host, dev: dev } }, dir: s.dir, w: s.w, h: s.h, d: s.d, dark: s.dark, font: s.font, now: s.now };
 }
 
 function stepped[S](own s: Sim[S], e: android.Event): Sim[S] {
   let t = at_now(s);
-  return Sim { p: t.p, shell: ui.step(t.shell, t.p, e), dir: t.dir, w: t.w, h: t.h, d: t.d, dark: t.dark, now: t.now };
+  return Sim { p: t.p, shell: ui.step(t.shell, t.p, e), dir: t.dir, w: t.w, h: t.h, d: t.d, dark: t.dark, font: t.font, now: t.now };
 }
 
 // Draws a frame at the time of the simulator.
@@ -131,7 +142,7 @@ pub function event[S](own s: Sim[S], e: android.Event): Sim[S] {
 }
 
 function later[S](own s: Sim[S], ms: i64): Sim[S] {
-  return Sim { p: s.p, shell: s.shell, dir: s.dir, w: s.w, h: s.h, d: s.d, dark: s.dark, now: s.now + ms };
+  return Sim { p: s.p, shell: s.shell, dir: s.dir, w: s.w, h: s.h, d: s.d, dark: s.dark, font: s.font, now: s.now + ms };
 }
 
 // Lets `ms` milliseconds go by. The program gets each Tick that it waits
@@ -154,7 +165,7 @@ pub function after[S](own s: Sim[S], ms: i64): Sim[S] {
 
 // The shell of `s` with the device of its time, to read only.
 function at_now_view[S](s: Sim[S]): ui.Shell[S] {
-  return ui.Shell { app: s.shell.app, host: ui.Host { ...s.shell.host, dev: device(s.dir, s.w, s.h, s.d, s.dark, s.now) } };
+  return ui.Shell { app: s.shell.app, host: ui.Host { ...s.shell.host, dev: device(s.dir, s.w, s.h, s.d, s.dark, s.font, s.now) } };
 }
 
 // Draws frames until no list flings, for at most 10 seconds.

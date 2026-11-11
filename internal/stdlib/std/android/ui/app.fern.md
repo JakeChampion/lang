@@ -31,6 +31,7 @@ function app_main(ctx: usize): usize {
 - A frame draws at the vsync after a change, through `android.request_frame`.
 - The items of each frame go to the accessibility service through `std/android/access`. So TalkBack reads the screen, and a double tap on an item is a tap on its element.
 - The theme is dark when the system is in night mode.
+- Text has the font size that the person set for the system.
 - A text field types with the keyboard of the system, through `std/android/keyboard`.
 
 ## Contracts
@@ -97,6 +98,7 @@ function device(ctx: usize): ui.Device {
     },
     density: (): f64 => android.density(ctx) as f64 / 160.0,
     dark: (): boolean => android.night_mode(ctx),
+    font_scale: (): f64 => android.font_scale(ctx),
     now: (): i64 => monotonic_ns(),
     request_frame: (): void => android.request_frame(ctx),
     finish: (): void => android.finish(ctx),
