@@ -1,0 +1,15 @@
+// spec: WK-08
+// A worker gets a copy of each value that its closure captures. A write to a
+// captured variable inside the closure would change the copy only, so the
+// parent would not see it.
+
+import "std/worker";
+
+function main(): i32 {
+    let n: i32 = 0;
+    let w = worker.spawn((): i32 => {
+        n = n + 5;
+        return n;
+    });
+    return w.join() + n;
+}

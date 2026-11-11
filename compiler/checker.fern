@@ -22707,11 +22707,47 @@ function send_arg_diags(arg: ast.Expr, pname: string, c: ast.ExprCall, ctx: OwnC
         out = out.append(dg_at("E100", "closure passed to `send` parameter \"" + pname + "\" returns " + type_label(ft.ret_type) + ", which cannot cross a worker boundary: " + rwhy, aline, acol));
       }
     }
-    return out;
+    return util.append_diags(out, send_assign_diags(lm, pname, s));
   }
   let why = send_unsafe_reason(at, s, []);
   if (why.len() > 0) {
     out = out.append(dg_at("E100", "argument to `send` parameter \"" + pname + "\" has type " + type_label(at) + ", which cannot cross a worker boundary: " + why, aline, acol));
+  }
+  return out;
+}
+
+// A worker gets a copy of each capture, so a write to a captured variable
+// inside the closure would not reach the variable.
+function send_assign_diags(lm: ast.ExprLambda, pname: string, s: Scope): util.Diag[] {
+  function assigns(st: ast.Stmt, own acc: ast.StmtAssign[]): ast.StmtAssign[] {
+    if let ast.StmtAssign(a) = st {
+      return acc.append(a);
+    }
+    return acc;
+  }
+  function skip(e: ast.Expr, own acc: ast.StmtAssign[]): ast.StmtAssign[] {
+    return acc;
+  }
+  function skip_name(e: ast.Expr, own acc: string[]): string[] {
+    return acc;
+  }
+  function each(e: ast.Expr): boolean {
+    return true;
+  }
+  let locals: string[] = [];
+  for param in lm.params {
+    locals = locals.append(param.name);
+  }
+  let found: ast.StmtAssign[] = [];
+  for st in lm.body {
+    locals = astwalk.fold_stmt_nodes(st, locals, astwalk.binders_of, skip_name, each);
+    found = astwalk.fold_stmt_nodes(st, found, assigns, skip, each);
+  }
+  let out: util.Diag[] = [];
+  for a in found {
+    if (!util.has_str(locals, a.target) && s.is_bound(a.target)) {
+      out = out.append(dg_at("E100", "closure passed to `send` parameter \"" + pname + "\" assigns the captured variable \"" + a.target + "\": a worker has its own copy, so the write does not reach the variable", a.target_line, a.target_col));
+    }
   }
   return out;
 }
