@@ -290,6 +290,10 @@ func TestSelfHostRepeatableClosureOwnedInputsRun(t *testing.T) {
 	ownedResultRuntimeCase(t, "repeatable_closure_owned_inputs")
 }
 
+func TestSelfHostCallbackCaptureLifetimesRun(t *testing.T) {
+	ownedResultRuntimeCase(t, "callback_capture_lifetimes")
+}
+
 func TestSelfHostCopiedCallResultsRun(t *testing.T) {
 	ownedResultRuntimeCase(t, "copied_call_results")
 }
