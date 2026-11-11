@@ -353,5 +353,95 @@
     "name": "checked_array_field_copy_refuses_generic",
     "source": "struct H{n:i32} function(own h:H)close():void{} struct Many[T]{items:T[]} function consume[T](own items:T[]):void{} function f[T](own p:(Many[T],i32)):i32{let kept=p.0.items;consume(p.0.items);return kept.len();} function main():i32{return 0;}",
     "want": "E051"
+  },
+  {
+    "name": "owned_field_match_callback_borrow_read",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} enum Tail{Empty,File(H),Chunk(ChunkProducer)} function touch(r:HttpResponse):void{} function wire(own answer:HttpResponse):own Tail{match(answer.body){BodyChunks(p)=>{touch(answer);return Chunk(p);},_=>{}}return Empty;}function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "owned_field_match_callback_branch_read",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} enum Tail{Empty,File(H),Chunk(ChunkProducer)} function touch(r:HttpResponse):void{} function wire(own answer:HttpResponse):own Tail{match(answer.body){BodyChunks(p)=>{if(answer.status==101){touch(answer);return Chunk(p);}return Chunk(p);},_=>{}}return Empty;}function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "owned_field_match_callback_scalar_read",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} enum Tail{Empty,File(H),Chunk(ChunkProducer)} function touch(r:HttpResponse):void{} function wire(own answer:HttpResponse):own Tail{match(answer.body){BodyChunks(p)=>{let n=answer.status;return Chunk(p);},_=>{}}return Empty;}function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "owned_field_match_callback_plain_match",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} enum Tail{Empty,File(H),Chunk(ChunkProducer)} function wire(own answer:HttpResponse):own Tail{match(answer.body){BodyChunks(p)=>{return Chunk(p);},_=>{}}return Empty;}function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "owned_field_match_custom_owned_record",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Producer{next:(i32) => i32} enum WireBody{Bytes(u8[]),Chunks(Producer)} struct Response{body:WireBody} enum Tail{Empty,File(H),Chunk(Producer)} function wire(own answer:Response):own Tail{match(answer.body){Chunks(p)=>{return Chunk(p);},_=>{}}return Empty;}function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "owned_field_match_borrowed_builtin",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} enum Tail{Empty,File(H),Chunk(ChunkProducer)} function wire(answer:HttpResponse):own Tail{match(answer.body){BodyChunks(p)=>{return Chunk(p);},_=>{}}return Empty;}function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "owned_field_match_borrowed_record",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Producer{next:(i32) => i32} enum WireBody{Bytes(u8[]),Chunks(Producer)} struct Response{body:WireBody} enum Tail{Empty,File(H),Chunk(Producer)} function wire(answer:Response):own Tail{match(answer.body){Chunks(p)=>{return Chunk(p);},_=>{}}return Empty;}function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "owned_field_match_borrowed_replacement",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} enum Tail{Empty,File(H),Chunk(ChunkProducer)} function touch(r:HttpResponse):void{} function wire(own answer:HttpResponse,other:HttpResponse):own Tail{answer=other;match(answer.body){BodyChunks(p)=>{touch(answer);return Chunk(p);},_=>{}}return Empty;}function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "owned_field_match_borrowed_payload_replacement",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} enum Tail{Empty,File(H),Chunk(ChunkProducer)} function touch(r:HttpResponse):void{} function wire(own answer:HttpResponse,other:ChunkProducer):own Tail{answer=HttpResponse{...answer,body:BodyChunks(other)};match(answer.body){BodyChunks(p)=>{touch(answer);return Chunk(p);},_=>{}}return Empty;}function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "owned_field_match_borrowed_capture",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} enum Tail{Empty,File(H),Chunk(ChunkProducer)} function touch(r:HttpResponse):void{} function outer(answer:HttpResponse):void{let f=():own Tail=>{match(answer.body){BodyChunks(p)=>{touch(answer);return Chunk(p);},_=>{}}return Empty;};}function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "owned_field_match_effectful_read",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} enum Tail{Empty,File(H),Chunk(ChunkProducer)} function touch(r:HttpResponse):void{print(r.status);} function wire(own answer:HttpResponse):own Tail{match(answer.body){BodyChunks(p)=>{touch(answer);return Chunk(p);},_=>{}}return Empty;} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "owned_field_match_borrowed_owner_alias",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} enum Tail{Empty,File(H),Chunk(ChunkProducer)} function touch(r:HttpResponse):void{} function wire(answer:HttpResponse):own Tail{let alias=answer;match(alias.body){BodyChunks(p)=>{touch(alias);return Chunk(p);},_=>{}}return Empty;} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "owned_field_match_cell_owned",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} enum Payload{CellPayload(Cell[i32])} struct Holder{payload:Payload} enum Out{Empty,File(H),Held(Cell[i32])} function touch(h:Holder):void{} function f(own holder:Holder):own Out{match(holder.payload){CellPayload(c)=>{touch(holder);return Held(c);}}return Empty;} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "owned_field_match_cell_borrowed",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} enum Payload{CellPayload(Cell[i32])} struct Holder{payload:Payload} enum Out{Empty,File(H),Held(Cell[i32])} function touch(h:Holder):void{} function f(holder:Holder):own Out{match(holder.payload){CellPayload(c)=>{touch(holder);return Held(c);}}return Empty;} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "owned_field_match_borrowed_resource",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} enum Payload{HandlePayload(H)} struct Holder{payload:Payload} enum Out{Empty,Held(H)} function take(own h:H):void{} function consume(own h:Holder):void{} function f(holder:Holder):own Out{match(holder.payload){HandlePayload(h)=>{return Held(h);}}return Empty;}function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "owned_field_match_resource_repeated",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} enum Payload{HandlePayload(H)} struct Holder{payload:Payload} enum Out{Empty,Held(H)} function take(own h:H):void{} function consume(own h:Holder):void{} function f(own holder:Holder):own Out{match(holder.payload){HandlePayload(h)=>{take(h);return Held(h);}}return Empty;}function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "owned_field_match_owner_consumed",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} enum Payload{HandlePayload(H)} struct Holder{payload:Payload} enum Out{Empty,Held(H)} function take(own h:H):void{} function consume(own h:Holder):void{} function f(own holder:Holder):own Out{consume(holder);match(holder.payload){HandlePayload(h)=>{return Held(h);}}return Empty;}function main():i32{return 0;}",
+    "want": "E050"
+  },
+  {
+    "name": "owned_field_match_resource_defer",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} enum Payload{HandlePayload(H)} struct Holder{payload:Payload} enum Out{Empty,Held(H)} function take(own h:H):void{} function consume(own h:Holder):void{} function f(own holder:Holder):own Out{match(holder.payload){HandlePayload(h)=>{defer{h.close();}return Held(h);}}return Empty;}function main():i32{return 0;}",
+    "want": "E051"
   }
 ]

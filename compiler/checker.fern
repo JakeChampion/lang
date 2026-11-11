@@ -23587,7 +23587,41 @@ function ow_arm_ctx(actx: OwnCtx, pat: ast.Pattern, whole: typeinfo.Type, scrut:
   if let ast.ExprCall(_) = scrut {
     return OwnCtx { ...bound, owned: ow_handle_binders(bound.owned, actx.owned, bound), borrowed: ow_handle_binders(bound.borrowed, actx.borrowed, bound) };
   }
+  if (ow_owned_field_source(scrut, actx)) {
+    return OwnCtx { ...bound, borrowed: ow_handle_binders(bound.borrowed, actx.borrowed, bound) };
+  }
   return bound;
+}
+
+// Data payloads retain the contract of an unchanged owned input.
+// Resource payloads still need the field's last-use transfer proof.
+function ow_owned_field_source(value: ast.Expr, ctx: OwnCtx): boolean {
+  let ast.ExprFieldAccess(field) = value else {
+    return false;
+  };
+  let ast.ExprIdent(owner) = field.obj else {
+    return false;
+  };
+  return ow_is_owned(ctx, owner.name) && !util.has_str(ctx.borrowed, owner.name) && ow_original_owned_input(ctx, owner.name);
+}
+
+function ow_original_owned_input(ctx: OwnCtx, name: string): boolean {
+  let fn = ctx.last_use.get().fn;
+  let original = fn.receiver_own && fn.receiver_name == name;
+  for param in fn.params {
+    original = original || param.own && param.name == name;
+  }
+  let unchanged = (st: ast.Stmt, own good: boolean): boolean => {
+    if let ast.StmtAssign(a) = st {
+      return good && a.target != name;
+    }
+    return good && !lu_stmt_declares(st, name);
+  };
+  let keep = (e: ast.Expr, own good: boolean): boolean => good;
+  for st in fn.body {
+    original = astwalk.fold_stmt_nodes(st, original, unchanged, keep, astwalk.descend_all);
+  }
+  return original;
 }
 
 // The names in names that were in before, or that can hold a handle.
