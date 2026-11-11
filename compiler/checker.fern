@@ -6,6 +6,7 @@ import "./astwalk";
 import "./lexical";
 import "./ownmatch";
 import "./builtinsigs";
+import "./caps";
 import "./typeinfo";
 import "./decltypes";
 import "./semtypes";
@@ -10082,14 +10083,40 @@ function unsafe_call(c: ast.ExprCall, own acc: UnsafeWalk): UnsafeWalk {
     }
   }
   for arg in c.args {
-    acc = astwalk.fold_expr_pruned(arg, acc, unsafe_visit, unsafe_descend);
+    acc = unsafe_argument(arg, acc);
   }
   return acc;
+}
+
+// An argument of a call. The address from __bytes_data is valid for the
+// call that takes it as an argument, so that place is the only one it has.
+function unsafe_argument(arg: ast.Expr, own acc: UnsafeWalk): UnsafeWalk {
+  if let ast.ExprCall(inner) = arg {
+    if (bytes_data_call(inner, acc.scope)) {
+      return unsafe_call(inner, acc);
+    }
+  }
+  return astwalk.fold_expr_pruned(arg, acc, unsafe_visit, unsafe_descend);
+}
+
+function bytes_data_call(c: ast.ExprCall, s: Scope): boolean {
+  if let ast.ExprIdent(id) = c.callee {
+    return id.name == "__bytes_data" && !s.defines(id.name);
+  }
+  return false;
+}
+
+function kept_address_diag(line: i32, col: i32): util.Diag {
+  return dg_at("E095", "the address from \"__bytes_data\" is kept after its call; write the call as an argument of the call that uses the address", line, col);
 }
 
 function unsafe_visit(e: ast.Expr, own acc: UnsafeWalk): UnsafeWalk {
   match (e) {
     ast.ExprCall(c) => {
+      // Outside an unsafe block the call has its own diagnostic.
+      if (acc.inside && bytes_data_call(c, acc.scope)) {
+        acc = unsafe_note(acc, kept_address_diag(c.line, c.col));
+      }
       return unsafe_call(c, acc);
     },
     ast.ExprLambda(lm) => {
@@ -17970,8 +17997,9 @@ function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, di: i32): b
     }
     ej = names.next[ej];
   }
-  // A free function named like a builtin or an intrinsic redeclares it.
-  if (f2.receiver_type.len() == 0 && !is_primitive_display_builtin(f2.name) && (builtinsigs.builtin_row(f2.name).len() > 0 || is_registered_intrinsic(f2.name))) {
+  // A free function named like a builtin or an intrinsic redeclares it. So
+  // does one with the mangled name of a built-in method.
+  if (f2.receiver_type.len() == 0 && !is_primitive_display_builtin(f2.name) && (builtinsigs.builtin_row(f2.name).len() > 0 || is_registered_intrinsic(f2.name) || f2.name.starts_with("__method_") && f2.name != "__method_boolean_to_string" && caps.is_builtin(f2.name))) {
     earlier = true;
   }
   return earlier;

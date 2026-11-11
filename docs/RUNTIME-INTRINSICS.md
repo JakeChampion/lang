@@ -407,7 +407,10 @@ The address of a string's bytes has its own spelling,
 The address of the bytes of a byte view has the spelling `__bytes_data(b)`.
 It reads each form of a `[u8]`: an owned array, a slice, and the bytes of a
 string. `TestSelfHostBytesDataEveryTarget` and `TestSharedCImportsBytesData`
-gate it.
+gate it. The call is an argument of the call that uses the address, as in
+`__memcpy(to, __bytes_data(b), n)`. Each other place is E095, because it
+keeps the address after that call. For an address inside the bytes, take
+the address of a slice: `__bytes_data(b[4:])`.
 
 ## Worked example — `str_concat`
 
