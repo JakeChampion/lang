@@ -4054,6 +4054,11 @@ func (c *checker) normalizeEnumKinds(t ast.Type) ast.Type {
 		for i, a := range x.Args {
 			args[i] = c.normalizeEnumKinds(a)
 		}
+		if _, isEnum := c.info.Enums[x.Name]; !isEnum {
+			if _, isStruct := c.info.Structs[x.Name]; isStruct {
+				return ast.StructType{Name: x.Name, Args: args}
+			}
+		}
 		return ast.EnumType{Name: x.Name, Args: args}
 	case ast.ArrayType:
 		return ast.ArrayType{Elem: c.normalizeEnumKinds(x.Elem)}

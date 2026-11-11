@@ -131,6 +131,7 @@ alloc_grows_when_retained                            0
 an_at_binding_binds_its_own_alternative              0
 an_empty_map_arm_takes_the_type_of_the_other_arm     0
 an_empty_map_takes_the_type_of_its_first_use         0
+an_impl_for_one_instance_of_a_generic_struct         0
 an_import_named_like_a_scalar_type                   0
 an_imported_module_does_not_see_the_programs_variants 0
 an_index_read_gives_a_literal_array_its_element_type 0
@@ -1441,6 +1442,7 @@ zero_width_slice                                     0
 value_cleanup_keeps_cow_aliases                    0
 
 # 2026-11-11: a_function_named_like_a_safe_intrinsic_shadows_it is clean under RC trace.
+# 2026-11-11: an_impl_for_one_instance_of_a_generic_struct is clean under RC trace.
 a_function_named_like_a_safe_intrinsic_shadows_it    0
 
 # 2026-11-11: Main 38399ecf removed the raw-builtin shadow fixture.
