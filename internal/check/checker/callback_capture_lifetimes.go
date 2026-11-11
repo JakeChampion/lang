@@ -5,8 +5,63 @@ import "github.com/jakechampion/lang/internal/syntax/ast"
 // Local callback values retain the resource captures of their definition.
 // Reassigned and shadowed bindings need a separate flow proof.
 func (c *checker) localCallbackCaptures(fn *ast.FuncDecl) (map[string][]ast.Param, map[ast.Expr][]ast.Param) {
+	c.computeCallbackFactories()
+	return c.callbackCaptureFacts(fn, false)
+}
+
+// A factory summary names the inputs retained by its returned callback.
+// Owning a callback moves its value, but does not end its environment loans.
+func (c *checker) computeCallbackFactories() {
+	if c.callbackFactories != nil {
+		return
+	}
+	c.callbackFactories = map[string][]ast.Param{}
+	changed := true
+	for changed {
+		changed = false
+		for _, fn := range c.callbackFactoryFuncs {
+			switch fn.ReturnType.(type) {
+			case *ast.FuncType, ast.ParamType:
+			default:
+				continue
+			}
+			_, values := c.callbackCaptureFacts(fn, true)
+			var captures []ast.Param
+			ast.Walk(fn.Body, func(n ast.Node) bool {
+				switch node := n.(type) {
+				case *ast.Lambda, *ast.FuncDecl:
+					return false
+				case *ast.Return:
+					captures = mergeCallbackCaptures(captures, values[node.Value])
+				}
+				return true
+			})
+			var sources []ast.Param
+			for _, param := range fn.Params {
+				for _, capture := range captures {
+					if capture.Name == param.Name {
+						sources = append(sources, param)
+						break
+					}
+				}
+			}
+			if len(sources) > len(c.callbackFactories[fn.Name]) {
+				c.callbackFactories[fn.Name] = sources
+				changed = true
+			}
+		}
+	}
+}
+
+func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[string][]ast.Param, map[ast.Expr][]ast.Param) {
 	definitions := map[string][]ast.Expr{}
 	var values []ast.Expr
+	roots := map[string]ast.Param{}
+	if summarize {
+		for _, param := range fn.Params {
+			roots[param.Name] = param
+		}
+	}
 	add := func(name string, value ast.Expr) {
 		if name != "" && name != "_" {
 			definitions[name] = append(definitions[name], value)
@@ -20,6 +75,10 @@ func (c *checker) localCallbackCaptures(fn *ast.FuncDecl) (map[string][]ast.Para
 	params(fn.Params)
 	ast.Walk(fn.Body, func(node ast.Node) bool {
 		switch n := node.(type) {
+		case *ast.Return:
+			values = append(values, n.Value)
+		case *ast.Call:
+			values = append(values, n)
 		case *ast.Var:
 			add(n.Name, n.Init)
 		case *ast.Assign:
@@ -79,6 +138,35 @@ func (c *checker) localCallbackCaptures(fn *ast.FuncDecl) (map[string][]ast.Para
 		switch v := value.(type) {
 		case *ast.Ident:
 			return resolve(v.Name, active)
+		case *ast.Call:
+			if c.callbackCallCopies[v] {
+				return nil
+			}
+			id, ok := v.Callee.(*ast.Ident)
+			if !ok || id.Local || c.callValueCallees[v] {
+				return nil
+			}
+			factory := c.callbackFactoryFuncs[id.Name]
+			if factory == nil {
+				return nil
+			}
+			var out []ast.Param
+			for i, param := range factory.Params {
+				if i >= len(v.Args) {
+					break
+				}
+				for _, source := range c.callbackFactories[id.Name] {
+					if source.Name != param.Name {
+						continue
+					}
+					arg := v.Args[i]
+					out = mergeCallbackCaptures(out, valueCaptures(arg, active))
+					if name, ok := arg.(*ast.Ident); ok && !param.Own && !c.copyableCallResult(param.Type) {
+						out = mergeCallbackCaptures(out, []ast.Param{{Name: name.Name, Type: param.Type}})
+					}
+				}
+			}
+			return out
 		case *ast.Lambda:
 			return captures(v, active)
 		case *ast.IfExpr:
@@ -98,6 +186,9 @@ func (c *checker) localCallbackCaptures(fn *ast.FuncDecl) (map[string][]ast.Para
 		values := definitions[name]
 		if active[name] || len(values) != 1 {
 			return nil
+		}
+		if root, ok := roots[name]; ok {
+			return []ast.Param{root}
 		}
 		active[name] = true
 		defer delete(active, name)

@@ -82,6 +82,33 @@ function statement_only(own h: Handle): i32 {
   return read();
 }
 
+function wrap(own read: () => i32): own () => i32 {
+  return (): i32 => read();
+}
+
+function factory(h: Handle): own () => i32 {
+  return wrap((): i32 => h.read());
+}
+
+function forward[T](own value: T): own T {
+  return value;
+}
+
+function factory_reads(own h: Handle): i32 {
+  let read = factory(h);
+  let n = read() + read();
+  h.close();
+  return n;
+}
+
+function fresh_factory_reads(): i32 {
+  let h = Handle { n: 17, closed: cell_new(0) };
+  let read = forward(factory(h));
+  let n = read();
+  h.close();
+  return n;
+}
+
 function main(): i32 {
   let closed = cell_new(0);
   print(reads(Handle { n: 7, closed: unsafe { share_unchecked(closed) } }));
@@ -94,5 +121,7 @@ function main(): i32 {
   print(selected_read(Handle { n: 7, closed: cell_new(0) }, false));
   print(selected_match(Handle { n: 7, closed: cell_new(0) }, false));
   print(statement_only(Handle { n: 6, closed: cell_new(0) }));
+  print(factory_reads(Handle { n: 13, closed: cell_new(0) }));
+  print(fresh_factory_reads());
   return 0;
 }

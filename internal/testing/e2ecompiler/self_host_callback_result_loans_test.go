@@ -20,6 +20,16 @@ func callbackResultLoanCases(t *testing.T, bin string, runner []string, dir stri
 	if err := json.Unmarshal(data, &cases); err != nil {
 		t.Fatal(err)
 	}
+	for _, name := range []string{
+		"diag_e050_factory_callback_uses_consumed_capture",
+		"diag_e050_factory_callback_uses_consumed_local",
+	} {
+		source, err := os.ReadFile(e2eharness.RepoPath("conformance", "cases", name, "main.fern"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		cases = append(cases, struct{ Name, Source, Want string }{name, string(source), "E050"})
+	}
 	for _, tc := range cases {
 		t.Run(tc.Name, func(t *testing.T) {
 			cmd := exec.Command(bin)
