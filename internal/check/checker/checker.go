@@ -49,14 +49,16 @@ func (e *Error) Labels() []diag.Label {
 var _ diag.FileSetter = (*Error)(nil)
 
 type Info struct {
-	VarTypes        map[*ast.Var]ast.Type
-	Target          string
-	IntrinsicCalls  map[*ast.Call]IntrinsicCall
-	StatefulHandler bool
-	BoxedCells      map[string]bool
-	Locals          map[*ast.FuncDecl][]*ast.Var
-	FuncSigs        map[string]*ast.FuncType
-	OwnFuncs        map[string][]bool
+	// ArrayFieldCopies records primitive COW array fields that cannot retain a resource alias.
+	ArrayFieldCopies map[*ast.FieldAccess]bool
+	VarTypes         map[*ast.Var]ast.Type
+	Target           string
+	IntrinsicCalls   map[*ast.Call]IntrinsicCall
+	StatefulHandler  bool
+	BoxedCells       map[string]bool
+	Locals           map[*ast.FuncDecl][]*ast.Var
+	FuncSigs         map[string]*ast.FuncType
+	OwnFuncs         map[string][]bool
 	// CallBorrows reports a plain call whose result can borrow from one of
 	// its arguments at this site.
 	CallBorrows func(*ast.Call) bool
@@ -14422,6 +14424,16 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		c.numericTypes[e] = t
 	}
 	t = c.postNumericType(e, t)
+	if field, ok := e.(*ast.FieldAccess); ok {
+		if primitiveArrayCopy(t) {
+			if c.info.ArrayFieldCopies == nil {
+				c.info.ArrayFieldCopies = map[*ast.FieldAccess]bool{}
+			}
+			c.info.ArrayFieldCopies[field] = true
+		} else {
+			delete(c.info.ArrayFieldCopies, field)
+		}
+	}
 	// A call returns its own reference to immutable data, even when the
 	// returned value shares storage with a borrowed input.
 	if call, ok := e.(*ast.Call); ok && c.copyableCallResult(t) {

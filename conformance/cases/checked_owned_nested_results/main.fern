@@ -7,14 +7,14 @@ function (own h: Handle) close(): i32 {
   return h.n;
 }
 
-struct Wrap { h: Handle }
+struct Wrap { h: Handle, bytes: u8[][] }
 
 function make_handle(n: i32, own closed: Cell[i32]): own Handle {
   return Handle { n: n, closed: closed };
 }
 
 function make_pair(own left: Handle, own right: Handle): own (Wrap, Wrap) {
-  return (Wrap { h: left }, Wrap { h: right });
+  return (Wrap { h: left, bytes: [[1 as u8]] }, Wrap { h: right, bytes: [[2 as u8]] });
 }
 
 function main(): i32 {
@@ -22,8 +22,14 @@ function main(): i32 {
   let pair = make_pair(make_handle(7, unsafe { share_unchecked(closed) }), make_handle(9, unsafe { share_unchecked(closed) }));
   let left = pair.0.h.n;
   let right = pair.1.h.n;
+  let saved_left = pair.0.bytes;
+  let saved_right = pair.1.bytes;
   assert(pair.0.h.close() == left);
   assert(pair.1.h.close() == right);
+  let changed = saved_left.with(0, [3 as u8]);
+  assert(saved_left[0][0] == 1 as u8);
+  assert(saved_right[0][0] == 2 as u8);
+  assert(changed[0][0] == 3 as u8);
   assert(closed.get() == 2);
   print(left);
   print(right);

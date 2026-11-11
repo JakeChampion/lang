@@ -68,6 +68,10 @@ A checked result remains owned after a local binding.
 Its nested resource fields can transfer at their last use.
 Earlier scalar field copies do not retain a resource loan.
 
+A numeric, boolean, or character COW array field copy does not retain a resource loan.
+This rule includes nested arrays.
+Resource arrays, mutable Cells, callbacks, and views keep their resource loans.
+
 A resource alias, a deferred action, or a later read can prevent that transfer.
 This rule includes checked callback results and local callback aliases.
 An ordinary-result function type retains its ordinary result contract.

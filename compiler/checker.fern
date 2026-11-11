@@ -19189,7 +19189,7 @@ struct LuSel { obj: string, field: string, line: i32, col: i32 }
 
 // updates holds, for the base of each update literal `S { ...q, f: v }`, one
 // entry per field the literal replaces.
-struct LuFacts { checked_locals: string[], occ: LuOcc[], vars: LuVar[], assigns: LuVar[], escaping: string[], sels: LuSel[], scalar_sels: string[], captured: string[], defer_bare: string[], defer_fields: string[], updates: LuSel[], unpacked: LuVar[], matched: LuVar[] }
+struct LuFacts { checked_locals: string[], occ: LuOcc[], vars: LuVar[], assigns: LuVar[], escaping: string[], sels: LuSel[], copy_sels: string[], captured: string[], defer_bare: string[], defer_fields: string[], updates: LuSel[], unpacked: LuVar[], matched: LuVar[] }
 
 // fresh names the fresh locals once lu_fresh_names has decided them; until
 // then fresh_known is false and lu_fresh_init_in decides from the facts.
@@ -19407,7 +19407,7 @@ function lu_fact_expr(e: ast.Expr, own f: LuFacts): LuFacts {
           return LuFacts { ...f, sels: f.sels.append(LuSel { obj: oid.name, field: fa.field, line: oid.line, col: oid.col }) };
         },
         _ => {
-          return lu_scalar_selection(fa, f);
+          return lu_copy_selection(fa, f);
         }
       }
     },
@@ -19430,16 +19430,27 @@ function lu_fact_expr(e: ast.Expr, own f: LuFacts): LuFacts {
   }
 }
 
-function lu_scalar_selection(fa: ast.ExprFieldAccess, own f: LuFacts): LuFacts {
+function lu_copy_selection(fa: ast.ExprFieldAccess, own f: LuFacts): LuFacts {
   let ty = fa.ty;
-  if (ty == "string" || ty == "str" || !typeinfo.is_primitive_type_name(ty)) {
+  if (!lu_primitive_array_copy(ty) && (ty == "string" || ty == "str" || !typeinfo.is_primitive_type_name(ty))) {
     return f;
   }
   let enclosing = ow_enclosing_field(fa);
   if let ast.ExprIdent(id) = enclosing.obj {
-    return LuFacts { ...f, scalar_sels: f.scalar_sels.append(lu_key(id.line, id.col)) };
+    return LuFacts { ...f, copy_sels: f.copy_sels.append(lu_key(id.line, id.col)) };
   }
   return f;
+}
+
+function lu_primitive_array_copy(ty: string): boolean {
+  if (!ty.ends_with("[]")) {
+    return false;
+  }
+  let leaf = ty;
+  while (leaf.ends_with("[]")) {
+    leaf = slice_unchecked(leaf, 0, leaf.len() - 2).to_owned();
+  }
+  return util.has_str(["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize", "isize", "f32", "f64", "boolean", "char", "void"], leaf);
 }
 
 function lu_occ_count(fx: LuFn, name: string): i32 {
@@ -20603,7 +20614,7 @@ function lu_is_loop_stmt(st: ast.Stmt): boolean {
 }
 
 function lu_empty_facts(): LuFacts {
-  return LuFacts { checked_locals: [], occ: [], vars: [], assigns: [], escaping: [], sels: [], scalar_sels: [], captured: [], defer_bare: [], defer_fields: [], updates: [], unpacked: [], matched: [] };
+  return LuFacts { checked_locals: [], occ: [], vars: [], assigns: [], escaping: [], sels: [], copy_sels: [], captured: [], defer_bare: [], defer_fields: [], updates: [], unpacked: [], matched: [] };
 }
 
 // A search for an occurrence of a name, the same occurrences that LuFacts.occ
@@ -21848,7 +21859,7 @@ function lu_checked_result_call(fx: LuFn, call: ast.ExprCall): boolean {
   return false;
 }
 
-// Scalar field copies cannot retain a resource alias.
+// Scalar and primitive COW array copies cannot retain a resource alias.
 function lu_exclusive_owned_field(fx: LuFn, name: string, field: string): boolean {
   if (!lu_own_param(fx, name) && !(lu_decl_count(fx, name) == 1 && lu_checked_result_local(fx, name))) {
     return false;
@@ -21865,7 +21876,7 @@ function lu_exclusive_owned_field(fx: LuFn, name: string, field: string): boolea
       if (selected.len() == 0) {
         return false;
       }
-      if (selected == field && !util.has_str(fx.facts.scalar_sels, lu_key(o.line, o.col))) {
+      if (selected == field && !util.has_str(fx.facts.copy_sels, lu_key(o.line, o.col))) {
         reads += 1;
       }
     }
