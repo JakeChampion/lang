@@ -40,8 +40,12 @@ It is a partial view, not a downloaded complete report.
 Run from the repository root:
 
 ```sh
-python3 docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/verify.py --commit HEAD
+python3 docs/benchmarks/compiler-checker-cliff-ci-2026-11-11/verify.py --commit b58ea71c546cdce56f11f5caf42dae4749377617
 ```
 
 The verifier checks committed data, raw gzip identities, protocol sources, the publication baseline, and the original comparator controls.
 After a later source integration, retain this command with the original publication commit.
+
+The later IR corpus repair changes its Go test harness.
+The counter evidence retains the exact compiler and protocol sources above.
+The verifier and all 31 data records stay unchanged.
