@@ -41,6 +41,19 @@ func TestFmtFileList(t *testing.T) {
 	if out, code := run("-fmt", "-d", messy, clean, messy2); code != 1 || out != wantDiff {
 		t.Errorf("-fmt -d over three files: exit %d (want 1), out:\n%s", code, out)
 	}
+	bad := filepath.Join(dir, "bad.fern")
+	if err := os.WriteFile(bad, []byte("function main(): i32 {\n  let x: i32 = 1\n  return x;\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, code := run("-fmt", "-d", bad, messy); code != 2 || out != printer.UnifiedDiff(unformatted, want, messy, messy) {
+		t.Errorf("-fmt -d with a file that does not parse: exit %d (want 2), out:\n%s", code, out)
+	}
+	if out, code := run("-fmt", "-d", filepath.Join(dir, "nope.fern")); code != 2 || out != "" {
+		t.Errorf("-fmt -d with a missing file: exit %d (want 2), out %q", code, out)
+	}
+	if _, code := run("-fmt", bad); code != 1 {
+		t.Errorf("-fmt with a file that does not parse: exit %d (want 1)", code)
+	}
 	if out, code := run("-fmt", "-o", filepath.Join(dir, "out.fern"), messy, clean); code != 2 || out != "" {
 		t.Errorf("-fmt -o with two inputs: exit %d (want 2), out %q", code, out)
 	}
