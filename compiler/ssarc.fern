@@ -6104,6 +6104,17 @@ function sysreg_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst)
   return emit(r, ir.op_sysreg(ir.K_SYSREG_WRITE, name));
 }
 
+function lane_f32_argument(f: ssasem.Func, value: i32): i32 {
+  let source = defining(f, value);
+  if (source.kind_tag == ssasem.cast() && source.args.len() == 1 && ssasem.is_f32(f.values[value])) {
+    let from = f.values[source.args[0]];
+    if (ssasem.is_float(from) && !ssasem.is_f32(from)) {
+      return source.args[0];
+    }
+  }
+  return value;
+}
+
 function lane_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irtables.LowerState {
   let w = typeinfo.lane_builtin_width(ins.str);
   let verb = typeinfo.lane_builtin_verb(ins.str);
@@ -6133,6 +6144,13 @@ function lane_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): 
   }
   for a in ins.args {
     r = emit(r, ir.op_drop());
+  }
+  if (w == 32 && verb == "of") {
+    let inputs = ins.args;
+    for i in 0..inputs.len() {
+      inputs = inputs.with(i, lane_f32_argument(f, inputs[i]));
+    }
+    ins = ssa.SInst { ...ins, args: inputs };
   }
   r = emit(r, ir.op_load_local(ins.args[0]));
   if (verb == "mul_add") {
