@@ -2021,7 +2021,7 @@ function __body_deadline(own c: __Conns, at: i32, opts: Config, now: i64): own _
   return __Conns { ...c, deadlines: c.deadlines.with(at, deadline), due: __sooner(c.due, deadline), rate_since: c.rate_since.with(at, since), rate_base: c.rate_base.with(at, base) };
 }
 
-function __serve_ready[D: async.Driver](drv: D, own c: __Conns, at: i32, opts: Config, behind: __Behind, clk: __Clock): (__Conns, boolean) {
+function __serve_ready[D: async.Driver](drv: D, own c: __Conns, at: i32, opts: Config, behind: __Behind, clk: __Clock): own (__Conns, boolean) {
   match (behind) {
     Pipelined => {
       return (c, true);
@@ -2977,7 +2977,7 @@ function __serve_event[D: async.Driver](drv: D, own c: __Conns, fd: i32, scratch
   return (read.0, at, read.1);
 }
 
-function __serve_finish[D: async.Driver](drv: D, own c: __Conns, fd: i32, eof: boolean, opts: Config, clk: __Clock): __Conns {
+function __serve_finish[D: async.Driver](drv: D, own c: __Conns, fd: i32, eof: boolean, opts: Config, clk: __Clock): own __Conns {
   let at = __conns_index(c, fd);
   if (at < 0) {
     return c;
@@ -6430,7 +6430,7 @@ function __h3_start_all_with[D: async.Driver, S](drv: D, own c: __Conns, fls: __
   return (__h3_flush_all(c, burst.touched), fs, state);
 }
 
-function __h3_flush_all(own c: __Conns, serials: i32[]): __Conns {
+function __h3_flush_all(own c: __Conns, serials: i32[]): own __Conns {
   let cur = c;
   for s in serials {
     cur = __h3_flush(cur, s);
@@ -6637,7 +6637,7 @@ function __h3_answer[D: async.Driver](drv: D, own c: __Conns, fls: __Flights, fl
   return (__h3_flush(r.0, fl.quic), r.1);
 }
 
-function __h3_abandon(own c: __Conns, fl: __Flight): __Conns {
+function __h3_abandon(own c: __Conns, fl: __Flight): own __Conns {
   let i: i32 = __h3_at(c.quic, fl.quic);
   if (i < 0) {
     return c;

@@ -6482,6 +6482,13 @@ function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
       first_expr = joined.e;
       continue;
     }
+    let tuple_join = tuple_literal_join(a, i, first, et, s);
+    if (!is_unknown(tuple_join)) {
+      first = tuple_join;
+      first_lit = 0;
+      first_expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+      continue;
+    }
     if (bare_map(first) && !bare_map(et)) {
       if let typeinfo.TypeMap(_) = et {
         first = et;
@@ -14350,7 +14357,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
           return out;
         }
       }
-      out = call_diags(mfa.obj, s);
+      out = dest_call_diags(mfa.obj, receiver_dest(mfa, dest, s), s);
       match (check_expr(mfa.obj, s)) {
         typeinfo.TypeTuple(mtt) => {
           let tdg = tuple_field_diags(mfa.field, mtt, mfa.line, mfa.col);
@@ -15268,12 +15275,73 @@ function scalar_array_mix(a: ast.ExprArray, anchor: typeinfo.Type, s: Scope, out
         anchor = etk;
         anchor_lit = lit;
       } else {
-        out = out.append(dg_at("E034", "array element: expected " + type_label(anchor) + ", got " + type_label(etk), expr_line(a.elements[k]), expr_col(a.elements[k])));
+        let joined = tuple_literal_join(a, k, anchor, etk, s);
+        if (is_unknown(joined)) {
+          out = out.append(dg_at("E034", "array element: expected " + type_label(anchor) + ", got " + type_label(etk), expr_line(a.elements[k]), expr_col(a.elements[k])));
+        } else {
+          anchor = joined;
+          anchor_lit = 0;
+        }
       }
     }
     k += 1;
   }
   return out;
+}
+
+// tuple_literal_join is the tuple type that element k and each element before it can take, or an unknown type.
+function tuple_literal_join(a: ast.ExprArray, k: i32, anchor: typeinfo.Type, etk: typeinfo.Type, s: Scope): typeinfo.Type {
+  if (!typeinfo.is_tuple(anchor) || !typeinfo.is_tuple(etk)) {
+    return t_unknown("not two tuples");
+  }
+  let joined = vb_join(VbStore { t: anchor, e: a.elements[0] }, VbStore { t: etk, e: a.elements[k] });
+  if (is_unknown(joined.t)) {
+    return joined.t;
+  }
+  for i in 0..k + 1 {
+    if (!literal_parts_take(a.elements[i], check_expr(a.elements[i], s), joined.t)) {
+      return t_unknown("no shared tuple type");
+    }
+  }
+  return joined.t;
+}
+
+// literal_parts_take is true when e of the type from can take the type to, and only its integer literals change type.
+function literal_parts_take(e: ast.Expr, from: typeinfo.Type, to: typeinfo.Type): boolean {
+  if (type_eq(from, to)) {
+    return true;
+  }
+  if (int_literal_tree(e)) {
+    return is_integer(to);
+  }
+  if let ast.ExprTuple(te) = e {
+    if let typeinfo.TypeTuple(ft) = from {
+      if let typeinfo.TypeTuple(tt) = to {
+        if (te.elements.len() != ft.elements.len() || ft.elements.len() != tt.elements.len()) {
+          return false;
+        }
+        for i in 0..te.elements.len() {
+          if (!literal_parts_take(te.elements[i], ft.elements[i], tt.elements[i])) {
+            return false;
+          }
+        }
+        return true;
+      }
+    }
+  }
+  if let ast.ExprArray(ae) = e {
+    if let typeinfo.TypeArray(fa) = from {
+      if let typeinfo.TypeArray(ta) = to {
+        for element in ae.elements {
+          if (!literal_parts_take(element, fa.elem, ta.elem)) {
+            return false;
+          }
+        }
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function element_mix(a: ast.ExprArray, anchor: typeinfo.Type, s: Scope, out: util.Diag[]): util.Diag[] {
@@ -15481,8 +15549,9 @@ function call_diags_struct_lit(sl: ast.ExprStructLit, dest_args: typeinfo.Type[]
       }
     }
     if (sl.has_base && fsig.type_params.len() > 0) {
-      if let typeinfo.TypeStruct(bst) = check_expr(sl.base, s) {
-        if (bst.args.len() == fsig.type_params.len()) {
+      let bt = check_expr(sl.base, s);
+      if let typeinfo.TypeStruct(bst) = bt {
+        if (bst.args.len() == fsig.type_params.len() && (dest_args.len() == 0 || !type_contains_unknown(bt))) {
           args = bst.args;
         }
       }
@@ -15505,7 +15574,11 @@ function call_diags_struct_lit(sl: ast.ExprStructLit, dest_args: typeinfo.Type[]
     out = util.append_diags(out, dest_call_diags(sl.field_values[vi], fdest, s));
   }
   if (sl.has_base) {
-    out = util.append_diags(out, call_diags(sl.base, s));
+    let bdest = t_unknown("no destination");
+    if (dest_args.len() > 0) {
+      bdest = t_struct_g(sl.type_name, dest_args);
+    }
+    out = util.append_diags(out, dest_call_diags(sl.base, bdest, s));
     let bt = check_expr(sl.base, s);
     if (!is_unknown(bt) && !type_eq(bt, t_struct(sl.type_name))) {
       out = out.append(dg_at("E003", "struct-update base must be " + sl.type_name + ", got " + type_label(bt), expr_line(sl.base), expr_col(sl.base)));
@@ -16003,6 +16076,37 @@ function lit_dest_args(sl: ast.ExprStructLit, dest_args: typeinfo.Type[], s: Sco
   return out;
 }
 
+// The type that a call in receiver position must have for its method to
+// give `dest`: the result type of the method binds its type variables, and
+// they give the receiver type. A receiver with no type of its own has the
+// method of the struct that `dest` is.
+function receiver_dest(mfa: ast.ExprFieldAccess, dest: typeinfo.Type, s: Scope): typeinfo.Type {
+  let none = t_unknown("no destination");
+  let ast.ExprCall(_) = mfa.obj else {
+    return none;
+  };
+  let owner = "";
+  if let typeinfo.TypeStruct(wanted) = dest {
+    owner = wanted.name;
+  }
+  if let typeinfo.TypeStruct(found) = check_expr(mfa.obj, s) {
+    owner = found.name;
+  }
+  let Some(msig) = s.scoped_method(mfa.field, owner) else {
+    return none;
+  };
+  let rref = parser.parse_type_ref(msig.receiver_type);
+  let vars = ref_type_vars(rref, parser.type_str_vars(msig.receiver_type, []), s, []);
+  if (is_unknown(dest) || vars.len() == 0) {
+    return none;
+  }
+  let (names, types) = gc_bind_param(parser.parse_type_ref(msig.ret_type_name), dest, vars, s.type_names(), [], []);
+  if (names.len() != vars.len()) {
+    return none;
+  }
+  return type_from_ref_subst(rref, names, types, s.type_names());
+}
+
 function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[] {
   if let ast.ExprCall(c) = e {
     return call_diags_call(c, s, [], dest);
@@ -16024,6 +16128,17 @@ function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[
     if let typeinfo.TypeStruct(ds) = member_dest(sl.type_name, dest, s) {
       if (ds.name == sl.type_name) {
         return call_diags_struct_lit(sl, lit_dest_args(sl, ds.args, s), s, []);
+      }
+    }
+  }
+  if let ast.ExprTuple(tup) = e {
+    if let typeinfo.TypeTuple(dt) = dest {
+      if (dt.elements.len() == tup.elements.len()) {
+        let out: util.Diag[] = [];
+        for i in 0..tup.elements.len() {
+          out = util.append_diags(out, dest_call_diags(tup.elements[i], dt.elements[i], s));
+        }
+        return out;
       }
     }
   }
@@ -22908,11 +23023,47 @@ function send_arg_diags(arg: ast.Expr, pname: string, c: ast.ExprCall, ctx: OwnC
         out = out.append(dg_at("E100", "closure passed to `send` parameter \"" + pname + "\" returns " + type_label(ft.ret_type) + ", which cannot cross a worker boundary: " + rwhy, aline, acol));
       }
     }
-    return out;
+    return util.append_diags(out, send_assign_diags(lm, pname, s));
   }
   let why = send_unsafe_reason(at, s, []);
   if (why.len() > 0) {
     out = out.append(dg_at("E100", "argument to `send` parameter \"" + pname + "\" has type " + type_label(at) + ", which cannot cross a worker boundary: " + why, aline, acol));
+  }
+  return out;
+}
+
+// A worker gets a copy of each capture, so a write to a captured variable
+// inside the closure would not reach the variable.
+function send_assign_diags(lm: ast.ExprLambda, pname: string, s: Scope): util.Diag[] {
+  function assigns(st: ast.Stmt, own acc: ast.StmtAssign[]): ast.StmtAssign[] {
+    if let ast.StmtAssign(a) = st {
+      return acc.append(a);
+    }
+    return acc;
+  }
+  function skip(e: ast.Expr, own acc: ast.StmtAssign[]): ast.StmtAssign[] {
+    return acc;
+  }
+  function skip_name(e: ast.Expr, own acc: string[]): string[] {
+    return acc;
+  }
+  function each(e: ast.Expr): boolean {
+    return true;
+  }
+  let locals: string[] = [];
+  for param in lm.params {
+    locals = locals.append(param.name);
+  }
+  let found: ast.StmtAssign[] = [];
+  for st in lm.body {
+    locals = astwalk.fold_stmt_nodes(st, locals, astwalk.binders_of, skip_name, each);
+    found = astwalk.fold_stmt_nodes(st, found, assigns, skip, each);
+  }
+  let out: util.Diag[] = [];
+  for a in found {
+    if (!util.has_str(locals, a.target) && s.is_bound(a.target)) {
+      out = out.append(dg_at("E100", "closure passed to `send` parameter \"" + pname + "\" assigns the captured variable \"" + a.target + "\": a worker has its own copy, so the write does not reach the variable", a.target_line, a.target_col));
+    }
   }
   return out;
 }
@@ -30799,7 +30950,7 @@ function settle_array_struct_literals(a: ast.ExprArray, s: Scope): ast.Expr {
     }
     let els: ast.Expr[] = [];
     for element in a.elements {
-      els = els.append(settle_struct_lit_wide(element, at.elem, s));
+      els = els.append(settle_struct_lit_wide(settle_wide_literals(element, at.elem), at.elem, s));
     }
     return ast.ExprArray { ...a, elements: els };
   }
@@ -34455,6 +34606,22 @@ function lit_type_link(a: typeinfo.Type, b: typeinfo.Type, st: LitInfer): LitInf
   return st;
 }
 
+// lit_free is true when no part of t is the marker of an unsettled literal.
+function lit_free(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(at) = t {
+    return lit_free(at.elem);
+  }
+  if let typeinfo.TypeTuple(tt) = t {
+    for element in tt.elements {
+      if (!lit_free(element)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return lit_id(t) < 0;
+}
+
 function lit_composite_local(e: ast.Expr, s: Scope, st: LitInfer): (typeinfo.Type, LitInfer, boolean) {
   let (seed, ids) = lit_tree(e, s, []);
   if (seed || float_literal_tree(e)) {
@@ -34480,9 +34647,13 @@ function lit_composite_local(e: ast.Expr, s: Scope, st: LitInfer): (typeinfo.Typ
     if (a.elements.len() > 0) {
       let (elem, next, any) = lit_composite_local(a.elements[0], s, st);
       st = next;
+      let joined = array_elem_type_of(check_expr(a, s));
       for i in 1..a.elements.len() {
         let (ty, more, found) = lit_composite_local(a.elements[i], s, st);
         st = more;
+        if (lit_free(ty) && !type_contains_unknown(joined)) {
+          ty = joined;
+        }
         st = lit_type_link(elem, ty, st);
       }
       return (t_array(elem), st, any);
@@ -35626,7 +35797,23 @@ function lit_kind_settled(e: ast.Expr): boolean {
 function array_element_preferred(e: ast.Expr, t: typeinfo.Type, lit: i32, first_expr: ast.Expr, first: typeinfo.Type, first_lit: i32, s: Scope): boolean {
   return !vaguer_than(t, first) && !literal_gives_way(lit, first) && !struct_lit_gives_way(e, t, first, s)
     && (same_element_type(t, first) || literal_gives_way(first_lit, t))
-    || struct_lit_gives_way(first_expr, first, t, s) || nested_array_gives_way(first_expr, first, t, s);
+    || struct_lit_gives_way(first_expr, first, t, s) || nested_array_gives_way(first_expr, first, t, s) && !literal_array_takes(e, first);
+}
+
+// literal_array_takes is true when the array literal e holds only integer literals, and each one takes the innermost element type of to.
+function literal_array_takes(e: ast.Expr, to: typeinfo.Type): boolean {
+  if let ast.ExprArray(a) = e {
+    if let typeinfo.TypeArray(ta) = to {
+      for element in a.elements {
+        if (!literal_array_takes(element, ta.elem)) {
+          return false;
+        }
+      }
+      return a.elements.len() > 0;
+    }
+    return false;
+  }
+  return int_literal_tree(e) && is_integer(to) && !wide_literal_widens(e, typeinfo.t_i64(), to);
 }
 
 function nested_array_gives_way(e: ast.Expr, from: typeinfo.Type, to: typeinfo.Type, s: Scope): boolean {

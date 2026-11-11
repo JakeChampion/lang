@@ -545,6 +545,31 @@ kernel loads at a random base, and a startup loop relocates the absolute
 data words (`docs/security/PIE.md`). Android is position-independent
 without the flag. Darwin, wasm and `-shared` refuse it with exit 2.
 
+### A function on arm64 holds 128 MiB of code at most
+
+A conditional branch on arm64 reaches 1 MiB, and a test-bit branch reaches
+32 KiB. For a target that is farther, the assembler writes the inverted branch
+over an unconditional branch (`arm64_asm_far_branch` in `arm64_native.fern`).
+An unconditional branch reaches 128 MiB. A target that is farther than that is
+a refusal that names the branch and the distance.
+
+### Load segments align to the largest page of the target
+
+An arm64 ELF image and each `-shared` object align their load segments to
+64 KiB. An x86-64-linux executable uses 4 KiB. An x86-64-android executable
+uses 16 KiB, because an Android kernel can use 16 KiB pages
+(`elf_x86_android_page_align` in `elf.fern`).
+
+### Signal numbers are the Linux numbers, and Darwin converts the watched ones
+
+`RealDriver.watch_signal` takes a signal number in the runtime convention,
+which is the Linux number. On arm64-darwin the reactor converts the number
+(`__fern_signal_host`), and reports the event with the runtime number
+(`__fern_signal_runtime`). It leaves the child-exit signal at its default
+action, because Darwin reaps each child itself when that signal is ignored.
+The helpers of `std/signal` do not convert a number on Darwin (#15336). The
+constants of that module have one number on both systems.
+
 ### Heap exhaustion exits 125 on the natives, traps on wasm
 
 The native targets exit 125 when the arena runs out (`.Lalloc_oom` in

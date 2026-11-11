@@ -1,0 +1,28 @@
+// An array literal has the same element type for each order of its
+// elements. An integer literal takes the type that the typed values share.
+function main(): i32 {
+    let i: i32 = 1;
+    let b: u8 = 3;
+    let x: i64 = 5000000000;
+    let after_a_literal = [1, i, x];
+    print(after_a_literal[0] + after_a_literal[2]);
+    let wide_literal = [1, i, 5000000000];
+    print(wide_literal[1] + wide_literal[2]);
+    let nested = [[1], [i], [x]];
+    print(nested[0][0] + nested[2][0]);
+    let nested_wide = [[1], [i], [5000000000]];
+    print(nested_wide[1][0] + nested_wide[2][0]);
+    let narrow: u8[][] = [[b], [3]];
+    print(narrow[0][0] + narrow[1][0]);
+    let narrow_then_wide = [[b], [3], [i]];
+    print(narrow_then_wide[0][0] + narrow_then_wide[2][0]);
+    let pairs = [(i, 1), (i, 5000000000)];
+    print(pairs[0].1 + pairs[1].1);
+    let typed_pairs = [(i, 1), (i, 2), (i, x)];
+    print(typed_pairs[1].1 + typed_pairs[2].1);
+    let first_parts = [(1, i), (x, i)];
+    print(first_parts[0].0 + first_parts[1].0);
+    let inner = [(i, [1]), (i, [x])];
+    print(inner[0].1[0] + inner[1].1[0]);
+    return 0;
+}

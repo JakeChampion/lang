@@ -1,0 +1,594 @@
+// Typed JNI bindings. std/jni/bind wrote this module. Do not edit it.
+import "std/jni";
+
+// A android.app.Activity.
+pub struct Activity { ref: usize }
+
+pub function (x: Activity) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Activity) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub function (x: Activity) as_context(): Context {
+  return Context { ref: x.ref };
+}
+
+// The class android.app.Activity and the IDs of its members.
+pub struct ActivityClass { class: usize, id_get_local_class_name: usize, id_is_finishing: usize }
+
+pub function activity_class(e: usize): Result[ActivityClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/app/Activity");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_get_local_class_name = jni.get_method_id(e, class, "getLocalClassName", "()Ljava/lang/String;");
+  jni.check(e)?;
+  let id_is_finishing = jni.get_method_id(e, class, "isFinishing", "()Z");
+  jni.check(e)?;
+  return Ok(ActivityClass { class: class, id_get_local_class_name: id_get_local_class_name, id_is_finishing: id_is_finishing });
+}
+
+// android.app.Activity.getLocalClassName()Ljava/lang/String;
+pub function (c: ActivityClass) get_local_class_name(e: usize, self: Activity): Result[string, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_local_class_name, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  let text = jni.string_of(e, got);
+  jni.delete_local_ref(e, got);
+  return Ok(text);
+}
+
+// android.app.Activity.isFinishing()Z
+pub function (c: ActivityClass) is_finishing(e: usize, self: Activity): Result[boolean, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 3, self.ref, c.id_is_finishing, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok((got & 255 as usize) != 0 as usize);
+}
+
+// A android.content.Context.
+pub struct Context { ref: usize }
+
+pub function (x: Context) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Context) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.Context and the IDs of its members.
+pub struct ContextClass { class: usize, id_get_package_manager: usize, id_get_package_name: usize }
+
+pub function context_class(e: usize): Result[ContextClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/content/Context");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_get_package_manager = jni.get_method_id(e, class, "getPackageManager", "()Landroid/content/pm/PackageManager;");
+  jni.check(e)?;
+  let id_get_package_name = jni.get_method_id(e, class, "getPackageName", "()Ljava/lang/String;");
+  jni.check(e)?;
+  return Ok(ContextClass { class: class, id_get_package_manager: id_get_package_manager, id_get_package_name: id_get_package_name });
+}
+
+// android.content.Context.getPackageManager()Landroid/content/pm/PackageManager;
+pub function (c: ContextClass) get_package_manager(e: usize, self: Context): Result[PackageManager, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_package_manager, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(PackageManager { ref: got });
+}
+
+// android.content.Context.getPackageName()Ljava/lang/String;
+pub function (c: ContextClass) get_package_name(e: usize, self: Context): Result[string, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_package_name, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  let text = jni.string_of(e, got);
+  jni.delete_local_ref(e, got);
+  return Ok(text);
+}
+
+// A android.content.pm.PackageManager.
+pub struct PackageManager { ref: usize }
+
+pub function (x: PackageManager) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: PackageManager) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.pm.PackageManager and the IDs of its members.
+pub struct PackageManagerClass { class: usize, id_query_intent_activities: usize }
+
+pub function package_manager_class(e: usize): Result[PackageManagerClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/content/pm/PackageManager");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_query_intent_activities = jni.get_method_id(e, class, "queryIntentActivities", "(Landroid/content/Intent;I)Ljava/util/List;");
+  jni.check(e)?;
+  return Ok(PackageManagerClass { class: class, id_query_intent_activities: id_query_intent_activities });
+}
+
+// android.content.pm.PackageManager.queryIntentActivities(Landroid/content/Intent;I)Ljava/util/List;
+pub function (c: PackageManagerClass) query_intent_activities(e: usize, self: PackageManager, a0: Intent, a1: i32): Result[List, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, a1 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_query_intent_activities, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(List { ref: got });
+}
+
+// A android.content.Intent.
+pub struct Intent { ref: usize }
+
+pub function (x: Intent) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Intent) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub const INTENT_ACTION_MAIN: string = "android.intent.action.MAIN";
+
+pub const INTENT_CATEGORY_LAUNCHER: string = "android.intent.category.LAUNCHER";
+
+pub const INTENT_FLAG_ACTIVITY_NEW_TASK: i32 = 268435456;
+
+// The class android.content.Intent and the IDs of its members.
+pub struct IntentClass { class: usize, id_new: usize, id_add_category: usize, id_add_flags: usize, id_get_action: usize, id_get_flags: usize }
+
+pub function intent_class(e: usize): Result[IntentClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/content/Intent");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_new = jni.get_method_id(e, class, "<init>", "(Ljava/lang/String;)V");
+  jni.check(e)?;
+  let id_add_category = jni.get_method_id(e, class, "addCategory", "(Ljava/lang/String;)Landroid/content/Intent;");
+  jni.check(e)?;
+  let id_add_flags = jni.get_method_id(e, class, "addFlags", "(I)Landroid/content/Intent;");
+  jni.check(e)?;
+  let id_get_action = jni.get_method_id(e, class, "getAction", "()Ljava/lang/String;");
+  jni.check(e)?;
+  let id_get_flags = jni.get_method_id(e, class, "getFlags", "()I");
+  jni.check(e)?;
+  return Ok(IntentClass { class: class, id_new: id_new, id_add_category: id_add_category, id_add_flags: id_add_flags, id_get_action: id_get_action, id_get_flags: id_get_flags });
+}
+
+// android.content.Intent.<init>(Ljava/lang/String;)V
+pub function (c: IntentClass) new(e: usize, a0: string): Result[Intent, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, 30, c.class, c.id_new, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.check(e)?;
+  return Ok(Intent { ref: got });
+}
+
+// android.content.Intent.addCategory(Ljava/lang/String;)Landroid/content/Intent;
+pub function (c: IntentClass) add_category(e: usize, self: Intent, a0: string): Result[Intent, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_add_category, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.check(e)?;
+  return Ok(Intent { ref: got });
+}
+
+// android.content.Intent.addFlags(I)Landroid/content/Intent;
+pub function (c: IntentClass) add_flags(e: usize, self: Intent, a0: i32): Result[Intent, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_add_flags, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Intent { ref: got });
+}
+
+// android.content.Intent.getAction()Ljava/lang/String;
+pub function (c: IntentClass) get_action(e: usize, self: Intent): Result[string, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_action, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  let text = jni.string_of(e, got);
+  jni.delete_local_ref(e, got);
+  return Ok(text);
+}
+
+// android.content.Intent.getFlags()I
+pub function (c: IntentClass) get_flags(e: usize, self: Intent): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_get_flags, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// A android.content.ComponentName.
+pub struct ComponentName { ref: usize }
+
+pub function (x: ComponentName) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: ComponentName) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.ComponentName and the IDs of its members.
+pub struct ComponentNameClass { class: usize, id_new: usize, id_flatten_to_short_string: usize }
+
+pub function component_name_class(e: usize): Result[ComponentNameClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/content/ComponentName");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_new = jni.get_method_id(e, class, "<init>", "(Ljava/lang/String;Ljava/lang/String;)V");
+  jni.check(e)?;
+  let id_flatten_to_short_string = jni.get_method_id(e, class, "flattenToShortString", "()Ljava/lang/String;");
+  jni.check(e)?;
+  return Ok(ComponentNameClass { class: class, id_new: id_new, id_flatten_to_short_string: id_flatten_to_short_string });
+}
+
+// android.content.ComponentName.<init>(Ljava/lang/String;Ljava/lang/String;)V
+pub function (c: ComponentNameClass) new(e: usize, a0: string, a1: string): Result[ComponentName, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  let s1 = jni.new_string(e, a1);
+  jni.jvalue_set_int(args, 1, s1);
+  let got = jni.invoke(e, 30, c.class, c.id_new, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.delete_local_ref(e, s1);
+  jni.check(e)?;
+  return Ok(ComponentName { ref: got });
+}
+
+// android.content.ComponentName.flattenToShortString()Ljava/lang/String;
+pub function (c: ComponentNameClass) flatten_to_short_string(e: usize, self: ComponentName): Result[string, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_flatten_to_short_string, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  let text = jni.string_of(e, got);
+  jni.delete_local_ref(e, got);
+  return Ok(text);
+}
+
+// A android.graphics.Point.
+pub struct Point { ref: usize }
+
+pub function (x: Point) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Point) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.graphics.Point and the IDs of its members.
+pub struct PointClass { class: usize, id_new: usize, id_offset: usize, id_x: usize, id_y: usize }
+
+pub function point_class(e: usize): Result[PointClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/graphics/Point");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_new = jni.get_method_id(e, class, "<init>", "(II)V");
+  jni.check(e)?;
+  let id_offset = jni.get_method_id(e, class, "offset", "(II)V");
+  jni.check(e)?;
+  let id_x = jni.get_field_id(e, class, "x", "I");
+  jni.check(e)?;
+  let id_y = jni.get_field_id(e, class, "y", "I");
+  jni.check(e)?;
+  return Ok(PointClass { class: class, id_new: id_new, id_offset: id_offset, id_x: id_x, id_y: id_y });
+}
+
+// android.graphics.Point.<init>(II)V
+pub function (c: PointClass) new(e: usize, a0: i32, a1: i32): Result[Point, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  jni.jvalue_set_int(args, 1, a1 as usize);
+  let got = jni.invoke(e, 30, c.class, c.id_new, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Point { ref: got });
+}
+
+// android.graphics.Point.offset(II)V
+pub function (c: PointClass) offset(e: usize, self: Point, a0: i32, a1: i32): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  jni.jvalue_set_int(args, 1, a1 as usize);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_offset, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// android.graphics.Point.x
+pub function (c: PointClass) x(e: usize, self: Point): Result[i32, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 5, self.ref, c.id_x, 0 as usize);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// android.graphics.Point.y
+pub function (c: PointClass) y(e: usize, self: Point): Result[i32, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 5, self.ref, c.id_y, 0 as usize);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// A android.os.SystemClock.
+pub struct SystemClock { ref: usize }
+
+pub function (x: SystemClock) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: SystemClock) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.os.SystemClock and the IDs of its members.
+pub struct SystemClockClass { class: usize, id_uptime_millis: usize }
+
+pub function system_clock_class(e: usize): Result[SystemClockClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/os/SystemClock");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_uptime_millis = jni.get_static_method_id(e, class, "uptimeMillis", "()J");
+  jni.check(e)?;
+  return Ok(SystemClockClass { class: class, id_uptime_millis: id_uptime_millis });
+}
+
+// android.os.SystemClock.uptimeMillis()J
+pub function (c: SystemClockClass) uptime_millis(e: usize): Result[i64, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_STATIC + 18, c.class, c.id_uptime_millis, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i64);
+}
+
+// A android.text.format.DateFormat.
+pub struct DateFormat { ref: usize }
+
+pub function (x: DateFormat) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: DateFormat) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.text.format.DateFormat and the IDs of its members.
+pub struct DateFormatClass { class: usize, id_is24_hour_format: usize }
+
+pub function date_format_class(e: usize): Result[DateFormatClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/text/format/DateFormat");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_is24_hour_format = jni.get_static_method_id(e, class, "is24HourFormat", "(Landroid/content/Context;)Z");
+  jni.check(e)?;
+  return Ok(DateFormatClass { class: class, id_is24_hour_format: id_is24_hour_format });
+}
+
+// android.text.format.DateFormat.is24HourFormat(Landroid/content/Context;)Z
+pub function (c: DateFormatClass) is24_hour_format(e: usize, a0: Context): Result[boolean, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_STATIC + 3, c.class, c.id_is24_hour_format, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok((got & 255 as usize) != 0 as usize);
+}
+
+// A java.util.List.
+pub struct List { ref: usize }
+
+pub function (x: List) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: List) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.util.List and the IDs of its members.
+pub struct ListClass { class: usize, id_get: usize, id_size: usize }
+
+pub function list_class(e: usize): Result[ListClass, jni.JavaError] {
+  let local = jni.find_class(e, "java/util/List");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_get = jni.get_method_id(e, class, "get", "(I)Ljava/lang/Object;");
+  jni.check(e)?;
+  let id_size = jni.get_method_id(e, class, "size", "()I");
+  jni.check(e)?;
+  return Ok(ListClass { class: class, id_get: id_get, id_size: id_size });
+}
+
+// java.util.List.get(I)Ljava/lang/Object;
+pub function (c: ListClass) get(e: usize, self: List, a0: i32): Result[jni.Object, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}
+
+// java.util.List.size()I
+pub function (c: ListClass) size(e: usize, self: List): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_size, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// A java.lang.Integer.
+pub struct Integer { ref: usize }
+
+pub function (x: Integer) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Integer) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub const INTEGER_MAX_VALUE: i32 = 2147483647;
+
+// The class java.lang.Integer and the IDs of its members.
+pub struct IntegerClass { class: usize, id_parse_int: usize }
+
+pub function integer_class(e: usize): Result[IntegerClass, jni.JavaError] {
+  let local = jni.find_class(e, "java/lang/Integer");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_parse_int = jni.get_static_method_id(e, class, "parseInt", "(Ljava/lang/String;)I");
+  jni.check(e)?;
+  return Ok(IntegerClass { class: class, id_parse_int: id_parse_int });
+}
+
+// java.lang.Integer.parseInt(Ljava/lang/String;)I
+pub function (c: IntegerClass) parse_int(e: usize, a0: string): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_STATIC + 15, c.class, c.id_parse_int, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// A java.lang.Math.
+pub struct Math { ref: usize }
+
+pub function (x: Math) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Math) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.lang.Math and the IDs of its members.
+pub struct MathClass { class: usize, id_sqrt: usize }
+
+pub function math_class(e: usize): Result[MathClass, jni.JavaError] {
+  let local = jni.find_class(e, "java/lang/Math");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_sqrt = jni.get_static_method_id(e, class, "sqrt", "(D)D");
+  jni.check(e)?;
+  return Ok(MathClass { class: class, id_sqrt: id_sqrt });
+}
+
+// java.lang.Math.sqrt(D)D
+pub function (c: MathClass) sqrt(e: usize, a0: f64): Result[f64, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_f64(args, 0, a0);
+  let got = jni.invoke_f64(e, jni.CALL_STATIC + 24, c.class, c.id_sqrt, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got);
+}
+
+// A java.lang.Float.
+pub struct Float { ref: usize }
+
+pub function (x: Float) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Float) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.lang.Float and the IDs of its members.
+pub struct FloatClass { class: usize, id_parse_float: usize }
+
+pub function float_class(e: usize): Result[FloatClass, jni.JavaError] {
+  let local = jni.find_class(e, "java/lang/Float");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_parse_float = jni.get_static_method_id(e, class, "parseFloat", "(Ljava/lang/String;)F");
+  jni.check(e)?;
+  return Ok(FloatClass { class: class, id_parse_float: id_parse_float });
+}
+
+// java.lang.Float.parseFloat(Ljava/lang/String;)F
+pub function (c: FloatClass) parse_float(e: usize, a0: string): Result[f32, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke_f32(e, jni.CALL_STATIC + 21, c.class, c.id_parse_float, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.check(e)?;
+  return Ok(got);
+}
+
+// A java.lang.System.
+pub struct System { ref: usize }
+
+pub function (x: System) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: System) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.lang.System and the IDs of its members.
+pub struct SystemClass { class: usize, id_out: usize }
+
+pub function system_class(e: usize): Result[SystemClass, jni.JavaError] {
+  let local = jni.find_class(e, "java/lang/System");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_out = jni.get_static_field_id(e, class, "out", "Ljava/io/PrintStream;");
+  jni.check(e)?;
+  return Ok(SystemClass { class: class, id_out: id_out });
+}
+
+// java.lang.System.out
+pub function (c: SystemClass) out(e: usize): Result[jni.Object, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_STATIC_FIELD + 0, c.class, c.id_out, 0 as usize);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
+}

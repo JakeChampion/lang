@@ -361,6 +361,17 @@ type Abort struct{ Cause, Detail string }
 
 func (a *Abort) Error() string { return a.Cause + "\n  " + a.Detail }
 
+// The interpreter hands out one task id, so another id names no task record.
+func taskRecord(args []Value) error {
+	if len(args) == 0 {
+		return nil
+	}
+	if id, ok := args[0].(Number); ok && id != 1 {
+		return indexAbort(CauseArrOOB, strconv.Itoa(int(id)), 2)
+	}
+	return nil
+}
+
 func indexAbort(cause, idx string, n int) error {
 	return &Abort{cause, fmt.Sprintf("index %s, length %d", idx, n)}
 }
@@ -1466,17 +1477,17 @@ func New() *Interp {
 		return sendCopyValue(args[0]), nil
 	}}
 	i.Builtins["__task_new"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(1), nil }}
-	i.Builtins["__task_free"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
+	i.Builtins["__task_free"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) { return nil, taskRecord(args) }}
 	i.Builtins["__task_cur"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
-	i.Builtins["__task_enter"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
+	i.Builtins["__task_enter"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) { return nil, taskRecord(args) }}
 	i.Builtins["__task_leave"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
 	i.Builtins["__task_park"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(-1), nil }}
-	i.Builtins["__task_wait"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return newArray(0), nil }}
-	i.Builtins["__task_timeout"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(-1), nil }}
+	i.Builtins["__task_wait"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) { return newArray(0), taskRecord(args) }}
+	i.Builtins["__task_timeout"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) { return Number(-1), taskRecord(args) }}
 	i.Builtins["__task_park_until"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(-1), nil }}
-	i.Builtins["__task_until"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(-1), nil }}
-	i.Builtins["__task_set_ready"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
-	i.Builtins["__task_set_cancelled"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
+	i.Builtins["__task_until"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) { return Number(-1), taskRecord(args) }}
+	i.Builtins["__task_set_ready"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) { return nil, taskRecord(args) }}
+	i.Builtins["__task_set_cancelled"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) { return nil, taskRecord(args) }}
 	i.Builtins["__task_cancelled"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
 	i.Builtins["f32_bits"] = &Builtin{Fn: builtinF32Bits}
 	i.Builtins["f32_from_bits"] = &Builtin{Fn: builtinF32FromBits}

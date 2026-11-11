@@ -76,7 +76,7 @@ struct Signal { present: boolean, description: boolean, format: i32, full: boole
 
 struct Timing { tick: u32, scale: u32, fixed: boolean }
 
-function read(input: [u8], at: i64, count: i32): Result[(i64, u32), frame.VideoError] {
+pub(package) function read(input: [u8], at: i64, count: i32): Result[(i64, u32), frame.VideoError] {
   return match (bit_input.read(input, at, count)) {
     Ok(value) => Ok(value),
     Err(pcm.Truncated) => Err(frame.Truncated),
@@ -84,7 +84,7 @@ function read(input: [u8], at: i64, count: i32): Result[(i64, u32), frame.VideoE
   };
 }
 
-function ue(input: [u8], at: i64): Result[(i64, u32), frame.VideoError] {
+pub(package) function ue(input: [u8], at: i64): Result[(i64, u32), frame.VideoError] {
   let zeros = 0;
   loop {
     let (next, value) = read(input, at, 1)?;
@@ -101,7 +101,7 @@ function ue(input: [u8], at: i64): Result[(i64, u32), frame.VideoError] {
   return Ok((next, (1u32 << zeros as u32) - 1u32 + suffix));
 }
 
-function bounded_ue(input: [u8], at: i64, maximum: u32): Result[(i64, u32), frame.VideoError] {
+pub(package) function bounded_ue(input: [u8], at: i64, maximum: u32): Result[(i64, u32), frame.VideoError] {
   let (next, value) = ue(input, at)?;
   if (value > maximum) {
     return Err(frame.Header);
@@ -109,7 +109,7 @@ function bounded_ue(input: [u8], at: i64, maximum: u32): Result[(i64, u32), fram
   return Ok((next, value));
 }
 
-function se(input: [u8], at: i64): Result[(i64, i32), frame.VideoError] {
+pub(package) function se(input: [u8], at: i64): Result[(i64, i32), frame.VideoError] {
   let (next, value) = ue(input, at)?;
   let magnitude = (value / 2u32 + value % 2u32) as i32;
   return Ok((next, if ((value & 1u32) == 0u32) { -magnitude } else { magnitude }));
@@ -145,7 +145,7 @@ function prevention(input: [u8], at: i32): Result[void, frame.VideoError] {
   return Ok(());
 }
 
-function rbsp_bytes(input: [u8]): Result[u8[], frame.VideoError] {
+pub(package) function rbsp_bytes(input: [u8]): Result[u8[], frame.VideoError] {
   let output: u8[] = [];
   let zeros = 0;
   for at in 0..input.len() {
@@ -399,7 +399,7 @@ function table_aspect(id: u32): Result[AspectRatio, frame.VideoError] {
   return Ok(AspectRatio { numerator: widths[id as i32], denominator: heights[id as i32] });
 }
 
-function overscan(input: [u8], at: i64): Result[i64, frame.VideoError] {
+pub(package) function overscan(input: [u8], at: i64): Result[i64, frame.VideoError] {
   let (position1, present) = read(input, at, 1)?;
   at = position1;
   if (present != 0u32) {
@@ -434,7 +434,7 @@ function video_signal(input: [u8], at: i64): Result[(i64, Signal), frame.VideoEr
   return signal_fields(input, at);
 }
 
-function chroma_location(input: [u8], at: i64): Result[i64, frame.VideoError] {
+pub(package) function chroma_location(input: [u8], at: i64): Result[i64, frame.VideoError] {
   let (position1, present) = read(input, at, 1)?;
   at = position1;
   if (present != 0u32) {
@@ -555,7 +555,7 @@ function vui(input: [u8], at: i64, references: i32): Result[(i64, Vui), frame.Vi
   return Ok((at, Vui { aspect_ratio: ratio, video_signal_present: signal.present, colour_description_present: signal.description, video_format: signal.format, full_range: signal.full, colour_primaries: signal.primaries, transfer_characteristics: signal.transfer, matrix_coefficients: signal.matrix, num_units_in_tick: time.tick, time_scale: time.scale, fixed_frame_rate: time.fixed }));
 }
 
-function trailing(input: [u8], at: i64): Result[void, frame.VideoError] {
+pub(package) function trailing(input: [u8], at: i64): Result[void, frame.VideoError] {
   let (position1, stop) = read(input, at, 1)?;
   at = position1;
   if (stop != 1u32) {

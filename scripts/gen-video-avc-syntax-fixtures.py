@@ -186,12 +186,13 @@ def invalid():
     ]]
 
 
-def build_trace():
-    binary = ROOT / "build/video/avc-sps-trace"
+def build_trace(codec="H264", name="avc-sps-trace"):
+    assert codec in ("H264", "HEVC")
+    binary = ROOT / "build/video" / name
     binary.parent.mkdir(parents=True, exist_ok=True)
     cflags = os.environ.get("FFMPEG_CFLAGS") or subprocess.check_output(["pkg-config", "--cflags", "libavcodec", "libavutil"], text=True)
     libs = os.environ.get("FFMPEG_LIBS") or subprocess.check_output(["pkg-config", "--libs", "libavcodec", "libavutil"], text=True)
-    subprocess.run([os.environ.get("CC", "cc"), "-Wall", "-Wextra", "-Werror", *shlex.split(cflags),
+    subprocess.run([os.environ.get("CC", "cc"), "-Wall", "-Wextra", "-Werror", "-DTRACE_CODEC=AV_CODEC_ID_" + codec, *shlex.split(cflags),
                     str(ROOT / "scripts/video-reference/avc-trace.c"), *shlex.split(libs), "-o", str(binary)], check=True)
     return binary
 

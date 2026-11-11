@@ -129,9 +129,9 @@ function device(ctx: usize): ui.Device {
 <<loop>>=
 // Runs the program `p` from the state `state` until Android destroys the
 // activity, and gives the last state.
-pub function run[S](ctx: usize, own state: S, p: ui.Program[S]): S {
-  let first = ui.shell(state, system_fonts(ctx), device(ctx));
-  let last = android.run(ctx, first, (own s: ui.Shell[S], e: android.Event): ui.Shell[S] => ui.step(s, p, e), (s: ui.Shell[S]): i32 => ui.wait(s, p));
+pub function run[S, M](ctx: usize, own state: S, p: ui.Program[S, M]): S {
+  let first: ui.Shell[S, M] = ui.shell(state, system_fonts(ctx), device(ctx));
+  let last = android.run(ctx, first, (own s: ui.Shell[S, M], e: android.Event): ui.Shell[S, M] => ui.step(s, p, e), (s: ui.Shell[S, M]): i32 => ui.wait(s, p));
   return last.app;
 }
 ```

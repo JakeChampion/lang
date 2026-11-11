@@ -5,10 +5,9 @@ text field and adds it with the Add button or with the action key of the
 keyboard. Each item has a switch for done and a button that removes it.
 The list scrolls.
 
-- `todo.fern` is the program: the `Model`, the `view` and the `update`. It
-  has no Android code. `ui.field` is the text field: each change of its
-  text comes to `update` as `ui.Edit`, and the action key comes as
-  `ui.Submit`. `ui.list` makes only the rows that show.
+- `todo.fern` is the program, with no Android code: the `Model`, the
+  `Msg`, the `view` and the `update`. `Msg` is the type of its messages.
+  `ui.list` makes only the rows that show.
 - `app.fern` is the NativeActivity. `std/android/ui/app` runs the program
   on the phone, with the keyboard of the system.
 - `todo_test.fern` runs the program on the host with `std/android/ui/sim`:

@@ -1,0 +1,139 @@
+// A NativeActivity app for the emulator check of the typed JNI bindings
+// that tools/jnibind writes (#14737). bindings.fern holds the wrappers of
+// the classes in bindings.spec. At the first Resume the app calls a
+// wrapper for each kind of member and each kind of result, logs what it
+// got, and finishes.
+import "std/android";
+import "std/jni";
+import "std/log";
+import "./bindings";
+
+struct App { done: boolean }
+
+pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size: usize): void {
+  android.start(activity, app_main_entry());
+}
+
+@callback("app_main")
+function app_main_entry(): usize;
+
+function app_main(ctx: usize): usize {
+  let last: App = android.run(ctx, App { done: false }, (own s: App, e: android.Event): App => step(ctx, s, e), (s: App): i32 => -1);
+  return 0 as usize;
+}
+
+function step(ctx: usize, s: App, e: android.Event): App {
+  match (e) {
+    android.Resume => {
+      if (!s.done) {
+        match (check(android.env(ctx), bindings.Activity { ref: android.activity_object(ctx) })) {
+          Ok(n) => {
+            log.warn("jnibind: done " + n.to_string());
+          },
+          Err(err) => {
+            log.warn("jnibind: failed: " + err.message());
+          }
+        }
+        android.finish(ctx);
+      }
+      return App { done: true };
+    },
+    _ => {
+      return s;
+    }
+  }
+}
+
+// Calls each kind of wrapper. The result is the number of parts that ran.
+function check(e: usize, act: bindings.Activity): Result[i32, jni.JavaError] {
+  context_part(e, act)?;
+  intent_part(e, act)?;
+  object_part(e)?;
+  static_part(e)?;
+  thrown_part(e)?;
+  return Ok(5);
+}
+
+// Methods of an object with a string and a boolean result, and a
+// conversion to a parent class.
+function context_part(e: usize, act: bindings.Activity): Result[void, jni.JavaError] {
+  let activities = bindings.activity_class(e)?;
+  let contexts = bindings.context_class(e)?;
+  let formats = bindings.date_format_class(e)?;
+  let name = activities.get_local_class_name(e, act)?;
+  let finishing = activities.is_finishing(e, act)?;
+  let package = contexts.get_package_name(e, act.as_context())?;
+  let clock = formats.is24_hour_format(e, act.as_context())?;
+  log.warn("jnibind: activity " + name + " finishing " + finishing.to_string() + " package " + package + " clock " + (clock || !clock).to_string());
+  return Ok(());
+}
+
+// A constructor with a string, constants, a method that gives its own
+// object, and an object of one class as the argument of another.
+function intent_part(e: usize, act: bindings.Activity): Result[void, jni.JavaError] {
+  let intents = bindings.intent_class(e)?;
+  let contexts = bindings.context_class(e)?;
+  let managers = bindings.package_manager_class(e)?;
+  let lists = bindings.list_class(e)?;
+  let intent = intents.new(e, bindings.INTENT_ACTION_MAIN)?;
+  let same = intents.add_category(e, intent, bindings.INTENT_CATEGORY_LAUNCHER)?;
+  let flagged = intents.add_flags(e, intent, bindings.INTENT_FLAG_ACTIVITY_NEW_TASK)?;
+  let action = intents.get_action(e, intent)?;
+  let flags = intents.get_flags(e, intent)?;
+  let pm = contexts.get_package_manager(e, act.as_context())?;
+  let found = managers.query_intent_activities(e, pm, intent, 0)?;
+  let count = lists.size(e, found)?;
+  let first = lists.get(e, found, 0)?;
+  log.warn("jnibind: intent " + action + " flags " + flags.to_string() + " launchers " + (count > 0).to_string() + " first " + (!first.is_null()).to_string());
+  for ref in [same.ref, flagged.ref, intent.ref, pm.ref, found.ref, first.ref] {
+    jni.delete_local_ref(e, ref);
+  }
+  return Ok(());
+}
+
+// Two string arguments, two int arguments, a void method and fields of
+// an object.
+function object_part(e: usize): Result[void, jni.JavaError] {
+  let names = bindings.component_name_class(e)?;
+  let points = bindings.point_class(e)?;
+  let name = names.new(e, "dev.fern.a", "dev.fern.a.Main")?;
+  let short = names.flatten_to_short_string(e, name)?;
+  let p = points.new(e, 3, -4)?;
+  points.offset(e, p, 10, 20)?;
+  let x = points.x(e, p)?;
+  let y = points.y(e, p)?;
+  log.warn("jnibind: component " + short + " point " + x.to_string() + " " + y.to_string());
+  jni.delete_local_ref(e, name.ref);
+  jni.delete_local_ref(e, p.ref);
+  return Ok(());
+}
+
+// Static methods with a long, an int, a double and a float result, a
+// static field, and a constant.
+function static_part(e: usize): Result[void, jni.JavaError] {
+  let clocks = bindings.system_clock_class(e)?;
+  let integers = bindings.integer_class(e)?;
+  let maths = bindings.math_class(e)?;
+  let floats = bindings.float_class(e)?;
+  let systems = bindings.system_class(e)?;
+  let up = clocks.uptime_millis(e)?;
+  let n = integers.parse_int(e, "-12345")?;
+  let root = maths.sqrt(e, 2.25)?;
+  let half = floats.parse_float(e, "0.5")?;
+  let out = systems.out(e)?;
+  log.warn("jnibind: uptime " + (up > 0 as i64).to_string() + " int " + n.to_string() + " max " + bindings.INTEGER_MAX_VALUE.to_string() + " sqrt " + root.to_string() + " float " + (half as f64).to_string() + " out " + (!out.is_null()).to_string());
+  jni.delete_local_ref(e, out.ref);
+  return Ok(());
+}
+
+// An exception of the Java code is an error, and the next call works.
+function thrown_part(e: usize): Result[void, jni.JavaError] {
+  let integers = bindings.integer_class(e)?;
+  let thrown = match (integers.parse_int(e, "fern")) {
+    Ok(n) => "no error",
+    Err(err) => err.message(),
+  };
+  let after = integers.parse_int(e, "7")?;
+  log.warn("jnibind: thrown " + thrown + " then " + after.to_string());
+  return Ok(());
+}

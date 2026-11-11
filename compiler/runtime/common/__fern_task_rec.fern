@@ -1,4 +1,15 @@
 function __fern_task_rec(id: i32): usize {
+  let st = __raw_task_state();
   let tab = __fern_task_tab();
-  return __raw_load_ptr(tab, id);
+  if (id < 1 || id >= __raw_load_ptr(st, 2) as i32) {
+    __fern_oob_abort();
+  }
+  let rec = __raw_load_ptr(tab, id);
+  if (rec == 0 as usize) {
+    __fern_oob_abort();
+  }
+  if (__raw_load_ptr(rec, 7) != 0 as usize) {
+    __fern_oob_abort();
+  }
+  return rec;
 }

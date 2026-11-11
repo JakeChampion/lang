@@ -47,7 +47,7 @@ An element takes the size of what it holds. Three methods change that:
 after it to the far edge:
 
 ```fern
-ui.row([ui.text("Wi-Fi"), ui.space(), ui.toggle(m.wifi, "wifi")]).aligned(ui.CENTER)
+ui.row([ui.text("Wi-Fi"), ui.space(), ui.toggle(m.wifi, "Wi-Fi", WifiChanged)]).aligned(ui.CENTER)
 ```
 
 The element that `view` returns takes the whole screen, less the status
@@ -81,29 +81,29 @@ ui.program(view, update).with_theme((dark: boolean): ui.Theme => my_theme(dark))
 
 | Element | What it is |
 |---|---|
-| `ui.button(label, action)` | A filled button |
-| `ui.outlined_button(label, action)` | A button with a border |
-| `ui.text_button(label, action)` | A button with its text only |
-| `ui.toggle(on, action)` | A switch |
+| `ui.button(label, msg)` | A filled button |
+| `ui.outlined_button(label, msg)` | A button with a border |
+| `ui.text_button(label, msg)` | A button with its text only |
+| `ui.toggle(on, say, msg)` | A switch. TalkBack reads `say` and its state |
 | `ui.card([...])` | A column on the surface color, with round corners |
 | `ui.progress(part)` | A bar, from 0 to 1 |
 | `ui.divider()` | A line across a column |
 
 ## Taps
 
-Each element can take a tap. `.on_tap("name")` gives it the name of an
-action, and `update` gets `ui.Tap("name", 0)`.
+Each element can take a tap. `.on_tap(msg)` gives it a message of your
+message type, and a tap gives that message to `update`.
+[State and messages](../messages/) shows how to declare the type.
 
-A list has many rows with the same action. `.on_tap_with("name", i)`
-adds a number, and `update` gets `ui.Tap("name", i)`:
+A list has many rows that do the same thing. Give the message the
+number of the row:
 
 ```fern
-ui.row([ui.text(item.title)]).on_tap_with("open", i)
+ui.row([ui.text(item.title)]).on_tap(Open(i))
 ```
 
-`.on_long("name", i)` does the same for a long press, which comes as
-`ui.LongPress("name", i)`. The element under a finger shows that it is
-pressed.
+`.on_long(msg)` does the same for a long press. The element under a
+finger shows that it is pressed.
 
 ## Lists that scroll
 
@@ -120,35 +120,39 @@ For a long list, use `ui.list`. It makes only the rows that show, so a
 list of 100,000 rows costs as much as a list of 20:
 
 ```fern
-ui.list("inbox", m.mails.len(), 72.0, (i: i32): ui.El => mail_row(m.mails[i], i))
+ui.list("inbox", m.mails.len(), 72.0, (i: i32): ui.El[Msg] => mail_row(m.mails[i], i))
 ```
 
 The arguments are the name of the list, the number of rows, and the
 height of a row in dp. The last argument is a function that makes one
-row.
+row. Write the result type of that function, `ui.El[Msg]`, so the
+compiler has the type of its messages.
 
 ## Text fields
 
 ```fern
-ui.field("name", m.name, "Your name")
+ui.field("name", m.name, "Your name").on_edit((text: string): Msg => Named(text)).on_submit(Saved)
 ```
 
 The arguments are the name of the field, its text, and the hint that it
 shows while it is empty. A tap shows the keyboard of the system.
 
-Your state keeps the text. Each change comes to `update`:
+Your state keeps the text. `.on_edit` takes a function that makes a
+message from the new text, and each change gives that message to
+`update`:
 
 ```fern
-ui.Edit("name", text) => {
+Named(text) => {
   return Model { ...m, name: text };
 },
-ui.Submit("name") => {
+Saved => {
   return saved(m);
 },
 ```
 
-`ui.Submit` comes when the person presses the action key of the
-keyboard. To clear the field, set its text to `""` in your state.
+The message of `.on_submit` comes when the person presses the action
+key of the keyboard. To clear the field, set its text to `""` in your
+state.
 
 A tap on the text of a field puts the caret there. A text that is wider
 than the field shows the part around the caret.
@@ -184,15 +188,15 @@ the elements below it:
 ```fern
 ui.stack([
   page(m),
-  ui.stack([ui.card([ui.text("Delete this item?"), ui.button("Delete", "delete")])]).centered().grow(1.0).background(draw.rgba(0, 0, 0, 128)).modal().on_tap("dismiss"),
+  ui.stack([ui.card([ui.text("Delete this item?"), ui.button("Delete", Deleted)])]).centered().grow(1.0).background(draw.rgba(0, 0, 0, 128)).modal().on_tap(Dismissed),
 ])
 ```
 
 ## Accessibility
 
-TalkBack reads each text and each element with an action. An element
+TalkBack reads each text and each element with a message. An element
 with no text, such as an icon, needs a description:
 
 ```fern
-ui.canvas("bin", draw_bin).width(24.0).height(24.0).on_tap("delete").described("Delete")
+ui.canvas("bin", draw_bin).width(24.0).height(24.0).on_tap(Deleted).described("Delete")
 ```

@@ -30,25 +30,24 @@ import "std/android/ui/app";
 
 struct Model { count: i32 }
 
-function view(m: Model, s: ui.Screen): ui.El {
+enum Msg { Add, Reset }
+
+function view(m: Model, s: ui.Screen): ui.El[Msg] {
   return ui.column(
     [
       ui.text(m.count.to_string()).sized(96.0).weighted(700),
-      ui.row([ui.outlined_button("Reset", "reset"), ui.button("Add one", "add")]).spaced(12.0),
+      ui.row([ui.outlined_button("Reset", Reset), ui.button("Add one", Add)]).spaced(12.0),
     ],
   ).spaced(16.0).centered();
 }
 
-function update(own m: Model, msg: ui.Msg): Model {
+function update(own m: Model, msg: Msg): Model {
   match (msg) {
-    ui.Tap("add", _) => {
+    Add => {
       return Model { count: m.count + 1 };
     },
-    ui.Tap("reset", _) => {
+    Reset => {
       return Model { count: 0 };
-    },
-    _ => {
-      return m;
     }
   }
 }
@@ -67,14 +66,21 @@ function app_main(ctx: usize): usize {
 }
 ```
 
-The app has three parts:
+The app has four parts:
 
 - **`Model`** is the state. Here it is one number.
+- **`Msg`** lists what can occur. Here a person can add one, or reset
+  the count.
 - **`view`** makes the screen from the state. It returns a tree of
-  elements: a column with a text and a row of two buttons. It does not
-  draw, and it has no positions in pixels.
+  elements: a column with a text and a row of two buttons. Each button
+  has the message that a tap on it gives. `view` does not draw, and it
+  has no positions in pixels.
 - **`update`** takes the state and a message, and returns the next state.
-  A tap on the button with the action `"add"` comes as `ui.Tap("add", _)`.
+
+The messages are your own type, so the compiler checks them. A button
+with a message that does not exist does not compile. When you add a
+message to `Msg`, the `match` in `update` does not compile until it
+handles the new message.
 
 After each message, the module calls `view` again and draws the new
 screen. Your code never changes the screen directly.
@@ -125,7 +131,7 @@ permissions = ["INTERNET"]
 | Page | What it covers |
 |---|---|
 | [Screens](./screens/) | Elements, sizes, colors, buttons, lists that scroll, text fields, pictures, and your own drawing |
-| [State and messages](./messages/) | Every message, timers, animation, the back key, and the events of Android |
+| [State and messages](./messages/) | Messages with values, timers, animation, the back key, and the events of Android |
 | [Testing](./testing/) | Tests that tap buttons and type text on your computer, with no phone |
 
 Complete apps are in

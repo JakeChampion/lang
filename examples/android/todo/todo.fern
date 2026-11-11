@@ -6,6 +6,10 @@ pub struct Item { text: string, done: boolean }
 
 pub struct Model { items: Item[], draft: string }
 
+// What a person can do on the screen. `Done` and `Remove` have the number
+// of the item.
+pub enum Msg { Draft(string), Add, Done(i32), Remove(i32) }
+
 pub function start(): Model {
   return Model { items: [], draft: "" };
 }
@@ -29,22 +33,22 @@ function summary(m: Model): string {
 }
 
 // One item: a switch for done, its text, and a button that removes it.
-function row(m: Model, i: i32): ui.El {
+function row(m: Model, i: i32): ui.El[Msg] {
   let it = m.items[i];
   let color = ui.INK;
   if (it.done) {
     color = ui.MUTED;
   }
-  return ui.row([ui.toggle(it.done, "done").on_tap_with("done", i), ui.text(it.text).sized(16.0).colored(color).clamped(1).wide(), ui.text_button("Remove", "remove").on_tap_with("remove", i)]).spaced(12.0).aligned(ui.CENTER).padding_xy(16.0, 0.0);
+  return ui.row([ui.toggle(it.done, it.text, Done(i)), ui.text(it.text).sized(16.0).colored(color).clamped(1).wide(), ui.text_button("Remove", Remove(i))]).spaced(12.0).aligned(ui.CENTER).padding_xy(16.0, 0.0);
 }
 
-pub function view(m: Model, s: ui.Screen): ui.El {
+pub function view(m: Model, s: ui.Screen): ui.El[Msg] {
   return ui.column(
     [
       ui.column([ui.text("To do").sized(28.0).weighted(700), ui.text(summary(m)).colored(ui.MUTED)]).spaced(4.0).padding_xy(16.0, 0.0),
-      ui.row([ui.field("draft", m.draft, "What is next?"), ui.button("Add", "add")]).spaced(12.0).aligned(ui.CENTER).padding_xy(16.0, 0.0),
+      ui.row([ui.field("draft", m.draft, "What is next?").on_edit((text: string): Msg => Draft(text)).on_submit(Add), ui.button("Add", Add)]).spaced(12.0).aligned(ui.CENTER).padding_xy(16.0, 0.0),
       ui.divider(),
-      ui.list("items", m.items.len(), 56.0, (i: i32): ui.El => row(m, i)),
+      ui.list("items", m.items.len(), 56.0, (i: i32): ui.El[Msg] => row(m, i)),
     ],
   ).spaced(16.0).padding_xy(0.0, 16.0).aligned(ui.STRETCH);
 }
@@ -75,29 +79,23 @@ function removed(m: Model, i: i32): Model {
   return Model { ...m, items: rest };
 }
 
-pub function update(own m: Model, msg: ui.Msg): Model {
+pub function update(own m: Model, msg: Msg): Model {
   match (msg) {
-    ui.Edit("draft", text) => {
+    Draft(text) => {
       return Model { ...m, draft: text };
     },
-    ui.Submit("draft") => {
+    Add => {
       return added(m);
     },
-    ui.Tap("add", _) => {
-      return added(m);
-    },
-    ui.Tap("done", i) => {
+    Done(i) => {
       return toggled(m, i);
     },
-    ui.Tap("remove", i) => {
+    Remove(i) => {
       return removed(m, i);
-    },
-    _ => {
-      return m;
     }
   }
 }
 
-pub function program(): ui.Program[Model] {
+pub function program(): ui.Program[Model, Msg] {
   return ui.program(view, update);
 }

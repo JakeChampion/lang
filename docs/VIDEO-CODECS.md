@@ -101,6 +101,17 @@ The byte budget applies before the unescaped copy. The pixel budget applies to t
 This is native sequence-header inspection, without picture reconstruction or complete stream conformance checks.
 It does not validate pictures, level constraints, or decoder support.
 
+`std/video/hevc` reads one base-layer H.265 SPS NAL without a platform codec.
+It reports profile identifiers, coded and visible dimensions, crop margins, precision, sublayer bounds, and VUI metadata.
+The byte budget and an 8 KiB SPS ceiling apply before the unescaped copy.
+The pixel budget covers the complete coded picture before crop.
+
+The reader checks ordinary SPS syntax and the nine range-extension flags through exact trailing bits.
+Fixed bounds constrain scaling lists, reference sets, long-term references, sublayers, and HRD entries.
+Other extensions and nonzero profile spaces return `Unsupported`.
+Profile constraint bits remain opaque. The reader does not resolve VPS references or validate pictures, level constraints, or decoder support.
+The native pixel-decode table remains unchanged.
+
 The same module inspects a PPS with its matching parsed sequence.
 It reports entropy and prediction flags, reference defaults, quantizers, slice-group metadata, and optional scaling flags.
 The reader validates all seven slice-group map types without a retained map allocation.
@@ -413,6 +424,12 @@ These external decoders supply the pixel comparison. Fern supplies packet framin
 Six encoder headers cover 8-, 10-, and 12-bit precision. Fifteen synthetic headers cover timing, decoder models, 32 operating points, and color branches.
 The real streams also match FFprobe metadata and every decoded plane through libaom and dav1d.
 Synthetic sequence-only carriers establish header syntax, without coded pictures or a pixel-decode claim.
+
+`scripts/check-video-hevc-interop` compares 36 native and real WASI metadata fields with independent FFmpeg CBS results.
+Eight libx265 streams cover 8-, 10-, and 12-bit precision, monochrome, chroma formats, crop, color, and aspect ratios.
+FFprobe metadata and every decoded sample from all three lossless frames must agree with the original raw input.
+Fifteen synthetic SPS headers cover seven sublayers, scaling lists, predicted reference sets, PCM, and HRD bounds.
+Synthetic headers establish syntax only. Four malformed controls require explicit independent parser diagnostics.
 
 Twenty-four FFmpeg packets cover RGB24, ARGB32, alpha, keyframes, partial rows, and unchanged frames.
 

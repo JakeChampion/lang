@@ -1,0 +1,38 @@
+// A resume runs the entry of the handle. A handle that pairs the id of a
+// parked task with another function stops the program with status 134: a
+// function restores only a frame that it saved.
+import "std/async";
+import "std/clock";
+import "std/time";
+
+function nap(): void {
+  let none: i32[] = [];
+  let wake = async.wait_any(none, Some(clock.instant().add(time.duration_millis(5))));
+}
+
+function first(): i32 {
+  nap();
+  return 7;
+}
+
+function second(): i32 {
+  let a: i64 = 4702111234474983745;
+  nap();
+  return (a % 100) as i32;
+}
+
+function main(): i32 {
+  let t = async.task_new((): i32 => first());
+  let st = async.task_start(t);
+  print("started");
+  let swapped = async.Task { id: t.id, entry: (): i32 => second(), shared: t.shared };
+  match (async.task_resume(swapped, async.Wake.TimedOut)) {
+    Done(v) => {
+      print("resumed");
+    },
+    Suspended(_) => {
+      print("parked again");
+    }
+  }
+  return 0;
+}

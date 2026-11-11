@@ -17,7 +17,9 @@ program that spawns nothing pays nothing.
 
 Fern values are immutable. A copy of a `Cell`, a closure, a `dyn` value, a
 view or a handle splits or forges what it names. The checker keeps those
-values inside one worker. So no accepted program can tell a copied tree
+values inside one worker. A closure shares each variable that it captures,
+so the checker also refuses a write to a captured variable inside a closure
+that crosses the boundary (`E100`). So no accepted program can tell a copied tree
 from a shared tree, and the copy is unobservable. A later release can move
 a value in place of the copy under the same contract.
 
