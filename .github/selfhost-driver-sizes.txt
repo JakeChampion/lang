@@ -619,17 +619,21 @@
 # 2026-11-11 (#15226): runtime_run measured by the driver-sizes-x86_64 lane
 # after the lane-extraction shuffle fusion. Main at 38399ecf measured 16659696
 # (+4.97%). This change adds 12416 bytes.
+# 2026-11-11: four rows measured by driver-sizes-x86_64 job 130515952623 on a
+# merge with main 4e38d84c. Main grew them past the 5% tolerance:
+# checker_codes_run +5.1%, checker_modload_run +6.0%, asm_run +5.4%,
+# asm_ir_run +5.5%. The 5% tolerance is unchanged.
 fern.fern/stage2 16710816
 fern.fern 16658288
 drivers/runtime_run.fern 16672112
 drivers/asm_load_run.fern 12721632
 drivers/asm_modload_run.fern 11387536
-drivers/asm_ir_run.fern 10449984
-drivers/asm_run.fern 9577776
+drivers/asm_ir_run.fern 11028400
+drivers/asm_run.fern 10091776
 drivers/wasm_ir_run.fern 9208976
 drivers/wasm_run.fern 9219200
 drivers/wasm_runio_run.fern 9197104
 drivers/asm_pathprobe_run.fern 5756560
-drivers/checker_modload_run.fern 3913968
-drivers/checker_codes_run.fern 3663328
+drivers/checker_modload_run.fern 4147040
+drivers/checker_codes_run.fern 3851760
 drivers/interp_run.fern 2835808
