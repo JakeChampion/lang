@@ -7634,6 +7634,7 @@ function id(o: Own): Own { return o; }
 		`function f(a: i32[]): [i32] { let r: i32[] = a; r = [1, 2]; return r[0:1]; }`,
 		`function f(n: i32): [i32] { let xs: i32[] = [n]; let r: i32[] = xs; return r[0:1]; }`,
 		`function f(o: Own): [i32] { let t: (Own, i32) = (o, 1); return t.0.items[0:1]; }`,
+		`function f(o: Own): [i32] { return id(o).items[0:1]; }`,
 	} {
 		if err := checkSource(t, decls+src); err == nil || !hasCode(err, "E063") {
 			t.Errorf("%q: want E063, got %v", src, err)
@@ -7642,7 +7643,6 @@ function id(o: Own): Own { return o; }
 	for _, src := range []string{
 		`function f(o: Own): [i32] { return o.items[0:2]; }`,
 		`function f(d: Deep): [i32] { return d.o.items[0:1]; }`,
-		`function f(o: Own): [i32] { return id(o).items[0:1]; }`,
 		`function f(h: H): [i32] { return h.v; }`,
 		`function f(h: H): [i32] { return h.v[0:1]; }`,
 		`function f(hs: H[]): [i32] { return hs[0].v; }`,
