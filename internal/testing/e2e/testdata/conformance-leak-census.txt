@@ -1398,3 +1398,6 @@ zero_width_slice                                     0
 
 # VT-01: checked value cleanup retains COW aliases.
 value_cleanup_keeps_cow_aliases                    0
+
+# 2026-11-11: a_function_named_like_a_safe_intrinsic_shadows_it is clean under RC trace.
+a_function_named_like_a_safe_intrinsic_shadows_it    0

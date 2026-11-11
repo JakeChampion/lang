@@ -4807,9 +4807,9 @@ pub function builtin_sig(name: string): typeinfo.Type {
   return t_func(params, type_from_name(slice_unchecked(row, close + 3, row.len()).to_owned()));
 }
 
-// Primitive display signatures are completed by private runtime source bodies.
-function is_primitive_display_builtin(name: string): boolean {
-  return name.starts_with("__primitive_") && builtinsigs.builtin_row(name).len() > 0;
+// Scalar display signatures are completed by private runtime source bodies.
+function is_scalar_display_builtin(name: string): boolean {
+  return name == "__method_boolean_to_string" || name.starts_with("__primitive_") && builtinsigs.builtin_row(name).len() > 0;
 }
 
 // builtin_method_sig is a builtin method's callable without its receiver, or
@@ -18010,7 +18010,7 @@ function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, di: i32): b
     ej = names.next[ej];
   }
   // A free function named like a builtin or an intrinsic redeclares it.
-  if (f2.receiver_type.len() == 0 && !is_primitive_display_builtin(f2.name) && (builtinsigs.builtin_row(f2.name).len() > 0 || is_registered_intrinsic(f2.name))) {
+  if (f2.receiver_type.len() == 0 && !is_scalar_display_builtin(f2.name) && (builtinsigs.builtin_row(f2.name).len() > 0 || is_registered_intrinsic(f2.name))) {
     earlier = true;
   }
   return earlier;
