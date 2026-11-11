@@ -33,6 +33,10 @@ The caller must close the player or recover its codec after such a failure.
 This method does not detach a surface. If no replacement exists, close before window destruction.
 
 `synchronize_audio` updates the presentation clock from an existing AAudio stream timestamp and an explicit audio media origin.
+`synchronize_music` supplies the same operation for `audio.Music`, including stereo playback.
+Both methods use audio frames and the actual sample rate, without a channel-count multiplier.
+
+A `Music.write` result counts samples. Divide it by `Music.channels` before its use as a frame count.
 An unavailable timestamp leaves the clock unchanged. A rejected anchor leaves the player and pending output buffer unchanged.
 The existing video timeline remains active until a valid audio anchor replaces it.
 
@@ -74,26 +78,34 @@ pub function (own player: Player) replace_surface(window: usize): Tick {
   };
 }
 
-function audio_clock(stream: audio.Stream, origin: playback_clock.AudioOrigin): Result[Option[playback_clock.Clock], frame.VideoError] {
-  if (origin.frame_position < 0i64 || origin.media_us < 0i64 || stream.rate <= 0) {
-    return Err(frame.Header);
-  }
-  let Some(stamp) = stream.timestamp() else {
-    return Ok(None);
+function synchronize_timestamp(own player: Player, rate: i32, origin: playback_clock.AudioOrigin, timestamp: Option[audio.Timestamp]): Tick {
+  let Some(stamp) = timestamp else {
+    return Tick { player: player, event: Idle };
   };
-  let clock = playback_clock.from_audio(origin, stamp.frame_position, stream.rate, stamp.monotonic_ns)?;
-  return Ok(Some(clock));
+  return match (playback_clock.from_audio(origin, stamp.frame_position, rate, stamp.monotonic_ns)) {
+    Ok(clock) => Tick { player: Player { ...player, clock: Some(clock) }, event: Idle },
+    Err(error) => Tick { player: player, event: Failure(error) },
+  };
 }
 
 pub function (own player: Player) synchronize_audio(stream: audio.Stream, origin: playback_clock.AudioOrigin): Tick {
   if (!player.decoder_live || player.failed || player.paused || player.output_eos) {
     return Tick { player: player, event: Failure(frame.State) };
   }
-  return match (audio_clock(stream, origin)) {
-    Ok(Some(clock)) => Tick { player: Player { ...player, clock: Some(clock) }, event: Idle },
-    Ok(None()) => Tick { player: player, event: Idle },
-    Err(error) => Tick { player: player, event: Failure(error) },
-  };
+  if (origin.frame_position < 0i64 || origin.media_us < 0i64 || stream.rate <= 0) {
+    return Tick { player: player, event: Failure(frame.Header) };
+  }
+  return synchronize_timestamp(player, stream.rate, origin, stream.timestamp());
+}
+
+pub function (own player: Player) synchronize_music(music: audio.Music, origin: playback_clock.AudioOrigin): Tick {
+  if (!player.decoder_live || player.failed || player.paused || player.output_eos) {
+    return Tick { player: player, event: Failure(frame.State) };
+  }
+  if (origin.frame_position < 0i64 || origin.media_us < 0i64 || music.rate <= 0) {
+    return Tick { player: player, event: Failure(frame.Header) };
+  }
+  return synchronize_timestamp(player, music.rate, origin, music.timestamp());
 }
 
 enum Feed { Waiting, Configuration, Submitted(i64), InputEnd }

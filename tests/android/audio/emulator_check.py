@@ -3,11 +3,11 @@
 
 Usage: emulator_check.py APK OUT_DIR
 
-It grants RECORD_AUDIO, starts the app, and requires its five lines in
+It grants RECORD_AUDIO, starts the app, and requires its six lines in
 logcat: the permission seen through JNI from the loop thread, a capture
 stream that read samples, a playback stream that wrote them, a stereo
 stream of music that took whole frames before and after a flush, and a
-timestamp diagnostic. It fails on a crash. OUT_DIR gets logcat.
+timestamp diagnostic for each playback stream. It fails on a crash. OUT_DIR gets logcat.
 """
 
 import re
@@ -16,12 +16,15 @@ import sys
 import time
 
 PACKAGE = "dev.fern.audiotest"
+TIMESTAMP = re.compile(r"audiotest: timestamp (?:unavailable|frames \d+ monotonic_ns \d+)$", re.MULTILINE)
+MUSIC_TIMESTAMP = re.compile(r"audiotest: music timestamp (?:unavailable|frames \d+ monotonic_ns \d+)$", re.MULTILINE)
 LINES = (
     re.compile(r"audiotest: sdk (\d+), record permission true"),
     re.compile(r"audiotest: capture rate ([1-9]\d*), read ([1-9]\d*) samples"),
     re.compile(r"audiotest: playback rate ([1-9]\d*), wrote ([1-9]\d*) samples"),
     re.compile(r"audiotest: music rate ([1-9]\d*), channels 2, wrote ([1-9]\d*) samples, 0 odd, 4 after the flush"),
-    re.compile(r"audiotest: timestamp (?:unavailable|frames \d+ monotonic_ns \d+)$", re.MULTILINE),
+    TIMESTAMP,
+    MUSIC_TIMESTAMP,
 )
 CRASH = re.compile(r"Fatal signal|UnsatisfiedLinkError|java\.lang\.\w+Exception|fern: ")
 
