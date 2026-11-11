@@ -6482,6 +6482,13 @@ function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
       first_expr = joined.e;
       continue;
     }
+    let tuple_join = tuple_literal_join(a, i, first, et, s);
+    if (!is_unknown(tuple_join)) {
+      first = tuple_join;
+      first_lit = 0;
+      first_expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+      continue;
+    }
     if (bare_map(first) && !bare_map(et)) {
       if let typeinfo.TypeMap(_) = et {
         first = et;
@@ -15268,12 +15275,73 @@ function scalar_array_mix(a: ast.ExprArray, anchor: typeinfo.Type, s: Scope, out
         anchor = etk;
         anchor_lit = lit;
       } else {
-        out = out.append(dg_at("E034", "array element: expected " + type_label(anchor) + ", got " + type_label(etk), expr_line(a.elements[k]), expr_col(a.elements[k])));
+        let joined = tuple_literal_join(a, k, anchor, etk, s);
+        if (is_unknown(joined)) {
+          out = out.append(dg_at("E034", "array element: expected " + type_label(anchor) + ", got " + type_label(etk), expr_line(a.elements[k]), expr_col(a.elements[k])));
+        } else {
+          anchor = joined;
+          anchor_lit = 0;
+        }
       }
     }
     k += 1;
   }
   return out;
+}
+
+// tuple_literal_join is the tuple type that element k and each element before it can take, or an unknown type.
+function tuple_literal_join(a: ast.ExprArray, k: i32, anchor: typeinfo.Type, etk: typeinfo.Type, s: Scope): typeinfo.Type {
+  if (!typeinfo.is_tuple(anchor) || !typeinfo.is_tuple(etk)) {
+    return t_unknown("not two tuples");
+  }
+  let joined = vb_join(VbStore { t: anchor, e: a.elements[0] }, VbStore { t: etk, e: a.elements[k] });
+  if (is_unknown(joined.t)) {
+    return joined.t;
+  }
+  for i in 0..k + 1 {
+    if (!literal_parts_take(a.elements[i], check_expr(a.elements[i], s), joined.t)) {
+      return t_unknown("no shared tuple type");
+    }
+  }
+  return joined.t;
+}
+
+// literal_parts_take is true when e of the type from can take the type to, and only its integer literals change type.
+function literal_parts_take(e: ast.Expr, from: typeinfo.Type, to: typeinfo.Type): boolean {
+  if (type_eq(from, to)) {
+    return true;
+  }
+  if (int_literal_tree(e)) {
+    return is_integer(to);
+  }
+  if let ast.ExprTuple(te) = e {
+    if let typeinfo.TypeTuple(ft) = from {
+      if let typeinfo.TypeTuple(tt) = to {
+        if (te.elements.len() != ft.elements.len() || ft.elements.len() != tt.elements.len()) {
+          return false;
+        }
+        for i in 0..te.elements.len() {
+          if (!literal_parts_take(te.elements[i], ft.elements[i], tt.elements[i])) {
+            return false;
+          }
+        }
+        return true;
+      }
+    }
+  }
+  if let ast.ExprArray(ae) = e {
+    if let typeinfo.TypeArray(fa) = from {
+      if let typeinfo.TypeArray(ta) = to {
+        for element in ae.elements {
+          if (!literal_parts_take(element, fa.elem, ta.elem)) {
+            return false;
+          }
+        }
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function element_mix(a: ast.ExprArray, anchor: typeinfo.Type, s: Scope, out: util.Diag[]): util.Diag[] {
@@ -30811,7 +30879,7 @@ function settle_array_struct_literals(a: ast.ExprArray, s: Scope): ast.Expr {
     }
     let els: ast.Expr[] = [];
     for element in a.elements {
-      els = els.append(settle_struct_lit_wide(element, at.elem, s));
+      els = els.append(settle_struct_lit_wide(settle_wide_literals(element, at.elem), at.elem, s));
     }
     return ast.ExprArray { ...a, elements: els };
   }
@@ -34467,6 +34535,22 @@ function lit_type_link(a: typeinfo.Type, b: typeinfo.Type, st: LitInfer): LitInf
   return st;
 }
 
+// lit_free is true when no part of t is the marker of an unsettled literal.
+function lit_free(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(at) = t {
+    return lit_free(at.elem);
+  }
+  if let typeinfo.TypeTuple(tt) = t {
+    for element in tt.elements {
+      if (!lit_free(element)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return lit_id(t) < 0;
+}
+
 function lit_composite_local(e: ast.Expr, s: Scope, st: LitInfer): (typeinfo.Type, LitInfer, boolean) {
   let (seed, ids) = lit_tree(e, s, []);
   if (seed || float_literal_tree(e)) {
@@ -34492,9 +34576,13 @@ function lit_composite_local(e: ast.Expr, s: Scope, st: LitInfer): (typeinfo.Typ
     if (a.elements.len() > 0) {
       let (elem, next, any) = lit_composite_local(a.elements[0], s, st);
       st = next;
+      let joined = array_elem_type_of(check_expr(a, s));
       for i in 1..a.elements.len() {
         let (ty, more, found) = lit_composite_local(a.elements[i], s, st);
         st = more;
+        if (lit_free(ty) && !type_contains_unknown(joined)) {
+          ty = joined;
+        }
         st = lit_type_link(elem, ty, st);
       }
       return (t_array(elem), st, any);
@@ -35638,7 +35726,23 @@ function lit_kind_settled(e: ast.Expr): boolean {
 function array_element_preferred(e: ast.Expr, t: typeinfo.Type, lit: i32, first_expr: ast.Expr, first: typeinfo.Type, first_lit: i32, s: Scope): boolean {
   return !vaguer_than(t, first) && !literal_gives_way(lit, first) && !struct_lit_gives_way(e, t, first, s)
     && (same_element_type(t, first) || literal_gives_way(first_lit, t))
-    || struct_lit_gives_way(first_expr, first, t, s) || nested_array_gives_way(first_expr, first, t, s);
+    || struct_lit_gives_way(first_expr, first, t, s) || nested_array_gives_way(first_expr, first, t, s) && !literal_array_takes(e, first);
+}
+
+// literal_array_takes is true when the array literal e holds only integer literals, and each one takes the innermost element type of to.
+function literal_array_takes(e: ast.Expr, to: typeinfo.Type): boolean {
+  if let ast.ExprArray(a) = e {
+    if let typeinfo.TypeArray(ta) = to {
+      for element in a.elements {
+        if (!literal_array_takes(element, ta.elem)) {
+          return false;
+        }
+      }
+      return a.elements.len() > 0;
+    }
+    return false;
+  }
+  return int_literal_tree(e) && is_integer(to) && !wide_literal_widens(e, typeinfo.t_i64(), to);
 }
 
 function nested_array_gives_way(e: ast.Expr, from: typeinfo.Type, to: typeinfo.Type, s: Scope): boolean {
