@@ -54,8 +54,18 @@ Seek requests use the closest-frame mode and reject values above Android's signe
 The separate `std/android/audio.Stream.timestamp` query exposes the AAudio frame position and its monotonic time in nanoseconds.
 It returns `None` before the platform supplies a valid anchor, including the delay after an asynchronous start.
 The existing stream rate supplies the frame units. The query does not change playback state or assign media timestamps.
-This is an audio-clock primitive for future integration, without a decoder or a completed A/V synchronizer.
-The lower-level video controller remains video-only.
+
+`std/android/video/player.synchronize_audio` can anchor video deadlines to this existing playback stream.
+The app supplies a matching audio frame and media-time origin. The conversion reuses the checked track-time rescaler.
+The conversion rounds down to whole microseconds without an intermediate multiplication overflow.
+
+An unavailable timestamp preserves the previous video clock. A rejected anchor preserves the player and its pending output buffer.
+The existing video timeline remains active until a valid audio anchor replaces it.
+The method requires an active, unpaused video controller and performs no audio state or I/O operation.
+
+The app supplies PCM and coordinates pause, resume, and seek across both streams.
+A video seek or codec recovery clears the clock, so the app must supply a matching new audio anchor.
+The controller remains video-only, without audio decode, integrated A/V transport control, or physical lip-sync qualification.
 
 ## Native MP4 video packets
 
@@ -608,7 +618,7 @@ The result establishes fewer allocations without a claim of general speed or pea
 
 The common playback priorities are H.264, HEVC, VP9, and AV1, followed by legacy formats.
 The Android path now supplies platform demux, timestamps, sync-sample seek, and surface playback control.
-The lower-level controller still needs audio synchronization and lifecycle integration.
+The lower-level controller accepts an app-owned AAudio clock anchor but still needs integrated audio decode, transport control, and lifecycle integration.
 The separate platform player supplies A/V synchronization. Both paths need representative device qualification.
 
 Device tests must cover backpressure, resolution changes, EOS, flush, and playback after a seek.

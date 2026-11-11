@@ -1,0 +1,264 @@
+import "std/android/video/player";
+import "std/android/video/capabilities";
+import "std/android/audio";
+import "std/video/playback_clock";
+import "std/video/frame";
+import "std/option";
+
+@import("libmediandk.so", "mock_mode")
+function mode(value: i32): void;
+
+@import("libmediandk.so", "mock_jni_mode")
+function jni_mode(value: i32): void;
+
+@import("libmediandk.so", "mock_jni_env")
+function env(): usize;
+
+@import("libmediandk.so", "mock_live")
+function live(): i32;
+
+@import("libmediandk.so", "mock_queued")
+function queued(): i32;
+
+@import("libmediandk.so", "mock_released")
+function released(): i32;
+
+@import("libmediandk.so", "mock_expected_deadline")
+function expect_deadline(ns: i64): void;
+
+@import("libmediandk.so", "mock_last_deadline")
+function last_deadline(): i64;
+
+@import("libaaudio.so", "mock_timestamp_mode")
+function audio_mode(value: i32): void;
+
+@import("libaaudio.so", "mock_timestamp_value")
+function audio_value(position: i64, ns: i64): void;
+
+@import("libaaudio.so", "mock_timestamp_calls")
+function audio_calls(): i32;
+
+function origin(): playback_clock.AudioOrigin {
+  return playback_clock.AudioOrigin { frame_position: 0i64, media_us: 0i64 };
+}
+
+function stream(): audio.Stream {
+  return audio.Stream { ptr: 123 as usize, rate: 48000 };
+}
+
+function opened(): Result[player.Player, frame.VideoError] {
+  mode(17);
+  jni_mode(0);
+  return player.open(env(), 29, 77, 0i64, 100i64, 123 as usize, capabilities.PreferHardware, frame.Limits { max_pixels: 128, max_packet_bytes: 512 });
+}
+
+function pending(): Result[player.Player, frame.VideoError] {
+  let p = opened()?;
+  for _ in 0..5 {
+    let next = p.tick(9876543210i64);
+    if let player.Failure(error) = next.event {
+      return Err(error);
+    }
+    p = next.player;
+  }
+  return Ok(p);
+}
+
+function idle(event: player.Event): boolean {
+  return match (event) { player.Idle => true, _ => false };
+}
+
+function failure(event: player.Event, error: frame.VideoError): boolean {
+  return match (event) { player.Failure(value) => value == error, _ => false };
+}
+
+function scheduled(event: player.Event): boolean {
+  return match (event) { player.FrameScheduled(value) => value == 223456i64, _ => false };
+}
+
+function clock_fields(p: player.Player): i64[] {
+  return match (p.clock) {
+    Some(c) => [c.media_us, c.monotonic_ns, c.paused_ns, if (c.paused) { 1i64 } else { 0i64 }],
+    None => [-1i64],
+  };
+}
+
+function output_fields(p: player.Player): i64[] {
+  return match (p.pending) {
+    Some(b) => [b.index as i64, b.offset as i64, b.size as i64, b.presentation_time_us, b.flags as i64],
+    None => [-1i64],
+  };
+}
+
+function snapshot(p: player.Player): i64[] {
+  let values = clock_fields(p);
+  for value in output_fields(p) {
+    values = values.append(value);
+  }
+  return values.append(p.target_us).append(p.recovery_us).append(p.last_frame_us).append(p.scheduled_frames).append(p.dropped_frames).append(if (p.failed) { 1i64 } else { 0i64 }).append(if (p.paused) { 1i64 } else { 0i64 }).append(if (p.output_eos) { 1i64 } else { 0i64 }).append(if (p.decoder_live) { 1i64 } else { 0i64 });
+}
+
+function unchanged(result: player.Tick, before: i64[], calls: i32, releases: i32): boolean {
+  return snapshot(result.player) == before && audio_calls() == calls && released() == releases;
+}
+
+function finish(own p: player.Player, code: i32): i32 {
+  let Ok(_) = p.close() else {
+    return code;
+  };
+  return if (live() == 0) { 0 } else { code + 1 };
+}
+
+function synchronized(result: player.Tick, before: i64[], count: i32): boolean {
+  return idle(result.event) && output_fields(result.player) == before && queued() == count && released() == 1 && audio_calls() == 1;
+}
+
+function rendered(result: player.Tick): boolean {
+  return scheduled(result.event) && result.player.pending.is_none() && result.player.scheduled_frames == 2 && last_deadline() == 9906543210i64;
+}
+
+function deadline(): i32 {
+  let Ok(p) = pending() else {
+    return 101;
+  };
+  if (p.pending.is_none() || p.scheduled_frames != 1 || released() != 1) {
+    return 102;
+  }
+  let before = output_fields(p);
+  let count = queued();
+  audio_value(48000i64, 10683087210i64);
+  let synced = p.synchronize_audio(stream(), origin());
+  if (!synchronized(synced, before, count)) {
+    return 103;
+  }
+  expect_deadline(9906543210i64);
+  let next = synced.player.tick(9906543210i64);
+  if (!rendered(next)) {
+    return 104;
+  }
+  return finish(next.player, 105);
+}
+
+function unavailable(): i32 {
+  let Ok(p) = pending() else {
+    return 201;
+  };
+  let before = snapshot(p);
+  for value in [2, 3, 4, 5, 6, 7, 9] {
+    audio_mode(value);
+    let result = p.synchronize_audio(stream(), origin());
+    if (!idle(result.event) || !unchanged(result, before, 1, 1)) {
+      return 202;
+    }
+    p = result.player;
+  }
+  audio_mode(0);
+  let absent = p.synchronize_audio(audio.Stream { ptr: 0 as usize, rate: 48000 }, origin());
+  if (!idle(absent.event) || !unchanged(absent, before, 0, 1)) {
+    return 203;
+  }
+  return finish(absent.player, 204);
+}
+
+function stale(): i32 {
+  let Ok(p) = pending() else {
+    return 301;
+  };
+  let before = snapshot(p);
+  audio_mode(1);
+  let result = p.synchronize_audio(stream(), playback_clock.AudioOrigin { frame_position: 1i64, media_us: 0i64 });
+  if (!failure(result.event, frame.Header) || !unchanged(result, before, 1, 1)) {
+    return 302;
+  }
+  return finish(result.player, 303);
+}
+
+function invalid(): i32 {
+  let Ok(p) = pending() else {
+    return 311;
+  };
+  let before = snapshot(p);
+  for bad in [playback_clock.AudioOrigin { frame_position: -1i64, media_us: 0i64 }, playback_clock.AudioOrigin { frame_position: 0i64, media_us: -1i64 }] {
+    audio_mode(0);
+    let result = p.synchronize_audio(stream(), bad);
+    if (!failure(result.event, frame.Header) || !unchanged(result, before, 0, 1)) {
+      return 312;
+    }
+    p = result.player;
+  }
+  audio_mode(0);
+  let rate = p.synchronize_audio(audio.Stream { ...stream(), rate: 0 }, origin());
+  if (!failure(rate.event, frame.Header) || !unchanged(rate, before, 0, 1)) {
+    return 313;
+  }
+  return finish(rate.player, 314);
+}
+
+function overflow(): i32 {
+  let Ok(p) = pending() else {
+    return 401;
+  };
+  let before = snapshot(p);
+  audio_value(1i64, 0i64);
+  let result = p.synchronize_audio(stream(), playback_clock.AudioOrigin { frame_position: 0i64, media_us: 9223372036854775807i64 });
+  if (!failure(result.event, frame.Limit) || !unchanged(result, before, 1, 1)) {
+    return 402;
+  }
+  return finish(result.player, 403);
+}
+
+function states(): i32 {
+  let Ok(p) = opened() else {
+    return 501;
+  };
+  for invalid in [player.Player { ...p, paused: true }, player.Player { ...p, failed: true }, player.Player { ...p, decoder_live: false }, player.Player { ...p, output_eos: true }] {
+    let before = snapshot(invalid);
+    audio_mode(0);
+    let result = invalid.synchronize_audio(stream(), origin());
+    if (!failure(result.event, frame.State) || !unchanged(result, before, 0, 0) || queued() != 0) {
+      return 502;
+    }
+  }
+  return finish(p, 503);
+}
+
+function anchor_matches(p: player.Player, us: i64, ns: i64): boolean {
+  return match (p.clock) { Some(c) => c.media_us == us && c.monotonic_ns == ns, None => false };
+}
+
+function after_seek(own p: player.Player): i32 {
+  let sought = p.seek(200000i64);
+  if (sought.player.clock.is_some() || sought.player.pending.is_some() || sought.player.target_us != 200000i64) {
+    return 604;
+  }
+  audio_value(96000i64, 14000000000i64);
+  let result = sought.player.synchronize_audio(stream(), playback_clock.AudioOrigin { frame_position: 96000i64, media_us: 200000i64 });
+  if (!idle(result.event) || !anchor_matches(result.player, 200000i64, 14000000000i64) || result.player.target_us != 200000i64) {
+    return 605;
+  }
+  return finish(result.player, 606);
+}
+
+function seek_and_zero(): i32 {
+  let Ok(p) = pending() else {
+    return 601;
+  };
+  let before = output_fields(p);
+  audio_mode(1);
+  let result = p.synchronize_audio(stream(), origin());
+  if (!idle(result.event) || !anchor_matches(result.player, 0i64, 0i64) || output_fields(result.player) != before) {
+    return 602;
+  }
+  return after_seek(result.player);
+}
+
+function main(): i32 {
+  let checks = [deadline, unavailable, stale, invalid, overflow, states, seek_and_zero];
+  for check in checks {
+    let code = check();
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}

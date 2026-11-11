@@ -1,0 +1,93 @@
+import "std/video/playback_clock";
+import "std/video/frame";
+import "std/test";
+import "video_audio_clock_vectors" as vectors;
+
+function reference(): test.TestOutcome {
+  for v in vectors.vectors() {
+    let origin = playback_clock.AudioOrigin { frame_position: v.first_frame, media_us: v.first_us };
+    let Ok(clock) = playback_clock.from_audio(origin, v.position, v.rate, v.ns) else {
+      return test.fail("rational anchor");
+    };
+    let Ok(position) = clock.position(v.ns) else {
+      return test.fail("anchor position");
+    };
+    let Ok(deadline) = clock.deadline(v.media_us) else {
+      return test.fail("anchor deadline");
+    };
+    if (clock.media_us != v.media_us || clock.monotonic_ns != v.ns || position != v.media_us || deadline != v.ns || clock.paused) {
+      return test.fail("independent rational metadata");
+    }
+  }
+  return test.pass();
+}
+
+function invalid(): test.TestOutcome {
+  let origin = playback_clock.AudioOrigin { frame_position: 10i64, media_us: 100i64 };
+  for bad in [playback_clock.AudioOrigin { ...origin, frame_position: -1i64 }, playback_clock.AudioOrigin { ...origin, media_us: -1i64 }] {
+    if let Err(frame.Header) = playback_clock.from_audio(bad, 10i64, 48000, 0i64) {} else {
+      return test.fail("negative origin");
+    }
+  }
+  for rate in [0, -1] {
+    if let Err(frame.Header) = playback_clock.from_audio(origin, 10i64, rate, 0i64) {} else {
+      return test.fail("actual positive sample rate");
+    }
+  }
+  if let Err(frame.Header) = playback_clock.from_audio(origin, 9i64, 48000, 0i64) {} else {
+    return test.fail("stale frame before origin");
+  }
+  if let Err(frame.Header) = playback_clock.from_audio(origin, 10i64, 48000, -1i64) {} else {
+    return test.fail("negative monotonic time");
+  }
+  return test.pass();
+}
+
+function overflow(): test.TestOutcome {
+  let origin = playback_clock.AudioOrigin { frame_position: 0i64, media_us: 0i64 };
+  if let Err(frame.Limit) = playback_clock.from_audio(origin, 9223372036854775807i64, 1, 0i64) {} else {
+    return test.fail("rescale overflow");
+  }
+  if let Err(frame.Limit) = playback_clock.from_audio(playback_clock.AudioOrigin { ...origin, media_us: 9223372036854775807i64 }, 1i64, 48000, 0i64) {} else {
+    return test.fail("origin addition overflow");
+  }
+  let Ok(clock) = playback_clock.from_audio(origin, 9223372036854775807i64, 2147483647, 0i64) else {
+    return test.fail("wide rescale without intermediate overflow");
+  };
+  if (clock.media_us != 4294967298000000i64) {
+    return test.fail("wide rational quotient");
+  }
+  return test.pass();
+}
+
+function presentation(): test.TestOutcome {
+  let origin = playback_clock.AudioOrigin { frame_position: 48000i64, media_us: 2000000i64 };
+  let Ok(clock) = playback_clock.from_audio(origin, 96001i64, 48000, 9000000000i64) else {
+    return test.fail("audio anchor");
+  };
+  let Ok(deadline) = clock.deadline(3100000i64) else {
+    return test.fail("video deadline");
+  };
+  if (clock.media_us != 3000020i64 || deadline != 9099980000i64) {
+    return test.fail("audio origin and fractional frame units");
+  }
+  let Ok(paused) = clock.pause(9100000000i64) else {
+    return test.fail("pause audio-derived clock");
+  };
+  let Ok(resumed) = paused.resume(10100000000i64) else {
+    return test.fail("resume audio-derived clock");
+  };
+  let Ok(after) = resumed.deadline(3100000i64) else {
+    return test.fail("resumed deadline");
+  };
+  return test.assert_true(after == deadline + 1000000000i64);
+}
+
+function main(): i32 {
+  let r = test.new("audio frame anchors for video");
+  r = r.it("independent rational anchors and full-width values", reference);
+  r = r.it("invalid and stale anchors", invalid);
+  r = r.it("overflow and wide quotient", overflow);
+  r = r.it("video deadlines and pause after audio anchor", presentation);
+  return r.finish();
+}

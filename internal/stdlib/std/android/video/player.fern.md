@@ -21,6 +21,19 @@ The surface and file descriptor must remain valid until `close`.
 Close before the window destruction callback returns.
 Each returned player value replaces the previous value.
 
+`synchronize_audio` updates the presentation clock from an existing AAudio stream timestamp and an explicit audio media origin.
+An unavailable timestamp leaves the clock unchanged. A rejected anchor leaves the player and pending output buffer unchanged.
+The existing video timeline remains active until a valid audio anchor replaces it.
+
+The method requires an active, unpaused player. It queries no codec buffers and performs no audio state or I/O operation.
+It allocates timestamp scratch memory, so it must run outside a real-time audio callback.
+
+The app supplies a playback stream and a frame-to-media origin for that stream.
+The app keeps the audio stream open throughout each call.
+The app must coordinate audio pause, resume, and seek. A video seek or software recovery clears the presentation clock.
+The app must supply a new matching audio anchor after such a discontinuity.
+This method does not add audio decode or establish physical lip-sync accuracy.
+
 ```fern
 <<*>>=
 // This module controls Android video presentation, pause, seek, and software recovery.
@@ -29,12 +42,35 @@ import "std/android/video/capabilities";
 import "std/android/video/extractor";
 import "std/video/frame";
 import "std/video/playback_clock";
+import "std/android/audio";
 
 pub struct Player { reader: extractor.Extractor, decoder: video.Decoder, decoder_live: boolean, format: video.CodecFormat, info: capabilities.CodecInfo, request: capabilities.Request, policy: capabilities.Policy, limits: frame.Limits, window: usize, clock: Option[playback_clock.Clock], pending: Option[video.OutputBuffer], paused: boolean, input_eos: boolean, output_eos: boolean, failed: boolean, config_next: i32, target_us: i64, last_input_us: i64, last_frame_us: i64, recovery_us: i64, fallback_used: boolean, scheduled_frames: i64, dropped_frames: i64 }
 
 pub enum Event { Idle, FrameScheduled(i64), FrameDropped(i64), FormatChanged(video.OutputFormat), Recovered(capabilities.CodecInfo), End, Failure(frame.VideoError) }
 
 pub struct Tick { player: Player, event: Event }
+
+function audio_clock(stream: audio.Stream, origin: playback_clock.AudioOrigin): Result[Option[playback_clock.Clock], frame.VideoError] {
+  if (origin.frame_position < 0i64 || origin.media_us < 0i64 || stream.rate <= 0) {
+    return Err(frame.Header);
+  }
+  let Some(stamp) = stream.timestamp() else {
+    return Ok(None);
+  };
+  let clock = playback_clock.from_audio(origin, stamp.frame_position, stream.rate, stamp.monotonic_ns)?;
+  return Ok(Some(clock));
+}
+
+pub function (own player: Player) synchronize_audio(stream: audio.Stream, origin: playback_clock.AudioOrigin): Tick {
+  if (!player.decoder_live || player.failed || player.paused || player.output_eos) {
+    return Tick { player: player, event: Failure(frame.State) };
+  }
+  return match (audio_clock(stream, origin)) {
+    Ok(Some(clock)) => Tick { player: Player { ...player, clock: Some(clock) }, event: Idle },
+    Ok(None()) => Tick { player: player, event: Idle },
+    Err(error) => Tick { player: player, event: Failure(error) },
+  };
+}
 
 enum Feed { Waiting, Configuration, Submitted(i64), InputEnd }
 
