@@ -147,29 +147,7 @@ pub function t_void(): Type {
 // element of a tuple, an argument of a struct or a union, the key or the value
 // of a map, or a parameter or the result of a function.
 pub function any_child(t: Type, p: (Type) => boolean): boolean {
-  match (t) {
-    TypeArray(a) => {
-      return p(a.elem);
-    },
-    TypeTuple(tt) => {
-      return any_of(tt.elements, p);
-    },
-    TypeStruct(st) => {
-      return any_of(st.args, p);
-    },
-    TypeUnion(u) => {
-      return any_of(u.args, p);
-    },
-    TypeMap(m) => {
-      return p(m.key) || p(m.value);
-    },
-    TypeFunc(f) => {
-      return p(f.ret_type) || any_of(f.param_types, p);
-    },
-    _ => {
-      return false;
-    }
-  }
+  return any_of(children(t), p);
 }
 
 function any_of(ts: Type[], p: (Type) => boolean): boolean {
@@ -179,6 +157,45 @@ function any_of(ts: Type[], p: (Type) => boolean): boolean {
     }
   }
   return false;
+}
+
+// The types that t holds directly.
+function children(t: Type): Type[] {
+  match (t) {
+    TypeArray(a) => {
+      return [a.elem];
+    },
+    TypeTuple(tt) => {
+      return tt.elements;
+    },
+    TypeStruct(st) => {
+      return st.args;
+    },
+    TypeUnion(u) => {
+      return u.args;
+    },
+    TypeMap(m) => {
+      return [m.key, m.value];
+    },
+    TypeFunc(f) => {
+      return f.param_types.append(f.ret_type);
+    },
+    _ => {
+      return [];
+    }
+  }
+}
+
+// The number of types in t, t included. The count stops above limit.
+pub function nodes(t: Type, limit: i32): i32 {
+  let n = 1;
+  for c in children(t) {
+    if (n > limit) {
+      return n;
+    }
+    n += nodes(c, limit - n);
+  }
+  return n;
 }
 
 pub function unchecked(): Type {

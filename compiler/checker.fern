@@ -6133,6 +6133,46 @@ function projected_ret(ret_name: string, bn: string[], bt: typeinfo.Type[], s: S
   return s.resolve_type(resolved);
 }
 
+// The limit of the types in the type of a call or of a tuple. A generic call
+// that holds its argument two times doubles the type at each level of nesting.
+pub const MAX_TYPE_NODES: i32 = 4096;
+
+const TYPE_TOO_LARGE: string = "type has too many parts";
+
+function bounded_type(t: typeinfo.Type): typeinfo.Type {
+  if (typeinfo.nodes(t, MAX_TYPE_NODES) > MAX_TYPE_NODES) {
+    return t_unknown(TYPE_TOO_LARGE);
+  }
+  return t;
+}
+
+function type_too_large(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeUnknown(u) = t {
+    return u.reason == TYPE_TOO_LARGE;
+  }
+  return false;
+}
+
+// The E106 of a call or of a tuple whose type is over the limit. The result
+// is found when an operand or the value is over the limit, and the diagnostic
+// is on the first value that is over it.
+function too_large_diags(value: typeinfo.Type, operands: ast.Expr[], line: i32, col: i32, s: Scope, out: util.Diag[]): (util.Diag[], boolean) {
+  let inner = false;
+  for operand in operands {
+    inner = inner || type_too_large(check_expr(operand, s));
+  }
+  if (!inner && !type_too_large(value)) {
+    return (out, false);
+  }
+  for operand in operands {
+    out = util.append_diags(out, call_diags(operand, s));
+  }
+  if (!inner) {
+    out = out.append(dg_at("E106", "type has more than " + util.i32_to_string(MAX_TYPE_NODES) + " parts", line, col));
+  }
+  return (out, true);
+}
+
 function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
   match (e) {
     ast.ExprNumber(n) => {
@@ -6154,14 +6194,14 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
       return check_unary_expr(u, s);
     },
     ast.ExprCall(c) => {
-      return check_call_expr(c, s);
+      return bounded_type(check_call_expr(c, s));
     },
     ast.ExprTuple(t) => {
       let elems: typeinfo.Type[] = [];
       for element in t.elements {
         elems = elems.append(check_expr(element, s));
       }
-      return t_tuple(elems);
+      return bounded_type(t_tuple(elems));
     },
     ast.ExprArray(a) => {
       return check_array_expr(a, s);
@@ -13903,6 +13943,10 @@ function call_diags(e: ast.Expr, s: Scope): util.Diag[] {
       out = util.append_diags(out, lanes_inside_diags(check_expr(e, s), a.line, a.col));
     },
     ast.ExprTuple(t) => {
+      let (large, found) = too_large_diags(check_expr(e, s), t.elements, t.line, t.col, s, out);
+      if (found) {
+        return large;
+      }
       for element in t.elements {
         out = util.append_diags(out, call_diags(element, s));
       }
@@ -14311,6 +14355,10 @@ function array_builtin_arity(method: string, view: boolean): i32 {
 }
 
 function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: typeinfo.Type): util.Diag[] {
+  let (large, found) = too_large_diags(bounded_type(check_call_expr(c, s)), c.args, c.line, c.col, s, out);
+  if (found) {
+    return large;
+  }
   out = util.append_diags(out, e032_call_check(c, s));
   let (recv, stored, step) = array_step(c);
   if let ast.ExprFieldAccess(efa) = c.callee {
@@ -18252,6 +18300,80 @@ const REGISTERED_INTRINSICS: string[] = [
   "__f32x4_swap_halves", "__f32x4_reverse", "__f32x4_zip_lo", "__f32x4_zip_hi", "__f32x4_splat", "__f32x4_of", "__f32x4_lane_bits", "__f32x4_lane", "__f32x4_bitmask", "__f32x4_mul_add", "__f32x4_sqrt", "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max", "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with", "__f32x4_load_bytes", "__f32x4_with_bytes", "__f32x4_store", "__f32x4_load_ptr", "__f32x4_pack",
 ];
 
+function qualified_trait(module: string, name: string): string {
+  if (module.len() == 0) {
+    return name;
+  }
+  return module + "." + name;
+}
+
+// An E006 for each trait that has the name of an earlier trait of its module.
+function trait_redeclared_diags(mod: parser.Module): util.Diag[] {
+  let out: util.Diag[] = [];
+  let reqs = mod.trait_reqs;
+  if (reqs.len() != mod.trait_decls.len()) {
+    return out;
+  }
+  for ti in 0..reqs.len() {
+    let td = mod.trait_decls[ti];
+    let name = qualified_trait(reqs[ti].module, reqs[ti].trait_name);
+    if (trait_declared_before(reqs, ti)) {
+      out = out.append(dg_at("E006", "trait \"" + name + "\" redeclared", td.line, td.col));
+      continue;
+    }
+    for mi in 0..td.methods.len() {
+      if (trait_method_declared_before(td.methods, mi)) {
+        out = out.append(dg_at("E006", "trait method \"" + td.methods[mi].name + "\" redeclared in trait \"" + name + "\"", td.methods[mi].line, td.methods[mi].col));
+      }
+    }
+  }
+  return out;
+}
+
+function trait_method_declared_before(methods: parser.FuncDecl[], mi: i32): boolean {
+  for mj in 0..mi {
+    if (methods[mj].name == methods[mi].name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function trait_declared_before(reqs: parser.TraitReq[], ti: i32): boolean {
+  for tj in 0..ti {
+    if (reqs[tj].trait_name == reqs[ti].trait_name && reqs[tj].module == reqs[ti].module) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function impl_trait_declared(reqs: parser.TraitReq[], im: parser.ImplInfo): boolean {
+  for r in reqs {
+    if (r.trait_name == im.trait_name && r.module == im.trait_module) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Whether an earlier impl gives the trait of mod.impls[ii] to the same
+// receiver. An orphan impl gives its trait to no receiver.
+function impl_declared_before(mod: parser.Module, ii: i32): boolean {
+  let im = mod.impls[ii];
+  if (orphan_impl(mod, im)) {
+    return false;
+  }
+  let receiver = parser.receiver_namespace(im.impl_type);
+  for ij in 0..ii {
+    let earlier = mod.impls[ij];
+    if (earlier.trait_name == im.trait_name && earlier.trait_module == im.trait_module && parser.receiver_namespace(earlier.impl_type) == receiver && !orphan_impl(mod, earlier)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, di: i32): boolean {
   let f2 = funcs[di];
   let earlier = redeclares_preregistered(f2);
@@ -18387,17 +18509,18 @@ function impl_trait_spelling(mod: parser.Module, fd: parser.FuncDecl): string {
   return fd.impl_trait;
 }
 
+// An impl in a module that declares neither its trait nor its type.
+function orphan_impl(mod: parser.Module, im: parser.ImplInfo): boolean {
+  return im.trait_name.len() > 0 && im.trait_module != im.module && !impl_type_is_local(mod, im);
+}
+
 function orphan_impl_diags(mod: parser.Module): util.Diag[] {
   let out: util.Diag[] = [];
   for im in mod.impls {
-    if (im.trait_name.len() == 0 || im.trait_module == im.module || impl_type_is_local(mod, im)) {
+    if (!orphan_impl(mod, im)) {
       continue;
     }
-    let tr = im.trait_name;
-    if (im.trait_module.len() > 0) {
-      tr = im.trait_module + "." + tr;
-    }
-    out = out.append(dg_at("E021", "orphan impl: `impl " + tr + " for " + util.demangle(util.base_type_name(im.impl_type)) + "` must be declared in the module that defines the trait or the type", im.line, im.col));
+    out = out.append(dg_at("E021", "orphan impl: `impl " + qualified_trait(im.trait_module, im.trait_name) + " for " + util.demangle(util.base_type_name(im.impl_type)) + "` must be declared in the module that defines the trait or the type", im.line, im.col));
   }
   return out;
 }
@@ -18598,6 +18721,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
       out = out.append(dg_at("E021", "method receiver type must be a struct, enum, array, slice, tuple, or built-in type, got " + util.base_type_name(f2.receiver_type), f2.line, f2.col));
     }
   }
+  out = util.append_diags(out, trait_redeclared_diags(mod));
   for sn2 in 0..mod.structs.len() {
     let s2 = mod.structs[sn2];
     let user_struct = s2.enum_owner.len() == 0 && !(s2.name.len() >= 2 && s2.name.starts_with("__"));
@@ -28115,7 +28239,8 @@ function e021_diags(mod: parser.Module): util.Diag[] {
     }
   }
   let own_vec = parser.declares_vec(mod.structs, mod.enums, mod.aliases, mod.trait_decls);
-  for im in mod.impls {
+  for ii in 0..mod.impls.len() {
+    let im = mod.impls[ii];
     if (!e021_source_qualifier_visible(mod, im.module, im.trait_spelling)) {
       out = out.append(dg_at("E021", "unknown trait \"" + im.trait_spelling + "\" in impl", im.line, im.col));
       continue;
@@ -28129,9 +28254,13 @@ function e021_diags(mod: parser.Module): util.Diag[] {
       out = out.append(dg_at("E021", "impl " + im.trait_spelling + " for " + im.impl_type + ": Send is not implemented by hand; every send-safe type satisfies it", im.line, im.col));
       continue;
     }
+    if (impl_declared_before(mod, ii) && impl_trait_declared(mod.trait_reqs, im)) {
+      out = out.append(dg_at("E006", "duplicate impl: " + qualified_trait(im.trait_module, im.trait_name) + " is already implemented for " + parser.receiver_namespace(im.impl_type), im.line, im.col));
+      continue;
+    }
     let known = false;
     for trait_req in mod.trait_reqs {
-      if (trait_req.trait_name == im.trait_name && trait_req.module == im.trait_module) {
+      if (!known && trait_req.trait_name == im.trait_name && trait_req.module == im.trait_module) {
         known = true;
         let sup = trait_req.supertraits;
         for parent in sup {

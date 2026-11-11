@@ -1,0 +1,2 @@
+trait T { function a(self: Self): i32; function a(self: Self): i32; }
+function main(): i32 { return 0; }

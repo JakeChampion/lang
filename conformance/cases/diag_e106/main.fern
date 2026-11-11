@@ -1,0 +1,8 @@
+function d[T](x: T): (T, T) {
+    return (x, x);
+}
+
+function main(): i32 {
+    let x = d(d(d(d(d(d(d(d(d(d(d(d(1))))))))))));
+    return 0;
+}

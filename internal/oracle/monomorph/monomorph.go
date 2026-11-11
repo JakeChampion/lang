@@ -471,6 +471,30 @@ func Run(prog *ast.Program, info *checker.Info) error {
 			prog.Funcs = append(prog.Funcs, fc)
 			progressed = true
 		}
+		for _, impl := range prog.Impls {
+			base, args, ok := genericStructInst(impl, info)
+			if !ok {
+				continue
+			}
+			inst := rewriteType(ast.StructType{Name: base, Args: args}, info, structInsts).(ast.StructType)
+			impl.Type = inst
+			for _, mn := range impl.MethodNames {
+				for _, pre := range []string{"__method_", "__assoc_"} {
+					src := funcNamed(prog, pre+base+"_"+mn)
+					name := pre + inst.Name + "_" + mn
+					if src == nil || existingFunc(name) {
+						continue
+					}
+					mc := instantiateFunc(src, name, nil)
+					mc.MethodRecv = inst.Name
+					mc.MethodSimpleName = mn
+					collectCalls(mc.Body)
+					mangleBodyStructLits(mc.Body)
+					prog.Funcs = append(prog.Funcs, mc)
+				}
+			}
+			progressed = true
+		}
 		beforeStructs := len(structInsts)
 		rewriteGenericStructTypes(prog, info, structInsts)
 		for _, k := range collectKeys(structInsts) {
@@ -1290,6 +1314,36 @@ func rewriteGenericStructTypes(prog *ast.Program, info *checker.Info, into map[i
 			}
 		}
 	}
+}
+
+// genericStructInst is the generic struct and the type arguments that an impl
+// without type parameters names, such as `impl T for Box[i32]`. The parser
+// spells an applied name as an enum type.
+func genericStructInst(impl *ast.ImplDecl, info *checker.Info) (string, []ast.Type, bool) {
+	if len(impl.TypeParams) > 0 {
+		return "", nil, false
+	}
+	var name string
+	var args []ast.Type
+	switch x := impl.Type.(type) {
+	case ast.StructType:
+		name, args = x.Name, x.Args
+	case ast.EnumType:
+		name, args = x.Name, x.Args
+	}
+	if _, isGen := info.GenericStructs[name]; !isGen || len(args) == 0 {
+		return "", nil, false
+	}
+	return name, args, true
+}
+
+func funcNamed(prog *ast.Program, name string) *ast.FuncDecl {
+	for _, fn := range prog.Funcs {
+		if fn.Name == name {
+			return fn
+		}
+	}
+	return nil
 }
 
 func collectKeys(m map[instKey][]ast.Type) []instKey {
