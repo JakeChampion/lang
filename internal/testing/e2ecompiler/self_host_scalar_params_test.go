@@ -13,7 +13,9 @@ import (
 // a method, a trait impl reached by a generic, and a parameter handed on.
 // A split parameter is also the base of a record update whose result is
 // kept whole: in a free function, a method, and a trait impl's self. Two
-// Option arguments read out of arrays are each taken apart on a branch.
+// Option arguments read out of arrays are each taken apart on a branch. A
+// self tail call that hands an Option on unchanged keeps it apart, and the
+// parameter after it changes on each turn.
 const scalarParamsLib = `import "std/time";
 
 pub struct Mix { a: i32, b: i64, c: f64, d: boolean }
@@ -62,6 +64,13 @@ impl Waiter for Real {
 
 @noinline pub function millis_plus(t: Option[Duration], extra: i64): i64 {
   return millis(t) + extra;
+}
+
+@noinline pub function retried(t: Option[Duration], left: i32): i64 {
+  if (left > 0) {
+    return retried(t, left - 1);
+  }
+  return millis(t) + left as i64;
 }
 
 @noinline pub function doubled(t: Option[i64]): i64 {
@@ -158,6 +167,8 @@ function main(): i32 {
     n = n + lib.millis(None);
     n = n + lib.millis_plus(Some(time.duration_seconds(2)), 1);
     n = n + lib.millis_plus(None, 5);
+    n = n + lib.retried(Some(time.duration_millis(i as i64)), 2);
+    n = n + lib.retried(None, 1);
     n = n + lib.doubled(Some(i as i64));
     n = n + lib.doubled(None);
     n = n + time.duration_millis(2500).whole_seconds();
@@ -169,7 +180,7 @@ function main(): i32 {
   }
   let allocated: i64 = bench.alloc_count() - a0;
   print(total.to_string() + " " + n.to_string() + " " + allocated.to_string());
-  if (total != 2000000005500.0 || n != 15000322400) {
+  if (total != 2000000005500.0 || n != 15000327250) {
     return 1;
   }
   if (allocated != 0) {
