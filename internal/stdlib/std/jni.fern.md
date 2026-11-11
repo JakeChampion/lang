@@ -668,7 +668,7 @@ pub function string_of(env: usize, jstr: usize): string {
 
 ### `typed calls`
 
-The bindings that `std/jni/bind` writes use these functions. A JNI function that calls a method has one entry in the table for each kind of result. The entries of one group are 3 apart, in the order of `RESULTS`. `CALL_METHOD` is the first entry for a method of an object, and `CALL_STATIC` is the first entry for a static method. The entries that read a field are 1 apart, in the same order with no `V`.
+The bindings that `std/jni/bind` writes use these functions. A JNI function that calls a method has one entry in the table for each kind of result. The entries of one group are 3 apart, in the order of `RESULTS`. `CALL_METHOD` is the first entry for a method of an object. `CALL_STATIC` is the first entry for a static method. The entries that read a field are 1 apart, in the same order with no `V`.
 
 ```fern
 <<typed calls>>=

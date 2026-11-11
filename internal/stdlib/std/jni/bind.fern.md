@@ -1,6 +1,6 @@
 # Typed JNI bindings
 
-This module writes a Fern module of typed wrappers for Java classes. A wrapper calls a Java method through `std/jni` with no class name, method name or type signature in the code of the app. The checker then refuses a wrong argument (#14737).
+This module writes a Fern module of typed wrappers for Java classes. A wrapper calls a Java method through `std/jni`. The code of the app then has no class name, method name or type signature, and the checker refuses a wrong argument (#14737).
 
 ## Model
 
@@ -13,11 +13,13 @@ The result is the text of one Fern module. For a class such as `android/content/
 - A function of `IntentClass` for each method, each constructor and each field.
 - A constant for each field that is a compile-time constant.
 
-A function has the name of its Java member in snake case. A constructor has the name `new`. When a request has two methods with one name, each function also has the types of its parameters, as in `put_extra_string_int`.
+A function has the name of its Java member in snake case. A constructor has the name `new`. Two methods of a request can have one name. Each function then also has the types of its parameters, as in `put_extra_string_int`.
 
-The types change as follows. A Java `boolean` is a `boolean`. A `byte`, a `short`, a `char` and an `int` are each an `i32`. A `long` is an `i64`, a `float` is an `f32` and a `double` is an `f64`. A `String` is a `string`. A class that has a request is its struct. Each other class and each array is a `jni.Object`.
+The primitive types change as follows. A Java `boolean` is a `boolean`. A `byte`, a `short`, a `char` and an `int` are each an `i32`. A `long` is an `i64`, a `float` is an `f32` and a `double` is an `f64`.
 
-A struct has a function `as_` for each parent class and each interface that has a request, so an `Activity` can go where a `Context` is necessary.
+A `String` is a `string`. A class that has a request is its struct. Each other class and each array is a `jni.Object`.
+
+A struct has a function `as_` for each parent class and each interface that has a request. Thus an `Activity` can go where a `Context` is necessary.
 
 ## Contracts
 
@@ -27,7 +29,7 @@ An object that a function gives is a local reference. The caller deletes it with
 
 `intent_class` finds a class with `FindClass`. On Android, a thread that native code started finds only the classes of the system that way.
 
-`generate` gives an error for a request whose class is not in the classes, for a member that the class does not have, and for two requests whose classes have one simple name. It writes no setter for a field, and no constant for a `float` or a `double`.
+`generate` gives an error for a request whose class is not in the classes, and for a member that the class does not have. It also gives an error for two requests whose classes have one simple name. It writes no setter for a field, and no constant for a `float` or a `double`.
 
 ## Module assembly
 
@@ -199,17 +201,8 @@ function result_index(t: classfile.Type): i32 {
 
 // A short name of `t` for the name of an overloaded function.
 function short_name(t: classfile.Type): string {
-  let name = match (result_letter(t)) {
-    "Z" => "boolean",
-    "B" => "byte",
-    "C" => "char",
-    "S" => "short",
-    "I" => "int",
-    "J" => "long",
-    "F" => "float",
-    "D" => "double",
-    _ => "object",
-  };
+  let names = ["object", "boolean", "byte", "char", "short", "int", "long", "float", "double", "object"];
+  let name = names[result_index(t)];
   if (t.base == "L") {
     name = snake(type_name(t.class));
   }
@@ -263,17 +256,26 @@ function fields_of(c: classfile.Class, r: Request): classfile.Field[] {
   return out;
 }
 
+// True when `c` has a public member that the text `want` of a request
+// names.
+function has_member(c: classfile.Class, want: string): boolean {
+  for m in c.methods {
+    if (is_public(m.access) && (m.name == want || m.name + m.descriptor == want)) {
+      return true;
+    }
+  }
+  for f in c.fields {
+    if (is_public(f.access) && (f.name == want || f.name + f.descriptor == want)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // The member of `r` that `c` does not have, or "".
 function missing(c: classfile.Class, r: Request): string {
   for want in r.members {
-    let found = false;
-    for m in c.methods {
-      found = found || is_public(m.access) && (m.name == want || m.name + m.descriptor == want);
-    }
-    for f in c.fields {
-      found = found || is_public(f.access) && (f.name == want || f.name + f.descriptor == want);
-    }
-    if (!found) {
+    if (!has_member(c, want)) {
       return want;
     }
   }
@@ -451,7 +453,7 @@ function finder(m: Bound): string {
 
 ### `members`
 
-A function puts its arguments in a jvalue array, calls the entry of the JNI table for the kind of its result, and changes the result to its Fern type.
+A function puts its arguments in a jvalue array. It calls the entry of the JNI table for the kind of its result. Then it changes the result to its Fern type.
 
 ```fern
 <<members>>=
@@ -484,16 +486,9 @@ function converted(t: classfile.Type, bound: string[]): string {
   if (t.dims > 0 || t.base == "L") {
     return "jni.Object { ref: got }";
   }
-  return match (t.base) {
-    "Z" => "(got & 255 as usize) != 0 as usize",
-    "B" => "got as i32 << 24 >> 24",
-    "S" => "got as i32 << 16 >> 16",
-    "C" => "(got & 65535 as usize) as i32",
-    "J" => "got as i64",
-    "F" => "got",
-    "D" => "got",
-    _ => "got as i32",
-  };
+  // In the order of jni.RESULTS, from "Z" to "D".
+  let forms = ["(got & 255 as usize) != 0 as usize", "got as i32 << 24 >> 24", "(got & 65535 as usize) as i32", "got as i32 << 16 >> 16", "got as i32", "got as i64", "got", "got"];
+  return forms[result_index(t) - 1];
 }
 
 // The function of std/jni that calls the table for the result `t`.

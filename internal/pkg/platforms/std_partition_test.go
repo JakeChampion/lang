@@ -55,7 +55,6 @@ var stdModuleReach = map[string]string{
 	"std/io_buffered":   "",
 	"std/ip":            "mmio,privileged",
 	"std/jni":           "cabi",
-	"std/jni/bind":      "",
 	"std/jpeg":          "",
 	"std/json":          "",
 	"std/log":           "log",
