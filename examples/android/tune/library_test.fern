@@ -1,0 +1,69 @@
+// Tests of the library of the player on the host: the files below a
+// directory, and the track of a file from its tags or from its path.
+import "std/result";
+import "std/test";
+import "./library";
+import "./tune";
+
+// A tree of directories: music has two files, one directory of an artist
+// with an album, one directory whose name starts with a dot, and one file
+// that is not sound.
+function names(dir: string): string[] {
+  if (dir == "music") {
+    return ["b.mp3", "Fern", ".trash", "notes.txt", "a.WAV"];
+  }
+  if (dir == "music/Fern") {
+    return ["First Light", "cover.png"];
+  }
+  if (dir == "music/Fern/First Light") {
+    return ["02 Slow Water.wav", "01 Morning Fern.flac"];
+  }
+  if (dir == "music/.trash") {
+    return ["old.mp3"];
+  }
+  return [];
+}
+
+function is_dir(path: string): boolean {
+  return path == "music/Fern" || path == "music/Fern/First Light" || path == "music/.trash";
+}
+
+function test_files(): test.TestOutcome {
+  let all = library.files("music", 6, names, is_dir).join(" ");
+  let flat = library.files("music", 0, names, is_dir).join(" ");
+  return test.assert_eq(all + " | " + flat, "music/Fern/First Light/01 Morning Fern.flac music/Fern/First Light/02 Slow Water.wav music/a.WAV music/b.mp3 | music/a.WAV music/b.mp3");
+}
+
+function test_numbered(): test.TestOutcome {
+  let got = "";
+  for name in ["03 Song", "7. Song", "12-Song", "1999", "Song 2", "100 Years", "1234 Song"] {
+    let (n, rest) = library.numbered(name);
+    got = got + n.to_string() + ":" + rest + " ";
+  }
+  return test.assert_eq(got.trim(), "3:Song 7:Song 12:Song 0:1999 0:Song 2 100:Years 0:1234 Song");
+}
+
+function show(t: Option[tune.Track]): string {
+  if let Some(k) = t {
+    return k.title + "," + k.artist + "," + k.album + "," + k.by + "," + k.number.to_string() + "," + k.format;
+  }
+  return "none";
+}
+
+function test_a_file_with_no_tags_takes_its_path(): test.TestOutcome {
+  let file = library.demo_file(1).unwrap_or([]);
+  let roots = ["/data/music", "/sdcard/Music"];
+  let deep = show(library.track(roots, "/sdcard/Music/Fern/First Light/02 Slow_Water.wav", file));
+  let album = show(library.track(roots, "/sdcard/Music/Mixes/Slow Water.wav", file));
+  let loose = show(library.track(roots, "/data/music/Slow Water.wav", file));
+  let other = show(library.track(roots, "/sdcard/Music/notes.txt", file)) + " " + show(library.track(roots, "/sdcard/Music/empty.wav", []));
+  return test.assert_eq(deep + " | " + album + " | " + loose + " | " + other, "Slow Water,Fern,First Light,Fern,2,WAV | Slow Water,Unknown artist,Mixes,Unknown artist,0,WAV | Slow Water,Unknown artist,Unknown album,Unknown artist,0,WAV | none none");
+}
+
+function main(): i32 {
+  let r = test.new("examples/android/tune library");
+  r = r.it("the files of sound below a directory", test_files);
+  r = r.it("a file name starts with a number", test_numbered);
+  r = r.it("a file with no tags takes its artist and its album from its path", test_a_file_with_no_tags_takes_its_path);
+  return r.finish();
+}
