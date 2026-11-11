@@ -68,9 +68,6 @@ function schedules(): i32 {
   if (!same(r256[32:48], hex("9ba354118e6925afa51a8b5f2067fcde")) || !same(r256[224:240], hex("fe4890d1e6188d0b046df344706c631e"))) {
     return 4;
   }
-  if (__aes_expand_key(pattern(24, 1, 0)).len() != 0 || __aes_expand_key(pattern(15, 1, 0)).len() != 0) {
-    return 5;
-  }
   return 0;
 }
 
@@ -84,6 +81,10 @@ function blocks(): i32 {
   let r256: u8[] = __aes_expand_key(pattern(32, 1, 0));
   if (!same(__aes_ctr32(r256, pt, zero), hex("8ea2b7ca516745bfeafc49904b496089"))) {
     return 11;
+  }
+  // Round keys that no key schedule made: each engine uses them as they are.
+  if (!same(__aes_ctr32(pattern(200, 7, 3), pt, zero), hex("69e756ba3d13e77cac8af65add76f67d"))) {
+    return 13;
   }
   // The counter and the data as views: a slice and a string's bytes.
   if (!same(__aes_ctr32(r256[0:240], pt[0:16], "0123456789abcdef".as_bytes()), hex("be9385f965527388d2c528f2282d05ef"))) {
@@ -118,9 +119,6 @@ function streams(): i32 {
   if (__aes_ctr32(r128, wrap, __alloc_u8(0)).len() != 0) {
     return 24;
   }
-  if (__aes_ctr32(r128[0:175], wrap, pattern(16, 1, 0)).len() != 0 || __aes_ctr32(r128, wrap[0:15], pattern(16, 1, 0)).len() != 0) {
-    return 25;
-  }
   return 0;
 }
 
@@ -146,9 +144,6 @@ function hashes(): i32 {
   // No data leaves the state as it was; a short key or state answers empty.
   if (!same(__ghash(h, y, __alloc_u8(0)), y)) {
     return 34;
-  }
-  if (__ghash(h[0:15], y, y).len() != 0 || __ghash(h, y[0:15], y).len() != 0) {
-    return 35;
   }
   // Chunked at block boundaries, the fold is the one-call fold.
   let data: u8[] = pattern(300, 3, 2);
@@ -342,10 +337,18 @@ const (
 	aesKATCtr256Long = "ff56feaa6d804759f03c320d54b0ddaa1f861681450c6b175d0bf7f08913563e8fb24b5317c376b527ea56bf644e1890139ed3b31ffbce0eb48c10396bf2f33a08d1895094b7388d0802f7224bc2a24fe30b0fe6d514b72e813b9e0d8462263082317bc6785a570d1c00a1756f44e658e6cac967bf2e9e5f5f20d582d96dd521292abc33779b235d7513e4a49de50a8ea380f3a8b4495523d698980ae697ed71c112dd0734e3b85c507624994d088c42dbc7050fe998396518ace8f6905be9bf659b3773856472d6586f3b40a67aeea10d7d98c8d952c350dd6e634af5ee02b34f79627149f82ed8c1ec842f77036162afbe7cda134c625858dbde52daf1e5f1147b3c5228a42b20281b0640978addab460fc9f29045f9aeacd21d9ae1554957c78b383970297a22e231414e"
 )
 
-// aesGCMIntoMisuses each stop the program instead of reaching outside the
+// aesKernelMisuses each stop the program instead of reaching outside the
 // buffer: a text region past its end, a negative offset, an aad region past
-// its end, an iv that is not 12 bytes, a schedule short of AES-128's.
-var aesGCMIntoMisuses = []string{
+// its end, an iv that is not 12 bytes, a schedule short of AES-128's, a key
+// that is not 16 or 32 bytes, and a counter, a hash key or a hash block short
+// of 16 bytes.
+var aesKernelMisuses = []string{
+	"__aes_expand_key(__alloc_u8(24))",
+	"__aes_expand_key(__alloc_u8(0))",
+	"__aes_ctr32(rk[0:10], __alloc_u8(16), __alloc_u8(16))",
+	"__aes_ctr32(rk, __alloc_u8(15), __alloc_u8(16))",
+	"__ghash(h[0:15], h, h)",
+	"__ghash(h, h[0:15], h)",
 	"__aes_gcm_seal_into(rk, h, iv, 0 as u64, __alloc_u8(20), 0, 0, 0, 8)",
 	"__aes_gcm_open_into(rk, h, iv, 0 as u64, __alloc_u8(40), 0, 4, 0 - 1, 8)",
 	"__aes_gcm_seal_into(rk, h, iv, 0 as u64, __alloc_u8(40), 30, 11, 0, 8)",
@@ -353,7 +356,7 @@ var aesGCMIntoMisuses = []string{
 	"__aes_gcm_open_into(rk[0:175], h, iv, 0 as u64, __alloc_u8(40), 0, 0, 0, 8)",
 }
 
-func aesGCMIntoMisuseProg(call string) string {
+func aesKernelMisuseProg(call string) string {
 	return `function main(): i32 {
   let rk: u8[] = __aes_expand_key(__alloc_u8(16));
   let h: u8[] = __aes_ctr32(rk, __alloc_u8(16), __alloc_u8(16));
@@ -398,8 +401,8 @@ func TestSelfHostAESGCMKernelsX86_64(t *testing.T) {
 
 func aesGCMMisuseStops(t *testing.T, run func(prog string) *exec.Cmd) {
 	t.Helper()
-	for _, call := range aesGCMIntoMisuses {
-		out, _ := run(aesGCMIntoMisuseProg(call)).CombinedOutput()
+	for _, call := range aesKernelMisuses {
+		out, _ := run(aesKernelMisuseProg(call)).CombinedOutput()
 		if strings.Contains(string(out), "survived") {
 			t.Errorf("%s returned instead of stopping the program:\n%s", call, out)
 		}
@@ -464,8 +467,8 @@ func TestSelfHostInterpAESGCMKernels(t *testing.T) {
 	if got := runDriverExit(t, runner, driver, []byte(aesGCMKernelsProg)); got != 0 {
 		t.Fatalf("self-host interpreter exited %d, want 0", got)
 	}
-	for _, call := range aesGCMIntoMisuses {
-		prog := aesGCMIntoMisuseProg(call)
+	for _, call := range aesKernelMisuses {
+		prog := aesKernelMisuseProg(call)
 		if got := interpExitStdin(t, oracle, prog, ""); got == 0 {
 			t.Errorf("Go interpreter: %s returned instead of stopping the program", call)
 		}

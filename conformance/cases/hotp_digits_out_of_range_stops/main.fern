@@ -1,0 +1,10 @@
+// An HOTP digit count outside 1 through 10 stops the program with status 134.
+import "std/crypto";
+import "std/string";
+
+function main(): i32 {
+    let key = "12345678901234567890123456789012".bytes();
+    print((crypto.hotp_sha256(key, 1, 10) >= 0).to_string());
+    print(crypto.hotp_sha256(key, 1, 11).to_string());
+    return 0;
+}

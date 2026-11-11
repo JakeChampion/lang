@@ -6504,10 +6504,19 @@ function call_aes_gcm(heap: interpheap.Heap, name: string, args: Value[]): Value
     return v_err(name + ": expected " + util.i32_to_string(want) + " byte arrays");
   }
   if (want == 1) {
+    if (bs[0].len() != 16 && bs[0].len() != 32) {
+      return v_err(name + ": the key is not 16 or 32 bytes");
+    }
     return byte_value(heap, aesref.expand_key(bs[0]));
   }
   if (name == "__ghash") {
+    if (bs[0].len() < 16 || bs[1].len() < 16) {
+      return v_err(name + ": the hash key or the block is too short");
+    }
     return byte_value(heap, aesref.ghash(bs[0], bs[1], bs[2]));
+  }
+  if (bs[0].len() < 176 || bs[1].len() < 16) {
+    return v_err(name + ": the round keys or the counter are too short");
   }
   return byte_value(heap, aesref.ctr32(bs[0], bs[1], bs[2]));
 }

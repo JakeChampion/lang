@@ -55,9 +55,6 @@ function sub_rot_word(w: u8[], at: i32, sb: i32[], rot: boolean, rcon: i32): u8[
 
 pub function expand_key(key: u8[]): u8[] {
   let nk = key.len() / 4;
-  if (key.len() != 16 && key.len() != 32) {
-    return __alloc_u8(0);
-  }
   let total: i32 = 16 * (nk + 7);
   let sb = sbox_table();
   let w = __alloc_u8(total);
@@ -142,16 +139,9 @@ function inc32(cb: u8[]): u8[] {
 }
 
 pub function ctr32(rk: u8[], counter: u8[], data: u8[]): u8[] {
-  let rounds = 0;
+  let rounds = 10;
   if (rk.len() >= 240) {
     rounds = 14;
-  } else {
-    if (rk.len() >= 176) {
-      rounds = 10;
-    }
-  }
-  if (rounds == 0 || counter.len() < 16) {
-    return __alloc_u8(0);
   }
   let sb = sbox_table();
   let cb = block_at(counter, 0, 16);
@@ -209,9 +199,6 @@ function shift_right1(v: u8[]): u8[] {
 }
 
 pub function ghash(h: u8[], y: u8[], data: u8[]): u8[] {
-  if (h.len() < 16 || y.len() < 16) {
-    return __alloc_u8(0);
-  }
   let acc = block_at(y, 0, 16);
   let at = 0;
   while (at < data.len()) {

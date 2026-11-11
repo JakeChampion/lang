@@ -50,6 +50,13 @@ func TestLiteralLocalTakesOneType(t *testing.T) {
 		{"two widths", "let x = 5; let a: i32 = x; let b: i64 = x;", ""},
 		{"two widths through a second local", "let x = 5; let y = x; let a: i64 = x; let b: i32 = y;", "E003"},
 		{"float is not an integer width", "let x = 5; let f: f64 = x;", "E003"},
+		{"element of a literal array", "let a = 1; let xs = [a, 2]; let ys: i64[] = xs; let u: i64 = a;", ""},
+		{"two widths through a literal array", "let a = 1; let xs = [a, 2]; let ys: i64[] = xs; let u: u8 = a;", "E003"},
+		{"two widths through an append result", "let a = 1; let xs = [a, 2]; let ys = xs.append(3); let zs: i64[] = ys; let u: u8 = a;", "E003"},
+		{"two widths through a with result", "let a = 1; let xs = [a, 2]; let ys = xs.with(1, 3); let zs: i64[] = ys; let u: u8 = a;", "E003"},
+		{"two widths through an assigned append", "let a = 1; let xs = [a, 2]; let ys = [3]; ys = xs.append(4); let zs: i64[] = ys; let u: u8 = a;", "E003"},
+		{"two widths through an operand in a literal array", "let a = 1; let xs = [a + 1, 2]; let ys: i64[] = xs; let u: u8 = a;", "E003"},
+		{"append result gives the array its width", "let xs = [1, 2]; let ys = xs.append(3); let zs: i64[] = ys; let ws: i64[] = xs;", ""},
 		{"value fixed by the literal", "let x = 300; let b: u8 = x;", "E047"},
 	}
 	for _, c := range cases {

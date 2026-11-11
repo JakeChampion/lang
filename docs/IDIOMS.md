@@ -237,7 +237,9 @@ Keep the annotation in these cases:
   literal settles from all of its uses in the function, in any order: after
   `let b = 0;`, the shift `v >> b` with an `i64` value makes `b` an `i64`.
   A method call or an f-string on the local does not fix its width. The
-  local is `i32` only when no use asks for another width.
+  local is `i32` only when no use asks for another width. A local has one
+  type: when the local is an element of a literal array or tuple, the use
+  that gives the element its width gives the local the same width.
 - The local holds a member struct of a `type A | B` union, and the code uses
   it as the union: `let e: ast.Expr = ast.ExprIdent { ... };`. Without the
   annotation, the local has the struct type, and a later assignment of
