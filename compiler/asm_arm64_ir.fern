@@ -2670,6 +2670,16 @@ function ssa_vpermute(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     s = ssa_fread(reg_of, ins.args[1], "d2", s);
     let br = ssa_fsrc(reg_of, ins.args[1], "d2");
     let b = "v" + slice_unchecked(br, 1, br.len());
+    if (mode >= 4) {
+      let first = if (mode >= 6) { b } else { a };
+      let second = if (mode >= 6) { a } else { b };
+      let op = if ((mode & 1) == 0) { "uzp1" } else { "uzp2" };
+      s = s.write("    " + op + " " + vd + ".4s, " + first + ".4s, " + second + ".4s\n");
+      if (mode >= 6) {
+        s = s.write("    rev64 " + vd + ".4s, " + vd + ".4s\n");
+      }
+      return ssa_fput(reg_of, ins.result, d, s);
+    }
     let shape = if (ins.imm == 32) { ".4s" } else { ".2d" };
     s = s.write("    zip" + util.i32_to_string(mode) + " " + vd + shape + ", " + a + shape + ", " + b + shape + "\n");
   }

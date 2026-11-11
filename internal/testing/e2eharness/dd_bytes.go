@@ -56,6 +56,13 @@ func DDByteCases() []DDByteCase {
 			})
 		}
 	}
+	for _, size := range []int{511, 512, 513} {
+		input := strings.Repeat(string(all), (size+255)/256)[:size]
+		cases = append(cases, DDByteCase{
+			Name: fmt.Sprintf("plain block boundary%d", size), Parts: []string{input},
+			Args: []string{"bs=512"},
+		})
+	}
 	cases = append(cases, DDByteCase{
 		Name:  "cache advice raw swab boundary",
 		Parts: []string{strings.Repeat(string(all), 513)[:131073]},
@@ -100,6 +107,14 @@ func RunDDByteCases(t *testing.T, bin string, runner []string, census func(*test
 		t.Skip("requires GNU coreutils 9.4 or newer")
 	}
 	t.Logf("reference: %s (%s)", oracle, firstLine)
+	RunDDByteCasesAgainst(t, bin, runner, []string{oracle}, census)
+}
+
+func RunDDByteCasesAgainst(t *testing.T, bin string, runner, oracle []string, census func(*testing.T, string)) {
+	t.Helper()
+	if len(oracle) == 0 {
+		t.Fatal("missing GNU reference command")
+	}
 	for _, tc := range DDByteCases() {
 		t.Run(tc.Name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -114,11 +129,17 @@ func RunDDByteCases(t *testing.T, bin string, runner []string, census func(*test
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			env := append(os.Environ(), "LC_ALL=C")
-			ref := exec.CommandContext(ctx, oracle, args...)
+			refArgv := append(append([]string{}, oracle...), args...)
+			ref := exec.CommandContext(ctx, refArgv[0], refArgv[1:]...)
 			ref.Dir, ref.Env, ref.Stdin = dir, env, strings.NewReader(tc.Input)
+			var referenceDiagnostic bytes.Buffer
+			ref.Stderr = &referenceDiagnostic
 			want, err := ref.Output()
 			if err != nil {
 				t.Fatalf("GNU run: %v", err)
+			}
+			if referenceDiagnostic.Len() != 0 {
+				t.Fatalf("unexpected GNU diagnostic: %s", referenceDiagnostic.String())
 			}
 			argv := append(append(append([]string{}, runner...), bin), args...)
 			cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)

@@ -1,9 +1,0 @@
-{
-  "job_id": 130273056388,
-  "run_id": 42942829694,
-  "source": "2ca148c6757a95ba419a67751dd3598726f07c56",
-  "decoded_utf8_bytes": 79822,
-  "decoded_tool_utf8_and_raw_sha256": "56507552ccfffe1c0c5a97601686cc1a51b2c7dd975a3313ec819cf4ba6dcf5b",
-  "gzip_sha256": "52a2b33ad7ee9d02192c202b3d6bb18de2343ab1da4d31370a2689141aef8548",
-  "transport": "Every appended range compared with exact tool-decoded UTF8."
-}

@@ -610,9 +610,12 @@
 # 2026-10-30 (#13910): all 11 rows measured by CI 41084272131 with
 # stage0-20261030-7cf0706, after the pin refresh and the consuming close.
 # 2026-10-31 (#13921): five rows measured by the driver-sizes-x86_64 lane after the pin refresh to stage0-20261031-0c1f501 (asm_modload_run, asm_ir_run, asm_run, asm_pathprobe_run, checker_modload_run, each 5.5% to 7.5% larger).
+# 2026-11-11 (#15226): runtime_run measured by the driver-sizes-x86_64 lane
+# after the lane-extraction shuffle fusion. Main at 38399ecf measured 16659696
+# (+4.97%). This change adds 12416 bytes.
 fern.fern/stage2 16710816
 fern.fern 16658288
-drivers/runtime_run.fern 15871648
+drivers/runtime_run.fern 16672112
 drivers/asm_load_run.fern 12721632
 drivers/asm_modload_run.fern 10839904
 drivers/asm_ir_run.fern 10449984

@@ -1,8 +1,8 @@
 // A counted or array loop steps after its body, and a `continue` that targets
 // the loop takes the step with it: plain, labelled, from a nested loop, from a
 // match arm, through a label a nested loop reuses. A body that rebinds the
-// counter or defers work steps at the head. Assigning the counter moves the
-// iteration, and a closure sees the counter's last value.
+// counter or defers work steps at the head. A closure sees the counter's last
+// value.
 
 function plain(n: i32): i32 {
   let t = 0;
@@ -63,18 +63,6 @@ function shadow(n: i32): i32 {
     t = t + i;
   }
   return t;
-}
-
-function mutate(n: i32): i32 {
-  let c = 0;
-  for j in 0..n {
-    j = j + 3;
-    c = c + 1;
-    if (c > 100) {
-      break;
-    }
-  }
-  return c;
 }
 
 function captures(): i32 {
@@ -217,7 +205,7 @@ function pairs(ps: (i32, string)[]): string {
 
 function main(): i32 {
   print(f"{arr_skip([1, 2, 3, 4, 5])} {arr_nested([1, 2], ["ab", "skip", "c", "stop", "zzz"])} {first_of(["q", "r"])} {first_of([])} {bytes_up("a b")} {pairs([(1, "a"), (2, "b"), (3, "c")])}");
-  print(f"{plain(10)} {skips(10)} {labeled(5)} {reused(3)} {shadow(5)} {mutate(10)}");
+  print(f"{plain(10)} {skips(10)} {labeled(5)} {reused(3)} {shadow(5)}");
   print(f"{captures()} {wide()} {negs()} {early([1, 7, 3])} {early([])} {matchy(8)}");
   print(f"{incl(5)} {incl(-1)}");
   return 0;

@@ -1875,6 +1875,7 @@ pub struct Scope {
   tbounds: string[],
   lit_locals: string[],
   in_unsafe: boolean,
+  range_indexes: i32[],
 }
 
 pub struct ViewMemo { names: util.NameIndex, holds: boolean[] }
@@ -2246,13 +2247,13 @@ function new_scope(): Scope {
   let ms: MethodSig[] = [];
   let structs = struct_table(ss, [], [], no_spellings());
   let unions = union_table(us);
-  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, []), methods: method_table(ms), imports: Imports { paths: [], unloaded: [], sights: [] }, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", fn_stdlib: false, default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [], in_unsafe: false };
+  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, []), methods: method_table(ms), imports: Imports { paths: [], unloaded: [], sights: [] }, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", fn_stdlib: false, default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [], in_unsafe: false, range_indexes: [] };
 }
 
 function new_scope_full(st: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: Imports, impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): Scope {
   let ns: string[] = [];
   let ts: typeinfo.Type[] = [];
-  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, imports.unloaded), methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", fn_stdlib: false, default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [], in_unsafe: false };
+  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, imports.unloaded), methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", fn_stdlib: false, default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [], in_unsafe: false, range_indexes: [] };
 }
 
 function (s: Scope) bind(name: string, t: typeinfo.Type): Scope {
@@ -2283,6 +2284,12 @@ function (s: Scope) bind_inferred(v: ast.StmtVar, t: typeinfo.Type): Scope {
 
 function (s: Scope) with_tparams(tparams: string[], tbounds: string[]): Scope {
   return Scope { ...s, tparams: tparams, tbounds: tbounds };
+}
+
+// is_range_index reports the index of a range `for`, which the loop sets on each turn.
+function (s: Scope) is_range_index(name: string): boolean {
+  let i = s.binding_index(name);
+  return i >= 0 && util.has_i32(s.range_indexes, i);
 }
 
 function (s: Scope) is_const_param(name: string): boolean {
@@ -17222,10 +17229,16 @@ function assign_diags(a: ast.StmtAssign, cur: Scope, unions: UnionSig[]): util.D
     out = out.append(undefined_name(a.target, cur, a.target_line, a.target_col));
   } else if (cur.is_const_param(a.target)) {
     out = out.append(dg_at("E091", "cannot assign to const parameter " + a.target + ": it is the constant its instance is made for", a.target_line, a.target_col));
+  } else if (cur.is_range_index(a.target)) {
+    out = out.append(dg_at("E091", range_index_assign_msg(a.target), a.target_line, a.target_col));
   } else {
     out = assign_value_diags(a.value, cur.lookup(a.target), "variable \"" + a.target + "\"", !parser.is_value_local_name(a.target), a.line, a.col, cur, unions);
   }
   return out;
+}
+
+function range_index_assign_msg(name: string): string {
+  return "cannot assign to range index " + name + ": the loop sets it on each turn, so use a while loop to change it";
 }
 
 // assign_value_diags checks an assigned value against its destination type tt; what names the destination in E003.
@@ -18239,9 +18252,10 @@ function export_shape_diags(mod: parser.Module): util.Diag[] {
   return out;
 }
 
-// reserved_name_diags reports each declaration under a built-in type's name.
-// Such a name takes the built-in's place for every module in the bundle, so no
-// later diagnostic can be trusted.
+// reserved_name_diags reports each declaration under a built-in type's name,
+// and each free function under the name of an unsafe intrinsic. Such a name
+// takes the built-in's place for every module in the bundle, so no later
+// diagnostic can be trusted.
 function reserved_name_diags(mod: parser.Module): util.Diag[] {
   let out: util.Diag[] = [];
   for ed in mod.enums {
@@ -18255,7 +18269,24 @@ function reserved_name_diags(mod: parser.Module): util.Diag[] {
       out = out.append(dg_at("E010", "struct \"" + sd.name + "\" is a reserved built-in name and cannot be redeclared", sd.line, sd.col));
     }
   }
+  for fd in mod.funcs {
+    let name = written_func_name(fd);
+    if (fd.receiver_type.len() == 0 && is_unsafe_intrinsic(name)) {
+      out = out.append(dg_at("E010", "function \"" + name + "\" is a reserved built-in name and cannot be redeclared", fd.line, fd.col));
+    }
+  }
   return out;
+}
+
+function written_func_name(fd: parser.FuncDecl): string {
+  if (fd.name.starts_with(util.ENTRY_SHADOW_PREFIX)) {
+    return slice_unchecked(fd.name, util.ENTRY_SHADOW_PREFIX.len(), fd.name.len()).to_owned();
+  }
+  let prefix = fd.module + "__";
+  if (fd.module.len() > 0 && fd.name.starts_with(prefix)) {
+    return slice_unchecked(fd.name, prefix.len(), fd.name.len()).to_owned();
+  }
+  return fd.name;
 }
 
 function collect_decl_diags(mod: parser.Module): util.Diag[] {
@@ -30611,7 +30642,11 @@ function range_var_type(iter: ast.Expr, s: Scope): typeinfo.Type {
 function for_binding(fr: ast.StmtFor, s: Scope): ForBinding {
   let body = s.enter_loop();
   if (for_iter_is_range(fr.iter)) {
-    return ForBinding { scope: bind_for_element(body, fr.var_name, range_var_type(fr.iter, s)), valid: !util.contains(fr.var_name, ",") };
+    let bound = bind_for_element(body, fr.var_name, range_var_type(fr.iter, s));
+    if (bound.names.len() > body.names.len()) {
+      bound = Scope { ...bound, range_indexes: bound.range_indexes.append(bound.names.len() - 1) };
+    }
+    return ForBinding { scope: bound, valid: !util.contains(fr.var_name, ",") };
   }
   let it = check_expr(fr.iter, s);
   match (it) {

@@ -1,4 +1,3 @@
-# 2026-11-11: a_function_named_like_a_raw_builtin_shadows_it is clean under RC trace.
 # 2026-11-10: copied_call_results has zero unpaired allocations under native RC trace.
 # 2026-11-10: nul_byte_in_a_path_is_refused is clean under RC trace.
 # 2026-11-10: nul_byte_in_a_program_or_argument_is_refused is clean under RC trace.

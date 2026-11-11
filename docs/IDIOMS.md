@@ -61,8 +61,9 @@ for x in xs {
 }
 ```
 
-Keep `while` when the step is not one or the body changes the index. Also
-keep it when the condition is not a bound. Use `loop` for a loop that only `break`
+Keep `while` when the step is not one or the body changes the index. The
+checker refuses an assignment to the index of a range `for` (E091). Also
+keep `while` when the condition is not a bound. Use `loop` for a loop that only `break`
 stops.
 
 ### Use `match` for a choice between values

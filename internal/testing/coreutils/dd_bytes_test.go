@@ -7,5 +7,10 @@ import (
 )
 
 func TestDDBytes(t *testing.T) {
-	e2eharness.RunDDByteCases(t, fernBin(t, "dd"), crossPrefix(), nil)
+	e2eharness.RunDDByteCasesAgainst(t, fernBin(t, "dd"), crossPrefix(), crossArgv(referenceBin(t, "dd")), nil)
+}
+
+func TestDDBytesReferenceCommand(t *testing.T) {
+	oracle := append([]string{"sh", "-c", `exec "$@"`, "gnu-reference"}, crossArgv(referenceBin(t, "dd"))...)
+	e2eharness.RunDDByteCasesAgainst(t, fernBin(t, "dd"), crossPrefix(), oracle, nil)
 }

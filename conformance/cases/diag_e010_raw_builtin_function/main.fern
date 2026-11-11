@@ -1,0 +1,7 @@
+function __load_u8(x: i32): i32 {
+  return x;
+}
+
+function main(): i32 {
+  return __load_u8(0);
+}

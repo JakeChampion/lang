@@ -14,12 +14,63 @@ Inter frames and show-existing-frame commands return `Unsupported`.
 The result does not validate entropy-coded headers, tile payloads, complete frame boundaries, or level conformance.
 It does not decode pixels, discover a playback clock, or establish decoder support.
 
+`split_packet` returns byte ranges for one VP9 packet, including an optional superframe index.
+The packet limit applies before the reader examines the index.
+An index contains at most eight sizes and occupies at most 34 bytes.
+The reader validates every size before it returns any range, without a payload copy.
+
+A packet without an index returns one range.
+A superframe marker requires a complete index with matching markers and positive sizes within the payload.
+The result reports unindexed bytes before the index separately, without a padding-validity claim.
+It does not identify unindexed concatenated frames, validate coded payloads, or assign separate timestamps.
+
 ```fern
 <<*>>=
 // Inspect bounded VP9 keyframe metadata without pixel reconstruction.
 import "std/audio/alac/bits";
 import "std/audio/pcm";
+import "std/audio/wire";
 import "std/video/frame";
+
+pub struct FrameRange { offset: i32, size: i32 }
+
+pub struct Packet { frames: FrameRange[], index_offset: i32, trailing_bytes: i32 }
+
+function indexed_packet(input: [u8], count: i32, width: i32, start: i32): Result[Packet, frame.VideoError] {
+  let frames: FrameRange[] = [];
+  let offset = 0;
+  for i in 0..count {
+    let size = wire.le(input, start + 1 + i * width, width);
+    if (size == 0u64 || size > (start - offset) as u64) {
+      return Err(frame.Header);
+    }
+    frames = frames.append(FrameRange { offset: offset, size: size as i32 });
+    offset += size as i32;
+  }
+  return Ok(Packet { frames: frames, index_offset: start, trailing_bytes: start - offset });
+}
+
+pub function split_packet(input: [u8], limits: frame.Limits): Result[Packet, frame.VideoError] {
+  frame.check_packet(input, limits)?;
+  if (input.len() == 0) {
+    return Err(frame.Truncated);
+  }
+  let marker = input[input.len() - 1];
+  if ((marker & 224u8) != 192u8) {
+    return Ok(Packet { frames: [FrameRange { offset: 0, size: input.len() }], index_offset: input.len(), trailing_bytes: 0 });
+  }
+  let count = (marker & 7u8) as i32 + 1;
+  let width = (marker >> 3 & 3u8) as i32 + 1;
+  let bytes = 2 + count * width;
+  if (input.len() < bytes) {
+    return Err(frame.Truncated);
+  }
+  let start = input.len() - bytes;
+  if (input[start] != marker) {
+    return Err(frame.Header);
+  }
+  return indexed_packet(input, count, width, start);
+}
 
 pub struct Keyframe { profile: i32, coded: frame.Format, render: frame.Format, bit_depth: i32, color_space: i32, full_range: boolean, subsampling_x: i32, subsampling_y: i32, show_frame: boolean, error_resilient: boolean, filter_level: i32, sharpness: i32, base_quantizer: i32, segmentation: boolean, tile_columns_log2: i32, tile_rows_log2: i32, uncompressed_bytes: i32, compressed_bytes: i32, tile_offset: i32 }
 
