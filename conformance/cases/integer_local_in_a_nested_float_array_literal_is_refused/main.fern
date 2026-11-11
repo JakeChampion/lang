@@ -1,0 +1,30 @@
+// An integer literal local in an array literal with a typed float destination
+// has the rule of a local with the annotation `i32`. The first element gives
+// each literal its type. A literal that holds only such locals is an integer
+// array, so the E034 is on the inner literal, or the destination refuses the
+// whole literal.
+function sf(xs: f64[]): f64 {
+    return xs[0];
+}
+
+function main(): i32 {
+    let a = 1;
+    let zs: f64[][] = [[1.5], [a]];
+    let b = 1;
+    let ws: f64[][] = [[b]];
+    let c = 1;
+    let ys: f64[][] = [[c], [1.5]];
+    let d = 1;
+    let xs: f64[][] = [[1, d], [d]];
+    let e = 1;
+    let rs: f64[][] = [[e, 1]];
+    let f = 1;
+    let qs: f64[][][] = [[[1.5]], [[f]]];
+    let g = 1;
+    let ps: f64[] = [g];
+    sf([g, g + 1]);
+    let h = 1;
+    let ts: f32[] = [h, 1, 2.5];
+    let us: f64[] = [1, h, h + 1, 2];
+    return 0;
+}
