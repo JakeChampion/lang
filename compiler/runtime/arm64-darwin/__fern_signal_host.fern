@@ -1,0 +1,37 @@
+// The Darwin number of a signal in the runtime convention, or 0 for none.
+function __fern_signal_host(sig: i32): i32 {
+  if (sig < 1 || sig > 31 || sig == 16 || sig == 30) {
+    return 0;
+  }
+  if (sig == 7) {
+    return 10;
+  }
+  if (sig == 10) {
+    return 30;
+  }
+  if (sig == 12) {
+    return 31;
+  }
+  if (sig == 17) {
+    return 20;
+  }
+  if (sig == 18) {
+    return 19;
+  }
+  if (sig == 19) {
+    return 17;
+  }
+  if (sig == 20) {
+    return 18;
+  }
+  if (sig == 23) {
+    return 16;
+  }
+  if (sig == 29) {
+    return 23;
+  }
+  if (sig == 31) {
+    return 12;
+  }
+  return sig;
+}

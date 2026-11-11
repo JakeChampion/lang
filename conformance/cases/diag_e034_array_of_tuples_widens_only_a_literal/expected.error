@@ -1,0 +1,2 @@
+main.fern:6:26: error[E034]: array element: expected (i32, i32), got (i32, i64)
+main.fern:8:20: error[E034]: array element: expected (i32, i32), got (i32, i64)

@@ -62,7 +62,8 @@ func TestSelfHostShippedFernFlagSpellings(t *testing.T) {
 		{[]string{"-target"}, "fern: -target needs a value: write -target ISA-ENV or -target=ISA-ENV\n"},
 		{[]string{"-cover=maybe", ok}, "fern: -cover is a boolean: write -cover=true or -cover=false (got \"maybe\")\n"},
 		{[]string{"--check=", ok}, "fern: -check is a boolean: write -check=true or -check=false (got \"\")\n"},
-		{[]string{"---check", ok}, "fern: unknown flag: ---check\n"},
+		{[]string{"---check", ok}, "fern: unknown flag: ---check: the nearest flag is -check\n"},
+		{[]string{"-chek", ok}, "fern: unknown flag: -chek: the nearest flag is -check\n"},
 		{[]string{"--bogus=1", ok}, "fern: unknown flag: --bogus=1\n"},
 	} {
 		stdout, stderr, code := runHelp(t, fern, env, c.args...)

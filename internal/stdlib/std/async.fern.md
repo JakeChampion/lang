@@ -1245,33 +1245,74 @@ function __wait_readable(set: i32[], n: i32, timeout_ms: i32): i32 {
   return -1;
 }
 
+// One watch for each descriptor, with the interest of each of its pairs. A
+// second watch of a descriptor replaces the first, so one for each pair loses
+// an interest. A wake goes to the lowest pair whose interest is ready.
 function __wait_watched(set: i32[], n: i32, timeout_ms: i32): i32 {
   let drv = real_driver();
-  let i = 0;
-  while (i < n) {
-    let watched = drv.watch(set[i * 2], interest_bits(set[i * 2 + 1]));
-    i += 1;
+  let hit = -1;
+  for i in 0..n {
+    if (__first_pair(set, i)) {
+      let refused = drv.watch(set[i * 2], __all_interest(set, n, set[i * 2]));
+      if (refused == 0 - __ebadf() && hit < 0) {
+        hit = i;
+      }
+    }
   }
-  let woke = drv.wait(n, time.millis_timeout(timeout_ms));
-  i = 0;
-  while (i < n) {
-    let unwatched = drv.unwatch(set[i * 2]);
-    i += 1;
+  if (hit < 0) {
+    hit = __woken_pair(set, n, drv.wait(n, time.millis_timeout(timeout_ms)));
+  }
+  for i in 0..n {
+    if (__first_pair(set, i)) {
+      let unwatched = drv.unwatch(set[i * 2]);
+    }
   }
   let closed = drv.close();
+  return hit;
+}
+
+function __first_pair(set: i32[], i: i32): boolean {
+  for k in 0..i {
+    if (set[k * 2] == set[i * 2]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function __all_interest(set: i32[], n: i32, fd: i32): i32 {
+  let all = 0;
+  for i in 0..n {
+    if (set[i * 2] == fd) {
+      all = all | interest_bits(set[i * 2 + 1]);
+    }
+  }
+  return all;
+}
+
+// `woke` holds (fd, readiness) pairs: 1 readable, 2 writable, 4 an error or a
+// hang-up, which each interest sees.
+function __woken_pair(set: i32[], n: i32, woke: i32[]): i32 {
   let hit = -1;
   let k = 0;
   while (k + 1 < woke.len()) {
-    i = 0;
-    while (i < n) {
-      if (set[i * 2] == woke[k] && (hit < 0 || i < hit)) {
+    for i in 0..n {
+      let wanted = (interest_bits(set[i * 2 + 1]) & woke[k + 1]) != 0 || (woke[k + 1] & 4) != 0;
+      if (set[i * 2] == woke[k] && wanted && (hit < 0 || i < hit)) {
         hit = i;
       }
-      i += 1;
     }
     k += 2;
   }
   return hit;
+}
+
+// The errno of a descriptor that is not open.
+function __ebadf(): i32 {
+  if (target_os() == "wasi") {
+    return 8;
+  }
+  return 9;
 }
 ```
 

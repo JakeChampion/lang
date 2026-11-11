@@ -772,6 +772,13 @@ function is_err(v: Value): boolean {
   }
 }
 
+function is_abort(v: Value): boolean {
+  if let VErr(e) = v {
+    return e.abort;
+  }
+  return false;
+}
+
 function unwrap_try(v: Value): Value {
   match (v) {
     VTry(t) => {
@@ -2242,6 +2249,12 @@ function call_runtime_intrinsic(heap: interpheap.Heap, name: string, args: Value
       return v_err(name + ": expected 1 float arg");
     }
     return v_float(f64_primitive(name, vfloat_as_f64(args[0])));
+  }
+  // The interpreter hands out one task id, so another id names no task record.
+  if (util.has_str(["__task_free", "__task_enter", "__task_set_ready", "__task_set_cancelled", "__task_timeout", "__task_until", "__task_wait"], name)) {
+    if (args.len() > 0 && is_int_like(args[0]) && int_arg_i32(args[0]) != 1) {
+      return index_abort(aborts.arr_oob(), util.i32_to_string(int_arg_i32(args[0])), 2);
+    }
   }
   if (util.has_str(["__task_free", "__task_enter", "__task_set_ready", "__task_set_cancelled"], name)) {
     return v_void();
@@ -7557,7 +7570,7 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
     return call_raw_mem_builtin(heap, name, args);
   }
   let rt = call_runtime_intrinsic(heap, name, args);
-  if (!is_err(rt)) {
+  if (!is_err(rt) || is_abort(rt)) {
     return rt;
   }
   if (name == "__mulhi_u64") {

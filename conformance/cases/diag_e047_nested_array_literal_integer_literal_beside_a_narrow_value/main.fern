@@ -1,0 +1,7 @@
+// An inner array literal of integer literals takes the element type of the
+// typed inner literal beside it, so each literal must fit in that type.
+function main(): i32 {
+    let b: u8 = 3;
+    let rows = [[b], [300]];
+    return rows.len();
+}
