@@ -1176,6 +1176,7 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 		skipPaths:     skipPaths,
 	}
 	for _, fn := range m.prog.Funcs {
+		r.declPos = fn.P
 		restoreTypeParams := r.bindTypeParams(fn.TypeParams)
 		if fn.Receiver == nil && fn.AssocType == "" && !isRuntimeHelperName(fn.Name) {
 			fn.Name = r.ownName(fn.Name)
@@ -1198,6 +1199,7 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 		restoreTypeParams()
 	}
 	for _, sd := range m.prog.Structs {
+		r.declPos = sd.P
 		restoreTypeParams := r.bindTypeParams(sd.TypeParams)
 		sd.Name = selfPrefix + sd.Name
 		for i := range sd.Fields {
@@ -1209,6 +1211,7 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 		restoreTypeParams()
 	}
 	for _, ed := range m.prog.Enums {
+		r.declPos = ed.P
 		restoreTypeParams := r.bindTypeParams(ed.TypeParams)
 		ed.Name = selfPrefix + ed.Name
 		for i := range ed.Variants {
@@ -1222,6 +1225,7 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 		restoreTypeParams()
 	}
 	for _, ud := range m.prog.Unions {
+		r.declPos = ud.P
 		restoreTypeParams := r.bindTypeParams(ud.TypeParams)
 		ud.Name = selfPrefix + ud.Name
 		for i := range ud.Members {
@@ -1234,11 +1238,13 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 		restoreTypeParams()
 	}
 	for _, cd := range m.prog.Consts {
+		r.declPos = cd.P
 		cd.Name = selfPrefix + cd.Name
 		r.rewriteType(&cd.Type)
 		r.rewriteExpr(&cd.Value)
 	}
 	for _, td := range m.prog.Traits {
+		r.declPos = td.P
 		restoreTypeParams := r.bindTypeParams(td.TypeParams)
 		td.Name = selfPrefix + td.Name
 		for i := range td.Methods {
@@ -1262,6 +1268,7 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 		restoreTypeParams()
 	}
 	for _, impl := range m.prog.Impls {
+		r.declPos = impl.P
 		restoreTypeParams := r.bindTypeParams(impl.TypeParams)
 		r.rewriteType(&impl.Type)
 		impl.Trait = r.rewriteTraitNameAt(impl.Trait, impl.TraitPos)
@@ -1272,6 +1279,7 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 		restoreTypeParams()
 	}
 	for _, fn := range m.prog.Funcs {
+		r.declPos = fn.P
 		restoreTypeParams := r.bindTypeParams(fn.TypeParams)
 		fn.ImplTrait = r.resolveTraitName(fn.ImplTrait)
 		r.rewriteBounds(fn.Bounds, fn.BoundArgs, fn.P)
@@ -1312,6 +1320,9 @@ type rewriter struct {
 	packageRoot   string
 	flatNamespace bool
 	skipPaths     map[string]bool
+	// declPos is the position of the declaration or statement whose types
+	// the rewriter reads. A type has no position of its own.
+	declPos ast.Position
 }
 
 // ownName is the name of the module's own function or const `name`.
@@ -1605,6 +1616,7 @@ func (r *rewriter) rewriteStmt(s ast.Stmt) {
 			r.rewriteExpr(&x.Value)
 		}
 	case *ast.Var:
+		r.declPos = x.P
 		r.rewriteType(&x.Type)
 		r.rewriteExpr(&x.Init)
 	case *ast.Destructure:
@@ -1953,7 +1965,7 @@ func (r *rewriter) rewriteDestructureStructNames(d *ast.Destructure) {
 }
 
 func (r *rewriter) rewriteStructName(name string) string {
-	return r.rewriteStructNameAt(name, ast.Position{})
+	return r.rewriteStructNameAt(name, r.declPos)
 }
 
 func (r *rewriter) rewriteStructNameAt(name string, pos ast.Position) string {

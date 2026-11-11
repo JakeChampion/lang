@@ -4,120 +4,86 @@ cd "$(dirname "$0")/.."
 FERN=${FERN:-fern}
 mkdir -p build
 "$FERN" -version
-for source in tests/jxl_tone_metadata_test.fern tests/jxl_f16_fields_test.fern tests/jxl_sample_depth_test.fern tests/jxl_headers_test.fern tests/jxl_integers_test.fern tests/jxl_bits_test.fern tests/jxl_boxes_test.fern tests/png_adam7_geometry_test.fern tests/png_adam7_test.fern; do
-  output="build/$(basename "$source" .fern)"
-  "$FERN" -check "$source"
-  "$FERN" -target x86-64-linux -sanitize -o "$output" "$source"
-  "$output"
-done
-"$FERN" -check tests/qoi_test.fern
-"$FERN" -target x86-64-linux -sanitize -o build/qoi_test tests/qoi_test.fern
-./build/qoi_test
-"$FERN" -check tests/png_grayscale_test.fern
-"$FERN" -target x86-64-linux -sanitize -o build/png_grayscale_test tests/png_grayscale_test.fern
-./build/png_grayscale_test
-"$FERN" -check tests/png_packed_test.fern
-"$FERN" -target x86-64-linux -sanitize -o build/png_packed_test tests/png_packed_test.fern
-./build/png_packed_test
-"$FERN" -check tests/png_palette_test.fern
-"$FERN" -target x86-64-linux -sanitize -o build/png_palette_test tests/png_palette_test.fern
-./build/png_palette_test
-"$FERN" -check tests/png_indexed_test.fern
-"$FERN" -target x86-64-linux -sanitize -o build/png_indexed_test tests/png_indexed_test.fern
-./build/png_indexed_test
-"$FERN" -check tests/png_transparency_test.fern
-"$FERN" -target x86-64-linux -sanitize -o build/png_transparency_test tests/png_transparency_test.fern
-./build/png_transparency_test
-"$FERN" -check tests/jpeg_dct_test.fern
-"$FERN" -target x86-64-linux -sanitize -o build/jpeg_dct_test tests/jpeg_dct_test.fern
-./build/jpeg_dct_test
-"$FERN" -check tests/jpeg_quantization_test.fern
-"$FERN" -target x86-64-linux -sanitize -o build/jpeg_quantization_test tests/jpeg_quantization_test.fern
-./build/jpeg_quantization_test
-"$FERN" -check tests/jpeg_entropy_writer_test.fern
-"$FERN" -target x86-64-linux -sanitize -o build/jpeg_entropy_writer_test tests/jpeg_entropy_writer_test.fern
-./build/jpeg_entropy_writer_test
-"$FERN" -check tests/jpeg_frame_writer_test.fern
-"$FERN" -target x86-64-linux -sanitize -o build/jpeg_frame_writer_test tests/jpeg_frame_writer_test.fern
-./build/jpeg_frame_writer_test
-"$FERN" -check tests/jpeg_component_blocks_test.fern
-"$FERN" -target x86-64-linux -sanitize -o build/jpeg_component_blocks_test tests/jpeg_component_blocks_test.fern
-./build/jpeg_component_blocks_test
-"$FERN" -check tests/jpeg_plane_coefficients_test.fern
-"$FERN" -target x86-64-linux -sanitize -o build/jpeg_plane_coefficients_test tests/jpeg_plane_coefficients_test.fern
-./build/jpeg_plane_coefficients_test
-"$FERN" -check tests/jpeg_produced_test.fern
-"$FERN" -check tests/jpeg_mcu_order_test.fern
-"$FERN" -check tests/jpeg_padded_blocks_test.fern
-"$FERN" -check tests/jpeg_mcu_entropy_test.fern
-"$FERN" -check tests/jpeg_component_frames_test.fern
-"$FERN" -check tests/jpeg_component_planes_test.fern
-"$FERN" -target x86-64-linux -sanitize -o build/jpeg_component_planes_test tests/jpeg_component_planes_test.fern
-./build/jpeg_component_planes_test
-"$FERN" -target x86-64-linux -sanitize -o build/jpeg_component_frames_test tests/jpeg_component_frames_test.fern
-./build/jpeg_component_frames_test
-"$FERN" -target x86-64-linux -sanitize -o build/jpeg_mcu_entropy_test tests/jpeg_mcu_entropy_test.fern
-./build/jpeg_mcu_entropy_test
-"$FERN" -target x86-64-linux -sanitize -o build/jpeg_padded_blocks_test tests/jpeg_padded_blocks_test.fern
-./build/jpeg_padded_blocks_test
-"$FERN" -target x86-64-linux -sanitize -o build/jpeg_mcu_order_test tests/jpeg_mcu_order_test.fern
-./build/jpeg_mcu_order_test
-"$FERN" -target x86-64-linux -sanitize -o build/jpeg_produced_test tests/jpeg_produced_test.fern
-./build/jpeg_produced_test
-for source in experiments/essentials.fern experiments/io.fern experiments/zlib.fern experiments/provider_factories.fern tests/pixels_test.fern tests/color_test.fern tests/resize_test.fern tests/png_test.fern tests/jpeg_header_test.fern tests/jpeg_entropy_test.fern tests/jpeg_idct_test.fern tests/jpeg_grayscale_test.fern tests/jpeg_ycbcr_test.fern tests/jpeg_rgb_ycbcr_test.fern tests/sample_bytes_test.fern tests/jpeg_planes_test.fern tests/jpeg_chroma_test.fern tests/jpeg_jfif_test.fern tests/jpeg_rgb_test.fern tests/png_rows_test.fern tests/png_provider_test.fern ../tests/stdlib/deflate_reader_test.fern tests/pipeline_test.fern tests/pipeline_bilinear_test.fern tests/providers_test.fern tests/regions_test.fern tests/row_cache_test.fern tests/cached_regions_test.fern tests/cached_tile_fusion_test.fern tests/linux_rss_test.fern tests/nearest_fusion_test.fern tests/cached_fusion_test.fern experiments/png-encode.fern examples/pixels.fern; do
-  output="build/$(basename "$source" .fern)"
-  "$FERN" -check "$source"
-  "$FERN" -target x86-64-linux -sanitize -o "$output" "$source"
-  "$output"
-done
-"$FERN" -check tests/png_compression_test.fern
-"$FERN" -target x86-64-linux -sanitize -o build/png_compression_test tests/png_compression_test.fern
-./build/png_compression_test
-"$FERN" -check tests/jpeg_exif_test.fern
-"$FERN" -target x86-64-linux -sanitize -o build/jpeg_exif_test tests/jpeg_exif_test.fern
-./build/jpeg_exif_test
-"$FERN" -check tests/jpeg_orientation_test.fern
-"$FERN" -target x86-64-linux -sanitize -o build/jpeg_orientation_test tests/jpeg_orientation_test.fern
-./build/jpeg_orientation_test
-"$FERN" -check tests/icc_envelope_test.fern
-"$FERN" -target x86-64-linux -sanitize -o build/icc_envelope_test tests/icc_envelope_test.fern
-./build/icc_envelope_test
-"$FERN" -check tests/icc_tag_data_test.fern
-"$FERN" -target x86-64-linux -sanitize -o build/icc_tag_data_test tests/icc_tag_data_test.fern
-./build/icc_tag_data_test
-"$FERN" -check tests/icc_curv_eval_test.fern
-"$FERN" -target x86-64-linux -sanitize -o build/icc_curv_eval_test tests/icc_curv_eval_test.fern
-./build/icc_curv_eval_test
-"$FERN" -check tests/icc_curv_inverse_test.fern
-"$FERN" -target x86-64-linux -sanitize -o build/icc_curv_inverse_test tests/icc_curv_inverse_test.fern
-./build/icc_curv_inverse_test
-"$FERN" -check tests/icc_power_inverse_test.fern
-"$FERN" -target x86-64-linux -sanitize -o build/icc_power_inverse_test tests/icc_power_inverse_test.fern
-./build/icc_power_inverse_test
-"$FERN" -check tests/icc_affine_inverse_test.fern
-"$FERN" -target x86-64-linux -sanitize -o build/icc_affine_inverse_test tests/icc_affine_inverse_test.fern
-./build/icc_affine_inverse_test
-"$FERN" -check tests/icc_parametric_eval_test.fern
-"$FERN" -target x86-64-linux -sanitize -o build/icc_parametric_eval_test tests/icc_parametric_eval_test.fern
-./build/icc_parametric_eval_test
-"$FERN" -check tests/icc_app2_test.fern
-"$FERN" -target x86-64-linux -sanitize -o build/icc_app2_test tests/icc_app2_test.fern
-./build/icc_app2_test
-"$FERN" -check tests/icc_matrix_eval_test.fern
-"$FERN" -target x86-64-linux -sanitize -o build/icc_matrix_eval_test tests/icc_matrix_eval_test.fern
-./build/icc_matrix_eval_test
-"$FERN" -check tests/icc_matrix_model_test.fern
-"$FERN" -target x86-64-linux -sanitize -o build/icc_matrix_model_test tests/icc_matrix_model_test.fern
-./build/icc_matrix_model_test
-"$FERN" -check tests/icc_matrix_trc_eval_test.fern
-"$FERN" -target x86-64-linux -sanitize -o build/icc_matrix_trc_eval_test tests/icc_matrix_trc_eval_test.fern
-./build/icc_matrix_trc_eval_test
-"$FERN" -check tests/icc_matrix_solve_test.fern
-"$FERN" -target x86-64-linux -sanitize -o build/icc_matrix_solve_test tests/icc_matrix_solve_test.fern
-./build/icc_matrix_solve_test
-"$FERN" -check tests/png_incremental_test.fern
-"$FERN" -target x86-64-linux -sanitize -o build/png_incremental_test tests/png_incremental_test.fern
-./build/png_incremental_test
+./scripts/programs.sh native \
+  tests/jxl_tone_metadata_test.fern \
+  tests/jxl_f16_fields_test.fern \
+  tests/jxl_sample_depth_test.fern \
+  tests/jxl_headers_test.fern \
+  tests/jxl_integers_test.fern \
+  tests/jxl_bits_test.fern \
+  tests/jxl_boxes_test.fern \
+  tests/png_adam7_geometry_test.fern \
+  tests/png_adam7_test.fern \
+  tests/qoi_test.fern \
+  tests/png_grayscale_test.fern \
+  tests/png_packed_test.fern \
+  tests/png_palette_test.fern \
+  tests/png_indexed_test.fern \
+  tests/png_transparency_test.fern \
+  tests/jpeg_dct_test.fern \
+  tests/jpeg_quantization_test.fern \
+  tests/jpeg_entropy_writer_test.fern \
+  tests/jpeg_frame_writer_test.fern \
+  tests/jpeg_component_blocks_test.fern \
+  tests/jpeg_plane_coefficients_test.fern \
+  tests/jpeg_produced_test.fern \
+  tests/jpeg_mcu_order_test.fern \
+  tests/jpeg_padded_blocks_test.fern \
+  tests/jpeg_mcu_entropy_test.fern \
+  tests/jpeg_component_frames_test.fern \
+  tests/jpeg_component_planes_test.fern \
+  experiments/essentials.fern \
+  experiments/io.fern \
+  experiments/zlib.fern \
+  experiments/provider_factories.fern \
+  tests/pixels_test.fern \
+  tests/color_test.fern \
+  tests/resize_test.fern \
+  tests/png_test.fern \
+  tests/jpeg_header_test.fern \
+  tests/jpeg_entropy_test.fern \
+  tests/jpeg_idct_test.fern \
+  tests/jpeg_grayscale_test.fern \
+  tests/jpeg_ycbcr_test.fern \
+  tests/jpeg_rgb_ycbcr_test.fern \
+  tests/sample_bytes_test.fern \
+  tests/jpeg_planes_test.fern \
+  tests/jpeg_chroma_test.fern \
+  tests/jpeg_jfif_test.fern \
+  tests/jpeg_rgb_test.fern \
+  tests/png_rows_test.fern \
+  tests/png_provider_test.fern \
+  ../tests/stdlib/deflate_reader_test.fern \
+  tests/pipeline_test.fern \
+  tests/pipeline_bilinear_test.fern \
+  tests/providers_test.fern \
+  tests/regions_test.fern \
+  tests/row_cache_test.fern \
+  tests/cached_regions_test.fern \
+  tests/cached_tile_fusion_test.fern \
+  tests/linux_rss_test.fern \
+  tests/nearest_fusion_test.fern \
+  tests/cached_fusion_test.fern \
+  experiments/png-encode.fern \
+  examples/pixels.fern \
+  tests/png_compression_test.fern \
+  tests/jpeg_exif_test.fern \
+  tests/jpeg_orientation_test.fern \
+  tests/icc_envelope_test.fern \
+  tests/icc_tag_data_test.fern \
+  tests/icc_curv_eval_test.fern \
+  tests/icc_curv_inverse_test.fern \
+  tests/icc_power_inverse_test.fern \
+  tests/icc_affine_inverse_test.fern \
+  tests/icc_parametric_eval_test.fern \
+  tests/icc_app2_test.fern \
+  tests/icc_matrix_eval_test.fern \
+  tests/icc_matrix_model_test.fern \
+  tests/icc_matrix_trc_eval_test.fern \
+  tests/icc_matrix_solve_test.fern \
+  tests/png_incremental_test.fern \
+  tests/icc_quadratic_inverse_test.fern \
+  tests/icc_inverse_test.fern
 "$FERN" -check benchmarks/memory_probe.fern
 "$FERN" -target x86-64-linux -sanitize -o build/memory-probe benchmarks/memory_probe.fern
 for mode in unique shared retained rows rows-retained rows-cancelled eager eager-retained; do
@@ -166,10 +132,3 @@ done
 cmp build/format-match.fern build/format-match-again.fern
 echo "Formatter match regression passed"
 
-"$FERN" -check tests/icc_quadratic_inverse_test.fern
-"$FERN" -target x86-64-linux -sanitize -o build/icc_quadratic_inverse_test tests/icc_quadratic_inverse_test.fern
-./build/icc_quadratic_inverse_test
-
-"$FERN" -check tests/icc_inverse_test.fern
-"$FERN" -target x86-64-linux -sanitize -o build/icc_inverse_test tests/icc_inverse_test.fern
-./build/icc_inverse_test

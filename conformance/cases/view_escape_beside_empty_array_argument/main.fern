@@ -1,0 +1,32 @@
+// spec: ML-03
+// An empty array literal argument holds no view. A view that another
+// argument carries into the result still escapes, and an empty array
+// literal that a view parameter reads is local storage.
+
+struct Held[T] { v: T, rest: Held[T][] }
+
+function keep[T](rest: Held[T][], v: T): Held[T] {
+    return Held { v: v, rest: rest };
+}
+
+function whole(xs: [i32]): [i32] {
+    return xs;
+}
+
+function empty_first[T](v: T): Held[T] {
+    return keep[T]([], v);
+}
+
+function beside_empty(): Held[[i32]] {
+    let a: i32[] = [1, 2, 3];
+    return keep([], a[0:2]);
+}
+
+function viewed_empty(): [i32] {
+    return whole([]);
+}
+
+function main(): i32 {
+    let h: Held[i32] = empty_first(4);
+    return h.rest.len() + beside_empty().rest.len() + viewed_empty().len();
+}

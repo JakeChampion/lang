@@ -1,7 +1,6 @@
 package checker
 
 import (
-	"fmt"
 	"slices"
 	"strconv"
 
@@ -397,32 +396,34 @@ func (c *checker) intLitLocalIn(e ast.Expr, want ast.Type) *litLocal {
 	return nil
 }
 
+// litPrefixScan is how many elements before an array element hold no open
+// literal local under the type t. It keeps the scan of an array literal
+// linear: each element is read again only when the element type changes.
+type litPrefixScan struct {
+	t    ast.Type
+	done int
+}
+
 // intLitLocalBesideFloat is the literal local that makes the element el
 // differ from the elements before it: el reads it as an integer where they
 // have a float, or one of them reads it where el has a float.
-//
-// clean holds, for each type of el, the number of leading elements that
-// read no such local. An element that reads none does not read one later,
-// so the next call starts after them and a literal of n elements costs n
-// reads, not n*n.
-func (c *checker) intLitLocalBesideFloat(before []ast.Expr, el ast.Expr, elemT, t ast.Type, clean map[string]int) *litLocal {
+func (c *checker) intLitLocalBesideFloat(scan *litPrefixScan, before []ast.Expr, el ast.Expr, elemT, t ast.Type) *litLocal {
 	if ll := c.intLitLocalIn(el, elemT); ll != nil {
 		return ll
 	}
-	// A read through a float does not change with the width of the float.
-	key := "float"
 	switch t.(type) {
-	case ast.FloatType:
-	case ast.ArrayType:
-		key = fmt.Sprint(t)
+	case ast.FloatType, ast.ArrayType:
 	default:
 		return nil
 	}
-	for i := clean[key]; i < len(before); i++ {
-		if ll := c.intLitLocalIn(before[i], t); ll != nil {
+	if scan.t == nil || !ast.Equal(scan.t, t) {
+		*scan = litPrefixScan{t: t}
+	}
+	for _, prev := range before[scan.done:] {
+		if ll := c.intLitLocalIn(prev, t); ll != nil {
 			return ll
 		}
-		clean[key] = i + 1
+		scan.done++
 	}
 	return nil
 }

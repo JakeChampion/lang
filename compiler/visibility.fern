@@ -322,7 +322,15 @@ function member_candidates(mod: parser.Module, methods: boolean): string[] {
   return out;
 }
 
-function missing_member(mod: parser.Module, name: string, r: astwalk.QualRef): util.Diag {
+// missing_kind is the word for the member that the reference r names.
+function missing_kind(r: astwalk.QualRef): string {
+  if (r.call) {
+    return "function";
+  }
+  return "function or const";
+}
+
+function missing_member(mod: parser.Module, name: string, r: astwalk.QualRef, kind: string): util.Diag {
   let methods = member_candidates(mod, true);
   let hint = "";
   let message = "";
@@ -337,10 +345,6 @@ function missing_member(mod: parser.Module, name: string, r: astwalk.QualRef): u
       if (method.len() > 0) {
         hint = " — " + member_quote(method) + " is a method, call it on the value: `x." + method + "(…)`";
       }
-    }
-    let kind = "function or const";
-    if (r.call) {
-      kind = "function";
     }
     message = "module " + member_quote(name) + " has no " + kind + " " + member_quote(r.name) + hint;
   }
@@ -467,7 +471,7 @@ function ref_diag(cx: VisCtx, r: astwalk.QualRef, out: util.Diag[]): util.Diag[]
   }
   let key = module_key(cx.loaded[mi]) + "." + r.name;
   if (!cx.declared.has(key)) {
-    return out.append(missing_member(cx.loaded[mi].mod, cx.loaded[mi].name, r));
+    return out.append(missing_member(cx.loaded[mi].mod, cx.loaded[mi].name, r, missing_kind(r)));
   }
   if (!cx.priv.has(key)) {
     return out;
@@ -570,6 +574,22 @@ function declares_private_type(mod: parser.Module, name: string): boolean {
   return false;
 }
 
+// declares_trait_or_resource is true for a name that a type position can hold
+// and that is not a struct, an enum or an alias.
+function declares_trait_or_resource(mod: parser.Module, name: string): boolean {
+  for td in mod.trait_decls {
+    if (td.name == name) {
+      return true;
+    }
+  }
+  for rd in mod.resources {
+    if (rd.name == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function type_kind_word(mod: parser.Module, name: string): string {
   for i in 0..mod.structs.len() {
     if (mod.structs[i].name == name) {
@@ -619,6 +639,22 @@ function check_type_name(tn: string, cx: VisCtx, line: i32, col: i32, acc: util.
   });
 }
 
+// check_written_type examines the type that a declaration writes. A name
+// that the module does not declare is an E087. A pattern and a struct literal
+// keep the diagnostics of the checker for such a name.
+function check_written_type(tn: string, cx: VisCtx, line: i32, col: i32, acc: util.Diag[]): util.Diag[] {
+  let (q, base) = qual_type_parts(tn);
+  if (q.len() == 0 || base.len() == 0 || !util.has_str(cx.quals, q)) {
+    return acc;
+  }
+  let mi = loaded_index(cx, q);
+  if (mi >= 0 && !cx.pkg.has(owner_ident(cx.src, q) + "." + base) && !cx.declared.has(module_key(cx.loaded[mi]) + "." + base) && !declares_trait_or_resource(cx.loaded[mi].mod, base)) {
+    let r = astwalk.QualRef { qual: q, name: base, line: line, col: col, call: false };
+    return acc.append(missing_member(cx.loaded[mi].mod, cx.loaded[mi].name, r, "type"));
+  }
+  return check_type_name(tn, cx, line, col, acc);
+}
+
 function type_diags(cx: VisCtx): util.Diag[] {
   let out: util.Diag[] = [];
   if (cx.quals.len() == 0) {
@@ -628,9 +664,9 @@ function type_diags(cx: VisCtx): util.Diag[] {
   for i in 0..src.funcs.len() {
     let f = src.funcs[i];
     for pi in 0..f.params.len() {
-      out = check_type_name(f.params[pi].type_name, cx, f.line, f.col, out);
+      out = check_written_type(f.params[pi].type_name, cx, f.line, f.col, out);
     }
-    out = check_type_name(f.ret_type, cx, f.line, f.col, out);
+    out = check_written_type(f.ret_type, cx, f.line, f.col, out);
     for bi in 0..f.body.len() {
       out = stmt_type_diags(f.body[bi], cx, out);
     }
@@ -638,7 +674,7 @@ function type_diags(cx: VisCtx): util.Diag[] {
   for si in 0..src.structs.len() {
     let sd = src.structs[si];
     for fi in 0..sd.fields.len() {
-      out = check_type_name(sd.fields[fi].type_name, cx, sd.line, sd.col, out);
+      out = check_written_type(sd.fields[fi].type_name, cx, sd.line, sd.col, out);
     }
   }
   return out;
@@ -660,7 +696,7 @@ function pattern_type_diags(p: ast.Pattern, cx: VisCtx, line: i32, col: i32, acc
 function stmt_type_diags(st: ast.Stmt, cx: VisCtx, acc: util.Diag[]): util.Diag[] {
   match (st) {
     ast.StmtVar(v) => {
-      acc = check_type_name(v.type_name, cx, v.line, v.col, acc);
+      acc = check_written_type(v.type_name, cx, v.line, v.col, acc);
       return expr_type_diags(v.init, cx, acc);
     },
     ast.StmtReturn(r) => {

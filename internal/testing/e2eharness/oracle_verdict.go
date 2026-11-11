@@ -213,11 +213,14 @@ func oracleVerdictKey(flags []string, combined bool, src string) (string, error)
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// fernEnvKey is the FERN_* environment, less the cache directory itself.
+// fernEnvKey is the FERN_* environment, less the cache directory itself and
+// the *_SHARD selectors. A selector chooses which cases a CI leg runs, so it
+// must not keep one leg from the verdicts of another.
 func fernEnvKey() string {
 	var env []string
 	for _, kv := range os.Environ() {
-		if strings.HasPrefix(kv, "FERN_") && !strings.HasPrefix(kv, "FERN_SELFHOST_BUILD_CACHE=") {
+		name, _, _ := strings.Cut(kv, "=")
+		if strings.HasPrefix(name, "FERN_") && name != "FERN_SELFHOST_BUILD_CACHE" && !strings.HasSuffix(name, "_SHARD") {
 			env = append(env, kv)
 		}
 	}
