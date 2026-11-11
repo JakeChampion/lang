@@ -7,7 +7,7 @@ function __fern_profile_start(base: usize, hi: usize, act: usize, timer: usize):
     return;
   }
   let a: i64 = __syscall4(46, 27, act as i64, 0, 8);
-  let b: i64 = 0 - 1;
+  let b: i64 = -1;
   if (a >= 0 as i64) {
     __raw_store_ptr(base + 48, 0, 67108864);
     let unblocked: i64 = __syscall4(48, 2, (base + 48) as i64, 0, 8);

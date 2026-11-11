@@ -5,7 +5,7 @@ function __fern_writer_nonblocking(fd: i32, on: boolean): Result[void, IoError] 
   }
   let want = flags | 2048;
   if (!on) {
-    want = flags & 0 - 1 - 2048;
+    want = flags & -1 - 2048;
   }
   let rc = __syscall3(25, fd as i64, 4, want as i64) as i32;
   if (rc < 0) {
