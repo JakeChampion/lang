@@ -1,0 +1,143 @@
+// Tests of std/audio/tags: each test writes the bytes of a tag by hand, as
+// the format puts them in a file.
+import "std/audio/tags";
+import "std/audio/wire";
+import "std/test";
+
+function bytes_of(s: string): u8[] {
+  let out: u8[] = [];
+  for i in 0..s.len() {
+    out = out.append(s[i]);
+  }
+  return out;
+}
+
+function joined(parts: u8[][]): u8[] {
+  let out: u8[] = [];
+  for p in parts {
+    for b in p {
+      out = out.append(b);
+    }
+  }
+  return out;
+}
+
+// A size of ID3v2: 7 bits in each of 4 bytes.
+function syncsafe(n: i32): u8[] {
+  return [(n >> 21 & 127) as u8, (n >> 14 & 127) as u8, (n >> 7 & 127) as u8, (n & 127) as u8];
+}
+
+function show(t: tags.Tags): string {
+  return t.title + "|" + t.artist + "|" + t.album + "|" + t.album_artist + "|" + t.track.to_string() + "|" + t.year.to_string();
+}
+
+// An ID3v2.3 text frame with the encoding byte `kind`.
+function frame3(id: string, kind: u8, text: u8[]): u8[] {
+  return joined([bytes_of(id), wire.put_be([], (text.len() + 1) as u64, 4), [0u8, 0u8, kind], text]);
+}
+
+function id3(version: u8, flags: u8, frames: u8[]): u8[] {
+  return joined([bytes_of("ID3"), [version, 0u8, flags], syncsafe(frames.len()), frames]);
+}
+
+function utf16le(s: string): u8[] {
+  let out: u8[] = [255u8, 254u8];
+  for i in 0..s.len() {
+    out = out.append(s[i]).append(0u8);
+  }
+  return out;
+}
+
+function test_id3v23(): test.TestOutcome {
+  // The title is in UTF-16 with a byte order mark: é is the unit 00E9. The
+  // artist is in Latin-1, where é is the byte E9.
+  let title = joined([utf16le("Caf"), [233u8, 0u8]]);
+  let frames = joined([frame3("TIT2", 1u8, title), frame3("TPE1", 0u8, joined([bytes_of("Ren"), [233u8]])), frame3("TALB", 0u8, bytes_of("First Light")), frame3("TPE2", 0u8, bytes_of("Various")), frame3("TRCK", 0u8, bytes_of("3/12")), frame3("TYER", 0u8, bytes_of("2019")), frame3("APIC", 0u8, bytes_of("not a text"))]);
+  let file = joined([id3(3u8, 0u8, frames), [255u8, 251u8, 144u8, 0u8]]);
+  return test.assert_eq(show(tags.read(file)), "Café|René|First Light|Various|3|2019");
+}
+
+function test_id3v24(): test.TestOutcome {
+  // The version 2.4 has a size of 7 bits to the byte in each frame, a text
+  // in UTF-8, and a date for the year. A second value comes after a zero.
+  let title = joined([bytes_of("Caf"), [195u8, 169u8, 0u8], bytes_of("second")]);
+  let frame = (id: string, text: u8[]): u8[] => joined([bytes_of(id), syncsafe(text.len() + 1), [0u8, 0u8, 3u8], text]);
+  let frames = joined([frame("TIT2", title), frame("TPE1", bytes_of("Fern")), frame("TDRC", bytes_of("2021-06-30")), frame("TRCK", bytes_of("11"))]);
+  return test.assert_eq(show(tags.read(id3(4u8, 0u8, frames))), "Café|Fern||" + "|11|2021");
+}
+
+function test_id3v22(): test.TestOutcome {
+  // The version 2.2 has names of 3 letters and sizes of 3 bytes.
+  let frame = (id: string, text: string): u8[] => joined([bytes_of(id), wire.put_be([], (text.len() + 1) as u64, 3), [0u8], bytes_of(text)]);
+  let frames = joined([frame("TT2", "Old Song"), frame("TP1", "Old Band"), frame("TAL", "Old Album"), frame("TRK", "2"), frame("TYE", "1999")]);
+  return test.assert_eq(show(tags.read(id3(2u8, 0u8, frames))), "Old Song|Old Band|Old Album||2|1999");
+}
+
+function test_id3v1(): test.TestOutcome {
+  let field = (s: string, width: i32): u8[] => {
+    let out = bytes_of(s);
+    while (out.len() < width) {
+      out = out.append(0u8);
+    }
+    return out;
+  };
+  let tag = joined([bytes_of("TAG"), field("Last Song", 30), field("Last Band", 30), field("Last Album", 30), bytes_of("1987"), field("", 28), [0u8, 9u8, 12u8]]);
+  let file = joined([[255u8, 251u8, 144u8, 0u8, 1u8, 2u8, 3u8], tag]);
+  return test.assert_eq(show(tags.read(file)) + " " + tag.len().to_string(), "Last Song|Last Band|Last Album||9|1987 128");
+}
+
+function comment(s: string): u8[] {
+  return joined([wire.put_le([], s.len() as u64, 4), bytes_of(s)]);
+}
+
+function test_flac(): test.TestOutcome {
+  // A stream info block of 34 bytes, then the comments in the last block.
+  // The names of the comments have small or capital letters.
+  let list = joined([comment("fern encoder"), wire.put_le([], 6u64, 4), comment("TITLE=Morning Fern"), comment("artist=Fern"), comment("Album=First Light"), comment("ALBUMARTIST=Fern and Friends"), comment("TRACKNUMBER=01"), comment("DATE=2026-11-11")]);
+  let info: u8[] = [];
+  for i in 0..34 {
+    info = info.append(0u8);
+  }
+  let file = joined([bytes_of("fLaC"), [0u8, 0u8, 0u8, 34u8], info, [132u8], wire.put_be([], list.len() as u64, 3), list]);
+  return test.assert_eq(show(tags.read(file)), "Morning Fern|Fern|First Light|Fern and Friends|1|2026");
+}
+
+function chunk(id: string, body: u8[]): u8[] {
+  let out = joined([bytes_of(id), wire.put_le([], body.len() as u64, 4), body]);
+  if (body.len() % 2 == 1) {
+    out = out.append(0u8);
+  }
+  return out;
+}
+
+function riff(chunks: u8[]): u8[] {
+  return joined([bytes_of("RIFF"), wire.put_le([], (chunks.len() + 4) as u64, 4), bytes_of("WAVE"), chunks]);
+}
+
+function test_wav(): test.TestOutcome {
+  // A text of an odd length has one byte after it.
+  let list = joined([bytes_of("INFO"), chunk("INAM", bytes_of("Slow Water\x00")), chunk("IART", bytes_of("Fern")), chunk("IPRD", bytes_of("First Light")), chunk("ITRK", bytes_of("2")), chunk("ICRD", bytes_of("2026"))]);
+  let with_list = riff(joined([chunk("fmt ", [1u8, 0u8, 2u8, 0u8]), chunk("data", [1u8, 2u8, 3u8]), chunk("LIST", list)]));
+  let frames = frame3("TIT2", 0u8, bytes_of("In a chunk"));
+  let with_id3 = riff(joined([chunk("fmt ", [1u8, 0u8]), chunk("id3 ", id3(3u8, 0u8, frames))]));
+  return test.assert_eq(show(tags.read(with_list)) + " / " + show(tags.read(with_id3)), "Slow Water|Fern|First Light||2|2026 / In a chunk||||0|0");
+}
+
+function test_bytes_that_are_not_tags(): test.TestOutcome {
+  let short = tags.read(bytes_of("ID3"));
+  let cut = tags.read(joined([bytes_of("ID3"), [3u8, 0u8, 0u8], syncsafe(4000), frame3("TIT2", 0u8, bytes_of("Whole")), bytes_of("TPE1"), [0u8, 0u8, 9u8]]));
+  let nothing: u8[] = [];
+  return test.assert_eq(short.empty().to_string() + " " + show(cut) + " " + tags.read(nothing).empty().to_string() + " " + tags.read(bytes_of("fLaC")).empty().to_string() + " " + tags.read(bytes_of("RIFF....WAVELIST")).empty().to_string(), "true Whole|||" + "|0|0 true true true");
+}
+
+function main(): i32 {
+  let r = test.new("std/audio/tags");
+  r = r.it("an ID3v2.3 tag has texts in UTF-16 and in Latin-1", test_id3v23);
+  r = r.it("an ID3v2.4 tag has texts in UTF-8 and a date", test_id3v24);
+  r = r.it("an ID3v2.2 tag has names of three letters", test_id3v22);
+  r = r.it("an ID3v1 tag is the last 128 bytes", test_id3v1);
+  r = r.it("a FLAC file has Vorbis comments", test_flac);
+  r = r.it("a WAV file has an INFO list or an id3 chunk", test_wav);
+  r = r.it("bytes that are not tags give empty tags", test_bytes_that_are_not_tags);
+  return r.finish();
+}

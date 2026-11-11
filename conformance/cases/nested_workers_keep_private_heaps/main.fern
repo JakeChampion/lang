@@ -1,0 +1,28 @@
+import "std/worker";
+
+struct Report { names: string[], depth: i32 }
+
+function nested(names: string[], depth: i32): Report {
+  if (depth == 0) {
+    return Report { names: [names[0] + "-child", names[1]], depth: 0 };
+  }
+  let child = worker.spawn((): Report => nested(names, depth - 1));
+  let result = child.join();
+  return Report { ...result, depth: result.depth + 1 };
+}
+
+function main(): i32 {
+  let names = ["outer", "retained"];
+  for i in 0..8 {
+    let child = worker.spawn((): Report => nested(names, 3));
+    let result = child.join();
+    if (result.depth != 3 || result.names[0] != "outer-child" || result.names[1] != "retained") {
+      return 1;
+    }
+    if (names[0] != "outer" || names[1] != "retained") {
+      return 2;
+    }
+  }
+  print("nested workers keep private heaps");
+  return 0;
+}

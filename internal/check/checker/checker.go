@@ -9863,6 +9863,7 @@ func (c *checker) checkEscapes(prog *ast.Program) {
 
 type escapeEnv struct {
 	params     map[string]int
+	paramTypes []ast.Type
 	locals     map[string]*ast.Var
 	armViews   map[string]ast.Expr
 	visiting   map[string]bool
@@ -9882,6 +9883,7 @@ func (c *checker) escapeEnv(fn *ast.FuncDecl) *escapeEnv {
 	}
 	for i, p := range fn.Params {
 		env.params[p.Name] = i
+		env.paramTypes = append(env.paramTypes, p.Type)
 	}
 	for _, v := range c.info.Locals[fn] {
 		env.locals[v.Name] = v
@@ -10071,6 +10073,15 @@ func (c *checker) aggregateViewRoots(expr ast.Expr, t ast.Type, env *escapeEnv, 
 		} else {
 			out.merge(c.aggregateCallRoots(e, env, sums, leaf))
 		}
+	case *ast.FieldAccess:
+		out.merge(c.holderViewRoots(e.Target, env, sums, leaf))
+	case *ast.Index:
+		out.merge(c.holderViewRoots(e.Array, env, sums, leaf))
+	case *ast.IfExpr:
+		part(e.Then, t)
+		part(e.Else, t)
+	case *ast.BlockExpr:
+		part(e.Tail, t)
 	case *ast.Ident:
 		if i, ok := env.params[e.Name]; ok {
 			out.carried = map[int]bool{i: true}
@@ -10083,6 +10094,49 @@ func (c *checker) aggregateViewRoots(expr ast.Expr, t ast.Type, env *escapeEnv, 
 		}
 	}
 	return out
+}
+
+// projType is the declared type of a parameter or a local, or of a field, a
+// tuple element or an array element reached from one.
+func (c *checker) projType(e ast.Expr, env *escapeEnv) ast.Type {
+	switch x := e.(type) {
+	case *ast.Ident:
+		if i, ok := env.params[x.Name]; ok {
+			return env.paramTypes[i]
+		}
+		if v, ok := env.locals[x.Name]; ok {
+			return v.Type
+		}
+	case *ast.FieldAccess:
+		return c.declaredFieldType(c.projType(x.Target, env), x.Field)
+	case *ast.Index:
+		switch t := c.projType(x.Array, env).(type) {
+		case ast.ArrayType:
+			return t.Elem
+		case ast.SliceType:
+			return t.Elem
+		}
+	}
+	return nil
+}
+
+// holderViewRoots is the roots of every view in the value that a field or an
+// element is read from. The part that is read can hold any of them.
+func (c *checker) holderViewRoots(holder ast.Expr, env *escapeEnv, sums map[string]viewSummary, leaf viewLeaf) viewRoots {
+	t := c.projType(holder, env)
+	if t == nil {
+		return viewRoots{params: map[int]bool{}}
+	}
+	return c.aggregateViewRoots(holder, t, env, sums, leaf)
+}
+
+// partSourceRoots is the storage of a field or an element: the storage that a
+// view part views, and otherwise the storage of the value that holds the part.
+func (c *checker) partSourceRoots(part, holder ast.Expr, env *escapeEnv, sums map[string]viewSummary) viewRoots {
+	if _, isSlice := c.projType(part, env).(ast.SliceType); isSlice {
+		return c.sliceViewRoots(part, env, sums)
+	}
+	return c.sliceSourceRoots(holder, env, sums)
 }
 
 func (c *checker) structLitParts(e *ast.StructLit, t ast.Type, part func(ast.Expr, ast.Type)) {
@@ -10210,6 +10264,15 @@ func (c *checker) sliceViewRoots(expr ast.Expr, env *escapeEnv, sums map[string]
 			return out
 		}
 		out.merge(c.sliceSourceRoots(e.Source, env, sums))
+	case *ast.FieldAccess:
+		out.merge(c.holderViewRoots(e.Target, env, sums, c.sliceLeaf(env, sums)))
+	case *ast.Index:
+		out.merge(c.holderViewRoots(e.Array, env, sums, c.sliceLeaf(env, sums)))
+	case *ast.IfExpr:
+		out.merge(c.sliceViewRoots(e.Then, env, sums))
+		out.merge(c.sliceViewRoots(e.Else, env, sums))
+	case *ast.BlockExpr:
+		out.merge(c.sliceViewRoots(e.Tail, env, sums))
 	case *ast.Call:
 		if id, ok := e.Callee.(*ast.Ident); ok {
 			if id.Name == "__method_string_as_bytes" && len(e.Args) == 1 {
@@ -10218,6 +10281,12 @@ func (c *checker) sliceViewRoots(expr ast.Expr, env *escapeEnv, sums map[string]
 			for i := range sums[id.Name].params {
 				if i < len(e.Args) {
 					out.merge(c.viewArgRoots(id.Name, i, e.Args[i], env, sums))
+				}
+			}
+			sig := c.info.FuncSigs[id.Name]
+			for i := range sums[id.Name].carried {
+				if i < len(e.Args) && sig != nil && i < len(sig.Params) {
+					out.merge(c.aggregateViewRoots(e.Args[i], sig.Params[i], env, sums, c.sliceLeaf(env, sums)))
 				}
 			}
 		}
@@ -10261,13 +10330,22 @@ func (c *checker) bytesSourceRoots(str ast.Expr, env *escapeEnv, sums map[string
 func (c *checker) sliceSourceRoots(src ast.Expr, env *escapeEnv, sums map[string]viewSummary) viewRoots {
 	out := viewRoots{params: map[int]bool{}}
 	switch s := src.(type) {
-	case *ast.ArrayLit:
+	case *ast.ArrayLit, *ast.StructLit, *ast.TupleLit:
 		out.local = true
 	case *ast.SliceExpr:
 		if s.IsString {
 			return out
 		}
 		out.merge(c.sliceSourceRoots(s.Source, env, sums))
+	case *ast.FieldAccess:
+		out.merge(c.partSourceRoots(s, s.Target, env, sums))
+	case *ast.Index:
+		out.merge(c.partSourceRoots(s, s.Array, env, sums))
+	case *ast.IfExpr:
+		out.merge(c.sliceSourceRoots(s.Then, env, sums))
+		out.merge(c.sliceSourceRoots(s.Else, env, sums))
+	case *ast.BlockExpr:
+		out.merge(c.sliceSourceRoots(s.Tail, env, sums))
 	case *ast.Call:
 		if id, ok := s.Callee.(*ast.Ident); ok {
 			if id.Name == "__method_string_as_bytes" && len(s.Args) == 1 {
@@ -10293,17 +10371,39 @@ func (c *checker) sliceSourceRoots(src ast.Expr, env *escapeEnv, sums map[string
 		if !ok {
 			return out
 		}
-		if _, isArr := v.Type.(ast.ArrayType); isArr {
-			out.local = true
-			return out
-		}
-		if _, isSlice := v.Type.(ast.SliceType); isSlice && v.Init != nil {
+		switch v.Type.(type) {
+		case ast.ArrayType, ast.StructType, ast.TupleType:
+			if !namesPlaces(v.Init) || env.reassigned[s.Name] {
+				out.local = true
+				return out
+			}
+			// A local that only names places has the storage of those places.
 			env.visiting[s.Name] = true
 			defer delete(env.visiting, s.Name)
-			out.merge(c.sliceViewRoots(v.Init, env, sums))
+			out.merge(c.sliceSourceRoots(v.Init, env, sums))
+		case ast.SliceType:
+			if v.Init != nil {
+				env.visiting[s.Name] = true
+				defer delete(env.visiting, s.Name)
+				out.merge(c.sliceViewRoots(v.Init, env, sums))
+			}
 		}
 	}
 	return out
+}
+
+// namesPlaces reports an initialiser that only names places: a name, a field
+// or an element, or a choice between such values.
+func namesPlaces(e ast.Expr) bool {
+	switch x := e.(type) {
+	case *ast.Ident, *ast.FieldAccess, *ast.Index:
+		return true
+	case *ast.IfExpr:
+		return namesPlaces(x.Then) && namesPlaces(x.Else)
+	case *ast.BlockExpr:
+		return len(x.Stmts) == 0 && namesPlaces(x.Tail)
+	}
+	return false
 }
 
 func (c *checker) checkStrEscapes(prog *ast.Program) {
@@ -14702,7 +14802,11 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		}
 		return ast.EnumType{Name: "Option", Args: []ast.Type{n.Target}}
 	case *ast.CastExpr:
+		// The destination of the cast is not a destination of its operand.
+		savedExpected := c.expectedType
+		c.expectedType = nil
 		inner := c.checkExpr(n.Inner, s)
+		c.expectedType = savedExpected
 		if !c.checkCastTarget(n.Target, n.P) {
 			return nil
 		}

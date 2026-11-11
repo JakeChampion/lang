@@ -6,12 +6,19 @@ import "std/i32";
 import "std/i64";
 import "std/option";
 import "./engine";
+import "./library";
 import "./tune";
 
-// `read` gives the bytes of a file, or no bytes. `open` gives a stream at
+// `grant` asks the person for the permission to read the music of the
+// phone. `files` gives the paths of the files of the library, and `roots` the
+// directories that they are in. `read` gives the bytes of a file, or no
+// bytes. `open` gives a stream at
 // a rate with a number of channels. `write` gives the stream samples, and
 // tells how many it took.
 pub struct Device {
+  grant: () => void,
+  files: () => string[],
+  roots: string[],
   read: (string) => u8[],
   open: (i32, i32) => tune.Sound,
   start: (tune.Sound) => void,
@@ -67,8 +74,30 @@ function done(dev: Device, own m: tune.Model, want: tune.Want): tune.Model {
     },
     tune.Seek(part) => {
       return sought(dev, m, part);
+    },
+    tune.Scan => {
+      return tune.update(m, tune.Files(dev.files()));
+    },
+    tune.Grant => {
+      dev.grant();
+      return m;
     }
   }
+}
+
+// Reads the next file of the library. A file of sound is a track, and each
+// other file adds nothing.
+function scanned(dev: Device, own m: tune.Model): tune.Model {
+  let path = m.scan[0];
+  let left: string[] = [];
+  for i in 1..m.scan.len() {
+    left = left.append(m.scan[i]);
+  }
+  let next = tune.Model { ...m, scan: left };
+  if let Some(t) = library.track(dev.roots, path, dev.read(path)) {
+    return tune.update(next, tune.Found(t));
+  }
+  return next;
 }
 
 // The samples of `all` from the sample `from`.
@@ -122,6 +151,9 @@ pub function run(dev: Device, m: tune.Model): tune.Model {
     state = tune.Model { ...state, wants: [] };
     for want in wants {
       state = done(dev, state, want);
+    }
+    if (state.scan.len() > 0) {
+      state = scanned(dev, state);
     }
     if (state.playing) {
       state = pumped(dev, state);
