@@ -34,6 +34,15 @@ func RunBaseByteCases(t *testing.T, utility, bin string, runner []string, census
 	if err != nil || !bytes.Contains(version, []byte("GNU coreutils")) {
 		t.Skip("requires GNU " + utility)
 	}
+	RunBaseByteCasesAgainst(t, utility, bin, runner, []string{oracle}, census)
+}
+
+func RunBaseByteCasesAgainst(t *testing.T, utility, bin string, runner, oracle []string, census func(*testing.T, string)) {
+	t.Helper()
+	if len(oracle) == 0 {
+		t.Fatal("missing GNU reference command")
+	}
+	var err error
 	type testCase struct {
 		name       string
 		args       []string
@@ -54,13 +63,17 @@ func RunBaseByteCases(t *testing.T, utility, bin string, runner []string, census
 		if codec == "--base58" {
 			sizes = []int{0, 256}
 		}
+		if codec == "--base16" {
+			sizes = append(sizes, 1, 2, 3, 7, 8, 9, 255, 257, 30719, 30720, 30721)
+		}
 		for _, n := range sizes {
 			data := make([]byte, n)
 			for i := range data {
 				data[i] = byte(i)
 			}
 			args := append(append([]string{}, flags...), "-w0")
-			cmd := exec.Command(oracle, args...)
+			argv := append(append([]string{}, oracle...), args...)
+			cmd := exec.Command(argv[0], argv[1:]...)
 			cmd.Stdin, cmd.Env = bytes.NewReader(data), append(os.Environ(), "LC_ALL=C")
 			encoded, err := cmd.Output()
 			if err != nil {
@@ -103,7 +116,7 @@ func RunBaseByteCases(t *testing.T, utility, bin string, runner []string, census
 				for _, impl := range []struct {
 					name, bin string
 					runner    []string
-				}{{"gnu", oracle, nil}, {"fern", bin, runner}} {
+				}{{"gnu", oracle[len(oracle)-1], oracle[:len(oracle)-1]}, {"fern", bin, runner}} {
 					args := append([]string{}, tc.args...)
 					if file {
 						args = append(args, "input")
