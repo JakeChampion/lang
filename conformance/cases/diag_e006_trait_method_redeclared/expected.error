@@ -1,0 +1,1 @@
+1:40: error[E006]: trait method "a" redeclared in trait "T"

@@ -1,0 +1,5 @@
+2:5: error[E006]: trait "lib.T" redeclared
+5:1: error[E006]: duplicate impl: lib.T is already implemented for lib.R
+5:16: error[E006]: method "a" on lib.R redeclared
+6:5: error[E006]: struct "lib.R" redeclared
+8:5: error[E006]: enum "lib.E" redeclared

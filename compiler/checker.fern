@@ -18297,6 +18297,80 @@ const REGISTERED_INTRINSICS: string[] = [
   "__f32x4_swap_halves", "__f32x4_reverse", "__f32x4_zip_lo", "__f32x4_zip_hi", "__f32x4_splat", "__f32x4_of", "__f32x4_lane_bits", "__f32x4_lane", "__f32x4_bitmask", "__f32x4_mul_add", "__f32x4_sqrt", "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max", "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with", "__f32x4_load_bytes", "__f32x4_with_bytes", "__f32x4_store", "__f32x4_load_ptr", "__f32x4_pack",
 ];
 
+function qualified_trait(module: string, name: string): string {
+  if (module.len() == 0) {
+    return name;
+  }
+  return module + "." + name;
+}
+
+// An E006 for each trait that has the name of an earlier trait of its module.
+function trait_redeclared_diags(mod: parser.Module): util.Diag[] {
+  let out: util.Diag[] = [];
+  let reqs = mod.trait_reqs;
+  if (reqs.len() != mod.trait_decls.len()) {
+    return out;
+  }
+  for ti in 0..reqs.len() {
+    let td = mod.trait_decls[ti];
+    let name = qualified_trait(reqs[ti].module, reqs[ti].trait_name);
+    if (trait_declared_before(reqs, ti)) {
+      out = out.append(dg_at("E006", "trait \"" + name + "\" redeclared", td.line, td.col));
+      continue;
+    }
+    for mi in 0..td.methods.len() {
+      if (trait_method_declared_before(td.methods, mi)) {
+        out = out.append(dg_at("E006", "trait method \"" + td.methods[mi].name + "\" redeclared in trait \"" + name + "\"", td.methods[mi].line, td.methods[mi].col));
+      }
+    }
+  }
+  return out;
+}
+
+function trait_method_declared_before(methods: parser.FuncDecl[], mi: i32): boolean {
+  for mj in 0..mi {
+    if (methods[mj].name == methods[mi].name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function trait_declared_before(reqs: parser.TraitReq[], ti: i32): boolean {
+  for tj in 0..ti {
+    if (reqs[tj].trait_name == reqs[ti].trait_name && reqs[tj].module == reqs[ti].module) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function impl_trait_declared(reqs: parser.TraitReq[], im: parser.ImplInfo): boolean {
+  for r in reqs {
+    if (r.trait_name == im.trait_name && r.module == im.trait_module) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Whether an earlier impl gives the trait of mod.impls[ii] to the same
+// receiver. An orphan impl gives its trait to no receiver.
+function impl_declared_before(mod: parser.Module, ii: i32): boolean {
+  let im = mod.impls[ii];
+  if (orphan_impl(mod, im)) {
+    return false;
+  }
+  let receiver = parser.receiver_namespace(im.impl_type);
+  for ij in 0..ii {
+    let earlier = mod.impls[ij];
+    if (earlier.trait_name == im.trait_name && earlier.trait_module == im.trait_module && parser.receiver_namespace(earlier.impl_type) == receiver && !orphan_impl(mod, earlier)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, di: i32): boolean {
   let f2 = funcs[di];
   let earlier = redeclares_preregistered(f2);
@@ -18432,17 +18506,18 @@ function impl_trait_spelling(mod: parser.Module, fd: parser.FuncDecl): string {
   return fd.impl_trait;
 }
 
+// An impl in a module that declares neither its trait nor its type.
+function orphan_impl(mod: parser.Module, im: parser.ImplInfo): boolean {
+  return im.trait_name.len() > 0 && im.trait_module != im.module && !impl_type_is_local(mod, im);
+}
+
 function orphan_impl_diags(mod: parser.Module): util.Diag[] {
   let out: util.Diag[] = [];
   for im in mod.impls {
-    if (im.trait_name.len() == 0 || im.trait_module == im.module || impl_type_is_local(mod, im)) {
+    if (!orphan_impl(mod, im)) {
       continue;
     }
-    let tr = im.trait_name;
-    if (im.trait_module.len() > 0) {
-      tr = im.trait_module + "." + tr;
-    }
-    out = out.append(dg_at("E021", "orphan impl: `impl " + tr + " for " + util.demangle(util.base_type_name(im.impl_type)) + "` must be declared in the module that defines the trait or the type", im.line, im.col));
+    out = out.append(dg_at("E021", "orphan impl: `impl " + qualified_trait(im.trait_module, im.trait_name) + " for " + util.demangle(util.base_type_name(im.impl_type)) + "` must be declared in the module that defines the trait or the type", im.line, im.col));
   }
   return out;
 }
@@ -18643,6 +18718,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
       out = out.append(dg_at("E021", "method receiver type must be a struct, enum, array, slice, tuple, or built-in type, got " + util.base_type_name(f2.receiver_type), f2.line, f2.col));
     }
   }
+  out = util.append_diags(out, trait_redeclared_diags(mod));
   for sn2 in 0..mod.structs.len() {
     let s2 = mod.structs[sn2];
     let user_struct = s2.enum_owner.len() == 0 && !(s2.name.len() >= 2 && s2.name.starts_with("__"));
@@ -28160,7 +28236,8 @@ function e021_diags(mod: parser.Module): util.Diag[] {
     }
   }
   let own_vec = parser.declares_vec(mod.structs, mod.enums, mod.aliases, mod.trait_decls);
-  for im in mod.impls {
+  for ii in 0..mod.impls.len() {
+    let im = mod.impls[ii];
     if (!e021_source_qualifier_visible(mod, im.module, im.trait_spelling)) {
       out = out.append(dg_at("E021", "unknown trait \"" + im.trait_spelling + "\" in impl", im.line, im.col));
       continue;
@@ -28174,9 +28251,13 @@ function e021_diags(mod: parser.Module): util.Diag[] {
       out = out.append(dg_at("E021", "impl " + im.trait_spelling + " for " + im.impl_type + ": Send is not implemented by hand; every send-safe type satisfies it", im.line, im.col));
       continue;
     }
+    if (impl_declared_before(mod, ii) && impl_trait_declared(mod.trait_reqs, im)) {
+      out = out.append(dg_at("E006", "duplicate impl: " + qualified_trait(im.trait_module, im.trait_name) + " is already implemented for " + parser.receiver_namespace(im.impl_type), im.line, im.col));
+      continue;
+    }
     let known = false;
     for trait_req in mod.trait_reqs {
-      if (trait_req.trait_name == im.trait_name && trait_req.module == im.trait_module) {
+      if (!known && trait_req.trait_name == im.trait_name && trait_req.module == im.trait_module) {
         known = true;
         let sup = trait_req.supertraits;
         for parent in sup {
