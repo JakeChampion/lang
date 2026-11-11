@@ -24,16 +24,76 @@ function screen(): ui.Screen {
   return ui.Screen { w: 200, h: 400, d: 1.0, dark: false, theme: ui.theme(false), left: 0, top: 0, right: 0, bottom: 0, font: 1.0 };
 }
 
-function laid(root: ui.El): ui.Layout {
-  return ui.layout(root, fonts(), screen(), map_new(4), ui.no_focus());
+// The messages of the elements and of the programs of these tests.
+enum Msg { Go, Row(i32), Cell(i32), Pick(i32), Open, Menu(i32), Under, Agree, Add, Switch, Clear, Left, Beat, Frame, Name(string), Sent, Next, Note(string) }
+
+// The name of the message and its number, as one word.
+function name_of(m: Msg): string {
+  match (m) {
+    Go => {
+      return "go0";
+    },
+    Row(i) => {
+      return "row" + i.to_string();
+    },
+    Cell(i) => {
+      return "cell" + i.to_string();
+    },
+    Pick(i) => {
+      return "pick" + i.to_string();
+    },
+    Menu(i) => {
+      return "menu" + i.to_string();
+    },
+    Under => {
+      return "under0";
+    },
+    Agree => {
+      return "ok0";
+    },
+    _ => {
+      return "other";
+    }
+  }
 }
 
-function scrolled(root: ui.El, name: string, to: i32): ui.Layout {
+// The number of the message of a tap on the node `n` of `b`, or -1.
+function number_of(b: ui.Built[Msg], n: scene.Node): i32 {
+  match (ui.tap_message(b.messages(), b.layout(), n)) {
+    Some(Row(i)) => {
+      return i;
+    },
+    Some(Cell(i)) => {
+      return i;
+    },
+    Some(Pick(i)) => {
+      return i;
+    },
+    _ => {
+      return -1;
+    }
+  }
+}
+
+function laid_on(root: ui.El[Msg], s: ui.Screen, focus: ui.Focus): ui.Built[Msg] {
+  return ui.layout(root, fonts(), s, map_new(4), focus);
+}
+
+function laid(root: ui.El[Msg]): ui.Built[Msg] {
+  return laid_on(root, screen(), ui.no_focus());
+}
+
+// The nodes and the lists of the tree, for a test of the gestures.
+function plain(root: ui.El[Msg]): ui.Layout {
+  return laid(root).layout();
+}
+
+function scrolled(root: ui.El[Msg], name: string, to: i32): ui.Built[Msg] {
   let offsets: Map[string, i32] = map_new(4);
   return ui.layout(root, fonts(), screen(), offsets.insert(name, to), ui.no_focus());
 }
 
-function label(s: string): ui.El {
+function label(s: string): ui.El[Msg] {
   return ui.text(s).sized(10.0);
 }
 
@@ -94,7 +154,7 @@ function test_text_wraps(): test.TestOutcome {
 
 function test_roles_take_the_theme(): test.TestOutcome {
   let dark = ui.Screen { ...screen(), theme: ui.theme(true) };
-  let lay = ui.layout(ui.box().grow(1.0).background(ui.SURFACE), fonts(), dark, map_new(4), ui.no_focus());
+  let lay = laid_on(ui.box().grow(1.0).background(ui.SURFACE), dark, ui.no_focus());
   let own_color = laid(ui.box().grow(1.0).background(draw.rgb(1, 2, 3)));
   let got = "";
   match (lay.nodes[0].paint) {
@@ -114,12 +174,12 @@ function test_roles_take_the_theme(): test.TestOutcome {
 
 function test_safe_area(): test.TestOutcome {
   let s = ui.Screen { ...screen(), top: 24, bottom: 48 };
-  let lay = ui.layout(ui.box().grow(1.0).background(ui.SURFACE), fonts(), s, map_new(4), ui.no_focus());
+  let lay = laid_on(ui.box().grow(1.0).background(ui.SURFACE), s, ui.no_focus());
   return test.assert_eq(boxes(lay.nodes) + " " + s.height().to_string(), "0,24,200,328 328");
 }
 
 function test_button(): test.TestOutcome {
-  let lay = laid(ui.column([ui.button("AA", "go")]).padding(10.0));
+  let lay = laid(ui.column([ui.button("AA", Go)]).padding(10.0));
   // 14 sp: "AA" is 17 pixels wide and 15 high, with 24 dp at each side.
   let n = lay.nodes[0];
   let r = 0;
@@ -129,19 +189,20 @@ function test_button(): test.TestOutcome {
     },
     _ => {}
   }
-  return test.assert_eq(boxes(lay.nodes) + " " + n.tap.name + " " + r.to_string(), "10,10,65,40 34,22,17,15 go 20");
+  let said = ui.tap_message(lay.messages(), lay.layout(), n).map((m: Msg): string => name_of(m)).unwrap_or("none");
+  return test.assert_eq(boxes(lay.nodes) + " " + said + " " + r.to_string(), "10,10,65,40 34,22,17,15 go0 20");
 }
 
-function rows(n: i32): ui.El[] {
-  let out: ui.El[] = [];
+function rows(n: i32): ui.El[Msg][] {
+  let out: ui.El[Msg][] = [];
   for i in 0..n {
-    out = out.append(ui.row([label("A")]).height(50.0).wide().on_tap_with("row", i));
+    out = out.append(ui.row([label("A")]).height(50.0).wide().on_tap(Row(i)));
   }
   return out;
 }
 
 function test_scroll_column(): test.TestOutcome {
-  let root = ui.column([ui.box().height(100.0), ui.column(rows(20)).scroll("items").grow(1.0)]);
+  let root: ui.El[Msg] = ui.column([ui.box().height(100.0), ui.column(rows(20)).scroll("items").grow(1.0)]);
   let top = laid(root);
   let moved = scrolled(root, "items", 120);
   let past = scrolled(root, "items", 5000);
@@ -150,24 +211,25 @@ function test_scroll_column(): test.TestOutcome {
   // rows show at the top, and seven after 120 pixels. A list goes at most
   // its own height past its end.
   let first = moved.nodes[1];
-  let got = s.name + " " + s.y.to_string() + " " + s.h.to_string() + " " + s.limit.to_string() + " " + top.nodes.len().to_string() + " " + moved.nodes.len().to_string() + " " + first.tap.arg.to_string() + " " + first.y.to_string() + " " + first.clip0.to_string() + " " + first.clip1.to_string() + " " + first.group + " " + past.nodes[past.nodes.len() - 1].y.to_string();
+  let got = s.name + " " + s.y.to_string() + " " + s.h.to_string() + " " + s.limit.to_string() + " " + top.nodes.len().to_string() + " " + moved.nodes.len().to_string() + " " + number_of(moved, first).to_string() + " " + first.y.to_string() + " " + first.clip0.to_string() + " " + first.clip1.to_string() + " " + first.group + " " + past.nodes[past.nodes.len() - 1].y.to_string();
   return test.assert_eq(got, "items 100 300 700 13 15 2 80 100 400 items 100");
 }
 
 function test_list_builds_the_rows_that_show(): test.TestOutcome {
-  let root = ui.list("big", 100000, 40.0, (i: i32): ui.El => ui.row([label("A")]).on_tap_with("pick", i));
+  let root: ui.El[Msg] = ui.list("big", 100000, 40.0, (i: i32): ui.El[Msg] => ui.row([label("A")]).on_tap(Pick(i)));
   let top = laid(root);
   let far = scrolled(root, "big", 2000010);
   // The first node is the list itself, and each row has two nodes.
   let n = far.nodes[1];
-  let got = top.scrollers[0].limit.to_string() + " " + top.nodes.len().to_string() + " " + far.nodes.len().to_string() + " " + n.tap.arg.to_string() + " " + n.y.to_string() + " " + n.h.to_string();
+  let got = top.scrollers[0].limit.to_string() + " " + top.nodes.len().to_string() + " " + far.nodes.len().to_string() + " " + number_of(far, n).to_string() + " " + n.y.to_string() + " " + n.h.to_string();
   return test.assert_eq(got, "3999600 21 23 50000 -10 40");
 }
 
-function cells(n: i32): ui.El[] {
-  let out: ui.El[] = [];
+function cells(n: i32): ui.El[Msg][] {
+  let out: ui.El[Msg][] = [];
   for i in 0..n {
-    out = out.append(ui.box().width(80.0).height(60.0).background(ui.SURFACE).on_tap_with("cell", i));
+    let cell: ui.El[Msg] = ui.box().width(80.0).height(60.0).background(ui.SURFACE).on_tap(Cell(i));
+    out = out.append(cell);
   }
   return out;
 }
@@ -180,13 +242,13 @@ function test_row_scrolls_across(): test.TestOutcome {
   let moved = scrolled(root, "strip", 100);
   let s = top.scrollers[0];
   let first = moved.nodes[1];
-  let got = s.across.to_string() + " " + s.limit.to_string() + " " + top.nodes.len().to_string() + " " + moved.nodes.len().to_string() + " " + first.tap.arg.to_string() + " " + first.x.to_string() + " " + first.left.to_string() + " " + first.right.to_string() + " " + down_up(moved, 10, 30) + " " + down_up(moved, 70, 30);
+  let got = s.across.to_string() + " " + s.limit.to_string() + " " + top.nodes.len().to_string() + " " + moved.nodes.len().to_string() + " " + number_of(moved, first).to_string() + " " + first.x.to_string() + " " + first.left.to_string() + " " + first.right.to_string() + " " + down_up(moved, 10, 30) + " " + down_up(moved, 70, 30);
   return test.assert_eq(got, "true 600 4 4 1 -20 0 200 cell1 cell2");
 }
 
 // A list that scrolls down, with a row that scrolls across as its second
 // element.
-function nested(): ui.El {
+function nested(): ui.El[Msg] {
   let kids = rows(20);
   return ui.column([kids[0], ui.row(cells(10)).scroll("strip").wide(), ui.column(kids).wide()]).scroll("page");
 }
@@ -201,7 +263,7 @@ function drag(lay: ui.Layout, x0: i32, y0: i32, x1: i32, y1: i32): ui.Input {
 }
 
 function test_a_drag_takes_the_list_of_its_direction(): test.TestOutcome {
-  let lay = laid(nested());
+  let lay = plain(nested());
   let across = drag(lay, 150, 80, 50, 85);
   let down = drag(lay, 150, 80, 155, 30);
   let got = across.offset("strip").to_string() + " " + across.offset("page").to_string() + " " + down.offset("strip").to_string() + " " + down.offset("page").to_string() + " " + lay.scrollers[1].parent;
@@ -209,7 +271,7 @@ function test_a_drag_takes_the_list_of_its_direction(): test.TestOutcome {
 }
 
 function test_a_list_springs_back_from_its_end(): test.TestOutcome {
-  let lay = laid(ui.column(rows(20)).scroll("items"));
+  let lay = plain(ui.column(rows(20)).scroll("items"));
   // The finger pulls the top of the list 99 pixels down after the slop: the
   // list goes half as far past its end.
   let pull = drag(lay, 100, 100, 100, 210);
@@ -222,7 +284,7 @@ function test_a_list_springs_back_from_its_end(): test.TestOutcome {
 }
 
 function test_a_fling_passes_its_end_and_springs_back(): test.TestOutcome {
-  let lay = laid(ui.column(rows(20)).scroll("items"));
+  let lay = plain(ui.column(rows(20)).scroll("items"));
   let (inp, _) = ui.touch(ui.no_input(), lay, 0, 100, 100, 0i64, 1.0);
   for i in 1..6 {
     let (next, _) = ui.touch(inp, lay, 2, 100, 100 + i * 4, i as i64 * 10000000i64, 1.0);
@@ -255,29 +317,33 @@ function scrolled_input(lay: ui.Layout): ui.Input {
 }
 
 function test_a_shorter_list_goes_back_to_its_end(): test.TestOutcome {
-  let long = laid(ui.column(rows(20)).scroll("items"));
-  let short = laid(ui.column(rows(8)).scroll("items"));
+  let long = plain(ui.column(rows(20)).scroll("items"));
+  let short = plain(ui.column(rows(8)).scroll("items"));
   let at_end = ui.Input { ...ui.no_input(), offsets: ui.no_input().offsets.insert("items", 600) };
   return test.assert_eq(ui.advance(at_end, long, 0i64).offset("items").to_string() + " " + ui.advance(at_end, short, 0i64).offset("items").to_string(), "600 0");
 }
 
-function down_up(lay: ui.Layout, x: i32, y: i32): string {
-  let (a, m0) = ui.touch(ui.no_input(), lay, 0, x, y, 0i64, 1.0);
-  let (b, m1) = ui.touch(a, lay, 1, x, y, 50000000i64, 1.0);
-  if let Some(ui.Tap(name, arg)) = m1 {
-    return name + arg.to_string();
+// The message of a tap at x and y, as `name_of` gives it, or "none".
+function down_up(b: ui.Built[Msg], x: i32, y: i32): string {
+  let lay = b.layout();
+  let (a, _) = ui.touch(ui.no_input(), lay, 0, x, y, 0i64, 1.0);
+  let (_, on) = ui.touch(a, lay, 1, x, y, 50000000i64, 1.0);
+  if let Some(n) = on {
+    if let Some(m) = ui.tap_message(b.messages(), lay, n) {
+      return name_of(m);
+    }
   }
   return "none";
 }
 
 function test_tap(): test.TestOutcome {
-  let lay = laid(ui.column([ui.button("A", "go"), ui.column(rows(3))]));
+  let lay = laid(ui.column([ui.button("A", Go), ui.column(rows(3))]));
   return test.assert_eq(down_up(lay, 10, 10) + " " + down_up(lay, 10, 110) + " " + down_up(lay, 150, 10), "go0 row1 none");
 }
 
 function test_drag_scrolls_and_does_not_tap(): test.TestOutcome {
   let root = ui.column(rows(20)).scroll("items");
-  let lay = laid(root);
+  let lay = plain(root);
   let (a, _) = ui.touch(ui.no_input(), lay, 0, 100, 300, 0i64, 1.0);
   let (b, _) = ui.touch(a, lay, 2, 100, 295, 16000000i64, 1.0);
   let small = b.offset("items");
@@ -290,7 +356,7 @@ function test_drag_scrolls_and_does_not_tap(): test.TestOutcome {
 
 function test_fling_goes_on_and_stops_at_the_end(): test.TestOutcome {
   let root = ui.column(rows(20)).scroll("items");
-  let lay = laid(root);
+  let lay = plain(root);
   let (inp, _) = ui.touch(ui.no_input(), lay, 0, 100, 380, 0i64, 1.0);
   for i in 1..11 {
     let (next, _) = ui.touch(inp, lay, 2, 100, 380 - i * 30, i as i64 * 10000000i64, 1.0);
@@ -305,21 +371,22 @@ function test_fling_goes_on_and_stops_at_the_end(): test.TestOutcome {
 }
 
 function test_long_press(): test.TestOutcome {
-  let lay = laid(ui.box().width(100.0).height(100.0).on_tap("open").on_long("menu", 7));
+  let b0 = laid(ui.box().width(100.0).height(100.0).on_tap(Open).on_long(Menu(7)));
+  let lay = b0.layout();
   let (a, _) = ui.touch(ui.no_input(), lay, 0, 10, 10, 0i64, 1.0);
   let early = ui.long_wait(a, 100000000i64);
   let (b, none) = ui.long_press(a, 399000000i64);
-  let (c, m) = ui.long_press(b, 400000000i64);
+  let (c, on) = ui.long_press(b, 400000000i64);
   let (d, tap) = ui.touch(c, lay, 1, 10, 10, 500000000i64, 1.0);
   let got = early.to_string() + " " + none.is_none().to_string() + " " + ui.long_wait(c, 400000000i64).to_string() + " " + tap.is_none().to_string();
-  if let Some(ui.LongPress(name, arg)) = m {
-    got = got + " " + name + arg.to_string();
+  if let Some(n) = on {
+    got = got + " " + ui.long_message(b0.messages(), lay, n).map((m: Msg): string => name_of(m)).unwrap_or("none");
   }
   return test.assert_eq(got, "300 true -1 true menu7");
 }
 
 function test_pressed_node_shows(): test.TestOutcome {
-  let lay = laid(ui.column([ui.button("A", "go")]));
+  let lay = plain(ui.column([ui.button("A", Go)]));
   let (a, _) = ui.touch(ui.no_input(), lay, 0, 10, 10, 0i64, 1.0);
   let pressed = ui.shown(a, lay, draw.rgba(0, 0, 0, 31));
   let (b, _) = ui.touch(a, lay, 1, 10, 10, 50000000i64, 1.0);
@@ -335,8 +402,8 @@ function test_pressed_node_shows(): test.TestOutcome {
 }
 
 function test_modal_takes_the_touches(): test.TestOutcome {
-  let page = ui.column([ui.button("A", "under")]);
-  let dialog = ui.stack([ui.column([ui.button("A", "ok")]).padding(20.0).background(ui.SURFACE)]).centered().grow(1.0).background(draw.rgba(0, 0, 0, 128)).modal();
+  let page: ui.El[Msg] = ui.column([ui.button("A", Under)]);
+  let dialog: ui.El[Msg] = ui.stack([ui.column([ui.button("A", Agree)]).padding(20.0).background(ui.SURFACE)]).centered().grow(1.0).background(draw.rgba(0, 0, 0, 128)).modal();
   let lay = laid(ui.stack([page, dialog]));
   return test.assert_eq(down_up(lay, 10, 10) + " " + down_up(lay, 100, 200), "none ok0");
 }
@@ -345,25 +412,25 @@ function test_modal_takes_the_touches(): test.TestOutcome {
 
 struct Counter { count: i32, backs: i32, ticks: i32, on: boolean }
 
-function counter_view(m: Counter, s: ui.Screen): ui.El {
-  return ui.column([label("A".repeat(m.count)), ui.button("A", "add"), ui.toggle(m.on, "switch"), ui.box().width(50.0).height(50.0).on_long("reset", 0)]).spaced(10.0);
+function counter_view(m: Counter, s: ui.Screen): ui.El[Msg] {
+  return ui.column([label("A".repeat(m.count)), ui.button("V", Add), ui.toggle(m.on, "switch", Switch), ui.box().width(50.0).height(50.0).on_long(Clear).described("reset")]).spaced(10.0);
 }
 
-function counter_update(own m: Counter, msg: ui.Msg): Counter {
+function counter_update(own m: Counter, msg: Msg): Counter {
   match (msg) {
-    ui.Tap("add", _) => {
+    Add => {
       return Counter { ...m, count: m.count + 1 };
     },
-    ui.Tap("switch", _) => {
+    Switch => {
       return Counter { ...m, on: !m.on };
     },
-    ui.LongPress("reset", _) => {
+    Clear => {
       return Counter { ...m, count: 0 };
     },
-    ui.Back => {
+    Left => {
       return Counter { ...m, backs: m.backs + 1 };
     },
-    ui.Tick => {
+    Beat => {
       return Counter { ...m, ticks: m.ticks + 1 };
     },
     _ => {
@@ -372,8 +439,8 @@ function counter_update(own m: Counter, msg: ui.Msg): Counter {
   }
 }
 
-function counter(): ui.Program[Counter] {
-  return ui.program((m: Counter, s: ui.Screen): ui.El => counter_view(m, s), (own m: Counter, msg: ui.Msg): Counter => counter_update(m, msg));
+function counter(): ui.Program[Counter, Msg] {
+  return ui.program(counter_view, counter_update);
 }
 
 function new_counter(): Counter {
@@ -383,48 +450,54 @@ function new_counter(): Counter {
 function test_program_taps(): test.TestOutcome {
   let s = sim.start(new_counter(), counter(), fonts(), 200, 400, 1.0);
   let first = s.shell.host.frames;
-  s = sim.tap(sim.tap(sim.tap(s, "add"), "add"), "missing");
+  s = sim.tap(sim.tap(sim.tap(s, "V"), "V"), "missing");
   let got = (first > 0).to_string() + " " + s.shell.app.count.to_string() + " " + sim.shows(s, "AA").to_string() + " " + sim.texts(s).len().to_string();
   return test.assert_eq(got, "true 2 true 2");
 }
 
 function test_program_long_press_and_toggle(): test.TestOutcome {
   let s = sim.start(new_counter(), counter(), fonts(), 200, 400, 1.0);
-  s = sim.tap(sim.tap(s, "add"), "switch");
+  s = sim.tap(sim.tap(s, "V"), "switch, off");
   let on = s.shell.app.on;
-  s = sim.hold(s, "reset", 0);
-  return test.assert_eq(on.to_string() + " " + s.shell.app.count.to_string() + " " + sim.spoken(s).join("|"), "true 0 A|switch, on|reset");
+  s = sim.hold(s, "reset");
+  return test.assert_eq(on.to_string() + " " + s.shell.app.count.to_string() + " " + sim.spoken(s).join("|"), "true 0 V|switch, on|reset");
 }
 
 function test_back_closes_or_tells(): test.TestOutcome {
   let closed = sim.back(sim.start(new_counter(), counter(), fonts(), 200, 400, 1.0));
-  let told = sim.back(sim.start(new_counter(), counter().with_back((m: Counter): boolean => true), fonts(), 200, 400, 1.0));
+  let told = sim.back(sim.start(new_counter(), counter().with_back((m: Counter): Option[Msg] => Some(Left)), fonts(), 200, 400, 1.0));
   let got = sim.finished(closed).to_string() + " " + closed.shell.app.backs.to_string() + " " + sim.finished(told).to_string() + " " + told.shell.app.backs.to_string();
   return test.assert_eq(got, "true 0 false 1");
 }
 
 function test_wait_gives_ticks(): test.TestOutcome {
-  let p = counter().with_wait((m: Counter): i32 => 100);
+  let p = counter().with_tick((m: Counter): i32 => 100, Beat);
   let s = sim.after(sim.start(new_counter(), p, fonts(), 200, 400, 1.0), 350i64);
   return test.assert_eq(s.shell.app.ticks.to_string() + " " + s.now.to_string(), "3 350");
 }
 
 struct Feed { picked: i32, frames: i32 }
 
-function feed(): ui.Program[Feed] {
-  return ui.program((m: Feed, s: ui.Screen): ui.El => ui.list("feed", 1000, 50.0, (i: i32): ui.El => ui.row([label("A")]).on_tap_with("pick", i)), (own m: Feed, msg: ui.Msg): Feed => {
-    match (msg) {
-      ui.Tap("pick", i) => {
-        return Feed { ...m, picked: i };
-      },
-      ui.Frame(_) => {
-        return Feed { ...m, frames: m.frames + 1 };
-      },
-      _ => {
-        return m;
-      }
+function feed_view(m: Feed, s: ui.Screen): ui.El[Msg] {
+  return ui.list("feed", 1000, 50.0, (i: i32) => ui.row([label("A")]).on_tap(Pick(i)));
+}
+
+function feed_update(own m: Feed, msg: Msg): Feed {
+  match (msg) {
+    Pick(i) => {
+      return Feed { ...m, picked: i };
+    },
+    Frame => {
+      return Feed { ...m, frames: m.frames + 1 };
+    },
+    _ => {
+      return m;
     }
-  });
+  }
+}
+
+function feed(): ui.Program[Feed, Msg] {
+  return ui.program(feed_view, feed_update);
 }
 
 function test_program_scrolls_and_flings(): test.TestOutcome {
@@ -441,7 +514,7 @@ function test_program_scrolls_and_flings(): test.TestOutcome {
 }
 
 function test_animating_gives_frames(): test.TestOutcome {
-  let p = feed().with_animating((m: Feed): boolean => m.frames < 3);
+  let p = feed().with_frames((m: Feed): boolean => m.frames < 3, (ns: i64): Msg => Frame);
   let s = sim.start(Feed { picked: -1, frames: 0 }, p, fonts(), 200, 400, 1.0);
   for i in 0..5 {
     s = sim.frame(s);
@@ -463,7 +536,7 @@ function test_text_follows_the_font_scale(): test.TestOutcome {
   // At twice the font size, "AAA" at 10 sp is 36 pixels wide and 20 high.
   // A size in dp does not change.
   let big = ui.Screen { ...screen(), font: 2.0 };
-  let lay = ui.layout(ui.column([label("AAA"), ui.box().width(10.0).height(10.0).background(ui.PRIMARY)]), fonts(), big, map_new(4), ui.no_focus());
+  let lay = laid_on(ui.column([label("AAA"), ui.box().width(10.0).height(10.0).background(ui.PRIMARY)]), big, ui.no_focus());
   let s = sim.scaled(sim.start(new_counter(), counter(), fonts(), 200, 400, 1.0), 1.5);
   return test.assert_eq(boxes(lay.nodes) + " " + s.shell.host.screen.font.to_string(), "0,0,36,20 0,20,10,10 1.5");
 }
@@ -472,28 +545,32 @@ function test_text_follows_the_font_scale(): test.TestOutcome {
 
 struct Form { name: string, sent: string, backs: i32, upper: boolean, gone: boolean }
 
-function form_view(m: Form, s: ui.Screen): ui.El {
-  if (m.gone) {
-    return ui.column([ui.button("A", "other")]);
-  }
-  return ui.column([ui.field("name", m.name, "AV"), ui.button("A", "other")]).spaced(10.0);
+function name_field(value: string): ui.El[Msg] {
+  return ui.field("name", value, "AV").on_edit((t: string): Msg => Name(t)).on_submit(Sent);
 }
 
-function form_update(own m: Form, msg: ui.Msg): Form {
+function form_view(m: Form, s: ui.Screen): ui.El[Msg] {
+  if (m.gone) {
+    return ui.column([ui.button("A", Next)]);
+  }
+  return ui.column([name_field(m.name), ui.button("A", Next)]).spaced(10.0);
+}
+
+function form_update(own m: Form, msg: Msg): Form {
   match (msg) {
-    ui.Edit("name", t) => {
+    Name(t) => {
       if (m.upper) {
         return Form { ...m, name: t.to_upper() };
       }
       return Form { ...m, name: t };
     },
-    ui.Submit("name") => {
+    Sent => {
       return Form { ...m, sent: m.name, name: "" };
     },
-    ui.Tap("other", _) => {
+    Next => {
       return Form { ...m, gone: m.upper };
     },
-    ui.Back => {
+    Left => {
       return Form { ...m, backs: m.backs + 1 };
     },
     _ => {
@@ -502,20 +579,19 @@ function form_update(own m: Form, msg: ui.Msg): Form {
   }
 }
 
-function form(upper: boolean): sim.Sim[Form] {
-  let p = ui.program((m: Form, s: ui.Screen): ui.El => form_view(m, s), (own m: Form, msg: ui.Msg): Form => form_update(m, msg));
-  return sim.start(Form { name: "", sent: "", backs: 0, upper: upper, gone: false }, p, fonts(), 200, 400, 1.0);
+function form(upper: boolean): sim.Sim[Form, Msg] {
+  return sim.start(Form { name: "", sent: "", backs: 0, upper: upper, gone: false }, ui.program(form_view, form_update), fonts(), 200, 400, 1.0);
 }
 
 function test_field_layout(): test.TestOutcome {
   // The field is 56 dp high: its background, its hint at 16 sp, which is
   // 19 pixels wide and 17 high, and its line of 1 dp. In focus it has a
   // caret before the hint, and its line is 2 dp.
-  let root = ui.column([ui.field("name", "", "AV")]);
-  let plain = laid(root);
-  let focused = ui.layout(root, fonts(), screen(), map_new(4), ui.Focus { field: "name", caret: 0 });
-  let tap = plain.nodes[0].tap.name;
-  return test.assert_eq(boxes(plain.nodes) + " | " + boxes(focused.nodes) + " | " + (tap == ui.FIELD_ACTION + "name").to_string(), "0,0,200,56 16,19,19,17 0,55,200,1 | 0,0,200,56 16,19,19,17 17,19,2,17 0,54,200,2 | true");
+  let root: ui.El[Msg] = ui.column([name_field("")]);
+  let unfocused = laid(root);
+  let focused = laid_on(root, screen(), ui.Focus { field: "name", caret: 0 });
+  let tap = unfocused.nodes[0].tap.name;
+  return test.assert_eq(boxes(unfocused.nodes) + " | " + boxes(focused.nodes) + " | " + (tap == ui.FIELD_ACTION + "name").to_string(), "0,0,200,56 16,19,19,17 0,55,200,1 | 0,0,200,56 16,19,19,17 17,19,2,17 0,54,200,2 | true");
 }
 
 function test_field_takes_text(): test.TestOutcome {
@@ -539,11 +615,11 @@ function test_program_changes_the_text(): test.TestOutcome {
 }
 
 function test_focus_goes_away(): test.TestOutcome {
-  let tapped = sim.tap(sim.type_in(form(false), "name", "A"), "other");
+  let tapped = sim.tap_nth(sim.type_in(form(false), "name", "A"), "A", 1);
   let backed = sim.back(sim.type_in(form(false), "name", "A"));
   let once = "[" + backed.shell.host.focus + "] " + sim.finished(backed).to_string();
   let again = sim.back(backed);
-  let removed = sim.tap(sim.type_in(form(true), "name", "A"), "other");
+  let removed = sim.tap_nth(sim.type_in(form(true), "name", "A"), "A", 1);
   let got = "[" + tapped.shell.host.focus + "] " + sim.keyboard(tapped).is_none().to_string() + " " + once + " " + sim.finished(again).to_string() + " [" + removed.shell.host.focus + "] " + sim.keyboard(removed).is_none().to_string();
   return test.assert_eq(got, "[] true [] false true [] true");
 }
@@ -566,8 +642,8 @@ function test_field_is_spoken(): test.TestOutcome {
 
 // The x of the caret of the layout: the fill of 2 pixels in the primary
 // color, or -1.
-function caret_x(lay: ui.Layout): i32 {
-  for n in lay.nodes {
+function caret_x(nodes: scene.Node[]): i32 {
+  for n in nodes {
     match (n.paint) {
       scene.Fill(c, _) => {
         if (n.w == 2 && c == ui.theme(false).primary) {
@@ -587,7 +663,7 @@ function test_a_tap_puts_the_caret(): test.TestOutcome {
   let end = s.shell.host.caret;
   s = sim.tap_at(s, 36, 28);
   let tapped = s.shell.host.caret;
-  let at = caret_x(s.shell.host.lay);
+  let at = caret_x(s.shell.host.lay.nodes);
   // The keyboard puts a "V" at its cursor: the two characters after the
   // caret stay after it.
   s = sim.event(s, android.Text("AAVAA"));
@@ -612,14 +688,14 @@ function n_fits(t: string): boolean {
 
 function test_a_long_text_shows_the_part_at_the_caret(): test.TestOutcome {
   // The field has 168 pixels for its text, which is less than the text.
-  let root = ui.column([ui.field("name", "V".repeat(10) + "A".repeat(20), "AV")]);
-  let at_end = ui.layout(root, fonts(), screen(), map_new(4), ui.Focus { field: "name", caret: 30 });
-  let at_start = ui.layout(root, fonts(), screen(), map_new(4), ui.Focus { field: "name", caret: 0 });
+  let root: ui.El[Msg] = ui.column([name_field("V".repeat(10) + "A".repeat(20))]);
+  let at_end = laid_on(root, screen(), ui.Focus { field: "name", caret: 30 });
+  let at_start = laid_on(root, screen(), ui.Focus { field: "name", caret: 0 });
   let got = "";
   for lay in [at_end, at_start] {
     match (lay.nodes[1].paint) {
       scene.Label(t, _, _, _, _) => {
-        got = got + t.take(1) + (t.len() >= 12 && n_fits(t)).to_string() + " " + (caret_x(lay) <= 184).to_string() + " ";
+        got = got + t.take(1) + (t.len() >= 12 && n_fits(t)).to_string() + " " + (caret_x(lay.nodes) <= 184).to_string() + " ";
       },
       _ => {}
     }
@@ -629,20 +705,26 @@ function test_a_long_text_shows_the_part_at_the_caret(): test.TestOutcome {
 
 struct Note { text: string, sent: i32 }
 
-function note_program(): ui.Program[Note] {
-  return ui.program((m: Note, s: ui.Screen): ui.El => ui.column([ui.area("note", m.text, "AV", 3)]), (own m: Note, msg: ui.Msg): Note => {
-    match (msg) {
-      ui.Edit("note", t) => {
-        return Note { ...m, text: t };
-      },
-      ui.Submit(_) => {
-        return Note { ...m, sent: m.sent + 1 };
-      },
-      _ => {
-        return m;
-      }
+function note_view(m: Note, s: ui.Screen): ui.El[Msg] {
+  return ui.column([ui.area("note", m.text, "AV", 3).on_edit((t: string): Msg => Note(t)).on_submit(Sent)]);
+}
+
+function note_update(own m: Note, msg: Msg): Note {
+  match (msg) {
+    Note(t) => {
+      return Note { ...m, text: t };
+    },
+    Sent => {
+      return Note { ...m, sent: m.sent + 1 };
+    },
+    _ => {
+      return m;
     }
-  });
+  }
+}
+
+function note_program(): ui.Program[Note, Msg] {
+  return ui.program(note_view, note_update);
 }
 
 function test_an_area_wraps_and_takes_new_lines(): test.TestOutcome {
@@ -658,10 +740,10 @@ function test_an_area_wraps_and_takes_new_lines(): test.TestOutcome {
 }
 
 function test_an_area_shows_the_lines_at_the_caret(): test.TestOutcome {
-  let root = ui.column([ui.area("note", "A\nAA\nAAA\nAAAA\nAAAAA", "AV", 3)]);
+  let root: ui.El[Msg] = ui.column([ui.area("note", "A\nAA\nAAA\nAAAA\nAAAAA", "AV", 3)]);
   let out = laid(root);
-  let at_end = ui.layout(root, fonts(), screen(), map_new(4), ui.Focus { field: "note", caret: 19 });
-  let texts = (lay: ui.Layout): string => {
+  let at_end = laid_on(root, screen(), ui.Focus { field: "note", caret: 19 });
+  let texts = (lay: ui.Built[Msg]): string => {
     let parts: string[] = [];
     for n in lay.nodes {
       match (n.paint) {

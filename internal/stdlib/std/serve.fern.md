@@ -190,6 +190,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<dependencies 2>>=
 import "std/i32";
 import "std/async";
+import "std/signal";
 import "core/error";
 import "core/cmp";
 import "std/platform";
@@ -2021,7 +2022,7 @@ function __body_deadline(own c: __Conns, at: i32, opts: Config, now: i64): own _
   return __Conns { ...c, deadlines: c.deadlines.with(at, deadline), due: __sooner(c.due, deadline), rate_since: c.rate_since.with(at, since), rate_base: c.rate_base.with(at, base) };
 }
 
-function __serve_ready[D: async.Driver](drv: D, own c: __Conns, at: i32, opts: Config, behind: __Behind, clk: __Clock): (__Conns, boolean) {
+function __serve_ready[D: async.Driver](drv: D, own c: __Conns, at: i32, opts: Config, behind: __Behind, clk: __Clock): own (__Conns, boolean) {
   match (behind) {
     Pipelined => {
       return (c, true);
@@ -2977,7 +2978,7 @@ function __serve_event[D: async.Driver](drv: D, own c: __Conns, fd: i32, scratch
   return (read.0, at, read.1);
 }
 
-function __serve_finish[D: async.Driver](drv: D, own c: __Conns, fd: i32, eof: boolean, opts: Config, clk: __Clock): __Conns {
+function __serve_finish[D: async.Driver](drv: D, own c: __Conns, fd: i32, eof: boolean, opts: Config, clk: __Clock): own __Conns {
   let at = __conns_index(c, fd);
   if (at < 0) {
     return c;
@@ -5347,7 +5348,7 @@ function __supervise(port: i32, opts: Config, worker: (__Listen, Config, Option[
   }
   let sup = __Supervisor { pids: [], spawned: [], pipes: [], readers: [], partial: [], snaps: [], quic: [], h3_free: __h3_pool(bound_fd, resolved), tcp: [], tcp_free: pool, backoff_ms: 100 as i64, fork_after: 0 as i64, fast_deaths: 0, stopping: false, worst: 0, crashed: 0 };
   let drv = async.real_driver();
-  let chld = drv.watch_signal(17);
+  let chld = drv.watch_signal(signal.sigchld());
   if (chld < 0) {
     drv.close();
     __supervisor_release(shared, sup);
@@ -5416,7 +5417,7 @@ function __supervisor_events(sup: __Supervisor, events: i32[]): __Supervisor {
     if (sig != 0) {
       sup = __supervisor_stop(sup, sig);
     }
-    if (fd == 0 - 17) {
+    if (fd == -signal.sigchld()) {
       sup = __supervisor_reap(sup);
     }
     let pipe: i32 = __index_of_i32(sup.pipes, fd);
@@ -5483,7 +5484,7 @@ function __supervisor_fork(drv: async.RealDriver, own: __Listen, listener: i32, 
   if (pid == -38) {
     eprint("serve: supervision unavailable; serving single-process");
     __snapshot_pipe_close(snap);
-    drv.unwatch_signal(17);
+    drv.unwatch_signal(signal.sigchld());
     drv.unwatch_signal(15);
     drv.unwatch_signal(2);
     drv.close();
@@ -6430,7 +6431,7 @@ function __h3_start_all_with[D: async.Driver, S](drv: D, own c: __Conns, fls: __
   return (__h3_flush_all(c, burst.touched), fs, state);
 }
 
-function __h3_flush_all(own c: __Conns, serials: i32[]): __Conns {
+function __h3_flush_all(own c: __Conns, serials: i32[]): own __Conns {
   let cur = c;
   for s in serials {
     cur = __h3_flush(cur, s);
@@ -6637,7 +6638,7 @@ function __h3_answer[D: async.Driver](drv: D, own c: __Conns, fls: __Flights, fl
   return (__h3_flush(r.0, fl.quic), r.1);
 }
 
-function __h3_abandon(own c: __Conns, fl: __Flight): __Conns {
+function __h3_abandon(own c: __Conns, fl: __Flight): own __Conns {
   let i: i32 = __h3_at(c.quic, fl.quic);
   if (i < 0) {
     return c;

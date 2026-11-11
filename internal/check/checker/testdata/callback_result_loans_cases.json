@@ -758,5 +758,45 @@
     "name": "callback read precedes cleanup in one expression",
     "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return 0; } function run(own h: H): i32 { let read = (): i32 => h.read(); return read() + h.close(); }",
     "want": ""
+  },
+  {
+    "name": "inline callback retains owner across later argument",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return 0; } function invoke(f: () => i32, ignored: i32): i32 { return f(); } function run(own h: H): i32 { return invoke((): i32 => h.read(), h.close()); }",
+    "want": "E050"
+  },
+  {
+    "name": "inline callback rejects earlier consumed owner",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return 0; } function invoke(f: () => i32, ignored: i32): i32 { return f(); } function run(own h: H): i32 { h.close(); return invoke((): i32 => h.read(), 0); }",
+    "want": "E050"
+  },
+  {
+    "name": "inline callback retains transitive callback owner",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return 0; } function invoke(f: () => i32, ignored: i32): i32 { return f(); } function run(own h: H): i32 { let read = (): i32 => h.read(); return invoke((): i32 => read(), h.close()); }",
+    "want": "E050"
+  },
+  {
+    "name": "inline callback permits read before later cleanup",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return 0; } function invoke(f: () => i32, ignored: i32): i32 { return f(); } function run(own h: H): i32 { return invoke((): i32 => h.read(), 0) + h.close(); }",
+    "want": ""
+  },
+  {
+    "name": "inline callback permits unrelated owner cleanup",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return 0; } function invoke(f: () => i32, ignored: i32): i32 { return f(); } function run(own h: H, own other: H): i32 { let n = invoke((): i32 => h.read(), other.close()); h.close(); return n; }",
+    "want": ""
+  },
+  {
+    "name": "inline callback without captures permits owner cleanup",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return 0; } function invoke(f: () => i32, ignored: i32): i32 { return f(); } function run(own h: H): i32 { return invoke((): i32 => 7, h.close()); }",
+    "want": ""
+  },
+  {
+    "name": "inline callback retains owner across owned input",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): void {} function invoke(f: () => i32, own h: H): i32 { h.close(); return f(); } function run(own h: H): i32 { return invoke((): i32 => h.read(), h); }",
+    "want": "E050"
+  },
+  {
+    "name": "inline callback copies immutable array before owned input",
+    "source": "function discard(own xs: i32[]): i32 { xs = xs.with(0, 99); return 0; } function invoke(f: () => i32, ignored: i32): i32 { return f(); } function run(own xs: i32[]): i32 { return invoke((): i32 => xs[0], discard(xs)); }",
+    "want": ""
   }
 ]

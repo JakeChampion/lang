@@ -14357,7 +14357,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
           return out;
         }
       }
-      out = call_diags(mfa.obj, s);
+      out = dest_call_diags(mfa.obj, receiver_dest(mfa, dest, s), s);
       match (check_expr(mfa.obj, s)) {
         typeinfo.TypeTuple(mtt) => {
           let tdg = tuple_field_diags(mfa.field, mtt, mfa.line, mfa.col);
@@ -15552,8 +15552,9 @@ function call_diags_struct_lit(sl: ast.ExprStructLit, dest_args: typeinfo.Type[]
       }
     }
     if (sl.has_base && fsig.type_params.len() > 0) {
-      if let typeinfo.TypeStruct(bst) = check_expr(sl.base, s) {
-        if (bst.args.len() == fsig.type_params.len()) {
+      let bt = check_expr(sl.base, s);
+      if let typeinfo.TypeStruct(bst) = bt {
+        if (bst.args.len() == fsig.type_params.len() && (dest_args.len() == 0 || !type_contains_unknown(bt))) {
           args = bst.args;
         }
       }
@@ -15576,7 +15577,11 @@ function call_diags_struct_lit(sl: ast.ExprStructLit, dest_args: typeinfo.Type[]
     out = util.append_diags(out, dest_call_diags(sl.field_values[vi], fdest, s));
   }
   if (sl.has_base) {
-    out = util.append_diags(out, call_diags(sl.base, s));
+    let bdest = t_unknown("no destination");
+    if (dest_args.len() > 0) {
+      bdest = t_struct_g(sl.type_name, dest_args);
+    }
+    out = util.append_diags(out, dest_call_diags(sl.base, bdest, s));
     let bt = check_expr(sl.base, s);
     if (!is_unknown(bt) && !type_eq(bt, t_struct(sl.type_name))) {
       out = out.append(dg_at("E003", "struct-update base must be " + sl.type_name + ", got " + type_label(bt), expr_line(sl.base), expr_col(sl.base)));
@@ -16050,6 +16055,37 @@ function member_dest(name: string, dest: typeinfo.Type, s: Scope): typeinfo.Type
   return type_from_ref_subst(member, u.type_params, du.args, s.type_names());
 }
 
+// The type that a call in receiver position must have for its method to
+// give `dest`: the result type of the method binds its type variables, and
+// they give the receiver type. A receiver with no type of its own has the
+// method of the struct that `dest` is.
+function receiver_dest(mfa: ast.ExprFieldAccess, dest: typeinfo.Type, s: Scope): typeinfo.Type {
+  let none = t_unknown("no destination");
+  let ast.ExprCall(_) = mfa.obj else {
+    return none;
+  };
+  let owner = "";
+  if let typeinfo.TypeStruct(wanted) = dest {
+    owner = wanted.name;
+  }
+  if let typeinfo.TypeStruct(found) = check_expr(mfa.obj, s) {
+    owner = found.name;
+  }
+  let Some(msig) = s.scoped_method(mfa.field, owner) else {
+    return none;
+  };
+  let rref = parser.parse_type_ref(msig.receiver_type);
+  let vars = ref_type_vars(rref, parser.type_str_vars(msig.receiver_type, []), s, []);
+  if (is_unknown(dest) || vars.len() == 0) {
+    return none;
+  }
+  let (names, types) = gc_bind_param(parser.parse_type_ref(msig.ret_type_name), dest, vars, s.type_names(), [], []);
+  if (names.len() != vars.len()) {
+    return none;
+  }
+  return type_from_ref_subst(rref, names, types, s.type_names());
+}
+
 function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[] {
   if let ast.ExprCall(c) = e {
     return call_diags_call(c, s, [], dest);
@@ -16071,6 +16107,17 @@ function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[
     if let typeinfo.TypeStruct(ds) = member_dest(sl.type_name, dest, s) {
       if (ds.name == sl.type_name) {
         return call_diags_struct_lit(sl, ds.args, s, []);
+      }
+    }
+  }
+  if let ast.ExprTuple(tup) = e {
+    if let typeinfo.TypeTuple(dt) = dest {
+      if (dt.elements.len() == tup.elements.len()) {
+        let out: util.Diag[] = [];
+        for i in 0..tup.elements.len() {
+          out = util.append_diags(out, dest_call_diags(tup.elements[i], dt.elements[i], s));
+        }
+        return out;
       }
     }
   }
@@ -18589,7 +18636,7 @@ function ocl_unknown(name: string): OclDef {
 }
 
 function ocl_var(v: ast.StmtVar, own defs: OclDef[]): OclDef[] {
-  let names = lu_var_names(ast.StmtVar(v), []);
+  let names = lu_var_names(v, []);
   if (names.len() == 1 && names[0] == v.name) {
     return defs.append(OclDef { name: v.name, value: v.init });
   }
@@ -18727,8 +18774,21 @@ function lu_pending(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.NameInd
   return cell_new(LastUses { known: false, keys: util.name_index(none), fn: fn, ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, captures_known: false, capture_names: util.name_index(none), capture_rows: [] });
 }
 
-function ow_callback_capture_diags(id: ast.ExprIdent, moved: MovedEntry[], ctx: OwnCtx): util.Diag[] {
-  if (id.builtin || moved.len() == 0 || ow_is_owned(ctx, id.name) || !util.has_str(ctx.bound, id.name)) {
+function ow_callback_capture_diags(value: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): util.Diag[] {
+  if (moved.len() == 0) {
+    return [];
+  }
+  let name = "lambda";
+  if let ast.ExprIdent(id) = value {
+    if (id.builtin || ow_is_owned(ctx, id.name) || !util.has_str(ctx.bound, id.name)) {
+      return [];
+    }
+    name = id.name;
+  } else if let ast.ExprLambda(lm) = value {
+    if (!lm.captures_known) {
+      value = annotate_lambda_expr(lm, ctx.scope, "", t_unknown(""));
+    }
+  } else {
     return [];
   }
   let lu = ctx.last_use.get();
@@ -18737,13 +18797,11 @@ function ow_callback_capture_diags(id: ast.ExprIdent, moved: MovedEntry[], ctx: 
     lu = LastUses { ...lu, captures_known: true, capture_names: facts.names, capture_rows: facts.rows };
     ctx.last_use.set(lu);
   }
-  let at = lu.capture_names.find(id.name);
+  let captures = ocl_value(value, OclFacts { names: lu.capture_names, rows: lu.capture_rows });
   let out: util.Diag[] = [];
-  if (at >= 0) {
-    for capture in lu.capture_rows[at] {
-      if (ow_moved_has(moved, capture.name) && !ow_cached_value_data(capture.type_name, ctx.decls, ctx.value_proofs)) {
-        out = out.append(dg_at("E050", "callback \"" + id.name + "\" uses captured owned parameter \"" + capture.name + "\" after it was consumed (moved at line " + ow_line_text(ow_moved_line(moved, capture.name)) + ")", id.line, id.col));
-      }
+  for capture in captures {
+    if (ow_moved_has(moved, capture.name) && !ow_cached_value_data(capture.type_name, ctx.decls, ctx.value_proofs)) {
+      out = out.append(dg_at("E050", "callback \"" + name + "\" uses captured owned parameter \"" + capture.name + "\" after it was consumed (moved at line " + ow_line_text(ow_moved_line(moved, capture.name)) + ")", expr_line(value), expr_col(value)));
     }
   }
   return out;
@@ -22967,29 +23025,14 @@ function send_arg_diags(arg: ast.Expr, pname: string, c: ast.ExprCall, ctx: OwnC
 // A worker gets a copy of each capture, so a write to a captured variable
 // inside the closure would not reach the variable.
 function send_assign_diags(lm: ast.ExprLambda, pname: string, s: Scope): util.Diag[] {
-  function assigns(st: ast.Stmt, own acc: ast.StmtAssign[]): ast.StmtAssign[] {
-    if let ast.StmtAssign(a) = st {
-      return acc.append(a);
-    }
-    return acc;
-  }
-  function skip(e: ast.Expr, own acc: ast.StmtAssign[]): ast.StmtAssign[] {
-    return acc;
-  }
-  function skip_name(e: ast.Expr, own acc: string[]): string[] {
-    return acc;
-  }
-  function each(e: ast.Expr): boolean {
-    return true;
-  }
   let locals: string[] = [];
   for param in lm.params {
     locals = locals.append(param.name);
   }
   let found: ast.StmtAssign[] = [];
   for st in lm.body {
-    locals = astwalk.fold_stmt_nodes(st, locals, astwalk.binders_of, skip_name, each);
-    found = astwalk.fold_stmt_nodes(st, found, assigns, skip, each);
+    locals = astwalk.fold_stmt_nodes(st, locals, astwalk.binders_of, send_keep_names, astwalk.descend_all);
+    found = astwalk.fold_stmt_nodes(st, found, send_collect_assigns, send_keep_assigns, astwalk.descend_all);
   }
   let out: util.Diag[] = [];
   for a in found {
@@ -22998,6 +23041,21 @@ function send_assign_diags(lm: ast.ExprLambda, pname: string, s: Scope): util.Di
     }
   }
   return out;
+}
+
+function send_collect_assigns(st: ast.Stmt, own acc: ast.StmtAssign[]): ast.StmtAssign[] {
+  if let ast.StmtAssign(a) = st {
+    return acc.append(a);
+  }
+  return acc;
+}
+
+function send_keep_assigns(e: ast.Expr, own acc: ast.StmtAssign[]): ast.StmtAssign[] {
+  return acc;
+}
+
+function send_keep_names(e: ast.Expr, own acc: string[]): string[] {
+  return acc;
 }
 
 // The reason a value of type t cannot be copied into another worker's heap,
@@ -23153,14 +23211,9 @@ function ow_call_capture_diags(c: ast.ExprCall, moved: MovedEntry[], ctx: OwnCtx
   if (prior.len() > 0) {
     return prior;
   }
-  let out: util.Diag[] = [];
-  if let ast.ExprIdent(id) = c.callee {
-    out = util.append_diags(out, ow_callback_capture_diags(id, moved, ctx));
-  }
+  let out = ow_callback_capture_diags(c.callee, moved, ctx);
   for arg in c.args {
-    if let ast.ExprIdent(id) = arg {
-      out = util.append_diags(out, ow_callback_capture_diags(id, moved, ctx));
-    }
+    out = util.append_diags(out, ow_callback_capture_diags(arg, moved, ctx));
   }
   return out;
 }
@@ -23258,7 +23311,7 @@ function ow_path_field_or_empty(path: string, name: string): string {
 function ru_borrow(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
   match (e) {
     ast.ExprIdent(id) => {
-      let d = ow_callback_capture_diags(id, moved, ctx);
+      let d = ow_callback_capture_diags(e, moved, ctx);
       if (!id.builtin && ow_is_owned(ctx, id.name)) {
         d = ow_bare_use_diags(moved, id);
       }
@@ -23273,7 +23326,7 @@ function ru_borrow(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
 function ru_expr(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
   match (e) {
     ast.ExprIdent(id) => {
-      let d = ow_callback_capture_diags(id, moved, ctx);
+      let d = ow_callback_capture_diags(e, moved, ctx);
       let m = moved;
       if (ow_is_owned(ctx, id.name)) {
         d = ow_bare_use_diags(moved, id);

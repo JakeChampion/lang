@@ -166,7 +166,9 @@ function x86_relro_slots(own a: x86_native.X86Asm, tv: i32, dv: i32, runtime: bo
   return x86_native.X86Asm { ...a, rodata: data };
 }
 
-pub function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string, dir: string, pie: boolean): string {
+// `page_align` is the alignment of the load segments. A fixed-address image
+// uses elf_x86_page_align().
+pub function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string, dir: string, pie: boolean, page_align: i32): string {
   util.arr_push_cliff_report("x86:emitted", 0);
   let a = x86_native.x86_gas_assemble_words_unlinked(asm, words);
   util.arr_push_cliff_report("x86:assembled", 0);
@@ -183,9 +185,9 @@ pub function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_nam
   let hdr = x86_native.x86_eh_frame_hdr(a, tv, ev, hv);
   let dv = elf.elf_x86_wx_data_vaddr(a.text.len(), hdr.len(), eh.len());
   if (pie) {
-    dv = elf.elf_x86_pie_data_vaddr(a.text.len(), hdr.len(), eh.len());
+    dv = elf.elf_x86_pie_data_vaddr(a.text.len(), hdr.len(), eh.len(), page_align);
   }
-  let gap = elf.elf_executable_relro_gap(a.relro_pad, elf.elf_x86_page_align());
+  let gap = elf.elf_executable_relro_gap(a.relro_pad, page_align);
   a = x86_native.x86_relro_gap(a, gap);
   let reloc_at = a.rodata.len();
   if (pie) {
@@ -216,7 +218,7 @@ pub function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_nam
   util.arr_push_cliff_report("x86:unwind", 0);
   let bin: u8[] = [];
   if (pie) {
-    bin = elf.elf_program_x86_pie(a.text, hdr, eh, a.rodata, a.bss_size, eoff, a.relro_pad);
+    bin = elf.elf_program_x86_pie(a.text, hdr, eh, a.rodata, a.bss_size, eoff, a.relro_pad, page_align);
   } else {
     bin = elf.elf_program_x86_wx(a.text, hdr, eh, a.rodata, a.bss_size, eoff, a.relro_pad);
   }

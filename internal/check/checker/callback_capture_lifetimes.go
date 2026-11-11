@@ -4,8 +4,9 @@ import "github.com/jakechampion/lang/internal/syntax/ast"
 
 // Local callback aliases retain the resource captures of their definition.
 // Reassigned and shadowed bindings need a separate flow proof.
-func (c *checker) localCallbackCaptures(fn *ast.FuncDecl) map[string][]ast.Param {
+func (c *checker) localCallbackCaptures(fn *ast.FuncDecl) (map[string][]ast.Param, map[*ast.Lambda][]ast.Param) {
 	definitions := map[string][]ast.Expr{}
+	var lambdas []*ast.Lambda
 	add := func(name string, value ast.Expr) {
 		if name != "" && name != "_" {
 			definitions[name] = append(definitions[name], value)
@@ -44,6 +45,7 @@ func (c *checker) localCallbackCaptures(fn *ast.FuncDecl) map[string][]ast.Param
 				}
 			}
 		case *ast.Lambda:
+			lambdas = append(lambdas, n)
 			params(n.Params)
 		case *ast.FuncDecl:
 			add(n.Name, &ast.Lambda{Captures: n.Captures})
@@ -52,6 +54,23 @@ func (c *checker) localCallbackCaptures(fn *ast.FuncDecl) map[string][]ast.Param
 		return true
 	})
 	var resolve func(string, map[string]bool) []ast.Param
+	var captures func(*ast.Lambda, map[string]bool) []ast.Param
+	captures = func(value *ast.Lambda, active map[string]bool) []ast.Param {
+		var out []ast.Param
+		seen := map[string]bool{}
+		for _, capture := range value.Captures {
+			if len(definitions[capture.Name]) > 1 || c.copyableCallResult(capture.Type) {
+				continue
+			}
+			for _, source := range append([]ast.Param{capture}, resolve(capture.Name, active)...) {
+				if !seen[source.Name] {
+					seen[source.Name] = true
+					out = append(out, source)
+				}
+			}
+		}
+		return out
+	}
 	resolve = func(name string, active map[string]bool) []ast.Param {
 		values := definitions[name]
 		if active[name] || len(values) != 1 {
@@ -63,20 +82,7 @@ func (c *checker) localCallbackCaptures(fn *ast.FuncDecl) map[string][]ast.Param
 		case *ast.Ident:
 			return resolve(value.Name, active)
 		case *ast.Lambda:
-			var out []ast.Param
-			seen := map[string]bool{}
-			for _, capture := range value.Captures {
-				if len(definitions[capture.Name]) > 1 || c.copyableCallResult(capture.Type) {
-					continue
-				}
-				for _, source := range append([]ast.Param{capture}, resolve(capture.Name, active)...) {
-					if !seen[source.Name] {
-						seen[source.Name] = true
-						out = append(out, source)
-					}
-				}
-			}
-			return out
+			return captures(value, active)
 		}
 		return nil
 	}
@@ -86,5 +92,9 @@ func (c *checker) localCallbackCaptures(fn *ast.FuncDecl) map[string][]ast.Param
 			out[name] = captures
 		}
 	}
-	return out
+	inline := map[*ast.Lambda][]ast.Param{}
+	for _, lambda := range lambdas {
+		inline[lambda] = captures(lambda, map[string]bool{})
+	}
+	return out, inline
 }

@@ -10893,18 +10893,34 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 
 	type movedSet = map[string]ast.Position
 	var callbackCaptures map[string][]ast.Param
+	var inlineCaptures map[*ast.Lambda][]ast.Param
 	callbackCapturesKnown := false
-	checkCallbackCaptures := func(id *ast.Ident, moved movedSet) {
-		if id == nil || id.Builtin || !id.Local || owned[id.Name] || len(moved) == 0 {
+	checkCallbackCaptures := func(value ast.Expr, moved movedSet) {
+		if value == nil || len(moved) == 0 {
+			return
+		}
+		name := "lambda"
+		switch v := value.(type) {
+		case *ast.Ident:
+			if v.Builtin || !v.Local || owned[v.Name] {
+				return
+			}
+			name = v.Name
+		case *ast.Lambda:
+		default:
 			return
 		}
 		if !callbackCapturesKnown {
-			callbackCaptures = c.localCallbackCaptures(fn)
+			callbackCaptures, inlineCaptures = c.localCallbackCaptures(fn)
 			callbackCapturesKnown = true
 		}
-		for _, capture := range callbackCaptures[id.Name] {
+		captures := callbackCaptures[name]
+		if lambda, ok := value.(*ast.Lambda); ok {
+			captures = inlineCaptures[lambda]
+		}
+		for _, capture := range captures {
 			if at, consumed := moved[capture.Name]; consumed {
-				c.errfCode(id.Pos(), "E050", "callback %q uses captured owned parameter %q after it was consumed (moved at line %d)", id.Name, capture.Name, at.Line)
+				c.errfCode(value.Pos(), "E050", "callback %q uses captured owned parameter %q after it was consumed (moved at line %d)", name, capture.Name, at.Line)
 			}
 		}
 	}
@@ -11184,12 +11200,10 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		dynConsumed := map[*ast.Ident]bool{}
 		fieldTarget := map[*ast.Ident]bool{}
 		fieldMoves := map[*ast.FieldAccess]bool{}
-		var lambdas []*ast.Lambda
 		immediate := map[*ast.Lambda]bool{}
 		ast.Walk(e, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.Lambda:
-				lambdas = append(lambdas, x)
 				return false
 			case *ast.MatchExpr, *ast.IfExpr, *ast.BlockExpr:
 				return false
@@ -11293,6 +11307,19 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			delete(borrow, id)
 		}
 		operands := map[*ast.Ident]bool{}
+		walkLambda := func(lam *ast.Lambda, called bool) {
+			if lam.ReturnOwn {
+				synth := &ast.FuncDecl{Params: append(append([]ast.Param(nil), lam.Captures...), lam.Params...), ReturnType: lam.ReturnType, Body: lam.Body}
+				if c.funcResultBorrowsWith(synth, true) {
+					c.errfCode(lam.Pos(), "E051", "an `own` result must not borrow a closure capture or parameter")
+				}
+			}
+			captures := lam.Captures
+			if called {
+				captures = nil
+			}
+			walkNested(lam.Params, captures, lam.Body, lam.ReturnOwn, lam.ReturnType, moved)
+		}
 		var recordUse func(ast.Node) bool
 		walkOperand := func(value ast.Expr) {
 			id, direct := value.(*ast.Ident)
@@ -11311,15 +11338,19 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				for _, arg := range x.Args {
 					walkOperand(arg)
 				}
-				id, _ := x.Callee.(*ast.Ident)
-				checkCallbackCaptures(id, moved)
+				checkCallbackCaptures(x.Callee, moved)
 				for _, arg := range x.Args {
-					id, _ := arg.(*ast.Ident)
-					checkCallbackCaptures(id, moved)
+					checkCallbackCaptures(arg, moved)
+				}
+				if lambda, ok := x.Callee.(*ast.Lambda); ok {
+					walkLambda(lambda, true)
 				}
 				return false
 
 			case *ast.Lambda:
+				if !immediate[x] {
+					walkLambda(x, false)
+				}
 				return false
 			case *ast.MatchExpr:
 				walkMatchExpr(x, moved)
@@ -11392,19 +11423,6 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			return true
 		}
 		ast.Walk(e, recordUse)
-		for _, lam := range lambdas {
-			if lam.ReturnOwn {
-				synth := &ast.FuncDecl{Params: append(append([]ast.Param(nil), lam.Captures...), lam.Params...), ReturnType: lam.ReturnType, Body: lam.Body}
-				if c.funcResultBorrowsWith(synth, true) {
-					c.errfCode(lam.Pos(), "E051", "an `own` result must not borrow a closure capture or parameter")
-				}
-			}
-			captures := lam.Captures
-			if immediate[lam] {
-				captures = nil
-			}
-			walkNested(lam.Params, captures, lam.Body, lam.ReturnOwn, lam.ReturnType, moved)
-		}
 	}
 
 	// A later iteration starts from the end of the body, when the end is
@@ -15410,8 +15428,11 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			if recvHint != nil {
 				c.setElemHintFor(fa.Target, recvHint)
 				c.expectedType = recvHint
+			} else if want := c.receiverExpected(n, fa, callExpected); want != nil {
+				c.expectedType = want
 			}
 			tt := c.receiverType(fa.Target, s)
+			c.expectedType = nil
 			if recvHint != nil {
 				c.expectedType = nil
 				c.elemHint = nil

@@ -4,7 +4,9 @@ This module runs a program of `std/android/ui` on the host with no phone, for th
 
 ## Model
 
-A `Sim` holds the shell of a program and a `Device` that draws nothing. `start` gives the program a window and draws its first frame. Each function then does what a person does: `tap` and `hold` find an element by the name of its action, `drag` moves a finger, `type_in` types a text into a field, `enter` presses the action key of the keyboard, `key` presses a key of a hardware keyboard, `back` presses the back key, and `after` lets time go by.
+A `Sim` holds the shell of a program and a `Device` that draws nothing. `start` gives the program a window and draws its first frame.
+
+Each function then does what a person does. `tap` and `hold` find an element by the text that it shows, or by what an accessibility service reads for it. `drag` moves a finger, and `type_in` types a text into a field. `enter` presses the action key of the keyboard, `key` presses a key of a hardware keyboard, and `back` presses the back key. `after` lets time go by, and `send` gives the program a message with no touch.
 
 After each event, the simulator draws a frame, as the display does at the next vsync. So the layout that the test reads is the layout that the person sees.
 
@@ -55,7 +57,7 @@ import "std/result";
 <<device>>=
 // The program, its shell, the directory of the device, the size of the
 // window, and the time in ms.
-pub struct Sim[S] { p: ui.Program[S], shell: ui.Shell[S], dir: string, w: i32, h: i32, d: f64, dark: boolean, font: f64, now: i64 }
+pub struct Sim[S, M] { p: ui.Program[S, M], shell: ui.Shell[S, M], dir: string, w: i32, h: i32, d: f64, dark: boolean, font: f64, now: i64 }
 
 const FRAME_MS: i64 = 16i64;
 
@@ -95,7 +97,7 @@ function device(dir: string, w: i32, h: i32, d: f64, dark: boolean, font: f64, n
 // A simulator of the program `p` from the state `state`, on a window of
 // w by h pixels with `d` pixels to the dp, in the light theme. It draws
 // the first frame.
-pub function start[S](own state: S, p: ui.Program[S], fonts: text.Fonts, w: i32, h: i32, d: f64): Sim[S] {
+pub function start[S, M](own state: S, p: ui.Program[S, M], fonts: text.Fonts, w: i32, h: i32, d: f64): Sim[S, M] {
   let dir = temp_dir("fern-ui-sim").unwrap_or(".");
   let s = Sim { p: p, shell: ui.shell(state, fonts, device(dir, w, h, d, false, 1.0, 0i64)), dir: dir, w: w, h: h, d: d, dark: false, font: 1.0, now: 0i64 };
   return event(event(s, android.Start), android.WindowCreated(android.Window { ptr: 1 as usize }));
@@ -103,12 +105,12 @@ pub function start[S](own state: S, p: ui.Program[S], fonts: text.Fonts, w: i32,
 
 // The simulator with the text of the system at the scale `font`: 1 is the
 // default font size.
-pub function scaled[S](own s: Sim[S], font: f64): Sim[S] {
+pub function scaled[S, M](own s: Sim[S, M], font: f64): Sim[S, M] {
   return event(Sim { p: s.p, shell: s.shell, dir: s.dir, w: s.w, h: s.h, d: s.d, dark: s.dark, font: font, now: s.now }, android.WindowResized(android.Window { ptr: 1 as usize }));
 }
 
 // The simulator in the dark theme, or in the light theme.
-pub function themed[S](own s: Sim[S], dark: boolean): Sim[S] {
+pub function themed[S, M](own s: Sim[S, M], dark: boolean): Sim[S, M] {
   return frame(Sim { p: s.p, shell: s.shell, dir: s.dir, w: s.w, h: s.h, d: s.d, dark: dark, font: s.font, now: s.now });
 }
 ```
@@ -120,34 +122,44 @@ pub function themed[S](own s: Sim[S], dark: boolean): Sim[S] {
 ```fern
 <<events>>=
 // The shell with the device of the time of the simulator.
-function at_now[S](own s: Sim[S]): Sim[S] {
+function at_now[S, M](own s: Sim[S, M]): Sim[S, M] {
   let dev = device(s.dir, s.w, s.h, s.d, s.dark, s.font, s.now);
-  return Sim { p: s.p, shell: ui.Shell { app: s.shell.app, host: ui.Host { ...s.shell.host, dev: dev } }, dir: s.dir, w: s.w, h: s.h, d: s.d, dark: s.dark, font: s.font, now: s.now };
+  return Sim { p: s.p, shell: ui.Shell { app: s.shell.app, host: ui.Host { ...s.shell.host, dev: dev }, said: s.shell.said }, dir: s.dir, w: s.w, h: s.h, d: s.d, dark: s.dark, font: s.font, now: s.now };
 }
 
-function stepped[S](own s: Sim[S], e: android.Event): Sim[S] {
+function stepped[S, M](own s: Sim[S, M], e: android.Event): Sim[S, M] {
   let t = at_now(s);
   return Sim { p: t.p, shell: ui.step(t.shell, t.p, e), dir: t.dir, w: t.w, h: t.h, d: t.d, dark: t.dark, font: t.font, now: t.now };
 }
 
 // Draws a frame at the time of the simulator.
-pub function frame[S](own s: Sim[S]): Sim[S] {
+pub function frame[S, M](own s: Sim[S, M]): Sim[S, M] {
   let ns = s.now * 1000000i64;
   return stepped(s, android.Vsync(ns));
 }
 
+function told[S, M](own s: Sim[S, M], m: M): Sim[S, M] {
+  let t = at_now(s);
+  return Sim { p: t.p, shell: ui.send(t.shell, t.p, m), dir: t.dir, w: t.w, h: t.h, d: t.d, dark: t.dark, font: t.font, now: t.now };
+}
+
+// Gives `update` the message `m`, and draws a frame.
+pub function send[S, M](own s: Sim[S, M], m: M): Sim[S, M] {
+  return frame(told(s, m));
+}
+
 // Gives the program the event `e`, and draws a frame.
-pub function event[S](own s: Sim[S], e: android.Event): Sim[S] {
+pub function event[S, M](own s: Sim[S, M], e: android.Event): Sim[S, M] {
   return frame(stepped(s, e));
 }
 
-function later[S](own s: Sim[S], ms: i64): Sim[S] {
+function later[S, M](own s: Sim[S, M], ms: i64): Sim[S, M] {
   return Sim { p: s.p, shell: s.shell, dir: s.dir, w: s.w, h: s.h, d: s.d, dark: s.dark, font: s.font, now: s.now + ms };
 }
 
-// Lets `ms` milliseconds go by. The program gets each Tick that it waits
+// Lets `ms` milliseconds go by. The program gets each tick that it waits
 // for in that time, and a frame after each one.
-pub function after[S](own s: Sim[S], ms: i64): Sim[S] {
+pub function after[S, M](own s: Sim[S, M], ms: i64): Sim[S, M] {
   let t = s;
   let left = ms;
   let turns = 0;
@@ -164,12 +176,12 @@ pub function after[S](own s: Sim[S], ms: i64): Sim[S] {
 }
 
 // The shell of `s` with the device of its time, to read only.
-function at_now_view[S](s: Sim[S]): ui.Shell[S] {
-  return ui.Shell { app: s.shell.app, host: ui.Host { ...s.shell.host, dev: device(s.dir, s.w, s.h, s.d, s.dark, s.font, s.now) } };
+function at_now_view[S, M](s: Sim[S, M]): ui.Shell[S, M] {
+  return ui.Shell { app: s.shell.app, host: ui.Host { ...s.shell.host, dev: device(s.dir, s.w, s.h, s.d, s.dark, s.font, s.now) }, said: s.shell.said };
 }
 
 // Draws frames until no list flings, for at most 10 seconds.
-pub function settle[S](own s: Sim[S]): Sim[S] {
+pub function settle[S, M](own s: Sim[S, M]): Sim[S, M] {
   let t = s;
   let turns = 0;
   while (t.shell.host.input.flinging() && turns < 625) {
@@ -185,47 +197,81 @@ pub function settle[S](own s: Sim[S]): Sim[S] {
 ```fern
 <<gestures>>=
 // A finger goes down at x and y, and lifts 50 ms later.
-pub function tap_at[S](own s: Sim[S], x: i32, y: i32): Sim[S] {
+pub function tap_at[S, M](own s: Sim[S, M], x: i32, y: i32): Sim[S, M] {
   let pressed = event(s, android.Touch(0, x as f32, y as f32));
   return event(later(pressed, 50i64), android.Touch(1, x as f32, y as f32));
 }
 
-// The middle of the part that shows of the first node with the action
-// `name` and the number `arg`, for a tap when `long` is false and for a
-// long press when it is true.
-function target[S](s: Sim[S], name: string, arg: i32, long: boolean): Option[(i32, i32)] {
-  for n in s.shell.host.lay.nodes {
-    let a = n.tap;
-    if (long) {
-      a = n.long;
+// The node shows the text `label`, or an accessibility service reads
+// `label` for it.
+function labelled(n: scene.Node, label: string): boolean {
+  if (n.say == label) {
+    return true;
+  }
+  match (n.paint) {
+    scene.Label(t, _, _, _, _) => {
+      return t == label;
+    },
+    _ => {
+      return false;
     }
-    let y0 = n.y.max(n.clip0);
-    let y1 = (n.y + n.h).min(n.clip1);
-    if (a.name == name && a.arg == arg && y1 > y0 && n.w > 0) {
-      return Some((n.x + n.w / 2, (y0 + y1) / 2));
+  }
+}
+
+// The middle of the part that shows of the node `n`, or None when no part
+// of it shows. A text that no font can draw has no size, and it shows
+// while its place is in the rows of its list.
+function middle(n: scene.Node): Option[(i32, i32)] {
+  let y0 = n.y.max(n.clip0);
+  let y1 = (n.y + n.h).min(n.clip1);
+  let empty = n.h == 0 && n.y >= n.clip0 && n.y < n.clip1;
+  if (y1 <= y0 && !empty) {
+    return None;
+  }
+  return Some((n.x + n.w / 2, (y0 + y1) / 2));
+}
+
+// Where a person puts a finger for `label`: the middle of the element
+// number `nth`, from 0, that shows or says `label`.
+function place_of[S, M](s: Sim[S, M], label: string, nth: i32): Option[(i32, i32)] {
+  let seen = 0;
+  for n in s.shell.host.lay.nodes {
+    if (labelled(n, label)) {
+      if let Some(at) = middle(n) {
+        if (seen == nth) {
+          return Some(at);
+        }
+        seen += 1;
+      }
     }
   }
   return None;
 }
 
-// A tap on the element with the action `name` and the number 0. Nothing
-// happens when the screen shows no such element.
-pub function tap[S](own s: Sim[S], name: string): Sim[S] {
-  return tap_with(s, name, 0);
+// A tap on the first element that shows or says `label`. Nothing happens
+// when the screen shows no such element.
+pub function tap[S, M](own s: Sim[S, M], label: string): Sim[S, M] {
+  return tap_nth(s, label, 0);
 }
 
-// A tap on the element with the action `name` and the number `arg`.
-pub function tap_with[S](own s: Sim[S], name: string, arg: i32): Sim[S] {
-  let Some((x, y)) = target(s, name, arg, false) else {
+// A tap on the element number `nth`, from 0, that shows or says `label`.
+pub function tap_nth[S, M](own s: Sim[S, M], label: string, nth: i32): Sim[S, M] {
+  let Some((x, y)) = place_of(s, label, nth) else {
     return s;
   };
   return tap_at(s, x, y);
 }
 
-// A finger stays for 600 ms on the element with the long-press action
-// `name` and the number `arg`, then lifts.
-pub function hold[S](own s: Sim[S], name: string, arg: i32): Sim[S] {
-  let Some((x, y)) = target(s, name, arg, true) else {
+// A finger stays for 600 ms on the first element that shows or says
+// `label`, then lifts.
+pub function hold[S, M](own s: Sim[S, M], label: string): Sim[S, M] {
+  return hold_nth(s, label, 0);
+}
+
+// A finger stays for 600 ms on the element number `nth`, from 0, that
+// shows or says `label`, then lifts.
+pub function hold_nth[S, M](own s: Sim[S, M], label: string, nth: i32): Sim[S, M] {
+  let Some((x, y)) = place_of(s, label, nth) else {
     return s;
   };
   let pressed = event(s, android.Touch(0, x as f32, y as f32));
@@ -234,7 +280,7 @@ pub function hold[S](own s: Sim[S], name: string, arg: i32): Sim[S] {
 
 // A finger goes down at x0 and y0, moves to x1 and y1 in `ms`
 // milliseconds, and lifts there. A frame draws each 16 ms.
-pub function drag[S](own s: Sim[S], x0: i32, y0: i32, x1: i32, y1: i32, ms: i64): Sim[S] {
+pub function drag[S, M](own s: Sim[S, M], x0: i32, y0: i32, x1: i32, y1: i32, ms: i64): Sim[S, M] {
   let t = event(s, android.Touch(0, x0 as f32, y0 as f32));
   let steps = (ms / FRAME_MS).max(1i64) as i32;
   for i in 1..steps + 1 {
@@ -247,24 +293,31 @@ pub function drag[S](own s: Sim[S], x0: i32, y0: i32, x1: i32, y1: i32, ms: i64)
 
 // A tap on the field `name`, then the keyboard of the system gives it the
 // text `text`.
-pub function type_in[S](own s: Sim[S], name: string, text: string): Sim[S] {
-  return event(tap(s, ui.FIELD_ACTION + name), android.Text(text));
+pub function type_in[S, M](own s: Sim[S, M], name: string, text: string): Sim[S, M] {
+  for n in s.shell.host.lay.nodes {
+    if (n.tap.name == ui.FIELD_ACTION + name) {
+      if let Some((x, y)) = middle(n) {
+        return event(tap_at(s, x, y), android.Text(text));
+      }
+    }
+  }
+  return s;
 }
 
 // The action key of the keyboard goes down.
-pub function enter[S](own s: Sim[S]): Sim[S] {
+pub function enter[S, M](own s: Sim[S, M]): Sim[S, M] {
   return event(s, android.TextAction(android.ACTION_DONE));
 }
 
 // The key with the Android key code `code` goes down and up: 66 is the
 // enter key, 67 is the delete key, and 21 and 22 are the left and the right
 // arrow.
-pub function key[S](own s: Sim[S], code: i32): Sim[S] {
+pub function key[S, M](own s: Sim[S, M], code: i32): Sim[S, M] {
   return event(event(s, android.Key(code, 0)), android.Key(code, 1));
 }
 
 // The back key goes down and up.
-pub function back[S](own s: Sim[S]): Sim[S] {
+pub function back[S, M](own s: Sim[S, M]): Sim[S, M] {
   return event(event(s, android.Key(4, 0)), android.Key(4, 1));
 }
 ```
@@ -275,7 +328,7 @@ pub function back[S](own s: Sim[S]): Sim[S] {
 <<reading>>=
 // The texts that the screen shows, in the order that they draw. A text
 // outside the rows of its list does not show.
-pub function texts[S](s: Sim[S]): string[] {
+pub function texts[S, M](s: Sim[S, M]): string[] {
   let out: string[] = [];
   for n in s.shell.host.lay.nodes {
     match (n.paint) {
@@ -291,18 +344,18 @@ pub function texts[S](s: Sim[S]): string[] {
 }
 
 // The screen shows the text `t`.
-pub function shows[S](s: Sim[S], t: string): boolean {
+pub function shows[S, M](s: Sim[S, M], t: string): boolean {
   return texts(s).contains(t);
 }
 
 // The program closed the app.
-pub function finished[S](s: Sim[S]): boolean {
+pub function finished[S, M](s: Sim[S, M]): boolean {
   return testkit.read_text(s.dir + "/calls").contains("finish");
 }
 
 // The text that the keyboard of the system shows, or None while the
 // keyboard does not show.
-pub function keyboard[S](s: Sim[S]): Option[string] {
+pub function keyboard[S, M](s: Sim[S, M]): Option[string] {
   let last = "no keyboard";
   for line in testkit.read_text(s.dir + "/calls").split("\n") {
     if (line == "no keyboard" || line.starts_with("keyboard ")) {
@@ -317,7 +370,7 @@ pub function keyboard[S](s: Sim[S]): Option[string] {
 
 // What an accessibility service reads on the screen, one item for each
 // line.
-pub function spoken[S](s: Sim[S]): string[] {
+pub function spoken[S, M](s: Sim[S, M]): string[] {
   let out: string[] = [];
   for line in testkit.read_text(s.dir + "/spoken").split("\n") {
     out = out.append(line.to_owned());
@@ -327,7 +380,7 @@ pub function spoken[S](s: Sim[S]): string[] {
 
 // The screen on a frame, as the CPU draws it. Release the frame with
 // draw.release.
-pub function picture[S](s: Sim[S]): draw.Frame {
+pub function picture[S, M](s: Sim[S, M]): draw.Frame {
   let host = s.shell.host;
   let fr = draw.offscreen(s.w, s.h);
   fr.fill(0, 0, s.w, s.h, host.screen.theme.background);

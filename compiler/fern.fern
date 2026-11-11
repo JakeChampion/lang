@@ -5957,6 +5957,13 @@ function executable_pie(pie: boolean, target: string, shared: boolean): boolean 
   return pie || target == "x86-64-android" && !shared;
 }
 
+function x86_executable_page_align(target: string): i32 {
+  if (target == "x86-64-android") {
+    return elf.elf_x86_android_page_align();
+  }
+  return elf.elf_x86_page_align();
+}
+
 function shared_refusal(shared: boolean, target: string, out_path: string, emit: string): string {
   if (!shared) {
     return "";
@@ -7187,7 +7194,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
         return 2;
       }
     } else if (!emit_text) {
-      out_asm = elfimage.x86_elf_binary(out_asm, words_of(recs), emit_syms, remap_path(remaps, entry_path), remap_path(remaps, comp_dir()), pie);
+      out_asm = elfimage.x86_elf_binary(out_asm, words_of(recs), emit_syms, remap_path(remaps, entry_path), remap_path(remaps, comp_dir()), pie, x86_executable_page_align(target));
       if (out_asm.len() == 0) {
         return 2;
       }

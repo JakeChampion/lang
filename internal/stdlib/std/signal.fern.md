@@ -8,7 +8,7 @@ Signal helpers install an ignore, default, or catch policy. Poll helpers report 
 
 ## Contracts
 
-These operations change process state. The public constants use the runtime signal convention, and host-specific conversion stays behind the runtime interface.
+These operations change process state. A signal number is the number of the host. Each public constant has one number on Linux and on Darwin, and `sigchld()` gives the number of the host.
 
 ## Module assembly
 
@@ -49,6 +49,14 @@ pub const SIGHUP: i32 = 1;
 pub const SIGQUIT: i32 = 3;
 
 pub const SIGTERM: i32 = 15;
+
+// The signal for the exit of a child. Its number is not the same on each host.
+pub function sigchld(): i32 {
+  if (target_os() == "darwin") {
+    return 20;
+  }
+  return 17;
+}
 ```
 
 ### `3 pub function ignore(sig: i32): i32`

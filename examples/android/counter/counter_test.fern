@@ -29,11 +29,11 @@ function test_fonts(): text.Fonts {
 }
 
 // A phone of 1080 by 2400 pixels at 2.75 pixels to the dp.
-function started(): sim.Sim[counter.Model] {
+function started(): sim.Sim[counter.Model, counter.Msg] {
   return sim.start(counter.Model { count: 0 }, counter.program(), test_fonts(), 1080, 2400, 2.75);
 }
 
-function saved(s: sim.Sim[counter.Model], name: string): void {
+function saved(s: sim.Sim[counter.Model, counter.Msg], name: string): void {
   if let Some(out) = env("COUNTER_UI_PNG") {
     let fr = sim.picture(s);
     let ok = testkit.save_png(fr, out + "/" + name + ".png");
@@ -48,13 +48,13 @@ function test_starts_at_zero(): test.TestOutcome {
 }
 
 function test_add_and_reset(): test.TestOutcome {
-  let s = sim.tap(started(), "add");
+  let s = sim.tap(started(), "Add one");
   let one = sim.texts(s).join("|");
-  s = sim.tap(sim.tap(s, "add"), "add");
+  s = sim.tap(sim.tap(s, "Add one"), "Add one");
   let three = s.shell.app.count;
   s = sim.themed(s, true);
   saved(s, "counter-dark");
-  s = sim.tap(s, "reset");
+  s = sim.tap(s, "Reset");
   return test.assert_eq(one + " " + three.to_string() + " " + s.shell.app.count.to_string(), "You pressed the button|1|time|Reset|Add one 3 0");
 }
 

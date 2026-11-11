@@ -9,8 +9,14 @@ function __fern_reactor_ctl(r_fd: i32, op: i32, fd: i32, arg: i32): i32 {
       __raw_store8(act, z, 0);
       z += 1;
     }
-    __raw_store8(act, 0, 1);
-    __syscall4(46, fd as i64, act as i64, 0, 8);
+    // An ignored SIGCHLD (20) makes the kernel reap each child.
+    if (fd != 20) {
+      __raw_store8(act, 0, 1);
+      let ignored = __syscall4(46, fd as i64, act as i64, 0, 8) as i32;
+      if (ignored < 0) {
+        return ignored;
+      }
+    }
     let ch = __raw_scratch(32);
     let sig_fd = fd;
     let sig_filter: i32 = -6;

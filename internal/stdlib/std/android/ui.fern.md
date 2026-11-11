@@ -4,7 +4,9 @@ This module makes the screens of a NativeActivity app from a tree of elements. T
 
 ## Model
 
-An app is a `Program`: a `view` and an `update`. `view` takes the state and the `Screen`, and gives an `El`: the tree of what the screen shows. `update` takes the state and a `Msg`, and gives the next state. The app does not draw, and it does not find what a touch is on.
+An app is a `Program`: a `view` and an `update`. `view` takes the state and the `Screen`, and gives an `El`: the tree of what the screen shows. `update` takes the state and a message, and gives the next state. The app does not draw, and it does not find what a touch is on.
+
+The app declares the type of its messages, usually an enum with one variant for each thing that can occur. `El[M]` is a tree whose elements give messages of the type `M`. The compiler finds `M` from the result type of `view`, so the calls that make the elements do not write it. A `match` in `update` must handle each variant, so the compiler finds a message that `update` does not handle.
 
 The executable example below is such an app.
 
@@ -16,9 +18,9 @@ The executable example below is such an app.
 
 Each element has a width and a height: `Hug` takes the size of what the element holds, `Grow` takes a share of the room that is left, and `Exact` is a size in dp. The methods of `El` set them, and they set the padding, the gap, the background, the corners and the border. Sizes are in dp, and text sizes are in sp: a text grows with the font size that the person set for the system. `align` sets where a column or a row puts its elements across it, and `justify` sets where it puts them along it.
 
-`on_tap` gives an element the name of an action, and a number when one name is not enough: the row of a list, for example. A tap on the element comes to `update` as `Tap` with that name and number. `on_long` does the same for a long press.
+`on_tap` gives an element a message. A tap on the element gives that message to `update`. A message can hold values: the row of a list, for example. `on_long` does the same for a long press.
 
-`field` is a text field of one line, and `area` is a text field of more than one line. A tap gives a field the focus and shows the keyboard of the system, and a tap on its text puts the caret there. The program keeps the text: each change comes to `update` as `Edit` with the name of the field and the new text, and `view` gives the field the text that it shows.
+`field` is a text field of one line, and `area` is a text field of more than one line. A tap gives a field the focus and shows the keyboard of the system, and a tap on its text puts the caret there. The program keeps the text. `on_edit` gives the field a function that makes a message from the new text, and each change gives that message to `update`. `view` gives the field the text that it shows. `on_submit` gives the field the message of the action key of the keyboard.
 
 `scroll` makes a column a list that scrolls down, and a row a list that scrolls across, with the fling of an Android list and a spring at each end. `list` is a list that makes only the rows that show, so a list of many rows costs as much as a short one. Each list has a name, which keeps its position from frame to frame.
 
@@ -26,7 +28,7 @@ A color is a pixel word of `std/android/draw`, or a role: `PRIMARY`, `ON_PRIMARY
 
 ### Messages
 
-`Tap` and `LongPress` have the name and the number of the action. `Edit` has the name of a field and its new text, and `Submit` has the name of the field when the action key of the keyboard goes down. `Back` comes for the back key when the program handles it. `Tick` comes when the time of `wait` goes by, and `Frame` comes for each frame while `animating` is true, with the time of the frame. `System` has each event of `std/android` that this module does not use itself.
+An element gives the messages of `on_tap`, `on_long`, `on_edit` and `on_submit`. A program gives the others. `with_tick` gives a message each time the time of its `wait` goes by. `with_frames` gives a message for each frame while its `animating` is true, with the time of the frame. `with_back` gives a message for the back key, or lets the back key close the app. `with_system` gives a message for an event of `std/android` that this module does not use itself.
 
 ### What the module does
 
@@ -36,7 +38,7 @@ A color is a pixel word of `std/android/draw`, or a role: `PRIMARY`, `ON_PRIMARY
 
 `view` must be pure: it gives the same tree for the same state and screen. The shell calls it for each frame that it draws.
 
-The name of an action is not "", and it does not start with `FIELD_ACTION`. A list has a name that no other list of the same screen has, and so has a field.
+A list has a name that no other list of the same screen has, and so has a field.
 
 `step` takes the events of `android.run` on the loop thread. Each function of a `Device` runs on that thread.
 
@@ -51,17 +53,16 @@ import "std/android/ui";
 
 struct Model { count: i32 }
 
-function view(m: Model, s: ui.Screen): ui.El {
-  return ui.column([ui.text(m.count.to_string()).sized(72.0), ui.button("Add one", "add")]).spaced(24.0).centered();
+enum Msg { Add }
+
+function view(m: Model, s: ui.Screen): ui.El[Msg] {
+  return ui.column([ui.text(m.count.to_string()).sized(72.0), ui.button("Add one", Add)]).spaced(24.0).centered();
 }
 
-function update(own m: Model, msg: ui.Msg): Model {
+function update(own m: Model, msg: Msg): Model {
   match (msg) {
-    ui.Tap("add", _) => {
+    Add => {
       return Model { count: m.count + 1 };
-    },
-    _ => {
-      return m;
     }
   }
 }
@@ -69,8 +70,8 @@ function update(own m: Model, msg: ui.Msg): Model {
 function main(): i32 {
   let screen = ui.Screen { w: 400, h: 800, d: 2.0, dark: false, theme: ui.theme(false), left: 0, top: 0, right: 0, bottom: 0, font: 1.0 };
   let lay = ui.layout(view(Model { count: 0 }, screen), text.Fonts { faces: [], weights: [] }, screen, map_new(4), ui.no_focus());
-  let next = update(Model { count: 0 }, ui.Tap("add", 0));
-  if (lay.nodes.len() == 3 && next.count == 1) {
+  let next = update(Model { count: 0 }, lay.taps[0]);
+  if (lay.nodes.len() == 3 && lay.taps.len() == 1 && next.count == 1) {
     return 0;
   }
   return 1;
@@ -239,9 +240,9 @@ pub const BETWEEN: i32 = 4;
 // Padding in dp.
 pub struct Edges { left: f64, top: f64, right: f64, bottom: f64 }
 
-pub struct El {
+pub struct El[M] {
   kind: i32,
-  kids: El[],
+  kids: El[M][],
   w: Size,
   h: Size,
   pad: Edges,
@@ -252,8 +253,9 @@ pub struct El {
   radius: f64,
   edge: i32,
   edge_width: f64,
-  tap: scene.Action,
-  long: scene.Action,
+  // The messages of a tap and of a long press.
+  tap: Option[M],
+  long: Option[M],
   barrier: boolean,
   say: string,
   // The name of the list that the element is, or "".
@@ -271,63 +273,67 @@ pub struct El {
   // A list of `count` rows of `row` dp, which `build` makes.
   count: i32,
   row: f64,
-  build: Option[(i32) => El],
+  build: Option[(i32) => El[M]],
   // A text field: its name and the text that it shows while it is empty.
   // `content` is its text.
   field: string,
   hint: string,
+  // A text field: the message of a change of its text, and the message of
+  // the action key of the keyboard.
+  edit: Option[(string) => M],
+  submit: Option[M],
 }
 
-function element(kind: i32, kids: El[]): El {
-  return El { kind: kind, kids: kids, w: Hug, h: Hug, pad: Edges { left: 0.0, top: 0.0, right: 0.0, bottom: 0.0 }, gap: 0.0, align: START, justify: START, bg: 0, radius: 0.0, edge: 0, edge_width: 0.0, tap: scene.no_action(), long: scene.no_action(), barrier: false, say: "", list: "", content: "", size: 14.0, weight: 400, ink: INK, lines: 0, key: "", image: None, paint: None, count: 0, row: 0.0, build: None, field: "", hint: "" };
+function element[M](kind: i32, kids: El[M][]): El[M] {
+  return El { kind: kind, kids: kids, w: Hug, h: Hug, pad: Edges { left: 0.0, top: 0.0, right: 0.0, bottom: 0.0 }, gap: 0.0, align: START, justify: START, bg: 0, radius: 0.0, edge: 0, edge_width: 0.0, tap: None, long: None, barrier: false, say: "", list: "", content: "", size: 14.0, weight: 400, ink: INK, lines: 0, key: "", image: None, paint: None, count: 0, row: 0.0, build: None, field: "", hint: "", edit: None, submit: None };
 }
 
 // The elements one below the other.
-pub function column(kids: El[]): El {
+pub function column[M](kids: El[M][]): El[M] {
   return element(COLUMN, kids);
 }
 
 // The elements side by side.
-pub function row(kids: El[]): El {
+pub function row[M](kids: El[M][]): El[M] {
   return element(ROW, kids);
 }
 
 // The elements one over the other: the last one is on top.
-pub function stack(kids: El[]): El {
+pub function stack[M](kids: El[M][]): El[M] {
   return element(STACK, kids);
 }
 
 // An empty rectangle.
-pub function box(): El {
+pub function box[M](): El[M] {
   return element(STACK, []);
 }
 
 // An element that takes the room that is left in a column or a row.
-pub function space(): El {
+pub function space[M](): El[M] {
   return El { ...element(STACK, []), w: Grow(1.0), h: Grow(1.0) };
 }
 
 // The text `s`, at 14 sp in the ink of the theme.
-pub function text(s: string): El {
+pub function text[M](s: string): El[M] {
   return El { ...element(TEXT, []), content: s };
 }
 
 // The image `img`, scaled to cover the box of the element. `key` names the
 // pixels of the image.
-pub function picture(key: string, img: draw.Image): El {
+pub function picture[M](key: string, img: draw.Image): El[M] {
   return El { ...element(PICTURE, []), key: key, image: Some(img) };
 }
 
 // What `paint` draws in the box that it gets as x, y, width and height.
 // `key` names what it draws: a new key draws it again.
-pub function canvas(key: string, paint: (draw.Frame, i32, i32, i32, i32) => void): El {
+pub function canvas[M](key: string, paint: (draw.Frame, i32, i32, i32, i32) => void): El[M] {
   return El { ...element(CANVAS, []), key: key, paint: Some(paint) };
 }
 
 // A list with the name `name` that scrolls: `count` rows of `row` dp each.
 // `build` makes the row of an index, and the list makes only the rows that
 // show.
-pub function list(name: string, count: i32, row: f64, build: (i32) => El): El {
+pub function list[M](name: string, count: i32, row: f64, build: (i32) => El[M]): El[M] {
   return El { ...element(LIST, []), list: name, count: count, row: row, build: Some(build), w: Grow(1.0), h: Grow(1.0) };
 }
 ```
@@ -338,7 +344,7 @@ A field is 56 dp high, as a text field of Material 3. The line below it is in th
 
 An `area` wraps its text. When the text has more lines than the area, the area shows the lines around the caret.
 
-The node of a field has a tap action with the name of the field after `FIELD_ACTION`. The shell gives the focus to the field for that action, and does not give the action to the program.
+The node of a field has a tap action with the name of the field after `FIELD_ACTION`. The shell gives the focus to the field for that action.
 
 ```fern
 <<text fields>>=
@@ -346,21 +352,20 @@ The node of a field has a tap action with the name of the field after `FIELD_ACT
 pub const FIELD_ACTION: string = "std/android/ui.field:";
 
 // A text field with the name `name`, which shows `value`, or `hint` while
-// `value` is empty. A tap gives it the focus and shows the keyboard. Each
-// change of the text gives the message Edit(name, text), and the action
-// key of the keyboard gives Submit(name).
-pub function field(name: string, value: string, hint: string): El {
+// `value` is empty. A tap gives it the focus and shows the keyboard.
+// `on_edit` and `on_submit` give it its messages.
+pub function field[M](name: string, value: string, hint: string): El[M] {
   return El { ...element(FIELD, []), field: name, content: value, hint: hint, size: 16.0, w: Grow(1.0), h: Exact(56.0), pad: Edges { left: 16.0, top: 0.0, right: 16.0, bottom: 0.0 }, bg: SURFACE, radius: 4.0 };
 }
 
 // A text field of `rows` lines. Its text wraps, and the enter key of the
-// keyboard starts a new line, so it gives no Submit message.
-pub function area(name: string, value: string, hint: string, rows: i32): El {
+// keyboard starts a new line, so it gives no message of `on_submit`.
+pub function area[M](name: string, value: string, hint: string, rows: i32): El[M] {
   return El { ...field(name, value, hint), lines: rows.max(2), h: Hug, pad: Edges { left: 16.0, top: 16.0, right: 16.0, bottom: 16.0 } };
 }
 
 // The field `name` in the tree `e`.
-function field_el(e: El, name: string): Option[El] {
+function field_el[M](e: El[M], name: string): Option[El[M]] {
   if (e.kind == FIELD && e.field == name) {
     return Some(e);
   }
@@ -370,6 +375,17 @@ function field_el(e: El, name: string): Option[El] {
     }
   }
   return None;
+}
+
+// Each change of the text of the field gives the message that `edit` makes
+// from the new text.
+pub function (e: El[M]) on_edit(edit: (string) => M): El[M] {
+  return El { ...e, edit: Some(edit) };
+}
+
+// The action key of the keyboard gives the message `m`.
+pub function (e: El[M]) on_submit(m: M): El[M] {
+  return El { ...e, submit: Some(m) };
 }
 
 // The field that has the focus, or "", and the character that its caret
@@ -386,124 +402,119 @@ pub function no_focus(): Focus {
 ```fern
 <<element methods>>=
 // The width and the height in dp.
-pub function (e: El) width(dp: f64): El {
+pub function (e: El[M]) width(dp: f64): El[M] {
   return El { ...e, w: Exact(dp) };
 }
 
-pub function (e: El) height(dp: f64): El {
+pub function (e: El[M]) height(dp: f64): El[M] {
   return El { ...e, h: Exact(dp) };
 }
 
 // The element takes a share of the room that is left along the column or
 // the row that holds it, with the weight `weight`.
-pub function (e: El) grow(weight: f64): El {
+pub function (e: El[M]) grow(weight: f64): El[M] {
   return El { ...e, w: Grow(weight), h: Grow(weight) };
 }
 
 // The element takes the whole width, or the whole height, that it can get.
-pub function (e: El) wide(): El {
+pub function (e: El[M]) wide(): El[M] {
   return El { ...e, w: Grow(1.0) };
 }
 
-pub function (e: El) tall(): El {
+pub function (e: El[M]) tall(): El[M] {
   return El { ...e, h: Grow(1.0) };
 }
 
 // Padding of `dp` on each side.
-pub function (e: El) padding(dp: f64): El {
+pub function (e: El[M]) padding(dp: f64): El[M] {
   return El { ...e, pad: Edges { left: dp, top: dp, right: dp, bottom: dp } };
 }
 
 // Padding of `x` dp at the left and the right, and `y` dp at the top and
 // the bottom.
-pub function (e: El) padding_xy(x: f64, y: f64): El {
+pub function (e: El[M]) padding_xy(x: f64, y: f64): El[M] {
   return El { ...e, pad: Edges { left: x, top: y, right: x, bottom: y } };
 }
 
 // The room between the elements of a column or a row, in dp.
-pub function (e: El) spaced(dp: f64): El {
+pub function (e: El[M]) spaced(dp: f64): El[M] {
   return El { ...e, gap: dp };
 }
 
 // Where a column or a row puts its elements across it: START, CENTER, END
 // or STRETCH. A stack puts its elements there from left to right.
-pub function (e: El) aligned(a: i32): El {
+pub function (e: El[M]) aligned(a: i32): El[M] {
   return El { ...e, align: a };
 }
 
 // Where a column or a row puts its elements along it: START, CENTER, END
 // or BETWEEN. A stack puts its elements there from top to bottom.
-pub function (e: El) justified(j: i32): El {
+pub function (e: El[M]) justified(j: i32): El[M] {
   return El { ...e, justify: j };
 }
 
 // The elements go in the middle, along and across.
-pub function (e: El) centered(): El {
+pub function (e: El[M]) centered(): El[M] {
   return El { ...e, align: CENTER, justify: CENTER };
 }
 
 // The color behind the element.
-pub function (e: El) background(color: i32): El {
+pub function (e: El[M]) background(color: i32): El[M] {
   return El { ...e, bg: color };
 }
 
 // Round corners of `dp`.
-pub function (e: El) rounded(dp: f64): El {
+pub function (e: El[M]) rounded(dp: f64): El[M] {
   return El { ...e, radius: dp };
 }
 
 // A line of `dp` in `color` along the edge.
-pub function (e: El) border(color: i32, dp: f64): El {
+pub function (e: El[M]) border(color: i32, dp: f64): El[M] {
   return El { ...e, edge: color, edge_width: dp };
 }
 
-// A tap gives the message Tap(name, 0).
-pub function (e: El) on_tap(name: string): El {
-  return El { ...e, tap: scene.Action { name: name, arg: 0 } };
+// A tap gives the message `m`.
+pub function (e: El[M]) on_tap(m: M): El[M] {
+  return El { ...e, tap: Some(m) };
 }
 
-// A tap gives the message Tap(name, arg).
-pub function (e: El) on_tap_with(name: string, arg: i32): El {
-  return El { ...e, tap: scene.Action { name: name, arg: arg } };
-}
-
-// A long press gives the message LongPress(name, arg).
-pub function (e: El) on_long(name: string, arg: i32): El {
-  return El { ...e, long: scene.Action { name: name, arg: arg } };
+// A long press gives the message `m`.
+pub function (e: El[M]) on_long(m: M): El[M] {
+  return El { ...e, long: Some(m) };
 }
 
 // Touches do not go to the elements below this one.
-pub function (e: El) modal(): El {
+pub function (e: El[M]) modal(): El[M] {
   return El { ...e, barrier: true };
 }
 
 // What an accessibility service reads for the element.
-pub function (e: El) described(say: string): El {
+pub function (e: El[M]) described(say: string): El[M] {
   return El { ...e, say: say };
 }
 
 // A column that scrolls down, or a row that scrolls across, as the list
 // `name`.
-pub function (e: El) scroll(name: string): El {
+pub function (e: El[M]) scroll(name: string): El[M] {
   return El { ...e, list: name };
 }
 
 // The size of a text in sp, its weight from 100 to 900, and its color.
-pub function (e: El) sized(sp: f64): El {
+pub function (e: El[M]) sized(sp: f64): El[M] {
   return El { ...e, size: sp };
 }
 
-pub function (e: El) weighted(weight: i32): El {
+pub function (e: El[M]) weighted(weight: i32): El[M] {
   return El { ...e, weight: weight };
 }
 
-pub function (e: El) colored(color: i32): El {
+pub function (e: El[M]) colored(color: i32): El[M] {
   return El { ...e, ink: color };
 }
 
 // A text of at most `n` lines: the last line ends with an ellipsis when
 // the text is longer.
-pub function (e: El) clamped(n: i32): El {
+pub function (e: El[M]) clamped(n: i32): El[M] {
   return El { ...e, lines: n };
 }
 ```
@@ -514,51 +525,53 @@ The sizes are those of Material 3: a button is 40 dp high with corners of 20 dp,
 
 ```fern
 <<widgets>>=
-function button_row(label: string, color: i32): El {
+function button_row[M](label: string, color: i32): El[M] {
   return row([text(label).weighted(500).colored(color)]).centered().padding_xy(24.0, 0.0).height(40.0).rounded(20.0);
 }
 
-// A button in the primary color. A tap gives Tap(name, 0).
-pub function button(label: string, name: string): El {
-  return button_row(label, ON_PRIMARY).background(PRIMARY).on_tap(name);
+// A button in the primary color. A tap gives the message `m`.
+pub function button[M](label: string, m: M): El[M] {
+  return button_row(label, ON_PRIMARY).background(PRIMARY).on_tap(m);
 }
 
 // A button with a border and no fill.
-pub function outlined_button(label: string, name: string): El {
-  return button_row(label, PRIMARY).border(OUTLINE, 1.0).on_tap(name);
+pub function outlined_button[M](label: string, m: M): El[M] {
+  return button_row(label, PRIMARY).border(OUTLINE, 1.0).on_tap(m);
 }
 
 // A button with its text only.
-pub function text_button(label: string, name: string): El {
-  return El { ...button_row(label, PRIMARY), pad: Edges { left: 12.0, top: 0.0, right: 12.0, bottom: 0.0 } }.on_tap(name);
+pub function text_button[M](label: string, m: M): El[M] {
+  return button_row(label, PRIMARY).padding_xy(12.0, 0.0).on_tap(m);
 }
 
 // The elements in a column on the surface color, with round corners.
-pub function card(kids: El[]): El {
+pub function card[M](kids: El[M][]): El[M] {
   return column(kids).padding(16.0).background(SURFACE).rounded(12.0);
 }
 
 // A line of 1 dp across a column.
-pub function divider(): El {
-  return El { ...box(), w: Grow(1.0) }.height(1.0).background(OUTLINE);
+pub function divider[M](): El[M] {
+  return box().wide().height(1.0).background(OUTLINE);
 }
 
-// A switch that is on or off. A tap gives Tap(name, 0).
-pub function toggle(on: boolean, name: string): El {
-  let track = row([box().width(16.0).height(16.0).rounded(8.0).background(OUTLINE)]).padding(8.0).border(OUTLINE, 2.0);
+// A switch that is on or off. A tap gives the message `m`. An accessibility
+// service reads `say` and the state of the switch.
+pub function toggle[M](on: boolean, say: string, m: M): El[M] {
+  let track: El[M] = row([box().width(16.0).height(16.0).rounded(8.0).background(OUTLINE)]).padding(8.0).border(OUTLINE, 2.0);
   let state = "off";
   if (on) {
     track = row([box().width(24.0).height(24.0).rounded(12.0).background(ON_PRIMARY)]).padding(4.0).justified(END).background(PRIMARY);
     state = "on";
   }
-  return track.aligned(CENTER).width(52.0).height(32.0).rounded(16.0).on_tap(name).described(name + ", " + state);
+  return track.aligned(CENTER).width(52.0).height(32.0).rounded(16.0).on_tap(m).described(say + ", " + state);
 }
 
 // A bar that shows the part of a task that is done, from 0 to 1.
-pub function progress(part: f64): El {
+pub function progress[M](part: f64): El[M] {
   let done = part.max(0.0).min(1.0);
-  let bar = [El { ...box(), w: Grow(done + 0.0001), h: Grow(1.0) }.background(PRIMARY).rounded(2.0), El { ...box(), w: Grow(1.0001 - done), h: Grow(1.0) }];
-  return row(bar).wide().height(4.0).background(TRACK).rounded(2.0);
+  let filled: El[M] = El { ...box(), w: Grow(done + 0.0001), h: Grow(1.0) };
+  let rest: El[M] = El { ...box(), w: Grow(1.0001 - done), h: Grow(1.0) };
+  return row([filled.background(PRIMARY).rounded(2.0), rest]).wide().height(4.0).background(TRACK).rounded(2.0);
 }
 ```
 
@@ -616,7 +629,7 @@ function weight_of(s: Size): f64 {
 // line.
 struct Lines { lines: string[], px: i32, face: i32, line: i32 }
 
-function text_lines(env: Env, e: El, room: i32): Lines {
+function text_lines[M](env: Env, e: El[M], room: i32): Lines {
   let size = sp(env, e.size);
   let face = text.face_for(env.fonts, e.weight);
   let lines = text.wrap(env.fonts, face, size, e.content, room);
@@ -628,7 +641,7 @@ function text_lines(env: Env, e: El, room: i32): Lines {
 }
 
 // The weight of `k` along a row when `across` is true, or along a column.
-function weight_along(k: El, across: boolean): f64 {
+function weight_along[M](k: El[M], across: boolean): f64 {
   if (across) {
     return weight_of(k.w);
   }
@@ -637,7 +650,7 @@ function weight_along(k: El, across: boolean): f64 {
 
 // The sizes `out` of the elements of `e`, with a share of `rest` pixels for
 // each element that grows. `total` is the sum of their weights.
-function shared(env: Env, e: El, own out: (i32, i32)[], rest: i32, total: f64, iw: i32, ih: i32): (i32, i32)[] {
+function shared[M](env: Env, e: El[M], own out: (i32, i32)[], rest: i32, total: f64, iw: i32, ih: i32): (i32, i32)[] {
   let across = e.kind == ROW;
   let sized = out;
   for i in 0..e.kids.len() {
@@ -660,7 +673,7 @@ function shared(env: Env, e: El, own out: (i32, i32)[], rest: i32, total: f64, i
 
 // The size of each element of the column or the row `e`, in the room iw
 // by ih.
-function sizes(env: Env, e: El, iw: i32, ih: i32): (i32, i32)[] {
+function sizes[M](env: Env, e: El[M], iw: i32, ih: i32): (i32, i32)[] {
   let across = e.kind == ROW;
   let room = ih;
   if (across) {
@@ -697,7 +710,7 @@ function sizes(env: Env, e: El, iw: i32, ih: i32): (i32, i32)[] {
 }
 
 // The size of the lines of the text `e` in a room of `iw` pixels.
-function text_size(env: Env, e: El, iw: i32): (i32, i32) {
+function text_size[M](env: Env, e: El[M], iw: i32): (i32, i32) {
   let t = text_lines(env, e, iw);
   let w = 0;
   for l in t.lines {
@@ -707,7 +720,7 @@ function text_size(env: Env, e: El, iw: i32): (i32, i32) {
 }
 
 // The size of the largest element of the stack `e`.
-function stack_size(env: Env, e: El, iw: i32, ih: i32): (i32, i32) {
+function stack_size[M](env: Env, e: El[M], iw: i32, ih: i32): (i32, i32) {
   let (w, h) = (0, 0);
   for k in e.kids {
     let (kw, kh) = measure(env, k, iw, ih);
@@ -718,7 +731,7 @@ function stack_size(env: Env, e: El, iw: i32, ih: i32): (i32, i32) {
 }
 
 // The size of the elements of the column or the row `e`, with their gaps.
-function flow_size(env: Env, e: El, iw: i32, ih: i32): (i32, i32) {
+function flow_size[M](env: Env, e: El[M], iw: i32, ih: i32): (i32, i32) {
   let (rw, rh) = (iw, ih);
   if (e.list.len() > 0) {
     if (e.kind == ROW) {
@@ -746,7 +759,7 @@ function flow_size(env: Env, e: El, iw: i32, ih: i32): (i32, i32) {
 }
 
 // The size of what `e` holds, in the room iw by ih.
-function content(env: Env, e: El, iw: i32, ih: i32): (i32, i32) {
+function content[M](env: Env, e: El[M], iw: i32, ih: i32): (i32, i32) {
   if (e.kind == TEXT) {
     return text_size(env, e, iw);
   }
@@ -769,7 +782,7 @@ function content(env: Env, e: El, iw: i32, ih: i32): (i32, i32) {
 }
 
 // The size of `e` in the room aw by ah.
-function measure(env: Env, e: El, aw: i32, ah: i32): (i32, i32) {
+function measure[M](env: Env, e: El[M], aw: i32, ah: i32): (i32, i32) {
   let ew = exact(env, e.w);
   let eh = exact(env, e.h);
   let ow = aw;
@@ -819,6 +832,45 @@ pub function no_layout(): Layout {
   return Layout { nodes: [], scrollers: [] };
 }
 
+// The messages of a text field, by the name of the field.
+pub struct FieldMessages[M] { name: string, edit: Option[(string) => M], submit: Option[M] }
+
+// The messages of a screen. The tap action or the long press action of a
+// node that gives a message has the name `MESSAGE_ACTION` and the index of
+// the message in `taps`.
+pub struct Messages[M] { taps: M[], fields: FieldMessages[M][] }
+
+pub function no_messages[M](): Messages[M] {
+  return Messages { taps: [], fields: [] };
+}
+
+// The name of the action of a node that gives a message. An accessibility
+// service reads the name for a node that has no text and no description.
+pub const MESSAGE_ACTION: string = "button";
+
+// A screen: its nodes, its lists and its messages.
+pub struct Built[M] { nodes: scene.Node[], scrollers: Scroller[], taps: M[], fields: FieldMessages[M][] }
+
+// The nodes and the lists of the screen.
+pub function (b: Built[M]) layout(): Layout {
+  return Layout { nodes: b.nodes, scrollers: b.scrollers };
+}
+
+// The messages of the screen.
+pub function (b: Built[M]) messages(): Messages[M] {
+  return Messages { taps: b.taps, fields: b.fields };
+}
+
+// The screen with the message `m`, and the action that gives it. No
+// message gives no action.
+function with_message[M](own out: Built[M], m: Option[M]): (Built[M], scene.Action) {
+  if let Some(message) = m {
+    let at = out.taps.len();
+    return (Built { nodes: out.nodes, scrollers: out.scrollers, taps: out.taps.append(message), fields: out.fields }, scene.Action { name: MESSAGE_ACTION, arg: at });
+  }
+  return (out, scene.no_action());
+}
+
 // The list that the nodes of an element are in, with its rows and its
 // columns.
 struct Clip { group: string, c0: i32, c1: i32, left: i32, right: i32 }
@@ -841,7 +893,7 @@ function shift(a: i32, rest: i32): i32 {
 
 // What the element shows of its own in the box x, y, w, h: its background,
 // its border, and its picture or its canvas.
-function paints(env: Env, e: El, x: i32, y: i32, w: i32, h: i32): scene.Node[] {
+function paints[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32): scene.Node[] {
   let r = px(env, e.radius);
   let ns: scene.Node[] = [];
   if (e.bg != 0) {
@@ -861,26 +913,22 @@ function paints(env: Env, e: El, x: i32, y: i32, w: i32, h: i32): scene.Node[] {
 }
 
 // The element takes touches, or an accessibility service reads it.
-function takes_part(e: El): boolean {
-  return e.tap.name.len() > 0 || e.long.name.len() > 0 || e.barrier || e.say.len() > 0 || e.list.len() > 0;
+function takes_part[M](e: El[M]): boolean {
+  return e.tap.is_some() || e.long.is_some() || e.kind == FIELD || e.barrier || e.say.len() > 0 || e.list.len() > 0;
 }
 
-// The element as the shell and an accessibility service use it: a field
-// has the action that gives it the focus, and a service reads its hint.
-function with_field_action(e: El): El {
-  if (e.kind != FIELD) {
-    return e;
+// What an accessibility service reads for the element: a field with a
+// text has its hint and its text.
+function spoken[M](e: El[M]): string {
+  if (e.kind == FIELD && e.say.len() == 0 && e.content.len() > 0) {
+    return e.hint + ", " + e.content;
   }
-  let say = e.say;
-  if (say.len() == 0 && e.content.len() > 0) {
-    say = e.hint + ", " + e.content;
-  }
-  return El { ...e, tap: scene.Action { name: FIELD_ACTION + e.field, arg: 0 }, say: say };
+  return e.say;
 }
 
-// The nodes of the element itself. The first one has its actions.
-function own_nodes(env: Env, e0: El, x: i32, y: i32, w: i32, h: i32, clip: Clip): scene.Node[] {
-  let e = with_field_action(e0);
+// The nodes of the element itself. The first one has the actions `tap` and
+// `long`.
+function own_nodes[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, clip: Clip, tap: scene.Action, long: scene.Action): scene.Node[] {
   let ns = paints(env, e, x, y, w, h);
   if (ns.len() == 0 && takes_part(e)) {
     ns = ns.append(scene.node(x, y, w, h, scene.Blank));
@@ -893,7 +941,7 @@ function own_nodes(env: Env, e0: El, x: i32, y: i32, w: i32, h: i32, clip: Clip)
   for i in 0..ns.len() {
     let n = clipped(ns[i], own);
     if (i == 0) {
-      n = scene.Node { ...n, tap: e.tap, long: e.long, barrier: e.barrier, say: e.say };
+      n = scene.Node { ...n, tap: tap, long: long, barrier: e.barrier, say: spoken(e) };
     }
     out = out.append(n);
   }
@@ -906,7 +954,7 @@ function offset_of(env: Env, name: string, limit: i32, room: i32): i32 {
   return env.offsets.get(name).unwrap_or(0).max(-room).min(limit + room);
 }
 
-function place_text(env: Env, e: El, x: i32, y: i32, w: i32, clip: Clip, own out: Layout): Layout {
+function place_text[M](env: Env, e: El[M], x: i32, y: i32, w: i32, clip: Clip, own out: Built[M]): Built[M] {
   let t = text_lines(env, e, w);
   let nodes = out.nodes;
   let color = env.theme.color(e.ink);
@@ -916,7 +964,7 @@ function place_text(env: Env, e: El, x: i32, y: i32, w: i32, clip: Clip, own out
     let n = scene.node(x + shift(e.align, w - lw), y + i * t.line, lw, t.line, scene.Label(l, t.px, t.face, 0, color));
     nodes = nodes.append(clipped(n, clip));
   }
-  return Layout { nodes: nodes, scrollers: out.scrollers };
+  return Built { nodes: nodes, scrollers: out.scrollers, taps: out.taps, fields: out.fields };
 }
 
 // What a field shows: its lines, the index of the first character of each
@@ -925,7 +973,7 @@ function place_text(env: Env, e: El, x: i32, y: i32, w: i32, clip: Clip, own out
 struct FieldView { lines: string[], starts: i32[], caret_line: i32, caret_x: i32 }
 
 // The pixels of the em, the face and the height of a line of the field.
-function field_type(env: Env, e: El): (i32, i32, i32) {
+function field_type[M](env: Env, e: El[M]): (i32, i32, i32) {
   let size = sp(env, e.size);
   let face = text.face_for(env.fonts, e.weight);
   return (size, face, text.line(env.fonts, face, size));
@@ -933,7 +981,7 @@ function field_type(env: Env, e: El): (i32, i32, i32) {
 
 // A field of one line in `w` pixels. In focus it shows the part of its
 // text around the caret. Out of focus it shows the end of its text.
-function line_view(env: Env, e: El, w: i32, focused: boolean): FieldView {
+function line_view[M](env: Env, e: El[M], w: i32, focused: boolean): FieldView {
   let (size, face, _) = field_type(env, e);
   if (!focused) {
     return FieldView { lines: [text.fit_end(env.fonts, face, size, e.content, w)], starts: [0], caret_line: -1, caret_x: 0 };
@@ -953,7 +1001,7 @@ function line_view(env: Env, e: El, w: i32, focused: boolean): FieldView {
 
 // A field of more than one line in `w` pixels. In focus it shows the lines
 // around the caret. Out of focus it shows its first lines.
-function area_view(env: Env, e: El, w: i32, focused: boolean): FieldView {
+function area_view[M](env: Env, e: El[M], w: i32, focused: boolean): FieldView {
   let (size, face, _) = field_type(env, e);
   let cs = text.letters(e.content);
   let ranges = text.wrap_ranges(env.fonts, face, size, e.content, w);
@@ -984,7 +1032,7 @@ function area_view(env: Env, e: El, w: i32, focused: boolean): FieldView {
 }
 
 // What the field `e` shows in `w` pixels. An empty field shows its hint.
-function field_view(env: Env, e: El, w: i32): FieldView {
+function field_view[M](env: Env, e: El[M], w: i32): FieldView {
   let focused = e.field == env.focus.field;
   if (e.content.len() == 0) {
     let (size, face, _) = field_type(env, e);
@@ -1002,7 +1050,7 @@ function field_view(env: Env, e: El, w: i32): FieldView {
 
 // The row of the first line of the field `e` in the box from y, of height
 // h: a field of one line has its text in the middle.
-function field_top(env: Env, e: El, y: i32, h: i32): i32 {
+function field_top[M](env: Env, e: El[M], y: i32, h: i32): i32 {
   if (e.lines > 1) {
     return y;
   }
@@ -1012,7 +1060,7 @@ function field_top(env: Env, e: El, y: i32, h: i32): i32 {
 
 // The character of the field `e` that the caret goes before, for a tap at
 // tx and ty. The text of the field is in the box x, y, w, h.
-function caret_at(env: Env, e: El, x: i32, y: i32, w: i32, h: i32, tx: i32, ty: i32): i32 {
+function caret_at[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, tx: i32, ty: i32): i32 {
   if (e.content.len() == 0) {
     return 0;
   }
@@ -1029,7 +1077,7 @@ function caret_at(env: Env, e: El, x: i32, y: i32, w: i32, h: i32, tx: i32, ty: 
 
 // The text of a field or its hint, the line below it, and the caret of the
 // field that has the focus.
-function place_field(env: Env, e: El, x: i32, y: i32, w: i32, h: i32, clip: Clip, own out: Layout): Layout {
+function place_field[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, clip: Clip, own out: Built[M]): Built[M] {
   let focused = e.field == env.focus.field;
   let (size, face, line) = field_type(env, e);
   let v = field_view(env, e, w);
@@ -1055,16 +1103,16 @@ function place_field(env: Env, e: El, x: i32, y: i32, w: i32, h: i32, clip: Clip
   for n in ns {
     nodes = nodes.append(clipped(n, clip));
   }
-  return Layout { nodes: nodes, scrollers: out.scrollers };
+  return Built { nodes: nodes, scrollers: out.scrollers, taps: out.taps, fields: out.fields };
 }
 
 // The rows of a list that show, each in its box.
-function place_rows(env: Env, e: El, x: i32, y: i32, w: i32, h: i32, clip: Clip, own out: Layout): Layout {
+function place_rows[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, clip: Clip, own out: Built[M]): Built[M] {
   let row = px(env, e.row).max(1);
   let limit = (e.count * row - h).max(0);
   let at = offset_of(env, e.list, limit, h);
   let inner = Clip { ...clip, group: e.list, c0: clip.c0.max(y), c1: clip.c1.min(y + h) };
-  let o = Layout { nodes: out.nodes, scrollers: out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit, across: false, parent: clip.group }) };
+  let o = Built { nodes: out.nodes, scrollers: out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit, across: false, parent: clip.group }), taps: out.taps, fields: out.fields };
   let Some(build) = e.build else {
     return o;
   };
@@ -1078,7 +1126,7 @@ function place_rows(env: Env, e: El, x: i32, y: i32, w: i32, h: i32, clip: Clip,
 
 // The elements of a row, each in its box, from the column `left` on. An
 // element outside the columns of `clip` gets no nodes.
-function place_along(env: Env, e: El, ss: (i32, i32)[], left: i32, y: i32, h: i32, gap: i32, clip: Clip, own out: Layout): Layout {
+function place_along[M](env: Env, e: El[M], ss: (i32, i32)[], left: i32, y: i32, h: i32, gap: i32, clip: Clip, own out: Built[M]): Built[M] {
   let o = out;
   let at = left;
   for i in 0..e.kids.len() {
@@ -1096,7 +1144,7 @@ function place_along(env: Env, e: El, ss: (i32, i32)[], left: i32, y: i32, h: i3
 
 // The elements of a row, each in its box. A row that is a list scrolls
 // them across.
-function place_row(env: Env, e: El, x: i32, y: i32, w: i32, h: i32, clip: Clip, own out: Layout): Layout {
+function place_row[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, clip: Clip, own out: Built[M]): Built[M] {
   let scrolls = e.list.len() > 0;
   let room = w;
   if (scrolls) {
@@ -1112,7 +1160,7 @@ function place_row(env: Env, e: El, x: i32, y: i32, w: i32, h: i32, clip: Clip, 
   }
   if (scrolls) {
     let limit = (total - w).max(0);
-    let o = Layout { nodes: out.nodes, scrollers: out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit, across: true, parent: clip.group }) };
+    let o = Built { nodes: out.nodes, scrollers: out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit, across: true, parent: clip.group }), taps: out.taps, fields: out.fields };
     let inner = Clip { ...clip, group: e.list, left: clip.left.max(x), right: clip.right.min(x + w) };
     return place_along(env, e, ss, x - offset_of(env, e.list, limit, w), y, h, gap, inner, o);
   }
@@ -1124,7 +1172,7 @@ function place_row(env: Env, e: El, x: i32, y: i32, w: i32, h: i32, clip: Clip, 
 
 // The elements of a column, each in its box, from the row `top` down. An
 // element outside the rows of `clip` gets no nodes.
-function place_down(env: Env, e: El, ss: (i32, i32)[], x: i32, top: i32, w: i32, gap: i32, clip: Clip, own out: Layout): Layout {
+function place_down[M](env: Env, e: El[M], ss: (i32, i32)[], x: i32, top: i32, w: i32, gap: i32, clip: Clip, own out: Built[M]): Built[M] {
   let o = out;
   let at = top;
   for i in 0..e.kids.len() {
@@ -1142,7 +1190,7 @@ function place_down(env: Env, e: El, ss: (i32, i32)[], x: i32, top: i32, w: i32,
 
 // The elements of a column, each in its box. A column that is a list
 // scrolls them.
-function place_column(env: Env, e: El, x: i32, y: i32, w: i32, h: i32, clip: Clip, own out: Layout): Layout {
+function place_column[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, clip: Clip, own out: Built[M]): Built[M] {
   let scrolls = e.list.len() > 0;
   let room = h;
   if (scrolls) {
@@ -1158,7 +1206,7 @@ function place_column(env: Env, e: El, x: i32, y: i32, w: i32, h: i32, clip: Cli
   }
   if (scrolls) {
     let limit = (total - h).max(0);
-    let o = Layout { nodes: out.nodes, scrollers: out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit, across: false, parent: clip.group }) };
+    let o = Built { nodes: out.nodes, scrollers: out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit, across: false, parent: clip.group }), taps: out.taps, fields: out.fields };
     let inner = Clip { ...clip, group: e.list, c0: clip.c0.max(y), c1: clip.c1.min(y + h) };
     return place_down(env, e, ss, x, y - offset_of(env, e.list, limit, h), w, gap, inner, o);
   }
@@ -1169,12 +1217,19 @@ function place_column(env: Env, e: El, x: i32, y: i32, w: i32, h: i32, clip: Cli
 }
 
 // Gives `e` the box x, y, w, h, and adds its nodes to `out`.
-function place(env: Env, e: El, x: i32, y: i32, w: i32, h: i32, clip: Clip, own out: Layout): Layout {
-  let nodes = out.nodes;
-  for n in own_nodes(env, e, x, y, w, h, clip) {
+function place[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, clip: Clip, own out: Built[M]): Built[M] {
+  let (told, tap) = with_message(out, e.tap);
+  let (both, long) = with_message(told, e.long);
+  let fields = both.fields;
+  if (e.kind == FIELD) {
+    tap = scene.Action { name: FIELD_ACTION + e.field, arg: 0 };
+    fields = fields.append(FieldMessages { name: e.field, edit: e.edit, submit: e.submit });
+  }
+  let nodes = both.nodes;
+  for n in own_nodes(env, e, x, y, w, h, clip, tap, long) {
     nodes = nodes.append(n);
   }
-  let o = Layout { nodes: nodes, scrollers: out.scrollers };
+  let o = Built { nodes: nodes, scrollers: both.scrollers, taps: both.taps, fields: fields };
   let ix = x + px(env, e.pad.left);
   let iy = y + px(env, e.pad.top);
   let iw = (w - px(env, e.pad.left) - px(env, e.pad.right)).max(0);
@@ -1201,11 +1256,11 @@ function place(env: Env, e: El, x: i32, y: i32, w: i32, h: i32, clip: Clip, own 
   return o;
 }
 
-// The nodes and the lists of the tree `root` on the screen `s`. The tree
+// The nodes, the lists and the messages of the tree `root` on the screen `s`. The tree
 // takes the part of the screen that is free, or its exact size. `offsets`
 // has how far each list scrolls, by its name. `focus` has the field that
 // has the focus, and its caret.
-pub function layout(root: El, fonts: text.Fonts, s: Screen, offsets: Map[string, i32], focus: Focus): Layout {
+pub function layout[M](root: El[M], fonts: text.Fonts, s: Screen, offsets: Map[string, i32], focus: Focus): Built[M] {
   let env = Env { fonts: fonts, d: s.d, font: s.font, theme: s.theme, offsets: offsets, focus: focus };
   let w = (s.w - s.left - s.right).max(0);
   let h = (s.h - s.top - s.bottom).max(0);
@@ -1215,7 +1270,7 @@ pub function layout(root: El, fonts: text.Fonts, s: Screen, offsets: Map[string,
   if (exact(env, root.h) >= 0) {
     h = exact(env, root.h);
   }
-  return place(env, root, s.left, s.top, w, h, Clip { group: "", c0: 0, c1: scene.NO_CLIP, left: 0, right: scene.NO_CLIP }, no_layout());
+  return place(env, root, s.left, s.top, w, h, Clip { group: "", c0: 0, c1: scene.NO_CLIP, left: 0, right: scene.NO_CLIP }, Built { nodes: [], scrollers: [], taps: [], fields: [] });
 }
 ```
 
@@ -1229,17 +1284,6 @@ A finger can pull a list past its end, and the list goes half as far as the fing
 
 ```fern
 <<gestures>>=
-pub enum Msg {
-  Tap(string, i32),
-  LongPress(string, i32),
-  Edit(string, string),
-  Submit(string),
-  Back,
-  Tick,
-  Frame(i64),
-  System(android.Event),
-}
-
 const SLOP_DP: f64 = 8.0;
 
 const LONG_PRESS_NS: i64 = 400000000i64;
@@ -1389,7 +1433,7 @@ function released(inp: Input, lay: Layout, p: Press, x: i32, y: i32, now: i64, d
   return inp;
 }
 
-function up(inp: Input, lay: Layout, x: i32, y: i32, now: i64, d: f64): (Input, Option[Msg]) {
+function up(inp: Input, lay: Layout, x: i32, y: i32, now: i64, d: f64): (Input, Option[scene.Node]) {
   let p = inp.press;
   let rest = Input { ...inp, press: no_press() };
   if (p.moved) {
@@ -1403,16 +1447,17 @@ function up(inp: Input, lay: Layout, x: i32, y: i32, now: i64, d: f64): (Input, 
   }
   if let Some(n) = p.target {
     if (n.tap.name.len() > 0) {
-      return (rest, Some(Tap(n.tap.name, n.tap.arg)));
+      return (rest, Some(n));
     }
   }
   return (rest, None);
 }
 
 // The input after the touch `action` at x and y at the time `now`, and the
-// message of a tap. The actions are those of the Touch event of
-// std/android. `d` is the pixels of one dp.
-pub function touch(inp: Input, lay: Layout, action: i32, x: i32, y: i32, now: i64, d: f64): (Input, Option[Msg]) {
+// node that a tap was on. `tap_message` gives the message of that node.
+// The actions are those of the Touch event of std/android. `d` is the
+// pixels of one dp.
+pub function touch(inp: Input, lay: Layout, action: i32, x: i32, y: i32, now: i64, d: f64): (Input, Option[scene.Node]) {
   if (action == 0) {
     return (down(inp, lay, x, y, now), None);
   }
@@ -1431,16 +1476,16 @@ pub function touch(inp: Input, lay: Layout, action: i32, x: i32, y: i32, now: i6
   return (inp, None);
 }
 
-// The action of a long press on the node under the finger, when the
-// finger can still press long.
-function long_action(inp: Input): Option[scene.Action] {
+// The node under the finger that has a long press action, when the finger
+// can still press long.
+function long_target(inp: Input): Option[scene.Node] {
   let p = inp.press;
   if (!p.active || p.moved || p.fired) {
     return None;
   }
   if let Some(n) = p.target {
     if (n.long.name.len() > 0) {
-      return Some(n.long);
+      return Some(n);
     }
   }
   return None;
@@ -1449,7 +1494,7 @@ function long_action(inp: Input): Option[scene.Action] {
 // The milliseconds from `now` to the long press of the finger, or -1 when
 // no long press can come.
 pub function long_wait(inp: Input, now: i64): i32 {
-  if (long_action(inp).is_none()) {
+  if (long_target(inp).is_none()) {
     return -1;
   }
   let left = inp.press.at + LONG_PRESS_NS - now;
@@ -1459,16 +1504,16 @@ pub function long_wait(inp: Input, now: i64): i32 {
   return ((left + 999999i64) / 1000000i64) as i32;
 }
 
-// The input at the time `now`, and the message of a long press when its
-// time came.
-pub function long_press(inp: Input, now: i64): (Input, Option[Msg]) {
-  let Some(a) = long_action(inp) else {
+// The input at the time `now`, and the node of a long press when its time
+// came. `long_message` gives the message of that node.
+pub function long_press(inp: Input, now: i64): (Input, Option[scene.Node]) {
+  let Some(n) = long_target(inp) else {
     return (inp, None);
   };
   if (now - inp.press.at < LONG_PRESS_NS) {
     return (inp, None);
   }
-  return (Input { ...inp, press: Press { ...inp.press, fired: true } }, Some(LongPress(a.name, a.arg)));
+  return (Input { ...inp, press: Press { ...inp.press, fired: true } }, Some(n));
 }
 
 // A list flings, or springs back to its end.
@@ -1551,6 +1596,31 @@ function same_node(n: scene.Node, t: scene.Node): boolean {
   return boxes && n.tap.name == t.tap.name && n.tap.arg == t.tap.arg && n.long.name == t.long.name && n.long.arg == t.long.arg;
 }
 
+// The message of `said` for the action `a` of the node `t`. A node that
+// `lay` does not have gives no message: the screen changed below the
+// finger.
+function message[M](said: Messages[M], lay: Layout, t: scene.Node, a: scene.Action): Option[M] {
+  if (a.name != MESSAGE_ACTION || a.arg < 0 || a.arg >= said.taps.len()) {
+    return None;
+  }
+  for n in lay.nodes {
+    if (same_node(n, t)) {
+      return Some(said.taps[a.arg]);
+    }
+  }
+  return None;
+}
+
+// The message of a tap on the node `n` of `lay`.
+pub function tap_message[M](said: Messages[M], lay: Layout, n: scene.Node): Option[M] {
+  return message(said, lay, n, n.tap);
+}
+
+// The message of a long press on the node `n` of `lay`.
+pub function long_message[M](said: Messages[M], lay: Layout, n: scene.Node): Option[M] {
+  return message(said, lay, n, n.long);
+}
+
 // The nodes of `lay` with the node under the finger shown pressed, in the
 // color `pressed`.
 pub function shown(inp: Input, lay: Layout, pressed: i32): scene.Node[] {
@@ -1580,31 +1650,50 @@ pub function shown(inp: Input, lay: Layout, pressed: i32): scene.Node[] {
 <<programs>>=
 // An app: `view` makes the tree of the screen from the state, and `update`
 // gives the next state for a message. `wait` gives the milliseconds to the
-// next Tick, or -1 for none. While `animating` is true, each frame gives a
-// Frame message. When `back` is true, the back key gives a Back message.
-// When it is false, the back key closes the app. `theme` gives the colors
-// of the light theme and of the dark theme.
-pub struct Program[S] { view: (S, Screen) => El, update: (own S, Msg) => S, wait: (S) => i32, animating: (S) => boolean, back: (S) => boolean, theme: (boolean) => Theme }
-
-// A program with no Tick and no Frame messages, which the back key closes,
-// in the colors of `theme`.
-pub function program[S](view: (S, Screen) => El, update: (own S, Msg) => S): Program[S] {
-  return Program { view: view, update: update, wait: (s: S): i32 => -1, animating: (s: S): boolean => false, back: (s: S): boolean => false, theme: (dark: boolean): Theme => theme(dark) };
+// next `tick` message, or -1 for none. While `animating` is true, each
+// frame gives the message that `frame` makes from its time in ns. `back`
+// gives the message of the back key, or None when the back key closes the
+// app. `system` gives the message of an event of std/android that the
+// shell does not use itself. `theme` gives the colors of the light theme
+// and of the dark theme.
+pub struct Program[S, M] {
+  view: (S, Screen) => El[M],
+  update: (own S, M) => S,
+  wait: (S) => i32,
+  tick: Option[M],
+  animating: (S) => boolean,
+  frame: Option[(i64) => M],
+  back: (S) => Option[M],
+  system: (android.Event) => Option[M],
+  theme: (boolean) => Theme,
 }
 
-pub function (p: Program[S]) with_wait(wait: (S) => i32): Program[S] {
-  return Program { ...p, wait: wait };
+// A program with no messages of its own, which the back key closes, in the
+// colors of `theme`.
+pub function program[S, M](view: (S, Screen) => El[M], update: (own S, M) => S): Program[S, M] {
+  return Program { view: view, update: update, wait: (s: S): i32 => -1, tick: None, animating: (s: S): boolean => false, frame: None, back: (s: S): Option[M] => None, system: (e: android.Event): Option[M] => None, theme: (dark: boolean): Theme => theme(dark) };
 }
 
-pub function (p: Program[S]) with_animating(animating: (S) => boolean): Program[S] {
-  return Program { ...p, animating: animating };
+// `update` gets the message `m` each time the milliseconds of `wait` go by.
+pub function (p: Program[S, M]) with_tick(wait: (S) => i32, m: M): Program[S, M] {
+  return Program { ...p, wait: wait, tick: Some(m) };
 }
 
-pub function (p: Program[S]) with_back(back: (S) => boolean): Program[S] {
+// While `animating` is true, `update` gets the message of `frame` for each
+// frame.
+pub function (p: Program[S, M]) with_frames(animating: (S) => boolean, frame: (i64) => M): Program[S, M] {
+  return Program { ...p, animating: animating, frame: Some(frame) };
+}
+
+pub function (p: Program[S, M]) with_back(back: (S) => Option[M]): Program[S, M] {
   return Program { ...p, back: back };
 }
 
-pub function (p: Program[S]) with_theme(theme: (boolean) => Theme): Program[S] {
+pub function (p: Program[S, M]) with_system(system: (android.Event) => Option[M]): Program[S, M] {
+  return Program { ...p, system: system };
+}
+
+pub function (p: Program[S, M]) with_theme(theme: (boolean) => Theme): Program[S, M] {
   return Program { ...p, theme: theme };
 }
 ```
@@ -1649,12 +1738,13 @@ pub struct Device {
 // its caret is before, and `area` tells that it has more than one line.
 pub struct Host { dev: Device, fonts: text.Fonts, paint: painter.Painter, window: usize, screen: Screen, input: Input, lay: Layout, frames: i32, focus: string, typed: string, caret: i32, area: boolean }
 
-pub struct Shell[S] { app: S, host: Host }
+// `said` has the messages of the layout of the last frame.
+pub struct Shell[S, M] { app: S, host: Host, said: Messages[M] }
 
 // A shell for the state `state`, which draws text with `fonts`.
-pub function shell[S](own state: S, fonts: text.Fonts, dev: Device): Shell[S] {
+pub function shell[S, M](own state: S, fonts: text.Fonts, dev: Device): Shell[S, M] {
   let screen = Screen { w: 0, h: 0, d: dev.density(), dark: dev.dark(), theme: theme(false), left: 0, top: 0, right: 0, bottom: 0, font: dev.font_scale() };
-  return Shell { app: state, host: Host { dev: dev, fonts: fonts, paint: painter.new(fonts), window: 0 as usize, screen: screen, input: no_input(), lay: no_layout(), frames: 0, focus: "", typed: "", caret: 0, area: false } };
+  return Shell { app: state, host: Host { dev: dev, fonts: fonts, paint: painter.new(fonts), window: 0 as usize, screen: screen, input: no_input(), lay: no_layout(), frames: 0, focus: "", typed: "", caret: 0, area: false }, said: no_messages() };
 }
 
 function changed(h: Host): Host {
@@ -1673,24 +1763,27 @@ function on_window(h: Host, window: usize): Host {
 }
 
 // The shell after `update` took the message `m`.
-function told[S](own s: Shell[S], p: Program[S], m: Msg): Shell[S] {
-  return Shell { app: p.update(s.app, m), host: changed(s.host) };
+pub function send[S, M](own s: Shell[S, M], p: Program[S, M], m: M): Shell[S, M] {
+  return Shell { app: p.update(s.app, m), host: changed(s.host), said: s.said };
 }
 
-function told_maybe[S](own s: Shell[S], p: Program[S], m: Option[Msg]): Shell[S] {
+function told_maybe[S, M](own s: Shell[S, M], p: Program[S, M], m: Option[M]): Shell[S, M] {
   if let Some(msg) = m {
-    return told(s, p, msg);
+    return send(s, p, msg);
   }
   return s;
 }
 
-// The shell after `update` took the Frame message of the time `ns`, while
+// The shell after `update` took the frame message of the time `ns`, while
 // the program animates.
-function animated[S](own s: Shell[S], p: Program[S], ns: i64): Shell[S] {
+function animated[S, M](own s: Shell[S, M], p: Program[S, M], ns: i64): Shell[S, M] {
   if (!p.animating(s.app)) {
     return s;
   }
-  return Shell { app: p.update(s.app, Frame(ns)), host: s.host };
+  let Some(frame) = p.frame else {
+    return s;
+  };
+  return Shell { app: p.update(s.app, frame(ns)), host: s.host, said: s.said };
 }
 
 // The host with no field in focus and no keyboard.
@@ -1705,7 +1798,7 @@ function blurred(h: Host): Host {
 // The host with the keyboard on the text that the tree `root` has for the
 // field in focus, with the caret at its end. A field that the tree no
 // longer has loses the focus.
-function synced(own h: Host, root: El): Host {
+function synced[M](own h: Host, root: El[M]): Host {
   if (h.focus.len() == 0) {
     return h;
   }
@@ -1720,30 +1813,35 @@ function synced(own h: Host, root: El): Host {
   return Host { ...h, typed: f.content, caret: end };
 }
 
-// Draws the tree `root` on the screen `screen` at the time `ns`.
-function painted(own h: Host, root: El, screen: Screen, ns: i64, animating: boolean): Host {
-  let input = advance(h.input, h.lay, ns);
-  let lay = layout(root, h.fonts, screen, input.offsets, Focus { field: h.focus, caret: h.caret });
-  let paint = h.dev.present(h.paint, h.window, shown(input, lay, screen.theme.pressed), screen.theme.background);
+// The host with its lists where they are at the time `ns`.
+function advanced(h: Host, ns: i64): Host {
+  return Host { ...h, input: advance(h.input, h.lay, ns) };
+}
+
+// Draws the layout `lay` on the screen `screen`.
+function painted(own h: Host, lay: Layout, screen: Screen, animating: boolean): Host {
+  let paint = h.dev.present(h.paint, h.window, shown(h.input, lay, screen.theme.pressed), screen.theme.background);
   h.dev.publish(scene.access_items(lay.nodes));
-  if (input.flinging() || animating) {
+  if (h.input.flinging() || animating) {
     h.dev.request_frame();
   }
-  return Host { ...h, paint: paint, screen: screen, input: input, lay: lay, frames: h.frames + 1 };
+  return Host { ...h, paint: paint, screen: screen, lay: lay, frames: h.frames + 1 };
 }
 
 // Draws the frame of the time `ns`.
-function drawn[S](own s: Shell[S], p: Program[S], ns: i64): Shell[S] {
+function drawn[S, M](own s: Shell[S, M], p: Program[S, M], ns: i64): Shell[S, M] {
   if (s.host.window == 0 as usize || s.host.screen.w == 0) {
     return s;
   }
   let screen = Screen { ...s.host.screen, theme: p.theme(s.host.screen.dark) };
   let root = p.view(s.app, screen);
   let animating = p.animating(s.app);
-  return Shell { app: s.app, host: painted(synced(s.host, root), root, screen, ns, animating) };
+  let host = advanced(synced(s.host, root), ns);
+  let built = layout(root, host.fonts, screen, host.input.offsets, Focus { field: host.focus, caret: host.caret });
+  return Shell { app: s.app, host: painted(host, built.layout(), screen, animating), said: built.messages() };
 }
 
-function frame[S](own s: Shell[S], p: Program[S], ns: i64): Shell[S] {
+function frame[S, M](own s: Shell[S, M], p: Program[S, M], ns: i64): Shell[S, M] {
   return drawn(animated(s, p, ns), p, ns);
 }
 
@@ -1758,7 +1856,7 @@ function field_of(name: string): string {
 // The host with the focus on the field `f` and the caret before the
 // character `caret`. A field that gets the focus shows the keyboard on its
 // text.
-function focused(h: Host, f: El, caret: i32): Host {
+function focused[M](h: Host, f: El[M], caret: i32): Host {
   if (h.focus != f.field) {
     h.dev.show_keyboard(f.content, f.lines > 1);
   }
@@ -1783,7 +1881,7 @@ function pressed(own h: Host): Host {
 
 // The host after a tap at x and y on the node `n` of the field `f`: the
 // field has the focus, with its caret where the tap was.
-function field_tapped(h: Host, f: El, n: scene.Node, x: i32, y: i32): Host {
+function field_tapped[M](h: Host, f: El[M], n: scene.Node, x: i32, y: i32): Host {
   let sc = h.screen;
   let env = Env { fonts: h.fonts, d: sc.d, font: sc.font, theme: sc.theme, offsets: h.input.offsets, focus: Focus { field: h.focus, caret: h.caret } };
   let left = px(env, f.pad.left);
@@ -1792,26 +1890,27 @@ function field_tapped(h: Host, f: El, n: scene.Node, x: i32, y: i32): Host {
   return focused(h, f, caret);
 }
 
-function touched[S](own s: Shell[S], p: Program[S], action: i32, x: i32, y: i32): Shell[S] {
+function touched[S, M](own s: Shell[S, M], p: Program[S, M], action: i32, x: i32, y: i32): Shell[S, M] {
   let h = s.host;
   let target = h.input.press.target;
-  let (input, m) = touch(h.input, h.lay, action, x, y, h.dev.now(), h.screen.d);
+  let (input, tapped) = touch(h.input, h.lay, action, x, y, h.dev.now(), h.screen.d);
   let host = Host { ...h, input: input };
   if (action == 0) {
     host = pressed(Host { ...h, input: input });
   }
-  let name = "";
-  if let Some(Tap(tapped, _)) = m {
-    name = field_of(tapped);
-  }
+  let Some(on) = tapped else {
+    return Shell { app: s.app, host: changed(host), said: s.said };
+  };
+  let name = field_of(on.tap.name);
   if (name.len() > 0) {
     let found = field_el(p.view(s.app, host.screen), name);
     if let (Some(f), Some(n)) = (found, target) {
-      return Shell { app: s.app, host: field_tapped(host, f, n, x, y) };
+      return Shell { app: s.app, host: field_tapped(host, f, n, x, y), said: s.said };
     }
-    return Shell { app: s.app, host: changed(host) };
+    return Shell { app: s.app, host: changed(host), said: s.said };
   }
-  return told_maybe(Shell { app: s.app, host: changed(host) }, p, m);
+  let m = tap_message(s.said, h.lay, on);
+  return told_maybe(Shell { app: s.app, host: changed(host), said: s.said }, p, m);
 }
 
 // The caret after the keyboard changed the text `old`, with the caret
@@ -1827,17 +1926,39 @@ function caret_after(old: string, new: string, caret: i32): i32 {
   return b.len() - same;
 }
 
+// The messages of the field `name`.
+function field_messages[M](said: Messages[M], name: string): Option[FieldMessages[M]] {
+  for f in said.fields {
+    if (f.name == name) {
+      return Some(f);
+    }
+  }
+  return None;
+}
+
+// The shell after `update` took the message of the field in focus for its
+// new text `text`.
+function edit_told[S, M](own s: Shell[S, M], p: Program[S, M], text: string): Shell[S, M] {
+  let m: Option[M] = None;
+  if let Some(f) = field_messages(s.said, s.host.focus) {
+    if let Some(edit) = f.edit {
+      m = Some(edit(text));
+    }
+  }
+  return told_maybe(Shell { app: s.app, host: changed(s.host), said: s.said }, p, m);
+}
+
 // The shell after a key of a hardware keyboard changed the text of the
 // field in focus to `text`, with the caret before the character `caret`.
 // The keyboard of the system gets the same text.
-function retyped[S](own s: Shell[S], p: Program[S], text: string, caret: i32): Shell[S] {
+function retyped[S, M](own s: Shell[S, M], p: Program[S, M], text: string, caret: i32): Shell[S, M] {
   let h = s.host;
   h.dev.set_keyboard(text, caret);
-  return told(Shell { app: s.app, host: Host { ...h, typed: text, caret: caret } }, p, Edit(h.focus, text));
+  return edit_told(Shell { app: s.app, host: Host { ...h, typed: text, caret: caret }, said: s.said }, p, text);
 }
 
 // The shell after a key of a hardware keyboard typed `typed` at the caret.
-function inserted[S](own s: Shell[S], p: Program[S], typed: string): Shell[S] {
+function inserted[S, M](own s: Shell[S, M], p: Program[S, M], typed: string): Shell[S, M] {
   let cs = text.letters(s.host.typed);
   let caret = s.host.caret.max(0).min(cs.len());
   let next = text.span(cs, 0, caret) + typed + text.span(cs, caret, cs.len());
@@ -1845,7 +1966,7 @@ function inserted[S](own s: Shell[S], p: Program[S], typed: string): Shell[S] {
 }
 
 // The shell after the delete key took the character before the caret.
-function deleted[S](own s: Shell[S], p: Program[S]): Shell[S] {
+function deleted[S, M](own s: Shell[S, M], p: Program[S, M]): Shell[S, M] {
   let cs = text.letters(s.host.typed);
   let caret = s.host.caret.max(0).min(cs.len());
   if (caret == 0) {
@@ -1856,11 +1977,11 @@ function deleted[S](own s: Shell[S], p: Program[S]): Shell[S] {
 }
 
 // The shell with the caret `by` characters to the right.
-function stepped[S](own s: Shell[S], by: i32): Shell[S] {
+function stepped[S, M](own s: Shell[S, M], by: i32): Shell[S, M] {
   let h = s.host;
   let caret = (h.caret + by).max(0).min(text.letters(h.typed).len());
   h.dev.set_keyboard(h.typed, caret);
-  return Shell { app: s.app, host: changed(Host { ...h, caret: caret }) };
+  return Shell { app: s.app, host: changed(Host { ...h, caret: caret }), said: s.said };
 }
 
 // The event is one that changes the text of a field.
@@ -1885,10 +2006,13 @@ function types(e: android.Event): boolean {
 }
 
 // The shell after the field in focus lost the focus and `update` took its
-// Submit message.
-function submitted[S](own s: Shell[S], p: Program[S]): Shell[S] {
-  let name = s.host.focus;
-  return told(Shell { app: s.app, host: blurred(s.host) }, p, Submit(name));
+// submit message.
+function submitted[S, M](own s: Shell[S, M], p: Program[S, M]): Shell[S, M] {
+  let m: Option[M] = None;
+  if let Some(f) = field_messages(s.said, s.host.focus) {
+    m = f.submit;
+  }
+  return told_maybe(Shell { app: s.app, host: blurred(s.host), said: s.said }, p, m);
 }
 
 // The shell after a key went down, while a field has the focus. Key code
@@ -1896,7 +2020,7 @@ function submitted[S](own s: Shell[S], p: Program[S]): Shell[S] {
 // line, and it submits a field of one line as the action key of the
 // keyboard does. Key code 67 is the delete key, and the key codes 21 and
 // 22 are the left and the right arrow.
-function key_edited[S](own s: Shell[S], p: Program[S], code: i32): Shell[S] {
+function key_edited[S, M](own s: Shell[S, M], p: Program[S, M], code: i32): Shell[S, M] {
   if (code == 66 && s.host.area) {
     return inserted(s, p, "\n");
   }
@@ -1917,11 +2041,11 @@ function key_edited[S](own s: Shell[S], p: Program[S], code: i32): Shell[S] {
 
 // The shell after the keyboard event `e`, while a field has the focus. The
 // back key takes the focus away.
-function edited[S](own s: Shell[S], p: Program[S], e: android.Event): Shell[S] {
+function edited[S, M](own s: Shell[S, M], p: Program[S, M], e: android.Event): Shell[S, M] {
   let h = s.host;
   match (e) {
     android.Text(t) => {
-      return told(Shell { app: s.app, host: Host { ...h, typed: t, caret: caret_after(h.typed, t, h.caret) } }, p, Edit(h.focus, t));
+      return edit_told(Shell { app: s.app, host: Host { ...h, typed: t, caret: caret_after(h.typed, t, h.caret) }, said: s.said }, p, t);
     },
     android.TextAction(_) => {
       return submitted(s, p);
@@ -1934,7 +2058,7 @@ function edited[S](own s: Shell[S], p: Program[S], e: android.Event): Shell[S] {
     },
     android.Key(code, action) => {
       if (code == 4 && action == 1) {
-        return Shell { app: s.app, host: blurred(h) };
+        return Shell { app: s.app, host: blurred(h), said: s.said };
       }
       if (action == 0) {
         return key_edited(s, p, code);
@@ -1947,81 +2071,88 @@ function edited[S](own s: Shell[S], p: Program[S], e: android.Event): Shell[S] {
   }
 }
 
-function ticked[S](own s: Shell[S], p: Program[S]): Shell[S] {
+function ticked[S, M](own s: Shell[S, M], p: Program[S, M]): Shell[S, M] {
   let h = s.host;
   let now = h.dev.now();
   let waits = p.wait(s.app) >= 0;
   if (long_wait(h.input, now) != 0) {
     if (waits) {
-      return told(s, p, Tick);
+      let tick = p.tick;
+      return told_maybe(s, p, tick);
     }
     return s;
   }
-  let (input, m) = long_press(h.input, now);
-  return told_maybe(Shell { app: s.app, host: Host { ...h, input: input } }, p, m);
+  let (input, pressed) = long_press(h.input, now);
+  let m: Option[M] = None;
+  if let Some(n) = pressed {
+    m = long_message(s.said, h.lay, n);
+  }
+  return told_maybe(Shell { app: s.app, host: Host { ...h, input: input }, said: s.said }, p, m);
 }
 
-function accessed[S](own s: Shell[S], p: Program[S], id: i32, action: i32): Shell[S] {
+function accessed[S, M](own s: Shell[S, M], p: Program[S, M], id: i32, action: i32): Shell[S, M] {
   let Some(n) = scene.access_node(s.host.lay.nodes, id) else {
     return s;
   };
-  if (action == android.ACCESS_LONG_CLICK && n.long.name.len() > 0) {
-    return told(s, p, LongPress(n.long.name, n.long.arg));
+  let m: Option[M] = None;
+  if (action == android.ACCESS_LONG_CLICK) {
+    m = long_message(s.said, s.host.lay, n);
   }
-  if (action == android.ACCESS_CLICK && n.tap.name.len() > 0) {
-    return told(s, p, Tap(n.tap.name, n.tap.arg));
+  if (action == android.ACCESS_CLICK) {
+    m = tap_message(s.said, s.host.lay, n);
   }
-  return s;
+  return told_maybe(s, p, m);
 }
 
 // The shell after a key: the back key closes the app, or tells the
 // program when it handles the key. Each other key goes to the program.
-function keyed[S](own s: Shell[S], p: Program[S], e: android.Event, code: i32, action: i32): Shell[S] {
+function keyed[S, M](own s: Shell[S, M], p: Program[S, M], e: android.Event, code: i32, action: i32): Shell[S, M] {
   if (code != 4) {
-    return told(s, p, System(e));
+    let m = p.system(e);
+    return told_maybe(s, p, m);
   }
   if (action != 1) {
     return s;
   }
-  if (p.back(s.app)) {
-    return told(s, p, Back);
+  if let Some(m) = p.back(s.app) {
+    return send(s, p, m);
   }
   s.host.dev.finish();
   return s;
 }
 
 // The shell after an event of the window or of the activity.
-function arranged[S](own s: Shell[S], p: Program[S], e: android.Event): Shell[S] {
+function arranged[S, M](own s: Shell[S, M], p: Program[S, M], e: android.Event): Shell[S, M] {
   let h = s.host;
   match (e) {
     android.WindowCreated(w) => {
-      return Shell { app: s.app, host: on_window(h, w.ptr) };
+      return Shell { app: s.app, host: on_window(h, w.ptr), said: s.said };
     },
     android.WindowResized(w) => {
-      return Shell { app: s.app, host: on_window(h, w.ptr) };
+      return Shell { app: s.app, host: on_window(h, w.ptr), said: s.said };
     },
     android.WindowRedraw(w) => {
-      return Shell { app: s.app, host: on_window(h, w.ptr) };
+      return Shell { app: s.app, host: on_window(h, w.ptr), said: s.said };
     },
     android.WindowDestroyed(_) => {
-      return Shell { app: s.app, host: Host { ...h, paint: h.dev.detach(h.paint), window: 0 as usize } };
+      return Shell { app: s.app, host: Host { ...h, paint: h.dev.detach(h.paint), window: 0 as usize }, said: s.said };
     },
     android.ContentRect(left, top, right, bottom) => {
       let sc = h.screen;
-      return Shell { app: s.app, host: changed(Host { ...h, screen: Screen { ...sc, left: left.max(0), top: top.max(0), right: (sc.w - right).max(0), bottom: (sc.h - bottom).max(0) } }) };
+      return Shell { app: s.app, host: changed(Host { ...h, screen: Screen { ...sc, left: left.max(0), top: top.max(0), right: (sc.w - right).max(0), bottom: (sc.h - bottom).max(0) } }), said: s.said };
     },
     android.Destroy => {
-      let t = told(s, p, System(e));
-      return Shell { app: t.app, host: Host { ...t.host, paint: t.host.dev.close(t.host.paint), window: 0 as usize } };
+      let t = told_maybe(s, p, p.system(e));
+      return Shell { app: t.app, host: Host { ...t.host, paint: t.host.dev.close(t.host.paint), window: 0 as usize }, said: t.said };
     },
     _ => {
-      return told(s, p, System(e));
+      return told_maybe(s, p, p.system(e));
     }
   }
 }
 
 // The shell after the event `e` of android.run.
-pub function step[S](own s: Shell[S], p: Program[S], e: android.Event): Shell[S] {
+pub function step[S, M](own s: Shell[S, M], p: Program[S, M], e: android.Event): Shell[S, M] {
   if (s.host.focus.len() > 0 && types(e)) {
     return edited(s, p, e);
   }
@@ -2049,7 +2180,7 @@ pub function step[S](own s: Shell[S], p: Program[S], e: android.Event): Shell[S]
 
 // The milliseconds that android.run waits for the next event before a
 // Tick, or -1 for no limit.
-pub function wait[S](s: Shell[S], p: Program[S]): i32 {
+pub function wait[S, M](s: Shell[S, M], p: Program[S, M]): i32 {
   let long = long_wait(s.host.input, s.host.dev.now());
   let own_wait = p.wait(s.app);
   if (long < 0) {

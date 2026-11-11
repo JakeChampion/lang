@@ -678,8 +678,13 @@ pub function elf_x86_page_align(): i32 {
   return 4096;
 }
 
+// An Android kernel can use 16 KiB pages.
+pub function elf_x86_android_page_align(): i32 {
+  return 16384;
+}
+
 pub function elf_x86_wx_data_vaddr(text_len: i32, hdr_len: i32, eh_len: i32): i32 {
-  return elf_base_vaddr() + elf_x86_pie_data_vaddr(text_len, hdr_len, eh_len);
+  return elf_base_vaddr() + elf_x86_pie_data_vaddr(text_len, hdr_len, eh_len, elf_x86_page_align());
 }
 
 pub function elf_x86_pie_text_vaddr(): i32 {
@@ -694,13 +699,13 @@ pub function elf_x86_pie_eh_frame_vaddr(text_len: i32, hdr_len: i32): i32 {
   return elf_align8(elf_x86_pie_eh_hdr_vaddr(text_len) + hdr_len);
 }
 
-pub function elf_x86_pie_data_vaddr(text_len: i32, hdr_len: i32, eh_len: i32): i32 {
+pub function elf_x86_pie_data_vaddr(text_len: i32, hdr_len: i32, eh_len: i32, page_align: i32): i32 {
   let end = elf_unwind_end(elf_x86_wx_text_off(), text_len, hdr_len, eh_len);
-  return elf_data_vaddr_after(end, elf_x86_page_align());
+  return elf_data_vaddr_after(end, page_align);
 }
 
-pub function elf_program_x86_pie(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss: i32, entry_off: i32, relro: i32): u8[] {
-  return elf_image_executable(text, hdr, eh, data, elf_em_x86_64(), entry_off, bss, 0i64, 3, true, elf_no_note(), true, elf_x86_page_align(), relro, 16);
+pub function elf_program_x86_pie(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss: i32, entry_off: i32, relro: i32, page_align: i32): u8[] {
+  return elf_image_executable(text, hdr, eh, data, elf_em_x86_64(), entry_off, bss, 0i64, 3, true, elf_no_note(), true, page_align, relro, 16);
 }
 
 pub function elf_program_x86_wx(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss: i32, entry_off: i32, relro: i32): u8[] {

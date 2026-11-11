@@ -1,4 +1,6 @@
 # 2026-11-11: array_of_tuple_literals_takes_its_destination_and_float_literals and literal_composite_takes_the_type_of_a_nested_part are clean under RC trace.
+# 2026-11-11: generic_call_takes_its_type_from_its_destination_inside_a_value is clean under RC trace.
+# 2026-11-11: generic_call_takes_its_type_from_an_append_receiver is clean under RC trace.
 # 2026-11-11: array_literal_takes_the_join_of_its_typed_values is clean under RC trace.
 # 2026-11-11: a_view_survives_a_park_when_the_task_frame_moves keeps the four blocks of the task runtime's pool.
 # 2026-11-11: generic_call_written_type_variable_empty_array is clean under RC trace.
@@ -454,6 +456,8 @@ generic_call_binds_through_closure_array_param       0
 generic_call_gives_its_expected_type_to_an_array_argument 0
 generic_call_in_struct_field                         0
 generic_call_infers_from_variant_argument            0
+generic_call_takes_its_type_from_its_destination_inside_a_value 0
+generic_call_takes_its_type_from_an_append_receiver 0
 generic_call_through_fn_value                        0
 generic_call_typed_by_its_destination                0
 generic_call_written_type_variable_empty_array       0

@@ -761,6 +761,12 @@ pub struct Arm64Asm {
   unres: string[],
   oor: string[],
   twice: string[],
+  // The state of the passes that give a far conditional branch its long form.
+  relax: boolean,
+  far: i32[],
+  far_at: i32,
+  cond_ats: i32[],
+  far_next: i32[],
 }
 
 function arm64_file_entry(own a: Arm64Asm, line: string): Arm64Asm {
@@ -815,6 +821,7 @@ function arm64_asm_vacant(): Arm64Asm {
     code: 0 as usize, text: [], patq: 0 as usize, lab_names: [], lab_offs: [], files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [],
     lab_head: gas.empty_buckets(), lab_next: [], lab_tail: gas.empty_buckets(),
     fixq: 0 as usize, fix_names: [], lid_offs: [], unres: [], oor: [], twice: [],
+    relax: false, far: [], far_at: 0, cond_ats: [], far_next: [],
   };
 }
 
@@ -887,21 +894,55 @@ function arm64_oor_note(name: string, rel: i32, bits: i32): string {
   return name + " (" + arm64_gas_dec(rel) + " bytes, imm" + arm64_gas_dec(bits) + ")";
 }
 
+// Whether a conditional branch at `at` reaches `target` in its long form: the
+// inverted branch over an unconditional one.
+function arm64_far_form_fits(kind: i32, at: i32, target: i32): boolean {
+  return kind != 0 && arm64_rel_fits(target - at - 4, 26);
+}
+
+// Gives the conditional branch at `at`, the last instruction, its long form.
+// The caller points the unconditional branch at `at + 4` to the target.
+function arm64_asm_far_branch(own a: Arm64Asm, at: i32): Arm64Asm {
+  a = arm64_queue_patch(a, at, 3, 0);
+  util.push_bytes(a.code, arm64_b([], 0));
+  return a;
+}
+
+// Records a forward conditional branch of a relax pass, and gives it its long
+// form when an earlier pass found its target out of reach.
+function arm64_asm_forward_cond(own a: Arm64Asm, at: i32): Arm64Asm {
+  let far = a.far_at < a.far.len() && a.far[a.far_at] == a.cond_ats.len();
+  a = Arm64Asm { ...a, cond_ats: a.cond_ats.append(at) };
+  if (far) {
+    a = arm64_asm_far_branch(Arm64Asm { ...a, far_at: a.far_at + 1 }, at);
+  }
+  return a;
+}
+
 function arm64_asm_fixup_or_patch(own a: Arm64Asm, name: string, kind: i32): Arm64Asm {
   let at = buf_len(a.code) - 4;
   let target = arm64_asm_label_off(a, name);
   if (target >= 0) {
     let bits = arm64_branch_field_bits(kind);
-    if (!arm64_rel_fits(target - at, bits)) {
+    if (arm64_rel_fits(target - at, bits)) {
+      return arm64_queue_patch(a, at, kind, target - at);
+    }
+    if (!arm64_far_form_fits(kind, at, target)) {
       return Arm64Asm { ...a, oor: a.oor.append(arm64_oor_note(name, target - at, bits)) };
     }
-    a = arm64_queue_patch(a, at, kind, target - at);
-  } else {
-    let ref = a.fix_names.len();
-    a = Arm64Asm { ...a, fix_names: a.fix_names.append(name) };
-    a = arm64_queue_fixup(a, at, ref << 3 | kind << 1 | 1);
+    return arm64_queue_patch(arm64_asm_far_branch(a, at), at + 4, 0, target - at - 4);
   }
-  return a;
+  let queued = kind;
+  if (a.relax && kind != 0) {
+    a = arm64_asm_forward_cond(a, at);
+    if (buf_len(a.code) - 4 != at) {
+      at += 4;
+      queued = 0;
+    }
+  }
+  let ref = a.fix_names.len();
+  a = Arm64Asm { ...a, fix_names: a.fix_names.append(name) };
+  return arm64_queue_fixup(a, at, ref << 3 | queued << 1 | 1);
 }
 
 function arm64_queue_fixup(own a: Arm64Asm, at: i32, hi: i32): Arm64Asm {
@@ -939,13 +980,24 @@ function arm64_asm_fixup_id(own a: Arm64Asm, id: i32, kind: i32): Arm64Asm {
   let at = buf_len(a.code) - 4;
   let target = arm64_lid_off(a, id);
   if (target < 0) {
-    return arm64_queue_fixup(a, at, id << 3 | kind << 1);
+    let queued = kind;
+    if (a.relax && kind != 0) {
+      a = arm64_asm_forward_cond(a, at);
+      if (buf_len(a.code) - 4 != at) {
+        at += 4;
+        queued = 0;
+      }
+    }
+    return arm64_queue_fixup(a, at, id << 3 | queued << 1);
   }
   let bits = arm64_branch_field_bits(kind);
-  if (!arm64_rel_fits(target - at, bits)) {
+  if (arm64_rel_fits(target - at, bits)) {
+    return arm64_queue_patch(a, at, kind, target - at);
+  }
+  if (!arm64_far_form_fits(kind, at, target)) {
     return Arm64Asm { ...a, oor: a.oor.append(arm64_oor_note("#" + arm64_gas_dec(id), target - at, bits)) };
   }
-  return arm64_queue_patch(a, at, kind, target - at);
+  return arm64_queue_patch(arm64_asm_far_branch(a, at), at + 4, 0, target - at - 4);
 }
 
 function arm64_queue_patch(own a: Arm64Asm, at: i32, kind: i32, rel: i32): Arm64Asm {
@@ -981,6 +1033,60 @@ function arm64_asm_cbnz(own a: Arm64Asm, rt: i32, name: string, w: boolean): Arm
   return arm64_asm_fixup_or_patch(a, name, 1);
 }
 
+// The word of a conditional branch with its condition inverted and its target
+// two instructions on, or 0 for a word that is no such branch.
+function arm64_far_cond_word(w: i64): i64 {
+  if ((w & 0xff000010) == 0x54000000 && (w & 14) != 14) {
+    return (w ^ 1) & 0xff00001f | 64;
+  }
+  if ((w & 0x7e000000) == 0x34000000) {
+    return (w ^ 0x01000000) & 0xff00001f | 64;
+  }
+  if ((w & 0x7e000000) == 0x36000000) {
+    return (w ^ 0x01000000) & 0xfff8001f | 64;
+  }
+  return 0;
+}
+
+// Notes the forward conditional branch at `at` for the next pass. A pass that
+// does not relax has no ordinal for it, and asks for a pass that does.
+function arm64_asm_far_found(own a: Arm64Asm, at: i32): Arm64Asm {
+  if (!a.relax) {
+    if (a.far_next.len() > 0) {
+      return a;
+    }
+    return Arm64Asm { ...a, far_next: [-1] };
+  }
+  let lo = 0;
+  let hi = a.cond_ats.len();
+  while (lo < hi) {
+    let mid = (lo + hi) / 2;
+    if (a.cond_ats[mid] < at) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return Arm64Asm { ...a, far_next: a.far_next.append(lo) };
+}
+
+// The union of two ascending lists with no element in common.
+function arm64_far_union(x: i32[], y: i32[]): i32[] {
+  let out: i32[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < x.len() || j < y.len()) {
+    if (j >= y.len() || i < x.len() && x[i] < y[j]) {
+      out = out.append(x[i]);
+      i += 1;
+    } else {
+      out = out.append(y[j]);
+      j += 1;
+    }
+  }
+  return out;
+}
+
 function arm64_fixup_name(a: Arm64Asm, hi: i32): string {
   if ((hi & 1) != 0) {
     return a.fix_names[hi >> 3];
@@ -1002,7 +1108,15 @@ function arm64_asm_resolve(own a: Arm64Asm): Arm64Asm {
       let at = pq[q] as i32 | pq[q + 1] as i32 << 8 | pq[q + 2] as i32 << 16 | pq[q + 3] as i32 << 24;
       let hi = pq[q + 4] as i32 | pq[q + 5] as i32 << 8 | pq[q + 6] as i32 << 16 | pq[q + 7] as i32 << 24;
       let kind = hi & 3;
-      code = arm64_patch_bytes(code, at, arm64_branch_keep(kind), arm64_branch_field(kind, hi - kind));
+      if (kind == 3) {
+        let far = arm64_far_cond_word(code[at] as i64 | code[at + 1] as i64 << 8 | code[at + 2] as i64 << 16 | code[at + 3] as i64 << 24);
+        if (far == 0) {
+          a = Arm64Asm { ...a, oor: a.oor.append("a far target of an instruction with no long form") };
+        }
+        code = arm64_patch_bytes(code, at, 0, far);
+      } else {
+        code = arm64_patch_bytes(code, at, arm64_branch_keep(kind), arm64_branch_field(kind, hi - kind));
+      }
       q += 8;
     }
   }
@@ -1031,7 +1145,11 @@ function arm64_asm_resolve(own a: Arm64Asm): Arm64Asm {
     }
     let rbits = arm64_branch_field_bits(kind);
     if (!arm64_rel_fits(target - at, rbits)) {
-      a = Arm64Asm { ...a, oor: a.oor.append(arm64_oor_note(arm64_fixup_name(a, hi), target - at, rbits)) };
+      if (arm64_far_form_fits(kind, at, target)) {
+        a = arm64_asm_far_found(a, at);
+      } else {
+        a = Arm64Asm { ...a, oor: a.oor.append(arm64_oor_note(arm64_fixup_name(a, hi), target - at, rbits)) };
+      }
       i += 8;
       continue;
     }
@@ -8034,7 +8152,10 @@ function arm64_gas_numref_dir(s: string): Option[i32] {
 }
 
 function arm64_gas_dec(n: i32): string {
-  if (n <= 0) {
+  if (n < 0) {
+    return "-" + arm64_gas_dec(-n);
+  }
+  if (n == 0) {
     return "0";
   }
   let out = "";
@@ -8847,10 +8968,25 @@ function arm64_gas_branch_line(own a: Arm64Asm, nl_cnt: Arm64NumericLabels, mnem
   };
 }
 
+// A conditional branch reaches 1 MiB. A forward one whose target is farther is
+// found when the labels resolve, so the program is assembled again with that
+// branch in its long form, until each branch reaches its target.
 pub function arm64_gas_program_words(src: string, words: u8[], origin: i32): Arm64GasProg {
+  let p = arm64_gas_program_pass(src, words, origin, false, []);
+  let far: i32[] = [];
+  while (p.asm.far_next.len() > 0) {
+    if (p.asm.relax) {
+      far = arm64_far_union(far, p.asm.far_next);
+    }
+    p = arm64_gas_program_pass(src, words, origin, true, far);
+  }
+  return p;
+}
+
+function arm64_gas_program_pass(src: string, words: u8[], origin: i32, relax: boolean, far: i32[]): Arm64GasProg {
   let p = arm64_gas_prog_new();
   let cfi = gas.cfi_new(cfi_profile_arm64());
-  let a = p.asm;
+  let a = Arm64Asm { ...p.asm, relax: relax, far: far };
   p = Arm64GasProg { ...p, asm: arm64_asm_vacant() };
   let pf_sites: i32[] = [];
   let pf_syms: string[] = [];
