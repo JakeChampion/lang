@@ -798,6 +798,101 @@ function test_cookie_crumbs_are_joined(): test.TestOutcome {
   return test.fail("no request: " + shown(cl, step.output).text + events_text(step.events));
 }
 
+function occurrences(text: string, needle: string): i32 {
+  let n = 0;
+  let rest = text;
+  while (true) {
+    let Some(at) = rest.index_of(needle) else {
+      break;
+    };
+    n += 1;
+    rest = rest.drop(at + needle.len());
+  }
+  return n;
+}
+
+function upload(path: string): hpack.Field[] {
+  return [hpack.field(":method", "POST"), hpack.field(":scheme", "http"), hpack.field(":path", path), hpack.field(":authority", "example.test")];
+}
+
+function block(stream: i32, n: i32, end_stream: boolean): u8[] {
+  return frame.encode(frame.Data(frame.DataFrame { stream: stream, end_stream: end_stream, data: __alloc_u8(n), padding: 0 }));
+}
+
+function test_discarded_data_returns_its_credit(): test.TestOutcome {
+  let o = opened(h2.Config { ...h2.config(), max_body: 20000 });
+  let (cl, head) = request(o.client, 1, upload("/big"), false);
+  let conn = o.conn;
+  let step = conn.read(head);
+  let text = shown(cl, step.output).text + events_text(step.events);
+  let sent = 0;
+  while (sent < 8) {
+    step = step.conn.read(block(1, 16384, false));
+    text += shown(cl, step.output).text + events_text(step.events);
+    sent += 1;
+  }
+  // The second frame takes the body over the limit. That frame and the six
+  // after it are not kept, and each of the eight counts for the window.
+  let got = occurrences(text, "WINDOW_UPDATE 0 +32768\n").to_string() + " " + occurrences(text, ":status=413").to_string() + " " + occurrences(text, "RST_STREAM 1 0\n").to_string() + " " + occurrences(text, "RST_STREAM 1 5\n").to_string() + " " + occurrences(text, "RST_STREAM 1 7\n").to_string();
+  return test.assert_eq(got, "4 1 1 6 0");
+}
+
+function test_buffered_bodies_have_a_bound(): test.TestOutcome {
+  let o = opened(h2.Config { ...h2.config(), max_body: 32768, max_buffered: 40000 });
+  let cl = o.client;
+  let bytes: u8[] = [];
+  for stream in [1, 3, 5] {
+    let (c, head) = request(cl, stream, upload("/part"), false);
+    cl = c;
+    bytes = bytes.concat(head).concat(block(stream, 16384, false));
+  }
+  let held = o.conn.read(bytes);
+  let text = shown(cl, held.output).text + events_text(held.events);
+  // The handler of stream 1 takes its body, so stream 7 has room.
+  let (c7, head7) = request(cl, 7, upload("/part"), false);
+  let freed = held.conn.read(block(1, 0, true).concat(head7).concat(block(7, 16384, false)));
+  text += shown(c7, freed.output).text;
+  return test.assert_eq(occurrences(text, "RST_STREAM 5 7\n").to_string() + " " + occurrences(text, "RST_STREAM").to_string(), "1 1");
+}
+
+function test_reset_budget_is_not_diluted(): test.TestOutcome {
+  let bad = get("/").append(hpack.field("Bad-Case", "x"));
+  let ping = frame.encode(frame.Ping(true, __alloc_u8(8)));
+  let o = opened(h2.Config { ...h2.config(), reset_budget: 3, budget_streams: 100 });
+  let cl = o.client;
+  let bytes: u8[] = [];
+  let stream = 1;
+  while (stream <= 7) {
+    let (c, r) = request(cl, stream, bad, true);
+    cl = c;
+    bytes = bytes.concat(r);
+    for k in 0..60 {
+      bytes = bytes.concat(ping);
+    }
+    stream += 2;
+  }
+  let flooded = o.conn.read(bytes);
+  let got = occurrences(shown(cl, flooded.output).text, "resets over the budget").to_string();
+  // New streams restore the budget.
+  let o2 = opened(h2.Config { ...h2.config(), reset_budget: 2, budget_streams: 4 });
+  cl = o2.client;
+  bytes = [];
+  stream = 1;
+  while (stream <= 11) {
+    let fields = get("/");
+    if (stream == 1 || stream >= 9) {
+      fields = bad;
+    }
+    let (c, r) = request(cl, stream, fields, true);
+    cl = c;
+    bytes = bytes.concat(r);
+    stream += 2;
+  }
+  let restored = o2.conn.read(bytes);
+  let text = shown(cl, restored.output).text;
+  return test.assert_eq(got + " " + occurrences(text, "RST_STREAM").to_string() + " " + occurrences(text, "GOAWAY").to_string(), "1 3 0");
+}
+
 function test_trailer_fields_are_checked(): test.TestOutcome {
   let got = "";
   for bad in [hpack.field("Bad Name", "a"), hpack.field("x-a", "a\r\nb"), hpack.field("connection", "close")] {
@@ -831,6 +926,9 @@ function main(): i32 {
   r = r.it("a setting above 2^31-1 is not an error where the setting has no limit", test_settings_above_i32);
   r = r.it("a field value does not start or end with a space or a tab", test_field_value_outer_space);
   r = r.it("the cookie fields of a request become one field", test_cookie_crumbs_are_joined);
+  r = r.it("DATA that is not kept returns its connection credit", test_discarded_data_returns_its_credit);
+  r = r.it("the bodies that one connection holds have a bound", test_buffered_bodies_have_a_bound);
+  r = r.it("frames that are not new streams do not restore the reset budget", test_reset_budget_is_not_diluted);
   r = r.it("trailer fields are checked", test_trailer_fields_are_checked);
   r = r.it("idle streams and self-dependency", test_idle_and_self_dependency);
   r = r.it("HEADERS on a stream that has closed", test_headers_on_closed_streams);

@@ -63,7 +63,8 @@ sends the attack and reads the connection refusing it:
 3. **MadeYouReset (CVE-2025-8671).** The reset budget counts every reset,
    the server's own included: a client whose frames make the server send
    RST_STREAM again and again is closed at the same budget as one that
-   sends RST_STREAM itself.
+   sends RST_STREAM itself. Only new streams restore the budget, so
+   frames that cost the client nothing, such as PING, do not dilute it.
 4. **HTTP/2 Bomb (CVE-2026-49975).** HPACK's decoder counts each field as
    it decodes and refuses more than a cap of fields, so a block that
    would expand past the list size stops before the allocation; the
