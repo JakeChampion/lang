@@ -11069,6 +11069,8 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	bindArm := func(bindings []string, types []ast.Type, scrutOwned bool, tag ast.Expr, armMoved movedSet) *ownedBindingScope {
 		taken := takesTag(tag)
 		_, temporary := tag.(*ast.Call)
+		fieldOwner := originalOwnedFieldSource(fn, tag)
+		ownedField := owned[fieldOwner] && !borrowedParam[fieldOwner]
 		scope := shadowOwnedBindings(bindings, owned, borrowedParam, armMoved, deferMoved)
 		scopes = append(scopes, scope)
 		for i, bname := range bindings {
@@ -11077,7 +11079,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			}
 			// A copyable payload is a local value. A payload that can hold
 			// a handle keeps its linear ownership.
-			if scrutOwned && c.holdsNoHandle(types[i]) {
+			if (scrutOwned || ownedField && ownershipBindingUnchanged(fn, bname)) && c.holdsNoHandle(types[i]) {
 				continue
 			}
 			if scrutOwned {

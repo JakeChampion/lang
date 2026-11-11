@@ -21559,7 +21559,7 @@ function lu_binding_level(frames: LuFrame[], name: string): i32 {
 function lu_dies(fx: LuFn, call: ast.Expr, aid: ast.ExprIdent, outer: ast.Expr, has_outer: boolean, site: LuSite): boolean {
   let name = aid.name;
   let elem = lu_elem_fresh(fx, site, name);
-  if (!lu_is_local(fx, name) && !elem) {
+  if (!lu_is_local(fx, name) && !elem && !lu_owned_field_payload(fx, name)) {
     return false;
   }
   let once = astwalk.count_ident_expr(call, name) == 1;
@@ -21579,6 +21579,38 @@ function lu_dies(fx: LuFn, call: ast.Expr, aid: ast.ExprIdent, outer: ast.Expr, 
     return false;
   }
   return !lu_live_after(fx, site, call, aid);
+}
+
+// The use keeps its conditional handle-free tag. The ownership walk checks
+// the complete payload type before it permits a transfer.
+function lu_owned_field_payload(fx: LuFn, name: string): boolean {
+  let found = false;
+  for assignment in fx.facts.assigns {
+    if (assignment.name == name) {
+      return false;
+    }
+  }
+  for binding in fx.facts.matched {
+    if (binding.name != name) {
+      continue;
+    }
+    let ast.ExprFieldAccess(field) = binding.init else {
+      return false;
+    };
+    let ast.ExprIdent(owner) = field.obj else {
+      return false;
+    };
+    if (!lu_own_param(fx, owner.name)) {
+      return false;
+    }
+    for assignment in fx.facts.assigns {
+      if (assignment.name == owner.name) {
+        return false;
+      }
+    }
+    found = true;
+  }
+  return found;
 }
 
 // The other mentions of `aid` in the call are reads of one of its fields, in
@@ -23620,7 +23652,7 @@ function ow_arm_ctx(actx: OwnCtx, pat: ast.Pattern, whole: typeinfo.Type, scrut:
     return OwnCtx { ...bound, owned: ow_handle_binders(bound.owned, actx.owned, bound), borrowed: ow_handle_binders(bound.borrowed, actx.borrowed, bound) };
   }
   if (ow_owned_field_source(scrut, actx)) {
-    return OwnCtx { ...bound, borrowed: ow_handle_binders(bound.borrowed, actx.borrowed, bound) };
+    return OwnCtx { ...bound, borrowed: ow_field_data_binders(bound.borrowed, actx.borrowed, bound) };
   }
   return bound;
 }
@@ -23643,6 +23675,12 @@ function ow_original_owned_input(ctx: OwnCtx, name: string): boolean {
   for param in fn.params {
     original = original || param.own && param.name == name;
   }
+  return original && ow_binding_unchanged(ctx, name);
+}
+
+function ow_binding_unchanged(ctx: OwnCtx, name: string): boolean {
+  let fn = ctx.last_use.get().fn;
+  let original = true;
   let unchanged = (st: ast.Stmt, own good: boolean): boolean => {
     if let ast.StmtAssign(a) = st {
       return good && a.target != name;
@@ -23654,6 +23692,16 @@ function ow_original_owned_input(ctx: OwnCtx, name: string): boolean {
     original = astwalk.fold_stmt_nodes(st, original, unchanged, keep, astwalk.descend_all);
   }
   return original;
+}
+
+function ow_field_data_binders(names: string[], before: string[], ctx: OwnCtx): string[] {
+  let out: string[] = [];
+  for name in names {
+    if (util.has_str(before, name) || !ow_holds_no_handle(typeinfo.spelling(ctx.scope.lookup(name)), ctx.decls) || !ow_binding_unchanged(ctx, name)) {
+      out = out.append(name);
+    }
+  }
+  return out;
 }
 
 // The names in names that were in before, or that can hold a handle.

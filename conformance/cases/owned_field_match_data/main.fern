@@ -18,11 +18,15 @@ function inspect(reply: Reply): void {
   assert(reply.status == 200);
 }
 
+function emit(own producer: Producer): own Tail {
+  return Chunk(producer);
+}
+
 function wire(own reply: Reply): own Tail {
   match (reply.body) {
     Chunks(producer) => {
       inspect(reply);
-      return Chunk(producer);
+      return emit(producer);
     },
     _ => {}
   }

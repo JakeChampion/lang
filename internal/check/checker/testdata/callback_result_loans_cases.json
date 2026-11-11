@@ -498,5 +498,30 @@
     "name": "generic_enum_data_copy_unresolved",
     "source": "enum Data[T]{Empty,SomeData(T)} function loan[T](x:Data[T]):Data[T]{return x;} function take[T](own x:Data[T]):void{} function f[T](x:Data[T]):void{take(loan(x));} function main():i32{return 0;}",
     "want": "E051"
+  },
+  {
+    "name": "owned_field_match_owned_helper",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} enum Tail{Empty,File(H),Chunk(ChunkProducer)} function touch(r:HttpResponse):void{} function emit(own p:ChunkProducer):own Tail{return Chunk(p);} function wire(own answer:HttpResponse):own Tail{match(answer.body){BodyChunks(p)=>{touch(answer);return emit(p);},_=>{}}return Empty;} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "owned_field_match_borrowed_helper",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} enum Tail{Empty,File(H),Chunk(ChunkProducer)} function touch(r:HttpResponse):void{} function emit(own p:ChunkProducer):own Tail{return Chunk(p);} function wire(answer:HttpResponse):own Tail{match(answer.body){BodyChunks(p)=>{touch(answer);return emit(p);},_=>{}}return Empty;} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "owned_field_match_replaced_helper",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} enum Tail{Empty,File(H),Chunk(ChunkProducer)} function touch(r:HttpResponse):void{} function emit(own p:ChunkProducer):own Tail{return Chunk(p);} function wire(own answer:HttpResponse,other:HttpResponse):own Tail{answer=other;match(answer.body){BodyChunks(p)=>{touch(answer);return emit(p);},_=>{}}return Empty;} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "owned_field_match_payload_reassigned_helper",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} enum Tail{Empty,File(H),Chunk(ChunkProducer)} function touch(r:HttpResponse):void{} function emit(own p:ChunkProducer):own Tail{return Chunk(p);} function wire(own answer:HttpResponse,other:ChunkProducer):own Tail{match(answer.body){BodyChunks(p)=>{touch(answer);p=other;return emit(p);},_=>{}}return Empty;} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "owned_field_match_payload_reassigned_result",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} enum Tail{Empty,File(H),Chunk(ChunkProducer)} function touch(r:HttpResponse):void{} function emit(own p:ChunkProducer):own Tail{return Chunk(p);} function wire(own answer:HttpResponse,other:ChunkProducer):own Tail{match(answer.body){BodyChunks(p)=>{touch(answer);p=other;return Chunk(p);},_=>{}}return Empty;} function main():i32{return 0;}",
+    "want": "E051"
   }
 ]
