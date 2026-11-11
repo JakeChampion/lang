@@ -2596,7 +2596,7 @@ function main(): i32 { return 0; }
 		{"e063-callee-param-ok", "function idsl(x: [i32]): [i32] { return x; }\nfunction f(p: i32[]): [i32] { return idsl(p[0:2]); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e063-receiver-method-slice-ret", "function (xs: T[]) danger(): [T] { let local: T[] = [xs[0], xs[0], xs[0]]; return local[0:1]; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
 		{"e063-sliced-temporary", "function mkarr(): i32[] { let a: i32[] = [1, 2, 3]; return a; }\nfunction f(): [i32] { return mkarr()[0:1]; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
-		{"e063-sliced-temporary-param-ok", "function idarr(x: i32[]): i32[] { return x; }\nfunction f(p: i32[]): [i32] { return idarr(p)[0:1]; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e063-sliced-temporary-of-param", "function idarr(x: i32[]): i32[] { return x; }\nfunction f(p: i32[]): [i32] { return idarr(p)[0:1]; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
 		{"e065-sliced-temporary", "function mkstr(): string { return \"a\" + \"b\"; }\nfunction f(): str { return slice_unchecked(mkstr(), 0, 1); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
 		{"e065-sliced-temporary-param-ok", "function idstr(s: string): string { return s; }\nfunction f(p: string): str { return slice_unchecked(idstr(p), 0, 1); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e065-sliced-literal-ok", "function lit(): string { return \"hello\"; }\nfunction f(): str { return slice_unchecked(lit(), 0, 1); }\nfunction main(): i32 { return 0; }\n", nil},
