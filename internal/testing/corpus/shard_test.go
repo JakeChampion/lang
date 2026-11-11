@@ -43,6 +43,40 @@ func TestShardCoversEveryFileOnce(t *testing.T) {
 	}
 }
 
+func TestShardKeepsFilesWhenTheListChanges(t *testing.T) {
+	root, err := RepoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := Files(root, Programs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grown := append([]string{"examples/a_new_first_program.fern"}, files[:len(files)/2]...)
+	grown = append(grown, "examples/a_new_middle_program.fern")
+	grown = append(grown, files[len(files)/2+1:]...)
+	for index := 0; index < 8; index++ {
+		selector := fmt.Sprintf("%d/8", index)
+		before, err := Shard(files, selector)
+		if err != nil {
+			t.Fatal(err)
+		}
+		after, err := Shard(grown, selector)
+		if err != nil {
+			t.Fatal(err)
+		}
+		owned := map[string]bool{}
+		for _, file := range after {
+			owned[file] = true
+		}
+		for _, file := range before {
+			if file != files[len(files)/2] && !owned[file] {
+				t.Errorf("shard %s lost %s when the list changed", selector, file)
+			}
+		}
+	}
+}
+
 func TestShardRejectsInvalidSelectors(t *testing.T) {
 	for _, selector := range []string{"0", "-1/4", "4/4", "0/0", "0/-1", "x/4", "0/x", "0/4/5"} {
 		if _, err := Shard([]string{"a", "b"}, selector); err == nil {
