@@ -30,7 +30,7 @@ any flag that has no value: `-cover=false`, `-g=true`.
 
 | Target | Output |
 | --- | --- |
-| `arm64-linux` (default) | Static ELF. ARMv8.2-A with the crypto extensions. |
+| `arm64-linux` | Static ELF. ARMv8.2-A with the crypto extensions. |
 | `arm64-android` | Static position-independent ELF for Android. |
 | `arm64-darwin` | Static, signed Mach-O for Apple Silicon (latest macOS). |
 | `x86-64-linux` | Static ELF. x86-64-v3 with AES-NI (Haswell, 2013, with AVX2). |
@@ -161,6 +161,9 @@ fern -target x86-64-linux -cover -o prog src/main.fern
 ./prog 2> cov.txt                # the -cover run's report, on stderr
 fern -lint -lint-cover cov.txt src/   # change-risk: complexity against the lines that run hit
 ```
+
+The findings go to stderr, as the diagnostics of the checker do. `-q`
+prints one line for each finding.
 
 `change-risk` scores each function `complexity^2 * (1 - coverage)^3 +
 complexity` from a saved `-cover` run (see [Coverage](#coverage)) and

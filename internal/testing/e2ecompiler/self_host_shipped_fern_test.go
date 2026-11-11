@@ -1,9 +1,11 @@
 package e2ecompiler
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -258,8 +260,17 @@ func TestSelfHostCLIWritesAssemblyToStdout(t *testing.T) {
 	root := e2eharness.SelfHostStdlibRoot(t)
 	src := writeShippedSrc(t, t.TempDir(), "main.fern", shippedArgsSrc)
 	out, err := exec.Command(cli, src, root).Output()
-	if err != nil || !strings.Contains(string(out), "__fn_main:\n") || !strings.Contains(string(out), "stp x29, x30, [sp, #-16]!") {
-		t.Errorf("no -o, no -target: %v\n%.400s", err, out)
+	hostTrap := map[string]string{"arm64": "svc ", "amd64": "syscall\n"}[runtime.GOARCH]
+	if err != nil || !strings.Contains(string(out), "__fn_main:\n") || !strings.Contains(string(out), hostTrap) {
+		t.Errorf("no -o, no -target on %s: %v, want the assembly of the host\n%.400s", runtime.GOARCH, err, out)
+	}
+	bin := filepath.Join(t.TempDir(), "host")
+	if o, err := exec.Command(cli, "-o", bin, src, root).CombinedOutput(); err != nil {
+		t.Fatalf("-o, no -target: %v\n%s", err, o)
+	}
+	var exit *exec.ExitError
+	if err := exec.Command(bin).Run(); err != nil && !errors.As(err, &exit) {
+		t.Errorf("the binary of a build with no -target does not start on the host: %v", err)
 	}
 	for _, target := range []string{"x86-64-linux", "arm64-darwin", "arm64-android"} {
 		out, err := exec.Command(cli, "-target", target, src, root).Output()

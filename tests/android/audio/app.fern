@@ -91,6 +91,7 @@ function play_music(): void {
       wrote += n;
       odd += n % 2;
     }
+    log_timestamp("music timestamp", music.timestamp());
     music.pause();
     music.flush();
     if (music.start()) {
@@ -103,12 +104,16 @@ function play_music(): void {
 }
 
 function log_anchor(speaker: audio.Stream): void {
-  match (speaker.timestamp()) {
+  log_timestamp("timestamp", speaker.timestamp());
+}
+
+function log_timestamp(name: string, stamp: Option[audio.Timestamp]): void {
+  match (stamp) {
     Some(value) => {
-      log.warn("audiotest: timestamp frames " + value.frame_position.to_string() + " monotonic_ns " + value.monotonic_ns.to_string());
+      log.warn("audiotest: " + name + " frames " + value.frame_position.to_string() + " monotonic_ns " + value.monotonic_ns.to_string());
     },
     None => {
-      log.warn("audiotest: timestamp unavailable");
+      log.warn("audiotest: " + name + " unavailable");
     }
   }
 }

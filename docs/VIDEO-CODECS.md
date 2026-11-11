@@ -644,6 +644,8 @@ The result establishes fewer allocations without a claim of general speed or pea
 The common playback priorities are H.264, HEVC, VP9, and AV1, followed by legacy formats.
 The Android path now supplies platform demux, timestamps, sync-sample seek, and surface playback control.
 The lower-level controller accepts an app-owned AAudio clock anchor but still needs integrated audio decode, transport control, and lifecycle integration.
+
+It accepts both `audio.Stream` and `audio.Music` anchors. Stereo positions count frames, rather than individual channel samples.
 The separate platform player supplies A/V synchronization. Both paths need representative device qualification.
 
 Device tests must cover backpressure, resolution changes, EOS, flush, and playback after a seek.

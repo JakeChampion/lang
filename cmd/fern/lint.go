@@ -1,6 +1,9 @@
 package main
 
-import "io"
+import (
+	"io"
+	"os"
+)
 
 func runLint(paths, sets, opts []string, cover, color string, w io.Writer) int {
 	args := []string{"-lint", "-color", color}
@@ -13,7 +16,7 @@ func runLint(paths, sets, opts []string, cover, color string, w io.Writer) int {
 	if cover != "" {
 		args = append(args, "-lint-cover", cover)
 	}
-	return runSelfHostTool(append(args, paths...), w)
+	return runSelfHostToolTo(append(args, paths...), os.Stdout, w)
 }
 
 func listLintRules(w io.Writer) int {

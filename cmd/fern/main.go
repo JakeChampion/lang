@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/check/checker"
@@ -257,9 +258,19 @@ func shouldUseASCII(force bool) bool {
 	return true
 }
 
+// hostTarget is the target of the machine that runs this program. A host that
+// is no target gives arm64-linux.
+func hostTarget() string {
+	isa := map[string]string{"arm64": "arm64", "amd64": "x86-64"}[runtime.GOARCH]
+	if name := isa + "-" + runtime.GOOS; isa != "" && platforms.ForTarget(name) != nil {
+		return name
+	}
+	return "arm64-linux"
+}
+
 func main() {
 	out := flag.String("o", "", "output path; if unset, a native target writes its assembly to stdout, and a wasm target refuses unless -emit asm asks for its WAT")
-	target := flag.String("target", "arm64-linux", "target as `<isa>-<environment>` — the ISA half selects the backend, the environment half says what the host provides; neither is implied. arm64-linux (default, Linux ELF), arm64-android and x86-64-android (Linux ELF as a static position-independent executable for Android), arm64-darwin (native Apple Silicon macOS), x86-64-linux (Linux ELF), wasm32-wasi (CLI component), wasm32-wasi-http (HTTP handler component implementing wasi:http/incoming-handler), arm64-freestanding / x86-64-freestanding (no host at all — grants no capability and writes assembly that an embedder links and calls through the -export functions, see docs/FREESTANDING-CORE.md). `fern-oracle -targets` lists them with their capabilities.")
+	target := flag.String("target", hostTarget(), "target as `<isa>-<environment>` — the ISA half selects the backend, the environment half says what the host provides; neither is implied. The default is the host of this program. arm64-linux (Linux ELF), arm64-android and x86-64-android (Linux ELF as a static position-independent executable for Android), arm64-darwin (native Apple Silicon macOS), x86-64-linux (Linux ELF), wasm32-wasi (CLI component), wasm32-wasi-http (HTTP handler component implementing wasi:http/incoming-handler), arm64-freestanding / x86-64-freestanding (no host at all — grants no capability and writes assembly that an embedder links and calls through the -export functions, see docs/FREESTANDING-CORE.md). `fern-oracle -targets` lists them with their capabilities.")
 	runIt := flag.Bool("run", false, "build to a temporary binary and execute it: directly when the target's ISA is the host's, else under -qemu (qemu-x86_64 for an x86-64 target when -qemu is left at its default); a wasm32-wasi target runs under `wasmtime run`")
 	optimize := flag.Bool("O", false, "release build: elide every assert() check after type-checking (the condition is not evaluated, so asserts must be side-effect-free). Applies to compiled output; -interp and -check always keep asserts.")
 	shared := flag.Bool("shared", false, "emit a shared object (.so) instead of an executable — a position-independent ET_DYN with a dynamic symbol table exporting the -export functions, loadable via dlopen / Android's System.loadLibrary. Native ELF targets only (x86-64-linux, arm64-linux, x86-64-android, arm64-android); requires -o.")
@@ -453,7 +464,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "usage: fern-oracle -lint PATH... (a .fern file or a directory of them)")
 			os.Exit(2)
 		}
-		if code := runLint(flag.Args(), lintSets, lintOpts, *lintCover, *colorMode, os.Stdout); code != 0 {
+		if code := runLint(flag.Args(), lintSets, lintOpts, *lintCover, *colorMode, os.Stderr); code != 0 {
 			os.Exit(code)
 		}
 		return

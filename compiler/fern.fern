@@ -2249,7 +2249,7 @@ function sub_flag(name: string, value: string, needs: string[], help: string): C
 function flag_groups(): FlagGroup[] {
   return [
     FlagGroup { title: "compile", flags: [
-      cli_flag("-target", "ISA-ENV", "the target to build for (default arm64-linux); -targets lists them"),
+      cli_flag("-target", "ISA-ENV", "the target to build for (default: the host of the compiler); -targets lists them"),
       cli_flag("-o", "OUT", "write the output to OUT; without it a native target prints its assembly"),
       cli_flag("-emit", "FORM", "output form instead of the target's default: asm, core-module, command-module, or image (an arm64 Linux Image of an arm64-kernel image, which a loader puts 2M above the start of its RAM, so BASE of -ram is that start plus 2M)"),
       cli_flag("-backend", "NAME", "name the target's emitter: ssa on the native ISAs, flat on wasm"),
@@ -5717,6 +5717,9 @@ function lint_text(st: DiagStyle, f: lint.Finding, src: string): string {
   }
   let out: string = f.file + ":" + util.i32_to_string(f.line) + ":" + util.i32_to_string(f.col) + ": "
     + paint(st, sgr, label + "[" + f.rule + "]") + ": " + f.msg;
+  if (st.terse) {
+    return out;
+  }
   let lines: string[] = [];
   let start = 0;
   for i in 0..=src.len() {
@@ -5855,7 +5858,7 @@ function run_lint(st: DiagStyle, paths: string[], sets: string[], opts: string[]
       let (fds, parsed) = lint_module(st, cfg, entry_display(f), mods.srcs[mi], mods.maps[mi], cov_files);
       broken = broken || !parsed;
       for fd in fds {
-        if (all.len() > 0) {
+        if (all.len() > 0 && !st.terse) {
           out += "\n";
         }
         out = out + lint_text(st, fd, src) + "\n";
@@ -5871,7 +5874,9 @@ function run_lint(st: DiagStyle, paths: string[], sets: string[], opts: string[]
   if (sum.len() > 0) {
     out = out + sum + "\n";
   }
-  write(out);
+  if (out.len() > 0) {
+    eprint(slice_unchecked(out, 0, out.len() - 1));
+  }
   if (broken || lint.failed(all)) {
     return 1;
   }
@@ -6503,7 +6508,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let embedded = embedded_root.len() > 0;
   let have_root = embedded;
   let prog_args: string[] = [];
-  let target = "arm64-linux";
+  let target = target_arch() + "-" + target_os();
   let emit = "";
   let mode_check = false;
   let mode_interp = false;

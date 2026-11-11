@@ -12,7 +12,7 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-func lintRun(t *testing.T, files map[string]string, args ...string) (string, string, int) {
+func lintRun(t *testing.T, files map[string]string, args ...string) (string, int) {
 	t.Helper()
 	dir := t.TempDir()
 	for name, src := range files {
@@ -29,16 +29,19 @@ func lintRun(t *testing.T, files map[string]string, args ...string) (string, str
 	var stdout, stderr strings.Builder
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	_ = cmd.Run()
-	return stdout.String(), stderr.String(), cmd.ProcessState.ExitCode()
+	if stdout.Len() > 0 {
+		t.Errorf("-lint %v wrote to stdout: %q", args, stdout.String())
+	}
+	return stderr.String(), cmd.ProcessState.ExitCode()
 }
 
 var lintScoreRe = regexp.MustCompile("function `([^`]+)` has a cyclomatic complexity of (\\d+)")
 
 func lintScores(t *testing.T, src string) map[string]int {
 	t.Helper()
-	out, errOut, code := lintRun(t, map[string]string{"t.fern": src}, "-lint-opt", "cyclomatic-complexity.max=1", "t.fern")
+	out, code := lintRun(t, map[string]string{"t.fern": src}, "-lint-opt", "cyclomatic-complexity.max=1", "t.fern")
 	if code != 0 {
-		t.Fatalf("-lint exit %d\n%s%s", code, out, errOut)
+		t.Fatalf("-lint exit %d\n%s", code, out)
 	}
 	scores := map[string]int{}
 	for _, m := range lintScoreRe.FindAllStringSubmatch(out, -1) {
@@ -151,9 +154,9 @@ const lintNoisyFn = `function noisy(n: i32): i32 {
 
 func lintFindings(t *testing.T, src string) string {
 	t.Helper()
-	out, errOut, code := lintRun(t, map[string]string{"t.fern": src}, "-lint-opt", "cyclomatic-complexity.max=2", "t.fern")
+	out, code := lintRun(t, map[string]string{"t.fern": src}, "-lint-opt", "cyclomatic-complexity.max=2", "t.fern")
 	if code != 0 {
-		t.Fatalf("-lint exit %d\n%s%s", code, out, errOut)
+		t.Fatalf("-lint exit %d\n%s", code, out)
 	}
 	return out
 }
@@ -202,9 +205,24 @@ func TestSelfHostLintBadDirectives(t *testing.T) {
 	}
 }
 
+func TestSelfHostLintTerse(t *testing.T) {
+	src := lintNoisyFn + strings.Replace(lintNoisyFn, "noisy", "noisier", 1)
+	files := map[string]string{"t.fern": src}
+	want := "t.fern:1:1: warning[cyclomatic-complexity]: function `noisy` has a cyclomatic complexity of 3, over the limit of 2\n" +
+		"t.fern:6:1: warning[cyclomatic-complexity]: function `noisier` has a cyclomatic complexity of 3, over the limit of 2\n" +
+		"2 warnings generated\n"
+	if out, code := lintRun(t, files, "-q", "-lint-opt", "cyclomatic-complexity.max=2", "t.fern"); code != 0 || out != want {
+		t.Errorf("-q: exit %d\n--- got ---\n%s--- want ---\n%s", code, out, want)
+	}
+	t.Setenv("FERN_DIAG_FORMAT", "terse")
+	if out, code := lintRun(t, files, "-lint-opt", "cyclomatic-complexity.max=2", "t.fern"); code != 0 || out != want {
+		t.Errorf("FERN_DIAG_FORMAT=terse: exit %d\n--- got ---\n%s--- want ---\n%s", code, out, want)
+	}
+}
+
 func TestSelfHostLintRenderingAndExit(t *testing.T) {
 	src := lintNoisyFn + strings.Replace(lintNoisyFn, "noisy", "noisier", 1)
-	out, _, code := lintRun(t, map[string]string{"t.fern": src}, "-lint-opt", "cyclomatic-complexity.max=2", "t.fern")
+	out, code := lintRun(t, map[string]string{"t.fern": src}, "-lint-opt", "cyclomatic-complexity.max=2", "t.fern")
 	want := "t.fern:1:1: warning[cyclomatic-complexity]: function `noisy` has a cyclomatic complexity of 3, over the limit of 2\n" +
 		"    function noisy(n: i32): i32 {\n" +
 		"    ^\n" +
@@ -218,11 +236,11 @@ func TestSelfHostLintRenderingAndExit(t *testing.T) {
 	if code != 0 || out != want {
 		t.Errorf("exit %d\n--- got ---\n%s--- want ---\n%s", code, out, want)
 	}
-	out, _, code = lintRun(t, map[string]string{"t.fern": lintNoisyFn}, "-lint-opt", "cyclomatic-complexity.max=2", "-lint-set", "cyclomatic-complexity=deny", "t.fern")
+	out, code = lintRun(t, map[string]string{"t.fern": lintNoisyFn}, "-lint-opt", "cyclomatic-complexity.max=2", "-lint-set", "cyclomatic-complexity=deny", "t.fern")
 	if code != 1 || !strings.Contains(out, "error[cyclomatic-complexity]") || !strings.HasSuffix(out, "1 error generated\n") {
 		t.Errorf("deny: exit %d\n%s", code, out)
 	}
-	out, _, code = lintRun(t, map[string]string{"t.fern": lintNoisyFn}, "-lint-set", "cyclomatic-complexity=allow", "-lint-opt", "cyclomatic-complexity.max=2", "t.fern")
+	out, code = lintRun(t, map[string]string{"t.fern": lintNoisyFn}, "-lint-set", "cyclomatic-complexity=allow", "-lint-opt", "cyclomatic-complexity.max=2", "t.fern")
 	if code != 0 || out != "" {
 		t.Errorf("allow: exit %d, output %q", code, out)
 	}
@@ -233,11 +251,11 @@ func TestSelfHostLintConfiguration(t *testing.T) {
 		"fern.toml":  "[package]\nname = \"p\"\n\n[lint]\ncyclomatic-complexity = \"deny\"\n\n[lint.options]\ncyclomatic-complexity.max = 2\n",
 		"src/a.fern": lintNoisyFn,
 	}
-	out, _, code := lintRun(t, files, "src")
+	out, code := lintRun(t, files, "src")
 	if code != 1 || !strings.Contains(out, "error[cyclomatic-complexity]") {
 		t.Errorf("manifest deny: exit %d\n%s", code, out)
 	}
-	out, _, code = lintRun(t, files, "-lint-set", "cyclomatic-complexity=warn", "src")
+	out, code = lintRun(t, files, "-lint-set", "cyclomatic-complexity=warn", "src")
 	if code != 0 || !strings.Contains(out, "warning[cyclomatic-complexity]") {
 		t.Errorf("-lint-set over the manifest: exit %d\n%s", code, out)
 	}
@@ -252,17 +270,17 @@ func TestSelfHostLintConfiguration(t *testing.T) {
 		{[]string{"-lint-set", "nonsense", "src"}, "must be spelled RULE=SEVERITY"},
 		{[]string{"fern.toml"}, "not a .fern source"},
 	} {
-		_, errOut, code := lintRun(t, map[string]string{"fern.toml": "[package]\nname = \"p\"\n", "src/a.fern": lintNoisyFn}, tc.args...)
+		errOut, code := lintRun(t, map[string]string{"fern.toml": "[package]\nname = \"p\"\n", "src/a.fern": lintNoisyFn}, tc.args...)
 		if code != 2 || !strings.Contains(errOut, tc.want) {
 			t.Errorf("%v: exit %d, stderr %q; want 2 and %q", tc.args, code, errOut, tc.want)
 		}
 	}
 	unquoted := map[string]string{"fern.toml": "[lint]\ncyclomatic-complexity = deny\n", "a.fern": lintNoisyFn}
-	if _, errOut, code := lintRun(t, unquoted, "a.fern"); code != 2 || !strings.Contains(errOut, `fern.toml:2:1: error[E088]: [lint] cyclomatic-complexity: expected a quoted string or a number, got "deny"`) {
+	if errOut, code := lintRun(t, unquoted, "a.fern"); code != 2 || !strings.Contains(errOut, `fern.toml:2:1: error[E088]: [lint] cyclomatic-complexity: expected a quoted string or a number, got "deny"`) {
 		t.Errorf("unquoted severity: exit %d, stderr %q", code, errOut)
 	}
 	bad := map[string]string{"fern.toml": "[lint.options]\nmax = 3\n", "a.fern": lintNoisyFn}
-	if _, errOut, code := lintRun(t, bad, "a.fern"); code != 2 || !strings.Contains(errOut, "fern.toml:2:1: error[E088]: [lint.options] key \"max\" must be spelled <rule>.<option>") {
+	if errOut, code := lintRun(t, bad, "a.fern"); code != 2 || !strings.Contains(errOut, "fern.toml:2:1: error[E088]: [lint.options] key \"max\" must be spelled <rule>.<option>") {
 		t.Errorf("bad [lint.options] key: exit %d, stderr %q", code, errOut)
 	}
 }
@@ -275,7 +293,7 @@ func TestSelfHostLintUnreadableModule(t *testing.T) {
 		{"no root chunk", "doc.fern.md", "# doc\n", `no root chunk "<<*>>"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, errOut, code := lintRun(t, map[string]string{tc.file: tc.src, "ok.fern": "function f(): i32 {\n  return 1;\n}\n"}, tc.file, "ok.fern")
+			errOut, code := lintRun(t, map[string]string{tc.file: tc.src, "ok.fern": "function f(): i32 {\n  return 1;\n}\n"}, tc.file, "ok.fern")
 			if code != 1 || !strings.Contains(errOut, tc.want) {
 				t.Errorf("exit %d, stderr %q; want 1 and %q", code, errOut, tc.want)
 			}
@@ -308,9 +326,9 @@ func TestSelfHostLintSplittingImprovesExcess(t *testing.T) {
 		return b.String() + "  return 0;\n}\n"
 	}
 	measure := func(src string) (count, excess int) {
-		out, errOut, code := lintRun(t, map[string]string{"t.fern": src}, "t.fern")
+		out, code := lintRun(t, map[string]string{"t.fern": src}, "t.fern")
 		if code != 0 {
-			t.Fatalf("-lint exit %d\n%s%s", code, out, errOut)
+			t.Fatalf("-lint exit %d\n%s", code, out)
 		}
 		for _, m := range lintScoreRe.FindAllStringSubmatch(out, -1) {
 			n, _ := strconv.Atoi(m[2])
@@ -351,7 +369,7 @@ func TestSelfHostLintChangeRisk(t *testing.T) {
 		hits[l] = 0
 	}
 	files := map[string]string{"t.fern": src, "cov.txt": coverRows("t.fern", hits)}
-	out, errOut, code := lintRun(t, files, "-lint-cover", "cov.txt", "t.fern")
+	out, code := lintRun(t, files, "-lint-cover", "cov.txt", "t.fern")
 	want := "t.fern:21:1: warning[change-risk]: function `big` has a change risk of 132: complexity 11 with 0.0% of its 11 lines covered, over the limit of 30\n" +
 		"    function big(n: i32): i32 {\n" +
 		"    ^\n" +
@@ -362,10 +380,10 @@ func TestSelfHostLintChangeRisk(t *testing.T) {
 		"    ^\n" +
 		"    help: split out the branch-heavy part, or raise the limit for this site with `// fern-lint: allow cyclomatic-complexity`\n" +
 		"2 warnings generated\n"
-	if code != 0 || out != want || errOut != "" {
-		t.Errorf("default limit: exit %d, stderr %q\n--- got ---\n%s--- want ---\n%s", code, errOut, out, want)
+	if code != 0 || out != want {
+		t.Errorf("default limit: exit %d\n--- got ---\n%s--- want ---\n%s", code, out, want)
 	}
-	out, _, code = lintRun(t, files, "-lint-cover", "cov.txt", "-lint-set", "cyclomatic-complexity=allow", "-lint-opt", "change-risk.max=2", "t.fern")
+	out, code = lintRun(t, files, "-lint-cover", "cov.txt", "-lint-set", "cyclomatic-complexity=allow", "-lint-opt", "change-risk.max=2", "t.fern")
 	riskRe := regexp.MustCompile("function `([^`]+)` has a change risk of (\\d+): complexity 3 with ([0-9.]+%) of its 3 lines covered")
 	got := map[string]string{}
 	for _, m := range riskRe.FindAllStringSubmatch(out, -1) {
@@ -383,7 +401,7 @@ func TestSelfHostLintChangeRisk(t *testing.T) {
 	if strings.Contains(out, "`unmeasured`") {
 		t.Errorf("a function with no rows was scored:\n%s", out)
 	}
-	out, _, code = lintRun(t, files, "-lint-cover", "cov.txt", "-lint-set", "change-risk=deny", "t.fern")
+	out, code = lintRun(t, files, "-lint-cover", "cov.txt", "-lint-set", "change-risk=deny", "t.fern")
 	if code != 1 || !strings.Contains(out, "error[change-risk]: function `big`") {
 		t.Errorf("deny: exit %d\n%s", code, out)
 	}
@@ -394,13 +412,13 @@ func TestSelfHostLintChangeRisk(t *testing.T) {
 		}
 		quiet := map[string]string{"t.fern": directive + src, "cov.txt": coverRows("t.fern", shifted)}
 		if directive == "// fern-lint: allow change-risk\n" {
-			out, _, _ = lintRun(t, quiet, "-lint-cover", "cov.txt", "-lint-set", "cyclomatic-complexity=allow", "-lint-opt", "change-risk.max=2", "t.fern")
+			out, _ = lintRun(t, quiet, "-lint-cover", "cov.txt", "-lint-set", "cyclomatic-complexity=allow", "-lint-opt", "change-risk.max=2", "t.fern")
 			if strings.Contains(out, "`none`") || !strings.Contains(out, "`big`") {
 				t.Errorf("allow on the first function:\n%s", out)
 			}
 			continue
 		}
-		out, _, code = lintRun(t, quiet, "-lint-cover", "cov.txt", "-lint-set", "cyclomatic-complexity=allow", "t.fern")
+		out, code = lintRun(t, quiet, "-lint-cover", "cov.txt", "-lint-set", "cyclomatic-complexity=allow", "t.fern")
 		if code != 0 || out != "" {
 			t.Errorf("allow-file: exit %d, output %q", code, out)
 		}
@@ -419,9 +437,9 @@ func TestSelfHostLintChangeRiskPaths(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			files := map[string]string{"src/a.fern": big, "cov.txt": coverRows(tc.covered, hits)}
-			out, errOut, code := lintRun(t, files, "-lint-cover", "cov.txt", "-lint-opt", "change-risk.max=5", tc.linted)
+			out, code := lintRun(t, files, "-lint-cover", "cov.txt", "-lint-opt", "change-risk.max=5", tc.linted)
 			if code != 0 || !strings.Contains(out, "src/a.fern:1:1: warning[change-risk]: function `noisy` has a change risk of 12") {
-				t.Errorf("exit %d, stderr %q\n%s", code, errOut, out)
+				t.Errorf("exit %d\n%s", code, out)
 			}
 		})
 	}
@@ -444,9 +462,9 @@ func TestSelfHostLintChangeRiskRefusals(t *testing.T) {
 		{"names other files", map[string]string{"t.fern": lintNoisyFn, "cov.txt": "fern-cover: other.fern:2 1\n"}, []string{"-lint-cover", "cov.txt", "t.fern"}, "-lint-cover cov.txt covers none of the linted files: it names other.fern"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			out, errOut, code := lintRun(t, tc.files, tc.args...)
-			if code != 2 || !strings.Contains(errOut, tc.want) {
-				t.Errorf("exit %d, stdout %q, stderr %q; want 2 and %q", code, out, errOut, tc.want)
+			out, code := lintRun(t, tc.files, tc.args...)
+			if code != 2 || !strings.Contains(out, tc.want) {
+				t.Errorf("exit %d, stderr %q; want 2 and %q", code, out, tc.want)
 			}
 		})
 	}
@@ -459,8 +477,8 @@ func TestSelfHostLintChangeRiskRefusals(t *testing.T) {
 		{noisy, []string{"-lint-set", "change-risk=allow", "-lint-opt", "change-risk.max=5", "t.fern"}},
 		{other, []string{"-lint-set", "change-risk=allow", "-lint-cover", "cov.txt", "t.fern"}},
 	} {
-		if out, errOut, code := lintRun(t, tc.files, tc.args...); code != 0 || out != "" {
-			t.Errorf("%v with the rule allowed: exit %d, stdout %q, stderr %q", tc.args, code, out, errOut)
+		if out, code := lintRun(t, tc.files, tc.args...); code != 0 || out != "" {
+			t.Errorf("%v with the rule allowed: exit %d, stderr %q", tc.args, code, out)
 		}
 	}
 }
