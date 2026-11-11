@@ -23013,23 +23013,55 @@ function ow_defer_local_moves(st: ast.Stmt, ctx: OwnCtx): MovedEntry[] {
   return astwalk.fold_stmt_pruned(st, [], collect, not_lambda);
 }
 
-function ow_result_pending_cleanup(value: ast.Expr, ctx: OwnCtx): boolean {
-  let seen = ctx.deferred.get();
-  for part in lu_arg_parts(value, []) {
-    let path = ow_ident_name(part);
-    if let ast.ExprFieldAccess(fa) = part {
-      let enclosing = ow_enclosing_field(fa);
-      let base = ow_ident_name(enclosing.obj);
-      if (ow_moved_has(seen, base)) {
-        return true;
+function ow_cleanup_parts(value: ast.Expr, ctx: OwnCtx): ast.Expr[] {
+  match (value) {
+    ast.ExprStructLit(sl) => {
+      return if (sl.has_base) { sl.field_values.append(sl.base) } else { sl.field_values };
+    },
+    ast.ExprTuple(t) => {
+      return t.elements;
+    },
+    ast.ExprArray(a) => {
+      return a.elements;
+    },
+    ast.ExprMapLit(m) => {
+      return util.append_all(m.keys, m.vals);
+    },
+    ast.ExprCall(c) => {
+      if (ow_qualified_ctor(c.callee, ctx)) {
+        return c.args;
       }
-      path = base + "." + enclosing.field;
-    }
-    if (path.len() > 0 && (ow_moved_has(seen, path) || ow_moved_prefix(seen, path).len() > 0)) {
+      if let ast.ExprIdent(id) = c.callee {
+        if (ctx.ofuncs.ctors.has(id.name) && !ow_ctor_name_taken(ctx, id.name) || ow_builtin_variant(ctx, id.name)) {
+          return c.args;
+        }
+      }
+    },
+    _ => {}
+  }
+  return [];
+}
+
+function ow_result_pending_cleanup(value: ast.Expr, ctx: OwnCtx): boolean {
+  if (ow_copyable_result(check_expr(value, ctx.scope), ctx)) {
+    return false;
+  }
+  for part in ow_cleanup_parts(value, ctx) {
+    if (ow_result_pending_cleanup(part, ctx)) {
       return true;
     }
   }
-  return false;
+  let seen = ctx.deferred.get();
+  let path = ow_ident_name(value);
+  if let ast.ExprFieldAccess(fa) = value {
+    let enclosing = ow_enclosing_field(fa);
+    let base = ow_ident_name(enclosing.obj);
+    if (ow_moved_has(seen, base)) {
+      return true;
+    }
+    path = base + "." + enclosing.field;
+  }
+  return path.len() > 0 && (ow_moved_has(seen, path) || ow_moved_prefix(seen, path).len() > 0);
 }
 
 function ow_result_loan(value: ast.Expr, ctx: OwnCtx): boolean {

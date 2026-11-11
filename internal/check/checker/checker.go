@@ -11449,7 +11449,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			}
 		case *ast.Return:
 			admitSupersededFields(x.Value, true)
-			if resultOwn && x.Value != nil && !c.valueData(resultType, map[string]bool{}) && !isOwnedExpr(x.Value) {
+			if resultOwn && x.Value != nil && !c.valueData(resultType, map[string]bool{}) && (!isOwnedExpr(x.Value) || c.resultPendingCleanup(x.Value, deferMoved)) {
 				c.errfCode(x.Pos(), "E051", "an `own` result must return an owned value")
 			}
 			recordExprUses(x.Value, moved)

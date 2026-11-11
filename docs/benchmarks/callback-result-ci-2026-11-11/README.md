@@ -14,7 +14,7 @@ The callback change adds 3,792 bytes to the current-main driver.
 `measurement.json` records source identities, measurements, and archive hashes.
 The compressed log retains the complete original job output.
 `local-driver.log` and `local-driver.tsv` retain the local stock-build result.
-The compiler and standard-library sources remain unchanged after the CI measurement.
+That measurement describes c9ce8161bd. Later compiler changes require their own qualification.
 
 The baseline changes only the runtime-driver row.
 The 5% tolerance and strict gate remain unchanged.

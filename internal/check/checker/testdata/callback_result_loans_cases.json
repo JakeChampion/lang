@@ -113,5 +113,45 @@
     "name": "background callback has no result loan",
     "source": "struct H { fd: i32 } function (own h: H) close(): void {}\nstruct State { h: H, work: (() => void)[] } function append(own state: State, work: () => void): own State { return State { ...state, work: state.work.append(work) }; } function main(): i32 { return 0; }\n",
     "want": ""
+  },
+  {
+    "name": "deferred spread owner",
+    "source": "struct H { fd:i32 } function (own h:H) close():void {} struct S { h:H, n:i32 } function consume(own s:S):void {s.h.close();}\nfunction f(own s:S):own S{defer consume(s);return S{...s,n:1};} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "deferred tuple payload",
+    "source": "struct H { fd:i32 } function (own h:H) close():void {} struct S { h:H, n:i32 } function consume(own s:S):void {s.h.close();}\nfunction f(own h:H):own(H,i32){defer h.close();return(h,1);} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "deferred array payload",
+    "source": "struct H { fd:i32 } function (own h:H) close():void {} struct S { h:H, n:i32 } function consume(own s:S):void {s.h.close();}\nfunction f(own h:H):own H[]{defer h.close();return[h];} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "deferred variant payload",
+    "source": "struct H { fd:i32 } function (own h:H) close():void {} struct S { h:H, n:i32 } function consume(own s:S):void {s.h.close();}\nenum E {Have(H)} function f(own h:H):own E{defer h.close();return Have(h);} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "deferred map payload",
+    "source": "struct H { fd:i32 } function (own h:H) close():void {} struct S { h:H, n:i32 } function consume(own s:S):void {s.h.close();}\nimport \"core/map\"; function f(own h:H):own Map[i32,H]{defer h.close();return Map {1:h};} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "deferred sibling copy",
+    "source": "struct H { fd:i32 } function (own h:H) close():void {} struct S { h:H, n:i32 } function consume(own s:S):void {s.h.close();}\nstruct Pair {a:H,b:H} function f(own p:Pair):own H{defer p.a.close();return p.b;} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "deferred scalar copy",
+    "source": "struct H { fd:i32 } function (own h:H) close():void {} struct S { h:H, n:i32 } function consume(own s:S):void {s.h.close();}\nfunction f(own h:H):own H{defer h.close();return H{fd:h.fd};} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "deferred data copy",
+    "source": "struct H { fd:i32 } function (own h:H) close():void {} struct S { h:H, n:i32 } function consume(own s:S):void {s.h.close();}\nfunction f(own h:H,xs:i32[]):own i32[]{defer h.close();return xs;} function main():i32{return 0;}",
+    "want": ""
   }
 ]

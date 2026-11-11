@@ -12,7 +12,6 @@
   "local_stock_bytes": 16668464,
   "local_stock_seconds": 55.692,
   "stage0": "stage0-20261109-a19e872",
-  "compiler_and_stdlib_changed_after_ci": false,
   "files": {
     "driver-size-job.log.gz": "811b5b12d07919c373e8229d3b4a005a108769c6e0240c210db084f5b15283ab",
     "local-driver.log": "70aded529f5723792118d63877cf924fa09e65da30126201674193abd8cf8df3",
@@ -25,5 +24,7 @@
     "difference_bytes": 3792,
     "stage0_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751"
   },
-  "driver_gate_tests_passed": 14
+  "driver_gate_tests_passed": 14,
+  "bank_tree_has_same_compiler_and_stdlib_as_ci": true,
+  "later_cleanup_changes_need_ci": true
 }

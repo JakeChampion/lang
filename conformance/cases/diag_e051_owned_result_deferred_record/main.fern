@@ -1,0 +1,20 @@
+// spec: OR-01
+
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): void {}
+
+struct State { handle: Handle, count: i32 }
+
+function finish(own state: State): void {
+  state.handle.close();
+}
+
+function bad(own state: State): own State {
+  defer finish(state);
+  return State { ...state, count: 1 };
+}
+
+function main(): i32 {
+  return 0;
+}
