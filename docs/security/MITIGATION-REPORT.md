@@ -1,6 +1,6 @@
 # Hardware mitigation report
 
-Status: partial implementation for [SEC-019](https://github.com/JakeChampion/lang/issues/13521), with the entropy half in [ENTROPY.md](ENTROPY.md).
+Status: implementation for [SEC-019](https://github.com/JakeChampion/lang/issues/13521), with the entropy half in [ENTROPY.md](ENTROPY.md).
 Parent: [security epic](https://github.com/JakeChampion/lang/issues/13502).
 
 ## Contract

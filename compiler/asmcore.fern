@@ -5705,6 +5705,7 @@ pub function dbg_vars(fn_label: string, a: ssa.Alloc, r: irtables.Lowered, repl:
 
 function dbg_shape_type(s: EmitState, t: string): string {
   let out = "";
+  let run = 0;
   let i = 0;
   while (i < t.len()) {
     if (t[i] == b'%') {
@@ -5713,14 +5714,14 @@ function dbg_shape_type(s: EmitState, t: string): string {
       if (a < 0 || b < 0) {
         return t;
       }
-      out = out + slice_unchecked(t, i, a + 1) + dbg_enum_members(s, t, a + 1, b) + "}";
+      out = out + slice_unchecked(t, run, a + 1) + dbg_enum_members(s, t, a + 1, b) + "}";
       i = b + 1;
+      run = i;
     } else {
-      out += slice_unchecked(t, i, i + 1);
       i += 1;
     }
   }
-  return out;
+  return out + slice_unchecked(t, run, t.len());
 }
 
 function dbg_enum_members(s: EmitState, t: string, i: i32, end: i32): string {

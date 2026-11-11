@@ -632,6 +632,9 @@ function __extend(below: x509.Certificate[], at: i32, inter: x509.Certificate[],
       continue;
     }
     let r = __try(below, inter[i], at, now, s);
+    if (r.found && !__purpose_ok(inter[i], server)) {
+      r = Search { found: false, err: __wrong_purpose(server), checks: r.checks };
+    }
     if (r.found) {
       let up = __extend(below.append(inter[i]), at + 1, inter, roots, now, server, Search { found: false, err: r.err, checks: r.checks });
       if (up.found) {
@@ -643,6 +646,25 @@ function __extend(below: x509.Certificate[], at: i32, inter: x509.Certificate[],
     i += 1;
   }
   return s;
+}
+
+// An intermediate that limits its extended key usage limits the certificates
+// below it. RFC 5280 does not say this. The verifiers of the Web PKI do.
+function __purpose_ok(c: x509.Certificate, server: boolean): boolean {
+  if (!c.has_ext_key_usage || __has(c.ext_key_usage, x509.EKU_ANY)) {
+    return true;
+  }
+  if (server) {
+    return __has(c.ext_key_usage, x509.EKU_SERVER_AUTH);
+  }
+  return __has(c.ext_key_usage, x509.EKU_CLIENT_AUTH);
+}
+
+function __wrong_purpose(server: boolean): VerifyError {
+  if (server) {
+    return NotForServers;
+  }
+  return NotForClients;
 }
 
 // A certificate with the name and the key of one already in the path adds

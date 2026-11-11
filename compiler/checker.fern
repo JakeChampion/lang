@@ -13516,18 +13516,19 @@ function pin_eq(entry: string): i32 {
 function subst_self_proj(t: string, name: string, val: string): string {
   let pat = "Self::" + name;
   let out = "";
+  let run = 0;
   let i = 0;
   while (i < t.len()) {
     let end = i + pat.len();
     if (end <= t.len() && util.str_range_eq(t, i, end, pat) && (end == t.len() || !parser.ident_byte(t[end] as i32)) && (i == 0 || !parser.ident_byte(t[i - 1] as i32))) {
-      out += val;
+      out = out + slice_unchecked(t, run, i) + val;
       i = end;
+      run = i;
     } else {
-      out += slice_unchecked(t, i, i + 1);
       i += 1;
     }
   }
-  return out;
+  return out + slice_unchecked(t, run, t.len());
 }
 
 function dyn_call_diags(c: ast.ExprCall, mfa: ast.ExprFieldAccess, traits: string, s: Scope): util.Diag[] {
@@ -15223,7 +15224,7 @@ function scalar_array_mix(a: ast.ExprArray, anchor: typeinfo.Type, s: Scope, out
         anchor = etk;
         anchor_lit = lit;
       } else {
-        return out.append(dg_at("E034", "array element: expected " + type_label(anchor) + ", got " + type_label(etk), expr_line(a.elements[k]), expr_col(a.elements[k])));
+        out = out.append(dg_at("E034", "array element: expected " + type_label(anchor) + ", got " + type_label(etk), expr_line(a.elements[k]), expr_col(a.elements[k])));
       }
     }
     k += 1;
@@ -15237,11 +15238,12 @@ function element_mix(a: ast.ExprArray, anchor: typeinfo.Type, s: Scope, out: uti
     let element = a.elements[k];
     let ty = check_expr(element, s);
     if (!type_contains_unknown(ty) && (!same_element_type(ty, anchor) || !type_assignable(ty, anchor, s.unions.unions)) && !array_mix_settles(element, ty, anchor, s)) {
-      if (!array_mix_settles(first, check_expr(first, s), ty, s)) {
-        return out.append(dg_at("E034", "array element: expected " + type_label(anchor) + ", got " + type_label(ty), expr_line(element), expr_col(element)));
+      if (array_mix_settles(first, check_expr(first, s), ty, s)) {
+        anchor = ty;
+        first = element;
+      } else {
+        out = out.append(dg_at("E034", "array element: expected " + type_label(anchor) + ", got " + type_label(ty), expr_line(element), expr_col(element)));
       }
-      anchor = ty;
-      first = element;
     }
   }
   return out;
@@ -15277,7 +15279,7 @@ function struct_instance_mix(a: ast.ExprArray, first: typeinfo.Type, s: Scope, o
         anchor = etk;
         anchor_expr = a.elements[k];
       } else if (!struct_lit_yields(a.elements[k], etk, anchor, s, true)) {
-        return out.append(dg_at("E034", "array element: expected " + type_label(anchor) + ", got " + type_label(etk), expr_line(a.elements[k]), expr_col(a.elements[k])));
+        out = out.append(dg_at("E034", "array element: expected " + type_label(anchor) + ", got " + type_label(etk), expr_line(a.elements[k]), expr_col(a.elements[k])));
       }
     }
   }

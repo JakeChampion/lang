@@ -1,6 +1,6 @@
 # Checked arithmetic and pointer lowering audit
 
-Status: partial implementation for [SEC-017](https://github.com/JakeChampion/lang/issues/13519).
+Status: implementation for [SEC-017](https://github.com/JakeChampion/lang/issues/13519).
 Parent: [security epic](https://github.com/JakeChampion/lang/issues/13502).
 This record covers three things: how an index becomes an address on the native targets, which proofs remove a check, and where a length meets its limit.
 
