@@ -2647,7 +2647,7 @@ function __h2_body_next(body: __H2Body, fd: i32): Option[u8[]] {
   return None;
 }
 
-function __h2_arrived(own c: __Conns, fd: i32, sid: i32, bytes: u8[]): __Conns {
+function __h2_arrived(own c: __Conns, fd: i32, sid: i32, bytes: u8[]): own __Conns {
   let pi: i32 = __pull_at(c, fd, sid);
   if (pi < 0) {
     return c;
@@ -2657,7 +2657,7 @@ function __h2_arrived(own c: __Conns, fd: i32, sid: i32, bytes: u8[]): __Conns {
   return c;
 }
 
-function __h2_body_ended(own c: __Conns, fd: i32, sid: i32): __Conns {
+function __h2_body_ended(own c: __Conns, fd: i32, sid: i32): own __Conns {
   let pi: i32 = __pull_at(c, fd, sid);
   if (pi < 0) {
     return c;
@@ -2674,7 +2674,7 @@ function __pull_tidied(own c: __Conns, pi: i32): __Conns {
   return c;
 }
 
-function __h2_responded(own a: __H2Answered, at: i32, sid: i32): __H2Answered {
+function __h2_responded(own a: __H2Answered, at: i32, sid: i32): own __H2Answered {
   let pi = __pull_at(a.conns, a.conns.fds[at], sid);
   if (pi < 0) {
     return a;
@@ -2688,7 +2688,7 @@ function __h2_responded(own a: __H2Answered, at: i32, sid: i32): __H2Answered {
 
 ```fern
 <<42 function __h2_stream_reset(c: __Conns, fd: i32, sid: i32): __Conns>>=
-function __h2_stream_reset(own c: __Conns, fd: i32, sid: i32): __Conns {
+function __h2_stream_reset(own c: __Conns, fd: i32, sid: i32): own __Conns {
   let pi = __pull_at(c, fd, sid);
   if (pi >= 0) {
     let body = c.pulls[pi].body;
@@ -2778,7 +2778,7 @@ function __h2_produce[D: async.Driver](drv: D, own a: __H2Answered, at: i32, sid
   return a;
 }
 
-function __h2_chunk(own a: __H2Answered, at: i32, pi: i32, chunk: Option[u8[]]): (__H2Answered, boolean) {
+function __h2_chunk(own a: __H2Answered, at: i32, pi: i32, chunk: Option[u8[]]): own (__H2Answered, boolean) {
   let p = a.conns.producers[pi];
   match (chunk) {
     Some(bytes) => {
@@ -2803,7 +2803,7 @@ function __trailers_joined(a: HeaderMap, b: HeaderMap): HeaderMap {
   return a;
 }
 
-function __h2_producer_failed(own a: __H2Answered, at: i32, pi: i32): __H2Answered {
+function __h2_producer_failed(own a: __H2Answered, at: i32, pi: i32): own __H2Answered {
   let p: __H2Producer = a.conns.producers[pi];
   let step: h2.Step = a.conn.reset(p.stream, frame.CANCEL);
   return __h2_responded(__H2Answered { ...a, conn: step.conn, conns: __Conns { ...a.conns, producers: __producer_removed(a.conns.producers, pi) }, out: a.out.concat(step.output) }, at, p.stream);
@@ -2844,7 +2844,7 @@ function __h2_producer_wake[D: async.Driver](drv: D, c: __Conns, fls: __Flights,
   return (c, fls);
 }
 
-function __h2_consumed(own a: __H2Answered, at: i32): __H2Answered {
+function __h2_consumed(own a: __H2Answered, at: i32): own __H2Answered {
   let fd: i32 = a.conns.fds[at];
   for p in a.conns.pulls {
     if (p.fd == fd) {
