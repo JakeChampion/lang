@@ -545,6 +545,13 @@ kernel loads at a random base, and a startup loop relocates the absolute
 data words (`docs/security/PIE.md`). Android is position-independent
 without the flag. Darwin, wasm and `-shared` refuse it with exit 2.
 
+### Load segments align to the largest page of the target
+
+An arm64 ELF image and each `-shared` object align their load segments to
+64 KiB. An x86-64-linux executable uses 4 KiB. An x86-64-android executable
+uses 16 KiB, because an Android kernel can use 16 KiB pages
+(`elf_x86_android_page_align` in `elf.fern`).
+
 ### Signal numbers are the Linux numbers, and Darwin converts the watched ones
 
 `RealDriver.watch_signal` takes a signal number in the runtime convention,
