@@ -13516,18 +13516,19 @@ function pin_eq(entry: string): i32 {
 function subst_self_proj(t: string, name: string, val: string): string {
   let pat = "Self::" + name;
   let out = "";
+  let run = 0;
   let i = 0;
   while (i < t.len()) {
     let end = i + pat.len();
     if (end <= t.len() && util.str_range_eq(t, i, end, pat) && (end == t.len() || !parser.ident_byte(t[end] as i32)) && (i == 0 || !parser.ident_byte(t[i - 1] as i32))) {
-      out += val;
+      out = out + slice_unchecked(t, run, i) + val;
       i = end;
+      run = i;
     } else {
-      out += slice_unchecked(t, i, i + 1);
       i += 1;
     }
   }
-  return out;
+  return out + slice_unchecked(t, run, t.len());
 }
 
 function dyn_call_diags(c: ast.ExprCall, mfa: ast.ExprFieldAccess, traits: string, s: Scope): util.Diag[] {

@@ -6840,15 +6840,14 @@ function x86_rodata_zero(own a: X86Asm, n: i32): X86Asm {
 function x86_rodata_bytes(own a: X86Asm, brest: string): X86Asm {
   let rodata = a.rodata;
   a = X86Asm { ...a, rodata: [] };
-  let btok = "";
+  let bstart = 0;
   for bci in 0..brest.len() {
     if (brest[bci] == b',') {
-      rodata = rodata.append(x86_gas_atoi(btok.trim()) & 255);
-      btok = "";
-    } else {
-      btok += slice_unchecked(brest, bci, bci + 1);
+      rodata = rodata.append(x86_gas_atoi(slice_unchecked(brest, bstart, bci).trim()) & 255);
+      bstart = bci + 1;
     }
   }
+  let btok = slice_unchecked(brest, bstart, brest.len());
   if (btok.trim().len() > 0) {
     rodata = rodata.append(x86_gas_atoi(btok.trim()) & 255);
   }

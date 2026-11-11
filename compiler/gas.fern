@@ -190,15 +190,14 @@ function cfi_trim(s: string): string {
 
 function cfi_split_ops(rest: string): string[] {
   let out: string[] = [];
-  let tok = "";
+  let start = 0;
   for i in 0..rest.len() {
     if (rest[i] == b',') {
-      out = out.append(cfi_trim(tok));
-      tok = "";
-    } else {
-      tok += slice_unchecked(rest, i, i + 1);
+      out = out.append(cfi_trim(slice_unchecked(rest, start, i).to_owned()));
+      start = i + 1;
     }
   }
+  let tok = slice_unchecked(rest, start, rest.len()).to_owned();
   if (cfi_trim(tok).len() > 0 || out.len() > 0) {
     out = out.append(cfi_trim(tok));
   }
