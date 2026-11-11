@@ -1175,7 +1175,7 @@ function x86_final_target(a: X86Asm, name: string, idx: i32, padded_text: i32, b
   let Some(split) = x86_symbol_addend_at(name) else {
     return -1;
   };
-  let symbol = x86_gas_trimmed(slice_unchecked(name, 0, split).to_owned()) + "";
+  let symbol = x86_gas_trimmed(slice_unchecked(name, 0, split).to_owned());
   let target = x86_final_off(a, symbol, padded_text, bss_base);
   let addend = x86_symbol_addend_value(slice_unchecked(name, split + 1, name.len()).to_owned());
   if (target < 0 || addend < 0) {

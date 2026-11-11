@@ -1,3 +1,5 @@
+import "std/string";
+
 pub struct TypeI32 { is_char: boolean, width: i32, unsigned: boolean, polymorphic: boolean }
 
 pub function width_ptr(): i32 {
@@ -447,7 +449,7 @@ pub function lane_builtin_verb(name: string): string {
   if (lane_builtin_width(name) == 0) {
     return "";
   }
-  return slice_unchecked(name, 8, name.len()) + "";
+  return slice_unchecked(name, 8, name.len()).to_owned();
 }
 
 pub function lane_builtin_params(name: string): Type[] {

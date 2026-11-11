@@ -13073,7 +13073,7 @@ function ssa_vstore_shuffle(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState)
   s = ssa_fread(reg_of, ins.args[2], "%xmm2", s);
   let a = ssa_fsrc(reg_of, ins.args[1], "%xmm1");
   let b = ssa_fsrc(reg_of, ins.args[2], "%xmm2");
-  let mask = slice_unchecked(ins.str, 15, ins.str.len()) + "";
+  let mask = slice_unchecked(ins.str, 15, ins.str.len()).to_owned();
   let low_words = true;
   for byte in mask {
     if (byte >= b'A' && (byte - b'A') as i32 % 8 >= 4) {
