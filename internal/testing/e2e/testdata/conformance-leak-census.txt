@@ -1,3 +1,4 @@
+# 2026-11-11: append_on_an_array_literal_takes_the_width_of_its_use is clean under RC trace.
 # 2026-11-11: hotp_digits_out_of_range_stops stops through exit(134) with one buffer live.
 # 2026-11-10: copied_call_results has zero unpaired allocations under native RC trace.
 # 2026-11-10: nul_byte_in_a_path_is_refused is clean under RC trace.
@@ -116,6 +117,7 @@ an_integer_literal_array_takes_the_element_type_of_append 0
 an_io_error_pattern_beside_std_net                   0
 an_unannotated_unit_variant_takes_the_type_of_its_use 0
 an_unannotated_variant_takes_an_array_of_its_enum    0
+append_on_an_array_literal_takes_the_width_of_its_use 0
 args                                                 0
 arith_precedence                                     0
 arr_slice_block_copy                                 0

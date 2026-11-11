@@ -15273,8 +15273,18 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		if fa, ok := n.Callee.(*ast.FieldAccess); ok {
 			c.settleOpenMapByCall(n, fa, s)
 			c.settleOpenCallByMethod(n, fa, s)
-			c.settleLitArrayByCall(n, fa, s)
+			recvHint := c.settleLitArrayByCall(n, fa, callExpected, s)
+			if recvHint != nil {
+				c.setElemHintFor(fa.Target, recvHint)
+				c.expectedType = recvHint
+			}
 			tt := c.receiverType(fa.Target, s)
+			if recvHint != nil {
+				c.expectedType = nil
+				c.elemHint = nil
+				c.settleNumeric(fa.Target, recvHint)
+				tt = c.postSettleType(fa.Target, tt)
+			}
 			recvFA, recvType = fa, tt
 			if tt == nil {
 				return nil
@@ -15583,7 +15593,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 					} else if st, isStruct := pt.(ast.StructType); isStruct && len(st.Args) > 0 {
 						c.expectedType = pt
 					} else if _, isArray := pt.(ast.ArrayType); isArray {
-						if _, isLit := n.Args[i].(*ast.ArrayLit); isLit {
+						if litArrayRooted(n.Args[i]) {
 							c.expectedType = pt
 						}
 					} else if _, isFn := pt.(*ast.FuncType); isFn {

@@ -239,7 +239,10 @@ Keep the annotation in these cases:
   A method call or an f-string on the local does not fix its width. The
   local is `i32` only when no use asks for another width. A local has one
   type: when the local is an element of a literal array or tuple, the use
-  that gives the element its width gives the local the same width.
+  that gives the element its width gives the local the same width. The
+  argument that `append` or `with` puts in a literal array is an element of
+  that array. An `append` or a `with` call on an array literal is a literal
+  array: `[1, 2].append(x)` has the element type of `[1, 2, x]`.
 - The local holds a member struct of a `type A | B` union, and the code uses
   it as the union: `let e: ast.Expr = ast.ExprIdent { ... };`. Without the
   annotation, the local has the struct type, and a later assignment of
