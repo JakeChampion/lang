@@ -1,3 +1,4 @@
+# 2026-11-11: a_view_survives_a_park_when_the_task_frame_moves keeps the four blocks of the task runtime's pool.
 # 2026-11-11: array_literal_wide_integer_literal_widens_the_value_beside_it is clean under RC trace.
 # 2026-11-11: task_handle_with_a_made_up_id and task_resumed_with_another_function stop through the runtime abort (status 134), so the task handles, the parked frame and their closures are live at the exit.
 # 2026-11-11: generic_call_gives_its_expected_type_to_an_array_argument is clean under RC trace.
@@ -97,6 +98,7 @@ a_two_parameter_enum_takes_generic_instances_as_arguments 0
 a_value_if_of_literals_takes_the_type_of_its_first_use 0
 a_variant_may_share_its_name_with_a_struct_of_its_module 0
 a_variant_pattern_names_the_scrutinees_enum          0
+a_view_survives_a_park_when_the_task_frame_moves     4
 ackermann                                            0
 add_sub_pair                                         0
 aead_in_place_refuses_overlapping_additional_data    0

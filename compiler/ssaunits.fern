@@ -3109,6 +3109,12 @@ pub function plan_held(f: ssasem.Func, modes: i32[], semantic: ssasem.Analysis, 
   return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, likely: units.likely, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: consts, text_lens: text_lens(f), analysis: semantic, defs: defs, modes: modes, unit_analysis: analysis, unique_receivers: unique_receivers(f, steps, consts, no_fresh(), lent_withs(f, defs, owned, kept)), fresh_seeded: false, checked_writes: checked_writes(f), links: [], reuse: no_reuse(), forced: forced };
 }
 
+// A frame view is a record in the stack frame of its function. A function
+// that parks comes back in another frame, so its views take heap boxes.
+pub function without_frame_views(p: Plan): Plan {
+  return Plan { ...p, frame_views: __alloc_bool(p.frame_views.len()) };
+}
+
 pub function without_constant_drops(p: Plan): Plan {
   let out: Step[] = [];
   for st in p.steps {
