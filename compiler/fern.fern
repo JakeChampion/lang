@@ -2249,7 +2249,7 @@ function sub_flag(name: string, value: string, needs: string[], help: string): C
 function flag_groups(): FlagGroup[] {
   return [
     FlagGroup { title: "compile", flags: [
-      cli_flag("-target", "ISA-ENV", "the target to build for (default arm64-linux); -targets lists them"),
+      cli_flag("-target", "ISA-ENV", "the target to build for (default: the host of the compiler); -targets lists them"),
       cli_flag("-o", "OUT", "write the output to OUT; without it a native target prints its assembly"),
       cli_flag("-emit", "FORM", "output form instead of the target's default: asm, core-module, command-module, or image (an arm64 Linux Image of an arm64-kernel image, which a loader puts 2M above the start of its RAM, so BASE of -ram is that start plus 2M)"),
       cli_flag("-backend", "NAME", "name the target's emitter: ssa on the native ISAs, flat on wasm"),
@@ -6508,7 +6508,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let embedded = embedded_root.len() > 0;
   let have_root = embedded;
   let prog_args: string[] = [];
-  let target = "arm64-linux";
+  let target = target_arch() + "-" + target_os();
   let emit = "";
   let mode_check = false;
   let mode_interp = false;

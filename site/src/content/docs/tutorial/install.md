@@ -97,15 +97,16 @@ Run it under the interpreter:
 fern -interp hello.fern
 ```
 
-Compile a native binary. The default target is `arm64-linux`, so name the
-target that matches your machine:
+Compile a native binary. The default target is the machine that runs `fern`.
+Name a target with `-target` to build for another machine:
 
 ```bash
-fern -target x86-64-linux -o hello hello.fern    # or arm64-linux, arm64-darwin
+fern -o hello hello.fern                         # for this machine
+fern -target arm64-linux -o hello hello.fern     # or x86-64-linux, arm64-darwin
 ./hello
 ```
 
-`fern -target x86-64-linux -run hello.fern` builds to a temporary binary
+`fern -run hello.fern` builds to a temporary binary
 and runs it in one step.
 
 Or compile to wasm and run under wasmtime:

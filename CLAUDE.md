@@ -56,7 +56,7 @@ Unscheduled; it constrains design choices today, it is not work in flight.
 
 ## Targets
 
-- **ARM64 / aarch64 Linux** — the default target. qemu-aarch64 under test; real
+- **ARM64 / aarch64 Linux** — the primary target. qemu-aarch64 under test; real
   hardware is AWS Graviton 2+, Android, Apple Silicon via Linux containers.
   Baseline: **ARMv8.2-A with the cryptographic extensions**, so Advanced SIMD,
   `crc32`, LSE atomics and `pmull`/`aes` are all assumable. Raspberry Pi is NOT
