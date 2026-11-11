@@ -67,7 +67,16 @@ func RunFoldByteCases(t *testing.T, bin string, runner []string, census func(*te
 	if err != nil {
 		t.Skip("requires GNU fold")
 	}
-	version, err := exec.Command(oracle, "--version").Output()
+	RunFoldByteCasesAgainst(t, bin, runner, []string{oracle}, census)
+}
+
+func RunFoldByteCasesAgainst(t *testing.T, bin string, runner, oracle []string, census func(*testing.T, string)) {
+	t.Helper()
+	if len(oracle) == 0 {
+		t.Fatal("missing GNU fold command")
+	}
+	versionArgv := append(append([]string{}, oracle...), "--version")
+	version, err := exec.Command(versionArgv[0], versionArgv[1:]...).Output()
 	if err != nil || !bytes.Contains(version, []byte("GNU coreutils")) {
 		t.Skip("requires GNU fold")
 	}
@@ -84,7 +93,7 @@ func RunFoldByteCases(t *testing.T, bin string, runner []string, census func(*te
 	if majorErr != nil || minorErr != nil || major < 9 || major == 9 && minor < 12 {
 		t.Skip("requires GNU coreutils 9.12 or newer")
 	}
-	t.Logf("reference: %s (%s)", oracle, strings.SplitN(string(version), "\n", 2)[0])
+	t.Logf("reference: %s (%s)", strings.Join(oracle, " "), strings.SplitN(string(version), "\n", 2)[0])
 	for _, tc := range FoldByteCases() {
 		t.Run(tc.Name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -99,7 +108,8 @@ func RunFoldByteCases(t *testing.T, bin string, runner []string, census func(*te
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			env := append(os.Environ(), "LC_ALL=C")
-			ref := exec.CommandContext(ctx, oracle, args...)
+			refArgv := append(append([]string{}, oracle...), args...)
+			ref := exec.CommandContext(ctx, refArgv[0], refArgv[1:]...)
 			ref.Dir, ref.Env, ref.Stdin = dir, env, strings.NewReader(tc.Input)
 			want, err := ref.Output()
 			if err != nil {
