@@ -157,6 +157,16 @@ The outer scope retains its use-after-transfer checks.
 
 The conformance cases `diag_e051_repeatable_closure_consumes_owned_capture` and `repeatable_closure_owned_inputs` cover these rules.
 
+A callback must finish its resource reads before the owner consumes the resource.
+Both checkers report E050 for direct local callbacks and simple aliases after a captured owner moves.
+The guard requires one lexical definition for each binding it follows.
+It preserves repeated reads before cleanup and immutable data copies.
+The cases `diag_e050_callback_uses_consumed_capture` and `callback_capture_lifetimes` cover this guard.
+
+This guard does not establish complete capture lifetimes.
+Callback factories, conditional callback values, mutable bindings, and resource field paths need a broader loan analysis.
+Issue #15328 tracks that remaining work.
+
 ## Cross-compiler parity
 
 Both the native (Go) checker and the self-host (`compiler/checker.fern`)

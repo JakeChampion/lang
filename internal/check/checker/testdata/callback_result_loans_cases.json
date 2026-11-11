@@ -643,5 +643,100 @@
     "name": "immediate borrowed input rejects ownership",
     "source": "struct H { n: i32 } function (own h: H) close(): i32 { return h.n; } function f(h: H): i32 { return ((own p: H): i32 => p.close())(h); }",
     "want": "E051"
+  },
+  {
+    "name": "local callback reads consumed capture",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): void {} function run(own h: H): i32 { let read = (): i32 => h.read(); h.close(); return read(); }",
+    "want": "E050"
+  },
+  {
+    "name": "callback alias reads consumed capture",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): void {} function run(own h: H): i32 { let read = (): i32 => h.read(); let alias = read; h.close(); return alias(); }",
+    "want": "E050"
+  },
+  {
+    "name": "named callback reads consumed capture",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): void {} function run(own h: H): i32 { function read(): i32 { return h.read(); } h.close(); return read(); }",
+    "want": "E050"
+  },
+  {
+    "name": "nested callback reads consumed capture",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): void {} function run(own h: H): i32 { let read = (): i32 => h.read(); let outer = (): i32 => read(); h.close(); return outer(); }",
+    "want": "E050"
+  },
+  {
+    "name": "callback passed after capture consumed",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): void {} function invoke(f: () => i32): i32 { return f(); } function run(own h: H): i32 { let read = (): i32 => h.read(); h.close(); return invoke(read); }",
+    "want": "E050"
+  },
+  {
+    "name": "callback returned after capture consumed",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): void {} function run(own h: H): () => i32 { let read = (): i32 => h.read(); h.close(); return read; }",
+    "want": "E050"
+  },
+  {
+    "name": "callback capture consumed through helper",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): void {} function drop(own h: H): void { h.close(); } function run(own h: H): i32 { let read = (): i32 => h.read(); drop(h); return read(); }",
+    "want": "E050"
+  },
+  {
+    "name": "callback reads after conditional capture consumption",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): void {} function run(own h: H, b: boolean): i32 { let read = (): i32 => h.read(); if (b) { h.close(); } return read(); }",
+    "want": "E050"
+  },
+  {
+    "name": "callback last use before capture consumption",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): void {} function run(own h: H): i32 { let read = (): i32 => h.read(); let n = read() + read(); h.close(); return n; }",
+    "want": ""
+  },
+  {
+    "name": "unused callback permits capture consumption",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): void {} function run(own h: H): void { let read = (): i32 => h.read(); h.close(); }",
+    "want": ""
+  },
+  {
+    "name": "owned callback factory retains transferred capture",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): void {} function make(own h: H): own () => i32 { return (): i32 => h.read(); } function run(own h: H): i32 { let read = make(h); return read() + read(); }",
+    "want": ""
+  },
+  {
+    "name": "unrelated owner consumption preserves callback",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): void {} function run(own h: H, own other: H): i32 { let read = (): i32 => h.read(); other.close(); return read(); }",
+    "want": ""
+  },
+  {
+    "name": "callback scalar result keeps its copy",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): void {} function run(own h: H): i32 { let read = (): i32 => h.read(); let n = read(); h.close(); return n; }",
+    "want": ""
+  },
+  {
+    "name": "shadowed capture name preserves outer callback",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): void {} function run(own h: H): i32 { let read = (): i32 => h.read(); { let h = H { n: 2 }; h.close(); } let n = read(); h.close(); return n; }",
+    "want": ""
+  },
+  {
+    "name": "replaced callback drops previous capture",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): void {} function run(own h: H, own other: H): i32 { let read = (): i32 => h.read(); read = (): i32 => other.read(); h.close(); return read(); }",
+    "want": ""
+  },
+  {
+    "name": "callback immutable array copy survives owned transfer",
+    "source": "function change(own xs: i32[]): void { xs = xs.with(0, 9); } function run(own xs: i32[]): i32 { let read = (): i32 => xs[0]; change(xs); return read(); }",
+    "want": ""
+  },
+  {
+    "name": "callback checked value copy survives cleanup",
+    "source": "@value struct V { n: i32 } function (own v: V) erase(): void {} function run(own v: V): i32 { let read = (): i32 => v.n; v.erase(); return read(); }",
+    "want": ""
+  },
+  {
+    "name": "callback reads consumed mutable cell capture",
+    "source": "function drop(own c: Cell[i32]): void {} function run(own c: Cell[i32]): i32 { let read = (): i32 => c.get(); drop(c); return read(); }",
+    "want": "E050"
+  },
+  {
+    "name": "captured aggregate retains its transfer guard",
+    "source": "struct H { n: i32 } function (own h: H) close(): void {} struct Owner { h: H, n: i32 } function run(own owner: Owner): i32 { let read = (): i32 => owner.n; owner.h.close(); return read(); }",
+    "want": "E051"
   }
 ]

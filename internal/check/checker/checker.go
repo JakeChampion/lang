@@ -10884,6 +10884,8 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	}
 
 	type movedSet = map[string]ast.Position
+	var callbackCaptures map[string][]ast.Param
+	callbackCapturesKnown := false
 
 	// A deferred call consumes its arguments at the function's exit, after
 	// every other use. deferMoved holds those names and field paths.
@@ -11310,7 +11312,21 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				return true
 			}
 			id, ok := n.(*ast.Ident)
-			if !ok || id.Builtin || !owned[id.Name] {
+			if !ok || id.Builtin {
+				return true
+			}
+			if id.Local && !owned[id.Name] && len(moved) > 0 {
+				if !callbackCapturesKnown {
+					callbackCaptures = c.localCallbackCaptures(fn)
+					callbackCapturesKnown = true
+				}
+				for _, capture := range callbackCaptures[id.Name] {
+					if at, consumed := moved[capture.Name]; consumed {
+						c.errfCode(id.Pos(), "E050", "callback %q uses captured owned parameter %q after it was consumed (moved at line %d)", id.Name, capture.Name, at.Line)
+					}
+				}
+			}
+			if !owned[id.Name] {
 				return true
 			}
 			if at, isMoved := moved[id.Name]; isMoved {
