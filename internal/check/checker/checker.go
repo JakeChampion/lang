@@ -10893,7 +10893,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 
 	type movedSet = map[string]ast.Position
 	var callbackCaptures map[string][]ast.Param
-	var inlineCaptures map[*ast.Lambda][]ast.Param
+	var inlineCaptures map[ast.Expr][]ast.Param
 	callbackCapturesKnown := false
 	checkCallbackCaptures := func(value ast.Expr, moved movedSet) {
 		if value == nil || len(moved) == 0 {
@@ -10907,6 +10907,8 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			}
 			name = v.Name
 		case *ast.Lambda:
+		case *ast.IfExpr, *ast.MatchExpr, *ast.BlockExpr:
+			name = "value"
 		default:
 			return
 		}
@@ -10915,8 +10917,8 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			callbackCapturesKnown = true
 		}
 		captures := callbackCaptures[name]
-		if lambda, ok := value.(*ast.Lambda); ok {
-			captures = inlineCaptures[lambda]
+		if _, named := value.(*ast.Ident); !named {
+			captures = inlineCaptures[value]
 		}
 		for _, capture := range captures {
 			if at, consumed := moved[capture.Name]; consumed {

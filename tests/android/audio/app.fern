@@ -66,6 +66,40 @@ function check(ctx: usize): void {
   }
   speaker.close();
   log.warn("audiotest: playback rate " + speaker.rate.to_string() + ", wrote " + wrote.to_string() + " samples");
+  play_music();
+}
+
+// A stereo stream of music: a tone on the left channel only. The stream
+// takes whole frames, stops at `pause`, and takes samples again after
+// `flush`.
+function play_music(): void {
+  let music = audio.music(44100, 2);
+  let wrote = 0;
+  let odd = 0;
+  let again = 0;
+  if (music.start()) {
+    for k in 0..25 {
+      let tone: i32[] = [];
+      for i in 0..882 {
+        let level = 8000;
+        if ((k * 882 + i) / 50 % 2 == 1) {
+          level = -8000;
+        }
+        tone = tone.append(level).append(0);
+      }
+      let n = music.write(tone, 200);
+      wrote += n;
+      odd += n % 2;
+    }
+    music.pause();
+    music.flush();
+    if (music.start()) {
+      again = music.write([100, 100, 200, 200], 200);
+    }
+    music.pause();
+  }
+  music.close();
+  log.warn("audiotest: music rate " + music.rate.to_string() + ", channels " + music.channels.to_string() + ", wrote " + wrote.to_string() + " samples, " + odd.to_string() + " odd, " + again.to_string() + " after the flush");
 }
 
 function log_anchor(speaker: audio.Stream): void {
