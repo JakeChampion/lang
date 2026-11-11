@@ -1,6 +1,6 @@
 # Android audio streams
 
-This module captures and plays mono 16-bit audio through AAudio.
+This module captures and plays 16-bit audio through AAudio: speech and sounds in mono, and music in mono or stereo.
 
 ## Model
 
@@ -15,6 +15,8 @@ Each stream uses the full capacity of its buffer and not the low-latency mode. I
 `read` and `write` block for at most their timeout. A sample is an `i32` from -32768 to 32767. `write` gives the number of samples that it wrote. When the buffer is full before the timeout, that number is less than the length, and the caller must write the other samples later.
 
 The module needs API level 28, for the usage, the content type and the input preset. A capture stream needs the RECORD_AUDIO permission.
+
+`music` gives a `Music` stream: a playback stream with the music content type and one or two channels. The samples of a stereo frame are one after the other, left then right. `pause` stops the sound and keeps the samples that the stream holds. `flush` drops them, so a player that moves to another time in a track does not play the old samples.
 
 ## Contracts
 
@@ -48,8 +50,9 @@ It does not assign media timestamps, synchronize the video controller, or measur
 
 ```fern
 <<module introduction>>=
-// This module captures and plays mono 16-bit audio through AAudio.
+// This module captures and plays 16-bit audio through AAudio.
 import "std/ffi";
+import "std/i32";
 ```
 
 ### `C functions`
@@ -91,6 +94,15 @@ function c_delete_builder(builder: usize): i32;
 
 @import("libaaudio.so", "AAudioStream_requestStart")
 function c_request_start(stream: usize): i32;
+
+@import("libaaudio.so", "AAudioStream_requestPause")
+function c_request_pause(stream: usize): i32;
+
+@import("libaaudio.so", "AAudioStream_requestFlush")
+function c_request_flush(stream: usize): i32;
+
+@import("libaaudio.so", "AAudioStream_waitForStateChange")
+function c_wait_for_state_change(stream: usize, state: i32, out_next: usize, timeout_ns: i64): i32;
 
 @import("libaaudio.so", "AAudioStream_requestStop")
 function c_request_stop(stream: usize): i32;
@@ -135,12 +147,26 @@ pub const USAGE_ALARM: i32 = 4;
 pub const USAGE_NOTIFICATION: i32 = 5;
 
 function open(input: boolean, rate: i32, usage: i32): Stream {
+  let content = 4;
+  if (usage == USAGE_MEDIA) {
+    content = 1;
+  }
+  let ptr = open_stream(input, rate, usage, 1, content);
+  if (ptr == 0 as usize) {
+    return Stream { ptr: ptr, rate: 0 };
+  }
+  return Stream { ptr: ptr, rate: c_sample_rate(ptr) };
+}
+
+// A stream of `channels` channels with the content type `content`, or 0
+// when the device opens none.
+function open_stream(input: boolean, rate: i32, usage: i32, channels: i32, content: i32): usize {
   unsafe {
     let slot: usize = __alloc(8);
     __store_ptr(slot, 0 as usize);
     if (c_create_builder(slot) != 0) {
       __free(slot, 8);
-      return Stream { ptr: 0 as usize, rate: 0 };
+      return 0 as usize;
     }
     let builder: usize = __load_ptr(slot);
     let direction = 0;
@@ -149,14 +175,10 @@ function open(input: boolean, rate: i32, usage: i32): Stream {
     }
     c_set_direction(builder, direction);
     c_set_sample_rate(builder, rate);
-    c_set_channel_count(builder, 1);
+    c_set_channel_count(builder, channels);
     c_set_format(builder, 1);
     c_set_performance_mode(builder, 10);
-    if (usage == USAGE_MEDIA) {
-      c_set_content_type(builder, 1);
-    } else {
-      c_set_content_type(builder, 4);
-    }
+    c_set_content_type(builder, content);
     if (input) {
       c_set_input_preset(builder, 7);
     } else {
@@ -168,10 +190,10 @@ function open(input: boolean, rate: i32, usage: i32): Stream {
     let deleted: i32 = c_delete_builder(builder);
     __free(slot, 8);
     if (opened != 0) {
-      return Stream { ptr: 0 as usize, rate: 0 };
+      return 0 as usize;
     }
     let sized: i32 = c_set_buffer_size(stream, c_buffer_capacity(stream));
-    return Stream { ptr: stream, rate: c_sample_rate(stream) };
+    return stream;
   }
 }
 
@@ -253,8 +275,14 @@ pub function (s: Stream) read(n: i32, timeout_ms: i32): i32[] {
 // Writes `samples` to a playback stream, waiting at most `timeout_ms`, and
 // gives the number of samples written. A sample out of range is clipped.
 pub function (s: Stream) write(samples: [i32], timeout_ms: i32): i32 {
+  return write_frames(s.ptr, samples, samples.len(), timeout_ms);
+}
+
+// Writes the first `frames` frames of `samples` to the stream `ptr`, and
+// gives the number of frames written.
+function write_frames(ptr: usize, samples: [i32], frames: i32, timeout_ms: i32): i32 {
   let n: i32 = samples.len();
-  if (s.ptr == 0 as usize || n == 0) {
+  if (ptr == 0 as usize || n == 0 || frames <= 0) {
     return 0;
   }
   unsafe {
@@ -269,9 +297,75 @@ pub function (s: Stream) write(samples: [i32], timeout_ms: i32): i32 {
       __store_u8(buf + (2 * k) as usize, v & 255);
       __store_u8(buf + (2 * k + 1) as usize, v >> 8 & 255);
     }
-    let wrote: i32 = c_write(s.ptr, buf, n, timeout_ms as i64 * 1000000i64);
+    let wrote: i32 = c_write(ptr, buf, frames, timeout_ms as i64 * 1000000i64);
     __free(buf, 2 * n);
-    return wrote;
+    return wrote.max(0);
   }
+}
+
+// A playback stream of music. `channels` is 1 or 2, and the samples of a
+// frame are one after the other.
+pub struct Music { ptr: usize, rate: i32, channels: i32 }
+
+// A playback stream of music at `rate` frames a second with `channels`
+// channels: 1 or 2. The device can choose another rate, which `rate` of the
+// stream gives. A stream with `ptr` 0 did not open.
+pub function music(rate: i32, channels: i32): Music {
+  let count = channels.max(1).min(2);
+  let ptr = open_stream(false, rate, USAGE_MEDIA, count, 2);
+  if (ptr == 0 as usize) {
+    return Music { ptr: ptr, rate: 0, channels: count };
+  }
+  return Music { ptr: ptr, rate: c_sample_rate(ptr), channels: count };
+}
+
+pub function (m: Music) start(): boolean {
+  return m.ptr != 0 as usize && c_request_start(m.ptr) == 0;
+}
+
+// Stops the sound. The stream keeps the samples that it holds, and `start`
+// plays them.
+pub function (m: Music) pause(): void {
+  if (m.ptr != 0 as usize) {
+    let paused: i32 = c_request_pause(m.ptr);
+  }
+}
+
+// AAUDIO_STREAM_STATE_PAUSING and AAUDIO_STREAM_STATE_FLUSHING.
+const PAUSING: i32 = 5;
+
+const FLUSHING: i32 = 7;
+
+// Waits at most 200 ms while the stream `ptr` is in `state`.
+function settled(ptr: usize, state: i32): void {
+  unsafe {
+    let slot: usize = __alloc(4);
+    let waited: i32 = c_wait_for_state_change(ptr, state, slot, 200000000i64);
+    __free(slot, 4);
+  }
+}
+
+// Drops the samples that the stream holds. Call it after `pause`. A stream
+// drops its samples only after it stopped, so `flush` waits for that, and
+// then for the samples to go.
+pub function (m: Music) flush(): void {
+  if (m.ptr != 0 as usize) {
+    settled(m.ptr, PAUSING);
+    let flushed: i32 = c_request_flush(m.ptr);
+    settled(m.ptr, FLUSHING);
+  }
+}
+
+pub function (m: Music) close(): void {
+  if (m.ptr != 0 as usize) {
+    let closed: i32 = c_close(m.ptr);
+  }
+}
+
+// Writes `samples` to the stream, waiting at most `timeout_ms`, and gives
+// the number of samples written: a whole number of frames. A sample out of
+// range is clipped.
+pub function (m: Music) write(samples: [i32], timeout_ms: i32): i32 {
+  return write_frames(m.ptr, samples, samples.len() / m.channels, timeout_ms) * m.channels;
 }
 ```
