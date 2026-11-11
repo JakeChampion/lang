@@ -1474,7 +1474,7 @@ function (c: Conn) __frame(f: frames.Frame, space: i32, now: i64): Conn {
       return c.__drain(Close { code: cc.code, frame_type: cc.frame_type, reason: cc.reason, app: cc.app, remote: true }, now);
     },
     frames.PathChallenge(data) => {
-      return Conn { ...c, pending: c.pending.append(frames.PathResponse(data)) };
+      return Conn { ...c, pending: __without_path_response(c.pending).append(frames.PathResponse(data)) };
     },
     frames.PathResponse(data) => {
       return c.__path_answered(data);
@@ -1565,7 +1565,7 @@ function (c: Conn) __cid_offered(n: frames.NewConnectionId, now: i64): Conn {
   let k = __cid_index(c.remote_cids, n.sequence);
   if (k >= 0) {
     if (__same(c.remote_cids[k].id, n.id) && __same(c.remote_cids[k].token, n.reset_token)) {
-      return c.__retire_prior(n.retire_prior_to);
+      return c.__retire_prior(n.retire_prior_to).__retires_limited(now);
     }
     return c.__fail(frames.PROTOCOL_VIOLATION, frames.NEW_CONNECTION_ID, "NEW_CONNECTION_ID repeats a sequence number with another connection ID", now);
   }
@@ -1575,13 +1575,47 @@ function (c: Conn) __cid_offered(n: frames.NewConnectionId, now: i64): Conn {
     }
   }
   if (n.sequence < c.retire_prior) {
-    return Conn { ...c, pending: c.pending.append(frames.RetireConnectionId(n.sequence)) };
+    return Conn { ...c, pending: c.pending.append(frames.RetireConnectionId(n.sequence)) }.__retires_limited(now);
   }
   let cur = Conn { ...c, remote_cids: c.remote_cids.append(Cid { seq: n.sequence, id: n.id, token: n.reset_token }) }.__retire_prior(n.retire_prior_to);
   if (cur.remote_cids.len() as i64 > cur.config.params.active_connection_id_limit) {
     return cur.__fail(frames.CONNECTION_ID_LIMIT_ERROR, frames.NEW_CONNECTION_ID, "more connection IDs than active_connection_id_limit allows", now);
   }
-  return cur;
+  return cur.__retires_limited(now);
+}
+
+// RFC 9000 section 5.1.2: the connection IDs that wait for their
+// RETIRE_CONNECTION_ID frame have a limit of two times
+// active_connection_id_limit.
+function (c: Conn) __retires_limited(now: i64): Conn {
+  let waiting = 0 as i64;
+  for f in c.pending {
+    match (f) {
+      frames.RetireConnectionId(seq) => {
+        waiting += 1;
+      },
+      _ => {}
+    }
+  }
+  if (waiting > 2 * c.config.params.active_connection_id_limit) {
+    return c.__fail(frames.CONNECTION_ID_LIMIT_ERROR, frames.NEW_CONNECTION_ID, "more connection IDs to retire than this side holds", now);
+  }
+  return c;
+}
+
+// One PATH_RESPONSE is owed at a time: the response to the last challenge
+// takes the place of one that did not go out (RFC 9000 section 8.2.2).
+function __without_path_response(pending: frames.Frame[]): frames.Frame[] {
+  let kept: frames.Frame[] = [];
+  for f in pending {
+    match (f) {
+      frames.PathResponse(data) => {},
+      _ => {
+        kept = kept.append(f);
+      }
+    }
+  }
+  return kept;
 }
 
 // __retire_prior retires every connection ID the peer issued below `prior`,
@@ -1825,7 +1859,11 @@ function (c: Conn) __crypto(space: i32, offset: i64, data: u8[], now: i64): Conn
   if (offset + data.len() as i64 - s.crypto_in.delivered() > MAX_CRYPTO_HELD) {
     return c.__fail(frames.CRYPTO_BUFFER_EXCEEDED, frames.CRYPTO, "CRYPTO data past what this side holds out of order", now);
   }
-  let (r, bytes) = s.crypto_in.add(offset, data).take();
+  let added = s.crypto_in.add(offset, data);
+  if (added.overrun) {
+    return c.__fail(frames.CRYPTO_BUFFER_EXCEEDED, frames.CRYPTO, "more ranges of CRYPTO data out of order than this side holds", now);
+  }
+  let (r, bytes) = added.take();
   let cur = Conn { ...c, spaces: c.spaces.with(space, Space { ...s, crypto_in: r }) };
   if (bytes.len() == 0) {
     return cur;
