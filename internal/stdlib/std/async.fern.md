@@ -1136,21 +1136,33 @@ pub function wait_any(set: i32[], until: Option[Instant]): Wake {
 }
 
 function __host_wait_any(set: i32[], until: Option[Instant]): Wake {
-  let timeout_ms = -1;
-  let left: i64 = 0;
-  if let Some(at) = until {
-    left = time.instant_nanos(at) - monotonic_ns();
-    timeout_ms = __ms_until(left);
+  let left = __host_left_ns(until);
+  let woke = __block(set, __host_timeout_ms(until, left));
+  // A wait has 2^31-1 ms at most. A deadline past that waits again.
+  while (woke < 0 && left > 2147483647 as i64 * 1000000) {
+    left = __host_left_ns(until);
+    woke = __block(set, __host_timeout_ms(until, left));
   }
-  let woke = __block(set, timeout_ms);
   if (woke >= 0) {
     return Woke(woke);
   }
-  // A wait has 2^31-1 ms at most. A deadline past that waits again.
-  if (left > 2147483647 as i64 * 1000000) {
-    return __host_wait_any(set, until);
-  }
   return TimedOut;
+}
+
+// The nanoseconds from now to the deadline, or 0 for no deadline.
+function __host_left_ns(until: Option[Instant]): i64 {
+  if let Some(at) = until {
+    return time.instant_nanos(at) - monotonic_ns();
+  }
+  return 0;
+}
+
+// The timeout of one wait: -1 waits with no limit.
+function __host_timeout_ms(until: Option[Instant], left: i64): i32 {
+  if let Some(_) = until {
+    return __ms_until(left);
+  }
+  return -1;
 }
 
 function __park(set: i32[], until: Option[Instant]): Wake {
