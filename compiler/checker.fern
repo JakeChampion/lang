@@ -12492,13 +12492,8 @@ function dupvar_diags(stmts: ast.Stmt[]): util.Diag[] {
           declared = declared.append(v.name);
         }
         if (v.type_name.len() == 0) {
-          match (v.init) {
-            ast.ExprArray(arr) => {
-              if (arr.elements.len() == 0) {
-                out = out.append(dg_at("E020", "empty array literal needs a type annotation", v.line, v.col));
-              }
-            },
-            _ => {}
+          if (empty_array_rooted(v.init)) {
+            out = out.append(dg_at("E020", "empty array literal needs a type annotation", v.line, v.col));
           }
         }
       },
@@ -12936,6 +12931,30 @@ function array_step(c: ast.ExprCall): (ast.Expr, ast.Expr, boolean) {
     }
   }
   return (c.callee, c.callee, false);
+}
+
+// empty_array_rooted is true for an empty array literal, and for an append or
+// a with call on one.
+function empty_array_rooted(e: ast.Expr): boolean {
+  if let ast.ExprArray(arr) = e {
+    return arr.elements.len() == 0;
+  }
+  if let ast.ExprCall(c) = e {
+    let (recv, arg, step) = array_step(c);
+    return step && empty_array_rooted(recv);
+  }
+  return false;
+}
+
+// array_step_root is the receiver that a chain of append and with calls starts from.
+function array_step_root(e: ast.Expr): ast.Expr {
+  if let ast.ExprCall(c) = e {
+    let (recv, arg, step) = array_step(c);
+    if (step) {
+      return array_step_root(recv);
+    }
+  }
+  return e;
 }
 
 // A mixed literal already has its E034, so it takes no destination error when its first element could settle there.
@@ -30293,17 +30312,23 @@ function settle_wide_literals(e: ast.Expr, t: typeinfo.Type): ast.Expr {
 // settle_array_step gives the literals of an append or a with call on an
 // array literal the element type of t.
 function settle_array_step(e: ast.Expr, t: typeinfo.Type): ast.Expr {
-  let ast.ExprCall(c) = e else {
+  let typeinfo.TypeArray(at) = t else {
     return e;
   };
-  let typeinfo.TypeArray(at) = t else {
+  if let ast.ExprArray(ea) = e {
+    if (ea.elements.len() == 0 && ea.elem_ty.len() == 0) {
+      return ast.ExprArray { ...ea, elem_ty: type_to_irtag(at.elem) };
+    }
+    return e;
+  }
+  let ast.ExprCall(c) = e else {
     return e;
   };
   let ast.ExprFieldAccess(fa) = c.callee else {
     return e;
   };
   let (recv, arg, step) = array_step(c);
-  if (!step || !lit_array_rooted(recv)) {
+  if (!step || !lit_array_rooted(recv) && !empty_array_rooted(recv)) {
     return e;
   }
   let obj = settle_array_step(settle_wide_literals(recv, t), t);
@@ -32623,6 +32648,10 @@ function lit_marked_read(e: ast.Expr, s: Scope): boolean {
   if let ast.ExprFieldAccess(fa) = e {
     return util.is_all_digits(fa.field) && lit_marked_read(fa.obj, s);
   }
+  if let ast.ExprCall(c) = e {
+    let (recv, arg, step) = array_step(c);
+    return step && lit_marked_read(recv, s);
+  }
   return false;
 }
 
@@ -33331,9 +33360,12 @@ function lit_array_demand(e: ast.Expr, wa: typeinfo.TypeArray, s: Scope, st: Lit
   }
   if let ast.ExprCall(c) = e {
     let (recv, arg, step) = array_step(c);
-    if (step && lit_array_rooted(recv) && is_integer(wa.elem)) {
+    if (step && (lit_array_rooted(recv) && is_integer(wa.elem) || empty_array_rooted(recv))) {
       let out = lit_demand(arg, wa.elem, s, lit_array_demand(recv, wa, s, lit_step_index(c, s, st)));
       return LitInfer { ...out, pargs: out.pargs.append(gcall_arg_key(c, LIT_STEP_RECV)), ptypes: out.ptypes.append(wa) };
+    }
+    if let ast.ExprIdent(id) = array_step_root(e) {
+      st = lit_type_demand(s.lookup(id.name), wa, st);
     }
   }
   return lit_other_demand(e, wa, s, st);
@@ -33639,7 +33671,7 @@ function variant_payload_types(c: ast.ExprCall, s: Scope): typeinfo.Type[] {
 // settle from the parameter type.
 function lit_arg_reads(arg: ast.Expr, s: Scope): boolean {
   let (seed, ids) = lit_tree(arg, s, []);
-  return seed && ids.len() > 0 || lit_composite(arg) || !seed && open_tree(arg, s) || lit_struct_read(arg, s) || lit_enum_read(arg, s) || lit_open_read(arg, s) || lit_marked_read(arg, s);
+  return seed && ids.len() > 0 || lit_composite(arg) || empty_array_rooted(arg) || !seed && open_tree(arg, s) || lit_struct_read(arg, s) || lit_enum_read(arg, s) || lit_open_read(arg, s) || lit_marked_read(arg, s);
 }
 
 // lit_open_receiver gives an open local the type arguments that a method call
@@ -33712,7 +33744,7 @@ function lit_method_receiver(c: ast.ExprCall, method: string, name: string, have
 // operand of a binary operator.
 function lit_array_receiver(c: ast.ExprCall, s: Scope, st: LitInfer): LitInfer {
   let (recv, arg, step) = array_step(c);
-  let ast.ExprIdent(id) = recv else {
+  let ast.ExprIdent(id) = array_step_root(recv) else {
     return st;
   };
   let typeinfo.TypeArray(a) = s.lookup(id.name) else {
@@ -33722,6 +33754,9 @@ function lit_array_receiver(c: ast.ExprCall, s: Scope, st: LitInfer): LitInfer {
     return st;
   }
   let (seed, ids) = lit_tree(arg, s, []);
+  if (lit_int_local_in_float(a.elem, arg, s, st)) {
+    return st;
+  }
   if (seed || lit_composite(arg)) {
     let (part, linked, found) = lit_composite_local(arg, s, st);
     return lit_type_link(a.elem, part, linked);
@@ -34062,6 +34097,9 @@ function lit_composite_local(e: ast.Expr, s: Scope, st: LitInfer): (typeinfo.Typ
     if (step && lit_array_rooted(recv)) {
       let (whole, next, any) = lit_composite_local(recv, s, lit_step_index(c, s, st));
       if let typeinfo.TypeArray(ra) = whole {
+        if (lit_int_local_in_float(ra.elem, arg, s, next)) {
+          return (whole, next, any);
+        }
         let (part, more, found) = lit_composite_local(arg, s, next);
         let linked = lit_type_link(ra.elem, part, more);
         return (whole, LitInfer { ...linked, pargs: linked.pargs.append(gcall_arg_key(c, LIT_STEP_RECV)), ptypes: linked.ptypes.append(whole) }, any || found);
@@ -34069,6 +34107,22 @@ function lit_composite_local(e: ast.Expr, s: Scope, st: LitInfer): (typeinfo.Typ
     }
   }
   return (check_expr(e, lit_typed_scope(s, st)), st, false);
+}
+
+// lit_int_local_in_float is true when arg reads an integer literal local and
+// elem is a float literal element. An integer local does not become a float.
+function lit_int_local_in_float(elem: typeinfo.Type, arg: ast.Expr, s: Scope, st: LitInfer): boolean {
+  let k = lit_id(elem);
+  if (k < 0 || !is_float(st.width[lit_find(st, k)])) {
+    return false;
+  }
+  let (seed, ids) = lit_tree(arg, s, []);
+  for id in lit_not_wide(ids) {
+    if (!is_float(st.width[lit_find(st, id)])) {
+      return seed;
+    }
+  }
+  return false;
 }
 
 function lit_composite(e: ast.Expr): boolean {
@@ -34941,7 +34995,7 @@ function lit_scan_expr(e: ast.Expr, own sc: LitScan): LitScan {
         return LitScan { ...sc, found: true };
       }
     }
-    if (lit_array_rooted(e)) {
+    if (lit_array_rooted(e) || empty_array_rooted(e)) {
       return LitScan { ...sc, found: true };
     }
   }

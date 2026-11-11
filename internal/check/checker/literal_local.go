@@ -266,20 +266,16 @@ func (c *checker) settleLitArrayByCall(call *ast.Call, fa *ast.FieldAccess, hint
 		c.litArraySteps[call] = litArrayStep{recv: fa.Target, arg: call.Args[at]}
 		return c.settleLitArrayStepByHint(call, hint, s)
 	}
-	id, ok := fa.Target.(*ast.Ident)
-	if !ok {
-		return nil
-	}
-	decl := s.lookupVarDecl(id.Name)
-	if decl == nil || c.litNestedOf[decl] == nil {
-		return nil
-	}
-	if _, array := decl.Type.(ast.ArrayType); !array {
+	id, decl := c.litStepRootLocal(fa.Target, s)
+	if decl == nil {
 		return nil
 	}
 	c.litCompositeReads[id] = decl
 	c.litArraySteps[call] = litArrayStep{from: decl}
-	if t := c.checkExpr(call.Args[at], s); settledNumeric(t) {
+	if want, ok := hint.(ast.ArrayType); ok {
+		c.settleLitCompositeLocal(id, want)
+	}
+	if t := c.litStepArgType(call.Args[at], s); t != nil {
 		c.settleLitCompositeLocal(id, ast.ArrayType{Elem: t})
 		return nil
 	}
@@ -298,11 +294,10 @@ func (c *checker) settleLitArrayByCall(call *ast.Call, fa *ast.FieldAccess, hint
 // neither gives a type.
 func (c *checker) settleLitArrayStepByHint(call *ast.Call, hint ast.Type, s *scope) ast.Type {
 	step := c.litArraySteps[call]
-	have, _ := c.checkExpr(step.arg, s).(ast.NumberType)
 	want, ok := hint.(ast.ArrayType)
 	w, integer := want.Elem.(ast.NumberType)
 	if !ok || !integer || w.Polymorphic {
-		if have.Width != 0 && !have.Polymorphic {
+		if have, ok := c.litStepArgType(step.arg, s).(ast.NumberType); ok {
 			return ast.ArrayType{Elem: have}
 		}
 		return nil
@@ -314,6 +309,59 @@ func (c *checker) settleLitArrayStepByHint(call *ast.Call, hint ast.Type, s *sco
 		}
 	}
 	return want
+}
+
+// litStepArgType is the element type that the stored argument of an append
+// or a with call gives a literal array: the type of a typed argument, or i64
+// for an integer literal that does not fit i32. The result is nil for another
+// argument.
+func (c *checker) litStepArgType(arg ast.Expr, s *scope) ast.Type {
+	t := c.checkExpr(arg, s)
+	if settledNumeric(t) {
+		return t
+	}
+	if nt, ok := t.(ast.NumberType); ok && nt.Polymorphic {
+		if def := c.polymorphicIntDefault(arg); def.Width == 64 {
+			return def
+		}
+	}
+	return nil
+}
+
+// litStepRootLocal is the literal array local that a chain of append and
+// with calls starts from, and the identifier that reads it.
+func (c *checker) litStepRootLocal(e ast.Expr, s *scope) (*ast.Ident, *ast.Var) {
+	for {
+		switch x := e.(type) {
+		case *ast.Ident:
+			decl := s.lookupVarDecl(x.Name)
+			if decl == nil || c.litNestedOf[decl] == nil {
+				return nil, nil
+			}
+			if _, array := decl.Type.(ast.ArrayType); !array {
+				return nil, nil
+			}
+			return x, decl
+		case *ast.Call:
+			fa, ok := x.Callee.(*ast.FieldAccess)
+			if !ok || litArrayStepArg(x, fa) < 0 {
+				return nil, nil
+			}
+			e = fa.Target
+		default:
+			return nil, nil
+		}
+	}
+}
+
+// litStepOnLocal is true for a chain of append and with calls on a literal
+// array local.
+func (c *checker) litStepOnLocal(e ast.Expr, s *scope) bool {
+	if _, call := e.(*ast.Call); !call {
+		return false
+	}
+	_, decl := c.litStepRootLocal(e, s)
+	return decl != nil
 }
 
 // litArrayRooted is true for an array literal, and for an append or a with
