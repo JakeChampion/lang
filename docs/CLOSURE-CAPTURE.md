@@ -143,6 +143,20 @@ Note that every numeric width, including the unsigned ones, is a scalar;
 `u8`/`u32`/`u64`/`usize` are **not** references and are freely
 reassignable when captured.
 
+## Resource consumption
+
+A repeatable callback cannot consume a captured resource.
+This rule also applies when its enclosing function receives that resource through an `own` parameter.
+Both checkers report E051 for the consuming use.
+The immutable data copy contract stays in effect for copyable captures.
+
+A callback can consume a fresh local resource or an `own` callback parameter.
+Each call then receives a separate resource.
+A directly invoked closure literal can consume its capture during that invocation.
+The outer scope retains its use-after-transfer checks.
+
+The conformance cases `diag_e051_repeatable_closure_consumes_owned_capture` and `repeatable_closure_owned_inputs` cover these rules.
+
 ## Cross-compiler parity
 
 Both the native (Go) checker and the self-host (`compiler/checker.fern`)
