@@ -1,0 +1,10 @@
+# The settings of `fern -apk` for the music player.
+[package]
+name = "tune"
+lib = "app.fern"
+
+[android]
+package = "dev.fern.tune"
+label = "Fern Tune"
+min_sdk = 28
+permissions = ["READ_MEDIA_AUDIO", "READ_EXTERNAL_STORAGE"]

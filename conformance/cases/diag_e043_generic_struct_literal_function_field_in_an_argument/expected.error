@@ -1,0 +1,2 @@
+main.fern:14:29: error[E043]: field "view": expected (i32) => i32, got (i32) => i64
+main.fern:15:35: error[E038]: argument 2 to "run": expected string, got i32

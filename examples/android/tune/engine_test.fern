@@ -1,0 +1,120 @@
+// Tests of the decoder of the player on the host: it reads the tunes that
+// demo.fern makes, as WAV and as FLAC.
+import "std/audio/flac";
+import "std/audio/pcm";
+import "std/audio/wav";
+import "std/result";
+import "std/test";
+import "./demo";
+import "./engine";
+
+function limits(): pcm.Limits {
+  return pcm.Limits { max_input_bytes: 1073741824, max_samples: 4194304 };
+}
+
+function stereo(): pcm.Format {
+  return pcm.Format { sample_rate: demo.RATE, channels: 2, bits_per_sample: 16 };
+}
+
+// One second of sound: four notes at 240 beats a minute.
+function tune(): i32[] {
+  return demo.render([demo.Note { pitch: 3, beats: 1.0 }, demo.Note { pitch: 7, beats: 1.0 }, demo.Note { pitch: 10, beats: 1.0 }, demo.Note { pitch: 15, beats: 1.0 }], 240);
+}
+
+// Each sample of the deck, and the number of its parts.
+function drained(d: engine.Deck): (i32[], i32, engine.Deck) {
+  let all: i32[] = [];
+  let parts = 0;
+  let deck = d;
+  while (!deck.done && parts < 100000) {
+    let (next, part) = deck.pull();
+    deck = next;
+    for v in part {
+      all = all.append(v);
+    }
+    parts += 1;
+  }
+  return (all, parts, deck);
+}
+
+function same(a: i32[], b: i32[]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function test_wav_plays_each_sample(): test.TestOutcome {
+  let samples = tune();
+  let Ok(file) = wav.encode(samples, stereo(), limits()) else {
+    return test.fail("the WAV encoder gave no file");
+  };
+  let Some(d) = engine.open(file) else {
+    return test.fail("the engine did not open the WAV file");
+  };
+  let head = d.kind.to_string() + " " + d.rate.to_string() + " " + d.channels.to_string() + " " + d.duration_ms().to_string();
+  let (all, parts, end) = drained(d);
+  return test.assert_eq(head + " " + same(all, samples).to_string() + " " + (parts > 2).to_string() + " " + end.position_ms().to_string(), "0 44100 2 1000 true true 1000");
+}
+
+function test_flac_plays_each_sample(): test.TestOutcome {
+  let samples = tune();
+  let Ok(file) = flac.encode(samples, stereo(), limits()) else {
+    return test.fail("the FLAC encoder gave no file");
+  };
+  let Some(d) = engine.open(file) else {
+    return test.fail("the engine did not open the FLAC file");
+  };
+  let head = d.kind.to_string() + " " + d.duration_ms().to_string() + " " + (file.len() < samples.len() * 2).to_string();
+  let (all, parts, end) = drained(d);
+  return test.assert_eq(head + " " + same(all, samples).to_string() + " " + (parts > 2).to_string(), "1 1000 true true true");
+}
+
+function test_seek(): test.TestOutcome {
+  let samples = tune();
+  let Ok(wave) = wav.encode(samples, stereo(), limits()) else {
+    return test.fail("the WAV encoder gave no file");
+  };
+  let Ok(lossless) = flac.encode(samples, stereo(), limits()) else {
+    return test.fail("the FLAC encoder gave no file");
+  };
+  let got = "";
+  for file in [wave, lossless] {
+    let Some(d) = engine.open(file) else {
+      return test.fail("the engine did not open a file");
+    };
+    let half = d.seek(0.5);
+    let at = half.at;
+    let (next, part) = half.pull();
+    // The part is the sound of the file from the frame that the deck is at.
+    let right = part.len() > 0;
+    for i in 0..part.len() {
+      if (part[i] != samples[at as i32 * 2 + i]) {
+        right = false;
+      }
+    }
+    let ended = next.seek(1.0).pull();
+    got = got + (at >= 22050i64 && at < 22050i64 + 8192i64).to_string() + " " + right.to_string() + " " + ended.0.done.to_string() + " ";
+  }
+  return test.assert_eq(got.trim(), "true true true true true true");
+}
+
+function test_other_bytes_do_not_open(): test.TestOutcome {
+  let text: u8[] = [104u8, 101u8, 108u8, 108u8, 111u8, 32u8, 102u8, 101u8, 114u8, 110u8];
+  let empty: u8[] = [];
+  return test.assert_eq(engine.open(text).is_none().to_string() + " " + engine.open(empty).is_none().to_string(), "true true");
+}
+
+function main(): i32 {
+  let r = test.new("examples/android/tune engine");
+  r = r.it("a WAV file plays each sample", test_wav_plays_each_sample);
+  r = r.it("a FLAC file plays each sample", test_flac_plays_each_sample);
+  r = r.it("a deck starts at a part of its file", test_seek);
+  r = r.it("bytes that are not sound do not open", test_other_bytes_do_not_open);
+  return r.finish();
+}

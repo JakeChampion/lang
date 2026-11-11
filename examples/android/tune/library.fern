@@ -1,0 +1,175 @@
+// The library of the player: the tracks of a directory, and the tunes that
+// the player makes when the directory has none.
+import "core/cmp";
+import "std/audio/flac";
+import "std/audio/pcm";
+import "std/audio/tags";
+import "std/audio/wav";
+import "std/option";
+import "std/result";
+import "std/string";
+import "std/unicode";
+import "./demo";
+import "./engine";
+import "./tune";
+
+function limits(): pcm.Limits {
+  return pcm.Limits { max_input_bytes: 1073741824, max_samples: 16777216 };
+}
+
+// The format of a file that the player reads, from the end of its name, or
+// "".
+pub function format_of(name: string): string {
+  let lower = name.to_lower();
+  if (lower.ends_with(".flac")) {
+    return "FLAC";
+  }
+  if (lower.ends_with(".wav")) {
+    return "WAV";
+  }
+  if (lower.ends_with(".mp3")) {
+    return "MP3";
+  }
+  return "";
+}
+
+// The parts of a path between its `/` characters.
+function parts(path: string): string[] {
+  let out: string[] = [];
+  for p in path.split("/") {
+    if (p.len() > 0) {
+      out = out.append(p.to_owned());
+    }
+  }
+  return out;
+}
+
+// The path below the root that it is in, or the whole path.
+function below(roots: string[], path: string): string {
+  for r in roots {
+    if (r.len() > 0 && path.starts_with(r + "/")) {
+      return path.drop(r.len() + 1).to_owned();
+    }
+  }
+  return path;
+}
+
+// The byte is between a number and a name: a space, a dot, a hyphen or a
+// low line.
+function between(c: u8): boolean {
+  return c == b' ' || c == b'.' || c == b'-' || c == b'_';
+}
+
+// The number at the start of a file name such as "03 Name" or "3. Name",
+// and the name after it. A name with no number gives 0 and itself.
+pub function numbered(name: string): (i32, string) {
+  let n = 0;
+  let at = 0;
+  while (at < name.len() && at < 3 && name[at] >= b'0' && name[at] <= b'9') {
+    n = n * 10 + (name[at] as i32 - 48);
+    at += 1;
+  }
+  let rest = at;
+  while (rest < name.len() && between(name[rest])) {
+    rest += 1;
+  }
+  if (at == 0 || rest == at || rest >= name.len()) {
+    return (0, name);
+  }
+  return (n, name.drop(rest).to_owned());
+}
+
+// The name of a file with no format at the end, and a space for each low
+// line.
+function stem(name: string): string {
+  let dot = name.len();
+  for i in 0..name.len() {
+    if (name[i] == b'.') {
+      dot = i;
+    }
+  }
+  return name.take(dot).replace("_", " ");
+}
+
+function or_else(text: string, other: string): string {
+  if (text.len() > 0) {
+    return text;
+  }
+  return other;
+}
+
+// The track of the file `path` with the bytes `bytes`, or None for a file
+// that is not sound. The tags of the file give its title, its artist, its
+// album and its number. A file with no tag for one of them takes it from
+// its path below its root: `Artist/Album/03 Title.flac`.
+pub function track(roots: string[], path: string, bytes: u8[]): Option[tune.Track] {
+  let dirs = parts(below(roots, path));
+  if (dirs.len() == 0) {
+    return None;
+  }
+  let name = dirs[dirs.len() - 1];
+  let format = format_of(name);
+  if (format.len() == 0) {
+    return None;
+  }
+  let found = tags.read(bytes);
+  let Some(deck) = engine.open(bytes) else {
+    return None;
+  };
+  let (number, title) = numbered(stem(name));
+  let album = tune.UNKNOWN_ALBUM;
+  let artist = tune.UNKNOWN_ARTIST;
+  if (dirs.len() >= 2) {
+    album = dirs[dirs.len() - 2];
+  }
+  if (dirs.len() >= 3) {
+    artist = dirs[dirs.len() - 3];
+  }
+  let by = or_else(found.artist, artist);
+  if (found.track > 0) {
+    number = found.track;
+  }
+  return Some(tune.Track { path: path, title: or_else(found.title, title), artist: by, album: or_else(found.album, album), by: or_else(found.album_artist, by), number: number, year: found.year, format: format, ms: deck.duration_ms() });
+}
+
+// The paths of the files of sound in `dir` and in the directories below
+// it, at most `depth` directories down. `list` gives the names in a
+// directory, and `is_dir` tells that a path is a directory.
+pub function files(dir: string, depth: i32, list: (string) => string[], is_dir: (string) => boolean): string[] {
+  let out: string[] = [];
+  for name in cmp.sort(list(dir)) {
+    let path = dir + "/" + name;
+    if (format_of(name).len() > 0) {
+      out = out.append(path);
+    } else if (depth > 0 && !name.starts_with(".") && is_dir(path)) {
+      for f in files(path, depth - 1, list, is_dir) {
+        out = out.append(f);
+      }
+    }
+  }
+  return out;
+}
+
+// The file of the tune of a number: the first one is a FLAC file, and each
+// other one is a WAV file.
+pub function demo_file(which: i32): Result[u8[], pcm.AudioError] {
+  let samples = demo.render(demo.melody(which), 96 + which * 24);
+  let format = pcm.Format { sample_rate: demo.RATE, channels: 2, bits_per_sample: 16 };
+  if (which == 0) {
+    return flac.encode(samples, format, limits());
+  }
+  return wav.encode(samples, format, limits());
+}
+
+// The path of the file of the tune of a number below the directory of the
+// library: the artist, the album, and the number and the name of the tune.
+pub function demo_name(which: i32): string {
+  let name = (which + 1).to_string() + " " + demo.names()[which];
+  if (which == 0) {
+    return "Fern/First Light/0" + name + ".flac";
+  }
+  if (which == 1) {
+    return "Fern/First Light/0" + name + ".wav";
+  }
+  return "Fern/Second Light/01 " + demo.names()[which] + ".wav";
+}

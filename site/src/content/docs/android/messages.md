@@ -76,6 +76,7 @@ write the enum before it: `Msg.Tick`.
 | What occurs | How you give it a message |
 |---|---|
 | A tap on an element | `.on_tap(msg)`, or the message of `ui.button` |
+| A finger on a slider | The function of `ui.slider`, or `.on_slide(slide)` |
 | A long press on an element | `.on_long(msg)` |
 | The text of a field changed | `.on_edit((text: string): Msg => Named(text))` |
 | The action key of the keyboard, on a field | `.on_submit(msg)` |
@@ -86,6 +87,35 @@ write the enum before it: `Msg.Tick`.
 
 An element or a program with no message for something gives nothing to
 `update` when it occurs.
+
+## Effects
+
+`update` does nothing to the phone: it returns the next state only. An app
+that plays a sound, reads a file or sends a request puts what it wants in
+the state. `with_effects` takes a function that does it. The module calls
+that function after each message, with the state, and the function
+returns the state:
+
+```fern
+enum Want { Load(string), Stop }
+
+struct Model { wants: Want[], ... }
+
+function effects(m: Model): Model {
+  for want in m.wants {
+    // Do it on the phone.
+  }
+  return Model { ...m, wants: [] };
+}
+
+ui.program(view, update).with_effects(effects)
+```
+
+A test does not give the program that function, or gives one that does
+nothing on a phone. Then the test reads `wants` from the state, and the
+whole of `update` runs on your computer.
+[`examples/android/tune`](https://github.com/JakeChampion/lang/tree/main/examples/android/tune)
+is a music player that works this way.
 
 ## Timers
 

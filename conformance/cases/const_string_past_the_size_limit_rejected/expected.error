@@ -1,0 +1,2 @@
+main.fern:22:1: error[E093]: const S17: string of more than 1048576 bytes in constant expression
+main.fern:23:1: error[E093]: const S18: "S17" is not a constant (must reference an earlier `const` declaration)

@@ -1,0 +1,1 @@
+main.fern:6:3: error[E003]: variable "f": expected (i32) => string, got (i32) => i32

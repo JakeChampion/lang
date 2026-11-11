@@ -136,4 +136,5 @@ permissions = ["INTERNET"]
 
 Complete apps are in
 [`examples/android`](https://github.com/JakeChampion/lang/tree/main/examples/android):
-`counter` is this page, and `todo` has a text field and a list.
+`counter` is this page, `todo` has a text field and a list, and `tune` is
+a music player that decodes and plays its files in Fern.

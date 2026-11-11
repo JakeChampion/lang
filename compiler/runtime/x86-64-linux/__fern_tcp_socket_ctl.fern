@@ -118,7 +118,7 @@ function __fern_tcp_socket_ctl(fd: i32, op: i32, arg: i32): i32 {
     }
     let want = flags | 2048;
     if (arg == 0) {
-      want = flags & 0 - 1 - 2048;
+      want = flags & -1 - 2048;
     }
     return __syscall3(72, fd as i64, 4, want as i64) as i32;
   }

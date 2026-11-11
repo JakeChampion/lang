@@ -9,6 +9,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if len(os.Args) > 1 && os.Args[1] == "--fern-budget-child" {
+		os.Exit(budgetChild(os.Args[2:]))
+	}
 	if _, set := os.LookupEnv("FERN_IR_VERIFY"); !set {
 		key, value, _ := strings.Cut(e2eharness.SelfHostVerify, "=")
 		os.Setenv(key, value)

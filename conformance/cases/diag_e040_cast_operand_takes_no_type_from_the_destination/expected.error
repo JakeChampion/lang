@@ -1,0 +1,1 @@
+main.fern:7:23: error[E040]: could not infer type parameter T for first — supply it explicitly at the call site (e.g. first[i32](...)) or annotate the binding

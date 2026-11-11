@@ -78,6 +78,7 @@ Each function takes the simulator and returns the next one.
 | `sim.tap_at(s, x, y)` | Taps a point |
 | `sim.hold(s, label)`, `sim.hold_nth(s, label, n)` | A long press |
 | `sim.send(s, msg)` | Gives `update` a message, with no touch |
+| `sim.slide(s, label, part)` | Puts a finger on the slider that says `label`, at a part from 0 to 1 |
 | `sim.drag(s, x0, y0, x1, y1, ms)` | Moves a finger, which scrolls a list |
 | `sim.settle(s)` | Waits for a fling to end |
 | `sim.type_in(s, field, text)` | Taps a field and types |

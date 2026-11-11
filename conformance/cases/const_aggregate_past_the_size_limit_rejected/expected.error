@@ -1,0 +1,2 @@
+main.fern:25:1: error[E093]: const A20: aggregate of more than 1048576 elements in constant expression
+main.fern:26:1: error[E093]: const A21: "A20" is not a constant (must reference an earlier `const` declaration)

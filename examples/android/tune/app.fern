@@ -1,0 +1,134 @@
+// A music player with no Java code of its own. NativeActivity loads this
+// library and calls ANativeActivity_onCreate. std/android/ui/app runs the
+// program of tune.fern, and player.fern plays its tracks through
+// std/android/audio.
+import "std/android";
+import "std/android/audio";
+import "std/android/ui/app";
+import "std/log";
+import "std/result";
+import "./library";
+import "./player";
+import "./tune";
+
+pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size: usize): void {
+  android.start(activity, app_main_entry());
+}
+
+@callback("app_main")
+function app_main_entry(): usize;
+
+function read(path: string): u8[] {
+  return read_file_bytes(path).unwrap_or([]);
+}
+
+function stream(s: tune.Sound): audio.Music {
+  return audio.Music { ptr: s.ptr, rate: s.rate, channels: s.channels };
+}
+
+function open(rate: i32, channels: i32): tune.Sound {
+  let m = audio.music(rate, channels);
+  if (m.ptr != 0 as usize && m.rate != rate) {
+    // The engine gives samples at the rate of the file only.
+    m.close();
+    return tune.no_sound();
+  }
+  return tune.Sound { ptr: m.ptr, rate: m.rate, channels: m.channels };
+}
+
+function names(dir: string): string[] {
+  return read_dir(dir).unwrap_or([]);
+}
+
+function is_dir(path: string): boolean {
+  match (stat(path)) {
+    Ok(s) => {
+      return s.is_dir;
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+}
+
+// The files of sound of each directory of the library.
+function files(roots: string[]): string[] {
+  let out: string[] = [];
+  for root in roots {
+    for f in library.files(root, 6, names, is_dir) {
+      out = out.append(f);
+    }
+  }
+  return out;
+}
+
+function device(ctx: usize, dir: string, roots: string[]): player.Device {
+  return player.Device {
+    grant: (): void => grant(ctx),
+    files: (): string[] => found(dir, roots),
+    roots: roots,
+    read: (path: string): u8[] => read(path),
+    open: (rate: i32, channels: i32): tune.Sound => open(rate, channels),
+    start: (s: tune.Sound): void => { let started = stream(s).start(); },
+    pause: (s: tune.Sound): void => stream(s).pause(),
+    flush: (s: tune.Sound): void => stream(s).flush(),
+    close: (s: tune.Sound): void => stream(s).close(),
+    write: (s: tune.Sound, samples: [i32]): i32 => stream(s).write(samples, 0),
+  };
+}
+
+// Asks the person for the permission to read the music of the phone, when
+// the app does not have it.
+function grant(ctx: usize): void {
+  if (!android.has_permission(ctx, "android.permission.READ_MEDIA_AUDIO") && !android.has_permission(ctx, "android.permission.READ_EXTERNAL_STORAGE")) {
+    log.info("tune: asks for the permission to read the music");
+    android.request_permissions(ctx, ["android.permission.READ_MEDIA_AUDIO", "android.permission.READ_EXTERNAL_STORAGE"]);
+  }
+}
+
+// The files of the library. The player makes its three tunes in `dir` when
+// no directory of the library has a file of sound.
+function found(dir: string, roots: string[]): string[] {
+  let have = files(roots);
+  log.info("tune: found " + have.len().to_string() + " files");
+  if (have.len() > 0) {
+    return have;
+  }
+  for which in 0..3 {
+    if let Ok(file) = library.demo_file(which) {
+      let path = dir + "/" + library.demo_name(which);
+      let made = create_dir_all(path.take(path.len() - path.split("/").last().unwrap_or("").len() - 1));
+      let written = write_file_bytes(path, file);
+    }
+  }
+  log.info("tune: made its tunes");
+  return files(roots);
+}
+
+// The message of an event of Android: the player looks for its files
+// again when the app shows again, because the person can give it the
+// permission to read the music of the phone while it is away.
+function system(e: android.Event): Option[tune.Msg] {
+  match (e) {
+    android.Resume => {
+      return Some(tune.Returned);
+    },
+    _ => {
+      return None;
+    }
+  }
+}
+
+function app_main(ctx: usize): usize {
+  let own_music = android.data_dir(ctx) + "/music";
+  let made = create_dir_all(own_music);
+  let roots = [own_music, "/sdcard/Music", "/sdcard/Download"];
+  let dev = device(ctx, own_music, roots);
+  log.info("tune: starts");
+  // The player looks for its files after the screen shows, and asks for
+  // the permission only when the person taps Scan.
+  let last = app.run(ctx, tune.start([]), player.program(dev).with_system(system));
+  dev.close(last.sound);
+  log.info("tune: closed with " + last.tracks.len().to_string() + " tracks at track " + last.current.to_string() + ", " + tune.clock(last.at_ms) + " of " + tune.clock(last.length_ms) + ", playing " + last.playing.to_string());
+  return 0 as usize;
+}

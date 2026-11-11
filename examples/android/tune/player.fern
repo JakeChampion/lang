@@ -1,0 +1,172 @@
+// What the player does on the device for the state of tune.fern: it reads
+// the file of a track, and gives its samples to a stream of sound. The
+// device is a set of functions, so a test gives one that plays nothing.
+import "std/android/ui";
+import "std/i32";
+import "std/i64";
+import "std/option";
+import "./engine";
+import "./library";
+import "./tune";
+
+// `grant` asks the person for the permission to read the music of the
+// phone. `files` gives the paths of the files of the library, and `roots` the
+// directories that they are in. `read` gives the bytes of a file, or no
+// bytes. `open` gives a stream at
+// a rate with a number of channels. `write` gives the stream samples, and
+// tells how many it took.
+pub struct Device {
+  grant: () => void,
+  files: () => string[],
+  roots: string[],
+  read: (string) => u8[],
+  open: (i32, i32) => tune.Sound,
+  start: (tune.Sound) => void,
+  pause: (tune.Sound) => void,
+  flush: (tune.Sound) => void,
+  close: (tune.Sound) => void,
+  write: (tune.Sound, [i32]) => i32,
+}
+
+// The samples that the player keeps ready, as a part of a second.
+const READY_PARTS: i32 = 5;
+
+function loaded(dev: Device, own m: tune.Model, i: i32): tune.Model {
+  dev.close(m.sound);
+  let Some(deck) = engine.open(dev.read(m.tracks[i].path)) else {
+    return tune.update(tune.Model { ...m, deck: None, sound: tune.no_sound(), pending: [] }, tune.Failed("Tune cannot play " + m.tracks[i].title));
+  };
+  let sound = dev.open(deck.rate, deck.channels);
+  if (sound.ptr == 0 as usize) {
+    return tune.update(tune.Model { ...m, deck: None, sound: sound, pending: [] }, tune.Failed("The phone gave no sound"));
+  }
+  dev.start(sound);
+  let length = deck.duration_ms();
+  return tune.Model { ...m, deck: Some(deck), sound: sound, pending: [], at_ms: 0i64, length_ms: length };
+}
+
+function sought(dev: Device, own m: tune.Model, part: f64): tune.Model {
+  let Some(deck) = m.deck else {
+    return m;
+  };
+  dev.pause(m.sound);
+  dev.flush(m.sound);
+  if (m.playing) {
+    dev.start(m.sound);
+  }
+  let moved = deck.seek(part);
+  let at = moved.position_ms();
+  return tune.Model { ...m, deck: Some(moved), pending: [], at_ms: at };
+}
+
+function done(dev: Device, own m: tune.Model, want: tune.Want): tune.Model {
+  match (want) {
+    tune.Load(i) => {
+      return loaded(dev, m, i);
+    },
+    tune.Resume => {
+      dev.start(m.sound);
+      return m;
+    },
+    tune.Hold => {
+      dev.pause(m.sound);
+      return m;
+    },
+    tune.Seek(part) => {
+      return sought(dev, m, part);
+    },
+    tune.Scan => {
+      return tune.update(m, tune.Files(dev.files()));
+    },
+    tune.Grant => {
+      dev.grant();
+      return m;
+    }
+  }
+}
+
+// Reads the next file of the library. A file of sound is a track, and each
+// other file adds nothing.
+function scanned(dev: Device, own m: tune.Model): tune.Model {
+  let path = m.scan[0];
+  let left: string[] = [];
+  for i in 1..m.scan.len() {
+    left = left.append(m.scan[i]);
+  }
+  let next = tune.Model { ...m, scan: left };
+  if let Some(t) = library.track(dev.roots, path, dev.read(path)) {
+    return tune.update(next, tune.Found(t));
+  }
+  return next;
+}
+
+// The samples of `all` from the sample `from`.
+function rest(all: i32[], from: i32): i32[] {
+  if (from <= 0) {
+    return all;
+  }
+  let out: i32[] = [];
+  for i in from..all.len() {
+    out = out.append(all[i]);
+  }
+  return out;
+}
+
+// Reads the file until the player has enough samples ready, gives the
+// sound what it takes, and tells the time of the track.
+function pumped(dev: Device, own m: tune.Model): tune.Model {
+  let Some(deck) = m.deck else {
+    return m;
+  };
+  let sound = m.sound;
+  let ready = m.pending;
+  let enough = sound.rate * sound.channels / READY_PARTS;
+  let d = deck;
+  while (ready.len() < enough && !d.done) {
+    let (next, part) = d.pull();
+    d = next;
+    for v in part {
+      ready = ready.append(v);
+    }
+  }
+  let kept = rest(ready, dev.write(sound, ready));
+  let waiting = kept.len() as i64 * 1000i64 / ((sound.rate * sound.channels).max(1) as i64);
+  let at = (d.position_ms() - waiting).max(0i64);
+  let length = d.duration_ms();
+  let ended = d.done && kept.len() == 0;
+  let after = tune.Model { ...m, deck: Some(d), pending: kept, at_ms: at, length_ms: length };
+  if (ended) {
+    return tune.update(after, tune.Finished);
+  }
+  return after;
+}
+
+// The state after the device did what the state wants, and after the
+// sound got its next samples.
+pub function run(dev: Device, m: tune.Model): tune.Model {
+  let turns = 0;
+  let state = tune.Model { ...m };
+  while (turns < 4) {
+    let wants = state.wants;
+    state = tune.Model { ...state, wants: [] };
+    for want in wants {
+      state = done(dev, state, want);
+    }
+    if (state.scan.len() > 0) {
+      state = scanned(dev, state);
+    }
+    if (state.playing) {
+      state = pumped(dev, state);
+    }
+    if (state.wants.len() == 0) {
+      return state;
+    }
+    turns += 1;
+  }
+  return state;
+}
+
+// The program of tune.fern on the device `dev`.
+pub function program(dev: Device): ui.Program[tune.Model, tune.Msg] {
+  return tune.program().with_effects((m: tune.Model): tune.Model => run(dev, m));
+}

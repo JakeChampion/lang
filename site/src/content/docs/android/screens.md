@@ -87,6 +87,7 @@ ui.program(view, update).with_theme((dark: boolean): ui.Theme => my_theme(dark))
 | `ui.toggle(on, say, msg)` | A switch. TalkBack reads `say` and its state |
 | `ui.card([...])` | A column on the surface color, with round corners |
 | `ui.progress(part)` | A bar, from 0 to 1 |
+| `ui.slider(part, slide)` | A bar with a thumb that a finger moves |
 | `ui.divider()` | A line across a column |
 
 ## Taps
@@ -104,6 +105,19 @@ ui.row([ui.text(item.title)]).on_tap(Open(i))
 
 `.on_long(msg)` does the same for a long press. The element under a
 finger shows that it is pressed.
+
+## Sliders
+
+`ui.slider` shows a part from 0 to 1, and takes a function that makes a
+message from the part under the finger. A touch or a drag on the slider
+gives that message, and a drag that starts on it scrolls no list:
+
+```fern
+ui.slider(m.volume, (part: f64): Msg => Volume(part)).described("Volume")
+```
+
+Your state keeps the part, as it keeps the text of a field. `.on_slide`
+gives the same message to an element of your own.
 
 ## Lists that scroll
 
