@@ -2830,6 +2830,17 @@ function main(): i32 { return 0; }
 		{"range-index-shadowed-assign", "function main(): i32 { let t = 0; for i in 0..3 { let i = 5; i = 6; t += i; } return t; }\n", nil},
 		{"range-element-assign", "function main(): i32 { let t = 0; for x in [1, 2, 3] { x = 4; t += x; } return t; }\n", nil},
 		{"range-outer-local-assign", "function main(): i32 { let i = 0; for k in 0..3 { i = k; } return i; }\n", nil},
+		{"raw-builtin-name-load", "function __load_u8(x: i32): i32 { return x; }\nfunction main(): i32 { return __load_u8(0); }\n", []string{"E010"}},
+		{"raw-builtin-name-memcpy", "function __memcpy(x: i32): i32 { return x; }\nfunction main(): i32 { return __memcpy(0); }\n", []string{"E010"}},
+		{"raw-builtin-name-str-bytes", "function __str_bytes(x: i32): i32 { return x; }\nfunction main(): i32 { return __str_bytes(0); }\n", []string{"E010"}},
+		{"raw-builtin-name-other-result", "function __bytes_data(x: i32): i32 { return x; }\nfunction main(): i32 { return __bytes_data(0); }\n", []string{"E010"}},
+		{"raw-builtin-name-alloc", "function __alloc(x: i32): i32 { return x; }\nfunction main(): i32 { return __alloc(0); }\n", []string{"E010"}},
+		{"raw-builtin-name-task", "function __task_new(x: i32): i32 { return x; }\nfunction main(): i32 { return __task_new(0); }\n", []string{"E010"}},
+		{"display-builtin-method-name", "function __method_boolean_to_string(x: i32): i32 { return x; }\nfunction main(): i32 { return __method_boolean_to_string(0); }\n", nil},
+		{"public-builtin-name-print", "function print(x: i32): i32 { return x; }\nfunction main(): i32 { return print(0); }\n", nil},
+		{"public-builtin-name-args", "function args(x: i32): i32 { return x; }\nfunction main(): i32 { return args(0); }\n", nil},
+		{"display-builtin-name", "function __primitive_i32_to_string(x: i32): i32 { return x; }\nfunction main(): i32 { return __primitive_i32_to_string(0); }\n", nil},
+		{"intrinsic-family-prefix-name", "function __port_text(x: i32): i32 { return x; }\nfunction main(): i32 { return __port_text(0); }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
