@@ -89,6 +89,9 @@ func (c *checker) openVariant(e ast.Expr) bool {
 }
 
 func (c *checker) errUninferredParam(call *ast.Call, fn *ast.FuncDecl, tp string) {
+	if c.anyFailed(call.Args) {
+		return
+	}
 	display, spelling := callSiteName(fn)
 	c.errfCode(call.P, "E040", "could not infer type parameter %s for %s — supply it explicitly at the call site (e.g. %s[i32](...)) or annotate the binding", tp, display, spelling)
 }

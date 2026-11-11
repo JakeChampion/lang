@@ -5888,6 +5888,9 @@ func isScalarBuiltinMethod(mangled string) bool {
 func IsPrimitiveDisplayMethod(name string) bool { return isScalarBuiltinMethod(name) }
 
 type checker struct {
+	// failedExprs holds each expression that has no type because its check
+	// reported an error.
+	failedExprs map[ast.Expr]bool
 	entryModule string
 	// Retain source types until contextual settlement selects conversions.
 	// Apply the casts after checking so every consumer sees the same AST.
@@ -14661,7 +14664,14 @@ func (c *checker) checkExprAt(e ast.Expr, s *scope, want ast.Type) ast.Type {
 }
 
 func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
-	t := c.checkExprInner(e, s)
+	before := len(c.errors)
+	t := c.boundedType(e, c.checkExprInner(e, s))
+	if t == nil && len(c.errors) > before {
+		if c.failedExprs == nil {
+			c.failedExprs = map[ast.Expr]bool{}
+		}
+		c.failedExprs[e] = true
+	}
 	switch t.(type) {
 	case ast.NumberType, ast.FloatType:
 		if c.numericTypes == nil {
