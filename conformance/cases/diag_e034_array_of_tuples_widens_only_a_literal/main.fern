@@ -1,0 +1,10 @@
+// In an array of tuple literals, only an integer literal takes a wider
+// type. A typed value in a tuple keeps its type.
+function main(): i32 {
+    let i: i32 = 1;
+    let x: i64 = 5;
+    let pairs = [(i, i), (i, x)];
+    let t = (i, i);
+    let more = [t, (i, x)];
+    return pairs.len() + more.len();
+}
