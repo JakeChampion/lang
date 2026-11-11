@@ -1,0 +1,391 @@
+// Tests of std/android/ui on the host: the layout, the gestures, and whole
+// programs on the simulator. The test font has 1000 units to the em, and
+// "A" is 600 units wide. So at 10 sp on a screen of 1 pixel to the dp,
+// "AAA" is 18 pixels wide and a line is 10 pixels high.
+import "core/map";
+import "std/android";
+import "std/android/draw";
+import "std/android/text";
+import "std/android/ui";
+import "std/android/ui/scene";
+import "std/android/ui/sim";
+import "std/test";
+import "std/truetype";
+import "./image_vectors";
+
+function fonts(): text.Fonts {
+  if let Some(f) = truetype.parse(image_vectors.font()) {
+    return text.Fonts { faces: [f], weights: [400] };
+  }
+  return text.Fonts { faces: [], weights: [] };
+}
+
+function screen(): ui.Screen {
+  return ui.Screen { w: 200, h: 400, d: 1.0, dark: false, theme: ui.theme(false), left: 0, top: 0, right: 0, bottom: 0 };
+}
+
+function laid(root: ui.El): ui.Layout {
+  return ui.layout(root, fonts(), screen(), map_new(4));
+}
+
+function scrolled(root: ui.El, name: string, to: i32): ui.Layout {
+  let offsets: Map[string, i32] = map_new(4);
+  return ui.layout(root, fonts(), screen(), offsets.insert(name, to));
+}
+
+function label(s: string): ui.El {
+  return ui.text(s).sized(10.0);
+}
+
+// The box of each node, as x,y,w,h.
+function boxes(ns: scene.Node[]): string {
+  let out: string[] = [];
+  for n in ns {
+    out = out.append(n.x.to_string() + "," + n.y.to_string() + "," + n.w.to_string() + "," + n.h.to_string());
+  }
+  return out.join(" ");
+}
+
+function test_column(): test.TestOutcome {
+  let lay = laid(ui.column([label("AAA"), label("A"), label("AA")]).spaced(5.0).padding(10.0));
+  return test.assert_eq(boxes(lay.nodes), "10,10,18,10 10,25,6,10 10,40,12,10");
+}
+
+function test_column_alignment(): test.TestOutcome {
+  let mid = laid(ui.column([label("AAA"), label("A")]).centered());
+  let end = laid(ui.column([label("AAA"), label("A")]).aligned(ui.END).justified(ui.END));
+  let apart = laid(ui.column([label("A"), label("A"), label("A")]).justified(ui.BETWEEN));
+  return test.assert_eq(boxes(mid.nodes) + " | " + boxes(end.nodes) + " | " + boxes(apart.nodes), "91,190,18,10 97,200,6,10 | 182,380,18,10 194,390,6,10 | 0,0,6,10 0,195,6,10 0,390,6,10");
+}
+
+function test_row_shares_the_room(): test.TestOutcome {
+  let lay = laid(ui.row([ui.box().width(20.0).background(ui.PRIMARY), ui.box().grow(1.0).background(ui.SURFACE), ui.box().grow(2.0).background(ui.OUTLINE)]).spaced(10.0).height(30.0));
+  // 200 less 20 and two gaps of 10 is 160: 53 and 106.
+  return test.assert_eq(boxes(lay.nodes), "0,0,20,0 30,0,53,30 93,0,106,30");
+}
+
+function test_stretch(): test.TestOutcome {
+  let lay = laid(ui.column([ui.box().height(10.0).background(ui.PRIMARY)]).aligned(ui.STRETCH).padding_xy(20.0, 0.0));
+  return test.assert_eq(boxes(lay.nodes), "20,0,160,10");
+}
+
+function test_stack(): test.TestOutcome {
+  let lay = laid(ui.stack([ui.box().grow(1.0).background(ui.SURFACE), label("AA")]).centered());
+  return test.assert_eq(boxes(lay.nodes), "0,0,200,400 94,195,12,10");
+}
+
+function test_text_wraps(): test.TestOutcome {
+  let f = fonts();
+  let space = text.width(f, 0, 10, "A A") - 12;
+  // Three words of 18 pixels: two fit in a row of 50 pixels when a space
+  // is at most 14 pixels wide.
+  let lay = laid(ui.column([label("AAA AAA AAA")]).width(50.0));
+  let one = laid(ui.column([label("AAA AAA AAA").clamped(1)]).width(50.0));
+  let got = (space <= 14).to_string() + " " + lay.nodes.len().to_string() + " " + lay.nodes[1].y.to_string() + " " + one.nodes.len().to_string();
+  let cut = "";
+  match (one.nodes[0].paint) {
+    scene.Label(s, _, _, _, _) => {
+      cut = s;
+    },
+    _ => {}
+  }
+  return test.assert_eq(got + " " + cut.ends_with("…").to_string(), "true 2 10 1 true");
+}
+
+function test_roles_take_the_theme(): test.TestOutcome {
+  let dark = ui.Screen { ...screen(), theme: ui.theme(true) };
+  let lay = ui.layout(ui.box().grow(1.0).background(ui.SURFACE), fonts(), dark, map_new(4));
+  let own_color = laid(ui.box().grow(1.0).background(draw.rgb(1, 2, 3)));
+  let got = "";
+  match (lay.nodes[0].paint) {
+    scene.Fill(c, _) => {
+      got = (c == ui.theme(true).surface).to_string();
+    },
+    _ => {}
+  }
+  match (own_color.nodes[0].paint) {
+    scene.Fill(c, _) => {
+      got = got + " " + (c == draw.rgb(1, 2, 3)).to_string();
+    },
+    _ => {}
+  }
+  return test.assert_eq(got, "true true");
+}
+
+function test_safe_area(): test.TestOutcome {
+  let s = ui.Screen { ...screen(), top: 24, bottom: 48 };
+  let lay = ui.layout(ui.box().grow(1.0).background(ui.SURFACE), fonts(), s, map_new(4));
+  return test.assert_eq(boxes(lay.nodes) + " " + s.height().to_string(), "0,24,200,328 328");
+}
+
+function test_button(): test.TestOutcome {
+  let lay = laid(ui.column([ui.button("AA", "go")]).padding(10.0));
+  // 14 sp: "AA" is 17 pixels wide and 15 high, with 24 dp at each side.
+  let n = lay.nodes[0];
+  let r = 0;
+  match (n.paint) {
+    scene.Fill(_, fr) => {
+      r = fr;
+    },
+    _ => {}
+  }
+  return test.assert_eq(boxes(lay.nodes) + " " + n.tap.name + " " + r.to_string(), "10,10,65,40 34,22,17,15 go 20");
+}
+
+function rows(n: i32): ui.El[] {
+  let out: ui.El[] = [];
+  for i in 0..n {
+    out = out.append(ui.row([label("A")]).height(50.0).wide().on_tap_with("row", i));
+  }
+  return out;
+}
+
+function test_scroll_column(): test.TestOutcome {
+  let root = ui.column([ui.box().height(100.0), ui.column(rows(20)).scroll("items").grow(1.0)]);
+  let top = laid(root);
+  let moved = scrolled(root, "items", 120);
+  let past = scrolled(root, "items", 5000);
+  let s = top.scrollers[0];
+  // The list is 300 pixels high and its rows are 1000: it scrolls 700. Six
+  // rows show at the top, and seven after 120 pixels.
+  let first = moved.nodes[1];
+  let got = s.name + " " + s.y.to_string() + " " + s.h.to_string() + " " + s.limit.to_string() + " " + top.nodes.len().to_string() + " " + moved.nodes.len().to_string() + " " + first.tap.arg.to_string() + " " + first.y.to_string() + " " + first.clip0.to_string() + " " + first.clip1.to_string() + " " + first.group + " " + past.nodes[past.nodes.len() - 1].y.to_string();
+  return test.assert_eq(got, "items 100 300 700 13 15 2 80 100 400 items 350");
+}
+
+function test_list_builds_the_rows_that_show(): test.TestOutcome {
+  let root = ui.list("big", 100000, 40.0, (i: i32): ui.El => ui.row([label("A")]).on_tap_with("pick", i));
+  let top = laid(root);
+  let far = scrolled(root, "big", 2000010);
+  // The first node is the list itself, and each row has two nodes.
+  let n = far.nodes[1];
+  let got = top.scrollers[0].limit.to_string() + " " + top.nodes.len().to_string() + " " + far.nodes.len().to_string() + " " + n.tap.arg.to_string() + " " + n.y.to_string() + " " + n.h.to_string();
+  return test.assert_eq(got, "3999600 21 23 50000 -10 40");
+}
+
+function down_up(lay: ui.Layout, x: i32, y: i32): string {
+  let (a, m0) = ui.touch(ui.no_input(), lay, 0, x, y, 0i64, 1.0);
+  let (b, m1) = ui.touch(a, lay, 1, x, y, 50000000i64, 1.0);
+  if let Some(ui.Tap(name, arg)) = m1 {
+    return name + arg.to_string();
+  }
+  return "none";
+}
+
+function test_tap(): test.TestOutcome {
+  let lay = laid(ui.column([ui.button("A", "go"), ui.column(rows(3))]));
+  return test.assert_eq(down_up(lay, 10, 10) + " " + down_up(lay, 10, 110) + " " + down_up(lay, 150, 10), "go0 row1 none");
+}
+
+function test_drag_scrolls_and_does_not_tap(): test.TestOutcome {
+  let root = ui.column(rows(20)).scroll("items");
+  let lay = laid(root);
+  let (a, _) = ui.touch(ui.no_input(), lay, 0, 100, 300, 0i64, 1.0);
+  let (b, _) = ui.touch(a, lay, 2, 100, 295, 16000000i64, 1.0);
+  let small = b.offset("items");
+  // The drag starts where the finger passes 8 pixels.
+  let (c, _) = ui.touch(b, lay, 2, 100, 280, 32000000i64, 1.0);
+  let (d, _) = ui.touch(c, lay, 2, 100, 200, 48000000i64, 1.0);
+  let (e, m) = ui.touch(d, lay, 1, 100, 200, 400000000i64, 1.0);
+  return test.assert_eq(small.to_string() + " " + c.offset("items").to_string() + " " + d.offset("items").to_string() + " " + m.is_none().to_string() + " " + e.flinging().to_string(), "0 0 80 true false");
+}
+
+function test_fling_goes_on_and_stops_at_the_end(): test.TestOutcome {
+  let root = ui.column(rows(20)).scroll("items");
+  let lay = laid(root);
+  let (inp, _) = ui.touch(ui.no_input(), lay, 0, 100, 380, 0i64, 1.0);
+  for i in 1..11 {
+    let (next, _) = ui.touch(inp, lay, 2, 100, 380 - i * 30, i as i64 * 10000000i64, 1.0);
+    inp = next;
+  }
+  let (lifted, _) = ui.touch(inp, lay, 1, 100, 80, 100000000i64, 1.0);
+  let at_lift = lifted.offset("items");
+  let mid = ui.advance(lifted, lay, 200000000i64);
+  let end = ui.advance(mid, lay, 5000000000i64);
+  let got = lifted.flinging().to_string() + " " + (mid.offset("items") > at_lift).to_string() + " " + end.offset("items").to_string() + " " + end.flinging().to_string();
+  return test.assert_eq(got, "true true 600 false");
+}
+
+function test_long_press(): test.TestOutcome {
+  let lay = laid(ui.box().width(100.0).height(100.0).on_tap("open").on_long("menu", 7));
+  let (a, _) = ui.touch(ui.no_input(), lay, 0, 10, 10, 0i64, 1.0);
+  let early = ui.long_wait(a, 100000000i64);
+  let (b, none) = ui.long_press(a, 399000000i64);
+  let (c, m) = ui.long_press(b, 400000000i64);
+  let (d, tap) = ui.touch(c, lay, 1, 10, 10, 500000000i64, 1.0);
+  let got = early.to_string() + " " + none.is_none().to_string() + " " + ui.long_wait(c, 400000000i64).to_string() + " " + tap.is_none().to_string();
+  if let Some(ui.LongPress(name, arg)) = m {
+    got = got + " " + name + arg.to_string();
+  }
+  return test.assert_eq(got, "300 true -1 true menu7");
+}
+
+function test_pressed_node_shows(): test.TestOutcome {
+  let lay = laid(ui.column([ui.button("A", "go")]));
+  let (a, _) = ui.touch(ui.no_input(), lay, 0, 10, 10, 0i64, 1.0);
+  let pressed = ui.shown(a, lay, draw.rgba(0, 0, 0, 31));
+  let (b, _) = ui.touch(a, lay, 1, 10, 10, 50000000i64, 1.0);
+  let over = pressed[1];
+  let r = 0;
+  match (over.paint) {
+    scene.Fill(_, fr) => {
+      r = fr;
+    },
+    _ => {}
+  }
+  return test.assert_eq(lay.nodes.len().to_string() + " " + pressed.len().to_string() + " " + ui.shown(b, lay, 0).len().to_string() + " " + r.to_string() + " " + over.w.to_string(), "2 3 2 20 " + lay.nodes[0].w.to_string());
+}
+
+function test_modal_takes_the_touches(): test.TestOutcome {
+  let page = ui.column([ui.button("A", "under")]);
+  let dialog = ui.stack([ui.column([ui.button("A", "ok")]).padding(20.0).background(ui.SURFACE)]).centered().grow(1.0).background(draw.rgba(0, 0, 0, 128)).modal();
+  let lay = laid(ui.stack([page, dialog]));
+  return test.assert_eq(down_up(lay, 10, 10) + " " + down_up(lay, 100, 200), "none ok0");
+}
+
+// --- a program
+
+struct Counter { count: i32, backs: i32, ticks: i32, on: boolean }
+
+function counter_view(m: Counter, s: ui.Screen): ui.El {
+  return ui.column([label("A".repeat(m.count)), ui.button("A", "add"), ui.toggle(m.on, "switch"), ui.box().width(50.0).height(50.0).on_long("reset", 0)]).spaced(10.0);
+}
+
+function counter_update(own m: Counter, msg: ui.Msg): Counter {
+  match (msg) {
+    ui.Tap("add", _) => {
+      return Counter { ...m, count: m.count + 1 };
+    },
+    ui.Tap("switch", _) => {
+      return Counter { ...m, on: !m.on };
+    },
+    ui.LongPress("reset", _) => {
+      return Counter { ...m, count: 0 };
+    },
+    ui.Back => {
+      return Counter { ...m, backs: m.backs + 1 };
+    },
+    ui.Tick => {
+      return Counter { ...m, ticks: m.ticks + 1 };
+    },
+    _ => {
+      return m;
+    }
+  }
+}
+
+function counter(): ui.Program[Counter] {
+  return ui.program((m: Counter, s: ui.Screen): ui.El => counter_view(m, s), (own m: Counter, msg: ui.Msg): Counter => counter_update(m, msg));
+}
+
+function new_counter(): Counter {
+  return Counter { count: 0, backs: 0, ticks: 0, on: false };
+}
+
+function test_program_taps(): test.TestOutcome {
+  let s = sim.start(new_counter(), counter(), fonts(), 200, 400, 1.0);
+  let first = s.shell.host.frames;
+  s = sim.tap(sim.tap(sim.tap(s, "add"), "add"), "missing");
+  let got = (first > 0).to_string() + " " + s.shell.app.count.to_string() + " " + sim.shows(s, "AA").to_string() + " " + sim.texts(s).len().to_string();
+  return test.assert_eq(got, "true 2 true 2");
+}
+
+function test_program_long_press_and_toggle(): test.TestOutcome {
+  let s = sim.start(new_counter(), counter(), fonts(), 200, 400, 1.0);
+  s = sim.tap(sim.tap(s, "add"), "switch");
+  let on = s.shell.app.on;
+  s = sim.hold(s, "reset", 0);
+  return test.assert_eq(on.to_string() + " " + s.shell.app.count.to_string() + " " + sim.spoken(s).join("|"), "true 0 A|switch, on|reset");
+}
+
+function test_back_closes_or_tells(): test.TestOutcome {
+  let closed = sim.back(sim.start(new_counter(), counter(), fonts(), 200, 400, 1.0));
+  let told = sim.back(sim.start(new_counter(), counter().with_back((m: Counter): boolean => true), fonts(), 200, 400, 1.0));
+  let got = sim.finished(closed).to_string() + " " + closed.shell.app.backs.to_string() + " " + sim.finished(told).to_string() + " " + told.shell.app.backs.to_string();
+  return test.assert_eq(got, "true 0 false 1");
+}
+
+function test_wait_gives_ticks(): test.TestOutcome {
+  let p = counter().with_wait((m: Counter): i32 => 100);
+  let s = sim.after(sim.start(new_counter(), p, fonts(), 200, 400, 1.0), 350i64);
+  return test.assert_eq(s.shell.app.ticks.to_string() + " " + s.now.to_string(), "3 350");
+}
+
+struct Feed { picked: i32, frames: i32 }
+
+function feed(): ui.Program[Feed] {
+  return ui.program((m: Feed, s: ui.Screen): ui.El => ui.list("feed", 1000, 50.0, (i: i32): ui.El => ui.row([label("A")]).on_tap_with("pick", i)), (own m: Feed, msg: ui.Msg): Feed => {
+    match (msg) {
+      ui.Tap("pick", i) => {
+        return Feed { ...m, picked: i };
+      },
+      ui.Frame(_) => {
+        return Feed { ...m, frames: m.frames + 1 };
+      },
+      _ => {
+        return m;
+      }
+    }
+  });
+}
+
+function test_program_scrolls_and_flings(): test.TestOutcome {
+  let s = sim.start(Feed { picked: -1, frames: 0 }, feed(), fonts(), 200, 400, 1.0);
+  // The drag starts at the first move, 50 pixels up, so the list goes 250.
+  s = sim.drag(s, 100, 350, 100, 50, 96i64);
+  let dragged = s.shell.host.input.offset("feed");
+  let flinging = s.shell.host.input.flinging();
+  s = sim.settle(s);
+  let rest = s.shell.host.input.offset("feed");
+  s = sim.tap_at(s, 100, 200);
+  let got = dragged.to_string() + " " + flinging.to_string() + " " + (rest > dragged + 300).to_string() + " " + (s.shell.app.picked == (rest + 200) / 50).to_string() + " " + s.shell.app.frames.to_string();
+  return test.assert_eq(got, "250 true true true 0");
+}
+
+function test_animating_gives_frames(): test.TestOutcome {
+  let p = feed().with_animating((m: Feed): boolean => m.frames < 3);
+  let s = sim.start(Feed { picked: -1, frames: 0 }, p, fonts(), 200, 400, 1.0);
+  for i in 0..5 {
+    s = sim.frame(s);
+  }
+  return test.assert_eq(s.shell.app.frames, 3);
+}
+
+function test_theme_follows_the_system(): test.TestOutcome {
+  let s = sim.start(new_counter(), counter(), fonts(), 200, 400, 1.0);
+  let light = s.shell.host.screen.theme.background;
+  s = sim.event(sim.themed(s, true), android.WindowResized(android.Window { ptr: 1 as usize }));
+  let fr = sim.picture(s);
+  defer draw.release(fr);
+  let got = (light == ui.theme(false).background).to_string() + " " + (s.shell.host.screen.theme.background == ui.theme(true).background).to_string() + " " + (fr.pixel(199, 399) == ui.theme(true).background).to_string();
+  return test.assert_eq(got, "true true true");
+}
+
+function main(): i32 {
+  let r = test.new("std/android/ui");
+  r = r.it("a column puts its elements one below the other", test_column);
+  r = r.it("a column aligns and justifies its elements", test_column_alignment);
+  r = r.it("a row shares its room by the weights", test_row_shares_the_room);
+  r = r.it("STRETCH gives each element the whole width", test_stretch);
+  r = r.it("a stack puts its elements one over the other", test_stack);
+  r = r.it("a text wraps and clamps", test_text_wraps);
+  r = r.it("a role takes its color from the theme", test_roles_take_the_theme);
+  r = r.it("the tree stays out of the bars of the system", test_safe_area);
+  r = r.it("a button has the size of Material", test_button);
+  r = r.it("a column that scrolls clips and moves its rows", test_scroll_column);
+  r = r.it("a list builds only the rows that show", test_list_builds_the_rows_that_show);
+  r = r.it("a touch that stays is a tap", test_tap);
+  r = r.it("a drag scrolls and does not tap", test_drag_scrolls_and_does_not_tap);
+  r = r.it("a fling goes on and stops at the end", test_fling_goes_on_and_stops_at_the_end);
+  r = r.it("a finger that stays presses long", test_long_press);
+  r = r.it("the node under the finger shows pressed", test_pressed_node_shows);
+  r = r.it("a modal element takes the touches", test_modal_takes_the_touches);
+  r = r.it("a program takes taps", test_program_taps);
+  r = r.it("a program takes a long press and a switch", test_program_long_press_and_toggle);
+  r = r.it("the back key closes the app or tells it", test_back_closes_or_tells);
+  r = r.it("a program that waits gets ticks", test_wait_gives_ticks);
+  r = r.it("a program scrolls and flings its list", test_program_scrolls_and_flings);
+  r = r.it("a program that animates gets frames", test_animating_gives_frames);
+  r = r.it("the theme follows the system", test_theme_follows_the_system);
+  return r.finish();
+}

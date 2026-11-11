@@ -1,0 +1,144 @@
+// Draws screens of std/android/ui with the GPU painter on an offscreen
+// canvas, and checks each one against the same nodes drawn on the CPU. It
+// is a shared object: check() gives one digit for each screen that matches.
+// internal/testing/e2e loads it with Mesa's OpenGL ES 2 on the host, from
+// the root of the repository. With UI_CHECK_PNG set to a directory, it
+// writes the GPU frame and the CPU frame of each check there as PNG files.
+import "core/map";
+import "std/android/draw";
+import "std/android/fonts";
+import "std/android/gl";
+import "std/android/testkit";
+import "std/android/text";
+import "std/android/ui";
+import "std/android/ui/painter";
+import "std/android/ui/scene";
+import "std/result";
+
+const W: i32 = 540;
+
+const H: i32 = 960;
+
+// The CPU truncates each blend and the GPU rounds it, so a pixel under
+// several translucent layers can differ by a few steps.
+const TOLERANCE: i32 = 6;
+
+function test_fonts(): text.Fonts {
+  let ws = [400, 500, 700];
+  let found: Option[fonts.Found][] = [];
+  for w in ws {
+    found = found.append(fonts.find_in("examples/android/paper/testfonts", "Roboto", w));
+  }
+  return text.load(found, ws, (path: string): u8[] => read_file_bytes(path).unwrap_or([]));
+}
+
+function screen(dark: boolean): ui.Screen {
+  return ui.Screen { w: W, h: H, d: 2.0, dark: dark, theme: ui.theme(dark), left: 0, top: 24, right: 0, bottom: 48 };
+}
+
+function dot(f: draw.Frame, x: i32, y: i32, w: i32, h: i32): void {
+  f.disc(x + w / 2, y + h / 2, w / 2, draw.rgb(200, 40, 40));
+}
+
+function row(i: i32): ui.El {
+  return ui.row([ui.text("Row " + i.to_string()), ui.space(), ui.toggle(i % 2 == 0, "switch")]).aligned(ui.CENTER).padding_xy(16.0, 0.0);
+}
+
+// A screen with each paint: fills, round fills, an outline, texts in three
+// weights, a canvas, and a list that scrolled.
+function page(): ui.El {
+  return ui.column(
+    [
+      ui.text("Title").sized(28.0).weighted(700),
+      ui.text("A longer text that wraps onto the next line of the card.").colored(ui.MUTED),
+      ui.card([ui.row([ui.button("Save", "save"), ui.outlined_button("Cancel", "cancel"), ui.canvas("dot", (f: draw.Frame, x: i32, y: i32, w: i32, h: i32): void => dot(f, x, y, w, h)).width(24.0).height(24.0)]).spaced(8.0).aligned(ui.CENTER), ui.progress(0.4)]).spaced(12.0),
+      ui.divider(),
+      ui.list("rows", 40, 48.0, (i: i32): ui.El => row(i)),
+    ],
+  ).spaced(12.0).padding(16.0).aligned(ui.STRETCH);
+}
+
+function nodes_of(s: ui.Screen, scrolled: i32): scene.Node[] {
+  let offsets: Map[string, i32] = map_new(4);
+  return ui.layout(page(), test_fonts(), s, offsets.insert("rows", scrolled)).nodes;
+}
+
+function cpu(fs: text.Fonts, nodes: scene.Node[], background: i32): draw.Frame {
+  let f = draw.offscreen(W, H);
+  f.fill(0, 0, W, H, background);
+  let c = scene.render(f, fs, text.new_cache(), nodes);
+  return f;
+}
+
+// The frame that the painter shows for `passes`, and the painter.
+function gpu_frame(own p: painter.Painter, passes: scene.Pass[], background: i32): (draw.Frame, painter.Painter) {
+  let q = painter.present(p, passes, background);
+  if let Some(c) = q.canvas {
+    return (c.read(), q);
+  }
+  return (draw.offscreen(0, 0), q);
+}
+
+// The frames match. With UI_CHECK_PNG set, it writes both as PNG files.
+function same(got: draw.Frame, want: draw.Frame, name: string): boolean {
+  if let Some(out) = env("UI_CHECK_PNG") {
+    let a = testkit.save_png(got, out + "/" + name + "-gpu.png");
+    let b = testkit.save_png(want, out + "/" + name + "-cpu.png");
+  }
+  return testkit.differ(got, want, TOLERANCE) == 0;
+}
+
+// Each check is a digit of the result: the page, the page with its list
+// scrolled, the page in the dark theme, and the light page at half alpha
+// over the dark page.
+pub function check(): i32 {
+  let fs = test_fonts();
+  let canvas = gl.open_offscreen(W, H);
+  if (canvas.is_none() || fs.faces.len() == 0) {
+    return 9;
+  }
+  let light = screen(false);
+  let p = painter.on_canvas(painter.with_size(painter.new(fs), W, H), canvas);
+  let n = 0;
+  let top = nodes_of(light, 0);
+  let (got, p1) = gpu_frame(p, [scene.Pass { nodes: top, dy: 0, alpha: 1.0 }], light.theme.background);
+  let want = cpu(fs, top, light.theme.background);
+  if (same(got, want, "page")) {
+    n += 1;
+  }
+  draw.release(got);
+  let moved = nodes_of(light, 330);
+  let (got2, p2) = gpu_frame(p1, [scene.Pass { nodes: moved, dy: 0, alpha: 1.0 }], light.theme.background);
+  let want2 = cpu(fs, moved, light.theme.background);
+  if (same(got2, want2, "scrolled") && testkit.differ(got2, want, TOLERANCE) > 0) {
+    n += 10;
+  }
+  draw.release(got2);
+  draw.release(want2);
+  let dark = screen(true);
+  let night = nodes_of(dark, 0);
+  let (got3, p3) = gpu_frame(p2, [scene.Pass { nodes: night, dy: 0, alpha: 1.0 }], dark.theme.background);
+  let want3 = cpu(fs, night, dark.theme.background);
+  if (same(got3, want3, "dark") && got3.pixel(2, 2) == dark.theme.background) {
+    n += 100;
+  }
+  draw.release(got3);
+  // The light page on its background fades in over the dark page, 40 rows
+  // down.
+  let sheet = [scene.node(0, 0, W, H, scene.Fill(light.theme.background, 0))];
+  for node in top {
+    sheet = sheet.append(node);
+  }
+  let (got4, p4) = gpu_frame(p3, [scene.Pass { nodes: night, dy: 0, alpha: 1.0 }, scene.Pass { nodes: sheet, dy: 40, alpha: 0.5 }], dark.theme.background);
+  let over = cpu(fs, sheet, light.theme.background);
+  want3.blend_frame(over, 0, 40, 128);
+  if (same(got4, want3, "faded")) {
+    n += 1000;
+  }
+  draw.release(got4);
+  draw.release(want3);
+  draw.release(want);
+  draw.release(over);
+  let closed = painter.close(p4);
+  return n;
+}

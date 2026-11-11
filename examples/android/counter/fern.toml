@@ -1,0 +1,9 @@
+# The settings of `fern -apk` for the counter.
+[package]
+name = "counter"
+lib = "app.fern"
+
+[android]
+package = "dev.fern.counter"
+label = "Fern Counter"
+min_sdk = 26

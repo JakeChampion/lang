@@ -19,9 +19,9 @@ const paperApp = "examples/android/paper"
 // The assets of Paper: the wallpaper. The fonts come from the system.
 var paperAssets = []string{"wallpaper.jpg"}
 
-// runPaperSuite builds one std/test suite of Paper for the host and requires
-// that it passes. The suites read the fonts from the directory of the app.
-func runPaperSuite(t *testing.T, file string) {
+// runAppSuite builds one std/test suite of the app in the directory app
+// for the host, runs it from that directory, and requires that it passes.
+func runAppSuite(t *testing.T, app, file string) {
 	t.Helper()
 	host := e2eharness.HostSelfHostTarget()
 	if host == "" {
@@ -29,17 +29,23 @@ func runPaperSuite(t *testing.T, file string) {
 	}
 	bin := filepath.Join(t.TempDir(), strings.TrimSuffix(file, ".fern"))
 	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-target", host, "-o", bin,
-		e2eharness.RepoPath(paperApp, file), e2eharness.SelfHostStdlibRoot(t))
+		e2eharness.RepoPath(app, file), e2eharness.SelfHostStdlibRoot(t))
 	cmd.Env = e2eharness.ChildEnv()
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build %s: %v\n%s", file, err, out)
 	}
 	run := exec.Command(bin)
-	run.Dir = e2eharness.RepoPath(paperApp)
+	run.Dir = e2eharness.RepoPath(app)
 	out, err := run.CombinedOutput()
 	if err != nil || !strings.Contains(string(out), "# fail 0") {
 		t.Fatalf("%s: %v\n%s", file, err, out)
 	}
+}
+
+// The suites of Paper read the fonts from the directory of the app.
+func runPaperSuite(t *testing.T, file string) {
+	t.Helper()
+	runAppSuite(t, paperApp, file)
 }
 
 // paper_test.fern checks the rules: the names and the search, with Paper
