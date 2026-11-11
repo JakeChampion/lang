@@ -1,0 +1,26 @@
+// A generic struct literal is an argument of a generic call. The call
+// leaves the type arguments of the literal open, so its function field
+// gives them.
+
+struct P[S, M] { view: (S) => M }
+struct Q[S, M] { seed: S, view: (S) => M }
+
+function run[S, M](p: P[S, M], s: S): M { return p.view(s); }
+function half[M](p: P[i32, M]): M { return p.view(3); }
+function start[S, M](q: Q[S, M]): M { return q.view(q.seed); }
+
+function double(n: i32): i64 { return (n * 2) as i64; }
+function name(n: i32): string { return "n" + n.to_string(); }
+
+function main(): i32 {
+    print(run(P { view: double }, 4));
+    print(run(P { view: name }, 5));
+    print(run(P { view: (n: i32): i64 => (n + 1) as i64 }, 6));
+    print(half(P { view: double }));
+    print(start(Q { seed: 9, view: double }));
+    let p = P { view: double };
+    print(run(p, 7));
+    let l = P { view: (n: i32): string => name(n) };
+    print(run(l, 8));
+    return run(P { view: double }, 1) as i32 - 2;
+}
