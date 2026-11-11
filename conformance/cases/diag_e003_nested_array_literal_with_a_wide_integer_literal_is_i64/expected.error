@@ -1,0 +1,1 @@
+main.fern:6:5: error[E003]: variable "k": expected i32, got i64

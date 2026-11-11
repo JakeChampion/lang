@@ -1,3 +1,4 @@
+# 2026-11-11: array_literal_wide_integer_literal_widens_the_value_beside_it is clean under RC trace.
 # 2026-11-11: generic_call_gives_its_expected_type_to_an_array_argument is clean under RC trace.
 # 2026-11-11: repeatable_closure_owned_inputs has zero unpaired allocations under native RC trace.
 # 2026-11-11: a_function_named_like_a_raw_builtin_shadows_it is clean under RC trace.
@@ -152,6 +153,7 @@ array_join                                           0
 array_literal_binds_a_generic_view_field             0
 array_literal_into_a_view_field                      0
 array_literal_takes_its_sibling_float_width          0
+array_literal_wide_integer_literal_widens_the_value_beside_it 0
 array_match_wildcard                                 0
 array_methods                                        0
 array_min_max_by_empty_none                          0

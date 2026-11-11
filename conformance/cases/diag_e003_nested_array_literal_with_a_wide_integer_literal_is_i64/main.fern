@@ -1,0 +1,8 @@
+// A nested array literal has the innermost element type i64 when one inner
+// literal holds an integer literal that does not fit in i32.
+function main(): i32 {
+    let i: i32 = 1;
+    let ms = [[i], [5000000000]];
+    let k: i32 = ms[0][0];
+    return k;
+}
