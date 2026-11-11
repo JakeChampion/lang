@@ -17,6 +17,18 @@ function data_cell(values: i32[]): Cell[i32[]] {
   return cell_new(values);
 }
 
+function take_data(own slot: Cell[i32]): i32 {
+  return slot.get();
+}
+
+function fresh_data(): own Cell[i32] {
+  return cell_new(7);
+}
+
+function owned_data(values: i32[]): own Cell[i32[]] {
+  return cell_new(values);
+}
+
 function snapshot(h: Handle): i32 {
   let slot = cell_new(h);
   let first = slot.get();
@@ -36,5 +48,11 @@ function main(): i32 {
   let data = data_cell(values);
   data.set(values);
   print(values[0] + data.get()[0]);
+  assert(take_data(cell_new(7)) == 7);
+  assert(take_data(fresh_data()) == 7);
+  let copied = owned_data(values);
+  copied.set(copied.get().with(0, 8));
+  assert(values[0] == 5);
+  assert(copied.get()[0] == 8);
   return 0;
 }

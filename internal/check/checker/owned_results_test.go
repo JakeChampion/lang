@@ -6,6 +6,9 @@ const ownedResultPrelude = ownedMatchPrelude + `function (own box: Box) close():
 
 func TestCheckedOwnedResults(t *testing.T) {
 	for name, src := range map[string]string{
+		"owned enum state":        `enum State { Plain, Secured(Box), Awaiting(Option[Box]) } function awaiting(own state: State): own State { match (state) { Secured(box) => { return Awaiting(Some(box)); }, _ => { return Awaiting(None); } } return Awaiting(None); }`,
+		"fresh match result":      `enum State { Plain, Secured(Box) } function fresh(state: State): own Box { match (state) { Secured(box) => { return Box { values: [box.values.len() as u8] }; }, _ => { return Box { values: [] }; } } return Box { values: [] }; }`,
+		"fresh match shadow":      `enum State { Plain, Secured(Box) } function fresh(state: State): own Box { match (state) { Secured(box) => { let box = Box { values: [] }; return box; }, _ => { return Box { values: [] }; } } return Box { values: [] }; }`,
 		"conditional result":      `function pass[T](own x: T, b: boolean): own T { return if (b) { x } else { x }; }`,
 		"match result":            `function pass[T](own x: T, b: boolean): own T { return match (b) { true => x, false => x }; }`,
 		"bound factory":           `trait Factory { function make(): own Self; } impl Factory for Box { function make(): own Self { return Box { values: [] }; } } function make[T: Factory](): own T { return T.make(); }`,
@@ -39,6 +42,11 @@ func TestCheckedOwnedResults(t *testing.T) {
 
 func TestCheckedOwnedResultRefusesBorrow(t *testing.T) {
 	for name, src := range map[string]string{
+		"borrowed enum state":               `enum State { Plain, Secured(Box), Awaiting(Option[Box]) } function awaiting(state: State): own State { match (state) { Secured(box) => { return Awaiting(Some(box)); }, _ => { return Awaiting(None); } } return Awaiting(None); }`,
+		"borrowed match alias":              `enum State { Plain, Secured(Box) } function unwrap(state: State): own Box { match (state) { Secured(box) => { let local = box; return local; }, _ => { return Box { values: [] }; } } return Box { values: [] }; }`,
+		"borrowed nested match":             `enum State { Plain, Secured(Box) } function unwrap(state: Option[State]): own Box { match (state) { Some(s) => { match (s) { Secured(box) => { return box; }, _ => {} } }, _ => {} } return Box { values: [] }; }`,
+		"borrowed match shadow":             `enum State { Plain, Secured(Box) } function unwrap(state: State, own box: Box): own Box { match (state) { Secured(box) => { return box; }, _ => { return box; } } return box; }`,
+		"borrowed match capture":            `enum State { Plain, Secured(Box) } function outer(state: State): void { let get = (): own Box => { match (state) { Secured(box) => { return box; }, _ => { return Box { values: [] }; } } return Box { values: [] }; }; }`,
 		"borrowed nested aggregate capture": `function run(x: Box): void { let f = (): own Box[] => { let xs = [x]; return xs; }; }`,
 		"borrowed local alias":              `function bad(box: Box): own Box { let local = box; return local; }`,
 		"captured local":                    `function make(): own Box { let box = Box { values: [] }; let f = (): Box => box; return box; }`,

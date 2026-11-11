@@ -4836,6 +4836,12 @@ function cancel_dropped_pushes(ops: Op[], own loads: i32[]): Cancelled {
   let i = 0;
   while (i < ops.len()) {
     let t = ops[i].kind_tag;
+    while (t == k_drop && top > 0 && (ops[kept[top - 1]].kind_tag == K_F32_BITS || ops[kept[top - 1]].kind_tag == K_F32_FROM_BITS)) {
+      // These conversions cannot trap. Keep the drop for their input.
+      top -= 1;
+      gone = gone.with(kept[top], true);
+      any = true;
+    }
     if (t == k_drop && top > 0 && util.index_of_i32(pushes, ops[kept[top - 1]].kind_tag) >= 0) {
       top -= 1;
       let pushed = ops[kept[top]];

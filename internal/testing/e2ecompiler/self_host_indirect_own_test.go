@@ -26,10 +26,23 @@ function (value: B) update(text: string): string { return text; }
 function (own value: A) done(): i32 { return value.text.len(); }
 function probe(text: string): i32 { return fresh().update(text).done(); }
 function main(): i32 { return probe("b") - 1; }`, nil},
-		{"borrowed_method_result", `struct B { text: string }
+		{"copied_method_result", `struct B { text: string }
 function (value: B) update(text: string): string { return text; }
 function sink(own text: string): i32 { return text.len(); }
-function probe(value: B, text: string): i32 { return sink(value.update(text)); }
+function probe(value: B, text: string): i32 {
+  let n = sink(value.update(text));
+  return n + text.len();
+}
+function main(): i32 { return 0; }`, nil},
+		{"borrowed_method_result", `struct B { text: string }
+struct Res { xs: i32[] }
+function (own r: Res) close(): void {}
+function (value: B) update(r: Res): Res { return r; }
+function sink(own r: Res): i32 { return r.xs[0]; }
+function probe(value: B, r: Res): i32 {
+  let n = sink(value.update(r));
+  return n + r.xs[0];
+}
 function main(): i32 { return 0; }`, []string{"E051"}},
 		{"fresh_scalar_method_same_name", `struct B { text: string }
 function (value: i32) update(): string { return "a" + "b"; }

@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+"""Compare native VP9 keyframe metadata with independent FFmpeg readers."""
+import importlib.util
+import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+os.chdir(ROOT)
+spec = importlib.util.spec_from_file_location('vp9_fixtures', ROOT / 'scripts/gen-video-vp9-fixtures.py')
+fixtures = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fixtures)
+compiler = os.environ.get('FERN') or subprocess.check_output(['./bootstrap/bootstrap.sh', 'stage0'], text=True).strip()
+target = {'x86_64': 'x86-64-linux', 'aarch64': 'arm64-linux', 'arm64': 'arm64-darwin'}[os.uname().machine]
+binary = ROOT / 'build/video/vp9-keyframe-reference'
+binary.parent.mkdir(parents=True, exist_ok=True)
+wasm = binary.with_suffix('.wasm')
+source = 'scripts/video-reference/vp9-keyframe.fern'
+for output, architecture, flags in ((binary, target, ['-sanitize']), (wasm, 'wasm32-wasi', [])):
+    subprocess.run([compiler, '-stdlib', str(ROOT / 'internal/stdlib'), '-target', architecture, *flags,
+                    '-o', str(output), source], check=True)
+
+
+def compare(name, path, data):
+    expected = fixtures.reference(path)
+    raw = path.with_suffix('.vp9')
+    raw.write_bytes(data)
+    native = subprocess.run([str(binary), str(raw)], text=True, capture_output=True, check=True)
+    assert 'live_bytes=0' in native.stderr, native.stderr
+    wasi = subprocess.check_output(['wasmtime', 'run', '--dir', '.', str(wasm), raw.name], cwd=raw.parent, text=True)
+    assert native.stdout == wasi, name
+    assert list(map(int, native.stdout.split())) == expected, name
+    print(name + ': all 21 native/real-WASI fields match independent VP9 headers', flush=True)
+
+
+def decode(path, decoder, pixel_format):
+    return subprocess.check_output(['ffmpeg', '-v', 'error', '-c:v', decoder, '-i', str(path),
+                                    '-frames:v', '1', '-pix_fmt', pixel_format, '-f', 'rawvideo', '-'])
+
+
+with tempfile.TemporaryDirectory() as temporary:
+    directory = Path(temporary)
+    for name, path, pixel_format in fixtures.generate(directory):
+        data = fixtures.packet(path)
+        fields = fixtures.reference(path)
+        stream = json.loads(subprocess.check_output(['ffprobe', '-v', 'error', '-show_streams', '-of', 'json', str(path)], text=True))['streams'][0]
+        assert [stream['width'], stream['height']] == fields[1:3]
+        assert stream['pix_fmt'] == pixel_format, (name, stream['pix_fmt'], pixel_format)
+        assert decode(path, 'vp9', pixel_format) == decode(path, 'libvpx-vp9', pixel_format), name
+        compare(name, path, data)
+    for name, data in fixtures.controls():
+        path = directory / (name + '.ivf')
+        path.write_bytes(fixtures.ivf(data))
+        compare(name, path, data)

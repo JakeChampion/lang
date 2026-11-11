@@ -6126,6 +6126,17 @@ function unzipped_lanes(f: ssasem.Func, ins: ssa.SInst): Option[LanePermutation]
   return Some(LanePermutation { first: low.args[0], second: low.args[1], mode: mode });
 }
 
+function lane_f32_argument(f: ssasem.Func, value: i32): i32 {
+  let source = defining(f, value);
+  if (source.kind_tag == ssasem.cast() && source.args.len() == 1 && ssasem.is_f32(f.values[value])) {
+    let from = f.values[source.args[0]];
+    if (ssasem.is_float(from) && !ssasem.is_f32(from)) {
+      return source.args[0];
+    }
+  }
+  return value;
+}
+
 function lane_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irtables.LowerState {
   let w = typeinfo.lane_builtin_width(ins.str);
   let verb = typeinfo.lane_builtin_verb(ins.str);
@@ -6166,12 +6177,29 @@ function lane_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): 
   for a in ins.args {
     r = emit(r, ir.op_drop());
   }
+  if (w == 32 && verb == "of") {
+    let inputs = ins.args;
+    for i in 0..inputs.len() {
+      inputs = inputs.with(i, lane_f32_argument(f, inputs[i]));
+    }
+    ins = ssa.SInst { ...ins, args: inputs };
+  }
   r = emit(r, ir.op_load_local(ins.args[0]));
   if (verb == "mul_add") {
     r = emit(r, ir.op_load_local(ins.args[1]));
     r = emit(r, ir.op_lane("vmul", w));
     r = emit(r, ir.op_load_local(ins.args[2]));
     return emit(r, ir.op_lane("vadd", w));
+  }
+  if (verb == "of" && w == 32) {
+    r = emit(r, ir.op_lane("vsplat", 64));
+    r = emit(r, ir.op_load_local(ins.args[1]));
+    r = emit(r, ir.op_lane_at("vreplace", 64, 1));
+    r = emit(r, ir.op_load_local(ins.args[2]));
+    r = emit(r, ir.op_lane("vsplat", 64));
+    r = emit(r, ir.op_load_local(ins.args[3]));
+    r = emit(r, ir.op_lane_at("vreplace", 64, 1));
+    return emit(r, ir.op_lane("vpack", 32));
   }
   r = emit(r, ir.op_lane("vsplat", w));
   for k in 1..ins.args.len() {

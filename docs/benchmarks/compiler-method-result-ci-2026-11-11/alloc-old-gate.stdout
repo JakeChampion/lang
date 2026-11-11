@@ -1,0 +1,12 @@
+### performance (bench)
+| metric | measured | baseline | delta |
+| --- | --- | --- | --- |
+| x86_64/checker.allocs | 40.4M | 39.6M | +2.23% |
+| x86_64/checker.frees | 40.4M | 39.6M | +2.23% |
+SLOWER: x86_64/checker.allocs 39.6M -> 40.4M (+2.23%, tolerance 1%).
+SLOWER: x86_64/checker.frees 39.6M -> 40.4M (+2.23%, tolerance 1%).
+Corrected baseline — paste into the baseline file:
+    x86_64/checker.allocs 40440085
+    x86_64/checker.frees 40440085
+WARNING: x86_64/checker.allocs +2.23%: x86_64/checker.allocs measured 40440085 against a baseline of 39556378 — over its 1% tolerance
+WARNING: x86_64/checker.frees +2.23%: x86_64/checker.frees measured 40440085 against a baseline of 39556378 — over its 1% tolerance

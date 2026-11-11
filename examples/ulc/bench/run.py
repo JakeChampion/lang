@@ -67,7 +67,7 @@ def samples(path, output_format="FLOAT32"):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fern", type=Path, required=True)
-    parser.add_argument("--baseline-fern", type=Path, help="compare exact decode output with an earlier Fern binary")
+    parser.add_argument("--baseline-fern", type=Path, help="compare exact output with an earlier Fern binary")
     parser.add_argument("--baseline-source-commit", help="source revision of the earlier Fern binary")
     parser.add_argument("--reference", type=Path, required=True, help="C release directory")
     parser.add_argument("--compiler", type=Path, help="Fern compiler used for the executable")
@@ -89,8 +89,6 @@ def main():
     parser.add_argument("--output-format", choices=("PCM8", "PCM16", "PCM24", "FLOAT32"), default="FLOAT32")
     parser.add_argument("--direction", choices=("encode", "decode", "both"), default="both")
     args = parser.parse_args()
-    if args.baseline_fern and args.direction != "decode":
-        parser.error("--baseline-fern requires --direction decode")
     if args.seconds <= 0 or args.repetitions < 3:
         parser.error("use positive seconds and at least three repetitions")
     if not 1 <= args.channels <= 255 or not 1 <= args.sample_rate <= 384000 or not 0 < args.quality <= 100:
@@ -140,7 +138,8 @@ def main():
         for kind in ("silence", "tone", "noise", "transients"):
             source = root / "input.wav"
             checksum = fixture(source, kind, args.seconds, args.channels, args.sample_rate)
-            encoded = {name: root / f"{name}.ulc" for name in ("C", "Fern")}
+            encoders = ("C", "Fern", "Baseline") if baseline and args.direction != "decode" else ("C", "Fern")
+            encoded = {name: root / f"{name}.ulc" for name in encoders}
             average = None
             fern_mode, fern_rate, c_rate = "encode", f"{args.quality:g}", f"-{args.quality:g}"
             if args.rate_mode != "vbr":
@@ -159,6 +158,9 @@ def main():
                         "Fern": [fern, fern_mode, source, encoded["Fern"], fern_rate, str(args.block_size)]}
             if average is not None:
                 commands["Fern"].append(f"{average:.5f}")
+            if "Baseline" in encoded:
+                commands["Baseline"] = [baseline, *commands["Fern"][1:]]
+                commands["Baseline"][3] = encoded["Baseline"]
             for command in commands.values():
                 run(command)
             sizes = {name: path.stat().st_size for name, path in encoded.items()}
@@ -193,8 +195,9 @@ def main():
                           "fern_speed_ratio": medians["C"] / medians["Fern"],
                           "encoded_bytes": sizes}
                 if baseline:
-                    assert outputs["Baseline"].read_bytes() == outputs["Fern"].read_bytes(), "Fern output differs from baseline"
-                    result["final_wav_bytes_identical"] = True
+                    compared = outputs if direction == "decode" else encoded
+                    assert compared["Baseline"].read_bytes() == compared["Fern"].read_bytes(), "Fern output differs from baseline"
+                    result["final_wav_bytes_identical" if direction == "decode" else "final_ulc_bytes_identical"] = True
                     result["baseline_speed_ratio"] = medians["Baseline"] / medians["Fern"]
                 if average is not None:
                     result["average_complexity"] = average

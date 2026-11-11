@@ -114,5 +114,8 @@
 # 2026-11-05: PR #14207, perf-x86_64 job 126960802774 on the merge with main 6dba1dcb measures lower values for the changed rows below. The rows that rise keep their limits.
 # 2026-11-10: PR #15106, CI job 129860813857 on b45460dd72 measured these counts.
 # Bank the balanced reductions after main 5d6c692eb2. Keep all tolerances.
-x86_64/checker.allocs	39556378
-x86_64/checker.frees	39556378
+# 2026-11-11: PR #15215 records main 29b1234d06, CI 42916398671, job 130211808249.
+# The checker workload reports 40,440,085 allocations and frees.
+# This is an inherited main cost. The 1% tolerance is unchanged.
+x86_64/checker.allocs	40440085
+x86_64/checker.frees	40440085

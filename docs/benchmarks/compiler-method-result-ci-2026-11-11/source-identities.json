@@ -1,0 +1,29 @@
+{
+  "source": "29b1234d0699d6b42d7d85bbcd82dbfb92c6dce2",
+  "files": {
+    "scripts/ci-check-perf": {
+      "git_blob": "29fb2ea363c6f2d740d237b81cde302757d4a9e7",
+      "sha256": "fa5fce8c5cbe004f996c3cfd879b8115197d0e7c47489fff49c4fb9d9bd094ff"
+    },
+    "scripts/perf-gate-selftest.mjs": {
+      "git_blob": "6c5d2d0818a3f284a87d58506b9fcec2f33ff05b",
+      "sha256": "cf43efd45ea24af40dcfbf895565116a7b404c300a112f40282a396e6e7309c7"
+    },
+    "scripts/cliff-bench": {
+      "git_blob": "c59d67c9eeb16ef51f95a04d8f653923c7988240",
+      "sha256": "5c9a79a17fe8d0f8c186bff9783c8385479be857e92edf85399329df6e00bb5a"
+    },
+    "scripts/selfhost-alloc-bench": {
+      "git_blob": "e7a5c89a2fb4df6c9683e330b8feef908a495a09",
+      "sha256": "08c045ef27ee05b13d36986d88d16ac875074ba577d0075821f18f8f341f69a1"
+    },
+    ".github/workflows/perf.yml": {
+      "git_blob": "9a724c314d0534f77973169be04ed9891bd21f02",
+      "sha256": "ef7b6c96f0c904449bce455adda04d3f8c9df804a9b09ec2b68ba2bfaaede354"
+    },
+    "bootstrap/stage0.lock": {
+      "git_blob": "b23b44713d4bd7f346814779492089faa573b3aa",
+      "sha256": "bf10dcab7a95f12aeea13ad2a4a3a0691f8370bc7a2396f00c48b1df865ed73f"
+    }
+  }
+}
