@@ -2840,6 +2840,11 @@ function main(): i32 { return 0; }
 		{"public-builtin-name-print", "function print(x: i32): i32 { return x; }\nfunction main(): i32 { return print(0); }\n", nil},
 		{"public-builtin-name-args", "function args(x: i32): i32 { return x; }\nfunction main(): i32 { return args(0); }\n", nil},
 		{"display-builtin-name", "function __primitive_i32_to_string(x: i32): i32 { return x; }\nfunction main(): i32 { return __primitive_i32_to_string(0); }\n", nil},
+		{"safe-intrinsic-name-wfi", "function __wfi(x: i32): i32 { return x; }\nfunction main(): i32 { return __wfi(0); }\n", nil},
+		{"safe-intrinsic-name-bytes-range", "function __bytes_range(x: i32): i32 { return x; }\nfunction main(): i32 { return __bytes_range(0); }\n", nil},
+		{"safe-intrinsic-name-kernel", "function __inner_mul_add_f64(x: i32): i32 { return x; }\nfunction main(): i32 { return __inner_mul_add_f64(0); }\n", nil},
+		{"builtin-method-name-string-len", "function __method_string_len(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
+		{"builtin-method-name-reader-close", "function __method_Reader_close(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}},
 		{"intrinsic-family-prefix-name", "function __port_text(x: i32): i32 { return x; }\nfunction main(): i32 { return __port_text(0); }\n", nil},
 	}
 	for _, tc := range cases {

@@ -6,6 +6,7 @@ import "./decltypes";
 import "./astwalk";
 import "./platforms";
 import "./builtinsigs";
+import "./caps";
 import "std/string";
 
 pub struct ImportedEnum { name: string, prefix: string }
@@ -1418,11 +1419,12 @@ function entry_shadow_names(names: string[]): string[] {
 
 // The free functions of the entry module that have the name of a builtin.
 // Each one shadows the builtin in the module, as a function of an imported
-// module does.
+// module does. The mangled name of a built-in method is not a name that a
+// program can take.
 function builtin_shadows(mod: parser.Module): string[] {
   let out: string[] = [];
   for fd in mod.funcs {
-    if (fd.receiver_type.len() == 0 && !fd.is_const && builtinsigs.builtin_row(fd.name).len() > 0 && !util.has_str(out, fd.name)) {
+    if (fd.receiver_type.len() == 0 && !fd.is_const && !fd.name.starts_with("__method_") && (builtinsigs.builtin_row(fd.name).len() > 0 || caps.is_builtin(fd.name)) && !util.has_str(out, fd.name)) {
       out = out.append(fd.name);
     }
   }
