@@ -2823,6 +2823,13 @@ function main(): i32 { return 0; }
 		{"written-fn-type-let-array", "function main(): i32 { let fs: fn[] = []; return 0; }\n", []string{"E064"}},
 		{"written-fn-type-nested", "function main(): i32 { let f: Option[fn] = None; return 0; }\n", []string{"E064"}},
 		{"written-arrow-types-clean", "struct S { f: (i32) => void, g: ((i32) => i32)[] }\nfunction ap(f: (i32) => void, o: Option[(i32) => void]): (i32) => void { return f; }\nfunction main(): i32 { let fs: ((i32) => void)[] = []; let w: (string) => void = (s: string): void => { }; return 0; }\n", nil},
+		{"range-index-compound-assign", "function main(): i32 {\n  let seen = 0;\n  for i in 0..10 {\n    seen += 1;\n    i += 1;\n  }\n  return seen;\n}\n", []string{"E091"}},
+		{"range-index-inclusive-assign", "function main(): i32 { for i in 0..=3 { i = 9; } return 0; }\n", []string{"E091"}},
+		{"range-index-nested-assign", "function main(): i32 { for i in 0..3 { for j in 0..3 { i = j; } } return 0; }\n", []string{"E091"}},
+		{"range-index-captured-assign", "function main(): i32 { let t = 0; for i in 0..3 { let g = (): i32 => { i = 4; return i; }; t += g(); } return t; }\n", []string{"E091"}},
+		{"range-index-shadowed-assign", "function main(): i32 { let t = 0; for i in 0..3 { let i = 5; i = 6; t += i; } return t; }\n", nil},
+		{"range-element-assign", "function main(): i32 { let t = 0; for x in [1, 2, 3] { x = 4; t += x; } return t; }\n", nil},
+		{"range-outer-local-assign", "function main(): i32 { let i = 0; for k in 0..3 { i = k; } return i; }\n", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
