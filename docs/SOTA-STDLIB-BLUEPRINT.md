@@ -175,9 +175,9 @@ treatment.
 | Primitive | Today | Best known | Verdict |
 | --- | --- | --- | --- |
 | `Map` layout | **SwissTable-style ctrl bytes + SWAR group probe**, home-bucket fast path, unchanged linear-probe order | SwissTable + SIMD group probe | **DONE (SWAR, this pass)** — 1.45x miss-heavy / 1.15x hit-heavy near the load ceiling, parity at typical load (`map_probe_chain` gates it); a 16-wide group-probe kernel through the #6198 surface is the remaining step |
-| String hash | **FNV-1a over 4-byte blocks + fmix32 avalanche** | wyhash / XXH3 | **DONE (this pass)** |
+| String hash | **A 64-bit product for each 4-byte word, with the high half folded down** | wyhash / XXH3 | **DONE** (#14979) |
 | Scalar hash | Wang mix | Fine | OK |
-| Adversarial keys | **Per-process seed XORed into the FNV basis, default on** | SipHash, randomised seed | **DONE for offline attacks (this pass)**; SipHash still wanted against an online oracle |
+| Adversarial keys | **Per-process seed XORed into the first state, default on** | SipHash, randomised seed | **DONE for offline attacks (this pass)**; SipHash still wanted against an online oracle |
 | Tiny map | **Linear scan at or below 8 entries** | Linear scan below ~8 entries | **DONE (this pass)** |
 | Checksum | — | xxHash / CRC32 | GAP |
 
@@ -214,10 +214,16 @@ unaffected.
 What that closes and what it does not: the seed defeats OFFLINE precomputation,
 which is the whole of the practical hash-flooding attack, because the colliding
 set has to be computed against a seed drawn per process. It does NOT defeat an
-attacker with an online timing oracle — FNV is invertible, so enough per-request
-feedback recovers the seed. SipHash-1-3 behind the same seed slot is the
-upgrade, and it is a drop-in: `__map_fnv_str_seeded` is the only consumer of the
+attacker with an online timing oracle — the hash is invertible, so enough
+per-request feedback recovers the seed. SipHash-1-3 behind the same seed slot is
+the upgrade, and it is a drop-in: `__map_str_hash` is the only consumer of the
 seed, so nothing outside it depends on how the seed is used.
+
+The seed must change each collision. The hash before #14979 multiplied 32-bit
+words, and a change of bit 31 in an even number of words gave one hash for each
+seed. The 64-bit product has no such change: the high half holds a difference
+that depends on the seed, and the fold brings it into the low half before the
+next word.
 
 ### Strings and bytes
 
@@ -595,10 +601,13 @@ pseudo-random values including negatives, and the zero / all-ones boundaries
 where smear-and-count and the `x ^ (x-1)` identity are least obviously correct.
 
 **`core/map`'s string hash mixes blocks and avalanches.** It was textbook
-byte-at-a-time FNV-1a. It now folds 4 bytes per multiply and finishes with a
+byte-at-a-time FNV-1a. It then folded 4 bytes per multiply and finished with a
 murmur3 fmix32, because callers mask the hash with `cap - 1` and so read only
 the LOW bits — where FNV-1a diffuses worst, since its multiply pushes influence
-upward while a trailing byte's xor only perturbs the bottom 8.
+upward while a trailing byte's xor only perturbs the bottom 8. Since #14979 each
+word goes into a 64-bit product whose high half folds into the low half, which
+does the same work for the low bits in each round. The numbers below are for
+the fmix32 form.
 
 The numbers are worth stating plainly, because the intuition oversells this.
 Bucket occupancy moves close to ideal: 1000 short keys into 1024 buckets fill

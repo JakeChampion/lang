@@ -304,7 +304,8 @@ x86_64/map_probe_chain.text	8492
 # Bank the measured reduction after main 5d6c692eb2. Keep the tolerance unchanged.
 x86_64/map_probe_chain.ir	238091314
 x86_64/map_string.text	9311
-x86_64/map_string.ir	53037751	2
+# 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured x86_64/map_string.ir at 51764454 (was 53037751). The tolerance is unchanged.
+x86_64/map_string.ir	51764454	2
 x86_64/ordmap_insert.text	5394
 x86_64/ordmap_insert.ir	81070676
 x86_64/pmap_insert.text	2946
@@ -596,7 +597,8 @@ aarch64/map_probe_chain.text	8507
 aarch64/map_probe_chain.ir	230251856
 aarch64/map_string.text	9472
 # 2026-10-26 (#13496): CI40297899459 reports the current map instruction count.
-aarch64/map_string.ir	53247468	2
+# 2026-11-11 (#15258): perf-aarch64 job 130456686122 measured aarch64/map_string.ir at 49757676 (was 53247468). The tolerance is unchanged.
+aarch64/map_string.ir	49757676	2
 aarch64/ordmap_insert.text	5771
 aarch64/ordmap_insert.ir	95978671
 aarch64/pmap_insert.text	3251

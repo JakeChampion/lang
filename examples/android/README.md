@@ -9,7 +9,8 @@ state for each message. The module does the layout, the drawing on the GPU,
 the touches, the lists that scroll, the dark theme and the accessibility
 tree. [`counter/`](counter/README.md) is the smallest such app, and
 [`todo/`](todo/README.md) has a text field and a list that scrolls.
-`std/android/ui/sim` runs both in tests on the host.
+`std/android/ui/sim` runs both in tests on the host. The
+[Android guide](https://fern-lang.netlify.app/android/) explains each part.
 
 `native/` is the smallest app that draws its own pixels. [`stopwatch/`](stopwatch/README.md),
 [`walkie/`](walkie/README.md), [`plex/`](plex/README.md), a Plex client,

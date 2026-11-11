@@ -443,5 +443,60 @@
     "name": "owned_field_match_resource_defer",
     "source": "struct H{fd:i32} function(own h:H)close():void{} enum Payload{HandlePayload(H)} struct Holder{payload:Payload} enum Out{Empty,Held(H)} function take(own h:H):void{} function consume(own h:Holder):void{} function f(own holder:Holder):own Out{match(holder.payload){HandlePayload(h)=>{defer{h.close();}return Held(h);}}return Empty;}function main():i32{return 0;}",
     "want": "E051"
+  },
+  {
+    "name": "generic_enum_data_copy_string",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} enum Data[T]{Empty,SomeData(T)} function loan(x:Data[string]):Data[string]{return x;} function take(own x:Data[string]):void{} function f(x:Data[string]):void{take(loan(x));} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "generic_enum_data_copy_nested_data",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct Bytes{items:u8[]} enum Data[T]{Empty,SomeData(T)} function loan(x:Data[Bytes]):Data[Bytes]{return x;} function take(own x:Data[Bytes]):void{} function f(x:Data[Bytes]):void{take(loan(x));} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "generic_enum_data_copy_two_parameters",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} enum Data[A,B]{Empty,First(A),Second(B)} function loan(x:Data[string,u8[]]):Data[string,u8[]]{return x;} function take(own x:Data[string,u8[]]):void{} function f(x:Data[string,u8[]]):void{take(loan(x));} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "generic_enum_data_copy_nested_enum",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} enum Inner[T]{NoInner,SomeInner(T)} enum Data[T]{Empty,SomeData(Inner[T])} function loan(x:Data[string]):Data[string]{return x;} function take(own x:Data[string]):void{} function f(x:Data[string]):void{take(loan(x));} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "generic_enum_data_copy_resource",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} enum Data[T]{Empty,SomeData(T)} function loan(x:Data[H]):Data[H]{return x;} function take(own x:Data[H]):void{} function f(x:Data[H]):void{take(loan(x));} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "generic_enum_data_copy_cell",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} enum Data[T]{Empty,SomeData(T)} function loan(x:Data[Cell[i32]]):Data[Cell[i32]]{return x;} function take(own x:Data[Cell[i32]]):void{} function f(x:Data[Cell[i32]]):void{take(loan(x));} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "generic_enum_data_copy_callback",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} enum Data[T]{Empty,SomeData(T)} function loan(x:Data[() => i32]):Data[() => i32]{return x;} function take(own x:Data[() => i32]):void{} function f(x:Data[() => i32]):void{take(loan(x));} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "generic_enum_data_copy_hidden_cell",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} enum Data[T]{Empty,SomeData(T,Cell[i32])} function loan(x:Data[string]):Data[string]{return x;} function take(own x:Data[string]):void{} function f(x:Data[string]):void{take(loan(x));} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "generic_enum_data_copy_hidden_callback",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} enum Data[T]{Empty,SomeData(T,() => i32)} function loan(x:Data[string]):Data[string]{return x;} function take(own x:Data[string]):void{} function f(x:Data[string]):void{take(loan(x));} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "generic_enum_data_copy_must_consume",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} @must_consume enum Data[T]{Empty,SomeData(T)} function loan(x:Data[string]):Data[string]{return x;} function take(own x:Data[string]):void{} function f(x:Data[string]):void{take(loan(x));} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "generic_enum_data_copy_unresolved",
+    "source": "enum Data[T]{Empty,SomeData(T)} function loan[T](x:Data[T]):Data[T]{return x;} function take[T](own x:Data[T]):void{} function f[T](x:Data[T]):void{take(loan(x));} function main():i32{return 0;}",
+    "want": "E051"
   }
 ]

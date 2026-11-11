@@ -303,11 +303,15 @@ selfhost/wasm32-wasi/deflate_decode.emit	20140
 selfhost/wasm32-wasi/deflate_encode.emit	11811
 selfhost/wasm32-wasi/enum_match.emit	545
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-selfhost/wasm32-wasi/http_hello.emit	19039
+# 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured selfhost/wasm32-wasi/http_hello.emit at 19326 (was 19039). The tolerance is unchanged.
+selfhost/wasm32-wasi/http_hello.emit	19326
 selfhost/wasm32-wasi/int_loop.emit	73
-selfhost/wasm32-wasi/map_int.emit	13304
-selfhost/wasm32-wasi/map_probe_chain.emit	13329
-selfhost/wasm32-wasi/map_string.emit	14007
+# 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured selfhost/wasm32-wasi/map_int.emit at 13496 (was 13304). The tolerance is unchanged.
+selfhost/wasm32-wasi/map_int.emit	13496
+# 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured selfhost/wasm32-wasi/map_probe_chain.emit at 13521 (was 13329). The tolerance is unchanged.
+selfhost/wasm32-wasi/map_probe_chain.emit	13521
+# 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured selfhost/wasm32-wasi/map_string.emit at 14287 (was 14007). The tolerance is unchanged.
+selfhost/wasm32-wasi/map_string.emit	14287
 selfhost/wasm32-wasi/ordmap_insert.emit	6767
 selfhost/wasm32-wasi/pmap_insert.emit	3296
 selfhost/wasm32-wasi/pvec_with.emit	2763
@@ -323,8 +327,10 @@ selfhost/wasm32-wasi/string_scan.emit	1405
 selfhost/wasm32-wasi/string_slice.emit	543
 selfhost/wasm32-wasi/struct_drop.emit	1629
 selfhost/wasm32-wasi/tokenize.emit	890
-selfhost/wasm32-wasi/utf8_ingest_unchecked.emit	8993
-selfhost/wasm32-wasi/utf8_ingest_validated.emit	9917
+# 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured selfhost/wasm32-wasi/utf8_ingest_unchecked.emit at 9273 (was 8993). The tolerance is unchanged.
+selfhost/wasm32-wasi/utf8_ingest_unchecked.emit	9273
+# 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured selfhost/wasm32-wasi/utf8_ingest_validated.emit at 10197 (was 9917). The tolerance is unchanged.
+selfhost/wasm32-wasi/utf8_ingest_validated.emit	10197
 selfhost/x86-64-linux/array_append.emit	1190
 selfhost/x86-64-linux/array_index.emit	1191
 selfhost/x86-64-linux/array_scale_f64.emit	1306

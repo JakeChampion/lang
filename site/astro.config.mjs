@@ -228,6 +228,10 @@ export default defineConfig({
           label: "HTTP guide",
           items: [{ autogenerate: { directory: "http" } }],
         },
+        {
+          label: "Android guide",
+          items: [{ autogenerate: { directory: "android" } }],
+        },
         { label: "Cookbook", link: "/cookbook/" },
         {
           label: "Reference",
