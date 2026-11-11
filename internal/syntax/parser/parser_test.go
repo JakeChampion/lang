@@ -353,6 +353,9 @@ func TestForInRangeDesugars(t *testing.T) {
 	if b, ok := loop.Cond.(*ast.Binary); !ok || b.Op != "<" {
 		t.Errorf("range loop cond should be `i < hi`, got %T %v", loop.Cond, loop.Cond)
 	}
+	if loop.RangeIndex != "i" {
+		t.Errorf("range loop must name its index for the checker, got %q", loop.RangeIndex)
+	}
 }
 
 func TestForInInclusiveRangeDesugars(t *testing.T) {
@@ -388,6 +391,9 @@ func TestForInInclusiveRangeDesugars(t *testing.T) {
 	}
 	if loop.Init != nil {
 		t.Errorf("the loop let is declared before the go flag, not in Init; got %T", loop.Init)
+	}
+	if loop.RangeIndex != "i" {
+		t.Errorf("inclusive range loop must name its index for the checker, got %q", loop.RangeIndex)
 	}
 	if id, ok := loop.Cond.(*ast.Ident); !ok || id.Name != gv.Name {
 		t.Errorf("inclusive range loop cond should be the go flag %q, got %T", gv.Name, loop.Cond)

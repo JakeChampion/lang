@@ -3232,7 +3232,7 @@ func (p *parser) parseForEach(kw lexer.Token, label string) (ast.Stmt, error) {
 		step := ast.Stmt(&ast.ExprStmt{P: kw.Pos, Expr: &ast.Assign{P: kw.Pos, Target: mkI(nameTok.Text),
 			Value: &ast.Binary{P: kw.Pos, Op: "+", Left: mkI(nameTok.Text), Right: &ast.NumberLit{P: kw.Pos, Value: 1}}}})
 		loop := &ast.For{P: kw.Pos, Init: declI, Cond: &ast.Binary{P: kw.Pos, Op: "<", Left: mkI(nameTok.Text), Right: mkI(hiName)},
-			Step: step, Body: body, Label: label}
+			Step: step, Body: body, Label: label, RangeIndex: nameTok.Text}
 		stmts := []ast.Stmt{declHi, loop}
 		if inclusive {
 			goName := fmt.Sprintf("__range_go_%d", rid)

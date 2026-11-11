@@ -163,7 +163,7 @@ language does not have. It is deleted.
 | `E088` | a `fern.toml` the loader refuses | — |
 | `E089` | a const argument is not an integer literal or a const parameter | `diag_e089` |
 | `E090` | an argument has the wrong kind for its parameter | `diag_e090` |
-| `E091` | an assignment to a const or a const parameter | `diag_e091` |
+| `E091` | an assignment to a const, a const parameter, or the index of a range `for` | `diag_e091` |
 | `E092` | a literate document does not tangle | — |
 | `E093` | a `const` initializer is not a constant expression | `const_initialiser_not_a_constant` |
 | `E094` | an embedded asset the compiler cannot resolve | — |
