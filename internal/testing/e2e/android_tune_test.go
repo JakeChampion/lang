@@ -20,10 +20,17 @@ func TestAndroidTuneEngine(t *testing.T) {
 	runAppSuite(t, tuneApp, "engine_test.fern")
 }
 
+// library_test.fern finds the files of sound below a directory, and gives a
+// file with no tags its artist and its album from its path.
+func TestAndroidTuneLibrary(t *testing.T) {
+	runAppSuite(t, tuneApp, "library_test.fern")
+}
+
 // tune_test.fern runs the music player on the simulator of std/android/ui,
 // with a device that takes the samples of 20 ms at each write. It plays a
 // track in time, stops it, moves the slider, plays the next track at the
-// end, and stops at a file that is not sound.
+// end, and stops at a file that is not sound. It reads the tags of its
+// files, and shows the artists and the albums.
 func TestAndroidTuneProgram(t *testing.T) {
 	runAppSuite(t, tuneApp, "tune_test.fern")
 }
