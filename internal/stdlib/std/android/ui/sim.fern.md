@@ -278,6 +278,23 @@ pub function hold_nth[S, M](own s: Sim[S, M], label: string, nth: i32): Sim[S, M
   return event(after(pressed, 600i64), android.Touch(1, x as f32, y as f32));
 }
 
+// A finger goes down on the first slider that says `label`, at `part` of
+// its width from 0 to 1, and lifts.
+pub function slide[S, M](own s: Sim[S, M], label: string, part: f64): Sim[S, M] {
+  let at: Option[(i32, i32)] = None;
+  for n in s.shell.host.lay.nodes {
+    if (at.is_none() && n.tap.name == ui.SLIDER_ACTION && n.say == label) {
+      if let Some((_, y)) = middle(n) {
+        at = Some((ui.slide_x(n, part, s.d), y));
+      }
+    }
+  }
+  let Some((x, y)) = at else {
+    return s;
+  };
+  return tap_at(s, x, y);
+}
+
 // A finger goes down at x0 and y0, moves to x1 and y1 in `ms`
 // milliseconds, and lifts there. A frame draws each 16 ms.
 pub function drag[S, M](own s: Sim[S, M], x0: i32, y0: i32, x1: i32, y1: i32, ms: i64): Sim[S, M] {

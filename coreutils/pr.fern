@@ -844,7 +844,7 @@ function printable_ascii(bytes: u8[]): boolean {
   return true;
 }
 
-function body_into(out: usize, c: Cfg, lines: u8[][], first_no: i64): i32 {
+function body_into(out: usize, c: Cfg, lines: u8[][], first_no: i64, last_terminated: boolean): i32 {
   let count = 0;
   let n = lines.len();
   if (c.columns == 1 && !c.merge) {
@@ -861,7 +861,7 @@ function body_into(out: usize, c: Cfg, lines: u8[][], first_no: i64): i32 {
         buf_push_byte(out, 10);
       }
       count += 1;
-      if (c.double_space) {
+      if (c.double_space && (i + 1 < n || last_terminated || !c.omit_header)) {
         buf_push_byte(out, 10);
         count += 1;
       }
@@ -925,7 +925,7 @@ function merge_row_into(out: usize, c: Cfg, rows: u8[][], from: i32, count: i32,
   buf_push_byte(out, 10);
 }
 
-function merge_body_into(out: usize, c: Cfg, rows: u8[][], width: i32, row_widths: i32[], first_no: i64): i32 {
+function merge_body_into(out: usize, c: Cfg, rows: u8[][], width: i32, row_widths: i32[], terminated: boolean[], first_no: i64): i32 {
   let count = 0;
   let nrows = 0;
   if (width > 0) {
@@ -935,7 +935,7 @@ function merge_body_into(out: usize, c: Cfg, rows: u8[][], width: i32, row_width
   while (r < nrows) {
     merge_row_into(out, c, rows, r * width, row_widths[r], wrap32(first_no + r as i64));
     count += 1;
-    if (c.double_space) {
+    if (c.double_space && (terminated[r] || !c.omit_header)) {
       buf_push_byte(out, 10);
       count += 1;
     }
@@ -1057,6 +1057,7 @@ function run_serial(c: Cfg, name: string, o0: io_buffered.BufWriter, ok0: boolea
   }
   while (page <= c.last_page) {
     let lines: u8[][] = [];
+    let last_terminated = true;
     let broke = false;
     let first = true;
     while (lines.len() < cap && !broke && !eof) {
@@ -1073,6 +1074,7 @@ function run_serial(c: Cfg, name: string, o0: io_buffered.BufWriter, ok0: boolea
       first = false;
       if (record.line) {
         lines = lines.append(record.text);
+        last_terminated = !record.ff && !record.src.eof;
       }
       broke = record.ff;
       eof = !record.line && !record.ff;
@@ -1093,7 +1095,7 @@ function run_serial(c: Cfg, name: string, o0: io_buffered.BufWriter, ok0: boolea
     if (printing) {
       let h = o.handle();
       page_head(h, c, page, hdr_name, s.mtime, s.mnsec);
-      page_tail(h, c, body_into(h, c, lines, line_no));
+      page_tail(h, c, body_into(h, c, lines, line_no, last_terminated));
       o = gnu.settle(o);
       if (!paginate && broke && !c.omit_pagination) {
         o = gnu.put(o, "\x0c");
@@ -1172,11 +1174,13 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
     }
     let cells: u8[][] = [];
     let row_widths: i32[] = [];
+    let terminated: boolean[] = [];
     let filled = 0;
     let page_ff = false;
     let r = 0;
     while (r < rows) {
       let row_width = 0;
+      let row_terminated = false;
       let any = false;
       let col = 0;
       while (col < width) {
@@ -1195,6 +1199,7 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
           } else {
             if (got.line) {
               cell = got.text;
+              row_terminated = row_terminated || !got.ff && !got.src.eof;
               any = true;
               present = true;
             }
@@ -1231,6 +1236,9 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
         break;
       }
       row_widths = row_widths.append(row_width);
+      if (c.double_space) {
+        terminated = terminated.append(row_terminated);
+      }
       while (row_width < width) {
         cells = cells.append([]);
         row_width += 1;
@@ -1259,7 +1267,7 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
     if (printing) {
       let h = o.handle();
       page_head(h, c, page, "", now, 0 as i64);
-      page_tail(h, c, merge_body_into(h, c, cells, width, row_widths, line_no));
+      page_tail(h, c, merge_body_into(h, c, cells, width, row_widths, terminated, line_no));
       o = gnu.settle(o);
       if (c.omit_header && page_ff && !c.omit_pagination) {
         o = gnu.put(o, "\x0c");

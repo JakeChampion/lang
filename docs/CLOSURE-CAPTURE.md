@@ -162,11 +162,14 @@ Both checkers report E050 for direct local callbacks and simple aliases after a 
 The guard requires one lexical definition for each binding it follows.
 An argument cannot consume a captured owner that the call still needs.
 This rule also covers callback literals and their captured callback aliases.
+Selected callback values retain the captures of their `if`, `match`, and block results.
+Reads that only evaluate a condition or a block statement do not extend the returned callback's captures.
 It preserves repeated reads before cleanup and immutable data copies.
 The cases `diag_e050_callback_uses_consumed_capture` and `callback_capture_lifetimes` cover this guard.
 
 This guard does not establish complete capture lifetimes.
-Callback factories, conditional callback values, mutable bindings, deferred callbacks, and resource field paths need a broader loan analysis.
+Callback factories and aggregate fields need a broader loan analysis.
+Mutable and shadowed bindings, deferred callbacks, and resource field paths have the same limit.
 Issue #15328 tracks that remaining work.
 
 ## Cross-compiler parity

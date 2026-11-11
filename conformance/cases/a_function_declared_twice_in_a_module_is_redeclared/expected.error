@@ -1,1 +1,2 @@
 function "lib.total" redeclared
+function "lib.total" takes 1 argument but was given 2

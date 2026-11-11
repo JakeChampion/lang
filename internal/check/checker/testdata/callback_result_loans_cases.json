@@ -798,5 +798,85 @@
     "name": "inline callback copies immutable array before owned input",
     "source": "function discard(own xs: i32[]): i32 { xs = xs.with(0, 99); return 0; } function invoke(f: () => i32, ignored: i32): i32 { return f(); } function run(own xs: i32[]): i32 { return invoke((): i32 => xs[0], discard(xs)); }",
     "want": ""
+  },
+  {
+    "name": "conditional callback captures consumed owner",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return 0; } function run(own h: H, flag: boolean): i32 { let read = if (flag) { (): i32 => h.read() } else { (): i32 => 0 }; h.close(); return read(); }",
+    "want": "E050"
+  },
+  {
+    "name": "conditional callback alias captures consumed owner",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return 0; } function run(own h: H, flag: boolean): i32 { let get = (): i32 => h.read(); let read = if (flag) { get } else { (): i32 => 0 }; h.close(); return read(); }",
+    "want": "E050"
+  },
+  {
+    "name": "conditional callback both branches share captured owner",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return 0; } function run(own h: H, flag: boolean): i32 { let read = if (flag) { (): i32 => h.read() } else { (): i32 => h.read() + 1 }; h.close(); return read(); }",
+    "want": "E050"
+  },
+  {
+    "name": "conditional callback permits earlier read",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return 0; } function run(own h: H, flag: boolean): i32 { let read = if (flag) { (): i32 => h.read() } else { (): i32 => 0 }; return read() + h.close(); }",
+    "want": ""
+  },
+  {
+    "name": "conditional callback does not retain condition-only lender",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return 0; } function run(own h: H, flag: boolean): i32 { let read = if (h.read() > 0) { (): i32 => 7 } else { (): i32 => 0 }; h.close(); return read(); }",
+    "want": ""
+  },
+  {
+    "name": "match callback captures consumed owner",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return 0; } function run(own h: H, flag: boolean): i32 { let read = match (flag) { true => (): i32 => h.read(), false => (): i32 => 0 }; h.close(); return read(); }",
+    "want": "E050"
+  },
+  {
+    "name": "match callback alias captures consumed owner",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return 0; } function run(own h: H, flag: boolean): i32 { let get = (): i32 => h.read(); let read = match (flag) { true => get, false => (): i32 => 0 }; h.close(); return read(); }",
+    "want": "E050"
+  },
+  {
+    "name": "match callback does not retain scrutinee-only lender",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return 0; } function run(own h: H, flag: boolean): i32 { let read = match (h.read() > 0) { true => (): i32 => 7, false => (): i32 => 0 }; h.close(); return read(); }",
+    "want": ""
+  },
+  {
+    "name": "block callback captures consumed owner",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return 0; } function run(own h: H, flag: boolean): i32 { let read = { let get = (): i32 => h.read(); get }; h.close(); return read(); }",
+    "want": "E050"
+  },
+  {
+    "name": "block callback does not retain statement-only lender",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return 0; } function run(own h: H, flag: boolean): i32 { let read = { let n = h.read(); (): i32 => 7 }; h.close(); return read(); }",
+    "want": ""
+  },
+  {
+    "name": "nested conditional callback captures consumed owner",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return 0; } function run(own h: H, flag: boolean): i32 { let read = if (flag) { match (flag) { true => (): i32 => h.read(), false => (): i32 => 0 } } else { (): i32 => 0 }; h.close(); return read(); }",
+    "want": "E050"
+  },
+  {
+    "name": "conditional callback operand survives later argument move",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return 0; } function invoke(f: () => i32, ignored: i32): i32 { return f(); } function run(own h: H, flag: boolean): i32 { return invoke(if (flag) { (): i32 => h.read() } else { (): i32 => 0 }, h.close()); }",
+    "want": "E050"
+  },
+  {
+    "name": "match callback operand survives later argument move",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return 0; } function invoke(f: () => i32, ignored: i32): i32 { return f(); } function run(own h: H, flag: boolean): i32 { return invoke(match (flag) { true => (): i32 => h.read(), false => (): i32 => 0 }, h.close()); }",
+    "want": "E050"
+  },
+  {
+    "name": "block callback operand survives later argument move",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return 0; } function invoke(f: () => i32, ignored: i32): i32 { return f(); } function run(own h: H, flag: boolean): i32 { return invoke({ (): i32 => h.read() }, h.close()); }",
+    "want": "E050"
+  },
+  {
+    "name": "conditional callback copies immutable array",
+    "source": "function changed(own xs: i32[]): void { xs = xs.with(0, 99); } function run(own xs: i32[], flag: boolean): i32 { let read = if (flag) { (): i32 => xs[0] } else { (): i32 => 0 }; changed(xs); return read(); }",
+    "want": ""
+  },
+  {
+    "name": "conditional callback retains only selected-value dependencies",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return 0; } function run(own h: H, flag: boolean): i32 { let read = if (flag) { let n = h.read(); (): i32 => 7 } else { (): i32 => 0 }; h.close(); return read(); }",
+    "want": ""
   }
 ]

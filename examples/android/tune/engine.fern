@@ -1,0 +1,275 @@
+// The decoder of the player: it reads a WAV, a FLAC or an MP3 file that is
+// in memory, and gives its sound a part at a time as 16-bit samples. It has
+// no Android code, so engine_test.fern runs it on the host.
+import "std/audio/flac";
+import "std/audio/mp3";
+import "std/audio/pcm";
+import "std/audio/wav";
+import "std/f64";
+import "std/i32";
+import "std/i64";
+import "std/option";
+import "std/result";
+
+pub const WAV: i32 = 0;
+
+pub const FLAC: i32 = 1;
+
+pub const MP3: i32 = 2;
+
+// The frames of one part of a WAV file.
+const WAV_PART: i32 = 4096;
+
+// A file that plays. `at` is the frame that the next part starts at, and
+// `total` is the number of frames, or 0 when the file does not tell.
+// `offset` is the byte that the next FLAC or MP3 frame starts at, between
+// `first` and `last`. `done` tells that the file has no more sound.
+pub struct Deck {
+  kind: i32,
+  bytes: u8[],
+  rate: i32,
+  channels: i32,
+  bits: i32,
+  total: i64,
+  at: i64,
+  offset: i32,
+  first: i32,
+  last: i32,
+  block: i32,
+  stream: Option[flac.Header],
+  layer3: mp3.Decoder,
+  done: boolean,
+}
+
+function limits(): pcm.Limits {
+  return pcm.Limits { max_input_bytes: 1073741824, max_samples: 1048576 };
+}
+
+function starts_with(bytes: [u8], tag: string): boolean {
+  if (bytes.len() < tag.len()) {
+    return false;
+  }
+  for i in 0..tag.len() {
+    if (bytes[i] != tag[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function blank(kind: i32, bytes: u8[]): Deck {
+  return Deck { kind: kind, bytes: bytes, rate: 0, channels: 0, bits: 16, total: 0i64, at: 0i64, offset: 0, first: 0, last: 0, block: 0, stream: None, layer3: mp3.decoder(), done: false };
+}
+
+function open_wav(bytes: u8[]): Option[Deck] {
+  let Ok(h) = wav.inspect(bytes, limits()) else {
+    return None;
+  };
+  return Some(Deck { ...blank(WAV, bytes), rate: h.format.sample_rate, channels: h.format.channels, bits: h.format.bits_per_sample, total: h.frames as i64 });
+}
+
+function open_flac(bytes: u8[]): Option[Deck] {
+  let Ok(h) = flac.inspect(bytes, limits()) else {
+    return None;
+  };
+  let n = bytes.len();
+  return Some(Deck { ...blank(FLAC, bytes), rate: h.format.sample_rate, channels: h.format.channels, bits: h.format.bits_per_sample, total: h.frames as i64, offset: h.data_offset, first: h.data_offset, last: n, block: h.min_block, stream: Some(h) });
+}
+
+function open_mp3(bytes: u8[]): Option[Deck] {
+  let Ok(t) = mp3.inspect_track(bytes, limits()) else {
+    return None;
+  };
+  return Some(Deck { ...blank(MP3, bytes), rate: t.sample_rate, channels: t.channels, total: t.declared_frames as i64, offset: t.data_offset, first: t.data_offset, last: t.data_end });
+}
+
+// A deck for the file `bytes`, or None when it is not a file that the
+// player reads. A deck has one or two channels.
+pub function open(bytes: u8[]): Option[Deck] {
+  let made: Option[Deck] = None;
+  if (starts_with(bytes, "RIFF")) {
+    made = open_wav(bytes);
+  } else if (starts_with(bytes, "fLaC")) {
+    made = open_flac(bytes);
+  } else {
+    made = open_mp3(bytes);
+  }
+  if let Some(d) = made {
+    if (d.rate > 0 && d.channels >= 1 && d.channels <= 2) {
+      return Some(d);
+    }
+  }
+  return None;
+}
+
+// The samples at 16 bits, from samples of `bits` bits.
+function to_16(samples: i32[], bits: i32): i32[] {
+  if (bits == 16) {
+    return samples;
+  }
+  let out: i32[] = [];
+  for v in samples {
+    if (bits > 16) {
+      out = out.append(v >> bits - 16);
+    } else {
+      out = out.append(v << 16 - bits);
+    }
+  }
+  return out;
+}
+
+function from_floats(samples: f32[]): i32[] {
+  let out: i32[] = [];
+  for v in samples {
+    out = out.append(((v as f64).max(-1.0).min(1.0) * 32767.0) as i32);
+  }
+  return out;
+}
+
+function ended(d: Deck): (Deck, i32[]) {
+  return (Deck { ...d, done: true }, []);
+}
+
+function pull_wav(d: Deck): (Deck, i32[]) {
+  let left = d.total - d.at;
+  if (left <= 0i64) {
+    return ended(d);
+  }
+  let frames = WAV_PART.min(left as i32);
+  let Ok(block) = wav.decode_range(d.bytes, d.at as i32, frames, limits()) else {
+    return ended(d);
+  };
+  let bits = d.bits;
+  let at = d.at + frames as i64;
+  return (Deck { ...d, at: at }, to_16(block.samples, bits));
+}
+
+function pull_flac(d: Deck): (Deck, i32[]) {
+  let Some(h) = d.stream else {
+    return ended(d);
+  };
+  if (d.offset >= d.last) {
+    return ended(d);
+  }
+  let Ok(frame) = flac.decode_frame(d.bytes, d.offset, h, limits()) else {
+    return ended(d);
+  };
+  let bits = d.bits;
+  let offset = d.offset + frame.bytes_read;
+  let at = d.at + frame.frames as i64;
+  return (Deck { ...d, at: at, offset: offset }, to_16(frame.samples, bits));
+}
+
+// The byte at or after `from` that an MP3 frame starts at, with a frame
+// after it too, or -1.
+function next_mp3(bytes: [u8], from: i32, last: i32): i32 {
+  let i = from;
+  while (i + 4 <= last && i < from + 65536) {
+    if (bytes[i] == 255u8) {
+      if let Ok(h) = mp3.inspect(bytes, i, limits()) {
+        if (i + h.bytes + 4 > last || mp3.inspect(bytes, i + h.bytes, limits()).is_ok()) {
+          return i;
+        }
+      }
+    }
+    i += 1;
+  }
+  return -1;
+}
+
+function pull_mp3(d: Deck): (Deck, i32[]) {
+  let start = next_mp3(d.bytes, d.offset, d.last);
+  if (start < 0) {
+    return ended(d);
+  }
+  let (layer3, got) = mp3.Decoder { ...d.layer3 }.decode_frame(d.bytes, start, limits());
+  let Ok(frame) = got else {
+    return (Deck { ...d, layer3: layer3, offset: start + 1 }, []);
+  };
+  let at = d.at + frame.frames as i64;
+  return (Deck { ...d, layer3: layer3, at: at, offset: start + frame.bytes_read }, from_floats(frame.samples));
+}
+
+// The deck after its next part, and the samples of that part: the samples
+// of a frame are one after the other. At the end of the file, the deck is
+// done and the part is empty. A part of an MP3 file can be empty before the
+// end.
+pub function (d: Deck) pull(): (Deck, i32[]) {
+  if (d.done) {
+    return (d, []);
+  }
+  if (d.kind == WAV) {
+    return pull_wav(d);
+  }
+  if (d.kind == FLAC) {
+    return pull_flac(d);
+  }
+  return pull_mp3(d);
+}
+
+// The frame that a FLAC frame at byte `i` starts at, or -1 when no frame
+// starts there.
+function flac_frame_at(d: Deck, h: flac.Header, i: i32): i64 {
+  if (d.bytes[i] != 255u8 || (d.bytes[i + 1] & 254u8) != 248u8) {
+    return -1i64;
+  }
+  let Ok(frame) = flac.decode_frame(d.bytes, i, h, limits()) else {
+    return -1i64;
+  };
+  if (frame.variable) {
+    return frame.number as i64;
+  }
+  return frame.number as i64 * (d.block as i64);
+}
+
+function seek_flac(d: Deck, part: f64): Deck {
+  let Some(h) = d.stream else {
+    return d;
+  };
+  let i = d.first + (part * ((d.last - d.first) as f64)) as i32;
+  while (i + 2 <= d.last) {
+    let at = flac_frame_at(d, h, i);
+    if (at >= 0i64) {
+      return Deck { ...d, at: at, offset: i, done: false };
+    }
+    i += 1;
+  }
+  return Deck { ...d, done: true };
+}
+
+function seek_mp3(d: Deck, part: f64): Deck {
+  let from = d.first + (part * ((d.last - d.first) as f64)) as i32;
+  let at = (part * (d.total as f64)) as i64;
+  return Deck { ...d, layer3: mp3.decoder(), at: at, offset: from, done: false };
+}
+
+// The deck at `part` of the file, from 0 to 1. A FLAC or an MP3 file
+// starts at the frame that is nearest after that part.
+pub function (d: Deck) seek(part: f64): Deck {
+  let to = part.max(0.0).min(1.0);
+  if (d.kind == WAV) {
+    let at = (to * (d.total as f64)) as i64;
+    return Deck { ...d, at: at, done: false };
+  }
+  if (d.kind == FLAC) {
+    return seek_flac(d, to);
+  }
+  return seek_mp3(d, to);
+}
+
+// The time of the next part, in ms.
+pub function (d: Deck) position_ms(): i64 {
+  return d.at * 1000i64 / (d.rate as i64);
+}
+
+// The length of the file in ms. An MP3 file that does not tell its length
+// gives the length that its bytes so far imply, or 0 at its start.
+pub function (d: Deck) duration_ms(): i64 {
+  if (d.total > 0i64) {
+    return d.total * 1000i64 / (d.rate as i64);
+  }
+  if (d.offset <= d.first) {
+    return 0i64;
+  }
+  return d.position_ms() * ((d.last - d.first) as i64) / ((d.offset - d.first) as i64);
+}

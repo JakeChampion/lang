@@ -2,11 +2,11 @@ package checker
 
 import "github.com/jakechampion/lang/internal/syntax/ast"
 
-// Local callback aliases retain the resource captures of their definition.
+// Local callback values retain the resource captures of their definition.
 // Reassigned and shadowed bindings need a separate flow proof.
-func (c *checker) localCallbackCaptures(fn *ast.FuncDecl) (map[string][]ast.Param, map[*ast.Lambda][]ast.Param) {
+func (c *checker) localCallbackCaptures(fn *ast.FuncDecl) (map[string][]ast.Param, map[ast.Expr][]ast.Param) {
 	definitions := map[string][]ast.Expr{}
-	var lambdas []*ast.Lambda
+	var values []ast.Expr
 	add := func(name string, value ast.Expr) {
 		if name != "" && name != "_" {
 			definitions[name] = append(definitions[name], value)
@@ -39,14 +39,17 @@ func (c *checker) localCallbackCaptures(fn *ast.FuncDecl) (map[string][]ast.Para
 				}
 			}
 		case *ast.MatchExpr:
+			values = append(values, n)
 			for _, arm := range n.Arms {
 				for _, name := range arm.Binders() {
 					add(name, nil)
 				}
 			}
 		case *ast.Lambda:
-			lambdas = append(lambdas, n)
+			values = append(values, n)
 			params(n.Params)
+		case *ast.IfExpr, *ast.BlockExpr:
+			values = append(values, n.(ast.Expr))
 		case *ast.FuncDecl:
 			add(n.Name, &ast.Lambda{Captures: n.Captures})
 			params(n.Params)
@@ -54,6 +57,7 @@ func (c *checker) localCallbackCaptures(fn *ast.FuncDecl) (map[string][]ast.Para
 		return true
 	})
 	var resolve func(string, map[string]bool) []ast.Param
+	var valueCaptures func(ast.Expr, map[string]bool) []ast.Param
 	var captures func(*ast.Lambda, map[string]bool) []ast.Param
 	captures = func(value *ast.Lambda, active map[string]bool) []ast.Param {
 		var out []ast.Param
@@ -71,6 +75,25 @@ func (c *checker) localCallbackCaptures(fn *ast.FuncDecl) (map[string][]ast.Para
 		}
 		return out
 	}
+	valueCaptures = func(value ast.Expr, active map[string]bool) []ast.Param {
+		switch v := value.(type) {
+		case *ast.Ident:
+			return resolve(v.Name, active)
+		case *ast.Lambda:
+			return captures(v, active)
+		case *ast.IfExpr:
+			return mergeCallbackCaptures(valueCaptures(v.Then, active), valueCaptures(v.Else, active))
+		case *ast.MatchExpr:
+			var out []ast.Param
+			for _, arm := range v.Arms {
+				out = mergeCallbackCaptures(out, valueCaptures(arm.Body, active))
+			}
+			return out
+		case *ast.BlockExpr:
+			return valueCaptures(v.Tail, active)
+		}
+		return nil
+	}
 	resolve = func(name string, active map[string]bool) []ast.Param {
 		values := definitions[name]
 		if active[name] || len(values) != 1 {
@@ -78,13 +101,7 @@ func (c *checker) localCallbackCaptures(fn *ast.FuncDecl) (map[string][]ast.Para
 		}
 		active[name] = true
 		defer delete(active, name)
-		switch value := values[0].(type) {
-		case *ast.Ident:
-			return resolve(value.Name, active)
-		case *ast.Lambda:
-			return captures(value, active)
-		}
-		return nil
+		return valueCaptures(values[0], active)
 	}
 	out := map[string][]ast.Param{}
 	for name := range definitions {
@@ -92,9 +109,23 @@ func (c *checker) localCallbackCaptures(fn *ast.FuncDecl) (map[string][]ast.Para
 			out[name] = captures
 		}
 	}
-	inline := map[*ast.Lambda][]ast.Param{}
-	for _, lambda := range lambdas {
-		inline[lambda] = captures(lambda, map[string]bool{})
+	inline := map[ast.Expr][]ast.Param{}
+	for _, value := range values {
+		inline[value] = valueCaptures(value, map[string]bool{})
 	}
 	return out, inline
+}
+
+func mergeCallbackCaptures(into, from []ast.Param) []ast.Param {
+	seen := map[string]bool{}
+	for _, capture := range into {
+		seen[capture.Name] = true
+	}
+	for _, capture := range from {
+		if !seen[capture.Name] {
+			seen[capture.Name] = true
+			into = append(into, capture)
+		}
+	}
+	return into
 }

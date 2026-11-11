@@ -18697,13 +18697,13 @@ function ocl_expr(e: ast.Expr, own defs: OclDef[]): OclDef[] {
 
 function ocl_unique(names: util.NameIndex, name: string): boolean {
   let i = names.chain(name);
-  let count = 0;
+  let found = false;
   while (i >= 0) {
     if (names.names[i] == name) {
-      count += 1;
-      if (count > 1) {
+      if (found) {
         return false;
       }
+      found = true;
     }
     i = names.next[i];
   }
@@ -18751,9 +18751,40 @@ function ocl_value(value: ast.Expr, facts: OclFacts): OclCapture[] {
     ast.ExprLambda(lm) => {
       return ocl_lambda(lm, facts);
     },
+    ast.ExprCall(c) => {
+      if (parser.is_value_block(c)) {
+        return ocl_block(c, facts);
+      }
+    },
     _ => {}
   }
   return [];
+}
+
+function ocl_return_value(st: ast.Stmt, own values: ast.Expr[]): ast.Expr[] {
+  if let ast.StmtReturn(r) = st {
+    return values.append(r.value);
+  }
+  return values;
+}
+
+function ocl_keep_values(e: ast.Expr, own values: ast.Expr[]): ast.Expr[] {
+  return values;
+}
+
+function ocl_block(c: ast.ExprCall, facts: OclFacts): OclCapture[] {
+  let ast.ExprLambda(lm) = c.callee else {
+    return [];
+  };
+  let values: ast.Expr[] = [];
+  for st in lm.body {
+    values = astwalk.fold_stmt_nodes(st, values, ocl_return_value, ocl_keep_values, not_lambda);
+  }
+  let out: OclCapture[] = [];
+  for value in values {
+    out = ocl_merge(out, ocl_value(value, facts));
+  }
+  return out;
 }
 
 function ocl_facts(fn: parser.FuncDecl): OclFacts {
@@ -18809,6 +18840,12 @@ function ow_callback_capture_diags(value: ast.Expr, moved: MovedEntry[], ctx: Ow
     if (!lm.captures_known) {
       value = annotate_lambda_expr(lm, ctx.scope, "", t_unknown(""));
     }
+  } else if let ast.ExprCall(c) = value {
+    if (!parser.is_value_block(c)) {
+      return [];
+    }
+    name = "value";
+    value = annotate_expr(value, ctx.scope);
   } else {
     return [];
   }
@@ -34116,7 +34153,7 @@ function lit_bound_typevar(sig: FuncSig, c: ast.ExprCall, tp: string, s: Scope):
   if (util.has_str(wn, tp)) {
     return false;
   }
-  let n = 0;
+  let found = false;
   let k = 0;
   while (k < sig.param_type_names.len() && k < c.args.len()) {
     if (sig.param_type_names[k] == tp) {
@@ -34124,13 +34161,13 @@ function lit_bound_typevar(sig: FuncSig, c: ast.ExprCall, tp: string, s: Scope):
       if (!seed && !int_literal_tree(c.args[k]) && !gcall_open(c.args[k], s)) {
         return false;
       }
-      n += 1;
+      found = true;
     } else if (type_ref_names_any(sig_param_ref(sig, k), [tp])) {
       return false;
     }
     k += 1;
   }
-  return n > 0;
+  return found;
 }
 
 function gcall_open(e: ast.Expr, s: Scope): boolean {
