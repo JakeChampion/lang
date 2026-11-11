@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""Compare VP9 packet ranges and decoded streams with independent readers."""
+import importlib.util
+import os
+from pathlib import Path
+import struct
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+os.chdir(ROOT)
+spec = importlib.util.spec_from_file_location('vp9_packet_fixtures', ROOT / 'scripts/gen-video-vp9-packet-fixtures.py')
+fixtures = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fixtures)
+compiler = os.environ.get('FERN') or subprocess.check_output(['./bootstrap/bootstrap.sh', 'stage0'], text=True).strip()
+target = {'x86_64': 'x86-64-linux', 'aarch64': 'arm64-linux', 'arm64': 'arm64-darwin'}[os.uname().machine]
+binary = ROOT / 'build/video/vp9-packet-reference'
+binary.parent.mkdir(parents=True, exist_ok=True)
+wasm = binary.with_suffix('.wasm')
+for output, architecture, flags in ((binary, target, ['-sanitize']), (wasm, 'wasm32-wasi', [])):
+    subprocess.run([compiler, '-stdlib', str(ROOT / 'internal/stdlib'), '-target', architecture, *flags,
+                    '-o', str(output), 'scripts/video-reference/vp9-packet.fern'], check=True)
+
+
+def run(directory, name, data, valid=True):
+    path = directory / (name + '.vp9')
+    path.write_bytes(data)
+    native = subprocess.run([str(binary), str(path)], text=True, capture_output=True)
+    wasi = subprocess.run(['wasmtime', 'run', '--dir', '.', str(wasm), path.name],
+                          cwd=directory, text=True, capture_output=True)
+    assert native.returncode == (0 if valid else 3) and wasi.returncode == (0 if valid else 1), (name, native, wasi)
+    if not valid:
+        assert native.stderr.splitlines()[0] == wasi.stderr.splitlines()[0] == 'invalid video header or packet', name
+    assert 'live_bytes=0' in native.stderr, native.stderr
+    assert native.stdout == wasi.stdout, name
+    return native.stdout.splitlines()
+
+
+def compare(directory, name, data):
+    offsets, sizes, start, trailing, payloads = fixtures.reference(directory, name, data)
+    expected = [str(start), str(trailing), str(len(sizes))]
+    for offset, size, payload in zip(offsets, sizes, payloads):
+        expected += [str(offset), str(size), payload.hex()]
+    assert run(directory, name, data) == expected, name
+    print(name + ': native/real-WASI ranges and every byte match FFmpeg superframe split', flush=True)
+    return payloads
+
+
+def decode(path, decoder):
+    return subprocess.check_output(['ffmpeg', '-v', 'error', '-c:v', decoder, '-i', str(path),
+                                    '-pix_fmt', 'yuv420p', '-f', 'rawvideo', '-'])
+
+
+with tempfile.TemporaryDirectory() as temporary:
+    directory = Path(temporary)
+    original, _ = fixtures.generate(directory)
+    data = original.read_bytes()
+    reconstructed = bytearray(data[:32])
+    count = 0
+    for timestamp, packet in fixtures.packets(data):
+        for payload in compare(directory, f'encoded-{timestamp}', packet):
+            reconstructed.extend(struct.pack('<IQ', len(payload), timestamp) + payload)
+            count += 1
+    struct.pack_into('<I', reconstructed, 24, count)
+    split = directory / 'split-stream.ivf'
+    split.write_bytes(reconstructed)
+    reference = decode(original, 'libvpx-vp9')
+    assert len(reference) == 90 * 64 * 36 * 3 // 2
+    assert decode(original, 'vp9') == decode(split, 'vp9') == decode(split, 'libvpx-vp9') == reference
+    print('90 displayed frames match every plane after extraction of ' + str(count) + ' coded frames', flush=True)
+    for name, packet in fixtures.controls():
+        compare(directory, name, packet)
+    keyframe = fixtures.packets(data)[0][1]
+    for name, packet in [('short-marker', keyframe + b'\xc0'), ('mismatched-marker', keyframe + b'\x00\x01\xc0')]:
+        run(directory, name, packet, False)
+        path = directory / (name + '.ivf')
+        path.write_bytes(fixtures.headers.ivf(packet))
+        result = subprocess.run(['ffmpeg', '-v', 'error', '-xerror', '-c:v', 'libvpx-vp9', '-i', str(path), '-f', 'null', '-'],
+                                text=True, capture_output=True)
+        assert result.returncode != 0 and ('Corrupt frame' in result.stderr or 'corrupt frame' in result.stderr), result.stderr
+    for name, packet in [('zero-size', keyframe + b'\xc0\x00\xc0'),
+                         ('unsigned-size', keyframe + b'\xd8\xff\xff\xff\xff\xd8')]:
+        run(directory, name, packet, False)
+        path = directory / (name + '.ivf')
+        path.write_bytes(fixtures.headers.ivf(packet))
+        result = subprocess.run(['ffmpeg', '-v', 'error', '-i', str(path), '-c:v', 'copy', '-copyinkf',
+                                 '-bsf:v', 'vp9_superframe_split', '-f', 'framehash', '-'], text=True, capture_output=True)
+        assert 'Invalid frame size in a superframe' in result.stderr, result.stderr
+    print('Four malformed indices fail independently without relying on FFmpeg exit status alone', flush=True)
