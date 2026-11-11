@@ -9,20 +9,16 @@ function __fern_reactor_ctl(r_fd: i32, op: i32, fd: i32, arg: i32): i32 {
       __raw_store8(act, z, 0);
       z += 1;
     }
-    let host = __fern_signal_host(fd);
-    if (host == 0) {
-      return -22;
-    }
-    // An ignored SIGCHLD makes the kernel reap each child.
-    if (host != 20) {
+    // An ignored SIGCHLD (20) makes the kernel reap each child.
+    if (fd != 20) {
       __raw_store8(act, 0, 1);
-      let ignored = __syscall4(46, host as i64, act as i64, 0, 8) as i32;
+      let ignored = __syscall4(46, fd as i64, act as i64, 0, 8) as i32;
       if (ignored < 0) {
         return ignored;
       }
     }
     let ch = __raw_scratch(32);
-    let sig_fd = host;
+    let sig_fd = fd;
     let sig_filter: i32 = -6;
     let sig_flags = 5;
     __raw_store_ptr(ch, 0, sig_fd as usize);
@@ -39,12 +35,8 @@ function __fern_reactor_ctl(r_fd: i32, op: i32, fd: i32, arg: i32): i32 {
     return __syscall6(363, r_fd as i64, ch as i64, 1, 0, 0, 0) as i32;
   }
   if (op == 5) {
-    let host2 = __fern_signal_host(fd);
-    if (host2 == 0) {
-      return -22;
-    }
     let ch2 = __raw_scratch(32);
-    let del_fd = host2;
+    let del_fd = fd;
     let del_filter: i32 = -6;
     let del_flags = 2;
     __raw_store_ptr(ch2, 0, del_fd as usize);
@@ -65,7 +57,7 @@ function __fern_reactor_ctl(r_fd: i32, op: i32, fd: i32, arg: i32): i32 {
       __raw_store8(act2, z2, 0);
       z2 += 1;
     }
-    return __syscall4(46, host2 as i64, act2 as i64, 0, 8) as i32;
+    return __syscall4(46, fd as i64, act2 as i64, 0, 8) as i32;
   }
   if (op == 6) {
     let ppid = __syscall3(39, 0, 0, 0) as i32;
