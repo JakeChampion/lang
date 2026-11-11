@@ -1003,12 +1003,18 @@ pub function wait_any(set: i32[], until: Option[Instant]): Wake {
 
 function __host_wait_any(set: i32[], until: Option[Instant]): Wake {
   let timeout_ms = -1;
+  let left: i64 = 0;
   if let Some(at) = until {
-    timeout_ms = __ms_until(time.instant_nanos(at) - monotonic_ns());
+    left = time.instant_nanos(at) - monotonic_ns();
+    timeout_ms = __ms_until(left);
   }
   let woke = __block(set, timeout_ms);
   if (woke >= 0) {
     return Woke(woke);
+  }
+  // A wait has 2^31-1 ms at most. A deadline past that waits again.
+  if (left > 2147483647 as i64 * 1000000) {
+    return __host_wait_any(set, until);
   }
   return TimedOut;
 }
@@ -1021,7 +1027,7 @@ function __park(set: i32[], until: Option[Instant]): Wake {
     let stored = set;
     let marked: i32 = 0 - 1;
     if let Some(at) = until {
-      stored = set.append(at.sec as i32).append(at.nsec);
+      stored = set.append(__sec_word(at.sec)).append(at.nsec);
       marked = 1;
     }
     let word = __task_park(stored, marked);
@@ -1033,6 +1039,15 @@ function __park(set: i32[], until: Option[Instant]): Wake {
     }
     return TimedOut;
   }
+}
+
+// The seconds of a deadline as one word of a wait set. An instant past the
+// range of the word is the last instant of the range, which no clock reaches.
+function __sec_word(sec: i64): i32 {
+  if (sec > 2147483647) {
+    return 2147483647;
+  }
+  return sec as i32;
 }
 
 // `ns` in whole milliseconds for a wait: a partial millisecond rounds up, and a
