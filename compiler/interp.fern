@@ -5052,7 +5052,28 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
     }
     return call_closure_mode(env.heap, closure_val, arg_vals, env.funcs, env.aliases, env.type_decls, inline_value);
   }
+  if (!callee_known) {
+    if let Some(member) = union_member_value(name, arg_vals, env.aliases) {
+      return member;
+    }
+  }
   return call_func_targs(env.heap, name, arg_vals, targs, expect, env.funcs, env.aliases, env.type_decls);
+}
+
+function union_member_value(name: string, args: Value[], aliases: parser.TypeAlias[]): Option[Value] {
+  if (args.len() != 1) {
+    return None;
+  }
+  if let VStruct(member) = args[0] {
+    if (member.type_name == name) {
+      for alias in aliases {
+        if (util.has_str(alias.variants, name)) {
+          return Some(args[0]);
+        }
+      }
+    }
+  }
+  return None;
 }
 
 // static_type_args is the type arguments of a call to fd that writes none,

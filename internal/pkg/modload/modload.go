@@ -163,6 +163,7 @@ type module struct {
 	allDecls         map[string]bool
 	reexports        map[string]string
 	reexportTypes    map[string]string
+	reexportOrigins  map[string]string
 	// The variants of each re-exported enum, by variant name.
 	reexportVariants map[string]reexportedVariant
 	pubUses          []pubUseEntry
@@ -292,6 +293,7 @@ func loadRecursive(path string, loaded map[string]*module, stack map[string]bool
 		reexports:        map[string]string{},
 		reexportVariants: map[string]reexportedVariant{},
 		reexportTypes:    map[string]string{},
+		reexportOrigins:  map[string]string{},
 		packageScoped:    map[string]bool{},
 	}
 	for _, fn := range prog.Funcs {
@@ -1071,6 +1073,11 @@ func resolveReexports(loaded map[string]*module) error {
 			}
 			if isType {
 				w.mod.reexportTypes[w.name] = mangled
+				origin := w.child.path
+				if path, ok := w.child.reexportOrigins[w.name]; ok {
+					origin = path
+				}
+				w.mod.reexportOrigins[w.name] = origin
 				w.mod.publicStructs[w.name] = true
 				if w.child.allEnums[w.name] {
 					w.mod.allEnums[w.name] = true
@@ -1439,6 +1446,9 @@ func (r *rewriter) checkPublicFunc(mod *module, fn string, pos ast.Position) {
 	if mod.publicFuncs[fn] {
 		return
 	}
+	if mod.publicStructs[fn] && !mod.hasPlainFunction(fn) {
+		return
+	}
 	if _, handled := r.packageScopedOK(mod, fn, pos); handled {
 		return
 	}
@@ -1447,6 +1457,15 @@ func (r *rewriter) checkPublicFunc(mod *module, fn string, pos ast.Position) {
 		return
 	}
 	r.refuse(pos, "%s.%s is not exported (declare it as `pub function %s …` to make it accessible from other modules)", mod.name, fn, fn)
+}
+
+func (m *module) hasPlainFunction(name string) bool {
+	for _, fn := range m.prog.Funcs {
+		if fn.Receiver == nil && fn.AssocType == "" && fn.DeclName == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *rewriter) checkPublicStruct(mod *module, name string, pos ast.Position) {
@@ -1688,6 +1707,8 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 					// module's mangled name, not this module's prefix.
 					if rx, ok := mod.reexports[fa.Field]; ok {
 						mangled = rx
+					} else if rx, ok := mod.reexportTypes[fa.Field]; ok {
+						mangled = rx
 					}
 					x.Module = &ast.ModuleCallSite{
 						Module:    id.Name,
@@ -1883,6 +1904,12 @@ func (r *rewriter) rewriteVariantPattern(armModule *string, armName *string, bra
 		}
 		if en, private := mod.allVariants[*armName]; private && !structNamed {
 			r.refuse(pos, "%s.%s is a variant of enum %s, which is not exported (declare it as `pub enum %s …` to make it accessible from other modules)", mod.name, *armName, en, en)
+			return
+		}
+		if original, ok := mod.reexportTypes[*armName]; ok {
+			origin := mod.reexportOrigins[*armName]
+			*armName = original
+			*armModule = origin
 			return
 		}
 		*armName = prefix + *armName
