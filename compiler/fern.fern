@@ -316,6 +316,15 @@ function read_failure(what: string, path: string, reason: string): string {
   return "fern: cannot read " + what + " " + path + ": " + reason;
 }
 
+// A mode written with no dash is read as the entry file. The line names the
+// flag.
+function report_entry_read_failure(st: DiagStyle, path: string, e: lexer.TokError): void {
+  report_source_read_failure(st, "entry file", path, e);
+  if (find_flag("-" + path).mode) {
+    eprint("fern: " + path + " is not a file: the mode flag is -" + path);
+  }
+}
+
 function fmt_file(st: DiagStyle, path: string, fmt_write: boolean, fmt_diff: boolean, out_path: string): i32 {
   if (path == "-" && fmt_write) {
     eprint("fern: -fmt -w cannot write back stdin; drop -w to print the result");
@@ -2218,13 +2227,15 @@ function unless_embedded(embedded: boolean, text: string): string {
 
 // A `mode` flag selects what fern does, so a command takes at most one. A
 // flag with `needs` takes effect only beside one of the flags it names.
-struct CliFlag { name: string, also: string[], value: string, help: string, mode: boolean, needs: string[] }
+// `needs` holds the flags that one of must be given with this one, and
+// `not_with` the flags that cannot be.
+struct CliFlag { name: string, also: string[], value: string, help: string, mode: boolean, needs: string[], not_with: string[] }
 
 struct FlagGroup { title: string, flags: CliFlag[] }
 
 function cli_flag(name: string, value: string, help: string): CliFlag {
   let none: string[] = [];
-  return CliFlag { name: name, also: none, value: value, help: help, mode: false, needs: none };
+  return CliFlag { name: name, also: none, value: value, help: help, mode: false, needs: none, not_with: none };
 }
 
 function mode_flag(name: string, value: string, help: string): CliFlag {
@@ -2286,7 +2297,7 @@ function flag_groups(): FlagGroup[] {
     FlagGroup { title: "fmt", flags: [
       mode_flag("-fmt", "", "print each FILE formatted: - for stdin, a DIR for every source beneath it (-o OUT takes one FILE)"),
       sub_flag("-w", "", ["-fmt"], "with -fmt: overwrite each file"),
-      sub_flag("-d", "", ["-fmt"], "with -fmt: print unified diffs, exiting 1 when any file differs"),
+      CliFlag { ...sub_flag("-d", "", ["-fmt"], "with -fmt: print unified diffs, exiting 1 when any file differs"), not_with: ["-w"] },
     ] },
     FlagGroup { title: "lint", flags: [
       mode_flag("-lint", "", "lint each PATH: a .fern or .fern.md file, a directory of them, or - for stdin"),
@@ -2362,6 +2373,21 @@ function find_flag(name: string): CliFlag {
   return cli_flag("", "", "");
 }
 
+// ": the nearest flag is -x" for a spelling near a flag, or "".
+function nearest_flag(given: string): string {
+  let names: string[] = [];
+  for g in flag_groups() {
+    for f in g.flags {
+      names = names.append(f.name);
+    }
+  }
+  let near = util.suggest(given, names);
+  if (near.len() == 0) {
+    return "";
+  }
+  return ": the nearest flag is " + near;
+}
+
 function read_flag(av: string[], i: i32): CliArg {
   let a = av[i];
   let body = slice_unchecked(a, 1, a.len()).to_owned();
@@ -2377,7 +2403,7 @@ function read_flag(av: string[], i: i32): CliArg {
   let f = find_flag("-" + body);
   let arg = CliArg { name: f.name, value: "", on: true, last: i, err: "" };
   if (f.name.len() == 0) {
-    return CliArg { ...arg, err: "unknown flag: " + a };
+    return CliArg { ...arg, err: "unknown flag: " + a + nearest_flag("-" + body) };
   }
   if (f.value.len() == 0) {
     return read_bool(arg, eq >= 0, given);
@@ -2428,6 +2454,11 @@ function flag_combination_error(given: string[]): Option[string] {
     }
     if (f.needs.len() > 0 && !gives_any(given, f.needs)) {
       return Some(name + " takes effect only with " + either(f.needs));
+    }
+    for other in f.not_with {
+      if (util.has_str(given, other)) {
+        return Some(other + " and " + name + " do different things with the result: give one of them");
+      }
     }
   }
   return None;
@@ -4518,7 +4549,7 @@ function check_file(st: DiagStyle, entry_path: string, root: string, target: str
       return report_checked(st, check_source(entry_path, src, modloader.no_buffers(), root, target, target_given, embed_dir));
     },
     Err(e) => {
-      report_source_read_failure(st, "entry file", entry_path, e);
+      report_entry_read_failure(st, entry_path, e);
       return 1;
     }
   }
@@ -6847,7 +6878,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       esrc = src;
     },
     Err(e) => {
-      report_source_read_failure(st, "entry file", entry_path, e);
+      report_entry_read_failure(st, entry_path, e);
       return 1;
     }
   }

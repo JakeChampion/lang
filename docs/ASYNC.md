@@ -244,6 +244,13 @@ function: it answers `Returned(v)` with no task record when `f` does not
 park, or `Parked(call, w)`, which the scheduler resumes with
 `call_resume`. `std/serve` holds a parked handler this way.
 
+**A handle that names no task.** A `Task` is a plain struct, so a program
+can write one. The runtime checks each use. A handle whose id names no live
+task record stops the program with status 134. So does a resume whose entry
+is not the function that parked: a function restores only a frame that it
+saved. The interpreters give the same status for an id that they did not
+hand out.
+
 **Cancellation.** `task_resume(t, Wake.Cancelled)` runs the task on with
 every wait answering `Cancelled`, and no wait parks again. So a
 cancelled task leaves through its own control flow, its `defer`s run,

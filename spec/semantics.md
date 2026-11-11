@@ -168,6 +168,7 @@ of them.
 | `WK-05` | `docs/WORKERS.md` | On native Linux a worker runs as another process, and its result crosses back through the shared region | `worker_runs_in_its_own_process` |
 | `WK-06` | `docs/WORKERS.md` | A simulation is a worker scheduler: a worker spawned on it parks on the virtual clock, its result crosses back at the join, and the joins move the clock to the deadlines | `worker_runs_on_the_simulation` |
 | `WK-07` | `docs/WORKERS.md` | A type parameter bounded by `worker.Send` crosses the worker boundary, the bound holds only for a send-safe type argument (`E021`), and no impl declares `Send` (`E021`) | `worker_send_bound` |
+| `WK-08` | `docs/WORKERS.md` | A closure that crosses a worker boundary does not assign a variable that it captures (`E100`) | `diag_e100_assigned_capture` |
 | `AL-01` | `docs/ALLOCATION-OBSERVABLE.md` | A loop that reclaims what it allocates does not grow the fresh-allocation high-water mark with the round count | `alloc_flat_under_reclaim` |
 | `AL-02` | `docs/ALLOCATION-OBSERVABLE.md` | A loop that retains what it allocates does grow it with the round count | `alloc_grows_when_retained` |
 | `AL-03` | `docs/ALLOCATION-OBSERVABLE.md` | A loop that allocates a closure environment per round reclaims it too | `alloc_flat_closure_env` |

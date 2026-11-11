@@ -3054,6 +3054,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 
 	c.ownFuncs = map[string][]bool{}
 	c.sendFuncs = map[string][]bool{}
+	c.sendLambdas = map[*ast.Lambda]string{}
 	c.sendParamNames = map[string][]string{}
 	for _, fn := range prog.Funcs {
 		hasOwn := false
@@ -5944,6 +5945,10 @@ type checker struct {
 	loopLabels   []string
 
 	ownFuncs map[string][]bool
+	// sendLambdas holds each closure written as the argument of a `send`
+	// parameter, with the name of the parameter.
+	sendLambdas map[*ast.Lambda]string
+
 	// sendFuncs holds, per function with a `send` parameter, which parameter
 	// slots are worker boundaries; sendParamNames holds their names.
 	sendFuncs      map[string][]bool
@@ -6002,6 +6007,9 @@ type captureEntry struct {
 	sink  func(name string, t ast.Type)
 	scope *scope
 	outer *ast.FuncDecl
+	// send is the `send` parameter that the closure of this entry is the
+	// argument of, or "".
+	send string
 }
 
 func (c *checker) typeParamDecl(name string) *ast.FuncDecl {
@@ -15717,6 +15725,9 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				}
 			}
 		}
+		if !calleeIsValue {
+			c.markSendLambdas(n.Args, calleeName)
+		}
 		for i := range n.Args {
 			if i < len(ft.Params) {
 				hp := ft.Params[i]
@@ -16352,6 +16363,11 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			c.errfCode(id.Pos(), "E091", "cannot assign to range index %s: the loop sets it on each turn, so use a while loop to change it", id.Name)
 		}
 		if id, ok := n.Target.(*ast.Ident); ok {
+			if pname := c.capturedAcrossSend(id.Name, s); pname != "" {
+				c.errfCode(id.Pos(), "E100",
+					"closure passed to `send` parameter %q assigns the captured variable %q: a worker has its own copy, so the write does not reach the variable",
+					pname, id.Name)
+			}
 			if ct, isCap := c.capturedType(id.Name, s); isCap && ast.IsPointerType(ct) {
 				c.errfCode(id.Pos(), "E049",
 					"cannot assign to captured %s %q: a reference-typed closure capture is read-only (it could close a reference cycle); return the new value from the closure instead",
@@ -16416,7 +16432,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			}
 		}
 		c.captureOuter = s
-		c.captureChain = append(c.captureChain, captureEntry{sink: c.captureSink, scope: s, outer: prev})
+		c.captureChain = append(c.captureChain, captureEntry{sink: c.captureSink, scope: s, outer: prev, send: c.sendLambdas[n]})
 		c.checkBlock(n.Body, root)
 		c.captureChain = c.captureChain[:len(c.captureChain)-1]
 		c.captureSink = prevSink

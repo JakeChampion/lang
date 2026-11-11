@@ -3,10 +3,13 @@ package e2ecompiler
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
 )
 
 // Each worker touches a private one-MiB array. VmSize also detects a region
@@ -153,5 +156,76 @@ func TestSelfHostWorkerUnmapFailureKeepsCensus(t *testing.T) {
 				t.Fatalf("failed munmap changed the census: %s", &stderr)
 			}
 		})
+	}
+}
+
+// The worker spins without end. The parent prints the pid of the worker and
+// then ends, by exit or by a bounds abort, while the worker runs.
+const workerOrphanProg = `import "std/worker";
+
+function spin(): i32 {
+  let n: i64 = 0;
+  while (true) { n += 1; }
+  return 0;
+}
+
+function main(): i32 {
+  let w = worker.spawn((): i32 => spin());
+  print(w.pid);
+  if (args().len() > 1) {
+    let none: i32[] = [];
+    print(none[3]);
+  }
+  exit(0);
+  return w.join();
+}
+`
+
+// No worker runs detached: a process worker ends when its parent ends.
+func TestSelfHostWorkerEndsWithItsParent(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"arm64-linux", "x86-64-linux"} {
+		bin := compileCPUProfile(t, cli, workerOrphanProg, target, "")
+		for _, how := range []string{"exit", "abort"} {
+			t.Run(target+"/"+how, func(t *testing.T) {
+				var args []string
+				if how == "abort" {
+					args = []string{"abort"}
+				}
+				var cmd *exec.Cmd
+				if target == "arm64-linux" {
+					_, runner := arm64Tooling(t)
+					cmd = runArm64Bin(runner, bin, args...)
+				} else {
+					cmd = runX86_64Bin(cli.runner, bin, args...)
+				}
+				out, _ := cmd.Output()
+				first, _, _ := strings.Cut(string(out), "\n")
+				pid, err := strconv.Atoi(strings.TrimSpace(first))
+				if err != nil || pid <= 0 {
+					t.Fatalf("no worker pid in %q", out)
+				}
+				defer func() {
+					if p, err := os.FindProcess(pid); err == nil {
+						_ = p.Kill()
+					}
+				}()
+				deadline := time.Now().Add(5 * time.Second)
+				for {
+					stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+					if err != nil {
+						return
+					}
+					after := string(stat[bytes.LastIndexByte(stat, ')')+1:])
+					if state := strings.Fields(after); len(state) > 0 && (state[0] == "Z" || state[0] == "X") {
+						return
+					}
+					if time.Now().After(deadline) {
+						t.Fatalf("worker %d still runs after its parent ended: %s", pid, after)
+					}
+					time.Sleep(50 * time.Millisecond)
+				}
+			})
+		}
 	}
 }

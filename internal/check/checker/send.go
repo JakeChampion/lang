@@ -27,6 +27,40 @@ func (c *checker) guardSendArg(arg ast.Expr, pname string, at ast.Type) {
 	}
 }
 
+// markSendLambdas records each closure in args that is the argument of a
+// `send` parameter of callee, before its body is checked.
+func (c *checker) markSendLambdas(args []ast.Expr, callee string) {
+	sends := c.sendFuncs[callee]
+	for i, arg := range args {
+		if lam, ok := arg.(*ast.Lambda); ok && i < len(sends) && sends[i] {
+			c.sendLambdas[lam] = c.sendParamNames[callee][i]
+		}
+	}
+}
+
+// capturedAcrossSend is the `send` parameter of a closure that name is
+// declared outside of and assigned inside of, or "". The worker gets a copy
+// of each capture, so the write would not reach the variable.
+func (c *checker) capturedAcrossSend(name string, s *scope) string {
+	if _, ok := s.lookup(name); ok {
+		return ""
+	}
+	send := ""
+	for i := len(c.captureChain) - 1; i >= 0; i-- {
+		ent := c.captureChain[i]
+		if send == "" {
+			send = ent.send
+		}
+		if ent.scope == nil {
+			continue
+		}
+		if _, ok := ent.scope.lookup(name); ok {
+			return send
+		}
+	}
+	return ""
+}
+
 // sendUnsafeReason is why a value of type t cannot be copied into another
 // worker's heap, or "" when every part of it can. A name in seen is on the
 // path above and holds nothing its parent did not refuse.
