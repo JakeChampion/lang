@@ -1,0 +1,18 @@
+// A call that names a struct wraps the value in the union that has the
+// struct as a member. The name can be a struct of an imported module, and
+// an imported module can name its own struct.
+
+import "./shapes" as shapes;
+
+function main(): i32 {
+  let c = shapes.Circle { r: 30 };
+  let q = shapes.Square { side: 12 };
+  if (shapes.circle_size(c) != 30) {
+    return 1;
+  }
+  if (shapes.size(shapes.Square(q)) != 12) {
+    return 2;
+  }
+  let s: shapes.Shape = shapes.Circle(c);
+  return shapes.size(s) + shapes.size(shapes.Square(q));
+}

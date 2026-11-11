@@ -91,6 +91,7 @@ def main(apk, out_dir, content_uri=None):
         else:
             assert "videotest: source=content offset=" in log, log
         assert "decoder name=" in log, log
+        assert "videotest: same surface accepted while paused" in log, log
         directory = re.search(r"videotest: sdk=\d+ directory=(\S+)", log).group(1)
         metrics = {"build": adb("shell", "getprop", "ro.build.fingerprint").strip(),
                    "abi": adb("shell", "getprop", "ro.product.cpu.abi").strip(),

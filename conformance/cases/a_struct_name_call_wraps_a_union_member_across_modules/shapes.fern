@@ -1,0 +1,21 @@
+pub struct Circle { r: i32 }
+
+pub struct Square { side: i32 }
+
+pub type Shape = Circle | Square;
+
+pub function size(s: Shape): i32 {
+  match (s) {
+    Circle(c) => {
+      return c.r;
+    },
+    Square(q) => {
+      return q.side;
+    }
+  }
+}
+
+// The call names a struct of this module.
+pub function circle_size(c: Circle): i32 {
+  return size(Circle(c));
+}

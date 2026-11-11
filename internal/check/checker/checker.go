@@ -2656,7 +2656,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			c.consumingTypes[fn.MethodRecv] = true
 		}
 		if _, dup := c.info.FuncSigs[fn.Name]; dup && (!isScalarBuiltinMethod(fn.Name) || declaredFunctions[fn.Name]) {
-			c.errfCode(fn.P, "E006", "function %q redeclared", fn.Name)
+			c.report(fn.BodyModule(), fn.P, "E006", fmt.Sprintf("function %q redeclared", fn.Name))
 			continue
 		}
 		declaredFunctions[fn.Name] = true
