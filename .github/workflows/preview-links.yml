@@ -13,10 +13,6 @@ permissions:
   contents: read
   statuses: write
 
-concurrency:
-  group: preview-links-${{ github.event.sha }}
-  cancel-in-progress: true
-
 jobs:
   check:
     # Only a ready deploy preview of this site: the fern-fun site posts the
@@ -26,6 +22,11 @@ jobs:
       github.event.state == 'success' &&
       startsWith(github.event.target_url, 'https://deploy-preview-') &&
       endsWith(github.event.target_url, '--fern-lang.netlify.app')
+    # On the job, not the workflow: each status event on the commit starts a
+    # run, and a skipped job must not cancel the check in progress.
+    concurrency:
+      group: preview-links-${{ github.event.sha }}
+      cancel-in-progress: true
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -44,7 +45,8 @@ jobs:
           node site/scripts/check-links.mjs --site "$SITE" | tee report.txt
 
       - name: Report the result on the commit
-        if: always()
+        # A cancelled run reports nothing. The newer run reports.
+        if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ github.event.sha }}

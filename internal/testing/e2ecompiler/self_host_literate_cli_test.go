@@ -180,6 +180,18 @@ func TestSelfHostWeave(t *testing.T) {
 		}
 	})
 
+	t.Run("non-ASCII prose", func(t *testing.T) {
+		doc := "# T\n\n東京 **京都** é *naïve* ü [大阪](https://example.com/a) 奈良\n"
+		_, out, errOut, code := literateRun(t, doc, "-weave", "-html")
+		if code != 0 {
+			t.Fatalf("exit %d\n%s", code, errOut)
+		}
+		want := `東京 <strong>京都</strong> é <em>naïve</em> ü <a href="https://example.com/a">大阪</a> 奈良`
+		if !strings.Contains(out, want) {
+			t.Errorf("want %q in:\n%s", want, out)
+		}
+	})
+
 	t.Run("output-file", func(t *testing.T) {
 		file := filepath.Join(t.TempDir(), "doc.md")
 		if _, out, errOut, code := literateRun(t, doc, "-weave", "-o", file); code != 0 || out != "" || !strings.HasSuffix(errOut, "wrote "+file+"\n") {

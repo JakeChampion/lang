@@ -659,19 +659,26 @@ function __handshake_on(sock: Socket, config: Config, deadline: i64): Result[Sho
     }
     let step = __exchange_fd(sock, s, input)?;
     s = step.session;
-    tickets = __more_tickets(tickets, step.tickets);
+    tickets = more_tickets(tickets, step.tickets);
     pending = step.data;
     ended = step.closed;
   }
   return Ok(Shook { session: s, tickets: tickets, pending: pending, ended: ended });
 }
 
-function __more_tickets(own a: Ticket[], b: Ticket[]): Ticket[] {
+// A connection keeps the newest MAX_TICKETS tickets, so a server that sends
+// tickets without end does not grow the connection.
+pub function more_tickets(own a: Ticket[], b: Ticket[]): Ticket[] {
   for t in b {
     a = a.append(t);
   }
-  return a;
+  if (a.len() <= MAX_TICKETS) {
+    return a;
+  }
+  return a.drop(a.len() - MAX_TICKETS);
 }
+
+pub const MAX_TICKETS: i32 = 8;
 ```
 
 ### `18 pub function (c: Connection) write(data: [u8]): Result[Connection, tls.TlsError]`
@@ -762,7 +769,7 @@ function __read_until(c: Connection, deadline: i64): Result[Received, tls.TlsErr
     }
     let step = __exchange(c, s, input)?;
     s = step.session;
-    conn = Connection { ...conn, tickets: __more_tickets(conn.tickets, step.tickets) };
+    conn = Connection { ...conn, tickets: more_tickets(conn.tickets, step.tickets) };
     if (step.data.len() > 0 || step.closed) {
       return Ok(__received(conn, s, step.data, step.closed));
     }
@@ -787,7 +794,7 @@ function __read_kernel(c: Connection, deadline: i64): Result[Received, tls.TlsEr
       return Ok(__received(conn, conn.session, [], false));
     }
     let next = __kernel_next(conn, ktls.read(c.sock, time.duration_nanos(left)))?;
-    conn = Connection { ...conn, tickets: __more_tickets(conn.tickets, next.tickets) };
+    conn = Connection { ...conn, tickets: more_tickets(conn.tickets, next.tickets) };
     if (next.done) {
       return Ok(__received(conn, next.session, next.data, next.ended));
     }

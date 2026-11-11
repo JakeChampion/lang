@@ -107,8 +107,10 @@ pressed.
 
 ## Lists that scroll
 
-`.scroll("name")` makes a column scroll. It flings as each Android list
-does.
+`.scroll("name")` makes a column scroll down, and a row scroll across.
+The list flings as each Android list does, and it springs back when a
+finger pulls it past its end. A row that scrolls across can be in a list
+that scrolls down.
 
 ```fern
 ui.column(rows).scroll("settings").grow(1.0)

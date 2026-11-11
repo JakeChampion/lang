@@ -1,4 +1,7 @@
 # 2026-11-11: a_function_named_like_a_raw_builtin_shadows_it is clean under RC trace.
+# 2026-11-11: nested_array_literals_take_the_wider_element_type is clean under RC trace.
+# 2026-11-11: integer_literal_in_an_append_on_a_float_array_is_a_float is clean under RC trace.
+# 2026-11-11: owned_field_match_data is clean under RC trace.
 # 2026-11-11: append_on_a_literal_array_local_takes_the_width_of_its_destination is clean under RC trace.
 # 2026-11-11: owned_field_match_data is clean under RC trace.
 # 2026-11-11: append_on_an_array_literal_takes_the_width_of_its_use is clean under RC trace.
@@ -555,6 +558,7 @@ int_saturating_shl                                   0
 int_shift_count_masked                               0
 int_wrap                                             0
 integer_conversion_boundaries                        0
+integer_literal_in_an_append_on_a_float_array_is_a_float 0
 integer_literals_beside_a_float                      0
 integer_literals_beside_an_f32                       0
 integer_widths_share_methods                         0
@@ -687,6 +691,7 @@ narrowing_cast_of_expression                         0
 negative_abs                                         0
 negative_literal_patterns                            0
 nested_arm_patterns                                  0
+nested_array_literals_take_the_wider_element_type    0
 nested_call_temp                                     0
 nested_loops                                         0
 nested_option                                        0

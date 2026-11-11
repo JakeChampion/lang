@@ -471,15 +471,7 @@ function source_line(path: string, n: i32): string {
       for i in 0..=src.len() {
         if (i == src.len() || src[i] == b'\n') {
           if (cur == n) {
-            let out = "";
-            for k in start..i {
-              if (src[k] == b'\t') {
-                out += " ";
-              } else {
-                out += slice_unchecked(src, k, k + 1);
-              }
-            }
-            return out;
+            return slice_unchecked(src, start, i).replace("\t", " ");
           }
           cur += 1;
           start = i + 1;
@@ -4468,15 +4460,7 @@ function path_base(p: string): string {
 }
 
 function flatten_path(p: string): string {
-  let out = "";
-  for i in 0..p.len() {
-    if (p[i] == b'/') {
-      out += "_";
-    } else {
-      out += slice_unchecked(p, i, i + 1);
-    }
-  }
-  return out;
+  return p.replace("/", "_");
 }
 
 function check_dir(st: DiagStyle, dir: string, root: string, target: string, target_given: boolean, embed_dir: string): i32 {

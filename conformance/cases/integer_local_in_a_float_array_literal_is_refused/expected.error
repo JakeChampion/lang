@@ -1,0 +1,8 @@
+main.fern:12:25: error[E034]: array element: expected f64, got i32
+main.fern:14:18: error[E034]: array element: expected i32, got f64
+main.fern:16:27: error[E034]: array element: expected f64, got i32
+main.fern:18:25: error[E034]: array element: expected f64, got i32
+main.fern:20:16: error[E034]: array element: expected f64, got i32
+main.fern:22:22: error[E034]: array element: expected f64[], got i32[]
+main.fern:24:25: error[E034]: array element: expected f64, got i32
+main.fern:26:25: error[E034]: array element: expected f64, got i64

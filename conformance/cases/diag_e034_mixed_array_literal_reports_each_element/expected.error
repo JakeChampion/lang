@@ -1,0 +1,8 @@
+main.fern:6:20: error[E034]: array element: expected string, got i32
+main.fern:6:23: error[E034]: array element: expected string, got i32
+main.fern:8:18: error[E034]: array element: expected i32, got f64
+main.fern:8:23: error[E034]: array element: expected i32, got f64
+main.fern:11:20: error[E034]: array element: expected i32[], got i64[]
+main.fern:11:23: error[E034]: array element: expected i32[], got i64[]
+main.fern:12:27: error[E034]: array element: expected P, got Q
+main.fern:12:39: error[E034]: array element: expected P, got Q

@@ -1,0 +1,13 @@
+// Only an array literal takes a wider element type. An inner element that is
+// an array of another type and is not a literal is an E034, at each depth and
+// at each position.
+function main(): i32 {
+    let i: i32 = 1;
+    let j: i64 = 5000000000;
+    let xs: i32[] = [i];
+    let a = [xs, [j]];
+    let b = [[j], xs];
+    let c = [[i], xs, [j]];
+    let d = [[[i]], [xs], [[j]]];
+    return 0;
+}

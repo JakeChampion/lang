@@ -1,0 +1,17 @@
+// The inner literals of a nested array literal take the wider element type,
+// as the elements of a flat literal do: `[[i], [j]]` has the type of
+// `[[j], [j]]` when `i` widens to the type of `j` without loss.
+function main(): i32 {
+    let i: i32 = 1;
+    let j: i64 = 5000000000;
+    let ns = [[i], [j]];
+    print(ns[0][0] + ns[1][0]);
+    let ms: i64[][] = [[j], [i]];
+    print(ms[0][0] + ms[1][0]);
+    let ds = [[[i]], [[j, i]], [[i], [j]]];
+    print(ds[0][0][0] + ds[2][1][0]);
+    let u: u8 = 3;
+    let ws = [[u], [i], [j]];
+    print(ws[0][0] + ws[2][0]);
+    return 0;
+}

@@ -575,6 +575,7 @@ function emphasis(seg: string): string {
 
 function delimited(s: string, d: string, open: string, close: string): string {
   let out = "";
+  let run = 0;
   let i = 0;
   let dn = d.len();
   while (i < s.len()) {
@@ -584,15 +585,15 @@ function delimited(s: string, d: string, open: string, close: string): string {
         j += 1;
       }
       if (j > i + dn && at(s, j, d)) {
-        out = out + open + slice_unchecked(s, i + dn, j) + close;
+        out = out + slice_unchecked(s, run, i) + open + slice_unchecked(s, i + dn, j) + close;
         i = j + dn;
+        run = i;
         continue;
       }
     }
-    out += slice_unchecked(s, i, i + 1);
     i += 1;
   }
-  return out;
+  return out + slice_unchecked(s, run, s.len());
 }
 
 function at(s: string, i: i32, d: string): boolean {
@@ -601,6 +602,7 @@ function at(s: string, i: i32, d: string): boolean {
 
 function links(s: string): string {
   let out = "";
+  let run = 0;
   let i = 0;
   while (i < s.len()) {
     if (s[i] == b'[') {
@@ -610,20 +612,21 @@ function links(s: string): string {
         if (uc > tc + 2) {
           let text = slice_unchecked(s, i + 1, tc).to_owned();
           let url = slice_unchecked(s, tc + 2, uc).to_owned();
+          out += slice_unchecked(s, run, i);
           if (safe_link_url(url)) {
             out = out + "<a href=\"" + url + "\">" + text + "</a>";
           } else {
             out += text;
           }
           i = uc + 1;
+          run = i;
           continue;
         }
       }
     }
-    out += slice_unchecked(s, i, i + 1);
     i += 1;
   }
-  return out;
+  return out + slice_unchecked(s, run, s.len());
 }
 
 function index_from(s: string, from: i32, c: u8): i32 {
