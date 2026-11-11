@@ -801,11 +801,11 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			continue
 		}
 		if _, isStruct := c.info.Structs[rd.Name]; isStruct {
-			c.errfCode(rd.P, "E006", "resource %q conflicts with a struct of the same name", rd.Name)
+			c.report(rd.SourceModule, rd.P, "E006", fmt.Sprintf("resource %q conflicts with a struct of the same name", rd.Name))
 			continue
 		}
 		if _, isEnum := c.info.Enums[rd.Name]; isEnum {
-			c.errfCode(rd.P, "E006", "resource %q conflicts with an enum of the same name", rd.Name)
+			c.report(rd.SourceModule, rd.P, "E006", fmt.Sprintf("resource %q conflicts with an enum of the same name", rd.Name))
 			continue
 		}
 		c.info.Resources[rd.Name] = rd
