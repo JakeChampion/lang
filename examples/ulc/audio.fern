@@ -86,8 +86,9 @@ pub function read_wav(data: [u8]): Result[Audio, string] {
   if (align != channels * bytes || length % align != 0) {
     return Err("invalid WAV sample alignment");
   }
-  let samples: f64[] = [];
+  let samples = transform.zeros(length / bytes);
   let cursor = start;
+  let index = 0;
   while (cursor < start + length) {
     let value = 0.0;
     let raw = data[cursor] as u32;
@@ -114,8 +115,9 @@ pub function read_wav(data: [u8]): Result[Audio, string] {
     if (!value.is_finite() || value.abs() > 1.0) {
       return Err("WAV samples must be finite and in [-1, 1]");
     }
-    samples = samples.append(value);
+    samples = samples.with(index, value);
     cursor += bytes;
+    index += 1;
   }
   return Ok(Audio { rate: rate, channels: channels, samples: samples });
 }
