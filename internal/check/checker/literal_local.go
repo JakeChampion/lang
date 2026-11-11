@@ -396,17 +396,34 @@ func (c *checker) intLitLocalIn(e ast.Expr, want ast.Type) *litLocal {
 	return nil
 }
 
+// litPrefixScan is how many elements before an array element hold no open
+// literal local under the type t. It keeps the scan of an array literal
+// linear: each element is read again only when the element type changes.
+type litPrefixScan struct {
+	t    ast.Type
+	done int
+}
+
 // intLitLocalBesideFloat is the literal local that makes the element el
 // differ from the elements before it: el reads it as an integer where they
 // have a float, or one of them reads it where el has a float.
-func (c *checker) intLitLocalBesideFloat(before []ast.Expr, el ast.Expr, elemT, t ast.Type) *litLocal {
+func (c *checker) intLitLocalBesideFloat(scan *litPrefixScan, before []ast.Expr, el ast.Expr, elemT, t ast.Type) *litLocal {
 	if ll := c.intLitLocalIn(el, elemT); ll != nil {
 		return ll
 	}
-	for _, prev := range before {
+	switch t.(type) {
+	case ast.FloatType, ast.ArrayType:
+	default:
+		return nil
+	}
+	if scan.t == nil || !ast.Equal(scan.t, t) {
+		*scan = litPrefixScan{t: t}
+	}
+	for _, prev := range before[scan.done:] {
 		if ll := c.intLitLocalIn(prev, t); ll != nil {
 			return ll
 		}
+		scan.done++
 	}
 	return nil
 }

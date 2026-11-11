@@ -2,9 +2,11 @@ package e2e
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -51,6 +53,66 @@ function main(): i32 {
 }`, fileA, fileB)
 
 	runAsyncIOProgram(t, bin, dir, "gather_files", src, 42)
+}
+
+// The peer accepts and sends nothing, so the socket is writable and never
+// readable. A wake names the pair whose interest is ready, in each order of the
+// two pairs. A descriptor that is not open wakes its pair at once.
+func TestAsyncWaitAnyTwoInterestsOnOneDescriptor(t *testing.T) {
+	bin := buildFernCLI(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("no free TCP port: %v", err)
+	}
+	var mu sync.Mutex
+	var held []net.Conn
+	defer func() {
+		ln.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range held {
+			c.Close()
+		}
+	}()
+	go func() {
+		for {
+			conn, aerr := ln.Accept()
+			if aerr != nil {
+				return
+			}
+			mu.Lock()
+			held = append(held, conn)
+			mu.Unlock()
+		}
+	}()
+
+	src := fmt.Sprintf(`import "std/async";
+import "std/clock";
+import "std/time";
+
+function soon(): Option[Instant] {
+    return Some(clock.instant().add(time.duration_millis(2000)));
+}
+
+function index(w: async.Wake): i32 {
+    match (w) {
+        Woke(i) => { return i; },
+        TimedOut => { return 8; },
+        Cancelled => { return 9; }
+    }
+    return 7;
+}
+
+function main(): i32 {
+    let c: Socket = tcp_connect_with([127u8, 0u8, 0u8, 1u8], %d, false);
+    if (c.fd < 0) { return 81; }
+    let rw: i32[] = [c.fd, 1, c.fd, 2];
+    let wr: i32[] = [c.fd, 2, c.fd, 1];
+    let bad: i32[] = [9999, 2];
+    return index(async.wait_any(rw, soon())) * 100 + index(async.wait_any(wr, soon())) * 10 + index(async.wait_any(bad, soon()));
+}`, ln.Addr().(*net.TCPAddr).Port)
+
+	runAsyncIOProgram(t, bin, t.TempDir(), "two_interests", src, 100)
 }
 
 func TestAsyncGatherTimers(t *testing.T) {

@@ -1,0 +1,51 @@
+// spec: RH-04
+
+import "std/i32";
+
+struct Handle { n: i32, closed: Cell[i32] }
+
+function (h: Handle) read(): i32 {
+  assert(h.closed.get() == 0);
+  return h.n;
+}
+
+function (own h: Handle) close(): i32 {
+  h.closed.set(1);
+  return 0;
+}
+
+function reads(own h: Handle): i32 {
+  let read = (): i32 => h.read();
+  let n = read();
+  return n + read() + h.close();
+}
+
+function change(own xs: i32[]): void {
+  xs = xs.with(0, 99);
+}
+
+function copied_array(own xs: i32[]): i32 {
+  let read = (): i32 => xs[0];
+  change(xs);
+  return read();
+}
+
+@value
+struct Value { n: i32 }
+
+function (own v: Value) erase(): void {}
+
+function copied_value(own v: Value): i32 {
+  let read = (): i32 => v.n;
+  v.erase();
+  return read();
+}
+
+function main(): i32 {
+  let closed = cell_new(0);
+  print(reads(Handle { n: 7, closed: unsafe { share_unchecked(closed) } }));
+  print(closed.get());
+  print(copied_array([3]));
+  print(copied_value(Value { n: 10 }));
+  return 0;
+}

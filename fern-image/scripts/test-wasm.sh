@@ -5,120 +5,83 @@ FERN=${FERN:-fern}
 mkdir -p build
 "$FERN" -version
 wasmtime --version
-for source in tests/jxl_tone_metadata_test.fern tests/jxl_f16_fields_test.fern tests/jxl_sample_depth_test.fern tests/jxl_headers_test.fern tests/jxl_integers_test.fern tests/jxl_bits_test.fern tests/jxl_boxes_test.fern tests/png_adam7_geometry_test.fern tests/png_adam7_test.fern; do
-  output="build/wasm-$(basename "$source" .fern).wasm"
-  "$FERN" -check "$source"
-  "$FERN" -target wasm32-wasi -sanitize -o "$output" "$source"
-  wasmtime "$output"
-done
-"$FERN" -check tests/qoi_test.fern
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-qoi_test.wasm tests/qoi_test.fern
-wasmtime build/wasm-qoi_test.wasm
-"$FERN" -check tests/png_grayscale_test.fern
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-png_grayscale_test.wasm tests/png_grayscale_test.fern
-wasmtime build/wasm-png_grayscale_test.wasm
-"$FERN" -check tests/png_packed_test.fern
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-png_packed_test.wasm tests/png_packed_test.fern
-wasmtime build/wasm-png_packed_test.wasm
-"$FERN" -check tests/png_palette_test.fern
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-png_palette_test.wasm tests/png_palette_test.fern
-wasmtime build/wasm-png_palette_test.wasm
-"$FERN" -check tests/png_indexed_test.fern
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-png_indexed_test.wasm tests/png_indexed_test.fern
-wasmtime build/wasm-png_indexed_test.wasm
-"$FERN" -check tests/png_transparency_test.fern
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-png_transparency_test.wasm tests/png_transparency_test.fern
-wasmtime build/wasm-png_transparency_test.wasm
-"$FERN" -check tests/jpeg_dct_test.fern
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-jpeg_dct_test.wasm tests/jpeg_dct_test.fern
-wasmtime build/wasm-jpeg_dct_test.wasm
-"$FERN" -check tests/jpeg_quantization_test.fern
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-jpeg_quantization_test.wasm tests/jpeg_quantization_test.fern
-wasmtime build/wasm-jpeg_quantization_test.wasm
-"$FERN" -check tests/jpeg_entropy_writer_test.fern
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-jpeg_entropy_writer_test.wasm tests/jpeg_entropy_writer_test.fern
-wasmtime build/wasm-jpeg_entropy_writer_test.wasm
-"$FERN" -check tests/jpeg_frame_writer_test.fern
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-jpeg_frame_writer_test.wasm tests/jpeg_frame_writer_test.fern
-wasmtime build/wasm-jpeg_frame_writer_test.wasm
-"$FERN" -check tests/jpeg_component_blocks_test.fern
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-jpeg_component_blocks_test.wasm tests/jpeg_component_blocks_test.fern
-wasmtime build/wasm-jpeg_component_blocks_test.wasm
-"$FERN" -check tests/jpeg_plane_coefficients_test.fern
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-jpeg_plane_coefficients_test.wasm tests/jpeg_plane_coefficients_test.fern
-wasmtime build/wasm-jpeg_plane_coefficients_test.wasm
-"$FERN" -check tests/jpeg_produced_test.fern
-"$FERN" -check tests/jpeg_mcu_order_test.fern
-"$FERN" -check tests/jpeg_padded_blocks_test.fern
-"$FERN" -check tests/jpeg_mcu_entropy_test.fern
-"$FERN" -check tests/jpeg_component_frames_test.fern
-"$FERN" -check tests/jpeg_component_planes_test.fern
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-jpeg_component_planes_test.wasm tests/jpeg_component_planes_test.fern
-wasmtime build/wasm-jpeg_component_planes_test.wasm
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-jpeg_component_frames_test.wasm tests/jpeg_component_frames_test.fern
-wasmtime build/wasm-jpeg_component_frames_test.wasm
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-jpeg_mcu_entropy_test.wasm tests/jpeg_mcu_entropy_test.fern
-wasmtime build/wasm-jpeg_mcu_entropy_test.wasm
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-jpeg_padded_blocks_test.wasm tests/jpeg_padded_blocks_test.fern
-wasmtime build/wasm-jpeg_padded_blocks_test.wasm
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-jpeg_mcu_order_test.wasm tests/jpeg_mcu_order_test.fern
-wasmtime build/wasm-jpeg_mcu_order_test.wasm
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-jpeg_produced_test.wasm tests/jpeg_produced_test.fern
-wasmtime build/wasm-jpeg_produced_test.wasm
-for source in experiments/essentials.fern experiments/zlib.fern experiments/provider_factories.fern tests/pixels_test.fern tests/color_test.fern tests/resize_test.fern tests/png_test.fern tests/jpeg_header_test.fern tests/jpeg_entropy_test.fern tests/jpeg_idct_test.fern tests/jpeg_grayscale_test.fern tests/jpeg_ycbcr_test.fern tests/jpeg_rgb_ycbcr_test.fern tests/sample_bytes_test.fern tests/jpeg_planes_test.fern tests/jpeg_chroma_test.fern tests/jpeg_jfif_test.fern tests/jpeg_rgb_test.fern tests/png_rows_test.fern tests/png_provider_test.fern ../tests/stdlib/deflate_reader_test.fern tests/pipeline_test.fern tests/pipeline_bilinear_test.fern tests/providers_test.fern tests/regions_test.fern tests/row_cache_test.fern tests/cached_regions_test.fern tests/cached_tile_fusion_test.fern tests/linux_rss_test.fern tests/nearest_fusion_test.fern tests/cached_fusion_test.fern; do
-  output="build/wasm-$(basename "$source" .fern).wasm"
-  "$FERN" -check "$source"
-  "$FERN" -target wasm32-wasi -sanitize -o "$output" "$source"
-  wasmtime "$output"
-done
-"$FERN" -check tests/png_compression_test.fern
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-png_compression_test.wasm tests/png_compression_test.fern
-wasmtime build/wasm-png_compression_test.wasm
-"$FERN" -check tests/jpeg_exif_test.fern
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-jpeg_exif_test.wasm tests/jpeg_exif_test.fern
-wasmtime build/wasm-jpeg_exif_test.wasm
-"$FERN" -check tests/jpeg_orientation_test.fern
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-jpeg_orientation_test.wasm tests/jpeg_orientation_test.fern
-wasmtime build/wasm-jpeg_orientation_test.wasm
-"$FERN" -check tests/icc_envelope_test.fern
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-icc_envelope_test.wasm tests/icc_envelope_test.fern
-wasmtime run --dir=. build/wasm-icc_envelope_test.wasm
-"$FERN" -check tests/icc_tag_data_test.fern
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-icc_tag_data_test.wasm tests/icc_tag_data_test.fern
-wasmtime run --dir=. build/wasm-icc_tag_data_test.wasm
-"$FERN" -check tests/icc_curv_eval_test.fern
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-icc_curv_eval_test.wasm tests/icc_curv_eval_test.fern
-wasmtime run --dir=. build/wasm-icc_curv_eval_test.wasm
-"$FERN" -check tests/icc_curv_inverse_test.fern
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-icc_curv_inverse_test.wasm tests/icc_curv_inverse_test.fern
-wasmtime run --dir=. build/wasm-icc_curv_inverse_test.wasm
-"$FERN" -check tests/icc_power_inverse_test.fern
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-icc_power_inverse_test.wasm tests/icc_power_inverse_test.fern
-wasmtime run --dir=. build/wasm-icc_power_inverse_test.wasm
-"$FERN" -check tests/icc_affine_inverse_test.fern
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-icc_affine_inverse_test.wasm tests/icc_affine_inverse_test.fern
-wasmtime run --dir=. build/wasm-icc_affine_inverse_test.wasm
-"$FERN" -check tests/icc_parametric_eval_test.fern
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-icc_parametric_eval_test.wasm tests/icc_parametric_eval_test.fern
-wasmtime run --dir=. build/wasm-icc_parametric_eval_test.wasm
-"$FERN" -check tests/icc_app2_test.fern
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-icc_app2_test.wasm tests/icc_app2_test.fern
-wasmtime run --dir=. build/wasm-icc_app2_test.wasm
-"$FERN" -check tests/icc_matrix_eval_test.fern
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-icc_matrix_eval_test.wasm tests/icc_matrix_eval_test.fern
-wasmtime run --dir=. build/wasm-icc_matrix_eval_test.wasm
-"$FERN" -check tests/icc_matrix_model_test.fern
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-icc_matrix_model_test.wasm tests/icc_matrix_model_test.fern
-wasmtime run --dir=. build/wasm-icc_matrix_model_test.wasm
-"$FERN" -check tests/icc_matrix_trc_eval_test.fern
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-icc_matrix_trc_eval_test.wasm tests/icc_matrix_trc_eval_test.fern
-wasmtime run --dir=. build/wasm-icc_matrix_trc_eval_test.wasm
-"$FERN" -check tests/icc_matrix_solve_test.fern
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-icc_matrix_solve_test.wasm tests/icc_matrix_solve_test.fern
-wasmtime run --dir=. build/wasm-icc_matrix_solve_test.wasm
-"$FERN" -check tests/png_incremental_test.fern
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-png_incremental_test.wasm tests/png_incremental_test.fern
-wasmtime build/wasm-png_incremental_test.wasm
+./scripts/programs.sh wasm \
+  tests/jxl_tone_metadata_test.fern \
+  tests/jxl_f16_fields_test.fern \
+  tests/jxl_sample_depth_test.fern \
+  tests/jxl_headers_test.fern \
+  tests/jxl_integers_test.fern \
+  tests/jxl_bits_test.fern \
+  tests/jxl_boxes_test.fern \
+  tests/png_adam7_geometry_test.fern \
+  tests/png_adam7_test.fern \
+  tests/qoi_test.fern \
+  tests/png_grayscale_test.fern \
+  tests/png_packed_test.fern \
+  tests/png_palette_test.fern \
+  tests/png_indexed_test.fern \
+  tests/png_transparency_test.fern \
+  tests/jpeg_dct_test.fern \
+  tests/jpeg_quantization_test.fern \
+  tests/jpeg_entropy_writer_test.fern \
+  tests/jpeg_frame_writer_test.fern \
+  tests/jpeg_component_blocks_test.fern \
+  tests/jpeg_plane_coefficients_test.fern \
+  tests/jpeg_produced_test.fern \
+  tests/jpeg_mcu_order_test.fern \
+  tests/jpeg_padded_blocks_test.fern \
+  tests/jpeg_mcu_entropy_test.fern \
+  tests/jpeg_component_frames_test.fern \
+  tests/jpeg_component_planes_test.fern \
+  experiments/essentials.fern \
+  experiments/zlib.fern \
+  experiments/provider_factories.fern \
+  tests/pixels_test.fern \
+  tests/color_test.fern \
+  tests/resize_test.fern \
+  tests/png_test.fern \
+  tests/jpeg_header_test.fern \
+  tests/jpeg_entropy_test.fern \
+  tests/jpeg_idct_test.fern \
+  tests/jpeg_grayscale_test.fern \
+  tests/jpeg_ycbcr_test.fern \
+  tests/jpeg_rgb_ycbcr_test.fern \
+  tests/sample_bytes_test.fern \
+  tests/jpeg_planes_test.fern \
+  tests/jpeg_chroma_test.fern \
+  tests/jpeg_jfif_test.fern \
+  tests/jpeg_rgb_test.fern \
+  tests/png_rows_test.fern \
+  tests/png_provider_test.fern \
+  ../tests/stdlib/deflate_reader_test.fern \
+  tests/pipeline_test.fern \
+  tests/pipeline_bilinear_test.fern \
+  tests/providers_test.fern \
+  tests/regions_test.fern \
+  tests/row_cache_test.fern \
+  tests/cached_regions_test.fern \
+  tests/cached_tile_fusion_test.fern \
+  tests/linux_rss_test.fern \
+  tests/nearest_fusion_test.fern \
+  tests/cached_fusion_test.fern \
+  tests/png_compression_test.fern \
+  tests/jpeg_exif_test.fern \
+  tests/jpeg_orientation_test.fern \
+  tests/icc_envelope_test.fern \
+  tests/icc_tag_data_test.fern \
+  tests/icc_curv_eval_test.fern \
+  tests/icc_curv_inverse_test.fern \
+  tests/icc_power_inverse_test.fern \
+  tests/icc_affine_inverse_test.fern \
+  tests/icc_parametric_eval_test.fern \
+  tests/icc_app2_test.fern \
+  tests/icc_matrix_eval_test.fern \
+  tests/icc_matrix_model_test.fern \
+  tests/icc_matrix_trc_eval_test.fern \
+  tests/icc_matrix_solve_test.fern \
+  tests/png_incremental_test.fern \
+  tests/icc_quadratic_inverse_test.fern \
+  tests/icc_inverse_test.fern
 "$FERN" -check benchmarks/nearest_fusion.fern
 "$FERN" -target wasm32-wasi -sanitize -o build/wasm-nearest-fusion.wasm benchmarks/nearest_fusion.fern
 wasmtime build/wasm-nearest-fusion.wasm 8
@@ -140,10 +103,3 @@ for mode in legacy fused; do
   done
 done
 
-"$FERN" -check tests/icc_quadratic_inverse_test.fern
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-icc_quadratic_inverse_test.wasm tests/icc_quadratic_inverse_test.fern
-wasmtime run --dir=. build/wasm-icc_quadratic_inverse_test.wasm
-
-"$FERN" -check tests/icc_inverse_test.fern
-"$FERN" -target wasm32-wasi -sanitize -o build/wasm-icc_inverse_test.wasm tests/icc_inverse_test.fern
-wasmtime run --dir=. build/wasm-icc_inverse_test.wasm

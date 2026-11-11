@@ -3054,6 +3054,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 
 	c.ownFuncs = map[string][]bool{}
 	c.sendFuncs = map[string][]bool{}
+	c.sendLambdas = map[*ast.Lambda]string{}
 	c.sendParamNames = map[string][]string{}
 	for _, fn := range prog.Funcs {
 		hasOwn := false
@@ -5944,6 +5945,10 @@ type checker struct {
 	loopLabels   []string
 
 	ownFuncs map[string][]bool
+	// sendLambdas holds each closure written as the argument of a `send`
+	// parameter, with the name of the parameter.
+	sendLambdas map[*ast.Lambda]string
+
 	// sendFuncs holds, per function with a `send` parameter, which parameter
 	// slots are worker boundaries; sendParamNames holds their names.
 	sendFuncs      map[string][]bool
@@ -6002,6 +6007,9 @@ type captureEntry struct {
 	sink  func(name string, t ast.Type)
 	scope *scope
 	outer *ast.FuncDecl
+	// send is the `send` parameter that the closure of this entry is the
+	// argument of, or "".
+	send string
 }
 
 func (c *checker) typeParamDecl(name string) *ast.FuncDecl {
@@ -10884,6 +10892,22 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	}
 
 	type movedSet = map[string]ast.Position
+	var callbackCaptures map[string][]ast.Param
+	callbackCapturesKnown := false
+	checkCallbackCaptures := func(id *ast.Ident, moved movedSet) {
+		if id == nil || id.Builtin || !id.Local || owned[id.Name] || len(moved) == 0 {
+			return
+		}
+		if !callbackCapturesKnown {
+			callbackCaptures = c.localCallbackCaptures(fn)
+			callbackCapturesKnown = true
+		}
+		for _, capture := range callbackCaptures[id.Name] {
+			if at, consumed := moved[capture.Name]; consumed {
+				c.errfCode(id.Pos(), "E050", "callback %q uses captured owned parameter %q after it was consumed (moved at line %d)", id.Name, capture.Name, at.Line)
+			}
+		}
+	}
 
 	// A deferred call consumes its arguments at the function's exit, after
 	// every other use. deferMoved holds those names and field paths.
@@ -11268,8 +11292,33 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		for id := range dynConsumed {
 			delete(borrow, id)
 		}
-		ast.Walk(e, func(n ast.Node) bool {
+		operands := map[*ast.Ident]bool{}
+		var recordUse func(ast.Node) bool
+		walkOperand := func(value ast.Expr) {
+			id, direct := value.(*ast.Ident)
+			if direct {
+				operands[id] = true
+			}
+			ast.Walk(value, recordUse)
+			if direct {
+				delete(operands, id)
+			}
+		}
+		recordUse = func(n ast.Node) bool {
 			switch x := n.(type) {
+			case *ast.Call:
+				walkOperand(x.Callee)
+				for _, arg := range x.Args {
+					walkOperand(arg)
+				}
+				id, _ := x.Callee.(*ast.Ident)
+				checkCallbackCaptures(id, moved)
+				for _, arg := range x.Args {
+					id, _ := arg.(*ast.Ident)
+					checkCallbackCaptures(id, moved)
+				}
+				return false
+
 			case *ast.Lambda:
 				return false
 			case *ast.MatchExpr:
@@ -11310,7 +11359,13 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				return true
 			}
 			id, ok := n.(*ast.Ident)
-			if !ok || id.Builtin || !owned[id.Name] {
+			if !ok || id.Builtin {
+				return true
+			}
+			if !operands[id] {
+				checkCallbackCaptures(id, moved)
+			}
+			if !owned[id.Name] {
 				return true
 			}
 			if at, isMoved := moved[id.Name]; isMoved {
@@ -11335,7 +11390,8 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				moved[id.Name] = id.Pos()
 			}
 			return true
-		})
+		}
+		ast.Walk(e, recordUse)
 		for _, lam := range lambdas {
 			if lam.ReturnOwn {
 				synth := &ast.FuncDecl{Params: append(append([]ast.Param(nil), lam.Captures...), lam.Params...), ReturnType: lam.ReturnType, Body: lam.Body}
@@ -14895,13 +14951,14 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		invalid := false
 		floatDest, toFloat := elemExpected.(ast.FloatType)
 		toFloat = toFloat && !floatDest.Polymorphic
+		var prefix litPrefixScan
 		for i, el := range n.Elems[1:] {
 			t := c.wideLiteralElem(checkElem(el), elemT, el)
 			elemTypes = append(elemTypes, t)
 			if t == nil || elemT == nil {
 				continue
 			}
-			if ll := c.intLitLocalBesideFloat(n.Elems[:i+1], el, elemT, t); ll != nil && !toFloat {
+			if ll := c.intLitLocalBesideFloat(&prefix, n.Elems[:i+1], el, elemT, t); ll != nil && !toFloat {
 				want, got := elemT, t
 				c.afterLitFix(ll, func() {
 					c.errfCode(el.Pos(), "E034", "array element: expected %s, got %s", litWidthIn(want, ll.width), litWidthIn(got, ll.width))
@@ -15668,6 +15725,9 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				}
 			}
 		}
+		if !calleeIsValue {
+			c.markSendLambdas(n.Args, calleeName)
+		}
 		for i := range n.Args {
 			if i < len(ft.Params) {
 				hp := ft.Params[i]
@@ -16303,6 +16363,11 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			c.errfCode(id.Pos(), "E091", "cannot assign to range index %s: the loop sets it on each turn, so use a while loop to change it", id.Name)
 		}
 		if id, ok := n.Target.(*ast.Ident); ok {
+			if pname := c.capturedAcrossSend(id.Name, s); pname != "" {
+				c.errfCode(id.Pos(), "E100",
+					"closure passed to `send` parameter %q assigns the captured variable %q: a worker has its own copy, so the write does not reach the variable",
+					pname, id.Name)
+			}
 			if ct, isCap := c.capturedType(id.Name, s); isCap && ast.IsPointerType(ct) {
 				c.errfCode(id.Pos(), "E049",
 					"cannot assign to captured %s %q: a reference-typed closure capture is read-only (it could close a reference cycle); return the new value from the closure instead",
@@ -16367,7 +16432,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			}
 		}
 		c.captureOuter = s
-		c.captureChain = append(c.captureChain, captureEntry{sink: c.captureSink, scope: s, outer: prev})
+		c.captureChain = append(c.captureChain, captureEntry{sink: c.captureSink, scope: s, outer: prev, send: c.sendLambdas[n]})
 		c.checkBlock(n.Body, root)
 		c.captureChain = c.captureChain[:len(c.captureChain)-1]
 		c.captureSink = prevSink

@@ -7072,6 +7072,9 @@ function build_lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: ir
     return empty(tokens.why);
   }
   p = ssaunits.without_constant_drops(p);
+  if (susp.on && susp.rows.has(f.graph.name)) {
+    p = ssaunits.without_frame_views(p);
+  }
   let layout = ssalayout.compute(f.graph, dom);
   if (!layout.ok) {
     return empty("physical RC needs reducible graph");
