@@ -1,0 +1,102 @@
+[
+  {
+    "name": "borrowed tuple",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nfunction f(make: () => (H, Mark)): own (H, Mark) { let p = make(); return (p.0, p.1); }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "borrowed direct tuple",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nfunction f(make: () => H): own (H, i32) { return (make(), 0); }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "borrowed array",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nfunction f(make: () => H): own H[] { return [make()]; }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "borrowed record",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nstruct Wrap { h: H } function f(make: () => H): own Wrap { return Wrap { h: make() }; }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "callback field",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nstruct Holder { make: () => H } function f(x: Holder): own (H, i32) { return (x.make(), 0); }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "forwarded callback",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nfunction forward(make: () => H): H { return make(); } function f(make: () => H): own (H, i32) { return (forward(make), 0); }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "forwarded holder",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nstruct Holder { make: () => H } function forward(x: Holder): H { return x.make(); } function f(x: Holder): own (H, i32) { return (forward(x), 0); }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "owned callback parameter",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nfunction forward(own make: () => H): H { return make(); } function f(own make: () => H): own (H, i32) { return (forward(make), 0); }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "checked callback tuple",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nfunction f(make: () => own (H, Mark)): own (H, Mark) { let p = make(); return (p.0, p.1); }\nfunction main(): i32 { return 0; }\n",
+    "want": ""
+  },
+  {
+    "name": "checked callback resource",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nfunction f(make: () => own H): own (H, i32) { return (make(), 0); }\nfunction main(): i32 { return 0; }\n",
+    "want": ""
+  },
+  {
+    "name": "checked callback generic",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nfunction f[T](make: () => own T): own T { return make(); }\nfunction main(): i32 { return 0; }\n",
+    "want": ""
+  },
+  {
+    "name": "borrowed callback generic",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nfunction f[T](make: () => T): own T { return make(); }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "copied string",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nfunction f(make: () => string): own string { return make(); }\nfunction main(): i32 { return 0; }\n",
+    "want": ""
+  },
+  {
+    "name": "copied array",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nfunction f(make: () => i32[]): own i32[] { return make(); }\nfunction main(): i32 { return 0; }\n",
+    "want": ""
+  },
+  {
+    "name": "copied tuple",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nfunction f(make: () => (i32[], Mark)): own (i32[], Mark) { return make(); }\nfunction main(): i32 { return 0; }\n",
+    "want": ""
+  },
+  {
+    "name": "copied record",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nstruct Data { xs: i32[] } function f(make: () => Data): own Data { return make(); }\nfunction main(): i32 { return 0; }\n",
+    "want": ""
+  },
+  {
+    "name": "borrowed cell",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nfunction f(make: () => Cell[i32]): own Cell[i32] { return make(); }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "borrowed receiver method",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nstruct Wrap { h: H } function (w: Wrap) get(): H { return w.h; } function f(w: Wrap): own (H, i32) { return (w.get(), 0); }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "ordinary receiver needs contract",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nstruct Wrap { h: H } function (w: Wrap) fresh(): H { return H { fd: 1 }; } function f(w: Wrap): own H { return w.fresh(); }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "checked receiver method",
+    "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nstruct Mark { n: i32 }\nstruct Wrap { h: H } function (w: Wrap) fresh(): own H { return H { fd: 1 }; } function f(w: Wrap): own H { return w.fresh(); }\nfunction main(): i32 { return 0; }\n",
+    "want": ""
+  }
+]

@@ -5945,13 +5945,14 @@ type checker struct {
 	handleFreeTypes   map[handleTypeKey]bool
 	// consumingTypes names the types with a method that consumes its
 	// receiver. Such a type is a user-defined handle.
-	consumingTypes  map[string]bool
-	callOwnFlags    map[*ast.Call][]bool
-	callOwnResults  map[*ast.Call]bool
-	callCopyTypes   map[string]bool
-	resultCopyParts map[ast.Expr]bool
-	scalarArgs      map[ast.Expr]bool
-	valueArgs       map[ast.Expr]bool
+	consumingTypes      map[string]bool
+	callOwnFlags        map[*ast.Call][]bool
+	callOwnResults      map[*ast.Call]bool
+	callCopyTypes       map[string]bool
+	resultCopyParts     map[ast.Expr]bool
+	resultCallbackParts map[ast.Expr]bool
+	scalarArgs          map[ast.Expr]bool
+	valueArgs           map[ast.Expr]bool
 	// handleFreeArgs holds the name arguments whose type cannot hold a handle.
 	handleFreeArgs map[ast.Expr]bool
 
@@ -14392,11 +14393,19 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		c.recordOwnedResult(call, true)
 	}
 	if c.current != nil && c.current.ReturnOwn {
-		if t != nil && c.holdsNoHandle(t) {
+		// Callbacks can lend captured resources, even when their representation
+		// holds no resource handle. Only immutable data has a copy contract.
+		if c.copyableCallResult(t) {
 			if c.resultCopyParts == nil {
 				c.resultCopyParts = map[ast.Expr]bool{}
 			}
 			c.resultCopyParts[e] = true
+		}
+		if c.callbackCanLend(t) {
+			if c.resultCallbackParts == nil {
+				c.resultCallbackParts = map[ast.Expr]bool{}
+			}
+			c.resultCallbackParts[e] = true
 		}
 		if definitelyScalar(t) {
 			if c.scalarArgs == nil {

@@ -258,7 +258,7 @@ func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 				flags = c.ownFuncs[id.Name]
 			}
 			for i, arg := range x.Args {
-				if (i >= len(flags) || !flags[i]) && c.resultPartBorrows(arg, b) {
+				if (i >= len(flags) || !flags[i] || c.resultCallbackParts[arg]) && c.resultPartBorrows(arg, b) {
 					return true
 				}
 			}

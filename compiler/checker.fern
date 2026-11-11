@@ -22982,11 +22982,19 @@ function ow_result_loan(value: ast.Expr, ctx: OwnCtx): boolean {
     return false;
   }
   let lu = ctx.last_use.get();
-  let lenders = BorrowContext { lenders: lu.lenders, result_scope: Some(ctx.scope) };
+  let lenders = BorrowContext { lenders: lu.lenders, result_scope: Some(ctx.scope), value_proofs: Some(ctx.value_proofs) };
   let borrowed: string[] = [];
   for name in ctx.borrowed {
     if (typeinfo.ownable(ctx.scope.lookup(name))) {
       borrowed = borrowed.append(name);
+    }
+  }
+  // Owning a callback does not consume the resources its closure borrows.
+  for name in ctx.owned {
+    if let typeinfo.TypeFunc(ft) = ctx.scope.lookup(name) {
+      if (!ft.ret_own) {
+        borrowed = borrowed.append(name);
+      }
     }
   }
   let locals = ow_borrowed_locals(ow_spine_stmts(ctx.result_body), ctx.ofuncs, borrowed, [], lu.borrows, lu.builtins, lenders, false);
@@ -23800,14 +23808,17 @@ struct OwnDataProofs { types: string[], copyable: boolean[] }
 // The declarations stay fixed during this walk. A complete spelling retains
 // generic arguments; an erased or unresolved type has no copy contract.
 function ow_copyable_result(ty: typeinfo.Type, ctx: OwnCtx): boolean {
-  let spelling = typeinfo.spelling(ty);
-  let proofs = ctx.value_proofs.get();
+  return ow_cached_value_data(typeinfo.spelling(ty), ctx.decls, ctx.value_proofs);
+}
+
+function ow_cached_value_data(spelling: string, decls: OwnDecls, cache: Cell[OwnDataProofs]): boolean {
+  let proofs = cache.get();
   let i = util.index_of_str(proofs.types, spelling);
   if (i >= 0) {
     return proofs.copyable[i];
   }
-  let copyable = spelling.len() > 0 && ow_value_data(spelling, ctx.decls, []);
-  ctx.value_proofs.set(OwnDataProofs { types: proofs.types.append(spelling), copyable: proofs.copyable.append(copyable) });
+  let copyable = spelling.len() > 0 && ow_value_data(spelling, decls, []);
+  cache.set(OwnDataProofs { types: proofs.types.append(spelling), copyable: proofs.copyable.append(copyable) });
   return copyable;
 }
 
@@ -24228,10 +24239,10 @@ function ow_value_if_origin(origin: string): boolean {
   return origin == parser.ORIGIN_IF_EXPR || origin == parser.ORIGIN_IF_DEAD_THEN || origin == parser.ORIGIN_IF_DEAD_ELSE || origin == parser.ORIGIN_IF_DEAD_BOTH;
 }
 
-struct BorrowContext { lenders: OwnLenders, result_scope: Option[Scope] }
+struct BorrowContext { lenders: OwnLenders, result_scope: Option[Scope], value_proofs: Option[Cell[OwnDataProofs]] }
 
 function borrow_context(lenders: OwnLenders): BorrowContext {
-  return BorrowContext { lenders: lenders, result_scope: None };
+  return BorrowContext { lenders: lenders, result_scope: None, value_proofs: None };
 }
 
 function ow_value_block_borrows(lm: ast.ExprLambda, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: BorrowContext, handles_only: boolean): boolean {
@@ -24350,16 +24361,22 @@ function ow_value_arm_borrows(arm: ast.Stmt[], ofuncs: OwnFuncs, borrowed: strin
   }
 }
 
+function ow_borrow_value_copy(ty: typeinfo.Type, lenders: BorrowContext): boolean {
+  let spelling = typeinfo.spelling(ty);
+  if let Some(cache) = lenders.value_proofs {
+    return ow_cached_value_data(spelling, lenders.lenders.decls, cache);
+  }
+  return ow_value_data(spelling, lenders.lenders.decls, []);
+}
+
 function ow_expr_borrows(e: ast.Expr, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: BorrowContext, handles_only: boolean): boolean {
   if let Some(scope) = lenders.result_scope {
     let ty = check_expr(e, scope);
     if (!typeinfo.ownable(ty)) {
       return false;
     }
-    if let typeinfo.TypeStruct(st) = ty {
-      if (ow_value_decl(st.name, lenders.lenders.decls.structs, lenders.lenders.decls.snames) && ow_value_data(typeinfo.spelling(ty), lenders.lenders.decls, [])) {
-        return false;
-      }
+    if (ow_borrow_value_copy(ty, lenders)) {
+      return false;
     }
     let children: ast.Expr[] = [];
     match (e) {
@@ -24393,6 +24410,8 @@ function ow_expr_borrows(e: ast.Expr, ofuncs: OwnFuncs, borrowed: string[], loca
         for i in 0..c.args.len() {
           if (i >= flags.len() || !flags[i]) {
             children = children.append(c.args[i]);
+          } else if let typeinfo.TypeFunc(_) = check_expr(c.args[i], scope) {
+            children = children.append(c.args[i]);
           }
         }
       },
@@ -24400,9 +24419,6 @@ function ow_expr_borrows(e: ast.Expr, ofuncs: OwnFuncs, borrowed: string[], loca
     }
     if (children.len() > 0) {
       for child in children {
-        if (ow_holds_no_handle(typeinfo.spelling(check_expr(child, scope)), lenders.lenders.decls)) {
-          continue;
-        }
         if (ow_expr_borrows(child, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only)) {
           return true;
         }
