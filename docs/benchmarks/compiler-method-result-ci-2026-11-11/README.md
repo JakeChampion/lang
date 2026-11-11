@@ -71,9 +71,23 @@ The negative-control archive retains every captured input, output, and child res
 Run this command on the publication checkout:
 
 ```sh
-python3 docs/benchmarks/compiler-method-result-ci-2026-11-11/verify.py --commit HEAD
+python3 docs/benchmarks/compiler-method-result-ci-2026-11-11/verify.py --commit 7ed25d7e1c1c94d73cae445d61852197c4c4e6aa
 ```
 
 The verifier checks exact data, product files, source identities, and gzip contents.
 Later compiler changes or baseline banks need their own qualification.
 The original publication remains the source of this record.
+
+## Main integration on 2026-11-11
+
+The branch retains main `3616c8cef7b4bbb518156247bc62ecd86df5ca74`.
+That commit contains the three upstream ULC recurrence files from PR #15211.
+Its tree matches the PR head `0c5f13cf7b29e5795b2b18b2d5af59e7eb5d597a`.
+[CI run 42917525358](https://github.com/JakeChampion/lang/actions/runs/42917525358) reports success for that head.
+All 68 jobs are complete, with 28 successful jobs and 40 conditional skips.
+The skips establish no test pass.
+
+Compiler, standard library, checker, syntax, and stage0 sources remain unchanged from main `29b1234d06`.
+The checker benchmark scripts and inputs are also unchanged.
+All 37 data files and twelve gzip identities retain their original bytes.
+The fixture and counter controls keep their original source scope.

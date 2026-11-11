@@ -1,0 +1,5 @@
+import "std/video/vp9";
+
+pub function values(v: vp9.Keyframe): i64[] {
+  return [v.profile as i64, v.coded.width as i64, v.coded.height as i64, v.render.width as i64, v.render.height as i64, v.bit_depth as i64, v.color_space as i64, if (v.full_range) { 1i64 } else { 0i64 }, v.subsampling_x as i64, v.subsampling_y as i64, if (v.show_frame) { 1i64 } else { 0i64 }, if (v.error_resilient) { 1i64 } else { 0i64 }, v.filter_level as i64, v.sharpness as i64, v.base_quantizer as i64, if (v.segmentation) { 1i64 } else { 0i64 }, v.tile_columns_log2 as i64, v.tile_rows_log2 as i64, v.uncompressed_bytes as i64, v.compressed_bytes as i64, v.tile_offset as i64];
+}
