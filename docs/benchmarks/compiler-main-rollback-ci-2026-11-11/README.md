@@ -66,9 +66,14 @@ Their status appears in the PR description.
 Run from the repository root at this publication:
 
 ```sh
-python3 docs/benchmarks/compiler-main-rollback-ci-2026-11-11/verify.py --commit HEAD
+python3 docs/benchmarks/compiler-main-rollback-ci-2026-11-11/verify.py --commit 34229724c031302b5147b5132333de7e2397579e
 ```
 
 The verifier checks all data hashes, gzip identities, source trees, protocol sources, baselines, and comparator controls.
 After another source change, pin this command to the original publication commit.
 The original counter verifier remains unchanged.
+
+The later integration retains current main compiler and standard library sources.
+The concurrent merge remains an ancestor.
+The committed archive files and refusal harness return from publication `34229724`.
+These earlier measurements retain their original source and publication.

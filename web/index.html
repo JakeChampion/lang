@@ -886,7 +886,17 @@
   // The self-host compiler (web/playground.wasm), compiled once here and
   // instantiated afresh for every run by web/wasi-shim.js, so nothing one
   // run leaves behind reaches the next.
-  window.__fernDriverReady = WebAssembly.compileStreaming(fetch("playground.wasm"));
+  // The embeds of one docs page share one compiled module. The page's own
+  // realm starts the request, so the request does not end with this frame.
+  var host = window;
+  try {
+    if (parent !== window && parent.location.origin === location.origin) host = parent;
+  } catch (e) { /* the parent is another origin */ }
+  var url = new URL("playground.wasm", location.href).href;
+  if (!host.__fernDriverModule) {
+    host.__fernDriverModule = host.WebAssembly.compileStreaming(host.fetch(url));
+  }
+  window.__fernDriverReady = host.__fernDriverModule;
   window.__fernDriverReady.then(function () {
     var el = document.getElementById("status");
     if (!el) return;

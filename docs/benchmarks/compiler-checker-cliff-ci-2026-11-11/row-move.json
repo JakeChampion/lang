@@ -1,0 +1,14 @@
+{
+  "source": "2ca148c6757a95ba419a67751dd3598726f07c56",
+  "run": 42942829694,
+  "job": 130273056431,
+  "measurement_date": "2026-11-11",
+  "bank_date": "2026-11-11",
+  "key": "x86_64/checker.cliff_count",
+  "before": 373694,
+  "after": 378075,
+  "default_tolerance_percent": 1,
+  "unchanged_all_other_rows_and_tolerances": true,
+  "report_scope": "Only the exact corrective count from the complete decoded CI log. No exact values inferred from rounded in-band displays. The report is a parsed view, not a downloaded full artifact report.",
+  "qualification_limit": "One-row projections pass after the update. Both full baselines reject this partial report. Complete exact-head CI must qualify the actual full report."
+}

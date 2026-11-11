@@ -1,0 +1,29 @@
+{
+  "main": "eb264b32a2775d534109f244b83dabe57258949e",
+  "concurrent_parent": "4e8cbe42176f1be18790297ea0dc83ae5aafb1ad",
+  "published_source": "34229724c031302b5147b5132333de7e2397579e",
+  "main_product_trees": {
+    "compiler": "08276a2dce11f1b4d2acb508b61b9a3cc7449939",
+    "internal/stdlib": "46dd5c28470193c98873630d96376781937fbc89",
+    "internal/check": "a93248f924595315edffa9d58310fa2b93965a86",
+    "internal/syntax": "e4465fb79bbbc03044f478cb3ae1b8e0f2d27bbb",
+    "conformance": "0a6ce7842175472f00fb99a539b8efe82ef063f1",
+    "scripts": "8a1bf2f85aa8cf0b575984b8174232dd4293d47f",
+    "tests": "f22cc66adea4fc867fa8568b9a7d917b4c0b8da3",
+    "examples": "5a10240e204e53a454bf09704e5ac792b1bd4d9a",
+    "spec": "1c22519c6b7107817a1544332a5659ca47533914",
+    "site": "cd33d8b6989ccf0ea73942cb507460e9a5834a21",
+    "web": "9bf5cc3d811055908ab07f4a84c2b8918c8c8a96",
+    ".github/actions": "bdf10cbbfe61ba5eb093db0991e3ecef1e13f218",
+    ".github/workflows": "04c6b9205b751a5bec3c2688ac0c1e5c2ffc83c2"
+  },
+  "harness_path": "internal/testing/e2ecompiler/self_host_irverify_test.go",
+  "harness_sha256": "5e1ccab66c77e4568f99a12140ac36cc44518cbaaee2dd85c16d16e789ab2643",
+  "harness_git_blob": "db6c2c55394bc9536806cd539713a7941abc36ea",
+  "cliff_baseline_sha256": "232f060436e5380ba4b28a2898c4e7ba2db091ac72400d024dc1ac34f5cb5cca",
+  "driver_baseline_sha256": "304562b1afd0f0fd345b19e5d868f10818e271923de23ecc245125779100df6e",
+  "producer_lock_sha256": "bf10dcab7a95f12aeea13ad2a4a3a0691f8370bc7a2396f00c48b1df865ed73f",
+  "producer_source": "a19e87208c5931d2600fdb75cc966fd179ae8c8f",
+  "producer_sha256": "a66fcf94f418bea5f969bfaf2b07e6fe56235d2565ca405c950e6e263187a751",
+  "qualification_limit": "Current-source correctness only. Earlier counter reports retain their original source. No timing, allocation, leak, or rank claim."
+}
