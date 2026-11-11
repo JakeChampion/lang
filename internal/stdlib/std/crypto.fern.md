@@ -3601,7 +3601,12 @@ pub function hkdf_sha384(salt: [u8], ikm: [u8], info: [u8], length: i32): u8[] {
   return okm;
 }
 
+// The truncated value is below 2^31, so it has at most 10 digits. A digit
+// count outside 1 through 10 stops the program with status 134.
 pub function hotp_sha256(key: [u8], counter: i64, digits: i32): i32 {
+  if (digits < 1 || digits > 10) {
+    exit(134);
+  }
   let msg = __alloc_u8(8);
   let i = 0;
   while (i < 8) {
@@ -3613,7 +3618,7 @@ pub function hotp_sha256(key: [u8], counter: i64, digits: i32): i32 {
   let bin = __hotp_window(hs);
   let m: i64 = 1;
   let d = 0;
-  while (d < digits && d < 10) {
+  while (d < digits) {
     m *= 10 as i64;
     d += 1;
   }
