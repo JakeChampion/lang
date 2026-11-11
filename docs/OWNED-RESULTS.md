@@ -32,6 +32,9 @@ A parameter keeps its ownership mode during assignment.
 
 A borrowed resource parameter cannot become an owned result.
 An aggregate or local alias cannot hide a resource loan.
+Match payloads retain the loan from a borrowed scrutinee.
+This also applies to nested matches and local aliases inside an arm.
+
 A fresh aggregate can contain copied data parts when those parts cannot hold a handle.
 A reusable closure borrows its captures.
 This rule also applies to an outer owned parameter.

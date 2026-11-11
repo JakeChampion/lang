@@ -1,0 +1,21 @@
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): void {}
+
+enum State { Plain, Secured(Handle), Awaiting(Option[Handle]) }
+
+function awaiting(state: State): own State {
+  match (state) {
+    Secured(h) => {
+      return Awaiting(Some(h));
+    },
+    _ => {
+      return Awaiting(None);
+    }
+  }
+  return Awaiting(None);
+}
+
+function main(): i32 {
+  return 0;
+}
