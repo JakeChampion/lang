@@ -231,6 +231,7 @@ func checkedOwnedResultBorrowFixtures(t *testing.T, bin string, runner []string,
 		"diag_e051_literal_match_arm_returns_a_borrow",
 		"diag_e051_match_binder_of_a_borrowed_scrutinee",
 		"diag_e051_owned_result_borrowed_match_payload",
+		"diag_e051_owned_result_deferred_record",
 		"diag_e051_through_a_type_parameter",
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -275,6 +276,10 @@ func TestSelfHostCheckedOwnedResultsWasm(t *testing.T) {
 
 func TestSelfHostCheckedOwnedResultsRun(t *testing.T) {
 	ownedResultRuntimeCase(t, "checked_owned_results")
+}
+
+func TestSelfHostCheckedOwnedNestedResultsRun(t *testing.T) {
+	ownedResultRuntimeCase(t, "checked_owned_nested_results")
 }
 
 func TestSelfHostCopiedCallResultsRun(t *testing.T) {
