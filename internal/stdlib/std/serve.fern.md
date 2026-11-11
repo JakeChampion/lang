@@ -1604,7 +1604,7 @@ function __tls_session(opts: Config): Result[__Tls, tls.TlsError] {
   return Ok(Plain);
 }
 
-function __serve_close[D: async.Driver](drv: D, own c: __Conns, at: i32): __Conns {
+function __serve_close[D: async.Driver](drv: D, own c: __Conns, at: i32): own __Conns {
   drv.unwatch(c.fds[at]);
   c.metrics.open.dec();
   match (c.tls[at]) {
@@ -2387,7 +2387,7 @@ function __h2_fed(c: __Conns, at: i32): h2.Step {
   return h2.Step { conn: h2.server(h2.config()).conn, output: [], events: [] };
 }
 
-function __h2_taken(own c: __Conns, at: i32): __Conns {
+function __h2_taken(own c: __Conns, at: i32): own __Conns {
   let lent: i32 = c.lent;
   if (lent == at) {
     lent = 0 - 1;
@@ -3642,7 +3642,7 @@ function __serve_gate[D: async.Driver](drv: D, listener: Socket, c: __Conns, opt
   return accepting;
 }
 
-function __serve_expire[D: async.Driver](drv: D, own c: __Conns, opts: Config, now: i64): __Conns {
+function __serve_expire[D: async.Driver](drv: D, own c: __Conns, opts: Config, now: i64): own __Conns {
   if (c.due < 0 as i64 || c.due > now) {
     return c;
   }
