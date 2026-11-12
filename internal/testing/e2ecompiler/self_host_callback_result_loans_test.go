@@ -31,6 +31,7 @@ func resultLoanCases(t *testing.T, bin string, runner []string, dir, fixture str
 		"diag_e050_dynamic_factory_uses_consumed_capture",
 		"diag_e050_projected_callback_index_capture",
 		"diag_e050_shadowed_callback_capture",
+		"diag_e050_union_callback_uses_consumed_capture",
 	} {
 		source, err := os.ReadFile(e2eharness.RepoPath("conformance", "cases", name, "main.fern"))
 		if err != nil {

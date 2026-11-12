@@ -1,3 +1,6 @@
+# 2026-11-12: main 6f8937ce, run 43285985869, perf-x86_64 job 131423863245.
+# The ssa changes of that day grew the emit of perceus_rbtree and perceus_rbtree_ck 5.0% to 8.1%
+# on the three targets. Each row moves to its measured value. Keep all tolerances.
 # 2026-11-10: PR #15089 retains the revised HTTP repair from #15087.
 # Bank measured HTTP code reductions after main c9547605. Keep all tolerances.
 # Evidence: docs/benchmarks/video-avc-pps-main-2026-11-10/.
@@ -379,12 +382,12 @@ selfhost/wasm32-wasi/perceus_deriv.emit	2831
 selfhost/x86-64-linux/perceus_nqueens.emit	1587
 selfhost/arm64-linux/perceus_nqueens.emit	1842
 selfhost/wasm32-wasi/perceus_nqueens.emit	1267
-selfhost/x86-64-linux/perceus_rbtree.emit	2832
-selfhost/arm64-linux/perceus_rbtree.emit	3129
-selfhost/wasm32-wasi/perceus_rbtree.emit	3564
-selfhost/x86-64-linux/perceus_rbtree_ck.emit	2931
-selfhost/arm64-linux/perceus_rbtree_ck.emit	3218
-selfhost/wasm32-wasi/perceus_rbtree_ck.emit	3897
+selfhost/x86-64-linux/perceus_rbtree.emit	2987
+selfhost/arm64-linux/perceus_rbtree.emit	3340
+selfhost/wasm32-wasi/perceus_rbtree.emit	3854
+selfhost/x86-64-linux/perceus_rbtree_ck.emit	3081
+selfhost/arm64-linux/perceus_rbtree_ck.emit	3402
+selfhost/wasm32-wasi/perceus_rbtree_ck.emit	4176
 # 2026-11-07: PR #14490 adds QTRLE emitted-size measurements from the local current compiler.
 # Existing limits and tolerances stay unchanged.
 # 2026-11-08: #14770. Pin the measured reduction from the corrected display roots.

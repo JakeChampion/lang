@@ -1,0 +1,32 @@
+// spec: RH-04
+
+struct Handle { n: i32 }
+
+function (h: Handle) read(): i32 {
+  return h.n;
+}
+
+function (own h: Handle) close(): void {}
+
+struct Lazy { run: () => i32 }
+
+struct Fixed { n: i32 }
+
+type Source = Lazy | Fixed;
+
+function factory(h: Handle): own Source {
+  return Lazy { run: (): i32 => h.read() };
+}
+
+function read_closed(own h: Handle): i32 {
+  let source = factory(h);
+  h.close();
+  return match (source) {
+    Lazy(r) => r.run(),
+    Fixed(f) => f.n,
+  };
+}
+
+function main(): i32 {
+  return read_closed(Handle { n: 7 });
+}

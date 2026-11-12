@@ -105,6 +105,84 @@ function test_seek(): test.TestOutcome {
   return test.assert_eq(got.trim(), "true true true true true true");
 }
 
+// The samples of a deck that reads `file` a window at a time, the most
+// bytes that its window held after its first part, and the frame and the
+// first samples after a seek to the half.
+struct Streamed { samples: i32[], most: i32, half: i64, after: i32[] }
+
+function streamed(file: u8[], window: i32): Option[Streamed] {
+  let bytes = file;
+  let source = (at: i64, n: i32): u8[] => {
+    let out: u8[] = [];
+    for i in at as i32..(at as i32 + n).min(bytes.len()) {
+      out = out.append(bytes[i]);
+    }
+    return out;
+  };
+  let Some(d) = engine.open_file(file.len() as i64, source, window) else {
+    return None;
+  };
+  let all: i32[] = [];
+  let most = 0;
+  let deck = d;
+  let parts = 0;
+  while (!deck.done && parts < 100000) {
+    let (next, part) = deck.pull();
+    deck = next;
+    most = most.max(deck.bytes.len());
+    for v in part {
+      all = all.append(v);
+    }
+    parts += 1;
+  }
+  let (seeked, after) = deck.seek(0.5).pull();
+  return Some(Streamed { samples: all, most: most, half: seeked.at - (after.len() / seeked.channels.max(1)) as i64, after: after });
+}
+
+// The bytes of `b` from `from` to `to`.
+function range(b: u8[], from: i32, to: i32): u8[] {
+  let out: u8[] = [];
+  for i in from..to {
+    out = out.append(b[i]);
+  }
+  return out;
+}
+
+// A deck that reads a WAV, a FLAC or an MP3 file a window at a time gives
+// the samples that the deck of the whole file gives, seeks to the same
+// frame, and holds no more than its window. A tag longer than a window
+// makes the start that it reads longer.
+function test_a_file_plays_from_a_window(): test.TestOutcome {
+  let samples = tune();
+  let Ok(wave) = wav.encode(samples, stereo(), limits()) else {
+    return test.fail("the WAV encoder gave no file");
+  };
+  let Ok(lossless) = flac.encode(samples, stereo(), limits()) else {
+    return test.fail("the FLAC encoder gave no file");
+  };
+  // A padding block of 300000 bytes after the stream info of the FLAC
+  // file: the stream info is not the last block, and the padding is.
+  let padded = fixture.joined(range(lossless, 0, 4), [0u8, 0u8, 0u8, 34u8]);
+  padded = fixture.joined(padded, range(lossless, 8, 42));
+  padded = fixture.joined(padded, [129u8, 4u8, 147u8, 224u8]);
+  for i in 0..300000 {
+    padded = padded.append(0u8);
+  }
+  padded = fixture.joined(padded, range(lossless, 42, lossless.len()));
+  let tagged = fixture.joined(fixture.id3v2_picture("Tagged", 300000), fixture.tone_mp3());
+  let got: string[] = [];
+  for file in [wave, lossless, padded, fixture.tone_mp3(), tagged] {
+    let Some(whole) = streamed(file, file.len() + 4096) else {
+      return test.fail("the whole file did not open");
+    };
+    let Some(part) = streamed(file, 32768) else {
+      return test.fail("the file did not open from a window");
+    };
+    got = got.append([same(part.samples, whole.samples) && part.samples.len() > 40000, part.most <= 32768, part.half == whole.half && same(part.after, whole.after)].map((b: boolean): string => b.to_string()).join(","));
+  }
+  return test.assert_eq(got.join(" "), "true,true,true true,true,true true,true,true true,true,true true,true,true");
+}
+
 function test_other_bytes_do_not_open(): test.TestOutcome {
   let text: u8[] = [104u8, 101u8, 108u8, 108u8, 111u8, 32u8, 102u8, 101u8, 114u8, 110u8];
   let empty: u8[] = [];
@@ -159,5 +237,6 @@ function main(): i32 {
   r = r.it("bytes that are not sound do not open", test_other_bytes_do_not_open);
   r = r.it("an MP3 file tells its length in frames of samples", test_mp3_length);
   r = r.it("an M4A, an Ogg Vorbis and an Opus file play", test_m4a_ogg_and_opus_play);
+  r = r.it("a file plays from a window of it", test_a_file_plays_from_a_window);
   return r.finish();
 }

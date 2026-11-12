@@ -2431,6 +2431,18 @@ function x86_gas_memext_op(mnem: string): Option[i32] {
     "lidt" => {
       return Some(769);
     },
+    "lgdt" => {
+      return Some(513);
+    },
+    "ltr" => {
+      return Some(768);
+    },
+    "ldmxcsr" => {
+      return Some(686);
+    },
+    "stmxcsr" => {
+      return Some(942);
+    },
     _ => {
       return None;
     }
@@ -3892,6 +3904,9 @@ function x86_gas_fixed_op(mnem: string): i32 {
     },
     "rdmsr" => {
       return x86_pack2(15, 50);
+    },
+    "rdtsc" => {
+      return x86_pack2(15, 49);
     },
     "wrmsr" => {
       return x86_pack2(15, 48);

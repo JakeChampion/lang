@@ -91,6 +91,7 @@ pub struct EmitState {
   ssa_lane_slots: boolean[],
   ssa_trap_suffix: string,
   ssa_x0: i32,
+  ssa_boxed: boolean[],
   reg_entries: irtables.SigReg,
   float_abi: irtables.SigReg,
   float_abi_masks: string[],
@@ -632,6 +633,7 @@ pub function new_state(): EmitState {
     ssa_lane_slots: [],
     ssa_trap_suffix: "",
     ssa_x0: -1,
+    ssa_boxed: [],
     reg_entries: irtables.sig_reg_of([]),
     float_abi: irtables.sig_reg_of([]),
     float_abi_masks: [],
@@ -6090,6 +6092,12 @@ pub function ssa_still_read(srcs: string[], done: boolean[], reg: string, self: 
     }
   }
   return false;
+}
+
+// Whether a count of v needs no test that v is a box (ssadeps.boxed_values).
+// A sanitizer build keeps the test.
+pub function ssa_is_boxed(s: EmitState, v: i32): boolean {
+  return !s.rc_free_debug && v >= 0 && v < s.ssa_boxed.len() && s.ssa_boxed[v];
 }
 
 pub function ssa_x0_forget(s: EmitState): EmitState {

@@ -12,7 +12,7 @@ On x86-64, a table entry is present, writable and user-accessible. The leaf deci
 
 `map_user` maps a range of a process. Each virtual page translates to a page of physical frames, and user code at EL0 or ring 3 can reach it. The kernel's own mapping stays kernel-only. Thus a process that loads a kernel address takes a fault.
 
-On arm64 a user page has AP 01 (read and write at both levels) or AP 11 (read-only at both levels), and it is PXN, so the kernel never runs user code. A user page that is not executable is also UXN. On x86-64 a user page sets the U/S bit, and the R/W bit when it is writable.
+On arm64 a user page has AP 01 (read and write at both levels) or AP 11 (read-only at both levels), and it is PXN, so the kernel never runs user code. A user page that is not executable is also UXN. On x86-64 a user page sets the U/S bit, and the R/W bit when it is writable. A user page that is not executable sets the NX bit, which the reset entry enables in `EFER`.
 
 `leaf` gives the translation of one address: the physical address and the access. A kernel uses it to check a pointer that a process gives it, and to read and write the process's memory through the identity mapping. `protect_user` changes the access of the user pages of a range. A page with no access keeps its frame in its entry with the valid bit clear. The walker then ignores the entry, and a later `protect_user` can give the access back.
 
@@ -111,10 +111,15 @@ function user_attr(write: boolean, exec: boolean): i64 {
     }
     return attr;
   }
+  // Present and user, R/W when writable, and NX (bit 63) unless exec.
+  let attr = 5i64;
   if (write) {
-    return 7i64;
+    attr = 7i64;
   }
-  return 5i64;
+  if (!exec) {
+    attr |= 1i64 << 63i64;
+  }
+  return attr;
 }
 
 function block_entry(address: usize, attr: i64): i64 {
