@@ -120,5 +120,7 @@
 # 2026-11-12: perf-x86_64 job 131075781965 (#15461, on main 0b8548db) measured 60,715,391 allocations and frees.
 # The merge of #15424 (c4f2f3d4) moved the count from 43,097,274 to 60,207,755: the callback factory summaries of the checker.
 # This is an inherited main cost, and #15471 has the bisect and the profile. The 1% tolerance is unchanged.
-x86_64/checker.allocs	60715391
-x86_64/checker.frees	60715391
+# 2026-11-12 (#15471): the callback factory summaries now resolve a union through its members.
+# `scripts/selfhost-alloc-bench` measured 46,066,029 allocations and frees (was 60,720,876 on main f2aa998b). The 1% tolerance is unchanged.
+x86_64/checker.allocs	46066029
+x86_64/checker.frees	46066029
