@@ -1,0 +1,82 @@
+// u8x16 is a lane type of 16 lanes of u8. The operators + and - wrap. The
+// builtins give the saturating arithmetic, the minimum, the maximum, the
+// average, the compares as masks, the bitwise operations and the lanes of
+// an array.
+
+function bytes(n: i32): u8[] {
+  let out: u8[] = [];
+  for i in 0..n {
+    out = out.append((i * 37 + 11) as u8);
+  }
+  return out;
+}
+
+// The number of bytes of `xs` that are below `limit`, 16 at a time.
+function count_below(xs: u8[], limit: u8): i32 {
+  let top = __u8x16_splat(limit);
+  let n = 0;
+  let i = 0;
+  while (i + 16 <= xs.len()) {
+    let mask = __u8x16_bitmask(__u8x16_lt(__u8x16_load(xs, i), top));
+    while (mask != 0) {
+      n += mask & 1;
+      mask = mask >> 1;
+    }
+    i += 16;
+  }
+  while (i < xs.len()) {
+    if (xs[i] < limit) {
+      n += 1;
+    }
+    i += 1;
+  }
+  return n;
+}
+
+// Each byte of `xs` made brighter by `gain`, with a limit of 255.
+function brighten(xs: u8[], gain: u8): u8[] {
+  let g = __u8x16_splat(gain);
+  let out = xs;
+  let i = 0;
+  while (i + 16 <= out.len()) {
+    out = __u8x16_with(out, i, __u8x16_add_sat(__u8x16_load(out, i), g));
+    i += 16;
+  }
+  return out;
+}
+
+function through(a: u8x16, b: u8x16): u8x16 {
+  return __u8x16_select(a, b, __u8x16_lt(a, b));
+}
+
+function sum(v: u8x16): i32 {
+  let xs = __u8x16_with([0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8], 0, v);
+  let n = 0;
+  for x in xs {
+    n += x as i32;
+  }
+  return n;
+}
+
+function main(): i32 {
+  let p = __u8x16_splat(200 as u8);
+  let q = __u8x16_of(1 as u8, 2 as u8, 3 as u8, 250 as u8, 5 as u8, 6 as u8, 7 as u8, 8 as u8, 9 as u8, 10 as u8, 11 as u8, 12 as u8, 13 as u8, 14 as u8, 15 as u8, 16 as u8);
+  print("add " + __u8x16_lane(p + q, 3).to_string() + " " + __u8x16_lane(p + q, 15).to_string() + " sum " + sum(p + q).to_string());
+  print("sub " + __u8x16_lane(q - p, 0).to_string() + " " + __u8x16_lane(q - p, 3).to_string() + " sum " + sum(q - p).to_string());
+  print("add_sat " + __u8x16_lane(__u8x16_add_sat(p, q), 0).to_string() + " " + __u8x16_lane(__u8x16_add_sat(p, q), 15).to_string() + " " + __u8x16_lane(__u8x16_add_sat(p, q), 3).to_string());
+  print("sub_sat " + __u8x16_lane(__u8x16_sub_sat(q, p), 3).to_string() + " " + __u8x16_lane(__u8x16_sub_sat(q, p), 0).to_string() + " " + __u8x16_lane(__u8x16_sub_sat(p, q), 0).to_string());
+  print("min " + sum(__u8x16_min(p, q)).to_string() + " max " + sum(__u8x16_max(p, q)).to_string() + " avg " + sum(__u8x16_avg(p, q)).to_string());
+  print("lt " + __u8x16_bitmask(__u8x16_lt(q, p)).to_string() + " " + __u8x16_bitmask(__u8x16_lt(p, q)).to_string() + " eq " + __u8x16_bitmask(__u8x16_eq(q, q)).to_string() + " " + __u8x16_bitmask(__u8x16_eq(p, q)).to_string() + " ne " + __u8x16_bitmask(__u8x16_ne(p, q)).to_string() + " " + __u8x16_bitmask(__u8x16_ne(p, p)).to_string());
+  print("bits " + sum(__u8x16_and(p, q)).to_string() + " " + sum(__u8x16_or(p, q)).to_string() + " " + sum(__u8x16_xor(p, q)).to_string());
+  let smaller = through(p, q);
+  print("select " + __u8x16_lane(smaller, 0).to_string() + " " + __u8x16_lane(smaller, 3).to_string() + " sum " + sum(smaller).to_string());
+  let xs = bytes(70);
+  print("below " + count_below(xs, 128 as u8).to_string() + " " + count_below(xs, 0 as u8).to_string() + " " + count_below(xs, 255 as u8).to_string());
+  let lit = brighten(xs, 100 as u8);
+  let total = 0;
+  for x in lit {
+    total += x as i32;
+  }
+  print("brighten " + lit[0].to_string() + " " + lit[5].to_string() + " " + lit[63].to_string() + " " + lit[64].to_string() + " total " + total.to_string());
+  return 0;
+}

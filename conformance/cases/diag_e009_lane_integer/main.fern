@@ -1,0 +1,11 @@
+// Integer lanes have the operators + and -. A lane type with no sign has no
+// negative.
+
+function main(): i32 {
+  let p: u8x16 = __u8x16_splat(2 as u8);
+  let ok: u8x16 = p + p - p;
+  let product = p * p;
+  let quotient = p / p;
+  let negative = -p;
+  return 0;
+}

@@ -491,6 +491,7 @@ function is_lane_builtin(name: string): boolean {
     "__f32x4_swap_halves", "__f32x4_reverse", "__f32x4_zip_lo", "__f32x4_zip_hi", "__f32x4_splat", "__f32x4_of", "__f32x4_lane_bits", "__f32x4_lane", "__f32x4_bitmask", "__f32x4_mul_add", "__f32x4_sqrt",
     "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max",
     "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with", "__f32x4_load_bytes", "__f32x4_with_bytes", "__f32x4_store", "__f32x4_load_ptr", "__f32x4_pack",
+    "__u8x16_splat", "__u8x16_of", "__u8x16_lane", "__u8x16_bitmask", "__u8x16_min", "__u8x16_max", "__u8x16_eq", "__u8x16_ne", "__u8x16_lt", "__u8x16_add_sat", "__u8x16_sub_sat", "__u8x16_avg", "__u8x16_and", "__u8x16_or", "__u8x16_xor", "__u8x16_select", "__u8x16_load", "__u8x16_with",
   ];
   return typeinfo.lane_builtin_width(name) > 0 && util.has_str(names, name);
 }
@@ -15009,6 +15010,21 @@ function operand_diags_typed(e: ast.Expr, s: Scope): (util.Diag[], typeinfo.Type
   return (call_diags(e, s), check_expr(e, s));
 }
 
+// True for a lane type whose elements are integers.
+function integer_lanes(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeLanes(l) = t {
+    return l.kind != typeinfo.LANE_FLOAT;
+  }
+  return false;
+}
+
+function unsigned_lanes(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeLanes(l) = t {
+    return l.kind == typeinfo.LANE_UNSIGNED;
+  }
+  return false;
+}
+
 function lanes_operator_diags(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.Type): util.Diag[] {
   if (util.has_str(["==", "!=", "<", ">", "<=", ">="], b.op)) {
     let lanes = type_label(lt);
@@ -15018,6 +15034,9 @@ function lanes_operator_diags(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo
     return [dg_at("E041", "cannot compare values of type " + lanes + " with \"" + b.op + "\": a lane value compares lane by lane, through __" + lanes + "_lt and __" + lanes + "_ne", b.line, b.col)];
   }
   if (util.has_str(["+", "-", "*", "/"], b.op) && type_eq(lt, rt)) {
+    if (integer_lanes(lt) && (b.op == "*" || b.op == "/")) {
+      return [dg_at("E009", "operator \"" + b.op + "\" is not available for " + type_label(lt) + ": integer lanes have + and -", b.line, b.col)];
+    }
     return [];
   }
   if (operand_open(lt) || operand_open(rt)) {
@@ -15182,6 +15201,9 @@ function unary_operator_diags(u: ast.ExprUnary, ot: typeinfo.Type, s: Scope, out
     let nok = !is_unknown(s.unop_overload_ret(u.op, ot));
     if (!operand_open(ot) && !is_integer(ot) && !is_float(ot) && !typeinfo.is_lanes(ot) && !nok) {
       out = out.append(dg_at("E009", "operator \"-\" requires an integer type, got " + type_label(ot), u.line, u.col));
+    }
+    if (unsigned_lanes(ot)) {
+      out = out.append(dg_at("E009", "operator \"-\" is not available for " + type_label(ot) + ": its lanes have no sign", u.line, u.col));
     }
   }
   if (u.op.len() > 3 && u.op.starts_with("as_")) {
@@ -18566,6 +18588,7 @@ const REGISTERED_INTRINSICS: string[] = [
   "__fd_close", "__tcp_close_unchecked", "__socket_from_fd",
   "__f64x2_swap_halves", "__f64x2_reverse", "__f64x2_zip_lo", "__f64x2_zip_hi", "__f64x2_splat", "__f64x2_of", "__f64x2_lane_bits", "__f64x2_lane", "__f64x2_bitmask", "__f64x2_mul_add", "__f64x2_sqrt", "__f64x2_abs", "__f64x2_floor", "__f64x2_round", "__f64x2_min", "__f64x2_max", "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with", "__f64x2_load_bytes", "__f64x2_with_bytes", "__f64x2_store", "__f64x2_load_ptr", "__f64x2_load_f32_ptr",
   "__f32x4_swap_halves", "__f32x4_reverse", "__f32x4_zip_lo", "__f32x4_zip_hi", "__f32x4_splat", "__f32x4_of", "__f32x4_lane_bits", "__f32x4_lane", "__f32x4_bitmask", "__f32x4_mul_add", "__f32x4_sqrt", "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max", "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with", "__f32x4_load_bytes", "__f32x4_with_bytes", "__f32x4_store", "__f32x4_load_ptr", "__f32x4_pack",
+  "__u8x16_splat", "__u8x16_of", "__u8x16_lane", "__u8x16_bitmask", "__u8x16_min", "__u8x16_max", "__u8x16_eq", "__u8x16_ne", "__u8x16_lt", "__u8x16_add_sat", "__u8x16_sub_sat", "__u8x16_avg", "__u8x16_and", "__u8x16_or", "__u8x16_xor", "__u8x16_select", "__u8x16_load", "__u8x16_with",
 ];
 
 function qualified_trait(module: string, name: string): string {
