@@ -122,6 +122,7 @@ They are outside the public library inventory below.
 | `std/http/router` | [HTTP route selection](../internal/stdlib/std/http/router.fern.md) |
 | `std/http/sse` | [Server-sent event text](../internal/stdlib/std/http/sse.fern.md) |
 | `std/http/static` | [Static HTTP file responses](../internal/stdlib/std/http/static.fern.md) |
+| `std/http/testing` | [HTTP response assertions](../internal/stdlib/std/http/testing.fern.md) |
 | `std/http/trace` | [W3C Trace Context](../internal/stdlib/std/http/trace.fern.md) |
 | `std/http/websocket` | [WebSocket server sessions](../internal/stdlib/std/http/websocket.fern.md) |
 | `std/i32` | [32-bit integers and byte properties](../internal/stdlib/std/i32.fern.md) |

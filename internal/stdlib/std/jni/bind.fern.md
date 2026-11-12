@@ -33,6 +33,10 @@ An object that a function gives is a local reference. The caller deletes it with
 
 `intent_class` makes a global reference to the class, and only `release` deletes it. Make each struct of IDs one time for the app, not one time for each call. `intent_class` finds a class with `FindClass`. On Android, a thread that native code started finds only the classes of the system that way.
 
+`intent_class` gives an error when the device does not have a member of the request. `classes` then gives that error for the module. Thus a request names only the members that the oldest Android version of the app has. Call a newer member by its name, after a test of the version.
+
+A `string` argument is never the Java value `null`. For a method that needs `null` for a `String`, call the method by its name.
+
 `generate` gives an error for a request whose class is not in the classes, and for a member that the class does not have. It also gives an error for two requests whose classes have one simple name. It writes no setter for a field, and no constant for a `float` or a `double`.
 
 ## Module assembly
