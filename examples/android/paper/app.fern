@@ -63,30 +63,6 @@ function text_of(e: usize, obj: usize): string {
   return out;
 }
 
-function new_object(e: usize, class_name: string, sig: string, args: usize[]): usize {
-  let c = jni.find_class(e, class_name);
-  let a = jni.jvalues(args);
-  let obj = jni.new_object_a(e, c, jni.get_method_id(e, c, "<init>", sig), a);
-  jni.free_buffer(a);
-  drop(e, c);
-  if (failed(e)) {
-    return 0 as usize;
-  }
-  return obj;
-}
-
-function static_object(e: usize, class_name: string, name: string, sig: string, args: usize[]): usize {
-  let c = jni.find_class(e, class_name);
-  let a = jni.jvalues(args);
-  let got = jni.call_static_object_method_a(e, c, jni.get_static_method_id(e, c, name, sig), a);
-  jni.free_buffer(a);
-  drop(e, c);
-  if (failed(e)) {
-    return 0 as usize;
-  }
-  return got;
-}
-
 function object_field(e: usize, obj: usize, name: string, sig: string): usize {
   let c = jni.get_object_class(e, obj);
   let got = jni.get_object_field(e, obj, jni.get_field_id(e, c, name, sig));
@@ -95,37 +71,6 @@ function object_field(e: usize, obj: usize, name: string, sig: string): usize {
     return 0 as usize;
   }
   return got;
-}
-
-function string_field(e: usize, obj: usize, name: string): string {
-  let s = object_field(e, obj, name, "Ljava/lang/String;");
-  let out = jni.string_of(e, s);
-  drop(e, s);
-  return out;
-}
-
-function bool_method(e: usize, obj: usize, name: string): boolean {
-  let c = jni.get_object_class(e, obj);
-  let a = jni.jvalues([]);
-  let got = jni.call_boolean_method_a(e, obj, jni.get_method_id(e, c, name, "()Z"), a);
-  jni.free_buffer(a);
-  drop(e, c);
-  if (failed(e)) {
-    return false;
-  }
-  return got != 0;
-}
-
-function long_method(e: usize, obj: usize, name: string): i64 {
-  let c = jni.get_object_class(e, obj);
-  let a = jni.jvalues([]);
-  let got = jni.call_long_method_a(e, obj, jni.get_method_id(e, c, name, "()J"), a);
-  jni.free_buffer(a);
-  drop(e, c);
-  if (failed(e)) {
-    return 0i64;
-  }
-  return got as i64;
 }
 
 function object_method(e: usize, obj: usize, name: string, sig: string, args: usize[]): usize {
@@ -154,6 +99,19 @@ function value_or[T](r: Result[T, jni.JavaError], d: T): T {
     Err(err) => {
       log.info("paper: " + err.message());
       return d;
+    }
+  }
+}
+
+// True when the Java code of a call with no result did not throw.
+function done(r: Result[void, jni.JavaError]): boolean {
+  match (r) {
+    Ok(_) => {
+      return true;
+    },
+    Err(err) => {
+      log.info("paper: " + err.message());
+      return false;
     }
   }
 }
@@ -388,11 +346,6 @@ function expand_notifications(ctx: usize): void {
 
 // --- the system bars
 
-// View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR and SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR.
-const LIGHT_STATUS: i32 = 8192;
-
-const LIGHT_NAV: i32 = 16;
-
 // Asks the UI thread to give the bars dark icons where the screen behind
 // them is light. Bars.fern holds the flags for the task.
 function set_bars(ctx: usize, light_top: boolean, light_bottom: boolean): void {
@@ -400,10 +353,10 @@ function set_bars(ctx: usize, light_top: boolean, light_bottom: boolean): void {
   let act = android.activity_object(ctx);
   let flags = 0;
   if (light_top) {
-    flags |= LIGHT_STATUS;
+    flags |= bindings.VIEW_SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
   }
   if (light_bottom) {
-    flags |= LIGHT_NAV;
+    flags |= bindings.VIEW_SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
   }
   let class = jni.load_class(e, act, "dev.fern.paper.Bars");
   if (failed(e) || class == 0 as usize) {
@@ -415,7 +368,10 @@ function set_bars(ctx: usize, light_top: boolean, light_bottom: boolean): void {
   let task = jni.new_object_a(e, class, jni.get_method_id(e, class, "<init>", "()V"), a);
   jni.free_buffer(a);
   if (!failed(e) && task != 0 as usize) {
-    let posted = jni.call_void(e, act, "runOnUiThread", "(Ljava/lang/Runnable;)V", [task]);
+    if let Ok(j) = bindings.classes(e) {
+      let posted = done(j.activity.run_on_ui_thread(e, bindings.Activity { ref: act }, jni.Object { ref: task }));
+      j.release(e);
+    }
     drop(e, task);
   }
   drop(e, class);
@@ -434,13 +390,17 @@ pub function bars_run(env: usize, thiz: usize): void {
   unsafe {
     obj = __load_ptr(activity + 24 as usize);
   }
-  let window = object_method(env, obj, "getWindow", "()Landroid/view/Window;", []);
-  let decor = object_method(env, window, "getDecorView", "()Landroid/view/View;", []);
-  if (decor != 0 as usize) {
-    let ok = jni.call_void(env, decor, "setSystemUiVisibility", "(I)V", [flags as usize]);
+  let Ok(j) = bindings.classes(env) else {
+    return;
+  };
+  let window = value_or(j.activity.get_window(env, bindings.Activity { ref: obj }), bindings.Window { ref: 0 as usize });
+  let decor = value_or(j.window.get_decor_view(env, window), bindings.View { ref: 0 as usize });
+  if (!decor.is_null()) {
+    let ok = done(j.view.set_system_ui_visibility(env, decor, flags));
   }
-  drop(env, decor);
-  drop(env, window);
+  drop(env, decor.ref);
+  drop(env, window.ref);
+  j.release(env);
 }
 
 // --- the home key
@@ -597,18 +557,18 @@ function default_allowed(ctx: usize): string[] {
 // The intents of the held notifications, by key, in a java.util.HashMap
 // whose global reference Filter.fern holds. A PendingIntent cannot go in a
 // file, so the intents last as long as the process.
-function intents(e: usize, class: usize): usize {
+function intents(e: usize, j: bindings.Classes, class: usize): usize {
   let field = jni.get_static_field_id(e, class, "fern", "J");
   let map = jni.get_static_long_field(e, class, field);
   if (map != 0 as usize) {
     return map;
   }
-  let fresh = new_object(e, "java/util/HashMap", "()V", []);
-  if (fresh == 0 as usize) {
+  let fresh = value_or(j.hash_map.new(e), bindings.HashMap { ref: 0 as usize });
+  if (fresh.is_null()) {
     return 0 as usize;
   }
-  let global = jni.new_global_ref(e, fresh);
-  drop(e, fresh);
+  let global = jni.new_global_ref(e, fresh.ref);
+  drop(e, fresh.ref);
   let set = jni.set_static_long_field(e, class, field, global);
   return global;
 }
@@ -617,13 +577,18 @@ function files_dir(e: usize, context: usize): string {
   let Ok(j) = bindings.classes(e) else {
     return "";
   };
+  let out = files_dir_of(e, j, context);
+  j.release(e);
+  return out;
+}
+
+function files_dir_of(e: usize, j: bindings.Classes, context: usize): string {
   let dir = value_or(j.context.get_files_dir(e, bindings.Context { ref: context }), bindings.File { ref: 0 as usize });
   let out = "";
   if (!dir.is_null()) {
     out = value_or(j.file.get_absolute_path(e, dir), "");
     drop(e, dir.ref);
   }
-  j.release(e);
   return out;
 }
 
@@ -639,10 +604,16 @@ function write_text(path: string, text: string): void {
 }
 
 function app_label(e: usize, context: usize, pkg: string): string {
-  let out = pkg;
   let Ok(j) = bindings.classes(e) else {
-    return out;
+    return pkg;
   };
+  let out = app_label_of(e, j, context, pkg);
+  j.release(e);
+  return out;
+}
+
+function app_label_of(e: usize, j: bindings.Classes, context: usize, pkg: string): string {
+  let out = pkg;
   let pm = value_or(j.context.get_package_manager(e, bindings.Context { ref: context }), bindings.PackageManager { ref: 0 as usize });
   let info = value_or(j.package_manager.get_application_info(e, pm, pkg, 0), bindings.ApplicationInfo { ref: 0 as usize });
   if (!info.is_null()) {
@@ -655,95 +626,97 @@ function app_label(e: usize, context: usize, pkg: string): string {
     drop(e, info.ref);
   }
   drop(e, pm.ref);
-  j.release(e);
   return out;
 }
 
-function extra_text(e: usize, extras: usize, name: string): string {
-  if (extras == 0 as usize) {
+function extra_text(e: usize, j: bindings.Classes, extras: bindings.Bundle, name: string): string {
+  if (extras.is_null()) {
     return "";
   }
-  let k = jni.new_string(e, name);
-  let cs = object_method(e, extras, "getCharSequence", "(Ljava/lang/String;)Ljava/lang/CharSequence;", [k]);
-  drop(e, k);
-  let out = text_of(e, cs);
-  drop(e, cs);
+  let cs = value_or(j.bundle.get_char_sequence(e, extras, name), jni.Object { ref: 0 as usize });
+  let out = text_of(e, cs.ref);
+  drop(e, cs.ref);
   return out;
 }
-
-// Notification.FLAG_GROUP_SUMMARY: the notification that stands for a group.
-const GROUP_SUMMARY: i32 = 512;
 
 // Takes the notification `sbn` out of the shade when the filter holds it,
 // keeps it in the held file, and tells the home screen.
-function hold(e: usize, service: usize, sbn: usize): void {
-  let dir = files_dir(e, service);
+function hold(e: usize, j: bindings.Classes, service: usize, sbn: bindings.StatusBarNotification): void {
+  let dir = files_dir_of(e, j, service);
   let settings = paper.parse_settings(read_text(dir + "/" + control.SETTINGS_FILE));
-  let pkg_s = object_method(e, sbn, "getPackageName", "()Ljava/lang/String;", []);
-  let pkg = jni.string_of(e, pkg_s);
-  drop(e, pkg_s);
-  let n = object_method(e, sbn, "getNotification", "()Landroid/app/Notification;", []);
-  if (n == 0 as usize) {
+  let pkg = value_or(j.status_bar_notification.get_package_name(e, sbn), "");
+  let n = value_or(j.status_bar_notification.get_notification(e, sbn), bindings.Notification { ref: 0 as usize });
+  if (n.is_null()) {
     return;
   }
-  let category = string_field(e, n, "category");
-  if (!paper.holds(settings, OWN_PACKAGE, pkg, category, bool_method(e, sbn, "isClearable"), bool_method(e, sbn, "isOngoing"))) {
-    drop(e, n);
+  let category = value_or(j.notification.category(e, n), "");
+  let clearable = value_or(j.status_bar_notification.is_clearable(e, sbn), false);
+  let ongoing = value_or(j.status_bar_notification.is_ongoing(e, sbn), false);
+  if (!paper.holds(settings, OWN_PACKAGE, pkg, category, clearable, ongoing)) {
+    drop(e, n.ref);
     return;
   }
-  let key_s = object_method(e, sbn, "getKey", "()Ljava/lang/String;", []);
-  let key = jni.string_of(e, key_s);
-  let c = jni.get_object_class(e, n);
-  let flags = jni.get_int_field(e, n, jni.get_field_id(e, c, "flags", "I"));
-  drop(e, c);
-  if ((flags & GROUP_SUMMARY) == 0) {
-    let extras = object_field(e, n, "extras", "Landroid/os/Bundle;");
-    let text = extra_text(e, extras, "android.bigText");
-    if (text.len() == 0) {
-      text = extra_text(e, extras, "android.text");
-    }
-    let h = paper.Held { pkg: pkg, app: app_label(e, service, pkg), title: extra_text(e, extras, "android.title"), text: text, posted: long_method(e, sbn, "getPostTime"), key: key };
-    drop(e, extras);
-    let held_path = dir + "/" + control.HELD_FILE;
-    write_text(held_path, paper.format_held(paper.add_held(paper.parse_held(read_text(held_path)), h)));
-    let pi = object_field(e, n, "contentIntent", "Landroid/app/PendingIntent;");
-    let class = jni.get_object_class(e, service);
-    let map = intents(e, class);
-    if (pi != 0 as usize && map != 0 as usize) {
-      drop(e, object_method(e, map, "put", "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;", [key_s, pi]));
-    }
-    drop(e, class);
-    drop(e, pi);
+  let key = value_or(j.status_bar_notification.get_key(e, sbn), "");
+  if ((value_or(j.notification.flags(e, n), 0) & bindings.NOTIFICATION_FLAG_GROUP_SUMMARY) == 0) {
+    keep(e, j, service, sbn, n, paper.Held { pkg: pkg, app: "", title: "", text: "", posted: 0i64, key: key }, dir);
   }
-  let cancelled = jni.call_void(e, service, "cancelNotification", "(Ljava/lang/String;)V", [key_s]);
-  drop(e, key_s);
-  drop(e, n);
+  let cancelled = done(j.notification_listener_service.cancel_notification(e, bindings.NotificationListenerService { ref: service }, key));
+  drop(e, n.ref);
   let activity = android.live_activity(e);
   if (activity != 0 as usize) {
     android.send(activity, control.KIND_HELD, 0 as usize);
   }
 }
 
+// Writes the notification `n` of `sbn` to the held file, and keeps its
+// intent. `h` has the package and the key of the notification.
+function keep(e: usize, j: bindings.Classes, service: usize, sbn: bindings.StatusBarNotification, n: bindings.Notification, h: paper.Held, dir: string): void {
+  let extras = value_or(j.notification.extras(e, n), no_bundle());
+  let text = extra_text(e, j, extras, "android.bigText");
+  if (text.len() == 0) {
+    text = extra_text(e, j, extras, "android.text");
+  }
+  let held = paper.Held { pkg: h.pkg, app: app_label_of(e, j, service, h.pkg), title: extra_text(e, j, extras, "android.title"), text: text, posted: value_or(j.status_bar_notification.get_post_time(e, sbn), 0i64), key: h.key };
+  drop(e, extras.ref);
+  let held_path = dir + "/" + control.HELD_FILE;
+  write_text(held_path, paper.format_held(paper.add_held(paper.parse_held(read_text(held_path)), held)));
+  let pi = value_or(j.notification.content_intent(e, n), bindings.PendingIntent { ref: 0 as usize });
+  let class = jni.get_object_class(e, service);
+  let map = intents(e, j, class);
+  if (!pi.is_null() && map != 0 as usize) {
+    let k = jni.new_string(e, h.key);
+    drop(e, value_or(j.hash_map.put(e, bindings.HashMap { ref: map }, jni.Object { ref: k }, pi.object()), jni.Object { ref: 0 as usize }).ref);
+    drop(e, k);
+  }
+  drop(e, class);
+  drop(e, pi.ref);
+}
+
 @jni("dev.fern.paper.Filter extends android.service.notification.NotificationListenerService", "void onNotificationPosted(android.service.notification.StatusBarNotification)")
 pub function filter_posted(env: usize, thiz: usize, sbn: usize): void {
-  hold(env, thiz, sbn);
+  if let Ok(j) = bindings.classes(env) {
+    hold(env, j, thiz, bindings.StatusBarNotification { ref: sbn });
+    j.release(env);
+  }
   let cleared = failed(env);
 }
 
 @jni("dev.fern.paper.Filter", "void onListenerConnected()")
 pub function filter_connected(env: usize, thiz: usize): void {
-  let all = object_method(env, thiz, "getActiveNotifications", "()[Landroid/service/notification/StatusBarNotification;", []);
-  if (all == 0 as usize) {
+  let Ok(j) = bindings.classes(env) else {
     return;
+  };
+  let all = value_or(j.notification_listener_service.get_active_notifications(env, bindings.NotificationListenerService { ref: thiz }), jni.Object { ref: 0 as usize });
+  if (!all.is_null()) {
+    for i in 0..jni.get_array_length(env, all.ref) {
+      let sbn = jni.get_object_array_element(env, all.ref, i);
+      hold(env, j, thiz, bindings.StatusBarNotification { ref: sbn });
+      let cleared = failed(env);
+      drop(env, sbn);
+    }
+    drop(env, all.ref);
   }
-  let n = jni.get_array_length(env, all);
-  for i in 0..n {
-    let sbn = jni.get_object_array_element(env, all, i);
-    hold(env, thiz, sbn);
-    let cleared = failed(env);
-    drop(env, sbn);
-  }
-  drop(env, all);
+  j.release(env);
 }
 
 // ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED: Android 14 lets an
@@ -754,39 +727,52 @@ const BACKGROUND_START_ALLOWED: i32 = 1;
 // or else its app.
 function open_held(ctx: usize, pkg: string, key: string): void {
   let e = android.env(ctx);
-  let act = android.activity_object(ctx);
-  let class = jni.load_class(e, act, "dev.fern.paper.Filter");
-  if (!failed(e) && class != 0 as usize) {
-    let map = jni.get_static_long_field(e, class, jni.get_static_field_id(e, class, "fern", "J"));
-    drop(e, class);
-    if (map != 0 as usize) {
-      let k = jni.new_string(e, key);
-      let pi = object_method(e, map, "remove", "(Ljava/lang/Object;)Ljava/lang/Object;", [k]);
-      drop(e, k);
-      if (pi != 0 as usize) {
-        let opts = static_object(e, "android/app/ActivityOptions", "makeBasic", "()Landroid/app/ActivityOptions;", []);
-        if (android.sdk_version(ctx) >= 34) {
-          drop(e, object_method(e, opts, "setPendingIntentBackgroundActivityStartMode", "(I)Landroid/app/ActivityOptions;", [BACKGROUND_START_ALLOWED as usize]));
-        }
-        let bundle = object_method(e, opts, "toBundle", "()Landroid/os/Bundle;", []);
-        let sent = jni.call_void(e, pi, "send", "(Landroid/content/Context;ILandroid/content/Intent;Landroid/app/PendingIntent$OnFinished;Landroid/os/Handler;Ljava/lang/String;Landroid/os/Bundle;)V", [act, 0 as usize, 0 as usize, 0 as usize, 0 as usize, 0 as usize, bundle]);
-        drop(e, bundle);
-        drop(e, opts);
-        drop(e, pi);
-        if (sent) {
-          return;
-        }
-      }
-    }
-  }
   let Ok(j) = bindings.classes(e) else {
     return;
   };
-  let pm = package_manager(ctx, e, j);
-  let intent = value_or(j.package_manager.get_launch_intent_for_package(e, pm, pkg), no_intent());
-  drop(e, pm.ref);
-  let started = start_intent(ctx, e, j, intent, no_bundle());
+  if (!send_held(ctx, e, j, key)) {
+    let pm = package_manager(ctx, e, j);
+    let intent = value_or(j.package_manager.get_launch_intent_for_package(e, pm, pkg), no_intent());
+    drop(e, pm.ref);
+    let started = start_intent(ctx, e, j, intent, no_bundle());
+  }
   j.release(e);
+}
+
+// Sends the intent that the process keeps for the held notification with
+// the key `key`. False when the process has no such intent.
+function send_held(ctx: usize, e: usize, j: bindings.Classes, key: string): boolean {
+  let act = android.activity_object(ctx);
+  let class = jni.load_class(e, act, "dev.fern.paper.Filter");
+  if (failed(e) || class == 0 as usize) {
+    return false;
+  }
+  let map = jni.get_static_long_field(e, class, jni.get_static_field_id(e, class, "fern", "J"));
+  drop(e, class);
+  if (map == 0 as usize) {
+    return false;
+  }
+  let k = jni.new_string(e, key);
+  let pi = value_or(j.hash_map.remove(e, bindings.HashMap { ref: map }, jni.Object { ref: k }), jni.Object { ref: 0 as usize });
+  drop(e, k);
+  if (pi.is_null()) {
+    return false;
+  }
+  let opts = value_or(j.activity_options.make_basic(e), bindings.ActivityOptions { ref: 0 as usize });
+  // The method came in Android 14, so the wrappers do not have it: a
+  // device that lacks a member of the struct of IDs gives an error for
+  // the struct.
+  if (android.sdk_version(ctx) >= 34) {
+    drop(e, object_method(e, opts.ref, "setPendingIntentBackgroundActivityStartMode", "(I)Landroid/app/ActivityOptions;", [BACKGROUND_START_ALLOWED as usize]));
+  }
+  let bundle = value_or(j.activity_options.to_bundle(e, opts), no_bundle());
+  // The permission argument is the Java value null, and a wrapper gives a
+  // string that is not null.
+  let sent = jni.call_void(e, pi.ref, "send", "(Landroid/content/Context;ILandroid/content/Intent;Landroid/app/PendingIntent$OnFinished;Landroid/os/Handler;Ljava/lang/String;Landroid/os/Bundle;)V", [act, 0 as usize, 0 as usize, 0 as usize, 0 as usize, 0 as usize, bundle.ref]);
+  drop(e, bundle.ref);
+  drop(e, opts.ref);
+  drop(e, pi.ref);
+  return sent;
 }
 
 // --- the device
