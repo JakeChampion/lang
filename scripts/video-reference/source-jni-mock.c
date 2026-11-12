@@ -13,6 +13,8 @@ enum { CONTEXT, RESOLVER, URI, ASSET, PARCEL, CLASS, STRING, EXCEPTION, URI_CLAS
 enum { CLOSE=1, PARSE, RESOLVE, OPEN, START, LENGTH, GET_PARCEL, GET_FD };
 static int objects[10], mode, pending, locals, frames, original = -1, closed;
 static void *table[235], **env_table = table;
+static int asset_seed = -1;
+static int64_t asset_offset, asset_bytes;
 static const char *names[] = {"", "close", "parse", "getContentResolver", "openAssetFileDescriptor", "getStartOffset", "getDeclaredLength", "getParcelFileDescriptor", "getFd"};
 static const char *sigs[] = {"", "()V", "(Ljava/lang/String;)Landroid/net/Uri;", "()Landroid/content/ContentResolver;", "(Landroid/net/Uri;Ljava/lang/String;)Landroid/content/res/AssetFileDescriptor;", "()J", "()J", "()Landroid/os/ParcelFileDescriptor;", "()I"};
 static void *local(int kind) { locals++; assert(locals < 32); return objects + kind; }
@@ -57,7 +59,25 @@ static void *parse(void *e, void *cls, void *id, Value *args) {
     if (mode == 6) { pending = 1; return 0; }
     return mode == 7 ? 0 : local(URI);
 }
+/* A real sparse asset file supplies native packet-reader tests. */
+void mock_source_asset(const uint8_t *data, int32_t count, int64_t offset) {
+    assert(asset_seed == -1 && data && count > 0 && offset >= 32);
+    char name[] = "/tmp/fern-source-asset-XXXXXX";
+    asset_seed = mkstemp(name); assert(asset_seed >= 0); assert(unlink(name) == 0);
+    uint8_t prefix[32]; memset(prefix, 0xa5, sizeof(prefix));
+    assert(write(asset_seed, prefix, sizeof(prefix)) == sizeof(prefix));
+    assert(lseek(asset_seed, offset, SEEK_SET) == offset);
+    assert(write(asset_seed, data, (size_t)count) == count);
+    uint8_t suffix[16]; memset(suffix, 0x5a, sizeof(suffix));
+    assert(write(asset_seed, suffix, sizeof(suffix)) == sizeof(suffix));
+    assert(lseek(asset_seed, 3, SEEK_SET) == 3);
+    asset_offset = offset; asset_bytes = count;
+}
+void mock_source_asset_close(void) { assert(asset_seed >= 0); assert(close(asset_seed) == 0); asset_seed = -1; }
+int mock_source_position(int fd) { return lseek(fd, 0, SEEK_CUR) == 3; }
+void mock_source_truncate(int fd, int64_t length) { assert(ftruncate(fd, length) == 0); }
 static void create_file(void) {
+    if (mode == 22) { assert(asset_seed >= 0); original = dup(asset_seed); assert(original >= 0); return; }
     if (mode == 18) {
         int ends[2]; assert(pipe(ends) == 0); original = ends[0]; assert(close(ends[1]) == 0); return;
     }
@@ -86,13 +106,13 @@ static int64_t long_call(void *e, void *obj, void *id, Value *args) {
     (void)e; (void)args; assert(obj == objects + ASSET && !pending);
     if ((uintptr_t)id == START) {
         if (mode == 11) { pending = 1; return 0; }
-        return mode == 15 ? -1 : 8;
+        return mode == 22 ? asset_offset : mode == 15 ? -1 : 8;
     }
     assert((uintptr_t)id == LENGTH);
     if (mode == 12) { pending = 1; return 0; }
     if (mode == 16) return -2;
     if (mode == 17) return 33;
-    return mode == 21 ? -1 : 16;
+    return mode == 22 ? asset_bytes : mode == 21 ? -1 : 16;
 }
 static int32_t int_call(void *e, void *obj, void *id, Value *args) {
     (void)e; (void)args; assert(obj == objects + PARCEL && (uintptr_t)id == GET_FD && !pending);

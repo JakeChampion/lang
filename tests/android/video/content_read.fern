@@ -1,0 +1,40 @@
+// Check native content bytes before the fixture starts platform video playback.
+import "std/android/video/source";
+import "std/video/frame";
+import "std/crypto";
+import "std/hex";
+
+pub struct Check { bytes: i64, digest: string }
+
+pub function inspect_with(length: i64, read: (i64, i32) => Result[u8[], frame.VideoError]): Result[Check, frame.VideoError] {
+  if (length <= 0i64) {
+    return Err(frame.Header);
+  }
+  if (length > 2097152i64) {
+    return Err(frame.Limit);
+  }
+  let hash = crypto.sha256_new();
+  let offset = 0i64;
+  while (offset < length) {
+    let remaining = length - offset;
+    let count = if (remaining < 4096i64) { remaining as i32 } else { 4096 };
+    let bytes = read(offset, count)?;
+    if (bytes.len() == 0) {
+      return Err(frame.Truncated);
+    }
+    if (bytes.len() > count) {
+      return Err(frame.Platform);
+    }
+    hash = hash.update(bytes);
+    offset += bytes.len() as i64;
+  }
+  let end = read(length, 1)?;
+  if (end.len() != 0) {
+    return Err(frame.Platform);
+  }
+  return Ok(Check { bytes: offset, digest: hex.encode(hash.finish()) });
+}
+
+pub function inspect(src: source.Source): Result[Check, frame.VideoError] {
+  return inspect_with(src.length, (offset: i64, count: i32): Result[u8[], frame.VideoError] => src.read_at(offset, count));
+}
