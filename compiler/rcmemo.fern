@@ -75,12 +75,8 @@ function build_stamp(dir: string): Option[string] {
   let Ok(raw) = read_file_bytes(path) else {
     return None;
   };
-  let bytes = "";
-  unsafe {
-    bytes = string_from_bytes_unchecked(raw);
-  }
-  let d = util.roll_wide(util.digest_start(), bytes.len() as i64);
-  let stamp = util.digest_text(util.roll(util.roll(d, __str_hash(bytes, 0)), __str_hash(bytes, 1)));
+  let d = util.roll_wide(util.digest_start(), raw.len() as i64);
+  let stamp = util.digest_text(util.roll(util.roll(d, __crc32_cksum_array(0, raw[:])), __crc32_ieee_array(0, raw[:])));
   record_stamp(file, lines, meta + " " + stamp);
   return Some(stamp);
 }
