@@ -1,6 +1,6 @@
 # Native MP4 and QuickTime video packet index
 
-This module indexes self-contained AVC, HEVC, AV1, and QTRLE video tracks in a complete MP4 or MOV byte view.
+This module indexes self-contained AVC, HEVC, VP9, AV1, and QTRLE video tracks in a complete MP4 or MOV byte view.
 It reuses the bounded ISO box, sample-table, clock, and data-reference readers of the audio library.
 Packet ranges refer to media-data payloads in the caller's original view. The index does not copy packet payloads.
 
@@ -29,12 +29,23 @@ AV1 configuration uses `length_size` zero, the complete record in `csd0`, and em
 The index does not convert AV1 packets to Annex B or validate their coded payload syntax.
 AV1 descriptions report `depth` zero. The record, rather than this legacy field, describes precision.
 
+`vp09` descriptions require one version-one `vpcC` box with zero flags and no initialization data.
+`std/video/vp9/configuration` validates its profile, precision, chroma, level identifier, and RGB constraints before configuration allocation.
+VP9 configuration uses `length_size` zero, WebM CodecPrivate in `csd0`, and empty `csd1`.
+The four one-byte fields are profile, level, precision, and chroma, each with its identifier and one-byte length.
+This matches Android's conversion from `vpcC`. It does not expose container color metadata through the index.
+
+VP9 descriptions report `depth` zero. Sample-entry dimensions retain the existing pixel budget.
+The index preserves complete VP9 sample bytes, including any superframe index.
+It does not inspect sample headers, confirm sample-to-record agreement, or establish decoder support.
+It does not convert VP9 packets to Annex B.
+
 QTRLE descriptions require version zero, one frame per sample, and the default color-table identifier.
 Palette depths, RGB555, and other sample-description versions return `Unsupported`.
 The caller must start QTRLE decode from a sync packet and preserve previous pixels for delta packets.
 
 Legacy files without `ftyp` are accepted only when every indexed video description is QTRLE.
-AVC, HEVC, and AV1 still require `ftyp`. A malformed or duplicate `ftyp` remains an error.
+AVC, HEVC, VP9, and AV1 still require `ftyp`. A malformed or duplicate `ftyp` remains an error.
 
 Limits bound input bytes, boxes, tracks, packets, descriptions, edits, dimensions, and each packet.
 The packet budget is cumulative across video tracks. The track budget includes non-video tracks.
@@ -47,10 +58,11 @@ The complete byte view uses signed 32-bit indices. This API does not stream a la
 
 ```fern
 <<*>>=
-// This module indexes bounded AVC, HEVC, AV1, and QTRLE packets in a complete byte view.
+// This module indexes bounded AVC, HEVC, VP9, AV1, and QTRLE packets in a complete byte view.
 import "std/video/frame";
 import "std/video/nal";
 import "std/video/av1/configuration";
+import "std/video/vp9/configuration" as vp9config;
 import "std/video/mp4/timing";
 import "std/audio/mp4/boxes";
 import "std/audio/mp4/tables";
@@ -61,7 +73,7 @@ import "std/audio/wire";
 import "core/cmp";
 
 @derive(cmp.Eq, cmp.Debug)
-pub enum Codec { AVC, HEVC, QTRLE, AV1 }
+pub enum Codec { AVC, HEVC, QTRLE, AV1, VP9 }
 
 pub struct Limits { video: frame.Limits, max_input_bytes: i32, max_boxes: i32, max_tracks: i32, max_packets: i32, max_descriptions: i32, max_edits: i32 }
 
@@ -106,6 +118,9 @@ function codec(kind: u32): Result[Codec, pcm.AudioError] {
   if (kind == boxes.tag("av01")) {
     return Ok(AV1);
   }
+  if (kind == boxes.tag("vp09")) {
+    return Ok(VP9);
+  }
   return Err(pcm.Unsupported);
 }
 
@@ -120,6 +135,13 @@ function av1_configuration(input: [u8], format: frame.Format, limits: frame.Limi
   for byte in input {
     bytes = bytes.append(byte);
   }
+  return Ok(nal.Config { length_size: 0, csd0: bytes, csd1: [] });
+}
+
+function vp9_configuration(input: [u8], limits: frame.Limits): Result[nal.Config, pcm.AudioError] {
+  let h = match (vp9config.inspect(input, limits)) { Ok(value) => value, Err(error) => { return Err(audio_error(error)); } };
+  // Android uses WebM CodecPrivate fields rather than the MP4 box payload.
+  let bytes = [1u8, 1u8, h.profile as u8, 2u8, 1u8, h.level as u8, 3u8, 1u8, h.bit_depth as u8, 4u8, 1u8, h.chroma_subsampling as u8];
   return Ok(nal.Config { length_size: 0, csd0: bytes, csd1: [] });
 }
 
@@ -139,6 +161,10 @@ function decoder_configuration(input: [u8], children: [boxes.Box], codec: Codec,
   if (codec == AV1) {
     let record = boxes.required(children, "av1C")?;
     return av1_configuration(input[record.data:record.end], format, limits);
+  }
+  if (codec == VP9) {
+    let record = boxes.required(children, "vpcC")?;
+    return vp9_configuration(input[record.data:record.end], limits);
   }
   return nal_configuration(input, children, codec, limits);
 }
