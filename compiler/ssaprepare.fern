@@ -93,13 +93,16 @@ pub function finish_formed(lowered: irtables.Lowered, selected: physicalbody.Sel
 
 pub function with_selects(b: Body): Body {
   let picked = ssa.select_branches(b.formed.f);
+  let returned = ssa.return_calls(picked.f);
+  let from = util.append_all(picked.from, returned.from);
+  let to = util.append_all(picked.to, returned.to);
   let terms = b.source.terms;
-  for k in 0..picked.from.len() {
-    if (picked.from[k] < terms.len() && picked.to[k] < terms.len()) {
-      terms = terms.with(picked.to[k], terms[picked.from[k]]);
+  for k in 0..from.len() {
+    if (from[k] < terms.len() && to[k] < terms.len()) {
+      terms = terms.with(to[k], terms[from[k]]);
     }
   }
-  return Body { ...b, formed: ssa.Formed { ...b.formed, f: ssa.fuse_and_not(ssa.fuse_carries(picked.f)) }, source: SourceLines { ...b.source, terms: terms } };
+  return Body { ...b, formed: ssa.Formed { ...b.formed, f: ssa.fuse_and_not(ssa.fuse_carries(returned.f)) }, source: SourceLines { ...b.source, terms: terms } };
 }
 
 pub struct SourceLines { values: sourcepos.SourcePos[], terms: sourcepos.SourcePos[] }
