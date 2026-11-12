@@ -3903,12 +3903,35 @@ function token_split_at(f: SFunc): TokenSplit {
     let found = token_entry(f, at, defs, p);
     if (found.p >= 0) {
       let chain = token_chain(f, at, defs, found);
-      if (chain.heads.len() > 0 && chain.e != p && util.index_of_i32(chain.heads, chain.e) < 0) {
+      if (chain.heads.len() > 0 && chain.e != p && util.index_of_i32(chain.heads, chain.e) < 0 && token_copyable(f, chain)) {
         return chain;
       }
     }
   }
   return no_token_split();
+}
+
+// Whether each instruction the split copies can be in a function twice. A
+// flat op and a dyn dispatch name their labels after the index of their op,
+// not after their result, so a second copy defines those labels again.
+function token_copyable(f: SFunc, sp: TokenSplit): boolean {
+  for k in 0..sp.heads.len() {
+    for part in [sp.heads[k], sp.fast_arms[k], sp.slow_arms[k]] {
+      if (part >= 0 && op_indexed(f.blocks[part])) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function op_indexed(b: SBlock): boolean {
+  for ins in b.insts {
+    if (ins.kind_tag == FLAT_OP || ins.kind_tag == DYN_DISPATCH) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // The token phi: one arm of the test is empty, the other holds one zero, and

@@ -81,3 +81,33 @@ func TestSelfHostSSATokenSplitReusesLoads(t *testing.T) {
 		t.Errorf("%d blocks of ins store the value field with no allocation, want at most 11", writeBacks)
 	}
 }
+
+// A flat op names its labels after the index of its op, so the split must
+// not copy one to both sides. examples/tests/ulc_codec.fern has a byte copy
+// between two token tests: on arm64 the copy defined its four labels twice.
+func TestSelfHostSSATokenSplitCopiesNoLabel(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	src, err := filepath.Abs("../../../examples/tests/ulc_codec.fern")
+	if err != nil {
+		t.Fatal(err)
+	}
+	label := regexp.MustCompile(`(?m)^([.A-Za-z_][^ \n]*):$`)
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			asm, err := os.ReadFile(cli.emit(t, src, target))
+			if err != nil {
+				t.Fatal(err)
+			}
+			seen := map[string]bool{}
+			for _, m := range label.FindAllStringSubmatch(string(asm), -1) {
+				if seen[m[1]] {
+					t.Fatalf("the label %s is defined twice", m[1])
+				}
+				seen[m[1]] = true
+			}
+			if len(seen) == 0 {
+				t.Fatal("the assembly holds no label")
+			}
+		})
+	}
+}
