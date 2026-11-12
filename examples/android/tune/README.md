@@ -86,6 +86,10 @@ file has Vorbis comments. An M4A file has an `ilst` box, and a WAV file has
 an INFO list. A file with no tag takes them
 from its path: `Artist/Album/03 Title.flac`.
 
+A long press on the icon of the app in the launcher shows two shortcuts,
+from `std/android/shortcuts`. "Shuffle all" plays each track of the
+library in a new order, and "Favorites" plays that playlist.
+
 When the player finds no file, it makes three tunes in its own directory:
 it makes the samples of a melody, and writes one FLAC file and two WAV
 files.

@@ -658,6 +658,19 @@ function test_the_settings(): test.TestOutcome {
   return test.assert_eq([light.to_string(), dark.to_string(), painted.to_string(), tabs.map((b: boolean): string => b.to_string()).join(","), hidden, kept.to_string(), again, started].join(" | "), "true | true | true | true,false,true,false,true | music/loose 3 0 | 3 | 4 0 | 1111");
 }
 
+// The shortcuts of the launcher play each track in an order that a number
+// chooses, or play a playlist.
+function test_the_shortcuts_of_the_launcher(): test.TestOutcome {
+  let s = sim.send(started(), tune.ShuffleAll(41));
+  let m = s.shell.app.model;
+  let first = order(m);
+  let all = cmp.sort(m.queue).map((i: i32): string => i.to_string()).join("") + " " + m.playing.to_string() + m.shuffle.to_string();
+  let other = order(sim.send(started(), tune.ShuffleAll(977)).shell.app.model);
+  let none = order(sim.send(started(), tune.PlayList(tune.FAVORITES)).shell.app.model);
+  let list = sim.send(started(), tune.PlayList("mix")).shell.app.model;
+  return test.assert_eq([all, (first != other).to_string(), none, order(list), list.playing.to_string(), tune.update(tune.start([]), tune.ShuffleAll(3)).playing.to_string()].join(" | "), "0123 truetrue | true | @-1 | 2,0@0 | true | false");
+}
+
 function main(): i32 {
   let r = test.new("examples/android/tune");
   r = r.it("the scan reads the tags and the paths of its files", test_scan_reads_tags_and_paths);
@@ -685,5 +698,6 @@ function main(): i32 {
   r = r.it("the sleep timer stops the player", test_the_sleep_timer);
   r = r.it("a track shows its lyrics", test_the_lyrics_of_a_track);
   r = r.it("the settings choose the theme, the tabs and the hidden folders", test_the_settings);
+  r = r.it("the shortcuts of the launcher play the library or a playlist", test_the_shortcuts_of_the_launcher);
   return r.finish();
 }

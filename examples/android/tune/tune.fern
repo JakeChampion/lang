@@ -147,6 +147,7 @@ pub enum Want { Load(i32), Resume, Hold, Seek(f64), Scan, Grant, List(string), K
 // number of semitones above the pitch of the file. `sleep_min` is the
 // time of the sleep timer in minutes, or 0, and `sleep_us` is the time of
 // sound that is left before the timer stops the player, in microseconds.
+// `salt` changes the order that shuffle gives.
 // `settings` tells that the screen of the settings shows. `look` is the
 // theme that the person chose. `hidden` has the directories whose files
 // are not in the library, and `off` has the lists that have no tab. `open` tells that the screen of the
@@ -195,6 +196,7 @@ pub struct Model {
   pitch: i32,
   sleep_min: i32,
   sleep_us: i64,
+  salt: i32,
   settings: boolean,
   look: i32,
   hidden: string[],
@@ -247,7 +249,7 @@ pub struct Model {
 
 // A player with no track yet, which reads the files `scan`.
 pub function start(scan: string[]): Model {
-  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", album_by: "", genre: "", place: "", sort: BY_ALBUM, speed: 100, pitch: 0, sleep_min: 0, sleep_us: 0i64, settings: false, look: LOOK_SYSTEM, hidden: [], off: [], query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, chosen: [], detail: false, lined: false, error: "", wants: [], sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false, covers: [], bare: [], pictures: [], art: None, lyrics: [], sung: false, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: false, wanted: [], playlists: [], list: "", adding: [], naming: false, name: "" };
+  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", album_by: "", genre: "", place: "", sort: BY_ALBUM, speed: 100, pitch: 0, sleep_min: 0, sleep_us: 0i64, salt: 0, settings: false, look: LOOK_SYSTEM, hidden: [], off: [], query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, chosen: [], detail: false, lined: false, error: "", wants: [], sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false, covers: [], bare: [], pictures: [], art: None, lyrics: [], sung: false, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: false, wanted: [], playlists: [], list: "", adding: [], naming: false, name: "" };
 }
 
 // A player with the tracks `tracks` and the playlists `playlists` that it
@@ -330,8 +332,10 @@ pub function start_in(home: string, folder: string): Model {
 // them. `Settings` shows the screen of the settings or not. `Look` goes to
 // the next theme. `TabShown` gives a list its tab, or takes the tab away.
 // `Hide` takes the directory that shows out of the library, and `Unhide`
-// puts a directory back.
-pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean), Menu(i32), MenuClosed, PlayNext, Enqueue, Lined(boolean), Jump(i32), Drop(i32), Closing, Walk(string[]), Listed(string, string[]), OpenList(string), AddTo, SaveQueue, ToList(string), NewList, Named(string), Create, Unlist(i32), DeleteList, Favorite, Imported(string, string[]), Export, Exported(string), Genre(string), Place(string), Sort, ToAlbum, ToArtist, Details, Speed, Pitch, Sleep, Slept(i64), Lyrics, Settings(boolean), Look, TabShown(i32), Hide, Unhide(string) }
+// puts a directory back. `ShuffleAll` plays each track of the library in
+// an order that its number chooses, and `PlayList` plays a playlist: the
+// shortcuts of the launcher send them.
+pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean), Menu(i32), MenuClosed, PlayNext, Enqueue, Lined(boolean), Jump(i32), Drop(i32), Closing, Walk(string[]), Listed(string, string[]), OpenList(string), AddTo, SaveQueue, ToList(string), NewList, Named(string), Create, Unlist(i32), DeleteList, Favorite, Imported(string, string[]), Export, Exported(string), Genre(string), Place(string), Sort, ToAlbum, ToArtist, Details, Speed, Pitch, Sleep, Slept(i64), Lyrics, Settings(boolean), Look, TabShown(i32), Hide, Unhide(string), ShuffleAll(i32), PlayList(string) }
 
 // The key of the album of a track: the artist that the album is under,
 // and its name.
@@ -1330,8 +1334,9 @@ function picked(m: Model, i: i32): Model {
 }
 
 // The queue `order` with each place after `keep` in a new order. The
-// order comes from the numbers, so it is the same each time.
-function mixed(order: i32[], keep: i32): i32[] {
+// order comes from the numbers and from `salt`, so it is the same each
+// time for the same `salt`.
+function mixed(order: i32[], keep: i32, salt: i32): i32[] {
   let out: i32[] = [];
   let rest: i32[] = [];
   for i in 0..order.len() {
@@ -1341,10 +1346,12 @@ function mixed(order: i32[], keep: i32): i32[] {
       rest = rest.append(order[i]);
     }
   }
-  let seed = 7 + order.len() * 31 + keep * 17;
+  let seed = (7 + order.len() * 31 + keep * 17) as i64 + salt as i64;
   while (rest.len() > 0) {
-    seed = (seed * 1103 + 12345) % 65536;
-    let pick = seed % rest.len();
+    // The high bits of this generator change most from one number to the
+    // next.
+    seed = seed * 1103515245i64 + 12345i64 & 2147483647i64;
+    let pick = ((seed >> 16i64) % (rest.len() as i64)) as i32;
     out = out.append(rest[pick]);
     let left: i32[] = [];
     for i in 0..rest.len() {
@@ -1379,7 +1386,7 @@ function started_from(m: Model, i: i32): Model {
         first = first.append(n);
       }
     }
-    return played_at(Model { ...m, queue: mixed(first, 0), chosen: [] }, 0);
+    return played_at(Model { ...m, queue: mixed(first, 0, m.salt), chosen: [] }, 0);
   }
   return played_at(Model { ...m, queue: queue, chosen: [] }, spot);
 }
@@ -1388,7 +1395,7 @@ function started_from(m: Model, i: i32): Model {
 // plays are in a new order. Off: the queue is in the order of the library.
 function shuffled(m: Model, on: boolean): Model {
   if (on) {
-    return Model { ...m, shuffle: true, queue: mixed(m.queue, m.spot) };
+    return Model { ...m, shuffle: true, queue: mixed(m.queue, m.spot, m.salt) };
   }
   let queue = cmp.sort(m.queue);
   let spot = m.spot;
@@ -1726,6 +1733,23 @@ pub function update(own m: Model, msg: Msg): Model {
     },
     Closing => {
       return Model { ...m, wants: m.wants.append(Quit) };
+    },
+    ShuffleAll(salt) => {
+      if (m.tracks.len() == 0) {
+        return m;
+      }
+      let all: i32[] = [];
+      for i in 0..m.tracks.len() {
+        all = all.append(i);
+      }
+      return played_at(Model { ...m, shuffle: true, salt: salt, queue: mixed(all, -1, salt), chosen: [] }, 0);
+    },
+    PlayList(name) => {
+      let songs = listed_songs(m, name);
+      if (songs.len() == 0) {
+        return m;
+      }
+      return played_at(Model { ...m, queue: songs, chosen: [] }, 0);
     },
     OpenList(name) => {
       return Model { ...at_top(m), list: name, query: "", chosen: [] };

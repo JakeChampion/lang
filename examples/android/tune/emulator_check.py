@@ -124,7 +124,24 @@ def main(apk, out):
     if not wait_for(r"tune: closed with (\d+) tracks", timeout=10):
         fail("the back key did not close the app at its second start")
 
-    log = first + logcat()
+    # The launcher has the two shortcuts of the app. A start with the
+    # action of the first one plays the library.
+    known = adb("shell", "dumpsys", "shortcut")
+    for action in ("dev.fern.tune.SHUFFLE", "dev.fern.tune.FAVORITES"):
+        if action not in known:
+            fail(f"the launcher does not have the shortcut {action}")
+    second = logcat()
+    adb("logcat", "-c")
+    adb("shell", "am", "start", "-W", "-n", PACKAGE + "/android.app.NativeActivity", "-a", "dev.fern.tune.SHUFFLE")
+    time.sleep(8)
+    screen(out, "shortcut")
+    if session_state() != 3:
+        fail(f"the shortcut did not play the library: the state of the session is {session_state()}")
+    adb("shell", "input", "keyevent", "4")
+    if not wait_for(r"tune: closed with (\d+) tracks", timeout=10):
+        fail("the back key did not close the app after the shortcut")
+
+    log = first + second + logcat()
     with open(f"{out}/logcat.txt", "w") as f:
         f.write(log)
     for line in crashes(log):
