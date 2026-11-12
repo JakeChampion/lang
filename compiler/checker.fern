@@ -20871,11 +20871,13 @@ struct LuOcc { name: string, line: i32, col: i32 }
 
 struct LuVar { name: string, init: ast.Expr }
 
+struct LuRebind { source: ast.ExprCall, value: ast.ExprIdent, target: string }
+
 struct LuSel { obj: string, field: string, line: i32, col: i32 }
 
 // updates holds, for the base of each update literal `S { ...q, f: v }`, one
 // entry per field the literal replaces.
-struct LuFacts { checked_locals: string[], occ: LuOcc[], vars: LuVar[], assigns: LuVar[], escaping: string[], sels: LuSel[], copy_sels: string[], captured: string[], defer_bare: string[], defer_fields: string[], updates: LuSel[], unpacked: LuVar[], matched: LuVar[] }
+struct LuFacts { checked_locals: string[], occ: LuOcc[], vars: LuVar[], assigns: LuVar[], escaping: string[], sels: LuSel[], copy_sels: string[], captured: string[], defer_bare: string[], defer_fields: string[], updates: LuSel[], unpacked: LuVar[], matched: LuVar[], rebinds: LuRebind[] }
 
 // fresh names the fresh locals once lu_fresh_names has decided them; until
 // then fresh_known is false and lu_fresh_init_in decides from the facts.
@@ -20949,7 +20951,7 @@ function lu_fact_stmt(st: ast.Stmt, own f: LuFacts): LuFacts {
       for arm in m.arms {
         matched = lu_pattern_values(arm.pattern, m.scrutinee, matched);
       }
-      return LuFacts { ...f, matched: matched };
+      return LuFacts { ...f, matched: matched, rebinds: lu_rebind_match(m, f.rebinds) };
     },
     _ => {
       return f;
@@ -21690,33 +21692,93 @@ function lu_assigned_owned(fx: LuFn, name: string, e: ast.Expr, seen: string[]):
   }
   let inner: string[] = seen.append(name);
   if let ast.ExprIdent(src) = e {
-    return lu_assigned_name_owned(fx, src, inner) || lu_payload_of(fx, src.name, name);
+    return lu_assigned_name_owned(fx, src, inner) || lu_payload_of(fx, src, name);
   }
   return lu_unpack_expr_in(fx, e, inner);
 }
 
-// A payload of a match on a call whose result borrows from no argument but
-// target: `match (x.f()) { Ok(y) => { x = y; } }` leaves x the one holder.
-function lu_payload_of(fx: LuFn, name: string, target: string): boolean {
-  if (util.has_str(fx.params, name) || lu_decl_count(fx, name) != 0) {
+// The transfer ends the payload's only use, before any intervening lender access.
+function lu_payload_of(fx: LuFn, value: ast.ExprIdent, target: string): boolean {
+  if (!lu_sole_last_read(fx, value, 0) || lu_occ_count(fx, value.name) != 1) {
     return false;
   }
-  let found = false;
-  for b in fx.facts.matched {
-    if (b.name == name) {
-      if (found) {
-        return false;
-      }
-      let ast.ExprCall(c) = b.init else {
-        return false;
-      };
-      if (!lu_plain_or_declared(fx, c) || lu_call_borrows_beside(fx, c, target)) {
-        return false;
-      }
-      found = true;
+  if (util.has_str(fx.facts.captured, target) || util.has_str(fx.facts.escaping, target)) {
+    return false;
+  }
+  for row in fx.facts.rebinds {
+    if (row.target == target && row.value.line == value.line && row.value.col == value.col && lu_rebind_source(fx, row.source, target)) {
+      return true;
     }
   }
-  return found;
+  return false;
+}
+
+function lu_rebind_match(m: ast.StmtMatch, own acc: LuRebind[]): LuRebind[] {
+  let ast.ExprCall(source) = m.scrutinee else {
+    return acc;
+  };
+  for arm in m.arms {
+    let binders = astwalk.pattern_binders(arm.pattern, []);
+    if (binders.len() != 1) {
+      continue;
+    }
+    let prior: string[] = [];
+    for st in arm.body {
+      if let Some(row) = lu_rebind_statement(st, source, binders, prior) {
+        if (!lu_rebind_guard_reads(m, row.target)) {
+          acc = acc.append(row);
+        }
+      }
+      prior = lu_all_names(st, prior);
+    }
+  }
+  return acc;
+}
+
+function lu_rebind_statement(st: ast.Stmt, source: ast.ExprCall, binders: string[], prior: string[]): Option[LuRebind] {
+  let ast.StmtAssign(a) = st else {
+    return None;
+  };
+  let ast.ExprIdent(value) = a.value else {
+    return None;
+  };
+  if (a.op.len() > 0 || !util.has_str(binders, value.name) || util.has_str(prior, a.target)) {
+    return None;
+  }
+  return Some(LuRebind { source: source, value: value, target: a.target });
+}
+
+function lu_rebind_guard_reads(m: ast.StmtMatch, target: string): boolean {
+  for arm in m.arms {
+    if (arm.has_guard && astwalk.count_ident_expr(arm.guard, target) > 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function lu_rebind_source(fx: LuFn, source: ast.ExprCall, target: string): boolean {
+  if (!lu_plain_or_declared(fx, source) || lu_call_borrows_beside(fx, source, target)) {
+    return false;
+  }
+  if let ast.ExprFieldAccess(field) = source.callee {
+    if (!lu_rebind_argument(field.obj, target)) {
+      return false;
+    }
+  }
+  for arg in source.args {
+    if (!lu_rebind_argument(arg, target)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function lu_rebind_argument(e: ast.Expr, target: string): boolean {
+  if (ow_ident_name(e) == target) {
+    return true;
+  }
+  return astwalk.count_ident_expr(e, target) == 0;
 }
 
 // A call of a named function, or of a method that the program declares.
@@ -22387,7 +22449,7 @@ function lu_is_loop_stmt(st: ast.Stmt): boolean {
 }
 
 function lu_empty_facts(): LuFacts {
-  return LuFacts { checked_locals: [], occ: [], vars: [], assigns: [], escaping: [], sels: [], copy_sels: [], captured: [], defer_bare: [], defer_fields: [], updates: [], unpacked: [], matched: [] };
+  return LuFacts { checked_locals: [], occ: [], vars: [], assigns: [], escaping: [], sels: [], copy_sels: [], captured: [], defer_bare: [], defer_fields: [], updates: [], unpacked: [], matched: [], rebinds: [] };
 }
 
 // A search for an occurrence of a name, the same occurrences that LuFacts.occ

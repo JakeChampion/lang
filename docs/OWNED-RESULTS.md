@@ -39,10 +39,15 @@ A local initialized by a declared method retains the method result's resource lo
 Its receiver and borrowed arguments can lend resources to that result.
 Checked owned results and immutable data copies keep their contracts.
 
-An assignment to a local keeps the local owned when the result can borrow only from that local.
-`out = out.fwrite(text);` is such an assignment, and so is `buf = w;` in an arm of `match (buf.write_bytes(block))` that binds `w`.
+A result can replace its local lender when no other name lends to that result.
+For example, `out = out.fwrite(text);` retains one owner.
 A result that borrows from a different name does not keep the local owned.
 A second local that holds the result is a borrow of the first.
+
+A match payload can replace its sole lender at its only use.
+The payload cannot be captured or retained by another pattern binding.
+No guard or earlier statement in that arm can access the lender.
+The source passes that lender directly.
 
 Match payloads retain the loan from a borrowed scrutinee.
 A generic parameter can hold a resource, so its signature cannot prove a result fresh.
