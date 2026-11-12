@@ -805,4 +805,6 @@ Source hashes use four-KiB chunks before playback. This remains bounded synchron
 The existing MediaStore emulator round adds a fresh AVC/AAC item with independent binary readback.
 It requires both the native-content digest and the native-AAC cursor diagnostics before and after the seek.
 Host controls use real asset descriptors at ordinary and eight-GiB offsets, with seven-byte short reads and physical truncation.
+These controls also call the app's actual pause, resume, and pump handlers with content audio and no private-file reader.
+Unused video and graphics imports abort if these audio controls call them.
 The existing private-file, content-video, and platform MediaPlayer rounds remain required.

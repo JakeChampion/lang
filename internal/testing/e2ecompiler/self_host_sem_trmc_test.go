@@ -286,7 +286,9 @@ func TestSelfHostSemanticTrmc(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for name, want := range map[string]int{"inc_all": 2, "drop_neg": 1, "take": 1, "to_rev": 1, "tag_all": 1, "last_of": 1, "mirror": 2, "append_to": 1, "count": 2, "put": 3} {
+		// mirror keeps its first self-call. That call is between two tests of
+		// the reuse token, so each side of ssa.split_tokens has a copy of it.
+		for name, want := range map[string]int{"inc_all": 2, "drop_neg": 1, "take": 1, "to_rev": 1, "tag_all": 1, "last_of": 1, "mirror": 3, "append_to": 1, "count": 2, "put": 3} {
 			if got := countSelfCalls(string(asm), name); got != want {
 				t.Errorf("%d call sites to %s in the listing, want %d", got, name, want)
 			}

@@ -3869,6 +3869,400 @@ function join_yields_call(f: SFunc, at: i32[], uses: i32[], b: SBlock, fuel: i32
   return false;
 }
 
+// A reuse token is a phi of a box and null behind a uniqueness test, and the
+// blocks after it test the token again for each thing they do. split_tokens
+// gives each side of the uniqueness test its own copy of those blocks, with
+// each token test decided, so the token is tested once.
+pub function split_tokens(f: SFunc): SFunc {
+  let g = f;
+  for rounds in 0..16 {
+    let at = token_split_at(g);
+    if (at.p < 0) {
+      return g;
+    }
+    g = token_split(g, at);
+  }
+  return g;
+}
+
+// p, t, f and m are block positions: p ends in the uniqueness test, t and f
+// are its arms and m holds the token phi. heads and arms are the positions of
+// the blocks that test the token and of the arm each side takes, -1 for an
+// edge straight to the join. e is the position of the block after the last
+// join.
+struct TokenSplit { p: i32, t: i32, f: i32, m: i32, tok: i32, box: i32, heads: i32[], fast_arms: i32[], slow_arms: i32[], dead_arms: i32[], e: i32 }
+
+function no_token_split(): TokenSplit {
+  return TokenSplit { p: -1, t: -1, f: -1, m: -1, tok: -1, box: -1, heads: [], fast_arms: [], slow_arms: [], dead_arms: [], e: -1 };
+}
+
+function token_split_at(f: SFunc): TokenSplit {
+  let at = block_positions(f);
+  let defs = inst_defs(f);
+  for p in 0..f.blocks.len() {
+    let found = token_entry(f, at, defs, p);
+    if (found.p >= 0) {
+      let chain = token_chain(f, at, defs, found);
+      if (chain.heads.len() > 0 && chain.e != p && util.index_of_i32(chain.heads, chain.e) < 0) {
+        return chain;
+      }
+    }
+  }
+  return no_token_split();
+}
+
+// The token phi: one arm of the test is empty, the other holds one zero, and
+// both jump to a block whose one phi takes the box and that zero.
+function token_entry(f: SFunc, at: i32[], defs: SInst[], p: i32): TokenSplit {
+  let none = no_token_split();
+  let term = f.blocks[p].term;
+  if (term.kind_tag != TERM_BRIF || term.t == term.f) {
+    return none;
+  }
+  let t = position_of(at, term.t);
+  let fb = position_of(at, term.f);
+  if (t < 0 || fb < 0 || !token_arm(f.blocks[t], f.blocks[p].id, 0) || !token_arm(f.blocks[fb], f.blocks[p].id, 1)) {
+    return none;
+  }
+  let m = token_meet(f, at, p, t, fb);
+  if (m < 0) {
+    return none;
+  }
+  let box = token_box(f.blocks[m], f.blocks[t], f.blocks[fb], defs);
+  if (box < 0) {
+    return none;
+  }
+  return TokenSplit { ...none, p: p, t: t, f: fb, m: m, tok: f.blocks[m].insts[0].result, box: box };
+}
+
+// The position of the block both arms jump to, when it starts with the one phi. -1 for another shape.
+function token_meet(f: SFunc, at: i32[], p: i32, t: i32, fb: i32): i32 {
+  let m = position_of(at, f.blocks[t].term.target);
+  if (m < 0 || m == p || f.blocks[t].term.target != f.blocks[fb].term.target || !token_phi_block(f.blocks[m])) {
+    return -1;
+  }
+  return m;
+}
+
+// The box the phi of mb takes from tb, when it takes the zero of zb from zb. -1 for another phi.
+function token_box(mb: SBlock, tb: SBlock, zb: SBlock, defs: SInst[]): i32 {
+  let zero_slot = pred_slot(mb, zb.id);
+  let box_slot = pred_slot(mb, tb.id);
+  let zero = mb.insts[0].args[zero_slot];
+  if (zero_slot == box_slot || zero != zb.insts[0].result || !const_is(defs, zero, 0i64)) {
+    return -1;
+  }
+  return mb.insts[0].args[box_slot];
+}
+
+// An arm of the uniqueness test: entered from the test alone, n instructions, then a jump.
+function token_arm(b: SBlock, from: i32, n: i32): boolean {
+  return sole_pred(b, from) && b.insts.len() == n && b.term.kind_tag == TERM_BR;
+}
+
+// A block that two blocks enter and that starts with its one phi.
+function token_phi_block(b: SBlock): boolean {
+  if (b.preds.len() != 2 || b.insts.len() == 0 || b.insts[0].kind_tag != PHI || b.insts[0].args.len() != 2) {
+    return false;
+  }
+  return b.insts.len() == 1 || b.insts[1].kind_tag != PHI;
+}
+
+function sole_pred(b: SBlock, id: i32): boolean {
+  return b.preds.len() == 1 && b.preds[0] == id && !has_phi(b);
+}
+
+// 1 when the block ends in a branch that a token which is a box takes to its
+// t side, 0 for its f side, -1 when the block does not end in a token test.
+function token_test(b: SBlock, defs: SInst[], tok: i32): i32 {
+  if (b.term.kind_tag != TERM_BRIF || b.term.cond < 0 || b.term.cond >= defs.len()) {
+    return -1;
+  }
+  let c = defs[b.term.cond];
+  if (c.kind_tag != BINARY || c.args.len() != 2 || c.args[0] != tok || !const_is(defs, c.args[1], 0i64)) {
+    return -1;
+  }
+  if (c.str == "ne") {
+    return 1;
+  }
+  if (c.str == "eq") {
+    return 0;
+  }
+  return -1;
+}
+
+function token_chain(f: SFunc, at: i32[], defs: SInst[], entry: TokenSplit): TokenSplit {
+  let out = entry;
+  let cur = entry.m;
+  for steps in 0..16 {
+    let b = f.blocks[cur];
+    let side = token_test(b, defs, entry.tok);
+    if (side < 0) {
+      break;
+    }
+    let ta = position_of(at, b.term.t);
+    let fa = position_of(at, b.term.f);
+    let join = token_join(f, at, cur, ta, fa);
+    if (join < 0 || join == entry.p || join == entry.m || util.index_of_i32(out.heads, join) >= 0) {
+      break;
+    }
+    let t_arm = ta;
+    if (ta == join) {
+      t_arm = -1;
+    }
+    let f_arm = fa;
+    if (fa == join) {
+      f_arm = -1;
+    }
+    let fast = f_arm;
+    let slow = t_arm;
+    if (side == 1) {
+      fast = t_arm;
+      slow = f_arm;
+    }
+    out = TokenSplit { ...out, heads: out.heads.append(cur), fast_arms: out.fast_arms.append(fast), slow_arms: out.slow_arms.append(slow), e: join };
+    cur = join;
+  }
+  return out;
+}
+
+// The join of a branch whose arms are one block each, or one block and the
+// join itself. -1 for another shape.
+function token_join(f: SFunc, at: i32[], head: i32, ta: i32, fa: i32): i32 {
+  if (ta < 0 || fa < 0 || ta == fa) {
+    return -1;
+  }
+  let id = f.blocks[head].id;
+  let t_to = arm_target(f, at, ta, id);
+  let f_to = arm_target(f, at, fa, id);
+  let join: i32 = -1;
+  if (t_to >= 0 && t_to == f_to) {
+    join = t_to;
+  } else if (t_to == fa) {
+    join = fa;
+  } else if (f_to == ta) {
+    join = ta;
+  }
+  if (join < 0 || f.blocks[join].preds.len() != 2) {
+    return -1;
+  }
+  return join;
+}
+
+// Where the block at pos jumps, when it is entered from the block id alone
+// and ends in a jump. -1 for another block.
+function arm_target(f: SFunc, at: i32[], pos: i32, id: i32): i32 {
+  if (!sole_pred(f.blocks[pos], id) || f.blocks[pos].term.kind_tag != TERM_BR) {
+    return -1;
+  }
+  return position_of(at, f.blocks[pos].term.target);
+}
+
+struct TokenCopy { insts: SInst[], map: i32[], nvals: i32, last: i32 }
+
+// One side of the split as one block: each head and the arm that side takes,
+// with fresh results. map gives the value on this side of each value the
+// copied blocks define. last is the id of the block this side enters e from.
+function token_copy(f: SFunc, sp: TokenSplit, defs: SInst[], arms: i32[], tok_value: i32, own insts: SInst[], nvals: i32): TokenCopy {
+  let map = util.minus_ones(f.nvals);
+  map = map.with(sp.tok, tok_value);
+  let n = nvals;
+  let prev = -1;
+  for k in 0..sp.heads.len() {
+    let parts: i32[] = [sp.heads[k]];
+    if (arms[k] >= 0) {
+      parts = parts.append(arms[k]);
+    }
+    for part in parts {
+      let b = f.blocks[part];
+      for ins in b.insts {
+        if (ins.kind_tag == PHI) {
+          if (ins.result != sp.tok) {
+            map = map.with(ins.result, token_mapped(map, ins.args[pred_slot(b, prev)]));
+          }
+          continue;
+        }
+        if (token_test_part(b, defs, ins)) {
+          continue;
+        }
+        let nargs: i32[] = [];
+        for a in ins.args {
+          nargs = nargs.append(token_mapped(map, a));
+        }
+        let result = ins.result;
+        if (result >= 0) {
+          map = map.with(result, n);
+          result = n;
+          n += 1;
+        }
+        insts = insts.append(SInst { ...ins, result: result, args: nargs });
+      }
+      prev = b.id;
+    }
+  }
+  return TokenCopy { insts: insts, map: map, nvals: n, last: prev };
+}
+
+// The compare of the decided token test of b, or the zero it compares with
+// when nothing else in b reads that zero.
+function token_test_part(b: SBlock, defs: SInst[], ins: SInst): boolean {
+  if (b.term.kind_tag != TERM_BRIF || ins.result < 0) {
+    return false;
+  }
+  if (ins.result == b.term.cond) {
+    return true;
+  }
+  let c = defs[b.term.cond];
+  if (ins.kind_tag != CONST_INT || c.args.len() != 2 || c.args[1] != ins.result) {
+    return false;
+  }
+  for other in b.insts {
+    if (other.result != c.result && util.index_of_i32(other.args, ins.result) >= 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function token_mapped(map: i32[], v: i32): i32 {
+  if (v >= 0 && v < map.len() && map[v] >= 0) {
+    return map[v];
+  }
+  return v;
+}
+
+function token_split(f: SFunc, sp: TokenSplit): SFunc {
+  let defs = inst_defs(f);
+  let region = token_region(f, sp);
+  let top = 0;
+  for b in f.blocks {
+    if (b.id >= top) {
+      top = b.id + 1;
+    }
+  }
+  let from = f.blocks[sp.p].id;
+  let eb = f.blocks[sp.e];
+  let fast = token_copy(f, sp, defs, sp.fast_arms, sp.box, [], f.nvals);
+  let zero = fast.nvals;
+  let slow = token_copy(f, sp, defs, sp.slow_arms, zero, [SInst { kind_tag: CONST_INT, result: zero, args: [], imm: 0, str: "" }], zero + 1);
+  let join = token_joined(f, sp, region, fast, slow);
+  let blocks: SBlock[] = [];
+  for bi in 0..f.blocks.len() {
+    if (bi == sp.t) {
+      blocks = blocks.append(SBlock { id: top, insts: fast.insts, term: t_br(eb.id), preds: [from] });
+      blocks = blocks.append(SBlock { id: top + 1, insts: slow.insts, term: t_br(eb.id), preds: [from] });
+    }
+    if (region[bi]) {
+      continue;
+    }
+    let b = token_renamed(f.blocks[bi], join.map, bi == sp.e);
+    if (bi == sp.e) {
+      b = SBlock { ...b, insts: util.append_all(join.insts, b.insts), preds: [top, top + 1] };
+    }
+    if (bi == sp.p) {
+      b = SBlock { ...b, term: t_brif(b.term.cond, top, top + 1) };
+    }
+    blocks = blocks.append(b);
+  }
+  return SFunc { ...f, nvals: join.nvals, blocks: blocks };
+}
+
+// The blocks the split replaces: the arms of the uniqueness test, each head
+// and each arm of a head.
+function token_region(f: SFunc, sp: TokenSplit): boolean[] {
+  let region = __alloc_bool(f.blocks.len());
+  region = region.with(sp.t, true).with(sp.f, true);
+  for k in 0..sp.heads.len() {
+    region = region.with(sp.heads[k], true);
+    if (sp.fast_arms[k] >= 0) {
+      region = region.with(sp.fast_arms[k], true);
+    }
+    if (sp.slow_arms[k] >= 0) {
+      region = region.with(sp.slow_arms[k], true);
+    }
+  }
+  return region;
+}
+
+// The phis of the block after the split. Its own phis take the value of each
+// side. Each value both sides define, and a later block reads, gets a phi,
+// and map names it.
+function token_joined(f: SFunc, sp: TokenSplit, region: boolean[], fast: TokenCopy, slow: TokenCopy): TokenCopy {
+  let eb = f.blocks[sp.e];
+  let insts: SInst[] = [];
+  for ins in eb.insts {
+    if (ins.kind_tag == PHI) {
+      insts = insts.append(SInst { ...ins, args: [token_mapped(fast.map, ins.args[pred_slot(eb, fast.last)]), token_mapped(slow.map, ins.args[pred_slot(eb, slow.last)])] });
+    }
+  }
+  let map = util.minus_ones(f.nvals);
+  let nvals = slow.nvals;
+  let read = token_read_outside(f, region, sp.e);
+  for v in 0..f.nvals {
+    if (read[v] && fast.map[v] >= 0 && slow.map[v] >= 0) {
+      insts = insts.append(SInst { kind_tag: PHI, result: nvals, args: [fast.map[v], slow.map[v]], imm: 0, str: "" });
+      map = map.with(v, nvals);
+      nvals += 1;
+    }
+  }
+  return TokenCopy { insts: insts, map: map, nvals: nvals, last: -1 };
+}
+
+// The block with its reads renamed by map. no_phis leaves its phis out.
+function token_renamed(b: SBlock, map: i32[], no_phis: boolean): SBlock {
+  let insts: SInst[] = [];
+  for ins in b.insts {
+    if (no_phis && ins.kind_tag == PHI) {
+      continue;
+    }
+    let nargs: i32[] = [];
+    for a in ins.args {
+      nargs = nargs.append(token_mapped(map, a));
+    }
+    insts = insts.append(SInst { ...ins, args: nargs });
+  }
+  let term = b.term;
+  if (term.kind_tag == TERM_BRIF) {
+    term = STerm { ...term, cond: token_mapped(map, term.cond) };
+  }
+  if (term.kind_tag == TERM_RET && term.value >= 0) {
+    term = STerm { ...term, value: token_mapped(map, term.value) };
+  }
+  return SBlock { ...b, insts: insts, term: term };
+}
+
+// The values that a block outside the copied ones reads.
+function token_read_outside(f: SFunc, region: boolean[], e: i32): boolean[] {
+  let read = __alloc_bool(f.nvals);
+  for bi in 0..f.blocks.len() {
+    if (region[bi]) {
+      continue;
+    }
+    let b = f.blocks[bi];
+    for ins in b.insts {
+      if (bi != e || ins.kind_tag != PHI) {
+        read = marked_all(read, ins.args);
+      }
+    }
+    if (b.term.kind_tag == TERM_BRIF) {
+      read = marked_all(read, [b.term.cond]);
+    }
+    if (b.term.kind_tag == TERM_RET) {
+      read = marked_all(read, [b.term.value]);
+    }
+  }
+  return read;
+}
+
+function marked_all(own marks: boolean[], values: i32[]): boolean[] {
+  for v in values {
+    if (v >= 0 && v < marks.len()) {
+      marks = marks.with(v, true);
+    }
+  }
+  return marks;
+}
+
 struct Diamond { ok: boolean, head: i32, t: i32, f: i32, join: i32 }
 
 pub function select_arm_limit(): i32 {

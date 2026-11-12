@@ -11,7 +11,7 @@ import "./audio_path";
 import "./content_read";
 import "./audio_content";
 
-struct App { ctx: usize, playback: Option[player.Player], fd: i32, content: Option[source.Source], sound: Option[audio_path.State], audio_reader: Option[Reader], content_audio: Option[audio_content.Input], stage: i32, resume_ns: i64, started_ns: i64, done: boolean }
+pub struct App { ctx: usize, playback: Option[player.Player], fd: i32, content: Option[source.Source], sound: Option[audio_path.State], audio_reader: Option[Reader], content_audio: Option[audio_content.Input], stage: i32, resume_ns: i64, started_ns: i64, done: boolean }
 
 pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size: usize): void {
   android.start(activity, app_main_entry());
@@ -151,19 +151,15 @@ function take_sound(own s: App): own (App, Option[audio_path.State]) {
   return (App { ...s, sound: None }, sound);
 }
 
-function pause_sound(own s: App, now: i64): App {
+pub function pause_sound(own s: App, now: i64): App {
   let (rest, source) = take_sound(s);
   if let Some(sound) = source {
-    if let Some(io) = rest.content_audio {
-      let next = audio_path.pump_with(sound, io.seek, io.read);
-      return accept_sound(rest, next);
-    }
     return App { ...rest, sound: Some(sound.pause(now)) };
   }
   return rest;
 }
 
-function resume_sound(own s: App, now: i64): App {
+pub function resume_sound(own s: App, now: i64): App {
   let (rest, source) = take_sound(s);
   if let Some(sound) = source {
     let resumed = sound.resume(now);
@@ -175,7 +171,7 @@ function resume_sound(own s: App, now: i64): App {
   return rest;
 }
 
-function pump_sound(own s: App): App {
+pub function pump_sound(own s: App): App {
   if let Some(p) = s.playback {
     if (p.paused) {
       return s;
@@ -183,6 +179,10 @@ function pump_sound(own s: App): App {
   }
   let (rest, source) = take_sound(s);
   if let Some(sound) = source {
+    if let Some(io) = rest.content_audio {
+      let next = audio_path.pump_with(sound, io.seek, io.read);
+      return accept_sound(rest, next);
+    }
     let Some(reader) = rest.audio_reader else {
       return fail(App { ...rest, sound: Some(sound) }, frame.Platform);
     };

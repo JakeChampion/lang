@@ -39,7 +39,7 @@ function main(): i32 {
  if(json.decode[Item](source.to_json()).is_err()) { return 9; }
  return 0;
 }`})
-	testFractalTargets(t, filepath.Join(dir, "main.fern"))
+	testCensusTargets(t, filepath.Join(dir, "main.fern"))
 }
 
 func TestSelfHostVoidLambdaStatementMatch(t *testing.T) {
@@ -60,7 +60,7 @@ function main(): i32 {
  if(total.get()!=3 || value(0)!=3 || matched!=1){return 1;}
  return 0;
 }`})
-	testFractalTargets(t, filepath.Join(dir, "main.fern"))
+	testCensusTargets(t, filepath.Join(dir, "main.fern"))
 }
 
 func TestSelfHostCellArrayMethods(t *testing.T) {
@@ -74,7 +74,7 @@ function main(): i32 {
  if(tail.len()!=1 || tail[0].value!=7 || state.get().len()!=2){return 1;}
  return 0;
 }`})
-	testFractalTargets(t, filepath.Join(dir, "main.fern"))
+	testCensusTargets(t, filepath.Join(dir, "main.fern"))
 }
 
 func TestSelfHostBlockyardCore(t *testing.T) {
@@ -82,7 +82,7 @@ func TestSelfHostBlockyardCore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	testFractalTargets(t, path, true)
+	testCensusTargets(t, path, true)
 }
 
 func TestSelfHostBlockyardStore(t *testing.T) {

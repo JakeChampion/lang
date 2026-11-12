@@ -3802,6 +3802,9 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
   }
   if (ins.str == "exit") {
     s = ssa_load(reg_of, ins.args[0], "x0", s);
+    if (asmcore.process_entry(s)) {
+      s = s.write("    str x0, [sp, #-16]!\n    bl __fern_task_close_drop\n    ldr x0, [sp], #16\n");
+    }
     if (s.leak_check) {
       s = s.write("    mov x19, x0\n    bl __fern_lc_report_exit\n    mov x0, x19\n");
     }
@@ -5539,6 +5542,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
   } else if (o.kind_tag == ir.K_TCP_CLOSE) {
     s = s.need("heap");
     s = s.need("tcp_close");
+    s = s.need("task");
     s = s.write("    bl __fn___fern_tcp_close\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == ir.K_TCP_LISTEN) {
     s = s.need("heap");
@@ -5817,7 +5821,7 @@ function ssa_dyn_dispatch(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.
       args = args.append(asmcore.DynArg { reg: "", off: ssa_slot_off(ssa.spill_slot(reg_of[v])) - s.ssa_save });
     }
   }
-  s = emit_dyn_dispatch_chain(ins.str, args, ins.imm, lp, s);
+  s = emit_dyn_dispatch_chain(ins.str, args, ins.result, lp, s);
   return ssa_store(reg_of, ins.result, "x0", asmcore.ssa_x0_forget(s));
 }
 
@@ -5836,7 +5840,7 @@ function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irtables.Lowe
   s = asmcore.ssa_x0_forget(s);
   let outer = s.capture;
   let h = buf_new(256);
-  s = emit_stack_op(r.ops[ins.imm], ins.imm, lp, r, asmcore.EmitState { ...s, capture: h });
+  s = emit_stack_op(r.ops[ins.imm], ins.result, lp, r, asmcore.EmitState { ...s, capture: h });
   let arm = buf_take(h);
   buf_free(h);
   s = asmcore.EmitState { ...s, capture: outer };
@@ -6150,7 +6154,9 @@ function arm64_worker_reap_census(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 // Snapshot live child allocations before munmap. Only a successful syscall
-// records their reclamation. No unmapped box enters a parent free list.
+// records their reclamation. No unmapped box enters a parent free list. The
+// count is signed: a body that frees boxes of the parent's image frees more
+// than it allocates.
 function emit_arm64_worker_unmap(s: asmcore.EmitState): asmcore.EmitState {
   s = s.need("worker_unmap");
   s = s.need("worker_regions");
@@ -6159,13 +6165,12 @@ function emit_arm64_worker_unmap(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(quar_addr("x5", "__fern_forget_lo") + "    str xzr, [x5]\n" + quar_addr("x5", "__fern_forget_hi") + "    str xzr, [x5]\n");
   }
   let ready = asmcore.fresh_label(s);
-  let bad = asmcore.fresh_label(ready.state);
-  let done = asmcore.fresh_label(bad.state);
+  let done = asmcore.fresh_label(ready.state);
   s = done.state;
   if (s.leak_check) {
     s = s.write("    mov x3, #0\n    mov x4, #0\n    cbz x2, " + ready.name + "\n");
-    s = s.write("    ldr x3, [x0, #8]\n    ldr x5, [x0, #24]\n    subs x3, x3, x5\n    b.lo " + bad.name + "\n");
-    s = s.write("    ldr x4, [x0, #16]\n    ldr x5, [x0, #32]\n    subs x4, x4, x5\n    b.lo " + bad.name + "\n");
+    s = s.write("    ldr x3, [x0, #8]\n    ldr x5, [x0, #24]\n    sub x3, x3, x5\n");
+    s = s.write("    ldr x4, [x0, #16]\n    ldr x5, [x0, #32]\n    sub x4, x4, x5\n");
     s = s.write(ready.name + ":\n    stp x3, x4, [sp, #-16]!\n");
   }
   s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_worker_unmap\n    add sp, sp, #48\n");
@@ -6175,7 +6180,7 @@ function emit_arm64_worker_unmap(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ldr x2, [x1]\n    add x2, x2, x3\n    str x2, [x1]\n");
     s = arm64_lc_counter_addr(s, 3);
     s = s.write("    ldr x2, [x1]\n    add x2, x2, x4\n    str x2, [x1]\n");
-    s = s.write("    b " + done.name + "\n" + bad.name + ":\n    mov x0, #-22\n" + done.name + ":\n");
+    s = s.write(done.name + ":\n");
   }
   return s.write("    str x0, [sp, #-16]!\n");
 }
@@ -6553,12 +6558,14 @@ function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
   s = s.write("    mov x29, sp\n");
   if (asmcore.declares_main(s.funcs)) {
     s = s.write("    bl __fn_main\n");
+    s = s.write("    str x0, [sp, #-16]!\n    bl __fern_task_close_drop\n    ldr x0, [sp], #16\n");
     if (s.leak_check) {
       s = s.write("    mov x19, x0\n");
       s = s.write("    bl __fern_lc_report\n");
       s = s.write("    mov x0, x19\n");
     }
   } else {
+    s = s.write("    bl __fern_task_close_drop\n");
     if (s.leak_check) {
       s = s.write("    bl __fern_lc_report\n");
     }
@@ -7390,7 +7397,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    .section .bss\n    .p2align 3\n__fern_cov_counters: .quad 0\n    .text\n");
   }
   if (s.has_need("task")) {
-    s = s.write("    .section .bss\n    .p2align 3\n__fern_task_state: .quad 0, 0, 0, 0, 0, 0, 0\n    .text\n");
+    s = s.write("    .section .bss\n    .p2align 3\n__fern_task_state: .quad 0, 0, 0, 0, 0, 0, 0, 0\n    .text\n");
   }
   if (s.has_need("str_print")) {
     s = emit_log_write("__fern_print_str", s);
@@ -10955,6 +10962,26 @@ function emit_rt_net(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   return s;
 }
 
+// Release the process-owned close table before the final heap report.
+function emit_task_close_drop(s: asmcore.EmitState): asmcore.EmitState {
+  if (!asmcore.process_entry(s)) {
+    return s;
+  }
+  s = s.write("    .text\n    .globl __fern_task_close_drop\n__fern_task_close_drop:\n");
+  if (!s.has_need("task")) {
+    return s.write("    ret\n");
+  }
+  s = s.write("    stp x29, x30, [sp, #-16]!\n    adrp x9, __fern_task_state\n    add x9, x9, :lo12:__fern_task_state\n    ldr x0, [x9, #56]\n    cbz x0, .Ltask_close_drop_done\n    str xzr, [x9, #56]\n    ldr x1, [x0]\n    add x1, x1, #1\n    lsl x1, x1, #3\n");
+  if (s.leak_check) {
+    s = lc_rt_req_free(s);
+  }
+  s = s.write("    bl __fern_raw_free\n");
+  if (s.leak_check) {
+    s = lc_rt_uncount(s, "__fern_lc_free_bytes", "__fern_lc_free_count");
+  }
+  return s.write(".Ltask_close_drop_done:\n    ldp x29, x30, [sp], #16\n    ret\n");
+}
+
 function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   if (s.has_need("heap")) {
     s = emit_rt_arena_and_alloc(s, darwin);
@@ -10995,7 +11022,7 @@ function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
   s = emit_san_waf_abort(s);
   s = emit_san_hbo_abort(s);
   s = emit_san_abort(s);
-  return s;
+  return emit_task_close_drop(s);
 }
 
 function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
@@ -11558,9 +11585,6 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   if (s.has_need("random_i32")) {
     s = emit_runtime("__fern_random_i32", s);
   }
-  if (s.has_need("tcp_close")) {
-    s = emit_runtime("__fern_tcp_close", s);
-  }
   if (s.has_need("tcp_accept")) {
     s = emit_runtime("__fern_tcp_accept", s);
   }
@@ -11740,6 +11764,10 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   if (s.has_need("task")) {
     s = emit_runtime(asmcore.task_runtime_roots(), asmcore.EmitState { ...s, rt_owned_allocs: true });
     s = asmcore.EmitState { ...s, rt_owned_allocs: false };
+  }
+  // After the task runtime, which owns the table that a close counts in.
+  if (s.has_need("tcp_close")) {
+    s = emit_runtime("__fern_tcp_close", s);
   }
   if (s.has_need("tcp_recv_into")) {
     s = emit_runtime("__fern_tcp_recv_into", s);

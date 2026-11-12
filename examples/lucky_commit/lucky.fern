@@ -1,0 +1,397 @@
+// The engine of `lucky_commit`: the hash spec, the padded commit layout, and
+// the search. A port of github.com/not-an-aardvark/lucky-commit.
+//
+// The program adds spaces and tabs to a commit until its hash starts with a
+// given prefix. The hashed data has this layout:
+//
+//   "commit <length>\0"            the git object header
+//   commit up to the insertion     the metadata, and the message too when
+//                                  the commit is not signed
+//   static padding (spaces)        aligns the next byte to 64
+//   dynamic padding (48 bytes)     a space or a tab for each bit of a 48-bit
+//                                  "padding specifier"
+//   rest of the commit             a newline, or the message after a signature
+//   SHA finalization padding
+//
+// The blocks before the dynamic padding do not change between attempts, so
+// the search hashes them one time and then hashes only the dynamic blocks.
+import "std/crypto";
+import "std/hex";
+import "std/string";
+import "std/worker";
+
+// The number of bytes of dynamic padding, and thus of bits in a specifier.
+pub const DYNAMIC_PADDING: i32 = 48;
+
+pub enum Algo { Sha1, Sha256 }
+
+// The number of 32-bit words in a digest.
+pub function (a: Algo) words(): i32 {
+  return match (a) { Sha1 => 5, Sha256 => 8 };
+}
+
+// A desired hash. A bit of the hash must equal its bit in `data` where its
+// bit in `mask` is 1.
+pub struct Spec { data: u32[], mask: u32[] }
+
+pub enum SpecError { TooLong, InvalidCharacter(string) }
+
+pub function (e: SpecError) message(): string {
+  return match (e) {
+    TooLong => "hash spec can't be longer than an actual hash",
+    InvalidCharacter(c) => "hash spec contains invalid character '" + c + "' (only hex characters and underscores are allowed)",
+  };
+}
+
+function is_continuation(b: u8): boolean {
+  return (b & 0xc0 as u8) == 0x80 as u8;
+}
+
+function char_count(s: string): i32 {
+  let n = 0;
+  for i in 0..s.len() {
+    if (!is_continuation(s[i])) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
+function hex_value(b: u8): i32 {
+  if (b >= b'0' && b <= b'9') {
+    return (b - b'0') as i32;
+  }
+  if (b >= b'a' && b <= b'f') {
+    return (b - b'a') as i32 + 10;
+  }
+  if (b >= b'A' && b <= b'F') {
+    return (b - b'A') as i32 + 10;
+  }
+  return -1;
+}
+
+// parse_spec reads hex digits and `_` placeholders. A `_`, and every
+// position after the end of `s`, matches any digit.
+pub function parse_spec(algo: Algo, s: string): Result[Spec, SpecError] {
+  let words = algo.words();
+  if (char_count(s) > words * 8) {
+    return Err(TooLong);
+  }
+  let data: u32[] = [];
+  let mask: u32[] = [];
+  for _ in 0..words {
+    data = data.append(0 as u32);
+    mask = mask.append(0 as u32);
+  }
+  let i = 0;
+  while (i < s.len()) {
+    let v = hex_value(s[i]);
+    if (v >= 0) {
+      let word = i / 8;
+      let shift = (28 - 4 * (i % 8)) as u32;
+      data = data.with(word, data[word] | v as u32 << shift);
+      mask = mask.with(word, mask[word] | 0xf as u32 << shift);
+    } else if (s[i] != b'_') {
+      let end = i + 1;
+      while (end < s.len() && is_continuation(s[end])) {
+        end += 1;
+      }
+      return Err(InvalidCharacter(slice_unchecked(s, i, end).to_owned()));
+    }
+    i += 1;
+  }
+  return Ok(Spec { data: data, mask: mask });
+}
+
+// default_spec is the spec `0000000`.
+pub function default_spec(algo: Algo): Spec {
+  return match (parse_spec(algo, "0000000")) {
+    Ok(spec) => spec,
+    Err(_) => Spec { data: [], mask: [] },
+  };
+}
+
+pub function (spec: Spec) matches(hash: u32[]): boolean {
+  for i in 0..spec.data.len() {
+    if ((hash[i] & spec.mask[i]) != spec.data[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// A git SHA-256 repository has a 64-digit tree hash on the first line.
+pub function looks_like_sha256(commit: string): boolean {
+  return match (commit.index_of("\n")) { Some(i) => i == 5 + 64, None => false };
+}
+
+function at(s: string, i: i32, needle: string): boolean {
+  if (i + needle.len() > s.len()) {
+    return false;
+  }
+  for k in 0..needle.len() {
+    if (s[i + k] != needle[k]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function is_blank(b: u8): boolean {
+  return b == b' ' || b == b'\t';
+}
+
+// padding_insertion_point gives the byte offset for the padding. A signed
+// commit takes it at the end of its `gpgsig` header, because a change to the
+// message breaks the signature. Other commits take it at the end of the
+// message. The point is moved back over trailing whitespace.
+pub function padding_insertion_point(commit: string): i32 {
+  let end = signature_end(commit);
+  while (end > 0 && (is_blank(commit[end - 1]) || commit[end - 1] == b'\n')) {
+    end -= 1;
+  }
+  return end;
+}
+
+// signature_end gives the offset of the newline that ends a `gpgsig` header
+// before the message, or the length of the commit when it has none.
+function signature_end(commit: string): i32 {
+  let n = commit.len();
+  let i = 0;
+  while (i < n && !at(commit, i, "\n\n")) {
+    if (at(commit, i, "\ngpgsig ") || at(commit, i, "\ngpgsig-sha256 ")) {
+      let j = i + 1;
+      while (j < n && !(commit[j] == b'\n' && !at(commit, j, "\n "))) {
+        j += 1;
+      }
+      return j;
+    }
+    i += 1;
+  }
+  return n;
+}
+
+function header(length: i32): string {
+  return "commit " + f"{length}" + "\x00";
+}
+
+// static_padding_length gives the smallest count of spaces that puts the
+// dynamic padding at a multiple of 64 bytes. The count changes the length in
+// the header too, so in rare cases it is more than 63.
+pub function static_padding_length(before: i32, without_static: i32): i32 {
+  let guess = (64 - (header(without_static).len() + before) % 64) % 64;
+  if (alignment(before, without_static, guess) == 0) {
+    return guess;
+  }
+  if (guess > 0 && alignment(before, without_static, guess - 1) == 0) {
+    return guess - 1;
+  }
+  return guess + 63;
+}
+
+function alignment(before: i32, without_static: i32, padding: i32): i32 {
+  return (header(without_static + padding).len() + before + padding) % 64;
+}
+
+// A commit with tabs in its dynamic padding.
+pub struct Processed {
+  commit: string,
+  // The byte offset of the dynamic padding in `commit`.
+  padding_at: i32,
+  // The byte length of the git object header.
+  header_len: i32,
+}
+
+pub function process(original: string): Processed {
+  let at_point = padding_insertion_point(original);
+  let old_padding = 0;
+  while (at_point + old_padding < original.len() && is_blank(original[at_point + old_padding])) {
+    old_padding += 1;
+  }
+  let without_static = original.len() - old_padding + DYNAMIC_PADDING;
+  let spaces = static_padding_length(at_point, without_static);
+  let commit = slice_unchecked(original, 0, at_point) + " ".repeat(spaces) + "\t".repeat(DYNAMIC_PADDING)
+    + slice_unchecked(original, at_point + old_padding, original.len());
+  return Processed { commit: commit, padding_at: at_point + spaces, header_len: header(commit.len()).len() };
+}
+
+// padding_byte gives the index in the dynamic padding of a specifier bit.
+// Each specifier byte, in little-endian order, fills 8 padding bytes, and its
+// high bit comes first.
+function padding_byte(bit: i32): i32 {
+  return bit / 8 * 8 + 7 - bit % 8;
+}
+
+function padding_char(spec: i64, bit: i32): u8 {
+  if ((spec >> bit as i64 & 1) == 1) {
+    return b'\t';
+  }
+  return b' ';
+}
+
+// padding gives the 48 bytes of dynamic padding for a specifier.
+pub function padding(spec: i64): string {
+  let out = "";
+  for i in 0..DYNAMIC_PADDING {
+    out += if (padding_char(spec, padding_byte(i)) == b'\t') { "\t" } else { " " };
+  }
+  return out;
+}
+
+// with_padding gives the commit object for a specifier.
+pub function (p: Processed) with_padding(spec: i64): string {
+  let end = p.padding_at + DYNAMIC_PADDING;
+  return slice_unchecked(p.commit, 0, p.padding_at) + padding(spec) + slice_unchecked(p.commit, end, p.commit.len());
+}
+
+// The input of one search: the static blocks, the dynamic blocks with tabs
+// in the padding and the SHA finalization padding, and the spec.
+pub struct Job { algo: Algo, prefix: u8[], dynamic: u8[], spec: Spec }
+
+pub function job(algo: Algo, p: Processed, spec: Spec): Job {
+  let data = (header(p.commit.len()) + p.commit).as_bytes();
+  let total = data.len();
+  let split = (p.header_len + p.padding_at) / 64 * 64;
+  let prefix: u8[] = [];
+  for i in 0..split {
+    prefix = prefix.append(data[i]);
+  }
+  let dynamic: u8[] = [];
+  for i in split..total {
+    dynamic = dynamic.append(data[i]);
+  }
+  dynamic = dynamic.append(0x80 as u8);
+  while (dynamic.len() % 64 != 56) {
+    dynamic = dynamic.append(0 as u8);
+  }
+  let bits = total as u64 * (8 as u64);
+  for k in 0..8 {
+    dynamic = dynamic.append((bits >> (56 - 8 * k) as u64 & 0xff as u64) as u8);
+  }
+  return Job { algo: algo, prefix: prefix, dynamic: dynamic, spec: spec };
+}
+
+function scatter(block: u8[], spec: i64): u8[] {
+  for bit in 0..DYNAMIC_PADDING {
+    block = block.with(padding_byte(bit), padding_char(spec, bit));
+  }
+  return block;
+}
+
+// step changes the padding of `spec` in `block` to the padding of `spec + 1`.
+// Only the bits that the increment changes are written.
+function step(block: u8[], spec: i64): u8[] {
+  let next = spec + 1;
+  let changed = spec ^ next;
+  let bit = 0;
+  while (changed != 0 && bit < DYNAMIC_PADDING) {
+    if ((changed & 1) == 1) {
+      block = block.with(padding_byte(bit), padding_char(next, bit));
+    }
+    changed >>= 1;
+    bit += 1;
+  }
+  return block;
+}
+
+// search_range tries the specifiers from `start` for `count` attempts, and
+// gives the first that matches.
+pub function search_range(j: Job, start: i64, count: i64): Option[i64] {
+  return match (j.algo) {
+    Sha1 => search_sha1(j, start, start + count),
+    Sha256 => search_sha256(j, start, start + count),
+  };
+}
+
+function search_sha1(j: Job, start: i64, end: i64): Option[i64] {
+  let base = crypto.sha1_new().update(j.prefix);
+  let block = scatter(j.dynamic, start);
+  let d = j.spec.data;
+  let m = j.spec.mask;
+  let s = start;
+  while (s < end) {
+    let h = base.update(block);
+    if ((h.h0 & m[0]) == d[0] && (h.h1 & m[1]) == d[1] && (h.h2 & m[2]) == d[2] && (h.h3 & m[3]) == d[3]
+      && (h.h4 & m[4]) == d[4]) {
+      return Some(s);
+    }
+    block = step(block, s);
+    s += 1;
+  }
+  return None;
+}
+
+function search_sha256(j: Job, start: i64, end: i64): Option[i64] {
+  let base = crypto.sha256_new().update(j.prefix);
+  let block = scatter(j.dynamic, start);
+  let d = j.spec.data;
+  let m = j.spec.mask;
+  let s = start;
+  while (s < end) {
+    let h = base.update(block);
+    if ((h.h0 & m[0]) == d[0] && (h.h1 & m[1]) == d[1] && (h.h2 & m[2]) == d[2] && (h.h3 & m[3]) == d[3]
+      && (h.h4 & m[4]) == d[4] && (h.h5 & m[5]) == d[5] && (h.h6 & m[6]) == d[6] && (h.h7 & m[7]) == d[7]) {
+      return Some(s);
+    }
+    block = step(block, s);
+    s += 1;
+  }
+  return None;
+}
+
+// The search space of a commit: every 48-bit specifier.
+pub const SEARCH_SPACE: i64 = 0x1000000000000;
+
+// search tries the specifiers in [start, start + count) on `workers`
+// workers, in rounds of `chunk` attempts for each worker. It gives the
+// lowest specifier that matches, so the result does not depend on the
+// worker count.
+pub function search(j: Job, start: i64, count: i64, workers: i32, chunk: i64): Option[i64] {
+  let end = start + count;
+  let base = start;
+  while (base < end) {
+    let found = round(j, base, end, chunk, workers);
+    if let Some(_) = found {
+      return found;
+    }
+    base += chunk * (workers as i64);
+  }
+  return None;
+}
+
+// round spawns its own worker, then the rest of the round, then joins.
+// Each worker covers a lower range than the workers after it, so the first
+// match in worker order is the lowest.
+function round(j: Job, from: i64, end: i64, chunk: i64, left: i32): Option[i64] {
+  if (left == 0 || from >= end) {
+    return None;
+  }
+  let count = if (end - from < chunk) { end - from } else { chunk };
+  let w = worker.spawn((): Option[i64] => search_range(j, from, count));
+  let rest = round(j, from + count, end, chunk, left - 1);
+  let mine = w.join();
+  if let Some(_) = mine {
+    return mine;
+  }
+  return rest;
+}
+
+// object_hash gives the digest words of a git commit object.
+pub function object_hash(algo: Algo, commit: string): u32[] {
+  let data = (header(commit.len()) + commit).as_bytes();
+  let digest = match (algo) { Sha1 => crypto.sha1(data), Sha256 => crypto.sha256(data) };
+  let out: u32[] = [];
+  for w in 0..digest.len() / 4 {
+    let v = 0 as u32;
+    for k in 0..4 {
+      v = v << 8 as u32 | digest[w * 4 + k] as u32;
+    }
+    out = out.append(v);
+  }
+  return out;
+}
+
+pub function object_hex(algo: Algo, commit: string): string {
+  let data = (header(commit.len()) + commit).as_bytes();
+  return match (algo) { Sha1 => hex.encode(crypto.sha1(data)), Sha256 => hex.encode(crypto.sha256(data)) };
+}

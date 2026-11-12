@@ -1,0 +1,117 @@
+// lucky_commit — amend the HEAD commit so that its hash starts with a prefix.
+//
+// A port of github.com/not-an-aardvark/lucky-commit. It adds spaces and tabs
+// to the commit message (or to the end of the signature of a signed commit)
+// until the hash matches, then moves HEAD to the new commit.
+//
+//   $ lucky_commit             # the hash starts with 0000000
+//   $ lucky_commit 1010101
+//   $ lucky_commit 00_111      # `_` matches any hex digit
+//   $ lucky_commit --benchmark # a fixed search of 2^28 hashes, no git
+//
+// The search runs on every CPU, in share-nothing `std/worker` workers. A
+// repository with the SHA-256 object format gets a SHA-256 search.
+import "./lucky";
+
+// The attempts that each worker makes in one round of the search.
+const CHUNK: i64 = 4194304;
+
+function usage(): i32 {
+  eprint("Usage: lucky_commit [commit-hash-prefix]\n\n"
+    + "`commit-hash-prefix` must contain hex characters and underscores. An underscore indicates "
+    + "that the hash may have any value in the given position.");
+  return 1;
+}
+
+function workers(): i32 {
+  let n = cpu_count() as i32;
+  if (n < 1) {
+    return 1;
+  }
+  return n;
+}
+
+function git(argv: string[], input: string): Option[string] {
+  let r = subprocess("git", argv, input);
+  if (r.exit_code != 0) {
+    eprint(r.stderr + "lucky_commit: git " + argv[0] + " finished with exit code " + f"{r.exit_code}");
+    return None;
+  }
+  return Some(r.stdout);
+}
+
+// benchmark makes a search that does not succeed, so it always costs 2^28
+// hashes. Time it with `time lucky_commit --benchmark`.
+function benchmark(): i32 {
+  let commit = "tree 6f4e79123e206448f80ec73b9a53e07eb0784fef\n"
+    + "author Foo Bar <foo@example.com> 1611912738 -0500\n"
+    + "committer Foo Bar <foo@example.com> 1611912738 -0500\n"
+    + "\n"
+    + "Test commit for benchmarking performance changes\n";
+  let Ok(spec) = lucky.parse_spec(lucky.Algo.Sha1, "000000000000000000000000000000000000000") else {
+    return 2;
+  };
+  let job = lucky.job(lucky.Algo.Sha1, lucky.process(commit), spec);
+  if let Some(_) = lucky.search(job, 0, 1 as i64 << 28, workers(), CHUNK) {
+    eprint("lucky_commit: the benchmark found a match");
+    return 1;
+  }
+  return 0;
+}
+
+function run(prefix: Option[string]): i32 {
+  let Some(existing) = git(["cat-file", "commit", "HEAD"], "") else {
+    return 1;
+  };
+  let algo = if (lucky.looks_like_sha256(existing)) { lucky.Algo.Sha256 } else { lucky.Algo.Sha1 };
+  let spec = lucky.default_spec(algo);
+  if let Some(text) = prefix {
+    match (lucky.parse_spec(algo, text)) {
+      Ok(parsed) => {
+        spec = parsed;
+      },
+      Err(e) => {
+        eprint("Error: " + e.message());
+        return 1;
+      }
+    }
+  }
+
+  let p = lucky.process(existing);
+  let Some(found) = lucky.search(lucky.job(algo, p, spec), 0, lucky.SEARCH_SPACE, workers(), CHUNK) else {
+    eprint("Sorry, failed to find a commit matching the given prefix despite searching hundreds "
+      + "of trillions of possible commits. Hopefully you haven't just been sitting here "
+      + "waiting the whole time.");
+    return 1;
+  };
+
+  let commit = p.with_padding(found);
+  let new_hash = lucky.object_hex(algo, commit);
+  let Some(oid) = git(["hash-object", "-t", "commit", "-w", "--stdin"], commit) else {
+    return 1;
+  };
+  if (!oid.starts_with(new_hash)) {
+    eprint("lucky_commit: found a matching commit, but git computed a different hash for it");
+    return 1;
+  }
+  // The old hash makes the update atomic: it fails if HEAD moved during the search.
+  let Some(_) = git(["update-ref", "-m", "amend with lucky_commit", "HEAD", new_hash, lucky.object_hex(algo, existing)], "") else {
+    return 1;
+  };
+  return 0;
+}
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() == 1) {
+    return run(None);
+  }
+  if (argv.len() != 2) {
+    return usage();
+  }
+  return match (argv[1]) {
+    "--benchmark" => benchmark(),
+    "-h" | "--help" => usage(),
+    _ => run(Some(argv[1])),
+  };
+}

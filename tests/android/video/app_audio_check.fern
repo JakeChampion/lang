@@ -1,0 +1,53 @@
+// Run the app's audio dispatch against the real content-source fixture.
+import "./app";
+import "./audio_content";
+import "./audio_path";
+
+@import("libaaudio.so", "av_audio_count")
+function count(what: i32): i32;
+
+function close(s: app.App, code: i32): i32 {
+  if let Some(sound) = s.sound {
+    sound.close();
+  }
+  return code;
+}
+
+function paused(own s: app.App, reads: Cell[i32]): Result[app.App, i32] {
+  let before = reads.get();
+  let writes = count(2);
+  s = app.pause_sound(s, 1100000000i64);
+  s = app.pump_sound(s);
+  let Some(sound) = s.sound else {
+    return Err(70);
+  };
+  if (sound.paused_ns.is_none() || reads.get() != before || count(2) != writes) {
+    return Err(close(s, 71));
+  }
+  return Ok(app.resume_sound(s, 1200000000i64));
+}
+
+function drain(own s: app.App): i32 {
+  for work in 0..8192 {
+    let Some(sound) = s.sound else {
+      return 72;
+    };
+    if (sound.at == sound.total) {
+      return close(s, if (s.done || sound.failed) { 73 } else { 0 });
+    }
+    s = app.pump_sound(s);
+    if (s.done) {
+      return close(s, 74);
+    }
+  }
+  return close(s, 75);
+}
+
+pub function run(own sound: audio_path.State, io: audio_content.Input, reads: Cell[i32], pause_first: boolean): i32 {
+  let state = app.App { ctx: 0 as usize, playback: None, fd: -1, content: None, sound: Some(sound), audio_reader: None, content_audio: Some(io), stage: 0, resume_ns: 0i64, started_ns: 1000000000i64, done: false };
+  if (pause_first) {
+    let next = match (paused(state, reads)) { Ok(value) => value, Err(code) => { return code; } };
+    return drain(next);
+  }
+  return drain(state);
+}

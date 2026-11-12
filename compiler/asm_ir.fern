@@ -8668,6 +8668,9 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
   }
   if (ins.str == "exit") {
     s = ssa_load(reg_of, ins.args[0], "%r11", s);
+    if (asmcore.process_entry(s)) {
+      s = s.write("    pushq %r11\n    call __fern_task_close_drop\n    popq %r11\n");
+    }
     if (s.leak_check) {
       s = s.write("    pushq %r11\n    call __fern_lc_report_exit\n    popq %r11\n");
     }
@@ -8713,7 +8716,7 @@ function ssa_dyn_dispatch(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.
       args = args.append(asmcore.DynArg { reg: "", off: 0 - 8 * (ssa.spill_slot(reg_of[v]) + 1) - s.ssa_save });
     }
   }
-  s = emit_dyn_dispatch_chain(ins.str, args, ins.imm, lp, s);
+  s = emit_dyn_dispatch_chain(ins.str, args, ins.result, lp, s);
   return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
 }
 
@@ -8732,7 +8735,7 @@ function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irtables.Lowe
   s = asmcore.ssa_x0_forget(s);
   let outer = s.capture;
   let h = buf_new(256);
-  s = emit_stack_op(r.ops[ins.imm], ins.imm, lp, r, asmcore.EmitState { ...s, capture: h });
+  s = emit_stack_op(r.ops[ins.imm], ins.result, lp, r, asmcore.EmitState { ...s, capture: h });
   let arm = buf_take(h);
   buf_free(h);
   s = asmcore.EmitState { ...s, capture: outer };
@@ -11004,6 +11007,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
   } else if (o.kind_tag == ir.K_TCP_CLOSE) {
     s = s.write("    call __fn___fern_tcp_close\n    addq $8, %rsp\n    pushq %rax\n");
     s = s.need("tcp_close");
+    s = s.need("task");
   } else if (o.kind_tag == ir.K_TCP_LISTEN) {
     s = s.write("    call __fn___fern_tcp_listen\n    addq $8, %rsp\n    pushq %rax\n");
     s = s.need("tcp_listen");
@@ -11404,7 +11408,9 @@ function worker_reap_census(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 // Snapshot live child allocations before munmap. A successful munmap frees
-// the whole region, without a release into the parent's free lists.
+// the whole region, without a release into the parent's free lists. The
+// count is signed: a body that frees boxes of the parent's image frees more
+// than it allocates.
 function emit_worker_unmap(s: asmcore.EmitState): asmcore.EmitState {
   s = s.need("worker_unmap");
   s = s.need("worker_regions");
@@ -11413,23 +11419,22 @@ function emit_worker_unmap(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq $0, __fern_forget_lo(%rip)\n    movq $0, __fern_forget_hi(%rip)\n");
   }
   let ready = asmcore.fresh_label(s);
-  let bad = asmcore.fresh_label(ready.state);
-  let done = asmcore.fresh_label(bad.state);
+  let done = asmcore.fresh_label(ready.state);
   s = done.state;
   if (s.leak_check) {
     s = s.write("    xorq %r8, %r8\n    xorq %r9, %r9\n    testq %r10, %r10\n    jz " + ready.name + "\n");
-    s = s.write("    movq 8(%rax), %r8\n    subq 24(%rax), %r8\n    jc " + bad.name + "\n");
-    s = s.write("    movq 16(%rax), %r9\n    subq 32(%rax), %r9\n    jc " + bad.name + "\n");
+    s = s.write("    movq 8(%rax), %r8\n    subq 24(%rax), %r8\n");
+    s = s.write("    movq 16(%rax), %r9\n    subq 32(%rax), %r9\n");
     s = s.write(ready.name + ":\n    pushq %r8\n    pushq %r9\n");
   }
   if (rc_trace_on()) {
     s = s.write("    pushq %rdx\n    pushq %rax\n");
   }
   s = s.write("    pushq %r10\n    pushq %rdx\n    pushq %rax\n    call __fn___fern_worker_unmap\n    addq $24, %rsp\n");
-  return worker_unmap_result(s, bad.name, done.name);
+  return worker_unmap_result(s, done.name);
 }
 
-function worker_unmap_result(s: asmcore.EmitState, bad_label: string, done_label: string): asmcore.EmitState {
+function worker_unmap_result(s: asmcore.EmitState, done_label: string): asmcore.EmitState {
   if (rc_trace_on()) {
     s = s.write("    popq %rdi\n    popq %rsi\n");
   }
@@ -11445,9 +11450,7 @@ function worker_unmap_result(s: asmcore.EmitState, bad_label: string, done_label
   if (rc_trace_on()) {
     s = s.write("    pushq %rax\n    pushq %rsi\n    pushq %rdi\n    call __fern_hev_u\n    addq $16, %rsp\n    popq %rax\n");
   }
-  if (s.leak_check) {
-    s = s.write("    jmp " + done_label + "\n" + bad_label + ":\n    movq $-22, %rax\n" + done_label + ":\n");
-  } else if (rc_trace_on()) {
+  if (s.leak_check || rc_trace_on()) {
     s = s.write(done_label + ":\n");
   }
   return s.write("    pushq %rax\n");
@@ -12471,6 +12474,7 @@ function reset_trampoline(t: i32, top: i32): i32[] {
 function emit_process_finish(mod: parser.Module, own s: asmcore.EmitState): asmcore.EmitState {
   if (asmcore.has_main(mod)) {
     s = s.write("    call __fn_main\n");
+    s = s.write("    pushq %rax\n    call __fern_task_close_drop\n    popq %rax\n");
     if (s.leak_check) {
       s = s.write("    pushq %rax\n");
       s = s.write("    call __fern_lc_report\n");
@@ -12478,6 +12482,7 @@ function emit_process_finish(mod: parser.Module, own s: asmcore.EmitState): asmc
     }
     s = s.write("    movq %rax, %rdi\n");
   } else {
+    s = s.write("    call __fern_task_close_drop\n");
     if (s.leak_check) {
       s = s.write("    call __fern_lc_report\n");
     }
@@ -12663,6 +12668,26 @@ function emit_entry_environment(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
+// Release the process-owned close table before the final heap report.
+function emit_task_close_drop(s: asmcore.EmitState): asmcore.EmitState {
+  if (!asmcore.process_entry(s)) {
+    return s;
+  }
+  s = s.write("    .text\n    .globl __fern_task_close_drop\n__fern_task_close_drop:\n");
+  if (!s.has_need("task")) {
+    return s.write("    ret\n");
+  }
+  s = s.write("    movq __fern_task_state+56(%rip), %rdi\n    testq %rdi, %rdi\n    jz .Ltask_close_drop_done\n    movq $0, __fern_task_state+56(%rip)\n    movq (%rdi), %rsi\n    addq $1, %rsi\n    shlq $3, %rsi\n");
+  if (s.leak_check) {
+    s = lc_rt_req_free(s);
+  }
+  s = s.write("    call __fern_raw_free\n");
+  if (s.leak_check) {
+    s = lc_rt_uncount(s, "__fern_lc_free_bytes", "__fern_lc_free_count");
+  }
+  return s.write(".Ltask_close_drop_done:\n    ret\n");
+}
+
 function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = emit_entry_core_runtime(s);
   if (hev_on(s)) {
@@ -12671,6 +12696,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   }
   s = s.write("    .text\n");
   s = emit_entry_environment(s);
+  s = emit_task_close_drop(s);
   if (s.has_need("str_eq")) {
     s = s.write("    .text\n");
     s = s.write(rt_x86_str_eq());
@@ -12838,7 +12864,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .section .bss\n    .align 8\n__fern_cov_counters: .quad 0\n    .text\n");
   }
   if (s.has_need("task")) {
-    s = s.write("    .section .bss\n    .align 8\n__fern_task_state: .quad 0, 0, 0, 0, 0, 0, 0\n    .text\n");
+    s = s.write("    .section .bss\n    .align 8\n__fern_task_state: .quad 0, 0, 0, 0, 0, 0, 0, 0\n    .text\n");
   }
   if (s.has_need("str_print")) {
     s = s.write("    .text\n");
