@@ -867,9 +867,13 @@ function step(own s: control.App, e: android.Event): control.App {
   let layer = s.layer;
   let apps = s.installed.len();
   let drawn = s.nodes.len() > 0;
+  let clock = clock_place(s.nodes);
   let t = control.step(s, e);
+  let placed = clock_place(t.nodes);
   if (!drawn && t.nodes.len() > 0) {
-    log.info("paper: drawn " + t.w.to_string() + "x" + t.h.to_string() + clock_place(t.nodes));
+    log.info("paper: drawn " + t.w.to_string() + "x" + t.h.to_string() + placed);
+  } else if (clock.len() > 0 && placed.len() > 0 && placed != clock) {
+    log.info("paper: moved" + placed);
   }
   if (t.layer != layer) {
     log.info("paper: layer " + t.layer.to_string());

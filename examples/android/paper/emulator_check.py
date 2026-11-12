@@ -114,24 +114,25 @@ def check_access(out):
         fail("the accessibility layer has no clock button of Paper")
         return
     box = re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', clock.group(0))
-    drawn = re.search(r"paper: drawn .*clock at (\d+) (\d+)", logcat())
-    if not box or not drawn:
+    places = re.findall(r"paper: (?:drawn|moved).*clock at (\d+) (\d+)", logcat())
+    if not box or not places:
         fail("the clock has no box in the accessibility layer, or Paper did not log where it drew the clock")
         return
     left, top, right, bottom = (int(v) for v in box.groups())
     x, y = (left + right) // 2, (top + bottom) // 2
-    if abs(x - int(drawn.group(1))) > 2 or abs(y - int(drawn.group(2))) > 2:
-        fail(f"the accessibility layer has the clock at {x} {y}, and Paper drew it at {drawn.group(1)} {drawn.group(2)}")
+    drawn = places[-1]
+    if abs(x - int(drawn[0])) > 2 or abs(y - int(drawn[1])) > 2:
+        fail(f"the accessibility layer has the clock at {x} {y}, and Paper drew it at {drawn[0]} {drawn[1]}")
 
 
 def open_clock():
-    """Taps the time, which opens the clock app, and goes home again. The
-    first frame logs the middle of the time."""
-    place = re.search(r"paper: drawn .*clock at (\d+) (\d+)", logcat())
-    if not place:
+    """Taps the time, which opens the clock app, and goes home again. Paper
+    logs the middle of the time when it draws it at a new place."""
+    places = re.findall(r"paper: (?:drawn|moved).*clock at (\d+) (\d+)", logcat())
+    if not places:
         fail("the home screen did not log the place of the clock")
         return
-    adb("shell", "input", "tap", place.group(1), place.group(2))
+    adb("shell", "input", "tap", *places[-1])
     opened = wait_for(r"paper: open clock (\S+)")
     if not opened or opened.group(1) == "by":
         fail("a tap on the time did not find the clock app")
@@ -331,6 +332,7 @@ def check_filter(out, width, height):
     if not wait_for_shade("fern_held", False):
         fail("the filter did not take the notification out of the shade")
     if not in_shade("fern_shown"):
+        held_evidence(out, printed, ui_dump(out, "ui-shown-gone"))
         fail("the filter took a notification from before it was on")
     tap(held)
     row = wait_for_node(out, "ui-held-list", '[^"]*held_text[^"]*', 10.0)

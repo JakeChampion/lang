@@ -187,6 +187,20 @@ class BackNavigationTests(unittest.TestCase):
         failures = self.run_device(Device(dump=low))
         self.assertIn("the accessibility layer has the clock at 159 166, and Paper drew it at 159 142", failures)
 
+    def test_clock_box_is_compared_with_the_last_place(self):
+        device = Device()
+        adb = device.adb
+
+        def moved(*args, **kwargs):
+            answer = adb(*args, **kwargs)
+            if args == ("shell", "input", "keyevent", "KEYCODE_HOME"):
+                device.log.insert(0, "paper: drawn 320x640, clock at 159 118")
+                device.log.append("paper: moved, clock at 159 142")
+            return answer
+
+        device.adb = moved
+        self.assertEqual([f for f in self.run_device(device) if "clock" in f], [])
+
     def test_clock_must_have_a_box(self):
         bare = '<node text="9:06" class="android.widget.Button" package="dev.fern.paper" clickable="true" />'
         failures = self.run_device(Device(dump=bare))
