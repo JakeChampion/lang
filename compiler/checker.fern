@@ -20720,6 +20720,9 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
     return true;
   }
   match (e) {
+    ast.ExprString(_) => {
+      return true;
+    },
     ast.ExprStructLit(sl) => {
       return ow_struct_lit_owned(sl, check_expr(e, ctx.scope), ctx);
     },

@@ -1,0 +1,34 @@
+// A string literal is an owned value, so it can be the argument of an `own`
+// parameter. The callee can keep it, give it back, or let it go.
+
+struct Label { text: string }
+
+function keep(own text: string): Label {
+  return Label { text: text };
+}
+
+function back(own text: string): string {
+  return text;
+}
+
+function drop(own text: string): i32 {
+  return text.len();
+}
+
+function swap(own xs: string[], i: i32, own with_this: string): (string, string[]) {
+  let old = xs[i];
+  return (old, xs.with(i, with_this));
+}
+
+function main(): i32 {
+  let label = keep("kept");
+  print(label.text + " " + back("back") + " " + drop("gone").to_string());
+  let (old, rest) = swap(["a", "b", "c"], 1, "z");
+  print(old + " " + rest[0] + rest[1] + rest[2]);
+  let n = 0;
+  for i in 0..3 {
+    n += drop("loop") + back("x" + i.to_string()).len() + keep("again").text.len();
+  }
+  print(n.to_string());
+  return 0;
+}

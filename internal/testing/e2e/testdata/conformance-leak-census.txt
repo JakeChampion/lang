@@ -812,6 +812,7 @@ own_param_superseded_field_argument                  0
 own_param_superseded_field_let                       0
 own_param_superseded_field_nested                    0
 own_parameter_compared_then_moved                    0
+own_parameter_takes_a_string_literal                 0
 own_self_reassign_move                               0
 own_struct_update_reuse                              0
 own_takes_replaced_field_of_owned_base               0

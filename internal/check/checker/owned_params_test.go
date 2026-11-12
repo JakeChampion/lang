@@ -3459,3 +3459,15 @@ function step(own h: Holder): Holder {
     return Holder { ...h, cfi: d };
 }`)
 }
+
+// A string literal is an owned value, so it is an argument of an `own`
+// parameter. A borrowed string parameter is not.
+func TestOwnedStringLiteralArgument(t *testing.T) {
+	const take = `function take(own s: string): string { return s; }
+function swap(own xs: string[], own z: string): string[] { return xs.with(0, z); }
+`
+	wantOK(t, "literal", take+`function f(): string { return take("z"); }`)
+	wantOK(t, "literal beside an owned array", take+`function f(): string[] { return swap(["a"], "z"); }`)
+	wantOK(t, "literal in a loop", take+`function f(): i32 { let n: i32 = 0; for i in 0..3 { n += take("z").len(); } return n; }`)
+	wantE051(t, "borrowed parameter", take+`function f(s: string): string { let t: string = take(s); return s + t; }`)
+}
