@@ -16,7 +16,7 @@ class Device:
     def __init__(self, *, stuck_keyboard=False, missing_keyboard=False,
                  ignored_back=False, early_close=False, wrong_home=False,
                  editor="inputType=0x1 imeOptions=0x10000002",
-                 dump='<node index="2" text="9:06" resource-id="" class="android.widget.Button" package="dev.fern.paper" content-desc="" clickable="true" />'):
+                 dump='<node index="2" text="9:06" resource-id="" class="android.widget.Button" package="dev.fern.paper" content-desc="" clickable="true" bounds="[77,92][242,193]" />'):
         self.dump = dump
         self.keyboard = False
         self.editor = editor
@@ -37,7 +37,7 @@ class Device:
         elif args == ("shell", "input", "keyevent", "KEYCODE_HOME"):
             self.layer = 0
             self.keyboard = False
-            self.log.extend(["paper: drawn 320x640", "paper: apps 1, Paper listed true", "paper: layer 0"])
+            self.log.extend(["paper: drawn 320x640, clock at 159 142", "paper: apps 1, Paper listed true", "paper: layer 0"])
         elif args[:3] == ("shell", "input", "swipe"):
             self.drawers += 1
             self.layer = 1
@@ -181,6 +181,16 @@ class BackNavigationTests(unittest.TestCase):
     def test_clock_must_be_a_button_for_accessibility(self):
         failures = self.run_device(Device(dump='<node text="9:06" class="android.view.View" package="dev.fern.paper" clickable="false" />'))
         self.assertIn("the accessibility layer has no clock button of Paper", failures)
+
+    def test_clock_box_must_be_where_the_clock_is_drawn(self):
+        low = '<node text="9:06" class="android.widget.Button" package="dev.fern.paper" clickable="true" bounds="[77,116][242,217]" />'
+        failures = self.run_device(Device(dump=low))
+        self.assertIn("the accessibility layer has the clock at 159 166, and Paper drew it at 159 142", failures)
+
+    def test_clock_must_have_a_box(self):
+        bare = '<node text="9:06" class="android.widget.Button" package="dev.fern.paper" clickable="true" />'
+        failures = self.run_device(Device(dump=bare))
+        self.assertEqual(len([f for f in failures if "no box in the accessibility layer" in f]), 1)
 
     def test_home_transition_also_requires_the_home_frame(self):
         failures = self.run_device(Device(wrong_home=True))

@@ -1905,16 +1905,24 @@ function item_node(ctx: usize, e: usize, id: i32): usize {
       ("setPackageName", "(Ljava/lang/CharSequence;)V", [pkg]),
       ("setClassName", "(Ljava/lang/CharSequence;)V", [cls]),
       ("setText", "(Ljava/lang/CharSequence;)V", [text]),
-      ("setBoundsInParent", "(Landroid/graphics/Rect;)V", [rect]),
       ("setVisibleToUser", "(Z)V", [1 as usize]),
       ("setEnabled", "(Z)V", [1 as usize]),
     ];
     for (name, sig, values) in calls {
       let done = jni.call_void(e, info, name, sig, values);
     }
+    // The app draws on the surface of the window, so an item has the
+    // coordinates of the window. The host view starts below the status
+    // bar. The box in the host is the item less the place of the host in
+    // the window, and the box on the screen is the item at the place of
+    // the window.
     let place: usize = jni.new_int_array(e, 2);
+    let framed = jni.call_void(e, host, "getLocationInWindow", "([I)V", [place]);
+    let inside = jni.int_array_region(e, place, 0, 2);
     let located = jni.call_void(e, host, "getLocationOnScreen", "([I)V", [place]);
     let at = jni.int_array_region(e, place, 0, 2);
+    let lifted = jni.call_void(e, rect, "offset", "(II)V", [(0 - inside[0]) as usize, (0 - inside[1]) as usize]);
+    let parent = jni.call_void(e, info, "setBoundsInParent", "(Landroid/graphics/Rect;)V", [rect]);
     let moved = jni.call_void(e, rect, "offset", "(II)V", [at[0] as usize, at[1] as usize]);
     let screen = jni.call_void(e, info, "setBoundsInScreen", "(Landroid/graphics/Rect;)V", [rect]);
     if ((it.actions & ACCESS_CLICK) != 0) {

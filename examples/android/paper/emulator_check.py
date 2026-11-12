@@ -105,11 +105,23 @@ def check_keyboard(width):
 def check_access(out):
     """An accessibility service reads the home screen: uiautomator dumps the
     window through the accessibility layer, and the dump has the clock of
-    Paper as a button with the time as its text."""
+    Paper as a button with the time as its text. The box of the button has
+    its middle where Paper drew the middle of the time, so a service puts
+    its focus on the clock and not below it."""
     dump = ui_dump(out, "ui")
-    clock = re.search(r'<node [^>]*text="\d{1,2}:\d\d[^"]*"[^>]*class="android\.widget\.Button"[^>]*package="dev\.fern\.paper"[^>]*clickable="true"', dump)
+    clock = re.search(r'<node [^>]*text="\d{1,2}:\d\d[^"]*"[^>]*class="android\.widget\.Button"[^>]*package="dev\.fern\.paper"[^>]*clickable="true"[^>]*', dump)
     if not clock:
         fail("the accessibility layer has no clock button of Paper")
+        return
+    box = re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', clock.group(0))
+    drawn = re.search(r"paper: drawn .*clock at (\d+) (\d+)", logcat())
+    if not box or not drawn:
+        fail("the clock has no box in the accessibility layer, or Paper did not log where it drew the clock")
+        return
+    left, top, right, bottom = (int(v) for v in box.groups())
+    x, y = (left + right) // 2, (top + bottom) // 2
+    if abs(x - int(drawn.group(1))) > 2 or abs(y - int(drawn.group(2))) > 2:
+        fail(f"the accessibility layer has the clock at {x} {y}, and Paper drew it at {drawn.group(1)} {drawn.group(2)}")
 
 
 def open_clock():
