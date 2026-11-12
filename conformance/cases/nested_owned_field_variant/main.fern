@@ -25,8 +25,11 @@ function keep(own xs: H[]): own H[] {
 }
 
 function update(own outer: Outer): own Option[Wrapped] {
-  let inner = outer.inner;
-  return Some(Wrapped.Wrap(Outer { ...outer, inner: Inner { ...inner, xs: keep(inner.xs) } }));
+  let build = (own held: Outer): own Option[Wrapped] => {
+    let inner = held.inner;
+    return Some(Wrapped.Wrap(Outer { ...held, inner: Inner { ...inner, xs: keep(inner.xs) } }));
+  };
+  return build(outer);
 }
 
 function close_all(own xs: H[]): i32 {
