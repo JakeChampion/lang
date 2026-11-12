@@ -1308,5 +1308,15 @@
     "name": "fresh callback loan loop backedge",
     "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f():i32{let h=H{n:3};let read=():i32=>h.read();let n=0;while(n<2){n+=read();h.close();}return n;} function main():i32{return 0;}",
     "want": "E051"
+  },
+  {
+    "name": "fresh callback loan unused capture owned result",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f():own H{let h=H{n:3};let read=():H=>h;return h;} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "fresh callback loan escaped capture owned result",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f(save:(()=>H)=>void):own H{let h=H{n:3};let read=():H=>h;save(read);return h;} function main():i32{return 0;}",
+    "want": "E051"
   }
 ]
