@@ -164,10 +164,12 @@
 # Record the exact corrective count. All tolerances stay unchanged.
 # 2026-11-12: perf-x86_64 job 131075781965 (#15461, on main 0b8548db) measured 45,149,488 copied bytes (was 39,116,232).
 # This is an inherited main cost of the merges after 710af42c. The 1% tolerance is unchanged.
-x86_64/checker.cliff_bytes	45149488
+# 2026-11-12 (#15474): a local scripts/cliff-bench run on main f2aa998b measures 44,566,616 copied bytes (was 45,149,488), 1.29% less. The win is the new ceiling. The tolerance is unchanged.
+x86_64/checker.cliff_bytes	44566616
 # 2026-11-11: Bank checker.cliff_count 378075 -> 373796 after main reverts.
 # Exact CI 42958185608 / job 130320191632 measures source ca80bd07aba3.
 # That source tree equals main 38399ecf. The 1% tolerance stays unchanged.
 # 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured x86_64/checker.cliff_count at 379346 (was 373694). The tolerance is unchanged.
 # 2026-11-12: the same job measured x86_64/checker.cliff_count at 461488 (was 379346). The tolerance is unchanged.
-x86_64/checker.cliff_count	461488
+# 2026-11-12 (#15474): the same run measures x86_64/checker.cliff_count at 461615 (was 461488). The tolerance is unchanged.
+x86_64/checker.cliff_count	461615
