@@ -239,20 +239,9 @@ function clean(p: string): string {
       segs = segs.append(seg);
     }
   }
-  let out = lead + joined(segs);
+  let out = lead + segs.join("/");
   if (out.len() == 0) {
     return ".";
-  }
-  return out;
-}
-
-function joined(segs: string[]): string {
-  let out = "";
-  for i in 0..segs.len() {
-    if (i > 0) {
-      out += "/";
-    }
-    out += segs[i];
   }
   return out;
 }

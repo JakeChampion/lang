@@ -673,21 +673,9 @@ function decimal(text: string): boolean {
   return true;
 }
 
-function hex_digits(text: string, from: i32): boolean {
-  if (from >= text.len()) {
-    return false;
-  }
-  for i in from..text.len() {
-    if (!lexer.is_hex_digit(text[i] as i32)) {
-      return false;
-    }
-  }
-  return true;
-}
-
 function integer_literal(text: string): boolean {
   if (text.len() > 2 && text[0] == b'0' && (text[1] == b'x' || text[1] == b'X')) {
-    return hex_digits(text, 2);
+    return util.hex_digits(text, 2);
   }
   return decimal(text);
 }
