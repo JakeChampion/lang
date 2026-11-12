@@ -254,6 +254,17 @@ def held_evidence(out, printed, dump):
     })
 
 
+def shown_evidence(out):
+    """What the device says about the notification from before the filter,
+    when it is not in the shade: the lines of the notification service
+    that have its tag or a cancel, and the held file of Paper."""
+    lines = shell("logcat", "-d", "-v", "time", "NotificationService:V", "NotificationManager:V", "NotificationListeners:V", "fern:V", "*:S").splitlines()
+    told = [line[:220] for line in lines if re.search(r"fern_shown|[Cc]ancel|paper:", line)]
+    for at in range(0, min(len(told), 40), 4):
+        keep(out, f"shown-{at:02}", {"service": "\n".join(told[-40:][at:at + 4])})
+    keep(out, "shown", {"list": shell("cmd", "notification", "list"), "held-file": shell("cat", FILES + "held")})
+
+
 def in_shade(tag):
     """Whether the notification with the tag `tag` is in the shade."""
     # Each line is the key of one notification, and a key has the tag
@@ -323,6 +334,10 @@ def check_filter(out, width, height):
     adb("shell", "cmd", "notification", "allow_listener", LISTENER, check=False)
     if not filter_on(out, width, height):
         return
+    if not in_shade("fern_shown"):
+        shown_evidence(out)
+        fail("the notification from before the filter left the shade when the filter came on")
+        return
     printed = post(out, "fern_held", "held_text")
     held = wait_for_node(out, "ui-held", r"\d+ held notifications?")
     if not held:
@@ -332,7 +347,7 @@ def check_filter(out, width, height):
     if not wait_for_shade("fern_held", False):
         fail("the filter did not take the notification out of the shade")
     if not in_shade("fern_shown"):
-        held_evidence(out, printed, ui_dump(out, "ui-shown-gone"))
+        shown_evidence(out)
         fail("the filter took a notification from before it was on")
     tap(held)
     row = wait_for_node(out, "ui-held-list", '[^"]*held_text[^"]*', 10.0)

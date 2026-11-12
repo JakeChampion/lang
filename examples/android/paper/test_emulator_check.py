@@ -219,7 +219,7 @@ class Phone:
     """A device for check_filter. `holds` is whether the filter takes a
     notification out of the shade, and `shows` is whether Paper shows it."""
 
-    def __init__(self, *, holds=True, shows=True, opens=True, takes_old=False, filter_row="off", probe=True):
+    def __init__(self, *, holds=True, shows=True, opens=True, takes_old=False, takes_late=False, filter_row="off", probe=True):
         self.holds = holds
         self.shows = shows
         self.opens = opens
@@ -227,6 +227,7 @@ class Phone:
         self.sliding = 0
         self.wrong_rows = 0
         self.takes_old = takes_old
+        self.takes_late = takes_late
         self.filter_row = filter_row
         self.probe = probe
         self.allowed = False
@@ -241,6 +242,8 @@ class Phone:
         self.failures = []
 
     def post(self, tag):
+        if self.takes_late and self.on:
+            self.shade.clear()
         if self.allowed and self.on and self.shows:
             self.held.append(tag)
         if not (self.allowed and self.on and self.holds):
@@ -388,6 +391,8 @@ class FilterTests(unittest.TestCase):
 
     def test_a_notification_from_before_the_filter_stays(self):
         failures = self.run_phone(Phone(takes_old=True))
+        self.assertIn("the notification from before the filter left the shade when the filter came on", failures)
+        failures = self.run_phone(Phone(takes_late=True))
         self.assertIn("the filter took a notification from before it was on", failures)
 
     def test_a_shade_that_the_check_cannot_read_fails(self):
