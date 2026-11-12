@@ -281,6 +281,7 @@ class FilterTests(unittest.TestCase):
         clock = iter(range(0, 100000, 5))
         with tempfile.TemporaryDirectory() as out, patch.multiple(check, adb=phone.adb, wait_for=phone.wait_for,
                             shell=lambda *args: phone.adb("shell", *args),
+                            logcat=lambda: "\n".join(phone.log),
                             fail=phone.failures.append), patch.object(check.time, "sleep"), \
                 patch.object(check.time, "monotonic", side_effect=lambda: next(clock)):
             check.check_filter(out, 320, 640)
@@ -311,6 +312,20 @@ class FilterTests(unittest.TestCase):
     def test_a_notification_that_paper_does_not_show_fails(self):
         failures = self.run_phone(Phone(shows=False))
         self.assertEqual(failures, ["the home screen does not show a held notification"])
+
+    def test_a_notification_that_paper_does_not_show_keeps_the_answers_of_the_device(self):
+        phone = Phone(shows=False)
+        clock = iter(range(0, 100000, 5))
+        with tempfile.TemporaryDirectory() as out, patch.multiple(check, adb=phone.adb, wait_for=phone.wait_for,
+                            shell=lambda *args: phone.adb("shell", *args) or "answer to " + " ".join(args[:2]),
+                            logcat=lambda: "paper: drawn 320x640", fail=phone.failures.append), patch.object(check.time, "sleep"), \
+                patch.object(check.time, "monotonic", side_effect=lambda: next(clock)):
+            check.check_filter(out, 320, 640)
+            kept = {p.name: p.read_text() for p in Path(out).iterdir()}
+        self.assertEqual(kept["held-listeners.txt"], "answer to settings get")
+        self.assertEqual(kept["held-held-file.txt"], "answer to cat /data/data/dev.fern.paper/files/held")
+        self.assertEqual(kept["held-log.txt"], "paper: drawn 320x640")
+        self.assertIn("9:06", kept["held-texts.txt"])
 
     def test_a_held_notification_that_does_not_open_fails(self):
         failures = self.run_phone(Phone(opens=False))

@@ -194,18 +194,40 @@ def post(out, tag, text, *flags):
     return printed
 
 
+def keep(out, group, answers):
+    """Keeps each answer of the device in a file, and prints its start.
+    The log of the job is the only place where a person reads it."""
+    for name, text in answers.items():
+        Path(out, group + "-" + name + ".txt").write_text(text)
+        print(f"{group} {name}: {text[:900]!r}", flush=True)
+
+
 def shade_evidence(out, printed):
-    """Keeps what the device says about its notifications, and prints the
-    start of each answer, for a check that cannot read the shade."""
-    answers = {
+    """What the device says about its notifications, for a check that
+    cannot read the shade."""
+    keep(out, "shade", {
         "post": printed,
         "list": shell("cmd", "notification", "list"),
         "service": shell("logcat", "-d", "-t", "400", "NotificationService:V", "NotificationManager:V", "*:S"),
         "dumpsys": shell("dumpsys", "notification", "--noredact"),
-    }
-    for name, text in answers.items():
-        Path(out, "shade-" + name + ".txt").write_text(text)
-        print(f"shade {name}: {text[:600]!r}", flush=True)
+    })
+
+
+def held_evidence(out, printed, dump):
+    """What the device and Paper say when the home screen shows no held
+    notification: the post, the shade, the listeners of the device, the
+    two files of Paper, its log lines, and the texts on the screen."""
+    files = "/data/data/" + PACKAGE + "/files/"
+    keep(out, "held", {
+        "post": printed,
+        "list": shell("cmd", "notification", "list"),
+        "listeners": shell("settings", "get", "secure", "enabled_notification_listeners"),
+        "settings-file": shell("cat", files + "settings"),
+        "held-file": shell("cat", files + "held"),
+        "log": "\n".join(logcat().splitlines()[-40:]),
+        "service": shell("logcat", "-d", "-t", "200", "NotificationService:V", "NotificationManager:V", "NotificationListeners:V", "*:S"),
+        "texts": " | ".join(re.findall(r'(?:text|content-desc)="([^"]+)"', dump)),
+    })
 
 
 def in_shade(tag):
@@ -280,9 +302,10 @@ def check_filter(out, width, height):
         return
     # The word after "activity" is the component of the intent. The two
     # words after it are the tag and the text.
-    post(out, "fern_held", "held_text", "-c", "activity", OPENED + "/.Settings")
+    printed = post(out, "fern_held", "held_text", "-c", "activity", OPENED + "/.Settings")
     held = wait_for_node(out, "ui-held", r"\d+ held notifications?")
     if not held:
+        held_evidence(out, printed, ui_dump(out, "ui-not-held"))
         fail("the home screen does not show a held notification")
         return
     if not wait_for_shade("fern_held", False):
