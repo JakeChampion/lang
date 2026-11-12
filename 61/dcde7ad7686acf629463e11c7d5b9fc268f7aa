@@ -183,3 +183,14 @@ aarch64/utf8_ingest_validated.text	8767
 aarch64/utf8_ingest_validated.ir	6178521
 aarch64/video_qtrle.text	5600
 aarch64/video_qtrle.ir	1559196292
+
+# lane: bootstrap-x86-64-linux
+bootstrap/x86-64-linux/stage1.wall_s	57
+bootstrap/x86-64-linux/stage1.peak_rss_mb	2549
+bootstrap/x86-64-linux/stage1.size_bytes	17196272
+bootstrap/x86-64-linux/stage2.wall_s	60
+bootstrap/x86-64-linux/stage2.peak_rss_mb	2556
+bootstrap/x86-64-linux/stage2.size_bytes	17211888
+bootstrap/x86-64-linux/stage3.wall_s	60
+bootstrap/x86-64-linux/stage3.peak_rss_mb	2562
+bootstrap/x86-64-linux/stage3.size_bytes	17211888
