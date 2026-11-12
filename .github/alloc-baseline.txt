@@ -124,5 +124,6 @@
 # analyses a factory again only when a factory that its body names has a new row:
 # 53,974,294, measured with scripts/selfhost-alloc-bench on the dev container at dcb74a3e.
 # The cost that remains is the first analysis of each factory, in the two passes of the checker.
-x86_64/checker.allocs	53974294
-x86_64/checker.frees	53974294
+# 2026-11-12: main at 74fc6d81, with the worklist and the merges of that day, measures 54,483,586 on the dev container.
+x86_64/checker.allocs	54483586
+x86_64/checker.frees	54483586
