@@ -67,13 +67,13 @@ function union_grant(own held: Holding[], dir: string, grants: string[]): Holdin
 
 struct GrantEdge { from: string, to: string, grants: string[] }
 
-function holding_index(held: Holding[], dir: string): i32 {
+function holding_index(held: Holding[], dir: string): Option[i32] {
   for i in 0..held.len() {
     if (held[i].dir == dir) {
-      return i;
+      return Some(i);
     }
   }
-  return -1;
+  return None;
 }
 
 function grant_edges(mans: ManifestAt[]): GrantEdge[] {
@@ -109,11 +109,13 @@ function holdings(mans: ManifestAt[], root_dir: string): Holding[] {
   while (changed) {
     changed = false;
     for edge in edges {
-      let from = holding_index(held, edge.from);
-      let to = holding_index(held, edge.to);
+      let giver_holds: string[] = match (holding_index(held, edge.from)) { Some(from) => held[from].grants, None => edge.grants };
+      let Some(to) = holding_index(held, edge.to) else {
+        continue;
+      };
       let allowed: string[] = [];
       for cap in edge.grants {
-        if (from < 0 || edge.from == root_dir || util.has_str(held[from].grants, cap)) {
+        if (edge.from == root_dir || util.has_str(giver_holds, cap)) {
           if (!util.has_str(held[to].grants, cap)) {
             allowed = allowed.append(cap);
             changed = true;
@@ -177,9 +179,11 @@ function attenuation_refusals(mans: ManifestAt[], held: Holding[], root_dir: str
   }
   let out: Refusal[] = [];
   for dir in sorted_unique(dirs) {
-    let at = holding_index(held, dir);
+    let Some(at) = holding_index(held, dir) else {
+      continue;
+    };
     for m in mans {
-      if (m.dir == dir && at >= 0 && dir != root_dir) {
+      if (m.dir == dir && dir != root_dir) {
         out = violations(m, held[at].grants, out);
       }
     }
@@ -217,9 +221,6 @@ function module_package(m: ModuleAt, prefix: string, root: caps.Pkg, held: Holdi
     }
   }
   let at = holding_index(held, dir);
-  let grants: string[] = [];
-  if (at >= 0) {
-    grants = held[at].grants;
-  }
-  return caps.Pkg { module: prefix, dir: dir, name: name, root: dir == root.dir, governed: at >= 0, grants: grants };
+  let grants: string[] = match (at) { Some(i) => held[i].grants, None => [] };
+  return caps.Pkg { module: prefix, dir: dir, name: name, root: dir == root.dir, governed: at.is_some(), grants: grants };
 }
