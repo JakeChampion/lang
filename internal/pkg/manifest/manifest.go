@@ -561,7 +561,7 @@ func androidValue(key, val string) (string, error) {
 			return val, nil
 		}
 		return "", fmt.Errorf("expected true or false, got %q", val)
-	case "permissions", "assets":
+	case "permissions", "assets", "widget":
 		items, err := parseStringArray(val)
 		if err != nil {
 			return "", err
@@ -573,5 +573,5 @@ func androidValue(key, val string) (string, error) {
 		}
 		return val, nil
 	}
-	return "", fmt.Errorf("unknown key (supported: package, label, icon, key, min_sdk, home, compress, cleartext, debuggable, permissions, assets)")
+	return "", fmt.Errorf("unknown key (supported: package, label, icon, key, min_sdk, home, compress, cleartext, debuggable, permissions, assets, widget)")
 }
