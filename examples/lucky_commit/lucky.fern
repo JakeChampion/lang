@@ -288,7 +288,7 @@ function step(block: u8[], spec: i64): u8[] {
     if ((changed & 1) == 1) {
       block = block.with(padding_byte(bit), padding_char(next, bit));
     }
-    changed = changed >> 1;
+    changed >>= 1;
     bit += 1;
   }
   return block;
