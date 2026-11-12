@@ -1225,6 +1225,101 @@
     "want": "E050"
   },
   {
+    "name": "fresh callback loan direct",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f():i32{let h=H{n:3};let read=():i32=>h.read();let n=read();return n+h.close();} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "fresh callback loan repeated reads",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f():i32{let h=H{n:3};let read=():i32=>h.read();let n=read()+read();return n+h.close();} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "fresh callback loan two callbacks",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f():i32{let h=H{n:3};let a=():i32=>h.read();let b=():i32=>h.read();let n=a()+b();return n+h.close();} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "fresh callback loan unused callback",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f():i32{let h=H{n:3};let read=():i32=>h.read();return h.close();} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "fresh callback loan earlier operand",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f():i32{let h=H{n:3};let read=():i32=>h.read();return read()+h.close();} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "fresh callback loan later operand",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f():i32{let h=H{n:3};let read=():i32=>h.read();return h.close()+read();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "fresh callback loan later callback",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f():i32{let h=H{n:3};let read=():i32=>h.read();let n=h.close();return n+read();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "fresh callback loan callback alias",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f():i32{let h=H{n:3};let read=():i32=>h.read();let alias=read;let n=read();return n+h.close()+alias();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "fresh callback loan callback argument",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function take(cb:()=>i32):i32{return cb();} function f():i32{let h=H{n:3};let read=():i32=>h.read();let n=take(read);return n+h.close();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "fresh callback loan callback returned",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f():()=>i32{let h=H{n:3};let read=():i32=>h.read();h.close();return read;} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "fresh callback loan callback stored",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f():i32{let h=H{n:3};let read=():i32=>h.read();let stored=[read];let n=read();return n+h.close()+stored[0]();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "fresh callback loan indirect lambda",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f():i32{let h=H{n:3};let read=():i32=>h.read();let later=():i32=>read();let n=read();return n+h.close()+later();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "fresh callback loan reassigned callback",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f():i32{let h=H{n:3};let read=():i32=>h.read();let n=read();read=():i32=>0;return n+h.close();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "fresh callback loan reassigned owner",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f(other:H):i32{let h=H{n:3};let read=():i32=>h.read();let n=read();h=other;return n+h.close();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "fresh callback loan deferred callback",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f():i32{let h=H{n:3};let read=():i32=>h.read();defer read();return h.close();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "fresh callback loan borrowed local",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f(other:H):i32{let h=other;let read=():i32=>h.read();let n=read();return n+h.close();} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "fresh callback loan loop backedge",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f():i32{let h=H{n:3};let read=():i32=>h.read();let n=0;while(n<2){n+=read();h.close();}return n;} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "fresh callback loan unused capture owned result",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f():own H{let h=H{n:3};let read=():H=>h;return h;} function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "fresh callback loan escaped capture owned result",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f(save:(()=>H)=>void):own H{let h=H{n:3};let read=():H=>h;save(read);return h;} function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
     "name": "deep call callback provenance valid before close",
     "source": "struct H{n:i32}function(h:H)read():i32{return h.n;}function(own h:H)close():i32{return h.n;}struct Box[T]{cb:T,a:i32,b:i32,c:i32,d:i32,e:i32,f:i32,g:i32} function(value:Box[T])changed(n:i32):Box[T]{return Box[T]{...value,a:n};}function deep[T](value:Box[T]):Box[T]{return value.changed(0).changed(1).changed(2).changed(3).changed(4).changed(5).changed(6).changed(7).changed(8).changed(9).changed(10).changed(11);}function run(own h:H):i32{let capture=():i32=>h.read();let box=deep(Box{cb:capture,a:0,b:0,c:0,d:0,e:0,f:0,g:0});let n=box.cb();return n+h.close();}function main():i32{return run(H{n:1});}",
     "want": ""

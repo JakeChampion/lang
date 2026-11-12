@@ -197,6 +197,9 @@ func escapingNames(body ast.Node, withDefer bool) map[string]bool {
 		})
 		return true
 	})
+	for name := range endedCallbackLoans(body) {
+		delete(esc, name)
+	}
 	return esc
 }
 
