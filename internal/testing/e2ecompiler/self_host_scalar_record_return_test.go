@@ -120,6 +120,7 @@ var scalarReturnCases = []struct{ name, source, want string }{
 	{"unrelated-record-donor", scalarRecordUnrelatedDonor, "10000\n200040000\n"},
 	{"unrelated-same-layout-donor", scalarRecordUnrelatedSameLayout, "1000\n"},
 	{"unrelated-tuple-donor", scalarTupleUnrelatedDonor, "1000\n"},
+	{"split-variant-payload", scalarRecordSplitVariantPayload, "0\n503500\n"},
 	{"mixed-float-bits", scalarRecordMixed, "0\n"},
 	{"narrow-float", scalarRecordNarrow, "0\n"},
 	{"one-two-three-phis", scalarRecordSmallPhis, "0\n"},
@@ -311,6 +312,44 @@ function main(): i32 {
   for i in 0..10000 {
     let c = costs(i);
     sum += take(Plan { cost: c.first + c.second, a: c.a, b: c.b, c: 0, d: 0 });
+  }
+  let count = __heap_alloc_count() - before;
+  print(count.to_string());
+  print(sum.to_string());
+  return 0;
+}
+`
+
+// The Dur in the Some goes to spend as words, so no box is there for the
+// result of add to give.
+const scalarRecordSplitVariantPayload = `import "std/i64";
+struct Dur { sec: i64, nsec: i64 }
+@noinline function carry(sec: i64, nsec: i64): Dur {
+  if (nsec > 999i64) {
+    return Dur { sec: sec + 1i64, nsec: nsec - 1000i64 };
+  }
+  return Dur { sec: sec, nsec: nsec };
+}
+@noinline function add(a: Dur, b: Dur): Dur {
+  return carry(a.sec + b.sec, a.nsec + b.nsec);
+}
+@noinline function spend(limit: Option[Dur]): i64 {
+  if let Some(d) = limit { return d.sec + d.nsec; }
+  return 0i64;
+}
+function limit_of(left: i64): Option[Dur] {
+  if (left < 500i64) {
+    return None;
+  }
+  return Some(Dur { sec: left / 1000i64, nsec: left % 1000i64 });
+}
+function main(): i32 {
+  let before = __heap_alloc_count();
+  let sum = 0i64;
+  for i in 0..1000 {
+    let r = add(Dur { sec: i as i64, nsec: 1i64 }, Dur { sec: 1i64, nsec: 2i64 });
+    let left = r.sec * 1000i64 + r.nsec;
+    sum += spend(limit_of(left));
   }
   let count = __heap_alloc_count() - before;
   print(count.to_string());
