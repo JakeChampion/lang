@@ -553,6 +553,28 @@ function test_groups_and_orders(): test.TestOutcome {
   return test.assert_eq([groups, bo, album, up, rock, place, orders.join(" "), m.sort.to_string(), shown.to_string()].join(" | "), "Ada:2/1,Bo:2/2,Cy:1/1 Rock:2/1,Unknown genre:1/1 /m/x:2/1,/m/y:1/1 | One:1/1,Two:1/1 0,2 | 0,1 | Bo | 0,1true | 2 | 0,1,2:OneTwo 2,0,1:OneTwo 2,1,0:TwoOne 0,1,2:OneTwo | 0 | true");
 }
 
+// A tap on a song while the menu shows puts the song in the menu, and a
+// second tap takes it out. The songs of the menu go in the queue and in a
+// playlist. The menu of one song goes to its album and shows its details.
+function test_the_menu_of_more_than_one_song(): test.TestOutcome {
+  let s = sim.tap(sim.tap(sim.hold(started(), "Tagged Song"), "Slow Water"), "Quick Light");
+  saved(s, "tune-chosen");
+  let three = sim.shows(s, "3 songs · tap a song to add it") && !sim.shows(s, "Details");
+  s = sim.tap(s, "Slow Water");
+  let two = numbers(s.shell.app.model.chosen);
+  s = sim.tap(s, "Add to queue");
+  let queue = order(s.shell.app.model) + " " + s.shell.app.model.chosen.len().to_string();
+  s = sim.tap(sim.tap(sim.tap(sim.hold(s, "Morning Fern"), "Slow Water"), "Add to playlist"), "mix");
+  let listed = lists(s.shell.app.model);
+  s = sim.tap(sim.hold(s, "Tagged Song"), "Details");
+  saved(s, "tune-details");
+  let detail = sim.shows(s, "Unknown genre · WAV · 0:06") && sim.shows(s, "music/loose/x1.wav");
+  s = sim.tap(s, "Album");
+  let album = s.shell.app.model.album + "/" + s.shell.app.model.album_by + " " + sim.shows(s, "Details").to_string();
+  s = sim.tap(sim.hold(sim.tap(s, "Up"), "Quick Light"), "Artist");
+  return test.assert_eq([three.to_string(), two, queue, listed, detail.to_string(), album, s.shell.app.model.artist].join(" | "), "true | 0,3 | 0,3@0 0 | mix:4 | true | Numbers/Ada false | Fern");
+}
+
 function main(): i32 {
   let r = test.new("examples/android/tune");
   r = r.it("the scan reads the tags and the paths of its files", test_scan_reads_tags_and_paths);
@@ -575,5 +597,6 @@ function main(): i32 {
   r = r.it("the player starts with the library that it saved", test_the_saved_library);
   r = r.it("the person makes playlists, and the scan reads an M3U file", test_playlists);
   r = r.it("a genre, a directory and each artist of a track show their songs", test_groups_and_orders);
+  r = r.it("the menu has more than one song, and one song shows its details", test_the_menu_of_more_than_one_song);
   return r.finish();
 }

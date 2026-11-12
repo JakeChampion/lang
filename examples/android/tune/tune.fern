@@ -128,8 +128,9 @@ pub enum Want { Load(i32), Resume, Hold, Seek(f64), Scan, Grant, List(string), K
 // `sound` plays the track, and `pending` has the samples that the sound
 // did not take yet.
 // `queue` has the numbers of the tracks that play, in their order, and
-// `spot` is the place of `current` in it, or -1. `menu` is the number of
-// the track whose menu shows, or -1. `lined` tells that the screen of the
+// `spot` is the place of `current` in it, or -1. `chosen` has the numbers
+// of the tracks whose menu shows, and `detail` tells that the menu shows
+// the details of its track. `lined` tells that the screen of the
 // queue shows.
 // `folder` is the directory that the library is in, or "" for the music of
 // the phone. `home` is the directory that the person chooses a folder
@@ -172,7 +173,8 @@ pub struct Model {
   repeat: i32,
   queue: i32[],
   spot: i32,
-  menu: i32,
+  chosen: i32[],
+  detail: boolean,
   lined: boolean,
   error: string,
   wants: Want[],
@@ -207,7 +209,7 @@ pub struct Model {
 
 // A player with no track yet, which reads the files `scan`.
 pub function start(scan: string[]): Model {
-  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", album_by: "", genre: "", place: "", sort: BY_ALBUM, query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, menu: -1, lined: false, error: "", wants: [], sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false, covers: [], bare: [], pictures: [], art: None, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: false, wanted: [], playlists: [], list: "", adding: [], naming: false, name: "" };
+  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", album_by: "", genre: "", place: "", sort: BY_ALBUM, query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, chosen: [], detail: false, lined: false, error: "", wants: [], sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false, covers: [], bare: [], pictures: [], art: None, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: false, wanted: [], playlists: [], list: "", adding: [], naming: false, name: "" };
 }
 
 // A player with the tracks `tracks` and the playlists `playlists` that it
@@ -247,8 +249,9 @@ pub function start_in(home: string, folder: string): Model {
 // library. `Play` and `SeekMs` come from the media buttons of Android:
 // play or stop, and go to a time in ms. `Focus` comes when a call or a
 // different app takes the sound of the phone, and when it gives it back.
-// `Menu` shows the menu of a track, and `PlayNext` and `Enqueue` put that
-// track in the queue. `Lined` shows the queue or not. `Jump` plays the
+// `Menu` shows the menu of a track. While the menu shows, `Pick` puts a
+// track in it or takes it out. `PlayNext` and `Enqueue` put the tracks of
+// the menu in the queue. `Lined` shows the queue or not. `Jump` plays the
 // track at a place of the queue, and `Drop` takes that place out.
 // `Closing` comes when Android destroys the activity. `Walk` comes with
 // the directories of the library when the player starts to go through
@@ -263,7 +266,9 @@ pub function start_in(home: string, folder: string): Model {
 // writes the playlist that shows as an M3U file, and `Exported` comes with
 // the words that tell the person the result. `Genre` and `Place` show the
 // songs of a genre and of a directory. `Sort` goes to the next order.
-pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean), Menu(i32), MenuClosed, PlayNext, Enqueue, Lined(boolean), Jump(i32), Drop(i32), Closing, Walk(string[]), Listed(string, string[]), OpenList(string), AddTo, SaveQueue, ToList(string), NewList, Named(string), Create, Unlist(i32), DeleteList, Favorite, Imported(string, string[]), Export, Exported(string), Genre(string), Place(string), Sort }
+// `ToAlbum` and `ToArtist` show the album and the artist of the track of
+// the menu, and `Details` shows or hides its details.
+pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean), Menu(i32), MenuClosed, PlayNext, Enqueue, Lined(boolean), Jump(i32), Drop(i32), Closing, Walk(string[]), Listed(string, string[]), OpenList(string), AddTo, SaveQueue, ToList(string), NewList, Named(string), Create, Unlist(i32), DeleteList, Favorite, Imported(string, string[]), Export, Exported(string), Genre(string), Place(string), Sort, ToAlbum, ToArtist, Details }
 
 // The key of the album of a track: the artist that the album is under,
 // and its name.
@@ -653,7 +658,7 @@ function with_track(m: Model, t: Track): Model {
   if (!knows_cover(m, album_key(t.by, t.album))) {
     wanted = wanted.append(t.path);
   }
-  return Model { ...m, tracks: all, current: moved(m.current, at), menu: moved(m.menu, at), queue: m.queue.map((i: i32): i32 => moved(i, at)), have: m.have.insert(t.path, true), dirty: true, wanted: wanted };
+  return Model { ...m, tracks: all, current: moved(m.current, at), chosen: m.chosen.map((i: i32): i32 => moved(i, at)), queue: m.queue.map((i: i32): i32 => moved(i, at)), have: m.have.insert(t.path, true), dirty: true, wanted: wanted };
 }
 
 // The player with the files and the directories that it did not read
@@ -724,7 +729,7 @@ pub function pruned(m: Model): Model {
     }
   }
   let current = placed(m.current, to);
-  let next = Model { ...done, tracks: kept, have: have, dirty: true, queue: queue, spot: spot, current: current, menu: -1 };
+  let next = Model { ...done, tracks: kept, have: have, dirty: true, queue: queue, spot: spot, current: current, chosen: [] };
   if (m.current >= 0 && current < 0) {
     return Model { ...next, queue: [], spot: -1, playing: false, open: false, at_ms: 0i64, wants: next.wants.append(Hold) };
   }
@@ -787,7 +792,11 @@ function track_row(m: Model, i: i32): ui.El[Msg] {
       name = t.number.to_string() + ". " + t.title;
     }
   }
-  return entry(thumb(m, album_key(t.by, t.album), t.album, 44.0), name, detail, color).on_tap(Pick(i)).on_long(Menu(i));
+  let row = entry(thumb(m, album_key(t.by, t.album), t.album, 44.0), name, detail, color).on_tap(Pick(i)).on_long(Menu(i));
+  if (m.chosen.contains(i)) {
+    return row.background(ui.SURFACE);
+  }
+  return row;
 }
 
 function count(n: i32, one: string): string {
@@ -940,7 +949,7 @@ function library(m: Model): ui.El[Msg] {
     kids = kids.append(ui.row([tab(m, "Songs", SONGS), tab(m, "Albums", ALBUMS), tab(m, "Artists", ARTISTS), tab(m, "Genres", GENRES), tab(m, "Lists", PLAYLISTS), tab(m, "Folders", FOLDERS)]).spaced(4.0).padding_xy(16.0, 0.0).scroll("tabs"));
   }
   kids = kids.append(list);
-  if (m.menu >= 0 && m.menu < m.tracks.len()) {
+  if (m.chosen.len() > 0) {
     kids = kids.append(menu(m));
   } else if (m.current >= 0) {
     kids = kids.append(mini(m));
@@ -987,10 +996,36 @@ function repeat_label(repeat: i32): string {
   return "Repeat off";
 }
 
-// The menu of the track `m.menu`, at the foot of the library.
+// The details of a track, a line for each.
+function details(t: Track): ui.El[Msg] {
+  let album = t.album;
+  if (t.number > 0) {
+    album = album + " · number " + t.number.to_string();
+  }
+  if (t.year > 0) {
+    album = album + " · " + t.year.to_string();
+  }
+  let lines = [t.artists.join(", "), album, genre_of(t) + " · " + t.format + " · " + clock(t.ms), t.path];
+  return ui.column(lines.map((line: string): ui.El[Msg] => ui.text(line).sized(13.0).colored(ui.MUTED).clamped(2))).spaced(2.0);
+}
+
+// The menu of the tracks of `m.chosen`, at the foot of the library. One
+// track has also the ways to its album and its artist, and its details.
 function menu(m: Model): ui.El[Msg] {
-  let t = m.tracks[m.menu];
-  return ui.column([ui.text(t.title).weighted(700).clamped(1), ui.row([ui.text_button("Play next", PlayNext), ui.text_button("Add to queue", Enqueue), ui.space(), ui.text_button("Close", MenuClosed)]).spaced(8.0).aligned(ui.CENTER), ui.row([ui.text_button("Add to playlist", AddTo)]).spaced(8.0).aligned(ui.CENTER)]).spaced(4.0).padding_xy(16.0, 12.0).background(ui.SURFACE);
+  let name = count(m.chosen.len(), "song") + " · tap a song to add it";
+  let more: ui.El[Msg][] = [ui.text_button("Add to playlist", AddTo)];
+  let kids: ui.El[Msg][] = [];
+  if (m.chosen.len() == 1) {
+    let t = m.tracks[m.chosen[0]];
+    name = t.title;
+    more = more.append(ui.text_button("Album", ToAlbum)).append(ui.text_button("Artist", ToArtist)).append(ui.text_button("Details", Details));
+    if (m.detail) {
+      kids = [details(t)];
+    }
+  }
+  let first = ui.row([ui.text_button("Play next", PlayNext), ui.text_button("Add to queue", Enqueue), ui.space(), ui.text_button("Close", MenuClosed)]).spaced(8.0).aligned(ui.CENTER);
+  let top: ui.El[Msg][] = [ui.text(name).weighted(700).clamped(1)];
+  return ui.column(top.concat(kids).concat([first, ui.row(more).spaced(8.0).aligned(ui.CENTER).scroll("menu")])).spaced(4.0).padding_xy(16.0, 12.0).background(ui.SURFACE);
 }
 
 // The screen where the person chooses the playlist that gets the paths of
@@ -1112,7 +1147,7 @@ function played_at(m: Model, spot: i32): Model {
 function started_from(m: Model, i: i32): Model {
   let queue = songs(m);
   let Some(spot) = queue.index_of(i) else {
-    return played_at(Model { ...m, queue: [i], menu: -1 }, 0);
+    return played_at(Model { ...m, queue: [i], chosen: [] }, 0);
   };
   if (m.shuffle) {
     let first: i32[] = [i];
@@ -1121,9 +1156,9 @@ function started_from(m: Model, i: i32): Model {
         first = first.append(n);
       }
     }
-    return played_at(Model { ...m, queue: mixed(first, 0), menu: -1 }, 0);
+    return played_at(Model { ...m, queue: mixed(first, 0), chosen: [] }, 0);
   }
-  return played_at(Model { ...m, queue: queue, menu: -1 }, spot);
+  return played_at(Model { ...m, queue: queue, chosen: [] }, spot);
 }
 
 // The player with shuffle on or off. On: the tracks after the one that
@@ -1140,26 +1175,39 @@ function shuffled(m: Model, on: boolean): Model {
   return Model { ...m, shuffle: false, queue: queue, spot: spot };
 }
 
-// The player with the track of the menu at the place `at` of the queue. A
-// player with no queue plays that track.
+// The player with the tracks of the menu at the place `at` of the queue. A
+// player with no queue plays the first of them.
 function queued(m: Model, at: i32): Model {
-  if (m.menu < 0) {
+  if (m.chosen.len() == 0) {
     return m;
   }
   if (m.queue.len() == 0 || m.current < 0) {
-    return played_at(Model { ...m, queue: [m.menu], menu: -1 }, 0);
+    return played_at(Model { ...m, queue: m.chosen, chosen: [], detail: false }, 0);
   }
-  let queue: i32[] = [];
-  for i in 0..m.queue.len() {
-    if (i == at) {
-      queue = queue.append(m.menu);
-    }
-    queue = queue.append(m.queue[i]);
+  let place = at.min(m.queue.len());
+  return Model { ...m, queue: m.queue.take(place).concat(m.chosen).concat(m.queue.drop(place)), chosen: [], detail: false };
+}
+
+// The player with the track `i` in the tracks of the menu, or out of them
+// when it is there.
+function chose_also(m: Model, i: i32): Model {
+  if (m.chosen.contains(i)) {
+    return Model { ...m, chosen: m.chosen.filter((c: i32): boolean => c != i), detail: false };
   }
-  if (at >= m.queue.len()) {
-    queue = queue.append(m.menu);
+  return Model { ...m, chosen: m.chosen.append(i), detail: false };
+}
+
+// The player on the album or on the artist of the one track of the menu.
+function went_to(m: Model, album: boolean): Model {
+  if (m.chosen.len() != 1) {
+    return m;
   }
-  return Model { ...m, queue: queue, menu: -1 };
+  let t = m.tracks[m.chosen[0]];
+  let next = Model { ...at_top(m), chosen: [], detail: false, query: "" };
+  if (album) {
+    return Model { ...next, album_by: t.by, album: t.album };
+  }
+  return Model { ...next, artist: t.by };
 }
 
 // The player with no track at the place `spot` of the queue. The track
@@ -1282,7 +1330,7 @@ function used(m: Model): Model {
   if (m.playing) {
     wants = wants.append(Hold);
   }
-  return Model { ...m, choosing: false, folder: m.dir, tracks: [], scan: [], covers: [], bare: [], pictures: [], art: None, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: true, wanted: [], current: -1, queue: [], spot: -1, menu: -1, lined: false, playing: false, open: false, artist: "", album: "", album_by: "", genre: "", place: "", query: "", error: "", fresh: false, wants: wants.append(Keep(m.dir)).append(Scan) };
+  return Model { ...m, choosing: false, folder: m.dir, tracks: [], scan: [], covers: [], bare: [], pictures: [], art: None, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: true, wanted: [], current: -1, queue: [], spot: -1, chosen: [], lined: false, playing: false, open: false, artist: "", album: "", album_by: "", genre: "", place: "", query: "", error: "", fresh: false, wants: wants.append(Keep(m.dir)).append(Scan) };
 }
 
 function returned(m: Model): Model {
@@ -1336,6 +1384,9 @@ pub function update(own m: Model, msg: Msg): Model {
       return Model { ...m, query: text };
     },
     Pick(i) => {
+      if (m.chosen.len() > 0) {
+        return chose_also(m, i);
+      }
       return started_from(m, i);
     },
     Toggle => {
@@ -1418,10 +1469,19 @@ pub function update(own m: Model, msg: Msg): Model {
       return used(m);
     },
     Menu(i) => {
-      return Model { ...m, menu: i };
+      return Model { ...m, chosen: [i], detail: false };
     },
     MenuClosed => {
-      return Model { ...m, menu: -1 };
+      return Model { ...m, chosen: [], detail: false };
+    },
+    ToAlbum => {
+      return went_to(m, true);
+    },
+    ToArtist => {
+      return went_to(m, false);
+    },
+    Details => {
+      return Model { ...m, detail: !m.detail };
     },
     PlayNext => {
       return queued(m, m.spot + 1);
@@ -1442,13 +1502,10 @@ pub function update(own m: Model, msg: Msg): Model {
       return Model { ...m, wants: m.wants.append(Quit) };
     },
     OpenList(name) => {
-      return Model { ...at_top(m), list: name, query: "", menu: -1 };
+      return Model { ...at_top(m), list: name, query: "", chosen: [] };
     },
     AddTo => {
-      if (m.menu < 0 || m.menu >= m.tracks.len()) {
-        return m;
-      }
-      return Model { ...m, adding: [m.tracks[m.menu].path], menu: -1 };
+      return Model { ...m, adding: m.chosen.map((i: i32): string => m.tracks[i].path), chosen: [], detail: false };
     },
     SaveQueue => {
       return Model { ...m, adding: m.queue.map((i: i32): string => m.tracks[i].path), lined: false };
@@ -1545,7 +1602,7 @@ pub function back(m: Model): Option[Msg] {
   if (m.lined) {
     return Some(Lined(false));
   }
-  if (m.menu >= 0) {
+  if (m.chosen.len() > 0) {
     return Some(MenuClosed);
   }
   if (m.open) {
