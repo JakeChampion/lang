@@ -640,6 +640,7 @@ let_else_or_pattern                                  0
 let_else_pattern_forms                               0
 let_else_payload_copy                                0
 let_else_qualified_variant                           0
+let_else_tuple_of_patterns                           0
 let_else_variant_binding_outlives_stmt               0
 literal_composite_takes_the_type_of_a_nested_part    0
 literal_local_read_at_two_widths                    0
