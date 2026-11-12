@@ -1,0 +1,13 @@
+// A NativeActivity app with a @jni class that extends AppWidgetProvider,
+// for the check that fern -apk gives the app a widget: the receiver in the
+// manifest, the resource table, the layout and the provider file.
+import "std/android/widget";
+
+@jni("dev.fern.widgettest.Row extends android.appwidget.AppWidgetProvider", "void onReceive(android.content.Context, android.content.Intent)")
+pub function on_receive(env: usize, thiz: usize, context: usize, intent: usize): void {
+  if (widget.action(env, intent) == widget.UPDATE) {
+    let shown = widget.show(env, context, "dev.fern.widgettest.Row", widget.Look { texts: [(0, "Ready")], actions: [(1, "dev.fern.widgettest.GO")], opens: [0] });
+  }
+}
+
+pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size: usize): void {}

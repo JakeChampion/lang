@@ -2312,6 +2312,7 @@ function flag_groups(): FlagGroup[] {
       sub_flag("-apk-debuggable", "", ["-apk"], "with -apk: mark the app debuggable (android:debuggable), so adb run-as can read its files; do not ship such an APK"),
       sub_flag("-apk-key", "FILE", ["-apk"], "with -apk: the P-256 signing key, a PEM file; a new key is written there when FILE does not exist (default OUT with .key.pem for .apk)"),
       sub_flag("-apk-home", "", ["-apk"], "with -apk: make the app a home screen: Android offers it as the home app, keeps one task of it, and shows the wallpaper behind it"),
+      sub_flag("-apk-widget", "ITEMS", ["-apk"], "with -apk: the comma-separated items of the row of the app widget of the home screen, each text:NAME:LABEL or button:NAME:LABEL; the app has one @jni class that extends android.appwidget.AppWidgetProvider"),
       sub_flag("-apk-run", "", ["-apk"], "with -apk: install the APK with adb on the device that adb sees, start it, and show the log lines of its process until it stops; the APK holds the library of the ABI of that device only"),
       sub_flag("-apk-asset", "FILES", ["-apk"], "with -apk: the comma-separated files to put under assets/ in the APK, each with its own file name, for AAssetManager"),
       cli_flag("-harden", "", "Linux and Android executables and shared objects: stack canaries, a check on every indirect call, a random pick among a free list's first eight blocks behind encoded links, and a guard page after every 64th large block; on arm64 also BTI landing pads and signed return addresses, on an x86-64 executable the shadow stack where the kernel offers it"),
@@ -6067,10 +6068,10 @@ function cli_backend_refusal(backend: string, target: string): string {
 
 // The Android flags: -jni-java, and the output, package, label, icon and key
 // file of -apk.
-struct ApkOpts { jni_java: string, jni_dex: string, out: string, package: string, label: string, icon: string, key: string, permissions: string, min_sdk: string, compress: boolean, cleartext: boolean, debuggable: boolean, home: boolean, assets: string, run: boolean }
+struct ApkOpts { jni_java: string, jni_dex: string, out: string, package: string, label: string, icon: string, key: string, permissions: string, min_sdk: string, compress: boolean, cleartext: boolean, debuggable: boolean, home: boolean, assets: string, widget: string, run: boolean }
 
 function is_android_flag(name: string): boolean {
-  return util.has_str(["-jni-java", "-jni-dex", "-apk", "-apk-package", "-apk-label", "-apk-icon", "-apk-key", "-apk-permission", "-apk-min-sdk", "-apk-compress", "-apk-cleartext", "-apk-debuggable", "-apk-home", "-apk-asset", "-apk-run"], name);
+  return util.has_str(["-jni-java", "-jni-dex", "-apk", "-apk-package", "-apk-label", "-apk-icon", "-apk-key", "-apk-permission", "-apk-min-sdk", "-apk-compress", "-apk-cleartext", "-apk-debuggable", "-apk-home", "-apk-asset", "-apk-widget", "-apk-run"], name);
 }
 
 // The -apk flags that take no value.
@@ -6094,6 +6095,7 @@ function android_flag(o: ApkOpts, f: CliArg): ApkOpts {
     "-apk-debuggable" => ApkOpts { ...o, debuggable: true },
     "-apk-home" => ApkOpts { ...o, home: true },
     "-apk-asset" => ApkOpts { ...o, assets: f.value },
+    "-apk-widget" => ApkOpts { ...o, widget: f.value },
     "-apk-run" => ApkOpts { ...o, run: true },
     _ => o,
   };
@@ -6285,7 +6287,7 @@ function apk_app(o: ApkOpts, lib: string, classes: u8[]): apk.App {
   for name in dex.subclasses_of(classes, apk.LISTENER_ACTION) {
     services = services.append(apk.Service { name: name, types: 0, permission: apk.LISTENER_PERMISSION, action: apk.LISTENER_ACTION });
   }
-  let app = apk.App { package: "dev.fern." + lib, label: lib, lib: lib, version_code: 1, version_name: "1.0", activity: activity, dex: classes, permissions: permissions, min_sdk: apk.MIN_SDK, services: services, icon: [], compress: o.compress, cleartext: o.cleartext, debuggable: o.debuggable, home: o.home, assets: [] };
+  let app = apk.App { package: "dev.fern." + lib, label: lib, lib: lib, version_code: 1, version_name: "1.0", activity: activity, dex: classes, permissions: permissions, min_sdk: apk.MIN_SDK, services: services, icon: [], compress: o.compress, cleartext: o.cleartext, debuggable: o.debuggable, home: o.home, assets: [], widget: apk.no_widget() };
   if (o.min_sdk.len() > 0) {
     app = apk.App { ...app, min_sdk: size_bytes(o.min_sdk) as i32 };
   }
@@ -6296,6 +6298,73 @@ function apk_app(o: ApkOpts, lib: string, classes: u8[]): apk.App {
     app = apk.App { ...app, label: o.label };
   }
   return app;
+}
+
+// A name of a resource: small letters, digits and `_`, with a letter first.
+function resource_name(name: string): boolean {
+  if (name.len() == 0 || name[0] < b'a' || name[0] > b'z') {
+    return false;
+  }
+  for i in 0..name.len() {
+    let c = name[i];
+    if (!(c >= b'a' && c <= b'z' || c >= b'0' && c <= b'9' || c == b'_')) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The item of the widget that `text` names, or the error.
+function apk_widget_item(text: string, seen: string[]): (apk.Item, string) {
+  let parts: string[] = [];
+  for part in text.trim().split(":") {
+    parts = parts.append(part.to_owned());
+  }
+  let none = apk.Item { button: false, name: "", label: "" };
+  if (parts.len() < 3 || parts[0] != "text" && parts[0] != "button") {
+    return (none, "fern: -apk-widget takes items such as text:title:Song or button:next:Next, and \"" + text + "\" is not one");
+  }
+  if (!resource_name(parts[1])) {
+    return (none, "fern: -apk-widget: the name \"" + parts[1] + "\" of an item has small letters, digits and _ only, with a letter first");
+  }
+  let label = parts[2];
+  for k in 3..parts.len() {
+    label = label + ":" + parts[k];
+  }
+  if (util.has_str(seen, parts[1])) {
+    return (none, "fern: -apk-widget: two items have the name \"" + parts[1] + "\"");
+  }
+  return (apk.Item { button: parts[0] == "button", name: parts[1], label: label }, "");
+}
+
+// The widget of the -apk-widget list and of the class in `classes` that
+// extends AppWidgetProvider. The second value is the error when the list
+// and the class are not there together, or when an item is not valid.
+function apk_widget(list: string, classes: u8[]): (apk.Widget, string) {
+  let providers = dex.subclasses_of(classes, "android.appwidget.AppWidgetProvider");
+  if (list.len() == 0) {
+    if (providers.len() > 0) {
+      return (apk.no_widget(), "fern: " + providers[0] + " extends android.appwidget.AppWidgetProvider, and the widget has no items: give them with -apk-widget, or with widget in the [android] table of fern.toml");
+    }
+    return (apk.no_widget(), "");
+  }
+  if (providers.len() != 1) {
+    return (apk.no_widget(), "fern: -apk-widget needs one @jni class that extends android.appwidget.AppWidgetProvider, and the app has " + util.i32_to_string(providers.len()));
+  }
+  let items: apk.Item[] = [];
+  let names: string[] = [];
+  for text in list.split(",") {
+    let (item, bad) = apk_widget_item(text.to_owned(), names);
+    if (bad.len() > 0) {
+      return (apk.no_widget(), bad);
+    }
+    items = items.append(item);
+    names = names.append(item.name);
+  }
+  if (items.len() > 8) {
+    return (apk.no_widget(), "fern: -apk-widget takes at most 8 items, and got " + util.i32_to_string(items.len()));
+  }
+  return (apk.Widget { provider: providers[0], items: items }, "");
 }
 
 // The files of the -apk-asset list, each under its own file name. The second
@@ -6394,6 +6463,7 @@ function apk_with_manifest(o: ApkOpts, entry_path: string): (ApkOpts, string) {
     debuggable: o.debuggable || fern_toml.android(m, "debuggable") == "true",
     home: o.home || fern_toml.android(m, "home") == "true",
     assets: assets,
+    widget: or_text(o.widget, fern_toml.android(m, "widget")),
   }, "");
 }
 
@@ -6465,7 +6535,12 @@ function run_apk(av: string[], flags: ApkOpts, entry_path: string, embedded_root
     eprint(key_bad);
     return 1;
   }
-  let app = apk.App { ...apk_app(o, lib, classes), icon: icon, assets: assets };
+  let (widget, widget_bad) = apk_widget(o.widget, classes);
+  if (widget_bad.len() > 0) {
+    eprint(widget_bad);
+    return 2;
+  }
+  let app = apk.App { ...apk_app(o, lib, classes), icon: icon, assets: assets, widget: widget };
   if let Err(e) = write_file_bytes(o.out, apk.write(app, libs, d)) {
     eprint("fern: cannot write " + o.out + ": " + e.message());
     return 1;
@@ -6616,7 +6691,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let sanitize_flag = false;
   let shared = false;
   let export_list = "";
-  let apk_opts = ApkOpts { jni_java: "", jni_dex: "", out: "", package: "", label: "", icon: "", key: "", permissions: "", min_sdk: "", compress: false, cleartext: false, debuggable: false, home: false, assets: "", run: false };
+  let apk_opts = ApkOpts { jni_java: "", jni_dex: "", out: "", package: "", label: "", icon: "", key: "", permissions: "", min_sdk: "", compress: false, cleartext: false, debuggable: false, home: false, assets: "", widget: "", run: false };
   let harden = false;
   let heap_limit_text = "";
   let ram_text = "";

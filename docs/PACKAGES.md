@@ -78,7 +78,9 @@ permissions = ["INTERNET", "ACCESS_COARSE_LOCATION"]
 assets = ["assets/wallpaper.jpg", "assets/Roboto-Regular.ttf"]
 ```
 
-`fern -apk OUT FILE` reads the table of the `fern.toml` that governs FILE. A flag on the command line takes priority over the table. The paths of `icon`, `key` and `assets` are relative to the directory of `fern.toml`. The keys are `package`, `label`, `icon` and `key` (strings), `min_sdk` (a number), `home`, `compress`, `cleartext` and `debuggable` (true or false), and `permissions` and `assets` (arrays of strings). Any other key is a manifest error.
+`fern -apk OUT FILE` reads the table of the `fern.toml` that governs FILE. A flag on the command line takes priority over the table. The paths of `icon`, `key` and `assets` are relative to the directory of `fern.toml`. The keys are `package`, `label`, `icon` and `key` (strings), `min_sdk` (a number), `home`, `compress`, `cleartext` and `debuggable` (true or false), and `permissions`, `assets` and `widget` (arrays of strings). Any other key is a manifest error.
+
+`widget` gives the app a widget of the home screen. Each string is an item of its row: `text:NAME:LABEL` is a text, and `button:NAME:LABEL` is a button. The app has one @jni class that extends `android.appwidget.AppWidgetProvider`, and `std/android/widget` gives the items their texts and the actions of their taps.
 
 ## Hash-addressed dependencies + `fern -fetch` (slice 2)
 
