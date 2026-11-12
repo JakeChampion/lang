@@ -1,0 +1,229 @@
+import "./audio_content";
+import "./audio_pcm";
+import "./audio_path";
+import "std/android/video/source";
+import "std/io";
+import "std/video/frame";
+import "std/result";
+
+@import("libandroid.so", "mock_source_env")
+function env(): usize;
+
+@import("libandroid.so", "mock_source_context")
+function context(): usize;
+
+@import("libandroid.so", "mock_source_asset")
+function seed(bytes: usize, count: i32, offset: i64): void;
+
+@import("libandroid.so", "mock_source_asset_close")
+function close_seed(): void;
+
+@import("libandroid.so", "mock_source_position")
+function position(fd: i32): i32;
+
+@import("libandroid.so", "mock_source_mode")
+function source_mode(value: i32): void;
+
+@import("libandroid.so", "mock_source_descriptors")
+function descriptors(): i32;
+
+@import("libandroid.so", "mock_source_truncate")
+function truncate(fd: i32, length: i64): void;
+
+@import("libaaudio.so", "av_audio_reset")
+function reset(): void;
+
+@import("libaaudio.so", "av_audio_mode")
+function mode(value: i32): void;
+
+@import("libaaudio.so", "av_audio_base")
+function base(value: i32): void;
+
+@import("libaaudio.so", "av_audio_count")
+function count(what: i32): i32;
+
+const PATH: string = "build/video/native-av-check/stream-fixture.mp4";
+
+function first_partial(own state: audio_path.State, io: audio_content.Input, reads: Cell[i32]): audio_path.State {
+  for work in 0..8192 {
+    if (state.failed || state.at > 2048) {
+      break;
+    }
+    let before = reads.get();
+    state = audio_path.pump_with(state, io.seek, io.read);
+    if (reads.get() - before > 8) {
+      return audio_path.State { ...state, failed: true };
+    }
+  }
+  return state;
+}
+
+function blocked(own state: audio_path.State, io: audio_content.Input, reads: Cell[i32]): Result[audio_path.State, i32] {
+  mode(1);
+  state = first_partial(state, io, reads);
+  if (state.at != 2054 || state.base != 2048) {
+    state.close();
+    return Err(10);
+  }
+  let before = reads.get();
+  mode(2);
+  state = audio_path.pump_with(state, io.seek, io.read);
+  if (state.at != 2054 || reads.get() != before) {
+    state.close();
+    return Err(11);
+  }
+  return Ok(state);
+}
+
+function paused(own state: audio_path.State, io: audio_content.Input, reads: Cell[i32]): Result[audio_path.State, i32] {
+  let before = reads.get();
+  let writes = count(2);
+  state = state.pause(1100000000i64);
+  state = audio_path.pump_with(state, io.seek, io.read);
+  if (reads.get() != before || count(2) != writes) {
+    state.close();
+    return Err(12);
+  }
+  return Ok(state.resume(1200000000i64));
+}
+
+function drained(own state: audio_path.State, io: audio_content.Input): audio_path.State {
+  for work in 0..8192 {
+    if (state.failed || state.at == state.total) {
+      break;
+    }
+    state = audio_path.pump_with(state, io.seek, io.read);
+  }
+  return state;
+}
+
+function finish(own state: audio_path.State, io: audio_content.Input, reads: Cell[i32]): i32 {
+  mode(0);
+  state = drained(state, io);
+  let before = reads.get();
+  let writes = count(2);
+  let next = audio_path.pump_with(state, io.seek, io.read);
+  let ok = !next.failed && next.at == 38400 && next.samples.len() <= 2048 && next.peak <= 2048;
+  next.close();
+  return if (ok && reads.get() == before && count(2) == writes && count(3) == 1) { 0 } else { 13 };
+}
+
+function run_stream(src: source.Source, chunk: i32, media_us: i64): i32 {
+  let input = audio_content.input(src);
+  let reads = cell_new(0);
+  let read = (count: i32): Result[u8[], IoError] => {
+    reads.set(reads.get() + 1);
+    return input.read(count.min(chunk));
+  };
+  let io = audio_content.Input { seek: input.seek, read: read };
+  let stream = match (audio_pcm.open_with(src.length, io.seek, io.read, media_us)) { Ok(value) => value, Err(_) => { return 1; } };
+  let state = match (audio_path.create_with(stream, io.seek, io.read, "")) { Ok(value) => value, Err(_) => { return 2; } };
+  return progress(state, io, reads, media_us);
+}
+
+function progress(own state: audio_path.State, io: audio_content.Input, reads: Cell[i32], media_us: i64): i32 {
+  if (media_us != 0i64) {
+    let ok = state.first == 9600 && state.origin.media_us == 100000i64;
+    if (!ok) {
+      state.close();
+      return 3;
+    }
+    return finish(state, io, reads);
+  }
+  let partial = match (blocked(state, io, reads)) { Ok(value) => value, Err(code) => { return code; } };
+  let resumed = match (paused(partial, io, reads)) { Ok(value) => value, Err(code) => { return code; } };
+  return finish(resumed, io, reads);
+}
+
+function controls(src: source.Source): i32 {
+  if let Ok(_) = audio_content.open(source.Source { ...src, length: 2097153i64 }, 0i64) {
+    return 20;
+  }
+  if let Ok(_) = audio_content.open(source.Source { ...src, length: 0i64 }, 0i64) {
+    return 21;
+  }
+  let io = audio_content.input(src);
+  if let Ok(_) = io.seek(-1i64) {
+    return 22;
+  }
+  if let Ok(_) = io.seek(src.length + 1i64) {
+    return 23;
+  }
+  if let Ok(_) = io.read(4097) {
+    return 24;
+  }
+  if let Ok(_) = io.read(-1) {
+    return 25;
+  }
+  return 0;
+}
+
+function broken(src: source.Source): i32 {
+  let (stream, io) = match (audio_content.open(src, 0i64)) { Ok(value) => value, Err(_) => { return 30; } };
+  truncate(src.fd, src.offset + src.length - 2048i64);
+  reset();
+  let result = audio_path.create_with(stream, io.seek, io.read, "");
+  let ok = match (result) {
+    Ok(state) => {
+      let reads = cell_new(0);
+      let code = finish(state, io, reads);
+      code == 13
+    },
+    Err(frame.Platform) => true,
+    _ => false,
+  };
+  return if (ok && count(3) == 1) { 0 } else { 31 };
+}
+
+function check(src: source.Source): i32 {
+  let first = controls(src);
+  if (first != 0) {
+    return first;
+  }
+  for chunk in [7, 4096] {
+    for media_us in [0i64, 100001i64] {
+      reset();
+      base(if (media_us == 0i64) { 0 } else { 9600 });
+      let result = run_stream(src, chunk, media_us);
+      if (result != 0) {
+        return result;
+      }
+    }
+  }
+  return broken(src);
+}
+
+function asset(bytes: [u8], offset: i64): i32 {
+  let before = descriptors();
+  unsafe {
+    seed(__bytes_data(bytes), bytes.len(), offset);
+  }
+  source_mode(22);
+  let src = match (source.open(env(), context(), "content://mock/native-aac", 2097152i64)) { Ok(value) => value, Err(_) => { close_seed(); return 40; } };
+  let code = check(src);
+  let intact = position(src.fd);
+  let closed = src.close();
+  close_seed();
+  if (intact != 1 || closed.is_err() || descriptors() != before) {
+    return 41;
+  }
+  return code;
+}
+
+function main(): i32 {
+  let Ok(reader) = open_reader(PATH) else {
+    return 50;
+  };
+  let result = io.read_all_bytes(reader);
+  let _ = reader.close();
+  let Ok(bytes) = result else {
+    return 51;
+  };
+  for offset in [32i64, 8589934624i64] {
+    let code = asset(bytes, offset);
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}

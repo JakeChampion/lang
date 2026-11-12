@@ -77,7 +77,9 @@ with tempfile.TemporaryDirectory() as temporary:
     run(excessive, 'video exceeds the configured limit')
     print('Explicit rate, layout, encoded-input, and decoded-sample refusals passed')
 
-for prefix, source in [('', 'audio_path_test.fern'), ('cursor-', 'audio_cursor_path_test.fern')]:
+entries = [('', 'audio_path_test.fern'), ('cursor-', 'audio_cursor_path_test.fern'),
+           ('content-', 'audio_content_path_test.fern')]
+for prefix, source in entries:
     for name, flags in [('normal', []), ('sanitize', ['-sanitize'])]:
         subprocess.run([compiler, '-stdlib', str(ROOT / 'internal/stdlib'), '-target', android,
                         '-shared', *flags, '-export', 'main', '-o', str(build / (prefix + name + '.so')),
@@ -87,6 +89,14 @@ for variant, flags in [('normal', []), ('ubsan', ['-fsanitize=undefined', '-fno-
     directory.mkdir(exist_ok=True)
     subprocess.run(['cc', '-shared', '-fPIC', '-Wall', '-Wextra', '-Werror', *flags,
                     '-o', str(directory / 'libaaudio.so'), 'tests/android/video/audio_path_mock.c'], check=True)
+    stubs = build / 'content-stubs.c'
+    stubs.write_bytes(subprocess.check_output(['scripts/libandroid-stubs', 'scripts/video-reference/source-jni-mock.c']))
+    subprocess.run(['cc', '-shared', '-fPIC', '-Wall', '-Wextra', '-Werror', *flags,
+                    '-o', str(directory / 'libandroid.so'), 'scripts/video-reference/source-jni-mock.c', str(stubs)], check=True)
+    libc = directory / 'libc.so'
+    if libc.is_symlink():
+        libc.unlink()
+    libc.symlink_to(subprocess.check_output(['cc', '-print-file-name=libc.so.6'], text=True).strip())
     env = dict(os.environ, LD_LIBRARY_PATH=str(directory) + ':' + os.environ.get('LD_LIBRARY_PATH', ''))
     for name in ('normal', 'sanitize'):
         subprocess.run(['python3', '-c',
@@ -107,12 +117,14 @@ for iteration in range(3):
     assert result==0,result
     assert set(os.listdir('/proc/self/fd'))==before, 'file descriptor leak'
 """
-        subprocess.run(['python3', '-c', probe, str(build / ('cursor-' + name + '.so'))],
-                       env=current, check=True)
-        print('Cursor PCM, bounded transport, seek, source errors, and descriptor cleanup:', variant, name)
+        for prefix in ('cursor-', 'content-'):
+            stream_path.write_bytes(stream_bytes)
+            subprocess.run(['python3', '-c', probe, str(build / (prefix + name + '.so'))],
+                           env=current, check=True)
+            print(prefix + 'PCM, bounded transport, seek, source errors, and descriptor cleanup:', variant, name)
 stream_path.write_bytes(stream_bytes)
-for prefix, source in [('', 'audio_path_test.fern'), ('cursor-', 'audio_cursor_path_test.fern')]:
+for prefix, source in entries:
     subprocess.run([compiler, '-stdlib', str(ROOT / 'internal/stdlib'), '-target', 'arm64-android',
                     '-shared', '-export', 'main', '-o', str(build / (prefix + 'arm64-transport.so')),
                     'tests/android/video/' + source], check=True)
-print('Both ARM64 transport shared compilations passed; no ARM execution claim')
+print('All three ARM64 transport shared compilations passed; no ARM execution claim')

@@ -14,12 +14,12 @@ function take_source(own state: State): (State, Option[audio_pcm.Stream]) {
   return (State { music: music, samples: samples, at: at, first: first, origin: origin, started_ns: started_ns, paused_ns: paused_ns, failed: failed, base: base, total: total, source: None, path: path, peak: peak }, source);
 }
 
-function fill(own state: State, reader: Reader): State {
+function fill(own state: State, seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError]): State {
   let (rest, source) = take_source(state);
   let Some(stream) = source else {
     return State { ...rest, failed: true };
   };
-  let (next, event) = match (stream.step(reader)) { Ok(value) => value, Err(_) => { return State { ...rest, failed: true }; } };
+  let (next, event) = match (stream.step_with(seek, read)) { Ok(value) => value, Err(_) => { return State { ...rest, failed: true }; } };
   let kept = State { ...rest, source: Some(next) };
   match (event) {
     audio_pcm.StreamPending => {
@@ -54,7 +54,7 @@ pub function pump(own state: State): State {
   return write(state);
 }
 
-pub function pump_stream(own state: State, reader: Reader): State {
+pub function pump_with(own state: State, seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError]): State {
   if (state.failed || state.paused_ns.is_some() || state.at == state.total) {
     return state;
   }
@@ -62,7 +62,7 @@ pub function pump_stream(own state: State, reader: Reader): State {
     if (state.at - state.base < state.samples.len()) {
       return write(state);
     }
-    state = fill(state, reader);
+    state = fill(state, seek, read);
     if (state.failed) {
       return state;
     }
@@ -73,10 +73,14 @@ pub function pump_stream(own state: State, reader: Reader): State {
   return state;
 }
 
-function primed(own state: State, reader: Reader): Result[State, frame.VideoError] {
+pub function pump_stream(own state: State, reader: Reader): State {
+  return pump_with(state, (offset: i64): Result[i64, IoError] => reader.seek(offset, 0), (count: i32): Result[u8[], IoError] => reader.read_chunk_bytes(count));
+}
+
+function primed(own state: State, seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError]): Result[State, frame.VideoError] {
   let next = state;
   for work in 0..16384 {
-    next = pump_stream(next, reader);
+    next = pump_with(next, seek, read);
     if (next.failed) {
       next.close();
       return Err(frame.Platform);
@@ -93,7 +97,7 @@ function primed(own state: State, reader: Reader): Result[State, frame.VideoErro
   return Err(frame.Limit);
 }
 
-pub function create_stream(own stream: audio_pcm.Stream, reader: Reader, path: string): Result[State, frame.VideoError] {
+pub function create_with(own stream: audio_pcm.Stream, seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError], path: string): Result[State, frame.VideoError] {
   let total = stream.info().frames as i32 * 2;
   let first = stream.first;
   let music = match (open_music()) {
@@ -101,7 +105,11 @@ pub function create_stream(own stream: audio_pcm.Stream, reader: Reader, path: s
     Err(error) => { return Err(error); },
   };
   let state = State { music: music, samples: [], at: first, first: first, origin: playback_clock.AudioOrigin { frame_position: 0i64, media_us: first as i64 * 1000000i64 / 96000i64 }, started_ns: 0i64, paused_ns: None, failed: false, base: first, total: total, source: Some(stream), path: path, peak: 0 };
-  return primed(state, reader);
+  return primed(state, seek, read);
+}
+
+pub function create_stream(own stream: audio_pcm.Stream, reader: Reader, path: string): Result[State, frame.VideoError] {
+  return create_with(stream, (offset: i64): Result[i64, IoError] => reader.seek(offset, 0), (count: i32): Result[u8[], IoError] => reader.read_chunk_bytes(count), path);
 }
 
 function block_ok(block: pcm.Block): boolean {

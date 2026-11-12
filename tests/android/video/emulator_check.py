@@ -2,6 +2,7 @@
 """Verify codec export and playback on a running Android emulator or device.
 
 Usage: emulator_check.py APK OUT_DIR [CONTENT_URI]
+       emulator_check.py APK OUT_DIR --native-av-uri CONTENT_URI
 Requires adb, FFmpeg, and ffprobe. OUT_DIR receives clips, logs, and metrics.
 Set ANDROID_SERIAL to select a physical device. The test requires API 29.
 """
@@ -107,7 +108,17 @@ def native_content_metrics(log, expected):
     return {'bytes': int(count), 'sha256': digest}
 
 
-def main(apk, out_dir, content_uri=None, av_path=None):
+def native_content_av_metrics(log, expected):
+    lines = [line for line in log.splitlines() if 'videotest: native AV source=' in line]
+    assert len(lines) == 1 and lines[0].endswith('videotest: native AV source=content'), lines
+    return {'audio': native_av_metrics(log), 'content': native_content_metrics(log, expected)}
+
+
+def main(apk, out_dir, content_uri=None, av_path=None, av_uri=None):
+    assert sum(value is not None for value in (content_uri, av_path, av_uri)) <= 1
+    native_content = av_uri is not None
+    if native_content:
+        content_uri = av_uri
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     sdk = int(adb("shell", "getprop", "ro.build.version.sdk").strip())
@@ -124,7 +135,7 @@ def main(apk, out_dir, content_uri=None, av_path=None):
         # The shell owns the MediaStore fixture and cannot grant its URI.
         permission = "READ_MEDIA_VIDEO" if sdk >= 33 else "READ_EXTERNAL_STORAGE"
         adb("shell", "pm", "grant", PACKAGE, "android.permission." + permission)
-        command += ["--es", "uri", content_uri, "-d", content_uri]
+        command += ["--es", "av_uri" if native_content else "uri", content_uri, "-d", content_uri]
     adb(*command)
     log = ""
     try:
@@ -155,6 +166,8 @@ def main(apk, out_dir, content_uri=None, av_path=None):
         if content_uri is not None:
             expected = adb('exec-out', 'content', 'read', '--uri', content_uri, binary=True)
             metrics['native_content'] = native_content_metrics(log, expected)
+            if native_content:
+                metrics['native_content_av'] = native_content_av_metrics(log, expected)
         for name in (("byte", "surface") if content_uri is None and av_path is None else ()):
             path = out / (name + ".mp4")
             path.write_bytes(adb("exec-out", "run-as", PACKAGE, "cat", directory + "/" + name + ".mp4", binary=True))
@@ -189,6 +202,9 @@ def native_av(apk, directory, private_directory):
 
 
 if __name__ == "__main__":
+    if len(sys.argv) == 5 and sys.argv[3] == '--native-av-uri':
+        main(sys.argv[1], sys.argv[2], av_uri=sys.argv[4])
+        sys.exit(0)
     if len(sys.argv) not in (3, 4):
         sys.exit(__doc__)
     private = main(*sys.argv[1:])
