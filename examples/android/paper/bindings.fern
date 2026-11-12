@@ -134,6 +134,33 @@ pub function (c: ComponentNameClass) unflatten_from_string(e: usize, a0: string)
   return Ok(ComponentName { ref: got });
 }
 
+// A android.content.ContentResolver.
+pub struct ContentResolver { ref: usize }
+
+pub function (x: ContentResolver) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: ContentResolver) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.content.ContentResolver and the IDs of its members.
+pub struct ContentResolverClass { class: usize }
+
+pub function content_resolver_class(e: usize): Result[ContentResolverClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/content/ContentResolver");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  return Ok(ContentResolverClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ContentResolverClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
 // A android.content.Context.
 pub struct Context { ref: usize }
 
@@ -146,21 +173,42 @@ pub function (x: Context) object(): jni.Object {
 }
 
 // The class android.content.Context and the IDs of its members.
-pub struct ContextClass { class: usize, id_get_package_manager: usize, id_start_activity: usize }
+pub struct ContextClass { class: usize, id_get_content_resolver: usize, id_get_files_dir: usize, id_get_package_manager: usize, id_get_system_service: usize, id_start_activity: usize }
 
 pub function context_class(e: usize): Result[ContextClass, jni.JavaError] {
   let local = jni.find_class(e, "android/content/Context");
   jni.check(e)?;
   let class = jni.new_global_ref(e, local);
   jni.delete_local_ref(e, local);
+  let id_get_content_resolver = jni.checked_id(e, class, jni.get_method_id(e, class, "getContentResolver", "()Landroid/content/ContentResolver;"))?;
+  let id_get_files_dir = jni.checked_id(e, class, jni.get_method_id(e, class, "getFilesDir", "()Ljava/io/File;"))?;
   let id_get_package_manager = jni.checked_id(e, class, jni.get_method_id(e, class, "getPackageManager", "()Landroid/content/pm/PackageManager;"))?;
+  let id_get_system_service = jni.checked_id(e, class, jni.get_method_id(e, class, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;"))?;
   let id_start_activity = jni.checked_id(e, class, jni.get_method_id(e, class, "startActivity", "(Landroid/content/Intent;Landroid/os/Bundle;)V"))?;
-  return Ok(ContextClass { class: class, id_get_package_manager: id_get_package_manager, id_start_activity: id_start_activity });
+  return Ok(ContextClass { class: class, id_get_content_resolver: id_get_content_resolver, id_get_files_dir: id_get_files_dir, id_get_package_manager: id_get_package_manager, id_get_system_service: id_get_system_service, id_start_activity: id_start_activity });
 }
 
 // Deletes the reference to the class. Do not use `c` after this call.
 pub function (c: ContextClass) release(e: usize): void {
   jni.delete_global_ref(e, c.class);
+}
+
+// android.content.Context.getContentResolver()Landroid/content/ContentResolver;
+pub function (c: ContextClass) get_content_resolver(e: usize, self: Context): Result[ContentResolver, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_content_resolver, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(ContentResolver { ref: got });
+}
+
+// android.content.Context.getFilesDir()Ljava/io/File;
+pub function (c: ContextClass) get_files_dir(e: usize, self: Context): Result[File, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_files_dir, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(File { ref: got });
 }
 
 // android.content.Context.getPackageManager()Landroid/content/pm/PackageManager;
@@ -170,6 +218,18 @@ pub function (c: ContextClass) get_package_manager(e: usize, self: Context): Res
   jni.free_buffer(args);
   jni.check(e)?;
   return Ok(PackageManager { ref: got });
+}
+
+// android.content.Context.getSystemService(Ljava/lang/String;)Ljava/lang/Object;
+pub function (c: ContextClass) get_system_service(e: usize, self: Context, a0: string): Result[jni.Object, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_system_service, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
 }
 
 // android.content.Context.startActivity(Landroid/content/Intent;Landroid/os/Bundle;)V
@@ -351,6 +411,37 @@ pub function (c: ActivityInfoClass) release(e: usize): void {
   jni.delete_global_ref(e, c.class);
 }
 
+// A android.content.pm.ApplicationInfo.
+pub struct ApplicationInfo { ref: usize }
+
+pub function (x: ApplicationInfo) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: ApplicationInfo) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+pub function (x: ApplicationInfo) as_package_item_info(): PackageItemInfo {
+  return PackageItemInfo { ref: x.ref };
+}
+
+// The class android.content.pm.ApplicationInfo and the IDs of its members.
+pub struct ApplicationInfoClass { class: usize }
+
+pub function application_info_class(e: usize): Result[ApplicationInfoClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/content/pm/ApplicationInfo");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  return Ok(ApplicationInfoClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: ApplicationInfoClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
 // A android.content.pm.PackageItemInfo.
 pub struct PackageItemInfo { ref: usize }
 
@@ -412,22 +503,47 @@ pub function (x: PackageManager) object(): jni.Object {
 pub const PACKAGE_MANAGER_MATCH_DEFAULT_ONLY: i32 = 65536;
 
 // The class android.content.pm.PackageManager and the IDs of its members.
-pub struct PackageManagerClass { class: usize, id_get_launch_intent_for_package: usize, id_query_intent_activities: usize, id_resolve_activity: usize }
+pub struct PackageManagerClass { class: usize, id_get_application_info: usize, id_get_application_label: usize, id_get_launch_intent_for_package: usize, id_query_intent_activities: usize, id_resolve_activity: usize }
 
 pub function package_manager_class(e: usize): Result[PackageManagerClass, jni.JavaError] {
   let local = jni.find_class(e, "android/content/pm/PackageManager");
   jni.check(e)?;
   let class = jni.new_global_ref(e, local);
   jni.delete_local_ref(e, local);
+  let id_get_application_info = jni.checked_id(e, class, jni.get_method_id(e, class, "getApplicationInfo", "(Ljava/lang/String;I)Landroid/content/pm/ApplicationInfo;"))?;
+  let id_get_application_label = jni.checked_id(e, class, jni.get_method_id(e, class, "getApplicationLabel", "(Landroid/content/pm/ApplicationInfo;)Ljava/lang/CharSequence;"))?;
   let id_get_launch_intent_for_package = jni.checked_id(e, class, jni.get_method_id(e, class, "getLaunchIntentForPackage", "(Ljava/lang/String;)Landroid/content/Intent;"))?;
   let id_query_intent_activities = jni.checked_id(e, class, jni.get_method_id(e, class, "queryIntentActivities", "(Landroid/content/Intent;I)Ljava/util/List;"))?;
   let id_resolve_activity = jni.checked_id(e, class, jni.get_method_id(e, class, "resolveActivity", "(Landroid/content/Intent;I)Landroid/content/pm/ResolveInfo;"))?;
-  return Ok(PackageManagerClass { class: class, id_get_launch_intent_for_package: id_get_launch_intent_for_package, id_query_intent_activities: id_query_intent_activities, id_resolve_activity: id_resolve_activity });
+  return Ok(PackageManagerClass { class: class, id_get_application_info: id_get_application_info, id_get_application_label: id_get_application_label, id_get_launch_intent_for_package: id_get_launch_intent_for_package, id_query_intent_activities: id_query_intent_activities, id_resolve_activity: id_resolve_activity });
 }
 
 // Deletes the reference to the class. Do not use `c` after this call.
 pub function (c: PackageManagerClass) release(e: usize): void {
   jni.delete_global_ref(e, c.class);
+}
+
+// android.content.pm.PackageManager.getApplicationInfo(Ljava/lang/String;I)Landroid/content/pm/ApplicationInfo;
+pub function (c: PackageManagerClass) get_application_info(e: usize, self: PackageManager, a0: string, a1: i32): Result[ApplicationInfo, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  jni.jvalue_set_int(args, 1, a1 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_application_info, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.check(e)?;
+  return Ok(ApplicationInfo { ref: got });
+}
+
+// android.content.pm.PackageManager.getApplicationLabel(Landroid/content/pm/ApplicationInfo;)Ljava/lang/CharSequence;
+pub function (c: PackageManagerClass) get_application_label(e: usize, self: PackageManager, a0: ApplicationInfo): Result[jni.Object, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_application_label, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(jni.Object { ref: got });
 }
 
 // android.content.pm.PackageManager.getLaunchIntentForPackage(Ljava/lang/String;)Landroid/content/Intent;
@@ -510,6 +626,114 @@ pub function (c: ResolveInfoClass) activity_info(e: usize, self: ResolveInfo): R
   return Ok(ActivityInfo { ref: got });
 }
 
+// A android.location.Location.
+pub struct Location { ref: usize }
+
+pub function (x: Location) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Location) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.location.Location and the IDs of its members.
+pub struct LocationClass { class: usize, id_get_latitude: usize, id_get_longitude: usize, id_get_time: usize }
+
+pub function location_class(e: usize): Result[LocationClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/location/Location");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_get_latitude = jni.checked_id(e, class, jni.get_method_id(e, class, "getLatitude", "()D"))?;
+  let id_get_longitude = jni.checked_id(e, class, jni.get_method_id(e, class, "getLongitude", "()D"))?;
+  let id_get_time = jni.checked_id(e, class, jni.get_method_id(e, class, "getTime", "()J"))?;
+  return Ok(LocationClass { class: class, id_get_latitude: id_get_latitude, id_get_longitude: id_get_longitude, id_get_time: id_get_time });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: LocationClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.location.Location.getLatitude()D
+pub function (c: LocationClass) get_latitude(e: usize, self: Location): Result[f64, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke_f64(e, jni.CALL_METHOD + 24, self.ref, c.id_get_latitude, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got);
+}
+
+// android.location.Location.getLongitude()D
+pub function (c: LocationClass) get_longitude(e: usize, self: Location): Result[f64, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke_f64(e, jni.CALL_METHOD + 24, self.ref, c.id_get_longitude, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got);
+}
+
+// android.location.Location.getTime()J
+pub function (c: LocationClass) get_time(e: usize, self: Location): Result[i64, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 18, self.ref, c.id_get_time, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i64);
+}
+
+// A android.location.LocationManager.
+pub struct LocationManager { ref: usize }
+
+pub function (x: LocationManager) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: LocationManager) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.location.LocationManager and the IDs of its members.
+pub struct LocationManagerClass { class: usize, id_get_last_known_location: usize, id_get_providers: usize }
+
+pub function location_manager_class(e: usize): Result[LocationManagerClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/location/LocationManager");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_get_last_known_location = jni.checked_id(e, class, jni.get_method_id(e, class, "getLastKnownLocation", "(Ljava/lang/String;)Landroid/location/Location;"))?;
+  let id_get_providers = jni.checked_id(e, class, jni.get_method_id(e, class, "getProviders", "(Z)Ljava/util/List;"))?;
+  return Ok(LocationManagerClass { class: class, id_get_last_known_location: id_get_last_known_location, id_get_providers: id_get_providers });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: LocationManagerClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.location.LocationManager.getLastKnownLocation(Ljava/lang/String;)Landroid/location/Location;
+pub function (c: LocationManagerClass) get_last_known_location(e: usize, self: LocationManager, a0: string): Result[Location, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  let s0 = jni.new_string(e, a0);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_last_known_location, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s0);
+  jni.check(e)?;
+  return Ok(Location { ref: got });
+}
+
+// android.location.LocationManager.getProviders(Z)Ljava/util/List;
+pub function (c: LocationManagerClass) get_providers(e: usize, self: LocationManager, a0: boolean): Result[List, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, jni.jbool(a0));
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_providers, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(List { ref: got });
+}
+
 // A android.net.Uri.
 pub struct Uri { ref: usize }
 
@@ -577,6 +801,166 @@ pub function (c: BundleClass) release(e: usize): void {
   jni.delete_global_ref(e, c.class);
 }
 
+// A android.provider.Settings.Secure.
+pub struct Settings_Secure { ref: usize }
+
+pub function (x: Settings_Secure) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Settings_Secure) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.provider.Settings.Secure and the IDs of its members.
+pub struct Settings_SecureClass { class: usize, id_get_string: usize }
+
+pub function settings_secure_class(e: usize): Result[Settings_SecureClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/provider/Settings$Secure");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_get_string = jni.checked_id(e, class, jni.get_static_method_id(e, class, "getString", "(Landroid/content/ContentResolver;Ljava/lang/String;)Ljava/lang/String;"))?;
+  return Ok(Settings_SecureClass { class: class, id_get_string: id_get_string });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: Settings_SecureClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.provider.Settings.Secure.getString(Landroid/content/ContentResolver;Ljava/lang/String;)Ljava/lang/String;
+pub function (c: Settings_SecureClass) get_string(e: usize, a0: ContentResolver, a1: string): Result[string, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let s1 = jni.new_string(e, a1);
+  jni.jvalue_set_int(args, 1, s1);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_get_string, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s1);
+  jni.check(e)?;
+  let text = jni.string_of(e, got);
+  jni.delete_local_ref(e, got);
+  return Ok(text);
+}
+
+// A android.provider.Telephony.Sms.
+pub struct Telephony_Sms { ref: usize }
+
+pub function (x: Telephony_Sms) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Telephony_Sms) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.provider.Telephony.Sms and the IDs of its members.
+pub struct Telephony_SmsClass { class: usize, id_get_default_sms_package: usize }
+
+pub function telephony_sms_class(e: usize): Result[Telephony_SmsClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/provider/Telephony$Sms");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_get_default_sms_package = jni.checked_id(e, class, jni.get_static_method_id(e, class, "getDefaultSmsPackage", "(Landroid/content/Context;)Ljava/lang/String;"))?;
+  return Ok(Telephony_SmsClass { class: class, id_get_default_sms_package: id_get_default_sms_package });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: Telephony_SmsClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.provider.Telephony.Sms.getDefaultSmsPackage(Landroid/content/Context;)Ljava/lang/String;
+pub function (c: Telephony_SmsClass) get_default_sms_package(e: usize, a0: Context): Result[string, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_get_default_sms_package, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  let text = jni.string_of(e, got);
+  jni.delete_local_ref(e, got);
+  return Ok(text);
+}
+
+// A android.telecom.TelecomManager.
+pub struct TelecomManager { ref: usize }
+
+pub function (x: TelecomManager) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: TelecomManager) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.telecom.TelecomManager and the IDs of its members.
+pub struct TelecomManagerClass { class: usize, id_get_default_dialer_package: usize }
+
+pub function telecom_manager_class(e: usize): Result[TelecomManagerClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/telecom/TelecomManager");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_get_default_dialer_package = jni.checked_id(e, class, jni.get_method_id(e, class, "getDefaultDialerPackage", "()Ljava/lang/String;"))?;
+  return Ok(TelecomManagerClass { class: class, id_get_default_dialer_package: id_get_default_dialer_package });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: TelecomManagerClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.telecom.TelecomManager.getDefaultDialerPackage()Ljava/lang/String;
+pub function (c: TelecomManagerClass) get_default_dialer_package(e: usize, self: TelecomManager): Result[string, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_default_dialer_package, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  let text = jni.string_of(e, got);
+  jni.delete_local_ref(e, got);
+  return Ok(text);
+}
+
+// A android.text.format.DateFormat.
+pub struct DateFormat { ref: usize }
+
+pub function (x: DateFormat) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: DateFormat) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.text.format.DateFormat and the IDs of its members.
+pub struct DateFormatClass { class: usize, id_is24_hour_format: usize }
+
+pub function date_format_class(e: usize): Result[DateFormatClass, jni.JavaError] {
+  let local = jni.find_class(e, "android/text/format/DateFormat");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_is24_hour_format = jni.checked_id(e, class, jni.get_static_method_id(e, class, "is24HourFormat", "(Landroid/content/Context;)Z"))?;
+  return Ok(DateFormatClass { class: class, id_is24_hour_format: id_is24_hour_format });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: DateFormatClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.text.format.DateFormat.is24HourFormat(Landroid/content/Context;)Z
+pub function (c: DateFormatClass) is24_hour_format(e: usize, a0: Context): Result[boolean, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_STATIC + 3, c.class, c.id_is24_hour_format, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok((got & 255 as usize) != 0 as usize);
+}
+
 // A android.view.View.
 pub struct View { ref: usize }
 
@@ -641,6 +1025,45 @@ pub function (c: WindowClass) get_decor_view(e: usize, self: Window): Result[Vie
   return Ok(View { ref: got });
 }
 
+// A java.io.File.
+pub struct File { ref: usize }
+
+pub function (x: File) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: File) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.io.File and the IDs of its members.
+pub struct FileClass { class: usize, id_get_absolute_path: usize }
+
+pub function file_class(e: usize): Result[FileClass, jni.JavaError] {
+  let local = jni.find_class(e, "java/io/File");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_get_absolute_path = jni.checked_id(e, class, jni.get_method_id(e, class, "getAbsolutePath", "()Ljava/lang/String;"))?;
+  return Ok(FileClass { class: class, id_get_absolute_path: id_get_absolute_path });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: FileClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// java.io.File.getAbsolutePath()Ljava/lang/String;
+pub function (c: FileClass) get_absolute_path(e: usize, self: File): Result[string, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_absolute_path, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  let text = jni.string_of(e, got);
+  jni.delete_local_ref(e, got);
+  return Ok(text);
+}
+
 // A java.util.List.
 pub struct List { ref: usize }
 
@@ -689,8 +1112,57 @@ pub function (c: ListClass) size(e: usize, self: List): Result[i32, jni.JavaErro
   return Ok(got as i32);
 }
 
+// A java.util.Locale.
+pub struct Locale { ref: usize }
+
+pub function (x: Locale) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Locale) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.util.Locale and the IDs of its members.
+pub struct LocaleClass { class: usize, id_get_country: usize, id_get_default: usize }
+
+pub function locale_class(e: usize): Result[LocaleClass, jni.JavaError] {
+  let local = jni.find_class(e, "java/util/Locale");
+  jni.check(e)?;
+  let class = jni.new_global_ref(e, local);
+  jni.delete_local_ref(e, local);
+  let id_get_country = jni.checked_id(e, class, jni.get_method_id(e, class, "getCountry", "()Ljava/lang/String;"))?;
+  let id_get_default = jni.checked_id(e, class, jni.get_static_method_id(e, class, "getDefault", "()Ljava/util/Locale;"))?;
+  return Ok(LocaleClass { class: class, id_get_country: id_get_country, id_get_default: id_get_default });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: LocaleClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// java.util.Locale.getCountry()Ljava/lang/String;
+pub function (c: LocaleClass) get_country(e: usize, self: Locale): Result[string, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_country, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  let text = jni.string_of(e, got);
+  jni.delete_local_ref(e, got);
+  return Ok(text);
+}
+
+// java.util.Locale.getDefault()Ljava/util/Locale;
+pub function (c: LocaleClass) get_default(e: usize): Result[Locale, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_get_default, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Locale { ref: got });
+}
+
 // The struct of IDs of each class of this module.
-pub struct Classes { activity: ActivityClass, activity_options: ActivityOptionsClass, component_name: ComponentNameClass, context: ContextClass, intent: IntentClass, activity_info: ActivityInfoClass, package_item_info: PackageItemInfoClass, package_manager: PackageManagerClass, resolve_info: ResolveInfoClass, uri: UriClass, bundle: BundleClass, view: ViewClass, window: WindowClass, list: ListClass }
+pub struct Classes { activity: ActivityClass, activity_options: ActivityOptionsClass, component_name: ComponentNameClass, content_resolver: ContentResolverClass, context: ContextClass, intent: IntentClass, activity_info: ActivityInfoClass, application_info: ApplicationInfoClass, package_item_info: PackageItemInfoClass, package_manager: PackageManagerClass, resolve_info: ResolveInfoClass, location: LocationClass, location_manager: LocationManagerClass, uri: UriClass, bundle: BundleClass, settings_secure: Settings_SecureClass, telephony_sms: Telephony_SmsClass, telecom_manager: TelecomManagerClass, date_format: DateFormatClass, view: ViewClass, window: WindowClass, file: FileClass, list: ListClass, locale: LocaleClass }
 
 // Makes the struct of IDs of each class. Call it one time, and call
 // `release` when the app does not call Java again.
@@ -716,12 +1188,22 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       return Err(err);
     },
   };
+  let content_resolver = match (content_resolver_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      activity_options.release(e);
+      component_name.release(e);
+      return Err(err);
+    },
+  };
   let context = match (context_class(e)) {
     Ok(c) => c,
     Err(err) => {
       activity.release(e);
       activity_options.release(e);
       component_name.release(e);
+      content_resolver.release(e);
       return Err(err);
     },
   };
@@ -731,6 +1213,7 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       activity.release(e);
       activity_options.release(e);
       component_name.release(e);
+      content_resolver.release(e);
       context.release(e);
       return Err(err);
     },
@@ -741,8 +1224,22 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       activity.release(e);
       activity_options.release(e);
       component_name.release(e);
+      content_resolver.release(e);
       context.release(e);
       intent.release(e);
+      return Err(err);
+    },
+  };
+  let application_info = match (application_info_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      activity_options.release(e);
+      component_name.release(e);
+      content_resolver.release(e);
+      context.release(e);
+      intent.release(e);
+      activity_info.release(e);
       return Err(err);
     },
   };
@@ -752,9 +1249,11 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       activity.release(e);
       activity_options.release(e);
       component_name.release(e);
+      content_resolver.release(e);
       context.release(e);
       intent.release(e);
       activity_info.release(e);
+      application_info.release(e);
       return Err(err);
     },
   };
@@ -764,9 +1263,11 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       activity.release(e);
       activity_options.release(e);
       component_name.release(e);
+      content_resolver.release(e);
       context.release(e);
       intent.release(e);
       activity_info.release(e);
+      application_info.release(e);
       package_item_info.release(e);
       return Err(err);
     },
@@ -777,11 +1278,48 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       activity.release(e);
       activity_options.release(e);
       component_name.release(e);
+      content_resolver.release(e);
       context.release(e);
       intent.release(e);
       activity_info.release(e);
+      application_info.release(e);
       package_item_info.release(e);
       package_manager.release(e);
+      return Err(err);
+    },
+  };
+  let location = match (location_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      activity_options.release(e);
+      component_name.release(e);
+      content_resolver.release(e);
+      context.release(e);
+      intent.release(e);
+      activity_info.release(e);
+      application_info.release(e);
+      package_item_info.release(e);
+      package_manager.release(e);
+      resolve_info.release(e);
+      return Err(err);
+    },
+  };
+  let location_manager = match (location_manager_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      activity_options.release(e);
+      component_name.release(e);
+      content_resolver.release(e);
+      context.release(e);
+      intent.release(e);
+      activity_info.release(e);
+      application_info.release(e);
+      package_item_info.release(e);
+      package_manager.release(e);
+      resolve_info.release(e);
+      location.release(e);
       return Err(err);
     },
   };
@@ -791,12 +1329,16 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       activity.release(e);
       activity_options.release(e);
       component_name.release(e);
+      content_resolver.release(e);
       context.release(e);
       intent.release(e);
       activity_info.release(e);
+      application_info.release(e);
       package_item_info.release(e);
       package_manager.release(e);
       resolve_info.release(e);
+      location.release(e);
+      location_manager.release(e);
       return Err(err);
     },
   };
@@ -806,13 +1348,107 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       activity.release(e);
       activity_options.release(e);
       component_name.release(e);
+      content_resolver.release(e);
       context.release(e);
       intent.release(e);
       activity_info.release(e);
+      application_info.release(e);
       package_item_info.release(e);
       package_manager.release(e);
       resolve_info.release(e);
+      location.release(e);
+      location_manager.release(e);
       uri.release(e);
+      return Err(err);
+    },
+  };
+  let settings_secure = match (settings_secure_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      activity_options.release(e);
+      component_name.release(e);
+      content_resolver.release(e);
+      context.release(e);
+      intent.release(e);
+      activity_info.release(e);
+      application_info.release(e);
+      package_item_info.release(e);
+      package_manager.release(e);
+      resolve_info.release(e);
+      location.release(e);
+      location_manager.release(e);
+      uri.release(e);
+      bundle.release(e);
+      return Err(err);
+    },
+  };
+  let telephony_sms = match (telephony_sms_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      activity_options.release(e);
+      component_name.release(e);
+      content_resolver.release(e);
+      context.release(e);
+      intent.release(e);
+      activity_info.release(e);
+      application_info.release(e);
+      package_item_info.release(e);
+      package_manager.release(e);
+      resolve_info.release(e);
+      location.release(e);
+      location_manager.release(e);
+      uri.release(e);
+      bundle.release(e);
+      settings_secure.release(e);
+      return Err(err);
+    },
+  };
+  let telecom_manager = match (telecom_manager_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      activity_options.release(e);
+      component_name.release(e);
+      content_resolver.release(e);
+      context.release(e);
+      intent.release(e);
+      activity_info.release(e);
+      application_info.release(e);
+      package_item_info.release(e);
+      package_manager.release(e);
+      resolve_info.release(e);
+      location.release(e);
+      location_manager.release(e);
+      uri.release(e);
+      bundle.release(e);
+      settings_secure.release(e);
+      telephony_sms.release(e);
+      return Err(err);
+    },
+  };
+  let date_format = match (date_format_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      activity_options.release(e);
+      component_name.release(e);
+      content_resolver.release(e);
+      context.release(e);
+      intent.release(e);
+      activity_info.release(e);
+      application_info.release(e);
+      package_item_info.release(e);
+      package_manager.release(e);
+      resolve_info.release(e);
+      location.release(e);
+      location_manager.release(e);
+      uri.release(e);
+      bundle.release(e);
+      settings_secure.release(e);
+      telephony_sms.release(e);
+      telecom_manager.release(e);
       return Err(err);
     },
   };
@@ -822,14 +1458,22 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       activity.release(e);
       activity_options.release(e);
       component_name.release(e);
+      content_resolver.release(e);
       context.release(e);
       intent.release(e);
       activity_info.release(e);
+      application_info.release(e);
       package_item_info.release(e);
       package_manager.release(e);
       resolve_info.release(e);
+      location.release(e);
+      location_manager.release(e);
       uri.release(e);
       bundle.release(e);
+      settings_secure.release(e);
+      telephony_sms.release(e);
+      telecom_manager.release(e);
+      date_format.release(e);
       return Err(err);
     },
   };
@@ -839,15 +1483,50 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       activity.release(e);
       activity_options.release(e);
       component_name.release(e);
+      content_resolver.release(e);
       context.release(e);
       intent.release(e);
       activity_info.release(e);
+      application_info.release(e);
       package_item_info.release(e);
       package_manager.release(e);
       resolve_info.release(e);
+      location.release(e);
+      location_manager.release(e);
       uri.release(e);
       bundle.release(e);
+      settings_secure.release(e);
+      telephony_sms.release(e);
+      telecom_manager.release(e);
+      date_format.release(e);
       view.release(e);
+      return Err(err);
+    },
+  };
+  let file = match (file_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      activity_options.release(e);
+      component_name.release(e);
+      content_resolver.release(e);
+      context.release(e);
+      intent.release(e);
+      activity_info.release(e);
+      application_info.release(e);
+      package_item_info.release(e);
+      package_manager.release(e);
+      resolve_info.release(e);
+      location.release(e);
+      location_manager.release(e);
+      uri.release(e);
+      bundle.release(e);
+      settings_secure.release(e);
+      telephony_sms.release(e);
+      telecom_manager.release(e);
+      date_format.release(e);
+      view.release(e);
+      window.release(e);
       return Err(err);
     },
   };
@@ -857,20 +1536,58 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       activity.release(e);
       activity_options.release(e);
       component_name.release(e);
+      content_resolver.release(e);
       context.release(e);
       intent.release(e);
       activity_info.release(e);
+      application_info.release(e);
       package_item_info.release(e);
       package_manager.release(e);
       resolve_info.release(e);
+      location.release(e);
+      location_manager.release(e);
       uri.release(e);
       bundle.release(e);
+      settings_secure.release(e);
+      telephony_sms.release(e);
+      telecom_manager.release(e);
+      date_format.release(e);
       view.release(e);
       window.release(e);
+      file.release(e);
       return Err(err);
     },
   };
-  return Ok(Classes { activity: activity, activity_options: activity_options, component_name: component_name, context: context, intent: intent, activity_info: activity_info, package_item_info: package_item_info, package_manager: package_manager, resolve_info: resolve_info, uri: uri, bundle: bundle, view: view, window: window, list: list });
+  let locale = match (locale_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      activity.release(e);
+      activity_options.release(e);
+      component_name.release(e);
+      content_resolver.release(e);
+      context.release(e);
+      intent.release(e);
+      activity_info.release(e);
+      application_info.release(e);
+      package_item_info.release(e);
+      package_manager.release(e);
+      resolve_info.release(e);
+      location.release(e);
+      location_manager.release(e);
+      uri.release(e);
+      bundle.release(e);
+      settings_secure.release(e);
+      telephony_sms.release(e);
+      telecom_manager.release(e);
+      date_format.release(e);
+      view.release(e);
+      window.release(e);
+      file.release(e);
+      list.release(e);
+      return Err(err);
+    },
+  };
+  return Ok(Classes { activity: activity, activity_options: activity_options, component_name: component_name, content_resolver: content_resolver, context: context, intent: intent, activity_info: activity_info, application_info: application_info, package_item_info: package_item_info, package_manager: package_manager, resolve_info: resolve_info, location: location, location_manager: location_manager, uri: uri, bundle: bundle, settings_secure: settings_secure, telephony_sms: telephony_sms, telecom_manager: telecom_manager, date_format: date_format, view: view, window: window, file: file, list: list, locale: locale });
 }
 
 // Deletes the reference to each class. Do not use `c` after this call.
@@ -878,15 +1595,25 @@ pub function (c: Classes) release(e: usize): void {
   c.activity.release(e);
   c.activity_options.release(e);
   c.component_name.release(e);
+  c.content_resolver.release(e);
   c.context.release(e);
   c.intent.release(e);
   c.activity_info.release(e);
+  c.application_info.release(e);
   c.package_item_info.release(e);
   c.package_manager.release(e);
   c.resolve_info.release(e);
+  c.location.release(e);
+  c.location_manager.release(e);
   c.uri.release(e);
   c.bundle.release(e);
+  c.settings_secure.release(e);
+  c.telephony_sms.release(e);
+  c.telecom_manager.release(e);
+  c.date_format.release(e);
   c.view.release(e);
   c.window.release(e);
+  c.file.release(e);
   c.list.release(e);
+  c.locale.release(e);
 }

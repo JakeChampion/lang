@@ -28,36 +28,36 @@ pub function large_fl_cells(): i32 {
 }
 
 pub function str_values(cache: irtables.LowerResult[]): string[] {
-  let vals: string[] = [];
+  let vals = util.name_index([]);
   for fi in 0..cache.len() {
     let r = cache[fi];
     for i in 0..r.ops.len() {
       if (r.ops[i].kind_tag == ir.K_CONST_STR) {
-        vals = intern_str(vals, r.ops[i].str);
+        vals = interned(vals, r.ops[i].str);
       }
       if (r.ops[i].kind_tag == ir.K_CONST_STRUCT) {
         vals = nested_strs(vals, r.ops[i].str);
       }
     }
   }
-  return vals;
+  return vals.names;
 }
 
-function intern_str(vals: string[], v: string): string[] {
-  if (util.index_of_str(vals, v) >= 0) {
+function interned(vals: util.NameIndex, v: string): util.NameIndex {
+  if (vals.has(v)) {
     return vals;
   }
-  return vals.append(v);
+  return vals.added(v);
 }
 
-function nested_strs(vals: string[], packed: string): string[] {
+function nested_strs(vals: util.NameIndex, packed: string): util.NameIndex {
   if (ir.const_struct_is_bytes(packed)) {
     return vals;
   }
   for v in ir.const_struct_values(packed) {
     let inner = ir.const_struct_ref(v);
     if (ir.const_struct_is_str(inner)) {
-      vals = intern_str(vals, ir.const_str_text(inner));
+      vals = interned(vals, ir.const_str_text(inner));
     } else if (inner.len() > 0) {
       vals = nested_strs(vals, inner);
     }
@@ -444,51 +444,76 @@ pub function tid_globals_section(structs: irtables.StructTab): string {
   return util.str_join_chunks(parts);
 }
 
+function after_str(off: i32, s: string): i32 {
+  return (off + 4 + s.len() + 3) / 4 * 4;
+}
+
 pub function str_offset(vals: string[], idx: i32): i32 {
   let off = str_region_base();
   for i in 0..idx {
-    off = (off + 4 + vals[i].len() + 3) / 4 * 4;
+    off = after_str(off, vals[i]);
   }
   return off;
 }
 
-function offset_of_value(vals: string[], v: string): i32 {
+// offs[i] is the offset of ix.names[i]. The last entry is the end of the table.
+struct Placed { ix: util.NameIndex, offs: i32[] }
+
+function placed_strs(vals: string[]): Placed {
+  let offs: i32[] = [];
+  let off = str_region_base();
   for i in 0..vals.len() {
-    if (vals[i] == v) {
-      return str_offset(vals, i);
-    }
+    offs = offs.append(off);
+    off = after_str(off, vals[i]);
   }
-  eprint("wasm-ir: string literal not interned: " + v);
-  exit(1);
-  return -1;
+  return Placed { ix: util.name_index(vals), offs: offs.append(off) };
+}
+
+function placed_caggs(cv: string[], base: i32): Placed {
+  let offs: i32[] = [];
+  let off = base;
+  for i in 0..cv.len() {
+    offs = offs.append(off);
+    off += const_agg_block_bytes(cv[i]);
+  }
+  return Placed { ix: util.name_index(cv), offs: offs.append(off) };
+}
+
+function (p: Placed) offset_of(v: string, what: string): i32 {
+  let i = p.ix.find(v);
+  if (i < 0) {
+    eprint("wasm-ir: " + what + " not interned: " + v);
+    exit(1);
+  }
+  return p.offs[i];
 }
 
 pub function const_agg_values(cache: irtables.LowerResult[]): string[] {
-  let vals: string[] = [];
+  let vals = util.name_index([]);
   for fi in 0..cache.len() {
     let r = cache[fi];
     for i in 0..r.ops.len() {
       if (r.ops[i].kind_tag == ir.K_CONST_STRUCT) {
         vals = intern_const_agg(vals, r.ops[i].str);
       }
-      if (answers_empty_bytes(r.ops[i]) && util.index_of_str(vals, empty_bytes_const()) < 0) {
-        vals = vals.append(empty_bytes_const());
+      if (answers_empty_bytes(r.ops[i])) {
+        vals = interned(vals, empty_bytes_const());
       }
     }
   }
-  return vals;
+  return vals.names;
 }
 
 function answers_empty_bytes(o: ir.Op): boolean {
   return o.kind_tag == ir.K_ALLOC_U8 || o.kind_tag == ir.K_ALLOC_UNINIT || o.kind_tag == ir.K_CALL_DIRECT && (o.str == "__fern_bytes_owned" || o.str == "__fern_bytes_range");
 }
 
-function intern_const_agg(vals: string[], packed: string): string[] {
-  if (util.index_of_str(vals, packed) >= 0) {
+function intern_const_agg(vals: util.NameIndex, packed: string): util.NameIndex {
+  if (vals.has(packed)) {
     return vals;
   }
   if (ir.const_struct_is_bytes(packed)) {
-    return vals.append(packed);
+    return vals.added(packed);
   }
   for v in ir.const_struct_values(packed) {
     let inner = ir.const_struct_ref(v);
@@ -496,7 +521,7 @@ function intern_const_agg(vals: string[], packed: string): string[] {
       vals = intern_const_agg(vals, inner);
     }
   }
-  return vals.append(packed);
+  return vals.added(packed);
 }
 
 pub function const_agg_block_bytes(packed: string): i32 {
@@ -530,12 +555,8 @@ pub function const_agg_region_base(sv: string[]): i32 {
   return (str_offset(sv, sv.len()) + 7) / 8 * 8;
 }
 
-pub function const_agg_offset(sv: string[], cv: string[], idx: i32): i32 {
-  return const_agg_region_base(sv) + const_agg_rel(cv, idx);
-}
-
 pub function fl_base_for_strs(sv: string[], cv: string[]): i32 {
-  return const_agg_offset(sv, cv, cv.len());
+  return const_agg_region_base(sv) + const_agg_rel(cv, cv.len());
 }
 
 pub function large_fl_base_for_strs(sv: string[], cv: string[]): i32 {
@@ -4322,8 +4343,8 @@ function emit_dyn_dispatch_wat(o: ir.Op, structs: irtables.StructTab, funcs: par
 
 struct WasmOpCtx {
   ns: string,
-  str_vals: string[],
-  cagg_vals: string[],
+  strs: Placed,
+  caggs: Placed,
   structs: irtables.StructTab,
   fn_table: string[],
   funcs: parser.FuncDecl[],
@@ -4539,8 +4560,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
   }
   let parts: string[] = [];
   let ns = cx.ns;
-  let str_vals = cx.str_vals;
-  let cagg_vals = cx.cagg_vals;
+  let caggs = cx.caggs;
   let structs = cx.structs;
   let fn_table = cx.fn_table;
   let funcs = cx.funcs;
@@ -4752,7 +4772,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
   } else if (o.kind_tag == ir.K_STORE_I64) {
     parts = parts.append("    i64.store\n    i32.const 0\n");
   } else if (o.kind_tag == ir.K_ALLOC_U8 || o.kind_tag == ir.K_ALLOC_UNINIT) {
-    parts = emit_wasm_alloc_u8(cagg_vals, ns, arrtmp, eltmp, o, parts);
+    parts = emit_wasm_alloc_u8(caggs, ns, arrtmp, eltmp, o, parts);
   } else if (o.kind_tag == ir.K_ALLOC) {
     parts = parts.append("    call $__fern_alloc\n");
   } else if (o.kind_tag == ir.K_PTR_WIDTH) {
@@ -4815,7 +4835,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append("    i32.const 8\n    i32.sub\n    i32.load\n");
   } else if (o.kind_tag == ir.K_CONST_STR) {
     parts = parts.append("    global.get " + str_base_global(ns) + "\n    i32.const "
-      + util.i32_to_string(offset_of_value(str_vals, o.str) - str_region_base()) + "\n    i32.add\n");
+      + util.i32_to_string(cx.strs.offset_of(o.str, "string literal") - str_region_base()) + "\n    i32.add\n");
   } else if (o.kind_tag == ir.K_STR_INDEX) {
     if (o.i32_imm == 1) {
       parts = parts.append("    i32.const 4\n    i32.add\n    i32.add\n    i32.load8_u\n");
@@ -4879,7 +4899,7 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
   } else if (o.kind_tag == ir.K_STRUCT_MAKE) {
     parts = emit_wasm_struct_make(arrtmp, eltmp, f64tmp, i64tmp, o, structs, parts);
   } else if (o.kind_tag == ir.K_CONST_STRUCT) {
-    parts = emit_wasm_const_struct(cagg_vals, ns, o, parts);
+    parts = emit_wasm_const_struct(caggs, ns, o, parts);
   } else if (o.kind_tag == ir.K_STRUCT_GET) {
     parts = emit_wasm_struct_get(o, parts);
   } else if (o.kind_tag == ir.K_STRUCT_SET) {
@@ -5081,10 +5101,10 @@ function emit_str_op_wat(o: ir.Op): string {
   return ircore.unsupported_op_refuse(o.kind_tag, "wasm");
 }
 
-function emit_function_ir(ns: string, r: irtables.LowerResult, fd: parser.FuncDecl, str_vals: string[], cagg_vals: string[], structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vgate: irverifygate.Gate): string {
+function emit_function_ir(ns: string, r: irtables.LowerResult, fd: parser.FuncDecl, strs: Placed, caggs: Placed, structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vgate: irverifygate.Gate): string {
   let fn_name = parser.decl_key(fd);
   let body = ircore.body_for_emit(fn_name, r);
-  return emit_function_ir_named(ns, body, fn_name, result_wat(body, fd, structs), str_vals, cagg_vals, structs, fn_table, funcs, vgate);
+  return emit_function_ir_named(ns, body, fn_name, result_wat(body, fd, structs), strs, caggs, structs, fn_table, funcs, vgate);
 }
 
 function result_wat(r: irtables.Lowered, fd: parser.FuncDecl, structs: irtables.StructTab): string {
@@ -5238,7 +5258,7 @@ function branch_only_if(ops: ir.Op[], i: i32): string {
 }
 
 // fern-lint: allow cyclomatic-complexity
-function emit_function_ir_named(ns: string, r: irtables.Lowered, fn_name: string, result_wat: string, str_vals: string[], cagg_vals: string[], structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vgate: irverifygate.Gate): string {
+function emit_function_ir_named(ns: string, r: irtables.Lowered, fn_name: string, result_wat: string, strs: Placed, caggs: Placed, structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vgate: irverifygate.Gate): string {
   irverifygate.verify_or_refuse(fn_name, r.ops, r.n_params, r.n_locals, vgate);
   irverifygate.certify_ops_or_refuse(fn_name, r.ops, r.n_params, r.n_locals, vgate);
   let f = wasmlocals.coalesce(r.ops, r.n_params, r.n_locals, r.i64_slots, r.f64_slots, r.v128_slots);
@@ -5302,7 +5322,7 @@ function emit_function_ir_named(ns: string, r: irtables.Lowered, fn_name: string
     if (o.kind_tag == ir.K_RETURN) {
       parts = parts.append(shadow_frame_pop(windows));
     }
-    parts = parts.append(emit_ir_op(o, WasmOpCtx { ns: ns, str_vals: str_vals, cagg_vals: cagg_vals, structs: structs, fn_table: fn_table, funcs: funcs, base: f.n_locals, window: window }));
+    parts = parts.append(emit_ir_op(o, WasmOpCtx { ns: ns, strs: strs, caggs: caggs, structs: structs, fn_table: fn_table, funcs: funcs, base: f.n_locals, window: window }));
     i += 1;
   }
   parts = parts.append(shadow_frame_close(windows, result_wat));
@@ -5311,19 +5331,19 @@ function emit_function_ir_named(ns: string, r: irtables.Lowered, fn_name: string
 
 pub function emit_functions_view(ns: string, mod: parser.Module, cache: irtables.LowerResult[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, physical: physicalbody.Collection): string {
   mod = parser.infer_ret_types_module(mod);
-  let str_vals = str_values(cache);
-  let cagg_vals = const_agg_values(cache);
+  let strs = placed_strs(str_values(cache));
+  let caggs = placed_caggs(const_agg_values(cache), 0);
   let ft = fn_value_table(cache);
   let vgate = irverifygate.with_memo(irverifygate.gate(irtables.fn_sig_index(all_funcs, mod.funcs, cache), ssa_lift.kind_table(), physicalbody.abis(physical)), irverifygate.open_memo("wasm32"));
   let parts: string[] = [];
   for fi in 0..mod.funcs.len() {
     if (mod.funcs[fi].import_iface.len() == 0 && !cache[fi].superseded) {
-      parts = parts.append(emit_function_ir(ns, cache[fi], mod.funcs[fi], str_vals, cagg_vals, all_structs, ft, all_funcs, vgate));
+      parts = parts.append(emit_function_ir(ns, cache[fi], mod.funcs[fi], strs, caggs, all_structs, ft, all_funcs, vgate));
     }
   }
   for xi in mod.funcs.len()..cache.len() {
     let body = ircore.body_for_emit(cache[xi].name, cache[xi]);
-    parts = parts.append(emit_function_ir_named(ns, body, cache[xi].name, produced_result_wat(body), str_vals, cagg_vals, all_structs, ft, all_funcs, vgate));
+    parts = parts.append(emit_function_ir_named(ns, body, cache[xi].name, produced_result_wat(body), strs, caggs, all_structs, ft, all_funcs, vgate));
   }
   irverifygate.report(vgate);
   irverifygate.close_memo(vgate.memo);
@@ -5422,7 +5442,7 @@ function refused_errno(): string {
   return "(i32.const -1)";
 }
 
-pub function build_io_error_func(sv: string[]): string {
+function build_io_error_func(strs: Placed): string {
   let o = "";
   o += "  (func $__fern_build_io_error (param $errno i32) (param $path i32) (result i32)\n";
   o += "    (local $r i32) (local $e i32) (local $n i32) (local $t i32) (local $l i32)\n";
@@ -5462,14 +5482,14 @@ pub function build_io_error_func(sv: string[]): string {
   for ti in 0..texts.len() {
     let en = wasi[ti];
     if (en != 0 && en != 44 && en != 2 && en != 20 && en != 27 && en != 25) {
-      o = o + "    (if (i32.eq (local.get $errno) (i32.const " + util.i32_to_string(en) + ")) (then (local.set $e (i32.const " + util.i32_to_string(offset_of_value(sv, texts[ti])) + ")) (local.set $l (i32.const " + util.i32_to_string(carried[ti]) + "))))\n";
+      o = o + "    (if (i32.eq (local.get $errno) (i32.const " + util.i32_to_string(en) + ")) (then (local.set $e (i32.const " + util.i32_to_string(strs.offset_of(texts[ti], "string literal")) + ")) (local.set $l (i32.const " + util.i32_to_string(carried[ti]) + "))))\n";
     }
   }
   let pfx = "Unknown error ";
   let plen = util.i32_to_string(pfx.len());
   o += "    (if (i32.eqz (local.get $e)) (then\n";
   o = o + "      (local.set $e (call $__fern_str_box (i32.const " + util.i32_to_string(4 + pfx.len() + 10) + ")))\n";
-  o = o + "      (memory.copy (i32.add (local.get $e) (i32.const 4)) (i32.const " + util.i32_to_string(offset_of_value(sv, pfx) + 4) + ") (i32.const " + plen + "))\n";
+  o = o + "      (memory.copy (i32.add (local.get $e) (i32.const 4)) (i32.const " + util.i32_to_string(strs.offset_of(pfx, "string literal") + 4) + ") (i32.const " + plen + "))\n";
   o += "      (local.set $n (i32.const 1)) (local.set $t (local.get $errno))\n";
   o += "      (block $dc (loop $dl (br_if $dc (i32.lt_u (local.get $t) (i32.const 10))) (local.set $t (i32.div_u (local.get $t) (i32.const 10))) (local.set $n (i32.add (local.get $n) (i32.const 1))) (br $dl)))\n";
   o = o + "      (i32.store (local.get $e) (i32.add (i32.const " + plen + ") (local.get $n)))\n";
@@ -9267,12 +9287,13 @@ function byte_escape(v: i32): string {
   return "\\" + hex_digit(v / 16) + hex_digit(v % 16);
 }
 
-function const_agg_data(sv: string[], cv: string[], structs: irtables.StructTab, fn_table: string[]): string {
+function const_agg_data(strs: Placed, caggs: Placed, structs: irtables.StructTab, fn_table: string[]): string {
+  let cv = caggs.ix.names;
   let parts: string[] = [];
   let i = 0;
   while (i < cv.len()) {
     if (ir.const_struct_is_bytes(cv[i])) {
-      parts = parts.append("  (data (i32.const " + util.i32_to_string(const_agg_offset(sv, cv, i)) + ") \"" + packed_byte_data(cv[i]) + "\")\n");
+      parts = parts.append("  (data (i32.const " + util.i32_to_string(caggs.offs[i]) + ") \"" + packed_byte_data(cv[i]) + "\")\n");
       i += 1;
       continue;
     }
@@ -9293,7 +9314,7 @@ function const_agg_data(sv: string[], cv: string[], structs: irtables.StructTab,
     } else if (ir.const_struct_is_array(cv[i])) {
       body = body + le32_escape(vals.len()) + le32_escape(vals.len());
       for v in vals {
-        body += le32_escape(const_agg_field(sv, cv, v));
+        body += le32_escape(const_agg_field(strs, caggs, v));
       }
       if (vals.len() % 2 == 1) {
         body += le32_escape(0);
@@ -9305,11 +9326,11 @@ function const_agg_data(sv: string[], cv: string[], structs: irtables.StructTab,
           let w = util.lit_to_i64(vals[vi]);
           body = body + le32_escape((w & 0xffffffff) as i32) + le32_escape((w >> 32) as i32);
         } else {
-          body = body + le32_escape(const_agg_field(sv, cv, vals[vi])) + le32_escape(0);
+          body = body + le32_escape(const_agg_field(strs, caggs, vals[vi])) + le32_escape(0);
         }
       }
     }
-    parts = parts.append("  (data (i32.const " + util.i32_to_string(const_agg_offset(sv, cv, i)) + ") \"" + body + "\")\n");
+    parts = parts.append("  (data (i32.const " + util.i32_to_string(caggs.offs[i]) + ") \"" + body + "\")\n");
     i += 1;
   }
   return util.str_join_chunks(parts);
@@ -9334,13 +9355,13 @@ function packed_byte_data(packed: string): string {
   }
 }
 
-function const_agg_field(sv: string[], cv: string[], word: string): i32 {
+function const_agg_field(strs: Placed, caggs: Placed, word: string): i32 {
   let inner = ir.const_struct_ref(word);
   if (ir.const_struct_is_str(inner)) {
-    return offset_of_value(sv, ir.const_str_text(inner));
+    return strs.offset_of(ir.const_str_text(inner), "string literal");
   }
   if (inner.len() > 0) {
-    return const_agg_offset(sv, cv, util.index_of_str(cv, inner)) + 8;
+    return caggs.offset_of(inner, "aggregate constant") + 8;
   }
   return util.lit_to_i32(word);
 }
@@ -9857,23 +9878,31 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     parts = parts.append(async_lift_imports(mod));
   }
   let sv = unit_strs(units);
-  let abort_offsets: i32[] = [];
+  let abort_from = sv.len();
   if (reports_abort) {
     for text in wasm_abort.texts() {
-      let at = sv.len();
       sv = sv.append(text);
-      abort_offsets = abort_offsets.append(str_offset(sv, at));
     }
   }
+  let abort_to = sv.len();
   if (needs_io_error(needs)) {
     sv = with_strerror_texts(sv);
   }
-  let crc32_table = 0;
+  let crc32_at = sv.len();
   if (need(needs, "@uses_crc32_ieee")) {
-    crc32_table = str_offset(sv, sv.len()) + 4;
     sv = sv.append(crc32_ieee_table_bytes());
   }
+  let strs = placed_strs(sv);
+  let abort_offsets: i32[] = [];
+  for at in abort_from..abort_to {
+    abort_offsets = abort_offsets.append(strs.offs[at]);
+  }
+  let crc32_table = 0;
+  if (crc32_at < sv.len()) {
+    crc32_table = strs.offs[crc32_at] + 4;
+  }
   let cv = unit_caggs(units);
+  let caggs = placed_caggs(cv, const_agg_region_base(sv));
   let shadow = shadow_stack_bytes(needs);
   parts = parts.append(wasm_abort.helpers(abort_offsets, mode));
   parts = parts.append("  (memory (export \"memory\") " + util.i32_to_string(memory_min_pages(sv, cv, shadow)) + ")\n");
@@ -9887,7 +9916,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     let sbstart = 0;
     while (sbi < units.len()) {
       parts = parts.append("  (global " + str_base_global(units[sbi].ns) + " i32 (i32.const "
-        + util.i32_to_string(str_offset(sv, sbstart)) + "))\n");
+        + util.i32_to_string(strs.offs[sbstart]) + "))\n");
       sbstart += units[sbi].strs.len();
       sbi += 1;
     }
@@ -9896,7 +9925,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     parts = parts.append(tid_globals_section(stab));
   }
   for di in 0..sv.len() {
-    parts = parts.append("  (data (i32.const " + util.i32_to_string(str_offset(sv, di)) + ") \""
+    parts = parts.append("  (data (i32.const " + util.i32_to_string(strs.offs[di]) + ") \""
       + le32_escape(sv[di].len()) + wat_escape(sv[di]) + "\")\n");
   }
   if (cv.len() > 0) {
@@ -9904,12 +9933,12 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     let kbstart = 0;
     while (kbi < units.len()) {
       parts = parts.append("  (global " + cagg_base_global(units[kbi].ns) + " i32 (i32.const "
-        + util.i32_to_string(const_agg_offset(sv, cv, kbstart)) + "))\n");
+        + util.i32_to_string(caggs.offs[kbstart]) + "))\n");
       kbstart += units[kbi].caggs.len();
       kbi += 1;
     }
   }
-  parts = parts.append(const_agg_data(sv, cv, stab, unit_fns(units)));
+  parts = parts.append(const_agg_data(strs, caggs, stab, unit_fns(units)));
   parts = parts.append(lc_globals(lc));
   if (need(needs, "@ret_word")) {
     parts = parts.append("  (global $__fern_ret_word (mut i32) (i32.const 0))\n");
@@ -9990,7 +10019,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     parts = parts.append(environ_func());
   }
   if (needs_io_error(needs)) {
-    parts = parts.append(build_io_error_func(sv));
+    parts = parts.append(build_io_error_func(strs));
   }
   parts = path_fs_bodies(parts, needs, mode);
   if (need(needs, "sleep_ms")) {
@@ -10194,10 +10223,10 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (needs_str_split(needs)) {
     parts = parts.append(str_split_helper());
   }
-  let ei = util.index_of_str(cv, empty_bytes_const());
+  let ei = caggs.ix.find(empty_bytes_const());
   let empty: i32 = -1;
   if (ei >= 0) {
-    empty = const_agg_offset(sv, cv, ei) + 8;
+    empty = caggs.offs[ei] + 8;
   }
   parts = array_helper_parts(needs, mod, parts, empty);
   if (need(needs, "@uses_str_case")) {
@@ -13038,7 +13067,7 @@ function empty_bytes_const(): string {
   return ir.op_const_bytes("").str;
 }
 
-function emit_wasm_alloc_u8(cagg_vals: string[], ns: string, arrtmp: i32, eltmp: i32, o: ir.Op, parts: string[]): string[] {
+function emit_wasm_alloc_u8(caggs: Placed, ns: string, arrtmp: i32, eltmp: i32, o: ir.Op, parts: string[]): string[] {
   let stride = 4;
   if (ir.is_packed(o)) {
     stride = 1;
@@ -13052,7 +13081,7 @@ function emit_wasm_alloc_u8(cagg_vals: string[], ns: string, arrtmp: i32, eltmp:
   }
   parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n");
   parts = parts.append(n + "    i32.eqz\n    if (result i32)\n");
-  parts = emit_wasm_const_struct(cagg_vals, ns, ir.op_const_bytes(""), parts);
+  parts = emit_wasm_const_struct(caggs, ns, ir.op_const_bytes(""), parts);
   parts = parts.append("    else\n");
   parts = parts.append(n + "    i32.const " + util.i32_to_string(stride) + "\n    call $__fern_arr_elems\n    local.set " + util.i32_to_string(arrtmp) + "\n");
   parts = parts.append("    local.get " + util.i32_to_string(arrtmp) + "\n" + n + "    i32.store\n");
@@ -13220,14 +13249,9 @@ function emit_wasm_struct_make(arrtmp: i32, eltmp: i32, f64tmp: i32, i64tmp: i32
   return parts;
 }
 
-function emit_wasm_const_struct(cagg_vals: string[], ns: string, o: ir.Op, parts: string[]): string[] {
-  let kidx = util.index_of_str(cagg_vals, o.str);
-  if (kidx < 0) {
-    eprint("wasm-ir: aggregate constant not interned: " + o.str);
-    exit(1);
-  }
+function emit_wasm_const_struct(caggs: Placed, ns: string, o: ir.Op, parts: string[]): string[] {
   parts = parts.append("    global.get " + cagg_base_global(ns) + "\n    i32.const "
-    + util.i32_to_string(const_agg_rel(cagg_vals, kidx) + 8) + "\n    i32.add\n");
+    + util.i32_to_string(caggs.offset_of(o.str, "aggregate constant") + 8) + "\n    i32.add\n");
 
   return parts;
 }

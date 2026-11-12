@@ -133,20 +133,34 @@ pub function busy_give_x86(): string {
 }
 
 // __fern_busy holds 0 when no thread runs Fern code, 1 when one does, and 2
-// when one does and others wait. A waiter sleeps on the futex. Both routines
-// keep every register except r11 and the flags, and __fern_busy_give keeps
-// r11 too.
+// when one does and others wait. A waiter sleeps on the futex. The word
+// after it is 1 from the time a give wakes a waiter until that waiter has
+// the turn: a thread that asks for the turn in that time waits for at most
+// 1 ms first, so the thread that gave the turn does not take it back
+// before the waiter runs. Both routines keep every register except r11 and
+// the flags, and __fern_busy_give keeps r11 too.
 function emit_busy_lock_x86(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .section .bss\n    .align 8\n__fern_busy: .skip 8\n    .text\n");
-  s = s.write("__fern_busy_take:\n    movl $1, %r11d\n    xchgl %r11d, __fern_busy(%rip)\n    testl %r11d, %r11d\n    jnz .Lfern_busy_wait\n    ret\n");
+  s = s.write("__fern_busy_take:\n    cmpl $0, __fern_busy+4(%rip)\n    jne .Lfern_busy_defer\n");
+  s = s.write(".Lfern_busy_try:\n    movl $1, %r11d\n    xchgl %r11d, __fern_busy(%rip)\n    testl %r11d, %r11d\n    jnz .Lfern_busy_wait\n    ret\n");
+  s = s.write(".Lfern_busy_defer:\n    pushq %rax\n    pushq %rcx\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    pushq %r10\n");
+  s = s.write("    pushq $1000000\n    pushq $0\n");
+  s = s.write("    movl $202, %eax\n    leaq __fern_busy+4(%rip), %rdi\n    movl $128, %esi\n    movl $1, %edx\n    movq %rsp, %r10\n").syscall(202);
+  s = s.write("    addq $16, %rsp\n    popq %r10\n    popq %rdi\n    popq %rsi\n    popq %rdx\n    popq %rcx\n    popq %rax\n    jmp .Lfern_busy_try\n");
   s = s.write(".Lfern_busy_wait:\n    pushq %rax\n    pushq %rcx\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    pushq %r10\n");
   s = s.write(".Lfern_busy_retry:\n    movl $2, %eax\n    xchgl %eax, __fern_busy(%rip)\n    testl %eax, %eax\n    jz .Lfern_busy_won\n");
   s = s.write("    movl $202, %eax\n    leaq __fern_busy(%rip), %rdi\n    movl $128, %esi\n    movl $2, %edx\n    xorl %r10d, %r10d\n").syscall(202);
   s = s.write("    jmp .Lfern_busy_retry\n");
-  s = s.write(".Lfern_busy_won:\n    popq %r10\n    popq %rdi\n    popq %rsi\n    popq %rdx\n    popq %rcx\n    popq %rax\n    ret\n");
+  // The waiter has the turn: it lets the threads that wait for it go on.
+  s = s.write(".Lfern_busy_won:\n    xorl %eax, %eax\n    xchgl %eax, __fern_busy+4(%rip)\n    testl %eax, %eax\n    jz .Lfern_busy_out\n");
+  s = s.write("    movl $202, %eax\n    leaq __fern_busy+4(%rip), %rdi\n    movl $129, %esi\n    movl $2147483647, %edx\n").syscall(202);
+  s = s.write(".Lfern_busy_out:\n    popq %r10\n    popq %rdi\n    popq %rsi\n    popq %rdx\n    popq %rcx\n    popq %rax\n    ret\n");
   s = s.write("__fern_busy_give:\n    pushq %r11\n    xorl %r11d, %r11d\n    xchgl %r11d, __fern_busy(%rip)\n    cmpl $2, %r11d\n    je .Lfern_busy_wake\n    popq %r11\n    ret\n");
   s = s.write(".Lfern_busy_wake:\n    pushq %rax\n    pushq %rcx\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n");
+  s = s.write("    movl $1, __fern_busy+4(%rip)\n");
   s = s.write("    movl $202, %eax\n    leaq __fern_busy(%rip), %rdi\n    movl $129, %esi\n    movl $1, %edx\n").syscall(202);
+  // No thread woke, so no thread has the next turn.
+  s = s.write("    testl %eax, %eax\n    jnz .Lfern_busy_woke\n    movl $0, __fern_busy+4(%rip)\n.Lfern_busy_woke:\n");
   return s.write("    popq %rdi\n    popq %rsi\n    popq %rdx\n    popq %rcx\n    popq %rax\n    popq %r11\n    ret\n");
 }
 

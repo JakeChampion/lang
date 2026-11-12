@@ -1,6 +1,7 @@
 package e2ecompiler
 
 import (
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -65,13 +66,16 @@ func TestSelfHostNoMainModuleIRX86_64(t *testing.T) {
 		})
 	}
 
-	t.Run("typeinfo-fern-routes-ir", func(t *testing.T) {
-		src := []byte(assemblerSource(t, "typeinfo.fern"))
+	t.Run("sourcepos-fern-routes-ir", func(t *testing.T) {
+		src, err := os.ReadFile("../../../compiler/sourcepos.fern")
+		if err != nil {
+			t.Fatalf("read sourcepos.fern: %v", err)
+		}
 		if path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src))); path != "ir" {
-			t.Fatalf("typeinfo.fern routed through %q path, want \"ir\"", path)
+			t.Fatalf("sourcepos.fern routed through %q path, want \"ir\"", path)
 		}
 		if asm := runCapture(t, gcc, runner, driverBin, src); len(asm) == 0 {
-			t.Fatal("typeinfo.fern emitted 0 bytes")
+			t.Fatal("sourcepos.fern emitted 0 bytes")
 		}
 	})
 }

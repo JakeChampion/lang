@@ -77,6 +77,13 @@ colors, give the program a theme:
 ui.program(view, update).with_theme((dark: boolean): ui.Theme => my_theme(dark))
 ```
 
+When the person chooses the colors in the app, give the program a theme
+that reads its state:
+
+```fern
+ui.program(view, update).with_theme_of((s: State, dark: boolean): ui.Theme => ui.theme(s.dark || dark))
+```
+
 ## Buttons and other ready-made elements
 
 | Element | What it is |
