@@ -11699,8 +11699,8 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			return
 		}
 		top := FieldMoveLiteral(value)
-		if returned && top != nil && top == value {
-			for _, arg := range nestedFieldOwnMoveArgs(fn, top, owned, c.ownFuncs) {
+		if returned {
+			for _, arg := range nestedFieldOwnMoveArgs(fn, value, owned, c.ownFuncs) {
 				selfMoveArgs[arg] = true
 			}
 		}

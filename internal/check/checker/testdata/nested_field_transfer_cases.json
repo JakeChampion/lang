@@ -58,5 +58,45 @@
     "name": "nested field transfer wrapped variant remains unproved",
     "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S} enum Wrapped{Wrap(O)} function f(own o:O):own Wrapped{let s=o.s;return Wrap(O{...o,s:S{...s,xs:filter(s.xs)}});}",
     "want": "E051"
+  },
+  {
+    "name": "tuple nested field transfer",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct S{xs:H[],n:i32} struct O{s:S} function keep(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} function f(own o:O):own(O,i32){let s=o.s;return(O{...o,s:S{...s,xs:keep(s.xs)}},1);}",
+    "want": ""
+  },
+  {
+    "name": "tuple recursive nested field transfer",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct S{xs:H[],n:i32} struct O{s:S} function keep(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} function f(own o:O):own(i32,(O,i32)){let s=o.s;return(1,(O{...o,s:S{...s,xs:keep(s.xs)}},2));}",
+    "want": ""
+  },
+  {
+    "name": "tuple nested field borrowed owner refused",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct S{xs:H[],n:i32} struct O{s:S} function keep(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} function f(o:O):own(O,i32){let s=o.s;return(O{...o,s:S{...s,xs:keep(s.xs)}},1);}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "tuple nested field retained alias refused",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct S{xs:H[],n:i32} struct O{s:S} function keep(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} function f(own o:O):own(O,S){let s=o.s;return(O{...o,s:S{...s,xs:keep(s.xs)}},s);}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "tuple nested field retained owner refused",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct S{xs:H[],n:i32} struct O{s:S} function keep(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} function f(own o:O):own(O,O){let s=o.s;return(O{...o,s:S{...s,xs:keep(s.xs)}},o);}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "tuple nested field callback capture refused",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct S{xs:H[],n:i32} struct O{s:S} function keep(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} function f(own o:O):own(O,()=>i32){let s=o.s;return(O{...o,s:S{...s,xs:keep(s.xs)}},()=>s.xs.len());}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "tuple nested field deferred owner refused",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct S{xs:H[],n:i32} struct O{s:S} function keep(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} function f(own o:O):own(O,i32){let s=o.s;defer o.s.xs[0].close();return(O{...o,s:S{...s,xs:keep(s.xs)}},1);}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "tuple callback nested transfer remains refused",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct S{xs:H[],n:i32} struct O{s:S} function keep(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} function f(own o:O):()=>own O{let s=o.s;return():own O=>O{...o,s:S{...s,xs:keep(s.xs)}};}",
+    "want": "E050|E051"
   }
 ]

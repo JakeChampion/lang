@@ -105,6 +105,9 @@ The returned record must replace the complete input field that owns the alias.
 Other aliases, callbacks, deferred cleanup, and repeated resource reads preserve the refusal.
 An unrelated resource sibling can still prevent an owned result.
 The `nested_owned_field_transfer` case checks the transfer and resource cleanup.
+A tuple result can contain the same transfer, including within another tuple.
+Other tuple parts must preserve the same owner and alias restrictions.
+The `nested_owned_field_tuple` case checks transfer and cleanup on all three targets.
 
 A numeric, boolean, or character COW array field copy does not retain a resource loan.
 This rule includes nested arrays.

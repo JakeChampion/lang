@@ -24922,6 +24922,13 @@ function ow_nested_field_alias(alias: string, root: string, field: string, value
 
 // The returned record replaces the complete field that owns the alias.
 function ow_nested_field_moves(value: ast.Expr, ctx: OwnCtx): string[] {
+  if let ast.ExprTuple(tuple) = value {
+    let out: string[] = [];
+    for element in tuple.elements {
+      out = util.append_all(out, ow_nested_field_moves(element, ctx));
+    }
+    return out;
+  }
   let ast.ExprStructLit(top) = value else {
     return [];
   };

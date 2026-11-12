@@ -1469,3 +1469,5 @@ callback_fresh_local_last_use                       0
 owned_array_exchange_inputs                        0
 # 2026-11-12: nested_owned_field_transfer has balanced allocations and zero live bytes on all three main targets.
 nested_owned_field_transfer                        0
+# 2026-11-12: nested_owned_field_tuple has balanced allocations and zero live bytes on all three main targets.
+nested_owned_field_tuple                           0

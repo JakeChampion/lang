@@ -3,7 +3,18 @@ package checker
 import "github.com/jakechampion/lang/internal/syntax/ast"
 
 // A returned record can replace the complete field that owns a local alias.
-func nestedFieldOwnMoveArgs(fn *ast.FuncDecl, top *ast.StructLit, owned map[string]bool, ownFuncs map[string][]bool) []*ast.FieldAccess {
+func nestedFieldOwnMoveArgs(fn *ast.FuncDecl, value ast.Expr, owned map[string]bool, ownFuncs map[string][]bool) []*ast.FieldAccess {
+	if tuple, ok := value.(*ast.TupleLit); ok {
+		var out []*ast.FieldAccess
+		for _, element := range tuple.Elems {
+			out = append(out, nestedFieldOwnMoveArgs(fn, element, owned, ownFuncs)...)
+		}
+		return out
+	}
+	top, ok := value.(*ast.StructLit)
+	if !ok {
+		return nil
+	}
 	root, ok := top.Base.(*ast.Ident)
 	if !ok || !owned[root.Name] || !ownershipBindingUnchanged(fn, root.Name) || identifierReads(fn.Body, root.Name) != 2 {
 		return nil
