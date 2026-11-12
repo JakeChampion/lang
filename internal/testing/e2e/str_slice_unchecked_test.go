@@ -191,6 +191,22 @@ func TestStrSliceUncheckedTrap(t *testing.T) {
 	}
 }
 
+// The table of std/hash/crc32 is a string constant whose bytes are not
+// UTF-8. The WAT writer must copy it with no slice of the constant.
+func TestWasmEmitsStringConstantOfRawBytes(t *testing.T) {
+	const src = `import "std/hash/crc32";
+import "std/string";
+
+function main(): i32 {
+    if (crc32.of("123456789".as_bytes()) != 0xcbf43926 as u32) { return 1; }
+    return 0;
+}
+`
+	if got := compileAndRunWasmbinMain(t, src); got != 0 {
+		t.Fatalf("wasm got %d, want 0", got)
+	}
+}
+
 func TestRunnerStringSliceSnapExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "tests/stdlib/string_slice_snap_test.fern")
