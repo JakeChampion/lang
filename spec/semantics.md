@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**151 of 154** claims are pinned by a conformance case. The remaining
+**150 of 153** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -184,9 +184,8 @@ of them.
 | `VT-05` | `docs/VALUE-TYPES.md` | Value fields cannot retain consumption obligations | `diag_e051_value_obligation` |
 | `ST-01` | `docs/STRINGS-SOTA.md` | `s[a:b]` on a string yields `None` when an endpoint is out of range, rather than aborting | `string_slice_option` |
 | `ST-02` | `docs/STRINGS-SOTA.md` | `s[a:b]` on a string yields `None` when an endpoint splits a UTF-8 code point | `string_slice_option` |
-| `ST-03` | `docs/STRINGS-SOTA.md` | `slice_unchecked(s, a, b)` indexes bytes: its endpoints are byte offsets on character boundaries | `slice_unchecked_bytes` |
+| `ST-03` | `docs/STRINGS-SOTA.md` | `slice_unchecked(s, a, b)` indexes bytes and checks no code-point boundary | `slice_unchecked_bytes` |
 | `ST-04` | `docs/STRINGS-SOTA.md` | `slice_unchecked(s, a, b)` aborts when its bounds are out of range | `slice_unchecked_oob` |
-| `ST-05` | `docs/STRINGS-SOTA.md` | `slice_unchecked(s, a, b)` aborts when an endpoint splits a UTF-8 code point, so a slice is valid UTF-8 | `slice_unchecked_aborts_on_a_split_character` |
 | `SC-01` | `docs/SAFETY-CONTRACT.md` | A call to an unsafe function is accepted only inside an `unsafe` block, through a direct call, a method, a trait object, a bound type parameter, an import, or a closure that holds its own block (`E095` otherwise) | `unsafe_block_accepts_obligations` |
 | `SC-02` | `docs/SAFETY-CONTRACT.md` | A call to a raw builtin (the raw allocation, load, store, copy, fill and release builtins, the box count helpers, `__arr_set_len`, the heap checkpoints, the `__c_call` forms, the task hooks and the syscall floor) is accepted only inside an `unsafe` block, in a function body or in a closure (`E095` otherwise) | `unsafe_block_accepts_raw_builtins` |
 | `RH-01` | `docs/security/HANDLE-AUDIT.md` | A handle whose `close` consumes its receiver cannot be closed twice; the first close is not the local's last use (`E051`) | `diag_e051_handle_closed_twice` |
