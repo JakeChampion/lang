@@ -205,6 +205,9 @@ class Phone:
         self.filter_row = filter_row
         self.probe = probe
         self.allowed = False
+        # The device drops a notification of the shell until the shell has
+        # the permission to post.
+        self.may_post = False
         self.on = filter_row == "on"
         self.screen = "home"
         self.shade = []
@@ -213,6 +216,8 @@ class Phone:
         self.failures = []
 
     def post(self, tag):
+        if not self.may_post:
+            return
         if self.allowed and self.on and self.shows:
             self.held.append(tag)
         if not (self.allowed and self.on and self.holds):
@@ -247,6 +252,8 @@ class Phone:
     def adb(self, *args, **kwargs):
         if args[:4] == ("shell", "cmd", "notification", "post"):
             self.post(args[-2])
+        elif args[:3] == ("shell", "pm", "grant") and args[3:] == ("com.android.shell", "android.permission.POST_NOTIFICATIONS"):
+            self.may_post = True
         elif args[:4] == ("shell", "cmd", "notification", "allow_listener"):
             self.allowed = True
         elif args[:3] == ("shell", "input", "swipe") and args[3:5] == args[5:7]:
@@ -273,6 +280,7 @@ class FilterTests(unittest.TestCase):
     def run_phone(self, phone):
         clock = iter(range(0, 100000, 5))
         with tempfile.TemporaryDirectory() as out, patch.multiple(check, adb=phone.adb, wait_for=phone.wait_for,
+                            shell=lambda *args: phone.adb("shell", *args),
                             fail=phone.failures.append), patch.object(check.time, "sleep"), \
                 patch.object(check.time, "monotonic", side_effect=lambda: next(clock)):
             check.check_filter(out, 320, 640)
@@ -283,6 +291,12 @@ class FilterTests(unittest.TestCase):
         self.assertEqual(self.run_phone(phone), [])
         self.assertEqual(phone.shade, ["fern_shown"])
         self.assertFalse(phone.allowed and phone.held)
+
+    def test_the_shell_gets_the_permission_to_post_before_the_first_post(self):
+        phone = Phone()
+        self.assertFalse(phone.may_post)
+        self.assertEqual(self.run_phone(phone), [])
+        self.assertTrue(phone.may_post)
 
     def test_a_filter_that_is_on_already_stays_on(self):
         self.assertEqual(self.run_phone(Phone(filter_row="on")), [])
@@ -316,6 +330,17 @@ class FilterTests(unittest.TestCase):
     def test_a_shade_that_the_check_cannot_read_fails(self):
         failures = self.run_phone(Phone(probe=False))
         self.assertEqual(failures, ["the shade does not show a notification that the shell posted"])
+
+    def test_a_shade_that_the_check_cannot_read_keeps_the_answers_of_the_device(self):
+        phone = Phone(probe=False)
+        with tempfile.TemporaryDirectory() as out, patch.multiple(check, adb=phone.adb, fail=phone.failures.append,
+                            shell=lambda *args: "answer to " + " ".join(args[:3])), patch.object(check.time, "sleep"), \
+                patch.object(check.time, "monotonic", side_effect=iter(range(0, 1000, 5)).__next__):
+            check.check_filter(out, 320, 640)
+            kept = {p.name: p.read_text() for p in Path(out).iterdir()}
+        self.assertEqual(kept["shade-list.txt"], "answer to cmd notification list")
+        self.assertEqual(kept["shade-post.txt"], "answer to cmd notification post")
+        self.assertIn("shade-dumpsys.txt", kept)
 
     def test_find_node_gives_the_middle_of_the_node(self):
         dump = node("Other", (0, 0, 10, 10)) + node("Notification filter: off", (0, 100, 320, 200))

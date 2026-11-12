@@ -173,6 +173,47 @@ def free_point(dump, width, height):
     return None
 
 
+def shell(*args):
+    """The output and the errors of a shell command on the device."""
+    done = subprocess.run(["adb", "shell", *args], check=False, capture_output=True, text=True)
+    return done.stdout + done.stderr
+
+
+# The package that posts for `cmd notification post` from adb.
+POSTER = "com.android.shell"
+
+
+def allow_posts(out):
+    """Lets the shell post a notification. From Android 13 a package posts
+    only with the permission POST_NOTIFICATIONS, and the device drops the
+    notification of a package without it after the post command returns."""
+    printed = shell("pm", "grant", POSTER, "android.permission.POST_NOTIFICATIONS")
+    printed += shell("cmd", "appops", "set", POSTER, "POST_NOTIFICATION", "allow")
+    Path(out, "allow-posts.txt").write_text(printed)
+
+
+def post(out, tag, text, *flags):
+    """Posts a notification from the shell, and keeps what the command
+    printed."""
+    printed = shell("cmd", "notification", "post", "-t", "Fern", *flags, tag, text)
+    Path(out, "post-" + tag + ".txt").write_text(printed)
+    return printed
+
+
+def shade_evidence(out, printed):
+    """Keeps what the device says about its notifications, and prints the
+    start of each answer, for a check that cannot read the shade."""
+    answers = {
+        "post": printed,
+        "list": shell("cmd", "notification", "list"),
+        "service": shell("logcat", "-d", "-t", "400", "NotificationService:V", "NotificationManager:V", "*:S"),
+        "dumpsys": shell("dumpsys", "notification", "--noredact"),
+    }
+    for name, text in answers.items():
+        Path(out, "shade-" + name + ".txt").write_text(text)
+        print(f"shade {name}: {text[:600]!r}", flush=True)
+
+
 def in_shade(tag):
     """Whether the notification with the tag `tag` is in the shade."""
     # Each line is the key of one notification, and a key has the tag
@@ -235,8 +276,10 @@ def check_filter(out, width, height):
     intent opens the settings of Android. A notification from before the
     filter was on stays in the shade, which shows that in_shade can see a
     notification."""
-    adb("shell", "cmd", "notification", "post", "-t", "Fern", "fern_shown", "shown_text", check=False)
+    allow_posts(out)
+    printed = post(out, "fern_shown", "shown_text")
     if not wait_for_shade("fern_shown", True):
+        shade_evidence(out, printed)
         fail("the shade does not show a notification that the shell posted")
         return
     adb("shell", "cmd", "notification", "allow_listener", LISTENER, check=False)
@@ -244,7 +287,7 @@ def check_filter(out, width, height):
         return
     # The word after "activity" is the component of the intent. The two
     # words after it are the tag and the text.
-    adb("shell", "cmd", "notification", "post", "-t", "Fern", "-c", "activity", OPENED + "/.Settings", "fern_held", "held_text", check=False)
+    post(out, "fern_held", "held_text", "-c", "activity", OPENED + "/.Settings")
     held = wait_for_node(out, "ui-held", r"\d+ held notifications?")
     if not held:
         fail("the home screen does not show a held notification")
