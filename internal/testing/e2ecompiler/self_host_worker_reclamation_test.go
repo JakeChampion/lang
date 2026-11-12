@@ -159,6 +159,51 @@ func TestSelfHostWorkerUnmapFailureKeepsCensus(t *testing.T) {
 	}
 }
 
+// The closure is the last use of the array, so the body frees that box of
+// the parent's image and frees more than it allocates.
+const workerImageFreeProg = `import "std/worker";
+
+function sum(xs: i64[]): i64 {
+  let t: i64 = 0;
+  for x in xs { t += x; }
+  return t;
+}
+
+function main(): i32 {
+  let xs: i64[] = [];
+  for i in 0..100 { xs = xs.append(i as i64); }
+  let w = worker.spawn((): i64 => sum(xs));
+  if (w.join() != 4950) { return 1; }
+  return 0;
+}
+`
+
+// A child that frees more than it allocates still balances the census.
+func TestSelfHostWorkerImageFreeKeepsCensus(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	leaks := regexp.MustCompile(`leakcheck: allocs=(\d+) frees=(\d+) live_bytes=0`)
+	for _, target := range []string{"arm64-linux", "x86-64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			bin := compileCPUProfile(t, cli, workerImageFreeProg, target, "", "-sanitize")
+			var cmd *exec.Cmd
+			if target == "arm64-linux" {
+				_, runner := arm64Tooling(t)
+				cmd = runArm64Bin(runner, bin)
+			} else {
+				cmd = runX86_64Bin(cli.runner, bin)
+			}
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &stdout, &stderr
+			if err := cmd.Run(); err != nil {
+				t.Fatalf("%v: stdout %q; stderr %s", err, &stdout, &stderr)
+			}
+			if m := leaks.FindStringSubmatch(stderr.String()); len(m) != 3 || m[1] != m[2] {
+				t.Fatalf("unbalanced census: %s", &stderr)
+			}
+		})
+	}
+}
+
 // The worker spins without end. The parent prints the pid of the worker and
 // then ends, by exit or by a bounds abort, while the worker runs.
 const workerOrphanProg = `import "std/worker";

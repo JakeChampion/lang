@@ -269,7 +269,8 @@ var DirectPrivileged = map[string]bool{
 	"__store_i64": true, "__store_ptr": true, "__store_u8": true, "__str_bytes": true,
 	"__syscall3": true, "__syscall4": true, "__syscall5": true, "__syscall6": true,
 	"__task_cancelled": true, "__task_cur": true, "__task_enter": true, "__task_free": true,
-	"__task_leave": true, "__task_new": true, "__task_park": true, "__task_park_until": true,
+	"__task_fd_gen": true,
+	"__task_leave":  true, "__task_new": true, "__task_park": true, "__task_park_until": true,
 	"__task_set_cancelled": true, "__task_set_ready": true, "__task_timeout": true, "__task_until": true,
 	"__task_wait": true,
 }

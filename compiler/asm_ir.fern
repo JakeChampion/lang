@@ -11004,6 +11004,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
   } else if (o.kind_tag == ir.K_TCP_CLOSE) {
     s = s.write("    call __fn___fern_tcp_close\n    addq $8, %rsp\n    pushq %rax\n");
     s = s.need("tcp_close");
+    s = s.need("task");
   } else if (o.kind_tag == ir.K_TCP_LISTEN) {
     s = s.write("    call __fn___fern_tcp_listen\n    addq $8, %rsp\n    pushq %rax\n");
     s = s.need("tcp_listen");
@@ -11404,7 +11405,9 @@ function worker_reap_census(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 // Snapshot live child allocations before munmap. A successful munmap frees
-// the whole region, without a release into the parent's free lists.
+// the whole region, without a release into the parent's free lists. The
+// count is signed: a body that frees boxes of the parent's image frees more
+// than it allocates.
 function emit_worker_unmap(s: asmcore.EmitState): asmcore.EmitState {
   s = s.need("worker_unmap");
   s = s.need("worker_regions");
@@ -11413,23 +11416,22 @@ function emit_worker_unmap(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq $0, __fern_forget_lo(%rip)\n    movq $0, __fern_forget_hi(%rip)\n");
   }
   let ready = asmcore.fresh_label(s);
-  let bad = asmcore.fresh_label(ready.state);
-  let done = asmcore.fresh_label(bad.state);
+  let done = asmcore.fresh_label(ready.state);
   s = done.state;
   if (s.leak_check) {
     s = s.write("    xorq %r8, %r8\n    xorq %r9, %r9\n    testq %r10, %r10\n    jz " + ready.name + "\n");
-    s = s.write("    movq 8(%rax), %r8\n    subq 24(%rax), %r8\n    jc " + bad.name + "\n");
-    s = s.write("    movq 16(%rax), %r9\n    subq 32(%rax), %r9\n    jc " + bad.name + "\n");
+    s = s.write("    movq 8(%rax), %r8\n    subq 24(%rax), %r8\n");
+    s = s.write("    movq 16(%rax), %r9\n    subq 32(%rax), %r9\n");
     s = s.write(ready.name + ":\n    pushq %r8\n    pushq %r9\n");
   }
   if (rc_trace_on()) {
     s = s.write("    pushq %rdx\n    pushq %rax\n");
   }
   s = s.write("    pushq %r10\n    pushq %rdx\n    pushq %rax\n    call __fn___fern_worker_unmap\n    addq $24, %rsp\n");
-  return worker_unmap_result(s, bad.name, done.name);
+  return worker_unmap_result(s, done.name);
 }
 
-function worker_unmap_result(s: asmcore.EmitState, bad_label: string, done_label: string): asmcore.EmitState {
+function worker_unmap_result(s: asmcore.EmitState, done_label: string): asmcore.EmitState {
   if (rc_trace_on()) {
     s = s.write("    popq %rdi\n    popq %rsi\n");
   }
@@ -11445,9 +11447,7 @@ function worker_unmap_result(s: asmcore.EmitState, bad_label: string, done_label
   if (rc_trace_on()) {
     s = s.write("    pushq %rax\n    pushq %rsi\n    pushq %rdi\n    call __fern_hev_u\n    addq $16, %rsp\n    popq %rax\n");
   }
-  if (s.leak_check) {
-    s = s.write("    jmp " + done_label + "\n" + bad_label + ":\n    movq $-22, %rax\n" + done_label + ":\n");
-  } else if (rc_trace_on()) {
+  if (s.leak_check || rc_trace_on()) {
     s = s.write(done_label + ":\n");
   }
   return s.write("    pushq %rax\n");
@@ -12838,7 +12838,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .section .bss\n    .align 8\n__fern_cov_counters: .quad 0\n    .text\n");
   }
   if (s.has_need("task")) {
-    s = s.write("    .section .bss\n    .align 8\n__fern_task_state: .quad 0, 0, 0, 0, 0, 0, 0\n    .text\n");
+    s = s.write("    .section .bss\n    .align 8\n__fern_task_state: .quad 0, 0, 0, 0, 0, 0, 0, 0\n    .text\n");
   }
   if (s.has_need("str_print")) {
     s = s.write("    .text\n");

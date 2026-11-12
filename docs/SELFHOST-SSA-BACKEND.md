@@ -69,7 +69,9 @@ lowered function it:
    reads to that branch's targets, on the arm's own comparison or to the side
    its constant picks (`ssa.thread_bool_joins`: a predicate spliced into its
    caller brings its `&&` or `||` as such a phi), and prunes again;
-4. once the certifier has read that form, turns each branch whose two arms
+4. once the certifier has read that form, gives each side of a uniqueness
+   test its own copy of the blocks that test the reuse token again, with
+   each of those tests decided (`ssa.split_tokens`), then turns each branch whose two arms
    compute a few pure integer values and meet again, at a join's phis or at
    a return each, into straight-line code (`ssa.select_branches`): the arms'
    instructions move up into the branching block and each value they chose
