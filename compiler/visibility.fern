@@ -18,13 +18,13 @@ function import_quals(mod: parser.Module): string[] {
   return out;
 }
 
-function module_named(loaded: flatten.LoadedModule[], name: string): i32 {
+function module_named(loaded: flatten.LoadedModule[], name: string): Option[i32] {
   for i in 0..loaded.len() {
     if (loaded[i].name == name) {
-      return i;
+      return Some(i);
     }
   }
-  return -1;
+  return None;
 }
 
 function module_key(lm: flatten.LoadedModule): string {
@@ -398,17 +398,17 @@ function owner_ident(src: parser.Module, qual: string): string {
   return "";
 }
 
-function loaded_index(cx: VisCtx, qual: string): i32 {
+function loaded_index(cx: VisCtx, qual: string): Option[i32] {
   let owner = owner_ident(cx.src, qual);
   if (owner.len() == 0) {
     return module_named(cx.loaded, qual);
   }
   for i in 0..cx.loaded.len() {
     if (cx.loaded[i].ident == owner) {
-      return i;
+      return Some(i);
     }
   }
-  return -1;
+  return None;
 }
 
 function package_scope(cx: VisCtx, qual: string, name: string): (boolean, boolean) {
@@ -480,10 +480,9 @@ function ref_diag(cx: VisCtx, r: astwalk.QualRef, out: util.Diag[]): util.Diag[]
     }
     return out;
   }
-  let mi = loaded_index(cx, r.qual);
-  if (mi < 0) {
+  let Some(mi) = loaded_index(cx, r.qual) else {
     return out;
-  }
+  };
   let key = module_key(cx.loaded[mi]) + "." + r.name;
   if (!cx.declared.has(key)) {
     return out.append(missing_member(cx.loaded[mi].mod, cx.loaded[mi].name, r, missing_kind(r)));
@@ -634,8 +633,10 @@ function check_type_name(tn: string, cx: VisCtx, line: i32, col: i32, acc: util.
     }
     return acc;
   }
-  let mi = loaded_index(cx, q);
-  if (mi < 0 || !cx.priv.has(module_key(cx.loaded[mi]) + "." + base)) {
+  let Some(mi) = loaded_index(cx, q) else {
+    return acc;
+  };
+  if (!cx.priv.has(module_key(cx.loaded[mi]) + "." + base)) {
     return acc;
   }
   let m = cx.loaded[mi].name;
@@ -662,10 +663,11 @@ function check_written_type(tn: string, cx: VisCtx, line: i32, col: i32, acc: ut
   if (q.len() == 0 || base.len() == 0 || !util.has_str(cx.quals, q)) {
     return acc;
   }
-  let mi = loaded_index(cx, q);
-  if (mi >= 0 && !cx.pkg.has(owner_ident(cx.src, q) + "." + base) && !cx.declared.has(module_key(cx.loaded[mi]) + "." + base) && !declares_trait_or_resource(cx.loaded[mi].mod, base)) {
-    let r = astwalk.QualRef { qual: q, name: base, line: line, col: col, call: false };
-    return acc.append(missing_member(cx.loaded[mi].mod, cx.loaded[mi].name, r, "type"));
+  if let Some(mi) = loaded_index(cx, q) {
+    if (!cx.pkg.has(owner_ident(cx.src, q) + "." + base) && !cx.declared.has(module_key(cx.loaded[mi]) + "." + base) && !declares_trait_or_resource(cx.loaded[mi].mod, base)) {
+      let r = astwalk.QualRef { qual: q, name: base, line: line, col: col, call: false };
+      return acc.append(missing_member(cx.loaded[mi].mod, cx.loaded[mi].name, r, "type"));
+    }
   }
   return check_type_name(tn, cx, line, col, acc);
 }
