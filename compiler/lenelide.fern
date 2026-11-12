@@ -1,0 +1,457 @@
+import "./ast";
+import "./astwalk";
+import "./util";
+
+struct LenLoopMatch { ok: boolean, idx: string, arr: string, root: string, bound: string }
+
+struct LenPath { path: string, root: string }
+
+pub function elide_len_bounded_body(stmts: ast.Stmt[]): ast.Stmt[] {
+  let lowered: ast.Stmt[] = [];
+  for i in 0..stmts.len() {
+    lowered = lowered.append(elb_recurse_stmt(stmts[i]));
+  }
+  let out: ast.Stmt[] = [];
+  for p in 0..lowered.len() {
+    let st = lowered[p];
+    match (st) {
+      ast.StmtWhile(w) => {
+        st = elb_try_while(w, lowered, p);
+      },
+      _ => {}
+    }
+    out = out.append(st);
+  }
+  return out;
+}
+
+function elb_recurse_stmt(st: ast.Stmt): ast.Stmt {
+  match (st) {
+    ast.StmtIf(f) => {
+      return ast.StmtIf { ...f, cond: f.cond, then_body: elide_len_bounded_body(f.then_body), else_body: elide_len_bounded_body(f.else_body) };
+    },
+    ast.StmtWhile(w) => {
+      return ast.StmtWhile { cond: w.cond, body: elide_len_bounded_body(w.body), label: w.label, line: w.line, is_loop: w.is_loop };
+    },
+    ast.StmtFor(fr) => {
+      return ast.StmtFor { var_name: fr.var_name, iter: fr.iter, body: elide_len_bounded_body(fr.body), label: fr.label, line: fr.line, col: fr.col };
+    },
+    ast.StmtMatch(m) => {
+      let arms: ast.MatchArm[] = [];
+      for i in 0..m.arms.len() {
+        let arm = m.arms[i];
+        arms = arms.append(ast.MatchArm { ...arm, body: elide_len_bounded_body(arm.body) });
+      }
+      return ast.StmtMatch { ...m, scrutinee: m.scrutinee, arms: arms };
+    },
+    ast.StmtDefer(d) => {
+      return ast.StmtDefer { action: elb_recurse_stmt(d.action), on_error: d.on_error, line: d.line };
+    },
+    _ => {
+      return st;
+    }
+  }
+}
+
+function elb_try_while(w: ast.StmtWhile, stmts: ast.Stmt[], p: i32): ast.Stmt {
+  let same: ast.Stmt = ast.StmtWhile { cond: w.cond, body: w.body, label: w.label, line: w.line, is_loop: w.is_loop };
+  let m = elb_loop_match(w.cond);
+  if (!m.ok) {
+    return same;
+  }
+  let lp = LenPath { path: m.arr, root: m.root };
+  if (m.bound != "") {
+    lp = elb_len_local(stmts, p, m.bound);
+    if (lp.path == "" || elb_assigns_stmts(w.body, m.bound) || elb_binds_stmts(w.body, m.bound)) {
+      return same;
+    }
+  }
+  if (lp.root == m.idx || elb_assigns_stmts(w.body, lp.root)) {
+    return same;
+  }
+  if (elb_binds_stmts(w.body, m.idx) || elb_binds_stmts(w.body, lp.root)) {
+    return same;
+  }
+  if (!elb_idx_monotonic_stmts(w.body, m.idx)) {
+    return same;
+  }
+  if (!elb_starts_nonneg(stmts, p, m.idx)) {
+    return same;
+  }
+  let nb: ast.Stmt[] = [];
+  let i = 0;
+  let stop = false;
+  while (i < w.body.len()) {
+    let st = w.body[i];
+    if (!stop && elb_assigns_stmt(st, m.idx)) {
+      stop = true;
+    }
+    if (!stop) {
+      st = elb_mark_stmt(st, m.idx, lp.path);
+    }
+    nb = nb.append(st);
+    i += 1;
+  }
+  let cond = elb_mark_cond(w.cond, m, lp.path).e;
+  return ast.StmtWhile { cond: cond, body: nb, label: w.label, line: w.line, is_loop: w.is_loop };
+}
+
+function elb_loop_match(cond: ast.Expr): LenLoopMatch {
+  match (cond) {
+    ast.ExprBinary(b) => {
+      if (b.op == "&&") {
+        let l = elb_loop_match(b.left);
+        if (l.ok) {
+          return l;
+        }
+        return elb_loop_match(b.right);
+      }
+      if (b.op == "<") {
+        match (b.left) {
+          ast.ExprIdent(li) => {
+            let lp = elb_len_path(b.right);
+            if (lp.path != "") {
+              return LenLoopMatch { ok: true, idx: li.name, arr: lp.path, root: lp.root, bound: "" };
+            }
+            match (b.right) {
+              ast.ExprIdent(ni) => {
+                if (ni.name != li.name) {
+                  return LenLoopMatch { ok: true, idx: li.name, arr: "", root: "", bound: ni.name };
+                }
+              },
+              _ => {}
+            }
+          },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  return LenLoopMatch { ok: false, idx: "", arr: "", root: "", bound: "" };
+}
+
+function elb_len_path(e: ast.Expr): LenPath {
+  match (e) {
+    ast.ExprCall(c) => {
+      match (c.callee) {
+        ast.ExprFieldAccess(fa) => {
+          if (fa.field == "len" && c.args.len() == 0) {
+            return LenPath { path: elb_path(fa.obj), root: elb_path_root(fa.obj) };
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  return LenPath { path: "", root: "" };
+}
+
+function elb_path(e: ast.Expr): string {
+  match (e) {
+    ast.ExprIdent(id) => {
+      return id.name;
+    },
+    ast.ExprFieldAccess(fa) => {
+      let base = elb_path(fa.obj);
+      if (base != "") {
+        return base + "." + fa.field;
+      }
+    },
+    _ => {}
+  }
+  return "";
+}
+
+function elb_path_root(e: ast.Expr): string {
+  match (e) {
+    ast.ExprIdent(id) => {
+      return id.name;
+    },
+    ast.ExprFieldAccess(fa) => {
+      return elb_path_root(fa.obj);
+    },
+    _ => {}
+  }
+  return "";
+}
+
+function elb_len_local(stmts: ast.Stmt[], p: i32, n: string): LenPath {
+  let none = LenPath { path: "", root: "" };
+  let q = p - 1;
+  while (q >= 0) {
+    match (stmts[q]) {
+      ast.StmtVar(v) => {
+        if (v.name == n) {
+          let lp = elb_len_path(v.init);
+          if (lp.path == "") {
+            return none;
+          }
+          for k in q + 1..p {
+            if (elb_assigns_stmt(stmts[k], n) || elb_assigns_stmt(stmts[k], lp.root) || elb_binds_stmts([stmts[k]], lp.root)) {
+              return none;
+            }
+          }
+          return lp;
+        }
+      },
+      _ => {}
+    }
+    q -= 1;
+  }
+  return none;
+}
+
+function elb_starts_nonneg(stmts: ast.Stmt[], p: i32, idx: string): boolean {
+  let q = p - 1;
+  while (q >= 0) {
+    let st = stmts[q];
+    match (st) {
+      ast.StmtVar(v) => {
+        if (v.name == idx) {
+          return elb_is_nonneg_int(v.init);
+        }
+      },
+      ast.StmtAssign(a) => {
+        if (a.target == idx) {
+          return elb_is_nonneg_int(a.value);
+        }
+      },
+      _ => {}
+    }
+    if (elb_assigns_stmt(st, idx) || elb_binds_stmts([st], idx)) {
+      return false;
+    }
+    q -= 1;
+  }
+  return false;
+}
+
+function elb_is_nonneg_int(e: ast.Expr): boolean {
+  match (e) {
+    ast.ExprNumber(n) => {
+      if (n.is_float) {
+        return false;
+      }
+      if (n.text.len() == 0) {
+        return false;
+      }
+      let c0 = n.text[0] as i32;
+      return c0 >= 48 && c0 <= 57;
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
+function elb_assigns_stmt(st: ast.Stmt, name: string): boolean {
+  function vs(s: ast.Stmt, own hit: boolean): boolean {
+    if (hit) {
+      return true;
+    }
+    match (s) {
+      ast.StmtAssign(a) => {
+        return a.target == name;
+      },
+      _ => {
+        return false;
+      }
+    }
+    return false;
+  }
+  return astwalk.fold_stmt_spine(st, false, vs);
+}
+
+function elb_assigns_stmts(stmts: ast.Stmt[], name: string): boolean {
+  for st in stmts {
+    if (elb_assigns_stmt(st, name)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function elb_binds_stmts(stmts: ast.Stmt[], name: string): boolean {
+  return util.has_str(astwalk.collect_bound_stmts(stmts, []), name);
+}
+
+function elb_idx_monotonic_stmts(stmts: ast.Stmt[], idx: string): boolean {
+  function vs(s: ast.Stmt, own ok: boolean): boolean {
+    if (!ok) {
+      return false;
+    }
+    match (s) {
+      ast.StmtAssign(a) => {
+        if (a.target == idx) {
+          return elb_is_monotonic_incr(a.value, idx);
+        }
+        return true;
+      },
+      _ => {
+        return true;
+      }
+    }
+    return true;
+  }
+  let ok = true;
+  for st in stmts {
+    ok = astwalk.fold_stmt_spine(st, ok, vs);
+  }
+  return ok;
+}
+
+function elb_is_monotonic_incr(v: ast.Expr, idx: string): boolean {
+  match (v) {
+    ast.ExprBinary(b) => {
+      if (b.op == "+") {
+        match (b.left) {
+          ast.ExprIdent(li) => {
+            if (li.name == idx) {
+              return elb_is_nonneg_int(b.right);
+            }
+          },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  return false;
+}
+
+function elb_mark_stmts(stmts: ast.Stmt[], idx: string, arr: string): ast.Stmt[] {
+  let out: ast.Stmt[] = [];
+  for i in 0..stmts.len() {
+    out = out.append(elb_mark_stmt(stmts[i], idx, arr));
+  }
+  return out;
+}
+
+function elb_mark_stmt(st: ast.Stmt, idx: string, arr: string): ast.Stmt {
+  match (st) {
+    ast.StmtVar(v) => {
+      return ast.StmtVar { name: v.name, type_name: v.type_name, init: elb_mark_expr(v.init, idx, arr), line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types };
+    },
+    ast.StmtReturn(r) => {
+      return ast.StmtReturn { value: elb_mark_expr(r.value, idx, arr), line: r.line, col: r.col };
+    },
+    ast.StmtExpr(x) => {
+      return ast.StmtExpr { ...x, value: elb_mark_expr(x.value, idx, arr) };
+    },
+    ast.StmtAssign(a) => {
+      return ast.StmtAssign { ...a, value: elb_mark_expr(a.value, idx, arr) };
+    },
+    ast.StmtIf(f) => {
+      return ast.StmtIf { ...f, cond: elb_mark_expr(f.cond, idx, arr), then_body: elb_mark_stmts(f.then_body, idx, arr), else_body: elb_mark_stmts(f.else_body, idx, arr) };
+    },
+    ast.StmtWhile(w) => {
+      return ast.StmtWhile { cond: elb_mark_expr(w.cond, idx, arr), body: elb_mark_stmts(w.body, idx, arr), label: w.label, line: w.line, is_loop: w.is_loop };
+    },
+    ast.StmtFor(fr) => {
+      return ast.StmtFor { var_name: fr.var_name, iter: elb_mark_expr(fr.iter, idx, arr), body: elb_mark_stmts(fr.body, idx, arr), label: fr.label, line: fr.line, col: fr.col };
+    },
+    ast.StmtMatch(m) => {
+      let arms: ast.MatchArm[] = [];
+      for i in 0..m.arms.len() {
+        let arm = m.arms[i];
+        arms = arms.append(ast.MatchArm { ...arm, body: elb_mark_stmts(arm.body, idx, arr), guard: elb_mark_expr(arm.guard, idx, arr) });
+      }
+      return ast.StmtMatch { ...m, scrutinee: elb_mark_expr(m.scrutinee, idx, arr), arms: arms };
+    },
+    _ => {
+      return st;
+    }
+  }
+}
+
+struct CondMark { e: ast.Expr, past: boolean }
+
+function elb_mark_cond(c: ast.Expr, m: LenLoopMatch, arr: string): CondMark {
+  match (c) {
+    ast.ExprBinary(b) => {
+      if (b.op == "&&") {
+        let l = elb_mark_cond(b.left, m, arr);
+        if (l.past) {
+          return CondMark { e: ast.binary(b.op, l.e, elb_mark_expr(b.right, m.idx, arr), b.line, b.col, b.ty), past: true };
+        }
+        let r = elb_mark_cond(b.right, m, arr);
+        return CondMark { e: ast.binary(b.op, b.left, r.e, b.line, b.col, b.ty), past: r.past };
+      }
+    },
+    _ => {}
+  }
+  let g = elb_loop_match(c);
+  return CondMark { e: c, past: g.ok && g.idx == m.idx && g.arr == m.arr && g.bound == m.bound };
+}
+
+function elb_mark_expr(e: ast.Expr, idx: string, arr: string): ast.Expr {
+  match (e) {
+    ast.ExprIndex(ix) => {
+      let mark = ix.unchecked;
+      match (ix.index) {
+        ast.ExprIdent(iid) => {
+          if (iid.name == idx && elb_path(ix.array) == arr) {
+            mark = true;
+          }
+        },
+        _ => {}
+      }
+      return ast.ExprIndex { array: elb_mark_expr(ix.array, idx, arr), index: elb_mark_expr(ix.index, idx, arr), unchecked: mark, ty: ix.ty, line: ix.line, col: ix.col };
+    },
+    ast.ExprBinary(b) => {
+      return ast.binary(b.op, elb_mark_expr(b.left, idx, arr), elb_mark_expr(b.right, idx, arr), b.line, b.col, b.ty);
+    },
+    ast.ExprUnary(u) => {
+      return ast.unary(u.op, elb_mark_expr(u.operand, idx, arr), u.line, u.col, u.ty);
+    },
+    ast.ExprCall(c) => {
+      let na: ast.Expr[] = [];
+      let i = 0;
+      while (i < c.args.len()) {
+        na = na.append(elb_mark_expr(c.args[i], idx, arr));
+        i += 1;
+      }
+      return ast.ExprCall { callee: elb_mark_expr(c.callee, idx, arr), args: na, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty };
+    },
+    ast.ExprArray(a) => {
+      let ne: ast.Expr[] = [];
+      let i = 0;
+      while (i < a.elements.len()) {
+        ne = ne.append(elb_mark_expr(a.elements[i], idx, arr));
+        i += 1;
+      }
+      return ast.ExprArray { ...a, elements: ne };
+    },
+    ast.ExprTuple(t) => {
+      let ne: ast.Expr[] = [];
+      let i = 0;
+      while (i < t.elements.len()) {
+        ne = ne.append(elb_mark_expr(t.elements[i], idx, arr));
+        i += 1;
+      }
+      return ast.ExprTuple { elements: ne, line: t.line, col: t.col };
+    },
+    ast.ExprSlice(sl) => {
+      return ast.ExprSlice { ...sl, array: elb_mark_expr(sl.array, idx, arr), start: elb_mark_expr(sl.start, idx, arr), end: elb_mark_expr(sl.end, idx, arr) };
+    },
+    ast.ExprStructLit(sl) => {
+      let nv: ast.Expr[] = [];
+      for i in 0..sl.field_values.len() {
+        nv = nv.append(elb_mark_expr(sl.field_values[i], idx, arr));
+      }
+      let nbase = sl.base;
+      if (sl.has_base) {
+        nbase = elb_mark_expr(sl.base, idx, arr);
+      }
+      return ast.ExprStructLit { ...sl, field_values: nv, base: nbase };
+    },
+    ast.ExprFieldAccess(fa) => {
+      return ast.ExprFieldAccess { ...fa, obj: elb_mark_expr(fa.obj, idx, arr) };
+    },
+    _ => {
+      return e;
+    }
+  }
+}

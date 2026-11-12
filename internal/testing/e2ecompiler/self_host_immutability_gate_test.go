@@ -33,6 +33,16 @@ func TestSelfHostImmutabilityGateX86_64(t *testing.T) {
 			wantDiag: "error[E056]",
 		},
 		{
+			name:     "compound-subscript-assign-E056",
+			src:      "function k(n: i32): i32 { print(n); return n; }\nfunction main(): i32 { let a: i32[] = [1, 2, 3]; a[k(0)] += 1; return a[0]; }\n",
+			wantDiag: "error[E056]",
+		},
+		{
+			name:     "compound-field-assign-E048",
+			src:      "struct P { x: i32 }\nfunction mk(): P { print(1); return P { x: 1 }; }\nfunction main(): i32 { mk().x += 1; return 0; }\n",
+			wantDiag: "error[E048]",
+		},
+		{
 			name:     "captured-ref-assign-E049",
 			src:      "function main(): i32 { let xs: i32[] = [1]; let f = (): i32 => { xs = xs.append(2); return xs.len(); }; return f(); }\n",
 			wantDiag: "error[E049]",
