@@ -1,3 +1,5 @@
+// spec: OR-05
+
 import "std/i32";
 
 struct H { value: i32, count: Cell[i32] }
