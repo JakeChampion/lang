@@ -37,6 +37,11 @@ A track shows its lyrics in the place of its picture. They come from
 an LRC file with the name of the track, or from the tags of its file. For
 lines with times, the screen shows the line that the track is at.
 
+A track that ends goes on to the next one in the same stream of sound.
+So no sound is lost between two tracks that have the same rate. With
+"Level" of the settings, a track plays at the gain that its file gives
+for ReplayGain, so the tracks have the same loudness.
+
 Shuffle puts
 the songs after the one that plays in a new order. Repeat has three
 states: off, the queue again, and the track again.

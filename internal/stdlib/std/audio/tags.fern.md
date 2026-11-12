@@ -1,6 +1,6 @@
 # Audio file tags
 
-This module reads the title, the artist, the album, the genre, the track number and the lyrics that an audio file holds about itself.
+This module reads what an audio file holds about itself: the title, the artist, the album, the genre, the track number, the lyrics and the gain.
 
 ## Model
 
@@ -18,7 +18,7 @@ A field that the file does not give is "" or 0. `picture` gives the bytes of the
 
 The input is the whole file, or its start as far as the end of its tags. A tag that goes past the end of the input gives the fields before that point. No input makes the functions fail: bytes that are not a tag give empty tags.
 
-A track number such as `3/12` gives 3. A date such as `2019-05-01` gives the year 2019. A genre that is a number of the ID3v1 list, such as `(17)`, gives its name: `Rock`.
+A track number such as `3/12` gives 3. A date such as `2019-05-01` gives the year 2019. A genre that is a number of the ID3v1 list, such as `(17)`, gives its name: `Rock`. A ReplayGain text such as `-6.48 dB` gives the gain -6.48. The gain of an Opus file is for a quieter level, so it gives 5 dB more.
 
 ## Executable example
 
@@ -95,10 +95,10 @@ import "std/utf8";
 
 // What a file tells about its sound. A field that the file does not give
 // is "" or 0.
-pub struct Tags { title: string, artist: string, album: string, album_artist: string, track: i32, year: i32, genre: string, lyrics: string }
+pub struct Tags { title: string, artist: string, album: string, album_artist: string, track: i32, year: i32, genre: string, lyrics: string, gain: f64 }
 
 pub function none(): Tags {
-  return Tags { title: "", artist: "", album: "", album_artist: "", track: 0, year: 0, genre: "", lyrics: "" };
+  return Tags { title: "", artist: "", album: "", album_artist: "", track: 0, year: 0, genre: "", lyrics: "", gain: 0.0 };
 }
 
 // The fields of the tags, for the tables of the names of each format.
@@ -118,8 +118,36 @@ const GENRE: i32 = 6;
 
 const LYRICS: i32 = 8;
 
+// The gain of the track in dB, as ReplayGain writes it.
+const GAIN: i32 = 9;
+
+// The gain of the track of an Opus file: 256 for each dB, for a level 5 dB
+// below that of ReplayGain.
+const OPUS_GAIN: i32 = 10;
+
+// The tags with the text `text` in a field that is a number, a genre or
+// a gain.
+function with_value(t: Tags, field: i32, text: string): Tags {
+  if (field == TRACK) {
+    return Tags { ...t, track: number(text) };
+  }
+  if (field == YEAR) {
+    return Tags { ...t, year: number(text) };
+  }
+  if (field == GENRE) {
+    return Tags { ...t, genre: genre_text(text) };
+  }
+  if (field == GAIN) {
+    return Tags { ...t, gain: decibels(text) };
+  }
+  if (field == OPUS_GAIN) {
+    return Tags { ...t, gain: decibels(text) / 256.0 + 5.0 };
+  }
+  return t;
+}
+
 // The tags with the text `text` in the field `field`. An empty text and a
-// field that is not one of the eight change nothing.
+// field that is not one of the ten change nothing.
 function with_field(t: Tags, field: i32, text: string): Tags {
   if (text.len() == 0) {
     return t;
@@ -136,19 +164,10 @@ function with_field(t: Tags, field: i32, text: string): Tags {
   if (field == ALBUM_ARTIST) {
     return Tags { ...t, album_artist: text };
   }
-  if (field == TRACK) {
-    return Tags { ...t, track: number(text) };
-  }
-  if (field == YEAR) {
-    return Tags { ...t, year: number(text) };
-  }
-  if (field == GENRE) {
-    return Tags { ...t, genre: genre_text(text) };
-  }
   if (field == LYRICS) {
     return Tags { ...t, lyrics: text };
   }
-  return t;
+  return with_value(t, field, text);
 }
 
 // The field of the name `name` in the table `names`, or -1.
@@ -186,6 +205,41 @@ function number(s: string): i32 {
     }
   }
   return n;
+}
+
+// The digits of `s` from the byte `at` as a number, and the byte after
+// them.
+function digits(s: string, at: i32): (f64, i32) {
+  let n = 0.0;
+  let p = at;
+  while (p < s.len() && s[p] >= b'0' && s[p] <= b'9') {
+    n = n * 10.0 + (s[p] as i32 - 48) as f64;
+    p += 1;
+  }
+  return (n, p);
+}
+
+// The number at the start of `text`, with a sign and a fraction: -6.48 for
+// "-6.48 dB".
+function decibels(text: string): f64 {
+  let s = text.trim().to_owned();
+  let at = 0;
+  if (s.starts_with("-") || s.starts_with("+")) {
+    at = 1;
+  }
+  let (whole, dot) = digits(s, at);
+  let part = 0.0;
+  if (dot < s.len() && s[dot] == b'.') {
+    let (n, end) = digits(s, dot + 1);
+    part = n;
+    for k in dot + 1..end {
+      part /= 10.0;
+    }
+  }
+  if (s.starts_with("-")) {
+    return -(whole + part);
+  }
+  return whole + part;
 }
 
 // The names of the genres of ID3v1, with the names that Winamp added.
@@ -373,6 +427,20 @@ function after_text(input: [u8], at: i32, to: i32, wide: boolean): i32 {
   return to;
 }
 
+// The text of the track gain in a frame of the person from `from` to
+// `to`, or "": such a frame has a description and then a value.
+function frame_gain(input: [u8], from: i32, to: i32): string {
+  if (from + 2 > to || to > input.len()) {
+    return "";
+  }
+  let kind = input[from];
+  let value = after_text(input, from + 1, to, kind == 1u8 || kind == 2u8);
+  if (text_as(input, kind, from + 1, value).to_upper() != "REPLAYGAIN_TRACK_GAIN") {
+    return "";
+  }
+  return text_as(input, kind, value, to);
+}
+
 // The text of a lyrics frame from `from` to `to`: a language of three
 // letters and a description come before it.
 function frame_lyrics(input: [u8], from: i32, to: i32): string {
@@ -438,14 +506,22 @@ function frames(input: [u8], from: i32, end: i32, version: i32): Tags {
     if (id.len() == 0 || size <= 0 || at + head + size > end) {
       return t;
     }
-    if (id == "USLT" || id == "ULT") {
-      t = with_field(t, LYRICS, frame_lyrics(input, at + head, at + head + size));
-    } else {
-      t = with_field(t, field_of(names, id), frame_text(input, at + head, at + head + size));
-    }
+    t = with_frame(t, names, id, input, at + head, at + head + size);
     at += head + size;
   }
   return t;
+}
+
+// The tags with the frame `id` of an ID3v2 tag, whose content is from
+// `from` to `to`: a lyrics frame, a frame of the person, or a text frame.
+function with_frame(t: Tags, names: (string, i32)[], id: string, input: [u8], from: i32, to: i32): Tags {
+  if (id == "USLT" || id == "ULT") {
+    return with_field(t, LYRICS, frame_lyrics(input, from, to));
+  }
+  if (id == "TXXX" || id == "TXX") {
+    return with_field(t, GAIN, frame_gain(input, from, to));
+  }
+  return with_field(t, field_of(names, id), frame_text(input, from, to));
 }
 
 // The tags of the ID3v2 tag that starts at the byte `start`, or empty
@@ -473,7 +549,7 @@ pub function id3v1(input: [u8]): Tags {
   if (input[at + 125] == 0u8) {
     track = input[at + 126] as i32;
   }
-  return Tags { title: latin1(input, at + 3, at + 33), artist: latin1(input, at + 33, at + 63), album: latin1(input, at + 63, at + 93), album_artist: "", track: track, year: number(latin1(input, at + 93, at + 97)), genre: genre_name(input[at + 127] as i32), lyrics: "" };
+  return Tags { title: latin1(input, at + 3, at + 33), artist: latin1(input, at + 33, at + 63), album: latin1(input, at + 63, at + 93), album_artist: "", track: track, year: number(latin1(input, at + 93, at + 97)), genre: genre_name(input[at + 127] as i32), lyrics: "", gain: 0.0 };
 }
 ```
 
@@ -482,7 +558,7 @@ pub function id3v1(input: [u8]): Tags {
 ```fern
 <<Vorbis comments>>=
 function vorbis_names(): (string, i32)[] {
-  return [("TITLE", TITLE), ("ARTIST", ARTIST), ("ALBUM", ALBUM), ("ALBUMARTIST", ALBUM_ARTIST), ("ALBUM ARTIST", ALBUM_ARTIST), ("TRACKNUMBER", TRACK), ("DATE", YEAR), ("YEAR", YEAR), ("GENRE", GENRE), ("LYRICS", LYRICS), ("UNSYNCEDLYRICS", LYRICS)];
+  return [("TITLE", TITLE), ("ARTIST", ARTIST), ("ALBUM", ALBUM), ("ALBUMARTIST", ALBUM_ARTIST), ("ALBUM ARTIST", ALBUM_ARTIST), ("TRACKNUMBER", TRACK), ("DATE", YEAR), ("YEAR", YEAR), ("GENRE", GENRE), ("LYRICS", LYRICS), ("UNSYNCEDLYRICS", LYRICS), ("REPLAYGAIN_TRACK_GAIN", GAIN), ("R128_TRACK_GAIN", OPUS_GAIN)];
 }
 
 // The tags with the Vorbis comment `NAME=value`. The name has small or
