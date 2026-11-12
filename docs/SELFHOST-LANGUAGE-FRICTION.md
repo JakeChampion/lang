@@ -58,7 +58,7 @@ column says what `TestSelfHostFeatureCensus` holds the row to.
 | Closures / lambdas | Capturing and escaping lambdas and nested named functions | **111**: 91 nested named functions across 7 modules, plus 20 arrow lambdas across 6 modules. Visitors capture queried names, function-signature registries, declared types and instrumentation context. The diagnostics sort captures line maps (#12993), and the modern-form lint walk captures its configuration (#14288). Sharing the E032 call-diagnostic walk removes two nested visitors. The E044 capture-scope fix and struct-literal diagnostics each add a shared-fold visitor. The replaced-read scan of the own check adds two (#13929). The callback aggregate proof adds one visitor (#15060). The owned-return cleanup proof adds one visitor (#15144). The check that a borrowed read keeps the data payload of its owner adds two arrow lambdas (#15275). The task and worker checks use capture-free visitors at module scope. Primitive display dependency discovery uses capture-free visitors at module scope (#12704). | pinned |
 | `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **8,651** in 351 modules — includes the bounded SIMD byte-origin scans (#15085) | floor |
 | `?` error propagation | ✅ incl. `From`-converting widening | **0** | pinned |
-| Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **10** spellings in 6 modules (`wasm_ir`'s call-name accumulator, `printer`'s line-id table for the linear-space diff (#8611), `modloader`'s fact-hash set, `ircore`'s unit-owner tables, `fern_toml`'s lock-entry positions and `mvs`'s registry-entry positions) | pinned |
+| Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **14** spellings in 7 modules (`wasm_ir`'s call-name accumulator, `printer`'s line-id table for the linear-space diff (#8611), `modloader`'s fact-hash set, `ircore`'s unit-owner tables, `fern_toml`'s lock-entry positions, `mvs`'s registry-entry positions and `interp`'s index of the shared values of one store or one send copy (#15436)) | pinned |
 | `astwalk` call sites (walkers on the shared spine) | — | **241** across 21 modules (fnsigs.fern held 25 when it was deleted) — `parser.fern` joins with the mentions, fn-value-call, moves-handle, deep-defer-scan, elb-guard and hl families, `interp.fern`'s cellify scans, `lift.fern`'s cap-type and env-box-lift families, `irtables.fern`'s assign-targets family, `treeshake.fern`'s name collector, and `asmcore.fern`'s P001/P002 pre-check (#6993) | floor |
 | `enum` with payloads | ✅ multi-payload, named fields | **2 declarations** | — |
 | `Option[T]` / `Result[T, E]` in return position | ✅ | **20** of 4,676 functions (0.4%) | — |
@@ -161,10 +161,10 @@ means finishing `str` can never help RC without also un-erasing it.
 Every self-host module imports siblings and `std/io` (which exports exactly two
 functions). Nothing else. The consequences:
 
-- **A compiler that has almost no hash map.** Ten `Map[K, V]` spellings
-  across six modules — `wasm_ir`'s call-name accumulator,
+- **A compiler that has almost no hash map.** Fourteen `Map[K, V]` spellings
+  across seven modules — `wasm_ir`'s call-name accumulator,
   `printer`'s line-id table, `modloader`'s fact-hash de-duplication set and
-  `ircore`'s unit-owner tables, `fern_toml`'s lock-entry positions and `mvs`'s registry-entry positions. Everything else is still a linear
+  `ircore`'s unit-owner tables, `fern_toml`'s lock-entry positions, `mvs`'s registry-entry positions and `interp`'s index of shared values. Everything else is still a linear
   scan over a `string[]` or a hand-rolled bucket table: 290 sites comparing an
   array element to a name, 114 hand-rolled
   `contains`/`index_of`/`find` helpers, and five hand-written hash tables
