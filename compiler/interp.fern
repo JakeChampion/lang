@@ -64,7 +64,9 @@ pub struct VHandle { r: Option[Reader], w: Option[Writer], d: Option[Dir] }
 
 pub struct VCellV { root: interpheap.Root }
 
-pub struct VLanes { width: i32, bits: i64[] }
+// `kind` is the kind of an element, as in typeinfo.TypeLanes. An integer
+// lane is in `bits` as an unsigned number.
+pub struct VLanes { width: i32, kind: i32, bits: i64[] }
 
 pub type Value = VInt | VInt64 | VUint | VBool | VString | VFloat | VFloat32 | VLanes | VArr | VTuple | VFunc | VMap | VStruct | VCell | VErr | VTry | VControl | VType | VHandle | VCellV;
 
@@ -840,12 +842,6 @@ function v_abort(cause: string, detail: string): Value {
 
 function index_abort(cause: string, i: string, n: i32): Value {
   return v_abort(cause, "index " + i + ", length " + util.i32_to_string(n));
-}
-
-// Whether byte offset `at` of `s` falls inside a character, on a UTF-8
-// continuation byte.
-function splits_char(s: string, at: i32): boolean {
-  return at > 0 && at < s.len() && s[at] >= 128u8 && s[at] < 192u8;
 }
 
 function slice_abort(cause: string, what: string, lo: i32, hi: i32, n: i32): Value {
@@ -2513,7 +2509,7 @@ function lanes_splat(width: i32, x: f64): Value {
   while (bits.len() < 128 / width) {
     bits = bits.append(lane_bits(width, x));
   }
-  return VLanes { width: width, bits: bits };
+  return VLanes { width: width, kind: typeinfo.LANE_FLOAT, bits: bits };
 }
 
 function lanes_map_bits(l: VLanes, flip: i64, clear: i64): Value {
@@ -2521,7 +2517,7 @@ function lanes_map_bits(l: VLanes, flip: i64, clear: i64): Value {
   for b in l.bits {
     bits = bits.append((b ^ flip) & (clear ^ -1));
   }
-  return VLanes { width: l.width, bits: bits };
+  return VLanes { width: l.width, kind: typeinfo.LANE_FLOAT, bits: bits };
 }
 
 function lane_arith(op: string, x: f64, y: f64): f64 {
@@ -2533,20 +2529,112 @@ function lane_arith(op: string, x: f64, y: f64): f64 {
   };
 }
 
+// The lanes of 8 bits fn(a, b), with each result cut to 8 bits.
+function byte_lanes_map(a: VLanes, b: VLanes, verb: string): Value {
+  let bits: i64[] = [];
+  for i in 0..16 {
+    bits = bits.append(byte_lane_op(verb, a.bits[i], b.bits[i]) & 255i64);
+  }
+  return VLanes { width: 8, kind: typeinfo.LANE_UNSIGNED, bits: bits };
+}
+
+function byte_mask(hold: boolean): i64 {
+  return if (hold) { 255i64 } else { 0i64 };
+}
+
+function byte_lane_op(verb: string, x: i64, y: i64): i64 {
+  return match (verb) {
+    "+" => x + y,
+    "-" => x - y,
+    "min" => if (x < y) { x } else { y },
+    "max" => if (x < y) { y } else { x },
+    "eq" => byte_mask(x == y),
+    "ne" => byte_mask(x != y),
+    "lt" => byte_mask(x < y),
+    "add_sat" => if (x + y > 255i64) { 255i64 } else { x + y },
+    "sub_sat" => if (x < y) { 0i64 } else { x - y },
+    "avg" => x + y + 1i64 >> 1i64,
+    "and" => x & y,
+    "or" => x | y,
+    "andnot" => x & (255i64 ^ y),
+    _ => x ^ y,
+  };
+}
+
+// The lanes of 8 bits of the values `xs`. One value is a splat.
+function byte_lanes_of(xs: Value[]): Value {
+  let bits: i64[] = [];
+  for i in 0..16 {
+    bits = bits.append(vint_as_i64(xs[i % xs.len()]) & 255i64);
+  }
+  return VLanes { width: 8, kind: typeinfo.LANE_UNSIGNED, bits: bits };
+}
+
+function call_byte_lane_builtin(heap: interpheap.Heap, verb: string, args: Value[]): Value {
+  if (verb == "splat" || verb == "of") {
+    return byte_lanes_of(args);
+  }
+  if (verb == "load") {
+    let at = lane_window(8, args);
+    if (at < 0) {
+      return v_err("lane load out of bounds");
+    }
+    if let VArr(a) = args[0] {
+      let xs: Value[] = [];
+      while (xs.len() < 16) {
+        xs = xs.append(arr_at(a, at + xs.len()));
+      }
+      return byte_lanes_of(xs);
+    }
+    return v_err("lane load: expected an array");
+  }
+  if (verb == "with") {
+    return lanes_with(heap, 8, args);
+  }
+  let ls = lane_args(if (verb == "lane") { [args[0]] } else { args });
+  if (ls.len() == 0) {
+    return v_err("__u8x16_" + verb + ": expected lane values");
+  }
+  if (verb == "lane") {
+    return v_byte(ls[0].bits[vint_bits(args[1])] as i32);
+  }
+  if (verb == "bitmask") {
+    let mask = 0;
+    for i in 0..16 {
+      mask = mask | (ls[0].bits[i] >> 7i64) as i32 << i;
+    }
+    return v_int(mask);
+  }
+  if (verb == "select") {
+    if let VLanes(kept) = byte_lanes_map(ls[0], ls[2], "and") {
+      if let VLanes(rest) = byte_lanes_map(ls[1], ls[2], "andnot") {
+        return byte_lanes_map(kept, rest, "or");
+      }
+    }
+  }
+  return byte_lanes_map(ls[0], ls[1], verb);
+}
+
 function lanes_binary(op: string, a: VLanes, rv: Value): Value {
   if let VLanes(b) = rv {
+    if (a.kind != typeinfo.LANE_FLOAT && (op == "+" || op == "-")) {
+      return byte_lanes_map(a, b, op);
+    }
     if (util.has_str(["+", "-", "*", "/"], op)) {
       let bits: i64[] = [];
       for i in 0..a.bits.len() {
         bits = bits.append(lane_bits(a.width, lane_arith(op, lane_at(a, i), lane_at(b, i))));
       }
-      return VLanes { width: a.width, bits: bits };
+      return VLanes { width: a.width, kind: typeinfo.LANE_FLOAT, bits: bits };
     }
   }
   return v_err("operator `" + op + "` on lane values");
 }
 
 function lane_value(l: VLanes, i: i32): Value {
+  if (l.kind != typeinfo.LANE_FLOAT) {
+    return v_byte(l.bits[i] as i32);
+  }
   if (l.width == 32) {
     return v_float32(lane_at(l, i));
   }
@@ -2590,7 +2678,7 @@ function lanes_apply(verb: string, ls: VLanes[]): Value {
     bits = bits.append(lane_bits(w, lane_fn(verb, w, xs)));
     i += 1;
   }
-  return VLanes { width: w, bits: bits };
+  return VLanes { width: w, kind: typeinfo.LANE_FLOAT, bits: bits };
 }
 
 function lanes_mask(verb: string, a: VLanes, b: VLanes): Value {
@@ -2605,7 +2693,7 @@ function lanes_mask(verb: string, a: VLanes, b: VLanes): Value {
     let hold = verb == "lt" && x < y || verb == "ne" && x != y;
     bits = bits.append(if (hold) { ones } else { 0 });
   }
-  return VLanes { width: a.width, bits: bits };
+  return VLanes { width: a.width, kind: typeinfo.LANE_FLOAT, bits: bits };
 }
 
 function lanes_select(ls: VLanes[]): Value {
@@ -2616,7 +2704,7 @@ function lanes_select(ls: VLanes[]): Value {
     bits = bits.append(ls[0].bits[i] & m | ls[1].bits[i] & (m ^ -1));
     i += 1;
   }
-  return VLanes { width: ls[0].width, bits: bits };
+  return VLanes { width: ls[0].width, kind: typeinfo.LANE_FLOAT, bits: bits };
 }
 
 function lanes_of(width: i32, args: Value[]): Value {
@@ -2627,7 +2715,7 @@ function lanes_of(width: i32, args: Value[]): Value {
   for a in args {
     bits = bits.append(lane_bits(width, vfloat_as_f64(a)));
   }
-  return VLanes { width: width, bits: bits };
+  return VLanes { width: width, kind: typeinfo.LANE_FLOAT, bits: bits };
 }
 
 function lane_window(width: i32, args: Value[]): i32 {
@@ -2703,13 +2791,16 @@ function lanes_bytes(heap: interpheap.Heap, width: i32, args: Value[], store: bo
       }
       bits = bits.append(value);
     }
-    return VLanes { width: width, bits: bits };
+    return VLanes { width: width, kind: typeinfo.LANE_FLOAT, bits: bits };
   }
   return v_err("packed lane access requires bytes");
 }
 
 function call_lane_builtin(heap: interpheap.Heap, name: string, width: i32, args: Value[]): Value {
   let verb = typeinfo.lane_builtin_verb(name);
+  if (width == 8) {
+    return call_byte_lane_builtin(heap, verb, args);
+  }
   if (verb == "lane_bits") {
     let lanes = lane_args([args[0]]);
     let at = vint_bits(args[1]);
@@ -2727,12 +2818,12 @@ function call_lane_builtin(heap: interpheap.Heap, name: string, width: i32, args
       let at = if (verb == "swap_halves") { (i + count / 2) % count } else if (verb == "reverse") { count - 1 - i } else { i / 2 + (if (verb == "zip_hi") { count / 2 } else { 0 }) };
       bits = bits.append(lanes[source].bits[at]);
     }
-    return VLanes { width: width, bits: bits };
+    return VLanes { width: width, kind: typeinfo.LANE_FLOAT, bits: bits };
   }
   if (verb == "load_f32_ptr") {
     let address = vint_as_i64(args[0]) as usize;
     unsafe {
-      return VLanes { width: 64, bits: [f64_bits(f32_from_bits(__load_i32(address)) as f64), f64_bits(f32_from_bits(__load_i32(address + 4 as usize)) as f64)] };
+      return VLanes { width: 64, kind: typeinfo.LANE_FLOAT, bits: [f64_bits(f32_from_bits(__load_i32(address)) as f64), f64_bits(f32_from_bits(__load_i32(address + 4 as usize)) as f64)] };
     }
   }
   if (verb == "load_ptr") {
@@ -2743,7 +2834,7 @@ function call_lane_builtin(heap: interpheap.Heap, name: string, width: i32, args
         bits = bits.append(if (width == 32) { (__load_i32(address + (4 * i) as usize) as u32) as i64 } else { __load_i64(address + (8 * i) as usize) });
       }
     }
-    return VLanes { width: width, bits: bits };
+    return VLanes { width: width, kind: typeinfo.LANE_FLOAT, bits: bits };
   }
   if (verb == "store") {
     let lanes = lane_args([args[1]]);
@@ -5892,7 +5983,7 @@ function tyarg_of_value(v: Value): string {
       return "f32";
     },
     VLanes(l) => {
-      return typeinfo.lanes_spelling(l.width);
+      return typeinfo.lanes_spelling(l.width, l.kind);
     },
     VStruct(sv) => {
       if (sv.targs.len() == 0) {
@@ -6054,7 +6145,7 @@ function value_type_name(v: Value): string {
       return "f32";
     },
     VLanes(l) => {
-      return typeinfo.lanes_spelling(l.width);
+      return typeinfo.lanes_spelling(l.width, l.kind);
     },
     VArr(a) => {
       if (a.view) {
@@ -7783,9 +7874,6 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
         let sub = vint_bits(args[2]);
         if (sua < 0 || sub > s.v.len() || sua > sub) {
           return slice_abort(aborts.str_oob(), "slice_unchecked", sua, sub, s.v.len());
-        }
-        if (splits_char(s.v, sua) || splits_char(s.v, sub)) {
-          return v_abort(aborts.str_oob(), "slice_unchecked [" + util.i32_to_string(sua) + ":" + util.i32_to_string(sub) + "] splits a UTF-8 character");
         }
         return v_string(slice_unchecked(s.v, sua, sub));
       },

@@ -128,3 +128,6 @@
 # With the worklist above, `scripts/selfhost-alloc-bench` measured 46,095,444 allocations and frees (was 53,974,294). The 1% tolerance is unchanged.
 x86_64/checker.allocs	46095444
 x86_64/checker.frees	46095444
+# 2026-11-12: main at 74fc6d81, with the worklist and the merges of that day, measures 54,483,586 on the dev container.
+x86_64/checker.allocs	54483586
+x86_64/checker.frees	54483586

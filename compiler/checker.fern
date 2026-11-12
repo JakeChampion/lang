@@ -125,10 +125,6 @@ function view_arg_borrow(from: typeinfo.Type, to: typeinfo.Type): boolean {
   return false;
 }
 
-function t_lanes(width: i32): typeinfo.Type {
-  return typeinfo.TypeLanes { width: width };
-}
-
 function is_float(t: typeinfo.Type): boolean {
   if let typeinfo.TypeFloat(f) = t {
     return true;
@@ -495,6 +491,7 @@ function is_lane_builtin(name: string): boolean {
     "__f32x4_swap_halves", "__f32x4_reverse", "__f32x4_zip_lo", "__f32x4_zip_hi", "__f32x4_splat", "__f32x4_of", "__f32x4_lane_bits", "__f32x4_lane", "__f32x4_bitmask", "__f32x4_mul_add", "__f32x4_sqrt",
     "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max",
     "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with", "__f32x4_load_bytes", "__f32x4_with_bytes", "__f32x4_store", "__f32x4_load_ptr", "__f32x4_pack",
+    "__u8x16_splat", "__u8x16_of", "__u8x16_lane", "__u8x16_bitmask", "__u8x16_min", "__u8x16_max", "__u8x16_eq", "__u8x16_ne", "__u8x16_lt", "__u8x16_add_sat", "__u8x16_sub_sat", "__u8x16_avg", "__u8x16_and", "__u8x16_or", "__u8x16_xor", "__u8x16_select", "__u8x16_load", "__u8x16_with",
   ];
   return typeinfo.lane_builtin_width(name) > 0 && util.has_str(names, name);
 }
@@ -1096,7 +1093,6 @@ pub function raw_floor_sigs(): RawFloorSig[] {
     RawFloorSig { name: "__fern_rc_dec", params: [p], result: typeinfo.t_void() },
     RawFloorSig { name: "__fern_slice_abort", params: [], result: typeinfo.t_void() },
     RawFloorSig { name: "__fern_oob_abort", params: [], result: typeinfo.t_void() },
-    RawFloorSig { name: "__fern_str_oob_abort", params: [], result: typeinfo.t_void() },
     RawFloorSig { name: "__fern_vdso_clock", params: [], result: p },
     RawFloorSig { name: "__syscall3", params: [n, w, w, w], result: w },
     RawFloorSig { name: "__syscall4", params: [n, w, w, w, w], result: w },
@@ -1184,7 +1180,7 @@ pub function type_debug(t: typeinfo.Type): string {
       return float_label(f);
     },
     typeinfo.TypeLanes(l) => {
-      return typeinfo.lanes_spelling(l.width);
+      return typeinfo.lanes_spelling(l.width, l.kind);
     },
     typeinfo.TypeArray(a) => {
       return "array<" + type_debug(a.elem) + ">";
@@ -1389,7 +1385,7 @@ function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
     typeinfo.TypeLanes(al) => {
       match (b) {
         typeinfo.TypeLanes(bl) => {
-          return al.width == bl.width;
+          return al.width == bl.width && al.kind == bl.kind;
         },
         _ => {
           return false;
@@ -4261,7 +4257,7 @@ function method_namespace_of(t: typeinfo.Type): string {
       return float_label(f);
     },
     typeinfo.TypeLanes(l) => {
-      return typeinfo.lanes_spelling(l.width);
+      return typeinfo.lanes_spelling(l.width, l.kind);
     },
     _ => {
       return "";
@@ -4966,7 +4962,7 @@ pub function receiver_key(t: typeinfo.Type): string {
       return un.name;
     },
     typeinfo.TypeLanes(l) => {
-      return typeinfo.lanes_spelling(l.width);
+      return typeinfo.lanes_spelling(l.width, l.kind);
     },
     typeinfo.TypeTuple(tup) => {
       return parser.tuple_arity_namespace(tup.elements.len());
@@ -7535,7 +7531,7 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
     return typeinfo.t_f64();
   }
   if (typeinfo.lanes_width(name) > 0) {
-    return t_lanes(typeinfo.lanes_width(name));
+    return typeinfo.lanes_named(name);
   }
   if (name == "void") {
     return typeinfo.t_void();
@@ -7715,7 +7711,7 @@ function vec_type(r: parser.TypeRef, tparams: string[], targs: typeinfo.Type[], 
   }
   let lanes = typeinfo.vec_lanes(ns, typeinfo.spelling(elem));
   if (lanes.len() > 0) {
-    return t_lanes(typeinfo.lanes_width(lanes));
+    return typeinfo.lanes_named(lanes);
   }
   return t_unknown(parser.render_type_ref(r) + " names no lane type");
 }
@@ -8235,7 +8231,7 @@ pub function type_label(t: typeinfo.Type): string {
       return float_label(f);
     },
     typeinfo.TypeLanes(l) => {
-      return typeinfo.lanes_spelling(l.width);
+      return typeinfo.lanes_spelling(l.width, l.kind);
     },
     typeinfo.TypeArray(a) => {
       return array_label(a);
@@ -14743,7 +14739,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
           out = util.append_diags(out, declared_method_diags(c, recv, "boolean", mfa.field, s));
         },
         typeinfo.TypeLanes(l) => {
-          let lanes = typeinfo.lanes_spelling(l.width);
+          let lanes = typeinfo.lanes_spelling(l.width, l.kind);
           if (s.method_missing(recv, mfa.field)) {
             out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice(lanes, mfa.field, recv), mfa.line, mfa.col), mfa, recv));
           }
@@ -15014,6 +15010,21 @@ function operand_diags_typed(e: ast.Expr, s: Scope): (util.Diag[], typeinfo.Type
   return (call_diags(e, s), check_expr(e, s));
 }
 
+// True for a lane type whose elements are integers.
+function integer_lanes(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeLanes(l) = t {
+    return l.kind != typeinfo.LANE_FLOAT;
+  }
+  return false;
+}
+
+function unsigned_lanes(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeLanes(l) = t {
+    return l.kind == typeinfo.LANE_UNSIGNED;
+  }
+  return false;
+}
+
 function lanes_operator_diags(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.Type): util.Diag[] {
   if (util.has_str(["==", "!=", "<", ">", "<=", ">="], b.op)) {
     let lanes = type_label(lt);
@@ -15023,6 +15034,9 @@ function lanes_operator_diags(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo
     return [dg_at("E041", "cannot compare values of type " + lanes + " with \"" + b.op + "\": a lane value compares lane by lane, through __" + lanes + "_lt and __" + lanes + "_ne", b.line, b.col)];
   }
   if (util.has_str(["+", "-", "*", "/"], b.op) && type_eq(lt, rt)) {
+    if (integer_lanes(lt) && (b.op == "*" || b.op == "/")) {
+      return [dg_at("E009", "operator \"" + b.op + "\" is not available for " + type_label(lt) + ": integer lanes have + and -", b.line, b.col)];
+    }
     return [];
   }
   if (operand_open(lt) || operand_open(rt)) {
@@ -15187,6 +15201,9 @@ function unary_operator_diags(u: ast.ExprUnary, ot: typeinfo.Type, s: Scope, out
     let nok = !is_unknown(s.unop_overload_ret(u.op, ot));
     if (!operand_open(ot) && !is_integer(ot) && !is_float(ot) && !typeinfo.is_lanes(ot) && !nok) {
       out = out.append(dg_at("E009", "operator \"-\" requires an integer type, got " + type_label(ot), u.line, u.col));
+    }
+    if (unsigned_lanes(ot)) {
+      out = out.append(dg_at("E009", "operator \"-\" is not available for " + type_label(ot) + ": its lanes have no sign", u.line, u.col));
     }
   }
   if (u.op.len() > 3 && u.op.starts_with("as_")) {
@@ -16512,7 +16529,7 @@ function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean 
   }
   match (recv) {
     typeinfo.TypeLanes(l) => {
-      let lanes = typeinfo.lanes_spelling(l.width);
+      let lanes = typeinfo.lanes_spelling(l.width, l.kind);
       return !s.has_visible_method(field, lanes) && is_unknown(builtin_method_sig(lanes, field));
     },
     typeinfo.TypeArray(array) => {
@@ -18571,6 +18588,7 @@ const REGISTERED_INTRINSICS: string[] = [
   "__fd_close", "__tcp_close_unchecked", "__socket_from_fd",
   "__f64x2_swap_halves", "__f64x2_reverse", "__f64x2_zip_lo", "__f64x2_zip_hi", "__f64x2_splat", "__f64x2_of", "__f64x2_lane_bits", "__f64x2_lane", "__f64x2_bitmask", "__f64x2_mul_add", "__f64x2_sqrt", "__f64x2_abs", "__f64x2_floor", "__f64x2_round", "__f64x2_min", "__f64x2_max", "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with", "__f64x2_load_bytes", "__f64x2_with_bytes", "__f64x2_store", "__f64x2_load_ptr", "__f64x2_load_f32_ptr",
   "__f32x4_swap_halves", "__f32x4_reverse", "__f32x4_zip_lo", "__f32x4_zip_hi", "__f32x4_splat", "__f32x4_of", "__f32x4_lane_bits", "__f32x4_lane", "__f32x4_bitmask", "__f32x4_mul_add", "__f32x4_sqrt", "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max", "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with", "__f32x4_load_bytes", "__f32x4_with_bytes", "__f32x4_store", "__f32x4_load_ptr", "__f32x4_pack",
+  "__u8x16_splat", "__u8x16_of", "__u8x16_lane", "__u8x16_bitmask", "__u8x16_min", "__u8x16_max", "__u8x16_eq", "__u8x16_ne", "__u8x16_lt", "__u8x16_add_sat", "__u8x16_sub_sat", "__u8x16_avg", "__u8x16_and", "__u8x16_or", "__u8x16_xor", "__u8x16_select", "__u8x16_load", "__u8x16_with",
 ];
 
 function qualified_trait(module: string, name: string): string {
@@ -24859,6 +24877,71 @@ function ow_jump(label: string, breaks: boolean, moved: MovedEntry[], ctx: OwnCt
   return OwnWalk { moved: moved, diags: [] };
 }
 
+struct OwNestedUses { name: string, reads: i32, declarations: i32, assigned: boolean }
+
+function ow_nested_use_expr(e: ast.Expr, own state: OwNestedUses): own OwNestedUses {
+  return if (ow_ident_name(e) == state.name) { OwNestedUses { ...state, reads: state.reads + 1 } } else { state };
+}
+
+function ow_nested_use_stmt(st: ast.Stmt, own state: OwNestedUses): own OwNestedUses {
+  if let ast.StmtVar(v) = st {
+    if (v.name == state.name) {
+      return OwNestedUses { ...state, declarations: state.declarations + 1 };
+    }
+  }
+  if let ast.StmtAssign(a) = st {
+    if (a.target == state.name) {
+      return OwNestedUses { ...state, assigned: true };
+    }
+  }
+  return state;
+}
+
+function ow_nested_uses(body: ast.Stmt[], name: string): OwNestedUses {
+  let state = OwNestedUses { name: name, reads: 0, declarations: 0, assigned: false };
+  for st in body {
+    state = astwalk.fold_stmt_nodes(st, state, ow_nested_use_stmt, ow_nested_use_expr, astwalk.descend_all);
+  }
+  return state;
+}
+
+function ow_nested_field_alias(alias: string, root: string, field: string, value: ast.Expr, body: ast.Stmt[]): boolean {
+  let uses = ow_nested_uses(body, alias);
+  if (uses.declarations != 1 || uses.assigned || uses.reads != ow_count_ident(value, alias)) {
+    return false;
+  }
+  for st in body {
+    if let ast.StmtVar(v) = st {
+      if (v.name == alias) {
+        return ow_is_field_read(v.init, root, field);
+      }
+    }
+  }
+  return false;
+}
+
+// The returned record replaces the complete field that owns the alias.
+function ow_nested_field_moves(value: ast.Expr, ctx: OwnCtx): string[] {
+  let ast.ExprStructLit(top) = value else {
+    return [];
+  };
+  let root = ow_ident_name(top.base);
+  let body = ctx.last_use.get().fn.body;
+  if (!top.has_base || root.len() == 0 || !ow_is_owned(ctx, root) || !ow_binding_unchanged(ctx, root) || ow_nested_uses(body, root).reads != 2) {
+    return [];
+  }
+  let out: string[] = [];
+  for i in 0..top.field_values.len() {
+    if let ast.ExprStructLit(inner) = top.field_values[i] {
+      let alias = ow_ident_name(inner.base);
+      if (inner.has_base && alias.len() > 0 && ow_nested_field_alias(alias, root, top.field_names[i], top.field_values[i], body)) {
+        out = util.append_all(out, ow_field_move_fields(alias, top.field_values[i], ctx));
+      }
+    }
+  }
+  return out;
+}
+
 // A literal based on q that replaces q.f moves q.f into an own parameter in
 // the literal. A literal in a local's initializer, an expression statement or
 // a returned value, outside a lambda, takes it from an owned q, whose later
@@ -24880,6 +24963,7 @@ function ow_superseded_ctx(value: ast.Expr, returned: boolean, ctx: OwnCtx): Own
   }
   let fields = astwalk.fold_expr_pruned(value, [], admit, not_lambda);
   if (returned) {
+    fields = util.append_all(fields, ow_nested_field_moves(value, ctx));
     if let ast.ExprStructLit(sl) = value {
       let base = ow_ident_name(sl.base);
       if (sl.has_base && base.len() > 0 && !util.has_str(ctx.borrowed, base)) {

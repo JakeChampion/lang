@@ -60,7 +60,7 @@ pub function equal(a: typeinfo.Type, b: typeinfo.Type): boolean {
     },
     typeinfo.TypeLanes(x) => {
       if let typeinfo.TypeLanes(y) = b {
-        return x.width == y.width;
+        return x.width == y.width && x.kind == y.kind;
       }
     },
     typeinfo.TypeNever(_) => {
@@ -201,7 +201,7 @@ pub function concrete(t: typeinfo.Type, allow_void: boolean): boolean {
       return !f.polymorphic && (f.width == 32 || f.width == 64);
     },
     typeinfo.TypeLanes(l) => {
-      return l.width == 32 || l.width == 64;
+      return typeinfo.lanes_spelling(l.width, l.kind) != "";
     },
     typeinfo.TypeBool(_) => {
       return true;

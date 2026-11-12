@@ -421,8 +421,10 @@ whole group are the next steps.
 | 6 | Const generics; `Vec[N, T]` | follow-on project, `docs/CONST-GENERICS.md` |
 | 7a | Integer lanes: the instruction vocabulary on x86-64, arm64 and wasm (§8) | done (#14731) |
 | 7b | Integer lanes: the IR ops, and emission for lanes of 8 bits on every backend | done (#14731) |
-| 7c | Integer lanes: the element kind of a lane type, and `u8x16` in both front ends, the builtins and both interpreters | next (#14731) |
-| 7d | Integer lanes: the shifts, the multiply, and the lanes of 16 and 32 bits | after 7c (#14731) |
+| 7c | Integer lanes: the element kind of a lane type, and `u8x16` in both front ends, the builtins and both interpreters | done (#14731) |
+| 7d | Integer lanes: `std/simd` functions for `u8x16` | done (#14731) |
+| 7e | Integer lanes: the shifts, the multiply, and the lanes of 16 and 32 bits | next (#14731) |
+| 7f | Integer lanes: the byte kernels of the stdlib and of `std/android/draw` on `u8x16`, each with a measured comparison | after 7e (#14731) |
 | — | Splice record-returning leaves so `Dual` / `DoubleDouble` stop allocating per operation (#12931) | follow-on, `seminline` |
 
 ## 8. Integer lanes
@@ -478,3 +480,38 @@ backend compares an `i32` in the full register.
 
 The gate is `TestSelfHostLaneIR`. Its driver builds the ops by hand and runs
 them on each backend, with the answers of the wasm specification.
+
+Slice 7c is the type. A lane type has the kind of its element: float,
+signed integer or unsigned integer. `u8x16` is a keyword, and it has 16
+lanes of `u8`.
+
+| Form | Meaning |
+| --- | --- |
+| `a + b`, `a - b` | add and subtract, which wrap |
+| `__u8x16_add_sat`, `__u8x16_sub_sat` | add and subtract, which stop at 255 and at 0 |
+| `__u8x16_min`, `__u8x16_max`, `__u8x16_avg` | the minimum, the maximum, and the average rounded up |
+| `__u8x16_eq`, `__u8x16_ne`, `__u8x16_lt` | compares, which give a lane of ones or of zeros |
+| `__u8x16_and`, `__u8x16_or`, `__u8x16_xor` | the bitwise operations |
+| `__u8x16_select(a, b, m)` | the bits of `a` where `m` has a one, and the bits of `b` where it has a zero |
+| `__u8x16_splat(x)`, `__u8x16_of(x0, ..., x15)` | a value from one byte, or from 16 bytes |
+| `__u8x16_lane(v, k)` | lane `k`, where `k` is an integer literal from 0 to 15 |
+| `__u8x16_bitmask(v)` | an `i32` with the top bit of lane `k` in bit `k` |
+| `__u8x16_load(xs, i)`, `__u8x16_with(xs, i, v)` | 16 bytes of a `u8[]` from index `i` |
+
+The operators `*` and `/` and the unary `-` are E009 for `u8x16`. The
+other rules are the rules of the float lanes. A compare operator is E041.
+A lane index that is not a literal in range is E038. A lane value lives
+only in a local, a parameter or a result (E085).
+
+`Vec[16, u8]` is not a spelling of `u8x16` yet. The generic kernels of
+`std/simd` are over the float lanes, and their traits do not fit a byte.
+
+The builtins lower to the IR ops of slice 7b. A load and a store use the
+group of 16 bytes that the packed float lanes already have. The gates are
+the conformance cases `lanes_u8x16_ops` and `diag_e009_lane_integer`, which
+run on both interpreters and on each backend.
+
+Slice 7d gives `std/simd` a function for each builtin of `u8x16`, such as
+`simd.add_sat_u8x16` and `simd.load_u8x16`. A program calls these, and the
+builtins stay the names of the compiler. The stdlib test compares each
+operation with its scalar form on each lane.

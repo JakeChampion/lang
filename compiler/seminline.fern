@@ -989,10 +989,12 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], modes: i32[][]
   let words = unknown_words(funcs0.len());
   let tries = no_tries(funcs0.len());
   let folded = false;
+  let settled = none_of(funcs0.len());
+  let was = settled;
   let round = 0;
   let more = true;
   let s = sp;
-  while (more && round < 16) {
+  while (more && round < 32) {
     s = grown_leaves(out, s);
     if (folded) {
       s = grown_shared(out, s);
@@ -1004,7 +1006,7 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], modes: i32[][]
     let ready: boolean[] = [];
     let j = 0;
     while (j < out.funcs.len()) {
-      ready = ready.append(s.leaves[j] || ctors[j] || once[j] && !awaits(out.funcs[j], s.ix, once, s.shared, s.small, j));
+      ready = ready.append(s.leaves[j] || ctors[j] || once[j] && !awaits(out.funcs[j], s.ix, once, settled, s.shared, s.small, j));
       j += 1;
     }
     let next = splice_round(out, sizes, callees, rewrite, modes, s.ix, s.owners, ready, ctors, if (folded) { s.shared } else { none_of(s.shared.len()) }, s.small, words, tries);
@@ -1018,6 +1020,10 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], modes: i32[][]
       once = s.once;
       more = true;
     }
+    let kept = kept_callees(once, ready, was, callees, settled);
+    more = more || kept.grew;
+    settled = kept.settled;
+    was = ready;
     out = next.out;
     round += 1;
   }
@@ -1351,12 +1357,31 @@ function called(ins: ssa.SInst, ix: util.NameIndex): i32 {
   return ix.find(ins.str);
 }
 
-function awaits(f: ssasem.Func, ix: util.NameIndex, once: boolean[], shared: boolean[], small: boolean[], self: i32): boolean {
+struct Kept { settled: boolean[], grew: boolean }
+
+// A once callee that two rounds found ready, and that a body still calls,
+// keeps its call. settled marks each such callee.
+function kept_callees(once: boolean[], ready: boolean[], was: boolean[], callees: i32[][], own settled: boolean[]): Kept {
+  let grew = false;
+  for row in callees {
+    for c in row {
+      if (once[c] && ready[c] && was[c] && !settled[c]) {
+        settled = settled.with(c, true);
+        grew = true;
+      }
+    }
+  }
+  return Kept { settled: settled, grew: grew };
+}
+
+// f has a call that a later round can splice. A settled callee keeps its
+// call, so f does not wait for it.
+function awaits(f: ssasem.Func, ix: util.NameIndex, once: boolean[], settled: boolean[], shared: boolean[], small: boolean[], self: i32): boolean {
   let whole: boolean[] = [];
   for b in f.graph.blocks {
     for ins in b.insts {
       let j = called(ins, ix);
-      if (j >= 0 && j != self && once[j]) {
+      if (j >= 0 && j != self && once[j] && !settled[j]) {
         if (!shared[j]) {
           return true;
         }
@@ -1594,7 +1619,7 @@ function scrutinee_reads(f: ssasem.Func): ssasem.Func {
 // For each value that narrows a struct-union to a member, its definition;
 // a definition with no result for every other value.
 function narrowings(f: ssasem.Func): ssa.SInst[] {
-  let none = ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
+  let none = ssa.no_inst();
   let out: ssa.SInst[] = [];
   while (out.len() < f.graph.nvals) {
     out = out.append(none);

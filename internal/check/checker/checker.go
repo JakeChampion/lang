@@ -7871,7 +7871,7 @@ func (c *checker) unifyType(expected, actual ast.Type, sub map[string]ast.Type) 
 	}
 	if e, ok := expected.(ast.StructType); ok {
 		if l, ok := actual.(ast.LanesType); ok && c.isBuiltinVec(e.Name, e.Args) {
-			return c.unifyType(e.Args[0], ast.ConstArg{Value: int64(l.Lanes())}, sub) && c.unifyType(e.Args[1], ast.FloatType{Width: l.Width}, sub)
+			return c.unifyType(e.Args[0], ast.ConstArg{Value: int64(l.Lanes())}, sub) && c.unifyType(e.Args[1], l.Elem(), sub)
 		}
 		a, ok := actual.(ast.StructType)
 		if !ok || a.Name != e.Name || len(a.Args) != len(e.Args) {
@@ -11699,6 +11699,11 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			return
 		}
 		top := FieldMoveLiteral(value)
+		if returned && top != nil && top == value {
+			for _, arg := range nestedFieldOwnMoveArgs(fn, top, owned, c.ownFuncs) {
+				selfMoveArgs[arg] = true
+			}
+		}
 		ast.Walk(value, func(n ast.Node) bool {
 			if _, ok := n.(*ast.Lambda); ok {
 				return false
@@ -16581,7 +16586,10 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				n.IsFloat = true
 				return ft
 			}
-			if isLanes(t) {
+			if l, ok := t.(ast.LanesType); ok {
+				if l.Kind == ast.LaneUnsigned {
+					c.errfCode(n.P, "E009", "operator \"-\" is not available for %s: its lanes have no sign", t)
+				}
 				return t
 			}
 			if pt, ok := t.(ast.ParamType); ok {
@@ -18677,7 +18685,7 @@ func (c *checker) registerLaneBuiltins() {
 	i32 := ast.NumberType{}
 	for _, lt := range []ast.LanesType{{Width: 64}, {Width: 32}} {
 		p := "__" + lt.String() + "_"
-		e := ast.FloatType{Width: lt.Width}
+		e := lt.Elem()
 		arr := ast.ArrayType{Elem: e}
 		bytes := ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}
 		of := make([]ast.Type, lt.Lanes())
@@ -18709,9 +18717,41 @@ func (c *checker) registerLaneBuiltins() {
 			c.info.FuncSigs[p+v] = sigs[v]
 		}
 	}
+	c.registerByteLaneBuiltins()
 	wide := ast.LanesType{Width: 64}
 	c.info.FuncSigs["__f64x2_load_f32_ptr"] = &ast.FuncType{Params: []ast.Type{ast.NumberType{Width: ast.WidthPtr, Signed: false}}, Result: wide}
 	c.info.FuncSigs["__f32x4_pack"] = &ast.FuncType{Params: []ast.Type{wide, wide}, Result: ast.LanesType{Width: 32}}
+}
+
+// byteLaneBuiltinVerbs are the verbs of the builtins of u8x16, in the order
+// of the self-hosted checker.
+var byteLaneBuiltinVerbs = []string{"splat", "of", "lane", "bitmask", "min", "max", "eq", "ne", "lt", "add_sat", "sub_sat", "avg", "and", "or", "xor", "select", "load", "with"}
+
+func (c *checker) registerByteLaneBuiltins() {
+	lt := ast.LanesType{Width: 8, Kind: ast.LaneUnsigned}
+	e := lt.Elem()
+	arr := ast.ArrayType{Elem: e}
+	i32 := ast.NumberType{}
+	of := make([]ast.Type, lt.Lanes())
+	for i := range of {
+		of[i] = e
+	}
+	sigs := map[string]*ast.FuncType{
+		"splat":   {Params: []ast.Type{e}, Result: lt},
+		"of":      {Params: of, Result: lt},
+		"lane":    {Params: []ast.Type{lt, i32}, Result: e},
+		"bitmask": {Params: []ast.Type{lt}, Result: i32},
+		"select":  {Params: []ast.Type{lt, lt, lt}, Result: lt},
+		"load":    {Params: []ast.Type{arr, i32}, Result: lt},
+		"with":    {Params: []ast.Type{arr, i32, lt}, Result: arr},
+	}
+	for _, v := range byteLaneBuiltinVerbs {
+		sig, ok := sigs[v]
+		if !ok {
+			sig = &ast.FuncType{Params: []ast.Type{lt, lt}, Result: lt}
+		}
+		c.info.FuncSigs["__u8x16_"+v] = sig
+	}
 }
 
 // sysregNameArg requires the register of a system-register intrinsic to be a
@@ -18739,6 +18779,8 @@ func (c *checker) laneIndexArg(n *ast.Call) {
 		lanes = 2
 	case "__f32x4_lane", "__f32x4_lane_bits":
 		lanes = 4
+	case "__u8x16_lane":
+		lanes = 16
 	default:
 		return
 	}
@@ -18793,6 +18835,10 @@ func isLanes(t ast.Type) bool {
 
 func (c *checker) lanesArith(n *ast.Binary, lt, rt ast.Type) ast.Type {
 	if ast.Equal(lt, rt) {
+		if l, ok := lt.(ast.LanesType); ok && l.Kind != ast.LaneFloat && (n.Op == "*" || n.Op == "/") {
+			c.errfCode(n.P, "E009", "operator %q is not available for %s: integer lanes have + and -", n.Op, lt)
+			return lt
+		}
 		n.IsLanes = true
 		return lt
 	}

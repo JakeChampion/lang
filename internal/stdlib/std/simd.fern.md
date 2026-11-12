@@ -22,6 +22,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<lane permutations>>
 
+<<byte lanes>>
+
 <<dependencies 2>>
 
 <<3 pub trait Lanes: ops.Num + ops.Neg>>
@@ -1016,5 +1018,103 @@ pub function zip_hi_f32x4(a: f32x4, b: f32x4): f32x4 {
 
 pub function zip_hi_f64x2(a: f64x2, b: f64x2): f64x2 {
   return __f64x2_zip_hi(a, b);
+}
+```
+
+## Byte lanes
+
+A `u8x16` has 16 lanes of `u8`. The operators `+` and `-` add and subtract the lanes, and each lane wraps at 256.
+The functions of this section are the other operations.
+
+A compare gives a mask: each lane is 255 where the compare holds, and 0 where it does not.
+`select_u8x16` takes such a mask, and `bitmask_u8x16` makes an `i32` from it, with lane `k` in bit `k`.
+
+`load_u8x16` reads 16 bytes of an array from an index. `with_u8x16` writes 16 bytes and gives the new array.
+The 16 bytes must be inside the array, or the program stops.
+
+The builtin `__u8x16_lane(v, k)` reads one lane. Its index `k` is an integer literal from 0 to 15.
+The builtin `__u8x16_of` makes a value from 16 bytes.
+
+```fern
+<<byte lanes>>=
+// Each lane has the byte `x`.
+pub function splat_u8x16(x: u8): u8x16 {
+  return __u8x16_splat(x);
+}
+
+// The 16 bytes of `bytes` from `offset`.
+pub function load_u8x16(bytes: u8[], offset: i32): u8x16 {
+  return __u8x16_load(bytes, offset);
+}
+
+// `bytes` with the 16 lanes of `value` from `offset`.
+pub function with_u8x16(own bytes: u8[], offset: i32, value: u8x16): u8[] {
+  return __u8x16_with(bytes, offset, value);
+}
+
+// The sum of each pair of lanes, with a limit of 255.
+pub function add_sat_u8x16(a: u8x16, b: u8x16): u8x16 {
+  return __u8x16_add_sat(a, b);
+}
+
+// The difference of each pair of lanes, with a limit of 0.
+pub function sub_sat_u8x16(a: u8x16, b: u8x16): u8x16 {
+  return __u8x16_sub_sat(a, b);
+}
+
+// The smaller byte of each pair of lanes.
+pub function min_u8x16(a: u8x16, b: u8x16): u8x16 {
+  return __u8x16_min(a, b);
+}
+
+// The larger byte of each pair of lanes.
+pub function max_u8x16(a: u8x16, b: u8x16): u8x16 {
+  return __u8x16_max(a, b);
+}
+
+// The average of each pair of lanes, rounded up.
+pub function avg_u8x16(a: u8x16, b: u8x16): u8x16 {
+  return __u8x16_avg(a, b);
+}
+
+// A lane of ones where the lanes are equal, and a lane of zeros where they are not.
+pub function eq_u8x16(a: u8x16, b: u8x16): u8x16 {
+  return __u8x16_eq(a, b);
+}
+
+// A lane of ones where the lanes are not equal, and a lane of zeros where they are.
+pub function ne_u8x16(a: u8x16, b: u8x16): u8x16 {
+  return __u8x16_ne(a, b);
+}
+
+// A lane of ones where the lane of `a` is below the lane of `b`, and a lane of zeros where it is not.
+pub function lt_u8x16(a: u8x16, b: u8x16): u8x16 {
+  return __u8x16_lt(a, b);
+}
+
+// The bits that `a` and `b` both have.
+pub function and_u8x16(a: u8x16, b: u8x16): u8x16 {
+  return __u8x16_and(a, b);
+}
+
+// The bits that `a` or `b` has.
+pub function or_u8x16(a: u8x16, b: u8x16): u8x16 {
+  return __u8x16_or(a, b);
+}
+
+// The bits that only one of `a` and `b` has.
+pub function xor_u8x16(a: u8x16, b: u8x16): u8x16 {
+  return __u8x16_xor(a, b);
+}
+
+// The bits of `a` where `mask` has a one, and the bits of `b` where it has
+// a zero.
+pub function select_u8x16(a: u8x16, b: u8x16, mask: u8x16): u8x16 {
+  return __u8x16_select(a, b, mask);
+}
+
+// The top bit of lane `k` in bit `k`.
+pub function bitmask_u8x16(value: u8x16): i32 {
+  return __u8x16_bitmask(value);
 }
 ```

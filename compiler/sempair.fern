@@ -86,7 +86,7 @@ function taken_apart(funcs: ssasem.Func[], ix: util.NameIndex, pg0: Pairing, dea
           if (at >= 0 && !computed) {
             let defs = ssa.inst_defs(funcs[j].graph);
             whole = whole_values(funcs[j], ix, ok, ok[j]);
-            scalar_whole = semscalarreturn.donors(funcs[j], defs, whole);
+            scalar_whole = semscalarreturn.donors(funcs[j], defs, retained_values(funcs[j], defs, ix, ok, ok[j], whole));
             inner = payloads_whole(funcs[j], defs, ix, Pairing { ok: ok, split: split }, ok[j], ok[j] && !split[j]);
             computed = true;
           }
@@ -224,6 +224,34 @@ pub function whole_values(f: ssasem.Func, ix: util.NameIndex, ok: boolean[], pai
   let defs = ssa.inst_defs(f.graph);
   let none: boolean[] = [];
   return through_joins(defs, seeded(f, defs, ix, ok, none, paired, []));
+}
+
+// A construction that no use keeps whole is taken apart, so it retains none
+// of its arguments.
+function retained_values(f: ssasem.Func, defs: ssa.SInst[], ix: util.NameIndex, ok: boolean[], paired: boolean, whole0: boolean[]): boolean[] {
+  let whole = whole0;
+  let none: boolean[] = [];
+  let found = -1;
+  let more = true;
+  while (more) {
+    let apart = __alloc_bool(f.graph.nvals);
+    let n = 0;
+    for b in f.graph.blocks {
+      for ins in b.insts {
+        let k = ins.kind_tag;
+        if ((k == ssasem.variant_new() || k == ssasem.record_new() || k == ssasem.tuple_new()) && !whole[ins.result]) {
+          apart = apart.with(ins.result, true);
+          n += 1;
+        }
+      }
+    }
+    more = n > found && n > 0;
+    found = n;
+    if (more) {
+      whole = through_joins(defs, seeded(f, defs, ix, ok, none, paired, apart));
+    }
+  }
+  return whole;
 }
 
 // split names the callees whose payloads a caller rebuilds as constructions.

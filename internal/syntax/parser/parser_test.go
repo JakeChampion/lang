@@ -3912,7 +3912,7 @@ func TestTraitDefaultOwnTypeParams(t *testing.T) {
 }
 
 func TestLaneTypeKeywords(t *testing.T) {
-	prog, err := Parse(`function f(a: f64x2): f32x4 { let b: f32x4 = __f32x4_splat(1.0); return b; }`)
+	prog, err := Parse(`function f(a: f64x2, c: u8x16): f32x4 { let b: f32x4 = __f32x4_splat(1.0); return b; }`)
 	if err != nil {
 		t.Fatalf("lane types should parse: %v", err)
 	}
@@ -3923,6 +3923,7 @@ func TestLaneTypeKeywords(t *testing.T) {
 		text  string
 	}{
 		{fn.Params[0].Type, 64, "f64x2"},
+		{fn.Params[1].Type, 8, "u8x16"},
 		{fn.ReturnType, 32, "f32x4"},
 		{fn.Body.Stmts[0].(*ast.Var).Type, 32, "f32x4"},
 	} {

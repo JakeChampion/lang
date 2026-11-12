@@ -24,7 +24,7 @@ function definition(f: ssasem.Func, v: i32): Def {
       }
     }
   }
-  return Def { found: false, ins: ssa.SInst { kind_tag: 0, result: 0, args: [], imm: 0, str: "" } };
+  return Def { found: false, ins: ssa.SInst { kind_tag: ssa.NONE, result: 0, args: [], imm: 0, str: "" } };
 }
 
 function contains(xs: i32[], x: i32): boolean {

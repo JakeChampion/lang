@@ -1,0 +1,147 @@
+import "./audio_path";
+import "std/audio/pcm";
+import "std/video/frame";
+
+@import("libaaudio.so", "av_audio_reset")
+function reset(): void;
+
+@import("libaaudio.so", "av_audio_mode")
+function mode(value: i32): void;
+
+@import("libaaudio.so", "av_audio_base")
+function base(value: i32): void;
+
+@import("libaaudio.so", "av_audio_count")
+function count(what: i32): i32;
+
+function block(): pcm.Block {
+  let samples: i32[] = [];
+  for i in 0..20000 {
+    samples = samples.append(i);
+  }
+  return pcm.Block { format: pcm.Format { sample_rate: 48000, channels: 2, bits_per_sample: 16 }, samples: samples };
+}
+
+function partial_progress(own s: audio_path.State): Result[audio_path.State, i32] {
+  if (s.at != 2048 || s.first != 0 || s.origin.frame_position != 0i64 || count(0) != 1) {
+    s.close();
+    return Err(2);
+  }
+  mode(1);
+  s = audio_path.pump(s);
+  if (s.at != 2054) {
+    s.close();
+    return Err(3);
+  }
+  mode(2);
+  s = audio_path.pump(s);
+  if (s.at != 2054 || s.ready(2000000000i64)) {
+    s.close();
+    return Err(4);
+  }
+  return Ok(s);
+}
+
+function pause_progress(own s: audio_path.State): Result[audio_path.State, i32] {
+  let calls = count(2);
+  s = s.pause(1100000000i64);
+  s = s.pause(1100000000i64);
+  s = audio_path.pump(s);
+  if (count(2) != calls || count(1) != 1) {
+    s.close();
+    return Err(5);
+  }
+  s = s.resume(1200000000i64);
+  s = s.resume(1200000000i64);
+  if (s.started_ns != 1100000000i64 || count(0) != 2) {
+    s.close();
+    return Err(6);
+  }
+  return Ok(s);
+}
+
+function finish_progress(own s: audio_path.State): i32 {
+  mode(0);
+  while (s.at < s.samples.len()) {
+    s = audio_path.pump(s);
+  }
+  if (s.at != 20000 || s.ready(1300000000i64) || !s.ready(1500000000i64)) {
+    s.close();
+    return 7;
+  }
+  s.close();
+  if (count(3) != 1) {
+    return 8;
+  }
+  return 0;
+}
+
+function partial(): i32 {
+  reset();
+  let Ok(created) = audio_path.create(block(), 0i64) else {
+    return 1;
+  };
+  let initial = audio_path.State { ...created, started_ns: 1000000000i64 };
+  let progressed = match (partial_progress(initial)) { Ok(value) => value, Err(code) => { return code; } };
+  let resumed = match (pause_progress(progressed)) { Ok(value) => value, Err(code) => { return code; } };
+  return finish_progress(resumed);
+}
+
+function origins(): i32 {
+  reset();
+  base(9600);
+  let Ok(s) = audio_path.create(block(), 100001i64) else {
+    return 10;
+  };
+  if (s.first != 9600 || s.at != 11648 || s.origin.frame_position != 0i64 || s.origin.media_us != 100000i64) {
+    s.close();
+    return 11;
+  }
+  s.close();
+  return 0;
+}
+
+function failures(): i32 {
+  reset();
+  mode(3);
+  if let Err(frame.Unsupported) = audio_path.create(block(), 0i64) {} else {
+    return 20;
+  }
+  if (count(0) != 0 || count(3) != 1) {
+    return 21;
+  }
+  mode(4);
+  if let Err(frame.Platform) = audio_path.create(block(), 0i64) {} else {
+    return 22;
+  }
+  if (count(3) != 2) {
+    return 23;
+  }
+  mode(0);
+  let Ok(s) = audio_path.create(block(), 0i64) else {
+    return 24;
+  };
+  mode(5);
+  let invalid = audio_path.pump(s);
+  if (!invalid.failed || invalid.at != 2048) {
+    invalid.close();
+    return 25;
+  }
+  invalid.close();
+  if (count(3) != 3) {
+    return 26;
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let first = partial();
+  if (first != 0) {
+    return first;
+  }
+  let second = origins();
+  if (second != 0) {
+    return second;
+  }
+  return failures();
+}

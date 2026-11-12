@@ -113,7 +113,7 @@ function pair(ins: ssa.SInst, payloads: i32[]): ssa.SInst[] {
     if (ins.str == "Some") {
       present = 1;
     }
-    tag = ssa.SInst { ...tag, kind_tag: 2, args: [], imm: present, str: "" };
+    tag = ssa.SInst { ...tag, kind_tag: ssa.CONST_BOOL, args: [], imm: present, str: "" };
     let kind = ssasem.zero();
     if (present == 1) {
       kind = 7;

@@ -1,0 +1,5 @@
+import "std/video/vp9/configuration";
+
+pub function values(h: configuration.Header): i32[] {
+  return [h.profile, h.level, h.bit_depth, h.chroma_subsampling, if (h.full_range) { 1 } else { 0 }, h.color_primaries, h.transfer_characteristics, h.matrix_coefficients];
+}

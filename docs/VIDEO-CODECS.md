@@ -69,7 +69,7 @@ The controller remains video-only, without audio decode, integrated A/V transpor
 
 ## Native MP4 video packets
 
-`std/video/mp4` indexes self-contained AVC, HEVC, AV1, and QTRLE video tracks without Android or an external codec library.
+`std/video/mp4` indexes self-contained AVC, HEVC, VP9, AV1, and QTRLE video tracks without Android or an external codec library.
 It reuses the existing ISO box, sample-table, clock, and data-reference readers.
 It preserves packet ranges, descriptions, decode order, decode times, composition times, durations, and sync-sample flags.
 Each packet range refers to the original byte view, without a payload copy.
@@ -394,7 +394,7 @@ Operating-point relationships, profile/level conformance, reference state, and r
 The native AV1 decode column remains unchanged.
 
 Android MediaExtractor supplies its supported containers through the Android adapter.
-The native MP4 indexer above supports self-contained AVC, HEVC, AV1, and QTRLE tracks.
+The native MP4 indexer above supports self-contained AVC, HEVC, VP9, AV1, and QTRLE tracks.
 Other MOV codecs, Matroska, WebM, MPEG-TS, and fragmented streams remain future work.
 
 ## Native QTRLE
@@ -680,3 +680,56 @@ The configuration format follows AOM AV1 ISOBMFF version 1.3.0.
 The record can omit a sequence header. The API then reports no sequence maximum and does not read media to obtain it.
 The existing sequence parser still checks a present header through its trailing bits and bounded zero padding.
 These checks do not establish complete ISO BMFF or AV1 stream conformance.
+
+## Native VP9 MP4 qualification
+
+`std/video/mp4` and its seekable source path accept native `vp09` descriptions through the same bounded tables and clocks.
+One version-one `vpcC` box is required. Flags and initialization-data length must be zero.
+`std/video/vp9/configuration.inspect` checks the complete twelve-byte payload before it reports eight scalar fields.
+The packet budget applies before access. The result retains no input bytes.
+
+Profile, precision, chroma, level identifiers, and RGB constraints follow the [VP Codec ISO Media File Format Binding version 1.0](https://www.webmproject.org/vp9/mp4/).
+Color identifiers remain scalar values. Sample headers, record-to-sample agreement, color conformance, and complete profile/level conformance remain outside this reader.
+The seekable index does not read media payloads to infer these properties.
+
+Configuration uses WebM CodecPrivate in `csd0`, zero `length_size`, and empty `csd1`.
+The profile, level, precision, and chroma fields use identifiers one through four and one-byte lengths.
+This follows Android's `MakeVP9CodecPrivateFromVpcC` conversion in `media/module/metadatautils/MetaDataUtils.cpp`.
+The index retains its existing limit on container color metadata. It reports zero packed depth for VP9.
+
+`scripts/check-video-mp4-vp9-interop` creates eight fresh, three-frame lossless VP9 MP4 files.
+FFmpeg CBS checks keyframe profile, precision, chroma, and range. FFprobe checks known color identifiers and packet metadata.
+The muxer's complete record supplies level and chroma-location identifiers that the VP9 keyframe does not contain.
+
+Both Fern index paths preserve every packet field and byte through native sanitizer and real WASI executables.
+Independent FFmpeg and libvpx decoders compare every plane with the original raw input before and after extraction.
+FFmpeg remains test-only. Fern does not decode VP9 pixels.
+
+## Native AAC and lower-level Android video integration
+
+The video test app also coordinates native AAC PCM with an app-owned AAudio music stream.
+The lower-level controller still owns one platform-decoded video track. The separate MediaPlayer A/V path remains unchanged.
+This fixture does not add a general A/V player API or a native AVC pixel decoder.
+
+The fixture contains twelve AVC frames and 19,200 stereo AAC frames at 48 kHz.
+The existing native MP4 audio decoder applies encoder-delay and final-presentation trims.
+The app quantizes its float output to interleaved signed 16-bit PCM.
+Input bytes have a two-MiB limit. Decoded output has a 48,000-sample limit.
+Reads use four-KiB chunks, and each nonblocking AAudio write requests at most 1,024 stereo frames.
+
+Partial writes preserve the remaining samples. Pause stops new audio writes and video submissions.
+Resume restarts both transports and permits a fresh AAudio clock anchor.
+Seek creates a new audio stream and selects PCM from the requested frame, so its frame-zero origin has explicit media units.
+The app rejects an unexpected stream rate instead of applying an incorrect frame-to-time scale.
+Completion and window destruction close the app-owned audio stream.
+
+The existing emulator runner adds this round after its video-only export checks.
+It verifies both submitted sample counts, the pause and seek diagnostics, and two available-or-unavailable timestamp observations.
+Unavailable timestamps remain distinct from valid anchors. They preserve the controller's existing timeline.
+A short grace after queue completion does not measure acoustic output or establish physical drain accuracy.
+
+`scripts/check-android-native-av` checks native sanitizer and real-WASI PCM against an independent FFmpeg decode.
+Every quantized sample must differ by at most one signed 16-bit sample unit.
+Host AAudio controls cover partial writes, backpressure, pause/resume, seek origins, rate rejection, startup failure, and exact cleanup counts.
+Normal and sanitizer Fern libraries run against both normal and undefined-behavior-sanitizer C controls.
+ARM64 shared compilation remains separate from execution. Representative device power, latency, and lip-sync qualification remain unmeasured.
