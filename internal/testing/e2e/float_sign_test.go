@@ -3,6 +3,7 @@ package e2e
 import "testing"
 
 const floatSignProg = `
+import "std/f32";
 import "std/f64";
 function main(): i32 {
     let negzero: f64 = f64_from_bits(0 - 9223372036854775807 - 1);   // 0x8000...0

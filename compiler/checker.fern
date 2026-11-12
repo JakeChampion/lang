@@ -3837,8 +3837,8 @@ function scalar_module_for(t: typeinfo.Type): string {
     typeinfo.TypeI32(it) => {
       return scalar_integer_module(int_label(it));
     },
-    typeinfo.TypeFloat(_) => {
-      return "std/f64";
+    typeinfo.TypeFloat(ft) => {
+      return if (ft.width == 32) { "std/f32" } else { "std/f64" };
     },
     typeinfo.TypeString(_) => {
       return "std/string";

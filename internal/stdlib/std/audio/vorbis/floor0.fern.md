@@ -18,6 +18,7 @@ import "std/audio/vorbis/bits";
 import "std/audio/vorbis/codebook";
 import "std/audio/vorbis/types";
 import "std/audio/pcm";
+import "std/f32";
 import "std/f64";
 
 pub struct Setup { order: i32, amplitude_bits: i32, amplitude_offset: i32, map_size: i32, small_exponent: i32, large_exponent: i32, small: i32[], large: i32[], books: i32[] }

@@ -63,6 +63,7 @@ A band of `b` short blocks has a bit in the collapse mask for each block. The bi
 // LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
 // NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+import "std/f32";
 import "std/f64";
 import "std/opus/pvq";
 import "std/opus/range";

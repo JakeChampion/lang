@@ -1,6 +1,7 @@
 import "std/audio/wire";
 import "std/base64";
 import "std/deflate";
+import "std/f32";
 import "std/f64";
 
 pub function unpack(encoded: string): Result[u8[], string] {

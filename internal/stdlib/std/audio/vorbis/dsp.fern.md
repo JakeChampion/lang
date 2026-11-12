@@ -16,6 +16,7 @@ This module is available under MPL-2.0. See `licenses/vorbis/NOTICE.txt`.
 // See licenses/vorbis/MPL-2.0.txt or https://mozilla.org/MPL/2.0/.
 import "std/audio/vorbis/tables";
 import "std/audio/pcm" as audio;
+import "std/f32";
 import "std/f64";
 
 pub struct Scratch { fft: f32[], time: f32[] }

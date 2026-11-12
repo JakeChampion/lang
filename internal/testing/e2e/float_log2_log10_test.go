@@ -3,6 +3,7 @@ package e2e
 import "testing"
 
 const floatLog2Log10Prog = `
+import "std/f32";
 import "std/f64";
 function approx(a: f64, b: f64): boolean { let d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }
 function main(): i32 {
