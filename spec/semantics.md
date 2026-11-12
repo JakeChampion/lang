@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**149 of 152** claims are pinned by a conformance case. The remaining
+**150 of 153** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -148,6 +148,7 @@ of them.
 | `ML-07` | `docs/MODE-LATTICE.md` | A closure may not capture a value holding a borrowed view (`E082`) | `diag_e082` |
 | `ML-08` | `docs/MODE-LATTICE.md` | An `if` or `match` expression whose arms build fresh arrays can be lent as a view, and the chosen arm's storage lives until the view's last use | `view_of_branch_value` |
 | `ML-09` | `docs/MODE-LATTICE.md` | A local array view accepts a matching owned array, literal, or temporary and preserves its contents across owner updates | `local_array_views_keep_their_storage` |
+| `ML-10` | `docs/MODE-LATTICE.md` | A `[T]` view of the storage of an inner block may not be stored in a variable of an outer block (`E063`), on its own, inside an aggregate, or through a container method such as `append` | `diag_e063_view_stored_past_its_block` |
 | `EO-01` | `docs/EVALUATION-ORDER.md` | A call evaluates its callee or receiver before arguments, then evaluates positional arguments from left to right | `evaluation_order_effects` |
 | `EO-02` | `docs/EVALUATION-ORDER.md` | Named arguments evaluate in parameter declaration order, and omitted arguments use constant defaults | `evaluation_order_effects` |
 | `EO-03` | `docs/EVALUATION-ORDER.md` | Operands, indices, slices, and aggregate contents follow the specified evaluation order | `evaluation_order_effects` |

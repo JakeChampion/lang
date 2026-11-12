@@ -5897,6 +5897,8 @@ func isScalarBuiltinMethod(mangled string) bool {
 func IsPrimitiveDisplayMethod(name string) bool { return isScalarBuiltinMethod(name) }
 
 type checker struct {
+	// declaredFuncs names each function that the program declares.
+	declaredFuncs map[string]bool
 	// failedExprs holds each expression that has no type because its check
 	// reported an error.
 	failedExprs map[ast.Expr]bool
@@ -10094,7 +10096,7 @@ func (c *checker) aggregateViewRoots(expr ast.Expr, t ast.Type, env *escapeEnv, 
 	case *ast.Call:
 		if e.IsVariantCall {
 			c.variantCallParts(e, t, part)
-		} else {
+		} else if !c.containerCallParts(e, t, env, part) {
 			out.merge(c.aggregateCallRoots(e, env, sums, leaf))
 		}
 	case *ast.FieldAccess:
@@ -10253,6 +10255,10 @@ const sliceEscapeMsg = "returning a `[T]` slice that views function-local storag
 const strEscapeMsg = "returning a `str` view of a function-local string: the backing string is reclaimed when %q returns, leaving a dangling view — return an owned `string` (materialise with .to_owned()) or view a parameter instead"
 
 func (c *checker) checkSliceEscapes(prog *ast.Program) {
+	c.declaredFuncs = make(map[string]bool, len(prog.Funcs))
+	for _, fn := range prog.Funcs {
+		c.declaredFuncs[fn.Name] = true
+	}
 	envs, order := c.escapeEnvs(prog, func(t ast.Type) bool { return true })
 	sums := returnViewSummaries(order, func(fn *ast.FuncDecl, ret ast.Expr, sums map[string]viewSummary) viewRoots {
 		if _, isSlice := fn.ReturnType.(ast.SliceType); isSlice {
@@ -10277,6 +10283,11 @@ func (c *checker) checkSliceEscapes(prog *ast.Program) {
 				c.errfCode(ret.P, "E063", sliceEscapeMsg, fn.Name)
 			}
 		})
+	}
+	for _, fn := range prog.Funcs {
+		if env, ok := envs[fn]; ok {
+			c.checkSliceStores(fn, env, sums)
+		}
 	}
 }
 
