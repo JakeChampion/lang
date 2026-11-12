@@ -730,7 +730,7 @@ function float_number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Val
 }
 
 function number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Value {
-  if (parser.is_unit_literal(n)) {
+  if (ast.is_unit_literal(n)) {
     return define(s, ssa.CONST_INT, [], 0, "", typeinfo.t_void());
   }
   if (n.is_float || n.suffix == "" && ssasem.is_float(expected)) {
@@ -742,13 +742,13 @@ function number(n: ast.ExprNumber, s: State, expected: typeinfo.Type): Value {
   let ty = literal_type(n.suffix);
   if (n.suffix == "" && ssasem.is_integer(expected)) {
     ty = expected;
-  } else if (n.suffix == "" && parser.literal_is_i64(n.text)) {
+  } else if (n.suffix == "" && ast.literal_is_i64(n.text)) {
     ty = typeinfo.t_i64();
   }
   if (!semtypes.concrete(ty, false)) {
     return refused(s, "unsupported literal width");
   }
-  if (ssasem.text_constant(ty) || ssasem.is_usize(ty) && parser.literal_is_i64(n.text)) {
+  if (ssasem.text_constant(ty) || ssasem.is_usize(ty) && ast.literal_is_i64(n.text)) {
     return define(s, ssa.CONST_INT, [], 0, decimal_text(n.text), ty);
   }
   return define(s, ssa.CONST_INT, [], util.lit_to_i32(n.text), "", ty);
@@ -1480,33 +1480,32 @@ function width_bearing(e: ast.Expr): boolean {
   if let ast.ExprNumber(n) = e {
     return n.suffix != "";
   }
-  return !parser.int_literal_tree(e);
+  return !ast.int_literal_tree(e);
 }
 
 function operand_type(t: typeinfo.Type): boolean {
   return ssasem.is_integer(t) || ssasem.is_float(t);
 }
 
-function operand_width(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Type): typeinfo.Type {
+function operand_width(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Type, types: checker.OperatorTypes): typeinfo.Type {
   if (ssasem.checked_arith(b.op)) {
     expected = option_payload(expected);
   }
-  if (parser.int_literal_tree(e) && ssasem.is_integer(expected)) {
+  if (ast.int_literal_tree(e) && ssasem.is_integer(expected)) {
     return expected;
   }
-  if ((parser.float_literal_tree(e) || parser.is_unsettled_int_literal(e)) && ssasem.is_float(expected)) {
+  if ((ast.float_literal_tree(e) || ast.is_unsettled_int_literal(e)) && ssasem.is_float(expected)) {
     return expected;
   }
-  let (whole_t, left_t, right_t) = checker.binary_types(b, s.scope);
-  let l = settled_in(left_t, s);
-  let r = settled_in(right_t, s);
+  let l = settled_in(types.operands[0].whole, s);
+  let r = settled_in(types.operands[1].whole, s);
   if (width_bearing(b.left) && ssasem.is_usize(l)) {
     return l;
   }
   if (width_bearing(b.right) && ssasem.is_usize(r)) {
     return r;
   }
-  let whole = settled_in(whole_t, s);
+  let whole = settled_in(types.whole, s);
   if (operand_type(whole)) {
     return whole;
   }
@@ -1541,34 +1540,63 @@ function address_widen(v: Value, want: typeinfo.Type): Value {
 
 function binary(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Type): Value {
   if (b.op == "&&" || b.op == "||") {
-    return logical(b, s);
+    return logical(b, s, untyped());
   }
-  let want = operand_width(e, b, s, expected);
-  if (!operand_type(want) && parser.int_literal_tree(b.left) && !parser.int_literal_tree(b.right)) {
-    let first = expr(b.right, s, want);
+  return typed_binary(e, b, s, expected, checker.operator_types(e, s.scope));
+}
+
+function untyped(): checker.OperatorTypes {
+  return checker.OperatorTypes { whole: typeinfo.unchecked(), operands: [] };
+}
+
+// An operand of a binary operator. `types` holds the checked types of the
+// operand, so a nested operator does not check its operands again.
+function operand(e: ast.Expr, s: State, expected: typeinfo.Type, types: checker.OperatorTypes): Value {
+  if let ast.ExprBinary(b) = e {
+    if (types.operands.len() == 2) {
+      return typed_binary(e, b, s, expected, types);
+    }
+  }
+  return expr(e, s, expected);
+}
+
+function operand_types(types: checker.OperatorTypes, at: i32): checker.OperatorTypes {
+  if (types.operands.len() == 2) {
+    return types.operands[at];
+  }
+  return untyped();
+}
+
+function typed_binary(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Type, types: checker.OperatorTypes): Value {
+  if (b.op == "&&" || b.op == "||") {
+    return logical(b, s, types);
+  }
+  let want = operand_width(e, b, s, expected, types);
+  if (!operand_type(want) && ast.int_literal_tree(b.left) && !ast.int_literal_tree(b.right)) {
+    let first = operand(b.right, s, want, types.operands[1]);
     if (!first.s.ok) {
       return first;
     }
     let wide = first.s.values[first.id];
-    if (ssasem.is_integer(wide) || ssasem.is_float(wide) && parser.is_unsettled_int_literal(b.left)) {
+    if (ssasem.is_integer(wide) || ssasem.is_float(wide) && ast.is_unsettled_int_literal(b.left)) {
       let right_id = first.id;
-      let lit = expr(b.left, first.s, wide);
+      let lit = operand(b.left, first.s, wide, types.operands[0]);
       if (!lit.s.ok) {
         return lit;
       }
       return arithmetic(b, lit.id, right_id, lit.s);
     }
   }
-  let produced = address_widen(expr(b.left, s, want), want);
+  let produced = address_widen(operand(b.left, s, want, types.operands[0]), want);
   s = produced.s;
   if (!s.ok) {
     return produced;
   }
   let left = produced.id;
-  if (!operand_type(want) && parser.int_literal_tree(b.right) && ssasem.is_integer(s.values[left]) && !wide_literal(b.right)) {
+  if (!operand_type(want) && ast.int_literal_tree(b.right) && ssasem.is_integer(s.values[left]) && !wide_literal(b.right)) {
     want = s.values[left];
   }
-  if (!operand_type(want) && parser.float_literal_tree(b.right) && ssasem.is_float(s.values[left])) {
+  if (!operand_type(want) && ast.float_literal_tree(b.right) && ssasem.is_float(s.values[left])) {
     want = s.values[left];
   }
   let key = composite_key(b.op, s.values[left], s);
@@ -1582,7 +1610,7 @@ function binary(e: ast.Expr, b: ast.ExprBinary, s: State, expected: typeinfo.Typ
   if (b.op == "+" && ssasem.is_string(s.values[left])) {
     return append_text(b, left, b.right, s, want);
   }
-  let right = address_widen(expr(b.right, s, want), want);
+  let right = address_widen(operand(b.right, s, want, types.operands[1]), want);
   s = right.s;
   if (!s.ok) {
     return right;
@@ -1638,7 +1666,7 @@ function arithmetic(b: ast.ExprBinary, left: i32, right: i32, s: State): Value {
   if (!semtypes.concrete(ty, false)) {
     return refused(s, "operator contract: " + typeinfo.spelling(s.values[left]) + " " + b.op + " " + typeinfo.spelling(s.values[right]));
   }
-  if let Some(v) = folded_value(s, b.op, left, right, ty, literal_operand(b.left) && literal_operand(b.right)) {
+  if let Some(v) = folded_value(s, b.op, left, right, ty, ast.literal_operand(b.left) && ast.literal_operand(b.right)) {
     return v;
   }
   return define(s, ssa.BINARY, [left, right], 0, b.op, ty);
@@ -1744,25 +1772,6 @@ function folded(s: State, v: i32, ty: typeinfo.Type, operands: i32[], literal: b
   return define(s, ssa.CONST_INT, [], v, "", ty);
 }
 
-// Whether e is an integer literal, or a negation, sum, difference or product
-// of them, whatever suffix the checker settled on it.
-function literal_operand(e: ast.Expr): boolean {
-  match (e) {
-    ast.ExprNumber(n) => {
-      return !n.is_float;
-    },
-    ast.ExprUnary(u) => {
-      return (u.op == "-" || u.op.starts_with("as_")) && literal_operand(u.operand);
-    },
-    ast.ExprBinary(b) => {
-      return (b.op == "+" || b.op == "-" || b.op == "*") && literal_operand(b.left) && literal_operand(b.right);
-    },
-    _ => {
-      return false;
-    }
-  }
-}
-
 // s without its last instructions and values when they define exactly ids.
 function without_temporaries(s: State, ids: i32[]): State {
   let n = s.cur.insts.len();
@@ -1813,7 +1822,7 @@ function recent_constant(s: State, v: i32): Option[i32] {
 
 function wide_literal(e: ast.Expr): boolean {
   if let ast.ExprNumber(n) = e {
-    return !n.is_float && n.suffix == "" && parser.literal_is_i64(n.text);
+    return !n.is_float && n.suffix == "" && ast.literal_is_i64(n.text);
   }
   return false;
 }
@@ -1953,7 +1962,7 @@ function unary(e: ast.Expr, u: ast.ExprUnary, s: State, expected: typeinfo.Type)
   if (!semtypes.concrete(ty, false)) {
     return refused(s, "operator contract: " + u.op + " " + typeinfo.spelling(s.values[operand.id]));
   }
-  return unary_op(s, u.op, operand.id, ty, literal_operand(u.operand));
+  return unary_op(s, u.op, operand.id, ty, ast.literal_operand(u.operand));
 }
 
 // `~x` is `x ^ (-1)` in the type of x: the subtraction wraps to all ones
@@ -2335,8 +2344,8 @@ function concat_ids(a: i32[], b: i32[]): i32[] {
   return out;
 }
 
-function logical(b: ast.ExprBinary, s: State): Value {
-  let left = expr(b.left, s, typeinfo.t_bool());
+function logical(b: ast.ExprBinary, s: State, types: checker.OperatorTypes): Value {
+  let left = operand(b.left, s, typeinfo.t_bool(), operand_types(types, 0));
   s = left.s;
   if (!s.ok) {
     return left;
@@ -2354,7 +2363,7 @@ function logical(b: ast.ExprBinary, s: State): Value {
   } else {
     s = terminate(s, ssa.t_brif(left.id, skip, rhs));
   }
-  let right = expr(b.right, open(s, rhs, [pred]), typeinfo.t_bool());
+  let right = operand(b.right, open(s, rhs, [pred]), typeinfo.t_bool(), operand_types(types, 1));
   s = right.s;
   if (!s.ok) {
     return right;

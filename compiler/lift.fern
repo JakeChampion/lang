@@ -267,11 +267,11 @@ function lift_expr_walk(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
     ast.ExprBinary(b) => {
       let blr = lift_expr_walk(b.left, acc, gfns);
       let brr = lift_expr_walk(b.right, blr.acc, gfns);
-      return LiftExpr { expr: ast.ExprBinary { op: b.op, left: blr.expr, right: brr.expr, line: b.line, col: b.col, ty: b.ty }, acc: brr.acc };
+      return LiftExpr { expr: ast.binary(b.op, blr.expr, brr.expr, b.line, b.col, b.ty), acc: brr.acc };
     },
     ast.ExprUnary(u) => {
       let uor = lift_expr_walk(u.operand, acc, gfns);
-      return LiftExpr { expr: ast.ExprUnary { op: u.op, operand: uor.expr, line: u.line, col: u.col, ty: u.ty }, acc: uor.acc };
+      return LiftExpr { expr: ast.unary(u.op, uor.expr, u.line, u.col, u.ty), acc: uor.acc };
     },
     ast.ExprIndex(ix) => {
       let ixar = lift_expr_walk(ix.array, acc, gfns);
@@ -3037,11 +3037,11 @@ function wcap_expr(e: ast.Expr, fd: parser.FuncDecl, gfns: string[], structs: ir
     ast.ExprBinary(b) => {
       let l = wcap_expr(b.left, fd, gfns, structs, mfuncs, acc, atargets);
       let r = wcap_expr(b.right, fd, gfns, structs, mfuncs, l.caps, atargets);
-      return WCapExpr { expr: ast.ExprBinary { op: b.op, left: l.expr, right: r.expr, line: b.line, col: b.col, ty: b.ty }, caps: r.caps, changed: l.changed || r.changed };
+      return WCapExpr { expr: ast.binary(b.op, l.expr, r.expr, b.line, b.col, b.ty), caps: r.caps, changed: l.changed || r.changed };
     },
     ast.ExprUnary(u) => {
       let o = wcap_expr(u.operand, fd, gfns, structs, mfuncs, acc, atargets);
-      return WCapExpr { expr: ast.ExprUnary { op: u.op, operand: o.expr, line: u.line, col: u.col, ty: u.ty }, caps: o.caps, changed: o.changed };
+      return WCapExpr { expr: ast.unary(u.op, o.expr, u.line, u.col, u.ty), caps: o.caps, changed: o.changed };
     },
     ast.ExprCall(c) => {
       if let ast.ExprLambda(ilm) = c.callee {

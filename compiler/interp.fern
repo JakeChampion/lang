@@ -4710,7 +4710,7 @@ function eval_binary_expr(b: ast.ExprBinary, env: Env): Value {
   if (is_err(rv)) {
     return rv;
   }
-  if (parser.is_unsettled_int_literal(b.left)) {
+  if (ast.is_unsettled_int_literal(b.left)) {
     lv = eval_expr(float_operand(b.left, b.right, rv), env);
   }
   let overload = struct_op_method(b.op, lv);
@@ -4761,7 +4761,7 @@ function orders_by_cmp(v: Value): boolean {
 // the checker settles it. Beside a float literal it keeps its integer type,
 // and the mixed operation is the error the checker reports.
 function float_operand(e: ast.Expr, other: ast.Expr, value: Value): ast.Expr {
-  if (!parser.is_unsettled_int_literal(e) || parser.float_literal_tree(other)) {
+  if (!ast.is_unsettled_int_literal(e) || ast.float_literal_tree(other)) {
     return e;
   }
   if let VFloat(_) = value {

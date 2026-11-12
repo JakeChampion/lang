@@ -908,17 +908,10 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
       return ast.ExprCall { callee: rewrite_expr(c.callee, ctx), args: args, line: c.line, col: c.col, type_args: targs, ty: c.ty };
     },
     ast.ExprBinary(b) => {
-      return ast.ExprBinary {
-        op: b.op,
-        left: rewrite_expr(b.left, ctx),
-        right: rewrite_expr(b.right, ctx),
-        line: b.line,
-        col: b.col,
-        ty: b.ty,
-      };
+      return ast.binary(b.op, rewrite_expr(b.left, ctx), rewrite_expr(b.right, ctx), b.line, b.col, b.ty);
     },
     ast.ExprUnary(u) => {
-      return ast.ExprUnary { op: rewrite_unary_op(u.op, ctx), operand: rewrite_expr(u.operand, ctx), line: u.line, col: u.col, ty: u.ty };
+      return ast.unary(rewrite_unary_op(u.op, ctx), rewrite_expr(u.operand, ctx), u.line, u.col, u.ty);
     },
     ast.ExprIndex(x) => {
       return ast.ExprIndex {
