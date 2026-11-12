@@ -215,17 +215,26 @@ def shade_evidence(out, printed):
     })
 
 
+# The directory of the files of Paper on the device.
+FILES = "/data/data/" + PACKAGE + "/files/"
+
+
+def places(dump):
+    """Each text of a dump with the bounds of its node."""
+    nodes = re.findall(r'<node [^>]*(?:text|content-desc)="([^"]+)"[^>]*bounds="([^"]+)"', dump)
+    return " | ".join(text + "@" + bounds for text, bounds in nodes)
+
+
 def held_evidence(out, printed, dump):
     """What the device and Paper say when the home screen shows no held
     notification: the post, the shade, the listeners of the device, the
     two files of Paper, its log lines, and the texts on the screen."""
-    files = "/data/data/" + PACKAGE + "/files/"
     keep(out, "held", {
         "post": printed,
         "list": shell("cmd", "notification", "list"),
         "listeners": shell("settings", "get", "secure", "enabled_notification_listeners"),
-        "settings-file": shell("cat", files + "settings"),
-        "held-file": shell("cat", files + "held"),
+        "settings-file": shell("cat", FILES + "settings"),
+        "held-file": shell("cat", FILES + "held"),
         "log": "\n".join(logcat().splitlines()[-40:]),
         "service": shell("logcat", "-d", "-t", "200", "NotificationService:V", "NotificationManager:V", "NotificationListeners:V", "*:S"),
         "texts": " | ".join(re.findall(r'(?:text|content-desc)="([^"]+)"', dump)),
@@ -268,12 +277,24 @@ def filter_on(out, width, height):
     if not row:
         fail("a long press on the home screen did not open the settings")
         return False
-    if row[2].endswith("off"):
-        tap(row)
-    else:
+    if not row[2].endswith("off"):
         adb("shell", "input", "keyevent", "KEYCODE_BACK")
+        time.sleep(1.5)
+        return True
+    tap(row)
     time.sleep(1.5)
-    return True
+    # Paper writes its settings file when a setting changes.
+    if "filter\t1" in shell("cat", FILES + "settings"):
+        return True
+    keep(out, "filter", {
+        "tap": f"{row[0]} {row[1]}",
+        "home": places(Path(out, "ui-home.xml").read_text()),
+        "rows": places(Path(out, "ui-settings.xml").read_text()),
+        "after": places(ui_dump(out, "ui-after-filter")),
+        "log": "\n".join(logcat().splitlines()[-12:]),
+    })
+    fail("a tap on the filter row did not turn the filter on")
+    return False
 
 
 def check_filter(out, width, height):

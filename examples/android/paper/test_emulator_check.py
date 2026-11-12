@@ -255,6 +255,8 @@ class Phone:
     def adb(self, *args, **kwargs):
         if args == ("shell", "id", "-u"):
             return "0\n"
+        if args == ("shell", "cat", "/data/data/dev.fern.paper/files/settings"):
+            return "filter\t1\n" if self.on else "cat: no such file\n"
         if args[:4] == ("shell", "cmd", "notification", "post"):
             self.dropped.append(args[-2])
         elif args[:6] == ("shell", "su", "shell", "cmd", "notification", "post"):
@@ -333,6 +335,21 @@ class FilterTests(unittest.TestCase):
         failures = self.run_phone(Phone(opens=False))
         self.assertIn("a tap on the held notification did not open it", failures)
         self.assertIn("the held notification stayed on the home screen after it opened", failures)
+
+    def test_a_tap_that_does_not_turn_the_filter_on_fails_with_the_places_of_the_rows(self):
+        phone = Phone()
+        phone.tap = lambda x, y: None
+        clock = iter(range(0, 100000, 1))
+        with tempfile.TemporaryDirectory() as out, patch.multiple(check, adb=phone.adb, wait_for=phone.wait_for,
+                            shell=lambda *args: phone.adb("shell", *args), logcat=lambda: "paper: layer 0",
+                            fail=phone.failures.append), patch.object(check.time, "sleep"), \
+                patch.object(check.time, "monotonic", side_effect=lambda: next(clock)):
+            check.check_filter(out, 320, 640)
+            kept = {p.name: p.read_text() for p in Path(out).iterdir()}
+        self.assertEqual(phone.failures, ["a tap on the filter row did not turn the filter on"])
+        self.assertEqual(kept["filter-tap.txt"], "160 150")
+        self.assertEqual(kept["filter-rows.txt"], "Notification filter: off@[0,100][320,200]")
+        self.assertIn("9:06@[0,0][320,300]", kept["filter-home.txt"])
 
     def test_a_tap_waits_until_a_sheet_that_slides_in_is_still(self):
         phone = Phone()
