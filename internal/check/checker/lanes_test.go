@@ -30,6 +30,17 @@ func TestLanesRejected(t *testing.T) {
 		"ordering":           {`function f(v: f32x4): boolean { return v < v; }`, "E041", "cannot compare values of type f32x4"},
 		"scalar operand":     {`function f(v: f64x2): f64x2 { return v + 1.0; }`, "E009", "got f64x2 and f64"},
 		"mixed lane types":   {`function f(v: f64x2, w: f32x4): f64x2 { return v * w; }`, "E009", "got f64x2 and f32x4"},
+		"byte index":         {`function f(v: u8x16): u8 { return __u8x16_lane(v, 16); }`, "E038", "the lane index is an integer literal from 0 to 15"},
+		"byte index name":    {`function f(v: u8x16, i: i32): u8 { return __u8x16_lane(v, i); }`, "E038", "the lane index is an integer literal from 0 to 15"},
+		"byte multiply":      {`function f(v: u8x16): u8x16 { return v * v; }`, "E009", "operator \"*\" is not available for u8x16"},
+		"byte divide":        {`function f(v: u8x16): u8x16 { return v / v; }`, "E009", "operator \"/\" is not available for u8x16"},
+		"byte negative":      {`function f(v: u8x16): u8x16 { return -v; }`, "E009", "its lanes have no sign"},
+		"byte equality":      {`function f(v: u8x16): boolean { return v == v; }`, "E041", "cannot compare values of type u8x16"},
+		"byte and float":     {`function f(v: u8x16, w: f32x4): u8x16 { return v + w; }`, "E009", "got u8x16 and f32x4"},
+		"byte field":         {`struct H { v: u8x16 } function f(): i32 { return 0; }`, "E085", "a field or payload of type u8x16"},
+		"byte array":         {`function f(): i32 { let xs: u8x16[] = []; return xs.len(); }`, "E085", "u8x16[] holds a lane value inside another type"},
+		"byte splat type":    {`function f(): u8x16 { return __u8x16_splat(1.5); }`, "E038", "expected u8, got f64"},
+		"byte load type":     {`function f(xs: i32[]): u8x16 { return __u8x16_load(xs, 0); }`, "E038", "expected u8[], got i32[]"},
 	} {
 		err := checkSource(t, tc.src)
 		if err == nil || !hasCode(err, tc.code) {
@@ -58,6 +69,10 @@ func TestLanesAccepted(t *testing.T) {
 		"packed f64":      `function f(xs: u8[]): u8[] { return __f64x2_with_bytes(xs, 0, __f64x2_load_bytes(xs, 1)); }`,
 		"f32 array":       `function f(xs: f32[]): f32[] { return __f32x4_with(xs, 0, __f32x4_load(xs, 4)); }`,
 		"lambda local":    `function f(v: f64x2): f64 { let x: f64 = __f64x2_lane(v, 0); let g = (y: f64): f64 => y + x; return g(1.0); }`,
+		"byte arithmetic": `function f(a: u8x16, b: u8x16): u8x16 { return a + b - a; }`,
+		"byte builtins":   `function f(a: u8x16): i32 { let m: u8x16 = __u8x16_lt(a, __u8x16_splat(7 as u8)); let b: u8x16 = __u8x16_select(__u8x16_min(a, a), __u8x16_max(a, a), m); return __u8x16_bitmask(__u8x16_and(__u8x16_or(b, m), __u8x16_xor(__u8x16_eq(b, a), __u8x16_ne(b, a)))) + (__u8x16_lane(__u8x16_avg(__u8x16_add_sat(a, b), __u8x16_sub_sat(a, b)), 15) as i32); }`,
+		"byte array":      `function f(xs: u8[]): u8[] { let v: u8x16 = __u8x16_load(xs, 0); return __u8x16_with(xs, 16, v); }`,
+		"byte call":       `function g(v: u8x16, k: u8): u8x16 { return v + __u8x16_splat(k); } function f(): u8 { return __u8x16_lane(g(__u8x16_splat(1 as u8), 2 as u8), 0); }`,
 	} {
 		if err := checkSource(t, src); err != nil {
 			t.Errorf("%s: want accepted, got %v", name, err)

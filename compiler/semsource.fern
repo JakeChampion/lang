@@ -3796,7 +3796,9 @@ function lane_memory(name: string, c: ast.ExprCall, s: State): Value {
     return refused(at.s, "lane index type");
   }
   let verb = typeinfo.lane_builtin_verb(name);
-  let marker = if (verb == "load_bytes" || verb == "with_bytes") { "lane_bytes" } else { "" };
+  // Lanes of 8 bits are the bytes of the array, so their group is a
+  // group of bytes.
+  let marker = if (verb == "load_bytes" || verb == "with_bytes" || typeinfo.lane_builtin_width(name) == 8) { "lane_bytes" } else { "" };
   if (verb == "load" || verb == "load_bytes") {
     return define(at.s, ssasem.array_get(), [xs.id, at.id], 0, marker, typeinfo.lane_builtin_result(name));
   }
@@ -7481,6 +7483,7 @@ function lane_contracts(): ssasem.Contract[] {
     "__f32x4_swap_halves", "__f32x4_reverse", "__f32x4_zip_lo", "__f32x4_zip_hi", "__f32x4_splat", "__f32x4_of", "__f32x4_lane_bits", "__f32x4_lane", "__f32x4_bitmask", "__f32x4_mul_add", "__f32x4_sqrt",
     "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max",
     "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with", "__f32x4_load_bytes", "__f32x4_with_bytes", "__f32x4_store", "__f32x4_load_ptr", "__f32x4_pack",
+    "__u8x16_splat", "__u8x16_of", "__u8x16_lane", "__u8x16_bitmask", "__u8x16_min", "__u8x16_max", "__u8x16_eq", "__u8x16_ne", "__u8x16_lt", "__u8x16_add_sat", "__u8x16_sub_sat", "__u8x16_avg", "__u8x16_and", "__u8x16_or", "__u8x16_xor", "__u8x16_select", "__u8x16_load", "__u8x16_with",
   ];
   let out: ssasem.Contract[] = [];
   for n in names {

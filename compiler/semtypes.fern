@@ -201,7 +201,7 @@ pub function concrete(t: typeinfo.Type, allow_void: boolean): boolean {
       return !f.polymorphic && (f.width == 32 || f.width == 64);
     },
     typeinfo.TypeLanes(l) => {
-      return l.width == 32 || l.width == 64;
+      return typeinfo.lanes_spelling(l.width, l.kind) != "";
     },
     typeinfo.TypeBool(_) => {
       return true;

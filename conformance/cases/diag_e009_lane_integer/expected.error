@@ -1,0 +1,3 @@
+operator "*" is not available for u8x16: integer lanes have + and -
+operator "/" is not available for u8x16: integer lanes have + and -
+operator "-" is not available for u8x16: its lanes have no sign

@@ -93,7 +93,7 @@ var intrinsicFamilies = []intrinsicFamily{
 	}},
 	{"lane", func(m map[string]*sigShape) []string {
 		return matching(m, func(n string, _ *sigShape) bool {
-			return strings.HasPrefix(n, "__f64x2_") || strings.HasPrefix(n, "__f32x4_")
+			return strings.HasPrefix(n, "__f64x2_") || strings.HasPrefix(n, "__f32x4_") || strings.HasPrefix(n, "__u8x16_")
 		})
 	}},
 	{"byte scan", func(m map[string]*sigShape) []string {
