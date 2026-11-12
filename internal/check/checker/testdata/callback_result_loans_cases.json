@@ -1223,5 +1223,25 @@
     "name": "nested record binding does not erase outer environment",
     "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} struct R{read:()=>i32} function f(own h:H):i32{let r=R{read:():i32=>h.read()};if(true){let r=R{read:():i32=>0};r.read();}h.close();return r.read();}",
     "want": "E050"
+  },
+  {
+    "name": "deep call callback provenance valid before close",
+    "source": "struct H{n:i32}function(h:H)read():i32{return h.n;}function(own h:H)close():i32{return h.n;}struct Box[T]{cb:T,a:i32,b:i32,c:i32,d:i32,e:i32,f:i32,g:i32} function(value:Box[T])changed(n:i32):Box[T]{return Box[T]{...value,a:n};}function deep[T](value:Box[T]):Box[T]{return value.changed(0).changed(1).changed(2).changed(3).changed(4).changed(5).changed(6).changed(7).changed(8).changed(9).changed(10).changed(11);}function run(own h:H):i32{let capture=():i32=>h.read();let box=deep(Box{cb:capture,a:0,b:0,c:0,d:0,e:0,f:0,g:0});let n=box.cb();return n+h.close();}function main():i32{return run(H{n:1});}",
+    "want": ""
+  },
+  {
+    "name": "deep call callback provenance refused after close",
+    "source": "struct H{n:i32}function(h:H)read():i32{return h.n;}function(own h:H)close():i32{return h.n;}struct Box[T]{cb:T,a:i32,b:i32,c:i32,d:i32,e:i32,f:i32,g:i32} function(value:Box[T])changed(n:i32):Box[T]{return Box[T]{...value,a:n};}function deep[T](value:Box[T]):Box[T]{return value.changed(0).changed(1).changed(2).changed(3).changed(4).changed(5).changed(6).changed(7).changed(8).changed(9).changed(10).changed(11);}function run(own h:H):i32{let capture=():i32=>h.read();let box=deep(Box{cb:capture,a:0,b:0,c:0,d:0,e:0,f:0,g:0});let n=h.close();return n+box.cb();}function main():i32{return run(H{n:1});}",
+    "want": "E050"
+  },
+  {
+    "name": "deep literal callback provenance valid before close",
+    "source": "struct H{n:i32}function(h:H)read():i32{return h.n;}function(own h:H)close():i32{return h.n;}struct Box[T]{cb:T,a:i32,b:i32,c:i32,d:i32,e:i32,f:i32,g:i32} function(value:Box[T])changed(n:i32):Box[T]{return Box[T]{...value,a:n};}function deep[T](value:Box[T]):Box[T]{return Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...value,a:0},a:1},a:2},a:3},a:4},a:5},a:6},a:7},a:8},a:9},a:10},a:11};}function run(own h:H):i32{let capture=():i32=>h.read();let box=deep(Box{cb:capture,a:0,b:0,c:0,d:0,e:0,f:0,g:0});let n=box.cb();return n+h.close();}function main():i32{return run(H{n:1});}",
+    "want": ""
+  },
+  {
+    "name": "deep literal callback provenance refused after close",
+    "source": "struct H{n:i32}function(h:H)read():i32{return h.n;}function(own h:H)close():i32{return h.n;}struct Box[T]{cb:T,a:i32,b:i32,c:i32,d:i32,e:i32,f:i32,g:i32} function(value:Box[T])changed(n:i32):Box[T]{return Box[T]{...value,a:n};}function deep[T](value:Box[T]):Box[T]{return Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...value,a:0},a:1},a:2},a:3},a:4},a:5},a:6},a:7},a:8},a:9},a:10},a:11};}function run(own h:H):i32{let capture=():i32=>h.read();let box=deep(Box{cb:capture,a:0,b:0,c:0,d:0,e:0,f:0,g:0});let n=h.close();return n+box.cb();}function main():i32{return run(H{n:1});}",
+    "want": "E050"
   }
 ]

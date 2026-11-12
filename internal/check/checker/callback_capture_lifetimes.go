@@ -187,10 +187,16 @@ func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[st
 				out = mergeCallbackLoans(out, prefixCallbackLoans(part.selector, valueCaptures(part.value, active)))
 			}
 			if v.Base != nil {
+				var inherited []callbackLoan
+				known := false
 				for _, field := range c.info.Structs[v.TypeName].Fields {
 					if !replaced[field.Name] {
+						if !known {
+							inherited = valueCaptures(v.Base, active)
+							known = true
+						}
 						part := "f:" + field.Name
-						out = mergeCallbackLoans(out, prefixCallbackLoans(part, projectCallbackLoans(valueCaptures(v.Base, active), part)))
+						out = mergeCallbackLoans(out, prefixCallbackLoans(part, projectCallbackLoans(inherited, part)))
 					}
 				}
 			}
@@ -243,13 +249,19 @@ func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[st
 				if i >= len(v.Args) {
 					break
 				}
+				var inherited []callbackLoan
+				known := false
 				for _, source := range c.callbackFactories[id.Name] {
 					if source.param.Name != param.Name {
 						continue
 					}
 					arg := v.Args[i]
 					if !source.direct {
-						selected := selectCallbackLoans(valueCaptures(arg, active), source.path)
+						if !known {
+							inherited = valueCaptures(arg, active)
+							known = true
+						}
+						selected := selectCallbackLoans(inherited, source.path)
 						if source.wide {
 							selected = flattenCallbackLoans(selected)
 						}
