@@ -1619,7 +1619,7 @@ function scrutinee_reads(f: ssasem.Func): ssasem.Func {
 // For each value that narrows a struct-union to a member, its definition;
 // a definition with no result for every other value.
 function narrowings(f: ssasem.Func): ssa.SInst[] {
-  let none = ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
+  let none = ssa.no_inst();
   let out: ssa.SInst[] = [];
   while (out.len() < f.graph.nvals) {
     out = out.append(none);

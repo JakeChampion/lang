@@ -7133,7 +7133,7 @@ function defining(f: ssasem.Func, v: i32): ssa.SInst {
       }
     }
   }
-  return ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
+  return ssa.no_inst();
 }
 
 function box_use_ok(ins: ssa.SInst, boxes: i32[]): boolean {

@@ -23,43 +23,43 @@ function op0(tag: i32): Op {
 }
 
 pub function op_const_i32(v: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 1, i32_imm: v, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_CONST_I32, i32_imm: v, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_const_i32_text(t: string): Op {
-  return Op { source: 0, decl: -1, kind_tag: 2, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: t };
+  return Op { source: 0, decl: -1, kind_tag: K_CONST_I32_TEXT, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: t };
 }
 
 pub function op_const_ptr_text(t: string): Op {
-  return Op { source: 0, decl: -1, kind_tag: 2, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: t };
+  return Op { source: 0, decl: -1, kind_tag: K_CONST_I32_TEXT, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: t };
 }
 
 pub function op_const_i64(v: i64): Op {
-  return Op { source: 0, decl: -1, kind_tag: 3, i32_imm: 0, i64_imm: v, f64_imm: 0.0, width: 64, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_CONST_I64, i32_imm: 0, i64_imm: v, f64_imm: 0.0, width: 64, unsigned: false, str: "" };
 }
 
 pub function op_int_extend(unsigned: boolean): Op {
-  return Op { source: 0, decl: -1, kind_tag: 7, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: unsigned, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_INT_EXTEND, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: unsigned, str: "" };
 }
 
 pub function op_int_wrap(unsigned: boolean): Op {
-  return Op { source: 0, decl: -1, kind_tag: 8, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: unsigned, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_INT_WRAP, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: unsigned, str: "" };
 }
 
 pub function op_int_extend_ptr(): Op {
-  return Op { source: 0, decl: -1, kind_tag: 7, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_INT_EXTEND, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: "" };
 }
 
 pub function op_int_wrap_ptr(): Op {
-  return Op { source: 0, decl: -1, kind_tag: 8, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_INT_WRAP, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: "" };
 }
 
 pub function op_const_i64_text(t: string): Op {
-  return Op { source: 0, decl: -1, kind_tag: 3, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: t };
+  return Op { source: 0, decl: -1, kind_tag: K_CONST_I64, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: t };
 }
 
 pub function op_const_f64(v: f64): Op {
-  return Op { source: 0, decl: -1, kind_tag: 4, i32_imm: 0, i64_imm: 0, f64_imm: v, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_CONST_F64, i32_imm: 0, i64_imm: 0, f64_imm: v, width: 0, unsigned: false, str: "" };
 }
 
 pub function const_i64_text(o: Op): string {
@@ -77,25 +77,25 @@ pub function const_f64_bits(o: Op): i64 {
 }
 
 pub function op_const_str(s: string): Op {
-  return Op { source: 0, decl: -1, kind_tag: 5, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: s };
+  return Op { source: 0, decl: -1, kind_tag: K_CONST_STR, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: s };
 }
 
 // The address of function `name`, with `cfi` the signature word its stub
 // carries under -harden (`cfi_sig_hash`).
 pub function op_const_func(cfi: i32, name: string): Op {
-  return Op { source: 0, decl: -1, kind_tag: 6, i32_imm: cfi, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: name };
+  return Op { source: 0, decl: -1, kind_tag: K_CONST_FUNC, i32_imm: cfi, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: name };
 }
 
 pub function op_load_local(idx: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 18, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_LOAD_LOCAL, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_store_local(idx: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 19, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_STORE_LOCAL, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_tee_local(idx: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 20, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_TEE_LOCAL, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_bin(kind: string, width: i32, unsigned: boolean): Op {
@@ -212,15 +212,15 @@ pub function op_lane_at(kind: string, width: i32, lane: i32): Op {
 }
 
 pub function op_const_f64_text(t: string): Op {
-  return Op { source: 0, decl: -1, kind_tag: 4, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: t };
+  return Op { source: 0, decl: -1, kind_tag: K_CONST_F64, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: t };
 }
 
 pub function op_load(width: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 67, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_LOAD, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function op_store(width: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 68, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_STORE, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function op_alloc(): Op {
@@ -232,15 +232,15 @@ pub function op_ptr_width(): Op {
 }
 
 pub function op_arr_make(n: i32, width: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 87, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_ARR_MAKE, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function op_arr_get(width: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 88, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_ARR_GET, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function op_arr_get_nc(width: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 88, i32_imm: 1, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_ARR_GET, i32_imm: 1, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function check_only(op: Op): Op {
@@ -292,23 +292,23 @@ pub function is_lane_call(op: Op): boolean {
 }
 
 pub function op_arr_set(width: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 89, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_ARR_SET, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function op_arr_make_i64(n: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 87, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_ARR_MAKE, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
 }
 
 pub function op_arr_get_i64(): Op {
-  return Op { source: 0, decl: -1, kind_tag: 88, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_ARR_GET, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
 }
 
 pub function op_arr_get_i64_nc(): Op {
-  return Op { source: 0, decl: -1, kind_tag: 88, i32_imm: 1, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_ARR_GET, i32_imm: 1, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
 }
 
 pub function op_arr_set_i64(): Op {
-  return Op { source: 0, decl: -1, kind_tag: 89, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_ARR_SET, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
 }
 
 pub function op_arr_len(): Op {
@@ -408,7 +408,7 @@ pub function op_store_ptr(): Op {
 }
 
 pub function op_int_cast(ty: string): Op {
-  return Op { source: 0, decl: -1, kind_tag: 9, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: ty };
+  return Op { source: 0, decl: -1, kind_tag: K_INT_CAST, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: ty };
 }
 
 pub function op_u32_wrap(): Op {
@@ -455,11 +455,11 @@ pub function op_str_slice(): Op {
 }
 
 pub function op_str_slice_frame(base: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 102, i32_imm: base + 1, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_STR_SLICE, i32_imm: base + 1, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_arr_slice(width: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 96, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_ARR_SLICE, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function op_array_literal_copy(width: i32): Op {
@@ -500,7 +500,7 @@ pub function op_raw_string(): Op {
 }
 
 pub function op_raw_string_frame(base: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 86, i32_imm: base + 1, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_RAW_STRING, i32_imm: base + 1, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function frame_box_base(o: Op): i32 {
@@ -783,7 +783,7 @@ pub function op_dir_entries(): Op {
 }
 
 pub function op_dir_stat(follow: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 423, i32_imm: follow, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_DIR_STAT, i32_imm: follow, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub const K_DIR_ACCESS: i32 = 424;
@@ -793,7 +793,7 @@ pub function op_dir_access(): Op {
 }
 
 pub function op_dir_unlink(dir: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 425, i32_imm: dir, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_DIR_UNLINK, i32_imm: dir, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub const K_DIR_CHMOD: i32 = 426;
@@ -809,7 +809,7 @@ pub function op_dir_chown(): Op {
 }
 
 pub function op_dir_open_file(write: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 428, i32_imm: write, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_DIR_OPEN_FILE, i32_imm: write, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_termios_get(): Op {
@@ -1380,11 +1380,11 @@ pub function op_str_split(): Op {
 }
 
 pub function op_opt_make(tag: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 120, i32_imm: tag, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_OPT_MAKE, i32_imm: tag, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_opt_make_w(tag: i32, width: i32, is_i64: boolean): Op {
-  return Op { source: 0, decl: -1, kind_tag: 120, i32_imm: tag, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_OPT_MAKE, i32_imm: tag, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
 }
 
 pub const K_OPT_TAG: i32 = 122;
@@ -1400,7 +1400,7 @@ pub function op_opt_payload(): Op {
 }
 
 pub function op_opt_payload_w(width: i32, is_i64: boolean): Op {
-  return Op { source: 0, decl: -1, kind_tag: 123, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_OPT_PAYLOAD, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
 }
 
 pub const K_OPT_SET_PAYLOAD: i32 = 124;
@@ -1844,11 +1844,11 @@ pub function op_proc_exec_as(): Op {
 }
 
 pub function op_struct_make(type_name: string, nfields: i32, decl_index: i32): Op {
-  return Op { source: 0, decl: decl_index, kind_tag: 138, i32_imm: nfields, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
+  return Op { source: 0, decl: decl_index, kind_tag: K_STRUCT_MAKE, i32_imm: nfields, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
 }
 
 pub function op_const_struct(type_name: string, nfields: i32, values: string): Op {
-  return Op { source: 0, decl: -1, kind_tag: 218, i32_imm: nfields, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name + "|" + values };
+  return Op { source: 0, decl: -1, kind_tag: K_CONST_STRUCT, i32_imm: nfields, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name + "|" + values };
 }
 
 pub function const_struct_type(packed: string): string {
@@ -2008,55 +2008,55 @@ function const_struct_fn_hash_at(t: string): i32 {
 }
 
 pub function op_struct_get(field_index: i32, width: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 139, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_STRUCT_GET, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function op_struct_set(field_index: i32, width: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 140, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_STRUCT_SET, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function op_struct_get_i64(field_index: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 139, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_STRUCT_GET, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
 }
 
 pub function op_struct_set_i64(field_index: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 140, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_STRUCT_SET, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
 }
 
 pub function op_struct_set_shape(type_name: string): Op {
-  return Op { source: 0, decl: -1, kind_tag: 141, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
+  return Op { source: 0, decl: -1, kind_tag: K_STRUCT_SET_SHAPE, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
 }
 
 pub function op_tuple_make(n: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 142, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_TUPLE_MAKE, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_tuple_make_k(n: i32, kinds: string): Op {
-  return Op { source: 0, decl: -1, kind_tag: 142, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: kinds };
+  return Op { source: 0, decl: -1, kind_tag: K_TUPLE_MAKE, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: kinds };
 }
 
 pub function op_tuple_get(idx: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 143, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_TUPLE_GET, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_tuple_set(idx: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 144, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_TUPLE_SET, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_tuple_set_w(idx: i32, width: i32, is_i64: boolean): Op {
-  return Op { source: 0, decl: -1, kind_tag: 144, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_TUPLE_SET, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
 }
 
 pub function op_tuple_get_w(idx: i32, width: i32, is_i64: boolean): Op {
-  return Op { source: 0, decl: -1, kind_tag: 143, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_TUPLE_GET, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
 }
 
 pub function op_variant_is(name: string): Op {
-  return Op { source: 0, decl: -1, kind_tag: 145, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: name };
+  return Op { source: 0, decl: -1, kind_tag: K_VARIANT_IS, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: name };
 }
 
 pub function op_call_direct(callee: string, argc: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 149, i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: callee };
+  return Op { source: 0, decl: -1, kind_tag: K_CALL_DIRECT, i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: callee };
 }
 
 pub function op_dyn_dispatch(arms: string[], base_slot: i32, argc: i32): Op {
@@ -2067,7 +2067,7 @@ pub function op_dyn_dispatch(arms: string[], base_slot: i32, argc: i32): Op {
     }
     tag += arms[i];
   }
-  return Op { source: 0, decl: -1, kind_tag: 147, i32_imm: base_slot, i64_imm: 0, f64_imm: 0.0, width: argc, unsigned: false, str: tag };
+  return Op { source: 0, decl: -1, kind_tag: K_DYN_DISPATCH, i32_imm: base_slot, i64_imm: 0, f64_imm: 0.0, width: argc, unsigned: false, str: tag };
 }
 
 pub function dyn_dispatch_arms(tag: string): string[] {
@@ -2085,18 +2085,18 @@ pub function dyn_dispatch_arms(tag: string): string[] {
 }
 
 pub function op_dyn_box(type_name: string): Op {
-  return Op { source: 0, decl: -1, kind_tag: 146, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
+  return Op { source: 0, decl: -1, kind_tag: K_DYN_BOX, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
 }
 
 pub function op_call_indirect(argc: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 150, i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_CALL_INDIRECT, i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 // `sig` is the width tag the wasm backend types the call with, and `cfi` is
 // the signature word a hardened native call compares with the callee's stub
 // (`cfi_sig_hash`). A raw call carries neither.
 pub function op_call_indirect_sig(argc: i32, sig: string, cfi: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 150, i32_imm: argc, i64_imm: cfi as i64, f64_imm: 0.0, width: 0, unsigned: false, str: sig };
+  return Op { source: 0, decl: -1, kind_tag: K_CALL_INDIRECT, i32_imm: argc, i64_imm: cfi as i64, f64_imm: 0.0, width: 0, unsigned: false, str: sig };
 }
 
 // The 32-bit FNV-1a hash of a function's full width tag, the word a hardened
@@ -2117,15 +2117,15 @@ pub function cfi_sig_hash(tag: string): i32 {
 }
 
 pub function op_block(blocktype: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 152, i32_imm: blocktype, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_BLOCK, i32_imm: blocktype, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_loop(blocktype: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 153, i32_imm: blocktype, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_LOOP, i32_imm: blocktype, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_if(blocktype: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 154, i32_imm: blocktype, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_IF, i32_imm: blocktype, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_else(): Op {
@@ -2137,11 +2137,11 @@ pub function op_end(): Op {
 }
 
 pub function op_br(depth: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 157, i32_imm: depth, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_BR, i32_imm: depth, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_brif(depth: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 158, i32_imm: depth, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_BRIF, i32_imm: depth, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_drop(): Op {

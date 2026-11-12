@@ -969,7 +969,7 @@ function phi_of(b: ssa.SBlock, v: i32): ssa.SInst {
       return ins;
     }
   }
-  return ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
+  return ssa.no_inst();
 }
 
 // An arm is entered from the branch alone, holds no phi, and is neither the
