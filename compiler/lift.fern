@@ -1554,7 +1554,7 @@ function call_argument_needs_box(call: ast.ExprCall, name: string, field: string
   }
   return field.len() > 0 && (lift_callee_param_is_fn(mfuncs, field, idx)
     || lift_method_arg_is_fn(call.args[idx], field, idx, mfuncs)
-    || lift_arr_store_arg_is_fn_name(call.args[idx], field, idx, fd, mfuncs));
+    || lift_store_arg_is_fn_name(call.args[idx], field, idx, fd, mfuncs));
 }
 
 function binding_param_is_fn(fd: parser.FuncDecl, vars: VarDecls, callee: string, idx: i32, mfuncs: MFuncs, depth: i32): boolean {
@@ -1834,8 +1834,17 @@ function lift_method_arg_is_fn(arg: ast.Expr, mfield: string, idx: i32, mfuncs: 
   return false;
 }
 
-function lift_arr_store_arg_is_fn_name(arg: ast.Expr, mfield: string, idx: i32, fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
-  if (!(mfield == "with" && idx == 1 || mfield == "append" && idx == 0)) {
+// The element argument of a builtin array or map method that stores it or
+// gives it back.
+function element_store_arg(mfield: string, idx: i32): boolean {
+  if (idx == 0) {
+    return mfield == "append";
+  }
+  return idx == 1 && (mfield == "with" || mfield == "insert" || mfield == "get_or");
+}
+
+function lift_store_arg_is_fn_name(arg: ast.Expr, mfield: string, idx: i32, fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
+  if (!element_store_arg(mfield, idx)) {
     return false;
   }
   match (arg) {
