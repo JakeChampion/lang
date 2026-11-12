@@ -8495,6 +8495,10 @@ function ssa_sysreg(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
     s = s.write("    movq %cr" + util.i32_to_string(cr) + ", %rax\n");
   } else if (cr >= 0) {
     s = s.write("    movq %rax, %cr" + util.i32_to_string(cr) + "\n    xorl %eax, %eax\n");
+  } else if (read && msr == 0x10i64) {
+    // A read of the time-stamp counter is rdtsc. Some VMMs give a stale value
+    // for rdmsr of the same register.
+    s = s.write("    rdtsc\n    shlq $32, %rdx\n    orq %rdx, %rax\n");
   } else if (read) {
     s = s.write("    movl $" + util.i64_to_string(msr) + ", %ecx\n    rdmsr\n    shlq $32, %rdx\n    orq %rdx, %rax\n");
   } else {
@@ -8565,6 +8569,11 @@ function ssa_privileged(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): as
   }
   if (ins.str == "dev_irq_pending") {
     s = s.write("    leaq __fern_irq_pending(%rip), %rax\n");
+    return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
+  }
+  if (ins.str == "dev_user_run") {
+    s = ssa_load(reg_of, ins.args[0], "%rax", s);
+    s = s.write("    call __fern_user_run\n");
     return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
   }
   let fixed = x86_no_operand_op(ins.str);
@@ -10995,6 +11004,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
   } else if (o.kind_tag == ir.K_TCP_CLOSE) {
     s = s.write("    call __fn___fern_tcp_close\n    addq $8, %rsp\n    pushq %rax\n");
     s = s.need("tcp_close");
+    s = s.need("task");
   } else if (o.kind_tag == ir.K_TCP_LISTEN) {
     s = s.write("    call __fn___fern_tcp_listen\n    addq $8, %rsp\n    pushq %rax\n");
     s = s.need("tcp_listen");
@@ -11395,7 +11405,9 @@ function worker_reap_census(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 // Snapshot live child allocations before munmap. A successful munmap frees
-// the whole region, without a release into the parent's free lists.
+// the whole region, without a release into the parent's free lists. The
+// count is signed: a body that frees boxes of the parent's image frees more
+// than it allocates.
 function emit_worker_unmap(s: asmcore.EmitState): asmcore.EmitState {
   s = s.need("worker_unmap");
   s = s.need("worker_regions");
@@ -11404,23 +11416,22 @@ function emit_worker_unmap(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq $0, __fern_forget_lo(%rip)\n    movq $0, __fern_forget_hi(%rip)\n");
   }
   let ready = asmcore.fresh_label(s);
-  let bad = asmcore.fresh_label(ready.state);
-  let done = asmcore.fresh_label(bad.state);
+  let done = asmcore.fresh_label(ready.state);
   s = done.state;
   if (s.leak_check) {
     s = s.write("    xorq %r8, %r8\n    xorq %r9, %r9\n    testq %r10, %r10\n    jz " + ready.name + "\n");
-    s = s.write("    movq 8(%rax), %r8\n    subq 24(%rax), %r8\n    jc " + bad.name + "\n");
-    s = s.write("    movq 16(%rax), %r9\n    subq 32(%rax), %r9\n    jc " + bad.name + "\n");
+    s = s.write("    movq 8(%rax), %r8\n    subq 24(%rax), %r8\n");
+    s = s.write("    movq 16(%rax), %r9\n    subq 32(%rax), %r9\n");
     s = s.write(ready.name + ":\n    pushq %r8\n    pushq %r9\n");
   }
   if (rc_trace_on()) {
     s = s.write("    pushq %rdx\n    pushq %rax\n");
   }
   s = s.write("    pushq %r10\n    pushq %rdx\n    pushq %rax\n    call __fn___fern_worker_unmap\n    addq $24, %rsp\n");
-  return worker_unmap_result(s, bad.name, done.name);
+  return worker_unmap_result(s, done.name);
 }
 
-function worker_unmap_result(s: asmcore.EmitState, bad_label: string, done_label: string): asmcore.EmitState {
+function worker_unmap_result(s: asmcore.EmitState, done_label: string): asmcore.EmitState {
   if (rc_trace_on()) {
     s = s.write("    popq %rdi\n    popq %rsi\n");
   }
@@ -11436,9 +11447,7 @@ function worker_unmap_result(s: asmcore.EmitState, bad_label: string, done_label
   if (rc_trace_on()) {
     s = s.write("    pushq %rax\n    pushq %rsi\n    pushq %rdi\n    call __fern_hev_u\n    addq $16, %rsp\n    popq %rax\n");
   }
-  if (s.leak_check) {
-    s = s.write("    jmp " + done_label + "\n" + bad_label + ":\n    movq $-22, %rax\n" + done_label + ":\n");
-  } else if (rc_trace_on()) {
+  if (s.leak_check || rc_trace_on()) {
     s = s.write(done_label + ":\n");
   }
   return s.write("    pushq %rax\n");
@@ -12161,6 +12170,9 @@ function emit_reset_start(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_start64:\n    movl %ebx, %eax\n    movq %rax, __fern_boot_info(%rip)\n    movabsq $" + util.i64_to_string(top) + ", %rax\n    movq %rax, %rsp\n");
   s = s.write("    leaq __fern_bss_start(%rip), %rdi\n    leaq __fern_bss_end(%rip), %rcx\n    subq %rdi, %rcx\n    xorl %eax, %eax\n    rep stosb\n");
   s = emit_idt_load(s);
+  if (s.user_mode) {
+    s = s.write("    call __fern_user_init\n");
+  }
   if (s.early.len() > 0) {
     // The hook runs on the stack, the identity map and the IDT, before the heap
     // starts.
@@ -12187,23 +12199,31 @@ function exit_provider_call(s: asmcore.EmitState, reg: string): string {
 // The IDT has 256 interrupt gates in .bss. Each one starts at the park stub,
 // and then each handler's gate goes to its trampoline.
 function emit_idt_load(s: asmcore.EmitState): asmcore.EmitState {
-  if (s.interrupts.len() == 0) {
+  if (s.interrupts.len() == 0 && !s.user_mode) {
     return s;
   }
   s = s.write("    .section .bss\n    .p2align 4\n__fern_idt:\n    .skip 4096\n    .text\n");
+  if (s.user_mode) {
+    // Each vector has its own gate of 32 bytes, which knows its number.
+    return s.write("    leaq __fern_idt(%rip), %rdi\n    leaq __fern_user_gates(%rip), %rax\n    movl $256, %ecx\n.Lidt_fill:\n    call __fern_idt_gate\n    addq $16, %rdi\n    addq $32, %rax\n    decl %ecx\n    jnz .Lidt_fill\n" + idt_register());
+  }
   s = s.write("    leaq __fern_idt(%rip), %rdi\n    movl $256, %ecx\n.Lidt_fill:\n    leaq .Lvector_park(%rip), %rax\n    call __fern_idt_gate\n    addq $16, %rdi\n    decl %ecx\n    jnz .Lidt_fill\n");
   for entry in s.interrupts {
     let parts = util.split_char(entry, b' ');
     let at = util.i32_to_string(16 * norc.x86_vector(parts[0]));
     s = s.write("    leaq __fern_idt(%rip), %rdi\n    addq $" + at + ", %rdi\n    leaq __fern_vector_" + parts[0] + "(%rip), %rax\n    call __fern_idt_gate\n");
   }
-  return s.write("    subq $16, %rsp\n    movl $4095, (%rsp)\n    leaq __fern_idt(%rip), %rax\n    movq %rax, 2(%rsp)\n    lidt (%rsp)\n    addq $16, %rsp\n");
+  return s.write(idt_register());
+}
+
+function idt_register(): string {
+  return "    subq $16, %rsp\n    movl $4095, (%rsp)\n    leaq __fern_idt(%rip), %rax\n    movq %rax, 2(%rsp)\n    lidt (%rsp)\n    addq $16, %rsp\n";
 }
 
 // __fern_idt_gate writes the interrupt gate at %rdi to the code at %rax: the
 // 64-bit code segment 8, present, DPL 0, type 0xe.
 function emit_idt_vectors(s: asmcore.EmitState): asmcore.EmitState {
-  if (s.interrupts.len() == 0) {
+  if (s.interrupts.len() == 0 && !s.user_mode) {
     return s;
   }
   s = s.write("__fern_idt_gate:\n    movl %eax, %edx\n    andl $65535, %edx\n    orl $524288, %edx\n    movl %edx, (%rdi)\n");
@@ -12214,7 +12234,145 @@ function emit_idt_vectors(s: asmcore.EmitState): asmcore.EmitState {
     let parts = util.split_char(entry, b' ');
     s = emit_idt_trampoline(s, parts[0], parts[1], norc.x86_error_code(norc.x86_vector(parts[0])));
   }
+  if (s.user_mode) {
+    s = emit_user_run(s);
+  }
   return s;
+}
+
+// The label that takes vector `v` from ring 0: the trampoline of its handler,
+// or the park stub.
+function kernel_vector_target(interrupts: string[], v: i32): string {
+  for entry in interrupts {
+    let parts = util.split_char(entry, b' ');
+    if (norc.x86_vector(parts[0]) == v) {
+      return "__fern_vector_" + parts[0];
+    }
+  }
+  return ".Lvector_park";
+}
+
+// The 16 general registers of the trap frame in `base`, in the order of their
+// numbers, without %rsp and without `base`. A load reads each register from
+// the frame, and a store writes it to the frame.
+function user_frame_gprs(load: boolean, base: string): string {
+  let names = ["rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"];
+  let out = "";
+  for i in 0..names.len() {
+    if (names[i] != "rsp" && names[i] != base) {
+      let at = util.i32_to_string(8 * i) + "(%" + base + ")";
+      if (load) {
+        out = out + "    movq " + at + ", %" + names[i] + "\n";
+      } else {
+        out = out + "    movq %" + names[i] + ", " + at + "\n";
+      }
+    }
+  }
+  return out;
+}
+
+// ymm0 to ymm15 of the trap frame in %rdi.
+function user_frame_vectors(load: boolean): string {
+  let out = "";
+  for i in 0..16 {
+    let at = util.i32_to_string(192 + 32 * i) + "(%rdi)";
+    let reg = "%ymm" + util.i32_to_string(i);
+    if (load) {
+      out = out + "    vmovdqu " + at + ", " + reg + "\n";
+    } else {
+      out = out + "    vmovdqu " + reg + ", " + at + "\n";
+    }
+  }
+  return out;
+}
+
+// A read of the model-specific register `index` into `to`, and a write of it
+// from `from`. Both use %rax, %rcx and %rdx.
+function msr_read(index: i64, to: string): string {
+  return "    movl $" + util.i64_to_string(index) + ", %ecx\n    rdmsr\n    shlq $32, %rdx\n    orq %rdx, %rax\n    movq %rax, " + to + "\n";
+}
+
+function msr_write(index: i64, from: string): string {
+  return "    movq " + from + ", %rax\n    movq %rax, %rdx\n    shrq $32, %rdx\n    movl $" + util.i64_to_string(index) + ", %ecx\n    wrmsr\n";
+}
+
+// The trap frame of __user_run: the 16 general registers at 0 in the order of
+// their numbers, the PC at 128, the flags at 136, the FS and GS bases at 144
+// and 152, the vector, the error code and CR2 of the last trap at 160, 168 and
+// 176, MXCSR at 184, and ymm0 to ymm15 at 192, 704 bytes in all.
+// __fern_user_ctx holds the frame of the running process, the stack pointer
+// of the kernel and one scratch word. Only one core runs a process.
+function emit_user_run(s: asmcore.EmitState): asmcore.EmitState {
+  let fs = 0xc0000100i64;
+  let gs = 0xc0000101i64;
+  s = s.write("    .section .bss\n    .p2align 4\n__fern_user_gdt:\n    .skip 64\n__fern_user_tss:\n    .skip 112\n__fern_user_ctx:\n    .skip 32\n    .text\n");
+  // The GDT keeps the kernel segments of the reset entry at 8 and 16, and adds
+  // the ring 3 data segment at 32, the ring 3 code segment at 40 and the TSS
+  // at 48. SYSCALL takes its segments from STAR, its target from LSTAR, and
+  // clears TF, IF, DF, NT and AC through FMASK.
+  s = s.write("__fern_user_init:\n    leaq __fern_user_gdt(%rip), %rdi\n    movl $65535, 8(%rdi)\n    movl $11508224, 12(%rdi)\n    movl $65535, 16(%rdi)\n    movl $13603328, 20(%rdi)\n");
+  s = s.write("    movl $65535, 32(%rdi)\n    movl $13628928, 36(%rdi)\n    movl $65535, 40(%rdi)\n    movl $11532800, 44(%rdi)\n");
+  s = s.write("    leaq __fern_user_tss(%rip), %rax\n    movl %eax, %edx\n    shll $16, %edx\n    orl $103, %edx\n    movl %edx, 48(%rdi)\n");
+  s = s.write("    movq %rax, %rdx\n    shrq $16, %rdx\n    andl $255, %edx\n    movl %eax, %ecx\n    andl $-16777216, %ecx\n    orl %ecx, %edx\n    orl $35072, %edx\n    movl %edx, 52(%rdi)\n");
+  s = s.write("    movq %rax, %rdx\n    shrq $32, %rdx\n    movl %edx, 56(%rdi)\n    movl $6815744, 100(%rax)\n");
+  s = s.write("    subq $16, %rsp\n    movl $63, (%rsp)\n    movq %rdi, 2(%rsp)\n    lgdt (%rsp)\n    movl $48, (%rsp)\n    ltr (%rsp)\n    addq $16, %rsp\n");
+  s = s.write("    movl $3221225600, %ecx\n    rdmsr\n    orl $1, %eax\n    wrmsr\n");
+  s = s.write("    movl $3221225601, %ecx\n    xorl %eax, %eax\n    movl $1769480, %edx\n    wrmsr\n");
+  s = s.write("    leaq __fern_user_syscall(%rip), %rax\n    movq %rax, %rdx\n    shrq $32, %rdx\n    movl $3221225602, %ecx\n    wrmsr\n");
+  s = s.write("    movl $3221225604, %ecx\n    movl $280320, %eax\n    xorl %edx, %edx\n    wrmsr\n    ret\n");
+  // __user_run(frame): keep the registers that a call keeps, the flags, and
+  // the FS base, GS base and MXCSR of the kernel, which the frame replaces.
+  // A PC outside the low half makes iretq fault in ring 0, so it is answered
+  // as the general-protection fault that the process would take.
+  s = s.write("__fern_user_run:\n    pushfq\n    pushq %rbx\n    pushq %rbp\n    pushq %r12\n    pushq %r13\n    pushq %r14\n    pushq %r15\n    subq $24, %rsp\n    cli\n    movq %rax, %rdi\n");
+  s = s.write("    movq 128(%rdi), %rax\n    shrq $47, %rax\n    jnz .Luser_bad_pc\n");
+  s = s.write("    movq %rdi, __fern_user_ctx(%rip)\n    movq %rsp, __fern_user_ctx+8(%rip)\n    movq %rsp, __fern_user_tss+4(%rip)\n");
+  s = s.write(msr_read(fs, "0(%rsp)") + msr_read(gs, "8(%rsp)") + "    stmxcsr 16(%rsp)\n");
+  s = s.write(msr_write(fs, "144(%rdi)") + msr_write(gs, "152(%rdi)") + "    ldmxcsr 184(%rdi)\n" + user_frame_vectors(true));
+  // The process gets its arithmetic flags and DF. IF is set and IOPL is 0.
+  s = s.write("    pushq $35\n    pushq 32(%rdi)\n    movq 136(%rdi), %rax\n    andl $3285, %eax\n    orl $514, %eax\n    pushq %rax\n    pushq $43\n    pushq 128(%rdi)\n");
+  s = s.write(user_frame_gprs(true, "rdi") + "    movq 56(%rdi), %rdi\n    iretq\n");
+  s = s.write(".Luser_bad_pc:\n    movq $13, 160(%rdi)\n    movq $0, 168(%rdi)\n    movl $2, %eax\n    jmp .Luser_ret\n");
+  // SYSCALL leaves the user PC in %rcx and the user flags in %r11, and it
+  // keeps the user stack.
+  s = s.write("__fern_user_syscall:\n    movq %rcx, __fern_user_ctx+16(%rip)\n    movq __fern_user_ctx(%rip), %rcx\n" + user_frame_gprs(false, "rcx"));
+  s = s.write("    movq %rsp, 32(%rcx)\n    movq __fern_user_ctx+16(%rip), %rax\n    movq %rax, 8(%rcx)\n    movq %rax, 128(%rcx)\n    movq %r11, 136(%rcx)\n");
+  s = s.write("    movq %rcx, %rdi\n    movq __fern_user_ctx+8(%rip), %rsp\n    xorl %r12d, %r12d\n    jmp .Luser_leave\n");
+  // A gate of a vector. An exception or an interrupt from ring 0 goes to the
+  // trampoline of its handler, or parks. One from ring 3 pushes its number,
+  // after a zero where the CPU pushes no error code.
+  s = s.write("    .p2align 5\n__fern_user_gates:\n");
+  for v in 0..256 {
+    let cs = "8";
+    let zero = "    pushq $0\n";
+    if (norc.x86_error_code(v)) {
+      cs = "16";
+      zero = "";
+    }
+    s = s.write("    .p2align 5\n    testb $3, " + cs + "(%rsp)\n    jz " + kernel_vector_target(s.interrupts, v) + "\n" + zero + "    pushq $" + util.i32_to_string(v) + "\n    jmp __fern_user_trap\n");
+  }
+  // The CPU switched to the stack of the TSS, which is the kernel stack of
+  // __user_run. It aligned that stack, and pushed SS, the stack pointer, the
+  // flags, CS and the PC.
+  s = s.write("    .p2align 5\n__fern_user_trap:\n    pushq %rdi\n    movq __fern_user_ctx(%rip), %rdi\n" + user_frame_gprs(false, "rdi"));
+  s = s.write("    popq %rax\n    movq %rax, 56(%rdi)\n    popq %rax\n    movq %rax, 160(%rdi)\n    popq %rax\n    movq %rax, 168(%rdi)\n    popq %rax\n    movq %rax, 128(%rdi)\n    popq %rax\n");
+  s = s.write("    popq %rax\n    movq %rax, 136(%rdi)\n    popq %rax\n    movq %rax, 32(%rdi)\n    movq __fern_user_ctx+8(%rip), %rsp\n    movq %cr2, %rax\n    movq %rax, 176(%rdi)\n");
+  s = s.write("    movl $2, %r12d\n    cmpq $32, 160(%rdi)\n    jb .Luser_leave\n    movl $1, %r12d\n");
+  // The frame is in %rdi and the kind in %r12, on the kernel stack.
+  s = s.write(".Luser_leave:\n    cld\n" + msr_read(fs, "144(%rdi)") + msr_read(gs, "152(%rdi)") + "    stmxcsr 184(%rdi)\n" + user_frame_vectors(false));
+  s = s.write(msr_write(fs, "0(%rsp)") + msr_write(gs, "8(%rsp)") + "    ldmxcsr 16(%rsp)\n    movq %r12, %rax\n    cmpl $1, %eax\n    jne .Luser_ret\n    movq 160(%rdi), %rax\n");
+  // An interrupt from ring 3 runs the top half of its vector here, in ring 0
+  // with the registers of the kernel, before __user_run returns.
+  for entry in s.interrupts {
+    let parts = util.split_char(entry, b' ');
+    if (norc.x86_vector(parts[0]) >= 32) {
+      s = s.write("    leaq " + parts[1] + "(%rip), %rcx\n    cmpq $" + util.i32_to_string(norc.x86_vector(parts[0])) + ", %rax\n    je .Luser_irq\n");
+    }
+  }
+  s = s.write("    movl $1, %eax\n    jmp .Luser_ret\n");
+  s = s.write(".Luser_irq:\n    movq 24(%rsp), %r15\n    movq 32(%rsp), %r14\n    movq 40(%rsp), %r13\n    movq 48(%rsp), %r12\n    movq 56(%rsp), %rbp\n    movq 64(%rsp), %rbx\n");
+  s = s.write("    movq %rsp, %rax\n    andq $-16, %rsp\n    subq $16, %rsp\n    movq %rax, (%rsp)\n    call *%rcx\n    movq (%rsp), %rsp\n    movl $1, %eax\n");
+  return s.write(".Luser_ret:\n    addq $24, %rsp\n    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbp\n    popq %rbx\n    popfq\n    ret\n");
 }
 
 // The trampoline saves the registers that a call can change: the nine
@@ -12291,10 +12449,10 @@ function reset_trampoline(t: i32, top: i32): i32[] {
   // CR4: PAE, OSFXSR, OSXMMEXCPT, OSXSAVE. Then XCR0 = x87 | SSE | AVX.
   b = util.le32(b.append(15).append(32).append(224).append(13), 263712).append(15).append(34).append(224);
   b = util.le32(b.append(49).append(201).append(184), 7).append(49).append(210).append(15).append(1).append(209);
-  // CR3 = PML4; EFER.LME; CR0 = PG | MP | PE with EM clear.
+  // CR3 = PML4; EFER.LME and EFER.NXE; CR0 = PG | MP | PE with EM clear.
   b = util.le32(b.append(184), t).append(15).append(34).append(216);
   b = util.le32(b.append(185), -1073741696).append(15).append(50);
-  b = util.le32(b.append(13), 256).append(15).append(48);
+  b = util.le32(b.append(13), 2304).append(15).append(48);
   b = b.append(15).append(32).append(192).append(131).append(224).append(251);
   b = util.le32(b.append(13), -2147483645).append(15).append(34).append(192);
   // lea start64-anchor(%ebp), %eax; push $8; push %eax; lret.
@@ -12680,7 +12838,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .section .bss\n    .align 8\n__fern_cov_counters: .quad 0\n    .text\n");
   }
   if (s.has_need("task")) {
-    s = s.write("    .section .bss\n    .align 8\n__fern_task_state: .quad 0, 0, 0, 0, 0, 0, 0\n    .text\n");
+    s = s.write("    .section .bss\n    .align 8\n__fern_task_state: .quad 0, 0, 0, 0, 0, 0, 0, 0\n    .text\n");
   }
   if (s.has_need("str_print")) {
     s = s.write("    .text\n");

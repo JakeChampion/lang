@@ -12,7 +12,10 @@ import (
 // separate heaps run under a timer that preempts them. Each tick during EL0
 // returns to the kernel loop, which runs the next process. The kernel heap
 // is never preempted, because the top half touches no RC value.
-const schedMainSrc = processKernelSrc + `
+const schedMainSrc = processKernelSrc + schedLoopSrc
+
+// schedLoopSrc is the main of the scheduler test, for the kernel of each ISA.
+const schedLoopSrc = `
 struct Slot { path: string, p: user_process.Process, line: u8[], preempts: i32, done: boolean }
 
 // Runs the slot until its next event, and gives the slot after it.

@@ -3,14 +3,32 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdlib.h>
+#include <stdio.h>
+#include <unistd.h>
 
 struct stream { int closed; int frames; int base; };
 static struct stream streams[16];
 static int count, mode, starts, pauses, writes, closes, base;
+static int16_t expected[48000];
+static size_t expected_count;
 
 void av_audio_reset(void) {
     for (int i = 0; i < count; ++i) assert(streams[i].closed);
     count = mode = starts = pauses = writes = closes = base = 0;
+    expected_count = 0;
+    const char *path = getenv("AV_AUDIO_REFERENCE");
+    if (path) {
+        FILE *file = fopen(path, "rb");
+        assert(file);
+        expected_count = fread(expected, sizeof *expected, 48000, file);
+        assert(expected_count == 38400 && fgetc(file) == EOF);
+        assert(fclose(file) == 0);
+    }
+}
+int av_audio_truncate(void) {
+    const char *path = getenv("AV_AUDIO_FILE");
+    assert(path);
+    return truncate(path, 0);
 }
 void av_audio_mode(int value) { mode = value; }
 void av_audio_base(int value) { base = value; }
@@ -50,7 +68,15 @@ int32_t AAudioStream_write(void *p, const void *buffer, int32_t frames, int64_t 
     struct stream *s = checked(p);
     const int16_t *samples = buffer;
     assert(frames > 0 && frames <= 1024 && timeout_ns == 0);
-    for (int i = 0; i < frames * 2; ++i) assert(samples[i] == (s->base + s->frames * 2 + i) % 30000);
+    for (int i = 0; i < frames * 2; ++i) {
+        int at = s->base + s->frames * 2 + i;
+        if (expected_count) {
+            assert(at >= 0 && (size_t)at < expected_count);
+            assert(abs((int)samples[i] - (int)expected[at]) <= 1);
+        } else {
+            assert(samples[i] == at % 30000);
+        }
+    }
     writes++;
     int accepted = mode == 1 ? (frames < 3 ? frames : 3) : mode == 2 ? 0 : frames;
     if (mode == 5) return frames + 1;

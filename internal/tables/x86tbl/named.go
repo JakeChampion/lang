@@ -127,6 +127,10 @@ var Named = []NamedFamily{
 		{ATT: "clflush", Op: 0xAE, Ext: 7, ATTProbe: "clflush (%rax)"},
 		{ATT: "invlpg", Op: 0x01, Ext: 7, ATTProbe: "invlpg 8(%r9)"},
 		{ATT: "lidt", Op: 0x01, Ext: 3, ATTProbe: "lidt (%rsp)"},
+		{ATT: "lgdt", Op: 0x01, Ext: 2, ATTProbe: "lgdt (%rsp)"},
+		{ATT: "ltr", Op: 0x00, Ext: 3, ATTProbe: "ltr (%rax)"},
+		{ATT: "ldmxcsr", Op: 0xAE, Ext: 2, ATTProbe: "ldmxcsr (%rsp)"},
+		{ATT: "stmxcsr", Op: 0xAE, Ext: 3, ATTProbe: "stmxcsr (%rsp)"},
 	}},
 
 	{Name: "movqd", Doc: "the GPR/xmm moves; direction from which operand is the xmm. AT&T's movq spelling is the mov family's, resolved there", Ops: []NamedOp{

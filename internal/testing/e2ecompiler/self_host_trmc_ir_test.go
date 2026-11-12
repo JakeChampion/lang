@@ -94,7 +94,7 @@ function main(): i32 { let t: Tree = Node(Leaf(1), Node(Leaf(2), Leaf(3))); let 
 	run(t, mixedScrutArityProg(), "trmc-mixed-ctor-narrow-scrutinee", 0)
 
 	asm := run(t, `enum List { Cons(i32, List), Wrap(List), Nil }
-function step(xs: List): List {
+@noinline function step(xs: List): List {
     match (xs) {
         Cons(h, t) => { return Cons(h + 1, step(t)); },
         Wrap(t) => { return Wrap(step(t)); },
@@ -103,9 +103,9 @@ function step(xs: List): List {
 }
 function score(l: List): i32 { let acc: i32 = 0; let cur: List = l; let go: boolean = true; while (go) { match (cur) { Cons(h, t) => { acc = acc + h; cur = t; }, Wrap(t) => { acc = acc + 100; cur = t; }, Nil => { go = false; } } } return acc; }
 function main(): i32 { let xs: List = Cons(1, Wrap(Cons(2, Nil))); if (score(step(xs)) != 105) { return 1; } return __rc_underflow_count(); }`,
-		"trmc-mixed-hole-pos-not-rewritten", 0)
-	if n := countSelfCalls(asm, "step"); n < 2 {
-		t.Errorf("trmc-mixed-hole-pos-not-rewritten: %d call sites to step in the asm, want more than main's one (TRMC must not fire when the hole position differs between arms)", n)
+		"trmc-mixed-hole-pos", 0)
+	if n := countSelfCalls(asm, "step"); n != 1 {
+		t.Errorf("trmc-mixed-hole-pos: %d call sites to step in the asm, want 1 (main's): TRMC fires when the hole position differs between arms, and the loop carries the position", n)
 	}
 
 	asm = run(t, `enum List { Cons(i32, List), Nil }

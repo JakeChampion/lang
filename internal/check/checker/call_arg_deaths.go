@@ -403,20 +403,13 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 	var replacingBases map[[2]string]int
 	// A name that only matches on a fresh call bind: the match takes the
 	// result, so the payload is owned.
-	freshBound, staleBound, boundTag := matchBinds(info, body)
+	freshBound, staleBound := matchBinds(info, body)
 	payloadOwned := func(name string) bool {
 		return freshBound[name] && !staleBound[name] && !isParam[name] && declCount[name] == 0
 	}
-	// A payload of a match on a call whose result borrows from no argument
-	// but target: `match (x.f()) { Ok(y) => { x = y; } }` leaves x the one
-	// holder.
-	payloadOf := func(name, target string) bool {
-		tag, ok := boundTag[name].(*ast.Call)
-		if !ok || isParam[name] || declCount[name] != 0 {
-			return false
-		}
-		_, named := tag.Callee.(*ast.Ident)
-		return named && info != nil && info.CallBorrowsBeside != nil && !info.CallBorrowsBeside(tag, target)
+	rebinds := matchPayloadRebinds(info, body, occurrences, escaping)
+	payloadOf := func(value *ast.Ident, target string) bool {
+		return !isParam[value.Name] && declCount[value.Name] == 0 && rebinds[value] == target
 	}
 	// An unpack reads the one field of a fresh local, an own parameter or a
 	// payload that a match took, that nothing else reads, from a holder that
@@ -1513,10 +1506,9 @@ func loopedDecls(body *ast.Block) map[string]bool {
 
 // matchBinds names the payloads that a match on a fresh call binds, and the
 // payloads that a match on another value binds.
-func matchBinds(info *Info, body *ast.Block) (fresh, stale map[string]bool, tag map[string]ast.Expr) {
+func matchBinds(info *Info, body *ast.Block) (fresh, stale map[string]bool) {
 	fresh = map[string]bool{}
 	stale = map[string]bool{}
-	tag = map[string]ast.Expr{}
 	ast.Walk(body, func(n ast.Node) bool {
 		if m, ok := n.(*ast.Match); ok {
 			_, named := m.Tag.(*ast.Ident)
@@ -1524,11 +1516,6 @@ func matchBinds(info *Info, body *ast.Block) (fresh, stale map[string]bool, tag 
 			for _, arm := range m.Arms {
 				names, _ := arm.OwnBindings()
 				for _, b := range names {
-					if _, bound := tag[b]; bound {
-						tag[b] = nil
-					} else {
-						tag[b] = m.Tag
-					}
 					if taken {
 						fresh[b] = true
 					} else {
@@ -1539,14 +1526,14 @@ func matchBinds(info *Info, body *ast.Block) (fresh, stale map[string]bool, tag 
 		}
 		return true
 	})
-	return fresh, stale, tag
+	return fresh, stale
 }
 
 // assignedOwned reports a value an assignment to target stores that no
 // other name holds: a fresh value, an unpack, a fresh local, a payload a
 // match took, a self-update `T { ...target, f: v }`, or a call whose result
 // borrows from no argument but target itself, also through a match payload.
-func assignedOwned(info *Info, target string, v ast.Expr, freshLocal map[string]bool, payloadOwned func(string) bool, payloadOf func(name, target string) bool, unpack func(ast.Expr) bool) bool {
+func assignedOwned(info *Info, target string, v ast.Expr, freshLocal map[string]bool, payloadOwned func(string) bool, payloadOf func(*ast.Ident, string) bool, unpack func(ast.Expr) bool) bool {
 	if freshInit(info, v) || unpack(v) {
 		return true
 	}
@@ -1558,7 +1545,7 @@ func assignedOwned(info *Info, target string, v ast.Expr, freshLocal map[string]
 	case *ast.BlockExpr:
 		return x.Tail != nil && assignedOwned(info, target, x.Tail, freshLocal, payloadOwned, payloadOf, unpack)
 	case *ast.Ident:
-		return freshLocal[x.Name] || payloadOwned(x.Name) || payloadOf(x.Name, target)
+		return freshLocal[x.Name] || payloadOwned(x.Name) || payloadOf(x, target)
 	case *ast.StructLit:
 		b, ok := x.Base.(*ast.Ident)
 		return ok && b.Name == target

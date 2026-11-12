@@ -174,12 +174,18 @@ A failed worker releases its region before the parent reports the failure.
 The leak census crosses with the result. The region's header holds its size
 and the four leak-check counters: `__worker_region` writes the parent's snapshot, the
 child writes its deltas at exit, and `__worker_reap` adds them to the
-parent's counters. The child counts a free only inside the region, because
-a box of the parent's image that the child frees is the parent's to count.
+parent's counters. A refused fork imports no child counters.
+
+The body runs on the private heap of the child, and the child counts each
+free of the body. That includes a free of a box of the parent's image. After
+the heap adoption, the child counts a free only inside the region.
+
 After a successful `munmap`, the parent records the reclamation of the
 remaining live child allocations. This bulk reclamation includes temporary
-objects that the child retained until exit. A failed `munmap` changes no
-free counter and stops the program. A refused fork imports no child counters.
+objects that the child retained until exit. The live count is signed. A body
+that frees boxes of the parent's image makes it negative. The negative count
+cancels those frees, because the parent counts its own release of each box.
+A failed `munmap` changes no free counter and stops the program.
 
 The builtins behind the step are `unsafe`, and only `std/worker` calls
 them.

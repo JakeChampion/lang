@@ -50,7 +50,7 @@ func TestSelfHostFractalTiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	testFractalTargets(t, path)
+	testCensusTargets(t, path)
 }
 
 func TestSelfHostFractalSource(t *testing.T) {
@@ -58,7 +58,7 @@ func TestSelfHostFractalSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	testFractalTargets(t, path, true)
+	testCensusTargets(t, path, true)
 }
 
 func TestSelfHostFractalAcceleration(t *testing.T) {
@@ -66,7 +66,7 @@ func TestSelfHostFractalAcceleration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	testFractalTargets(t, path)
+	testCensusTargets(t, path)
 }
 
 func TestSelfHostFractalFipKernels(t *testing.T) {
@@ -83,10 +83,10 @@ func TestSelfHostFractalFipKernels(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	testFractalTargets(t, filepath.Join(dir, "fractal.fern"))
+	testCensusTargets(t, filepath.Join(dir, "fractal.fern"))
 }
 
-func testFractalTargets(t *testing.T, path string, network ...bool) {
+func testCensusTargets(t *testing.T, path string, network ...bool) {
 	t.Helper()
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {

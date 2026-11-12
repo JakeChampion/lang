@@ -91,4 +91,4 @@ An extended attribute value goes to the kernel with its length, not as a C strin
 ## Remaining limits
 
 - A plain `open_writer` follows a symbolic link, including a dangling one, and creates its target. A caller that writes into a directory other users can write uses `open_exclusive` or the no-follow bit.
-- Ownership of a descriptor after `close` is the gap recorded in [HANDLE-AUDIT.md](HANDLE-AUDIT.md).
+- The built-in `close` consumes its handle ([HANDLE-AUDIT.md](HANDLE-AUDIT.md)). A handle that a spawned task holds can still be closed by its owner (#15049), and a result that holds a borrowed handle can still pass to an `own` parameter (#13867).

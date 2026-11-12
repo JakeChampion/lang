@@ -1528,15 +1528,28 @@ pub function read_deadline(sock: Socket, max: i32, deadline: Duration): Result[R
   return read_watched(sock, max, deadline, 1);
 }
 
+// The number of closes of the descriptor number of sock in this process.
+function __closes(sock: Socket): i32 {
+  unsafe {
+    return __task_fd_gen(sock.fd);
+  }
+}
+
 pub function read_watched(sock: Socket, max: i32, wait: Duration, interest: i32): Result[Recv, NetError] {
   let until = monotonic_ns() + wait.as_nanos();
   let set = [sock.fd, interest];
+  let opened = __closes(sock);
   while (true) {
     let at = until;
     if (at - monotonic_ns() < 1000000i64) {
       at = monotonic_ns() + 1000000i64;
     }
-    match (async.wait_any(set, Some(time.instant_from_nanos(at)))) {
+    let woke = async.wait_any(set, Some(time.instant_from_nanos(at)));
+    // The number of the descriptor can name a different connection now.
+    if (__closes(sock) != opened) {
+      return Err(Other(errno.EBADF));
+    }
+    match (woke) {
       Woke(i) => {},
       TimedOut => {
         return Ok(Elapsed);
