@@ -726,6 +726,7 @@ const BACKGROUND_START_ALLOWED: i32 = 1;
 // Opens a held notification: its own intent while the process keeps it,
 // or else its app.
 function open_held(ctx: usize, pkg: string, key: string): void {
+  log.info("paper: open held " + pkg);
   let e = android.env(ctx);
   let Ok(j) = bindings.classes(e) else {
     return;
