@@ -645,10 +645,10 @@ function digits(text: string): i64 {
 function fraction(text: string): i64 {
   let ms = digits(text);
   for i in text.len()..3 {
-    ms = ms * 10i64;
+    ms *= 10i64;
   }
   for i in 3..text.len() {
-    ms = ms / 10i64;
+    ms /= 10i64;
   }
   return ms;
 }
