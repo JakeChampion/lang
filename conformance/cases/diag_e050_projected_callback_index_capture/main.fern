@@ -1,0 +1,30 @@
+// spec: RH-04
+
+struct H { n: i32 }
+
+function (h: H) read(): i32 {
+  return h.n;
+}
+
+function (own h: H) close(): i32 {
+  return h.n;
+}
+
+struct ReadBox { read: () => i32 }
+
+struct Pickers { items: ReadBox[], pick: () => i32 }
+
+function wrap(own r: Pickers): own () => i32 {
+  return (): i32 => r.items[r.pick()].read();
+}
+
+function f(own h: H, own other: H): i32 {
+  let r = Pickers { items: [ReadBox { read: (): i32 => h.read() }], pick: (): i32 => other.read() - other.read() };
+  let run = wrap(r);
+  other.close();
+  return run();
+}
+
+function main(): i32 {
+  return f(H { n: 7 }, H { n: 3 });
+}

@@ -29,6 +29,8 @@ A color is a pixel word of `std/android/draw`, or a role: `PRIMARY`, `ON_PRIMARY
 ### Messages
 
 An element gives the messages of `on_tap`, `on_long`, `on_edit` and `on_submit`. A program gives the others. `with_tick` gives a message each time the time of its `wait` goes by. `with_frames` gives a message for each frame while its `animating` is true, with the time of the frame. `with_back` gives a message for the back key, or lets the back key close the app. `with_system` gives a message for an event of `std/android` that this module does not use itself.
+`with_close` takes the final state during Destroy and returns its closed state.
+The callback runs before Android frees the context or detaches the loop thread from the JVM.
 
 `with_theme` gives the colors for the light system and for the dark system. `with_theme_of` gives them for the state of the program also.
 
@@ -1752,6 +1754,7 @@ pub struct Program[S, M] {
   back: (S) => Option[M],
   system: (android.Event) => Option[M],
   effects: (S) => S,
+  close: (own S) => own S,
   theme: (S, boolean) => Theme,
   meter: boolean,
 }
@@ -1759,7 +1762,7 @@ pub struct Program[S, M] {
 // A program with no messages of its own, which the back key closes, in the
 // colors of `theme`.
 pub function program[S, M](view: (S, Screen) => El[M], update: (own S, M) => S): Program[S, M] {
-  return Program { view: view, update: update, wait: (s: S): i32 => -1, tick: None, animating: (s: S): boolean => false, frame: None, back: (s: S): Option[M] => None, system: (e: android.Event): Option[M] => None, effects: (s: S): S => s, theme: (s: S, dark: boolean): Theme => theme(dark), meter: false };
+  return Program { view: view, update: update, wait: (s: S): i32 => -1, tick: None, animating: (s: S): boolean => false, frame: None, back: (s: S): Option[M] => None, system: (e: android.Event): Option[M] => None, effects: (s: S): S => s, close: (own s: S): own S => s, theme: (s: S, dark: boolean): Theme => theme(dark), meter: false };
 }
 
 // After each message, the shell gives the state to `effects`, which does
@@ -1768,6 +1771,12 @@ pub function program[S, M](view: (S, Screen) => El[M], update: (own S, M) => S):
 // state, and a test reads that from the state.
 pub function (p: Program[S, M]) with_effects(effects: (S) => S): Program[S, M] {
   return Program { ...p, effects: effects };
+}
+
+// Takes the final state during Destroy and returns its closed state before
+// Android frees the context and detaches the loop thread from the JVM.
+pub function (p: Program[S, M]) with_close(close: (own S) => own S): Program[S, M] {
+  return Program { ...p, close: close };
 }
 
 // `update` gets the message `m` each time the milliseconds of `wait` go by.
@@ -2328,7 +2337,8 @@ function arranged[S, M](own s: Shell[S, M], p: Program[S, M], e: android.Event):
     },
     android.Destroy => {
       let t = told_maybe(s, p, p.system(e));
-      return Shell { app: t.app, host: Host { ...t.host, paint: t.host.dev.close(t.host.paint), window: 0 as usize }, said: t.said };
+      let closed = p.close(t.app);
+      return Shell { app: closed, host: Host { ...t.host, paint: t.host.dev.close(t.host.paint), window: 0 as usize }, said: t.said };
     },
     _ => {
       return told_maybe(s, p, p.system(e));

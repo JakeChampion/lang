@@ -5966,8 +5966,9 @@ type checker struct {
 	sendFuncs            map[string][]bool
 	sendParamNames       map[string][]string
 	callbackFactoryFuncs map[string]*ast.FuncDecl
-	callbackFactories    map[string][]ast.Param
+	callbackFactories    map[string][]callbackLoan
 	callbackResultCalls  map[*ast.Call]bool
+	callbackValues       map[ast.Expr]bool
 	resultBorrows        map[string]bool
 	resultAnalysed       map[string]bool
 	// declaredMethods names the methods the program declares.
@@ -10936,6 +10937,11 @@ func SupersededFieldMoves(sl *ast.StructLit, target string, consumed func(field 
 }
 
 func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
+	if fn.Body == nil {
+		return
+	}
+	c.computeCallbackFactories()
+	defer c.distinctOwnedBindings(fn)()
 	if fn.ReturnOwn && c.funcResultBorrowsWith(fn, true) {
 		c.errfCode(fn.Pos(), "E051", "an `own` result must not borrow a parameter")
 	}
@@ -11092,7 +11098,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		return false
 	}
 	checkCallbackCaptures := func(value ast.Expr, moved movedSet) {
-		if value == nil || len(moved) == 0 {
+		if value == nil || len(moved) == 0 || !c.callbackValues[value] {
 			return
 		}
 		name := "lambda"
@@ -11103,7 +11109,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			}
 			name = v.Name
 		case *ast.Lambda:
-		case *ast.IfExpr, *ast.MatchExpr, *ast.BlockExpr, *ast.Call:
+		case *ast.IfExpr, *ast.MatchExpr, *ast.BlockExpr, *ast.Call, *ast.FieldAccess, *ast.Index:
 			name = "value"
 		default:
 			return
@@ -14790,6 +14796,16 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			delete(c.info.ArrayFieldCopies, field)
 		}
 	}
+	_, callbackValue := t.(*ast.FuncType)
+	_, genericValue := t.(ast.ParamType)
+	if callbackValue || genericValue {
+		if c.callbackValues == nil {
+			c.callbackValues = map[ast.Expr]bool{}
+		}
+		c.callbackValues[e] = true
+	} else {
+		delete(c.callbackValues, e)
+	}
 	// A call returns its own reference to immutable data, even when the
 	// returned value shares storage with a borrowed input.
 	if call, ok := e.(*ast.Call); ok {
@@ -15969,6 +15985,10 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		}
 		if ft != nil {
 			c.recordOwnedResult(n, ft.ResultOwn)
+			if c.callbackValues == nil {
+				c.callbackValues = map[ast.Expr]bool{}
+			}
+			c.callbackValues[n.Callee] = true
 		}
 		if (len(calleeOwnFlags) > 0 || calleeIsValue) && !recvIsArg0 && n.Method == nil {
 			if c.callOwnFlags == nil {

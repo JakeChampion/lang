@@ -141,6 +141,10 @@ fern -fmt -w src/               # every .fern and .fern.md file under src/
 fern -fmt - < foo.fern          # stdin to stdout, as an editor pipes a buffer
 ```
 
+`fern -fmt -d` exits 0 when no file would change and 1 when one would. It
+exits 2 when a file cannot be read or does not parse, so a script can tell
+that result from a difference.
+
 The formatter is idempotent: formatting its own output changes nothing.
 On a literate `.fern.md` file it formats the code inside each chunk and
 leaves the prose alone.
