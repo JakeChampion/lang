@@ -61,5 +61,53 @@ class ContentPermissionTests(unittest.TestCase):
             self.assertFalse(any(call.args[:3] == ("shell", "pm", "grant") for call in calls.call_args_list))
 
 
+class NativeAvDiagnosticsTests(unittest.TestCase):
+    def log(self, first="unavailable", second="frames=0 monotonic_ns=0"):
+        return ("W/fern: videotest: native AAC frames=19200 rate=48000 channels=2\n"
+                "W/fern: videotest: native AV submitted_frames=19200 origin_us=0\n"
+                f"W/fern: videotest: native AV timestamp {first}\n"
+                "W/fern: videotest: native AV submitted_frames=14400 origin_us=100000\n"
+                f"W/fern: videotest: native AV timestamp {second}\n")
+
+    def test_available_and_unavailable_anchors_remain_distinct(self):
+        for first, second in [('unavailable', 'frames=0 monotonic_ns=0'),
+                              ('frames=19200 monotonic_ns=9223372036854775807', 'unavailable'),
+                              ('unavailable', 'unavailable')]:
+            with self.subTest(first=first, second=second):
+                result = check.native_av_metrics(self.log(first, second))
+                self.assertEqual(result['frames'], 19200)
+                self.assertEqual(result['timestamps'][0] is None, first == 'unavailable')
+                self.assertEqual(result['timestamps'][1] is None, second == 'unavailable')
+
+    def test_invalid_timestamp_diagnostics_fail(self):
+        for value in ['frames=-1 monotonic_ns=0', 'frames=0 monotonic_ns=-1',
+                      'frames=0 monotonic_ns=9223372036854775808', 'frames=no monotonic_ns=1', '']:
+            with self.subTest(value=value), self.assertRaises(AssertionError):
+                check.native_av_metrics(self.log(second=value))
+
+    def test_audio_counts_and_seek_origins_must_match(self):
+        for before, after in [('channels=2', 'channels=1'), ('rate=48000', 'rate=44100'),
+                              ('frames=19200 rate', 'frames=19456 rate'),
+                              ('submitted_frames=14400', 'submitted_frames=14399'),
+                              ('origin_us=100000', 'origin_us=0')]:
+            with self.subTest(before=before), self.assertRaises(AssertionError):
+                check.native_av_metrics(self.log().replace(before, after))
+
+    def test_private_av_launch_needs_no_storage_grant(self):
+        def device(*args, **kwargs):
+            if args == ("shell", "getprop", "ro.build.version.sdk"):
+                return "34\n"
+            if args[:3] == ("shell", "am", "start"):
+                raise RuntimeError("launch sentinel")
+            return ""
+
+        with tempfile.TemporaryDirectory() as directory, patch.object(check, "adb", side_effect=device) as calls:
+            with self.assertRaisesRegex(RuntimeError, "launch sentinel"):
+                check.main("video.apk", directory, av_path="/data/user/0/dev.fern.videotest/files/native-av.mp4")
+            self.assertFalse(any(call.args[:3] == ("shell", "pm", "grant") for call in calls.call_args_list))
+            start = next(call.args for call in calls.call_args_list if call.args[:3] == ("shell", "am", "start"))
+            self.assertEqual(start[-3:], ('--es', 'av_path', '/data/user/0/dev.fern.videotest/files/native-av.mp4'))
+
+
 if __name__ == "__main__":
     unittest.main()

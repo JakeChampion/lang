@@ -1,0 +1,52 @@
+// Prepare bounded stereo PCM for the native AAC and lower-level video fixture.
+import "std/audio/mp4";
+import "std/audio/pcm";
+import "std/video/frame";
+import "std/io";
+
+pub const MAX_INPUT: i32 = 2097152;
+
+pub const MAX_SAMPLES: i32 = 48000;
+
+function error(value: pcm.AudioError): frame.VideoError {
+  return match (value) { pcm.Limit => frame.Limit, pcm.Unsupported => frame.Unsupported, pcm.Truncated => frame.Truncated, _ => frame.Header };
+}
+
+pub function decode(input: [u8]): Result[pcm.Block, frame.VideoError] {
+  let base = mp4.default_limits();
+  let budget = pcm.Limits { max_input_bytes: MAX_INPUT, max_samples: MAX_SAMPLES };
+  let limits = mp4.Limits { ...base, audio: budget, max_tracks: 2, max_packets: 128, max_descriptions: 1, max_edits: 4 };
+  let audio = match (mp4.decode(input, limits)) { Ok(value) => value, Err(value) => { return Err(error(value)); } };
+  if (audio.sample_rate != 48000 || audio.channels != 2 || audio.frames <= 0i64) {
+    return Err(frame.Unsupported);
+  }
+  return match (pcm.quantize(audio.samples, pcm.Format { sample_rate: audio.sample_rate, channels: audio.channels, bits_per_sample: 16 }, budget)) { Ok(value) => Ok(value), Err(value) => Err(error(value)) };
+}
+
+pub function read(path: string): Result[pcm.Block, frame.VideoError] {
+  let Ok(reader) = open_reader(path) else {
+    return Err(frame.Platform);
+  };
+  let result = read_from(reader);
+  let _ = reader.close();
+  return result;
+}
+
+function read_from(reader: Reader): Result[pcm.Block, frame.VideoError] {
+  let bytes: u8[] = [];
+  while (true) {
+    let Ok(chunk) = reader.read_chunk_bytes(4096) else {
+      return Err(frame.Platform);
+    };
+    if (chunk.len() == 0) {
+      return decode(bytes);
+    }
+    if (chunk.len() > MAX_INPUT - bytes.len()) {
+      return Err(frame.Limit);
+    }
+    for byte in chunk {
+      bytes = bytes.append(byte);
+    }
+  }
+  return Err(frame.Truncated);
+}
