@@ -3039,12 +3039,33 @@ function map_construction(e: ast.Expr, c: ast.ExprCall, s: State, expected: type
   return define(s, ssasem.map_new(), [cap.id], 0, "", expected);
 }
 
+// slice_unchecked aborts where the checked slice answers None: the slice
+// op traps an endpoint out of range, and the probes trap an endpoint that
+// splits a character, so the result is well-formed UTF-8.
 function string_slice(c: ast.ExprCall, s: State): Value {
   let p = slice_parts(c, s);
   if (!p.hi.s.ok) {
     return p.hi;
   }
-  return define(p.hi.s, ssasem.slice(), [p.src, p.lo, p.hi.id], 0, "", typeinfo.t_str());
+  let len = define(p.hi.s, ssasem.length(), [p.src], 0, "", typeinfo.t_i32());
+  let sink = len.s.next_block;
+  let t = SliceTree { s: State { ...len.s, next_block: sink + 1 }, preds: [] };
+  t = slice_probe(t, p.src, p.lo, len.id, sink);
+  t = slice_probe(t, p.src, p.hi.id, len.id, sink);
+  let view = define(t.s, ssasem.slice(), [p.src, p.lo, p.hi.id], 0, "", typeinfo.t_str());
+  let from_view = view.s.cur.id;
+  let cont = view.s.next_block;
+  s = terminate(State { ...view.s, next_block: cont + 1 }, ssa.t_br(cont));
+  let abort = ssasem.find_contract(s.contracts, "__fern_str_oob_abort");
+  if (abort < 0) {
+    return refused(s, "slice_unchecked: no contract for its abort");
+  }
+  if (ssasem.find_contract_in(s.calls, "__fern_str_oob_abort") < 0) {
+    s = State { ...s, calls: s.calls.append(s.contracts.list[abort]) };
+  }
+  let trap = define(open(s, sink, t.preds), ssasem.call(), [], 0, "__fern_str_oob_abort", typeinfo.t_void());
+  s = terminate(trap.s, ssa.t_unreachable());
+  return Value { s: open(s, cont, [from_view]), id: view.id };
 }
 
 struct SliceParts { src: i32, lo: i32, hi: Value }
