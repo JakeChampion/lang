@@ -195,10 +195,12 @@ class Phone:
     """A device for check_filter. `holds` is whether the filter takes a
     notification out of the shade, and `shows` is whether Paper shows it."""
 
-    def __init__(self, *, holds=True, shows=True, opens=True, takes_old=False, filter_row="off", probe=True):
+    def __init__(self, *, holds=True, shows=True, opens=True, sends=True, takes_old=False, filter_row="off", probe=True):
         self.holds = holds
         self.shows = shows
         self.opens = opens
+        self.sends = sends
+        self.front = "dev.fern.paper"
         self.takes_old = takes_old
         self.filter_row = filter_row
         self.probe = probe
@@ -229,6 +231,8 @@ class Phone:
             if self.opens:
                 self.held.clear()
                 self.log.append("paper: open held com.android.shell")
+                if self.sends:
+                    self.front = "com.android.settings"
 
     def dump(self):
         if self.screen == "settings":
@@ -242,7 +246,7 @@ class Phone:
 
     def adb(self, *args, **kwargs):
         if args[:4] == ("shell", "cmd", "notification", "post"):
-            self.post(args[6])
+            self.post(args[-2])
         elif args[:4] == ("shell", "cmd", "notification", "allow_listener"):
             self.allowed = True
         elif args[:3] == ("shell", "input", "swipe") and args[3:5] == args[5:7]:
@@ -251,8 +255,12 @@ class Phone:
             self.tap(int(args[3]), int(args[4]))
         elif args == ("shell", "input", "keyevent", "KEYCODE_BACK"):
             self.screen = "home"
-        elif args[:3] == ("shell", "dumpsys", "notification") and self.probe:
-            return "".join(f"    NotificationRecord(0x1: pkg=com.android.shell id=2020 tag={tag} importance=3)\n" for tag in self.shade)
+        elif args == ("shell", "input", "keyevent", "KEYCODE_HOME"):
+            self.front = "dev.fern.paper"
+        elif args[:4] == ("shell", "dumpsys", "activity", "activities"):
+            return f"  topResumedActivity=ActivityRecord{{1 u0 {self.front}/.Main t1}}\n"
+        elif args[:4] == ("shell", "cmd", "notification", "list") and self.probe:
+            return "".join(f"0|com.android.shell|2020|{tag}|2000\n" for tag in self.shade)
         elif args == ("shell", "cat", "/sdcard/paper-ui.xml"):
             return self.dump()
         return ""
@@ -291,6 +299,15 @@ class FilterTests(unittest.TestCase):
         failures = self.run_phone(Phone(opens=False))
         self.assertIn("a tap on the held notification did not open it", failures)
         self.assertIn("the held notification stayed on the home screen after it opened", failures)
+
+    def test_a_held_notification_whose_intent_opens_nothing_fails(self):
+        failures = self.run_phone(Phone(sends=False))
+        self.assertEqual(failures, ["the intent of the held notification did not open the settings of Android"])
+
+    def test_the_tag_of_another_notification_is_not_in_the_shade(self):
+        with patch.object(check, "adb", return_value="0|com.android.shell|2020|fern_held_more|2000\n"):
+            self.assertFalse(check.in_shade("fern_held"))
+            self.assertTrue(check.in_shade("fern_held_more"))
 
     def test_a_notification_from_before_the_filter_stays(self):
         failures = self.run_phone(Phone(takes_old=True))
