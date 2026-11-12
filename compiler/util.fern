@@ -586,6 +586,31 @@ pub function hex_digit(d: i32): u8 {
   return (87 + d) as u8;
 }
 
+// hex_value is the value of the hex digit c in either case, or -1.
+pub function hex_value(c: u8): i32 {
+  if (c >= b'0' && c <= b'9') {
+    return (c - b'0') as i32;
+  }
+  let lower = c | 32u8;
+  if (lower >= b'a' && lower <= b'f') {
+    return (lower - b'a') as i32 + 10;
+  }
+  return -1;
+}
+
+// hex_digits reports whether text has one or more bytes from `from` and each is a hex digit.
+pub function hex_digits(text: string, from: i32): boolean {
+  if (from >= text.len()) {
+    return false;
+  }
+  for i in from..text.len() {
+    if (hex_value(text[i]) < 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // path_base is the part of path after its last slash.
 pub function path_base(path: string): string {
   let start = 0;

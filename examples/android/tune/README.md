@@ -16,7 +16,9 @@ An album has its picture from the tag of one of its files, or from an
 image file of its directory, such as `cover.jpg`. `std/audio/tags` gives the
 bytes of the picture, and `std/android/image` decodes them. A list shows the
 picture at a small size, and the screen of the track shows it at a large
-size. An album with no picture shows rings in the colors of its name.
+size. An album with no picture shows rings in the colors of its name. The media
+session gets the picture also, so Android shows it with the media controls
+and on the lock screen.
 
 A tap on a song makes the list that shows the queue of the player. A long
 press on a song shows its menu: "Play next" and "Add to queue".

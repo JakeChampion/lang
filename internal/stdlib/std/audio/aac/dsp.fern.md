@@ -18,6 +18,7 @@ This module is available under MPL-2.0. See `licenses/aac/NOTICE.txt`.
 
 import "std/audio/aac/tables";
 import "std/audio/pcm" as audio;
+import "std/f32";
 import "std/f64";
 
 pub struct Scratch { fft: f32[], time: f32[], short: f32[] }

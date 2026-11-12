@@ -620,7 +620,7 @@ func f64InverseTrigCases() []f64Case {
 
 func f64InverseTrigProg(cs []f64Case) string {
 	var b strings.Builder
-	b.WriteString("import \"std/i64\";\nimport \"std/f64\";\n")
+	b.WriteString("import \"std/i64\";\nimport \"std/f32\";\nimport \"std/f64\";\n")
 	b.WriteString("function emit(v: f64): i32 { print(f64_bits(v).to_string()); return 0; }\n")
 	b.WriteString("function main(): i32 {\n")
 	for _, c := range cs {

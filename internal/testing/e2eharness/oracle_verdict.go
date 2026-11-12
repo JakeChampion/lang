@@ -17,6 +17,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/jakechampion/lang/internal/stdlib"
+	"github.com/jakechampion/lang/internal/tools/literate"
 )
 
 const fernModulePath = "github.com/jakechampion/lang"
@@ -49,10 +52,9 @@ func CheckTargetVerdict(t testing.TB, oracle, src, target string) ([]byte, int) 
 }
 
 // oracleVerdict runs the Go oracle with flags on src, with stdin as its input.
-// FERN_SELFHOST_BUILD_CACHE enables the cache. Its key covers the oracle's Go
-// source and embedded files, the source's relative import closure, and the
-// FERN_* environment. It excludes the compiler package's embedded self-host
-// sources, which -interp and -check do not read.
+// FERN_SELFHOST_BUILD_CACHE enables the cache. Its key covers the oracle's
+// sources (oracleSourcesKey), the source's relative import closure, the stdlib
+// modules that the closure imports, and the FERN_* environment.
 // FERN_BIN suites also run an external executable. Run them
 // without the verdict cache because that executable can change at the same path.
 func oracleVerdict(t testing.TB, oracle string, flags []string, src, stdin string, combined bool) ([]byte, int) {
@@ -114,7 +116,7 @@ func sourceVerdictKey(t testing.TB, what, source string) string {
 		t.Fatalf("oracle verdict key for %s: %v", what, err)
 	}
 	h := sha256.New()
-	fmt.Fprintf(h, "oracle-source-verdict-v2\x00%s\x00%s\x00%d\x00%s\x00env\x00%s\x00", what, oracleKey, len(source), source, fernEnvKey())
+	fmt.Fprintf(h, "oracle-source-verdict-v3\x00%s\x00%s\x00%d\x00%s\x00%s\x00env\x00%s\x00", what, oracleKey, len(source), source, stdlibClosureKey(imports, stdlib.ReadModule), fernEnvKey())
 	return hex.EncodeToString(h.Sum(nil))
 }
 
@@ -200,12 +202,22 @@ func oracleVerdictKey(flags []string, combined bool, src string) (string, error)
 	sort.Strings(closure)
 	sort.Strings(missing)
 	h := sha256.New()
-	fmt.Fprintf(h, "oracle-verdict-v2\x00%s\x00%t\x00%s\x00%s\x00%s\x00", strings.Join(flags, "\x00"), combined, oracle, src, abs)
+	fmt.Fprintf(h, "oracle-verdict-v3\x00%s\x00%t\x00%s\x00%s\x00%s\x00", strings.Join(flags, "\x00"), combined, oracle, src, abs)
+	var imports []string
 	for _, p := range closure {
 		if err := hashFile(h, p, p); err != nil {
 			return "", err
 		}
+		code, err := literate.ReadFile(p)
+		if err != nil {
+			return "", err
+		}
+		// A file that does not lex imports nothing, as in importClosure.
+		if found, err := fernSourceImports(string(code)); err == nil {
+			imports = append(imports, found...)
+		}
 	}
+	fmt.Fprintf(h, "stdlib\x00%s\x00", stdlibClosureKey(imports, stdlib.ReadModule))
 	for _, p := range missing {
 		fmt.Fprintf(h, "missing\x00%s\x00", p)
 	}
@@ -229,9 +241,11 @@ func fernEnvKey() string {
 }
 
 // oracleSourcesKey hashes the files of every package in this module that
-// cmd/fern links, so a change to the parser, checker, interpreter or stdlib
-// changes it. The compiler package is left out: it only embeds the self-host
-// sources that `-target` runs, which `-interp` and `-check` never read.
+// cmd/fern links, so a change to the parser, checker or interpreter changes
+// it. The compiler package is left out: it only embeds the self-host sources
+// that `-target` runs, which `-interp` and `-check` never read. The stdlib
+// package keeps its Go files but not its embedded modules. stdlibClosureKey
+// hashes the modules that a program imports.
 var oracleSourcesKey = sync.OnceValues(func() (string, error) {
 	tmpl := `{{if .Module}}{{if eq .Module.Path "` + fernModulePath + `"}}{{.ImportPath}}` + "\t" +
 		`{{.Dir}}` + "\t" + `{{join .GoFiles ","}}` + "\t" + `{{join .EmbedFiles ","}}{{end}}{{end}}`
@@ -263,7 +277,11 @@ var oracleSourcesKey = sync.OnceValues(func() (string, error) {
 		if fields[0] == fernModulePath+"/compiler" {
 			continue
 		}
-		for _, list := range fields[2:] {
+		lists := fields[2:]
+		if fields[0] == fernModulePath+"/internal/stdlib" {
+			lists = fields[2:3]
+		}
+		for _, list := range lists {
 			for _, f := range strings.Split(list, ",") {
 				if f == "" {
 					continue
@@ -276,6 +294,50 @@ var oracleSourcesKey = sync.OnceValues(func() (string, error) {
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 })
+
+// stdlibClosureKey hashes the stdlib modules that imports reach, directly or
+// through other stdlib modules. The oracle reads a stdlib module only when an
+// import names it. Thus a change to another stdlib module keeps the key.
+func stdlibClosureKey(imports []string, read func(string) (stdlib.ModuleSource, error)) string {
+	modules := map[string]string{}
+	var visit func(imp string)
+	visit = func(imp string) {
+		name := stdlib.ModuleKey(imp)
+		if name == "" {
+			return
+		}
+		if _, ok := modules[name]; ok {
+			return
+		}
+		m, err := read(imp)
+		if err != nil {
+			modules[name] = "error\x00" + err.Error()
+			return
+		}
+		modules[name] = fmt.Sprintf("%d\x00%s\x00%s\x00%d\x00%s", len(m.Code), m.Code, m.DocPath, len(m.DocSource), m.DocSource)
+		// A module that does not lex imports nothing, as in importClosure.
+		nested, err := fernSourceImports(m.Code)
+		if err != nil {
+			return
+		}
+		for _, n := range nested {
+			visit(n)
+		}
+	}
+	for _, imp := range imports {
+		visit(imp)
+	}
+	names := make([]string, 0, len(modules))
+	for name := range modules {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	h := sha256.New()
+	for _, name := range names {
+		fmt.Fprintf(h, "%s\x00%s\x00", name, modules[name])
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
 
 func hashFile(h interface{ Write([]byte) (int, error) }, path, name string) error {
 	data, err := os.ReadFile(path)

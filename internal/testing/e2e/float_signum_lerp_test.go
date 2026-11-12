@@ -3,6 +3,7 @@ package e2e
 import "testing"
 
 const floatSignumLerpProg = `
+import "std/f32";
 import "std/f64";
 function main(): i32 {
     // ---- signum f64 ----

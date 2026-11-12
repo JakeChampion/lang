@@ -132,7 +132,7 @@ function show(ctx: usize, media: Media, now: tune.Now): void {
   let Some(s) = media.session else {
     return;
   };
-  session.set_track(ctx, s, now.title, now.artist, now.album, now.length_ms);
+  session.set_track(ctx, s, now.title, now.artist, now.album, now.length_ms, now.art);
   session.set_state(ctx, s, now.playing, now.at_ms);
   if (now.playing && !service.start_media(ctx, SERVICE, media.token)) {
     log.info("tune: Android gave no foreground service");

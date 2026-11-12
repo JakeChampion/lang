@@ -11089,26 +11089,12 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
 
 function const_text_u32(t: string): boolean {
   if (t.len() > 2 && t[0] == 48 && (t[1] == 120 || t[1] == 88)) {
-    return t.len() <= 10 && hex_digits(t, 2);
+    return t.len() <= 10 && util.hex_digits(t, 2);
   }
   if (!util.is_all_digits(t) || t.len() > 10) {
     return false;
   }
   return util.digits_to_i64(t) <= 4294967295i64;
-}
-
-function hex_digits(t: string, from: i32): boolean {
-  if (from >= t.len()) {
-    return false;
-  }
-  for i in from..t.len() {
-    let c = t[i] as i32;
-    let ok = c >= 48 && c <= 57 || c >= 97 && c <= 102 || c >= 65 && c <= 70;
-    if (!ok) {
-      return false;
-    }
-  }
-  return true;
 }
 
 function emit_ir_op_heap_bump_bytes(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {

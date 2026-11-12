@@ -115,7 +115,7 @@ pub struct Sound { ptr: usize, rate: i32, channels: i32 }
 pub struct Cover { key: string, image: draw.Image }
 
 // What the player tells Android about the track that plays.
-pub struct Now { title: string, artist: string, album: string, length_ms: i64, at_ms: i64, playing: boolean }
+pub struct Now { title: string, artist: string, album: string, length_ms: i64, at_ms: i64, playing: boolean, art: Option[draw.Image] }
 
 // The locks of the device that keep the phone awake while a track plays,
 // or 0 for no lock.

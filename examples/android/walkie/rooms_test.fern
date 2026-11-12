@@ -1,6 +1,7 @@
 import "std/crypto";
 import "std/net";
 import "std/test";
+import "std/unicode";
 import "./rooms";
 
 function random(seed: string): u8[] {
