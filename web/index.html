@@ -945,6 +945,7 @@ function main(): i32 {
 }`,
   test: `import "std/test";
 import "std/string";
+import "std/unicode";
 
 function slugify(s: string): string {
     return s.trim().to_lower().replace(" ", "-");
