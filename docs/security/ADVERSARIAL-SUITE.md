@@ -132,6 +132,6 @@ QEMU establishes emulated behaviour only.
 
 ## Gaps
 
-- The fault tests did not run on a native host with PAC, BTI, MTE or the user shadow stack. The arm64 rows are QEMU rows.
+- The fault tests ran on a physical host for PAC only ([GUARANTEES.md](GUARANTEES.md)). The BTI, MTE and user shadow stack rows are QEMU rows or have no run.
 - The seccomp filter exists on Linux only. QEMU user mode does not emulate it, so the arm64 tests run on the native arm64 lane.
 - Package archives carry a hash and no signature ([PACKAGE-INTEGRITY.md](PACKAGE-INTEGRITY.md)).
