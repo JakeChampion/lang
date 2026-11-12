@@ -4412,10 +4412,10 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
     return ssa_call(ins, reg_of, lp, s);
   }
   if (k == ssa.FLAT_OP) {
-    return ssa_flat_op(ins, reg_of, lp, r, s);
+    return ssa_flat_op(ins, reg_of, r, s);
   }
   if (k == ssa.DYN_DISPATCH) {
-    return ssa_dyn_dispatch(ins, reg_of, lp, s);
+    return ssa_dyn_dispatch(ins, reg_of, s);
   }
   if (k == ssa.STR_VIEW) {
     return ssa_str_view(ins, reg_of, ssa_view_off(fr, ins.result), s);
@@ -5269,7 +5269,7 @@ function emit_dir_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 }
 
 // fern-lint: allow cyclomatic-complexity
-function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asmcore.EmitState): asmcore.EmitState {
+function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asmcore.EmitState {
   if (o.kind_tag == ir.K_TCP_POLLABLE || o.kind_tag == ir.K_SEND_ADOPT || o.kind_tag == ir.K_SEND_ROOT) {
     return s;
   }
@@ -5282,9 +5282,9 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.need("sha1").need("heap");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_sha1_hw_blocks\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == ir.K_MEMCPY) {
-    s = emit_arm64_op_memcpy(o, i, lp, s);
+    s = emit_arm64_op_memcpy(s);
   } else if (o.kind_tag == ir.K_MEMSET) {
-    s = emit_arm64_op_memset(i, lp, s);
+    s = emit_arm64_op_memset(s);
   } else if (o.kind_tag == ir.K_FREE) {
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
     let owned = s.leak_check && s.rt_owned_allocs;
@@ -5789,17 +5789,19 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
   return s;
 }
 
-function emit_arm64_op_memset(i: i32, lp: string, s: asmcore.EmitState): asmcore.EmitState {
+function emit_arm64_op_memset(s: asmcore.EmitState): asmcore.EmitState {
+  let tag = asmcore.fresh_label(s);
+  s = tag.state;
   s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-  s = s.write(lp + "ms" + util.i32_to_string(i) + ":\n");
-  s = s.write("    cbz x2, " + lp + "msd" + util.i32_to_string(i) + "\n");
+  s = s.write(tag.name + "ms:\n");
+  s = s.write("    cbz x2, " + tag.name + "msd\n");
   s = s.write("    strb w1, [x0], #1\n    sub x2, x2, #1\n");
-  s = s.write("    b " + lp + "ms" + util.i32_to_string(i) + "\n");
-  s = s.write(lp + "msd" + util.i32_to_string(i) + ":\n");
+  s = s.write("    b " + tag.name + "ms\n");
+  s = s.write(tag.name + "msd:\n");
   return s.write("    mov x0, #0\n    str x0, [sp, #-16]!\n");
 }
 
-function ssa_dyn_dispatch(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+function ssa_dyn_dispatch(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   s = asmcore.ssa_x0_forget(s);
   let args: asmcore.DynArg[] = [];
   let moved = false;
@@ -5818,11 +5820,11 @@ function ssa_dyn_dispatch(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.
       args = args.append(asmcore.DynArg { reg: "", off: ssa_slot_off(ssa.spill_slot(reg_of[v])) - s.ssa_save });
     }
   }
-  s = emit_dyn_dispatch_chain(ins.str, args, ins.imm, lp, s);
+  s = emit_dyn_dispatch_chain(ins.str, args, s);
   return ssa_store(reg_of, ins.result, "x0", asmcore.ssa_x0_forget(s));
 }
 
-function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irtables.Lowered, s: asmcore.EmitState): asmcore.EmitState {
+function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], r: irtables.Lowered, s: asmcore.EmitState): asmcore.EmitState {
   let kind = r.ops[ins.imm].kind_tag;
   if (kind == ir.K_TCP_POLLABLE) {
     s = asmcore.ssa_x0_forget(s);
@@ -5837,7 +5839,7 @@ function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irtables.Lowe
   s = asmcore.ssa_x0_forget(s);
   let outer = s.capture;
   let h = buf_new(256);
-  s = emit_stack_op(r.ops[ins.imm], ins.imm, lp, r, asmcore.EmitState { ...s, capture: h });
+  s = emit_stack_op(r.ops[ins.imm], r, asmcore.EmitState { ...s, capture: h });
   let arm = buf_take(h);
   buf_free(h);
   s = asmcore.EmitState { ...s, capture: outer };
@@ -5983,10 +5985,11 @@ function ssa_load_helper_args(reg_of: i32[], args: i32[], s: asmcore.EmitState):
   return ssa_parallel_moves(srcs, dsts, s);
 }
 
-function emit_arm64_op_memcpy(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState): asmcore.EmitState {
-  let mi = util.i32_to_string(i);
-  s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-  s = arm64_copy_bytes(s, CopyRegs { dst: "x0", src: "x1", n: "x2", tmp: "x4", src_end: "x9", dst_end: "x10" }, lp + "mc" + mi, lp + "mct" + mi, lp + "mcb" + mi, lp + "mcd" + mi);
+function emit_arm64_op_memcpy(s: asmcore.EmitState): asmcore.EmitState {
+  let tag = asmcore.fresh_label(s);
+  let t = tag.name;
+  s = tag.state.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+  s = arm64_copy_bytes(s, CopyRegs { dst: "x0", src: "x1", n: "x2", tmp: "x4", src_end: "x9", dst_end: "x10" }, t + "mc", t + "mct", t + "mcb", t + "mcd");
   s = s.write("    mov x0, #0\n    str x0, [sp, #-16]!\n");
 
   return s;
@@ -6255,11 +6258,14 @@ function dyn_arg_load(s: asmcore.EmitState, reg: string, a: asmcore.DynArg): asm
   return fr_ldr(s, reg, a.off);
 }
 
-function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], i: i32, lp: string, own s: asmcore.EmitState): asmcore.EmitState {
+function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], own s: asmcore.EmitState): asmcore.EmitState {
+  let tag = asmcore.fresh_label(s);
+  s = tag.state;
+  let key = tag.name;
   let dargc = args.len();
   s = dyn_arg_load(s, "x0", args[0]);
   s = s.write("    ldr x1, [x0]\n");
-  let dend = lp + "dynend" + util.i32_to_string(i);
+  let dend = key + "dynend";
   let dfi = 0;
   let darmn = 0;
   while (dfi < s.funcs.len()) {
@@ -6271,7 +6277,7 @@ function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], i: i32, l
       let dbn = ddbn;
       let dlit = asmcore.shape_ref(s, dbn);
       s = dlit.state;
-      let dnext = lp + "dynnext" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
+      let dnext = key + "dynnext" + util.i32_to_string(darmn);
       s = s.write("    adrp x2, " + dlit.label + "\n");
       s = s.write("    add x2, x2, :lo12:" + dlit.label + "\n");
       s = s.write("    cmp x1, x2\n    b.ne " + dnext + "\n");
@@ -6296,8 +6302,8 @@ function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], i: i32, l
     if (irtables.dyn_arm_matches(dfd, arms) && dfd.receiver_type.len() > 0
       && !asmcore.recv_is_array(dfd.receiver_type)
       && irtables.decl_is_enum(s.struct_decls, ddbn)) {
-      let dehit = lp + "dynehit" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
-      let denext = lp + "dynnext" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
+      let dehit = key + "dynehit" + util.i32_to_string(darmn);
+      let denext = key + "dynnext" + util.i32_to_string(darmn);
       let dvi = 0;
       while (dvi < s.struct_decls.decls.len()) {
         if (s.struct_decls.decls[dvi].enum_owner == ddbn) {
