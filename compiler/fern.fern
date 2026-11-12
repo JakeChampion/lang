@@ -698,7 +698,7 @@ function darwin_dwarf(p: arm64_native.Arm64GasProg, tv: i64, dv: i64, cu_name: s
 
 // A kernel image: the position-independent layout at `base`, as an ET_EXEC that
 // the loader enters at _start.
-function arm64_kernel_image(asm: string, words: u8[], base: i64): string {
+function arm64_kernel_image(asm: string, words: u8[], base: i64): u8[] {
   let p = arm64_native.arm64_gas_program_words(asm, words, elf.elf_text_vaddr_pie(false));
   if (p.unknown.len() > 0) {
     return elfimage.arm64_refusals("arm64-kernel", "assembler", p.unknown);
@@ -712,25 +712,20 @@ function arm64_kernel_image(asm: string, words: u8[], base: i64): string {
     return elfimage.arm64_refusals("arm64-kernel", "linker", p.unknown);
   }
   let eoff = arm64_native.arm64_asm_label_off(p.asm, "_start");
-  unsafe {
-    return string_from_bytes_unchecked(elf.elf_image_kernel(p.asm.text, p.data, elf.elf_em_aarch64(), eoff, p.bss_size, p.relro_pad, base));
-  }
+  return elf.elf_image_kernel(p.asm.text, p.data, elf.elf_em_aarch64(), eoff, p.bss_size, p.relro_pad, base);
 }
 
-function arm64_linux_image(image: string, base: i64, size: i64): string {
-  let b = elf.elf_arm64_linux_image(image.as_bytes(), base, size);
+function arm64_linux_image(image: u8[], base: i64, size: i64): u8[] {
+  let b = elf.elf_arm64_linux_image(image[:], base, size);
   if (b.len() == 0) {
     eprint("fern: the load segments of the arm64-kernel image do not ascend, so it has no Image form");
-    return "";
   }
-  unsafe {
-    return string_from_bytes_unchecked(b);
-  }
+  return b;
 }
 
 // A PVH kernel image: the fixed layout at `base`, which a VMM enters at the
 // 32-bit _start.
-function x86_kernel_image(asm: string, words: u8[], base: i64): string {
+function x86_kernel_image(asm: string, words: u8[], base: i64): u8[] {
   let a = x86_native.x86_gas_assemble_words_unlinked(asm, words);
   let tv = base + elf.elf_text_off_pvh() as i64;
   let dv = base + elf.elf_data_vaddr_pvh(a.text.len()) as i64;
@@ -739,12 +734,10 @@ function x86_kernel_image(asm: string, words: u8[], base: i64): string {
   a = x86_native.x86_link(a, tv as i32, dv as i32);
   if (a.unknown.len() > 0) {
     eprint("fern: -target x86-64-kernel: in-process assembler could not encode: " + a.unknown[0]);
-    return "";
+    return [];
   }
   let eoff = x86_native.x86_label_off(a, "_start");
-  unsafe {
-    return string_from_bytes_unchecked(elf.elf_image_kernel_pvh(a.text, a.rodata, eoff, a.bss_size, a.relro_pad, base));
-  }
+  return elf.elf_image_kernel_pvh(a.text, a.rodata, eoff, a.bss_size, a.relro_pad, base);
 }
 
 // The -export names and the JNI symbols. With neither, a shared object
@@ -1762,7 +1755,7 @@ function export_widen_arm64(x: string, w: string, t: string): string {
   return "    mov x16, " + x + "\n";
 }
 
-function arm64_elf_shared(asm: string, words: u8[], names: string[], soname: string, target: string, merged: parser.Module, note: boolean): string {
+function arm64_elf_shared(asm: string, words: u8[], names: string[], soname: string, target: string, merged: parser.Module, note: boolean): u8[] {
   let p = arm64_native.arm64_gas_program_words(asm, words, -1);
   if (p.unknown.len() > 0) {
     return elfimage.arm64_refusals(target, "assembler", p.unknown);
@@ -1809,12 +1802,10 @@ function arm64_elf_shared(asm: string, words: u8[], names: string[], soname: str
   }
   let init_at = arm64_native.arm64_symbol_addr(p, "__fern_init_array", tv as i64, dv as i64) as i32;
   let so = elf.elf_shared(elf.elf_em_aarch64(), elf.elf_cat_u8([], pa.text), hdr, eh, p.data, dv, p.bss_size, rel_offs, rel_adds, names, vals, sizes, soname, imp, note, init_at);
-  unsafe {
-    return string_from_bytes_unchecked(util.to_u8(so));
-  }
+  return util.to_u8(so);
 }
 
-function x86_elf_shared(asm: string, words: u8[], names: string[], soname: string, target: string, merged: parser.Module): string {
+function x86_elf_shared(asm: string, words: u8[], names: string[], soname: string, target: string, merged: parser.Module): u8[] {
   let a = x86_native.x86_gas_assemble_words_unlinked(asm, words);
   let tv = elf.elf_text_off_so(false);
   let hdr_len = x86_native.x86_eh_frame_hdr_len(a);
@@ -1829,7 +1820,7 @@ function x86_elf_shared(asm: string, words: u8[], names: string[], soname: strin
   }
   if (a.unknown.len() > 0) {
     eprint("fern: -target x86-64-linux: in-process assembler could not encode: " + a.unknown[0]);
-    return "";
+    return [];
   }
   let rel_offs: i32[] = [];
   let rel_adds: i64[] = [];
@@ -1864,9 +1855,7 @@ function x86_elf_shared(asm: string, words: u8[], names: string[], soname: strin
     init_at = data_at + init_at - base;
   }
   let so = elf.elf_shared(elf.elf_em_x86_64(), elf.elf_cat_u8([], a.text), hdr, eh, a.rodata, data_at, a.bss_size, rel_offs, rel_adds, names, vals, sizes, soname, imp, false, init_at);
-  unsafe {
-    return string_from_bytes_unchecked(util.to_u8(so));
-  }
+  return util.to_u8(so);
 }
 
 function le64_at(b: i32[], off: i32): i64 {
@@ -2597,25 +2586,40 @@ function target_writes_binary(t: string, emit: string): boolean {
   return is_native_target(t);
 }
 
-function write_output(out_path: string, data: string, t: string, emit: string): Result[void, IoError] {
+// An image with the mode of an executable file.
+function write_image_exec(out_path: string, image: u8[]): Result[void, IoError] {
+  match (write_file_bytes(out_path, image)) {
+    Err(e) => {
+      return Err(e);
+    },
+    Ok(_) => {}
+  }
+  return chmod(out_path, 493);
+}
+
+// The output is the image when the build made one, and the text otherwise.
+function write_output(out_path: string, text: string, image: u8[], t: string, emit: string): Result[void, IoError] {
+  if (image.len() == 0) {
+    return write_file(out_path, text);
+  }
   if (!target_writes_binary(t, emit)) {
-    return write_file(out_path, data);
+    return write_file_bytes(out_path, image);
   }
   if let Ok(link) = lstat(out_path) {
     if (!link.is_file) {
       if let Ok(st) = stat(out_path) {
         if (!st.is_file) {
-          return write_file(out_path, data);
+          return write_file_bytes(out_path, image);
         }
       }
-      return write_file_exec(out_path, data);
+      return write_image_exec(out_path, image);
     }
     match (remove_file(out_path)) {
       Ok(_) => {},
       Err(_) => {}
     }
   }
-  return write_file_exec(out_path, data);
+  return write_image_exec(out_path, image);
 }
 
 pub function capability_diags(merged: parser.Module, target: string): util.Diag[] {
@@ -7006,6 +7010,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     return 1;
   }
   let out_asm = "";
+  let image: u8[] = [];
   let emit_text = emit == "asm";
   if (target == "arm64-linux") {
     let recs = word_buf(emit_text);
@@ -7022,14 +7027,14 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     }
     out_asm += bti_property_text(emit_text && harden);
     if (!emit_text && shared) {
-      out_asm = arm64_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()).to_owned(), target, merged, harden);
-      if (out_asm.len() == 0) {
+      image = arm64_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()).to_owned(), target, merged, harden);
+      if (image.len() == 0) {
         return 2;
       }
     } else if (!emit_text) {
-      out_asm = elfimage.arm64_elf_binary(out_asm, words_of(recs), emit_syms, remap_path(remaps, entry_path), remap_path(remaps, comp_dir()), harden, pie);
+      image = elfimage.arm64_elf_binary(out_asm, words_of(recs), emit_syms, remap_path(remaps, entry_path), remap_path(remaps, comp_dir()), harden, pie);
       util.arr_push_cliff_report("arm64:image", 0);
-      if (out_asm.len() == 0) {
+      if (image.len() == 0) {
         return 2;
       }
     }
@@ -7040,13 +7045,13 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       return 2;
     }
     if (!emit_text) {
-      out_asm = arm64_kernel_image(out_asm, words_of(recs), ram_base);
-      if (out_asm.len() == 0) {
+      image = arm64_kernel_image(out_asm, words_of(recs), ram_base);
+      if (image.len() == 0) {
         return 2;
       }
       if (emit == "image") {
-        out_asm = arm64_linux_image(out_asm, ram_base, ram_size);
-        if (out_asm.len() == 0) {
+        image = arm64_linux_image(image, ram_base, ram_size);
+        if (image.len() == 0) {
           return 2;
         }
       }
@@ -7058,8 +7063,8 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       return 2;
     }
     if (!emit_text) {
-      out_asm = x86_kernel_image(out_asm, words_of(recs), ram_base);
-      if (out_asm.len() == 0) {
+      image = x86_kernel_image(out_asm, words_of(recs), ram_base);
+      if (image.len() == 0) {
         return 2;
       }
     }
@@ -7083,13 +7088,13 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     }
     out_asm += bti_property_text(emit_text && harden);
     if (!emit_text && shared) {
-      out_asm = arm64_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()).to_owned(), target, merged, harden);
-      if (out_asm.len() == 0) {
+      image = arm64_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()).to_owned(), target, merged, harden);
+      if (image.len() == 0) {
         return 2;
       }
     } else if (!emit_text) {
-      out_asm = elfimage.arm64_elf_binary_pie(out_asm, words_of(recs), emit_syms, remap_path(remaps, entry_path), remap_path(remaps, comp_dir()), harden);
-      if (out_asm.len() == 0) {
+      image = elfimage.arm64_elf_binary_pie(out_asm, words_of(recs), emit_syms, remap_path(remaps, entry_path), remap_path(remaps, comp_dir()), harden);
+      if (image.len() == 0) {
         return 2;
       }
     }
@@ -7135,17 +7140,13 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
         dsym_offs = pa2.lab_offs;
         dwarf = darwin_dwarf(prog, tv, dv, remap_path(remaps, entry_path), remap_path(remaps, comp_dir()));
       }
-      unsafe {
-        out_asm = string_from_bytes_unchecked(util.to_u8(arm64_native.macho_executable_binds(pa2.text, arm64_native.arm64_code_len(prog), deh, prog.data, "fern", deoff, prog.bss_size, dreb, prog.bind_offs, prog.bind_syms, dsym_names, dsym_offs, dwarf)));
-      }
+      image = util.to_u8(arm64_native.macho_executable_binds(pa2.text, arm64_native.arm64_code_len(prog), deh, prog.data, "fern", deoff, prog.bss_size, dreb, prog.bind_offs, prog.bind_syms, dsym_names, dsym_offs, dwarf));
       util.arr_push_cliff_report("darwin:image", 0);
     }
   } else if (target == "wasm32-wasi" && emit_text) {
     out_asm = wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub);
   } else if (target == "wasm32-wasi" && emit == "core-module") {
-    unsafe {
-      out_asm = string_from_bytes_unchecked(util.to_u8(emitforms.stamped_core(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub)), sub.switches)));
-    }
+    image = util.to_u8(emitforms.stamped_core(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub)), sub.switches));
   } else if (target == "wasm32-wasi") {
     let comp = emitforms.wasm_component(full, sub);
     if (comp.bytes.len() == 0) {
@@ -7154,9 +7155,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       }
       return 2;
     }
-    unsafe {
-      out_asm = string_from_bytes_unchecked(util.to_u8(comp.bytes));
-    }
+    image = util.to_u8(comp.bytes);
   } else if (target == "wasm32-wasi-http" && emit_text) {
     out_asm = emitforms.wasm_http_core(full, sub);
   } else if (target == "wasm32-wasi-http" && emit == "core-module") {
@@ -7164,9 +7163,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     if (hwat.len() == 0) {
       return 2;
     }
-    unsafe {
-      out_asm = string_from_bytes_unchecked(util.to_u8(emitforms.stamped_core(watbin.wat_to_binary(hwat), sub.switches)));
-    }
+    image = util.to_u8(emitforms.stamped_core(watbin.wat_to_binary(hwat), sub.switches));
   } else if (target == "wasm32-wasi-http") {
     let hc = emitforms.wasm_http_component(full, sub);
     if (hc.bytes.len() == 0) {
@@ -7175,9 +7172,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       }
       return 2;
     }
-    unsafe {
-      out_asm = string_from_bytes_unchecked(util.to_u8(hc.bytes));
-    }
+    image = util.to_u8(hc.bytes);
   } else if (target == "x86-64-freestanding") {
     out_asm = asm_ir.emit_module_or_error_sub(full, sub, 0 as usize);
     if (out_asm.len() == 0) {
@@ -7194,24 +7189,29 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       out_asm = export_entries(merged, entry_names(merged, shared_roots), false, harden) + import_entries(merged, false) + out_asm;
     }
     if (!emit_text && shared) {
-      out_asm = x86_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()).to_owned(), target, merged);
-      if (out_asm.len() == 0) {
+      image = x86_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()).to_owned(), target, merged);
+      if (image.len() == 0) {
         return 2;
       }
     } else if (!emit_text) {
-      out_asm = elfimage.x86_elf_binary(out_asm, words_of(recs), emit_syms, remap_path(remaps, entry_path), remap_path(remaps, comp_dir()), pie, x86_executable_page_align(target));
-      if (out_asm.len() == 0) {
+      image = elfimage.x86_elf_binary(out_asm, words_of(recs), emit_syms, remap_path(remaps, entry_path), remap_path(remaps, comp_dir()), pie, x86_executable_page_align(target));
+      if (image.len() == 0) {
         return 2;
       }
     }
   }
   if (out_path.len() > 0) {
-    match (write_output(out_path, out_asm, target, emit)) {
+    match (write_output(out_path, out_asm, image, target, emit)) {
       Err(e) => {
         eprint("fern: cannot write output " + out_path + ": " + e.message());
         return 1;
       },
       Ok(_) => {}
+    }
+  } else if (image.len() > 0) {
+    if let Err(e) = stdout().write_bytes(image[:]) {
+      eprint("fern: cannot write output: " + e.message());
+      return 1;
     }
   } else {
     write(out_asm);
