@@ -1,6 +1,7 @@
 package checker
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -337,7 +338,7 @@ func TestArrayLiteralCheckIsLinear(t *testing.T) {
 	if testing.Short() {
 		t.Skip("times large array literals")
 	}
-	elapsed := func(n int, elem string) time.Duration {
+	program := func(n int, elem string) string {
 		var b strings.Builder
 		b.WriteString("function main(): i32 {\nlet xs = [")
 		for i := 0; i < n; i++ {
@@ -347,22 +348,29 @@ func TestArrayLiteralCheckIsLinear(t *testing.T) {
 			b.WriteString(elem)
 		}
 		b.WriteString("];\nreturn 0;\n}\n")
-		src := b.String()
-		// The fastest of three runs: one pause on a busy machine must not decide the ratio.
-		var best time.Duration
-		for run := 0; run < 3; run++ {
-			start := time.Now()
-			if err := checkSource(t, src); err != nil {
-				t.Fatal(err)
-			}
-			if d := time.Since(start); run == 0 || d < best {
-				best = d
-			}
+		return b.String()
+	}
+	elapsed := func(src string) time.Duration {
+		runtime.GC()
+		start := time.Now()
+		if err := checkSource(t, src); err != nil {
+			t.Fatal(err)
 		}
-		return best
+		return time.Since(start)
 	}
 	for _, elem := range []string{"1.5", "7", "[1.5, 2.5]"} {
-		small, large := elapsed(5000, elem), elapsed(20000, elem)
+		smallSrc, largeSrc := program(5000, elem), program(20000, elem)
+		// The fastest of five runs of each size, taken in turn, so that a slow
+		// spell of a busy machine falls on both sizes.
+		var small, large time.Duration
+		for run := 0; run < 5; run++ {
+			if d := elapsed(smallSrc); run == 0 || d < small {
+				small = d
+			}
+			if d := elapsed(largeSrc); run == 0 || d < large {
+				large = d
+			}
+		}
 		if large > 8*small {
 			t.Errorf("elements %s: 5000 took %v and 20000 took %v; four times the elements must take less than eight times as long", elem, small, large)
 		}
