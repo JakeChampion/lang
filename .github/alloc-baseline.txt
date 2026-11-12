@@ -117,5 +117,11 @@
 # 2026-11-11: PR #15215 records main 29b1234d06, CI 42916398671, job 130211808249.
 # The checker workload reports 40,440,085 allocations and frees.
 # This is an inherited main cost. The 1% tolerance is unchanged.
-x86_64/checker.allocs	40440085
-x86_64/checker.frees	40440085
+# 2026-11-12: main measured 60,723,989 at 73e139f0. A bisect names #15424: 43,096,543
+# at b648c5b9 and 60,206,996 at c4f2f3d4. The callback loan summaries (ocl_factories)
+# analyse each factory again in each round. A worklist now analyses a factory again
+# only when a factory that its body names has a new row: 53,974,294, measured with
+# scripts/selfhost-alloc-bench on the dev container. The cost that remains is the
+# first analysis of each factory, in the two passes of the checker.
+x86_64/checker.allocs	53974294
+x86_64/checker.frees	53974294
