@@ -22,7 +22,7 @@ func TestSelfHostLabsCore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	testFractalTargets(t, entry)
+	testCensusTargets(t, entry)
 }
 
 func TestSelfHostLabsStore(t *testing.T) {
