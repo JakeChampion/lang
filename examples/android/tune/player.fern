@@ -23,7 +23,7 @@ import "./tune";
 // `keep` keeps the folder of the library for the next start. `decode` gives an
 // image from the bytes of a JPEG or a PNG file, at a size. `save` keeps
 // the text of the library for the next start, and `keep_lists` keeps the
-// text of the playlists. `write_text` writes a text file, and tells that it
+// text of the playlists. `keep_prefs` keeps the text of the settings. `write_text` writes a text file, and tells that it
 // did. `kept` gives the bytes
 // that `put` kept under a name, or no bytes. `show` tells
 // Android the track that plays and its state. `wake` keeps the phone
@@ -45,6 +45,7 @@ pub struct Device {
   decode: (u8[], i32, i32) => Option[draw.Image],
   save: (string) => void,
   keep_lists: (string) => void,
+  keep_prefs: (string) => void,
   write_text: (string, string) => boolean,
   kept: (string) => u8[],
   put: (string, u8[]) => void,
@@ -167,6 +168,10 @@ function done(dev: Device, own p: Player, want: tune.Want): Player {
     },
     tune.Grant => {
       dev.grant();
+      return Player { model: m, deck: deck };
+    },
+    tune.KeepPrefs => {
+      dev.keep_prefs(library.prefs_text(tune.prefs(m)));
       return Player { model: m, deck: deck };
     },
     tune.KeepLists => {
@@ -545,5 +550,5 @@ function stepped(dev: Device, own p: Player, msg: tune.Msg): Player {
 }
 
 pub function program(dev: Device): ui.Program[Player, tune.Msg] {
-  return ui.program((p: Player, s: ui.Screen): ui.El[tune.Msg] => tune.view(p.model, s), (own p: Player, msg: tune.Msg): Player => stepped(dev, p, msg)).with_tick((p: Player): i32 => tune.beat(p.model), tune.Beat).with_back((p: Player): Option[tune.Msg] => tune.back(p.model));
+  return ui.program((p: Player, s: ui.Screen): ui.El[tune.Msg] => tune.view(p.model, s), (own p: Player, msg: tune.Msg): Player => stepped(dev, p, msg)).with_tick((p: Player): i32 => tune.beat(p.model), tune.Beat).with_back((p: Player): Option[tune.Msg] => tune.back(p.model)).with_theme_of((p: Player, dark: boolean): ui.Theme => tune.theme(p.model, dark));
 }

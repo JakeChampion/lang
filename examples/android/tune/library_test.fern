@@ -135,6 +135,14 @@ function test_the_lines_of_lyrics(): test.TestOutcome {
   return test.assert_eq(show(timed) + " / " + show(plain) + " / " + library.lrc("").len().to_string() + " " + tune.line_at(timed, 12499i64).to_string() + tune.line_at(timed, 12500i64).to_string() + tune.line_at(timed, 0i64).to_string(), "1000=First|12500=Second line|20500=Twice|62345=Twice / -1=One|-1=Two|-1=[x] not a tag / 0 01-1");
 }
 
+function test_the_text_of_the_settings(): test.TestOutcome {
+  let p = tune.Prefs { look: tune.LOOK_DARK, sort: tune.BY_YEAR, hidden: ["/m/a b", "/m/c"], off: [tune.GENRES, tune.FOLDERS] };
+  let back = library.prefs_from(library.prefs_text(p) + "\nnot a line\nhidden \n");
+  let none = library.prefs_from("");
+  let got = [back.look.to_string(), back.sort.to_string(), back.hidden.join(","), back.off.map((t: i32): string => t.to_string()).join(","), none.look.to_string() + none.sort.to_string() + none.hidden.len().to_string() + none.off.len().to_string()];
+  return test.assert_eq(got.join(" | "), "2 | 2 | /m/a b,/m/c | 4,5 | 0000");
+}
+
 function main(): i32 {
   let r = test.new("examples/android/tune library");
   r = r.it("a name that ends as a file that is not sound", test_other_files);
@@ -147,5 +155,6 @@ function main(): i32 {
   r = r.it("the library is a text that the player reads back", test_the_text_of_a_library);
   r = r.it("the playlists are a text, and an M3U file gives paths", test_playlist_texts);
   r = r.it("lyrics are lines with times or with none", test_the_lines_of_lyrics);
+  r = r.it("the settings are a text", test_the_text_of_the_settings);
   return r.finish();
 }

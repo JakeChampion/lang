@@ -46,9 +46,19 @@ a time. The player asks for the audio focus of `std/android/focus`: a
 different app that plays stops, and the player stops for a call. A foreground service of `std/android/service` and a wake lock keep
 the sound on while the window of the app is away.
 
-The "Folder" button shows the directories of the phone. The person goes
+The "Settings" button shows the settings of the player. "Theme" chooses
+the light colors, the dark colors, or those of the system, with
+`with_theme_of` of `std/android/ui`. "Scan" reads the directories again.
+Each list but the songs has a button that takes its tab away. The player
+keeps the settings for its next start.
+
+"Choose" shows the directories of the phone. The person goes
 into a directory and taps "Use". The library then has the files of that
 folder only, and the player keeps the folder for its next start.
+
+A folder of the list of the folders has the "Hide" button. The library
+then has no file of that directory, and the scan does not read it. The
+settings show each hidden folder with a button that puts it back.
 
 The library has six lists: the songs, the albums, the artists, the
 genres, the playlists and the folders. An artist shows its albums, and an

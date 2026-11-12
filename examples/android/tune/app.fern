@@ -195,6 +195,7 @@ function device(ctx: usize, dir: string, roots: string[], media: Media): player.
     decode: (bytes: u8[], w: i32, h: i32): Option[draw.Image] => image.decode_cover(bytes, w, h),
     save: (text: string): void => { let saved = write_file(dir + "/../library.tsv", text); },
     keep_lists: (text: string): void => { let saved = write_file(dir + "/../playlists.txt", text); },
+    keep_prefs: (text: string): void => { let saved = write_file(dir + "/../settings.txt", text); },
     write_text: (path: string, text: string): boolean => write_file(path, text).is_ok(),
     kept: (name: string): u8[] => read(dir + "/../covers/" + name),
     put: (name: string, bytes: u8[]): void => { let kept = write_file_bytes(dir + "/../covers/" + name, bytes); },
@@ -321,7 +322,7 @@ function app_main(ctx: usize): usize {
   // The player looks for its files after the screen shows, and asks for
   // the permission only when the person taps Scan.
   let folder = read_file(android.data_dir(ctx) + "/folder.txt").unwrap_or("");
-  let last = app.run(ctx, player.wrap(tune.start_with("/storage/emulated/0", folder, library.from_text(read_file(android.data_dir(ctx) + "/library.tsv").unwrap_or("")), library.lists_from(read_file(android.data_dir(ctx) + "/playlists.txt").unwrap_or("")))), player.program(dev).with_system(system)).model;
+  let last = app.run(ctx, player.wrap(tune.start_with("/storage/emulated/0", folder, library.from_text(read_file(android.data_dir(ctx) + "/library.tsv").unwrap_or("")), library.lists_from(read_file(android.data_dir(ctx) + "/playlists.txt").unwrap_or("")), library.prefs_from(read_file(android.data_dir(ctx) + "/settings.txt").unwrap_or("")))), player.program(dev).with_system(system)).model;
   log.info("tune: closed with " + last.tracks.len().to_string() + " tracks at track " + last.current.to_string() + ", " + tune.clock(last.at_ms) + " of " + tune.clock(last.length_ms) + ", playing " + last.playing.to_string());
   return 0 as usize;
 }

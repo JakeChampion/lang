@@ -70,6 +70,13 @@ pub const FOLDERS: i32 = 5;
 // name, with the last year first, or with the longest first.
 pub const BY_ALBUM: i32 = 0;
 
+// The theme: that of the system, the light one, or the dark one.
+pub const LOOK_SYSTEM: i32 = 0;
+
+pub const LOOK_LIGHT: i32 = 1;
+
+pub const LOOK_DARK: i32 = 2;
+
 pub const BY_NAME: i32 = 1;
 
 pub const BY_YEAR: i32 = 2;
@@ -125,8 +132,8 @@ pub function no_sound(): Sound {
 // the folder of the library for the next start, or give back what the
 // player holds of the device before Android destroys the activity, or
 // keep the playlists for the next start, or write a playlist as an M3U
-// file.
-pub enum Want { Load(i32), Resume, Hold, Seek(f64), Scan, Grant, List(string), Keep(string), Quit, KeepLists, WriteList(string) }
+// file, or keep the settings.
+pub enum Want { Load(i32), Resume, Hold, Seek(f64), Scan, Grant, List(string), Keep(string), Quit, KeepLists, WriteList(string), KeepPrefs }
 
 // `fresh` tells that the player did not look for its files yet: it looks
 // at its first Beat, after the screen shows.
@@ -139,7 +146,10 @@ pub enum Want { Load(i32), Resume, Hold, Seek(f64), Scan, Grant, List(string), K
 // albums. `speed` is the speed of the sound in percent, and `pitch` is the
 // number of semitones above the pitch of the file. `sleep_min` is the
 // time of the sleep timer in minutes, or 0, and `sleep_us` is the time of
-// sound that is left before the timer stops the player, in microseconds. `open` tells that the screen of the
+// sound that is left before the timer stops the player, in microseconds.
+// `settings` tells that the screen of the settings shows. `look` is the
+// theme that the person chose. `hidden` has the directories whose files
+// are not in the library, and `off` has the lists that have no tab. `open` tells that the screen of the
 // track shows. `current` is the number of the track that plays, or -1.
 // `sound` plays the track, and `pending` has the samples that the sound
 // did not take yet.
@@ -185,6 +195,10 @@ pub struct Model {
   pitch: i32,
   sleep_min: i32,
   sleep_us: i64,
+  settings: boolean,
+  look: i32,
+  hidden: string[],
+  off: i32[],
   query: string,
   open: boolean,
   current: i32,
@@ -233,13 +247,30 @@ pub struct Model {
 
 // A player with no track yet, which reads the files `scan`.
 pub function start(scan: string[]): Model {
-  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", album_by: "", genre: "", place: "", sort: BY_ALBUM, speed: 100, pitch: 0, sleep_min: 0, sleep_us: 0i64, query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, chosen: [], detail: false, lined: false, error: "", wants: [], sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false, covers: [], bare: [], pictures: [], art: None, lyrics: [], sung: false, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: false, wanted: [], playlists: [], list: "", adding: [], naming: false, name: "" };
+  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", album_by: "", genre: "", place: "", sort: BY_ALBUM, speed: 100, pitch: 0, sleep_min: 0, sleep_us: 0i64, settings: false, look: LOOK_SYSTEM, hidden: [], off: [], query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, chosen: [], detail: false, lined: false, error: "", wants: [], sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false, covers: [], bare: [], pictures: [], art: None, lyrics: [], sung: false, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: false, wanted: [], playlists: [], list: "", adding: [], naming: false, name: "" };
 }
 
 // A player with the tracks `tracks` and the playlists `playlists` that it
 // saved at an earlier time. The tracks are in the order of the library. It looks for the files again after the screen
 // shows, and gets the picture of each album.
-pub function start_with(home: string, folder: string, tracks: Track[], playlists: Playlist[]): Model {
+// The settings that the player keeps for its next start.
+pub struct Prefs { look: i32, sort: i32, hidden: string[], off: i32[] }
+
+pub function no_prefs(): Prefs {
+  return Prefs { look: LOOK_SYSTEM, sort: BY_ALBUM, hidden: [], off: [] };
+}
+
+pub function prefs(m: Model): Prefs {
+  return Prefs { look: m.look, sort: m.sort, hidden: m.hidden, off: m.off };
+}
+
+// The colors of the player: those that the person chose, or those of the
+// system.
+pub function theme(m: Model, dark: boolean): ui.Theme {
+  return ui.theme(m.look == LOOK_DARK || m.look == LOOK_SYSTEM && dark);
+}
+
+pub function start_with(home: string, folder: string, tracks: Track[], playlists: Playlist[], p: Prefs): Model {
   let m = start_in(home, folder);
   let have = m.have;
   let wanted: string[] = [];
@@ -252,7 +283,7 @@ pub function start_with(home: string, folder: string, tracks: Track[], playlists
       last = key;
     }
   }
-  return Model { ...m, tracks: tracks, have: have, wanted: wanted, playlists: playlists };
+  return Model { ...m, tracks: tracks, have: have, wanted: wanted, playlists: playlists, look: p.look % 3, sort: p.sort % 4, hidden: p.hidden, off: p.off };
 }
 
 // A player whose library is in `folder`, and whose person chooses a folder
@@ -296,8 +327,11 @@ pub function start_in(home: string, folder: string): Model {
 // the next time of the sleep timer. `Slept` comes with the microseconds of
 // sound that the player gave the phone, while the timer is on. `Lyrics`
 // shows the lyrics of the track in the place of its picture, or hides
-// them.
-pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean), Menu(i32), MenuClosed, PlayNext, Enqueue, Lined(boolean), Jump(i32), Drop(i32), Closing, Walk(string[]), Listed(string, string[]), OpenList(string), AddTo, SaveQueue, ToList(string), NewList, Named(string), Create, Unlist(i32), DeleteList, Favorite, Imported(string, string[]), Export, Exported(string), Genre(string), Place(string), Sort, ToAlbum, ToArtist, Details, Speed, Pitch, Sleep, Slept(i64), Lyrics }
+// them. `Settings` shows the screen of the settings or not. `Look` goes to
+// the next theme. `TabShown` gives a list its tab, or takes the tab away.
+// `Hide` takes the directory that shows out of the library, and `Unhide`
+// puts a directory back.
+pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean), Menu(i32), MenuClosed, PlayNext, Enqueue, Lined(boolean), Jump(i32), Drop(i32), Closing, Walk(string[]), Listed(string, string[]), OpenList(string), AddTo, SaveQueue, ToList(string), NewList, Named(string), Create, Unlist(i32), DeleteList, Favorite, Imported(string, string[]), Export, Exported(string), Genre(string), Place(string), Sort, ToAlbum, ToArtist, Details, Speed, Pitch, Sleep, Slept(i64), Lyrics, Settings(boolean), Look, TabShown(i32), Hide, Unhide(string) }
 
 // The key of the album of a track: the artist that the album is under,
 // and its name.
@@ -696,7 +730,7 @@ function with_files(m: Model, files: string[]): Model {
   let scan = m.scan;
   let seen = m.seen;
   for f in files {
-    if (seen.get(f).is_none()) {
+    if (seen.get(f).is_none() && !hides(m, f)) {
       seen = seen.insert(f, true);
       if (m.have.get(f).is_none()) {
         scan = scan.append(f);
@@ -726,15 +760,14 @@ function placed(i: i32, to: i32[]): i32 {
   return to[i];
 }
 
-// The player at the end of a walk through its directories: it has no
-// track whose file is not in a directory that the walk read. The track
-// that plays stops when its file is not there.
-pub function pruned(m: Model): Model {
+// The player with no track that `gone` is true for. The track that plays
+// stops when it is one of them.
+function without(m: Model, gone: (Track) => boolean): Model {
   let kept: Track[] = [];
   let to: i32[] = [];
   let have: Map[string, boolean] = map_new(64);
   for t in m.tracks {
-    if (m.listed.get(dir_of(t.path)).is_some() && m.seen.get(t.path).is_none()) {
+    if (gone(t)) {
       to = to.append(-1);
     } else {
       to = to.append(kept.len());
@@ -742,9 +775,8 @@ pub function pruned(m: Model): Model {
       have = have.insert(t.path, true);
     }
   }
-  let done = Model { ...m, walking: false, seen: map_new(64), listed: map_new(64) };
   if (kept.len() == m.tracks.len()) {
-    return done;
+    return m;
   }
   let queue: i32[] = [];
   let spot = -1;
@@ -758,11 +790,33 @@ pub function pruned(m: Model): Model {
     }
   }
   let current = placed(m.current, to);
-  let next = Model { ...done, tracks: kept, have: have, dirty: true, queue: queue, spot: spot, current: current, chosen: [] };
+  let next = Model { ...m, tracks: kept, have: have, dirty: true, queue: queue, spot: spot, current: current, chosen: [] };
   if (m.current >= 0 && current < 0) {
     return Model { ...next, queue: [], spot: -1, playing: false, open: false, at_ms: 0i64, wants: next.wants.append(Hold) };
   }
   return next;
+}
+
+// The player at the end of a walk through its directories: it has no
+// track whose file is not in a directory that the walk read.
+pub function pruned(m: Model): Model {
+  let (listed, seen) = (m.listed, m.seen);
+  return without(Model { ...m, walking: false, seen: map_new(64), listed: map_new(64) }, (t: Track): boolean => listed.get(dir_of(t.path)).is_some() && seen.get(t.path).is_none());
+}
+
+// The path is the directory `dir`, or below it.
+function below(path: string, dir: string): boolean {
+  return path == dir || path.starts_with(dir + "/");
+}
+
+// The path is in a directory that the person hides.
+function hides(m: Model, path: string): boolean {
+  for dir in m.hidden {
+    if (below(path, dir)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // The part of the track that played, from 0 to 1.
@@ -882,10 +936,16 @@ function heading(m: Model, summary: string): ui.El[Msg] {
     let acts = ui.row([ui.text_button("Export", Export), ui.text_button("Delete", DeleteList), ui.space(), ui.text_button("Up", Up)]).spaced(8.0);
     return ui.column([ui.column(top).spaced(4.0), acts]).spaced(4.0).padding_xy(16.0, 0.0);
   }
-  if (!rooted(m)) {
-    return ui.row([ui.column(top).spaced(4.0).wide(), ui.text_button("Up", Up)]).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0);
+  let row: ui.El[Msg][] = [ui.column(top).spaced(4.0).wide()];
+  if (m.place.len() > 0) {
+    row = row.append(ui.text_button("Hide", Hide));
   }
-  return ui.row([ui.column(top).spaced(4.0).wide(), ui.text_button("Folder", Choose), ui.text_button("Scan", Rescan)]).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0);
+  if (rooted(m)) {
+    row = row.append(ui.text_button("Settings", Settings(true)));
+  } else {
+    row = row.append(ui.text_button("Up", Up));
+  }
+  return ui.row(row).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0);
 }
 
 // The last part of a path.
@@ -958,6 +1018,39 @@ function mini(m: Model): ui.El[Msg] {
   return ui.column([ui.progress(part(m)), ui.row([ui.column([ui.text(title(m)).weighted(500).clamped(1), ui.text(clock(m.at_ms) + " / " + clock(m.length_ms)).sized(12.0).colored(ui.MUTED)]).spaced(2.0).wide(), ui.text_button(play_label(m), Toggle)]).spaced(12.0).aligned(ui.CENTER).padding_xy(16.0, 8.0)]).background(ui.SURFACE).on_tap(Opened).described("Now playing, " + title(m));
 }
 
+// The lists that the person can take the tab of, in the order of the tabs.
+const TABS: i32[] = [ALBUMS, ARTISTS, GENRES, PLAYLISTS, FOLDERS];
+
+function tab_name(which: i32): string {
+  return ["Songs", "Artists", "Albums", "Lists", "Genres", "Folders"][which];
+}
+
+function look_label(look: i32): string {
+  return ["System", "Light", "Dark"][look];
+}
+
+// A line of the settings: a name, a detail, and a button.
+function setting(name: string, detail: string, button: string, m: Msg): ui.El[Msg] {
+  return ui.row([ui.column([ui.text(name).weighted(500), ui.text(detail).sized(12.0).colored(ui.MUTED).clamped(1)]).spaced(2.0).wide(), ui.text_button(button, m)]).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0);
+}
+
+// The screen of the settings: the theme, the folder of the library, the
+// tabs, and the directories that the person hides.
+function settings(m: Model): ui.El[Msg] {
+  let head = ui.row([ui.text("Settings").sized(28.0).weighted(700).wide(), ui.text_button("Up", Up)]).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0);
+  let folder = m.folder;
+  if (folder.len() == 0) {
+    folder = "The music of the phone";
+  }
+  let tabs: ui.El[Msg][] = [];
+  for which in TABS {
+    tabs = tabs.append(ui.text_button(toggle_label(tab_name(which), !m.off.contains(which)), TabShown(which)));
+  }
+  let hidden = m.hidden;
+  let rows = ui.list("hidden", hidden.len(), 48.0, (row: i32): ui.El[Msg] => ui.row([ui.text(hidden[row]).clamped(1).wide(), ui.text_button("Show", Unhide(hidden[row]))]).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0));
+  return ui.column([head, setting("Theme", "The colors of the player", look_label(m.look), Look), setting("Folder", folder, "Choose", Choose), setting("Library", count(m.tracks.len(), "song"), "Scan", Rescan), ui.text("Tabs").weighted(700).padding_xy(16.0, 0.0), ui.row(tabs).spaced(4.0).padding_xy(16.0, 0.0).scroll("tab-settings"), ui.text(count(hidden.len(), "hidden folder")).weighted(700).padding_xy(16.0, 0.0), rows]).spaced(12.0).padding_xy(0.0, 16.0).aligned(ui.STRETCH);
+}
+
 function sort_label(sort: i32): string {
   return ["By album", "By name", "By year", "By length"][sort];
 }
@@ -975,7 +1068,13 @@ function library(m: Model): ui.El[Msg] {
   }
   let kids: ui.El[Msg][] = [heading(m, summary), ui.row(search).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0)];
   if (rooted(m)) {
-    kids = kids.append(ui.row([tab(m, "Songs", SONGS), tab(m, "Albums", ALBUMS), tab(m, "Artists", ARTISTS), tab(m, "Genres", GENRES), tab(m, "Lists", PLAYLISTS), tab(m, "Folders", FOLDERS)]).spaced(4.0).padding_xy(16.0, 0.0).scroll("tabs"));
+    let tabs: ui.El[Msg][] = [tab(m, "Songs", SONGS)];
+    for which in TABS {
+      if (!m.off.contains(which)) {
+        tabs = tabs.append(tab(m, tab_name(which), which));
+      }
+    }
+    kids = kids.append(ui.row(tabs).spaced(4.0).padding_xy(16.0, 0.0).scroll("tabs"));
   }
   kids = kids.append(list);
   if (m.chosen.len() > 0) {
@@ -1151,6 +1250,30 @@ function now_playing(m: Model): ui.El[Msg] {
   ).spaced(16.0).padding(16.0).aligned(ui.STRETCH);
 }
 
+// The player with a tab for the list `which`, or with none when it has
+// one. The songs show when the tab that shows goes away.
+function tab_shown(m: Model, which: i32): Model {
+  let wants = m.wants.append(KeepPrefs);
+  if (m.off.contains(which)) {
+    return Model { ...m, off: m.off.filter((t: i32): boolean => t != which), wants: wants };
+  }
+  let tab = m.tab;
+  if (tab == which) {
+    tab = SONGS;
+  }
+  return Model { ...m, off: m.off.append(which), tab: tab, wants: wants };
+}
+
+// The player with the directory that shows out of its library.
+function hid(m: Model): Model {
+  let dir = m.place;
+  if (dir.len() == 0 || m.hidden.contains(dir)) {
+    return m;
+  }
+  let next = without(m, (t: Track): boolean => below(t.path, dir));
+  return Model { ...at_top(next), hidden: m.hidden.append(dir), wants: next.wants.append(KeepPrefs) };
+}
+
 // The value after `now` in `values`, or the first one.
 function after(values: i32[], now: i32): i32 {
   for i in 0..values.len() - 1 {
@@ -1183,6 +1306,9 @@ function pitch_label(pitch: i32): string {
 pub function view(m: Model, s: ui.Screen): ui.El[Msg] {
   if (m.choosing) {
     return chooser(m);
+  }
+  if (m.settings) {
+    return settings(m);
   }
   if (m.adding.len() > 0) {
     return picker(m);
@@ -1382,6 +1508,9 @@ function went_up(m: Model): Model {
   if (m.choosing) {
     return Model { ...m, choosing: false };
   }
+  if (m.settings) {
+    return Model { ...m, settings: false };
+  }
   if (m.naming) {
     return Model { ...m, naming: false, name: "" };
   }
@@ -1427,7 +1556,7 @@ function used(m: Model): Model {
   if (m.playing) {
     wants = wants.append(Hold);
   }
-  return Model { ...m, choosing: false, folder: m.dir, tracks: [], scan: [], covers: [], bare: [], pictures: [], art: None, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: true, wanted: [], current: -1, queue: [], spot: -1, chosen: [], lined: false, playing: false, open: false, artist: "", album: "", album_by: "", genre: "", place: "", query: "", error: "", fresh: false, wants: wants.append(Keep(m.dir)).append(Scan) };
+  return Model { ...m, choosing: false, folder: m.dir, tracks: [], scan: [], covers: [], bare: [], pictures: [], art: None, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: true, wanted: [], current: -1, queue: [], spot: -1, chosen: [], lined: false, playing: false, open: false, settings: false, artist: "", album: "", album_by: "", genre: "", place: "", query: "", error: "", fresh: false, wants: wants.append(Keep(m.dir)).append(Scan) };
 }
 
 function returned(m: Model): Model {
@@ -1542,7 +1671,7 @@ pub function update(own m: Model, msg: Msg): Model {
       return with_files(m, files);
     },
     Rescan => {
-      return Model { ...m, fresh: false, error: "", asked: true, wants: m.wants.append(Grant).append(Scan) };
+      return Model { ...m, fresh: false, settings: false, error: "", asked: true, wants: m.wants.append(Grant).append(Scan) };
     },
     Returned => {
       return returned(m);
@@ -1635,13 +1764,28 @@ pub function update(own m: Model, msg: Msg): Model {
       return Model { ...at_top(m), place: dir, query: "" };
     },
     Sort => {
-      return Model { ...m, sort: (m.sort + 1) % 4 };
+      return Model { ...m, sort: (m.sort + 1) % 4, wants: m.wants.append(KeepPrefs) };
     },
     Speed => {
       return Model { ...m, speed: after(SPEEDS, m.speed) };
     },
     Pitch => {
       return Model { ...m, pitch: after(PITCHES, m.pitch) };
+    },
+    Settings(on) => {
+      return Model { ...m, settings: on };
+    },
+    Look => {
+      return Model { ...m, look: (m.look + 1) % 3, wants: m.wants.append(KeepPrefs) };
+    },
+    TabShown(which) => {
+      return tab_shown(m, which);
+    },
+    Hide => {
+      return hid(m);
+    },
+    Unhide(dir) => {
+      return Model { ...m, hidden: m.hidden.filter((h: string): boolean => h != dir), wants: m.wants.append(KeepPrefs).append(Scan) };
     },
     Lyrics => {
       return Model { ...m, sung: !m.sung };
@@ -1728,7 +1872,7 @@ pub function back(m: Model): Option[Msg] {
   if (m.open) {
     return Some(Closed);
   }
-  if (m.choosing || !rooted(m)) {
+  if (m.choosing || m.settings || !rooted(m)) {
     return Some(Up);
   }
   return None;

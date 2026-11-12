@@ -8,6 +8,7 @@ import "std/android/draw";
 import "std/android/fonts";
 import "std/android/testkit";
 import "std/android/text";
+import "std/android/ui";
 import "std/android/ui/sim";
 import "std/audio/wire";
 import "std/i32";
@@ -171,6 +172,7 @@ function device(): player.Device {
     decode: (bytes: u8[], w: i32, h: i32): Option[draw.Image] => decoded(bytes, w, h),
     save: (text: string): void => {},
     keep_lists: (text: string): void => {},
+    keep_prefs: (text: string): void => {},
     write_text: (path: string, text: string): boolean => path.starts_with("music/") && text.starts_with("#EXTM3U\nFern/First Light/02 Slow Water.wav\n"),
     kept: (name: string): u8[] => [],
     put: (name: string, bytes: u8[]): void => {},
@@ -335,7 +337,7 @@ function test_a_scan_adds_no_track_two_times(): test.TestOutcome {
   // The track that plays keeps its place when the player reads the files
   // again.
   let s = sim.tap(started(), "Slow Water");
-  s = sim.after(sim.tap(s, "Scan"), 50i64);
+  s = sim.after(sim.tap(sim.tap(s, "Settings"), "Scan"), 50i64);
   return test.assert_eq(s.shell.app.model.tracks.len().to_string() + " " + s.shell.app.model.scan.len().to_string() + " " + s.shell.app.model.current.to_string() + " " + s.shell.app.model.playing.to_string(), "4 0 2 true");
 }
 
@@ -345,7 +347,7 @@ function test_a_scan_adds_no_track_two_times(): test.TestOutcome {
 function test_a_person_chooses_the_folder_of_the_library(): test.TestOutcome {
   let s = sim.after(sim.start(player.wrap(tune.start_in("music", "")), player.program(device()), test_fonts(), 1080, 2400, 2.75), 400i64);
   let all = s.shell.app.model.tracks.len();
-  let a = sim.tap(s, "Folder");
+  let a = sim.tap(sim.tap(s, "Settings"), "Choose");
   let at_home = sim.shows(a, "loose") && !sim.shows(a, "Up") && a.shell.app.model.wants.len() == 0;
   let b = sim.tap(sim.tap(a, "Fern"), "First Light");
   let deep = b.shell.app.model.dir + " " + sim.shows(b, "Use First Light").to_string();
@@ -465,7 +467,7 @@ function test_the_player_gives_the_device_back(): test.TestOutcome {
 // keeps the picture of each album.
 function test_the_saved_library(): test.TestOutcome {
   let saved = library.from_text(library.to_text([tune.Track { ...tune.plain("music/" + library.demo_name(0), "Morning Fern", "FLAC", 6000i64), artist: "Fern", album: "First Light", by: "Fern", number: 1 }, tune.plain("music/Old.wav", "Old", "WAV", 1000i64)]));
-  let first = sim.start(player.wrap(tune.start_with("music", "", saved, [])), player.program(device()), test_fonts(), 1080, 2400, 2.75);
+  let first = sim.start(player.wrap(tune.start_with("music", "", saved, [], tune.no_prefs())), player.program(device()), test_fonts(), 1080, 2400, 2.75);
   let before = titles(first.shell.app.model) + " " + first.shell.app.model.wanted.len().to_string();
   let s = sim.after(first, 500i64);
   let m = s.shell.app.model;
@@ -630,6 +632,32 @@ function test_the_lyrics_of_a_track(): test.TestOutcome {
   return test.assert_eq([none.to_string(), m.lyrics.len().to_string(), first.to_string(), tune.line_at(m.lyrics, m.at_ms).to_string(), shown.to_string()].join(" "), "false 3 0 1 true");
 }
 
+// The settings choose the theme and the tabs. A directory that the person
+// hides has no track in the library, and the scan does not read it. The
+// player starts with the settings that it kept.
+function test_the_settings(): test.TestOutcome {
+  let s = sim.tap(started(), "Settings");
+  saved(s, "tune-settings");
+  let light = s.shell.host.screen.theme.background == ui.theme(false).background;
+  s = sim.tap(sim.tap(s, "System"), "Light");
+  let dark = s.shell.app.model.look == tune.LOOK_DARK && sim.shows(s, "Dark");
+  let fr = sim.picture(s);
+  let painted = fr.pixel(1070, 2390) == ui.theme(true).background;
+  draw.release(fr);
+  s = sim.tap(sim.tap(sim.tap(s, "Genres on"), "Albums on"), "Up");
+  let tabs = [sim.shows(s, "Songs"), sim.shows(s, "Albums"), sim.shows(s, "Artists"), sim.shows(s, "Genres"), sim.shows(s, "Folders")];
+  s = sim.tap(sim.tap(sim.tap(s, "Folders"), "loose"), "Hide");
+  let m = s.shell.app.model;
+  let hidden = m.hidden.join(",") + " " + m.tracks.len().to_string() + " " + m.place.len().to_string();
+  s = sim.after(sim.tap(sim.tap(s, "Settings"), "Scan"), 300i64);
+  let kept = s.shell.app.model.tracks.len();
+  s = sim.after(sim.tap(sim.tap(s, "Settings"), "Show"), 300i64);
+  let again = s.shell.app.model.tracks.len().to_string() + " " + s.shell.app.model.hidden.len().to_string();
+  let next = tune.start_with("music", "", [], [], tune.Prefs { look: tune.LOOK_LIGHT, sort: tune.BY_NAME, hidden: ["music/loose"], off: [tune.FOLDERS] });
+  let started = [next.look, next.sort, next.hidden.len(), next.off.len()].map((n: i32): string => n.to_string()).join("");
+  return test.assert_eq([light.to_string(), dark.to_string(), painted.to_string(), tabs.map((b: boolean): string => b.to_string()).join(","), hidden, kept.to_string(), again, started].join(" | "), "true | true | true | true,false,true,false,true | music/loose 3 0 | 3 | 4 0 | 1111");
+}
+
 function main(): i32 {
   let r = test.new("examples/android/tune");
   r = r.it("the scan reads the tags and the paths of its files", test_scan_reads_tags_and_paths);
@@ -656,5 +684,6 @@ function main(): i32 {
   r = r.it("the sound plays at a speed and a pitch", test_the_speed_and_the_pitch);
   r = r.it("the sleep timer stops the player", test_the_sleep_timer);
   r = r.it("a track shows its lyrics", test_the_lyrics_of_a_track);
+  r = r.it("the settings choose the theme, the tabs and the hidden folders", test_the_settings);
   return r.finish();
 }

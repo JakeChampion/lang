@@ -725,6 +725,37 @@ pub function lrc(text: string): tune.Line[] {
   return cmp.sort_by(out.filter((l: tune.Line): boolean => l.ms >= 0i64), (a: tune.Line, b: tune.Line): i32 => (a.ms - b.ms) as i32);
 }
 
+// The settings as a text: a line for the theme, a line for the order, a
+// line for each list with no tab, and a line for each hidden directory.
+pub function prefs_text(p: tune.Prefs): string {
+  let lines = ["look " + p.look.to_string(), "sort " + p.sort.to_string()];
+  for tab in p.off {
+    lines = lines.append("off " + tab.to_string());
+  }
+  for dir in p.hidden {
+    lines = lines.append("hidden " + field(dir));
+  }
+  return lines.join("\n");
+}
+
+// The settings of a text of `prefs_text`.
+pub function prefs_from(text: string): tune.Prefs {
+  let p = tune.no_prefs();
+  for raw in text.split("\n") {
+    let line = raw.to_owned();
+    if (line.starts_with("look ")) {
+      p = tune.Prefs { ...p, look: number_of(line.drop(5).to_owned()) as i32 };
+    } else if (line.starts_with("sort ")) {
+      p = tune.Prefs { ...p, sort: number_of(line.drop(5).to_owned()) as i32 };
+    } else if (line.starts_with("off ")) {
+      p = tune.Prefs { ...p, off: p.off.append(number_of(line.drop(4).to_owned()) as i32) };
+    } else if (line.len() > 7 && line.starts_with("hidden ")) {
+      p = tune.Prefs { ...p, hidden: p.hidden.append(line.drop(7).to_owned()) };
+    }
+  }
+  return p;
+}
+
 // The file of the tune of a number: the first one is a FLAC file, and each
 // other one is a WAV file.
 pub function demo_file(which: i32): Result[u8[], pcm.AudioError] {
