@@ -3111,6 +3111,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// Method calls now have their resolved receiver arguments. Analyse the
 	// complete typed program before the owned-argument checks use its results.
 	c.computeResultBorrows(prog)
+	c.callbackFactoryFuncs = map[string]*ast.FuncDecl{}
+	for _, fn := range prog.Funcs {
+		c.callbackFactoryFuncs[fn.Name] = fn
+	}
 	for _, fn := range prog.Funcs {
 		c.current = fn
 		c.checkOwnedParams(fn)
@@ -5959,10 +5963,13 @@ type checker struct {
 
 	// sendFuncs holds, per function with a `send` parameter, which parameter
 	// slots are worker boundaries; sendParamNames holds their names.
-	sendFuncs      map[string][]bool
-	sendParamNames map[string][]string
-	resultBorrows  map[string]bool
-	resultAnalysed map[string]bool
+	sendFuncs            map[string][]bool
+	sendParamNames       map[string][]string
+	callbackFactoryFuncs map[string]*ast.FuncDecl
+	callbackFactories    map[string][]ast.Param
+	callbackResultCalls  map[*ast.Call]bool
+	resultBorrows        map[string]bool
+	resultAnalysed       map[string]bool
 	// declaredMethods names the methods the program declares.
 	declaredMethods map[string]bool
 	// handleFreeResults names the functions whose result type cannot hold a handle.
@@ -11060,6 +11067,30 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	var callbackCaptures map[string][]ast.Param
 	var inlineCaptures map[ast.Expr][]ast.Param
 	callbackCapturesKnown := false
+	ensureCallbackCaptures := func() {
+		if !callbackCapturesKnown {
+			callbackCaptures, inlineCaptures = c.localCallbackCaptures(fn)
+			callbackCapturesKnown = true
+		}
+	}
+	localCaptureOwner := func(name string) bool {
+		ensureCallbackCaptures()
+		for _, captures := range callbackCaptures {
+			for _, capture := range captures {
+				if capture.Name == name {
+					return true
+				}
+			}
+		}
+		for _, captures := range inlineCaptures {
+			for _, capture := range captures {
+				if capture.Name == name {
+					return true
+				}
+			}
+		}
+		return false
+	}
 	checkCallbackCaptures := func(value ast.Expr, moved movedSet) {
 		if value == nil || len(moved) == 0 {
 			return
@@ -11072,15 +11103,12 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			}
 			name = v.Name
 		case *ast.Lambda:
-		case *ast.IfExpr, *ast.MatchExpr, *ast.BlockExpr:
+		case *ast.IfExpr, *ast.MatchExpr, *ast.BlockExpr, *ast.Call:
 			name = "value"
 		default:
 			return
 		}
-		if !callbackCapturesKnown {
-			callbackCaptures, inlineCaptures = c.localCallbackCaptures(fn)
-			callbackCapturesKnown = true
-		}
+		ensureCallbackCaptures()
 		captures := callbackCaptures[name]
 		if _, named := value.(*ast.Ident); !named {
 			captures = inlineCaptures[value]
@@ -11367,6 +11395,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		dynConsumed := map[*ast.Ident]bool{}
 		fieldTarget := map[*ast.Ident]bool{}
 		fieldMoves := map[*ast.FieldAccess]bool{}
+		localConsumes := map[*ast.Ident]bool{}
 		immediate := map[*ast.Lambda]bool{}
 		ast.Walk(e, func(n ast.Node) bool {
 			switch x := n.(type) {
@@ -11438,6 +11467,9 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 						continue
 					}
 					if ai < len(flags) && flags[ai] {
+						if id, ok := arg.(*ast.Ident); ok && id.Local && !borrowedParam[id.Name] {
+							localConsumes[id] = true
+						}
 						if fa, ok := arg.(*ast.FieldAccess); ok && isOwnedExpr(fa) {
 							if id, ok := fa.Target.(*ast.Ident); ok && owned[id.Name] {
 								fieldMoves[fa] = true
@@ -11451,6 +11483,9 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				}
 				if x.Method != nil && len(x.Args) > 0 {
 					consumes := c.methodConsumesReceiver(x.Method)
+					if id, ok := x.Args[0].(*ast.Ident); ok && consumes && id.Local && !borrowedParam[id.Name] {
+						localConsumes[id] = true
+					}
 					if id, ok := x.Args[0].(*ast.Ident); ok && !consumes {
 						borrow[id] = true
 					}
@@ -11564,6 +11599,9 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				checkCallbackCaptures(id, moved)
 			}
 			if !owned[id.Name] {
+				if localConsumes[id] && localCaptureOwner(id.Name) {
+					moved[id.Name] = id.Pos()
+				}
 				return true
 			}
 			if at, isMoved := moved[id.Name]; isMoved {
@@ -14754,8 +14792,20 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 	}
 	// A call returns its own reference to immutable data, even when the
 	// returned value shares storage with a borrowed input.
-	if call, ok := e.(*ast.Call); ok && c.copyableCallResult(t) {
-		c.recordOwnedResult(call, true)
+	if call, ok := e.(*ast.Call); ok {
+		if c.copyableCallResult(t) {
+			c.recordOwnedResult(call, true)
+		}
+		_, callback := t.(*ast.FuncType)
+		_, generic := t.(ast.ParamType)
+		if callback || generic {
+			if c.callbackResultCalls == nil {
+				c.callbackResultCalls = map[*ast.Call]bool{}
+			}
+			c.callbackResultCalls[call] = true
+		} else {
+			delete(c.callbackResultCalls, call)
+		}
 	}
 	if definitelyScalar(t) {
 		if c.scalarArgs == nil {
