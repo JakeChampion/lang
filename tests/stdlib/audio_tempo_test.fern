@@ -1,0 +1,178 @@
+import "std/audio/tempo";
+import "std/f64";
+import "std/i32";
+import "std/test";
+
+const RATE: i32 = 44100;
+
+// A tone of `hz` for `frames` frames in one channel.
+function tone(hz: f64, frames: i32): i32[] {
+  let out: i32[] = [];
+  for i in 0..frames {
+    out = out.append(((6.283185307179586 * hz * (i as f64) / (RATE as f64)).sin() * 12000.0) as i32);
+  }
+  return out;
+}
+
+// The number of the times that the samples go from below 0 to 0 or above.
+function rises(samples: [i32]): i32 {
+  let n = 0;
+  for i in 1..samples.len() {
+    if (samples[i - 1] < 0 && samples[i] >= 0) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
+// The output of a `Tempo` at `speed` for `sound`, in pushes of `chunk`
+// samples.
+function played(sound: i32[], channels: i32, speed: f64, chunk: i32): i32[] {
+  let t = tempo.new(RATE, channels).at(speed);
+  let out: i32[] = [];
+  let at = 0;
+  while (at < sound.len()) {
+    let end = (at + chunk).min(sound.len());
+    let (next, part) = t.push(sound[at:end]);
+    t = next;
+    for v in part {
+      out = out.append(v);
+    }
+    at = end;
+  }
+  let (done, tail) = t.flush();
+  for v in tail {
+    out = out.append(v);
+  }
+  return out;
+}
+
+function same(a: i32[], b: i32[]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function near(got: i32, want: i32, percent: i32): boolean {
+  return (got - want).abs() * 100 <= want * percent;
+}
+
+// The pitch of a tone in one channel, in Hz.
+function pitch(samples: [i32]): i32 {
+  return (rises(samples) as i64 * (RATE as i64) / (samples.len().max(1) as i64)) as i32;
+}
+
+function test_the_speed_1_gives_the_input(): test.TestOutcome {
+  let sound = tone(440.0, RATE / 2);
+  return test.assert_eq(same(played(sound, 1, 1.0, 4096), sound).to_string(), "true");
+}
+
+function test_a_faster_sound_has_its_pitch(): test.TestOutcome {
+  // One second of 440 Hz at the speed 2 is half of a second of 440 Hz.
+  let out = played(tone(440.0, RATE), 1, 2.0, 4096);
+  return test.assert_eq(near(out.len(), RATE / 2, 7).to_string() + " " + near(pitch(out), 440, 2).to_string(), "true true");
+}
+
+function test_a_slower_sound_has_its_pitch(): test.TestOutcome {
+  let out = played(tone(440.0, RATE), 1, 0.5, 4096);
+  return test.assert_eq(near(out.len(), RATE * 2, 7).to_string() + " " + near(pitch(out), 440, 2).to_string(), "true true");
+}
+
+// The largest step between two samples that are one after the other.
+function steepest(samples: [i32]): i32 {
+  let most = 0;
+  for i in 1..samples.len() {
+    most = most.max((samples[i] - samples[i - 1]).abs());
+  }
+  return most;
+}
+
+function test_two_parts_join_with_no_step(): test.TestOutcome {
+  let sound = tone(440.0, RATE);
+  let limit = steepest(sound) * 5 / 4;
+  let got = [steepest(played(sound, 1, 1.5, 4096)) <= limit, steepest(played(sound, 1, 0.75, 4096)) <= limit, steepest(played(sound, 1, 3.0, 4096)) <= limit];
+  return test.assert_eq(got.map((b: boolean): string => b.to_string()).join(" "), "true true true");
+}
+
+function test_the_size_of_a_push_changes_nothing(): test.TestOutcome {
+  let sound = tone(330.0, RATE / 2);
+  return test.assert_eq(same(played(sound, 1, 1.5, 441), played(sound, 1, 1.5, 100000)).to_string(), "true");
+}
+
+function test_each_channel_stays_in_its_place(): test.TestOutcome {
+  // The left channel has a tone, and the right channel has no sound.
+  let left = tone(440.0, RATE / 2);
+  let sound: i32[] = [];
+  for v in left {
+    sound = sound.append(v).append(0);
+  }
+  let out = played(sound, 2, 1.25, 4096);
+  let quiet = true;
+  let loud = 0;
+  for i in 0..out.len() / 2 {
+    if (out[i * 2 + 1] != 0) {
+      quiet = false;
+    }
+    loud = loud.max(out[i * 2].abs());
+  }
+  return test.assert_eq(quiet.to_string() + " " + (loud > 11000).to_string() + " " + near(out.len() / 2, RATE * 2 / 5, 6).to_string(), "true true true");
+}
+
+function read(sound: i32[], step: f64, chunk: i32): i32[] {
+  let r = tempo.resampler(1);
+  let out: i32[] = [];
+  let at = 0;
+  while (at < sound.len()) {
+    let end = (at + chunk).min(sound.len());
+    let (next, part) = r.push(sound[at:end], step);
+    r = next;
+    for v in part {
+      out = out.append(v);
+    }
+    at = end;
+  }
+  return out;
+}
+
+function test_a_step_changes_the_pitch(): test.TestOutcome {
+  let sound = tone(440.0, RATE);
+  let whole = read(sound, 1.0, 4096);
+  let high = read(sound, 2.0, 4096);
+  let low = read(sound, 0.5, 4096);
+  // The step 1 gives the input, less the two frames that it waits for.
+  let kept = true;
+  for i in 0..whole.len() {
+    if (whole[i] != sound[i]) {
+      kept = false;
+    }
+  }
+  let got = [kept && whole.len() >= sound.len() - 3, near(high.len(), RATE / 2, 1), near(pitch(high), 880, 2), near(low.len(), RATE * 2, 1), near(pitch(low), 220, 2), same(read(sound, 1.3, 100), read(sound, 1.3, 100000))];
+  return test.assert_eq(got.map((b: boolean): string => b.to_string()).join(" "), "true true true true true true");
+}
+
+function test_the_pitch_changes_and_the_speed_stays(): test.TestOutcome {
+  // The speed 1 / 1.5 and then the step 1.5: the length stays, and 440 Hz
+  // becomes 660 Hz.
+  let slow = played(tone(440.0, RATE), 1, 1.0 / 1.5, 4096);
+  let out = read(slow, 1.5, 4096);
+  return test.assert_eq(near(out.len(), RATE, 7).to_string() + " " + near(pitch(out), 660, 2).to_string(), "true true");
+}
+
+function main(): i32 {
+  let r = test.new("std/audio/tempo");
+  r = r.it("the speed 1 gives the input", test_the_speed_1_gives_the_input);
+  r = r.it("a faster sound has its pitch", test_a_faster_sound_has_its_pitch);
+  r = r.it("a slower sound has its pitch", test_a_slower_sound_has_its_pitch);
+  r = r.it("two parts join with no step", test_two_parts_join_with_no_step);
+  r = r.it("the size of a push changes nothing", test_the_size_of_a_push_changes_nothing);
+  r = r.it("each channel stays in its place", test_each_channel_stays_in_its_place);
+  r = r.it("a step changes the pitch", test_a_step_changes_the_pitch);
+  r = r.it("the pitch changes and the speed stays", test_the_pitch_changes_and_the_speed_stays);
+  return r.finish();
+}
