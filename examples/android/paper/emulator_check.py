@@ -105,21 +105,34 @@ def check_keyboard(width):
 def check_access(out):
     """An accessibility service reads the home screen: uiautomator dumps the
     window through the accessibility layer, and the dump has the clock of
-    Paper as a button with the time as its text."""
+    Paper as a button with the time as its text. The box of the button has
+    its middle where Paper drew the middle of the time, so a service puts
+    its focus on the clock and not below it."""
     dump = ui_dump(out, "ui")
-    clock = re.search(r'<node [^>]*text="\d{1,2}:\d\d[^"]*"[^>]*class="android\.widget\.Button"[^>]*package="dev\.fern\.paper"[^>]*clickable="true"', dump)
+    clock = re.search(r'<node [^>]*text="\d{1,2}:\d\d[^"]*"[^>]*class="android\.widget\.Button"[^>]*package="dev\.fern\.paper"[^>]*clickable="true"[^>]*', dump)
     if not clock:
         fail("the accessibility layer has no clock button of Paper")
+        return
+    box = re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', clock.group(0))
+    places = re.findall(r"paper: (?:drawn|moved).*clock at (\d+) (\d+)", logcat())
+    if not box or not places:
+        fail("the clock has no box in the accessibility layer, or Paper did not log where it drew the clock")
+        return
+    left, top, right, bottom = (int(v) for v in box.groups())
+    x, y = (left + right) // 2, (top + bottom) // 2
+    drawn = places[-1]
+    if abs(x - int(drawn[0])) > 2 or abs(y - int(drawn[1])) > 2:
+        fail(f"the accessibility layer has the clock at {x} {y}, and Paper drew it at {drawn[0]} {drawn[1]}")
 
 
 def open_clock():
-    """Taps the time, which opens the clock app, and goes home again. The
-    first frame logs the middle of the time."""
-    place = re.search(r"paper: drawn .*clock at (\d+) (\d+)", logcat())
-    if not place:
+    """Taps the time, which opens the clock app, and goes home again. Paper
+    logs the middle of the time when it draws it at a new place."""
+    places = re.findall(r"paper: (?:drawn|moved).*clock at (\d+) (\d+)", logcat())
+    if not places:
         fail("the home screen did not log the place of the clock")
         return
-    adb("shell", "input", "tap", place.group(1), place.group(2))
+    adb("shell", "input", "tap", *places[-1])
     opened = wait_for(r"paper: open clock (\S+)")
     if not opened or opened.group(1) == "by":
         fail("a tap on the time did not find the clock app")
@@ -241,6 +254,17 @@ def held_evidence(out, printed, dump):
     })
 
 
+def shown_evidence(out):
+    """What the device says about the notification from before the filter,
+    when it is not in the shade: the lines of the notification service
+    that have its tag or a cancel, and the held file of Paper."""
+    lines = shell("logcat", "-d", "-v", "time", "NotificationService:V", "NotificationManager:V", "NotificationListeners:V", "fern:V", "*:S").splitlines()
+    told = [line[:220] for line in lines if re.search(r"fern_shown|[Cc]ancel|paper:", line)]
+    for at in range(0, min(len(told), 40), 4):
+        keep(out, f"shown-{at:02}", {"service": "\n".join(told[-40:][at:at + 4])})
+    keep(out, "shown", {"list": shell("cmd", "notification", "list"), "held-file": shell("cat", FILES + "held")})
+
+
 def in_shade(tag):
     """Whether the notification with the tag `tag` is in the shade."""
     # Each line is the key of one notification, and a key has the tag
@@ -310,6 +334,10 @@ def check_filter(out, width, height):
     adb("shell", "cmd", "notification", "allow_listener", LISTENER, check=False)
     if not filter_on(out, width, height):
         return
+    if not in_shade("fern_shown"):
+        shown_evidence(out)
+        fail("the notification from before the filter left the shade when the filter came on")
+        return
     printed = post(out, "fern_held", "held_text")
     held = wait_for_node(out, "ui-held", r"\d+ held notifications?")
     if not held:
@@ -319,6 +347,7 @@ def check_filter(out, width, height):
     if not wait_for_shade("fern_held", False):
         fail("the filter did not take the notification out of the shade")
     if not in_shade("fern_shown"):
+        shown_evidence(out)
         fail("the filter took a notification from before it was on")
     tap(held)
     row = wait_for_node(out, "ui-held-list", '[^"]*held_text[^"]*', 10.0)
@@ -331,7 +360,23 @@ def check_filter(out, width, height):
     time.sleep(1.0)
     if find_node(ui_dump(out, "ui-opened"), r"\d+ held notifications?"):
         fail("the held notification stayed on the home screen after it opened")
+    # A listener that connects while the filter is on holds each
+    # notification that the shade has.
     adb("shell", "cmd", "notification", "disallow_listener", LISTENER, check=False)
+    adb("shell", "cmd", "notification", "allow_listener", LISTENER, check=False)
+    if not wait_for_shade("fern_shown", False):
+        fail("the filter did not hold the notifications of the shade when its listener connected")
+
+
+def clear_shade():
+    """Stops the listener, and makes sure that the shade has no
+    notification of this check. A check of another app reads the shade
+    after this one, and the shade shows the buttons of only its first
+    notifications. The shell has no command that cancels a notification:
+    check_filter ends with a step in which Paper holds them."""
+    adb("shell", "cmd", "notification", "disallow_listener", LISTENER, check=False)
+    if "|fern_" in adb("shell", "cmd", "notification", "list", check=False):
+        fail("the check left its notification in the shade")
 
 
 def main(apk, out):
@@ -394,6 +439,7 @@ def main(apk, out):
         fail(f"the home screen after Back has {part:.3f} of the paper colour, not paper above the wallpaper")
 
     check_filter(out, width, height)
+    clear_shade()
 
     log = early + logcat()
     with open(f"{out}/logcat.txt", "w") as f:

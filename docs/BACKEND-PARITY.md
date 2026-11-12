@@ -617,6 +617,10 @@ call modulo cons, into a loop before any emitter sees the body
 (`ssasem.tail_recursion`, #9692, #10462), so self-tail recursion runs in
 constant stack depth on x86-64, arm64 and wasm
 (`internal/testing/e2ecompiler/self_host_sem_tail_recursion_test.go`).
+The constructions of one function can put the recursive result in different
+payloads, as a tree insert does for its left and its right child. The loop
+then carries the payload index of the open hole
+(`internal/testing/e2ecompiler/self_host_sem_trmc_test.go`, `put`).
 
 ### Pointer-width handling on arm64-darwin's high heap — how it works
 

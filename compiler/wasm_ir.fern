@@ -4385,9 +4385,8 @@ function emit_wasm_lane_int(o: ir.Op): string {
   let verbs: string[] = ["add", "sub", "add_sat_s", "add_sat_u", "sub_sat_s", "sub_sat_u", "min_s", "min_u", "max_s", "max_u", "avgr_u", "eq", "ne", "lt_s", "lt_u", "neg", "abs", "splat", "extract_lane_s", "extract_lane_u", "bitmask", "replace_lane", "mul", "shl", "shr_s", "shr_u"];
   let verb = verbs[o.kind_tag - ir.LANE_INT_FIRST];
   // Lanes of 32 bits have no saturating form and no average, and lanes
-  // of 8 bits have no multiply. The x86-64 backend has no shift for
-  // lanes of 8 bits, so this one refuses that width too.
-  if (w == 32 && (verb.contains("_sat_") || verb == "avgr_u") || w == 8 && (verb == "mul" || o.kind_tag >= ir.K_VISHL)) {
+  // of 8 bits have no multiply.
+  if (w == 32 && (verb.contains("_sat_") || verb == "avgr_u") || w == 8 && verb == "mul") {
     return ircore.unsupported_op_refuse(o.kind_tag, "wasm");
   }
   let shape = if (w == 8) { "i8x16" } else if (w == 16) { "i16x8" } else { "i32x4" };

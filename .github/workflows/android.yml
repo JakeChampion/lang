@@ -121,6 +121,7 @@ jobs:
           FERN="$PWD/bin/fern-selfhost" scripts/check-video-mp4-av1-interop
           FERN="$PWD/bin/fern-selfhost" scripts/check-video-mp4-vp9-interop
           FERN="$PWD/bin/fern-selfhost" scripts/check-audio-mp4-file-interop
+          FERN="$PWD/bin/fern-selfhost" scripts/check-audio-mp4-cursor-interop
           FERN="$PWD/bin/fern-selfhost" scripts/check-android-native-av
           FERN="$PWD/bin/fern-selfhost" scripts/check-video-annex-b-interop
           FERN="$PWD/bin/fern-selfhost" scripts/check-video-avc-interop

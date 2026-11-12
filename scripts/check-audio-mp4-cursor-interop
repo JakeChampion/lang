@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""Compare bounded native AAC presentation reads with whole-track and FFmpeg PCM."""
+from fractions import Fraction
+import json
+import math
+import os
+from pathlib import Path
+import runpy
+import struct
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+os.chdir(ROOT)
+FIXTURE = runpy.run_path(str(ROOT / 'scripts/gen-mp4-vectors.py'))
+AAC = FIXTURE['AAC']
+compiler = os.environ.get('FERN') or subprocess.check_output(['./bootstrap/bootstrap.sh', 'stage0'], text=True).strip()
+target = {'x86_64': 'x86-64-linux', 'aarch64': 'arm64-linux', 'arm64': 'arm64-darwin'}[os.uname().machine]
+binary = ROOT / 'build/audio/mp4-cursor-reference'
+binary.parent.mkdir(parents=True, exist_ok=True)
+for output, architecture, flags in [(binary, target, ['-sanitize']), (binary.with_suffix('.wasm'), 'wasm32-wasi', [])]:
+    subprocess.run([compiler, '-stdlib', str(ROOT / 'internal/stdlib'), '-target', architecture, *flags,
+                    '-o', str(output), 'scripts/audio-reference/mp4-cursor.fern'], check=True)
+
+
+def output(path, mode, wasm=False, start=0):
+    command = ['wasmtime', 'run', '--dir', '.', str(binary.with_suffix('.wasm'))] if wasm else [str(binary)]
+    result = subprocess.run([*command, path.name, mode], cwd=path.parent, capture_output=True, text=True, check=True)
+    if not wasm:
+        assert 'live_bytes=0' in result.stderr and 'fern-sanitizer:' not in result.stderr, result.stderr
+    lines = result.stdout.splitlines()
+    rate, channels, frames = map(int, lines[0].split())
+    position = start
+    samples = b''
+    for line in lines[1:]:
+        tag, at, count, data = line.split()
+        count, at = int(count), int(at)
+        raw = bytes.fromhex(data)
+        assert tag == 'O' and at == position and 0 < count
+        assert mode == 'whole' or count <= 1024
+        assert len(raw) == count * channels * 4
+        position += count
+        samples += raw
+    assert position == frames
+    return (rate, channels, frames), samples
+
+
+def verify(path, expected=None):
+    native = output(path, 'cursor')
+    if expected is None:
+        assert native == output(path, 'whole')
+    else:
+        assert native == expected[0]
+    wasi = output(path, 'cursor', True)
+    if expected is None:
+        assert wasi == output(path, 'whole', True)
+    else:
+        assert wasi == expected[1]
+    cut = 1234 * native[0][1] * 4
+    assert output(path, 'seek', start=1234) == (native[0], native[1][cut:])
+    assert output(path, 'seek', True, start=1234) == (wasi[0], wasi[1][cut:])
+    description = json.loads(subprocess.check_output(['ffprobe', '-v', 'error', '-select_streams', 'a:0',
+                                                     '-show_streams', '-show_packets', '-of', 'json', str(path)]))
+    probe = description['streams'][0]
+    rate, channels, frames = native[0]
+    assert native[0] == wasi[0]
+    assert rate == int(probe['sample_rate']) and channels == probe['channels']
+    # The applied movie edit can round the last packet duration as well as the stream duration.
+    original = json.loads(subprocess.check_output(['ffprobe', '-v', 'error', '-ignore_editlist', '1',
+                                                  '-select_streams', 'a:0', '-show_packets', '-of', 'json', str(path)]))
+    endpoint = max(Fraction(int(p['pts']) + int(p['duration'])) for p in original['packets'])
+    side_data = [s for s in description['packets'][0].get('side_data_list', []) if s['side_data_type'] == 'Skip Samples']
+    skip = int(side_data[0]['skip_samples']) if side_data else 0
+    physical = endpoint * Fraction(probe['time_base']) * rate - skip
+    edited = Fraction(int(probe['duration_ts'])) * Fraction(probe['time_base']) * rate
+    duration = min(physical, edited)
+    assert duration.denominator == 1 and frames == duration.numerator, (frames, duration)
+    raw = subprocess.check_output(['ffmpeg', '-v', 'error', '-i', str(path), '-map', '0:a:0',
+                                   '-af', f'atrim=end_sample={frames}', '-c:a', 'pcm_f32le', '-f', 'f32le', '-'])
+    assert len(raw) == frames * channels * 4
+    expected = struct.unpack(f'<{frames * channels}f', raw)
+    peaks = []
+    for actual in (native[1], wasi[1]):
+        values = struct.unpack(f'<{frames * channels}f', actual)
+        assert all(math.isfinite(value) for value in values)
+        peak = max(abs(value - reference) for value, reference in zip(values, expected))
+        assert peak <= 0.000001, (path.name, peak)
+        peaks.append(peak)
+    print(path.name, frames, 'frames, every native/WASI sample within existing AAC tolerance', peaks)
+    return native, wasi
+
+
+with tempfile.TemporaryDirectory() as directory:
+    temp = Path(directory)
+    for name, rate, channels, flags in [
+        ('mono', 44100, 1, []), ('stereo', 48000, 2, ['-movflags', '+faststart']),
+        ('surround', 48000, 6, []), ('high-rate', 96000, 2, []),
+        ('two-tracks', 48000, 2, ['-map', '0:a', '-map', '0:a']),
+        ('no-edits', 44100, 2, ['-use_editlist', '0']),
+    ]:
+        raw = temp / 'input.f32'
+        raw.write_bytes(AAC['signal'](channels, 4099, 'tone'))
+        path = temp / (name + '.m4a')
+        AAC['run'](['-f', 'f32le', '-ar', str(rate), '-ac', str(channels), '-i', str(raw),
+                    '-c:a', 'aac', '-b:a', str(64000 * channels), '-aac_pns', '0', '-aac_tns', '0',
+                    *flags, str(path)])
+        expected = verify(path)
+        if name == 'mono':
+            sparse = temp / 'sparse.m4a'
+            FIXTURE['sparse_movie'](path, sparse)
+            verify(sparse, expected)
+    path = temp / 'interleaved.mp4'
+    AAC['run'](['-f', 'lavfi', '-i', 'color=c=black:size=32x32:rate=30:duration=0.2',
+                '-f', 'f32le', '-ar', '44100', '-ac', '2', '-i', str(raw),
+                '-c:v', 'libx264', '-c:a', 'aac', '-aac_pns', '0', '-aac_tns', '0', '-shortest', str(path)])
+    verify(path)
+    print('independent AAC MP4 cursor interoperability passed')

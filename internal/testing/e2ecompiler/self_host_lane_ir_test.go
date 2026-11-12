@@ -152,6 +152,8 @@ function wide_checks(own m: ir.Op[]): ir.Op[] {
   m = icheck(m, wmask("vilts", 32, 15, 16), 15, 58);
   m = icheck(m, wshift("vishl", 32, 15, 4, 2), 80, 59);
   m = icheck(m, wshift("vishru", 32, 15, 4, 0), 187500000, 59);
+  m = icheck(m, wshift("vishl", 16, 13, 20, 5), 144, 59);
+  m = icheck(m, wshift("vishru", 32, 15, 36, 0), 187500000, 59);
   return icheck(m, wshift("vishrs", 32, 15, 4, 0), 0 - 80935456, 59);
 }
 function int_checks(own m: ir.Op[]): ir.Op[] {
@@ -201,6 +203,15 @@ function int_checks(own m: ir.Op[]): ir.Op[] {
   m = icheck(m, [ir.op_load_local(11), vi("vineg"), ir.op_lane_at("viextracts", 8, 0)], 0 - 100, 45);
   m = icheck(m, [ir.op_load_local(10), vi("viabs"), ir.op_lane_at("viextracts", 8, 0)], 56, 45);
   m = icheck(m, [ir.op_load_local(10), vi("viabs"), ir.op_lane_at("viextractu", 8, 3)], 7, 45);
+  // 47: the shifts of lanes of 8 bits, and a count modulo the lane width.
+  m = icheck(m, wshift("vishl", 8, 10, 3, 0), 64, 47);
+  m = icheck(m, wshift("vishl", 8, 10, 3, 3), 56, 47);
+  m = icheck(m, wshift("vishru", 8, 10, 3, 0), 25, 47);
+  m = icheck(m, wshift("vishrs", 8, 10, 3, 0), 0 - 7, 47);
+  m = icheck(m, wshift("vishrs", 8, 10, 3, 3), 0, 47);
+  m = icheck(m, wshift("vishrs", 8, 10, 0, 0), 0 - 56, 47);
+  m = icheck(m, wshift("vishrs", 8, 10, 7, 0), 0 - 1, 47);
+  m = icheck(m, wshift("vishrs", 8, 10, 11, 0), 0 - 7, 47);
   // 46: p + q held across a call, so it spills to a slot pair.
   m = m.append(ir.op_load_local(10)).append(ir.op_load_local(11)).append(vi("viadd")).append(ir.op_store_local(12));
   m = m.append(ir.op_call_direct("side", 0)).append(ir.op_drop());

@@ -59,8 +59,28 @@ function main(): i32 { return 0; }`, []string{"E051"}},
 		{"function_field", `struct F { f: (own string) => i32 }
 function apply(h: F, s: string): i32 { return h.f(s); }
 function main(): i32 { return 0; }`, []string{"E051"}},
+		{"parameter_literal_with_caller", `function length(own s: string): i32 { return s.len(); }
+function apply(f: (own string) => i32): i32 { return f("ab"); }
+function main(): i32 { return apply(length); }`, nil},
+		{"local_closure_literal", `function main(): i32 { let f: (own string) => i32 = (own s: string): i32 => s.len(); return f("ab"); }`, nil},
+		{"function_field_literal", `struct F { f: (own string) => i32 }
+function apply(h: F): i32 { return h.f("ab"); }
+function main(): i32 { return 0; }`, nil},
 		{"borrowed_argument", `function apply(f: (own string) => i32, s: string): i32 { return f(s); }
 function main(): i32 { return 0; }`, []string{"E051"}},
+		{"borrowed_resource_callback", `struct R { n: i32 }
+function (own r: R) close(): i32 { return r.n; }
+function apply(f: (own R) => i32, r: R): i32 { return f(r); }
+function main(): i32 { return 0; }`, []string{"E051"}},
+		{"borrowed_resource_function_field", `struct R { n: i32 }
+function (own r: R) close(): i32 { return r.n; }
+struct F { f: (own R) => i32 }
+function apply(h: F, r: R): i32 { return h.f(r); }
+function main(): i32 { return 0; }`, []string{"E051"}},
+		{"fresh_resource_callback", `struct R { n: i32 }
+function (own r: R) close(): i32 { return r.n; }
+function apply(f: (own R) => i32): i32 { return f(R { n: 2 }); }
+function main(): i32 { return 0; }`, nil},
 		{"use_after_move", `function apply(f: (own string) => i32, own s: string): i32 { let n = f(s); return n + s.len(); }
 function main(): i32 { return 0; }`, []string{"E050"}},
 		{"local_last_use", `function apply(f: (own string) => i32): i32 { let s = "ab"; return f(s); }
@@ -119,4 +139,8 @@ function main(): i32 { return 0; }`, nil},
 			}
 		})
 	}
+}
+
+func TestSelfHostIndirectOwnedLiteralRun(t *testing.T) {
+	ownedResultRuntimeCase(t, "own_parameter_takes_a_string_literal")
 }

@@ -16,7 +16,7 @@ class Device:
     def __init__(self, *, stuck_keyboard=False, missing_keyboard=False,
                  ignored_back=False, early_close=False, wrong_home=False,
                  editor="inputType=0x1 imeOptions=0x10000002",
-                 dump='<node index="2" text="9:06" resource-id="" class="android.widget.Button" package="dev.fern.paper" content-desc="" clickable="true" />'):
+                 dump='<node index="2" text="9:06" resource-id="" class="android.widget.Button" package="dev.fern.paper" content-desc="" clickable="true" bounds="[77,92][242,193]" />'):
         self.dump = dump
         self.keyboard = False
         self.editor = editor
@@ -37,7 +37,7 @@ class Device:
         elif args == ("shell", "input", "keyevent", "KEYCODE_HOME"):
             self.layer = 0
             self.keyboard = False
-            self.log.extend(["paper: drawn 320x640", "paper: apps 1, Paper listed true", "paper: layer 0"])
+            self.log.extend(["paper: drawn 320x640, clock at 159 142", "paper: apps 1, Paper listed true", "paper: layer 0"])
         elif args[:3] == ("shell", "input", "swipe"):
             self.drawers += 1
             self.layer = 1
@@ -182,6 +182,30 @@ class BackNavigationTests(unittest.TestCase):
         failures = self.run_device(Device(dump='<node text="9:06" class="android.view.View" package="dev.fern.paper" clickable="false" />'))
         self.assertIn("the accessibility layer has no clock button of Paper", failures)
 
+    def test_clock_box_must_be_where_the_clock_is_drawn(self):
+        low = '<node text="9:06" class="android.widget.Button" package="dev.fern.paper" clickable="true" bounds="[77,116][242,217]" />'
+        failures = self.run_device(Device(dump=low))
+        self.assertIn("the accessibility layer has the clock at 159 166, and Paper drew it at 159 142", failures)
+
+    def test_clock_box_is_compared_with_the_last_place(self):
+        device = Device()
+        adb = device.adb
+
+        def moved(*args, **kwargs):
+            answer = adb(*args, **kwargs)
+            if args == ("shell", "input", "keyevent", "KEYCODE_HOME"):
+                device.log.insert(0, "paper: drawn 320x640, clock at 159 118")
+                device.log.append("paper: moved, clock at 159 142")
+            return answer
+
+        device.adb = moved
+        self.assertEqual([f for f in self.run_device(device) if "clock" in f], [])
+
+    def test_clock_must_have_a_box(self):
+        bare = '<node text="9:06" class="android.widget.Button" package="dev.fern.paper" clickable="true" />'
+        failures = self.run_device(Device(dump=bare))
+        self.assertEqual(len([f for f in failures if "no box in the accessibility layer" in f]), 1)
+
     def test_home_transition_also_requires_the_home_frame(self):
         failures = self.run_device(Device(wrong_home=True))
         self.assertTrue(any("paper colour" in failure for failure in failures), failures)
@@ -195,7 +219,7 @@ class Phone:
     """A device for check_filter. `holds` is whether the filter takes a
     notification out of the shade, and `shows` is whether Paper shows it."""
 
-    def __init__(self, *, holds=True, shows=True, opens=True, takes_old=False, filter_row="off", probe=True):
+    def __init__(self, *, holds=True, shows=True, opens=True, takes_old=False, takes_late=False, sweeps=True, filter_row="off", probe=True):
         self.holds = holds
         self.shows = shows
         self.opens = opens
@@ -203,6 +227,10 @@ class Phone:
         self.sliding = 0
         self.wrong_rows = 0
         self.takes_old = takes_old
+        self.takes_late = takes_late
+        self.sweeps = sweeps
+        # The listener stopped once, so its next start is a new connection.
+        self.stopped = False
         self.filter_row = filter_row
         self.probe = probe
         self.allowed = False
@@ -217,6 +245,8 @@ class Phone:
         self.failures = []
 
     def post(self, tag):
+        if self.takes_late and self.on:
+            self.shade.clear()
         if self.allowed and self.on and self.shows:
             self.held.append(tag)
         if not (self.allowed and self.on and self.holds):
@@ -263,6 +293,10 @@ class Phone:
             self.post(args[-2])
         elif args[:4] == ("shell", "cmd", "notification", "allow_listener"):
             self.allowed = True
+            if self.stopped and self.sweeps:
+                self.shade.clear()
+        elif args[:4] == ("shell", "cmd", "notification", "disallow_listener"):
+            self.stopped = True
         elif args[:3] == ("shell", "input", "swipe") and args[3:5] == args[5:7]:
             self.screen = "settings"
             self.sliding = 2
@@ -294,7 +328,7 @@ class FilterTests(unittest.TestCase):
     def test_a_held_notification_leaves_the_shade_and_opens(self):
         phone = Phone()
         self.assertEqual(self.run_phone(phone), [])
-        self.assertEqual(phone.shade, ["fern_shown"])
+        self.assertEqual(phone.shade, [])
         self.assertFalse(phone.allowed and phone.held)
 
     def test_each_post_is_a_post_of_the_shell_user_when_adb_is_root(self):
@@ -357,6 +391,20 @@ class FilterTests(unittest.TestCase):
         self.assertTrue(phone.on)
         self.assertEqual(phone.wrong_rows, 0)
 
+    def test_a_listener_that_connects_holds_the_shade(self):
+        failures = self.run_phone(Phone(sweeps=False))
+        self.assertEqual(failures, ["the filter did not hold the notifications of the shade when its listener connected"])
+
+    def test_a_notification_that_the_check_leaves_is_a_failure(self):
+        failures = []
+        with patch.multiple(check, adb=lambda *args, **kwargs: "0|com.android.shell|2020|fern_shown|2000\n", fail=failures.append):
+            check.clear_shade()
+        self.assertEqual(failures, ["the check left its notification in the shade"])
+        failures.clear()
+        with patch.multiple(check, adb=lambda *args, **kwargs: "-1|android|55|null|1000\n", fail=failures.append):
+            check.clear_shade()
+        self.assertEqual(failures, [])
+
     def test_the_tag_of_another_notification_is_not_in_the_shade(self):
         with patch.object(check, "adb", return_value="0|com.android.shell|2020|fern_held_more|2000\n"):
             self.assertFalse(check.in_shade("fern_held"))
@@ -364,6 +412,8 @@ class FilterTests(unittest.TestCase):
 
     def test_a_notification_from_before_the_filter_stays(self):
         failures = self.run_phone(Phone(takes_old=True))
+        self.assertIn("the notification from before the filter left the shade when the filter came on", failures)
+        failures = self.run_phone(Phone(takes_late=True))
         self.assertIn("the filter took a notification from before it was on", failures)
 
     def test_a_shade_that_the_check_cannot_read_fails(self):
