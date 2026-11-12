@@ -1,4 +1,5 @@
 import "std/test";
+import "std/unicode";
 
 function test_bytes_len_is_5(): test.TestOutcome {
   let s = "Hello";
