@@ -100,6 +100,36 @@ function main(): i32 {
 }`,
 			want: 20,
 		},
+		{
+			name: "an array of functions through a type parameter",
+			src: `function with_some[T](own xs: T[], x: Option[T]): T[] {
+    if let Some(v) = x { return xs.append(v); }
+    return xs;
+}
+function main(): i32 {
+    let fs: ((i32) => i32)[] = [];
+    fs = with_some(fs, Some((n: i32): i32 => n + 1));
+    let ns: i32[] = with_some([1, 2], Some(3));
+    return fs[0](40) + ns.len() - 1;
+}`,
+			want: 43,
+		},
+		{
+			name: "an array of functions in a field of a generic struct",
+			src: `function with_some[T](own xs: T[], x: Option[T]): T[] {
+    if let Some(v) = x { return xs.append(v); }
+    return xs;
+}
+struct Box[M] { fs: ((i32) => M)[], f: Option[(i32) => M] }
+function grow[M](own b: Box[M]): ((i32) => M)[] {
+    return with_some(b.fs, b.f);
+}
+function main(): i32 {
+    let out = grow(Box { fs: [], f: Some((n: i32): string => n.to_string()) });
+    return out.len() * 10 + out[0](7).len();
+}`,
+			want: 11,
+		},
 	}
 
 	for _, c := range cases {
