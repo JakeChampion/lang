@@ -530,7 +530,7 @@ function shown(dev: Device, own m: tune.Model): tune.Model {
     return m;
   }
   let t = m.tracks[m.current];
-  dev.show(tune.Now { title: t.title, artist: t.artist, album: t.album, length_ms: m.length_ms, at_ms: m.at_ms, playing: m.playing });
+  dev.show(tune.Now { title: t.title, artist: t.artist, album: t.album, length_ms: m.length_ms, at_ms: m.at_ms, playing: m.playing, art: m.art });
   let awake = m.awake;
   if (m.playing && awake.wake == 0 as usize) {
     awake = dev.wake();
