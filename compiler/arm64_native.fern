@@ -1992,6 +1992,24 @@ function arm64_v3int_entry(mnem: string): i32 {
     "ushl" => {
       return arm64_vec_entry(true, 8, 15);
     },
+    "sqadd" => {
+      return arm64_vec_entry(false, 1, 15);
+    },
+    "uqadd" => {
+      return arm64_vec_entry(true, 1, 15);
+    },
+    "sqsub" => {
+      return arm64_vec_entry(false, 5, 15);
+    },
+    "uqsub" => {
+      return arm64_vec_entry(true, 5, 15);
+    },
+    "srhadd" => {
+      return arm64_vec_entry(false, 2, 7);
+    },
+    "urhadd" => {
+      return arm64_vec_entry(true, 2, 7);
+    },
     _ => {
       return -1;
     }

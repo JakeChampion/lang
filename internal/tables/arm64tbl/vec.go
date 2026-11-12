@@ -35,6 +35,9 @@ var VecInt3 = VecTable{
 		{"smax", false, 0x0C, ArrBHS}, {"smin", false, 0x0D, ArrBHS},
 		{"umax", true, 0x0C, ArrBHS}, {"umin", true, 0x0D, ArrBHS},
 		{"sshl", false, 0x08, ArrBHSD}, {"ushl", true, 0x08, ArrBHSD},
+		{"sqadd", false, 0x01, ArrBHSD}, {"uqadd", true, 0x01, ArrBHSD},
+		{"sqsub", false, 0x05, ArrBHSD}, {"uqsub", true, 0x05, ArrBHSD},
+		{"srhadd", false, 0x02, ArrBHS}, {"urhadd", true, 0x02, ArrBHS},
 	},
 }
 
