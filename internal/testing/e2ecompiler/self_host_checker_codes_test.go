@@ -2597,6 +2597,7 @@ function main(): i32 { return 0; }
 		{"e063-receiver-method-slice-ret", "function (xs: T[]) danger(): [T] { let local: T[] = [xs[0], xs[0], xs[0]]; return local[0:1]; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
 		{"e063-sliced-temporary", "function mkarr(): i32[] { let a: i32[] = [1, 2, 3]; return a; }\nfunction f(): [i32] { return mkarr()[0:1]; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
 		{"e063-sliced-temporary-of-param", "function idarr(x: i32[]): i32[] { return x; }\nfunction f(p: i32[]): [i32] { return idarr(p)[0:1]; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
+		{"e063-view-param-sliced-ok", "function window(x: i32[]): [i32] { return x[0:2]; }\nfunction f(p: i32[]): [i32] { return window(p)[0:1]; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e065-sliced-temporary", "function mkstr(): string { return \"a\" + \"b\"; }\nfunction f(): str { return slice_unchecked(mkstr(), 0, 1); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
 		{"e065-sliced-temporary-param-ok", "function idstr(s: string): string { return s; }\nfunction f(p: string): str { return slice_unchecked(idstr(p), 0, 1); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e065-sliced-literal-ok", "function lit(): string { return \"hello\"; }\nfunction f(): str { return slice_unchecked(lit(), 0, 1); }\nfunction main(): i32 { return 0; }\n", nil},
@@ -3043,6 +3044,10 @@ function main(): i32 { return 0; }`},
 function main(): i32 { return 0; }`},
 		{"local-array-view-temporary-escape", `function make(): u8[] { return [3]; }
 function bad(): [u8] { let view: [u8] = make(); return view; }
+function main(): i32 { return 0; }`},
+		{"local-array-view-call-result-escape", `function idarr(x: i32[]): i32[] { return x; }
+function bad(p: i32[]): [i32] { let view: [i32] = idarr(p); return view; }
+function kept(p: i32[]): i32 { let view: [i32] = idarr(p); return view[0]; }
 function main(): i32 { return 0; }`},
 		{"record-variant-rename-and-rest", `enum S { Rect { w: i32, h: i32 }, Tag { name: string, n: i32 } }
 function f(s: S): i32 { match (s) { Rect { h: hh, w } => { return w - hh; }, Tag { n: count, .. } => { return count; } } }

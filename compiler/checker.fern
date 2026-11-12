@@ -8852,7 +8852,7 @@ function slc_walk(stmts: ast.Stmt[], fname: string, s: Scope, params: string[], 
     match (st) {
       ast.StmtVar(v) => {
         if (typeinfo.is_array_view(var_declared_type(v, cur)) && typeinfo.is_owned_array(check_expr(v.init, cur))) {
-          if (slc_src_roots(v.init, cur, params, localarr, tainted, sums, vix).local) {
+          if (slc_of_call_result(v.init) || slc_src_roots(v.init, cur, params, localarr, tainted, sums, vix).local) {
             tainted = tainted.append(v.name);
           }
         }
