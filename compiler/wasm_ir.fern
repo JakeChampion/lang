@@ -9262,12 +9262,16 @@ pub function hex_digit(d: i32): string {
   }
 }
 
+// The characters from the space to the tilde, in byte order.
+const PRINTABLE: string = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+
+// `s` can hold bytes that are not UTF-8, so no slice of `s` is safe.
 pub function wat_escape(s: string): string {
   let parts: string[] = [];
   for i in 0..s.len() {
     let b = s[i] as i32;
     if (b >= 32 && b <= 126 && b != 34 && b != 92) {
-      parts = parts.append(slice_unchecked(s, i, i + 1).to_owned());
+      parts = parts.append(slice_unchecked(PRINTABLE, b - 32, b - 31).to_owned());
     } else {
       parts = parts.append(byte_escape(b));
     }

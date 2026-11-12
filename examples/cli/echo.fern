@@ -1,4 +1,5 @@
 import "std/string";
+import "std/utf8";
 import "std/array";
 
 function unescape(s: string): string {
@@ -7,6 +8,7 @@ function unescape(s: string): string {
   let i = 0;
   while (i < n) {
     if (s[i] == b'\\' && i + 1 < n) {
+      let end = i + 2;
       match (s[i + 1]) {
         b'n' => {
           out += "\n";
@@ -24,13 +26,15 @@ function unescape(s: string): string {
           out += "\x00";
         },
         _ => {
-          out += slice_unchecked(s, i, i + 2);
+          end = utf8.ceil_char_boundary(s, end);
+          out += slice_unchecked(s, i, end);
         }
       }
-      i += 2;
+      i = end;
     } else {
-      out += slice_unchecked(s, i, i + 1);
-      i += 1;
+      let end = utf8.ceil_char_boundary(s, i + 1);
+      out += slice_unchecked(s, i, end);
+      i = end;
     }
   }
   return out;
