@@ -285,6 +285,24 @@ function coerce_int_width(val: Value, type_name: string): Value {
       }
     }
   }
+  return coerce_tuple_parts(val, type_name);
+}
+
+// A tuple from a value block takes each part of its declared result type.
+function coerce_tuple_parts(val: Value, type_name: string): Value {
+  if (type_name.len() == 0) {
+    return val;
+  }
+  if let VTuple(t) = val {
+    let ty = parser.parse_type_ref(type_name);
+    if (ty.is_tuple && ty.array_depth == 0 && ty.args.len() == t.elements.len()) {
+      let parts: Value[] = [];
+      for i in 0..t.elements.len() {
+        parts = parts.append(coerce_int_width(t.elements[i], parser.render_type_ref(ty.args[i])));
+      }
+      return v_tuple(parts);
+    }
+  }
   return val;
 }
 
