@@ -1,0 +1,258 @@
+import "std/video/av1/configuration";
+import "std/video/frame";
+import "std/video/mp4";
+import "std/video/mp4/file" as mp4file;
+import "std/hex";
+import "std/test";
+import "video_mp4_av1_vectors" as vectors;
+import "video_av1_configuration_fields" as fields;
+import "video_mp4_file_check" as source;
+
+function reference(): test.TestOutcome {
+  for v in vectors.configurations() {
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("fixture hex");
+    };
+    let Ok(value) = configuration.inspect(bytes, frame.default_limits()) else {
+      return test.fail(v.name);
+    };
+    if (fields.values(value) != v.values) {
+      return test.fail("CBS configuration " + v.name);
+    }
+    let Ok(absent) = configuration.inspect(bytes[:4], frame.default_limits()) else {
+      return test.fail("optional sequence");
+    };
+    if (absent.maximum != None) {
+      return test.fail("unknown maximum without sequence");
+    }
+    for delay in 0..16 {
+      let Ok(delayed) = configuration.inspect(bytes.with(3, (16 + delay) as u8), frame.default_limits()) else {
+        return test.fail("delay field");
+      };
+      if (delayed.presentation_delay != delay + 1) {
+        return test.fail("delay value");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function expect(bytes: [u8], error: frame.VideoError): boolean {
+  return match (configuration.inspect(bytes, frame.default_limits())) { Err(value) => value == error, _ => false };
+}
+
+function headers(): test.TestOutcome {
+  for length in 0..4 {
+    if (!expect([129u8, 0u8, 12u8, 0u8][:length], frame.Truncated)) {
+      return test.fail("header prefix");
+    }
+  }
+  for bytes in [[1u8, 0u8, 12u8, 0u8], [129u8, 0u8, 12u8, 1u8], [129u8, 0u8, 12u8, 32u8], [129u8, 0u8, 140u8, 0u8], [129u8, 0u8, 44u8, 0u8], [129u8, 0u8, 15u8, 0u8], [129u8, 32u8, 16u8, 0u8], [129u8, 64u8, 0u8, 0u8]] {
+    if (!expect(bytes, frame.Header)) {
+      return test.fail("reserved or inferred field");
+    }
+  }
+  for bytes in [[130u8, 0u8, 12u8, 0u8], [129u8, 96u8, 12u8, 0u8]] {
+    if (!expect(bytes, frame.Unsupported)) {
+      return test.fail("version and profile");
+    }
+  }
+  return test.pass();
+}
+
+function sequence_envelope(bytes: u8[]): boolean {
+  for cut in 5..bytes.len() {
+    if (configuration.inspect(bytes[:cut], frame.default_limits()).is_ok()) {
+      return false;
+    }
+  }
+  if (!expect(bytes.with(1, bytes[1] ^ 1u8), frame.Header) || !expect(bytes.with(2, bytes[2] ^ 16u8), frame.Header)) {
+    return false;
+  }
+  let doubled = source.copy(bytes);
+  for byte in bytes[4:] {
+    doubled = doubled.append(byte);
+  }
+  if (!expect(doubled, frame.Header)) {
+    return false;
+  }
+  let late: u8[] = [bytes[0], bytes[1], bytes[2], bytes[3], 122, 0];
+  for byte in bytes[4:] {
+    late = late.append(byte);
+  }
+  if (!expect(late, frame.Header)) {
+    return false;
+  }
+  return true;
+}
+
+function boundaries(): test.TestOutcome {
+  for v in vectors.configurations() {
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("fixture hex");
+    };
+    let exact = frame.Limits { max_pixels: v.values[9] * v.values[10], max_packet_bytes: bytes.len() };
+    if (configuration.inspect(bytes, exact).is_err()) {
+      return test.fail("exact budgets");
+    }
+    for bad in [frame.Limits { ...exact, max_packet_bytes: bytes.len() - 1 }, frame.Limits { ...exact, max_pixels: exact.max_pixels - 1 }] {
+      if let Err(frame.Limit) = configuration.inspect(bytes, bad) {} else {
+        return test.fail("early budgets");
+      }
+    }
+    if (!sequence_envelope(bytes)) {
+      return test.fail("sequence match and envelope");
+    }
+  }
+  return test.pass();
+}
+
+function opaque_obus(): test.TestOutcome {
+  for bytes in [[129u8, 0u8, 12u8, 0u8], [129u8, 0u8, 12u8, 0u8, 122u8, 0u8], [129u8, 0u8, 12u8, 0u8, 42u8, 1u8, 255u8]] {
+    if (configuration.inspect(bytes, frame.default_limits()).is_err()) {
+      return test.fail("optional sequence and opaque payload");
+    }
+  }
+  if (!expect([129u8, 0u8, 12u8, 0u8, 120u8], frame.Unsupported) || !expect([129u8, 0u8, 12u8, 0u8, 122u8, 1u8], frame.Truncated)) {
+    return test.fail("OBU size field");
+  }
+  return test.pass();
+}
+
+function same_packet(p: mp4.Packet, e: vectors.Packet): boolean {
+  return p.offset == e.offset && p.bytes == e.bytes && p.decode_time == e.dts && p.presentation_time == e.pts && p.duration == e.duration && p.sync == e.sync && p.description == 0;
+}
+
+function same_description(config: mp4.Description, v: vectors.File): boolean {
+  return config.codec == mp4.AV1 && config.format == frame.Format { width: 64, height: 36 } && config.config.length_size == 0 && hex.encode(config.config.csd0) == v.config && config.config.csd1.len() == 0;
+}
+
+function packet_metadata(index: mp4.Index, v: vectors.File): boolean {
+  if (index.tracks.len() != 1) {
+    return false;
+  }
+  let track = index.tracks[0];
+  let config = track.descriptions[0];
+  if (!same_description(config, v) || track.clock.scale != v.scale || track.packets.len() != v.packets.len()) {
+    return false;
+  }
+  for i in 0..v.packets.len() {
+    let p = track.packets[i];
+    let e = v.packets[i];
+    if (!same_packet(p, e)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function complete(): test.TestOutcome {
+  for v in vectors.files() {
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("fixture hex");
+    };
+    let Ok(index) = mp4.inspect(bytes, mp4.default_limits()) else {
+      return test.fail(v.name);
+    };
+    if (!packet_metadata(index, v)) {
+      return test.fail("FFprobe complete index " + v.name);
+    }
+  }
+  return test.pass();
+}
+
+function seekable(): test.TestOutcome {
+  for v in vectors.files() {
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("fixture hex");
+    };
+    let Ok(media) = source.media(bytes) else {
+      return test.fail("fixture media");
+    };
+    for short in [0, 7] {
+      let reader = source.memory([source.Segment { at: 0i64, bytes: bytes }], media, short);
+      let Ok(index) = mp4file.inspect_with(bytes.len() as i64, reader.seek, reader.read, mp4file.default_limits()) else {
+        return test.fail("metadata-only source " + v.name);
+      };
+      if (!packet_metadata(index, v)) {
+        return test.fail("FFprobe seekable index");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function locate(bytes: [u8], tag: string): i32 {
+  let wanted = tag.bytes();
+  let found = -1;
+  for i in 0..bytes.len() - 3 {
+    if (bytes[i] == wanted[0] && bytes[i + 1] == wanted[1] && bytes[i + 2] == wanted[2] && bytes[i + 3] == wanted[3]) {
+      found = i;
+    }
+  }
+  return found;
+}
+
+function descriptions(): test.TestOutcome {
+  for v in vectors.files() {
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("fixture hex");
+    };
+    let config = locate(bytes, "av1C");
+    let entry = locate(bytes, "av01");
+    if (config < 0 || entry < 0) {
+      return test.fail("fixture boxes");
+    }
+    for bad in [bytes.with(config, 102u8), bytes.with(config + 4, 1u8), bytes.with(config + 7, 32u8), bytes.with(entry + 29, 63u8), bytes.with(entry + 31, 35u8)] {
+      if let Err(frame.Header) = mp4.inspect(bad, mp4.default_limits()) {} else {
+        return test.fail("missing configuration, flags, or maximum mismatch");
+      }
+    }
+    if let Err(frame.Unsupported) = mp4.inspect(bytes.with(config + 4, 130u8), mp4.default_limits()) {} else {
+      return test.fail("unsupported record version");
+    }
+  }
+  return test.pass();
+}
+
+function optional_sequence(): test.TestOutcome {
+  for v in vectors.files() {
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("fixture hex");
+    };
+    let Ok(record) = hex.decode(v.config) else {
+      return test.fail("fixture config");
+    };
+    let config = locate(bytes, "av1C");
+    let at = config + 8;
+    let end = config + 4 + record.len();
+    if ((end - at) % 2 != 0) {
+      bytes = bytes.with(at, 122u8).with(at + 1, 1u8).with(at + 2, 128u8);
+      at += 3;
+    }
+    while (at < end) {
+      bytes = bytes.with(at, 122u8).with(at + 1, 0u8);
+      at += 2;
+    }
+    let Ok(index) = mp4.inspect(bytes, mp4.default_limits()) else {
+      return test.fail("configuration without sequence");
+    };
+    if (index.tracks[0].packets.len() != 3 || index.tracks[0].descriptions[0].codec != mp4.AV1) {
+      return test.fail("sequence remains in media samples");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let r = test.new("native AV1 MP4 metadata and packet ranges");
+  r = r.it("independent configurations and optional sequence", reference);
+  r = r.it("header inference and reserved fields", headers);
+  r = r.it("every prefix, sequence match, and budgets", boundaries);
+  r = r.it("bounded opaque configuration OBUs", opaque_obus);
+  r = r.it("independent complete-view packet metadata", complete);
+  r = r.it("seekable short reads skip media payloads", seekable);
+  r = r.it("configuration boxes and exact sample dimensions", descriptions);
+  r = r.it("container configuration permits no sequence", optional_sequence);
+  return r.finish();
+}

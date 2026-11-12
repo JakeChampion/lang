@@ -3055,6 +3055,7 @@ function main(): i32 { return 0; }`},
 function bad(p: i32[]): [i32] { let view: [i32] = idarr(p); return view; }
 function kept(p: i32[]): i32 { let view: [i32] = idarr(p); return view[0]; }
 function main(): i32 { return 0; }`},
+
 		{"record-variant-rename-and-rest", `enum S { Rect { w: i32, h: i32 }, Tag { name: string, n: i32 } }
 function f(s: S): i32 { match (s) { Rect { h: hh, w } => { return w - hh; }, Tag { n: count, .. } => { return count; } } }
 function g(o: Option[S]): i32 { return match (o) { Some(Rect { w: ww, .. }) => ww, Some(Tag { .. }) => 1, None => 0 }; }

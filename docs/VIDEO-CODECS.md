@@ -69,10 +69,21 @@ The controller remains video-only, without audio decode, integrated A/V transpor
 
 ## Native MP4 video packets
 
-`std/video/mp4` indexes self-contained AVC, HEVC, and QTRLE video tracks without Android or an external codec library.
+`std/video/mp4` indexes self-contained AVC, HEVC, AV1, and QTRLE video tracks without Android or an external codec library.
 It reuses the existing ISO box, sample-table, clock, and data-reference readers.
 It preserves packet ranges, descriptions, decode order, decode times, composition times, durations, and sync-sample flags.
 Each packet range refers to the original byte view, without a payload copy.
+
+Native `av01` descriptions require one `av1C` box.
+`std/video/av1/configuration` checks its record fields and each self-delimited configuration OBU without a payload copy.
+A sequence header is optional. If present, it must come first and match the record fields and sample-entry maximum dimensions.
+The index retains the complete record in `csd0`, empty `csd1`, and `length_size` zero.
+
+This layout also matches Android's AV1 configuration convention. Native indexing does not call Android.
+
+Other configuration OBU payloads remain opaque. The parser does not validate coded samples, sample groups, HDR metadata, decoder-model delays, or complete profile/level conformance.
+AV1 packet ranges preserve the existing clocks, offsets, descriptions, and source budgets.
+Both complete-view and seekable-file indexes use this path. The native AV1 pixel-decode column remains unchanged.
 
 Absent composition and sync tables use packet defaults without per-sample temporary arrays.
 Explicit tables retain their validation, including the distinction between absent and empty sync tables.
@@ -383,7 +394,7 @@ Operating-point relationships, profile/level conformance, reference state, and r
 The native AV1 decode column remains unchanged.
 
 Android MediaExtractor supplies its supported containers through the Android adapter.
-The native MP4 indexer above supports self-contained AVC and HEVC tracks.
+The native MP4 indexer above supports self-contained AVC, HEVC, AV1, and QTRLE tracks.
 Other MOV codecs, Matroska, WebM, MPEG-TS, and fragmented streams remain future work.
 
 ## Native QTRLE
@@ -657,3 +668,15 @@ Performance work requires representative clips, fixed compiler versions, and mat
 CPU time, peak memory, allocations, frame latency, and device power require separate measurements.
 Encoder comparisons require rate-distortion measurements on a shared corpus.
 A decoder quality target means correct reconstruction and color metadata, rather than a tunable quality score.
+
+## Native AV1 MP4 qualification
+
+`scripts/check-video-mp4-av1-interop` creates fresh AV1 MP4 files with FFmpeg and compares native sanitizer and real-WASI results.
+It checks every packet field and byte against FFprobe and the original file.
+Both index paths must agree. Extracted packets retain every decoded plane through independent libaom and dav1d decoders.
+Synthetic configuration references establish header syntax only. FFmpeg remains test-only.
+
+The configuration format follows AOM AV1 ISOBMFF version 1.3.0.
+The record can omit a sequence header. The API then reports no sequence maximum and does not read media to obtain it.
+The existing sequence parser still checks a present header through its trailing bits and bounded zero padding.
+These checks do not establish complete ISO BMFF or AV1 stream conformance.
