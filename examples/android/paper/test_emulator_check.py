@@ -384,6 +384,31 @@ class FilterTests(unittest.TestCase):
         self.assertTrue(phone.on)
         self.assertEqual(phone.wrong_rows, 0)
 
+    def test_the_check_takes_its_notifications_out_of_the_shade(self):
+        shade = ["0|com.android.shell|2020|fern_shown|2000", "-1|android|55|null|1000"]
+        calls = []
+
+        def adb(*args, **kwargs):
+            if args[-1] == "list":
+                return "\n".join(shade)
+            return ""
+
+        def shell(*args):
+            calls.append(args)
+            if "snooze" in args:
+                shade.remove(args[-1])
+            return "2000"
+
+        failures = []
+        with patch.multiple(check, adb=adb, shell=shell, fail=failures.append):
+            check.clear_shade()
+        self.assertEqual(shade, ["-1|android|55|null|1000"])
+        self.assertEqual(failures, [])
+        shade.append("0|com.android.shell|2020|fern_shown|2000")
+        with patch.multiple(check, adb=adb, shell=lambda *args: "2000", fail=failures.append):
+            check.clear_shade()
+        self.assertEqual(failures, ["the check left its notification in the shade"])
+
     def test_the_tag_of_another_notification_is_not_in_the_shade(self):
         with patch.object(check, "adb", return_value="0|com.android.shell|2020|fern_held_more|2000\n"):
             self.assertFalse(check.in_shade("fern_held"))

@@ -363,6 +363,19 @@ def check_filter(out, width, height):
     adb("shell", "cmd", "notification", "disallow_listener", LISTENER, check=False)
 
 
+def clear_shade():
+    """Takes the notifications of this check out of the shade, and stops
+    the listener. A check of another app reads the shade after this one,
+    and the shade shows the buttons of only its first notifications."""
+    adb("shell", "cmd", "notification", "disallow_listener", LISTENER, check=False)
+    for key in adb("shell", "cmd", "notification", "list", check=False).split():
+        if "|fern_" in key:
+            # The shell has no command that cancels a notification.
+            shell(*poster(), "cmd", "notification", "snooze", "--for", "86400000", key)
+    if "|fern_" in adb("shell", "cmd", "notification", "list", check=False):
+        fail("the check left its notification in the shade")
+
+
 def main(apk, out):
     subprocess.run(["mkdir", "-p", out], check=True)
     adb("install", "-r", "-g", apk)
@@ -423,6 +436,7 @@ def main(apk, out):
         fail(f"the home screen after Back has {part:.3f} of the paper colour, not paper above the wallpaper")
 
     check_filter(out, width, height)
+    clear_shade()
 
     log = early + logcat()
     with open(f"{out}/logcat.txt", "w") as f:
