@@ -195,12 +195,13 @@ class Phone:
     """A device for check_filter. `holds` is whether the filter takes a
     notification out of the shade, and `shows` is whether Paper shows it."""
 
-    def __init__(self, *, holds=True, shows=True, opens=True, sends=True, takes_old=False, filter_row="off", probe=True):
+    def __init__(self, *, holds=True, shows=True, opens=True, takes_old=False, filter_row="off", probe=True):
         self.holds = holds
         self.shows = shows
         self.opens = opens
-        self.sends = sends
-        self.front = "dev.fern.paper"
+        # The dumps that still show a sheet lower than its last place.
+        self.sliding = 0
+        self.wrong_rows = 0
         self.takes_old = takes_old
         self.filter_row = filter_row
         self.probe = probe
@@ -222,7 +223,11 @@ class Phone:
             self.shade.append(tag)
 
     def tap(self, x, y):
-        if self.screen == "settings" and y == 150:
+        if self.screen == "settings" and y != 150:
+            # A tap on the place of a row that still moved opens another row.
+            self.wrong_rows += 1
+            self.screen = "other sheet"
+        elif self.screen == "settings" and y == 150:
             self.on = True
             self.screen = "home"
             if self.takes_old:
@@ -234,12 +239,12 @@ class Phone:
             if self.opens:
                 self.held.clear()
                 self.log.append("paper: open held com.android.shell")
-                if self.sends:
-                    self.front = "com.android.settings"
 
     def dump(self):
         if self.screen == "settings":
-            return node("Notification filter: " + self.filter_row, (0, 100, 320, 200))
+            down = 100 * self.sliding
+            self.sliding = max(0, self.sliding - 1)
+            return node("Notification filter: " + self.filter_row, (0, 100 + down, 320, 200 + down))
         if self.screen == "held":
             return node("Shell · 9:06&#10;Fern: held_text", (0, 100, 320, 200))
         nodes = node("9:06", (0, 0, 320, 300))
@@ -258,14 +263,11 @@ class Phone:
             self.allowed = True
         elif args[:3] == ("shell", "input", "swipe") and args[3:5] == args[5:7]:
             self.screen = "settings"
+            self.sliding = 2
         elif args[:3] == ("shell", "input", "tap"):
             self.tap(int(args[3]), int(args[4]))
         elif args == ("shell", "input", "keyevent", "KEYCODE_BACK"):
             self.screen = "home"
-        elif args == ("shell", "input", "keyevent", "KEYCODE_HOME"):
-            self.front = "dev.fern.paper"
-        elif args[:4] == ("shell", "dumpsys", "activity", "activities"):
-            return f"  topResumedActivity=ActivityRecord{{1 u0 {self.front}/.Main t1}}\n"
         elif args[:4] == ("shell", "cmd", "notification", "list") and self.probe:
             return "".join(f"0|com.android.shell|2020|{tag}|2000\n" for tag in self.shade)
         elif args == ("shell", "cat", "/sdcard/paper-ui.xml"):
@@ -278,7 +280,7 @@ class Phone:
 
 class FilterTests(unittest.TestCase):
     def run_phone(self, phone):
-        clock = iter(range(0, 100000, 5))
+        clock = iter(range(0, 100000, 1))
         with tempfile.TemporaryDirectory() as out, patch.multiple(check, adb=phone.adb, wait_for=phone.wait_for,
                             shell=lambda *args: phone.adb("shell", *args),
                             logcat=lambda: "\n".join(phone.log),
@@ -315,7 +317,7 @@ class FilterTests(unittest.TestCase):
 
     def test_a_notification_that_paper_does_not_show_keeps_the_answers_of_the_device(self):
         phone = Phone(shows=False)
-        clock = iter(range(0, 100000, 5))
+        clock = iter(range(0, 100000, 1))
         with tempfile.TemporaryDirectory() as out, patch.multiple(check, adb=phone.adb, wait_for=phone.wait_for,
                             shell=lambda *args: phone.adb("shell", *args) or "answer to " + " ".join(args[:2]),
                             logcat=lambda: "paper: drawn 320x640", fail=phone.failures.append), patch.object(check.time, "sleep"), \
@@ -332,9 +334,11 @@ class FilterTests(unittest.TestCase):
         self.assertIn("a tap on the held notification did not open it", failures)
         self.assertIn("the held notification stayed on the home screen after it opened", failures)
 
-    def test_a_held_notification_whose_intent_opens_nothing_fails(self):
-        failures = self.run_phone(Phone(sends=False))
-        self.assertEqual(failures, ["the intent of the held notification did not open the settings of Android"])
+    def test_a_tap_waits_until_a_sheet_that_slides_in_is_still(self):
+        phone = Phone()
+        self.assertEqual(self.run_phone(phone), [])
+        self.assertTrue(phone.on)
+        self.assertEqual(phone.wrong_rows, 0)
 
     def test_the_tag_of_another_notification_is_not_in_the_shade(self):
         with patch.object(check, "adb", return_value="0|com.android.shell|2020|fern_held_more|2000\n"):

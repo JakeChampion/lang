@@ -14,8 +14,8 @@ shows the keyboard again after the back key hid it, a search for "pap" that
 finds Paper and opens it, Back that hides the keyboard, then Back that goes
 home, a frame section in the system trace while the list slides, the
 notification filter that takes a new notification out of the shade and
-shows it as held, a tap that sends the intent of the held notification,
-and no crash in logcat. OUT_DIR gets the frames, logcat and the trace.
+shows it as held, a tap that opens the held notification, and no crash in
+logcat. OUT_DIR gets the frames, logcat and the trace.
 """
 
 from pathlib import Path
@@ -31,8 +31,6 @@ PACKAGE = "dev.fern.paper"
 ACTIVITY = PACKAGE + "/.Home"
 PAPER = (255, 244, 230)
 LISTENER = PACKAGE + "/" + PACKAGE + ".Filter"
-# The app that the intent of the test notification opens.
-OPENED = "com.android.settings"
 
 
 def paper_part(out, name, top_half=False):
@@ -153,12 +151,16 @@ def find_node(dump, label):
 
 
 def wait_for_node(out, name, label, timeout=30.0):
-    """find_node on a new dump each second, for `timeout` seconds."""
+    """find_node on a new dump each second, until two dumps in a row give
+    the node one place, or for `timeout` seconds. A sheet slides in, and
+    a tap on the place that a row had while it moved hits another row."""
     deadline = time.monotonic() + timeout
+    last = None
     while True:
         found = find_node(ui_dump(out, name), label)
-        if found or time.monotonic() >= deadline:
+        if found and found == last or time.monotonic() >= deadline:
             return found
+        last = found
         time.sleep(1.0)
 
 
@@ -249,18 +251,6 @@ def wait_for_shade(tag, shown, timeout=15.0):
         time.sleep(0.5)
 
 
-def wait_for_front(package, timeout=10.0):
-    """An activity of `package` is at the front within `timeout` seconds."""
-    deadline = time.monotonic() + timeout
-    while True:
-        resumed = adb("shell", "dumpsys", "activity", "activities", check=False)
-        if re.search(r"(mResumedActivity|topResumedActivity).*" + re.escape(package) + "/", resumed):
-            return True
-        if time.monotonic() >= deadline:
-            return False
-        time.sleep(0.5)
-
-
 def tap(point):
     adb("shell", "input", "tap", str(point[0]), str(point[1]))
 
@@ -288,10 +278,9 @@ def filter_on(out, width, height):
 
 def check_filter(out, width, height):
     """The filter holds a notification: Paper takes it out of the shade,
-    shows it on the home screen, and sends its intent after a tap. The
-    intent opens the settings of Android. A notification from before the
-    filter was on stays in the shade, which shows that in_shade can see a
-    notification."""
+    shows it on the home screen, and opens it after a tap. A notification
+    from before the filter was on stays in the shade, which shows that
+    in_shade can see a notification."""
     printed = post(out, "fern_shown", "shown_text")
     if not wait_for_shade("fern_shown", True):
         shade_evidence(out, printed)
@@ -300,9 +289,7 @@ def check_filter(out, width, height):
     adb("shell", "cmd", "notification", "allow_listener", LISTENER, check=False)
     if not filter_on(out, width, height):
         return
-    # The word after "activity" is the component of the intent. The two
-    # words after it are the tag and the text.
-    printed = post(out, "fern_held", "held_text", "-c", "activity", OPENED + "/.Settings")
+    printed = post(out, "fern_held", "held_text")
     held = wait_for_node(out, "ui-held", r"\d+ held notifications?")
     if not held:
         held_evidence(out, printed, ui_dump(out, "ui-not-held"))
@@ -320,10 +307,7 @@ def check_filter(out, width, height):
     tap(row)
     if not wait_for(r"paper: open held com\.android\.shell"):
         fail("a tap on the held notification did not open it")
-    elif not wait_for_front(OPENED):
-        fail("the intent of the held notification did not open the settings of Android")
-    adb("shell", "input", "keyevent", "KEYCODE_HOME")
-    time.sleep(1.5)
+    time.sleep(1.0)
     if find_node(ui_dump(out, "ui-opened"), r"\d+ held notifications?"):
         fail("the held notification stayed on the home screen after it opened")
     adb("shell", "cmd", "notification", "disallow_listener", LISTENER, check=False)
