@@ -98,6 +98,14 @@ A checked result remains owned after a local binding.
 Its nested resource fields can transfer at their last use.
 Earlier scalar field copies do not retain a resource loan.
 
+A returned record can replace an owned input field through a local alias.
+The nested record can transfer a field of that alias into an owned argument.
+The alias must remain unchanged and appear only inside that nested replacement.
+The returned record must replace the complete input field that owns the alias.
+Other aliases, callbacks, deferred cleanup, and repeated resource reads preserve the refusal.
+An unrelated resource sibling can still prevent an owned result.
+The `nested_owned_field_transfer` case checks the transfer and resource cleanup.
+
 A numeric, boolean, or character COW array field copy does not retain a resource loan.
 This rule includes nested arrays.
 Resource arrays, mutable Cells, callbacks, and views keep their resource loans.

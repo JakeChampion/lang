@@ -1,0 +1,62 @@
+[
+  {
+    "name": "owned field filter in record update",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} function f(own s:S):own S{return S{...s,xs:filter(s.xs)};}",
+    "want": ""
+  },
+  {
+    "name": "owned nested field filter in record update",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S} function f(own o:O):own O{let s=o.s;return O{...o,s:S{...s,xs:filter(s.xs)}};}",
+    "want": ""
+  },
+  {
+    "name": "owned field filter before record update",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} function f(own s:S):own S{let xs=filter(s.xs);return S{...s,xs:xs};}",
+    "want": ""
+  },
+  {
+    "name": "nested field filter borrowed owner refused",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S}function f(o:O):own O{let s=o.s;return O{...o,s:S{...s,xs:filter(s.xs)}};}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "nested field filter other destination refused",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S,other:S}function f(own o:O):own O{let s=o.s;return O{...o,other:S{...s,xs:filter(s.xs)}};}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "nested field filter retained alias refused",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S,other:S}function f(own o:O):own O{let s=o.s;let saved=s;return O{...o,s:S{...s,xs:filter(s.xs)},other:saved};}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "nested field filter captured alias refused",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S,observe:()=>i32}function f(own o:O):own O{let s=o.s;let observe=():i32=>s.xs[0].fd;return O{...o,s:S{...s,xs:filter(s.xs)},observe:observe};}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "nested field filter reassigned alias refused",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S}function f(own o:O,other:S):own O{let s=o.s;s=other;return O{...o,s:S{...s,xs:filter(s.xs)}};}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "nested field filter deferred owner refused",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S}function f(own o:O):own O{let s=o.s;defer o.s.xs[0].close();return O{...o,s:S{...s,xs:filter(s.xs)}};}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "nested field filter repeated field refused",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S}function take(own xs:H[],n:i32):own H[]{return xs;} function f(own o:O):own O{let s=o.s;return O{...o,s:S{...s,xs:take(s.xs,s.xs.len())}};}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "nested field transfer resource sibling remains unproved",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:i32[],h:H}struct O{s:S} function grow(own xs:i32[]):own i32[]{return xs.append(1);}function f(own o:O):own O{let s=o.s;return O{...o,s:S{...s,xs:grow(s.xs)}};}",
+    "want": "E051"
+  },
+  {
+    "name": "nested field transfer wrapped variant remains unproved",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S} enum Wrapped{Wrap(O)} function f(own o:O):own Wrapped{let s=o.s;return Wrap(O{...o,s:S{...s,xs:filter(s.xs)}});}",
+    "want": "E051"
+  }
+]
