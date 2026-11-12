@@ -1,4 +1,5 @@
 import "std/audio/wav";
+import "std/audio/linear";
 import "std/audio/pcm";
 import "std/audio/wire";
 import "std/test";
@@ -195,6 +196,47 @@ function mutations(): test.TestOutcome {
   return test.pass();
 }
 
+// The start of a file and its size give the layout that the whole file
+// gives. A part of the data chunk with whole frames reads as samples.
+function starts(): test.TestOutcome {
+  let samples: i32[] = [];
+  for i in 0..400 {
+    samples = samples.append(i * 37 - 7000).append(-i * 11);
+  }
+  let format = pcm.Format { sample_rate: 44100, channels: 2, bits_per_sample: 16 };
+  let Ok(plain) = wav.encode(samples, format, pcm.default_limits()) else {
+    return test.fail("encode");
+  };
+  // A LIST chunk after the data chunk is not in the head.
+  let file = riff(join(join(join([], plain[12:plain.len()]), []), chunk("LIST", [73u8, 78u8, 70u8, 79u8])));
+  let Ok(whole) = wav.inspect_linear(file, pcm.default_limits()) else {
+    return test.fail("whole file");
+  };
+  let size = file.len() as i64;
+  let Ok(found) = wav.inspect_start(file[0:64], size, pcm.default_limits()) else {
+    return test.fail("head of 64 bytes");
+  };
+  let Ok(again) = wav.inspect_start(file, size, pcm.default_limits()) else {
+    return test.fail("head that is the whole file");
+  };
+  let stride = found.format.channels * found.format.storage_bits / 8;
+  let from = found.data_offset + 100 * stride;
+  let part = join([], file[from:from + 10 * stride]);
+  let Ok(window) = linear.create(part, 0, part.len(), found.format, pcm.default_limits()) else {
+    return test.fail("index of a part");
+  };
+  let Ok(block) = window.read_integer(part, 0, 10, pcm.default_limits()) else {
+    return test.fail("read of a part");
+  };
+  let expected: i32[] = [];
+  for k in 200..220 {
+    expected = expected.append(samples[k]);
+  }
+  let refused = [wav.inspect_start(file[0:40], size, pcm.default_limits()).is_err(), wav.inspect_start(file[0:64], size + 2i64, pcm.default_limits()).is_err(), wav.inspect_start(file[0:64], 30i64, pcm.default_limits()).is_err(), wav.inspect_start(field(file[0:64], 36, 4, 4294967295u64), size, pcm.default_limits()).is_err()];
+  let got = [found.data_offset == whole.data_offset(), found.data_bytes == whole.data_bytes(), again.data_offset == found.data_offset && again.data_bytes == found.data_bytes, block.samples == expected];
+  return test.assert_eq(got.map((b: boolean): string => b.to_string()).join(" ") + " | " + refused.map((b: boolean): string => b.to_string()).join(" "), "true true true true | true true true true");
+}
+
 function main(): i32 {
   let runner = test.new("WAVE float headers, payloads, and reusable ranges");
   runner = runner.it("ordinary/extensible float bits, suffixes, and live aliases", samples);
@@ -203,5 +245,6 @@ function main(): i32 {
   runner = runner.it("non-finite float payloads", float_errors);
   runner = runner.it("ranges, output budgets, exact end, and empty files", ranges);
   runner = runner.it("every-byte mutations remain bounded", mutations);
+  runner = runner.it("the start of a file gives its layout, and a part gives its samples", starts);
   return runner.finish();
 }
