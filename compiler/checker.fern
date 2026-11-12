@@ -12946,7 +12946,7 @@ function float_read_int_tree(e: ast.Expr): boolean {
     return (u.op == "-" || u.op == "+") && float_read_int_tree(u.operand);
   }
   if let ast.ExprBinary(b) = e {
-    return parser.int_literal_op(b.op) && float_read_int_tree(b.left) && float_read_int_tree(b.right);
+    return ast.int_literal_op(b.op) && float_read_int_tree(b.left) && float_read_int_tree(b.right);
   }
   return false;
 }
