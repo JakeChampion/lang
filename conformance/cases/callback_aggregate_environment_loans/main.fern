@@ -1,0 +1,57 @@
+// spec: RH-04
+
+struct Handle { n: i32 }
+
+function (h: Handle) read(): i32 {
+  return h.n;
+}
+
+function (own h: Handle) close(): i32 {
+  return h.n;
+}
+
+struct Readers { left: () => i32, right: () => i32 }
+
+function wrap_record(own readers: Readers): () => i32 {
+  return (): i32 => readers.left();
+}
+
+function wrap_tuple(own readers: (() => i32, () => i32)): () => i32 {
+  return (): i32 => readers.0();
+}
+
+function wrap_array(own readers: (() => i32)[]): () => i32 {
+  return (): i32 => readers[0]();
+}
+
+function record_case(own left: Handle, own right: Handle): i32 {
+  let readers = Readers { left: (): i32 => left.read(), right: (): i32 => right.read() };
+  let run = wrap_record(readers);
+  let closed = right.close();
+  let n = run();
+  return n + closed + left.close();
+}
+
+function tuple_case(own left: Handle, own right: Handle): i32 {
+  let readers = ((): i32 => left.read(), (): i32 => right.read());
+  let run = wrap_tuple(readers);
+  let closed = right.close();
+  let n = run();
+  return n + closed + left.close();
+}
+
+function array_case(own h: Handle): i32 {
+  let readers = [(): i32 => h.read()];
+  let run = wrap_array(readers);
+  let n = run();
+  return n + h.close();
+}
+
+function main(): i32 {
+  let total = record_case(Handle { n: 3 }, Handle { n: 5 });
+  total += tuple_case(Handle { n: 7 }, Handle { n: 11 });
+  total += array_case(Handle { n: 13 });
+  assert(total == 62);
+  print(total);
+  return 0;
+}

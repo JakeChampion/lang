@@ -1023,5 +1023,80 @@
     "name": "dynamic factory copied array input does not retain loan",
     "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): void {} function drop(own xs: i32[]): void {} function run(own xs: i32[], make: (i32[]) => () => i32): i32 { let read = make(xs); drop(xs); return read(); }",
     "want": ""
+  },
+  {
+    "name": "aggregate environment record capture retains callback environment",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return h.n; } struct ReadBox { read: () => i32 } function wrap(own r: ReadBox):() => i32 { return (): i32 => r.read(); } function f(own h: H): i32 { let r = ReadBox { read: (): i32 => h.read() }; let run = wrap(r); h.close(); return run(); }",
+    "want": "E050"
+  },
+  {
+    "name": "aggregate environment ordinary record capture retains callback environment",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return h.n; } struct ReadBox { read: () => i32 } function wrap(r: ReadBox): () => i32 { return (): i32 => r.read(); } function f(own h: H): i32 { let r = ReadBox { read: (): i32 => h.read() }; let run = wrap(r); h.close(); return run(); }",
+    "want": "E050"
+  },
+  {
+    "name": "aggregate environment tuple capture retains callback environment",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return h.n; } function wrap(own r: (() => i32, i32)):() => i32 { return (): i32 => r.0(); } function f(own h: H): i32 { let r = ((): i32 => h.read(), 0); let run = wrap(r); h.close(); return run(); }",
+    "want": "E050"
+  },
+  {
+    "name": "aggregate environment record callback permits valid last use",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return h.n; } struct ReadBox { read: () => i32 } function wrap(own r: ReadBox):() => i32 { return (): i32 => r.read(); } function f(own h: H): i32 { let r = ReadBox { read: (): i32 => h.read() }; let run = wrap(r); let n = run(); return n + h.close(); }",
+    "want": ""
+  },
+  {
+    "name": "aggregate environment record callback excludes unrelated field loans",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return h.n; } struct Readers { left: () => i32, right: () => i32 } function wrap(own r: Readers):() => i32 { return (): i32 => r.left(); } function f(own h: H, own other: H): i32 { let r = Readers { left: (): i32 => h.read(), right: (): i32 => other.read() }; let run = wrap(r); other.close(); let n = run(); return n + h.close(); }",
+    "want": ""
+  },
+  {
+    "name": "aggregate environment record callback projection retains environment",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct ReadBox { read:()=>i32 }\nfunction f(own h:H):i32{let r=ReadBox{read:():i32=>h.read()};h.close();return r.read();}",
+    "want": "E050"
+  },
+  {
+    "name": "aggregate environment record callback projection permits unrelated field",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct Readers { left:()=>i32, right:()=>i32 }\nfunction f(own h:H,own other:H):i32{let r=Readers{left:():i32=>h.read(),right:():i32=>other.read()};other.close();let n=r.left();return n+h.close();}",
+    "want": ""
+  },
+  {
+    "name": "aggregate environment record factory retains callback environment",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct ReadBox { read:()=>i32 }\nfunction make(own cb:()=>i32):ReadBox{return ReadBox{read:cb};}\nfunction wrap(own r:ReadBox):own()=>i32{return ():i32=>r.read();}\nfunction f(own h:H):i32{let r=make(():i32=>h.read());let run=wrap(r);h.close();return run();}",
+    "want": "E050"
+  },
+  {
+    "name": "aggregate environment generic record identity retains callback environment",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct ReadBox { read:()=>i32 }\nfunction identity[T](own x:T):T{return x;}\nfunction wrap(own r:ReadBox):own()=>i32{return ():i32=>r.read();}\nfunction f(own h:H):i32{let r=identity(ReadBox{read:():i32=>h.read()});let run=wrap(r);h.close();return run();}",
+    "want": "E050"
+  },
+  {
+    "name": "aggregate environment array capture retains callback environment",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nfunction wrap(own r:(()=>i32)[]):own()=>i32{return ():i32=>r[0]();}\nfunction f(own h:H):i32{let r=[():i32=>h.read()];let run=wrap(r);h.close();return run();}",
+    "want": "E050"
+  },
+  {
+    "name": "aggregate environment array capture ends callback loan at last use",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nfunction wrap(own r:(()=>i32)[]):own()=>i32{return ():i32=>r[0]();}\nfunction f(own h:H):i32{let r=[():i32=>h.read()];let run=wrap(r);let n=run();return n+h.close();}",
+    "want": ""
+  },
+  {
+    "name": "aggregate environment tuple capture excludes unrelated field loans",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nfunction wrap(own r:(()=>i32,()=>i32)):own()=>i32{return ():i32=>r.0();}\nfunction f(own h:H,own other:H):i32{let r=(():i32=>h.read(),():i32=>other.read());let run=wrap(r);other.close();let n=run();return n+h.close();}",
+    "want": ""
+  },
+  {
+    "name": "aggregate environment record update replaces old callback environment",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct ReadBox { read:()=>i32 }\nfunction wrap(own r:ReadBox):own()=>i32{return ():i32=>r.read();}\nfunction f(own h:H,own other:H):i32{let r=ReadBox{read:():i32=>h.read()};let updated=ReadBox{...r,read:():i32=>other.read()};let run=wrap(updated);h.close();let n=run();return n+other.close();}",
+    "want": ""
+  },
+  {
+    "name": "aggregate environment nested record capture retains callback environment",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct ReadBox { read:()=>i32 }\nstruct Outer { inner:ReadBox }\nfunction wrap(own r:Outer):own()=>i32{return ():i32=>r.inner.read();}\nfunction f(own h:H):i32{let r=Outer{inner:ReadBox{read:():i32=>h.read()}};let run=wrap(r);h.close();return run();}",
+    "want": "E050"
+  },
+  {
+    "name": "aggregate environment local record alias retains callback environment",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct ReadBox { read:()=>i32 }\nfunction wrap(own r:ReadBox):own()=>i32{let saved=r;return ():i32=>saved.read();}\nfunction f(own h:H):i32{let r=ReadBox{read:():i32=>h.read()};let run=wrap(r);h.close();return run();}",
+    "want": "E050"
   }
 ]

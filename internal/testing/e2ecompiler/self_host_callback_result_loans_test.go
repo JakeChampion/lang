@@ -71,3 +71,7 @@ func TestSelfHostCallbackResultLoansWasm(t *testing.T) {
 	bin := buildSelfHostBinFor(t, dir, "drivers/checker_codes_run.fern", "callback_result_loans.wasm", "wasm32-wasi")
 	callbackResultLoanCases(t, bin, []string{e2eharness.Wasmtime(t), "run"}, dir)
 }
+
+func TestSelfHostAggregateCallbackEnvironmentRun(t *testing.T) {
+	ownedResultRuntimeCase(t, "callback_aggregate_environment_loans")
+}

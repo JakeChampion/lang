@@ -1,3 +1,4 @@
+# 2026-11-12: callback_aggregate_environment_loans has balanced allocations and zero live bytes on all three main targets.
 # 2026-11-11: array_of_tuple_literals_takes_its_destination_and_float_literals and literal_composite_takes_the_type_of_a_nested_part are clean under RC trace.
 # 2026-11-11: generic_struct_literal_with_a_function_field_is_an_argument is clean under RC trace.
 # 2026-11-11: a_struct_name_call_wraps_a_union_member_across_modules is clean under RC trace.
@@ -246,6 +247,7 @@ call_of_a_call_through_a_function_value              0
 call_result_arg_temp                                 0
 call_result_payload_is_a_fresh_local                 0
 call_type_args_user_type                             0
+callback_aggregate_environment_loans                0
 callback_capture_lifetimes                            0
 captured_map_keeps_raw_byte_keys                     0
 cast_generic_float_width                             0

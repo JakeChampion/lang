@@ -1,12 +1,26 @@
 package checker
 
-import "github.com/jakechampion/lang/internal/syntax/ast"
+import (
+	"github.com/jakechampion/lang/internal/syntax/ast"
+	"strconv"
+)
 
 // Local callback values retain the resource captures of their definition.
 // Reassigned and shadowed bindings need a separate flow proof.
 func (c *checker) localCallbackCaptures(fn *ast.FuncDecl) (map[string][]ast.Param, map[ast.Expr][]ast.Param) {
 	c.computeCallbackFactories()
-	return c.callbackCaptureFacts(fn, false)
+	names, values := c.callbackCaptureFacts(fn, false)
+	out := map[string][]ast.Param{}
+	inline := map[ast.Expr][]ast.Param{}
+	for name, loans := range names {
+		out[name] = callbackLoanParams(loans)
+	}
+	for value, loans := range values {
+		if c.callbackValues[value] {
+			inline[value] = callbackLoanParams(loans)
+		}
+	}
+	return out, inline
 }
 
 // A factory summary names the inputs retained by its returned callback.
@@ -15,32 +29,37 @@ func (c *checker) computeCallbackFactories() {
 	if c.callbackFactories != nil {
 		return
 	}
-	c.callbackFactories = map[string][]ast.Param{}
+	c.callbackFactories = map[string][]callbackLoan{}
+	var factories []*ast.FuncDecl
+	for _, fn := range c.callbackFactoryFuncs {
+		if fn.Body != nil && c.callbackContainer(fn.ReturnType, map[string]bool{}) {
+			factories = append(factories, fn)
+		}
+	}
 	changed := true
 	for changed {
 		changed = false
-		for _, fn := range c.callbackFactoryFuncs {
-			switch fn.ReturnType.(type) {
-			case *ast.FuncType, ast.ParamType:
-			default:
-				continue
-			}
+		for _, fn := range factories {
 			_, values := c.callbackCaptureFacts(fn, true)
-			var captures []ast.Param
+			var captures []callbackLoan
 			ast.Walk(fn.Body, func(n ast.Node) bool {
 				switch node := n.(type) {
 				case *ast.Lambda, *ast.FuncDecl:
 					return false
 				case *ast.Return:
-					captures = mergeCallbackCaptures(captures, values[node.Value])
+					captures = mergeCallbackLoans(captures, values[node.Value])
 				}
 				return true
 			})
-			var sources []ast.Param
-			for _, param := range fn.Params {
-				for _, capture := range captures {
-					if capture.Name == param.Name {
-						sources = append(sources, param)
+			sources := c.callbackFactories[fn.Name]
+			for _, capture := range captures {
+				for _, param := range fn.Params {
+					if capture.param.Name == param.Name {
+						var folded, recursive bool
+						capture.path, folded = c.boundCallbackPath(param.Type, capture.path)
+						capture.result, recursive = c.boundCallbackPath(fn.ReturnType, capture.result)
+						capture.wide = capture.wide || folded || recursive
+						sources = mergeCallbackLoans(sources, []callbackLoan{capture})
 						break
 					}
 				}
@@ -53,7 +72,7 @@ func (c *checker) computeCallbackFactories() {
 	}
 }
 
-func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[string][]ast.Param, map[ast.Expr][]ast.Param) {
+func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[string][]callbackLoan, map[ast.Expr][]callbackLoan) {
 	definitions := map[string][]ast.Expr{}
 	bindingTypes := map[string]ast.Type{}
 	for _, param := range fn.Params {
@@ -81,8 +100,8 @@ func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[st
 		switch n := node.(type) {
 		case *ast.Return:
 			values = append(values, n.Value)
-		case *ast.Call:
-			values = append(values, n)
+		case *ast.Call, *ast.FieldAccess, *ast.Index:
+			values = append(values, n.(ast.Expr))
 		case *ast.Var:
 			add(n.Name, n.Init)
 			bindingTypes[n.Name] = c.info.VarTypes[n]
@@ -115,46 +134,78 @@ func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[st
 		case *ast.IfExpr, *ast.BlockExpr:
 			values = append(values, n.(ast.Expr))
 		case *ast.FuncDecl:
-			add(n.Name, &ast.Lambda{Captures: n.Captures})
+			add(n.Name, &ast.Lambda{Captures: n.Captures, Params: n.Params, Body: n.Body, ReturnType: n.ReturnType})
+			bindingTypes[n.Name] = &ast.FuncType{}
 			params(n.Params)
 		}
 		return true
 	})
-	var resolve func(string, map[string]bool) []ast.Param
-	var valueCaptures func(ast.Expr, map[string]bool) []ast.Param
-	var captures func(*ast.Lambda, map[string]bool) []ast.Param
-	captures = func(value *ast.Lambda, active map[string]bool) []ast.Param {
-		var out []ast.Param
-		seen := map[string]bool{}
+	var resolve func(string, map[string]bool) []callbackLoan
+	var valueCaptures func(ast.Expr, map[string]bool) []callbackLoan
+	memo := map[string][]callbackLoan{}
+	cyclic := map[string]bool{}
+	captures := func(value *ast.Lambda, active map[string]bool) []callbackLoan {
+		var out []callbackLoan
 		for _, capture := range value.Captures {
 			if len(definitions[capture.Name]) > 1 || c.copyableCallResult(capture.Type) {
 				continue
 			}
-			for _, source := range append([]ast.Param{capture}, resolve(capture.Name, active)...) {
-				if !seen[source.Name] {
-					seen[source.Name] = true
-					out = append(out, source)
-				}
+			out = mergeCallbackLoans(out, []callbackLoan{{param: capture, direct: true}})
+			for _, path := range callbackCapturePlaces(value, capture.Name) {
+				sources := selectCallbackLoans(resolve(capture.Name, active), path)
+				out = mergeCallbackLoans(out, flattenCallbackLoans(sources))
 			}
 		}
 		return out
 	}
-	valueCaptures = func(value ast.Expr, active map[string]bool) []ast.Param {
+	valueCaptures = func(value ast.Expr, active map[string]bool) []callbackLoan {
 		switch v := value.(type) {
 		case *ast.Ident:
 			return resolve(v.Name, active)
-		case *ast.Call:
-			if !c.callbackResultCalls[v] {
-				return nil
+		case *ast.FieldAccess:
+			return projectCallbackLoans(valueCaptures(v.Target, active), callbackFieldSelector(v.Field))
+		case *ast.Index:
+			return projectCallbackLoans(valueCaptures(v.Array, active), "a:*")
+		case *ast.StructLit:
+			var out []callbackLoan
+			replaced := map[string]bool{}
+			for _, field := range v.Fields {
+				replaced[field.Name] = true
+				out = mergeCallbackLoans(out, prefixCallbackLoans("f:"+field.Name, valueCaptures(field.Value, active)))
 			}
+			if v.Base != nil {
+				for _, field := range c.info.Structs[v.TypeName].Fields {
+					if !replaced[field.Name] {
+						part := "f:" + field.Name
+						out = mergeCallbackLoans(out, prefixCallbackLoans(part, projectCallbackLoans(valueCaptures(v.Base, active), part)))
+					}
+				}
+			}
+			return out
+		case *ast.TupleLit:
+			var out []callbackLoan
+			for i, elem := range v.Elems {
+				out = mergeCallbackLoans(out, prefixCallbackLoans("t:"+strconv.Itoa(i), valueCaptures(elem, active)))
+			}
+			return out
+		case *ast.ArrayLit:
+			var out []callbackLoan
+			for _, elem := range v.Elems {
+				out = mergeCallbackLoans(out, prefixCallbackLoans("a:*", valueCaptures(elem, active)))
+			}
+			return out
+		case *ast.Call:
 			id, named := v.Callee.(*ast.Ident)
 			if c.callValueCallees[v] || named && id.Local {
-				out := valueCaptures(v.Callee, active)
+				if !c.callbackResultCalls[v] {
+					return nil
+				}
+				out := flattenCallbackLoans(valueCaptures(v.Callee, active))
 				flags := c.callOwnFlags[v]
 				for i, arg := range v.Args {
-					out = mergeCallbackCaptures(out, valueCaptures(arg, active))
+					out = mergeCallbackLoans(out, flattenCallbackLoans(valueCaptures(arg, active)))
 					if input, ok := arg.(*ast.Ident); ok && input.Local && (i >= len(flags) || !flags[i]) && !c.copyableCallResult(bindingTypes[input.Name]) {
-						out = mergeCallbackCaptures(out, []ast.Param{{Name: input.Name, Type: bindingTypes[input.Name]}})
+						out = mergeCallbackLoans(out, []callbackLoan{{param: ast.Param{Name: input.Name, Type: bindingTypes[input.Name]}, direct: true}})
 					}
 				}
 				return out
@@ -166,19 +217,25 @@ func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[st
 			if factory == nil {
 				return nil
 			}
-			var out []ast.Param
+			var out []callbackLoan
 			for i, param := range factory.Params {
 				if i >= len(v.Args) {
 					break
 				}
 				for _, source := range c.callbackFactories[id.Name] {
-					if source.Name != param.Name {
+					if source.param.Name != param.Name {
 						continue
 					}
 					arg := v.Args[i]
-					out = mergeCallbackCaptures(out, valueCaptures(arg, active))
+					if !source.direct {
+						selected := selectCallbackLoans(valueCaptures(arg, active), source.path)
+						if source.wide {
+							selected = flattenCallbackLoans(selected)
+						}
+						out = mergeCallbackLoans(out, prefixCallbackLoans(source.result, selected))
+					}
 					if name, ok := arg.(*ast.Ident); ok && !param.Own && !c.copyableCallResult(param.Type) {
-						out = mergeCallbackCaptures(out, []ast.Param{{Name: name.Name, Type: param.Type}})
+						out = mergeCallbackLoans(out, []callbackLoan{{param: ast.Param{Name: name.Name, Type: param.Type}, result: source.result, direct: true}})
 					}
 				}
 			}
@@ -186,11 +243,11 @@ func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[st
 		case *ast.Lambda:
 			return captures(v, active)
 		case *ast.IfExpr:
-			return mergeCallbackCaptures(valueCaptures(v.Then, active), valueCaptures(v.Else, active))
+			return mergeCallbackLoans(valueCaptures(v.Then, active), valueCaptures(v.Else, active))
 		case *ast.MatchExpr:
-			var out []ast.Param
+			var out []callbackLoan
 			for _, arm := range v.Arms {
-				out = mergeCallbackCaptures(out, valueCaptures(arm.Body, active))
+				out = mergeCallbackLoans(out, valueCaptures(arm.Body, active))
 			}
 			return out
 		case *ast.BlockExpr:
@@ -198,41 +255,46 @@ func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[st
 		}
 		return nil
 	}
-	resolve = func(name string, active map[string]bool) []ast.Param {
+	resolve = func(name string, active map[string]bool) []callbackLoan {
 		values := definitions[name]
-		if active[name] || len(values) != 1 {
+		if active[name] {
+			for binding := range active {
+				cyclic[binding] = true
+			}
 			return nil
 		}
+		if len(values) != 1 {
+			return nil
+		}
+		if loans, known := memo[name]; known {
+			return loans
+		}
 		if root, ok := roots[name]; ok {
-			return []ast.Param{root}
+			return []callbackLoan{{param: root}}
 		}
 		active[name] = true
 		defer delete(active, name)
-		return valueCaptures(values[0], active)
+		loans := valueCaptures(values[0], active)
+		// A recursive binding can depend on an unfinished ancestor proof.
+		if !cyclic[name] {
+			memo[name] = loans
+		}
+		return loans
 	}
-	out := map[string][]ast.Param{}
+	out := map[string][]callbackLoan{}
 	for name := range definitions {
+		switch bindingTypes[name].(type) {
+		case *ast.FuncType, ast.ParamType:
+		default:
+			continue
+		}
 		if captures := resolve(name, map[string]bool{}); len(captures) > 0 {
 			out[name] = captures
 		}
 	}
-	inline := map[ast.Expr][]ast.Param{}
+	inline := map[ast.Expr][]callbackLoan{}
 	for _, value := range values {
 		inline[value] = valueCaptures(value, map[string]bool{})
 	}
 	return out, inline
-}
-
-func mergeCallbackCaptures(into, from []ast.Param) []ast.Param {
-	seen := map[string]bool{}
-	for _, capture := range into {
-		seen[capture.Name] = true
-	}
-	for _, capture := range from {
-		if !seen[capture.Name] {
-			seen[capture.Name] = true
-			into = append(into, capture)
-		}
-	}
-	return into
 }
