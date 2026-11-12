@@ -23834,6 +23834,131 @@ function lu_resolved(fn: parser.FuncDecl): parser.FuncDecl {
   return lexical.resolve_func(fn).func;
 }
 
+struct LuLoanCheck { valid: boolean, lambdas: i32 }
+
+function lu_loan_stmt(st: ast.Stmt, own check: LuLoanCheck): LuLoanCheck {
+  match (st) {
+    ast.StmtVar(_) => {},
+    ast.StmtReturn(_) => {},
+    ast.StmtExpr(_) => {},
+    _ => {
+      return LuLoanCheck { ...check, valid: false };
+    }
+  }
+  return check;
+}
+
+function lu_loan_expr(e: ast.Expr, own check: LuLoanCheck): LuLoanCheck {
+  if let ast.ExprLambda(lm) = e {
+    return LuLoanCheck { valid: check.valid && lm.origin.len() == 0, lambdas: check.lambdas + 1 };
+  }
+  return check;
+}
+
+function lu_loan_calls(e: ast.Expr, own calls: LuOcc[]): LuOcc[] {
+  if let ast.ExprCall(call) = e {
+    if let ast.ExprIdent(id) = call.callee {
+      return calls.append(LuOcc { name: id.name, line: id.line, col: id.col });
+    }
+  }
+  return calls;
+}
+
+// Every use of this callback is a direct call before the owner's last read.
+function lu_loan_ends(facts: LuFacts, calls: LuOcc[], callback: string, owner: string): boolean {
+  let last = -1;
+  for i in 0..facts.occ.len() {
+    if (facts.occ[i].name == owner) {
+      last = i;
+    }
+  }
+  for i in 0..facts.occ.len() {
+    let occurrence = facts.occ[i];
+    if (occurrence.name != callback) {
+      continue;
+    }
+    if (i >= last) {
+      return false;
+    }
+    let direct = false;
+    for call in calls {
+      if (call.name == occurrence.name && call.line == occurrence.line && call.col == occurrence.col) {
+        direct = true;
+      }
+    }
+    if (!direct) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function lu_loan_captures(lm: ast.ExprLambda, owner: string): boolean {
+  let names: string[] = [];
+  for st in lm.body {
+    names = lu_all_names(st, names);
+  }
+  return util.has_str(names, owner);
+}
+
+function lu_owner_loan_ends(vars: ast.StmtVar[], facts: LuFacts, calls: LuOcc[], owner: string): boolean {
+  let captured = false;
+  let safe = true;
+  for callback in vars {
+    if let ast.ExprLambda(lm) = callback.init {
+      if (lu_loan_captures(lm, owner)) {
+        captured = true;
+        safe = safe && lu_loan_ends(facts, calls, callback.name, owner);
+      }
+    }
+  }
+  return captured && safe;
+}
+
+function lu_without_names(names: string[], removed: string[]): string[] {
+  let out: string[] = [];
+  for name in names {
+    if (!util.has_str(removed, name)) {
+      out = out.append(name);
+    }
+  }
+  return out;
+}
+
+// Restrict the loan-end proof to immutable bindings in a straight-line body.
+// Captures inside another lambda cannot use this proof.
+function lu_ended_callback_loans(body: ast.Stmt[], own facts: LuFacts): LuFacts {
+  let check = LuLoanCheck { valid: true, lambdas: 0 };
+  let bound = 0;
+  let vars: ast.StmtVar[] = [];
+  let calls: LuOcc[] = [];
+  for st in body {
+    if let ast.StmtVar(v) = st {
+      vars = vars.append(v);
+      if let ast.ExprLambda(_) = v.init {
+        bound += 1;
+      }
+    }
+  }
+  if (bound == 0) {
+    return facts;
+  }
+  for st in body {
+    check = astwalk.fold_stmt_nodes(st, check, lu_loan_stmt, lu_loan_expr, astwalk.descend_all);
+    calls = astwalk.fold_stmt_pruned(st, calls, lu_loan_calls, not_lambda);
+  }
+  if (!check.valid || check.lambdas != bound) {
+    return facts;
+  }
+  let ended: string[] = [];
+  for owner in vars {
+    if (lu_owner_loan_ends(vars, facts, calls, owner.name)) {
+      ended = ended.append(owner.name);
+    }
+  }
+  return LuFacts { ...facts, captured: lu_without_names(facts.captured, ended), escaping: lu_without_names(facts.escaping, ended) };
+}
+
 // `fn` is resolved with lu_resolved.
 function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex): string[] {
   let facts = lu_empty_facts();
@@ -23842,6 +23967,7 @@ function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.N
     facts = astwalk.fold_stmt_nodes(st, facts, lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
     nested = astwalk.fold_stmt_nodes(st, nested, astwalk.keep_lambdas, astwalk.collect_lambda, not_lambda);
   }
+  facts = lu_ended_callback_loans(fn.body, facts);
   let fx0 = LuFn { checked_params: lu_checked_params(fn), ret_own: fn.ret_own, facts: facts, params: lu_param_names(fn), owned: lu_own_names(fn), ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, looped: lu_looped_decls(fn.body, false, []), fresh: [], fresh_known: false, forks: lu_forks(fn.body, []) };
   let fx = LuFn { ...fx0, fresh: lu_fresh_names(fx0), fresh_known: true };
   let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };

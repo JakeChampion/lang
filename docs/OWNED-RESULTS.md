@@ -53,13 +53,22 @@ A callback that returns another callback also retains these environment loans.
 The check follows callback environments through records, tuples, arrays, and record updates.
 A selected record or tuple field retains the loans of that component.
 An unrelated callback field does not extend those loans.
+
 Array elements share a conservative loan set.
 Single-definition aggregate aliases preserve the selected component.
 Each local declaration has a separate binding identity.
 A shadowed name does not erase an outer callback loan.
 Lambda parameters and local named functions use the same scope rule.
+
 An index expression also retains loans from callbacks that compute its index.
 Mutable bindings and resource paths inside aggregates still need a broader proof.
+
+A fresh local can transfer after its capturing callbacks finish their last uses.
+The checked proof requires a straight-line body with unmodified bindings.
+Every callback reference must be a direct call before the owner's last read.
+Aliases, stored or returned callbacks, and captures by another lambda prevent this proof.
+Branches, loops, deferred uses, and assignments retain the conservative refusal.
+The source must still satisfy the existing fresh-value ownership checks.
 
 The caller can copy immutable data results.
 This also applies to a call with an ordinary result type.
