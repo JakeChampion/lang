@@ -87,6 +87,25 @@ function test_id3v1(): test.TestOutcome {
   return test.assert_eq(show(tags.read(file)) + " " + tag.len().to_string(), "Last Song|Last Band|Last Album||9|1987 128");
 }
 
+function test_genres(): test.TestOutcome {
+  let tcon = (text: string): string => tags.read(id3(3u8, 0u8, frame3("TCON", 0u8, bytes_of(text)))).genre;
+  let v1 = bytes_of("TAG");
+  while (v1.len() < 127) {
+    v1 = v1.append(0u8);
+  }
+  v1 = v1.append(8u8);
+  let list = joined([comment("fern encoder"), wire.put_le([], 1u64, 4), comment("genre=Field Recording")]);
+  let info: u8[] = [];
+  for i in 0..34 {
+    info = info.append(0u8);
+  }
+  let flac = joined([bytes_of("fLaC"), [0u8, 0u8, 0u8, 34u8], info, [132u8], wire.put_be([], list.len() as u64, 3), list]);
+  let numbered = box(bytes_of("moov"), box(bytes_of("udta"), box(bytes_of("meta"), joined([[0u8, 0u8, 0u8, 0u8], box(bytes_of("ilst"), item(bytes_of("gnre"), [0u8, 18u8]))]))));
+  let named_genre = box(bytes_of("moov"), box(bytes_of("udta"), box(bytes_of("meta"), joined([[0u8, 0u8, 0u8, 0u8], box(bytes_of("ilst"), item(named("gen"), bytes_of("Chiptune")))]))));
+  let got = [tcon("Shoegaze"), tcon("(17)"), tcon("52"), tcon("(4)Eurodisco"), tcon("(RX)"), tcon("1999 Hits"), tcon("(250)"), tags.id3v1(v1).genre, tags.read(flac).genre, tags.mp4(numbered).genre, tags.mp4(named_genre).genre, tags.none().genre.len().to_string()];
+  return test.assert_eq(got.join("|"), "Shoegaze|Rock|Electronic|Eurodisco|(RX)|1999 Hits|(250)|Jazz|Field Recording|Rock|Chiptune|0");
+}
+
 function comment(s: string): u8[] {
   return joined([wire.put_le([], s.len() as u64, 4), bytes_of(s)]);
 }
@@ -224,6 +243,7 @@ function main(): i32 {
   r = r.it("an MP4 file has items in an ilst box", test_mp4);
   r = r.it("an Ogg file has Vorbis comments in its second packet", test_ogg);
   r = r.it("a file holds the picture of its album", test_pictures);
+  r = r.it("a genre is a text or a number of the ID3v1 list", test_genres);
   r = r.it("bytes that are not tags give empty tags", test_bytes_that_are_not_tags);
   return r.finish();
 }

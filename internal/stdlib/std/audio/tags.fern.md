@@ -1,6 +1,6 @@
 # Audio file tags
 
-This module reads the title, the artist, the album and the track number that an audio file holds about itself.
+This module reads the title, the artist, the album, the genre and the track number that an audio file holds about itself.
 
 ## Model
 
@@ -18,7 +18,7 @@ A field that the file does not give is "" or 0. `picture` gives the bytes of the
 
 The input is the whole file, or its start as far as the end of its tags. A tag that goes past the end of the input gives the fields before that point. No input makes the functions fail: bytes that are not a tag give empty tags.
 
-A track number such as `3/12` gives 3. A date such as `2019-05-01` gives the year 2019.
+A track number such as `3/12` gives 3. A date such as `2019-05-01` gives the year 2019. A genre that is a number of the ID3v1 list, such as `(17)`, gives its name: `Rock`.
 
 ## Executable example
 
@@ -95,10 +95,10 @@ import "std/utf8";
 
 // What a file tells about its sound. A field that the file does not give
 // is "" or 0.
-pub struct Tags { title: string, artist: string, album: string, album_artist: string, track: i32, year: i32 }
+pub struct Tags { title: string, artist: string, album: string, album_artist: string, track: i32, year: i32, genre: string }
 
 pub function none(): Tags {
-  return Tags { title: "", artist: "", album: "", album_artist: "", track: 0, year: 0 };
+  return Tags { title: "", artist: "", album: "", album_artist: "", track: 0, year: 0, genre: "" };
 }
 
 // The fields of the tags, for the tables of the names of each format.
@@ -114,8 +114,10 @@ const TRACK: i32 = 4;
 
 const YEAR: i32 = 5;
 
+const GENRE: i32 = 6;
+
 // The tags with the text `text` in the field `field`. An empty text and a
-// field that is not one of the six change nothing.
+// field that is not one of the seven change nothing.
 function with_field(t: Tags, field: i32, text: string): Tags {
   if (text.len() == 0) {
     return t;
@@ -138,6 +140,9 @@ function with_field(t: Tags, field: i32, text: string): Tags {
   if (field == YEAR) {
     return Tags { ...t, year: number(text) };
   }
+  if (field == GENRE) {
+    return Tags { ...t, genre: genre_text(text) };
+  }
   return t;
 }
 
@@ -154,7 +159,7 @@ function field_of(names: (string, i32)[], name: string): i32 {
 
 // The tags have no field.
 pub function (t: Tags) empty(): boolean {
-  return t.title.len() == 0 && t.artist.len() == 0 && t.album.len() == 0 && t.album_artist.len() == 0 && t.track == 0 && t.year == 0;
+  return t.title.len() == 0 && t.artist.len() == 0 && t.album.len() == 0 && t.album_artist.len() == 0 && t.track == 0 && t.year == 0 && t.genre.len() == 0;
 }
 ```
 
@@ -176,6 +181,47 @@ function number(s: string): i32 {
     }
   }
   return n;
+}
+
+// The names of the genres of ID3v1, with the names that Winamp added.
+function genre_names(): string[] {
+  return ["Blues", "Classic Rock", "Country", "Dance", "Disco", "Funk", "Grunge", "Hip-Hop", "Jazz", "Metal", "New Age", "Oldies", "Other", "Pop", "R&B", "Rap", "Reggae", "Rock", "Techno", "Industrial", "Alternative", "Ska", "Death Metal", "Pranks", "Soundtrack", "Euro-Techno", "Ambient", "Trip-Hop", "Vocal", "Jazz+Funk", "Fusion", "Trance", "Classical", "Instrumental", "Acid", "House", "Game", "Sound Clip", "Gospel", "Noise", "AlternRock", "Bass", "Soul", "Punk", "Space", "Meditative", "Instrumental Pop", "Instrumental Rock", "Ethnic", "Gothic", "Darkwave", "Techno-Industrial", "Electronic", "Pop-Folk", "Eurodance", "Dream", "Southern Rock", "Comedy", "Cult", "Gangsta", "Top 40", "Christian Rap", "Pop/Funk", "Jungle", "Native American", "Cabaret", "New Wave", "Psychedelic", "Rave", "Showtunes", "Trailer", "Lo-Fi", "Tribal", "Acid Punk", "Acid Jazz", "Polka", "Retro", "Musical", "Rock & Roll", "Hard Rock", "Folk", "Folk-Rock", "National Folk", "Swing", "Fast Fusion", "Bebop", "Latin", "Revival", "Celtic", "Bluegrass", "Avantgarde", "Gothic Rock", "Progressive Rock", "Psychedelic Rock", "Symphonic Rock", "Slow Rock", "Big Band", "Chorus", "Easy Listening", "Acoustic", "Humour", "Speech", "Chanson", "Opera", "Chamber Music", "Sonata", "Symphony", "Booty Bass", "Primus", "Porn Groove", "Satire", "Slow Jam", "Club", "Tango", "Samba", "Folklore", "Ballad", "Power Ballad", "Rhythmic Soul", "Freestyle", "Duet", "Punk Rock", "Drum Solo", "A Cappella", "Euro-House", "Dance Hall", "Goa", "Drum & Bass", "Club-House", "Hardcore", "Terror", "Indie", "BritPop", "Afro-Punk", "Polsk Punk", "Beat", "Christian Gangsta Rap", "Heavy Metal", "Black Metal", "Crossover", "Contemporary Christian", "Christian Rock", "Merengue", "Salsa", "Thrash Metal", "Anime", "JPop", "Synthpop"];
+}
+
+// The name of the genre of the number `n` of ID3v1, or "".
+function genre_name(n: i32): string {
+  let names = genre_names();
+  if (n < 0 || n >= names.len()) {
+    return "";
+  }
+  return names[n];
+}
+
+// The genre of the text `text` of a tag. `(17)` and `17` give the name of
+// that number, and `(17)Punk` gives the text after the number.
+function genre_text(text: string): string {
+  let from = 0;
+  if (text.starts_with("(")) {
+    from = 1;
+  }
+  let at = from;
+  while (at < text.len() && text[at] >= 48u8 && text[at] <= 57u8) {
+    at += 1;
+  }
+  if (at == from) {
+    return text;
+  }
+  if (from == 1 && (at >= text.len() || text[at] != 41u8) || from == 0 && at < text.len()) {
+    return text;
+  }
+  if (from == 1 && at + 1 < text.len()) {
+    return text.drop(at + 1).to_owned();
+  }
+  let name = genre_name(number(text));
+  if (name.len() == 0) {
+    return text;
+  }
+  return name;
 }
 
 function text_of(cps: i32[]): string {
@@ -300,7 +346,7 @@ function frame_text(input: [u8], from: i32, to: i32): string {
 // The names of the text frames of ID3v2: four letters in the versions 2.3
 // and 2.4, and three in the version 2.2.
 function id3_names(): (string, i32)[] {
-  return [("TIT2", TITLE), ("TT2", TITLE), ("TPE1", ARTIST), ("TP1", ARTIST), ("TALB", ALBUM), ("TAL", ALBUM), ("TPE2", ALBUM_ARTIST), ("TP2", ALBUM_ARTIST), ("TRCK", TRACK), ("TRK", TRACK), ("TDRC", YEAR), ("TYER", YEAR), ("TYE", YEAR)];
+  return [("TIT2", TITLE), ("TT2", TITLE), ("TPE1", ARTIST), ("TP1", ARTIST), ("TALB", ALBUM), ("TAL", ALBUM), ("TPE2", ALBUM_ARTIST), ("TP2", ALBUM_ARTIST), ("TRCK", TRACK), ("TRK", TRACK), ("TDRC", YEAR), ("TYER", YEAR), ("TYE", YEAR), ("TCON", GENRE), ("TCO", GENRE)];
 }
 
 // The name of a frame is capital letters and digits.
@@ -383,7 +429,7 @@ pub function id3v1(input: [u8]): Tags {
   if (input[at + 125] == 0u8) {
     track = input[at + 126] as i32;
   }
-  return Tags { title: latin1(input, at + 3, at + 33), artist: latin1(input, at + 33, at + 63), album: latin1(input, at + 63, at + 93), album_artist: "", track: track, year: number(latin1(input, at + 93, at + 97)) };
+  return Tags { title: latin1(input, at + 3, at + 33), artist: latin1(input, at + 33, at + 63), album: latin1(input, at + 63, at + 93), album_artist: "", track: track, year: number(latin1(input, at + 93, at + 97)), genre: genre_name(input[at + 127] as i32) };
 }
 ```
 
@@ -392,7 +438,7 @@ pub function id3v1(input: [u8]): Tags {
 ```fern
 <<Vorbis comments>>=
 function vorbis_names(): (string, i32)[] {
-  return [("TITLE", TITLE), ("ARTIST", ARTIST), ("ALBUM", ALBUM), ("ALBUMARTIST", ALBUM_ARTIST), ("ALBUM ARTIST", ALBUM_ARTIST), ("TRACKNUMBER", TRACK), ("DATE", YEAR), ("YEAR", YEAR)];
+  return [("TITLE", TITLE), ("ARTIST", ARTIST), ("ALBUM", ALBUM), ("ALBUMARTIST", ALBUM_ARTIST), ("ALBUM ARTIST", ALBUM_ARTIST), ("TRACKNUMBER", TRACK), ("DATE", YEAR), ("YEAR", YEAR), ("GENRE", GENRE)];
 }
 
 // The tags with the Vorbis comment `NAME=value`. The name has small or
@@ -464,7 +510,7 @@ pub function flac(input: [u8]): Tags {
 ```fern
 <<RIFF>>=
 function info_names(): (string, i32)[] {
-  return [("INAM", TITLE), ("IART", ARTIST), ("IPRD", ALBUM), ("ITRK", TRACK), ("IPRT", TRACK), ("ICRD", YEAR)];
+  return [("INAM", TITLE), ("IART", ARTIST), ("IPRD", ALBUM), ("ITRK", TRACK), ("IPRT", TRACK), ("ICRD", YEAR), ("IGNR", GENRE)];
 }
 
 function info(input: [u8], from: i32, to: i32): Tags {
@@ -530,6 +576,9 @@ function box_in(input: [u8], from: i32, to: i32, kind: string): (i32, i32) {
   return (-1, -1);
 }
 
+// The item `gnre` of `ilst`: the number of an ID3v1 genre, plus 1.
+const GENRE_NUMBER: i32 = 7;
+
 // The field of the item of `ilst` at `at`, or -1.
 function mp4_field(input: [u8], at: i32): i32 {
   if (wire.tag(input, at, "aART")) {
@@ -538,10 +587,13 @@ function mp4_field(input: [u8], at: i32): i32 {
   if (wire.tag(input, at, "trkn")) {
     return TRACK;
   }
+  if (wire.tag(input, at, "gnre")) {
+    return GENRE_NUMBER;
+  }
   if (input[at] != 169u8) {
     return -1;
   }
-  for pair in [("nam", TITLE), ("ART", ARTIST), ("alb", ALBUM), ("day", YEAR)] {
+  for pair in [("nam", TITLE), ("ART", ARTIST), ("alb", ALBUM), ("day", YEAR), ("gen", GENRE)] {
     let (name, field) = pair;
     if (wire.tag(input, at + 1, name)) {
       return field;
@@ -575,6 +627,8 @@ pub function mp4(input: [u8]): Tags {
     let (value, value_end) = box_in(input, at + 8, (at + size).min(end), "data");
     if (field == TRACK && value >= 0 && value + 12 <= value_end) {
       t = Tags { ...t, track: wire.be(input, value + 10, 2) as i32 };
+    } else if (field == GENRE_NUMBER && value >= 0 && value + 10 <= value_end) {
+      t = with_field(t, GENRE, genre_name(wire.be(input, value + 8, 2) as i32 - 1));
     } else if (field >= 0 && value >= 0 && value + 8 <= value_end) {
       t = with_field(t, field, utf8_text(input, value + 8, value_end));
     }
