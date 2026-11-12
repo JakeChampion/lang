@@ -9,6 +9,8 @@ import "std/i64";
 import "std/audio/tags";
 import "std/audio/wire";
 import "std/option";
+import "std/result";
+import "std/utf8";
 import "./engine";
 import "./library";
 import "./tune";
@@ -20,7 +22,9 @@ import "./tune";
 // `now` is the time in ns. `dirs` gives the names of the directories in a directory, and
 // `keep` keeps the folder of the library for the next start. `decode` gives an
 // image from the bytes of a JPEG or a PNG file, at a size. `save` keeps
-// the text of the library for the next start. `kept` gives the bytes
+// the text of the library for the next start, and `keep_lists` keeps the
+// text of the playlists. `write_text` writes a text file, and tells that it
+// did. `kept` gives the bytes
 // that `put` kept under a name, or no bytes. `show` tells
 // Android the track that plays and its state. `wake` keeps the phone
 // awake until `sleep`. `quit` gives back what the app holds of Android,
@@ -40,6 +44,8 @@ pub struct Device {
   keep: (string) => void,
   decode: (u8[], i32, i32) => Option[draw.Image],
   save: (string) => void,
+  keep_lists: (string) => void,
+  write_text: (string, string) => boolean,
   kept: (string) => u8[],
   put: (string, u8[]) => void,
   show: (tune.Now) => void,
@@ -144,6 +150,14 @@ function done(dev: Device, own p: Player, want: tune.Want): Player {
     tune.Grant => {
       dev.grant();
       return Player { model: m, deck: deck };
+    },
+    tune.KeepLists => {
+      dev.keep_lists(library.lists_text(m.playlists));
+      return Player { model: m, deck: deck };
+    },
+    tune.WriteList(name) => {
+      let told = exported(dev, m, name);
+      return Player { model: tune.update(m, tune.Exported(told)), deck: deck };
     },
     tune.Quit => {
       dev.close(m.sound);
@@ -296,20 +310,62 @@ function scanned(dev: Device, own m: tune.Model): tune.Model {
   return listed(dev, next, path);
 }
 
+// Writes the playlist `name` as an M3U file in the folder of the library,
+// or in the first directory of the music of the phone that takes it. It
+// gives the words that tell the person the result.
+function exported(dev: Device, m: tune.Model, name: string): string {
+  let Some(list) = tune.playlist(m, name) else {
+    return "";
+  };
+  let dirs = dev.roots.drop(1).concat(dev.roots.take(1));
+  if (m.folder.len() > 0) {
+    dirs = [m.folder];
+  }
+  for dir in dirs {
+    let path = dir + "/" + name.replace("/", "-") + ".m3u";
+    if (dev.write_text(path, library.m3u_text(dir, list.paths))) {
+      return "Tune wrote " + path;
+    }
+  }
+  return "Tune cannot write " + name + ".m3u";
+}
+
+// The player with the playlist of the M3U file `name` of the directory
+// `dir`, under the name of the file. A playlist that the player has stays
+// as it is.
+function imported(dev: Device, own m: tune.Model, dir: string, name: string): tune.Model {
+  let stem = name.take(name.len() - (if (name.to_lower().ends_with(".m3u8")) { 5 } else { 4 })).to_owned();
+  if (tune.playlist(m, stem).is_some()) {
+    return m;
+  }
+  let Ok(text) = utf8.from_bytes(dev.read(dir + "/" + name)) else {
+    return m;
+  };
+  return tune.update(m, tune.Imported(stem, library.m3u_paths(dir, text)));
+}
+
 // The player with the entries of the directory `path` in its scan. An
 // image file with the name of a picture of an album goes to `pictures`,
-// and an entry whose name starts with a dot goes nowhere.
+// an M3U file gives a playlist, and an entry whose name starts with a dot
+// goes nowhere.
 function listed(dev: Device, own m: tune.Model, path: string): tune.Model {
   let below: string[] = [];
   let pictures = m.pictures;
+  let lists: string[] = [];
   for name in cmp.sort(dev.names(path)) {
     if (library.picture_name(name)) {
       pictures = pictures.append(path + "/" + name);
+    } else if (library.playlist_name(name)) {
+      lists = lists.append(name);
     } else if (!name.starts_with(".")) {
       below = below.append(path + "/" + name);
     }
   }
-  return tune.update(tune.Model { ...m, pictures: pictures }, tune.Listed(path, below));
+  let state = tune.update(tune.Model { ...m, pictures: pictures }, tune.Listed(path, below));
+  for name in lists {
+    state = imported(dev, state, path, name);
+  }
+  return state;
 }
 
 // The milliseconds of one step that the scan can use.

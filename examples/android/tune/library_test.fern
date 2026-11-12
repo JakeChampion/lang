@@ -117,6 +117,17 @@ function test_the_text_of_a_library(): test.TestOutcome {
   return test.assert_eq(got, "2 /m/a b/01 x.mp3|A tab|By|3|1999|123456 Y|Unknown artist 0");
 }
 
+function test_playlist_texts(): test.TestOutcome {
+  let lists = [tune.Playlist { name: "Road", paths: ["/m/a.mp3", "/m/b c.flac"] }, tune.Playlist { name: "Empty", paths: [] }];
+  let back = library.lists_from(library.lists_text(lists));
+  let got = back.len().to_string() + " " + back[0].name + ":" + back[0].paths.join(",") + " " + back[1].name + ":" + back[1].paths.len().to_string();
+  let m3u = library.m3u_paths("/m/Fern", "#EXTM3U\r\n#EXTINF:1,x\r\nFirst Light/01 a.flac\r\n../b.mp3\n/abs/c.wav\nwin\\\\d.mp3\n\n").join("|");
+  let paths = ["/m/Fern/x/a.flac", "/other/b.mp3"];
+  let text = library.m3u_text("/m/Fern", paths);
+  let again = library.m3u_paths("/m/Fern", text).join("|");
+  return test.assert_eq(got + " / " + m3u + " / " + library.playlist_name("Mix.M3U8").to_string() + library.playlist_name("a.mp3").to_string() + " / " + text.replace("\n", ";") + " " + again, "2 Road:/m/a.mp3,/m/b c.flac Empty:0 / /m/Fern/First Light/01 a.flac|/m/b.mp3|/abs/c.wav|/m/Fern/win/d.mp3 / truefalse / #EXTM3U;x/a.flac;/other/b.mp3; /m/Fern/x/a.flac|/other/b.mp3");
+}
+
 function main(): i32 {
   let r = test.new("examples/android/tune library");
   r = r.it("a name that ends as a file that is not sound", test_other_files);
@@ -127,5 +138,6 @@ function main(): i32 {
   r = r.it("an M4A, an Ogg Vorbis and an Opus file give their tags and their length", test_m4a_ogg_and_opus_files);
   r = r.it("a tag gives the picture of its album", test_a_picture_in_a_tag);
   r = r.it("the library is a text that the player reads back", test_the_text_of_a_library);
+  r = r.it("the playlists are a text, and an M3U file gives paths", test_playlist_texts);
   return r.finish();
 }

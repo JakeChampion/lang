@@ -40,6 +40,15 @@ pub const ARTISTS: i32 = 1;
 
 pub const ALBUMS: i32 = 2;
 
+pub const PLAYLISTS: i32 = 3;
+
+// The name of the playlist of the songs that the person likes.
+pub const FAVORITES: string = "Favorites";
+
+// A list of songs that the person made: its name, and the paths of the
+// files of its songs in their order.
+pub struct Playlist { name: string, paths: string[] }
+
 // An artist or an album: its name, the artist that an album is under, the
 // number of its songs and of its albums, and the year of an album.
 pub struct Group { name: string, by: string, songs: i32, albums: i32, year: i32 }
@@ -67,8 +76,10 @@ pub function no_sound(): Sound {
 // files of the library again, ask the person for the permission to read
 // the music of the phone, give the directories in a directory, or keep
 // the folder of the library for the next start, or give back what the
-// player holds of the device before Android destroys the activity.
-pub enum Want { Load(i32), Resume, Hold, Seek(f64), Scan, Grant, List(string), Keep(string), Quit }
+// player holds of the device before Android destroys the activity, or
+// keep the playlists for the next start, or write a playlist as an M3U
+// file.
+pub enum Want { Load(i32), Resume, Hold, Seek(f64), Scan, Grant, List(string), Keep(string), Quit, KeepLists, WriteList(string) }
 
 // `fresh` tells that the player did not look for its files yet: it looks
 // at its first Beat, after the screen shows.
@@ -99,7 +110,10 @@ pub enum Want { Load(i32), Resume, Hold, Seek(f64), Scan, Grant, List(string), K
 // directories, `walking` is true, `seen` has each path that it found and
 // `listed` has each directory that it read. `dirty` tells that the library
 // is not the one that the player saved. `wanted` has the path of a track
-// for each album that has no picture yet.
+// for each album that has no picture yet. `list` is the name of the
+// playlist whose songs show, or "". `adding` has the paths that the person
+// puts in a playlist: the screen then shows the playlists. While `naming`
+// is true, the person types the name `name` of a new playlist.
 pub struct Model {
   fresh: boolean,
   tracks: Track[],
@@ -143,17 +157,22 @@ pub struct Model {
   walking: boolean,
   dirty: boolean,
   wanted: string[],
+  playlists: Playlist[],
+  list: string,
+  adding: string[],
+  naming: boolean,
+  name: string,
 }
 
 // A player with no track yet, which reads the files `scan`.
 pub function start(scan: string[]): Model {
-  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, menu: -1, lined: false, error: "", wants: [], sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false, covers: [], bare: [], pictures: [], art: None, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: false, wanted: [] };
+  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, menu: -1, lined: false, error: "", wants: [], sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false, covers: [], bare: [], pictures: [], art: None, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: false, wanted: [], playlists: [], list: "", adding: [], naming: false, name: "" };
 }
 
-// A player with the tracks `tracks` that it saved at an earlier time, in
-// the order of the library. It looks for the files again after the screen
+// A player with the tracks `tracks` and the playlists `playlists` that it
+// saved at an earlier time. The tracks are in the order of the library. It looks for the files again after the screen
 // shows, and gets the picture of each album.
-pub function start_with(home: string, folder: string, tracks: Track[]): Model {
+pub function start_with(home: string, folder: string, tracks: Track[], playlists: Playlist[]): Model {
   let m = start_in(home, folder);
   let have = m.have;
   let wanted: string[] = [];
@@ -166,7 +185,7 @@ pub function start_with(home: string, folder: string, tracks: Track[]): Model {
       last = key;
     }
   }
-  return Model { ...m, tracks: tracks, have: have, wanted: wanted };
+  return Model { ...m, tracks: tracks, have: have, wanted: wanted, playlists: playlists };
 }
 
 // A player whose library is in `folder`, and whose person chooses a folder
@@ -193,7 +212,16 @@ pub function start_in(home: string, folder: string): Model {
 // `Closing` comes when Android destroys the activity. `Walk` comes with
 // the directories of the library when the player starts to go through
 // them, and `Listed` comes with the entries of a directory that it read.
-pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean), Menu(i32), MenuClosed, PlayNext, Enqueue, Lined(boolean), Jump(i32), Drop(i32), Closing, Walk(string[]), Listed(string, string[]) }
+// `OpenList` shows the songs of a playlist. `AddTo` puts the track of the
+// menu in a playlist, and `SaveQueue` puts the queue in one: the person
+// then chooses the playlist with `ToList`, or makes one with `NewList`,
+// `Named` and `Create`. `Unlist` takes a song out of the playlist that
+// shows, and `DeleteList` deletes that playlist. `Favorite` puts the track
+// that plays in the favorites, or takes it out. `Imported` comes with the
+// name and the paths of a playlist file that the scan found. `Export`
+// writes the playlist that shows as an M3U file, and `Exported` comes with
+// the words that tell the person the result.
+pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean), Menu(i32), MenuClosed, PlayNext, Enqueue, Lined(boolean), Jump(i32), Drop(i32), Closing, Walk(string[]), Listed(string, string[]), OpenList(string), AddTo, SaveQueue, ToList(string), NewList, Named(string), Create, Unlist(i32), DeleteList, Favorite, Imported(string, string[]), Export, Exported(string) }
 
 // The key of the album of a track: the artist that the album is under,
 // and its name.
@@ -226,6 +254,96 @@ pub function with_cover(m: Model, key: string, image: Option[draw.Image]): Model
   return Model { ...m, bare: m.bare.append(key) };
 }
 
+// The playlist of the name `name`, or None.
+pub function playlist(m: Model, name: string): Option[Playlist] {
+  for p in m.playlists {
+    if (p.name == name) {
+      return Some(p);
+    }
+  }
+  return None;
+}
+
+// The numbers of the tracks of the playlist `name`, in its order. A path
+// that the library does not have gives no number.
+function listed_songs(m: Model, name: string): i32[] {
+  let Some(p) = playlist(m, name) else {
+    return [];
+  };
+  let at: Map[string, i32] = map_new(64);
+  for i in 0..m.tracks.len() {
+    at = at.insert(m.tracks[i].path, i);
+  }
+  let out: i32[] = [];
+  for path in p.paths {
+    if let Some(i) = at.get(path) {
+      out = out.append(i);
+    }
+  }
+  return out;
+}
+
+// The playlists with the paths `paths` at the end of the playlist `name`.
+// A path that the playlist has does not go in two times. A playlist that
+// is not there starts.
+function listed_in(lists: Playlist[], name: string, paths: string[]): Playlist[] {
+  let out: Playlist[] = [];
+  let found = false;
+  for p in lists {
+    if (p.name == name) {
+      let all = p.paths;
+      for path in paths {
+        if (!all.contains(path)) {
+          all = all.append(path);
+        }
+      }
+      out = out.append(Playlist { name: name, paths: all });
+      found = true;
+    } else {
+      out = out.append(p);
+    }
+  }
+  if (!found) {
+    return out.append(Playlist { name: name, paths: paths });
+  }
+  return out;
+}
+
+// The playlists with no path `path` in the playlist `name`.
+function unlisted(lists: Playlist[], name: string, path: string): Playlist[] {
+  let out: Playlist[] = [];
+  for p in lists {
+    if (p.name == name) {
+      let kept: string[] = [];
+      for q in p.paths {
+        if (q != path) {
+          kept = kept.append(q);
+        }
+      }
+      out = out.append(Playlist { name: name, paths: kept });
+    } else {
+      out = out.append(p);
+    }
+  }
+  return out;
+}
+
+// True when the track that plays is in the favorites.
+pub function favorite(m: Model): boolean {
+  if (m.current < 0) {
+    return false;
+  }
+  if let Some(p) = playlist(m, FAVORITES) {
+    return p.paths.contains(m.tracks[m.current].path);
+  }
+  return false;
+}
+
+// The player with the playlists `lists`, which the device then keeps.
+function with_lists(m: Model, lists: Playlist[]): Model {
+  return Model { ...m, playlists: lists, wants: m.wants.append(KeepLists) };
+}
+
 // A time in ms as minutes and seconds.
 pub function clock(ms: i64): string {
   let s = (ms / 1000i64) as i32;
@@ -255,6 +373,9 @@ function in_view(m: Model, t: Track): boolean {
 // The numbers of the tracks that show: those of the album or of the artist
 // that shows, whose title, artist or album has the text of the search.
 pub function songs(m: Model): i32[] {
+  if (m.list.len() > 0) {
+    return listed_songs(m, m.list);
+  }
   let want = wanted(m);
   let out: i32[] = [];
   for i in 0..m.tracks.len() {
@@ -525,12 +646,18 @@ function tab(m: Model, name: string, which: i32): ui.El[Msg] {
 // button that goes up from it.
 function heading(m: Model, summary: string): ui.El[Msg] {
   let name = "Tune";
-  if (m.album.len() > 0) {
+  if (m.list.len() > 0) {
+    name = m.list;
+  } else if (m.album.len() > 0) {
     name = m.album;
   } else if (m.artist.len() > 0) {
     name = m.artist;
   }
   let top: ui.El[Msg][] = [ui.text(name).sized(28.0).weighted(700).clamped(1), ui.text(summary).colored(ui.MUTED).clamped(1)];
+  if (m.list.len() > 0) {
+    let acts = ui.row([ui.text_button("Export", Export), ui.text_button("Delete", DeleteList), ui.space(), ui.text_button("Up", Up)]).spaced(8.0);
+    return ui.column([ui.column(top).spaced(4.0), acts]).spaced(4.0).padding_xy(16.0, 0.0);
+  }
   if (m.artist.len() > 0) {
     return ui.row([ui.column(top).spaced(4.0).wide(), ui.text_button("Up", Up)]).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0);
   }
@@ -560,6 +687,14 @@ function chooser(m: Model): ui.El[Msg] {
 // The list of the tab that shows. An artist that shows has its albums, and
 // an album that shows has its songs.
 function listing(m: Model): (ui.El[Msg], string) {
+  if (m.list.len() > 0) {
+    let shown = songs(m);
+    return (ui.list("playlist", shown.len(), 64.0, (row: i32): ui.El[Msg] => track_row(m, shown[row]).on_long(Unlist(row))), count(shown.len(), "song") + " · hold a song to take it out");
+  }
+  if (m.tab == PLAYLISTS && m.artist.len() == 0 && m.album.len() == 0) {
+    let lists = m.playlists;
+    return (ui.list("playlists", lists.len(), 64.0, (row: i32): ui.El[Msg] => entry(ui.canvas("rings:" + lists[row].name, art(lists[row].name)).width(44.0).height(44.0), lists[row].name, count(lists[row].paths.len(), "song"), ui.INK).on_tap(OpenList(lists[row].name))), count(lists.len(), "playlist"));
+  }
   if (m.album.len() == 0 && (m.tab == ALBUMS || m.artist.len() > 0)) {
     let groups = albums(m);
     return (ui.list("albums", groups.len(), 64.0, (row: i32): ui.El[Msg] => album_row(m, groups[row])), count(groups.len(), "album"));
@@ -585,8 +720,8 @@ function library(m: Model): ui.El[Msg] {
     summary = summary + " · reading " + count(m.scan.len(), "file");
   }
   let kids: ui.El[Msg][] = [heading(m, summary), ui.row([ui.field("search", m.query, "Search the library").on_edit((text: string): Msg => Search(text))]).padding_xy(16.0, 0.0)];
-  if (m.artist.len() == 0) {
-    kids = kids.append(ui.row([tab(m, "Songs", SONGS), tab(m, "Artists", ARTISTS), tab(m, "Albums", ALBUMS)]).spaced(8.0).padding_xy(16.0, 0.0));
+  if (m.artist.len() == 0 && m.list.len() == 0) {
+    kids = kids.append(ui.row([tab(m, "Songs", SONGS), tab(m, "Artists", ARTISTS), tab(m, "Albums", ALBUMS), tab(m, "Lists", PLAYLISTS)]).spaced(4.0).padding_xy(16.0, 0.0));
   }
   kids = kids.append(list);
   if (m.menu >= 0 && m.menu < m.tracks.len()) {
@@ -639,7 +774,23 @@ function repeat_label(repeat: i32): string {
 // The menu of the track `m.menu`, at the foot of the library.
 function menu(m: Model): ui.El[Msg] {
   let t = m.tracks[m.menu];
-  return ui.column([ui.text(t.title).weighted(700).clamped(1), ui.row([ui.text_button("Play next", PlayNext), ui.text_button("Add to queue", Enqueue), ui.space(), ui.text_button("Close", MenuClosed)]).spaced(8.0).aligned(ui.CENTER)]).spaced(4.0).padding_xy(16.0, 12.0).background(ui.SURFACE);
+  return ui.column([ui.text(t.title).weighted(700).clamped(1), ui.row([ui.text_button("Play next", PlayNext), ui.text_button("Add to queue", Enqueue), ui.space(), ui.text_button("Close", MenuClosed)]).spaced(8.0).aligned(ui.CENTER), ui.row([ui.text_button("Add to playlist", AddTo)]).spaced(8.0).aligned(ui.CENTER)]).spaced(4.0).padding_xy(16.0, 12.0).background(ui.SURFACE);
+}
+
+// The screen where the person chooses the playlist that gets the paths of
+// `adding`, or types the name of a new one.
+function picker(m: Model): ui.El[Msg] {
+  let top: ui.El[Msg][] = [ui.text("Add to playlist").sized(28.0).weighted(700).clamped(1), ui.text(count(m.adding.len(), "song")).colored(ui.MUTED)];
+  let head = ui.row([ui.column(top).spaced(4.0).wide(), ui.text_button("Cancel", Up)]).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0);
+  if (m.naming) {
+    let typed = ui.row([ui.field("playlist", m.name, "Playlist name").on_edit((text: string): Msg => Named(text)).on_submit(Create)]).padding_xy(16.0, 0.0);
+    let make = ui.row([ui.space(), ui.button("Create", Create)]).padding_xy(16.0, 0.0);
+    return ui.column([head, typed, make, ui.space()]).spaced(12.0).padding_xy(0.0, 16.0).aligned(ui.STRETCH);
+  }
+  let lists = m.playlists;
+  let rows = ui.list("to-playlist", lists.len(), 56.0, (row: i32): ui.El[Msg] => ui.row([ui.text(lists[row].name).clamped(1)]).padding_xy(16.0, 0.0).aligned(ui.CENTER).on_tap(ToList(lists[row].name)));
+  let foot = ui.row([ui.space(), ui.button("New playlist", NewList)]).padding_xy(16.0, 0.0);
+  return ui.column([head, rows, foot]).spaced(12.0).padding_xy(0.0, 16.0).aligned(ui.STRETCH);
 }
 
 // The screen of the queue: a tap on a track plays it, and a long press
@@ -655,7 +806,7 @@ function line(m: Model): ui.El[Msg] {
     return entry(thumb(m, album_key(t.by, t.album), t.album, 44.0), t.title, t.artist + " · " + t.album, color).on_tap(Jump(row)).on_long(Drop(row));
   });
   let top: ui.El[Msg][] = [ui.text("Queue").sized(28.0).weighted(700), ui.text(count(queue.len(), "song") + " · hold a song to take it out").colored(ui.MUTED).clamped(1)];
-  return ui.column([ui.row([ui.column(top).spaced(4.0).wide(), ui.text_button("Close", Lined(false))]).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0), rows]).spaced(12.0).padding_xy(0.0, 16.0).aligned(ui.STRETCH);
+  return ui.column([ui.row([ui.column(top).spaced(4.0).wide(), ui.text_button("Save", SaveQueue), ui.text_button("Close", Lined(false))]).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0), rows]).spaced(12.0).padding_xy(0.0, 16.0).aligned(ui.STRETCH);
 }
 
 function now_playing(m: Model): ui.El[Msg] {
@@ -673,7 +824,7 @@ function now_playing(m: Model): ui.El[Msg] {
     [
       ui.row([ui.text_button("Library", Closed)]),
       ui.column([big]).centered().grow(1.0),
-      ui.column([ui.text(name).sized(22.0).weighted(700).clamped(2), ui.text(format).colored(ui.MUTED).clamped(1)]).spaced(4.0),
+      ui.row([ui.column([ui.text(name).sized(22.0).weighted(700).clamped(2), ui.text(format).colored(ui.MUTED).clamped(1)]).spaced(4.0).wide(), ui.text_button(toggle_label("Favorite", favorite(m)), Favorite)]).spaced(8.0).aligned(ui.CENTER),
       ui.column([ui.slider(part(m), (at: f64): Msg => Sought((at * 1000.0 + 0.5) as i32)).described("Position"), ui.row([ui.text(clock(m.at_ms)).sized(12.0).colored(ui.MUTED), ui.space(), ui.text(clock(m.length_ms)).sized(12.0).colored(ui.MUTED)])]),
       ui.row([ui.text_button("Previous", Previous), ui.button(play_label(m), Toggle), ui.text_button("Next", Next)]).spaced(8.0).justified(ui.CENTER).aligned(ui.CENTER),
       ui.row([ui.text_button(toggle_label("Shuffle", m.shuffle), Shuffled), ui.text_button(repeat_label(m.repeat), Repeated), ui.text_button("Queue", Lined(true))]).spaced(8.0).justified(ui.CENTER),
@@ -684,6 +835,9 @@ function now_playing(m: Model): ui.El[Msg] {
 pub function view(m: Model, s: ui.Screen): ui.El[Msg] {
   if (m.choosing) {
     return chooser(m);
+  }
+  if (m.adding.len() > 0) {
+    return picker(m);
   }
   if (m.lined) {
     return line(m);
@@ -867,6 +1021,15 @@ function went_up(m: Model): Model {
   if (m.choosing) {
     return Model { ...m, choosing: false };
   }
+  if (m.naming) {
+    return Model { ...m, naming: false, name: "" };
+  }
+  if (m.adding.len() > 0) {
+    return Model { ...m, adding: [] };
+  }
+  if (m.list.len() > 0) {
+    return Model { ...m, list: "" };
+  }
   if (m.album.len() > 0 && m.tab != ALBUMS) {
     return Model { ...m, album: "" };
   }
@@ -918,6 +1081,37 @@ function returned(m: Model): Model {
   return Model { ...m, asked: false, wants: m.wants.append(Scan) };
 }
 
+// The player with a new playlist of the name that the person typed, with
+// the paths of `adding`. A name with no letter makes no playlist.
+function created(m: Model): Model {
+  let name = m.name.trim().to_owned();
+  if (name.len() == 0) {
+    return m;
+  }
+  return with_lists(Model { ...m, adding: [], naming: false, name: "" }, listed_in(m.playlists, name, m.adding));
+}
+
+// The player with no song at the row `row` of the playlist that shows.
+function unlisted_row(m: Model, row: i32): Model {
+  let shown = songs(m);
+  if (m.list.len() == 0 || row < 0 || row >= shown.len()) {
+    return m;
+  }
+  return with_lists(m, unlisted(m.playlists, m.list, m.tracks[shown[row]].path));
+}
+
+// The player with the track that plays in the favorites, or out of them.
+function liked(m: Model): Model {
+  if (m.current < 0) {
+    return m;
+  }
+  let path = m.tracks[m.current].path;
+  if (favorite(m)) {
+    return with_lists(m, unlisted(m.playlists, FAVORITES, path));
+  }
+  return with_lists(m, listed_in(m.playlists, FAVORITES, [path]));
+}
+
 // fern-lint: allow cyclomatic-complexity
 // One arm for each message.
 pub function update(own m: Model, msg: Msg): Model {
@@ -966,7 +1160,7 @@ pub function update(own m: Model, msg: Msg): Model {
       return Model { ...m, playing: false, error: why };
     },
     Tab(which) => {
-      return Model { ...m, tab: which, artist: "", album: "" };
+      return Model { ...m, tab: which, artist: "", album: "", list: "" };
     },
     Artist(name) => {
       return Model { ...m, artist: name, album: "", query: "" };
@@ -1031,6 +1225,51 @@ pub function update(own m: Model, msg: Msg): Model {
     Closing => {
       return Model { ...m, wants: m.wants.append(Quit) };
     },
+    OpenList(name) => {
+      return Model { ...m, list: name, artist: "", album: "", query: "", menu: -1 };
+    },
+    AddTo => {
+      if (m.menu < 0 || m.menu >= m.tracks.len()) {
+        return m;
+      }
+      return Model { ...m, adding: [m.tracks[m.menu].path], menu: -1 };
+    },
+    SaveQueue => {
+      return Model { ...m, adding: m.queue.map((i: i32): string => m.tracks[i].path), lined: false };
+    },
+    ToList(name) => {
+      return with_lists(Model { ...m, adding: [], naming: false, name: "" }, listed_in(m.playlists, name, m.adding));
+    },
+    NewList => {
+      return Model { ...m, naming: true, name: "" };
+    },
+    Named(text) => {
+      return Model { ...m, name: text };
+    },
+    Create => {
+      return created(m);
+    },
+    Unlist(row) => {
+      return unlisted_row(m, row);
+    },
+    DeleteList => {
+      return with_lists(Model { ...m, list: "" }, m.playlists.filter((p: Playlist): boolean => p.name != m.list));
+    },
+    Favorite => {
+      return liked(m);
+    },
+    Export => {
+      return Model { ...m, wants: m.wants.append(WriteList(m.list)) };
+    },
+    Exported(told) => {
+      return Model { ...m, error: told };
+    },
+    Imported(name, paths) => {
+      if (playlist(m, name).is_some() || paths.len() == 0) {
+        return m;
+      }
+      return with_lists(m, m.playlists.append(Playlist { name: name, paths: paths }));
+    },
     Walk(roots) => {
       return with_files(Model { ...m, walking: true, seen: map_new(64), listed: map_new(64) }, roots);
     },
@@ -1075,6 +1314,9 @@ pub function beat(m: Model): i32 {
 }
 
 pub function back(m: Model): Option[Msg] {
+  if (m.adding.len() > 0) {
+    return Some(Up);
+  }
   if (m.lined) {
     return Some(Lined(false));
   }
@@ -1084,7 +1326,7 @@ pub function back(m: Model): Option[Msg] {
   if (m.open) {
     return Some(Closed);
   }
-  if (m.choosing || m.artist.len() > 0) {
+  if (m.choosing || m.artist.len() > 0 || m.list.len() > 0) {
     return Some(Up);
   }
   return None;

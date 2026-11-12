@@ -536,6 +536,96 @@ pub function from_text(text: string): tune.Track[] {
   return out;
 }
 
+// The playlists as a text: a line with `#PLAYLIST` and the name of a
+// playlist, and then a line for each path.
+pub function lists_text(lists: tune.Playlist[]): string {
+  let lines: string[] = [];
+  for p in lists {
+    lines = lines.append("#PLAYLIST " + field(p.name));
+    for path in p.paths {
+      lines = lines.append(field(path));
+    }
+  }
+  return lines.join("\n");
+}
+
+// The playlists of a text of `lists_text`.
+pub function lists_from(text: string): tune.Playlist[] {
+  let out: tune.Playlist[] = [];
+  let name = "";
+  let paths: string[] = [];
+  for line in text.split("\n") {
+    if (line.starts_with("#PLAYLIST ")) {
+      if (name.len() > 0) {
+        out = out.append(tune.Playlist { name: name, paths: paths });
+      }
+      name = line.drop(10).to_owned();
+      paths = [];
+    } else if (line.len() > 0 && name.len() > 0) {
+      paths = paths.append(line.to_owned());
+    }
+  }
+  if (name.len() > 0) {
+    out = out.append(tune.Playlist { name: name, paths: paths });
+  }
+  return out;
+}
+
+// True for the name of a playlist file: an M3U file.
+pub function playlist_name(name: string): boolean {
+  let lower = name.to_lower();
+  return lower.ends_with(".m3u") || lower.ends_with(".m3u8");
+}
+
+// The path `path` with no `.` part and no `..` part.
+function plain_path(path: string): string {
+  let out: string[] = [];
+  for part in path.split("/") {
+    if (part == ".." && out.len() > 0) {
+      out = out.take(out.len() - 1);
+    } else if (part.len() > 0 && part != ".") {
+      out = out.append(part.to_owned());
+    }
+  }
+  let joined = out.join("/");
+  if (path.starts_with("/")) {
+    return "/" + joined;
+  }
+  return joined;
+}
+
+// The paths of the M3U file `text` that is in the directory `dir`. A line
+// that starts with `#` is a comment. A path that does not start with `/`
+// is below `dir`.
+pub function m3u_paths(dir: string, text: string): string[] {
+  let out: string[] = [];
+  for raw in text.split("\n") {
+    let line = raw.trim().replace("\\", "/");
+    if (line.len() > 0 && !line.starts_with("#")) {
+      if (line.starts_with("/")) {
+        out = out.append(plain_path(line));
+      } else {
+        out = out.append(plain_path(dir + "/" + line));
+      }
+    }
+  }
+  return out;
+}
+
+// The text of an M3U file in the directory `dir` for `paths`. A path below
+// `dir` is relative to it.
+pub function m3u_text(dir: string, paths: string[]): string {
+  let lines: string[] = ["#EXTM3U"];
+  for path in paths {
+    if (path.starts_with(dir + "/")) {
+      lines = lines.append(path.drop(dir.len() + 1).to_owned());
+    } else {
+      lines = lines.append(path);
+    }
+  }
+  return lines.join("\n") + "\n";
+}
+
 // The file of the tune of a number: the first one is a FLAC file, and each
 // other one is a WAV file.
 pub function demo_file(which: i32): Result[u8[], pcm.AudioError] {

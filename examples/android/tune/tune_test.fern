@@ -35,6 +35,14 @@ function test_fonts(): text.Fonts {
   return text.load(found, ws, (path: string): u8[] => read_file_bytes(path).unwrap_or([]));
 }
 
+function text_bytes(s: string): u8[] {
+  let out: u8[] = [];
+  for i in 0..s.len() {
+    out = out.append(s[i]);
+  }
+  return out;
+}
+
 // A WAV file with a LIST chunk of the type INFO after its sound.
 function tagged(file: u8[], title: string, artist: string, album: string, number: string, year: string): u8[] {
   let info: u8[] = [73u8, 78u8, 70u8, 79u8];
@@ -73,6 +81,9 @@ function read(path: string): u8[] {
   if (path.ends_with("Painted.mp3")) {
     return fixture.joined(fixture.id3v2_picture("Painted", 300), fixture.silent_mp3(100, true));
   }
+  if (path.ends_with("mix.m3u")) {
+    return [35u8, 69u8, 88u8, 84u8, 10u8].concat(text_bytes("First Light/02 Slow Water.wav\n../loose/x1.wav\n# a comment\nmissing.mp3\n"));
+  }
   if (path.ends_with("cover.jpg")) {
     return [255u8, 216u8, 255u8, 224u8];
   }
@@ -103,7 +114,7 @@ function boxed(): string[] {
 // The names in the directory `at` of the files of the test.
 function names_in(at: string): string[] {
   let out: string[] = [];
-  for p in paths().concat(boxed()).append("music/Gone.mp3") {
+  for p in paths().concat(boxed()).append("music/Gone.mp3").append("music/Fern/mix.m3u") {
     if (p.starts_with(at + "/")) {
       let name = p.drop(at.len() + 1).split("/")[0].to_owned();
       if (!out.contains(name)) {
@@ -153,6 +164,8 @@ function device(): player.Device {
     keep: (folder: string): void => {},
     decode: (bytes: u8[], w: i32, h: i32): Option[draw.Image] => decoded(bytes, w, h),
     save: (text: string): void => {},
+    keep_lists: (text: string): void => {},
+    write_text: (path: string, text: string): boolean => path.starts_with("music/") && text.starts_with("#EXTM3U\nFern/First Light/02 Slow Water.wav\n"),
     kept: (name: string): u8[] => [],
     put: (name: string, bytes: u8[]): void => {},
     show: (now: tune.Now): void => {},
@@ -446,11 +459,47 @@ function test_the_player_gives_the_device_back(): test.TestOutcome {
 // keeps the picture of each album.
 function test_the_saved_library(): test.TestOutcome {
   let saved = library.from_text(library.to_text([tune.Track { ...tune.plain("music/" + library.demo_name(0), "Morning Fern", "FLAC", 6000i64), artist: "Fern", album: "First Light", by: "Fern", number: 1 }, tune.plain("music/Old.wav", "Old", "WAV", 1000i64)]));
-  let first = sim.start(player.wrap(tune.start_with("music", "", saved)), player.program(device()), test_fonts(), 1080, 2400, 2.75);
+  let first = sim.start(player.wrap(tune.start_with("music", "", saved, [])), player.program(device()), test_fonts(), 1080, 2400, 2.75);
   let before = titles(first.shell.app.model) + " " + first.shell.app.model.wanted.len().to_string();
   let s = sim.after(first, 500i64);
   let m = s.shell.app.model;
   return test.assert_eq(before + " | " + titles(m) + " " + m.dirty.to_string() + " " + m.walking.to_string() + " " + m.wanted.len().to_string() + " " + m.bare.len().to_string(), "Morning Fern|Old 2 | Tagged Song|Morning Fern|Slow Water|Quick Light false false 0 3");
+}
+
+function lists(m: tune.Model): string {
+  let out: string[] = [];
+  for p in m.playlists {
+    out = out.append(p.name + ":" + p.paths.len().to_string());
+  }
+  return out.join(",");
+}
+
+// The scan makes a playlist from an M3U file. The menu of a song puts it
+// in a new playlist that the person names. The track that plays goes in
+// the favorites and out of them. The queue goes in a playlist. A playlist
+// shows its songs, and a tap makes them the queue.
+function test_playlists(): test.TestOutcome {
+  let s = started();
+  let found = lists(s.shell.app.model);
+  s = sim.tap(sim.tap(sim.hold(s, "Tagged Song"), "Add to playlist"), "New playlist");
+  s = sim.tap(sim.send(s, tune.Named(" Road ")), "Create");
+  let made = lists(s.shell.app.model);
+  s = sim.tap(sim.tap(sim.tap(s, "Quick Light"), "Now playing, Quick Light"), "Favorite off");
+  let liked = lists(s.shell.app.model) + " " + sim.shows(s, "Favorite on").to_string();
+  s = sim.tap(sim.tap(sim.tap(s, "Queue"), "Save"), "Road");
+  let kept = lists(s.shell.app.model);
+  s = sim.tap(sim.tap(sim.tap(s, "Library"), "Lists"), "mix");
+  saved(s, "tune-playlist");
+  let shown = sim.shows(s, "2 songs · hold a song to take it out");
+  s = sim.tap(s, "Export");
+  let wrote = s.shell.app.model.error;
+  s = sim.tap(s, "Slow Water");
+  let queue = order(s.shell.app.model);
+  s = sim.send(sim.send(s, tune.Unlist(0)), tune.Favorite);
+  s = sim.tap(sim.tap(s, "Now playing, Slow Water"), "Favorite on");
+  let after = lists(s.shell.app.model);
+  let gone = sim.tap(sim.tap(s, "Library"), "Delete");
+  return test.assert_eq(found + " | " + made + " | " + liked + " | " + kept + " | " + shown.to_string() + " " + wrote + " " + queue + " | " + after + " | " + lists(gone.shell.app.model) + " " + gone.shell.app.model.list.len().to_string(), "mix:3 | mix:3,Road:1 | mix:3,Road:1,Favorites:1 true | mix:3,Road:4,Favorites:1 | true Tune wrote music/mix.m3u 2,0@0 | mix:2,Road:4,Favorites:1 | Road:4,Favorites:1 0");
 }
 
 function main(): i32 {
@@ -473,5 +522,6 @@ function main(): i32 {
   r = r.it("an album has its picture from a tag or from an image file", test_the_picture_of_an_album);
   r = r.it("the player gives the device back when the activity ends", test_the_player_gives_the_device_back);
   r = r.it("the player starts with the library that it saved", test_the_saved_library);
+  r = r.it("the person makes playlists, and the scan reads an M3U file", test_playlists);
   return r.finish();
 }

@@ -37,9 +37,19 @@ The "Folder" button shows the directories of the phone. The person goes
 into a directory and taps "Use". The library then has the files of that
 folder only, and the player keeps the folder for its next start.
 
-The library has three lists: the songs, the artists and the albums. An
-artist shows its albums, and an album shows its songs in the order of their
-numbers.
+The library has four lists: the songs, the artists, the albums and the
+playlists. An artist shows its albums, and an album shows its songs in the
+order of their numbers.
+
+The menu of a song shows "Add to playlist", and the queue shows "Save". Each
+of them shows the playlists and a field for the name of a new one. The
+"Favorite" button of the screen of the track puts the track in the
+playlist "Favorites", or takes it out. A long press on a song of a
+playlist takes it out. The player keeps the playlists in its private files.
+
+The scan reads each M3U file that it finds as a playlist with the name of
+the file. "Export" writes a playlist as an M3U file in the folder of the
+library.
 
 `std/audio/tags` reads the title, the artist, the album and the
 number from each file. An MP3 file has an ID3 tag, and a FLAC or an Ogg
