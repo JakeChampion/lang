@@ -119,6 +119,7 @@ jobs:
           FERN="$PWD/bin/fern-selfhost" scripts/check-video-av1-interop
           FERN="$PWD/bin/fern-selfhost" scripts/check-video-av1-sequence-interop
           FERN="$PWD/bin/fern-selfhost" scripts/check-video-mp4-av1-interop
+          FERN="$PWD/bin/fern-selfhost" scripts/check-video-mp4-vp9-interop
           FERN="$PWD/bin/fern-selfhost" scripts/check-video-annex-b-interop
           FERN="$PWD/bin/fern-selfhost" scripts/check-video-avc-interop
           FERN="$PWD/bin/fern-selfhost" scripts/check-video-hevc-interop

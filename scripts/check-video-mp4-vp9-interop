@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+"""Compare VP9 records and MP4 ranges with CBS, FFprobe, and two decoders."""
+import importlib.util
+import os
+from fractions import Fraction
+from pathlib import Path
+import struct
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+os.chdir(ROOT)
+spec = importlib.util.spec_from_file_location('mp4_vp9', ROOT / 'scripts/gen-video-mp4-vp9-fixtures.py')
+fixtures = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fixtures)
+compiler = os.environ.get('FERN') or subprocess.check_output(['./bootstrap/bootstrap.sh', 'stage0'], text=True).strip()
+target = {'x86_64': 'x86-64-linux', 'aarch64': 'arm64-linux', 'arm64': 'arm64-darwin'}[os.uname().machine]
+outputs = {}
+for name in ('vp9-configuration', 'mp4-vp9'):
+    binary = ROOT / ('build/video/' + name + '-reference')
+    wasm = binary.with_suffix('.wasm')
+    for output, architecture, flags in ((binary, target, ['-sanitize']), (wasm, 'wasm32-wasi', [])):
+        subprocess.run([compiler, '-stdlib', str(ROOT / 'internal/stdlib'), '-target', architecture, *flags,
+                        '-o', str(output), 'scripts/video-reference/' + name + '.fern'], check=True)
+    outputs[name] = (binary, wasm)
+
+
+def run(name, path, *arguments, error=None):
+    binary, wasm = outputs[name]
+    native = subprocess.run([str(binary), *arguments, str(path)], text=True, capture_output=True)
+    wasi = subprocess.run(['wasmtime', 'run', '--dir', '.', str(wasm), *arguments, path.name],
+                          cwd=path.parent, text=True, capture_output=True)
+    assert native.returncode == (3 if error else 0), (path.name, native)
+    assert wasi.returncode == (1 if error else 0), (path.name, wasi)
+    assert 'live_bytes=0' in native.stderr and 'fern-sanitizer:' not in native.stderr, native.stderr
+    assert native.stdout == wasi.stdout, path.name
+    if error:
+        assert native.stderr.splitlines()[0] == wasi.stderr.splitlines()[0] == error
+    return native.stdout.splitlines()
+
+
+def decode(path, decoder, pixel_format):
+    return subprocess.check_output(['ffmpeg', '-v', 'error', '-xerror', '-c:v', decoder, '-i', str(path),
+                                    '-pix_fmt', pixel_format, '-fps_mode', 'passthrough', '-f', 'rawvideo', '-'])
+
+
+with tempfile.TemporaryDirectory() as temporary:
+    directory = Path(temporary)
+    for name, path, record, values, metadata, carrier, raw in fixtures.generate(directory):
+        config = directory / (name + '.vpcc')
+        config.write_bytes(record)
+        assert list(map(int, run('vp9-configuration', config))) == values, name
+        lines = run('mp4-vp9', path, 'complete')
+        assert lines == run('mp4-vp9', path, 'file'), name
+        stream = metadata['streams'][0]
+        assert lines[0] == f'T {stream["time_base"].split("/")[1]} 64 36'
+        assert lines[1] == 'C ' + fixtures.private(values).hex()
+        extracted = []
+        original = path.read_bytes()
+        assert len(lines[2:]) == len(metadata['packets']) == 3
+        rate, scale = struct.unpack_from('<II', carrier.read_bytes(), 16)
+        for line, packet in zip(lines[2:], metadata['packets']):
+            _, offset, size, dts, pts, duration, sync, payload = line.split()
+            assert [int(offset), int(size), int(dts), int(pts), int(duration)] == [int(packet[k]) for k in ('pos', 'size', 'dts', 'pts', 'duration')]
+            assert sync == str('K' in packet['flags']).lower()
+            data = bytes.fromhex(payload)
+            assert data == original[int(offset):int(offset) + int(size)]
+            timestamp = Fraction(int(pts), int(stream['time_base'].split('/')[1])) * rate / scale
+            assert timestamp.denominator == 1
+            extracted.append((int(timestamp), data))
+        restored = directory / (name + '-extracted.ivf')
+        restored.write_bytes(fixtures.ivf.ivf(carrier.read_bytes(), extracted))
+        for decoder in ('vp9', 'libvpx-vp9'):
+            assert decode(path, decoder, name) == raw, (name, decoder, 'original')
+            assert decode(restored, decoder, name) == raw, (name, decoder, 'extracted')
+        print('Muxer record, CBS keyframe, color fields, CodecPrivate, every packet, and lossless planes:', name)
+    good = bytes([1, 0, 0, 0, 0, 10, 130, 1, 1, 1, 0, 0])
+    for i, data in enumerate((good[:1] + bytes([1]) + good[2:], good[:-1] + bytes([1]),
+                              good[:4] + bytes([4]) + good[5:], good + bytes([0]))):
+        path = directory / f'invalid-{i}.vpcc'
+        path.write_bytes(data)
+        run('vp9-configuration', path, error='invalid video header or packet')
+    print('Four explicit native/WASI refusals passed; no external rejection claim.')
