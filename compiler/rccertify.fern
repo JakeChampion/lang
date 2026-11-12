@@ -202,7 +202,7 @@ function meet(a: i32, b: i32): i32 {
 
 function def_of(f: ssa.SFunc, d: ssa.DefSites, v: i32): ssa.SInst {
   if (v < 0 || v >= d.block.len() || d.block[v] < 0) {
-    return ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
+    return ssa.no_inst();
   }
   return f.blocks[d.block[v]].insts[d.at[v]];
 }
