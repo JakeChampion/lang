@@ -1,0 +1,22 @@
+// A value `if` or `match` in an array literal gives tuple literals. Each
+// tuple literal takes the tuple type of a typed destination, or the float
+// type of the same part of another element.
+function pick(c: boolean): (f64, i32)[] {
+    let a: (f64, i32)[] = [if (c) { (1, 2) } else { (3, 4) }];
+    return a;
+}
+
+function both(c: boolean): (f64, i32)[] {
+    let a: (f64, i32)[] = [(5, 6), match (c) { true => (1, 2), false => (3, 4) }];
+    return a;
+}
+
+function main(): i32 {
+    print(pick(true)[0].0 + 0.5);
+    print(pick(false)[0].0 + 0.5);
+    let b = both(false);
+    print(b[0].0 + b[1].0 + 0.5);
+    let open = [(5.5, 6), if (b.len() == 2) { (1, 2) } else { (3, 4) }];
+    print(open[0].0 + open[1].0);
+    return 0;
+}
