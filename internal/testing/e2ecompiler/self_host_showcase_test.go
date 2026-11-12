@@ -11,7 +11,7 @@ func TestSelfHostShowcaseCore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	testFractalTargets(t, path, true)
+	testCensusTargets(t, path, true)
 }
 
 func TestSelfHostImportedCastTypes(t *testing.T) {
@@ -34,7 +34,7 @@ pub function check(): i32 {
  return 0;
 }`,
 	})
-	testFractalTargets(t, filepath.Join(dir, "main.fern"))
+	testCensusTargets(t, filepath.Join(dir, "main.fern"))
 }
 
 // Regression for #13149: return checks need the types of pattern bindings.
@@ -61,7 +61,7 @@ function main(): i32 {
  return 0;
 }`,
 	})
-	testFractalTargets(t, filepath.Join(dir, "main.fern"), true)
+	testCensusTargets(t, filepath.Join(dir, "main.fern"), true)
 }
 
 func TestSelfHostShowcaseWasm(t *testing.T) {

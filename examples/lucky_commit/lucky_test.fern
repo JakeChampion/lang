@@ -1,0 +1,393 @@
+// The cases of the upstream lucky-commit test suite, with its expected
+// paddings and hashes.
+import "std/test";
+import "./lucky";
+
+function unsigned_commit(spaces: string, padding: string): string {
+  return "tree 0123456701234567012345670123456701234567\n"
+    + "parent 7654321076543210765432107654321076543210\n"
+    + "author Foo Bár <foo@example.com> 1513980859 -0500\n"
+    + "committer Baz Qux <baz@example.com> 1513980898 -0500\n"
+    + "\n"
+    + "Do a thing\n"
+    + "\n"
+    + "Makes some changes to the foo feature" + spaces + padding + "\n";
+}
+
+function signature(): string {
+  let line = " AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n";
+  return "gpgsig -----BEGIN PGP SIGNATURE-----\n \n" + line.repeat(6) + " =AAAA\n -----END PGP SIGNATURE-----";
+}
+
+function signed_commit(spaces: string, padding: string): string {
+  return "tree 0123456701234567012345670123456701234567\n"
+    + "parent 7654321076543210765432107654321076543210\n"
+    + "author Foo Bár <foo@example.com> 1513980859 -0500\n"
+    + "committer Baz Qux <baz@example.com> 1513980898 -0500\n"
+    + signature() + spaces + padding + "\n"
+    + "\n"
+    + "Do a thing\n"
+    + "\n"
+    + "Makes some changes to the foo feature\n";
+}
+
+function signed_merge_commit(spaces: string, padding: string): string {
+  return "tree 0123456701234567012345670123456701234567\n"
+    + "parent 7654321076543210765432107654321076543210\n"
+    + "parent 2468246824682468246824682468246824682468\n"
+    + "author Foo Bár <foo@example.com> 1513980859 -0500\n"
+    + "committer Baz Qux <baz@example.com> 1513980898 -0500\n"
+    + signature() + spaces + padding + "\n"
+    + "\n"
+    + "Do a thing\n"
+    + "\n"
+    + "Makes some changes to the foo feature\n";
+}
+
+function gpg_text_in_message(spaces: string, padding: string): string {
+  return "tree 0123456701234567012345670123456701234567\n"
+    + "parent 7654321076543210765432107654321076543210\n"
+    + "author Foo Bár <foo@example.com> 1513980859 -0500\n"
+    + "committer Baz Qux <baz@example.com> 1513980898 -0500\n"
+    + "\n"
+    + "For no particular reason, this commit message looks like a GPG signature.\n"
+    + "gpgsig -----END PGP SIGNATURE-----\n"
+    + "\n"
+    + "So anyway, that's fun." + spaces + padding + "\n";
+}
+
+function gpg_text_in_email(spaces: string, padding: string): string {
+  return "tree 0123456701234567012345670123456701234567\n"
+    + "parent 7654321076543210765432107654321076543210\n"
+    + "author Foo Bár <-----END PGP SIGNATURE-----@example.com> 1513980859 -0500\n"
+    + "committer Baz Qux <baz@example.com> 1513980898 -0500\n"
+    + "\n"
+    + "For no particular reason, the commit author's email has a GPG signature marker."
+    + spaces + padding + "\n";
+}
+
+function pathological_commit(spaces: string, padding: string): string {
+  return "tree 0123456701234567012345670123456701234567\n"
+    + "parent 7654321076543210765432107654321076543210\n"
+    + "author Foo Bár <foo@example.com> 1513980859 -0500\n"
+    + "committer Baz Qux <baz@example.com> 1513980898 -0500\n"
+    + "\n"
+    + "This commit is a pathological case for `ProcessedCommit`\n"
+    + "\n"
+    + "If it adds 41 bytes of static padding, then the total length of the \n"
+    + "commit will be 999 bytes, and the dynamic padding that follows it \n"
+    + "will start one byte too soon to be 64-byte aligned. If it adds 42 bytes \n"
+    + "of static padding, then the total length of the commit will be 1000 bytes. \n"
+    + "Since this is now a four-digit number, it will add an additional byte to the \n"
+    + "header, so the dynamic padding will start one byte too late to be 64-byte \n"
+    + "aligned. We should detect this case and add 105 bytes of static padding, \n"
+    + "to ensure that the dynamic padding is aligned. This is the only case where \n"
+    + "ProcessedCommit will add more than 63 bytes of static padding." + spaces + padding + "\n\n\n";
+}
+
+function tabs(): string {
+  return "\t".repeat(48);
+}
+
+function spaces(n: i32): string {
+  return " ".repeat(n);
+}
+
+function check_processed(input: string, expected: string): test.TestOutcome {
+  let p = lucky.process(input);
+  if (p.with_padding(0xffffffffffff) != p.commit) {
+    return test.fail("the all-tabs specifier does not give the processed commit");
+  }
+  if ((p.header_len + p.padding_at) % 64 != 0) {
+    return test.fail("the dynamic padding is not 64-byte aligned");
+  }
+  return test.assert_eq(p.commit, expected);
+}
+
+function spec_of(algo: lucky.Algo, s: string): lucky.Spec {
+  return match (lucky.parse_spec(algo, s)) {
+    Ok(spec) => spec,
+    Err(e) => {
+      eprint("bad spec " + s + ": " + e.message());
+      lucky.Spec { data: [], mask: [] }
+    },
+  };
+}
+
+// check_search runs the search over [start, start + count) and compares the
+// commit it finds and the hash of that commit.
+function check_search(algo: lucky.Algo, input: string, prefix: string, start: i64, count: i64, expected: string, hash: u32[]): test.TestOutcome {
+  let p = lucky.process(input);
+  let job = lucky.job(algo, p, spec_of(algo, prefix));
+  match (lucky.search(job, start, count, 2, 37)) {
+    Some(found) => {
+      let commit = p.with_padding(found);
+      if (commit != expected) {
+        return test.assert_eq(commit, expected);
+      }
+      return test.assert_eq_array(lucky.object_hash(algo, commit), hash);
+    },
+    None => {
+      return test.fail("no match for " + prefix);
+    }
+  }
+}
+
+function test_search_failure(): test.TestOutcome {
+  let p = lucky.process(signed_commit("", ""));
+  let job = lucky.job(lucky.Algo.Sha1, p, spec_of(lucky.Algo.Sha1, "0102034"));
+  return test.assert_true(lucky.search(job, 0, 100, 3, 10) == None);
+}
+
+function sha1_8f1e428(): u32[] {
+  return [0x8f1e428e as u32, 0xc25b1ea8 as u32, 0x8389165e as u32, 0xeb3fbdff as u32, 0xbf7c3267 as u32];
+}
+
+function test_search_without_signature(): test.TestOutcome {
+  return check_search(
+    lucky.Algo.Sha1, unsigned_commit("", ""), "8f1e428", 0, 100,
+    unsigned_commit(spaces(61), "  \t                                             "), sha1_8f1e428(),
+  );
+}
+
+function test_search_sha256_without_signature(): test.TestOutcome {
+  let hash: u32[] = [
+    0x8d84635e as u32, 0x3c969997 as u32, 0x8993a0b2 as u32, 0x7b144cd1 as u32,
+    0x97abdfdc as u32, 0x88223259 as u32, 0x116651b4 as u32, 0x0076f9f6 as u32,
+  ];
+  return check_search(
+    lucky.Algo.Sha256, unsigned_commit("", ""), "8d84635", 0, 100,
+    unsigned_commit(spaces(61), "      \t                                         "), hash,
+  );
+}
+
+function test_search_with_placeholders(): test.TestOutcome {
+  return check_search(
+    lucky.Algo.Sha1, unsigned_commit("", ""), "8f1e428__2", 0, 100,
+    unsigned_commit(spaces(61), "  \t                                             "), sha1_8f1e428(),
+  );
+}
+
+function test_search_with_multi_word_spec(): test.TestOutcome {
+  return check_search(
+    lucky.Algo.Sha1, unsigned_commit("", ""), "8f1e428ec", 0, 100,
+    unsigned_commit(spaces(61), "  \t                                             "), sha1_8f1e428(),
+  );
+}
+
+function test_search_with_full_spec(): test.TestOutcome {
+  return check_search(
+    lucky.Algo.Sha1, unsigned_commit("", ""), "8f1e428ec25b1ea88389165eeb3fbdffbf7c3267", 0, lucky.SEARCH_SPACE,
+    unsigned_commit(spaces(61), "  \t                                             "), sha1_8f1e428(),
+  );
+}
+
+function test_search_after_many_iterations(): test.TestOutcome {
+  let hash: u32[] = [0x000000a2 as u32, 0x56d137b6 as u32, 0xcf22aa10 as u32, 0xf59b0c5f as u32, 0xecb860b6 as u32];
+  let p = lucky.process(unsigned_commit("", ""));
+  let job = lucky.job(lucky.Algo.Sha1, p, spec_of(lucky.Algo.Sha1, "000000"));
+  match (lucky.search(job, 0, 1 as i64 << 24, 4, 1 as i64 << 20)) {
+    Some(found) => {
+      let commit = p.with_padding(found);
+      let expected = unsigned_commit(spaces(61), "\t\t\t\t\t\t \t \t\t\t    \t \t \t\t\t\t                        ");
+      if (commit != expected) {
+        return test.assert_eq(commit, expected);
+      }
+      return test.assert_eq_array(lucky.object_hash(lucky.Algo.Sha1, commit), hash);
+    },
+    None => {
+      return test.fail("no match for 000000");
+    }
+  }
+}
+
+function test_search_with_large_specifier(): test.TestOutcome {
+  let hash: u32[] = [0x008429bb as u32, 0x16236716 as u32, 0x20cd203e as u32, 0x57d62217 as u32, 0x4ba2b8c3 as u32];
+  return check_search(
+    lucky.Algo.Sha1, unsigned_commit("", ""), "00", 1 as i64 << 40, 256,
+    unsigned_commit(spaces(61), "\t  \t \t                                         \t"), hash,
+  );
+}
+
+function test_search_with_signature(): test.TestOutcome {
+  let hash: u32[] = [0x495fb74a as u32, 0x51f99d4f as u32, 0xf837bf24 as u32, 0x39c7b946 as u32, 0xe39f56a7 as u32];
+  return check_search(
+    lucky.Algo.Sha1, signed_commit("", ""), "495fb", 0, 100,
+    signed_commit(spaces(31), "      \t\t                                        "), hash,
+  );
+}
+
+function test_static_padding_lengths(): test.TestOutcome {
+  let got: i32[] = [
+    lucky.static_padding_length(226, 300), lucky.static_padding_length(245, 300),
+    lucky.static_padding_length(246, 300), lucky.static_padding_length(920, 980),
+    lucky.static_padding_length(941, 991), lucky.static_padding_length(940, 992),
+    lucky.static_padding_length(940, 991),
+  ];
+  let want: i32[] = [19, 0, 63, 28, 8, 8, 72];
+  return test.assert_eq_array(got, want);
+}
+
+function check_spec(algo: lucky.Algo, s: string, data: u32[], mask: u32[]): test.TestOutcome {
+  match (lucky.parse_spec(algo, s)) {
+    Ok(spec) => {
+      if (spec.mask != mask) {
+        return test.assert_eq_array(spec.mask, mask);
+      }
+      return test.assert_eq_array(spec.data, data);
+    },
+    Err(e) => {
+      return test.fail(s + ": " + e.message());
+    }
+  }
+}
+
+function check_spec_error(algo: lucky.Algo, s: string, expected: string): test.TestOutcome {
+  match (lucky.parse_spec(algo, s)) {
+    Ok(_) => {
+      return test.fail(s + " parsed");
+    },
+    Err(e) => {
+      return test.assert_eq(e.message(), expected);
+    }
+  }
+}
+
+function sha1_words(a: u32, b: u32): u32[] {
+  return [a, b, 0 as u32, 0 as u32, 0 as u32];
+}
+
+function sha256_words(a: u32, b: u32): u32[] {
+  return [a, b, 0 as u32, 0 as u32, 0 as u32, 0 as u32, 0 as u32, 0 as u32];
+}
+
+function test_parse_specs(): test.TestOutcome {
+  let s1 = lucky.Algo.Sha1;
+  let cases: test.TestOutcome[] = [
+    check_spec(s1, "8f1e428", sha1_words(0x8f1e4280 as u32, 0 as u32), sha1_words(0xfffffff0 as u32, 0 as u32)),
+    check_spec(s1, "8f1e", sha1_words(0x8f1e0000 as u32, 0 as u32), sha1_words(0xffff0000 as u32, 0 as u32)),
+    check_spec(s1, "8f1e428e", sha1_words(0x8f1e428e as u32, 0 as u32), sha1_words(0xffffffff as u32, 0 as u32)),
+    check_spec(s1, "8", sha1_words(0x80000000 as u32, 0 as u32), sha1_words(0xf0000000 as u32, 0 as u32)),
+    check_spec(s1, "abcdef001234", sha1_words(0xabcdef00 as u32, 0x12340000 as u32), sha1_words(0xffffffff as u32, 0xffff0000 as u32)),
+    check_spec(lucky.Algo.Sha256, "abcdef001234", sha256_words(0xabcdef00 as u32, 0x12340000 as u32), sha256_words(0xffffffff as u32, 0xffff0000 as u32)),
+    check_spec(s1, "abcdef0012345678", sha1_words(0xabcdef00 as u32, 0x12345678 as u32), sha1_words(0xffffffff as u32, 0xffffffff as u32)),
+    check_spec(s1, "", sha1_words(0 as u32, 0 as u32), sha1_words(0 as u32, 0 as u32)),
+    check_spec(s1, "ABCDEFB", sha1_words(0xabcdefb0 as u32, 0 as u32), sha1_words(0xfffffff0 as u32, 0 as u32)),
+    check_spec(s1, "1234567_1234567_", sha1_words(0x12345670 as u32, 0x12345670 as u32), sha1_words(0xfffffff0 as u32, 0xfffffff0 as u32)),
+    check_spec(s1, "_1234567_1234567", sha1_words(0x01234567 as u32, 0x01234567 as u32), sha1_words(0x0fffffff as u32, 0x0fffffff as u32)),
+    check_spec(lucky.Algo.Sha256, "__", sha256_words(0 as u32, 0 as u32), sha256_words(0 as u32, 0 as u32)),
+  ];
+  for c in cases {
+    if let Fail(_) = c {
+      return c;
+    }
+  }
+  return test.pass();
+}
+
+function test_parse_spec_mixed_underscores(): test.TestOutcome {
+  let data: u32[] = [0x10203040 as u32, 0x50607080 as u32, 0x90a0b0c0 as u32, 0xd0e0f000 as u32, 0xf00d0000 as u32];
+  let mask: u32[] = [0xf0f0f0f0 as u32, 0xf0f0f0f0 as u32, 0xf0f0f0f0 as u32, 0xf0f0f0f0 as u32, 0xffff0000 as u32];
+  return check_spec(lucky.Algo.Sha1, "1_2_3_4_5_6_7_8_9_a_b_c_d_e_f_0_f00d", data, mask);
+}
+
+function test_parse_spec_lengths(): test.TestOutcome {
+  let full = "1234567812345678123456781234567812345678";
+  let words: u32[] = [0x12345678 as u32, 0x12345678 as u32, 0x12345678 as u32, 0x12345678 as u32, 0x12345678 as u32];
+  let ones: u32[] = [0xffffffff as u32, 0xffffffff as u32, 0xffffffff as u32, 0xffffffff as u32, 0xffffffff as u32];
+  let exact = check_spec(lucky.Algo.Sha1, full, words, ones);
+  if let Fail(_) = exact {
+    return exact;
+  }
+  let too_long = "hash spec can't be longer than an actual hash";
+  let half = check_spec_error(lucky.Algo.Sha1, full + "1", too_long);
+  if let Fail(_) = half {
+    return half;
+  }
+  let bytes = check_spec_error(lucky.Algo.Sha1, full + "12", too_long);
+  if let Fail(_) = bytes {
+    return bytes;
+  }
+  let data256: u32[] = [
+    0x12345678 as u32, 0x12345678 as u32, 0x12345678 as u32, 0x12345678 as u32,
+    0x12345678 as u32, 0x10000000 as u32, 0 as u32, 0 as u32,
+  ];
+  let mask256: u32[] = [
+    0xffffffff as u32, 0xffffffff as u32, 0xffffffff as u32, 0xffffffff as u32,
+    0xffffffff as u32, 0xf0000000 as u32, 0 as u32, 0 as u32,
+  ];
+  let sha256 = check_spec(lucky.Algo.Sha256, full + "1", data256, mask256);
+  if let Fail(_) = sha256 {
+    return sha256;
+  }
+  return check_spec_error(lucky.Algo.Sha256, full + "1234567812345678123456781", too_long);
+}
+
+function test_parse_spec_invalid_characters(): test.TestOutcome {
+  let message = "hash spec contains invalid character 'g' (only hex characters and underscores are allowed)";
+  let even = check_spec_error(lucky.Algo.Sha1, "abcdgeb", message);
+  if let Fail(_) = even {
+    return even;
+  }
+  let odd = check_spec_error(lucky.Algo.Sha1, "abcdefg", message);
+  if let Fail(_) = odd {
+    return odd;
+  }
+  return check_spec_error(lucky.Algo.Sha1, "ab✓", "hash spec contains invalid character '✓' (only hex characters and underscores are allowed)");
+}
+
+function word_spec(s: string): lucky.Spec {
+  return spec_of(lucky.Algo.Sha1, s);
+}
+
+function test_spec_matches(): test.TestOutcome {
+  let fives: u32[] = [0x01020304 as u32, 0x05060708 as u32, 0x090a0b0c as u32, 0x0d0e0f10 as u32, 0x11121314 as u32];
+  let half: u32[] = [0x0102034f as u32, 0x05060708 as u32, 0x090a0b0c as u32, 0x0d0e0f10 as u32, 0x11121314 as u32];
+  let ones: u32[] = [0x1e1e1e1e as u32, 0x1e1e1e1e as u32, 0x1e1e1e1e as u32, 0x1e1e1e1e as u32, 0x1e1e1e1e as u32];
+  let twos: u32[] = [0x21212121 as u32, 0x21212121 as u32, 0x21212121 as u32, 0x21212121 as u32, 0x21212121 as u32];
+  return test.assert_true(
+    word_spec("1").matches(ones) && !word_spec("1").matches(twos) && word_spec("010203").matches(fives)
+      && word_spec("0102034").matches(half) && !word_spec("0102035").matches(fives)
+      && !word_spec("0105034").matches(half),
+  );
+}
+
+function test_sha256_detection(): test.TestOutcome {
+  let sha1 = "tree " + "0".repeat(40) + "\nauthor x\n";
+  let sha256 = "tree " + "0".repeat(64) + "\nauthor x\n";
+  return test.assert_true(!lucky.looks_like_sha256(sha1) && lucky.looks_like_sha256(sha256));
+}
+
+function test_padding_order(): test.TestOutcome {
+  // Bit 0 is the last byte of the first group of 8, and bit 8 the last of the second.
+  return test.assert_eq(lucky.padding(0x101), "       \t       \t" + spaces(32));
+}
+
+function main(): i32 {
+  let r = test.new("lucky_commit");
+  r = r.it("processed commit without a signature", (): test.TestOutcome => check_processed(unsigned_commit("", ""), unsigned_commit(spaces(61), tabs())));
+  r = r.it("processed commit with a signature", (): test.TestOutcome => check_processed(signed_commit("", ""), signed_commit(spaces(31), tabs())));
+  r = r.it("processed commit that is already padded", (): test.TestOutcome => check_processed(signed_commit(spaces(4), "\t".repeat(100)), signed_commit(spaces(31), tabs())));
+  r = r.it("processed merge commit with a signature", (): test.TestOutcome => check_processed(signed_merge_commit("", ""), signed_merge_commit(spaces(47), tabs())));
+  r = r.it("processed commit with gpg text in the message", (): test.TestOutcome => check_processed(gpg_text_in_message("", ""), gpg_text_in_message(spaces(42), tabs())));
+  r = r.it("processed commit with gpg text in the email", (): test.TestOutcome => check_processed(gpg_text_in_email("", ""), gpg_text_in_email(spaces(7), tabs())));
+  r = r.it("processed commit with pathological alignment", (): test.TestOutcome => check_processed(pathological_commit("", ""), pathological_commit(spaces(105), tabs())));
+  r = r.it("static padding lengths", test_static_padding_lengths);
+  r = r.it("padding bit order", test_padding_order);
+  r = r.it("parse specs", test_parse_specs);
+  r = r.it("parse spec with mixed underscores", test_parse_spec_mixed_underscores);
+  r = r.it("parse spec lengths", test_parse_spec_lengths);
+  r = r.it("parse spec invalid characters", test_parse_spec_invalid_characters);
+  r = r.it("spec matches", test_spec_matches);
+  r = r.it("sha256 repository detection", test_sha256_detection);
+  r = r.it("search failure", test_search_failure);
+  r = r.it("search without a signature", test_search_without_signature);
+  r = r.it("search sha256 without a signature", test_search_sha256_without_signature);
+  r = r.it("search with placeholders", test_search_with_placeholders);
+  r = r.it("search with a multi-word spec", test_search_with_multi_word_spec);
+  r = r.it("search with a full spec", test_search_with_full_spec);
+  r = r.it("search after many iterations", test_search_after_many_iterations);
+  r = r.it("search with a large specifier", test_search_with_large_specifier);
+  r = r.it("search with a signature", test_search_with_signature);
+  return r.finish();
+}

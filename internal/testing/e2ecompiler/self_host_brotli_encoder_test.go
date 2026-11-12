@@ -32,7 +32,7 @@ func TestSelfHostBrotliEncoder(t *testing.T) {
 	if err := os.WriteFile(path, []byte(brotliEncoderMain), 0600); err != nil {
 		t.Fatal(err)
 	}
-	testFractalTargets(t, path)
+	testCensusTargets(t, path)
 }
 
 func TestSelfHostBrotliEncoderIndependent(t *testing.T) {
