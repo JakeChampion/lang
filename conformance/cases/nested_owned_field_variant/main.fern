@@ -1,0 +1,69 @@
+import "std/i32";
+
+struct H { value: i32, count: Cell[i32] }
+
+struct Inner { xs: H[], n: i32 }
+
+struct Outer { inner: Inner }
+
+enum Wrapped { Wrap(Outer) }
+
+function (own h: H) close(): i32 {
+  let next = h.count.get() + 1;
+  h.count.set(next);
+  return if (next == 1) { h.value } else { 0 };
+}
+
+function keep(own xs: H[]): own H[] {
+  let out: H[] = [];
+  for h in xs {
+    out = out.append(h);
+  }
+  return out;
+}
+
+function update(own outer: Outer): own Option[Wrapped] {
+  let inner = outer.inner;
+  return Some(Wrapped.Wrap(Outer { ...outer, inner: Inner { ...inner, xs: keep(inner.xs) } }));
+}
+
+function close_all(own xs: H[]): i32 {
+  let value = 0;
+  for h in xs {
+    value += h.close();
+  }
+  return value;
+}
+
+function close_inner(own inner: Inner): i32 {
+  return close_all(inner.xs);
+}
+
+function finish(own outer: Outer): i32 {
+  return close_inner(outer.inner);
+}
+
+function main(): i32 {
+  let updated = update(Outer {
+    inner: Inner {
+      xs: [H { value: 42, count: cell_new(0) }],
+      n: 1,
+    },
+  });
+  match (updated) {
+    Some(wrapped) => {
+      match (wrapped) {
+        Wrapped.Wrap(outer) => {
+          if (outer.inner.xs.len() != 1 || outer.inner.n != 1) {
+            return 1;
+          }
+          print(finish(outer));
+        }
+      }
+    },
+    None => {
+      return 2;
+    }
+  }
+  return 0;
+}

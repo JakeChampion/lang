@@ -25153,9 +25153,9 @@ function ow_nested_field_alias(alias: string, root: string, field: string, value
 
 // The returned record replaces the complete field that owns the alias.
 function ow_nested_field_moves(value: ast.Expr, ctx: OwnCtx): string[] {
-  if let ast.ExprTuple(tuple) = value {
+  if let Some(parts) = ow_nested_field_parts(value, ctx) {
     let out: string[] = [];
-    for element in tuple.elements {
+    for element in parts {
       out = util.append_all(out, ow_nested_field_moves(element, ctx));
     }
     return out;
@@ -25178,6 +25178,25 @@ function ow_nested_field_moves(value: ast.Expr, ctx: OwnCtx): string[] {
     }
   }
   return out;
+}
+
+function ow_nested_field_parts(value: ast.Expr, ctx: OwnCtx): Option[ast.Expr[]] {
+  if let ast.ExprTuple(tuple) = value {
+    return Some(tuple.elements);
+  }
+  if let ast.ExprCall(call) = value {
+    if (ow_nested_variant(call.callee, ctx)) {
+      return Some(call.args);
+    }
+  }
+  return None;
+}
+
+function ow_nested_variant(callee: ast.Expr, ctx: OwnCtx): boolean {
+  if let ast.ExprIdent(id) = callee {
+    return ow_builtin_variant(ctx, id.name) || ow_variant_known(ctx, id.name, "");
+  }
+  return ow_qualified_ctor(callee, ctx);
 }
 
 // A literal based on q that replaces q.f moves q.f into an own parameter in

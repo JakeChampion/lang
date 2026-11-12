@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**150 of 153** claims are pinned by a conformance case. The remaining
+**151 of 154** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -232,6 +232,7 @@ of them.
 | `OR-02` | `docs/OWNED-RESULTS.md` | An owned generic result cannot transfer a borrowed parameter without a copy contract (`E051`) | `diag_e051_checked_result_borrows` |
 | `OR-03` | `docs/OWNED-RESULTS.md` | An ordinary-result function cannot satisfy an owned-result function type (`E003`) | `diag_e003_checked_result_strengthening` |
 | `OR-04` | `docs/OWNED-RESULTS.md` | Ordinary call results containing only immutable copyable data can transfer their own reference while COW preserves borrowed sources | `copied_call_results` |
+| `OR-05` | `docs/OWNED-RESULTS.md` | A returned nested record replacement retains its transfer proof through genuine variant constructors. Borrowed owners and retained aliases prevent the transfer | `nested_owned_field_variant` |
 
 ## Every gap this index opened with is now closed
 

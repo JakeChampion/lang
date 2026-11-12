@@ -4,9 +4,9 @@ import "github.com/jakechampion/lang/internal/syntax/ast"
 
 // A returned record can replace the complete field that owns a local alias.
 func nestedFieldOwnMoveArgs(fn *ast.FuncDecl, value ast.Expr, owned, borrowed map[string]bool, ownFuncs map[string][]bool) []*ast.FieldAccess {
-	if tuple, ok := value.(*ast.TupleLit); ok {
+	if parts, ok := nestedFieldTransferParts(value); ok {
 		var out []*ast.FieldAccess
-		for _, element := range tuple.Elems {
+		for _, element := range parts {
 			out = append(out, nestedFieldOwnMoveArgs(fn, element, owned, borrowed, ownFuncs)...)
 		}
 		return out
@@ -32,6 +32,18 @@ func nestedFieldOwnMoveArgs(fn *ast.FuncDecl, value ast.Expr, owned, borrowed ma
 		out = append(out, SupersededFieldOwnMoveArgs(inner, alias.Name, ownFuncs)...)
 	}
 	return out
+}
+
+func nestedFieldTransferParts(value ast.Expr) ([]ast.Expr, bool) {
+	switch value := value.(type) {
+	case *ast.TupleLit:
+		return value.Elems, true
+	case *ast.Call:
+		if value.IsVariantCall {
+			return value.Args, true
+		}
+	}
+	return nil, false
 }
 
 func nestedFieldAlias(fn *ast.FuncDecl, alias, root, field string) bool {
