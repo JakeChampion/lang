@@ -1,4 +1,5 @@
 import "std/test";
+import "std/unicode";
 
 function test_uppercase(): test.TestOutcome {
   return test.assert_eq("hello".to_upper(), "HELLO");
