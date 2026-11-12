@@ -80,6 +80,8 @@ jobs:
         run: python3 -B -m unittest discover -s tests/android -p 'test_emulator.py'
       - name: Check the Paper navigation assertions
         run: python3 -B -m unittest discover -s examples/android/paper -p 'test_*.py'
+      - name: Check the Tune provider assertions
+        run: python3 -B -m unittest discover -s examples/android/tune -p 'test_*.py'
       - name: Build the stopwatch APK and the logcat report program
         run: |
           make bin/fern
