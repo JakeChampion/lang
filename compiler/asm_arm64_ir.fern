@@ -6150,7 +6150,9 @@ function arm64_worker_reap_census(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 // Snapshot live child allocations before munmap. Only a successful syscall
-// records their reclamation. No unmapped box enters a parent free list.
+// records their reclamation. No unmapped box enters a parent free list. The
+// count is signed: a body that frees boxes of the parent's image frees more
+// than it allocates.
 function emit_arm64_worker_unmap(s: asmcore.EmitState): asmcore.EmitState {
   s = s.need("worker_unmap");
   s = s.need("worker_regions");
@@ -6159,13 +6161,12 @@ function emit_arm64_worker_unmap(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(quar_addr("x5", "__fern_forget_lo") + "    str xzr, [x5]\n" + quar_addr("x5", "__fern_forget_hi") + "    str xzr, [x5]\n");
   }
   let ready = asmcore.fresh_label(s);
-  let bad = asmcore.fresh_label(ready.state);
-  let done = asmcore.fresh_label(bad.state);
+  let done = asmcore.fresh_label(ready.state);
   s = done.state;
   if (s.leak_check) {
     s = s.write("    mov x3, #0\n    mov x4, #0\n    cbz x2, " + ready.name + "\n");
-    s = s.write("    ldr x3, [x0, #8]\n    ldr x5, [x0, #24]\n    subs x3, x3, x5\n    b.lo " + bad.name + "\n");
-    s = s.write("    ldr x4, [x0, #16]\n    ldr x5, [x0, #32]\n    subs x4, x4, x5\n    b.lo " + bad.name + "\n");
+    s = s.write("    ldr x3, [x0, #8]\n    ldr x5, [x0, #24]\n    sub x3, x3, x5\n");
+    s = s.write("    ldr x4, [x0, #16]\n    ldr x5, [x0, #32]\n    sub x4, x4, x5\n");
     s = s.write(ready.name + ":\n    stp x3, x4, [sp, #-16]!\n");
   }
   s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_worker_unmap\n    add sp, sp, #48\n");
@@ -6175,7 +6176,7 @@ function emit_arm64_worker_unmap(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ldr x2, [x1]\n    add x2, x2, x3\n    str x2, [x1]\n");
     s = arm64_lc_counter_addr(s, 3);
     s = s.write("    ldr x2, [x1]\n    add x2, x2, x4\n    str x2, [x1]\n");
-    s = s.write("    b " + done.name + "\n" + bad.name + ":\n    mov x0, #-22\n" + done.name + ":\n");
+    s = s.write(done.name + ":\n");
   }
   return s.write("    str x0, [sp, #-16]!\n");
 }
