@@ -1921,7 +1921,7 @@ function item_node(ctx: usize, e: usize, id: i32): usize {
     let inside = jni.int_array_region(e, place, 0, 2);
     let located = jni.call_void(e, host, "getLocationOnScreen", "([I)V", [place]);
     let at = jni.int_array_region(e, place, 0, 2);
-    let lifted = jni.call_void(e, rect, "offset", "(II)V", [(0 - inside[0]) as usize, (0 - inside[1]) as usize]);
+    let lifted = jni.call_void(e, rect, "offset", "(II)V", [(-inside[0]) as usize, (-inside[1]) as usize]);
     let parent = jni.call_void(e, info, "setBoundsInParent", "(Landroid/graphics/Rect;)V", [rect]);
     let moved = jni.call_void(e, rect, "offset", "(II)V", [at[0] as usize, at[1] as usize]);
     let screen = jni.call_void(e, info, "setBoundsInScreen", "(Landroid/graphics/Rect;)V", [rect]);
