@@ -339,6 +339,7 @@ cow_alias_safety                                     0
 cross_module_bounded_method                          0
 csv_fields                                           0
 date_iso                                             0
+declared_method_owned_results                        0
 default_args                                         0
 default_args_const                                   0
 default_is_an_identifier                             0

@@ -97,22 +97,25 @@ function lyrics(dev: Device, path: string, words: string): tune.Line[] {
 // The player with the track `i` open. With `follow`, the track goes on in
 // the stream of sound that the player has, when the stream has its rate
 // and its channels: the sound that the stream holds plays to its end.
+// The deck reads a window of the file at a time, so a long file does not
+// fill the memory or hold up the screen when it starts. Its first bytes
+// are the start of the file, with the tags.
 function loaded(dev: Device, own m: tune.Model, i: i32, follow: boolean): Player {
-  let file = dev.read(m.tracks[i].path);
-  let picture = tags.picture(file);
+  let path = m.tracks[i].path;
+  let Some(deck) = engine.open_file(dev.size(path), (at: i64, n: i32): u8[] => dev.part(path, at, n), engine.WINDOW) else {
+    dev.close(m.sound);
+    return wrap(tune.update(tune.Model { ...m, sound: tune.no_sound(), pending: [] }, tune.Failed("Tune cannot play " + m.tracks[i].title)));
+  };
+  let picture = tags.picture(deck.bytes);
   if (picture.len() == 0) {
-    picture = folder_picture(dev, m, m.tracks[i].path);
+    picture = folder_picture(dev, m, path);
   }
   let art: Option[draw.Image] = None;
   if (picture.len() > 0) {
     art = dev.decode(picture, ART, ART);
   }
-  let told = tags.read(file);
-  let words = lyrics(dev, m.tracks[i].path, told.lyrics);
-  let Some(deck) = engine.open(file) else {
-    dev.close(m.sound);
-    return wrap(tune.update(tune.Model { ...m, sound: tune.no_sound(), pending: [] }, tune.Failed("Tune cannot play " + m.tracks[i].title)));
-  };
+  let told = tags.read(deck.bytes);
+  let words = lyrics(dev, path, told.lyrics);
   let sound = m.sound;
   if (!follow || sound.ptr == 0 as usize || sound.rate != deck.rate || sound.channels != deck.channels) {
     dev.close(m.sound);

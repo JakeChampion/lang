@@ -5,6 +5,7 @@
 import "std/audio/aac";
 import "std/audio/aac/config" as aac_config;
 import "std/audio/flac";
+import "std/audio/linear";
 import "std/audio/mp3";
 import "std/audio/mp4";
 import "std/audio/mp4/tables";
@@ -37,13 +38,21 @@ const WAV_PART: i32 = 4096;
 
 // A file that plays. `at` is the frame that the next part starts at, and
 // `total` is the number of frames of samples, or 0 when the file does not
-// tell.
+// tell. `bytes` is a window of the file from the byte `base`, of at most
+// `window` bytes, and `source` reads more of the file, which has `size`
+// bytes. A WAV file has its samples from the byte `data`, in `pcm`.
 // `offset` is the byte that the next FLAC or MP3 frame starts at, between
 // `first` and `last`. `done` tells that the file has no more sound. `codec`
 // is the decoder of an M4A, an Ogg Vorbis or an Opus file.
 pub struct Deck {
   kind: i32,
   bytes: u8[],
+  base: i32,
+  size: i32,
+  window: i32,
+  source: (i64, i32) => u8[],
+  data: i32,
+  pcm: linear.Format,
   rate: i32,
   channels: i32,
   bits: i32,
@@ -86,33 +95,63 @@ function starts_with(bytes: [u8], tag: string): boolean {
   return true;
 }
 
+// The bytes of the window of a deck when the program gives no size.
+pub const WINDOW: i32 = 524288;
+
+// The bytes that the start of a file has at first: the tags and the
+// headers grow it when they are longer.
+const HEAD: i32 = 262144;
+
+// A source that reads the bytes `bytes`.
+function source_of(bytes: u8[]): (i64, i32) => u8[] {
+  return (at: i64, n: i32): u8[] => {
+    let out: u8[] = [];
+    let from = at as i32;
+    for i in from..(from + n).min(bytes.len()) {
+      out = out.append(bytes[i]);
+    }
+    return out;
+  };
+}
+
 function blank(kind: i32, bytes: u8[]): Deck {
-  return Deck { kind: kind, bytes: bytes, rate: 0, channels: 0, bits: 16, total: 0i64, at: 0i64, offset: 0, first: 0, last: 0, block: 0, stream: None, layer3: mp3.decoder(), done: false, codec: Plain };
-}
-
-function open_wav(bytes: u8[]): Option[Deck] {
-  let Ok(h) = wav.inspect(bytes, limits()) else {
-    return None;
-  };
-  return Some(Deck { ...blank(WAV, bytes), rate: h.format.sample_rate, channels: h.format.channels, bits: h.format.bits_per_sample, total: h.frames as i64 });
-}
-
-function open_flac(bytes: u8[]): Option[Deck] {
-  let Ok(h) = flac.inspect(bytes, limits()) else {
-    return None;
-  };
   let n = bytes.len();
-  return Some(Deck { ...blank(FLAC, bytes), rate: h.format.sample_rate, channels: h.format.channels, bits: h.format.bits_per_sample, total: h.frames as i64, offset: h.data_offset, first: h.data_offset, last: n, block: h.min_block, stream: Some(h) });
+  return Deck { kind: kind, bytes: bytes, base: 0, size: n, window: n, source: source_of([]), data: 0, pcm: linear.Format { sample_rate: 0, channels: 0, bits: 0, storage_bits: 0, little_endian: true, kind: linear.Signed }, rate: 0, channels: 0, bits: 16, total: 0i64, at: 0i64, offset: 0, first: 0, last: 0, block: 0, stream: None, layer3: mp3.decoder(), done: false, codec: Plain };
 }
 
-function open_mp3(bytes: u8[]): Option[Deck] {
-  let Ok(t) = mp3.inspect_track(bytes, limits()) else {
+// The deck of a WAV file of `size` bytes whose start is `head`.
+function open_wav(head: u8[], size: i32): Option[Deck] {
+  let Ok(l) = wav.inspect_start(head, size as i64, limits()) else {
     return None;
   };
-  let Ok(h) = mp3.inspect(bytes, t.data_offset, limits()) else {
+  let stride = l.format.channels * (l.format.storage_bits / 8);
+  if (stride <= 0 || l.format.kind == linear.Float) {
+    return None;
+  }
+  return Some(Deck { ...blank(WAV, head), size: size, rate: l.format.sample_rate, channels: l.format.channels, bits: l.format.bits, total: (l.data_bytes / stride) as i64, data: l.data_offset, pcm: l.format });
+}
+
+function open_flac(head: u8[], size: i32): Option[Deck] {
+  let Ok(h) = flac.inspect(head, limits()) else {
     return None;
   };
-  return Some(Deck { ...blank(MP3, bytes), rate: t.sample_rate, channels: t.channels, total: t.declared_frames as i64 * (h.frames as i64), offset: t.data_offset, first: t.data_offset, last: t.data_end });
+  return Some(Deck { ...blank(FLAC, head), size: size, rate: h.format.sample_rate, channels: h.format.channels, bits: h.format.bits_per_sample, total: h.frames as i64, offset: h.data_offset, first: h.data_offset, last: size, block: h.min_block, stream: Some(h) });
+}
+
+// The deck of an MP3 file of `size` bytes whose start is `head`. The sound
+// ends at the byte `end`, or where the head ends when `end` is -1.
+function open_mp3(head: u8[], size: i32, end: i32): Option[Deck] {
+  let Ok(t) = mp3.inspect_track(head, limits()) else {
+    return None;
+  };
+  let Ok(h) = mp3.inspect(head, t.data_offset, limits()) else {
+    return None;
+  };
+  let last = t.data_end;
+  if (end >= 0) {
+    last = end;
+  }
+  return Some(Deck { ...blank(MP3, head), size: size, rate: t.sample_rate, channels: t.channels, total: t.declared_frames as i64 * (h.frames as i64), offset: t.data_offset, first: t.data_offset, last: last });
 }
 
 function open_m4a(bytes: u8[]): Option[Deck] {
@@ -170,30 +209,103 @@ function open_ogg(bytes: u8[]): Option[Deck] {
 // The deck of the format that the first bytes of the file show. A file
 // that starts as no other format is an MP3 file.
 function opened(bytes: u8[]): Option[Deck] {
+  let n = bytes.len();
   if (starts_with(bytes, "RIFF")) {
-    return open_wav(bytes);
+    return open_wav(bytes, n);
   }
   if (starts_with(bytes, "fLaC")) {
-    return open_flac(bytes);
+    return open_flac(bytes, n);
   }
   if (starts_with(bytes, "OggS")) {
     return open_ogg(bytes);
   }
-  if (bytes.len() >= 12 && bytes[4] == b'f' && bytes[5] == b't' && bytes[6] == b'y' && bytes[7] == b'p') {
+  if (whole_file(bytes)) {
     return open_m4a(bytes);
   }
-  return open_mp3(bytes);
+  return open_mp3(bytes, n, -1);
 }
 
-// A deck for the file `bytes`, or None when it is not a file that the
-// player reads. A deck has one or two channels.
-pub function open(bytes: u8[]): Option[Deck] {
-  if let Some(d) = opened(bytes) {
+// An M4A file: its index needs the whole file, as that of an Ogg file does.
+function whole_file(head: [u8]): boolean {
+  return head.len() >= 12 && head[4] == b'f' && head[5] == b't' && head[6] == b'y' && head[7] == b'p' || starts_with(head, "OggS");
+}
+
+// The deck, when it has a rate and one or two channels.
+function checked(deck: Option[Deck]): Option[Deck] {
+  if let Some(d) = deck {
     if (d.rate > 0 && d.channels >= 1 && d.channels <= 2) {
       return Some(d);
     }
   }
   return None;
+}
+
+// A deck for the file `bytes`, or None when it is not a file that the
+// player reads. A deck has one or two channels.
+pub function open(bytes: u8[]): Option[Deck] {
+  return checked(opened(bytes));
+}
+
+// The start of a file of `size` bytes from `source`, grown four times at a
+// time until `parses` takes it or it is the whole file.
+function grown(head: u8[], size: i32, source: (i64, i32) => u8[], parses: (u8[]) => boolean): u8[] {
+  let h = head;
+  while (!parses(h) && h.len() < size) {
+    h = source(0i64, (h.len() * 4).max(HEAD).min(size));
+  }
+  return h;
+}
+
+// The sound ends before an ID3v1 tag: the last 128 bytes, from `TAG`.
+function mp3_end(size: i32, source: (i64, i32) => u8[]): i32 {
+  if (size >= 128 && starts_with(source((size - 128) as i64, 3), "TAG")) {
+    return size - 128;
+  }
+  return size;
+}
+
+// The deck of a WAV, a FLAC or an MP3 file whose start is `head`.
+function streamed(head: u8[], n: i32, source: (i64, i32) => u8[]): Option[Deck] {
+  if (starts_with(head, "RIFF")) {
+    return open_wav(grown(head, n, source, (h: u8[]): boolean => wav.inspect_start(h, n as i64, limits()).is_ok()), n);
+  }
+  if (starts_with(head, "fLaC")) {
+    return open_flac(grown(head, n, source, (h: u8[]): boolean => flac.inspect(h, limits()).is_ok()), n);
+  }
+  return open_mp3(grown(head, n, source, (h: u8[]): boolean => mp3.inspect_track(h, limits()).is_ok()), n, mp3_end(n, source));
+}
+
+// A deck for a file of `size` bytes that `source` reads a part at a time,
+// at most `window` bytes at a time. A WAV, a FLAC or an MP3 file plays
+// from a window of the file. An M4A or an Ogg file is read whole. The
+// bytes of the deck are the start of the file when it opens.
+pub function open_file(size: i64, source: (i64, i32) => u8[], window: i32): Option[Deck] {
+  if (size <= 0i64 || size > 2147483647i64 || window < 4096) {
+    return None;
+  }
+  let n = size as i32;
+  let head = source(0i64, HEAD.min(n));
+  if (whole_file(head)) {
+    return open(source(0i64, n));
+  }
+  let Some(d) = checked(streamed(head, n, source)) else {
+    return None;
+  };
+  return Some(Deck { ...d, source: source, window: window });
+}
+
+// The deck with the bytes of the file from `at` to `at + need` in its
+// window, or with the rest of the file when the file ends before. A start
+// of the file that is longer than a window, for long tags, goes at the
+// first read.
+function windowed(own d: Deck, at: i32, need: i32): Deck {
+  let end = d.base + d.bytes.len();
+  if (at >= d.base && d.bytes.len() <= d.window && (at + need <= end || end >= d.size)) {
+    return d;
+  }
+  let read = d.source;
+  let bytes = read(at as i64, d.window.max(need).min(d.size - at).max(0));
+  return Deck { ...d, bytes: bytes, base: at };
 }
 
 // The samples at 16 bits, from samples of `bits` bits.
@@ -229,13 +341,25 @@ function pull_wav(own d: Deck): (Deck, i32[]) {
   if (left <= 0i64) {
     return ended(d);
   }
+  let stride = d.pcm.channels * (d.pcm.storage_bits / 8);
   let frames = WAV_PART.min(left as i32);
-  let Ok(block) = wav.decode_range(d.bytes, d.at as i32, frames, limits()) else {
-    return ended(d);
+  let from = d.data + d.at as i32 * stride;
+  let w = windowed(d, from, frames * stride);
+  let rel = from - w.base;
+  let have = ((w.bytes.len() - rel) / stride).min(frames);
+  if (have <= 0) {
+    return ended(w);
+  }
+  let part = w.bytes[rel:rel + have * stride];
+  let Ok(index) = linear.create(part, 0, have * stride, w.pcm, limits()) else {
+    return ended(w);
   };
-  let bits = d.bits;
-  let at = d.at + frames as i64;
-  return (Deck { ...d, at: at }, to_16(block.samples, bits));
+  let Ok(block) = index.read_integer(part, 0, have, limits()) else {
+    return ended(w);
+  };
+  let bits = w.bits;
+  let at = w.at + have as i64;
+  return (Deck { ...w, at: at }, to_16(block.samples, bits));
 }
 
 function pull_flac(own d: Deck): (Deck, i32[]) {
@@ -245,13 +369,15 @@ function pull_flac(own d: Deck): (Deck, i32[]) {
   if (d.offset >= d.last) {
     return ended(d);
   }
-  let Ok(frame) = flac.decode_frame(d.bytes, d.offset, h, limits()) else {
-    return ended(d);
+  let (offset0, need) = (d.offset, d.window / 2);
+  let w = windowed(d, offset0, need);
+  let Ok(frame) = flac.decode_frame(w.bytes, w.offset - w.base, h, limits()) else {
+    return ended(w);
   };
-  let bits = d.bits;
-  let offset = d.offset + frame.bytes_read;
-  let at = d.at + frame.frames as i64;
-  return (Deck { ...d, at: at, offset: offset }, to_16(frame.samples, bits));
+  let bits = w.bits;
+  let offset = w.offset + frame.bytes_read;
+  let at = w.at + frame.frames as i64;
+  return (Deck { ...w, at: at, offset: offset }, to_16(frame.samples, bits));
 }
 
 // The byte at or after `from` that an MP3 frame starts at, with a frame
@@ -271,23 +397,36 @@ function next_mp3(bytes: [u8], from: i32, last: i32): i32 {
   return -1;
 }
 
+// The bytes after the place of a search where `next_mp3` stops.
+const MP3_SEARCH: i32 = 65540;
+
 function pull_mp3(own d: Deck): (Deck, i32[]) {
-  let start = next_mp3(d.bytes, d.offset, d.last);
-  if (start < 0) {
-    return ended(d);
+  let (offset0, need) = (d.offset, d.window / 2);
+  let w = windowed(d, offset0, need);
+  let end = w.last.min(w.base + w.bytes.len());
+  let rel = next_mp3(w.bytes, w.offset - w.base, end - w.base);
+  if (rel < 0) {
+    // The window ends before the search does: the search goes on in the
+    // next window.
+    if (end < w.last && end - w.offset < MP3_SEARCH) {
+      let o = (end - 4).max(w.offset + 1);
+      return (Deck { ...w, offset: o }, []);
+    }
+    return ended(w);
   }
-  let (layer3, got) = mp3.Decoder { ...d.layer3 }.decode_frame(d.bytes, start, limits());
+  let start = rel + w.base;
+  let (layer3, got) = mp3.Decoder { ...w.layer3 }.decode_frame(w.bytes, rel, limits());
   let Ok(frame) = got else {
-    return (Deck { ...d, layer3: layer3, offset: start + 1 }, []);
+    return (Deck { ...w, layer3: layer3, offset: start + 1 }, []);
   };
-  let at = d.at + frame.frames as i64;
-  return (Deck { ...d, layer3: layer3, at: at, offset: start + frame.bytes_read }, from_floats(frame.samples));
+  let at = w.at + frame.frames as i64;
+  return (Deck { ...w, layer3: layer3, at: at, offset: start + frame.bytes_read }, from_floats(frame.samples));
 }
 
 // The deck with no decoder, and the decoder that it had.
 function parted(own d: Deck): (Deck, Codec) {
-  let Deck { kind, bytes, rate, channels, bits, total, at, offset, first, last, block, stream, layer3, done, codec } = d;
-  return (Deck { kind: kind, bytes: bytes, rate: rate, channels: channels, bits: bits, total: total, at: at, offset: offset, first: first, last: last, block: block, stream: stream, layer3: layer3, done: done, codec: Plain }, codec);
+  let Deck { kind, bytes, base, size, window, source, data, pcm, rate, channels, bits, total, at, offset, first, last, block, stream, layer3, done, codec } = d;
+  return (Deck { kind: kind, bytes: bytes, base: base, size: size, window: window, source: source, data: data, pcm: pcm, rate: rate, channels: channels, bits: bits, total: total, at: at, offset: offset, first: first, last: last, block: block, stream: stream, layer3: layer3, done: done, codec: Plain }, codec);
 }
 
 // The next packet of an M4A file: 1024 frames of samples.
@@ -395,10 +534,11 @@ pub function (own d: Deck) pull(): (Deck, i32[]) {
 // The frame that a FLAC frame at byte `i` starts at, or -1 when no frame
 // starts there.
 function flac_frame_at(d: Deck, h: flac.Header, i: i32): i64 {
-  if (d.bytes[i] != 255u8 || (d.bytes[i + 1] & 254u8) != 248u8) {
+  let rel = i - d.base;
+  if (rel < 0 || rel + 1 >= d.bytes.len() || d.bytes[rel] != 255u8 || (d.bytes[rel + 1] & 254u8) != 248u8) {
     return -1i64;
   }
-  let Ok(frame) = flac.decode_frame(d.bytes, i, h, limits()) else {
+  let Ok(frame) = flac.decode_frame(d.bytes, rel, h, limits()) else {
     return -1i64;
   };
   if (frame.variable) {
@@ -407,19 +547,35 @@ function flac_frame_at(d: Deck, h: flac.Header, i: i32): i64 {
   return frame.number as i64 * (d.block as i64);
 }
 
+// The deck at the first FLAC frame at or after the byte `i`. It reads one
+// window at a time, and a frame starts before the last half of a window.
+function flac_found(own d: Deck, h: flac.Header, i: i32): Deck {
+  let need = d.window / 2;
+  let w = windowed(d, i, need);
+  let limit = w.last;
+  if (w.base + w.bytes.len() < w.size) {
+    limit = w.base + w.bytes.len() - need;
+  }
+  let j = i;
+  while (j + 2 <= w.last && j < limit) {
+    let at = flac_frame_at(w, h, j);
+    if (at >= 0i64) {
+      return Deck { ...w, at: at, offset: j, done: false };
+    }
+    j += 1;
+  }
+  if (j + 2 > w.last) {
+    return Deck { ...w, done: true };
+  }
+  return flac_found(w, h, j);
+}
+
 function seek_flac(own d: Deck, part: f64): Deck {
   let Some(h) = d.stream else {
     return d;
   };
   let i = d.first + (part * ((d.last - d.first) as f64)) as i32;
-  while (i + 2 <= d.last) {
-    let at = flac_frame_at(d, h, i);
-    if (at >= 0i64) {
-      return Deck { ...d, at: at, offset: i, done: false };
-    }
-    i += 1;
-  }
-  return Deck { ...d, done: true };
+  return flac_found(d, h, i);
 }
 
 function seek_mp3(own d: Deck, part: f64): Deck {

@@ -10,6 +10,11 @@ Float reads preserve finite values without clipping. Integer reads reject float 
 `inspect` validates chunk bounds and format fields without sample allocation.
 `decode_range` reads a frame range. `decode` reads the complete data chunk.
 
+`inspect_start` reads a file that is not in memory. It takes the start of the file and the size of the whole file.
+It gives the format and the place of the data chunk, and it does not need the samples.
+A program then reads the samples from the file a part at a time.
+`linear.create` makes an index for a part that holds only whole frames, at the offset 0.
+
 The encoder writes PCM WAVE with standard channel masks for multichannel audio.
 Custom channel masks return `Unsupported`. Compressed WAVE, RIFX, and RF64 return `Unsupported`.
 
@@ -23,6 +28,9 @@ import "std/array";
 import "std/audio/wire";
 
 pub struct Header { format: pcm.Format, frames: i32, data_offset: i32, data_bytes: i32 }
+
+// The format of a file, and the offset and the size of its data chunk.
+pub struct Layout { format: linear.Format, data_offset: i32, data_bytes: i32 }
 
 const CHANNEL_MASK: u64[] = [0u64, 4u64, 3u64, 7u64, 51u64, 55u64, 63u64, 1807u64, 1599u64];
 
@@ -91,9 +99,25 @@ function parse_format(input: [u8], at: i32, size: i32): Result[linear.Format, pc
   return Ok(linear.Format { sample_rate: rate as i32, channels: channels, bits: bits, storage_bits: bits, little_endian: true, kind: encoding });
 }
 
+pub function inspect_linear(input: [u8], limits: pcm.Limits): Result[linear.Index, pcm.AudioError] {
+  let found = layout(input, input.len() as i64, limits)?;
+  return linear.create(input, found.data_offset, found.data_bytes, found.format, limits);
+}
+
+// The layout of a file of `size` bytes whose start is `head`. The head
+// holds the chunks before the data chunk and the header of the data chunk.
+pub function inspect_start(head: [u8], size: i64, limits: pcm.Limits): Result[Layout, pcm.AudioError] {
+  if (size < head.len() as i64 || size > 2147483647i64) {
+    return Err(pcm.Header);
+  }
+  return layout(head, size, limits);
+}
+
+// The layout of a file of `size` bytes whose start is `input`. When the
+// input is not the whole file, the walk stops at the data chunk.
 // fern-lint: allow cyclomatic-complexity
 // One arm per RIFF chunk kind, and one check per header field.
-pub function inspect_linear(input: [u8], limits: pcm.Limits): Result[linear.Index, pcm.AudioError] {
+function layout(input: [u8], size: i64, limits: pcm.Limits): Result[Layout, pcm.AudioError] {
   pcm.check_input(input, limits)?;
   if (input.len() < 12) {
     return Err(pcm.Truncated);
@@ -104,32 +128,37 @@ pub function inspect_linear(input: [u8], limits: pcm.Limits): Result[linear.Inde
   if (!wire.tag(input, 0, "RIFF") || !wire.tag(input, 8, "WAVE")) {
     return Err(pcm.Header);
   }
+  let total = size as i32;
   let declared = wire.le(input, 4, 4) + 8u64;
-  if (declared > input.len() as u64) {
+  if (declared > total as u64) {
     return Err(pcm.Truncated);
   }
-  if (declared != input.len() as u64) {
+  if (declared != total as u64) {
     return Err(pcm.Header);
   }
+  let whole = total == input.len();
   let at = 12;
   let format = linear.Format { sample_rate: 0, channels: 0, bits: 0, storage_bits: 0, little_endian: true, kind: linear.Signed };
   let have_format = false;
   let data_at = -1;
   let data_bytes = 0;
-  while (at < input.len()) {
-    if (input.len() - at < 8) {
+  while (at < total) {
+    if (total - at < 8 || input.len() - at < 8) {
       return Err(pcm.Truncated);
     }
     let size64 = wire.le(input, at + 4, 4);
-    if (size64 > (input.len() - at - 8) as u64) {
+    if (size64 > (total - at - 8) as u64) {
       return Err(pcm.Truncated);
     }
-    let size = size64 as i32;
+    let chunk = size64 as i32;
     if (wire.tag(input, at, "fmt ")) {
       if (have_format) {
         return Err(pcm.Header);
       }
-      format = parse_format(input, at + 8, size)?;
+      if (chunk > input.len() - at - 8) {
+        return Err(pcm.Truncated);
+      }
+      format = parse_format(input, at + 8, chunk)?;
       have_format = true;
     }
     if (wire.tag(input, at, "data")) {
@@ -137,11 +166,14 @@ pub function inspect_linear(input: [u8], limits: pcm.Limits): Result[linear.Inde
         return Err(pcm.Header);
       }
       data_at = at + 8;
-      data_bytes = size;
+      data_bytes = chunk;
+      if (!whole) {
+        return Ok(Layout { format: format, data_offset: data_at, data_bytes: data_bytes });
+      }
     }
-    at += 8 + size;
-    if (size % 2 != 0) {
-      if (at == input.len()) {
+    at += 8 + chunk;
+    if (chunk % 2 != 0) {
+      if (at == total) {
         return Err(pcm.Truncated);
       }
       at += 1;
@@ -150,7 +182,7 @@ pub function inspect_linear(input: [u8], limits: pcm.Limits): Result[linear.Inde
   if (!have_format || data_at < 0) {
     return Err(pcm.Header);
   }
-  return linear.create(input, data_at, data_bytes, format, limits);
+  return Ok(Layout { format: format, data_offset: data_at, data_bytes: data_bytes });
 }
 
 pub function inspect(input: [u8], limits: pcm.Limits): Result[Header, pcm.AudioError] {

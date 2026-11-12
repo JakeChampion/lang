@@ -224,7 +224,10 @@ function print_lines(path: string, fd: i32, line: u8[], bytes: u8[]): u8[] {
 }
 `
 
-const processMainSrc = processKernelSrc + `
+const processMainSrc = processKernelSrc + processSpawnSrc
+
+// processSpawnSrc is the main of the process test, for the kernel of each ISA.
+const processSpawnSrc = `
 // Runs the program at path to its end. Then the kernel prints what the
 // program left in /out/result.txt, makes its own tables active again and gives
 // back the frames of the process.
@@ -486,12 +489,22 @@ func efaultImage() []byte {
 // codeImage is a static arm64 ELF of one read and execute segment at base,
 // which holds the headers and then code, the entry.
 func codeImage(base uint64, code []uint32) []byte {
+	b := make([]byte, 4*len(code))
+	for i, w := range code {
+		binary.LittleEndian.PutUint32(b[4*i:], w)
+	}
+	return elfImage(183, base, b)
+}
+
+// elfImage is a static ELF of the machine, of one read and execute segment
+// at base, which holds the headers and then code, the entry.
+func elfImage(machine uint16, base uint64, code []byte) []byte {
 	const headers = 64 + 56
 	le := binary.LittleEndian
-	b := make([]byte, headers+4*len(code))
+	b := make([]byte, headers+len(code))
 	copy(b, "\x7fELF\x02\x01\x01")
-	le.PutUint16(b[16:], 2)   // ET_EXEC
-	le.PutUint16(b[18:], 183) // EM_AARCH64
+	le.PutUint16(b[16:], 2) // ET_EXEC
+	le.PutUint16(b[18:], machine)
 	le.PutUint32(b[20:], 1)
 	le.PutUint64(b[24:], base+headers)
 	le.PutUint64(b[32:], 64)
@@ -506,15 +519,19 @@ func codeImage(base uint64, code []uint32) []byte {
 	le.PutUint64(ph[32:], uint64(len(b)))
 	le.PutUint64(ph[40:], uint64(len(b)))
 	le.PutUint64(ph[48:], 0x1000)
-	for i, w := range code {
-		le.PutUint32(b[headers+4*i:], w)
-	}
+	copy(b[headers:], code)
 	return b
 }
 
 // processInitrd builds each Fern program for arm64-linux, and writes a cpio
 // archive with it and each raw image as bin/NAME, and the files of etcFiles.
 func processInitrd(t *testing.T, cli *selfHostCLI, dir string, fern map[string]string, raw map[string][]byte) string {
+	t.Helper()
+	return processInitrdFor(t, cli, "arm64-linux", dir, fern, raw)
+}
+
+// processInitrdFor is processInitrd with the programs built for target.
+func processInitrdFor(t *testing.T, cli *selfHostCLI, target, dir string, fern map[string]string, raw map[string][]byte) string {
 	t.Helper()
 	programs := map[string][]byte{}
 	for name, b := range raw {
@@ -526,7 +543,7 @@ func processInitrd(t *testing.T, cli *selfHostCLI, dir string, fern map[string]s
 			t.Fatal(err)
 		}
 		out := filepath.Join(dir, name)
-		if msg, err := cli.compileCmd("arm64-linux", out, path).CombinedOutput(); err != nil {
+		if msg, err := cli.compileCmd(target, out, path).CombinedOutput(); err != nil {
 			t.Fatalf("build %s: %v\n%s", name, err, msg)
 		}
 		b, err := os.ReadFile(out)
