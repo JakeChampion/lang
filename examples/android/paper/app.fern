@@ -639,6 +639,10 @@ function extra_text(e: usize, j: bindings.Classes, extras: bindings.Bundle, name
   return out;
 }
 
+// Notification.FLAG_AUTOGROUP_SUMMARY, which the SDK hides: the summary
+// that the device makes for the notifications of an app with no group.
+const FLAG_AUTOGROUP_SUMMARY: i32 = 1024;
+
 // Takes the notification `sbn` out of the shade when the filter holds it,
 // keeps it in the held file, and tells the home screen.
 function hold(e: usize, j: bindings.Classes, service: usize, sbn: bindings.StatusBarNotification): void {
@@ -647,6 +651,14 @@ function hold(e: usize, j: bindings.Classes, service: usize, sbn: bindings.Statu
   let pkg = value_or(j.status_bar_notification.get_package_name(e, sbn), "");
   let n = value_or(j.status_bar_notification.get_notification(e, sbn), bindings.Notification { ref: 0 as usize });
   if (n.is_null()) {
+    return;
+  }
+  // The device removes this summary when its last notification goes. A
+  // cancel of the summary also cancels each notification of the group,
+  // and one of them can be from before the filter was on.
+  if ((value_or(j.notification.flags(e, n), 0) & FLAG_AUTOGROUP_SUMMARY) != 0) {
+    log.info("paper: left the summary of the device for " + pkg);
+    drop(e, n.ref);
     return;
   }
   let category = value_or(j.notification.category(e, n), "");
