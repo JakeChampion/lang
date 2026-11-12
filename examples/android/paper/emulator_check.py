@@ -360,18 +360,21 @@ def check_filter(out, width, height):
     time.sleep(1.0)
     if find_node(ui_dump(out, "ui-opened"), r"\d+ held notifications?"):
         fail("the held notification stayed on the home screen after it opened")
+    # A listener that connects while the filter is on holds each
+    # notification that the shade has.
     adb("shell", "cmd", "notification", "disallow_listener", LISTENER, check=False)
+    adb("shell", "cmd", "notification", "allow_listener", LISTENER, check=False)
+    if not wait_for_shade("fern_shown", False):
+        fail("the filter did not hold the notifications of the shade when its listener connected")
 
 
 def clear_shade():
-    """Takes the notifications of this check out of the shade, and stops
-    the listener. A check of another app reads the shade after this one,
-    and the shade shows the buttons of only its first notifications."""
+    """Stops the listener, and makes sure that the shade has no
+    notification of this check. A check of another app reads the shade
+    after this one, and the shade shows the buttons of only its first
+    notifications. The shell has no command that cancels a notification:
+    check_filter ends with a step in which Paper holds them."""
     adb("shell", "cmd", "notification", "disallow_listener", LISTENER, check=False)
-    for key in adb("shell", "cmd", "notification", "list", check=False).split():
-        if "|fern_" in key:
-            # The shell has no command that cancels a notification.
-            shell(*poster(), "cmd", "notification", "snooze", "--for", "86400000", key)
     if "|fern_" in adb("shell", "cmd", "notification", "list", check=False):
         fail("the check left its notification in the shade")
 

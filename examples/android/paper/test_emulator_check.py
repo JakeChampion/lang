@@ -219,7 +219,7 @@ class Phone:
     """A device for check_filter. `holds` is whether the filter takes a
     notification out of the shade, and `shows` is whether Paper shows it."""
 
-    def __init__(self, *, holds=True, shows=True, opens=True, takes_old=False, takes_late=False, filter_row="off", probe=True):
+    def __init__(self, *, holds=True, shows=True, opens=True, takes_old=False, takes_late=False, sweeps=True, filter_row="off", probe=True):
         self.holds = holds
         self.shows = shows
         self.opens = opens
@@ -228,6 +228,9 @@ class Phone:
         self.wrong_rows = 0
         self.takes_old = takes_old
         self.takes_late = takes_late
+        self.sweeps = sweeps
+        # The listener stopped once, so its next start is a new connection.
+        self.stopped = False
         self.filter_row = filter_row
         self.probe = probe
         self.allowed = False
@@ -290,6 +293,10 @@ class Phone:
             self.post(args[-2])
         elif args[:4] == ("shell", "cmd", "notification", "allow_listener"):
             self.allowed = True
+            if self.stopped and self.sweeps:
+                self.shade.clear()
+        elif args[:4] == ("shell", "cmd", "notification", "disallow_listener"):
+            self.stopped = True
         elif args[:3] == ("shell", "input", "swipe") and args[3:5] == args[5:7]:
             self.screen = "settings"
             self.sliding = 2
@@ -321,7 +328,7 @@ class FilterTests(unittest.TestCase):
     def test_a_held_notification_leaves_the_shade_and_opens(self):
         phone = Phone()
         self.assertEqual(self.run_phone(phone), [])
-        self.assertEqual(phone.shade, ["fern_shown"])
+        self.assertEqual(phone.shade, [])
         self.assertFalse(phone.allowed and phone.held)
 
     def test_each_post_is_a_post_of_the_shell_user_when_adb_is_root(self):
@@ -384,30 +391,19 @@ class FilterTests(unittest.TestCase):
         self.assertTrue(phone.on)
         self.assertEqual(phone.wrong_rows, 0)
 
-    def test_the_check_takes_its_notifications_out_of_the_shade(self):
-        shade = ["0|com.android.shell|2020|fern_shown|2000", "-1|android|55|null|1000"]
-        calls = []
+    def test_a_listener_that_connects_holds_the_shade(self):
+        failures = self.run_phone(Phone(sweeps=False))
+        self.assertEqual(failures, ["the filter did not hold the notifications of the shade when its listener connected"])
 
-        def adb(*args, **kwargs):
-            if args[-1] == "list":
-                return "\n".join(shade)
-            return ""
-
-        def shell(*args):
-            calls.append(args)
-            if "snooze" in args:
-                shade.remove(args[-1])
-            return "2000"
-
+    def test_a_notification_that_the_check_leaves_is_a_failure(self):
         failures = []
-        with patch.multiple(check, adb=adb, shell=shell, fail=failures.append):
-            check.clear_shade()
-        self.assertEqual(shade, ["-1|android|55|null|1000"])
-        self.assertEqual(failures, [])
-        shade.append("0|com.android.shell|2020|fern_shown|2000")
-        with patch.multiple(check, adb=adb, shell=lambda *args: "2000", fail=failures.append):
+        with patch.multiple(check, adb=lambda *args, **kwargs: "0|com.android.shell|2020|fern_shown|2000\n", fail=failures.append):
             check.clear_shade()
         self.assertEqual(failures, ["the check left its notification in the shade"])
+        failures.clear()
+        with patch.multiple(check, adb=lambda *args, **kwargs: "-1|android|55|null|1000\n", fail=failures.append):
+            check.clear_shade()
+        self.assertEqual(failures, [])
 
     def test_the_tag_of_another_notification_is_not_in_the_shade(self):
         with patch.object(check, "adb", return_value="0|com.android.shell|2020|fern_held_more|2000\n"):
