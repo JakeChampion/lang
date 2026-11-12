@@ -183,7 +183,11 @@ function children(t: Type): Type[] {
       return [m.key, m.value];
     },
     TypeFunc(f) => {
-      return f.param_types.append(f.ret_type);
+      let parts: Type[] = [f.ret_type];
+      for p in f.param_types {
+        parts = parts.append(p);
+      }
+      return parts;
     },
     _ => {
       return [];

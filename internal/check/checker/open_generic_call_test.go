@@ -52,6 +52,8 @@ func TestDestinationBindsACallInsideItsValue(t *testing.T) {
 		"function button[M](s: string, m: M): El[M] { return El { kids: [], tap: Some(m), pad: 0.0 }; }\n" +
 		"function (e: El[M]) padded(v: f64): El[M] { return El { ...e, pad: v }; }\n" +
 		"function space[M](): El[M] { return El { kids: [], tap: None, pad: 0.0 }; }\n" +
+		"function (e: El[M]) on(m: M): El[M] { return El { ...e, tap: Some(m) }; }\n" +
+		"function (e: El[M]) made(f: (string) => M): El[M] { return El { ...e, tap: Some(f(\"x\")) }; }\n" +
 		"enum Msg { Inc, Dec }\n"
 	const end = "\nfunction main(): i32 { return 0; }\n"
 	good := []struct{ name, body string }{
@@ -63,6 +65,9 @@ func TestDestinationBindsACallInsideItsValue(t *testing.T) {
 		{"struct update base in a generic function", "function wide[M](s: string): El[M] { return El { ...text(s), pad: 1.0 }; }\nfunction view(): El[Msg] { return wide(\"a\"); }"},
 		{"call with no argument after the first element", "function view(): i32 { let xs = [button(\"+\", Inc), space()]; return xs.len(); }"},
 		{"call with no argument in an array argument", "function view(): i32 { let e = column([button(\"+\", Inc), space(), button(\"-\", Dec)]).padded(1.0); return 0; }"},
+		{"call with no argument before the first element with arguments", "function view(): i32 { let e = column([space(), space(), button(\"+\", Inc)]).padded(1.0); return 0; }"},
+		{"method argument binds the receiver", "function view(): i32 { let e = column([text(\"a\").on(Inc)]); return 0; }"},
+		{"function argument binds the receiver of a chain", "function view(): i32 { let e = column([text(\"a\").made((s: string): Msg => Dec).on(Inc)]).padded(1.0); return 0; }"},
 		{"tuple element", "function view(): El[Msg] { let p: (El[Msg], i32) = (text(\"a\").padded(5.0), 1); return p.0; }"},
 	}
 	for _, c := range good {
@@ -72,6 +77,7 @@ func TestDestinationBindsACallInsideItsValue(t *testing.T) {
 	}
 	bad := []struct{ name, body, want string }{
 		{"receiver with no destination", "function view(): i32 { let e = text(\"a\").padded(1.0); return 0; }", "could not infer type parameter M for text"},
+		{"method argument with no destination", "function view(): i32 { let e = text(\"a\").on(Inc); return 0; }", "could not infer type parameter M for text"},
 		{"array with no destination", "function view(): i32 { let e = [text(\"a\")]; return 0; }", "could not infer type parameter M for text"},
 	}
 	for _, c := range bad {

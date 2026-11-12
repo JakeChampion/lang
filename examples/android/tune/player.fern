@@ -2,10 +2,15 @@
 // the file of a track, and gives its samples to a stream of sound. The
 // device is a set of functions, so a test gives one that plays nothing.
 import "core/cmp";
+import "std/android/draw";
 import "std/android/ui";
 import "std/i32";
 import "std/i64";
+import "std/audio/tags";
+import "std/audio/wire";
 import "std/option";
+import "std/result";
+import "std/utf8";
 import "./engine";
 import "./library";
 import "./tune";
@@ -15,9 +20,15 @@ import "./tune";
 // gives the names in a directory, and `is_dir` tells that a path is a
 // directory. `demo` makes the tunes of the player and gives their paths.
 // `now` is the time in ns. `dirs` gives the names of the directories in a directory, and
-// `keep` keeps the folder of the library for the next start. `show` tells
+// `keep` keeps the folder of the library for the next start. `decode` gives an
+// image from the bytes of a JPEG or a PNG file, at a size. `save` keeps
+// the text of the library for the next start, and `keep_lists` keeps the
+// text of the playlists. `keep_prefs` keeps the text of the settings. `write_text` writes a text file, and tells that it
+// did. `kept` gives the bytes
+// that `put` kept under a name, or no bytes. `show` tells
 // Android the track that plays and its state. `wake` keeps the phone
-// awake until `sleep`. `size` gives the number of bytes of a
+// awake until `sleep`. `quit` gives back what the app holds of Android,
+// while the activity is valid. `size` gives the number of bytes of a
 // file, `part` gives at most a number of its bytes from an offset, and
 // `read` gives each byte of it, or no bytes. `open` gives a stream at
 // a rate with a number of channels. `write` gives the stream samples, and
@@ -31,7 +42,15 @@ pub struct Device {
   now: () => i64,
   dirs: (string) => string[],
   keep: (string) => void,
+  decode: (u8[], i32, i32) => Option[draw.Image],
+  save: (string) => void,
+  keep_lists: (string) => void,
+  keep_prefs: (string) => void,
+  write_text: (string, string) => boolean,
+  kept: (string) => u8[],
+  put: (string, u8[]) => void,
   show: (tune.Now) => void,
+  quit: () => void,
   wake: () => tune.Awake,
   sleep: (tune.Awake) => void,
   size: (string) => i64,
@@ -48,74 +67,249 @@ pub struct Device {
 // The samples that the player keeps ready, as a part of a second.
 const READY_PARTS: i32 = 5;
 
-function loaded(dev: Device, own m: tune.Model, i: i32): tune.Model {
+// The player on a device: the state of tune.fern, and the deck that reads
+// the file of the track that plays. Only one owner uses a deck, so it is
+// not in the state.
+pub struct Player { model: tune.Model, deck: Option[engine.Voice] }
+
+// A player with the state `model` and no deck.
+pub function wrap(own model: tune.Model): Player {
+  return Player { model: model, deck: None };
+}
+
+// The lyrics of the track at `path`: those of the LRC file with its name,
+// or those of the tags of its file.
+function lyrics(dev: Device, path: string, file: u8[]): tune.Line[] {
+  let cut = path.len();
+  for k in 0..path.len() {
+    if (path[k] == b'.') {
+      cut = k;
+    }
+  }
+  if let Ok(text) = utf8.from_bytes(dev.read(path.take(cut).to_owned() + ".lrc")) {
+    if (text.len() > 0) {
+      return library.lrc(text);
+    }
+  }
+  return library.lrc(tags.read(file).lyrics);
+}
+
+function loaded(dev: Device, own m: tune.Model, i: i32): Player {
   dev.close(m.sound);
-  let Some(deck) = engine.open(dev.read(m.tracks[i].path)) else {
-    return tune.update(tune.Model { ...m, deck: None, sound: tune.no_sound(), pending: [] }, tune.Failed("Tune cannot play " + m.tracks[i].title));
+  let file = dev.read(m.tracks[i].path);
+  let picture = tags.picture(file);
+  if (picture.len() == 0) {
+    picture = folder_picture(dev, m, m.tracks[i].path);
+  }
+  let art: Option[draw.Image] = None;
+  if (picture.len() > 0) {
+    art = dev.decode(picture, ART, ART);
+  }
+  let words = lyrics(dev, m.tracks[i].path, file);
+  let Some(deck) = engine.open(file) else {
+    return wrap(tune.update(tune.Model { ...m, sound: tune.no_sound(), pending: [] }, tune.Failed("Tune cannot play " + m.tracks[i].title)));
   };
   let sound = dev.open(deck.rate, deck.channels);
   if (sound.ptr == 0 as usize) {
-    return tune.update(tune.Model { ...m, deck: None, sound: sound, pending: [] }, tune.Failed("The phone gave no sound"));
+    return wrap(tune.update(tune.Model { ...m, sound: sound, pending: [] }, tune.Failed("The phone gave no sound")));
   }
   dev.start(sound);
   let length = deck.duration_ms();
-  return tune.Model { ...m, deck: Some(deck), sound: sound, pending: [], at_ms: 0i64, length_ms: length };
+  return Player { model: tune.Model { ...m, sound: sound, pending: [], at_ms: 0i64, length_ms: length, art: art, lyrics: words }, deck: Some(engine.voice(deck)) };
 }
 
-function sought(dev: Device, own m: tune.Model, part: f64): tune.Model {
-  let Some(deck) = m.deck else {
-    return m;
+function sought(dev: Device, own m: tune.Model, own deck: Option[engine.Voice], part: f64): Player {
+  let Some(d) = deck else {
+    return wrap(m);
   };
   dev.pause(m.sound);
   dev.flush(m.sound);
   if (m.playing) {
     dev.start(m.sound);
   }
-  let moved = deck.seek(part);
-  let at = moved.position_ms();
-  return tune.Model { ...m, deck: Some(moved), pending: [], at_ms: at, told: "" };
+  let moved = d.seek(part);
+  let at = moved.deck.position_ms();
+  return Player { model: tune.Model { ...m, pending: [], at_ms: at, told: "" }, deck: Some(moved) };
 }
 
-function done(dev: Device, own m: tune.Model, want: tune.Want): tune.Model {
+// fern-lint: allow cyclomatic-complexity
+// One arm for each thing that the state can want.
+// The player after the device did `want`.
+function done(dev: Device, own p: Player, want: tune.Want): Player {
+  let Player { model: m, deck } = p;
   match (want) {
     tune.Load(i) => {
       return loaded(dev, m, i);
     },
     tune.Resume => {
       dev.start(m.sound);
-      return m;
+      return Player { model: m, deck: deck };
     },
     tune.Hold => {
       dev.pause(m.sound);
-      return m;
+      return Player { model: m, deck: deck };
     },
     tune.Seek(part) => {
-      return sought(dev, m, part);
+      return sought(dev, m, deck, part);
     },
     tune.Scan => {
       if (m.folder.len() > 0) {
         let folder = [m.folder];
-        return tune.update(m, tune.Files(folder));
+        return Player { model: tune.update(m, tune.Walk(folder)), deck: deck };
       }
-      return tune.update(m, tune.Files(dev.roots));
+      return Player { model: tune.update(m, tune.Walk(dev.roots)), deck: deck };
     },
     tune.List(dir) => {
-      return tune.update(m, tune.Dirs(dir, dev.dirs(dir)));
+      return Player { model: tune.update(m, tune.Dirs(dir, dev.dirs(dir))), deck: deck };
     },
     tune.Keep(folder) => {
       dev.keep(folder);
-      return m;
+      return Player { model: m, deck: deck };
     },
     tune.Grant => {
       dev.grant();
-      return m;
+      return Player { model: m, deck: deck };
+    },
+    tune.KeepPrefs => {
+      dev.keep_prefs(library.prefs_text(tune.prefs(m)));
+      return Player { model: m, deck: deck };
+    },
+    tune.KeepLists => {
+      dev.keep_lists(library.lists_text(m.playlists));
+      return Player { model: m, deck: deck };
+    },
+    tune.WriteList(name) => {
+      let told = exported(dev, m, name);
+      return Player { model: tune.update(m, tune.Exported(told)), deck: deck };
+    },
+    tune.Quit => {
+      dev.close(m.sound);
+      if (m.awake.wake != 0 as usize) {
+        dev.sleep(m.awake);
+      }
+      dev.quit();
+      return wrap(tune.Model { ...m, sound: tune.no_sound(), pending: [], awake: tune.Awake { wake: 0 as usize, wifi: 0 as usize } });
     }
   }
 }
 
-// Reads the next path of the library. A file of sound is a track. A
-// directory gives its entries to the scan, with no entry whose name starts
-// with a dot. Each other path adds nothing.
+// The side in pixels of the picture of an album in a list, and of the
+// picture of the track that plays.
+const THUMB: i32 = 112;
+
+const ART: i32 = 720;
+
+// The bytes of the image file of the directory of `path`, or no bytes.
+function folder_picture(dev: Device, m: tune.Model, path: string): u8[] {
+  let dir = tune.dir_of(path);
+  for p in m.pictures {
+    if (tune.dir_of(p) == dir) {
+      return dev.read(p);
+    }
+  }
+  return [];
+}
+
+// The name that the device keeps the picture of the album of the key
+// `key` under: 16 hexadecimal digits of a hash of the key.
+function cover_name(key: string): string {
+  let h = -3750763034362895579i64;
+  for i in 0..key.len() {
+    h = (h ^ key[i] as i64) * 1099511628211i64;
+  }
+  let digits = "0123456789abcdef";
+  let out = "";
+  for k in 0..16 {
+    let d = (h >> (60 - 4 * k) as i64 & 15i64) as i32;
+    out = out + digits.drop(d).take(1);
+  }
+  return out;
+}
+
+// The bytes of a picture that the device keeps: the width and the height
+// in 4 bytes each, and then the pixels. A picture with no pixel tells that
+// the album has no picture.
+function cover_bytes(image: Option[draw.Image]): u8[] {
+  let Some(img) = image else {
+    return wire.put_le(wire.put_le([], 0u64, 4), 0u64, 4);
+  };
+  let out = wire.put_le(wire.put_le([], img.width as u64, 4), img.height as u64, 4);
+  for b in img.pixels {
+    out = out.append(b);
+  }
+  return out;
+}
+
+// A width and a height that a picture of a row can have.
+function sized(w: i32, h: i32): boolean {
+  return w > 0 && h > 0 && w <= 4096 && h <= 4096;
+}
+
+// The picture of bytes of `cover_bytes`: None for bytes that are not one,
+// and Some(None) for an album that has no picture.
+function cover_image(bytes: u8[]): Option[Option[draw.Image]] {
+  if (bytes.len() < 8) {
+    return None;
+  }
+  let w = wire.le(bytes, 0, 4) as i32;
+  let h = wire.le(bytes, 4, 4) as i32;
+  if (w == 0 && h == 0 && bytes.len() == 8) {
+    return Some(None);
+  }
+  if (!sized(w, h) || bytes.len() != 8 + w * h * 4) {
+    return None;
+  }
+  let pixels: u8[] = [];
+  for i in 8..bytes.len() {
+    pixels = pixels.append(bytes[i]);
+  }
+  return Some(Some(draw.Image { width: w, height: h, pixels: pixels }));
+}
+
+// The picture of the album of the file `path`, from that file or from an
+// image file of its directory, at the size of a row.
+function cover_from(dev: Device, m: tune.Model, path: string): Option[draw.Image] {
+  let bytes = library.picture(dev.size(path), (at: i64, n: i32): u8[] => dev.part(path, at, n));
+  if (bytes.len() == 0) {
+    bytes = folder_picture(dev, m, path);
+  }
+  if (bytes.len() == 0) {
+    return None;
+  }
+  return dev.decode(bytes, THUMB, THUMB);
+}
+
+// The player with the picture of the album of the first path of `wanted`.
+// The device keeps each picture, so an album gets its picture from its
+// files one time.
+function covered(dev: Device, own m: tune.Model): tune.Model {
+  let path = m.wanted[0];
+  let left: string[] = [];
+  for i in 1..m.wanted.len() {
+    left = left.append(m.wanted[i]);
+  }
+  let next = tune.Model { ...m, wanted: left };
+  let key = "";
+  for t in next.tracks {
+    if (t.path == path) {
+      key = tune.album_key(t.by, t.album);
+    }
+  }
+  if (key.len() == 0 || tune.knows_cover(next, key)) {
+    return next;
+  }
+  let name = cover_name(key);
+  if let Some(image) = cover_image(dev.kept(name)) {
+    return tune.with_cover(next, key, image);
+  }
+  let image = cover_from(dev, next, path);
+  dev.put(name, cover_bytes(image));
+  return tune.with_cover(next, key, image);
+}
+
+// Reads the next path of the library. A file of sound is a track, and its
+// album gets its picture. A directory gives its entries to the scan. Each
+// other path adds nothing.
 function scanned(dev: Device, own m: tune.Model): tune.Model {
   let path = m.scan[0];
   let left: string[] = [];
@@ -136,13 +330,65 @@ function scanned(dev: Device, own m: tune.Model): tune.Model {
   if (library.other_file(path) || path.len() > 1024 || !dev.is_dir(path)) {
     return next;
   }
+  return listed(dev, next, path);
+}
+
+// Writes the playlist `name` as an M3U file in the folder of the library,
+// or in the first directory of the music of the phone that takes it. It
+// gives the words that tell the person the result.
+function exported(dev: Device, m: tune.Model, name: string): string {
+  let Some(list) = tune.playlist(m, name) else {
+    return "";
+  };
+  let dirs = dev.roots.drop(1).concat(dev.roots.take(1));
+  if (m.folder.len() > 0) {
+    dirs = [m.folder];
+  }
+  for dir in dirs {
+    let path = dir + "/" + name.replace("/", "-") + ".m3u";
+    if (dev.write_text(path, library.m3u_text(dir, list.paths))) {
+      return "Tune wrote " + path;
+    }
+  }
+  return "Tune cannot write " + name + ".m3u";
+}
+
+// The player with the playlist of the M3U file `name` of the directory
+// `dir`, under the name of the file. A playlist that the player has stays
+// as it is.
+function imported(dev: Device, own m: tune.Model, dir: string, name: string): tune.Model {
+  let stem = name.take(name.len() - (if (name.to_lower().ends_with(".m3u8")) { 5 } else { 4 })).to_owned();
+  if (tune.playlist(m, stem).is_some()) {
+    return m;
+  }
+  let Ok(text) = utf8.from_bytes(dev.read(dir + "/" + name)) else {
+    return m;
+  };
+  return tune.update(m, tune.Imported(stem, library.m3u_paths(dir, text)));
+}
+
+// The player with the entries of the directory `path` in its scan. An
+// image file with the name of a picture of an album goes to `pictures`,
+// an M3U file gives a playlist, and an entry whose name starts with a dot
+// goes nowhere.
+function listed(dev: Device, own m: tune.Model, path: string): tune.Model {
   let below: string[] = [];
+  let pictures = m.pictures;
+  let lists: string[] = [];
   for name in cmp.sort(dev.names(path)) {
-    if (!name.starts_with(".")) {
+    if (library.picture_name(name)) {
+      pictures = pictures.append(path + "/" + name);
+    } else if (library.playlist_name(name)) {
+      lists = lists.append(name);
+    } else if (!name.starts_with(".")) {
       below = below.append(path + "/" + name);
     }
   }
-  return tune.update(next, tune.Files(below));
+  let state = tune.update(tune.Model { ...m, pictures: pictures }, tune.Listed(path, below));
+  for name in lists {
+    state = imported(dev, state, path, name);
+  }
+  return state;
 }
 
 // The milliseconds of one step that the scan can use.
@@ -155,9 +401,31 @@ function scanned_until(dev: Device, own m: tune.Model, until: i64): tune.Model {
   while (state.scan.len() > 0 && dev.now() < until) {
     state = scanned(dev, state);
   }
-  if (state.scan.len() == 0 && state.tracks.len() == 0 && state.folder.len() == 0 && !state.made) {
+  if (state.scan.len() > 0) {
+    return state;
+  }
+  if (state.tracks.len() == 0 && state.folder.len() == 0 && !state.made) {
     let made = dev.demo();
     return tune.update(tune.Model { ...state, made: true }, tune.Files(made));
+  }
+  // The walk is at its end: the library loses the tracks whose files are
+  // not there, and the device keeps the library when it is new.
+  let whole = state;
+  if (whole.walking) {
+    whole = tune.pruned(whole);
+  }
+  if (whole.dirty) {
+    dev.save(library.to_text(whole.tracks));
+    return tune.Model { ...whole, dirty: false };
+  }
+  return whole;
+}
+
+// Gets the pictures of albums until the time `until`, in ns: one or more.
+function covered_until(dev: Device, own m: tune.Model, until: i64): tune.Model {
+  let state = covered(dev, m);
+  while (state.wanted.len() > 0 && dev.now() < until) {
+    state = covered(dev, state);
   }
   return state;
 }
@@ -174,62 +442,86 @@ function rest(all: i32[], from: i32): i32[] {
   return out;
 }
 
-// Reads the file until the player has enough samples ready, gives the
-// sound what it takes, and tells the time of the track.
-function pumped(dev: Device, own m: tune.Model): tune.Model {
-  let Some(deck) = m.deck else {
-    return m;
-  };
-  let sound = m.sound;
-  let ready = m.pending;
-  let enough = sound.rate * sound.channels / READY_PARTS;
+// The deck after it gave parts until `ready` has `enough` samples or the
+// file ends, and those samples.
+function filled(own deck: engine.Voice, ready: i32[], enough: i32, speed: f64, pitch: i32): (engine.Voice, i32[]) {
   let d = deck;
-  while (ready.len() < enough && !d.done) {
-    let (next, part) = d.pull();
+  let out = ready;
+  while (out.len() < enough && !d.deck.done) {
+    let (next, part) = d.pull(speed, pitch);
     d = next;
     for v in part {
-      ready = ready.append(v);
+      out = out.append(v);
     }
   }
-  let kept = rest(ready, dev.write(sound, ready));
-  let waiting = kept.len() as i64 * 1000i64 / ((sound.rate * sound.channels).max(1) as i64);
-  let at = (d.position_ms() - waiting).max(0i64);
-  let length = d.duration_ms();
-  let ended = d.done && kept.len() == 0;
-  let after = tune.Model { ...m, deck: Some(d), pending: kept, at_ms: at, length_ms: length };
-  if (ended) {
-    return tune.update(after, tune.Finished);
-  }
-  return after;
+  return (d, out);
 }
 
-// The state after the device did what the state wants, and after the
-// sound got its next samples.
-pub function run(dev: Device, m: tune.Model): tune.Model {
-  let turns = 0;
+// While a track plays: reads the file until the player has enough samples
+// ready, gives the sound what it takes, and tells the time of the track.
+function pumped(dev: Device, own m: tune.Model, own deck: Option[engine.Voice]): Player {
+  if (!m.playing) {
+    return Player { model: m, deck: deck };
+  }
+  let Some(first) = deck else {
+    return wrap(m);
+  };
+  let sound = m.sound;
+  let (d, ready) = filled(first, m.pending, sound.rate * sound.channels / READY_PARTS, m.speed as f64 / 100.0, m.pitch);
+  let wrote = dev.write(sound, ready);
+  let kept = rest(ready, wrote);
+  let each = (sound.rate * sound.channels).max(1) as i64;
+  let waiting = kept.len() as i64 * (m.speed as i64) * 10i64 / each;
+  let at = (d.deck.position_ms() - waiting).max(0i64);
+  let length = d.deck.duration_ms();
+  let ended = d.deck.done && kept.len() == 0;
+  let after = tune.Model { ...m, pending: kept, at_ms: at, length_ms: length };
+  if (after.sleep_us > 0i64) {
+    after = tune.update(after, tune.Slept(wrote as i64 * 1000000i64 / each));
+  }
+  if (ended) {
+    return Player { model: tune.update(after, tune.Finished), deck: Some(d) };
+  }
+  return Player { model: after, deck: Some(d) };
+}
+
+// The player after it read paths of the library until the time `until`,
+// and after the sound got its next samples.
+function settled(dev: Device, own p: Player, until: i64): Player {
+  let Player { model, deck } = p;
+  let m = model;
+  if (m.scan.len() > 0) {
+    m = scanned_until(dev, m, until);
+  } else if (m.wanted.len() > 0) {
+    m = covered_until(dev, m, until);
+  }
+  return pumped(dev, m, deck);
+}
+
+// The player after the device did each thing that the state wants.
+function turn(dev: Device, own p: Player, until: i64): Player {
+  let Player { model: asked, deck: held } = p;
+  let wants = asked.wants;
+  let state = Player { model: tune.Model { ...asked, wants: [] }, deck: held };
+  for want in wants {
+    state = done(dev, state, want);
+  }
+  return settled(dev, state, until);
+}
+
+// The player after the device did what the state wants. A thing that the
+// device did can make the state want one more thing.
+function run(dev: Device, own p: Player): Player {
   let until = dev.now() + SCAN_MS * 1000000i64;
-  let state = tune.Model { ...m };
-  while (turns < 4) {
-    let wants = state.wants;
-    state = tune.Model { ...state, wants: [] };
-    for want in wants {
-      state = done(dev, state, want);
-    }
-    if (state.scan.len() > 0) {
-      state = scanned_until(dev, state, until);
-    }
-    if (state.playing) {
-      state = pumped(dev, state);
-    }
-    if (state.wants.len() == 0) {
-      return state;
-    }
+  let state = turn(dev, p, until);
+  let turns = 1;
+  while (turns < 4 && state.model.wants.len() > 0) {
+    state = turn(dev, state, until);
     turns += 1;
   }
   return state;
 }
 
-// The program of tune.fern on the device `dev`.
 // Tells Android the track and the state of the player when one of them is
 // new, and keeps the phone awake while a track plays.
 function shown(dev: Device, own m: tune.Model): tune.Model {
@@ -249,6 +541,14 @@ function shown(dev: Device, own m: tune.Model): tune.Model {
   return tune.Model { ...m, told: key, awake: awake };
 }
 
-pub function program(dev: Device): ui.Program[tune.Model, tune.Msg] {
-  return tune.program().with_effects((m: tune.Model): tune.Model => shown(dev, run(dev, m)));
+// The player after the message `msg`: `tune.update` gives the next state,
+// and then the device does what that state wants.
+function stepped(dev: Device, own p: Player, msg: tune.Msg): Player {
+  let Player { model, deck } = p;
+  let Player { model: after, deck: held } = run(dev, Player { model: tune.update(model, msg), deck: deck });
+  return Player { model: shown(dev, after), deck: held };
+}
+
+pub function program(dev: Device): ui.Program[Player, tune.Msg] {
+  return ui.program((p: Player, s: ui.Screen): ui.El[tune.Msg] => tune.view(p.model, s), (own p: Player, msg: tune.Msg): Player => stepped(dev, p, msg)).with_tick((p: Player): i32 => tune.beat(p.model), tune.Beat).with_back((p: Player): Option[tune.Msg] => tune.back(p.model)).with_theme_of((p: Player, dark: boolean): ui.Theme => tune.theme(p.model, dark));
 }

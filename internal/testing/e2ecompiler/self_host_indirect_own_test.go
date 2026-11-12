@@ -73,6 +73,12 @@ function main(): i32 { return 0; }`, nil},
 function main(): i32 { return 0; }`, nil},
 		{"borrowed_callback", `function apply(f: (string) => i32, own s: string): i32 { let n = f(s); return n + f(s); }
 function main(): i32 { return 0; }`, nil},
+		{"field_value_result_local", `struct P[S] { update: (own S, i32) => S, effects: (own S) => S }
+function run[S](p: P[S], own s: S): S { let next = p.update(s, 3); return p.effects(next); }
+function main(): i32 { return 0; }`, []string{"E051"}},
+		{"field_value_own_result_local", `struct P[S] { update: (own S, i32) => own S, effects: (own S) => own S }
+function run[S](p: P[S], own s: S): S { let next = p.update(s, 3); return p.effects(next); }
+function main(): i32 { return 0; }`, nil},
 		{"borrowed_field_callback", `struct F { f: (string) => i32 }
 function apply(h: F, own s: string): i32 { let n = h.f(s); return n + h.f(s); }
 function main(): i32 { return 0; }`, nil},

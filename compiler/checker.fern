@@ -20378,6 +20378,9 @@ function lu_fresh_value(fx: LuFn, e: ast.Expr): boolean {
     if (lu_checked_result_call(fx, c)) {
       return true;
     }
+    if (lu_field_value_call(c)) {
+      return false;
+    }
     if let Some(tail) = ow_unsafe_value(c) {
       return lu_fresh_value(fx, tail);
     }
@@ -22710,6 +22713,16 @@ function lu_checked_result_local(fx: LuFn, name: string): boolean {
   };
   if let ast.ExprCall(call) = init {
     return lu_checked_result_call(fx, call);
+  }
+  return false;
+}
+
+// A call of a function value that a field holds, such as `p.update(x)`. Its
+// result can borrow an argument when its type has no `own` result.
+function lu_field_value_call(call: ast.ExprCall): boolean {
+  if let ast.ExprFieldAccess(_) = call.callee {
+    let ref = parser.ref_ungroup(parser.parse_type_ref(ast.expr_ty(call.callee)));
+    return ref.is_fn;
   }
   return false;
 }
