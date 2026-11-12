@@ -2667,18 +2667,15 @@ function ssa_vint_bin(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.EmitS
   return ssa_fput(reg_of, ins.result, d, s);
 }
 
-// A shift of each lane by one count. A shift to the right is a shift to
-// the left by the negative count. The x86-64 backend has no shift for
-// lanes of 8 bits, so this one refuses that width too.
+// A shift of each lane by one count. The count is modulo the lane width.
+// A shift to the right is a shift to the left by the negative count.
 function ssa_vint_shift(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   let w = ins.imm;
-  if (w == 8) {
-    ircore.unsupported_op_refuse(ir.kind_id(b), "arm64");
-  }
   s = ssa_fread(reg_of, ins.args[0], "d1", s);
   s = ssa_load(reg_of, ins.args[1], "x16", s);
   let a = ssa_fsrc(reg_of, ins.args[0], "d1");
   let d = ssa_fdst(reg_of, ins.result);
+  s = s.write("    and w16, w16, #" + util.i32_to_string(w - 1) + "\n");
   if (b != "vishl") {
     s = s.write("    neg w16, w16\n");
   }

@@ -1,0 +1,24 @@
+import "core/map";
+
+function twice(x: i32): i32 {
+  return x * 2;
+}
+
+function inc(x: i32): i32 {
+  return x + 1;
+}
+
+function main(): i32 {
+  let m: Map[string, (i32) => i32] = map_new(0);
+  m = m.insert("a", twice);
+  m = m.insert("b", inc);
+  let found = m.get_or("a", inc);
+  let fallback = m.get_or("z", inc);
+  let by_lambda = m.get_or("b", (x: i32): i32 => x);
+  print((found(4) + fallback(4) + by_lambda(4)).to_string());
+  let inferred = map_new(0);
+  inferred = inferred.insert("c", twice);
+  let got = inferred.get_or("c", inc);
+  print(got(10).to_string());
+  return 0;
+}

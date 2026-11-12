@@ -123,6 +123,21 @@ function test_lyrics(): test.TestOutcome {
   return test.assert_eq(got.join("|"), "Song|[00:01.00]One/Two|Café|Line one/Line two|Sung");
 }
 
+function test_gain(): test.TestOutcome {
+  // A frame of the person has a description and then a value.
+  let user = (name: string, value: string): u8[] => joined([bytes_of("TXXX"), wire.put_be([], (name.len() + value.len() + 2) as u64, 4), [0u8, 0u8, 0u8], bytes_of(name), [0u8], bytes_of(value)]);
+  let id3_gain = tags.read(id3(3u8, 0u8, joined([user("replaygain_track_gain", "-6.48 dB"), user("OTHER", "9"), frame3("TIT2", 0u8, bytes_of("Song"))])));
+  let flac_of = (line: string): u8[] => {
+    let list = joined([comment("fern encoder"), wire.put_le([], 1u64, 4), comment(line)]);
+    let info: u8[] = [];
+    for i in 0..34 {
+      info = info.append(0u8);
+    }
+    return joined([bytes_of("fLaC"), [0u8, 0u8, 0u8, 34u8], info, [132u8], wire.put_be([], list.len() as u64, 3), list]);
+  };
+  return test.assert_eq(id3_gain.title + " " + ((id3_gain.gain * 100.0).round() as i32).to_string() + " " + ((tags.read(flac_of("REPLAYGAIN_TRACK_GAIN=+2.5 dB")).gain * 100.0).round() as i32).to_string() + " " + ((tags.read(flac_of("R128_TRACK_GAIN=-512")).gain * 100.0).round() as i32).to_string() + " " + ((tags.none().gain * 100.0) as i32).to_string(), "Song -648 250 300 0");
+}
+
 function comment(s: string): u8[] {
   return joined([wire.put_le([], s.len() as u64, 4), bytes_of(s)]);
 }
@@ -262,6 +277,7 @@ function main(): i32 {
   r = r.it("a file holds the picture of its album", test_pictures);
   r = r.it("a genre is a text or a number of the ID3v1 list", test_genres);
   r = r.it("a file holds its lyrics", test_lyrics);
+  r = r.it("a file holds the gain of its track", test_gain);
   r = r.it("bytes that are not tags give empty tags", test_bytes_that_are_not_tags);
   return r.finish();
 }

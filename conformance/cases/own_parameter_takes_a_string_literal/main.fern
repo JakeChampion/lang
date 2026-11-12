@@ -1,6 +1,8 @@
 // A string literal is an owned value, so it can be the argument of an `own`
 // parameter. The callee can keep it, give it back, or let it go.
 
+struct TextCall { f: (own string) => i32 }
+
 struct Label { text: string }
 
 function keep(own text: string): Label {
@@ -20,7 +22,19 @@ function swap(own xs: string[], i: i32, own with_this: string): (string, string[
   return (old, xs.with(i, with_this));
 }
 
+function call_length(f: (own string) => i32): i32 {
+  return f("ab");
+}
+
+function call_field(h: TextCall): i32 {
+  return h.f("ab");
+}
+
 function main(): i32 {
+  assert(call_length(drop) == 2);
+  let run: (own string) => i32 = (own text: string): i32 => text.len();
+  assert(run("ab") == 2);
+  assert(call_field(TextCall { f: drop }) == 2);
   let label = keep("kept");
   print(label.text + " " + back("back") + " " + drop("gone").to_string());
   let (old, rest) = swap(["a", "b", "c"], 1, "z");

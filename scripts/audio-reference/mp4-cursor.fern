@@ -1,0 +1,105 @@
+// Emit presentation PCM for independent file-cursor and whole-track comparisons.
+import "std/audio/mp4";
+import "std/audio/mp4/file";
+import "std/audio/mp4/cursor";
+import "std/audio/source";
+import "std/hex";
+import "std/io";
+
+function bytes(samples: [f32]): u8[] {
+  let output: u8[] = [];
+  for sample in samples {
+    let bits = f32_bits(sample) as u32;
+    for shift in [0u32, 8u32, 16u32, 24u32] {
+      output = output.append((bits >> shift & 255u32) as u8);
+    }
+  }
+  return output;
+}
+
+function header(rate: i32, channels: i32, frames: i64): void {
+  print(rate.to_string() + " " + channels.to_string() + " " + frames.to_string());
+}
+
+function emit(position: i64, frames: i32, channels: i32, samples: [f32]): void {
+  print("O " + position.to_string() + " " + frames.to_string() + " " + hex.encode(bytes(samples[0:frames * channels])));
+}
+
+function complete(path: string): Result[void, string] {
+  let input = match (read_file_bytes(path)) { Ok(value) => value, Err(value) => { return Err(value.message()); } };
+  let value = match (mp4.decode(input, mp4.default_limits())) { Ok(value) => value, Err(value) => { return Err(value.message()); } };
+  header(value.sample_rate, value.channels, value.frames);
+  emit(0i64, value.frames as i32, value.channels, value.samples);
+  return Ok(());
+}
+
+function drain(own state: cursor.Cursor, reader: Reader): Result[void, string] {
+  let output: f32[] = [];
+  while (true) {
+    let (next, event) = match (state.step_into(output, reader)) { Ok(value) => value, Err(value) => { return Err(value.message()); } };
+    state = next;
+    match (event) {
+      cursor.BufferPending(value) => {
+        output = value;
+      },
+      cursor.BufferSamples(value) => {
+        emit(value.position, value.frames, value.info.channels, value.samples);
+        output = value.samples;
+      },
+      cursor.BufferFinished(_) => {
+        return Ok(());
+      }
+    }
+  }
+  return Ok(());
+}
+
+function prime(own state: cursor.Cursor, reader: Reader): Result[cursor.Cursor, string] {
+  let output: f32[] = [];
+  for i in 0..3 {
+    match (state.step_into(output, reader)) {
+      Ok((next, cursor.BufferPending(buffer))) => {
+        state = next;
+        output = buffer;
+      },
+      Err(value) => {
+        return Err(value.message());
+      },
+      _ => {
+        return Err("unexpected output before packet read");
+      }
+    }
+  }
+  return match (state.seek(1234i64)) { Ok(value) => Ok(value), Err(value) => Err(value.message()) };
+}
+
+function stream(reader: Reader, mode: string): Result[void, string] {
+  let index = match (file.inspect(reader, file.default_limits())) { Ok(value) => value, Err(value) => { return Err(value.message()); } };
+  for i in 0..index.tracks.len() {
+    if (index.tracks[i].enabled) {
+      let base = file.default_limits();
+      let limits = file.Limits { ...base, input: source.Limits { chunk_size: 7, max_buffer_bytes: base.input.max_buffer_bytes } };
+      let state = match (cursor.create(index, i, limits)) { Ok(value) => value, Err(value) => { return Err(value.message()); } };
+      if (mode == "seek") {
+        state = prime(state, reader)?;
+      }
+      let info = state.info();
+      header(info.sample_rate, info.channels, info.frames);
+      return drain(state, reader);
+    }
+  }
+  return Err("no enabled AAC track");
+}
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 3) {
+    return 2;
+  }
+  let Ok(reader) = open_reader(argv[1]) else {
+    return 3;
+  };
+  let result = if (argv[2] == "whole") { complete(argv[1]) } else { stream(reader, argv[2]) };
+  let closed = reader.close();
+  return match (result) { Ok(_) => match (closed) { Ok(_) => 0, Err(error) => { eprint(error.message()); return 1; } }, Err(message) => { eprint(message); return 1; } };
+}

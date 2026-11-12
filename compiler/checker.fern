@@ -21834,7 +21834,7 @@ function lu_looped_decls(stmts: ast.Stmt[], in_loop: boolean, own acc: string[])
   return acc;
 }
 
-// A plain named call whose result can borrow from one of its arguments.
+// A declared call whose result can borrow from its receiver or arguments.
 function lu_init_borrows(fx: LuFn, e: ast.Expr): boolean {
   if let ast.ExprUnary(u) = e {
     return u.op == "try_" && lu_init_borrows(fx, u.operand);
@@ -21843,8 +21843,20 @@ function lu_init_borrows(fx: LuFn, e: ast.Expr): boolean {
     if let ast.ExprIdent(_) = c.callee {
       return lu_call_site_borrows(fx, c);
     }
+    if let ast.ExprFieldAccess(field) = c.callee {
+      for method in fx.lenders.methods {
+        if (lu_matches_method(method, field)) {
+          return lu_call_site_borrows(fx, c);
+        }
+      }
+    }
   }
   return false;
+}
+
+function lu_matches_method(method: OwnLend, field: ast.ExprFieldAccess): boolean {
+  let receiver = ast.receiver_tag(field.obj);
+  return method.name == field.field && (receiver.len() == 0 || method.receiver == ow_receiver_ns(receiver));
 }
 
 function lu_call_site_borrows(fx: LuFn, c: ast.ExprCall): boolean {
@@ -21860,6 +21872,25 @@ function lu_call_borrows_beside(fx: LuFn, c: ast.ExprCall, except: string): bool
     return false;
   }
   if (!ow_call_may_borrow(c, fx.ofuncs, fx.borrows, fx.builtins)) {
+    return false;
+  }
+  if let ast.ExprFieldAccess(field) = c.callee {
+    let key = ow_receiver_ns(ast.receiver_tag(field.obj)) + "." + field.field;
+    if (util.has_str(fx.lenders.fresh_methods, key)) {
+      return false;
+    }
+    for method in fx.lenders.methods {
+      if (lu_matches_method(method, field)) {
+        if (lu_arg_may_borrow(fx, field.obj) && lu_lends(method, 0)) {
+          return true;
+        }
+        for i in 0..c.args.len() {
+          if (lu_lends(method, i + 1) && lu_arg_may_borrow(fx, c.args[i])) {
+            return true;
+          }
+        }
+      }
+    }
     return false;
   }
   let callee: string = ow_ident_name(c.callee);
@@ -26319,9 +26350,9 @@ function ow_handle_borrows(mod: parser.Module, borrows: util.NameIndex, dx: OwnD
 // The parameters of each declared function that can lend a handle to its
 // result: a borrowed pointer type that can hold a handle. A function the
 // module does not declare has no row, and every argument of it can lend.
-struct OwnLend { name: string, lend: boolean[], callbacks: boolean[] }
+struct OwnLend { name: string, receiver: string, lend: boolean[], callbacks: boolean[] }
 
-struct OwnLenders { rows: OwnLend[], names: util.NameIndex, methods: OwnLend[], constructors: util.NameIndex, decls: OwnDecls }
+struct OwnLenders { rows: OwnLend[], names: util.NameIndex, methods: OwnLend[], fresh_methods: string[], constructors: util.NameIndex, decls: OwnDecls }
 
 function ow_lenders(mod: parser.Module, ofuncs: OwnFuncs, dx: OwnDecls): OwnLenders {
   let rows: OwnLend[] = [];
@@ -26335,7 +26366,7 @@ function ow_lenders(mod: parser.Module, ofuncs: OwnFuncs, dx: OwnDecls): OwnLend
         lend = lend.append((!param.own || param.type_name == "fn") && ow_param_can_lend(fn, param, ofuncs, dx));
         callbacks = callbacks.append(param.type_name == "fn");
       }
-      methods = methods.append(OwnLend { name: fn.name, lend: lend, callbacks: callbacks });
+      methods = methods.append(OwnLend { name: fn.name, receiver: ow_receiver_ns(fn.receiver_type), lend: lend, callbacks: callbacks });
       continue;
     }
     let flags: boolean[] = ow_func_flags(ofuncs, fn.name);
@@ -26345,7 +26376,7 @@ function ow_lenders(mod: parser.Module, ofuncs: OwnFuncs, dx: OwnDecls): OwnLend
       lend = lend.append((i >= flags.len() || !flags[i] || fn.params[i].type_name == "fn") && ow_param_can_lend(fn, fn.params[i], ofuncs, dx));
       callbacks = callbacks.append(fn.params[i].type_name == "fn");
     }
-    rows = rows.append(OwnLend { name: fn.name, lend: lend, callbacks: callbacks });
+    rows = rows.append(OwnLend { name: fn.name, receiver: "", lend: lend, callbacks: callbacks });
     names = names.append(fn.name);
   }
   let constructors: string[] = [];
@@ -26363,7 +26394,7 @@ function ow_lenders(mod: parser.Module, ofuncs: OwnFuncs, dx: OwnDecls): OwnLend
       }
     }
   }
-  return OwnLenders { rows: rows, names: util.name_index(names), methods: methods, constructors: util.name_index(constructors), decls: dx };
+  return OwnLenders { rows: rows, names: util.name_index(names), methods: methods, fresh_methods: [], constructors: util.name_index(constructors), decls: dx };
 }
 
 function ow_decl_type_is_pointer(fn: parser.FuncDecl, tn: string, ofuncs: OwnFuncs): boolean {
@@ -27170,7 +27201,7 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
   let noret = lu_no_return_funcs(mod);
   let fresh_scrut = ow_signature_fresh_owners(result_mod, collect_own_funcs(result_mod), builtins, decls);
   let handle_borrows = ow_handle_borrows(mod, borrows, decls);
-  let lenders = ow_lenders(mod, ofuncs, decls);
+  let lenders = OwnLenders { ...ow_lenders(mod, ofuncs, decls), fresh_methods: fresh_methods };
   let out: util.Diag[] = ow_value_diags(decls);
   let value_proofs = cell_new(OwnDataProofs { types: [], copyable: [] });
   let empty_names: string[] = [];
@@ -34858,15 +34889,6 @@ function any_open_enum(ts: typeinfo.Type[], s: Scope): boolean {
   return false;
 }
 
-function all_known(ts: typeinfo.Type[]): boolean {
-  for t in ts {
-    if (!known_type(t)) {
-      return false;
-    }
-  }
-  return true;
-}
-
 function fill_open_args(have: typeinfo.Type[], want: typeinfo.Type[]): (typeinfo.Type[], boolean) {
   let out: typeinfo.Type[] = [];
   if (have.len() != want.len()) {
@@ -34874,7 +34896,7 @@ function fill_open_args(have: typeinfo.Type[], want: typeinfo.Type[]): (typeinfo
   }
   for i in 0..have.len() {
     if (unbound_enum_argument(have[i])) {
-      if (!known_type(want[i])) {
+      if (holds_any_unknown(want[i])) {
         return (out, false);
       }
       out = out.append(want[i]);
@@ -34894,7 +34916,7 @@ function fill_open_args(have: typeinfo.Type[], want: typeinfo.Type[]): (typeinfo
 // `want` does not know the arguments.
 function fill_open_enum(have: typeinfo.Type, want: typeinfo.Type): (typeinfo.Type, boolean) {
   if (unbound_enum_argument(have)) {
-    return (want, known_type(want));
+    return (want, !holds_any_unknown(want));
   }
   match (have) {
     typeinfo.TypeUnion(h) => {
@@ -34936,7 +34958,7 @@ function fill_open_map(h: typeinfo.TypeMap, want: typeinfo.Type): (typeinfo.Type
   };
   let key = if (map_new_column(h.key)) { w.key } else { h.key };
   let value = if (map_new_column(h.value)) { w.value } else { h.value };
-  return (t_map(key, value), known_type(key) && known_type(value));
+  return (t_map(key, value), !holds_any_unknown(key) && !holds_any_unknown(value));
 }
 
 function fill_open_union(h: typeinfo.TypeUnion, want: typeinfo.Type): (typeinfo.Type, boolean) {
@@ -34947,36 +34969,10 @@ function fill_open_union(h: typeinfo.TypeUnion, want: typeinfo.Type): (typeinfo.
     return (want, false);
   }
   if (bare_union(h)) {
-    return (want, w.args.len() > 0 && known_type(want));
+    return (want, w.args.len() > 0 && !holds_any_unknown(want));
   }
   let (args, ok) = fill_open_args(h.args, w.args);
   return (typeinfo.TypeUnion { name: h.name, args: args }, ok);
-}
-
-function known_type(t: typeinfo.Type): boolean {
-  match (t) {
-    typeinfo.TypeUnknown(_) => {
-      return false;
-    },
-    typeinfo.TypeUnion(u) => {
-      return all_known(u.args);
-    },
-    typeinfo.TypeStruct(st) => {
-      return all_known(st.args);
-    },
-    typeinfo.TypeArray(a) => {
-      return known_type(a.elem);
-    },
-    typeinfo.TypeMap(m) => {
-      return known_type(m.key) && known_type(m.value);
-    },
-    typeinfo.TypeTuple(tt) => {
-      return all_known(tt.elements);
-    },
-    _ => {
-      return true;
-    }
-  }
 }
 
 // open_spelling writes a filled type as an annotation the checker reads back,

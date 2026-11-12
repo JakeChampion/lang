@@ -521,6 +521,10 @@ Slice 7e widens the IR and the backends. The IR gets `vimul`, `vishl`,
 `vishrs` and `vishru`. Each backend has code for lanes of 8, 16 and 32
 bits. The three backends refuse the same ops, so a program has one
 behaviour on each target: the saturating ops and the average have no
-form for lanes of 32 bits, and the multiply and the shifts have no form
-for lanes of 8 bits. x86-64 has no shift instruction for bytes, and
-slice 7g gives that width a shift from the shift of 16 bits and a mask.
+form for lanes of 32 bits, and the multiply has no form for lanes of 8
+bits.
+
+Slice 7g gives lanes of 8 bits their shifts. x86-64 has no shift
+instruction for bytes. Its code is the shift of the lanes of 16 bits and
+a mask, and the signed shift then gives each byte its sign. A shift count
+is modulo the lane width on each backend.

@@ -1,0 +1,170 @@
+import "std/audio/mp4";
+import "std/audio/mp4/file";
+import "std/audio/mp4/cursor";
+import "std/audio/source";
+import "std/test";
+import "mp4_vectors";
+import "aac_kernel_check" as reference;
+import "mp4_file_check" as fixture;
+import "video_mp4_file_check" as memory;
+
+function fail(error: source.ReadError): string {
+  return error.message();
+}
+
+function copy(samples: [f32]): f32[] {
+  let output: f32[] = [];
+  for value in samples {
+    output = output.append(value);
+  }
+  return output;
+}
+
+function prefix(actual: cursor.Audio, want: mp4.Decoded, position: i64): Result[void, string] {
+  if (actual.position != position || actual.frames < 1 || actual.frames > 1024 || actual.info.sample_rate != want.sample_rate || actual.info.channels != want.channels || actual.info.frames != want.frames) {
+    return Err("presentation event metadata");
+  }
+  let count = actual.frames * want.channels;
+  for i in 0..count {
+    if (actual.samples[i] != want.samples[position as i32 * want.channels + i]) {
+      return Err("exact whole-track sample reference");
+    }
+  }
+  return Ok(());
+}
+
+function unchanged(value: [f32], old: [f32], first: i32): Result[void, string] {
+  if (value.len() != old.len()) {
+    return Err("output capacity changed");
+  }
+  for i in first..old.len() {
+    if (value[i] != old[i]) {
+      return Err("output tail changed");
+    }
+  }
+  return Ok(());
+}
+
+pub function read(index: mp4.Index, input: memory.Source, want: mp4.Decoded, target: i64): Result[void, string] {
+  let state = match (cursor.create(index, 0, file.default_limits())) { Ok(value) => value, Err(value) => { return Err(fail(value)); } };
+  state = match (state.seek(target)) { Ok(value) => value, Err(value) => { return Err(fail(value)); } };
+  let output: f32[] = [];
+  for i in 0..1024 * want.channels + 3 {
+    output = output.append(11.25f32);
+  }
+  return drain(state, input, want, output, target);
+}
+
+function drain(own state: cursor.Cursor, input: memory.Source, want: mp4.Decoded, own output: f32[], position: i64): Result[void, string] {
+  for step in 0..100000 {
+    let before = input.counts();
+    let old = copy(output);
+    let (next, event) = match (state.step_into_with(output, input.seek, input.read)) { Ok(value) => value, Err(value) => { return Err(fail(value)); } };
+    state = next;
+    let after = input.counts();
+    if (after.seeks - before.seeks + after.reads - before.reads > 1) {
+      return Err("multiple source operations in one step");
+    }
+    let (buffer, at, done) = outcome(event, old, want, position)?;
+    output = buffer;
+    position = at;
+    if (done) {
+      return finished(state, input, output);
+    }
+  }
+  return Err("cursor did not finish");
+}
+
+function outcome(own event: cursor.BufferEvent, old: [f32], want: mp4.Decoded, position: i64): Result[(f32[], i64, boolean), string] {
+  match (event) {
+    cursor.BufferPending(value) => {
+      unchanged(value, old, 0)?;
+      return Ok((value, position, false));
+    },
+    cursor.BufferSamples(audio) => {
+      prefix(audio, want, position)?;
+      unchanged(audio.samples, old, audio.frames * want.channels)?;
+      return Ok((audio.samples, position + audio.frames as i64, false));
+    },
+    cursor.BufferFinished(value) => {
+      if (position != want.frames) {
+        return Err("presentation completion");
+      }
+      unchanged(value, old, 0)?;
+      return Ok((value, position, true));
+    }
+  }
+}
+
+function finished(own state: cursor.Cursor, input: memory.Source, own output: f32[]): Result[void, string] {
+  let before = input.counts();
+  for i in 0..2 {
+    let old = copy(output);
+    let (next, event) = match (state.step_into_with(output, input.seek, input.read)) { Ok(value) => value, Err(value) => { return Err(fail(value)); } };
+    state = next;
+    if let cursor.BufferFinished(value) = event {
+      if (value != old) {
+        return Err("finished output changed");
+      }
+      output = value;
+    } else {
+      return Err("finished state changed");
+    }
+  }
+  let after = input.counts();
+  if (before.seeks != after.seeks || before.reads != after.reads) {
+    return Err("source access after completion");
+  }
+  return Ok(());
+}
+
+function cases(): test.TestOutcome {
+  for v in mp4_vectors.vectors() {
+    let Ok(bytes) = reference.unpack(v.bytes) else {
+      return test.fail("fixture");
+    };
+    let Ok(want) = mp4.decode(bytes, mp4.default_limits()) else {
+      return test.fail("whole " + v.name);
+    };
+    for short in [0, 7] {
+      let input = memory.memory([memory.Segment { at: 0i64, bytes: bytes }], [], short);
+      let Ok(index) = file.inspect_with(bytes.len() as i64, input.seek, input.read, file.default_limits()) else {
+        return test.fail("index " + v.name);
+      };
+      if let Err(message) = read(index, input, want, 0i64) {
+        return test.fail(v.name + ": " + message);
+      }
+    }
+  }
+  return test.pass();
+}
+
+function seeks(): test.TestOutcome {
+  for name in ["stereo-faststart", "silence", "surround"] {
+    let Ok(bytes) = fixture.fixture(name) else {
+      return test.fail("fixture");
+    };
+    let Ok(want) = mp4.decode(bytes, mp4.default_limits()) else {
+      return test.fail("whole");
+    };
+    let input = memory.memory([memory.Segment { at: 0i64, bytes: bytes }], [], 7);
+    let Ok(index) = file.inspect_with(bytes.len() as i64, input.seek, input.read, file.default_limits()) else {
+      return test.fail("index");
+    };
+    for at in [0i64, 1i64, 1023i64, 1024i64, want.frames - 1i64, want.frames] {
+      if (at <= want.frames) {
+        if let Err(message) = read(index, input, want, at) {
+          return test.fail(name + ": " + message);
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let r = test.new("bounded native AAC MP4 cursor");
+  r = r.it("every sample, short reads, output tails, and cooperative source operations", cases);
+  r = r.it("sample seeks, overlap replay, and idle completion", seeks);
+  return r.finish();
+}
