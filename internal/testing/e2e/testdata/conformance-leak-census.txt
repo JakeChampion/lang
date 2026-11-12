@@ -366,7 +366,6 @@ destructure_repeated_discards                        0
 destructure_repeated_discards_in_param               0
 destructure_tuple_and_struct_forms                   0
 destructured_binding_match_on_its_method             0
-diag_e009_lane_integer                               0
 digit_separators_and_usize_suffix                    0
 display_user_type_print                             0
 div_modulo                                           0
