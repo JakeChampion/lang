@@ -1096,6 +1096,7 @@ pub function raw_floor_sigs(): RawFloorSig[] {
     RawFloorSig { name: "__fern_rc_dec", params: [p], result: typeinfo.t_void() },
     RawFloorSig { name: "__fern_slice_abort", params: [], result: typeinfo.t_void() },
     RawFloorSig { name: "__fern_oob_abort", params: [], result: typeinfo.t_void() },
+    RawFloorSig { name: "__fern_str_oob_abort", params: [], result: typeinfo.t_void() },
     RawFloorSig { name: "__fern_vdso_clock", params: [], result: p },
     RawFloorSig { name: "__syscall3", params: [n, w, w, w], result: w },
     RawFloorSig { name: "__syscall4", params: [n, w, w, w, w], result: w },
@@ -12911,8 +12912,8 @@ function float_literal_tree(e: ast.Expr): boolean {
 
 // element_literal_kind is numeric_literal_kind for an array element. When gives is true, an integer literal that a float destination reads stays an integer literal.
 function element_literal_kind(e: ast.Expr, gives: boolean): i32 {
-  if (gives && float_read_int_tree(e)) {
-    return 1;
+  if (float_read_int_tree(e)) {
+    return if (gives) { 1 } else { 2 };
   }
   return numeric_literal_kind(e);
 }

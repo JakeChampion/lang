@@ -348,6 +348,14 @@ _start:
     umin v23.4h, v9.4h, v28.4h
     sshl v23.2d, v9.2d, v28.2d
     ushl v23.8b, v9.8b, v28.8b
+    sqadd v23.16b, v9.16b, v28.16b
+    uqadd v2.16b, v21.16b, v1.16b
+    uqadd v23.4h, v9.4h, v28.4h
+    sqsub v23.2d, v9.2d, v28.2d
+    uqsub v4.16b, v23.16b, v3.16b
+    uqsub v23.4s, v9.4s, v28.4s
+    srhadd v23.8h, v9.8h, v28.8h
+    urhadd v5.16b, v2.16b, v30.16b
     and v23.8b, v9.8b, v28.8b
     bic v23.16b, v9.16b, v28.16b
     orr v23.8b, v9.8b, v28.8b

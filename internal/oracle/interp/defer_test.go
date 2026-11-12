@@ -97,3 +97,24 @@ func TestInterpDeferReturnValueComputedFirst(t *testing.T) {
 		t.Errorf("return-before-defer: got %v, want 5 (defer mutation must not affect return value)", v)
 	}
 }
+
+func TestInterpDeferSeesTheArrayBeforeAReturnWrite(t *testing.T) {
+	for _, mode := range []string{"", "copy", "verify"} {
+		t.Setenv("FERN_INTERP_ARRAY_COW", mode)
+		_, out := evalProgramCapture(t, `function show(w: i32[]): void {
+			if (w[0] == 1) { print("old"); } else { print("new"); }
+		}
+		function put(own w: i32[]): i32[] {
+			defer show(w);
+			return w.with(0, 9);
+		}
+		function main(): void {
+			let a: i32[] = [1, 2, 3];
+			a = put(a);
+			show(a);
+		}`)
+		if out != "old\nnew\n" {
+			t.Errorf("FERN_INTERP_ARRAY_COW=%q: stdout = %q, want \"old\\nnew\\n\"", mode, out)
+		}
+	}
+}

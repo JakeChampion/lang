@@ -228,6 +228,38 @@ var withAliasingCases = []struct {
 		want: 59,
 	},
 	{
+		name: "return writes into an owned local",
+		src: `function put(own w: i32[], i: i32, v: i32): i32[] { return w.with(i, v); }
+		function main(): i32 {
+			let a: i32[] = [1, 2, 3];
+			a = put(a, 0, 9);
+			return a[0] * 10 + a[2];
+		}`,
+		want: 93,
+	},
+	{
+		name: "return from a borrowed parameter",
+		src: `function put(w: i32[]): i32[] { return w.with(0, 9); }
+		function main(): i32 {
+			let a: i32[] = [1, 2, 3];
+			let b: i32[] = put(a);
+			return a[0] * 10 + b[0];
+		}`,
+		want: 19,
+	},
+	{
+		name: "return beside a closure that reads the local",
+		src: `function put(own w: i32[]): i32 {
+			let g: () => i32 = (): i32 => { return w[0]; };
+			return w.with(0, 9)[0] * 10 + g();
+		}
+		function main(): i32 {
+			let a: i32[] = [1, 2, 3];
+			return put(a);
+		}`,
+		want: 91,
+	},
+	{
 		name: "reassign through a callee",
 		src: `function setz(w: i32[], i: i32, v: i32): i32[] { w = w.with(i, v); return w; }
 		function main(): i32 {
@@ -282,6 +314,31 @@ func TestArrayWithIsLinear(t *testing.T) {
 	}
 	if largeCopies > large {
 		t.Errorf("%d writes copied %d elements, want at most %d", large, largeCopies, large)
+	}
+}
+
+func TestArrayWithInAReturnIsLinear(t *testing.T) {
+	fill := func(n int) int {
+		t.Helper()
+		src := fmt.Sprintf(`function put(own w: i32[], i: i32, v: i32): i32[] { return w.with(i, v); }
+		function main(): i32 {
+			let a: i32[] = [];
+			let i: i32 = 0;
+			while (i < %d) { a = a.append(0); i = i + 1; }
+			let j: i32 = 0;
+			while (j < %d) { a = put(a, j, j); j = j + 1; }
+			return a[%d - 1];
+		}`, n, n, n)
+		v, ip := evalProgram(t, src)
+		if v != Number(n-1) {
+			t.Fatalf("last element %v, want %d", v, n-1)
+		}
+		return ip.arraySetCopies
+	}
+	for _, n := range []int{1000, 4000} {
+		if copies := fill(n); copies > n {
+			t.Errorf("%d writes copied %d elements, want at most %d", n, copies, n)
+		}
 	}
 }
 

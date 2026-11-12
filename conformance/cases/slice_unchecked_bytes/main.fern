@@ -1,19 +1,10 @@
 // spec: ST-03
-
-
-
-
-
-
-
-
-
-
-
+// The endpoints are byte offsets. "é" takes two bytes, so the boundaries
+// of "héllo" are 0, 1, 3, 4, 5 and 6.
 function main(): i32 {
     let m: string = "héllo";
-    print(slice_unchecked(m, 1, 2).len().to_string());
-    print(slice_unchecked(m, 2, 4).len().to_string());
+    print(slice_unchecked(m, 0, 1).len().to_string());
+    print(slice_unchecked(m, 1, 3).len().to_string());
     print(slice_unchecked(m, 0, 6).len().to_string());
     return 0;
 }

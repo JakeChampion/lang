@@ -1,4 +1,5 @@
 import "std/string";
+import "std/utf8";
 import "std/i32";
 import "./diag";
 
@@ -9,6 +10,19 @@ pub struct Tok { kind: TokKind, text: string, aux: string, line: i32, col: i32 }
 pub struct LexResult { toks: Tok[], diags: diag.Diag[] }
 
 struct Pos { i: i32, line: i32, col: i32 }
+
+// True when the bytes of `t` are in `src` at byte offset `i`.
+function has_at(src: string, i: i32, t: string): boolean {
+  if (i + t.len() > src.len()) {
+    return false;
+  }
+  for k in 0..t.len() {
+    if (src[i + k] != t[k]) {
+      return false;
+    }
+  }
+  return true;
+}
 
 function advance(src: string, p: Pos, to: i32): Pos {
   let line = p.line;
@@ -73,7 +87,7 @@ function byte_units(): string[] {
 function match_unit(src: string, i: i32, units: string[]): string {
   for unit in units {
     let e = i + unit.len();
-    if (e <= src.len() && slice_unchecked(src, i, e) == unit && (e == src.len() || !is_alphanumeric(src[e]))) {
+    if (has_at(src, i, unit) && (e == src.len() || !is_alphanumeric(src[e]))) {
       return unit;
     }
   }
@@ -84,7 +98,7 @@ struct Run { start: i32, end: i32, close: i32, ok: boolean }
 
 function delimited(src: string, from: i32, closer: string): Run {
   for j in from..=src.len() - closer.len() {
-    if (slice_unchecked(src, j, j + closer.len()) == closer) {
+    if (has_at(src, j, closer)) {
       return Run { start: from, end: j, close: j + closer.len(), ok: true };
     }
   }
@@ -192,7 +206,7 @@ function scan_string(src: string, p: Pos): Scan {
     form = "brace";
     open = p.i + 2;
     closer = "\"}";
-  } else if (p.i + 2 < src.len() && slice_unchecked(src, p.i, p.i + 3) == "\"\"\"") {
+  } else if (has_at(src, p.i, "\"\"\"")) {
     form = "triple";
     open = p.i + 3;
     closer = "\"\"\"";
@@ -207,7 +221,7 @@ function scan_string(src: string, p: Pos): Scan {
 
 function scan_punct(src: string, p: Pos): Scan {
   for op in two_byte_ops() {
-    if (p.i + 2 <= src.len() && slice_unchecked(src, p.i, p.i + 2) == op) {
+    if (has_at(src, p.i, op)) {
       let t2 = Tok { kind: TPunct, text: op, aux: "", line: p.line, col: p.col };
       return scanned(t2, advance(src, p, p.i + 2));
     }
@@ -257,8 +271,9 @@ function scan_one(src: string, p: Pos): Scan {
   if (is_punct_byte(b)) {
     return scan_punct(src, p);
   }
-  let bad = Tok { kind: TPunct, text: slice_unchecked(src, p.i, p.i + 1).to_owned(), aux: "", line: p.line, col: p.col };
-  return scan_failed(bad, advance(src, p, p.i + 1), f"unexpected byte '{bad.text}'", p);
+  let end = utf8.ceil_char_boundary(src, p.i + 1);
+  let bad = Tok { kind: TPunct, text: slice_unchecked(src, p.i, end).to_owned(), aux: "", line: p.line, col: p.col };
+  return scan_failed(bad, advance(src, p, end), f"unexpected character '{bad.text}'", p);
 }
 
 pub function lex(src: string): LexResult {

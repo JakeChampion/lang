@@ -655,8 +655,119 @@ function simd_opcode(op: string): i32 {
     "f64x2.promote_low_f32x4" => 95,
     "i32x4.extract_lane" => 27,
     "i64x2.extract_lane" => 29,
+    _ => simd_int_opcode(op),
+  };
+}
+
+// The opcode of an operation on integer lanes of 8, 16 or 32 bits, or -1.
+// The three shapes have the same verbs in the same order, so one table
+// of verbs gives the opcode from the base of the shape.
+function simd_int_opcode(op: string): i32 {
+  let Some(dot) = op.index_of(".") else {
+    return -1;
+  };
+  let shape = slice_unchecked(op, 0, dot).to_owned();
+  let verb = slice_unchecked(op, dot + 1, op.len()).to_owned();
+  let fixed = simd_int_fixed(op);
+  if (fixed >= 0) {
+    return fixed;
+  }
+  // The compares start at 35, 45 and 55. The arithmetic starts at 96,
+  // 128 and 160.
+  let at = match (shape) {
+    "i8x16" => 0,
+    "i16x8" => 1,
+    "i32x4" => 2,
     _ => -1,
   };
+  if (at < 0) {
+    return -1;
+  }
+  let compare = simd_place(["eq", "ne", "lt_s", "lt_u", "gt_s", "gt_u", "le_s", "le_u", "ge_s", "ge_u"], verb);
+  if (compare >= 0) {
+    return 35 + 10 * at + compare;
+  }
+  let math = simd_int_math(verb);
+  if (math < 0 || simd_int_absent(at, verb)) {
+    return -1;
+  }
+  return 96 + 32 * at + math;
+}
+
+// The place of an arithmetic verb after the base of its shape, or -1.
+function simd_int_math(verb: string): i32 {
+  return match (verb) {
+    "abs" => 0,
+    "neg" => 1,
+    "all_true" => 3,
+    "bitmask" => 4,
+    "shl" => 11,
+    "shr_s" => 12,
+    "shr_u" => 13,
+    "add" => 14,
+    "add_sat_s" => 15,
+    "add_sat_u" => 16,
+    "sub" => 17,
+    "sub_sat_s" => 18,
+    "sub_sat_u" => 19,
+    "mul" => 21,
+    "min_s" => 22,
+    "min_u" => 23,
+    "max_s" => 24,
+    "max_u" => 25,
+    "avgr_u" => 27,
+    _ => -1,
+  };
+}
+
+// True for a verb that the shape at `at` does not have: lanes of 8 bits
+// have no multiply, and lanes of 32 bits have no saturating arithmetic
+// and no average.
+function simd_int_absent(at: i32, verb: string): boolean {
+  if (at == 0) {
+    return verb == "mul";
+  }
+  return at == 2 && (verb.contains("_sat_") || verb == "avgr_u");
+}
+
+// The opcode of an operation whose place does not follow the table.
+function simd_int_fixed(op: string): i32 {
+  return match (op) {
+    "i8x16.swizzle" => 14,
+    "i16x8.splat" => 16,
+    "i32x4.splat" => 17,
+    "i8x16.extract_lane_s" => 21,
+    "i8x16.extract_lane_u" => 22,
+    "i8x16.replace_lane" => 23,
+    "i16x8.extract_lane_s" => 24,
+    "i16x8.extract_lane_u" => 25,
+    "i16x8.replace_lane" => 26,
+    "i32x4.replace_lane" => 28,
+    "i8x16.popcnt" => 98,
+    "i8x16.narrow_i16x8_s" => 101,
+    "i8x16.narrow_i16x8_u" => 102,
+    "i16x8.narrow_i32x4_s" => 133,
+    "i16x8.narrow_i32x4_u" => 134,
+    "i16x8.extend_low_i8x16_s" => 135,
+    "i16x8.extend_high_i8x16_s" => 136,
+    "i16x8.extend_low_i8x16_u" => 137,
+    "i16x8.extend_high_i8x16_u" => 138,
+    "i32x4.extend_low_i16x8_s" => 167,
+    "i32x4.extend_high_i16x8_s" => 168,
+    "i32x4.extend_low_i16x8_u" => 169,
+    "i32x4.extend_high_i16x8_u" => 170,
+    "i32x4.dot_i16x8_s" => 186,
+    _ => -1,
+  };
+}
+
+function simd_place(verbs: string[], verb: string): i32 {
+  for i in 0..verbs.len() {
+    if (verbs[i] == verb) {
+      return i;
+    }
+  }
+  return -1;
 }
 
 function shuffle_digits(text: string, start: i32, radix: i32): Option[i32] {
@@ -716,7 +827,7 @@ function simd_has_memarg(op: string): boolean {
 }
 
 function simd_has_lane(op: string): boolean {
-  return op.ends_with(".extract_lane") || op.ends_with(".replace_lane");
+  return op.ends_with(".extract_lane") || op.ends_with(".extract_lane_s") || op.ends_with(".extract_lane_u") || op.ends_with(".replace_lane");
 }
 
 function simd_lane_index(op: string, text: string): i32 {
@@ -757,7 +868,18 @@ function simd_binary_verb(op: string): boolean {
     || op.ends_with(".min") || op.ends_with(".max") || op.ends_with(".pmin") || op.ends_with(".pmax")
     || op.ends_with(".eq") || op.ends_with(".ne") || op.ends_with(".lt") || op.ends_with(".gt") || op.ends_with(".lt_s")
     || op.ends_with(".le") || op.ends_with(".ge")
-    || op.ends_with(".and") || op.ends_with(".andnot") || op.ends_with(".or") || op.ends_with(".xor");
+    || op.ends_with(".and") || op.ends_with(".andnot") || op.ends_with(".or") || op.ends_with(".xor")
+    || simd_int_binary(op);
+}
+
+// True for an operation on integer lanes that takes two operands. A
+// shift takes the lanes and a count.
+function simd_int_binary(op: string): boolean {
+  let Some(dot) = op.index_of(".") else {
+    return false;
+  };
+  let verb = slice_unchecked(op, dot + 1, op.len()).to_owned();
+  return simd_place(["lt_u", "gt_s", "gt_u", "le_s", "le_u", "ge_s", "ge_u", "shl", "shr_s", "shr_u", "add_sat_s", "add_sat_u", "sub_sat_s", "sub_sat_u", "min_s", "min_u", "max_s", "max_u", "avgr_u", "swizzle", "dot_i16x8_s"], verb) >= 0 || verb.starts_with("narrow_");
 }
 
 function bulk_mem_opcode(op: string): i32 {

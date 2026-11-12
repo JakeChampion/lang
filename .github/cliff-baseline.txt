@@ -162,11 +162,12 @@
 # This is an inherited main cost. The 1% tolerance is unchanged.
 # 2026-11-11: main 2ca148c675 measured 378,075 checker append crossings in CI 42942829694, job 130273056431.
 # Record the exact corrective count. All tolerances stay unchanged.
-# 2026-11-12: perf-x86_64 job 131088356182 on #15467 measured x86_64/checker.cliff_bytes at 45189512 (was 39116232). That pull request changed no file of the compiler, so the row moved on main. A local scripts/cliff-bench run on main 71058189 measures 45150392, which is the value here. The tolerance is unchanged.
-x86_64/checker.cliff_bytes	45150392
+# 2026-11-12: perf-x86_64 job 131075781965 (#15461, on main 0b8548db) measured 45,149,488 copied bytes (was 39,116,232).
+# This is an inherited main cost of the merges after 710af42c. The 1% tolerance is unchanged.
+x86_64/checker.cliff_bytes	45149488
 # 2026-11-11: Bank checker.cliff_count 378075 -> 373796 after main reverts.
 # Exact CI 42958185608 / job 130320191632 measures source ca80bd07aba3.
 # That source tree equals main 38399ecf. The 1% tolerance stays unchanged.
 # 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured x86_64/checker.cliff_count at 379346 (was 373694). The tolerance is unchanged.
-# 2026-11-12: the same job measured x86_64/checker.cliff_count at 462170 (was 379346), and the same local run on main 71058189 measures 461557. The tolerance is unchanged.
-x86_64/checker.cliff_count	461557
+# 2026-11-12: the same job measured x86_64/checker.cliff_count at 461488 (was 379346). The tolerance is unchanged.
+x86_64/checker.cliff_count	461488
