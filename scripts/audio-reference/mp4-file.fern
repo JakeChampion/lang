@@ -1,0 +1,58 @@
+// Emit native AAC file metadata and original packet bytes for independent checks.
+import "std/audio/mp4";
+import "std/audio/mp4/file" as mp4file;
+import "std/audio/mp4/tables";
+import "std/audio/source";
+import "std/audio/file";
+import "std/hex";
+
+function packet(reader: Reader, p: tables.Packet): Result[void, string] {
+  let window = match (file.create(p.offset, p.bytes, source.Limits { chunk_size: 7, max_buffer_bytes: 1048576 })) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+  while (!window.ready) {
+    window = match (window.step(reader)) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+  }
+  print("P " + p.offset.to_string() + " " + p.bytes.to_string() + " " + p.position.to_string() + " " + p.duration.to_string() + " " + p.description.to_string() + " " + hex.encode(window.view()));
+  return Ok(());
+}
+
+function index(reader: Reader, path: string, mode: string): Result[mp4.Index, string] {
+  if (mode == "complete") {
+    let input = match (read_file_bytes(path)) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+    return match (mp4.inspect(input, mp4.default_limits())) { Ok(value) => Ok(value), Err(error) => Err(error.message()) };
+  }
+  return match (mp4file.inspect(reader, mp4file.default_limits())) { Ok(value) => Ok(value), Err(error) => Err(error.message()) };
+}
+
+function emit(reader: Reader, path: string, mode: string): Result[void, string] {
+  let value = index(reader, path, mode)?;
+  print("M " + value.bytes.to_string() + " " + value.movie.scale.to_string() + " " + value.movie.duration.to_string());
+  for track in value.tracks {
+    print("T " + track.id.to_string() + " " + track.enabled.to_string() + " " + track.clock.scale.to_string() + " " + track.clock.duration.to_string());
+    for c in track.configurations {
+      print("C " + c.object_type.to_string() + " " + c.sample_rate.to_string() + " " + c.rate_index.to_string() + " " + c.channel_config.to_string() + " " + c.channels.to_string() + " " + c.frame_size.to_string());
+    }
+    for edit in track.edits {
+      print("E " + edit.duration.to_string() + " " + edit.media_time.to_string());
+    }
+    for p in track.packets {
+      packet(reader, p)?;
+    }
+  }
+  return Ok(());
+}
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 3) {
+    return 2;
+  }
+  let Ok(reader) = open_reader(argv[1]) else {
+    return 3;
+  };
+  let result = emit(reader, argv[1], argv[2]);
+  let closed = reader.close();
+  return match (result) {
+    Ok(_) => match (closed) { Ok(_) => 0, Err(error) => { eprint(error.message()); return 1; } },
+    Err(message) => { eprint(message); return 1; },
+  };
+}

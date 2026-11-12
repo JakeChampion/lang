@@ -37,7 +37,14 @@ pub function default_limits(): container.Limits {
 }
 
 pub function inspect(input: [u8], limits: container.Limits): Result[Index, pcm.AudioError] {
-  let raw = container.inspect(input, limits, boxes.tag("mp4a"))?;
+  return configured(input, container.inspect(input, limits, boxes.tag("mp4a"))?, limits);
+}
+
+pub(package) function inspect_movie(input: [u8], media: tables.Media[], file_bytes: i64, top_boxes: i32, limits: container.Limits): Result[Index, pcm.AudioError] {
+  return configured(input, container.inspect_movie(input, media, file_bytes, top_boxes, limits, boxes.tag("mp4a"))?, limits);
+}
+
+function configured(input: [u8], raw: container.Index, limits: container.Limits): Result[Index, pcm.AudioError] {
   let budget = raw.budget;
   let tracks: Track[] = [];
   for value in raw.tracks {
