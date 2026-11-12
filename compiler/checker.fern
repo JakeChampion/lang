@@ -26868,7 +26868,7 @@ function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtin
     let any_ptr = false;
     let all_own = true;
     for i in 0..fn.params.len() {
-      if (ow_sig_type_is_pointer(fn, fn.params[i].type_name, ofuncs)) {
+      if (ow_decl_type_is_pointer(fn, fn.params[i].type_name, ofuncs)) {
         any_ptr = true;
         if ((i >= flags.len() || !flags[i] || fn.params[i].type_name == "fn") && ow_param_can_lend(fn, fn.params[i], ofuncs, dx)) {
           all_own = false;

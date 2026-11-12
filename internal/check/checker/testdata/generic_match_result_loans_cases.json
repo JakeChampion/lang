@@ -1,0 +1,62 @@
+[
+  {
+    "name": "borrowed option payload",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} function take(own h:H):void{h.close();} function wrap[T](v:T):Option[T]{return Some(v);} function f(h:H):void{match(wrap(h)){Some(v)=>{take(v);},_=>{}}}",
+    "want": "E051"
+  },
+  {
+    "name": "borrowed unsafe option payload",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} function take(own h:H):void{h.close();} function wrap[T](v:T):Option[T]{unsafe{return Some(v);}} function f(h:H):void{match(wrap(h)){Some(v)=>{take(v);},_=>{}}}",
+    "want": "E051"
+  },
+  {
+    "name": "owned option payload",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} function take(own h:H):void{h.close();} function wrap[T](own v:T):Option[T]{return Some(v);} function f(own h:H):void{match(wrap(h)){Some(v)=>{take(v);},_=>{}}}",
+    "want": ""
+  },
+  {
+    "name": "checked owned option payload",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} function take(own h:H):void{h.close();} function wrap[T](own v:T):own Option[T]{return Some(v);} function f(own h:H):void{match(wrap(h)){Some(v)=>{take(v);},_=>{}}}",
+    "want": ""
+  },
+  {
+    "name": "copied immutable option payload",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} function take(own h:H):void{h.close();} function wrap[T](v:T):Option[T]{return Some(v);} function count(own xs:u8[]):i32{return xs.len();} function f(xs:u8[]):i32{match(wrap(xs)){Some(v)=>{return count(v);},_=>{return 0;}} return 0;}",
+    "want": ""
+  },
+  {
+    "name": "scalar option payload",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} function take(own h:H):void{h.close();} function wrap[T](v:T):Option[T]{return Some(v);} function count(own n:i32):i32{return n;} function f(n:i32):i32{match(wrap(n)){Some(v)=>{return count(v);},_=>{return 0;}} return 0;}",
+    "want": ""
+  },
+  {
+    "name": "borrowed result payload",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} function take(own h:H):void{h.close();} function wrap[T](v:T):Result[T,string]{return Ok(v);} function f(h:H):void{match(wrap(h)){Ok(v)=>{take(v);},_=>{}}}",
+    "want": "E051"
+  },
+  {
+    "name": "borrowed user variant payload",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} function take(own h:H):void{h.close();} enum Slot[T]{Full(T),Empty} function wrap[T](v:T):Slot[T]{return Full(v);} function f(h:H):void{match(wrap(h)){Full(v)=>{take(v);},_=>{}}}",
+    "want": "E051"
+  },
+  {
+    "name": "borrowed nested option payload",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} function take(own h:H):void{h.close();} function wrap[T](v:T):Option[Option[T]]{return Some(Some(v));} function f(h:H):void{match(wrap(h)){Some(a)=>{match(a){Some(v)=>{take(v);},_=>{}}},_=>{}}}",
+    "want": "E051"
+  },
+  {
+    "name": "non generic borrowed option payload",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} function take(own h:H):void{h.close();} function wrap(v:H):Option[H]{return Some(v);} function f(h:H):void{match(wrap(h)){Some(v)=>{take(v);},_=>{}}}",
+    "want": "E051"
+  },
+  {
+    "name": "owned result with unused borrowed input",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} function take(own h:H):void{h.close();} function wrap[T](own v:T,unused:H):Option[T]{return Some(v);} function f(own h:H,unused:H):void{match(wrap(h,unused)){Some(v)=>{take(v);},_=>{}}}",
+    "want": ""
+  },
+  {
+    "name": "fresh option factory",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} function take(own h:H):void{h.close();} function wrap():Option[H]{return Some(H{fd:1});} function f():void{match(wrap()){Some(v)=>{take(v);},_=>{}}}",
+    "want": ""
+  }
+]
