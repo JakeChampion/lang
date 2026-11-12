@@ -1,3 +1,7 @@
+# 2026-11-12: main 6f8937ce, run 43285985869, perf-x86_64 job 131423863245 and perf-aarch64 job 131423863482.
+# The ssa changes of that day moved deflate_encode, perceus_nqueens, perceus_rbtree and perceus_rbtree_ck.
+# The .ir rows fall 3.0% to 12.6%. The .text rows grow 1.0% to 6.7%. Each row moves to its measured value.
+# The commits on main after that run do not change the code of these programs. Keep all tolerances.
 # 2026-11-10: PR #15089 retains the revised HTTP repair from #15087.
 # Bank measured HTTP code reductions after main c9547605. Keep all tolerances.
 # Evidence: docs/benchmarks/video-avc-pps-main-2026-11-10/.
@@ -285,7 +289,7 @@ x86_64/deflate_decode.ir	32877120
 x86_64/deflate_decode.text	12725
 x86_64/deflate_encode.ir	41579468
 # 2026-11-05: PR #14207, perf-x86_64 job 126960802774 on the merge with main 6dba1dcb measures lower values for the changed rows below. The rows that rise keep their limits.
-x86_64/deflate_encode.text	7168
+x86_64/deflate_encode.text	7248
 x86_64/enum_match.text	934
 x86_64/enum_match.ir	29250077
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
@@ -578,7 +582,7 @@ aarch64/closure_call.ir	46002179
 aarch64/deflate_decode.ir	34895281
 aarch64/deflate_decode.text	13575
 aarch64/deflate_encode.ir	43566583
-aarch64/deflate_encode.text	7818
+aarch64/deflate_encode.text	7899
 aarch64/enum_match.text	1165
 aarch64/enum_match.ir	24975095
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
@@ -642,21 +646,21 @@ x86_64/perceus_cfold.ir	54520496
 x86_64/perceus_deriv.text	2726
 x86_64/perceus_deriv.ir	66585210
 x86_64/perceus_nqueens.text	1591
-x86_64/perceus_nqueens.ir	92759479
-x86_64/perceus_rbtree.text	2836
-x86_64/perceus_rbtree.ir	51343623
-x86_64/perceus_rbtree_ck.text	2935
-x86_64/perceus_rbtree_ck.ir	51100263
+x86_64/perceus_nqueens.ir	84561093
+x86_64/perceus_rbtree.text	2987
+x86_64/perceus_rbtree.ir	49735957
+x86_64/perceus_rbtree_ck.text	3081
+x86_64/perceus_rbtree_ck.ir	49322197
 aarch64/perceus_cfold.text	2215
 aarch64/perceus_cfold.ir	61031992
 aarch64/perceus_deriv.text	3027
 aarch64/perceus_deriv.ir	80353384
 aarch64/perceus_nqueens.text	1844
-aarch64/perceus_nqueens.ir	106638432
-aarch64/perceus_rbtree.text	3131
-aarch64/perceus_rbtree.ir	56811156
-aarch64/perceus_rbtree_ck.text	3220
-aarch64/perceus_rbtree_ck.ir	56271318
+aarch64/perceus_nqueens.ir	93232046
+aarch64/perceus_rbtree.text	3340
+aarch64/perceus_rbtree.ir	55118687
+aarch64/perceus_rbtree_ck.text	3402
+aarch64/perceus_rbtree_ck.ir	53967009
 # 2026-11-01: #13988 keeps the original main pvec instruction gates.
 # Fresh measurements remain within their unchanged 1% tolerance.
 # 2026-11-07: PR #14490 adds the fixed QTRLE workload. Existing limits stay unchanged.
