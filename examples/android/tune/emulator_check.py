@@ -29,6 +29,12 @@ from emulator import adb, count, crashes, fail, failures, finish, logcat, screen
 PACKAGE = "dev.fern.tune"
 
 
+def has_widget_provider(dump):
+    """Whether Android lists the exact widget component in full or short form."""
+    package = re.escape(PACKAGE)
+    return re.search(r"(?<![\w.$])" + package + r"/(?:" + package + r")?\.Widget(?![\w.$])", dump) is not None
+
+
 def session_text():
     """The part of `dumpsys media_session` for the session of the player."""
     text = adb("shell", "dumpsys", "media_session")
@@ -144,7 +150,9 @@ def main(apk, out):
     # Android knows the widget of the app, which tells that it read the
     # provider file and the layout of the APK. The update broadcast starts
     # the provider class with no activity, and the process stays alive.
-    if "dev.fern.tune/.Widget" not in adb("shell", "dumpsys", "appwidget"):
+    providers = adb("shell", "dumpsys", "appwidget")
+    Path(out, "appwidget.txt").write_text(providers)
+    if not has_widget_provider(providers):
         fail("Android does not list the widget provider dev.fern.tune/.Widget")
     third = logcat()
     adb("logcat", "-c")

@@ -75,6 +75,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 2>>=
 import "core/ops";
+import "std/f32";
 import "std/f64";
 ```
 

@@ -8347,7 +8347,7 @@ func TestScalarModuleHintIsFollowable(t *testing.T) {
 	}{
 		{"i32 radix points at std/i32", `let x: i32 = 5; print(x.to_string_radix(16));`, `std/i32`},
 		{"i64 radix points at std/i64", `let x: i64 = 5; print(x.to_string_radix(16));`, `std/i64`},
-		{"f32 precision points at std/f64", `let x: f32 = 1.5; print(x.to_string_prec(2));`, `std/f64`},
+		{"f32 precision points at std/f32", `let x: f32 = 1.5; print(x.to_string_prec(2));`, `std/f32`},
 		{"f64 precision points at std/f64", `let x: f64 = 1.5; print(x.to_string_prec(2));`, `std/f64`},
 		// A `str` view had NO hint at all: scalarModuleFor had no StrType case,
 		// so the message fell through to the builtin list ("it has: as_bytes,

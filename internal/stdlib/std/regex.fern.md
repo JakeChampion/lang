@@ -1457,7 +1457,10 @@ pub function (c: Captures) group(i: i32): Result[Option[string], TextError] {
   if (s < 0) {
     return Ok(None);
   }
-  if (s != e && (!utf8.is_char_boundary(c.text, s) || !utf8.is_char_boundary(c.text, e))) {
+  if (s == e) {
+    return Ok(Some(""));
+  }
+  if (!utf8.is_char_boundary(c.text, s) || !utf8.is_char_boundary(c.text, e)) {
     return Err(InvalidUtf8Output);
   }
   return Ok(Some(slice_unchecked(c.text, s, e) + ""));
@@ -1630,10 +1633,13 @@ pub function (prog: Regex) split(text: string): Result[string[], TextError] {
       return Ok(out);
     };
     if (m.end > m.start) {  // non-empty separator
-      if (last != m.start && (!utf8.is_char_boundary(text, last) || !utf8.is_char_boundary(text, m.start))) {
+      if (last == m.start) {
+        out = out.append("");
+      } else if (!utf8.is_char_boundary(text, last) || !utf8.is_char_boundary(text, m.start)) {
         return Err(InvalidUtf8Output);
+      } else {
+        out = out.append(slice_unchecked(text, last, m.start) + "");
       }
-      out = out.append(slice_unchecked(text, last, m.start) + "");
       last = m.end;
       pos = m.end;
     } else {

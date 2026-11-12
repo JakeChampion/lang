@@ -70,6 +70,7 @@ An intra frame does not use the energies of the last frame. The encoder can code
 // LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
 // NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+import "std/f32";
 import "std/f64";
 import "std/opus/modes";
 import "std/opus/range";

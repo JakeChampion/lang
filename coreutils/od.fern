@@ -1,6 +1,7 @@
 import "std/string";
 import "std/array";
 import "std/io_buffered";
+import "std/f32";
 import "std/f64";
 import "./lib/gnu";
 import "./lib/ld";

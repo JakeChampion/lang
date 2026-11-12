@@ -17,6 +17,7 @@ This module is available under MPL-2.0. See `licenses/vorbis/NOTICE.txt`.
 import "std/audio/vorbis/bits";
 import "std/audio/vorbis/codebook";
 import "std/audio/pcm";
+import "std/f32";
 import "std/f64";
 
 pub struct Setup { kind: i32, begin: i32, end: i32, partition: i32, classifications: i32, classbook: i32, books: i32[], passes: i32 }

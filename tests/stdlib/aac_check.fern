@@ -1,5 +1,6 @@
 import "std/audio/aac";
 import "std/audio/pcm";
+import "std/f32";
 import "std/f64";
 import "aac_kernel_check" as ref;
 import "aac_vectors";

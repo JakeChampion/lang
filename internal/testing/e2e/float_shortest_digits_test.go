@@ -39,7 +39,7 @@ func TestFloatShortestDigits(t *testing.T) {
 		vals = append(vals, v)
 	}
 	var b strings.Builder
-	b.WriteString("import \"std/f64\";\nfunction show(d: (i64, i32)): void {\n")
+	b.WriteString("import \"std/f32\";\nimport \"std/f64\";\nfunction show(d: (i64, i32)): void {\n")
 	b.WriteString("    write(d.0.to_string()); write(\" \"); write(d.1.to_string()); write(\"\\n\");\n}\n")
 	b.WriteString("function main(): i32 {\n")
 	want := []string{}

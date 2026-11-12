@@ -267,27 +267,30 @@ function wit_ly_whole(n: i32): string[] {
     while (i < n) { o = o.append(""); i = i + 1; }
     return o;
 }
+function wit_ly_at(found: Option[i32], want: i32): boolean {
+    return match (found) { Some(i) => i == want, None => false };
+}
 function main(): i32 {
     let tb: i32[] = wit_section_body(FERN_BIN(), 7);
     let ifaces: string[] = wit_world_import_names(tb);
     let all: WitImportPlan = wit_import_plan(tb, ifaces, wit_ly_whole(ifaces.len()));
     if (all.n_type != 32) { return 1; }
     if (all.n_inst != 19) { return 2; }
-    if (wit_import_instance_index(tb, all, "wasi:io/error@0.2.0") != 0) { return 3; }
-    if (wit_import_instance_index(tb, all, "wasi:io/streams@0.2.0") != 2) { return 4; }
-    if (wit_import_instance_index(tb, all, "wasi:cli/stdout@0.2.0") != 4) { return 5; }
-    if (wit_import_instance_index(tb, all, "wasi:random/random@0.2.0") != 18) { return 6; }
-    if (wit_import_instance_index(tb, all, "wasi:not/here@0.2.0") != (0 - 1)) { return 7; }
+    if (!wit_ly_at(wit_import_instance_index(tb, all, "wasi:io/error@0.2.0"), 0)) { return 3; }
+    if (!wit_ly_at(wit_import_instance_index(tb, all, "wasi:io/streams@0.2.0"), 2)) { return 4; }
+    if (!wit_ly_at(wit_import_instance_index(tb, all, "wasi:cli/stdout@0.2.0"), 4)) { return 5; }
+    if (!wit_ly_at(wit_import_instance_index(tb, all, "wasi:random/random@0.2.0"), 18)) { return 6; }
+    if (wit_import_instance_index(tb, all, "wasi:not/here@0.2.0").is_some()) { return 7; }
     let stdout: WitImportPlan = wit_import_plan(tb, ["wasi:cli/stdout@0.2.0"], ["get-stdout"]);
     if (stdout.n_inst != 2) { return 8; }
-    if (wit_import_instance_index(tb, stdout, "wasi:io/error@0.2.0") != (0 - 1)) { return 9; }
-    if (wit_import_instance_index(tb, stdout, "wasi:io/streams@0.2.0") != 0) { return 10; }
-    if (wit_import_instance_index(tb, stdout, "wasi:cli/stdout@0.2.0") != 1) { return 11; }
-    if (wit_import_instance_index(tb, stdout, "wasi:random/random@0.2.0") != (0 - 1)) { return 12; }
+    if (wit_import_instance_index(tb, stdout, "wasi:io/error@0.2.0").is_some()) { return 9; }
+    if (!wit_ly_at(wit_import_instance_index(tb, stdout, "wasi:io/streams@0.2.0"), 0)) { return 10; }
+    if (!wit_ly_at(wit_import_instance_index(tb, stdout, "wasi:cli/stdout@0.2.0"), 1)) { return 11; }
+    if (wit_import_instance_index(tb, stdout, "wasi:random/random@0.2.0").is_some()) { return 12; }
     let stat: WitImportPlan = wit_import_plan(tb, ["wasi:filesystem/types@0.2.0"], ["[method]descriptor.stat-at"]);
     if (stat.n_inst != 1) { return 13; }
-    if (wit_import_instance_index(tb, stat, "wasi:filesystem/types@0.2.0") != 0) { return 14; }
-    if (wit_import_instance_index(tb, stat, "wasi:clocks/wall-clock@0.2.0") != (0 - 1)) { return 15; }
+    if (!wit_ly_at(wit_import_instance_index(tb, stat, "wasi:filesystem/types@0.2.0"), 0)) { return 14; }
+    if (wit_import_instance_index(tb, stat, "wasi:clocks/wall-clock@0.2.0").is_some()) { return 15; }
     return 0;
 }
 `

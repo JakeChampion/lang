@@ -872,7 +872,7 @@ pub function collect_idents_expr(e: ast.Expr, own acc: string[]): string[] {
   return fold_expr_pruned(e, acc, ident_of, not_lambda);
 }
 
-function scoped_reads(e: ast.Expr, bound: string[], acc: string[], reads: (ast.Expr, own string[]) => string[]): string[] {
+function scoped_reads(e: ast.Expr, bound: string[], own acc: string[], reads: (ast.Expr, own string[]) => string[]): string[] {
   for name in reads(e, []) {
     if (!util.has_str(bound, name)) {
       acc = acc.append(name);
@@ -881,7 +881,7 @@ function scoped_reads(e: ast.Expr, bound: string[], acc: string[], reads: (ast.E
   return acc;
 }
 
-function scoped_stmt_reads(st: ast.Stmt, bound: string[], acc: string[], reads: (ast.Expr, own string[]) => string[]): string[] {
+function scoped_stmt_reads(st: ast.Stmt, bound: string[], own acc: string[], reads: (ast.Expr, own string[]) => string[]): string[] {
   match (st) {
     ast.StmtVar(v) => {
       let init_bound = bound;
@@ -950,7 +950,7 @@ function scoped_stmt_reads(st: ast.Stmt, bound: string[], acc: string[], reads: 
   }
 }
 
-function scoped_stmts_reads(body: ast.Stmt[], bound: string[], acc: string[], reads: (ast.Expr, own string[]) => string[]): (string[], string[]) {
+function scoped_stmts_reads(body: ast.Stmt[], bound: string[], own acc: string[], reads: (ast.Expr, own string[]) => string[]): (string[], string[]) {
   for st in body {
     acc = scoped_stmt_reads(st, bound, acc, reads);
     if let ast.StmtVar(v) = st {

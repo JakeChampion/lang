@@ -1249,6 +1249,7 @@ single_alias                                         0
 single_alias_with_arg                                0
 single_insert                                        0
 slice_at_length                                      0
+slice_unchecked_aborts_on_a_split_character          0
 slice_unchecked_bytes                                0
 slice_unchecked_oob                                  0
 slice_views                                          0
@@ -1463,3 +1464,6 @@ callback_shadowed_bindings                         0
 
 # 2026-11-12: callback_fresh_local_last_use has balanced allocations and zero live bytes on all three main targets.
 callback_fresh_local_last_use                       0
+
+# 2026-11-12: owned_array_exchange_inputs has balanced allocations and zero live bytes on all three main targets.
+owned_array_exchange_inputs                        0

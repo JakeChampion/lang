@@ -1,5 +1,6 @@
 import "std/audio/vorbisfile";
 import "std/audio/pcm";
+import "std/f32";
 import "std/f64";
 import "aac_kernel_check" as ref;
 
