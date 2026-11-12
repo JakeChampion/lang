@@ -203,12 +203,19 @@ def tap_notice_button(label, out):
     """Opens the notifications and taps the first button with the text
     label. It gives the pid of the copy that logs the tap."""
     adb("shell", "cmd", "statusbar", "expand-notifications")
-    time.sleep(1.5)
-    adb("shell", "uiautomator", "dump", "/sdcard/notices.xml")
-    dump = adb("shell", "cat", "/sdcard/notices.xml")
-    m = re.search(r'text="' + re.escape(label) + r'"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', dump, re.IGNORECASE)
+    # The shade opens with a motion, and a notification gets its new
+    # button a moment after its app posts it again.
+    deadline = time.monotonic() + 10
+    while True:
+        time.sleep(1.5)
+        adb("shell", "uiautomator", "dump", "/sdcard/notices.xml")
+        dump = adb("shell", "cat", "/sdcard/notices.xml")
+        m = re.search(r'text="' + re.escape(label) + r'"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', dump, re.IGNORECASE)
+        if m is not None or time.monotonic() >= deadline:
+            break
     if m is None:
         Path(out, "notices.xml").write_text(dump)
+        print("notices: " + " | ".join(re.findall(r'text="([^"]+)"', dump))[:900], flush=True)
         raise Failure("no " + label + " button in the notifications")
     x1, y1, x2, y2 = (int(g) for g in m.groups())
     adb("shell", "input", "tap", str((x1 + x2) // 2), str((y1 + y2) // 2))
