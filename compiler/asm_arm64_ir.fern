@@ -5539,6 +5539,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
   } else if (o.kind_tag == ir.K_TCP_CLOSE) {
     s = s.need("heap");
     s = s.need("tcp_close");
+    s = s.need("task");
     s = s.write("    bl __fn___fern_tcp_close\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == ir.K_TCP_LISTEN) {
     s = s.need("heap");
@@ -7390,7 +7391,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    .section .bss\n    .p2align 3\n__fern_cov_counters: .quad 0\n    .text\n");
   }
   if (s.has_need("task")) {
-    s = s.write("    .section .bss\n    .p2align 3\n__fern_task_state: .quad 0, 0, 0, 0, 0, 0, 0\n    .text\n");
+    s = s.write("    .section .bss\n    .p2align 3\n__fern_task_state: .quad 0, 0, 0, 0, 0, 0, 0, 0\n    .text\n");
   }
   if (s.has_need("str_print")) {
     s = emit_log_write("__fern_print_str", s);
@@ -11558,9 +11559,6 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   if (s.has_need("random_i32")) {
     s = emit_runtime("__fern_random_i32", s);
   }
-  if (s.has_need("tcp_close")) {
-    s = emit_runtime("__fern_tcp_close", s);
-  }
   if (s.has_need("tcp_accept")) {
     s = emit_runtime("__fern_tcp_accept", s);
   }
@@ -11740,6 +11738,10 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   if (s.has_need("task")) {
     s = emit_runtime(asmcore.task_runtime_roots(), asmcore.EmitState { ...s, rt_owned_allocs: true });
     s = asmcore.EmitState { ...s, rt_owned_allocs: false };
+  }
+  // After the task runtime, which owns the table that a close counts in.
+  if (s.has_need("tcp_close")) {
+    s = emit_runtime("__fern_tcp_close", s);
   }
   if (s.has_need("tcp_recv_into")) {
     s = emit_runtime("__fern_tcp_recv_into", s);

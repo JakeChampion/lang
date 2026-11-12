@@ -1,0 +1,32 @@
+function __fern_task_fd_closed(fd: i32): i32 {
+  if (fd < 0) {
+    return 0;
+  }
+  let st = __raw_task_state();
+  let tab = __raw_load_ptr(st, 7);
+  let cap = 0;
+  if (tab != 0 as usize) {
+    cap = __raw_load_ptr(tab, 0) as i32;
+  }
+  if (fd >= cap) {
+    let ncap = 64;
+    while (ncap <= fd) {
+      ncap *= 2;
+    }
+    let ntab = __alloc((ncap + 1) * 8);
+    let i = 0;
+    while (i < ncap) {
+      __raw_store_ptr(ntab, i + 1, 0 as usize);
+      i += 1;
+    }
+    if (tab != 0 as usize) {
+      __memcpy(ntab + 8 as usize, tab + 8 as usize, cap * 8);
+      __free(tab, (cap + 1) * 8);
+    }
+    tab = ntab;
+    __raw_store_ptr(tab, 0, ncap as usize);
+    __raw_store_ptr(st, 7, tab);
+  }
+  __raw_store_ptr(tab, fd + 1, __raw_load_ptr(tab, fd + 1) + 1 as usize);
+  return 0;
+}
