@@ -419,4 +419,39 @@ whole group are the next steps.
 | 5b | Array fusion: `xs.map(k)` runs a lane kernel on whole groups of lanes | done (#13040) |
 | 5c | Lane memory: one 16-byte load and one 16-byte store per group | done (#13026) |
 | 6 | Const generics; `Vec[N, T]` | follow-on project, `docs/CONST-GENERICS.md` |
+| 7a | Integer lanes: the instruction vocabulary on x86-64, arm64 and wasm (§8) | done (#14731) |
+| 7b | Integer lanes: the element kind of a lane type, the IR ops and emission on every backend | next (#14731) |
+| 7c | Integer lanes: `u8x16` in both front ends, the builtins and both interpreters, then the other shapes | after 7b (#14731) |
 | — | Splice record-returning leaves so `Dual` / `DoubleDouble` stop allocating per operation (#12931) | follow-on, `seminline` |
+
+## 8. Integer lanes
+
+#14731 adds the lane types `u8x16`, `i8x16`, `u16x8`, `i16x8`, `u32x4` and
+`i32x4`. The work lands bottom-up, as the float lanes did in slice 4. No
+slice leaves a type on main that a backend refuses.
+
+`u8x16` is the first type, because pixels and byte scans are the first
+consumers. The other shapes follow with the same steps.
+
+A lane type records only the width of a lane today. `f32x4` and `i32x4`
+have the same width, so slice 7b gives a lane type an element kind: float,
+signed integer or unsigned integer.
+
+Slice 7a is the instruction vocabulary. Nothing emits these forms yet.
+
+- **x86-64.** The VEX forms `vpaddb`, `vpmaxub`, `vpaddsb`, `vpsubsb`,
+  `vpavgb`, `vpminsb`, `vpmaxsb` and `vpcmpgtb`. The forms `vpsubb`,
+  `vpaddusb`, `vpsubusb`, `vpminub`, `vpcmpeqb`, the bitwise forms and
+  `vpshufb` were already encodable.
+- **arm64.** `sqadd`, `uqadd`, `sqsub`, `uqsub`, `srhadd` and `urhadd`. The
+  integer `add`, `sub`, `mul`, the compares, `smax`, `smin`, `umax`, `umin`
+  and the shifts by a register were already there.
+- **wasm.** `watbin` learns the operations of `i8x16`, `i16x8` and `i32x4`.
+  These are the arithmetic, the saturating arithmetic, the ten compares, and
+  `min` and `max` of each sign. They also include `avgr_u`, `abs`, `neg`,
+  `popcnt`, `all_true`, `bitmask`, the shifts, and the lane reads and writes.
+  The last group changes the shape: `swizzle`, the two `narrow` forms, the
+  four `extend` forms and `dot_i16x8_s`.
+
+The gates are the ones of slice 4a: the GNU as differentials for the native
+assemblers, and `TestSelfHostWatbinSimdLanes` for wasm.
