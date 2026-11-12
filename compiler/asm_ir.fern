@@ -17,6 +17,7 @@ import "./ircore";
 import "./rtbytecopy";
 import "./ssa";
 import "./ssalive";
+import "./ssadeps";
 import "./ssafixed";
 import "./ssa_lift";
 import "./physicalbody";
@@ -8027,7 +8028,7 @@ function ssa_rc_prim_emit(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.
   if (ins.str == "__fern_rc_is_unique") {
     let d = ssa_dst(reg_of, ins.result);
     s = ssa_zero(s, "%rcx");
-    s = ssa_rc_guard(s, p, done, ins.imm != 4);
+    s = ssa_rc_guard(s, ins.args[0], p, done, ins.imm != 4);
     s = ssa_rc_is_one(s, rb);
     s = ssa_branch(s, J_JNE, done);
     s = ssa_mov_ir(s, 32, 1i64, "1", "%rcx");
@@ -8035,7 +8036,7 @@ function ssa_rc_prim_emit(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.
     s = ssa_mov_rr(s, d, "%rcx");
     return ssa_store(reg_of, ins.result, d, s);
   }
-  s = ssa_rc_guard(s, p, done, ins.imm != 4);
+  s = ssa_rc_guard(s, ins.args[0], p, done, ins.imm != 4);
   if (s.rc_free_debug) {
     s = ssa_mov_rm(s, 32, true, "%rcx", rb, -8).write(san_poison_check("%ecx", s.rc_free_debug));
     s = ssa_branch(ssa_test_rr(s, 32, "%rcx", "%rcx"), J_JS, done);
@@ -8048,9 +8049,11 @@ function ssa_rc_prim_emit(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.
   return ssa_store(reg_of, ins.result, p, s);
 }
 
-function ssa_rc_guard(s: asmcore.EmitState, p: string, done: asmcore.Lab, strip: boolean): asmcore.EmitState {
-  s = ssa_branch(ssa_test_bit(s, 1, p), J_JNZ, done);
-  s = ssa_branch(ssa_cmp_floor(s, p), J_JB, done);
+function ssa_rc_guard(s: asmcore.EmitState, v: i32, p: string, done: asmcore.Lab, strip: boolean): asmcore.EmitState {
+  if (!asmcore.ssa_is_boxed(s, v)) {
+    s = ssa_branch(ssa_test_bit(s, 1, p), J_JNZ, done);
+    s = ssa_branch(ssa_cmp_floor(s, p), J_JB, done);
+  }
   if (strip) {
     s = ssa_mov_rr(s, "%rdx", p);
     s = ssa_alu_ir(s, 4, 64, -3i64, "%rdx");
@@ -8130,7 +8133,9 @@ function ssa_rc_dec(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves,
   if (ins.str == "__fern_str_free") {
     s = ssa_branch(ssa_test_bit(s, 1, p), J_JNZ, kept);
   }
-  s = ssa_branch(ssa_cmp_floor(s, p), J_JB, kept);
+  if (ins.str != "__fern_rc_dec" || !asmcore.ssa_is_boxed(s, ins.args[0])) {
+    s = ssa_branch(ssa_cmp_floor(s, p), J_JB, kept);
+  }
   s = ssa_branch(ssa_alu_im(s, 7, 32, 1, p, -8), J_JG, dec);
   s = ssa_branch(ssa_alu_im(s, 7, 32, 0, p, -8), J_JS, kept);
   s = ssa_cold_save(s, saves.mask, saves.base, saves.save, false);
@@ -9998,8 +10003,10 @@ function ssa_unique_flags(reg_of: i32[], v: i32, aligned: boolean, join: string,
   let p = ssa_src(reg_of, v, "%r11");
   let jn = asmcore.lab_new(s, join);
   s = jn.state;
-  s = ssa_branch(ssa_test_bit(s, 1, p), J_JNZ, jn.lab);
-  s = ssa_branch(ssa_cmp_floor(s, p), J_JB, jn.lab);
+  if (!asmcore.ssa_is_boxed(s, v)) {
+    s = ssa_branch(ssa_test_bit(s, 1, p), J_JNZ, jn.lab);
+    s = ssa_branch(ssa_cmp_floor(s, p), J_JB, jn.lab);
+  }
   let rb = p;
   if (!aligned) {
     s = ssa_alu_ir(ssa_mov_rr(s, "%rdx", p), 4, 64, -3i64, "%rdx");
@@ -10268,6 +10275,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
       s = with_sym_addr(s, asmcore.shape_label(s, shapes.names[si]));
     }
   }
+  s = asmcore.EmitState { ...s, ssa_boxed: ssadeps.boxed_values(f) };
   let alloc = ssa_allocate(f, imm, s);
   match (env("FERN_SSA_ALLOC")) {
     Some(want) => {
