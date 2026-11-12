@@ -25,6 +25,27 @@ The adapter does not bundle FFmpeg or another external codec library.
 
 The native QTRLE codec uses Fern on every target.
 
+## Native AAC file input
+
+`std/audio/mp4/file` indexes AAC tracks through a borrowed seekable source.
+It shares the video file scanner and the existing audio configuration, table, clock, and edit readers.
+The scanner reads bounded movie metadata and top-level headers. It skips encoded media payloads.
+The index retains scalar AAC configurations and absolute packet ranges, without encoded audio or PCM.
+`std/audio/file.Window` can then read one bounded packet from the same source.
+
+File length and packet offsets use signed 64-bit values.
+Separate limits bound movie bytes, source windows, operations, boxes, tracks, descriptions, edits, and packets.
+The nested encoded-input limit bounds both movie bytes and each encoded packet.
+Short reads are supported. Each seek and read consumes an operation.
+
+The caller owns the immutable source and closes it. Skipped physical payload bytes require later packet-read validation.
+
+This API supplies input for incremental A/V work. It does not provide a streaming decoder or change the Android controller.
+The caller must maintain AAC decoder state and apply the existing presentation plan for priming, edits, and padding.
+The complete-view AAC and ALAC decoders keep their existing APIs.
+The lower-level controller remains video-only, with external AAudio clock anchors.
+The separate platform `MediaPlayer` path still supplies platform A/V playback.
+
 ## Android player paths
 
 `std/android/player` provides complete platform A/V playback through Android `MediaPlayer`.

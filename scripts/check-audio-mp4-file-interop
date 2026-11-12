@@ -1,0 +1,201 @@
+#!/usr/bin/env python3
+"""Compare bounded AAC file indexes and packet bytes with independent MP4 tools."""
+import json
+import os
+from pathlib import Path
+import runpy
+import struct
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+os.chdir(ROOT)
+FIXTURE = runpy.run_path(str(ROOT / 'scripts/gen-mp4-vectors.py'))
+AAC = FIXTURE['AAC']
+compiler = os.environ.get('FERN') or subprocess.check_output(['./bootstrap/bootstrap.sh', 'stage0'], text=True).strip()
+target = {'x86_64': 'x86-64-linux', 'aarch64': 'arm64-linux', 'arm64': 'arm64-darwin'}[os.uname().machine]
+binary = ROOT / 'build/audio/mp4-file-reference'
+binary.parent.mkdir(parents=True, exist_ok=True)
+for output, arch in [(binary, target), (binary.with_suffix('.wasm'), 'wasm32-wasi')]:
+    subprocess.run([compiler, '-stdlib', str(ROOT / 'internal/stdlib'), '-target', arch,
+                    *(['-sanitize'] if arch == target else []), '-o', str(output),
+                    'scripts/audio-reference/mp4-file.fern'], check=True)
+
+
+def run(command):
+    return subprocess.check_output(command)
+
+
+def rows(path, mode, wasm=False):
+    command = ['wasmtime', 'run', '--dir', '.', str(binary.with_suffix('.wasm'))] if wasm else [str(binary)]
+    return subprocess.check_output([*command, path.name, mode], cwd=path.parent).decode().splitlines()
+
+
+def tracks(lines):
+    output = []
+    for line in lines[1:]:
+        fields = line.split()
+        if fields[0] == 'T':
+            output.append({'header': fields[1:], 'config': [], 'edits': [], 'packets': []})
+        else:
+            output[-1][{'C': 'config', 'E': 'edits', 'P': 'packets'}[fields[0]]].append(fields[1:])
+    return output
+
+
+def adts(packet, config):
+    object_type, _, rate_index, channel_config, _, _ = config
+    size = len(packet) + 7
+    assert object_type == 2 and 7 < size < 8192
+    return bytes([0xff, 0xf1, (object_type - 1) << 6 | rate_index << 2 | channel_config >> 2,
+                  (channel_config & 3) << 6 | size >> 11, size >> 3 & 255,
+                  (size & 7) << 5 | 31, 0xfc]) + packet
+
+
+def boxes(data):
+    at = 0
+    while at < len(data):
+        size, kind = struct.unpack_from('>I4s', data, at)
+        width = 8
+        if size == 1:
+            size, = struct.unpack_from('>Q', data, at + 8)
+            width = 16
+        if size == 0:
+            size = len(data) - at
+        assert width <= size <= len(data) - at
+        yield kind, data[at + width:at + size]
+        at += size
+
+
+def metadata(path):
+    # Read only the small movie box, including for the sparse source.
+    with path.open('rb') as file:
+        while True:
+            header = file.read(8)
+            size, kind = struct.unpack('>I4s', header)
+            width = 8
+            if size == 1:
+                size, = struct.unpack('>Q', file.read(8))
+                width = 16
+            if kind == b'moov':
+                children = list(boxes(file.read(size - width)))
+                movie = dict(children)
+                break
+            file.seek(size - width, 1)
+    clock = lambda data: struct.unpack_from('>II', data, 12)
+    # Fresh FFmpeg fixtures use version zero movie and track clocks.
+    assert movie[b'mvhd'][0] == 0
+    result = []
+    for kind, body in children:
+        if kind != b'trak':
+            continue
+        track = dict(boxes(body))
+        media = dict(boxes(track[b'mdia']))
+        if media[b'hdlr'][8:12] != b'soun':
+            continue
+        assert track[b'tkhd'][0] == media[b'mdhd'][0] == 0
+        identity, = struct.unpack_from('>I', track[b'tkhd'], 12)
+        edits = []
+        if b'edts' in track:
+            edit = dict(boxes(track[b'edts']))[b'elst']
+            count, = struct.unpack_from('>I', edit, 4)
+            assert edit[0] == 0
+            edits = [list(map(str, struct.unpack_from('>Ii', edit, 8 + i * 12))) for i in range(count)]
+        rate, duration = clock(media[b'mdhd'])
+        result.append(([str(identity), str(bool(track[b'tkhd'][3] & 1)).lower(), str(rate), str(duration)], edits))
+    return clock(movie[b'mvhd']), result
+
+
+def verify(path, sparse=False):
+    actual = rows(path, 'file')
+    assert actual == rows(path, 'file', True)
+    if not sparse:
+        assert actual == rows(path, 'complete') == rows(path, 'complete', True)
+    probe = json.loads(run(['ffprobe', '-v', 'error', '-ignore_editlist', '1', '-select_streams', 'a',
+                            '-show_streams', '-show_packets', '-of', 'json', str(path)]))
+    values = tracks(actual)
+    movie, expected_tracks = metadata(path)
+    assert actual[0].split()[1:] == list(map(str, [path.stat().st_size, *movie]))
+    assert len(values) == len(probe['streams'])
+    with path.open('rb') as original:
+        for number, (track, stream) in enumerate(zip(values, probe['streams'])):
+            config = list(map(int, track['config'][0]))
+            assert config[1] == int(stream['sample_rate']) and config[4] == stream['channels']
+            assert int(track['header'][0]) == int(stream['id'], 0)
+            assert (track['header'], track['edits']) == expected_tracks[number]
+            assert int(track['header'][2]) == int(stream['time_base'].split('/')[1])
+            packets = [p for p in probe['packets'] if p['stream_index'] == stream['index']]
+            assert len(track['packets']) == len(packets)
+            encoded = b''
+            for fields, packet in zip(track['packets'], packets):
+                offset, size, position, duration, description = map(int, fields[:5])
+                assert [offset, size, position, duration] == [int(packet[k]) for k in ('pos', 'size', 'dts', 'duration')]
+                assert description == 0 and int(packet['pts']) == position
+                original.seek(offset)
+                payload = bytes.fromhex(fields[5])
+                assert payload == original.read(size)
+                encoded += adts(payload, config)
+            extracted = path.parent / 'extracted.aac'
+            extracted.write_bytes(encoded)
+            before = run(['ffmpeg', '-v', 'error', '-ignore_editlist', '1', '-i', str(path), '-map', f'0:a:{number}',
+                          '-c:a', 'pcm_f32le', '-f', 'f32le', '-'])
+            after = run(['ffmpeg', '-v', 'error', '-i', str(extracted), '-c:a', 'pcm_f32le', '-f', 'f32le', '-'])
+            assert before == after and len(after) == len(packets) * 1024 * config[4] * 4
+    print(path.name, len(values), sum(len(t['packets']) for t in values), 'packet metadata/bytes and every decoded sample match')
+
+
+def sparse_movie(path, output):
+    data = path.read_bytes()
+    def co64(kind, body):
+        if kind == b'stco':
+            count = struct.unpack_from('>I', body, 4)[0]
+            values = struct.unpack_from(f'>{count}I', body, 8)
+            return FIXTURE['box'](b'co64', body[:8] + struct.pack(f'>{count}Q', *values))
+        return FIXTURE['box'](kind, body)
+    data = FIXTURE['rewrite'](data, co64)
+    top = {}
+    at = 0
+    while at < len(data):
+        size, tag = struct.unpack_from('>I4s', data, at)
+        top[tag] = (at, data[at:at + size])
+        at += size
+    base = 8 * 1024**3
+    movie = bytearray(top[b'moov'][1])
+    table = movie.index(b'co64') + 4
+    count = struct.unpack_from('>I', movie, table + 4)[0]
+    for i in range(count):
+        at = table + 8 + i * 8
+        struct.pack_into('>Q', movie, at, struct.unpack_from('>Q', movie, at)[0] + base - top[b'mdat'][0])
+    with output.open('wb') as out:
+        out.write(top[b'ftyp'][1])
+        out.write(struct.pack('>I4sQ', 1, b'free', base - out.tell()))
+        out.seek(base)
+        out.write(top[b'mdat'][1])
+        out.write(movie)
+    assert output.stat().st_size > base and output.stat().st_blocks * 512 < 1024**2
+
+
+with tempfile.TemporaryDirectory() as directory:
+    temp = Path(directory)
+    for name, rate, channels, flags in [
+        ('mono', 44100, 1, []), ('stereo-faststart', 48000, 2, ['-movflags', '+faststart']),
+        ('surround', 48000, 6, []), ('high-rate', 96000, 2, []),
+        ('two-tracks', 44100, 2, ['-map', '0:a', '-map', '0:a']),
+        ('no-edits', 44100, 2, ['-use_editlist', '0']),
+    ]:
+        raw = temp / 'input.f32'
+        raw.write_bytes(AAC['signal'](channels, 4099, 'tone'))
+        path = temp / (name + '.m4a')
+        AAC['run'](['-f', 'f32le', '-ar', str(rate), '-ac', str(channels), '-i', str(raw),
+                    '-c:a', 'aac', '-b:a', str(64000 * channels), '-aac_pns', '0', '-aac_tns', '0',
+                    *flags, str(path)])
+        verify(path)
+        if name == 'mono':
+            large = temp / 'sparse.m4a'
+            sparse_movie(path, large)
+            verify(large, True)
+    path = temp / 'interleaved.mp4'
+    AAC['run'](['-f', 'lavfi', '-i', 'color=c=black:size=32x32:rate=30:duration=0.2',
+                '-f', 'f32le', '-ar', '44100', '-ac', '2', '-i', str(raw),
+                '-c:v', 'libx264', '-c:a', 'aac', '-aac_pns', '0', '-aac_tns', '0', '-shortest', str(path)])
+    verify(path)
+    print('independent bounded AAC MP4 file interoperability passed')

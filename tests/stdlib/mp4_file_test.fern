@@ -1,0 +1,76 @@
+import "std/audio/mp4";
+import "std/audio/mp4/file" as mp4file;
+import "std/audio/mp4/tables";
+import "mp4_file_check" as check;
+import "std/audio/pcm";
+import "std/audio/source";
+import "std/audio/file";
+import "std/test";
+import "mp4_vectors";
+import "aac_kernel_check" as reference;
+import "video_mp4_file_check" as memory;
+
+function complete(): test.TestOutcome {
+  for v in mp4_vectors.vectors() {
+    let Ok(bytes) = reference.unpack(v.bytes) else {
+      return test.fail("fixture");
+    };
+    let Ok(want) = mp4.inspect(bytes, mp4.default_limits()) else {
+      return test.fail(v.name);
+    };
+    let Ok(media) = memory.media(bytes) else {
+      return test.fail("media");
+    };
+    for short in [0, 7] {
+      let reader = memory.memory([memory.Segment { at: 0i64, bytes: bytes }], media, short);
+      let Ok(actual) = mp4file.inspect_with(bytes.len() as i64, reader.seek, reader.read, mp4file.default_limits()) else {
+        return test.fail("metadata-only " + v.name);
+      };
+      if (actual.bytes != bytes.len() as i64 || !check.same(actual, want, 0i64)) {
+        return test.fail("complete and file index " + v.name);
+      }
+    }
+  }
+  return test.pass();
+}
+
+function packet_bytes(reader: memory.Source, bytes: [u8], packet: tables.Packet): Result[void, string] {
+  let window = match (file.create(packet.offset, packet.bytes, source.Limits { chunk_size: 7, max_buffer_bytes: 65536 })) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+  while (!window.ready) {
+    window = match (window.step_with(reader.seek, reader.read)) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+  }
+  let data = window.view();
+  for i in 0..packet.bytes {
+    if (data[i] != bytes[packet.offset as i32 + i]) {
+      return Err("original AAC packet bytes");
+    }
+  }
+  return Ok(());
+}
+
+function packets(): test.TestOutcome {
+  for v in mp4_vectors.vectors() {
+    let Ok(bytes) = reference.unpack(v.bytes) else {
+      return test.fail("fixture");
+    };
+    let reader = memory.memory([memory.Segment { at: 0i64, bytes: bytes }], [], 7);
+    let Ok(index) = mp4file.inspect_with(bytes.len() as i64, reader.seek, reader.read, mp4file.default_limits()) else {
+      return test.fail(v.name);
+    };
+    for track in index.tracks {
+      for packet in track.packets {
+        if let Err(message) = packet_bytes(reader, bytes, packet) {
+          return test.fail(message);
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let r = test.new("bounded native AAC MP4 file input");
+  r = r.it("all complete-view configurations, clocks, edits, and packets", complete);
+  r = r.it("bounded packet windows preserve original AAC bytes", packets);
+  return r.finish();
+}
