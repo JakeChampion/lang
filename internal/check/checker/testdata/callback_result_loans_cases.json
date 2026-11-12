@@ -1098,5 +1098,45 @@
     "name": "aggregate environment local record alias retains callback environment",
     "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct ReadBox { read:()=>i32 }\nfunction wrap(own r:ReadBox):own()=>i32{let saved=r;return ():i32=>saved.read();}\nfunction f(own h:H):i32{let r=ReadBox{read:():i32=>h.read()};let run=wrap(r);h.close();return run();}",
     "want": "E050"
+  },
+  {
+    "name": "record alias inside callback excludes unrelated loans",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct Readers { left:()=>i32, right:()=>i32 }\nfunction wrap(own r:Readers):()=>i32{return ():i32=>{let saved=r;return saved.left();};}\nfunction f(own h:H,own other:H):i32{let r=Readers{left:():i32=>h.read(),right:():i32=>other.read()};let run=wrap(r);other.close();let n=run();return n; }",
+    "want": ""
+  },
+  {
+    "name": "record alias inside callback retains selected loan",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct Readers { left:()=>i32, right:()=>i32 }\nfunction wrap(own r:Readers):()=>i32{return ():i32=>{let saved=r;return saved.left();};}\nfunction f(own h:H,own other:H):i32{let r=Readers{left:():i32=>h.read(),right:():i32=>other.read()};let run=wrap(r);h.close();let n=run();return n; }",
+    "want": "E050"
+  },
+  {
+    "name": "record alias chain inside callback excludes unrelated loans",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct Readers { left:()=>i32, right:()=>i32 }\nfunction wrap(own r:Readers):()=>i32{return ():i32=>{let saved=r;let again=saved;return again.left();};}\nfunction f(own h:H,own other:H):i32{let r=Readers{left:():i32=>h.read(),right:():i32=>other.read()};let run=wrap(r);other.close();let n=run();return n; }",
+    "want": ""
+  },
+  {
+    "name": "record alias before callback excludes unrelated loans",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct Readers { left:()=>i32, right:()=>i32 }\nfunction wrap(own r:Readers):()=>i32{let saved=r;return ():i32=>saved.left();}\nfunction f(own h:H,own other:H):i32{let r=Readers{left:():i32=>h.read(),right:():i32=>other.read()};let run=wrap(r);other.close();let n=run();return n; }",
+    "want": ""
+  },
+  {
+    "name": "projected callback retains index environment loan",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct ReadBox { read:()=>i32 }\nstruct Pickers { items:ReadBox[], pick:()=>i32 }\nfunction wrap(own r:Pickers):()=>i32{return ():i32=>r.items[r.pick()].read();}\nfunction f(own h:H,own other:H):i32{let r=Pickers{items:[ReadBox{read:():i32=>h.read()}],pick:():i32=>other.read()-other.read()};let run=wrap(r);other.close();return run();}",
+    "want": "E050"
+  },
+  {
+    "name": "projected callback index environment ends at last use",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct ReadBox { read:()=>i32 }\nstruct Pickers { items:ReadBox[], pick:()=>i32 }\nfunction wrap(own r:Pickers):()=>i32{return ():i32=>r.items[r.pick()].read();}\nfunction f(own h:H,own other:H):i32{let r=Pickers{items:[ReadBox{read:():i32=>h.read()}],pick:():i32=>other.read()-other.read()};let run=wrap(r);let n=run();return n+h.close()+other.close();}",
+    "want": ""
+  },
+  {
+    "name": "function field alias read retains selected loan",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct Readers { left:()=>i32, right:()=>i32 }\nfunction wrap(own r:Readers):()=>i32{return ():i32=>{let saved=r.left;return 0;};}\nfunction f(own h:H,own other:H):i32{let r=Readers{left:():i32=>h.read(),right:():i32=>other.read()};let run=wrap(r);h.close();other.close();return run();}",
+    "want": "E050"
+  },
+  {
+    "name": "unused aggregate alias excludes unused environment loans",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct Readers { left:()=>i32, right:()=>i32 }\nfunction wrap(own r:Readers):()=>i32{return ():i32=>{let saved=r;return 0;};}\nfunction f(own h:H,own other:H):i32{let r=Readers{left:():i32=>h.read(),right:():i32=>other.read()};let run=wrap(r);h.close();other.close();return run();}",
+    "want": ""
   }
 ]

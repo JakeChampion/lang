@@ -15,65 +15,87 @@ type callbackLoan struct {
 	direct, wide bool
 }
 
-// Only containers that can hold callbacks need environment summaries.
-func (c *checker) callbackContainer(t ast.Type, active map[string]bool) bool {
+// Nominal callback containment is a least fixed point over declaration edges.
+// Shared and recursive type graphs do not require repeated subtree walks.
+func (c *checker) callbackContainerTypes() map[handleTypeKey]bool {
+	types := map[handleTypeKey]bool{}
+	for name := range c.info.Structs {
+		types[handleTypeKey{name: name}] = false
+	}
+	for name := range c.info.Enums {
+		types[handleTypeKey{name: name, enum: true}] = false
+	}
+	for changed := true; changed; {
+		changed = false
+		for name, decl := range c.info.Structs {
+			key := handleTypeKey{name: name}
+			if types[key] || decl == nil {
+				continue
+			}
+			for _, field := range decl.Fields {
+				if c.callbackContainer(field.Type, types) {
+					types[key] = true
+					changed = true
+					break
+				}
+			}
+		}
+		for name, decl := range c.info.Enums {
+			key := handleTypeKey{name: name, enum: true}
+			if types[key] || decl == nil {
+				continue
+			}
+			for _, variant := range decl.Variants {
+				for _, part := range variant.Payloads {
+					if c.callbackContainer(part, types) {
+						types[key] = true
+						changed = true
+						break
+					}
+				}
+				if types[key] {
+					break
+				}
+			}
+		}
+	}
+	return types
+}
+
+func (c *checker) callbackContainer(t ast.Type, types map[handleTypeKey]bool) bool {
 	switch t := t.(type) {
-	case *ast.FuncType, ast.ParamType, ast.ProjType, ast.DynTraitType, ast.UnboundType, ast.SelfType:
+	case *ast.FuncType, ast.ParamType, ast.ProjType, ast.DynTraitType, ast.UnboundType, ast.SelfType, ast.StreamType:
 		return true
 	case ast.ArrayType:
-		return c.callbackContainer(t.Elem, active)
+		return c.callbackContainer(t.Elem, types)
 	case ast.SliceType:
-		return c.callbackContainer(t.Elem, active)
-	case ast.StreamType:
-		return c.callbackContainer(t.Elem, active)
+		return c.callbackContainer(t.Elem, types)
 	case ast.TupleType:
 		for _, elem := range t.Elems {
-			if c.callbackContainer(elem, active) {
+			if c.callbackContainer(elem, types) {
 				return true
 			}
 		}
 	case ast.StructType:
 		for _, arg := range t.Args {
-			if c.callbackContainer(arg, active) {
+			if c.callbackContainer(arg, types) {
 				return true
 			}
 		}
-		if active[t.Name] {
-			return false
+		if found, known := types[handleTypeKey{name: t.Name}]; known {
+			return found
 		}
-		active[t.Name] = true
-		defer delete(active, t.Name)
-		if decl := c.info.Structs[t.Name]; decl != nil {
-			for _, field := range decl.Fields {
-				if c.callbackContainer(substituteType(field.Type, declArgs(decl.TypeParams, t.Args)), active) {
-					return true
-				}
-			}
-		} else {
-			return true
-		}
+		return t.Name != "Map" && t.Name != "Cell"
 	case ast.EnumType:
 		for _, arg := range t.Args {
-			if c.callbackContainer(arg, active) {
+			if c.callbackContainer(arg, types) {
 				return true
 			}
 		}
-		if active[t.Name] {
-			return false
+		if found, known := types[handleTypeKey{name: t.Name, enum: true}]; known {
+			return found
 		}
-		active[t.Name] = true
-		defer delete(active, t.Name)
-		if decl := c.info.Enums[t.Name]; decl != nil {
-			for _, variant := range decl.Variants {
-				for _, part := range variant.Payloads {
-					if c.callbackContainer(substituteType(part, declArgs(decl.TypeParams, t.Args)), active) {
-						return true
-					}
-				}
-			}
-		} else {
-			return true
-		}
+		return t.Name != "Option" && t.Name != "Result"
 	}
 	return false
 }
@@ -152,31 +174,100 @@ func callbackLoanParams(loans []callbackLoan) []ast.Param {
 	return out
 }
 
-func callbackCapturePlace(value ast.Expr, name string) (string, bool) {
+func callbackCapturePlace(value ast.Expr, name string, aliases map[string]ast.Expr, active map[string]bool) (string, bool) {
 	switch v := value.(type) {
 	case *ast.Ident:
-		return "", v.Name == name
+		if v.Name == name {
+			return "", true
+		}
+		if alias := aliases[v.Name]; alias != nil && !active[v.Name] {
+			active[v.Name] = true
+			defer delete(active, v.Name)
+			return callbackCapturePlace(alias, name, aliases, active)
+		}
 	case *ast.FieldAccess:
-		path, ok := callbackCapturePlace(v.Target, name)
+		path, ok := callbackCapturePlace(v.Target, name, aliases, active)
 		return callbackPath(path, callbackFieldSelector(v.Field)), ok
 	case *ast.Index:
-		path, ok := callbackCapturePlace(v.Array, name)
+		path, ok := callbackCapturePlace(v.Array, name, aliases, active)
 		return callbackPath(path, "a:*"), ok
 	}
 	return "", false
 }
 
+func callbackPurePlace(value ast.Expr) bool {
+	switch v := value.(type) {
+	case *ast.Ident:
+		return true
+	case *ast.FieldAccess:
+		return callbackPurePlace(v.Target)
+	}
+	return false
+}
+
+func (c *checker) callbackCaptureAliases(lambda *ast.Lambda) map[string]ast.Expr {
+	definitions := map[string][]ast.Expr{}
+	addParams := func(params []ast.Param) {
+		for _, param := range params {
+			definitions[param.Name] = append(definitions[param.Name], nil)
+		}
+	}
+	addParams(lambda.Params)
+	ast.Walk(lambda.Body, func(node ast.Node) bool {
+		switch n := node.(type) {
+		case *ast.Var:
+			var alias ast.Expr
+			switch c.info.VarTypes[n].(type) {
+			case ast.StructType, ast.TupleType, ast.ArrayType, ast.SliceType:
+				if callbackPurePlace(n.Init) {
+					alias = n.Init
+				}
+			}
+			definitions[n.Name] = append(definitions[n.Name], alias)
+		case *ast.Assign:
+			if id, named := n.Target.(*ast.Ident); named {
+				definitions[id.Name] = append(definitions[id.Name], nil)
+			}
+		case *ast.Lambda:
+			addParams(n.Params)
+		}
+		return true
+	})
+	aliases := map[string]ast.Expr{}
+	for name, definitions := range definitions {
+		if len(definitions) == 1 && definitions[0] != nil {
+			aliases[name] = definitions[0]
+		}
+	}
+	return aliases
+}
+
+// A maximal place can contain index expressions below a field projection.
+func callbackPlaceIndices(value ast.Expr, visit func(ast.Node) bool) {
+	switch v := value.(type) {
+	case *ast.FieldAccess:
+		callbackPlaceIndices(v.Target, visit)
+	case *ast.Index:
+		ast.Walk(v.Idx, visit)
+		callbackPlaceIndices(v.Array, visit)
+	}
+}
+
 // Keep maximal places. The object of r.left is not a separate read of r.
-func callbackCapturePlaces(lambda *ast.Lambda, name string) []string {
+func (c *checker) callbackCapturePlaces(lambda *ast.Lambda, name string) []string {
 	var out []string
+	aliases := c.callbackCaptureAliases(lambda)
 	var visit func(ast.Node) bool
 	visit = func(node ast.Node) bool {
+		if binding, ok := node.(*ast.Var); ok && aliases[binding.Name] != nil {
+			if _, selected := callbackCapturePlace(binding.Init, name, aliases, map[string]bool{}); selected {
+				return false
+			}
+		}
 		if value, ok := node.(ast.Expr); ok {
-			if path, found := callbackCapturePlace(value, name); found {
+			if path, found := callbackCapturePlace(value, name, aliases, map[string]bool{}); found {
 				out = append(out, path)
-				if index, indexed := value.(*ast.Index); indexed {
-					ast.Walk(index.Idx, visit)
-				}
+				callbackPlaceIndices(value, visit)
 				return false
 			}
 		}

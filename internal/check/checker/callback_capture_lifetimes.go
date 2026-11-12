@@ -31,8 +31,9 @@ func (c *checker) computeCallbackFactories() {
 	}
 	c.callbackFactories = map[string][]callbackLoan{}
 	var factories []*ast.FuncDecl
+	containers := c.callbackContainerTypes()
 	for _, fn := range c.callbackFactoryFuncs {
-		if fn.Body != nil && c.callbackContainer(fn.ReturnType, map[string]bool{}) {
+		if fn.Body != nil && c.callbackContainer(fn.ReturnType, containers) {
 			factories = append(factories, fn)
 		}
 	}
@@ -151,7 +152,7 @@ func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[st
 				continue
 			}
 			out = mergeCallbackLoans(out, []callbackLoan{{param: capture, direct: true}})
-			for _, path := range callbackCapturePlaces(value, capture.Name) {
+			for _, path := range c.callbackCapturePlaces(value, capture.Name) {
 				sources := selectCallbackLoans(resolve(capture.Name, active), path)
 				out = mergeCallbackLoans(out, flattenCallbackLoans(sources))
 			}
