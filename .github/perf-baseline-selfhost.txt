@@ -1,3 +1,6 @@
+# 2026-11-12: main 6f8937ce, run 43285985869, perf-x86_64 job 131423863245.
+# The ssa changes of that day grew the emit of perceus_rbtree and perceus_rbtree_ck 5.0% to 8.1%
+# on the three targets. Each row moves to its measured value. Keep all tolerances.
 # 2026-11-10: PR #15089 retains the revised HTTP repair from #15087.
 # Bank measured HTTP code reductions after main c9547605. Keep all tolerances.
 # Evidence: docs/benchmarks/video-avc-pps-main-2026-11-10/.
@@ -379,7 +382,6 @@ selfhost/wasm32-wasi/perceus_deriv.emit	2831
 selfhost/x86-64-linux/perceus_nqueens.emit	1587
 selfhost/arm64-linux/perceus_nqueens.emit	1842
 selfhost/wasm32-wasi/perceus_nqueens.emit	1267
-# 2026-11-12 (#15529): perf-x86_64 job 131415511344 on b142e9f4 measured these rows, and a local scripts/perf-bench-selfhost on main 6f8937ce gives the same values. #15529 changes no file of the compiler, so the rows moved on main. The tolerances are unchanged.
 selfhost/x86-64-linux/perceus_rbtree.emit	2987
 selfhost/arm64-linux/perceus_rbtree.emit	3340
 selfhost/wasm32-wasi/perceus_rbtree.emit	3854

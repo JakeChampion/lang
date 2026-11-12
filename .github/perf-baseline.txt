@@ -1,3 +1,7 @@
+# 2026-11-12: main 6f8937ce, run 43285985869, perf-x86_64 job 131423863245 and perf-aarch64 job 131423863482.
+# The ssa changes of that day moved deflate_encode, perceus_nqueens, perceus_rbtree and perceus_rbtree_ck.
+# The .ir rows fall 3.0% to 12.6%. The .text rows grow 1.0% to 6.7%. Each row moves to its measured value.
+# The commits on main after that run do not change the code of these programs. Keep all tolerances.
 # 2026-11-10: PR #15089 retains the revised HTTP repair from #15087.
 # Bank measured HTTP code reductions after main c9547605. Keep all tolerances.
 # Evidence: docs/benchmarks/video-avc-pps-main-2026-11-10/.
@@ -285,7 +289,6 @@ x86_64/deflate_decode.ir	32877120
 x86_64/deflate_decode.text	12725
 x86_64/deflate_encode.ir	41579468
 # 2026-11-05: PR #14207, perf-x86_64 job 126960802774 on the merge with main 6dba1dcb measures lower values for the changed rows below. The rows that rise keep their limits.
-# 2026-11-12 (#15529): perf-x86_64 job 131415511344 and perf-aarch64 job 131415511311 on b142e9f4 measured these rows; a local scripts/perf-bench on main 6f8937ce gives the same x86_64 values. #15529 changes no file of the compiler, so the rows moved on main. The tolerances are unchanged.
 x86_64/deflate_encode.text	7248
 x86_64/enum_match.text	934
 x86_64/enum_match.ir	29250077
