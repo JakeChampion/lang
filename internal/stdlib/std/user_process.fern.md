@@ -1,8 +1,8 @@
 # User processes
 
-A user process of a kernel is a static Linux program that runs at EL0 in its own page tables. This module loads the program from its ELF image, runs it with `__user_run`, and answers its system calls with the Linux ABI (milestone 4 of `docs/BARE-METAL-PLAN.md`, #14263). A program that the compiler builds with `-target arm64-linux` thus runs on the kernel with no change. `docs/FERNOS-LINUX-ABI.md` records the calls of the compiler, the program that milestone 6 runs.
+A user process of a kernel is a static Linux program that runs in user mode, at EL0 on arm64 and in ring 3 on x86-64, in its own page tables. This module loads the program from its ELF image, runs it with `__user_run`, and answers its system calls with the Linux ABI (milestone 4 of `docs/BARE-METAL-PLAN.md`, #14263). A program that the compiler builds with `-target arm64-linux` or `-target x86-64-linux` thus runs on the kernel of the same ISA with no change. `docs/FERNOS-LINUX-ABI.md` records the calls of the compiler, the program that milestone 6 runs.
 
-Only arm64 runs a process now. x86-64 enters ring 3 in a later slice of #14263.
+The tables below give the arm64 numbers of the calls. On x86-64, `generic_call` gives each call of the x86-64 table its arm64 number, and the two ISAs then share the code. Three layouts differ on x86-64: `struct stat`, `struct epoll_event` and the `O_DIRECTORY` flag.
 
 ## The address space
 
@@ -89,13 +89,13 @@ A descriptor with `O_NONBLOCK` gives `EAGAIN` where a blocking one waits.
 
 ## Time
 
-`clock_gettime` (113) reads the generic timer's counter. The monotonic clocks give the counter time since the counter started. `with_clock` sets the wall clock, for example from a real-time clock, and `CLOCK_REALTIME` adds it to the counter time. Without `with_clock` the wall clock starts at 0, in 1970. The kernel gives no vDSO, so the runtime makes the system call.
+`clock_gettime` (113) reads the counter of the process. On arm64 that is the generic timer's counter. x86-64 has no counter of a known frequency, so a kernel gives the process one with `with_counter`, for example the time-stamp counter with a frequency that the board measured. Without one, the clocks of an x86-64 process do not advance. The monotonic clocks give the counter time since the counter started. `with_clock` sets the wall clock, for example from a real-time clock, and `CLOCK_REALTIME` adds it to the counter time. Without `with_clock` the wall clock starts at 0, in 1970. The kernel gives no vDSO, so the runtime makes the system call.
 
 ## Scheduling
 
-An IRQ during EL0 ends `run` with `Interrupted`. The IRQ stays pending at EL0, because the exception entry masks it. `__user_run` then gives back the DAIF of the kernel, and the top half takes the IRQ at EL1 before `run` returns. A scheduler thus calls `run` of the next process at each `Interrupted`. The top half touches no RC value, so the kernel heap is never preempted.
+An IRQ during EL0 ends `run` with `Interrupted`. The IRQ stays pending at EL0, because the exception entry masks it. `__user_run` then gives back the DAIF of the kernel, and the top half takes the IRQ at EL1 before `run` returns. On x86-64, the CPU delivers the interrupt from ring 3 through the IDT, and `__user_run` calls the top half of its vector in ring 0 before it returns. A scheduler thus calls `run` of the next process at each `Interrupted`. The top half touches no RC value, so the kernel heap is never preempted.
 
-A second core can run processes too, through `serve_core` and a mailbox (see `other cores`). It runs only the EL0 code. Core 0 answers each system call and fault, so only core 0 touches an RC value.
+On arm64, a second core can run processes too, through `serve_core` and a mailbox (see `other cores`). It runs only the EL0 code. Core 0 answers each system call and fault, so only core 0 touches an RC value.
 
 ## Module assembly
 
@@ -150,13 +150,32 @@ import "std/user_net";
 
 ### `constants`
 
-The trap frame of `__user_run` holds x0 to x30 from offset 0, then `SP_EL0`, the PC and PSTATE.
+On arm64, the trap frame of `__user_run` holds x0 to x30 from offset 0, then `SP_EL0`, the PC and PSTATE. On x86-64, it holds the 16 general registers in the order of their numbers, then the PC and the flags. The vector, the error code and CR2 of the last trap are at 160, 168 and 176, and MXCSR is at 184.
 
 ```fern
 <<constants>>=
-const SP_AT: usize = 248;
+// The offsets of the stack pointer and of the PC in the trap frame.
+function sp_at(): usize {
+  if (target_arch() == "arm64") {
+    return 248 as usize;
+  }
+  return 32 as usize;
+}
 
-const PC_AT: usize = 256;
+function pc_at(): usize {
+  if (target_arch() == "arm64") {
+    return 256 as usize;
+  }
+  return 128 as usize;
+}
+
+const VECTOR_AT: usize = 160;
+
+const ERROR_AT: usize = 168;
+
+const CR2_AT: usize = 176;
+
+const MXCSR_AT: usize = 184;
 
 const PAGE: usize = 4096;
 
@@ -186,8 +205,13 @@ const ENOTTY: i64 = 25;
 
 const ENOSYS: i64 = 38;
 
-// The ELF machine of arm64.
-const EM_AARCH64: u32 = 183;
+// The ELF machine of this ISA: EM_AARCH64 or EM_X86_64.
+function machine(): u32 {
+  if (target_arch() == "arm64") {
+    return 183 as u32;
+  }
+  return 62 as u32;
+}
 ```
 
 ### `pub struct Process`
@@ -198,7 +222,7 @@ const EM_AARCH64: u32 = 183;
 <<pub struct Process>>=
 pub struct Region { start: usize, end: usize, read: boolean, write: boolean, exec: boolean }
 
-pub struct Process { tables: pagetable.Tables, frames: frames.Frames, frame: usize, regions: Region[], next_map: usize, root: Option[cpio.Archive], files: OpenFile[], exe: string, epoch_ns: i64, random: Option[(i32) => Option[u8[]]], nodes: Node[], next_inode: u32, net: Option[user_net.Net], epolls: Epoll[], signals: u64, wait_until: i64 }
+pub struct Process { tables: pagetable.Tables, frames: frames.Frames, frame: usize, regions: Region[], next_map: usize, root: Option[cpio.Archive], files: OpenFile[], exe: string, epoch_ns: i64, random: Option[(i32) => Option[u8[]]], counter: Option[() => i64], nodes: Node[], next_inode: u32, net: Option[user_net.Net], epolls: Epoll[], signals: u64, wait_until: i64 }
 
 pub enum Stop { Output(i32, u8[]), Exited(i32), Killed(string), Interrupted, Waiting }
 
@@ -341,9 +365,9 @@ function zeros(n: i32): u8[] {
 
 ### `load`
 
-`load` checks that the image is a static arm64 executable, and that each segment lies below the start stack and outside the kernel mapping. Two segments can share a page: the page then gets the access of both.
+`load` checks that the image is a static executable of this ISA, and that each segment lies below the start stack and outside the kernel mapping. Two segments can share a page: the page then gets the access of both.
 
-The code of an executable page must reach instruction fetch. `sync_code` thus calls `__cache_sync_code` for each line of the page, at the smallest line size that `CTR_EL0` reports.
+The code of an executable page must reach instruction fetch. On arm64, `sync_code` thus calls `__cache_sync_code` for each line of the page, at the smallest line size that `CTR_EL0` reports. On x86-64, instruction fetch sees each store.
 
 From the stack pointer up, the start stack has `argc`, the `argv` pointers, a null, the `envp` pointers and a null. The auxiliary vector follows. The vector gives `AT_PAGESZ` and `AT_ENTRY`. The strings are above it, at the top of the stack.
 
@@ -355,14 +379,14 @@ pub function load(f: frames.Frames, tables: pagetable.Tables, image: u8[], argv:
   let Ok(img) = elf.parse(image) else {
     return Err("the image is not an ELF64 file");
   };
-  if (img.kind != 2 as u32 || img.machine != EM_AARCH64) {
-    return Err("the image is not a static arm64 executable");
+  if (img.kind != 2 as u32 || img.machine != machine()) {
+    return Err("the image is not a static " + target_arch() + " executable");
   }
   let Some(frame) = f.alloc() else {
     return Err("no frame for the trap frame");
   };
   zero(frame);
-  let p = Process { tables: tables, frames: f, frame: frame, regions: [], next_map: MAP_BASE, root: None, files: [], exe: "", epoch_ns: 0i64, random: None, nodes: [], next_inode: NODE_INODE, net: None, epolls: [], signals: 0 as u64, wait_until: 0i64 };
+  let p = Process { tables: tables, frames: f, frame: frame, regions: [], next_map: MAP_BASE, root: None, files: [], exe: "", epoch_ns: 0i64, random: None, counter: None, nodes: [], next_inode: NODE_INODE, net: None, epolls: [], signals: 0 as u64, wait_until: 0i64 };
   for s in img.loads() {
     let Ok(q) = p.load_segment(s, image) else {
       return Err("a segment does not load");
@@ -373,8 +397,12 @@ pub function load(f: frames.Frames, tables: pagetable.Tables, image: u8[], argv:
   let Some(sp) = p.start_stack(argv, envp, img.entry) else {
     return Err("the start stack does not fit");
   };
-  raw.store_u64(frame + SP_AT, sp as u64);
-  raw.store_u64(frame + PC_AT, img.entry);
+  raw.store_u64(frame + sp_at(), sp as u64);
+  raw.store_u64(frame + pc_at(), img.entry);
+  if (target_arch() != "arm64") {
+    // The reset value of MXCSR: each exception masked, round to nearest.
+    raw.store_u64(frame + MXCSR_AT, 0x1f80 as u64);
+  }
   return Ok(p);
 }
 
@@ -443,6 +471,9 @@ function (p: Process) segment_page(page: usize, s: elf.Segment): Option[usize] {
 }
 
 function sync_code(frame: usize): void {
+  if (target_arch() != "arm64") {
+    return;
+  }
   unsafe {
     let ctr = __sysreg_read("s3_3_c0_c0_1");
     let line = 4i64 << (ctr >> 16i64 & 15i64);
@@ -506,7 +537,9 @@ pub function (p: Process) release(): void {
 
 ### `run`
 
-`run` makes the tables of the process the active translation and runs it until an event. A synchronous exception is a system call, a fault, or another class. A translation fault in a region that allows the access pages the address in, and the process continues. Any other fault ends the process. The fault status code is bits 0 to 5 of `ESR_EL1`. The codes 4 to 7 are a translation fault at levels 0 to 3.
+`run` makes the tables of the process the active translation and runs it until an event. A synchronous exception is a system call, a fault, or another class. A translation fault in a region that allows the access pages the address in, and the process continues. Any other fault ends the process. On arm64, the fault status code is bits 0 to 5 of `ESR_EL1`. The codes 4 to 7 are a translation fault at levels 0 to 3.
+
+On x86-64, `__user_run` gives 0 for `syscall`, 1 for an interrupt and 2 for an exception, and the frame holds the vector, the error code and CR2. Vector 14 is a page fault. Bit 0 of its error code is clear when the page is not present, which is the translation fault of x86-64. `event` gets the vector as the class, the error code as the syndrome and CR2 as the address.
 
 ```fern
 <<run>>=
@@ -518,8 +551,10 @@ pub function (p: Process) run(): (Process, Stop) {
     let far = 0i64;
     unsafe {
       kind = __user_run(p.frame);
-      esr = __sysreg_read("esr_el1");
-      far = __sysreg_read("far_el1");
+      if (target_arch() == "arm64") {
+        esr = __sysreg_read("esr_el1");
+        far = __sysreg_read("far_el1");
+      }
     }
     let (q, stop) = p.event(kind, esr, far);
     p = q;
@@ -533,11 +568,17 @@ pub function (p: Process) run(): (Process, Stop) {
   return (p, Killed("unreachable"));
 }
 
-// Answers the end of a run at EL0: the kind of __user_run, and ESR_EL1 and
-// FAR_EL1 after it. None means that the process continues.
+// Answers the end of a run in user mode: the kind of __user_run, and ESR_EL1
+// and FAR_EL1 after it. None means that the process continues.
 function (p: Process) event(kind: i64, esr: i64, far: i64): (Process, Option[Stop]) {
   if (kind == 1i64) {
     return (p, Some(Interrupted));
+  }
+  if (target_arch() != "arm64") {
+    if (kind == 0i64) {
+      return p.syscall();
+    }
+    return (p, p.fault(reg(p.frame, 20) as i64, reg(p.frame, 21) as i64, reg(p.frame, 22) as usize));
   }
   if (kind != 0i64) {
     return (p, Some(Killed("an exception of kind " + kind.to_string())));
@@ -551,11 +592,14 @@ function (p: Process) event(kind: i64, esr: i64, far: i64): (Process, Option[Sto
 
 // Pages in the address of a translation fault in a region, or ends the process.
 function (p: Process) fault(class: i64, esr: i64, far: usize): Option[Stop] {
-  let translation = (esr & 0x3ci64) == 4i64;
-  if ((class == 0x20i64 || class == 0x24i64) && translation && p.page_in(far)) {
+  let translation = (esr & 0x3ci64) == 4i64 && (class == 0x20i64 || class == 0x24i64);
+  if (target_arch() != "arm64") {
+    translation = class == 14i64 && (esr & 1i64) == 0i64;
+  }
+  if (translation && p.page_in(far)) {
     return None;
   }
-  return Some(Killed("a fault of class " + class.to_string() + " at " + far.to_string() + " from " + reg(p.frame, 32).to_string()));
+  return Some(Killed("a fault of class " + class.to_string() + " at " + far.to_string() + " from " + raw.load_u64(p.frame + pc_at()).to_string()));
 }
 ```
 
@@ -667,14 +711,48 @@ pub function (c: Core) quit(): void {
 
 ```fern
 <<system calls>>=
+// The number of the call of the frame, as its arm64 number. NO_CALL is a
+// number of x86-64 that the kernel does not answer.
+function call_number(frame: usize): u64 {
+  if (target_arch() == "arm64") {
+    return reg(frame, 8);
+  }
+  return generic_call(reg(frame, 0));
+}
+
+const NO_CALL: u64 = 0xffffffff;
+
+// Each pair is the x86-64 number of a call and its arm64 number.
+const X86_CALLS: i32[] = [0, 63, 1, 64, 3, 57, 5, 80, 8, 62, 9, 222, 10, 226, 13, 134, 14, 135, 16, 29, 20, 66, 41, 198, 43, 202, 44, 206, 45, 207, 48, 210, 49, 200, 50, 201, 51, 204, 52, 205, 54, 208, 55, 209, 60, 93, 72, 25, 74, 82, 75, 83, 79, 17, 91, 52, 131, 132, 217, 61, 228, 113, 231, 94, 233, 21, 257, 56, 258, 34, 262, 79, 263, 35, 264, 38, 267, 78, 268, 53, 281, 22, 288, 242, 289, 74, 291, 20, 316, 276, 318, 278, 332, 291];
+
+function generic_call(n: u64): u64 {
+  let i = 0;
+  while (i < X86_CALLS.len()) {
+    if (X86_CALLS[i] as u64 == n) {
+      return X86_CALLS[i + 1] as u64;
+    }
+    i += 2;
+  }
+  return NO_CALL;
+}
+
+// Argument i of the call of the frame: x0 to x5 on arm64, and %rdi, %rsi,
+// %rdx, %r10, %r8 and %r9 on x86-64.
+function arg(frame: usize, i: i32): u64 {
+  if (target_arch() == "arm64") {
+    return reg(frame, i);
+  }
+  return reg(frame, [7, 6, 2, 10, 8, 9][i]);
+}
+
 function (p: Process) syscall(): (Process, Option[Stop]) {
   let f = p.frame;
-  let n = reg(f, 8);
-  let a0 = reg(f, 0);
-  let a1 = reg(f, 1);
-  let a2 = reg(f, 2);
+  let n = call_number(f);
+  let a0 = arg(f, 0);
+  let a1 = arg(f, 1);
+  let a2 = arg(f, 2);
   if (p.takes_net_call(n, a0)) {
-    return p.net_call(n, a0, a1, a2, reg(f, 3));
+    return p.net_call(n, a0, a1, a2, arg(f, 3));
   }
   if (n == 64 as u64) {
     return p.write_to(a0, p.copy_in(a1 as usize, limit(a2 as usize)));
@@ -686,16 +764,16 @@ function (p: Process) syscall(): (Process, Option[Stop]) {
     return (p, Some(Exited((a0 & 255 as u64) as i32)));
   }
   if (n == 222 as u64) {
-    return p.mmap(a1 as usize, a2, reg(f, 3));
+    return p.mmap(a1 as usize, a2, arg(f, 3));
   }
   if (n == 226 as u64) {
     return p.mprotect(a0 as usize, a1 as usize, a2);
   }
   if (is_file_call(n)) {
-    return p.file_call(n, a0, a1, a2, reg(f, 3));
+    return p.file_call(n, a0, a1, a2, arg(f, 3));
   }
   if (is_write_call(n)) {
-    return p.write_call(n, a0, a1, a2, reg(f, 3));
+    return p.write_call(n, a0, a1, a2, arg(f, 3));
   }
   return (p, p.signal_call(n, a0, a1, a2));
 }
@@ -714,7 +792,7 @@ function (p: Process) signal_call(n: u64, a0: u64, a1: u64, a2: u64): Option[Sto
     return p.answer(a1 == 0 as u64 || p.copy_out(a1 as usize, zeros(8).concat(u64_bytes(2 as u64)).concat(zeros(8))), 0i64);
   }
   if (n == 134 as u64) {
-    return p.sigaction(a0, a2, reg(p.frame, 3));
+    return p.sigaction(a0, a2, arg(p.frame, 3));
   }
   if (n == 135 as u64) {
     return p.answer(a2 == 0 as u64 || p.copy_out(a2 as usize, zeros(8)), 0i64);
@@ -858,7 +936,7 @@ A socket, an epoll instance and a signalfd are descriptors, beside the files. Th
 
 The handle of a socket is its port before `listen`, and the slot of its connection after `accept4`. The generation of a connection socket names the accept of its slot. The handle of an epoll instance is its index in the instances of the process. The mask of a signalfd is the set of its signals.
 
-Each socket call first runs `pump`, so the call sees the frames that arrived. A call that must wait moves the PC back to the `svc`, and `run` ends with `Waiting`. The next `run` starts the call again. A timeout of `epoll_pwait` becomes a deadline, which the call that starts again keeps. A struct `epoll_event` on arm64 has 16 bytes: the events, 4 bytes of padding, and the data.
+Each socket call first runs `pump`, so the call sees the frames that arrived. A call that must wait moves the PC back to the `svc` or the `syscall` instruction, and `run` ends with `Waiting`. The next `run` starts the call again. A timeout of `epoll_pwait` becomes a deadline, which the call that starts again keeps. A struct `epoll_event` on arm64 has 16 bytes: the events, 4 bytes of padding, and the data.
 
 ```fern
 <<sockets>>=
@@ -1030,7 +1108,7 @@ function (p: Process) socket_option_call(n: u64, f: OpenFile, a1: u64, a2: u64):
   }
   if (n == 209 as u64) {
     // getsockopt: every option reads 0, so SO_ERROR has no error.
-    return (p, p.answer(p.copy_out(reg(p.frame, 3) as usize, zeros(4)) && p.copy_out(reg(p.frame, 4) as usize, u32_bytes(4 as u32)), 0i64));
+    return (p, p.answer(p.copy_out(arg(p.frame, 3) as usize, zeros(4)) && p.copy_out(arg(p.frame, 4) as usize, u32_bytes(4 as u32)), 0i64));
   }
   if (n == 210 as u64) {
     return p.end_stream(f, a1 != 0 as u64);
@@ -1052,7 +1130,7 @@ function (p: Process) pump(): Process {
   let Some(n) = p.net else {
     return p;
   };
-  return Process { ...p, net: Some(n.pump(counter_ns() / 1000000i64)) };
+  return Process { ...p, net: Some(n.pump(p.now() / 1000000i64)) };
 }
 
 function (p: Process) socket(domain: u64, kind: u64): (Process, Option[Stop]) {
@@ -1188,9 +1266,14 @@ function (p: Process) would_block(f: OpenFile): (Process, Option[Stop]) {
   return p.wait();
 }
 
-// Moves the PC back to the svc, so the next run starts the call again.
+// Moves the PC back to the svc or the syscall instruction, so the next run
+// starts the call again. On x86-64, %rax still holds the number of the call.
 function (p: Process) wait(): (Process, Option[Stop]) {
-  set_reg(p.frame, 32, reg(p.frame, 32) as i64 - 4i64);
+  let length = 2 as u64;
+  if (target_arch() == "arm64") {
+    length = 4 as u64;
+  }
+  raw.store_u64(p.frame + pc_at(), raw.load_u64(p.frame + pc_at()) - length);
   return (p, Some(Waiting));
 }
 
@@ -1287,10 +1370,10 @@ function (p: Process) epoll_ctl(ep: i32, op: u64, fd: u64, event: usize): (Proce
     return p.failed(ENOENT);
   }
   if (op != 2 as u64) {
-    let Some(e) = p.copy_in(event, 16 as usize) else {
+    let Some(e) = p.copy_in(event, (epoll_data_at() + 8) as usize) else {
       return p.failed(EFAULT);
     };
-    kept = kept.append(Watch { fd: fd, events: raw_u64(e, 0) as u32, data: raw_u64(e, 8) });
+    kept = kept.append(Watch { fd: fd, events: raw_u64(e, 0) as u32, data: raw_u64(e, epoll_data_at()) });
   }
   return p.set_epoll(ep, Epoll { watches: kept }).done(0i64);
 }
@@ -1308,7 +1391,7 @@ function (p: Process) epoll_wait(ep: i32, va: usize, max: i32, timeout: i32): (P
     return p.failed(EINVAL);
   }
   let (out, count) = p.ready_events(ep, max);
-  let now = counter_ns();
+  let now = p.now();
   if (count > 0 || timeout == 0 || p.wait_until != 0i64 && now >= p.wait_until) {
     let q = Process { ...p, wait_until: 0i64 };
     return (q, q.answer(q.copy_out(va, out), count as i64));
@@ -1319,6 +1402,15 @@ function (p: Process) epoll_wait(ep: i32, va: usize, max: i32, timeout: i32): (P
   return p.wait();
 }
 
+// The offset of the data of a struct epoll_event. The struct is packed on
+// x86-64, so the data follows the events with no padding.
+function epoll_data_at(): i32 {
+  if (target_arch() == "arm64") {
+    return 8;
+  }
+  return 4;
+}
+
 // The struct epoll_event of each ready descriptor of instance ep, at most max.
 function (p: Process) ready_events(ep: i32, max: i32): (u8[], i32) {
   let out: u8[] = [];
@@ -1326,7 +1418,7 @@ function (p: Process) ready_events(ep: i32, max: i32): (u8[], i32) {
   for w in p.epoll(ep).watches {
     let ready = p.readiness(w.fd) & (w.events | EPOLLHUP);
     if (ready != 0 as u32 && count < max) {
-      out = out.concat(u32_bytes(ready)).concat(zeros(4)).concat(u64_bytes(w.data));
+      out = out.concat(u32_bytes(ready)).concat(zeros(epoll_data_at() - 4)).concat(u64_bytes(w.data));
       count += 1;
     }
   }
@@ -1395,7 +1487,13 @@ const O_CREAT: u64 = 0x40;
 
 const O_TRUNC: u64 = 0x200;
 
-const O_DIRECTORY: u64 = 0x4000;
+// O_DIRECTORY is 0o40000 on arm64 and 0o200000 on x86-64.
+function o_directory(): u64 {
+  if (target_arch() == "arm64") {
+    return 0x4000 as u64;
+  }
+  return 0x10000 as u64;
+}
 
 const FIRST_FD: u64 = 3;
 
@@ -1429,7 +1527,11 @@ pub function (p: Process) with_root(a: cpio.Archive): Process {
 }
 
 // The time of the generic timer's counter, in nanoseconds since it started.
+// x86-64 has no counter of a known frequency, and gives 0.
 pub function counter_ns(): i64 {
+  if (target_arch() != "arm64") {
+    return 0i64;
+  }
   unsafe {
     let c = __sysreg_read("cntvct_el0");
     let f = __sysreg_read("cntfrq_el0");
@@ -1437,17 +1539,35 @@ pub function counter_ns(): i64 {
   }
 }
 
+// Gives the process a counter: source() is a time in nanoseconds that only
+// increases. A wall clock that with_clock set before is lost.
+pub function (p: Process) with_counter(source: () => i64): Process {
+  return Process { ...p, counter: Some(source), epoch_ns: 0i64 };
+}
+
+// The time of the counter of the process, in nanoseconds.
+function (p: Process) now(): i64 {
+  match (p.counter) {
+    Some(source) => {
+      return source();
+    },
+    None => {
+      return counter_ns();
+    }
+  }
+}
+
 // Sets the wall clock of the process: unix_ns is the Unix time now, in
 // nanoseconds, for example from a real-time clock.
 pub function (p: Process) with_clock(unix_ns: i64): Process {
-  return Process { ...p, epoch_ns: unix_ns - counter_ns() };
+  return Process { ...p, epoch_ns: unix_ns - p.now() };
 }
 
 // CLOCK_REALTIME and its coarse form, 0 and 5, add the wall clock to the
 // counter. CLOCK_MONOTONIC, its raw and coarse forms and CLOCK_BOOTTIME, 1, 4,
 // 6 and 7, are the counter.
 function (p: Process) clock_gettime(clock: u64, va: usize): Option[Stop] {
-  let now = counter_ns();
+  let now = p.now();
   if (clock == 0 as u64 || clock == 5 as u64) {
     now += p.epoch_ns;
   } else if (clock != 1 as u64 && clock != 4 as u64 && clock != 6 as u64 && clock != 7 as u64) {
@@ -1592,7 +1712,7 @@ function (p: Process) file_call(n: u64, a0: u64, a1: u64, a2: u64, a3: u64): (Pr
     return (p, p.fstatat(a0, a1 as usize, a2 as usize, a3));
   }
   if (n == 291 as u64) {
-    return (p, p.statx(a0, a1 as usize, a2, reg(p.frame, 4) as usize));
+    return (p, p.statx(a0, a1 as usize, a2, arg(p.frame, 4) as usize));
   }
   if (n == 78 as u64) {
     return (p, p.readlinkat(a0, a1 as usize, a2 as usize, a3 as usize));
@@ -1966,12 +2086,16 @@ function (p: Process) fstatat(dirfd: u64, va: usize, buf: usize, flags: u64): Op
   }
 }
 
-// Writes the stat of f to buf: an arm64 struct stat of 128 bytes.
+// Writes the stat of f to buf: a struct stat of 128 bytes on arm64, and of 144
+// bytes on x86-64.
 function (p: Process) stat_to(f: Option[OpenFile], buf: usize): Option[Stop] {
   let Some(file) = f else {
     return p.fail(EBADF);
   };
   let e = file.entry;
+  if (target_arch() != "arm64") {
+    return p.answer(p.copy_out(buf, x86_stat(e)), 0i64);
+  }
   let out = u64_bytes(1 as u64).concat(u64_bytes(e.inode as u64));
   out = out.concat(u32_bytes(e.mode)).concat(u32_bytes(e.links)).concat(u32_bytes(e.uid)).concat(u32_bytes(e.gid));
   out = out.concat(zeros(16)).concat(u64_bytes(e.size as u64)).concat(u32_bytes(PAGE as u32)).concat(zeros(4));
@@ -1980,6 +2104,17 @@ function (p: Process) stat_to(f: Option[OpenFile], buf: usize): Option[Stop] {
     out = out.concat(u64_bytes(e.mtime as u64)).concat(zeros(8));
   }
   return p.answer(p.copy_out(buf, out.concat(zeros(8))), 0i64);
+}
+
+// The x86-64 layout has the link count before the mode, as a word of 64 bits.
+function x86_stat(e: cpio.Entry): u8[] {
+  let out = u64_bytes(1 as u64).concat(u64_bytes(e.inode as u64)).concat(u64_bytes(e.links as u64));
+  out = out.concat(u32_bytes(e.mode)).concat(u32_bytes(e.uid)).concat(u32_bytes(e.gid)).concat(zeros(12));
+  out = out.concat(u64_bytes(e.size as u64)).concat(u64_bytes(PAGE as u64)).concat(u64_bytes(((e.size + 511) / 512) as u64));
+  for i in 0..3 {
+    out = out.concat(u64_bytes(e.mtime as u64)).concat(zeros(8));
+  }
+  return out.concat(zeros(24));
 }
 
 function u32_bytes(v: u32): u8[] {
@@ -2137,7 +2272,7 @@ function open_errno(f: OpenFile, flags: u64, change: boolean): i64 {
   if ((flags & O_CREAT) != 0 as u64 && (flags & O_EXCL) != 0 as u64) {
     return EEXIST;
   }
-  if ((flags & O_DIRECTORY) != 0 as u64 && !f.entry.is_dir()) {
+  if ((flags & o_directory()) != 0 as u64 && !f.entry.is_dir()) {
     return ENOTDIR;
   }
   if (change && f.entry.is_dir()) {
