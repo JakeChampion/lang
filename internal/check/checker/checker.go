@@ -3111,6 +3111,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// Method calls now have their resolved receiver arguments. Analyse the
 	// complete typed program before the owned-argument checks use its results.
 	c.computeResultBorrows(prog)
+	c.callbackFactoryFuncs = map[string]*ast.FuncDecl{}
+	for _, fn := range prog.Funcs {
+		c.callbackFactoryFuncs[fn.Name] = fn
+	}
 	for _, fn := range prog.Funcs {
 		c.current = fn
 		c.checkOwnedParams(fn)
@@ -5959,10 +5963,13 @@ type checker struct {
 
 	// sendFuncs holds, per function with a `send` parameter, which parameter
 	// slots are worker boundaries; sendParamNames holds their names.
-	sendFuncs      map[string][]bool
-	sendParamNames map[string][]string
-	resultBorrows  map[string]bool
-	resultAnalysed map[string]bool
+	sendFuncs            map[string][]bool
+	sendParamNames       map[string][]string
+	callbackFactoryFuncs map[string]*ast.FuncDecl
+	callbackFactories    map[string][]ast.Param
+	callbackResultCalls  map[*ast.Call]bool
+	resultBorrows        map[string]bool
+	resultAnalysed       map[string]bool
 	// declaredMethods names the methods the program declares.
 	declaredMethods map[string]bool
 	// handleFreeResults names the functions whose result type cannot hold a handle.
@@ -7419,6 +7426,20 @@ func BoundErrors(info *Info, fn *ast.FuncDecl, args []ast.Type, pos ast.Position
 	return c.errors
 }
 
+// boundSite names the generic function in a bound diagnostic.
+func boundSite(fn *ast.FuncDecl) string {
+	if fn.MethodRecv != "" {
+		return demangle(fn.MethodRecv) + "." + fn.MethodSimpleName
+	}
+	return demangle(fn.Name)
+}
+
+func (c *checker) errUnimplementedBound(pos ast.Position, fn *ast.FuncDecl, tp string, arg ast.Type, trait string) {
+	c.errfCode(pos, "E021",
+		"type argument %s = %s does not implement trait %s required by %s",
+		tp, demangle(arg.String()), demangle(trait), boundSite(fn))
+}
+
 func (c *checker) checkTypeArgBounds(genericFn *ast.FuncDecl, args []ast.Type, sub map[string]ast.Type, tpSet map[string]bool, pos ast.Position) {
 	for i, tp := range genericFn.TypeParams {
 		if _, isParam := args[i].(ast.ParamType); isParam {
@@ -7426,10 +7447,7 @@ func (c *checker) checkTypeArgBounds(genericFn *ast.FuncDecl, args []ast.Type, s
 		}
 		for bi, traitName := range genericFn.Bounds[tp] {
 			tn, ok := receiverNamespace(args[i])
-			site := demangle(genericFn.Name)
-			if genericFn.MethodRecv != "" {
-				site = demangle(genericFn.MethodRecv) + "." + genericFn.MethodSimpleName
-			}
+			site := boundSite(genericFn)
 			dynAt := -1
 			if d, isDyn := args[i].(ast.DynTraitType); isDyn {
 				for k, name := range d.Traits {
@@ -7439,9 +7457,7 @@ func (c *checker) checkTypeArgBounds(genericFn *ast.FuncDecl, args []ast.Type, s
 				}
 			}
 			if dynAt < 0 && (!ok || !c.implements(args[i], traitName)) {
-				c.errfCode(pos, "E021",
-					"type argument %s = %s does not implement trait %s required by %s",
-					tp, demangle(args[i].String()), demangle(traitName), site)
+				c.errUnimplementedBound(pos, genericFn, tp, args[i], traitName)
 				continue
 			}
 			var boundArgs []ast.Type
@@ -11051,6 +11067,30 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	var callbackCaptures map[string][]ast.Param
 	var inlineCaptures map[ast.Expr][]ast.Param
 	callbackCapturesKnown := false
+	ensureCallbackCaptures := func() {
+		if !callbackCapturesKnown {
+			callbackCaptures, inlineCaptures = c.localCallbackCaptures(fn)
+			callbackCapturesKnown = true
+		}
+	}
+	localCaptureOwner := func(name string) bool {
+		ensureCallbackCaptures()
+		for _, captures := range callbackCaptures {
+			for _, capture := range captures {
+				if capture.Name == name {
+					return true
+				}
+			}
+		}
+		for _, captures := range inlineCaptures {
+			for _, capture := range captures {
+				if capture.Name == name {
+					return true
+				}
+			}
+		}
+		return false
+	}
 	checkCallbackCaptures := func(value ast.Expr, moved movedSet) {
 		if value == nil || len(moved) == 0 {
 			return
@@ -11063,15 +11103,12 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			}
 			name = v.Name
 		case *ast.Lambda:
-		case *ast.IfExpr, *ast.MatchExpr, *ast.BlockExpr:
+		case *ast.IfExpr, *ast.MatchExpr, *ast.BlockExpr, *ast.Call:
 			name = "value"
 		default:
 			return
 		}
-		if !callbackCapturesKnown {
-			callbackCaptures, inlineCaptures = c.localCallbackCaptures(fn)
-			callbackCapturesKnown = true
-		}
+		ensureCallbackCaptures()
 		captures := callbackCaptures[name]
 		if _, named := value.(*ast.Ident); !named {
 			captures = inlineCaptures[value]
@@ -11358,6 +11395,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		dynConsumed := map[*ast.Ident]bool{}
 		fieldTarget := map[*ast.Ident]bool{}
 		fieldMoves := map[*ast.FieldAccess]bool{}
+		localConsumes := map[*ast.Ident]bool{}
 		immediate := map[*ast.Lambda]bool{}
 		ast.Walk(e, func(n ast.Node) bool {
 			switch x := n.(type) {
@@ -11429,6 +11467,9 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 						continue
 					}
 					if ai < len(flags) && flags[ai] {
+						if id, ok := arg.(*ast.Ident); ok && id.Local && !borrowedParam[id.Name] {
+							localConsumes[id] = true
+						}
 						if fa, ok := arg.(*ast.FieldAccess); ok && isOwnedExpr(fa) {
 							if id, ok := fa.Target.(*ast.Ident); ok && owned[id.Name] {
 								fieldMoves[fa] = true
@@ -11442,6 +11483,9 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				}
 				if x.Method != nil && len(x.Args) > 0 {
 					consumes := c.methodConsumesReceiver(x.Method)
+					if id, ok := x.Args[0].(*ast.Ident); ok && consumes && id.Local && !borrowedParam[id.Name] {
+						localConsumes[id] = true
+					}
 					if id, ok := x.Args[0].(*ast.Ident); ok && !consumes {
 						borrow[id] = true
 					}
@@ -11555,6 +11599,9 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				checkCallbackCaptures(id, moved)
 			}
 			if !owned[id.Name] {
+				if localConsumes[id] && localCaptureOwner(id.Name) {
+					moved[id.Name] = id.Pos()
+				}
 				return true
 			}
 			if at, isMoved := moved[id.Name]; isMoved {
@@ -14745,8 +14792,20 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 	}
 	// A call returns its own reference to immutable data, even when the
 	// returned value shares storage with a borrowed input.
-	if call, ok := e.(*ast.Call); ok && c.copyableCallResult(t) {
-		c.recordOwnedResult(call, true)
+	if call, ok := e.(*ast.Call); ok {
+		if c.copyableCallResult(t) {
+			c.recordOwnedResult(call, true)
+		}
+		_, callback := t.(*ast.FuncType)
+		_, generic := t.(ast.ParamType)
+		if callback || generic {
+			if c.callbackResultCalls == nil {
+				c.callbackResultCalls = map[*ast.Call]bool{}
+			}
+			c.callbackResultCalls[call] = true
+		} else {
+			delete(c.callbackResultCalls, call)
+		}
 	}
 	if definitelyScalar(t) {
 		if c.scalarArgs == nil {
@@ -15133,8 +15192,22 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			n.ElemType = elemExpected
 			return ast.ArrayType{Elem: elemExpected}
 		}
-		elemT := checkElem(n.Elems[0])
 		originalElemExpected := elemExpected
+		// A first element that is a call with no argument takes the type
+		// of the first element that has arguments.
+		if openPlace := elemExpected == nil || mentionsTypeParam(elemExpected); openPlace && noArgCall(n.Elems[0]) {
+			for _, el := range n.Elems[1:] {
+				if noArgCall(el) {
+					continue
+				}
+				if lead := checkElem(el); lead != nil && !mentionsTypeParam(lead) {
+					elemExpected = lead
+				}
+				break
+			}
+		}
+		elemT := checkElem(n.Elems[0])
+		elemExpected = originalElemExpected
 		elemTypes := []ast.Type{elemT}
 		invalid := false
 		floatDest, toFloat := elemExpected.(ast.FloatType)
@@ -15143,7 +15216,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		for i, el := range n.Elems[1:] {
 			// A call with no argument has only its place to give it a type:
 			// it takes the type of the first element as its expected type.
-			if call, isCall := el.(*ast.Call); isCall && len(call.Args) == 0 && (elemExpected == nil || mentionsTypeParam(elemExpected)) && elemT != nil && !mentionsTypeParam(elemT) {
+			if noArgCall(el) && (elemExpected == nil || mentionsTypeParam(elemExpected)) && elemT != nil && !mentionsTypeParam(elemT) {
 				elemExpected = elemT
 			}
 			t := c.wideLiteralElem(checkElem(el), elemT, el)
@@ -15604,7 +15677,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			if recvHint != nil {
 				c.setElemHintFor(fa.Target, recvHint)
 				c.expectedType = recvHint
-			} else if want := c.receiverExpected(n, fa, callExpected); want != nil {
+			} else if want := c.receiverExpected(n, fa, callExpected, s); want != nil {
 				c.expectedType = want
 			}
 			tt := c.receiverType(fa.Target, s)
@@ -16107,7 +16180,6 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 					}
 					args[i] = v
 				} else {
-					c.errUninferredParam(n, genericFn, tp)
 					complete = false
 				}
 			}
@@ -16116,6 +16188,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				n.TypeArgs = args
 				return c.resolveProj(substituteType(ft.Result, sub))
 			}
+			c.errUninferredParams(n, genericFn, sub)
 			return nil
 		}
 		if intrinsic != IntrinsicNone {
@@ -18214,6 +18287,11 @@ func (c *checker) widenGenericCallByLiterals(call *ast.Call) ast.Type {
 		sub[tp] = call.TypeArgs[i]
 	}
 	return c.resolveProj(substituteType(fn.ReturnType, sub))
+}
+
+func noArgCall(e ast.Expr) bool {
+	call, ok := e.(*ast.Call)
+	return ok && len(call.Args) == 0
 }
 
 func isCellNew(call *ast.Call) bool {

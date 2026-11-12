@@ -4,7 +4,7 @@ This module provides numeric constants and RGB operations.
 
 ## Model
 
-Numeric helpers expose constants and angle conversion. RGB helpers use packed color values.
+Numeric helpers expose constants. The `f64` methods of `std/f64` convert angles and interpolate. RGB helpers use packed color values.
 
 ## Contracts
 
@@ -16,7 +16,7 @@ The text color parser returns an `RgbParseError` for invalid input.
 import "std/math";
 
 function main(): i32 {
-  if (math.lerp(2.0, 4.0, 0.5) != 3.0) { return 1; }
+  if (math.pack_rgb(1, 2, 3) != 66051) { return 1; }
   return 0;
 }
 ```
@@ -54,18 +54,6 @@ pub const PI: f64 = 3.141592653589793;
 pub const TAU: f64 = 6.283185307179586;
 
 pub const E: f64 = 2.718281828459045;
-
-pub function to_radians(deg: f64): f64 {
-  return deg * (PI / 180.0);
-}
-
-pub function to_degrees(rad: f64): f64 {
-  return rad * (180.0 / PI);
-}
-
-pub function lerp(a: f64, b: f64, t: f64): f64 {
-  return a * (1.0 - t) + b * t;
-}
 
 pub function pack_rgb(r: i32, g: i32, b: i32): i32 {
   return (r & 255) << 16 | (g & 255) << 8 | b & 255;

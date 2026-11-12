@@ -40,6 +40,18 @@ A reusable closure borrows its captures.
 This rule also applies to an outer owned parameter.
 The closure cannot return such a capture as an owned result.
 
+A returned callback retains the resource loans in its environment.
+This includes callbacks passed through a factory, an owned callback parameter,
+or a generic forwarding function.
+Ownership of the callback value does not transfer a resource that its environment borrows.
+An owned resource input instead transfers that resource into the returned callback.
+A copied immutable result does not retain an environment loan.
+
+A callback must finish its last use before a captured resource is consumed.
+The check follows single-definition local bindings and inputs of resolved named factories.
+A callback that returns another callback also retains these environment loans.
+Mutable bindings and resource paths inside aggregates still need a broader proof.
+
 The caller can copy immutable data results.
 This also applies to a call with an ordinary result type.
 The call supplies an independent reference.

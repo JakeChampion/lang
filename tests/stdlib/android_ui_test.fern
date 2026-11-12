@@ -508,6 +508,16 @@ function test_wait_gives_ticks(): test.TestOutcome {
   return test.assert_eq(s.shell.app.ticks.to_string() + " " + s.now.to_string(), "3 350");
 }
 
+// A finger moves for 250 ms and no tick comes in that time. The tick of
+// 100 ms is then due at once, and the next one is 100 ms after it.
+function test_events_do_not_move_a_tick(): test.TestOutcome {
+  let p = counter().with_tick((m: Counter): i32 => 100, Beat);
+  let s = sim.drag(sim.start(new_counter(), p, fonts(), 200, 400, 1.0), 20, 300, 20, 310, 250i64);
+  let due = ui.wait(s.shell, p);
+  let t = sim.event(s, android.Tick);
+  return test.assert_eq(due.to_string() + " " + t.shell.app.ticks.to_string() + " " + ui.wait(t.shell, p).to_string(), "0 1 100");
+}
+
 struct Feed { picked: i32, frames: i32 }
 
 function feed_view(m: Feed, s: ui.Screen): ui.El[Msg] {
@@ -562,6 +572,21 @@ function test_theme_follows_the_system(): test.TestOutcome {
   defer draw.release(fr);
   let got = (light == ui.theme(false).background).to_string() + " " + (s.shell.host.screen.theme.background == ui.theme(true).background).to_string() + " " + (fr.pixel(199, 399) == ui.theme(true).background).to_string();
   return test.assert_eq(got, "true true true");
+}
+
+function test_a_theme_follows_the_state(): test.TestOutcome {
+  // The switch of the counter chooses the dark colors.
+  let s = sim.start(new_counter(), counter().with_theme_of((m: Counter, dark: boolean): ui.Theme => ui.theme(m.on || dark)), fonts(), 200, 400, 1.0);
+  let first = sim.picture(s);
+  defer draw.release(first);
+  s = sim.send(s, Switch);
+  let second = sim.picture(s);
+  defer draw.release(second);
+  s = sim.send(s, Switch);
+  let third = sim.picture(s);
+  defer draw.release(third);
+  let got = [first.pixel(199, 399) == ui.theme(false).background, second.pixel(199, 399) == ui.theme(true).background, third.pixel(199, 399) == ui.theme(false).background];
+  return test.assert_eq(got.map((b: boolean): string => b.to_string()).join(" "), "true true true");
 }
 
 function test_text_follows_the_font_scale(): test.TestOutcome {
@@ -863,6 +888,7 @@ function main(): i32 {
   r = r.it("a stack puts its elements one over the other", test_stack);
   r = r.it("a text wraps and clamps", test_text_wraps);
   r = r.it("a role takes its color from the theme", test_roles_take_the_theme);
+  r = r.it("a theme follows the state of the program", test_a_theme_follows_the_state);
   r = r.it("the tree stays out of the bars of the system", test_safe_area);
   r = r.it("a button has the size of Material", test_button);
   r = r.it("a column that scrolls clips and moves its rows", test_scroll_column);
@@ -903,5 +929,6 @@ function main(): i32 {
   r = r.it("a finger moves a slider and scrolls no list", test_a_finger_moves_a_slider);
   r = r.it("the effects run after each message", test_effects_run_after_each_message);
   r = r.it("the meter shows the cost of a frame", test_the_meter_shows_the_cost_of_a_frame);
+  r = r.it("events between two ticks do not move the next tick", test_events_do_not_move_a_tick);
   return r.finish();
 }

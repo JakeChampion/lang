@@ -1,0 +1,1 @@
+callback "read" uses captured owned parameter "h" after it was consumed
