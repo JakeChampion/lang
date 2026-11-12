@@ -79,7 +79,7 @@ pub function wrap(own model: tune.Model): Player {
 
 // The lyrics of the track at `path`: those of the LRC file with its name,
 // or those of the tags of its file.
-function lyrics(dev: Device, path: string, file: u8[]): tune.Line[] {
+function lyrics(dev: Device, path: string, words: string): tune.Line[] {
   let cut = path.len();
   for k in 0..path.len() {
     if (path[k] == b'.') {
@@ -91,11 +91,13 @@ function lyrics(dev: Device, path: string, file: u8[]): tune.Line[] {
       return library.lrc(text);
     }
   }
-  return library.lrc(tags.read(file).lyrics);
+  return library.lrc(words);
 }
 
-function loaded(dev: Device, own m: tune.Model, i: i32): Player {
-  dev.close(m.sound);
+// The player with the track `i` open. With `follow`, the track goes on in
+// the stream of sound that the player has, when the stream has its rate
+// and its channels: the sound that the stream holds plays to its end.
+function loaded(dev: Device, own m: tune.Model, i: i32, follow: boolean): Player {
   let file = dev.read(m.tracks[i].path);
   let picture = tags.picture(file);
   if (picture.len() == 0) {
@@ -105,17 +107,23 @@ function loaded(dev: Device, own m: tune.Model, i: i32): Player {
   if (picture.len() > 0) {
     art = dev.decode(picture, ART, ART);
   }
-  let words = lyrics(dev, m.tracks[i].path, file);
+  let told = tags.read(file);
+  let words = lyrics(dev, m.tracks[i].path, told.lyrics);
   let Some(deck) = engine.open(file) else {
+    dev.close(m.sound);
     return wrap(tune.update(tune.Model { ...m, sound: tune.no_sound(), pending: [] }, tune.Failed("Tune cannot play " + m.tracks[i].title)));
   };
-  let sound = dev.open(deck.rate, deck.channels);
-  if (sound.ptr == 0 as usize) {
-    return wrap(tune.update(tune.Model { ...m, sound: sound, pending: [] }, tune.Failed("The phone gave no sound")));
+  let sound = m.sound;
+  if (!follow || sound.ptr == 0 as usize || sound.rate != deck.rate || sound.channels != deck.channels) {
+    dev.close(m.sound);
+    sound = dev.open(deck.rate, deck.channels);
+    if (sound.ptr == 0 as usize) {
+      return wrap(tune.update(tune.Model { ...m, sound: sound, pending: [] }, tune.Failed("The phone gave no sound")));
+    }
+    dev.start(sound);
   }
-  dev.start(sound);
   let length = deck.duration_ms();
-  return Player { model: tune.Model { ...m, sound: sound, pending: [], at_ms: 0i64, length_ms: length, art: art, lyrics: words }, deck: Some(engine.voice(deck)) };
+  return Player { model: tune.Model { ...m, sound: sound, pending: [], at_ms: 0i64, length_ms: length, art: art, lyrics: words, gain: told.gain }, deck: Some(engine.voice(deck)) };
 }
 
 function sought(dev: Device, own m: tune.Model, own deck: Option[engine.Voice], part: f64): Player {
@@ -139,7 +147,10 @@ function done(dev: Device, own p: Player, want: tune.Want): Player {
   let Player { model: m, deck } = p;
   match (want) {
     tune.Load(i) => {
-      return loaded(dev, m, i);
+      return loaded(dev, m, i, false);
+    },
+    tune.Follow(i) => {
+      return loaded(dev, m, i, true);
     },
     tune.Resume => {
       dev.start(m.sound);
@@ -444,14 +455,20 @@ function rest(all: i32[], from: i32): i32[] {
 
 // The deck after it gave parts until `ready` has `enough` samples or the
 // file ends, and those samples.
-function filled(own deck: engine.Voice, ready: i32[], enough: i32, speed: f64, pitch: i32): (engine.Voice, i32[]) {
+function filled(own deck: engine.Voice, ready: i32[], enough: i32, speed: f64, pitch: i32, gain: f64): (engine.Voice, i32[]) {
   let d = deck;
   let out = ready;
+  // The factor of a gain in dB: 2 for each 6.02 dB.
+  let factor = (gain / 6.020599913279624).exp2();
   while (out.len() < enough && !d.deck.done) {
     let (next, part) = d.pull(speed, pitch);
     d = next;
     for v in part {
-      out = out.append(v);
+      if (gain == 0.0) {
+        out = out.append(v);
+      } else {
+        out = out.append(((v as f64 * factor) as i32).max(-32768).min(32767));
+      }
     }
   }
   return (d, out);
@@ -467,7 +484,7 @@ function pumped(dev: Device, own m: tune.Model, own deck: Option[engine.Voice]):
     return wrap(m);
   };
   let sound = m.sound;
-  let (d, ready) = filled(first, m.pending, sound.rate * sound.channels / READY_PARTS, m.speed as f64 / 100.0, m.pitch);
+  let (d, ready) = filled(first, m.pending, sound.rate * sound.channels / READY_PARTS, m.speed as f64 / 100.0, m.pitch, if (m.level) { m.gain } else { 0.0 });
   let wrote = dev.write(sound, ready);
   let kept = rest(ready, wrote);
   let each = (sound.rate * sound.channels).max(1) as i64;

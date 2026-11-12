@@ -125,7 +125,8 @@ pub function no_sound(): Sound {
   return Sound { ptr: 0 as usize, rate: 0, channels: 0 };
 }
 
-// What the device must do: load the track of a number and play it, play
+// What the device must do: load the track of a number and play it, load
+// it to follow the track that ends in the same stream of sound, play
 // on, stop the sound, go to a part of the track from 0 to 1, look for the
 // files of the library again, ask the person for the permission to read
 // the music of the phone, give the directories in a directory, or keep
@@ -133,7 +134,7 @@ pub function no_sound(): Sound {
 // player holds of the device before Android destroys the activity, or
 // keep the playlists for the next start, or write a playlist as an M3U
 // file, or keep the settings.
-pub enum Want { Load(i32), Resume, Hold, Seek(f64), Scan, Grant, List(string), Keep(string), Quit, KeepLists, WriteList(string), KeepPrefs }
+pub enum Want { Load(i32), Follow(i32), Resume, Hold, Seek(f64), Scan, Grant, List(string), Keep(string), Quit, KeepLists, WriteList(string), KeepPrefs }
 
 // `fresh` tells that the player did not look for its files yet: it looks
 // at its first Beat, after the screen shows.
@@ -147,7 +148,9 @@ pub enum Want { Load(i32), Resume, Hold, Seek(f64), Scan, Grant, List(string), K
 // number of semitones above the pitch of the file. `sleep_min` is the
 // time of the sleep timer in minutes, or 0, and `sleep_us` is the time of
 // sound that is left before the timer stops the player, in microseconds.
-// `salt` changes the order that shuffle gives.
+// `salt` changes the order that shuffle gives. With `level`, each track
+// plays at the gain `gain` in dB that its file gives, so the tracks have
+// the same loudness.
 // `settings` tells that the screen of the settings shows. `look` is the
 // theme that the person chose. `hidden` has the directories whose files
 // are not in the library, and `off` has the lists that have no tab. `open` tells that the screen of the
@@ -197,6 +200,8 @@ pub struct Model {
   sleep_min: i32,
   sleep_us: i64,
   salt: i32,
+  level: boolean,
+  gain: f64,
   settings: boolean,
   look: i32,
   hidden: string[],
@@ -249,21 +254,21 @@ pub struct Model {
 
 // A player with no track yet, which reads the files `scan`.
 pub function start(scan: string[]): Model {
-  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", album_by: "", genre: "", place: "", sort: BY_ALBUM, speed: 100, pitch: 0, sleep_min: 0, sleep_us: 0i64, salt: 0, settings: false, look: LOOK_SYSTEM, hidden: [], off: [], query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, chosen: [], detail: false, lined: false, error: "", wants: [], sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false, covers: [], bare: [], pictures: [], art: None, lyrics: [], sung: false, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: false, wanted: [], playlists: [], list: "", adding: [], naming: false, name: "" };
+  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", album_by: "", genre: "", place: "", sort: BY_ALBUM, speed: 100, pitch: 0, sleep_min: 0, sleep_us: 0i64, salt: 0, level: true, gain: 0.0, settings: false, look: LOOK_SYSTEM, hidden: [], off: [], query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, chosen: [], detail: false, lined: false, error: "", wants: [], sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false, covers: [], bare: [], pictures: [], art: None, lyrics: [], sung: false, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: false, wanted: [], playlists: [], list: "", adding: [], naming: false, name: "" };
 }
 
 // A player with the tracks `tracks` and the playlists `playlists` that it
 // saved at an earlier time. The tracks are in the order of the library. It looks for the files again after the screen
 // shows, and gets the picture of each album.
 // The settings that the player keeps for its next start.
-pub struct Prefs { look: i32, sort: i32, hidden: string[], off: i32[] }
+pub struct Prefs { look: i32, sort: i32, hidden: string[], off: i32[], level: boolean }
 
 pub function no_prefs(): Prefs {
-  return Prefs { look: LOOK_SYSTEM, sort: BY_ALBUM, hidden: [], off: [] };
+  return Prefs { look: LOOK_SYSTEM, sort: BY_ALBUM, hidden: [], off: [], level: true };
 }
 
 pub function prefs(m: Model): Prefs {
-  return Prefs { look: m.look, sort: m.sort, hidden: m.hidden, off: m.off };
+  return Prefs { look: m.look, sort: m.sort, hidden: m.hidden, off: m.off, level: m.level };
 }
 
 // The colors of the player: those that the person chose, or those of the
@@ -285,7 +290,7 @@ pub function start_with(home: string, folder: string, tracks: Track[], playlists
       last = key;
     }
   }
-  return Model { ...m, tracks: tracks, have: have, wanted: wanted, playlists: playlists, look: p.look % 3, sort: p.sort % 4, hidden: p.hidden, off: p.off };
+  return Model { ...m, tracks: tracks, have: have, wanted: wanted, playlists: playlists, look: p.look % 3, sort: p.sort % 4, hidden: p.hidden, off: p.off, level: p.level };
 }
 
 // A player whose library is in `folder`, and whose person chooses a folder
@@ -334,8 +339,9 @@ pub function start_in(home: string, folder: string): Model {
 // `Hide` takes the directory that shows out of the library, and `Unhide`
 // puts a directory back. `ShuffleAll` plays each track of the library in
 // an order that its number chooses, and `PlayList` plays a playlist: the
-// shortcuts of the launcher send them.
-pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean), Menu(i32), MenuClosed, PlayNext, Enqueue, Lined(boolean), Jump(i32), Drop(i32), Closing, Walk(string[]), Listed(string, string[]), OpenList(string), AddTo, SaveQueue, ToList(string), NewList, Named(string), Create, Unlist(i32), DeleteList, Favorite, Imported(string, string[]), Export, Exported(string), Genre(string), Place(string), Sort, ToAlbum, ToArtist, Details, Speed, Pitch, Sleep, Slept(i64), Lyrics, Settings(boolean), Look, TabShown(i32), Hide, Unhide(string), ShuffleAll(i32), PlayList(string) }
+// shortcuts of the launcher send them. `Level` sets or stops the same
+// loudness for each track.
+pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean), Menu(i32), MenuClosed, PlayNext, Enqueue, Lined(boolean), Jump(i32), Drop(i32), Closing, Walk(string[]), Listed(string, string[]), OpenList(string), AddTo, SaveQueue, ToList(string), NewList, Named(string), Create, Unlist(i32), DeleteList, Favorite, Imported(string, string[]), Export, Exported(string), Genre(string), Place(string), Sort, ToAlbum, ToArtist, Details, Speed, Pitch, Sleep, Slept(i64), Lyrics, Settings(boolean), Look, TabShown(i32), Hide, Unhide(string), ShuffleAll(i32), PlayList(string), Level }
 
 // The key of the album of a track: the artist that the album is under,
 // and its name.
@@ -1052,7 +1058,7 @@ function settings(m: Model): ui.El[Msg] {
   }
   let hidden = m.hidden;
   let rows = ui.list("hidden", hidden.len(), 48.0, (row: i32): ui.El[Msg] => ui.row([ui.text(hidden[row]).clamped(1).wide(), ui.text_button("Show", Unhide(hidden[row]))]).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0));
-  return ui.column([head, setting("Theme", "The colors of the player", look_label(m.look), Look), setting("Folder", folder, "Choose", Choose), setting("Library", count(m.tracks.len(), "song"), "Scan", Rescan), ui.text("Tabs").weighted(700).padding_xy(16.0, 0.0), ui.row(tabs).spaced(4.0).padding_xy(16.0, 0.0).scroll("tab-settings"), ui.text(count(hidden.len(), "hidden folder")).weighted(700).padding_xy(16.0, 0.0), rows]).spaced(12.0).padding_xy(0.0, 16.0).aligned(ui.STRETCH);
+  return ui.column([head, setting("Theme", "The colors of the player", look_label(m.look), Look), setting("Loudness", "The same level for each track that tells its gain", toggle_label("Level", m.level), Level), setting("Folder", folder, "Choose", Choose), setting("Library", count(m.tracks.len(), "song"), "Scan", Rescan), ui.text("Tabs").weighted(700).padding_xy(16.0, 0.0), ui.row(tabs).spaced(4.0).padding_xy(16.0, 0.0).scroll("tab-settings"), ui.text(count(hidden.len(), "hidden folder")).weighted(700).padding_xy(16.0, 0.0), rows]).spaced(12.0).padding_xy(0.0, 16.0).aligned(ui.STRETCH);
 }
 
 function sort_label(sort: i32): string {
@@ -1502,11 +1508,15 @@ function went_back(m: Model): Model {
   return played_at(m, (m.spot + m.queue.len() - 1) % m.queue.len());
 }
 
+// The player at the end of a track: the track again, or the next one.
+// The new track follows the old one in the same stream of sound, so no
+// sound is lost between the two.
 function finished(m: Model): Model {
+  let next = went_on(m, false);
   if (m.repeat == REPEAT_ONE) {
-    return played_at(m, m.spot);
+    next = played_at(m, m.spot);
   }
-  return went_on(m, false);
+  return Model { ...next, wants: next.wants.map((w: Want): Want => match (w) { Load(i) => Follow(i), _ => w }) };
 }
 
 // The list above the album or the artist that shows: an album of the
@@ -1798,6 +1808,9 @@ pub function update(own m: Model, msg: Msg): Model {
     },
     Settings(on) => {
       return Model { ...m, settings: on };
+    },
+    Level => {
+      return Model { ...m, level: !m.level, wants: m.wants.append(KeepPrefs) };
     },
     Look => {
       return Model { ...m, look: (m.look + 1) % 3, wants: m.wants.append(KeepPrefs) };
