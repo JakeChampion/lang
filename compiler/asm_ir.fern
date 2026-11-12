@@ -7420,19 +7420,37 @@ function ssa_vint_bin(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.EmitS
   return ssa_fput(reg_of, ins.result, d, s);
 }
 
-// A shift of each lane by one count. Lanes of 8 bits have no shift
-// instruction, so that width is a refusal.
+// A shift of each lane by one count. The count is modulo the lane width.
 function ssa_vint_shift(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  if (ins.imm == 8) {
-    ircore.unsupported_op_refuse(ir.kind_id(b), "x86-64");
-  }
   let op = if (b == "vishl") { "vpsll" } else if (b == "vishrs") { "vpsra" } else { "vpsrl" };
   s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
   s = ssa_load(reg_of, ins.args[1], "%rcx", s);
   let a = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
   let d = ssa_fsrc(reg_of, ins.result, "%xmm0");
-  s = s.write("    movd %ecx, %xmm2\n    " + op + ssa_vint_sfx(ins.imm) + " %xmm2, " + a + ", " + d + "\n");
+  s = s.write("    and $" + util.i32_to_string(ins.imm - 1) + ", %ecx\n    movd %ecx, %xmm2\n");
+  if (ins.imm == 8) {
+    return ssa_fput(reg_of, ins.result, d, s.write(x86_byte_lane_shift(b, a, d)));
+  }
+  s = s.write("    " + op + ssa_vint_sfx(ins.imm) + " %xmm2, " + a + ", " + d + "\n");
   return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// Lanes of 8 bits have no shift instruction. The shift of the lanes of 16
+// bits moves bits across a byte boundary, and a mask removes them: the
+// mask is the same shift of a byte of ones. The signed shift then gives
+// each byte its sign: with m the top bit after the shift, (x ^ m) - m.
+// The count is in %xmm2 and is less than 8.
+function x86_byte_lane_shift(b: string, a: string, d: string): string {
+  if (b == "vishl") {
+    return "    vpsllw %xmm2, " + a + ", %xmm0\n    vpcmpeqb %xmm1, %xmm1, %xmm1\n    vpsllw %xmm2, %xmm1, %xmm1\n"
+      + "    vpbroadcastb %xmm1, %xmm1\n    vpand %xmm1, %xmm0, " + d + "\n";
+  }
+  let o = "    vpsrlw %xmm2, " + a + ", %xmm0\n    vpcmpeqb %xmm1, %xmm1, %xmm1\n    vpsrlw %xmm2, %xmm1, %xmm1\n    vpsrlw $8, %xmm1, %xmm1\n";
+  if (b == "vishru") {
+    return o + "    vpbroadcastb %xmm1, %xmm1\n    vpand %xmm1, %xmm0, " + d + "\n";
+  }
+  return o + "    vpsrlw $1, %xmm1, %xmm2\n    vpxor %xmm1, %xmm2, %xmm2\n    vpbroadcastb %xmm2, %xmm2\n"
+    + "    vpbroadcastb %xmm1, %xmm1\n    vpand %xmm1, %xmm0, %xmm0\n    vpxor %xmm2, %xmm0, %xmm0\n    vpsubb %xmm2, %xmm0, " + d + "\n";
 }
 
 // The negative of each lane is 0 - a. The absolute value is the signed
