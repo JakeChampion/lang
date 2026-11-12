@@ -7917,7 +7917,7 @@ func (c *checker) unifyType(expected, actual ast.Type, sub map[string]ast.Type) 
 				return false
 			}
 		}
-		return c.unifyType(e.Result, a.Result, sub)
+		return c.unifyType(e.Result, a.Result, sub) && (!e.ResultOwn || a.ResultOwn)
 	}
 	return ast.Equal(expected, actual)
 }

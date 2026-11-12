@@ -28,6 +28,22 @@ function finish(own value: H): i32 {
   return 0;
 }
 
+function create[T](make: () => own T): Option[T] {
+  return Some(make());
+}
+
+function fresh_value(): i32 {
+  match (create((): own H => H { value: 39, count: cell_new(0) })) {
+    Some(value) => {
+      return finish(value);
+    },
+    None => {
+      return 0;
+    }
+  }
+  return 0;
+}
+
 function count(xs: u8[]): i32 {
   match (borrow(xs)) {
     Some(values) => {
@@ -46,6 +62,6 @@ function main(): i32 {
   if (xs.len() != 2 || n != 3) {
     return 1;
   }
-  print(finish(H { value: 39, count: cell_new(0) }) + n);
+  print(fresh_value() + n);
   return 0;
 }
