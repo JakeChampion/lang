@@ -64,7 +64,7 @@ An `f32` or `f64` result moves from `%xmm0` or `d0` into that register after a w
 
 | Gap | Consequence |
 |---|---|
-| A foreign call takes at most six integer arguments and no float argument | A C function with a float parameter or a seventh parameter has no safe call; the checker refuses nothing, because the shim count is the whole surface |
+| A direct foreign call (`__c_call0` to `__c_call6`) takes at most six integer arguments and no float argument | A C function with a float parameter or a seventh parameter has no direct call. An `@import` declaration reaches it through `__c_callv` (see "The vector shim") |
 | A variadic C callee on arm64-darwin | Apple's convention passes variadic arguments on the stack; the shim passes them in registers, so such a call is wrong on that target |
 | Tail calls | A call in tail position to a register entry is a jump (`jmp __fn_f.r`, `b __fn_f.r`), so the caller's frame is gone and a backtrace omits it; `TestSelfHostAbortBacktraceCorruptFrame` keeps work after its call for that reason |
 | The register entry `.r` is not exported | A C caller reaches only the stack entry, which is the exported symbol, so this is a limit on size and not on safety |
@@ -84,6 +84,18 @@ No test called a C function with more than four arguments.
 
 The arm64 shim had no run-time test. `TestArm64SharedLibCCallFFI` now loads an arm64 shared object from a C program under QEMU and calls back into C through every shim arity.
 Its callees check the AAPCS64 stack alignment and clobber every caller-saved integer and vector register.
+
+## The vector shim
+
+An `@import` whose signature has a float, more integers than six, or a struct with `@derive(ffi.CLayout)` by value does not use the shims of one arity.
+`compiler/cabi.fern` assigns each argument to a register or a stack word, as the System V ABI and AAPCS64 do, and the call goes through `__c_callv(fn, ints, floats, kind)`.
+
+- The shim loads the integer argument registers and eight stack words from `ints`, and the eight vector argument registers from `floats`.
+- `kind` names the register of the result: an integer, an `f32`, an `f64`, or each result register for a struct.
+- The compiler refuses an import with a struct whose arguments need more than eight stack words (`refusal` in `compiler/cabi.fern`).
+
+`TestSharedCImportsFloatArgs`, `TestSharedCImportsStackArgs`, `TestSharedCImportsVariadic` and `TestSharedCImportsStructByValue` in `internal/testing/e2e/shared_imports_test.go` call C functions of these shapes.
+A direct `__c_call0` to `__c_call6` call keeps the limit of six integer arguments.
 
 ## Commands
 
