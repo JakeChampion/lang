@@ -79,6 +79,9 @@ function c_set_format(builder: usize, format: i32): void;
 @import("libaaudio.so", "AAudioStreamBuilder_setPerformanceMode")
 function c_set_performance_mode(builder: usize, mode: i32): void;
 
+@import("libaaudio.so", "AAudioStreamBuilder_setBufferCapacityInFrames")
+function c_set_buffer_capacity(builder: usize, frames: i32): void;
+
 @import("libaaudio.so", "AAudioStreamBuilder_setUsage")
 function c_set_usage(builder: usize, usage: i32): void;
 
@@ -153,7 +156,7 @@ function open(input: boolean, rate: i32, usage: i32): Stream {
   if (usage == USAGE_MEDIA) {
     content = 1;
   }
-  let ptr = open_stream(input, rate, usage, 1, content);
+  let ptr = open_stream(input, rate, usage, 1, content, 0);
   if (ptr == 0 as usize) {
     return Stream { ptr: ptr, rate: 0 };
   }
@@ -161,8 +164,9 @@ function open(input: boolean, rate: i32, usage: i32): Stream {
 }
 
 // A stream of `channels` channels with the content type `content`, or 0
-// when the device opens none.
-function open_stream(input: boolean, rate: i32, usage: i32, channels: i32, content: i32): usize {
+// when the device opens none. Its buffer holds `capacity` frames or more,
+// or the frames that the device chooses for 0.
+function open_stream(input: boolean, rate: i32, usage: i32, channels: i32, content: i32, capacity: i32): usize {
   unsafe {
     let slot: usize = __alloc(8);
     __store_ptr(slot, 0 as usize);
@@ -180,6 +184,9 @@ function open_stream(input: boolean, rate: i32, usage: i32, channels: i32, conte
     c_set_channel_count(builder, channels);
     c_set_format(builder, 1);
     c_set_performance_mode(builder, 10);
+    if (capacity > 0) {
+      c_set_buffer_capacity(builder, capacity);
+    }
     c_set_content_type(builder, content);
     if (input) {
       c_set_input_preset(builder, 7);
@@ -320,10 +327,11 @@ pub function (m: Music) timestamp(): Option[Timestamp] {
 
 // A playback stream of music at `rate` frames a second with `channels`
 // channels: 1 or 2. The device can choose another rate, which `rate` of the
-// stream gives. A stream with `ptr` 0 did not open.
+// stream gives. A stream with `ptr` 0 did not open. Its buffer holds a
+// quarter of a second, so the sound goes on while the app is late.
 pub function music(rate: i32, channels: i32): Music {
   let count = channels.max(1).min(2);
-  let ptr = open_stream(false, rate, USAGE_MEDIA, count, 2);
+  let ptr = open_stream(false, rate, USAGE_MEDIA, count, 2, rate / 4);
   if (ptr == 0 as usize) {
     return Music { ptr: ptr, rate: 0, channels: count };
   }

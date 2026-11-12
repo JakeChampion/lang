@@ -88,12 +88,39 @@ func (c *checker) openVariant(e ast.Expr) bool {
 	return ed != nil && len(ed.TypeParams) > 0
 }
 
-func (c *checker) errUninferredParam(call *ast.Call, fn *ast.FuncDecl, tp string) {
+// errUninferredParams reports the type parameters of fn that sub leaves
+// unbound. A bound with no impl for its type argument is the report in their
+// place: the impl is what binds a parameter that the bound names.
+func (c *checker) errUninferredParams(call *ast.Call, fn *ast.FuncDecl, sub map[string]ast.Type) {
 	if c.anyFailed(call.Args) {
 		return
 	}
+	unmet := false
+	for _, tp := range fn.TypeParams {
+		arg, ok := sub[tp]
+		if !ok {
+			continue
+		}
+		switch arg.(type) {
+		case ast.ParamType, ast.DynTraitType:
+			continue
+		}
+		for _, trait := range fn.Bounds[tp] {
+			if !c.implements(arg, trait) {
+				c.errUnimplementedBound(call.P, fn, tp, arg, trait)
+				unmet = true
+			}
+		}
+	}
+	if unmet {
+		return
+	}
 	display, spelling := callSiteName(fn)
-	c.errfCode(call.P, "E040", "could not infer type parameter %s for %s — supply it explicitly at the call site (e.g. %s[i32](...)) or annotate the binding", tp, display, spelling)
+	for _, tp := range fn.TypeParams {
+		if _, ok := sub[tp]; !ok {
+			c.errfCode(call.P, "E040", "could not infer type parameter %s for %s — supply it explicitly at the call site (e.g. %s[i32](...)) or annotate the binding", tp, display, spelling)
+		}
+	}
 }
 
 // beginOpenGenericCall ties the open call of decl's value to decl.
@@ -136,7 +163,7 @@ func (c *checker) settleOpenCall(decl *ast.Var, filled ast.Type) {
 	for i, tp := range oc.fn.TypeParams {
 		v, ok := sub[tp]
 		if !ok {
-			c.errUninferredParam(oc.call, oc.fn, tp)
+			c.errUninferredParams(oc.call, oc.fn, sub)
 			return
 		}
 		args[i] = v
@@ -155,11 +182,7 @@ func (c *checker) finishOpenGenericCalls() {
 }
 
 func (oc *openCall) errUnbound(c *checker) {
-	for _, tp := range oc.fn.TypeParams {
-		if _, ok := oc.sub[tp]; !ok {
-			c.errUninferredParam(oc.call, oc.fn, tp)
-		}
-	}
+	c.errUninferredParams(oc.call, oc.fn, oc.sub)
 }
 
 // settleOpenCallByMethod gives an open generic-call local the type
@@ -262,22 +285,32 @@ func bindOpenParams(pattern, got ast.Type, tpSet map[string]bool, sub map[string
 				bindOpenParams(p.Elems[i], g.Elems[i], tpSet, sub)
 			}
 		}
+	case *ast.FuncType:
+		if g, ok := got.(*ast.FuncType); ok && len(g.Params) == len(p.Params) {
+			for i := range p.Params {
+				bindOpenParams(p.Params[i], g.Params[i], tpSet, sub)
+			}
+			bindOpenParams(p.Result, g.Result, tpSet, sub)
+		}
 	}
 }
 
 // receiverExpected gives the type that a call in receiver position must
-// have for its method to give expected: the result type of the method binds
-// the type parameters of its receiver. It is nil when they do not all bind.
-func (c *checker) receiverExpected(call *ast.Call, fa *ast.FieldAccess, expected ast.Type) ast.Type {
-	if _, ok := fa.Target.(*ast.Call); !ok || expected == nil {
+// have: the result type of the method binds the type parameters of its
+// receiver from expected. Where expected names a type parameter of the call
+// that it is an argument of, the arguments of the method bind them. It is
+// nil when they do not all bind.
+func (c *checker) receiverExpected(call *ast.Call, fa *ast.FieldAccess, expected ast.Type, s *scope) ast.Type {
+	if _, ok := fa.Target.(*ast.Call); !ok {
 		return nil
 	}
-	name, _, ok := nominalParts(expected)
-	if !ok {
-		return nil
+	open := c.openCallNominal(fa.Target)
+	name := open
+	if name == "" {
+		name, _, _ = nominalParts(expected)
 	}
 	ft := c.info.FuncSigs[c.info.Methods[name+"."+fa.Field]]
-	if ft == nil || len(ft.Params) != len(call.Args)+1 {
+	if name == "" || ft == nil || len(ft.Params) != len(call.Args)+1 {
 		return nil
 	}
 	recvName, recvArgs, ok := nominalParts(ft.Params[0])
@@ -290,10 +323,89 @@ func (c *checker) receiverExpected(call *ast.Call, fa *ast.FieldAccess, expected
 			tpSet[p.Name] = true
 		}
 	}
-	sub := map[string]ast.Type{}
-	bindOpenParams(ft.Result, expected, tpSet, sub)
-	if len(tpSet) == 0 || len(sub) != len(tpSet) {
+	if len(tpSet) == 0 {
 		return nil
 	}
-	return substituteType(ft.Params[0], sub)
+	sub := map[string]ast.Type{}
+	bindOpenParams(ft.Result, expected, tpSet, sub)
+	if len(sub) == len(tpSet) {
+		if want := substituteType(ft.Params[0], sub); !containsParamType(want) {
+			return want
+		}
+	}
+	if open == "" || expected == nil {
+		return nil
+	}
+	fromArgs := map[string]ast.Type{}
+	for i, a := range call.Args {
+		if !typeMentionsAny(ft.Params[i+1], tpSet) {
+			continue
+		}
+		if t := settledLiteralType(c.checkExpr(a, s)); t != nil && !containsParamType(t) {
+			bindOpenParams(ft.Params[i+1], t, tpSet, fromArgs)
+		}
+	}
+	if len(fromArgs) == len(tpSet) {
+		return substituteType(ft.Params[0], fromArgs)
+	}
+	if len(sub) == len(tpSet) {
+		return substituteType(ft.Params[0], sub)
+	}
+	return nil
+}
+
+// openCallNominal names the struct or enum that a call gives when the call
+// leaves type parameters of a generic function unbound, directly or through
+// the receivers of a chain of method calls. It is "" for each other
+// expression.
+func (c *checker) openCallNominal(e ast.Expr) string {
+	call, ok := e.(*ast.Call)
+	if !ok {
+		return ""
+	}
+	if fa, ok := call.Callee.(*ast.FieldAccess); ok {
+		name := c.openCallNominal(fa.Target)
+		if name == "" {
+			return ""
+		}
+		ft := c.info.FuncSigs[c.info.Methods[name+"."+fa.Field]]
+		if ft == nil {
+			return ""
+		}
+		result, _, _ := nominalParts(ft.Result)
+		return result
+	}
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok || id.Local || len(call.TypeArgs) > 0 {
+		return ""
+	}
+	fn, ok := c.info.GenericFuncs[id.Name]
+	if !ok {
+		return ""
+	}
+	name, args, _ := nominalParts(fn.ReturnType)
+	for _, a := range args {
+		if p, ok := a.(ast.ParamType); ok && !funcParamsMention(fn, p.Name) {
+			return name
+		}
+	}
+	return ""
+}
+
+func funcParamsMention(fn *ast.FuncDecl, tp string) bool {
+	for _, p := range fn.Params {
+		if typeMentionsParam(p.Type, tp) {
+			return true
+		}
+	}
+	return false
+}
+
+func typeMentionsAny(t ast.Type, tpSet map[string]bool) bool {
+	for tp := range tpSet {
+		if typeMentionsParam(t, tp) {
+			return true
+		}
+	}
+	return false
 }

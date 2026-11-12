@@ -32,6 +32,8 @@ An element gives the messages of `on_tap`, `on_long`, `on_edit` and `on_submit`.
 `with_close` takes the final state during Destroy and returns its closed state.
 The callback runs before Android frees the context or detaches the loop thread from the JVM.
 
+`with_theme` gives the colors for the light system and for the dark system. `with_theme_of` gives them for the state of the program also.
+
 `update` does nothing to the device. A program that plays a sound or reads a file puts that request in its state, and `with_effects` gives the function that does it.
 
 ### The cost of a frame
@@ -1753,14 +1755,14 @@ pub struct Program[S, M] {
   system: (android.Event) => Option[M],
   effects: (S) => S,
   close: (own S) => own S,
-  theme: (boolean) => Theme,
+  theme: (S, boolean) => Theme,
   meter: boolean,
 }
 
 // A program with no messages of its own, which the back key closes, in the
 // colors of `theme`.
 pub function program[S, M](view: (S, Screen) => El[M], update: (own S, M) => S): Program[S, M] {
-  return Program { view: view, update: update, wait: (s: S): i32 => -1, tick: None, animating: (s: S): boolean => false, frame: None, back: (s: S): Option[M] => None, system: (e: android.Event): Option[M] => None, effects: (s: S): S => s, close: (own s: S): own S => s, theme: (dark: boolean): Theme => theme(dark), meter: false };
+  return Program { view: view, update: update, wait: (s: S): i32 => -1, tick: None, animating: (s: S): boolean => false, frame: None, back: (s: S): Option[M] => None, system: (e: android.Event): Option[M] => None, effects: (s: S): S => s, close: (own s: S): own S => s, theme: (s: S, dark: boolean): Theme => theme(dark), meter: false };
 }
 
 // After each message, the shell gives the state to `effects`, which does
@@ -1804,7 +1806,15 @@ pub function (p: Program[S, M]) with_system(system: (android.Event) => Option[M]
   return Program { ...p, system: system };
 }
 
+// The program in the colors that `theme` gives for the light system and
+// for the dark system.
 pub function (p: Program[S, M]) with_theme(theme: (boolean) => Theme): Program[S, M] {
+  return Program { ...p, theme: (s: S, dark: boolean): Theme => theme(dark) };
+}
+
+// The program in the colors that `theme` gives for its state, so the
+// person can choose them in the program.
+pub function (p: Program[S, M]) with_theme_of(theme: (S, boolean) => Theme): Program[S, M] {
   return Program { ...p, theme: theme };
 }
 ```
@@ -1847,8 +1857,9 @@ pub struct Device {
 // `focus` is the name of the field that has the focus, or "". `typed` is
 // the text that the keyboard holds for it, `caret` is the character that
 // its caret is before, and `area` tells that it has more than one line.
-// `cost` is the cost of the last frame.
-pub struct Host { dev: Device, fonts: text.Fonts, paint: painter.Painter, window: usize, screen: Screen, input: Input, lay: Layout, frames: i32, focus: string, typed: string, caret: i32, area: boolean, cost: Cost }
+// `cost` is the cost of the last frame. `ticked` is the time of the last
+// tick of the program, in ns.
+pub struct Host { dev: Device, fonts: text.Fonts, paint: painter.Painter, window: usize, screen: Screen, input: Input, lay: Layout, frames: i32, focus: string, typed: string, caret: i32, area: boolean, cost: Cost, ticked: i64 }
 
 // The milliseconds of the parts of the last frame: `view`, the layout, the
 // painter and the accessibility tree. `frame` is the longest frame and
@@ -1879,7 +1890,7 @@ pub struct Shell[S, M] { app: S, host: Host, said: Messages[M] }
 // A shell for the state `state`, which draws text with `fonts`.
 pub function shell[S, M](own state: S, fonts: text.Fonts, dev: Device): Shell[S, M] {
   let screen = Screen { w: 0, h: 0, d: dev.density(), dark: dev.dark(), theme: theme(false), left: 0, top: 0, right: 0, bottom: 0, font: dev.font_scale() };
-  return Shell { app: state, host: Host { dev: dev, fonts: fonts, paint: painter.new(fonts), window: 0 as usize, screen: screen, input: no_input(), lay: no_layout(), frames: 0, focus: "", typed: "", caret: 0, area: false, cost: no_cost() }, said: no_messages() };
+  return Shell { app: state, host: Host { dev: dev, fonts: fonts, paint: painter.new(fonts), window: 0 as usize, screen: screen, input: no_input(), lay: no_layout(), frames: 0, focus: "", typed: "", caret: 0, area: false, cost: no_cost(), ticked: dev.now() }, said: no_messages() };
 }
 
 function changed(h: Host): Host {
@@ -1988,7 +1999,7 @@ function drawn[S, M](own s: Shell[S, M], p: Program[S, M], ns: i64): Shell[S, M]
   if (s.host.window == 0 as usize || s.host.screen.w == 0) {
     return s;
   }
-  let screen = Screen { ...s.host.screen, theme: p.theme(s.host.screen.dark) };
+  let screen = Screen { ...s.host.screen, theme: p.theme(s.app, s.host.screen.dark) };
   let t0 = s.host.dev.now();
   let root = p.view(s.app, screen);
   let t1 = s.host.dev.now();
@@ -2256,20 +2267,21 @@ function edited[S, M](own s: Shell[S, M], p: Program[S, M], e: android.Event): S
 function ticked[S, M](own s: Shell[S, M], p: Program[S, M]): Shell[S, M] {
   let h = s.host;
   let now = h.dev.now();
-  let waits = p.wait(s.app) >= 0;
-  if (long_wait(h.input, now) != 0) {
-    if (waits) {
-      let tick = p.tick;
-      return told_maybe(s, p, tick);
-    }
+  let long = long_wait(h.input, now) == 0;
+  if (!long && tick_left(h, p.wait(s.app), now) != 0) {
     return s;
   }
-  let (input, pressed) = long_press(h.input, now);
-  let m: Option[M] = None;
-  if let Some(n) = pressed {
-    m = long_message(s.said, h.lay, n);
+  let host = Host { ...h, ticked: now };
+  let m: Option[M] = p.tick;
+  if (long) {
+    let (input, pressed) = long_press(h.input, now);
+    host = Host { ...h, input: input };
+    m = None;
+    if let Some(n) = pressed {
+      m = long_message(s.said, h.lay, n);
+    }
   }
-  return told_maybe(Shell { app: s.app, host: Host { ...h, input: input }, said: s.said }, p, m);
+  return told_maybe(Shell { app: s.app, host: host, said: s.said }, p, m);
 }
 
 function accessed[S, M](own s: Shell[S, M], p: Program[S, M], id: i32, action: i32): Shell[S, M] {
@@ -2372,11 +2384,27 @@ function handled[S, M](own s: Shell[S, M], p: Program[S, M], e: android.Event): 
   }
 }
 
+// The milliseconds to the next tick of a program that has a tick each
+// `wait` ms, at the time `now`. A wait below 0 is no tick. The time counts
+// from the last tick, so events between two ticks do not move the next
+// one.
+function tick_left(h: Host, wait: i32, now: i64): i32 {
+  if (wait < 0) {
+    return wait;
+  }
+  let gone = (now - h.ticked) / 1000000i64;
+  if (gone >= wait as i64) {
+    return 0;
+  }
+  return wait - gone as i32;
+}
+
 // The milliseconds that android.run waits for the next event before a
 // Tick, or -1 for no limit.
 pub function wait[S, M](s: Shell[S, M], p: Program[S, M]): i32 {
-  let long = long_wait(s.host.input, s.host.dev.now());
-  let own_wait = p.wait(s.app);
+  let now = s.host.dev.now();
+  let long = long_wait(s.host.input, now);
+  let own_wait = tick_left(s.host, p.wait(s.app), now);
   if (long < 0) {
     return own_wait;
   }

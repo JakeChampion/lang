@@ -3,16 +3,19 @@
 // 20 ms at each write, as a stream of sound does in the time between two
 // writes. With TUNE_UI_PNG set to a directory, the test writes the screens
 // there as PNG files.
+import "core/cmp";
 import "std/android/draw";
 import "std/android/fonts";
 import "std/android/testkit";
 import "std/android/text";
+import "std/android/ui";
 import "std/android/ui/sim";
 import "std/audio/wire";
 import "std/i32";
 import "std/i64";
 import "std/result";
 import "std/test";
+import "./fixture";
 import "./library";
 import "./player";
 import "./tune";
@@ -31,6 +34,14 @@ function test_fonts(): text.Fonts {
     found = found.append(fonts.find_in(font_dir(), "Roboto", w));
   }
   return text.load(found, ws, (path: string): u8[] => read_file_bytes(path).unwrap_or([]));
+}
+
+function text_bytes(s: string): u8[] {
+  let out: u8[] = [];
+  for i in 0..s.len() {
+    out = out.append(s[i]);
+  }
+  return out;
 }
 
 // A WAV file with a LIST chunk of the type INFO after its sound.
@@ -68,6 +79,24 @@ function tagged(file: u8[], title: string, artist: string, album: string, number
 // of their artist and their albums, one file with tags, and one file that
 // is not sound.
 function read(path: string): u8[] {
+  if (path.ends_with("Painted.mp3")) {
+    return fixture.joined(fixture.id3v2_picture("Painted", 300), fixture.silent_mp3(100, true));
+  }
+  if (path.ends_with("mix.m3u")) {
+    return [35u8, 69u8, 88u8, 84u8, 10u8].concat(text_bytes("First Light/02 Slow Water.wav\n../loose/x1.wav\n# a comment\nmissing.mp3\n"));
+  }
+  if (path.ends_with("Slow Water.lrc")) {
+    return text_bytes("[00:00.00]Slow water runs\n[00:01.00]Under the fern\n[00:02.50]Into the light\n");
+  }
+  if (path.ends_with(".lrc")) {
+    return [];
+  }
+  if (path.ends_with("cover.jpg")) {
+    return [255u8, 216u8, 255u8, 224u8];
+  }
+  if (path.ends_with("Boxed.wav")) {
+    return library.demo_file(2).unwrap_or([]);
+  }
   for which in 0..3 {
     if (path.ends_with(library.demo_name(which))) {
       return library.demo_file(which).unwrap_or([]);
@@ -83,10 +112,16 @@ function paths(): string[] {
   return ["music/" + library.demo_name(2), "music/loose/x1.wav", "music/" + library.demo_name(0), "music/" + library.demo_name(1), "music/Fern/cover.mp3"];
 }
 
+// A directory that the library of the test does not have at its start: an
+// album with an image file, and a file with a picture in its tag.
+function boxed(): string[] {
+  return ["extra/Box/01 Boxed.wav", "extra/Box/cover.jpg", "extra/Painted.mp3"];
+}
+
 // The names in the directory `at` of the files of the test.
 function names_in(at: string): string[] {
   let out: string[] = [];
-  for p in paths() {
+  for p in paths().concat(boxed()).append("music/Gone.mp3").append("music/Fern/mix.m3u") {
     if (p.starts_with(at + "/")) {
       let name = p.drop(at.len() + 1).split("/")[0].to_owned();
       if (!out.contains(name)) {
@@ -109,6 +144,21 @@ function dirs_of(at: string): string[] {
   return [];
 }
 
+// The device of the test decodes the bytes that start as a JPEG file: the
+// image has one pixel for each 100 pixels of the side that the player asks
+// for.
+function decoded(bytes: u8[], w: i32, h: i32): Option[draw.Image] {
+  if (bytes.len() < 2 || bytes[0] != 255u8 || bytes[1] != 216u8) {
+    return None;
+  }
+  let side = (w / 100).max(1);
+  let pixels: u8[] = [];
+  for i in 0..side * side * 4 {
+    pixels = pixels.append(200u8);
+  }
+  return Some(draw.Image { width: side, height: side, pixels: pixels });
+}
+
 function device(): player.Device {
   return player.Device {
     grant: (): void => {},
@@ -119,7 +169,15 @@ function device(): player.Device {
     now: (): i64 => 0i64,
     dirs: (at: string): string[] => dirs_of(at),
     keep: (folder: string): void => {},
+    decode: (bytes: u8[], w: i32, h: i32): Option[draw.Image] => decoded(bytes, w, h),
+    save: (text: string): void => {},
+    keep_lists: (text: string): void => {},
+    keep_prefs: (text: string): void => {},
+    write_text: (path: string, text: string): boolean => path.starts_with("music/") && text.starts_with("#EXTM3U\nFern/First Light/02 Slow Water.wav\n"),
+    kept: (name: string): u8[] => [],
+    put: (name: string, bytes: u8[]): void => {},
     show: (now: tune.Now): void => {},
+    quit: (): void => {},
     wake: (): tune.Awake => tune.Awake { wake: 1 as usize, wifi: 1 as usize },
     sleep: (a: tune.Awake): void => {},
     size: (path: string): i64 => read(path).len() as i64,
@@ -138,15 +196,15 @@ function device(): player.Device {
 // player read its files. The library is in this order: Tagged Song by Ada,
 // then Morning Fern and Slow Water on First Light, then Quick Light on
 // Second Light.
-function started_from(own m: tune.Model): sim.Sim[tune.Model, tune.Msg] {
-  return sim.after(sim.start(m, player.program(device()), test_fonts(), 1080, 2400, 2.75), 50i64);
+function started_from(own m: tune.Model): sim.Sim[player.Player, tune.Msg] {
+  return sim.after(sim.start(player.wrap(m), player.program(device()), test_fonts(), 1080, 2400, 2.75), 50i64);
 }
 
-function started(): sim.Sim[tune.Model, tune.Msg] {
+function started(): sim.Sim[player.Player, tune.Msg] {
   return started_from(tune.start(paths()));
 }
 
-function saved(s: sim.Sim[tune.Model, tune.Msg], name: string): void {
+function saved(s: sim.Sim[player.Player, tune.Msg], name: string): void {
   if let Some(out) = env("TUNE_UI_PNG") {
     let fr = sim.picture(s);
     let ok = testkit.save_png(fr, out + "/" + name + ".png");
@@ -167,10 +225,10 @@ function titles(m: tune.Model): string {
 }
 
 function test_scan_reads_tags_and_paths(): test.TestOutcome {
-  let before = sim.start(tune.start(paths()), player.program(device()), test_fonts(), 1080, 2400, 2.75);
+  let before = sim.start(player.wrap(tune.start(paths())), player.program(device()), test_fonts(), 1080, 2400, 2.75);
   let reading = sim.shows(before, "0 songs · reading 5 files") || sim.shows(before, "1 song · reading 4 files");
   let s = started();
-  let m = s.shell.app;
+  let m = s.shell.app.model;
   let ada = m.tracks[0];
   let fern = m.tracks[2];
   let got = reading.to_string() + " " + titles(m) + " " + m.scan.len().to_string() + " / " + ada.artist + "," + ada.album + "," + ada.number.to_string() + "," + ada.year.to_string() + " / " + fern.artist + "," + fern.album + "," + fern.number.to_string() + "," + fern.format;
@@ -198,7 +256,7 @@ function test_artists_and_albums(): test.TestOutcome {
   let songs = sim.shows(s, "1. Morning Fern").to_string() + " " + sim.shows(s, "2. Slow Water").to_string() + " " + sim.shows(s, "Quick Light").to_string();
   // The back key goes up to the artist, then to the list of the artists.
   s = sim.back(s);
-  let up = s.shell.app.artist + "," + s.shell.app.album;
+  let up = s.shell.app.model.artist + "," + s.shell.app.model.album;
   s = sim.back(s);
   let top = sim.shows(s, "2 artists").to_string() + " " + sim.finished(s).to_string();
   s = sim.tap(s, "Albums");
@@ -208,96 +266,96 @@ function test_artists_and_albums(): test.TestOutcome {
 
 function test_a_tap_plays_a_track(): test.TestOutcome {
   let s = sim.tap(started(), "Quick Light");
-  let m = s.shell.app;
+  let m = s.shell.app.model;
   let first = m.current.to_string() + " " + m.playing.to_string() + " " + m.sound.rate.to_string() + " " + m.sound.channels.to_string() + " " + (m.length_ms > 1500i64).to_string();
   s = sim.after(s, 1000i64);
   saved(s, "tune-library");
-  let at = s.shell.app.at_ms;
+  let at = s.shell.app.model.at_ms;
   return test.assert_eq(first + " " + near(at, 1000i64, 250i64).to_string() + " " + sim.shows(s, "Pause").to_string(), "3 true 44100 2 true true true");
 }
 
 function test_pause_and_seek(): test.TestOutcome {
   let s = sim.after(sim.tap(started(), "Slow Water"), 500i64);
   s = sim.tap(s, "Pause");
-  let held = s.shell.app.at_ms;
+  let held = s.shell.app.model.at_ms;
   s = sim.after(s, 500i64);
-  let still = s.shell.app.at_ms == held && !s.shell.app.playing;
+  let still = s.shell.app.model.at_ms == held && !s.shell.app.model.playing;
   s = sim.tap(s, "Now playing, Slow Water");
-  let length = s.shell.app.length_ms;
+  let length = s.shell.app.model.length_ms;
   s = sim.slide(s, "Position", 0.5);
   saved(s, "tune-now-playing");
-  let sought = near(s.shell.app.at_ms, length / 2i64, 300i64);
+  let sought = near(s.shell.app.model.at_ms, length / 2i64, 300i64);
   s = sim.after(sim.tap(s, "Play"), 400i64);
-  let after = near(s.shell.app.at_ms, length / 2i64 + 400i64, 300i64);
+  let after = near(s.shell.app.model.at_ms, length / 2i64 + 400i64, 300i64);
   return test.assert_eq(still.to_string() + " " + sim.shows(s, "Fern · First Light").to_string() + " " + sought.to_string() + " " + after.to_string(), "true true true true");
 }
 
 function test_the_next_track_plays_at_the_end(): test.TestOutcome {
-  // The library has one more track, whose file is not sound. It is by no
-  // artist, so it is the last one.
+  // The library has one more track, whose file is in its directory and is
+  // not sound. It is by no artist, so it is the last one.
   let with_gone = tune.update(tune.start(paths()), tune.Found(tune.plain("music/Gone.mp3", "Gone", "MP3", 0i64)));
   let s = sim.tap(started_from(with_gone), "Slow Water");
-  let length = s.shell.app.length_ms;
+  let length = s.shell.app.model.length_ms;
   s = sim.after(s, length + 300i64);
-  let next = s.shell.app.current.to_string() + " " + s.shell.app.playing.to_string();
-  let quick = s.shell.app.length_ms;
+  let next = s.shell.app.model.current.to_string() + " " + s.shell.app.model.playing.to_string();
+  let quick = s.shell.app.model.length_ms;
   s = sim.after(s, quick + 300i64);
   // The player tells that it cannot play the file, and stops.
-  return test.assert_eq(next + " " + s.shell.app.current.to_string() + " " + s.shell.app.playing.to_string() + " " + sim.shows(s, "Tune cannot play Gone").to_string(), "3 true 4 false true");
+  return test.assert_eq(next + " " + s.shell.app.model.current.to_string() + " " + s.shell.app.model.playing.to_string() + " " + sim.shows(s, "Tune cannot play Gone").to_string(), "3 true 4 false true");
 }
 
 function test_repeat_and_previous(): test.TestOutcome {
   let s = sim.tap(sim.tap(started(), "Quick Light"), "Now playing, Quick Light");
-  s = sim.tap(s, "Repeat off");
-  let length = s.shell.app.length_ms;
+  s = sim.tap(sim.tap(s, "Repeat off"), "Repeat all");
+  let length = s.shell.app.model.length_ms;
   s = sim.after(s, length + 300i64);
-  let repeated = s.shell.app.current.to_string() + " " + near(s.shell.app.at_ms, 300i64, 250i64).to_string();
+  let repeated = s.shell.app.model.current.to_string() + " " + near(s.shell.app.model.at_ms, 300i64, 250i64).to_string();
   s = sim.tap(s, "Previous");
-  let before = s.shell.app.current;
+  let before = s.shell.app.model.current;
   s = sim.tap(sim.after(s, 3500i64), "Previous");
-  return test.assert_eq(repeated + " " + before.to_string() + " " + s.shell.app.current.to_string() + " " + near(s.shell.app.at_ms, 0i64, 100i64).to_string(), "3 true 2 2 true");
+  return test.assert_eq(repeated + " " + before.to_string() + " " + s.shell.app.model.current.to_string() + " " + near(s.shell.app.model.at_ms, 0i64, 100i64).to_string(), "3 true 2 2 true");
 }
 
 function test_back_closes_the_track_then_the_app(): test.TestOutcome {
   let s = sim.tap(sim.tap(started(), "Slow Water"), "Now playing, Slow Water");
-  let open = s.shell.app.open;
+  let open = s.shell.app.model.open;
   s = sim.back(s);
-  let closed = !s.shell.app.open && !sim.finished(s);
+  let closed = !s.shell.app.model.open && !sim.finished(s);
   return test.assert_eq(open.to_string() + " " + closed.to_string() + " " + sim.finished(sim.back(s)).to_string(), "true true true");
 }
 
 function test_a_player_with_no_files_looks_for_them(): test.TestOutcome {
   // The app starts the player with no file. The first frame shows an empty
   // library, and the player asks the device for its files after it.
-  let s = sim.start(tune.start([]), player.program(device()), test_fonts(), 1080, 2400, 2.75);
-  let first = sim.shows(s, "0 songs").to_string() + " " + s.shell.app.tracks.len().to_string();
+  let s = sim.start(player.wrap(tune.start([])), player.program(device()), test_fonts(), 1080, 2400, 2.75);
+  let first = sim.shows(s, "0 songs").to_string() + " " + s.shell.app.model.tracks.len().to_string();
   s = sim.after(s, 500i64);
-  return test.assert_eq(first + " " + s.shell.app.tracks.len().to_string() + " " + sim.shows(s, "4 songs").to_string(), "true 0 4 true");
+  return test.assert_eq(first + " " + s.shell.app.model.tracks.len().to_string() + " " + sim.shows(s, "4 songs").to_string(), "true 0 4 true");
 }
 
 function test_a_scan_adds_no_track_two_times(): test.TestOutcome {
   // The track that plays keeps its place when the player reads the files
   // again.
   let s = sim.tap(started(), "Slow Water");
-  s = sim.after(sim.tap(s, "Scan"), 50i64);
-  return test.assert_eq(s.shell.app.tracks.len().to_string() + " " + s.shell.app.scan.len().to_string() + " " + s.shell.app.current.to_string() + " " + s.shell.app.playing.to_string(), "4 0 2 true");
+  s = sim.after(sim.tap(sim.tap(s, "Settings"), "Scan"), 50i64);
+  return test.assert_eq(s.shell.app.model.tracks.len().to_string() + " " + s.shell.app.model.scan.len().to_string() + " " + s.shell.app.model.current.to_string() + " " + s.shell.app.model.playing.to_string(), "4 0 2 true");
 }
 
 // The Folder button shows the directories of the phone. The person goes
 // into Fern and then First Light, goes up one time, and uses Fern: the
 // library then has the three tunes of Fern, with the album from the path.
 function test_a_person_chooses_the_folder_of_the_library(): test.TestOutcome {
-  let s = sim.after(sim.start(tune.start_in("music", ""), player.program(device()), test_fonts(), 1080, 2400, 2.75), 400i64);
-  let all = s.shell.app.tracks.len();
-  let a = sim.tap(s, "Folder");
-  let at_home = sim.shows(a, "loose") && !sim.shows(a, "Up") && a.shell.app.wants.len() == 0;
+  let s = sim.after(sim.start(player.wrap(tune.start_in("music", "")), player.program(device()), test_fonts(), 1080, 2400, 2.75), 400i64);
+  let all = s.shell.app.model.tracks.len();
+  let a = sim.tap(sim.tap(s, "Settings"), "Choose");
+  let at_home = sim.shows(a, "loose") && !sim.shows(a, "Up") && a.shell.app.model.wants.len() == 0;
   let b = sim.tap(sim.tap(a, "Fern"), "First Light");
-  let deep = b.shell.app.dir + " " + sim.shows(b, "Use First Light").to_string();
+  let deep = b.shell.app.model.dir + " " + sim.shows(b, "Use First Light").to_string();
   let c = sim.tap(b, "Up");
   saved(c, "tune-folder");
-  let up = c.shell.app.dir;
+  let up = c.shell.app.model.dir;
   let d = sim.after(sim.tap(c, "Use Fern"), 50i64);
-  let m = d.shell.app;
+  let m = d.shell.app.model;
   return test.assert_eq(all.to_string() + " " + at_home.to_string() + " " + deep + " " + up + " | " + m.folder + " " + m.choosing.to_string() + " " + titles(m) + " " + m.tracks[2].album, "4 true music/Fern/First Light true music/Fern | music/Fern false Morning Fern|Slow Water|Quick Light Second Light");
 }
 
@@ -306,16 +364,16 @@ function test_a_person_chooses_the_folder_of_the_library(): test.TestOutcome {
 // track plays.
 function test_the_media_buttons_of_android(): test.TestOutcome {
   let s = sim.after(sim.tap(started(), "Slow Water"), 100i64);
-  let on = s.shell.app.told + " " + (s.shell.app.awake.wake != 0 as usize).to_string();
+  let on = s.shell.app.model.told + " " + (s.shell.app.model.awake.wake != 0 as usize).to_string();
   let again = sim.send(s, tune.Play(true));
-  let same = again.shell.app.playing;
+  let same = again.shell.app.model.playing;
   let held = sim.send(again, tune.Play(false));
-  let off = held.shell.app.told + " " + (held.shell.app.awake.wake != 0 as usize).to_string() + " " + held.shell.app.playing.to_string();
-  let length = held.shell.app.length_ms;
+  let off = held.shell.app.model.told + " " + (held.shell.app.model.awake.wake != 0 as usize).to_string() + " " + held.shell.app.model.playing.to_string();
+  let length = held.shell.app.model.length_ms;
   let moved = sim.send(held, tune.SeekMs(length / 2i64));
-  let at = moved.shell.app.at_ms;
+  let at = moved.shell.app.model.at_ms;
   let back = sim.send(moved, tune.Play(true));
-  return test.assert_eq(on + " | " + same.to_string() + " | " + off + " | " + near(at, length / 2i64, 200i64).to_string() + " " + back.shell.app.playing.to_string() + " " + back.shell.app.told, "2|true true | true | 2|false false false | true true 2|true");
+  return test.assert_eq(on + " | " + same.to_string() + " | " + off + " | " + near(at, length / 2i64, 200i64).to_string() + " " + back.shell.app.model.playing.to_string() + " " + back.shell.app.model.told, "2|true true | true | 2|false false false | true true 2|true");
 }
 
 // A call takes the sound of the phone: the player stops, and plays again
@@ -323,11 +381,294 @@ function test_the_media_buttons_of_android(): test.TestOutcome {
 function test_the_audio_focus(): test.TestOutcome {
   let s = sim.after(sim.tap(started(), "Slow Water"), 100i64);
   let away = sim.send(s, tune.Focus(false));
-  let stopped = away.shell.app.playing;
+  let stopped = away.shell.app.model.playing;
   let again = sim.send(away, tune.Focus(true));
-  let plays = again.shell.app.playing;
+  let plays = again.shell.app.model.playing;
   let held = sim.send(sim.send(again, tune.Play(false)), tune.Focus(true));
-  return test.assert_eq(stopped.to_string() + " " + plays.to_string() + " " + held.shell.app.playing.to_string(), "false true false");
+  return test.assert_eq(stopped.to_string() + " " + plays.to_string() + " " + held.shell.app.model.playing.to_string(), "false true false");
+}
+
+function order(m: tune.Model): string {
+  let out: string[] = [];
+  for i in m.queue {
+    out = out.append(i.to_string());
+  }
+  return out.join(",") + "@" + m.spot.to_string();
+}
+
+// A long press on a song shows its menu. The first song of the menu
+// plays, "Play next" puts a song after it, and "Add to queue" puts a song
+// at the end. The screen of the queue shows them. A song leaves the queue,
+// and the queue stops at its end with no repeat.
+function test_the_queue(): test.TestOutcome {
+  let s = sim.tap(sim.hold(started(), "Tagged Song"), "Add to queue");
+  let first = order(s.shell.app.model) + " " + s.shell.app.model.playing.to_string();
+  s = sim.tap(sim.hold(s, "Quick Light"), "Play next");
+  s = sim.tap(sim.hold(s, "Slow Water"), "Add to queue");
+  s = sim.tap(sim.hold(s, "Morning Fern"), "Play next");
+  let built = order(s.shell.app.model);
+  s = sim.tap(sim.tap(sim.tap(s, "Now playing, Tagged Song"), "Next"), "Queue");
+  saved(s, "tune-queue");
+  let shows = sim.shows(s, "4 songs · hold a song to take it out");
+  s = sim.send(s, tune.Drop(3));
+  let less = order(s.shell.app.model);
+  s = sim.send(sim.send(s, tune.Jump(2)), tune.Finished);
+  return test.assert_eq(first + " | " + built + " | " + shows.to_string() + " " + less + " | " + order(s.shell.app.model) + " " + s.shell.app.model.playing.to_string(), "0@0 true | 0,1,3,2@0 | true 0,1,3@1 | 0,1,3@2 false");
+}
+
+// A tap on a song of an album makes the album the queue. Shuffle puts the
+// songs after it in a new order, and the queue has each song one time.
+function test_a_list_is_the_queue(): test.TestOutcome {
+  let s = sim.tap(sim.tap(started(), "Albums"), "First Light");
+  s = sim.tap(s, "1. Morning Fern");
+  let album = order(s.shell.app.model);
+  let all = sim.tap(started(), "Morning Fern");
+  let whole = order(all.shell.app.model);
+  let mixed = sim.send(all, tune.Shuffled);
+  let m = mixed.shell.app.model;
+  let back = sim.send(mixed, tune.Shuffled);
+  return test.assert_eq(album + " | " + whole + " | " + m.queue.len().to_string() + " " + m.queue[1].to_string() + " " + m.spot.to_string() + " " + cmp.sort(m.queue).len().to_string() + " | " + order(back.shell.app.model), "1,2@0 | 0,1,2,3@1 | 4 1 1 4 | 0,1,2,3@1");
+}
+
+// The player reads the directory "extra" with the music of the phone. An
+// album gets its picture from the tag of a file, or from an image file of
+// its directory. A track that plays has its picture at the size of its
+// screen. An album with no picture has none.
+function test_the_picture_of_an_album(): test.TestOutcome {
+  let s = sim.after(sim.start(player.wrap(tune.start(["extra"])), player.program(device()), test_fonts(), 1080, 2400, 2.75), 100i64);
+  let m = s.shell.app.model;
+  let keys: string[] = [];
+  for c in m.covers {
+    keys = keys.append(c.key.replace("\n", "/") + ":" + c.image.width.to_string());
+  }
+  saved(s, "tune-covers");
+  let plays = sim.after(sim.tap(s, "Painted"), 100i64);
+  let art = 0;
+  if let Some(img) = plays.shell.app.model.art {
+    art = img.width;
+  }
+  let plain = started().shell.app.model;
+  return test.assert_eq(titles(m) + " " + keys.join(",") + " " + m.pictures.len().to_string() + " " + art.to_string() + " | " + plain.covers.len().to_string() + " " + plain.bare.len().to_string(), "Tagged Song|Boxed|Morning Fern|Slow Water|Quick Light|Painted Unknown artist/extra:1,extra/Box:1 1 7 | 0 3");
+}
+
+// Android destroys the activity while a track plays: the player gives the
+// sound and the locks back, and keeps its track for the next state.
+function test_the_player_gives_the_device_back(): test.TestOutcome {
+  let s = sim.after(sim.tap(started(), "Slow Water"), 100i64);
+  let before = (s.shell.app.model.sound.ptr != 0 as usize).to_string() + " " + (s.shell.app.model.awake.wake != 0 as usize).to_string() + " " + s.shell.app.deck.is_some().to_string();
+  let t = sim.after(sim.send(s, tune.Closing), 100i64);
+  let m = t.shell.app.model;
+  return test.assert_eq(before + " | " + (m.sound.ptr != 0 as usize).to_string() + " " + (m.awake.wake != 0 as usize).to_string() + " " + t.shell.app.deck.is_some().to_string() + " " + m.current.to_string() + " " + m.playing.to_string(), "true true true | false false false 2 true");
+}
+
+// The player starts with the library that it saved. A track whose file is
+// not in its directory leaves the library at the end of the walk, and a
+// file that is new comes in. The device then keeps the new library, and
+// keeps the picture of each album.
+function test_the_saved_library(): test.TestOutcome {
+  let saved = library.from_text(library.to_text([tune.Track { ...tune.plain("music/" + library.demo_name(0), "Morning Fern", "FLAC", 6000i64), artist: "Fern", album: "First Light", by: "Fern", number: 1 }, tune.plain("music/Old.wav", "Old", "WAV", 1000i64)]));
+  let first = sim.start(player.wrap(tune.start_with("music", "", saved, [], tune.no_prefs())), player.program(device()), test_fonts(), 1080, 2400, 2.75);
+  let before = titles(first.shell.app.model) + " " + first.shell.app.model.wanted.len().to_string();
+  let s = sim.after(first, 500i64);
+  let m = s.shell.app.model;
+  return test.assert_eq(before + " | " + titles(m) + " " + m.dirty.to_string() + " " + m.walking.to_string() + " " + m.wanted.len().to_string() + " " + m.bare.len().to_string(), "Morning Fern|Old 2 | Tagged Song|Morning Fern|Slow Water|Quick Light false false 0 3");
+}
+
+function lists(m: tune.Model): string {
+  let out: string[] = [];
+  for p in m.playlists {
+    out = out.append(p.name + ":" + p.paths.len().to_string());
+  }
+  return out.join(",");
+}
+
+// The scan makes a playlist from an M3U file. The menu of a song puts it
+// in a new playlist that the person names. The track that plays goes in
+// the favorites and out of them. The queue goes in a playlist. A playlist
+// shows its songs, and a tap makes them the queue.
+function test_playlists(): test.TestOutcome {
+  let s = started();
+  let found = lists(s.shell.app.model);
+  s = sim.tap(sim.tap(sim.hold(s, "Tagged Song"), "Add to playlist"), "New playlist");
+  s = sim.tap(sim.send(s, tune.Named(" Road ")), "Create");
+  let made = lists(s.shell.app.model);
+  s = sim.tap(sim.tap(sim.tap(s, "Quick Light"), "Now playing, Quick Light"), "Favorite off");
+  let liked = lists(s.shell.app.model) + " " + sim.shows(s, "Favorite on").to_string();
+  s = sim.tap(sim.tap(sim.tap(s, "Queue"), "Save"), "Road");
+  let kept = lists(s.shell.app.model);
+  s = sim.tap(sim.tap(sim.tap(s, "Library"), "Lists"), "mix");
+  saved(s, "tune-playlist");
+  let shown = sim.shows(s, "2 songs · hold a song to take it out");
+  s = sim.tap(s, "Export");
+  let wrote = s.shell.app.model.error;
+  s = sim.tap(s, "Slow Water");
+  let queue = order(s.shell.app.model);
+  s = sim.send(sim.send(s, tune.Unlist(0)), tune.Favorite);
+  s = sim.tap(sim.tap(s, "Now playing, Slow Water"), "Favorite on");
+  let after = lists(s.shell.app.model);
+  let gone = sim.tap(sim.tap(s, "Library"), "Delete");
+  return test.assert_eq(found + " | " + made + " | " + liked + " | " + kept + " | " + shown.to_string() + " " + wrote + " " + queue + " | " + after + " | " + lists(gone.shell.app.model) + " " + gone.shell.app.model.list.len().to_string(), "mix:3 | mix:3,Road:1 | mix:3,Road:1,Favorites:1 true | mix:3,Road:4,Favorites:1 | true Tune wrote music/mix.m3u 2,0@0 | mix:2,Road:4,Favorites:1 | Road:4,Favorites:1 0");
+}
+
+function song(path: string, title: string, artist: string, by: string, album: string, year: i32, ms: i64, genre: string): tune.Track {
+  return tune.Track { ...tune.plain(path, title, "MP3", ms), artist: artist, album: album, by: by, year: year, genre: genre, artists: tune.names(artist) };
+}
+
+function tallies(groups: tune.Group[]): string {
+  let out: string[] = [];
+  for g in groups {
+    out = out.append(g.name + ":" + g.songs.to_string() + "/" + g.albums.to_string());
+  }
+  return out.join(",");
+}
+
+function numbers(xs: i32[]): string {
+  let out: string[] = [];
+  for x in xs {
+    out = out.append(x.to_string());
+  }
+  return out.join(",");
+}
+
+// A track with two artists is under each of them. A genre and a directory
+// show their songs. An album of an artist shows each of its songs, and the
+// way up goes to the artist. The songs and the albums have four orders.
+function test_groups_and_orders(): test.TestOutcome {
+  let m = tune.start([]);
+  for t in [song("/m/y/b.mp3", "Alpha", "Bo feat. Cy", "Bo", "Two", 2010, 1000i64, ""), song("/m/x/a.mp3", "beta", "Ada; Bo", "Ada", "One", 2001, 3000i64, "Rock"), song("/m/x/c.mp3", "gamma", "Ada", "Ada", "One", 2002, 2000i64, "Rock")] {
+    m = tune.update(m, tune.Found(t));
+  }
+  let groups = tallies(tune.artists(m)) + " " + tallies(tune.genres(m)) + " " + tallies(tune.folders(m));
+  m = tune.update(m, tune.Artist("Bo"));
+  let bo = tallies(tune.albums(m)) + " " + numbers(tune.songs(m));
+  m = tune.update(m, tune.Album("Ada", "One"));
+  let album = numbers(tune.songs(m));
+  m = tune.update(m, tune.Up);
+  let up = m.artist + m.album;
+  m = tune.update(tune.update(m, tune.Up), tune.Genre("Rock"));
+  let rock = numbers(tune.songs(m)) + tune.back(m).is_some().to_string();
+  m = tune.update(m, tune.Place("/m/y"));
+  let place = numbers(tune.songs(m)) + m.genre;
+  m = tune.update(m, tune.Tab(tune.SONGS));
+  let orders: string[] = [];
+  for i in 0..4 {
+    orders = orders.append(numbers(tune.songs(m)) + ":" + tune.albums(m).map((g: tune.Group): string => g.name).join(""));
+    m = tune.update(m, tune.Sort);
+  }
+  let s = sim.tap(sim.tap(started(), "Genres"), "Unknown genre");
+  saved(s, "tune-genre");
+  let shown = sim.shows(s, "Unknown genre") && sim.shows(s, "Tagged Song") && !sim.shows(s, "Genres");
+  return test.assert_eq([groups, bo, album, up, rock, place, orders.join(" "), m.sort.to_string(), shown.to_string()].join(" | "), "Ada:2/1,Bo:2/2,Cy:1/1 Rock:2/1,Unknown genre:1/1 /m/x:2/1,/m/y:1/1 | One:1/1,Two:1/1 0,2 | 0,1 | Bo | 0,1true | 2 | 0,1,2:OneTwo 2,0,1:OneTwo 2,1,0:TwoOne 0,1,2:OneTwo | 0 | true");
+}
+
+// A tap on a song while the menu shows puts the song in the menu, and a
+// second tap takes it out. The songs of the menu go in the queue and in a
+// playlist. The menu of one song goes to its album and shows its details.
+function test_the_menu_of_more_than_one_song(): test.TestOutcome {
+  let s = sim.tap(sim.tap(sim.hold(started(), "Tagged Song"), "Slow Water"), "Quick Light");
+  saved(s, "tune-chosen");
+  let three = sim.shows(s, "3 songs · tap a song to add it") && !sim.shows(s, "Details");
+  s = sim.tap(s, "Slow Water");
+  let two = numbers(s.shell.app.model.chosen);
+  s = sim.tap(s, "Add to queue");
+  let queue = order(s.shell.app.model) + " " + s.shell.app.model.chosen.len().to_string();
+  s = sim.tap(sim.tap(sim.tap(sim.hold(s, "Morning Fern"), "Slow Water"), "Add to playlist"), "mix");
+  let listed = lists(s.shell.app.model);
+  s = sim.tap(sim.hold(s, "Tagged Song"), "Details");
+  saved(s, "tune-details");
+  let detail = sim.shows(s, "Unknown genre · WAV · 0:06") && sim.shows(s, "music/loose/x1.wav");
+  s = sim.tap(s, "Album");
+  let album = s.shell.app.model.album + "/" + s.shell.app.model.album_by + " " + sim.shows(s, "Details").to_string();
+  s = sim.tap(sim.hold(sim.tap(s, "Up"), "Quick Light"), "Artist");
+  return test.assert_eq([three.to_string(), two, queue, listed, detail.to_string(), album, s.shell.app.model.artist].join(" | "), "true | 0,3 | 0,3@0 0 | mix:4 | true | Numbers/Ada false | Fern");
+}
+
+// At the speed 2 the track goes two times as fast, and the pitch buttons
+// go through their values.
+function test_the_speed_and_the_pitch(): test.TestOutcome {
+  let s = sim.tap(sim.tap(started(), "Quick Light"), "Now playing, Quick Light");
+  let plain = sim.after(s, 1000i64).shell.app.model.at_ms;
+  s = sim.tap(sim.tap(sim.tap(sim.tap(sim.tap(started(), "Quick Light"), "Now playing, Quick Light"), "Speed 1.00"), "Speed 1.25"), "Speed 1.50");
+  saved(s, "tune-speed");
+  let label = sim.shows(s, "Speed 2.00");
+  s = sim.after(s, 1000i64);
+  let fast = s.shell.app.model.at_ms;
+  s = sim.tap(sim.tap(s, "Pitch 0"), "Pitch +1");
+  let high = s.shell.app.model.pitch;
+  s = sim.after(s, 500i64);
+  let moved = s.shell.app.model.at_ms > fast;
+  for i in 0..5 {
+    s = sim.send(s, tune.Pitch);
+  }
+  return test.assert_eq([near(plain, 1000i64, 150i64).to_string(), label.to_string(), near(fast, 2000i64, 300i64).to_string(), high.to_string(), moved.to_string(), s.shell.app.model.pitch.to_string()].join(" "), "true true true 2 true 0");
+}
+
+// The sleep timer counts the sound that plays, and stops the player at
+// its end.
+function test_the_sleep_timer(): test.TestOutcome {
+  let s = sim.tap(sim.tap(sim.tap(started(), "Quick Light"), "Now playing, Quick Light"), "Sleep off");
+  let set = sim.shows(s, "Sleep 15 min");
+  s = sim.after(s, 2000i64);
+  let left = near(s.shell.app.model.sleep_us / 1000i64, 898000i64, 400i64);
+  let shown = sim.shows(s, "Sleep 15 min") && s.shell.app.model.playing;
+  s = sim.send(s, tune.Slept(897000000i64));
+  let last = sim.shows(s, "Sleep 1 min");
+  s = sim.after(s, 1500i64);
+  let m = s.shell.app.model;
+  return test.assert_eq([set, left, shown, last, m.playing, m.sleep_min == 0 && m.sleep_us == 0i64, sim.shows(s, "Sleep off")].map((b: boolean): string => b.to_string()).join(" "), "true true true true false true true");
+}
+
+// A track with an LRC file shows its lyrics, and the line that the track
+// is at changes with the time. A track with no lyrics has no button.
+function test_the_lyrics_of_a_track(): test.TestOutcome {
+  let s = sim.tap(sim.tap(started(), "Quick Light"), "Now playing, Quick Light");
+  let none = sim.shows(s, "Lyrics off");
+  s = sim.tap(sim.tap(sim.tap(sim.tap(s, "Library"), "Slow Water"), "Now playing, Slow Water"), "Lyrics off");
+  let first = tune.line_at(s.shell.app.model.lyrics, s.shell.app.model.at_ms);
+  s = sim.after(s, 1500i64);
+  saved(s, "tune-lyrics");
+  let m = s.shell.app.model;
+  let shown = sim.shows(s, "Under the fern") && sim.shows(s, "Into the light") && sim.shows(s, "Lyrics on");
+  return test.assert_eq([none.to_string(), m.lyrics.len().to_string(), first.to_string(), tune.line_at(m.lyrics, m.at_ms).to_string(), shown.to_string()].join(" "), "false 3 0 1 true");
+}
+
+// The settings choose the theme and the tabs. A directory that the person
+// hides has no track in the library, and the scan does not read it. The
+// player starts with the settings that it kept.
+function test_the_settings(): test.TestOutcome {
+  let s = sim.tap(started(), "Settings");
+  saved(s, "tune-settings");
+  let light = s.shell.host.screen.theme.background == ui.theme(false).background;
+  s = sim.tap(sim.tap(s, "System"), "Light");
+  let dark = s.shell.app.model.look == tune.LOOK_DARK && sim.shows(s, "Dark");
+  let fr = sim.picture(s);
+  let painted = fr.pixel(1070, 2390) == ui.theme(true).background;
+  draw.release(fr);
+  s = sim.tap(sim.tap(sim.tap(s, "Genres on"), "Albums on"), "Up");
+  let tabs = [sim.shows(s, "Songs"), sim.shows(s, "Albums"), sim.shows(s, "Artists"), sim.shows(s, "Genres"), sim.shows(s, "Folders")];
+  s = sim.tap(sim.tap(sim.tap(s, "Folders"), "loose"), "Hide");
+  let m = s.shell.app.model;
+  let hidden = m.hidden.join(",") + " " + m.tracks.len().to_string() + " " + m.place.len().to_string();
+  s = sim.after(sim.tap(sim.tap(s, "Settings"), "Scan"), 300i64);
+  let kept = s.shell.app.model.tracks.len();
+  s = sim.after(sim.tap(sim.tap(s, "Settings"), "Show"), 300i64);
+  let again = s.shell.app.model.tracks.len().to_string() + " " + s.shell.app.model.hidden.len().to_string();
+  let next = tune.start_with("music", "", [], [], tune.Prefs { look: tune.LOOK_LIGHT, sort: tune.BY_NAME, hidden: ["music/loose"], off: [tune.FOLDERS] });
+  let started = [next.look, next.sort, next.hidden.len(), next.off.len()].map((n: i32): string => n.to_string()).join("");
+  return test.assert_eq([light.to_string(), dark.to_string(), painted.to_string(), tabs.map((b: boolean): string => b.to_string()).join(","), hidden, kept.to_string(), again, started].join(" | "), "true | true | true | true,false,true,false,true | music/loose 3 0 | 3 | 4 0 | 1111");
+}
+
+// The shortcuts of the launcher play each track in an order that a number
+// chooses, or play a playlist.
+function test_the_shortcuts_of_the_launcher(): test.TestOutcome {
+  let s = sim.send(started(), tune.ShuffleAll(41));
+  let m = s.shell.app.model;
+  let first = order(m);
+  let all = cmp.sort(m.queue).map((i: i32): string => i.to_string()).join("") + " " + m.playing.to_string() + m.shuffle.to_string();
+  let other = order(sim.send(started(), tune.ShuffleAll(977)).shell.app.model);
+  let none = order(sim.send(started(), tune.PlayList(tune.FAVORITES)).shell.app.model);
+  let list = sim.send(started(), tune.PlayList("mix")).shell.app.model;
+  return test.assert_eq([all, (first != other).to_string(), none, order(list), list.playing.to_string(), tune.update(tune.start([]), tune.ShuffleAll(3)).playing.to_string()].join(" | "), "0123 truetrue | true | @-1 | 2,0@0 | true | false");
 }
 
 function main(): i32 {
@@ -345,5 +686,18 @@ function main(): i32 {
   r = r.it("a person chooses the folder of the library", test_a_person_chooses_the_folder_of_the_library);
   r = r.it("the media buttons of Android play, stop and go to a time", test_the_media_buttons_of_android);
   r = r.it("the player stops for a call and plays again after it", test_the_audio_focus);
+  r = r.it("the menu of a song puts it in the queue", test_the_queue);
+  r = r.it("the list that shows is the queue", test_a_list_is_the_queue);
+  r = r.it("an album has its picture from a tag or from an image file", test_the_picture_of_an_album);
+  r = r.it("the player gives the device back when the activity ends", test_the_player_gives_the_device_back);
+  r = r.it("the player starts with the library that it saved", test_the_saved_library);
+  r = r.it("the person makes playlists, and the scan reads an M3U file", test_playlists);
+  r = r.it("a genre, a directory and each artist of a track show their songs", test_groups_and_orders);
+  r = r.it("the menu has more than one song, and one song shows its details", test_the_menu_of_more_than_one_song);
+  r = r.it("the sound plays at a speed and a pitch", test_the_speed_and_the_pitch);
+  r = r.it("the sleep timer stops the player", test_the_sleep_timer);
+  r = r.it("a track shows its lyrics", test_the_lyrics_of_a_track);
+  r = r.it("the settings choose the theme, the tabs and the hidden folders", test_the_settings);
+  r = r.it("the shortcuts of the launcher play the library or a playlist", test_the_shortcuts_of_the_launcher);
   return r.finish();
 }

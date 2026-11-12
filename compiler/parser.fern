@@ -13980,6 +13980,10 @@ function mg_ty(ty: string, gstructs: StructDecl[], ins: Insts): TyIns {
     let o = mg_ty(slice_unchecked(ty, 4, ty.len()).to_owned(), gstructs, ins);
     return TyIns { ty: "own " + o.ty, mins: o.mins };
   }
+  if (spelling_is_view(ty)) {
+    let v = mg_ty(slice_unchecked(ty, 1, ty.len() - 1).to_owned(), gstructs, ins);
+    return TyIns { ty: "[" + v.ty + "]", mins: v.mins };
+  }
   if (type_ends_arr(ty)) {
     let r = mg_ty(slice_unchecked(ty, 0, ty.len() - 2), gstructs, ins);
     return TyIns { ty: r.ty + "[]", mins: r.mins };
