@@ -842,12 +842,6 @@ function index_abort(cause: string, i: string, n: i32): Value {
   return v_abort(cause, "index " + i + ", length " + util.i32_to_string(n));
 }
 
-// Whether byte offset `at` of `s` falls inside a character, on a UTF-8
-// continuation byte.
-function splits_char(s: string, at: i32): boolean {
-  return at > 0 && at < s.len() && s[at] >= 128u8 && s[at] < 192u8;
-}
-
 function slice_abort(cause: string, what: string, lo: i32, hi: i32, n: i32): Value {
   return v_abort(cause, what + " [" + util.i32_to_string(lo) + ":" + util.i32_to_string(hi) + "], length " + util.i32_to_string(n));
 }
@@ -7783,9 +7777,6 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
         let sub = vint_bits(args[2]);
         if (sua < 0 || sub > s.v.len() || sua > sub) {
           return slice_abort(aborts.str_oob(), "slice_unchecked", sua, sub, s.v.len());
-        }
-        if (splits_char(s.v, sua) || splits_char(s.v, sub)) {
-          return v_abort(aborts.str_oob(), "slice_unchecked [" + util.i32_to_string(sua) + ":" + util.i32_to_string(sub) + "] splits a UTF-8 character");
         }
         return v_string(slice_unchecked(s.v, sua, sub));
       },

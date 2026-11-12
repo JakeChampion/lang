@@ -755,16 +755,12 @@ func TestSliceUncheckedStillTraps(t *testing.T) {
 	if _, err := builtinSliceUnchecked(nil, []Value{String("hi"), Number(1), Number(9)}); err == nil {
 		t.Fatal("slice_unchecked out of range must be an error")
 	}
-	var abort *Abort
-	if _, err := builtinSliceUnchecked(nil, []Value{String("héllo"), Number(1), Number(2)}); !errors.As(err, &abort) || abort.Cause != CauseStrOOB {
-		t.Errorf("slice_unchecked inside a character: got %v, want the string-range abort", err)
-	}
-	v, err := builtinSliceUnchecked(nil, []Value{String("héllo"), Number(1), Number(3)})
+	v, err := builtinSliceUnchecked(nil, []Value{String("héllo"), Number(1), Number(2)})
 	if err != nil {
 		t.Fatalf("slice_unchecked: %v", err)
 	}
-	if s, ok := v.(String); !ok || string(s) != "é" {
-		t.Errorf("got %#v, want the whole character", v)
+	if s, ok := v.(String); !ok || len(string(s)) != 1 {
+		t.Errorf("got %#v, want the single byte", v)
 	}
 }
 
