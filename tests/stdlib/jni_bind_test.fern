@@ -200,6 +200,49 @@ function test_all_classes(): test.TestOutcome {
   );
 }
 
+// A "?" after a member is the mark of a member that a device can lack:
+// its lookup gives 0 with no error, a function tests for it, and its
+// wrapper gives an error on such a device. A "?" before a String
+// parameter is the mark of a parameter that can be null.
+function test_marks(): test.TestOutcome {
+  let text = generated([bind.Request { class: "dev/fern/Point", members: ["parse(?Ljava/lang/String;)Ldev/fern/Point;", "set(?Ljava/lang/String;J)V", "area?", "x?", "label"] }]);
+  if (text.contains("has_label") || text.contains("has_parse")) {
+    return test.fail("a member with no mark has a test");
+  }
+  return test.assert_eq(
+    absent(text, [
+      "import \"std/jni\";\nimport \"std/option\";\n",
+      "let id_area = jni.optional_id(e, jni.get_method_id(e, class, \"area\", \"()D\"));",
+      "let id_x = jni.optional_id(e, jni.get_field_id(e, class, \"x\", \"I\"));",
+      "let id_label = jni.checked_id(e, class, jni.get_field_id(e, class, \"label\", \"Ljava/lang/String;\"))?;",
+      "let id_parse = jni.checked_id(e, class, jni.get_static_method_id(e, class, \"parse\", \"(Ljava/lang/String;)Ldev/fern/Point;\"))?;",
+      "pub function (c: PointClass) has_area(): boolean {\n  return c.id_area != 0 as usize;\n}",
+      "pub function (c: PointClass) has_x(): boolean {",
+      "pub function (c: PointClass) area(e: usize, self: Point): Result[f64, jni.JavaError] {\n  if (c.id_area == 0 as usize) {\n    return Err(jni.absent(\"dev.fern.Point.area\"));\n  }\n",
+      "pub function (c: PointClass) x(e: usize, self: Point): Result[i32, jni.JavaError] {\n  if (c.id_x == 0 as usize) {\n    return Err(jni.absent(\"dev.fern.Point.x\"));\n  }\n",
+      "pub function (c: PointClass) parse(e: usize, a0: Option[string]): Result[Point, jni.JavaError] {",
+      "  let s0 = 0 as usize;\n  if let Some(t0) = a0 {\n    s0 = jni.new_string(e, t0);\n  }\n  jni.jvalue_set_int(args, 0, s0);\n",
+      "pub function (c: PointClass) set(e: usize, self: Point, a0: Option[string], a1: i64): Result[void, jni.JavaError] {",
+      "  jni.delete_local_ref(e, s0);\n",
+    ]),
+    "",
+  );
+}
+
+// A module with no parameter that can be null does not import std/option.
+function test_marks_absent(): test.TestOutcome {
+  let text = generated([bind.Request { class: "dev/fern/Point", members: ["parse", "area?"] }]);
+  if (text.contains("std/option") || text.contains("Option[")) {
+    return test.fail("a module with no null parameter has an Option");
+  }
+  return test.assert_eq(absent(text, ["pub function (c: PointClass) parse(e: usize, a0: string): Result[Point, jni.JavaError] {"]), "");
+}
+
+function test_mark_errors(): test.TestOutcome {
+  let got = generated([bind.Request { class: "dev/fern/Point", members: ["set(?I)V"] }]) + "; " + generated([bind.Request { class: "dev/fern/Point", members: ["?area"] }]) + "; " + generated([bind.Request { class: "dev/fern/Point", members: ["nothing?"] }]) + "; " + generated([bind.Request { class: "dev/fern/Point", members: ["parse(Ljava/lang/String;)?Ldev/fern/Point;"] }]);
+  return test.assert_eq(got, "error: the mark ? in set(?I)V is not before Ljava/lang/String;; error: the mark ? in ?area is not before a parameter; error: dev/fern/Point has no public member nothing; error: the mark ? in parse(Ljava/lang/String;)?Ldev/fern/Point; is not before a parameter");
+}
+
 function test_errors(): test.TestOutcome {
   let got = generated([all("dev/fern/Absent")]) + "; " + generated([bind.Request { class: "dev/fern/Point", members: ["nothing"] }]) + "; " + generated([bind.Request { class: "dev/fern/Sample", members: ["rows"] }]) + "; " + generated([all("dev/fern/Point"), all("dev/fern/Point")]);
   return test.assert_eq(got, "error: the classes do not have dev/fern/Absent; error: dev/fern/Point has no public member nothing; error: dev/fern/Sample has no public member rows; error: two requests have a class with the name Point");
@@ -218,6 +261,9 @@ function main(): i32 {
   r = r.it("a request with members binds only them", test_members);
   r = r.it("the member - binds a class with no function", test_type_only);
   r = r.it("the struct Classes holds each class", test_all_classes);
+  r = r.it("a mark gives a member that can be absent and a parameter that can be null", test_marks);
+  r = r.it("a module with no null parameter has no Option", test_marks_absent);
+  r = r.it("generate refuses a mark in a wrong place", test_mark_errors);
   r = r.it("generate refuses a request that is not correct", test_errors);
   return r.finish();
 }

@@ -8,3 +8,4 @@ package = "dev.fern.tune"
 label = "Fern Tune"
 min_sdk = 30
 permissions = ["READ_MEDIA_AUDIO", "READ_EXTERNAL_STORAGE", "FOREGROUND_SERVICE", "FOREGROUND_SERVICE_MEDIA_PLAYBACK", "POST_NOTIFICATIONS", "WAKE_LOCK"]
+widget = ["text:title:Fern Tune", "button:previous:Prev", "button:toggle:Play", "button:next:Next"]

@@ -732,6 +732,21 @@ pub function check(env: usize): Result[void, JavaError] {
   return Err(JavaError { text: out });
 }
 
+// The ID `id` that a lookup gave, or 0 when the lookup threw. It clears
+// the exception. Use it for a member that an older device does not have.
+pub function optional_id(env: usize, id: usize): usize {
+  if (exception_occurred(env) == 0 as usize) {
+    return id;
+  }
+  exception_clear(env);
+  return 0 as usize;
+}
+
+// The error for a call of `member`, which the device does not have.
+pub function absent(member: string): JavaError {
+  return JavaError { text: "the device does not have " + member };
+}
+
 // The ID `id` that a lookup in the class `class` gave. When the lookup
 // threw, the result is the error, and the global reference `class` is
 // deleted, because the struct that would hold it does not exist.

@@ -101,7 +101,7 @@ Do it **after** the remaining carriers, not before. The carriers are
 independently valuable, individually revertible, and each one narrows the set of
 places the checker's answer is consulted — which makes a settling change easier
 to evaluate, not harder. Settling is also the natural point at which
-`irlower.literal_is_i64` (and its `parser.fern` twin) should be re-examined:
+`irlower.literal_is_i64` (and its `ast.fern` twin) should be re-examined:
 those exist precisely because lowering could not trust the checker, and a real
 settling pass is what would let them be deleted.
 

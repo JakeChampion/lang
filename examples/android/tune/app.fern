@@ -11,6 +11,7 @@ import "std/android/image";
 import "std/android/service";
 import "std/android/session";
 import "std/android/shortcuts";
+import "std/android/widget";
 import "std/android/ui/app";
 import "std/log";
 import "std/result";
@@ -76,6 +77,45 @@ pub function playing_command(env: usize, thiz: usize, intent: usize, flags: i32,
 
 const SERVICE: string = "dev.fern.tune.Playing";
 
+const WIDGET: string = "dev.fern.tune.Widget";
+
+// The actions of the buttons of the widget.
+const WIDGET_PLAY: string = "dev.fern.tune.widget.PLAY";
+
+const WIDGET_PAUSE: string = "dev.fern.tune.widget.PAUSE";
+
+const WIDGET_NEXT: string = "dev.fern.tune.widget.NEXT";
+
+const WIDGET_PREVIOUS: string = "dev.fern.tune.widget.PREVIOUS";
+
+// What the widget shows: the item 0 is the track and opens the app, and
+// the items 1 to 3 are the buttons. The middle button plays or stops.
+function widget_look(title: string, playing: boolean): widget.Look {
+  if (playing) {
+    return widget.Look { texts: [(0, title), (2, "Pause")], actions: [(1, WIDGET_PREVIOUS), (2, WIDGET_PAUSE), (3, WIDGET_NEXT)], opens: [0] };
+  }
+  return widget.Look { texts: [(0, title), (2, "Play")], actions: [(1, WIDGET_PREVIOUS), (2, WIDGET_PLAY), (3, WIDGET_NEXT)], opens: [0] };
+}
+
+// The provider of the widget of the home screen. A button of the widget
+// sends the command of its media button to the player, when the player
+// runs. A new widget shows the name of the app.
+@jni("dev.fern.tune.Widget extends android.appwidget.AppWidgetProvider", "void onReceive(android.content.Context, android.content.Intent)")
+pub function widget_receive(env: usize, thiz: usize, context: usize, intent: usize): void {
+  let action = widget.action(env, intent);
+  if (action == WIDGET_PLAY) {
+    session.play(env);
+  } else if (action == WIDGET_PAUSE) {
+    session.pause(env);
+  } else if (action == WIDGET_NEXT) {
+    session.next(env);
+  } else if (action == WIDGET_PREVIOUS) {
+    session.previous(env);
+  } else if (action == widget.UPDATE && android.live_activity(env) == 0 as usize) {
+    let shown = widget.show(env, context, WIDGET, widget_look("Fern Tune", false));
+  }
+}
+
 // The session of the player and its token, or 0 when Android gave none.
 // `focus` is the request for the sound of the phone.
 struct Media { session: Option[session.Session], token: usize, focus: Option[focus.Focus] }
@@ -88,6 +128,7 @@ function show(ctx: usize, media: Media, now: tune.Now): void {
       let granted = focus.request(ctx, f);
     }
   }
+  let shown = widget.show(android.env(ctx), android.activity_object(ctx), WIDGET, widget_look(now.title + " · " + now.artist, now.playing));
   let Some(s) = media.session else {
     return;
   };

@@ -7,7 +7,7 @@ import "std/string";
 // The last step of a native compile: link the in-process assembler's output
 // at the image's addresses and write the ELF executable.
 
-pub function arm64_refusals(target: string, stage: string, unknown: string[]): string {
+pub function arm64_refusals(target: string, stage: string, unknown: string[]): u8[] {
   let msg: string = "fern: -target " + target + ": in-process " + stage
     + " refused " + util.i32_to_string(unknown.len()) + ": ";
   for i in 0..unknown.len() {
@@ -17,10 +17,10 @@ pub function arm64_refusals(target: string, stage: string, unknown: string[]): s
     msg += unknown[i];
   }
   eprint(msg);
-  return "";
+  return [];
 }
 
-pub function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string, dir: string, harden: boolean, pie: boolean): string {
+pub function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string, dir: string, harden: boolean, pie: boolean): u8[] {
   let p = arm64_native.arm64_gas_program_words(asm, words, -1);
   if (p.unknown.len() > 0) {
     return arm64_refusals("arm64-linux", "assembler", p.unknown);
@@ -71,11 +71,9 @@ pub function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_n
 
 // The image with its symbol table and DWARF when emit_syms is set. The text
 // of the image starts at text_off in the file and at tv in memory.
-function arm64_with_debug(bin: u8[], p: arm64_native.Arm64GasProg, tv: i64, dv: i64, text_off: i32, emit_syms: boolean, cu_name: string, dir: string): string {
+function arm64_with_debug(bin: u8[], p: arm64_native.Arm64GasProg, tv: i64, dv: i64, text_off: i32, emit_syms: boolean, cu_name: string, dir: string): u8[] {
   if (!emit_syms) {
-    unsafe {
-      return string_from_bytes_unchecked(bin);
-    }
+    return bin;
   }
   let pa2 = p.asm;
   let aend = arm64_native.arm64_code_len(p);
@@ -90,12 +88,10 @@ function arm64_with_debug(bin: u8[], p: arm64_native.Arm64GasProg, tv: i64, dv: 
     arm64_native.arm64_debug_frame(p, tv),
     arm64_var_ranges(p, tv, dv),
   );
-  unsafe {
-    return string_from_bytes_unchecked(util.to_u8(wide));
-  }
+  return util.to_u8(wide);
 }
 
-pub function arm64_elf_binary_pie(asm: string, words: u8[], emit_syms: boolean, cu_name: string, dir: string, harden: boolean): string {
+pub function arm64_elf_binary_pie(asm: string, words: u8[], emit_syms: boolean, cu_name: string, dir: string, harden: boolean): u8[] {
   let p = arm64_native.arm64_gas_program_words(asm, words, -1);
   if (p.unknown.len() > 0) {
     return arm64_refusals("arm64-android", "assembler", p.unknown);
@@ -168,7 +164,7 @@ function x86_relro_slots(own a: x86_native.X86Asm, tv: i32, dv: i32, runtime: bo
 
 // `page_align` is the alignment of the load segments. A fixed-address image
 // uses elf_x86_page_align().
-pub function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string, dir: string, pie: boolean, page_align: i32): string {
+pub function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string, dir: string, pie: boolean, page_align: i32): u8[] {
   util.arr_push_cliff_report("x86:emitted", 0);
   let a = x86_native.x86_gas_assemble_words_unlinked(asm, words);
   util.arr_push_cliff_report("x86:assembled", 0);
@@ -204,16 +200,16 @@ pub function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_nam
   util.arr_push_cliff_report("x86:resolved", 0);
   if (a.unknown.len() > 0) {
     eprint("fern: -target x86-64-linux: in-process assembler could not encode: " + a.unknown[0]);
-    return "";
+    return [];
   }
   let eoff = x86_native.x86_label_off(a, "_start");
   if (eoff < 0) {
     eprint("fern: -target x86-64-linux: no _start symbol in the emitted program");
-    return "";
+    return [];
   }
   if (eoff >= a.text.len()) {
     eprint("fern: -target x86-64-linux: no code at _start");
-    return "";
+    return [];
   }
   util.arr_push_cliff_report("x86:unwind", 0);
   let bin: u8[] = [];
@@ -224,9 +220,7 @@ pub function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_nam
   }
   util.arr_push_cliff_report("x86:image", 0);
   if (!emit_syms) {
-    unsafe {
-      return string_from_bytes_unchecked(bin);
-    }
+    return bin;
   }
   let end = x86_native.x86_code_len(a);
   let wide: i32[] = elf.elf_append_debug(
@@ -239,9 +233,7 @@ pub function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_nam
     x86_native.x86_debug_frame(a, tv),
     x86_var_ranges(a, tv as i32),
   );
-  unsafe {
-    return string_from_bytes_unchecked(util.to_u8(wide));
-  }
+  return util.to_u8(wide);
 }
 
 function reserve_bytes(own data: i32[], n: i32): i32[] {

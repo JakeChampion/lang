@@ -24,7 +24,29 @@ import "./util";
 // `min_sdk` is the lowest API level it runs on. `icon` is the PNG of the
 // launcher icon, or is empty. `compress` deflates the libraries. `home`
 // makes the activity a home screen, and `assets` go under assets/.
-pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string, activity: string, dex: u8[], permissions: string[], min_sdk: i32, services: Service[], icon: u8[], compress: boolean, cleartext: boolean, debuggable: boolean, home: boolean, assets: Asset[] }
+pub struct App { package: string, label: string, lib: string, version_code: i32, version_name: string, activity: string, dex: u8[], permissions: string[], min_sdk: i32, services: Service[], icon: u8[], compress: boolean, cleartext: boolean, debuggable: boolean, home: boolean, assets: Asset[], widget: Widget }
+
+// The app widget of the home screen: the Java class of its provider, which
+// extends android.appwidget.AppWidgetProvider, and the items of its row. An
+// app with no widget has no provider.
+pub struct Widget { provider: string, items: Item[] }
+
+// An item of the row of a widget: a text that takes the room that is left,
+// or a button. `name` is the name of its ID, and `label` is the text that
+// it shows first.
+pub struct Item { button: boolean, name: string, label: string }
+
+pub function no_widget(): Widget {
+  return Widget { provider: "", items: [] };
+}
+
+// The ID of the layout of the widget, of its provider file, and of its
+// first item. The items have IDs one after the other.
+pub const WIDGET_LAYOUT_ID: i32 = 2130837504;
+
+const WIDGET_INFO_ID: i32 = 2130903040;
+
+pub const WIDGET_ITEM_ID: i32 = 2130968576;
 
 // A service of the app: its Java class, and its foreground service types as
 // the flags of android:foregroundServiceType, or 0. A service that only the
@@ -107,12 +129,12 @@ function prefixed(b: [u8]): u8[] {
 // exported, taskAffinity, clearTaskOnLaunch, stateNotNeeded,
 // excludeFromRecents, launchMode,
 // configChanges, value, minSdkVersion, versionCode, versionName,
-// windowSoftInputMode, targetSdkVersion, resumeWhilePausing,
+// resource, windowSoftInputMode, targetSdkVersion, resumeWhilePausing,
 // extractNativeLibs, usesCleartextTraffic and foregroundServiceType. Android
 // finds the attributes of an element by a search in the order of their IDs,
 // so each element lists its attributes in that order too.
 function attr_ids(): i32[] {
-  return [16842752, 16842753, 16842754, 16842755, 16842758, 16842764, 16842767, 16842768, 16842770, 16842773, 16842774, 16842775, 16842781, 16842783, 16842788, 16843276, 16843291, 16843292, 16843307, 16843376, 16843954, 16844010, 16844012, 16844185];
+  return [16842752, 16842753, 16842754, 16842755, 16842758, 16842764, 16842767, 16842768, 16842770, 16842773, 16842774, 16842775, 16842781, 16842783, 16842788, 16842789, 16843276, 16843291, 16843292, 16843307, 16843376, 16843954, 16844010, 16844012, 16844185];
 }
 
 const S_THEME: i32 = 0;
@@ -145,33 +167,35 @@ const S_CONFIG_CHANGES: i32 = 13;
 
 const S_VALUE: i32 = 14;
 
-const S_MIN_SDK: i32 = 15;
+const S_RESOURCE: i32 = 15;
 
-const S_VERSION_CODE: i32 = 16;
+const S_MIN_SDK: i32 = 16;
 
-const S_VERSION_NAME: i32 = 17;
+const S_VERSION_CODE: i32 = 17;
 
-const S_SOFT_INPUT: i32 = 18;
+const S_VERSION_NAME: i32 = 18;
 
-const S_TARGET_SDK: i32 = 19;
+const S_SOFT_INPUT: i32 = 19;
 
-const S_RESUME_WHILE_PAUSING: i32 = 20;
+const S_TARGET_SDK: i32 = 20;
 
-const S_EXTRACT_NATIVE_LIBS: i32 = 21;
+const S_RESUME_WHILE_PAUSING: i32 = 21;
 
-const S_CLEARTEXT: i32 = 22;
+const S_EXTRACT_NATIVE_LIBS: i32 = 22;
 
-const S_FOREGROUND_TYPE: i32 = 23;
+const S_CLEARTEXT: i32 = 23;
 
-const S_PREFIX: i32 = 24;
+const S_FOREGROUND_TYPE: i32 = 24;
 
-const S_URI: i32 = 25;
+const S_PREFIX: i32 = 25;
 
-const S_PACKAGE: i32 = 26;
+const S_URI: i32 = 26;
+
+const S_PACKAGE: i32 = 27;
 
 function pool_strings(app: App): string[] {
   let out: string[] = [
-    "theme", "label", "icon", "name", "permission", "hasCode", "debuggable", "exported", "taskAffinity", "clearTaskOnLaunch", "stateNotNeeded", "excludeFromRecents", "launchMode", "configChanges", "value", "minSdkVersion", "versionCode", "versionName", "windowSoftInputMode", "targetSdkVersion", "resumeWhilePausing", "extractNativeLibs", "usesCleartextTraffic", "foregroundServiceType",
+    "theme", "label", "icon", "name", "permission", "hasCode", "debuggable", "exported", "taskAffinity", "clearTaskOnLaunch", "stateNotNeeded", "excludeFromRecents", "launchMode", "configChanges", "value", "resource", "minSdkVersion", "versionCode", "versionName", "windowSoftInputMode", "targetSdkVersion", "resumeWhilePausing", "extractNativeLibs", "usesCleartextTraffic", "foregroundServiceType",
     "android", "http://schemas.android.com/apk/res/android", "package",
     "manifest", "uses-sdk", "application", "activity", "meta-data", "intent-filter", "action", "category", "service",
     app.package, app.label, app.version_name, app.activity, "android.app.lib_name", app.lib,
@@ -188,6 +212,9 @@ function pool_strings(app: App): string[] {
   }
   if (app.home) {
     out = out.append("android.intent.category.HOME").append("android.intent.category.DEFAULT").append("");
+  }
+  if (app.widget.provider.len() > 0) {
+    out = out.append("receiver").append(app.widget.provider).append(WIDGET_UPDATE).append(WIDGET_META);
   }
   return out;
 }
@@ -214,6 +241,24 @@ function service_element(out: u8[], line: i32, pool: string[], sv: Service): u8[
     out = end(start(out, line, at(pool, "action"), [attr_str(S_NAME, at(pool, sv.action))]), line, at(pool, "action"));
     out = end(out, line, filter);
   }
+  return end(out, line, tag);
+}
+
+const WIDGET_UPDATE: string = "android.appwidget.action.APPWIDGET_UPDATE";
+
+const WIDGET_META: string = "android.appwidget.provider";
+
+// The receiver of the widget: Android sends it the update action, and
+// finds the provider file of the widget in its meta-data.
+function receiver_element(out: u8[], line: i32, pool: string[], w: Widget): u8[] {
+  let tag = at(pool, "receiver");
+  let filter = at(pool, "intent-filter");
+  let meta = at(pool, "meta-data");
+  out = start(out, line, tag, [attr_str(S_NAME, at(pool, w.provider)), attr_int(S_EXPORTED, 18, -1)]);
+  out = start(out, line, filter, []);
+  out = end(start(out, line, at(pool, "action"), [attr_str(S_NAME, at(pool, WIDGET_UPDATE))]), line, at(pool, "action"));
+  out = end(out, line, filter);
+  out = end(start(out, line, meta, [attr_str(S_NAME, at(pool, WIDGET_META)), attr_int(S_RESOURCE, 1, WIDGET_INFO_ID)]), line, meta);
   return end(out, line, tag);
 }
 
@@ -282,7 +327,12 @@ function string_pool(strings: string[]): u8[] {
 }
 
 function resource_map(): u8[] {
-  let ids = attr_ids();
+  return id_map(attr_ids());
+}
+
+// The resource map of a binary XML file: the ID of each framework
+// attribute, in the order of the names at the start of the pool.
+function id_map(ids: i32[]): u8[] {
   let out = put32(put16(put16([], 384), 8), 8 + 4 * ids.len());
   for id in ids {
     out = put32(out, id);
@@ -305,13 +355,19 @@ function node(out: u8[], kind: i32, size: i32, line: i32): u8[] {
 }
 
 function start(out: u8[], line: i32, name: i32, attrs: Attr[]): u8[] {
+  return start_in(out, line, name, attrs, S_URI);
+}
+
+// The start of an element in a file whose pool has the URI of the android
+// namespace at `uri`.
+function start_in(out: u8[], line: i32, name: i32, attrs: Attr[], uri: i32): u8[] {
   out = node(out, 258, 36 + 20 * attrs.len(), line);
   out = put32(put32(out, -1), name);
   out = put16(put16(put16(put16(put16(put16(out, 20), 20), attrs.len()), 0), 0), 0);
   for a in attrs {
     let ns: i32 = -1;
     if (a.android) {
-      ns = S_URI;
+      ns = uri;
     }
     let raw: i32 = -1;
     if (a.kind == 3) {
@@ -395,6 +451,9 @@ pub function manifest(app: App): u8[] {
   for sv in app.services {
     body = service_element(body, 11, s, sv);
   }
+  if (app.widget.provider.len() > 0) {
+    body = receiver_element(body, 11, s, app.widget);
+  }
   body = end(end(body, 11, application), 12, manifest_tag);
   body = put32(put32(node(body, 257, 24, 12), S_PREFIX), S_URI);
   let rest = util.append_bytes(util.append_bytes(string_pool(s), resource_map()), body);
@@ -430,22 +489,133 @@ function package_name(name: string): u8[] {
   return out;
 }
 
-function resource_table(package: string): u8[] {
-  let types = string_pool(["drawable"]);
-  let keys = string_pool(["icon"]);
-  let spec = chunk(514, put32(put16(util.put_u8(util.put_u8([], 1), 0), 0), 1), put32([], 0));
+// An entry of the resource table: the name of its key, and its value as
+// the type and the data of a Res_value. The data of a file is the index of
+// its path in the strings of the table.
+struct Res { key: string, kind: i32, data: i32 }
+
+// The spec chunk and the type chunk of the type `id` in the default
+// configuration. `first` is the index of the key of its first entry.
+function type_chunks(id: i32, entries: Res[], first: i32): u8[] {
+  let n = entries.len();
+  let flags: u8[] = [];
+  for k in 0..n {
+    flags = put32(flags, 0);
+  }
+  let spec = chunk(514, put32(put16(util.put_u8(util.put_u8([], id), 0), 0), n), flags);
   let config: u8[] = put32([], 64);
   while (config.len() < 64) {
     config = config.append(0 as u8);
   }
-  let type_header = util.append_bytes(put32(put32(put16(util.put_u8(util.put_u8([], 1), 0), 0), 1), 8 + 12 + config.len() + 4), config);
-  let entry = put32(put16(put16([], 8), 0), 0);
-  entry = put32(util.put_u8(util.put_u8(put16(entry, 8), 0), 3), 0);
-  let type_chunk = chunk(513, type_header, util.append_bytes(put32([], 0), entry));
-  let pkg_header = util.append_bytes(put32([], 127), package_name(package));
-  pkg_header = put32(put32(put32(put32(put32(pkg_header, 288), 1), 288 + types.len()), 1), 0);
-  let pkg = chunk(512, pkg_header, util.append_bytes(util.append_bytes(util.append_bytes(types, keys), spec), type_chunk));
-  return chunk(2, put32([], 1), util.append_bytes(string_pool([ICON_PATH]), pkg));
+  let header = util.append_bytes(put32(put32(put16(util.put_u8(util.put_u8([], id), 0), 0), n), 8 + 12 + config.len() + 4 * n), config);
+  let offsets: u8[] = [];
+  let body: u8[] = [];
+  for k in 0..n {
+    offsets = put32(offsets, body.len());
+    body = put32(put16(put16(body, 8), 0), first + k);
+    body = put32(util.put_u8(util.put_u8(put16(body, 8), 0), entries[k].kind), entries[k].data);
+  }
+  return util.append_bytes(spec, chunk(513, header, util.append_bytes(offsets, body)));
+}
+
+const WIDGET_LAYOUT_PATH: string = "res/layout/widget.xml";
+
+const WIDGET_INFO_PATH: string = "res/xml/widget.xml";
+
+// The resource table: one package 0x7f. The type 1 has the icon. With a
+// widget, the type 2 has its layout, the type 3 has its provider file, and
+// the type 4 has the IDs of its items. A type with no entry has no chunk.
+function resource_table(app: App): u8[] {
+  let paths: string[] = [];
+  let kinds = ["drawable"];
+  let keys: string[] = [];
+  let body: u8[] = [];
+  if (app.icon.len() > 0) {
+    body = type_chunks(1, [Res { key: "icon", kind: 3, data: 0 }], 0);
+    paths = [ICON_PATH];
+    keys = ["icon"];
+  }
+  if (app.widget.provider.len() > 0) {
+    kinds = ["drawable", "layout", "xml", "id"];
+    body = util.append_bytes(body, type_chunks(2, [Res { key: "widget", kind: 3, data: paths.len() }], keys.len()));
+    body = util.append_bytes(body, type_chunks(3, [Res { key: "widget_info", kind: 3, data: paths.len() + 1 }], keys.len() + 1));
+    paths = paths.append(WIDGET_LAYOUT_PATH).append(WIDGET_INFO_PATH);
+    keys = keys.append("widget").append("widget_info");
+    let ids: Res[] = [];
+    for item in app.widget.items {
+      ids = ids.append(Res { key: item.name, kind: 18, data: 0 });
+    }
+    body = util.append_bytes(body, type_chunks(4, ids, keys.len()));
+    for item in app.widget.items {
+      keys = keys.append(item.name);
+    }
+  }
+  let types = string_pool(kinds);
+  let pkg_header = util.append_bytes(put32([], 127), package_name(app.package));
+  pkg_header = put32(put32(put32(put32(put32(pkg_header, 288), kinds.len()), 288 + types.len()), keys.len()), 0);
+  let pkg = chunk(512, pkg_header, util.append_bytes(util.append_bytes(types, string_pool(keys)), body));
+  return chunk(2, put32([], 1), util.append_bytes(string_pool(paths), pkg));
+}
+
+// A binary XML file of resources. `ids` has the IDs of its framework
+// attributes in rising order, and `strings` starts with their names, then
+// has `android` and the URI of its namespace.
+function xml_file(ids: i32[], strings: string[], body: u8[]): u8[] {
+  let prefix = ids.len();
+  let all = put32(put32(node([], 256, 24, 1), prefix), prefix + 1);
+  all = util.append_bytes(all, body);
+  all = put32(put32(node(all, 257, 24, 1), prefix), prefix + 1);
+  let rest = util.append_bytes(util.append_bytes(string_pool(strings), id_map(ids)), all);
+  return util.append_bytes(put32(put16(put16([], 3), 8), 8 + rest.len()), rest);
+}
+
+const ANDROID_URI: string = "http://schemas.android.com/apk/res/android";
+
+// A size in dp or in sp as the data of a dimension value.
+function dp(n: i32): i32 {
+  return n << 8 | 1;
+}
+
+function sp(n: i32): i32 {
+  return n << 8 | 2;
+}
+
+// The layout of the widget: a row on a dark ground. A text takes the room
+// that is left, on one line, and a button has the size of its label. The
+// attributes of each element are in the order of their IDs: textSize,
+// textColor, gravity, orientation, id, background, padding, layout_width,
+// layout_height, text, maxLines and layout_weight.
+function widget_layout(w: Widget): u8[] {
+  let ids = [16842901, 16842904, 16842927, 16842948, 16842960, 16842964, 16842965, 16842996, 16842997, 16843087, 16843091, 16843137];
+  let strings = ["textSize", "textColor", "gravity", "orientation", "id", "background", "padding", "layout_width", "layout_height", "text", "maxLines", "layout_weight", "android", ANDROID_URI, "LinearLayout", "TextView"];
+  for item in w.items {
+    strings = strings.append(item.label);
+  }
+  let uri = ids.len() + 1;
+  let row = at(strings, "LinearLayout");
+  let view = at(strings, "TextView");
+  let body = start_in([], 2, row, [attr_int(2, 17, 16), attr_int(3, 16, 0), attr_int(5, 28, -434101980), attr_int(6, 5, dp(8)), attr_int(7, 16, -1), attr_int(8, 16, -1)], uri);
+  for k in 0..w.items.len() {
+    let item = w.items[k];
+    let label = 16 + k;
+    let attrs: Attr[] = [attr_int(0, 5, sp(14)), attr_int(1, 28, -1), attr_int(4, 1, WIDGET_ITEM_ID + k), attr_int(7, 5, dp(0)), attr_int(8, 16, -2), attr_str(9, label), attr_int(10, 16, 1), attr_int(11, 4, 1065353216)];
+    if (item.button) {
+      attrs = [attr_int(0, 5, sp(16)), attr_int(1, 28, -1), attr_int(2, 17, 17), attr_int(4, 1, WIDGET_ITEM_ID + k), attr_int(6, 5, dp(12)), attr_int(7, 16, -2), attr_int(8, 16, -2), attr_str(9, label)];
+    }
+    body = end(start_in(body, 3 + k, view, attrs, uri), 3 + k, view);
+  }
+  return xml_file(ids, strings, end(body, 3 + w.items.len(), row));
+}
+
+// The provider file of the widget: its smallest size, its layout, and no
+// update by the clock. Its attributes are minWidth, minHeight,
+// updatePeriodMillis, initialLayout and resizeMode.
+function widget_info(): u8[] {
+  let ids = [16843071, 16843072, 16843344, 16843345, 16843619];
+  let strings = ["minWidth", "minHeight", "updatePeriodMillis", "initialLayout", "resizeMode", "android", ANDROID_URI, "appwidget-provider"];
+  let tag = 7;
+  let body = start_in([], 2, tag, [attr_int(0, 5, dp(250)), attr_int(1, 5, dp(40)), attr_int(2, 16, 0), attr_int(3, 1, WIDGET_LAYOUT_ID), attr_int(4, 17, 1)], ids.len() + 1);
+  return xml_file(ids, strings, end(body, 2, tag));
 }
 
 // The zip archive. The data of each entry starts at a multiple of its
@@ -747,8 +917,14 @@ function signed(app: App, libs: Lib[], key: ecdsa.PrivateKey): u8[] {
   if (app.dex.len() > 0) {
     entries = entries.append(Entry { name: "classes.dex", data: app.dex, deflated: false });
   }
+  if (app.icon.len() > 0 || app.widget.provider.len() > 0) {
+    entries = entries.append(Entry { name: "resources.arsc", data: resource_table(app), deflated: false });
+  }
   if (app.icon.len() > 0) {
-    entries = entries.append(Entry { name: "resources.arsc", data: resource_table(app.package), deflated: false }).append(Entry { name: ICON_PATH, data: app.icon, deflated: false });
+    entries = entries.append(Entry { name: ICON_PATH, data: app.icon, deflated: false });
+  }
+  if (app.widget.provider.len() > 0) {
+    entries = entries.append(Entry { name: WIDGET_LAYOUT_PATH, data: widget_layout(app.widget), deflated: false }).append(Entry { name: WIDGET_INFO_PATH, data: widget_info(), deflated: false });
   }
   for a in app.assets {
     entries = entries.append(Entry { name: "assets/" + a.name, data: a.data, deflated: false });

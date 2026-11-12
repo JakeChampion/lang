@@ -628,6 +628,22 @@ function postorder(f: SFunc, at: i32[], entry: i32): i32[] {
   return out;
 }
 
+// The block positions the entry reaches, in reverse postorder.
+pub function reverse_postorder(f: SFunc, at: i32[]): i32[] {
+  let entry = position_of(at, f.entry);
+  if (entry < 0) {
+    return [];
+  }
+  let order = postorder(f, at, entry);
+  let out: i32[] = [];
+  let i = order.len() - 1;
+  while (i >= 0) {
+    out = out.append(order[i]);
+    i -= 1;
+  }
+  return out;
+}
+
 function dominates(idom: i32[], a: i32, b: i32): boolean {
   if (idom[b] < 0) {
     return false;

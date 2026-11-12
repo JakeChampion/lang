@@ -334,10 +334,10 @@ pub function map_expr(e: ast.Expr, visit: (ast.Expr) => ast.Expr): ast.Expr {
       return visit(e);
     },
     ast.ExprBinary(b) => {
-      return visit(ast.ExprBinary { ...b, left: map_expr(b.left, visit), right: map_expr(b.right, visit) });
+      return visit(ast.binary(b.op, map_expr(b.left, visit), map_expr(b.right, visit), b.line, b.col, b.ty));
     },
     ast.ExprUnary(u) => {
-      return visit(ast.ExprUnary { ...u, operand: map_expr(u.operand, visit) });
+      return visit(ast.unary(u.op, map_expr(u.operand, visit), u.line, u.col, u.ty));
     },
     ast.ExprCall(c) => {
       let args: ast.Expr[] = [];
@@ -486,7 +486,7 @@ pub function map_expr_where[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) =>
       a = ra;
       changed = lh || rh;
       if (changed) {
-        out = ast.ExprBinary { ...b, left: le, right: re };
+        out = ast.binary(b.op, le, re, b.line, b.col, b.ty);
       }
     },
     ast.ExprUnary(u) => {
@@ -494,7 +494,7 @@ pub function map_expr_where[T](e: ast.Expr, acc: T, visit_stmt: (ast.Stmt, T) =>
       a = oa;
       changed = oh;
       if (changed) {
-        out = ast.ExprUnary { ...u, operand: oe };
+        out = ast.unary(u.op, oe, u.line, u.col, u.ty);
       }
     },
     ast.ExprCall(c) => {
@@ -1520,10 +1520,10 @@ function placed_at(e: ast.Expr, line: i32, col: i32): ast.Expr {
       return ast.ExprString { ...sv, line: line, col: col };
     },
     ast.ExprUnary(u) => {
-      return ast.ExprUnary { ...u, operand: placed_at(u.operand, line, col), line: line, col: col };
+      return ast.unary(u.op, placed_at(u.operand, line, col), line, col, u.ty);
     },
     ast.ExprBinary(b) => {
-      return ast.ExprBinary { ...b, left: placed_at(b.left, line, col), right: placed_at(b.right, line, col), line: line, col: col };
+      return ast.binary(b.op, placed_at(b.left, line, col), placed_at(b.right, line, col), line, col, b.ty);
     },
     _ => {
       return e;

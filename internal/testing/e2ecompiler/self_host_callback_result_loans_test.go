@@ -81,3 +81,7 @@ func TestSelfHostAggregateCallbackEnvironmentRun(t *testing.T) {
 func TestSelfHostShadowedCallbackBindingsRun(t *testing.T) {
 	ownedResultRuntimeCase(t, "callback_shadowed_bindings")
 }
+
+func TestSelfHostFreshLocalCallbackLastUseRun(t *testing.T) {
+	ownedResultRuntimeCase(t, "callback_fresh_local_last_use")
+}

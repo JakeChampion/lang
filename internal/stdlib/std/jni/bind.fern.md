@@ -33,9 +33,11 @@ An object that a function gives is a local reference. The caller deletes it with
 
 `intent_class` makes a global reference to the class, and only `release` deletes it. Make each struct of IDs one time for the app, not one time for each call. `intent_class` finds a class with `FindClass`. On Android, a thread that native code started finds only the classes of the system that way.
 
-`intent_class` gives an error when the device does not have a member of the request. `classes` then gives that error for the module. Thus a request names only the members that the oldest Android version of the app has. Call a newer member by its name, after a test of the version.
+`intent_class` gives an error when the device does not have a member of the request. `classes` then gives that error for the module. Thus a request names only the members that the oldest Android version of the app has.
 
-A `string` argument is never the Java value `null`. For a method that needs `null` for a `String`, call the method by its name.
+A `?` after a member is the mark of a member that an older device does not have, as in `setIdentifier?`. `intent_class` then gives no error for it. The struct of IDs gets a function such as `has_set_identifier`, and the wrapper gives an error when the device does not have the member.
+
+A `string` argument is never the Java value `null`. A `?` before `Ljava/lang/String;` in the descriptor of a member is the mark of a parameter that can be `null`, as in `setAction(?Ljava/lang/String;)Landroid/content/Intent;`. That parameter is an `Option[string]`, and `None` is `null`.
 
 `generate` gives an error for a request whose class is not in the classes, and for a member that the class does not have. It also gives an error for two requests whose classes have one simple name. It writes no setter for a field, and no constant for a `float` or a `double`.
 
@@ -235,10 +237,77 @@ function find(classes: classfile.Class[], name: string): Option[classfile.Class]
   return None;
 }
 
-// True when the request `r` asks for the member `name` with the
-// descriptor `descriptor`.
-function wanted(r: Request, name: string, descriptor: string): boolean {
-  return r.members.len() == 0 || has(r.members, name) || has(r.members, name + descriptor);
+// One member of a request with its marks. `text` is the name, or the
+// name and the descriptor, with no mark. `optional` is the mark of a
+// member that a device can lack. `nullable` has the places of the String
+// parameters that can be null.
+struct Want { text: string, optional: boolean, nullable: i32[] }
+
+// The number of parameters of the start `head` of a descriptor, which
+// ends where a parameter starts. None when `head` is not such a start.
+function parameters_before(head: string): Option[i32] {
+  let Some(open) = head.index_of("(") else {
+    return None;
+  };
+  let Some(sig) = classfile.signature(slice_unchecked(head, open, head.len()) + ")V") else {
+    return None;
+  };
+  return Some(sig.params.len());
+}
+
+// The member `word` of a request, or an error for a mark in a place
+// where it has no meaning.
+function want_of(word: string): Result[Want, string] {
+  let body = word;
+  let optional = word.ends_with("?") && word.len() > 1;
+  if (optional) {
+    body = slice_unchecked(word, 0, word.len() - 1) + "";
+  }
+  let parts = body.split("?");
+  let text = parts[0];
+  let nullable: i32[] = [];
+  for i in 1..parts.len() {
+    let Some(at) = parameters_before(text) else {
+      return Err("the mark ? in " + word + " is not before a parameter");
+    };
+    if (!parts[i].starts_with("Ljava/lang/String;")) {
+      return Err("the mark ? in " + word + " is not before Ljava/lang/String;");
+    }
+    nullable = nullable.append(at);
+    text += parts[i];
+  }
+  return Ok(Want { text: text, optional: optional, nullable: nullable });
+}
+
+// The request `r` with the marks of its members read.
+function wants_of(r: Request): Result[Want[], string] {
+  let out: Want[] = [];
+  for word in r.members {
+    out = out.append(want_of(word)?);
+  }
+  return Ok(out);
+}
+
+// The member of `wants` for `name` with `descriptor`. A member with a
+// descriptor comes before a member that is a name only.
+function want_for(wants: Want[], name: string, descriptor: string): Option[Want] {
+  for w in wants {
+    if (w.text == name + descriptor) {
+      return Some(w);
+    }
+  }
+  for w in wants {
+    if (w.text == name) {
+      return Some(w);
+    }
+  }
+  return None;
+}
+
+// True when the members `wants` of a request ask for the member `name`
+// with the descriptor `descriptor`. No member asks for each one.
+function wanted(wants: Want[], name: string, descriptor: string): boolean {
+  return wants.len() == 0 || want_for(wants, name, descriptor).is_some();
 }
 
 function is_public(access: i32): boolean {
@@ -264,7 +333,7 @@ function sorted(keys: string[]): i32[] {
 
 // The methods of the request, in the order of their names and
 // descriptors.
-function methods_of(c: classfile.Class, r: Request): classfile.Method[] {
+function methods_of(c: classfile.Class, r: Want[]): classfile.Method[] {
   let picked: classfile.Method[] = [];
   let keys: string[] = [];
   for m in c.methods {
@@ -281,7 +350,7 @@ function methods_of(c: classfile.Class, r: Request): classfile.Method[] {
 }
 
 // The fields of the request, in the order of their names.
-function fields_of(c: classfile.Class, r: Request): classfile.Field[] {
+function fields_of(c: classfile.Class, r: Want[]): classfile.Field[] {
   let picked: classfile.Field[] = [];
   let keys: string[] = [];
   for f in c.fields {
@@ -314,10 +383,10 @@ function has_member(c: classfile.Class, want: string): boolean {
 }
 
 // The member of `r` that `c` does not have, or "".
-function missing(c: classfile.Class, r: Request): string {
-  for want in r.members {
-    if (want != "-" && !has_member(c, want)) {
-      return want;
+function missing(c: classfile.Class, r: Want[]): string {
+  for want in r {
+    if (want.text != "-" && !has_member(c, want.text)) {
+      return want.text;
     }
   }
   return "";
@@ -348,7 +417,10 @@ function ancestors(classes: classfile.Class[], c: classfile.Class): string[] {
 ```fern
 <<the struct of a class>>=
 // One function to write: the Java member and the name of the function.
-struct Bound { name: string, java: string, descriptor: string, is_static: boolean, is_field: boolean }
+// `has` is the name of the function that tests for the member, or ""
+// for a member that each device has. `nullable` has the places of the
+// String parameters that can be null.
+struct Bound { name: string, java: string, descriptor: string, is_static: boolean, is_field: boolean, has: string, nullable: i32[] }
 
 function is_static(access: i32): boolean {
   return classfile.has(access, classfile.STATIC);
@@ -392,23 +464,35 @@ function is_constant(f: classfile.Field): boolean {
 
 // The functions of the class: its methods, then the fields that are not
 // constants.
-function bound_members(methods: classfile.Method[], fields: classfile.Field[]): Bound[] {
+function bound_members(methods: classfile.Method[], fields: classfile.Field[], wants: Want[]): Bound[] {
   let out: Bound[] = [];
   // Each struct of IDs has a function with the name `release`.
   let used: string[] = ["release"];
   for m in methods {
-    let name = free_name(method_name(m, count_named(methods, m.name) > 1), used);
-    used = used.append(name);
-    out = out.append(Bound { name: name, java: m.name, descriptor: m.descriptor, is_static: is_static(m.access), is_field: false });
+    let b = marked(Bound { name: free_name(method_name(m, count_named(methods, m.name) > 1), used), java: m.name, descriptor: m.descriptor, is_static: is_static(m.access), is_field: false, has: "", nullable: [] }, wants, used);
+    used = used.append(b.name).append(b.has);
+    out = out.append(b);
   }
   for f in fields {
     if (!is_constant(f)) {
-      let name = free_name(snake(f.name), used);
-      used = used.append(name);
-      out = out.append(Bound { name: name, java: f.name, descriptor: f.descriptor, is_static: is_static(f.access), is_field: true });
+      let b = marked(Bound { name: free_name(snake(f.name), used), java: f.name, descriptor: f.descriptor, is_static: is_static(f.access), is_field: true, has: "", nullable: [] }, wants, used);
+      used = used.append(b.name).append(b.has);
+      out = out.append(b);
     }
   }
   return out;
+}
+
+// The member `b` with the marks that `wants` has for it.
+function marked(b: Bound, wants: Want[], used: string[]): Bound {
+  let Some(w) = want_for(wants, b.java, b.descriptor) else {
+    return b;
+  };
+  let has = "";
+  if (w.optional) {
+    has = free_name("has_" + b.name, used.append(b.name));
+  }
+  return Bound { ...b, has: has, nullable: w.nullable };
 }
 
 // The string literal of `s`.
@@ -469,7 +553,7 @@ function class_struct(c: classfile.Class, members: Bound[]): string {
   for m in members {
     fields += ", id_" + m.name + ": usize";
     values += ", id_" + m.name + ": id_" + m.name;
-    finds += "  let id_" + m.name + " = jni.checked_id(e, class, jni." + finder(m) + "(e, class, " + quoted(m.java) + ", " + quoted(m.descriptor) + "))?;\n";
+    finds += "  let id_" + m.name + " = " + lookup(m) + ";\n";
   }
   let out = "// The class " + java_name(c.name) + " and the IDs of its members.\npub struct " + t + "Class { " + fields + " }\n\n";
   out += "pub function " + snake(t) + "_class(e: usize): Result[" + t + "Class, jni.JavaError] {\n";
@@ -478,6 +562,32 @@ function class_struct(c: classfile.Class, members: Bound[]): string {
   out += finds + "  return Ok(" + t + "Class { " + values + " });\n}\n\n";
   out += "// Deletes the reference to the class. Do not use `c` after this call.\n";
   return out + "pub function (c: " + t + "Class) release(e: usize): void {\n  jni.delete_global_ref(e, c.class);\n}\n\n";
+}
+
+// The expression that finds the ID of `m`. A member that a device can
+// lack gives the ID 0 on such a device.
+function lookup(m: Bound): string {
+  let call = "jni." + finder(m) + "(e, class, " + quoted(m.java) + ", " + quoted(m.descriptor) + ")";
+  if (m.has.len() > 0) {
+    return "jni.optional_id(e, " + call + ")";
+  }
+  return "jni.checked_id(e, class, " + call + ")?";
+}
+
+// The function that tests for a member that a device can lack, and the
+// lines of its wrapper that give the error on such a device.
+function has_function(t: string, m: Bound): string {
+  if (m.has.len() == 0) {
+    return "";
+  }
+  return "// False when the device does not have the member of `" + m.name + "`.\npub function (c: " + t + "Class) " + m.has + "(): boolean {\n  return c.id_" + m.name + " != 0 as usize;\n}\n\n";
+}
+
+function absent_lines(c: classfile.Class, m: Bound): string {
+  if (m.has.len() == 0) {
+    return "";
+  }
+  return "  if (c.id_" + m.name + " == 0 as usize) {\n    return Err(jni.absent(" + quoted(java_name(c.name) + "." + m.java) + "));\n  }\n";
 }
 
 // The function of std/jni that finds the ID of `m`.
@@ -502,10 +612,13 @@ A function puts its arguments in a jvalue array. It calls the entry of the JNI t
 ```fern
 <<members>>=
 // The lines that put argument `i`, of the type `t`, in the jvalue array.
-function argument(i: i32, t: classfile.Type, bound: string[]): string {
+function argument(i: i32, t: classfile.Type, nullable: boolean): string {
   let n = i.to_string();
   let a = "a" + n;
   let set = "  jni.jvalue_set_int(args, " + n + ", ";
+  if (is_string(t) && nullable) {
+    return "  let s" + n + " = 0 as usize;\n  if let Some(t" + n + ") = " + a + " {\n    s" + n + " = jni.new_string(e, t" + n + ");\n  }\n" + set + "s" + n + ");\n";
+  }
   if (is_string(t)) {
     return "  let s" + n + " = jni.new_string(e, " + a + ");\n" + set + "s" + n + ");\n";
   }
@@ -573,6 +686,15 @@ function target(m: Bound): string {
   return "self.ref";
 }
 
+function has_place(places: i32[], i: i32): boolean {
+  for p in places {
+    if (p == i) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // The parameters of the function of `m`, after the receiver.
 function parameters(t: string, m: Bound, params: classfile.Type[], bound: string[]): string {
   let out = "e: usize";
@@ -580,7 +702,11 @@ function parameters(t: string, m: Bound, params: classfile.Type[], bound: string
     out += ", self: " + t;
   }
   for i in 0..params.len() {
-    out += ", a" + i.to_string() + ": " + fern_type(params[i], bound);
+    if (has_place(m.nullable, i)) {
+      out += ", a" + i.to_string() + ": Option[string]";
+    } else {
+      out += ", a" + i.to_string() + ": " + fern_type(params[i], bound);
+    }
   }
   return out;
 }
@@ -598,10 +724,10 @@ function method_function(c: classfile.Class, m: Bound, sig: classfile.Signature,
   }
   let out = "// " + java_name(c.name) + "." + m.java + m.descriptor + "\n";
   out += "pub function (c: " + t + "Class) " + m.name + "(" + parameters(t, m, sig.params, bound) + "): Result[" + fern_type(result, bound) + ", jni.JavaError] {\n";
-  out += "  let args = jni.jvalue_alloc(" + sig.params.len().to_string() + ");\n";
+  out += absent_lines(c, m) + "  let args = jni.jvalue_alloc(" + sig.params.len().to_string() + ");\n";
   let frees = "  jni.free_buffer(args);\n";
   for i in 0..sig.params.len() {
-    out += argument(i, sig.params[i], bound);
+    out += argument(i, sig.params[i], has_place(m.nullable, i));
     if (is_string(sig.params[i])) {
       frees += "  jni.delete_local_ref(e, s" + i.to_string() + ");\n";
     }
@@ -618,7 +744,7 @@ function field_function(c: classfile.Class, m: Bound, kind: classfile.Type, boun
   }
   let out = "// " + java_name(c.name) + "." + m.java + "\n";
   out += "pub function (c: " + t + "Class) " + m.name + "(" + parameters(t, m, [], bound) + "): Result[" + fern_type(kind, bound) + ", jni.JavaError] {\n";
-  out += call_start(kind) + entry + ", " + target(m) + ", c.id_" + m.name + ", 0 as usize);\n";
+  out += absent_lines(c, m) + call_start(kind) + entry + ", " + target(m) + ", c.id_" + m.name + ", 0 as usize);\n";
   return out + ending(kind, bound);
 }
 
@@ -660,12 +786,13 @@ function class_text(classes: classfile.Class[], r: Request, bound: string[]): Re
   let Some(c) = find(classes, r.class) else {
     return Err("the classes do not have " + r.class);
   };
-  let lost = missing(c, r);
+  let wants = wants_of(r)?;
+  let lost = missing(c, wants);
   if (lost.len() > 0) {
     return Err(r.class + " has no public member " + lost);
   }
-  let fields = fields_of(c, r);
-  let members = bound_members(methods_of(c, r), fields);
+  let fields = fields_of(c, wants);
+  let members = bound_members(methods_of(c, wants), fields, wants);
   let out = object_struct(classes, c, bound);
   for f in fields {
     if (is_constant(f)) {
@@ -674,7 +801,7 @@ function class_text(classes: classfile.Class[], r: Request, bound: string[]): Re
   }
   out += class_struct(c, members);
   for m in members {
-    out += member_function(c, m, bound)?;
+    out += has_function(type_name(c.name), m) + member_function(c, m, bound)?;
   }
   return Ok(out);
 }
@@ -716,11 +843,15 @@ function all_classes(bound: string[]): string {
 // for.
 pub function generate(classes: classfile.Class[], requests: Request[]): Result[string, string] {
   let bound = bound_classes(requests)?;
-  let out = "// Typed JNI bindings. std/jni/bind wrote this module. Do not edit it.\nimport \"std/jni\";\n\n";
+  let body = "";
   for r in requests {
-    out += class_text(classes, r, bound)?;
+    body += class_text(classes, r, bound)?;
   }
-  out += all_classes(bound);
+  let out = "// Typed JNI bindings. std/jni/bind wrote this module. Do not edit it.\nimport \"std/jni\";\n";
+  if (body.contains(": Option[string]")) {
+    out += "import \"std/option\";\n";
+  }
+  out += "\n" + body + all_classes(bound);
   // Each part ends with an empty line, and a module ends with none.
   return Ok(slice_unchecked(out, 0, out.len() - 1) + "");
 }

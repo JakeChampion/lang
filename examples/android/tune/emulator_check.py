@@ -141,7 +141,17 @@ def main(apk, out):
     if not wait_for(r"tune: closed with (\d+) tracks", timeout=10):
         fail("the back key did not close the app after the shortcut")
 
-    log = first + second + logcat()
+    # Android knows the widget of the app, which tells that it read the
+    # provider file and the layout of the APK. The update broadcast starts
+    # the provider class with no activity, and the process stays alive.
+    if "dev.fern.tune/.Widget" not in adb("shell", "dumpsys", "appwidget"):
+        fail("Android does not list the widget provider dev.fern.tune/.Widget")
+    third = logcat()
+    adb("logcat", "-c")
+    adb("shell", "am", "broadcast", "-a", "android.appwidget.action.APPWIDGET_UPDATE", "-n", PACKAGE + "/.Widget")
+    time.sleep(3)
+
+    log = first + second + third + logcat()
     with open(f"{out}/logcat.txt", "w") as f:
         f.write(log)
     for line in crashes(log):

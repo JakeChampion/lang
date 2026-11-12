@@ -2897,42 +2897,6 @@ function root_at(w: Walk, k: i32): i32 {
   return -1;
 }
 
-function rpo(f: ssa.SFunc, at: i32[]): i32[] {
-  let n = f.blocks.len();
-  let entry = at[f.entry];
-  let seen = __alloc_bool(n);
-  let order: i32[] = [];
-  let stack: i32[] = [entry];
-  let sp = 1;
-  let cursor = util.minus_ones(n);
-  seen = seen.with(entry, true);
-  while (sp > 0) {
-    let bi = stack[sp - 1];
-    let k = cursor[bi] + 1;
-    let id = ssa.successor_id(f.blocks[bi].term, k);
-    while (id >= 0 && (at[id] < 0 || seen[at[id]])) {
-      k += 1;
-      id = ssa.successor_id(f.blocks[bi].term, k);
-    }
-    cursor = cursor.with(bi, k);
-    if (id >= 0) {
-      seen = seen.with(at[id], true);
-      stack = pushed(stack, sp, at[id]);
-      sp += 1;
-    } else {
-      order = order.append(bi);
-      sp -= 1;
-    }
-  }
-  let out: i32[] = [];
-  let i = order.len() - 1;
-  while (i >= 0) {
-    out = out.append(order[i]);
-    i -= 1;
-  }
-  return out;
-}
-
 function pushed(own stack: i32[], sp: i32, v: i32): i32[] {
   if (sp < stack.len()) {
     return stack.with(sp, v);
@@ -3718,7 +3682,7 @@ function walk_assuming(w: Walk, lv: Live, p0: Progress, tok: i32, hold: boolean)
     return Assumed { ok: false, w: wa, p: progress_of(wa, lva) };
   }
   let pa = seeded(progress_of(wa, lva), wa, lva, reach, w, lv, p0);
-  let done = settle(pa, wa, lva, rpo(sub, at), reach, wa.takes);
+  let done = settle(pa, wa, lva, ssa.reverse_postorder(sub, at), reach, wa.takes);
   return Assumed { ok: !done.changed, w: wa, p: done.p };
 }
 
@@ -3960,7 +3924,7 @@ function certify_graph(f0: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis,
   if (!lv.ok) {
     return failed("liveness: " + lv.why);
   }
-  let done = settle(progress_of(w, lv), w, lv, rpo(f, at), reach, w.takes);
+  let done = settle(progress_of(w, lv), w, lv, ssa.reverse_postorder(f, at), reach, w.takes);
   if (done.changed) {
     return failed("did not settle in " + util.i32_to_string(round_limit()) + " rounds");
   }
