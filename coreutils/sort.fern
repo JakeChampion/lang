@@ -1491,14 +1491,9 @@ function out_settle(own o: Out): Out {
   return out_written(o, written, "write failed");
 }
 
-function out_written(own o: Out, own written: Result[io_buffered.BufWriter, IoError], what: string): Out {
-  match (written) {
-    Ok(w) => {
-      return Out { ...o, w: w };
-    },
-    Err(e) => {
-      out_die(o, what, e);
-    }
+function out_written(own o: Out, written: Result[io_buffered.BufWriter, IoError], what: string): Out {
+  if let Err(e) = written {
+    out_die(o, what, e);
   }
   return o;
 }
