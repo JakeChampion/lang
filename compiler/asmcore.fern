@@ -6010,12 +6010,17 @@ pub function ssa_join(lp: string, blk: i32): string {
 }
 
 pub function ssa_lane_index(what: string): i32 {
+  let n = 0;
+  let seen = false;
   for k in 0..what.len() {
+    if (seen) {
+      n = n * 10 + (what[k] as i32 - 48);
+    }
     if (what[k] == b':') {
-      return what[k + 1] as i32 - 48;
+      seen = true;
     }
   }
-  return 0;
+  return n;
 }
 
 pub function ssa_lane_slot_table(reg_of: i32[], lanes: boolean[]): boolean[] {
