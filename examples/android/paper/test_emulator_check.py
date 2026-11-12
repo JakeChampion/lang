@@ -90,6 +90,7 @@ class BackNavigationTests(unittest.TestCase):
                             wait_for_keyboard=lambda shown, timeout=5.0: device.keyboard == shown,
                             wait_for=device.wait_for, paper_part=device.frame,
                             open_clock=lambda: None, finish=lambda: None,
+                            check_filter=lambda out, width, height: None,
                             fail=device.failures.append), patch.object(check.time, "sleep"):
             check.main("paper.apk", out)
         return device.failures
@@ -184,6 +185,131 @@ class BackNavigationTests(unittest.TestCase):
     def test_home_transition_also_requires_the_home_frame(self):
         failures = self.run_device(Device(wrong_home=True))
         self.assertTrue(any("paper colour" in failure for failure in failures), failures)
+
+
+def node(text, box, clickable="true"):
+    return f'<node text="{text}" class="android.widget.Button" clickable="{clickable}" bounds="[{box[0]},{box[1]}][{box[2]},{box[3]}]" />'
+
+
+class Phone:
+    """A device for check_filter. `holds` is whether the filter takes a
+    notification out of the shade, and `shows` is whether Paper shows it."""
+
+    def __init__(self, *, holds=True, shows=True, opens=True, takes_old=False, filter_row="off", probe=True):
+        self.holds = holds
+        self.shows = shows
+        self.opens = opens
+        self.takes_old = takes_old
+        self.filter_row = filter_row
+        self.probe = probe
+        self.allowed = False
+        self.on = filter_row == "on"
+        self.screen = "home"
+        self.shade = []
+        self.held = []
+        self.log = []
+        self.failures = []
+
+    def post(self, tag):
+        if self.allowed and self.on and self.shows:
+            self.held.append(tag)
+        if not (self.allowed and self.on and self.holds):
+            self.shade.append(tag)
+
+    def tap(self, x, y):
+        if self.screen == "settings" and y == 150:
+            self.on = True
+            self.screen = "home"
+            if self.takes_old:
+                self.shade.clear()
+        elif self.screen == "home" and y == 450 and self.held:
+            self.screen = "held"
+        elif self.screen == "held" and y == 150:
+            self.screen = "home"
+            if self.opens:
+                self.held.clear()
+                self.log.append("paper: open held com.android.shell")
+
+    def dump(self):
+        if self.screen == "settings":
+            return node("Notification filter: " + self.filter_row, (0, 100, 320, 200))
+        if self.screen == "held":
+            return node("Shell · 9:06&#10;Fern: held_text", (0, 100, 320, 200))
+        nodes = node("9:06", (0, 0, 320, 300))
+        if self.held:
+            nodes += node(f"{len(self.held)} held notification", (0, 400, 320, 500))
+        return nodes
+
+    def adb(self, *args, **kwargs):
+        if args[:4] == ("shell", "cmd", "notification", "post"):
+            self.post(args[6])
+        elif args[:4] == ("shell", "cmd", "notification", "allow_listener"):
+            self.allowed = True
+        elif args[:3] == ("shell", "input", "swipe") and args[3:5] == args[5:7]:
+            self.screen = "settings"
+        elif args[:3] == ("shell", "input", "tap"):
+            self.tap(int(args[3]), int(args[4]))
+        elif args == ("shell", "input", "keyevent", "KEYCODE_BACK"):
+            self.screen = "home"
+        elif args[:3] == ("shell", "dumpsys", "notification") and self.probe:
+            return "".join(f"    NotificationRecord(0x1: pkg=com.android.shell id=2020 tag={tag} importance=3)\n" for tag in self.shade)
+        elif args == ("shell", "cat", "/sdcard/paper-ui.xml"):
+            return self.dump()
+        return ""
+
+    def wait_for(self, pattern, timeout=30):
+        return re.search(pattern, "\n".join(self.log))
+
+
+class FilterTests(unittest.TestCase):
+    def run_phone(self, phone):
+        clock = iter(range(0, 100000, 5))
+        with tempfile.TemporaryDirectory() as out, patch.multiple(check, adb=phone.adb, wait_for=phone.wait_for,
+                            fail=phone.failures.append), patch.object(check.time, "sleep"), \
+                patch.object(check.time, "monotonic", side_effect=lambda: next(clock)):
+            check.check_filter(out, 320, 640)
+        return phone.failures
+
+    def test_a_held_notification_leaves_the_shade_and_opens(self):
+        phone = Phone()
+        self.assertEqual(self.run_phone(phone), [])
+        self.assertEqual(phone.shade, ["fern_shown"])
+        self.assertFalse(phone.allowed and phone.held)
+
+    def test_a_filter_that_is_on_already_stays_on(self):
+        self.assertEqual(self.run_phone(Phone(filter_row="on")), [])
+
+    def test_a_notification_that_stays_in_the_shade_fails(self):
+        failures = self.run_phone(Phone(holds=False))
+        self.assertIn("the filter did not take the notification out of the shade", failures)
+
+    def test_a_notification_that_paper_does_not_show_fails(self):
+        failures = self.run_phone(Phone(shows=False))
+        self.assertEqual(failures, ["the home screen does not show a held notification"])
+
+    def test_a_held_notification_that_does_not_open_fails(self):
+        failures = self.run_phone(Phone(opens=False))
+        self.assertIn("a tap on the held notification did not open it", failures)
+        self.assertIn("the held notification stayed on the home screen after it opened", failures)
+
+    def test_a_notification_from_before_the_filter_stays(self):
+        failures = self.run_phone(Phone(takes_old=True))
+        self.assertIn("the filter took a notification from before it was on", failures)
+
+    def test_a_shade_that_the_check_cannot_read_fails(self):
+        failures = self.run_phone(Phone(probe=False))
+        self.assertEqual(failures, ["the shade does not show a notification that the shell posted"])
+
+    def test_find_node_gives_the_middle_of_the_node(self):
+        dump = node("Other", (0, 0, 10, 10)) + node("Notification filter: off", (0, 100, 320, 200))
+        self.assertEqual(check.find_node(dump, "Notification filter: (?:on|off)"), (160, 150, "Notification filter: off"))
+        self.assertIsNone(check.find_node(dump, "Absent"))
+
+    def test_free_point_is_outside_each_node_with_an_action(self):
+        dump = node("9:06", (0, 0, 320, 300)) + node("wall", (0, 0, 320, 640), clickable="false")
+        x, y = check.free_point(dump, 320, 640)
+        self.assertGreater(y, 300)
+        self.assertIsNone(check.free_point(node("all", (0, 0, 320, 640)), 320, 640))
 
 
 if __name__ == "__main__":

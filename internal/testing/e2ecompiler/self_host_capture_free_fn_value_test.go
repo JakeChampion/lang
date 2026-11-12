@@ -79,6 +79,17 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`},
+	{"a-tuple-holds-fn-names-and-a-constant", `function dbl(x: i32): i32 { return x * 2; }
+function inc(x: i32): i32 { return x + 1; }
+const SEVEN: i32 = 7;
+function main(): i32 {
+    let pair: ((i32) => i32, (i32) => i32, i32) = (dbl, inc, SEVEN);
+    let f = pair.0;
+    let g = pair.1;
+    if (f(10) + g(10) + pair.2 != 38) { return 91; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`},
 }
 
 func TestSelfHostCaptureFreeFnValue(t *testing.T) {

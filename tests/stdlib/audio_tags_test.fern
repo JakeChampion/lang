@@ -102,8 +102,8 @@ function test_genres(): test.TestOutcome {
   let flac = joined([bytes_of("fLaC"), [0u8, 0u8, 0u8, 34u8], info, [132u8], wire.put_be([], list.len() as u64, 3), list]);
   let numbered = box(bytes_of("moov"), box(bytes_of("udta"), box(bytes_of("meta"), joined([[0u8, 0u8, 0u8, 0u8], box(bytes_of("ilst"), item(bytes_of("gnre"), [0u8, 18u8]))]))));
   let named_genre = box(bytes_of("moov"), box(bytes_of("udta"), box(bytes_of("meta"), joined([[0u8, 0u8, 0u8, 0u8], box(bytes_of("ilst"), item(named("gen"), bytes_of("Chiptune")))]))));
-  let got = [tcon("Shoegaze"), tcon("(17)"), tcon("52"), tcon("(4)Eurodisco"), tcon("(RX)"), tcon("1999 Hits"), tcon("(250)"), tags.id3v1(v1).genre, tags.read(flac).genre, tags.mp4(numbered).genre, tags.mp4(named_genre).genre, tags.none().genre.len().to_string()];
-  return test.assert_eq(got.join("|"), "Shoegaze|Rock|Electronic|Eurodisco|(RX)|1999 Hits|(250)|Jazz|Field Recording|Rock|Chiptune|0");
+  let got = [tcon("Shoegaze"), tcon("(17)"), tcon("52"), tcon("(4)Eurodisco"), tcon("(RX)"), tcon("1999 Hits"), tcon("(250)"), tcon("("), tcon("()"), tcon("(17"), tcon("17)"), tcon("(17)x"), tcon("0"), tags.id3v1(v1).genre, tags.read(flac).genre, tags.mp4(numbered).genre, tags.mp4(named_genre).genre, tags.none().genre.len().to_string()];
+  return test.assert_eq(got.join("|"), "Shoegaze|Rock|Electronic|Eurodisco|(RX)|1999 Hits|(250)|(|()|(17|17)|x|Blues|Jazz|Field Recording|Rock|Chiptune|0");
 }
 
 function test_lyrics(): test.TestOutcome {

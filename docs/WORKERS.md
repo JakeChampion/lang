@@ -231,12 +231,20 @@ times. A parent with a heap of hundreds of MiB shows it too.
 
 `__send_copy(v)` is a builtin that returns a fresh deep copy of a send-safe
 value. The lowering emits one helper per reference type the value holds,
-named `__sem_send_` and the type's key, beside the release helpers.
+beside the release helpers. The helper that the builtin calls has the name
+`__sem_send_` and the type's key.
 
 A string copies its bytes. An array copies each element. A record, a tuple and an
 enum variant allocate a fresh box and copy each field. An `Option` copies
 its payload. A map reads its key and value columns, and a fresh map of the
 same size takes a copy of each pair.
+
+The copy keeps the sharing of the source. An array, a tuple, a record or an
+enum variant that two parts of the value hold copies one time, and the two
+parts of the copy hold that one box. The helpers keep a table from the
+address of a source box to its copy for the time of one `__send_copy`. A
+box with one owner has one path to it, so it does not go into the table. A
+string and a map that two parts hold copy one time for each part.
 
 Both checkers refuse a value that is not send-safe with `E100`. The
 interpreters copy every array store, so a builtin that writes through a
@@ -310,8 +318,10 @@ degrade until a thread primitive ships that wasmtime implements (R5).
 - `conformance/cases/send_copy_deep`: `__send_copy` of a record, an array,
   a tuple, strings and both enum layouts prints what the original prints.
 - `TestSelfHostSendCopyAllocatesFreshBoxes`: the copy of a nine-box value
-  makes thirteen allocations, nine boxes and four freed temporaries, and a
-  sanitized run frees them all, on both native targets and wasm.
+  makes nine boxes, four freed temporaries and the table of copied boxes,
+  and a sanitized run frees them all, on both native targets and wasm.
+- `TestSelfHostSendCopyKeepsSharedBoxes`: the copy of 79 boxes with 2^26
+  paths makes one box for each box, on both native targets and wasm.
 
 - `conformance/cases/worker_runs_in_its_own_process`: a worker that
   allocates sixty-four megabytes does not grow the parent's arena, on

@@ -1023,5 +1023,225 @@
     "name": "dynamic factory copied array input does not retain loan",
     "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): void {} function drop(own xs: i32[]): void {} function run(own xs: i32[], make: (i32[]) => () => i32): i32 { let read = make(xs); drop(xs); return read(); }",
     "want": ""
+  },
+  {
+    "name": "aggregate environment record capture retains callback environment",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return h.n; } struct ReadBox { read: () => i32 } function wrap(own r: ReadBox):() => i32 { return (): i32 => r.read(); } function f(own h: H): i32 { let r = ReadBox { read: (): i32 => h.read() }; let run = wrap(r); h.close(); return run(); }",
+    "want": "E050"
+  },
+  {
+    "name": "aggregate environment ordinary record capture retains callback environment",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return h.n; } struct ReadBox { read: () => i32 } function wrap(r: ReadBox): () => i32 { return (): i32 => r.read(); } function f(own h: H): i32 { let r = ReadBox { read: (): i32 => h.read() }; let run = wrap(r); h.close(); return run(); }",
+    "want": "E050"
+  },
+  {
+    "name": "aggregate environment tuple capture retains callback environment",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return h.n; } function wrap(own r: (() => i32, i32)):() => i32 { return (): i32 => r.0(); } function f(own h: H): i32 { let r = ((): i32 => h.read(), 0); let run = wrap(r); h.close(); return run(); }",
+    "want": "E050"
+  },
+  {
+    "name": "aggregate environment record callback permits valid last use",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return h.n; } struct ReadBox { read: () => i32 } function wrap(own r: ReadBox):() => i32 { return (): i32 => r.read(); } function f(own h: H): i32 { let r = ReadBox { read: (): i32 => h.read() }; let run = wrap(r); let n = run(); return n + h.close(); }",
+    "want": ""
+  },
+  {
+    "name": "aggregate environment record callback excludes unrelated field loans",
+    "source": "struct H { n: i32 } function (h: H) read(): i32 { return h.n; } function (own h: H) close(): i32 { return h.n; } struct Readers { left: () => i32, right: () => i32 } function wrap(own r: Readers):() => i32 { return (): i32 => r.left(); } function f(own h: H, own other: H): i32 { let r = Readers { left: (): i32 => h.read(), right: (): i32 => other.read() }; let run = wrap(r); other.close(); let n = run(); return n + h.close(); }",
+    "want": ""
+  },
+  {
+    "name": "aggregate environment record callback projection retains environment",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct ReadBox { read:()=>i32 }\nfunction f(own h:H):i32{let r=ReadBox{read:():i32=>h.read()};h.close();return r.read();}",
+    "want": "E050"
+  },
+  {
+    "name": "aggregate environment record callback projection permits unrelated field",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct Readers { left:()=>i32, right:()=>i32 }\nfunction f(own h:H,own other:H):i32{let r=Readers{left:():i32=>h.read(),right:():i32=>other.read()};other.close();let n=r.left();return n+h.close();}",
+    "want": ""
+  },
+  {
+    "name": "aggregate environment record factory retains callback environment",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct ReadBox { read:()=>i32 }\nfunction make(own cb:()=>i32):ReadBox{return ReadBox{read:cb};}\nfunction wrap(own r:ReadBox):own()=>i32{return ():i32=>r.read();}\nfunction f(own h:H):i32{let r=make(():i32=>h.read());let run=wrap(r);h.close();return run();}",
+    "want": "E050"
+  },
+  {
+    "name": "aggregate environment generic record identity retains callback environment",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct ReadBox { read:()=>i32 }\nfunction identity[T](own x:T):T{return x;}\nfunction wrap(own r:ReadBox):own()=>i32{return ():i32=>r.read();}\nfunction f(own h:H):i32{let r=identity(ReadBox{read:():i32=>h.read()});let run=wrap(r);h.close();return run();}",
+    "want": "E050"
+  },
+  {
+    "name": "aggregate environment array capture retains callback environment",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nfunction wrap(own r:(()=>i32)[]):own()=>i32{return ():i32=>r[0]();}\nfunction f(own h:H):i32{let r=[():i32=>h.read()];let run=wrap(r);h.close();return run();}",
+    "want": "E050"
+  },
+  {
+    "name": "aggregate environment array capture ends callback loan at last use",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nfunction wrap(own r:(()=>i32)[]):own()=>i32{return ():i32=>r[0]();}\nfunction f(own h:H):i32{let r=[():i32=>h.read()];let run=wrap(r);let n=run();return n+h.close();}",
+    "want": ""
+  },
+  {
+    "name": "aggregate environment tuple capture excludes unrelated field loans",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nfunction wrap(own r:(()=>i32,()=>i32)):own()=>i32{return ():i32=>r.0();}\nfunction f(own h:H,own other:H):i32{let r=(():i32=>h.read(),():i32=>other.read());let run=wrap(r);other.close();let n=run();return n+h.close();}",
+    "want": ""
+  },
+  {
+    "name": "aggregate environment record update replaces old callback environment",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct ReadBox { read:()=>i32 }\nfunction wrap(own r:ReadBox):own()=>i32{return ():i32=>r.read();}\nfunction f(own h:H,own other:H):i32{let r=ReadBox{read:():i32=>h.read()};let updated=ReadBox{...r,read:():i32=>other.read()};let run=wrap(updated);h.close();let n=run();return n+other.close();}",
+    "want": ""
+  },
+  {
+    "name": "aggregate environment nested record capture retains callback environment",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct ReadBox { read:()=>i32 }\nstruct Outer { inner:ReadBox }\nfunction wrap(own r:Outer):own()=>i32{return ():i32=>r.inner.read();}\nfunction f(own h:H):i32{let r=Outer{inner:ReadBox{read:():i32=>h.read()}};let run=wrap(r);h.close();return run();}",
+    "want": "E050"
+  },
+  {
+    "name": "aggregate environment local record alias retains callback environment",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct ReadBox { read:()=>i32 }\nfunction wrap(own r:ReadBox):own()=>i32{let saved=r;return ():i32=>saved.read();}\nfunction f(own h:H):i32{let r=ReadBox{read:():i32=>h.read()};let run=wrap(r);h.close();return run();}",
+    "want": "E050"
+  },
+  {
+    "name": "record alias inside callback excludes unrelated loans",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct Readers { left:()=>i32, right:()=>i32 }\nfunction wrap(own r:Readers):()=>i32{return ():i32=>{let saved=r;return saved.left();};}\nfunction f(own h:H,own other:H):i32{let r=Readers{left:():i32=>h.read(),right:():i32=>other.read()};let run=wrap(r);other.close();let n=run();return n; }",
+    "want": ""
+  },
+  {
+    "name": "record alias inside callback retains selected loan",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct Readers { left:()=>i32, right:()=>i32 }\nfunction wrap(own r:Readers):()=>i32{return ():i32=>{let saved=r;return saved.left();};}\nfunction f(own h:H,own other:H):i32{let r=Readers{left:():i32=>h.read(),right:():i32=>other.read()};let run=wrap(r);h.close();let n=run();return n; }",
+    "want": "E050"
+  },
+  {
+    "name": "record alias chain inside callback excludes unrelated loans",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct Readers { left:()=>i32, right:()=>i32 }\nfunction wrap(own r:Readers):()=>i32{return ():i32=>{let saved=r;let again=saved;return again.left();};}\nfunction f(own h:H,own other:H):i32{let r=Readers{left:():i32=>h.read(),right:():i32=>other.read()};let run=wrap(r);other.close();let n=run();return n; }",
+    "want": ""
+  },
+  {
+    "name": "record alias before callback excludes unrelated loans",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct Readers { left:()=>i32, right:()=>i32 }\nfunction wrap(own r:Readers):()=>i32{let saved=r;return ():i32=>saved.left();}\nfunction f(own h:H,own other:H):i32{let r=Readers{left:():i32=>h.read(),right:():i32=>other.read()};let run=wrap(r);other.close();let n=run();return n; }",
+    "want": ""
+  },
+  {
+    "name": "projected callback retains index environment loan",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct ReadBox { read:()=>i32 }\nstruct Pickers { items:ReadBox[], pick:()=>i32 }\nfunction wrap(own r:Pickers):()=>i32{return ():i32=>r.items[r.pick()].read();}\nfunction f(own h:H,own other:H):i32{let r=Pickers{items:[ReadBox{read:():i32=>h.read()}],pick:():i32=>other.read()-other.read()};let run=wrap(r);other.close();return run();}",
+    "want": "E050"
+  },
+  {
+    "name": "projected callback index environment ends at last use",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct ReadBox { read:()=>i32 }\nstruct Pickers { items:ReadBox[], pick:()=>i32 }\nfunction wrap(own r:Pickers):()=>i32{return ():i32=>r.items[r.pick()].read();}\nfunction f(own h:H,own other:H):i32{let r=Pickers{items:[ReadBox{read:():i32=>h.read()}],pick:():i32=>other.read()-other.read()};let run=wrap(r);let n=run();return n+h.close()+other.close();}",
+    "want": ""
+  },
+  {
+    "name": "function field alias read retains selected loan",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct Readers { left:()=>i32, right:()=>i32 }\nfunction wrap(own r:Readers):()=>i32{return ():i32=>{let saved=r.left;return 0;};}\nfunction f(own h:H,own other:H):i32{let r=Readers{left:():i32=>h.read(),right:():i32=>other.read()};let run=wrap(r);h.close();other.close();return run();}",
+    "want": "E050"
+  },
+  {
+    "name": "unused aggregate alias excludes unused environment loans",
+    "source": "struct H { n:i32 }\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct Readers { left:()=>i32, right:()=>i32 }\nfunction wrap(own r:Readers):()=>i32{return ():i32=>{let saved=r;return 0;};}\nfunction f(own h:H,own other:H):i32{let r=Readers{left:():i32=>h.read(),right:():i32=>other.read()};let run=wrap(r);h.close();other.close();return run();}",
+    "want": ""
+  },
+  {
+    "name": "shared record constructor retains loans",
+    "source": "struct H{n:i32}\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct N16{read:()=>i32}\nstruct N15{left:N16,right:N16}\nstruct N14{left:N15,right:N15}\nstruct N13{left:N14,right:N14}\nstruct N12{left:N13,right:N13}\nstruct N11{left:N12,right:N12}\nstruct N10{left:N11,right:N11}\nstruct N9{left:N10,right:N10}\nstruct N8{left:N9,right:N9}\nstruct N7{left:N8,right:N8}\nstruct N6{left:N7,right:N7}\nstruct N5{left:N6,right:N6}\nstruct N4{left:N5,right:N5}\nstruct N3{left:N4,right:N4}\nstruct N2{left:N3,right:N3}\nstruct N1{left:N2,right:N2}\nstruct N0{left:N1,right:N1}\nfunction make16(cb:()=>i32):N16{return N16{read:cb};}\nfunction make15(cb:()=>i32):N15{let child=make16(cb);return N15{left:child,right:child};}\nfunction make14(cb:()=>i32):N14{let child=make15(cb);return N14{left:child,right:child};}\nfunction make13(cb:()=>i32):N13{let child=make14(cb);return N13{left:child,right:child};}\nfunction make12(cb:()=>i32):N12{let child=make13(cb);return N12{left:child,right:child};}\nfunction make11(cb:()=>i32):N11{let child=make12(cb);return N11{left:child,right:child};}\nfunction make10(cb:()=>i32):N10{let child=make11(cb);return N10{left:child,right:child};}\nfunction make9(cb:()=>i32):N9{let child=make10(cb);return N9{left:child,right:child};}\nfunction make8(cb:()=>i32):N8{let child=make9(cb);return N8{left:child,right:child};}\nfunction make7(cb:()=>i32):N7{let child=make8(cb);return N7{left:child,right:child};}\nfunction make6(cb:()=>i32):N6{let child=make7(cb);return N6{left:child,right:child};}\nfunction make5(cb:()=>i32):N5{let child=make6(cb);return N5{left:child,right:child};}\nfunction make4(cb:()=>i32):N4{let child=make5(cb);return N4{left:child,right:child};}\nfunction make3(cb:()=>i32):N3{let child=make4(cb);return N3{left:child,right:child};}\nfunction make2(cb:()=>i32):N2{let child=make3(cb);return N2{left:child,right:child};}\nfunction make1(cb:()=>i32):N1{let child=make2(cb);return N1{left:child,right:child};}\nfunction make0(cb:()=>i32):N0{let child=make1(cb);return N0{left:child,right:child};}\nfunction f(own h:H):i32{let root=make0(():i32=>h.read());let run=root.right.right.right.right.right.right.right.right.right.right.right.right.right.right.right.right.read;h.close();return run();}\n",
+    "want": "E050"
+  },
+  {
+    "name": "shared record constructor ends loans at last use",
+    "source": "struct H{n:i32}\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct N16{read:()=>i32}\nstruct N15{left:N16,right:N16}\nstruct N14{left:N15,right:N15}\nstruct N13{left:N14,right:N14}\nstruct N12{left:N13,right:N13}\nstruct N11{left:N12,right:N12}\nstruct N10{left:N11,right:N11}\nstruct N9{left:N10,right:N10}\nstruct N8{left:N9,right:N9}\nstruct N7{left:N8,right:N8}\nstruct N6{left:N7,right:N7}\nstruct N5{left:N6,right:N6}\nstruct N4{left:N5,right:N5}\nstruct N3{left:N4,right:N4}\nstruct N2{left:N3,right:N3}\nstruct N1{left:N2,right:N2}\nstruct N0{left:N1,right:N1}\nfunction make16(cb:()=>i32):N16{return N16{read:cb};}\nfunction make15(cb:()=>i32):N15{let child=make16(cb);return N15{left:child,right:child};}\nfunction make14(cb:()=>i32):N14{let child=make15(cb);return N14{left:child,right:child};}\nfunction make13(cb:()=>i32):N13{let child=make14(cb);return N13{left:child,right:child};}\nfunction make12(cb:()=>i32):N12{let child=make13(cb);return N12{left:child,right:child};}\nfunction make11(cb:()=>i32):N11{let child=make12(cb);return N11{left:child,right:child};}\nfunction make10(cb:()=>i32):N10{let child=make11(cb);return N10{left:child,right:child};}\nfunction make9(cb:()=>i32):N9{let child=make10(cb);return N9{left:child,right:child};}\nfunction make8(cb:()=>i32):N8{let child=make9(cb);return N8{left:child,right:child};}\nfunction make7(cb:()=>i32):N7{let child=make8(cb);return N7{left:child,right:child};}\nfunction make6(cb:()=>i32):N6{let child=make7(cb);return N6{left:child,right:child};}\nfunction make5(cb:()=>i32):N5{let child=make6(cb);return N5{left:child,right:child};}\nfunction make4(cb:()=>i32):N4{let child=make5(cb);return N4{left:child,right:child};}\nfunction make3(cb:()=>i32):N3{let child=make4(cb);return N3{left:child,right:child};}\nfunction make2(cb:()=>i32):N2{let child=make3(cb);return N2{left:child,right:child};}\nfunction make1(cb:()=>i32):N1{let child=make2(cb);return N1{left:child,right:child};}\nfunction make0(cb:()=>i32):N0{let child=make1(cb);return N0{left:child,right:child};}\nfunction f(own h:H):i32{let root=make0(():i32=>h.read());let run=root.right.right.right.right.right.right.right.right.right.right.right.right.right.right.right.right.read;let n=run();return n+h.close();}\n",
+    "want": ""
+  },
+  {
+    "name": "shared tuple constructor retains loans",
+    "source": "struct H{n:i32}\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct N16{read:()=>i32}\nstruct N15{pair:(N16,N16)}\nstruct N14{pair:(N15,N15)}\nstruct N13{pair:(N14,N14)}\nstruct N12{pair:(N13,N13)}\nstruct N11{pair:(N12,N12)}\nstruct N10{pair:(N11,N11)}\nstruct N9{pair:(N10,N10)}\nstruct N8{pair:(N9,N9)}\nstruct N7{pair:(N8,N8)}\nstruct N6{pair:(N7,N7)}\nstruct N5{pair:(N6,N6)}\nstruct N4{pair:(N5,N5)}\nstruct N3{pair:(N4,N4)}\nstruct N2{pair:(N3,N3)}\nstruct N1{pair:(N2,N2)}\nstruct N0{pair:(N1,N1)}\nfunction make16(cb:()=>i32):N16{return N16{read:cb};}\nfunction make15(cb:()=>i32):N15{let child=make16(cb);return N15{pair:(child,child)};}\nfunction make14(cb:()=>i32):N14{let child=make15(cb);return N14{pair:(child,child)};}\nfunction make13(cb:()=>i32):N13{let child=make14(cb);return N13{pair:(child,child)};}\nfunction make12(cb:()=>i32):N12{let child=make13(cb);return N12{pair:(child,child)};}\nfunction make11(cb:()=>i32):N11{let child=make12(cb);return N11{pair:(child,child)};}\nfunction make10(cb:()=>i32):N10{let child=make11(cb);return N10{pair:(child,child)};}\nfunction make9(cb:()=>i32):N9{let child=make10(cb);return N9{pair:(child,child)};}\nfunction make8(cb:()=>i32):N8{let child=make9(cb);return N8{pair:(child,child)};}\nfunction make7(cb:()=>i32):N7{let child=make8(cb);return N7{pair:(child,child)};}\nfunction make6(cb:()=>i32):N6{let child=make7(cb);return N6{pair:(child,child)};}\nfunction make5(cb:()=>i32):N5{let child=make6(cb);return N5{pair:(child,child)};}\nfunction make4(cb:()=>i32):N4{let child=make5(cb);return N4{pair:(child,child)};}\nfunction make3(cb:()=>i32):N3{let child=make4(cb);return N3{pair:(child,child)};}\nfunction make2(cb:()=>i32):N2{let child=make3(cb);return N2{pair:(child,child)};}\nfunction make1(cb:()=>i32):N1{let child=make2(cb);return N1{pair:(child,child)};}\nfunction make0(cb:()=>i32):N0{let child=make1(cb);return N0{pair:(child,child)};}\nfunction f(own h:H):i32{let root=make0(():i32=>h.read());let run=root.pair.1.pair.1.pair.1.pair.1.pair.1.pair.1.pair.1.pair.1.pair.1.pair.1.pair.1.pair.1.pair.1.pair.1.pair.1.pair.1.read;h.close();return run();}\n",
+    "want": "E050"
+  },
+  {
+    "name": "shared fields preserve independent descendant loans",
+    "source": "struct H{n:i32}\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct Leaf{left:()=>i32,right:()=>i32}\nstruct Pair{first:Leaf,second:Leaf,spare:()=>i32}\nfunction pack(own left:()=>i32,own right:()=>i32,own spare:()=>i32):Pair{let child=Leaf{left:left,right:right};return Pair{first:child,second:child,spare:spare};}\nfunction choose(own p:Pair):()=>i32{return p.second.left;}\nfunction f(own h:H,own other:H,own spare:H):i32{let p=pack(():i32=>h.read(),():i32=>other.read(),():i32=>spare.read());let run=choose(p);other.close();spare.close();let n=run();return n+h.close();}\n",
+    "want": ""
+  },
+  {
+    "name": "recursive callback container ends loan at last use",
+    "source": "struct H{n:i32}\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct A{next:B[],read:()=>i32}\nstruct B{back:A[]}\nfunction pack(own cb:()=>i32):B{return B{back:[A{next:[],read:cb}]};}\nfunction choose(own b:B):()=>i32{return b.back[0].read;}\nfunction f(own h:H):i32{let b=pack(():i32=>h.read());let run=choose(b);let n=run();return n+h.close();}",
+    "want": ""
+  },
+  {
+    "name": "recursive callback container retains later sibling loan",
+    "source": "struct H{n:i32}\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct A{next:B[],read:()=>i32}\nstruct B{back:A[]}\nfunction pack(own cb:()=>i32):B{return B{back:[A{next:[],read:cb}]};}\nfunction choose(own b:B):()=>i32{return b.back[0].read;}\nfunction f(own h:H):i32{let b=pack(():i32=>h.read());let run=choose(b);h.close();return run();}",
+    "want": "E050"
+  },
+  {
+    "name": "unrelated lambda parameter does not erase resource capture",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f(own h:H):i32{let ignore=(h:i32):i32=>h;let read=():i32=>h.read();h.close();return read();}",
+    "want": "E050"
+  },
+  {
+    "name": "nested callback declaration does not erase outer callback loan",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f(own h:H):i32{let read=():i32=>h.read();if(true){let read=():i32=>0;read();}h.close();return read();}",
+    "want": "E050"
+  },
+  {
+    "name": "unrelated factory lambda parameter does not erase input loan",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function wrap(cb:()=>i32):()=>i32{let ignore=(cb:i32):i32=>cb;return ():i32=>cb();} function f(own h:H):i32{let read=wrap(():i32=>h.read());h.close();return read();}",
+    "want": "E050"
+  },
+  {
+    "name": "shadowed callback keeps independent resource loan",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f(own h:H,own other:H):i32{let read=():i32=>h.read();let n=read();h.close();if(true){let read=():i32=>other.read();n+=read();}return n+other.close();}",
+    "want": ""
+  },
+  {
+    "name": "local named function parameter does not erase resource capture",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f(own h:H):i32{function ignore(h:i32):i32{return h;}let read=():i32=>h.read();h.close();return read();}",
+    "want": "E050"
+  },
+  {
+    "name": "local named function keeps shadowed capture owner",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f(own h:H):i32{if(true){let h=H{n:3};function read():i32{return h.read();}h.close();return read();}return h.close();}",
+    "want": "E050"
+  },
+  {
+    "name": "local named function permits independent shadowed owner",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f(own h:H):i32{let read=():i32=>h.read();let n=read();h.close();if(true){let h=H{n:3};function read():i32{return h.read();}n+=read();n+=h.close();}return n;}",
+    "want": ""
+  },
+  {
+    "name": "lambda keeps shadowed fresh capture owner",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f(own h:H):i32{if(true){let h=H{n:3};let read=():i32=>h.read();h.close();return read();}return h.close();}",
+    "want": "E050"
+  },
+  {
+    "name": "owned lambda parameter retains its callback loan",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f(own h:H):i32{let run=(own h:H):i32=>{let read=():i32=>h.read();h.close();return read();};return run(h);}",
+    "want": "E050"
+  },
+  {
+    "name": "owned lambda parameter permits callback last use",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f(own h:H):i32{let run=(own h:H):i32=>{let read=():i32=>h.read();let n=read();return n+h.close();};return run(h);}",
+    "want": ""
+  },
+  {
+    "name": "nested record binding does not erase outer environment",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} struct R{read:()=>i32} function f(own h:H):i32{let r=R{read:():i32=>h.read()};if(true){let r=R{read:():i32=>0};r.read();}h.close();return r.read();}",
+    "want": "E050"
+  },
+  {
+    "name": "deep call callback provenance valid before close",
+    "source": "struct H{n:i32}function(h:H)read():i32{return h.n;}function(own h:H)close():i32{return h.n;}struct Box[T]{cb:T,a:i32,b:i32,c:i32,d:i32,e:i32,f:i32,g:i32} function(value:Box[T])changed(n:i32):Box[T]{return Box[T]{...value,a:n};}function deep[T](value:Box[T]):Box[T]{return value.changed(0).changed(1).changed(2).changed(3).changed(4).changed(5).changed(6).changed(7).changed(8).changed(9).changed(10).changed(11);}function run(own h:H):i32{let capture=():i32=>h.read();let box=deep(Box{cb:capture,a:0,b:0,c:0,d:0,e:0,f:0,g:0});let n=box.cb();return n+h.close();}function main():i32{return run(H{n:1});}",
+    "want": ""
+  },
+  {
+    "name": "deep call callback provenance refused after close",
+    "source": "struct H{n:i32}function(h:H)read():i32{return h.n;}function(own h:H)close():i32{return h.n;}struct Box[T]{cb:T,a:i32,b:i32,c:i32,d:i32,e:i32,f:i32,g:i32} function(value:Box[T])changed(n:i32):Box[T]{return Box[T]{...value,a:n};}function deep[T](value:Box[T]):Box[T]{return value.changed(0).changed(1).changed(2).changed(3).changed(4).changed(5).changed(6).changed(7).changed(8).changed(9).changed(10).changed(11);}function run(own h:H):i32{let capture=():i32=>h.read();let box=deep(Box{cb:capture,a:0,b:0,c:0,d:0,e:0,f:0,g:0});let n=h.close();return n+box.cb();}function main():i32{return run(H{n:1});}",
+    "want": "E050"
+  },
+  {
+    "name": "deep literal callback provenance valid before close",
+    "source": "struct H{n:i32}function(h:H)read():i32{return h.n;}function(own h:H)close():i32{return h.n;}struct Box[T]{cb:T,a:i32,b:i32,c:i32,d:i32,e:i32,f:i32,g:i32} function(value:Box[T])changed(n:i32):Box[T]{return Box[T]{...value,a:n};}function deep[T](value:Box[T]):Box[T]{return Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...value,a:0},a:1},a:2},a:3},a:4},a:5},a:6},a:7},a:8},a:9},a:10},a:11};}function run(own h:H):i32{let capture=():i32=>h.read();let box=deep(Box{cb:capture,a:0,b:0,c:0,d:0,e:0,f:0,g:0});let n=box.cb();return n+h.close();}function main():i32{return run(H{n:1});}",
+    "want": ""
+  },
+  {
+    "name": "deep literal callback provenance refused after close",
+    "source": "struct H{n:i32}function(h:H)read():i32{return h.n;}function(own h:H)close():i32{return h.n;}struct Box[T]{cb:T,a:i32,b:i32,c:i32,d:i32,e:i32,f:i32,g:i32} function(value:Box[T])changed(n:i32):Box[T]{return Box[T]{...value,a:n};}function deep[T](value:Box[T]):Box[T]{return Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...Box[T]{...value,a:0},a:1},a:2},a:3},a:4},a:5},a:6},a:7},a:8},a:9},a:10},a:11};}function run(own h:H):i32{let capture=():i32=>h.read();let box=deep(Box{cb:capture,a:0,b:0,c:0,d:0,e:0,f:0,g:0});let n=h.close();return n+box.cb();}function main():i32{return run(H{n:1});}",
+    "want": "E050"
   }
 ]
