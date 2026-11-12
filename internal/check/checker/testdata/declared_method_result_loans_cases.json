@@ -68,5 +68,45 @@
     "name": "fresh result from resource receiver",
     "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;}struct Box{h:H}function(b:Box)fresh():H{return H{n:b.h.n};}function f(b:Box):i32{let h=b.fresh();return h.close();}",
     "want": ""
+  },
+  {
+    "name": "receiver rebound from its own method result closes",
+    "source": "struct W { fd: i32 }\nfunction (w: W) put(s: string): W { return w; }\nfunction (w: W) try_put(s: string): Result[W, string] { return Ok(w); }\nfunction (own w: W) close(): i32 { return w.fd; }\nfunction run(): i32 { let o = W { fd: 1 }; o = o.put(\"a\"); o = o.put(\"b\"); return o.close(); }\nfunction main(): i32 { return run() - 1; }\n",
+    "want": ""
+  },
+  {
+    "name": "receiver rebound through a nested method result closes",
+    "source": "struct W { fd: i32 }\nfunction (w: W) try_put(s: string): Result[W, string] { return Ok(w); }\nfunction (own w: W) close(): i32 { return w.fd; }\nfunction keep(r: Result[W, string], fallback: W): W { match (r) { Ok(w) => { return w; }, Err(_) => { return fallback; } } }\nfunction run(): i32 { let b = W { fd: 1 }; b = keep(b.try_put(\"a\"), b); return b.close(); }\nfunction main(): i32 { return run() - 1; }\n",
+    "want": ""
+  },
+  {
+    "name": "receiver rebound from a match payload of its own method result closes",
+    "source": "struct W { fd: i32 }\nfunction (w: W) put(s: string): W { return w; }\nfunction (w: W) try_put(s: string): Result[W, string] { return Ok(w); }\nfunction (own w: W) close(): i32 { return w.fd; }\nfunction run(): i32 { let buf = W { fd: 1 }; let i = 0; while (i < 2) { match (buf.try_put(\"a\")) { Ok(w) => { buf = w; }, Err(_) => { return 9; } } i += 1; } return buf.close(); }\nfunction main(): i32 { return run() - 1; }\n",
+    "want": ""
+  },
+  {
+    "name": "method result passed as owned beside its receiver",
+    "source": "struct W { fd: i32 }\nfunction (w: W) put(s: string): W { return w; }\nfunction (w: W) try_put(s: string): Result[W, string] { return Ok(w); }\nfunction (own w: W) close(): i32 { return w.fd; }\nstruct Out { w: W, n: i32 }\nfunction settle(own o: Out, own written: Result[W, string]): Out { match (written) { Ok(w) => { return Out { ...o, w: w }; }, Err(_) => {} } return o; }\nfunction put(own o: Out, s: string): Out { let written = o.w.try_put(s); return settle(o, written); }\nfunction main(): i32 { let o = put(Out { w: W { fd: 1 }, n: 0 }, \"a\"); return o.w.close() - 1; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "method result in a second local closed beside its receiver",
+    "source": "struct W { fd: i32 }\nfunction (w: W) put(s: string): W { return w; }\nfunction (w: W) try_put(s: string): Result[W, string] { return Ok(w); }\nfunction (own w: W) close(): i32 { return w.fd; }\nfunction run(): i32 { let o = W { fd: 1 }; let c = o.put(\"a\"); let n = o.close(); return n + c.close(); }\nfunction main(): i32 { return run() - 2; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "local rebound from a method result of a borrowed parameter",
+    "source": "struct W { fd: i32 }\nfunction (w: W) put(s: string): W { return w; }\nfunction (w: W) try_put(s: string): Result[W, string] { return Ok(w); }\nfunction (own w: W) close(): i32 { return w.fd; }\nfunction run(other: W): i32 { let o = W { fd: 1 }; o = other.put(\"a\"); return o.close(); }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "local rebound from a match payload of a borrowed parameter",
+    "source": "struct W { fd: i32 }\nfunction (w: W) put(s: string): W { return w; }\nfunction (w: W) try_put(s: string): Result[W, string] { return Ok(w); }\nfunction (own w: W) close(): i32 { return w.fd; }\nfunction run(other: W): i32 { let buf = W { fd: 1 }; match (other.try_put(\"a\")) { Ok(w) => { buf = w; }, Err(_) => { return 9; } } return buf.close(); }\nfunction main(): i32 { return 0; }\n",
+    "want": "E051"
+  },
+  {
+    "name": "match payload of a method result closed beside its receiver",
+    "source": "struct W { fd: i32 }\nfunction (w: W) put(s: string): W { return w; }\nfunction (w: W) try_put(s: string): Result[W, string] { return Ok(w); }\nfunction (own w: W) close(): i32 { return w.fd; }\nfunction run(): i32 { let buf = W { fd: 1 }; let n = 0; match (buf.try_put(\"a\")) { Ok(w) => { n = w.close(); }, Err(_) => { return 9; } } return n + buf.close(); }\nfunction main(): i32 { return run() - 2; }\n",
+    "want": "E051"
   }
 ]

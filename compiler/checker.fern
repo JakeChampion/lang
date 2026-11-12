@@ -19067,7 +19067,9 @@ struct OwnJump { target: i32, breaks: boolean, moved: MovedEntry[] }
 struct OwnReturns { synthetic: boolean, moved: MovedEntry[] }
 
 // Only single-definition local callbacks and aliases participate.
-struct OclDef { name: string, value: ast.Expr, spelling: string }
+// binder marks a match binder. It has each loan of the matched value, and each
+// loan covers its whole source.
+struct OclDef { name: string, value: ast.Expr, spelling: string, binder: boolean }
 
 struct OclCapture { name: string, type_name: string, result: string, source: string, direct: boolean, wide: boolean }
 
@@ -19086,7 +19088,7 @@ struct OclPlaces { name: string, defs: OclDef[], names: util.NameIndex, aggregat
 struct OclContainers { names: util.NameIndex, holds: boolean[] }
 
 function ocl_unknown(name: string): OclDef {
-  return OclDef { name: name, value: ast.ExprUnknown { kind: "", line: 0, col: 0 }, spelling: "" };
+  return OclDef { name: name, value: ast.ExprUnknown { kind: "", line: 0, col: 0 }, spelling: "", binder: false };
 }
 
 function ocl_param(param: ast.ParamDecl): OclDef {
@@ -19096,7 +19098,7 @@ function ocl_param(param: ast.ParamDecl): OclDef {
 function ocl_var(v: ast.StmtVar, own defs: OclDef[]): OclDef[] {
   let names = lu_var_names(v, []);
   if (names.len() == 1 && names[0] == v.name) {
-    return defs.append(OclDef { name: v.name, value: v.init, spelling: parser.fn_tag_spelling(v.type_name, v.fn_ret, v.fn_param_types) });
+    return defs.append(OclDef { name: v.name, value: v.init, spelling: parser.fn_tag_spelling(v.type_name, v.fn_ret, v.fn_param_types), binder: false });
   }
   for name in names {
     defs = defs.append(ocl_unknown(name));
@@ -19110,15 +19112,17 @@ function ocl_stmt(st: ast.Stmt, own defs: OclDef[]): OclDef[] {
       return ocl_var(v, defs);
     },
     ast.StmtAssign(a) => {
-      return defs.append(OclDef { name: a.target, value: a.value, spelling: "" });
+      return defs.append(OclDef { name: a.target, value: a.value, spelling: "", binder: false });
     },
     ast.StmtFor(f) => {
       return defs.append(ocl_unknown(f.var_name));
     },
+    ast.StmtMatch(m) => {
+      for name in lu_arm_binders(st, []) {
+        defs = defs.append(OclDef { name: name, value: m.scrutinee, spelling: "", binder: true });
+      }
+    },
     _ => {}
-  }
-  for name in lu_arm_binders(st, []) {
-    defs = defs.append(ocl_unknown(name));
   }
   return defs;
 }
@@ -19203,6 +19207,14 @@ function ocl_flatten(loans: OclCapture[]): OclCapture[] {
   let out: OclCapture[] = [];
   for loan in loans {
     out = ocl_merge(out, [OclCapture { ...loan, result: "" }]);
+  }
+  return out;
+}
+
+function ocl_widen(loans: OclCapture[]): OclCapture[] {
+  let out: OclCapture[] = [];
+  for loan in loans {
+    out = ocl_merge(out, [OclCapture { ...loan, result: "", wide: true }]);
   }
   return out;
 }
@@ -19402,6 +19414,13 @@ function ocl_call(call: ast.ExprCall, facts: OclFacts): OclCapture[] {
   if (call.ty.len() > 0 && ow_value_data(call.ty, facts.factories.decls, [])) {
     return [];
   }
+  if (ocl_variant(call.callee, facts)) {
+    let out: OclCapture[] = [];
+    for arg in call.args {
+      out = ocl_merge(out, ocl_flatten(ocl_value(arg, facts)));
+    }
+    return out;
+  }
   let mapped = ow_result_call(call, facts.factories.names, facts.factories.decls);
   let ast.ExprCall(c) = mapped else {
     return [];
@@ -19429,6 +19448,40 @@ function ocl_call(call: ast.ExprCall, facts: OclFacts): OclCapture[] {
     }
   }
   return out;
+}
+
+// Option's and Result's variants are not among the module's declarations.
+function ocl_variant(callee: ast.Expr, facts: OclFacts): boolean {
+  let name = "";
+  let owner = "";
+  match (callee) {
+    ast.ExprIdent(id) => {
+      name = id.name;
+    },
+    ast.ExprFieldAccess(fa) => {
+      let ast.ExprIdent(obj) = fa.obj else {
+        return false;
+      };
+      name = fa.field;
+      owner = obj.name;
+    },
+    _ => {
+      return false;
+    }
+  }
+  if (facts.names.has(name) || facts.names.has(owner) || facts.factories.names.has(name)) {
+    return false;
+  }
+  let decls = facts.factories.decls;
+  let i = decls.snames.chain(name);
+  while (i >= 0) {
+    let sd = decls.structs[i];
+    if (sd.name == name && sd.enum_owner != "" && (owner == "" || sd.enum_owner == owner)) {
+      return true;
+    }
+    i = decls.snames.next[i];
+  }
+  return owner == "" && is_builtin_variant(name);
 }
 
 function ocl_argument_loans(arg: ast.Expr, param: ast.ParamDecl, sources: OclCapture[], facts: OclFacts): OclCapture[] {
@@ -19841,7 +19894,11 @@ function ocl_facts(fn: parser.FuncDecl, factories: OclFactories, summarize: bool
     changed = false;
     for i in 0..defs.len() {
       if (ocl_unique(facts.names, defs[i].name)) {
-        let grown = ocl_merge(facts.rows[i], ocl_value(defs[i].value, facts));
+        let loans = ocl_value(defs[i].value, facts);
+        if (defs[i].binder) {
+          loans = ocl_widen(loans);
+        }
+        let grown = ocl_merge(facts.rows[i], loans);
         if (grown.len() > facts.rows[i].len()) {
           facts = OclFacts { ...facts, rows: facts.rows.with(i, grown) };
           changed = true;
@@ -21623,10 +21680,7 @@ function lu_assigned_owned(fx: LuFn, name: string, e: ast.Expr, seen: string[]):
     return sl.has_base && ow_ident_name(sl.base) == name;
   }
   if let ast.ExprCall(c) = e {
-    if let ast.ExprIdent(_) = c.callee {
-      return !lu_call_borrows_beside(fx, c, name);
-    }
-    return false;
+    return lu_plain_or_declared(fx, c) && !lu_call_borrows_beside(fx, c, name);
   }
   if let ast.ExprUnary(u) = e {
     return u.op == "try_" && lu_assigned_owned(fx, name, u.operand, seen);
@@ -21636,9 +21690,67 @@ function lu_assigned_owned(fx: LuFn, name: string, e: ast.Expr, seen: string[]):
   }
   let inner: string[] = seen.append(name);
   if let ast.ExprIdent(src) = e {
-    return lu_assigned_name_owned(fx, src, inner);
+    return lu_assigned_name_owned(fx, src, inner) || lu_payload_of(fx, src.name, name);
   }
   return lu_unpack_expr_in(fx, e, inner);
+}
+
+// A payload of a match on a call whose result borrows from no argument but
+// target: `match (x.f()) { Ok(y) => { x = y; } }` leaves x the one holder.
+function lu_payload_of(fx: LuFn, name: string, target: string): boolean {
+  if (util.has_str(fx.params, name) || lu_decl_count(fx, name) != 0) {
+    return false;
+  }
+  let found = false;
+  for b in fx.facts.matched {
+    if (b.name == name) {
+      if (found) {
+        return false;
+      }
+      let ast.ExprCall(c) = b.init else {
+        return false;
+      };
+      if (!lu_plain_or_declared(fx, c) || lu_call_borrows_beside(fx, c, target)) {
+        return false;
+      }
+      found = true;
+    }
+  }
+  return found;
+}
+
+// A call of a named function, or of a method that the program declares.
+function lu_plain_or_declared(fx: LuFn, c: ast.ExprCall): boolean {
+  match (c.callee) {
+    ast.ExprIdent(_) => {
+      return true;
+    },
+    ast.ExprFieldAccess(field) => {
+      for method in fx.lenders.methods {
+        if (lu_matches_method(method, field)) {
+          return true;
+        }
+      }
+    },
+    _ => {}
+  }
+  return false;
+}
+
+// lu_arg_may_borrow, where a call argument can borrow from the plain name
+// except: `x = x.f().g(x)` leaves x the one holder.
+function lu_arg_borrows_beside(fx: LuFn, a: ast.Expr, except: string): boolean {
+  if (except.len() > 0) {
+    if (ow_ident_name(a) == except) {
+      return false;
+    }
+    if let ast.ExprCall(c) = a {
+      if (lu_plain_or_declared(fx, c)) {
+        return lu_call_borrows_beside(fx, c, except);
+      }
+    }
+  }
+  return lu_arg_may_borrow(fx, a);
 }
 
 function lu_if_body_owned(fx: LuFn, name: string, body: ast.Stmt[], seen: string[]): boolean {
@@ -21824,11 +21936,11 @@ function lu_call_borrows_beside(fx: LuFn, c: ast.ExprCall, except: string): bool
     }
     for method in fx.lenders.methods {
       if (lu_matches_method(method, field)) {
-        if (lu_arg_may_borrow(fx, field.obj) && lu_lends(method, 0)) {
+        if (lu_lends(method, 0) && lu_arg_borrows_beside(fx, field.obj, except)) {
           return true;
         }
         for i in 0..c.args.len() {
-          if (lu_lends(method, i + 1) && lu_arg_may_borrow(fx, c.args[i])) {
+          if (lu_lends(method, i + 1) && lu_arg_borrows_beside(fx, c.args[i], except)) {
             return true;
           }
         }
@@ -21839,9 +21951,7 @@ function lu_call_borrows_beside(fx: LuFn, c: ast.ExprCall, except: string): bool
   let callee: string = ow_ident_name(c.callee);
   let row: i32 = fx.lenders.names.find(callee);
   for i in 0..c.args.len() {
-    let a = c.args[i];
-    let skipped: boolean = except.len() > 0 && ow_ident_name(a) == except;
-    if (!skipped && lu_arg_may_borrow(fx, a) && (row < 0 || lu_lends(fx.lenders.rows[row], i))) {
+    if (lu_arg_borrows_beside(fx, c.args[i], except) && (row < 0 || lu_lends(fx.lenders.rows[row], i))) {
       return true;
     }
   }

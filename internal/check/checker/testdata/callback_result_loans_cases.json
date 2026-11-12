@@ -1343,5 +1343,55 @@
     "name": "spawned task holds a closed handle",
     "source": "import \"std/async\";\nstruct H { fd: i32 }\nfunction (own h: H) close(): void {}\nfunction read(h: H): i32 { return h.fd; }\nfunction main(): i32 { let h = H { fd: 1 }; let f = async.spawn((): i32 => read(h)); h.close(); match (async.block_on(f)) { Some(v) => { return v; }, None => { return 0; } } }\n",
     "want": "E051"
+  },
+  {
+    "name": "enum factory payload callback refused after close",
+    "source": "struct H { n: i32 }\nfunction (h: H) read(): i32 { return h.n; }\nfunction (own h: H) close(): void {}\nenum Source { Lazy(() => i32), Fixed(i32) }\nfunction factory(h: H): own Source { return Lazy((): i32 => h.read()); }\nfunction run(own h: H): i32 { let source = factory(h); h.close(); return match (source) { Lazy(r) => r(), Fixed(n) => n, }; }\nfunction main(): i32 { return run(H { n: 7 }); }\n",
+    "want": "E050"
+  },
+  {
+    "name": "qualified variant payload callback refused after close",
+    "source": "struct H { n: i32 }\nfunction (h: H) read(): i32 { return h.n; }\nfunction (own h: H) close(): void {}\nenum Source { Lazy(() => i32), Fixed(i32) }\nfunction run(own h: H): i32 { let source = Source.Lazy((): i32 => h.read()); h.close(); return match (source) { Lazy(r) => r(), Fixed(n) => n, }; }\nfunction main(): i32 { return run(H { n: 7 }); }\n",
+    "want": "E050"
+  },
+  {
+    "name": "option factory payload callback refused after close",
+    "source": "struct H { n: i32 }\nfunction (h: H) read(): i32 { return h.n; }\nfunction (own h: H) close(): void {}\nfunction factory(h: H): Option[() => i32] { return Some((): i32 => h.read()); }\nfunction run(own h: H): i32 { let source = factory(h); h.close(); return match (source) { Some(r) => r(), None => 0, }; }\nfunction main(): i32 { return run(H { n: 7 }); }\n",
+    "want": "E050"
+  },
+  {
+    "name": "local option payload callback refused after close",
+    "source": "struct H { n: i32 }\nfunction (h: H) read(): i32 { return h.n; }\nfunction (own h: H) close(): void {}\nfunction run(own h: H): i32 { let source = Some((): i32 => h.read()); h.close(); return match (source) { Some(r) => r(), None => 0, }; }\nfunction main(): i32 { return run(H { n: 7 }); }\n",
+    "want": "E050"
+  },
+  {
+    "name": "match statement payload callback refused after close",
+    "source": "struct H { n: i32 }\nfunction (h: H) read(): i32 { return h.n; }\nfunction (own h: H) close(): void {}\nfunction run(own h: H): i32 { let source = Some((): i32 => h.read()); h.close(); match (source) { Some(r) => { return r(); }, None => { return 0; } } }\nfunction main(): i32 { return run(H { n: 7 }); }\n",
+    "want": "E050"
+  },
+  {
+    "name": "if let payload callback refused after close",
+    "source": "struct H { n: i32 }\nfunction (h: H) read(): i32 { return h.n; }\nfunction (own h: H) close(): void {}\nfunction run(own h: H): i32 { let source = Some((): i32 => h.read()); h.close(); if let Some(r) = source { return r(); } return 0; }\nfunction main(): i32 { return run(H { n: 7 }); }\n",
+    "want": "E050"
+  },
+  {
+    "name": "tuple pattern callback refused after close",
+    "source": "struct H { n: i32 }\nfunction (h: H) read(): i32 { return h.n; }\nfunction (own h: H) close(): void {}\nfunction run(own h: H): i32 { let pair = ((): i32 => h.read(), 3); h.close(); return match (pair) { (cb, n) => cb() + n, }; }\nfunction main(): i32 { return run(H { n: 7 }); }\n",
+    "want": "E050"
+  },
+  {
+    "name": "variant payload callback accepted before close",
+    "source": "struct H { n: i32 }\nfunction (h: H) read(): i32 { return h.n; }\nfunction (own h: H) close(): void {}\nenum Source { Lazy(() => i32), Fixed(i32) }\nfunction factory(h: H): own Source { return Lazy((): i32 => h.read()); }\nfunction run(own h: H): i32 { let source = factory(h); let n = match (source) { Lazy(r) => r(), Fixed(n) => n, }; h.close(); return n; }\nfunction main(): i32 { return run(H { n: 7 }); }\n",
+    "want": ""
+  },
+  {
+    "name": "data binder beside a callback accepted after close",
+    "source": "struct H { n: i32 }\nfunction (h: H) read(): i32 { return h.n; }\nfunction (own h: H) close(): void {}\nfunction run(own h: H): i32 { let pair = ((): i32 => h.read(), 3); h.close(); return match (pair) { (cb, n) => n, }; }\nfunction main(): i32 { return run(H { n: 7 }); }\n",
+    "want": ""
+  },
+  {
+    "name": "binder that is not a callback accepted in a loop",
+    "source": "struct H { n: i32 }\nfunction (own h: H) close(): void {}\nstruct Box { run: () => i32 }\nfunction pick(h: H): Option[Box] { return Some(Box { run: (): i32 => h.n }); }\nfunction renew(own h: H): H { return h; }\nfunction run(own h0: H): i32 { let h = h0; let total = 0; for k in 0..2 { if (k == 0) { h = renew(h); } if let Some(b) = pick(h) { total += 1; } } h.close(); return total; }\nfunction main(): i32 { return run(H { n: 7 }); }\n",
+    "want": ""
   }
 ]

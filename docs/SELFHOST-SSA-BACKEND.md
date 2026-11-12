@@ -206,6 +206,13 @@ the string's tag test), where the count is read: the inline release guard
 (`ssa_rc_dec`) and the generated release helpers' heads have tested the
 floor already and enter there.
 
+An inline retain, release or uniqueness test first tests that its value is a
+box: no tag bit, and not below the heap floor. The test goes when a load from
+the same value comes before each count of that value, in the same block or in
+a block that dominates the count (`ssadeps.boxed_values`,
+`asmcore.ssa_is_boxed`). The load read the box already. A sanitizer build
+keeps each test.
+
 A `-size` build (`FERN_SIZE=1`, `asmcore.EmitState.size`) trades that
 inline guard for its call: a release calls the `.r` entry, and the retain
 and the uniqueness test `ssa.rc_inlined` otherwise expands call their stack

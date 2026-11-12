@@ -61,7 +61,7 @@ function main(): i32 {
     out = out.fflush();
     let fork: gnu.Stdio = held.fwrite("fork");
     fork = fork.fflush();
-    fork.close_stdout();
+    out.close_stdout();
     return 0;
   }
   if (mode == "closed-empty") {

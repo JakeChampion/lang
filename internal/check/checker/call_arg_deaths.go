@@ -403,9 +403,20 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 	var replacingBases map[[2]string]int
 	// A name that only matches on a fresh call bind: the match takes the
 	// result, so the payload is owned.
-	freshBound, staleBound := matchBinds(info, body)
+	freshBound, staleBound, boundTag := matchBinds(info, body)
 	payloadOwned := func(name string) bool {
 		return freshBound[name] && !staleBound[name] && !isParam[name] && declCount[name] == 0
+	}
+	// A payload of a match on a call whose result borrows from no argument
+	// but target: `match (x.f()) { Ok(y) => { x = y; } }` leaves x the one
+	// holder.
+	payloadOf := func(name, target string) bool {
+		tag, ok := boundTag[name].(*ast.Call)
+		if !ok || isParam[name] || declCount[name] != 0 {
+			return false
+		}
+		_, named := tag.Callee.(*ast.Ident)
+		return named && info != nil && info.CallBorrowsBeside != nil && !info.CallBorrowsBeside(tag, target)
 	}
 	// An unpack reads the one field of a fresh local, an own parameter or a
 	// payload that a match took, that nothing else reads, from a holder that
@@ -456,7 +467,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 				return true
 			}
 			t, ok := a.Target.(*ast.Ident)
-			if !ok || staleAssign[t.Name] || assignedOwned(info, t.Name, a.Value, freshInitLocal, payloadOwned, unpack) {
+			if !ok || staleAssign[t.Name] || assignedOwned(info, t.Name, a.Value, freshInitLocal, payloadOwned, payloadOf, unpack) {
 				return true
 			}
 			staleAssign[t.Name] = true
@@ -1499,9 +1510,10 @@ func loopedDecls(body *ast.Block) map[string]bool {
 
 // matchBinds names the payloads that a match on a fresh call binds, and the
 // payloads that a match on another value binds.
-func matchBinds(info *Info, body *ast.Block) (fresh, stale map[string]bool) {
+func matchBinds(info *Info, body *ast.Block) (fresh, stale map[string]bool, tag map[string]ast.Expr) {
 	fresh = map[string]bool{}
 	stale = map[string]bool{}
+	tag = map[string]ast.Expr{}
 	ast.Walk(body, func(n ast.Node) bool {
 		if m, ok := n.(*ast.Match); ok {
 			_, named := m.Tag.(*ast.Ident)
@@ -1509,6 +1521,11 @@ func matchBinds(info *Info, body *ast.Block) (fresh, stale map[string]bool) {
 			for _, arm := range m.Arms {
 				names, _ := arm.OwnBindings()
 				for _, b := range names {
+					if _, bound := tag[b]; bound {
+						tag[b] = nil
+					} else {
+						tag[b] = m.Tag
+					}
 					if taken {
 						fresh[b] = true
 					} else {
@@ -1519,32 +1536,32 @@ func matchBinds(info *Info, body *ast.Block) (fresh, stale map[string]bool) {
 		}
 		return true
 	})
-	return fresh, stale
+	return fresh, stale, tag
 }
 
 // assignedOwned reports a value an assignment to target stores that no
 // other name holds: a fresh value, an unpack, a fresh local, a payload a
 // match took, a self-update `T { ...target, f: v }`, or a call whose result
-// borrows from no argument but target itself.
-func assignedOwned(info *Info, target string, v ast.Expr, freshLocal map[string]bool, payloadOwned func(string) bool, unpack func(ast.Expr) bool) bool {
+// borrows from no argument but target itself, also through a match payload.
+func assignedOwned(info *Info, target string, v ast.Expr, freshLocal map[string]bool, payloadOwned func(string) bool, payloadOf func(name, target string) bool, unpack func(ast.Expr) bool) bool {
 	if freshInit(info, v) || unpack(v) {
 		return true
 	}
 	switch x := v.(type) {
 	case *ast.TryOp:
-		return assignedOwned(info, target, x.Inner, freshLocal, payloadOwned, unpack)
+		return assignedOwned(info, target, x.Inner, freshLocal, payloadOwned, payloadOf, unpack)
 	case *ast.IfExpr:
-		return assignedOwned(info, target, x.Then, freshLocal, payloadOwned, unpack) && assignedOwned(info, target, x.Else, freshLocal, payloadOwned, unpack)
+		return assignedOwned(info, target, x.Then, freshLocal, payloadOwned, payloadOf, unpack) && assignedOwned(info, target, x.Else, freshLocal, payloadOwned, payloadOf, unpack)
 	case *ast.BlockExpr:
-		return x.Tail != nil && assignedOwned(info, target, x.Tail, freshLocal, payloadOwned, unpack)
+		return x.Tail != nil && assignedOwned(info, target, x.Tail, freshLocal, payloadOwned, payloadOf, unpack)
 	case *ast.Ident:
-		return freshLocal[x.Name] || payloadOwned(x.Name)
+		return freshLocal[x.Name] || payloadOwned(x.Name) || payloadOf(x.Name, target)
 	case *ast.StructLit:
 		b, ok := x.Base.(*ast.Ident)
 		return ok && b.Name == target
 	case *ast.Call:
 		_, named := x.Callee.(*ast.Ident)
-		return named && x.Method == nil && info != nil && info.CallBorrowsBeside != nil && !info.CallBorrowsBeside(x, target)
+		return named && info != nil && info.CallBorrowsBeside != nil && !info.CallBorrowsBeside(x, target)
 	}
 	return false
 }
