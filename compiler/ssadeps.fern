@@ -331,3 +331,87 @@ function uses_error(f: ssa.SFunc, dependencies: i32[][], g: Facts): string {
   }
   return "";
 }
+
+// The values a count can read without a test that they are boxes. A value is
+// one when each count of it comes after a load from it: a load in the same
+// block before the count, or a load in a block that dominates the count. The
+// load already read the box, so the value is not null and holds no tag bit.
+pub function boxed_values(f: ssa.SFunc): boolean[] {
+  let counted = counted_values(f);
+  if (counted.len() == 0) {
+    return counted;
+  }
+  let dom = dominates_at(f, ssa.block_positions(f));
+  let loads = load_blocks(f, counted);
+  let out = counted;
+  for bi in 0..f.blocks.len() {
+    let insts = f.blocks[bi].insts;
+    for k in 0..insts.len() {
+      if (counts_box(insts[k]) && out[insts[k].args[0]] && !loaded_before(insts, k, insts[k].args[0]) && !loaded_above(dom, loads[insts[k].args[0]], bi)) {
+        out = out.with(insts[k].args[0], false);
+      }
+    }
+  }
+  return out;
+}
+
+// The values that some count names, or no values when the function has no count.
+function counted_values(f: ssa.SFunc): boolean[] {
+  let counted = __alloc_bool(f.nvals);
+  let any = false;
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (counts_box(ins)) {
+        counted = counted.with(ins.args[0], true);
+        any = true;
+      }
+    }
+  }
+  if (!any) {
+    return [];
+  }
+  return counted;
+}
+
+function counts_box(ins: ssa.SInst): boolean {
+  return ins.kind_tag == ssa.CALL && ins.args.len() == 1 && ins.args[0] >= 0
+    && (ins.str == "__fern_rc_inc" || ins.str == "__fern_rc_is_unique" || ins.str == "__fern_rc_dec");
+}
+
+function loads_from(ins: ssa.SInst, v: i32): boolean {
+  return ins.kind_tag == ssa.LD_AT && ins.args.len() == 1 && ins.args[0] == v && ins.imm >= 0;
+}
+
+// For each counted value, the positions of the blocks that load from it.
+function load_blocks(f: ssa.SFunc, counted: boolean[]): i32[][] {
+  let out: i32[][] = [];
+  for _ in 0..f.nvals {
+    out = out.append([]);
+  }
+  for bi in 0..f.blocks.len() {
+    for ins in f.blocks[bi].insts {
+      if (ins.kind_tag == ssa.LD_AT && ins.args.len() == 1 && ins.imm >= 0 && ins.args[0] >= 0 && counted[ins.args[0]] && !contains(out[ins.args[0]], bi)) {
+        out = out.with(ins.args[0], out[ins.args[0]].append(bi));
+      }
+    }
+  }
+  return out;
+}
+
+function loaded_before(insts: ssa.SInst[], k: i32, v: i32): boolean {
+  for j in 0..k {
+    if (loads_from(insts[j], v)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function loaded_above(dom: Dom, blocks: i32[], bi: i32): boolean {
+  for d in blocks {
+    if (d != bi && dom_holds(dom, bi, d)) {
+      return true;
+    }
+  }
+  return false;
+}

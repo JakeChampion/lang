@@ -370,7 +370,8 @@ On `x86-64-kernel`:
   21), or a number from `"32"` to `"255"` for an external interrupt.
 - The reset entry fills a 256-entry IDT in `.bss` with interrupt gates to a
   park stub. Then it writes the gate of each handler and loads the IDT with
-  `lidt`.
+  `lidt`. An image that calls `__user_run` has a gate for each vector, which
+  sends a trap from ring 3 to the trap frame (item 28 of the record).
 - The trampoline saves the nine caller-saved general registers and ymm0 to
   ymm15, because the baseline has AVX2. It clears the direction flag and calls
   the handler. Then it restores the registers, drops the error code that the
@@ -918,8 +919,7 @@ and three `mmap` reservations at start.
 
    `TestSelfHostKernelUserModeOnQemu` runs EL0 code that makes two `svc`
    calls. The kernel answers them through the frame. Then the code loads a
-   kernel address and takes a data abort. x86-64 refuses `__user_run` until
-   its slice, which uses `syscall` and `iretq`.
+   kernel address and takes a data abort. Item 28 is the x86-64 slice.
 19. **Linux programs run as user processes on arm64** (#14263, the second
    slice of milestone 4). `std/user_process` loads a static `arm64-linux`
    executable into a fresh `std/pagetable` mapping, which holds the kernel
@@ -1031,7 +1031,46 @@ and three `mmap` reservations at start.
    with `Waiting`, and the next run starts it again. The program answers three
    requests from the host. Then the kernel sends SIGTERM, and the program exits
    with 0.
-28. Beside those: the panic scope is decided (#14257, see the north-star
+28. **User mode and processes run on x86-64** (#14263, the last slice of
+   milestone 4). `__user_run(frame)` enters ring 3 with `iretq` and returns
+   with the kind of the trap: 0 for `syscall`, 1 for an interrupt and 2 for
+   an exception. Only one core runs a process.
+   - The frame holds the 16 general registers in the order of their numbers,
+     the PC, the flags, the FS and GS bases, the vector, the error code and
+     CR2 of the last trap, MXCSR, and ymm0 to ymm15, 704 bytes in all.
+   - An image that calls `__user_run` has a GDT with the ring 3 segments, a
+     TSS, and the `STAR`, `LSTAR` and `FMASK` registers of `SYSCALL`. The IDT
+     has a gate for each vector. A trap from ring 0 goes to the trampoline of
+     its handler, as before. A trap from ring 3 saves the user state into
+     the frame on the stack that the TSS gives, which is the kernel stack of
+     `__user_run`.
+   - `__user_run` keeps the registers that a call keeps, the flags, and the
+     FS base, the GS base and MXCSR of the kernel. The process gets its
+     arithmetic flags and DF from the frame, with IF set and IOPL 0.
+   - A PC outside the low half makes `iretq` fault in ring 0. `__user_run`
+     does not enter ring 3 for one. It answers a general-protection fault.
+   - The CPU delivers an interrupt from ring 3 through the IDT. The interrupt
+     does not wait for the kernel, as it does on arm64. Thus `__user_run`
+     calls the top half of the vector in ring 0, with the registers of the
+     kernel. Then it returns 1. The kernel heap is still never preempted.
+   - The reset entry sets `EFER.NXE`, and `std/pagetable` sets NX on a user
+     page that is not executable.
+   - A read of the `tsc` register is `rdtsc`, because qemu gives a stale
+     value for `rdmsr` of it.
+   - `std/user_process` runs a static `x86-64-linux` program. It gives each
+     x86-64 call its arm64 number and shares the code of the calls. The
+     layouts of `struct stat` and `struct epoll_event` and the value of
+     `O_DIRECTORY` differ. x86-64 has no counter of a known frequency, so the
+     kernel gives a process one with `with_counter`.
+   - An `x86-64-linux` program links at `0x400000`, so the kernel of the
+     tests has its RAM at 1 GiB, and its tables map only that RAM and the
+     device window.
+
+   `TestSelfHostKernelX86UserModeOnQemu`, `TestSelfHostKernelX86ProcessOnQemu`
+   and `TestSelfHostKernelX86SchedulerOnQemu` are the x86-64 forms of the
+   tests of items 18 to 22. The scheduler test checks the three "done when"
+   items of #14263 under the local APIC timer.
+29. Beside those: the panic scope is decided (#14257, see the north-star
    section).
 
 ## Prior art: TamaGo, GoTEE and eggshell

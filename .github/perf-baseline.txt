@@ -264,6 +264,16 @@
 # (struct_drop.ir -1.8% and -1.9%, sort_inplace.ir and
 # utf8_ingest_validated.ir -1.1% on aarch64). Values are the perf-x86_64 and
 # perf-aarch64 lanes' measurements of the branch.
+#
+# Re-pinned 2026-11-12 (#15528) on the x86_64 rows that moved more than the
+# tolerance, from a local perf-bench. #15528 removes the box test of a count
+# that comes after a load from the same value. ordmap_insert.ir -2.16%,
+# perceus_cfold.text -1.48%, perceus_cfold.ir -4.85%, perceus_deriv.text
+# -3.48%, perceus_deriv.ir -2.11%, perceus_nqueens.text -1.63%,
+# perceus_nqueens.ir -1.35%, perceus_rbtree.text -1.67%, perceus_rbtree.ir
+# -4.39%, perceus_rbtree_ck.text -1.62%, perceus_rbtree_ck.ir -4.11%,
+# pmap_insert.text -1.49%, pmap_insert.ir -3.52%, pvec_with.text -1.12%,
+# pvec_with.ir -5.54%.
 
 x86_64/array_append.text	1187
 x86_64/array_append.ir	12005460
@@ -311,11 +321,11 @@ x86_64/map_string.text	9311
 # 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured x86_64/map_string.ir at 51764454 (was 53037751). The tolerance is unchanged.
 x86_64/map_string.ir	51764454	2
 x86_64/ordmap_insert.text	5394
-x86_64/ordmap_insert.ir	81070676
-x86_64/pmap_insert.text	2946
-x86_64/pmap_insert.ir	53294866
-x86_64/pvec_with.text	2957
-x86_64/pvec_with.ir	55174232
+x86_64/ordmap_insert.ir	79318047
+x86_64/pmap_insert.text	2902
+x86_64/pmap_insert.ir	51416670
+x86_64/pvec_with.text	2924
+x86_64/pvec_with.ir	52118035
 x86_64/record_update.ir	36120760
 x86_64/record_update.text	981
 x86_64/sort_inplace.text	1538
@@ -641,16 +651,16 @@ aarch64/utf8_ingest_validated.text	8735
 aarch64/utf8_ingest_validated.ir	6229114
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
-x86_64/perceus_cfold.text	1961
-x86_64/perceus_cfold.ir	54520496
-x86_64/perceus_deriv.text	2726
-x86_64/perceus_deriv.ir	66585210
-x86_64/perceus_nqueens.text	1591
-x86_64/perceus_nqueens.ir	84561093
-x86_64/perceus_rbtree.text	2987
-x86_64/perceus_rbtree.ir	49735957
-x86_64/perceus_rbtree_ck.text	3081
-x86_64/perceus_rbtree_ck.ir	49322197
+x86_64/perceus_cfold.text	1932
+x86_64/perceus_cfold.ir	51874510
+x86_64/perceus_deriv.text	2631
+x86_64/perceus_deriv.ir	65178824
+x86_64/perceus_nqueens.text	1565
+x86_64/perceus_nqueens.ir	83418693
+x86_64/perceus_rbtree.text	2937
+x86_64/perceus_rbtree.ir	47550357
+x86_64/perceus_rbtree_ck.text	3031
+x86_64/perceus_rbtree_ck.ir	47295957
 aarch64/perceus_cfold.text	2215
 aarch64/perceus_cfold.ir	61031992
 aarch64/perceus_deriv.text	3027

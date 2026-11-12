@@ -127,3 +127,97 @@ func TestSelfHostSysnoLinuxTablesPairUp(t *testing.T) {
 		}
 	}
 }
+
+const userProcessSrc = "../../stdlib/std/user_process.fern.md"
+
+// std/user_process answers the calls of an x86-64 process through the arm64
+// numbers. Each pair of X86_CALLS must name one call in both kernel tables,
+// and each arm64 number that the module answers must have a pair. The calls
+// that the Go tables do not have, because they are newer than the tables, are
+// checked against the tables of the compiler.
+func TestSelfHostUserProcessX86CallsPairUp(t *testing.T) {
+	b, err := os.ReadFile(userProcessSrc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	m := regexp.MustCompile(`const X86_CALLS: i32\[\] = \[([0-9, ]+)\];`).FindStringSubmatch(src)
+	if m == nil {
+		t.Fatalf("no X86_CALLS table in %s", userProcessSrc)
+	}
+	var nums []int
+	for _, f := range strings.Split(m[1], ", ") {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		nums = append(nums, n)
+	}
+	if len(nums)%2 != 0 || len(nums) < 80 {
+		t.Fatalf("X86_CALLS has %d numbers, want pairs", len(nums))
+	}
+	asm, err := os.ReadFile(sysnoSrc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := func(tables ...map[string]int) map[int]map[string]bool {
+		out := map[int]map[string]bool{}
+		for _, table := range tables {
+			for name, n := range table {
+				if out[n] == nil {
+					out[n] = map[string]bool{}
+				}
+				out[n][name] = true
+			}
+		}
+		return out
+	}
+	alias := map[string]string{"newfstatat": "fstatat", "rt_sigaction": "sigaction", "rt_sigprocmask": "sigprocmask", "getdents64": "getdents"}
+	normal := func(table map[string]int) map[string]int {
+		out := map[string]int{}
+		for name, n := range table {
+			if a, ok := alias[name]; ok {
+				name = a
+			}
+			out[name] = n
+		}
+		return out
+	}
+	x86 := names(fernSysnoTable(t, string(asm), "sysno_x86_64"), normal(goSysnoTable(t, "zsysnum_linux_amd64.go")))
+	arm := names(fernSysnoTable(t, string(asm), "sysno_arm64_linux"), normal(goSysnoTable(t, "zsysnum_linux_arm64.go")))
+	answered := map[int]bool{}
+	for i := 0; i < len(nums); i += 2 {
+		shared := ""
+		for name := range x86[nums[i]] {
+			if arm[nums[i+1]][name] {
+				shared = name
+			}
+		}
+		if shared == "" {
+			t.Errorf("X86_CALLS pairs x86-64 %d %v with arm64 %d %v, which are not one call", nums[i], x86[nums[i]], nums[i+1], arm[nums[i+1]])
+		}
+		answered[nums[i+1]] = true
+	}
+	want := map[int]bool{}
+	for _, m := range regexp.MustCompile(`\bn [!=]= (\d+) as u64`).FindAllStringSubmatch(src, -1) {
+		n, _ := strconv.Atoi(m[1])
+		want[n] = true
+	}
+	for _, m := range regexp.MustCompile(`(?m)^const [A-Z_]+_CALLS: i32\[\] = \[([0-9, ]+)\];`).FindAllStringSubmatch(src, -1) {
+		if strings.Contains(m[0], "X86_CALLS") {
+			continue
+		}
+		for _, f := range strings.Split(m[1], ", ") {
+			n, _ := strconv.Atoi(f)
+			want[n] = true
+		}
+	}
+	if len(want) < 40 {
+		t.Fatalf("read only %d arm64 numbers from %s: the extraction has gone stale", len(want), userProcessSrc)
+	}
+	for n := range want {
+		if !answered[n] {
+			t.Errorf("std/user_process answers the arm64 call %d %v, and X86_CALLS has no x86-64 number for it", n, arm[n])
+		}
+	}
+}
