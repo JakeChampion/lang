@@ -130,20 +130,23 @@ function static_part(e: usize): Result[void, jni.JavaError] {
 
 // A String parameter that is null, a member that a device can lack, and
 // a lookup of a member that the device does not have. With a null
-// parent, a File has the path of its child. With an empty parent, the
-// path starts at the root.
+// parent or an empty parent, Android gives the path of the child.
+// A nonempty parent prefixes that path.
 function marks_part(e: usize): Result[void, jni.JavaError] {
   let files = bindings.file_class(e)?;
   let clocks = bindings.system_clock_class(e)?;
   let bare = files.new(e, None, "x")?;
-  let rooted = files.new(e, Some(""), "x")?;
+  let empty = files.new(e, Some(""), "x")?;
+  let parented = files.new(e, Some("parent"), "x")?;
   let first = files.get_path(e, bare)?;
-  let second = files.get_path(e, rooted)?;
+  let second = files.get_path(e, empty)?;
+  let third = files.get_path(e, parented)?;
   jni.delete_local_ref(e, bare.ref);
-  jni.delete_local_ref(e, rooted.ref);
+  jni.delete_local_ref(e, empty.ref);
+  jni.delete_local_ref(e, parented.ref);
   let lost = jni.optional_id(e, jni.get_static_method_id(e, clocks.class, "fernHasNoSuchMethod", "()V"));
   let up = clocks.uptime_millis(e)?;
-  log.warn("jnibind: null " + first + " empty " + second + " has " + clocks.has_uptime_millis().to_string() + " lost " + (lost == 0 as usize).to_string() + " then " + (up > 0 as i64).to_string());
+  log.warn("jnibind: null " + first + " empty " + second + " parent " + third + " has " + clocks.has_uptime_millis().to_string() + " lost " + (lost == 0 as usize).to_string() + " then " + (up > 0 as i64).to_string());
   files.release(e);
   clocks.release(e);
   return Ok(());
