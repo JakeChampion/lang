@@ -6499,7 +6499,7 @@ function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
     return t_array(t_unknown("empty array literal"));
   }
   let first = check_expr(a.elements[0], s);
-  let first_lit = numeric_literal_kind(a.elements[0]);
+  let first_lit = element_literal_kind(a.elements[0]);
   let first_expr = a.elements[0];
   for i in 1..a.elements.len() {
     let et = check_expr(a.elements[i], s);
@@ -6508,7 +6508,7 @@ function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
     }
     if (unbound_enum_argument(first)) {
       first = et;
-      first_lit = numeric_literal_kind(a.elements[i]);
+      first_lit = element_literal_kind(a.elements[i]);
       first_expr = a.elements[i];
       continue;
     }
@@ -6538,13 +6538,13 @@ function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
       }
     }
     let scalar = scalar_numeric_join(first, et);
-    if (!is_unknown(scalar) && !int_literal_tree(first_expr) && (!int_literal_tree(a.elements[i]) || wide_literal_widens(a.elements[i], et, first))) {
+    if (!is_unknown(scalar) && element_literal_kind(first_expr) != 1 && (element_literal_kind(a.elements[i]) != 1 || wide_literal_widens(a.elements[i], et, first))) {
       first = scalar;
       first_lit = 0;
       first_expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
       continue;
     }
-    let lit = numeric_literal_kind(a.elements[i]);
+    let lit = element_literal_kind(a.elements[i]);
     if (array_element_preferred(a.elements[i], et, lit, first_expr, first, first_lit, s)) {
       first = et;
       first_lit = lit;
@@ -12778,6 +12778,27 @@ function float_literal_tree(e: ast.Expr): boolean {
   return parser.float_literal_tree(e);
 }
 
+// element_literal_kind is numeric_literal_kind for an array element: an integer literal that a float destination reads stays an integer literal.
+function element_literal_kind(e: ast.Expr): i32 {
+  if (float_read_int_tree(e)) {
+    return 1;
+  }
+  return numeric_literal_kind(e);
+}
+
+function float_read_int_tree(e: ast.Expr): boolean {
+  if let ast.ExprNumber(n) = e {
+    return parser.float_settled_int(n);
+  }
+  if let ast.ExprUnary(u) = e {
+    return (u.op == "-" || u.op == "+") && float_read_int_tree(u.operand);
+  }
+  if let ast.ExprBinary(b) = e {
+    return parser.int_literal_op(b.op) && float_read_int_tree(b.left) && float_read_int_tree(b.right);
+  }
+  return false;
+}
+
 function literal_gives_way(kind: i32, t: typeinfo.Type): boolean {
   if (kind == 1) {
     return is_integer(t) || is_float(t);
@@ -15312,18 +15333,18 @@ function array_mix_diags(a: ast.ExprArray, s: Scope, out: util.Diag[]): util.Dia
 }
 
 function scalar_array_mix(a: ast.ExprArray, anchor: typeinfo.Type, s: Scope, out: util.Diag[]): util.Diag[] {
-  let anchor_lit = numeric_literal_kind(a.elements[0]);
+  let anchor_lit = element_literal_kind(a.elements[0]);
   let k = 1;
   while (k < a.elements.len()) {
     let etk = check_expr(a.elements[k], s);
     let scalar = scalar_numeric_join(anchor, etk);
-    if (!is_unknown(scalar) && anchor_lit == 0 && lit_kind_settled(a.elements[k])) {
+    if (!is_unknown(scalar) && anchor_lit == 0 && element_literal_kind(a.elements[k]) == 0) {
       anchor = scalar;
       anchor_lit = 0;
       k += 1;
       continue;
     }
-    let lit = numeric_literal_kind(a.elements[k]);
+    let lit = element_literal_kind(a.elements[k]);
     if (!type_contains_unknown(etk) && !literal_gives_way(lit, anchor)) {
       if (same_element_type(etk, anchor) && (!typeinfo.is_tuple(anchor) || type_assignable(etk, anchor, s.unions.unions)) || literal_gives_way(anchor_lit, etk)) {
         anchor = etk;
@@ -15348,7 +15369,7 @@ function tuple_literal_join(a: ast.ExprArray, k: i32, anchor: typeinfo.Type, etk
   if (!typeinfo.is_tuple(anchor) || !typeinfo.is_tuple(etk)) {
     return t_unknown("not two tuples");
   }
-  let joined = vb_join(VbStore { t: anchor, e: a.elements[0] }, VbStore { t: etk, e: a.elements[k] });
+  let joined = vb_join(int_read_store(anchor, a.elements[0], s), int_read_store(etk, a.elements[k], s));
   if (is_unknown(joined.t)) {
     return joined.t;
   }
@@ -15360,12 +15381,55 @@ function tuple_literal_join(a: ast.ExprArray, k: i32, anchor: typeinfo.Type, etk
   return joined.t;
 }
 
+// int_read_store is e of the type t, with each integer literal that a float destination reads as an integer literal again.
+function int_read_store(t: typeinfo.Type, e: ast.Expr, s: Scope): VbStore {
+  if (!holds_float_read_int(e)) {
+    return VbStore { t: t, e: e };
+  }
+  let read = int_read(e);
+  return VbStore { t: check_expr(read, s), e: read };
+}
+
+function holds_float_read_int(e: ast.Expr): boolean {
+  if let ast.ExprTuple(te) = e {
+    for part in te.elements {
+      if (holds_float_read_int(part)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  return float_read_int_tree(e);
+}
+
+function int_read(e: ast.Expr): ast.Expr {
+  if let ast.ExprNumber(n) = e {
+    if (parser.float_settled_int(n)) {
+      return ast.ExprNumber { ...n, is_float: false, bits: parser.literal_bits(n.text, false) };
+    }
+  }
+  if let ast.ExprUnary(u) = e {
+    return ast.ExprUnary { ...u, operand: int_read(u.operand) };
+  }
+  if let ast.ExprBinary(b) = e {
+    return ast.ExprBinary { ...b, left: int_read(b.left), right: int_read(b.right) };
+  }
+  if let ast.ExprTuple(te) = e {
+    let parts: ast.Expr[] = [];
+    for part in te.elements {
+      parts = parts.append(int_read(part));
+    }
+    return ast.ExprTuple { ...te, elements: parts };
+  }
+  return e;
+}
+
 // literal_parts_take is true when e of the type from can take the type to, and only its number literals change type.
 function literal_parts_take(e: ast.Expr, from: typeinfo.Type, to: typeinfo.Type): boolean {
   if (type_eq(from, to)) {
     return true;
   }
-  if (int_literal_tree(e)) {
+  if (element_literal_kind(e) == 1) {
     return is_integer(to) || is_float(to);
   }
   if (float_literal_tree(e)) {
@@ -36225,10 +36289,6 @@ function scalar_numeric_join(a: typeinfo.Type, b: typeinfo.Type): typeinfo.Type 
     return a;
   }
   return typeinfo.mixed_integer_join(a, b);
-}
-
-function lit_kind_settled(e: ast.Expr): boolean {
-  return numeric_literal_kind(e) == 0;
 }
 
 function array_element_preferred(e: ast.Expr, t: typeinfo.Type, lit: i32, first_expr: ast.Expr, first: typeinfo.Type, first_lit: i32, s: Scope): boolean {
