@@ -6030,6 +6030,16 @@ func (e *env) captureCell(name string) (*binding, bool) {
 	return nil, false
 }
 
+// slot is the entry of name, which is a *binding when a closure captured it.
+func (e *env) slot(name string) Value {
+	for cur := e; cur != nil; cur = cur.parent {
+		if v, ok := cur.vars[name]; ok {
+			return v
+		}
+	}
+	return nil
+}
+
 func (e *env) get(name string) (Value, bool) {
 	for cur := e; cur != nil; cur = cur.parent {
 		if v, ok := cur.vars[name]; ok {
@@ -6335,7 +6345,12 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 		if x.Value == nil {
 			return result{flow: flowReturn, val: Void{}}, nil
 		}
+		moved := i.returnMoves(x.Value, e)
 		v, err := i.evalExpr(x.Value, e)
+		i.moving = i.moving[:len(i.moving)-len(moved)]
+		for _, old := range moved {
+			arrOwn(old)
+		}
 		if err != nil {
 			return result{}, err
 		}
@@ -8080,6 +8095,35 @@ func (i *Interp) assignIdent(a *ast.Assign, name string, env *env) (Value, error
 	arrOwn(v)
 	env.set(name, v)
 	return v, nil
+}
+
+// returnMoves lets a return expression write in place into an array that a
+// local of the function holds, as assignIdent does for an assignment. The
+// local dies with the return, so its hold does not stop the write. A closure
+// that captured the local, or a defer that has not run, can read the array
+// after the return, so the local keeps its hold then. The caller pops the
+// moved arrays from i.moving and owns them again after the expression.
+func (i *Interp) returnMoves(rhs ast.Expr, e *env) []Value {
+	if n := len(i.deferStack); n > 0 && len(i.deferStack[n-1]) > 0 {
+		return nil
+	}
+	var moved []Value
+	seen := map[string]bool{}
+	ast.Walk(rhs, func(n ast.Node) bool {
+		id, ok := n.(*ast.Ident)
+		if !ok || seen[id.Name] {
+			return true
+		}
+		seen[id.Name] = true
+		v := e.slot(id.Name)
+		if _, isArray := v.(Array); isArray && movesFirst(rhs, id.Name) {
+			arrDisown(v)
+			i.moving = append(i.moving, v)
+			moved = append(moved, v)
+		}
+		return true
+	})
+	return moved
 }
 
 func movesFirst(rhs ast.Expr, name string) bool {
