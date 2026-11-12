@@ -6535,6 +6535,12 @@ function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
       first_expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
       continue;
     }
+    if (typeinfo.is_tuple(first) && typeinfo.is_tuple(et) && !type_eq(first, et) && prior_literals_take(a, i, et, s)) {
+      first = et;
+      first_lit = 0;
+      first_expr = a.elements[i];
+      continue;
+    }
     if (bare_map(first) && !bare_map(et)) {
       if let typeinfo.TypeMap(_) = et {
         first = et;
@@ -12875,8 +12881,22 @@ function int_literal_tree(e: ast.Expr): boolean {
   return ast.int_literal_tree(e);
 }
 
+// float_settled_tree is true for integer literals that the parser gave the float type of a destination.
+function float_settled_tree(e: ast.Expr): boolean {
+  if let ast.ExprNumber(n) = e {
+    return parser.float_settled_int(n);
+  }
+  if let ast.ExprUnary(u) = e {
+    return (u.op == "-" || u.op == "+") && float_settled_tree(u.operand);
+  }
+  if let ast.ExprBinary(b) = e {
+    return (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/") && float_settled_tree(b.left) && float_settled_tree(b.right);
+  }
+  return false;
+}
+
 function numeric_literal_kind(e: ast.Expr): i32 {
-  if (int_literal_tree(e)) {
+  if (int_literal_tree(e) || float_settled_tree(e)) {
     return 1;
   }
   if (float_literal_tree(e)) {
@@ -15481,7 +15501,10 @@ function scalar_array_mix(a: ast.ExprArray, anchor: typeinfo.Type, s: Scope, out
         anchor_lit = lit;
       } else {
         let joined = tuple_literal_join(a, k, anchor, etk, s);
-        if (is_unknown(joined)) {
+        if (is_unknown(joined) && typeinfo.is_tuple(etk) && prior_literals_take(a, k, etk, s)) {
+          anchor = etk;
+          anchor_lit = 0;
+        } else if (is_unknown(joined)) {
           out = out.append(dg_at("E034", "array element: expected " + type_label(anchor) + ", got " + type_label(etk), expr_line(a.elements[k]), expr_col(a.elements[k])));
         } else {
           anchor = joined;
@@ -15492,6 +15515,16 @@ function scalar_array_mix(a: ast.ExprArray, anchor: typeinfo.Type, s: Scope, out
     k += 1;
   }
   return out;
+}
+
+// prior_literals_take is true when each element before index k can take the type want by a change of its number literals only.
+function prior_literals_take(a: ast.ExprArray, k: i32, want: typeinfo.Type, s: Scope): boolean {
+  for i in 0..k {
+    if (!literal_parts_take(a.elements[i], check_expr(a.elements[i], s), want)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // tuple_literal_join is the tuple type that element k and each element before it can take, or an unknown type.
@@ -15570,7 +15603,7 @@ function literal_parts_take(e: ast.Expr, from: typeinfo.Type, to: typeinfo.Type)
   if (type_eq(from, to)) {
     return true;
   }
-  if (int_literal_tree(e)) {
+  if (int_literal_tree(e) || float_settled_tree(e)) {
     return is_integer(to) || is_float(to);
   }
   if (float_literal_tree(e)) {
