@@ -896,15 +896,15 @@ function wit_alias_target_pos(buf: i32[], sort_pos: i32): i32 {
   return sort_pos + 1;
 }
 
-function wit_outer_slot(tbody: i32[], sort_pos: i32): i32 {
+function wit_outer_slot(tbody: i32[], sort_pos: i32): Option[i32] {
   if (tbody[sort_pos] != 3 || tbody[sort_pos + 1] != 2) {
-    return -1;
+    return None;
   }
   let cr = wit_read_uleb(tbody, sort_pos + 2);
   if (cr.value != 1) {
-    return -1;
+    return None;
   }
-  return wit_read_uleb(tbody, cr.next).value;
+  return Some(wit_read_uleb(tbody, cr.next).value);
 }
 
 function wit_inline_def(tbody: i32[], ws: i32): i32 {
@@ -930,16 +930,18 @@ function wit_inst_prune(tbody: i32[], q: i32, whole: boolean, names: string[]): 
   let inline: i32[] = [];
   let outer: i32[] = [];
   for j in 0..decls.len() {
-    let ws: i32 = -1;
+    let ws: Option[i32] = None;
     if (keep[j] && tbody[decls[j]] == 2) {
       ws = wit_outer_slot(tbody, decls[j] + 1);
     }
     let off: i32 = -1;
-    if (ws >= 0 && !whole) {
-      off = wit_inline_def(tbody, ws);
-    }
-    if (ws >= 0 && off < 0) {
-      outer = outer.append(ws);
+    if let Some(slot) = ws {
+      if (!whole) {
+        off = wit_inline_def(tbody, slot);
+      }
+      if (off < 0) {
+        outer = outer.append(slot);
+      }
     }
     inline = inline.append(off);
   }
@@ -1146,10 +1148,9 @@ function wit_world_alias_mapped(tbody: i32[], sort_pos: i32, inst_map: i32[]): i
 
 function wit_use_alias_mapped(tbody: i32[], sort_pos: i32, type_map: i32[]): i32[] {
   let none: i32[] = [];
-  let ws = wit_outer_slot(tbody, sort_pos);
-  if (ws < 0) {
+  let Some(ws) = wit_outer_slot(tbody, sort_pos) else {
     return wit_tx_alias(tbody, sort_pos, none).out;
-  }
+  };
   return watbin.leb_u32([3, 2, 1], type_map[ws]);
 }
 
@@ -1576,11 +1577,15 @@ pub function wit_world_declares(tbody: i32[], iface: string): boolean {
   return wit_names_index(wit_world_decls(tbody).imp_names, iface).is_some();
 }
 
-pub function wit_import_instance_index(tbody: i32[], plan: WitImportPlan, iface: string): i32 {
+pub function wit_import_instance_index(tbody: i32[], plan: WitImportPlan, iface: string): Option[i32] {
   let Some(j) = wit_names_index(wit_world_decls(tbody).imp_names, iface) else {
-    return -1;
+    return None;
   };
-  return plan.index[j];
+  let inst = plan.index[j];
+  if (inst < 0) {
+    return None;
+  }
+  return Some(inst);
 }
 
 pub struct WitCoreImports { ifaces: string[], names: string[], params: i32[][], results: i32[][] }
