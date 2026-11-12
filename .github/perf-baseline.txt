@@ -1,3 +1,8 @@
+# 2026-11-12: PR #15532 at 140e81519b, perf-aarch64 job 131459432086.
+# Fifteen aarch64 rows of the perceus, pmap, pvec and ordmap programs got 1.0% to 4.4% faster.
+# A change of main after 12e1326ff7 gives that gain: the arm64 binaries of these programs are
+# byte-identical with and without this PR. Main re-banked its x86-64 rows only. Each row moves to
+# its measured value. Keep all tolerances.
 # 2026-11-12: main 6f8937ce, run 43285985869, perf-x86_64 job 131423863245 and perf-aarch64 job 131423863482.
 # The ssa changes of that day moved deflate_encode, perceus_nqueens, perceus_rbtree and perceus_rbtree_ck.
 # The .ir rows fall 3.0% to 12.6%. The .text rows grow 1.0% to 6.7%. Each row moves to its measured value.
@@ -614,11 +619,11 @@ aarch64/map_string.text	9472
 # 2026-11-11 (#15258): perf-aarch64 job 130456686122 measured aarch64/map_string.ir at 49757676 (was 53247468). The tolerance is unchanged.
 aarch64/map_string.ir	49757676	2
 aarch64/ordmap_insert.text	5771
-aarch64/ordmap_insert.ir	95978671
-aarch64/pmap_insert.text	3251
-aarch64/pmap_insert.ir	63996220
-aarch64/pvec_with.text	3213
-aarch64/pvec_with.ir	58556365
+aarch64/ordmap_insert.ir	94397455
+aarch64/pmap_insert.text	3214
+aarch64/pmap_insert.ir	62593290
+aarch64/pvec_with.text	3180
+aarch64/pvec_with.ir	55994886
 aarch64/record_update.text	1216
 aarch64/record_update.ir	34494442
 aarch64/sort_inplace.text	1727
@@ -661,16 +666,16 @@ x86_64/perceus_rbtree.text	2937
 x86_64/perceus_rbtree.ir	47550357
 x86_64/perceus_rbtree_ck.text	3031
 x86_64/perceus_rbtree_ck.ir	47295957
-aarch64/perceus_cfold.text	2215
-aarch64/perceus_cfold.ir	61031992
-aarch64/perceus_deriv.text	3027
-aarch64/perceus_deriv.ir	80353384
-aarch64/perceus_nqueens.text	1844
-aarch64/perceus_nqueens.ir	93232046
-aarch64/perceus_rbtree.text	3340
-aarch64/perceus_rbtree.ir	55118687
-aarch64/perceus_rbtree_ck.text	3402
-aarch64/perceus_rbtree_ck.ir	53967009
+aarch64/perceus_cfold.text	2184
+aarch64/perceus_cfold.ir	58667203
+aarch64/perceus_deriv.text	2934
+aarch64/perceus_deriv.ir	78975795
+aarch64/perceus_nqueens.text	1812
+aarch64/perceus_nqueens.ir	92089646
+aarch64/perceus_rbtree.text	3290
+aarch64/perceus_rbtree.ir	52933087
+aarch64/perceus_rbtree_ck.text	3352
+aarch64/perceus_rbtree_ck.ir	51940769
 # 2026-11-01: #13988 keeps the original main pvec instruction gates.
 # Fresh measurements remain within their unchanged 1% tolerance.
 # 2026-11-07: PR #14490 adds the fixed QTRLE workload. Existing limits stay unchanged.

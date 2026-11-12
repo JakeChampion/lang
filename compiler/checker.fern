@@ -1340,7 +1340,18 @@ function wider_int(lt: typeinfo.Type, rt: typeinfo.Type): typeinfo.Type {
   return lt;
 }
 
+// type_eq compares two types in full, the owned or view form of each part
+// included. same_type_any_mode takes `string` and `str`, and `T[]` and
+// `[T]`, as one type.
 function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
+  return type_eq_in(a, b, true);
+}
+
+function same_type_any_mode(a: typeinfo.Type, b: typeinfo.Type): boolean {
+  return type_eq_in(a, b, false);
+}
+
+function type_eq_in(a: typeinfo.Type, b: typeinfo.Type, modes: boolean): boolean {
   match (a) {
     typeinfo.TypeI32(ai) => {
       match (b) {
@@ -1362,10 +1373,10 @@ function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
         }
       }
     },
-    typeinfo.TypeString(_) => {
+    typeinfo.TypeString(sa) => {
       match (b) {
-        typeinfo.TypeString(_) => {
-          return true;
+        typeinfo.TypeString(bs) => {
+          return !modes || sa.tag == bs.tag;
         },
         _ => {
           return false;
@@ -1395,7 +1406,7 @@ function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
     typeinfo.TypeArray(ae) => {
       match (b) {
         typeinfo.TypeArray(be) => {
-          return type_eq(ae.elem, be.elem);
+          return (!modes || ae.view == be.view) && type_eq_in(ae.elem, be.elem, modes);
         },
         _ => {
           return false;
@@ -1405,7 +1416,7 @@ function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
     typeinfo.TypeStruct(an) => {
       match (b) {
         typeinfo.TypeStruct(bn) => {
-          return an.name == bn.name && type_args_agree(an.args, bn.args);
+          return an.name == bn.name && type_args_agree_in(an.args, bn.args, modes);
         },
         _ => {
           return false;
@@ -1419,7 +1430,7 @@ function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
             return false;
           }
           for i in 0..at.elements.len() {
-            if (!type_eq(at.elements[i], bt.elements[i])) {
+            if (!type_eq_in(at.elements[i], bt.elements[i], modes)) {
               return false;
             }
           }
@@ -1436,11 +1447,11 @@ function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
           if (af.param_types.len() != bf.param_types.len()) {
             return false;
           }
-          if (af.ret_own != bf.ret_own || !type_eq(af.ret_type, bf.ret_type)) {
+          if (af.ret_own != bf.ret_own || !type_eq_in(af.ret_type, bf.ret_type, modes)) {
             return false;
           }
           for fi in 0..af.param_types.len() {
-            if (!type_eq(af.param_types[fi], bf.param_types[fi])) {
+            if (!type_eq_in(af.param_types[fi], bf.param_types[fi], modes)) {
               return false;
             }
           }
@@ -1454,7 +1465,7 @@ function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
     typeinfo.TypeMap(am) => {
       match (b) {
         typeinfo.TypeMap(bm) => {
-          return type_eq(am.key, bm.key) && type_eq(am.value, bm.value);
+          return type_eq_in(am.key, bm.key, modes) && type_eq_in(am.value, bm.value, modes);
         },
         _ => {
           return false;
@@ -1464,7 +1475,7 @@ function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
     typeinfo.TypeUnion(an) => {
       match (b) {
         typeinfo.TypeUnion(bn) => {
-          return an.name == bn.name && type_args_agree(an.args, bn.args);
+          return an.name == bn.name && type_args_agree_in(an.args, bn.args, modes);
         },
         _ => {
           return false;
@@ -1525,6 +1536,10 @@ function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
 // written and some pair that is known on both sides differs. A bare name and
 // an argument that holds an unknown, an unbound one included, stay open.
 function type_args_agree(a: typeinfo.Type[], b: typeinfo.Type[]): boolean {
+  return type_args_agree_in(a, b, true);
+}
+
+function type_args_agree_in(a: typeinfo.Type[], b: typeinfo.Type[], modes: boolean): boolean {
   if (a.len() == 0 || b.len() == 0) {
     return true;
   }
@@ -1532,7 +1547,7 @@ function type_args_agree(a: typeinfo.Type[], b: typeinfo.Type[]): boolean {
     return false;
   }
   for i in 0..a.len() {
-    if (!holds_any_unknown(a[i]) && !holds_any_unknown(b[i]) && !type_eq(a[i], b[i])) {
+    if (!holds_any_unknown(a[i]) && !holds_any_unknown(b[i]) && !type_eq_in(a[i], b[i], modes)) {
       return false;
     }
   }
@@ -1788,10 +1803,10 @@ function as_cast_allowed(src: typeinfo.Type, tgt: typeinfo.Type): boolean {
   if (src_num && tgt_num) {
     return true;
   }
-  if (type_eq(src, typeinfo.t_string()) && cast_pointer_int(tgt)) {
+  if (typeinfo.is_text(src) && cast_pointer_int(tgt)) {
     return true;
   }
-  if (cast_pointer_int(src) && type_eq(tgt, typeinfo.t_string())) {
+  if (cast_pointer_int(src) && typeinfo.is_text(tgt)) {
     return true;
   }
   return false;
@@ -2832,7 +2847,7 @@ function conforms_to_dyn_trait(s: Scope, from: typeinfo.Type, tyname: string, tr
 }
 
 function map_key_type_error(s: Scope, kt: typeinfo.Type): string {
-  if (is_unknown(kt) || is_type_variable(kt) || is_integer(kt) || type_eq(kt, typeinfo.t_char()) || type_eq(kt, typeinfo.t_string()) || type_eq(kt, typeinfo.t_str())) {
+  if (is_unknown(kt) || is_type_variable(kt) || is_integer(kt) || type_eq(kt, typeinfo.t_char()) || typeinfo.is_text(kt)) {
     return "";
   }
   if (is_tuple_or_array(kt)) {
@@ -2894,7 +2909,7 @@ function structural_map_key(t: typeinfo.Type): boolean {
 }
 
 function structural_key_element(t: typeinfo.Type): boolean {
-  if (type_eq(t, typeinfo.t_string()) || structural_map_key(t)) {
+  if (typeinfo.is_text(t) || structural_map_key(t)) {
     return true;
   }
   if let typeinfo.TypeBool(_) = t {
@@ -4524,10 +4539,6 @@ function shifts_view(from: typeinfo.Type, to: typeinfo.Type, strings: boolean): 
   return false;
 }
 
-function same_element_type(a: typeinfo.Type, b: typeinfo.Type): boolean {
-  return type_eq(a, b) && !owned_beside_view(a, b);
-}
-
 function any_shifts_view(from: typeinfo.Type[], to: typeinfo.Type[], strings: boolean): boolean {
   if (from.len() != to.len()) {
     return false;
@@ -4561,7 +4572,7 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
   }
   // nominal_args_clash above checks the arguments of one generic name, and
   // an aggregate checks its components below.
-  if ((same_nominal(from, to) || type_eq(from, to)) && !is_tuple_or_array(to)) {
+  if ((same_nominal(from, to) || same_type_any_mode(from, to)) && !is_tuple_or_array(to)) {
     return true;
   }
   match (to) {
@@ -6333,7 +6344,7 @@ function operator_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo
     return lanes_result_type(b, lt, rt);
   }
   if (b.op == "+") {
-    if (type_eq(lt, typeinfo.t_string()) && type_eq(rt, typeinfo.t_string())) {
+    if (typeinfo.is_text(lt) && typeinfo.is_text(rt)) {
       return typeinfo.t_string();
     }
     if (is_integer(lt) && is_integer(rt)) {
@@ -6408,7 +6419,7 @@ function bitwise_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.
     if (float_operands_agree(lt, rt)) {
       return typeinfo.t_bool();
     }
-    if (type_eq(lt, rt) && !is_unknown(lt)) {
+    if (same_type_any_mode(lt, rt) && !is_unknown(lt)) {
       return typeinfo.t_bool();
     }
     if (is_integer(lt) && is_integer(rt)
@@ -15067,7 +15078,7 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
     }
   }
   if (b.op == "==" || b.op == "!=") {
-    let eq_widths: boolean = (type_eq(blt, brt) || !is_unknown(scalar_numeric_join(blt, brt))
+    let eq_widths: boolean = (same_type_any_mode(blt, brt) || !is_unknown(scalar_numeric_join(blt, brt))
       || settles_to(b.left, brt, s) || settles_to(b.right, blt, s)) && same_views(blt, brt);
     if (!is_unknown(blt) && !is_unknown(brt) && !eq_widths) {
       out = out.append(dg_at("E041", "cannot compare " + type_label(blt) + " with " + type_label(brt) + ": both sides of \"" + b.op + "\" must have the same type", b.line, b.col));
@@ -15078,7 +15089,7 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
   if (b.op == "+") {
     let (pl, pr) = settled_operands(b, blt, brt);
     if (!operand_open(pl) && !operand_open(pr)) {
-      let oks = type_eq(pl, typeinfo.t_string()) && type_eq(pr, typeinfo.t_string());
+      let oks = typeinfo.is_text(pl) && typeinfo.is_text(pr);
       let both_int = is_integer(pl) && is_integer(pr);
       let oki2 = both_int && int_operands_agree(pl, pr, b.left, b.right);
       let okf2 = float_operands_agree(pl, pr);
@@ -15146,7 +15157,7 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
       let o_both_int = is_integer(olt) && is_integer(ort);
       let oki_o = o_both_int && int_operands_agree(olt, ort, b.left, b.right);
       let okf_o = float_operands_agree(olt, ort);
-      let oks_o = type_eq(olt, typeinfo.t_string()) && type_eq(ort, typeinfo.t_string());
+      let oks_o = typeinfo.is_text(olt) && typeinfo.is_text(ort);
       let okc_o = type_eq(olt, typeinfo.t_char()) && type_eq(ort, typeinfo.t_char());
       if (!oki_o && !okf_o && !oks_o && !okc_o) {
         if (type_eq(olt, ort) && is_composite_type(olt)) {
@@ -15307,13 +15318,13 @@ function cast_diags(u: ast.ExprUnary, tgt: typeinfo.Type, cot: typeinfo.Type, s:
 }
 
 function primitive_cast_diags(u: ast.ExprUnary, tgt: typeinfo.Type, cot: typeinfo.Type, s: Scope): util.Diag[] {
-  if (type_eq(tgt, typeinfo.t_string()) && cast_pointer_int(cot) && !is_usize(cot)) {
+  if (typeinfo.is_text(tgt) && cast_pointer_int(cot) && !is_usize(cot)) {
     return [e069_cast(u, cot, tgt)];
   }
   if (!as_cast_allowed(cot, tgt)) {
     return [e033_cast(u, cot, tgt)];
   }
-  if (type_eq(tgt, typeinfo.t_string()) && cast_pointer_int(cot) || type_eq(cot, typeinfo.t_string()) && cast_pointer_int(tgt)) {
+  if (typeinfo.is_text(tgt) && cast_pointer_int(cot) || typeinfo.is_text(cot) && cast_pointer_int(tgt)) {
     return pointer_cast_diags(u, cot, tgt, s);
   }
   return [];
@@ -15514,7 +15525,7 @@ function scalar_array_mix(a: ast.ExprArray, anchor: typeinfo.Type, s: Scope, out
     }
     let lit = element_literal_kind(a.elements[k], gives);
     if (!type_contains_unknown(etk) && !literal_gives_way(lit, anchor)) {
-      if (same_element_type(etk, anchor) && (!typeinfo.is_tuple(anchor) || type_assignable(etk, anchor, s.unions.unions)) || literal_gives_way(anchor_lit, etk)) {
+      if (type_eq(etk, anchor) && (!typeinfo.is_tuple(anchor) || type_assignable(etk, anchor, s.unions.unions)) || literal_gives_way(anchor_lit, etk)) {
         anchor = etk;
         anchor_lit = lit;
       } else {
@@ -15618,7 +15629,7 @@ function int_read(e: ast.Expr): ast.Expr {
 
 // literal_parts_take is true when e of the type from can take the type to, and only its number literals change type.
 function literal_parts_take(e: ast.Expr, from: typeinfo.Type, to: typeinfo.Type): boolean {
-  if (same_element_type(from, to)) {
+  if (type_eq(from, to)) {
     return true;
   }
   if (int_literal_tree(e) || float_settled_tree(e)) {
@@ -15689,7 +15700,7 @@ function element_mix(a: ast.ExprArray, anchor: typeinfo.Type, s: Scope, out: uti
   for k in 1..a.elements.len() {
     let element = a.elements[k];
     let ty = check_expr(element, s);
-    if (!type_contains_unknown(ty) && (!same_element_type(ty, anchor) || !type_assignable(ty, anchor, s.unions.unions)) && !array_mix_settles(element, ty, anchor, s)) {
+    if (!type_contains_unknown(ty) && (!type_eq(ty, anchor) || !type_assignable(ty, anchor, s.unions.unions)) && !array_mix_settles(element, ty, anchor, s)) {
       if (prior_elements_settle(a, k, ty, s)) {
         anchor = ty;
       } else {
@@ -31683,7 +31694,7 @@ function main(): i32 {
   if (!type_eq(pt1.tys[0], typeinfo.t_i32())) {
     return 10;
   }
-  if (!type_eq(pt1.tys[1], typeinfo.t_string())) {
+  if (!typeinfo.is_text(pt1.tys[1])) {
     return 11;
   }
   if (!type_eq(pt1.tys[2], typeinfo.t_bool())) {
@@ -31830,7 +31841,7 @@ function main(): i32 {
       if (u13.name != "Option") {
         return 130;
       }
-      if (u13.args.len() != 1 || !type_eq(u13.args[0], typeinfo.t_string())) {
+      if (u13.args.len() != 1 || !typeinfo.is_text(u13.args[0])) {
         return 131;
       }
     },
@@ -31842,7 +31853,7 @@ function main(): i32 {
   let src13u = "let s = \"hello\"; let t = slice_unchecked(s, 1, 4); return 0;";
   let stmts13u = parser.parse_program(lexer.tokenize(src13u));
   let pt13u = check_program(stmts13u);
-  if (!type_eq(pt13u.tys[1], typeinfo.t_string())) {
+  if (!typeinfo.is_text(pt13u.tys[1])) {
     return 133;
   }
 
@@ -37401,7 +37412,7 @@ function scalar_numeric_join(a: typeinfo.Type, b: typeinfo.Type): typeinfo.Type 
 
 function array_element_preferred(e: ast.Expr, t: typeinfo.Type, lit: i32, first_expr: ast.Expr, first: typeinfo.Type, first_lit: i32, s: Scope): boolean {
   return !vaguer_than(t, first) && !literal_gives_way(lit, first) && !struct_lit_gives_way(e, t, first, s)
-    && (same_element_type(t, first) || literal_gives_way(first_lit, t))
+    && (type_eq(t, first) || literal_gives_way(first_lit, t))
     || struct_lit_gives_way(first_expr, first, t, s) || nested_array_gives_way(first_expr, first, t, s) && !literal_array_takes(e, first);
 }
 

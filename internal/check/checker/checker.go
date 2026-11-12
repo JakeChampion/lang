@@ -13810,11 +13810,11 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 			result = unified
 			return
 		}
-		if c.assignable(armT, result) {
+		if c.assignable(armT, result) && !ownedBesideView(armT, result) {
 			result = armT
 			return
 		}
-		if c.assignable(result, armT) {
+		if c.assignable(result, armT) && !ownedBesideView(armT, result) {
 			return
 		}
 		c.errfCode(p, "E031", "match arms have incompatible types: %s vs %s", result, armT)
@@ -13928,11 +13928,11 @@ func (c *checker) checkTupleMatchExpr(n *ast.MatchExpr, tup ast.TupleType, s *sc
 			result = unified
 			return
 		}
-		if c.assignable(armT, result) {
+		if c.assignable(armT, result) && !ownedBesideView(armT, result) {
 			result = armT
 			return
 		}
-		if c.assignable(result, armT) {
+		if c.assignable(result, armT) && !ownedBesideView(armT, result) {
 			return
 		}
 		c.errfCode(p, "E031", "match arms have incompatible types: %s vs %s", result, armT)
@@ -14027,10 +14027,10 @@ func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *s
 			return
 		}
 		if !ast.Equal(result, armT) {
-			if c.assignable(armT, result) {
+			if c.assignable(armT, result) && !ownedBesideView(armT, result) {
 				return
 			}
-			if c.assignable(result, armT) {
+			if c.assignable(result, armT) && !ownedBesideView(armT, result) {
 				result = armT
 				return
 			}
