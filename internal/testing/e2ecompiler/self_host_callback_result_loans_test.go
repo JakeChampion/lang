@@ -12,7 +12,12 @@ import (
 
 func callbackResultLoanCases(t *testing.T, bin string, runner []string, dir string) {
 	t.Helper()
-	data, err := os.ReadFile(langSrcAbs(t, "internal/check/checker/testdata/callback_result_loans_cases.json"))
+	resultLoanCases(t, bin, runner, dir, "callback_result_loans_cases.json")
+}
+
+func resultLoanCases(t *testing.T, bin string, runner []string, dir, fixture string) {
+	t.Helper()
+	data, err := os.ReadFile(langSrcAbs(t, "internal/check/checker/testdata/"+fixture))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +54,9 @@ func callbackResultLoanCases(t *testing.T, bin string, runner []string, dir stri
 				}
 				found := false
 				for _, d := range ds {
-					found = found || tc.Want != "" && d.code == tc.Want
+					for _, code := range strings.Split(tc.Want, "|") {
+						found = found || code != "" && d.code == code
+					}
 				}
 				if !found {
 					t.Errorf("%s: want %q, got %v", label, tc.Want, ds)

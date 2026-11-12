@@ -24855,6 +24855,71 @@ function ow_jump(label: string, breaks: boolean, moved: MovedEntry[], ctx: OwnCt
   return OwnWalk { moved: moved, diags: [] };
 }
 
+struct OwNestedUses { name: string, reads: i32, declarations: i32, assigned: boolean }
+
+function ow_nested_use_expr(e: ast.Expr, own state: OwNestedUses): own OwNestedUses {
+  return if (ow_ident_name(e) == state.name) { OwNestedUses { ...state, reads: state.reads + 1 } } else { state };
+}
+
+function ow_nested_use_stmt(st: ast.Stmt, own state: OwNestedUses): own OwNestedUses {
+  if let ast.StmtVar(v) = st {
+    if (v.name == state.name) {
+      return OwNestedUses { ...state, declarations: state.declarations + 1 };
+    }
+  }
+  if let ast.StmtAssign(a) = st {
+    if (a.target == state.name) {
+      return OwNestedUses { ...state, assigned: true };
+    }
+  }
+  return state;
+}
+
+function ow_nested_uses(body: ast.Stmt[], name: string): OwNestedUses {
+  let state = OwNestedUses { name: name, reads: 0, declarations: 0, assigned: false };
+  for st in body {
+    state = astwalk.fold_stmt_nodes(st, state, ow_nested_use_stmt, ow_nested_use_expr, astwalk.descend_all);
+  }
+  return state;
+}
+
+function ow_nested_field_alias(alias: string, root: string, field: string, value: ast.Expr, body: ast.Stmt[]): boolean {
+  let uses = ow_nested_uses(body, alias);
+  if (uses.declarations != 1 || uses.assigned || uses.reads != ow_count_ident(value, alias)) {
+    return false;
+  }
+  for st in body {
+    if let ast.StmtVar(v) = st {
+      if (v.name == alias) {
+        return ow_is_field_read(v.init, root, field);
+      }
+    }
+  }
+  return false;
+}
+
+// The returned record replaces the complete field that owns the alias.
+function ow_nested_field_moves(value: ast.Expr, ctx: OwnCtx): string[] {
+  let ast.ExprStructLit(top) = value else {
+    return [];
+  };
+  let root = ow_ident_name(top.base);
+  let body = ctx.last_use.get().fn.body;
+  if (!top.has_base || root.len() == 0 || !ow_is_owned(ctx, root) || !ow_binding_unchanged(ctx, root) || ow_nested_uses(body, root).reads != 2) {
+    return [];
+  }
+  let out: string[] = [];
+  for i in 0..top.field_values.len() {
+    if let ast.ExprStructLit(inner) = top.field_values[i] {
+      let alias = ow_ident_name(inner.base);
+      if (inner.has_base && alias.len() > 0 && ow_nested_field_alias(alias, root, top.field_names[i], top.field_values[i], body)) {
+        out = util.append_all(out, ow_field_move_fields(alias, top.field_values[i], ctx));
+      }
+    }
+  }
+  return out;
+}
+
 // A literal based on q that replaces q.f moves q.f into an own parameter in
 // the literal. A literal in a local's initializer, an expression statement or
 // a returned value, outside a lambda, takes it from an owned q, whose later
@@ -24876,6 +24941,7 @@ function ow_superseded_ctx(value: ast.Expr, returned: boolean, ctx: OwnCtx): Own
   }
   let fields = astwalk.fold_expr_pruned(value, [], admit, not_lambda);
   if (returned) {
+    fields = util.append_all(fields, ow_nested_field_moves(value, ctx));
     if let ast.ExprStructLit(sl) = value {
       let base = ow_ident_name(sl.base);
       if (sl.has_base && base.len() > 0 && !util.has_str(ctx.borrowed, base)) {

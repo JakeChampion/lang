@@ -11699,6 +11699,11 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			return
 		}
 		top := FieldMoveLiteral(value)
+		if returned && top != nil && top == value {
+			for _, arg := range nestedFieldOwnMoveArgs(fn, top, owned, c.ownFuncs) {
+				selfMoveArgs[arg] = true
+			}
+		}
 		ast.Walk(value, func(n ast.Node) bool {
 			if _, ok := n.(*ast.Lambda); ok {
 				return false
