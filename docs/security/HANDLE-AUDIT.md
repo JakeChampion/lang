@@ -82,7 +82,7 @@ Safe code reaches them today through `Reader`, `Writer`, `Dir`, and every `tcp_*
 The accepted design in `docs/SAFETY-CONTRACT.md` requires a refusal when a resource handle escapes after close or ownership transfer.
 The owner chose the direct implementation on 2026-10-29: the built-in `close` consumes its receiver in both checkers.
 Both probes above are now refused at compile time for `Reader`, `Writer`, and `Dir`.
-A `Socket` held as a `Socket` is refused the same way. A descriptor held as an `i32` still reaches the hazard until the conversion goes.
+A `Socket` held as a `Socket` is refused the same way.
 
 | Pattern | Code | Case |
 |---|---|---|

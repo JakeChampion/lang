@@ -1,0 +1,32 @@
+struct W { value: i32, count: Cell[i32] }
+
+function (w: W) pass(): Result[W, i32] {
+  return Ok(w);
+}
+
+function (own w: W) close(): i32 {
+  let n = w.count.get() + 1;
+  w.count.set(n);
+  assert(n == 1);
+  return w.value;
+}
+
+function main(): i32 {
+  let w = W { value: 21, count: cell_new(0) };
+  let i = 0;
+  while (i < 2) {
+    match (w.pass()) {
+      Ok(value) => {
+        let next = i + 1;
+        w = value;
+        i = next;
+      },
+      Err(_) => {
+        return 1;
+      }
+    }
+  }
+  let other = W { value: 21, count: cell_new(0) };
+  print(w.close() + other.close());
+  return 0;
+}

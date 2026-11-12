@@ -1,6 +1,10 @@
 // Prepare bounded stereo PCM for the native AAC and lower-level video fixture.
 import "std/audio/mp4";
 import "std/audio/pcm";
+import "std/audio/mp4/file";
+import "std/audio/mp4/cursor";
+import "std/audio/mp4/time";
+import "std/audio/source";
 import "std/video/frame";
 import "std/io";
 
@@ -49,4 +53,90 @@ function read_from(reader: Reader): Result[pcm.Block, frame.VideoError] {
     }
   }
   return Err(frame.Truncated);
+}
+
+pub struct Stream { decoder: cursor.Cursor, samples: f32[], first: i32, info: cursor.Info }
+
+pub enum StreamEvent { StreamPending, StreamSamples(pcm.Block), StreamFinished }
+
+function read_error(value: source.ReadError): frame.VideoError {
+  return match (value) { source.ReadAudio(value) => error(value), source.ReadSize => frame.Limit, _ => frame.Platform };
+}
+
+function file_limits(): file.Limits {
+  let base = file.default_limits();
+  let index = mp4.Limits { ...base.index, audio: pcm.Limits { max_input_bytes: MAX_INPUT, max_samples: MAX_SAMPLES }, max_tracks: 2, max_packets: 128, max_descriptions: 1, max_edits: 4 };
+  return file.Limits { ...base, index: index, input: source.Limits { chunk_size: 4096, max_buffer_bytes: MAX_INPUT }, max_file_bytes: MAX_INPUT as i64, max_metadata_bytes: MAX_INPUT };
+}
+
+function selected(index: mp4.Index): Result[i32, frame.VideoError] {
+  for i in 0..index.tracks.len() {
+    if (index.tracks[i].enabled) {
+      return Ok(i);
+    }
+  }
+  return Err(frame.Header);
+}
+
+function positioned(own decoder: cursor.Cursor, media_us: i64): Result[(cursor.Cursor, i32), frame.VideoError] {
+  let info = decoder.info();
+  if (info.sample_rate != 48000 || info.channels != 2 || info.frames <= 0i64) {
+    return Err(frame.Unsupported);
+  }
+  let first = match (time.rescale(media_us, 48000u32, 1000000u32)) { Ok(value) => value, Err(_) => { return Err(frame.Limit); } };
+  if (first >= info.frames) {
+    return Err(frame.Header);
+  }
+  let sought = match (decoder.seek(first)) { Ok(value) => value, Err(value) => { return Err(read_error(value)); } };
+  return Ok((sought, first as i32 * 2));
+}
+
+function from_reader(reader: Reader, media_us: i64): Result[Stream, frame.VideoError] {
+  if (media_us < 0i64) {
+    return Err(frame.Header);
+  }
+  let limits = file_limits();
+  let index = match (file.inspect(reader, limits)) { Ok(value) => value, Err(value) => { return Err(read_error(value)); } };
+  let number = selected(index)?;
+  let decoder = match (cursor.create(index, number, limits)) { Ok(value) => value, Err(value) => { return Err(read_error(value)); } };
+  let info = decoder.info();
+  let (sought, first) = positioned(decoder, media_us)?;
+  return Ok(Stream { decoder: sought, samples: [], first: first, info: info });
+}
+
+pub function open(path: string, media_us: i64): Result[(Stream, Reader), frame.VideoError] {
+  let Ok(reader) = open_reader(path) else {
+    return Err(frame.Platform);
+  };
+  let stream = match (from_reader(reader, media_us)) {
+    Ok(value) => value,
+    Err(error) => { let _ = reader.close(); return Err(error); },
+  };
+  return Ok((stream, reader));
+}
+
+pub function (state: Stream) info(): cursor.Info {
+  return state.info;
+}
+
+function convert(samples: [f32]): Result[pcm.Block, frame.VideoError] {
+  let format = pcm.Format { sample_rate: 48000, channels: 2, bits_per_sample: 16 };
+  return match (pcm.quantize(samples, format, pcm.Limits { max_input_bytes: MAX_INPUT, max_samples: 2048 })) { Ok(value) => Ok(value), Err(value) => Err(error(value)) };
+}
+
+pub function (own state: Stream) step(reader: Reader): Result[(Stream, StreamEvent), frame.VideoError] {
+  let Stream { decoder, samples, first, info } = state;
+  let (next, event) = match (decoder.step_into(samples, reader)) { Ok(value) => value, Err(value) => { return Err(read_error(value)); } };
+  match (event) {
+    cursor.BufferPending(buffer) => {
+      return Ok((Stream { decoder: next, samples: buffer, first: first, info: info }, StreamPending));
+    },
+    cursor.BufferFinished(buffer) => {
+      return Ok((Stream { decoder: next, samples: buffer, first: first, info: info }, StreamFinished));
+    },
+    cursor.BufferSamples(block) => {
+      let quantized = convert(block.samples[0:block.frames * block.info.channels])?;
+      return Ok((Stream { decoder: next, samples: block.samples, first: first, info: info }, StreamSamples(quantized)));
+    }
+  }
 }

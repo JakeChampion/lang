@@ -291,6 +291,14 @@ pub function is_exact_i32(t: Type): boolean {
   return false;
 }
 
+// A `string` or a `str`.
+pub function is_text(t: Type): boolean {
+  if let TypeString(_) = t {
+    return true;
+  }
+  return false;
+}
+
 pub function is_owned_array(t: Type): boolean {
   if let TypeArray(a) = t {
     return !a.view;

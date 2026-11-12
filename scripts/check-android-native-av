@@ -50,6 +50,11 @@ with tempfile.TemporaryDirectory() as temporary:
     assert lines[0] == '48000 2 19200'
     actual = bytes.fromhex(lines[1])
     expected = fixture.reference_pcm(clip)
+    stream_bytes = clip.read_bytes()
+    stream_path = build / 'stream-fixture.mp4'
+    stream_path.write_bytes(stream_bytes)
+    pcm_path = build / 'stream-reference.pcm'
+    pcm_path.write_bytes(expected)
     assert len(actual) == len(expected) == 19200 * 2 * 2
     values = struct.unpack('<38400h', actual)
     reference_values = struct.unpack('<38400h', expected)
@@ -72,10 +77,11 @@ with tempfile.TemporaryDirectory() as temporary:
     run(excessive, 'video exceeds the configured limit')
     print('Explicit rate, layout, encoded-input, and decoded-sample refusals passed')
 
-for name, flags in [('normal', []), ('sanitize', ['-sanitize'])]:
-    subprocess.run([compiler, '-stdlib', str(ROOT / 'internal/stdlib'), '-target', android,
-                    '-shared', *flags, '-export', 'main', '-o', str(build / (name + '.so')),
-                    'tests/android/video/audio_path_test.fern'], check=True)
+for prefix, source in [('', 'audio_path_test.fern'), ('cursor-', 'audio_cursor_path_test.fern')]:
+    for name, flags in [('normal', []), ('sanitize', ['-sanitize'])]:
+        subprocess.run([compiler, '-stdlib', str(ROOT / 'internal/stdlib'), '-target', android,
+                        '-shared', *flags, '-export', 'main', '-o', str(build / (prefix + name + '.so')),
+                        'tests/android/video/' + source], check=True)
 for variant, flags in [('normal', []), ('ubsan', ['-fsanitize=undefined', '-fno-sanitize-recover=all'])]:
     directory = build / variant
     directory.mkdir(exist_ok=True)
@@ -87,7 +93,26 @@ for variant, flags in [('normal', []), ('ubsan', ['-fsanitize=undefined', '-fno-
                         'import ctypes,sys; result=ctypes.CDLL(sys.argv[1]).main(); assert result==0,result',
                         str(build / (name + '.so'))], env=env, check=True)
         print('AAudio partial writes, backpressure, pause/resume, origins, and cleanup:', variant, name)
-subprocess.run([compiler, '-stdlib', str(ROOT / 'internal/stdlib'), '-target', 'arm64-android',
-                '-shared', '-export', 'main', '-o', str(build / 'arm64-transport.so'),
-                'tests/android/video/audio_path_test.fern'], check=True)
-print('ARM64 transport shared compilation passed; no ARM execution claim')
+        stream_path.write_bytes(stream_bytes)
+        current = dict(env, AV_AUDIO_REFERENCE=str(pcm_path), AV_AUDIO_FILE=str(stream_path))
+        probe = """import ctypes,os,sys
+from pathlib import Path
+clip=Path(os.environ['AV_AUDIO_FILE'])
+original=clip.read_bytes()
+entry=ctypes.CDLL(sys.argv[1]).main
+for iteration in range(3):
+    clip.write_bytes(original)
+    before=set(os.listdir('/proc/self/fd'))
+    result=entry()
+    assert result==0,result
+    assert set(os.listdir('/proc/self/fd'))==before, 'file descriptor leak'
+"""
+        subprocess.run(['python3', '-c', probe, str(build / ('cursor-' + name + '.so'))],
+                       env=current, check=True)
+        print('Cursor PCM, bounded transport, seek, source errors, and descriptor cleanup:', variant, name)
+stream_path.write_bytes(stream_bytes)
+for prefix, source in [('', 'audio_path_test.fern'), ('cursor-', 'audio_cursor_path_test.fern')]:
+    subprocess.run([compiler, '-stdlib', str(ROOT / 'internal/stdlib'), '-target', 'arm64-android',
+                    '-shared', '-export', 'main', '-o', str(build / (prefix + 'arm64-transport.so')),
+                    'tests/android/video/' + source], check=True)
+print('Both ARM64 transport shared compilations passed; no ARM execution claim')

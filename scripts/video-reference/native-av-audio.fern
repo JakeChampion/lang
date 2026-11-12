@@ -1,18 +1,74 @@
 // Emit the exact PCM that the Android integration fixture supplies to AAudio.
 import "../../tests/android/video/audio_pcm";
 import "std/hex";
+import "std/audio/pcm";
+import "std/video/frame";
+
+function append_block(block: pcm.Block, whole: pcm.Block, at: i32, own bytes: u8[]): Result[u8[], frame.VideoError] {
+  if (block.samples.len() < 1 || block.samples.len() > 2048 || at > whole.samples.len() - block.samples.len()) {
+    return Err(frame.Header);
+  }
+  for i in 0..block.samples.len() {
+    let sample = block.samples[i];
+    if (sample != whole.samples[at + i]) {
+      return Err(frame.Header);
+    }
+    bytes = bytes.append((sample & 255) as u8).append((sample >> 8 & 255) as u8);
+  }
+  return Ok(bytes);
+}
+
+function drain(own stream: audio_pcm.Stream, reader: Reader, whole: pcm.Block): Result[u8[], frame.VideoError] {
+  let bytes: u8[] = [];
+  let at = stream.first;
+  for work in 0..131072 {
+    let (next, event) = stream.step(reader)?;
+    stream = next;
+    match (event) {
+      audio_pcm.StreamPending => {},
+      audio_pcm.StreamSamples(block) => {
+        bytes = append_block(block, whole, at, bytes)?;
+        at += block.samples.len();
+      },
+      audio_pcm.StreamFinished => {
+        if (at != whole.samples.len()) {
+          return Err(frame.Truncated);
+        }
+        return Ok(bytes);
+      }
+    }
+  }
+  return Err(frame.Limit);
+}
+
+function seek_check(path: string, whole: pcm.Block): Result[void, frame.VideoError] {
+  let (stream, reader) = audio_pcm.open(path, 100001i64)?;
+  let result = drain(stream, reader, whole);
+  let _ = reader.close();
+  let _ = result?;
+  return Ok(());
+}
+
+function compare(own stream: audio_pcm.Stream, reader: Reader, path: string): Result[(pcm.Block, u8[]), frame.VideoError] {
+  let whole = audio_pcm.read(path)?;
+  let bytes = drain(stream, reader, whole)?;
+  return Ok((whole, bytes));
+}
 
 function main(): i32 {
   let argv = args();
   if (argv.len() != 2) {
     return 1;
   }
-  let block = match (audio_pcm.read(argv[1])) { Ok(value) => value, Err(error) => { eprint(error.message()); return 3; } };
-  print(block.format.sample_rate.to_string() + " " + block.format.channels.to_string() + " " + (block.samples.len() / block.format.channels).to_string());
-  let bytes: u8[] = [];
-  for sample in block.samples {
-    bytes = bytes.append((sample & 255) as u8).append((sample >> 8 & 255) as u8);
+  let (stream, reader) = match (audio_pcm.open(argv[1], 0i64)) { Ok(value) => value, Err(error) => { eprint(error.message()); return 3; } };
+  let result = compare(stream, reader, argv[1]);
+  let _ = reader.close();
+  let (whole, bytes) = match (result) { Ok(value) => value, Err(error) => { eprint(error.message()); return 3; } };
+  if let Err(error) = seek_check(argv[1], whole) {
+    eprint(error.message());
+    return 3;
   }
+  print(whole.format.sample_rate.to_string() + " " + whole.format.channels.to_string() + " " + (whole.samples.len() / whole.format.channels).to_string());
   print(hex.encode(bytes));
   return 0;
 }

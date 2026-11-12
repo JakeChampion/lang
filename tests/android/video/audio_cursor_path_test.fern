@@ -1,0 +1,199 @@
+import "./audio_path";
+import "./audio_pcm";
+import "std/video/frame";
+
+@import("libaaudio.so", "av_audio_reset")
+function reset(): void;
+
+@import("libaaudio.so", "av_audio_mode")
+function mode(value: i32): void;
+
+@import("libaaudio.so", "av_audio_base")
+function base(value: i32): void;
+
+@import("libaaudio.so", "av_audio_count")
+function count(what: i32): i32;
+
+@import("libaaudio.so", "av_audio_truncate")
+function truncate(): i32;
+
+const PATH: string = "build/video/native-av-check/stream-fixture.mp4";
+
+function prepare(own stream: audio_pcm.Stream, own reader: Reader): Result[(audio_path.State, Reader), i32] {
+  let state = match (audio_path.create_stream(stream, reader, PATH)) {
+    Ok(value) => value,
+    Err(_) => { let _ = reader.close(); return Err(2); },
+  };
+  return Ok((state, reader));
+}
+
+function opened(media_us: i64): Result[(audio_path.State, Reader), i32] {
+  let (stream, reader) = match (audio_pcm.open(PATH, media_us)) { Ok(value) => value, Err(_) => { return Err(1); } };
+  return prepare(stream, reader);
+}
+
+function at(reader: Reader): i64 {
+  return match (reader.seek(0i64, 1)) { Ok(value) => value, Err(_) => -1i64 };
+}
+
+function partial(own s: audio_path.State, reader: Reader): Result[audio_path.State, i32] {
+  if (s.at != 2048 || s.total != 38400 || s.samples.len() > 2048 || s.first != 0) {
+    s.close();
+    return Err(10);
+  }
+  mode(1);
+  s = audio_path.pump_stream(s, reader);
+  if (s.at != 2054 || s.base != 2048) {
+    s.close();
+    return Err(11);
+  }
+  let position = at(reader);
+  mode(2);
+  s = audio_path.pump_stream(s, reader);
+  if (s.at != 2054 || at(reader) != position || s.ready(9000000000i64)) {
+    s.close();
+    return Err(12);
+  }
+  return Ok(s);
+}
+
+function paused(own s: audio_path.State, reader: Reader): Result[audio_path.State, i32] {
+  let calls = count(2);
+  let position = at(reader);
+  s = s.pause(1100000000i64);
+  s = s.pause(1100000000i64);
+  s = audio_path.pump_stream(s, reader);
+  if (count(2) != calls || at(reader) != position || count(1) != 1) {
+    s.close();
+    return Err(13);
+  }
+  s = s.resume(1200000000i64);
+  s = s.resume(1200000000i64);
+  if (s.started_ns != 1100000000i64 || count(0) != 2) {
+    s.close();
+    return Err(14);
+  }
+  return Ok(s);
+}
+
+function drained(own s: audio_path.State, reader: Reader): audio_path.State {
+  for work in 0..2048 {
+    if (s.failed || s.at == s.total) {
+      break;
+    }
+    s = audio_path.pump_stream(s, reader);
+    if (s.samples.len() > 2048 || s.peak > 2048) {
+      return audio_path.State { ...s, failed: true };
+    }
+  }
+  return s;
+}
+
+function finish(own s: audio_path.State, reader: Reader): i32 {
+  mode(0);
+  s = drained(s, reader);
+  let ok = !s.failed && s.at == 38400 && !s.ready(1500000000i64) && s.ready(1700000000i64);
+  let position = at(reader);
+  let calls = count(2);
+  s = audio_path.pump_stream(s, reader);
+  let idle = at(reader) == position && count(2) == calls;
+  s.close();
+  return if (ok && idle && count(3) == 1) { 0 } else { 16 };
+}
+
+function progress(own s: audio_path.State, reader: Reader): i32 {
+  let initial = audio_path.State { ...s, started_ns: 1000000000i64 };
+  let part = match (partial(initial, reader)) { Ok(value) => value, Err(code) => { return code; } };
+  let resumed = match (paused(part, reader)) { Ok(value) => value, Err(code) => { return code; } };
+  return finish(resumed, reader);
+}
+
+function full(): i32 {
+  reset();
+  let (state, reader) = match (opened(0i64)) { Ok(value) => value, Err(code) => { return code; } };
+  let result = progress(state, reader);
+  let _ = reader.close();
+  return result;
+}
+
+function origin_ok(s: audio_path.State): boolean {
+  return s.first == 9600 && s.origin.media_us == 100000i64 && s.origin.frame_position == 0i64 && s.at > s.first && s.at - s.first <= 2048;
+}
+
+function origin(own s: audio_path.State, reader: Reader): i32 {
+  let ok = origin_ok(s);
+  mode(0);
+  let next = drained(s, reader);
+  let finished = !next.failed && next.at - next.first == 28800;
+  next.close();
+  return if (ok && finished && count(3) == 1) { 0 } else { 20 };
+}
+
+function seeked(): i32 {
+  reset();
+  base(9600);
+  let (state, reader) = match (opened(100001i64)) { Ok(value) => value, Err(code) => { return code; } };
+  let result = origin(state, reader);
+  let _ = reader.close();
+  return result;
+}
+
+function refusal(value: i32): i32 {
+  reset();
+  mode(value);
+  let (stream, reader) = match (audio_pcm.open(PATH, 0i64)) { Ok(value) => value, Err(_) => { return 30; } };
+  let result = audio_path.create_stream(stream, reader, PATH);
+  let code = match (result) {
+    Err(frame.Unsupported) => if (value == 3) { 0 } else { 31 },
+    Err(frame.Platform) => if (value == 4) { 0 } else { 32 },
+    Ok(state) => { state.close(); 33 },
+    _ => 34,
+  };
+  let _ = reader.close();
+  return if (code == 0 && count(3) == 1) { 0 } else { 35 };
+}
+
+function invalid(own s: audio_path.State, reader: Reader): i32 {
+  let before = s.at;
+  mode(5);
+  let next = audio_path.pump_stream(s, reader);
+  let ok = next.failed && next.at == before;
+  next.close();
+  return if (ok && count(3) == 1) { 0 } else { 40 };
+}
+
+function bad_write(): i32 {
+  reset();
+  let (state, reader) = match (opened(0i64)) { Ok(value) => value, Err(code) => { return code; } };
+  let result = invalid(state, reader);
+  let _ = reader.close();
+  return result;
+}
+
+function truncated(): i32 {
+  reset();
+  let (stream, reader) = match (audio_pcm.open(PATH, 0i64)) { Ok(value) => value, Err(_) => { return 50; } };
+  if (truncate() != 0) {
+    return 51;
+  }
+  let result = audio_path.create_stream(stream, reader, PATH);
+  let ok = match (result) { Err(frame.Platform) => true, Ok(state) => { state.close(); false }, _ => false };
+  let _ = reader.close();
+  return if (ok && count(0) == 0 && count(3) == 1) { 0 } else { 52 };
+}
+
+function main(): i32 {
+  for run in [full, seeked, bad_write] {
+    let result = run();
+    if (result != 0) {
+      return result;
+    }
+  }
+  for value in [3, 4] {
+    let result = refusal(value);
+    if (result != 0) {
+      return result;
+    }
+  }
+  return truncated();
+}

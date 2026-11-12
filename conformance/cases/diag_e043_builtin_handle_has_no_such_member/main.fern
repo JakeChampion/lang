@@ -1,0 +1,9 @@
+// A built-in handle has no struct declaration. A method that it does not have
+// is E043, as for a declared struct.
+function count(r: Reader): i32 {
+    return r.nope();
+}
+
+function main(): i32 {
+    return 0;
+}

@@ -1,0 +1,22 @@
+struct W { n: i32 }
+
+function (w: W) pass(): Result[W, i32] {
+  return Ok(w);
+}
+
+function (own w: W) close(): i32 {
+  return w.n;
+}
+
+function main(): i32 {
+  let buf = W { n: 1 };
+  match (buf.pass()) {
+    Ok(w) => {
+      let n = buf.close();
+      buf = w;
+      return n + buf.close();
+    },
+    Err(_) => {}
+  }
+  return 0;
+}

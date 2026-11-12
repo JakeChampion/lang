@@ -1,23 +1,107 @@
 // This fixture owns AAudio transport while the lower-level controller owns video.
 import "std/android/audio";
+import "./audio_pcm";
 import "std/audio/pcm";
 import "std/audio/mp4/time";
 import "std/video/frame";
 import "std/video/playback_clock";
 import "std/option";
 
-pub struct State { music: audio.Music, samples: i32[], at: i32, first: i32, origin: playback_clock.AudioOrigin, started_ns: i64, paused_ns: Option[i64], failed: boolean }
+pub struct State { music: audio.Music, samples: i32[], at: i32, first: i32, origin: playback_clock.AudioOrigin, started_ns: i64, paused_ns: Option[i64], failed: boolean, base: i32, total: i32, source: Option[audio_pcm.Stream], path: string, peak: i32 }
 
-pub function pump(own state: State): State {
-  if (state.failed || state.paused_ns.is_some() || state.at == state.samples.len()) {
-    return state;
+function take_source(own state: State): (State, Option[audio_pcm.Stream]) {
+  let State { music, samples, at, first, origin, started_ns, paused_ns, failed, base, total, source, path, peak } = state;
+  return (State { music: music, samples: samples, at: at, first: first, origin: origin, started_ns: started_ns, paused_ns: paused_ns, failed: failed, base: base, total: total, source: None, path: path, peak: peak }, source);
+}
+
+function fill(own state: State, reader: Reader): State {
+  let (rest, source) = take_source(state);
+  let Some(stream) = source else {
+    return State { ...rest, failed: true };
+  };
+  let (next, event) = match (stream.step(reader)) { Ok(value) => value, Err(_) => { return State { ...rest, failed: true }; } };
+  let kept = State { ...rest, source: Some(next) };
+  match (event) {
+    audio_pcm.StreamPending => {
+      return kept;
+    },
+    audio_pcm.StreamFinished => {
+      return State { ...kept, failed: kept.at != kept.total };
+    },
+    audio_pcm.StreamSamples(block) => {
+      if (block.samples.len() == 0 || block.samples.len() > 2048) {
+        return State { ...kept, failed: true };
+      }
+      return State { ...kept, samples: block.samples, base: kept.at, peak: kept.peak.max(block.samples.len()) };
+    }
   }
-  let end = (state.at + 2048).min(state.samples.len());
-  let wrote = state.music.write(state.samples[state.at:end], 0);
-  if (wrote < 0 || wrote > end - state.at || wrote % 2 != 0) {
+}
+
+function write(own state: State): State {
+  let offset = state.at - state.base;
+  let end = (offset + 2048).min(state.samples.len());
+  let wrote = state.music.write(state.samples[offset:end], 0);
+  if (wrote < 0 || wrote > end - offset || wrote % 2 != 0) {
     return State { ...state, failed: true };
   }
   return State { ...state, at: state.at + wrote };
+}
+
+pub function pump(own state: State): State {
+  if (state.failed || state.paused_ns.is_some() || state.at == state.total) {
+    return state;
+  }
+  return write(state);
+}
+
+pub function pump_stream(own state: State, reader: Reader): State {
+  if (state.failed || state.paused_ns.is_some() || state.at == state.total) {
+    return state;
+  }
+  for work in 0..8 {
+    if (state.at - state.base < state.samples.len()) {
+      return write(state);
+    }
+    state = fill(state, reader);
+    if (state.failed) {
+      return state;
+    }
+  }
+  if (state.at - state.base < state.samples.len()) {
+    return write(state);
+  }
+  return state;
+}
+
+function primed(own state: State, reader: Reader): Result[State, frame.VideoError] {
+  let next = state;
+  for work in 0..16384 {
+    next = pump_stream(next, reader);
+    if (next.failed) {
+      next.close();
+      return Err(frame.Platform);
+    }
+    if (next.samples.len() > 0) {
+      if (!next.music.start()) {
+        next.close();
+        return Err(frame.Platform);
+      }
+      return Ok(State { ...next, started_ns: monotonic_ns() });
+    }
+  }
+  next.close();
+  return Err(frame.Limit);
+}
+
+pub function create_stream(own stream: audio_pcm.Stream, reader: Reader, path: string): Result[State, frame.VideoError] {
+  let total = stream.info().frames as i32 * 2;
+  let first = stream.first;
+  let music = match (open_music()) {
+    Ok(value) => value,
+    Err(error) => { return Err(error); },
+  };
+  let state = State { music: music, samples: [], at: first, first: first, origin: playback_clock.AudioOrigin { frame_position: 0i64, media_us: first as i64 * 1000000i64 / 96000i64 }, started_ns: 0i64, paused_ns: None, failed: false, base: first, total: total, source: Some(stream), path: path, peak: 0 };
+  return primed(state, reader);
 }
 
 function block_ok(block: pcm.Block): boolean {
@@ -42,7 +126,7 @@ pub function create(block: pcm.Block, media_us: i64): Result[State, frame.VideoE
     return Err(frame.Header);
   }
   let music = open_music()?;
-  let state = pump(State { music: music, samples: block.samples, at: first as i32 * 2, first: first as i32 * 2, origin: playback_clock.AudioOrigin { frame_position: 0i64, media_us: first * 1000000i64 / 48000i64 }, started_ns: 0i64, paused_ns: None, failed: false });
+  let state = pump(State { music: music, samples: block.samples, at: first as i32 * 2, first: first as i32 * 2, origin: playback_clock.AudioOrigin { frame_position: 0i64, media_us: first * 1000000i64 / 48000i64 }, started_ns: 0i64, paused_ns: None, failed: false, base: 0, total: block.samples.len(), source: None, path: "", peak: block.samples.len() });
   if (state.failed || !music.start()) {
     music.close();
     return Err(frame.Platform);
@@ -50,14 +134,10 @@ pub function create(block: pcm.Block, media_us: i64): Result[State, frame.VideoE
   return Ok(State { ...state, started_ns: monotonic_ns() });
 }
 
-pub function (state: State) block(): pcm.Block {
-  return pcm.Block { format: pcm.Format { sample_rate: 48000, channels: 2, bits_per_sample: 16 }, samples: state.samples };
-}
-
 pub function (state: State) ready(now_ns: i64): boolean {
-  let frames = (state.samples.len() - state.first) / 2;
+  let frames = (state.total - state.first) / 2;
   let duration = frames as i64 * 1000000000i64 / 48000i64;
-  return !state.failed && state.paused_ns.is_none() && state.at == state.samples.len() && now_ns - state.started_ns >= duration + 100000000i64;
+  return !state.failed && state.paused_ns.is_none() && state.at == state.total && now_ns - state.started_ns >= duration + 100000000i64;
 }
 
 pub function (own state: State) pause(now_ns: i64): State {

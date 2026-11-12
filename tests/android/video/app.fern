@@ -10,7 +10,7 @@ import "./audio_pcm";
 import "./audio_path";
 import "./content_read";
 
-struct App { ctx: usize, playback: Option[player.Player], fd: i32, content: Option[source.Source], sound: Option[audio_path.State], stage: i32, resume_ns: i64, started_ns: i64, done: boolean }
+struct App { ctx: usize, playback: Option[player.Player], fd: i32, content: Option[source.Source], sound: Option[audio_path.State], audio_reader: Option[Reader], stage: i32, resume_ns: i64, started_ns: i64, done: boolean }
 
 pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size: usize): void {
   android.start(activity, app_main_entry());
@@ -20,15 +20,13 @@ pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size:
 function app_main_entry(): usize;
 
 function app_main(ctx: usize): usize {
-  let last = android.run(ctx, App { ctx: ctx, playback: None, fd: -1, content: None, sound: None, stage: 0, resume_ns: 0i64, started_ns: monotonic_ns(), done: false }, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => 5);
+  let last = android.run(ctx, App { ctx: ctx, playback: None, fd: -1, content: None, sound: None, audio_reader: None, stage: 0, resume_ns: 0i64, started_ns: monotonic_ns(), done: false }, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => 5);
   let _ = cleanup(last);
   return 0 as usize;
 }
 
 function cleanup(own s: App): App {
-  if let Some(sound) = s.sound {
-    sound.close();
-  }
+  s = finish_sound(s);
   match (s.playback) {
     Some(p) => {
       let _ = p.close();
@@ -91,15 +89,24 @@ function start_file(own s: App, window: android.Window, path: string): App {
   return App { ...s, playback: Some(p), fd: fd, started_ns: monotonic_ns() };
 }
 
+function start_sound(own s: App, own stream: audio_pcm.Stream, own reader: Reader, path: string): App {
+  let sound = match (audio_path.create_stream(stream, reader, path)) {
+    Ok(value) => value,
+    Err(error) => { let _ = reader.close(); return fail(s, error); },
+  };
+  return App { ...s, sound: Some(sound), audio_reader: Some(reader) };
+}
+
 function start_av(own s: App, window: android.Window, path: string): App {
-  let block = match (audio_pcm.read(path)) { Ok(value) => value, Err(error) => { return fail(s, error); } };
+  let (stream, reader) = match (audio_pcm.open(path, 0i64)) { Ok(value) => value, Err(error) => { return fail(s, error); } };
+  let frames = stream.info().frames;
   let opened = start_file(s, window, path);
   if (opened.done) {
+    let _ = reader.close();
     return opened;
   }
-  let sound = match (audio_path.create(block, 0i64)) { Ok(value) => value, Err(error) => { return fail(opened, error); } };
-  log.warn("videotest: native AAC frames=" + (sound.samples.len() / 2).to_string() + " rate=48000 channels=2");
-  return App { ...opened, sound: Some(sound) };
+  log.warn("videotest: native AAC frames=" + frames.to_string() + " rate=48000 channels=2");
+  return start_sound(opened, stream, reader, path);
 }
 
 function start_content(own s: App, window: android.Window, uri: string): App {
@@ -122,22 +129,29 @@ function start_content(own s: App, window: android.Window, uri: string): App {
   return App { ...s, playback: Some(p), content: Some(src), started_ns: monotonic_ns() };
 }
 
+function take_sound(own s: App): own (App, Option[audio_path.State]) {
+  let sound = s.sound;
+  return (App { ...s, sound: None }, sound);
+}
+
 function pause_sound(own s: App, now: i64): App {
-  if let Some(sound) = s.sound {
-    return App { ...s, sound: Some(audio_path.State { ...sound }.pause(now)) };
+  let (rest, source) = take_sound(s);
+  if let Some(sound) = source {
+    return App { ...rest, sound: Some(sound.pause(now)) };
   }
-  return s;
+  return rest;
 }
 
 function resume_sound(own s: App, now: i64): App {
-  if let Some(sound) = s.sound {
-    let resumed = audio_path.State { ...sound }.resume(now);
-    s = App { ...s, sound: Some(resumed) };
+  let (rest, source) = take_sound(s);
+  if let Some(sound) = source {
+    let resumed = sound.resume(now);
     if (resumed.failed) {
-      return fail(s, frame.Platform);
+      return fail(App { ...rest, sound: Some(resumed) }, frame.Platform);
     }
+    return App { ...rest, sound: Some(resumed) };
   }
-  return s;
+  return rest;
 }
 
 function pump_sound(own s: App): App {
@@ -146,14 +160,18 @@ function pump_sound(own s: App): App {
       return s;
     }
   }
-  if let Some(sound) = s.sound {
-    let next = audio_path.pump(audio_path.State { ...sound });
-    s = App { ...s, sound: Some(next) };
+  let (rest, source) = take_sound(s);
+  if let Some(sound) = source {
+    let Some(reader) = rest.audio_reader else {
+      return fail(App { ...rest, sound: Some(sound) }, frame.Platform);
+    };
+    let next = audio_path.pump_stream(sound, reader);
     if (next.failed) {
-      return fail(s, frame.Platform);
+      return fail(App { ...rest, sound: Some(next) }, frame.Platform);
     }
+    return App { ...rest, sound: Some(next) };
   }
-  return s;
+  return rest;
 }
 
 function anchor(s: App, own p: player.Player): player.Tick {
@@ -169,14 +187,16 @@ function seek_sound(own s: App, target_us: i64): App {
   let Some(sound) = s.sound else {
     return s;
   };
-  let block = sound.block();
-  sound.close();
-  s = App { ...s, sound: None };
-  let next = match (audio_path.create(block, target_us)) { Ok(value) => value, Err(error) => { return fail(s, error); } };
-  return App { ...s, sound: Some(next) };
+  let path = sound.path.to_owned();
+  s = finish_sound(s);
+  let (stream, reader) = match (audio_pcm.open(path, target_us)) { Ok(value) => value, Err(error) => { return fail(s, error); } };
+  return start_sound(s, stream, reader, path);
 }
 
 function report_sound(sound: audio_path.State): void {
+  if (sound.source.is_some()) {
+    log.warn("videotest: native AV cursor peak_samples=" + sound.peak.to_string());
+  }
   log.warn("videotest: native AV submitted_frames=" + ((sound.at - sound.first) / 2).to_string() + " origin_us=" + sound.origin.media_us.to_string());
   match (sound.music.timestamp()) {
     Some(stamp) => {
@@ -192,7 +212,10 @@ function finish_sound(own s: App): App {
   if let Some(sound) = s.sound {
     sound.close();
   }
-  return App { ...s, sound: None };
+  if let Some(reader) = s.audio_reader {
+    let _ = reader.close();
+  }
+  return App { ...s, sound: None, audio_reader: None };
 }
 
 function pause_and_replace(own s: App, own p: player.Player, now: i64): App {
