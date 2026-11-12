@@ -15550,10 +15550,10 @@ function int_read(e: ast.Expr): ast.Expr {
     }
   }
   if let ast.ExprUnary(u) = e {
-    return ast.ExprUnary { ...u, operand: int_read(u.operand) };
+    return ast.unary(u.op, int_read(u.operand), u.line, u.col, u.ty);
   }
   if let ast.ExprBinary(b) = e {
-    return ast.ExprBinary { ...b, left: int_read(b.left), right: int_read(b.right) };
+    return ast.binary(b.op, int_read(b.left), int_read(b.right), b.line, b.col, b.ty);
   }
   if let ast.ExprTuple(te) = e {
     let parts: ast.Expr[] = [];
