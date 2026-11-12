@@ -5062,22 +5062,14 @@ function dynamic_kernel_count(f: ssasem.Func, ins: ssa.SInst): boolean {
 }
 
 function array_kernel(name: string): Option[ir.Op] {
-  if (name == "__mismatch_bytes") {
-    return Some(ir.op_mismatch_bytes());
-  }
-  if (name == "__sum_bytes_array") {
-    return Some(ir.op_sum_bytes_array());
-  }
-  if (name == "__bsd_sum_bytes") {
-    return Some(ir.op_bsd_sum_bytes());
-  }
-  if (name == "__crc32_cksum_array") {
-    return Some(ir.op_crc32_cksum_array());
-  }
-  if (name == "__crc32_ieee_array") {
-    return Some(ir.op_crc32_ieee_array());
-  }
-  return None;
+  return match (name) {
+    "__mismatch_bytes" => Some(ir.op_mismatch_bytes()),
+    "__sum_bytes_array" => Some(ir.op_sum_bytes_array()),
+    "__bsd_sum_bytes" => Some(ir.op_bsd_sum_bytes()),
+    "__crc32_cksum_array" => Some(ir.op_crc32_cksum_array()),
+    "__crc32_ieee_array" => Some(ir.op_crc32_ieee_array()),
+    _ => None,
+  };
 }
 
 function lent_views(f: ssasem.Func, ins: ssa.SInst): boolean {
@@ -5334,16 +5326,12 @@ function dir_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
     }
     return Lowered { found: true, r: emit(r, ir.op_dir_unlink(dir)) };
   }
-  if (m == "Dir.chmod") {
-    return Lowered { found: true, r: emit(r, ir.op_dir_chmod()) };
-  }
-  if (m == "Dir.chown") {
-    return Lowered { found: true, r: emit(r, ir.op_dir_chown()) };
-  }
-  if (m == "Dir.close") {
-    return Lowered { found: true, r: emit(r, ir.op_reader_close()) };
-  }
-  return Lowered { found: false, r: r };
+  return match (m) {
+    "Dir.chmod" => Lowered { found: true, r: emit(r, ir.op_dir_chmod()) },
+    "Dir.chown" => Lowered { found: true, r: emit(r, ir.op_dir_chown()) },
+    "Dir.close" => Lowered { found: true, r: emit(r, ir.op_reader_close()) },
+    _ => Lowered { found: false, r: r },
+  };
 }
 
 // A file opened under a directory. The plain forms push the flag word the
@@ -5441,49 +5429,23 @@ function handle_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
 
 function handle_metadata_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   let op = handle_method(ins.str);
-  if (op == "stat") {
-    return Lowered { found: true, r: emit(r, ir.op_fd_stat()) };
-  }
-  if (op == "flags") {
-    return Lowered { found: true, r: emit(r, ir.op_fd_flags()) };
-  }
-  if (op == "seek") {
-    return Lowered { found: true, r: emit(r, ir.op_reader_seek()) };
-  }
-  if (op == "fsync") {
-    return Lowered { found: true, r: emit(r, ir.op_fd_fsync()) };
-  }
-  if (op == "fdatasync") {
-    return Lowered { found: true, r: emit(r, ir.op_fd_fdatasync()) };
-  }
-  if (op == "syncfs") {
-    return Lowered { found: true, r: emit(r, ir.op_fd_syncfs()) };
-  }
-  if (op == "drop_cache") {
-    return Lowered { found: true, r: emit(r, ir.op_fd_drop_cache()) };
-  }
-  if (op == "isatty") {
-    return Lowered { found: true, r: emit(r, ir.op_isatty()) };
-  }
-  if (op == "dup_onto") {
-    return Lowered { found: true, r: emit(r, ir.op_fd_dup_onto()) };
-  }
-  if (op == "window_size") {
-    return Lowered { found: true, r: emit(r, ir.op_window_size()) };
-  }
-  if (op == "set_window_size") {
-    return Lowered { found: true, r: emit(r, ir.op_set_window_size()) };
-  }
-  if (op == "termios_get") {
-    return Lowered { found: true, r: emit(r, ir.op_termios_get()) };
-  }
-  if (op == "termios_set") {
-    return Lowered { found: true, r: emit(r, ir.op_termios_set()) };
-  }
-  if (op == "set_extproc") {
-    return Lowered { found: true, r: emit(r, ir.op_set_extproc()) };
-  }
-  return Lowered { found: false, r: r };
+  return match (op) {
+    "stat" => Lowered { found: true, r: emit(r, ir.op_fd_stat()) },
+    "flags" => Lowered { found: true, r: emit(r, ir.op_fd_flags()) },
+    "seek" => Lowered { found: true, r: emit(r, ir.op_reader_seek()) },
+    "fsync" => Lowered { found: true, r: emit(r, ir.op_fd_fsync()) },
+    "fdatasync" => Lowered { found: true, r: emit(r, ir.op_fd_fdatasync()) },
+    "syncfs" => Lowered { found: true, r: emit(r, ir.op_fd_syncfs()) },
+    "drop_cache" => Lowered { found: true, r: emit(r, ir.op_fd_drop_cache()) },
+    "isatty" => Lowered { found: true, r: emit(r, ir.op_isatty()) },
+    "dup_onto" => Lowered { found: true, r: emit(r, ir.op_fd_dup_onto()) },
+    "window_size" => Lowered { found: true, r: emit(r, ir.op_window_size()) },
+    "set_window_size" => Lowered { found: true, r: emit(r, ir.op_set_window_size()) },
+    "termios_get" => Lowered { found: true, r: emit(r, ir.op_termios_get()) },
+    "termios_set" => Lowered { found: true, r: emit(r, ir.op_termios_set()) },
+    "set_extproc" => Lowered { found: true, r: emit(r, ir.op_set_extproc()) },
+    _ => Lowered { found: false, r: r },
+  };
 }
 
 function handle_method(name: string): string {
@@ -5538,99 +5500,49 @@ function union_builtin_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered
 }
 
 function outcome_builtin_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
-  if (ins.str == "write_file") {
-    return Lowered { found: true, r: emit(r, ir.op_write_file()) };
-  }
-  if (ins.str == "write_file_bytes") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_write_file_bytes())) };
-  }
-  if (ins.str == "write_file_exec") {
-    return Lowered { found: true, r: emit(r, ir.op_write_file_exec()) };
-  }
-  if (ins.str == "create_dir_all") {
-    return Lowered { found: true, r: emit(r, ir.op_create_dir_all()) };
-  }
-  if (ins.str == "remove_dir_all") {
-    return Lowered { found: true, r: emit(r, ir.op_remove_dir_all()) };
-  }
-  if (ins.str == "remove_file") {
-    return Lowered { found: true, r: emit(r, ir.op_remove_file()) };
-  }
-  return Lowered { found: false, r: r };
+  return match (ins.str) {
+    "write_file" => Lowered { found: true, r: emit(r, ir.op_write_file()) },
+    "write_file_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_write_file_bytes())) },
+    "write_file_exec" => Lowered { found: true, r: emit(r, ir.op_write_file_exec()) },
+    "create_dir_all" => Lowered { found: true, r: emit(r, ir.op_create_dir_all()) },
+    "remove_dir_all" => Lowered { found: true, r: emit(r, ir.op_remove_dir_all()) },
+    "remove_file" => Lowered { found: true, r: emit(r, ir.op_remove_file()) },
+    _ => Lowered { found: false, r: r },
+  };
 }
 
 function value_builtin_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
-  if (ins.str == "args") {
-    return Lowered { found: true, r: emit(r, ir.op_args()) };
-  }
-  if (ins.str == "set_args") {
-    return Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_set_args", 1)) };
-  }
-  if (ins.str == "putchar") {
-    return Lowered { found: true, r: emit(r, ir.op_putchar()) };
-  }
-  if (ins.str == "f32_bits") {
-    return Lowered { found: true, r: emit(r, ir.op_f32_bits()) };
-  }
-  if (ins.str == "f32_from_bits") {
-    return Lowered { found: true, r: emit(r, ir.op_f32_from_bits()) };
-  }
-  if (ins.str == "__account_entry") {
-    return Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_account_entry", 2)) };
-  }
-  if (ins.str == "__ct_secret") {
-    return Lowered { found: true, r: emit(r, ir.op_ct_mark(0)) };
-  }
-  if (ins.str == "__ct_public") {
-    return Lowered { found: true, r: emit(r, ir.op_ct_mark(1)) };
-  }
-  if (ins.str == "__bytes_owned") {
-    return Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_bytes_owned", 1)) };
-  }
-  if (ins.str == "__bytes_range") {
-    return Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_bytes_range", 3)) };
-  }
-  if (ins.str == "__bytes_into") {
-    return Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_bytes_into", 5)) };
-  }
-  if (ins.str == "__rc_underflow_count") {
-    return Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_rc_underflow_get", 0)) };
-  }
-  if (ins.str == "__arr_push_shared_count") {
-    return Lowered { found: true, r: emit(r, ir.op_arr_push_shared_count()) };
-  }
-  if (ins.str == "__arr_push_shared_bytes") {
-    return Lowered { found: true, r: emit(r, ir.op_arr_push_shared_bytes()) };
-  }
-  return host_builtin_site(r, ins);
+  return match (ins.str) {
+    "args" => Lowered { found: true, r: emit(r, ir.op_args()) },
+    "set_args" => Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_set_args", 1)) },
+    "putchar" => Lowered { found: true, r: emit(r, ir.op_putchar()) },
+    "f32_bits" => Lowered { found: true, r: emit(r, ir.op_f32_bits()) },
+    "f32_from_bits" => Lowered { found: true, r: emit(r, ir.op_f32_from_bits()) },
+    "__account_entry" => Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_account_entry", 2)) },
+    "__ct_secret" => Lowered { found: true, r: emit(r, ir.op_ct_mark(0)) },
+    "__ct_public" => Lowered { found: true, r: emit(r, ir.op_ct_mark(1)) },
+    "__bytes_owned" => Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_bytes_owned", 1)) },
+    "__bytes_range" => Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_bytes_range", 3)) },
+    "__bytes_into" => Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_bytes_into", 5)) },
+    "__rc_underflow_count" => Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_rc_underflow_get", 0)) },
+    "__arr_push_shared_count" => Lowered { found: true, r: emit(r, ir.op_arr_push_shared_count()) },
+    "__arr_push_shared_bytes" => Lowered { found: true, r: emit(r, ir.op_arr_push_shared_bytes()) },
+    _ => host_builtin_site(r, ins),
+  };
 }
 
 function host_builtin_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
-  if (ins.str == "random_bytes") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_random_bytes())) };
-  }
-  if (ins.str == "random_i32") {
-    return Lowered { found: true, r: emit(r, ir.op_random_i32()) };
-  }
-  if (ins.str == "monotonic_ns") {
-    return Lowered { found: true, r: emit(r, ir.op_monotonic_ns()) };
-  }
-  if (ins.str == "now_unix_ms") {
-    return Lowered { found: true, r: emit(r, ir.op_now_unix_ms()) };
-  }
-  if (ins.str == "now_ns") {
-    return Lowered { found: true, r: emit(r, ir.op_now_ns()) };
-  }
-  if (ins.str == "clock_resolution") {
-    return Lowered { found: true, r: emit(r, ir.op_clock_resolution()) };
-  }
-  if (ins.str == "sleep_ms") {
-    return Lowered { found: true, r: emit(r, ir.op_sleep_ms()) };
-  }
-  if (ins.str == "sleep_ns") {
-    return Lowered { found: true, r: emit(r, ir.op_sleep_ns()) };
-  }
-  return os_query_site(r, ins);
+  return match (ins.str) {
+    "random_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_random_bytes())) },
+    "random_i32" => Lowered { found: true, r: emit(r, ir.op_random_i32()) },
+    "monotonic_ns" => Lowered { found: true, r: emit(r, ir.op_monotonic_ns()) },
+    "now_unix_ms" => Lowered { found: true, r: emit(r, ir.op_now_unix_ms()) },
+    "now_ns" => Lowered { found: true, r: emit(r, ir.op_now_ns()) },
+    "clock_resolution" => Lowered { found: true, r: emit(r, ir.op_clock_resolution()) },
+    "sleep_ms" => Lowered { found: true, r: emit(r, ir.op_sleep_ms()) },
+    "sleep_ns" => Lowered { found: true, r: emit(r, ir.op_sleep_ns()) },
+    _ => os_query_site(r, ins),
+  };
 }
 
 function is_worker_site(name: string): boolean {
@@ -5739,140 +5651,58 @@ function os_query_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
 }
 
 function fs_op_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
-  if (ins.str == "temp_dir") {
-    return Lowered { found: true, r: emit(r, ir.op_temp_dir()) };
-  }
-  if (ins.str == "read_link_bytes") {
-    return Lowered { found: true, r: emit(r, ir.bytes_payload(ir.op_read_link())) };
-  }
-  if (ins.str == "read_link") {
-    return Lowered { found: true, r: emit(r, ir.op_read_link()) };
-  }
-  if (ins.str == "remove_dir") {
-    return Lowered { found: true, r: emit(r, ir.op_remove_dir()) };
-  }
-  if (ins.str == "statfs") {
-    return Lowered { found: true, r: emit(r, ir.op_statfs()) };
-  }
-  if (ins.str == "mounts") {
-    return Lowered { found: true, r: emit(r, ir.op_mounts()) };
-  }
-  if (ins.str == "sysctl") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_sysctl())) };
-  }
-  if (ins.str == "create_dir") {
-    return Lowered { found: true, r: emit(r, ir.op_create_dir()) };
-  }
-  if (ins.str == "chmod") {
-    return Lowered { found: true, r: emit(r, ir.op_chmod()) };
-  }
-  if (ins.str == "access") {
-    return Lowered { found: true, r: emit(r, ir.op_access()) };
-  }
-  if (ins.str == "rename") {
-    return Lowered { found: true, r: emit(r, ir.op_rename()) };
-  }
-  if (ins.str == "getxattr") {
-    return Lowered { found: true, r: emit(r, ir.op_getxattr()) };
-  }
-  if (ins.str == "getxattr_bytes") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_getxattr_bytes())) };
-  }
-  if (ins.str == "lgetxattr") {
-    return Lowered { found: true, r: emit(r, ir.op_lgetxattr()) };
-  }
-  if (ins.str == "lgetxattr_bytes") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_lgetxattr_bytes())) };
-  }
-  if (ins.str == "setxattr") {
-    return Lowered { found: true, r: emit(r, ir.op_setxattr()) };
-  }
-  if (ins.str == "setxattr_bytes") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_setxattr_bytes())) };
-  }
-  if (ins.str == "lsetxattr") {
-    return Lowered { found: true, r: emit(r, ir.op_lsetxattr()) };
-  }
-  if (ins.str == "lsetxattr_bytes") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_lsetxattr_bytes())) };
-  }
-  if (ins.str == "rename_noreplace") {
-    return Lowered { found: true, r: emit(r, ir.op_rename_noreplace()) };
-  }
-  if (ins.str == "rename_exchange") {
-    return Lowered { found: true, r: emit(r, ir.op_rename_exchange()) };
-  }
-  if (ins.str == "create_link") {
-    return Lowered { found: true, r: emit(r, ir.op_create_link()) };
-  }
-  if (ins.str == "clone_file") {
-    return Lowered { found: true, r: emit(r, ir.op_clone_file()) };
-  }
-  if (ins.str == "create_symlink") {
-    return Lowered { found: true, r: emit(r, ir.op_create_symlink()) };
-  }
-  if (ins.str == "chown_at") {
-    return Lowered { found: true, r: emit(r, ir.op_chown_at()) };
-  }
-  if (ins.str == "truncate") {
-    return Lowered { found: true, r: emit(r, ir.op_truncate()) };
-  }
-  return os_floor_site(r, ins);
+  return match (ins.str) {
+    "temp_dir" => Lowered { found: true, r: emit(r, ir.op_temp_dir()) },
+    "read_link_bytes" => Lowered { found: true, r: emit(r, ir.bytes_payload(ir.op_read_link())) },
+    "read_link" => Lowered { found: true, r: emit(r, ir.op_read_link()) },
+    "remove_dir" => Lowered { found: true, r: emit(r, ir.op_remove_dir()) },
+    "statfs" => Lowered { found: true, r: emit(r, ir.op_statfs()) },
+    "mounts" => Lowered { found: true, r: emit(r, ir.op_mounts()) },
+    "sysctl" => Lowered { found: true, r: emit(r, ir.packed(ir.op_sysctl())) },
+    "create_dir" => Lowered { found: true, r: emit(r, ir.op_create_dir()) },
+    "chmod" => Lowered { found: true, r: emit(r, ir.op_chmod()) },
+    "access" => Lowered { found: true, r: emit(r, ir.op_access()) },
+    "rename" => Lowered { found: true, r: emit(r, ir.op_rename()) },
+    "getxattr" => Lowered { found: true, r: emit(r, ir.op_getxattr()) },
+    "getxattr_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_getxattr_bytes())) },
+    "lgetxattr" => Lowered { found: true, r: emit(r, ir.op_lgetxattr()) },
+    "lgetxattr_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_lgetxattr_bytes())) },
+    "setxattr" => Lowered { found: true, r: emit(r, ir.op_setxattr()) },
+    "setxattr_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_setxattr_bytes())) },
+    "lsetxattr" => Lowered { found: true, r: emit(r, ir.op_lsetxattr()) },
+    "lsetxattr_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_lsetxattr_bytes())) },
+    "rename_noreplace" => Lowered { found: true, r: emit(r, ir.op_rename_noreplace()) },
+    "rename_exchange" => Lowered { found: true, r: emit(r, ir.op_rename_exchange()) },
+    "create_link" => Lowered { found: true, r: emit(r, ir.op_create_link()) },
+    "clone_file" => Lowered { found: true, r: emit(r, ir.op_clone_file()) },
+    "create_symlink" => Lowered { found: true, r: emit(r, ir.op_create_symlink()) },
+    "chown_at" => Lowered { found: true, r: emit(r, ir.op_chown_at()) },
+    "truncate" => Lowered { found: true, r: emit(r, ir.op_truncate()) },
+    _ => os_floor_site(r, ins),
+  };
 }
 
 function os_floor_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
-  if (ins.str == "set_file_times") {
-    return Lowered { found: true, r: emit(r, ir.op_set_file_times()) };
-  }
-  if (ins.str == "mknod") {
-    return Lowered { found: true, r: emit(r, ir.op_mknod()) };
-  }
-  if (ins.str == "chmod_at") {
-    return Lowered { found: true, r: emit(r, ir.op_chmod_at()) };
-  }
-  if (ins.str == "chdir") {
-    return Lowered { found: true, r: emit(r, ir.op_chdir()) };
-  }
-  if (ins.str == "chroot") {
-    return Lowered { found: true, r: emit(r, ir.op_chroot()) };
-  }
-  if (ins.str == "set_process_group") {
-    return Lowered { found: true, r: emit(r, ir.op_set_process_group()) };
-  }
-  if (ins.str == "setgroups") {
-    return Lowered { found: true, r: emit(r, ir.op_setgroups()) };
-  }
-  if (ins.str == "getgroups") {
-    return Lowered { found: true, r: emit(r, ir.op_getgroups()) };
-  }
-  if (ins.str == "priority") {
-    return Lowered { found: true, r: emit(r, ir.op_priority()) };
-  }
-  if (ins.str == "sync") {
-    return Lowered { found: true, r: emit(r, ir.op_sync()) };
-  }
-  if (ins.str == "poll") {
-    return Lowered { found: true, r: emit(r, ir.op_poll()) };
-  }
-  if (ins.str == "timer_fd") {
-    return Lowered { found: true, r: emit(r, ir.op_timer_fd()) };
-  }
-  if (ins.str == "window_size") {
-    return Lowered { found: true, r: emit(r, ir.op_window_size()) };
-  }
-  if (ins.str == "set_window_size") {
-    return Lowered { found: true, r: emit(r, ir.op_set_window_size()) };
-  }
-  if (ins.str == "termios_get") {
-    return Lowered { found: true, r: emit(r, ir.op_termios_get()) };
-  }
-  if (ins.str == "termios_set") {
-    return Lowered { found: true, r: emit(r, ir.op_termios_set()) };
-  }
-  if (ins.str == "set_extproc") {
-    return Lowered { found: true, r: emit(r, ir.op_set_extproc()) };
-  }
-  return os_floor_process_site(r, ins);
+  return match (ins.str) {
+    "set_file_times" => Lowered { found: true, r: emit(r, ir.op_set_file_times()) },
+    "mknod" => Lowered { found: true, r: emit(r, ir.op_mknod()) },
+    "chmod_at" => Lowered { found: true, r: emit(r, ir.op_chmod_at()) },
+    "chdir" => Lowered { found: true, r: emit(r, ir.op_chdir()) },
+    "chroot" => Lowered { found: true, r: emit(r, ir.op_chroot()) },
+    "set_process_group" => Lowered { found: true, r: emit(r, ir.op_set_process_group()) },
+    "setgroups" => Lowered { found: true, r: emit(r, ir.op_setgroups()) },
+    "getgroups" => Lowered { found: true, r: emit(r, ir.op_getgroups()) },
+    "priority" => Lowered { found: true, r: emit(r, ir.op_priority()) },
+    "sync" => Lowered { found: true, r: emit(r, ir.op_sync()) },
+    "poll" => Lowered { found: true, r: emit(r, ir.op_poll()) },
+    "timer_fd" => Lowered { found: true, r: emit(r, ir.op_timer_fd()) },
+    "window_size" => Lowered { found: true, r: emit(r, ir.op_window_size()) },
+    "set_window_size" => Lowered { found: true, r: emit(r, ir.op_set_window_size()) },
+    "termios_get" => Lowered { found: true, r: emit(r, ir.op_termios_get()) },
+    "termios_set" => Lowered { found: true, r: emit(r, ir.op_termios_set()) },
+    "set_extproc" => Lowered { found: true, r: emit(r, ir.op_set_extproc()) },
+    _ => os_floor_process_site(r, ins),
+  };
 }
 
 function os_floor_process_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
@@ -6024,70 +5854,30 @@ function os_floor_process_site(own r: irtables.LowerState, ins: ssa.SInst): Lowe
 }
 
 function builder_builtin_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
-  if (ins.str == "buf_new") {
-    return Lowered { found: true, r: emit(r, ir.op_buf_new()) };
-  }
-  if (ins.str == "buf_push") {
-    return Lowered { found: true, r: emit(r, ir.op_buf_push()) };
-  }
-  if (ins.str == "buf_push_range") {
-    return Lowered { found: true, r: emit(r, ir.op_buf_push_range()) };
-  }
-  if (ins.str == "buf_push_bytes_range") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_buf_push_bytes_range())) };
-  }
-  if (ins.str == "buf_push_bytes_mapped") {
-    return Lowered { found: true, r: emit(r, ir.op_buf_push_bytes_mapped()) };
-  }
-  if (ins.str == "buf_push_mapped") {
-    return Lowered { found: true, r: emit(r, ir.op_buf_push_mapped()) };
-  }
-  if (ins.str == "buf_push_bytes_filtered") {
-    return Lowered { found: true, r: emit(r, ir.op_buf_push_bytes_filtered()) };
-  }
-  if (ins.str == "buf_push_filtered") {
-    return Lowered { found: true, r: emit(r, ir.op_buf_push_filtered()) };
-  }
-  if (ins.str == "buf_push_bytes_expanded") {
-    return Lowered { found: true, r: emit(r, ir.op_buf_push_bytes_expanded()) };
-  }
-  if (ins.str == "buf_push_expanded") {
-    return Lowered { found: true, r: emit(r, ir.op_buf_push_expanded()) };
-  }
-  if (ins.str == "buf_push_byte") {
-    return Lowered { found: true, r: emit(r, ir.op_buf_push_byte()) };
-  }
-  if (ins.str == "buf_push_u64") {
-    return Lowered { found: true, r: emit(r, ir.op_buf_push_u64()) };
-  }
-  if (ins.str == "buf_push_decimal") {
-    return Lowered { found: true, r: emit(r, ir.op_buf_push_decimal()) };
-  }
-  if (ins.str == "buf_push_base64") {
-    return Lowered { found: true, r: emit(r, ir.op_buf_push_base64()) };
-  }
-  if (ins.str == "buf_push_base32") {
-    return Lowered { found: true, r: emit(r, ir.op_buf_push_base32()) };
-  }
-  if (ins.str == "buf_decode_base32") {
-    return Lowered { found: true, r: emit(r, ir.op_buf_decode_base32()) };
-  }
-  if (ins.str == "buf_len") {
-    return Lowered { found: true, r: emit(r, ir.op_buf_len()) };
-  }
-  if (ins.str == "buf_take") {
-    return Lowered { found: true, r: emit(r, ir.op_buf_take()) };
-  }
-  if (ins.str == "buf_take_bytes") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_buf_take_bytes())) };
-  }
-  if (ins.str == "buf_free") {
-    return Lowered { found: true, r: emit(r, ir.op_buf_free()) };
-  }
-  if (ins.str == "buf_clear") {
-    return Lowered { found: true, r: emit(r, ir.op_buf_clear()) };
-  }
-  return Lowered { found: false, r: r };
+  return match (ins.str) {
+    "buf_new" => Lowered { found: true, r: emit(r, ir.op_buf_new()) },
+    "buf_push" => Lowered { found: true, r: emit(r, ir.op_buf_push()) },
+    "buf_push_range" => Lowered { found: true, r: emit(r, ir.op_buf_push_range()) },
+    "buf_push_bytes_range" => Lowered { found: true, r: emit(r, ir.packed(ir.op_buf_push_bytes_range())) },
+    "buf_push_bytes_mapped" => Lowered { found: true, r: emit(r, ir.op_buf_push_bytes_mapped()) },
+    "buf_push_mapped" => Lowered { found: true, r: emit(r, ir.op_buf_push_mapped()) },
+    "buf_push_bytes_filtered" => Lowered { found: true, r: emit(r, ir.op_buf_push_bytes_filtered()) },
+    "buf_push_filtered" => Lowered { found: true, r: emit(r, ir.op_buf_push_filtered()) },
+    "buf_push_bytes_expanded" => Lowered { found: true, r: emit(r, ir.op_buf_push_bytes_expanded()) },
+    "buf_push_expanded" => Lowered { found: true, r: emit(r, ir.op_buf_push_expanded()) },
+    "buf_push_byte" => Lowered { found: true, r: emit(r, ir.op_buf_push_byte()) },
+    "buf_push_u64" => Lowered { found: true, r: emit(r, ir.op_buf_push_u64()) },
+    "buf_push_decimal" => Lowered { found: true, r: emit(r, ir.op_buf_push_decimal()) },
+    "buf_push_base64" => Lowered { found: true, r: emit(r, ir.op_buf_push_base64()) },
+    "buf_push_base32" => Lowered { found: true, r: emit(r, ir.op_buf_push_base32()) },
+    "buf_decode_base32" => Lowered { found: true, r: emit(r, ir.op_buf_decode_base32()) },
+    "buf_len" => Lowered { found: true, r: emit(r, ir.op_buf_len()) },
+    "buf_take" => Lowered { found: true, r: emit(r, ir.op_buf_take()) },
+    "buf_take_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_buf_take_bytes())) },
+    "buf_free" => Lowered { found: true, r: emit(r, ir.op_buf_free()) },
+    "buf_clear" => Lowered { found: true, r: emit(r, ir.op_buf_clear()) },
+    _ => Lowered { found: false, r: r },
+  };
 }
 
 // A system-register op. The register name is a string literal, so the op takes
@@ -6228,28 +6018,16 @@ function intrinsic_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
 }
 
 function bit_count_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
-  if (ins.str == "__clz32") {
-    return Lowered { found: true, r: emit(r, ir.op_clz(32)) };
-  }
-  if (ins.str == "__ctz32") {
-    return Lowered { found: true, r: emit(r, ir.op_ctz(32)) };
-  }
-  if (ins.str == "__popcount32") {
-    return Lowered { found: true, r: emit(r, ir.op_popcount(32)) };
-  }
-  if (ins.str == "__clz64") {
-    return Lowered { found: true, r: emit(r, ir.op_clz(64)) };
-  }
-  if (ins.str == "__ctz64") {
-    return Lowered { found: true, r: emit(r, ir.op_ctz(64)) };
-  }
-  if (ins.str == "__popcount64") {
-    return Lowered { found: true, r: emit(r, ir.op_popcount(64)) };
-  }
-  if (ins.str == "__mulhi_u64") {
-    return Lowered { found: true, r: emit(r, ir.op_bin("mulhi_u", 64, true)) };
-  }
-  return Lowered { found: false, r: r };
+  return match (ins.str) {
+    "__clz32" => Lowered { found: true, r: emit(r, ir.op_clz(32)) },
+    "__ctz32" => Lowered { found: true, r: emit(r, ir.op_ctz(32)) },
+    "__popcount32" => Lowered { found: true, r: emit(r, ir.op_popcount(32)) },
+    "__clz64" => Lowered { found: true, r: emit(r, ir.op_clz(64)) },
+    "__ctz64" => Lowered { found: true, r: emit(r, ir.op_ctz(64)) },
+    "__popcount64" => Lowered { found: true, r: emit(r, ir.op_popcount(64)) },
+    "__mulhi_u64" => Lowered { found: true, r: emit(r, ir.op_bin("mulhi_u", 64, true)) },
+    _ => Lowered { found: false, r: r },
+  };
 }
 
 function str_release(own r: irtables.LowerState): irtables.LowerState {
@@ -6536,83 +6314,39 @@ function byte_scan_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   if (sha != 0) {
     return Lowered { found: true, r: emit(r, ir.sha_builtin_op(sha)) };
   }
-  if (ins.str == "__sum_bytes") {
-    return Lowered { found: true, r: emit(r, ir.op_sum_bytes()) };
-  }
-  if (ins.str == "__scale_f64") {
-    return Lowered { found: true, r: emit(r, ir.op_scale_f64()) };
-  }
-  if (ins.str == "__crc32_cksum") {
-    return Lowered { found: true, r: emit(r, ir.op_crc32_cksum()) };
-  }
-  if (ins.str == "__crc32_cksum_array") {
-    return Lowered { found: true, r: emit(r, ir.op_call_direct(ssabytes.crc32_name(), 2)) };
-  }
-  if (ins.str == "__crc32_ieee_array") {
-    return Lowered { found: true, r: emit(r, ir.op_call_direct(ssabytes.crc32_ieee_name(), 2)) };
-  }
-  if (ins.str == "__ascii_run") {
-    return Lowered { found: true, r: emit(r, ir.op_ascii_run()) };
-  }
-  if (ins.str == "__scan_set") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_set())) };
-  }
-  if (ins.str == "__scan_set_bytes") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_set_bytes())) };
-  }
-  if (ins.str == "__count_runs") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_count_runs())) };
-  }
-  if (ins.str == "__count_runs_bytes") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_count_runs_bytes())) };
-  }
-  if (ins.str == "__bsd_sum") {
-    return Lowered { found: true, r: emit(r, ir.op_bsd_sum()) };
-  }
-  if (ins.str == "__str_hash") {
-    return Lowered { found: true, r: emit(r, ir.op_str_hash()) };
-  }
-  if (ins.str == "__count_byte") {
-    return Lowered { found: true, r: emit(r, ir.op_count_byte()) };
-  }
-  if (ins.str == "__rmemchr") {
-    return Lowered { found: true, r: emit(r, ir.op_rmemchr()) };
-  }
-  if (ins.str == "__mismatch") {
-    return Lowered { found: true, r: emit(r, ir.op_mismatch()) };
-  }
-  if (ins.str == "__mismatch_bytes") {
-    return Lowered { found: true, r: emit(r, ir.op_call_direct(ssabytes.mismatch_name(), 5)) };
-  }
-  if (ins.str == "__mismatch_bytes_str") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_mismatch_bytes_str())) };
-  }
-  return Lowered { found: false, r: r };
+  return match (ins.str) {
+    "__sum_bytes" => Lowered { found: true, r: emit(r, ir.op_sum_bytes()) },
+    "__scale_f64" => Lowered { found: true, r: emit(r, ir.op_scale_f64()) },
+    "__crc32_cksum" => Lowered { found: true, r: emit(r, ir.op_crc32_cksum()) },
+    "__crc32_cksum_array" => Lowered { found: true, r: emit(r, ir.op_call_direct(ssabytes.crc32_name(), 2)) },
+    "__crc32_ieee_array" => Lowered { found: true, r: emit(r, ir.op_call_direct(ssabytes.crc32_ieee_name(), 2)) },
+    "__ascii_run" => Lowered { found: true, r: emit(r, ir.op_ascii_run()) },
+    "__scan_set" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_set())) },
+    "__scan_set_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_set_bytes())) },
+    "__count_runs" => Lowered { found: true, r: emit(r, ir.packed(ir.op_count_runs())) },
+    "__count_runs_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_count_runs_bytes())) },
+    "__bsd_sum" => Lowered { found: true, r: emit(r, ir.op_bsd_sum()) },
+    "__str_hash" => Lowered { found: true, r: emit(r, ir.op_str_hash()) },
+    "__count_byte" => Lowered { found: true, r: emit(r, ir.op_count_byte()) },
+    "__rmemchr" => Lowered { found: true, r: emit(r, ir.op_rmemchr()) },
+    "__mismatch" => Lowered { found: true, r: emit(r, ir.op_mismatch()) },
+    "__mismatch_bytes" => Lowered { found: true, r: emit(r, ir.op_call_direct(ssabytes.mismatch_name(), 5)) },
+    "__mismatch_bytes_str" => Lowered { found: true, r: emit(r, ir.packed(ir.op_mismatch_bytes_str())) },
+    _ => Lowered { found: false, r: r },
+  };
 }
 
 function string_method_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
-  if (ins.str == "string.to_ascii_upper") {
-    return Lowered { found: true, r: emit(r, ir.op_str_to_upper()) };
-  }
-  if (ins.str == "string.to_ascii_lower") {
-    return Lowered { found: true, r: emit(r, ir.op_str_to_lower()) };
-  }
-  if (ins.str == "string.trim") {
-    return Lowered { found: true, r: emit(r, ir.op_str_trim()) };
-  }
-  if (ins.str == "string.lines") {
-    return Lowered { found: true, r: emit(r, ir.op_str_lines()) };
-  }
-  if (ins.str == "string.split") {
-    return Lowered { found: true, r: emit(r, ir.op_str_split()) };
-  }
-  if (ins.str == "string.repeat") {
-    return Lowered { found: true, r: emit(r, ir.op_str_repeat()) };
-  }
-  if (ins.str == "string.replace") {
-    return Lowered { found: true, r: emit(r, ir.op_str_replace()) };
-  }
-  return Lowered { found: false, r: r };
+  return match (ins.str) {
+    "string.to_ascii_upper" => Lowered { found: true, r: emit(r, ir.op_str_to_upper()) },
+    "string.to_ascii_lower" => Lowered { found: true, r: emit(r, ir.op_str_to_lower()) },
+    "string.trim" => Lowered { found: true, r: emit(r, ir.op_str_trim()) },
+    "string.lines" => Lowered { found: true, r: emit(r, ir.op_str_lines()) },
+    "string.split" => Lowered { found: true, r: emit(r, ir.op_str_split()) },
+    "string.repeat" => Lowered { found: true, r: emit(r, ir.op_str_repeat()) },
+    "string.replace" => Lowered { found: true, r: emit(r, ir.op_str_replace()) },
+    _ => Lowered { found: false, r: r },
+  };
 }
 
 function runtime_helper_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
