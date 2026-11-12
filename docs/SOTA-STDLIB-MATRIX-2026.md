@@ -130,7 +130,7 @@ to make an algorithmic claim measurable end-to-end.
 | # | Primitive | Site | Today | Target | Verdict | Phase |
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | f64 → shortest | `std/f64` | Dragonbox (#6161) | Dragonbox / Schubfach | **SHIPPED** | — |
-| 2 | f32 → shortest | `std/f64` | Dragonbox, 64-bit cache | Dragonbox | **SHIPPED** | — |
+| 2 | f32 → shortest | `std/f32` | Dragonbox, 64-bit cache | Dragonbox | **SHIPPED** | — |
 | 3 | decimal → f64 | `std/f64` | Eisel–Lemire + exact fallback (#6167) | Eisel–Lemire | **SHIPPED** | — |
 | 4 | decimal → f32 | `std/f64` | Via f64 then narrow | Direct f32 path | GAP (double-rounding, see §B) | 4 |
 | 5 | hard float parse | `std/f64` | Exact fallback present | Big-int fallback | **SHIPPED** | — |
@@ -190,7 +190,7 @@ is waiting on a caller.
 | 30 | pow | `std/f64` | glibc / ARM double-double log and exp in Fern, within 1 ulp, exact when x^y is a double | Specialised exp/log | DECIDE:accuracy-contract | 4 |
 | 31 | cbrt | `std/f64` | Fern-level implementation | Correctly rounded | GAP | 4 |
 | 32 | hypot | `std/f64` | Fern-level, plus `hypot3` | Scaled, overflow-safe | Audit for overflow | 4 |
-| — | f32 transcendentals | `std/f64` | **Every one widens to f64, computes, narrows** | Direct f32 | **GAP — double rounding** | 4 |
+| — | f32 transcendentals | `std/f32` | **Every one widens to f64, computes, narrows** | Direct f32 | **GAP — double rounding** | 4 |
 
 This section is the one place where the published list and Fern's actual
 problem genuinely diverge in *kind*. The list frames these as performance rows

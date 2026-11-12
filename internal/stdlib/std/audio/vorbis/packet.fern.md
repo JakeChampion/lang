@@ -23,6 +23,7 @@ import "std/audio/vorbis/residue";
 import "std/audio/vorbis/setup";
 import "std/audio/vorbis/types";
 import "std/audio/pcm";
+import "std/f32";
 import "std/f64";
 
 struct Floors { reader: bits.Reader, active: i32[], output: f32[], curve: f32[] }
