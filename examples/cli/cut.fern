@@ -1,5 +1,6 @@
 import "std/result";
 import "std/string";
+import "std/utf8";
 import "std/i32";
 import "std/io";
 import "std/array";
@@ -44,10 +45,15 @@ function cut_fields(line: string, delim: string, ranges: (i32, i32)[]): string {
 
 function cut_chars(line: string, ranges: (i32, i32)[]): string {
   let out = "";
-  for i in 0..line.len() {
-    if (selected(i + 1, ranges)) {
-      out += slice_unchecked(line, i, i + 1);
+  let i = 0;
+  let position = 1;
+  while (i < line.len()) {
+    let end = utf8.ceil_char_boundary(line, i + 1);
+    if (selected(position, ranges)) {
+      out += slice_unchecked(line, i, end);
     }
+    i = end;
+    position += 1;
   }
   return out;
 }

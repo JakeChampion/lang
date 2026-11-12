@@ -28,6 +28,7 @@
 // every policy, so there is one copy of it.
 import "std/i32";
 import "std/string";
+import "std/utf8";
 import "std/i64";
 import "std/f64";
 import "std/array";
@@ -58,7 +59,9 @@ pub function quote(s: string): string {
         out += "\\r";
       },
       _ => {
-        out += slice_unchecked(s, i, i + 1);
+        if (utf8.is_char_boundary(s, i)) {
+          out += slice_unchecked(s, i, utf8.ceil_char_boundary(s, i + 1));
+        }
       }
     }
   }
