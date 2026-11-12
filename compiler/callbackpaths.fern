@@ -24,7 +24,20 @@ pub function path_tail(projection: string): string {
 }
 
 pub function selectors_match(a: string, b: string): boolean {
-  return a == b || a.starts_with("a:") && b.starts_with("a:") && (a == "a:*" || b == "a:*" || a.starts_with("a:$") || b.starts_with("a:$"));
+  if (a == b || a.starts_with("a:") && b.starts_with("a:") && (a == "a:*" || b == "a:*" || a.starts_with("a:$") || b.starts_with("a:$"))) {
+    return true;
+  }
+  if (util.index_of_sub(a, "|") < 0 && util.index_of_sub(b, "|") < 0) {
+    return false;
+  }
+  for left in util.split_char(a, b'|') {
+    for right in util.split_char(b, b'|') {
+      if (left == right) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 pub function field(name: string): string {
@@ -60,6 +73,10 @@ function declaration(structs: parser.StructDecl[], name: string): Option[parser.
 }
 
 function projection_type_in(structs: parser.StructDecl[], ty: string, part: string): string {
+  let group = util.index_of_sub(part, "|");
+  if (group >= 0) {
+    part = slice_unchecked(part, 0, group) + "";
+  }
   let arrow = parser.top_arrow_at(ty);
   if (part == "r:*" && arrow >= 0) {
     return (slice_unchecked(ty, arrow + 2, ty.len()) + "").trim();

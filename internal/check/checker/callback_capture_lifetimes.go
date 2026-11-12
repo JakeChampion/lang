@@ -170,9 +170,19 @@ func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[st
 		case *ast.StructLit:
 			var out []callbackLoan
 			replaced := map[string]bool{}
+			var parts []callbackPart
 			for _, field := range v.Fields {
 				replaced[field.Name] = true
-				out = mergeCallbackLoans(out, prefixCallbackLoans("f:"+field.Name, valueCaptures(field.Value, active)))
+				part := callbackPart{selector: "f:" + field.Name, value: field.Value}
+				if id, ok := field.Value.(*ast.Ident); ok && id.Local && len(definitions[id.Name]) == 1 {
+					if ty := c.declaredFieldType(c.litTypes[v], field.Name); ty != nil {
+						part.group = id.Name + "\x00" + ty.String()
+					}
+				}
+				parts = append(parts, part)
+			}
+			for _, part := range groupCallbackParts(parts) {
+				out = mergeCallbackLoans(out, prefixCallbackLoans(part.selector, valueCaptures(part.value, active)))
 			}
 			if v.Base != nil {
 				for _, field := range c.info.Structs[v.TypeName].Fields {
@@ -185,8 +195,16 @@ func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[st
 			return out
 		case *ast.TupleLit:
 			var out []callbackLoan
+			var parts []callbackPart
 			for i, elem := range v.Elems {
-				out = mergeCallbackLoans(out, prefixCallbackLoans("t:"+strconv.Itoa(i), valueCaptures(elem, active)))
+				part := callbackPart{selector: "t:" + strconv.Itoa(i), value: elem}
+				if id, ok := elem.(*ast.Ident); ok && id.Local && len(definitions[id.Name]) == 1 {
+					part.group = id.Name
+				}
+				parts = append(parts, part)
+			}
+			for _, part := range groupCallbackParts(parts) {
+				out = mergeCallbackLoans(out, prefixCallbackLoans(part.selector, valueCaptures(part.value, active)))
 			}
 			return out
 		case *ast.ArrayLit:

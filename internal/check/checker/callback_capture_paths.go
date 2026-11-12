@@ -15,6 +15,29 @@ type callbackLoan struct {
 	direct, wide bool
 }
 
+type callbackPart struct {
+	selector string
+	value    ast.Expr
+	group    string
+}
+
+// Repeated reads of one immutable binding share the same environment shape.
+func groupCallbackParts(parts []callbackPart) []callbackPart {
+	var out []callbackPart
+	groups := map[string]int{}
+	for _, part := range parts {
+		if index, known := groups[part.group]; part.group != "" && known {
+			out[index].selector += "|" + part.selector
+			continue
+		}
+		if part.group != "" {
+			groups[part.group] = len(out)
+		}
+		out = append(out, part)
+	}
+	return out
+}
+
 // Nominal callback containment is a least fixed point over declaration edges.
 // Shared and recursive type graphs do not require repeated subtree walks.
 func (c *checker) callbackContainerTypes() map[handleTypeKey]bool {
@@ -293,9 +316,23 @@ func callbackFieldSelector(field string) string {
 	return "f:" + field
 }
 func callbackSelectorsMatch(a, b string) bool {
-	return a == b || strings.HasPrefix(a, "a:") && strings.HasPrefix(b, "a:") && (a == "a:*" || b == "a:*")
+	if a == b || strings.HasPrefix(a, "a:") && strings.HasPrefix(b, "a:") && (a == "a:*" || b == "a:*") {
+		return true
+	}
+	if !strings.Contains(a, "|") && !strings.Contains(b, "|") {
+		return false
+	}
+	for _, left := range strings.Split(a, "|") {
+		for _, right := range strings.Split(b, "|") {
+			if left == right {
+				return true
+			}
+		}
+	}
+	return false
 }
 func (c *checker) callbackProjectionType(t ast.Type, part string) ast.Type {
+	part, _, _ = strings.Cut(part, "|")
 	if t == nil {
 		return nil
 	}

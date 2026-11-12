@@ -15203,8 +15203,22 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			n.ElemType = elemExpected
 			return ast.ArrayType{Elem: elemExpected}
 		}
-		elemT := checkElem(n.Elems[0])
 		originalElemExpected := elemExpected
+		// A first element that is a call with no argument takes the type
+		// of the first element that has arguments.
+		if openPlace := elemExpected == nil || mentionsTypeParam(elemExpected); openPlace && noArgCall(n.Elems[0]) {
+			for _, el := range n.Elems[1:] {
+				if noArgCall(el) {
+					continue
+				}
+				if lead := checkElem(el); lead != nil && !mentionsTypeParam(lead) {
+					elemExpected = lead
+				}
+				break
+			}
+		}
+		elemT := checkElem(n.Elems[0])
+		elemExpected = originalElemExpected
 		elemTypes := []ast.Type{elemT}
 		invalid := false
 		floatDest, toFloat := elemExpected.(ast.FloatType)
@@ -15213,7 +15227,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		for i, el := range n.Elems[1:] {
 			// A call with no argument has only its place to give it a type:
 			// it takes the type of the first element as its expected type.
-			if call, isCall := el.(*ast.Call); isCall && len(call.Args) == 0 && (elemExpected == nil || mentionsTypeParam(elemExpected)) && elemT != nil && !mentionsTypeParam(elemT) {
+			if noArgCall(el) && (elemExpected == nil || mentionsTypeParam(elemExpected)) && elemT != nil && !mentionsTypeParam(elemT) {
 				elemExpected = elemT
 			}
 			t := c.wideLiteralElem(checkElem(el), elemT, el)
@@ -15674,7 +15688,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			if recvHint != nil {
 				c.setElemHintFor(fa.Target, recvHint)
 				c.expectedType = recvHint
-			} else if want := c.receiverExpected(n, fa, callExpected); want != nil {
+			} else if want := c.receiverExpected(n, fa, callExpected, s); want != nil {
 				c.expectedType = want
 			}
 			tt := c.receiverType(fa.Target, s)
@@ -18288,6 +18302,11 @@ func (c *checker) widenGenericCallByLiterals(call *ast.Call) ast.Type {
 		sub[tp] = call.TypeArgs[i]
 	}
 	return c.resolveProj(substituteType(fn.ReturnType, sub))
+}
+
+func noArgCall(e ast.Expr) bool {
+	call, ok := e.(*ast.Call)
+	return ok && len(call.Args) == 0
 }
 
 func isCellNew(call *ast.Call) bool {

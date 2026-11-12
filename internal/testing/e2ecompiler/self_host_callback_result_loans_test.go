@@ -24,6 +24,7 @@ func callbackResultLoanCases(t *testing.T, bin string, runner []string, dir stri
 		"diag_e050_factory_callback_uses_consumed_capture",
 		"diag_e050_factory_callback_uses_consumed_local",
 		"diag_e050_dynamic_factory_uses_consumed_capture",
+		"diag_e050_projected_callback_index_capture",
 	} {
 		source, err := os.ReadFile(e2eharness.RepoPath("conformance", "cases", name, "main.fern"))
 		if err != nil {

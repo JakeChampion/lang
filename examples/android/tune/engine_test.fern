@@ -1,5 +1,5 @@
 // Tests of the decoder of the player on the host: it reads the tunes that
-// demo.fern makes, as WAV and as FLAC.
+// demo.fern makes, as WAV and as FLAC, and the files of fixture.fern.
 import "std/audio/flac";
 import "std/audio/pcm";
 import "std/audio/wav";
@@ -23,7 +23,7 @@ function tune(): i32[] {
 }
 
 // Each sample of the deck, and the number of its parts.
-function drained(d: engine.Deck): (i32[], i32, engine.Deck) {
+function drained(own d: engine.Deck): (i32[], i32, engine.Deck) {
   let all: i32[] = [];
   let parts = 0;
   let deck = d;
@@ -122,6 +122,35 @@ function test_mp3_length(): test.TestOutcome {
   return test.assert_eq(length.to_string() + " " + all.len().to_string() + " " + last.position_ms().to_string(), "2612 230400 2612");
 }
 
+// A file of one second: the deck tells its rate and its length, plays its
+// sound from the start, and plays the last part from the half.
+function played(file: u8[]): string {
+  let Some(deck) = engine.open(file) else {
+    return "none";
+  };
+  let head = deck.rate.to_string() + " " + deck.channels.to_string() + " " + near(deck.duration_ms(), 1000i64, 120i64).to_string();
+  let (all, parts, end) = drained(deck);
+  let loud = 0;
+  for v in all {
+    if (v > 1000 || v < -1000) {
+      loud += 1;
+    }
+  }
+  let Some(again) = engine.open(file) else {
+    return "none";
+  };
+  let (half, n, last) = drained(again.seek(0.5));
+  return head + " " + near((all.len() / end.channels) as i64 * 1000i64 / (end.rate as i64), 1000i64, 120i64).to_string() + " " + (loud > all.len() / 4).to_string() + " " + near((half.len() / last.channels) as i64 * 1000i64 / (last.rate as i64), 500i64, 120i64).to_string();
+}
+
+function near(got: i64, want: i64, by: i64): boolean {
+  return got >= want - by && got <= want + by;
+}
+
+function test_m4a_ogg_and_opus_play(): test.TestOutcome {
+  return test.assert_eq(played(fixture.m4a()) + " | " + played(fixture.ogg()) + " | " + played(fixture.opus()), "22050 1 true true true true | 22050 1 true true true true | 48000 1 true true true true");
+}
+
 function main(): i32 {
   let r = test.new("examples/android/tune engine");
   r = r.it("a WAV file plays each sample", test_wav_plays_each_sample);
@@ -129,5 +158,6 @@ function main(): i32 {
   r = r.it("a deck starts at a part of its file", test_seek);
   r = r.it("bytes that are not sound do not open", test_other_bytes_do_not_open);
   r = r.it("an MP3 file tells its length in frames of samples", test_mp3_length);
+  r = r.it("an M4A, an Ogg Vorbis and an Opus file play", test_m4a_ogg_and_opus_play);
   return r.finish();
 }

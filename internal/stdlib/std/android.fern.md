@@ -6,7 +6,11 @@ This module runs an Android app with no Java code, through `android.app.NativeAc
 
 NativeActivity loads the app library and calls its `ANativeActivity_onCreate` export on the UI thread. That export calls `start`. `start` sets the activity callbacks and starts a loop thread. The callbacks run on the UI thread. Each callback sends an event to the loop thread through a pipe. Then it waits for the reply of the loop thread.
 
-The loop thread runs `run`. `run` keeps the state of the app as an ordinary Fern value. It gives each event to the `step` function of the app. When `timeout` milliseconds go by with no event, it gives `Tick`. The two threads take turns in the Fern code of the library: `__fern_busy` is a lock, and a C call gives it back.
+The loop thread runs `run`. `run` keeps the state of the app as an ordinary Fern value. It gives each event to the `step` function of the app. When `timeout` milliseconds go by with no event, it gives `Tick`.
+
+When `timeout` gives 0, `run` gives `Tick` after the event that is ready, if one is. So an app that gives the time that is left to its next Tick gets that Tick while events come all the time.
+
+The two threads take turns in the Fern code of the library: `__fern_busy` is a lock, and a C call gives it back. A thread that waits for the lock gets the next turn, so a loop thread that is busy does not keep the UI thread out.
 
 The app draws the pixels itself: `lock` gives the frame of the window, `std/android/draw` draws rectangles and text on it, and `post` shows it. `request_frame` asks the display for its next frame, and the loop then gives `Vsync` to `step` at that vsync, so an app draws each frame of an animation at the time the display shows it. The window covers the whole screen, and `ContentRect` gives the part of it that the system bars and the keyboard leave free. `asset` reads a file that `fern -apk -apk-asset` put in the APK.
 
@@ -187,7 +191,7 @@ function c_pthread_detach(thread: usize): i32;
 
 ### `events`
 
-`Touch` has the action of the pointer: 0 down, 1 up, 2 move and 3 cancel. While TalkBack explores by touch, a finger on the screen comes as a hover pointer instead: 7 hover move, 9 hover enter and 10 hover exit. `Key` has the Android key code and the action: 0 down and 1 up. Key code 4 is the back key. The volume keys and the mute key (24, 25 and 164) come as `Key` events too, and then the system changes the volume.
+`Touch` has the action of the pointer: 0 down, 1 up, 2 move and 3 cancel. While TalkBack explores by touch, a finger on the screen comes as a hover pointer instead: 7 hover move, 9 hover enter and 10 hover exit. `Key` has the Android key code and the action: 0 down and 1 up. Key code 4 is the back key. The volume keys and the mute key (24, 25 and 164) come as `Key` events too, and then the system changes the volume. The headset hook and the media keys (79, 85 to 90, 126 and 127) come as `Key` events too, and then the system gives them to the media session that plays.
 
 `Char` follows the `Key` event of a key that goes down and types a character: the code point that the key map of the keyboard gives for the key and its shift state. A hardware keyboard types through these events.
 
@@ -677,14 +681,17 @@ pub function run[S](ctx: usize, own state: S, step: (own S, Event) => S, timeout
     let added: i32 = c_looper_add_fd(lp.looper, Context.c_load_message_read(ctx), IDENT_MESSAGE, 1, 0 as usize, 0 as usize);
   }
   while (!lp.done) {
-    let ident: i32 = c_looper_poll_once(timeout(state), 0 as usize, 0 as usize, 0 as usize);
+    let wait: i32 = timeout(state);
+    let ident: i32 = c_looper_poll_once(wait, 0 as usize, 0 as usize, 0 as usize);
     if (ident == IDENT_MESSAGE) {
       let (next_lp, next_state) = message(lp, state, step);
       lp = next_lp;
       state = next_state;
     } else if (ident == IDENT_INPUT) {
       state = input(lp, state, step);
-    } else if (ident == POLL_TIMEOUT) {
+    }
+    // A Tick that is due comes also when an event is ready at each poll.
+    if (ident == POLL_TIMEOUT || wait == 0) {
       state = step(state, Tick);
     }
     // The UI thread frees the context after the Destroy reply.
@@ -806,7 +813,11 @@ function key_char(ctx: usize, device: i32, code: i32, meta: i32): i32 {
   return c;
 }
 
-// The volume and media keys, which Android handles after the app.
+// The keys that the system handles after the app: the volume keys, the
+// mute key, the headset hook, and the media keys from play/pause (85) to
+// fast forward (90), play (126), pause (127), record (130), audio track
+// (222), and skip and step (272 to 275). The system gives a media key to
+// the media session that plays.
 function system_key(code: i32): boolean {
   return code == 24 || code == 25 || code == 164 || code == 79 || code >= 85 && code <= 90 || code == 126 || code == 127 || code == 130 || code == 222 || code >= 272 && code <= 275;
 }

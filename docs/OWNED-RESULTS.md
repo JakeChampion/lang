@@ -50,6 +50,12 @@ A copied immutable result does not retain an environment loan.
 A callback must finish its last use before a captured resource is consumed.
 The check follows single-definition local bindings and inputs of resolved named factories.
 A callback that returns another callback also retains these environment loans.
+The check follows callback environments through records, tuples, arrays, and record updates.
+A selected record or tuple field retains the loans of that component.
+An unrelated callback field does not extend those loans.
+Array elements share a conservative loan set.
+Single-definition aggregate aliases preserve the selected component.
+An index expression also retains loans from callbacks that compute its index.
 Mutable bindings and resource paths inside aggregates still need a broader proof.
 
 The caller can copy immutable data results.
