@@ -1,0 +1,84 @@
+// This fixture owns AAudio transport while the lower-level controller owns video.
+import "std/android/audio";
+import "std/audio/pcm";
+import "std/audio/mp4/time";
+import "std/video/frame";
+import "std/video/playback_clock";
+import "std/option";
+
+pub struct State { music: audio.Music, samples: i32[], at: i32, first: i32, origin: playback_clock.AudioOrigin, started_ns: i64, paused_ns: Option[i64], failed: boolean }
+
+pub function pump(own state: State): State {
+  if (state.failed || state.paused_ns.is_some() || state.at == state.samples.len()) {
+    return state;
+  }
+  let end = (state.at + 2048).min(state.samples.len());
+  let wrote = state.music.write(state.samples[state.at:end], 0);
+  if (wrote < 0 || wrote > end - state.at || wrote % 2 != 0) {
+    return State { ...state, failed: true };
+  }
+  return State { ...state, at: state.at + wrote };
+}
+
+function block_ok(block: pcm.Block): boolean {
+  return block.format == pcm.Format { sample_rate: 48000, channels: 2, bits_per_sample: 16 } && block.samples.len() > 0 && block.samples.len() <= 48000 && block.samples.len() % 2 == 0;
+}
+
+function open_music(): Result[audio.Music, frame.VideoError] {
+  let music = audio.music(48000, 2);
+  if (music.ptr == 0 as usize || music.rate != 48000 || music.channels != 2) {
+    music.close();
+    return Err(frame.Unsupported);
+  }
+  return Ok(music);
+}
+
+pub function create(block: pcm.Block, media_us: i64): Result[State, frame.VideoError] {
+  if (!block_ok(block) || media_us < 0i64) {
+    return Err(frame.Header);
+  }
+  let first = match (time.rescale(media_us, 48000u32, 1000000u32)) { Ok(value) => value, Err(_) => { return Err(frame.Limit); } };
+  if (first >= (block.samples.len() / 2) as i64) {
+    return Err(frame.Header);
+  }
+  let music = open_music()?;
+  let state = pump(State { music: music, samples: block.samples, at: first as i32 * 2, first: first as i32 * 2, origin: playback_clock.AudioOrigin { frame_position: 0i64, media_us: first * 1000000i64 / 48000i64 }, started_ns: 0i64, paused_ns: None, failed: false });
+  if (state.failed || !music.start()) {
+    music.close();
+    return Err(frame.Platform);
+  }
+  return Ok(State { ...state, started_ns: monotonic_ns() });
+}
+
+pub function (state: State) block(): pcm.Block {
+  return pcm.Block { format: pcm.Format { sample_rate: 48000, channels: 2, bits_per_sample: 16 }, samples: state.samples };
+}
+
+pub function (state: State) ready(now_ns: i64): boolean {
+  let frames = (state.samples.len() - state.first) / 2;
+  let duration = frames as i64 * 1000000000i64 / 48000i64;
+  return !state.failed && state.paused_ns.is_none() && state.at == state.samples.len() && now_ns - state.started_ns >= duration + 100000000i64;
+}
+
+pub function (own state: State) pause(now_ns: i64): State {
+  if (state.paused_ns.is_none()) {
+    state.music.pause();
+    return State { ...state, paused_ns: Some(now_ns) };
+  }
+  return state;
+}
+
+pub function (own state: State) resume(now_ns: i64): State {
+  let Some(paused) = state.paused_ns else {
+    return state;
+  };
+  if (now_ns < paused || !state.music.start()) {
+    return State { ...state, failed: true };
+  }
+  return State { ...state, started_ns: state.started_ns + now_ns - paused, paused_ns: None };
+}
+
+pub function (state: State) close(): void {
+  state.music.pause();
+  state.music.close();
+}

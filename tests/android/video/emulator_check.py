@@ -7,6 +7,7 @@ Set ANDROID_SERIAL to select a physical device. The test requires API 29.
 """
 
 import json
+import importlib.util
 from pathlib import Path
 import re
 import subprocess
@@ -14,6 +15,10 @@ import sys
 import time
 
 PACKAGE = "dev.fern.videotest"
+
+fixture_spec = importlib.util.spec_from_file_location("native_av_fixture", Path(__file__).with_name("native_av_fixture.py"))
+fixture = importlib.util.module_from_spec(fixture_spec)
+fixture_spec.loader.exec_module(fixture)
 
 
 def adb(*args, binary=False):
@@ -56,7 +61,28 @@ def verify_screen(data):
     assert min(pixels) >= 105 and max(pixels) <= 150, (min(pixels), max(pixels))
 
 
-def main(apk, out_dir, content_uri=None):
+def native_av_metrics(log):
+    assert "videotest: native AAC frames=19200 rate=48000 channels=2" in log
+    submissions = re.findall(r"videotest: native AV submitted_frames=(\d+) origin_us=(\d+)", log)
+    assert submissions == [('19200', '0'), ('14400', '100000')], submissions
+    timestamps = []
+    for line in log.splitlines():
+        if "videotest: native AV timestamp" not in line:
+            continue
+        if line.endswith("videotest: native AV timestamp unavailable"):
+            timestamps.append(None)
+            continue
+        value = re.search(r"videotest: native AV timestamp frames=(\d+) monotonic_ns=(\d+)$", line)
+        assert value is not None, line
+        position, time_ns = map(int, value.groups())
+        assert max(position, time_ns) <= (1 << 63) - 1
+        timestamps.append({'frame_position': position, 'monotonic_ns': time_ns})
+    assert len(timestamps) == 2, timestamps
+    return {'rate': 48000, 'channels': 2, 'frames': 19200, 'timestamps': timestamps,
+            'submissions': [{'frames': int(n), 'origin_us': int(at)} for n, at in submissions]}
+
+
+def main(apk, out_dir, content_uri=None, av_path=None):
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     sdk = int(adb("shell", "getprop", "ro.build.version.sdk").strip())
@@ -65,6 +91,9 @@ def main(apk, out_dir, content_uri=None):
     adb("shell", "am", "force-stop", PACKAGE)
     adb("logcat", "-c")
     command = ["shell", "am", "start", "-W", "-n", PACKAGE + "/android.app.NativeActivity"]
+    if av_path is not None:
+        assert content_uri is None
+        command += ['--es', 'av_path', av_path]
     if content_uri is not None:
         assert content_uri.startswith("content://"), content_uri
         # The shell owns the MediaStore fixture and cannot grant its URI.
@@ -85,10 +114,10 @@ def main(apk, out_dir, content_uri=None):
         assert "videotest: FAIL" not in log, log
         assert not re.search(r"Fatal signal|UnsatisfiedLinkError|FATAL EXCEPTION|fern: ", log), log
         assert "videotest: roundtrip complete" in log, "codec test timeout"
-        if content_uri is None:
+        if content_uri is None and av_path is None:
             assert "export surface=false frames=12" in log, log
             assert "export surface=true frames=12" in log, log
-        else:
+        elif content_uri is not None:
             assert "videotest: source=content offset=" in log, log
         assert "decoder name=" in log, log
         assert "videotest: same surface accepted while paused" in log, log
@@ -96,7 +125,9 @@ def main(apk, out_dir, content_uri=None):
         metrics = {"build": adb("shell", "getprop", "ro.build.fingerprint").strip(),
                    "abi": adb("shell", "getprop", "ro.product.cpu.abi").strip(),
                    "clips": {}}
-        for name in (("byte", "surface") if content_uri is None else ()):
+        if av_path is not None:
+            metrics['native_av'] = native_av_metrics(log)
+        for name in (("byte", "surface") if content_uri is None and av_path is None else ()):
             path = out / (name + ".mp4")
             path.write_bytes(adb("exec-out", "run-as", PACKAGE, "cat", directory + "/" + name + ".mp4", binary=True))
             metrics["clips"][name] = verify_clip(path)
@@ -112,9 +143,26 @@ def main(apk, out_dir, content_uri=None):
             (out / "logcat.txt").write_text(log)
         adb("shell", "am", "force-stop", PACKAGE)
     print("Android video export, pixels, surface playback, pause, and seek passed", flush=True)
+    return directory
+
+
+def native_av(apk, directory, private_directory):
+    out = Path(directory)
+    path = out / 'native-av.mp4'
+    metadata = fixture.create(out / 'byte.mp4', path)
+    (out / 'native-av-fixture.json').write_text(json.dumps(metadata, indent=2) + '\n')
+    assert re.fullmatch(r'/data/(?:user/\d+|data)/dev\.fern\.videotest/files', private_directory), private_directory
+    destination = private_directory + '/native-av.mp4'
+    data = path.read_bytes()
+    subprocess.run(['adb', 'shell', '-T', 'run-as', PACKAGE, 'tee', destination], input=data,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True, timeout=45)
+    assert adb('exec-out', 'run-as', PACKAGE, 'cat', destination, binary=True) == data
+    main(apk, out / 'native-av', av_path=destination)
 
 
 if __name__ == "__main__":
     if len(sys.argv) not in (3, 4):
         sys.exit(__doc__)
-    main(*sys.argv[1:])
+    private = main(*sys.argv[1:])
+    if len(sys.argv) == 3:
+        native_av(sys.argv[1], sys.argv[2], private)

@@ -704,3 +704,32 @@ The muxer's complete record supplies level and chroma-location identifiers that 
 Both Fern index paths preserve every packet field and byte through native sanitizer and real WASI executables.
 Independent FFmpeg and libvpx decoders compare every plane with the original raw input before and after extraction.
 FFmpeg remains test-only. Fern does not decode VP9 pixels.
+
+## Native AAC and lower-level Android video integration
+
+The video test app also coordinates native AAC PCM with an app-owned AAudio music stream.
+The lower-level controller still owns one platform-decoded video track. The separate MediaPlayer A/V path remains unchanged.
+This fixture does not add a general A/V player API or a native AVC pixel decoder.
+
+The fixture contains twelve AVC frames and 19,200 stereo AAC frames at 48 kHz.
+The existing native MP4 audio decoder applies encoder-delay and final-presentation trims.
+The app quantizes its float output to interleaved signed 16-bit PCM.
+Input bytes have a two-MiB limit. Decoded output has a 48,000-sample limit.
+Reads use four-KiB chunks, and each nonblocking AAudio write requests at most 1,024 stereo frames.
+
+Partial writes preserve the remaining samples. Pause stops new audio writes and video submissions.
+Resume restarts both transports and permits a fresh AAudio clock anchor.
+Seek creates a new audio stream and selects PCM from the requested frame, so its frame-zero origin has explicit media units.
+The app rejects an unexpected stream rate instead of applying an incorrect frame-to-time scale.
+Completion and window destruction close the app-owned audio stream.
+
+The existing emulator runner adds this round after its video-only export checks.
+It verifies both submitted sample counts, the pause and seek diagnostics, and two available-or-unavailable timestamp observations.
+Unavailable timestamps remain distinct from valid anchors. They preserve the controller's existing timeline.
+A short grace after queue completion does not measure acoustic output or establish physical drain accuracy.
+
+`scripts/check-android-native-av` checks native sanitizer and real-WASI PCM against an independent FFmpeg decode.
+Every quantized sample must differ by at most one signed 16-bit sample unit.
+Host AAudio controls cover partial writes, backpressure, pause/resume, seek origins, rate rejection, startup failure, and exact cleanup counts.
+Normal and sanitizer Fern libraries run against both normal and undefined-behavior-sanitizer C controls.
+ARM64 shared compilation remains separate from execution. Representative device power, latency, and lip-sync qualification remain unmeasured.

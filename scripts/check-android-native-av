@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+"""Check bounded native AAC PCM and the app-owned AAudio transport on Linux."""
+import importlib.util
+import os
+from pathlib import Path
+import struct
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+os.chdir(ROOT)
+spec = importlib.util.spec_from_file_location('native_av_fixture', ROOT / 'tests/android/video/native_av_fixture.py')
+fixture = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(fixture)
+compiler = os.environ.get('FERN') or subprocess.check_output(['./bootstrap/bootstrap.sh', 'stage0'], text=True).strip()
+assert os.uname().sysname == 'Linux'
+target, android = {'x86_64': ('x86-64-linux', 'x86-64-android'),
+                   'aarch64': ('arm64-linux', 'arm64-android')}[os.uname().machine]
+build = ROOT / 'build/video/native-av-check'
+build.mkdir(parents=True, exist_ok=True)
+reference = build / 'reference'
+wasm = build / 'reference.wasm'
+for output, architecture, flags in ((reference, target, ['-sanitize']), (wasm, 'wasm32-wasi', [])):
+    subprocess.run([compiler, '-stdlib', str(ROOT / 'internal/stdlib'), '-target', architecture, *flags,
+                    '-o', str(output), 'scripts/video-reference/native-av-audio.fern'], check=True)
+
+
+def run(path, error=None):
+    native = subprocess.run([str(reference), str(path)], capture_output=True, text=True)
+    wasi = subprocess.run(['wasmtime', 'run', '--dir', '.', str(wasm), path.name],
+                          cwd=path.parent, capture_output=True, text=True)
+    assert native.returncode == (3 if error else 0), native
+    assert wasi.returncode == (1 if error else 0), wasi
+    assert native.stdout == wasi.stdout
+    assert 'live_bytes=0' in native.stderr and 'fern-sanitizer:' not in native.stderr, native.stderr
+    if error:
+        assert native.stderr.splitlines()[0] == wasi.stderr.splitlines()[0] == error
+    return native.stdout.splitlines()
+
+
+with tempfile.TemporaryDirectory() as temporary:
+    directory = Path(temporary)
+    video = directory / 'video.mp4'
+    clip = directory / 'av.mp4'
+    subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i',
+                    'color=c=gray:size=128x128:rate=30:duration=0.4', '-an', '-c:v', 'libx264',
+                    '-preset', 'ultrafast', '-tune', 'zerolatency', '-pix_fmt', 'yuv420p', str(video)], check=True)
+    fixture.create(video, clip)
+    lines = run(clip)
+    assert lines[0] == '48000 2 19200'
+    actual = bytes.fromhex(lines[1])
+    expected = fixture.reference_pcm(clip)
+    assert len(actual) == len(expected) == 19200 * 2 * 2
+    values = struct.unpack('<38400h', actual)
+    reference_values = struct.unpack('<38400h', expected)
+    peak_error = max(abs(a - b) for a, b in zip(values, reference_values))
+    assert peak_error <= 1, peak_error
+    print('Native/WASI stereo AAC presentation, S16 packing, and FFmpeg reference: peak error', peak_error)
+    for name, arguments in [('mono', ['-ac', '1']), ('rate', ['-ar', '44100'])]:
+        path = directory / (name + '.mp4')
+        subprocess.run(['ffmpeg', '-v', 'error', '-i', str(clip), '-map', '0', '-c:v', 'copy',
+                        '-c:a', 'aac', *arguments, '-t', '0.4', str(path)], check=True)
+        run(path, 'unsupported video format')
+    oversized = directory / 'oversized.mp4'
+    with oversized.open('wb') as output:
+        output.truncate(2097153)
+    run(oversized, 'video exceeds the configured limit')
+    excessive = directory / 'excessive.mp4'
+    subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i',
+                    'aevalsrc=0.05*sin(2*PI*440*t)|0.05*sin(2*PI*660*t):s=48000:d=1',
+                    '-c:a', 'aac', str(excessive)], check=True)
+    run(excessive, 'video exceeds the configured limit')
+    print('Explicit rate, layout, encoded-input, and decoded-sample refusals passed')
+
+for name, flags in [('normal', []), ('sanitize', ['-sanitize'])]:
+    subprocess.run([compiler, '-stdlib', str(ROOT / 'internal/stdlib'), '-target', android,
+                    '-shared', *flags, '-export', 'main', '-o', str(build / (name + '.so')),
+                    'tests/android/video/audio_path_test.fern'], check=True)
+for variant, flags in [('normal', []), ('ubsan', ['-fsanitize=undefined', '-fno-sanitize-recover=all'])]:
+    directory = build / variant
+    directory.mkdir(exist_ok=True)
+    subprocess.run(['cc', '-shared', '-fPIC', '-Wall', '-Wextra', '-Werror', *flags,
+                    '-o', str(directory / 'libaaudio.so'), 'tests/android/video/audio_path_mock.c'], check=True)
+    env = dict(os.environ, LD_LIBRARY_PATH=str(directory) + ':' + os.environ.get('LD_LIBRARY_PATH', ''))
+    for name in ('normal', 'sanitize'):
+        subprocess.run(['python3', '-c',
+                        'import ctypes,sys; result=ctypes.CDLL(sys.argv[1]).main(); assert result==0,result',
+                        str(build / (name + '.so'))], env=env, check=True)
+        print('AAudio partial writes, backpressure, pause/resume, origins, and cleanup:', variant, name)
+subprocess.run([compiler, '-stdlib', str(ROOT / 'internal/stdlib'), '-target', 'arm64-android',
+                '-shared', '-export', 'main', '-o', str(build / 'arm64-transport.so'),
+                'tests/android/video/audio_path_test.fern'], check=True)
+print('ARM64 transport shared compilation passed; no ARM execution claim')
