@@ -86,12 +86,30 @@ function optional_skip(input: [u8], at: i64, count: i64): Result[i64, frame.Vide
   return if (present == 0u32) { Ok(next) } else { skip(input, next, count) };
 }
 
-function point(input: [u8], at: i64, width: i32, display: boolean): Result[i64, frame.VideoError] {
+function level_matches(level: u32, expected: Option[(i32, i32)]): boolean {
+  return match (expected) {
+    Some((wanted, tier)) => level as i32 == wanted && (level > 7u32 || tier == 0),
+    None => true,
+  };
+}
+
+function tier(input: [u8], at: i64, expected: Option[(i32, i32)]): Result[i64, frame.VideoError] {
+  let Some((_, wanted)) = expected else {
+    return skip(input, at, 1i64);
+  };
+  let (next, value) = read(input, at, 1)?;
+  return if (value as i32 == wanted) { Ok(next) } else { Err(frame.Header) };
+}
+
+function point(input: [u8], at: i64, width: i32, display: boolean, expected: Option[(i32, i32)]): Result[i64, frame.VideoError] {
   at = skip(input, at, 12i64)?;
   let (next0, level) = read(input, at, 5)?;
   at = next0;
+  if (!level_matches(level, expected)) {
+    return Err(frame.Header);
+  }
   if (level > 7u32) {
-    at = skip(input, at, 1i64)?;
+    at = tier(input, at, expected)?;
   }
   if (width != 0) {
     at = optional_skip(input, at, (2 * width + 1) as i64)?;
@@ -102,21 +120,32 @@ function point(input: [u8], at: i64, width: i32, display: boolean): Result[i64, 
   return Ok(at);
 }
 
-function operating(input: [u8], at: i64, reduced: boolean): Result[(i64, i32), frame.VideoError] {
-  if (reduced) {
+function reduced_point(input: [u8], at: i64, expected: Option[(i32, i32)]): Result[(i64, i32), frame.VideoError] {
+  let Some((wanted, tier)) = expected else {
     return Ok((skip(input, at, 5i64)?, 1));
+  };
+  let (next, level) = read(input, at, 5)?;
+  if (level as i32 != wanted || tier != 0) {
+    return Err(frame.Header);
+  }
+  return Ok((next, 1));
+}
+
+function operating(input: [u8], at: i64, reduced: boolean, expected: Option[(i32, i32)]): Result[(i64, i32), frame.VideoError] {
+  if (reduced) {
+    return reduced_point(input, at, expected);
   }
   let (next0, width) = model(input, at)?;
   let (next1, display) = read(input, next0, 1)?;
   let (next2, count) = read(input, next1, 5)?;
   at = next2;
-  for _ in 0..count as i32 + 1 {
-    at = point(input, at, width, display != 0u32)?;
+  for index in 0..count as i32 + 1 {
+    at = point(input, at, width, display != 0u32, if (index == 0) { expected } else { None })?;
   }
   return Ok((at, count as i32 + 1));
 }
 
-function prefix(input: [u8]): Result[Prefix, frame.VideoError] {
+function prefix(input: [u8], expected: Option[(i32, i32)]): Result[Prefix, frame.VideoError] {
   let (next0, profile) = read(input, 0i64, 3)?;
   if (profile > 2u32) {
     return Err(frame.Unsupported);
@@ -126,7 +155,7 @@ function prefix(input: [u8]): Result[Prefix, frame.VideoError] {
   if (reduced != 0u32 && still == 0u32) {
     return Err(frame.Header);
   }
-  let (at, points) = operating(input, next2, reduced != 0u32)?;
+  let (at, points) = operating(input, next2, reduced != 0u32, expected)?;
   return Ok(Prefix { at: at, profile: profile as i32, still: still != 0u32, reduced: reduced != 0u32, points: points });
 }
 
@@ -308,8 +337,8 @@ function trailing(input: [u8], at: i64): Result[void, frame.VideoError] {
   return Ok(());
 }
 
-function payload(input: [u8], limits: frame.Limits): Result[Header, frame.VideoError] {
-  let p = prefix(input)?;
+function payload(input: [u8], limits: frame.Limits, expected: Option[(i32, i32)]): Result[Header, frame.VideoError] {
+  let p = prefix(input, expected)?;
   let (at, maximum) = dimensions(input, p.at)?;
   let _ = frame.pixel_count(maximum, limits)?;
   let t = tools(input, at, p.reduced)?;
@@ -319,7 +348,7 @@ function payload(input: [u8], limits: frame.Limits): Result[Header, frame.VideoE
   return Ok(Header { profile: p.profile, maximum: maximum, bit_depth: c.depth, monochrome: c.mono, subsampling_x: c.x, subsampling_y: c.y, chroma_sample_position: c.position, color_primaries: c.primaries, transfer_characteristics: c.transfer, matrix_coefficients: c.matrix, full_range: c.full, still_picture: p.still, reduced_still_picture: p.reduced, operating_points: p.points, frame_id_bits: t.frame_ids, order_hint_bits: t.order, use_128x128_superblock: t.large, enable_superres: t.superres, enable_cdef: t.cdef, enable_restoration: t.restoration, film_grain: grain != 0u32 });
 }
 
-pub function inspect(input: [u8], limits: frame.Limits): Result[Header, frame.VideoError] {
+function inspect_impl(input: [u8], limits: frame.Limits, expected: Option[(i32, i32)]): Result[Header, frame.VideoError] {
   let Some(unit) = av1.next_obu(input, 0, limits)? else {
     return Err(frame.Truncated);
   };
@@ -332,6 +361,14 @@ pub function inspect(input: [u8], limits: frame.Limits): Result[Header, frame.Vi
   if (unit.size > MAX_SEQUENCE_BYTES) {
     return Err(frame.Limit);
   }
-  return payload(input[unit.offset:unit.next_offset], limits);
+  return payload(input[unit.offset:unit.next_offset], limits, expected);
+}
+
+pub function inspect(input: [u8], limits: frame.Limits): Result[Header, frame.VideoError] {
+  return inspect_impl(input, limits, None);
+}
+
+pub(package) function inspect_record(input: [u8], limits: frame.Limits, level: i32, tier: i32): Result[Header, frame.VideoError] {
+  return inspect_impl(input, limits, Some((level, tier)));
 }
 ```

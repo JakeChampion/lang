@@ -368,15 +368,15 @@ func TestSelfHostFeatureCensus(t *testing.T) {
 		"Nested named functions are visitors in astwalk, checker, parser, lift, wasm_ir, cover, treeshake and interp. A visitor that moves onto the shared folds lowers this row. A new visitor raises it.")
 	pinned(t, c, "try op", 0,
 		"The self-host propagates errors by hand, so `?` has NO fixpoint coverage. A rise here is good news and means this row and the doc's have to move.")
-	pinned(t, c, "Map type spellings", 10,
-		"The builtin Map is an association list, so each lookup is a linear scan. The compiler uses util.NameIndex for name lookups on hot paths. A new Map spelling needs a reason in the commit message, because a Map on a hot path makes that path quadratic.")
+	pinned(t, c, "Map type spellings", 14,
+		"Each Map is the hash table of core/map. The compiler uses util.NameIndex for name lookups on hot paths. A new Map spelling needs a reason in the commit message, and moves this row and the row in docs/SELFHOST-LANGUAGE-FRICTION.md.")
 
 	atLeast(t, c, "for..in loops", 8651,
 		"A floor on `for x in xs` loops. A conversion from a hand-written index loop raises the count: move the floor to the new measurement. A fold onto astwalk or a table index can remove loops: lower the floor and say which change it was in the commit message.")
 	atLeast(t, c, "astwalk call sites", 514,
 		"Hand-written AST walkers that move onto the shared fold spine raise this count. A fall means that a walker went back to its own traversal. Move the floor to the new measurement after each conversion.")
 
-	atMost(t, c, "wildcard match arms", 1619, 1616,
+	atMost(t, c, "wildcard match arms", 1631, 1628,
 		"A `_ =>` arm does not name its cases, so a new AST node can pass through it with no diagnostic. Some arms are necessary: a match over strings needs one (E030), and an arm that picks one shape out of a large sum is not safer when it names every variant. The ceiling is the measurement plus 3. Re-measure main when you move it, because a stale measurement gives the headroom to the next change.")
 	atMost(t, c, "increment by one", 2296, 2293,
 		"Each `x = x + 1` is usually a hand-written index loop that `for x in xs` can replace. The count is the size of that migration. The ceiling is the measurement plus 3.")

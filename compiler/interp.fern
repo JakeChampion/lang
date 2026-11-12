@@ -11,6 +11,7 @@ import "./aesref";
 import "./platforms";
 import "./typeinfo";
 import "./interpheap";
+import "core/map";
 import "std/utf8";
 import "std/f64";
 import "std/rand";
@@ -37,13 +38,16 @@ pub struct VFloat32 { v: f64 }
 // keeps its own length and reads its parent's store from `offset`.
 pub struct VArr { items: Value[], elem: string, view: boolean, store: interpheap.Root, offset: i32 }
 
-pub struct VTuple { elements: Value[] }
+// A tuple, a map or a record that the program builds has a key that no other
+// value has. A shared value is then stored and copied one time. The key is
+// zero for a value that a builtin builds.
+pub struct VTuple { elements: Value[], key: i64 }
 
 pub struct VFunc { params: ast.ParamDecl[], ret_type: string, body: ast.Stmt[], captured_names: string[], captured_values: Value[], captured_types: string[], generic_name: string }
 
-pub struct VMap { keys: Value[], values: Value[] }
+pub struct VMap { keys: Value[], values: Value[], key: i64 }
 
-pub struct VStruct { type_name: string, field_names: string[], field_values: Value[], owner: string, targs: string[] }
+pub struct VStruct { type_name: string, field_names: string[], field_values: Value[], owner: string, targs: string[], key: i64 }
 
 pub struct VErr { msg: string, abort: boolean }
 
@@ -680,55 +684,132 @@ function i32s_as_i64s(b: i32[]): i64[] {
 }
 
 function v_tuple(elements: Value[]): Value {
-  return VTuple { elements: elements };
+  return VTuple { elements: elements, key: 0i64 };
+}
+
+function v_tuple_in(heap: interpheap.Heap, elements: Value[]): Value {
+  return VTuple { elements: elements, key: interpheap.serial(heap) };
+}
+
+// The copies of one send. An array has the key of its store slot, below zero.
+struct SendCopies { at: Map[i64, i32], values: Value[] }
+
+struct Sent { value: Value, copies: SendCopies }
+
+struct SentParts { values: Value[], copies: SendCopies }
+
+function array_key(a: VArr): i64 {
+  return -1i64 - interpheap.reference(a.store).slot as i64;
+}
+
+function send_copied(c: SendCopies, key: i64): Option[Value] {
+  if (key == 0i64) {
+    return None;
+  }
+  let i = c.at.get_or(key, -1);
+  if (i < 0) {
+    return None;
+  }
+  return Some(c.values[i]);
+}
+
+function send_keep(own c: SendCopies, key: i64, v: Value): Sent {
+  if (key == 0i64) {
+    return Sent { value: v, copies: c };
+  }
+  let at = c.values.len();
+  return Sent { value: v, copies: SendCopies { at: c.at.insert(key, at), values: c.values.append(v) } };
 }
 
 // A builtin can fill an array through its shared store. A send copy needs
 // separate stores, including the arrays inside a record or enum payload.
-function send_copy_value(v: Value): Value {
+// A value that two parts hold has one copy.
+function send_copy_value(heap: interpheap.Heap, v: Value): Value {
+  return send_copy_part(heap, v, SendCopies { at: map_new(0), values: [] }).value;
+}
+
+function send_copy_array(heap: interpheap.Heap, a: VArr, own c: SendCopies): Sent {
+  if (a.view) {
+    let els = send_copy_parts(heap, arr_els(a), c);
+    return Sent { value: v_arr_of(heap, els.values, a.elem), copies: els.copies };
+  }
+  let key = array_key(a);
+  if let Some(done) = send_copied(c, key) {
+    if let VArr(d) = done {
+      if (d.elem != a.elem) {
+        return Sent { value: VArr { ...d, elem: a.elem }, copies: c };
+      }
+    }
+    return Sent { value: done, copies: c };
+  }
+  let els = send_copy_parts(heap, arr_els(a), c);
+  return send_keep(els.copies, key, v_arr_of(heap, els.values, a.elem));
+}
+
+function send_copy_part(heap: interpheap.Heap, v: Value, own c: SendCopies): Sent {
   match (v) {
     VArr(a) => {
-      return v_arr_of(a.store.heap, send_copy_values(arr_els(a)), a.elem);
+      return send_copy_array(heap, a, c);
     },
     VTuple(t) => {
-      return VTuple { elements: send_copy_values(t.elements) };
+      if let Some(done) = send_copied(c, t.key) {
+        return Sent { value: done, copies: c };
+      }
+      let els = send_copy_parts(heap, t.elements, c);
+      return send_keep(els.copies, t.key, v_tuple_in(heap, els.values));
     },
     VStruct(s) => {
-      return VStruct { ...s, field_values: send_copy_values(s.field_values) };
+      if let Some(done) = send_copied(c, s.key) {
+        return Sent { value: done, copies: c };
+      }
+      let fields = send_copy_parts(heap, s.field_values, c);
+      return send_keep(fields.copies, s.key, VStruct { ...s, field_values: fields.values, key: interpheap.serial(heap) });
     },
     VMap(m) => {
-      return VMap { keys: send_copy_values(m.keys), values: send_copy_values(m.values) };
+      if let Some(done) = send_copied(c, m.key) {
+        return Sent { value: done, copies: c };
+      }
+      let keys = send_copy_parts(heap, m.keys, c);
+      let values = send_copy_parts(heap, m.values, keys.copies);
+      return send_keep(values.copies, m.key, v_map_in(heap, keys.values, values.values));
     },
     _ => {
-      return v;
+      return Sent { value: v, copies: c };
     }
   }
 }
 
-function send_copy_values(values: Value[]): Value[] {
+function send_copy_parts(heap: interpheap.Heap, values: Value[], own c: SendCopies): SentParts {
   let out: Value[] = [];
+  let copies = c;
   for value in values {
-    out = out.append(send_copy_value(value));
+    let sent = send_copy_part(heap, value, copies);
+    out = out.append(sent.value);
+    copies = sent.copies;
   }
-  return out;
+  return SentParts { values: out, copies: copies };
 }
 
 function v_map(keys: Value[], values: Value[]): Value {
-  return VMap { keys: keys, values: values };
+  return VMap { keys: keys, values: values, key: 0i64 };
+}
+
+function v_map_in(heap: interpheap.Heap, keys: Value[], values: Value[]): Value {
+  return VMap { keys: keys, values: values, key: interpheap.serial(heap) };
 }
 
 function v_map_new(): Value {
   let ks: Value[] = [];
   let vs: Value[] = [];
-  return VMap { keys: ks, values: vs };
+  return v_map(ks, vs);
 }
 
 function v_struct(type_name: string, names: string[], values: Value[]): Value {
-  return VStruct { type_name: type_name, field_names: names, field_values: values, owner: "", targs: [] };
+  return VStruct { type_name: type_name, field_names: names, field_values: values, owner: "", targs: [], key: 0i64 };
 }
 
-function v_struct_at(type_name: string, names: string[], values: Value[], targs: string[]): Value {
-  return VStruct { type_name: type_name, field_names: names, field_values: values, owner: "", targs: targs };
+function v_struct_at(heap: interpheap.Heap, type_name: string, names: string[], values: Value[], targs: string[]): Value {
+  return VStruct { type_name: type_name, field_names: names, field_values: values, owner: "", targs: targs, key: interpheap.serial(heap) };
 }
 
 pub function v_err(msg: string): Value {
@@ -872,6 +953,14 @@ function v_variant(name: string, args: Value[]): Value {
 }
 
 function v_variant_of(owner: string, name: string, args: Value[]): Value {
+  return v_variant_keyed(owner, name, args, 0i64);
+}
+
+function v_variant_in(heap: interpheap.Heap, owner: string, name: string, args: Value[]): Value {
+  return v_variant_keyed(owner, name, args, interpheap.serial(heap));
+}
+
+function v_variant_keyed(owner: string, name: string, args: Value[], key: i64): Value {
   let vnames: string[] = [];
   for vi in 0..args.len() {
     if (vi == 0) {
@@ -880,7 +969,7 @@ function v_variant_of(owner: string, name: string, args: Value[]): Value {
       vnames = vnames.append("__ev" + util.i32_to_string(vi));
     }
   }
-  return VStruct { type_name: name, field_names: vnames, field_values: args, owner: owner, targs: [] };
+  return VStruct { type_name: name, field_names: vnames, field_values: args, owner: owner, targs: [], key: key };
 }
 
 function variant_owner(name: string, decls: parser.StructDecl[]): string {
@@ -1425,10 +1514,10 @@ function cell_scalar_text(h: usize, v: Value): boolean {
   return true;
 }
 
-function cell_parts_text(h: usize, vs: Value[], own edges: interpheap.Root[], heap: interpheap.Heap, captures: boolean): (boolean, interpheap.Root[]) {
+function cell_parts_text(h: usize, vs: Value[], own edges: interpheap.Root[], heap: interpheap.Heap, captures: boolean, seen: Cell[Map[i64, i32]]): (boolean, interpheap.Root[]) {
   cell_hex_text(h, vs.len() as i64);
   for v in vs {
-    let (ok, next) = cell_any_text(h, v, edges, heap, captures);
+    let (ok, next) = cell_any_text(h, v, edges, heap, captures, seen);
     edges = unsafe { share_unchecked(next) };
     if (!ok) {
       return (false, edges);
@@ -1437,7 +1526,53 @@ function cell_parts_text(h: usize, vs: Value[], own edges: interpheap.Root[], he
   return (true, edges);
 }
 
-function cell_any_text(h: usize, v: Value, own edges: interpheap.Root[], heap: interpheap.Heap, captures: boolean): (boolean, interpheap.Root[]) {
+// The key of a value that the text holds one time, or zero.
+function shared_key(v: Value): i64 {
+  if let VArr(a) = v {
+    if (a.view) {
+      return 0i64;
+    }
+    return array_key(a);
+  }
+  if let VTuple(t) = v {
+    return t.key;
+  }
+  if let VMap(m) = v {
+    return m.key;
+  }
+  if let VStruct(st) = v {
+    return st.key;
+  }
+  return 0i64;
+}
+
+// A value with a key has the tag `K` at its first copy. A later copy is a
+// reference to the count of the keyed values that came before the first one.
+function cell_any_text(h: usize, v: Value, own edges: interpheap.Root[], heap: interpheap.Heap, captures: boolean, seen: Cell[Map[i64, i32]]): (boolean, interpheap.Root[]) {
+  let key = shared_key(v);
+  if (key == 0i64) {
+    return cell_tree_text(h, v, edges, heap, captures, seen);
+  }
+  let at = seen.get().get_or(key, -1);
+  if (at >= 0) {
+    if let VArr(a) = v {
+      cell_bits_text(h, 114, at as i64);
+      cell_name_text(h, a.elem);
+      return (true, edges);
+    }
+    cell_bits_text(h, 82, at as i64);
+    return (true, edges);
+  }
+  buf_push_byte(h, 75);
+  let (ok, next) = cell_tree_text(h, v, edges, heap, captures, seen);
+  let known = seen.get();
+  seen.set(map_new(0));
+  let n = known.len();
+  seen.set(known.insert(key, n));
+  return (ok, next);
+}
+
+function cell_tree_text(h: usize, v: Value, own edges: interpheap.Root[], heap: interpheap.Heap, captures: boolean, seen: Cell[Map[i64, i32]]): (boolean, interpheap.Root[]) {
   if let VHandle(value) = v {
     let handle = interpheap.NativeHandle { reader: value.r, writer: value.w, directory: value.d };
     let root = interpheap.allocate_handle(heap, handle);
@@ -1481,19 +1616,19 @@ function cell_any_text(h: usize, v: Value, own edges: interpheap.Root[], heap: i
       cell_name_text(h, a.elem);
       let store = a.store;
       edges = unsafe { share_unchecked(edges.append(store)) };
-      return cell_parts_text(h, a.items, edges, heap, captures);
+      return cell_parts_text(h, a.items, edges, heap, captures, seen);
     },
     VTuple(t) => {
       buf_push_byte(h, 116);
-      return cell_parts_text(h, t.elements, edges, heap, captures);
+      return cell_parts_text(h, t.elements, edges, heap, captures, seen);
     },
     VMap(m) => {
       buf_push_byte(h, 109);
-      let (ok, next) = cell_parts_text(h, m.keys, edges, heap, captures);
+      let (ok, next) = cell_parts_text(h, m.keys, edges, heap, captures, seen);
       if (!ok) {
         return (false, next);
       }
-      return cell_parts_text(h, m.values, unsafe { share_unchecked(next) }, heap, captures);
+      return cell_parts_text(h, m.values, unsafe { share_unchecked(next) }, heap, captures, seen);
     },
     VStruct(st) => {
       buf_push_byte(h, 83);
@@ -1507,7 +1642,7 @@ function cell_any_text(h: usize, v: Value, own edges: interpheap.Root[], heap: i
       for name in st.field_names {
         cell_name_text(h, name);
       }
-      return cell_parts_text(h, st.field_values, edges, heap, captures);
+      return cell_parts_text(h, st.field_values, edges, heap, captures, seen);
     },
     _ => {
       return (cell_scalar_text(h, v), edges);
@@ -1529,13 +1664,13 @@ function encoded_binding(v: Value, heap: interpheap.Heap): EncodedValue {
 
 function encoded_captures(values: Value[], heap: interpheap.Heap): EncodedValue {
   let h = buf_new(64);
-  let (ok, edges) = cell_parts_text(h, values, [], heap, true);
+  let (ok, edges) = cell_parts_text(h, values, [], heap, true, cell_new(map_new(0)));
   return encoded_buffer(h, ok, edges);
 }
 
 function encoded_value_mode(v: Value, heap: interpheap.Heap, captures: boolean): EncodedValue {
   let h = buf_new(64);
-  let (ok, edges) = cell_any_text(h, v, [], heap, captures);
+  let (ok, edges) = cell_any_text(h, v, [], heap, captures, cell_new(map_new(0)));
   return encoded_buffer(h, ok, edges);
 }
 
@@ -1556,7 +1691,7 @@ function encoded_buffer(h: usize, ok: boolean, edges: interpheap.Root[]): Encode
 function managed_cell_value(root: interpheap.Root): Value {
   let payload = interpheap.get(root);
   let edges = interpheap.children(root);
-  return cell_any_value(payload.text, cell_new(0), edges);
+  return cell_any_value(payload.text, cell_new(0), edges, root.heap, []).value;
 }
 
 function cell_scalar_value(tag: i32, bits: i64): Value {
@@ -1608,18 +1743,94 @@ function cell_name_value(s: string, at: Cell[i32]): string {
   return slice_unchecked(s, i, i + n).to_owned();
 }
 
-function cell_parts_value(s: string, at: Cell[i32], edges: interpheap.Root[]): Value[] {
+// `seen` holds each keyed value that the text gave, in the sequence of the text.
+struct Got { value: Value, seen: Value[] }
+
+struct GotParts { values: Value[], seen: Value[] }
+
+function cell_parts_value(s: string, at: Cell[i32], edges: interpheap.Root[], heap: interpheap.Heap, own seen: Value[]): GotParts {
   let n = cell_hex_value(s, at) as i32;
   let out: Value[] = [];
+  let known = seen;
   for k in 0..n {
-    out = out.append(cell_any_value(s, at, edges));
+    let got = cell_any_value(s, at, edges, heap, known);
+    out = out.append(got.value);
+    known = got.seen;
   }
-  return out;
+  return GotParts { values: out, seen: known };
 }
 
-function cell_any_value(s: string, at: Cell[i32], edges: interpheap.Root[]): Value {
+function cell_any_value(s: string, at: Cell[i32], edges: interpheap.Root[], heap: interpheap.Heap, own seen: Value[]): Got {
   let tag = s[at.get()] as i32;
   at.set(at.get() + 1);
+  if (tag == 82) {
+    return Got { value: seen[cell_hex_value(s, at) as i32], seen: seen };
+  }
+  if (tag == 114) {
+    let first = seen[cell_hex_value(s, at) as i32];
+    let elem = cell_name_value(s, at);
+    if let VArr(a) = first {
+      if (a.elem != elem) {
+        return Got { value: VArr { ...a, elem: elem }, seen: seen };
+      }
+    }
+    return Got { value: first, seen: seen };
+  }
+  if (tag == 75) {
+    let got = cell_compound_value(s, at, edges, heap, seen, true);
+    return Got { value: got.value, seen: got.seen.append(got.value) };
+  }
+  at.set(at.get() - 1);
+  return cell_compound_value(s, at, edges, heap, seen, false);
+}
+
+function cell_key(heap: interpheap.Heap, keyed: boolean): i64 {
+  if (keyed) {
+    return interpheap.serial(heap);
+  }
+  return 0i64;
+}
+
+function cell_compound_value(s: string, at: Cell[i32], edges: interpheap.Root[], heap: interpheap.Heap, own seen: Value[], keyed: boolean): Got {
+  let tag = s[at.get()] as i32;
+  at.set(at.get() + 1);
+  if (tag == 97) {
+    let edge = cell_hex_value(s, at) as i32;
+    let offset = cell_hex_value(s, at) as i32;
+    let view = cell_hex_value(s, at) != 0i64;
+    let elem = cell_name_value(s, at);
+    let items = cell_parts_value(s, at, edges, heap, seen);
+    return Got { value: VArr { items: items.values, elem: elem, view: view, store: edges[edge], offset: offset }, seen: items.seen };
+  }
+  if (tag == 116) {
+    let els = cell_parts_value(s, at, edges, heap, seen);
+    return Got { value: VTuple { elements: els.values, key: cell_key(heap, keyed) }, seen: els.seen };
+  }
+  if (tag == 109) {
+    let keys = cell_parts_value(s, at, edges, heap, seen);
+    let values = cell_parts_value(s, at, edges, heap, keys.seen);
+    return Got { value: VMap { keys: keys.values, values: values.values, key: cell_key(heap, keyed) }, seen: values.seen };
+  }
+  if (tag == 83) {
+    let type_name = cell_name_value(s, at);
+    let owner = cell_name_value(s, at);
+    let nt = cell_hex_value(s, at) as i32;
+    let targs: string[] = [];
+    while (targs.len() < nt) {
+      targs = targs.append(cell_name_value(s, at));
+    }
+    let n = cell_hex_value(s, at) as i32;
+    let names: string[] = [];
+    while (names.len() < n) {
+      names = names.append(cell_name_value(s, at));
+    }
+    let fields = cell_parts_value(s, at, edges, heap, seen);
+    return Got { value: VStruct { type_name: type_name, field_names: names, field_values: fields.values, owner: owner, targs: targs, key: cell_key(heap, keyed) }, seen: fields.seen };
+  }
+  return Got { value: cell_leaf_value(s, at, edges, heap, tag), seen: seen };
+}
+
+function cell_leaf_value(s: string, at: Cell[i32], edges: interpheap.Root[], heap: interpheap.Heap, tag: i32): Value {
   if (tag == 115) {
     return v_string(cell_name_value(s, at));
   }
@@ -1641,38 +1852,10 @@ function cell_any_value(s: string, at: Cell[i32], edges: interpheap.Root[]): Val
     let root = edges[cell_hex_value(s, at) as i32];
     let payload = interpheap.get(root);
     if let Some(code) = payload.closure {
-      return VFunc { params: code.params, ret_type: code.ret_type, body: code.body, captured_names: code.captured_names, captured_values: cell_parts_value(payload.text, cell_new(0), interpheap.children(root)), captured_types: code.captured_types, generic_name: code.generic_name };
+      let captured = cell_parts_value(payload.text, cell_new(0), interpheap.children(root), heap, []);
+      return VFunc { params: code.params, ret_type: code.ret_type, body: code.body, captured_names: code.captured_names, captured_values: captured.values, captured_types: code.captured_types, generic_name: code.generic_name };
     }
     return v_err("function binding has no code");
-  }
-  if (tag == 97) {
-    let edge = cell_hex_value(s, at) as i32;
-    let offset = cell_hex_value(s, at) as i32;
-    let view = cell_hex_value(s, at) != 0i64;
-    let elem = cell_name_value(s, at);
-    return VArr { items: cell_parts_value(s, at, edges), elem: elem, view: view, store: edges[edge], offset: offset };
-  }
-  if (tag == 116) {
-    return v_tuple(cell_parts_value(s, at, edges));
-  }
-  if (tag == 109) {
-    let keys = cell_parts_value(s, at, edges);
-    return v_map(keys, cell_parts_value(s, at, edges));
-  }
-  if (tag == 83) {
-    let type_name = cell_name_value(s, at);
-    let owner = cell_name_value(s, at);
-    let nt = cell_hex_value(s, at) as i32;
-    let targs: string[] = [];
-    while (targs.len() < nt) {
-      targs = targs.append(cell_name_value(s, at));
-    }
-    let n = cell_hex_value(s, at) as i32;
-    let names: string[] = [];
-    while (names.len() < n) {
-      names = names.append(cell_name_value(s, at));
-    }
-    return VStruct { type_name: type_name, field_names: names, field_values: cell_parts_value(s, at, edges), owner: owner, targs: targs };
   }
   return cell_scalar_value(tag, cell_hex_value(s, at));
 }
@@ -2640,7 +2823,7 @@ function is_worker_contract(name: string): boolean {
 
 function worker_contract(heap: interpheap.Heap, name: string, args: Value[]): Value {
   if (name == "__send_copy") {
-    return send_copy_value(arg_at(args, 0));
+    return send_copy_value(heap, arg_at(args, 0));
   }
   if (name == "__send_root") {
     let encoded = encoded_value(arg_at(args, 0), heap);
@@ -4710,7 +4893,7 @@ function eval_binary_expr(b: ast.ExprBinary, env: Env): Value {
   if (is_err(rv)) {
     return rv;
   }
-  if (parser.is_unsettled_int_literal(b.left)) {
+  if (ast.is_unsettled_int_literal(b.left)) {
     lv = eval_expr(float_operand(b.left, b.right, rv), env);
   }
   let overload = struct_op_method(b.op, lv);
@@ -4761,7 +4944,7 @@ function orders_by_cmp(v: Value): boolean {
 // the checker settles it. Beside a float literal it keeps its integer type,
 // and the mixed operation is the error the checker reports.
 function float_operand(e: ast.Expr, other: ast.Expr, value: Value): ast.Expr {
-  if (!parser.is_unsettled_int_literal(e) || parser.float_literal_tree(other)) {
+  if (!ast.is_unsettled_int_literal(e) || ast.float_literal_tree(other)) {
     return e;
   }
   if let VFloat(_) = value {
@@ -4846,7 +5029,7 @@ function eval_expr(e: ast.Expr, env: Env): Value {
         elems = elems.append(ev);
         i += 1;
       }
-      return v_tuple(elems);
+      return v_tuple_in(env.heap, elems);
     },
     ast.ExprArray(a) => {
       let elems: Value[] = [];
@@ -5033,7 +5216,7 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
     arg_vals = arg_vals.append(av);
   }
   if (is_variant) {
-    return v_variant_of(variant_enum, variant_name, arg_vals);
+    return v_variant_in(env.heap, variant_enum, variant_name, arg_vals);
   }
   if (is_method) {
     return call_method_targs(env.heap, recv, recv_static, name, arg_vals, targs, env.funcs, env.aliases, env.type_decls);
@@ -5338,7 +5521,7 @@ function eval_expr_struct_lit(sl: ast.ExprStructLit, env: Env): Value {
             bvals = bvals.append(ov2);
           }
         }
-        return v_struct_at(sl.type_name, bnames, bvals, struct_targs(sl.type_name, env));
+        return v_struct_at(env.heap, sl.type_name, bnames, bvals, struct_targs(sl.type_name, env));
       },
       _ => {
         return v_err("struct update base is not a struct");
@@ -5353,7 +5536,7 @@ function eval_expr_struct_lit(sl: ast.ExprStructLit, env: Env): Value {
     }
     fvs = fvs.append(fv);
   }
-  return v_struct_at(sl.type_name, sl.field_names, fvs, struct_targs(sl.type_name, env));
+  return v_struct_at(env.heap, sl.type_name, sl.field_names, fvs, struct_targs(sl.type_name, env));
 }
 
 // A field value settles to the declared type of the field, as a let settles
@@ -6138,9 +6321,9 @@ function call_method_targs(heap: interpheap.Heap, recv: Value, recv_static: stri
               nvs = nvs.append(m.values[j]);
             }
           }
-          return VMap { keys: m.keys, values: nvs };
+          return v_map_in(heap, m.keys, nvs);
         }
-        return VMap { keys: m.keys.append(args[0]), values: m.values.append(args[1]) };
+        return v_map_in(heap, m.keys.append(args[0]), m.values.append(args[1]));
       }
       if (name == "get") {
         if (args.len() != 1) {
@@ -6186,7 +6369,7 @@ function call_method_targs(heap: interpheap.Heap, recv: Value, recv_static: stri
             nv = nv.append(m.values[di]);
           }
         }
-        return v_map(nk, nv);
+        return v_map_in(heap, nk, nv);
       }
       if (name == "len") {
         return v_int(m.keys.len());

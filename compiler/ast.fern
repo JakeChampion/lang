@@ -1,4 +1,5 @@
 import "./typeinfo";
+import "std/string";
 
 // bits is the f64 bit pattern of a float literal, parsed once from text, and 0
 // for an integer literal.
@@ -11,9 +12,11 @@ pub struct ExprString { value: string, line: i32, col: i32 }
 
 pub struct ExprBool { value: boolean, line: i32, col: i32 }
 
-pub struct ExprBinary { op: string, left: Expr, right: Expr, line: i32, col: i32, ty: string }
+// lit is the literal class of the node. `binary` and `unary` calculate it, so
+// each node comes from one of them.
+pub struct ExprBinary { op: string, left: Expr, right: Expr, line: i32, col: i32, ty: string, lit: i32 }
 
-pub struct ExprUnary { op: string, operand: Expr, line: i32, col: i32, ty: string }
+pub struct ExprUnary { op: string, operand: Expr, line: i32, col: i32, ty: string, lit: i32 }
 
 pub struct ExprCall { callee: Expr, args: Expr[], line: i32, col: i32, type_args: string[], ty: string }
 
@@ -48,6 +51,174 @@ pub type Expr = ExprNumber | ExprIdent | ExprString | ExprBool | ExprBinary | Ex
   | ExprMapLit | ExprFString | ExprUnknown | ExprZero | ExprBytes;
 
 pub const ORIGIN_NESTED_FN: string = "nested_fn";
+
+// A literal class is a set of these bits. Each bit is a shape of literal tree.
+
+// Integers with no suffix below the integer operators.
+const LIT_INT: i32 = 1;
+
+// Integers with no suffix that fit i32, below `-`, `+`, `*` and `/`.
+const LIT_I32: i32 = 2;
+
+// Integers with no suffix below `-`, `+`, `*` and `/`.
+const LIT_ARITH: i32 = 4;
+
+// Floats with no suffix below `-`, `+`, `*` and `/`.
+const LIT_FLOAT: i32 = 8;
+
+// Integers with any suffix below a negation, a cast, `+`, `-` and `*`.
+const LIT_OPERAND: i32 = 16;
+
+pub function binary(op: string, left: Expr, right: Expr, line: i32, col: i32, ty: string): ExprBinary {
+  return ExprBinary { op: op, left: left, right: right, line: line, col: col, ty: ty, lit: binary_class(op, lit_class(left) & lit_class(right)) };
+}
+
+pub function unary(op: string, operand: Expr, line: i32, col: i32, ty: string): ExprUnary {
+  return ExprUnary { op: op, operand: operand, line: line, col: col, ty: ty, lit: unary_class(op, operand) };
+}
+
+function lit_class(e: Expr): i32 {
+  match (e) {
+    ExprNumber(n) => {
+      return number_class(n);
+    },
+    ExprUnary(u) => {
+      return u.lit;
+    },
+    ExprBinary(b) => {
+      return b.lit;
+    },
+    _ => {
+      return 0;
+    }
+  }
+}
+
+function number_class(n: ExprNumber): i32 {
+  if (n.is_float) {
+    if (n.suffix.len() == 0) {
+      return LIT_FLOAT;
+    }
+    return 0;
+  }
+  if (n.suffix.len() > 0 || is_unit_literal(n)) {
+    return LIT_OPERAND;
+  }
+  if (literal_is_i64(n.text)) {
+    return LIT_OPERAND | LIT_INT | LIT_ARITH;
+  }
+  return LIT_OPERAND | LIT_INT | LIT_ARITH | LIT_I32;
+}
+
+function unary_class(op: string, operand: Expr): i32 {
+  let inner = lit_class(operand);
+  if (op == "-") {
+    if let ExprNumber(n) = operand {
+      if (!n.is_float && n.suffix.len() == 0 && n.text == "2147483648") {
+        inner = inner | LIT_I32;
+      }
+    }
+    return inner;
+  }
+  if (op == "+") {
+    return inner & (LIT_INT | LIT_ARITH | LIT_FLOAT);
+  }
+  if (op.starts_with("as_")) {
+    return inner & LIT_OPERAND;
+  }
+  return 0;
+}
+
+// both holds the bits that the two operands share.
+function binary_class(op: string, both: i32): i32 {
+  if (both == 0) {
+    return 0;
+  }
+  if (op == "+" || op == "-" || op == "*") {
+    return both;
+  }
+  if (op == "/") {
+    return both & (LIT_INT | LIT_I32 | LIT_ARITH | LIT_FLOAT);
+  }
+  if (int_literal_op(op)) {
+    return both & LIT_INT;
+  }
+  return 0;
+}
+
+pub function int_literal_op(op: string): boolean {
+  return op == "+" || op == "-" || op == "*" || op == "/" || op == "%"
+    || op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>"
+    || op == "+|" || op == "-|" || op == "*|" || op == "<<|";
+}
+
+pub function int_literal_tree(e: Expr): boolean {
+  return (lit_class(e) & LIT_INT) != 0;
+}
+
+pub function i32_literal_tree(e: Expr): boolean {
+  return (lit_class(e) & LIT_I32) != 0;
+}
+
+pub function is_unsettled_int_literal(e: Expr): boolean {
+  return (lit_class(e) & LIT_ARITH) != 0;
+}
+
+pub function float_literal_tree(e: Expr): boolean {
+  return (lit_class(e) & LIT_FLOAT) != 0;
+}
+
+pub function literal_operand(e: Expr): boolean {
+  return (lit_class(e) & LIT_OPERAND) != 0;
+}
+
+pub function is_unit_literal(n: ExprNumber): boolean {
+  return n.raw == "()";
+}
+
+pub function is_hex_lit(text: string): boolean {
+  return text.len() > 2 && text[0] as i32 == 48
+    && (text[1] as i32 == 120 || text[1] as i32 == 88);
+}
+
+function lower_hex_byte(b: i32): i32 {
+  if (b >= 65 && b <= 70) {
+    return b + 32;
+  }
+  return b;
+}
+
+pub function magnitude_fits(text: string, start: i32, max: string): boolean {
+  let i = start;
+  while (i < text.len() && text[i] as i32 == 48) {
+    i += 1;
+  }
+  let n = text.len() - i;
+  if (n != max.len()) {
+    return n < max.len();
+  }
+  for k in 0..n {
+    let tc = lower_hex_byte(text[i + k] as i32);
+    let mc = max[k] as i32;
+    if (tc != mc) {
+      return tc < mc;
+    }
+  }
+  return true;
+}
+
+pub function literal_is_i64(text: string): boolean {
+  let hex = is_hex_lit(text);
+  let start = 0;
+  if (hex) {
+    start = 2;
+  }
+  let m = "2147483647";
+  if (hex) {
+    m = "7fffffff";
+  }
+  return !magnitude_fits(text, start, m);
+}
 
 pub function var_binds_itself(v: StmtVar): boolean {
   if let ExprLambda(lm) = v.init {

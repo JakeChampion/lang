@@ -1,4 +1,5 @@
 import "std/test";
+import "std/http/testing";
 import "std/http";
 import "std/stream";
 import "std/string";
@@ -11,7 +12,7 @@ function test_text_body(): test.TestOutcome {
   if (!http.serialize_response(resp).ends_with("\r\n\r\nhello")) {
     return test.fail("wire: " + http.serialize_response(resp));
   }
-  return test.assert_body(resp, "hello");
+  return testing.assert_body(resp, "hello");
 }
 
 function test_bytes_body(): test.TestOutcome {
@@ -23,7 +24,7 @@ function test_bytes_body(): test.TestOutcome {
   if (resp.body_bytes().len() != 2) {
     return test.fail("bytes: " + resp.body_bytes().len().to_string());
   }
-  return test.assert_body(resp, "hi");
+  return testing.assert_body(resp, "hi");
 }
 
 function test_stream_body_from_its_cursor(): test.TestOutcome {
@@ -33,7 +34,7 @@ function test_stream_body_from_its_cursor(): test.TestOutcome {
   if (resp.body_len() != 2) {
     return test.fail("len: " + resp.body_len().to_string());
   }
-  return test.assert_body(resp, "me");
+  return testing.assert_body(resp, "me");
 }
 
 function scratch(name: string): string {
@@ -70,7 +71,7 @@ function test_file_body_is_read_by_the_loop(): test.TestOutcome {
   if (whole.body_len() != 11) {
     return test.fail("len: " + whole.body_len().to_string());
   }
-  return test.assert_body(whole, "from a file");
+  return testing.assert_body(whole, "from a file");
 }
 
 function test_a_missing_file_is_a_404(): test.TestOutcome {
@@ -78,7 +79,7 @@ function test_a_missing_file_is_a_404(): test.TestOutcome {
   if (resp.status != 404) {
     return test.fail("status: " + resp.status.to_string());
   }
-  return test.assert_body(resp, "Not Found");
+  return testing.assert_body(resp, "Not Found");
 }
 
 function three_chunks(i: i32): Option[u8[]] {
@@ -96,12 +97,12 @@ function test_a_chunks_body_reads_as_its_chunks_joined(): test.TestOutcome {
   if (!http.serialize_response(resp).ends_with("\r\n\r\nc0c1c2")) {
     return test.fail("wire: " + http.serialize_response(resp));
   }
-  return test.assert_body(resp, "c0c1c2");
+  return testing.assert_body(resp, "c0c1c2");
 }
 
 function test_other_bodies_pass_through_materialize(): test.TestOutcome {
   let resp = http.materialize(http.ok("as is"));
-  return test.assert_body(resp, "as is");
+  return testing.assert_body(resp, "as is");
 }
 
 function main(): i32 {

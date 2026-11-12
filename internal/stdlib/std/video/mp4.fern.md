@@ -1,6 +1,6 @@
 # Native MP4 and QuickTime video packet index
 
-This module indexes self-contained AVC, HEVC, and QTRLE video tracks in a complete MP4 or MOV byte view.
+This module indexes self-contained AVC, HEVC, AV1, and QTRLE video tracks in a complete MP4 or MOV byte view.
 It reuses the bounded ISO box, sample-table, clock, and data-reference readers of the audio library.
 Packet ranges refer to media-data payloads in the caller's original view. The index does not copy packet payloads.
 
@@ -21,15 +21,25 @@ Their `depth` is 24 or 32. Their NAL configuration is empty, with `length_size` 
 AVC and HEVC descriptions retain their NAL configuration and report `depth` zero.
 That zero does not describe their component precision. The NAL configuration parser does not infer precision.
 
+`av01` descriptions require one `av1C` box. Its record header and configuration OBU framing pass native validation.
+An optional sequence header must come first. Its profile, first level and tier, precision, and chroma fields must match the record.
+When present, its maximum dimensions must equal the sample-entry dimensions.
+AV1 configuration uses `length_size` zero, the complete record in `csd0`, and empty `csd1`.
+
+The index does not convert AV1 packets to Annex B or validate their coded payload syntax.
+AV1 descriptions report `depth` zero. The record, rather than this legacy field, describes precision.
+
 QTRLE descriptions require version zero, one frame per sample, and the default color-table identifier.
 Palette depths, RGB555, and other sample-description versions return `Unsupported`.
 The caller must start QTRLE decode from a sync packet and preserve previous pixels for delta packets.
+
 Legacy files without `ftyp` are accepted only when every indexed video description is QTRLE.
-AVC and HEVC still require `ftyp`. A malformed or duplicate `ftyp` remains an error.
+AVC, HEVC, and AV1 still require `ftyp`. A malformed or duplicate `ftyp` remains an error.
 
 Limits bound input bytes, boxes, tracks, packets, descriptions, edits, dimensions, and each packet.
 The packet budget is cumulative across video tracks. The track budget includes non-video tracks.
 These limits bound retained entries, not exact process memory.
+
 Absent composition and sync tables do not require default arrays in the packet indexer.
 Their packet defaults remain zero composition offset and an all-sync track.
 An explicit empty sync table still marks every packet as a non-sync sample.
@@ -37,9 +47,10 @@ The complete byte view uses signed 32-bit indices. This API does not stream a la
 
 ```fern
 <<*>>=
-// This module indexes bounded AVC, HEVC, and QTRLE packets in a complete byte view.
+// This module indexes bounded AVC, HEVC, AV1, and QTRLE packets in a complete byte view.
 import "std/video/frame";
 import "std/video/nal";
+import "std/video/av1/configuration";
 import "std/video/mp4/timing";
 import "std/audio/mp4/boxes";
 import "std/audio/mp4/tables";
@@ -50,7 +61,7 @@ import "std/audio/wire";
 import "core/cmp";
 
 @derive(cmp.Eq, cmp.Debug)
-pub enum Codec { AVC, HEVC, QTRLE }
+pub enum Codec { AVC, HEVC, QTRLE, AV1 }
 
 pub struct Limits { video: frame.Limits, max_input_bytes: i32, max_boxes: i32, max_tracks: i32, max_packets: i32, max_descriptions: i32, max_edits: i32 }
 
@@ -92,19 +103,44 @@ function codec(kind: u32): Result[Codec, pcm.AudioError] {
   if (kind == boxes.tag("rle ")) {
     return Ok(QTRLE);
   }
+  if (kind == boxes.tag("av01")) {
+    return Ok(AV1);
+  }
   return Err(pcm.Unsupported);
 }
 
-function configuration(input: [u8], children: [boxes.Box], codec: Codec, limits: frame.Limits): Result[nal.Config, pcm.AudioError] {
+function av1_configuration(input: [u8], format: frame.Format, limits: frame.Limits): Result[nal.Config, pcm.AudioError] {
+  let info = match (configuration.inspect(input, limits)) { Ok(value) => value, Err(error) => { return Err(audio_error(error)); } };
+  if let Some(maximum) = info.maximum {
+    if (maximum != format) {
+      return Err(pcm.Header);
+    }
+  }
+  let bytes: u8[] = [];
+  for byte in input {
+    bytes = bytes.append(byte);
+  }
+  return Ok(nal.Config { length_size: 0, csd0: bytes, csd1: [] });
+}
+
+function nal_configuration(input: [u8], children: [boxes.Box], codec: Codec, limits: frame.Limits): Result[nal.Config, pcm.AudioError] {
+  let box = boxes.required(children, if (codec == AVC) { "avcC" } else { "hvcC" })?;
+  let value = if (codec == AVC) { nal.avc_config(input[box.data:box.end], limits) } else { nal.hevc_config(input[box.data:box.end], limits) };
+  return match (value) { Ok(value) => Ok(value), Err(error) => Err(audio_error(error)) };
+}
+
+function decoder_configuration(input: [u8], children: [boxes.Box], codec: Codec, format: frame.Format, limits: frame.Limits): Result[nal.Config, pcm.AudioError] {
   if let Some(_) = boxes.one(children, "sinf")? {
     return Err(pcm.Unsupported);
   }
   if (codec == QTRLE) {
     return Ok(nal.Config { length_size: 0, csd0: [], csd1: [] });
   }
-  let box = boxes.required(children, if (codec == AVC) { "avcC" } else { "hvcC" })?;
-  let value = if (codec == AVC) { nal.avc_config(input[box.data:box.end], limits) } else { nal.hevc_config(input[box.data:box.end], limits) };
-  return match (value) { Ok(value) => Ok(value), Err(error) => Err(audio_error(error)) };
+  if (codec == AV1) {
+    let record = boxes.required(children, "av1C")?;
+    return av1_configuration(input[record.data:record.end], format, limits);
+  }
+  return nal_configuration(input, children, codec, limits);
 }
 
 function animation_depth(input: [u8], entry: boxes.Box, kind: Codec): Result[i32, pcm.AudioError] {
@@ -138,7 +174,7 @@ function description(input: [u8], entry: boxes.Box, budget: boxes.Budget, limits
     _ => {}
   }
   let (next, children) = boxes.children(input, entry.data + 78, entry.end, budget)?;
-  let value = configuration(input, children, kind, limits)?;
+  let value = decoder_configuration(input, children, kind, format, limits)?;
   return Ok((next, Description { codec: kind, format: format, config: value, depth: depth }));
 }
 

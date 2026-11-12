@@ -20,6 +20,8 @@ The historical study after it records research issue #5365.
   These rules do not permit a view to initialize an owned array.
 
 - E063 rejects a returned array view of function-local storage, including a view inside an aggregate.
+  E063 also rejects a store of an array view in a variable of an outer block, when the view is of the storage of an inner block.
+  That storage ends with its block. A view of storage of the outer block, and a store in the block of the storage, are valid.
   E065 applies the corresponding rule to string views. E082 rejects closure captures that contain views.
 
 - `fip` and `fbip` impose allocation and reuse requirements under E053 and E068.
