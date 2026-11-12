@@ -15601,7 +15601,7 @@ function int_read(e: ast.Expr): ast.Expr {
 // literal_parts_take is true when e of the type from can take the type to, and only its number literals change type.
 function literal_parts_take(e: ast.Expr, from: typeinfo.Type, to: typeinfo.Type): boolean {
   if (type_eq(from, to)) {
-    return true;
+    return !owned_beside_view(from, to);
   }
   if (int_literal_tree(e) || float_settled_tree(e)) {
     return is_integer(to) || is_float(to);
