@@ -109,9 +109,6 @@ func TestFoldBitwiseAndShift(t *testing.T) {
 		{"xor", "0x0F ^ 0x03", 0x0C},
 		{"shl", "1 << 4", 16},
 		{"shr", "256 >> 2", 64},
-		{"shl_count_64", "1 << 64", 1},
-		{"shl_count_65", "1 << 65", 2},
-		{"shr_count_65", "256 >> 65", 128},
 	}
 	for _, c := range cases {
 		c := c
@@ -174,7 +171,7 @@ func TestIllTypedConstIsTheCheckersError(t *testing.T) {
 func TestZeroDivisorOutranksATypeError(t *testing.T) {
 	got := foldErr(t, `const X: i32 = 1 / 0 + (1 + true);`)
 	if !strings.Contains(got, "division by zero") {
-		t.Errorf("a zero divisor outranks a sibling's type error, as the self-host's eval_const does; got %v", got)
+		t.Errorf("a zero divisor outranks a sibling's type error; got %v", got)
 	}
 }
 

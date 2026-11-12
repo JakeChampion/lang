@@ -1,0 +1,8 @@
+// spec: IS-16
+// A step of a const initializer whose exact value is outside the declared
+// type is an error. The same expression in a `let` wraps.
+const W: u8 = 255 + 1;
+
+function main(): i32 {
+    return W as i32;
+}
