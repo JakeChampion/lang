@@ -18782,20 +18782,32 @@ struct OwnJump { target: i32, breaks: boolean, moved: MovedEntry[] }
 struct OwnReturns { synthetic: boolean, moved: MovedEntry[] }
 
 // Only single-definition local callbacks and aliases participate.
-struct OclDef { name: string, value: ast.Expr }
+struct OclDef { name: string, value: ast.Expr, spelling: string }
 
 struct OclCapture { name: string, type_name: string }
 
-struct OclFacts { names: util.NameIndex, rows: OclCapture[][] }
+struct OclFactories { names: util.NameIndex, funcs: parser.FuncDecl[], rows: string[][], decls: OwnDecls }
+
+struct OclFactoryCache { known: boolean, factories: OclFactories }
+
+struct OclFactoryState { cache: Cell[OclFactoryCache], mod: parser.Module, env: ModuleEnv }
+
+struct OclFacts { names: util.NameIndex, rows: OclCapture[][], factories: OclFactories, inlines: OclCapture[], types: string[], tparams: string[] }
+
+struct OclInlineFacts { facts: OclFacts, captures: OclCapture[] }
 
 function ocl_unknown(name: string): OclDef {
-  return OclDef { name: name, value: ast.ExprUnknown { kind: "", line: 0, col: 0 } };
+  return OclDef { name: name, value: ast.ExprUnknown { kind: "", line: 0, col: 0 }, spelling: "" };
+}
+
+function ocl_param(param: ast.ParamDecl): OclDef {
+  return OclDef { ...ocl_unknown(param.name), spelling: parser.fn_tag_spelling(param.type_name, param.fn_ret, param.fn_param_types) };
 }
 
 function ocl_var(v: ast.StmtVar, own defs: OclDef[]): OclDef[] {
   let names = lu_var_names(v, []);
   if (names.len() == 1 && names[0] == v.name) {
-    return defs.append(OclDef { name: v.name, value: v.init });
+    return defs.append(OclDef { name: v.name, value: v.init, spelling: parser.fn_tag_spelling(v.type_name, v.fn_ret, v.fn_param_types) });
   }
   for name in names {
     defs = defs.append(ocl_unknown(name));
@@ -18809,7 +18821,7 @@ function ocl_stmt(st: ast.Stmt, own defs: OclDef[]): OclDef[] {
       return ocl_var(v, defs);
     },
     ast.StmtAssign(a) => {
-      return defs.append(OclDef { name: a.target, value: a.value });
+      return defs.append(OclDef { name: a.target, value: a.value, spelling: "" });
     },
     ast.StmtFor(f) => {
       return defs.append(ocl_unknown(f.var_name));
@@ -18825,7 +18837,7 @@ function ocl_stmt(st: ast.Stmt, own defs: OclDef[]): OclDef[] {
 function ocl_expr(e: ast.Expr, own defs: OclDef[]): OclDef[] {
   if let ast.ExprLambda(lm) = e {
     for param in lm.params {
-      defs = defs.append(ocl_unknown(param.name));
+      defs = defs.append(ocl_param(param));
     }
   }
   return defs;
@@ -18891,10 +18903,147 @@ function ocl_value(value: ast.Expr, facts: OclFacts): OclCapture[] {
       if (parser.is_value_block(c)) {
         return ocl_block(c, facts);
       }
+      return ocl_call(c, facts);
     },
     _ => {}
   }
   return [];
+}
+
+// A moved callback keeps the loans of its environment. A moved resource
+// instead belongs to the returned callback, so its old binding is not a loan.
+function ocl_call(call: ast.ExprCall, facts: OclFacts): OclCapture[] {
+  if (call.ty.len() > 0 && ow_value_data(call.ty, facts.factories.decls, [])) {
+    return [];
+  }
+  let mapped = ow_result_call(call, facts.factories.names, facts.factories.decls);
+  let ast.ExprCall(c) = mapped else {
+    return [];
+  };
+  let ast.ExprIdent(id) = c.callee else {
+    return ocl_dynamic_call(c, facts);
+  };
+  if (facts.names.has(id.name)) {
+    return ocl_dynamic_call(c, facts);
+  }
+  let at = facts.factories.names.find(id.name);
+  if (at < 0) {
+    return [];
+  }
+  let fn = facts.factories.funcs[at];
+  let out: OclCapture[] = [];
+  for i in 0..fn.params.len() {
+    if (i < c.args.len() && util.has_str(facts.factories.rows[at], fn.params[i].name)) {
+      out = ocl_merge(out, ocl_value(c.args[i], facts));
+      if (!fn.params[i].own) {
+        if let ast.ExprIdent(arg) = c.args[i] {
+          out = ocl_merge(out, [OclCapture { name: arg.name, type_name: fn.params[i].type_name }]);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function ocl_signature(params: ast.ParamDecl[], ret: string, fn_ret: string, fn_params: string): string {
+  let inputs: string[] = [];
+  for p in params {
+    let spelling = parser.fn_tag_spelling(p.type_name, p.fn_ret, p.fn_param_types);
+    if (p.own) {
+      spelling = "own " + spelling;
+    }
+    inputs = inputs.append(spelling);
+  }
+  return "(" + inputs.join(",") + ") => " + parser.fn_tag_spelling(ret, fn_ret, fn_params);
+}
+
+function ocl_callable_spelling(value: ast.Expr, facts: OclFacts): string {
+  if let ast.ExprIdent(id) = value {
+    let local = facts.names.find(id.name);
+    if (local >= 0 && ocl_unique(facts.names, id.name)) {
+      return facts.types[local];
+    }
+    let at = facts.factories.names.find(id.name);
+    if (at >= 0) {
+      let fn = facts.factories.funcs[at];
+      return ocl_signature(fn.params, fn.ret_type, fn.ret_fn_ret, fn.ret_fn_param_types);
+    }
+  } else if let ast.ExprLambda(lm) = value {
+    return ocl_signature(lm.params, lm.ret_type, lm.ret_fn_ret, lm.ret_fn_param_types);
+  } else if let ast.ExprCall(c) = value {
+    let ref = parser.ref_ungroup(parser.parse_type_ref(ocl_callable_spelling(c.callee, facts)));
+    if (ref.is_fn && ref.args.len() > 0) {
+      return parser.render_type_ref(parser.ref_fn_result(ref));
+    }
+  }
+  return "";
+}
+
+function ocl_dynamic_call(c: ast.ExprCall, facts: OclFacts): OclCapture[] {
+  let ref = parser.ref_ungroup(parser.parse_type_ref(ocl_callable_spelling(c.callee, facts)));
+  let result = "";
+  if (ref.is_fn && ref.args.len() > 0) {
+    result = parser.render_type_ref(parser.ref_fn_result(ref));
+  }
+  if (c.ty != "fn" && !util.has_str(facts.tparams, c.ty) && !parser.ref_is_fn_value(parser.parse_type_ref(result)) && !util.has_str(facts.tparams, result)) {
+    return [];
+  }
+  let out = ocl_value(c.callee, facts);
+  for i in 0..c.args.len() {
+    out = ocl_merge(out, ocl_value(c.args[i], facts));
+    let owned = ref.is_fn && i + 1 < ref.args.len() && parser.ref_is_own(ref.args[i]);
+    if (!owned) {
+      if let ast.ExprIdent(arg) = c.args[i] {
+        let at = facts.names.find(arg.name);
+        if (at >= 0 && ocl_unique(facts.names, arg.name) && !ow_value_data(facts.types[at], facts.factories.decls, [])) {
+          out = ocl_merge(out, [OclCapture { name: arg.name, type_name: facts.types[at] }]);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function ocl_factories(mod: parser.Module, env: ModuleEnv, dx: OwnDecls): OclFactories {
+  let names: string[] = [];
+  let funcs: parser.FuncDecl[] = [];
+  let rows: string[][] = [];
+  for fn in mod.funcs {
+    if (fn.ret_type == "fn" || util.has_str(fn.all_type_params, fn.ret_type) || util.has_str(fn.type_params, fn.ret_type)) {
+      funcs = funcs.append(annotate_func(fn, env));
+      names = names.append(fn.name);
+      rows = rows.append([]);
+    }
+  }
+  let factories = OclFactories { names: util.name_index(names), funcs: funcs, rows: rows, decls: dx };
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for i in 0..funcs.len() {
+      let facts = ocl_facts(funcs[i], factories, true);
+      let values: ast.Expr[] = [];
+      for st in funcs[i].body {
+        values = astwalk.fold_stmt_nodes(st, values, ocl_return_value, ocl_keep_values, not_lambda);
+      }
+      let captures: OclCapture[] = [];
+      for value in values {
+        captures = ocl_merge(captures, ocl_value(value, facts));
+      }
+      let sources = factories.rows[i];
+      for param in funcs[i].params {
+        for capture in captures {
+          if (capture.name == param.name && !util.has_str(sources, param.name)) {
+            sources = sources.append(param.name);
+          }
+        }
+      }
+      if (sources.len() > factories.rows[i].len()) {
+        factories = OclFactories { ...factories, rows: factories.rows.with(i, sources) };
+        changed = true;
+      }
+    }
+  }
+  return factories;
 }
 
 function ocl_return_value(st: ast.Stmt, own values: ast.Expr[]): ast.Expr[] {
@@ -18923,21 +19072,37 @@ function ocl_block(c: ast.ExprCall, facts: OclFacts): OclCapture[] {
   return out;
 }
 
-function ocl_facts(fn: parser.FuncDecl): OclFacts {
+function ocl_facts(fn: parser.FuncDecl, factories: OclFactories, summarize: boolean): OclFacts {
   let defs: OclDef[] = [];
   for param in fn.params {
-    defs = defs.append(ocl_unknown(param.name));
+    defs = defs.append(ocl_param(param));
   }
   for st in fn.body {
     defs = astwalk.fold_stmt_nodes(st, defs, ocl_stmt, ocl_expr, astwalk.descend_all);
   }
   let names: string[] = [];
   let rows: OclCapture[][] = [];
+  let types: string[] = [];
   for def in defs {
     names = names.append(def.name);
     rows = rows.append([]);
+    types = types.append(def.spelling);
   }
-  let facts = OclFacts { names: util.name_index(names), rows: rows };
+  let tparams = fn.all_type_params;
+  for name in func_scope_tparams(fn) {
+    if (!util.has_str(tparams, name)) {
+      tparams = tparams.append(name);
+    }
+  }
+  let facts = OclFacts { names: util.name_index(names), rows: rows, factories: factories, inlines: [], types: types, tparams: tparams };
+  if (summarize) {
+    for param in fn.params {
+      let at = facts.names.find(param.name);
+      if (at >= 0 && ocl_unique(facts.names, param.name)) {
+        facts = OclFacts { ...facts, rows: facts.rows.with(at, [OclCapture { name: param.name, type_name: param.type_name }]) };
+      }
+    }
+  }
   let changed = true;
   while (changed) {
     changed = false;
@@ -18951,15 +19116,58 @@ function ocl_facts(fn: parser.FuncDecl): OclFacts {
       }
     }
   }
+  if (!summarize) {
+    let state = OclInlineFacts { facts: facts, captures: [] };
+    for st in fn.body {
+      state = astwalk.fold_stmt(st, state, ocl_inline_captures);
+    }
+    facts = OclFacts { ...facts, inlines: state.captures };
+  }
   return facts;
 }
 
+function ocl_inline_captures(e: ast.Expr, own state: OclInlineFacts): OclInlineFacts {
+  return OclInlineFacts { ...state, captures: ocl_merge(state.captures, ocl_value(e, state.facts)) };
+}
+
 // The last-use and capture facts are computed on their first question.
-struct LastUses { known: boolean, keys: util.NameIndex, fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex, captures_known: boolean, capture_names: util.NameIndex, capture_rows: OclCapture[][] }
+struct LastUses { known: boolean, keys: util.NameIndex, fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex, captures_known: boolean, capture_names: util.NameIndex, capture_rows: OclCapture[][], capture_inlines: OclCapture[], capture_types: string[], capture_tparams: string[] }
 
 function lu_pending(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex): Cell[LastUses] {
   let none: string[] = [];
-  return cell_new(LastUses { known: false, keys: util.name_index(none), fn: fn, ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, captures_known: false, capture_names: util.name_index(none), capture_rows: [] });
+  return cell_new(LastUses { known: false, keys: util.name_index(none), fn: fn, ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, captures_known: false, capture_names: util.name_index(none), capture_rows: [], capture_inlines: [], capture_types: [], capture_tparams: [] });
+}
+
+function ow_callback_facts(ctx: OwnCtx): OclFacts {
+  let lu = ctx.last_use.get();
+  let state = ctx.factories.cache.get();
+  if (!state.known) {
+    state = OclFactoryCache { known: true, factories: ocl_factories(ctx.factories.mod, ctx.factories.env, ctx.decls) };
+    ctx.factories.cache.set(state);
+  }
+  if (!lu.captures_known) {
+    let facts = ocl_facts(lu.fn, state.factories, false);
+    lu = LastUses { ...lu, captures_known: true, capture_names: facts.names, capture_rows: facts.rows, capture_inlines: facts.inlines, capture_types: facts.types, capture_tparams: facts.tparams };
+    ctx.last_use.set(lu);
+  }
+  return OclFacts { names: lu.capture_names, rows: lu.capture_rows, factories: state.factories, inlines: lu.capture_inlines, types: lu.capture_types, tparams: lu.capture_tparams };
+}
+
+function ow_local_capture_owner(name: string, ctx: OwnCtx): boolean {
+  let facts = ow_callback_facts(ctx);
+  for capture in facts.inlines {
+    if (capture.name == name && !ow_cached_value_data(capture.type_name, ctx.decls, ctx.value_proofs)) {
+      return true;
+    }
+  }
+  for captures in facts.rows {
+    for capture in captures {
+      if (capture.name == name && !ow_cached_value_data(capture.type_name, ctx.decls, ctx.value_proofs)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function ow_callback_capture_diags(value: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): util.Diag[] {
@@ -18977,21 +19185,13 @@ function ow_callback_capture_diags(value: ast.Expr, moved: MovedEntry[], ctx: Ow
       value = annotate_lambda_expr(lm, ctx.scope, "", t_unknown(""));
     }
   } else if let ast.ExprCall(c) = value {
-    if (!parser.is_value_block(c)) {
-      return [];
-    }
     name = "value";
     value = annotate_expr(value, ctx.scope);
   } else {
     return [];
   }
-  let lu = ctx.last_use.get();
-  if (!lu.captures_known) {
-    let facts = ocl_facts(lu.fn);
-    lu = LastUses { ...lu, captures_known: true, capture_names: facts.names, capture_rows: facts.rows };
-    ctx.last_use.set(lu);
-  }
-  let captures = ocl_value(value, OclFacts { names: lu.capture_names, rows: lu.capture_rows });
+  let facts = ow_callback_facts(ctx);
+  let captures = ocl_value(value, facts);
   let out: util.Diag[] = [];
   for capture in captures {
     if (ow_moved_has(moved, capture.name) && !ow_cached_value_data(capture.type_name, ctx.decls, ctx.value_proofs)) {
@@ -19010,7 +19210,7 @@ function lu_has(ctx: OwnCtx, key: string): boolean {
   return lu.keys.has(key);
 }
 
-struct OwnCtx { result_body: ast.Stmt[], ret_own: boolean, value_proofs: Cell[OwnDataProofs], owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], enums: parser.EnumDecl[], snames: util.NameIndex, decls: OwnDecls, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: Cell[LastUses], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean, noret: util.NameIndex, loops: string[], jumps: Cell[OwnJump[]], replaced: OwnRead[] }
+struct OwnCtx { factories: OclFactoryState, result_body: ast.Stmt[], ret_own: boolean, value_proofs: Cell[OwnDataProofs], owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], enums: parser.EnumDecl[], snames: util.NameIndex, decls: OwnDecls, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: Cell[LastUses], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean, noret: util.NameIndex, loops: string[], jumps: Cell[OwnJump[]], replaced: OwnRead[] }
 
 function ow_expr_is_scalar(e: ast.Expr, ctx: OwnCtx): boolean {
   if (ow_scalar_literal(e)) {
@@ -19285,7 +19485,7 @@ function ow_nested_ctx(ctx: OwnCtx, lm: ast.ExprLambda, repeatable: boolean): Ow
       bound = bound.append(p.name);
     }
   }
-  let nested = OwnCtx { result_body: lm.body, ret_own: lm.ret_own, value_proofs: ctx.value_proofs, owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, enums: ctx.enums, snames: ctx.snames, decls: ctx.decls, admit: ctx.admit, admit_fields: [], fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use, returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: ctx.in_loop, noret: ctx.noret, loops: [], jumps: ow_fresh_jumps(), replaced: ctx.replaced };
+  let nested = OwnCtx { factories: ctx.factories, result_body: lm.body, ret_own: lm.ret_own, value_proofs: ctx.value_proofs, owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, enums: ctx.enums, snames: ctx.snames, decls: ctx.decls, admit: ctx.admit, admit_fields: [], fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use, returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: ctx.in_loop, noret: ctx.noret, loops: [], jumps: ow_fresh_jumps(), replaced: ctx.replaced };
   return nested;
 }
 
@@ -23443,6 +23643,12 @@ function ow_walk_call(c: ast.ExprCall, moved: MovedEntry[], ctx: OwnCtx): OwnWal
 }
 
 function ow_consume_arg(a: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
+  if let ast.ExprIdent(id) = a {
+    if (!id.builtin && !ow_is_owned(ctx, id.name) && util.has_str(ctx.bound, id.name) && !util.has_str(ctx.borrowed, id.name) && ow_local_capture_owner(id.name, ctx)) {
+      let read = ru_borrow(a, moved, ctx);
+      return OwnWalk { ...read, moved: ow_moved_add(read.moved, id.name, id.line, id.col) };
+    }
+  }
   if let ast.ExprFieldAccess(fa) = a {
     if let ast.ExprIdent(oid) = fa.obj {
       if (!oid.builtin && ow_is_owned(ctx, oid.name) && ow_is_owned_expr(a, ctx)) {
@@ -25907,6 +26113,8 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
   let lenders = ow_lenders(mod, ofuncs, decls);
   let out: util.Diag[] = ow_value_diags(decls);
   let value_proofs = cell_new(OwnDataProofs { types: [], copyable: [] });
+  let empty_names: string[] = [];
+  let factories = OclFactoryState { mod: result_mod, env: env, cache: cell_new(OclFactoryCache { known: false, factories: OclFactories { names: util.name_index(empty_names), funcs: [], rows: [], decls: decls } }) };
   for i in 0..mod.funcs.len() {
     let fn = mod.funcs[i];
     if (!in_focus(focus, fn)) {
@@ -25933,7 +26141,7 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
     } else {
       lu_fn = annotate_func(fn, env);
     }
-    let ctx = OwnCtx { result_body: fn.body, ret_own: fn.ret_own, value_proofs: value_proofs, owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_pending(lu_fn, ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret, loops: [], jumps: ow_fresh_jumps(), replaced: ow_replaced_reads(fn.body) };
+    let ctx = OwnCtx { factories: factories, result_body: fn.body, ret_own: fn.ret_own, value_proofs: value_proofs, owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_pending(lu_fn, ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret, loops: [], jumps: ow_fresh_jumps(), replaced: ow_replaced_reads(fn.body) };
     let nomoved: MovedEntry[] = [];
     let r = ow_stmts(fn.body, nomoved, ctx);
     out = util.append_diags(out, r.diags);
