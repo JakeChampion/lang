@@ -26,6 +26,11 @@ The menu then acts on each of its songs. The menu of one song goes to its
 album and to its artist, and "Details" shows its tags and its path. The screen
 of the track has the "Queue" button, which shows the queue.
 
+The screen of the track has three more buttons. "Speed" plays the track
+faster or slower with the same pitch, and "Pitch" makes it higher or lower
+with the same speed: `std/audio/tempo` does the two. "Sleep" stops the
+player after 15, 30 or 60 minutes of sound.
+
 Shuffle puts
 the songs after the one that plays in a new order. Repeat has three
 states: off, the queue again, and the track again.

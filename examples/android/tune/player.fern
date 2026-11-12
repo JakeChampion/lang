@@ -69,7 +69,7 @@ const READY_PARTS: i32 = 5;
 // The player on a device: the state of tune.fern, and the deck that reads
 // the file of the track that plays. Only one owner uses a deck, so it is
 // not in the state.
-pub struct Player { model: tune.Model, deck: Option[engine.Deck] }
+pub struct Player { model: tune.Model, deck: Option[engine.Voice] }
 
 // A player with the state `model` and no deck.
 pub function wrap(own model: tune.Model): Player {
@@ -96,10 +96,10 @@ function loaded(dev: Device, own m: tune.Model, i: i32): Player {
   }
   dev.start(sound);
   let length = deck.duration_ms();
-  return Player { model: tune.Model { ...m, sound: sound, pending: [], at_ms: 0i64, length_ms: length, art: art }, deck: Some(deck) };
+  return Player { model: tune.Model { ...m, sound: sound, pending: [], at_ms: 0i64, length_ms: length, art: art }, deck: Some(engine.voice(deck)) };
 }
 
-function sought(dev: Device, own m: tune.Model, own deck: Option[engine.Deck], part: f64): Player {
+function sought(dev: Device, own m: tune.Model, own deck: Option[engine.Voice], part: f64): Player {
   let Some(d) = deck else {
     return wrap(m);
   };
@@ -109,7 +109,7 @@ function sought(dev: Device, own m: tune.Model, own deck: Option[engine.Deck], p
     dev.start(m.sound);
   }
   let moved = d.seek(part);
-  let at = moved.position_ms();
+  let at = moved.deck.position_ms();
   return Player { model: tune.Model { ...m, pending: [], at_ms: at, told: "" }, deck: Some(moved) };
 }
 
@@ -421,11 +421,11 @@ function rest(all: i32[], from: i32): i32[] {
 
 // The deck after it gave parts until `ready` has `enough` samples or the
 // file ends, and those samples.
-function filled(own deck: engine.Deck, ready: i32[], enough: i32): (engine.Deck, i32[]) {
+function filled(own deck: engine.Voice, ready: i32[], enough: i32, speed: f64, pitch: i32): (engine.Voice, i32[]) {
   let d = deck;
   let out = ready;
-  while (out.len() < enough && !d.done) {
-    let (next, part) = d.pull();
+  while (out.len() < enough && !d.deck.done) {
+    let (next, part) = d.pull(speed, pitch);
     d = next;
     for v in part {
       out = out.append(v);
@@ -436,7 +436,7 @@ function filled(own deck: engine.Deck, ready: i32[], enough: i32): (engine.Deck,
 
 // While a track plays: reads the file until the player has enough samples
 // ready, gives the sound what it takes, and tells the time of the track.
-function pumped(dev: Device, own m: tune.Model, own deck: Option[engine.Deck]): Player {
+function pumped(dev: Device, own m: tune.Model, own deck: Option[engine.Voice]): Player {
   if (!m.playing) {
     return Player { model: m, deck: deck };
   }
@@ -444,13 +444,18 @@ function pumped(dev: Device, own m: tune.Model, own deck: Option[engine.Deck]): 
     return wrap(m);
   };
   let sound = m.sound;
-  let (d, ready) = filled(first, m.pending, sound.rate * sound.channels / READY_PARTS);
-  let kept = rest(ready, dev.write(sound, ready));
-  let waiting = kept.len() as i64 * 1000i64 / ((sound.rate * sound.channels).max(1) as i64);
-  let at = (d.position_ms() - waiting).max(0i64);
-  let length = d.duration_ms();
-  let ended = d.done && kept.len() == 0;
+  let (d, ready) = filled(first, m.pending, sound.rate * sound.channels / READY_PARTS, m.speed as f64 / 100.0, m.pitch);
+  let wrote = dev.write(sound, ready);
+  let kept = rest(ready, wrote);
+  let each = (sound.rate * sound.channels).max(1) as i64;
+  let waiting = kept.len() as i64 * (m.speed as i64) * 10i64 / each;
+  let at = (d.deck.position_ms() - waiting).max(0i64);
+  let length = d.deck.duration_ms();
+  let ended = d.deck.done && kept.len() == 0;
   let after = tune.Model { ...m, pending: kept, at_ms: at, length_ms: length };
+  if (after.sleep_us > 0i64) {
+    after = tune.update(after, tune.Slept(wrote as i64 * 1000000i64 / each));
+  }
   if (ended) {
     return Player { model: tune.update(after, tune.Finished), deck: Some(d) };
   }

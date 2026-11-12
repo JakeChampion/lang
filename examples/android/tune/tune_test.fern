@@ -575,6 +575,41 @@ function test_the_menu_of_more_than_one_song(): test.TestOutcome {
   return test.assert_eq([three.to_string(), two, queue, listed, detail.to_string(), album, s.shell.app.model.artist].join(" | "), "true | 0,3 | 0,3@0 0 | mix:4 | true | Numbers/Ada false | Fern");
 }
 
+// At the speed 2 the track goes two times as fast, and the pitch buttons
+// go through their values.
+function test_the_speed_and_the_pitch(): test.TestOutcome {
+  let s = sim.tap(sim.tap(started(), "Quick Light"), "Now playing, Quick Light");
+  let plain = sim.after(s, 1000i64).shell.app.model.at_ms;
+  s = sim.tap(sim.tap(sim.tap(sim.tap(sim.tap(started(), "Quick Light"), "Now playing, Quick Light"), "Speed 1.00"), "Speed 1.25"), "Speed 1.50");
+  saved(s, "tune-speed");
+  let label = sim.shows(s, "Speed 2.00");
+  s = sim.after(s, 1000i64);
+  let fast = s.shell.app.model.at_ms;
+  s = sim.tap(sim.tap(s, "Pitch 0"), "Pitch +1");
+  let high = s.shell.app.model.pitch;
+  s = sim.after(s, 500i64);
+  let moved = s.shell.app.model.at_ms > fast;
+  for i in 0..5 {
+    s = sim.send(s, tune.Pitch);
+  }
+  return test.assert_eq([near(plain, 1000i64, 150i64).to_string(), label.to_string(), near(fast, 2000i64, 300i64).to_string(), high.to_string(), moved.to_string(), s.shell.app.model.pitch.to_string()].join(" "), "true true true 2 true 0");
+}
+
+// The sleep timer counts the sound that plays, and stops the player at
+// its end.
+function test_the_sleep_timer(): test.TestOutcome {
+  let s = sim.tap(sim.tap(sim.tap(started(), "Quick Light"), "Now playing, Quick Light"), "Sleep off");
+  let set = sim.shows(s, "Sleep 15 min");
+  s = sim.after(s, 2000i64);
+  let left = near(s.shell.app.model.sleep_us / 1000i64, 898000i64, 400i64);
+  let shown = sim.shows(s, "Sleep 15 min") && s.shell.app.model.playing;
+  s = sim.send(s, tune.Slept(897000000i64));
+  let last = sim.shows(s, "Sleep 1 min");
+  s = sim.after(s, 1500i64);
+  let m = s.shell.app.model;
+  return test.assert_eq([set, left, shown, last, m.playing, m.sleep_min == 0 && m.sleep_us == 0i64, sim.shows(s, "Sleep off")].map((b: boolean): string => b.to_string()).join(" "), "true true true true false true true");
+}
+
 function main(): i32 {
   let r = test.new("examples/android/tune");
   r = r.it("the scan reads the tags and the paths of its files", test_scan_reads_tags_and_paths);
@@ -598,5 +633,7 @@ function main(): i32 {
   r = r.it("the person makes playlists, and the scan reads an M3U file", test_playlists);
   r = r.it("a genre, a directory and each artist of a track show their songs", test_groups_and_orders);
   r = r.it("the menu has more than one song, and one song shows its details", test_the_menu_of_more_than_one_song);
+  r = r.it("the sound plays at a speed and a pitch", test_the_speed_and_the_pitch);
+  r = r.it("the sleep timer stops the player", test_the_sleep_timer);
   return r.finish();
 }

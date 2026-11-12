@@ -10,6 +10,7 @@ import "std/audio/mp4";
 import "std/audio/mp4/tables";
 import "std/audio/opusfile";
 import "std/audio/pcm";
+import "std/audio/tempo";
 import "std/audio/vorbisfile";
 import "std/audio/vorbisfile/seek" as vorbis_seek;
 import "std/audio/wav";
@@ -462,4 +463,43 @@ pub function (d: Deck) duration_ms(): i64 {
     return 0i64;
   }
   return d.position_ms() * ((d.last - d.first) as i64) / ((d.offset - d.first) as i64);
+}
+
+// A deck with the speed and the pitch that its sound plays at.
+pub struct Voice { deck: Deck, tempo: tempo.Tempo, reader: tempo.Resampler }
+
+pub function voice(own d: Deck): Voice {
+  let (rate, channels) = (d.rate, d.channels);
+  return Voice { deck: d, tempo: tempo.new(rate, channels), reader: tempo.resampler(channels) };
+}
+
+// The next part of the sound at the speed `speed`, where 1 is the speed of
+// the file, `pitch` semitones above the pitch of the file.
+pub function (own v: Voice) pull(speed: f64, pitch: i32): (Voice, i32[]) {
+  let Voice { deck, tempo: stretch, reader } = v;
+  let (d, raw) = deck.pull();
+  let step = (pitch as f64 / 12.0).exp2();
+  let (s, part) = stretch.at(speed / step).push(raw);
+  let out = part;
+  let after = s;
+  if (d.done) {
+    let (flushed, tail) = after.flush();
+    after = flushed;
+    for x in tail {
+      out = out.append(x);
+    }
+  }
+  if (pitch == 0) {
+    return (Voice { deck: d, tempo: after, reader: reader }, out);
+  }
+  let (r, read) = reader.push(out, step);
+  return (Voice { deck: d, tempo: after, reader: r }, read);
+}
+
+// The voice at the part `part` of its file, from 0 to 1.
+pub function (own v: Voice) seek(part: f64): Voice {
+  let Voice { deck, tempo: stretch, reader } = v;
+  let (cleared, dropped) = stretch.flush();
+  let channels = deck.channels;
+  return Voice { deck: deck.seek(part), tempo: cleared, reader: tempo.resampler(channels) };
 }

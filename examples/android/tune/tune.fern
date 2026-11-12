@@ -76,6 +76,15 @@ pub const BY_YEAR: i32 = 2;
 
 pub const BY_LENGTH: i32 = 3;
 
+// The speeds of the sound in percent, and the pitches in semitones, in the
+// order that their buttons go through.
+const SPEEDS: i32[] = [100, 125, 150, 200, 50, 75];
+
+const PITCHES: i32[] = [0, 1, 2, 3, -3, -2, -1];
+
+// The times of the sleep timer in minutes.
+const SLEEPS: i32[] = [0, 15, 30, 60];
+
 // The name of the playlist of the songs that the person likes.
 pub const FAVORITES: string = "Favorites";
 
@@ -123,7 +132,10 @@ pub enum Want { Load(i32), Resume, Hold, Seek(f64), Scan, Grant, List(string), K
 // is the album whose songs show, under the artist `album_by`, or "".
 // `genre` is the genre whose songs show, and `place` is the directory
 // whose songs show, or "". `sort` is the order of the songs and of the
-// albums. `open` tells that the screen of the
+// albums. `speed` is the speed of the sound in percent, and `pitch` is the
+// number of semitones above the pitch of the file. `sleep_min` is the
+// time of the sleep timer in minutes, or 0, and `sleep_us` is the time of
+// sound that is left before the timer stops the player, in microseconds. `open` tells that the screen of the
 // track shows. `current` is the number of the track that plays, or -1.
 // `sound` plays the track, and `pending` has the samples that the sound
 // did not take yet.
@@ -163,6 +175,10 @@ pub struct Model {
   genre: string,
   place: string,
   sort: i32,
+  speed: i32,
+  pitch: i32,
+  sleep_min: i32,
+  sleep_us: i64,
   query: string,
   open: boolean,
   current: i32,
@@ -209,7 +225,7 @@ pub struct Model {
 
 // A player with no track yet, which reads the files `scan`.
 pub function start(scan: string[]): Model {
-  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", album_by: "", genre: "", place: "", sort: BY_ALBUM, query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, chosen: [], detail: false, lined: false, error: "", wants: [], sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false, covers: [], bare: [], pictures: [], art: None, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: false, wanted: [], playlists: [], list: "", adding: [], naming: false, name: "" };
+  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", album_by: "", genre: "", place: "", sort: BY_ALBUM, speed: 100, pitch: 0, sleep_min: 0, sleep_us: 0i64, query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, chosen: [], detail: false, lined: false, error: "", wants: [], sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false, covers: [], bare: [], pictures: [], art: None, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: false, wanted: [], playlists: [], list: "", adding: [], naming: false, name: "" };
 }
 
 // A player with the tracks `tracks` and the playlists `playlists` that it
@@ -267,8 +283,11 @@ pub function start_in(home: string, folder: string): Model {
 // the words that tell the person the result. `Genre` and `Place` show the
 // songs of a genre and of a directory. `Sort` goes to the next order.
 // `ToAlbum` and `ToArtist` show the album and the artist of the track of
-// the menu, and `Details` shows or hides its details.
-pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean), Menu(i32), MenuClosed, PlayNext, Enqueue, Lined(boolean), Jump(i32), Drop(i32), Closing, Walk(string[]), Listed(string, string[]), OpenList(string), AddTo, SaveQueue, ToList(string), NewList, Named(string), Create, Unlist(i32), DeleteList, Favorite, Imported(string, string[]), Export, Exported(string), Genre(string), Place(string), Sort, ToAlbum, ToArtist, Details }
+// the menu, and `Details` shows or hides its details. `Speed` and `Pitch`
+// go to the next speed and the next pitch of the sound. `Sleep` goes to
+// the next time of the sleep timer. `Slept` comes with the microseconds of
+// sound that the player gave the phone, while the timer is on.
+pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean), Menu(i32), MenuClosed, PlayNext, Enqueue, Lined(boolean), Jump(i32), Drop(i32), Closing, Walk(string[]), Listed(string, string[]), OpenList(string), AddTo, SaveQueue, ToList(string), NewList, Named(string), Create, Unlist(i32), DeleteList, Favorite, Imported(string, string[]), Export, Exported(string), Genre(string), Place(string), Sort, ToAlbum, ToArtist, Details, Speed, Pitch, Sleep, Slept(i64) }
 
 // The key of the album of a track: the artist that the album is under,
 // and its name.
@@ -1079,8 +1098,38 @@ function now_playing(m: Model): ui.El[Msg] {
       ui.column([ui.slider(part(m), (at: f64): Msg => Sought((at * 1000.0 + 0.5) as i32)).described("Position"), ui.row([ui.text(clock(m.at_ms)).sized(12.0).colored(ui.MUTED), ui.space(), ui.text(clock(m.length_ms)).sized(12.0).colored(ui.MUTED)])]),
       ui.row([ui.text_button("Previous", Previous), ui.button(play_label(m), Toggle), ui.text_button("Next", Next)]).spaced(8.0).justified(ui.CENTER).aligned(ui.CENTER),
       ui.row([ui.text_button(toggle_label("Shuffle", m.shuffle), Shuffled), ui.text_button(repeat_label(m.repeat), Repeated), ui.text_button("Queue", Lined(true))]).spaced(8.0).justified(ui.CENTER),
+      ui.row([ui.text_button(speed_label(m.speed), Speed), ui.text_button(pitch_label(m.pitch), Pitch), ui.text_button(sleep_label(m), Sleep)]).spaced(8.0).justified(ui.CENTER),
     ],
   ).spaced(16.0).padding(16.0).aligned(ui.STRETCH);
+}
+
+// The value after `now` in `values`, or the first one.
+function after(values: i32[], now: i32): i32 {
+  for i in 0..values.len() - 1 {
+    if (values[i] == now) {
+      return values[i + 1];
+    }
+  }
+  return values[0];
+}
+
+function speed_label(speed: i32): string {
+  return "Speed " + (speed / 100).to_string() + "." + (speed % 100 / 10).to_string() + (speed % 10).to_string();
+}
+
+// The minutes that are left of the sleep timer, or "Sleep off".
+function sleep_label(m: Model): string {
+  if (m.sleep_us <= 0i64) {
+    return "Sleep off";
+  }
+  return "Sleep " + ((m.sleep_us + 59999999i64) / 60000000i64).to_string() + " min";
+}
+
+function pitch_label(pitch: i32): string {
+  if (pitch > 0) {
+    return "Pitch +" + pitch.to_string();
+  }
+  return "Pitch " + pitch.to_string();
 }
 
 pub function view(m: Model, s: ui.Screen): ui.El[Msg] {
@@ -1539,6 +1588,26 @@ pub function update(own m: Model, msg: Msg): Model {
     },
     Sort => {
       return Model { ...m, sort: (m.sort + 1) % 4 };
+    },
+    Speed => {
+      return Model { ...m, speed: after(SPEEDS, m.speed) };
+    },
+    Pitch => {
+      return Model { ...m, pitch: after(PITCHES, m.pitch) };
+    },
+    Sleep => {
+      let minutes = after(SLEEPS, m.sleep_min);
+      return Model { ...m, sleep_min: minutes, sleep_us: minutes as i64 * 60000000i64 };
+    },
+    Slept(us) => {
+      if (m.sleep_us > us) {
+        return Model { ...m, sleep_us: m.sleep_us - us };
+      }
+      let woke = Model { ...m, sleep_min: 0, sleep_us: 0i64 };
+      if (m.playing) {
+        return toggled(woke);
+      }
+      return woke;
     },
     Export => {
       return Model { ...m, wants: m.wants.append(WriteList(m.list)) };
