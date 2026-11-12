@@ -1488,6 +1488,8 @@ func New() *Interp {
 	i.Builtins["__task_until"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) { return Number(-1), taskRecord(args) }}
 	i.Builtins["__task_set_ready"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) { return nil, taskRecord(args) }}
 	i.Builtins["__task_set_cancelled"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) { return nil, taskRecord(args) }}
+	// A handle of this interpreter is not reused, so no count can change.
+	i.Builtins["__task_fd_gen"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
 	i.Builtins["__task_cancelled"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
 	i.Builtins["f32_bits"] = &Builtin{Fn: builtinF32Bits}
 	i.Builtins["f32_from_bits"] = &Builtin{Fn: builtinF32FromBits}

@@ -417,5 +417,5 @@ pub function access_store(name: string): boolean {
 // A task intrinsic, which lowers to a call of the runtime's `__fern_task_*`
 // function of the same name.
 pub function task_intrinsic(name: string): boolean {
-  return util.has_str(["__task_cancelled", "__task_cur", "__task_enter", "__task_free", "__task_leave", "__task_new", "__task_park", "__task_park_until", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_until", "__task_wait"], name);
+  return util.has_str(["__task_cancelled", "__task_cur", "__task_enter", "__task_fd_gen", "__task_free", "__task_leave", "__task_new", "__task_park", "__task_park_until", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_until", "__task_wait"], name);
 }

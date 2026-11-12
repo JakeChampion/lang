@@ -1050,7 +1050,8 @@ pub function module_calls_direct(cache: irtables.LowerResult[], name: string): b
 
 pub function module_uses_task(cache: irtables.LowerResult[]): boolean {
   function is_task_call(o: ir.Op): boolean {
-    return o.kind_tag == ir.K_CALL_DIRECT && ircore.is_task_runtime_fn(o.str);
+    // A close counts in the table of the task runtime.
+    return o.kind_tag == ir.K_TCP_CLOSE || o.kind_tag == ir.K_CALL_DIRECT && ircore.is_task_runtime_fn(o.str);
   }
   return any_op(cache, is_task_call);
 }
@@ -1180,6 +1181,46 @@ pub function task_funcs(lc: boolean): string {
     + "    (i32.const 0))\n"
     + "  (func $__fern_task_set_cancelled (param $id i32) (result i32)\n"
     + "    (i64.store offset=24 (call $__fern_task_rec (local.get $id)) (i64.const 1))\n"
+    + "    (i32.const 0))\n"
+    + "  (global $__fern_fd_tab (mut i32) (i32.const 0))\n"
+    + "  (global $__fern_fd_cap (mut i32) (i32.const 0))\n"
+    + "  (global $__fern_fd_len (mut i32) (i32.const 0))\n"
+    + "  (func $__fern_fd_slot (param $tab i32) (param $cap i32) (param $fd i32) (result i32) (local $h i32) (local $e i32) (local $k i32)\n"
+    + "    (local.set $h (i32.shr_u (i32.mul (local.get $fd) (i32.const -1640531535)) (i32.const 8)))\n"
+    + "    (loop $probe\n"
+    + "      (local.set $h (i32.and (local.get $h) (i32.sub (local.get $cap) (i32.const 1))))\n"
+    + "      (local.set $e (i32.add (local.get $tab) (i32.shl (local.get $h) (i32.const 3))))\n"
+    + "      (local.set $k (i32.load (local.get $e)))\n"
+    + "      (if (i32.and (i32.ne (local.get $k) (local.get $fd)) (i32.ne (local.get $k) (i32.const 0))) (then\n"
+    + "        (local.set $h (i32.add (local.get $h) (i32.const 1)))\n"
+    + "        (br $probe))))\n"
+    + "    (local.get $e))\n"
+    + "  (func $__fern_task_fd_gen (param $fd i32) (result i32) (local $e i32)\n"
+    + "    (if (i32.or (i32.eqz (local.get $fd)) (i32.eqz (global.get $__fern_fd_cap))) (then (return (i32.const 0))))\n"
+    + "    (local.set $e (call $__fern_fd_slot (global.get $__fern_fd_tab) (global.get $__fern_fd_cap) (local.get $fd)))\n"
+    + "    (if (i32.ne (i32.load (local.get $e)) (local.get $fd)) (then (return (i32.const 0))))\n"
+    + "    (i32.load offset=4 (local.get $e)))\n"
+    + "  (func $__fern_task_fd_closed (param $fd i32) (result i32) (local $e i32) (local $cap i32) (local $nt i32) (local $i i32) (local $o i32) (local $d i32)\n"
+    + "    (if (i32.eqz (local.get $fd)) (then (return (i32.const 0))))\n"
+    + "    (local.set $cap (global.get $__fern_fd_cap))\n"
+    + "    (if (i32.ge_u (i32.shl (i32.add (global.get $__fern_fd_len) (i32.const 1)) (i32.const 1)) (local.get $cap)) (then\n"
+    + "      (local.set $cap (select (i32.shl (local.get $cap) (i32.const 1)) (i32.const 64) (local.get $cap)))\n"
+    + "      (local.set $nt (call $__fern_task_zalloc (i32.shl (local.get $cap) (i32.const 3))))\n"
+    + "      (block $moved (loop $move\n"
+    + "        (br_if $moved (i32.ge_u (local.get $i) (global.get $__fern_fd_cap)))\n"
+    + "        (local.set $o (i32.add (global.get $__fern_fd_tab) (i32.shl (local.get $i) (i32.const 3))))\n"
+    + "        (if (i32.load (local.get $o)) (then\n"
+    + "          (local.set $d (call $__fern_fd_slot (local.get $nt) (local.get $cap) (i32.load (local.get $o))))\n"
+    + "          (i64.store (local.get $d) (i64.load (local.get $o)))))\n"
+    + "        (local.set $i (i32.add (local.get $i) (i32.const 1)))\n"
+    + "        (br $move)))\n"
+    + "      (global.set $__fern_fd_tab (local.get $nt))\n"
+    + "      (global.set $__fern_fd_cap (local.get $cap))))\n"
+    + "    (local.set $e (call $__fern_fd_slot (global.get $__fern_fd_tab) (global.get $__fern_fd_cap) (local.get $fd)))\n"
+    + "    (if (i32.eqz (i32.load (local.get $e))) (then\n"
+    + "      (i32.store (local.get $e) (local.get $fd))\n"
+    + "      (global.set $__fern_fd_len (i32.add (global.get $__fern_fd_len) (i32.const 1)))))\n"
+    + "    (i32.store offset=4 (local.get $e) (i32.add (i32.load offset=4 (local.get $e)) (i32.const 1)))\n"
     + "    (i32.const 0))\n"
     + "  (func $__fern_task_cancelled (result i32)\n"
     + "    (if (i32.eqz (global.get $__fern_task_cur_g)) (then (return (i32.const 0))))\n"
@@ -3916,6 +3957,7 @@ pub function tcp_send_buf_func(): string {
 pub function tcp_close_func(udp: boolean, watched: boolean, sends: boolean): string {
   let o = "";
   o += "  (func $__fern_tcp_close (param $c i32) (result i32)\n";
+  o += "    (drop (call $__fern_task_fd_closed (local.get $c)))\n";
   if (watched) {
     o += "    (call $__fern_reactor_forget (local.get $c))\n";
   }

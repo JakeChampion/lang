@@ -1234,6 +1234,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		"__task_until":         {Params: []ast.Type{i32T}, Result: ast.NumberType{Width: 64, Signed: true}},
 		"__task_set_ready":     {Params: []ast.Type{i32T, i32T}, Result: ast.VoidType{}},
 		"__task_set_cancelled": {Params: []ast.Type{i32T}, Result: ast.VoidType{}},
+		"__task_fd_gen":        {Params: []ast.Type{i32T}, Result: i32T},
 		"__task_cancelled":     {Params: []ast.Type{}, Result: i32T},
 	} {
 		c.info.FuncSigs[name] = sig
@@ -9548,6 +9549,7 @@ var UnsafeIntrinsics = map[string]bool{
 	"__c_callv":  true,
 	"__task_new": true, "__task_free": true, "__task_enter": true, "__task_leave": true,
 	"__task_park": true, "__task_wait": true, "__task_set_ready": true, "__task_set_cancelled": true,
+	"__task_fd_gen":    true,
 	"__task_cancelled": true, "__task_timeout": true, "__task_cur": true,
 	"__task_park_until": true, "__task_until": true,
 	"__syscall3": true, "__syscall4": true, "__syscall5": true, "__syscall6": true,
