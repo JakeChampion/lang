@@ -348,11 +348,18 @@ func TestArrayLiteralCheckIsLinear(t *testing.T) {
 		}
 		b.WriteString("];\nreturn 0;\n}\n")
 		src := b.String()
-		start := time.Now()
-		if err := checkSource(t, src); err != nil {
-			t.Fatal(err)
+		// The fastest of three runs: one pause on a busy machine must not decide the ratio.
+		var best time.Duration
+		for run := 0; run < 3; run++ {
+			start := time.Now()
+			if err := checkSource(t, src); err != nil {
+				t.Fatal(err)
+			}
+			if d := time.Since(start); run == 0 || d < best {
+				best = d
+			}
 		}
-		return time.Since(start)
+		return best
 	}
 	for _, elem := range []string{"1.5", "7", "[1.5, 2.5]"} {
 		small, large := elapsed(5000, elem), elapsed(20000, elem)
