@@ -2171,20 +2171,20 @@ pub function position_count(f: SFunc): i32 {
 }
 
 pub function block_positions(f: SFunc): i32[] {
+  return positions_of(f.blocks);
+}
+
+// The index of each block in `blocks`, by block id, and -1 for an id with no block.
+pub function positions_of(blocks: SBlock[]): i32[] {
   let top: i32 = -1;
-  for blk in f.blocks {
+  for blk in blocks {
     if (blk.id > top) {
       top = blk.id;
     }
   }
-  let out = __alloc_i32(top + 1);
-  let i = 0;
-  while (i <= top) {
-    out = out.with(i, -1);
-    i += 1;
-  }
-  for i in 0..f.blocks.len() {
-    let id = f.blocks[i].id;
+  let out = util.minus_ones(top + 1);
+  for i in 0..blocks.len() {
+    let id = blocks[i].id;
     if (id >= 0 && out[id] < 0) {
       out = out.with(id, i);
     }

@@ -5478,17 +5478,6 @@ function mapped_term(t: ssa.STerm, map: i32[]): ssa.STerm {
   return t;
 }
 
-function block_positions(blocks: ssa.SBlock[]): i32[] {
-  let at: i32[] = [];
-  for i in 0..blocks.len() {
-    while (at.len() <= blocks[i].id) {
-      at = at.append(-1);
-    }
-    at = at.with(blocks[i].id, i);
-  }
-  return at;
-}
-
 function reached(blocks: ssa.SBlock[], at: i32[]): boolean[] {
   let seen = __alloc_bool(at.len());
   seen = seen.with(blocks[0].id, true);
@@ -5536,7 +5525,7 @@ function live_edges(b: ssa.SBlock, seen: boolean[]): ssa.SBlock {
 }
 
 function reachable(blocks: ssa.SBlock[]): ssa.SBlock[] {
-  let seen = reached(blocks, block_positions(blocks));
+  let seen = reached(blocks, ssa.positions_of(blocks));
   let out: ssa.SBlock[] = [];
   for b in blocks {
     if (seen[b.id]) {
