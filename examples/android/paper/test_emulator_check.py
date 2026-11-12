@@ -273,6 +273,7 @@ class FilterTests(unittest.TestCase):
     def run_phone(self, phone):
         clock = iter(range(0, 100000, 5))
         with tempfile.TemporaryDirectory() as out, patch.multiple(check, adb=phone.adb, wait_for=phone.wait_for,
+                            shell=lambda *args: phone.adb("shell", *args),
                             fail=phone.failures.append), patch.object(check.time, "sleep"), \
                 patch.object(check.time, "monotonic", side_effect=lambda: next(clock)):
             check.check_filter(out, 320, 640)
@@ -316,6 +317,17 @@ class FilterTests(unittest.TestCase):
     def test_a_shade_that_the_check_cannot_read_fails(self):
         failures = self.run_phone(Phone(probe=False))
         self.assertEqual(failures, ["the shade does not show a notification that the shell posted"])
+
+    def test_a_shade_that_the_check_cannot_read_keeps_the_answers_of_the_device(self):
+        phone = Phone(probe=False)
+        with tempfile.TemporaryDirectory() as out, patch.multiple(check, adb=phone.adb, fail=phone.failures.append,
+                            shell=lambda *args: "answer to " + " ".join(args[:3])), patch.object(check.time, "sleep"), \
+                patch.object(check.time, "monotonic", side_effect=iter(range(0, 1000, 5)).__next__):
+            check.check_filter(out, 320, 640)
+            kept = {p.name: p.read_text() for p in Path(out).iterdir()}
+        self.assertEqual(kept["shade-list.txt"], "answer to cmd notification list")
+        self.assertEqual(kept["shade-post.txt"], "answer to cmd notification post")
+        self.assertIn("shade-dumpsys.txt", kept)
 
     def test_find_node_gives_the_middle_of_the_node(self):
         dump = node("Other", (0, 0, 10, 10)) + node("Notification filter: off", (0, 100, 320, 200))
