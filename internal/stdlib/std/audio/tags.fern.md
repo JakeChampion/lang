@@ -202,6 +202,14 @@ function genre_name(n: i32): string {
   return names[n];
 }
 
+function genre_digits_end(text: string, from: i32): i32 {
+  let at = from;
+  while (at < text.len() && text[at] >= 48u8 && text[at] <= 57u8) {
+    at += 1;
+  }
+  return at;
+}
+
 // The genre of the text `text` of a tag. `(17)` and `17` give the name of
 // that number, and `(17)Punk` gives the text after the number.
 function genre_text(text: string): string {
@@ -209,10 +217,7 @@ function genre_text(text: string): string {
   if (text.starts_with("(")) {
     from = 1;
   }
-  let at = from;
-  while (at < text.len() && text[at] >= 48u8 && text[at] <= 57u8) {
-    at += 1;
-  }
+  let at = genre_digits_end(text, from);
   if (at == from) {
     return text;
   }
