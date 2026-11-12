@@ -1,0 +1,72 @@
+[
+  {
+    "name": "borrowed receiver",
+    "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;} struct Box{h:H}function(b:Box)read():H{return b.h;}function f(b:Box):i32{let h=b.read();return h.close();}",
+    "want": "E051"
+  },
+  {
+    "name": "borrowed receiver alias",
+    "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;} struct Box{h:H}function(b:Box)read():H{return b.h;}function f(b:Box):i32{let a=b.read();let h=a;return h.close();}",
+    "want": "E051"
+  },
+  {
+    "name": "borrowed generic receiver",
+    "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;} struct Box[T]{h:T}function(b:Box[T])read():T{return b.h;}function f(b:Box[H]):i32{let h=b.read();return h.close();}",
+    "want": "E051"
+  },
+  {
+    "name": "borrowed method argument",
+    "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;} struct Box{n:i32}function(b:Box)read(h:H):H{return h;}function f(b:Box,h:H):i32{let a=b.read(h);return a.close();}",
+    "want": "E051"
+  },
+  {
+    "name": "borrowed generic method argument",
+    "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;} struct Box{n:i32}function(b:Box)read[T](h:T):T{return h;}function f(b:Box,h:H):i32{let a=b.read(h);return a.close();}",
+    "want": "E051"
+  },
+  {
+    "name": "owned receiver",
+    "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;} struct Box{h:H}function(own b:Box)take():H{return b.h;}function f(own b:Box):i32{let h=b.take();return h.close();}",
+    "want": ""
+  },
+  {
+    "name": "owned method argument",
+    "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;} struct Box{n:i32}function(b:Box)take(own h:H):H{return h;}function f(b:Box,own h:H):i32{let a=b.take(h);return a.close();}",
+    "want": ""
+  },
+  {
+    "name": "checked fresh method result",
+    "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;} struct Box{n:i32}function(b:Box)fresh():own H{return H{n:b.n};}function f(b:Box):i32{let h=b.fresh();return h.close();}",
+    "want": ""
+  },
+  {
+    "name": "fresh ordinary method result",
+    "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;} struct Box{n:i32}function(b:Box)fresh():H{return H{n:b.n};}function f(b:Box):i32{let h=b.fresh();return h.close();}",
+    "want": ""
+  },
+  {
+    "name": "data array result",
+    "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;} struct Box{xs:i32[]}function(b:Box)read():i32[]{return b.xs;}function take(own xs:i32[]):i32{return xs.len();}function f(b:Box):i32{let a=b.read();let c=b.read();return take(a)+take(c);}",
+    "want": ""
+  },
+  {
+    "name": "data record result",
+    "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;} struct Data{xs:i32[]}struct Box{d:Data}function(b:Box)read():Data{return b.d;}function take(own d:Data):i32{return d.xs.len();}function f(b:Box):i32{let a=b.read();let c=b.read();return take(a)+take(c);}",
+    "want": ""
+  },
+  {
+    "name": "same named methods preserve owned receiver",
+    "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;} struct Borrowed{h:H}struct Owned{h:H}function(b:Borrowed)read():H{return b.h;}function(own b:Owned)read():H{return b.h;}function f(own b:Owned):i32{let h=b.read();return h.close();}",
+    "want": ""
+  },
+  {
+    "name": "same named methods preserve borrowed receiver",
+    "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;} struct Borrowed{h:H}struct Owned{h:H}function(b:Borrowed)read():H{return b.h;}function(own b:Owned)read():H{return b.h;}function f(b:Borrowed):i32{let h=b.read();return h.close();}",
+    "want": "E051"
+  },
+  {
+    "name": "fresh result from resource receiver",
+    "source": "struct H{n:i32}function(own h:H)close():i32{return h.n;}struct Box{h:H}function(b:Box)fresh():H{return H{n:b.h.n};}function f(b:Box):i32{let h=b.fresh();return h.close();}",
+    "want": ""
+  }
+]
