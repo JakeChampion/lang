@@ -1,0 +1,288 @@
+import "std/audio/mp4";
+import "std/audio/mp4/file";
+import "std/audio/mp4/cursor";
+import "std/audio/mp4/time";
+import "std/audio/mp4/tables";
+import "std/audio/aac/config" as aac_config;
+import "std/audio/pcm";
+import "std/audio/source";
+import "std/test";
+import "mp4_cursor_test" as check;
+import "mp4_file_check" as fixture;
+import "video_mp4_file_check" as memory;
+
+function load(): Result[(u8[], mp4.Index, mp4.Decoded), string] {
+  let bytes = fixture.fixture("stereo-faststart")?;
+  let index = match (mp4.inspect(bytes, mp4.default_limits())) { Ok(value) => value, Err(value) => { return Err(value.message()); } };
+  let want = match (mp4.decode(bytes, mp4.default_limits())) { Ok(value) => value, Err(value) => { return Err(value.message()); } };
+  return Ok((bytes, index, want));
+}
+
+function changed(index: mp4.Index, track: mp4.Track): mp4.Index {
+  return mp4.Index { ...index, tracks: index.tracks.with(0, track) };
+}
+
+function replay(): test.TestOutcome {
+  let Ok((bytes, index, _)) = load() else {
+    return test.fail("fixture");
+  };
+  let edits = [time.Edit { duration: 37i64, media_time: -1i64 }, time.Edit { duration: 113i64, media_time: 1024i64 }, time.Edit { duration: 79i64, media_time: 0i64 }, time.Edit { duration: 205i64, media_time: 1024i64 }, time.Edit { duration: 64i64, media_time: -1i64 }];
+  let edited = changed(mp4.Index { ...index, movie: time.Clock { scale: 48000u32, duration: 498i64 } }, mp4.Track { ...index.tracks[0], edits: edits });
+  let Ok(want) = mp4.decode_track(bytes, edited, 0, mp4.default_limits()) else {
+    return test.fail("whole edit reference");
+  };
+  let input = memory.memory([memory.Segment { at: 0i64, bytes: bytes }], [], 7);
+  for at in [0i64, 36i64, 37i64, 38i64, 149i64, 150i64, 228i64, 229i64, 434i64, 497i64, 498i64] {
+    if let Err(message) = check.read(edited, input, want, at) {
+      return test.fail(message);
+    }
+  }
+  return test.pass();
+}
+
+function wide(): test.TestOutcome {
+  let Ok((bytes, index, want)) = load() else {
+    return test.fail("fixture");
+  };
+  let offset = 8589934592i64;
+  let rows: tables.Packet[] = [];
+  for row in index.tracks[0].packets {
+    rows = rows.append(tables.Packet { ...row, offset: row.offset + offset });
+  }
+  let shifted = changed(mp4.Index { ...index, bytes: index.bytes + offset }, mp4.Track { ...index.tracks[0], packets: rows });
+  let input = memory.memory([memory.Segment { at: offset, bytes: bytes }], [], 7);
+  if let Err(message) = check.read(shifted, input, want, 0i64) {
+    return test.fail(message);
+  }
+  return test.pass();
+}
+
+function refused(index: mp4.Index, number: i32, limits: file.Limits, expected: pcm.AudioError): boolean {
+  return match (cursor.create(index, number, limits)) { Err(source.ReadAudio(value)) => value == expected, _ => false };
+}
+
+function invalid_index(): test.TestOutcome {
+  let Ok((_, index, _)) = load() else {
+    return test.fail("fixture");
+  };
+  let limits = file.default_limits();
+  let track = index.tracks[0];
+  let row = track.packets[0];
+  for packet in [tables.Packet { ...row, offset: -1i64 }, tables.Packet { ...row, offset: index.bytes }, tables.Packet { ...row, bytes: 0 }, tables.Packet { ...row, description: -1 }, tables.Packet { ...row, position: -1i64 }] {
+    if (!refused(changed(index, mp4.Track { ...track, packets: track.packets.with(0, packet) }), 0, limits, pcm.Header)) {
+      return test.fail("forged packet admission");
+    }
+  }
+  if (!refused(index, -1, limits, pcm.Header) || !refused(index, index.tracks.len(), limits, pcm.Header)) {
+    return test.fail("track selection");
+  }
+  let overflow = tables.Packet { ...row, position: 9223372036854775807i64 };
+  if (!refused(changed(index, mp4.Track { ...track, packets: track.packets.with(0, overflow) }), 0, limits, pcm.Limit)) {
+    return test.fail("clock overflow");
+  }
+  return test.pass();
+}
+
+function limits(): test.TestOutcome {
+  let Ok((_, index, _)) = load() else {
+    return test.fail("fixture");
+  };
+  let base = file.default_limits();
+  for budget in [file.Limits { ...base, max_file_bytes: index.bytes - 1i64 }, file.Limits { ...base, max_operations: 0 }, file.Limits { ...base, index: mp4.Limits { ...base.index, max_packets: 0 } }, file.Limits { ...base, index: mp4.Limits { ...base.index, audio: pcm.Limits { ...base.index.audio, max_samples: 2047 } } }] {
+    if (!refused(index, 0, budget, pcm.Limit)) {
+      return test.fail("cursor admission limit");
+    }
+  }
+  let budget = file.Limits { ...base, input: source.Limits { chunk_size: 0, max_buffer_bytes: 1000 } };
+  if let Err(source.ReadSize) = cursor.create(index, 0, budget) {} else {
+    return test.fail("invalid source budget");
+  }
+  return test.pass();
+}
+
+function source_failure(seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError]): Result[source.ReadError, string] {
+  let (_, index, _) = load()?;
+  let state = match (cursor.create(index, 0, file.default_limits())) { Ok(value) => value, Err(value) => { return Err(value.message()); } };
+  let output: f32[] = [];
+  for i in 0..200 {
+    match (state.step_into_with(output, seek, read)) {
+      Ok((next, cursor.BufferPending(buffer))) => {
+        state = next;
+        output = buffer;
+      },
+      Err(value) => {
+        return Ok(value);
+      },
+      _ => {
+        return Err("invalid source reached PCM");
+      }
+    }
+  }
+  return Err("invalid source did not fail");
+}
+
+function io_errors(): test.TestOutcome {
+  let seek = (at: i64): Result[i64, IoError] => Ok(at);
+  let empty = (_count: i32): Result[u8[], IoError] => Ok([]);
+  if let Ok(source.ReadAudio(pcm.Truncated)) = source_failure(seek, empty) {} else {
+    return test.fail("physical EOF");
+  }
+  let failed = (_count: i32): Result[u8[], IoError] => Err(IoError.Interrupted);
+  if let Ok(source.ReadIo(IoError.Interrupted)) = source_failure(seek, failed) {} else {
+    return test.fail("I/O category");
+  }
+  let wrong = (at: i64): Result[i64, IoError] => Ok(at + 1i64);
+  if let Ok(source.ReadSize) = source_failure(wrong, empty) {} else {
+    return test.fail("wrong seek result");
+  }
+  let rejected = (_at: i64): Result[i64, IoError] => Err(IoError.Interrupted);
+  if let Ok(source.ReadIo(IoError.Interrupted)) = source_failure(rejected, empty) {} else {
+    return test.fail("seek I/O category");
+  }
+  if let Ok(source.ReadSize) = source_failure(seek, oversized) {} else {
+    return test.fail("oversized source result");
+  }
+  return test.pass();
+}
+
+function oversized(count: i32): Result[u8[], IoError] {
+  let bytes: u8[] = [];
+  for i in 0..count + 1 {
+    bytes = bytes.append(0 as u8);
+  }
+  return Ok(bytes);
+}
+
+function packet_budgets(): test.TestOutcome {
+  let Ok((_, index, _)) = load() else {
+    return test.fail("fixture");
+  };
+  let base = file.default_limits();
+  let maximum = 0;
+  for row in index.tracks[0].packets {
+    if (row.bytes > maximum) {
+      maximum = row.bytes;
+    }
+  }
+  let limits = file.Limits { ...base, index: mp4.Limits { ...base.index, audio: pcm.Limits { ...base.index.audio, max_input_bytes: maximum - 1 } } };
+  if (!refused(index, 0, limits, pcm.Limit)) {
+    return test.fail("encoded packet budget");
+  }
+  let small = file.Limits { ...base, input: source.Limits { chunk_size: 7, max_buffer_bytes: maximum - 1 } };
+  if let Err(source.ReadSize) = cursor.create(index, 0, small) {} else {
+    return test.fail("packet window budget");
+  }
+  let exact = file.Limits { ...base, input: source.Limits { chunk_size: 7, max_buffer_bytes: maximum }, index: mp4.Limits { ...base.index, audio: pcm.Limits { ...base.index.audio, max_input_bytes: maximum } } };
+  if let Err(_) = cursor.create(index, 0, exact) {
+    return test.fail("exact packet budgets");
+  }
+  return test.pass();
+}
+
+function configuration(): test.TestOutcome {
+  let Ok((_, index, _)) = load() else {
+    return test.fail("fixture");
+  };
+  let base = file.default_limits();
+  let track = index.tracks[0];
+  let config = track.configurations[0];
+  let malformed = changed(index, mp4.Track { ...track, configurations: [aac_config.Config { ...config, channels: config.channels + 1 }] });
+  if (!refused(malformed, 0, base, pcm.Header)) {
+    return test.fail("noncanonical configuration");
+  }
+  let other = match (aac_config.create(2, 44100, 1)) { Ok(value) => value, Err(_) => { return test.fail("configuration"); } };
+  let switched = changed(index, mp4.Track { ...track, configurations: [config, other] });
+  if (!refused(switched, 0, base, pcm.Unsupported)) {
+    return test.fail("configuration change");
+  }
+  if (!refused(mp4.Index { ...index, movie: time.Clock { scale: 0u32, duration: 1i64 } }, 0, base, pcm.Header)) {
+    return test.fail("movie clock");
+  }
+  return test.pass();
+}
+
+function check_silence(audio: cursor.Audio, position: i64): Result[void, string] {
+  if (audio.frames != 1024 || audio.position != position || audio.info.frames != 100000000i64) {
+    return Err("long presentation metadata");
+  }
+  for i in 0..2048 {
+    if (audio.samples[i] != 0.0f32) {
+      return Err("silence sample");
+    }
+  }
+  if (audio.samples.len() != 2049 || audio.samples[2048] != 11.25f32) {
+    return Err("bounded silence storage");
+  }
+  return Ok(());
+}
+
+function silence_step(own state: cursor.Cursor, own samples: f32[], position: i64): Result[(cursor.Cursor, f32[]), string] {
+  let rejected_seek = (_at: i64): Result[i64, IoError] => Err(IoError.Interrupted);
+  let rejected_read = (_count: i32): Result[u8[], IoError] => Err(IoError.Interrupted);
+  let (next, event) = match (state.step_into_with(samples, rejected_seek, rejected_read)) { Ok(value) => value, Err(value) => { return Err(value.message()); } };
+  let cursor.BufferSamples(audio) = event else {
+    return Err("silence block");
+  };
+  check_silence(audio, position)?;
+  return Ok((next, audio.samples));
+}
+
+function long_silence(): test.TestOutcome {
+  let Ok((_, index, _)) = load() else {
+    return test.fail("fixture");
+  };
+  let track = mp4.Track { ...index.tracks[0], edits: [time.Edit { duration: 100000000i64, media_time: -1i64 }] };
+  let edited = changed(mp4.Index { ...index, movie: time.Clock { scale: 48000u32, duration: 100000000i64 } }, track);
+  let base = file.default_limits();
+  let limits = file.Limits { ...base, index: mp4.Limits { ...base.index, audio: pcm.Limits { ...base.index.audio, max_samples: 200000000 } } };
+  let Ok(state) = cursor.create(edited, 0, limits) else {
+    return test.fail("long presentation");
+  };
+  let samples: f32[] = [];
+  for i in 0..2049 {
+    samples = samples.append(11.25f32);
+  }
+  for i in 0..16 {
+    let Ok((next, output)) = silence_step(state, samples, i as i64 * 1024i64) else {
+      return test.fail("bounded silence step");
+    };
+    state = next;
+    samples = output;
+  }
+  return test.pass();
+}
+
+function operation_limit(): test.TestOutcome {
+  let Ok((_, index, _)) = load() else {
+    return test.fail("fixture");
+  };
+  let limits = file.Limits { ...file.default_limits(), max_operations: 1 };
+  let Ok(state) = cursor.create(index, 0, limits) else {
+    return test.fail("create");
+  };
+  let read = (_count: i32): Result[u8[], IoError] => Err(IoError.Interrupted);
+  let seek = (at: i64): Result[i64, IoError] => Ok(at);
+  let Ok((next, event)) = state.step_into_with([], seek, read) else {
+    return test.fail("first window");
+  };
+  if let cursor.BufferPending(output) = event {
+    if let Err(source.ReadAudio(pcm.Limit)) = next.step_into_with(output, seek, read) {
+      return test.pass();
+    }
+  }
+  return test.fail("operation limit");
+}
+
+function main(): i32 {
+  let r = test.new("AAC MP4 cursor boundaries");
+  r = r.it("silence, repeated and backward edits, and exact seeks", replay);
+  r = r.it("packet ranges above eight GiB", wide);
+  r = r.it("retained index and timestamp validation", invalid_index);
+  r = r.it("source, sample, packet, and track budgets", limits);
+  r = r.it("truncation and source I/O categories", io_errors);
+  r = r.it("operation budget", operation_limit);
+  r = r.it("exact packet budgets", packet_budgets);
+  r = r.it("canonical configuration and clocks", configuration);
+  r = r.it("long presentation with one reusable frame and no source I/O", long_silence);
+  return r.finish();
+}

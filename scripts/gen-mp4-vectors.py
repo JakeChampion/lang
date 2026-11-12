@@ -33,6 +33,38 @@ def rewrite(data, change):
     return out
 
 
+def sparse_movie(path, output):
+    data = path.read_bytes()
+    def co64(kind, body):
+        if kind == b'stco':
+            count = struct.unpack_from('>I', body, 4)[0]
+            values = struct.unpack_from(f'>{count}I', body, 8)
+            return box(b'co64', body[:8] + struct.pack(f'>{count}Q', *values))
+        return box(kind, body)
+    data = rewrite(data, co64)
+    top = {}
+    at = 0
+    while at < len(data):
+        size, tag = struct.unpack_from('>I4s', data, at)
+        top[tag] = (at, data[at:at + size])
+        at += size
+    base = 8 * 1024**3
+    movie = bytearray(top[b'moov'][1])
+    table = movie.index(b'co64') + 4
+    count = struct.unpack_from('>I', movie, table + 4)[0]
+    for i in range(count):
+        at = table + 8 + i * 8
+        struct.pack_into('>Q', movie, at, struct.unpack_from('>Q', movie, at)[0] + base - top[b'mdat'][0])
+    with output.open('wb') as out:
+        out.write(top[b'ftyp'][1])
+        out.write(struct.pack('>I4sQ', 1, b'free', base - out.tell()))
+        out.seek(base)
+        out.write(top[b'mdat'][1])
+        out.write(movie)
+    assert output.stat().st_size > base and output.stat().st_blocks * 512 < 1024**2
+
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--check', action='store_true')
