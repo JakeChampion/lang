@@ -31,6 +31,17 @@ const sysregX86Src = `function main(): i32 {
 `
 
 // sysregRows reads the arm64 register table of compiler/sysreg.fern, so the
+// A read of the time-stamp counter is rdtsc, because a VMM can give a stale
+// value for rdmsr of the same register. A write stays wrmsr.
+func TestSelfHostSysregTscIsRdtsc(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	text := emitKernelAsm(t, cli, "x86-64-kernel", kernelX86RAM, "function main(): i32 {\n  unsafe {\n    __sysreg_write(\"tsc\", 5i64);\n    return __sysreg_read(\"tsc\") as i32;\n  }\n}\n")
+	wantInOrder(t, "x86-64-kernel", text, []string{"    movl $16, %ecx\n    wrmsr\n", "    rdtsc\n    shlq $32, %rdx\n    orq %rdx, %rax\n"})
+	if strings.Contains(text, "rdmsr") {
+		t.Errorf("the image reads the time-stamp counter with rdmsr")
+	}
+}
+
 // test assembles every row that the compiler accepts.
 func sysregRows(t *testing.T) map[string]string {
 	t.Helper()
