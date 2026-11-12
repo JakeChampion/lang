@@ -49,14 +49,15 @@ function (value: i32) update(): string { return "a" + "b"; }
 function (value: B) update(): string { return value.text; }
 function sink(own text: string): i32 { return text.len(); }
 function main(): i32 { return sink((1).update()) - 2; }`, nil},
-		{"parameter_without_caller", `function apply(f: (own string) => i32): i32 { return f("ab"); }
-function main(): i32 { return 0; }`, []string{"E051"}},
+		{"string_literal", `function apply(f: (own string) => i32): i32 { return f("ab"); }
+function main(): i32 { return 0; }`, nil},
 		{"parameter_with_caller", `function length(own s: string): i32 { return s.len(); }
-function apply(f: (own string) => i32): i32 { return f("ab"); }
-function main(): i32 { return apply(length); }`, []string{"E051"}},
-		{"local_closure", `function main(): i32 { let f: (own string) => i32 = (own s: string): i32 => s.len(); return f("ab"); }`, []string{"E051"}},
+function apply(f: (own string) => i32, s: string): i32 { return f(s); }
+function main(): i32 { return apply(length, "ab"); }`, []string{"E051"}},
+		{"local_closure", `function run(s: string): i32 { let f: (own string) => i32 = (own t: string): i32 => t.len(); return f(s); }
+function main(): i32 { return 0; }`, []string{"E051"}},
 		{"function_field", `struct F { f: (own string) => i32 }
-function apply(h: F): i32 { return h.f("ab"); }
+function apply(h: F, s: string): i32 { return h.f(s); }
 function main(): i32 { return 0; }`, []string{"E051"}},
 		{"borrowed_argument", `function apply(f: (own string) => i32, s: string): i32 { return f(s); }
 function main(): i32 { return 0; }`, []string{"E051"}},
