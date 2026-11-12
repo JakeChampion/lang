@@ -14852,6 +14852,8 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
                     out = util.append_diags(out, callable_arg_diags(c, check_expr(c.callee, s), s));
                   }
                 }
+              } else if (semtypes.is_fd_handle_name(sn.name)) {
+                out = out.append(handle_member_diag(sn.name, mfa));
               }
             }
           }
@@ -15816,6 +15818,12 @@ function call_diags_slice(s2: ast.ExprSlice, s: Scope, out: util.Diag[]): util.D
   return out;
 }
 
+// E043 for a member that a built-in handle does not have. A handle has no
+// struct declaration, and `fd` is its one field.
+function handle_member_diag(name: string, fa: ast.ExprFieldAccess): util.Diag {
+  return access_fix(dg_at("E043", "struct " + name + " has no field or method \"" + fa.field + "\"", fa.line, fa.col), fa, ["fd"]);
+}
+
 function call_diags_field_access(fa: ast.ExprFieldAccess, s: Scope, out: util.Diag[]): util.Diag[] {
   let qen = qual_enum_name(fa.obj, s);
   if (qen.len() > 0) {
@@ -15839,6 +15847,8 @@ function call_diags_field_access(fa: ast.ExprFieldAccess, s: Scope, out: util.Di
         if (!util.has_str(fsig.field_names, fa.field)) {
           out = out.append(s.member_fix(dg_at("E043", "struct " + util.demangle(sn.name) + " has no field or method \"" + fa.field + "\"", fa.line, fa.col), fa, fsig));
         }
+      } else if (semtypes.is_fd_handle_name(sn.name) && fa.field != "fd") {
+        out = out.append(handle_member_diag(sn.name, fa));
       }
     },
     typeinfo.TypeTuple(tt) => {

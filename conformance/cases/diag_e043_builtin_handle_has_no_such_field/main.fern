@@ -1,0 +1,8 @@
+// `fd` is the one field of a built-in handle. Another field is E043.
+function port(s: Socket): i32 {
+    return s.port;
+}
+
+function main(): i32 {
+    return 0;
+}
