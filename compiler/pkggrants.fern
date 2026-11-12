@@ -153,17 +153,6 @@ function sorted_unique(input: string[]): string[] {
   return out;
 }
 
-function joined(xs: string[], sep: string): string {
-  let out = "";
-  for i in 0..xs.len() {
-    if (i > 0) {
-      out += sep;
-    }
-    out += xs[i];
-  }
-  return out;
-}
-
 // Refusal is a dependency entry granting more than its package holds, at
 // line `line` of the fern.toml in `dir`.
 pub struct Refusal { dir: string, line: i32, message: string }
@@ -173,7 +162,7 @@ function violations(m: ManifestAt, held: string[], own out: Refusal[]): Refusal[
     if (dep.governed) {
       for cap in sorted_unique(dep.caps) {
         if (!util.has_str(held, cap)) {
-          out = out.append(Refusal { dir: m.dir, line: dep.line, message: "dependency \"" + dep.name + "\" of \"" + m.man.name + "\" is granted '" + cap + "' but \"" + m.man.name + "\" itself holds only [" + joined(sorted_unique(held), ", ") + "] (attenuation: a dependency may grant at most what it holds)" });
+          out = out.append(Refusal { dir: m.dir, line: dep.line, message: "dependency \"" + dep.name + "\" of \"" + m.man.name + "\" is granted '" + cap + "' but \"" + m.man.name + "\" itself holds only [" + sorted_unique(held).join(", ") + "] (attenuation: a dependency may grant at most what it holds)" });
         }
       }
     }

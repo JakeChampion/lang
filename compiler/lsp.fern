@@ -572,8 +572,8 @@ function percent_decode(s: string): string {
     if (i + 2 >= s.len()) {
       return "";
     }
-    let hi = hex_digit(s[i + 1] as i32);
-    let lo = hex_digit(s[i + 2] as i32);
+    let hi = util.hex_value(s[i + 1]);
+    let lo = util.hex_value(s[i + 2]);
     if (hi < 0 || lo < 0) {
       return "";
     }
@@ -583,17 +583,4 @@ function percent_decode(s: string): string {
   unsafe {
     return string_from_bytes_unchecked(out);
   }
-}
-
-function hex_digit(b: i32): i32 {
-  if (b >= 48 && b <= 57) {
-    return b - 48;
-  }
-  if (b >= 97 && b <= 102) {
-    return b - 87;
-  }
-  if (b >= 65 && b <= 70) {
-    return b - 55;
-  }
-  return -1;
 }

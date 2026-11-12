@@ -481,17 +481,6 @@ function host(): Vocab {
   return vocab(bs, ls);
 }
 
-function joined(xs: string[], sep: string): string {
-  let out = "";
-  for x in xs {
-    if (out.len() > 0) {
-      out += sep;
-    }
-    out += x;
-  }
-  return out;
-}
-
 function section(g: Graph, title: string, v: Vocab): string {
   let (rows, _) = solve(g, v, true);
   let (direct, _) = solve(g, v, false);
@@ -527,13 +516,13 @@ function section(g: Graph, title: string, v: Vocab): string {
       if (g.funcs[k].is_pub) {
         pub_effectful += 1;
       }
-      out = out + display(g.funcs[k]) + "  " + joined(reached, ",");
+      out = out + display(g.funcs[k]) + "  " + reached.join(",");
       if (via.len() > 0) {
-        out = out + "  (via a function value: " + joined(via, ",") + ")";
+        out = out + "  (via a function value: " + via.join(",") + ")";
       }
       let w = witness(g, v, k, rows[k]);
       if (w.len() > 0) {
-        out = out + "  (example: " + joined(w, " → ") + ")";
+        out = out + "  (example: " + w.join(" → ") + ")";
       }
       out += "\n";
     }

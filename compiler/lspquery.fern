@@ -678,7 +678,7 @@ function method_text(s: checker.Scope, fa: ast.ExprFieldAccess): string {
 pub struct Parts { params: string[], ret: string }
 
 pub function parts_text(name: string, parts: Parts): string {
-  return "function " + name + "(" + joined(parts.params) + "): " + parts.ret;
+  return "function " + name + "(" + parts.params.join(", ") + "): " + parts.ret;
 }
 
 pub function func_parts(sig: checker.FuncSig): Parts {
@@ -786,7 +786,7 @@ pub function label(t: typeinfo.Type, spelling: string): string {
 }
 
 function labels(ts: typeinfo.Type[], spellings: string[]): string {
-  return joined(label_list(ts, spellings, 0));
+  return label_list(ts, spellings, 0).join(", ");
 }
 
 function label_list(ts: typeinfo.Type[], spellings: string[], from: i32): string[] {
@@ -797,17 +797,6 @@ function label_list(ts: typeinfo.Type[], spellings: string[], from: i32): string
       sp = spellings[i];
     }
     out = out.append(label(ts[i], sp));
-  }
-  return out;
-}
-
-function joined(xs: string[]): string {
-  let out = "";
-  for i in 0..xs.len() {
-    if (i > 0) {
-      out += ", ";
-    }
-    out += xs[i];
   }
   return out;
 }
