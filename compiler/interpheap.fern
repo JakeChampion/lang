@@ -22,7 +22,7 @@ struct Counts { generations: i64[], values: i32[] }
 // before it reaches the allocator the interpreter itself runs on.
 pub struct RawBlocks { addrs: i64[], sizes: i32[], live: boolean[] }
 
-pub struct Heap { state: Cell[State], counts: Cell[Counts], raw: Cell[RawBlocks] }
+pub struct Heap { state: Cell[State], counts: Cell[Counts], raw: Cell[RawBlocks], serials: Cell[i64] }
 
 pub struct Root { heap: Heap, reference: Ref }
 
@@ -48,7 +48,14 @@ function empty_payload(): Payload {
 }
 
 pub function create(): Heap {
-  return Heap { state: cell_new(empty_state()), counts: cell_new(empty_counts()), raw: cell_new(RawBlocks { addrs: [], sizes: [], live: [] }) };
+  return Heap { state: cell_new(empty_state()), counts: cell_new(empty_counts()), raw: cell_new(RawBlocks { addrs: [], sizes: [], live: [] }), serials: cell_new(0i64) };
+}
+
+// A number that no earlier call gave. It is never zero.
+pub function serial(h: Heap): i64 {
+  let n = h.serials.get() + 1i64;
+  h.serials.set(n);
+  return n;
 }
 
 function raw_index(blocks: RawBlocks, addr: i64): Option[i32] {

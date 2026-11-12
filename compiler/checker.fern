@@ -8841,13 +8841,108 @@ function slc_expr_roots(e: ast.Expr, cur: Scope, params: string[], localarr: str
 
 pub struct SlcWalk { diags: util.Diag[], viewed: string[] }
 
-function slc_walk(stmts: ast.Stmt[], fname: string, s: Scope, params: string[], localarr: string[], tainted: string[], held: string[], sums: ViewSum[], vix: ViewIndex, ret_is_view: boolean): SlcWalk {
+// The three lists of the walk: the owned local arrays, the views of local
+// storage, and the aggregates that hold such a view.
+struct SlcLists { arrays: string[], tainted: string[], held: string[] }
+
+// The block depth of the storage behind each name of the three lists, in list
+// order, and the depth of the declaration of each local. A function body has
+// depth 1. `depth` is the depth of the block that the walk is in.
+struct SlcDepths { depth: i32, arrays: i32[], tainted: i32[], held: i32[], vars: string[], var_depths: i32[] }
+
+// The names of `names` whose storage is deeper than depth `t`.
+function slc_deeper(names: string[], at: i32[], t: i32): string[] {
+  let out: string[] = [];
+  for i in 0..at.len() {
+    if (at[i] > t) {
+      out = out.append(names[i]);
+    }
+  }
+  return out;
+}
+
+function slc_lists_deeper(l: SlcLists, d: SlcDepths, t: i32): SlcLists {
+  return SlcLists { arrays: slc_deeper(l.arrays, d.arrays, t), tainted: slc_deeper(l.tainted, d.tainted, t), held: slc_deeper(l.held, d.held, t) };
+}
+
+// The depth of the deepest storage that `v` views: the deepest block for
+// which the storage of that block and of the blocks inside it gives a root.
+function slc_storage_depth(v: ast.StmtVar, cur: Scope, params: string[], before: SlcLists, d: SlcDepths, sums: ViewSum[], vix: ViewIndex): i32 {
+  let vty = bound_type(v, cur);
+  for up in 1..d.depth {
+    let l = slc_lists_deeper(before, d, d.depth - up);
+    let found = slc_src_roots(v.init, cur, params, l.arrays, l.tainted, sums, vix).local || slc_expr_roots(v.init, cur, params, l.arrays, l.tainted, sums, vix).local;
+    if (found || holds_view_aggregate(vty, cur) && slc_agg_roots(v.init, vty, cur, params, l.arrays, l.tainted, l.held, sums, vix).local) {
+      return d.depth - up + 1;
+    }
+  }
+  return 1;
+}
+
+// The depths after the declaration `v`, which grew the lists from `before`
+// to `after`.
+function slc_declared(d: SlcDepths, v: ast.StmtVar, cur: Scope, params: string[], before: SlcLists, after: SlcLists, sums: ViewSum[], vix: ViewIndex): SlcDepths {
+  let out = SlcDepths { ...d, vars: d.vars.append(v.name), var_depths: d.var_depths.append(d.depth) };
+  if (after.arrays.len() > before.arrays.len()) {
+    out = SlcDepths { ...out, arrays: out.arrays.append(d.depth) };
+  }
+  if (after.tainted.len() == before.tainted.len() && after.held.len() == before.held.len()) {
+    return out;
+  }
+  let at = slc_storage_depth(v, cur, params, before, d, sums, vix);
+  for i in before.tainted.len()..after.tainted.len() {
+    out = SlcDepths { ...out, tainted: out.tainted.append(at) };
+  }
+  for i in before.held.len()..after.held.len() {
+    out = SlcDepths { ...out, held: out.held.append(at) };
+  }
+  return out;
+}
+
+// The depth of the declaration of the local or parameter `name`, or 0.
+function slc_var_depth(d: SlcDepths, name: string, params: string[]): i32 {
+  let at = 0;
+  for i in 0..d.vars.len() {
+    if (d.vars[i] == name) {
+      at = d.var_depths[i];
+    }
+  }
+  if (at == 0 && name_in(name, params)) {
+    return 1;
+  }
+  return at;
+}
+
+// A view that is stored in a variable of an outer block must not view the
+// storage of an inner block: that storage ends with its block.
+function slc_store_diags(a: ast.StmtAssign, cur: Scope, params: string[], localarr: string[], tainted: string[], held: string[], sums: ViewSum[], vix: ViewIndex, d: SlcDepths): util.Diag[] {
+  let to = slc_var_depth(d, a.target, params);
+  if (to == 0 || to >= d.depth || !cur.is_bound(a.target)) {
+    return [];
+  }
+  let tty = cur.lookup(a.target);
+  if (!typeinfo.is_array_view(tty) && !holds_view_aggregate(tty, cur)) {
+    return [];
+  }
+  let l = slc_lists_deeper(SlcLists { arrays: localarr, tainted: tainted, held: held }, d, to);
+  if (!slc_agg_roots(a.value, tty, cur, params, l.arrays, l.tainted, l.held, sums, vix).local) {
+    return [];
+  }
+  return [dg_at("E063", "storing a `[T]` slice in \"" + a.target + "\" that views the storage of an inner block: the backing array is reclaimed when that block ends, leaving a dangling view — store an owned array (`T[]`), or declare the storage in the block of \"" + a.target + "\"", a.line, a.col)];
+}
+
+function slc_walk(stmts: ast.Stmt[], fname: string, s: Scope, params: string[], localarr: string[], tainted: string[], held: string[], sums: ViewSum[], vix: ViewIndex, ret_is_view: boolean, depths: SlcDepths): SlcWalk {
   let out: util.Diag[] = [];
   let viewed: string[] = [];
   let cur = s;
+  let dep = depths;
   for st in stmts {
     match (st) {
+      ast.StmtAssign(a) => {
+        out = util.append_diags(out, slc_store_diags(a, cur, params, localarr, tainted, held, sums, vix, dep));
+      },
       ast.StmtVar(v) => {
+        let before = SlcLists { arrays: localarr, tainted: tainted, held: held };
         if (typeinfo.is_array_view(var_declared_type(v, cur)) && typeinfo.is_owned_array(check_expr(v.init, cur))) {
           if (slc_of_call_result(v.init) || slc_src_roots(v.init, cur, params, localarr, tainted, sums, vix).local) {
             tainted = tainted.append(v.name);
@@ -8867,6 +8962,7 @@ function slc_walk(stmts: ast.Stmt[], fname: string, s: Scope, params: string[], 
             }
           }
         }
+        dep = slc_declared(dep, v, cur, params, before, SlcLists { arrays: localarr, tainted: tainted, held: held }, sums, vix);
       },
       ast.StmtReturn(r) => {
         if (ret_is_view) {
@@ -8882,33 +8978,33 @@ function slc_walk(stmts: ast.Stmt[], fname: string, s: Scope, params: string[], 
         }
       },
       ast.StmtIf(f) => {
-        let wt = slc_walk(f.then_body, fname, cur, params, localarr, tainted, held, sums, vix, ret_is_view);
+        let wt = slc_walk(f.then_body, fname, cur, params, localarr, tainted, held, sums, vix, ret_is_view, SlcDepths { ...dep, depth: dep.depth + 1 });
         out = util.append_diags(out, wt.diags);
         viewed = merge_view_names(viewed, wt.viewed);
-        let we = slc_walk(f.else_body, fname, cur, params, localarr, tainted, held, sums, vix, ret_is_view);
+        let we = slc_walk(f.else_body, fname, cur, params, localarr, tainted, held, sums, vix, ret_is_view, SlcDepths { ...dep, depth: dep.depth + 1 });
         out = util.append_diags(out, we.diags);
         viewed = merge_view_names(viewed, we.viewed);
       },
       ast.StmtWhile(w) => {
-        let ww = slc_walk(w.body, fname, cur, params, localarr, tainted, held, sums, vix, ret_is_view);
+        let ww = slc_walk(w.body, fname, cur, params, localarr, tainted, held, sums, vix, ret_is_view, SlcDepths { ...dep, depth: dep.depth + 1 });
         out = util.append_diags(out, ww.diags);
         viewed = merge_view_names(viewed, ww.viewed);
       },
       ast.StmtFor(fr) => {
-        let wf = slc_walk(fr.body, fname, for_body_scope(fr, cur), params, localarr, tainted, held, sums, vix, ret_is_view);
+        let wf = slc_walk(fr.body, fname, for_body_scope(fr, cur), params, localarr, tainted, held, sums, vix, ret_is_view, SlcDepths { ...dep, depth: dep.depth + 1 });
         out = util.append_diags(out, wf.diags);
         viewed = merge_view_names(viewed, wf.viewed);
       },
       ast.StmtMatch(m) => {
         for arm in m.arms {
-          let wa = slc_walk(arm.body, fname, cur, params, localarr, tainted, held, sums, vix, ret_is_view);
+          let wa = slc_walk(arm.body, fname, cur, params, localarr, tainted, held, sums, vix, ret_is_view, SlcDepths { ...dep, depth: dep.depth + 1 });
           out = util.append_diags(out, wa.diags);
           viewed = merge_view_names(viewed, wa.viewed);
         }
       },
       ast.StmtDefer(d) => {
         let one: ast.Stmt[] = [d.action];
-        let wd = slc_walk(one, fname, cur, params, localarr, tainted, held, sums, vix, ret_is_view);
+        let wd = slc_walk(one, fname, cur, params, localarr, tainted, held, sums, vix, ret_is_view, SlcDepths { ...dep, depth: dep.depth + 1 });
         out = util.append_diags(out, wd.diags);
         viewed = merge_view_names(viewed, wd.viewed);
       },
@@ -9107,6 +9203,26 @@ function held_roots(name: string, params: string[], held: string[]): ViewRoots {
   return ViewRoots { local: name_in(name, held), params: [] };
 }
 
+// A function can store a view of an inner block in an outer variable only
+// when its body assigns a variable and makes a slice. The walk is not free,
+// so a body with neither is not walked for its stores.
+function slc_may_store(fd: parser.FuncDecl): boolean {
+  let assigns: string[] = [];
+  let slices = false;
+  for st in fd.body {
+    assigns = astwalk.fold_stmt_spine(st, assigns, astwalk.assign_target_of);
+    slices = astwalk.fold_stmt(st, slices, slc_slice_seen);
+  }
+  return slices && assigns.len() > 0;
+}
+
+function slc_slice_seen(e: ast.Expr, own seen: boolean): boolean {
+  if let ast.ExprSlice(_) = e {
+    return true;
+  }
+  return seen;
+}
+
 function returns_view_or_holder(fd: parser.FuncDecl, s: Scope): boolean {
   return parser.spelling_is_view(fd.ret_type) || holds_view_aggregate(s.ret_type, s);
 }
@@ -9181,6 +9297,9 @@ function slc_agg_roots(e: ast.Expr, to: typeinfo.Type, cur: Scope, params: strin
 function slc_agg_call_roots(c: ast.ExprCall, cur: Scope, params: string[], localarr: string[], tainted: string[], held: string[], sums: ViewSum[], vix: ViewIndex): ViewRoots {
   let out = no_view_roots();
   let callee = view_callee(c, cur);
+  if (!view_sum_known(sums, vix, callee.key)) {
+    return slc_builtin_call_roots(c, cur, params, localarr, tainted, held, sums, vix);
+  }
   let flags = view_sum_flags(sums, vix, callee.key);
   for i in 0..flags.len() {
     if (flags[i] && i < callee.args.len()) {
@@ -9190,6 +9309,24 @@ function slc_agg_call_roots(c: ast.ExprCall, cur: Scope, params: string[], local
       } else {
         out = merge_view_roots(out, slc_src_roots(callee.args[i], cur, params, localarr, tainted, sums, vix));
       }
+    }
+  }
+  return out;
+}
+
+// A call with no summary is a builtin, such as the `append` of an array or the
+// `insert` of a map. Its result can hold each view that its receiver or an
+// argument holds.
+function slc_builtin_call_roots(c: ast.ExprCall, cur: Scope, params: string[], localarr: string[], tainted: string[], held: string[], sums: ViewSum[], vix: ViewIndex): ViewRoots {
+  let parts = c.args;
+  if let ast.ExprFieldAccess(fa) = c.callee {
+    parts = parts.append(fa.obj);
+  }
+  let out = no_view_roots();
+  for part in parts {
+    let pt = check_expr(part, cur);
+    if (typeinfo.is_array_view(pt) || holds_view_aggregate(pt, cur)) {
+      out = merge_view_roots(out, slc_agg_roots(part, pt, cur, params, localarr, tainted, held, sums, vix));
     }
   }
   return out;
@@ -9214,7 +9351,12 @@ struct SlcFunction { scope: Scope, params: string[], fixed_strings: string[] }
 function slice_escape_diags(fn: parser.FuncDecl, prepared: SlcFunction, sums: ViewSum[], vix: ViewIndex): SlcWalk {
   let localarr: string[] = [];
   let held: string[] = [];
-  return slc_walk(fn.body, fn.name, prepared.scope, prepared.params, localarr, prepared.fixed_strings, held, sums, vix, parser.spelling_is_view(fn.ret_type));
+  let roots: i32[] = [];
+  for name in prepared.fixed_strings {
+    roots = roots.append(1);
+  }
+  let depths = SlcDepths { depth: 1, arrays: [], tainted: roots, held: [], vars: [], var_depths: [] };
+  return slc_walk(fn.body, fn.name, prepared.scope, prepared.params, localarr, prepared.fixed_strings, held, sums, vix, parser.spelling_is_view(fn.ret_type), depths);
 }
 
 // fixed_string_locals is each `string` local that the body never reassigns: its
@@ -26680,11 +26822,14 @@ function e049_init_ref_ty(init: ast.Expr): string {
   }
 }
 
-function e049_scope(stmts: ast.Stmt[]): NameTy[] {
+// With a scope, a `let` that has no written type and no literal initializer
+// gets the type that the checker infers.
+function e049_scope(stmts: ast.Stmt[], typed: Option[Scope]): NameTy[] {
   let out: NameTy[] = [];
+  let sc = typed;
   for stmt in stmts {
     for vb in e049_value_blocks(stmt) {
-      out = e049_append_nt(out, e049_scope(vb.body));
+      out = e049_append_nt(out, e049_scope(vb.body, sc));
     }
     match (stmt) {
       ast.StmtVar(v) => {
@@ -26692,31 +26837,79 @@ function e049_scope(stmts: ast.Stmt[]): NameTy[] {
         if (vty.len() == 0) {
           vty = e049_init_ref_ty(v.init);
         }
+        if (vty.len() == 0) {
+          if let Some(s) = sc {
+            vty = e049_inferred_ref_ty(v, s);
+          }
+        }
         out = out.append(NameTy { nm: v.name, ty: vty });
       },
       ast.StmtIf(f) => {
-        out = e049_append_nt(out, e049_scope(f.then_body));
-        out = e049_append_nt(out, e049_scope(f.else_body));
+        out = e049_append_nt(out, e049_scope(f.then_body, sc));
+        out = e049_append_nt(out, e049_scope(f.else_body, sc));
       },
       ast.StmtWhile(w) => {
-        out = e049_append_nt(out, e049_scope(w.body));
+        out = e049_append_nt(out, e049_scope(w.body, sc));
       },
       ast.StmtFor(fr) => {
-        out = e049_append_nt(out, e049_scope(fr.body));
+        out = e049_append_nt(out, e049_scope(fr.body, e049_for_scope(fr, sc)));
       },
       ast.StmtMatch(m) => {
         for arm in m.arms {
-          out = e049_append_nt(out, e049_scope(arm.body));
+          out = e049_append_nt(out, e049_scope(arm.body, sc));
         }
       },
       ast.StmtDefer(d) => {
         let one: ast.Stmt[] = [d.action];
-        out = e049_append_nt(out, e049_scope(one));
+        out = e049_append_nt(out, e049_scope(one, sc));
       },
       _ => {}
     }
+    if let Some(s) = sc {
+      sc = Some(bind_stmt(stmt, s));
+    }
   }
   return out;
+}
+
+function e049_for_scope(fr: ast.StmtFor, typed: Option[Scope]): Option[Scope] {
+  if let Some(s) = typed {
+    return Some(for_body_scope(fr, s));
+  }
+  return None;
+}
+
+// The spelling of the inferred type of v when the type is a reference type.
+function e049_inferred_ref_ty(v: ast.StmtVar, s: Scope): string {
+  let t = var_bind_type(v, s);
+  if (is_unknown(t) || typeinfo.is_void(t)) {
+    return "";
+  }
+  let sp = typeinfo.spelling(t);
+  if (sp != "string" && sp != "str" && typeinfo.is_primitive_type_name(sp)) {
+    return "";
+  }
+  return sp;
+}
+
+function e049_has_untyped(scope: NameTy[]): boolean {
+  for nt in scope {
+    if (nt.ty.len() == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function e049_captures(body: ast.Stmt[]): string[] {
+  let captured: string[] = [];
+  for st in body {
+    captured = astwalk.fold_stmt_own_pruned(st, captured, e049_lambda_captures, e049_not_into_lambda);
+  }
+  for st in body {
+    captured = e049_nested_stmt_captures(st, captured);
+  }
+  return captured;
 }
 
 function e049_value_blocks(st: ast.Stmt): ast.ExprLambda[] {
@@ -26745,7 +26938,7 @@ function e049_lambda_locals_nt(lm: ast.ExprLambda): NameTy[] {
   for param in lm.params {
     out = out.append(NameTy { nm: param.name, ty: param.type_name });
   }
-  return e049_append_nt(out, e049_scope(lm.body));
+  return e049_append_nt(out, e049_scope(lm.body, None));
 }
 
 function e049_nt_names(nts: NameTy[]): string[] {
@@ -26898,7 +27091,12 @@ pub function e049_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameInde
     for param in fn.params {
       encl = encl.append(NameTy { nm: param.name, ty: param.type_name });
     }
-    encl = e049_append_nt(encl, e049_scope(fn.body));
+    let locals = e049_scope(fn.body, None);
+    if (e049_has_untyped(locals) && e049_captures(fn.body).len() > 0) {
+      let sc = build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs);
+      locals = e049_scope(fn.body, Some(sc));
+    }
+    encl = e049_append_nt(encl, locals);
     out = util.append_diags(out, e049_find(fn.body, encl));
     out = util.append_diags(out, e049_cell_stores(fn, mod, env));
   }
@@ -26918,17 +27116,11 @@ function e049_cell_stores(fn: parser.FuncDecl, mod: parser.Module, env: ModuleEn
 }
 
 function e049_body_stores(fn: parser.FuncDecl, mod: parser.Module, env: ModuleEnv): util.Diag[] {
-  let captured: string[] = [];
-  for st in fn.body {
-    captured = astwalk.fold_stmt_own_pruned(st, captured, e049_lambda_captures, e049_not_into_lambda);
-  }
-  for st in fn.body {
-    captured = e049_nested_stmt_captures(st, captured);
-  }
+  let captured = e049_captures(fn.body);
   if (captured.len() == 0) {
     return [];
   }
-  let vars = e049_lambda_var_types(fn.body, e049_scope(fn.body));
+  let vars = e049_lambda_var_types(fn.body, e049_scope(fn.body, None));
   let sc = build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs);
   return e049_store_walk(fn.body, sc, vars, captured, fn.type_params, mod, []);
 }
@@ -30251,7 +30443,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
         function_diags = function_diags.append(dg_at("E052", "missing return: \"" + mod.funcs[i].name + "\" has return type " + type_label(inferred) + " but can fall off the end without returning a value", mod.funcs[i].line, mod.funcs[i].col));
       }
     }
-    if (returns_view_or_holder(mod.funcs[i], fsc)) {
+    if (returns_view_or_holder(mod.funcs[i], fsc) || slc_may_store(mod.funcs[i])) {
       function_diags = util.append_diags(function_diags, slice_escape_diags(mod.funcs[i], slc_functions[i], slc_sums, slc_ix).diags);
     }
     if (mc_on) {

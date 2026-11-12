@@ -47,14 +47,14 @@ function main(): i32 {
     let words: u8[] = [];
     let line = av[1];
     for kind in ["static", "pie", "g"] {
-      let image = "";
+      let image: u8[] = [];
       if (x86) {
         image = elfimage.x86_elf_binary(src, words, kind == "g", "input.s", "/fuzz", kind == "pie", elf.elf_x86_page_align());
       } else {
         image = elfimage.arm64_elf_binary(src, words, kind == "g", "input.s", "/fuzz", false, kind == "pie");
       }
       if (image.len() > 0) {
-        match (write_file(av[2] + "." + kind, image)) {
+        match (write_file_bytes(av[2] + "." + kind, image)) {
           Err(_) => {
             eprint("asm_fuzz_run: cannot write " + av[2] + "." + kind);
             return 2;
