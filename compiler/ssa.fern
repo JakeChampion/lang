@@ -4066,14 +4066,11 @@ struct TokenCopy { insts: SInst[], map: i32[], nvals: i32, last: i32 }
 function token_copy(f: SFunc, sp: TokenSplit, defs: SInst[], arms: i32[], tok_value: i32, own insts: SInst[], nvals: i32): TokenCopy {
   let map = util.minus_ones(f.nvals);
   map = map.with(sp.tok, tok_value);
+  let loads = loads_above(f, sp.p);
   let n = nvals;
   let prev = -1;
   for k in 0..sp.heads.len() {
-    let parts: i32[] = [sp.heads[k]];
-    if (arms[k] >= 0) {
-      parts = parts.append(arms[k]);
-    }
-    for part in parts {
+    for part in head_and_arm(sp.heads[k], arms[k]) {
       let b = f.blocks[part];
       for ins in b.insts {
         if (ins.kind_tag == PHI) {
@@ -4089,6 +4086,12 @@ function token_copy(f: SFunc, sp: TokenSplit, defs: SInst[], arms: i32[], tok_va
         for a in ins.args {
           nargs = nargs.append(token_mapped(map, a));
         }
+        let again = same_load(loads, SInst { ...ins, args: nargs });
+        if (again >= 0) {
+          map = map.with(ins.result, again);
+          continue;
+        }
+        loads = without_stored(loads, SInst { ...ins, args: nargs });
         let result = ins.result;
         if (result >= 0) {
           map = map.with(result, n);
@@ -4101,6 +4104,72 @@ function token_copy(f: SFunc, sp: TokenSplit, defs: SInst[], arms: i32[], tok_va
     }
   }
   return TokenCopy { insts: insts, map: map, nvals: n, last: prev };
+}
+
+function head_and_arm(head: i32, arm: i32): i32[] {
+  if (arm < 0) {
+    return [head];
+  }
+  return [head, arm];
+}
+
+// The field loads that hold where the block at p ends: each ld_at of the
+// block and of the blocks above it that one block alone enters, less each
+// one that a later st_at to the same field of the same base follows.
+function loads_above(f: SFunc, p: i32): SInst[] {
+  let at = block_positions(f);
+  let chain: i32[] = [p];
+  let cur = p;
+  for steps in 0..8 {
+    if (f.blocks[cur].preds.len() != 1) {
+      break;
+    }
+    let up = position_of(at, f.blocks[cur].preds[0]);
+    if (up < 0 || util.index_of_i32(chain, up) >= 0) {
+      break;
+    }
+    chain = chain.append(up);
+    cur = up;
+  }
+  let loads: SInst[] = [];
+  let k = chain.len() - 1;
+  while (k >= 0) {
+    for ins in f.blocks[chain[k]].insts {
+      loads = without_stored(loads, ins);
+      if (ins.kind_tag == LD_AT && ins.args.len() == 1 && ins.result >= 0) {
+        loads = loads.append(ins);
+      }
+    }
+    k -= 1;
+  }
+  return loads;
+}
+
+// loads less each load of the field that ins stores to.
+function without_stored(loads: SInst[], ins: SInst): SInst[] {
+  if (ins.kind_tag != ST_AT || ins.args.len() == 0) {
+    return loads;
+  }
+  let kept: SInst[] = [];
+  for l in loads {
+    if (l.args[0] != ins.args[0] || l.imm != ins.imm) {
+      kept = kept.append(l);
+    }
+  }
+  return kept;
+}
+
+// The result of a load in loads of the field that ins loads, or -1.
+function same_load(loads: SInst[], ins: SInst): i32 {
+  if (ins.kind_tag != LD_AT || ins.args.len() != 1) {
+    return -1;
+  }
+  for l in loads {
+    if (l.args[0] == ins.args[0] && l.imm == ins.imm && l.str == ins.str) {
+      return l.result;
+    }
+  }
+  return -1;
 }
 
 // The compare of the decided token test of b, or the zero it compares with
@@ -4146,18 +4215,20 @@ function token_split(f: SFunc, sp: TokenSplit): SFunc {
   let zero = fast.nvals;
   let slow = token_copy(f, sp, defs, sp.slow_arms, zero, [SInst { kind_tag: CONST_INT, result: zero, args: [], imm: 0, str: "" }], zero + 1);
   let join = token_joined(f, sp, region, fast, slow);
+  let after = token_renamed(eb, join.map, true);
+  let sunk = write_backs(after.insts, join.insts, sp.box, defs, fast.insts);
   let blocks: SBlock[] = [];
   for bi in 0..f.blocks.len() {
     if (bi == sp.t) {
       blocks = blocks.append(SBlock { id: top, insts: fast.insts, term: t_br(eb.id), preds: [from] });
-      blocks = blocks.append(SBlock { id: top + 1, insts: slow.insts, term: t_br(eb.id), preds: [from] });
+      blocks = blocks.append(SBlock { id: top + 1, insts: util.append_all(slow.insts, sunk.moved), term: t_br(eb.id), preds: [from] });
     }
     if (region[bi]) {
       continue;
     }
     let b = token_renamed(f.blocks[bi], join.map, bi == sp.e);
     if (bi == sp.e) {
-      b = SBlock { ...b, insts: util.append_all(join.insts, b.insts), preds: [top, top + 1] };
+      b = SBlock { ...b, insts: util.append_all(join.insts, sunk.kept), preds: [top, top + 1] };
     }
     if (bi == sp.p) {
       b = SBlock { ...b, term: t_brif(b.term.cond, top, top + 1) };
@@ -4165,6 +4236,60 @@ function token_split(f: SFunc, sp: TokenSplit): SFunc {
     blocks = blocks.append(b);
   }
   return SFunc { ...f, nvals: join.nvals, blocks: blocks };
+}
+
+struct WriteBacks { kept: SInst[], moved: SInst[] }
+
+// The stores that lead the block after the split and write a field of the
+// unique box back to itself: the base is a phi that takes the box from the
+// unique side, and the value is a load of the same field of the box. Only
+// the shared side needs such a store. moved holds each one with the base of
+// that side, and kept holds the other instructions.
+function write_backs(insts: SInst[], phis: SInst[], box: i32, defs: SInst[], unique_side: SInst[]): WriteBacks {
+  let kept: SInst[] = [];
+  let moved: SInst[] = [];
+  let leading = true;
+  for ins in insts {
+    leading = leading && (ins.kind_tag == ST_AT || ins.kind_tag == CONST_INT);
+    let base = -1;
+    if (leading && ins.kind_tag == ST_AT && ins.args.len() == 2) {
+      base = shared_base(phis, ins.args[0], box);
+    }
+    if (base >= 0 && writes_back(ins, box, defs) && !stores_field(unique_side, box, ins.imm)) {
+      moved = moved.append(SInst { ...ins, args: [base, ins.args[1]] });
+    } else {
+      kept = kept.append(ins);
+    }
+  }
+  return WriteBacks { kept: kept, moved: moved };
+}
+
+// What the phi v takes from the shared side, when it takes the box from the unique side. -1 for another value.
+function shared_base(phis: SInst[], v: i32, box: i32): i32 {
+  for phi in phis {
+    if (phi.result == v && phi.args.len() == 2 && phi.args[0] == box) {
+      return phi.args[1];
+    }
+  }
+  return -1;
+}
+
+function stores_field(insts: SInst[], base: i32, offset: i32): boolean {
+  for ins in insts {
+    if (ins.kind_tag == ST_AT && ins.args.len() > 0 && ins.args[0] == base && ins.imm == offset) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function writes_back(ins: SInst, box: i32, defs: SInst[]): boolean {
+  let v = ins.args[1];
+  if (v < 0 || v >= defs.len()) {
+    return false;
+  }
+  let d = defs[v];
+  return d.kind_tag == LD_AT && d.args.len() == 1 && d.args[0] == box && d.imm == ins.imm && d.str == ins.str;
 }
 
 // The blocks the split replaces: the arms of the uniqueness test, each head

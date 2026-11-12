@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -41,5 +42,42 @@ func TestSelfHostSSATokenSplit(t *testing.T) {
 				t.Fatalf("exit %d, want 55\n%s", code, stderr)
 			}
 		})
+	}
+}
+
+// The split reuses a field load that holds above the uniqueness test, and
+// moves a store that writes a field of the unique box back to itself to the
+// shared side. ins of the red-black tree workload has both shapes. Before
+// these two steps its register form held 22 loads of the color field and 13
+// blocks that store the value field with no allocation.
+func TestSelfHostSSATokenSplitReusesLoads(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	src, err := filepath.Abs("../../../bench/perceus/fern/run_rbtree.fern")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), "rbtree")
+	cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "x86-64-linux", "-o", out, src, cli.stdlib)
+	cmd.Env = append(os.Environ(), "FERN_SSA_ALLOC=rbtree__ins")
+	msg, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v\n%s", err, msg)
+	}
+	form := string(msg)
+	if end := strings.Index(form, "\n}\n"); end >= 0 {
+		form = form[:end]
+	}
+	colorLoads := strings.Count(form, "ld_at 8 rc ")
+	writeBacks := 0
+	for _, block := range regexp.MustCompile(`\n  b\d+:\n`).Split(form, -1) {
+		if strings.Contains(block, "st_at 24 ") && !strings.Contains(block, "__fern_alloc_reuse") && !strings.Contains(block, "arr_box") {
+			writeBacks++
+		}
+	}
+	if colorLoads == 0 || colorLoads > 17 {
+		t.Errorf("ins loads the color field %d times, want 1 to 17", colorLoads)
+	}
+	if writeBacks > 11 {
+		t.Errorf("%d blocks of ins store the value field with no allocation, want at most 11", writeBacks)
 	}
 }
