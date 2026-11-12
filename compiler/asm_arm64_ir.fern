@@ -5269,7 +5269,7 @@ function emit_dir_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 }
 
 // fern-lint: allow cyclomatic-complexity
-function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asmcore.EmitState): asmcore.EmitState {
+function emit_stack_op(o: ir.Op, lp: string, r: irtables.Lowered, s: asmcore.EmitState): asmcore.EmitState {
   if (o.kind_tag == ir.K_TCP_POLLABLE || o.kind_tag == ir.K_SEND_ADOPT || o.kind_tag == ir.K_SEND_ROOT) {
     return s;
   }
@@ -5282,9 +5282,9 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.need("sha1").need("heap");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_sha1_hw_blocks\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == ir.K_MEMCPY) {
-    s = emit_arm64_op_memcpy(o, i, lp, s);
+    s = emit_arm64_op_memcpy(o, lp, s);
   } else if (o.kind_tag == ir.K_MEMSET) {
-    s = emit_arm64_op_memset(i, lp, s);
+    s = emit_arm64_op_memset(lp, s);
   } else if (o.kind_tag == ir.K_FREE) {
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
     let owned = s.leak_check && s.rt_owned_allocs;
@@ -5789,13 +5789,14 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
   return s;
 }
 
-function emit_arm64_op_memset(i: i32, lp: string, s: asmcore.EmitState): asmcore.EmitState {
+function emit_arm64_op_memset(lp: string, st: asmcore.EmitState): asmcore.EmitState {
+  let (mi, s) = loop_key(st);
   s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-  s = s.write(lp + "ms" + util.i32_to_string(i) + ":\n");
-  s = s.write("    cbz x2, " + lp + "msd" + util.i32_to_string(i) + "\n");
+  s = s.write(lp + "ms" + mi + ":\n");
+  s = s.write("    cbz x2, " + lp + "msd" + mi + "\n");
   s = s.write("    strb w1, [x0], #1\n    sub x2, x2, #1\n");
-  s = s.write("    b " + lp + "ms" + util.i32_to_string(i) + "\n");
-  s = s.write(lp + "msd" + util.i32_to_string(i) + ":\n");
+  s = s.write("    b " + lp + "ms" + mi + "\n");
+  s = s.write(lp + "msd" + mi + ":\n");
   return s.write("    mov x0, #0\n    str x0, [sp, #-16]!\n");
 }
 
@@ -5837,7 +5838,7 @@ function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irtables.Lowe
   s = asmcore.ssa_x0_forget(s);
   let outer = s.capture;
   let h = buf_new(256);
-  s = emit_stack_op(r.ops[ins.imm], ins.imm, lp, r, asmcore.EmitState { ...s, capture: h });
+  s = emit_stack_op(r.ops[ins.imm], lp, r, asmcore.EmitState { ...s, capture: h });
   let arm = buf_take(h);
   buf_free(h);
   s = asmcore.EmitState { ...s, capture: outer };
@@ -5983,8 +5984,14 @@ function ssa_load_helper_args(reg_of: i32[], args: i32[], s: asmcore.EmitState):
   return ssa_parallel_moves(srcs, dsts, s);
 }
 
-function emit_arm64_op_memcpy(o: ir.Op, i: i32, lp: string, s: asmcore.EmitState): asmcore.EmitState {
-  let mi = util.i32_to_string(i);
+// The SSA lowering can emit one op in two blocks, so a loop label takes a
+// number of its own, not the index of the op.
+function loop_key(s: asmcore.EmitState): (string, asmcore.EmitState) {
+  return (util.i32_to_string(s.label_n), asmcore.EmitState { ...s, label_n: s.label_n + 1 });
+}
+
+function emit_arm64_op_memcpy(o: ir.Op, lp: string, st: asmcore.EmitState): asmcore.EmitState {
+  let (mi, s) = loop_key(st);
   s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
   s = arm64_copy_bytes(s, CopyRegs { dst: "x0", src: "x1", n: "x2", tmp: "x4", src_end: "x9", dst_end: "x10" }, lp + "mc" + mi, lp + "mct" + mi, lp + "mcb" + mi, lp + "mcd" + mi);
   s = s.write("    mov x0, #0\n    str x0, [sp, #-16]!\n");
