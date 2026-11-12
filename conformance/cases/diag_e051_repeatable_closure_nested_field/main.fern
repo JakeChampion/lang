@@ -1,0 +1,26 @@
+// spec: RH-01
+
+struct H { fd: i32 }
+
+function (own h: H) close(): void {}
+
+struct Inner { xs: H[], n: i32 }
+
+struct Outer { inner: Inner }
+
+function keep(own xs: H[]): own H[] {
+  let out: H[] = [];
+  for h in xs {
+    out = out.append(h);
+  }
+  return out;
+}
+
+function make(own outer: Outer): () => Outer {
+  let inner = outer.inner;
+  return () => Outer { ...outer, inner: Inner { ...inner, xs: keep(inner.xs) } };
+}
+
+function main(): i32 {
+  return 0;
+}

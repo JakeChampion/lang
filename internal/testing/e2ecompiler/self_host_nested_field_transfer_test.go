@@ -24,3 +24,7 @@ func TestSelfHostNestedFieldTransfersWasm(t *testing.T) {
 func TestSelfHostNestedOwnedFieldTransferRun(t *testing.T) {
 	ownedResultRuntimeCase(t, "nested_owned_field_transfer")
 }
+
+func TestSelfHostNestedOwnedFieldTupleRun(t *testing.T) {
+	ownedResultRuntimeCase(t, "nested_owned_field_tuple")
+}

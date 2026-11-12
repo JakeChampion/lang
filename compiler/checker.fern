@@ -24922,12 +24922,19 @@ function ow_nested_field_alias(alias: string, root: string, field: string, value
 
 // The returned record replaces the complete field that owns the alias.
 function ow_nested_field_moves(value: ast.Expr, ctx: OwnCtx): string[] {
+  if let ast.ExprTuple(tuple) = value {
+    let out: string[] = [];
+    for element in tuple.elements {
+      out = util.append_all(out, ow_nested_field_moves(element, ctx));
+    }
+    return out;
+  }
   let ast.ExprStructLit(top) = value else {
     return [];
   };
   let root = ow_ident_name(top.base);
   let body = ctx.last_use.get().fn.body;
-  if (!top.has_base || root.len() == 0 || !ow_is_owned(ctx, root) || !ow_binding_unchanged(ctx, root) || ow_nested_uses(body, root).reads != 2) {
+  if (!top.has_base || root.len() == 0 || !ow_is_owned(ctx, root) || util.has_str(ctx.borrowed, root) || !ow_binding_unchanged(ctx, root) || ow_nested_uses(body, root).reads != 2) {
     return [];
   }
   let out: string[] = [];
