@@ -1,4 +1,4 @@
-# Android content video sources
+# Android content media sources
 
 This module opens a granted content URI through Android's content resolver.
 It returns an owned, seekable descriptor and the asset's byte range.
@@ -13,8 +13,15 @@ The Java asset closes before `open` returns. No Java global references remain.
 It does not bound process memory. The adapter does not read the file into memory.
 A provider can report an unknown asset length. The adapter resolves it from the seekable file's end.
 Pipes and other non-seekable descriptors return `Unsupported`.
+
 The descriptor shares its file position with the provider's descriptor.
-Use positional reads or the extractor, and do not change that position concurrently.
+`read_at` reads relative to the asset without changing that shared position.
+It clamps each read to the asset boundary. Each request is limited to 1 MiB before allocation or I/O.
+An empty read at the declared end returns empty bytes. Short physical reads are permitted.
+
+Keep the source open during reads and close it once after all consumers finish.
+These synchronous reads belong outside latency-sensitive Android callbacks.
+Use the bytes with the existing native packet readers. This module does not decode media.
 
 ```fern
 <<*>>=
@@ -34,6 +41,11 @@ function c_seek(fd: i32, offset: i64, mode: i32): i64;
 
 @import("libc.so", "close")
 function c_close(fd: i32): i32;
+
+@import("libc.so", "pread")
+function c_read_at(fd: i32, output: usize, bytes: usize, offset: i64): i64;
+
+const MAX_READ_BYTES: i32 = 1048576;
 
 function range_header(offset: i64, declared_length: i64, file_length: i64, maximum_bytes: i64): Result[void, frame.VideoError] {
   if (offset < 0i64 || declared_length < -1i64 || file_length < 0i64) {
@@ -72,6 +84,48 @@ pub function (source: Source) close(): Result[void, frame.VideoError] {
     return Err(frame.Platform);
   }
   return Ok(());
+}
+
+function read_plan(source: Source, offset: i64, count: i32): Result[(i64, i32), frame.VideoError] {
+  if (source.fd < 0 || source.length < 0i64 || offset < 0i64 || count < 0) {
+    return Err(frame.Header);
+  }
+  let range = checked_range(source.offset, source.length, 9223372036854775807i64, 9223372036854775807i64)?;
+  if (count > MAX_READ_BYTES) {
+    return Err(frame.Limit);
+  }
+  if (offset > range.length) {
+    return Err(frame.Truncated);
+  }
+  let remaining = range.length - offset;
+  let bytes = if (remaining < count as i64) { remaining as i32 } else { count };
+  return Ok((range.offset + offset, bytes));
+}
+
+function read_bytes(fd: i32, offset: i64, count: i32): Result[u8[], frame.VideoError] {
+  unsafe {
+    let data = __alloc(count);
+    let received = c_read_at(fd, data, count as usize, offset);
+    if (received < 0i64 || received > count as i64) {
+      __free(data, count);
+      return Err(frame.Platform);
+    }
+    let bytes: u8[] = [];
+    for i in 0..received as i32 {
+      bytes = bytes.append(__load_u8(data + i as usize) as u8);
+    }
+    __free(data, count);
+    return Ok(bytes);
+  }
+}
+
+// Read at a relative asset offset without changing the descriptor position.
+pub function (source: Source) read_at(offset: i64, count: i32): Result[u8[], frame.VideoError] {
+  let (position, bytes) = read_plan(source, offset, count)?;
+  if (bytes == 0) {
+    return Ok([]);
+  }
+  return read_bytes(source.fd, position, bytes);
 }
 
 function cleared(e: usize): boolean {

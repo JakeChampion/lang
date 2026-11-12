@@ -309,6 +309,12 @@ An unknown length resolves from the seekable file's end. Non-seekable sources re
 A caller-supplied 64-bit limit bounds the source range, separately from packet limits.
 The adapter does not buffer the complete source or retain Java global references.
 
+`Source.read_at` reads relative asset offsets through `pread` without a descriptor-position change.
+Each request permits at most 1 MiB before allocation or I/O.
+The method clamps reads to the asset range and returns short reads or an empty array at EOF.
+Native AAC and video packet readers can use this method through their existing callback APIs.
+These synchronous reads belong outside frame and audio callbacks.
+
 Close the extractor or player before source close. Each source has one owner.
 The app needs a URI read grant, without broad storage permission.
 
@@ -526,6 +532,10 @@ The compiler differential suite includes the native video, MP4 packet and file-i
 The host ABI tests cover JNI discovery, candidate failures, software recovery, and resource cleanup.
 They also cover encoder states, direct packet views, muxer order, extraction, pause, seek, and EOS.
 The content-source mock checks real descriptor ranges, close-on-exec, JNI failures, and repeated open/close cycles.
+
+`scripts/check-android-content-reads` also checks short reads, a full 1 MiB payload, truncation, and unchanged descriptor positions.
+Native AAC and AVC packet checks cover asset offsets above 8 GiB.
+The host controls combine normal and sanitized Fern libraries with normal and UBSan C mocks.
 These mocks do not decode video.
 
 The Android workflow builds `tests/android/video/app.fern` and runs it on the API 34 emulator.
@@ -538,6 +548,12 @@ Distinct-window replacement and pending-buffer behavior use host ABI controls. T
 
 The workflow also copies the byte-buffer export into MediaStore and grants the video APK video read permission.
 The same codec-policy playback, pause, seek, frame-count, and screenshot checks apply to this content source.
+
+Before playback, the app reads the content asset in 4096-byte chunks through the native source method.
+The fixture limits the asset to 2 MiB and computes incremental SHA-256 without a complete encoded copy.
+The harness compares its byte count and digest with an independent Android content read.
+Portable native-sanitizer and WASI tests check this checksum helper and its refusal paths.
+The WASI tests do not execute Android descriptor reads.
 Artifacts contain both MP4 files, codec names, Android build, elapsed times, and process memory.
 
 The APK build lane also runs `scripts/check-video-mp4-interop` on fresh FFmpeg fixtures.

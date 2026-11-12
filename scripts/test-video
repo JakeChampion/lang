@@ -98,19 +98,5 @@ print('Android surface replacement, pending buffers, pause, errors, and recovery
 PYTHON
 fi
 
-# Content assets use libc descriptors and a separate JNI test double.
-"$fern_video_compiler" -target arm64-android -shared -export main -o build/video/source-api.so tests/stdlib/android_video_source_mock_test.fern internal/stdlib
-if [ -n "$android_target" ]; then
-  mkdir -p build/video/source
-  scripts/libandroid-stubs scripts/video-reference/source-jni-mock.c > build/video/source/stubs.c
-  cc -shared -fPIC -Wall -Wextra -Werror -o build/video/source/libandroid.so scripts/video-reference/source-jni-mock.c build/video/source/stubs.c
-  ln -sf "$(cc -print-file-name=libc.so.6)" build/video/source/libc.so
-  "$fern_video_compiler" -target "$android_target" -shared -export main -o build/video/source/mock.so tests/stdlib/android_video_source_mock_test.fern internal/stdlib
-  LD_LIBRARY_PATH="$PWD/build/video/source${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" python3 - <<'PYTHON'
-import ctypes
-result = ctypes.CDLL('./build/video/source/mock.so').main()
-if result != 0:
-    raise SystemExit(f'Android content source test failed at check {result}')
-print('Android content source ranges, descriptors, and JNI cleanup passed')
-PYTHON
-fi
+# Content assets use positional reads and a separate JNI test double.
+FERN="$fern_video_compiler" scripts/check-android-content-reads

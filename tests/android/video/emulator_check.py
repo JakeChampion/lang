@@ -7,6 +7,7 @@ Set ANDROID_SERIAL to select a physical device. The test requires API 29.
 """
 
 import json
+import hashlib
 import importlib.util
 from pathlib import Path
 import re
@@ -82,6 +83,16 @@ def native_av_metrics(log):
             'submissions': [{'frames': int(n), 'origin_us': int(at)} for n, at in submissions]}
 
 
+def native_content_metrics(log, expected):
+    assert 0 < len(expected) <= 2097152, len(expected)
+    values = re.findall(r"videotest: native content bytes=([0-9]+) sha256=([0-9a-f]{64})$", log, re.MULTILINE)
+    assert len(values) == 1, values
+    count, digest = values[0]
+    assert int(count) == len(expected), values
+    assert digest == hashlib.sha256(expected).hexdigest(), values
+    return {'bytes': int(count), 'sha256': digest}
+
+
 def main(apk, out_dir, content_uri=None, av_path=None):
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -127,6 +138,9 @@ def main(apk, out_dir, content_uri=None, av_path=None):
                    "clips": {}}
         if av_path is not None:
             metrics['native_av'] = native_av_metrics(log)
+        if content_uri is not None:
+            expected = adb('exec-out', 'content', 'read', '--uri', content_uri, binary=True)
+            metrics['native_content'] = native_content_metrics(log, expected)
         for name in (("byte", "surface") if content_uri is None and av_path is None else ()):
             path = out / (name + ".mp4")
             path.write_bytes(adb("exec-out", "run-as", PACKAGE, "cat", directory + "/" + name + ".mp4", binary=True))

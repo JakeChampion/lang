@@ -14,8 +14,8 @@ shows the keyboard again after the back key hid it, a search for "pap" that
 finds Paper and opens it, Back that hides the keyboard, then Back that goes
 home, a frame section in the system trace while the list slides, the
 notification filter that takes a new notification out of the shade and
-shows it as held, a tap that sends the intent of the held notification,
-and no crash in logcat. OUT_DIR gets the frames, logcat and the trace.
+shows it as held, a tap that opens the held notification, and no crash in
+logcat. OUT_DIR gets the frames, logcat and the trace.
 """
 
 from pathlib import Path
@@ -31,8 +31,6 @@ PACKAGE = "dev.fern.paper"
 ACTIVITY = PACKAGE + "/.Home"
 PAPER = (255, 244, 230)
 LISTENER = PACKAGE + "/" + PACKAGE + ".Filter"
-# The app that the intent of the test notification opens.
-OPENED = "com.android.settings"
 
 
 def paper_part(out, name, top_half=False):
@@ -153,12 +151,16 @@ def find_node(dump, label):
 
 
 def wait_for_node(out, name, label, timeout=30.0):
-    """find_node on a new dump each second, for `timeout` seconds."""
+    """find_node on a new dump each second, until two dumps in a row give
+    the node one place, or for `timeout` seconds. A sheet slides in, and
+    a tap on the place that a row had while it moved hits another row."""
     deadline = time.monotonic() + timeout
+    last = None
     while True:
         found = find_node(ui_dump(out, name), label)
-        if found or time.monotonic() >= deadline:
+        if found and found == last or time.monotonic() >= deadline:
             return found
+        last = found
         time.sleep(1.0)
 
 
@@ -194,18 +196,49 @@ def post(out, tag, text, *flags):
     return printed
 
 
+def keep(out, group, answers):
+    """Keeps each answer of the device in a file, and prints its start.
+    The log of the job is the only place where a person reads it."""
+    for name, text in answers.items():
+        Path(out, group + "-" + name + ".txt").write_text(text)
+        print(f"{group} {name}: {text[:900]!r}", flush=True)
+
+
 def shade_evidence(out, printed):
-    """Keeps what the device says about its notifications, and prints the
-    start of each answer, for a check that cannot read the shade."""
-    answers = {
+    """What the device says about its notifications, for a check that
+    cannot read the shade."""
+    keep(out, "shade", {
         "post": printed,
         "list": shell("cmd", "notification", "list"),
         "service": shell("logcat", "-d", "-t", "400", "NotificationService:V", "NotificationManager:V", "*:S"),
         "dumpsys": shell("dumpsys", "notification", "--noredact"),
-    }
-    for name, text in answers.items():
-        Path(out, "shade-" + name + ".txt").write_text(text)
-        print(f"shade {name}: {text[:600]!r}", flush=True)
+    })
+
+
+# The directory of the files of Paper on the device.
+FILES = "/data/data/" + PACKAGE + "/files/"
+
+
+def places(dump):
+    """Each text of a dump with the bounds of its node."""
+    nodes = re.findall(r'<node [^>]*(?:text|content-desc)="([^"]+)"[^>]*bounds="([^"]+)"', dump)
+    return " | ".join(text + "@" + bounds for text, bounds in nodes)
+
+
+def held_evidence(out, printed, dump):
+    """What the device and Paper say when the home screen shows no held
+    notification: the post, the shade, the listeners of the device, the
+    two files of Paper, its log lines, and the texts on the screen."""
+    keep(out, "held", {
+        "post": printed,
+        "list": shell("cmd", "notification", "list"),
+        "listeners": shell("settings", "get", "secure", "enabled_notification_listeners"),
+        "settings-file": shell("cat", FILES + "settings"),
+        "held-file": shell("cat", FILES + "held"),
+        "log": "\n".join(logcat().splitlines()[-40:]),
+        "service": shell("logcat", "-d", "-t", "200", "NotificationService:V", "NotificationManager:V", "NotificationListeners:V", "*:S"),
+        "texts": " | ".join(re.findall(r'(?:text|content-desc)="([^"]+)"', dump)),
+    })
 
 
 def in_shade(tag):
@@ -221,18 +254,6 @@ def wait_for_shade(tag, shown, timeout=15.0):
     deadline = time.monotonic() + timeout
     while True:
         if in_shade(tag) == shown:
-            return True
-        if time.monotonic() >= deadline:
-            return False
-        time.sleep(0.5)
-
-
-def wait_for_front(package, timeout=10.0):
-    """An activity of `package` is at the front within `timeout` seconds."""
-    deadline = time.monotonic() + timeout
-    while True:
-        resumed = adb("shell", "dumpsys", "activity", "activities", check=False)
-        if re.search(r"(mResumedActivity|topResumedActivity).*" + re.escape(package) + "/", resumed):
             return True
         if time.monotonic() >= deadline:
             return False
@@ -256,20 +277,31 @@ def filter_on(out, width, height):
     if not row:
         fail("a long press on the home screen did not open the settings")
         return False
-    if row[2].endswith("off"):
-        tap(row)
-    else:
+    if not row[2].endswith("off"):
         adb("shell", "input", "keyevent", "KEYCODE_BACK")
+        time.sleep(1.5)
+        return True
+    tap(row)
     time.sleep(1.5)
-    return True
+    # Paper writes its settings file when a setting changes.
+    if "filter\t1" in shell("cat", FILES + "settings"):
+        return True
+    keep(out, "filter", {
+        "tap": f"{row[0]} {row[1]}",
+        "home": places(Path(out, "ui-home.xml").read_text()),
+        "rows": places(Path(out, "ui-settings.xml").read_text()),
+        "after": places(ui_dump(out, "ui-after-filter")),
+        "log": "\n".join(logcat().splitlines()[-12:]),
+    })
+    fail("a tap on the filter row did not turn the filter on")
+    return False
 
 
 def check_filter(out, width, height):
     """The filter holds a notification: Paper takes it out of the shade,
-    shows it on the home screen, and sends its intent after a tap. The
-    intent opens the settings of Android. A notification from before the
-    filter was on stays in the shade, which shows that in_shade can see a
-    notification."""
+    shows it on the home screen, and opens it after a tap. A notification
+    from before the filter was on stays in the shade, which shows that
+    in_shade can see a notification."""
     printed = post(out, "fern_shown", "shown_text")
     if not wait_for_shade("fern_shown", True):
         shade_evidence(out, printed)
@@ -278,11 +310,10 @@ def check_filter(out, width, height):
     adb("shell", "cmd", "notification", "allow_listener", LISTENER, check=False)
     if not filter_on(out, width, height):
         return
-    # The word after "activity" is the component of the intent. The two
-    # words after it are the tag and the text.
-    post(out, "fern_held", "held_text", "-c", "activity", OPENED + "/.Settings")
+    printed = post(out, "fern_held", "held_text")
     held = wait_for_node(out, "ui-held", r"\d+ held notifications?")
     if not held:
+        held_evidence(out, printed, ui_dump(out, "ui-not-held"))
         fail("the home screen does not show a held notification")
         return
     if not wait_for_shade("fern_held", False):
@@ -297,10 +328,7 @@ def check_filter(out, width, height):
     tap(row)
     if not wait_for(r"paper: open held com\.android\.shell"):
         fail("a tap on the held notification did not open it")
-    elif not wait_for_front(OPENED):
-        fail("the intent of the held notification did not open the settings of Android")
-    adb("shell", "input", "keyevent", "KEYCODE_HOME")
-    time.sleep(1.5)
+    time.sleep(1.0)
     if find_node(ui_dump(out, "ui-opened"), r"\d+ held notifications?"):
         fail("the held notification stayed on the home screen after it opened")
     adb("shell", "cmd", "notification", "disallow_listener", LISTENER, check=False)

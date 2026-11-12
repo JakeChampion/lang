@@ -1,6 +1,7 @@
 """Check media fixture permissions before video test startup."""
 
 import importlib.util
+import hashlib
 from pathlib import Path
 import subprocess
 import tempfile
@@ -107,6 +108,37 @@ class NativeAvDiagnosticsTests(unittest.TestCase):
             self.assertFalse(any(call.args[:3] == ("shell", "pm", "grant") for call in calls.call_args_list))
             start = next(call.args for call in calls.call_args_list if call.args[:3] == ("shell", "am", "start"))
             self.assertEqual(start[-3:], ('--es', 'av_path', '/data/user/0/dev.fern.videotest/files/native-av.mp4'))
+
+
+class NativeContentDiagnosticsTests(unittest.TestCase):
+    data = b'native content bytes\x00\xff'
+
+    def line(self, count=None, digest=None):
+        if count is None:
+            count = len(self.data)
+        if digest is None:
+            digest = hashlib.sha256(self.data).hexdigest()
+        return f'W/fern: videotest: native content bytes={count} sha256={digest}\n'
+
+    def test_native_bytes_match_the_independent_content_read(self):
+        value = check.native_content_metrics(self.line(), self.data)
+        self.assertEqual(value, {'bytes': len(self.data), 'sha256': hashlib.sha256(self.data).hexdigest()})
+
+    def test_missing_duplicate_or_malformed_diagnostics_fail(self):
+        for log in ['', self.line() * 2, self.line(count=-1), self.line(digest='0' * 63),
+                    self.line(digest='Z' * 64), self.line().replace('sha256=', 'sha256=0')]:
+            with self.subTest(log=log), self.assertRaises(AssertionError):
+                check.native_content_metrics(log, self.data)
+
+    def test_wrong_byte_count_or_digest_fails(self):
+        for log in [self.line(count=len(self.data) + 1), self.line(digest='0' * 64)]:
+            with self.subTest(log=log), self.assertRaises(AssertionError):
+                check.native_content_metrics(log, self.data)
+
+    def test_independent_reference_must_fit_the_fixture_limit(self):
+        for expected in [b'', b'x' * 2097153]:
+            with self.subTest(length=len(expected)), self.assertRaises(AssertionError):
+                check.native_content_metrics(self.line(), expected)
 
 
 if __name__ == "__main__":
