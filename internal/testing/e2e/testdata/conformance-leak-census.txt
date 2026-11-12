@@ -1,3 +1,4 @@
+# 2026-11-12: literal_trees_take_the_type_of_their_use is clean under RC trace.
 # 2026-11-11: array_of_tuple_literals_takes_its_destination_and_float_literals and literal_composite_takes_the_type_of_a_nested_part are clean under RC trace.
 # 2026-11-11: generic_struct_literal_with_a_function_field_is_an_argument is clean under RC trace.
 # 2026-11-11: a_struct_name_call_wraps_a_union_member_across_modules is clean under RC trace.
@@ -639,6 +640,7 @@ literal_local_typed_by_its_uses                      0
 literal_match_alternatives_share_one_body            0
 literal_payload_pattern                              0
 literal_tree_takes_its_destination_width             0
+literal_trees_take_the_type_of_their_use             0
 local_array_views_keep_their_storage                  0
 local_from_handle_free_call_is_fresh                 0
 local_read_from_borrowed_struct_moves_at_last_use    0
