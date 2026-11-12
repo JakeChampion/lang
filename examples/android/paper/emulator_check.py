@@ -179,23 +179,17 @@ def shell(*args):
     return done.stdout + done.stderr
 
 
-# The package that posts for `cmd notification post` from adb.
-POSTER = "com.android.shell"
-
-
-def allow_posts(out):
-    """Lets the shell post a notification. From Android 13 a package posts
-    only with the permission POST_NOTIFICATIONS, and the device drops the
-    notification of a package without it after the post command returns."""
-    printed = shell("pm", "grant", POSTER, "android.permission.POST_NOTIFICATIONS")
-    printed += shell("cmd", "appops", "set", POSTER, "POST_NOTIFICATION", "allow")
-    Path(out, "allow-posts.txt").write_text(printed)
+def poster():
+    """The words that make a command run as the shell user. On an emulator
+    adb runs as root, and the device has no package for a notification
+    that root posts, so it drops that notification."""
+    return ["su", "shell"] if shell("id", "-u").strip() == "0" else []
 
 
 def post(out, tag, text, *flags):
-    """Posts a notification from the shell, and keeps what the command
+    """Posts a notification as the shell user, and keeps what the command
     printed."""
-    printed = shell("cmd", "notification", "post", "-t", "Fern", *flags, tag, text)
+    printed = shell(*poster(), "cmd", "notification", "post", "-t", "Fern", *flags, tag, text)
     Path(out, "post-" + tag + ".txt").write_text(printed)
     return printed
 
@@ -276,7 +270,6 @@ def check_filter(out, width, height):
     intent opens the settings of Android. A notification from before the
     filter was on stays in the shade, which shows that in_shade can see a
     notification."""
-    allow_posts(out)
     printed = post(out, "fern_shown", "shown_text")
     if not wait_for_shade("fern_shown", True):
         shade_evidence(out, printed)
