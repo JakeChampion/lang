@@ -418,11 +418,22 @@ func (c *checker) callSiteBorrowsBeside(x *ast.Call, except string) bool {
 		if aid, ok := a.(*ast.Ident); ok && except != "" && aid.Name == except {
 			continue
 		}
-		if c.argMayBorrow(a) && c.paramCanLend(sig, flags, i) {
+		if c.argMayBorrowBeside(a, except) && c.paramCanLend(sig, flags, i) {
 			return true
 		}
 	}
 	return false
+}
+
+// argMayBorrowBeside is argMayBorrow, where a call argument can borrow from
+// the plain name except: `x = f(x).g(x)` leaves x the one holder.
+func (c *checker) argMayBorrowBeside(a ast.Expr, except string) bool {
+	if call, ok := a.(*ast.Call); ok && except != "" && !freshAssociatedResult(call) {
+		if _, named := call.Callee.(*ast.Ident); named {
+			return c.callSiteBorrowsBeside(call, except)
+		}
+	}
+	return c.argMayBorrow(a)
 }
 
 // paramCanLend reports a parameter of the signature that can lend a handle
