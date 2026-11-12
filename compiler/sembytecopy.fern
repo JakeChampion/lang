@@ -40,21 +40,15 @@ function any_byte_update(f: ssasem.Func): boolean {
 }
 
 function index(f: ssasem.Func): Index {
-  let defs: ssa.SInst[] = [];
-  let homes: i32[] = [];
-  for i in 0..f.values.len() {
-    defs = defs.append(ssa.no_inst());
-    homes = homes.append(-1);
-  }
+  let homes = util.minus_ones(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.result >= 0) {
-        defs = defs.with(ins.result, ins);
         homes = homes.with(ins.result, b.id);
       }
     }
   }
-  return Index { defs: defs, homes: homes, blocks: ssa.block_positions(f.graph) };
+  return Index { defs: ssa.inst_defs(f.graph), homes: homes, blocks: ssa.block_positions(f.graph) };
 }
 
 function literal(ix: Index, v: i32, n: i32): boolean {
