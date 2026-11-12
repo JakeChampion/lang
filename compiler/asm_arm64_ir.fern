@@ -633,6 +633,10 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.need("sha256").need("heap");
     return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_sha256_hw_blocks\n    str x0, [sp, #-16]!\n");
   }
+  if (o.kind_tag == ir.K_SHA1X8_HW_BLOCKS) {
+    s = s.need("sha1x8").need("heap");
+    return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_sha1x8_hw_blocks\n    str x0, [sp, #-16]!\n");
+  }
   if (o.kind_tag == ir.K_OUTER_MUL_F64) {
     return emit_outer_mul_f64(s);
   }
@@ -12263,9 +12267,53 @@ function a64_sha1_blocks(s: asmcore.EmitState): string {
     + ".Lsha1_ret:\n    ldr x0, [x29, #40]\n" + rt_unframe_of(s, 48) + "    ret\n    .size __fern_sha1_hw_blocks, .-__fern_sha1_hw_blocks\n";
 }
 
+// The eight lanes of a word-major state run one after another on the SHA-1
+// instructions. Word w of lane k is at byte 4 * (8 * w + k), and a group of
+// 512 bytes holds one block of each lane.
+function a64_sha1x8_blocks(s: asmcore.EmitState): string {
+  let o: string = "    .global __fern_sha1x8_hw_blocks\n    .type __fern_sha1x8_hw_blocks, %function\n__fern_sha1x8_hw_blocks:\n"
+    + rt_frame_of(s, 48) + "    mov x29, sp\n"
+    + a64_aes_view("x1", "x3", "x4", ".Lsx8_data") + "    str x3, [x29, #16]\n    str x4, [x29, #24]\n"
+    + a64_aes_view("x0", "x3", "x5", ".Lsx8_st") + "    str x3, [x29, #32]\n"
+    + "    mov x0, #160\n    cmp x5, #160\n    b.hs .Lsx8_stok\n    mov x0, #0\n.Lsx8_stok:\n"
+    + a64_aes_alloc("40") + "    ldr x4, [x0]\n    cbz x4, .Lsx8_ret\n    ldr x3, [x29, #32]\n    add x6, x0, #8\n";
+  for j in 0..10 {
+    o += "    ld1 {v0.16b}, [x3]\n    st1 {v0.16b}, [x6]\n    add x3, x3, #16\n    add x6, x6, #16\n";
+  }
+  let k: u32[] = [0x5a827999, 0x6ed9eba1, 0x8f1bbcdc, 0xca62c1d6];
+  for i in 0..4 {
+    o = o + "    movz w8, #" + util.i32_to_string((k[i] & 0xffff) as i32) + "\n    movk w8, #" + util.i32_to_string((k[i] >> 16) as i32)
+      + ", lsl #16\n    dup v" + util.i32_to_string(16 + i) + ".4s, w8\n";
+  }
+  o += "    ldr x1, [x29, #16]\n    ldr x4, [x29, #24]\n.Lsx8_loop:\n    cmp x4, #512\n    b.lo .Lsx8_ret\n    ldr x7, [x29, #40]\n    add x7, x7, #8\n";
+  for lane in 0..8 {
+    o = o + "    add x8, x1, #" + util.i32_to_string(64 * lane) + "\n";
+    for w in 0..4 {
+      o = o + "    ldr w9, [x7, #" + util.i32_to_string(4 * lane + 32 * w) + "]\n    ins v0.s[" + util.i32_to_string(w) + "], w9\n";
+    }
+    o = o + "    ldr w9, [x7, #" + util.i32_to_string(4 * lane + 128) + "]\n    ins v1.s[0], w9\n";
+    for j in 4..8 {
+      let v = "v" + util.i32_to_string(j);
+      o = o + "    ld1 {" + v + ".16b}, [x8]\n    add x8, x8, #16\n    rev32 " + v + ".16b, " + v + ".16b\n";
+    }
+    o = o + "    orr v20.16b, v0.16b, v0.16b\n    orr v21.16b, v1.16b, v1.16b\n" + a64_sha1_rounds()
+      + "    add v0.4s, v0.4s, v20.4s\n    add v1.4s, v1.4s, v21.4s\n";
+    for w in 0..4 {
+      o = o + "    umov w9, v0.s[" + util.i32_to_string(w) + "]\n    str w9, [x7, #" + util.i32_to_string(4 * lane + 32 * w) + "]\n";
+    }
+    o = o + "    umov w9, v1.s[0]\n    str w9, [x7, #" + util.i32_to_string(4 * lane + 128) + "]\n";
+  }
+  return o + "    add x1, x1, #512\n    sub x4, x4, #512\n    b .Lsx8_loop\n"
+    + ".Lsx8_ret:\n    ldr x0, [x29, #40]\n" + rt_unframe_of(s, 48) + "    ret\n    .size __fern_sha1x8_hw_blocks, .-__fern_sha1x8_hw_blocks\n";
+}
+
 function emit_rt_sha(s: asmcore.EmitState): asmcore.EmitState {
-  if (s.has_need("sha256") || s.has_need("sha1")) {
+  if (s.has_need("sha256") || s.has_need("sha1") || s.has_need("sha1x8")) {
     s = s.write("    .arch_extension sha2\n");
+  }
+  if (s.has_need("sha1x8")) {
+    let sha1x8 = a64_sha1x8_blocks(s);
+    s = s.write(sha1x8);
   }
   if (s.has_need("sha256")) {
     let sha256 = a64_sha256_blocks(s);

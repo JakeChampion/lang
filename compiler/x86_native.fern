@@ -3577,9 +3577,9 @@ const VEX_THREE_NAMES: string[] = ["vfmadd213ps", "vfmadd213pd", "vpcmpeqb", "vm
 const VEX_THREE_OPS: i32[] = [680, 680, 372, 345, 472, 474, 475, 469, 484, 476, 491, 495, 504, 512, 567, 359, 516, 501, 502, 354, 362, 364, 365, 508, 478, 492, 488, 480, 568, 572, 356, 509, 510, 505, 506, 493, 477, 489, 473, 490, 494, 570, 574, 569, 573, 571, 575, 483, 373, 374, 357, 358, 576, 497, 498, 466, 481, 482, 465];
 
 // Each shift by an immediate: its 0F opcode times 8, plus the /digit.
-const VEX_SHIFT_NAMES: string[] = ["vpsrlw", "vpsrlq", "vpsllq"];
+const VEX_SHIFT_NAMES: string[] = ["vpsrlw", "vpsrld", "vpslld", "vpsrlq", "vpsllq"];
 
-const VEX_SHIFT_OPS: i32[] = [906, 922, 926];
+const VEX_SHIFT_OPS: i32[] = [906, 914, 918, 922, 926];
 
 function x86_vex_shift_imm(mnem: string): i32 {
   for k in 0..VEX_SHIFT_NAMES.len() {
@@ -3626,9 +3626,29 @@ function x86_gas_vex_shuffle(own a: X86Asm, rest: string): X86Asm {
   return a;
 }
 
+// vperm2i128 takes each 128-bit half of the result from either source, as
+// the immediate selects.
+function x86_gas_vperm2i128(own a: X86Asm, rest: string): X86Asm {
+  let ops = x86_gas_split_ops(rest);
+  if (ops.len() != 4 || !ops[0].starts_with("$")) {
+    return x86_gas_bad(a, "vperm2i128 " + rest);
+  }
+  let first = x86_gas_ymm(ops[2]);
+  let dest = x86_gas_ymm(ops[3]);
+  if (first < 0 || dest < 0 || !x86_gas_has_paren(ops[1]) && x86_gas_ymm(ops[1]) < 0) {
+    return x86_gas_bad(a, "vperm2i128 " + rest);
+  }
+  a = x86_gas_vex_rm(a, "vperm2i128", 3, 1, first, 70, dest, ops[1], true, false, 1);
+  buf_push_byte(a.code, x86_gas_atoi(ops[0]) & 255);
+  return a;
+}
+
 function x86_gas_vex_three(own a: X86Asm, mnem: string, rest: string): X86Asm {
   if (mnem == "vshufps") {
     return x86_gas_vex_shuffle(a, rest);
+  }
+  if (mnem == "vperm2i128") {
+    return x86_gas_vperm2i128(a, rest);
   }
   let ops = x86_gas_split_ops(rest);
   if (ops.len() != 3) {
@@ -6509,7 +6529,7 @@ function x86_gas_system_verdict(v: MnemVerdict, mnem: string): Option[MnemVerdic
 
 function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
   let v = MnemVerdict { vz: mnem == "vzeroupper", fixed: x86_gas_fixed_op(mnem), a_kind: GK_NONE, a_ext: -1, a_sfx: 0, sfx: 0, b_kind: GK_NONE, b_ext: -1, vshift: x86_gas_vshift_op(mnem), c_kind: GK_NONE, c_ext: -1 };
-  if (mnem == "vshufps" || x86_vex_three_op(mnem) >= 0 || x86_vex_shift_imm(mnem) >= 0) {
+  if (mnem == "vshufps" || mnem == "vperm2i128" || x86_vex_three_op(mnem) >= 0 || x86_vex_shift_imm(mnem) >= 0) {
     return MnemVerdict { ...v, a_kind: GK_VEX_THREE };
   }
   let bmi = x86_gas_bmi_verdict(v, mnem);

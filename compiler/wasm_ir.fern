@@ -702,7 +702,8 @@ pub function module_uses_aes_gcm(cache: irtables.LowerResult[]): boolean {
 }
 
 pub function module_uses_sha_hw_blocks(cache: irtables.LowerResult[]): boolean {
-  return module_emits_op_cached(cache, "sha256_hw_blocks") || module_emits_op_cached(cache, "sha1_hw_blocks");
+  return module_emits_op_cached(cache, "sha256_hw_blocks") || module_emits_op_cached(cache, "sha1_hw_blocks")
+    || module_emits_op_cached(cache, "sha1x8_hw_blocks");
 }
 
 function sha_hw_blocks_helper(): string {
