@@ -12,8 +12,10 @@ swipe up that opens the app list in the paper
 colour with the keyboard for its text field, a tap on the search field that
 shows the keyboard again after the back key hid it, a search for "pap" that
 finds Paper and opens it, Back that hides the keyboard, then Back that goes
-home, a frame section in the system trace while the list slides, and no
-crash in logcat. OUT_DIR gets the frames, logcat and the trace.
+home, a frame section in the system trace while the list slides, the
+notification filter that takes a new notification out of the shade and
+shows it as held, a tap that opens the held notification, and no crash in
+logcat. OUT_DIR gets the frames, logcat and the trace.
 """
 
 from pathlib import Path
@@ -28,7 +30,7 @@ from emulator import adb, count, crashes, fail, finish, logcat, screen, wait_for
 PACKAGE = "dev.fern.paper"
 ACTIVITY = PACKAGE + "/.Home"
 PAPER = (255, 244, 230)
-
+LISTENER = PACKAGE + "/" + PACKAGE + ".Filter"
 
 
 def paper_part(out, name, top_half=False):
@@ -104,10 +106,7 @@ def check_access(out):
     """An accessibility service reads the home screen: uiautomator dumps the
     window through the accessibility layer, and the dump has the clock of
     Paper as a button with the time as its text."""
-    adb("shell", "uiautomator", "dump", "/sdcard/paper-ui.xml", check=False)
-    dump = adb("shell", "cat", "/sdcard/paper-ui.xml", check=False)
-    with open(f"{out}/ui.xml", "w") as f:
-        f.write(dump)
+    dump = ui_dump(out, "ui")
     clock = re.search(r'<node [^>]*text="\d{1,2}:\d\d[^"]*"[^>]*class="android\.widget\.Button"[^>]*package="dev\.fern\.paper"[^>]*clickable="true"', dump)
     if not clock:
         fail("the accessibility layer has no clock button of Paper")
@@ -131,6 +130,123 @@ def open_clock():
             fail(f"a tap on the time did not bring {opened.group(1)} to the front")
     adb("shell", "input", "keyevent", "KEYCODE_HOME")
     time.sleep(1.5)
+
+
+def ui_dump(out, name):
+    """The window of the app as the accessibility layer has it."""
+    adb("shell", "uiautomator", "dump", "/sdcard/paper-ui.xml", check=False)
+    dump = adb("shell", "cat", "/sdcard/paper-ui.xml", check=False)
+    Path(out, name + ".xml").write_text(dump)
+    return dump
+
+
+def find_node(dump, label):
+    """The middle of the first node whose text matches the pattern `label`,
+    and the match of the text. None when no node has such a text."""
+    node = re.search(r'<node [^>]*(?:text|content-desc)="(' + label + r')"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', dump)
+    if not node:
+        return None
+    left, top, right, bottom = (int(node.group(i)) for i in range(node.lastindex - 3, node.lastindex + 1))
+    return (left + right) // 2, (top + bottom) // 2, node.group(1)
+
+
+def wait_for_node(out, name, label, timeout=30.0):
+    """find_node on a new dump each second, for `timeout` seconds."""
+    deadline = time.monotonic() + timeout
+    while True:
+        found = find_node(ui_dump(out, name), label)
+        if found or time.monotonic() >= deadline:
+            return found
+        time.sleep(1.0)
+
+
+def free_point(dump, width, height):
+    """A point of the home screen that no node with an action covers. A
+    long press there opens the settings."""
+    boxes = [tuple(int(v) for v in box) for box in re.findall(r'<node [^>]*clickable="true"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', dump)]
+    for y in range(height * 3 // 10, height * 7 // 10, max(1, height // 40)):
+        for x in range(width // 10, width * 9 // 10, max(1, width // 20)):
+            if not any(l <= x <= r and t <= y <= b for l, t, r, b in boxes):
+                return x, y
+    return None
+
+
+def in_shade(tag):
+    """Whether the notification with the tag `tag` is in the shade."""
+    dump = adb("shell", "dumpsys", "notification", "--noredact", check=False)
+    return bool(re.search(r"NotificationRecord\([^\n]*\btag=" + re.escape(tag) + r"\b", dump))
+
+
+def wait_for_shade(tag, shown, timeout=15.0):
+    """The notification `tag` reaches the requested state within `timeout`
+    seconds."""
+    deadline = time.monotonic() + timeout
+    while True:
+        if in_shade(tag) == shown:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.5)
+
+
+def tap(point):
+    adb("shell", "input", "tap", str(point[0]), str(point[1]))
+
+
+def filter_on(out, width, height):
+    """Turns the notification filter on in the settings of Paper, which a
+    long press on the home screen opens."""
+    place = free_point(ui_dump(out, "ui-home"), width, height)
+    if not place:
+        fail("the home screen has no place for a long press")
+        return False
+    x, y = str(place[0]), str(place[1])
+    adb("shell", "input", "swipe", x, y, x, y, "900")
+    row = wait_for_node(out, "ui-settings", "Notification filter: (?:on|off)", 10.0)
+    if not row:
+        fail("a long press on the home screen did not open the settings")
+        return False
+    if row[2].endswith("off"):
+        tap(row)
+    else:
+        adb("shell", "input", "keyevent", "KEYCODE_BACK")
+    time.sleep(1.5)
+    return True
+
+
+def check_filter(out, width, height):
+    """The filter holds a notification: Paper takes it out of the shade,
+    shows it on the home screen, and opens it after a tap. A notification
+    from before the filter was on stays in the shade, which shows that
+    in_shade can see a notification."""
+    adb("shell", "cmd", "notification", "post", "-t", "Fern", "fern_shown", "shown_text", check=False)
+    if not wait_for_shade("fern_shown", True):
+        fail("the shade does not show a notification that the shell posted")
+        return
+    adb("shell", "cmd", "notification", "allow_listener", LISTENER, check=False)
+    if not filter_on(out, width, height):
+        return
+    adb("shell", "cmd", "notification", "post", "-t", "Fern", "fern_held", "held_text", check=False)
+    held = wait_for_node(out, "ui-held", r"\d+ held notifications?")
+    if not held:
+        fail("the home screen does not show a held notification")
+        return
+    if not wait_for_shade("fern_held", False):
+        fail("the filter did not take the notification out of the shade")
+    if not in_shade("fern_shown"):
+        fail("the filter took a notification from before it was on")
+    tap(held)
+    row = wait_for_node(out, "ui-held-list", '[^"]*held_text[^"]*', 10.0)
+    if not row:
+        fail("the list of held notifications does not have the text of the notification")
+        return
+    tap(row)
+    if not wait_for(r"paper: open held com\.android\.shell"):
+        fail("a tap on the held notification did not open it")
+    time.sleep(1.0)
+    if find_node(ui_dump(out, "ui-opened"), r"\d+ held notifications?"):
+        fail("the held notification stayed on the home screen after it opened")
+    adb("shell", "cmd", "notification", "disallow_listener", LISTENER, check=False)
 
 
 def main(apk, out):
@@ -191,6 +307,8 @@ def main(apk, out):
     _, _, part = paper_part(out, "back")
     if part < 0.05 or part > 0.7:
         fail(f"the home screen after Back has {part:.3f} of the paper colour, not paper above the wallpaper")
+
+    check_filter(out, width, height)
 
     log = early + logcat()
     with open(f"{out}/logcat.txt", "w") as f:
