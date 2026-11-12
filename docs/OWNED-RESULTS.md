@@ -23,6 +23,8 @@ let step = (own value: string): own string => value;
 ```
 
 The same result annotation applies to a local named function.
+Type inference reads the payload type inside this annotation.
+The callback must still satisfy the checked result contract.
 
 An ordinary result does not carry this promise.
 An owned-result function can satisfy an ordinary-result function type.

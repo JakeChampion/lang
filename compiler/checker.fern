@@ -7371,7 +7371,7 @@ function settles_any_argument(args: typeinfo.Type[]): boolean {
 }
 
 function type_ref_names_any(r: parser.TypeRef, vars: string[]): boolean {
-  if (util.has_str(vars, r.base)) {
+  if (util.has_str(vars, parser.ref_without_own(r).base)) {
     return true;
   }
   for a in r.args {
@@ -7908,7 +7908,7 @@ function gc_bind_param(r: parser.TypeRef, at: typeinfo.Type, tparams: string[], 
           ns = fn2;
           ts = ft2;
         }
-        let (rn2, rt2) = gc_bind_param(parser.ref_fn_result(r), f.ret_type, tparams, tn, ns, ts);
+        let (rn2, rt2) = gc_bind_param(parser.ref_without_own(parser.ref_fn_result(r)), f.ret_type, tparams, tn, ns, ts);
         ns = rn2;
         ts = rt2;
       }
@@ -26321,6 +26321,9 @@ function ow_param_can_lend(fn: parser.FuncDecl, param: ast.ParamDecl, ofuncs: Ow
       return false;
     }
     tn = param.fn_ret;
+  }
+  if (util.has_str(fn.all_type_params, tn)) {
+    return true;
   }
   return ow_decl_type_is_pointer(fn, tn, ofuncs) && !ow_holds_no_handle(tn, dx);
 }

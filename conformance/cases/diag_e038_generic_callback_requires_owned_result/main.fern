@@ -1,0 +1,18 @@
+// spec: RH-01
+
+struct H { fd: i32 }
+
+function (own h: H) close(): void {}
+
+function produce[T](make: () => own T): own T {
+  return make();
+}
+
+function consume_borrowed(h: H): void {
+  let value = produce(() => h);
+  value.close();
+}
+
+function main(): i32 {
+  return 0;
+}
