@@ -1,0 +1,11 @@
+// spec: ST-05
+// slice_unchecked aborts where the checked slice answers None: an endpoint
+// out of range, or an endpoint inside a character. A string stays valid
+// UTF-8, so the slices before the abort print whole characters.
+function main(): i32 {
+    let s = "aé";
+    print(slice_unchecked(s, 0, 1));
+    print(slice_unchecked(s, 1, 3));
+    print(slice_unchecked(s, 0, 2));
+    return 0;
+}
