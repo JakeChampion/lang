@@ -1458,3 +1458,6 @@ a_function_named_like_a_safe_intrinsic_shadows_it    0
 
 # 2026-11-12: callback_shadowed_bindings has balanced allocations and zero live bytes on all three main targets.
 callback_shadowed_bindings                         0
+
+# 2026-11-12: callback_fresh_local_last_use has balanced allocations and zero live bytes on all three main targets.
+callback_fresh_local_last_use                       0
