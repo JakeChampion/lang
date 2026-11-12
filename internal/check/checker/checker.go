@@ -9895,6 +9895,9 @@ type escapeEnv struct {
 	armViews   map[string]ast.Expr
 	visiting   map[string]bool
 	reassigned map[string]bool
+	// outlives names the locals that a store check leaves out of locals:
+	// their storage lives as long as the target of the store.
+	outlives map[string]bool
 }
 
 func (c *checker) escapeEnv(fn *ast.FuncDecl) *escapeEnv {
@@ -10572,6 +10575,8 @@ func (c *checker) stringSourceRoots(expr ast.Expr, env *escapeEnv, sums map[stri
 				defer delete(env.visiting, e.Name)
 				return c.stringSourceRoots(v.Init, env, sums)
 			}
+		} else if env.outlives[e.Name] {
+			return out
 		}
 		out.local = true
 		return out

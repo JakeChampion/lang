@@ -137,9 +137,14 @@ func (c *checker) checkSliceStores(fn *ast.FuncDecl, env *escapeEnv, sums map[st
 		inner := *env
 		inner.locals = map[string]*ast.Var{}
 		inner.visiting = map[string]bool{}
+		inner.outlives = map[string]bool{}
 		for _, v := range c.info.Locals[fn] {
 			vb := home[v]
-			if vb == nil || vb == to || !within(vb, to) || !within(at, vb) {
+			if vb == nil || !within(at, vb) {
+				continue
+			}
+			if vb == to || !within(vb, to) {
+				inner.outlives[v.Name] = true
 				continue
 			}
 			if seen := inner.locals[v.Name]; seen == nil || within(vb, home[seen]) {
