@@ -125,10 +125,9 @@ function wire_import(w: WorldWired, tbody: i32[], asy: watbin.AsyncSurface, ifac
     }
     return WorldWired { ...w, kinds: w.kinds.append(4), insts: w.insts.append(0), rts: w.rts.append(vt) };
   }
-  let inst = wit_decode.wit_import_instance_index(tbody, w.plan, iface);
-  if (inst < 0) {
+  let Some(inst) = wit_decode.wit_import_instance_index(tbody, w.plan, iface) else {
     return refuse(w, "core imports interface " + iface + " not declared by the world");
-  }
+  };
   let kind = 0;
   let rt = 0;
   if (is_resource_drop(name)) {
@@ -266,10 +265,9 @@ pub function compose_http(tbody: i32[], core: i32[]): Composed {
   if (w.refused.len() > 0) {
     return Composed { bytes: [], refused: w.refused };
   }
-  let http_inst = wit_decode.wit_import_instance_index(tbody, w.plan, http_iface);
-  if (http_inst < 0) {
+  let Some(http_inst) = wit_decode.wit_import_instance_index(tbody, w.plan, http_iface) else {
     return Composed { bytes: [], refused: "world does not import " + http_iface };
-  }
+  };
   let (w2, req_t) = surface_resource(w, http_inst, "incoming-request");
   let (w3, out_t) = surface_resource(w2, http_inst, "response-outparam");
   let o = util.append_all(w3.o, watbin.comp_core_module_section(core));
