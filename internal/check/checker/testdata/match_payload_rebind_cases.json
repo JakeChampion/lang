@@ -1,0 +1,52 @@
+[
+  {
+    "name": "payload read after receiver close",
+    "source": "struct W{n:i32}function(w:W)read():i32{return w.n;}function(w:W)pass():Result[W,i32]{return Ok(w);}function(own w:W)close():i32{print(w.n);return w.n;} function main():i32{let buf=W{n:1};match(buf.pass()){Ok(w)=>{buf=w;let n=buf.close();return n+w.read();},Err(_)=>{}}return 0;}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "payload consumed after receiver close",
+    "source": "struct W{n:i32}function(w:W)read():i32{return w.n;}function(w:W)pass():Result[W,i32]{return Ok(w);}function(own w:W)close():i32{print(w.n);return w.n;} function main():i32{let buf=W{n:1};match(buf.pass()){Ok(w)=>{buf=w;let n=buf.close();return n+w.close();},Err(_)=>{}}return 0;}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "receiver closed before payload rebound",
+    "source": "struct W{n:i32}function(w:W)read():i32{return w.n;}function(w:W)pass():Result[W,i32]{return Ok(w);}function(own w:W)close():i32{print(w.n);return w.n;} function main():i32{let buf=W{n:1};match(buf.pass()){Ok(w)=>{let n=buf.close();buf=w;return n+buf.close();},Err(_)=>{}}return 0;}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "payload rebound after prior receiver consumption through helper",
+    "source": "struct W{n:i32}function(w:W)read():i32{return w.n;}function(w:W)pass():Result[W,i32]{return Ok(w);}function(own w:W)close():i32{print(w.n);return w.n;} function drop(own w:W):i32{return w.close();}function main():i32{let buf=W{n:1};match(buf.pass()){Ok(w)=>{let n=drop(buf);buf=w;return n+buf.close();},Err(_)=>{}}return 0;}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "payload retained in callback after receiver close",
+    "source": "struct W{n:i32}function(w:W)read():i32{return w.n;}function(w:W)pass():Result[W,i32]{return Ok(w);}function(own w:W)close():i32{print(w.n);return w.n;} function main():i32{let buf=W{n:1};match(buf.pass()){Ok(w)=>{let f=():i32=>w.read();buf=w;let n=buf.close();return n+f();},Err(_)=>{}}return 0;}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "payload assigned to second receiver",
+    "source": "struct W{n:i32}function(w:W)read():i32{return w.n;}function(w:W)pass():Result[W,i32]{return Ok(w);}function(own w:W)close():i32{print(w.n);return w.n;} function main():i32{let buf=W{n:1};let other=W{n:2};match(buf.pass()){Ok(w)=>{buf=w;other=w;return buf.close()+other.close();},Err(_)=>{}}return 0;}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "valid payload rebound",
+    "source": "struct W{n:i32}function(w:W)read():i32{return w.n;}function(w:W)pass():Result[W,i32]{return Ok(w);}function(own w:W)close():i32{print(w.n);return w.n;} function main():i32{let buf=W{n:1};match(buf.pass()){Ok(w)=>{buf=w;return buf.close();},Err(_)=>{}}return 0;}",
+    "want": ""
+  },
+  {
+    "name": "receiver consumed in guard",
+    "source": "struct W{n:i32}function(w:W)read():i32{return w.n;}function(w:W)pass():Result[W,i32]{return Ok(w);}function(own w:W)close():i32{print(w.n);return w.n;} function test(own w:W):boolean{let n=w.close();return false;}function main():i32{let buf=W{n:1};match(buf.pass()){Ok(_) when test(buf)=>{return 0;},Ok(w)=>{buf=w;return buf.close();},Err(_)=>{}}return 0;}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "receiver consumed in source argument",
+    "source": "struct W{n:i32}function(w:W)read():i32{return w.n;}function(w:W)pass():Result[W,i32]{return Ok(w);}function(own w:W)close():i32{print(w.n);return w.n;} function(w:W)after(n:i32):Result[W,i32]{return Ok(w);}function main():i32{let buf=W{n:1};match(buf.after(buf.close())){Ok(w)=>{buf=w;return buf.close();},Err(_)=>{}}return 0;}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "unrelated prefix before valid payload rebound",
+    "source": "struct W{n:i32}function(w:W)read():i32{return w.n;}function(w:W)pass():Result[W,i32]{return Ok(w);}function(own w:W)close():i32{print(w.n);return w.n;} function main():i32{let buf=W{n:1};match(buf.pass()){Ok(w)=>{let n=3;buf=w;return n+buf.close();},Err(_)=>{}}return 0;}",
+    "want": ""
+  }
+]
