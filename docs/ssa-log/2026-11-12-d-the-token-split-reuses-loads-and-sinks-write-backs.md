@@ -5,8 +5,8 @@ x86-64 and arm64. `ssa.split_tokens`: `loads_above`, `same_load`,
 
 ## The shape
 
-After `split_tokens` gave each side of a uniqueness test its own block, two
-things were left on the unique side of `ins` in the red-black tree workloads.
+`split_tokens` gives each side of a uniqueness test its own block. Two
+things stayed on the unique side of `ins` in the red-black tree workloads.
 
 The release of a field of the reused box loaded the field again:
 
@@ -15,7 +15,7 @@ The release of a field of the reused box loaded the field again:
         v989 = call __fern_rc_dec v988
 ```
 
-The match had loaded the same field above the test (`v285`).
+The match loaded the same field above the test (`v285`).
 
 After the join, the rebuild stored each scalar field that the match read:
 
@@ -28,20 +28,23 @@ On the unique side that store writes a field of the box back to itself.
 
 ## What changed
 
-**A load that holds above the test is not made again.** `loads_above`
-collects the `ld_at` instructions of the block that ends in the uniqueness
-test, and of the blocks above it that one block alone enters. A later `st_at`
+**A load that holds above the test is not made again.**
+
+`loads_above` collects the `ld_at` instructions of the block that ends in
+the uniqueness test. It also collects those of the blocks above it that one
+block alone enters. A later `st_at`
 to the same field of the same base removes its load. A copy that loads such
 a field takes the earlier result.
 
 The match read the earlier value, so `ssadeps.boxed_values` also removes the
 box test of its release.
 
-**A store that writes a field back goes to the shared side.** `write_backs`
-looks at the stores that lead the block after the join. It takes each one
-whose base is a phi that has the box on the unique side, and whose value is
-a load of the same field of the box. It moves that store to the shared side,
-with the base of that side. The unique side must hold no store to that field.
+**A store that writes a field back goes to the shared side.**
+
+`write_backs` looks at the stores that lead the block after the join. It
+takes a store when two things are true. The base is a phi that has the box
+on the unique side. The value is a load of the same field of the box. It
+moves that store to the shared side, with the base of that side. The unique side must hold no store to that field.
 
 ## Measured
 
