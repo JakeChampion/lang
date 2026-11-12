@@ -4527,7 +4527,7 @@ function shifts_view(from: typeinfo.Type, to: typeinfo.Type, strings: boolean): 
 }
 
 function same_element_type(a: typeinfo.Type, b: typeinfo.Type): boolean {
-  return type_eq(a, b) && !promotes_view(a, b) && !promotes_view(b, a);
+  return type_eq(a, b) && !owned_beside_view(a, b);
 }
 
 function any_shifts_view(from: typeinfo.Type[], to: typeinfo.Type[], strings: boolean): boolean {
@@ -10526,18 +10526,9 @@ function mx_arm_compatible(a: VbStore, b: VbStore, elem: boolean, assigns: boole
   return mx_parts_compatible(a, b, elem, assigns, unions, enums);
 }
 
+// Whether one of two joined types is owned where the other is a view, at any depth.
 function owned_beside_view(a: typeinfo.Type, b: typeinfo.Type): boolean {
-  if let typeinfo.TypeArray(aa) = a {
-    if let typeinfo.TypeArray(ba) = b {
-      return aa.view != ba.view;
-    }
-  }
-  if let typeinfo.TypeString(aa) = a {
-    if let typeinfo.TypeString(ba) = b {
-      return aa.tag != ba.tag;
-    }
-  }
-  return false;
+  return promotes_view(a, b) || promotes_view(b, a);
 }
 
 function mx_args_compatible(a: typeinfo.TypeUnion, b: typeinfo.TypeUnion, elem: boolean, assigns: boolean, unions: UnionSig[], enums: parser.EnumDecl[]): boolean {
@@ -32299,6 +32290,9 @@ function vb_empty_arrays_fit(e: ast.Expr, want: typeinfo.Type): boolean {
 }
 
 function vb_join(a: VbStore, b: VbStore): VbStore {
+  if (owned_beside_view(a.t, b.t)) {
+    return VbStore { t: t_unknown("owned beside a view"), e: ast.ExprUnknown { kind: "", line: 0, col: 0 } };
+  }
   let scalar = scalar_numeric_join(a.t, b.t);
   if (scalar_vb_joinable(a, b, scalar)) {
     return VbStore { t: scalar, e: ast.ExprUnknown { kind: "", line: 0, col: 0 } };
