@@ -507,6 +507,18 @@ pub function int_array_region(env: usize, array: usize, start: i32, n: i32): i32
   }
 }
 
+// Puts the ints `values` in `array` from the index `start`.
+pub function set_int_array_region(env: usize, array: usize, start: i32, values: [i32]): void {
+  unsafe {
+    let buf: usize = alloc_buffer(4 * values.len() + 4);
+    for k in 0..values.len() {
+      __store_i32(buf + (4 * k) as usize, values[k]);
+    }
+    let done: usize = call4(env, 211, array, start as usize, values.len() as usize, buf);
+    free_buffer(buf);
+  }
+}
+
 // A jvalue array of `args`. Free it with free_buffer.
 pub function jvalues(args: usize[]): usize {
   unsafe {
