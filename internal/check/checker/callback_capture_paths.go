@@ -185,6 +185,16 @@ func flattenCallbackLoans(loans []callbackLoan) []callbackLoan {
 	return out
 }
 
+func widenCallbackLoans(loans []callbackLoan) []callbackLoan {
+	var out []callbackLoan
+	for _, loan := range loans {
+		loan.result = ""
+		loan.wide = true
+		out = mergeCallbackLoans(out, []callbackLoan{loan})
+	}
+	return out
+}
+
 func callbackLoanParams(loans []callbackLoan) []ast.Param {
 	var out []ast.Param
 	seen := map[string]bool{}

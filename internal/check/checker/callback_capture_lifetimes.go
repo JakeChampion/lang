@@ -93,6 +93,14 @@ func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[st
 			definitions[name] = append(definitions[name], value)
 		}
 	}
+	// A match binder holds a part of the matched value, so it has each loan
+	// of that value, and each loan covers its whole source.
+	binders := map[string]bool{}
+	callbackBinders := map[string]bool{}
+	bind := func(name string, matched ast.Expr) {
+		add(name, matched)
+		binders[name] = true
+	}
 	params := func(ps []ast.Param) {
 		for _, p := range ps {
 			add(p.Name, nil)
@@ -105,6 +113,10 @@ func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[st
 			values = append(values, n.Value)
 		case *ast.Call, *ast.FieldAccess, *ast.Index:
 			values = append(values, n.(ast.Expr))
+		case *ast.Ident:
+			if n.Local && binders[n.Name] && c.callbackValues[n] {
+				callbackBinders[n.Name] = true
+			}
 		case *ast.Var:
 			add(n.Name, n.Init)
 			bindingTypes[n.Name] = c.info.VarTypes[n]
@@ -121,14 +133,14 @@ func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[st
 		case *ast.Match:
 			for _, arm := range n.Arms {
 				for _, name := range arm.Binders() {
-					add(name, nil)
+					bind(name, n.Tag)
 				}
 			}
 		case *ast.MatchExpr:
 			values = append(values, n)
 			for _, arm := range n.Arms {
 				for _, name := range arm.Binders() {
-					add(name, nil)
+					bind(name, n.Tag)
 				}
 			}
 		case *ast.Lambda:
@@ -222,6 +234,13 @@ func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[st
 			}
 			return out
 		case *ast.Call:
+			if v.IsVariantCall {
+				var out []callbackLoan
+				for _, arg := range v.Args {
+					out = mergeCallbackLoans(out, flattenCallbackLoans(valueCaptures(arg, active)))
+				}
+				return out
+			}
 			id, named := v.Callee.(*ast.Ident)
 			if c.callValueCallees[v] || named && id.Local {
 				if !c.callbackResultCalls[v] {
@@ -308,6 +327,9 @@ func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[st
 		active[name] = true
 		defer delete(active, name)
 		loans := valueCaptures(values[0], active)
+		if binders[name] {
+			loans = widenCallbackLoans(loans)
+		}
 		// A recursive binding can depend on an unfinished ancestor proof.
 		if !cyclic[name] {
 			memo[name] = loans
@@ -319,7 +341,9 @@ func (c *checker) callbackCaptureFacts(fn *ast.FuncDecl, summarize bool) (map[st
 		switch bindingTypes[name].(type) {
 		case *ast.FuncType, ast.ParamType:
 		default:
-			continue
+			if !callbackBinders[name] {
+				continue
+			}
 		}
 		if captures := resolve(name, map[string]bool{}); len(captures) > 0 {
 			out[name] = captures

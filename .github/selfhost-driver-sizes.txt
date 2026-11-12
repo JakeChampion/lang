@@ -1,3 +1,8 @@
+# 2026-11-12: after PR #15527, on main 6f8937ce with the self-rebind exception of the checker.
+# driver-sizes-x86_64 job 131410502724 reported checker_modload_run at 4.4 MB, over the tolerance.
+# A local run of TestSelfHostWarmStockDriver measured 4356448 bytes, 5.05% above its prior bank.
+# The drift of main gave most of that growth: checker_codes_run moved 0.16% in the same run.
+# Re-bank only this measured row. The 5% tolerance and all other rows stay unchanged.
 # 2026-11-12: PR #15497 at 83222cb2a8, driver-sizes-x86_64 job 131205638619.
 # Main's checker driver reached 4051184 bytes, 5.2% above its prior bank.
 # The local stock build agrees. Matched media/control builds are byte-identical.
@@ -646,6 +651,6 @@ drivers/wasm_ir_run.fern 9677328
 drivers/wasm_run.fern 9688304
 drivers/wasm_runio_run.fern 9663024
 drivers/asm_pathprobe_run.fern 5756560
-drivers/checker_modload_run.fern 4147040
+drivers/checker_modload_run.fern 4356448
 drivers/checker_codes_run.fern 4051184
 drivers/interp_run.fern 2835808
