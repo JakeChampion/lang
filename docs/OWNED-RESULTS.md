@@ -33,6 +33,8 @@ A parameter keeps its ownership mode during assignment.
 A borrowed resource parameter cannot become an owned result.
 An aggregate or local alias cannot hide a resource loan.
 Match payloads retain the loan from a borrowed scrutinee.
+A generic parameter can hold a resource, so its signature cannot prove a result fresh.
+This rule includes an ordinary result that wraps the parameter in an option or result.
 This also applies to nested matches and local aliases inside an arm.
 
 A fresh aggregate can contain copied data parts when those parts cannot hold a handle.
@@ -103,6 +105,7 @@ The nested record can transfer a field of that alias into an owned argument.
 The alias must remain unchanged and appear only inside that nested replacement.
 The returned record must replace the complete input field that owns the alias.
 Other aliases, callbacks, deferred cleanup, and repeated resource reads preserve the refusal.
+
 An unrelated resource sibling can still prevent an owned result.
 The `nested_owned_field_transfer` case checks the transfer and resource cleanup.
 
