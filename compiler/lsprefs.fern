@@ -246,10 +246,8 @@ function named_after(toks: lspquery.Tok[], line: i32, col: i32, name: string): O
   return tok_answer(toks, lspquery.first_ident(toks, lspquery.after(toks, line, col), name));
 }
 
-function tok_answer(toks: lspquery.Tok[], i: i32): Option[lspquery.SourceSpan] {
-  if (i < 0) {
-    return None;
-  }
+function tok_answer(toks: lspquery.Tok[], at: Option[i32]): Option[lspquery.SourceSpan] {
+  let i: i32 = match (at) { Some(found) => found, None => { return None; } };
   return Some(lspquery.SourceSpan { line: toks[i].line, col: toks[i].col, len: toks[i].text.len() });
 }
 
@@ -478,7 +476,9 @@ function module_refs(p: lspquery.Program, t: Target, m: i32, anchors: Anchor[], 
     if (a.pattern) {
       marks = pattern_marks(toks, a, t.spelled, marks);
     } else {
-      marks = marked(marks, spelling_at(toks, a, t.spelled), 1);
+      if let Some(i) = spelling_at(toks, a, t.spelled) {
+        marks = marked(marks, i, 1);
+      }
     }
   }
   if (quals.len() > 0) {
@@ -486,7 +486,9 @@ function module_refs(p: lspquery.Program, t: Target, m: i32, anchors: Anchor[], 
   }
   if let Some(decl) = t.decl {
     if (util.pos_file_index(decl.line) == m) {
-      marks = marked(marks, decl_tok(toks, decl), 2);
+      if let Some(i) = decl_tok(toks, decl) {
+        marks = marked(marks, i, 2);
+      }
     }
   }
   for i in 0..toks.len() {
@@ -498,37 +500,31 @@ function module_refs(p: lspquery.Program, t: Target, m: i32, anchors: Anchor[], 
 }
 
 function marked(own marks: i32[], i: i32, mark: i32): i32[] {
-  if (i < 0 || marks[i] >= mark) {
+  if (marks[i] >= mark) {
     return marks;
   }
   return marks.with(i, mark);
 }
 
-function decl_tok(toks: lspquery.Tok[], a: lspquery.SourceSpan): i32 {
-  let i = lspquery.tok_at(toks, a.line, a.col);
-  if (i >= 0 && toks[i].ident) {
-    return i;
+function decl_tok(toks: lspquery.Tok[], a: lspquery.SourceSpan): Option[i32] {
+  let i: i32 = match (lspquery.tok_at(toks, a.line, a.col)) { Some(found) => found, None => { return None; } };
+  if (toks[i].ident) {
+    return Some(i);
   }
-  return -1;
+  return None;
 }
 
-function spelling_at(toks: lspquery.Tok[], a: Anchor, name: string): i32 {
-  let i = lspquery.tok_at(toks, a.line, a.col);
-  if (i < 0) {
-    return i;
-  }
-  i = named_from(toks, i, name);
+function spelling_at(toks: lspquery.Tok[], a: Anchor, name: string): Option[i32] {
+  let at: i32 = match (lspquery.tok_at(toks, a.line, a.col)) { Some(found) => found, None => { return None; } };
+  let i = named_from(toks, at, name);
   if (i < toks.len() && toks[i].ident && toks[i].text == name) {
-    return i;
+    return Some(i);
   }
-  return -1;
+  return None;
 }
 
 function pattern_marks(toks: lspquery.Tok[], a: Anchor, name: string, own marks: i32[]): i32[] {
-  let i = lspquery.tok_at(toks, a.line, a.col);
-  if (i < 0) {
-    return marks;
-  }
+  let i: i32 = match (lspquery.tok_at(toks, a.line, a.col)) { Some(found) => found, None => { return marks; } };
   let end = lspquery.pattern_end(toks, i);
   while (i < end) {
     if (toks[i].ident && toks[i].text == name && lspquery.text_at(toks, i + 1) != ":") {

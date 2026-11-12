@@ -572,8 +572,8 @@ function decl_symbol(toks: lspquery.Tok[], line: i32, col: i32, name: string, de
   if (start < toks.len()) {
     s = Symbol { ...s, line: toks[start].line, col: toks[start].col };
   }
-  if (at >= 0) {
-    s = Symbol { ...s, name_line: toks[at].line, name_col: toks[at].col };
+  if let Some(i) = at {
+    s = Symbol { ...s, name_line: toks[i].line, name_col: toks[i].col };
   }
   if (end >= 0) {
     s = Symbol { ...s, end_line: toks[end].line, end_col: toks[end].col + tok_len(toks[end]) };
@@ -613,8 +613,7 @@ function struct_symbol(toks: lspquery.Tok[], sd: parser.StructDecl): Symbol {
   let open = lspquery.after(toks, s.name_line, s.name_col);
   let fields: Symbol[] = [];
   for f in sd.fields {
-    let i = lspquery.field_tok(toks, open, f.name);
-    if (i >= 0) {
+    if let Some(i) = lspquery.field_tok(toks, open, f.name) {
       fields = fields.append(member_symbol(toks, i, f.name, util.show_type_vars(f.type_name), SK_FIELD));
     }
   }
@@ -700,8 +699,8 @@ pub function inlay_hints(p: lspquery.Program, m: i32, lo: i32, hi: i32): Hint[] 
 function func_hints(toks: lspquery.Tok[], quals: flatten.Qualifiers, bs: Bound[], own out: Hint[]): Hint[] {
   for b in bs {
     if (b.let_line > 0 && visible(b.name) && known(b.t)) {
-      let i = lspquery.first_ident(toks, lspquery.after(toks, b.let_line, b.let_col), b.name);
-      if (i >= 0 && (!b.annotated || i + 1 < toks.len() && toks[i + 1].text == "=") && !hinted(out, toks[i].line, toks[i].col + b.name.len())) {
+      let i: i32 = match (lspquery.first_ident(toks, lspquery.after(toks, b.let_line, b.let_col), b.name)) { Some(found) => found, None => { continue; } };
+      if ((!b.annotated || i + 1 < toks.len() && toks[i + 1].text == "=") && !hinted(out, toks[i].line, toks[i].col + b.name.len())) {
         out = out.append(Hint { line: toks[i].line, col: toks[i].col + b.name.len(), label: ": " + lspquery.written(quals, type_text(b.t)) });
       }
     }
