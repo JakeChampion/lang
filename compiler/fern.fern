@@ -325,6 +325,15 @@ function report_entry_read_failure(st: DiagStyle, path: string, e: lexer.TokErro
   }
 }
 
+// With -d, exit 1 means that a file differs. A file with no diff to show
+// exits 2, as diff(1) does.
+function fmt_failure_code(fmt_diff: boolean): i32 {
+  if (fmt_diff) {
+    return 2;
+  }
+  return 1;
+}
+
 function fmt_file(st: DiagStyle, path: string, fmt_write: boolean, fmt_diff: boolean, out_path: string): i32 {
   if (path == "-" && fmt_write) {
     eprint("fern: -fmt -w cannot write back stdin; drop -w to print the result");
@@ -337,14 +346,14 @@ function fmt_file(st: DiagStyle, path: string, fmt_write: boolean, fmt_diff: boo
     },
     Err(e) => {
       report_source_read_failure(st, "file", path, e);
-      return 1;
+      return fmt_failure_code(fmt_diff);
     }
   }
   let name = entry_display(path);
   let (formatted, errs) = format_text(name, esrc);
   let no_files: string[] = [];
   if (eprint_findings(st, errs, name, no_files, [util.no_line_map()])) {
-    return 1;
+    return fmt_failure_code(fmt_diff);
   }
   if (fmt_diff) {
     let d = printer.unified_diff(esrc, formatted, name, name);
@@ -2297,7 +2306,7 @@ function flag_groups(): FlagGroup[] {
     FlagGroup { title: "fmt", flags: [
       mode_flag("-fmt", "", "print each FILE formatted: - for stdin, a DIR for every source beneath it (-o OUT takes one FILE)"),
       sub_flag("-w", "", ["-fmt"], "with -fmt: overwrite each file"),
-      CliFlag { ...sub_flag("-d", "", ["-fmt"], "with -fmt: print unified diffs, exiting 1 when any file differs"), not_with: ["-w"] },
+      CliFlag { ...sub_flag("-d", "", ["-fmt"], "with -fmt: print unified diffs, exiting 1 when any file differs and 2 when one cannot be read or parsed"), not_with: ["-w"] },
     ] },
     FlagGroup { title: "lint", flags: [
       mode_flag("-lint", "", "lint each PATH: a .fern or .fern.md file, a directory of them, or - for stdin"),

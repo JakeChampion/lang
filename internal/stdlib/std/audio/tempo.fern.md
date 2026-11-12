@@ -113,7 +113,7 @@ function apart(mono: [i32], at: i32, want: i32, n: i32, limit: i64): i64 {
   while (i < n) {
     let d = mono[at + i] - mono[want + i];
     if (d < 0) {
-      d = 0 - d;
+      d = -d;
     }
     sum += d as i64;
     if (sum >= limit) {
