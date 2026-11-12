@@ -1,0 +1,115 @@
+import "./content_read";
+import "std/video/frame";
+import "std/test";
+
+function pattern(length: i64, short: i32, offset: i64, requested: i32): Result[u8[], frame.VideoError] {
+  if (offset < 0i64 || offset > length || requested < 1 || requested > 4096) {
+    return Err(frame.Platform);
+  }
+  let count = requested;
+  if (short > 0 && count > short) {
+    count = short;
+  }
+  if (count as i64 > length - offset) {
+    count = (length - offset) as i32;
+  }
+  let bytes: u8[] = [];
+  for i in 0..count {
+    bytes = bytes.append(((offset + i as i64) % 251i64) as u8);
+  }
+  return Ok(bytes);
+}
+
+function reference(length: i64, short: i32, digest: string): boolean {
+  let read = (offset: i64, count: i32): Result[u8[], frame.VideoError] => pattern(length, short, offset, count);
+  return match (content_read.inspect_with(length, read)) { Ok(value) => value.bytes == length && value.digest == digest, _ => false };
+}
+
+function digests(): test.TestOutcome {
+  for short in [1, 7, 4096] {
+    if (!reference(8193i64, short, "7e3691790cd64b19d4edb1a80e988214515abeb53aa0f34ffbfe4b4bf405d120")) {
+      return test.fail("independent SHA-256 with short reads");
+    }
+  }
+  if (!reference(2097152i64, 4096, "1e075c8d478ad21844e33e830a695ef03a4d2488b69ee275bd8947618bb1be1e")) {
+    return test.fail("exact two-MiB fixture bound");
+  }
+  return test.pass();
+}
+
+function abc(): test.TestOutcome {
+  let read = (offset: i64, count: i32): Result[u8[], frame.VideoError] => {
+    let input: u8[] = [97, 98, 99];
+    let bytes: u8[] = [];
+    for i in 0..count {
+      if (offset + i as i64 < 3i64) {
+        bytes = bytes.append(input[offset as i32 + i]);
+      }
+    }
+    return Ok(bytes);
+  };
+  let Ok(value) = content_read.inspect_with(3i64, read) else {
+    return test.fail("abc probe");
+  };
+  if (value.digest != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad") {
+    return test.fail("FIPS abc digest");
+  }
+  return test.pass();
+}
+
+function early_limits(): test.TestOutcome {
+  let calls = cell_new(0);
+  let read = (_offset: i64, _count: i32): Result[u8[], frame.VideoError] => {
+    calls.set(calls.get() + 1);
+    return Err(frame.Platform);
+  };
+  for (length, expected) in [(-1i64, frame.Header), (0i64, frame.Header), (2097153i64, frame.Limit)] {
+    if let Err(error) = content_read.inspect_with(length, read) {
+      if (error != expected) {
+        return test.fail("exact admission error");
+      }
+    } else {
+      return test.fail("invalid length accepted");
+    }
+  }
+  if (calls.get() != 0) {
+    return test.fail("read before length admission");
+  }
+  return test.pass();
+}
+
+function malformed(kind: i32, offset: i64): Result[u8[], frame.VideoError] {
+  if (kind == 0) {
+    return Ok([]);
+  }
+  if (kind == 1) {
+    return Ok([0, 1, 2, 3]);
+  }
+  if (kind == 2) {
+    return Err(frame.Limit);
+  }
+  return Ok(if (offset == 3i64) { [4] } else { [0, 1, 2] });
+}
+
+function source_failures(): test.TestOutcome {
+  for (kind, expected) in [(0, frame.Truncated), (1, frame.Platform), (2, frame.Limit), (3, frame.Platform)] {
+    let read = (offset: i64, _count: i32): Result[u8[], frame.VideoError] => malformed(kind, offset);
+    if let Err(error) = content_read.inspect_with(3i64, read) {
+      if (error != expected) {
+        return test.fail("read error category");
+      }
+    } else {
+      return test.fail("malformed source accepted");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("bounded native content fixture hash");
+  runner = runner.it("FIPS abc reference", abc);
+  runner = runner.it("independent digests, short reads, and exact two-MiB boundary", digests);
+  runner = runner.it("length limits precede all source reads", early_limits);
+  runner = runner.it("premature EOF, oversized reads, I/O errors, and declared EOF", source_failures);
+  return runner.finish();
+}

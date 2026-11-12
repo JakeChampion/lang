@@ -8,6 +8,7 @@ import "std/log";
 import "./roundtrip";
 import "./audio_pcm";
 import "./audio_path";
+import "./content_read";
 
 struct App { ctx: usize, playback: Option[player.Player], fd: i32, content: Option[source.Source], sound: Option[audio_path.State], stage: i32, resume_ns: i64, started_ns: i64, done: boolean }
 
@@ -107,6 +108,11 @@ function start_content(own s: App, window: android.Window, uri: string): App {
     Ok(value) => value,
     Err(e) => { return fail(s, e); },
   };
+  let checked = match (content_read.inspect(src)) {
+    Ok(value) => value,
+    Err(e) => { let _ = src.close(); return fail(s, e); },
+  };
+  log.warn("videotest: native content bytes=" + checked.bytes.to_string() + " sha256=" + checked.digest);
   let p = match (player.open(env, android.sdk_version(s.ctx), src.fd, src.offset, src.length, window.ptr, capabilities.PreferHardware, frame.default_limits())) {
     Ok(value) => value,
     Err(e) => { let _ = src.close(); return fail(s, e); },

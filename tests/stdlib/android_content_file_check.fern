@@ -1,0 +1,183 @@
+import "std/android/video/source" as asset;
+import "std/audio/mp4" as audiomp4;
+import "std/audio/mp4/file" as audiofile;
+import "std/audio/file";
+import "std/audio/source";
+import "std/video/mp4" as videomp4;
+import "std/video/mp4/file" as videofile;
+import "std/hex";
+import "mp4_vectors";
+import "aac_kernel_check" as encoded;
+import "mp4_file_check" as audio;
+import "video_mp4_file_check" as video;
+
+@import("libandroid.so", "mock_source_asset")
+function seed(data: usize, bytes: i32, offset: i64): void;
+
+@import("libandroid.so", "mock_source_asset_close")
+function close_seed(): void;
+
+@import("libandroid.so", "mock_source_position")
+function position(fd: i32): i32;
+
+@import("libandroid.so", "mock_source_mode")
+function mode(value: i32): void;
+
+@import("libandroid.so", "mock_source_descriptors")
+function descriptors(): i32;
+
+@import("libandroid.so", "mock_source_truncate")
+function truncate(fd: i32, length: i64): void;
+
+enum Kind { Audio, Video, Raw }
+
+struct Input { seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError] }
+
+function input(src: asset.Source): Input {
+  let cursor = cell_new(0i64);
+  let seek = (offset: i64): Result[i64, IoError] => {
+    if (offset < 0i64 || offset > src.length) {
+      return Err(Other("content", "asset offset", 22));
+    }
+    cursor.set(offset);
+    return Ok(offset);
+  };
+  let read = (requested: i32): Result[u8[], IoError] => {
+    let count = if (requested > 7) { 7 } else { requested };
+    return match (src.read_at(cursor.get(), count)) {
+      Ok(bytes) => { cursor.set(cursor.get() + bytes.len() as i64); return Ok(bytes); },
+      Err(error) => Err(Other("content", error.message(), 0)),
+    };
+  };
+  return Input { seek: seek, read: read };
+}
+
+function packet(reader: Input, bytes: [u8], offset: i64, count: i32): Result[void, string] {
+  let window = match (file.create(offset, count, source.Limits { chunk_size: 7, max_buffer_bytes: 65536 })) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+  while (!window.ready) {
+    window = match (window.step_with(reader.seek, reader.read)) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+  }
+  let view = window.view();
+  for i in 0..count {
+    if (view[i] != bytes[offset as i32 + i]) {
+      return Err("asset packet bytes");
+    }
+  }
+  return Ok(());
+}
+
+function audio_index(src: asset.Source, bytes: [u8]): Result[void, string] {
+  let expected = match (audiomp4.inspect(bytes, audiomp4.default_limits())) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+  let reader = input(src);
+  let index = match (audiofile.inspect_with(src.length, reader.seek, reader.read, audiofile.default_limits())) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+  if (index.bytes != src.length || !audio.same(index, expected, 0i64)) {
+    return Err("native AAC asset index");
+  }
+  for track in index.tracks {
+    for p in track.packets {
+      packet(reader, bytes, p.offset, p.bytes)?;
+    }
+  }
+  return Ok(());
+}
+
+function video_index(src: asset.Source, bytes: [u8]): Result[void, string] {
+  let expected = match (videomp4.inspect(bytes, videomp4.default_limits())) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+  let reader = input(src);
+  let index = match (videofile.inspect_with(src.length, reader.seek, reader.read, videofile.default_limits())) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+  if (index.bytes != src.length || !video.same(index, expected, 0i64)) {
+    return Err("native video asset index");
+  }
+  for track in index.tracks {
+    for p in track.packets {
+      packet(reader, bytes, p.offset, p.bytes)?;
+    }
+  }
+  return Ok(());
+}
+
+function large_read(src: asset.Source, bytes: [u8]): Result[void, string] {
+  let full = match (src.read_at(0i64, 1048576)) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+  if (full.len() != 1048576) {
+    return Err("exact one-MiB read");
+  }
+  for i in 0..full.len() {
+    if (full[i] != bytes[i]) {
+      return Err("full one-MiB payload");
+    }
+  }
+  return short_read(src, bytes);
+}
+
+function short_read(src: asset.Source, bytes: [u8]): Result[void, string] {
+  truncate(src.fd, src.offset + src.length - 3i64);
+  let partial = match (src.read_at(0i64, 1048576)) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+  if (partial.len() != bytes.len() - 3) {
+    return Err("physical short read");
+  }
+  for i in 0..partial.len() {
+    if (partial[i] != bytes[i]) {
+      return Err("physical short payload");
+    }
+  }
+  let end = match (src.read_at(src.length - 2i64, 4)) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+  if (end.len() != 0) {
+    return Err("physical early EOF");
+  }
+  return Ok(());
+}
+
+function reference(e: usize, ctx: usize, bytes: [u8], offset: i64, kind: Kind): Result[void, string] {
+  let before = descriptors();
+  unsafe {
+    seed(__bytes_data(bytes), bytes.len(), offset);
+  }
+  mode(22);
+  let result = asset.open(e, ctx, "content://mock/native-mp4", 16777216i64);
+  let value = match (result) {
+    Ok(src) => {
+      let parsed = match (kind) { Kind.Audio => audio_index(src, bytes), Kind.Video => video_index(src, bytes), Kind.Raw => large_read(src, bytes) };
+      let intact = position(src.fd);
+      let closed = src.close();
+      if (intact != 1) { Err("asset descriptor position changed") } else { match (closed) { Ok(_) => parsed, Err(error) => Err(error.message()) } }
+    },
+    Err(error) => Err(error.message()),
+  };
+  close_seed();
+  if (descriptors() != before) {
+    return Err("asset descriptor leak");
+  }
+  return value;
+}
+
+pub function run(e: usize, ctx: usize): i32 {
+  for v in mp4_vectors.vectors() {
+    let Ok(bytes) = encoded.unpack(v.bytes) else {
+      return 801;
+    };
+    for offset in [32i64, 8589934624i64] {
+      if let Err(message) = reference(e, ctx, bytes, offset, Kind.Audio) {
+        eprint(v.name + ": " + message);
+        return 802;
+      }
+    }
+  }
+  let Ok(bytes) = video.fixture("avc-bframes") else {
+    return 803;
+  };
+  for offset in [32i64, 8589934624i64] {
+    if let Err(message) = reference(e, ctx, bytes, offset, Kind.Video) {
+      eprint(message);
+      return 804;
+    }
+  }
+  let large: u8[] = [];
+  for i in 0..1048576 {
+    large = large.append((i % 251) as u8);
+  }
+  if let Err(message) = reference(e, ctx, large, 8589934624i64, Kind.Raw) {
+    eprint(message);
+    return 805;
+  }
+  return 0;
+}
