@@ -1,0 +1,8 @@
+// A task handle is opaque. A program cannot read its id, so it cannot write
+// a handle with the id of another task.
+import "std/async";
+
+function main(): i32 {
+  let real = async.task_new((): i32 => 7);
+  return real.id;
+}
