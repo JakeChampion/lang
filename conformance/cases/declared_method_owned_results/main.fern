@@ -1,0 +1,30 @@
+import "std/i32";
+
+struct Handle { value: i32, count: Cell[i32] }
+
+function (own h: Handle) close(): i32 {
+  let n = h.count.get() + 1;
+  h.count.set(n);
+  assert(n == 1);
+  return h.value;
+}
+
+struct Box { handle: Handle }
+
+function (box: Box) fresh(): own Handle {
+  return Handle { value: box.handle.value, count: cell_new(0) };
+}
+
+function (own box: Box) take(): Handle {
+  return box.handle;
+}
+
+function main(): i32 {
+  let box = Box { handle: Handle { value: 21, count: cell_new(0) } };
+  let fresh = box.fresh();
+  let a = fresh.close();
+  let taken = box.take();
+  let b = taken.close();
+  print((a + b).to_string());
+  return 0;
+}

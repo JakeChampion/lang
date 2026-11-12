@@ -1,0 +1,20 @@
+struct Handle { value: i32 }
+
+function (own h: Handle) close(): i32 {
+  return h.value;
+}
+
+struct Box { handle: Handle }
+
+function (box: Box) borrowed(): Handle {
+  return box.handle;
+}
+
+function consume(box: Box): i32 {
+  let handle = box.borrowed();
+  return handle.close();
+}
+
+function main(): i32 {
+  return 0;
+}

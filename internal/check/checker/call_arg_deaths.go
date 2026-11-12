@@ -1223,7 +1223,10 @@ func freshInit(info *Info, init ast.Expr) bool {
 		if _, named := init.Callee.(*ast.Ident); !named {
 			return false
 		}
-		return init.Method != nil || info == nil || info.CallBorrows == nil || !info.CallBorrows(init)
+		if init.Method != nil && (info == nil || info.DeclaredMethod == nil || !info.DeclaredMethod(init)) {
+			return true
+		}
+		return info == nil || info.CallBorrows == nil || !info.CallBorrows(init)
 	case *ast.ArrayLit, *ast.StringLit:
 		return true
 	case *ast.StructLit:

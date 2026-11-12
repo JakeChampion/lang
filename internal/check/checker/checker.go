@@ -64,6 +64,8 @@ type Info struct {
 	CallBorrows func(*ast.Call) bool
 	// CallOwnedResult reports the checked type or immutable-data copy contract.
 	CallOwnedResult func(*ast.Call) bool
+	// DeclaredMethod reports a method with a body in this program.
+	DeclaredMethod func(*ast.Call) bool
 	// CallSignatureBorrows reports a signature with a borrowed handle-bearing parameter.
 	CallSignatureBorrows func(*ast.Call) bool
 	TypeHoldsNoHandle    func(ast.Type) bool
@@ -3090,6 +3092,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.computeResultBorrows(prog)
 	c.info.CallBorrows = c.callSiteBorrows
 	c.info.CallOwnedResult = func(call *ast.Call) bool { return c.callOwnResults[call] }
+	c.info.DeclaredMethod = func(call *ast.Call) bool {
+		id, ok := call.Callee.(*ast.Ident)
+		return ok && call.Method != nil && c.resultAnalysed[id.Name]
+	}
 	c.info.TypeHoldsNoHandle = c.holdsNoHandle
 	c.info.CallSignatureBorrows = func(call *ast.Call) bool {
 		if id, ok := call.Callee.(*ast.Ident); ok {

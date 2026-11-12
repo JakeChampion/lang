@@ -34,6 +34,11 @@ A parameter keeps its ownership mode during assignment.
 
 A borrowed resource parameter cannot become an owned result.
 An aggregate or local alias cannot hide a resource loan.
+
+A local initialized by a declared method retains the method result's resource loans.
+Its receiver and borrowed arguments can lend resources to that result.
+Checked owned results and immutable data copies keep their contracts.
+
 Match payloads retain the loan from a borrowed scrutinee.
 A generic parameter can hold a resource, so its signature cannot prove a result fresh.
 This rule includes an ordinary result that wraps the parameter in an option or result.
