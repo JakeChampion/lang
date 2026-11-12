@@ -30,6 +30,8 @@ A color is a pixel word of `std/android/draw`, or a role: `PRIMARY`, `ON_PRIMARY
 
 An element gives the messages of `on_tap`, `on_long`, `on_edit` and `on_submit`. A program gives the others. `with_tick` gives a message each time the time of its `wait` goes by. `with_frames` gives a message for each frame while its `animating` is true, with the time of the frame. `with_back` gives a message for the back key, or lets the back key close the app. `with_system` gives a message for an event of `std/android` that this module does not use itself.
 
+`with_theme` gives the colors for the light system and for the dark system. `with_theme_of` gives them for the state of the program also.
+
 `update` does nothing to the device. A program that plays a sound or reads a file puts that request in its state, and `with_effects` gives the function that does it.
 
 ### The cost of a frame
@@ -1750,14 +1752,14 @@ pub struct Program[S, M] {
   back: (S) => Option[M],
   system: (android.Event) => Option[M],
   effects: (S) => S,
-  theme: (boolean) => Theme,
+  theme: (S, boolean) => Theme,
   meter: boolean,
 }
 
 // A program with no messages of its own, which the back key closes, in the
 // colors of `theme`.
 pub function program[S, M](view: (S, Screen) => El[M], update: (own S, M) => S): Program[S, M] {
-  return Program { view: view, update: update, wait: (s: S): i32 => -1, tick: None, animating: (s: S): boolean => false, frame: None, back: (s: S): Option[M] => None, system: (e: android.Event): Option[M] => None, effects: (s: S): S => s, theme: (dark: boolean): Theme => theme(dark), meter: false };
+  return Program { view: view, update: update, wait: (s: S): i32 => -1, tick: None, animating: (s: S): boolean => false, frame: None, back: (s: S): Option[M] => None, system: (e: android.Event): Option[M] => None, effects: (s: S): S => s, theme: (s: S, dark: boolean): Theme => theme(dark), meter: false };
 }
 
 // After each message, the shell gives the state to `effects`, which does
@@ -1795,7 +1797,15 @@ pub function (p: Program[S, M]) with_system(system: (android.Event) => Option[M]
   return Program { ...p, system: system };
 }
 
+// The program in the colors that `theme` gives for the light system and
+// for the dark system.
 pub function (p: Program[S, M]) with_theme(theme: (boolean) => Theme): Program[S, M] {
+  return Program { ...p, theme: (s: S, dark: boolean): Theme => theme(dark) };
+}
+
+// The program in the colors that `theme` gives for its state, so the
+// person can choose them in the program.
+pub function (p: Program[S, M]) with_theme_of(theme: (S, boolean) => Theme): Program[S, M] {
   return Program { ...p, theme: theme };
 }
 ```
@@ -1980,7 +1990,7 @@ function drawn[S, M](own s: Shell[S, M], p: Program[S, M], ns: i64): Shell[S, M]
   if (s.host.window == 0 as usize || s.host.screen.w == 0) {
     return s;
   }
-  let screen = Screen { ...s.host.screen, theme: p.theme(s.host.screen.dark) };
+  let screen = Screen { ...s.host.screen, theme: p.theme(s.app, s.host.screen.dark) };
   let t0 = s.host.dev.now();
   let root = p.view(s.app, screen);
   let t1 = s.host.dev.now();

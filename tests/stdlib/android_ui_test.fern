@@ -549,6 +549,21 @@ function test_theme_follows_the_system(): test.TestOutcome {
   return test.assert_eq(got, "true true true");
 }
 
+function test_a_theme_follows_the_state(): test.TestOutcome {
+  // The switch of the counter chooses the dark colors.
+  let s = sim.start(new_counter(), counter().with_theme_of((m: Counter, dark: boolean): ui.Theme => ui.theme(m.on || dark)), fonts(), 200, 400, 1.0);
+  let first = sim.picture(s);
+  defer draw.release(first);
+  s = sim.send(s, Switch);
+  let second = sim.picture(s);
+  defer draw.release(second);
+  s = sim.send(s, Switch);
+  let third = sim.picture(s);
+  defer draw.release(third);
+  let got = [first.pixel(199, 399) == ui.theme(false).background, second.pixel(199, 399) == ui.theme(true).background, third.pixel(199, 399) == ui.theme(false).background];
+  return test.assert_eq(got.map((b: boolean): string => b.to_string()).join(" "), "true true true");
+}
+
 function test_text_follows_the_font_scale(): test.TestOutcome {
   // At twice the font size, "AAA" at 10 sp is 36 pixels wide and 20 high.
   // A size in dp does not change.
@@ -848,6 +863,7 @@ function main(): i32 {
   r = r.it("a stack puts its elements one over the other", test_stack);
   r = r.it("a text wraps and clamps", test_text_wraps);
   r = r.it("a role takes its color from the theme", test_roles_take_the_theme);
+  r = r.it("a theme follows the state of the program", test_a_theme_follows_the_state);
   r = r.it("the tree stays out of the bars of the system", test_safe_area);
   r = r.it("a button has the size of Material", test_button);
   r = r.it("a column that scrolls clips and moves its rows", test_scroll_column);
