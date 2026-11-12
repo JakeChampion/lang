@@ -9,14 +9,15 @@ import (
 )
 
 // A binary image is not UTF-8, so a function that makes one returns `u8[]`
-// (#14441). A `string` result needs `string_from_bytes_unchecked`, and these
-// sources have no other use for it.
+// (#14441), and a function that reads one hashes the bytes (#15447). A
+// `string` of an image needs `string_from_bytes_unchecked`, and these sources
+// have no other use for it.
 func TestImageWritersReturnBytes(t *testing.T) {
 	root, err := repoRoot()
 	if err != nil {
 		t.Fatalf("repo root: %v", err)
 	}
-	for _, name := range []string{"elfimage.fern", "playground_run.fern"} {
+	for _, name := range []string{"elfimage.fern", "playground_run.fern", "rcmemo.fern"} {
 		src, err := os.ReadFile(filepath.Join(root, "compiler", name))
 		if err != nil {
 			t.Fatal(err)

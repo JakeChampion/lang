@@ -382,6 +382,7 @@ min_sdk = 26
 home = true
 permissions = ["INTERNET", "ACCESS_COARSE_LOCATION"]
 assets = ["assets/wallpaper.jpg", "assets/Roboto-Regular.ttf"]
+widget = ["text:title:Paper", "button:next:Next"]
 `)
 	if err != nil {
 		t.Fatal(err)
@@ -394,6 +395,7 @@ assets = ["assets/wallpaper.jpg", "assets/Roboto-Regular.ttf"]
 		"home":        "true",
 		"permissions": "INTERNET,ACCESS_COARSE_LOCATION",
 		"assets":      "assets/wallpaper.jpg,assets/Roboto-Regular.ttf",
+		"widget":      "text:title:Paper,button:next:Next",
 	}
 	for k, v := range want {
 		if m.Android[k] != v {

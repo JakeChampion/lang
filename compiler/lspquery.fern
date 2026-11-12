@@ -208,10 +208,7 @@ pub function quals_of(v: View, m: i32): flatten.Qualifiers {
 pub struct Site { name: string, qual: string, target: string, line: i32, col: i32, len: i32, name_col: i32, dot_col: i32, prev: string }
 
 pub function site_at(toks: Tok[], q: flatten.Qualifiers, line: i32, col: i32): Option[Site] {
-  let i = ident_at(toks, q, line, col);
-  if (i < 0) {
-    return None;
-  }
+  let i: i32 = match (ident_at(toks, q, line, col)) { Some(found) => found, None => { return None; } };
   if (!punct_before(toks, i, ".") && util.has_str(q.aliases, toks[i].text) && dot_ident_after(toks, i)) {
     i += 2;
   }
@@ -235,14 +232,14 @@ pub function site_at(toks: Tok[], q: flatten.Qualifiers, line: i32, col: i32): O
   return Some(Site { ...site, qual: qt.text, target: target, col: qt.col, len: t.col + t.text.len() - qt.col, prev: text_at(toks, i - 3) });
 }
 
-function ident_at(toks: Tok[], q: flatten.Qualifiers, line: i32, col: i32): i32 {
+function ident_at(toks: Tok[], q: flatten.Qualifiers, line: i32, col: i32): Option[i32] {
   for i in 0..toks.len() {
     let t = toks[i];
     if (names_something(t, q) && t.line == line && col >= t.col && col < t.col + t.text.len()) {
-      return i;
+      return Some(i);
     }
   }
-  return -1;
+  return None;
 }
 
 pub function names_something(t: Tok, q: flatten.Qualifiers): boolean {
@@ -916,11 +913,15 @@ pub function local_def(p: Program, b: lexical.Binding, param: boolean, name: str
 }
 
 pub function binding_decl(toks: Tok[], b: lexical.Binding, param: boolean, name: string): Option[SourceSpan] {
-  let i = first_ident(toks, after(toks, b.line, b.col), name);
-  while (param && i >= 0 && !(punct_before(toks, i, "(") || punct_before(toks, i, ","))) {
-    i = first_ident(toks, i + 1, name);
+  let at = first_ident(toks, after(toks, b.line, b.col), name);
+  while (param) {
+    let i: i32 = match (at) { Some(found) => found, None => { break; } };
+    if (punct_before(toks, i, "(") || punct_before(toks, i, ",")) {
+      break;
+    }
+    at = first_ident(toks, i + 1, name);
   }
-  return tok_answer(toks, i, b.line, b.col, name);
+  return tok_answer(toks, at, b.line, b.col, name);
 }
 
 function global_def(p: Program, v: checker.QueryView, s: checker.Scope, name: string): Option[SourceSpan] {
@@ -1022,8 +1023,8 @@ pub function decl_def(p: Program, line: i32, col: i32, name: string): Option[Sou
   return tok_answer(toks, first_ident(toks, after(toks, line, col), shown), line, col, shown);
 }
 
-function tok_answer(toks: Tok[], i: i32, line: i32, col: i32, name: string): Option[SourceSpan] {
-  if (i >= 0) {
+function tok_answer(toks: Tok[], at: Option[i32], line: i32, col: i32, name: string): Option[SourceSpan] {
+  if let Some(i) = at {
     return Some(SourceSpan { line: toks[i].line, col: toks[i].col, len: name.len() });
   }
   if (line <= 0) {
@@ -1032,12 +1033,12 @@ function tok_answer(toks: Tok[], i: i32, line: i32, col: i32, name: string): Opt
   return Some(SourceSpan { line: line, col: col, len: name.len() });
 }
 
-pub function tok_at(toks: Tok[], line: i32, col: i32): i32 {
+pub function tok_at(toks: Tok[], line: i32, col: i32): Option[i32] {
   let i = after(toks, line, col);
   if (i < toks.len() && toks[i].line == line && toks[i].col == col) {
-    return i;
+    return Some(i);
   }
-  return -1;
+  return None;
 }
 
 pub function pattern_end(toks: Tok[], from: i32): i32 {
@@ -1122,24 +1123,24 @@ function closing_brace(toks: Tok[], open: i32): i32 {
   return toks.len() - 1;
 }
 
-pub function field_tok(toks: Tok[], from: i32, name: string): i32 {
+pub function field_tok(toks: Tok[], from: i32, name: string): Option[i32] {
   let i = from;
   while (i < toks.len() && toks[i].text != "}") {
     if (toks[i].ident && toks[i].text == name && text_at(toks, i + 1) == ":") {
-      return i;
+      return Some(i);
     }
     i += 1;
   }
-  return -1;
+  return None;
 }
 
-pub function first_ident(toks: Tok[], from: i32, name: string): i32 {
+pub function first_ident(toks: Tok[], from: i32, name: string): Option[i32] {
   let i = from;
   while (i >= 0 && i < toks.len() && i < from + 64) {
     if (toks[i].ident && toks[i].text == name) {
-      return i;
+      return Some(i);
     }
     i += 1;
   }
-  return -1;
+  return None;
 }

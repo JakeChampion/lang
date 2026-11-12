@@ -6,6 +6,7 @@
 import "std/android";
 import "std/jni";
 import "std/log";
+import "std/option";
 import "./bindings";
 
 struct App { done: boolean }
@@ -51,7 +52,8 @@ function check(e: usize, act: bindings.Activity): Result[i32, jni.JavaError] {
   object_part(e)?;
   static_part(e)?;
   thrown_part(e)?;
-  return Ok(5);
+  marks_part(e)?;
+  return Ok(6);
 }
 
 // Methods of an object with a string and a boolean result, and a
@@ -123,6 +125,27 @@ function static_part(e: usize): Result[void, jni.JavaError] {
   let out = systems.out(e)?;
   log.warn("jnibind: uptime " + (up > 0 as i64).to_string() + " int " + n.to_string() + " max " + bindings.INTEGER_MAX_VALUE.to_string() + " sqrt " + root.to_string() + " float " + (half as f64).to_string() + " out " + (!out.is_null()).to_string());
   jni.delete_local_ref(e, out.ref);
+  return Ok(());
+}
+
+// A String parameter that is null, a member that a device can lack, and
+// a lookup of a member that the device does not have. With a null
+// parent, a File has the path of its child. With an empty parent, the
+// path starts at the root.
+function marks_part(e: usize): Result[void, jni.JavaError] {
+  let files = bindings.file_class(e)?;
+  let clocks = bindings.system_clock_class(e)?;
+  let bare = files.new(e, None, "x")?;
+  let rooted = files.new(e, Some(""), "x")?;
+  let first = files.get_path(e, bare)?;
+  let second = files.get_path(e, rooted)?;
+  jni.delete_local_ref(e, bare.ref);
+  jni.delete_local_ref(e, rooted.ref);
+  let lost = jni.optional_id(e, jni.get_static_method_id(e, clocks.class, "fernHasNoSuchMethod", "()V"));
+  let up = clocks.uptime_millis(e)?;
+  log.warn("jnibind: null " + first + " empty " + second + " has " + clocks.has_uptime_millis().to_string() + " lost " + (lost == 0 as usize).to_string() + " then " + (up > 0 as i64).to_string());
+  files.release(e);
+  clocks.release(e);
   return Ok(());
 }
 

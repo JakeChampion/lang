@@ -90,6 +90,12 @@ A long press on the icon of the app in the launcher shows two shortcuts,
 from `std/android/shortcuts`. "Shuffle all" plays each track of the
 library in a new order, and "Favorites" plays that playlist.
 
+The app has a widget for the home screen: the track that plays, with the
+buttons "Prev", "Play" or "Pause", and "Next". `fern -apk` makes its
+resources from the `widget` list of `fern.toml`, and `std/android/widget`
+gives it its texts. A tap on the track opens the app. The buttons work
+while the player runs.
+
 When the player finds no file, it makes three tunes in its own directory:
 it makes the samples of a melody, and writes one FLAC file and two WAV
 files.

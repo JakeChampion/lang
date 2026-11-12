@@ -14,6 +14,10 @@
 // struct of the class with no member. A line that starts with "#" is a
 // comment.
 //
+// A "?" after a member is the mark of a member that an older device does
+// not have. A "?" before Ljava/lang/String; in a descriptor is the mark of
+// a parameter that can be null.
+//
 //   android.content.Intent <init>(Ljava/lang/String;)V addCategory
 //   android.content.Context
 //

@@ -1,5 +1,6 @@
 // Typed JNI bindings. std/jni/bind wrote this module. Do not edit it.
 import "std/jni";
+import "std/option";
 
 // A dev.fern.Point.
 pub struct Point { ref: usize }
@@ -284,7 +285,7 @@ pub function sample_class(e: usize): Result[SampleClass, jni.JavaError] {
   let class = jni.new_global_ref(e, local);
   jni.delete_local_ref(e, local);
   let id_new = jni.checked_id(e, class, jni.get_method_id(e, class, "<init>", "(Ljava/lang/String;I)V"))?;
-  let id_size = jni.checked_id(e, class, jni.get_method_id(e, class, "size", "()I"))?;
+  let id_size = jni.optional_id(e, jni.get_method_id(e, class, "size", "()I"));
   let id_total = jni.checked_id(e, class, jni.get_static_method_id(e, class, "total", "([JD[Ljava/lang/Object;)J"))?;
   return Ok(SampleClass { class: class, id_new: id_new, id_size: id_size, id_total: id_total });
 }
@@ -295,9 +296,12 @@ pub function (c: SampleClass) release(e: usize): void {
 }
 
 // dev.fern.Sample.<init>(Ljava/lang/String;I)V
-pub function (c: SampleClass) new(e: usize, a0: string, a1: i32): Result[Sample, jni.JavaError] {
+pub function (c: SampleClass) new(e: usize, a0: Option[string], a1: i32): Result[Sample, jni.JavaError] {
   let args = jni.jvalue_alloc(2);
-  let s0 = jni.new_string(e, a0);
+  let s0 = 0 as usize;
+  if let Some(t0) = a0 {
+    s0 = jni.new_string(e, t0);
+  }
   jni.jvalue_set_int(args, 0, s0);
   jni.jvalue_set_int(args, 1, a1 as usize);
   let got = jni.invoke(e, 30, c.class, c.id_new, args);
@@ -307,8 +311,16 @@ pub function (c: SampleClass) new(e: usize, a0: string, a1: i32): Result[Sample,
   return Ok(Sample { ref: got });
 }
 
+// False when the device does not have the member of `size`.
+pub function (c: SampleClass) has_size(): boolean {
+  return c.id_size != 0 as usize;
+}
+
 // dev.fern.Sample.size()I
 pub function (c: SampleClass) size(e: usize, self: Sample): Result[i32, jni.JavaError] {
+  if (c.id_size == 0 as usize) {
+    return Err(jni.absent("dev.fern.Sample.size"));
+  }
   let args = jni.jvalue_alloc(0);
   let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_size, args);
   jni.free_buffer(args);

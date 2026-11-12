@@ -1,5 +1,6 @@
 // Typed JNI bindings. std/jni/bind wrote this module. Do not edit it.
 import "std/jni";
+import "std/option";
 
 // A android.app.Activity.
 pub struct Activity { ref: usize }
@@ -65,7 +66,7 @@ pub function (x: ActivityOptions) object(): jni.Object {
 }
 
 // The class android.app.ActivityOptions and the IDs of its members.
-pub struct ActivityOptionsClass { class: usize, id_make_basic: usize, id_make_clip_reveal_animation: usize, id_to_bundle: usize }
+pub struct ActivityOptionsClass { class: usize, id_make_basic: usize, id_make_clip_reveal_animation: usize, id_set_pending_intent_background_activity_start_mode: usize, id_to_bundle: usize }
 
 pub function activity_options_class(e: usize): Result[ActivityOptionsClass, jni.JavaError] {
   let local = jni.find_class(e, "android/app/ActivityOptions");
@@ -74,8 +75,9 @@ pub function activity_options_class(e: usize): Result[ActivityOptionsClass, jni.
   jni.delete_local_ref(e, local);
   let id_make_basic = jni.checked_id(e, class, jni.get_static_method_id(e, class, "makeBasic", "()Landroid/app/ActivityOptions;"))?;
   let id_make_clip_reveal_animation = jni.checked_id(e, class, jni.get_static_method_id(e, class, "makeClipRevealAnimation", "(Landroid/view/View;IIII)Landroid/app/ActivityOptions;"))?;
+  let id_set_pending_intent_background_activity_start_mode = jni.optional_id(e, jni.get_method_id(e, class, "setPendingIntentBackgroundActivityStartMode", "(I)Landroid/app/ActivityOptions;"));
   let id_to_bundle = jni.checked_id(e, class, jni.get_method_id(e, class, "toBundle", "()Landroid/os/Bundle;"))?;
-  return Ok(ActivityOptionsClass { class: class, id_make_basic: id_make_basic, id_make_clip_reveal_animation: id_make_clip_reveal_animation, id_to_bundle: id_to_bundle });
+  return Ok(ActivityOptionsClass { class: class, id_make_basic: id_make_basic, id_make_clip_reveal_animation: id_make_clip_reveal_animation, id_set_pending_intent_background_activity_start_mode: id_set_pending_intent_background_activity_start_mode, id_to_bundle: id_to_bundle });
 }
 
 // Deletes the reference to the class. Do not use `c` after this call.
@@ -101,6 +103,24 @@ pub function (c: ActivityOptionsClass) make_clip_reveal_animation(e: usize, a0: 
   jni.jvalue_set_int(args, 3, a3 as usize);
   jni.jvalue_set_int(args, 4, a4 as usize);
   let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_make_clip_reveal_animation, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(ActivityOptions { ref: got });
+}
+
+// False when the device does not have the member of `set_pending_intent_background_activity_start_mode`.
+pub function (c: ActivityOptionsClass) has_set_pending_intent_background_activity_start_mode(): boolean {
+  return c.id_set_pending_intent_background_activity_start_mode != 0 as usize;
+}
+
+// android.app.ActivityOptions.setPendingIntentBackgroundActivityStartMode(I)Landroid/app/ActivityOptions;
+pub function (c: ActivityOptionsClass) set_pending_intent_background_activity_start_mode(e: usize, self: ActivityOptions, a0: i32): Result[ActivityOptions, jni.JavaError] {
+  if (c.id_set_pending_intent_background_activity_start_mode == 0 as usize) {
+    return Err(jni.absent("android.app.ActivityOptions.setPendingIntentBackgroundActivityStartMode"));
+  }
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_set_pending_intent_background_activity_start_mode, args);
   jni.free_buffer(args);
   jni.check(e)?;
   return Ok(ActivityOptions { ref: got });
@@ -190,19 +210,41 @@ pub function (x: PendingIntent) object(): jni.Object {
 }
 
 // The class android.app.PendingIntent and the IDs of its members.
-pub struct PendingIntentClass { class: usize }
+pub struct PendingIntentClass { class: usize, id_send: usize }
 
 pub function pending_intent_class(e: usize): Result[PendingIntentClass, jni.JavaError] {
   let local = jni.find_class(e, "android/app/PendingIntent");
   jni.check(e)?;
   let class = jni.new_global_ref(e, local);
   jni.delete_local_ref(e, local);
-  return Ok(PendingIntentClass { class: class });
+  let id_send = jni.checked_id(e, class, jni.get_method_id(e, class, "send", "(Landroid/content/Context;ILandroid/content/Intent;Landroid/app/PendingIntent$OnFinished;Landroid/os/Handler;Ljava/lang/String;Landroid/os/Bundle;)V"))?;
+  return Ok(PendingIntentClass { class: class, id_send: id_send });
 }
 
 // Deletes the reference to the class. Do not use `c` after this call.
 pub function (c: PendingIntentClass) release(e: usize): void {
   jni.delete_global_ref(e, c.class);
+}
+
+// android.app.PendingIntent.send(Landroid/content/Context;ILandroid/content/Intent;Landroid/app/PendingIntent$OnFinished;Landroid/os/Handler;Ljava/lang/String;Landroid/os/Bundle;)V
+pub function (c: PendingIntentClass) send(e: usize, self: PendingIntent, a0: Context, a1: i32, a2: Intent, a3: jni.Object, a4: jni.Object, a5: Option[string], a6: Bundle): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(7);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.jvalue_set_int(args, 1, a1 as usize);
+  jni.jvalue_set_int(args, 2, a2.ref);
+  jni.jvalue_set_int(args, 3, a3.ref);
+  jni.jvalue_set_int(args, 4, a4.ref);
+  let s5 = 0 as usize;
+  if let Some(t5) = a5 {
+    s5 = jni.new_string(e, t5);
+  }
+  jni.jvalue_set_int(args, 5, s5);
+  jni.jvalue_set_int(args, 6, a6.ref);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_send, args);
+  jni.free_buffer(args);
+  jni.delete_local_ref(e, s5);
+  jni.check(e)?;
+  return Ok(());
 }
 
 // A android.content.ComponentName.
