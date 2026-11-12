@@ -1,0 +1,22 @@
+// spec: RH-01
+
+struct H { fd: i32 }
+
+function (own h: H) close(): void {}
+
+function wrap[T](value: T): Option[T] {
+  return Some(value);
+}
+
+function consume_borrowed(h: H): void {
+  match (wrap(h)) {
+    Some(value) => {
+      value.close();
+    },
+    None => {}
+  }
+}
+
+function main(): i32 {
+  return 0;
+}

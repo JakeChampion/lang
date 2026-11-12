@@ -540,6 +540,121 @@ function scalar_math_f32(k: i32, x: f32, p: f32, y: f32): f32 {
   return p.pow(y);
 }
 
+function ramp(n: i32): u8[] {
+  let out: u8[] = [];
+  for i in 0..n {
+    out = out.append((i * 37 + 11) as u8);
+  }
+  return out;
+}
+
+function total(xs: u8[]): i32 {
+  let n = 0;
+  for x in xs {
+    n += x as i32;
+  }
+  return n;
+}
+
+// The lanes of `v` as an array.
+function byte_lanes(v: u8x16): u8[] {
+  let zeros: u8[] = [];
+  while (zeros.len() < 16) {
+    zeros = zeros.append(0 as u8);
+  }
+  return simd.with_u8x16(zeros, 0, v);
+}
+
+// One scalar form of a function of two bytes, for the lanes to agree with.
+function scalar_u8(verb: string, x: i32, y: i32): i32 {
+  return match (verb) {
+    "add" => x + y & 255,
+    "sub" => x - y & 255,
+    "add_sat" => if (x + y > 255) { 255 } else { x + y },
+    "sub_sat" => if (x < y) { 0 } else { x - y },
+    "min" => if (x < y) { x } else { y },
+    "max" => if (x < y) { y } else { x },
+    "avg" => (x + y + 1) / 2,
+    "eq" => if (x == y) { 255 } else { 0 },
+    "ne" => if (x != y) { 255 } else { 0 },
+    "lt" => if (x < y) { 255 } else { 0 },
+    "and" => x & y,
+    "or" => x | y,
+    _ => x ^ y,
+  };
+}
+
+function lanes_u8(verb: string, a: u8x16, b: u8x16): u8x16 {
+  return match (verb) {
+    "add" => a + b,
+    "sub" => a - b,
+    "add_sat" => simd.add_sat_u8x16(a, b),
+    "sub_sat" => simd.sub_sat_u8x16(a, b),
+    "min" => simd.min_u8x16(a, b),
+    "max" => simd.max_u8x16(a, b),
+    "avg" => simd.avg_u8x16(a, b),
+    "eq" => simd.eq_u8x16(a, b),
+    "ne" => simd.ne_u8x16(a, b),
+    "lt" => simd.lt_u8x16(a, b),
+    "and" => simd.and_u8x16(a, b),
+    "or" => simd.or_u8x16(a, b),
+    _ => simd.xor_u8x16(a, b),
+  };
+}
+
+// Each operation on byte lanes agrees with its scalar form on each lane, for
+// bytes that include 0, 255 and equal pairs.
+function test_byte_lanes_against_the_scalar(): test.TestOutcome {
+  let xs = ramp(64);
+  let ys: u8[] = [];
+  for i in 0..64 {
+    ys = ys.append(if (i % 5 == 0) { xs[i] } else { (i * 101 + 250) as u8 });
+  }
+  xs = xs.with(3, 0 as u8).with(4, 255 as u8).with(20, 255 as u8);
+  ys = ys.with(4, 255 as u8).with(7, 0 as u8).with(20, 1 as u8);
+  let bad: string[] = [];
+  for verb in ["add", "sub", "add_sat", "sub_sat", "min", "max", "avg", "eq", "ne", "lt", "and", "or", "xor"] {
+    for at in [0, 16, 32, 48] {
+      let got = byte_lanes(lanes_u8(verb, simd.load_u8x16(xs, at), simd.load_u8x16(ys, at)));
+      for k in 0..16 {
+        if (got[k] as i32 != scalar_u8(verb, xs[at + k] as i32, ys[at + k] as i32)) {
+          bad = bad.append(verb + " at " + (at + k).to_string());
+        }
+      }
+    }
+  }
+  return test.assert_eq(bad.join(", "), "");
+}
+
+// A mask picks the lanes of a select, and gives one bit for each lane.
+function test_byte_lane_masks(): test.TestOutcome {
+  let xs = ramp(16);
+  let v = simd.load_u8x16(xs, 0);
+  let limit = simd.splat_u8x16(128 as u8);
+  let low = simd.lt_u8x16(v, limit);
+  let want_mask = 0;
+  let want_sum = 0;
+  for k in 0..16 {
+    if (xs[k] as i32 < 128) {
+      want_mask = want_mask | 1 << k;
+      want_sum += xs[k] as i32;
+    } else {
+      want_sum += 128;
+    }
+  }
+  let picked = byte_lanes(simd.select_u8x16(v, limit, low));
+  let got = simd.bitmask_u8x16(low).to_string() + " " + total(picked).to_string() + " " + (__u8x16_lane(v, 15) as i32).to_string() + " " + simd.bitmask_u8x16(simd.splat_u8x16(127 as u8)).to_string();
+  return test.assert_eq(got, want_mask.to_string() + " " + want_sum.to_string() + " " + (xs[15] as i32).to_string() + " 0");
+}
+
+// A store writes 16 bytes and leaves the other bytes.
+function test_byte_lane_memory(): test.TestOutcome {
+  let xs = ramp(40);
+  let ys = simd.with_u8x16(ramp(40), 9, simd.splat_u8x16(7 as u8));
+  let got = ys[8].to_string() + " " + ys[9].to_string() + " " + ys[24].to_string() + " " + ys[25].to_string() + " " + xs[9].to_string() + " " + ys.len().to_string();
+  return test.assert_eq(got, xs[8].to_string() + " 7 7 " + xs[25].to_string() + " " + xs[9].to_string() + " 40");
+}
+
 function main(): i32 {
   let r = test.new("simd");
   r = r.it("kernel on f64", test_kernel_on_f64);
@@ -565,5 +680,8 @@ function main(): i32 {
   r = r.it("lane masks", test_lane_masks);
   r = r.it("lane helpers", test_lane_helpers);
   r = r.it("lane Math against the scalar", test_lane_math_sweep);
+  r = r.it("byte lanes against the scalar", test_byte_lanes_against_the_scalar);
+  r = r.it("byte lane masks", test_byte_lane_masks);
+  r = r.it("byte lane memory", test_byte_lane_memory);
   return r.finish();
 }

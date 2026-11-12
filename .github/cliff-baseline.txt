@@ -1,3 +1,6 @@
+# 2026-11-12: PR #15497 at 83222cb2a8, perf-x86_64 job 131205638421.
+# The job measured checker.cliff_bytes at 43667784. A fresh-main local run agrees.
+# Re-bank this row. The 1% tolerance and the cliff count stay unchanged.
 # 2026-11-09: PR #14855, a local scripts/cliff-bench run on its merge with main 502e0efb. checker.cliff_bytes rises 1.07% and checker.cliff_count 1.52% with the replaced-read and array-update rules of both checkers. Each is pinned at its measured value.
 # 2026-11-09: PR #14847, perf-x86_64 job 129087018092. The checker rows fall with the four slices of that PR: cliff_bytes -3.19%, cliff_count -5.25%. Pinned at the measured values.
 # 2026-11-09: PR #14829. The unchanged compiler copies 40,124,160 bytes on identical checker input. The repaired candidate copies 40,126,728 bytes. Bank the measured bytes without a larger tolerance.
@@ -165,11 +168,13 @@
 # 2026-11-12: perf-x86_64 job 131075781965 (#15461, on main 0b8548db) measured 45,149,488 copied bytes (was 39,116,232).
 # This is an inherited main cost of the merges after 710af42c. The 1% tolerance is unchanged.
 # 2026-11-12 (#15474): a local scripts/cliff-bench run on main f2aa998b measures 44,566,616 copied bytes (was 45,149,488), 1.29% less. The win is the new ceiling. The tolerance is unchanged.
-x86_64/checker.cliff_bytes	44566616
+# 2026-11-12 (#15471): `scripts/cliff-bench` measured 42,809,472 copied bytes when a union resolves through its members (was 44,566,616). The 1% tolerance is unchanged.
+x86_64/checker.cliff_bytes	43667784
 # 2026-11-11: Bank checker.cliff_count 378075 -> 373796 after main reverts.
 # Exact CI 42958185608 / job 130320191632 measures source ca80bd07aba3.
 # That source tree equals main 38399ecf. The 1% tolerance stays unchanged.
 # 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured x86_64/checker.cliff_count at 379346 (was 373694). The tolerance is unchanged.
 # 2026-11-12: the same job measured x86_64/checker.cliff_count at 461488 (was 379346). The tolerance is unchanged.
 # 2026-11-12 (#15474): the same run measures x86_64/checker.cliff_count at 461615 (was 461488). The tolerance is unchanged.
-x86_64/checker.cliff_count	461615
+# 2026-11-12 (#15471): the same run measured x86_64/checker.cliff_count at 438998 (was 461615). The tolerance is unchanged.
+x86_64/checker.cliff_count	438998

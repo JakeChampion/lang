@@ -191,7 +191,7 @@ func vecImplParts(impl *ast.ImplDecl) ([]*ast.ImplDecl, bool) {
 // vecImplBinding binds the impl parameters that args names to the count and
 // element of l, and reports whether l fits args.
 func vecImplBinding(args []ast.Type, tparams []string, l ast.LanesType) (map[string]ast.Type, bool) {
-	want := []ast.Type{ast.ConstArg{Value: int64(l.Lanes())}, ast.FloatType{Width: l.Width}}
+	want := []ast.Type{ast.ConstArg{Value: int64(l.Lanes())}, l.Elem()}
 	sub := map[string]ast.Type{}
 	for k, a := range args {
 		name, named := implParamName(a, tparams)

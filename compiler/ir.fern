@@ -23,43 +23,43 @@ function op0(tag: i32): Op {
 }
 
 pub function op_const_i32(v: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 1, i32_imm: v, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_CONST_I32, i32_imm: v, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_const_i32_text(t: string): Op {
-  return Op { source: 0, decl: -1, kind_tag: 2, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: t };
+  return Op { source: 0, decl: -1, kind_tag: K_CONST_I32_TEXT, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: t };
 }
 
 pub function op_const_ptr_text(t: string): Op {
-  return Op { source: 0, decl: -1, kind_tag: 2, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: t };
+  return Op { source: 0, decl: -1, kind_tag: K_CONST_I32_TEXT, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: t };
 }
 
 pub function op_const_i64(v: i64): Op {
-  return Op { source: 0, decl: -1, kind_tag: 3, i32_imm: 0, i64_imm: v, f64_imm: 0.0, width: 64, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_CONST_I64, i32_imm: 0, i64_imm: v, f64_imm: 0.0, width: 64, unsigned: false, str: "" };
 }
 
 pub function op_int_extend(unsigned: boolean): Op {
-  return Op { source: 0, decl: -1, kind_tag: 7, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: unsigned, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_INT_EXTEND, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: unsigned, str: "" };
 }
 
 pub function op_int_wrap(unsigned: boolean): Op {
-  return Op { source: 0, decl: -1, kind_tag: 8, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: unsigned, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_INT_WRAP, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: unsigned, str: "" };
 }
 
 pub function op_int_extend_ptr(): Op {
-  return Op { source: 0, decl: -1, kind_tag: 7, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_INT_EXTEND, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: "" };
 }
 
 pub function op_int_wrap_ptr(): Op {
-  return Op { source: 0, decl: -1, kind_tag: 8, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_INT_WRAP, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width_ptr(), unsigned: true, str: "" };
 }
 
 pub function op_const_i64_text(t: string): Op {
-  return Op { source: 0, decl: -1, kind_tag: 3, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: t };
+  return Op { source: 0, decl: -1, kind_tag: K_CONST_I64, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: t };
 }
 
 pub function op_const_f64(v: f64): Op {
-  return Op { source: 0, decl: -1, kind_tag: 4, i32_imm: 0, i64_imm: 0, f64_imm: v, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_CONST_F64, i32_imm: 0, i64_imm: 0, f64_imm: v, width: 0, unsigned: false, str: "" };
 }
 
 pub function const_i64_text(o: Op): string {
@@ -77,25 +77,25 @@ pub function const_f64_bits(o: Op): i64 {
 }
 
 pub function op_const_str(s: string): Op {
-  return Op { source: 0, decl: -1, kind_tag: 5, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: s };
+  return Op { source: 0, decl: -1, kind_tag: K_CONST_STR, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: s };
 }
 
 // The address of function `name`, with `cfi` the signature word its stub
 // carries under -harden (`cfi_sig_hash`).
 pub function op_const_func(cfi: i32, name: string): Op {
-  return Op { source: 0, decl: -1, kind_tag: 6, i32_imm: cfi, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: name };
+  return Op { source: 0, decl: -1, kind_tag: K_CONST_FUNC, i32_imm: cfi, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: name };
 }
 
 pub function op_load_local(idx: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 18, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_LOAD_LOCAL, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_store_local(idx: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 19, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_STORE_LOCAL, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_tee_local(idx: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 20, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_TEE_LOCAL, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_bin(kind: string, width: i32, unsigned: boolean): Op {
@@ -164,12 +164,36 @@ pub const K_ALLOC_UNINIT: i32 = 515;
 
 pub const K_VLOAD_F32: i32 = 520;
 
+// The ops on integer lanes. The width of an op is the width of a lane.
+// The fifteen binary ops come first, then the two unary ops, then the
+// ops that take or give a scalar.
+pub const LANE_INT_FIRST: i32 = 526;
+
+pub const LANE_INT_LAST: i32 = 551;
+
+pub const K_VINEG: i32 = 541;
+
+pub const K_VIREPLACE: i32 = 547;
+
+// The multiply, and the three shifts, which take the lanes and a count.
+pub const K_VIMUL: i32 = 548;
+
+pub const K_VISHL: i32 = 549;
+
+pub function is_lane_int_kind(id: i32): boolean {
+  return id >= LANE_INT_FIRST && id <= LANE_INT_LAST;
+}
+
 pub function lane_kind_names(): string[] {
   let out: string[] = [];
   for id in LANE_KIND_FIRST..LANE_KIND_LAST + 1 {
     out = out.append(KIND_NAMES[id]);
   }
-  return out.append(KIND_NAMES[K_VPACK]).append(KIND_NAMES[K_VPERMUTE]).append(KIND_NAMES[K_VEXTRACT_BITS]).append(KIND_NAMES[K_VLOAD_F32]);
+  out = out.append(KIND_NAMES[K_VPACK]).append(KIND_NAMES[K_VPERMUTE]).append(KIND_NAMES[K_VEXTRACT_BITS]).append(KIND_NAMES[K_VLOAD_F32]);
+  for id in LANE_INT_FIRST..LANE_INT_LAST + 1 {
+    out = out.append(KIND_NAMES[id]);
+  }
+  return out;
 }
 
 function lane_kind_pops(): i32[] {
@@ -181,7 +205,7 @@ pub function lane_writes(id: i32): boolean {
 }
 
 pub function is_lane_kind(id: i32): boolean {
-  return id >= LANE_KIND_FIRST && id <= LANE_KIND_LAST || id == K_VPACK || id == K_VPERMUTE || id == K_VEXTRACT_BITS || id == K_VLOAD_F32;
+  return id >= LANE_KIND_FIRST && id <= LANE_KIND_LAST || id == K_VPACK || id == K_VPERMUTE || id == K_VEXTRACT_BITS || id == K_VLOAD_F32 || is_lane_int_kind(id);
 }
 
 pub function op_lane(kind: string, width: i32): Op {
@@ -193,15 +217,15 @@ pub function op_lane_at(kind: string, width: i32, lane: i32): Op {
 }
 
 pub function op_const_f64_text(t: string): Op {
-  return Op { source: 0, decl: -1, kind_tag: 4, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: t };
+  return Op { source: 0, decl: -1, kind_tag: K_CONST_F64, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: false, str: t };
 }
 
 pub function op_load(width: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 67, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_LOAD, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function op_store(width: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 68, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_STORE, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function op_alloc(): Op {
@@ -213,15 +237,15 @@ pub function op_ptr_width(): Op {
 }
 
 pub function op_arr_make(n: i32, width: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 87, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_ARR_MAKE, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function op_arr_get(width: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 88, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_ARR_GET, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function op_arr_get_nc(width: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 88, i32_imm: 1, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_ARR_GET, i32_imm: 1, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function check_only(op: Op): Op {
@@ -273,23 +297,23 @@ pub function is_lane_call(op: Op): boolean {
 }
 
 pub function op_arr_set(width: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 89, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_ARR_SET, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function op_arr_make_i64(n: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 87, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_ARR_MAKE, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
 }
 
 pub function op_arr_get_i64(): Op {
-  return Op { source: 0, decl: -1, kind_tag: 88, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_ARR_GET, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
 }
 
 pub function op_arr_get_i64_nc(): Op {
-  return Op { source: 0, decl: -1, kind_tag: 88, i32_imm: 1, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_ARR_GET, i32_imm: 1, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
 }
 
 pub function op_arr_set_i64(): Op {
-  return Op { source: 0, decl: -1, kind_tag: 89, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_ARR_SET, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
 }
 
 pub function op_arr_len(): Op {
@@ -389,7 +413,7 @@ pub function op_store_ptr(): Op {
 }
 
 pub function op_int_cast(ty: string): Op {
-  return Op { source: 0, decl: -1, kind_tag: 9, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: ty };
+  return Op { source: 0, decl: -1, kind_tag: K_INT_CAST, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: ty };
 }
 
 pub function op_u32_wrap(): Op {
@@ -436,11 +460,11 @@ pub function op_str_slice(): Op {
 }
 
 pub function op_str_slice_frame(base: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 102, i32_imm: base + 1, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_STR_SLICE, i32_imm: base + 1, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_arr_slice(width: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 96, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_ARR_SLICE, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function op_array_literal_copy(width: i32): Op {
@@ -481,7 +505,7 @@ pub function op_raw_string(): Op {
 }
 
 pub function op_raw_string_frame(base: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 86, i32_imm: base + 1, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_RAW_STRING, i32_imm: base + 1, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function frame_box_base(o: Op): i32 {
@@ -764,7 +788,7 @@ pub function op_dir_entries(): Op {
 }
 
 pub function op_dir_stat(follow: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 423, i32_imm: follow, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_DIR_STAT, i32_imm: follow, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub const K_DIR_ACCESS: i32 = 424;
@@ -774,7 +798,7 @@ pub function op_dir_access(): Op {
 }
 
 pub function op_dir_unlink(dir: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 425, i32_imm: dir, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_DIR_UNLINK, i32_imm: dir, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub const K_DIR_CHMOD: i32 = 426;
@@ -790,7 +814,7 @@ pub function op_dir_chown(): Op {
 }
 
 pub function op_dir_open_file(write: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 428, i32_imm: write, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_DIR_OPEN_FILE, i32_imm: write, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_termios_get(): Op {
@@ -1361,11 +1385,11 @@ pub function op_str_split(): Op {
 }
 
 pub function op_opt_make(tag: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 120, i32_imm: tag, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_OPT_MAKE, i32_imm: tag, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_opt_make_w(tag: i32, width: i32, is_i64: boolean): Op {
-  return Op { source: 0, decl: -1, kind_tag: 120, i32_imm: tag, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_OPT_MAKE, i32_imm: tag, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
 }
 
 pub const K_OPT_TAG: i32 = 122;
@@ -1381,7 +1405,7 @@ pub function op_opt_payload(): Op {
 }
 
 pub function op_opt_payload_w(width: i32, is_i64: boolean): Op {
-  return Op { source: 0, decl: -1, kind_tag: 123, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_OPT_PAYLOAD, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
 }
 
 pub const K_OPT_SET_PAYLOAD: i32 = 124;
@@ -1825,11 +1849,11 @@ pub function op_proc_exec_as(): Op {
 }
 
 pub function op_struct_make(type_name: string, nfields: i32, decl_index: i32): Op {
-  return Op { source: 0, decl: decl_index, kind_tag: 138, i32_imm: nfields, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
+  return Op { source: 0, decl: decl_index, kind_tag: K_STRUCT_MAKE, i32_imm: nfields, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
 }
 
 pub function op_const_struct(type_name: string, nfields: i32, values: string): Op {
-  return Op { source: 0, decl: -1, kind_tag: 218, i32_imm: nfields, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name + "|" + values };
+  return Op { source: 0, decl: -1, kind_tag: K_CONST_STRUCT, i32_imm: nfields, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name + "|" + values };
 }
 
 pub function const_struct_type(packed: string): string {
@@ -1989,55 +2013,55 @@ function const_struct_fn_hash_at(t: string): i32 {
 }
 
 pub function op_struct_get(field_index: i32, width: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 139, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_STRUCT_GET, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function op_struct_set(field_index: i32, width: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 140, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_STRUCT_SET, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
 pub function op_struct_get_i64(field_index: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 139, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_STRUCT_GET, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
 }
 
 pub function op_struct_set_i64(field_index: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 140, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_STRUCT_SET, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
 }
 
 pub function op_struct_set_shape(type_name: string): Op {
-  return Op { source: 0, decl: -1, kind_tag: 141, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
+  return Op { source: 0, decl: -1, kind_tag: K_STRUCT_SET_SHAPE, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
 }
 
 pub function op_tuple_make(n: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 142, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_TUPLE_MAKE, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_tuple_make_k(n: i32, kinds: string): Op {
-  return Op { source: 0, decl: -1, kind_tag: 142, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: kinds };
+  return Op { source: 0, decl: -1, kind_tag: K_TUPLE_MAKE, i32_imm: n, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: kinds };
 }
 
 pub function op_tuple_get(idx: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 143, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_TUPLE_GET, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_tuple_set(idx: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 144, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_TUPLE_SET, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_tuple_set_w(idx: i32, width: i32, is_i64: boolean): Op {
-  return Op { source: 0, decl: -1, kind_tag: 144, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_TUPLE_SET, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
 }
 
 pub function op_tuple_get_w(idx: i32, width: i32, is_i64: boolean): Op {
-  return Op { source: 0, decl: -1, kind_tag: 143, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_TUPLE_GET, i32_imm: idx, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
 }
 
 pub function op_variant_is(name: string): Op {
-  return Op { source: 0, decl: -1, kind_tag: 145, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: name };
+  return Op { source: 0, decl: -1, kind_tag: K_VARIANT_IS, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: name };
 }
 
 pub function op_call_direct(callee: string, argc: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 149, i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: callee };
+  return Op { source: 0, decl: -1, kind_tag: K_CALL_DIRECT, i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: callee };
 }
 
 pub function op_dyn_dispatch(arms: string[], base_slot: i32, argc: i32): Op {
@@ -2048,7 +2072,7 @@ pub function op_dyn_dispatch(arms: string[], base_slot: i32, argc: i32): Op {
     }
     tag += arms[i];
   }
-  return Op { source: 0, decl: -1, kind_tag: 147, i32_imm: base_slot, i64_imm: 0, f64_imm: 0.0, width: argc, unsigned: false, str: tag };
+  return Op { source: 0, decl: -1, kind_tag: K_DYN_DISPATCH, i32_imm: base_slot, i64_imm: 0, f64_imm: 0.0, width: argc, unsigned: false, str: tag };
 }
 
 pub function dyn_dispatch_arms(tag: string): string[] {
@@ -2066,18 +2090,18 @@ pub function dyn_dispatch_arms(tag: string): string[] {
 }
 
 pub function op_dyn_box(type_name: string): Op {
-  return Op { source: 0, decl: -1, kind_tag: 146, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
+  return Op { source: 0, decl: -1, kind_tag: K_DYN_BOX, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
 }
 
 pub function op_call_indirect(argc: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 150, i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_CALL_INDIRECT, i32_imm: argc, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 // `sig` is the width tag the wasm backend types the call with, and `cfi` is
 // the signature word a hardened native call compares with the callee's stub
 // (`cfi_sig_hash`). A raw call carries neither.
 pub function op_call_indirect_sig(argc: i32, sig: string, cfi: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 150, i32_imm: argc, i64_imm: cfi as i64, f64_imm: 0.0, width: 0, unsigned: false, str: sig };
+  return Op { source: 0, decl: -1, kind_tag: K_CALL_INDIRECT, i32_imm: argc, i64_imm: cfi as i64, f64_imm: 0.0, width: 0, unsigned: false, str: sig };
 }
 
 // The 32-bit FNV-1a hash of a function's full width tag, the word a hardened
@@ -2098,15 +2122,15 @@ pub function cfi_sig_hash(tag: string): i32 {
 }
 
 pub function op_block(blocktype: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 152, i32_imm: blocktype, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_BLOCK, i32_imm: blocktype, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_loop(blocktype: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 153, i32_imm: blocktype, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_LOOP, i32_imm: blocktype, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_if(blocktype: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 154, i32_imm: blocktype, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_IF, i32_imm: blocktype, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_else(): Op {
@@ -2118,11 +2142,11 @@ pub function op_end(): Op {
 }
 
 pub function op_br(depth: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 157, i32_imm: depth, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_BR, i32_imm: depth, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_brif(depth: i32): Op {
-  return Op { source: 0, decl: -1, kind_tag: 158, i32_imm: depth, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+  return Op { source: 0, decl: -1, kind_tag: K_BRIF, i32_imm: depth, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
 }
 
 pub function op_drop(): Op {
@@ -3520,10 +3544,36 @@ const KIND_NAMES: string[] = [
   "atomic_fetch_add",  // 523
   "atomic_cas",  // 524
   "secondary_entry",  // 525
+  "viadd",  // 526
+  "visub",  // 527
+  "viadds",  // 528
+  "viaddu",  // 529
+  "visubs",  // 530
+  "visubu",  // 531
+  "vimins",  // 532
+  "viminu",  // 533
+  "vimaxs",  // 534
+  "vimaxu",  // 535
+  "viavg",  // 536
+  "vieq",  // 537
+  "vine",  // 538
+  "vilts",  // 539
+  "viltu",  // 540
+  "vineg",  // 541
+  "viabs",  // 542
+  "visplat",  // 543
+  "viextracts",  // 544
+  "viextractu",  // 545
+  "vibitmask",  // 546
+  "vireplace",  // 547
+  "vimul",  // 548
+  "vishl",  // 549
+  "vishrs",  // 550
+  "vishru",  // 551
 ];
 
 // BEGIN GENERATED KIND ORDER (cmd/irkindgen) — do not edit by hand.
-const KIND_ORDER: i32[] = [237, 21, 403, 402, 445, 444, 76, 77, 515, 28, 180, 88, 90, 87, 92, 95, 94, 93, 303, 302, 217, 216, 91, 383, 89, 96, 227, 524, 523, 521, 522, 152, 499, 157, 506, 158, 329, 369, 411, 386, 489, 297, 295, 291, 292, 488, 487, 294, 372, 371, 370, 351, 485, 328, 326, 325, 293, 306, 296, 347, 502, 503, 519, 151, 149, 150, 385, 277, 268, 321, 275, 316, 389, 388, 405, 219, 4, 6, 1, 2, 3, 5, 218, 482, 235, 359, 327, 379, 252, 309, 373, 480, 481, 260, 231, 262, 263, 399, 220, 424, 426, 427, 422, 421, 428, 423, 425, 396, 24, 25, 159, 146, 147, 155, 156, 176, 249, 164, 35, 166, 14, 15, 16, 17, 12, 13, 56, 45, 58, 366, 311, 300, 307, 299, 241, 301, 48, 414, 49, 59, 54, 53, 52, 51, 47, 50, 55, 78, 61, 57, 46, 60, 40, 44, 251, 239, 238, 247, 248, 246, 362, 374, 404, 39, 43, 491, 315, 80, 229, 230, 240, 416, 11, 154, 382, 9, 7, 8, 507, 510, 508, 509, 232, 38, 42, 363, 375, 288, 67, 69, 70, 18, 71, 153, 365, 377, 236, 37, 41, 222, 225, 358, 74, 75, 245, 378, 446, 274, 412, 413, 182, 398, 23, 484, 430, 36, 34, 183, 184, 420, 203, 304, 305, 120, 123, 124, 122, 29, 381, 408, 187, 221, 418, 419, 483, 163, 282, 213, 280, 211, 212, 286, 397, 271, 79, 165, 185, 186, 223, 81, 224, 287, 207, 83, 85, 205, 331, 82, 84, 86, 367, 443, 342, 341, 343, 178, 348, 171, 310, 391, 432, 169, 233, 264, 179, 407, 242, 330, 26, 27, 261, 172, 173, 267, 357, 356, 384, 160, 435, 434, 438, 439, 436, 272, 234, 360, 322, 324, 361, 525, 495, 497, 406, 269, 283, 284, 314, 318, 319, 317, 364, 376, 440, 441, 409, 410, 31, 32, 33, 392, 394, 244, 279, 243, 278, 395, 285, 393, 181, 266, 417, 175, 270, 68, 72, 199, 19, 73, 104, 100, 98, 345, 99, 103, 380, 390, 101, 97, 113, 108, 111, 102, 105, 107, 106, 109, 139, 138, 140, 141, 22, 177, 253, 368, 298, 204, 206, 228, 323, 401, 500, 501, 201, 511, 486, 116, 338, 437, 200, 332, 320, 112, 344, 387, 353, 346, 333, 20, 174, 312, 313, 188, 504, 505, 273, 143, 142, 144, 10, 334, 442, 335, 337, 517, 516, 336, 355, 265, 250, 340, 339, 518, 433, 458, 450, 470, 473, 145, 479, 461, 453, 464, 448, 514, 460, 456, 400, 469, 477, 468, 467, 475, 520, 466, 455, 454, 452, 465, 459, 471, 512, 513, 449, 463, 474, 478, 447, 457, 476, 451, 462, 472, 162, 167, 161, 148, 415, 276, 493, 494, 492, 496, 349, 170, 352, 226, 308, 350, 490, 498, 431, 281, 202, 30];
+const KIND_ORDER: i32[] = [237, 21, 403, 402, 445, 444, 76, 77, 515, 28, 180, 88, 90, 87, 92, 95, 94, 93, 303, 302, 217, 216, 91, 383, 89, 96, 227, 524, 523, 521, 522, 152, 499, 157, 506, 158, 329, 369, 411, 386, 489, 297, 295, 291, 292, 488, 487, 294, 372, 371, 370, 351, 485, 328, 326, 325, 293, 306, 296, 347, 502, 503, 519, 151, 149, 150, 385, 277, 268, 321, 275, 316, 389, 388, 405, 219, 4, 6, 1, 2, 3, 5, 218, 482, 235, 359, 327, 379, 252, 309, 373, 480, 481, 260, 231, 262, 263, 399, 220, 424, 426, 427, 422, 421, 428, 423, 425, 396, 24, 25, 159, 146, 147, 155, 156, 176, 249, 164, 35, 166, 14, 15, 16, 17, 12, 13, 56, 45, 58, 366, 311, 300, 307, 299, 241, 301, 48, 414, 49, 59, 54, 53, 52, 51, 47, 50, 55, 78, 61, 57, 46, 60, 40, 44, 251, 239, 238, 247, 248, 246, 362, 374, 404, 39, 43, 491, 315, 80, 229, 230, 240, 416, 11, 154, 382, 9, 7, 8, 507, 510, 508, 509, 232, 38, 42, 363, 375, 288, 67, 69, 70, 18, 71, 153, 365, 377, 236, 37, 41, 222, 225, 358, 74, 75, 245, 378, 446, 274, 412, 413, 182, 398, 23, 484, 430, 36, 34, 183, 184, 420, 203, 304, 305, 120, 123, 124, 122, 29, 381, 408, 187, 221, 418, 419, 483, 163, 282, 213, 280, 211, 212, 286, 397, 271, 79, 165, 185, 186, 223, 81, 224, 287, 207, 83, 85, 205, 331, 82, 84, 86, 367, 443, 342, 341, 343, 178, 348, 171, 310, 391, 432, 169, 233, 264, 179, 407, 242, 330, 26, 27, 261, 172, 173, 267, 357, 356, 384, 160, 435, 434, 438, 439, 436, 272, 234, 360, 322, 324, 361, 525, 495, 497, 406, 269, 283, 284, 314, 318, 319, 317, 364, 376, 440, 441, 409, 410, 31, 32, 33, 392, 394, 244, 279, 243, 278, 395, 285, 393, 181, 266, 417, 175, 270, 68, 72, 199, 19, 73, 104, 100, 98, 345, 99, 103, 380, 390, 101, 97, 113, 108, 111, 102, 105, 107, 106, 109, 139, 138, 140, 141, 22, 177, 253, 368, 298, 204, 206, 228, 323, 401, 500, 501, 201, 511, 486, 116, 338, 437, 200, 332, 320, 112, 344, 387, 353, 346, 333, 20, 174, 312, 313, 188, 504, 505, 273, 143, 142, 144, 10, 334, 442, 335, 337, 517, 516, 336, 355, 265, 250, 340, 339, 518, 433, 458, 450, 470, 473, 145, 479, 461, 453, 464, 448, 514, 460, 456, 400, 469, 477, 468, 542, 526, 528, 529, 536, 546, 537, 544, 545, 539, 540, 534, 535, 532, 533, 548, 538, 541, 547, 549, 550, 551, 543, 527, 530, 531, 467, 475, 520, 466, 455, 454, 452, 465, 459, 471, 512, 513, 449, 463, 474, 478, 447, 457, 476, 451, 462, 472, 162, 167, 161, 148, 415, 276, 493, 494, 492, 496, 349, 170, 352, 226, 308, 350, 490, 498, 431, 281, 202, 30];
 
 // END GENERATED KIND ORDER
 
@@ -3808,6 +3858,9 @@ function kind_pops(t: i32): i32 {
   }
   if (t == K_VPACK || t == K_VPERMUTE) {
     return 2;
+  }
+  if (is_lane_int_kind(t)) {
+    return if (t < K_VINEG || t >= K_VIREPLACE) { 2 } else { 1 };
   }
   if (is_lane_kind(t)) {
     return lane_kind_pops()[t - LANE_KIND_FIRST];

@@ -1,0 +1,67 @@
+import "std/i32";
+
+struct H { value: i32, count: Cell[i32] }
+
+function (own h: H) close(): i32 {
+  let n = h.count.get() + 1;
+  h.count.set(n);
+  return if (n == 1) { h.value } else { 0 };
+}
+
+function wrap[T](own value: T): Option[T] {
+  return Some(value);
+}
+
+function borrow[T](value: T): Option[T] {
+  return Some(value);
+}
+
+function finish(own value: H): i32 {
+  match (wrap(value)) {
+    Some(h) => {
+      return h.close();
+    },
+    None => {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+function create[T](make: () => own T): Option[T] {
+  return Some(make());
+}
+
+function fresh_value(): i32 {
+  match (create((): own H => H { value: 39, count: cell_new(0) })) {
+    Some(value) => {
+      return finish(value);
+    },
+    None => {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+function count(xs: u8[]): i32 {
+  match (borrow(xs)) {
+    Some(values) => {
+      return values.append(3u8).len();
+    },
+    None => {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let xs = [1u8, 2u8];
+  let n = count(xs);
+  if (xs.len() != 2 || n != 3) {
+    return 1;
+  }
+  print(fresh_value() + n);
+  return 0;
+}

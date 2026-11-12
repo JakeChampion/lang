@@ -1,0 +1,318 @@
+import "std/audio/mp4";
+import "std/audio/mp4/file" as mp4file;
+import "std/audio/mp4/boxes";
+import "std/audio/mp4/tables";
+import "std/audio/wire";
+import "std/audio/pcm";
+import "std/audio/source";
+import "std/test";
+import "video_mp4_file_check" as memory;
+import "mp4_file_check" as check;
+
+function be(own bytes: u8[], at: i32, value: u64, width: i32): u8[] {
+  for i in 0..width {
+    bytes = bytes.with(at + i, (value >> ((width - i - 1) * 8) as u64) as u8);
+  }
+  return bytes;
+}
+
+function locate(input: [u8], path: [string]): Result[boxes.Box, pcm.AudioError] {
+  let box = boxes.Box { kind: 0u32, start: 0, data: 0, end: input.len() };
+  let budget = boxes.Budget { boxes: 0, maximum: 1000 };
+  for tag in path {
+    let (next, children) = boxes.children(input, box.data, box.end, budget)?;
+    budget = next;
+    box = boxes.required(children, tag)?;
+  }
+  return Ok(box);
+}
+
+function sparse_metadata(bytes: [u8], moov: boxes.Box, shift: i64): Result[u8[], pcm.AudioError] {
+  let metadata = memory.copy(bytes[moov.start:moov.end]);
+  let co64 = locate(metadata, ["moov", "trak", "mdia", "minf", "stbl", "co64"])?;
+  let count = wire.be(metadata, co64.data + 4, 4) as i32;
+  for i in 0..count {
+    let at = co64.data + 8 + 8 * i;
+    let offset = wire.be(metadata, at, 8) + shift as u64;
+    metadata = be(metadata, at, offset, 8);
+  }
+  return Ok(metadata);
+}
+
+function sparse_roots(bytes: [u8]): Result[(boxes.Box, boxes.Box, boxes.Box), pcm.AudioError] {
+  let top = memory.top(bytes)?;
+  return Ok((boxes.required(top, "ftyp")?, boxes.required(top, "mdat")?, boxes.required(top, "moov")?));
+}
+
+function large_offsets(): test.TestOutcome {
+  let Ok(bytes) = check.fixture("co64") else {
+    return test.fail("fixture");
+  };
+  let Ok((ftyp, mdat, moov)) = sparse_roots(bytes) else {
+    return test.fail("roots");
+  };
+  let base = 8589934592i64;
+  let shift = base - mdat.start as i64;
+  let Ok(metadata) = sparse_metadata(bytes, moov, shift) else {
+    return test.fail("co64");
+  };
+  let prefix = memory.copy(bytes[ftyp.start:ftyp.end]);
+  let free: u8[] = [0, 0, 0, 1, 102, 114, 101, 101, 0, 0, 0, 0, 0, 0, 0, 0];
+  free = be(free, 8, (base - prefix.len() as i64) as u64, 8);
+  let media = memory.copy(bytes[mdat.start:mdat.end]);
+  let end = base + media.len() as i64 + metadata.len() as i64;
+  let io = memory.memory(
+    [
+      memory.Segment { at: 0i64, bytes: prefix },
+      memory.Segment { at: prefix.len() as i64, bytes: free },
+      memory.Segment { at: base, bytes: media },
+      memory.Segment { at: base + media.len() as i64, bytes: metadata },
+    ],
+    [tables.Media { start: base + (mdat.data - mdat.start) as i64, end: base + media.len() as i64 }], 3,
+  );
+  let Ok(expected) = mp4.inspect(bytes, mp4.default_limits()) else {
+    return test.fail("complete index");
+  };
+  let value = match (mp4file.inspect_with(end, io.seek, io.read, mp4file.default_limits())) { Ok(value) => value, Err(error) => { return test.fail(error.message()); } };
+  if (value.bytes != end || !check.same(value, expected, shift) || io.counts().bytes > metadata.len() as i64 + 64i64) {
+    return test.fail("64-bit range, metadata, or skipped payload");
+  }
+  return test.pass();
+}
+
+function rejects(bytes: u8[], length: i64, limits: mp4file.Limits): boolean {
+  let io = memory.memory([memory.Segment { at: 0i64, bytes: bytes }], [], 3);
+  return match (mp4file.inspect_with(length, io.seek, io.read, limits)) { Err(_) => true, _ => false };
+}
+
+function truncated(): test.TestOutcome {
+  let Ok(bytes) = check.fixture("mono") else {
+    return test.fail("fixture");
+  };
+  for length in 0..bytes.len() {
+    if (!rejects(bytes, length as i64, mp4file.default_limits())) {
+      return test.fail("accepted truncated source " + length.to_string());
+    }
+  }
+  for value in [0u64, 1u64, 4u64, 4294967295u64] {
+    if (!rejects(be(memory.copy(bytes), 0, value, 4), bytes.len() as i64, mp4file.default_limits())) {
+      return test.fail("invalid root size");
+    }
+  }
+  let extended: u8[] = [0, 0, 0, 1, 102, 114, 101, 101, 255, 255, 255, 255, 255, 255, 255, 255];
+  if (!rejects(extended, 9223372036854775807i64, mp4file.Limits { ...mp4file.default_limits(), max_file_bytes: 9223372036854775807i64 })) {
+    return test.fail("unsigned extended extent overflow");
+  }
+  return test.pass();
+}
+
+function limits(): test.TestOutcome {
+  let Ok(bytes) = check.fixture("mono") else {
+    return test.fail("fixture");
+  };
+  let configured = mp4file.default_limits();
+  let cases = [
+    mp4file.Limits { ...configured, max_file_bytes: bytes.len() as i64 - 1i64 },
+    mp4file.Limits { ...configured, max_metadata_bytes: 8 },
+    mp4file.Limits { ...configured, input: source.Limits { chunk_size: 31, max_buffer_bytes: 8 } },
+    mp4file.Limits { ...configured, input: source.Limits { chunk_size: 0, max_buffer_bytes: 65536 } },
+    mp4file.Limits { ...configured, index: mp4.Limits { ...configured.index, audio: pcm.Limits { ...configured.index.audio, max_input_bytes: 8 } } },
+    mp4file.Limits { ...configured, max_operations: 1 },
+    mp4file.Limits { ...configured, max_operations: 0 },
+    mp4file.Limits { ...configured, index: mp4.Limits { ...configured.index, max_boxes: 1 } },
+    mp4file.Limits { ...configured, index: mp4.Limits { ...configured.index, max_packets: 1 } },
+  ];
+  for i in 0..cases.len() {
+    let limits = cases[i];
+    let io = memory.memory([memory.Segment { at: 0i64, bytes: bytes }], [], 3);
+    let result = mp4file.inspect_with(bytes.len() as i64, io.seek, io.read, limits);
+    let refused = if (i == 2 || i == 3) { match (result) { Err(source.ReadSize) => true, _ => false } } else { match (result) { Err(source.ReadAudio(pcm.Limit)) => true, _ => false } };
+    if (!refused) {
+      return test.fail("configured budget " + i.to_string());
+    }
+    let calls = io.counts();
+    if (limits.max_operations >= 0 && calls.seeks + calls.reads > limits.max_operations) {
+      return test.fail("source operations exceeded budget");
+    }
+  }
+  return test.pass();
+}
+
+function failures(): test.TestOutcome {
+  let seek = (offset: i64): Result[i64, IoError] => Ok(offset);
+  let no_read = (_: i32): Result[u8[], IoError] => Ok([]);
+  let interrupted = (_: i32): Result[u8[], IoError] => Err(IoError.Interrupted);
+  let bad_seek = (_: i64): Result[i64, IoError] => Err(IoError.Interrupted);
+  let wrong_seek = (offset: i64): Result[i64, IoError] => Ok(offset + 1i64);
+  let oversized = (count: i32): Result[u8[], IoError] => {
+    let out: u8[] = [];
+    for _ in 0..count + 1 {
+      out = out.append(0);
+    }
+    return Ok(out);
+  };
+  if let Err(source.ReadIo(Interrupted())) = mp4file.inspect_with(16i64, bad_seek, no_read, mp4file.default_limits()) {} else {
+    return test.fail("seek error");
+  }
+  if let Err(source.ReadIo(Interrupted())) = mp4file.inspect_with(16i64, seek, interrupted, mp4file.default_limits()) {} else {
+    return test.fail("read error");
+  }
+  if let Err(source.ReadAudio(pcm.Truncated)) = mp4file.inspect_with(16i64, seek, no_read, mp4file.default_limits()) {} else {
+    return test.fail("early EOF");
+  }
+  if let Err(source.ReadSize) = mp4file.inspect_with(16i64, wrong_seek, no_read, mp4file.default_limits()) {} else {
+    return test.fail("wrong seek position");
+  }
+  if let Err(source.ReadSize) = mp4file.inspect_with(16i64, seek, oversized, mp4file.default_limits()) {} else {
+    return test.fail("oversized read");
+  }
+  return test.pass();
+}
+
+function appended(input: [u8], suffix: [u8]): u8[] {
+  let bytes = memory.copy(input);
+  for byte in suffix {
+    bytes = bytes.append(byte);
+  }
+  return bytes;
+}
+
+function structures(): test.TestOutcome {
+  let Ok(bytes) = check.fixture("mono") else {
+    return test.fail("fixture");
+  };
+  for tag in ["ftyp", "moov"] {
+    let Ok(box) = locate(bytes, [tag]) else {
+      return test.fail("root box");
+    };
+    let duplicate = appended(bytes, bytes[box.start:box.end]);
+    if (!rejects(duplicate, duplicate.len() as i64, mp4file.default_limits())) {
+      return test.fail("duplicate " + tag);
+    }
+  }
+  let fragment: u8[] = [0, 0, 0, 8, 109, 111, 111, 102];
+  let bad = appended(bytes, fragment);
+  let io = memory.memory([memory.Segment { at: 0i64, bytes: bad }], [], 0);
+  if let Err(source.ReadAudio(pcm.Unsupported)) = mp4file.inspect_with(bad.len() as i64, io.seek, io.read, mp4file.default_limits()) {} else {
+    return test.fail("fragment");
+  }
+  let Ok(table) = locate(bytes, ["moov", "trak", "mdia", "minf", "stbl", "stco"]) else {
+    return test.fail("offsets");
+  };
+  let invalid = be(memory.copy(bytes), table.data + 8, 4294967295u64, 4);
+  if (!rejects(invalid, invalid.len() as i64, mp4file.default_limits())) {
+    return test.fail("packet outside source");
+  }
+  return test.pass();
+}
+
+function box_headers(): test.TestOutcome {
+  let Ok(bytes) = check.fixture("mono") else {
+    return test.fail("fixture");
+  };
+  let Ok(expected) = mp4.inspect(bytes, mp4.default_limits()) else {
+    return test.fail("complete index");
+  };
+  let uuid: u8[] = [0, 0, 0, 24, 117, 117, 105, 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  let extended: u8[] = [0, 0, 0, 1, 102, 114, 101, 101, 0, 0, 0, 0, 0, 0, 0, 16];
+  let terminal: u8[] = [0, 0, 0, 0, 102, 114, 101, 101];
+  let input = appended(appended(appended(bytes, uuid), extended), terminal);
+  let io = memory.memory([memory.Segment { at: 0i64, bytes: input }], [], 1);
+  let Ok(value) = mp4file.inspect_with(input.len() as i64, io.seek, io.read, mp4file.default_limits()) else {
+    return test.fail("optional box headers");
+  };
+  if (!check.same(value, expected, 0i64)) {
+    return test.fail("optional boxes changed packets");
+  }
+  return test.pass();
+}
+
+function preflight(): test.TestOutcome {
+  let Ok(bytes) = check.fixture("mono") else {
+    return test.fail("fixture");
+  };
+  let configured = mp4file.default_limits();
+  let cases = [
+    mp4file.Limits { ...configured, max_file_bytes: bytes.len() as i64 - 1i64 },
+    mp4file.Limits { ...configured, max_metadata_bytes: 7 },
+    mp4file.Limits { ...configured, max_operations: 0 },
+    mp4file.Limits { ...configured, index: mp4.Limits { ...configured.index, max_tracks: 0 } },
+    mp4file.Limits { ...configured, index: mp4.Limits { ...configured.index, max_descriptions: 0 } },
+    mp4file.Limits { ...configured, index: mp4.Limits { ...configured.index, max_edits: -1 } },
+  ];
+  for limits in cases {
+    let reader = memory.memory([memory.Segment { at: 0i64, bytes: bytes }], [], 0);
+    if let Err(source.ReadAudio(pcm.Limit)) = mp4file.inspect_with(bytes.len() as i64, reader.seek, reader.read, limits) {} else {
+      return test.fail("early limit");
+    }
+    if (reader.counts().reads != 0 || reader.counts().seeks != 0) {
+      return test.fail("I/O before limit admission");
+    }
+  }
+  return test.pass();
+}
+
+function packet_budget(): test.TestOutcome {
+  let Ok(bytes) = check.fixture("mono") else {
+    return test.fail("fixture");
+  };
+  let Ok(movie) = locate(bytes, ["moov"]) else {
+    return test.fail("movie");
+  };
+  let Ok(table) = locate(bytes, ["moov", "trak", "mdia", "minf", "stbl", "stsz"]) else {
+    return test.fail("sizes");
+  };
+  let maximum = movie.end - movie.start;
+  let invalid = be(bytes, table.data + 12, maximum as u64 + 1u64, 4);
+  let reader = memory.memory([memory.Segment { at: 0i64, bytes: invalid }], [], 3);
+  let limits = mp4file.default_limits();
+  limits = mp4file.Limits { ...limits, index: mp4.Limits { ...limits.index, audio: pcm.Limits { ...limits.index.audio, max_input_bytes: maximum } } };
+  if let Err(source.ReadAudio(pcm.Limit)) = mp4file.inspect_with(invalid.len() as i64, reader.seek, reader.read, limits) {
+    return test.pass();
+  }
+  return test.fail("individual encoded packet exceeds metadata input budget");
+}
+
+function classified(bytes: u8[], wanted: pcm.AudioError): boolean {
+  let reader = memory.memory([memory.Segment { at: 0i64, bytes: bytes }], [], 3);
+  return match (mp4file.inspect_with(bytes.len() as i64, reader.seek, reader.read, mp4file.default_limits())) { Err(source.ReadAudio(actual)) => actual == wanted, _ => false };
+}
+
+function restrictions(): test.TestOutcome {
+  let Ok(bytes) = check.fixture("mono") else {
+    return test.fail("fixture");
+  };
+  let Ok(stsd) = locate(bytes, ["moov", "trak", "mdia", "minf", "stbl", "stsd"]) else {
+    return test.fail("description");
+  };
+  let Ok(dref) = locate(bytes, ["moov", "trak", "mdia", "minf", "dinf", "dref"]) else {
+    return test.fail("reference");
+  };
+  if (!classified(be(memory.copy(bytes), stsd.data + 12, boxes.tag("enca") as u64, 4), pcm.Unsupported)) {
+    return test.fail("encrypted sample entry");
+  }
+  if (!classified(be(memory.copy(bytes), dref.data + 16, 0u64, 4), pcm.Unsupported)) {
+    return test.fail("external data reference");
+  }
+  let Ok(ftyp) = locate(bytes, ["ftyp"]) else {
+    return test.fail("file type");
+  };
+  if (!classified(be(bytes, ftyp.start + 4, boxes.tag("free") as u64, 4), pcm.Header)) {
+    return test.fail("missing file type");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("bounded AAC MP4 file boundaries");
+  runner = runner.it("64-bit offsets skip an 8 GiB sparse range", large_offsets);
+  runner = runner.it("truncated and overflowing source boxes", truncated);
+  runner = runner.it("metadata, source, packet, and operation budgets", limits);
+  runner = runner.it("I/O errors and source callback contracts", failures);
+  runner = runner.it("duplicate roots, fragments, and sample containment", structures);
+  runner = runner.it("UUID, extended, and end-of-source boxes", box_headers);
+  runner = runner.it("invalid limits fail before source I/O", preflight);
+  runner = runner.it("each packet has its own encoded-input bound", packet_budget);
+  runner = runner.it("encrypted, external, and untyped files retain refusals", restrictions);
+  return runner.finish();
+}

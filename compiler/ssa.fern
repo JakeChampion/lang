@@ -15,6 +15,9 @@ pub struct SBlock { id: i32, insts: SInst[], term: STerm, preds: i32[] }
 pub struct SFunc { name: string, nparams: i32, nvals: i32, blocks: SBlock[], entry: i32, takes_env: boolean }
 
 // The kinds of SInst. Negative kinds are the semantic ones in ssasem.fern.
+// NONE is the kind of no_inst().
+pub const NONE: i32 = 0;
+
 pub const CONST_INT: i32 = 1;
 
 pub const CONST_BOOL: i32 = 2;
@@ -1149,7 +1152,7 @@ pub function lane_result(ins: SInst): boolean {
     return false;
   }
   let b = lane_base(ins.str);
-  return b != "vextract" && b != "vextract_bits" && b != "vbitmask" && b != "vstore" && b != "vset";
+  return b != "vextract" && b != "vextract_bits" && b != "vbitmask" && b != "vstore" && b != "vset" && b != "viextracts" && b != "viextractu" && b != "vibitmask";
 }
 
 pub function lane_values(f: SFunc): boolean[] {
@@ -5440,14 +5443,14 @@ function rotate_of(defs: SInst[], ins: SInst): SInst {
     return no_inst();
   }
   let m = rotate_half_pair(defs, ins, ins.args[0], ins.args[1]);
-  if (m.kind_tag == 0) {
+  if (m.kind_tag == NONE) {
     m = rotate_half_pair(defs, ins, ins.args[1], ins.args[0]);
   }
   return m;
 }
 
 pub function no_inst(): SInst {
-  return SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
+  return SInst { kind_tag: NONE, result: -1, args: [], imm: 0, str: "" };
 }
 
 pub function inst_defs(f: SFunc): SInst[] {
@@ -5474,12 +5477,12 @@ function rewrite_insts(f: SFunc, defs: SInst[], rewrite: (SInst[], SInst) => SIn
     let changed = false;
     for k in 0..blk.insts.len() {
       let m = rewrite(defs, blk.insts[k]);
-      if (m.kind_tag != 0 && !changed) {
+      if (m.kind_tag != NONE && !changed) {
         ninsts = insts_before(blk.insts, k);
         changed = true;
       }
       if (changed) {
-        ninsts = ninsts.append(if (m.kind_tag != 0) { m } else { blk.insts[k] });
+        ninsts = ninsts.append(if (m.kind_tag != NONE) { m } else { blk.insts[k] });
       }
     }
     if (changed && !copying) {
@@ -5670,7 +5673,7 @@ function wide_of(defs: SInst[], v: i32, op: string): SInst {
 
 function not_of(defs: SInst[], v: i32): i32 {
   let d = bin_of(defs, v, "xor");
-  if (d.kind_tag == 0) {
+  if (d.kind_tag == NONE) {
     return -1;
   }
   if (is_const(defs, d.args[1], 0i64 - 1i64)) {
@@ -5701,11 +5704,11 @@ function carry_of(defs: SInst[], shr: SInst): SInst {
     return no_inst();
   }
   let o = bin_of(defs, shr.args[0], "or");
-  if (o.kind_tag == 0) {
+  if (o.kind_tag == NONE) {
     return no_inst();
   }
   let m = carry_halves(defs, shr, o.args[0], o.args[1]);
-  if (m.kind_tag == 0) {
+  if (m.kind_tag == NONE) {
     m = carry_halves(defs, shr, o.args[1], o.args[0]);
   }
   return m;
@@ -5714,15 +5717,15 @@ function carry_of(defs: SInst[], shr: SInst): SInst {
 function carry_halves(defs: SInst[], shr: SInst, p: i32, q: i32): SInst {
   let pa = bin_of(defs, p, "and");
   let qa = bin_of(defs, q, "and");
-  if (pa.kind_tag == 0 || qa.kind_tag == 0) {
+  if (pa.kind_tag == NONE || qa.kind_tag == NONE) {
     return no_inst();
   }
   for k in 0..2 {
     let m = add_carry(defs, shr, pa, qa.args[k], qa.args[1 - k]);
-    if (m.kind_tag == 0) {
+    if (m.kind_tag == NONE) {
       m = sub_borrow(defs, shr, pa, qa.args[k], qa.args[1 - k]);
     }
-    if (m.kind_tag != 0) {
+    if (m.kind_tag != NONE) {
       return m;
     }
   }
@@ -5733,11 +5736,11 @@ function add_carry(defs: SInst[], shr: SInst, p: SInst, either: i32, inv: i32): 
   let x = copy_root(defs, p.args[0]);
   let y = copy_root(defs, p.args[1]);
   let e = bin_of(defs, either, "or");
-  if (e.kind_tag == 0 || !same_pair(defs, e.args[0], e.args[1], x, y)) {
+  if (e.kind_tag == NONE || !same_pair(defs, e.args[0], e.args[1], x, y)) {
     return no_inst();
   }
   let s = wide_of(defs, not_of(defs, inv), "add");
-  if (s.kind_tag == 0) {
+  if (s.kind_tag == NONE) {
     return no_inst();
   }
   if (same_pair(defs, s.args[0], s.args[1], x, y)) {
@@ -5745,7 +5748,7 @@ function add_carry(defs: SInst[], shr: SInst, p: SInst, either: i32, inv: i32): 
   }
   for k in 0..2 {
     let inner = wide_of(defs, s.args[k], "add");
-    if (inner.kind_tag != 0 && same_pair(defs, inner.args[0], inner.args[1], x, y) && zero_one(defs, s.args[1 - k])) {
+    if (inner.kind_tag != NONE && same_pair(defs, inner.args[0], inner.args[1], x, y) && zero_one(defs, s.args[1 - k])) {
       return SInst { kind_tag: CARRY, result: shr.result, args: [x, y, copy_root(defs, s.args[1 - k])], imm: 0, str: "" };
     }
   }
@@ -5765,7 +5768,7 @@ function sub_borrow(defs: SInst[], shr: SInst, p: SInst, either: i32, diff: i32)
 
 function inverted_or(defs: SInst[], v: i32, x: i32, y: i32): boolean {
   let e = bin_of(defs, v, "or");
-  if (e.kind_tag == 0) {
+  if (e.kind_tag == NONE) {
     return false;
   }
   return not_of(defs, e.args[0]) == x && copy_root(defs, e.args[1]) == y || not_of(defs, e.args[1]) == x && copy_root(defs, e.args[0]) == y;
@@ -5773,14 +5776,14 @@ function inverted_or(defs: SInst[], v: i32, x: i32, y: i32): boolean {
 
 function borrow_from(defs: SInst[], shr: SInst, diff: i32, x: i32, y: i32): SInst {
   let d = wide_of(defs, diff, "sub");
-  if (d.kind_tag == 0) {
+  if (d.kind_tag == NONE) {
     return no_inst();
   }
   if (copy_root(defs, d.args[0]) == x && copy_root(defs, d.args[1]) == y) {
     return SInst { kind_tag: CARRY, result: shr.result, args: [x, y], imm: 1, str: "" };
   }
   let inner = wide_of(defs, d.args[0], "sub");
-  if (inner.kind_tag != 0 && copy_root(defs, inner.args[0]) == x && copy_root(defs, inner.args[1]) == y && zero_one(defs, d.args[1])) {
+  if (inner.kind_tag != NONE && copy_root(defs, inner.args[0]) == x && copy_root(defs, inner.args[1]) == y && zero_one(defs, d.args[1])) {
     return SInst { kind_tag: CARRY, result: shr.result, args: [x, y, copy_root(defs, d.args[1])], imm: 1, str: "" };
   }
   return no_inst();
@@ -6476,7 +6479,7 @@ pub function combine_byte_stores(f: SFunc): SFunc {
         j += 1;
       }
       let packed = shuffled_byte_store(defs, insts, group, count);
-      if (packed.kind_tag != 0) {
+      if (packed.kind_tag != NONE) {
         for at in group {
           insts = insts.with(at, no_inst());
         }
@@ -6487,7 +6490,7 @@ pub function combine_byte_stores(f: SFunc): SFunc {
     }
     let kept: SInst[] = [];
     for ins in insts {
-      if (ins.kind_tag != 0) {
+      if (ins.kind_tag != NONE) {
         kept = kept.append(ins);
       }
     }

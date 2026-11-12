@@ -195,16 +195,20 @@ class Phone:
     """A device for check_filter. `holds` is whether the filter takes a
     notification out of the shade, and `shows` is whether Paper shows it."""
 
-    def __init__(self, *, holds=True, shows=True, opens=True, sends=True, takes_old=False, filter_row="off", probe=True):
+    def __init__(self, *, holds=True, shows=True, opens=True, takes_old=False, filter_row="off", probe=True):
         self.holds = holds
         self.shows = shows
         self.opens = opens
-        self.sends = sends
-        self.front = "dev.fern.paper"
+        # The dumps that still show a sheet lower than its last place.
+        self.sliding = 0
+        self.wrong_rows = 0
         self.takes_old = takes_old
         self.filter_row = filter_row
         self.probe = probe
         self.allowed = False
+        # adb runs as root, and the device drops a notification that root
+        # posts.
+        self.dropped = []
         self.on = filter_row == "on"
         self.screen = "home"
         self.shade = []
@@ -219,7 +223,11 @@ class Phone:
             self.shade.append(tag)
 
     def tap(self, x, y):
-        if self.screen == "settings" and y == 150:
+        if self.screen == "settings" and y != 150:
+            # A tap on the place of a row that still moved opens another row.
+            self.wrong_rows += 1
+            self.screen = "other sheet"
+        elif self.screen == "settings" and y == 150:
             self.on = True
             self.screen = "home"
             if self.takes_old:
@@ -231,12 +239,12 @@ class Phone:
             if self.opens:
                 self.held.clear()
                 self.log.append("paper: open held com.android.shell")
-                if self.sends:
-                    self.front = "com.android.settings"
 
     def dump(self):
         if self.screen == "settings":
-            return node("Notification filter: " + self.filter_row, (0, 100, 320, 200))
+            down = 100 * self.sliding
+            self.sliding = max(0, self.sliding - 1)
+            return node("Notification filter: " + self.filter_row, (0, 100 + down, 320, 200 + down))
         if self.screen == "held":
             return node("Shell · 9:06&#10;Fern: held_text", (0, 100, 320, 200))
         nodes = node("9:06", (0, 0, 320, 300))
@@ -245,20 +253,23 @@ class Phone:
         return nodes
 
     def adb(self, *args, **kwargs):
+        if args == ("shell", "id", "-u"):
+            return "0\n"
+        if args == ("shell", "cat", "/data/data/dev.fern.paper/files/settings"):
+            return "filter\t1\n" if self.on else "cat: no such file\n"
         if args[:4] == ("shell", "cmd", "notification", "post"):
+            self.dropped.append(args[-2])
+        elif args[:6] == ("shell", "su", "shell", "cmd", "notification", "post"):
             self.post(args[-2])
         elif args[:4] == ("shell", "cmd", "notification", "allow_listener"):
             self.allowed = True
         elif args[:3] == ("shell", "input", "swipe") and args[3:5] == args[5:7]:
             self.screen = "settings"
+            self.sliding = 2
         elif args[:3] == ("shell", "input", "tap"):
             self.tap(int(args[3]), int(args[4]))
         elif args == ("shell", "input", "keyevent", "KEYCODE_BACK"):
             self.screen = "home"
-        elif args == ("shell", "input", "keyevent", "KEYCODE_HOME"):
-            self.front = "dev.fern.paper"
-        elif args[:4] == ("shell", "dumpsys", "activity", "activities"):
-            return f"  topResumedActivity=ActivityRecord{{1 u0 {self.front}/.Main t1}}\n"
         elif args[:4] == ("shell", "cmd", "notification", "list") and self.probe:
             return "".join(f"0|com.android.shell|2020|{tag}|2000\n" for tag in self.shade)
         elif args == ("shell", "cat", "/sdcard/paper-ui.xml"):
@@ -271,8 +282,10 @@ class Phone:
 
 class FilterTests(unittest.TestCase):
     def run_phone(self, phone):
-        clock = iter(range(0, 100000, 5))
+        clock = iter(range(0, 100000, 1))
         with tempfile.TemporaryDirectory() as out, patch.multiple(check, adb=phone.adb, wait_for=phone.wait_for,
+                            shell=lambda *args: phone.adb("shell", *args),
+                            logcat=lambda: "\n".join(phone.log),
                             fail=phone.failures.append), patch.object(check.time, "sleep"), \
                 patch.object(check.time, "monotonic", side_effect=lambda: next(clock)):
             check.check_filter(out, 320, 640)
@@ -283,6 +296,15 @@ class FilterTests(unittest.TestCase):
         self.assertEqual(self.run_phone(phone), [])
         self.assertEqual(phone.shade, ["fern_shown"])
         self.assertFalse(phone.allowed and phone.held)
+
+    def test_each_post_is_a_post_of_the_shell_user_when_adb_is_root(self):
+        phone = Phone()
+        self.assertEqual(self.run_phone(phone), [])
+        self.assertEqual(phone.dropped, [])
+
+    def test_adb_that_is_not_root_posts_with_no_change_of_user(self):
+        with patch.object(check, "shell", side_effect=["2000\n"]):
+            self.assertEqual(check.poster(), [])
 
     def test_a_filter_that_is_on_already_stays_on(self):
         self.assertEqual(self.run_phone(Phone(filter_row="on")), [])
@@ -295,14 +317,45 @@ class FilterTests(unittest.TestCase):
         failures = self.run_phone(Phone(shows=False))
         self.assertEqual(failures, ["the home screen does not show a held notification"])
 
+    def test_a_notification_that_paper_does_not_show_keeps_the_answers_of_the_device(self):
+        phone = Phone(shows=False)
+        clock = iter(range(0, 100000, 1))
+        with tempfile.TemporaryDirectory() as out, patch.multiple(check, adb=phone.adb, wait_for=phone.wait_for,
+                            shell=lambda *args: phone.adb("shell", *args) or "answer to " + " ".join(args[:2]),
+                            logcat=lambda: "paper: drawn 320x640", fail=phone.failures.append), patch.object(check.time, "sleep"), \
+                patch.object(check.time, "monotonic", side_effect=lambda: next(clock)):
+            check.check_filter(out, 320, 640)
+            kept = {p.name: p.read_text() for p in Path(out).iterdir()}
+        self.assertEqual(kept["held-listeners.txt"], "answer to settings get")
+        self.assertEqual(kept["held-held-file.txt"], "answer to cat /data/data/dev.fern.paper/files/held")
+        self.assertEqual(kept["held-log.txt"], "paper: drawn 320x640")
+        self.assertIn("9:06", kept["held-texts.txt"])
+
     def test_a_held_notification_that_does_not_open_fails(self):
         failures = self.run_phone(Phone(opens=False))
         self.assertIn("a tap on the held notification did not open it", failures)
         self.assertIn("the held notification stayed on the home screen after it opened", failures)
 
-    def test_a_held_notification_whose_intent_opens_nothing_fails(self):
-        failures = self.run_phone(Phone(sends=False))
-        self.assertEqual(failures, ["the intent of the held notification did not open the settings of Android"])
+    def test_a_tap_that_does_not_turn_the_filter_on_fails_with_the_places_of_the_rows(self):
+        phone = Phone()
+        phone.tap = lambda x, y: None
+        clock = iter(range(0, 100000, 1))
+        with tempfile.TemporaryDirectory() as out, patch.multiple(check, adb=phone.adb, wait_for=phone.wait_for,
+                            shell=lambda *args: phone.adb("shell", *args), logcat=lambda: "paper: layer 0",
+                            fail=phone.failures.append), patch.object(check.time, "sleep"), \
+                patch.object(check.time, "monotonic", side_effect=lambda: next(clock)):
+            check.check_filter(out, 320, 640)
+            kept = {p.name: p.read_text() for p in Path(out).iterdir()}
+        self.assertEqual(phone.failures, ["a tap on the filter row did not turn the filter on"])
+        self.assertEqual(kept["filter-tap.txt"], "160 150")
+        self.assertEqual(kept["filter-rows.txt"], "Notification filter: off@[0,100][320,200]")
+        self.assertIn("9:06@[0,0][320,300]", kept["filter-home.txt"])
+
+    def test_a_tap_waits_until_a_sheet_that_slides_in_is_still(self):
+        phone = Phone()
+        self.assertEqual(self.run_phone(phone), [])
+        self.assertTrue(phone.on)
+        self.assertEqual(phone.wrong_rows, 0)
 
     def test_the_tag_of_another_notification_is_not_in_the_shade(self):
         with patch.object(check, "adb", return_value="0|com.android.shell|2020|fern_held_more|2000\n"):
@@ -316,6 +369,17 @@ class FilterTests(unittest.TestCase):
     def test_a_shade_that_the_check_cannot_read_fails(self):
         failures = self.run_phone(Phone(probe=False))
         self.assertEqual(failures, ["the shade does not show a notification that the shell posted"])
+
+    def test_a_shade_that_the_check_cannot_read_keeps_the_answers_of_the_device(self):
+        phone = Phone(probe=False)
+        with tempfile.TemporaryDirectory() as out, patch.multiple(check, adb=phone.adb, fail=phone.failures.append,
+                            shell=lambda *args: "answer to " + " ".join(args[:3])), patch.object(check.time, "sleep"), \
+                patch.object(check.time, "monotonic", side_effect=iter(range(0, 1000, 5)).__next__):
+            check.check_filter(out, 320, 640)
+            kept = {p.name: p.read_text() for p in Path(out).iterdir()}
+        self.assertEqual(kept["shade-list.txt"], "answer to cmd notification list")
+        self.assertEqual(kept["shade-post.txt"], "answer to cmd notification post")
+        self.assertIn("shade-dumpsys.txt", kept)
 
     def test_find_node_gives_the_middle_of_the_node(self):
         dump = node("Other", (0, 0, 10, 10)) + node("Notification filter: off", (0, 100, 320, 200))

@@ -693,7 +693,7 @@ function read_of(g: ssa.SFunc, rd: Reads, v: i32): ssa.SInst {
       return ins;
     }
   }
-  return ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
+  return ssa.no_inst();
 }
 
 function standing(r: Rereads, v: i32): i32 {

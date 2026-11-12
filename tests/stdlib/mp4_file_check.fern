@@ -1,0 +1,62 @@
+import "std/audio/mp4";
+import "std/audio/mp4/tables";
+import "std/audio/mp4/time";
+import "std/audio/pcm";
+import "mp4_vectors";
+import "aac_kernel_check" as reference;
+
+function same_clock(a: time.Clock, b: time.Clock): boolean {
+  return a.scale == b.scale && a.duration == b.duration;
+}
+
+function same_edits(a: [time.Edit], b: [time.Edit]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i].duration != b[i].duration || a[i].media_time != b[i].media_time) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function same_packet(a: tables.Packet, b: tables.Packet, shift: i64): boolean {
+  return a.offset == b.offset + shift && a.bytes == b.bytes && a.position == b.position && a.duration == b.duration && a.description == b.description;
+}
+
+function same_track(a: mp4.Track, b: mp4.Track, shift: i64): boolean {
+  if (a.id != b.id || a.enabled != b.enabled || !same_clock(a.clock, b.clock) || a.configurations != b.configurations || !same_edits(a.edits, b.edits)) {
+    return false;
+  }
+  if (a.packets.len() != b.packets.len()) {
+    return false;
+  }
+  for i in 0..a.packets.len() {
+    if (!same_packet(a.packets[i], b.packets[i], shift)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+pub function same(a: mp4.Index, b: mp4.Index, shift: i64): boolean {
+  if (!same_clock(a.movie, b.movie) || a.tracks.len() != b.tracks.len()) {
+    return false;
+  }
+  for i in 0..a.tracks.len() {
+    if (!same_track(a.tracks[i], b.tracks[i], shift)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+pub function fixture(name: string): Result[u8[], string] {
+  for vector in mp4_vectors.vectors() {
+    if (vector.name == name) {
+      return reference.unpack(vector.bytes);
+    }
+  }
+  return Err("missing fixture");
+}

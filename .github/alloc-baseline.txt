@@ -1,3 +1,7 @@
+# 2026-11-12: PR #15497 at 83222cb2a8, perf-x86_64 job 131205638421.
+# The job measured 45856143 checker allocations and frees, 15.83% below the prior bank.
+# Fresh main locally measures 45856686 of each: 543 events more, within the unchanged 1% tolerance.
+# Re-bank only these last x86 rows. The 10% drift ceiling stays unchanged.
 # 2026-11-10: PR #15091, perf-x86_64 job 129644270390 on 7a1541eab3 measured 40824273 allocations and frees for the expanded checker source. Keep the 1% tolerance.
 # 2026-11-09: PR #14874 at 2d7d444e94. CI job 129298782302 measures
 # 40405424 balanced checker events after the merge of main d04e79179f.
@@ -120,5 +124,14 @@
 # 2026-11-12: perf-x86_64 job 131075781965 (#15461, on main 0b8548db) measured 60,715,391 allocations and frees.
 # The merge of #15424 (c4f2f3d4) moved the count from 43,097,274 to 60,207,755: the callback factory summaries of the checker.
 # This is an inherited main cost, and #15471 has the bisect and the profile. The 1% tolerance is unchanged.
-x86_64/checker.allocs	60715391
-x86_64/checker.frees	60715391
+# 2026-11-12: ocl_factories analysed each factory again in each round. A worklist now
+# analyses a factory again only when a factory that its body names has a new row:
+# 53,974,294, measured with scripts/selfhost-alloc-bench on the dev container at dcb74a3e.
+# The cost that remains is the first analysis of each factory, in the two passes of the checker.
+# 2026-11-12 (#15471): the callback factory summaries now resolve a union through its members.
+# With the worklist above, `scripts/selfhost-alloc-bench` measured 46,095,444 allocations and frees (was 53,974,294). The 1% tolerance is unchanged.
+x86_64/checker.allocs	46095444
+x86_64/checker.frees	46095444
+# 2026-11-12: main at 74fc6d81, with the worklist and the merges of that day, measures 54,483,586 on the dev container.
+x86_64/checker.allocs	45856143
+x86_64/checker.frees	45856143

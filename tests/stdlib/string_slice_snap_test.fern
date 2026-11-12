@@ -47,9 +47,9 @@ function test_ascii_identity(): test.TestOutcome {
     && "hello".slice_snap(5, 5) == "");
 }
 
-function test_unchecked_whole_character(): test.TestOutcome {
-  let t = slice_unchecked(hello_acc(), 1, 3);
-  return test.assert_true(t.len() == 2 && t[0] as i32 == 195 && t[1] as i32 == 169);
+function test_unchecked_byte_honest(): test.TestOutcome {
+  let t = slice_unchecked(hello_acc(), 0, 2);
+  return test.assert_true(t.len() == 2 && t[0] as i32 == 104 && t[1] as i32 == 195);
 }
 
 function test_unchecked_boundary_forms(): test.TestOutcome {
@@ -76,7 +76,7 @@ function main(): i32 {
   r = r.it("snapped empty", test_snapped_empty);
   r = r.it("empty source", test_empty_source);
   r = r.it("ascii identity", test_ascii_identity);
-  r = r.it("unchecked whole character", test_unchecked_whole_character);
+  r = r.it("unchecked byte honest", test_unchecked_byte_honest);
   r = r.it("unchecked boundary forms", test_unchecked_boundary_forms);
   r = r.it("unchecked owned temp", test_unchecked_owned_temp);
   return r.finish();

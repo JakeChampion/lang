@@ -149,7 +149,7 @@ function depth(): i32 {
 
 function graph_of(f: ssasem.Func): Graph {
   let n = f.values.len();
-  let none = ssa.SInst { kind_tag: 0, result: -1, args: [], imm: 0, str: "" };
+  let none = ssa.no_inst();
   let defs: ssa.SInst[] = [];
   let home: i32[] = [];
   let i32s: boolean[] = [];

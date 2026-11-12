@@ -2640,7 +2640,7 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
       let is_tykw: boolean = x.name == "string" || x.name == "boolean" || x.name == "void"
         || x.name == "i32" || x.name == "i64"
         || x.name == "u8" || x.name == "u32" || x.name == "u64"
-        || x.name == "usize" || x.name == "f32" || x.name == "f64" || x.name == "f64x2" || x.name == "f32x4";
+        || x.name == "usize" || x.name == "f32" || x.name == "f64" || x.name == "f64x2" || x.name == "f32x4" || x.name == "u8x16";
       if (is_tykw) {
         let kwline = p.peek_line();
         let kwcol = p.peek_col();

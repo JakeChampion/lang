@@ -3560,9 +3560,9 @@ function x86_gas_is_vex_two(mnem: string): boolean {
 
 // The opcode of each VEX three-operand integer and FMA instruction: 256 plus
 // the 0F opcode, or 512 plus the 0F38 opcode.
-const VEX_THREE_NAMES: string[] = ["vfmadd213ps", "vfmadd213pd", "vpcmpeqb", "vmulpd", "vpsubusb", "vpminub", "vpand", "vpmullw", "vpmulhuw", "vpaddusb", "vpor", "vpxor", "vpsubb", "vpshufb", "vpcmpgtq", "vpackuswb", "vpmaddubsw", "vpmaddwd", "vpsadbw", "vpunpckldq", "vpunpckhdq", "vpunpcklqdq", "vpunpckhqdq", "vpaddb", "vpmaxub", "vpaddsb", "vpsubsb", "vpavgb", "vpminsb", "vpmaxsb", "vpcmpgtb"];
+const VEX_THREE_NAMES: string[] = ["vfmadd213ps", "vfmadd213pd", "vpcmpeqb", "vmulpd", "vpsubusb", "vpminub", "vpand", "vpmullw", "vpmulhuw", "vpaddusb", "vpor", "vpxor", "vpsubb", "vpshufb", "vpcmpgtq", "vpackuswb", "vpmaddubsw", "vpmaddwd", "vpsadbw", "vpunpckldq", "vpunpckhdq", "vpunpcklqdq", "vpunpckhqdq", "vpaddb", "vpmaxub", "vpaddsb", "vpsubsb", "vpavgb", "vpminsb", "vpmaxsb", "vpcmpgtb", "vpaddw", "vpaddd", "vpsubw", "vpsubd", "vpaddsw", "vpaddusw", "vpsubsw", "vpsubusw", "vpminsw", "vpmaxsw", "vpminuw", "vpmaxuw", "vpminsd", "vpmaxsd", "vpminud", "vpmaxud", "vpavgw", "vpcmpeqw", "vpcmpeqd", "vpcmpgtw", "vpcmpgtd", "vpmulld", "vpsllw", "vpslld", "vpsrld", "vpsraw", "vpsrad", "vpsrlw"];
 
-const VEX_THREE_OPS: i32[] = [680, 680, 372, 345, 472, 474, 475, 469, 484, 476, 491, 495, 504, 512, 567, 359, 516, 501, 502, 354, 362, 364, 365, 508, 478, 492, 488, 480, 568, 572, 356];
+const VEX_THREE_OPS: i32[] = [680, 680, 372, 345, 472, 474, 475, 469, 484, 476, 491, 495, 504, 512, 567, 359, 516, 501, 502, 354, 362, 364, 365, 508, 478, 492, 488, 480, 568, 572, 356, 509, 510, 505, 506, 493, 477, 489, 473, 490, 494, 570, 574, 569, 573, 571, 575, 483, 373, 374, 357, 358, 576, 497, 498, 466, 481, 482, 465];
 
 // Each shift by an immediate: its 0F opcode times 8, plus the /digit.
 const VEX_SHIFT_NAMES: string[] = ["vpsrlw", "vpsrlq", "vpsllq"];
@@ -3628,7 +3628,7 @@ function x86_gas_vex_three(own a: X86Asm, mnem: string, rest: string): X86Asm {
     return x86_gas_bad(a, mnem + " " + rest);
   }
   let shift = x86_vex_shift_imm(mnem);
-  if (shift >= 0) {
+  if (shift >= 0 && ops[0].starts_with("$")) {
     util.push_bytes(a.code, x86_vex([], false, false, (v1 & 15) >= 8, 1, false, vd & 15, vd >= 16, 1));
     buf_push_byte(a.code, shift / 8);
     buf_push_byte(a.code, x86_modrm(3, shift % 8, v1 & 15));
@@ -3640,6 +3640,9 @@ function x86_gas_vex_three(own a: X86Asm, mnem: string, rest: string): X86Asm {
     return x86_gas_bad(a, mnem + " " + rest);
   }
   let mo = x86_vex_three_op(mnem);
+  if (mo < 0) {
+    return x86_gas_bad(a, mnem + " " + rest);
+  }
   let pp = 1;
   if (mnem.len() >= 2 && mnem[mnem.len() - 2] == b'p' && mnem[mnem.len() - 1] == b's' && mnem != "vfmadd213ps") {
     pp = 0;

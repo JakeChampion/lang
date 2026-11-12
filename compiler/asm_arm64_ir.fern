@@ -2563,8 +2563,134 @@ function ssa_fr_q(s: asmcore.EmitState, load: boolean, q: string, first: i32, pu
   return s.write(m + q + ", [x16]\n");
 }
 
+// The ops on integer lanes. `ins.imm` is the width of a lane: 8, 16 or 32
+// bits. An op that a width does not have is a refusal that names the op.
+function ssa_vint(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let id = ir.kind_id(b);
+  let w = ins.imm;
+  if (w != 8 && w != 16 && w != 32) {
+    ircore.unsupported_op_refuse(id, "arm64");
+  }
+  if (id >= ir.K_VISHL) {
+    return ssa_vint_shift(ins, b, reg_of, s);
+  }
+  if (id < ir.K_VINEG || id == ir.K_VIMUL) {
+    return ssa_vint_bin(ins, b, reg_of, s);
+  }
+  if (b == "visplat") {
+    s = ssa_load(reg_of, ins.args[0], "x16", s);
+    let d = ssa_fdst(reg_of, ins.result);
+    s = s.write("    dup " + ssa_viarr(d, w) + ", w16\n");
+    return ssa_fput(reg_of, ins.result, d, s);
+  }
+  s = ssa_fread(reg_of, ins.args[0], "d1", s);
+  let a = ssa_fsrc(reg_of, ins.args[0], "d1");
+  if (b == "vineg" || b == "viabs") {
+    let d = ssa_fdst(reg_of, ins.result);
+    s = s.write("    " + (if (b == "vineg") { "neg " } else { "abs " }) + ssa_viarr(d, w) + ", " + ssa_viarr(a, w) + "\n");
+    return ssa_fput(reg_of, ins.result, d, s);
+  }
+  if (b == "vireplace") {
+    s = ssa_load(reg_of, ins.args[1], "x16", s);
+    let d = ssa_fdst(reg_of, ins.result);
+    if (a != d) {
+      s = s.write("    mov " + ssa_vbytes(d) + ", " + ssa_vbytes(a) + "\n");
+    }
+    s = s.write("    ins " + ssa_vi_lane(d, w, asmcore.ssa_lane_index(ins.str)) + ", w16\n");
+    return ssa_fput(reg_of, ins.result, d, s);
+  }
+  let d = ssa_dst(reg_of, ins.result);
+  if (b == "vibitmask") {
+    // One byte for each lane, then one bit of its place for each byte.
+    // The sum of a half is the mask of that half.
+    s = s.write("    cmlt " + ssa_viarr("d0", w) + ", " + ssa_viarr(a, w) + ", #0\n");
+    if (w == 32) {
+      s = s.write("    xtn v0.4h, v0.4s\n");
+    }
+    if (w != 8) {
+      s = s.write("    xtn v0.8b, v0.8h\n");
+    }
+    s = s.write("    ldr x16, =0x8040201008040201\n    dup v1.2d, x16\n    and v0.16b, v0.16b, v1.16b\n");
+    s = s.write("    ext v1.16b, v0.16b, v0.16b, #8\n    addv b0, v0.8b\n    addv b1, v1.8b\n    umov w16, v0.b[0]\n    umov w17, v1.b[0]\n");
+    if (w == 8) {
+      s = s.write("    orr " + d + ", x16, x17, lsl #8\n");
+    } else {
+      s = s.write("    mov " + d + ", x16\n");
+    }
+  } else {
+    // An i32 fills its register with its sign.
+    let read = if (b == "viextracts") { "smov " + d } else { "umov " + ssa_wreg(d) };
+    s = s.write("    " + read + ", " + ssa_vi_lane(a, w, asmcore.ssa_lane_index(ins.str)) + "\n");
+  }
+  return ssa_store(reg_of, ins.result, d, s);
+}
+
+// The arrangement of integer lanes of `w` bits in the register `d`.
+function ssa_viarr(d: string, w: i32): string {
+  let arr = if (w == 8) { ".16b" } else if (w == 16) { ".8h" } else { ".4s" };
+  return "v" + slice_unchecked(d, 1, d.len()) + arr;
+}
+
+function ssa_vi_lane(d: string, w: i32, lane: i32): string {
+  let t = if (w == 8) { ".b[" } else if (w == 16) { ".h[" } else { ".s[" };
+  return "v" + slice_unchecked(d, 1, d.len()) + t + util.i32_to_string(lane) + "]";
+}
+
+// A binary op on integer lanes. `mode` 1 has the operands in the other
+// order, and 2 gives the complement of the compare.
+function ssa_vint_bin(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let names: string[] = ["viadd", "visub", "viadds", "viaddu", "visubs", "visubu", "vimins", "viminu", "vimaxs", "vimaxu", "viavg", "vieq", "vine", "vilts", "viltu", "vimul"];
+  let mnems: string[] = ["add", "sub", "sqadd", "uqadd", "sqsub", "uqsub", "smin", "umin", "smax", "umax", "urhadd", "cmeq", "cmeq", "cmgt", "cmhi", "mul"];
+  let modes: i32[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 1, 1, 0];
+  let i = util.index_of_str(names, b);
+  let w = ins.imm;
+  // The other backends have no saturating form and no average for lanes
+  // of 32 bits, and no multiply for lanes of 8 bits. So this one refuses
+  // them too.
+  if (w == 32 && i >= 2 && i <= 5 || w == 32 && b == "viavg" || w == 8 && b == "vimul") {
+    ircore.unsupported_op_refuse(ir.kind_id(b), "arm64");
+  }
+  s = ssa_fread(reg_of, ins.args[0], "d1", s);
+  s = ssa_fread(reg_of, ins.args[1], "d2", s);
+  let d = ssa_fdst(reg_of, ins.result);
+  let vd = ssa_viarr(d, w);
+  let va = ssa_viarr(ssa_fsrc(reg_of, ins.args[0], "d1"), w);
+  let vb = ssa_viarr(ssa_fsrc(reg_of, ins.args[1], "d2"), w);
+  if (modes[i] == 1) {
+    s = s.write("    " + mnems[i] + " " + vd + ", " + vb + ", " + va + "\n");
+  } else {
+    s = s.write("    " + mnems[i] + " " + vd + ", " + va + ", " + vb + "\n");
+  }
+  if (modes[i] == 2) {
+    s = s.write("    not " + ssa_vbytes(d) + ", " + ssa_vbytes(d) + "\n");
+  }
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// A shift of each lane by one count. A shift to the right is a shift to
+// the left by the negative count. The x86-64 backend has no shift for
+// lanes of 8 bits, so this one refuses that width too.
+function ssa_vint_shift(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let w = ins.imm;
+  if (w == 8) {
+    ircore.unsupported_op_refuse(ir.kind_id(b), "arm64");
+  }
+  s = ssa_fread(reg_of, ins.args[0], "d1", s);
+  s = ssa_load(reg_of, ins.args[1], "x16", s);
+  let a = ssa_fsrc(reg_of, ins.args[0], "d1");
+  let d = ssa_fdst(reg_of, ins.result);
+  if (b != "vishl") {
+    s = s.write("    neg w16, w16\n");
+  }
+  s = s.write("    dup " + ssa_viarr("d2", w) + ", w16\n    " + (if (b == "vishrs") { "sshl " } else { "ushl " }) + ssa_viarr(d, w) + ", " + ssa_viarr(a, w) + ", " + ssa_viarr("d2", w) + "\n");
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
 function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   let b = ssa.lane_base(ins.str);
+  if (ir.is_lane_int_kind(ir.kind_id(b))) {
+    return ssa_vint(ins, b, reg_of, s);
+  }
   if (b == "vpermute") {
     return ssa_vpermute(ins, reg_of, s);
   }

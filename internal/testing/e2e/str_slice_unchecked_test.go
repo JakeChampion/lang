@@ -17,11 +17,11 @@ function main(): i32 {
     let s: string = mk();
     if (s.len() != 6) { return 1; }
 
-    // (a) The offsets are bytes: the cut takes the two bytes of é.
-    let cut: str = slice_unchecked(s, 1, 3);
+    // (a) Byte-honest: the cut lands mid-é and keeps the lead byte.
+    let cut: str = slice_unchecked(s, 0, 2);
     if (cut.len() != 2) { return 2; }
-    if (cut[0] != 195) { return 3; }
-    if (cut[1] != 169) { return 4; }
+    if (cut[0] != 104) { return 3; }
+    if (cut[1] != 195) { return 4; }
 
     // Boundary index forms: full range, empty range, suffix.
     if (slice_unchecked(s, 0, 6) != s) { return 5; }
@@ -137,24 +137,6 @@ var strSliceUncheckedTrapCases = []struct{ name, src string }{
     let t: str = slice_unchecked(s, lo, 1);
     return t.len();
 }`},
-	{"high_splits_a_character", `function main(): i32 {
-    let s: string = "héllo";
-    let hi: i32 = 2;
-    let t: str = slice_unchecked(s, 0, hi);
-    return t.len() - 2;
-}`},
-	{"low_splits_a_character", `function main(): i32 {
-    let s: string = "héllo";
-    let lo: i32 = 2;
-    let t: str = slice_unchecked(s, lo, 6);
-    return t.len() - 4;
-}`},
-	{"empty_inside_a_character", `function main(): i32 {
-    let s: string = "héllo";
-    let at: i32 = 2;
-    let t: str = slice_unchecked(s, at, at);
-    return t.len();
-}`},
 }
 
 func TestStrSliceUncheckedTrap(t *testing.T) {
@@ -188,6 +170,22 @@ func TestStrSliceUncheckedTrap(t *testing.T) {
 				}
 			})
 		})
+	}
+}
+
+// The table of std/hash/crc32 is a string constant whose bytes are not
+// UTF-8. The WAT writer must copy it with no slice of the constant.
+func TestWasmEmitsStringConstantOfRawBytes(t *testing.T) {
+	const src = `import "std/hash/crc32";
+import "std/string";
+
+function main(): i32 {
+    if (crc32.of("123456789".as_bytes()) != 0xcbf43926 as u32) { return 1; }
+    return 0;
+}
+`
+	if got := compileAndRunWasmbinMain(t, src); got != 0 {
+		t.Fatalf("wasm got %d, want 0", got)
 	}
 }
 

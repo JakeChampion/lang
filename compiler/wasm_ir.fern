@@ -944,9 +944,6 @@ function wasm_helper_symbol(name: string): string {
   if (name == "__fern_oob_abort") {
     return "$__fern_oob_abort";
   }
-  if (name == "__fern_str_oob_abort") {
-    return "$__fern_str_oob_abort";
-  }
   if (name == "__fern_rc_inc" || name == "__fern_str_own") {
     return "$__fern_rc_inc";
   }
@@ -4378,7 +4375,37 @@ function wasm_lane_const(width: i32, text: string): string {
   return "    f64.const " + text + "\n    f64x2.splat\n";
 }
 
+// An op on integer lanes of 8, 16 or 32 bits. An op that a width does
+// not have is a refusal that names the op.
+function emit_wasm_lane_int(o: ir.Op): string {
+  let w = o.width;
+  if (w != 8 && w != 16 && w != 32) {
+    return ircore.unsupported_op_refuse(o.kind_tag, "wasm");
+  }
+  let verbs: string[] = ["add", "sub", "add_sat_s", "add_sat_u", "sub_sat_s", "sub_sat_u", "min_s", "min_u", "max_s", "max_u", "avgr_u", "eq", "ne", "lt_s", "lt_u", "neg", "abs", "splat", "extract_lane_s", "extract_lane_u", "bitmask", "replace_lane", "mul", "shl", "shr_s", "shr_u"];
+  let verb = verbs[o.kind_tag - ir.LANE_INT_FIRST];
+  // Lanes of 32 bits have no saturating form and no average, and lanes
+  // of 8 bits have no multiply. The x86-64 backend has no shift for
+  // lanes of 8 bits, so this one refuses that width too.
+  if (w == 32 && (verb.contains("_sat_") || verb == "avgr_u") || w == 8 && (verb == "mul" || o.kind_tag >= ir.K_VISHL)) {
+    return ircore.unsupported_op_refuse(o.kind_tag, "wasm");
+  }
+  let shape = if (w == 8) { "i8x16" } else if (w == 16) { "i16x8" } else { "i32x4" };
+  if (verb.starts_with("extract_lane")) {
+    // A lane of 32 bits is the whole i32, so its read has no sign.
+    let read = if (w == 32) { "extract_lane" } else { verb };
+    return "    " + shape + "." + read + " " + util.i32_to_string(o.i32_imm) + "\n";
+  }
+  if (verb == "replace_lane") {
+    return "    " + shape + "." + verb + " " + util.i32_to_string(o.i32_imm) + "\n";
+  }
+  return "    " + shape + "." + verb + "\n";
+}
+
 function emit_wasm_lane(o: ir.Op, cx: WasmOpCtx): string {
+  if (ir.is_lane_int_kind(o.kind_tag)) {
+    return emit_wasm_lane_int(o);
+  }
   let k = ir.kind_name(o.kind_tag);
   if (k == "vextract_bits") {
     return "    " + (if (o.width == 32) { "i32x4" } else { "i64x2" }) + ".extract_lane " + util.i32_to_string(o.i32_imm) + "\n";
@@ -5124,7 +5151,7 @@ function decl_result_wat(fd: parser.FuncDecl, structs: irtables.StructTab): stri
   if (parser.is_float_type_name(fd.ret_type)) {
     return " (result f64)\n";
   }
-  if (fd.ret_type == "f64x2" || fd.ret_type == "f32x4") {
+  if (fd.ret_type == "f64x2" || fd.ret_type == "f32x4" || fd.ret_type == "u8x16") {
     return " (result v128)\n";
   }
   if (irtables.erased_passthrough_safe(fd)) {
@@ -9012,7 +9039,6 @@ pub function rc_runtime_helpers(heap_base: i32): string {
   let o = "";
   o += "  (func $__fern_oob_abort (result i32) (call $__fern_abort_arr) (unreachable))\n";
   o += "  (func $__fern_slice_abort (result i32) (call $__fern_abort_slice) (unreachable))\n";
-  o += "  (func $__fern_str_oob_abort (result i32) (call $__fern_abort_str) (unreachable))\n";
   o += "  (func $__alloc (param $n i32) (result i32)\n";
   o += "    (call $__fern_alloc (local.get $n)))\n";
   o += "  (func $__free (param $p i32) (result i32)\n";

@@ -623,6 +623,7 @@ lanes_methods                                        0
 lanes_receivers                                      0
 lanes_spill_pressure                                 0
 lanes_through_calls                                  0
+lanes_u8x16_ops                                      0
 len_on_empty_u8                                      0
 let_else_at_binding                                  0
 let_else_binding_of_call_result_is_copied            0
@@ -811,6 +812,7 @@ own_param_superseded_field_argument                  0
 own_param_superseded_field_let                       0
 own_param_superseded_field_nested                    0
 own_parameter_compared_then_moved                    0
+own_parameter_takes_a_string_literal                 0
 own_self_reassign_move                               0
 own_struct_update_reuse                              0
 own_takes_replaced_field_of_owned_base               0
@@ -1249,7 +1251,6 @@ single_alias                                         0
 single_alias_with_arg                                0
 single_insert                                        0
 slice_at_length                                      0
-slice_unchecked_aborts_on_a_split_character          0
 slice_unchecked_bytes                                0
 slice_unchecked_oob                                  0
 slice_views                                          0
@@ -1467,3 +1468,9 @@ callback_fresh_local_last_use                       0
 
 # 2026-11-12: owned_array_exchange_inputs has balanced allocations and zero live bytes on all three main targets.
 owned_array_exchange_inputs                        0
+# 2026-11-12: nested_owned_field_transfer has balanced allocations and zero live bytes on all three main targets.
+nested_owned_field_transfer                        0
+# 2026-11-12: generic_match_owned_payloads has balanced allocations and zero live bytes on all three main targets.
+generic_match_owned_payloads                      0
+# 2026-11-12: nested_owned_field_tuple has balanced allocations and zero live bytes on all three main targets.
+nested_owned_field_tuple                           0

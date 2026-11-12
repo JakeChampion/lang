@@ -7310,8 +7310,152 @@ function ssa_lane_sfx(width: i32): string {
   return "pd";
 }
 
+// The ops on integer lanes. `ins.imm` is the width of a lane: 8, 16 or 32
+// bits. An op that a width does not have is a refusal that names the op.
+function ssa_vint(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let id = ir.kind_id(b);
+  let w = ins.imm;
+  if (w != 8 && w != 16 && w != 32) {
+    ircore.unsupported_op_refuse(id, "x86-64");
+  }
+  if (id >= ir.K_VISHL) {
+    return ssa_vint_shift(ins, b, reg_of, s);
+  }
+  if (id < ir.K_VINEG || id == ir.K_VIMUL) {
+    return ssa_vint_bin(ins, b, reg_of, s);
+  }
+  if (b == "vineg" || b == "viabs") {
+    return ssa_vint_unary(ins, b, reg_of, s);
+  }
+  if (b == "visplat") {
+    s = ssa_load(reg_of, ins.args[0], "%rcx", s);
+    let d = ssa_fsrc(reg_of, ins.result, "%xmm0");
+    s = s.write("    movd %ecx, %xmm1\n");
+    if (w == 8) {
+      // A shuffle with a mask of zeros gives byte 0 to each lane.
+      s = s.write("    pxor %xmm2, %xmm2\n    pshufb %xmm2, %xmm1\n");
+    } else {
+      if (w == 16) {
+        s = s.write("    punpcklwd %xmm1, %xmm1\n");
+      }
+      s = s.write("    pshufd $0, %xmm1, %xmm1\n");
+    }
+    s = s.write("    movdqa %xmm1, " + d + "\n");
+    return ssa_fput(reg_of, ins.result, d, s);
+  }
+  let lane = util.i32_to_string(asmcore.ssa_lane_index(ins.str));
+  if (b == "vireplace") {
+    s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
+    s = ssa_load(reg_of, ins.args[1], "%rcx", s);
+    let a = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
+    let d = ssa_fsrc(reg_of, ins.result, "%xmm0");
+    if (a != d) {
+      s = s.write("    movdqa " + a + ", " + d + "\n");
+    }
+    s = s.write("    pinsr" + ssa_vint_sfx(w) + " $" + lane + ", %ecx, " + d + "\n");
+    return ssa_fput(reg_of, ins.result, d, s);
+  }
+  s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
+  let a = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
+  let d = ssa_dst(reg_of, ins.result);
+  let r = ssa_r32(d);
+  if (b == "vibitmask") {
+    if (w == 8) {
+      s = s.write("    pmovmskb " + a + ", " + r + "\n");
+    } else if (w == 32) {
+      s = s.write("    movmskps " + a + ", " + r + "\n");
+    } else {
+      // The signed pack keeps the sign of each lane in one byte.
+      s = s.write("    movdqa " + a + ", %xmm0\n    packsswb %xmm0, %xmm0\n    pmovmskb %xmm0, " + r + "\n    andl $255, " + r + "\n");
+    }
+  } else {
+    s = s.write("    pextr" + ssa_vint_sfx(w) + " $" + lane + ", " + a + ", " + r + "\n");
+    if (b == "viextracts") {
+      // An i32 fills its register with its sign.
+      let n = util.i32_to_string(64 - w);
+      s = s.write("    shlq $" + n + ", " + d + "\n    sarq $" + n + ", " + d + "\n");
+    }
+  }
+  return ssa_store(reg_of, ins.result, d, s);
+}
+
+// The letter of a lane width in a mnemonic.
+function ssa_vint_sfx(w: i32): string {
+  return if (w == 8) { "b" } else if (w == 16) { "w" } else { "d" };
+}
+
+// A binary op on integer lanes. The VEX form writes a third register, so
+// the result can share a register with an operand. `mode` 1 has the
+// operands in the other order, 2 gives the complement of the compare,
+// and 3 is the unsigned less-than: the complement of max(a, b) == a.
+function ssa_vint_bin(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let names: string[] = ["viadd", "visub", "viadds", "viaddu", "visubs", "visubu", "vimins", "viminu", "vimaxs", "vimaxu", "viavg", "vieq", "vine", "vilts", "viltu", "vimul"];
+  let mnems: string[] = ["vpadd", "vpsub", "vpadds", "vpaddus", "vpsubs", "vpsubus", "vpmins", "vpminu", "vpmaxs", "vpmaxu", "vpavg", "vpcmpeq", "vpcmpeq", "vpcmpgt", "vpmaxu", "vpmull"];
+  let modes: i32[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 1, 3, 0];
+  let i = util.index_of_str(names, b);
+  let w = ins.imm;
+  // Lanes of 32 bits have no saturating form and no average. Lanes of 8
+  // bits have no multiply.
+  if (w == 32 && i >= 2 && i <= 5 || w == 32 && b == "viavg" || w == 8 && b == "vimul") {
+    ircore.unsupported_op_refuse(ir.kind_id(b), "x86-64");
+  }
+  let sfx = ssa_vint_sfx(w);
+  let op = mnems[i] + sfx;
+  s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
+  s = ssa_fread(reg_of, ins.args[1], "%xmm2", s);
+  let x = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
+  let y = ssa_fsrc(reg_of, ins.args[1], "%xmm2");
+  let d = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  if (modes[i] == 0) {
+    s = s.write("    " + op + " " + y + ", " + x + ", " + d + "\n");
+  } else if (modes[i] == 1) {
+    s = s.write("    " + op + " " + x + ", " + y + ", " + d + "\n");
+  } else {
+    s = s.write("    " + op + " " + y + ", " + x + ", %xmm0\n");
+    if (modes[i] == 3) {
+      s = s.write("    vpcmpeq" + sfx + " " + x + ", %xmm0, %xmm0\n");
+    }
+    s = s.write("    vpcmpeqb %xmm2, %xmm2, %xmm2\n    vpxor %xmm2, %xmm0, " + d + "\n");
+  }
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// A shift of each lane by one count. Lanes of 8 bits have no shift
+// instruction, so that width is a refusal.
+function ssa_vint_shift(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  if (ins.imm == 8) {
+    ircore.unsupported_op_refuse(ir.kind_id(b), "x86-64");
+  }
+  let op = if (b == "vishl") { "vpsll" } else if (b == "vishrs") { "vpsra" } else { "vpsrl" };
+  s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
+  s = ssa_load(reg_of, ins.args[1], "%rcx", s);
+  let a = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
+  let d = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  s = s.write("    movd %ecx, %xmm2\n    " + op + ssa_vint_sfx(ins.imm) + " %xmm2, " + a + ", " + d + "\n");
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
+// The negative of each lane is 0 - a. The absolute value is the signed
+// maximum of a and its negative.
+function ssa_vint_unary(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let sfx = ssa_vint_sfx(ins.imm);
+  s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
+  let a = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
+  let d = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  s = s.write("    vpxor %xmm2, %xmm2, %xmm2\n");
+  if (b == "vineg") {
+    s = s.write("    vpsub" + sfx + " " + a + ", %xmm2, " + d + "\n");
+  } else {
+    s = s.write("    vpsub" + sfx + " " + a + ", %xmm2, %xmm2\n    vpmaxs" + sfx + " " + a + ", %xmm2, " + d + "\n");
+  }
+  return ssa_fput(reg_of, ins.result, d, s);
+}
+
 function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   let b = ssa.lane_base(ins.str);
+  if (ir.is_lane_int_kind(ir.kind_id(b))) {
+    return ssa_vint(ins, b, reg_of, s);
+  }
   if (b == "vpermute") {
     return ssa_vpermute(ins, reg_of, s);
   }

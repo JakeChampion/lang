@@ -1,5 +1,6 @@
 import "std/android/video/source";
 import "std/video/frame";
+import "android_content_file_check";
 
 @import("libandroid.so", "mock_source_env")
 function env(): usize;
@@ -60,26 +61,89 @@ function errors(e: usize, ctx: usize): i32 {
   return 0;
 }
 
-function success(e: usize, ctx: usize): i32 {
+function read_failure(src: source.Source, offset: i64, count: i32, expected: frame.VideoError): boolean {
+  return match (src.read_at(offset, count)) { Err(error) => error == expected, _ => false };
+}
+
+function read_bounds(src: source.Source): boolean {
+  for (offset, count, error) in [(-1i64, 1, frame.Header), (0i64, -1, frame.Header), (src.length + 1i64, 1, frame.Truncated), (0i64, 1048577, frame.Limit)] {
+    if (!read_failure(src, offset, count, error)) {
+      return false;
+    }
+  }
+  for value in [source.Source { ...src, fd: -1 }, source.Source { ...src, offset: -1i64 }, source.Source { ...src, length: -1i64 }] {
+    if (!read_failure(value, 0i64, 1, frame.Header)) {
+      return false;
+    }
+  }
+  return read_failure(source.Source { ...src, offset: 9223372036854775800i64, length: 16i64 }, 0i64, 1, frame.Limit);
+}
+
+function read_bytes(src: source.Source): boolean {
+  let Ok(bytes) = src.read_at(0i64, 1048576) else {
+    return false;
+  };
+  if (bytes.len() as i64 != src.length) {
+    return false;
+  }
+  for i in 0..bytes.len() {
+    if (bytes[i] as i64 != src.offset + i as i64) {
+      return false;
+    }
+  }
+  let Ok(partial) = src.read_at(src.length - 3i64, 12) else {
+    return false;
+  };
+  if (partial.len() != 3 || partial[0] as i64 != src.offset + src.length - 3i64 || partial[2] as i64 != src.offset + src.length - 1i64) {
+    return false;
+  }
+  return true;
+}
+
+function read_empty(src: source.Source): boolean {
+  let Ok(end) = src.read_at(src.length, 1) else {
+    return false;
+  };
+  let Ok(empty) = src.read_at(0i64, 0) else {
+    return false;
+  };
+  return end.len() == 0 && empty.len() == 0;
+}
+
+function read_checks(src: source.Source): boolean {
+  return read_bytes(src) && read_bounds(src) && read_empty(src) && verify(src.fd, src.offset, src.length) == 1;
+}
+
+function opened(src: source.Source, before: i32): boolean {
+  return clean() == 1 && closed() == 1 && descriptors() == before + 1 && verify(src.fd, src.offset, src.length) == 1;
+}
+
+function success_case(e: usize, ctx: usize, value: i32): i32 {
+  mode(value);
   let before = descriptors();
+  let src = match (source.open(e, ctx, "content://mock/video", 40i64)) { Ok(result) => result, Err(_) => { return 501; } };
+  if (!opened(src, before) || !read_checks(src)) {
+    let _ = src.close();
+    return 502;
+  }
+  if let Err(_) = src.close() {
+    return 503;
+  }
+  if (!read_failure(src, 0i64, 1, frame.Platform)) {
+    return 506;
+  }
+  if (descriptors() != before) {
+    return 504;
+  }
+  return 0;
+}
+
+function success(e: usize, ctx: usize): i32 {
   for _ in 0..1000 {
     for value in [0, 21] {
-      mode(value);
-      let src = match (source.open(e, ctx, "content://mock/video", 40i64)) {
-        Ok(result) => result,
-        Err(_) => { return 501; },
-      };
-      if (clean() != 1 || closed() != 1 || descriptors() != before + 1 || verify(src.fd, src.offset, src.length) != 1) {
-        return 502;
-      }
-      match (src.close()) {
-        Ok(_) => {},
-        _ => {
-          return 503;
-        }
-      }
-      if (descriptors() != before) {
-        return 504;
+      let result = success_case(e, ctx, value);
+      if (result != 0) {
+        return result;
       }
     }
   }
@@ -119,5 +183,9 @@ function main(): i32 {
   if (result != 0) {
     return result;
   }
-  return success(e, ctx);
+  let good = success(e, ctx);
+  if (good != 0) {
+    return good;
+  }
+  return android_content_file_check.run(e, ctx);
 }

@@ -23,6 +23,8 @@ let step = (own value: string): own string => value;
 ```
 
 The same result annotation applies to a local named function.
+Type inference reads the payload type inside this annotation.
+The callback must still satisfy the checked result contract.
 
 An ordinary result does not carry this promise.
 An owned-result function can satisfy an ordinary-result function type.
@@ -33,6 +35,8 @@ A parameter keeps its ownership mode during assignment.
 A borrowed resource parameter cannot become an owned result.
 An aggregate or local alias cannot hide a resource loan.
 Match payloads retain the loan from a borrowed scrutinee.
+A generic parameter can hold a resource, so its signature cannot prove a result fresh.
+This rule includes an ordinary result that wraps the parameter in an option or result.
 This also applies to nested matches and local aliases inside an arm.
 
 A fresh aggregate can contain copied data parts when those parts cannot hold a handle.
@@ -97,6 +101,20 @@ A cleanup of a separate field remains valid.
 A checked result remains owned after a local binding.
 Its nested resource fields can transfer at their last use.
 Earlier scalar field copies do not retain a resource loan.
+
+A returned record can replace an owned input field through a local alias.
+The nested record can transfer a field of that alias into an owned argument.
+The alias must remain unchanged and appear only inside that nested replacement.
+The returned record must replace the complete input field that owns the alias.
+Other aliases, callbacks, deferred cleanup, and repeated resource reads preserve the refusal.
+
+A reusable closure borrows its outer owner, so its nested field cannot transfer.
+An unrelated resource sibling can still prevent an owned result.
+The `nested_owned_field_transfer` case checks the transfer and resource cleanup.
+
+A tuple result can contain the same transfer within another tuple.
+Other tuple parts must preserve the same owner and alias restrictions.
+The `nested_owned_field_tuple` case checks transfer and cleanup on all three targets.
 
 A numeric, boolean, or character COW array field copy does not retain a resource loan.
 This rule includes nested arrays.

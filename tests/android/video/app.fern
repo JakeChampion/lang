@@ -6,8 +6,11 @@ import "std/android/video/capabilities";
 import "std/video/frame";
 import "std/log";
 import "./roundtrip";
+import "./audio_pcm";
+import "./audio_path";
+import "./content_read";
 
-struct App { ctx: usize, playback: Option[player.Player], fd: i32, content: Option[source.Source], stage: i32, resume_ns: i64, started_ns: i64, done: boolean }
+struct App { ctx: usize, playback: Option[player.Player], fd: i32, content: Option[source.Source], sound: Option[audio_path.State], stage: i32, resume_ns: i64, started_ns: i64, done: boolean }
 
 pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size: usize): void {
   android.start(activity, app_main_entry());
@@ -17,12 +20,15 @@ pub function ANativeActivity_onCreate(activity: usize, saved: usize, saved_size:
 function app_main_entry(): usize;
 
 function app_main(ctx: usize): usize {
-  let last = android.run(ctx, App { ctx: ctx, playback: None, fd: -1, content: None, stage: 0, resume_ns: 0i64, started_ns: monotonic_ns(), done: false }, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => 5);
+  let last = android.run(ctx, App { ctx: ctx, playback: None, fd: -1, content: None, sound: None, stage: 0, resume_ns: 0i64, started_ns: monotonic_ns(), done: false }, (own s: App, e: android.Event): App => step(s, e), (s: App): i32 => 5);
   let _ = cleanup(last);
   return 0 as usize;
 }
 
 function cleanup(own s: App): App {
+  if let Some(sound) = s.sound {
+    sound.close();
+  }
   match (s.playback) {
     Some(p) => {
       let _ = p.close();
@@ -38,7 +44,7 @@ function cleanup(own s: App): App {
   if (s.fd >= 0) {
     roundtrip.close_file(s.fd);
   }
-  return App { ...s, playback: None, fd: -1, content: None };
+  return App { ...s, playback: None, fd: -1, content: None, sound: None };
 }
 
 function fail(own s: App, error: frame.VideoError): App {
@@ -51,6 +57,10 @@ function start(own s: App, window: android.Window): App {
   let env = android.env(s.ctx);
   let api = android.sdk_version(s.ctx);
   log.warn("videotest: sdk=" + api.to_string() + " directory=" + base);
+  let path = android.intent_extra(s.ctx, "av_path");
+  if (path != "") {
+    return start_av(s, window, path);
+  }
   let uri = android.intent_extra(s.ctx, "uri");
   if (uri != "") {
     return start_content(s, window, uri);
@@ -67,12 +77,29 @@ function start(own s: App, window: android.Window): App {
     },
     _ => {}
   }
-  let fd = match (roundtrip.open_file(base + "/byte.mp4", false)) { Ok(value) => value, Err(e) => { return fail(s, e); } };
+  return start_file(s, window, base + "/byte.mp4");
+}
+
+function start_file(own s: App, window: android.Window, path: string): App {
+  let env = android.env(s.ctx);
+  let api = android.sdk_version(s.ctx);
+  let fd = match (roundtrip.open_file(path, false)) { Ok(value) => value, Err(e) => { return fail(s, e); } };
   let p = match (player.open(env, api, fd, 0i64, roundtrip.length(fd), window.ptr, capabilities.PreferHardware, frame.default_limits())) {
     Ok(value) => value, Err(e) => { roundtrip.close_file(fd); return fail(s, e); },
   };
   log.warn("videotest: decoder name=" + p.info.name + " implementation=" + p.info.implementation.to_debug());
   return App { ...s, playback: Some(p), fd: fd, started_ns: monotonic_ns() };
+}
+
+function start_av(own s: App, window: android.Window, path: string): App {
+  let block = match (audio_pcm.read(path)) { Ok(value) => value, Err(error) => { return fail(s, error); } };
+  let opened = start_file(s, window, path);
+  if (opened.done) {
+    return opened;
+  }
+  let sound = match (audio_path.create(block, 0i64)) { Ok(value) => value, Err(error) => { return fail(opened, error); } };
+  log.warn("videotest: native AAC frames=" + (sound.samples.len() / 2).to_string() + " rate=48000 channels=2");
+  return App { ...opened, sound: Some(sound) };
 }
 
 function start_content(own s: App, window: android.Window, uri: string): App {
@@ -81,6 +108,11 @@ function start_content(own s: App, window: android.Window, uri: string): App {
     Ok(value) => value,
     Err(e) => { return fail(s, e); },
   };
+  let checked = match (content_read.inspect(src)) {
+    Ok(value) => value,
+    Err(e) => { let _ = src.close(); return fail(s, e); },
+  };
+  log.warn("videotest: native content bytes=" + checked.bytes.to_string() + " sha256=" + checked.digest);
   let p = match (player.open(env, android.sdk_version(s.ctx), src.fd, src.offset, src.length, window.ptr, capabilities.PreferHardware, frame.default_limits())) {
     Ok(value) => value,
     Err(e) => { let _ = src.close(); return fail(s, e); },
@@ -90,7 +122,81 @@ function start_content(own s: App, window: android.Window, uri: string): App {
   return App { ...s, playback: Some(p), content: Some(src), started_ns: monotonic_ns() };
 }
 
+function pause_sound(own s: App, now: i64): App {
+  if let Some(sound) = s.sound {
+    return App { ...s, sound: Some(audio_path.State { ...sound }.pause(now)) };
+  }
+  return s;
+}
+
+function resume_sound(own s: App, now: i64): App {
+  if let Some(sound) = s.sound {
+    let resumed = audio_path.State { ...sound }.resume(now);
+    s = App { ...s, sound: Some(resumed) };
+    if (resumed.failed) {
+      return fail(s, frame.Platform);
+    }
+  }
+  return s;
+}
+
+function pump_sound(own s: App): App {
+  if let Some(p) = s.playback {
+    if (p.paused) {
+      return s;
+    }
+  }
+  if let Some(sound) = s.sound {
+    let next = audio_path.pump(audio_path.State { ...sound });
+    s = App { ...s, sound: Some(next) };
+    if (next.failed) {
+      return fail(s, frame.Platform);
+    }
+  }
+  return s;
+}
+
+function anchor(s: App, own p: player.Player): player.Tick {
+  if let Some(sound) = s.sound {
+    if (!p.output_eos && !p.paused) {
+      return p.synchronize_music(sound.music, sound.origin);
+    }
+  }
+  return player.Tick { player: p, event: player.Idle };
+}
+
+function seek_sound(own s: App, target_us: i64): App {
+  let Some(sound) = s.sound else {
+    return s;
+  };
+  let block = sound.block();
+  sound.close();
+  s = App { ...s, sound: None };
+  let next = match (audio_path.create(block, target_us)) { Ok(value) => value, Err(error) => { return fail(s, error); } };
+  return App { ...s, sound: Some(next) };
+}
+
+function report_sound(sound: audio_path.State): void {
+  log.warn("videotest: native AV submitted_frames=" + ((sound.at - sound.first) / 2).to_string() + " origin_us=" + sound.origin.media_us.to_string());
+  match (sound.music.timestamp()) {
+    Some(stamp) => {
+      log.warn("videotest: native AV timestamp frames=" + stamp.frame_position.to_string() + " monotonic_ns=" + stamp.monotonic_ns.to_string());
+    },
+    None => {
+      log.warn("videotest: native AV timestamp unavailable");
+    }
+  }
+}
+
+function finish_sound(own s: App): App {
+  if let Some(sound) = s.sound {
+    sound.close();
+  }
+  return App { ...s, sound: None };
+}
+
 function pause_and_replace(own s: App, own p: player.Player, now: i64): App {
+  s = pause_sound(s, now);
   let window = p.window;
   let paused = p.pause(now);
   let replaced = paused.player.replace_surface(window);
@@ -110,6 +216,10 @@ function tick(own s: App): App {
   };
   let p = player.Player { ...borrowed };
   let now = monotonic_ns();
+  s = pump_sound(s);
+  if (s.done) {
+    return s;
+  }
   if (now - s.started_ns > 20000000000i64) {
     return fail(s, frame.Platform);
   }
@@ -117,13 +227,29 @@ function tick(own s: App): App {
     return pause_and_replace(s, player.Player { ...p }, now);
   }
   if (s.stage == 1) {
-    if (now < s.resume_ns) {
-      return s;
-    }
-    let resumed = player.Player { ...p }.resume(now);
-    return App { ...s, playback: Some(resumed.player), stage: 2 };
+    return after_pause(s, player.Player { ...p }, now);
   }
-  let next = player.Player { ...p }.tick(now);
+  return advance(s, player.Player { ...p }, now);
+}
+
+function after_pause(own s: App, own p: player.Player, now: i64): App {
+  if (now < s.resume_ns) {
+    return s;
+  }
+  s = resume_sound(s, now);
+  if (s.done) {
+    return s;
+  }
+  let resumed = p.resume(now);
+  return App { ...s, playback: Some(resumed.player), stage: 2 };
+}
+
+function advance(own s: App, own p: player.Player, now: i64): App {
+  let anchored = anchor(s, p);
+  if let player.Failure(error) = anchored.event {
+    return fail(App { ...s, playback: Some(anchored.player) }, error);
+  }
+  let next = anchored.player.tick(now);
   s = App { ...s, playback: Some(next.player) };
   match (next.event) {
     player.Failure(e) => {
@@ -139,6 +265,12 @@ function tick(own s: App): App {
 }
 
 function ended(own s: App, own p: player.Player): App {
+  if let Some(sound) = s.sound {
+    if (!sound.ready(monotonic_ns())) {
+      return s;
+    }
+    report_sound(sound);
+  }
   if (s.stage < 2 || p.scheduled_frames == 0i64) {
     return fail(s, frame.Header);
   }
@@ -153,14 +285,14 @@ function ended(own s: App, own p: player.Player): App {
       },
       _ => {}
     }
-    return App { ...s, playback: Some(seek.player), stage: 3 };
+    return seek_sound(App { ...s, playback: Some(seek.player), stage: 3 }, 100000i64);
   }
   if (p.scheduled_frames + p.dropped_frames != 24i64) {
     return fail(s, frame.Header);
   }
   log.warn("videotest: playback frames=" + p.scheduled_frames.to_string() + " dropped=" + p.dropped_frames.to_string() + " elapsed_ns=" + (monotonic_ns() - s.started_ns).to_string());
   log.warn("videotest: roundtrip complete");
-  return App { ...s, done: true };
+  return finish_sound(App { ...s, done: true });
 }
 
 function step(own s: App, e: android.Event): App {
@@ -178,29 +310,34 @@ function step(own s: App, e: android.Event): App {
       return tick(s);
     },
     android.Pause => {
-      match (s.playback) {
-        Some(p) => {
-          let result = player.Player { ...p }.pause(monotonic_ns());
-          return App { ...s, playback: Some(result.player) };
-        },
-        None => {
-          return s;
-        }
-      }
+      return pause_playback(s, monotonic_ns());
     },
     android.Resume => {
-      match (s.playback) {
-        Some(p) => {
-          let result = player.Player { ...p }.resume(monotonic_ns());
-          return App { ...s, playback: Some(result.player) };
-        },
-        None => {
-          return s;
-        }
-      }
+      return resume_playback(s, monotonic_ns());
     },
     _ => {
       return s;
     }
   }
+}
+
+function pause_playback(own s: App, now: i64): App {
+  s = pause_sound(s, now);
+  if let Some(p) = s.playback {
+    let result = player.Player { ...p }.pause(now);
+    return App { ...s, playback: Some(result.player) };
+  }
+  return s;
+}
+
+function resume_playback(own s: App, now: i64): App {
+  s = resume_sound(s, now);
+  if (s.done) {
+    return s;
+  }
+  if let Some(p) = s.playback {
+    let result = player.Player { ...p }.resume(now);
+    return App { ...s, playback: Some(result.player) };
+  }
+  return s;
 }

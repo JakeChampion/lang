@@ -551,6 +551,32 @@ is the number of slots it leaves.
 | `atomic_fetch_add` | 523 | 2 | 1 |
 | `atomic_cas` | 524 | 3 | 1 |
 | `secondary_entry` | 525 | 0 | 1 |
+| `viadd` | 526 | 2 | 1 |
+| `visub` | 527 | 2 | 1 |
+| `viadds` | 528 | 2 | 1 |
+| `viaddu` | 529 | 2 | 1 |
+| `visubs` | 530 | 2 | 1 |
+| `visubu` | 531 | 2 | 1 |
+| `vimins` | 532 | 2 | 1 |
+| `viminu` | 533 | 2 | 1 |
+| `vimaxs` | 534 | 2 | 1 |
+| `vimaxu` | 535 | 2 | 1 |
+| `viavg` | 536 | 2 | 1 |
+| `vieq` | 537 | 2 | 1 |
+| `vine` | 538 | 2 | 1 |
+| `vilts` | 539 | 2 | 1 |
+| `viltu` | 540 | 2 | 1 |
+| `vineg` | 541 | 1 | 1 |
+| `viabs` | 542 | 1 | 1 |
+| `visplat` | 543 | 1 | 1 |
+| `viextracts` | 544 | 1 | 1 |
+| `viextractu` | 545 | 1 | 1 |
+| `vibitmask` | 546 | 1 | 1 |
+| `vireplace` | 547 | 2 | 1 |
+| `vimul` | 548 | 2 | 1 |
+| `vishl` | 549 | 2 | 1 |
+| `vishrs` | 550 | 2 | 1 |
+| `vishru` | 551 | 2 | 1 |
 <!-- END ir_effects_run -->
 
 `vpermute` preserves all lane bits in two 128-bit inputs.
@@ -561,6 +587,20 @@ The width is 32 or 64 bits per lane.
 `vextract_bits` reads the indexed lane as an unsigned integer of the same width.
 Its immediate is a lane index from zero to the lane count minus one.
 It preserves NaN payloads and signed zero without a float conversion.
+
+The ops from `viadd` to `vireplace` are the ops on integer lanes.
+The width of an op is the width of a lane.
+`viadds`, `viaddu`, `visubs` and `visubu` saturate, and the last letter is the sign.
+`viavg` is the unsigned average, rounded up.
+`vieq`, `vine`, `vilts` and `viltu` give a lane of ones where the compare holds, and a lane of zeros where it does not.
+`visplat` takes an `i32` and gives its low bits to each lane.
+`viextracts` and `viextractu` read the indexed lane as an `i32`, with its sign or with zeros.
+`vireplace` writes the low bits of an `i32` to the indexed lane.
+`vibitmask` gives an `i32` with the top bit of lane `k` in bit `k`.
+The bitwise ops, `vselect`, `vload` and `vstore` do not read the lanes, so they are also the ops for integer lanes.
+`vimul` gives the low bits of each product. `vishl`, `vishrs` and `vishru` take the lanes and one `i32` count, and shift each lane by that count.
+A backend has code for lanes of 8, 16 and 32 bits.
+Each backend refuses the same ops by name: the saturating ops and `viavg` for lanes of 32 bits, and `vimul` and the shifts for lanes of 8 bits.
 
 ## How this is kept true
 

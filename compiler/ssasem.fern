@@ -1286,7 +1286,7 @@ function packed_lane_group(ins: ssa.SInst, elem: typeinfo.Type, t: typeinfo.Type
 pub function lane_group(elem: typeinfo.Type, t: typeinfo.Type): boolean {
   if let typeinfo.TypeLanes(l) = t {
     if let typeinfo.TypeFloat(e) = elem {
-      return e.width == l.width;
+      return l.kind == typeinfo.LANE_FLOAT && e.width == l.width;
     }
   }
   return false;
@@ -2537,7 +2537,7 @@ function leaf_key(t: typeinfo.Type): string {
     return c.value;
   }
   if let typeinfo.TypeLanes(l) = t {
-    return typeinfo.lanes_spelling(l.width);
+    return typeinfo.lanes_spelling(l.width, l.kind);
   }
   if (typeinfo.is_void(t)) {
     return "void";

@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+if [ -n "${FERN:-}" ]; then
+  compiler=$FERN
+else
+  make bin/fern-selfhost
+  compiler="$PWD/bin/fern-selfhost"
+fi
+case "$(uname -sm)" in
+  'Linux x86_64') target=x86-64-linux; android=x86-64-android ;;
+  'Linux aarch64') target=arm64-linux; android=arm64-android ;;
+  'Darwin arm64') target=arm64-darwin; android= ;;
+  *) echo 'unsupported host' >&2; exit 1 ;;
+esac
+build=build/video/content-reads
+mkdir -p "$build"
+stdlib="$PWD/internal/stdlib"
+portable=tests/android/video/content_read_test.fern
+"$compiler" -stdlib "$stdlib" -target "$target" -sanitize -o "$build/hash" "$portable"
+"$build/hash"
+"$compiler" -stdlib "$stdlib" -target wasm32-wasi -o "$build/hash.wasm" "$portable"
+wasmtime run "$build/hash.wasm"
+entry=tests/stdlib/android_video_source_mock_test.fern
+"$compiler" -stdlib "$stdlib" -target arm64-android -shared -export main -o "$build/source-api.so" "$entry"
+if [ -n "$android" ]; then
+  scripts/libandroid-stubs scripts/video-reference/source-jni-mock.c > "$build/stubs.c"
+  for c_variant in normal ubsan; do
+    directory="$build/$c_variant"
+    mkdir -p "$directory"
+    flags=()
+    if [ "$c_variant" = ubsan ]; then flags=(-fsanitize=undefined -fno-sanitize-recover=all); fi
+    cc -shared -fPIC -Wall -Wextra -Werror "${flags[@]}" -o "$directory/libandroid.so" scripts/video-reference/source-jni-mock.c "$build/stubs.c"
+    ln -sf "$(cc -print-file-name=libc.so.6)" "$directory/libc.so"
+  done
+  for variant in normal sanitize; do
+    flags=()
+    if [ "$variant" = sanitize ]; then flags=(-sanitize); fi
+    "$compiler" -stdlib "$stdlib" -target "$android" -shared "${flags[@]}" -export main -o "$build/$variant.so" "$entry"
+    for c_variant in normal ubsan; do
+      LD_LIBRARY_PATH="$PWD/$build/$c_variant${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" python3 - "$build/$variant.so" <<'PYTHON'
+import ctypes
+import sys
+result = ctypes.CDLL('./' + sys.argv[1]).main()
+if result != 0:
+    raise SystemExit(f'Android content source test failed at check {result}')
+print('Android content ranges, positional reads, native packet indexes, and cleanup passed')
+PYTHON
+    done
+  done
+fi
+python3 -m unittest discover -s tests/android/video -p test_emulator_check.py

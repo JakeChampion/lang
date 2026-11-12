@@ -1,0 +1,18 @@
+// Emit the exact PCM that the Android integration fixture supplies to AAudio.
+import "../../tests/android/video/audio_pcm";
+import "std/hex";
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 2) {
+    return 1;
+  }
+  let block = match (audio_pcm.read(argv[1])) { Ok(value) => value, Err(error) => { eprint(error.message()); return 3; } };
+  print(block.format.sample_rate.to_string() + " " + block.format.channels.to_string() + " " + (block.samples.len() / block.format.channels).to_string());
+  let bytes: u8[] = [];
+  for sample in block.samples {
+    bytes = bytes.append((sample & 255) as u8).append((sample >> 8 & 255) as u8);
+  }
+  print(hex.encode(bytes));
+  return 0;
+}
