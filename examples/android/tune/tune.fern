@@ -13,17 +13,37 @@ import "std/unicode";
 // A file of the library: its title, its artist, its album and its number
 // on the album, from its tags or from its path. `by` is the artist that
 // the album is under. `format` is the kind of the file, and `ms` is its
-// length.
-pub struct Track { path: string, title: string, artist: string, album: string, by: string, number: i32, year: i32, format: string, ms: i64 }
+// length. `genre` is "" when the file gives none. `artists` has each name
+// of `artist`.
+pub struct Track { path: string, title: string, artist: string, album: string, by: string, number: i32, year: i32, format: string, ms: i64, genre: string, artists: string[] }
+
+// The names of the artists of the text `artist` of a tag: the parts
+// between `;`, ` / `, ` feat. ` and ` ft. `.
+pub function names(artist: string): string[] {
+  let text = artist;
+  for mark in [" feat. ", " ft. ", " / ", ";"] {
+    text = text.replace(mark, "\n");
+  }
+  let out: string[] = [];
+  for part in text.split("\n") {
+    let name = part.trim().to_owned();
+    if (name.len() > 0 && !out.contains(name)) {
+      out = out.append(name);
+    }
+  }
+  return out;
+}
 
 // A track with a title only, by no artist and on no album.
 pub function plain(path: string, title: string, format: string, ms: i64): Track {
-  return Track { path: path, title: title, artist: UNKNOWN_ARTIST, album: UNKNOWN_ALBUM, by: UNKNOWN_ARTIST, number: 0, year: 0, format: format, ms: ms };
+  return Track { path: path, title: title, artist: UNKNOWN_ARTIST, album: UNKNOWN_ALBUM, by: UNKNOWN_ARTIST, number: 0, year: 0, format: format, ms: ms, genre: "", artists: [UNKNOWN_ARTIST] };
 }
 
 pub const UNKNOWN_ARTIST: string = "Unknown artist";
 
 pub const UNKNOWN_ALBUM: string = "Unknown album";
+
+pub const UNKNOWN_GENRE: string = "Unknown genre";
 
 // What the player does at the end of the queue or of a track: it stops,
 // it plays the queue again, or it plays the track again.
@@ -41,6 +61,20 @@ pub const ARTISTS: i32 = 1;
 pub const ALBUMS: i32 = 2;
 
 pub const PLAYLISTS: i32 = 3;
+
+pub const GENRES: i32 = 4;
+
+pub const FOLDERS: i32 = 5;
+
+// The order of the songs and of the albums: that of the library, by the
+// name, with the last year first, or with the longest first.
+pub const BY_ALBUM: i32 = 0;
+
+pub const BY_NAME: i32 = 1;
+
+pub const BY_YEAR: i32 = 2;
+
+pub const BY_LENGTH: i32 = 3;
 
 // The name of the playlist of the songs that the person likes.
 pub const FAVORITES: string = "Favorites";
@@ -86,7 +120,10 @@ pub enum Want { Load(i32), Resume, Hold, Seek(f64), Scan, Grant, List(string), K
 // `tracks` is in the order of the artists, the albums and the numbers.
 // `scan` has the files that the player did not read yet. `tab` is the
 // list that shows. `artist` is the artist whose albums show, and `album`
-// is the album whose songs show, or "". `open` tells that the screen of the
+// is the album whose songs show, under the artist `album_by`, or "".
+// `genre` is the genre whose songs show, and `place` is the directory
+// whose songs show, or "". `sort` is the order of the songs and of the
+// albums. `open` tells that the screen of the
 // track shows. `current` is the number of the track that plays, or -1.
 // `sound` plays the track, and `pending` has the samples that the sound
 // did not take yet.
@@ -121,6 +158,10 @@ pub struct Model {
   tab: i32,
   artist: string,
   album: string,
+  album_by: string,
+  genre: string,
+  place: string,
+  sort: i32,
   query: string,
   open: boolean,
   current: i32,
@@ -166,7 +207,7 @@ pub struct Model {
 
 // A player with no track yet, which reads the files `scan`.
 pub function start(scan: string[]): Model {
-  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, menu: -1, lined: false, error: "", wants: [], sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false, covers: [], bare: [], pictures: [], art: None, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: false, wanted: [], playlists: [], list: "", adding: [], naming: false, name: "" };
+  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", album_by: "", genre: "", place: "", sort: BY_ALBUM, query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, menu: -1, lined: false, error: "", wants: [], sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false, covers: [], bare: [], pictures: [], art: None, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: false, wanted: [], playlists: [], list: "", adding: [], naming: false, name: "" };
 }
 
 // A player with the tracks `tracks` and the playlists `playlists` that it
@@ -220,8 +261,9 @@ pub function start_in(home: string, folder: string): Model {
 // that plays in the favorites, or takes it out. `Imported` comes with the
 // name and the paths of a playlist file that the scan found. `Export`
 // writes the playlist that shows as an M3U file, and `Exported` comes with
-// the words that tell the person the result.
-pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean), Menu(i32), MenuClosed, PlayNext, Enqueue, Lined(boolean), Jump(i32), Drop(i32), Closing, Walk(string[]), Listed(string, string[]), OpenList(string), AddTo, SaveQueue, ToList(string), NewList, Named(string), Create, Unlist(i32), DeleteList, Favorite, Imported(string, string[]), Export, Exported(string) }
+// the words that tell the person the result. `Genre` and `Place` show the
+// songs of a genre and of a directory. `Sort` goes to the next order.
+pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean), Menu(i32), MenuClosed, PlayNext, Enqueue, Lined(boolean), Jump(i32), Drop(i32), Closing, Walk(string[]), Listed(string, string[]), OpenList(string), AddTo, SaveQueue, ToList(string), NewList, Named(string), Create, Unlist(i32), DeleteList, Favorite, Imported(string, string[]), Export, Exported(string), Genre(string), Place(string), Sort }
 
 // The key of the album of a track: the artist that the album is under,
 // and its name.
@@ -362,12 +404,77 @@ function wanted(m: Model): string {
   return m.query.trim().to_lower();
 }
 
-// The track is on the album that shows, or by the artist that shows.
+// The player with no artist, album, genre, directory or playlist on show.
+function at_top(m: Model): Model {
+  return Model { ...m, artist: "", album: "", album_by: "", genre: "", place: "", list: "" };
+}
+
+// A list of the library shows, not a part of one.
+function rooted(m: Model): boolean {
+  return m.artist.len() == 0 && m.album.len() == 0 && m.genre.len() == 0 && m.place.len() == 0 && m.list.len() == 0;
+}
+
+// The track is by the artist `name`: its album is under that name, or its
+// artists have that name.
+function by(t: Track, name: string): boolean {
+  return t.by == name || t.artists.contains(name);
+}
+
+pub function genre_of(t: Track): string {
+  if (t.genre.len() == 0) {
+    return UNKNOWN_GENRE;
+  }
+  return t.genre;
+}
+
+// The track is on the album, of the genre, in the directory or by the
+// artist that shows.
 function in_view(m: Model, t: Track): boolean {
   if (m.album.len() > 0) {
-    return t.album == m.album && t.by == m.artist;
+    return t.album == m.album && t.by == m.album_by;
   }
-  return m.artist.len() == 0 || t.by == m.artist;
+  if (m.genre.len() > 0) {
+    return genre_of(t) == m.genre;
+  }
+  if (m.place.len() > 0) {
+    return dir_of(t.path) == m.place;
+  }
+  return m.artist.len() == 0 || by(t, m.artist);
+}
+
+function low(c: u8): i32 {
+  if (c >= b'A' && c <= b'Z') {
+    return c as i32 + 32;
+  }
+  return c as i32;
+}
+
+// Less than 0 when `a` is before `b`, and 0 when they are the same. A
+// capital letter of ASCII is the same as its small letter.
+function order(a: string, b: string): i32 {
+  for i in 0..a.len().min(b.len()) {
+    let d = low(a[i]) - low(b[i]);
+    if (d != 0) {
+      return d;
+    }
+  }
+  return a.len() - b.len();
+}
+
+// The tracks `shown` in the order `sort`. The order of the library is the
+// one that `shown` has.
+function sorted(m: Model, shown: i32[]): i32[] {
+  let tracks = m.tracks;
+  if (m.sort == BY_NAME) {
+    return cmp.sort_by(shown, (a: i32, b: i32): i32 => order(tracks[a].title, tracks[b].title));
+  }
+  if (m.sort == BY_YEAR) {
+    return cmp.sort_by(shown, (a: i32, b: i32): i32 => tracks[b].year - tracks[a].year);
+  }
+  if (m.sort == BY_LENGTH) {
+    return cmp.sort_by(shown, (a: i32, b: i32): i32 => (tracks[b].ms - tracks[a].ms) as i32);
+  }
+  return shown;
 }
 
 // The numbers of the tracks that show: those of the album or of the artist
@@ -384,31 +491,95 @@ pub function songs(m: Model): i32[] {
       out = out.append(i);
     }
   }
-  return out;
+  if (m.album.len() > 0) {
+    return out;
+  }
+  return sorted(m, out);
+}
+
+// Groups, with the place of each name in them.
+struct Tally { groups: Group[], at: Map[string, i32] }
+
+// The tally with one more song of the track `t` under `name`. `by` of a
+// group is the key of the album of its last song, so the songs of an album
+// count one album when they are one after the other.
+function tallied(own tally: Tally, name: string, t: Track): Tally {
+  let key = album_key(t.by, t.album);
+  let Tally { groups, at } = tally;
+  let Some(i) = at.get(name) else {
+    let n = groups.len();
+    return Tally { groups: groups.append(Group { name: name, by: key, songs: 1, albums: 1, year: t.year }), at: at.insert(name, n) };
+  };
+  let g = groups[i];
+  let albums = g.albums;
+  if (g.by != key) {
+    albums += 1;
+  }
+  return Tally { groups: groups.with(i, Group { ...g, by: key, songs: g.songs + 1, albums: albums, year: g.year.max(t.year) }), at: at };
+}
+
+function by_name(groups: Group[]): Group[] {
+  return cmp.sort_by(groups, (a: Group, b: Group): i32 => order(a.name, b.name));
 }
 
 // The artists whose name has the text of the search, each with the number
-// of its albums and of its songs. The tracks of an artist are one after
-// the other.
+// of its albums and of its songs. An artist is the name that an album is
+// under, or one of the artists of a track.
 pub function artists(m: Model): Group[] {
   let want = wanted(m);
-  let out: Group[] = [];
-  let album = "";
+  let out = Tally { groups: [], at: map_new(64) };
   for t in m.tracks {
-    let n = out.len();
-    if (n > 0 && out[n - 1].name == t.by) {
-      let g = out[n - 1];
-      let albums = g.albums;
-      if (t.album != album) {
-        albums += 1;
-      }
-      out = out.with(n - 1, Group { ...g, songs: g.songs + 1, albums: albums });
-    } else if (has(t.by, want)) {
-      out = out.append(Group { name: t.by, by: t.by, songs: 1, albums: 1, year: 0 });
+    if (has(t.by, want)) {
+      out = tallied(out, t.by, t);
     }
-    album = t.album;
+    for name in t.artists {
+      if (name != t.by && has(name, want)) {
+        out = tallied(out, name, t);
+      }
+    }
   }
-  return out;
+  return by_name(out.groups);
+}
+
+// The genres whose name has the text of the search.
+pub function genres(m: Model): Group[] {
+  let want = wanted(m);
+  let out = Tally { groups: [], at: map_new(64) };
+  for t in m.tracks {
+    let name = genre_of(t);
+    if (has(name, want)) {
+      out = tallied(out, name, t);
+    }
+  }
+  return by_name(out.groups);
+}
+
+// The directories of the tracks whose path has the text of the search.
+pub function folders(m: Model): Group[] {
+  let want = wanted(m);
+  let out = Tally { groups: [], at: map_new(64) };
+  for t in m.tracks {
+    let name = dir_of(t.path);
+    if (has(name, want)) {
+      out = tallied(out, name, t);
+    }
+  }
+  return by_name(out.groups);
+}
+
+// The albums `groups` in the order `sort`. The order of the library is the
+// one that `groups` has.
+function ordered(groups: Group[], sort: i32): Group[] {
+  if (sort == BY_NAME) {
+    return by_name(groups);
+  }
+  if (sort == BY_YEAR) {
+    return cmp.sort_by(groups, (a: Group, b: Group): i32 => b.year - a.year);
+  }
+  if (sort == BY_LENGTH) {
+    return cmp.sort_by(groups, (a: Group, b: Group): i32 => b.songs - a.songs);
+  }
+  return groups;
 }
 
 // The albums of the artist that shows, or each album, whose name has the
@@ -418,31 +589,34 @@ pub function albums(m: Model): Group[] {
   let out: Group[] = [];
   for t in m.tracks {
     let n = out.len();
+    if (m.artist.len() > 0 && !by(t, m.artist) || !has(t.album, want)) {
+      continue;
+    }
     if (n > 0 && out[n - 1].name == t.album && out[n - 1].by == t.by) {
       let g = out[n - 1];
       out = out.with(n - 1, Group { ...g, songs: g.songs + 1, year: g.year.max(t.year) });
-    } else if ((m.artist.len() == 0 || t.by == m.artist) && has(t.album, want)) {
+    } else {
       out = out.append(Group { name: t.album, by: t.by, songs: 1, albums: 1, year: t.year });
     }
   }
-  return out;
+  return ordered(out, m.sort);
 }
 
 // `a` comes before `b` in the library: by the artist, then the album, then
 // the number, then the title.
 function before(a: Track, b: Track): boolean {
-  let (x, y) = (a.by.to_lower(), b.by.to_lower());
-  if (x != y) {
-    return x < y;
+  let artist = order(a.by, b.by);
+  if (artist != 0) {
+    return artist < 0;
   }
-  let (p, q) = (a.album.to_lower(), b.album.to_lower());
-  if (p != q) {
-    return p < q;
+  let album = order(a.album, b.album);
+  if (album != 0) {
+    return album < 0;
   }
   if (a.number != b.number) {
     return a.number < b.number;
   }
-  return a.title.to_lower() < b.title.to_lower();
+  return order(a.title, b.title) < 0;
 }
 
 // The player with the track `t` at its place in the library. A file that
@@ -627,6 +801,14 @@ function artist_row(g: Group): ui.El[Msg] {
   return entry(ui.canvas("rings:" + g.name, art(g.name)).width(44.0).height(44.0), g.name, count(g.albums, "album") + " · " + count(g.songs, "song"), ui.INK).on_tap(Artist(g.name));
 }
 
+function genre_row(g: Group): ui.El[Msg] {
+  return entry(ui.canvas("rings:" + g.name, art(g.name)).width(44.0).height(44.0), g.name, count(g.songs, "song") + " · " + count(g.albums, "album"), ui.INK).on_tap(Genre(g.name));
+}
+
+function folder_row(g: Group): ui.El[Msg] {
+  return entry(ui.canvas("rings:" + g.name, art(g.name)).width(44.0).height(44.0), leaf(g.name), count(g.songs, "song") + " · " + g.name, ui.INK).on_tap(Place(g.name));
+}
+
 function album_row(m: Model, g: Group): ui.El[Msg] {
   let detail = g.by + " · " + count(g.songs, "song");
   if (g.year > 0) {
@@ -652,13 +834,17 @@ function heading(m: Model, summary: string): ui.El[Msg] {
     name = m.album;
   } else if (m.artist.len() > 0) {
     name = m.artist;
+  } else if (m.genre.len() > 0) {
+    name = m.genre;
+  } else if (m.place.len() > 0) {
+    name = leaf(m.place);
   }
   let top: ui.El[Msg][] = [ui.text(name).sized(28.0).weighted(700).clamped(1), ui.text(summary).colored(ui.MUTED).clamped(1)];
   if (m.list.len() > 0) {
     let acts = ui.row([ui.text_button("Export", Export), ui.text_button("Delete", DeleteList), ui.space(), ui.text_button("Up", Up)]).spaced(8.0);
     return ui.column([ui.column(top).spaced(4.0), acts]).spaced(4.0).padding_xy(16.0, 0.0);
   }
-  if (m.artist.len() > 0) {
+  if (!rooted(m)) {
     return ui.row([ui.column(top).spaced(4.0).wide(), ui.text_button("Up", Up)]).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0);
   }
   return ui.row([ui.column(top).spaced(4.0).wide(), ui.text_button("Folder", Choose), ui.text_button("Scan", Rescan)]).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0);
@@ -684,6 +870,33 @@ function chooser(m: Model): ui.El[Msg] {
   return ui.column([ui.row(head).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0), rows, foot]).spaced(12.0).padding_xy(0.0, 16.0).aligned(ui.STRETCH);
 }
 
+// The list of the playlists, the genres, the directories or the artists.
+function groups_list(m: Model): (ui.El[Msg], string) {
+  if (m.tab == PLAYLISTS) {
+    let lists = m.playlists;
+    return (ui.list("playlists", lists.len(), 64.0, (row: i32): ui.El[Msg] => entry(ui.canvas("rings:" + lists[row].name, art(lists[row].name)).width(44.0).height(44.0), lists[row].name, count(lists[row].paths.len(), "song"), ui.INK).on_tap(OpenList(lists[row].name))), count(lists.len(), "playlist"));
+  }
+  if (m.tab == GENRES) {
+    let groups = genres(m);
+    return (ui.list("genres", groups.len(), 64.0, (row: i32): ui.El[Msg] => genre_row(groups[row])), count(groups.len(), "genre"));
+  }
+  if (m.tab == FOLDERS) {
+    let groups = folders(m);
+    return (ui.list("folders", groups.len(), 64.0, (row: i32): ui.El[Msg] => folder_row(groups[row])), count(groups.len(), "folder"));
+  }
+  let groups = artists(m);
+  return (ui.list("artists", groups.len(), 64.0, (row: i32): ui.El[Msg] => artist_row(groups[row])), count(groups.len(), "artist"));
+}
+
+// The order `sort` changes the list that shows: songs that are not those
+// of an album or of a playlist, or albums.
+function sorts(m: Model): boolean {
+  if (rooted(m)) {
+    return m.tab == SONGS || m.tab == ALBUMS;
+  }
+  return m.album.len() == 0 && m.list.len() == 0;
+}
+
 // The list of the tab that shows. An artist that shows has its albums, and
 // an album that shows has its songs.
 function listing(m: Model): (ui.El[Msg], string) {
@@ -691,17 +904,12 @@ function listing(m: Model): (ui.El[Msg], string) {
     let shown = songs(m);
     return (ui.list("playlist", shown.len(), 64.0, (row: i32): ui.El[Msg] => track_row(m, shown[row]).on_long(Unlist(row))), count(shown.len(), "song") + " · hold a song to take it out");
   }
-  if (m.tab == PLAYLISTS && m.artist.len() == 0 && m.album.len() == 0) {
-    let lists = m.playlists;
-    return (ui.list("playlists", lists.len(), 64.0, (row: i32): ui.El[Msg] => entry(ui.canvas("rings:" + lists[row].name, art(lists[row].name)).width(44.0).height(44.0), lists[row].name, count(lists[row].paths.len(), "song"), ui.INK).on_tap(OpenList(lists[row].name))), count(lists.len(), "playlist"));
+  if (rooted(m) && m.tab != SONGS && m.tab != ALBUMS) {
+    return groups_list(m);
   }
-  if (m.album.len() == 0 && (m.tab == ALBUMS || m.artist.len() > 0)) {
+  if (m.album.len() == 0 && (m.tab == ALBUMS && rooted(m) || m.artist.len() > 0)) {
     let groups = albums(m);
     return (ui.list("albums", groups.len(), 64.0, (row: i32): ui.El[Msg] => album_row(m, groups[row])), count(groups.len(), "album"));
-  }
-  if (m.album.len() == 0 && m.tab == ARTISTS) {
-    let groups = artists(m);
-    return (ui.list("artists", groups.len(), 64.0, (row: i32): ui.El[Msg] => artist_row(groups[row])), count(groups.len(), "artist"));
   }
   let shown = songs(m);
   return (ui.list("tracks", shown.len(), 64.0, (row: i32): ui.El[Msg] => track_row(m, shown[row])), count(shown.len(), "song"));
@@ -712,6 +920,10 @@ function mini(m: Model): ui.El[Msg] {
   return ui.column([ui.progress(part(m)), ui.row([ui.column([ui.text(title(m)).weighted(500).clamped(1), ui.text(clock(m.at_ms) + " / " + clock(m.length_ms)).sized(12.0).colored(ui.MUTED)]).spaced(2.0).wide(), ui.text_button(play_label(m), Toggle)]).spaced(12.0).aligned(ui.CENTER).padding_xy(16.0, 8.0)]).background(ui.SURFACE).on_tap(Opened).described("Now playing, " + title(m));
 }
 
+function sort_label(sort: i32): string {
+  return ["By album", "By name", "By year", "By length"][sort];
+}
+
 function library(m: Model): ui.El[Msg] {
   let (list, summary) = listing(m);
   if (m.error.len() > 0) {
@@ -719,9 +931,13 @@ function library(m: Model): ui.El[Msg] {
   } else if (m.scan.len() > 0) {
     summary = summary + " · reading " + count(m.scan.len(), "file");
   }
-  let kids: ui.El[Msg][] = [heading(m, summary), ui.row([ui.field("search", m.query, "Search the library").on_edit((text: string): Msg => Search(text))]).padding_xy(16.0, 0.0)];
-  if (m.artist.len() == 0 && m.list.len() == 0) {
-    kids = kids.append(ui.row([tab(m, "Songs", SONGS), tab(m, "Artists", ARTISTS), tab(m, "Albums", ALBUMS), tab(m, "Lists", PLAYLISTS)]).spaced(4.0).padding_xy(16.0, 0.0));
+  let search: ui.El[Msg][] = [ui.field("search", m.query, "Search the library").on_edit((text: string): Msg => Search(text))];
+  if (sorts(m)) {
+    search = search.append(ui.text_button(sort_label(m.sort), Sort));
+  }
+  let kids: ui.El[Msg][] = [heading(m, summary), ui.row(search).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0)];
+  if (rooted(m)) {
+    kids = kids.append(ui.row([tab(m, "Songs", SONGS), tab(m, "Albums", ALBUMS), tab(m, "Artists", ARTISTS), tab(m, "Genres", GENRES), tab(m, "Lists", PLAYLISTS), tab(m, "Folders", FOLDERS)]).spaced(4.0).padding_xy(16.0, 0.0).scroll("tabs"));
   }
   kids = kids.append(list);
   if (m.menu >= 0 && m.menu < m.tracks.len()) {
@@ -1030,10 +1246,10 @@ function went_up(m: Model): Model {
   if (m.list.len() > 0) {
     return Model { ...m, list: "" };
   }
-  if (m.album.len() > 0 && m.tab != ALBUMS) {
-    return Model { ...m, album: "" };
+  if (m.album.len() > 0) {
+    return Model { ...m, album: "", album_by: "" };
   }
-  return Model { ...m, artist: "", album: "" };
+  return at_top(m);
 }
 
 // The chooser on the directory `dir`, which the device gives the
@@ -1066,7 +1282,7 @@ function used(m: Model): Model {
   if (m.playing) {
     wants = wants.append(Hold);
   }
-  return Model { ...m, choosing: false, folder: m.dir, tracks: [], scan: [], covers: [], bare: [], pictures: [], art: None, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: true, wanted: [], current: -1, queue: [], spot: -1, menu: -1, lined: false, playing: false, open: false, artist: "", album: "", query: "", error: "", fresh: false, wants: wants.append(Keep(m.dir)).append(Scan) };
+  return Model { ...m, choosing: false, folder: m.dir, tracks: [], scan: [], covers: [], bare: [], pictures: [], art: None, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: true, wanted: [], current: -1, queue: [], spot: -1, menu: -1, lined: false, playing: false, open: false, artist: "", album: "", album_by: "", genre: "", place: "", query: "", error: "", fresh: false, wants: wants.append(Keep(m.dir)).append(Scan) };
 }
 
 function returned(m: Model): Model {
@@ -1160,13 +1376,13 @@ pub function update(own m: Model, msg: Msg): Model {
       return Model { ...m, playing: false, error: why };
     },
     Tab(which) => {
-      return Model { ...m, tab: which, artist: "", album: "", list: "" };
+      return Model { ...at_top(m), tab: which };
     },
     Artist(name) => {
-      return Model { ...m, artist: name, album: "", query: "" };
+      return Model { ...at_top(m), artist: name, query: "" };
     },
     Album(by, name) => {
-      return Model { ...m, artist: by, album: name, query: "" };
+      return Model { ...m, album_by: by, album: name, query: "" };
     },
     Up => {
       return went_up(m);
@@ -1226,7 +1442,7 @@ pub function update(own m: Model, msg: Msg): Model {
       return Model { ...m, wants: m.wants.append(Quit) };
     },
     OpenList(name) => {
-      return Model { ...m, list: name, artist: "", album: "", query: "", menu: -1 };
+      return Model { ...at_top(m), list: name, query: "", menu: -1 };
     },
     AddTo => {
       if (m.menu < 0 || m.menu >= m.tracks.len()) {
@@ -1257,6 +1473,15 @@ pub function update(own m: Model, msg: Msg): Model {
     },
     Favorite => {
       return liked(m);
+    },
+    Genre(name) => {
+      return Model { ...at_top(m), genre: name, query: "" };
+    },
+    Place(dir) => {
+      return Model { ...at_top(m), place: dir, query: "" };
+    },
+    Sort => {
+      return Model { ...m, sort: (m.sort + 1) % 4 };
     },
     Export => {
       return Model { ...m, wants: m.wants.append(WriteList(m.list)) };
@@ -1326,7 +1551,7 @@ pub function back(m: Model): Option[Msg] {
   if (m.open) {
     return Some(Closed);
   }
-  if (m.choosing || m.artist.len() > 0 || m.list.len() > 0) {
+  if (m.choosing || !rooted(m)) {
     return Some(Up);
   }
   return None;

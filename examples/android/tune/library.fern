@@ -465,7 +465,7 @@ pub function track(roots: string[], path: string, size: i64, part: (i64, i32) =>
   if (found.track > 0) {
     number = found.track;
   }
-  return Some(tune.Track { path: path, title: or_else(found.title, title), artist: by, album: or_else(found.album, album), by: or_else(found.album_artist, by), number: number, year: found.year, format: format, ms: ms });
+  return Some(tune.Track { path: path, title: or_else(found.title, title), artist: by, album: or_else(found.album, album), by: or_else(found.album_artist, by), number: number, year: found.year, format: format, ms: ms, genre: found.genre, artists: tune.names(by) });
 }
 
 // The function that gives the parts of a file that is in memory.
@@ -504,7 +504,7 @@ function field(text: string): string {
 pub function to_text(tracks: tune.Track[]): string {
   let lines: string[] = [];
   for t in tracks {
-    lines = lines.append([field(t.path), field(t.title), field(t.artist), field(t.album), field(t.by), t.number.to_string(), t.year.to_string(), t.format, t.ms.to_string()].join("\t"));
+    lines = lines.append([field(t.path), field(t.title), field(t.artist), field(t.album), field(t.by), t.number.to_string(), t.year.to_string(), t.format, t.ms.to_string(), field(t.genre)].join("\t"));
   }
   return lines.join("\n");
 }
@@ -520,7 +520,7 @@ function number_of(text: string): i64 {
   return n;
 }
 
-// The tracks of a text of `to_text`. A line that does not have nine fields
+// The tracks of a text of `to_text`. A line that does not have ten fields
 // gives no track.
 pub function from_text(text: string): tune.Track[] {
   let out: tune.Track[] = [];
@@ -529,8 +529,8 @@ pub function from_text(text: string): tune.Track[] {
     for part in line.split("\t") {
       f = f.append(part.to_owned());
     }
-    if (f.len() == 9 && f[0].len() > 0) {
-      out = out.append(tune.Track { path: f[0], title: f[1], artist: f[2], album: f[3], by: f[4], number: number_of(f[5]) as i32, year: number_of(f[6]) as i32, format: f[7], ms: number_of(f[8]) });
+    if (f.len() == 10 && f[0].len() > 0) {
+      out = out.append(tune.Track { path: f[0], title: f[1], artist: f[2], album: f[3], by: f[4], number: number_of(f[5]) as i32, year: number_of(f[6]) as i32, format: f[7], ms: number_of(f[8]), genre: f[9], artists: tune.names(f[2]) });
     }
   }
   return out;

@@ -37,9 +37,15 @@ The "Folder" button shows the directories of the phone. The person goes
 into a directory and taps "Use". The library then has the files of that
 folder only, and the player keeps the folder for its next start.
 
-The library has four lists: the songs, the artists, the albums and the
-playlists. An artist shows its albums, and an album shows its songs in the
-order of their numbers.
+The library has six lists: the songs, the albums, the artists, the
+genres, the playlists and the folders. An artist shows its albums, and an
+album shows its songs in the order of their numbers. A genre and a folder
+show their songs. A track with more than one artist, such as `Ada; Bo` or
+`Ada feat. Bo`, is under each of them.
+
+The button next to the search field changes the order of the songs and of
+the albums: that of the library, by the name, by the year, or by the
+length.
 
 The menu of a song shows "Add to playlist", and the queue shows "Save". Each
 of them shows the playlists and a field for the name of a new one. The
@@ -51,8 +57,8 @@ The scan reads each M3U file that it finds as a playlist with the name of
 the file. "Export" writes a playlist as an M3U file in the folder of the
 library.
 
-`std/audio/tags` reads the title, the artist, the album and the
-number from each file. An MP3 file has an ID3 tag, and a FLAC or an Ogg
+`std/audio/tags` reads the title, the artist, the album, the genre and
+the number from each file. An MP3 file has an ID3 tag, and a FLAC or an Ogg
 file has Vorbis comments. An M4A file has an `ilst` box, and a WAV file has
 an INFO list. A file with no tag takes them
 from its path: `Artist/Album/03 Title.flac`.

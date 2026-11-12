@@ -502,6 +502,57 @@ function test_playlists(): test.TestOutcome {
   return test.assert_eq(found + " | " + made + " | " + liked + " | " + kept + " | " + shown.to_string() + " " + wrote + " " + queue + " | " + after + " | " + lists(gone.shell.app.model) + " " + gone.shell.app.model.list.len().to_string(), "mix:3 | mix:3,Road:1 | mix:3,Road:1,Favorites:1 true | mix:3,Road:4,Favorites:1 | true Tune wrote music/mix.m3u 2,0@0 | mix:2,Road:4,Favorites:1 | Road:4,Favorites:1 0");
 }
 
+function song(path: string, title: string, artist: string, by: string, album: string, year: i32, ms: i64, genre: string): tune.Track {
+  return tune.Track { ...tune.plain(path, title, "MP3", ms), artist: artist, album: album, by: by, year: year, genre: genre, artists: tune.names(artist) };
+}
+
+function tallies(groups: tune.Group[]): string {
+  let out: string[] = [];
+  for g in groups {
+    out = out.append(g.name + ":" + g.songs.to_string() + "/" + g.albums.to_string());
+  }
+  return out.join(",");
+}
+
+function numbers(xs: i32[]): string {
+  let out: string[] = [];
+  for x in xs {
+    out = out.append(x.to_string());
+  }
+  return out.join(",");
+}
+
+// A track with two artists is under each of them. A genre and a directory
+// show their songs. An album of an artist shows each of its songs, and the
+// way up goes to the artist. The songs and the albums have four orders.
+function test_groups_and_orders(): test.TestOutcome {
+  let m = tune.start([]);
+  for t in [song("/m/y/b.mp3", "Alpha", "Bo feat. Cy", "Bo", "Two", 2010, 1000i64, ""), song("/m/x/a.mp3", "beta", "Ada; Bo", "Ada", "One", 2001, 3000i64, "Rock"), song("/m/x/c.mp3", "gamma", "Ada", "Ada", "One", 2002, 2000i64, "Rock")] {
+    m = tune.update(m, tune.Found(t));
+  }
+  let groups = tallies(tune.artists(m)) + " " + tallies(tune.genres(m)) + " " + tallies(tune.folders(m));
+  m = tune.update(m, tune.Artist("Bo"));
+  let bo = tallies(tune.albums(m)) + " " + numbers(tune.songs(m));
+  m = tune.update(m, tune.Album("Ada", "One"));
+  let album = numbers(tune.songs(m));
+  m = tune.update(m, tune.Up);
+  let up = m.artist + m.album;
+  m = tune.update(tune.update(m, tune.Up), tune.Genre("Rock"));
+  let rock = numbers(tune.songs(m)) + tune.back(m).is_some().to_string();
+  m = tune.update(m, tune.Place("/m/y"));
+  let place = numbers(tune.songs(m)) + m.genre;
+  m = tune.update(m, tune.Tab(tune.SONGS));
+  let orders: string[] = [];
+  for i in 0..4 {
+    orders = orders.append(numbers(tune.songs(m)) + ":" + tune.albums(m).map((g: tune.Group): string => g.name).join(""));
+    m = tune.update(m, tune.Sort);
+  }
+  let s = sim.tap(sim.tap(started(), "Genres"), "Unknown genre");
+  saved(s, "tune-genre");
+  let shown = sim.shows(s, "Unknown genre") && sim.shows(s, "Tagged Song") && !sim.shows(s, "Genres");
+  return test.assert_eq([groups, bo, album, up, rock, place, orders.join(" "), m.sort.to_string(), shown.to_string()].join(" | "), "Ada:2/1,Bo:2/2,Cy:1/1 Rock:2/1,Unknown genre:1/1 /m/x:2/1,/m/y:1/1 | One:1/1,Two:1/1 0,2 | 0,1 | Bo | 0,1true | 2 | 0,1,2:OneTwo 2,0,1:OneTwo 2,1,0:TwoOne 0,1,2:OneTwo | 0 | true");
+}
+
 function main(): i32 {
   let r = test.new("examples/android/tune");
   r = r.it("the scan reads the tags and the paths of its files", test_scan_reads_tags_and_paths);
@@ -523,5 +574,6 @@ function main(): i32 {
   r = r.it("the player gives the device back when the activity ends", test_the_player_gives_the_device_back);
   r = r.it("the player starts with the library that it saved", test_the_saved_library);
   r = r.it("the person makes playlists, and the scan reads an M3U file", test_playlists);
+  r = r.it("a genre, a directory and each artist of a track show their songs", test_groups_and_orders);
   return r.finish();
 }
