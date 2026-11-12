@@ -104,18 +104,6 @@ function string_field(e: usize, obj: usize, name: string): string {
   return out;
 }
 
-function int_method(e: usize, obj: usize, name: string, sig: string, args: usize[]): i32 {
-  let c = jni.get_object_class(e, obj);
-  let a = jni.jvalues(args);
-  let got = jni.call_int_method_a(e, obj, jni.get_method_id(e, c, name, sig), a);
-  jni.free_buffer(a);
-  drop(e, c);
-  if (failed(e)) {
-    return 0;
-  }
-  return got;
-}
-
 function bool_method(e: usize, obj: usize, name: string): boolean {
   let c = jni.get_object_class(e, obj);
   let a = jni.jvalues([]);
@@ -138,18 +126,6 @@ function long_method(e: usize, obj: usize, name: string): i64 {
     return 0i64;
   }
   return got as i64;
-}
-
-function double_method(e: usize, obj: usize, name: string): f64 {
-  let c = jni.get_object_class(e, obj);
-  let a = jni.jvalues([]);
-  let got = jni.call_double_method_a(e, obj, jni.get_method_id(e, c, name, "()D"), a);
-  jni.free_buffer(a);
-  drop(e, c);
-  if (failed(e)) {
-    return 0.0;
-  }
-  return got;
 }
 
 function object_method(e: usize, obj: usize, name: string, sig: string, args: usize[]): usize {
@@ -491,31 +467,41 @@ function last_location(ctx: usize): Option[(f64, f64)] {
     return None;
   }
   let e = android.env(ctx);
-  let lm = system_service(e, android.activity_object(ctx), "location");
-  if (lm == 0 as usize) {
+  let Ok(j) = bindings.classes(e) else {
     return None;
+  };
+  let lm = bindings.LocationManager { ref: value_or(j.context.get_system_service(e, context(ctx), "location"), jni.Object { ref: 0 as usize }).ref };
+  let best: Option[(f64, f64)] = None;
+  if (!lm.is_null()) {
+    best = newest_location(e, j, lm);
+    drop(e, lm.ref);
   }
-  let providers = object_method(e, lm, "getProviders", "(Z)Ljava/util/List;", [1 as usize]);
+  j.release(e);
+  return best;
+}
+
+// The newest location of the providers of `lm`.
+function newest_location(e: usize, j: bindings.Classes, lm: bindings.LocationManager): Option[(f64, f64)] {
   let best: Option[(f64, f64)] = None;
   let best_at = 0i64;
-  if (providers != 0 as usize) {
-    let n = int_method(e, providers, "size", "()I", []);
-    for i in 0..n {
-      let p = object_method(e, providers, "get", "(I)Ljava/lang/Object;", [i as usize]);
-      let loc = object_method(e, lm, "getLastKnownLocation", "(Ljava/lang/String;)Landroid/location/Location;", [p]);
-      if (loc != 0 as usize) {
-        let at = long_method(e, loc, "getTime");
-        if (at > best_at) {
-          best_at = at;
-          best = Some((double_method(e, loc, "getLatitude"), double_method(e, loc, "getLongitude")));
-        }
-        drop(e, loc);
-      }
-      drop(e, p);
-    }
-    drop(e, providers);
+  let providers = value_or(j.location_manager.get_providers(e, lm, true), bindings.List { ref: 0 as usize });
+  if (providers.is_null()) {
+    return best;
   }
-  drop(e, lm);
+  for i in 0..value_or(j.list.size(e, providers), 0) {
+    let p = value_or(j.list.get(e, providers, i), jni.Object { ref: 0 as usize });
+    let loc = value_or(j.location_manager.get_last_known_location(e, lm, jni.string_of(e, p.ref)), bindings.Location { ref: 0 as usize });
+    if (!loc.is_null()) {
+      let at = value_or(j.location.get_time(e, loc), 0i64);
+      if (at > best_at) {
+        best_at = at;
+        best = Some((value_or(j.location.get_latitude(e, loc), 0.0), value_or(j.location.get_longitude(e, loc), 0.0)));
+      }
+      drop(e, loc.ref);
+    }
+    drop(e, p.ref);
+  }
+  drop(e, providers.ref);
   return best;
 }
 
@@ -544,24 +530,26 @@ function fetch_weather(url: string): worker.Worker[string] {
 
 function is_24h(ctx: usize): boolean {
   let e = android.env(ctx);
-  let c = jni.find_class(e, "android/text/format/DateFormat");
-  let a = jni.jvalues([android.activity_object(ctx)]);
-  let got = jni.call_static_int_method_a(e, c, jni.get_static_method_id(e, c, "is24HourFormat", "(Landroid/content/Context;)Z"), a);
-  jni.free_buffer(a);
-  drop(e, c);
-  if (failed(e)) {
+  let Ok(j) = bindings.classes(e) else {
     return false;
-  }
-  return (got & 255) != 0;
+  };
+  let out = value_or(j.date_format.is24_hour_format(e, context(ctx)), false);
+  j.release(e);
+  return out;
 }
 
 function country(ctx: usize): string {
   let e = android.env(ctx);
-  let locale = static_object(e, "java/util/Locale", "getDefault", "()Ljava/util/Locale;", []);
-  let c = object_method(e, locale, "getCountry", "()Ljava/lang/String;", []);
-  let out = jni.string_of(e, c);
-  drop(e, c);
-  drop(e, locale);
+  let Ok(j) = bindings.classes(e) else {
+    return "";
+  };
+  let locale = value_or(j.locale.get_default(e), bindings.Locale { ref: 0 as usize });
+  let out = "";
+  if (!locale.is_null()) {
+    out = value_or(j.locale.get_country(e, locale), "");
+    drop(e, locale.ref);
+  }
+  j.release(e);
   return out;
 }
 
@@ -572,13 +560,13 @@ const LISTENER: string = "dev.fern.paper/dev.fern.paper.Filter";
 
 function listener_on(ctx: usize): boolean {
   let e = android.env(ctx);
-  let cr = object_method(e, android.activity_object(ctx), "getContentResolver", "()Landroid/content/ContentResolver;", []);
-  let name = jni.new_string(e, "enabled_notification_listeners");
-  let v = static_object(e, "android/provider/Settings$Secure", "getString", "(Landroid/content/ContentResolver;Ljava/lang/String;)Ljava/lang/String;", [cr, name]);
-  let text = jni.string_of(e, v);
-  drop(e, v);
-  drop(e, name);
-  drop(e, cr);
+  let Ok(j) = bindings.classes(e) else {
+    return false;
+  };
+  let cr = value_or(j.context.get_content_resolver(e, context(ctx)), bindings.ContentResolver { ref: 0 as usize });
+  let text = value_or(j.settings_secure.get_string(e, cr, "enabled_notification_listeners"), "");
+  drop(e, cr.ref);
+  j.release(e);
   return text.contains(LISTENER);
 }
 
@@ -586,24 +574,23 @@ function listener_on(ctx: usize): boolean {
 // the user chooses other apps.
 function default_allowed(ctx: usize): string[] {
   let e = android.env(ctx);
-  let act = android.activity_object(ctx);
   let out: string[] = [];
-  let tm = system_service(e, act, "telecom");
-  if (tm != 0 as usize) {
-    let d = object_method(e, tm, "getDefaultDialerPackage", "()Ljava/lang/String;", []);
-    let s = jni.string_of(e, d);
-    if (s.len() > 0) {
-      out = out.append(s);
+  let Ok(j) = bindings.classes(e) else {
+    return out;
+  };
+  let tm = bindings.TelecomManager { ref: value_or(j.context.get_system_service(e, context(ctx), "telecom"), jni.Object { ref: 0 as usize }).ref };
+  if (!tm.is_null()) {
+    let dialer = value_or(j.telecom_manager.get_default_dialer_package(e, tm), "");
+    if (dialer.len() > 0) {
+      out = out.append(dialer);
     }
-    drop(e, d);
-    drop(e, tm);
+    drop(e, tm.ref);
   }
-  let sms = static_object(e, "android/provider/Telephony$Sms", "getDefaultSmsPackage", "(Landroid/content/Context;)Ljava/lang/String;", [act]);
-  let s = jni.string_of(e, sms);
-  if (s.len() > 0 && !paper.has(out, s)) {
-    out = out.append(s);
+  let sms = value_or(j.telephony_sms.get_default_sms_package(e, context(ctx)), "");
+  if (sms.len() > 0 && !paper.has(out, sms)) {
+    out = out.append(sms);
   }
-  drop(e, sms);
+  j.release(e);
   return out;
 }
 
@@ -627,11 +614,16 @@ function intents(e: usize, class: usize): usize {
 }
 
 function files_dir(e: usize, context: usize): string {
-  let dir = object_method(e, context, "getFilesDir", "()Ljava/io/File;", []);
-  let p = object_method(e, dir, "getAbsolutePath", "()Ljava/lang/String;", []);
-  let out = jni.string_of(e, p);
-  drop(e, p);
-  drop(e, dir);
+  let Ok(j) = bindings.classes(e) else {
+    return "";
+  };
+  let dir = value_or(j.context.get_files_dir(e, bindings.Context { ref: context }), bindings.File { ref: 0 as usize });
+  let out = "";
+  if (!dir.is_null()) {
+    out = value_or(j.file.get_absolute_path(e, dir), "");
+    drop(e, dir.ref);
+  }
+  j.release(e);
   return out;
 }
 
@@ -647,21 +639,23 @@ function write_text(path: string, text: string): void {
 }
 
 function app_label(e: usize, context: usize, pkg: string): string {
-  let pm = object_method(e, context, "getPackageManager", "()Landroid/content/pm/PackageManager;", []);
-  let p = jni.new_string(e, pkg);
-  let info = object_method(e, pm, "getApplicationInfo", "(Ljava/lang/String;I)Landroid/content/pm/ApplicationInfo;", [p, 0 as usize]);
   let out = pkg;
-  if (info != 0 as usize) {
-    let cs = object_method(e, pm, "getApplicationLabel", "(Landroid/content/pm/ApplicationInfo;)Ljava/lang/CharSequence;", [info]);
-    let t = text_of(e, cs);
+  let Ok(j) = bindings.classes(e) else {
+    return out;
+  };
+  let pm = value_or(j.context.get_package_manager(e, bindings.Context { ref: context }), bindings.PackageManager { ref: 0 as usize });
+  let info = value_or(j.package_manager.get_application_info(e, pm, pkg, 0), bindings.ApplicationInfo { ref: 0 as usize });
+  if (!info.is_null()) {
+    let cs = value_or(j.package_manager.get_application_label(e, pm, info), jni.Object { ref: 0 as usize });
+    let t = text_of(e, cs.ref);
     if (t.len() > 0) {
       out = t;
     }
-    drop(e, cs);
-    drop(e, info);
+    drop(e, cs.ref);
+    drop(e, info.ref);
   }
-  drop(e, p);
-  drop(e, pm);
+  drop(e, pm.ref);
+  j.release(e);
   return out;
 }
 

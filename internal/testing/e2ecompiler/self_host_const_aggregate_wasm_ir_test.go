@@ -53,6 +53,12 @@ var constAggWasmCases = []struct {
 	{"nested-wide-records",
 		`struct D { sec: i64, nsec: i64 } struct T { a: D, b: D } function mk(): T { return T { a: D { sec: 10 as i64, nsec: 0 }, b: D { sec: 30 as i64, nsec: 0 } }; } @noinline function keep(t: T): i64 { return t.a.sec + t.b.sec + t.a.nsec; } function main(): i32 { return keep(mk()) as i32; }`,
 		40, 3, true},
+	{"string-field-shares-a-literal",
+		`struct P { name: string, n: i32 } struct Q { p: P, tag: string } function mk(): Q { return Q { p: P { name: "ab", n: 3 }, tag: "ab" }; } @noinline function other(): string { return "ab"; } function main(): i32 { let q: Q = mk(); return q.p.name.len() + q.tag.len() + q.p.n + other().len(); }`,
+		9, 2, true},
+	{"string-array-repeats-an-element",
+		`@noinline function names(): string[] { return ["ab", "cde", "ab"]; } @noinline function last(): string { return "cde"; } function main(): i32 { let ns: string[] = names(); return ns[0].len() + ns[1].len() * 10 + ns[2].len() * 20 + last().len(); }`,
+		75, 1, true},
 }
 
 func TestSelfHostConstAggregateWasmIR(t *testing.T) {

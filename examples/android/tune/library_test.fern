@@ -87,6 +87,62 @@ function test_a_scan_reads_parts_of_a_file(): test.TestOutcome {
   return test.assert_eq(got.trim(), "true true true true true true");
 }
 
+function tagged(name: string, file: u8[]): string {
+  if let Some(t) = library.track(["m"], "m/" + name, file.len() as i64, library.parts_of(file)) {
+    return t.format + " " + t.title + "," + t.artist + "," + t.album + "," + t.number.to_string() + " " + (t.ms >= 940i64 && t.ms <= 1060i64).to_string();
+  }
+  return "none";
+}
+
+function test_m4a_ogg_and_opus_files(): test.TestOutcome {
+  return test.assert_eq(tagged("a.m4a", fixture.m4a()) + " | " + tagged("b.ogg", fixture.ogg()) + " | " + tagged("c.opus", fixture.opus()), "M4A Short m4a,Fixture,Formats,2 true | OGG Short ogg,Fixture,Formats,2 true | OPUS Short opus,Fixture,Formats,2 true");
+}
+
+// A picture of 200 KB is before the title of the tag: the scan reads the
+// title and the picture from more than the first 128 KB of the file.
+function test_a_picture_in_a_tag(): test.TestOutcome {
+  let file = fixture.joined(fixture.id3v2_picture("Painted", 200000), fixture.silent_mp3(100, true));
+  let small = fixture.joined(fixture.id3v2_picture("Small", 500), fixture.silent_mp3(100, true));
+  let bare = fixture.silent_mp3(100, true);
+  let got = of("p.mp3", file) + " " + library.picture(file.len() as i64, library.parts_of(file)).len().to_string() + " " + library.picture(small.len() as i64, library.parts_of(small)).len().to_string() + " " + library.picture(bare.len() as i64, library.parts_of(bare)).len().to_string();
+  let names = library.picture_name("Cover.JPG").to_string() + " " + library.picture_name("folder.png").to_string() + " " + library.picture_name("back.jpg").to_string();
+  return test.assert_eq(got + " | " + names, "Painted 2612 200000 500 0 | true true false");
+}
+
+function test_the_text_of_a_library(): test.TestOutcome {
+  let tracks = [tune.Track { path: "/m/a b/01 x.mp3", title: "A\ttab", artist: "Ar; Second / Third feat. Ar", album: "Al", by: "By", number: 3, year: 1999, format: "MP3", ms: 123456i64, genre: "Field Recording", artists: [] }, tune.plain("/m/y.wav", "Y", "WAV", 0i64)];
+  let text = library.to_text(tracks);
+  let back = library.from_text(text + "\nnot a line\n");
+  let got = back.len().to_string() + " " + back[0].path + "|" + back[0].title + "|" + back[0].by + "|" + back[0].number.to_string() + "|" + back[0].year.to_string() + "|" + back[0].ms.to_string() + "|" + back[0].genre + "|" + back[0].artists.join(",") + " " + back[1].title + "|" + back[1].artist + "|" + back[1].genre.len().to_string() + " " + library.from_text("").len().to_string();
+  return test.assert_eq(got, "2 /m/a b/01 x.mp3|A tab|By|3|1999|123456|Field Recording|Ar,Second,Third Y|Unknown artist|0 0");
+}
+
+function test_playlist_texts(): test.TestOutcome {
+  let lists = [tune.Playlist { name: "Road", paths: ["/m/a.mp3", "/m/b c.flac"] }, tune.Playlist { name: "Empty", paths: [] }];
+  let back = library.lists_from(library.lists_text(lists));
+  let got = back.len().to_string() + " " + back[0].name + ":" + back[0].paths.join(",") + " " + back[1].name + ":" + back[1].paths.len().to_string();
+  let m3u = library.m3u_paths("/m/Fern", "#EXTM3U\r\n#EXTINF:1,x\r\nFirst Light/01 a.flac\r\n../b.mp3\n/abs/c.wav\nwin\\\\d.mp3\n\n").join("|");
+  let paths = ["/m/Fern/x/a.flac", "/other/b.mp3"];
+  let text = library.m3u_text("/m/Fern", paths);
+  let again = library.m3u_paths("/m/Fern", text).join("|");
+  return test.assert_eq(got + " / " + m3u + " / " + library.playlist_name("Mix.M3U8").to_string() + library.playlist_name("a.mp3").to_string() + " / " + text.replace("\n", ";") + " " + again, "2 Road:/m/a.mp3,/m/b c.flac Empty:0 / /m/Fern/First Light/01 a.flac|/m/b.mp3|/abs/c.wav|/m/Fern/win/d.mp3 / truefalse / #EXTM3U;x/a.flac;/other/b.mp3; /m/Fern/x/a.flac|/other/b.mp3");
+}
+
+function test_the_lines_of_lyrics(): test.TestOutcome {
+  let show = (lines: tune.Line[]): string => lines.map((l: tune.Line): string => l.ms.to_string() + "=" + l.text).join("|");
+  let timed = library.lrc("[ar:Fern]\r\n[00:12.50]Second line\r\n[00:01]First\n[01:02.345][00:20.5] Twice \nno time\n\n");
+  let plain = library.lrc("One\n\n  Two  \n[x] not a tag\n");
+  return test.assert_eq(show(timed) + " / " + show(plain) + " / " + library.lrc("").len().to_string() + " " + tune.line_at(timed, 12499i64).to_string() + tune.line_at(timed, 12500i64).to_string() + tune.line_at(timed, 0i64).to_string(), "1000=First|12500=Second line|20500=Twice|62345=Twice / -1=One|-1=Two|-1=[x] not a tag / 0 01-1");
+}
+
+function test_the_text_of_the_settings(): test.TestOutcome {
+  let p = tune.Prefs { look: tune.LOOK_DARK, sort: tune.BY_YEAR, hidden: ["/m/a b", "/m/c"], off: [tune.GENRES, tune.FOLDERS] };
+  let back = library.prefs_from(library.prefs_text(p) + "\nnot a line\nhidden \n");
+  let none = library.prefs_from("");
+  let got = [back.look.to_string(), back.sort.to_string(), back.hidden.join(","), back.off.map((t: i32): string => t.to_string()).join(","), none.look.to_string() + none.sort.to_string() + none.hidden.len().to_string() + none.off.len().to_string()];
+  return test.assert_eq(got.join(" | "), "2 | 2 | /m/a b,/m/c | 4,5 | 0000");
+}
+
 function main(): i32 {
   let r = test.new("examples/android/tune library");
   r = r.it("a name that ends as a file that is not sound", test_other_files);
@@ -94,5 +150,11 @@ function main(): i32 {
   r = r.it("a file with no tags takes its artist and its album from its path", test_a_file_with_no_tags_takes_its_path);
   r = r.it("an MP3 file tells its length, or its bytes and its bit rate do", test_the_length_of_an_mp3_file);
   r = r.it("a scan reads parts of a file", test_a_scan_reads_parts_of_a_file);
+  r = r.it("an M4A, an Ogg Vorbis and an Opus file give their tags and their length", test_m4a_ogg_and_opus_files);
+  r = r.it("a tag gives the picture of its album", test_a_picture_in_a_tag);
+  r = r.it("the library is a text that the player reads back", test_the_text_of_a_library);
+  r = r.it("the playlists are a text, and an M3U file gives paths", test_playlist_texts);
+  r = r.it("lyrics are lines with times or with none", test_the_lines_of_lyrics);
+  r = r.it("the settings are a text", test_the_text_of_the_settings);
   return r.finish();
 }

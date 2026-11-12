@@ -5,9 +5,12 @@
 import "core/cmp";
 import "std/android";
 import "std/android/audio";
+import "std/android/draw";
 import "std/android/focus";
+import "std/android/image";
 import "std/android/service";
 import "std/android/session";
+import "std/android/shortcuts";
 import "std/android/ui/app";
 import "std/log";
 import "std/result";
@@ -95,6 +98,19 @@ function show(ctx: usize, media: Media, now: tune.Now): void {
   }
 }
 
+// Stops the foreground service, and ends the media session and the focus
+// request. The activity is valid until its Destroy event ends, so the
+// player calls this for that event.
+function quit(ctx: usize, media: Media): void {
+  service.stop(ctx, SERVICE);
+  if let Some(s) = media.session {
+    session.close(ctx, s);
+  }
+  if let Some(f) = media.focus {
+    focus.close(ctx, f);
+  }
+}
+
 function wake(ctx: usize): tune.Awake {
   let a = service.stay_awake(ctx, "fern:tune");
   return tune.Awake { wake: a.wake, wifi: a.wifi };
@@ -177,7 +193,15 @@ function device(ctx: usize, dir: string, roots: string[], media: Media): player.
     now: (): i64 => monotonic_ns(),
     dirs: (at: string): string[] => dirs(at),
     keep: (folder: string): void => { let kept = write_file(dir + "/../folder.txt", folder); },
+    decode: (bytes: u8[], w: i32, h: i32): Option[draw.Image] => image.decode_cover(bytes, w, h),
+    save: (text: string): void => { let saved = write_file(dir + "/../library.tsv", text); },
+    keep_lists: (text: string): void => { let saved = write_file(dir + "/../playlists.txt", text); },
+    keep_prefs: (text: string): void => { let saved = write_file(dir + "/../settings.txt", text); },
+    write_text: (path: string, text: string): boolean => write_file(path, text).is_ok(),
+    kept: (name: string): u8[] => read(dir + "/../covers/" + name),
+    put: (name: string, bytes: u8[]): void => { let kept = write_file_bytes(dir + "/../covers/" + name, bytes); },
     show: (now: tune.Now): void => show(ctx, media, now),
+    quit: (): void => quit(ctx, media),
     wake: (): tune.Awake => wake(ctx),
     sleep: (a: tune.Awake): void => service.release_awake(ctx, service.Awake { wake: a.wake, wifi: a.wifi }),
     size: (path: string): i64 => size(path),
@@ -274,15 +298,24 @@ function system(e: android.Event): Option[tune.Msg] {
     android.Resume => {
       return Some(tune.Returned);
     },
+    android.Destroy => {
+      return Some(tune.Closing);
+    },
     _ => {
       return None;
     }
   }
 }
 
+// The actions of the shortcuts of the launcher.
+const SHUFFLE: string = "dev.fern.tune.SHUFFLE";
+
+const FAVORITES: string = "dev.fern.tune.FAVORITES";
+
 function app_main(ctx: usize): usize {
   let own_music = android.data_dir(ctx) + "/music";
   let made = create_dir_all(own_music);
+  let covers = create_dir_all(android.data_dir(ctx) + "/covers");
   let roots = [own_music, "/sdcard/Music", "/sdcard/Download"];
   let media = Media { session: session.new(ctx, "dev.fern.tune.Controls", "Fern Tune"), token: 0 as usize, focus: focus.music(ctx, "dev.fern.tune.Focus") };
   if let Some(s) = media.session {
@@ -295,18 +328,17 @@ function app_main(ctx: usize): usize {
   // The player looks for its files after the screen shows, and asks for
   // the permission only when the person taps Scan.
   let folder = read_file(android.data_dir(ctx) + "/folder.txt").unwrap_or("");
-  let last = app.run(ctx, tune.start_in("/storage/emulated/0", folder), player.program(dev).with_system(system));
-  dev.close(last.sound);
-  if (last.awake.wake != 0 as usize) {
-    dev.sleep(last.awake);
+  let first = tune.start_with("/storage/emulated/0", folder, library.from_text(read_file(android.data_dir(ctx) + "/library.tsv").unwrap_or("")), library.lists_from(read_file(android.data_dir(ctx) + "/playlists.txt").unwrap_or("")), library.prefs_from(read_file(android.data_dir(ctx) + "/settings.txt").unwrap_or("")));
+  if (!shortcuts.set(ctx, [shortcuts.Shortcut { id: "shuffle", label: "Shuffle all", action: SHUFFLE }, shortcuts.Shortcut { id: "favorites", label: "Favorites", action: FAVORITES }])) {
+    log.info("tune: the launcher took no shortcuts");
   }
-  service.stop(ctx, SERVICE);
-  if let Some(s) = media.session {
-    session.close(ctx, s);
+  let action = shortcuts.action(ctx);
+  if (action == SHUFFLE) {
+    first = tune.update(first, tune.ShuffleAll((dev.now() / 1000000i64 % 60000i64) as i32));
+  } else if (action == FAVORITES) {
+    first = tune.update(first, tune.PlayList(tune.FAVORITES));
   }
-  if let Some(f) = media.focus {
-    focus.close(ctx, f);
-  }
+  let last = app.run(ctx, player.wrap(first), player.program(dev).with_system(system)).model;
   log.info("tune: closed with " + last.tracks.len().to_string() + " tracks at track " + last.current.to_string() + ", " + tune.clock(last.at_ms) + " of " + tune.clock(last.length_ms) + ", playing " + last.playing.to_string());
   return 0 as usize;
 }

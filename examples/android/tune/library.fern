@@ -6,6 +6,7 @@ import "std/audio/pcm";
 import "std/audio/tags";
 import "std/audio/wav";
 import "std/audio/wire";
+import "core/cmp";
 import "std/option";
 import "std/result";
 import "std/string";
@@ -30,6 +31,15 @@ pub function format_of(name: string): string {
   }
   if (lower.ends_with(".mp3")) {
     return "MP3";
+  }
+  if (lower.ends_with(".m4a")) {
+    return "M4A";
+  }
+  if (lower.ends_with(".ogg") || lower.ends_with(".oga")) {
+    return "OGG";
+  }
+  if (lower.ends_with(".opus")) {
+    return "OPUS";
   }
   return "";
 }
@@ -143,6 +153,11 @@ function mp3_file(head: u8[], size: i64, part: (i64, i32) => u8[]): Option[(tags
     return None;
   };
   let found = tags.id3v2(head);
+  if (found.title.len() == 0 && skip > head.len() as i64) {
+    // A picture before the texts of a tag can make the tag longer than
+    // `head`.
+    found = tags.id3v2(start_of(head, skip, part));
+  }
   if (found.empty() && size >= 128i64) {
     found = tags.id3v1(part(size - 128i64, 128));
   }
@@ -227,6 +242,199 @@ function wav_file(head: u8[], size: i64, part: (i64, i32) => u8[]): Option[(tags
   return Some((found, sound.bytes * 1000i64 / sound.second));
 }
 
+// The bytes of a file that the player reads for its picture, at most.
+const PICTURE_BYTES: i64 = 8388608i64;
+
+// The byte after the last metadata block of a FLAC file.
+function flac_tags_end(head: u8[], size: i64, part: (i64, i32) => u8[]): i64 {
+  let at = 4i64;
+  let turns = 0;
+  while (at + 4i64 <= size && turns < 256) {
+    let block = bytes_at(head, at, 4, part);
+    if (block.len() < 4) {
+      return at;
+    }
+    at += 4i64 + wire.be(block, 1, 3) as i64;
+    if ((block[0] & 128u8) != 0u8) {
+      return at;
+    }
+    turns += 1;
+  }
+  return at;
+}
+
+// The start of the file of `size` bytes as far as `end`, or as far as the
+// limit of a picture.
+function start_of(head: u8[], end: i64, part: (i64, i32) => u8[]): u8[] {
+  if (end <= head.len() as i64) {
+    return head;
+  }
+  return part(0i64, end.min(PICTURE_BYTES) as i32);
+}
+
+// The bytes of the picture that the file of `size` bytes holds for its
+// album: a JPEG or a PNG image, or no bytes.
+pub function picture(size: i64, part: (i64, i32) => u8[]): u8[] {
+  let head = part(0i64, HEAD);
+  if (wire.tag(head, 0, "fLaC")) {
+    return tags.picture(start_of(head, flac_tags_end(head, size, part), part));
+  }
+  if (wire.tag(head, 0, "OggS")) {
+    return tags.picture(start_of(head, size.min(2097152i64), part));
+  }
+  if (head.len() >= 8 && wire.tag(head, 4, "ftyp")) {
+    return tags.picture(moov_of(head, size, part));
+  }
+  return tags.picture(start_of(head, id3_bytes(head), part));
+}
+
+// True for the name of an image file that holds the picture of the album
+// of its directory.
+pub function picture_name(name: string): boolean {
+  let lower = name.to_lower();
+  for stem in ["cover", "folder", "front", "album", "albumart"] {
+    for end in [".jpg", ".jpeg", ".png", ".webp"] {
+      if (lower == stem + end) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// The bytes of the file from `at`, at most `n`: from `head` when it has
+// them, or from the device.
+function bytes_at(head: u8[], at: i64, n: i32, part: (i64, i32) => u8[]): u8[] {
+  if (at + n as i64 <= head.len() as i64) {
+    let out: u8[] = [];
+    let from = at as i32;
+    for i in from..from + n {
+      out = out.append(head[i]);
+    }
+    return out;
+  }
+  return part(at, n);
+}
+
+// The length in ms that the `mvhd` box of the `moov` box `moov` tells.
+function moov_ms(moov: [u8]): i64 {
+  let at = 8;
+  while (at + 8 <= moov.len()) {
+    let size = wire.be(moov, at, 4) as i32;
+    if (size < 8) {
+      return 0i64;
+    }
+    if (wire.tag(moov, at + 4, "mvhd") && at + 40 <= moov.len()) {
+      let wide = moov[at + 8] == 1u8;
+      let scale = wire.be(moov, at + (if (wide) { 28 } else { 20 }), 4) as i64;
+      let length = wire.be(moov, at + (if (wide) { 32 } else { 24 }), if (wide) { 8 } else { 4 }) as i64;
+      if (scale <= 0i64) {
+        return 0i64;
+      }
+      return length * 1000i64 / scale;
+    }
+    at += size;
+  }
+  return 0i64;
+}
+
+// The tags of an M4A file and its length in ms, from its `moov` box.
+function m4a_file(head: u8[], size: i64, part: (i64, i32) => u8[]): Option[(tags.Tags, i64)] {
+  let moov = moov_of(head, size, part);
+  let ms = moov_ms(moov);
+  if (ms <= 0i64) {
+    return None;
+  }
+  return Some((tags.mp4(moov), ms));
+}
+
+// The `moov` box of an M4A file, or no bytes. The box is at the start of
+// the file or after its sound.
+function moov_of(head: u8[], size: i64, part: (i64, i32) => u8[]): u8[] {
+  let at = 0i64;
+  let turns = 0;
+  while (at + 8i64 <= size && turns < 64) {
+    let box = bytes_at(head, at, 16, part);
+    if (box.len() < 16) {
+      return [];
+    }
+    let length = wire.be(box, 0, 4) as i64;
+    if (length == 1i64) {
+      length = wire.be(box, 8, 8) as i64;
+    }
+    if (length == 0i64) {
+      length = size - at;
+    }
+    if (length < 8i64) {
+      return [];
+    }
+    if (wire.tag(box, 4, "moov")) {
+      return bytes_at(head, at, length.min(PICTURE_BYTES) as i32, part);
+    }
+    at += length;
+    turns += 1;
+  }
+  return [];
+}
+
+// The byte of the last Ogg page that starts in `tail`, or -1.
+function last_page(tail: [u8]): i32 {
+  let at = tail.len() - 27;
+  while (at >= 0) {
+    if (wire.tag(tail, at, "OggS")) {
+      return at;
+    }
+    at -= 1;
+  }
+  return -1;
+}
+
+// The tags of an Ogg file with Vorbis or Opus sound, and its length in ms:
+// the last page tells the number of its last sample.
+function ogg_file(head: u8[], size: i64, part: (i64, i32) => u8[]): Option[(tags.Tags, i64)] {
+  if (head.len() < 48) {
+    return None;
+  }
+  let rate = 0i64;
+  let skip = 0i64;
+  if (wire.tag(head, 28, "OpusHead")) {
+    rate = 48000i64;
+    skip = wire.le(head, 38, 2) as i64;
+  } else if (head[28] == 1u8 && wire.tag(head, 29, "vorbis")) {
+    rate = wire.le(head, 40, 4) as i64;
+  }
+  if (rate <= 0i64 || head[if (rate == 48000i64 && skip > 0i64) { 37 } else { 39 }] > 2u8) {
+    return None;
+  }
+  let from = (size - 65536i64).max(0i64);
+  let tail = bytes_at(head, from, (size - from) as i32, part);
+  let page = last_page(tail);
+  if (page < 0) {
+    return None;
+  }
+  let last = wire.le(tail, page + 6, 8) as i64;
+  return Some((tags.ogg(head), (last - skip).max(0i64) * 1000i64 / rate));
+}
+
+// The tags and the length in ms of the file that starts with `head`, by
+// the format that its first bytes show. A file that starts as no other
+// format is an MP3 file.
+function described(head: u8[], size: i64, part: (i64, i32) => u8[]): Option[(tags.Tags, i64)] {
+  if (wire.tag(head, 0, "RIFF")) {
+    return wav_file(head, size, part);
+  }
+  if (wire.tag(head, 0, "fLaC")) {
+    return flac_file(head, size, part);
+  }
+  if (wire.tag(head, 0, "OggS")) {
+    return ogg_file(head, size, part);
+  }
+  if (head.len() >= 8 && wire.tag(head, 4, "ftyp")) {
+    return m4a_file(head, size, part);
+  }
+  return mp3_file(head, size, part);
+}
+
 // The track of the file `path` of `size` bytes, or None for a file that is
 // not sound. `part` gives the bytes of the file from an offset, at most a
 // number of them. The tags of the file give its title, its artist, its
@@ -242,16 +450,7 @@ pub function track(roots: string[], path: string, size: i64, part: (i64, i32) =>
   if (format.len() == 0 || size <= 0i64) {
     return None;
   }
-  let head = part(0i64, HEAD);
-  let read: Option[(tags.Tags, i64)] = None;
-  if (wire.tag(head, 0, "RIFF")) {
-    read = wav_file(head, size, part);
-  } else if (wire.tag(head, 0, "fLaC")) {
-    read = flac_file(head, size, part);
-  } else {
-    read = mp3_file(head, size, part);
-  }
-  let Some((found, ms)) = read else {
+  let Some((found, ms)) = described(part(0i64, HEAD), size, part) else {
     return None;
   };
   let (number, title) = numbered(stem(name));
@@ -267,7 +466,7 @@ pub function track(roots: string[], path: string, size: i64, part: (i64, i32) =>
   if (found.track > 0) {
     number = found.track;
   }
-  return Some(tune.Track { path: path, title: or_else(found.title, title), artist: by, album: or_else(found.album, album), by: or_else(found.album_artist, by), number: number, year: found.year, format: format, ms: ms });
+  return Some(tune.Track { path: path, title: or_else(found.title, title), artist: by, album: or_else(found.album, album), by: or_else(found.album_artist, by), number: number, year: found.year, format: format, ms: ms, genre: found.genre, artists: tune.names(by) });
 }
 
 // The function that gives the parts of a file that is in memory.
@@ -287,12 +486,274 @@ pub function parts_of(bytes: u8[]): (i64, i32) => u8[] {
 // name, because the answer costs time for each file of a large directory.
 pub function other_file(name: string): boolean {
   let lower = name.to_lower();
-  for end in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".bmp", ".pdf", ".txt", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".zip", ".rar", ".7z", ".apk", ".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4a", ".aac", ".ogg", ".opus", ".wma", ".lrc", ".cue", ".log", ".json", ".xml", ".html", ".csv", ".epub", ".nomedia", ".tmp", ".crdownload"] {
+  for end in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".bmp", ".pdf", ".txt", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".zip", ".rar", ".7z", ".apk", ".mp4", ".mkv", ".mov", ".avi", ".webm", ".aac", ".wma", ".lrc", ".cue", ".log", ".json", ".xml", ".html", ".csv", ".epub", ".nomedia", ".tmp", ".crdownload"] {
     if (lower.ends_with(end)) {
       return true;
     }
   }
   return false;
+}
+
+// A text with a space for each tab and each line feed, for one field of a
+// line of the saved library.
+function field(text: string): string {
+  return text.replace("\t", " ").replace("\n", " ");
+}
+
+// The tracks as a text: one line for each track, and a tab between two
+// fields.
+pub function to_text(tracks: tune.Track[]): string {
+  let lines: string[] = [];
+  for t in tracks {
+    lines = lines.append([field(t.path), field(t.title), field(t.artist), field(t.album), field(t.by), t.number.to_string(), t.year.to_string(), t.format, t.ms.to_string(), field(t.genre)].join("\t"));
+  }
+  return lines.join("\n");
+}
+
+function number_of(text: string): i64 {
+  let n = 0i64;
+  for i in 0..text.len() {
+    if (text[i] < b'0' || text[i] > b'9') {
+      return n;
+    }
+    n = n * 10i64 + (text[i] as i64 - 48i64);
+  }
+  return n;
+}
+
+// The tracks of a text of `to_text`. A line that does not have ten fields
+// gives no track.
+pub function from_text(text: string): tune.Track[] {
+  let out: tune.Track[] = [];
+  for line in text.split("\n") {
+    let f: string[] = [];
+    for part in line.split("\t") {
+      f = f.append(part.to_owned());
+    }
+    if (f.len() == 10 && f[0].len() > 0) {
+      out = out.append(tune.Track { path: f[0], title: f[1], artist: f[2], album: f[3], by: f[4], number: number_of(f[5]) as i32, year: number_of(f[6]) as i32, format: f[7], ms: number_of(f[8]), genre: f[9], artists: tune.names(f[2]) });
+    }
+  }
+  return out;
+}
+
+// The playlists as a text: a line with `#PLAYLIST` and the name of a
+// playlist, and then a line for each path.
+pub function lists_text(lists: tune.Playlist[]): string {
+  let lines: string[] = [];
+  for p in lists {
+    lines = lines.append("#PLAYLIST " + field(p.name));
+    for path in p.paths {
+      lines = lines.append(field(path));
+    }
+  }
+  return lines.join("\n");
+}
+
+// The playlists of a text of `lists_text`.
+pub function lists_from(text: string): tune.Playlist[] {
+  let out: tune.Playlist[] = [];
+  let name = "";
+  let paths: string[] = [];
+  for line in text.split("\n") {
+    if (line.starts_with("#PLAYLIST ")) {
+      if (name.len() > 0) {
+        out = out.append(tune.Playlist { name: name, paths: paths });
+      }
+      name = line.drop(10).to_owned();
+      paths = [];
+    } else if (line.len() > 0 && name.len() > 0) {
+      paths = paths.append(line.to_owned());
+    }
+  }
+  if (name.len() > 0) {
+    out = out.append(tune.Playlist { name: name, paths: paths });
+  }
+  return out;
+}
+
+// True for the name of a playlist file: an M3U file.
+pub function playlist_name(name: string): boolean {
+  let lower = name.to_lower();
+  return lower.ends_with(".m3u") || lower.ends_with(".m3u8");
+}
+
+// The path `path` with no `.` part and no `..` part.
+function plain_path(path: string): string {
+  let out: string[] = [];
+  for part in path.split("/") {
+    if (part == ".." && out.len() > 0) {
+      out = out.take(out.len() - 1);
+    } else if (part.len() > 0 && part != ".") {
+      out = out.append(part.to_owned());
+    }
+  }
+  let joined = out.join("/");
+  if (path.starts_with("/")) {
+    return "/" + joined;
+  }
+  return joined;
+}
+
+// The paths of the M3U file `text` that is in the directory `dir`. A line
+// that starts with `#` is a comment. A path that does not start with `/`
+// is below `dir`.
+pub function m3u_paths(dir: string, text: string): string[] {
+  let out: string[] = [];
+  for raw in text.split("\n") {
+    let line = raw.trim().replace("\\", "/");
+    if (line.len() > 0 && !line.starts_with("#")) {
+      if (line.starts_with("/")) {
+        out = out.append(plain_path(line));
+      } else {
+        out = out.append(plain_path(dir + "/" + line));
+      }
+    }
+  }
+  return out;
+}
+
+// The text of an M3U file in the directory `dir` for `paths`. A path below
+// `dir` is relative to it.
+pub function m3u_text(dir: string, paths: string[]): string {
+  let lines: string[] = ["#EXTM3U"];
+  for path in paths {
+    if (path.starts_with(dir + "/")) {
+      lines = lines.append(path.drop(dir.len() + 1).to_owned());
+    } else {
+      lines = lines.append(path);
+    }
+  }
+  return lines.join("\n") + "\n";
+}
+
+// The number that the digits of `text` make, or -1 when `text` is not
+// digits only.
+function digits(text: string): i64 {
+  if (text.len() == 0 || text.len() > 9) {
+    return -1i64;
+  }
+  for i in 0..text.len() {
+    if (text[i] < b'0' || text[i] > b'9') {
+      return -1i64;
+    }
+  }
+  return number_of(text);
+}
+
+// The milliseconds of the digits after the point of a time, or -1.
+function fraction(text: string): i64 {
+  let ms = digits(text);
+  for i in text.len()..3 {
+    ms = ms * 10i64;
+  }
+  for i in 3..text.len() {
+    ms = ms / 10i64;
+  }
+  return ms;
+}
+
+// The time in ms of the text `mm:ss.xx`, or -1.
+function time_of(text: string): i64 {
+  let parts: string[] = [];
+  for part in text.replace(".", ":").split(":") {
+    parts = parts.append(part.to_owned());
+  }
+  if (parts.len() < 2 || parts.len() > 3) {
+    return -1i64;
+  }
+  let (min, sec) = (digits(parts[0]), digits(parts[1]));
+  let ms = 0i64;
+  if (parts.len() == 3) {
+    ms = fraction(parts[2]);
+  }
+  if (min < 0i64 || sec < 0i64 || ms < 0i64) {
+    return -1i64;
+  }
+  return (min * 60i64 + sec) * 1000i64 + ms;
+}
+
+// The time in ms of the stamp `[mm:ss.xx]` at the byte `at` of `line`, and
+// the byte after it. The time is -1 when no stamp is there.
+function stamp(line: string, at: i32): (i64, i32) {
+  let close = at;
+  while (close < line.len() && line[close] != b']') {
+    close += 1;
+  }
+  if (at >= line.len() || line[at] != b'[' || close >= line.len()) {
+    return (-1i64, at);
+  }
+  let ms = time_of(line.take(close).drop(at + 1).to_owned());
+  if (ms < 0i64) {
+    return (-1i64, at);
+  }
+  return (ms, close + 1);
+}
+
+// The lines of the lyrics `text`. A line of an LRC file starts with one
+// stamp or more, and a line with a tag such as `[ar:Name]` is no lyric.
+// The lines with times are in the order of their times.
+pub function lrc(text: string): tune.Line[] {
+  let out: tune.Line[] = [];
+  let timed = false;
+  for raw in text.replace("\r", "").split("\n") {
+    let line = raw.trim().to_owned();
+    let times: i64[] = [];
+    let at = 0;
+    let more = true;
+    while (more) {
+      let (ms, next) = stamp(line, at);
+      more = ms >= 0i64;
+      if (more) {
+        times = times.append(ms);
+        at = next;
+      }
+    }
+    let words = line.drop(at).trim().to_owned();
+    if (times.len() > 0) {
+      timed = true;
+      for t in times {
+        out = out.append(tune.Line { ms: t, text: words });
+      }
+    } else if (words.len() > 0 && !(words.starts_with("[") && words.ends_with("]"))) {
+      out = out.append(tune.Line { ms: -1i64, text: words });
+    }
+  }
+  if (!timed) {
+    return out;
+  }
+  return cmp.sort_by(out.filter((l: tune.Line): boolean => l.ms >= 0i64), (a: tune.Line, b: tune.Line): i32 => (a.ms - b.ms) as i32);
+}
+
+// The settings as a text: a line for the theme, a line for the order, a
+// line for each list with no tab, and a line for each hidden directory.
+pub function prefs_text(p: tune.Prefs): string {
+  let lines = ["look " + p.look.to_string(), "sort " + p.sort.to_string()];
+  for tab in p.off {
+    lines = lines.append("off " + tab.to_string());
+  }
+  for dir in p.hidden {
+    lines = lines.append("hidden " + field(dir));
+  }
+  return lines.join("\n");
+}
+
+// The settings of a text of `prefs_text`.
+pub function prefs_from(text: string): tune.Prefs {
+  let p = tune.no_prefs();
+  for raw in text.split("\n") {
+    let line = raw.to_owned();
+    if (line.starts_with("look ")) {
+      p = tune.Prefs { ...p, look: number_of(line.drop(5).to_owned()) as i32 };
+    } else if (line.starts_with("sort ")) {
+      p = tune.Prefs { ...p, sort: number_of(line.drop(5).to_owned()) as i32 };
+    } else if (line.starts_with("off ")) {
+      p = tune.Prefs { ...p, off: p.off.append(number_of(line.drop(4).to_owned()) as i32) };
+    } else if (line.len() > 7 && line.starts_with("hidden ")) {
+      p = tune.Prefs { ...p, hidden: p.hidden.append(line.drop(7).to_owned()) };
+    }
+  }
+  return p;
 }
 
 // The file of the tune of a number: the first one is a FLAC file, and each

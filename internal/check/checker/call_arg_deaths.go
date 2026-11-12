@@ -1206,6 +1206,10 @@ func freshInit(info *Info, init ast.Expr) bool {
 		if freshAssociatedResult(init) {
 			return true
 		}
+		// An `own` result borrows no argument, also through a function value.
+		if info != nil && info.CallOwnedResult != nil && info.CallOwnedResult(init) {
+			return true
+		}
 		if info != nil {
 			// A variant construction from another module has a qualified
 			// callee. It is fresh on the same terms as an unqualified one.

@@ -1,0 +1,24 @@
+// spec: RH-04
+
+struct Handle { n: i32 }
+
+function (h: Handle) read(): i32 {
+  return h.n;
+}
+
+function (own h: Handle) close(): void {}
+
+function wrap(own read: () => i32): own () => i32 {
+  return (): i32 => read();
+}
+
+function factory(h: Handle): own () => i32 {
+  return wrap((): i32 => h.read());
+}
+
+function main(): i32 {
+  let h = Handle { n: 7 };
+  let read = factory(h);
+  h.close();
+  return read();
+}
