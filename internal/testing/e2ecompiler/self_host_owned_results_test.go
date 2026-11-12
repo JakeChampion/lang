@@ -160,7 +160,7 @@ function borrowed_source(source: H[]): i32 { return keep(firsts(source)); }
 		{"fresh lambda local", `function run(): void { let f = (): own Box => { let box = Box { values: [] }; return box; }; }`, ""},
 		{"owned field", `struct Outer { box: Box } function get(own outer: Outer): own Box { return outer.box; }`, ""},
 		{"borrowed local alias", `function bad(box: Box): own Box { let local = box; return local; }`, "E051"},
-		{"captured local", `function make(): own Box { let box = Box { values: [] }; let f = (): Box => box; return box; }`, "E051"},
+		{"captured local", `function make(): own Box { let box = Box { values: [] }; let f = (): Box => box; let g = f; return box; }`, "E051"},
 		{"deferred field", `struct Outer { box: Box } function (own o: Outer) close(): void { o.box.close(); } function get(own o: Outer): own Box { defer o.close(); return o.box; }`, "E051"},
 		{"deferred sibling", `struct Pair { first: Box, second: Box } function get(own p: Pair): own Box { defer p.first.close(); return p.second; }`, ""},
 		{"deferred local root", `function get(): own Box { let b = Box { values: [] }; defer b.close(); return b; }`, "E051"},
