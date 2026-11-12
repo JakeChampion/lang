@@ -13,11 +13,12 @@ from quick to thorough.
 
 `http.request(method, path)` builds a request, with `with_header`,
 `with_text`, `with_bytes` and `with_json` to fill it in. Pass a platform and assert on
-what comes back. `std/test`'s HTTP assertions name the status, header or
+what comes back. The assertions of `std/http/testing` name the status, header or
 body they expected and what they got.
 
 ```fern
 import "std/test";
+import "std/http/testing";
 import "std/http";
 import "std/http/router";
 import "std/mock_platform";
@@ -39,9 +40,9 @@ function send(method: string, path: string): HttpResponse {
 
 function main(): i32 {
     let r: test.TestRunner = test.new("users");
-    r = r.it("finds a user", (): test.TestOutcome => test.assert_body(send("GET", "/users/7"), "{\"id\":7}"));
-    r = r.it("refuses a bad id", (): test.TestOutcome => test.assert_status(send("GET", "/users/x"), 400));
-    r = r.it("405s a POST", (): test.TestOutcome => test.assert_header(send("POST", "/users/7"), "allow", "GET, HEAD"));
+    r = r.it("finds a user", (): test.TestOutcome => testing.assert_body(send("GET", "/users/7"), "{\"id\":7}"));
+    r = r.it("refuses a bad id", (): test.TestOutcome => testing.assert_status(send("GET", "/users/x"), 400));
+    r = r.it("405s a POST", (): test.TestOutcome => testing.assert_header(send("POST", "/users/7"), "allow", "GET, HEAD"));
     return r.finish();
 }
 ```
@@ -68,6 +69,7 @@ on the response and on what the handler did.
 
 ```fern
 import "std/test";
+import "std/http/testing";
 import "std/http";
 import "std/fetch";
 import "std/mock_platform";
@@ -93,13 +95,13 @@ function test_upstream_up(): test.TestOutcome {
     if (!m.has_call("log")) {
         return test.fail("expected a log line");
     }
-    return test.assert_body(resp, "eu-west fine");
+    return testing.assert_body(resp, "eu-west fine");
 }
 
 function test_upstream_down(): test.TestOutcome {
     let m: mock_platform.MockPlatform = mock_platform.new()
         .with_http("GET", "https://status.example.com/health", Err(fetch.Timeout(fetch.Total)));
-    return test.assert_status(handle(http.request("GET", "/"), m), 502);
+    return testing.assert_status(handle(http.request("GET", "/"), m), 502);
 }
 
 function main(): i32 {
@@ -136,6 +138,7 @@ latency and fault decided by the script and a seed.
 
 ```fern
 import "std/test";
+import "std/http/testing";
 import "std/http";
 import "std/fetch";
 import "std/sim";
@@ -169,12 +172,12 @@ function test_slow_but_in_time(): test.TestOutcome {
 
 function test_too_slow(): test.TestOutcome {
     let got: (HttpResponse, i64) = run([sim_fetch.reply(200, "42").after(time.duration_millis(900))]);
-    return test.assert_status(got.0, 504);
+    return testing.assert_status(got.0, 504);
 }
 
 function test_one_reset_is_retried(): test.TestOutcome {
     let got: (HttpResponse, i64) = run([sim_fetch.reset(), sim_fetch.reply(200, "42")]);
-    return test.assert_body(got.0, "price 42");
+    return testing.assert_body(got.0, "price 42");
 }
 
 function main(): i32 {

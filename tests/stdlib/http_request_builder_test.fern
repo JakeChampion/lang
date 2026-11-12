@@ -1,4 +1,5 @@
 import "std/test";
+import "std/http/testing";
 import "std/http";
 import "std/mock_platform";
 import "std/platform";
@@ -47,25 +48,25 @@ function test_json_body_is_created(): test.TestOutcome {
     return test.fail("body length: " + req.body_len().to_string());
   }
   let resp = handle(req, m);
-  match (test.assert_status(resp, 200)) {
+  match (testing.assert_status(resp, 200)) {
     Fail(msg) => {
       return test.fail(msg);
     },
     Pass => {}
   }
-  match (test.assert_header(resp, "location", "/items/1")) {
+  match (testing.assert_header(resp, "location", "/items/1")) {
     Fail(msg) => {
       return test.fail(msg);
     },
     Pass => {}
   }
-  match (test.assert_header(resp, "Content-Type", "application/json")) {
+  match (testing.assert_header(resp, "Content-Type", "application/json")) {
     Fail(msg) => {
       return test.fail(msg);
     },
     Pass => {}
   }
-  match (test.assert_body(resp, "{\"n\": 1}")) {
+  match (testing.assert_body(resp, "{\"n\": 1}")) {
     Fail(msg) => {
       return test.fail(msg);
     },
@@ -80,19 +81,19 @@ function test_json_body_is_created(): test.TestOutcome {
 function test_body_without_its_type_is_refused(): test.TestOutcome {
   let m = mock_platform.new();
   let resp = handle(http.request("POST", "/items").with_text("{}"), m);
-  match (test.assert_status(resp, 415)) {
+  match (testing.assert_status(resp, 415)) {
     Fail(msg) => {
       return test.fail(msg);
     },
     Pass => {}
   }
-  return test.assert_no_header(resp, "Location");
+  return testing.assert_no_header(resp, "Location");
 }
 
 function test_header_names_the_caller(): test.TestOutcome {
   let m = mock_platform.new();
   let resp = handle(http.request("GET", "/whoami").with_header("X-Caller", "ada"), m);
-  match (test.assert_status(resp, 200)) {
+  match (testing.assert_status(resp, 200)) {
     Fail(msg) => {
       return test.fail(msg);
     },
@@ -101,7 +102,7 @@ function test_header_names_the_caller(): test.TestOutcome {
   if (m.call_count() != 0) {
     return test.fail("a lookup reached the platform");
   }
-  return test.assert_body(resp, "you are ada");
+  return testing.assert_body(resp, "you are ada");
 }
 
 function test_bare_request_has_nothing(): test.TestOutcome {
@@ -110,7 +111,7 @@ function test_bare_request_has_nothing(): test.TestOutcome {
     return test.fail("a bare request carries something");
   }
   let m = mock_platform.new();
-  return test.assert_status(handle(req, m), 401);
+  return testing.assert_status(handle(req, m), 401);
 }
 
 function test_query_reads_by_name(): test.TestOutcome {

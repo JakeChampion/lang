@@ -1,4 +1,5 @@
 import "std/test";
+import "std/http/testing";
 import "std/http";
 import "std/json";
 import "std/mock_platform";
@@ -31,59 +32,59 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 function test_ok_passes_through(): test.TestOutcome {
   let m = mock_platform.new();
   let resp = handle(http.request("GET", "/items/1"), m);
-  match (test.assert_status(resp, 200)) {
+  match (testing.assert_status(resp, 200)) {
     Fail(msg) => {
       return test.fail(msg);
     },
     Pass => {}
   }
-  return test.assert_body(resp, "first");
+  return testing.assert_body(resp, "first");
 }
 
 function test_fail_answers_a_problem(): test.TestOutcome {
   let m = mock_platform.new();
   let resp = handle(http.request("GET", "/items/9"), m);
-  match (test.assert_status(resp, 404)) {
+  match (testing.assert_status(resp, 404)) {
     Fail(msg) => {
       return test.fail(msg);
     },
     Pass => {}
   }
-  match (test.assert_header(resp, "content-type", "application/problem+json")) {
+  match (testing.assert_header(resp, "content-type", "application/problem+json")) {
     Fail(msg) => {
       return test.fail(msg);
     },
     Pass => {}
   }
-  return test.assert_body(resp, "{\"type\":\"about:blank\",\"title\":\"Not Found\",\"status\":404,\"detail\":\"no item at /items/9\"}");
+  return testing.assert_body(resp, "{\"type\":\"about:blank\",\"title\":\"Not Found\",\"status\":404,\"detail\":\"no item at /items/9\"}");
 }
 
 function test_error_keeps_its_own_title_and_escapes(): test.TestOutcome {
   let m = mock_platform.new();
   let resp = handle(http.request("GET", "/items/locked"), m);
-  match (test.assert_status(resp, 403)) {
+  match (testing.assert_status(resp, 403)) {
     Fail(msg) => {
       return test.fail(msg);
     },
     Pass => {}
   }
-  return test.assert_body(resp, "{\"type\":\"about:blank\",\"title\":\"Locked\",\"status\":403,\"detail\":\"item 'locked' is read-only\"}");
+  return testing.assert_body(resp, "{\"type\":\"about:blank\",\"title\":\"Locked\",\"status\":403,\"detail\":\"item 'locked' is read-only\"}");
 }
 
 function test_problem_quotes_its_text(): test.TestOutcome {
   let resp = http.problem(422, "Bad \"name\"", "line\nbreak");
-  match (test.assert_status(resp, 422)) {
+  match (testing.assert_status(resp, 422)) {
     Fail(msg) => {
       return test.fail(msg);
     },
     Pass => {}
   }
-  return test.assert_body(resp, "{\"type\":\"about:blank\",\"title\":\"Bad \\\"name\\\"\",\"status\":422,\"detail\":\"line\\nbreak\"}");
+  return testing.assert_body(resp, "{\"type\":\"about:blank\",\"title\":\"Bad \\\"name\\\"\",\"status\":422,\"detail\":\"line\\nbreak\"}");
 }
 
 function test_problem_without_detail(): test.TestOutcome {
   let resp = http.problem(503, "", "");
-  return test.assert_body(resp, "{\"type\":\"about:blank\",\"title\":\"Service Unavailable\",\"status\":503}");
+  return testing.assert_body(resp, "{\"type\":\"about:blank\",\"title\":\"Service Unavailable\",\"status\":503}");
 }
 
 function decode(text: string): Result[HttpResponse, json.JsonError] {
@@ -93,13 +94,13 @@ function decode(text: string): Result[HttpResponse, json.JsonError] {
 
 function test_json_error_answers_400(): test.TestOutcome {
   let resp = http.respond(decode("{\"n\": "));
-  match (test.assert_status(resp, 400)) {
+  match (testing.assert_status(resp, 400)) {
     Fail(msg) => {
       return test.fail(msg);
     },
     Pass => {}
   }
-  match (test.assert_header(resp, "content-type", "application/problem+json")) {
+  match (testing.assert_header(resp, "content-type", "application/problem+json")) {
     Fail(msg) => {
       return test.fail(msg);
     },
@@ -112,7 +113,7 @@ function test_json_error_answers_400(): test.TestOutcome {
   if (!body.contains(" at line 1, column ")) {
     return test.fail("body: " + body);
   }
-  return test.assert_status(http.respond(decode("{\"n\": 1}")), 200);
+  return testing.assert_status(http.respond(decode("{\"n\": 1}")), 200);
 }
 
 function failing(): Result[HttpResponse, string] {
@@ -121,13 +122,13 @@ function failing(): Result[HttpResponse, string] {
 
 function test_string_error_answers_500_without_the_message(): test.TestOutcome {
   let resp = http.respond(failing());
-  match (test.assert_status(resp, 500)) {
+  match (testing.assert_status(resp, 500)) {
     Fail(msg) => {
       return test.fail(msg);
     },
     Pass => {}
   }
-  return test.assert_body(resp, "{\"type\":\"about:blank\",\"title\":\"Internal Server Error\",\"status\":500}");
+  return testing.assert_body(resp, "{\"type\":\"about:blank\",\"title\":\"Internal Server Error\",\"status\":500}");
 }
 
 function counted(n: i32, ok: boolean): (i32, Result[HttpResponse, http.HttpError]) {
@@ -142,7 +143,7 @@ function test_respond_with_keeps_the_state(): test.TestOutcome {
   if (good.0 != 2) {
     return test.fail("state after Ok: " + good.0.to_string());
   }
-  match (test.assert_body(good.1, "counted")) {
+  match (testing.assert_body(good.1, "counted")) {
     Fail(msg) => {
       return test.fail(msg);
     },
@@ -152,7 +153,7 @@ function test_respond_with_keeps_the_state(): test.TestOutcome {
   if (bad.0 != 2) {
     return test.fail("state after Err: " + bad.0.to_string());
   }
-  return test.assert_status(bad.1, 409);
+  return testing.assert_status(bad.1, 409);
 }
 
 struct Boom { what: string }
@@ -170,13 +171,13 @@ function exploding(): Result[HttpResponse, dyn error.Error] {
 function test_dyn_error_answers_500_and_logs_the_message(): test.TestOutcome {
   let m = mock_platform.new();
   let resp = http.respond_error(exploding(), m);
-  match (test.assert_status(resp, 500)) {
+  match (testing.assert_status(resp, 500)) {
     Fail(msg) => {
       return test.fail(msg);
     },
     Pass => {}
   }
-  match (test.assert_body(resp, "{\"type\":\"about:blank\",\"title\":\"Internal Server Error\",\"status\":500}")) {
+  match (testing.assert_body(resp, "{\"type\":\"about:blank\",\"title\":\"Internal Server Error\",\"status\":500}")) {
     Fail(msg) => {
       return test.fail(msg);
     },
@@ -212,7 +213,7 @@ function test_respond_error_with_keeps_the_state(): test.TestOutcome {
   if (bad.0 != 2) {
     return test.fail("state after Err: " + bad.0.to_string());
   }
-  match (test.assert_status(bad.1, 500)) {
+  match (testing.assert_status(bad.1, 500)) {
     Fail(msg) => {
       return test.fail(msg);
     },
@@ -228,26 +229,26 @@ function proxied(failure: fetch.FetchError): Result[HttpResponse, fetch.FetchErr
 }
 
 function test_fetch_timeout_answers_504(): test.TestOutcome {
-  return test.assert_status(http.respond(proxied(fetch.Timeout(fetch.Inactivity))), 504);
+  return testing.assert_status(http.respond(proxied(fetch.Timeout(fetch.Inactivity))), 504);
 }
 
 function test_fetch_failure_answers_502_without_the_message(): test.TestOutcome {
   let resp = http.respond(proxied(fetch.Connect(net.ConnectionRefused)));
-  match (test.assert_status(resp, 502)) {
+  match (testing.assert_status(resp, 502)) {
     Fail(msg) => {
       return test.fail(msg);
     },
     Pass => {}
   }
-  return test.assert_body(resp, "{\"type\":\"about:blank\",\"title\":\"Bad Gateway\",\"status\":502}");
+  return testing.assert_body(resp, "{\"type\":\"about:blank\",\"title\":\"Bad Gateway\",\"status\":502}");
 }
 
 function test_fetch_bad_request_answers_500(): test.TestOutcome {
-  return test.assert_status(http.respond(proxied(fetch.InvalidRequest("method"))), 500);
+  return testing.assert_status(http.respond(proxied(fetch.InvalidRequest("method"))), 500);
 }
 
 function test_fetch_bad_url_answers_502(): test.TestOutcome {
-  return test.assert_status(http.respond(proxied(fetch.InvalidUrl("no scheme"))), 502);
+  return testing.assert_status(http.respond(proxied(fetch.InvalidUrl("no scheme"))), 502);
 }
 
 function test_produced_body_trailers(): test.TestOutcome {

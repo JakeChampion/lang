@@ -88,7 +88,7 @@ strings, booleans — and `assert_lt` and friends on any `cmp.Ord` type.
 | Maps         | `assert_map_len`, `assert_map_has`, `assert_map_lacks`, `assert_eq_map`                                               |
 | Option       | `assert_is_some`, `assert_is_none`, `assert_is_some_eq`, and the `_string` forms                          |
 | JSON         | `assert_json_eq` (parses both sides; object key order does not matter), `assert_json_has_key`, `assert_json_eq_field_string` |
-| HTTP         | `assert_status`, `assert_header`, `assert_no_header`, `assert_body` on an `HttpResponse`                              |
+| HTTP         | `assert_status`, `assert_header`, `assert_no_header`, `assert_body` on an `HttpResponse`, in `std/http/testing`       |
 | File state   | `assert_file_exists`, `assert_file_not_exists`, `assert_file_contains`, `assert_file_contents`, `assert_is_file`, `assert_is_dir`, `assert_file_size` |
 | Golden files | `assert_matches_golden(path, actual)` (writes a missing file) / `assert_matches_golden_strict(...)` (fails on one)     |
 | Process      | `assert_exit`, `assert_exit_zero`, `assert_stdout_eq`, `assert_stderr_eq`, `assert_stdout_contains`, `assert_stderr_contains`, `assert_process` |
