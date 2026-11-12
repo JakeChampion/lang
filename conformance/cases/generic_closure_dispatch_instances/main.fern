@@ -1,0 +1,30 @@
+struct Value { n: i32 }
+
+function make(n: i32): () => i32 {
+  return (): i32 => n;
+}
+
+function make_wide(n: i64): () => i64 {
+  return (): i64 => n;
+}
+
+function relay[T](value: T): (i32, () => T) {
+  return (0, (): T => value);
+}
+
+function invoke(run: () => i32): i32 {
+  return run();
+}
+
+function main(): i32 {
+  let run = make(7);
+  let pair = relay(Value { n: 7 });
+  let get = pair.1;
+  let wide = make_wide(4294967297i64);
+  assert(wide() == 4294967297i64);
+  let array_pair = relay([2, 4]);
+  let get_array = array_pair.1;
+  assert(get_array()[1] == 4);
+  print(invoke(run) + get().n);
+  return 0;
+}

@@ -454,6 +454,31 @@ function new_counter(): Counter {
   return Counter { count: 0, backs: 0, ticks: 0, on: false };
 }
 
+function close_message(e: android.Event): Option[Msg] {
+  if let android.Destroy = e {
+    return Some(Add);
+  }
+  return None;
+}
+
+function test_program_closes_final_state(): test.TestOutcome {
+  let closed = cell_new(-1);
+  let p = counter().with_system(close_message).with_close((own m: Counter): own Counter => {
+    closed.set(m.count);
+    return Counter { ...m, count: m.count + 10 };
+  });
+  let s = sim.start(new_counter(), p, fonts(), 200, 400, 1.0);
+  s = sim.event(s, android.Tick);
+  if (closed.get() != -1) {
+    return test.fail("a live program closed its state");
+  }
+  s = sim.event(s, android.Destroy);
+  if (closed.get() != 1) {
+    return test.fail("Destroy did not close the final state");
+  }
+  return test.assert_eq(s.shell.app.count, 11);
+}
+
 function test_program_taps(): test.TestOutcome {
   let s = sim.start(new_counter(), counter(), fonts(), 200, 400, 1.0);
   let first = s.shell.host.frames;
@@ -879,6 +904,7 @@ function main(): i32 {
   r = r.it("a finger that stays presses long", test_long_press);
   r = r.it("the node under the finger shows pressed", test_pressed_node_shows);
   r = r.it("a modal element takes the touches", test_modal_takes_the_touches);
+  r = r.it("a program closes its final state during Destroy", test_program_closes_final_state);
   r = r.it("a program takes taps", test_program_taps);
   r = r.it("a program takes a long press and a switch", test_program_long_press_and_toggle);
   r = r.it("the back key closes the app or tells it", test_back_closes_or_tells);

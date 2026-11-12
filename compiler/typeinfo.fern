@@ -149,6 +149,9 @@ pub function t_void(): Type {
 // element of a tuple, an argument of a struct or a union, the key or the value
 // of a map, or a parameter or the result of a function.
 pub function any_child(t: Type, p: (Type) => boolean): boolean {
+  if let TypeFunc(f) = t {
+    return any_of(f.param_types, p) || p(f.ret_type);
+  }
   return any_of(children(t), p);
 }
 

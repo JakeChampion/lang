@@ -1,4 +1,5 @@
 import "std/test";
+import "std/http/testing";
 import "std/http";
 import "std/json";
 import "std/mock_platform";
@@ -23,38 +24,38 @@ function test_a_json_body_decodes(): test.TestOutcome {
   let m = mock_platform.new();
   let req = http.request("POST", "/items").with_json("{\"name\":\"axe\",\"qty\":2,\"tags\":[\"iron\",\"oak\"]}");
   let resp = handle(req, m);
-  match (test.assert_status(resp, 201)) {
+  match (testing.assert_status(resp, 201)) {
     Fail(msg) => {
       return test.fail(msg);
     },
     Pass => {}
   }
-  return test.assert_body(resp, "{\"name\":\"axe\",\"qty\":2,\"tags\":[\"iron\",\"oak\"]}");
+  return testing.assert_body(resp, "{\"name\":\"axe\",\"qty\":2,\"tags\":[\"iron\",\"oak\"]}");
 }
 
 function test_the_media_type_must_be_json(): test.TestOutcome {
   let m = mock_platform.new();
   let resp = handle(http.request("POST", "/items").with_text("{\"name\":\"axe\",\"qty\":2,\"tags\":[]}"), m);
-  match (test.assert_status(resp, 415)) {
+  match (testing.assert_status(resp, 415)) {
     Fail(msg) => {
       return test.fail(msg);
     },
     Pass => {}
   }
-  match (test.assert_header(resp, "content-type", "application/problem+json")) {
+  match (testing.assert_header(resp, "content-type", "application/problem+json")) {
     Fail(msg) => {
       return test.fail(msg);
     },
     Pass => {}
   }
   let typed = http.request("POST", "/items").with_text("{\"name\":\"axe\",\"qty\":2,\"tags\":[]}").with_header("Content-Type", "application/vnd.shop+JSON; charset=utf-8");
-  return test.assert_status(handle(typed, m), 201);
+  return testing.assert_status(handle(typed, m), 201);
 }
 
 function test_malformed_json_is_400(): test.TestOutcome {
   let m = mock_platform.new();
   let resp = handle(http.request("POST", "/items").with_json("{\"name\":"), m);
-  match (test.assert_status(resp, 400)) {
+  match (testing.assert_status(resp, 400)) {
     Fail(msg) => {
       return test.fail(msg);
     },
@@ -71,7 +72,7 @@ function test_a_body_that_is_not_utf8_is_400(): test.TestOutcome {
   let m = mock_platform.new();
   let raw = unsafe { string_from_bytes_unchecked([123 as u8, 255 as u8, 125 as u8]) };
   let resp = handle(http.request("POST", "/items").with_json(raw), m);
-  match (test.assert_status(resp, 400)) {
+  match (testing.assert_status(resp, 400)) {
     Fail(msg) => {
       return test.fail(msg);
     },
@@ -87,7 +88,7 @@ function test_a_body_that_is_not_utf8_is_400(): test.TestOutcome {
 function test_the_wrong_shape_is_422(): test.TestOutcome {
   let m = mock_platform.new();
   let resp = handle(http.request("POST", "/items").with_json("{\"name\":\"axe\",\"qty\":\"two\",\"tags\":[]}"), m);
-  match (test.assert_status(resp, 422)) {
+  match (testing.assert_status(resp, 422)) {
     Fail(msg) => {
       return test.fail(msg);
     },
@@ -98,7 +99,7 @@ function test_the_wrong_shape_is_422(): test.TestOutcome {
     return test.fail("problem body: " + body);
   }
   let missing = handle(http.request("POST", "/items").with_json("{\"name\":\"axe\"}"), m);
-  match (test.assert_status(missing, 422)) {
+  match (testing.assert_status(missing, 422)) {
     Fail(msg) => {
       return test.fail(msg);
     },

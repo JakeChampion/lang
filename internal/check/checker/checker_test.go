@@ -2254,6 +2254,23 @@ func TestCompoundAssignPlaceDiagnosticReportedOnce(t *testing.T) {
 	}
 }
 
+// The parser writes the place of a compound assignment twice. The place is
+// never assignable, so the second copy cannot run.
+func TestCompoundAssignToPlaceWithCallRefusedOnce(t *testing.T) {
+	for _, tc := range []struct{ name, stmt, code string }{
+		{"element", "a[k(0)] += 1;", "E056"},
+		{"field", "mk().p += 1;", "E048"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := "struct S { p: i32 }\nfunction k(n: i32): i32 { return n; }\nfunction mk(): S { return S { p: 1 }; }\nfunction main(): i32 { let a: i32[] = [1, 2]; " + tc.stmt + " return 0; }"
+			errs := checkErrors(t, src)
+			if len(errs) != 1 || errs[0].ErrCode != tc.code {
+				t.Fatalf("%s: got %v, want one %s", tc.stmt, errs, tc.code)
+			}
+		})
+	}
+}
+
 func TestPointerCaptureWriteBackRejected(t *testing.T) {
 	src := `function main(): i32 {
 		let name: string = "a";

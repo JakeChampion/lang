@@ -45,8 +45,12 @@ func TestSelfHostFmtRefusesParseErrors(t *testing.T) {
 				{"-fmt", "-o", out, path},
 			} {
 				stdout, stderr, code := runFmtCapture(runX86_64Bin(runner, bin, args...))
-				if code != 1 {
-					t.Errorf("%v exited %d, want 1", args, code)
+				want := 1
+				if args[1] == "-d" {
+					want = 2
+				}
+				if code != want {
+					t.Errorf("%v exited %d, want %d", args, code, want)
 				}
 				if stdout != "" {
 					t.Errorf("%v wrote to stdout:\n%s", args, stdout)
@@ -83,6 +87,37 @@ func TestSelfHostFmtRefusesParseErrors(t *testing.T) {
 		}
 		if !strings.Contains(stderr, bad+":3:3: error[P001]") {
 			t.Errorf("the file that does not parse was not reported:\n%s", stderr)
+		}
+	})
+
+	t.Run("diff-exit-codes", func(t *testing.T) {
+		tmp := t.TempDir()
+		bad := filepath.Join(tmp, "bad.fern")
+		messy := filepath.Join(tmp, "messy.fern")
+		missing := filepath.Join(tmp, "missing.fern")
+		if err := os.WriteFile(bad, []byte(fmtParseErrorCases[0].src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(messy, []byte("function main(): i32 {return 0;}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range []struct {
+			args []string
+			want int
+		}{
+			{[]string{"-fmt", "-d", messy}, 1},
+			{[]string{"-fmt", "-d", messy, bad}, 2},
+			{[]string{"-fmt", "-d", bad, messy}, 2},
+			{[]string{"-fmt", "-d", missing}, 2},
+			{[]string{"-fmt", missing}, 1},
+		} {
+			stdout, stderr, code := runFmtCapture(runX86_64Bin(runner, bin, c.args...))
+			if code != c.want {
+				t.Errorf("%v exited %d, want %d:\n%s", c.args, code, c.want, stderr)
+			}
+			if len(c.args) == 4 && !strings.HasPrefix(stdout, "--- "+messy+"\n") {
+				t.Errorf("%v did not print the diff of the file that parses:\n%s", c.args, stdout)
+			}
 		}
 	})
 

@@ -1,5 +1,6 @@
 import "std/unicode";
 import "std/test";
+import "std/http/testing";
 import "std/platform";
 import "std/sim";
 import "std/sim_fetch";
@@ -299,7 +300,7 @@ function test_http_carries_the_span_upstream(): test.TestOutcome {
 function test_a_handler_runs_over_the_simulation(): test.TestOutcome {
   let p = __plat(1).with_config("REGION", "eu-west");
   let resp = handle(http.request("GET", "/"), p);
-  return test.assert_body(resp, "eu-west 25 status 200");
+  return testing.assert_body(resp, "eu-west 25 status 200");
 }
 
 function __user(req: HttpRequest, params: router.Params, plat: sim_platform.SimPlatform): Result[HttpResponse, dyn http.ToResponse] {
