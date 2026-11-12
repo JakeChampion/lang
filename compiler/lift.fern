@@ -381,11 +381,11 @@ function value_fn_contract(v: ast.Expr, shadowed: string[], mfuncs: MFuncs): (st
       if (util.index_of_str(shadowed, id.name) >= 0) {
         return ("", "", false);
       }
-      for d in mfuncs.decls {
-        if (d.name == id.name && d.receiver_type.len() == 0 && !d.is_const) {
-          let (dr, dp) = params_fn_contract(d.params, contract_spelling(d.ret_type, d.ret_fn_ret, d.ret_fn_param_types));
-          return (dr, dp, true);
-        }
+      let di = first_free_decl(mfuncs, id.name, true);
+      if (di >= 0) {
+        let d = mfuncs.decls[di];
+        let (dr, dp) = params_fn_contract(d.params, contract_spelling(d.ret_type, d.ret_fn_ret, d.ret_fn_param_types));
+        return (dr, dp, true);
       }
     },
     ast.ExprCall(c) => {
@@ -822,26 +822,25 @@ function make_wrap_lambda_func(lam: ast.ExprLambda, wrapname: string): parser.Fu
 }
 
 function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs): Option[parser.FuncDecl] {
-  for fi in 0..mfuncs.decls.len() {
-    if (mfuncs.decls[fi].name == fnname && mfuncs.decls[fi].receiver_type.len() == 0) {
-      let tgt = mfuncs.decls[fi];
-      let ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", own: false, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: "", line: 0, col: 0 }];
-      let args: ast.Expr[] = [];
-      for pj in 0..tgt.params.len() {
-        ps = ps.append(tgt.params[pj]);
-        args = args.append(ast.ExprIdent { name: tgt.params[pj].name, line: 0, col: 0, ty: "", builtin: false });
-      }
-      let call: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: fnname, line: 0, col: 0, ty: "", builtin: false }, args: args, line: 0, col: 0, type_args: [], ty: "" };
-      let body: ast.Stmt = ast.StmtReturn { value: call, line: 0, col: 0 };
-      if (tgt.ret_type == "void") {
-        body = ast.StmtExpr { value: call, line: 0, op: "" };
-      }
-      let bd: ast.Stmt[] = [body];
-      let notp: string[] = [];
-      return Some(parser.FuncDecl { bound_modules: [], stdlib: "", no_inline: false, always_inline: false, name: wrapname, receiver_name: "", receiver_type: "", receiver_own: false, type_params: notp, params: ps, ret_own: tgt.ret_own, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", import_weak: false, all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: tgt.ret_fn_ret, ret_fn_param_types: tgt.ret_fn_param_types, is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [], is_unsafe: false });
-    }
+  let fi = first_free_decl(mfuncs, fnname, false);
+  if (fi < 0) {
+    return None;
   }
-  return None;
+  let tgt = mfuncs.decls[fi];
+  let ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", own: false, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: "", line: 0, col: 0 }];
+  let args: ast.Expr[] = [];
+  for pj in 0..tgt.params.len() {
+    ps = ps.append(tgt.params[pj]);
+    args = args.append(ast.ExprIdent { name: tgt.params[pj].name, line: 0, col: 0, ty: "", builtin: false });
+  }
+  let call: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: fnname, line: 0, col: 0, ty: "", builtin: false }, args: args, line: 0, col: 0, type_args: [], ty: "" };
+  let body: ast.Stmt = ast.StmtReturn { value: call, line: 0, col: 0 };
+  if (tgt.ret_type == "void") {
+    body = ast.StmtExpr { value: call, line: 0, op: "" };
+  }
+  let bd: ast.Stmt[] = [body];
+  let notp: string[] = [];
+  return Some(parser.FuncDecl { bound_modules: [], stdlib: "", no_inline: false, always_inline: false, name: wrapname, receiver_name: "", receiver_type: "", receiver_own: false, type_params: notp, params: ps, ret_own: tgt.ret_own, ret_type: tgt.ret_type, body: bd, line: 0, col: 0, import_iface: "", import_wit: "", import_weak: false, all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: tgt.ret_fn_ret, ret_fn_param_types: tgt.ret_fn_param_types, is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [], is_unsafe: false });
 }
 
 function named_wrap_name(fnname: string, fd: parser.FuncDecl, counter: i32, mfuncs: MFuncs): string {
@@ -1739,15 +1738,23 @@ function lift_ident_is_param(fd: parser.FuncDecl, name: string): boolean {
   return util.index_of_str(bound, name) >= 0;
 }
 
-function lift_names_fn_value(mfuncs: MFuncs, name: string): boolean {
+// The first declaration of this name that has no receiver, or -1. With
+// fns_only, a constant does not count.
+function first_free_decl(mfuncs: MFuncs, name: string, fns_only: boolean): i32 {
   let first: i32 = -1;
   let i = mfuncs.head[util.hash_bucket(name, mfuncs.head.len())];
   while (i >= 0) {
-    if ((first < 0 || i < first) && mfuncs.decls[i].receiver_type.len() == 0 && mfuncs.decls[i].name == name) {
+    if ((first < 0 || i < first) && mfuncs.decls[i].receiver_type.len() == 0 && mfuncs.decls[i].name == name
+      && !(fns_only && mfuncs.decls[i].is_const)) {
       first = i;
     }
     i = mfuncs.next[i];
   }
+  return first;
+}
+
+function lift_names_fn_value(mfuncs: MFuncs, name: string): boolean {
+  let first = first_free_decl(mfuncs, name, false);
   return first >= 0 && !mfuncs.decls[first].is_const;
 }
 
@@ -2332,13 +2339,7 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, vars: 
           },
           ast.ExprIdent(ttid) => {
             if (util.index_of_str(tbound, ttid.name) < 0) {
-              let tfnok = false;
-              for tmi in 0..mfuncs.decls.len() {
-                if (mfuncs.decls[tmi].name == ttid.name && mfuncs.decls[tmi].receiver_type.len() == 0 && !mfuncs.decls[tmi].is_const) {
-                  tfnok = true;
-                }
-              }
-              if (tfnok) {
+              if (first_free_decl(mfuncs, ttid.name, true) >= 0) {
                 let ttw = try_fn_field_value(tl.elements[tei], fd, vars, tfs, tct, gfns, mfuncs, structs);
                 tfs = ttw.funcs;
                 tct = ttw.counter;

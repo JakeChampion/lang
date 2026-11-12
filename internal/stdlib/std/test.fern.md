@@ -64,7 +64,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<24 pub function assert_one_of[T: cmp.Eq + cmp.Display](actual: T, allowed: T[]): TestOutcome>>
 
-<<25 pub function assert_status(resp: HttpResponse, expected: i32): TestOutcome>>
+<<25 pub function assert_is_ok[T, E](res: Result[T, E]): TestOutcome>>
 
 <<26 pub function assert_array_intersects_string(a: string[], b: string[]): TestOutcome>>
 
@@ -97,8 +97,6 @@ import "std/u64";
 import "std/f64";
 import "std/array";
 import "std/string";
-import "std/headers";
-import "std/http";
 import "std/json";
 import "std/time";
 import "std/clock";
@@ -1900,50 +1898,10 @@ pub function assert_is_some_eq[T: cmp.Eq + cmp.Display](opt: Option[T], expected
 }
 ```
 
-### `25 pub function assert_status(resp: HttpResponse, expected: i32): TestOutcome`
+### `25 pub function assert_is_ok[T, E](res: Result[T, E]): TestOutcome`
 
 ```fern
-<<25 pub function assert_status(resp: HttpResponse, expected: i32): TestOutcome>>=
-pub function assert_status(resp: HttpResponse, expected: i32): TestOutcome {
-  if (resp.status == expected) {
-    return Pass;
-  }
-  return Fail("assert_status: got " + resp.status.to_string() + ", expected " + expected.to_string());
-}
-
-pub function assert_header(resp: HttpResponse, name: string, expected: string): TestOutcome {
-  match (resp.headers.get(name)) {
-    Some(v) => {
-      if (v == expected) {
-        return Pass;
-      }
-      return Fail("assert_header: " + name + " is \"" + v + "\", expected \"" + expected + "\"");
-    },
-    None => {
-      return Fail("assert_header: no " + name + " header, expected \"" + expected + "\"");
-    }
-  }
-}
-
-pub function assert_no_header(resp: HttpResponse, name: string): TestOutcome {
-  match (resp.headers.get(name)) {
-    Some(v) => {
-      return Fail("assert_no_header: " + name + " is \"" + v + "\", expected no " + name + " header");
-    },
-    None => {
-      return Pass;
-    }
-  }
-}
-
-pub function assert_body(resp: HttpResponse, expected: string): TestOutcome {
-  let got = resp.body_text_lossy();
-  if (got == expected) {
-    return Pass;
-  }
-  return Fail("assert_body: got \"" + got + "\", expected \"" + expected + "\"");
-}
-
+<<25 pub function assert_is_ok[T, E](res: Result[T, E]): TestOutcome>>=
 pub function assert_is_ok[T, E](res: Result[T, E]): TestOutcome {
   if (res.is_ok()) {
     return Pass;

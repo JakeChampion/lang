@@ -827,9 +827,9 @@ Today: **58 of 89 modules are core-safe.** The table classifies only the top-lev
 modules. Nested modules such as `http/*` and `crypto/*` are not in it (#14400). Two results
 worth knowing:
 
-- **`std/test` reaches 14 host capabilities**, `tcp`, `reactor` and `ktls` among them. It
-  imports `std/http` for its HTTP assertions, and `std/http` imports `std/platform`
-  (#14402). So a freestanding target cannot run the in-language test runner.
+- **`std/test` reaches `env`, `fs`, `log` and `now`.** The HTTP assertions are in
+  `std/http/testing`, which reaches the host capabilities of `std/http`. A freestanding
+  target has none of the four, so it cannot run the in-language test runner.
   Do not treat "core-safe" and "testable in-language" as the same set.
 - **`std/jni` is hosted on `cabi` alone.** It touches no OS surface at all; what it
   needs is a calling convention to hand a JNIEnv method pointer to.

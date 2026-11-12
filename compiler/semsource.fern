@@ -3,6 +3,7 @@ import "./capturebox";
 import "./astwalk";
 import "./parser";
 import "./lexer";
+import "./lenelide";
 import "./lexical";
 import "./checker";
 import "./typeinfo";
@@ -6862,7 +6863,7 @@ function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Cont
   if (!semtypes.concrete(s.result, true)) {
     return Made { p: refuse("unresolved result type: " + unresolved_result_spelling(fd, s)), memo: memo };
   }
-  let body = parser.elide_len_bounded_body(fd.body);
+  let body = lenelide.elide_len_bounded_body(fd.body);
   s = learn_body(fd, body, s);
   s = stmts(body, prebind(parameters(fd, s)));
   return complete(fd, s, name, memo, finalizers);
