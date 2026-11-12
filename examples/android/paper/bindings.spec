@@ -2,9 +2,9 @@
 # bindings.fern again with
 #   jnibind $ANDROID_HOME/platforms/android-34/android.jar bindings.spec
 android.app.Activity getWindow runOnUiThread(Ljava/lang/Runnable;)V
-android.app.ActivityOptions makeClipRevealAnimation toBundle makeBasic()Landroid/app/ActivityOptions;
+android.app.ActivityOptions makeClipRevealAnimation toBundle makeBasic()Landroid/app/ActivityOptions; setPendingIntentBackgroundActivityStartMode?
 android.app.Notification category contentIntent extras flags FLAG_GROUP_SUMMARY
-android.app.PendingIntent -
+android.app.PendingIntent send(Landroid/content/Context;ILandroid/content/Intent;Landroid/app/PendingIntent$OnFinished;Landroid/os/Handler;?Ljava/lang/String;Landroid/os/Bundle;)V
 android.content.ComponentName unflattenFromString
 android.content.ContentResolver -
 android.content.Context getPackageManager startActivity(Landroid/content/Intent;Landroid/os/Bundle;)V getContentResolver()Landroid/content/ContentResolver; getFilesDir()Ljava/io/File; getSystemService(Ljava/lang/String;)Ljava/lang/Object;

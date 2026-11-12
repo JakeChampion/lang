@@ -760,16 +760,14 @@ function send_held(ctx: usize, e: usize, j: bindings.Classes, key: string): bool
     return false;
   }
   let opts = value_or(j.activity_options.make_basic(e), bindings.ActivityOptions { ref: 0 as usize });
-  // The method came in Android 14, so the wrappers do not have it: a
-  // device that lacks a member of the struct of IDs gives an error for
-  // the struct.
-  if (android.sdk_version(ctx) >= 34) {
-    drop(e, object_method(e, opts.ref, "setPendingIntentBackgroundActivityStartMode", "(I)Landroid/app/ActivityOptions;", [BACKGROUND_START_ALLOWED as usize]));
+  // The method came in Android 14. On an older device it is an error,
+  // and the options stay as they are.
+  if let Ok(same) = j.activity_options.set_pending_intent_background_activity_start_mode(e, opts, BACKGROUND_START_ALLOWED) {
+    drop(e, same.ref);
   }
   let bundle = value_or(j.activity_options.to_bundle(e, opts), no_bundle());
-  // The permission argument is the Java value null, and a wrapper gives a
-  // string that is not null.
-  let sent = jni.call_void(e, pi.ref, "send", "(Landroid/content/Context;ILandroid/content/Intent;Landroid/app/PendingIntent$OnFinished;Landroid/os/Handler;Ljava/lang/String;Landroid/os/Bundle;)V", [act, 0 as usize, 0 as usize, 0 as usize, 0 as usize, 0 as usize, bundle.ref]);
+  let none = jni.Object { ref: 0 as usize };
+  let sent = done(j.pending_intent.send(e, bindings.PendingIntent { ref: pi.ref }, context(ctx), 0, no_intent(), none, none, None, bundle));
   drop(e, bundle.ref);
   drop(e, opts.ref);
   drop(e, pi.ref);
