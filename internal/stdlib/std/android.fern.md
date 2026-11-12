@@ -814,12 +814,16 @@ function key_char(ctx: usize, device: i32, code: i32, meta: i32): i32 {
 }
 
 // The keys that the system handles after the app: the volume keys, the
-// mute key, the headset hook, and the media keys from play/pause (85) to
-// fast forward (90), play (126), pause (127), record (130), audio track
-// (222), and skip and step (272 to 275). The system gives a media key to
-// the media session that plays.
+// mute key, the headset hook, and the media keys. The system gives a media
+// key to the media session that plays.
 function system_key(code: i32): boolean {
-  return code == 24 || code == 25 || code == 164 || code == 79 || code >= 85 && code <= 90 || code == 126 || code == 127 || code == 130 || code == 222 || code >= 272 && code <= 275;
+  return code == 24 || code == 25 || code == 164 || code == 79 || media_key(code);
+}
+
+// The media keys: play/pause (85) to fast forward (90), play (126), pause
+// (127), record (130), audio track (222), and skip and step (272 to 275).
+function media_key(code: i32): boolean {
+  return code >= 85 && code <= 90 || code == 126 || code == 127 || code == 130 || code == 222 || code >= 272 && code <= 275;
 }
 
 // JNIInvokeInterface of jni.h, the functions of a JavaVM.
