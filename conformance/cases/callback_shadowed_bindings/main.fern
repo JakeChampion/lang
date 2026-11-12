@@ -1,0 +1,43 @@
+import "std/i32";
+
+struct H { n: Cell[i32] }
+
+function (h: H) read(): i32 {
+  return h.n.get();
+}
+
+function (own h: H) close(): i32 {
+  let n = h.n.get();
+  h.n.set(-1);
+  return n;
+}
+
+function combine(own h: H): i32 {
+  let ignore = (h: i32): i32 => h + 1;
+  let read = (): i32 => h.read();
+  let n = read() + ignore(2);
+  n += h.close();
+  if (true) {
+    let read = (): i32 => 1;
+    n += read();
+  }
+  if (true) {
+    let h = H { n: cell_new(5) };
+    function read(): i32 {
+      return h.read();
+    }
+    n += read();
+    n += h.close();
+  }
+  let invoke = (own h: H): i32 => {
+    let read = (): i32 => h.read();
+    let n = read();
+    return n + h.close();
+  };
+  return n + invoke(H { n: cell_new(3) });
+}
+
+function main(): i32 {
+  print(combine(H { n: cell_new(11) }));
+  return 0;
+}

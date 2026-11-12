@@ -10937,6 +10937,11 @@ func SupersededFieldMoves(sl *ast.StructLit, target string, consumed func(field 
 }
 
 func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
+	if fn.Body == nil {
+		return
+	}
+	c.computeCallbackFactories()
+	defer c.distinctOwnedBindings(fn)()
 	if fn.ReturnOwn && c.funcResultBorrowsWith(fn, true) {
 		c.errfCode(fn.Pos(), "E051", "an `own` result must not borrow a parameter")
 	}

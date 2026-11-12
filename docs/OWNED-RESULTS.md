@@ -55,6 +55,9 @@ A selected record or tuple field retains the loans of that component.
 An unrelated callback field does not extend those loans.
 Array elements share a conservative loan set.
 Single-definition aggregate aliases preserve the selected component.
+Each local declaration has a separate binding identity.
+A shadowed name does not erase an outer callback loan.
+Lambda parameters and local named functions use the same scope rule.
 An index expression also retains loans from callbacks that compute its index.
 Mutable bindings and resource paths inside aggregates still need a broader proof.
 

@@ -19317,7 +19317,7 @@ function ocl_factories(mod: parser.Module, env: ModuleEnv, dx: OwnDecls): OclFac
   let rows: OclCapture[][] = [];
   for fn in mod.funcs {
     if (ocl_container(parser.fn_tag_spelling(fn.ret_type, fn.ret_fn_ret, fn.ret_fn_param_types), containers)) {
-      funcs = funcs.append(annotate_func(fn, env));
+      funcs = funcs.append(lexical.resolve_func(annotate_func(fn, env)).func);
       names = names.append(fn.name);
       rows = rows.append([]);
     }
@@ -19543,11 +19543,11 @@ function ocl_callback_value(e: ast.Expr, facts: OclFacts): boolean {
 }
 
 // The last-use and capture facts are computed on their first question.
-struct LastUses { known: boolean, keys: util.NameIndex, fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex, captures_known: boolean, capture_names: util.NameIndex, capture_rows: OclCapture[][], capture_inlines: OclCapture[], capture_types: string[], capture_tparams: string[] }
+struct LastUses { known: boolean, keys: util.NameIndex, fn: parser.FuncDecl, typed_fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex, captures_known: boolean, capture_names: util.NameIndex, capture_rows: OclCapture[][], capture_inlines: OclCapture[], capture_types: string[], capture_tparams: string[] }
 
-function lu_pending(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex): Cell[LastUses] {
+function lu_pending(fn: parser.FuncDecl, typed_fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex): Cell[LastUses] {
   let none: string[] = [];
-  return cell_new(LastUses { known: false, keys: util.name_index(none), fn: fn, ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, captures_known: false, capture_names: util.name_index(none), capture_rows: [], capture_inlines: [], capture_types: [], capture_tparams: [] });
+  return cell_new(LastUses { known: false, keys: util.name_index(none), fn: fn, typed_fn: typed_fn, ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, captures_known: false, capture_names: util.name_index(none), capture_rows: [], capture_inlines: [], capture_types: [], capture_tparams: [] });
 }
 
 function ow_callback_facts(ctx: OwnCtx): OclFacts {
@@ -19621,7 +19621,7 @@ function ow_callback_capture_diags(value: ast.Expr, moved: MovedEntry[], ctx: Ow
 function lu_has(ctx: OwnCtx, key: string): boolean {
   let lu = ctx.last_use.get();
   if (!lu.known) {
-    lu = LastUses { ...lu, known: true, keys: util.name_index(lu_last_use_args(lu_resolved(lu.fn), lu.ofuncs, lu.borrows, lu.lenders, lu.builtins, lu.noret)) };
+    lu = LastUses { ...lu, known: true, keys: util.name_index(lu_last_use_args(lu_resolved(lu.typed_fn), lu.ofuncs, lu.borrows, lu.lenders, lu.builtins, lu.noret)) };
     ctx.last_use.set(lu);
   }
   return lu.keys.has(key);
@@ -26551,6 +26551,14 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
       continue;
     }
     fn = parser.FuncDecl { ...fn, body: ownmatch.source(fn.body) };
+    let lu_fn = fn;
+    if (i < typed.len()) {
+      lu_fn = parser.FuncDecl { ...fn, body: ownmatch.source(typed[i].body) };
+    } else {
+      lu_fn = annotate_func(fn, env);
+    }
+    let resolved = lexical.resolve_func(fn);
+    fn = resolved.func;
     let owned: string[] = [];
     let borrowed: string[] = [];
     if (fn.receiver_own && ow_ownable_type(fn.receiver_type)) {
@@ -26565,16 +26573,23 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
         borrowed = borrowed.append(param.name);
       }
     }
-    let lu_fn = fn;
-    if (i < typed.len()) {
-      lu_fn = parser.FuncDecl { ...fn, body: ownmatch.source(typed[i].body) };
-    } else {
-      lu_fn = annotate_func(fn, env);
-    }
-    let ctx = OwnCtx { factories: factories, result_body: fn.body, ret_own: fn.ret_own, value_proofs: value_proofs, owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_pending(lu_fn, ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret, loops: [], jumps: ow_fresh_jumps(), replaced: ow_replaced_reads(fn.body) };
+    let ctx = OwnCtx { factories: factories, result_body: fn.body, ret_own: fn.ret_own, value_proofs: value_proofs, owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_pending(fn, lu_fn, ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret, loops: [], jumps: ow_fresh_jumps(), replaced: ow_replaced_reads(fn.body) };
     let nomoved: MovedEntry[] = [];
     let r = ow_stmts(fn.body, nomoved, ctx);
-    out = util.append_diags(out, r.diags);
+    out = util.append_diags(out, ow_source_diags(r.diags, resolved.bindings));
+  }
+  return out;
+}
+
+function ow_source_diags(diags: util.Diag[], bindings: lexical.Binding[]): util.Diag[] {
+  let out: util.Diag[] = [];
+  for diag in diags {
+    let message = diag.message;
+    for binding in bindings {
+      message = message.replace("\"" + binding.symbol + "\"", "\"" + binding.name + "\"");
+      message = message.replace("\"" + binding.symbol + ".", "\"" + binding.name + ".");
+    }
+    out = out.append(util.Diag { ...diag, message: message });
   }
   return out;
 }

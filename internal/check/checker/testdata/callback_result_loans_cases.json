@@ -1168,5 +1168,60 @@
     "name": "recursive callback container retains later sibling loan",
     "source": "struct H{n:i32}\nfunction(h:H) read():i32{return h.n;}\nfunction(own h:H) close():i32{return h.n;}\nstruct A{next:B[],read:()=>i32}\nstruct B{back:A[]}\nfunction pack(own cb:()=>i32):B{return B{back:[A{next:[],read:cb}]};}\nfunction choose(own b:B):()=>i32{return b.back[0].read;}\nfunction f(own h:H):i32{let b=pack(():i32=>h.read());let run=choose(b);h.close();return run();}",
     "want": "E050"
+  },
+  {
+    "name": "unrelated lambda parameter does not erase resource capture",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f(own h:H):i32{let ignore=(h:i32):i32=>h;let read=():i32=>h.read();h.close();return read();}",
+    "want": "E050"
+  },
+  {
+    "name": "nested callback declaration does not erase outer callback loan",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f(own h:H):i32{let read=():i32=>h.read();if(true){let read=():i32=>0;read();}h.close();return read();}",
+    "want": "E050"
+  },
+  {
+    "name": "unrelated factory lambda parameter does not erase input loan",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function wrap(cb:()=>i32):()=>i32{let ignore=(cb:i32):i32=>cb;return ():i32=>cb();} function f(own h:H):i32{let read=wrap(():i32=>h.read());h.close();return read();}",
+    "want": "E050"
+  },
+  {
+    "name": "shadowed callback keeps independent resource loan",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f(own h:H,own other:H):i32{let read=():i32=>h.read();let n=read();h.close();if(true){let read=():i32=>other.read();n+=read();}return n+other.close();}",
+    "want": ""
+  },
+  {
+    "name": "local named function parameter does not erase resource capture",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f(own h:H):i32{function ignore(h:i32):i32{return h;}let read=():i32=>h.read();h.close();return read();}",
+    "want": "E050"
+  },
+  {
+    "name": "local named function keeps shadowed capture owner",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f(own h:H):i32{if(true){let h=H{n:3};function read():i32{return h.read();}h.close();return read();}return h.close();}",
+    "want": "E050"
+  },
+  {
+    "name": "local named function permits independent shadowed owner",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f(own h:H):i32{let read=():i32=>h.read();let n=read();h.close();if(true){let h=H{n:3};function read():i32{return h.read();}n+=read();n+=h.close();}return n;}",
+    "want": ""
+  },
+  {
+    "name": "lambda keeps shadowed fresh capture owner",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f(own h:H):i32{if(true){let h=H{n:3};let read=():i32=>h.read();h.close();return read();}return h.close();}",
+    "want": "E050"
+  },
+  {
+    "name": "owned lambda parameter retains its callback loan",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f(own h:H):i32{let run=(own h:H):i32=>{let read=():i32=>h.read();h.close();return read();};return run(h);}",
+    "want": "E050"
+  },
+  {
+    "name": "owned lambda parameter permits callback last use",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} function f(own h:H):i32{let run=(own h:H):i32=>{let read=():i32=>h.read();let n=read();return n+h.close();};return run(h);}",
+    "want": ""
+  },
+  {
+    "name": "nested record binding does not erase outer environment",
+    "source": "struct H { n:i32 } function(h:H) read():i32{return h.n;} function(own h:H) close():i32{return h.n;} struct R{read:()=>i32} function f(own h:H):i32{let r=R{read:():i32=>h.read()};if(true){let r=R{read:():i32=>0};r.read();}h.close();return r.read();}",
+    "want": "E050"
   }
 ]

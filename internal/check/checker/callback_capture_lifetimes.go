@@ -41,6 +41,7 @@ func (c *checker) computeCallbackFactories() {
 	for changed {
 		changed = false
 		for _, fn := range factories {
+			restore := distinctBindings(fn)
 			_, values := c.callbackCaptureFacts(fn, true)
 			var captures []callbackLoan
 			ast.Walk(fn.Body, func(n ast.Node) bool {
@@ -65,6 +66,7 @@ func (c *checker) computeCallbackFactories() {
 					}
 				}
 			}
+			restore()
 			if len(sources) > len(c.callbackFactories[fn.Name]) {
 				c.callbackFactories[fn.Name] = sources
 				changed = true
