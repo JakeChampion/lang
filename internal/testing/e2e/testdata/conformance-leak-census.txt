@@ -1463,3 +1463,6 @@ callback_shadowed_bindings                         0
 
 # 2026-11-12: callback_fresh_local_last_use has balanced allocations and zero live bytes on all three main targets.
 callback_fresh_local_last_use                       0
+
+# 2026-11-12: owned_array_exchange_inputs has balanced allocations and zero live bytes on all three main targets.
+owned_array_exchange_inputs                        0
