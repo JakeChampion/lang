@@ -205,6 +205,9 @@ class Phone:
         self.filter_row = filter_row
         self.probe = probe
         self.allowed = False
+        # The device drops a notification of the shell until the shell has
+        # the permission to post.
+        self.may_post = False
         self.on = filter_row == "on"
         self.screen = "home"
         self.shade = []
@@ -213,6 +216,8 @@ class Phone:
         self.failures = []
 
     def post(self, tag):
+        if not self.may_post:
+            return
         if self.allowed and self.on and self.shows:
             self.held.append(tag)
         if not (self.allowed and self.on and self.holds):
@@ -247,6 +252,8 @@ class Phone:
     def adb(self, *args, **kwargs):
         if args[:4] == ("shell", "cmd", "notification", "post"):
             self.post(args[-2])
+        elif args[:3] == ("shell", "pm", "grant") and args[3:] == ("com.android.shell", "android.permission.POST_NOTIFICATIONS"):
+            self.may_post = True
         elif args[:4] == ("shell", "cmd", "notification", "allow_listener"):
             self.allowed = True
         elif args[:3] == ("shell", "input", "swipe") and args[3:5] == args[5:7]:
@@ -284,6 +291,12 @@ class FilterTests(unittest.TestCase):
         self.assertEqual(self.run_phone(phone), [])
         self.assertEqual(phone.shade, ["fern_shown"])
         self.assertFalse(phone.allowed and phone.held)
+
+    def test_the_shell_gets_the_permission_to_post_before_the_first_post(self):
+        phone = Phone()
+        self.assertFalse(phone.may_post)
+        self.assertEqual(self.run_phone(phone), [])
+        self.assertTrue(phone.may_post)
 
     def test_a_filter_that_is_on_already_stays_on(self):
         self.assertEqual(self.run_phone(Phone(filter_row="on")), [])

@@ -179,6 +179,19 @@ def shell(*args):
     return done.stdout + done.stderr
 
 
+# The package that posts for `cmd notification post` from adb.
+POSTER = "com.android.shell"
+
+
+def allow_posts(out):
+    """Lets the shell post a notification. From Android 13 a package posts
+    only with the permission POST_NOTIFICATIONS, and the device drops the
+    notification of a package without it after the post command returns."""
+    printed = shell("pm", "grant", POSTER, "android.permission.POST_NOTIFICATIONS")
+    printed += shell("cmd", "appops", "set", POSTER, "POST_NOTIFICATION", "allow")
+    Path(out, "allow-posts.txt").write_text(printed)
+
+
 def post(out, tag, text, *flags):
     """Posts a notification from the shell, and keeps what the command
     printed."""
@@ -190,7 +203,12 @@ def post(out, tag, text, *flags):
 def shade_evidence(out, printed):
     """Keeps what the device says about its notifications, and prints the
     start of each answer, for a check that cannot read the shade."""
-    answers = {"post": printed, "list": shell("cmd", "notification", "list"), "dumpsys": shell("dumpsys", "notification", "--noredact")}
+    answers = {
+        "post": printed,
+        "list": shell("cmd", "notification", "list"),
+        "service": shell("logcat", "-d", "-t", "400", "NotificationService:V", "NotificationManager:V", "*:S"),
+        "dumpsys": shell("dumpsys", "notification", "--noredact"),
+    }
     for name, text in answers.items():
         Path(out, "shade-" + name + ".txt").write_text(text)
         print(f"shade {name}: {text[:600]!r}", flush=True)
@@ -258,6 +276,7 @@ def check_filter(out, width, height):
     intent opens the settings of Android. A notification from before the
     filter was on stays in the shade, which shows that in_shade can see a
     notification."""
+    allow_posts(out)
     printed = post(out, "fern_shown", "shown_text")
     if not wait_for_shade("fern_shown", True):
         shade_evidence(out, printed)
