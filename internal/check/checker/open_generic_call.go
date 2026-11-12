@@ -88,12 +88,39 @@ func (c *checker) openVariant(e ast.Expr) bool {
 	return ed != nil && len(ed.TypeParams) > 0
 }
 
-func (c *checker) errUninferredParam(call *ast.Call, fn *ast.FuncDecl, tp string) {
+// errUninferredParams reports the type parameters of fn that sub leaves
+// unbound. A bound with no impl for its type argument is the report in their
+// place: the impl is what binds a parameter that the bound names.
+func (c *checker) errUninferredParams(call *ast.Call, fn *ast.FuncDecl, sub map[string]ast.Type) {
 	if c.anyFailed(call.Args) {
 		return
 	}
+	unmet := false
+	for _, tp := range fn.TypeParams {
+		arg, ok := sub[tp]
+		if !ok {
+			continue
+		}
+		switch arg.(type) {
+		case ast.ParamType, ast.DynTraitType:
+			continue
+		}
+		for _, trait := range fn.Bounds[tp] {
+			if !c.implements(arg, trait) {
+				c.errUnimplementedBound(call.P, fn, tp, arg, trait)
+				unmet = true
+			}
+		}
+	}
+	if unmet {
+		return
+	}
 	display, spelling := callSiteName(fn)
-	c.errfCode(call.P, "E040", "could not infer type parameter %s for %s — supply it explicitly at the call site (e.g. %s[i32](...)) or annotate the binding", tp, display, spelling)
+	for _, tp := range fn.TypeParams {
+		if _, ok := sub[tp]; !ok {
+			c.errfCode(call.P, "E040", "could not infer type parameter %s for %s — supply it explicitly at the call site (e.g. %s[i32](...)) or annotate the binding", tp, display, spelling)
+		}
+	}
 }
 
 // beginOpenGenericCall ties the open call of decl's value to decl.
@@ -136,7 +163,7 @@ func (c *checker) settleOpenCall(decl *ast.Var, filled ast.Type) {
 	for i, tp := range oc.fn.TypeParams {
 		v, ok := sub[tp]
 		if !ok {
-			c.errUninferredParam(oc.call, oc.fn, tp)
+			c.errUninferredParams(oc.call, oc.fn, sub)
 			return
 		}
 		args[i] = v
@@ -155,11 +182,7 @@ func (c *checker) finishOpenGenericCalls() {
 }
 
 func (oc *openCall) errUnbound(c *checker) {
-	for _, tp := range oc.fn.TypeParams {
-		if _, ok := oc.sub[tp]; !ok {
-			c.errUninferredParam(oc.call, oc.fn, tp)
-		}
-	}
+	c.errUninferredParams(oc.call, oc.fn, oc.sub)
 }
 
 // settleOpenCallByMethod gives an open generic-call local the type

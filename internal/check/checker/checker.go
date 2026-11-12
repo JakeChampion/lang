@@ -7419,6 +7419,20 @@ func BoundErrors(info *Info, fn *ast.FuncDecl, args []ast.Type, pos ast.Position
 	return c.errors
 }
 
+// boundSite names the generic function in a bound diagnostic.
+func boundSite(fn *ast.FuncDecl) string {
+	if fn.MethodRecv != "" {
+		return demangle(fn.MethodRecv) + "." + fn.MethodSimpleName
+	}
+	return demangle(fn.Name)
+}
+
+func (c *checker) errUnimplementedBound(pos ast.Position, fn *ast.FuncDecl, tp string, arg ast.Type, trait string) {
+	c.errfCode(pos, "E021",
+		"type argument %s = %s does not implement trait %s required by %s",
+		tp, demangle(arg.String()), demangle(trait), boundSite(fn))
+}
+
 func (c *checker) checkTypeArgBounds(genericFn *ast.FuncDecl, args []ast.Type, sub map[string]ast.Type, tpSet map[string]bool, pos ast.Position) {
 	for i, tp := range genericFn.TypeParams {
 		if _, isParam := args[i].(ast.ParamType); isParam {
@@ -7426,10 +7440,7 @@ func (c *checker) checkTypeArgBounds(genericFn *ast.FuncDecl, args []ast.Type, s
 		}
 		for bi, traitName := range genericFn.Bounds[tp] {
 			tn, ok := receiverNamespace(args[i])
-			site := demangle(genericFn.Name)
-			if genericFn.MethodRecv != "" {
-				site = demangle(genericFn.MethodRecv) + "." + genericFn.MethodSimpleName
-			}
+			site := boundSite(genericFn)
 			dynAt := -1
 			if d, isDyn := args[i].(ast.DynTraitType); isDyn {
 				for k, name := range d.Traits {
@@ -7439,9 +7450,7 @@ func (c *checker) checkTypeArgBounds(genericFn *ast.FuncDecl, args []ast.Type, s
 				}
 			}
 			if dynAt < 0 && (!ok || !c.implements(args[i], traitName)) {
-				c.errfCode(pos, "E021",
-					"type argument %s = %s does not implement trait %s required by %s",
-					tp, demangle(args[i].String()), demangle(traitName), site)
+				c.errUnimplementedBound(pos, genericFn, tp, args[i], traitName)
 				continue
 			}
 			var boundArgs []ast.Type
@@ -16121,7 +16130,6 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 					}
 					args[i] = v
 				} else {
-					c.errUninferredParam(n, genericFn, tp)
 					complete = false
 				}
 			}
@@ -16130,6 +16138,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				n.TypeArgs = args
 				return c.resolveProj(substituteType(ft.Result, sub))
 			}
+			c.errUninferredParams(n, genericFn, sub)
 			return nil
 		}
 		if intrinsic != IntrinsicNone {
