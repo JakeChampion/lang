@@ -4,13 +4,13 @@ This module tells Android what an app plays, for a NativeActivity app of `std/an
 
 ## Model
 
-A media session holds the title of the track that plays, its length, and the state of the player. Android shows them with its media controls: in the notification panel, on the lock screen, and on a headset or a watch. A button of those controls sends a command to the session.
+A media session holds the title of the track that plays, its picture, its length, and the state of the player. Android shows them with its media controls: in the notification panel, on the lock screen, and on a headset or a watch. A button of those controls sends a command to the session.
 
 The app declares a @jni class that extends `android.media.session.MediaSession$Callback`. Each native method of that class calls the function of this module for its command: `play`, `pause`, `next`, `previous`, `stop` or `seek_to`. `new` makes one session with one callback of that class.
 
 The callback runs on the main thread of the app. It sends the command to the loop thread of the live activity, which `android.live_activity` names. The loop gives it to the app as a `Posted` event. `event` decodes it as a `Command`.
 
-`set_track` gives the session the track. `set_state` gives it the state of the player and the time of the track. Android counts the time on from there while the player plays. So call `set_state` only when the state changes or the player goes to a different time.
+`set_track` gives the session the track, with the picture of its album when the app has one. Android shows the picture behind the media controls. `set_state` gives it the state of the player and the time of the track. Android counts the time on from there while the player plays. So call `set_state` only when the state changes or the player goes to a different time.
 
 `token` gives the token of the session. A notification of `std/android/service` that has the token shows as the media controls of the app.
 
@@ -37,6 +37,7 @@ Call each function except the six command functions on the loop thread. Call `cl
 <<module introduction>>=
 // This module tells Android what an app plays, and reports media buttons.
 import "std/android";
+import "std/android/draw";
 import "std/jni";
 ```
 
@@ -201,11 +202,65 @@ function put_text(e: usize, builder: usize, key: string, value: string): void {
   let c: usize = jni.delete_local_ref(e, same);
 }
 
-// Gives the session the track that plays: its title, its artist, its album
-// and its length in ms.
-pub function set_track(ctx: usize, s: Session, title: string, artist: string, album: string, length_ms: i64): void {
+// The longest side in pixels of the picture that the session gets.
+const ART_SIDE: i32 = 320;
+
+// A Bitmap of `img`, or 0. A pixel of a Bitmap is alpha, red, green and
+// blue in one int.
+function bitmap(e: usize, img: draw.Image): usize {
+  let n = img.width * img.height;
+  if (n <= 0 || img.pixels.len() < n * 4) {
+    return 0 as usize;
+  }
+  let colors: i32[] = [];
+  for k in 0..n {
+    let at = k * 4;
+    colors = colors.append(img.pixels[at + 3] as i32 << 24 | img.pixels[at] as i32 << 16 | img.pixels[at + 1] as i32 << 8 | img.pixels[at + 2] as i32);
+  }
+  let array: usize = jni.new_int_array(e, n);
+  jni.set_int_array_region(e, array, 0, colors);
+  let config_class: usize = jni.find_class(e, "android/graphics/Bitmap$Config");
+  let config: usize = jni.get_static_object_field(e, config_class, jni.get_static_field_id(e, config_class, "ARGB_8888", "Landroid/graphics/Bitmap$Config;"));
+  let bitmap_class: usize = jni.find_class(e, "android/graphics/Bitmap");
+  let values: usize = jni.jvalues([array, img.width as usize, img.height as usize, config]);
+  let made: usize = jni.call_static_object_method_a(e, bitmap_class, jni.get_static_method_id(e, bitmap_class, "createBitmap", "([IIILandroid/graphics/Bitmap$Config;)Landroid/graphics/Bitmap;"), values);
+  jni.free_buffer(values);
+  for local in [array, config] {
+    let dropped: usize = jni.delete_local_ref(e, local);
+  }
+  if (threw(e)) {
+    return 0 as usize;
+  }
+  return made;
+}
+
+// Puts the picture `img` of the album in the track of `builder`, at a
+// size of `ART_SIDE` pixels or less.
+function put_art(e: usize, builder: usize, img: draw.Image): void {
+  let small = img;
+  let longest = img.width.max(img.height);
+  if (longest > ART_SIDE) {
+    small = img.scaled((img.width * ART_SIDE / longest).max(1), (img.height * ART_SIDE / longest).max(1));
+  }
+  let picture: usize = bitmap(e, small);
+  if (picture == 0 as usize) {
+    return;
+  }
+  let key: usize = jni.new_string(e, "android.media.metadata.ALBUM_ART");
+  let same: usize = jni.call_object(e, builder, "putBitmap", "(Ljava/lang/String;Landroid/graphics/Bitmap;)L" + TRACK_BUILDER + ";", [key, picture]);
+  for local in [key, same, picture] {
+    let dropped: usize = jni.delete_local_ref(e, local);
+  }
+}
+
+// Gives the session the track that plays: its title, its artist, its
+// album, its length in ms, and the picture of its album or None.
+pub function set_track(ctx: usize, s: Session, title: string, artist: string, album: string, length_ms: i64, art: Option[draw.Image]): void {
   let e: usize = android.env(ctx);
   let builder: usize = new_object(e, jni.find_class(e, TRACK_BUILDER), "()V", []);
+  if let Some(img) = art {
+    put_art(e, builder, img);
+  }
   put_text(e, builder, "android.media.metadata.TITLE", title);
   put_text(e, builder, "android.media.metadata.ARTIST", artist);
   put_text(e, builder, "android.media.metadata.ALBUM", album);
