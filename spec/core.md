@@ -573,6 +573,10 @@ is the number of slots it leaves.
 | `viextractu` | 545 | 1 | 1 |
 | `vibitmask` | 546 | 1 | 1 |
 | `vireplace` | 547 | 2 | 1 |
+| `vimul` | 548 | 2 | 1 |
+| `vishl` | 549 | 2 | 1 |
+| `vishrs` | 550 | 2 | 1 |
+| `vishru` | 551 | 2 | 1 |
 <!-- END ir_effects_run -->
 
 `vpermute` preserves all lane bits in two 128-bit inputs.
@@ -594,7 +598,9 @@ The width of an op is the width of a lane.
 `vireplace` writes the low bits of an `i32` to the indexed lane.
 `vibitmask` gives an `i32` with the top bit of lane `k` in bit `k`.
 The bitwise ops, `vselect`, `vload` and `vstore` do not read the lanes, so they are also the ops for integer lanes.
-A backend has code for lanes of 8 bits, and refuses each other width by the name of the op.
+`vimul` gives the low bits of each product. `vishl`, `vishrs` and `vishru` take the lanes and one `i32` count, and shift each lane by that count.
+A backend has code for lanes of 8, 16 and 32 bits.
+Each backend refuses the same ops by name: the saturating ops and `viavg` for lanes of 32 bits, and `vimul` and the shifts for lanes of 8 bits.
 
 ## How this is kept true
 
