@@ -19695,10 +19695,22 @@ function ocl_containers(decls: OwnDecls): OclContainers {
       names = names.append(decl.enum_owner);
     }
   }
+  for alias in decls.aliases {
+    if (!util.has_str(names, alias.name)) {
+      names = names.append(alias.name);
+    }
+  }
   let types = OclContainers { names: util.name_index(names), holds: __alloc_bool(names.len()) };
   let changed = true;
   while (changed) {
     changed = false;
+    for alias in decls.aliases {
+      let at = types.names.find(alias.name);
+      if (at >= 0 && !types.holds[at] && ocl_container_variants(alias, types)) {
+        types = OclContainers { ...types, holds: types.holds.with(at, true) };
+        changed = true;
+      }
+    }
     for decl in decls.structs {
       if (ocl_container_fields(decl, types)) {
         for name in [decl.name, decl.enum_owner] {
@@ -19712,6 +19724,16 @@ function ocl_containers(decls: OwnDecls): OclContainers {
     }
   }
   return types;
+}
+
+// A union can hold a callback when one of its members can.
+function ocl_container_variants(alias: parser.TypeAlias, types: OclContainers): boolean {
+  for variant in alias.variants {
+    if (ocl_container(variant, types)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function ocl_container_fields(decl: parser.StructDecl, types: OclContainers): boolean {
