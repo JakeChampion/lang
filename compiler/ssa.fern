@@ -3779,6 +3779,96 @@ function arm_term(v: i32, konst: i32[], jn: BoolJoin): STerm {
   return t_brif(v, jn.t, jn.f);
 }
 
+// A call whose result reaches the return only through a join returns from its
+// own block, where an emitter can make it a tail call. The block with id to[k]
+// took the return of the join with id from[k], in that order.
+pub function return_calls(f: SFunc): Selection {
+  let out = Selection { f: f, from: [], to: [] };
+  for rounds in 0..8 {
+    let r = return_round(out.f);
+    if (r.from.len() == 0) {
+      return out;
+    }
+    out = Selection { f: r.f, from: util.append_all(out.from, r.from), to: util.append_all(out.to, r.to) };
+  }
+  return out;
+}
+
+function return_round(f: SFunc): Selection {
+  let at = block_positions(f);
+  let uses = use_counts(f);
+  let blocks = f.blocks;
+  let from: i32[] = [];
+  let to: i32[] = [];
+  for jb in f.blocks {
+    if (!return_join(jb, uses)) {
+      continue;
+    }
+    for i in 0..jb.preds.len() {
+      let pp = position_of(at, jb.preds[i]);
+      if (pp >= 0 && yields_call(f, at, uses, f.blocks[pp], jb.insts[0].args[i], 4)) {
+        blocks = blocks.with(pp, SBlock { ...blocks[pp], term: t_ret(jb.insts[0].args[i]) });
+        from = from.append(jb.id);
+        to = to.append(jb.preds[i]);
+      }
+    }
+  }
+  if (from.len() == 0) {
+    return Selection { f: f, from: from, to: to };
+  }
+  let g = SFunc { ...f, blocks: blocks };
+  return Selection { f: SFunc { ...g, blocks: settled_return_joins(refreshed_preds(g), f.entry) }, from: from, to: to };
+}
+
+// A block that holds one phi, with one value for each predecessor, that has one use.
+function value_join(b: SBlock, uses: i32[]): boolean {
+  return b.insts.len() == 1 && b.insts[0].kind_tag == PHI && b.insts[0].args.len() == b.preds.len() && b.preds.len() > 0 && uses[b.insts[0].result] == 1;
+}
+
+function return_join(b: SBlock, uses: i32[]): boolean {
+  return value_join(b, uses) && b.term.kind_tag == TERM_RET && b.term.value == b.insts[0].result;
+}
+
+// A return join with no predecessor left goes. One with a single predecessor
+// left returns the value of that predecessor.
+function settled_return_joins(blocks: SBlock[], entry: i32): SBlock[] {
+  let kept: SBlock[] = [];
+  for b in blocks {
+    if (b.preds.len() == 0 && b.id != entry) {
+      continue;
+    }
+    if (b.preds.len() == 1 && b.insts.len() == 1 && b.insts[0].kind_tag == PHI && b.term.kind_tag == TERM_RET && b.term.value == b.insts[0].result) {
+      kept = kept.append(SBlock { ...b, insts: [], term: t_ret(b.insts[0].args[0]) });
+    } else {
+      kept = kept.append(b);
+    }
+  }
+  return kept;
+}
+
+// Whether b jumps to its join with v, and v is the result of a call that ends
+// b, or of a call that ends a block which reaches b through joins only.
+function yields_call(f: SFunc, at: i32[], uses: i32[], b: SBlock, v: i32, fuel: i32): boolean {
+  if (b.term.kind_tag != TERM_BR || b.insts.len() == 0 || v < 0 || uses[v] != 1) {
+    return false;
+  }
+  let last = b.insts[b.insts.len() - 1];
+  if (last.result != v) {
+    return false;
+  }
+  return calls(last) || fuel > 0 && value_join(b, uses) && join_yields_call(f, at, uses, b, fuel - 1);
+}
+
+function join_yields_call(f: SFunc, at: i32[], uses: i32[], b: SBlock, fuel: i32): boolean {
+  for i in 0..b.preds.len() {
+    let pp = position_of(at, b.preds[i]);
+    if (pp >= 0 && yields_call(f, at, uses, f.blocks[pp], b.insts[0].args[i], fuel)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 struct Diamond { ok: boolean, head: i32, t: i32, f: i32, join: i32 }
 
 pub function select_arm_limit(): i32 {

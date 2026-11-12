@@ -14,6 +14,7 @@ enum List { Cons(i32, List), Neg(i32, List), Nil }
 enum Rev { Node(Rev, i32), End }
 enum SList { SCons(string, SList), SNil }
 enum Tree { Fork(Tree, Tree), Leaf(i32) }
+enum Bst { Bin(Bst, i32, Bst), Tip }
 
 // The canonical shape: the cons is the returned value, the recursion its tail.
 function inc_all(xs: List): List {
@@ -109,6 +110,46 @@ function mirror(t: Tree): Tree {
     }
 }
 
+// The hole is the first payload on one path and the third on the other. A key
+// that is present hands the node back as it came in.
+@noinline function put(t: Bst, k: i32): Bst {
+    match (t) {
+        Bin(l, key, r) => {
+            if (k < key) { return Bin(put(l, k), key, r); }
+            if (k > key) { return Bin(l, key, put(r, k)); }
+            return t;
+        },
+        Tip => { return Bin(Tip, k, Tip); },
+    }
+}
+
+// The path to key n goes right at each even depth and left at each odd one.
+function zigzag(n: i32): Bst {
+    let acc: Bst = Tip;
+    let i: i32 = n - 1;
+    while (i >= 0) {
+        if (i % 2 == 0) { acc = Bin(Tip, i / 2, acc); } else { acc = Bin(acc, 2 * n - i / 2, Tip); }
+        i = i - 1;
+    }
+    return acc;
+}
+
+function path_score(t: Bst, k: i32): i32 {
+    let acc: i32 = 0;
+    let cur: Bst = t;
+    let go: boolean = true;
+    while (go) {
+        match (cur) {
+            Bin(l, key, r) => {
+                acc = acc + key % 7 + 1;
+                if (k < key) { cur = l; } else if (k > key) { cur = r; } else { acc = acc + 1000000; go = false; }
+            },
+            Tip => { go = false; },
+        }
+    }
+    return acc;
+}
+
 function build(n: i32): List {
     let acc: List = Nil;
     let i: i32 = 0;
@@ -198,16 +239,22 @@ function main(): i32 {
     let tail_after: i32 = score(tails[0]);
     let k: i32 = count(spans(20), 0);
     let after: i32 = score(keep);
+    // Held across the first insert, which must copy the path, not write to it.
+    let deep: Bst = zigzag(n);
+    let z0: i32 = path_score(deep, n);
+    let z1: i32 = path_score(put(deep, n), n);
+    let z2: i32 = path_score(put(put(zigzag(n), n), n), n);
+    let z3: i32 = path_score(deep, n);
     print("before=" + before.to_string() + " a=" + a.to_string() + " b=" + b.to_string()
         + " c=" + c.to_string() + " d=" + d.to_string() + " e=" + e.to_string()
         + " f=" + f.to_string() + " g=" + g.to_string() + " m=" + m.to_string()
         + " j=" + j.to_string() + " tail=" + tail_after.to_string() + " k=" + k.to_string()
-        + " after=" + after.to_string() + " underflow=" + __rc_underflow_count().to_string());
+        + " after=" + after.to_string() + " z=" + z0.to_string() + "," + z1.to_string() + "," + z2.to_string() + "," + z3.to_string() + " underflow=" + __rc_underflow_count().to_string());
     return __rc_underflow_count();
 }
 `
 
-const selfHostTrmcWant = "0|before=1000021 a=3100021 b=3000000 c=999974 d=300003 e=900000 f=0 g=3100021 m=1199991 j=1000080 tail=59 k=39 after=1000021 underflow=0\n"
+const selfHostTrmcWant = "0|before=1000021 a=3100021 b=3000000 c=999974 d=300003 e=900000 f=0 g=3100021 m=1199991 j=1000080 tail=59 k=39 after=1000021 z=1199991,2199993,2199993,1199991 underflow=0\n"
 
 func TestSelfHostSemanticTrmc(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -239,7 +286,7 @@ func TestSelfHostSemanticTrmc(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for name, want := range map[string]int{"inc_all": 2, "drop_neg": 1, "take": 1, "to_rev": 1, "tag_all": 1, "last_of": 1, "mirror": 2, "append_to": 1, "count": 2} {
+		for name, want := range map[string]int{"inc_all": 2, "drop_neg": 1, "take": 1, "to_rev": 1, "tag_all": 1, "last_of": 1, "mirror": 2, "append_to": 1, "count": 2, "put": 3} {
 			if got := countSelfCalls(string(asm), name); got != want {
 				t.Errorf("%d call sites to %s in the listing, want %d", got, name, want)
 			}

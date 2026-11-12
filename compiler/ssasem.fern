@@ -2975,28 +2975,39 @@ function composite_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
 }
 
 function hole_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
-  if (ins.kind_tag == hole_at()) {
-    if (ins.args.len() != 1) {
-      return "hole address arity";
-    }
-    if (!is_usize(result) || !record_laid(f, f.values[ins.args[0]])) {
-      return "hole address type";
-    }
-    return "";
+  if (ins.kind_tag != hole_at()) {
+    return hole_fill_error(ins, f, result);
   }
-  if (ins.args.len() != 3) {
-    return "hole fill arity";
+  if (ins.args.len() != 1) {
+    return "hole address arity";
   }
-  if (!record_laid(f, result) || !is_usize(f.values[ins.args[1]])) {
-    return "hole fill type";
-  }
-  if (!semtypes.equal(f.values[ins.args[0]], result) || !semtypes.equal(f.values[ins.args[2]], result)) {
-    return "hole fill type";
-  }
-  if (!holds_own_type(f, result, ins.imm)) {
-    return "hole fill index";
+  if (!is_usize(result) || !record_laid(f, f.values[ins.args[0]])) {
+    return "hole address type";
   }
   return "";
+}
+
+function hole_fill_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+  if (ins.args.len() != 3 && ins.args.len() != 4) {
+    return "hole fill arity";
+  }
+  if (!hole_fill_typed(ins, f, result)) {
+    return "hole fill type";
+  }
+  for index in hole_indexes(ins) {
+    if (!holds_own_type(f, result, index)) {
+      return "hole fill index";
+    }
+  }
+  return "";
+}
+
+function hole_fill_typed(ins: ssa.SInst, f: Func, result: typeinfo.Type): boolean {
+  if (ins.args.len() == 4 && !semtypes.equal(f.values[ins.args[3]], i32_type())) {
+    return false;
+  }
+  return record_laid(f, result) && is_usize(f.values[ins.args[1]])
+    && semtypes.equal(f.values[ins.args[0]], result) && semtypes.equal(f.values[ins.args[2]], result);
 }
 
 function record_laid(f: Func, t: typeinfo.Type): boolean {
@@ -5038,14 +5049,15 @@ pub function tail_recursion(own f: Func, name: string): Func {
   let parents = borrow_parents(f);
   let defs = ssa.inst_defs(f.graph);
   let kinds = back_kinds(f, name, nparams, parents, defs);
-  let hole = agreed_hole(f, kinds, name, nparams, parents, defs);
-  if (hole < 0) {
+  let sites = site_holes(f, kinds, name, nparams, parents, defs);
+  if (!record_laid(f, f.result)) {
     kinds = without_cons(kinds);
+    sites = util.minus_ones(kinds.len());
   }
   if (util.index_of_i32(kinds, self_tail()) < 0 && util.index_of_i32(kinds, cons_tail()) < 0) {
     return f;
   }
-  return spliced(f, kinds, nparams, hole, name);
+  return spliced(f, kinds, nparams, sites, name);
 }
 
 function calls_itself(f: Func, name: string): boolean {
@@ -5081,21 +5093,57 @@ function back_kinds(f: Func, name: string, nparams: i32, parents: i32[][], defs:
   return out;
 }
 
-function agreed_hole(f: Func, kinds: i32[], name: string, nparams: i32, parents: i32[][], defs: ssa.SInst[]): i32 {
-  if (!record_laid(f, f.result)) {
-    return -1;
-  }
-  let hole: i32 = -1;
+// The payload index of the hole of each block that ends in a cons tail, and -1 for each other block.
+function site_holes(f: Func, kinds: i32[], name: string, nparams: i32, parents: i32[][], defs: ssa.SInst[]): i32[] {
+  let out: i32[] = [];
   for bi in 0..kinds.len() {
     if (kinds[bi] == cons_tail()) {
-      let at = cons_hole(f, f.graph.blocks[bi], name, nparams, parents, defs);
-      if (hole >= 0 && at != hole) {
-        return -1;
-      }
-      hole = at;
+      out = out.append(cons_hole(f, f.graph.blocks[bi], name, nparams, parents, defs));
+    } else {
+      out = out.append(-1);
     }
   }
-  return hole;
+  return out;
+}
+
+function distinct_holes(sites: i32[]): i32[] {
+  let out: i32[] = [];
+  for at in sites {
+    if (at >= 0 && util.index_of_i32(out, at) < 0) {
+      out = out.append(at);
+    }
+  }
+  return out;
+}
+
+// The payload indexes a hole fill can store to. A fill with a fourth
+// operand reads the index of the hole from it, and lists the indexes in str.
+pub function hole_indexes(ins: ssa.SInst): i32[] {
+  if (ins.args.len() < 4) {
+    return [ins.imm];
+  }
+  let out: i32[] = [];
+  let n = 0;
+  for i in 0..ins.str.len() {
+    if (ins.str[i] == 44) {
+      out = out.append(n);
+      n = 0;
+    } else {
+      n = n * 10 + (ins.str[i] as i32 - 48);
+    }
+  }
+  return out.append(n);
+}
+
+function hole_list(holes: i32[]): string {
+  let out = "";
+  for k in 0..holes.len() {
+    if (k > 0) {
+      out = out + ",";
+    }
+    out = out + util.i32_to_string(holes[k]);
+  }
+  return out;
 }
 
 function without_cons(kinds: i32[]): i32[] {
@@ -5287,37 +5335,68 @@ function mapped_ret_term(map: i32[], t: ssa.STerm): ssa.STerm {
 
 struct Splice { values: typeinfo.Type[], blocks: ssa.SBlock[], backs: i32[], rows: i32[][] }
 
-struct Chain { r: i32, h: i32, r0: i32, h0: i32 }
+// The loop carries the result r and the box h whose hole is open, from r0 and
+// h0. When the holes are at more than one payload index, it also carries the
+// index i of the open hole, from i0.
+struct Chain { r: i32, h: i32, r0: i32, h0: i32, i: i32, i0: i32, holes: i32[] }
 
-function loop_chain(f: Func, nparams: i32): Chain {
+function loop_chain(f: Func, nparams: i32, holes: i32[]): Chain {
   let r = f.graph.nvals + nparams;
-  return Chain { r: r, h: r + 1, r0: r + 2, h0: r + 3 };
+  if (holes.len() > 1) {
+    return Chain { r: r, h: r + 1, r0: r + 2, h0: r + 3, i: r + 4, i0: r + 5, holes: holes };
+  }
+  return Chain { r: r, h: r + 1, r0: r + 2, h0: r + 3, i: -1, i0: -1, holes: holes };
+}
+
+function chain_values(own values: typeinfo.Type[], result: typeinfo.Type, ch: Chain): typeinfo.Type[] {
+  if (ch.holes.len() > 0) {
+    values = values.append(result).append(address()).append(result).append(address());
+  }
+  if (ch.i >= 0) {
+    values = values.append(i32_type()).append(i32_type());
+  }
+  return values;
+}
+
+function chain_starts(own insts: ssa.SInst[], ch: Chain): ssa.SInst[] {
+  if (ch.holes.len() > 0) {
+    insts = insts.append(ssa.SInst { kind_tag: zero(), result: ch.r0, args: [], imm: 0, str: "" });
+    insts = insts.append(ssa.SInst { kind_tag: zero(), result: ch.h0, args: [], imm: 0, str: "" });
+  }
+  if (ch.i >= 0) {
+    insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: ch.i0, args: [], imm: 0, str: "" });
+  }
+  return insts;
+}
+
+function fill(ch: Chain, result: i32, value: i32): ssa.SInst {
+  if (ch.i < 0) {
+    return ssa.SInst { kind_tag: hole_fill(), result: result, args: [ch.r, ch.h, value], imm: ch.holes[0], str: "" };
+  }
+  return ssa.SInst { kind_tag: hole_fill(), result: result, args: [ch.r, ch.h, value, ch.i], imm: 0, str: hole_list(ch.holes) };
 }
 
 function address(): typeinfo.Type {
   return typeinfo.TypeI32 { width: typeinfo.width_ptr(), unsigned: true, is_char: false, polymorphic: false };
 }
 
-function spliced(own f: Func, kinds: i32[], nparams: i32, hole: i32, name: string): Func {
+function spliced(own f: Func, kinds: i32[], nparams: i32, sites: i32[], name: string): Func {
   let map = phi_map(f, nparams);
   let header = fresh_block_id(f);
   let entry = f.graph.blocks[0];
-  let ch = loop_chain(f, nparams);
+  let ch = loop_chain(f, nparams, distinct_holes(sites));
   let values = f.values;
   let p = 0;
   while (p < nparams) {
     values = values.append(f.values[p]);
     p += 1;
   }
-  if (hole >= 0) {
-    values = values.append(f.result).append(address()).append(f.result).append(address());
-  }
-  let s = Splice { values: values, blocks: [], backs: [], rows: [] };
+  let s = Splice { values: chain_values(values, f.result, ch), blocks: [], backs: [], rows: [] };
   let head = ssa.SBlock { ...entry, id: header, insts: not_kind_6(entry.insts) };
-  s = rewrite_block(s, f, head, kinds[0], map, header, hole, ch);
+  s = rewrite_block(s, f, head, kinds[0], map, header, sites[0], ch);
   for bi in 1..f.graph.blocks.len() {
     let b = f.graph.blocks[bi];
-    s = rewrite_block(s, f, ssa.SBlock { ...b, preds: repointed(b.preds, entry.id, header) }, kinds[bi], map, header, hole, ch);
+    s = rewrite_block(s, f, ssa.SBlock { ...b, preds: repointed(b.preds, entry.id, header) }, kinds[bi], map, header, sites[bi], ch);
   }
 
   let entry_insts = kind_6(entry.insts);
@@ -5333,13 +5412,9 @@ function spliced(own f: Func, kinds: i32[], nparams: i32, hole: i32, name: strin
       firsts = firsts.with(p, at + 2);
     }
   }
-  if (hole >= 0) {
-    entry_insts = entry_insts.append(ssa.SInst { kind_tag: zero(), result: ch.r0, args: [], imm: 0, str: "" });
-    entry_insts = entry_insts.append(ssa.SInst { kind_tag: zero(), result: ch.h0, args: [], imm: 0, str: "" });
-  }
-  let blocks: ssa.SBlock[] = [ssa.SBlock { id: entry.id, insts: entry_insts, term: branch_to(header), preds: [] }];
+  let blocks: ssa.SBlock[] = [ssa.SBlock { id: entry.id, insts: chain_starts(entry_insts, ch), term: branch_to(header), preds: [] }];
   let built = s.blocks[0];
-  let head_insts = phis(map, firsts, s.rows, nparams, hole, ch, name);
+  let head_insts = phis(map, firsts, s.rows, nparams, ch, name);
   for ins in built.insts {
     head_insts = head_insts.append(ins);
   }
@@ -5374,6 +5449,7 @@ function branch_to(header: i32): ssa.STerm {
 }
 
 function rewrite_block(own s: Splice, f: Func, b: ssa.SBlock, kind: i32, map: i32[], header: i32, hole: i32, ch: Chain): Splice {
+  let chained = ch.holes.len() > 0;
   if (kind == self_tail()) {
     let kept: ssa.SInst[] = [];
     let i = 0;
@@ -5382,8 +5458,11 @@ function rewrite_block(own s: Splice, f: Func, b: ssa.SBlock, kind: i32, map: i3
       i += 1;
     }
     let row = mapped_list(map, b.insts[b.insts.len() - 1].args);
-    if (hole >= 0) {
+    if (chained) {
       row = row.append(ch.r).append(ch.h);
+    }
+    if (ch.i >= 0) {
+      row = row.append(ch.i);
     }
     return Splice { ...s, blocks: s.blocks.append(ssa.SBlock { ...b, insts: kept, term: branch_to(header) }), backs: s.backs.append(b.id), rows: s.rows.append(row) };
   }
@@ -5392,9 +5471,9 @@ function rewrite_block(own s: Splice, f: Func, b: ssa.SBlock, kind: i32, map: i3
   }
   let insts = rewritten(map, b.insts);
   let term = mapped_ret_term(map, b.term);
-  if (hole >= 0 && term.kind_tag == ssa.TERM_RET && term.value >= 0) {
+  if (chained && term.kind_tag == ssa.TERM_RET && term.value >= 0) {
     let filled = s.values.len();
-    insts = insts.append(ssa.SInst { kind_tag: hole_fill(), result: filled, args: [ch.r, ch.h, term.value], imm: hole, str: "" });
+    insts = insts.append(fill(ch, filled, term.value));
     term = ssa.STerm { ...term, value: filled };
     s = Splice { ...s, values: s.values.append(f.result) };
   }
@@ -5417,10 +5496,16 @@ function linked(own s: Splice, f: Func, b: ssa.SBlock, map: i32[], header: i32, 
   let at = s.values.len();
   let chain = at + 1;
   insts = insts.append(ssa.SInst { kind_tag: hole_at(), result: at, args: [cons.result], imm: 0, str: "" });
-  insts = insts.append(ssa.SInst { kind_tag: hole_fill(), result: chain, args: [ch.r, ch.h, cons.result], imm: hole, str: "" });
+  insts = insts.append(fill(ch, chain, cons.result));
   row = row.append(chain).append(at);
+  let values = s.values.append(address()).append(f.result);
+  if (ch.i >= 0) {
+    insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: at + 2, args: [], imm: hole, str: "" });
+    row = row.append(at + 2);
+    values = values.append(i32_type());
+  }
   let block = ssa.SBlock { ...b, insts: insts, term: branch_to(header) };
-  return Splice { values: s.values.append(address()).append(f.result), blocks: s.blocks.append(block), backs: s.backs.append(b.id), rows: s.rows.append(row) };
+  return Splice { values: values, blocks: s.blocks.append(block), backs: s.backs.append(b.id), rows: s.rows.append(row) };
 }
 
 function repointed(preds: i32[], from: i32, to: i32): i32[] {
@@ -5463,14 +5548,17 @@ function rewritten(map: i32[], insts: ssa.SInst[]): ssa.SInst[] {
   return out;
 }
 
-function phis(map: i32[], firsts: i32[], rows: i32[][], nparams: i32, hole: i32, ch: Chain, name: string): ssa.SInst[] {
+function phis(map: i32[], firsts: i32[], rows: i32[][], nparams: i32, ch: Chain, name: string): ssa.SInst[] {
   let out: ssa.SInst[] = [];
   for p in 0..nparams {
     out = out.append(ssa.SInst { ...phi_over(map[p], firsts[p], rows, p), imm: p, str: name });
   }
-  if (hole >= 0) {
+  if (ch.holes.len() > 0) {
     out = out.append(phi_over(ch.r, ch.r0, rows, nparams));
     out = out.append(phi_over(ch.h, ch.h0, rows, nparams + 1));
+  }
+  if (ch.i >= 0) {
+    out = out.append(phi_over(ch.i, ch.i0, rows, nparams + 2));
   }
   return out;
 }

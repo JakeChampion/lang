@@ -93,7 +93,10 @@ lowered function it:
    after `cmn`, `cmp`, `adcs` or `sbcs` and x86-64 after `add`, `sub`, `adc`
    or `sbb`. An incoming c must be 0 or 1, a shift right by 63, an and
    with 1 or another carry, for the flags to agree with the formula. P-256's
-   field multiply takes 20 ns in place of 31 ns on Apple Silicon;
+   field multiply takes 20 ns in place of 31 ns on Apple Silicon. The step
+   then lets a call return from its own block when its result reaches the
+   return only through joins (`ssa.return_calls`): the last operand of an
+   `&&` or an `||` that the function returns is then a tail call;
 5. allocates registers with `ssa.regalloc_linear` over two pools: the
    caller-saved registers (x0 and x9 to x15 on arm64; rax, rsi, rdi and r8
    to r10 on x86-64) and, for a value live across a call, the callee-saved
