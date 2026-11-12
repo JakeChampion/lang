@@ -23625,6 +23625,38 @@ function lu_loan_ends(facts: LuFacts, calls: LuOcc[], callback: string, owner: s
   return true;
 }
 
+function lu_loan_captures(lm: ast.ExprLambda, owner: string): boolean {
+  let names: string[] = [];
+  for st in lm.body {
+    names = lu_all_names(st, names);
+  }
+  return util.has_str(names, owner);
+}
+
+function lu_owner_loan_ends(vars: ast.StmtVar[], facts: LuFacts, calls: LuOcc[], owner: string): boolean {
+  let captured = false;
+  let safe = true;
+  for callback in vars {
+    if let ast.ExprLambda(lm) = callback.init {
+      if (lu_loan_captures(lm, owner)) {
+        captured = true;
+        safe = safe && lu_loan_ends(facts, calls, callback.name, owner);
+      }
+    }
+  }
+  return captured && safe;
+}
+
+function lu_without_names(names: string[], removed: string[]): string[] {
+  let out: string[] = [];
+  for name in names {
+    if (!util.has_str(removed, name)) {
+      out = out.append(name);
+    }
+  }
+  return out;
+}
+
 // Restrict the loan-end proof to immutable bindings in a straight-line body.
 // Captures inside another lambda cannot use this proof.
 function lu_ended_callback_loans(body: ast.Stmt[], own facts: LuFacts): LuFacts {
@@ -23652,37 +23684,11 @@ function lu_ended_callback_loans(body: ast.Stmt[], own facts: LuFacts): LuFacts 
   }
   let ended: string[] = [];
   for owner in vars {
-    let captured = false;
-    let safe = true;
-    for callback in vars {
-      if let ast.ExprLambda(lm) = callback.init {
-        let names: string[] = [];
-        for st in lm.body {
-          names = lu_all_names(st, names);
-        }
-        if (util.has_str(names, owner.name)) {
-          captured = true;
-          safe = safe && lu_loan_ends(facts, calls, callback.name, owner.name);
-        }
-      }
-    }
-    if (captured && safe) {
+    if (lu_owner_loan_ends(vars, facts, calls, owner.name)) {
       ended = ended.append(owner.name);
     }
   }
-  let captured: string[] = [];
-  let escaping: string[] = [];
-  for name in facts.captured {
-    if (!util.has_str(ended, name)) {
-      captured = captured.append(name);
-    }
-  }
-  for name in facts.escaping {
-    if (!util.has_str(ended, name)) {
-      escaping = escaping.append(name);
-    }
-  }
-  return LuFacts { ...facts, captured: captured, escaping: escaping };
+  return LuFacts { ...facts, captured: lu_without_names(facts.captured, ended), escaping: lu_without_names(facts.escaping, ended) };
 }
 
 // `fn` is resolved with lu_resolved.
