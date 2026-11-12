@@ -19136,9 +19136,10 @@ function ocl_call(call: ast.ExprCall, facts: OclFacts): OclCapture[] {
   let out: OclCapture[] = [];
   for i in 0..fn.params.len() {
     if (i < c.args.len()) {
+      let inherited = ocl_argument_loans(c.args[i], fn.params[i], facts.factories.rows[at], facts);
       for source in facts.factories.rows[at] {
         if (source.name == fn.params[i].name) {
-          out = ocl_merge(out, ocl_argument(c.args[i], fn.params[i], source, facts));
+          out = ocl_merge(out, ocl_argument(c.args[i], fn.params[i], source, inherited));
         }
       }
     }
@@ -19146,10 +19147,19 @@ function ocl_call(call: ast.ExprCall, facts: OclFacts): OclCapture[] {
   return out;
 }
 
-function ocl_argument(arg: ast.Expr, param: ast.ParamDecl, source: OclCapture, facts: OclFacts): OclCapture[] {
+function ocl_argument_loans(arg: ast.Expr, param: ast.ParamDecl, sources: OclCapture[], facts: OclFacts): OclCapture[] {
+  for source in sources {
+    if (source.name == param.name && !source.direct) {
+      return ocl_value(arg, facts);
+    }
+  }
+  return [];
+}
+
+function ocl_argument(arg: ast.Expr, param: ast.ParamDecl, source: OclCapture, inherited: OclCapture[]): OclCapture[] {
   let out: OclCapture[] = [];
   if (!source.direct) {
-    out = ocl_select(ocl_value(arg, facts), source.source);
+    out = ocl_select(inherited, source.source);
     if (source.wide) {
       out = ocl_flatten(out);
     }
@@ -19230,10 +19240,16 @@ function ocl_struct(sl: ast.ExprStructLit, facts: OclFacts): OclCapture[] {
     let name = parser.ref_ungroup(parser.parse_type_ref(sl.type_name)).base;
     let at = facts.factories.decls.snames.find(name);
     if (at >= 0) {
+      let inherited: OclCapture[] = [];
+      let known = false;
       for field in facts.factories.decls.structs[at].fields {
         if (!util.has_str(sl.field_names, field.name)) {
+          if (!known) {
+            inherited = ocl_value(sl.base, facts);
+            known = true;
+          }
           let part = "f:" + field.name;
-          out = ocl_merge(out, ocl_prefix(part, ocl_project(ocl_value(sl.base, facts), part)));
+          out = ocl_merge(out, ocl_prefix(part, ocl_project(inherited, part)));
         }
       }
     }
