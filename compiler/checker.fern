@@ -34635,15 +34635,6 @@ function any_open_enum(ts: typeinfo.Type[], s: Scope): boolean {
   return false;
 }
 
-function all_known(ts: typeinfo.Type[]): boolean {
-  for t in ts {
-    if (!known_type(t)) {
-      return false;
-    }
-  }
-  return true;
-}
-
 function fill_open_args(have: typeinfo.Type[], want: typeinfo.Type[]): (typeinfo.Type[], boolean) {
   let out: typeinfo.Type[] = [];
   if (have.len() != want.len()) {
@@ -34651,7 +34642,7 @@ function fill_open_args(have: typeinfo.Type[], want: typeinfo.Type[]): (typeinfo
   }
   for i in 0..have.len() {
     if (unbound_enum_argument(have[i])) {
-      if (!known_type(want[i])) {
+      if (holds_any_unknown(want[i])) {
         return (out, false);
       }
       out = out.append(want[i]);
@@ -34671,7 +34662,7 @@ function fill_open_args(have: typeinfo.Type[], want: typeinfo.Type[]): (typeinfo
 // `want` does not know the arguments.
 function fill_open_enum(have: typeinfo.Type, want: typeinfo.Type): (typeinfo.Type, boolean) {
   if (unbound_enum_argument(have)) {
-    return (want, known_type(want));
+    return (want, !holds_any_unknown(want));
   }
   match (have) {
     typeinfo.TypeUnion(h) => {
@@ -34713,7 +34704,7 @@ function fill_open_map(h: typeinfo.TypeMap, want: typeinfo.Type): (typeinfo.Type
   };
   let key = if (map_new_column(h.key)) { w.key } else { h.key };
   let value = if (map_new_column(h.value)) { w.value } else { h.value };
-  return (t_map(key, value), known_type(key) && known_type(value));
+  return (t_map(key, value), !holds_any_unknown(key) && !holds_any_unknown(value));
 }
 
 function fill_open_union(h: typeinfo.TypeUnion, want: typeinfo.Type): (typeinfo.Type, boolean) {
@@ -34724,36 +34715,10 @@ function fill_open_union(h: typeinfo.TypeUnion, want: typeinfo.Type): (typeinfo.
     return (want, false);
   }
   if (bare_union(h)) {
-    return (want, w.args.len() > 0 && known_type(want));
+    return (want, w.args.len() > 0 && !holds_any_unknown(want));
   }
   let (args, ok) = fill_open_args(h.args, w.args);
   return (typeinfo.TypeUnion { name: h.name, args: args }, ok);
-}
-
-function known_type(t: typeinfo.Type): boolean {
-  match (t) {
-    typeinfo.TypeUnknown(_) => {
-      return false;
-    },
-    typeinfo.TypeUnion(u) => {
-      return all_known(u.args);
-    },
-    typeinfo.TypeStruct(st) => {
-      return all_known(st.args);
-    },
-    typeinfo.TypeArray(a) => {
-      return known_type(a.elem);
-    },
-    typeinfo.TypeMap(m) => {
-      return known_type(m.key) && known_type(m.value);
-    },
-    typeinfo.TypeTuple(tt) => {
-      return all_known(tt.elements);
-    },
-    _ => {
-      return true;
-    }
-  }
 }
 
 // open_spelling writes a filled type as an annotation the checker reads back,
