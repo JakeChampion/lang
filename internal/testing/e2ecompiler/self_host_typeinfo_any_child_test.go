@@ -20,7 +20,10 @@ function erased(t: typeinfo.Type): boolean {
   return false;
 }
 function show(name: string, t: typeinfo.Type): void {
-  print(name + ":" + typeinfo.any_child(t, erased).to_string());
+  let before = __arr_push_shared_count();
+  let found = typeinfo.any_child(t, erased);
+  assert(__arr_push_shared_count() == before);
+  print(name + ":" + found.to_string());
 }
 function main(): i32 {
   let v: typeinfo.Type = typeinfo.TypeErased { name: "T" };
