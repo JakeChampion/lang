@@ -40,8 +40,19 @@ Short reads are supported. Each seek and read consumes an operation.
 
 The caller owns the immutable source and closes it. Skipped physical payload bytes require later packet-read validation.
 
-This API supplies input for incremental A/V work. It does not provide a streaming decoder or change the Android controller.
-The caller must maintain AAC decoder state and apply the existing presentation plan for priming, edits, and padding.
+The index supplies input for incremental A/V work without a change to the Android controller.
+`std/audio/mp4/cursor` now maintains native AAC decoder state over these indexed packet ranges.
+It applies the existing presentation plan for priming, edits, silence, and padding.
+Each cooperative step performs at most one seek, one bounded source read, or one AAC packet decode.
+
+The cursor retains AAC state and scratch, one encoded packet, and one decoded AAC frame.
+Caller output is separate.
+Positions count frames across all channels. Exact seeks and backward edits replay earlier packets to restore overlap state.
+End-of-track reads require no source operations.
+The sample budget still bounds the complete presentation length without a complete PCM allocation.
+
+This API supplies audio blocks. It does not control AAudio transport or synchronize video.
+
 The complete-view AAC and ALAC decoders keep their existing APIs.
 The lower-level controller remains video-only, with external AAudio clock anchors.
 The separate platform `MediaPlayer` path still supplies platform A/V playback.

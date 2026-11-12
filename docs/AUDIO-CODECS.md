@@ -36,6 +36,7 @@ Its file index and exact source seeks use `std/audio/wavpack/file`.
 Both source readers retain one encoded group and reusable PCM storage.
 They validate group checksums before sample output and trailing tags before completion.
 Its index retains metadata and byte offsets without an encoded input copy.
+
 The reader reuses caller output and one packet scratch array.
 Integer samples exclude padding in their source containers.
 Raw float reads preserve every source bit, including signed zero and NaN payloads.
@@ -81,6 +82,14 @@ fern -target x86-64-linux -o audio-convert examples/audio-convert.fern
 ./audio-convert qoa input16.wav output.qoa
 ./audio-convert flac input24.wav output.flac
 ```
+
+## Incremental AAC M4A reads
+
+`std/audio/mp4/cursor` reads bounded native AAC presentation blocks from a borrowed seekable source.
+It reuses packet windows, decoder state, and the same presentation plan as whole-track decode.
+Each step performs at most one source operation or one packet decode.
+The caller reuses float PCM storage, and each output declares its valid prefix.
+Exact seeks replay overlap history. Silence and repeated or backward edits retain bounded frame storage.
 
 ## Lossless M4A playback
 
@@ -134,6 +143,7 @@ The frozen bank contains 81 bitstreams independently decoded by FFmpeg and libFL
 A separate exhaustive oracle checks 147 predictor, partition, Rice, escape-code, and wasted-bit cost minima.
 Regenerate the banks with `scripts/gen-flac-encoder-vectors.py --encoder PATH` and `scripts/gen-flac-encoder-costs.py`.
 The encoder executable comes from `scripts/audio-reference/flac-encode.fern`.
+
 An additional bank contains 70 LPC streams with the same independent decode and MD5 checks.
 It covers every sample depth, all eight channel counts, selected orders through 32, short blocks, and 33-bit stereo transforms.
 Regenerate it with `scripts/gen-flac-lpc-vectors.py --encoder PATH`.
@@ -272,6 +282,7 @@ The complete-file convenience method checks a cumulative PCM budget.
 
 The index checks packet headers and extents. Reads validate the selected audio payloads.
 The playable end respects partial ALAC packets when a CAF packet table describes nominal full-packet capacity.
+
 `std/audio/caf/file` supplies bounded ALAC playback over a borrowed seekable source.
 Its cooperative builder scans 64-bit chunk extents and skips unknown payloads without reads.
 It shares metadata, layout, packet-header, and presentation checks with the byte-view API.
@@ -455,6 +466,7 @@ WASI executes the same corpus and boundary tests.
 Android ARM64 shared libraries compile successfully.
 Native ARM64 CI and device measurements remain necessary.
 These checks do not establish a speed or quality lead over other codecs.
+
 The [MP2 measurements](benchmarks/mp2-2026-11-09/README.md) retain seven-trial CPU comparisons, state probes, and all target results.
 Frame scratch reuse reduces decode time by 8.5 to 10.7 percent and allocation counts by 30 to 43 percent.
 The [scratch measurements](benchmarks/mp2-scratch-2026-11-09/README.md) retain the paired trials and unchanged decoder-state probes.

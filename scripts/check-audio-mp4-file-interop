@@ -143,36 +143,6 @@ def verify(path, sparse=False):
     print(path.name, len(values), sum(len(t['packets']) for t in values), 'packet metadata/bytes and every decoded sample match')
 
 
-def sparse_movie(path, output):
-    data = path.read_bytes()
-    def co64(kind, body):
-        if kind == b'stco':
-            count = struct.unpack_from('>I', body, 4)[0]
-            values = struct.unpack_from(f'>{count}I', body, 8)
-            return FIXTURE['box'](b'co64', body[:8] + struct.pack(f'>{count}Q', *values))
-        return FIXTURE['box'](kind, body)
-    data = FIXTURE['rewrite'](data, co64)
-    top = {}
-    at = 0
-    while at < len(data):
-        size, tag = struct.unpack_from('>I4s', data, at)
-        top[tag] = (at, data[at:at + size])
-        at += size
-    base = 8 * 1024**3
-    movie = bytearray(top[b'moov'][1])
-    table = movie.index(b'co64') + 4
-    count = struct.unpack_from('>I', movie, table + 4)[0]
-    for i in range(count):
-        at = table + 8 + i * 8
-        struct.pack_into('>Q', movie, at, struct.unpack_from('>Q', movie, at)[0] + base - top[b'mdat'][0])
-    with output.open('wb') as out:
-        out.write(top[b'ftyp'][1])
-        out.write(struct.pack('>I4sQ', 1, b'free', base - out.tell()))
-        out.seek(base)
-        out.write(top[b'mdat'][1])
-        out.write(movie)
-    assert output.stat().st_size > base and output.stat().st_blocks * 512 < 1024**2
-
 
 with tempfile.TemporaryDirectory() as directory:
     temp = Path(directory)
@@ -191,7 +161,7 @@ with tempfile.TemporaryDirectory() as directory:
         verify(path)
         if name == 'mono':
             large = temp / 'sparse.m4a'
-            sparse_movie(path, large)
+            FIXTURE['sparse_movie'](path, large)
             verify(large, True)
     path = temp / 'interleaved.mp4'
     AAC['run'](['-f', 'lavfi', '-i', 'color=c=black:size=32x32:rate=30:duration=0.2',

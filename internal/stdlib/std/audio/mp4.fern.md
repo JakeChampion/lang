@@ -59,7 +59,7 @@ function configured(input: [u8], raw: container.Index, limits: container.Limits)
   return Ok(Index { movie: raw.movie, tracks: tracks, bytes: raw.bytes });
 }
 
-function packet_config(track: Track): Result[aac_config.Config, pcm.AudioError] {
+pub(package) function packet_config(track: Track): Result[aac_config.Config, pcm.AudioError] {
   if (track.packets.len() == 0 || track.configurations.len() == 0) {
     return Err(pcm.Header);
   }
