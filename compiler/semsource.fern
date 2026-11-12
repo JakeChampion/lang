@@ -3,6 +3,7 @@ import "./capturebox";
 import "./astwalk";
 import "./parser";
 import "./lexer";
+import "./lenelide";
 import "./lexical";
 import "./checker";
 import "./typeinfo";
@@ -6438,57 +6439,63 @@ function builtin_enum_entry(t: typeinfo.Type, s: State, out: Schemas): Schemas {
   return with_new_enum(out, semrecords.Enum { ty: t, variants: variants, layout: semrecords.layout_option(), views: views, nests_func: variants_nest_func(variants) });
 }
 
-function env_rows(named: typeinfo.Type[], envs: ssasem.Contract[]): ssasem.EnvRow[] {
-  let out: ssasem.EnvRow[] = [];
+struct EnvCandidate { row: ssasem.EnvRow, request: Option[Request] }
+
+function env_rows(named: typeinfo.Type[], envs: ssasem.Contract[]): EnvCandidate[] {
+  let out: EnvCandidate[] = [];
   for t in named {
     if (!ssasem.is_func(t)) {
       continue;
     }
     for c in envs {
-      let env = env_serving(c, t);
-      if (semtypes.is_env(env) && !ssasem.has_env_row(out, t, env)) {
-        out = out.append(ssasem.EnvRow { fn_ty: t, env_ty: env });
+      if let Some(candidate) = env_serving(c, t) {
+        out = out.append(candidate);
       }
     }
   }
   return out;
 }
 
-function env_serving(c: ssasem.Contract, t: typeinfo.Type): typeinfo.Type {
+function env_serving(c: ssasem.Contract, t: typeinfo.Type): Option[EnvCandidate] {
   if (semtypes.equal(ssasem.closure_type(c), t)) {
-    return c.params[0];
+    return Some(EnvCandidate { row: ssasem.EnvRow { fn_ty: t, env_ty: c.params[0] }, request: None });
   }
   let vars = ssasem.contract_variables(c);
   if (vars.len() == 0) {
-    return typeinfo.unchecked();
+    return None;
   }
   let b = ssasem.bind_type(ssasem.unbound(), ssasem.closure_type(c), t);
   if (!b.ok || !ssasem.binds_all(b, vars)) {
-    return typeinfo.unchecked();
+    return None;
   }
   let inst = ssasem.instantiate_contract(c, b, vars);
   if (!semtypes.equal(ssasem.closure_type(inst), t)) {
-    return typeinfo.unchecked();
+    return None;
   }
-  return inst.params[0];
+  return Some(EnvCandidate { row: ssasem.EnvRow { fn_ty: t, env_ty: inst.params[0] }, request: Some(Request { key: c.name, name: inst.name, binding: b }) });
 }
 
-struct Closed { rows: ssasem.EnvRow[], dyns: ssasem.EnvRow[], table: Schemas }
+struct Closed { rows: ssasem.EnvRow[], dyns: ssasem.EnvRow[], table: Schemas, requests: Request[] }
 
 function env_rows_closed(named: typeinfo.Type[], s: State, memo: SchemaMemo): Closed {
   let rows: ssasem.EnvRow[] = [];
   let drows: ssasem.EnvRow[] = [];
+  let requests: Request[] = [];
   let table = schemas(named, s, memo);
   while (table.ok) {
     let r = table_reach(table, named);
     let reach = r.fns;
     let dreach = r.dyns;
     let grown = false;
-    for row in env_rows(reach, s.contracts.envs) {
-      if (ssasem.has_env_row(rows, row.fn_ty, row.env_ty)) {
+    for candidate in env_rows(reach, s.contracts.envs) {
+      let row = candidate.row;
+      if (!semtypes.is_env(row.env_ty) || ssasem.has_env_row(rows, row.fn_ty, row.env_ty)) {
         continue;
       }
       rows = rows.append(row);
+      if let Some(r) = candidate.request {
+        requests = requests.append(r);
+      }
       named = named.append(row.env_ty);
       grown = true;
     }
@@ -6507,7 +6514,7 @@ function env_rows_closed(named: typeinfo.Type[], s: State, memo: SchemaMemo): Cl
     }
     table = schemas(named, s, table.memo);
   }
-  return Closed { rows: rows, dyns: drows, table: table };
+  return Closed { rows: rows, dyns: drows, table: table, requests: requests };
 }
 
 struct Reach { fns: typeinfo.Type[], dyns: typeinfo.Type[] }
@@ -6834,7 +6841,7 @@ function complete(fd: parser.FuncDecl, s: State, name: string, memo: SchemaMemo,
   f = ssasem.tail_recursion(f, name);
   f = ssabounds.word_loads(ssabounds.grouped_reads(ssabounds.proven_indices(f)), word_load_contracts(), [ssabytes.word_name(4), ssabytes.word_name(8)], [ssabytes.swap_name(4), ssabytes.swap_name(8)]);
   f = ssaquotient.shared_quotients(ssabounds.nonneg_quotients(f));
-  return Made { p: Produced { ok: true, why: "", func: f, modes: modes, template: false, key: "", requests: s.requests, bodyless: false, analysis: None, view_escape: 0, dropped: false }, memo: table.memo };
+  return Made { p: Produced { ok: true, why: "", func: f, modes: modes, template: false, key: "", requests: util.append_all(s.requests, closed.requests), bodyless: false, analysis: None, view_escape: 0, dropped: false }, memo: table.memo };
 }
 
 function unresolved_result_spelling(fd: parser.FuncDecl, s: State): string {
@@ -6856,7 +6863,7 @@ function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Cont
   if (!semtypes.concrete(s.result, true)) {
     return Made { p: refuse("unresolved result type: " + unresolved_result_spelling(fd, s)), memo: memo };
   }
-  let body = parser.elide_len_bounded_body(fd.body);
+  let body = lenelide.elide_len_bounded_body(fd.body);
   s = learn_body(fd, body, s);
   s = stmts(body, prebind(parameters(fd, s)));
   return complete(fd, s, name, memo, finalizers);

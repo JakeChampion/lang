@@ -1,4 +1,5 @@
 import "std/test";
+import "std/http/testing";
 import "std/http";
 import "std/fetch";
 import "std/mock_platform";
@@ -36,19 +37,19 @@ function __fetched(plat: platform.Platform, url: string): string {
 
 function test_defaults_without_canned_answers(): test.TestOutcome {
   let resp = handle(http.request("GET", "/"), mock_platform.new());
-  return test.assert_body(resp, "nowhere 0 0 connect: Connection refused");
+  return testing.assert_body(resp, "nowhere 0 0 connect: Connection refused");
 }
 
 function test_canned_answers_reach_the_handler(): test.TestOutcome {
   let m = mock_platform.new().with_env("REGION", "eu-west").with_now(time.timestamp_from_unix_millis(1700000000123)).with_random(42).with_http("GET", "http://10.0.0.1:8080/health", Ok(http.text(204, "fine")));
   let resp = handle(http.request("GET", "/"), m);
-  return test.assert_body(resp, "eu-west 1700000000123 42 204 fine");
+  return testing.assert_body(resp, "eu-west 1700000000123 42 204 fine");
 }
 
 function test_a_request_of_another_url_still_fails(): test.TestOutcome {
   let m = mock_platform.new().with_http("GET", "http://10.0.0.1:8080/other", Ok(http.ok("")));
   let resp = handle(http.request("GET", "/"), m);
-  return test.assert_body(resp, "nowhere 0 0 connect: Connection refused");
+  return testing.assert_body(resp, "nowhere 0 0 connect: Connection refused");
 }
 
 function test_a_full_response_arrives_whole(): test.TestOutcome {

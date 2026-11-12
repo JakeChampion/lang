@@ -362,21 +362,21 @@ func TestSelfHostFeatureCensus(t *testing.T) {
 		"Nine on astwalk's fold spine, five on its accumulator-carrying map spine (map_expr_where / map_exprs_where / map_stmt_where / map_stmts_where / map_stmts_where_changed), util.append_all, and util.sorted_by. The diagnostics source-order sort added sorted_by in #12993. This code exercises generic function monomorphisation on the fixpoint path.")
 	pinned(t, c, "generic structs", 0,
 		"The self-host declares no generic struct, so nothing on the fixpoint path monomorphises a generic TYPE — only generic functions. This is load-bearing, not incidental: a generic struct in a signature promotes its type param to the monomorphiser, and the per-module emit path runs no monomorphiser, so the un-cloned template fails IR verify there — the accumulator spine returns bare tuples for exactly that reason.")
-	pinned(t, c, "arrow lambdas", 20,
+	pinned(t, c, "arrow lambdas", 24,
 		"Arrow lambdas in the compiler are traversal callbacks in astwalk, checker and parser, and the identity finish hook of the shared AST splicer. A new arrow lambda moves this row and the row in docs/SELFHOST-LANGUAGE-FRICTION.md.")
 	pinned(t, c, "nested named fns", 91,
 		"Nested named functions are visitors in astwalk, checker, parser, lift, wasm_ir, cover, treeshake and interp. A visitor that moves onto the shared folds lowers this row. A new visitor raises it.")
 	pinned(t, c, "try op", 0,
 		"The self-host propagates errors by hand, so `?` has NO fixpoint coverage. A rise here is good news and means this row and the doc's have to move.")
-	pinned(t, c, "Map type spellings", 10,
-		"The builtin Map is an association list, so each lookup is a linear scan. The compiler uses util.NameIndex for name lookups on hot paths. A new Map spelling needs a reason in the commit message, because a Map on a hot path makes that path quadratic.")
+	pinned(t, c, "Map type spellings", 14,
+		"Each Map is the hash table of core/map. The compiler uses util.NameIndex for name lookups on hot paths. A new Map spelling needs a reason in the commit message, and moves this row and the row in docs/SELFHOST-LANGUAGE-FRICTION.md.")
 
 	atLeast(t, c, "for..in loops", 8651,
 		"A floor on `for x in xs` loops. A conversion from a hand-written index loop raises the count: move the floor to the new measurement. A fold onto astwalk or a table index can remove loops: lower the floor and say which change it was in the commit message.")
 	atLeast(t, c, "astwalk call sites", 514,
 		"Hand-written AST walkers that move onto the shared fold spine raise this count. A fall means that a walker went back to its own traversal. Move the floor to the new measurement after each conversion.")
 
-	atMost(t, c, "wildcard match arms", 1614, 1611,
+	atMost(t, c, "wildcard match arms", 1619, 1616,
 		"A `_ =>` arm does not name its cases, so a new AST node can pass through it with no diagnostic. Some arms are necessary: a match over strings needs one (E030), and an arm that picks one shape out of a large sum is not safer when it names every variant. The ceiling is the measurement plus 3. Re-measure main when you move it, because a stale measurement gives the headroom to the next change.")
 	atMost(t, c, "increment by one", 2296, 2293,
 		"Each `x = x + 1` is usually a hand-written index loop that `for x in xs` can replace. The count is the size of that migration. The ceiling is the measurement plus 3.")

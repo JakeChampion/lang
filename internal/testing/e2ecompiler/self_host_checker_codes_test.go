@@ -2385,6 +2385,12 @@ function main(): i32 { return 0; }
 		{"e031-view-arms-join-ok", "function f(c: boolean, a: i64[]): i64 { let w = if (c) { a[:] } else { a[1:] }; return w[0]; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e031-owned-array-beside-view", "function f(c: boolean, s: string): i32 { let owned: u8[] = [1 as u8]; let w = if (c) { owned } else { s.as_bytes() }; return w.len(); }\nfunction main(): i32 { return 0; }\n", []string{"E031"}},
 		{"e031-match-owned-array-beside-view", "function f(c: boolean, s: string): i32 { let owned: u8[] = [1 as u8]; let w = match (c) { true => owned, _ => s.as_bytes() }; return w.len(); }\nfunction main(): i32 { return 0; }\n", []string{"E031"}},
+		{"e031-tuple-owned-array-beside-view", "function f(c: boolean, s: string): i32 { let owned: u8[] = [1 as u8]; let w = if (c) { (owned, 1) } else { (s.as_bytes(), 1) }; return w.0.len(); }\nfunction main(): i32 { return 0; }\n", []string{"E031"}},
+		{"e031-match-tuple-owned-array-beside-view", "function f(c: boolean, s: string): i32 { let owned: u8[] = [1 as u8]; let w = match (c) { true => (1, owned), _ => (1, s.as_bytes()) }; return w.1.len(); }\nfunction main(): i32 { return 0; }\n", []string{"E031"}},
+		{"e031-nested-owned-array-beside-view", "function f(c: boolean, s: string): i32 { let owned: u8[] = [1 as u8]; let w = if (c) { [owned] } else { [s.as_bytes()] }; return w.len(); }\nfunction main(): i32 { return 0; }\n", []string{"E031"}},
+		{"e031-tuple-owned-string-beside-str", "function f(c: boolean, s: string): i32 { let o: string = \"ab\"; let w = if (c) { (o, 1) } else { (slice_unchecked(s, 0, 1), 1) }; return w.0.len(); }\nfunction main(): i32 { return 0; }\n", []string{"E031"}},
+		{"e031-tuple-view-arms-join-ok", "function f(c: boolean, a: i64[]): i64 { let w = if (c) { (a[:], 1) } else { (a[1:], 2) }; return w.0[0]; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e034-tuple-element-owned-array-beside-view", "function f(s: string): i32 { let owned: u8[] = [1 as u8]; let w = [(owned, 1), (s.as_bytes(), 1)]; return w.len(); }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
 		{"e031-array-arms-typed-elements-differ", "function f(c: boolean, big: i32): i32 { let w = if (c) { [big as u64] } else { [big] }; return w.len(); }\nfunction main(): i32 { return f(true, 3); }\n", []string{"E031"}},
 		{"e031-array-match-arms-literal-then-typed-differ", "function f(k: i32, n: i32, m: i64): i32 { let w = match (k) { 0 => [1], 1 => [n], _ => [m] }; return w.len(); }\nfunction main(): i32 { return f(0, 1, 2i64); }\n", []string{"E031"}},
 		{"e003-str-array-local-element-into-string", "function main(): i32 { let s: string = \"ab\"; let xs: str[] = [slice_unchecked(s, 0, 1)]; let t: string = xs[0]; return t.len(); }\n", []string{"E003"}},
@@ -2597,6 +2603,7 @@ function main(): i32 { return 0; }
 		{"e063-receiver-method-slice-ret", "function (xs: T[]) danger(): [T] { let local: T[] = [xs[0], xs[0], xs[0]]; return local[0:1]; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
 		{"e063-sliced-temporary", "function mkarr(): i32[] { let a: i32[] = [1, 2, 3]; return a; }\nfunction f(): [i32] { return mkarr()[0:1]; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
 		{"e063-sliced-temporary-of-param", "function idarr(x: i32[]): i32[] { return x; }\nfunction f(p: i32[]): [i32] { return idarr(p)[0:1]; }\nfunction main(): i32 { return 0; }\n", []string{"E063"}},
+		{"e063-view-param-sliced-ok", "function window(x: i32[]): [i32] { return x[0:2]; }\nfunction f(p: i32[]): [i32] { return window(p)[0:1]; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e065-sliced-temporary", "function mkstr(): string { return \"a\" + \"b\"; }\nfunction f(): str { return slice_unchecked(mkstr(), 0, 1); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
 		{"e065-sliced-temporary-param-ok", "function idstr(s: string): string { return s; }\nfunction f(p: string): str { return slice_unchecked(idstr(p), 0, 1); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e065-sliced-literal-ok", "function lit(): string { return \"hello\"; }\nfunction f(): str { return slice_unchecked(lit(), 0, 1); }\nfunction main(): i32 { return 0; }\n", nil},
@@ -3044,6 +3051,10 @@ function main(): i32 { return 0; }`},
 		{"local-array-view-temporary-escape", `function make(): u8[] { return [3]; }
 function bad(): [u8] { let view: [u8] = make(); return view; }
 function main(): i32 { return 0; }`},
+		{"local-array-view-call-result-escape", `function idarr(x: i32[]): i32[] { return x; }
+function bad(p: i32[]): [i32] { let view: [i32] = idarr(p); return view; }
+function kept(p: i32[]): i32 { let view: [i32] = idarr(p); return view[0]; }
+function main(): i32 { return 0; }`},
 		{"record-variant-rename-and-rest", `enum S { Rect { w: i32, h: i32 }, Tag { name: string, n: i32 } }
 function f(s: S): i32 { match (s) { Rect { h: hh, w } => { return w - hh; }, Tag { n: count, .. } => { return count; } } }
 function g(o: Option[S]): i32 { return match (o) { Some(Rect { w: ww, .. }) => ww, Some(Tag { .. }) => 1, None => 0 }; }
@@ -3314,6 +3325,15 @@ function main(): i32 { return 0; }`},
 		{"literal-float-tuple-element", `function f(c: boolean): void { let q = 2; let x = if (c) { (q, 2) } else { (3.5, 4) }; }`},
 		{"literal-float-enum-payload", `function f(c: boolean): void { let q = 2; let x = if (c) { Some(q) } else { Some(3.5) }; }`},
 		{"literal-float-value-array", `function f(c: boolean): void { let a: (f64, i32)[] = [if (c) { (1, 2) } else { (3, 4) }]; }`},
+		{"literal-float-value-array-typed-arm", `function f(c: boolean, t: (i32, i32)): void { let a: (f64, i32)[] = [if (c) { t } else { (3, 4) }]; }`},
+		{"literal-float-value-array-float-arm", `function f(c: boolean): void { let a: (f64, i32)[] = [if (c) { (1, 2) } else { (3.5, 4) }]; }`},
+		{"literal-float-value-array-after-literal", `function f(c: boolean): void { let a: (f64, i32)[] = [(5, 6), if (c) { (1, 2) } else { (3, 4) }]; }`},
+		{"literal-float-value-array-open-after-float", `function f(c: boolean): void { let a = [(5.5, 6), if (c) { (1, 2) } else { (3, 4) }]; }`},
+		{"literal-float-value-array-open-before-float", `function f(c: boolean): void { let a = [if (c) { (1, 2) } else { (3, 4) }, (5.5, 6)]; }`},
+		{"literal-float-value-array-match-after-literal", `function f(c: boolean): void { let a: (f64, i32)[] = [(5, 6), match (c) { true => (1, 2), false => (3, 4) }]; }`},
+		{"literal-float-value-array-match", `function f(c: boolean): void { let a: (f64, i32)[] = [match (c) { true => (1, 2), false => (3, 4) }]; }`},
+		{"literal-float-value-array-narrow", `function f(c: boolean): void { let a: (u8, i32)[] = [if (c) { (300, 2) } else { (3, 4) }]; }`},
+		{"literal-float-value-array-string", `function f(c: boolean): void { let a: (string, i32)[] = [if (c) { (1, 2) } else { (3, 4) }]; }`},
 		{"literal-float-block-tail", `function f(c: boolean): void { let x: string = { let q = 1; if (c) { q } else { 2.5 } }; }`},
 		{"literal-float-already-pinned", `function f(c: boolean): void { let q = 2; let n: i32 = q; let x = if (c) { q } else { 2.5 }; }`},
 		{"literal-array-local-width", `function f(): void { let xs = [1]; let w: u64[] = xs; }`},

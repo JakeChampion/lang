@@ -32,3 +32,24 @@ func TestSendCopyKeepsBufferWritesSeparate(t *testing.T) {
 		})
 	}
 }
+
+// A record that two fields hold has one copy, so the time of the copy is
+// linear in the number of records (#15436).
+func TestSendCopyCopiesASharedBoxOneTime(t *testing.T) {
+	var cur Value = &Struct{TypeName: "N", Fields: map[string]Value{"xs": arrayOf(Number(1))}}
+	for range 64 {
+		cur = &Struct{TypeName: "N", Fields: map[string]Value{"l": cur, "r": cur}}
+	}
+	i := New()
+	copied, err := i.Builtins["__send_copy"].Fn(i, []Value{cur})
+	if err != nil {
+		t.Fatal(err)
+	}
+	top := copied.(*Struct)
+	if top == cur {
+		t.Fatal("the copy is the original record")
+	}
+	if top.Fields["l"] != top.Fields["r"] {
+		t.Fatal("the copy does not share the record that the original shares")
+	}
+}

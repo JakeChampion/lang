@@ -286,7 +286,7 @@ func main() {
 	emitDebug := flag.Bool("g", false, "emit a symbol table and DWARF into the native binary so debuggers, nm, backtraces, and profilers can map code addresses to function names and source lines")
 	doFmt := flag.Bool("fmt", false, "format the source files (- for stdin) and write them to stdout in order (use -w to write back in place, -d to print a diff, -o OUT with a single file)")
 	writeBack := flag.Bool("w", false, "with -fmt, overwrite each input file with its formatted output")
-	diffMode := flag.Bool("d", false, "with -fmt, print a unified diff between each file and its formatted form; exits 1 when any differs")
+	diffMode := flag.Bool("d", false, "with -fmt, print a unified diff between each file and its formatted form; exits 1 when any differs, 2 when one cannot be read or parsed")
 	doResolve := flag.Bool("resolve", false, "run Minimum Version Selection over a fern.toml's versioned ([package] index) dependencies and write the chosen versions to fern.lock (pass the manifest, its directory, or any file inside the package; default `.`). url-sourced versions are fetched and verified into the content-addressed store. The build reads fern.lock; the compiler never reads the index.")
 	doVendor := flag.Bool("vendor", false, "flatten the transitive dependency graph of a fern.toml (pass the manifest, its directory, or any file inside the package; default `.`) into <root>/vendor/<name>/, one directory per package. After vendoring, builds are fully offline — the loader resolves declared dependencies out of vendor/ and never touches the network or the deps' original path/url locations. url dependencies must be fetched (`fern-oracle -fetch`) first; vendoring copies from the store.")
 	doAdd := flag.Bool("add", false, "add a dependency to the nearest fern.toml: `fern-oracle -add NAME SPEC [DIR]` where SPEC is `path:../dir`, `url:https://…/pkg.tar.gz` (the archive is fetched and its sha256 recorded automatically — no hand-computed hash), `workspace` (a `{ workspace = true }` member dep), or `version:X.Y.Z` (an MVS dependency). DIR (default `.`) selects the package whose fern.toml to edit. The manifest is edited textually so comments and formatting survive.")
@@ -633,8 +633,14 @@ func formatFile(srcPath string, writeBack, diffMode bool, outPath string) (int, 
 	} else {
 		srcBytes, err = os.ReadFile(srcPath)
 	}
+	// With -d, exit 1 means that a file differs. A file with no diff to
+	// show exits 2, as diff(1) does.
+	failure := 1
+	if diffMode {
+		failure = 2
+	}
 	if err != nil {
-		return 1, err
+		return failure, err
 	}
 	src := string(srcBytes)
 	var formatted string
@@ -643,7 +649,7 @@ func formatFile(srcPath string, writeBack, diffMode bool, outPath string) (int, 
 	} else {
 		formatted, err = fmtsource.Format(src)
 		if err != nil {
-			return 1, fmt.Errorf("%s", diag.Format(name, src, err))
+			return failure, fmt.Errorf("%s", diag.Format(name, src, err))
 		}
 	}
 	if diffMode {

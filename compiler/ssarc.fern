@@ -1967,8 +1967,8 @@ function send_rows(own out: Fresh, f: ssasem.Func, done: util.NameIndex): Fresh 
   return out;
 }
 
-// One copy helper per reference type a sent value holds, named by the type.
-// A helper copies its own box and calls the helper of each reference part.
+// The helpers of one sent type. The entry has the name that `__send_copy`
+// calls. It makes the table of copied boxes and calls the part helper.
 function send_helpers(own rows: irtables.LowerState[], t: typeinfo.Type, f: ssasem.Func, done: util.NameIndex): irtables.LowerState[] {
   if (!ssasem.reference(t)) {
     return rows;
@@ -1977,11 +1977,124 @@ function send_helpers(own rows: irtables.LowerState[], t: typeinfo.Type, f: ssas
   if (done.has(name) || util.has_str(row_names_of(rows), name)) {
     return rows;
   }
-  rows = rows.append(send_helper(t, f));
+  rows = rows.append(send_entry(t));
+  if (!done.has(seen_get_name()) && !util.has_str(row_names_of(rows), seen_get_name())) {
+    rows = util.append_all(rows, seen_rows(f));
+  }
+  return send_part_rows(rows, t, f, done);
+}
+
+// One part helper per reference type a sent value holds, named by the type.
+// It copies its own box and calls the part helper of each reference part.
+// A box that can have more than one owner goes through the table, so the
+// copy has one box for each box of the source.
+function send_part_rows(own rows: irtables.LowerState[], t: typeinfo.Type, f: ssasem.Func, done: util.NameIndex): irtables.LowerState[] {
+  if (!ssasem.reference(t)) {
+    return rows;
+  }
+  let name = send_part_name(t);
+  if (done.has(name) || util.has_str(row_names_of(rows), name)) {
+    return rows;
+  }
+  if (send_shares(t, f)) {
+    rows = rows.append(send_shared(t));
+    rows = rows.append(send_body(t, f, send_body_name(t)));
+  } else {
+    rows = rows.append(send_body(t, f, name));
+  }
   for part in send_parts(t, f) {
-    rows = send_helpers(rows, part, f, done);
+    rows = send_part_rows(rows, part, f, done);
   }
   return rows;
+}
+
+function send_part_name(t: typeinfo.Type): string {
+  return "__sem_sendpart_" + ssasem.type_key(t);
+}
+
+function send_body_name(t: typeinfo.Type): string {
+  return "__sem_sendbody_" + ssasem.type_key(t);
+}
+
+// A type whose value is a box with a count word that `__fern_rc_is_unique`
+// reads. A string and a map have other layouts, and an Option is its payload.
+function send_shares(t: typeinfo.Type, f: ssasem.Func): boolean {
+  if (send_refused(t, f) != "") {
+    return false;
+  }
+  if let typeinfo.TypeArray(_) = t {
+    return true;
+  }
+  if let typeinfo.TypeTuple(_) = t {
+    return true;
+  }
+  if let typeinfo.TypeStruct(_) = t {
+    return !ssasem.is_map(t) && !ssasem.is_string(t);
+  }
+  if let typeinfo.TypeUnion(_) = t {
+    return enum_layout(f, t) != semrecords.layout_option();
+  }
+  return false;
+}
+
+// The entry takes the source in local 0 and returns a fresh copy.
+function send_entry(t: typeinfo.Type): irtables.LowerState {
+  let seen = 1;
+  let out = 2;
+  let r: irtables.LowerState = irtables.LowerState {
+    ...empty(""), ok: true,
+    n_params: 1, n_locals: 3, name: ssasem.send_helper_name(t),
+  };
+  r = emit(r, ir.op_call_direct(seen_new_name(), 0));
+  r = emit(r, ir.op_store_local(seen));
+  r = emit(r, ir.op_load_local(0));
+  r = emit(r, ir.op_load_local(seen));
+  r = emit(r, ir.op_call_direct(send_part_name(t), 2));
+  r = emit(r, ir.op_store_local(out));
+  r = helper(r, seen, seen_free_name());
+  r = emit(r, ir.op_load_local(out));
+  return emit(r, ir.op_return());
+}
+
+// The part helper of a box type. A box with one owner has one path to it,
+// so it copies with no table access. Any other box copies one time, and
+// each later path takes a count of that copy.
+function send_shared(t: typeinfo.Type): irtables.LowerState {
+  let seen = 1;
+  let out = 2;
+  let r: irtables.LowerState = irtables.LowerState {
+    ...empty(""), ok: true,
+    n_params: 2, n_locals: 3, name: send_part_name(t),
+  };
+  r = emit(r, ir.op_load_local(0));
+  r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_load_local(0));
+  r = emit(r, ir.op_load_local(seen));
+  r = emit(r, ir.op_call_direct(send_body_name(t), 2));
+  r = emit(r, ir.op_return());
+  r = emit(r, ir.op_end());
+  r = emit(r, ir.op_load_local(0));
+  r = emit(r, ir.op_load_local(seen));
+  r = emit(r, ir.op_call_direct(seen_get_name(), 2));
+  r = emit(r, ir.op_store_local(out));
+  r = emit(r, ir.op_load_local(out));
+  r = emit(r, ir.op_int_extend_ptr());
+  r = emit(r, ir.op_const_i64(0));
+  r = emit(r, ir.op_bin("ne", 64, false));
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_load_local(out));
+  r = emit(r, ir.op_return());
+  r = emit(r, ir.op_end());
+  r = emit(r, ir.op_load_local(0));
+  r = emit(r, ir.op_load_local(seen));
+  r = emit(r, ir.op_call_direct(send_body_name(t), 2));
+  r = emit(r, ir.op_store_local(out));
+  r = emit(r, ir.op_load_local(seen));
+  r = emit(r, ir.op_load_local(0));
+  r = emit(r, ir.op_load_local(out));
+  r = emit(r, ir.op_call_direct(seen_put_name(), 3));
+  return emit(r, ir.op_return());
 }
 
 function row_names_of(rows: irtables.LowerState[]): string[] {
@@ -2057,11 +2170,12 @@ function send_refused_shape(t: typeinfo.Type, f: ssasem.Func): string {
   return "";
 }
 
-// The helper takes the source in local 0 and returns a fresh copy.
-function send_helper(t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+// The body takes the source in local 0 and the table of copied boxes in
+// local 1, and returns a fresh copy.
+function send_body(t: typeinfo.Type, f: ssasem.Func, name: string): irtables.LowerState {
   let r: irtables.LowerState = irtables.LowerState {
     ...empty(""), ok: true,
-    n_params: 1, n_locals: 1, name: ssasem.send_helper_name(t),
+    n_params: 2, n_locals: 2, name: name,
   };
   let why = send_refused(t, f);
   if (why.len() > 0) {
@@ -2080,9 +2194,9 @@ function send_helper(t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
     return send_map(r, t, f);
   }
   if let typeinfo.TypeStruct(_) = t {
-    r = reserve(r, 2);
-    r = send_record(r, ssasem.record_fields(t, f), record_name(t), 1, f);
-    r = emit(r, ir.op_load_local(1));
+    r = reserve(r, 3);
+    r = send_record(r, ssasem.record_fields(t, f), record_name(t), 2, f);
+    r = emit(r, ir.op_load_local(2));
     return emit(r, ir.op_return());
   }
   if (enum_layout(f, t) == semrecords.layout_option()) {
@@ -2091,10 +2205,240 @@ function send_helper(t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
   return send_variants(r, t, f);
 }
 
+// The table of copied boxes is a holder array of one word, which is the
+// address of a slot array or zero. Word 0 of the slot array is the number
+// of pairs. Each pair is the address of a source box and the address of
+// its copy. The number of pairs is a power of two, and at most half are
+// in use.
+function seen_new_name(): string {
+  return "__sem_seen_new";
+}
+
+function seen_get_name(): string {
+  return "__sem_seen_get";
+}
+
+function seen_put_name(): string {
+  return "__sem_seen_put";
+}
+
+function seen_free_name(): string {
+  return "__sem_seen_free";
+}
+
+// The first slot array has eight pairs.
+function seen_first_words(): i32 {
+  return 17;
+}
+
+function seen_rows(f: ssasem.Func): irtables.LowerState[] {
+  return [seen_new(), seen_get(), seen_insert(), seen_grow(f), seen_put(), seen_free(f)];
+}
+
+function seen_row(name: string, n_params: i32, n_locals: i32, wide: i32[]): irtables.LowerState {
+  return irtables.LowerState {
+    ...empty(""), ok: true,
+    n_params: n_params, n_locals: n_locals, name: name, i64_slots: wide,
+  };
+}
+
+function emit_all(own r: irtables.LowerState, ops: ir.Op[]): irtables.LowerState {
+  for op in ops {
+    r = emit(r, op);
+  }
+  return r;
+}
+
+function i64_array(): typeinfo.Type {
+  return typeinfo.TypeArray { elem: typeinfo.t_i64(), view: false };
+}
+
+function bin32(kind: string): ir.Op {
+  return ir.op_bin(kind, 0, false);
+}
+
+function bin64(kind: string): ir.Op {
+  return ir.op_bin(kind, 64, true);
+}
+
+function seen_new(): irtables.LowerState {
+  return emit_all(seen_row(seen_new_name(), 0, 0, []), [ir.op_const_i64(0), ir.op_arr_make_i64(1), ir.op_return()]);
+}
+
+// The address in local `box` goes to local `key`. A value that is not the
+// address of a box returns `miss` from the helper.
+function seen_key(box: i32, key: i32, miss: ir.Op): ir.Op[] {
+  return [
+    ir.op_load_local(box), ir.op_int_extend_ptr(), ir.op_store_local(key),
+    ir.op_load_local(key), ir.op_const_i64(65536), bin64("lt_u"),
+    ir.op_if(0), miss, ir.op_return(), ir.op_end(),
+    ir.op_load_local(key), ir.op_const_i64(1), bin64("and"), ir.op_const_i64(0), bin64("ne"),
+    ir.op_if(0), miss, ir.op_return(), ir.op_end(),
+  ];
+}
+
+// The first pair to examine for `key` goes to local `at`, and the mask of
+// the pair numbers to local `mask`.
+function seen_start(slots: i32, key: i32, mask: i32, at: i32): ir.Op[] {
+  return [
+    ir.op_load_local(slots), ir.op_arr_len(), ir.op_const_i32(1), bin32("sub"),
+    ir.op_const_i32(1), bin32("shr_u"), ir.op_const_i32(1), bin32("sub"), ir.op_store_local(mask),
+    ir.op_load_local(key), ir.op_const_i64(4), bin64("shr_u"),
+    ir.op_load_local(key), ir.op_const_i64(16), bin64("shr_u"), bin64("xor"),
+    ir.op_int_wrap(true), ir.op_load_local(mask), bin32("and"), ir.op_store_local(at),
+  ];
+}
+
+// Word `word` of pair `at`, where word 0 is the source and word 1 the copy.
+function seen_word(slots: i32, at: i32, word: i32): ir.Op[] {
+  return [
+    ir.op_load_local(slots), ir.op_load_local(at), ir.op_const_i32(1), bin32("shl"),
+    ir.op_const_i32(word + 1), bin32("add"),
+  ];
+}
+
+function seen_next(mask: i32, at: i32): ir.Op[] {
+  return [
+    ir.op_load_local(at), ir.op_const_i32(1), bin32("add"), ir.op_load_local(mask), bin32("and"),
+    ir.op_store_local(at), ir.op_br(0),
+  ];
+}
+
+// The copy of the box in local 0 with one more count, or zero.
+function seen_get(): irtables.LowerState {
+  let holder = 1;
+  let slots = 2;
+  let key = 3;
+  let mask = 4;
+  let at = 5;
+  let found = 6;
+  let r = seen_row(seen_get_name(), 2, 7, [key, found]);
+  r = emit_all(r, seen_key(0, key, ir.op_const_i32(0)));
+  r = emit_all(r, [
+    ir.op_load_local(holder), ir.op_const_i32(0), ir.op_arr_get_i64_nc(), ir.op_int_wrap_ptr(), ir.op_store_local(slots),
+    ir.op_load_local(slots), ir.op_int_extend_ptr(), ir.op_const_i64(0), bin64("eq"),
+    ir.op_if(0), ir.op_const_i32(0), ir.op_return(), ir.op_end(),
+  ]);
+  r = emit_all(r, seen_start(slots, key, mask, at));
+  r = emit_all(r, [ir.op_block(0), ir.op_loop(0)]);
+  r = emit_all(r, seen_word(slots, at, 0));
+  r = emit_all(r, [
+    ir.op_arr_get_i64_nc(), ir.op_store_local(found),
+    ir.op_load_local(found), ir.op_const_i64(0), bin64("eq"),
+    ir.op_if(0), ir.op_const_i32(0), ir.op_return(), ir.op_end(),
+    ir.op_load_local(found), ir.op_load_local(key), bin64("eq"),
+    ir.op_if(0),
+  ]);
+  r = emit_all(r, seen_word(slots, at, 1));
+  r = emit_all(r, [
+    ir.op_arr_get_i64_nc(), ir.op_int_wrap_ptr(), ir.op_call_direct("__fern_rc_inc", 1), ir.op_return(),
+    ir.op_end(),
+  ]);
+  r = emit_all(r, seen_next(mask, at));
+  return emit_all(r, [ir.op_end(), ir.op_end(), ir.op_const_i32(0), ir.op_return()]);
+}
+
+// The pair of the box in local 1 and its copy in local 2 goes into the
+// slot array in local 0, which has a free pair.
+function seen_insert(): irtables.LowerState {
+  let key = 3;
+  let mask = 4;
+  let at = 5;
+  let r = seen_row("__sem_seen_insert", 3, 6, [key]);
+  r = emit_all(r, [ir.op_load_local(1), ir.op_int_extend_ptr(), ir.op_store_local(key)]);
+  r = emit_all(r, seen_start(0, key, mask, at));
+  r = emit_all(r, [ir.op_block(0), ir.op_loop(0)]);
+  r = emit_all(r, seen_word(0, at, 0));
+  r = emit_all(r, [ir.op_arr_get_i64_nc(), ir.op_const_i64(0), bin64("eq"), ir.op_if(0)]);
+  r = emit_all(r, seen_word(0, at, 0));
+  r = emit_all(r, [ir.op_load_local(key), ir.op_arr_set_i64()]);
+  r = emit_all(r, seen_word(0, at, 1));
+  r = emit_all(r, [
+    ir.op_load_local(2), ir.op_int_extend_ptr(), ir.op_arr_set_i64(),
+    ir.op_const_i32(0), ir.op_return(),
+    ir.op_end(),
+  ]);
+  r = emit_all(r, seen_next(mask, at));
+  return emit_all(r, [ir.op_end(), ir.op_end(), ir.op_const_i32(0), ir.op_return()]);
+}
+
+// A slot array with two times the pairs replaces the one in the holder in
+// local 0. The helper returns it.
+function seen_grow(f: ssasem.Func): irtables.LowerState {
+  let old = 1;
+  let slots = 2;
+  let i = 3;
+  let r = seen_row("__sem_seen_grow", 1, 4, []);
+  r = emit_all(r, [
+    ir.op_load_local(0), ir.op_const_i32(0), ir.op_arr_get_i64_nc(), ir.op_int_wrap_ptr(), ir.op_store_local(old),
+    ir.op_load_local(old), ir.op_arr_len(), ir.op_const_i32(1), bin32("shl"), ir.op_const_i32(1), bin32("sub"),
+    ir.op_alloc_slots(64), ir.op_store_local(slots),
+    ir.op_load_local(slots), ir.op_const_i32(0),
+    ir.op_load_local(old), ir.op_const_i32(0), ir.op_arr_get_i64_nc(), ir.op_arr_set_i64(),
+    ir.op_const_i32(1), ir.op_store_local(i),
+    ir.op_block(0), ir.op_loop(0),
+    ir.op_load_local(i), ir.op_load_local(old), ir.op_arr_len(), bin32("ge_s"), ir.op_brif(1),
+    ir.op_load_local(old), ir.op_load_local(i), ir.op_arr_get_i64_nc(), ir.op_const_i64(0), bin64("ne"),
+    ir.op_if(0),
+    ir.op_load_local(slots),
+    ir.op_load_local(old), ir.op_load_local(i), ir.op_arr_get_i64_nc(), ir.op_int_wrap_ptr(),
+    ir.op_load_local(old), ir.op_load_local(i), ir.op_const_i32(1), bin32("add"), ir.op_arr_get_i64_nc(), ir.op_int_wrap_ptr(),
+    ir.op_call_direct("__sem_seen_insert", 3), ir.op_drop(),
+    ir.op_end(),
+    ir.op_load_local(i), ir.op_const_i32(2), bin32("add"), ir.op_store_local(i),
+    ir.op_br(0),
+    ir.op_end(), ir.op_end(),
+    ir.op_load_local(0), ir.op_const_i32(0), ir.op_load_local(slots), ir.op_int_extend_ptr(), ir.op_arr_set_i64(),
+  ]);
+  r = release(r, old, i64_array(), f);
+  return emit_all(r, [ir.op_load_local(slots), ir.op_return()]);
+}
+
+// The table in local 0 learns that the box in local 1 has the copy in
+// local 2. The helper returns the copy.
+function seen_put(): irtables.LowerState {
+  let slots = 3;
+  let key = 4;
+  let r = seen_row(seen_put_name(), 3, 5, [key]);
+  r = emit_all(r, seen_key(1, key, ir.op_load_local(2)));
+  return emit_all(r, [
+    ir.op_load_local(0), ir.op_const_i32(0), ir.op_arr_get_i64_nc(), ir.op_int_wrap_ptr(), ir.op_store_local(slots),
+    ir.op_load_local(slots), ir.op_int_extend_ptr(), ir.op_const_i64(0), bin64("eq"),
+    ir.op_if(0),
+    ir.op_const_i32(seen_first_words()), ir.op_alloc_slots(64), ir.op_store_local(slots),
+    ir.op_load_local(0), ir.op_const_i32(0), ir.op_load_local(slots), ir.op_int_extend_ptr(), ir.op_arr_set_i64(),
+    ir.op_end(),
+    ir.op_load_local(slots), ir.op_const_i32(0), ir.op_arr_get_i64_nc(), ir.op_int_wrap(true),
+    ir.op_const_i32(1), bin32("add"), ir.op_const_i32(2), bin32("shl"),
+    ir.op_load_local(slots), ir.op_arr_len(), ir.op_const_i32(1), bin32("sub"), bin32("gt_s"),
+    ir.op_if(0),
+    ir.op_load_local(0), ir.op_call_direct("__sem_seen_grow", 1), ir.op_store_local(slots),
+    ir.op_end(),
+    ir.op_load_local(slots), ir.op_load_local(1), ir.op_load_local(2), ir.op_call_direct("__sem_seen_insert", 3), ir.op_drop(),
+    ir.op_load_local(slots), ir.op_const_i32(0),
+    ir.op_load_local(slots), ir.op_const_i32(0), ir.op_arr_get_i64_nc(), ir.op_const_i64(1), bin64("add"), ir.op_arr_set_i64(),
+    ir.op_load_local(2), ir.op_return(),
+  ]);
+}
+
+function seen_free(f: ssasem.Func): irtables.LowerState {
+  let slots = 1;
+  let r = seen_row(seen_free_name(), 1, 2, []);
+  r = emit_all(r, [
+    ir.op_load_local(0), ir.op_const_i32(0), ir.op_arr_get_i64_nc(), ir.op_int_wrap_ptr(), ir.op_store_local(slots),
+    ir.op_load_local(slots), ir.op_int_extend_ptr(), ir.op_const_i64(0), bin64("ne"),
+    ir.op_if(0),
+  ]);
+  r = release(r, slots, i64_array(), f);
+  r = emit(r, ir.op_end());
+  r = release(r, 0, i64_array(), f);
+  return emit_all(r, [ir.op_const_i32(0), ir.op_return()]);
+}
+
 // A string copies through a byte array, which the helper releases once the
 // fresh string holds its own bytes.
 function send_string(own r: irtables.LowerState, f: ssasem.Func): irtables.LowerState {
-  let bytes = 1;
+  let bytes = 2;
   r = reserve(r, bytes + 1);
   r = emit(r, ir.op_load_local(0));
   r = emit(r, ir.counted(ir.packed(ir.op_str_bytes())));
@@ -2109,7 +2453,8 @@ function send_string(own r: irtables.LowerState, f: ssasem.Func): irtables.Lower
 // A fresh copy of the part in local `slot`, left on the stack.
 function send_part(own r: irtables.LowerState, part: typeinfo.Type): irtables.LowerState {
   if (ssasem.reference(part)) {
-    r = emit(r, ir.op_call_direct(ssasem.send_helper_name(part), 1));
+    r = emit(r, ir.op_load_local(1));
+    r = emit(r, ir.op_call_direct(send_part_name(part), 2));
   }
   return r;
 }
@@ -2125,8 +2470,8 @@ function send_array(own r: irtables.LowerState, elem: typeinfo.Type, f: ssasem.F
     r = emit(r, ir.op_arr_slice(elem_width(elem)));
     return emit(r, ir.op_return());
   }
-  let out = 1;
-  let index = 2;
+  let out = 2;
+  let index = 3;
   r = reserve(r, index + 1);
   r = emit(r, arr_make_op(elem, 0));
   r = emit(r, ir.op_store_local(out));
@@ -2167,17 +2512,17 @@ function send_map(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func):
   let vt: typeinfo.Type = ssasem.map_value(t);
   let keys_t: typeinfo.Type = typeinfo.TypeArray { elem: kt, view: false };
   let vals_t: typeinfo.Type = typeinfo.TypeArray { elem: vt, view: false };
-  let out: i32 = 1;
-  let key: i32 = 2;
-  let val: i32 = 3;
-  let keys: i32 = 4;
-  let vals: i32 = 5;
-  let index: i32 = 6;
-  let scratch: i32 = 7;
+  let out: i32 = 2;
+  let key: i32 = 3;
+  let val: i32 = 4;
+  let keys: i32 = 5;
+  let vals: i32 = 6;
+  let index: i32 = 7;
+  let scratch: i32 = 8;
   r = irtables.LowerState { ...reserve(r, scratch + 6), scratch_start: scratch };
   r = send_map_slot(r, key, kt);
   r = send_map_slot(r, val, vt);
-  let fh: ssasem.Func = ssasem.Func { ...f, values: [t, t, kt, vt, keys_t, vals_t, typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false }] };
+  let fh: ssasem.Func = ssasem.Func { ...f, values: [t, typeinfo.t_i32(), t, kt, vt, keys_t, vals_t, typeinfo.t_i32()] };
   let put: ssa.SInst = ssa.SInst { kind_tag: ssasem.map_insert(), result: out, args: [out, key, val], imm: 0, str: "" };
   r = emit(r, ir.op_load_local(0));
   r = emit(r, ir.op_call_direct("__map_len_impl", 1));
@@ -2274,8 +2619,8 @@ function send_record(own r: irtables.LowerState, fields: semrecords.Field[], sha
 
 function send_option(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
   let e = f.enums[semrecords.find_enum(f.enums, t)];
-  let out = 1;
-  let tag = 2;
+  let out = 2;
+  let tag = 3;
   r = reserve(r, tag + 1);
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_store_local(out));
@@ -2313,7 +2658,7 @@ function send_option(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Fun
 }
 
 function send_variants(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
-  let out = 1;
+  let out = 2;
   r = reserve(r, out + 1);
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_store_local(out));

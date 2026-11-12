@@ -1,4 +1,5 @@
 import "std/test";
+import "std/http/testing";
 import "std/http";
 import "std/time";
 import "std/clock";
@@ -457,42 +458,42 @@ function http_resp(): HttpResponse {
 }
 
 function test_assert_status_pass(): test.TestOutcome {
-  return expect_pass(test.assert_status(http_resp(), 200));
+  return expect_pass(testing.assert_status(http_resp(), 200));
 }
 
 function test_assert_status_fail(): test.TestOutcome {
-  return expect_fail_containing(test.assert_status(http_resp(), 404), "assert_status: got 200, expected 404");
+  return expect_fail_containing(testing.assert_status(http_resp(), 404), "assert_status: got 200, expected 404");
 }
 
 function test_assert_header_pass(): test.TestOutcome {
-  return expect_pass(test.assert_header(http_resp(), "x-kind", "greeting"));
+  return expect_pass(testing.assert_header(http_resp(), "x-kind", "greeting"));
 }
 
 function test_assert_header_fail(): test.TestOutcome {
-  let wrong = expect_fail_containing(test.assert_header(http_resp(), "X-Kind", "farewell"), "assert_header: X-Kind is \"greeting\", expected \"farewell\"");
+  let wrong = expect_fail_containing(testing.assert_header(http_resp(), "X-Kind", "farewell"), "assert_header: X-Kind is \"greeting\", expected \"farewell\"");
   match (wrong) {
     Fail(m) => {
       return test.fail(m);
     },
     Pass => {}
   }
-  return expect_fail_containing(test.assert_header(http_resp(), "X-Other", "x"), "assert_header: no X-Other header");
+  return expect_fail_containing(testing.assert_header(http_resp(), "X-Other", "x"), "assert_header: no X-Other header");
 }
 
 function test_assert_no_header_pass(): test.TestOutcome {
-  return expect_pass(test.assert_no_header(http_resp(), "X-Other"));
+  return expect_pass(testing.assert_no_header(http_resp(), "X-Other"));
 }
 
 function test_assert_no_header_fail(): test.TestOutcome {
-  return expect_fail_containing(test.assert_no_header(http_resp(), "x-kind"), "assert_no_header: x-kind is \"greeting\"");
+  return expect_fail_containing(testing.assert_no_header(http_resp(), "x-kind"), "assert_no_header: x-kind is \"greeting\"");
 }
 
 function test_assert_body_pass(): test.TestOutcome {
-  return expect_pass(test.assert_body(http_resp(), "hello"));
+  return expect_pass(testing.assert_body(http_resp(), "hello"));
 }
 
 function test_assert_body_fail(): test.TestOutcome {
-  return expect_fail_containing(test.assert_body(http_resp(), "bye"), "assert_body: got \"hello\", expected \"bye\"");
+  return expect_fail_containing(testing.assert_body(http_resp(), "bye"), "assert_body: got \"hello\", expected \"bye\"");
 }
 
 function is_even(n: i32): boolean {

@@ -83,8 +83,8 @@ STAGE0=bin/fern-selfhost make distcheck` rebuilds the host's pin as its
 the pinned sha256 against a build of their own.
 
 WASM as the snapshot format (`BOOTSTRAP-RESEARCH.md §7`) is ruled out twice over
-today. `fern.fern` cannot be compiled to wasm: `write_file_exec` needs
-`fsmode`, and E066 refuses it because the component-model filesystem has no
+today. `fern.fern` cannot be compiled to wasm: `chmod`, which gives an image its
+executable mode, needs `fsmode`, and E066 refuses it because the component-model filesystem has no
 permission bits (#6133) — a target property, not a gap. And compiling the
 compiler peaks at 4.0 GB of resident memory under a 16 GiB `MAP_NORESERVE`
 arena — at wasm32's 4 GiB address ceiling with no room for growth.

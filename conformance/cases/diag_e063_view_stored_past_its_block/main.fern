@@ -1,0 +1,81 @@
+// spec: ML-10
+// A view does not own its storage. The storage of a local ends with the block
+// that declares it. So a view of that storage may not be stored in a variable
+// of an outer block: on its own, inside an Option, or through `append`.
+// A view of the storage of the outer block, and a store in the block of the
+// storage, are valid.
+
+function last_of_loop(): i32 {
+  let last: [i32] = [0][:];
+  for k in 0..4 {
+    let tmp: i32[] = [k, k + 1, k + 2];
+    last = tmp[1:3];
+  }
+  return last[0];
+}
+
+function through_option(n: i32): i32 {
+  let o: Option[[i32]] = None;
+  if (n > 0) {
+    let tmp: i32[] = [1, 2, 3, 4, 5, 6];
+    o = Some(tmp[0:5]);
+  }
+  if let Some(v) = o {
+    return v.len();
+  }
+  return 0;
+}
+
+function through_append(): i32 {
+  let views: [i32][] = [];
+  let k: i32 = 0;
+  while (k < 4) {
+    let tmp: i32[] = [k, k + 1, k + 2];
+    views = views.append(tmp[1:3]);
+    k = k + 1;
+  }
+  return views.len();
+}
+
+function of_a_temporary(): i32 {
+  let last: [i32] = [0][:];
+  for k in 0..4 {
+    last = [k, k + 1, k + 2][1:3];
+  }
+  return last[0];
+}
+
+function through_an_inner_view(): i32 {
+  let last: [i32] = [0][:];
+  for k in 0..4 {
+    let tmp: i32[] = [k, k + 1, k + 2];
+    let inner: [i32] = tmp[1:3];
+    if (k > 1) {
+      last = inner;
+    }
+  }
+  return last[0];
+}
+
+function of_outer_storage(): i32 {
+  let base: i32[] = [5, 6, 7, 8];
+  let last: [i32] = base[0:1];
+  let views: [i32][] = [];
+  for k in 0..3 {
+    let inner: [i32] = base[k:k + 2];
+    last = inner;
+    views = views.append(base[k:k + 1]);
+  }
+  return last[0] + views.len();
+}
+
+function in_one_block(): i32 {
+  let v: [i32] = [0][:];
+  let tmp: i32[] = [1, 2, 3];
+  v = tmp[1:3];
+  return v[0];
+}
+
+function main(): i32 {
+  return last_of_loop() + through_option(1) + through_append() + of_a_temporary() + through_an_inner_view() + of_outer_storage() + in_one_block();
+}
