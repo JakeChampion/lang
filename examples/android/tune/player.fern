@@ -221,7 +221,7 @@ function cover_name(key: string): string {
   let out = "";
   for k in 0..16 {
     let d = (h >> (60 - 4 * k) as i64 & 15i64) as i32;
-    out = out + digits.drop(d).take(1);
+    out += digits.drop(d).take(1);
   }
   return out;
 }
