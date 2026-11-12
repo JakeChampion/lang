@@ -10991,7 +10991,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		switch x := e.(type) {
 		case *ast.StructLit:
 			return c.structLitOwned(x, isOwnedExpr)
-		case *ast.TupleLit, *ast.ArrayLit, *ast.MapLit, *ast.Lambda:
+		case *ast.TupleLit, *ast.ArrayLit, *ast.MapLit, *ast.Lambda, *ast.StringLit:
 			return true
 		case *ast.Binary:
 			return x.IsStringConcat
