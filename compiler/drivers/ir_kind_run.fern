@@ -72,6 +72,7 @@ function main(): i32 {
     "vget", "vset", "vbitmask", "vpack", "vload_f32", "vpermute", "vextract_bits", "alloc_uninit", "crc32_ieee", "crc32_ieee_array", "count_below_u64", "prctl_query", "mulhi_s",
     "viadd", "visub", "viadds", "viaddu", "visubs", "visubu", "vimins", "viminu", "vimaxs", "vimaxu", "viavg", "vieq", "vine", "vilts", "viltu",
     "vineg", "viabs", "visplat", "viextracts", "viextractu", "vibitmask", "vireplace",
+    "vimul", "vishl", "vishrs", "vishru",
   ];
   if (!ir.kind_retired(198) || ir.kind_name(198) != "invalid") {
     failures += 1;
@@ -230,6 +231,7 @@ function main(): i32 {
     "crc32_ieee", "crc32_ieee_array", "count_below_u64", "prctl_query", "mulhi_s",
     "viadd", "visub", "viadds", "viaddu", "visubs", "visubu", "vimins", "viminu", "vimaxs", "vimaxu", "viavg", "vieq", "vine", "vilts", "viltu",
     "vineg", "viabs", "visplat", "viextracts", "viextractu", "vibitmask", "vireplace",
+    "vimul", "vishl", "vishrs", "vishru",
   ];
   let tag_ok = 0;
   let tag_bad = 0;

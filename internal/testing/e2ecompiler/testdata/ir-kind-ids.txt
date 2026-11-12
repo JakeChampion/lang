@@ -494,3 +494,7 @@ viextracts=544
 viextractu=545
 vibitmask=546
 vireplace=547
+vimul=548
+vishl=549
+vishrs=550
+vishru=551

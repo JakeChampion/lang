@@ -88,6 +88,72 @@ function ibin(k: string, x: i32, y: i32, lane: i32): ir.Op[] {
 function imask(k: string, x: i32, y: i32): ir.Op[] {
   return [ir.op_load_local(x), ir.op_load_local(y), vi(k), vi("vibitmask")];
 }
+// Locals 13 to 16 hold wider lanes. For 16 bits, h is 40000 with 9 in lane
+// 5 and k is 30000. For 32 bits, t is 3000000000 with 5 in lane 2 and u is
+// 70000.
+function wi(k: string, w: i32): ir.Op { return ir.op_lane(k, w); }
+// wbin is k(x, y) at the width w, with lane read with its sign.
+function wbin(k: string, w: i32, x: i32, y: i32, lane: i32): ir.Op[] {
+  return [ir.op_load_local(x), ir.op_load_local(y), wi(k, w), ir.op_lane_at("viextracts", w, lane)];
+}
+function wmask(k: string, w: i32, x: i32, y: i32): ir.Op[] {
+  return [ir.op_load_local(x), ir.op_load_local(y), wi(k, w), wi("vibitmask", w)];
+}
+// wshift is k(x, count) at the width w, with lane read with its sign.
+function wshift(k: string, w: i32, x: i32, count: i32, lane: i32): ir.Op[] {
+  return [ir.op_load_local(x), ir.op_const_i32(count), wi(k, w), ir.op_lane_at("viextracts", w, lane)];
+}
+function wide_checks(own m: ir.Op[]): ir.Op[] {
+  m = m.append(ir.op_const_i32(40000)).append(wi("visplat", 16)).append(ir.op_const_i32(9)).append(ir.op_lane_at("vireplace", 16, 5)).append(ir.op_store_local(13));
+  m = m.append(ir.op_const_i32(30000)).append(wi("visplat", 16)).append(ir.op_store_local(14));
+  m = m.append(ir.op_const_i32(0 - 1294967296)).append(wi("visplat", 32)).append(ir.op_const_i32(5)).append(ir.op_lane_at("vireplace", 32, 2)).append(ir.op_store_local(15));
+  m = m.append(ir.op_const_i32(70000)).append(wi("visplat", 32)).append(ir.op_store_local(16));
+  // 50..54: lanes of 16 bits.
+  m = icheck(m, [ir.op_load_local(13), ir.op_lane_at("viextractu", 16, 0)], 40000, 50);
+  m = icheck(m, [ir.op_load_local(13), ir.op_lane_at("viextracts", 16, 7)], 0 - 25536, 50);
+  m = icheck(m, [ir.op_load_local(13), ir.op_lane_at("viextractu", 16, 5)], 9, 50);
+  m = icheck(m, wbin("viadd", 16, 13, 14, 0), 4464, 51);
+  m = icheck(m, wbin("visub", 16, 14, 13, 5), 29991, 51);
+  m = icheck(m, wbin("vimul", 16, 13, 14, 5), 7856, 51);
+  m = icheck(m, wbin("viaddu", 16, 13, 14, 0), 0 - 1, 51);
+  m = icheck(m, wbin("visubu", 16, 13, 14, 5), 0, 51);
+  m = icheck(m, wbin("viadds", 16, 14, 14, 0), 32767, 51);
+  m = icheck(m, wbin("visubs", 16, 13, 14, 0), 0 - 32768, 51);
+  m = icheck(m, wbin("viminu", 16, 13, 14, 0), 30000, 52);
+  m = icheck(m, wbin("vimaxu", 16, 13, 14, 0), 0 - 25536, 52);
+  m = icheck(m, wbin("vimins", 16, 13, 14, 0), 0 - 25536, 52);
+  m = icheck(m, wbin("vimaxs", 16, 13, 14, 0), 30000, 52);
+  m = icheck(m, [ir.op_load_local(13), ir.op_load_local(14), wi("viavg", 16), ir.op_lane_at("viextractu", 16, 0)], 35000, 52);
+  m = icheck(m, [ir.op_load_local(13), wi("viabs", 16), ir.op_lane_at("viextracts", 16, 0)], 25536, 52);
+  m = icheck(m, [ir.op_load_local(14), wi("vineg", 16), ir.op_lane_at("viextracts", 16, 0)], 0 - 30000, 52);
+  m = icheck(m, [ir.op_load_local(13), ir.op_const_i32(9), wi("visplat", 16), wi("vieq", 16), wi("vibitmask", 16)], 32, 53);
+  m = icheck(m, [ir.op_load_local(13), ir.op_const_i32(9), wi("visplat", 16), wi("vine", 16), wi("vibitmask", 16)], 223, 53);
+  m = icheck(m, wmask("viltu", 16, 13, 14), 32, 53);
+  m = icheck(m, wmask("vilts", 16, 13, 14), 255, 53);
+  m = icheck(m, wmask("vilts", 16, 14, 13), 0, 53);
+  m = icheck(m, wshift("vishl", 16, 13, 4, 5), 144, 54);
+  m = icheck(m, wshift("vishru", 16, 13, 4, 0), 2500, 54);
+  m = icheck(m, wshift("vishrs", 16, 13, 4, 0), 0 - 1596, 54);
+  // 55..59: lanes of 32 bits.
+  m = icheck(m, [ir.op_load_local(15), ir.op_lane_at("viextracts", 32, 0)], 0 - 1294967296, 55);
+  m = icheck(m, [ir.op_load_local(15), ir.op_lane_at("viextractu", 32, 2)], 5, 55);
+  m = icheck(m, wbin("viadd", 32, 15, 16, 2), 70005, 56);
+  m = icheck(m, wbin("visub", 32, 16, 15, 2), 69995, 56);
+  m = icheck(m, wbin("vimul", 32, 15, 16, 2), 350000, 56);
+  m = icheck(m, wbin("viminu", 32, 15, 16, 0), 70000, 57);
+  m = icheck(m, wbin("vimaxu", 32, 15, 16, 0), 0 - 1294967296, 57);
+  m = icheck(m, wbin("vimins", 32, 15, 16, 0), 0 - 1294967296, 57);
+  m = icheck(m, wbin("vimaxs", 32, 15, 16, 0), 70000, 57);
+  m = icheck(m, [ir.op_load_local(15), wi("viabs", 32), ir.op_lane_at("viextracts", 32, 0)], 1294967296, 57);
+  m = icheck(m, [ir.op_load_local(16), wi("vineg", 32), ir.op_lane_at("viextracts", 32, 3)], 0 - 70000, 57);
+  m = icheck(m, [ir.op_load_local(15), ir.op_const_i32(5), wi("visplat", 32), wi("vieq", 32), wi("vibitmask", 32)], 4, 58);
+  m = icheck(m, [ir.op_load_local(15), ir.op_const_i32(5), wi("visplat", 32), wi("vine", 32), wi("vibitmask", 32)], 11, 58);
+  m = icheck(m, wmask("viltu", 32, 15, 16), 4, 58);
+  m = icheck(m, wmask("vilts", 32, 15, 16), 15, 58);
+  m = icheck(m, wshift("vishl", 32, 15, 4, 2), 80, 59);
+  m = icheck(m, wshift("vishru", 32, 15, 4, 0), 187500000, 59);
+  return icheck(m, wshift("vishrs", 32, 15, 4, 0), 0 - 80935456, 59);
+}
 function int_checks(own m: ir.Op[]): ir.Op[] {
   m = m.append(ir.op_const_i32(200)).append(vi("visplat")).append(ir.op_const_i32(7)).append(ir.op_lane_at("vireplace", 8, 3)).append(ir.op_store_local(10));
   m = m.append(ir.op_const_i32(100)).append(vi("visplat")).append(ir.op_const_i32(250)).append(ir.op_lane_at("vireplace", 8, 3)).append(ir.op_store_local(11));
@@ -248,6 +314,7 @@ function main(): i32 {
   m = check(m, [ir.op_load_local(3), ir.op_lane_at("vextract", 64, 0)], "10.5", 32);
   m = check(m, [ir.op_load_local(3), ir.op_lane_at("vextract", 64, 1)], "-3.5", 32);
   m = int_checks(m);
+  m = wide_checks(m);
   m = m.append(ir.op_const_i32(0)).append(ir.op_return());
   let kern: ir.Op[] = [ir.op_load_local(0), ir.op_load_local(0), v("vload"), ir.op_load_local(0), v("vload"), v("vadd"), v("vstore"),
     ir.op_const_i32(0), ir.op_return()];
@@ -263,7 +330,7 @@ function main(): i32 {
   for r in g.cache {
     let out = r;
     if (i < g.im.funcs.len() && g.im.funcs[i].name == "main") {
-      out = irtables.LowerResult { ...r, ops: m, n_params: 0, n_locals: 13, v128_slots: [0, 1, 2, 3, 5, 6, 10, 11, 12], f64_slots: [7, 8] };
+      out = irtables.LowerResult { ...r, ops: m, n_params: 0, n_locals: 17, v128_slots: [0, 1, 2, 3, 5, 6, 10, 11, 12, 13, 14, 15, 16], f64_slots: [7, 8] };
     }
     if (i < g.im.funcs.len() && g.im.funcs[i].name == "kern") {
       out = irtables.LowerResult { ...r, ops: kern, n_params: 1, n_locals: 1 };
@@ -304,7 +371,7 @@ func TestSelfHostLaneIR(t *testing.T) {
 				t.Fatalf("emit: %v", err)
 			}
 			if target == "x86-64-linux" {
-				for _, want := range []string{"vfmadd213pd", "cmppd $1,", "roundpd $1,", "movupd", "vpaddusb", "vpminsb", "pmovmskb", "pinsrb $12,"} {
+				for _, want := range []string{"vfmadd213pd", "cmppd $1,", "roundpd $1,", "movupd", "vpaddusb", "vpminsb", "pmovmskb", "pinsrb $12,", "vpmullw", "vpmulld", "vpsraw", "vpsrld", "packsswb", "pinsrw $5,"} {
 					if !strings.Contains(string(output), want) {
 						t.Errorf("x86-64 text lacks %q", want)
 					}

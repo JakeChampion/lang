@@ -4375,18 +4375,31 @@ function wasm_lane_const(width: i32, text: string): string {
   return "    f64.const " + text + "\n    f64x2.splat\n";
 }
 
-// An op on integer lanes. Lanes of 8 bits have code. Each other width
-// is a refusal that names the op.
+// An op on integer lanes of 8, 16 or 32 bits. An op that a width does
+// not have is a refusal that names the op.
 function emit_wasm_lane_int(o: ir.Op): string {
-  if (o.width != 8) {
+  let w = o.width;
+  if (w != 8 && w != 16 && w != 32) {
     return ircore.unsupported_op_refuse(o.kind_tag, "wasm");
   }
-  let verbs: string[] = ["add", "sub", "add_sat_s", "add_sat_u", "sub_sat_s", "sub_sat_u", "min_s", "min_u", "max_s", "max_u", "avgr_u", "eq", "ne", "lt_s", "lt_u", "neg", "abs", "splat", "extract_lane_s", "extract_lane_u", "bitmask", "replace_lane"];
+  let verbs: string[] = ["add", "sub", "add_sat_s", "add_sat_u", "sub_sat_s", "sub_sat_u", "min_s", "min_u", "max_s", "max_u", "avgr_u", "eq", "ne", "lt_s", "lt_u", "neg", "abs", "splat", "extract_lane_s", "extract_lane_u", "bitmask", "replace_lane", "mul", "shl", "shr_s", "shr_u"];
   let verb = verbs[o.kind_tag - ir.LANE_INT_FIRST];
-  if (verb.ends_with("_lane") || verb.starts_with("extract_lane")) {
-    return "    i8x16." + verb + " " + util.i32_to_string(o.i32_imm) + "\n";
+  // Lanes of 32 bits have no saturating form and no average, and lanes
+  // of 8 bits have no multiply. The x86-64 backend has no shift for
+  // lanes of 8 bits, so this one refuses that width too.
+  if (w == 32 && (verb.contains("_sat_") || verb == "avgr_u") || w == 8 && (verb == "mul" || o.kind_tag >= ir.K_VISHL)) {
+    return ircore.unsupported_op_refuse(o.kind_tag, "wasm");
   }
-  return "    i8x16." + verb + "\n";
+  let shape = if (w == 8) { "i8x16" } else if (w == 16) { "i16x8" } else { "i32x4" };
+  if (verb.starts_with("extract_lane")) {
+    // A lane of 32 bits is the whole i32, so its read has no sign.
+    let read = if (w == 32) { "extract_lane" } else { verb };
+    return "    " + shape + "." + read + " " + util.i32_to_string(o.i32_imm) + "\n";
+  }
+  if (verb == "replace_lane") {
+    return "    " + shape + "." + verb + " " + util.i32_to_string(o.i32_imm) + "\n";
+  }
+  return "    " + shape + "." + verb + "\n";
 }
 
 function emit_wasm_lane(o: ir.Op, cx: WasmOpCtx): string {

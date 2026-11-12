@@ -423,7 +423,8 @@ whole group are the next steps.
 | 7b | Integer lanes: the IR ops, and emission for lanes of 8 bits on every backend | done (#14731) |
 | 7c | Integer lanes: the element kind of a lane type, and `u8x16` in both front ends, the builtins and both interpreters | done (#14731) |
 | 7d | Integer lanes: `std/simd` functions for `u8x16` | done (#14731) |
-| 7e | Integer lanes: the shifts, the multiply, and the lanes of 16 and 32 bits | next (#14731) |
+| 7e | Integer lanes: the shifts, the multiply, and code for lanes of 16 and 32 bits on each backend | done (#14731) |
+| 7g | Integer lanes: the types `i8x16`, `u16x8`, `i16x8`, `u32x4` and `i32x4` in both front ends, and the shifts of lanes of 8 bits | next (#14731) |
 | 7f | Integer lanes: the byte kernels of the stdlib and of `std/android/draw` on `u8x16`, each with a measured comparison | after 7e (#14731) |
 | — | Splice record-returning leaves so `Dual` / `DoubleDouble` stop allocating per operation (#12931) | follow-on, `seminline` |
 
@@ -515,3 +516,11 @@ Slice 7d gives `std/simd` a function for each builtin of `u8x16`, such as
 `simd.add_sat_u8x16` and `simd.load_u8x16`. A program calls these, and the
 builtins stay the names of the compiler. The stdlib test compares each
 operation with its scalar form on each lane.
+
+Slice 7e widens the IR and the backends. The IR gets `vimul`, `vishl`,
+`vishrs` and `vishru`. Each backend has code for lanes of 8, 16 and 32
+bits. The three backends refuse the same ops, so a program has one
+behaviour on each target: the saturating ops and the average have no
+form for lanes of 32 bits, and the multiply and the shifts have no form
+for lanes of 8 bits. x86-64 has no shift instruction for bytes, and
+slice 7g gives that width a shift from the shift of 16 bits and a mask.
