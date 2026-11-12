@@ -1,0 +1,52 @@
+[
+  {
+    "name": "method borrowed replacement",
+    "source": "import \"std/array\"; struct H{fd:i32} function(own h:H)close():void{} function f(own xs:H[],value:H):void{let result=xs.swap_at(0, value);}function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "method retained replacement",
+    "source": "import \"std/array\"; struct H{fd:i32} function(own h:H)close():void{} function f(own xs:H[]):void{let value=H{fd:7};let result=xs.swap_at(0, value);value.close();}function main():i32{return 0;}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "method owned replacement",
+    "source": "import \"std/array\"; struct H{fd:i32} function(own h:H)close():void{} function f(own xs:H[],own value:H):void{let result=xs.swap_at(0, value);}function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "method copyable data replacement",
+    "source": "import \"std/array\"; @value struct Data{bytes:i32[]} struct H{fd:i32} function(own h:H)close():void{} function f():void{let xs=[Data{bytes:[1]}];let value=Data{bytes:[2]};let result=xs.swap_at(0, value);print(value.bytes.len());}function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "function borrowed replacement",
+    "source": "import \"std/array\"; struct H{fd:i32} function(own h:H)close():void{} function f(own xs:H[],value:H):void{let result=array.swap_at(xs, 0, value);}function main():i32{return 0;}",
+    "want": "E051"
+  },
+  {
+    "name": "function retained replacement",
+    "source": "import \"std/array\"; struct H{fd:i32} function(own h:H)close():void{} function f(own xs:H[]):void{let value=H{fd:7};let result=array.swap_at(xs, 0, value);value.close();}function main():i32{return 0;}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "function owned replacement",
+    "source": "import \"std/array\"; struct H{fd:i32} function(own h:H)close():void{} function f(own xs:H[],own value:H):void{let result=array.swap_at(xs, 0, value);}function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "function copyable data replacement",
+    "source": "import \"std/array\"; @value struct Data{bytes:i32[]} struct H{fd:i32} function(own h:H)close():void{} function f():void{let xs=[Data{bytes:[1]}];let value=Data{bytes:[2]};let result=array.swap_at(xs, 0, value);print(value.bytes.len());}function main():i32{return 0;}",
+    "want": ""
+  },
+  {
+    "name": "method retained ordinary array replacement",
+    "source": "import \"std/array\"; struct H{fd:i32} function(own h:H)close():void{} function f():void{let xs=[[1]];let value=[2];let result=xs.swap_at(0, value);print(value.len());}function main():i32{return 0;}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "function retained ordinary array replacement",
+    "source": "import \"std/array\"; struct H{fd:i32} function(own h:H)close():void{} function f():void{let xs=[[1]];let value=[2];let result=array.swap_at(xs, 0, value);print(value.len());}function main():i32{return 0;}",
+    "want": "E050|E051"
+  }
+]

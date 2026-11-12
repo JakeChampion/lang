@@ -1,0 +1,25 @@
+import "std/array";
+import "std/i32";
+
+struct H { value: i32, count: Cell[i32] }
+
+function (own h: H) close(): i32 {
+  let next = h.count.get() + 1;
+  h.count.set(next);
+  return if (next == 1) { h.value } else { 0 };
+}
+
+function finish(own values: H[]): i32 {
+  let total = 0;
+  for value in values {
+    total += value.close();
+  }
+  return total;
+}
+
+function main(): i32 {
+  let values = [H { value: 40, count: cell_new(0) }];
+  let (removed, rest) = values.swap_at(0, H { value: 2, count: cell_new(0) });
+  print(removed.close() + finish(rest));
+  return 0;
+}
