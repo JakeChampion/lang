@@ -1056,7 +1056,13 @@ pub function module_uses_task(cache: irtables.LowerResult[]): boolean {
   return any_op(cache, is_task_call);
 }
 
-pub function task_funcs(lc: boolean): string {
+// count is true when the module has the allocation count of the program.
+pub function task_funcs(lc: boolean, count: boolean): string {
+  // The table of closes is storage of the runtime, not of the program.
+  let fd_uncount = "";
+  if (count) {
+    fd_uncount = "      (global.set $__fern_alloc_count (i64.sub (global.get $__fern_alloc_count) (i64.const 1)))\n";
+  }
   let uncount = "";
   if (lc) {
     uncount = "    (global.set $__fern_lc_alloc_count (i64.sub (global.get $__fern_lc_alloc_count) (i64.const 1)))\n"
@@ -1206,6 +1212,7 @@ pub function task_funcs(lc: boolean): string {
     + "    (if (i32.ge_u (i32.shl (i32.add (global.get $__fern_fd_len) (i32.const 1)) (i32.const 1)) (local.get $cap)) (then\n"
     + "      (local.set $cap (select (i32.shl (local.get $cap) (i32.const 1)) (i32.const 64) (local.get $cap)))\n"
     + "      (local.set $nt (call $__fern_task_zalloc (i32.shl (local.get $cap) (i32.const 3))))\n"
+    + fd_uncount
     + "      (block $moved (loop $move\n"
     + "        (br_if $moved (i32.ge_u (local.get $i) (global.get $__fern_fd_cap)))\n"
     + "        (local.set $o (i32.add (global.get $__fern_fd_tab) (i32.shl (local.get $i) (i32.const 3))))\n"
@@ -10198,7 +10205,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     parts = parts.append(reactor_wait_func());
   }
   if (need(needs, "@uses_task")) {
-    parts = parts.append(task_funcs(lc));
+    parts = parts.append(task_funcs(lc, need(needs, "@heap_alloc_count")));
   }
   if (need(needs, "tcp_recv_into")) {
     parts = parts.append(tcp_recv_into_func());
