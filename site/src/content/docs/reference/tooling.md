@@ -69,6 +69,7 @@ to compile with E066 instead of failing at run time.
 | `-color` | `auto` | Colour diagnostics: `auto`, `always`, or `never`. `NO_COLOR` turns `auto` off. |
 | `-ascii` | auto | Draw diagnostics with ASCII only. Chosen automatically when the locale is not UTF-8. |
 | `-q` | off | Print one line per diagnostic, without source context, notes, fixes or colour. |
+| `-diag-format` | `full` | `full`, `terse` or `json`. `terse` is the same as `-q`. `json` prints one JSON object on a line for each diagnostic; see [Diagnostics as JSON](#diagnostics-as-json). `-q` and `-diag-format` cannot be given together. |
 
 ### Environment variables
 
@@ -88,9 +89,33 @@ the run.
 | `FERN_COVER` | The same as `-cover`. |
 | `FERN_ARRAY_REPORT` | Print the `-array-report` report on stderr during an ordinary compile. |
 | `FERN_PROFILE` | `cpu`, `alloc`, `cpu-pprof` or `alloc-pprof`: build a self-profiling executable. `FERN_PROFILE_FILE` names the pprof output. |
-| `FERN_DIAG_FORMAT` | `terse` is the same as `-q`. |
+| `FERN_DIAG_FORMAT` | The default for `-diag-format`: `terse` or `json`. Any other value is ignored. |
 | `FERN_CACHE_DIR` | Where `fern` keeps its cache, in place of the user cache directory. |
 | `FERN_KTLS`, `FERN_IO_URING` | Read at run time by a program using `std/fetch` or `std/serve`; see [protocols](../../http/protocols/). |
+
+### Diagnostics as JSON
+
+`-diag-format json` prints each diagnostic of the checker, the parser and
+`-lint` as one JSON object on one line of stderr:
+
+```json
+{"file":"bad.fern","line":3,"col":10,"length":1,"severity":"error","code":"E001","message":"cannot find \"y\" in this scope","related":[]}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `file` | The path of the source file. Empty when the diagnostic has no position. |
+| `line`, `col` | The position, counted from 1. `line` is 0 when the diagnostic has no position. |
+| `length` | The number of columns that the diagnostic marks. 0 when it marks one point. |
+| `severity` | `error` or `warning`. |
+| `code` | The diagnostic code, such as `E001`, or the name of the lint rule. |
+| `message` | The text of the diagnostic. |
+| `related` | The notes of the diagnostic. Each one has `file`, `line`, `col`, `length` and `message`. |
+
+The exit code is the same as in the other formats. `-lint` does not print
+its summary line in this format. Some messages are not diagnostics
+of a source file, such as an unknown flag or a file that cannot be read.
+Each of these stays a plain `fern:` line.
 
 ### Program arguments
 
