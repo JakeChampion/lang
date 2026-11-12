@@ -760,24 +760,38 @@ The lower-level controller still owns one platform-decoded video track. The sepa
 This fixture does not add a general A/V player API or a native AVC pixel decoder.
 
 The fixture contains twelve AVC frames and 19,200 stereo AAC frames at 48 kHz.
-The existing native MP4 audio decoder applies encoder-delay and final-presentation trims.
-The app quantizes its float output to interleaved signed 16-bit PCM.
+The existing native MP4 file index and AAC cursor apply encoder-delay and final-presentation trims.
+The app retains metadata, AAC state, one packet window, and reusable float and integer frame buffers.
+It retains no complete encoded input or presentation PCM.
+The app owns the borrowed reader and closes it after decoder use.
+The complete-view decoder remains a test-only reference for this fixture.
+
+Each output block has at most 2,048 interleaved signed 16-bit samples.
 Input bytes have a two-MiB limit. Decoded output has a 48,000-sample limit.
 Reads use four-KiB chunks, and each nonblocking AAudio write requests at most 1,024 stereo frames.
+Each app pump performs at most eight cooperative cursor steps and one audio write.
+Index creation and initial priming remain bounded synchronous startup work outside the audio callback.
 
 Partial writes preserve the remaining samples. Pause stops new audio writes and video submissions.
 Resume restarts both transports and permits a fresh AAudio clock anchor.
-Seek creates a new audio stream and selects PCM from the requested frame, so its frame-zero origin has explicit media units.
+
+Seek closes the old audio stream and reader, reopens the file, and replays AAC state to the requested frame.
+The new stream has a frame-zero origin in explicit media units.
 The app rejects an unexpected stream rate instead of applying an incorrect frame-to-time scale.
-Completion and window destruction close the app-owned audio stream.
+Completion, startup errors, and window destruction close the app-owned audio stream and reader.
 
 The existing emulator runner adds this round after its video-only export checks.
 It verifies both submitted sample counts, the pause and seek diagnostics, and two available-or-unavailable timestamp observations.
+Both rounds must report the cursor path and a maximum pending block of at most 2,048 samples.
 Unavailable timestamps remain distinct from valid anchors. They preserve the controller's existing timeline.
 A short grace after queue completion does not measure acoustic output or establish physical drain accuracy.
 
 `scripts/check-android-native-av` checks native sanitizer and real-WASI PCM against an independent FFmpeg decode.
 Every quantized sample must differ by at most one signed 16-bit sample unit.
+Cursor output also matches the existing whole-track API exactly, including the seek suffix.
+The new real-file transport controls check every submitted sample, bounded blocks, truncation, and unchanged descriptor counts.
+The original synthetic transport controls remain in the same required check.
+
 Host AAudio controls cover partial writes, backpressure, pause/resume, seek origins, rate rejection, startup failure, and exact cleanup counts.
 Normal and sanitizer Fern libraries run against both normal and undefined-behavior-sanitizer C controls.
 ARM64 shared compilation remains separate from execution. Representative device power, latency, and lip-sync qualification remain unmeasured.

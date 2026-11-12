@@ -62,6 +62,19 @@ def verify_screen(data):
     assert min(pixels) >= 105 and max(pixels) <= 150, (min(pixels), max(pixels))
 
 
+def native_cursor_metrics(log):
+    lines = [line for line in log.splitlines() if 'videotest: native AV cursor' in line]
+    assert len(lines) == 2, lines
+    peaks = []
+    for line in lines:
+        match = re.search(r'videotest: native AV cursor peak_samples=([0-9]+)$', line)
+        assert match is not None, line
+        peak = int(match.group(1))
+        assert 0 < peak <= 2048, peak
+        peaks.append(peak)
+    return peaks
+
+
 def native_av_metrics(log):
     assert "videotest: native AAC frames=19200 rate=48000 channels=2" in log
     submissions = re.findall(r"videotest: native AV submitted_frames=(\d+) origin_us=(\d+)", log)
@@ -80,6 +93,7 @@ def native_av_metrics(log):
         timestamps.append({'frame_position': position, 'monotonic_ns': time_ns})
     assert len(timestamps) == 2, timestamps
     return {'rate': 48000, 'channels': 2, 'frames': 19200, 'timestamps': timestamps,
+            'cursor_peak_samples': native_cursor_metrics(log),
             'submissions': [{'frames': int(n), 'origin_us': int(at)} for n, at in submissions]}
 
 

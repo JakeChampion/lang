@@ -65,8 +65,10 @@ class ContentPermissionTests(unittest.TestCase):
 class NativeAvDiagnosticsTests(unittest.TestCase):
     def log(self, first="unavailable", second="frames=0 monotonic_ns=0"):
         return ("W/fern: videotest: native AAC frames=19200 rate=48000 channels=2\n"
+                "W/fern: videotest: native AV cursor peak_samples=2048\n"
                 "W/fern: videotest: native AV submitted_frames=19200 origin_us=0\n"
                 f"W/fern: videotest: native AV timestamp {first}\n"
+                "W/fern: videotest: native AV cursor peak_samples=2048\n"
                 "W/fern: videotest: native AV submitted_frames=14400 origin_us=100000\n"
                 f"W/fern: videotest: native AV timestamp {second}\n")
 
@@ -93,6 +95,16 @@ class NativeAvDiagnosticsTests(unittest.TestCase):
                               ('origin_us=100000', 'origin_us=0')]:
             with self.subTest(before=before), self.assertRaises(AssertionError):
                 check.native_av_metrics(self.log().replace(before, after))
+
+    def test_cursor_path_and_bounded_blocks_are_required(self):
+        line = "W/fern: videotest: native AV cursor peak_samples=2048\n"
+        valid = self.log()
+        self.assertEqual(check.native_av_metrics(valid)['cursor_peak_samples'], [2048, 2048])
+        for changed in [valid.replace(line, ''), valid.replace(line, '', 1), valid + line,
+                        *[valid.replace('peak_samples=2048', 'peak_samples=' + value)
+                          for value in ['0', '2049', '-1', 'x', '2048 trailing']]]:
+            with self.subTest(log=changed), self.assertRaises(AssertionError):
+                check.native_av_metrics(changed)
 
     def test_private_av_launch_needs_no_storage_grant(self):
         def device(*args, **kwargs):
