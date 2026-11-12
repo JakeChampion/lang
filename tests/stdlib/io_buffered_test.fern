@@ -269,7 +269,7 @@ function test_buf_writer_close_writes(): test.TestOutcome {
   match (open_writer(path)) {
     Ok(w) => {
       let b = io.buf_writer_new(w, 64);
-      b = b.write_string("held").unwrap_or(b);
+      b.write_string("held");
       let held = b.buffered();
       if let Err(_) = b.close() {
         return test.fail("close failed");
