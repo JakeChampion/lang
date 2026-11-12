@@ -36,7 +36,7 @@ func ownedFrameReaderCases(t *testing.T, bin string, runner []string, dir string
 		{"fresh-local-field", "", "Result[State, Failure]", `let b = State { buffer: Buffer { bytes: [] }, other: [] }; let next = b.buffer.advance()?; return Ok(State { ...b, buffer: next });`, false},
 		{"borrowed-local-field", "s: State", "Result[State, Failure]", `let b = State { ...s, other: [1u8] }; let next = advance(b.buffer, b.other)?; return Ok(State { ...b, buffer: next });`, true},
 		{"later-field-read", "own s: State", "Result[State, Failure]", `let b = State { ...s, other: [] }; let next = b.buffer.advance()?; let n = b.buffer.bytes.len(); return Ok(State { ...b, buffer: next });`, true},
-		{"capture-field", "own s: State", "Result[State, Failure]", `let b = State { ...s, other: [] }; let view = () => b.buffer.bytes.len(); let next = b.buffer.advance()?; return Ok(State { ...b, buffer: next });`, true},
+		{"capture-field", "own s: State", "Result[State, Failure]", `let b = State { ...s, other: [] }; let view = () => b.buffer.bytes.len(); let next = b.buffer.advance()?; let out = State { ...b, buffer: next }; let n = view(); return Ok(out);`, true},
 		{"defer-field", "own s: State", "Result[State, Failure]", `let b = State { ...s, other: [] }; defer { let n = b.buffer.bytes.len(); } let next = b.buffer.advance()?; return Ok(State { ...b, buffer: next });`, true},
 		{"duplicate-receiver", "own s: State", "Result[State, Failure]", `return Ok(State { ...s, buffer: s.buffer.with_view(s.buffer.bytes)? });`, true},
 		{"wrong-replacement", "own s: State", "Result[State, Failure]", `let b = s.buffer.advance()?; return Ok(State { ...s, other: b.bytes });`, true},
