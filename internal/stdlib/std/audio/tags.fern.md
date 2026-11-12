@@ -1,6 +1,6 @@
 # Audio file tags
 
-This module reads the title, the artist, the album, the genre and the track number that an audio file holds about itself.
+This module reads the title, the artist, the album, the genre, the track number and the lyrics that an audio file holds about itself.
 
 ## Model
 
@@ -95,10 +95,10 @@ import "std/utf8";
 
 // What a file tells about its sound. A field that the file does not give
 // is "" or 0.
-pub struct Tags { title: string, artist: string, album: string, album_artist: string, track: i32, year: i32, genre: string }
+pub struct Tags { title: string, artist: string, album: string, album_artist: string, track: i32, year: i32, genre: string, lyrics: string }
 
 pub function none(): Tags {
-  return Tags { title: "", artist: "", album: "", album_artist: "", track: 0, year: 0, genre: "" };
+  return Tags { title: "", artist: "", album: "", album_artist: "", track: 0, year: 0, genre: "", lyrics: "" };
 }
 
 // The fields of the tags, for the tables of the names of each format.
@@ -116,8 +116,10 @@ const YEAR: i32 = 5;
 
 const GENRE: i32 = 6;
 
+const LYRICS: i32 = 8;
+
 // The tags with the text `text` in the field `field`. An empty text and a
-// field that is not one of the seven change nothing.
+// field that is not one of the eight change nothing.
 function with_field(t: Tags, field: i32, text: string): Tags {
   if (text.len() == 0) {
     return t;
@@ -143,6 +145,9 @@ function with_field(t: Tags, field: i32, text: string): Tags {
   if (field == GENRE) {
     return Tags { ...t, genre: genre_text(text) };
   }
+  if (field == LYRICS) {
+    return Tags { ...t, lyrics: text };
+  }
   return t;
 }
 
@@ -159,7 +164,7 @@ function field_of(names: (string, i32)[], name: string): i32 {
 
 // The tags have no field.
 pub function (t: Tags) empty(): boolean {
-  return t.title.len() == 0 && t.artist.len() == 0 && t.album.len() == 0 && t.album_artist.len() == 0 && t.track == 0 && t.year == 0 && t.genre.len() == 0;
+  return t.title.len() == 0 && t.artist.len() == 0 && t.album.len() == 0 && t.album_artist.len() == 0 && t.track == 0 && t.year == 0 && t.genre.len() == 0 && t.lyrics.len() == 0;
 }
 ```
 
@@ -330,17 +335,47 @@ function frame_text(input: [u8], from: i32, to: i32): string {
   if (from >= to || to > input.len()) {
     return "";
   }
-  let kind = input[from];
+  return text_as(input, input[from], from + 1, to);
+}
+
+// The text from `from` to `to` that is written as `kind` of ID3v2 tells.
+function text_as(input: [u8], kind: u8, from: i32, to: i32): string {
   if (kind == 1u8) {
-    return utf16(input, from + 1, to, false);
+    return utf16(input, from, to, false);
   }
   if (kind == 2u8) {
-    return utf16(input, from + 1, to, true);
+    return utf16(input, from, to, true);
   }
   if (kind == 3u8) {
-    return utf8_text(input, from + 1, to);
+    return utf8_text(input, from, to);
   }
-  return latin1(input, from + 1, to);
+  return latin1(input, from, to);
+}
+
+// The byte after the end of the text that starts at `at`: a zero byte, or
+// two zero bytes for a text in UTF-16.
+function after_text(input: [u8], at: i32, to: i32, wide: boolean): i32 {
+  let p = at;
+  while (p < to) {
+    if (!wide && input[p] == 0u8) {
+      return p + 1;
+    }
+    if (wide && p + 1 < to && input[p] == 0u8 && input[p + 1] == 0u8) {
+      return p + 2;
+    }
+    p += if (wide) { 2 } else { 1 };
+  }
+  return to;
+}
+
+// The text of a lyrics frame from `from` to `to`: a language of three
+// letters and a description come before it.
+function frame_lyrics(input: [u8], from: i32, to: i32): string {
+  if (from + 4 > to || to > input.len()) {
+    return "";
+  }
+  let kind = input[from];
+  return text_as(input, kind, after_text(input, from + 4, to, kind == 1u8 || kind == 2u8), to);
 }
 
 // The names of the text frames of ID3v2: four letters in the versions 2.3
@@ -398,7 +433,11 @@ function frames(input: [u8], from: i32, end: i32, version: i32): Tags {
     if (id.len() == 0 || size <= 0 || at + head + size > end) {
       return t;
     }
-    t = with_field(t, field_of(names, id), frame_text(input, at + head, at + head + size));
+    if (id == "USLT" || id == "ULT") {
+      t = with_field(t, LYRICS, frame_lyrics(input, at + head, at + head + size));
+    } else {
+      t = with_field(t, field_of(names, id), frame_text(input, at + head, at + head + size));
+    }
     at += head + size;
   }
   return t;
@@ -429,7 +468,7 @@ pub function id3v1(input: [u8]): Tags {
   if (input[at + 125] == 0u8) {
     track = input[at + 126] as i32;
   }
-  return Tags { title: latin1(input, at + 3, at + 33), artist: latin1(input, at + 33, at + 63), album: latin1(input, at + 63, at + 93), album_artist: "", track: track, year: number(latin1(input, at + 93, at + 97)), genre: genre_name(input[at + 127] as i32) };
+  return Tags { title: latin1(input, at + 3, at + 33), artist: latin1(input, at + 33, at + 63), album: latin1(input, at + 63, at + 93), album_artist: "", track: track, year: number(latin1(input, at + 93, at + 97)), genre: genre_name(input[at + 127] as i32), lyrics: "" };
 }
 ```
 
@@ -438,7 +477,7 @@ pub function id3v1(input: [u8]): Tags {
 ```fern
 <<Vorbis comments>>=
 function vorbis_names(): (string, i32)[] {
-  return [("TITLE", TITLE), ("ARTIST", ARTIST), ("ALBUM", ALBUM), ("ALBUMARTIST", ALBUM_ARTIST), ("ALBUM ARTIST", ALBUM_ARTIST), ("TRACKNUMBER", TRACK), ("DATE", YEAR), ("YEAR", YEAR), ("GENRE", GENRE)];
+  return [("TITLE", TITLE), ("ARTIST", ARTIST), ("ALBUM", ALBUM), ("ALBUMARTIST", ALBUM_ARTIST), ("ALBUM ARTIST", ALBUM_ARTIST), ("TRACKNUMBER", TRACK), ("DATE", YEAR), ("YEAR", YEAR), ("GENRE", GENRE), ("LYRICS", LYRICS), ("UNSYNCEDLYRICS", LYRICS)];
 }
 
 // The tags with the Vorbis comment `NAME=value`. The name has small or
@@ -593,7 +632,7 @@ function mp4_field(input: [u8], at: i32): i32 {
   if (input[at] != 169u8) {
     return -1;
   }
-  for pair in [("nam", TITLE), ("ART", ARTIST), ("alb", ALBUM), ("day", YEAR), ("gen", GENRE)] {
+  for pair in [("nam", TITLE), ("ART", ARTIST), ("alb", ALBUM), ("day", YEAR), ("gen", GENRE), ("lyr", LYRICS)] {
     let (name, field) = pair;
     if (wire.tag(input, at + 1, name)) {
       return field;
@@ -702,22 +741,6 @@ function range(input: [u8], from: i32, to: i32): u8[] {
     out = out.append(input[i]);
   }
   return out;
-}
-
-// The byte after the end of the text that starts at `at`: a zero byte, or
-// two zero bytes for a text in UTF-16.
-function after_text(input: [u8], at: i32, to: i32, wide: boolean): i32 {
-  let p = at;
-  while (p < to) {
-    if (!wide && input[p] == 0u8) {
-      return p + 1;
-    }
-    if (wide && p + 1 < to && input[p] == 0u8 && input[p + 1] == 0u8) {
-      return p + 2;
-    }
-    p += if (wide) { 2 } else { 1 };
-  }
-  return to;
 }
 
 // The image of the picture frame from `from` to `to` of an ID3v2 tag. A

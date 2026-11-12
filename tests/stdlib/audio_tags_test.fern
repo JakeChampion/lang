@@ -106,6 +106,23 @@ function test_genres(): test.TestOutcome {
   return test.assert_eq(got.join("|"), "Shoegaze|Rock|Electronic|Eurodisco|(RX)|1999 Hits|(250)|Jazz|Field Recording|Rock|Chiptune|0");
 }
 
+function test_lyrics(): test.TestOutcome {
+  // A lyrics frame has a language and a description before its text.
+  let plain = joined([[0u8], bytes_of("eng"), bytes_of("note"), [0u8], bytes_of("[00:01.00]One\nTwo")]);
+  let wide = joined([[1u8], bytes_of("eng"), [255u8, 254u8, 0u8, 0u8], utf16le("Caf"), [233u8, 0u8]]);
+  let v3 = tags.read(id3(3u8, 0u8, joined([frame3("TIT2", 0u8, bytes_of("Song")), joined([bytes_of("USLT"), wire.put_be([], plain.len() as u64, 4), [0u8, 0u8], plain])])));
+  let v3w = tags.read(id3(3u8, 0u8, joined([bytes_of("USLT"), wire.put_be([], wide.len() as u64, 4), [0u8, 0u8], wide])));
+  let list = joined([comment("fern encoder"), wire.put_le([], 1u64, 4), comment("LYRICS=Line one\nLine two")]);
+  let info: u8[] = [];
+  for i in 0..34 {
+    info = info.append(0u8);
+  }
+  let flac = joined([bytes_of("fLaC"), [0u8, 0u8, 0u8, 34u8], info, [132u8], wire.put_be([], list.len() as u64, 3), list]);
+  let m4a = box(bytes_of("moov"), box(bytes_of("udta"), box(bytes_of("meta"), joined([[0u8, 0u8, 0u8, 0u8], box(bytes_of("ilst"), item(named("lyr"), bytes_of("Sung")))]))));
+  let got = [v3.title, v3.lyrics.replace("\n", "/"), v3w.lyrics, tags.read(flac).lyrics.replace("\n", "/"), tags.mp4(m4a).lyrics];
+  return test.assert_eq(got.join("|"), "Song|[00:01.00]One/Two|Café|Line one/Line two|Sung");
+}
+
 function comment(s: string): u8[] {
   return joined([wire.put_le([], s.len() as u64, 4), bytes_of(s)]);
 }
@@ -244,6 +261,7 @@ function main(): i32 {
   r = r.it("an Ogg file has Vorbis comments in its second packet", test_ogg);
   r = r.it("a file holds the picture of its album", test_pictures);
   r = r.it("a genre is a text or a number of the ID3v1 list", test_genres);
+  r = r.it("a file holds its lyrics", test_lyrics);
   r = r.it("bytes that are not tags give empty tags", test_bytes_that_are_not_tags);
   return r.finish();
 }
