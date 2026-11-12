@@ -1147,10 +1147,10 @@ function lane_index_diags(name: string, c: ast.ExprCall): util.Diag[] {
   let lanes = 128 / typeinfo.lane_builtin_width(name);
   if let ast.ExprNumber(n) = c.args[1] {
     let start = 0;
-    if (parser.is_hex_lit(n.text)) {
+    if (ast.is_hex_lit(n.text)) {
       start = 2;
     }
-    if (!n.is_float && !parser.is_quoted_literal(n) && parser.magnitude_fits(n.text, start, util.i32_to_string(lanes - 1))) {
+    if (!n.is_float && !parser.is_quoted_literal(n) && ast.magnitude_fits(n.text, start, util.i32_to_string(lanes - 1))) {
       return [];
     }
   }
@@ -6241,7 +6241,7 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
 }
 
 function check_number_expr(n: ast.ExprNumber, s: Scope): typeinfo.Type {
-  if (parser.is_unit_literal(n)) {
+  if (ast.is_unit_literal(n)) {
     return typeinfo.t_void();
   }
   if (n.is_float && n.suffix == "f32") {
@@ -6274,7 +6274,7 @@ function check_number_expr(n: ast.ExprNumber, s: Scope): typeinfo.Type {
   if (n.suffix == "char") {
     return typeinfo.t_char();
   }
-  if (parser.literal_is_i64(n.text)) {
+  if (ast.literal_is_i64(n.text)) {
     return typeinfo.t_i64();
   }
   return typeinfo.t_i32();
@@ -6430,11 +6430,15 @@ function bitwise_result_type(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.
 }
 
 function check_unary_expr(u: ast.ExprUnary, s: Scope): typeinfo.Type {
+  // The type of a cast comes from its target only.
+  if (u.op.starts_with("as_") || u.op.starts_with("as?_")) {
+    return unary_result_type(u, typeinfo.unchecked(), s);
+  }
   return unary_result_type(u, check_expr(u.operand, s), s);
 }
 
 function unary_result_type(u: ast.ExprUnary, ot: typeinfo.Type, s: Scope): typeinfo.Type {
-  if (u.op == "-" && unsettled_int_literal(ast.ExprUnary { ...u })) {
+  if (u.op == "-" && unsettled_int_literal(u)) {
     if let ast.ExprNumber(_) = u.operand {
       return typeinfo.t_i32();
     }
@@ -10512,7 +10516,7 @@ function unsettled_tree(e: ast.Expr, lits: string[]): boolean {
       return (u.op == "-" || u.op == "+") && unsettled_tree(u.operand, lits);
     },
     ast.ExprBinary(b) => {
-      return parser.int_literal_op(b.op) && unsettled_tree(b.left, lits) && unsettled_tree(b.right, lits);
+      return ast.int_literal_op(b.op) && unsettled_tree(b.left, lits) && unsettled_tree(b.right, lits);
     },
     ast.ExprCall(c) => {
       return unsettled_value_block(c, [], 0, lits);
@@ -12606,7 +12610,7 @@ function int_ty_max_hex(ty: string, negated: boolean): string {
 }
 
 function int_lit_fits(text: string, ty: string, negated: boolean): boolean {
-  let hex = parser.is_hex_lit(text);
+  let hex = ast.is_hex_lit(text);
   let start = 0;
   if (hex) {
     start = 2;
@@ -12622,11 +12626,11 @@ function int_lit_fits(text: string, ty: string, negated: boolean): boolean {
   if (max.len() == 0) {
     return true;
   }
-  return parser.magnitude_fits(text, start, max);
+  return ast.magnitude_fits(text, start, max);
 }
 
 function int_lit_as_written(text: string, negated: boolean): string {
-  let prefixed: boolean = parser.is_hex_lit(text)
+  let prefixed: boolean = ast.is_hex_lit(text)
     || text.len() > 2 && text[0] == b'0' && (text[1] == b'o' || text[1] == b'O' || text[1] == b'b' || text[1] == b'B');
   let start = 0;
   let out = text;
@@ -12791,7 +12795,7 @@ function numeral_spelling(n: ast.ExprNumber): string {
 
 function suffix_range_diag(num: ast.ExprNumber, negated: boolean): util.Diag[] {
   let out: util.Diag[] = [];
-  if ((!num.is_float && num.suffix.len() == 0 || parser.float_settled_int(num)) && !parser.is_quoted_literal(num) && !parser.is_unit_literal(num) && !int_lit_fits(num.text, "u64", false)) {
+  if ((!num.is_float && num.suffix.len() == 0 || parser.float_settled_int(num)) && !parser.is_quoted_literal(num) && !ast.is_unit_literal(num) && !int_lit_fits(num.text, "u64", false)) {
     return out.append(dg_at("E047", "literal " + num.text + " does not fit in any integer type; write it as a float for f64", num.line, num.col));
   }
   if (num.is_float || parser.is_quoted_literal(num) || num.suffix.len() == 0) {
@@ -12849,35 +12853,7 @@ function is_map_new_name(name: string): boolean {
 }
 
 function unsettled_int_literal(e: ast.Expr): boolean {
-  match (e) {
-    ast.ExprNumber(n) => {
-      return !n.is_float && n.suffix.len() == 0 && !parser.is_unit_literal(n)
-        && !parser.literal_is_i64(n.text);
-    },
-    ast.ExprUnary(u) => {
-      if (u.op == "-") {
-        match (u.operand) {
-          ast.ExprNumber(un) => {
-            if (!un.is_float && un.suffix.len() == 0 && un.text == "2147483648") {
-              return true;
-            }
-          },
-          _ => {}
-        }
-        return unsettled_int_literal(u.operand);
-      }
-      return false;
-    },
-    ast.ExprBinary(b) => {
-      if (b.op == "+" || b.op == "-" || b.op == "*" || b.op == "/") {
-        return unsettled_int_literal(b.right) && unsettled_int_literal(b.left);
-      }
-      return false;
-    },
-    _ => {
-      return false;
-    }
-  }
+  return ast.i32_literal_tree(e);
 }
 
 // A number, or a number under one or more unary minuses: `5`, `-5`, `-(-5)`.
@@ -12896,7 +12872,7 @@ function bare_numeric_literal(e: ast.Expr): boolean {
 }
 
 function int_literal_tree(e: ast.Expr): boolean {
-  return parser.int_literal_tree(e);
+  return ast.int_literal_tree(e);
 }
 
 function numeric_literal_kind(e: ast.Expr): i32 {
@@ -12910,7 +12886,7 @@ function numeric_literal_kind(e: ast.Expr): i32 {
 }
 
 function float_literal_tree(e: ast.Expr): boolean {
-  return parser.float_literal_tree(e);
+  return ast.float_literal_tree(e);
 }
 
 // element_literal_kind is numeric_literal_kind for an array element. When gives is true, an integer literal that a float destination reads stays an integer literal.
@@ -12992,7 +12968,7 @@ function int_range_diags(e: ast.Expr, ty: string, negated: boolean): util.Diag[]
   let out: util.Diag[] = [];
   match (e) {
     ast.ExprNumber(n) => {
-      if (n.is_float || parser.is_quoted_literal(n) || n.suffix.len() > 0 || parser.is_unit_literal(n)) {
+      if (n.is_float || parser.is_quoted_literal(n) || n.suffix.len() > 0 || ast.is_unit_literal(n)) {
         return out;
       }
       if (int_lit_fits(n.text, ty, negated)) {
@@ -14112,7 +14088,8 @@ function call_diags(e: ast.Expr, s: Scope): util.Diag[] {
       out = call_diags_binary(b, s, out);
     },
     ast.ExprUnary(u) => {
-      out = call_diags_unary(u, s, out);
+      let (diags, ut) = unary_diags_typed(u, s);
+      out = diags;
     },
     ast.ExprArray(a) => {
       out = call_diags_array(a, s, out);
@@ -14985,11 +14962,11 @@ function unmet_tvar(t: typeinfo.Type, method: string, s: Scope): string {
   return name;
 }
 
-function tvar_neg_diags(u: ast.ExprUnary, s: Scope): util.Diag[] {
+function tvar_neg_diags(u: ast.ExprUnary, ot: typeinfo.Type, s: Scope): util.Diag[] {
   if (u.op != "-") {
     return [];
   }
-  let name = unmet_tvar(check_expr(u.operand, s), "neg", s);
+  let name = unmet_tvar(ot, "neg", s);
   if (name == "") {
     return [];
   }
@@ -15009,6 +14986,9 @@ function operand_diags_typed(e: ast.Expr, s: Scope): (util.Diag[], typeinfo.Type
     if (b.op != "__named_arg") {
       return binary_diags_typed(b, s);
     }
+  }
+  if let ast.ExprUnary(u) = e {
+    return unary_diags_typed(u, s);
   }
   return (call_diags(e, s), check_expr(e, s));
 }
@@ -15158,32 +15138,34 @@ function bitwise_not_type(ot: typeinfo.Type): typeinfo.Type {
 }
 
 // `~` takes an integer operand.
-function bitwise_not_diags(u: ast.ExprUnary, s: Scope, own out: util.Diag[]): util.Diag[] {
+function bitwise_not_diags(u: ast.ExprUnary, bt: typeinfo.Type, own out: util.Diag[]): util.Diag[] {
   if (u.op != "~") {
     return out;
   }
-  let bt = check_expr(u.operand, s);
   if (!operand_open(bt) && !is_integer(bt)) {
     return out.append(dg_at("E009", "operator \"~\" requires an integer type, got " + type_label(bt), u.line, u.col));
   }
   return out;
 }
 
-function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Diag[] {
-  out = call_diags(u.operand, s);
+function unary_diags_typed(u: ast.ExprUnary, s: Scope): (util.Diag[], typeinfo.Type) {
+  let (out, ot) = operand_diags_typed(u.operand, s);
+  return (unary_operator_diags(u, ot, s, out), unary_result_type(u, ot, s));
+}
+
+// ot is the type of the operand, and out holds the diagnostics of the operand.
+function unary_operator_diags(u: ast.ExprUnary, ot: typeinfo.Type, s: Scope, out: util.Diag[]): util.Diag[] {
   if (u.op == "!") {
-    let ot = check_expr(u.operand, s);
     if (!is_unknown(ot) && !type_eq(ot, typeinfo.t_bool())) {
       out = out.append(dg_at("E009", "operator \"!\" requires boolean, got " + type_label(ot), u.line, u.col));
     }
   }
-  out = util.append_diags(out, tvar_neg_diags(u, s));
-  out = bitwise_not_diags(u, s, out);
+  out = util.append_diags(out, tvar_neg_diags(u, ot, s));
+  out = bitwise_not_diags(u, ot, out);
   if (u.op == "-") {
-    let nt = check_expr(u.operand, s);
-    let nok = !is_unknown(s.unop_overload_ret(u.op, nt));
-    if (!operand_open(nt) && !is_integer(nt) && !is_float(nt) && !typeinfo.is_lanes(nt) && !nok) {
-      out = out.append(dg_at("E009", "operator \"-\" requires an integer type, got " + type_label(nt), u.line, u.col));
+    let nok = !is_unknown(s.unop_overload_ret(u.op, ot));
+    if (!operand_open(ot) && !is_integer(ot) && !is_float(ot) && !typeinfo.is_lanes(ot) && !nok) {
+      out = out.append(dg_at("E009", "operator \"-\" requires an integer type, got " + type_label(ot), u.line, u.col));
     }
   }
   if (u.op.len() > 3 && u.op.starts_with("as_")) {
@@ -15205,35 +15187,33 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
     if (bare_numeric_literal(u.operand)) {
       out = util.append_diags(out, int_dest_range_diags(u.operand, tgt));
     }
-    out = util.append_diags(out, cast_diags(u, tgt, check_expr(u.operand, s), s));
+    out = util.append_diags(out, cast_diags(u, tgt, ot, s));
   }
   if (u.op.len() > 4 && u.op.starts_with("as?_")) {
-    let aot = check_expr(u.operand, s);
     let target = slice_unchecked(u.op, 4, u.op.len()).to_owned();
     let target_errors = cast_target_diags(target, u, s);
     if (target_errors.len() > 0) {
       return util.append_diags(out, target_errors);
     }
-    if (is_integer(aot)) {
+    if (is_integer(ot)) {
       if (!is_integer(s.resolve_type(target))) {
-        out = out.append(dg_at("E060", "'as?' from " + type_label(aot) + " converts only to an integer type, got " + target, u.line, u.col));
+        out = out.append(dg_at("E060", "'as?' from " + type_label(ot) + " converts only to an integer type, got " + target, u.line, u.col));
       }
-    } else if (!downcast_operand_ok(aot)) {
-      out = out.append(dg_at("E059", "'as?' requires a 'dyn Trait' value or an integer on the left, got " + type_label(aot), u.line, u.col));
+    } else if (!downcast_operand_ok(ot)) {
+      out = out.append(dg_at("E059", "'as?' requires a 'dyn Trait' value or an integer on the left, got " + type_label(ot), u.line, u.col));
     }
   }
   if (u.op == "try_") {
-    let trt = check_expr(u.operand, s);
-    if (is_primitive_type(trt)) {
-      out = out.append(dg_at("E042", "`?` operator requires an Option, a Result, or an `@try` enum, got " + type_label(trt), u.line, u.col));
+    if (is_primitive_type(ot)) {
+      out = out.append(dg_at("E042", "`?` operator requires an Option, a Result, or an `@try` enum, got " + type_label(ot), u.line, u.col));
     } else {
-      match (trt) {
+      match (ot) {
         typeinfo.TypeUnion(tu) => {
           if (try_able_union(s, tu.name)) {
             if (try_ret_other_type(s.try_ret, tu.name)) {
               out = out.append(dg_at("E042", "`?` on " + tu.name + " requires the surrounding function to return " + tu.name + ", got " + try_ret_label(s.try_ret), u.line, u.col));
             } else {
-              out = util.append_diags(out, try_residual_diags(s, trt, u));
+              out = util.append_diags(out, try_residual_diags(s, ot, u));
             }
           } else {
             if (s.has_union(tu.name)) {
@@ -15570,10 +15550,10 @@ function int_read(e: ast.Expr): ast.Expr {
     }
   }
   if let ast.ExprUnary(u) = e {
-    return ast.ExprUnary { ...u, operand: int_read(u.operand) };
+    return ast.unary(u.op, int_read(u.operand), u.line, u.col, u.ty);
   }
   if let ast.ExprBinary(b) = e {
-    return ast.ExprBinary { ...b, left: int_read(b.left), right: int_read(b.right) };
+    return ast.binary(b.op, int_read(b.left), int_read(b.right), b.line, b.col, b.ty);
   }
   if let ast.ExprTuple(te) = e {
     let parts: ast.Expr[] = [];
@@ -30968,13 +30948,21 @@ pub function expr_type(e: ast.Expr, s: Scope): typeinfo.Type {
   return check_expr(e, s);
 }
 
-pub function binary_types(b: ast.ExprBinary, s: Scope): (typeinfo.Type, typeinfo.Type, typeinfo.Type) {
-  let lt = check_expr(b.left, s);
-  let rt = check_expr(b.right, s);
-  if (b.op == "__named_arg") {
-    return (rt, lt, rt);
+// The checked types of a tree of binary operators. `operands` holds the left
+// tree and the right tree. It is empty below an expression of a different kind.
+pub struct OperatorTypes { whole: typeinfo.Type, operands: OperatorTypes[] }
+
+pub function operator_types(e: ast.Expr, s: Scope): OperatorTypes {
+  if let ast.ExprBinary(b) = e {
+    let left = operator_types(b.left, s);
+    let right = operator_types(b.right, s);
+    let whole = right.whole;
+    if (b.op != "__named_arg") {
+      whole = binary_result_type(b, left.whole, right.whole, s);
+    }
+    return OperatorTypes { whole: whole, operands: [left, right] };
   }
-  return (binary_result_type(b, lt, rt, s), lt, rt);
+  return OperatorTypes { whole: check_expr(e, s), operands: [] };
 }
 
 pub function scope_type(s: Scope, name: string): typeinfo.Type {
@@ -32331,12 +32319,12 @@ function annotate_typed(e: ast.Expr, s: Scope): Typed {
       if (b.op != "__named_arg") {
         bt = binary_result_type(b, lt, rt, s);
       }
-      return Typed { e: ast.ExprBinary { op: b.op, left: left, right: right, line: b.line, col: b.col, ty: type_to_irtag(bt) }, ty: bt, known: true };
+      return Typed { e: ast.binary(b.op, left, right, b.line, b.col, type_to_irtag(bt)), ty: bt, known: true };
     },
     ast.ExprUnary(u) => {
       let oa = annotate_typed(u.operand, s);
       let ut = unary_result_type(u, typed_type(oa, u.operand, s), s);
-      return Typed { e: ast.ExprUnary { op: u.op, operand: oa.e, line: u.line, col: u.col, ty: type_to_irtag(ut) }, ty: ut, known: true };
+      return Typed { e: ast.unary(u.op, oa.e, u.line, u.col, type_to_irtag(ut)), ty: ut, known: true };
     },
     ast.ExprCall(c) => {
       let nargs: ast.Expr[] = [];
@@ -33415,7 +33403,7 @@ function vb_zero_of(tag: string): ast.Expr {
     "string" => ast.ExprString { value: "", line: 0, col: 0 },
     "boolean" => ast.ExprBool { value: false, line: 0, col: 0 },
     "f64" => ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: true, bits: 0, line: 0, col: 0 },
-    "f32" => ast.ExprUnary { op: "as_f32", operand: vb_zero_of("f64"), line: 0, col: 0, ty: "f32" },
+    "f32" => ast.unary("as_f32", vb_zero_of("f64"), 0, 0, "f32"),
     "i32" => ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, bits: 0, line: 0, col: 0 },
     _ => ast.ExprNumber { text: "0", suffix: tag, raw: "", is_float: false, bits: 0, line: 0, col: 0 },
   };
@@ -34220,7 +34208,7 @@ function qualify_at(n: ast.Expr, q: QualifyAcc): (ast.Expr, QualifyAcc, boolean)
         return (n, child, false);
       }
       let left = qualify_expr(b.left, none, s, coll);
-      return (ast.ExprBinary { ...b, left: left, right: qualify_expr(b.right, check_expr(left, s), s, coll) }, child, true);
+      return (ast.binary(b.op, left, qualify_expr(b.right, check_expr(left, s), s, coll), b.line, b.col, b.ty), child, true);
     },
     _ => {
       return (n, child, false);
@@ -35347,7 +35335,7 @@ function open_wide(e: ast.Expr, s: Scope): boolean {
 function wide_int_tree(e: ast.Expr): boolean {
   match (e) {
     ast.ExprNumber(n) => {
-      return int_literal_tree(e) && parser.literal_is_i64(n.text);
+      return int_literal_tree(e) && ast.literal_is_i64(n.text);
     },
     ast.ExprUnary(u) => {
       return wide_int_tree(u.operand);
@@ -36793,14 +36781,14 @@ function lit_float_read(e: ast.Expr, want: parser.TypeRef): ast.Expr {
     return ast.ExprNumber { ...n, is_float: true, bits: parser.literal_bits(n.text, true), suffix: want.base };
   }
   if let ast.ExprBinary(b) = e {
-    return ast.ExprBinary { ...b, left: lit_float_read(b.left, want), right: lit_float_read(b.right, want), ty: want.base };
+    return ast.binary(b.op, lit_float_read(b.left, want), lit_float_read(b.right, want), b.line, b.col, want.base);
   }
   if let ast.ExprUnary(u) = e {
     if (u.op == "-" || u.op == "+") {
-      return ast.ExprUnary { ...u, operand: lit_float_read(u.operand, want), ty: want.base };
+      return ast.unary(u.op, lit_float_read(u.operand, want), u.line, u.col, want.base);
     }
   }
-  return ast.ExprUnary { op: "as_" + want.base, operand: e, line: expr_line(e), col: expr_col(e), ty: want.base };
+  return ast.unary("as_" + want.base, e, expr_line(e), expr_col(e), want.base);
 }
 
 function lit_call_settled(c: ast.ExprCall, rw: LitRewrite): boolean {
@@ -37144,7 +37132,7 @@ function binary_numeric_join(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.
 
 function widen_binary_operand(e: ast.Expr, from: typeinfo.Type, to: typeinfo.Type, line: i32, col: i32): ast.Expr {
   if (!int_literal_tree(e) && !is_unknown(to) && typeinfo.lossless_widen(from, to)) {
-    return ast.ExprUnary { op: "as_" + typeinfo.spelling(to), operand: e, line: line, col: col, ty: type_to_irtag(to) };
+    return ast.unary("as_" + typeinfo.spelling(to), e, line, col, type_to_irtag(to));
   }
   return e;
 }

@@ -157,7 +157,7 @@ function hit_stmt(key: string): ast.Stmt {
 }
 
 function and(a: ast.Expr, b: ast.Expr): ast.Expr {
-  return ast.ExprBinary { op: "&&", left: a, right: b, line: 0, col: 0, ty: "" };
+  return ast.binary("&&", a, b, 0, 0, "");
 }
 
 function report_stmt(): ast.Stmt {
@@ -343,9 +343,9 @@ function cover_node(e: ast.Expr, c: Ctx): ast.Expr {
       let ev = hit(branch_key(c, b.line, b.col, "E"));
       let tk = hit(branch_key(c, b.line, b.col, "T"));
       if (b.op == "&&") {
-        return ast.ExprBinary { ...b, left: and(ev, b.left), right: and(tk, b.right) };
+        return ast.binary(b.op, and(ev, b.left), and(tk, b.right), b.line, b.col, b.ty);
       }
-      return ast.ExprBinary { ...b, left: and(and(ev, b.left), tk) };
+      return ast.binary(b.op, and(and(ev, b.left), tk), b.right, b.line, b.col, b.ty);
     },
     ast.ExprLambda(lm) => {
       if (lm.origin == parser.ORIGIN_MATCH_EXPR || lm.origin == parser.ORIGIN_IF_EXPR) {

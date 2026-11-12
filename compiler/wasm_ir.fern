@@ -4516,9 +4516,9 @@ function wasm_text_const(o: ir.Op): string {
   if (o.width != ir.width_ptr()) {
     return o.str;
   }
-  let fits = parser.magnitude_fits(o.str, 0, "4294967295");
-  if (parser.is_hex_lit(o.str)) {
-    fits = parser.magnitude_fits(o.str, 2, "ffffffff");
+  let fits = ast.magnitude_fits(o.str, 0, "4294967295");
+  if (ast.is_hex_lit(o.str)) {
+    fits = ast.magnitude_fits(o.str, 2, "ffffffff");
   }
   if (!fits) {
     eprint("error: literal " + o.str + " does not fit in usize on wasm32, where usize is 32 bits");

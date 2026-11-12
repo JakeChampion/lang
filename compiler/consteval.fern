@@ -436,7 +436,7 @@ function evaluate_binary(b: ast.ExprBinary, ty: parser.TypeRef, names: string[],
 
 // An integer-literal operand of a float is a float, as the checker settles it.
 function beside_float(e: ast.Expr, v: Value, names: string[], values: Value[]): Value {
-  if (parser.is_unsettled_int_literal(e)) {
+  if (ast.is_unsettled_int_literal(e)) {
     return evaluate(parser.settle_to_name(e, "f64"), parser.parse_type_ref("f64"), names, values);
   }
   return v;

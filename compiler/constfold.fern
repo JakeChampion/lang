@@ -9,7 +9,7 @@ function lit_int(v: i64, suffix: string): ast.Expr {
   if (v >= 0) {
     return num_lit(s, suffix);
   }
-  return ast.ExprUnary { op: "-", operand: num_lit(slice_unchecked(s, 1, s.len()), suffix), line: 0, col: 0, ty: "" };
+  return ast.unary("-", num_lit(slice_unchecked(s, 1, s.len()), suffix), 0, 0, "");
 }
 
 function num_lit(text: string, suffix: string): ast.Expr {

@@ -374,10 +374,10 @@ function elb_mark_cond(c: ast.Expr, m: LenLoopMatch, arr: string): CondMark {
       if (b.op == "&&") {
         let l = elb_mark_cond(b.left, m, arr);
         if (l.past) {
-          return CondMark { e: ast.ExprBinary { op: b.op, left: l.e, right: elb_mark_expr(b.right, m.idx, arr), line: b.line, col: b.col, ty: b.ty }, past: true };
+          return CondMark { e: ast.binary(b.op, l.e, elb_mark_expr(b.right, m.idx, arr), b.line, b.col, b.ty), past: true };
         }
         let r = elb_mark_cond(b.right, m, arr);
-        return CondMark { e: ast.ExprBinary { op: b.op, left: b.left, right: r.e, line: b.line, col: b.col, ty: b.ty }, past: r.past };
+        return CondMark { e: ast.binary(b.op, b.left, r.e, b.line, b.col, b.ty), past: r.past };
       }
     },
     _ => {}
@@ -401,10 +401,10 @@ function elb_mark_expr(e: ast.Expr, idx: string, arr: string): ast.Expr {
       return ast.ExprIndex { array: elb_mark_expr(ix.array, idx, arr), index: elb_mark_expr(ix.index, idx, arr), unchecked: mark, ty: ix.ty, line: ix.line, col: ix.col };
     },
     ast.ExprBinary(b) => {
-      return ast.ExprBinary { op: b.op, left: elb_mark_expr(b.left, idx, arr), right: elb_mark_expr(b.right, idx, arr), line: b.line, col: b.col, ty: b.ty };
+      return ast.binary(b.op, elb_mark_expr(b.left, idx, arr), elb_mark_expr(b.right, idx, arr), b.line, b.col, b.ty);
     },
     ast.ExprUnary(u) => {
-      return ast.ExprUnary { op: u.op, operand: elb_mark_expr(u.operand, idx, arr), line: u.line, col: u.col, ty: u.ty };
+      return ast.unary(u.op, elb_mark_expr(u.operand, idx, arr), u.line, u.col, u.ty);
     },
     ast.ExprCall(c) => {
       let na: ast.Expr[] = [];
