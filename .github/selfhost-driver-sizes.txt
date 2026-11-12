@@ -1,3 +1,7 @@
+# 2026-11-12: PR #15434 at 9bd9d45117, driver-sizes-x86_64 job 130956353359.
+# The view-store rule of the self-host checker and the drift of main grew wasm_ir_run,
+# wasm_run and wasm_runio_run 5.1%. Each moves to its measured value. Each other driver grew
+# 1.0% to 1.8%. The 5% tolerance is unchanged.
 # 2026-11-11: PR #15285 at b7a115a043, driver-sizes-x86_64 job 130523491654.
 # The PR changes one test and one document. The drift of main grew checker_codes_run 5.1%,
 # checker_modload_run 6.0%, asm_run 5.4% and asm_ir_run 5.5%. Each moves to its measured value.
@@ -634,9 +638,9 @@ drivers/asm_load_run.fern 12721632
 drivers/asm_modload_run.fern 11387536
 drivers/asm_ir_run.fern 11028400
 drivers/asm_run.fern 10091776
-drivers/wasm_ir_run.fern 9208976
-drivers/wasm_run.fern 9219200
-drivers/wasm_runio_run.fern 9197104
+drivers/wasm_ir_run.fern 9677328
+drivers/wasm_run.fern 9688304
+drivers/wasm_runio_run.fern 9663024
 drivers/asm_pathprobe_run.fern 5756560
 drivers/checker_modload_run.fern 4147040
 drivers/checker_codes_run.fern 3851760
