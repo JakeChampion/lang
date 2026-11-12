@@ -84,6 +84,12 @@ function read(path: string): u8[] {
   if (path.ends_with("mix.m3u")) {
     return [35u8, 69u8, 88u8, 84u8, 10u8].concat(text_bytes("First Light/02 Slow Water.wav\n../loose/x1.wav\n# a comment\nmissing.mp3\n"));
   }
+  if (path.ends_with("Slow Water.lrc")) {
+    return text_bytes("[00:00.00]Slow water runs\n[00:01.00]Under the fern\n[00:02.50]Into the light\n");
+  }
+  if (path.ends_with(".lrc")) {
+    return [];
+  }
   if (path.ends_with("cover.jpg")) {
     return [255u8, 216u8, 255u8, 224u8];
   }
@@ -610,6 +616,20 @@ function test_the_sleep_timer(): test.TestOutcome {
   return test.assert_eq([set, left, shown, last, m.playing, m.sleep_min == 0 && m.sleep_us == 0i64, sim.shows(s, "Sleep off")].map((b: boolean): string => b.to_string()).join(" "), "true true true true false true true");
 }
 
+// A track with an LRC file shows its lyrics, and the line that the track
+// is at changes with the time. A track with no lyrics has no button.
+function test_the_lyrics_of_a_track(): test.TestOutcome {
+  let s = sim.tap(sim.tap(started(), "Quick Light"), "Now playing, Quick Light");
+  let none = sim.shows(s, "Lyrics off");
+  s = sim.tap(sim.tap(sim.tap(sim.tap(s, "Library"), "Slow Water"), "Now playing, Slow Water"), "Lyrics off");
+  let first = tune.line_at(s.shell.app.model.lyrics, s.shell.app.model.at_ms);
+  s = sim.after(s, 1500i64);
+  saved(s, "tune-lyrics");
+  let m = s.shell.app.model;
+  let shown = sim.shows(s, "Under the fern") && sim.shows(s, "Into the light") && sim.shows(s, "Lyrics on");
+  return test.assert_eq([none.to_string(), m.lyrics.len().to_string(), first.to_string(), tune.line_at(m.lyrics, m.at_ms).to_string(), shown.to_string()].join(" "), "false 3 0 1 true");
+}
+
 function main(): i32 {
   let r = test.new("examples/android/tune");
   r = r.it("the scan reads the tags and the paths of its files", test_scan_reads_tags_and_paths);
@@ -635,5 +655,6 @@ function main(): i32 {
   r = r.it("the menu has more than one song, and one song shows its details", test_the_menu_of_more_than_one_song);
   r = r.it("the sound plays at a speed and a pitch", test_the_speed_and_the_pitch);
   r = r.it("the sleep timer stops the player", test_the_sleep_timer);
+  r = r.it("a track shows its lyrics", test_the_lyrics_of_a_track);
   return r.finish();
 }

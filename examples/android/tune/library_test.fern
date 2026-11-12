@@ -128,6 +128,13 @@ function test_playlist_texts(): test.TestOutcome {
   return test.assert_eq(got + " / " + m3u + " / " + library.playlist_name("Mix.M3U8").to_string() + library.playlist_name("a.mp3").to_string() + " / " + text.replace("\n", ";") + " " + again, "2 Road:/m/a.mp3,/m/b c.flac Empty:0 / /m/Fern/First Light/01 a.flac|/m/b.mp3|/abs/c.wav|/m/Fern/win/d.mp3 / truefalse / #EXTM3U;x/a.flac;/other/b.mp3; /m/Fern/x/a.flac|/other/b.mp3");
 }
 
+function test_the_lines_of_lyrics(): test.TestOutcome {
+  let show = (lines: tune.Line[]): string => lines.map((l: tune.Line): string => l.ms.to_string() + "=" + l.text).join("|");
+  let timed = library.lrc("[ar:Fern]\r\n[00:12.50]Second line\r\n[00:01]First\n[01:02.345][00:20.5] Twice \nno time\n\n");
+  let plain = library.lrc("One\n\n  Two  \n[x] not a tag\n");
+  return test.assert_eq(show(timed) + " / " + show(plain) + " / " + library.lrc("").len().to_string() + " " + tune.line_at(timed, 12499i64).to_string() + tune.line_at(timed, 12500i64).to_string() + tune.line_at(timed, 0i64).to_string(), "1000=First|12500=Second line|20500=Twice|62345=Twice / -1=One|-1=Two|-1=[x] not a tag / 0 01-1");
+}
+
 function main(): i32 {
   let r = test.new("examples/android/tune library");
   r = r.it("a name that ends as a file that is not sound", test_other_files);
@@ -139,5 +146,6 @@ function main(): i32 {
   r = r.it("a tag gives the picture of its album", test_a_picture_in_a_tag);
   r = r.it("the library is a text that the player reads back", test_the_text_of_a_library);
   r = r.it("the playlists are a text, and an M3U file gives paths", test_playlist_texts);
+  r = r.it("lyrics are lines with times or with none", test_the_lines_of_lyrics);
   return r.finish();
 }

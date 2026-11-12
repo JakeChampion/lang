@@ -31,6 +31,10 @@ faster or slower with the same pitch, and "Pitch" makes it higher or lower
 with the same speed: `std/audio/tempo` does the two. "Sleep" stops the
 player after 15, 30 or 60 minutes of sound.
 
+A track shows its lyrics in the place of its picture. They come from
+an LRC file with the name of the track, or from the tags of its file. For
+lines with times, the screen shows the line that the track is at.
+
 Shuffle puts
 the songs after the one that plays in a new order. Repeat has three
 states: off, the queue again, and the track again.

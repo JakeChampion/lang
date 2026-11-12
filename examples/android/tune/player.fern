@@ -76,6 +76,23 @@ pub function wrap(own model: tune.Model): Player {
   return Player { model: model, deck: None };
 }
 
+// The lyrics of the track at `path`: those of the LRC file with its name,
+// or those of the tags of its file.
+function lyrics(dev: Device, path: string, file: u8[]): tune.Line[] {
+  let cut = path.len();
+  for k in 0..path.len() {
+    if (path[k] == b'.') {
+      cut = k;
+    }
+  }
+  if let Ok(text) = utf8.from_bytes(dev.read(path.take(cut).to_owned() + ".lrc")) {
+    if (text.len() > 0) {
+      return library.lrc(text);
+    }
+  }
+  return library.lrc(tags.read(file).lyrics);
+}
+
 function loaded(dev: Device, own m: tune.Model, i: i32): Player {
   dev.close(m.sound);
   let file = dev.read(m.tracks[i].path);
@@ -87,6 +104,7 @@ function loaded(dev: Device, own m: tune.Model, i: i32): Player {
   if (picture.len() > 0) {
     art = dev.decode(picture, ART, ART);
   }
+  let words = lyrics(dev, m.tracks[i].path, file);
   let Some(deck) = engine.open(file) else {
     return wrap(tune.update(tune.Model { ...m, sound: tune.no_sound(), pending: [] }, tune.Failed("Tune cannot play " + m.tracks[i].title)));
   };
@@ -96,7 +114,7 @@ function loaded(dev: Device, own m: tune.Model, i: i32): Player {
   }
   dev.start(sound);
   let length = deck.duration_ms();
-  return Player { model: tune.Model { ...m, sound: sound, pending: [], at_ms: 0i64, length_ms: length, art: art }, deck: Some(engine.voice(deck)) };
+  return Player { model: tune.Model { ...m, sound: sound, pending: [], at_ms: 0i64, length_ms: length, art: art, lyrics: words }, deck: Some(engine.voice(deck)) };
 }
 
 function sought(dev: Device, own m: tune.Model, own deck: Option[engine.Voice], part: f64): Player {

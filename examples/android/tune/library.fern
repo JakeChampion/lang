@@ -6,6 +6,7 @@ import "std/audio/pcm";
 import "std/audio/tags";
 import "std/audio/wav";
 import "std/audio/wire";
+import "core/cmp";
 import "std/option";
 import "std/result";
 import "std/string";
@@ -624,6 +625,104 @@ pub function m3u_text(dir: string, paths: string[]): string {
     }
   }
   return lines.join("\n") + "\n";
+}
+
+// The number that the digits of `text` make, or -1 when `text` is not
+// digits only.
+function digits(text: string): i64 {
+  if (text.len() == 0 || text.len() > 9) {
+    return -1i64;
+  }
+  for i in 0..text.len() {
+    if (text[i] < b'0' || text[i] > b'9') {
+      return -1i64;
+    }
+  }
+  return number_of(text);
+}
+
+// The milliseconds of the digits after the point of a time, or -1.
+function fraction(text: string): i64 {
+  let ms = digits(text);
+  for i in text.len()..3 {
+    ms = ms * 10i64;
+  }
+  for i in 3..text.len() {
+    ms = ms / 10i64;
+  }
+  return ms;
+}
+
+// The time in ms of the text `mm:ss.xx`, or -1.
+function time_of(text: string): i64 {
+  let parts: string[] = [];
+  for part in text.replace(".", ":").split(":") {
+    parts = parts.append(part.to_owned());
+  }
+  if (parts.len() < 2 || parts.len() > 3) {
+    return -1i64;
+  }
+  let (min, sec) = (digits(parts[0]), digits(parts[1]));
+  let ms = 0i64;
+  if (parts.len() == 3) {
+    ms = fraction(parts[2]);
+  }
+  if (min < 0i64 || sec < 0i64 || ms < 0i64) {
+    return -1i64;
+  }
+  return (min * 60i64 + sec) * 1000i64 + ms;
+}
+
+// The time in ms of the stamp `[mm:ss.xx]` at the byte `at` of `line`, and
+// the byte after it. The time is -1 when no stamp is there.
+function stamp(line: string, at: i32): (i64, i32) {
+  let close = at;
+  while (close < line.len() && line[close] != b']') {
+    close += 1;
+  }
+  if (at >= line.len() || line[at] != b'[' || close >= line.len()) {
+    return (-1i64, at);
+  }
+  let ms = time_of(line.take(close).drop(at + 1).to_owned());
+  if (ms < 0i64) {
+    return (-1i64, at);
+  }
+  return (ms, close + 1);
+}
+
+// The lines of the lyrics `text`. A line of an LRC file starts with one
+// stamp or more, and a line with a tag such as `[ar:Name]` is no lyric.
+// The lines with times are in the order of their times.
+pub function lrc(text: string): tune.Line[] {
+  let out: tune.Line[] = [];
+  let timed = false;
+  for raw in text.replace("\r", "").split("\n") {
+    let line = raw.trim().to_owned();
+    let times: i64[] = [];
+    let at = 0;
+    let more = true;
+    while (more) {
+      let (ms, next) = stamp(line, at);
+      more = ms >= 0i64;
+      if (more) {
+        times = times.append(ms);
+        at = next;
+      }
+    }
+    let words = line.drop(at).trim().to_owned();
+    if (times.len() > 0) {
+      timed = true;
+      for t in times {
+        out = out.append(tune.Line { ms: t, text: words });
+      }
+    } else if (words.len() > 0 && !(words.starts_with("[") && words.ends_with("]"))) {
+      out = out.append(tune.Line { ms: -1i64, text: words });
+    }
+  }
+  if (!timed) {
+    return out;
+  }
+  return cmp.sort_by(out.filter((l: tune.Line): boolean => l.ms >= 0i64), (a: tune.Line, b: tune.Line): i32 => (a.ms - b.ms) as i32);
 }
 
 // The file of the tune of a number: the first one is a FLAC file, and each
