@@ -13086,13 +13086,6 @@ function tuple_literal_settles(e: ast.Expr, elements: typeinfo.Type[], s: Scope)
 }
 
 function array_element_settles(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
-  if let typeinfo.TypeTuple(_) = want {
-    if let ast.ExprCall(c) = e {
-      if (parser.is_value_block(c)) {
-        return element_assignable(check_expr(e, s), want, s.unions.unions);
-      }
-    }
-  }
   return view_free_settle(e, want, s) && settles_or_assignable(e, want, s);
 }
 
@@ -15377,6 +15370,34 @@ function literal_parts_take(e: ast.Expr, from: typeinfo.Type, to: typeinfo.Type)
         return true;
       }
     }
+  }
+  if let ast.ExprCall(vc) = e {
+    if (parser.is_value_block(vc)) {
+      return vb_parts_take(parser.vb_body(vc), from, to);
+    }
+  }
+  return false;
+}
+
+// vb_parts_take is literal_parts_take for each value that a value block can give.
+function vb_parts_take(body: ast.Stmt[], from: typeinfo.Type, to: typeinfo.Type): boolean {
+  if (body.len() == 0) {
+    return false;
+  }
+  let tail = body[body.len() - 1];
+  if let ast.StmtReturn(r) = tail {
+    return literal_parts_take(r.value, from, to);
+  }
+  if let ast.StmtIf(f) = tail {
+    return vb_parts_take(f.then_body, from, to) && vb_parts_take(f.else_body, from, to);
+  }
+  if let ast.StmtMatch(m) = tail {
+    for arm in m.arms {
+      if (!vb_parts_take(arm.body, from, to)) {
+        return false;
+      }
+    }
+    return m.arms.len() > 0;
   }
   return false;
 }

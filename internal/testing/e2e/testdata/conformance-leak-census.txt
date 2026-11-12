@@ -180,6 +180,7 @@ array_none_empty_and_all_match                       0
 array_none_module                                    0
 array_of_structs                                     0
 array_of_tuple_literals_takes_its_destination_and_float_literals 0
+array_of_value_if_tuples_takes_its_destination       0
 array_pair_truncates                                 0
 array_param_threaded_reassign                        0
 array_reverse                                        0
