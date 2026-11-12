@@ -366,6 +366,7 @@ destructure_repeated_discards                        0
 destructure_repeated_discards_in_param               0
 destructure_tuple_and_struct_forms                   0
 destructured_binding_match_on_its_method             0
+diag_e009_lane_integer                               0
 digit_separators_and_usize_suffix                    0
 display_user_type_print                             0
 div_modulo                                           0
@@ -623,6 +624,7 @@ lanes_methods                                        0
 lanes_receivers                                      0
 lanes_spill_pressure                                 0
 lanes_through_calls                                  0
+lanes_u8x16_ops                                      0
 len_on_empty_u8                                      0
 let_else_at_binding                                  0
 let_else_binding_of_call_result_is_copied            0

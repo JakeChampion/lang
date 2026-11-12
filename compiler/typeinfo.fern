@@ -409,7 +409,7 @@ function renamed_list(ts: Type[], clone_of: (Type) => string): Type[] {
 
 pub function lanes_spelling(width: i32, kind: i32): string {
   if (kind != LANE_FLOAT) {
-    return "";
+    return if (kind == LANE_UNSIGNED && width == 8) { "u8x16" } else { "" };
   }
   if (width == 64) {
     return "f64x2";
@@ -428,7 +428,7 @@ pub function lanes_named(t: string): Type {
 
 // The kind of an element of the lane type with the name `t`.
 pub function lanes_kind(t: string): i32 {
-  return LANE_FLOAT;
+  return if (t == "u8x16") { LANE_UNSIGNED } else { LANE_FLOAT };
 }
 
 // The type of one element of a lane type.
@@ -441,7 +441,8 @@ pub function lane_elem(l: TypeLanes): Type {
 
 // The lane type of a lane builtin, from the start of its name.
 pub function lane_builtin_lanes(name: string): TypeLanes {
-  return TypeLanes { width: lane_builtin_width(name), kind: LANE_FLOAT };
+  let w = lane_builtin_width(name);
+  return TypeLanes { width: w, kind: if (w == 8) { LANE_UNSIGNED } else { LANE_FLOAT } };
 }
 
 // vec_lanes is the lane type spelled `Vec[n, elem]`, or "" when the portable
@@ -488,6 +489,9 @@ pub function lanes_width(t: string): i32 {
   if (t == "f32x4") {
     return 32;
   }
+  if (t == "u8x16") {
+    return 8;
+  }
   return 0;
 }
 
@@ -500,6 +504,9 @@ pub function lane_builtin_width(name: string): i32 {
   }
   if (__mismatch(name, 0, "__f32x4_", 0, 8) == 8) {
     return 32;
+  }
+  if (__mismatch(name, 0, "__u8x16_", 0, 8) == 8) {
+    return 8;
   }
   return 0;
 }
