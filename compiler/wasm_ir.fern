@@ -4378,7 +4378,24 @@ function wasm_lane_const(width: i32, text: string): string {
   return "    f64.const " + text + "\n    f64x2.splat\n";
 }
 
+// An op on integer lanes. Lanes of 8 bits have code. Each other width
+// is a refusal that names the op.
+function emit_wasm_lane_int(o: ir.Op): string {
+  if (o.width != 8) {
+    return ircore.unsupported_op_refuse(o.kind_tag, "wasm");
+  }
+  let verbs: string[] = ["add", "sub", "add_sat_s", "add_sat_u", "sub_sat_s", "sub_sat_u", "min_s", "min_u", "max_s", "max_u", "avgr_u", "eq", "ne", "lt_s", "lt_u", "neg", "abs", "splat", "extract_lane_s", "extract_lane_u", "bitmask", "replace_lane"];
+  let verb = verbs[o.kind_tag - ir.LANE_INT_FIRST];
+  if (verb.ends_with("_lane") || verb.starts_with("extract_lane")) {
+    return "    i8x16." + verb + " " + util.i32_to_string(o.i32_imm) + "\n";
+  }
+  return "    i8x16." + verb + "\n";
+}
+
 function emit_wasm_lane(o: ir.Op, cx: WasmOpCtx): string {
+  if (ir.is_lane_int_kind(o.kind_tag)) {
+    return emit_wasm_lane_int(o);
+  }
   let k = ir.kind_name(o.kind_tag);
   if (k == "vextract_bits") {
     return "    " + (if (o.width == 32) { "i32x4" } else { "i64x2" }) + ".extract_lane " + util.i32_to_string(o.i32_imm) + "\n";

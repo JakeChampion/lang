@@ -70,6 +70,8 @@ function main(): i32 {
     "vsqrt", "vabs", "vneg", "vfloor", "vceil", "vtrunc", "vround", "veq", "vne", "vlt", "vle", "vgt", "vge",
     "vand", "vor", "vxor", "vandnot", "vselect", "vload", "vstore",
     "vget", "vset", "vbitmask", "vpack", "vload_f32", "vpermute", "vextract_bits", "alloc_uninit", "crc32_ieee", "crc32_ieee_array", "count_below_u64", "prctl_query", "mulhi_s",
+    "viadd", "visub", "viadds", "viaddu", "visubs", "visubu", "vimins", "viminu", "vimaxs", "vimaxu", "viavg", "vieq", "vine", "vilts", "viltu",
+    "vineg", "viabs", "visplat", "viextracts", "viextractu", "vibitmask", "vireplace",
   ];
   if (!ir.kind_retired(198) || ir.kind_name(198) != "invalid") {
     failures += 1;
@@ -226,6 +228,8 @@ function main(): i32 {
     "open_dir", "dir_open", "dir_entries", "dir_stat", "dir_access", "dir_unlink", "dir_chmod", "dir_chown", "dir_open_file",
     "mulhi_u", "writer_splice_forever", "utf8_blocks", "sha1_hw", "sha1_hw_blocks", "aes_gcm_seal_into", "aes_gcm_open_into", "mismatch_bytes_str", "opt_set_payload", "vbitmask",
     "crc32_ieee", "crc32_ieee_array", "count_below_u64", "prctl_query", "mulhi_s",
+    "viadd", "visub", "viadds", "viaddu", "visubs", "visubu", "vimins", "viminu", "vimaxs", "vimaxu", "viavg", "vieq", "vine", "vilts", "viltu",
+    "vineg", "viabs", "visplat", "viextracts", "viextractu", "vibitmask", "vireplace",
   ];
   let tag_ok = 0;
   let tag_bad = 0;

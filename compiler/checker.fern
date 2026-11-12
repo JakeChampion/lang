@@ -19605,19 +19605,65 @@ function ocl_factories(mod: parser.Module, env: ModuleEnv, dx: OwnDecls): OclFac
     }
   }
   let factories = OclFactories { names: util.name_index(names), funcs: funcs, rows: rows, decls: dx };
+  let users = ocl_factory_users(funcs, factories.names);
+  let stale = __alloc_bool(funcs.len());
+  for i in 0..funcs.len() {
+    stale = stale.with(i, true);
+  }
   let changed = true;
   while (changed) {
     changed = false;
     for i in 0..funcs.len() {
+      if (!stale[i]) {
+        continue;
+      }
+      stale = stale.with(i, false);
       let facts = ocl_facts(funcs[i], factories, true);
       let sources = ocl_factory_sources(funcs[i], facts, factories.rows[i]);
       if (sources.len() > factories.rows[i].len()) {
         factories = OclFactories { ...factories, rows: factories.rows.with(i, sources) };
+        for user in users[i] {
+          stale = stale.with(user, true);
+        }
         changed = true;
       }
     }
   }
   return factories;
+}
+
+// For each factory, the factories whose bodies name it. A row can change only when the row of a named factory changes.
+function ocl_factory_users(funcs: parser.FuncDecl[], names: util.NameIndex): i32[][] {
+  let users: i32[][] = [];
+  for i in 0..funcs.len() {
+    users = users.append([]);
+  }
+  for i in 0..funcs.len() {
+    let idents: string[] = [];
+    for st in funcs[i].body {
+      idents = astwalk.fold_stmt_nodes(st, idents, ocl_no_stmt_names, ocl_ident_name, astwalk.descend_all);
+    }
+    let seen = __alloc_bool(funcs.len());
+    for name in idents {
+      let at = names.find(name);
+      if (at >= 0 && !seen[at]) {
+        seen = seen.with(at, true);
+        users = users.with(at, users[at].append(i));
+      }
+    }
+  }
+  return users;
+}
+
+function ocl_ident_name(e: ast.Expr, own acc: string[]): string[] {
+  if let ast.ExprIdent(id) = e {
+    return acc.append(id.name);
+  }
+  return acc;
+}
+
+function ocl_no_stmt_names(st: ast.Stmt, own acc: string[]): string[] {
+  return acc;
 }
 
 // Each declaration records whether its fields can hold a callback.

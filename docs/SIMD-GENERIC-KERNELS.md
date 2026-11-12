@@ -420,8 +420,9 @@ whole group are the next steps.
 | 5c | Lane memory: one 16-byte load and one 16-byte store per group | done (#13026) |
 | 6 | Const generics; `Vec[N, T]` | follow-on project, `docs/CONST-GENERICS.md` |
 | 7a | Integer lanes: the instruction vocabulary on x86-64, arm64 and wasm (§8) | done (#14731) |
-| 7b | Integer lanes: the element kind of a lane type, the IR ops and emission on every backend | next (#14731) |
-| 7c | Integer lanes: `u8x16` in both front ends, the builtins and both interpreters, then the other shapes | after 7b (#14731) |
+| 7b | Integer lanes: the IR ops, and emission for lanes of 8 bits on every backend | done (#14731) |
+| 7c | Integer lanes: the element kind of a lane type, and `u8x16` in both front ends, the builtins and both interpreters | next (#14731) |
+| 7d | Integer lanes: the shifts, the multiply, and the lanes of 16 and 32 bits | after 7c (#14731) |
 | — | Splice record-returning leaves so `Dual` / `DoubleDouble` stop allocating per operation (#12931) | follow-on, `seminline` |
 
 ## 8. Integer lanes
@@ -455,3 +456,25 @@ Slice 7a is the instruction vocabulary. Nothing emits these forms yet.
 
 The gates are the ones of slice 4a: the GNU as differentials for the native
 assemblers, and `TestSelfHostWatbinSimdLanes` for wasm.
+
+Slice 7b is the IR. The 22 ops from `viadd` to `vireplace` are the ops on
+integer lanes, and `spec/core.md` gives the meaning of each one. An op has
+the width of a lane, and a name with a sign where the sign changes the
+result. The bitwise ops, `vselect`, `vload` and `vstore` are the same ops
+as for the float lanes.
+
+Each backend has code for lanes of 8 bits. Another width is a refusal that
+names the op, so slice 7d adds a width with no change to the IR.
+
+- **x86-64.** The binary ops are the VEX forms of slice 7a, which write a
+  third register. The unsigned less-than is the complement of
+  `max(a, b) == a`. A splat is `pshufb` with a mask of zeros.
+- **arm64.** Each op is one instruction, except the mask. The mask keeps
+  one bit of each lane and adds the lanes of each half with `addv`.
+- **wasm.** Each op is one `i8x16` instruction.
+
+A signed lane read fills its register with the sign, because a native
+backend compares an `i32` in the full register.
+
+The gate is `TestSelfHostLaneIR`. Its driver builds the ops by hand and runs
+them on each backend, with the answers of the wasm specification.
