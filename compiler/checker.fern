@@ -26362,11 +26362,14 @@ function e049_init_ref_ty(init: ast.Expr): string {
   }
 }
 
-function e049_scope(stmts: ast.Stmt[]): NameTy[] {
+// With a scope, a `let` that has no written type and no literal initializer
+// gets the type that the checker infers.
+function e049_scope(stmts: ast.Stmt[], typed: Option[Scope]): NameTy[] {
   let out: NameTy[] = [];
+  let sc = typed;
   for stmt in stmts {
     for vb in e049_value_blocks(stmt) {
-      out = e049_append_nt(out, e049_scope(vb.body));
+      out = e049_append_nt(out, e049_scope(vb.body, sc));
     }
     match (stmt) {
       ast.StmtVar(v) => {
@@ -26374,31 +26377,79 @@ function e049_scope(stmts: ast.Stmt[]): NameTy[] {
         if (vty.len() == 0) {
           vty = e049_init_ref_ty(v.init);
         }
+        if (vty.len() == 0) {
+          if let Some(s) = sc {
+            vty = e049_inferred_ref_ty(v, s);
+          }
+        }
         out = out.append(NameTy { nm: v.name, ty: vty });
       },
       ast.StmtIf(f) => {
-        out = e049_append_nt(out, e049_scope(f.then_body));
-        out = e049_append_nt(out, e049_scope(f.else_body));
+        out = e049_append_nt(out, e049_scope(f.then_body, sc));
+        out = e049_append_nt(out, e049_scope(f.else_body, sc));
       },
       ast.StmtWhile(w) => {
-        out = e049_append_nt(out, e049_scope(w.body));
+        out = e049_append_nt(out, e049_scope(w.body, sc));
       },
       ast.StmtFor(fr) => {
-        out = e049_append_nt(out, e049_scope(fr.body));
+        out = e049_append_nt(out, e049_scope(fr.body, e049_for_scope(fr, sc)));
       },
       ast.StmtMatch(m) => {
         for arm in m.arms {
-          out = e049_append_nt(out, e049_scope(arm.body));
+          out = e049_append_nt(out, e049_scope(arm.body, sc));
         }
       },
       ast.StmtDefer(d) => {
         let one: ast.Stmt[] = [d.action];
-        out = e049_append_nt(out, e049_scope(one));
+        out = e049_append_nt(out, e049_scope(one, sc));
       },
       _ => {}
     }
+    if let Some(s) = sc {
+      sc = Some(bind_stmt(stmt, s));
+    }
   }
   return out;
+}
+
+function e049_for_scope(fr: ast.StmtFor, typed: Option[Scope]): Option[Scope] {
+  if let Some(s) = typed {
+    return Some(for_body_scope(fr, s));
+  }
+  return None;
+}
+
+// The spelling of the inferred type of v when the type is a reference type.
+function e049_inferred_ref_ty(v: ast.StmtVar, s: Scope): string {
+  let t = var_bind_type(v, s);
+  if (is_unknown(t) || typeinfo.is_void(t)) {
+    return "";
+  }
+  let sp = typeinfo.spelling(t);
+  if (sp != "string" && sp != "str" && typeinfo.is_primitive_type_name(sp)) {
+    return "";
+  }
+  return sp;
+}
+
+function e049_has_untyped(scope: NameTy[]): boolean {
+  for nt in scope {
+    if (nt.ty.len() == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function e049_captures(body: ast.Stmt[]): string[] {
+  let captured: string[] = [];
+  for st in body {
+    captured = astwalk.fold_stmt_own_pruned(st, captured, e049_lambda_captures, e049_not_into_lambda);
+  }
+  for st in body {
+    captured = e049_nested_stmt_captures(st, captured);
+  }
+  return captured;
 }
 
 function e049_value_blocks(st: ast.Stmt): ast.ExprLambda[] {
@@ -26427,7 +26478,7 @@ function e049_lambda_locals_nt(lm: ast.ExprLambda): NameTy[] {
   for param in lm.params {
     out = out.append(NameTy { nm: param.name, ty: param.type_name });
   }
-  return e049_append_nt(out, e049_scope(lm.body));
+  return e049_append_nt(out, e049_scope(lm.body, None));
 }
 
 function e049_nt_names(nts: NameTy[]): string[] {
@@ -26580,7 +26631,12 @@ pub function e049_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameInde
     for param in fn.params {
       encl = encl.append(NameTy { nm: param.name, ty: param.type_name });
     }
-    encl = e049_append_nt(encl, e049_scope(fn.body));
+    let locals = e049_scope(fn.body, None);
+    if (e049_has_untyped(locals) && e049_captures(fn.body).len() > 0) {
+      let sc = build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs);
+      locals = e049_scope(fn.body, Some(sc));
+    }
+    encl = e049_append_nt(encl, locals);
     out = util.append_diags(out, e049_find(fn.body, encl));
     out = util.append_diags(out, e049_cell_stores(fn, mod, env));
   }
@@ -26600,17 +26656,11 @@ function e049_cell_stores(fn: parser.FuncDecl, mod: parser.Module, env: ModuleEn
 }
 
 function e049_body_stores(fn: parser.FuncDecl, mod: parser.Module, env: ModuleEnv): util.Diag[] {
-  let captured: string[] = [];
-  for st in fn.body {
-    captured = astwalk.fold_stmt_own_pruned(st, captured, e049_lambda_captures, e049_not_into_lambda);
-  }
-  for st in fn.body {
-    captured = e049_nested_stmt_captures(st, captured);
-  }
+  let captured = e049_captures(fn.body);
   if (captured.len() == 0) {
     return [];
   }
-  let vars = e049_lambda_var_types(fn.body, e049_scope(fn.body));
+  let vars = e049_lambda_var_types(fn.body, e049_scope(fn.body, None));
   let sc = build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs);
   return e049_store_walk(fn.body, sc, vars, captured, fn.type_params, mod, []);
 }
