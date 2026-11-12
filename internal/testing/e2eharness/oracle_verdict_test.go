@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/stdlib"
 )
 
 func TestOracleVerdictCachesByInputs(t *testing.T) {
@@ -325,5 +327,43 @@ func TestInterpInputVerdictKeysTheInput(t *testing.T) {
 	InterpVerdict(t, fake, src)
 	if got := runs(); got != 3 {
 		t.Fatalf("an empty input and no input ran the oracle %d times, want 3: they are the same verdict", got)
+	}
+}
+
+func TestStdlibClosureKeyCoversImportedModules(t *testing.T) {
+	base := map[string]string{
+		"std/test":   "import \"std/string\";\npub function a(): i32 { return 1; }\n",
+		"std/string": "pub function b(): i32 { return 2; }\n",
+		"std/opus":   "pub function c(): i32 { return 3; }\n",
+	}
+	keyWith := func(change func(map[string]string)) string {
+		modules := map[string]string{}
+		for name, code := range base {
+			modules[name] = code
+		}
+		change(modules)
+		read := func(imp string) (stdlib.ModuleSource, error) {
+			code, ok := modules[imp]
+			if !ok {
+				return stdlib.ModuleSource{}, os.ErrNotExist
+			}
+			return stdlib.ModuleSource{Code: code}, nil
+		}
+		return stdlibClosureKey([]string{"std/test", "./helper"}, read)
+	}
+	want := keyWith(func(map[string]string) {})
+	for _, tc := range []struct {
+		name    string
+		change  func(map[string]string)
+		changes bool
+	}{
+		{"an imported module", func(m map[string]string) { m["std/test"] += "// edit\n" }, true},
+		{"a module that an import reaches", func(m map[string]string) { m["std/string"] += "// edit\n" }, true},
+		{"a module that no import reaches", func(m map[string]string) { m["std/opus"] += "// edit\n" }, false},
+		{"an imported module that is not there", func(m map[string]string) { delete(m, "std/string") }, true},
+	} {
+		if got := keyWith(tc.change); (got != want) != tc.changes {
+			t.Errorf("%s: key changed = %v, want %v", tc.name, got != want, tc.changes)
+		}
 	}
 }
