@@ -128,6 +128,8 @@ func TestSelfHostCLIUsageListsEveryFlag(t *testing.T) {
 		switch {
 		case name == "-color":
 			args = append(args, "auto")
+		case name == "-diag-format":
+			args = append(args, "json")
 		case value != "" && !strings.HasPrefix(value, "["):
 			args = append(args, "x")
 		}

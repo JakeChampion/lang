@@ -228,6 +228,8 @@ const dominanceReuseChecks = `function dominance_reuse_checks(): i32 {
   }
   if (ssadeps.dom_holds(d, 0, 2) || ssadeps.dom_holds(d, 3, 3)) { return 3; }
   if (d.idom[0] != 1 || d.idom[1] != 1 || d.idom[2] != 1 || d.idom[3] != -1) { return 4; }
+  let order = ssa.reverse_postorder(f, ssa.block_positions(f));
+  if (order.len() != 3 || order[0] != 1 || order[1] != 2 || order[2] != 0) { return 6; }
   if (ssa.print_func(f) != before) { return 5; }
   return 0;
 }

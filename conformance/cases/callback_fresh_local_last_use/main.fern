@@ -1,0 +1,26 @@
+import "std/i32";
+
+struct H { n: Cell[i32] }
+
+function (h: H) read(): i32 {
+  return h.n.get();
+}
+
+function (own h: H) close(): i32 {
+  let n = h.n.get();
+  h.n.set(-1);
+  return n;
+}
+
+function combine(): i32 {
+  let h = H { n: cell_new(14) };
+  let first = (): i32 => h.read();
+  let second = (): i32 => h.read();
+  let n = first() + second();
+  return n + h.close();
+}
+
+function main(): i32 {
+  print(combine());
+  return 0;
+}

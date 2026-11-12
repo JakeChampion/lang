@@ -1,6 +1,6 @@
 # Bounded MP4 video file indexing
 
-This module indexes AVC, HEVC, and QTRLE tracks from a borrowed seekable source.
+This module indexes AVC, HEVC, AV1, and QTRLE tracks from a borrowed seekable source.
 It reads top-level box headers and one bounded movie metadata box.
 It skips media payloads and other top-level payloads without a copy.
 Packet offsets and the source length use signed 64-bit counts.

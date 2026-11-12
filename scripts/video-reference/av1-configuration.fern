@@ -1,0 +1,22 @@
+// Emit independently comparable AV1 configuration fields.
+import "std/video/av1/configuration";
+import "std/video/frame";
+import "../../tests/stdlib/video_av1_configuration_fields" as fields;
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 2) {
+    return 1;
+  }
+  let Ok(bytes) = read_file_bytes(argv[1]) else {
+    return 2;
+  };
+  let value = match (configuration.inspect(bytes, frame.default_limits())) {
+    Ok(value) => value,
+    Err(error) => { eprint(error.message()); return 3; },
+  };
+  for field in fields.values(value) {
+    print(field.to_string());
+  }
+  return 0;
+}

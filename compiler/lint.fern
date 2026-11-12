@@ -692,7 +692,7 @@ function number_type(n: ast.ExprNumber): string {
   if (n.is_float) {
     return "f64";
   }
-  if (parser.literal_is_i64(n.text)) {
+  if (ast.literal_is_i64(n.text)) {
     return "";
   }
   return "i32";

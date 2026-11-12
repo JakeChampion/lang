@@ -11,6 +11,7 @@ import "std/android/ui/scene";
 import "std/android/ui/sim";
 import "std/test";
 import "std/truetype";
+import "std/unicode";
 import "./image_vectors";
 
 function fonts(): text.Fonts {

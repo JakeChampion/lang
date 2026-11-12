@@ -2165,7 +2165,7 @@ function splice(own f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssase
       }
     }
   }
-  let pos = block_positions(callee.graph);
+  let pos = ssa.block_positions(callee.graph);
   let entry_id = callee.graph.blocks[callee.graph.entry].id;
   let copied: ssa.SBlock[] = [];
   let rets: i32[] = [];
@@ -2182,7 +2182,7 @@ function splice(own f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssase
     }
     let preds: i32[] = [];
     for p in cb.preds {
-      preds = preds.append(first + position_of(pos, p));
+      preds = preds.append(first + ssa.position_of(pos, p));
     }
     if (cb.id == entry_id) {
       preds = [b.id];
@@ -2195,9 +2195,9 @@ function splice(own f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssase
       }
       t = ssa.t_br(cont);
     } else if (t.kind_tag == ssa.TERM_BR) {
-      t = ssa.t_br(first + position_of(pos, t.target));
+      t = ssa.t_br(first + ssa.position_of(pos, t.target));
     } else if (t.kind_tag == ssa.TERM_BRIF) {
-      t = ssa.STerm { ...t, cond: mapped(vmap, t.cond), t: first + position_of(pos, t.t), f: first + position_of(pos, t.f) };
+      t = ssa.STerm { ...t, cond: mapped(vmap, t.cond), t: first + ssa.position_of(pos, t.t), f: first + ssa.position_of(pos, t.f) };
     }
     copied = copied.append(ssa.SBlock { id: first + j, insts: insts, term: t, preds: preds });
     j += 1;
@@ -2224,7 +2224,7 @@ function splice(own f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssase
   let targets = ssa.term_targets(b.term);
   for ob in g.blocks {
     if (ob.id == b.id) {
-      blocks = blocks.append(ssa.SBlock { ...ob, insts: head, term: ssa.t_br(first + position_of(pos, entry_id)) });
+      blocks = blocks.append(ssa.SBlock { ...ob, insts: head, term: ssa.t_br(first + ssa.position_of(pos, entry_id)) });
     } else if (util.index_of_i32(targets, ob.id) >= 0) {
       let preds: i32[] = [];
       for q in ob.preds {
@@ -2367,24 +2367,6 @@ function mapped(vmap: i32[], v: i32): i32 {
     return v;
   }
   return vmap[v];
-}
-
-function block_positions(g: ssa.SFunc): i32[] {
-  let at = __alloc_i32(ssa.next_block_id(g));
-  for j in 0..g.blocks.len() {
-    let id = g.blocks[j].id;
-    if (id >= 0 && at[id] == 0) {
-      at = at.with(id, j + 1);
-    }
-  }
-  return at;
-}
-
-function position_of(at: i32[], id: i32): i32 {
-  if (id < 0 || id >= at.len()) {
-    return -1;
-  }
-  return at[id] - 1;
 }
 
 struct Defs { insts: ssa.SInst[], blocks: i32[] }

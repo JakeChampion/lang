@@ -52,6 +52,7 @@ import "./lsprefs";
 import "./lsptokens";
 import "std/envflag";
 import "std/hex";
+import "std/json";
 import "std/crypto/ed25519";
 import "std/io";
 import "core/error";
@@ -420,15 +421,15 @@ function has_error(fs: Finding[]): boolean {
   return false;
 }
 
-pub struct DiagStyle { color: boolean, ascii: boolean, terse: boolean }
+pub struct DiagStyle { color: boolean, ascii: boolean, terse: boolean, json: boolean }
 
 pub function plain_style(): DiagStyle {
-  return DiagStyle { color: false, ascii: true, terse: false };
+  return DiagStyle { color: false, ascii: true, terse: false, json: false };
 }
 
-function diag_style(mode: string, force_ascii: boolean, terse: boolean): DiagStyle {
-  if (terse) {
-    return DiagStyle { color: false, ascii: true, terse: true };
+function diag_style(mode: string, force_ascii: boolean, format: string): DiagStyle {
+  if (format != "full") {
+    return DiagStyle { color: false, ascii: true, terse: true, json: format == "json" };
   }
   let color = mode == "always";
   if (mode == "auto") {
@@ -457,18 +458,57 @@ function diag_style(mode: string, force_ascii: boolean, terse: boolean): DiagSty
       }
     }
   }
-  return DiagStyle { color: color, ascii: ascii, terse: false };
+  return DiagStyle { color: color, ascii: ascii, terse: false, json: false };
 }
 
-function terse_from_env(): boolean {
+function diag_format_from_env(): string {
   match (env("FERN_DIAG_FORMAT")) {
     Some(value) => {
-      return value == "terse";
+      if (value == "terse" || value == "json") {
+        return value;
+      }
+      return "full";
     },
     None => {
-      return false;
+      return "full";
     }
   }
+}
+
+function json_position(file: string, line: i32, col: i32, length: i32): string {
+  return "\"file\":\"" + json.escape(file) + "\",\"line\":" + util.i32_to_string(line) + ",\"col\":" + util.i32_to_string(col)
+    + ",\"length\":" + util.i32_to_string(length);
+}
+
+function json_diagnostic(position: string, severity: string, code: string, message: string, related: string[]): string {
+  return "{" + position + ",\"severity\":\"" + severity + "\",\"code\":\"" + json.escape(code) + "\",\"message\":\""
+    + json.escape(message) + "\",\"related\":[" + comma_joined(related) + "]}";
+}
+
+function finding_file(f: Finding, entry: string, files: string[], line: i32): string {
+  if (line <= 0) {
+    return "";
+  }
+  if (f.path.len() > 0) {
+    return f.path;
+  }
+  let path = util.pos_file(files, line);
+  if (path.len() == 0) {
+    return entry_display(entry);
+  }
+  return path;
+}
+
+function finding_json(f: Finding, entry: string, files: string[], d: util.Diag): string {
+  let related: string[] = [];
+  let unplaced = Finding { diag: d, warning: false, path: "" };
+  for r in d.related {
+    related = related.append("{" + json_position(finding_file(unplaced, entry, files, r.line), util.pos_line(r.line), r.col, r.length)
+      + ",\"message\":\"" + json.escape(r.message) + "\"}");
+  }
+  let severity: string = if (f.warning) { "warning" } else { "error" };
+  let line: i32 = if (d.line > 0) { util.pos_line(d.line) } else { 0 };
+  return json_diagnostic(json_position(finding_file(f, entry, files, d.line), line, d.col, d.length), severity, f.diag.code, d.message, related);
 }
 
 function paint(st: DiagStyle, sgr: string, text: string): string {
@@ -601,6 +641,9 @@ function finding_header(st: DiagStyle, f: Finding, entry: string, files: string[
 
 function finding_text(st: DiagStyle, f: Finding, entry: string, files: string[], maps: util.LineMap[]): string {
   let d = util.doc_diag(maps, f.diag);
+  if (st.json) {
+    return finding_json(f, entry, files, d);
+  }
   let head = finding_header(st, f, entry, files, d);
   if (st.terse) {
     return head.replace("\r", "\\r").replace("\n", "\\n");
@@ -2329,7 +2372,8 @@ function flag_groups(): FlagGroup[] {
     FlagGroup { title: "diagnostics", flags: [
       cli_flag("-color", "MODE", "colour diagnostics: auto (the default), always or never"),
       cli_flag("-ascii", "", "draw the diagnostic gutter with | rather than box drawing"),
-      cli_flag("-q", "", "one plain line per diagnostic (also FERN_DIAG_FORMAT=terse)"),
+      CliFlag { ...cli_flag("-q", "", "one plain line per diagnostic (also FERN_DIAG_FORMAT=terse)"), not_with: ["-diag-format"] },
+      cli_flag("-diag-format", "FORMAT", "print diagnostics as full (the default), terse or json (also FERN_DIAG_FORMAT)"),
       mode_flag("-explain", "[CODE]", "explain an error code, or list the codes"),
       mode_flag("-version", "", "the commit this binary was built from"),
       CliFlag { ...cli_flag("-h", "", "print this help"), also: ["-help"] },
@@ -4174,7 +4218,7 @@ function run_doctests(path: string, root: string, target: string, embed_dir: str
 }
 
 function run_doctest(path: string, tc: literate.Doctest, root: string, target: string, embed_dir: string): string {
-  let st = DiagStyle { color: false, ascii: false, terse: false };
+  let st = DiagStyle { color: false, ascii: false, terse: false, json: false };
   let srcs = Sources { paths: [path], srcs: [tc.code], maps: [util.LineMap { doc: path, lits: tc.lits, shifts: tc.shifts }], open: modloader.no_buffers() };
   let ld = load_checked(srcs, root, target, embed_dir);
   let fs = ld.refused;
@@ -5408,7 +5452,7 @@ struct ToolFlags {
   lcov: boolean,
   color_mode: string,
   ascii: boolean,
-  terse: boolean,
+  diag_format: string,
   lint: boolean,
   lint_rules: boolean,
   lint_sets: string[],
@@ -5422,7 +5466,7 @@ struct ToolFlags {
 function tool_flag(f: CliArg): boolean {
   return f.name == "-run" || f.name == "-qemu" || f.name == "-version" || f.name == "-explain"
     || f.name == "-cover-report" || f.name == "-lcov" || f.name == "-color" || f.name == "-ascii"
-    || f.name == "-q" || f.name == "-lint" || f.name == "-lint-rules" || f.name == "-lint-set"
+    || f.name == "-q" || f.name == "-diag-format" || f.name == "-lint" || f.name == "-lint-rules" || f.name == "-lint-set"
     || f.name == "-lint-opt" || f.name == "-lint-cover" || f.name == "-weave" || f.name == "-html"
     || f.name == "-doctest";
 }
@@ -5444,7 +5488,15 @@ function parse_tool_flag(tf: ToolFlags, f: CliArg): (ToolFlags, i32) {
     return (ToolFlags { ...tf, ascii: f.on }, 0);
   }
   if (f.name == "-q") {
-    return (ToolFlags { ...tf, terse: f.on }, 0);
+    let format: string = if (f.on) { "terse" } else { "full" };
+    return (ToolFlags { ...tf, diag_format: format }, 0);
+  }
+  if (f.name == "-diag-format") {
+    if (f.value != "full" && f.value != "terse" && f.value != "json") {
+      eprint("fern: -diag-format wants full, terse or json (got \"" + f.value + "\")");
+      return (tf, 2);
+    }
+    return (ToolFlags { ...tf, diag_format: f.value }, 0);
   }
   if (f.name == "-lint") {
     return (ToolFlags { ...tf, lint: f.on }, 0);
@@ -5728,6 +5780,10 @@ function lint_text(st: DiagStyle, f: lint.Finding, src: string): string {
     label = "error";
     sgr = "1;31";
   }
+  if (st.json) {
+    let none: string[] = [];
+    return json_diagnostic(json_position(f.file, f.line, f.col, 0), label, f.rule, f.msg, none);
+  }
   let out: string = f.file + ":" + util.i32_to_string(f.line) + ":" + util.i32_to_string(f.col) + ": "
     + paint(st, sgr, label + "[" + f.rule + "]") + ": " + f.msg;
   if (st.terse) {
@@ -5884,7 +5940,7 @@ function run_lint(st: DiagStyle, paths: string[], sets: string[], opts: string[]
     return 2;
   }
   let sum = lint.summary(all);
-  if (sum.len() > 0) {
+  if (sum.len() > 0 && !st.json) {
     out = out + sum + "\n";
   }
   if (out.len() > 0) {
@@ -6526,7 +6582,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let mode_check = false;
   let mode_interp = false;
   let no_strs: string[] = [];
-  let tf = ToolFlags { run_it: false, qemu: "qemu-aarch64", version: false, explain: false, explain_code: "", cover_report: false, lcov: false, color_mode: "auto", ascii: false, terse: terse_from_env(), lint: false, lint_rules: false, lint_sets: no_strs, lint_opts: no_strs, lint_cover: "", weave: false, html: false, doctest: false };
+  let tf = ToolFlags { run_it: false, qemu: "qemu-aarch64", version: false, explain: false, explain_code: "", cover_report: false, lcov: false, color_mode: "auto", ascii: false, diag_format: diag_format_from_env(), lint: false, lint_rules: false, lint_sets: no_strs, lint_opts: no_strs, lint_cover: "", weave: false, html: false, doctest: false };
   let mode_fmt = false;
   let fmt_write = false;
   let fmt_diff = false;
@@ -6722,7 +6778,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     i += 1;
   }
 
-  let st = diag_style(tf.color_mode, tf.ascii, tf.terse);
+  let st = diag_style(tf.color_mode, tf.ascii, tf.diag_format);
 
   if (profile_name == "hardened") {
     harden = true;
