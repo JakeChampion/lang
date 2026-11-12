@@ -125,10 +125,6 @@ function view_arg_borrow(from: typeinfo.Type, to: typeinfo.Type): boolean {
   return false;
 }
 
-function t_lanes(width: i32): typeinfo.Type {
-  return typeinfo.TypeLanes { width: width };
-}
-
 function is_float(t: typeinfo.Type): boolean {
   if let typeinfo.TypeFloat(f) = t {
     return true;
@@ -1184,7 +1180,7 @@ pub function type_debug(t: typeinfo.Type): string {
       return float_label(f);
     },
     typeinfo.TypeLanes(l) => {
-      return typeinfo.lanes_spelling(l.width);
+      return typeinfo.lanes_spelling(l.width, l.kind);
     },
     typeinfo.TypeArray(a) => {
       return "array<" + type_debug(a.elem) + ">";
@@ -1389,7 +1385,7 @@ function type_eq(a: typeinfo.Type, b: typeinfo.Type): boolean {
     typeinfo.TypeLanes(al) => {
       match (b) {
         typeinfo.TypeLanes(bl) => {
-          return al.width == bl.width;
+          return al.width == bl.width && al.kind == bl.kind;
         },
         _ => {
           return false;
@@ -4261,7 +4257,7 @@ function method_namespace_of(t: typeinfo.Type): string {
       return float_label(f);
     },
     typeinfo.TypeLanes(l) => {
-      return typeinfo.lanes_spelling(l.width);
+      return typeinfo.lanes_spelling(l.width, l.kind);
     },
     _ => {
       return "";
@@ -4966,7 +4962,7 @@ pub function receiver_key(t: typeinfo.Type): string {
       return un.name;
     },
     typeinfo.TypeLanes(l) => {
-      return typeinfo.lanes_spelling(l.width);
+      return typeinfo.lanes_spelling(l.width, l.kind);
     },
     typeinfo.TypeTuple(tup) => {
       return parser.tuple_arity_namespace(tup.elements.len());
@@ -7535,7 +7531,7 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
     return typeinfo.t_f64();
   }
   if (typeinfo.lanes_width(name) > 0) {
-    return t_lanes(typeinfo.lanes_width(name));
+    return typeinfo.lanes_named(name);
   }
   if (name == "void") {
     return typeinfo.t_void();
@@ -7715,7 +7711,7 @@ function vec_type(r: parser.TypeRef, tparams: string[], targs: typeinfo.Type[], 
   }
   let lanes = typeinfo.vec_lanes(ns, typeinfo.spelling(elem));
   if (lanes.len() > 0) {
-    return t_lanes(typeinfo.lanes_width(lanes));
+    return typeinfo.lanes_named(lanes);
   }
   return t_unknown(parser.render_type_ref(r) + " names no lane type");
 }
@@ -8235,7 +8231,7 @@ pub function type_label(t: typeinfo.Type): string {
       return float_label(f);
     },
     typeinfo.TypeLanes(l) => {
-      return typeinfo.lanes_spelling(l.width);
+      return typeinfo.lanes_spelling(l.width, l.kind);
     },
     typeinfo.TypeArray(a) => {
       return array_label(a);
@@ -14743,7 +14739,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
           out = util.append_diags(out, declared_method_diags(c, recv, "boolean", mfa.field, s));
         },
         typeinfo.TypeLanes(l) => {
-          let lanes = typeinfo.lanes_spelling(l.width);
+          let lanes = typeinfo.lanes_spelling(l.width, l.kind);
           if (s.method_missing(recv, mfa.field)) {
             out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice(lanes, mfa.field, recv), mfa.line, mfa.col), mfa, recv));
           }
@@ -16512,7 +16508,7 @@ function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean 
   }
   match (recv) {
     typeinfo.TypeLanes(l) => {
-      let lanes = typeinfo.lanes_spelling(l.width);
+      let lanes = typeinfo.lanes_spelling(l.width, l.kind);
       return !s.has_visible_method(field, lanes) && is_unknown(builtin_method_sig(lanes, field));
     },
     typeinfo.TypeArray(array) => {

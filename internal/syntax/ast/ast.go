@@ -53,9 +53,29 @@ type FloatType struct {
 	Polymorphic bool
 }
 
+// LaneKind is the kind of an element of a lane type.
+type LaneKind int
+
+const (
+	LaneFloat LaneKind = iota
+	LaneSigned
+	LaneUnsigned
+)
+
+// LanesType is a lane type. Two lane types with one width and two kinds
+// are two types.
 type LanesType struct {
 	Width    int
+	Kind     LaneKind
 	Spelling string
+}
+
+// Elem is the type of one element.
+func (l LanesType) Elem() Type {
+	if l.Kind == LaneFloat {
+		return FloatType{Width: l.Width}
+	}
+	return NumberType{Width: l.Width, Signed: l.Kind == LaneSigned}
 }
 
 func (l LanesType) Lanes() int { return 128 / l.Width }
@@ -299,7 +319,7 @@ func (f FloatType) String() string {
 	return fmt.Sprintf("f%d", f.NormalWidth())
 }
 func (l LanesType) String() string {
-	return fmt.Sprintf("f%dx%d", l.Width, l.Lanes())
+	return fmt.Sprintf("%c%dx%d", "fiu"[l.Kind], l.Width, l.Lanes())
 }
 func (c ConstArg) String() string { return strconv.FormatInt(c.Value, 10) }
 
@@ -959,7 +979,7 @@ func Equal(a, b Type) bool {
 		return ok && x.NormalWidth() == y.NormalWidth()
 	case LanesType:
 		y, ok := b.(LanesType)
-		return ok && x.Width == y.Width
+		return ok && x.Width == y.Width && x.Kind == y.Kind
 	case ConstArg:
 		y, ok := b.(ConstArg)
 		return ok && x.Value == y.Value

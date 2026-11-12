@@ -19,7 +19,15 @@ pub struct TypeString { tag: i32 }
 
 pub struct TypeFloat { width: i32, polymorphic: boolean }
 
-pub struct TypeLanes { width: i32 }
+// `kind` is the kind of an element: LANE_FLOAT, LANE_SIGNED or
+// LANE_UNSIGNED. Two lane types with one width and two kinds are two types.
+pub struct TypeLanes { width: i32, kind: i32 }
+
+pub const LANE_FLOAT: i32 = 0;
+
+pub const LANE_SIGNED: i32 = 1;
+
+pub const LANE_UNSIGNED: i32 = 2;
 
 pub struct TypeArray { elem: Type, view: boolean }
 
@@ -399,7 +407,10 @@ function renamed_list(ts: Type[], clone_of: (Type) => string): Type[] {
   return out;
 }
 
-pub function lanes_spelling(width: i32): string {
+pub function lanes_spelling(width: i32, kind: i32): string {
+  if (kind != LANE_FLOAT) {
+    return "";
+  }
   if (width == 64) {
     return "f64x2";
   }
@@ -407,6 +418,30 @@ pub function lanes_spelling(width: i32): string {
     return "f32x4";
   }
   return "";
+}
+
+// The lane type with the name `t`. Call it for a name that lanes_width
+// accepts.
+pub function lanes_named(t: string): Type {
+  return TypeLanes { width: lanes_width(t), kind: lanes_kind(t) };
+}
+
+// The kind of an element of the lane type with the name `t`.
+pub function lanes_kind(t: string): i32 {
+  return LANE_FLOAT;
+}
+
+// The type of one element of a lane type.
+pub function lane_elem(l: TypeLanes): Type {
+  if (l.kind == LANE_FLOAT) {
+    return TypeFloat { width: l.width, polymorphic: false };
+  }
+  return TypeI32 { is_char: false, width: l.width, unsigned: l.kind == LANE_UNSIGNED, polymorphic: false };
+}
+
+// The lane type of a lane builtin, from the start of its name.
+pub function lane_builtin_lanes(name: string): TypeLanes {
+  return TypeLanes { width: lane_builtin_width(name), kind: LANE_FLOAT };
 }
 
 // vec_lanes is the lane type spelled `Vec[n, elem]`, or "" when the portable
@@ -442,8 +477,8 @@ pub function lane_vec_args(t: Type): Type[] {
   let TypeLanes(l) = t else {
     return [];
   };
-  let nt = lane_vec_spellings(lanes_spelling(l.width));
-  return [TypeConst { value: nt[0] }, TypeFloat { width: l.width, polymorphic: false }];
+  let nt = lane_vec_spellings(lanes_spelling(l.width, l.kind));
+  return [TypeConst { value: nt[0] }, lane_elem(l)];
 }
 
 pub function lanes_width(t: string): i32 {
@@ -478,8 +513,9 @@ pub function lane_builtin_verb(name: string): string {
 
 pub function lane_builtin_params(name: string): Type[] {
   let w = lane_builtin_width(name);
-  let lt: Type = TypeLanes { width: w };
-  let e: Type = TypeFloat { width: w, polymorphic: false };
+  let lanes = lane_builtin_lanes(name);
+  let lt: Type = lanes;
+  let e: Type = lane_elem(lanes);
   let i: Type = TypeI32 { is_char: false, width: 32, unsigned: false, polymorphic: false };
   let arr: Type = TypeArray { elem: e, view: false };
   let v = lane_builtin_verb(name);
@@ -496,7 +532,7 @@ pub function lane_builtin_params(name: string): Type[] {
     return [TypeI32 { is_char: false, width: -1, unsigned: true, polymorphic: false }, lt];
   }
   if (v == "pack") {
-    return [TypeLanes { width: 64 }, TypeLanes { width: 64 }];
+    return [TypeLanes { width: 64, kind: LANE_FLOAT }, TypeLanes { width: 64, kind: LANE_FLOAT }];
   }
   if (v == "splat") {
     return [e];
@@ -544,10 +580,10 @@ pub function lane_builtin_result(name: string): Type {
     "lane_bits" => TypeI32 { is_char: false, width: w, unsigned: true, polymorphic: false },
     "store" => TypeVoid { tag: 0 },
     "bitmask" => TypeI32 { is_char: false, width: 32, unsigned: false, polymorphic: false },
-    "lane" => TypeFloat { width: w, polymorphic: false },
+    "lane" => lane_elem(lane_builtin_lanes(name)),
     "with_bytes" => TypeArray { elem: TypeI32 { is_char: false, width: 8, unsigned: true, polymorphic: false }, view: false },
-    "with" => TypeArray { elem: TypeFloat { width: w, polymorphic: false }, view: false },
-    _ => TypeLanes { width: w },
+    "with" => TypeArray { elem: lane_elem(lane_builtin_lanes(name)), view: false },
+    _ => lane_builtin_lanes(name),
   };
 }
 
@@ -578,7 +614,7 @@ pub function spelling(t: Type): string {
       return "";
     },
     TypeLanes(l) => {
-      return lanes_spelling(l.width);
+      return lanes_spelling(l.width, l.kind);
     },
     TypeArray(a) => {
       let elem = spelling(a.elem);

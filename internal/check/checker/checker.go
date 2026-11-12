@@ -7871,7 +7871,7 @@ func (c *checker) unifyType(expected, actual ast.Type, sub map[string]ast.Type) 
 	}
 	if e, ok := expected.(ast.StructType); ok {
 		if l, ok := actual.(ast.LanesType); ok && c.isBuiltinVec(e.Name, e.Args) {
-			return c.unifyType(e.Args[0], ast.ConstArg{Value: int64(l.Lanes())}, sub) && c.unifyType(e.Args[1], ast.FloatType{Width: l.Width}, sub)
+			return c.unifyType(e.Args[0], ast.ConstArg{Value: int64(l.Lanes())}, sub) && c.unifyType(e.Args[1], l.Elem(), sub)
 		}
 		a, ok := actual.(ast.StructType)
 		if !ok || a.Name != e.Name || len(a.Args) != len(e.Args) {
@@ -18677,7 +18677,7 @@ func (c *checker) registerLaneBuiltins() {
 	i32 := ast.NumberType{}
 	for _, lt := range []ast.LanesType{{Width: 64}, {Width: 32}} {
 		p := "__" + lt.String() + "_"
-		e := ast.FloatType{Width: lt.Width}
+		e := lt.Elem()
 		arr := ast.ArrayType{Elem: e}
 		bytes := ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}
 		of := make([]ast.Type, lt.Lanes())

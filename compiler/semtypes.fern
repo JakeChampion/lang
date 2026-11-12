@@ -60,7 +60,7 @@ pub function equal(a: typeinfo.Type, b: typeinfo.Type): boolean {
     },
     typeinfo.TypeLanes(x) => {
       if let typeinfo.TypeLanes(y) = b {
-        return x.width == y.width;
+        return x.width == y.width && x.kind == y.kind;
       }
     },
     typeinfo.TypeNever(_) => {
