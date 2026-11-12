@@ -24934,7 +24934,7 @@ function ow_nested_field_moves(value: ast.Expr, ctx: OwnCtx): string[] {
   };
   let root = ow_ident_name(top.base);
   let body = ctx.last_use.get().fn.body;
-  if (!top.has_base || root.len() == 0 || !ow_is_owned(ctx, root) || !ow_binding_unchanged(ctx, root) || ow_nested_uses(body, root).reads != 2) {
+  if (!top.has_base || root.len() == 0 || !ow_is_owned(ctx, root) || util.has_str(ctx.borrowed, root) || !ow_binding_unchanged(ctx, root) || ow_nested_uses(body, root).reads != 2) {
     return [];
   }
   let out: string[] = [];

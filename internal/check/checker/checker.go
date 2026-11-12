@@ -11700,7 +11700,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		}
 		top := FieldMoveLiteral(value)
 		if returned {
-			for _, arg := range nestedFieldOwnMoveArgs(fn, value, owned, c.ownFuncs) {
+			for _, arg := range nestedFieldOwnMoveArgs(fn, value, owned, borrowedParam, c.ownFuncs) {
 				selfMoveArgs[arg] = true
 			}
 		}

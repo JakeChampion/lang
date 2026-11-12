@@ -98,5 +98,10 @@
     "name": "tuple callback nested transfer remains refused",
     "source": "struct H{fd:i32} function(own h:H)close():void{} struct S{xs:H[],n:i32} struct O{s:S} function keep(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} function f(own o:O):()=>own O{let s=o.s;return():own O=>O{...o,s:S{...s,xs:keep(s.xs)}};}",
     "want": "E050|E051"
+  },
+  {
+    "name": "repeatable callback nested field transfer refused",
+    "source": "struct H{fd:i32} function(own h:H)close():void{} struct S{xs:H[],n:i32} struct O{s:S} function keep(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} function f(own o:O):()=>O{let s=o.s;return()=>O{...o,s:S{...s,xs:keep(s.xs)}};}",
+    "want": "E050|E051"
   }
 ]
