@@ -2,6 +2,7 @@ package checker
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
@@ -9,6 +10,10 @@ import (
 // distinctBindings separates local bindings from global names and other
 // locals with the same name. The returned function restores every name.
 func distinctBindings(fn *ast.FuncDecl) func() {
+	return resolveBindings(fn).restore
+}
+
+func resolveBindings(fn *ast.FuncDecl) *bindingRenamer {
 	r := &bindingRenamer{seen: map[string]int{}}
 	ast.Walk(fn.Body, func(node ast.Node) bool {
 		if id, ok := node.(*ast.Ident); ok && !id.Local {
@@ -17,10 +22,33 @@ func distinctBindings(fn *ast.FuncDecl) func() {
 		return true
 	})
 	r.function(fn.Params, fn.Body, false)
+	return r
+}
+
+func (r *bindingRenamer) restore() {
+	for i := len(r.undo) - 1; i >= 0; i-- {
+		*r.undo[i].slot = r.undo[i].name
+	}
+}
+
+func (c *checker) distinctOwnedBindings(fn *ast.FuncDecl) func() {
+	before := len(c.errors)
+	r := resolveBindings(fn)
 	return func() {
-		for i := len(r.undo) - 1; i >= 0; i-- {
-			*r.undo[i].slot = r.undo[i].name
+		var names []string
+		for _, undo := range r.undo {
+			symbol, source := strconv.Quote(*undo.slot), strconv.Quote(undo.name)
+			names = append(names, symbol, source, symbol[:len(symbol)-1]+".", source[:len(source)-1]+".")
 		}
+		if len(names) > 0 {
+			replace := strings.NewReplacer(names...)
+			for _, err := range c.errors[before:] {
+				if err, ok := err.(*Error); ok {
+					err.Msg = replace.Replace(err.Msg)
+				}
+			}
+		}
+		r.restore()
 	}
 }
 
@@ -79,7 +107,7 @@ func (r *bindingRenamer) lookup(name string) (string, bool) {
 }
 
 // function walks the parameters and the body of a function or a lambda. A
-// lambda sees the locals around it. A nested function does not.
+// lambda sees the locals around it. A nested function sees its captures.
 func (r *bindingRenamer) function(params []ast.Param, body *ast.Block, closure bool) {
 	outer := r.scopes
 	if !closure {
@@ -181,9 +209,20 @@ func (r *bindingRenamer) visit(n ast.Node) bool {
 			r.pop()
 		}
 	case *ast.Lambda:
+		for i := range x.Captures {
+			if name, ok := r.lookup(x.Captures[i].Name); ok {
+				r.set(&x.Captures[i].Name, name)
+			}
+		}
 		r.function(x.Params, x.Body, true)
 	case *ast.FuncDecl:
-		r.function(x.Params, x.Body, false)
+		r.bind(&x.Name)
+		for i := range x.Captures {
+			if name, ok := r.lookup(x.Captures[i].Name); ok {
+				r.set(&x.Captures[i].Name, name)
+			}
+		}
+		r.function(x.Params, x.Body, len(x.Captures) > 0)
 	default:
 		return true
 	}

@@ -1,0 +1,20 @@
+struct H { n: i32 }
+
+function (h: H) read(): i32 {
+  return h.n;
+}
+
+function (own h: H) close(): void {}
+
+function run(own h: H): i32 {
+  let invoke = (own h: H): i32 => {
+    let read = (): i32 => h.read();
+    h.close();
+    return read();
+  };
+  return invoke(h);
+}
+
+function main(): i32 {
+  return run(H { n: 3 });
+}
