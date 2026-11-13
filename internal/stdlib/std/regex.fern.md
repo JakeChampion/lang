@@ -4,7 +4,9 @@ This module evaluates regular expressions.
 
 ## Model
 
-A compiled expression keeps a program for a Pike VM, its case policy, and capture metadata. Each search runs this program, so a span and its captures come from the same thread. Match values identify input spans. A compiled expression also keeps the set of bytes that can start a match. A search does not try a match at a byte outside that set.
+A compiled expression keeps a program for a Pike VM, its case policy, and capture metadata. Each search runs this program, so a span and its captures come from the same thread. A search runs its threads in one pass over the text. A new thread starts at each offset where a match can start, until a thread finds a match. The threads are in one array of words, and a step does not allocate. Thus a search takes time in proportion to the length of the text and the size of the program.
+
+Match values identify input spans. A compiled expression also keeps the set of bytes that can start a match. A search does not try a match at a byte outside that set.
 
 ## Match rule
 
@@ -73,9 +75,9 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<21 function __rx_split(a: i32, b: i32): RInst>>
 
-<<22 struct RThread>>
+<<22 packed program>>
 
-<<23 function __rx_addthread(st: RAdd, prog: RInst[], pc: i32, caps: i32[], t: string, ti: i32): RAdd>>
+<<23 function __rx_exec(prog: Regex, t: string, from: i32, ns: i32, rule: RRule, anchored: boolean, own m: i32[]): i32[]>>
 
 
 
@@ -385,34 +387,15 @@ function __rx_class(mask: u8[], byte: i32, ci: boolean): boolean {
 ```fern
 <<10 function __rx_search_from(prog: Regex, text: string, from: i32): Option[Match]>>=
 function __rx_search_from(prog: Regex, text: string, from: i32): Option[Match] {
-  let (start, end, _) = __rx_run(prog, text, from, 0, __rx_rule(prog));
-  if (start < 0) {
-    return None;
-  }
-  return Some(Match { start: start, end: end });
+  return __rx_match(__rx_exec(prog, text, from, 1, __rx_rule(prog), false, []));
 }
 
-// The start, the end and the capture slots of the first match at or after
-// `from`. The start is -1 when there is no match. A search for a span alone
-// gives 0 for `nslots`.
-function __rx_run(prog: Regex, t: string, from: i32, nslots: i32, rule: RRule): (i32, i32, i32[]) {
-  let init = __rx_fill(nslots, -1);
-  let ti = from;
-  while (true) {
-    ti = prog.next_candidate(t, ti);
-    if (ti < 0) {
-      return (-1, -1, []);
-    }
-    let (end, caps) = __rx_cvm_at(prog.program, t, ti, prog.ci, rule, init);
-    if (end >= 0) {
-      return (ti, end, caps);
-    }
-    if (ti >= t.len()) {
-      return (-1, -1, []);
-    }
-    ti += 1;
+// The span in the result of `__rx_exec`.
+function __rx_match(m: i32[]): Option[Match] {
+  if (!__rx_found(m)) {
+    return None;
   }
-  return (-1, -1, []);
+  return Some(Match { start: m[0], end: m[1] });
 }
 
 // The rule of a search. `RuleExists` stops at the first match that a thread
@@ -466,6 +449,8 @@ function __rx_bytes(text: string, lo: i32, hi: i32): u8[] {
 <<16 function __rx_replace_all_from(prog: RProg, text: string, repl: string, first: Option[RMatch]): u8[]>>=
 function __rx_replace_all_from(prog: Regex, text: string, repl: string, first: Option[Match]): u8[] {
   let h = buf_new(text.len());
+  let rule = __rx_rule(prog);
+  let mem: i32[] = [];
   let last = 0;
   let next = first;
   while (true) {
@@ -483,7 +468,8 @@ function __rx_replace_all_from(prog: Regex, text: string, repl: string, first: O
     if (nxt > text.len()) {
       break;
     }
-    next = __rx_search_from(prog, text, nxt);
+    mem = __rx_exec(prog, text, nxt, 1, rule, false, mem);
+    next = __rx_match(mem);
   }
   buf_push_range(h, text, last, text.len());
   return __rx_finish(h);
@@ -663,140 +649,347 @@ function __rx_word_assert(k: i32, before: boolean, after: boolean): boolean {
   }
   return !after;
 }
+```
 
-function __rx_fill(n: i32, v: i32): i32[] {
-  let out: i32[] = [];
-  let i = 0;
-  while (i < n) {
-    out = out.append(v);
-    i += 1;
+### `22 packed program`
+
+```fern
+<<22 packed program>>=
+// The packed program has three words for each instruction: the opcode and
+// two operands. A char matches the byte in operand a or in operand b. A class
+// matches the bytes that the eight words at operand a of `masks` mark. A
+// split prefers operand a to operand b. A save writes the slot in operand a,
+// and an assertion has its kind in operand a.
+const RX_CHAR: i32 = 0;
+
+const RX_ANY: i32 = 1;
+
+const RX_CLASS: i32 = 2;
+
+const RX_MATCH: i32 = 3;
+
+const RX_SPLIT: i32 = 4;
+
+const RX_JMP: i32 = 5;
+
+const RX_SAVE: i32 = 6;
+
+const RX_ASSERT: i32 = 7;
+
+// A search gets new memory when its generation stamp passes this value.
+const RX_GEN_LIMIT: i32 = 1073741824;
+
+function __rx_pack(prog: RInst[], ci: boolean): (i32[], i32[]) {
+  let code = __alloc_i32(prog.len() * 3);
+  let masks: i32[] = [];
+  for pc in 0..prog.len() {
+    let op = RX_MATCH;
+    let a = 0;
+    let b = 0;
+    match (prog[pc]) {
+      IChar(c) => {
+        op = RX_CHAR;
+        a = __rx_fold(c, ci);
+        b = a;
+        if (ci && a >= 97 && a <= 122) {
+          b = a - 32;
+        }
+      },
+      IAny => {
+        op = RX_ANY;
+      },
+      IClass(tok) => {
+        op = RX_CLASS;
+        a = masks.len();
+        masks = __rx_pack_mask(masks, tok, ci);
+      },
+      IAssert(k) => {
+        op = RX_ASSERT;
+        a = k;
+      },
+      ISplit(sp) => {
+        op = RX_SPLIT;
+        a = sp.a;
+        b = sp.b;
+      },
+      IJmp(to) => {
+        op = RX_JMP;
+        a = to;
+      },
+      ISave(slot) => {
+        op = RX_SAVE;
+        a = slot;
+      },
+      IMatch => {}
+    }
+    code = code.with(3 * pc, op);
+    code = code.with(3 * pc + 1, a);
+    code = code.with(3 * pc + 2, b);
+  }
+  return (code, masks);
+}
+
+// Eight words of 32 bits, one bit for each byte of the class.
+function __rx_pack_mask(own masks: i32[], tok: u8[], ci: boolean): i32[] {
+  let base = 0;
+  if (ci) {
+    base = 256;
+  }
+  for w in 0..8 {
+    let word = 0;
+    for bit in 0..32 {
+      if (tok[base + w * 32 + bit] != 0) {
+        word = word | 1 << bit;
+      }
+    }
+    masks = masks.append(word);
+  }
+  return masks;
+}
+```
+
+### `23 function __rx_exec(prog: Regex, t: string, from: i32, ns: i32, rule: RRule, anchored: boolean, own m: i32[]): i32[]`
+
+The search runs the program once over the text, as a Pike VM. Each list of threads holds at most one thread for each instruction, so all the state of a search fits in one array of `i32` words. The array has this layout, for a program of `n` instructions and `ns` capture slots:
+
+| Words | Contents |
+| --- | --- |
+| 0 to 2 | the start of the match or -1, its end, and the last generation stamp |
+| `n` | the generation stamp of each instruction: the step that visited it last |
+| `ns` | the slots of the match |
+| `n` and `n` | the instructions of the threads of the current list and of the next list, in priority order |
+| `n * ns` and `n * ns` | the slots of the threads of the two lists, by instruction |
+| `2 * n + 2` | the stack of the closure: an instruction to visit, or a slot to restore and its value |
+| `ns` | the slots of the path that the closure follows |
+
+A step makes a new generation stamp. Thus an instruction is visited in this step when its stamp is the stamp of the step, and the search does not clear a set of visited states. A caller that searches again with the same program gives the array back, and the search does not allocate.
+
+```fern
+<<23 function __rx_exec(prog: Regex, t: string, from: i32, ns: i32, rule: RRule, anchored: boolean, own m: i32[]): i32[]>>=
+// Runs the program on `t` from `from` and gives `m` back with the result in
+// its first words. A search for a span alone gives 1 for `ns`. `RuleExists`
+// can give 0, and then the start is only not -1. A slot at or after `ns` is
+// not recorded. `m` stays empty when no offset can start a match.
+//
+// The threads of a list are in priority order. A thread that comes to a
+// (pc, offset) state that a thread of higher priority visited stops. A new
+// thread starts at each candidate offset until a thread finds a match. It has
+// a lower priority than each older thread, so the leftmost start wins. Under
+// `RuleFirst` the first thread that reaches the match wins and stops the
+// threads after it. Under `RuleLongest` the first thread that reaches the
+// longest end at the leftmost start wins, and `ns` is at least 1. When
+// `anchored` is true, a thread starts at `from` only.
+//
+// The step and the closure are one loop, so a step calls no function for a
+// thread.
+// fern-lint: allow cyclomatic-complexity
+function __rx_exec(prog: Regex, t: string, from: i32, ns: i32, rule: RRule, anchored: boolean, own m: i32[]): i32[] {
+  let next = from;
+  if (!anchored) {
+    next = prog.next_candidate(t, from);
+  }
+  if (next < 0) {
+    if (m.len() > 0) {
+      m = m.with(0, -1);
+    }
+    return m;
+  }
+  let code = prog.code;
+  let masks = prog.masks;
+  let n = code.len() / 3;
+  let res = 3 + n;
+  let cl = res + ns;
+  let nl = cl + n;
+  let cs = nl + n;
+  let nsl = cs + n * ns;
+  let stk = nsl + n * ns;
+  let sc = stk + 2 * n + 2;
+  if (m.len() < sc + ns || m[2] > RX_GEN_LIMIT) {
+    m = __alloc_i32(sc + ns);
+  }
+  let longest = rule == RuleLongest;
+  let exists = rule == RuleExists;
+  let gen = m[2];
+  let len = t.len();
+  let best_start = -1;
+  let best_end = -1;
+  let ccount = 0;
+  let pos = next - 1;
+  while (true) {
+    gen += 1;
+    let npos = pos + 1;
+    let b = -1;
+    if (pos >= 0 && pos < len) {
+      b = t[pos] as i32;
+    }
+    let ncount = 0;
+    let k = 0;
+    while (k <= ccount) {
+      let entry = -1;
+      if (k < ccount) {
+        let pc = m[cl + k];
+        let at = cs + pc * ns;
+        let op = code[3 * pc];
+        if (longest && best_end >= 0 && m[at] > best_start) {
+          op = -1;  // a thread that starts after the match
+        }
+        if (op == RX_CHAR) {
+          if (b == code[3 * pc + 1] || b == code[3 * pc + 2]) {
+            entry = pc + 1;
+          }
+        } else if (op == RX_CLASS) {
+          if (b >= 0 && (masks[code[3 * pc + 1] + (b >> 5)] >> (b & 31) & 1) != 0) {
+            entry = pc + 1;
+          }
+        } else if (op == RX_ANY) {
+          if (b >= 0) {
+            entry = pc + 1;
+          }
+        } else if (op == RX_MATCH) {
+          if (!longest || pos > best_end) {
+            best_end = pos;
+            best_start = pos;
+            if (ns > 0) {
+              best_start = m[at];
+            }
+            for s in 0..ns {
+              m = m.with(res + s, m[at + s]);
+            }
+          }
+          if (exists) {
+            break;
+          }
+          if (!longest) {
+            k = ccount;  // the threads after this one have a lower priority
+          }
+        }
+        if (entry >= 0) {
+          for s in 0..ns {
+            m = m.with(sc + s, m[at + s]);
+          }
+        }
+      } else if (best_end < 0 && (npos == next || !anchored && npos > next && __rx_can_start(prog, t, npos))) {
+        entry = 0;
+        for s in 0..ns {
+          m = m.with(sc + s, -1);
+        }
+      }
+      k += 1;
+      if (entry < 0) {
+        continue;
+      }
+      // The closure of `entry` at `npos` adds the threads of the next list in
+      // priority order: a split visits operand a and all that follows it
+      // before operand b.
+      m = m.with(stk, entry);
+      let sp = 2;
+      while (sp > 0) {
+        sp -= 2;
+        let pc = m[stk + sp];
+        if (pc < 0) {
+          m = m.with(sc - pc - 1, m[stk + sp + 1]);
+          continue;
+        }
+        while (m[3 + pc] != gen) {
+          m = m.with(3 + pc, gen);
+          let op = code[3 * pc];
+          if (op == RX_SPLIT) {
+            m = m.with(stk + sp, code[3 * pc + 2]);
+            sp += 2;
+            pc = code[3 * pc + 1];
+          } else if (op == RX_JMP) {
+            pc = code[3 * pc + 1];
+          } else if (op == RX_SAVE) {
+            let slot = code[3 * pc + 1];
+            if (slot < ns) {
+              m = m.with(stk + sp, -slot - 1);
+              m = m.with(stk + sp + 1, m[sc + slot]);
+              sp += 2;
+              m = m.with(sc + slot, npos);
+            }
+            pc += 1;
+          } else if (op == RX_ASSERT) {
+            if (!__rx_assert_ok(code[3 * pc + 1], t, npos)) {
+              break;
+            }
+            pc += 1;
+          } else {
+            m = m.with(nl + ncount, pc);
+            ncount += 1;
+            let to = nsl + pc * ns;
+            for s in 0..ns {
+              m = m.with(to + s, m[sc + s]);
+            }
+            break;
+          }
+        }
+      }
+    }
+    if (exists && best_end >= 0) {
+      break;
+    }
+    if (ncount == 0) {
+      if (best_end >= 0 || anchored) {
+        break;
+      }
+      next = prog.next_candidate(t, npos + 1);
+      if (next < 0) {
+        break;
+      }
+      pos = next - 1;  // no thread lives, so go to the next candidate
+      ccount = 0;
+      continue;
+    }
+    let tl = cl;
+    cl = nl;
+    nl = tl;
+    let ts = cs;
+    cs = nsl;
+    nsl = ts;
+    ccount = ncount;
+    pos = npos;
+  }
+  if (best_end < 0) {
+    best_start = -1;
+  }
+  m = m.with(0, best_start);
+  m = m.with(1, best_end);
+  return m.with(2, gen);
+}
+
+// True when a match can start at `at`. `next_candidate` gives the first such
+// offset, but it can read far past `at`.
+function __rx_can_start(prog: Regex, t: string, at: i32): boolean {
+  if (prog.first.len() == 0) {
+    return at <= t.len();
+  }
+  return at < t.len() && prog.first[t[at] as i32] != 0 && __rx_has_prefix(prog, t, at);
+}
+
+// True when the result of `__rx_exec` holds a match.
+function __rx_found(m: i32[]): boolean {
+  return m.len() > 0 && m[0] >= 0;
+}
+
+// The slots of the match in the result of `__rx_exec`.
+function __rx_slots(prog: Regex, m: i32[], ns: i32): i32[] {
+  let at = 3 + prog.code.len() / 3;
+  let out = __alloc_i32(ns);
+  for s in 0..ns {
+    out = out.with(s, m[at + s]);
   }
   return out;
 }
-```
-
-### `22 struct RThread`
-
-```fern
-<<22 struct RThread>>=
-struct RThread { pc: i32, caps: i32[] }
-
-struct RAdd { seen: i32[], gen: i32, threads: RThread[] }
-```
-
-### `23 function __rx_addthread(st: RAdd, prog: RInst[], pc: i32, caps: i32[], t: string, ti: i32): RAdd`
-
-```fern
-<<23 function __rx_addthread(st: RAdd, prog: RInst[], pc: i32, caps: i32[], t: string, ti: i32): RAdd>>=
-function __rx_addthread(st: RAdd, prog: RInst[], pc: i32, caps: i32[], t: string, ti: i32): RAdd {
-  let sn = st.seen;
-  let g = st.gen;
-  let ths = st.threads;
-  if (sn[pc] == g) {
-    return RAdd { seen: sn, gen: g, threads: ths };
-  }
-  sn = sn.with(pc, g);
-  match (prog[pc]) {
-    IJmp(a) => {
-      return __rx_addthread(RAdd { seen: sn, gen: g, threads: ths }, prog, a, caps, t, ti);
-    },
-    ISplit(sp) => {
-      let st2 = __rx_addthread(RAdd { seen: sn, gen: g, threads: ths }, prog, sp.a, caps, t, ti);
-      return __rx_addthread(st2, prog, sp.b, caps, t, ti);
-    },
-    ISave(slot) => {
-      if (slot >= caps.len()) {
-        return __rx_addthread(RAdd { seen: sn, gen: g, threads: ths }, prog, pc + 1, caps, t, ti);
-      }
-      return __rx_addthread(RAdd { seen: sn, gen: g, threads: ths }, prog, pc + 1, caps.with(slot, ti), t, ti);
-    },
-    IAssert(k) => {
-      if (__rx_assert_ok(k, t, ti)) {
-        return __rx_addthread(RAdd { seen: sn, gen: g, threads: ths }, prog, pc + 1, caps, t, ti);
-      }
-      return RAdd { seen: sn, gen: g, threads: ths };
-    },
-    _ => {
-      return RAdd { seen: sn, gen: g, threads: ths.append(RThread { pc: pc, caps: caps }) };
-    }
-  }
-}
-
-// The end and the capture slots of the match that starts at `ti0`. The end is
-// -1 when there is no match. The threads are in priority order, and a thread
-// that comes to a visited (pc, offset) state stops. Under leftmost-first, the
-// first thread that reaches IMatch wins and stops the threads after it. Under
-// `RuleLongest`, the first thread to reach the longest end wins. A slot that
-// `init` does not hold is not recorded.
-function __rx_cvm_at(prog: RInst[], t: string, ti0: i32, ci: boolean, rule: RRule, init: i32[]): (i32, i32[]) {
-  let seen = __rx_fill(prog.len(), 0);
-  let gen = 1;
-  let st = __rx_addthread(RAdd { seen: seen, gen: gen, threads: [] }, prog, 0, init, t, ti0);
-  let clist = st.threads;
-  seen = st.seen;
-  let best: i32[] = [];
-  let best_end = -1;
-  let pos = ti0;
-  while (clist.len() > 0) {
-    gen += 1;
-    let nst = RAdd { seen: seen, gen: gen, threads: [] };
-    let k = 0;
-    while (k < clist.len()) {
-      let th = clist[k];
-      match (prog[th.pc]) {
-        IChar(c) => {
-          if (pos < t.len() && __rx_fold(t[pos] as i32, ci) == __rx_fold(c, ci)) {
-            nst = __rx_addthread(nst, prog, th.pc + 1, th.caps, t, pos + 1);
-          }
-        },
-        IAny => {
-          if (pos < t.len()) {
-            nst = __rx_addthread(nst, prog, th.pc + 1, th.caps, t, pos + 1);
-          }
-        },
-        IClass(tok) => {
-          if (pos < t.len() && __rx_class(tok, t[pos] as i32, ci)) {
-            nst = __rx_addthread(nst, prog, th.pc + 1, th.caps, t, pos + 1);
-          }
-        },
-        IMatch => {
-          if (rule != RuleLongest || pos > best_end) {
-            best = th.caps;
-            best_end = pos;
-          }
-          if (rule == RuleExists) {
-            return (best_end, best);
-          }
-          if (rule == RuleFirst) {
-            break;
-          }
-        },
-        IAssert(_) => {},
-        ISplit(_) => {},
-        IJmp(_) => {},
-        ISave(_) => {}
-      }
-      k += 1;
-    }
-    clist = nst.threads;
-    seen = nst.seen;
-    if (pos >= t.len()) {
-      clist = [];
-    }
-    pos += 1;
-  }
-  return (best_end, best);
-}
 
 function __rx_csearch_from(prog: Regex, t: string, from: i32): i32[] {
-  let (start, _, caps) = __rx_run(prog, t, from, (prog.ngroups + 1) * 2, __rx_rule(prog));
-  if (start < 0) {
+  let ns = (prog.ngroups + 1) * 2;
+  let m = __rx_exec(prog, t, from, ns, __rx_rule(prog), false, []);
+  if (!__rx_found(m)) {
     return [];
   }
-  return caps;
+  return __rx_slots(prog, m, ns);
 }
 ```
-
 
 
 ### `26 function __rx_span(c: RCaps, i: i32): (i32, i32)`
@@ -1484,17 +1677,22 @@ pub function (prog: Regex) captures(text: string): Option[Captures] {
 }
 
 pub function (prog: Regex) captures_all(text: string): Captures[] {
+  let rule = __rx_rule(prog);
+  let ns = (prog.ngroups + 1) * 2;
+  let m: i32[] = [];
   let out: Captures[] = [];
   let pos = 0;
   while (pos <= text.len()) {
-    let caps = __rx_csearch_from(prog, text, pos);
+    m = __rx_exec(prog, text, pos, ns, rule, false, m);
+    if (!__rx_found(m)) {
+      return out;
+    }
+    let caps = __rx_slots(prog, m, ns);
     let Some(c) = __rx_caps_wrap(caps, text, prog.ngroups, prog.names) else {
       return out;
     };
     out = out.append(c);
-    // Slots 0/1 are the whole-match span; advance through the shared
-    // helper so this stays mechanically in step with Regex.find_all.
-    pos = __rx_advance(Match { start: caps[0], end: caps[1] });
+    pos = __rx_advance(Match { start: m[0], end: m[1] });
   }
   return out;
 }
@@ -1518,14 +1716,27 @@ pub function compile(pattern: string): Result[Regex, CompileError] {
     return Err(CompileError { kind: ProgramLimit, offset: pattern.len() });
   }
   let first = __rx_first_set(r.node, ci);
+  let (code, masks) = __rx_pack(__rx_cprog(r.node), ci);
   return Ok(Regex {
-    ci: ci, ngroups: r.g - 1, names: __rx_group_names(pattern), program: __rx_cprog(r.node),
+    ci: ci, ngroups: r.g - 1, names: __rx_group_names(pattern), code: code, masks: masks,
     first: first, lead: __rx_lead(first), prefix: __rx_prefix(r.node, ci), leftmost_longest: false,
   });
 }
 
 pub function (prog: Regex) count(text: string): i32 {
-  return prog.find_all(text).len();
+  let rule = __rx_rule(prog);
+  let m: i32[] = [];
+  let count = 0;
+  let pos = 0;
+  while (pos <= text.len()) {
+    m = __rx_exec(prog, text, pos, 1, rule, false, m);
+    if (!__rx_found(m)) {
+      return count;
+    }
+    count += 1;
+    pos = __rx_advance(Match { start: m[0], end: m[1] });
+  }
+  return count;
 }
 
 pub function (prog: Regex) find(text: string): Option[Match] {
@@ -1576,14 +1787,17 @@ pub function (prog: Regex) next_candidate(text: string, from: i32): i32 {
 }
 
 pub function (prog: Regex) find_all(text: string): Match[] {
+  let rule = __rx_rule(prog);
+  let m: i32[] = [];
   let out: Match[] = [];
   let pos = 0;
   while (pos <= text.len()) {
-    let Some(m) = __rx_search_from(prog, text, pos) else {
+    m = __rx_exec(prog, text, pos, 1, rule, false, m);
+    let Some(found) = __rx_match(m) else {
       return out;
     };
-    out = out.append(m);
-    pos = __rx_advance(m);
+    out = out.append(found);
+    pos = __rx_advance(found);
   }
   return out;
 }
@@ -1676,22 +1890,21 @@ pub function (prog: Regex) index_of(text: string): Option[i32] {
 // The longest match from offset 0 ends at the end of the text exactly when a
 // match of the full text exists.
 pub function (prog: Regex) is_full_match(text: string): boolean {
-  let (end, _) = __rx_cvm_at(prog.program, text, 0, prog.ci, RuleLongest, []);
-  return end == text.len();
+  let m = __rx_exec(prog, text, 0, 1, RuleLongest, true, []);
+  return __rx_found(m) && m[1] == text.len();
 }
 
 // A copy of `prog` that gives the longest match at the leftmost start, as
 // POSIX does.
 pub function (prog: Regex) longest(): Regex {
   return Regex {
-    ci: prog.ci, ngroups: prog.ngroups, names: prog.names, program: prog.program,
+    ci: prog.ci, ngroups: prog.ngroups, names: prog.names, code: prog.code, masks: prog.masks,
     first: prog.first, lead: prog.lead, prefix: prog.prefix, leftmost_longest: true,
   };
 }
 
 pub function (prog: Regex) is_match(text: string): boolean {
-  let (start, _, _) = __rx_run(prog, text, 0, 0, RuleExists);
-  return start >= 0;
+  return __rx_found(__rx_exec(prog, text, 0, 0, RuleExists, false, []));
 }
 
 pub function (e: CompileError) message(): string {
@@ -1759,11 +1972,14 @@ pub function (prog: Regex) replace_groups_bytes(text: string, tmpl: string): u8[
 }
 
 pub function (prog: Regex) split(text: string): Result[string[], TextError] {
+  let rule = __rx_rule(prog);
+  let mem: i32[] = [];
   let out: string[] = [];
   let last = 0;
   let pos = 0;
   while (pos <= text.len()) {
-    let Some(m) = __rx_search_from(prog, text, pos) else {
+    mem = __rx_exec(prog, text, pos, 1, rule, false, mem);
+    let Some(m) = __rx_match(mem) else {
       if (!utf8.is_char_boundary(text, last)) {
         return Err(InvalidUtf8Output);
       }
@@ -1792,11 +2008,14 @@ pub function (prog: Regex) split(text: string): Result[string[], TextError] {
 }
 
 pub function (prog: Regex) split_bytes(text: string): u8[][] {
+  let rule = __rx_rule(prog);
+  let mem: i32[] = [];
   let out: u8[][] = [];
   let last = 0;
   let pos = 0;
   while (pos <= text.len()) {
-    let Some(m) = __rx_search_from(prog, text, pos) else {
+    mem = __rx_exec(prog, text, pos, 1, rule, false, mem);
+    let Some(m) = __rx_match(mem) else {
       out = out.append(__rx_bytes(text, last, text.len()));
       return out;
     };
@@ -1881,7 +2100,7 @@ struct RClassUnit { kind: i32, lo: i32, hi: i32 }
 // `first` marks, or -1. Each match starts with the bytes of `prefix`, folded
 // to lower case under `ci`. `leftmost_longest` selects the longest match at
 // the leftmost start in place of the first.
-pub struct Regex { ci: boolean, ngroups: i32, names: string[], program: RInst[], first: u8[], lead: i32, prefix: u8[], leftmost_longest: boolean }
+pub struct Regex { ci: boolean, ngroups: i32, names: string[], code: i32[], masks: i32[], first: u8[], lead: i32, prefix: u8[], leftmost_longest: boolean }
 ```
 
 ### Module introduction
