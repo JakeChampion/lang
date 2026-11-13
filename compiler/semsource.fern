@@ -2889,7 +2889,8 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
   if (ssasem.contract_variables(contract).len() > 0) {
     return invoke_method(recv, c.args, contract, s, written_binding(c, contract, s), destination_binding(contract, expected));
   }
-  let lent = lend(widen(Value { s: s, id: recv }, contract.params[0]), contract.params[0], contract.modes[0], keeps(s, contract, 0));
+  let kept = keeps(s, contract, 0);
+  let lent = lend(widen(Value { s: s, id: recv }, contract.params[0]), contract.params[0], contract.modes[0], kept);
   s = lent.s;
   recv = lent.id;
   if (!semtypes.equal(s.values[recv], contract.params[0])) {
@@ -2897,7 +2898,8 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
   }
   let ids: i32[] = [recv];
   for i in 0..c.args.len() {
-    let v = lend(expr(c.args[i], s, contract.params[i + 1]), contract.params[i + 1], contract.modes[i + 1], keeps(s, contract, i + 1));
+    let kept_arg = keeps(s, contract, i + 1);
+    let v = lend(expr(c.args[i], s, contract.params[i + 1]), contract.params[i + 1], contract.modes[i + 1], kept_arg);
     s = v.s;
     if (!s.ok) {
       return v;
@@ -3517,13 +3519,6 @@ function destination_binding(contract: ssasem.Contract, expected: typeinfo.Type)
 }
 
 function call(e: ast.Expr, c: ast.ExprCall, s: State, statement: boolean, expected: typeinfo.Type): Value {
-  if (!statement && typeinfo.is_void(checked(e, s))) {
-    let done = discard(e, s);
-    if (!done.ok) {
-      return Value { s: done, id: -1 };
-    }
-    return unit_value(done);
-  }
   if (parser.is_value_block(c)) {
     return value_block(e, c, s, expected);
   }
@@ -3899,7 +3894,8 @@ function invoke_method(recv: i32, args: ast.Expr[], contract: ssasem.Contract, s
   if (!written.ok) {
     return refused(s, written.why);
   }
-  let v = lend(Value { s: s, id: recv }, contract.params[0], contract.modes[0], keeps(s, contract, 0));
+  let kept = keeps(s, contract, 0);
+  let v = lend(Value { s: s, id: recv }, contract.params[0], contract.modes[0], kept);
   s = v.s;
   if (!s.ok) {
     return v;
@@ -3926,7 +3922,9 @@ function invoke_rest(ids: i32[], bound: ssasem.Binding, args: ast.Expr[], base: 
     if (!semtypes.concrete(want, false)) {
       want = ssasem.substitute(want, later_binding(bound, args, i + 1, base, contract, s));
     }
-    let v = kernel_argument(lend(expr(args[i], s, want), want, contract.modes[at], keeps(s, contract, at)), want);
+    // Before the argument: the state must have no other reader while `expr` grows it.
+    let kept = keeps(s, contract, at);
+    let v = kernel_argument(lend(expr(args[i], s, want), want, contract.modes[at], kept), want);
     s = v.s;
     if (!s.ok) {
       return v;
@@ -7057,28 +7055,22 @@ function (h: Handers) stored_mask(key: string): i64 {
   return h.stored[at];
 }
 
-function handers_with(h: Handers, key: string, mask: i64, kept: i64): Handers {
-  let keys = h.keys;
-  let masks = h.masks;
-  let stored = h.stored;
-  let at = keys.find(key);
+function handers_with(own h: Handers, key: string, mask: i64, kept: i64): Handers {
+  let at = h.keys.find(key);
   if (at < 0) {
-    keys = keys.added(key);
-    masks = masks.append(mask);
-    stored = stored.append(kept);
+    h = Handers { ...h, keys: h.keys.added(key), masks: h.masks.append(mask), stored: h.stored.append(kept) };
   } else {
-    masks = masks.with(at, masks[at] | mask);
-    stored = stored.with(at, stored[at] | kept);
+    h = Handers { ...h, masks: h.masks.with(at, h.masks[at] | mask), stored: h.stored.with(at, h.stored[at] | kept) };
   }
   let m = method_name_of(key);
   if (m.len() == 0) {
-    return Handers { ...h, keys: keys, masks: masks, stored: stored };
+    return h;
   }
   let mat = h.methods.find(m);
   if (mat < 0) {
-    return Handers { keys: keys, masks: masks, stored: stored, methods: h.methods.added(m), method_masks: h.method_masks.append(mask), method_stored: h.method_stored.append(kept) };
+    return Handers { ...h, methods: h.methods.added(m), method_masks: h.method_masks.append(mask), method_stored: h.method_stored.append(kept) };
   }
-  return Handers { keys: keys, masks: masks, stored: stored, methods: h.methods, method_masks: h.method_masks.with(mat, h.method_masks[mat] | mask), method_stored: h.method_stored.with(mat, h.method_stored[mat] | kept) };
+  return Handers { ...h, method_masks: h.method_masks.with(mat, h.method_masks[mat] | mask), method_stored: h.method_stored.with(mat, h.method_stored[mat] | kept) };
 }
 
 function return_exprs(st: ast.Stmt, own acc: ast.Expr[]): ast.Expr[] {
@@ -7266,7 +7258,7 @@ function hands_back(fd: parser.FuncDecl, known: Handers): (i64, i64) {
         c = Carried { names: c.names.append(b.name), sets: c.sets.append(held) };
         grew = true;
       } else if (at >= 0 && (c.sets[at] | held) != c.sets[at]) {
-        c = Carried { names: c.names, sets: c.sets.with(at, c.sets[at] | held) };
+        c = Carried { ...c, sets: c.sets.with(at, c.sets[at] | held) };
         grew = true;
       }
     }
