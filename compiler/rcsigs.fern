@@ -200,7 +200,10 @@ function sealing_ops(): string[] {
   return ["aes_gcm_seal_into", "aes_gcm_open_into"];
 }
 
-pub struct OpTable { names: util.NameIndex, sigs: Sig[] }
+// owned_frame_views: a view in the frame of its function holds a unit. It
+// does on wasm, where a string slice is a copy on the heap. On the register
+// backends the count of such a view is immortal.
+pub struct OpTable { names: util.NameIndex, sigs: Sig[], owned_frame_views: boolean }
 
 pub function op_table(): OpTable {
   let rows = Rows { names: [], sigs: [] };
@@ -218,7 +221,11 @@ pub function op_table(): OpTable {
   rows = add(rows, ["opt_make_w", "arr_make_i64", "const_option", "const_struct", "const_closure"], inert(result_none()));
   rows = add(rows, ["args", "environ"], inert(result_unknown()));
   rows = add(rows, ["alloc", "raw_alloc"], inert(result_unknown()));
-  return OpTable { names: util.name_index(rows.names), sigs: rows.sigs };
+  return OpTable { names: util.name_index(rows.names), sigs: rows.sigs, owned_frame_views: false };
+}
+
+pub function with_owned_frame_views(t: OpTable): OpTable {
+  return OpTable { ...t, owned_frame_views: true };
 }
 
 pub function (t: OpTable) op_lookup(kind: string): Sig {

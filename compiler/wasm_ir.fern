@@ -5479,7 +5479,7 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irtables
   let strs = placed_strs(str_values(cache));
   let caggs = placed_caggs(const_agg_values(cache), 0);
   let ft = fn_value_table(cache);
-  let vgate = irverifygate.with_memo(irverifygate.gate(irtables.fn_sig_index(all_funcs, mod.funcs, cache), ssa_lift.kind_table(), physicalbody.abis(physical)), irverifygate.open_memo("wasm32"));
+  let vgate = irverifygate.with_memo(irverifygate.with_owned_frame_views(irverifygate.gate(irtables.fn_sig_index(all_funcs, mod.funcs, cache), ssa_lift.kind_table(), physicalbody.abis(physical))), irverifygate.open_memo("wasm32"));
   let parts: string[] = [];
   for fi in 0..mod.funcs.len() {
     if (mod.funcs[fi].import_iface.len() == 0 && !cache[fi].superseded) {
