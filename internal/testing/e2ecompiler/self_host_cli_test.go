@@ -14,6 +14,20 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
+// splitManifest gives the assembly without its FERNBUILD1 manifest line, and
+// that line.
+func splitManifest(asm string) (code, manifest string) {
+	var b strings.Builder
+	for _, line := range strings.SplitAfter(asm, "\n") {
+		if strings.Contains(line, "FERNBUILD1 ") {
+			manifest = line
+			continue
+		}
+		b.WriteString(line)
+	}
+	return b.String(), manifest
+}
+
 func TestSelfHostCLIX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -448,7 +462,12 @@ function main(): i32 {
 		if code != 0 {
 			t.Fatalf("-O emit exited %d, want 0", code)
 		}
-		if string(optAsm) != string(defAsm) {
+		optCode, optManifest := splitManifest(string(optAsm))
+		defCode, defManifest := splitManifest(string(defAsm))
+		if !strings.Contains(optManifest, " optimize=1 ") || !strings.Contains(defManifest, " optimize=0 ") {
+			t.Errorf("%s: the manifests do not record -O:\n-O: %s\ndefault: %s", name, optManifest, defManifest)
+		}
+		if optCode != defCode {
 			t.Errorf("%s: -O changed the emitted code; folding is meant to run on every build\n"+
 				"--- -O ---\n%s\n--- default ---\n%s", name, optAsm, defAsm)
 		}
