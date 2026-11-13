@@ -1,0 +1,375 @@
+// The age v1 format: the header, its MAC, the X25519 recipient stanza, and
+// the STREAM of ChaCha20-Poly1305 chunks (age-encryption.org/v1).
+import "std/array";
+import "std/crypto";
+import "std/crypto/aead";
+import "std/crypto/chacha20poly1305";
+import "std/option";
+import "std/result";
+import "std/crypto/x25519";
+import "./source";
+import "./text";
+
+pub const INTRO: string = "age-encryption.org/v1";
+
+// The plaintext bytes in one chunk of the payload.
+pub const CHUNK: i32 = 65536;
+
+// The bytes of a sealed chunk: the text and the 16-byte tag.
+pub const SEALED: i32 = 65552;
+
+const X25519_LABEL: string = "age-encryption.org/v1/X25519";
+
+pub struct Stanza { kind: string, args: string[], body: u8[] }
+
+pub struct Header { stanzas: Stanza[], mac: u8[] }
+
+// The prefix of age's format.ParseError.
+function parse_error(m: string): string {
+  return "parsing age header: " + m;
+}
+
+// age's splitArgs: the line without its "\n", split at each space.
+function split_args(line: [u8]): u8[][] {
+  let n = line.len();
+  if (n > 0 && line[n - 1] == b'\n') {
+    n -= 1;
+  }
+  let out: u8[][] = [];
+  let start = 0;
+  for i in 0..n {
+    if (line[i] == b' ') {
+      out = out.append(text.copy(line[start:i]));
+      start = i + 1;
+    }
+  }
+  return out.append(text.copy(line[start:n]));
+}
+
+// A stanza argument: one or more bytes from 33 to 126.
+function valid_arg(a: [u8]): boolean {
+  if (a.len() == 0) {
+    return false;
+  }
+  for c in a {
+    if (c < 33 || c > 126) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function body_line_error(line: [u8], why: string): string {
+  return parse_error("malformed body line " + text.quote(line) + ": " + why);
+}
+
+function read_body(own s: source.Src, kind: string, args: string[]): (source.Src, Result[Stanza, string]) {
+  let body: u8[] = [];
+  loop {
+    let (t, line, f) = source.read_line(s);
+    s = t;
+    if let Some(e) = f {
+      return (s, Err("failed to read line: " + e.message()));
+    }
+    let content = line[0:line.len() - 1];
+    let b = match (text.decode_string(content)) {
+      Ok(b) => b,
+      Err(why) => {
+        if (text.has_prefix(line, "---") || text.has_prefix(line, "->")) {
+          return (s, Err("malformed body line " + text.quote(line) + ": stanza ended without a short line\nNote: this might be a file encrypted with an old beta version of age or rage. Use age v1.0.0-beta6 or rage to decrypt it."));
+        }
+        return (s, Err(body_line_error(line, why)));
+      },
+    };
+    if (b.len() > 48) {
+      return (s, Err(body_line_error(line, "too long")));
+    }
+    body = body.concat(b);
+    if (b.len() < 48) {
+      return (s, Ok(Stanza { kind: kind, args: args, body: body }));
+    }
+  }
+  return (s, Err(""));
+}
+
+// age's StanzaReader.ReadStanza.
+function read_stanza(own s: source.Src): (source.Src, Result[Stanza, string]) {
+  let (t, line, f) = source.read_line(s);
+  if let Some(e) = f {
+    return (t, Err("failed to read line: " + e.message()));
+  }
+  if (!text.has_prefix(line, "->")) {
+    return (t, Err("malformed stanza opening line: " + text.quote(line)));
+  }
+  let parts = split_args(line);
+  if (!text.equals(parts[0], "->") || parts.len() < 2) {
+    return (t, Err("malformed stanza: " + text.quote(line)));
+  }
+  let args: string[] = [];
+  for i in 1..parts.len() {
+    if (!valid_arg(parts[i])) {
+      return (t, Err("malformed stanza: " + text.quote(line)));
+    }
+    args = args.append(text.ascii(parts[i]));
+  }
+  return read_body(t, args[0], array.slice(args, 1, args.len()));
+}
+
+// The MAC line, after "---".
+function read_mac(own s: source.Src): (source.Src, Result[u8[], string]) {
+  let (t, line, f) = source.read_line(s);
+  if let Some(e) = f {
+    return (t, Err("failed to read header: " + e.message()));
+  }
+  let parts = split_args(line);
+  if (!text.equals(parts[0], "---") || parts.len() != 2) {
+    return (t, Err(parse_error("malformed closing line: " + text.quote(line))));
+  }
+  match (text.decode_string(parts[1])) {
+    Ok(mac) => {
+      if (mac.len() != 32) {
+        return (t, Err(parse_error("malformed closing line " + text.quote(line) + ": <nil>")));
+      }
+      return (t, Ok(mac));
+    },
+    Err(why) => {
+      return (t, Err(parse_error("malformed closing line " + text.quote(line) + ": " + why)));
+    }
+  }
+}
+
+// age's format.Parse. The error is the message after "failed to read
+// header: ".
+pub function parse(own s: source.Src): (source.Src, Result[Header, string]) {
+  let (t, intro, f) = source.read_line(s);
+  s = t;
+  if let Some(e) = f {
+    return (s, Err(parse_error("failed to read intro: " + e.message())));
+  }
+  if (!text.equals(intro, INTRO + "\n")) {
+    return (s, Err(parse_error("unexpected intro: " + text.quote(intro))));
+  }
+  let stanzas: Stanza[] = [];
+  loop {
+    let (u, g) = source.peek(s, 3);
+    s = u;
+    if let Some(e) = g {
+      return (s, Err(parse_error("failed to read header: " + e.message())));
+    }
+    if (source.next_is(s, "---")) {
+      let (v, mac) = read_mac(s);
+      return match (mac) {
+        Ok(m) => (v, Ok(Header { stanzas: stanzas, mac: m })),
+        Err(why) => (v, Err(why)),
+      };
+    }
+    let (v, st) = read_stanza(s);
+    s = v;
+    match (st) {
+      Ok(x) => {
+        stanzas = stanzas.append(x);
+      },
+      Err(why) => {
+        return (s, Err("failed to parse header: " + why));
+      }
+    }
+  }
+  return (s, Err(""));
+}
+
+// A stanza as the header holds it: the body is in lines of 64 columns, and
+// the last line is shorter, so it can be empty.
+pub function marshal_stanza(st: Stanza): string {
+  let out = "-> " + st.kind;
+  for a in st.args {
+    out += " " + a;
+  }
+  out += "\n";
+  let body = text.b64_raw(st.body);
+  let at = 0;
+  while (at + 64 <= body.len()) {
+    out += body[at:at + 64].unwrap_or("") + "\n";
+    at += 64;
+  }
+  return out + body[at:body.len()].unwrap_or("") + "\n";
+}
+
+// The header up to and with "---": the bytes that the MAC covers.
+pub function marshal_without_mac(h: Header): string {
+  let out = INTRO + "\n";
+  for st in h.stanzas {
+    out += marshal_stanza(st);
+  }
+  return out + "---";
+}
+
+pub function marshal(h: Header): string {
+  return marshal_without_mac(h) + " " + text.b64_raw(h.mac) + "\n";
+}
+
+pub function header_mac(file_key: [u8], h: Header): u8[] {
+  let key = crypto.hkdf_sha256([], file_key, "header".as_bytes(), 32);
+  let mac = crypto.hmac_sha256(key, marshal_without_mac(h).as_bytes());
+  crypto.erase(key);
+  return mac;
+}
+
+// True when the MAC of the header under the file key is the MAC in the
+// header. Only the verdict is public.
+pub function mac_ok(file_key: [u8], h: Header): boolean {
+  let want = header_mac(file_key, h);
+  let diff = 0;
+  for i in 0..32 {
+    diff |= want[i] ^ h.mac[i];
+  }
+  let verdict = __alloc_u8(1);
+  verdict = verdict.with(0, diff);
+  __ct_public(verdict);
+  return verdict[0] == 0;
+}
+
+// The nonce of chunk n as the iv and the sequence number that
+// std/crypto/chacha20poly1305 folds into the iv: an 11-byte big-endian counter
+// and a last-chunk flag byte. The counter must be less than 2^55.
+pub function chunk_seq(n: i64, last: boolean): u64 {
+  let flag = if (last) { 1i64 } else { 0i64 };
+  return (n << 8 | flag) as u64;
+}
+
+// The 12 bytes of the nonce of chunk n.
+pub function chunk_nonce(n: i64, last: boolean): u8[] {
+  let seq = chunk_seq(n, last);
+  let out = __alloc_u8(12);
+  for i in 0..8 {
+    out = out.with(4 + i, (seq >> (56 - 8 * i) as u64 & 255u64) as u8);
+  }
+  return out;
+}
+
+pub const ZERO_IV: u8[] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+
+// The key of the payload STREAM: HKDF-SHA256 with the payload nonce as salt.
+pub function payload_key(file_key: [u8], nonce: [u8]): Result[chacha20poly1305.Key, aead.AeadError] {
+  let k = crypto.hkdf_sha256(nonce, file_key, "payload".as_bytes(), 32);
+  let key = chacha20poly1305.key(k);
+  crypto.erase(k);
+  return key;
+}
+
+// Seals buf[0:n] as chunk index in place and gives the n + 16 sealed bytes.
+pub function seal_chunk(k: chacha20poly1305.Key, index: i64, last: boolean, own buf: u8[], n: i32): Result[u8[], aead.AeadError] {
+  return k.seal_in_place(ZERO_IV, chunk_seq(index, last), buf, 0, 0, 0, n);
+}
+
+// Opens a sealed chunk. The result holds the plaintext in its first
+// sealed.len() - 16 bytes.
+pub function open_chunk(k: chacha20poly1305.Key, index: i64, last: boolean, own sealed: u8[]): Option[u8[]] {
+  let n = sealed.len() - 16;
+  if (n < 0) {
+    return None;
+  }
+  match (k.open_in_place(ZERO_IV, chunk_seq(index, last), sealed, 0, 0, 0, n)) {
+    Ok(b) => {
+      return Some(b);
+    },
+    Err(_) => {
+      return None;
+    }
+  }
+}
+
+function wrap_key(shared: [u8], share: [u8], recipient: [u8]): Result[chacha20poly1305.Key, aead.AeadError] {
+  let k = crypto.hkdf_sha256(text.copy(share).concat(recipient), shared, X25519_LABEL.as_bytes(), 32);
+  let key = chacha20poly1305.key(k);
+  crypto.erase(k);
+  return key;
+}
+
+// The X25519 stanza that wraps the file key to the recipient's public key.
+// ephemeral is a fresh secret scalar.
+pub function wrap(file_key: [u8], recipient: [u8], ephemeral: [u8]): Result[Stanza, string] {
+  let share = match (x25519.public_key(ephemeral)) {
+    Ok(p) => p,
+    Err(e) => {
+      return Err(e.message());
+    },
+  };
+  __ct_public(share);
+  let shared = match (x25519.x25519(ephemeral, recipient)) {
+    Ok(p) => p,
+    Err(e) => {
+      return Err(e.message());
+    },
+  };
+  let wrapped = wrap_key(shared, share, recipient);
+  crypto.erase(shared);
+  let body = match (wrapped) {
+    Ok(key) => match (key.seal(ZERO_IV, file_key, [])) {
+      Ok(b) => b,
+      Err(e) => {
+        return Err(e.message());
+      },
+    },
+    Err(e) => {
+      return Err(e.message());
+    },
+  };
+  __ct_public(body);
+  return Ok(Stanza { kind: "X25519", args: [text.b64_raw(share)], body: body });
+}
+
+// The result of one identity on one stanza.
+pub enum Unwrapped {
+  FileKey(u8[]),
+  // Not this identity's stanza: age's ErrIncorrectIdentity.
+  Incorrect,
+  Invalid(string),
+}
+
+// age's X25519Identity.unwrap. scalar is secret; public is its public key.
+// The ephemeral share of an X25519 stanza.
+function share_of(st: Stanza): Result[u8[], string] {
+  if (st.args.len() != 1) {
+    return Err("invalid X25519 recipient block");
+  }
+  let share = match (text.decode_string(st.args[0].as_bytes())) {
+    Ok(b) => b,
+    Err(why) => {
+      return Err("failed to parse X25519 recipient: " + why);
+    },
+  };
+  if (share.len() != 32) {
+    return Err("invalid X25519 recipient block");
+  }
+  return Ok(share);
+}
+
+pub function unwrap(st: Stanza, scalar: [u8], public: [u8]): Unwrapped {
+  if (st.kind != "X25519") {
+    return Incorrect;
+  }
+  let share = match (share_of(st)) {
+    Ok(b) => b,
+    Err(why) => {
+      return Invalid(why);
+    },
+  };
+  let shared = match (x25519.x25519(scalar, share)) {
+    Ok(p) => p,
+    Err(_) => {
+      return Invalid("invalid X25519 recipient: crypto/ecdh: bad X25519 remote ECDH input: low order point");
+    },
+  };
+  let key = wrap_key(shared, share, public);
+  crypto.erase(shared);
+  if (st.body.len() != 32) {
+    return Invalid("invalid X25519 recipient block: incorrect file key size");
+  }
+  let Ok(k) = key else {
+    return Incorrect;
+  };
+  return match (k.open(ZERO_IV, st.body, [])) {
+    Ok(file_key) => FileKey(file_key),
+    Err(_) => Incorrect,
+  };
+}

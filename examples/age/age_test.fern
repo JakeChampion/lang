@@ -1,0 +1,643 @@
+// The parts of the age port that do no I/O: bech32, the header and its MAC,
+// the stanzas and their refusals, the STREAM nonces, the armor, and the
+// command line.
+import "std/test";
+import "std/base64";
+import "std/crypto";
+import "std/crypto/chacha20poly1305";
+import "std/hex";
+import "std/option";
+import "std/result";
+import "./bech32";
+import "./cli";
+import "./format";
+import "./keys";
+import "./source";
+import "./text";
+
+// The x25519 vector of the C2SP CCTV age suite.
+const IDENTITY: string = "AGE-SECRET-KEY-1EGTZVFFV20835NWYV6270LXYVK2VKNX2MMDKWYKLMGR48UAWX40Q2P2LM0";
+
+const HEADER: string = "age-encryption.org/v1\n-> X25519 TEiF0ypqr+bpvcqXNyCVJpL7OuwPdVwPL7KQEbFDOCc\nhjabGXwSLQ9c3S6Lw2i+S2Tu2fiwQHHslbBN6B41FLE\n--- WyJp9F/9FOZh7gJdheq2WIJcwHgYc8NIVh3ddwhrcNg\n";
+
+const PAYLOAD: string = "eecf62c7ce91b433274e68d4f2f9134cb74c5bfef7beaa52c8f0bc0e992c1e8331fb66";
+
+const PAYLOAD_SHA256: string = "013f54400c82da08037759ada907a8b864e97de81c088a182062c4b5622fd2ab";
+
+const FILE_KEY: string = "59454c4c4f57205355424d4152494e45";
+
+function unhex(s: string): u8[] {
+  let Ok(b) = hex.decode(s) else {
+    return [];
+  };
+  return b;
+}
+
+function decoded(s: string): string {
+  return match (bech32.decode(s.as_bytes())) {
+    Ok(d) => d.hrp + " " + hex.encode(d.data),
+    Err(why) => "error: " + why,
+  };
+}
+
+function test_bech32_vectors(): test.TestOutcome {
+  let got = [
+    decoded("A12UEL5L"),
+    decoded("a12uel5l"),
+    decoded("abcdef1qpzry9x8gf2tvdw0s3jn54khce6mua7lmqqqxw"),
+    decoded("pzry9x0s0muk"),
+    decoded("1pzry9x0s0muk"),
+    decoded("x1b4n0q5v"),
+    decoded("li1dgmt3"),
+    decoded("A1G7SGD8"),
+    decoded("A12uEL5L"),
+    decoded("abc1éqqqqqqq"),
+    decoded("a\x7f1qqqqqqq"),
+  ];
+  return test.assert_eq_array(got, [
+    "A ",
+    "a ",
+    "abcdef 00443214c74254b635cf84653a56d7c675be77df",
+    "error: separator '1' at invalid position: pos=-1, len=12",
+    "error: separator '1' at invalid position: pos=0, len=13",
+    "error: invalid character data part: s[0]=98",
+    "error: separator '1' at invalid position: pos=2, len=8",
+    "error: invalid checksum",
+    "error: mixed case",
+    "error: invalid character data part: s[0]=233",
+    "error: invalid character human-readable part: s[1]=127",
+  ]);
+}
+
+function test_bech32_round_trip(): test.TestOutcome {
+  let key = __alloc_u8(32);
+  for i in 0..32 {
+    key = key.with(i, (i * 37 + 11) as u8);
+  }
+  let low = bech32.encode("age", key);
+  let up = bech32.encode("AGE-SECRET-KEY-", key);
+  let back = match (bech32.decode(low.as_bytes())) {
+    Ok(d) => d.hrp == "age" && hex.encode(d.data) == hex.encode(key),
+    Err(_) => false,
+  };
+  let secret = match (bech32.decode_secret(up.as_bytes())) {
+    Some(s) => hex.encode(s) == hex.encode(key),
+    None => false,
+  };
+  return test.assert_eq_array([low.starts_with("age1"), up.starts_with("AGE-SECRET-KEY-1"), up == up.to_ascii_upper(), back, secret], [true, true, true, true, true]);
+}
+
+// The line with the byte at i changed to c.
+function changed(line: string, i: i32, c: u8): string {
+  return text.ascii(text.copy(line.as_bytes()).with(i, c));
+}
+
+// What decode_secret gives for a key line, against the variable-time decoder.
+function secret_verdict(line: string): string {
+  let plain = match (bech32.decode(line.as_bytes())) {
+    Ok(d) => hex.encode(d.data),
+    Err(_) => "",
+  };
+  return match (bech32.decode_secret(line.as_bytes())) {
+    Some(k) => if (hex.encode(k) == plain) {
+      "key"
+    } else {
+      "wrong key"
+    },
+    None => "refused: " + keys.secret_key_error(line.as_bytes()),
+  };
+}
+
+function test_secret_keys(): test.TestOutcome {
+  let n = IDENTITY.len();
+  let got = [
+    secret_verdict(IDENTITY),
+    secret_verdict(changed(IDENTITY, n - 1, b'1')),
+    secret_verdict(changed(IDENTITY, n - 1, b'2')),
+    secret_verdict(changed(IDENTITY, 30, b'b')),
+    secret_verdict(changed(IDENTITY, 30, b'O')),
+    secret_verdict(IDENTITY + "Q"),
+    secret_verdict(IDENTITY[0:n - 1].unwrap_or("").to_owned()),
+    secret_verdict(bech32.encode("AGE-SECRET-KEY-", __alloc_u8(31))),
+    secret_verdict(bech32.encode("AGE-SECRET-KEX-", __alloc_u8(32))),
+  ];
+  return test.assert_eq_array(got, [
+    "key",
+    "refused: separator '1' at invalid position: pos=73, len=74",
+    "refused: invalid checksum",
+    "refused: mixed case",
+    "refused: invalid character data part: s[14]=111",
+    "refused: invalid checksum",
+    "refused: invalid checksum",
+    "refused: invalid X25519 secret key",
+    "refused: unknown type \"AGE-SECRET-KEX-\"",
+  ]);
+}
+
+function first_error(r: Result[keys.Identity[], string]): string {
+  return match (r) {
+    Ok(ids) => "ok " + ids.len().to_string(),
+    Err(why) => why,
+  };
+}
+
+function test_identity_files(): test.TestOutcome {
+  let got = [
+    first_error(keys.identities("# a comment\n\n".bytes().concat(IDENTITY.as_bytes()).concat("\r\n".as_bytes()))),
+    first_error(keys.identities((IDENTITY + "\n" + IDENTITY).bytes())),
+    first_error(keys.identities("".bytes())),
+    first_error(keys.identities("# only\n".bytes())),
+    first_error(keys.identities((" " + IDENTITY).bytes())),
+    first_error(keys.identities(("# x\n" + IDENTITY.to_ascii_lower()).bytes())),
+    first_error(keys.identities((IDENTITY + " ").bytes())),
+    first_error(keys.identities("AGE-PLUGIN-X-1QQ\n".bytes())),
+  ];
+  return test.assert_eq_array(got, [
+    "ok 1",
+    "ok 2",
+    "no secret keys found",
+    "no secret keys found",
+    "error at line 1: unknown identity type",
+    "error at line 2: unknown identity type",
+    "error at line 1: malformed secret key: invalid character data part: s[58]=32",
+    "error at line 1: plugin identities are not supported by this port",
+  ]);
+}
+
+function recipient(arg: string): string {
+  return match (keys.parse_recipient(arg)) {
+    Ok(k) => "key " + k.len().to_string(),
+    Err(why) => why,
+  };
+}
+
+function test_recipients(): test.TestOutcome {
+  let r = bech32.encode("age", __alloc_u8(32));
+  let got = [
+    recipient(r),
+    recipient(r.to_ascii_upper()),
+    recipient(""),
+    recipient("age1"),
+    recipient(bech32.encode("age", __alloc_u8(31))),
+    recipient("age1foo1qqqqqqqqqqqqq"),
+    recipient(changed(r, 10, b'b')),
+  ];
+  return test.assert_eq_array(got, [
+    "key 32",
+    f"unknown recipient type: \"{r.to_ascii_upper()}\"",
+    "unknown recipient type: \"\"",
+    "malformed recipient \"age1\": separator '1' at invalid position: pos=3, len=4",
+    f"malformed recipient \"{bech32.encode("age", __alloc_u8(31))}\": invalid X25519 public key",
+    "invalid recipient encoding \"age1foo1qqqqqqqqqqqqq\": invalid checksum",
+    f"malformed recipient \"{changed(r, 10, b'b')}\": invalid character data part: s[6]=98",
+  ]);
+}
+
+function header_of(src: string): Result[format.Header, string] {
+  let (_, r) = format.parse(source.plain(source.raw_bytes(src.bytes())));
+  return r;
+}
+
+function parse_message(src: string): string {
+  return match (header_of(src)) {
+    Ok(h) => "ok " + h.stanzas.len().to_string(),
+    Err(why) => why,
+  };
+}
+
+// The header, its MAC under the file key, the unwrap of its stanza and the
+// payload, which decrypts to the bytes the vector names.
+function test_vector(): test.TestOutcome {
+  let Ok(h) = header_of(HEADER) else {
+    return test.fail("the header does not parse");
+  };
+  let Ok(ids) = keys.identities(IDENTITY.bytes()) else {
+    return test.fail("the identity does not parse");
+  };
+  let key = match (format.unwrap(h.stanzas[0], ids[0].scalar, ids[0].public)) {
+    format.FileKey(k) => k,
+    _ => {
+      return test.fail("the stanza does not unwrap");
+    },
+  };
+  let payload = unhex(PAYLOAD);
+  let Ok(pk) = format.payload_key(key, payload[0:16]) else {
+    return test.fail("no payload key");
+  };
+  let opened = format.open_chunk(pk, 0, true, text.copy(payload[16:payload.len()]));
+  let wrong_flag = format.open_chunk(pk, 0, false, text.copy(payload[16:payload.len()]));
+  let plain = match (opened) {
+    Some(b) => hex.encode(crypto.sha256(b[0:b.len() - 16])),
+    None => "",
+  };
+  return test.assert_eq_array(
+    [
+      hex.encode(key),
+      format.marshal(h),
+      format.mac_ok(key, h).to_string(),
+      format.mac_ok(__alloc_u8(16), h).to_string(),
+      plain,
+      wrong_flag.is_none().to_string(),
+    ],
+    [FILE_KEY, HEADER, "true", "false", PAYLOAD_SHA256, "true"],
+  );
+}
+
+const STANZA: string = "-> X25519 TEiF0ypqr+bpvcqXNyCVJpL7OuwPdVwPL7KQEbFDOCc\n";
+
+const BODY: string = "hjabGXwSLQ9c3S6Lw2i+S2Tu2fiwQHHslbBN6B41FLE\n";
+
+const MAC: string = "--- WyJp9F/9FOZh7gJdheq2WIJcwHgYc8NIVh3ddwhrcNg\n";
+
+const INTRO: string = "age-encryption.org/v1\n";
+
+function test_header_refusals(): test.TestOutcome {
+  let got = [
+    parse_message(""),
+    parse_message("age-encryption.org/v1"),
+    parse_message("age-encryption.org/v2\n" + STANZA + BODY + MAC),
+    parse_message(INTRO + STANZA + BODY),
+    parse_message(INTRO + STANZA + BODY + "--- abc def\n"),
+    parse_message(INTRO + STANZA + BODY + "---x WyJp\n"),
+    parse_message(INTRO + STANZA + BODY + "--- AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ\n"),
+    parse_message(INTRO + STANZA + BODY + "--- WyJp9F/9FOZh7gJdheq2WIJcwHgYc8NIVh3ddwhrcNg\r\n"),
+    parse_message(INTRO + STANZA + BODY + "--- WyJp9F/9FOZh7gJdheq2WIJcwHgYc8NIVh3ddwhrcNg"),
+    parse_message(INTRO + "->  TEiF\n" + BODY + MAC),
+    parse_message(INTRO + "->\n" + BODY + MAC),
+    parse_message(INTRO + "-> X\x7f519 a\n" + BODY + MAC),
+    parse_message(INTRO + "-- X25519 a\n" + BODY + MAC),
+    parse_message(INTRO + STANZA + "hjabGXwSLQ9c3S6Lw2i+S2Tu2fiwQHHslbBN6B41FLE=\n" + MAC),
+    parse_message(INTRO + STANZA + "hjabGXwSLQ9c3S6Lw2i+S2Tu2fiwQHHslbBN6B41FLE\r\n" + MAC),
+    parse_message(INTRO + STANZA + "hjabGXwSLQ9c3S6Lw2i+S2Tu2fiwQHHslbBN6B41FLF\n" + MAC),
+    parse_message(INTRO + STANZA + "A".repeat(68) + "\n" + MAC),
+    parse_message(INTRO + STANZA + "A".repeat(64) + "\n" + MAC),
+    parse_message(INTRO + STANZA + "A".repeat(64) + "\n\n" + MAC),
+    parse_message(INTRO + "-> a\n\n-> b c\n\n" + MAC),
+  ];
+  return test.assert_eq_array(got, [
+    "parsing age header: failed to read intro: EOF",
+    "parsing age header: failed to read intro: EOF",
+    "parsing age header: unexpected intro: \"age-encryption.org/v2\\n\"",
+    "parsing age header: failed to read header: EOF",
+    "parsing age header: malformed closing line: \"--- abc def\\n\"",
+    "parsing age header: malformed closing line: \"---x WyJp\\n\"",
+    "parsing age header: malformed closing line \"--- AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ\\n\": <nil>",
+    "parsing age header: malformed closing line \"--- WyJp9F/9FOZh7gJdheq2WIJcwHgYc8NIVh3ddwhrcNg\\r\\n\": unexpected newline character",
+    "failed to read header: EOF",
+    "failed to parse header: malformed stanza: \"->  TEiF\\n\"",
+    "failed to parse header: malformed stanza: \"->\\n\"",
+    "failed to parse header: malformed stanza: \"-> X\\x7f519 a\\n\"",
+    "failed to parse header: malformed stanza opening line: \"-- X25519 a\\n\"",
+    "failed to parse header: parsing age header: malformed body line \"hjabGXwSLQ9c3S6Lw2i+S2Tu2fiwQHHslbBN6B41FLE=\\n\": illegal base64 data at input byte 43",
+    "failed to parse header: parsing age header: malformed body line \"hjabGXwSLQ9c3S6Lw2i+S2Tu2fiwQHHslbBN6B41FLE\\r\\n\": unexpected newline character",
+    "failed to parse header: parsing age header: malformed body line \"hjabGXwSLQ9c3S6Lw2i+S2Tu2fiwQHHslbBN6B41FLF\\n\": illegal base64 data at input byte 42",
+    "failed to parse header: parsing age header: malformed body line \"" + "A".repeat(68) + "\\n\": too long",
+    "failed to parse header: malformed body line \"" + MAC.trim_end_chars("\n") + "\\n\": stanza ended without a short line\nNote: this might be a file encrypted with an old beta version of age or rage. Use age v1.0.0-beta6 or rage to decrypt it.",
+    "ok 1",
+    "ok 2",
+  ]);
+}
+
+function unwrapped(st: format.Stanza): string {
+  let Ok(ids) = keys.identities(IDENTITY.bytes()) else {
+    return "no identity";
+  };
+  return match (format.unwrap(st, ids[0].scalar, ids[0].public)) {
+    format.FileKey(k) => "key " + hex.encode(k),
+    format.Incorrect => "incorrect",
+    format.Invalid(why) => why,
+  };
+}
+
+function test_stanza_refusals(): test.TestOutcome {
+  let Ok(h) = header_of(HEADER) else {
+    return test.fail("the header does not parse");
+  };
+  let st = h.stanzas[0];
+  let zero = text.b64_raw(__alloc_u8(32));
+  let got = [
+    unwrapped(st),
+    unwrapped(format.Stanza { ...st, kind: "scrypt" }),
+    unwrapped(format.Stanza { ...st, args: st.args.append("x") }),
+    unwrapped(format.Stanza { ...st, args: ["abc="] }),
+    unwrapped(format.Stanza { ...st, args: ["AAAA"] }),
+    unwrapped(format.Stanza { ...st, args: [zero] }),
+    unwrapped(format.Stanza { ...st, body: st.body.append(0u8) }),
+    unwrapped(format.Stanza { ...st, body: st.body.with(0, st.body[0] ^ 1u8) }),
+  ];
+  return test.assert_eq_array(got, [
+    "key " + FILE_KEY,
+    "incorrect",
+    "invalid X25519 recipient block",
+    "failed to parse X25519 recipient: illegal base64 data at input byte 3",
+    "invalid X25519 recipient block",
+    "invalid X25519 recipient: crypto/ecdh: bad X25519 remote ECDH input: low order point",
+    "invalid X25519 recipient block: incorrect file key size",
+    "incorrect",
+  ]);
+}
+
+// A stanza body of 48 bytes ends with an empty line, and a stanza wraps and
+// unwraps a file key.
+function test_marshal(): test.TestOutcome {
+  let long = format.Stanza { kind: "x", args: ["a", "b"], body: __alloc_u8(48) };
+  let empty = format.Stanza { kind: "y", args: [], body: [] };
+  let Ok(ids) = keys.identities(IDENTITY.bytes()) else {
+    return test.fail("the identity does not parse");
+  };
+  let eph = __alloc_u8(32).with(0, 9u8);
+  let key = unhex(FILE_KEY);
+  let wrapped = match (format.wrap(key, ids[0].public, eph)) {
+    Ok(st) => unwrapped(st),
+    Err(why) => why,
+  };
+  return test.assert_eq_array([format.marshal_stanza(long), format.marshal_stanza(empty), wrapped], [
+    "-> x a b\n" + "A".repeat(64) + "\n\n",
+    "-> y\n\n",
+    "key " + FILE_KEY,
+  ]);
+}
+
+function test_stream_nonce(): test.TestOutcome {
+  let got = [
+    hex.encode(format.chunk_nonce(0, false)),
+    hex.encode(format.chunk_nonce(0, true)),
+    hex.encode(format.chunk_nonce(1, false)),
+    hex.encode(format.chunk_nonce(258, true)),
+    hex.encode(format.chunk_nonce(0x123456789abcdi64, false)),
+  ];
+  return test.assert_eq_array(got, [
+    "000000000000000000000000",
+    "000000000000000000000001",
+    "000000000000000000000100",
+    "000000000000000000010201",
+    "000000000123456789abcd00",
+  ]);
+}
+
+// Each chunk opens only under its own counter and its own last-chunk flag,
+// and the iv form of the nonce is the explicit 12 bytes.
+function test_stream_chunks(): test.TestOutcome {
+  let Ok(k) = format.payload_key(unhex(FILE_KEY), __alloc_u8(16)) else {
+    return test.fail("no payload key");
+  };
+  let text_bytes = "a chunk of text".bytes();
+  let n = text_bytes.len();
+  let Ok(sealed) = format.seal_chunk(k, 5, true, text_bytes.concat(__alloc_u8(16)), n) else {
+    return test.fail("seal");
+  };
+  let Ok(explicit) = k.seal(format.chunk_nonce(5, true), "a chunk of text".bytes(), []) else {
+    return test.fail("seal with the explicit nonce");
+  };
+  let Ok(empty) = format.seal_chunk(k, 0, true, __alloc_u8(16), 0) else {
+    return test.fail("seal of an empty chunk");
+  };
+  let opens = [
+    format.open_chunk(k, 5, true, text.copy(sealed)).is_some(),
+    format.open_chunk(k, 5, false, text.copy(sealed)).is_some(),
+    format.open_chunk(k, 4, true, text.copy(sealed)).is_some(),
+    format.open_chunk(k, 6, true, text.copy(sealed)).is_some(),
+    format.open_chunk(k, 0, true, empty).is_some(),
+    format.open_chunk(k, 0, true, __alloc_u8(15)).is_some(),
+    hex.encode(sealed) == hex.encode(explicit),
+  ];
+  return test.assert_eq_array(opens, [true, false, false, false, true, false, true]);
+}
+
+// What an armored input decodes to, or the error that ends it.
+function dearmored(src: string): string {
+  let (s, b, f) = source.read_full(source.armored(source.raw_bytes(src.bytes())), 1000000);
+  return match (f) {
+    None => "full",
+    Some(source.Short) => "ok " + text.ascii(b),
+    Some(e) => e.message(),
+  };
+}
+
+function armor_of(s: string): string {
+  let b = base64.encode(s.as_bytes());
+  let out = "-----BEGIN AGE ENCRYPTED FILE-----\n";
+  let at = 0;
+  while (at < b.len()) {
+    let end = if (at + 64 < b.len()) { at + 64 } else { b.len() };
+    out += b[at:end].unwrap_or("") + "\n";
+    at += 64;
+  }
+  return out + "-----END AGE ENCRYPTED FILE-----\n";
+}
+
+function test_armor(): test.TestOutcome {
+  let short = "hello, world";
+  let long = "0123456789".repeat(10);
+  let a = armor_of(long);
+  let lines = a.split("\n");
+  let got = [
+    dearmored(armor_of(short)),
+    dearmored(armor_of(long)),
+    dearmored(a.replace("\n", "\r\n")),
+    dearmored(armor_of(long) + " \n\t\n"),
+    dearmored(armor_of(long) + "x\n"),
+    dearmored(armor_of(long) + " ".repeat(1024)),
+    dearmored(armor_of(long).trim_end_chars("\n")),
+    dearmored(lines[0] + "\n" + lines[1] + "AAAA\n"),
+    dearmored(lines[0] + "\n" + lines[1][0:60].unwrap_or("") + "\n" + lines[1][60:64].unwrap_or("") + "\n"),
+    dearmored(lines[0] + " \n" + lines[1] + "\n"),
+    dearmored(lines[0] + "\n" + "!" + lines[1][1:64].unwrap_or("") + "\n"),
+    dearmored(lines[0] + "\n" + lines[1] + "\n"),
+    dearmored(armor_of(short).replace("-----END AGE ENCRYPTED FILE-----", "-----END AGE ENCRYPTED FILE----")),
+    dearmored(armor_of("hell").replace("==", "")),
+    dearmored("-----BEGIN AGE ENCRYPTED FILE-----\n-----END AGE ENCRYPTED FILE-----\n"),
+    dearmored(" \n\r \t\n" + armor_of(short) + "\n \n"),
+    dearmored(" ".repeat(1030) + "\n" + armor_of(short)),
+    dearmored(lines[0] + "\n" + lines[1][0:10].unwrap_or("") + "\r" + lines[1][11:64].unwrap_or("") + "\n"),
+    dearmored(armor_of("hell").replace("==\n", "==\r\r\n")),
+    dearmored(armor_of("012345678901234567890123456789012345678901234567").replace("\n-----END", "\n\n-----END")),
+  ];
+  return test.assert_eq_array(got, [
+    "ok hello, world",
+    "ok " + long,
+    "ok " + long,
+    "ok " + long,
+    "invalid armor: trailing data after armored file",
+    "invalid armor: too much trailing whitespace",
+    "ok " + long,
+    "invalid armor: column limit exceeded",
+    "invalid armor: invalid closing line: \"" + lines[1][60:64].unwrap_or("") + "\"",
+    "invalid armor: invalid first line: \"-----BEGIN AGE ENCRYPTED FILE----- \"",
+    "invalid armor: illegal base64 data at input byte 0",
+    "invalid armor: unexpected EOF",
+    "invalid armor: invalid closing line: \"-----END AGE ENCRYPTED FILE----\"",
+    "invalid armor: illegal base64 data at input byte 4",
+    "EOF",
+    "ok hello, world",
+    "invalid armor: too much leading whitespace",
+    "invalid armor: illegal base64 data at input byte 10",
+    "invalid armor: illegal base64 data at input byte 8",
+    "invalid armor: empty line before the closing line",
+  ]);
+}
+
+function b64(s: string, pad: boolean): string {
+  return match (text.b64_decode(s.as_bytes(), pad)) {
+    Ok(b) => "ok " + hex.encode(b),
+    Err(at) => "error at " + at.to_string(),
+  };
+}
+
+function test_go_text(): test.TestOutcome {
+  let got = [
+    b64("QUJD", false),
+    b64("QUI", false),
+    b64("QUJ", false),
+    b64("QQ", false),
+    b64("QR", false),
+    b64("Q", false),
+    b64("QUI=", false),
+    b64("QUI=", true),
+    b64("QQ==", true),
+    b64("QQ=", true),
+    b64("QQ==QQ==", true),
+    b64("QUJD\nRA==", true),
+    b64("QUJ", true),
+    text.quote("a\"b\\c\n\t\x7fé".as_bytes()),
+    text.quote([0xffu8, b'x']),
+  ];
+  return test.assert_eq_array(got, [
+    "ok 414243",
+    "ok 4142",
+    "error at 2",
+    "ok 41",
+    "error at 0",
+    "error at 0",
+    "error at 3",
+    "ok 4142",
+    "ok 41",
+    "error at 3",
+    "error at 4",
+    "error at 4",
+    "error at 0",
+    "\"a\\\"b\\\\c\\n\\t\\x7fé\\u0085\"",
+    "\"\\xffx\"",
+  ]);
+}
+
+function flags(args: string[]): string {
+  return match (cli.parse(args)) {
+    cli.Run(o) => {
+      let f = "";
+      if (o.encrypt) {
+        f += "e";
+      }
+      if (o.decrypt) {
+        f += "d";
+      }
+      if (o.armor) {
+        f += "a";
+      }
+      f + " o=" + o.output + " r=" + o.recipients.join(",") + " i=" + o.identities.join(",") + " [" + o.inputs.join(",") + "]"
+    },
+    cli.Help => "help",
+    cli.Bad(why) => "bad: " + why,
+  };
+}
+
+function test_flags(): test.TestOutcome {
+  let got = [
+    flags(["-d", "-i", "k", "f"]),
+    flags(["--decrypt", "--identity=k", "-i", "j", "-o", "-x"]),
+    flags(["-r", "a", "-r=b", "-a", "-", "-d"]),
+    flags(["-a=false", "-e=1", "--", "-d"]),
+    flags(["-a=x"]),
+    flags(["-x"]),
+    flags(["--bogus=1"]),
+    flags(["-o"]),
+    flags(["---x"]),
+    flags(["-=x"]),
+    flags(["-h"]),
+    flags(["--help"]),
+    flags(["-da"]),
+  ];
+  return test.assert_eq_array(got, [
+    "d o= r= i=k [f]",
+    "d o=-x r= i=k,j []",
+    "a o= r=a,b i= [-,-d]",
+    "e o= r= i= [-d]",
+    "bad: invalid boolean value \"x\" for -a: parse error",
+    "bad: flag provided but not defined: -x",
+    "bad: flag provided but not defined: -bogus",
+    "bad: flag needs an argument: -o",
+    "bad: bad flag syntax: ---x",
+    "bad: bad flag syntax: -=x",
+    "help",
+    "help",
+    "bad: flag provided but not defined: -da",
+  ]);
+}
+
+function checked(args: string[]): string {
+  let argv = ["age"].concat(args);
+  let Run(o) = cli.parse(args) else {
+    return "no parse";
+  };
+  return match (cli.check(argv, o)) {
+    Some(f) => f.msg + " | " + f.hints.join(" | "),
+    None => "ok",
+  };
+}
+
+function test_checks(): test.TestOutcome {
+  let got = [
+    checked(["-d", "-i", "k", "f"]),
+    checked(["-r", "x", "p", "q"]),
+    checked(["-r", "x", "p", "-a"]),
+    checked(["-r", "x y", "p", "-a"]),
+    checked(["-e", "-d"]),
+    checked(["-d", "-a"]),
+    checked(["-d", "-r", "x"]),
+    checked(["-i", "k"]),
+    checked(["-e"]),
+    checked(["-e", "-i", "k"]),
+  ];
+  return test.assert_eq_array(got, [
+    "ok",
+    "too many INPUT arguments: \"p\" \"q\" | only a single input file may be specified at a time",
+    "too many INPUT arguments: \"p\" \"-a\" | the input file must be specified after all flags | did you mean: |     age -r x -a p",
+    "too many INPUT arguments: \"p\" \"-a\" | the input file must be specified after all flags",
+    "-e/--encrypt can't be used with -d/--decrypt | ",
+    "-a/--armor can't be used with -d/--decrypt | note that armored files are detected automatically",
+    "-r/--recipient can't be used with -d/--decrypt | did you mean to use -i/--identity to specify a private key?",
+    "-i/--identity and -j can't be used in encryption mode unless symmetric encryption is explicitly selected with -e/--encrypt | did you forget to specify -d/--decrypt?",
+    "missing recipients | did you forget to specify -r/--recipient, -R/--recipients-file or -p/--passphrase?",
+    "ok",
+  ]);
+}
+
+function test_scan_lines(): test.TestOutcome {
+  let b = "a\r\nb\n\nc\r".bytes();
+  let got: string[] = [];
+  for (from, to) in keys.scan_lines(b) {
+    got = got.append(text.ascii(b[from:to]));
+  }
+  return test.assert_eq_array(got, ["a", "b", "", "c"]);
+}
+
+function main(): i32 {
+  let r = test.new("age");
+  r = r.it("bech32 decodes the BIP 173 vectors with age's messages", test_bech32_vectors);
+  r = r.it("bech32 encodes and decodes keys in both cases", test_bech32_round_trip);
+  r = r.it("the constant-time key decoder agrees with the plain decoder", test_secret_keys);
+  r = r.it("identity files: comments, CRLF and each refusal", test_identity_files);
+  r = r.it("recipient strings and their refusals", test_recipients);
+  r = r.it("the CCTV x25519 vector: header, MAC, unwrap and payload", test_vector);
+  r = r.it("each malformed header gets age's message", test_header_refusals);
+  r = r.it("each malformed X25519 stanza gets age's message", test_stanza_refusals);
+  r = r.it("stanzas marshal in 64-column lines and wrap a file key", test_marshal);
+  r = r.it("the STREAM nonce is a counter and a last-chunk flag", test_stream_nonce);
+  r = r.it("a chunk opens only under its counter and flag", test_stream_chunks);
+  r = r.it("the armor and each of its refusals", test_armor);
+  r = r.it("Go's base64 offsets and %q quotation", test_go_text);
+  r = r.it("the flags follow Go's flag package", test_flags);
+  r = r.it("the checks after the flags, in age's order", test_checks);
+  r = r.it("identity lines split as bufio.ScanLines splits them", test_scan_lines);
+  return r.finish();
+}

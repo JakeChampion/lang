@@ -1,0 +1,332 @@
+// The text forms that the messages of age use: Go's %q quotation, Go's
+// strict base64 decoder with its error offsets, and Go's names for the
+// errors of a system call.
+import "std/base64";
+import "std/option";
+import "std/utf8";
+
+const HEX: string = "0123456789abcdef";
+
+// An owned copy of b.
+pub function copy(b: [u8]): u8[] {
+  let out: u8[] = [];
+  return out.concat(b);
+}
+
+// The bytes as a string. The caller gives valid UTF-8.
+pub function ascii(b: [u8]): string {
+  let Ok(s) = utf8.from_bytes(b) else {
+    return "";
+  };
+  return s;
+}
+
+pub function has_prefix(b: [u8], p: string): boolean {
+  if (b.len() < p.len()) {
+    return false;
+  }
+  for i in 0..p.len() {
+    if (b[i] != p[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+pub function equals(b: [u8], s: string): boolean {
+  return b.len() == s.len() && has_prefix(b, s);
+}
+
+function continuation(s: [u8], at: i32): i32 {
+  if (at >= s.len() || (s[at] & 0xc0) != 0x80) {
+    return -1;
+  }
+  return s[at] as i32 & 0x3f;
+}
+
+// The rune at s[at] and its length in bytes, as Go decodes UTF-8. A byte that
+// does not start a valid sequence is U+FFFD with length 1.
+function rune3(c: i32, c1: i32, c2: i32): i32 {
+  if (c < 0xe0 || c >= 0xf0 || c1 < 0 || c2 < 0) {
+    return -1;
+  }
+  let r = (c & 0x0f) << 12 | c1 << 6 | c2;
+  if (r < 0x800 || r >= 0xd800 && r <= 0xdfff) {
+    return -1;
+  }
+  return r;
+}
+
+function rune4(c: i32, c1: i32, c2: i32, c3: i32): i32 {
+  if (c < 0xf0 || c >= 0xf5 || (c1 | c2 | c3) < 0) {
+    return -1;
+  }
+  let r = (c & 0x07) << 18 | c1 << 12 | c2 << 6 | c3;
+  if (r < 0x10000 || r > 0x10ffff) {
+    return -1;
+  }
+  return r;
+}
+
+pub function rune_at(s: [u8], at: i32): (i32, i32) {
+  let c = s[at] as i32;
+  if (c < 0x80) {
+    return (c, 1);
+  }
+  let c1 = continuation(s, at + 1);
+  if (c >= 0xc2 && c < 0xe0 && c1 >= 0) {
+    return ((c & 0x1f) << 6 | c1, 2);
+  }
+  let c2 = continuation(s, at + 2);
+  let r3 = rune3(c, c1, c2);
+  if (r3 >= 0) {
+    return (r3, 3);
+  }
+  let r4 = rune4(c, c1, c2, continuation(s, at + 3));
+  if (r4 >= 0) {
+    return (r4, 4);
+  }
+  return (0xfffd, 1);
+}
+
+function hex_digits(own out: u8[], v: i32, n: i32): u8[] {
+  let i = n - 1;
+  while (i >= 0) {
+    out = out.append(HEX[v >> 4 * i & 15]);
+    i -= 1;
+  }
+  return out;
+}
+
+// Go's unicode.IsPrint for a rune above U+007F, for the runes that age's
+// messages can meet. The C1 controls and the format characters are not
+// printable.
+function printable(r: i32): boolean {
+  if (r < 0xa0 || r == 0xad || r == 0xfeff) {
+    return false;
+  }
+  return !(r >= 0x200b && r <= 0x200f || r >= 0x2028 && r <= 0x202e || r >= 0x2060 && r <= 0x206f);
+}
+
+// The escape of a rune that Go's %q does not show as it is.
+function escape(own out: u8[], r: i32): u8[] {
+  if (r >= 7 && r <= 13) {
+    return out.append(b'\\').append("abtnvfr"[r - 7]);
+  }
+  if (r < 0x80) {
+    return hex_digits(out.append(b'\\').append(b'x'), r, 2);
+  }
+  if (r < 0x10000) {
+    return hex_digits(out.append(b'\\').append(b'u'), r, 4);
+  }
+  return hex_digits(out.append(b'\\').append(b'U'), r, 8);
+}
+
+function escaped(own out: u8[], s: [u8], at: i32, r: i32, n: i32): u8[] {
+  if (r == 34 || r == 92) {
+    return out.append(b'\\').append(r as u8);
+  }
+  if (r >= 32 && r < 127) {
+    return out.append(r as u8);
+  }
+  if (r > 127 && printable(r)) {
+    for i in 0..n {
+      out = out.append(s[at + i]);
+    }
+    return out;
+  }
+  return escape(out, r);
+}
+
+// Go's strconv.Quote, which the %q verb uses.
+pub function quote(s: [u8]): string {
+  let out: u8[] = [b'"'];
+  let at = 0;
+  while (at < s.len()) {
+    let (r, n) = rune_at(s, at);
+    if (r == 0xfffd && n == 1) {
+      out = hex_digits(out.append(b'\\').append(b'x'), s[at] as i32, 2);
+    } else {
+      out = escaped(out, s, at, r, n);
+    }
+    at += n;
+  }
+  return ascii(out.append(b'"'));
+}
+
+function b64_value(c: u8): i32 {
+  if (c >= b'A' && c <= b'Z') {
+    return c as i32 - 65;
+  }
+  if (c >= b'a' && c <= b'z') {
+    return c as i32 - 71;
+  }
+  if (c >= b'0' && c <= b'9') {
+    return c as i32 + 4;
+  }
+  if (c == b'+') {
+    return 62;
+  }
+  if (c == b'/') {
+    return 63;
+  }
+  return -1;
+}
+
+// One quantum of Go's decoder: the next index, the count of 6-bit groups, the
+// groups as one value, and the offset of an error or -1.
+struct Quantum { next: i32, count: i32, value: i32, fail: i32 }
+
+function failure(si: i32, at: i32): Quantum {
+  return Quantum { next: si, count: 0, value: 0, fail: at };
+}
+
+// The end of a quantum at a "=" after j groups.
+function padded(s: [u8], at: i32, j: i32, value: i32): Quantum {
+  let si = at;
+  if (j == 2) {
+    if (si == s.len()) {
+      return failure(si, s.len());
+    }
+    if (s[si] != b'=') {
+      return failure(si, si - 1);
+    }
+    si += 1;
+  }
+  let trailing = if (si < s.len()) { si } else { -1 };
+  return Quantum { next: si, count: j, value: value << 6 * (4 - j), fail: trailing };
+}
+
+function quantum(s: [u8], from: i32, pad: boolean): Quantum {
+  let si = from;
+  let value = 0;
+  let j = 0;
+  while (j < 4) {
+    if (si == s.len()) {
+      if (j == 0) {
+        return failure(si, -1);
+      }
+      if (j == 1 || pad) {
+        return failure(si, si - j);
+      }
+      return Quantum { next: si, count: j, value: value << 6 * (4 - j), fail: -1 };
+    }
+    let c = s[si];
+    si += 1;
+    let v = b64_value(c);
+    if (v < 0) {
+      if (!pad || c != b'=' || j < 2) {
+        return failure(si, si - 1);
+      }
+      return padded(s, si, j, value);
+    }
+    value = value << 6 | v;
+    j += 1;
+  }
+  return Quantum { next: si, count: 4, value: value, fail: -1 };
+}
+
+// Go's base64.StdEncoding.Strict() when pad is true, and
+// base64.RawStdEncoding.Strict() when pad is false, with the error offset
+// that Go reports. Go skips "\r" and "\n" in the input. This decoder refuses
+// them, as the age specification requires.
+pub function b64_decode(s: [u8], pad: boolean): Result[u8[], i32] {
+  let out: u8[] = [];
+  let si = 0;
+  while (si < s.len()) {
+    let q = quantum(s, si, pad);
+    if (q.count == 0) {
+      if (q.fail >= 0) {
+        return Err(q.fail);
+      }
+      return Ok(out);
+    }
+    let b0 = (q.value >> 16 & 255) as u8;
+    let b1 = (q.value >> 8 & 255) as u8;
+    let b2 = (q.value & 255) as u8;
+    if (q.count == 4) {
+      out = out.append(b0).append(b1).append(b2);
+    } else if (q.count == 3) {
+      if (b2 != 0) {
+        return Err(q.next - 1);
+      }
+      out = out.append(b0).append(b1);
+    } else {
+      if (b1 != 0 || b2 != 0) {
+        return Err(q.next - 2);
+      }
+      out = out.append(b0);
+    }
+    if (q.fail >= 0) {
+      return Err(q.fail);
+    }
+    si = q.next;
+  }
+  return Ok(out);
+}
+
+// age's format.DecodeString: canonical base64 with no padding and no line
+// break.
+pub function decode_string(s: [u8]): Result[u8[], string] {
+  for c in s {
+    if (c == b'\n' || c == b'\r') {
+      return Err("unexpected newline character");
+    }
+  }
+  match (b64_decode(s, false)) {
+    Ok(b) => {
+      return Ok(b);
+    },
+    Err(at) => {
+      return Err(f"illegal base64 data at input byte {at}");
+    }
+  }
+}
+
+pub function b64_padded(b: [u8]): string {
+  return base64.encode(b);
+}
+
+// Base64 with no padding.
+pub function b64_raw(b: [u8]): string {
+  return base64.encode(b).trim_end_chars("=");
+}
+
+// The text that Go gives for the error of a system call, such as
+// "no such file or directory".
+pub function errno_text(e: IoError): string {
+  match (e) {
+    NotFound(_) => {
+      return "no such file or directory";
+    },
+    PermissionDenied(_) => {
+      return "permission denied";
+    },
+    AlreadyExists(_) => {
+      return "file exists";
+    },
+    Interrupted => {
+      return "interrupted system call";
+    },
+    Other(_, why, _) => {
+      if (why.len() > 0 && why[0] >= b'A' && why[0] <= b'Z') {
+        return why.to_ascii_lower()[0:1].unwrap_or("") + why[1:why.len()].unwrap_or("");
+      }
+      return why;
+    },
+    _ => {
+      return e.message();
+    }
+  }
+  return e.message();
+}
+
+// Go's bytes.TrimSpace(b) is empty, for ASCII white space.
+pub function blank(b: [u8]): boolean {
+  for c in b {
+    if (c != b' ' && c != b'\t' && c != b'\n' && c != b'\r' && c != 11 as u8 && c != 12 as u8) {
+      return false;
+    }
+  }
+  return true;
+}
