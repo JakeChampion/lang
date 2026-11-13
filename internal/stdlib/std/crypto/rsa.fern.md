@@ -156,8 +156,15 @@ function __from_be(b: [u8]): bigint.BigInt {
   let v = bigint.zero();
   let i = 0;
   while (i < b.len()) {
-    v = v.shl(8).add(bigint.from_u64(b[i] as u64));
-    i += 1;
+    let n = (b.len() - i + 7) % 8 + 1;
+    let w = 0 as u64;
+    let k = 0;
+    while (k < n) {
+      w = w << 8 | b[i + k] as u64;
+      k += 1;
+    }
+    v = v.shl(8 * n).add(bigint.from_u64(w));
+    i += n;
   }
   return v;
 }
@@ -445,6 +452,8 @@ pub function (key: PublicKey) verify_pss(hash: sha2.Hash, msg: [u8], sig: [u8]):
 
 A private key keeps its public key and the values of the Chinese remainder theorem (CRT): the Montgomery forms of p and q, dp = d mod (p - 1), dq = d mod (q - 1), and qinv = q^-1 mod p. It also keeps the Montgomery form of the modulus n for the check of each decryption. Construction checks the key as Go's `rsa.PrivateKey.Validate` does, and computes the CRT values. That work uses `std/bigint`, which is not constant-time, so a caller marks the key secret after construction.
 
+A PKCS#1 key and an OpenSSH key also hold qinv. Construction uses that value when q qinv mod p is 1. Otherwise it computes qinv, which takes about as long as one decryption. Go always computes qinv, so a wrong value in a key file is not an error.
+
 ```fern
 <<14 pub struct PrivateKey>>=
 // The CRT values are big-endian bytes: p and q, dp and dq with the length
@@ -470,8 +479,9 @@ function __inverse_mod(d: bigint.BigInt, e: bigint.BigInt, prime: bigint.BigInt)
   return d.mul(e).divmod(prime.sub(__one())).1.cmp(__one()) == 0;
 }
 
-// The private key of an RSA key pair with two primes.
-pub function private_key(modulus: [u8], exponent: [u8], d: [u8], p: [u8], q: [u8]): Result[PrivateKey, RsaError] {
+// The private key of an RSA key pair with two primes. qinv is the CRT
+// coefficient of the key file, or empty.
+pub function private_key(modulus: [u8], exponent: [u8], d: [u8], p: [u8], q: [u8], qinv: [u8]): Result[PrivateKey, RsaError] {
   let public = public_key(modulus, exponent)?;
   let bp = __from_be(p);
   let bq = __from_be(q);
@@ -493,8 +503,13 @@ pub function private_key(modulus: [u8], exponent: [u8], d: [u8], p: [u8], q: [u8
   let mp = montgomery.modulus_of(p_bytes, p_bits);
   let dp = __to_be(bd.divmod(bp.sub(__one())).1, p_bytes.len());
   let dq = __to_be(bd.divmod(bq.sub(__one())).1, q_bytes.len());
-  let qinv = montgomery.to_bytes(mp, montgomery.inv(mp, montgomery.from_bytes(mp, q_bytes)));
-  return Ok(PrivateKey { public: public, m: m, p: p_bytes, q: q_bytes, p_bits: p_bits, q_bits: q_bits, dp: dp, dq: dq, qinv: qinv });
+  let bc = __from_be(qinv);
+  let coefficient = if (bc.cmp(bp) < 0 && bq.mul(bc).divmod(bp).1.cmp(__one()) == 0) {
+    __to_be(bc, p_bytes.len())
+  } else {
+    montgomery.to_bytes(mp, montgomery.inv(mp, montgomery.from_bytes(mp, q_bytes)))
+  };
+  return Ok(PrivateKey { public: public, m: m, p: p_bytes, q: q_bytes, p_bits: p_bits, q_bits: q_bits, dp: dp, dq: dq, qinv: coefficient });
 }
 
 // The secret values of the key, for a caller that marks them secret under

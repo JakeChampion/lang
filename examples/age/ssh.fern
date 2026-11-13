@@ -902,7 +902,7 @@ function openssh_rsa(rest: Wire): Parsed {
   if (!padding_ok(rest_of(w1))) {
     return Bad("ssh: padding not as expected");
   }
-  return match (rsa.private_key(f[0], f[1], f[2], f[4], f[5])) {
+  return match (rsa.private_key(f[0], f[1], f[2], f[4], f[5], f[3])) {
     Ok(key) => {
       mark_rsa(key);
       Key(RsaPrivate(RsaPublic(rsa_wire(f[0], f[1]), key.public_key()), key))
@@ -1139,7 +1139,7 @@ function pkcs1(b: [u8]): Parsed {
   if (f.len() < 9 || f[0].len() != 0) {
     return Bad("x509: unsupported private key version");
   }
-  return match (rsa.private_key(f[1], f[2], f[3], f[4], f[5])) {
+  return match (rsa.private_key(f[1], f[2], f[3], f[4], f[5], f[8])) {
     Ok(key) => {
       mark_rsa(key);
       Key(RsaPrivate(RsaPublic(rsa_wire(f[1], f[2]), key.public_key()), key))
