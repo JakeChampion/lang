@@ -67,7 +67,7 @@ The implementation shares this exact tokenizer between documents and queries.
 <<Unicode tokenization>>=
 pub function tokenize(text: string): string[] {
   let clean = text.to_lower();
-  for separator in ["\n", "\r", "\t", ".", ",", ";", ":", "!", "?", "(", ")", "[", "]", "{", "}", "\"", "'", "/", "\\", "-", "—", "　"] {
+  for separator in ["\n", "\r", "\t", ".", ",", ";", ":", "!", "?", "(", ")", "[", "]", "{", "}", "\"", "'", "/", "\\", "-", "—", "\u{3000}"] {
     clean = clean.replace(separator, " ");
   }
   return clean.split(" ") |> array.filter((term: string): boolean => term.len() > 0 && term.len() <= 128);

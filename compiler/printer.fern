@@ -18,10 +18,83 @@ function is_control_byte(b: i32): boolean {
   return b < 32 || b == 127;
 }
 
+// The scalar of the UTF-8 sequence at `i` and its size. The size is 0 when the
+// bytes there are not one sequence.
+function scalar_at(s: string, i: i32): (i32, i32) {
+  let b = s[i] as i32;
+  let size = 0;
+  let cp = 0;
+  if (b >= 0xc2 && b < 0xe0) {
+    size = 2;
+    cp = b & 0x1f;
+  } else if (b >= 0xe0 && b < 0xf0) {
+    size = 3;
+    cp = b & 0x0f;
+  } else if (b >= 0xf0 && b < 0xf5) {
+    size = 4;
+    cp = b & 0x07;
+  }
+  if (size == 0 || i + size > s.len()) {
+    return (0, 0);
+  }
+  for k in 1..size {
+    let c = s[i + k] as i32;
+    if ((c & 0xc0) != 0x80) {
+      return (0, 0);
+    }
+    cp = cp << 6 | c & 0x3f;
+  }
+  return (cp, size);
+}
+
+// Whether a reader cannot see the scalar `cp`, or `cp` changes the order of
+// the text on the screen: the C1 controls, and the Unicode categories Cf, Zl,
+// Zp and Zs.
+function is_hidden_scalar(cp: i32): boolean {
+  if (cp < 0x2000) {
+    return cp >= 0x80 && cp <= 0xa0 || cp == 0xad || cp >= 0x600 && cp <= 0x605 || cp == 0x61c || cp == 0x6dd || cp == 0x70f || cp == 0x890 || cp == 0x891 || cp == 0x8e2 || cp == 0x1680 || cp == 0x180e;
+  }
+  if (cp < 0x10000) {
+    return cp <= 0x200f || cp >= 0x2028 && cp <= 0x202f || cp >= 0x205f && cp <= 0x2064 || cp >= 0x2066 && cp <= 0x206f || cp == 0x3000 || cp == 0xfeff || cp >= 0xfff9 && cp <= 0xfffb;
+  }
+  return cp == 0x110bd || cp == 0x110cd || cp >= 0x13430 && cp <= 0x1343f || cp >= 0x1bca0 && cp <= 0x1bca3 || cp >= 0x1d173 && cp <= 0x1d17a || cp == 0xe0001 || cp >= 0xe0020 && cp <= 0xe007f;
+}
+
+// `\u{XXXX}` for the scalar `cp`, with 4 hex digits or more.
+function append_scalar_escape(out: u8[], cp: i32): u8[] {
+  let a = out;
+  a = a.append(92 as u8);
+  a = a.append(117 as u8);
+  a = a.append(123 as u8);
+  let shift = 20;
+  while (shift >= 0) {
+    let d = cp >> shift & 15;
+    if (shift <= 12 || cp >> shift != 0) {
+      if (d < 10) {
+        a = a.append((48 + d) as u8);
+      } else {
+        a = a.append((55 + d) as u8);
+      }
+    }
+    shift -= 4;
+  }
+  return a.append(125 as u8);
+}
+
 function escape_lit_body(s: string, fstring: boolean): string {
   let out: u8[] = [];
-  for i in 0..s.len() {
+  let i = 0;
+  while (i < s.len()) {
     let b = s[i] as i32;
+    if (b >= 128) {
+      let (cp, size) = scalar_at(s, i);
+      if (size > 0 && is_hidden_scalar(cp)) {
+        out = append_scalar_escape(out, cp);
+        i += size;
+        continue;
+      }
+    }
+    i += 1;
     if (b == 34) {
       out = out.append(92 as u8);
       out = out.append(34 as u8);
@@ -43,7 +116,7 @@ function escape_lit_body(s: string, fstring: boolean): string {
     } else if (is_control_byte(b)) {
       out = append_hex_escape(out, b);
     } else {
-      out = out.append(s[i]);
+      out = out.append(b as u8);
     }
   }
   unsafe {
