@@ -46,7 +46,7 @@ function parent(s: store.Store, hash: string, n: i32): Rev {
   let Ok(o) = got.object else {
     return none(got.store);
   };
-  let parents = objects.header_values(o.body, "parent");
+  let parents = store.parents(got.store, c.hash, o.body);
   if (n > parents.len()) {
     return none(got.store);
   }

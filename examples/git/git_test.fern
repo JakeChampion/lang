@@ -1,8 +1,9 @@
 // The parts of the git port that do no I/O: the names of objects, the loose
-// object file, and the lines of a tree.
+// object file, the lines of a tree, the deltas, and the text of a commit.
 import "std/test";
 import "std/array";
 import "std/hex";
+import "./log";
 import "./objects";
 import "./pack";
 
@@ -151,6 +152,58 @@ function test_entry(): test.TestOutcome {
   return test.pass();
 }
 
+const COMMIT: string = "tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\nparent ce013625030ba8dba906f756967f9e9ca394464a\nparent e69de29bb2d1d6434b8b29ae775ad8c2e48c5391\nauthor A B <a@example.com> 1772581567 +0530\ncommitter C D <c@example.com> 1772629567 -0800\n\nfirst line\nsecond line\n\nbody\twith a tab\n\nlast\n";
+
+// The fields of a commit, and the date on the clock of its zone.
+function test_commit_fields(): test.TestOutcome {
+  let c = log.commit_of("abc", COMMIT.bytes());
+  if (c.tree != "4b825dc642cb6eb9a060e54bf8d69288fbee4904" || c.parents.len() != 2 || c.parents[1] != "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391") {
+    return test.fail("the tree and the parents");
+  }
+  if (c.author.name != "A B" || c.author.email != "a@example.com" || c.author.time != 1772581567 || c.author.zone != "+0530") {
+    return test.fail("the author: " + c.author.name + "|" + c.author.email + "|" + c.author.zone);
+  }
+  if (log.date_text(c.author) != "Wed Mar 4 05:16:07 2026 +0530") {
+    return test.fail("a date east of Greenwich: " + log.date_text(c.author));
+  }
+  if (log.date_text(c.committer) != "Wed Mar 4 05:06:07 2026 -0800") {
+    return test.fail("a date west of Greenwich: " + log.date_text(c.committer));
+  }
+  if (log.date_text(log.Person { name: "", email: "", time: 0, zone: "-0100" }) != "Wed Dec 31 23:00:00 1969 -0100") {
+    return test.fail("a date before 1970");
+  }
+  let odd = log.person("no address");
+  if (odd.name != "no address" || odd.email != "" || odd.time != 0) {
+    return test.fail("a line with no address");
+  }
+  return test.pass();
+}
+
+// The subject, the body, the default text and the placeholders of a format.
+function test_commit_text(): test.TestOutcome {
+  let c = log.commit_of("abc", COMMIT.bytes());
+  let s = log.Shorts { hash: "ab", tree: "4b", parents: ["ce", "e6"] };
+  if (log.subject(c.message) != "first line second line") {
+    return test.fail("the subject: " + log.subject(c.message));
+  }
+  if (log.body_of(c.message) != "body\twith a tab\n\nlast\n" || log.body_of("one\n") != "" || log.body_of("one\n\ntwo") != "two") {
+    return test.fail("the body");
+  }
+  let want = "commit abc\nMerge: ce e6\nAuthor: A B <a@example.com>\nDate:   Wed Mar 4 05:16:07 2026 +0530\n\n    first line\n    second line\n    \n    body    with a tab\n    \n    last\n";
+  if (log.medium(c, s) != want) {
+    return test.fail("the default text: " + log.medium(c, s));
+  }
+  let got = log.formatted(c, s, "%H %h %T %t|%P|%p|%an %ae %at|%cn %ce %ct|%s%n%%|%x %");
+  let wanted = "abc ab 4b825dc642cb6eb9a060e54bf8d69288fbee4904 4b|ce013625030ba8dba906f756967f9e9ca394464a e69de29bb2d1d6434b8b29ae775ad8c2e48c5391|ce e6|A B a@example.com 1772581567|C D c@example.com 1772629567|first line second line\n%|%x %";
+  if (got != wanted) {
+    return test.fail("the placeholders: " + got);
+  }
+  if (log.formatted(c, s, "%B") != c.message || log.formatted(c, s, "") != "") {
+    return test.fail("the raw message");
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let r = test.new("git");
   r = r.it("the names of objects", test_names);
@@ -159,5 +212,7 @@ function main(): i32 {
   r = r.it("the lines of a tree", test_tree_lines);
   r = r.it("a delta", test_delta);
   r = r.it("the header of a packed object", test_entry);
+  r = r.it("the fields of a commit", test_commit_fields);
+  r = r.it("the text of a commit", test_commit_text);
   return r.finish();
 }

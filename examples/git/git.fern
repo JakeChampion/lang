@@ -14,15 +14,17 @@ import "std/errno";
 import "std/io";
 import "std/string";
 import "core/cmp";
+import "core/map";
 import "std/crypto";
 import "std/hex";
+import "./log";
 import "./objects";
 import "./pack";
 import "./refs";
 import "./rev";
 import "./store";
 
-const USAGE: string = "usage: git hash-object [-w] [-t KIND] [--stdin] [FILE...]\n   or: git cat-file (-t | -s | -p | -e) NAME\n   or: git cat-file (--batch | --batch-check)\n   or: git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...\n   or: git verify-pack [-v] FILE.idx...\n   or: git ls-tree [-r] [-t] [-d] [-l] [--name-only] [--full-tree] TREE";
+const USAGE: string = "usage: git hash-object [-w] [-t KIND] [--stdin] [FILE...]\n   or: git cat-file (-t | -s | -p | -e) NAME\n   or: git cat-file (--batch | --batch-check)\n   or: git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...\n   or: git verify-pack [-v] FILE.idx...\n   or: git ls-tree [-r] [-t] [-d] [-l] [--name-only] [--full-tree] TREE\n   or: git log [-n N] [--oneline] [--format=FORMAT] [NAME]";
 
 function fatal(message: string): i32 {
   eprint("fatal: " + message);
@@ -279,15 +281,16 @@ function cat_file(argv: string[]): i32 {
 
 const AMBIGUOUS: string = "': unknown revision or path not in the working tree.\nUse '--' to separate paths from revisions, like this:\n'git <command> [<revision>...] -- [<file>...]'";
 
-// The digits after `--short=`, or 7. A number below 4 is 4, as in git.
-function short_length(flag: string): i32 {
+// The digits after `--short=`, or the length that git gives to a short
+// name in this store. A number below 4 is 4, as in git.
+function short_length(s: store.Store, flag: string): i32 {
   if (!flag.starts_with("--short=")) {
-    return 7;
+    return store.short_length(s);
   }
   let n = 0;
   for i in 8..flag.len() {
     if (flag[i] < b'0' || flag[i] > b'9') {
-      return 7;
+      return store.short_length(s);
     }
     n = n * 10 + (flag[i] - b'0') as i32;
   }
@@ -313,7 +316,7 @@ function rev_parse(argv: string[]): i32 {
     if (x == "--verify") {
       verify = true;
     } else if (x == "--short" || x.starts_with("--short=")) {
-      short = short_length(x);
+      short = short_length(s, x);
     } else if (x == "--git-dir") {
       put_line(r.shown);
     } else {
@@ -458,6 +461,150 @@ function ls_tree(argv: string[]): i32 {
   put(listed.out);
   if (!listed.ok) {
     return fatal("unable to read a tree of " + names[0]);
+  }
+  return 0;
+}
+
+// ---- log ----
+
+// The form of each commit: the default form, one line, or a format. With
+// `separated`, a line end is between two commits and not after each one.
+struct LogOpts { limit: i32, oneline: boolean, format: string, has_format: boolean, separated: boolean, name: string, bad: string }
+
+// The count in `text`, or -1 when it is not a count.
+function log_number(text: string): i32 {
+  let n = 0;
+  for i in 0..text.len() {
+    if (text[i] < b'0' || text[i] > b'9' || n > 100000000) {
+      return -1;
+    }
+    n = n * 10 + (text[i] - b'0') as i32;
+  }
+  return if (text.len() == 0) { -1 } else { n };
+}
+
+// git 2.43 reads a limit that is not a count as 0.
+function log_limit(text: string): i32 {
+  return log_number(text).max(0);
+}
+
+function log_format(o: LogOpts, x: string): LogOpts {
+  if (x.starts_with("--format=")) {
+    return LogOpts { ...o, format: objects.part(x, 9, x.len()), has_format: true };
+  }
+  if (x.starts_with("--pretty=tformat:")) {
+    return LogOpts { ...o, format: objects.part(x, 17, x.len()), has_format: true };
+  }
+  if (x.starts_with("--pretty=format:")) {
+    return LogOpts { ...o, format: objects.part(x, 16, x.len()), has_format: true, separated: true };
+  }
+  return LogOpts { ...o, bad: x };
+}
+
+function log_args(argv: string[]): LogOpts {
+  let o = LogOpts { limit: -1, oneline: false, format: "", has_format: false, separated: false, name: "HEAD", bad: "" };
+  let i = 0;
+  while (i < argv.len()) {
+    let x = argv[i];
+    if (x == "--oneline") {
+      o = LogOpts { ...o, oneline: true };
+    } else if (x == "-n" && i + 1 < argv.len()) {
+      i += 1;
+      o = LogOpts { ...o, limit: log_limit(argv[i]) };
+    } else if (x.starts_with("--max-count=")) {
+      o = LogOpts { ...o, limit: log_limit(objects.part(x, 12, x.len())) };
+    } else if (x.starts_with("-") && log_number(objects.part(x, 1, x.len())) >= 0) {
+      o = LogOpts { ...o, limit: log_number(objects.part(x, 1, x.len())) };
+    } else if (x.starts_with("-")) {
+      o = log_format(o, x);
+    } else {
+      o = LogOpts { ...o, name: x };
+    }
+    i += 1;
+  }
+  return o;
+}
+
+// The commits that wait for their turn. git shows the commit with the
+// latest committer date first, and the first found of two equal dates.
+struct Waiting { commits: log.Commit[], store: store.Store, seen: Map[string, boolean] }
+
+function log_push(w: Waiting, hash: string): Waiting {
+  if (w.seen.contains(hash)) {
+    return w;
+  }
+  let got = store.read(w.store, hash);
+  let seen = w.seen.insert(hash, true);
+  return match (got.object) {
+    Ok(o) => Waiting { commits: w.commits.append(log.Commit { ...log.commit_of(hash, o.body), parents: store.parents(got.store, hash, o.body) }), store: got.store, seen: seen },
+    Err(_) => Waiting { commits: w.commits, store: got.store, seen: seen },
+  };
+}
+
+// The place of the commit to show next.
+function log_next(commits: log.Commit[]): i32 {
+  let best = 0;
+  for i in 1..commits.len() {
+    if (commits[i].committer.time > commits[best].committer.time) {
+      best = i;
+    }
+  }
+  return best;
+}
+
+function log_text(w: Waiting, c: log.Commit, o: LogOpts): string {
+  let least = store.short_length(w.store);
+  let shorts = log.Shorts { hash: refs.short_of(w.store, c.hash, least), tree: refs.short_of(w.store, c.tree, least), parents: [] };
+  for p in c.parents {
+    shorts = log.Shorts { ...shorts, parents: shorts.parents.append(refs.short_of(w.store, p, least)) };
+  }
+  if (o.has_format) {
+    return log.formatted(c, shorts, o.format);
+  }
+  if (o.oneline) {
+    return shorts.hash + " " + log.subject(c.message);
+  }
+  return log.medium(c, shorts);
+}
+
+function log_command(argv: string[]): i32 {
+  let o = log_args(argv);
+  let (repo, status) = repo_or_fail();
+  if (status != 0) {
+    return status;
+  }
+  if (o.bad.len() > 0) {
+    return fatal("unrecognized argument: " + o.bad);
+  }
+  let r = repo[0];
+  let named = rev.parse(r, store.open(r.objects()), o.name);
+  if (named.hash.len() == 0) {
+    return fatal(if (named.message.len() > 0) { named.message } else { "ambiguous argument '" + o.name + AMBIGUOUS });
+  }
+  // git shows no commit for a tree or a blob.
+  let start = rev.parse(r, store.open(r.objects()), o.name + "^{commit}");
+  if (start.hash.len() == 0) {
+    return 0;
+  }
+  let w = log_push(Waiting { commits: [], store: start.store, seen: Map { } }, start.hash);
+  let shown = 0;
+  let plain = !o.has_format && !o.oneline;
+  while (w.commits.len() > 0 && shown != o.limit) {
+    let at = log_next(w.commits);
+    let c = w.commits[at];
+    w = Waiting { ...w, commits: array.concat(array.slice(w.commits, 0, at), array.slice(w.commits, at + 1, w.commits.len())) };
+    let text = log_text(w, c, o);
+    if (shown > 0 && (plain || o.separated)) {
+      put("\n".bytes());
+    }
+    put(text.bytes());
+    if (!plain && !o.separated && !(o.has_format && o.format.len() == 0)) {
+      put("\n".bytes());
+    }
+    shown += 1;
+    for p in c.parents {
+      w = log_push(w, p);
+    }
   }
   return 0;
 }
@@ -621,6 +768,7 @@ function main(): i32 {
     "rev-parse" => rev_parse(rest),
     "verify-pack" => verify_pack(rest),
     "ls-tree" => ls_tree(rest),
+    "log" => log_command(rest),
     _ => {
       eprint("git: '" + argv[1] + "' is not a command of this port.");
       1

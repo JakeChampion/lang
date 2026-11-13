@@ -8,7 +8,8 @@ import "./pack";
 // reads when it needs an object of it.
 pub struct Packed { path: string, idx: u8[], data: u8[], loaded: boolean }
 
-pub struct Store { objects: string, packs: Packed[] }
+// `shallow` holds the commits whose parents a shallow clone does not have.
+pub struct Store { objects: string, packs: Packed[], shallow: string[] }
 
 // The result of a read: the object, and the store with the packfile that
 // the read loaded.
@@ -16,11 +17,15 @@ pub struct Found { store: Store, object: Result[objects.Object, string] }
 
 // The store of the directory `objects`, with the index of each packfile.
 pub function open(dir: string): Store {
+  let shallow: string[] = [];
+  if let Ok(text) = read_file(dir + "/../shallow") {
+    shallow = text.split("\n").filter((line: string): boolean => line.len() == 40);
+  }
   let packs: Packed[] = [];
   let names = match (read_dir(dir + "/pack")) {
     Ok(ns) => ns,
     Err(_) => {
-      return Store { objects: dir, packs: packs };
+      return Store { objects: dir, packs: packs, shallow: shallow };
     },
   };
   for n in names {
@@ -33,7 +38,31 @@ pub function open(dir: string): Store {
       }
     }
   }
-  return Store { objects: dir, packs: packs };
+  return Store { objects: dir, packs: packs, shallow: shallow };
+}
+
+// The least length of a short name, as git sets it: half of the bits of
+// the count of packed objects, and 7 or more.
+pub function short_length(s: Store): i32 {
+  let count = 0;
+  for p in s.packs {
+    count += pack.count(p.idx);
+  }
+  let bits = 0;
+  while (count > 0) {
+    bits += 1;
+    count /= 2;
+  }
+  return ((bits + 1) / 2).max(7);
+}
+
+// The parents of the commit `hash` with the content `body`. A commit at the
+// edge of a shallow clone has none.
+pub function parents(s: Store, hash: string, body: u8[]): string[] {
+  if (s.shallow.contains(hash)) {
+    return [];
+  }
+  return objects.header_values(body, "parent");
 }
 
 // The packfile `i` with its data.

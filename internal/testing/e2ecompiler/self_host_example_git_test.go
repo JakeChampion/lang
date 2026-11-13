@@ -176,6 +176,18 @@ func TestSelfHostExampleGitAgainstGit(t *testing.T) {
 				{"", []string{"ls-tree", "nosuch"}},
 				{"", []string{"ls-tree", "HEAD:nosuch"}},
 				{"", []string{"ls-tree", "HEAD:a.txt"}},
+				{"", []string{"log"}},
+				{"", []string{"log", "--oneline"}},
+				{"", []string{"log", "--format=%H %h %T %t|%P|%p|%an %ae %ad %at|%cn %ce %cd %ct|%s|%b|%B|%%|%x"}},
+				{"", []string{"log", "--pretty=format:%s"}},
+				{"", []string{"log", "--pretty=tformat:%s"}},
+				{"", []string{"log", "--format="}},
+				{"", []string{"log", "-n", "0"}},
+				{"", []string{"log", "v1"}},
+				{"", []string{"log", "HEAD:"}},
+				{"", []string{"log", "nosuch"}},
+				{"", []string{"log", "HEAD:nosuch"}},
+				{"", []string{"log", "--bogus"}},
 				{"", []string{"hash-object", "-t", "bogus", "nosuchfile"}},
 				{"x", []string{"hash-object", "-t", "bogus", "--stdin"}},
 				{"", []string{"hash-object", "a.txt"}},
@@ -268,7 +280,7 @@ func gitPackedFixture(t *testing.T, oracle gitTool, dir string) string {
 		t.Fatal(err)
 	}
 	must("add", "-A")
-	must(append(id, "commit", "-q", "-m", "on the side")...)
+	must(append(id, "commit", "-q", "--date=2026-03-04T05:06:07+0530", "-m", "on the side\nin two lines\n\nbody\twith a tab\n\nlast")...)
 	must("checkout", "-q", "main")
 	must(append(id, "merge", "-q", "--no-ff", "-m", "merge", "side")...)
 	must(append(id, "tag", "-a", "v1", "-m", "tag one")...)
@@ -335,6 +347,12 @@ func TestSelfHostExampleGitPacked(t *testing.T) {
 				compare("", "cat-file", "-p", "HEAD~5:small.txt")
 				compare("", "ls-tree", "-l", "HEAD")
 				compare("", "ls-tree", "-r", "HEAD^2")
+				compare("", "log")
+				compare("", "log", "--oneline")
+				compare("", "log", "-n", "3", "--format=%h %p|%an %ad|%cd|%s|%b")
+				compare("", "log", "-2", "side")
+				compare("", "log", "--max-count=4", "--pretty=format:%B|", "HEAD~1")
+				compare("", "log", "--format=%t %T", "v1")
 			}
 			check(idx)
 			if _, stderr, code := oracle.run(t, top, "", "-c", "repack.useDeltaBaseOffset=false", "repack", "-q", "-a", "-d", "-f", "--depth=10"); code != 0 {
@@ -343,6 +361,52 @@ func TestSelfHostExampleGitPacked(t *testing.T) {
 			idx = gitPackIndex(t, top)
 			check(idx)
 			compare("", "verify-pack", "-v", "nosuch.idx")
+
+			// With 16,384 packed objects or more, git gives 8 digits to a short name.
+			many := filepath.Join(t.TempDir(), "many")
+			if err := os.Mkdir(many, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			var stream, files strings.Builder
+			for i := 1; i <= 16400; i++ {
+				fmt.Fprintf(&stream, "blob\nmark :%d\ndata %d\n%d\n", i, len(fmt.Sprint(i)), i)
+				fmt.Fprintf(&files, "M 100644 :%d f%d\n", i, i)
+			}
+			stream.WriteString("commit refs/heads/main\ncommitter T <t@example.com> 1700000000 +0000\ndata 4\nmany\n" + files.String())
+			for _, step := range []struct {
+				stdin string
+				args  []string
+			}{{"", []string{"init", "-q", "-b", "main", "."}}, {stream.String(), []string{"fast-import", "--quiet"}}, {"", []string{"repack", "-q", "-a", "-d"}}} {
+				if _, stderr, code := oracle.run(t, many, step.stdin, step.args...); code != 0 {
+					t.Fatalf("git %v: exit %d\n%s", step.args, code, stderr)
+				}
+			}
+			if out, _, _ := oracle.run(t, many, "", "rev-parse", "--short", "HEAD"); len(strings.TrimSpace(out)) != 8 {
+				t.Fatalf("git gives %q as the short name: the fixture does not have 8 digits", out)
+			}
+
+			// A shallow clone: a commit at its edge has no parent.
+			shallow := filepath.Join(t.TempDir(), "shallow")
+			if _, stderr, code := oracle.run(t, top, "", "clone", "-q", "--depth=3", "file://"+top, shallow); code != 0 {
+				t.Fatalf("git clone: exit %d\n%s", code, stderr)
+			}
+			for _, c := range []struct {
+				dir  string
+				args []string
+			}{
+				{many, []string{"rev-parse", "--short", "HEAD"}},
+				{many, []string{"log", "--format=%h %t"}},
+				{shallow, []string{"log", "--format=%h %p %s"}},
+				{shallow, []string{"log", "--oneline", "HEAD~2"}},
+				{shallow, []string{"rev-parse", "HEAD~2"}},
+				{shallow, []string{"rev-parse", "HEAD~3"}},
+			} {
+				wantOut, wantErr, wantCode := oracle.run(t, c.dir, "", c.args...)
+				gotOut, gotErr, gotCode := port.run(t, c.dir, "", c.args...)
+				if gotOut != wantOut || gotErr != wantErr || gotCode != wantCode {
+					t.Errorf("git %v in %s:\n got exit %d, stdout %q, stderr %q\nwant exit %d, stdout %q, stderr %q", c.args, filepath.Base(c.dir), gotCode, gotOut, gotErr, wantCode, wantOut, wantErr)
+				}
+			}
 
 			// One changed byte in the middle of the packfile: git and the port refuse it.
 			packed := strings.TrimSuffix(idx, ".idx") + ".pack"

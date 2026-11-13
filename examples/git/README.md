@@ -3,8 +3,8 @@
 A subset of the plumbing commands of git, in Fern (#15591). The port reads
 and writes the object store of a real repository.
 
-This is slices 1 to 3: loose objects, packfiles with their deltas, the
-refs, the operators of a revision, and five commands.
+This is slices 1 to 4: loose objects, packfiles with their deltas, the
+refs, the operators of a revision, and six commands.
 
 ## Commands
 
@@ -15,6 +15,7 @@ git cat-file (--batch | --batch-check)
 git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...
 git verify-pack [-v] FILE.idx...
 git ls-tree [-r] [-t] [-d] [-l] [--name-only] [--full-tree] TREE
+git log [-n N] [--oneline] [--format=FORMAT] [NAME]
 ```
 
 - `hash-object` prints the name of the object for each file, and for the
@@ -36,6 +37,16 @@ git ls-tree [-r] [-t] [-d] [-l] [--name-only] [--full-tree] TREE
   the size of each blob. In a directory below the top of the worktree, it
   lists the tree of that directory, as git does.
 
+- `log` prints the commits that a name reaches, the latest committer date
+  first. `-n N`, `-N` and `--max-count=N` set the count of commits.
+  `--oneline` prints the short name and the subject.
+
+  `--format=FORMAT` prints a line for each commit. `--pretty=format:FORMAT`
+  puts a line end between two commits and not after each one. The
+  placeholders are `%H`, `%h`, `%T`, `%t`, `%P`, `%p`, `%s`, `%b`, `%B`,
+  `%n` and `%%`. For the author they are `%an`, `%ae`, `%ad` and `%at`,
+  and `%cn`, `%ce`, `%cd` and `%ct` for the committer.
+
 A name is a full hash, a short hash of four digits or more, `HEAD`, or a
 ref. The port looks for a ref as git does: the name, then the name below
 `refs/`, `refs/tags/`, `refs/heads/` and `refs/remotes/`. It reads loose
@@ -45,6 +56,10 @@ A name can have operators after it. `^N` is parent `N` of a commit, and
 `~N` is the first parent `N` times. `^{KIND}` follows tags and commits to
 an object of that kind, and `^{}` follows tags only. `:PATH` is the entry
 at a path below the tree.
+
+A short name has the length that git gives it: 7 digits, or more for a
+store with many packed objects. In a shallow clone, a commit at the edge
+has no parent.
 
 The port finds the repository as git does: `GIT_DIR`, or the `.git` of the
 current directory or of a directory above it. A `.git` file of a linked
@@ -62,6 +77,7 @@ The standard output, the messages and the exit status are those of git
 - `store.fern`: the loose objects and the packfiles of one repository.
 - `refs.fern`: the repository of the current directory, and the names.
 - `rev.fern`: the operators of a revision.
+- `log.fern`: the fields of a commit and the text that `log` prints.
 - `git.fern`: the command line.
 
 ## What it does not have yet
@@ -77,7 +93,10 @@ The standard output, the messages and the exit status are those of git
 - `hash-object -w` for a commit, a tree or a tag. git checks the form of
   such an object before it writes one, and the port does not have that
   check. The port prints the name of such an object without `-w`.
-- `log` and `index-pack`.
+- `log` with a range, a path, a graph, a diff, or a date format. The
+  default text gives a tab the width of 8 columns, and a wide character
+  has one column.
+- `index-pack`.
 - Repositories with SHA-256 names.
 
 ## Tests
@@ -94,4 +113,5 @@ The standard output, the messages and the exit status are those of git
   by offset and then by name. Each object and each line of `verify-pack -v`
   are those of git. The last commit of the repository is a merge, and the
   operators give each parent. The port refuses a packfile with one changed
-  byte.
+  byte. The test also has a shallow clone, and a store of 16,400 objects
+  where a short name has 8 digits.
