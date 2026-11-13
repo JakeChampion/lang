@@ -64,3 +64,52 @@ func TestSocketCloseTableCensusX86_64(t *testing.T) {
 		}
 	}
 }
+
+func TestSocketCloseExitBeforeTableUseX86_64(t *testing.T) {
+	_, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	source := filepath.Join(dir, "late-close.fern")
+	program := `@noinline function stop(): void { exit(17); }
+function main(): i32 {
+  unsafe { let s: Socket = __socket_from_fd(300); let _ = tcp_close(s); }
+  stop();
+  return 0;
+}
+`
+	if err := os.WriteFile(source, []byte(program), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin, err := buildTracedX86_64(t, source, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, stderr, code := runSplit(t, runX86_64Bin(runner, bin))
+	n, top, traceErr := pairRcTrace(stderr)
+	if code != 17 || traceErr != nil || n != 0 {
+		t.Fatalf("exit %d, unpaired %d: %s, %v\n%s", code, n, top, traceErr, stderr)
+	}
+}
+
+func TestTaskFreeReturnOmitsCloseCleanup(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "plain.fern")
+	if err := os.WriteFile(source, []byte("function main(): i32 { return 17; }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "arm64-darwin"} {
+		t.Run(target, func(t *testing.T) {
+			asm := filepath.Join(dir, target+".s")
+			cmd := exec.Command(e2eharness.SelfHostCLI(t), "-stdlib", e2eharness.SelfHostStdlibRoot(t), "-target", target, "-emit", "asm", "-o", asm, source)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("emit: %v\n%s", err, out)
+			}
+			text, err := os.ReadFile(asm)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(text), "__fern_task_close_drop") {
+				t.Fatal("a task-free return emits socket cleanup")
+			}
+		})
+	}
+}

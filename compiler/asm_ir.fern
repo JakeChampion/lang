@@ -8669,6 +8669,7 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
   if (ins.str == "exit") {
     s = ssa_load(reg_of, ins.args[0], "%r11", s);
     if (asmcore.process_entry(s)) {
+      s = s.need("task_close_exit");
       s = s.write("    pushq %r11\n    call __fern_task_close_drop\n    popq %r11\n");
     }
     if (s.leak_check) {
@@ -12474,7 +12475,9 @@ function reset_trampoline(t: i32, top: i32): i32[] {
 function emit_process_finish(mod: parser.Module, own s: asmcore.EmitState): asmcore.EmitState {
   if (asmcore.has_main(mod)) {
     s = s.write("    call __fn_main\n");
-    s = s.write("    pushq %rax\n    call __fern_task_close_drop\n    popq %rax\n");
+    if (s.has_need("task")) {
+      s = s.write("    pushq %rax\n    call __fern_task_close_drop\n    popq %rax\n");
+    }
     if (s.leak_check) {
       s = s.write("    pushq %rax\n");
       s = s.write("    call __fern_lc_report\n");
@@ -12482,7 +12485,9 @@ function emit_process_finish(mod: parser.Module, own s: asmcore.EmitState): asmc
     }
     s = s.write("    movq %rax, %rdi\n");
   } else {
-    s = s.write("    call __fern_task_close_drop\n");
+    if (s.has_need("task")) {
+      s = s.write("    call __fern_task_close_drop\n");
+    }
     if (s.leak_check) {
       s = s.write("    call __fern_lc_report\n");
     }
@@ -12670,7 +12675,7 @@ function emit_entry_environment(s: asmcore.EmitState): asmcore.EmitState {
 
 // Release the process-owned close table before the final heap report.
 function emit_task_close_drop(s: asmcore.EmitState): asmcore.EmitState {
-  if (!asmcore.process_entry(s)) {
+  if (!asmcore.process_entry(s) || !s.has_need("task") && !s.has_need("task_close_exit")) {
     return s;
   }
   s = s.write("    .text\n    .globl __fern_task_close_drop\n__fern_task_close_drop:\n");
