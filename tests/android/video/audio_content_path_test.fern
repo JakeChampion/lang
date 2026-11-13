@@ -2,6 +2,7 @@ import "./audio_content";
 import "./audio_pcm";
 import "./audio_path";
 import "./app_audio_check";
+import "./app_window_check";
 import "std/android/video/source";
 import "std/io";
 import "std/video/frame";
@@ -212,6 +213,10 @@ function check(src: source.Source): i32 {
     if (result != 0) {
       return result;
     }
+  }
+  let window = app_window_check.run();
+  if (window != 0) {
+    return window;
   }
   return broken(src);
 }

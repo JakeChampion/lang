@@ -821,6 +821,18 @@ Duplicate lifecycle events do not restart audio or extend that interval.
 Host controls use synthetic timestamps, real file descriptors, AAudio mocks, and inert video handles.
 They check pauses above 30 seconds, clock positions, pending PCM, and unchanged source-read and audio-write counts.
 These controls provide no physical-device timing or lip-sync measurement.
-Window destruction still closes audio, video, and the borrowed source.
+
+Window destruction closes audio, video, and the borrowed source.
+It also clears the fixture stage and internal resume deadline.
+The next window starts a new fixture round and watchdog interval.
+If the activity remains paused, the app pauses the new streams before the next tick.
+Resume excludes only the interval after the new window starts.
+
+Host controls destroy the window at each fixture stage with pending partial PCM.
+They check duplicate destruction, exact descriptor and audio cleanup, and a fresh native AAC stream from the same content asset.
+The controls call the same post-creation state handler that follows platform video setup.
+They cover active and paused activities, full sample order, and a completed fixture that must stay complete.
+They do not execute platform window recreation or establish physical-device behavior.
+
 Unused video and graphics imports abort if these audio controls call them.
 The existing private-file, content-video, and platform MediaPlayer rounds remain required.
