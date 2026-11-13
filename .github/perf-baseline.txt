@@ -1,3 +1,7 @@
+# 2026-11-13: PR #15649, perf-x86_64 job 131794350593 on the merge with main bece4d5b. #15647 tests a
+# reuse allocation inline. perceus_rbtree.ir -4.20%, perceus_rbtree_ck.ir -3.43%, pmap_insert.ir
+# -1.35%. The .text rows of five programs grew 2.2% to 4.3%, because each site has its token test
+# and two calls. Each row moves to its measured value. Keep all tolerances.
 # 2026-11-13: PR #15643, perf-x86_64 job 131751756991 and perf-aarch64 job 131751756801 on the merge of
 # #15634 with main 312303b6. #15609 changed the deflate encoder, and deflate_encode.text grew 1.2% on
 # both targets. #15634 changes only the checker, so these are values of main. Each row moves to its
@@ -361,9 +365,9 @@ x86_64/map_string.text	9311
 x86_64/map_string.ir	51764454	2
 x86_64/ordmap_insert.text	5394
 x86_64/ordmap_insert.ir	75473969
-x86_64/pmap_insert.text	2902
-x86_64/pmap_insert.ir	50281511
-x86_64/pvec_with.text	2924
+x86_64/pmap_insert.text	2966
+x86_64/pmap_insert.ir	49602962
+x86_64/pvec_with.text	2994
 x86_64/pvec_with.ir	50694324
 x86_64/record_update.ir	36120760
 x86_64/record_update.text	981
@@ -690,16 +694,16 @@ aarch64/utf8_ingest_validated.text	8735
 aarch64/utf8_ingest_validated.ir	6229114
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
-x86_64/perceus_cfold.text	1892
+x86_64/perceus_cfold.text	1974
 x86_64/perceus_cfold.ir	47742110
-x86_64/perceus_deriv.text	2581
+x86_64/perceus_deriv.text	2651
 x86_64/perceus_deriv.ir	64168424
 x86_64/perceus_nqueens.text	1548
 x86_64/perceus_nqueens.ir	81923493
-x86_64/perceus_rbtree.text	2666
-x86_64/perceus_rbtree.ir	37915477
-x86_64/perceus_rbtree_ck.text	2762
-x86_64/perceus_rbtree_ck.ir	38467317
+x86_64/perceus_rbtree.text	2779
+x86_64/perceus_rbtree.ir	36323477
+x86_64/perceus_rbtree_ck.text	2874
+x86_64/perceus_rbtree_ck.ir	37147157
 # 2026-11-12 (#15554): PR #15558 job 131516922622 on main 1bbf2294 measures
 # 13 aarch64 rows below their pins: deflate_decode.text -1.76%,
 # deflate_encode.text -1.06%, ordmap_insert.ir -3.63%, perceus_cfold.text

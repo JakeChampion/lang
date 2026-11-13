@@ -1,3 +1,6 @@
+# 2026-11-13: PR #15649, perf-x86_64 job 131794350593 on the merge with main bece4d5b. #15647 tests a
+# reuse allocation inline. The two deflate_decode rows on x86-64 grew 1.2% and 1.3%. Each row moves
+# to its measured value. Keep all tolerances.
 # 2026-11-13: PR #15643, perf-x86_64 job 131751756991 and perf-aarch64 job 131751756801 on main
 # 312303b6. Forty profile rows grew 48 to 96 bytes on x86-64 and arm64. The growth is in each program,
 # so it is in the runtime or in the startup code of main, not in one benchmark. Each row moves to its
@@ -239,13 +242,13 @@ profile/x86-64-linux/deflate_decode.diagnostic.bytes	111144
 # 2026-11-05: main 01a92579b (#14222), perf-x86_64 job 127187970930 measures lower values for the row below. The rows that rise keep their limits.
 profile/x86-64-linux/deflate_decode.diagnostic.emit	12887
 profile/x86-64-linux/deflate_decode.diagnostic.ir	45857493
-profile/x86-64-linux/deflate_decode.hardened.bytes	55024
+profile/x86-64-linux/deflate_decode.hardened.bytes	55696
 profile/x86-64-linux/deflate_decode.hardened.emit	13084
 profile/x86-64-linux/deflate_decode.hardened.ir	33840579
 profile/x86-64-linux/deflate_decode.minimal.bytes	46112
 profile/x86-64-linux/deflate_decode.minimal.emit	11402
 profile/x86-64-linux/deflate_decode.minimal.ir	39191644
-profile/x86-64-linux/deflate_decode.safe.bytes	50624
+profile/x86-64-linux/deflate_decode.safe.bytes	51264
 profile/x86-64-linux/deflate_decode.safe.emit	12469
 profile/x86-64-linux/deflate_decode.safe.ir	32880607
 profile/x86-64-linux/enum_match.diagnostic.bytes	10960
