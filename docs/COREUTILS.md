@@ -785,6 +785,22 @@ line must contain `(GNU diffutils)`. The pin is 3.10, the release of
 ubuntu-24.04. `.github/actions/gnu-diffutils` builds it on each lane, macOS
 included. `diffutils/README.md` lists the programs and the scope of each.
 
+## sed
+
+The same gate holds the port of GNU sed in `sed/`. It uses
+`coreutils/lib/gnu.fern` with `in_package("sed")`, and the regular
+expressions of `coreutils/lib/bre.fern` with `bre.sed_syntax`. The version
+line is `sed (Fern sed) 0.1`. After a bad option, GNU sed writes its whole
+usage to standard error, so the port writes its own usage there. The corpus
+cases of a bad option compare standard error up to the word `Usage:`.
+
+The oracle is in `FERN_GNU_SED`. Its version line must contain
+`(GNU sed)`. The pin is 4.9, the release of ubuntu-24.04.
+`.github/actions/gnu-sed` builds it on each lane, macOS included. For the
+arm64 leg under qemu, the GNU sed and its libraries come from the arm64
+packages of the distribution, as for coreutils. `sed/README.md` gives the
+scope of the port.
+
 ## One binary
 
 `coreutils/multicall/fern-coreutils.fern` is every utility in a single

@@ -96,6 +96,9 @@ jobs:
       - uses: ./.github/actions/gnu-diffutils
         with:
           host: ${{ matrix.host }}
+      - uses: ./.github/actions/gnu-sed
+        with:
+          host: ${{ matrix.host }}
       # A SKIP IS A MISSING DEPENDENCY, NOT A PASS. Without this a cache that
       # restored an empty or half-written directory would leave a corpus with
       # no reference, and the failure would name the utility rather than this
@@ -164,7 +167,7 @@ jobs:
       # its parity cases, weighted by the parity row.
       #
       # BOTH LISTS ARE DERIVED. The top-level list comes from `go test -list`
-      # and the utility list from coreutils/*.fern and diffutils/*.fern — the same set
+      # and the utility list from coreutils/*.fern, diffutils/*.fern and sed/*.fern — the same set
       # TestSelfHostCoreutilsCoverage holds the corpus registry to — so a test
       # or a utility added to the tree lands in some shard without anyone
       # adding it anywhere. scripts/shard-tests partitions the live list and
@@ -188,7 +191,7 @@ jobs:
               scripts/shard-tests "${{ matrix.shard }}" "$NSHARD" "$W"
           )
           mapfile -t UTILS < <(
-            find coreutils diffutils -maxdepth 1 -name '*.fern' |
+            find coreutils diffutils sed -maxdepth 1 -name '*.fern' |
               sed "s|.*/||; s|\.fern\$||; s|^|$GIANT/|" | sort |
               scripts/shard-tests "${{ matrix.shard }}" "$NSHARD" "$W" |
               sed "s|^$GIANT/||"

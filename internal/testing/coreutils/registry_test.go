@@ -30,7 +30,7 @@ func TestCorpusRegistryHasNoStrays(t *testing.T) {
 	}
 	for util := range corpusRegistry {
 		if !have[util] {
-			t.Errorf("registerCorpus(%q, ...) has no coreutils/%s.fern or diffutils/%s.fern — drop the registration with the utility", util, util, util)
+			t.Errorf("registerCorpus(%q, ...) has no coreutils/%s.fern, diffutils/%s.fern or sed/%s.fern — drop the registration with the utility", util, util, util, util)
 		}
 	}
 }

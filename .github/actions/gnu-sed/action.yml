@@ -1,0 +1,66 @@
+name: GNU sed oracle
+description: >
+  The pinned GNU sed that the corpus compares the sed/ port with
+  (docs/COREUTILS.md). The action builds it from source and caches it per
+  host. Then it sets FERN_GNU_SED to its bin directory.
+
+  The pin is 4.9, the release that ubuntu-24.04 ships. A build from source
+  keeps macOS on the same release, because macOS has the BSD sed.
+inputs:
+  host:
+    description: The runner, which keys the cache.
+    required: true
+  version:
+    description: The GNU sed release to build.
+    required: false
+    default: "4.9"
+runs:
+  using: composite
+  steps:
+    - name: Cache the GNU sed oracle
+      id: gnu-sed
+      uses: actions/cache@v6
+      with:
+        path: ~/gnu-sed
+        key: gnu-sed-${{ inputs.version }}-${{ inputs.host }}
+    - name: Build the GNU sed oracle
+      if: steps.gnu-sed.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        VER: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        work="$(mktemp -d)"
+        cd "$work"
+        curl -fsSLO "https://ftp.gnu.org/gnu/sed/sed-$VER.tar.xz"
+        tar xf "sed-$VER.tar.xz"
+        cd "sed-$VER"
+        ./configure --quiet --disable-nls --without-selinux --prefix="$HOME/gnu-sed"
+        make -j"$(getconf _NPROCESSORS_ONLN)"
+        make install
+        rm -rf "$HOME/gnu-sed/share"
+        cd /
+        rm -rf "$work"
+    # A cache that restored an empty directory must stop here, with one
+    # message that names the cause. The list comes from sed/*.fern.
+    - name: Assert the oracle is GNU sed, and point the corpus at it
+      shell: bash
+      env:
+        VER: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        bindir="$HOME/gnu-sed/bin"
+        missing=""
+        for f in sed/*.fern; do
+          util="$(basename "$f" .fern)"
+          line="$("$bindir/$util" --version 2>/dev/null | head -1 || true)"
+          case "$line" in
+            *"(GNU sed) $VER") ;;
+            *) missing="$missing $util" ;;
+          esac
+        done
+        if [ -n "$missing" ]; then
+          echo "::error::no GNU sed $VER oracle in $bindir for:$missing"
+          exit 1
+        fi
+        echo "FERN_GNU_SED=$bindir" >> "$GITHUB_ENV"

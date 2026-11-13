@@ -1,0 +1,2596 @@
+import "std/string";
+import "std/rand";
+import "../coreutils/lib/gnu";
+import "../coreutils/lib/bre";
+
+const EXIT_BAD_USAGE: i32 = 1;
+
+const EXIT_BAD_INPUT: i32 = 2;
+
+const EXIT_PANIC: i32 = 4;
+
+// How much of POSIX the run follows. POSIXLY_CORRECT in the environment
+// gives POSIX_CORRECT, and --posix gives POSIX_BASIC.
+const POSIX_EXTENDED: i32 = 0;
+
+const POSIX_CORRECT: i32 = 1;
+
+const POSIX_BASIC: i32 = 2;
+
+const OPT_BINARY: i32 = 1;
+
+const OPT_EXTENDED: i32 = 2;
+
+const OPT_DEBUG: i32 = 3;
+
+const OPT_IN_PLACE: i32 = 4;
+
+const OPT_EXPRESSION: i32 = 5;
+
+const OPT_FILE: i32 = 6;
+
+const OPT_LINE_LENGTH: i32 = 7;
+
+const OPT_NULL_DATA: i32 = 8;
+
+const OPT_QUIET: i32 = 9;
+
+const OPT_POSIX: i32 = 10;
+
+const OPT_SANDBOX: i32 = 11;
+
+const OPT_SEPARATE: i32 = 12;
+
+const OPT_UNBUFFERED: i32 = 13;
+
+const OPT_FOLLOW: i32 = 14;
+
+const OPT_USAGE: i32 = 15;
+
+const EOF: i32 = -1;
+
+const A_NONE: i32 = 0;
+
+const A_LINE: i32 = 1;
+
+const A_LAST: i32 = 2;
+
+const A_RE: i32 = 3;
+
+// first~step
+const A_STEP: i32 = 4;
+
+// addr1,+N
+const A_PLUS: i32 = 5;
+
+// addr1,~N
+const A_MULT: i32 = 6;
+
+const RANGE_INACTIVE: i32 = 0;
+
+const RANGE_ACTIVE: i32 = 1;
+
+// A range whose first address is a line number cannot start again.
+const RANGE_CLOSED: i32 = 2;
+
+// The three kinds of text whose escapes the script reader converts.
+const TEXT_BUFFER: i32 = 0;
+
+const TEXT_REPLACEMENT: i32 = 1;
+
+const TEXT_REGEX: i32 = 2;
+
+const R_TEXT: i32 = 0;
+
+const R_GROUP: i32 = 1;
+
+const R_CASE: i32 = 2;
+
+const CASE_ASIS: i32 = 0;
+
+const CASE_UPPER: i32 = 1;
+
+const CASE_LOWER: i32 = 2;
+
+const CASE_UPPER_FIRST: i32 = 3;
+
+const CASE_LOWER_FIRST: i32 = 4;
+
+// How a cycle ends.
+const END_NONE: i32 = 0;
+
+const END_CYCLE: i32 = 1;
+
+const END_DELETE: i32 = 2;
+
+const END_RESTART: i32 = 3;
+
+const END_QUIT: i32 = 4;
+
+const END_QUIT_SILENT: i32 = 5;
+
+// The fixed outputs. The w files follow them.
+const OUT_STDOUT: i32 = 0;
+
+const OUT_EDIT: i32 = 1;
+
+const OUT_STDERR: i32 = 2;
+
+const CHUNK: i32 = 65536;
+
+const KIND_FILE: i32 = 0;
+
+const KIND_STDOUT: i32 = 1;
+
+const KIND_STDERR: i32 = 2;
+
+function help_text(): string {
+  let p = gnu.prog();
+  let out = "Usage: " + p + " [OPTION]... {script-only-if-no-other-script} [input-file]...\n";
+  out += "Run a sed script on each line of the input files, or of standard input.\n";
+  out += "\n";
+  out += "  -n, --quiet, --silent    do not print the pattern space at the end of a cycle\n";
+  out += "      --debug              not in this port: sed stops with an error\n";
+  out += "  -e SCRIPT, --expression=SCRIPT\n";
+  out += "                           add the commands in SCRIPT to the script\n";
+  out += "  -f FILE, --file=FILE     add the commands in FILE to the script\n";
+  out += "  --follow-symlinks        with -i, edit the file that a link points to\n";
+  out += "  -i[SUFFIX], --in-place[=SUFFIX]\n";
+  out += "                           edit the files in place, and keep a backup when\n";
+  out += "                           SUFFIX is given\n";
+  out += "  -l N, --line-length=N    wrap the output of the 'l' command at N columns\n";
+  out += "  --posix                  disable the GNU extensions\n";
+  out += "  -E, -r, --regexp-extended\n";
+  out += "                           use extended regular expressions\n";
+  out += "  -s, --separate           treat each file as a separate stream\n";
+  out += "      --sandbox            reject the e, r and w commands\n";
+  out += "  -u, --unbuffered         write the output after each line\n";
+  out += "  -z, --null-data          separate lines with NUL bytes\n";
+  out += "      --help               print this help and exit\n";
+  out += "      --version            print the version and exit\n";
+  out += "\n";
+  out += "Without -e or -f, the first operand is the script. The other operands are\n";
+  out += "the input files. Without input files, sed reads standard input.\n";
+  return out;
+}
+
+function usage(status: i32): void {
+  let w = if (status == 0) { stdout() } else { stderr() };
+  w.write(help_text());
+  exit(status);
+}
+
+struct Opts { quiet: boolean, extended: boolean, separate: boolean, in_place: boolean, suffix: string, posix: i32, zero: boolean, unbuffered: boolean, line_len: i32, follow: boolean, sandbox: boolean }
+
+struct Addr { kind: i32, n: i64, step: i64, rx: i32 }
+
+// A command. `jump` is the target of b, t and T, and the index of the
+// closing brace of {. `out` is the output of w, W and the w flag of s.
+struct Cmd { a1: Addr, a2: Addr, bang: boolean, op: u8, text: u8[], name: string, num: i64, jump: i32, sub: i32, out: i32, table: u8[] }
+
+// An empty regex stands for the last regex that ran. `nosub` marks a regex of
+// an address: GNU sed compiles it without groups, and checks the groups when
+// an s command first uses it through an empty regex.
+struct Rx { re: bre.Bre, empty: boolean, nosub: boolean }
+
+struct ROp { kind: i32, text: u8[], n: i32 }
+
+struct Sub { rx: i32, ops: ROp[], global: boolean, nth: i64, print: i32, eval: boolean, out: i32, cased: boolean, refs: i32 }
+
+// Where the script reader is: a file and its line, or an -e expression.
+struct Loc { is_file: boolean, fname: string, line: i32, expr: i32 }
+
+struct WFile { name: string, w: Writer, kind: i32 }
+
+struct Comp { o: Opts, src: u8[], pos: i32, ch: i32, loc: Loc, nexpr: i32, first: boolean, cmds: Cmd[], rxs: Rx[], subs: Sub[], wfiles: WFile[], rnames: string[], blocks: i32[], block_locs: Loc[], labels: string[], label_at: i32[], pending: i32, pend: u8[], quiet: boolean }
+
+// ---------------------------------------------------------------------------
+// Messages
+
+function say(msg: u8[]): void {
+  let h = buf_new(msg.len() + 64);
+  buf_push(h, gnu.prog());
+  buf_push(h, ": ");
+  buf_push_bytes_range(h, msg, 0, msg.len());
+  buf_push_byte(h, 10);
+  let b = buf_take_bytes(h);
+  buf_free(h);
+  stderr().write_bytes(b);
+}
+
+function panic(msg: string): void {
+  say(msg.bytes());
+  exit(EXIT_PANIC);
+}
+
+function loc_text(l: Loc, pos: i32): string {
+  if (l.is_file) {
+    return f"file {l.fname} line {l.line}";
+  }
+  return f"-e expression #{l.expr}, char {pos}";
+}
+
+function bad_prog(c: Comp, msg: string): void {
+  say((loc_text(c.loc, c.pos) + ": " + msg).bytes());
+  exit(EXIT_BAD_USAGE);
+}
+
+function bad_command(c: Comp, ch: i32): void {
+  let h = buf_new(64);
+  buf_push(h, loc_text(c.loc, c.pos) + ": unknown command: `");
+  buf_push_byte(h, ch);
+  buf_push(h, "'");
+  let b = buf_take_bytes(h);
+  buf_free(h);
+  say(b);
+  exit(EXIT_BAD_USAGE);
+}
+
+// ---------------------------------------------------------------------------
+// The script reader
+
+function comp_new(o: Opts): Comp {
+  let loc = Loc { is_file: false, fname: "", line: 0, expr: 0 };
+  return Comp { o: o, src: [], pos: 0, ch: EOF, loc: loc, nexpr: 0, first: true, cmds: [], rxs: [], subs: [], wfiles: [], rnames: [], blocks: [], block_locs: [], labels: [], label_at: [], pending: -1, pend: [], quiet: false };
+}
+
+function inchar(c: Comp): Comp {
+  if (c.pos >= c.src.len()) {
+    return Comp { ...c, ch: EOF };
+  }
+  let ch = c.src[c.pos] as i32;
+  if (ch == 10) {
+    return Comp { ...c, pos: c.pos + 1, ch: ch, loc: Loc { ...c.loc, line: c.loc.line + 1 } };
+  }
+  return Comp { ...c, pos: c.pos + 1, ch: ch };
+}
+
+// savchar puts back the character that inchar gave last.
+function savchar(c: Comp): Comp {
+  if (c.ch == EOF) {
+    return c;
+  }
+  if (c.ch == 10) {
+    return Comp { ...c, pos: c.pos - 1, loc: Loc { ...c.loc, line: c.loc.line - 1 } };
+  }
+  return Comp { ...c, pos: c.pos - 1 };
+}
+
+function is_blank(ch: i32): boolean {
+  return ch == 32 || ch == 9;
+}
+
+function is_space(ch: i32): boolean {
+  return ch == 32 || ch >= 9 && ch <= 13;
+}
+
+function is_digit(ch: i32): boolean {
+  return ch >= 48 && ch <= 57;
+}
+
+function in_nonblank(c0: Comp): Comp {
+  let c = inchar(c0);
+  while (is_blank(c.ch)) {
+    c = inchar(c);
+  }
+  return c;
+}
+
+// in_integer reads the digits that start with `first`, the current character.
+function in_integer(c0: Comp, first: i32): (Comp, i64) {
+  let c = c0;
+  let ch = first;
+  let n: i64 = 0;
+  while (is_digit(ch)) {
+    n = n * 10 + (ch - 48) as i64;
+    c = inchar(c);
+    ch = c.ch;
+  }
+  return (savchar(c), n);
+}
+
+function read_end_of_cmd(c0: Comp): Comp {
+  let c = in_nonblank(c0);
+  if (c.ch == 125 || c.ch == 35) {
+    return savchar(c);
+  }
+  if (c.ch != EOF && c.ch != 10 && c.ch != 59) {
+    bad_prog(c, "extra characters after command");
+  }
+  return c;
+}
+
+function read_filename(c0: Comp): (Comp, string) {
+  let c = in_nonblank(c0);
+  let h = buf_new(32);
+  while (c.ch != EOF && c.ch != 10) {
+    buf_push_byte(h, c.ch);
+    c = inchar(c);
+  }
+  let name = buf_take(h);
+  buf_free(h);
+  return (c, name);
+}
+
+function read_label(c0: Comp): (Comp, string) {
+  let c = in_nonblank(c0);
+  let h = buf_new(16);
+  while (c.ch != EOF && !is_space(c.ch) && c.ch != 59 && c.ch != 125 && c.ch != 35) {
+    buf_push_byte(h, c.ch);
+    c = inchar(c);
+  }
+  let label = buf_take(h);
+  buf_free(h);
+  return (savchar(c), label);
+}
+
+// match_slash reads up to the closing delimiter. A regex turns \n into a
+// newline. An escaped delimiter loses its backslash, but \& keeps it in a
+// replacement whose delimiter is &. In a regex, a bracket expression is
+// copied as it is: the delimiter does not end it, and a backslash in it is
+// a literal character.
+function match_slash(c0: Comp, slash: i32, regex: boolean): (Comp, u8[], boolean) {
+  let c = c0;
+  let h = buf_new(32);
+  let found = false;
+  while (true) {
+    c = inchar(c);
+    let ch = c.ch;
+    if (ch == EOF || ch == 10) {
+      break;
+    }
+    if (ch == slash) {
+      found = true;
+      break;
+    }
+    if (ch == 91 && regex) {
+      c = copy_bracket(c, h);
+      if (c.ch == EOF || c.ch == 10) {
+        break;
+      }
+      continue;
+    }
+    if (ch == 92) {
+      c = inchar(c);
+      ch = c.ch;
+      if (ch == EOF) {
+        break;
+      }
+      if (ch == 110 && regex) {
+        ch = 10;
+      } else if (ch != 10 && (ch != slash || !regex && ch == 38)) {
+        buf_push_byte(h, 92);
+      }
+    }
+    buf_push_byte(h, ch);
+  }
+  if (c.ch == 10 && !found) {
+    c = savchar(c);
+  }
+  let text = buf_take_bytes(h);
+  buf_free(h);
+  return (c, text, found);
+}
+
+// copy_bracket copies a bracket expression after its [. It stops after the
+// closing ], or at the end of the line.
+function copy_bracket(c0: Comp, h: usize): Comp {
+  buf_push_byte(h, 91);
+  let c = inchar(c0);
+  if (c.ch == 94) {
+    buf_push_byte(h, 94);
+    c = inchar(c);
+  }
+  if (c.ch == 93) {
+    buf_push_byte(h, 93);
+    c = inchar(c);
+  }
+  while (c.ch != EOF && c.ch != 10) {
+    let ch = c.ch;
+    buf_push_byte(h, ch);
+    if (ch == 93) {
+      return c;
+    }
+    c = inchar(c);
+    if (ch == 91 && (c.ch == 58 || c.ch == 46 || c.ch == 61)) {
+      buf_push_byte(h, c.ch);
+      c = copy_class(c, h, c.ch);
+      if (c.ch == EOF || c.ch == 10) {
+        return c;
+      }
+      c = inchar(c);
+    }
+  }
+  return c;
+}
+
+// copy_class copies a [:class:], [.symbol.] or [=equivalence=] through its
+// closing `kind` and ].
+function copy_class(c0: Comp, h: usize, kind: i32): Comp {
+  let c = c0;
+  let prev = -2;
+  while (true) {
+    c = inchar(c);
+    if (c.ch == EOF || c.ch == 10) {
+      return c;
+    }
+    buf_push_byte(h, c.ch);
+    if (prev == kind && c.ch == 93) {
+      return c;
+    }
+    prev = c.ch;
+  }
+  return c;
+}
+
+// ---------------------------------------------------------------------------
+// Escapes
+
+function hex_value(ch: i32): i32 {
+  if (ch >= 48 && ch <= 57) {
+    return ch - 48;
+  }
+  if (ch >= 97 && ch <= 102) {
+    return ch - 87;
+  }
+  if (ch >= 65 && ch <= 70) {
+    return ch - 55;
+  }
+  return 99;
+}
+
+// convert_number reads up to `digits` digits of `base` after t[at]. It gives
+// the byte and the index after the digits, or -1 when no digit follows.
+function convert_number(t: u8[], at: i32, base: i32, digits: i32): (i32, i32) {
+  let v = 0;
+  let k = at;
+  while (k < t.len() && k < at + digits && hex_value(t[k] as i32) < base) {
+    v = v * base + hex_value(t[k] as i32);
+    k += 1;
+  }
+  if (k == at) {
+    return (-1, at);
+  }
+  return (v & 255, k);
+}
+
+function upper_byte(ch: i32): i32 {
+  if (ch >= 97 && ch <= 122) {
+    return ch - 32;
+  }
+  return ch;
+}
+
+function lower_byte(ch: i32): i32 {
+  if (ch >= 65 && ch <= 90) {
+    return ch + 32;
+  }
+  return ch;
+}
+
+// escape_at converts the escape whose letter is t[at], after a backslash. It
+// gives the byte and the index after the escape, or -1 for no conversion.
+function escape_at(c: Comp, t: u8[], at: i32): (i32, i32) {
+  let e = t[at] as i32;
+  if (e == 97) {
+    return (7, at + 1);
+  }
+  if (e == 102) {
+    return (12, at + 1);
+  }
+  if (e == 110) {
+    return (10, at + 1);
+  }
+  if (e == 114) {
+    return (13, at + 1);
+  }
+  if (e == 116) {
+    return (9, at + 1);
+  }
+  if (e == 118) {
+    return (11, at + 1);
+  }
+  if (e == 100) {
+    return convert_number(t, at + 1, 10, 3);
+  }
+  if (e == 111) {
+    return convert_number(t, at + 1, 8, 3);
+  }
+  if (e == 120) {
+    return convert_number(t, at + 1, 16, 2);
+  }
+  if (e == 99 && at + 1 < t.len()) {
+    let x = t[at + 1] as i32;
+    if (x == 92) {
+      if (at + 2 >= t.len() || t[at + 2] as i32 != 92) {
+        bad_prog(c, "recursive escaping after \\c not allowed");
+      }
+      return (28, at + 3);
+    }
+    return (upper_byte(x) ^ 64, at + 2);
+  }
+  return (-1, at);
+}
+
+// normalize converts the escapes of a text. A produced backslash or & in a
+// replacement keeps its literal meaning.
+function normalize(c: Comp, t: u8[], mode: i32): u8[] {
+  let h = buf_new(t.len() + 1);
+  let i = 0;
+  while (i < t.len()) {
+    let ch = t[i] as i32;
+    if (ch != 92) {
+      buf_push_byte(h, ch);
+      i += 1;
+      continue;
+    }
+    if (i + 1 >= t.len()) {
+      if (mode != TEXT_BUFFER) {
+        buf_push_byte(h, 92);
+      }
+      i += 1;
+      continue;
+    }
+    if (t[i + 1] as i32 == 99 && i + 2 >= t.len()) {
+      buf_push_byte(h, 92);
+      i += 2;
+      continue;
+    }
+    let conv: (i32, i32) = escape_at(c, t, i + 1);
+    if (conv.0 >= 0) {
+      if (mode == TEXT_REPLACEMENT && (conv.0 == 92 || conv.0 == 38)) {
+        buf_push_byte(h, 92);
+      }
+      buf_push_byte(h, conv.0);
+      i = conv.1;
+      continue;
+    }
+    if (mode != TEXT_BUFFER) {
+      buf_push_byte(h, 92);
+    }
+    buf_push_byte(h, t[i + 1] as i32);
+    i += 2;
+  }
+  let out = buf_take_bytes(h);
+  buf_free(h);
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Compiling the script
+
+function no_addr(): Addr {
+  return Addr { kind: A_NONE, n: 0, step: 0, rx: -1 };
+}
+
+function compile_rx(c: Comp, pat: u8[], icase: boolean, multi: boolean, refs: i32, subst: boolean): (Comp, i32) {
+  let idx = c.rxs.len();
+  if (pat.len() == 0) {
+    if (icase || multi) {
+      bad_prog(c, "cannot specify modifiers on empty regexp");
+    }
+    let empty = bre.bre_compile_bytes("".bytes());
+    return (Comp { ...c, rxs: c.rxs.append(Rx { re: empty, empty: true, nosub: false }) }, idx);
+  }
+  let text = normalize(c, pat, TEXT_REGEX);
+  let syntax = bre.sed_syntax(c.o.extended, icase, multi, c.o.posix == POSIX_BASIC);
+  let re = bre.bre_compile_bytes_syntax(text, syntax);
+  if (re.err.len() > 0) {
+    bad_prog(c, re.err);
+  }
+  if (refs > re.ngroups && c.o.posix == POSIX_EXTENDED) {
+    bad_prog(c, f"invalid reference \\{refs} on `s' command's RHS");
+  }
+  return (Comp { ...c, rxs: c.rxs.append(Rx { re: re, empty: false, nosub: !subst }) }, idx);
+}
+
+function compile_address(c0: Comp, ch: i32): (Comp, Addr, boolean) {
+  let c = c0;
+  if (ch == 47 || ch == 92) {
+    let delim = ch;
+    if (ch == 92) {
+      c = inchar(c);
+      delim = c.ch;
+    }
+    let ms: (Comp, u8[], boolean) = match_slash(c, delim, true);
+    c = ms.0;
+    if (!ms.2) {
+      bad_prog(c, "unterminated address regex");
+    }
+    let icase = false;
+    let multi = false;
+    while (true) {
+      c = in_nonblank(c);
+      if (c.o.posix == POSIX_BASIC) {
+        c = savchar(c);
+        break;
+      }
+      if (c.ch == 73) {
+        icase = true;
+      } else if (c.ch == 77) {
+        multi = true;
+      } else {
+        c = savchar(c);
+        break;
+      }
+    }
+    let rr: (Comp, i32) = compile_rx(c, ms.1, icase, multi, 0, false);
+    return (rr.0, Addr { kind: A_RE, n: 0, step: 0, rx: rr.1 }, true);
+  }
+  if (is_digit(ch)) {
+    let ni: (Comp, i64) = in_integer(c, ch);
+    c = in_nonblank(ni.0);
+    if (c.ch != 126 || c.o.posix == POSIX_BASIC) {
+      return (savchar(c), Addr { kind: A_LINE, n: ni.1, step: 0, rx: -1 }, true);
+    }
+    c = in_nonblank(c);
+    let st: (Comp, i64) = in_integer(c, c.ch);
+    if (st.1 > 0) {
+      return (st.0, Addr { kind: A_STEP, n: ni.1, step: st.1, rx: -1 }, true);
+    }
+    return (st.0, Addr { kind: A_LINE, n: ni.1, step: 0, rx: -1 }, true);
+  }
+  if ((ch == 43 || ch == 126) && c.o.posix != POSIX_BASIC) {
+    c = in_nonblank(c);
+    let st: (Comp, i64) = in_integer(c, c.ch);
+    let kind = if (ch == 43) { A_PLUS } else { A_MULT };
+    return (st.0, Addr { kind: kind, n: st.1, step: 0, rx: -1 }, true);
+  }
+  if (ch == 36) {
+    return (c, Addr { kind: A_LAST, n: 0, step: 0, rx: -1 }, true);
+  }
+  return (c, no_addr(), false);
+}
+
+function new_cmd(a1: Addr, a2: Addr, bang: boolean, op: i32): Cmd {
+  return Cmd { a1: a1, a2: a2, bang: bang, op: op as u8, text: [], name: "", num: -1, jump: -1, sub: -1, out: -1, table: [] };
+}
+
+function push_cmd(c: Comp, cmd: Cmd): Comp {
+  return Comp { ...c, cmds: c.cmds.append(cmd) };
+}
+
+// compile_chunk compiles one -e expression or one -f file.
+function compile_chunk(c0: Comp): Comp {
+  let c = c0;
+  if (c.pending >= 0) {
+    c = read_text(c, -1, 10);
+  }
+  while (true) {
+    c = inchar(c);
+    while (c.ch == 59 || is_space(c.ch)) {
+      c = inchar(c);
+    }
+    if (c.ch == EOF) {
+      break;
+    }
+    c = compile_command(c);
+  }
+  return Comp { ...c, first: false };
+}
+
+function compile_command(c0: Comp): Comp {
+  let c = c0;
+  let a1 = no_addr();
+  let a2 = no_addr();
+  let r: (Comp, Addr, boolean) = compile_address(c, c.ch);
+  c = r.0;
+  if (r.2) {
+    a1 = r.1;
+    if (a1.kind == A_PLUS || a1.kind == A_MULT) {
+      bad_prog(c, "invalid usage of +N or ~N as first address");
+    }
+    c = in_nonblank(c);
+    if (c.ch == 44) {
+      c = in_nonblank(c);
+      let r2: (Comp, Addr, boolean) = compile_address(c, c.ch);
+      c = r2.0;
+      if (!r2.2) {
+        bad_prog(c, "unexpected `,'");
+      }
+      a2 = r2.1;
+      c = in_nonblank(c);
+    }
+    if (a1.kind == A_LINE && a1.n == 0 && (a2.kind != A_RE || c.o.posix == POSIX_BASIC)) {
+      bad_prog(c, "invalid usage of line address 0");
+    }
+  }
+  let bang = false;
+  if (c.ch == 33) {
+    bang = true;
+    c = in_nonblank(c);
+    if (c.ch == 33) {
+      bad_prog(c, "multiple `!'s");
+    }
+  }
+  let ch = c.ch;
+  if (c.o.posix == POSIX_BASIC) {
+    if (ch == 101 || ch == 70 || ch == 118 || ch == 122 || ch == 76 || ch == 81 || ch == 84 || ch == 82 || ch == 87) {
+      bad_command(c, ch);
+    }
+    if ((ch == 97 || ch == 105 || ch == 108 || ch == 61 || ch == 114) && a2.kind != A_NONE) {
+      bad_prog(c, "command only uses one address");
+    }
+  }
+  let cmd = new_cmd(a1, a2, bang, ch);
+  return compile_op(c, cmd, ch);
+}
+
+// One arm for each command of sed.
+// fern-lint: allow cyclomatic-complexity
+function compile_op(c0: Comp, cmd: Cmd, ch: i32): Comp {
+  let c = c0;
+  if (ch == EOF) {
+    bad_prog(c, "missing command");
+  }
+  if (ch == 35) {
+    return compile_comment(c, cmd);
+  }
+  if (ch == 118) {
+    return compile_version(c);
+  }
+  if (ch == 123) {
+    return Comp { ...push_cmd(c, cmd), blocks: c.blocks.append(c.cmds.len()), block_locs: c.block_locs.append(c.loc) };
+  }
+  if (ch == 125) {
+    return compile_close(c, cmd);
+  }
+  if (ch == 58) {
+    return compile_label(c, cmd);
+  }
+  if (ch == 97 || ch == 105 || ch == 99) {
+    return compile_text(c, cmd);
+  }
+  if (ch == 101) {
+    return compile_exec(c, cmd);
+  }
+  if (ch == 98 || ch == 116 || ch == 84) {
+    let lr: (Comp, string) = read_label(c);
+    return push_cmd(lr.0, Cmd { ...cmd, name: lr.1 });
+  }
+  if (ch == 113 || ch == 81 || ch == 108 || ch == 76) {
+    return compile_int_arg(c, cmd, ch);
+  }
+  if (ch == 61 || ch == 100 || ch == 68 || ch == 70 || ch == 103 || ch == 71 || ch == 104 || ch == 72 || ch == 110 || ch == 78 || ch == 112 || ch == 80 || ch == 122 || ch == 120) {
+    return push_cmd(read_end_of_cmd(c), cmd);
+  }
+  if (ch == 114) {
+    return compile_read(c, cmd);
+  }
+  if (ch == 82) {
+    return compile_read_line(c, cmd);
+  }
+  if (ch == 119 || ch == 87) {
+    if (c.o.sandbox) {
+      bad_prog(c, "e/r/w commands disabled in sandbox mode");
+    }
+    let wr: (Comp, i32) = open_wfile(c);
+    return push_cmd(wr.0, Cmd { ...cmd, out: wr.1 });
+  }
+  if (ch == 115) {
+    return compile_subst(c, cmd);
+  }
+  if (ch == 121) {
+    return compile_translate(c, cmd);
+  }
+  bad_command(c, ch);
+  return c;
+}
+
+function compile_comment(c0: Comp, cmd: Cmd): Comp {
+  let c = c0;
+  if (cmd.a1.kind != A_NONE) {
+    bad_prog(c, "comments don't accept any addresses");
+  }
+  c = inchar(c);
+  if (c.ch == 110 && c.first && c.pos == 2) {
+    c = Comp { ...c, quiet: true };
+  }
+  while (c.ch != EOF && c.ch != 10) {
+    c = inchar(c);
+  }
+  return c;
+}
+
+// verscmp compares version strings as strverscmp does for plain versions:
+// runs of digits compare as numbers.
+function verscmp(a: string, b: string): i32 {
+  let i = 0;
+  let j = 0;
+  while (i < a.len() && j < b.len()) {
+    let x = a[i] as i32;
+    let y = b[j] as i32;
+    if (is_digit(x) && is_digit(y)) {
+      let n: i64 = 0;
+      while (i < a.len() && is_digit(a[i] as i32)) {
+        n = n * 10 + (a[i] as i32 - 48) as i64;
+        i += 1;
+      }
+      let m: i64 = 0;
+      while (j < b.len() && is_digit(b[j] as i32)) {
+        m = m * 10 + (b[j] as i32 - 48) as i64;
+        j += 1;
+      }
+      if (n != m) {
+        return if (n < m) { -1 } else { 1 };
+      }
+      continue;
+    }
+    if (x != y) {
+      return if (x < y) { -1 } else { 1 };
+    }
+    i += 1;
+    j += 1;
+  }
+  if (i < a.len()) {
+    return 1;
+  }
+  if (j < b.len()) {
+    return -1;
+  }
+  return 0;
+}
+
+function compile_version(c0: Comp): Comp {
+  let lr: (Comp, string) = read_label(c0);
+  let c = lr.0;
+  if (lr.1.len() > 0 && verscmp(lr.1, "4.9") > 0) {
+    c = inchar(c);
+    bad_prog(savchar(c), "expected newer version of sed");
+  }
+  return Comp { ...c, o: Opts { ...c.o, posix: POSIX_EXTENDED } };
+}
+
+function compile_close(c0: Comp, cmd: Cmd): Comp {
+  let c = c0;
+  if (c.blocks.len() == 0) {
+    bad_prog(c, "unexpected `}'");
+  }
+  if (cmd.a1.kind != A_NONE) {
+    bad_prog(c, "`}' doesn't want any addresses");
+  }
+  c = read_end_of_cmd(c);
+  let open = c.blocks[c.blocks.len() - 1];
+  let at = c.cmds.len();
+  let cmds = c.cmds.with(open, Cmd { ...c.cmds[open], jump: at });
+  let blocks = c.blocks.take(c.blocks.len() - 1);
+  let locs = c.block_locs.take(c.block_locs.len() - 1);
+  return push_cmd(Comp { ...c, cmds: cmds, blocks: blocks, block_locs: locs }, cmd);
+}
+
+function compile_label(c0: Comp, cmd: Cmd): Comp {
+  let c = c0;
+  if (cmd.a1.kind != A_NONE) {
+    bad_prog(c, ": doesn't want any addresses");
+  }
+  let lr: (Comp, string) = read_label(c);
+  c = lr.0;
+  if (lr.1.len() == 0) {
+    bad_prog(c, "\":\" lacks a label");
+  }
+  c = Comp { ...c, labels: c.labels.append(lr.1), label_at: c.label_at.append(c.cmds.len()) };
+  return push_cmd(c, Cmd { ...cmd, name: lr.1 });
+}
+
+// compile_text reads the text of a, i and c. A backslash may come first;
+// without one the text is the rest of the line, from its first non-blank.
+function compile_text(c0: Comp, cmd: Cmd): Comp {
+  let c = in_nonblank(c0);
+  if (c.ch == EOF) {
+    bad_prog(c, "expected \\ after `a', `c' or `i'");
+  }
+  let lead = 10;
+  if (c.ch == 92) {
+    c = inchar(c);
+    lead = c.ch;
+  } else {
+    if (c.o.posix == POSIX_BASIC) {
+      bad_prog(c, "expected \\ after `a', `c' or `i'");
+    }
+    c = savchar(c);
+  }
+  let at = c.cmds.len();
+  c = push_cmd(c, cmd);
+  return read_text(c, at, lead);
+}
+
+function compile_exec(c0: Comp, cmd: Cmd): Comp {
+  let c = c0;
+  if (c.o.sandbox) {
+    bad_prog(c, "e/r/w commands disabled in sandbox mode");
+  }
+  c = in_nonblank(c);
+  if (c.ch == EOF || c.ch == 10) {
+    return push_cmd(c, cmd);
+  }
+  let lead = 10;
+  if (c.ch == 92) {
+    c = inchar(c);
+    lead = c.ch;
+  } else {
+    c = savchar(c);
+  }
+  let at = c.cmds.len();
+  c = push_cmd(c, cmd);
+  return read_text(c, at, lead);
+}
+
+// read_text reads a text up to an unescaped newline. A text that ends in a
+// backslash at the end of an expression goes on in the next one. `at` is the
+// command that owns the text, or -1 to go on with the pending text.
+function read_text(c0: Comp, at: i32, lead: i32): Comp {
+  let c = c0;
+  if (at >= 0) {
+    c = Comp { ...c, pending: at, pend: [] };
+  }
+  if (lead == EOF) {
+    return c;
+  }
+  let h = buf_new(c.pend.len() + 32);
+  buf_push_bytes_range(h, c.pend, 0, c.pend.len());
+  if (lead != 10) {
+    buf_push_byte(h, lead);
+  }
+  c = inchar(c);
+  while (c.ch != EOF && c.ch != 10) {
+    if (c.ch == 92) {
+      c = inchar(c);
+      if (c.ch != EOF) {
+        buf_push_byte(h, 92);
+      }
+    }
+    if (c.ch == EOF) {
+      buf_push_byte(h, 10);
+      let raw = buf_take_bytes(h);
+      buf_free(h);
+      return set_text(Comp { ...c, pend: raw }, raw);
+    }
+    buf_push_byte(h, c.ch);
+    c = inchar(c);
+  }
+  buf_push_byte(h, 10);
+  let raw = buf_take_bytes(h);
+  buf_free(h);
+  let text = normalize(c, raw, TEXT_BUFFER);
+  return Comp { ...set_text(c, text), pending: -1, pend: [] };
+}
+
+function set_text(c: Comp, text: u8[]): Comp {
+  let at = c.pending;
+  return Comp { ...c, cmds: c.cmds.with(at, Cmd { ...c.cmds[at], text: text }) };
+}
+
+function compile_int_arg(c0: Comp, cmd: Cmd, ch: i32): Comp {
+  let c = c0;
+  if ((ch == 113 || ch == 81) && cmd.a2.kind != A_NONE) {
+    bad_prog(c, "command only uses one address");
+  }
+  c = in_nonblank(c);
+  let num: i64 = -1;
+  if (is_digit(c.ch) && c.o.posix != POSIX_BASIC) {
+    let ni: (Comp, i64) = in_integer(c, c.ch);
+    c = ni.0;
+    num = ni.1;
+  } else {
+    c = savchar(c);
+  }
+  return push_cmd(read_end_of_cmd(c), Cmd { ...cmd, num: num });
+}
+
+function compile_read(c0: Comp, cmd: Cmd): Comp {
+  let c = c0;
+  if (c.o.sandbox) {
+    bad_prog(c, "e/r/w commands disabled in sandbox mode");
+  }
+  let fr: (Comp, string) = read_filename(c);
+  c = fr.0;
+  if (fr.1.len() == 0) {
+    bad_prog(c, "missing filename in r/R/w/W commands");
+  }
+  return push_cmd(c, Cmd { ...cmd, name: fr.1 });
+}
+
+function compile_read_line(c0: Comp, cmd: Cmd): Comp {
+  let c = c0;
+  if (c.o.sandbox) {
+    bad_prog(c, "e/r/w commands disabled in sandbox mode");
+  }
+  let fr: (Comp, string) = read_filename(c);
+  c = fr.0;
+  if (fr.1.len() == 0) {
+    bad_prog(c, "missing filename in r/R/w/W commands");
+  }
+  for k in 0..c.rnames.len() {
+    if (c.rnames[k] == fr.1) {
+      return push_cmd(c, Cmd { ...cmd, name: fr.1, out: k });
+    }
+  }
+  let k = c.rnames.len();
+  return push_cmd(Comp { ...c, rnames: c.rnames.append(fr.1) }, Cmd { ...cmd, name: fr.1, out: k });
+}
+
+// open_wfile reads the name of a w file and opens it now, as GNU sed does.
+// The same name gives the same output.
+function open_wfile(c0: Comp): (Comp, i32) {
+  let fr: (Comp, string) = read_filename(c0);
+  let c = fr.0;
+  let name = fr.1;
+  if (name.len() == 0) {
+    bad_prog(c, "missing filename in r/R/w/W commands");
+  }
+  for k in 0..c.wfiles.len() {
+    if (c.wfiles[k].name == name) {
+      return (c, k);
+    }
+  }
+  let k = c.wfiles.len();
+  if (name == "/dev/stdout") {
+    return (Comp { ...c, wfiles: c.wfiles.append(WFile { name: name, w: stdout(), kind: KIND_STDOUT }) }, k);
+  }
+  if (name == "/dev/stderr") {
+    return (Comp { ...c, wfiles: c.wfiles.append(WFile { name: name, w: stderr(), kind: KIND_STDERR }) }, k);
+  }
+  match (open_writer(name)) {
+    Ok(w) => {
+      return (Comp { ...c, wfiles: c.wfiles.append(WFile { name: name, w: w, kind: KIND_FILE }) }, k);
+    },
+    Err(e) => {
+      panic("couldn't open file " + name + ": " + gnu.io_error_text(e));
+    }
+  }
+  return (c, k);
+}
+
+function compile_subst(c0: Comp, cmd: Cmd): Comp {
+  let c = inchar(c0);
+  let slash = c.ch;
+  let m1: (Comp, u8[], boolean) = match_slash(c, slash, true);
+  c = m1.0;
+  if (!m1.2) {
+    bad_prog(c, "unterminated `s' command");
+  }
+  let m2: (Comp, u8[], boolean) = match_slash(c, slash, false);
+  c = m2.0;
+  if (!m2.2) {
+    bad_prog(c, "unterminated `s' command");
+  }
+  let rp: (ROp[], i32, boolean) = parse_replacement(c, normalize(c, m2.1, TEXT_REPLACEMENT));
+  let sub = Sub { rx: -1, ops: rp.0, global: false, nth: 0, print: 0, eval: false, out: -1, cased: rp.2, refs: rp.1 };
+  let fl: (Comp, Sub, boolean, boolean) = subst_flags(c, sub);
+  c = fl.0;
+  sub = fl.1;
+  let rr: (Comp, i32) = compile_rx(c, m1.1, fl.2, fl.3, rp.1, true);
+  c = rr.0;
+  if (sub.eval && c.o.sandbox) {
+    bad_prog(c, "e/r/w commands disabled in sandbox mode");
+  }
+  if (sub.nth == 0) {
+    sub = Sub { ...sub, nth: 1 };
+  }
+  let at = c.subs.len();
+  c = Comp { ...c, subs: c.subs.append(Sub { ...sub, rx: rr.1 }) };
+  return push_cmd(c, Cmd { ...cmd, sub: at });
+}
+
+// subst_flags reads the flags of s. It gives the I and M flags apart, which
+// belong to the regex.
+// One arm for each flag of s.
+// fern-lint: allow cyclomatic-complexity
+function subst_flags(c0: Comp, sub0: Sub): (Comp, Sub, boolean, boolean) {
+  let c = c0;
+  let sub = sub0;
+  let icase = false;
+  let multi = false;
+  let basic = c.o.posix == POSIX_BASIC;
+  while (true) {
+    c = in_nonblank(c);
+    let ch = c.ch;
+    if ((ch == 105 || ch == 73) && !basic) {
+      icase = true;
+    } else if ((ch == 109 || ch == 77) && !basic) {
+      multi = true;
+    } else if (ch == 101 && !basic) {
+      sub = Sub { ...sub, eval: true };
+    } else if (ch == 112) {
+      if (sub.print != 0) {
+        bad_prog(c, "multiple `p' options to `s' command");
+      }
+      sub = Sub { ...sub, print: if (sub.eval) { 2 } else { 1 } };
+    } else if (ch == 103) {
+      if (sub.global) {
+        bad_prog(c, "multiple `g' options to `s' command");
+      }
+      sub = Sub { ...sub, global: true };
+    } else if (ch == 119) {
+      if (c.o.sandbox) {
+        bad_prog(c, "e/r/w commands disabled in sandbox mode");
+      }
+      let wr: (Comp, i32) = open_wfile(c);
+      return (wr.0, Sub { ...sub, out: wr.1 }, icase, multi);
+    } else if (is_digit(ch)) {
+      if (sub.nth != 0) {
+        bad_prog(c, "multiple number options to `s' command");
+      }
+      let ni: (Comp, i64) = in_integer(c, ch);
+      c = ni.0;
+      if (ni.1 == 0) {
+        bad_prog(c, "number option to `s' command may not be zero");
+      }
+      sub = Sub { ...sub, nth: ni.1 };
+    } else if (ch == 125 || ch == 35) {
+      return (savchar(c), sub, icase, multi);
+    } else if (ch == 10 || ch == 59 || ch == EOF) {
+      return (c, sub, icase, multi);
+    } else if (ch == 13) {
+      c = inchar(c);
+      if (c.ch != 10) {
+        bad_prog(c, "unknown option to `s'");
+      }
+      return (c, sub, icase, multi);
+    } else {
+      bad_prog(c, "unknown option to `s'");
+    }
+  }
+  return (c, sub, icase, multi);
+}
+
+// parse_replacement splits a replacement into literal text, group references
+// and case conversions. It gives the highest group referenced, and whether a
+// case conversion is present.
+function parse_replacement(c: Comp, t: u8[]): (ROp[], i32, boolean) {
+  let ops: ROp[] = [];
+  let h = buf_new(t.len() + 1);
+  let max = 0;
+  let cased = false;
+  let i = 0;
+  while (i < t.len()) {
+    let ch = t[i] as i32;
+    if (ch == 38) {
+      ops = flush_text(ops, h);
+      ops = ops.append(ROp { kind: R_GROUP, text: [], n: 0 });
+      i += 1;
+      continue;
+    }
+    if (ch != 92 || i + 1 >= t.len()) {
+      buf_push_byte(h, ch);
+      i += 1;
+      continue;
+    }
+    let e = t[i + 1] as i32;
+    i += 2;
+    if (is_digit(e)) {
+      ops = flush_text(ops, h);
+      ops = ops.append(ROp { kind: R_GROUP, text: [], n: e - 48 });
+      if (e - 48 > max) {
+        max = e - 48;
+      }
+      continue;
+    }
+    let mode = case_mode(e);
+    if (mode >= 0 && c.o.posix != POSIX_BASIC) {
+      ops = flush_text(ops, h);
+      ops = ops.append(ROp { kind: R_CASE, text: [], n: mode });
+      cased = true;
+      continue;
+    }
+    if (e == 110) {
+      buf_push_byte(h, 10);
+    } else {
+      buf_push_byte(h, e);
+    }
+  }
+  ops = flush_text(ops, h);
+  buf_free(h);
+  return (ops, max, cased);
+}
+
+function case_mode(e: i32): i32 {
+  return match (e) {
+    85 => CASE_UPPER,
+    76 => CASE_LOWER,
+    69 => CASE_ASIS,
+    117 => CASE_UPPER_FIRST,
+    108 => CASE_LOWER_FIRST,
+    _ => -1,
+  };
+}
+
+function flush_text(ops: ROp[], h: usize): ROp[] {
+  if (buf_len(h) == 0) {
+    return ops;
+  }
+  return ops.append(ROp { kind: R_TEXT, text: buf_take_bytes(h), n: 0 });
+}
+
+// y_text converts the escapes of one half of y: \\ is a backslash, \n a
+// newline, and another escaped character stands for itself.
+function y_text(c: Comp, t: u8[]): u8[] {
+  let h = buf_new(t.len() + 1);
+  let i = 0;
+  while (i < t.len()) {
+    let ch = t[i] as i32;
+    if (ch != 92 || i + 1 >= t.len()) {
+      buf_push_byte(h, ch);
+      i += 1;
+      continue;
+    }
+    let conv: (i32, i32) = escape_at(c, t, i + 1);
+    if (conv.0 >= 0) {
+      buf_push_byte(h, conv.0);
+      i = conv.1;
+      continue;
+    }
+    buf_push_byte(h, t[i + 1] as i32);
+    i += 2;
+  }
+  let out = buf_take_bytes(h);
+  buf_free(h);
+  return out;
+}
+
+function compile_translate(c0: Comp, cmd: Cmd): Comp {
+  let c = inchar(c0);
+  let slash = c.ch;
+  let m1: (Comp, u8[], boolean) = match_slash(c, slash, false);
+  c = m1.0;
+  if (!m1.2) {
+    bad_prog(c, "unterminated `y' command");
+  }
+  let m2: (Comp, u8[], boolean) = match_slash(c, slash, false);
+  c = m2.0;
+  if (!m2.2) {
+    bad_prog(c, "unterminated `y' command");
+  }
+  let src = y_text(c, m1.1);
+  let dst = y_text(c, m2.1);
+  if (src.len() != dst.len()) {
+    bad_prog(c, "strings for `y' command are different lengths");
+  }
+  let table = __alloc_u8(256);
+  for b in 0..256 {
+    table = table.with(b, b as u8);
+  }
+  for k in 0..src.len() {
+    table = table.with(src[k] as i32, dst[k]);
+  }
+  return push_cmd(read_end_of_cmd(c), Cmd { ...cmd, table: table });
+}
+
+// The script after every chunk: the program the run executes.
+struct Prog { cmds: Cmd[], rxs: Rx[], subs: Sub[], o: Opts, wfiles: WFile[], rnames: string[], where: string, delim: i32 }
+
+function finish_program(c0: Comp): Prog {
+  let c = c0;
+  if (c.blocks.len() > 0) {
+    let loc = c.block_locs[c.block_locs.len() - 1];
+    say((loc_text(loc, 0) + ": unmatched `{'").bytes());
+    exit(EXIT_BAD_USAGE);
+  }
+  let cmds = c.cmds;
+  for k in 0..cmds.len() {
+    let op = cmds[k].op;
+    if (op == b'b' || op == b't' || op == b'T') {
+      let name = cmds[k].name;
+      let target = cmds.len();
+      if (name.len() > 0) {
+        target = find_label(c, name);
+      }
+      cmds = cmds.with(k, Cmd { ...cmds[k], jump: target });
+    }
+  }
+  let where = if (c.loc.is_file) { loc_text(c.loc, 0) } else { f"-e expression #{c.nexpr}, char 0" };
+  let o = c.o;
+  if (c.quiet) {
+    o = Opts { ...o, quiet: true };
+  }
+  let delim = if (o.zero) { 0 } else { 10 };
+  return Prog { cmds: cmds, rxs: c.rxs, subs: c.subs, o: o, wfiles: c.wfiles, rnames: c.rnames, where: where, delim: delim };
+}
+
+// find_label gives the command of the last label with this name.
+function find_label(c: Comp, name: string): i32 {
+  let k = c.labels.len() - 1;
+  while (k >= 0) {
+    if (c.labels[k] == name) {
+      return c.label_at[k];
+    }
+    k -= 1;
+  }
+  panic("can't find label for jump to `" + name + "'");
+  return 0;
+}
+
+function compile_string(c0: Comp, text: u8[]): Comp {
+  let n = c0.nexpr + 1;
+  let c = Comp { ...c0, src: text, pos: 0, ch: EOF, nexpr: n, loc: Loc { is_file: false, fname: "", line: 1, expr: n } };
+  return compile_chunk(c);
+}
+
+function compile_file(c0: Comp, name: string): Comp {
+  let text: u8[] = [];
+  if (name == "-") {
+    text = read_all(stdin(), "-");
+  } else {
+    match (read_file_bytes(name)) {
+      Ok(b) => {
+        text = b;
+      },
+      Err(e) => {
+        panic("couldn't open file " + name + ": " + gnu.io_error_text(e));
+      }
+    }
+  }
+  let c = Comp { ...c0, src: text, pos: 0, ch: EOF, loc: Loc { is_file: true, fname: name, line: 1, expr: c0.nexpr } };
+  return compile_chunk(c);
+}
+
+function read_all(r: Reader, name: string): u8[] {
+  let h = buf_new(CHUNK);
+  while (true) {
+    match (r.read_chunk_bytes(CHUNK)) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          break;
+        }
+        buf_push_bytes_range(h, chunk, 0, chunk.len());
+      },
+      Err(e) => {
+        panic("read error on " + name + ": " + gnu.io_error_text(e));
+      }
+    }
+  }
+  let out = buf_take_bytes(h);
+  buf_free(h);
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// The run
+
+// An output. Two outputs can share a buffer: a w file named /dev/stdout
+// writes to standard output, but it keeps its own missing newline.
+struct Out { name: string, w: Writer, h: usize, kind: i32 }
+
+struct App { file: boolean, data: u8[], name: string }
+
+// A file that R reads a line at a time.
+struct RFile { r: Reader, ok: boolean, buf: u8[], pos: i32, eof: boolean }
+
+// The file that -i edits: its name, the temporary file and its output.
+struct Edit { target: string, tmp: string, st: FileStat }
+
+struct Inp { files: string[], next: i32, r: Reader, open: boolean, name: string, edit: Option[Edit] }
+
+// The state of the run. The buffer of the open input and the read position
+// in it are fields of their own, as the reading of each line changes them.
+struct Run { ps: u8[], chomped: boolean, hold: u8[], hchomped: boolean, replaced: boolean, line: i64, end: i32, code: i32, got: boolean, ibuf: u8[], ipos: i32, ieof: boolean, apps: App[], ranges: i32[], rend: i64[], last_rx: i32, nosub: boolean[], outs: Out[], missing: boolean[], cur: i32, rfiles: RFile[], inp: Inp, bad: boolean }
+
+function initial_ranges(p: Prog): i32[] {
+  let out: i32[] = [];
+  for cmd in p.cmds {
+    let st = if (cmd.a1.kind == A_LINE && cmd.a1.n == 0) { RANGE_ACTIVE } else { RANGE_INACTIVE };
+    out = out.append(st);
+  }
+  return out;
+}
+
+function zeros_i64(n: i32): i64[] {
+  let out: i64[] = [];
+  for _ in 0..n {
+    out = out.append(0);
+  }
+  return out;
+}
+
+function make_outs(p: Prog): Out[] {
+  let main_h = buf_new(CHUNK);
+  let err_h = buf_new(256);
+  let outs: Out[] = [Out { name: "stdout", w: stdout(), h: main_h, kind: KIND_STDOUT }, Out { name: "", w: stdout(), h: main_h, kind: KIND_FILE }, Out { name: "stderr", w: stderr(), h: err_h, kind: KIND_STDERR }];
+  for f in p.wfiles {
+    if (f.kind == KIND_STDOUT) {
+      outs = outs.append(Out { name: "stdout", w: f.w, h: main_h, kind: KIND_STDOUT });
+    } else if (f.kind == KIND_STDERR) {
+      outs = outs.append(Out { name: "stderr", w: f.w, h: err_h, kind: KIND_STDERR });
+    } else {
+      outs = outs.append(Out { name: f.name, w: f.w, h: buf_new(4096), kind: KIND_FILE });
+    }
+  }
+  return outs;
+}
+
+function make_rfiles(p: Prog): RFile[] {
+  let out: RFile[] = [];
+  for name in p.rnames {
+    if (name == "/dev/stdin") {
+      out = out.append(RFile { r: stdin(), ok: true, buf: [], pos: 0, eof: false });
+      continue;
+    }
+    match (open_reader(name)) {
+      Ok(r) => {
+        out = out.append(RFile { r: r, ok: true, buf: [], pos: 0, eof: false });
+      },
+      Err(_) => {
+        out = out.append(RFile { r: stdin(), ok: false, buf: [], pos: 0, eof: true });
+      }
+    }
+  }
+  return out;
+}
+
+function falses(n: i32): boolean[] {
+  let out: boolean[] = [];
+  for _ in 0..n {
+    out = out.append(false);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Output
+
+function flush_out(o: Out): void {
+  if (buf_len(o.h) == 0) {
+    return;
+  }
+  let bytes = buf_take_bytes(o.h);
+  if let Err(e) = o.w.write_bytes(bytes) {
+    panic("couldn't write " + f"{bytes.len()}" + " items to " + o.name + ": " + gnu.io_error_text(e));
+  }
+}
+
+// settle writes a full buffer out. A file other than standard output is
+// written after each write, as GNU sed flushes it.
+function settle(p: Prog, r: Run, i: i32): void {
+  let o = r.outs[i];
+  if (o.kind != KIND_STDOUT || p.o.unbuffered || buf_len(o.h) >= CHUNK) {
+    flush_out(o);
+  }
+}
+
+function missing_newline(p: Prog, own r: Run, i: i32): Run {
+  if (!r.missing[i]) {
+    return r;
+  }
+  buf_push_byte(r.outs[i].h, p.delim);
+  return Run { ...r, missing: r.missing.with(i, false) };
+}
+
+function output_pattern(p: Prog, own r0: Run, i: i32, text: u8[], lo: i32, hi: i32, chomped: boolean): Run {
+  let r = missing_newline(p, r0, i);
+  let h = r.outs[i].h;
+  buf_push_bytes_range(h, text, lo, hi);
+  if (chomped) {
+    buf_push_byte(h, p.delim);
+  } else {
+    r = Run { ...r, missing: r.missing.with(i, true) };
+  }
+  settle(p, r, i);
+  return r;
+}
+
+// output_ps writes the pattern space, as p and the end of a cycle do.
+function output_ps(p: Prog, own r0: Run, i: i32): Run {
+  let r = missing_newline(p, r0, i);
+  let h = r.outs[i].h;
+  buf_push_bytes_range(h, r.ps, 0, r.ps.len());
+  if (r.chomped) {
+    buf_push_byte(h, p.delim);
+  } else {
+    r = Run { ...r, missing: r.missing.with(i, true) };
+  }
+  settle(p, r, i);
+  return r;
+}
+
+function output_raw(p: Prog, own r0: Run, i: i32, text: u8[]): Run {
+  let r = missing_newline(p, r0, i);
+  buf_push_bytes_range(r.outs[i].h, text, 0, text.len());
+  settle(p, r, i);
+  return r;
+}
+
+// output_text writes the text of i or c. Its last character, the newline
+// that ends the text, becomes the line delimiter.
+function output_text(p: Prog, own r: Run, text: u8[]): Run {
+  if (text.len() == 0) {
+    return r;
+  }
+  let cur = r.cur;
+  return output_pattern(p, r, cur, text, 0, text.len() - 1, true);
+}
+
+// output_first writes the pattern space up to its first newline, as P and W
+// do. Without a newline it writes it all, as p and w do.
+function output_first(p: Prog, own r: Run, i: i32): Run {
+  let k = __memchr_bytes(r.ps, p.delim, 0);
+  if (k < 0) {
+    return output_ps(p, r, i);
+  }
+  let ps = r.ps;
+  return output_pattern(p, r, i, ps, 0, k, true);
+}
+
+function dump_append(p: Prog, own r0: Run): Run {
+  if (r0.apps.len() == 0) {
+    return r0;
+  }
+  let apps = r0.apps;
+  let r = Run { ...r0, apps: [] };
+  for a in apps {
+    let cur = r.cur;
+    r = missing_newline(p, r, cur);
+    if (!a.file) {
+      buf_push_bytes_range(r.outs[cur].h, a.data, 0, a.data.len());
+      continue;
+    }
+    let data = read_appended(a.name);
+    buf_push_bytes_range(r.outs[cur].h, data, 0, data.len());
+  }
+  settle(p, r, r.cur);
+  return r;
+}
+
+function read_appended(name: string): u8[] {
+  if (name == "/dev/stdin") {
+    return read_all(stdin(), "stdin");
+  }
+  match (read_file_bytes(name)) {
+    Ok(b) => {
+      return b;
+    },
+    Err(_) => {}
+  }
+  let none: u8[] = [];
+  return none;
+}
+
+// close_outputs closes the w files and frees each buffer once: the idle
+// in-place slot and a w file of standard output or standard error share the
+// buffer of that stream.
+function close_outputs(r: Run): void {
+  buf_free(r.outs[OUT_STDOUT].h);
+  buf_free(r.outs[OUT_STDERR].h);
+  for k in 3..r.outs.len() {
+    if (r.outs[k].kind == KIND_FILE) {
+      buf_free(r.outs[k].h);
+      unsafe {
+        r.outs[k].w.close_unchecked();
+      }
+    }
+  }
+}
+
+function flush_all(r: Run): void {
+  for o in r.outs {
+    flush_out(o);
+  }
+}
+
+// runtime_error stops the run on an error in the script, such as an empty
+// regex with no regex before it.
+function runtime_error(p: Prog, r: Run, msg: string): void {
+  flush_all(r);
+  say((p.where + ": " + msg).bytes());
+  exit(EXIT_BAD_USAGE);
+}
+
+// ---------------------------------------------------------------------------
+// Input
+
+function no_edit(): Option[Edit] {
+  return None;
+}
+
+function read_chunk(p: Prog, rd: Reader, name: string): u8[] {
+  let size = if (p.o.unbuffered) { 1 } else { CHUNK };
+  match (rd.read_chunk_bytes(size)) {
+    Ok(chunk) => {
+      return chunk;
+    },
+    Err(e) => {
+      panic("read error on " + name + ": " + gnu.io_error_text(e));
+    }
+  }
+  let none: u8[] = [];
+  return none;
+}
+
+// read_long_line reads a line that goes on past the input buffer. It sets
+// `got` when there was a line.
+function read_long_line(p: Prog, own r0: Run): Run {
+  let r = r0;
+  let h = buf_new(r.ibuf.len() - r.ipos + CHUNK);
+  buf_push_bytes_range(h, r.ibuf, r.ipos, r.ibuf.len());
+  while (!r.ieof) {
+    let chunk = read_chunk(p, r.inp.r, r.inp.name);
+    if (chunk.len() == 0) {
+      r = Run { ...r, ieof: true };
+      break;
+    }
+    let j = __memchr_bytes(chunk, p.delim, 0);
+    if (j >= 0) {
+      buf_push_bytes_range(h, chunk, 0, j);
+      let line = buf_take_bytes(h);
+      buf_free(h);
+      return Run { ...r, ibuf: chunk, ipos: j + 1, ps: line, chomped: true, got: true };
+    }
+    buf_push_bytes_range(h, chunk, 0, chunk.len());
+  }
+  let line = buf_take_bytes(h);
+  buf_free(h);
+  let found = line.len() > 0;
+  return Run { ...r, ibuf: [], ipos: 0, ps: line, chomped: false, got: found };
+}
+
+// has_data tells whether the open input has another byte, and reads ahead
+// when its buffer is empty.
+function has_data(p: Prog, own r: Run): (Run, boolean) {
+  if (!r.inp.open) {
+    return (r, false);
+  }
+  if (r.ipos < r.ibuf.len()) {
+    return (r, true);
+  }
+  if (r.ieof) {
+    return (r, false);
+  }
+  let chunk = read_chunk(p, r.inp.r, r.inp.name);
+  if (chunk.len() == 0) {
+    return (Run { ...r, ieof: true, ibuf: [], ipos: 0 }, false);
+  }
+  return (Run { ...r, ibuf: chunk, ipos: 0 }, true);
+}
+
+// at_eof tells whether the line just read is the last one. Without -s it
+// opens the next files to look for more input, as GNU sed does.
+function at_eof(p: Prog, own r0: Run): (Run, boolean) {
+  let hd: (Run, boolean) = has_data(p, r0);
+  let r = hd.0;
+  if (hd.1) {
+    return (r, false);
+  }
+  if (p.o.separate) {
+    return (r, true);
+  }
+  while (r.inp.next < r.inp.files.len()) {
+    r = close_input(p, r);
+    r = open_next(p, r);
+    let more: (Run, boolean) = has_data(p, r);
+    r = more.0;
+    if (more.1) {
+      return (r, false);
+    }
+  }
+  return (r, true);
+}
+
+function reset_file_state(p: Prog, own r: Run): Run {
+  if (!p.o.separate) {
+    return r;
+  }
+  return Run { ...r, line: 0, ranges: initial_ranges(p) };
+}
+
+function open_next(p: Prog, own r: Run): Run {
+  let name = r.inp.files[r.inp.next];
+  let inp = Inp { ...r.inp, next: r.inp.next + 1, name: name, edit: no_edit() };
+  let fresh = Run { ...r, ibuf: [], ipos: 0, ieof: false };
+  if (name == "-" && !p.o.in_place) {
+    return reset_file_state(p, Run { ...fresh, inp: Inp { ...inp, r: stdin(), open: true } });
+  }
+  let path = name;
+  if (p.o.in_place && p.o.follow) {
+    path = follow_links(name);
+  }
+  match (open_reader(path)) {
+    Ok(reader) => {
+      let opened = Run { ...fresh, inp: Inp { ...inp, r: reader, open: true } };
+      if (p.o.in_place) {
+        return start_edit(p, reset_file_state(p, opened), path);
+      }
+      return reset_file_state(p, opened);
+    },
+    Err(e) => {
+      say(("can't read " + name + ": " + gnu.io_error_text(e)).bytes());
+      return Run { ...fresh, inp: Inp { ...inp, open: false }, bad: true };
+    }
+  }
+}
+
+// follow_links resolves a chain of symbolic links, as --follow-symlinks does.
+function follow_links(name: string): string {
+  let path = name;
+  for _ in 0..40 {
+    match (read_link(path)) {
+      Ok(target) => {
+        if (target.starts_with("/")) {
+          path = target;
+        } else {
+          path = dir_part(path) + target;
+        }
+      },
+      Err(_) => {
+        return path;
+      }
+    }
+  }
+  return path;
+}
+
+// dir_part gives the directory of a path with its slash, or "".
+function dir_part(path: string): string {
+  let k = path.len() - 1;
+  while (k >= 0 && path[k] != b'/') {
+    k -= 1;
+  }
+  if (k < 0) {
+    return "";
+  }
+  return slice_unchecked(path, 0, k + 1) + "";
+}
+
+function base_part(path: string): string {
+  let d = dir_part(path);
+  return slice_unchecked(path, d.len(), path.len()) + "";
+}
+
+function start_edit(p: Prog, own r: Run, path: string): Run {
+  let st = match (r.inp.r.stat()) {
+    Ok(s) => s,
+    Err(e) => {
+      panic("couldn't edit " + path + ": " + gnu.io_error_text(e));
+      return r;
+    },
+  };
+  if (!st.is_file) {
+    panic("couldn't edit " + path + ": not a regular file");
+  }
+  let made = make_temp(dir_part(path));
+  let out = Out { name: made.0, w: made.1, h: buf_new(CHUNK), kind: KIND_FILE };
+  let edit = Edit { target: path, tmp: made.0, st: st };
+  return Run { ...r, inp: Inp { ...r.inp, edit: Some(edit) }, outs: r.outs.with(OUT_EDIT, out), cur: OUT_EDIT, missing: r.missing.with(OUT_EDIT, false) };
+}
+
+function make_temp(dir: string): (string, Writer) {
+  let letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  let last = "";
+  for _ in 0..100 {
+    let rnd = rand.bytes(6);
+    let name = dir + "sed";
+    for b in rnd {
+      name = name + slice_unchecked(letters, b as i32 % 62, b as i32 % 62 + 1);
+    }
+    last = name;
+    match (open_exclusive(name)) {
+      Ok(w) => {
+        return (name, w);
+      },
+      Err(e) => {
+        if (gnu.io_error_text(e) != "File exists") {
+          panic("couldn't open temporary file " + name + ": " + gnu.io_error_text(e));
+        }
+      }
+    }
+  }
+  panic("couldn't open temporary file " + last + ": File exists");
+  return (last, stdout());
+}
+
+// backup_name gives the name of the backup of `target`: each * of the
+// suffix becomes the base name, else the suffix follows the name. A name
+// without a slash stays in the directory of the file.
+function backup_name(target: string, suffix: string): string {
+  let base = base_part(target);
+  let name = "";
+  if (suffix.contains("*")) {
+    for k in 0..suffix.len() {
+      if (suffix[k] == b'*') {
+        name = name + base;
+      } else {
+        name = name + slice_unchecked(suffix, k, k + 1);
+      }
+    }
+  } else {
+    name = base + suffix;
+  }
+  if (name.contains("/")) {
+    return name;
+  }
+  return dir_part(target) + name;
+}
+
+// The run state holds the handles, so they close through a borrow, and the
+// state drops them right after.
+function close_input(p: Prog, own r: Run): Run {
+  if (!r.inp.open) {
+    return r;
+  }
+  if (r.inp.name != "-" || p.o.in_place) {
+    unsafe {
+      r.inp.r.close_unchecked();
+    }
+  }
+  if let Some(e) = r.inp.edit {
+    return finish_edit(p, Run { ...r, inp: Inp { ...r.inp, open: false, edit: no_edit() }, ibuf: [], ipos: 0 }, e);
+  }
+  return Run { ...r, inp: Inp { ...r.inp, open: false }, ibuf: [], ipos: 0 };
+}
+
+function finish_edit(p: Prog, own r: Run, e: Edit): Run {
+  flush_out(r.outs[OUT_EDIT]);
+  buf_free(r.outs[OUT_EDIT].h);
+  unsafe {
+    r.outs[OUT_EDIT].w.close_unchecked();
+  }
+  chown_at(e.tmp, e.st.uid as i32, e.st.gid as i32, false);
+  chmod(e.tmp, (e.st.mode & 4095) as i32);
+  if (p.o.suffix.len() > 0 && p.o.suffix != "*") {
+    let backup = backup_name(e.target, p.o.suffix);
+    if let Err(err) = rename(e.target, backup) {
+      panic("cannot rename " + e.target + ": " + gnu.io_error_text(err));
+    }
+  }
+  if let Err(err) = rename(e.tmp, e.target) {
+    panic("cannot rename " + e.tmp + ": " + gnu.io_error_text(err));
+  }
+  let idle = Out { ...r.outs[OUT_STDOUT], name: "", kind: KIND_FILE };
+  return Run { ...r, cur: OUT_STDOUT, outs: r.outs.with(OUT_EDIT, idle) };
+}
+
+// read_pattern_space empties the append queue, then reads the next line into
+// the pattern space, or after it with `append`, as N does.
+function read_pattern_space(p: Prog, own r0: Run, append: boolean): Run {
+  let r = dump_append(p, r0);
+  let old = r.ps;
+  r = Run { ...r, replaced: false };
+  while (true) {
+    if (r.inp.open) {
+      let k = __memchr_bytes(r.ibuf, p.delim, r.ipos);
+      if (k >= 0) {
+        let line = __bytes_range(r.ibuf, r.ipos, k);
+        if (append) {
+          line = join(old, p.delim, line);
+        }
+        return Run { ...r, ipos: k + 1, ps: line, chomped: true, line: r.line + 1, got: true };
+      }
+      r = read_long_line(p, r);
+      if (r.got) {
+        let ps = if (append) { join(old, p.delim, r.ps) } else { r.ps };
+        return Run { ...r, ps: ps, line: r.line + 1 };
+      }
+      r = close_input(p, Run { ...r, ps: old });
+    }
+    if (r.inp.next >= r.inp.files.len()) {
+      return Run { ...r, ps: old, got: false };
+    }
+    r = open_next(p, r);
+  }
+  return r;
+}
+
+function join(a: u8[], delim: i32, b: u8[]): u8[] {
+  let h = buf_new(a.len() + b.len() + 1);
+  buf_push_bytes_range(h, a, 0, a.len());
+  buf_push_byte(h, delim);
+  buf_push_bytes_range(h, b, 0, b.len());
+  let out = buf_take_bytes(h);
+  buf_free(h);
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Addresses
+
+function resolve_rx(p: Prog, own r: Run, idx: i32): (Run, bre.Bre) {
+  if (!p.rxs[idx].empty) {
+    if (r.last_rx == idx) {
+      return (r, p.rxs[idx].re);
+    }
+    return (Run { ...r, last_rx: idx }, p.rxs[idx].re);
+  }
+  if (r.last_rx < 0) {
+    runtime_error(p, r, "no previous regular expression");
+  }
+  let re = p.rxs[r.last_rx].re;
+  return (r, re);
+}
+
+function match_one(p: Prog, own r: Run, a: Addr): (Run, boolean) {
+  if (a.kind == A_LINE) {
+    let hit = r.line == a.n;
+    return (r, hit);
+  }
+  if (a.kind == A_RE) {
+    let rr: (Run, bre.Bre) = resolve_rx(p, r, a.rx);
+    let hit = rr.1.search_range_bytes(rr.0.ps, 0, rr.0.ps.len());
+    return (rr.0, hit);
+  }
+  if (a.kind == A_LAST) {
+    return at_eof(p, r);
+  }
+  if (a.kind == A_STEP) {
+    let hit = r.line >= a.n && (r.line - a.n) % a.step == 0;
+    return (r, hit);
+  }
+  return (r, true);
+}
+
+function set_range(own r: Run, idx: i32, st: i32, end: i64): Run {
+  return Run { ...r, ranges: r.ranges.with(idx, st), rend: r.rend.with(idx, end) };
+}
+
+function close_range(own r: Run, idx: i32, cmd: Cmd): Run {
+  let st = if (cmd.a1.kind == A_LINE) { RANGE_CLOSED } else { RANGE_INACTIVE };
+  return Run { ...r, ranges: r.ranges.with(idx, st) };
+}
+
+function match_address(p: Prog, own r: Run, idx: i32, cmd: Cmd): (Run, boolean) {
+  if (cmd.a2.kind == A_NONE) {
+    return match_one(p, r, cmd.a1);
+  }
+  let st = r.ranges[idx];
+  if (st == RANGE_ACTIVE) {
+    return in_range(p, r, idx, cmd);
+  }
+  if (st == RANGE_CLOSED) {
+    return (r, false);
+  }
+  return start_range(p, r, idx, cmd);
+}
+
+// in_range tests a line inside an active range. A line past a second line
+// number is outside it, but a line past the end of addr1,+N is the last one
+// inside, and addr1,~N ends at the next multiple of N.
+function in_range(p: Prog, own r: Run, idx: i32, cmd: Cmd): (Run, boolean) {
+  let k = cmd.a2.kind;
+  let l = r.line;
+  if (k == A_LINE) {
+    let end = r.rend[idx];
+    if (l > end) {
+      return (close_range(r, idx, cmd), false);
+    }
+    if (l == end) {
+      return (close_range(r, idx, cmd), true);
+    }
+    return (r, true);
+  }
+  if (k == A_PLUS) {
+    if (l >= r.rend[idx]) {
+      return (close_range(r, idx, cmd), true);
+    }
+    return (r, true);
+  }
+  if (k == A_MULT) {
+    if (l % cmd.a2.n == 0) {
+      return (close_range(r, idx, cmd), true);
+    }
+    return (r, true);
+  }
+  let m: (Run, boolean) = match_one(p, r, cmd.a2);
+  if (m.1) {
+    return (close_range(m.0, idx, cmd), true);
+  }
+  return (m.0, true);
+}
+
+// start_range tests the first address of an inactive range. A line number
+// starts the range on a later line too, when that line is not already past
+// a second line number.
+function start_range(p: Prog, own r0: Run, idx: i32, cmd: Cmd): (Run, boolean) {
+  let r = r0;
+  let l = r.line;
+  if (cmd.a1.kind == A_LINE) {
+    if (l < cmd.a1.n || l > cmd.a1.n && cmd.a2.kind == A_LINE && l > cmd.a2.n) {
+      return (r, false);
+    }
+  } else {
+    let m: (Run, boolean) = match_one(p, r, cmd.a1);
+    r = m.0;
+    if (!m.1) {
+      return (r, false);
+    }
+  }
+  let a2 = cmd.a2;
+  if (a2.kind == A_LINE) {
+    if (a2.n <= l) {
+      return (close_range(r, idx, cmd), true);
+    }
+    return (set_range(r, idx, RANGE_ACTIVE, a2.n), true);
+  }
+  if (a2.kind == A_PLUS) {
+    if (a2.n == 0) {
+      return (close_range(r, idx, cmd), true);
+    }
+    return (set_range(r, idx, RANGE_ACTIVE, l + a2.n), true);
+  }
+  if (a2.kind == A_MULT) {
+    if (a2.n <= 0) {
+      return (close_range(r, idx, cmd), true);
+    }
+    return (set_range(r, idx, RANGE_ACTIVE, 0), true);
+  }
+  if (a2.kind == A_LAST) {
+    let e: (Run, boolean) = at_eof(p, r);
+    if (e.1) {
+      return (close_range(e.0, idx, cmd), true);
+    }
+    r = e.0;
+  }
+  return (set_range(r, idx, RANGE_ACTIVE, 0), true);
+}
+
+// ---------------------------------------------------------------------------
+// Commands
+
+function run_script(p: Prog, own r0: Run): Run {
+  let r = Run { ...r0, end: END_NONE };
+  let pc = 0;
+  let n = p.cmds.len();
+  while (pc < n) {
+    let cmd = p.cmds[pc];
+    if (cmd.a1.kind != A_NONE) {
+      let (matched_r, hit) = match_address(p, r, pc, cmd);
+      r = matched_r;
+      if (hit == cmd.bang) {
+        pc = if (cmd.op == b'{') { cmd.jump } else { pc + 1 };
+        continue;
+      }
+    } else if (cmd.bang) {
+      pc = if (cmd.op == b'{') { cmd.jump } else { pc + 1 };
+      continue;
+    }
+    let (ran, next) = exec_cmd(p, r, pc, cmd);
+    r = ran;
+    if (r.end != END_NONE) {
+      return r;
+    }
+    pc = next;
+  }
+  return Run { ...r, end: END_CYCLE };
+}
+
+// One arm for each command of sed.
+// fern-lint: allow cyclomatic-complexity
+function exec_cmd(p: Prog, own r: Run, pc: i32, cmd: Cmd): (Run, i32) {
+  let next = pc + 1;
+  let cur = r.cur;
+  return match (cmd.op) {
+    b'{' | b'}' | b':' => (r, next),
+    b'=' => {
+      let text = (f"{r.line}" + delim_text(p)).bytes();
+      (output_raw(p, r, cur, text), next)
+    },
+    b'a' => (Run { ...r, apps: r.apps.append(App { file: false, data: cmd.text, name: "" }) }, next),
+    b'i' => (output_text(p, r, cmd.text), next),
+    b'c' => (exec_change(p, r, pc, cmd), next),
+    b'b' => (r, cmd.jump),
+    b't' => if (r.replaced) { (Run { ...r, replaced: false }, cmd.jump) } else { (r, next) },
+    b'T' => if (r.replaced) { (Run { ...r, replaced: false }, next) } else { (r, cmd.jump) },
+    b'd' => (Run { ...r, end: END_DELETE }, next),
+    b'D' => (exec_delete_first(p, r), next),
+    b'e' => (exec_command(p, r, cmd), next),
+    b'F' => {
+      let text = (r.inp.name + delim_text(p)).bytes();
+      (output_raw(p, r, cur, text), next)
+    },
+    b'g' => (Run { ...r, ps: r.hold, chomped: r.hchomped }, next),
+    b'G' => (Run { ...r, ps: join(r.ps, p.delim, r.hold), chomped: r.hchomped }, next),
+    b'h' => (Run { ...r, hold: r.ps, hchomped: r.chomped }, next),
+    b'H' => (Run { ...r, hold: join(r.hold, p.delim, r.ps), hchomped: r.chomped }, next),
+    b'l' => (exec_list(p, r, cmd), next),
+    b'n' => (exec_next(p, r), next),
+    b'N' => (exec_append_next(p, r), next),
+    b'p' => (output_ps(p, r, cur), next),
+    b'P' => (output_first(p, r, cur), next),
+    b'q' => (Run { ...r, end: END_QUIT, code: exit_code(cmd) }, next),
+    b'Q' => (Run { ...r, end: END_QUIT_SILENT, code: exit_code(cmd) }, next),
+    b'r' => (Run { ...r, apps: r.apps.append(App { file: true, data: [], name: cmd.name }) }, next),
+    b'R' => (exec_read_line(p, r, cmd), next),
+    b's' => (exec_subst(p, r, p.subs[cmd.sub]), next),
+    b'w' => (output_ps(p, r, cmd.out + 3), next),
+    b'W' => (output_first(p, r, cmd.out + 3), next),
+    b'x' => (Run { ...r, ps: r.hold, chomped: r.hchomped, hold: r.ps, hchomped: r.chomped }, next),
+    b'y' => (Run { ...r, ps: translate(r.ps, cmd.table) }, next),
+    b'z' => (Run { ...r, ps: [] }, next),
+    _ => (r, next),
+  };
+}
+
+function delim_text(p: Prog): string {
+  if (p.delim == 0) {
+    return "\x00";
+  }
+  return "\n";
+}
+
+function exit_code(cmd: Cmd): i32 {
+  if (cmd.num < 0) {
+    return 0;
+  }
+  return cmd.num as i32;
+}
+
+function translate(ps: u8[], table: u8[]): u8[] {
+  let h = buf_new(ps.len() + 1);
+  buf_push_bytes_mapped(h, ps, table);
+  let out = buf_take_bytes(h);
+  buf_free(h);
+  return out;
+}
+
+// c writes its text at the end of a range, and on every line without one.
+function exec_change(p: Prog, own r0: Run, pc: i32, cmd: Cmd): Run {
+  let r = r0;
+  if (cmd.a2.kind == A_NONE || r.ranges[pc] != RANGE_ACTIVE) {
+    r = output_text(p, r, cmd.text);
+  }
+  return Run { ...r, end: END_DELETE };
+}
+
+function exec_delete_first(p: Prog, own r: Run): Run {
+  let k = __memchr_bytes(r.ps, p.delim, 0);
+  if (k < 0) {
+    return Run { ...r, end: END_DELETE };
+  }
+  return Run { ...r, ps: __bytes_range(r.ps, k + 1, r.ps.len()), end: END_RESTART };
+}
+
+function exec_next(p: Prog, own r0: Run): Run {
+  let e: (Run, boolean) = at_eof(p, r0);
+  let r = e.0;
+  if (e.1) {
+    return Run { ...r, end: END_CYCLE };
+  }
+  if (!p.o.quiet) {
+    let cur = r.cur;
+    r = output_ps(p, r, cur);
+  }
+  r = read_pattern_space(p, r, false);
+  if (!r.got) {
+    return Run { ...r, end: END_DELETE };
+  }
+  return r;
+}
+
+function exec_append_next(p: Prog, own r0: Run): Run {
+  let e: (Run, boolean) = at_eof(p, r0);
+  let r = e.0;
+  if (e.1) {
+    if (p.o.posix != POSIX_EXTENDED) {
+      return Run { ...r, end: END_DELETE };
+    }
+    return Run { ...r, end: END_CYCLE };
+  }
+  r = read_pattern_space(p, r, true);
+  if (!r.got) {
+    return Run { ...r, end: END_CYCLE };
+  }
+  return r;
+}
+
+// rfile_line takes the next line of an R file, with its delimiter.
+function rfile_line(p: Prog, f0: RFile, name: string): (RFile, u8[], boolean) {
+  let f = f0;
+  let none: u8[] = [];
+  if (!f.ok) {
+    return (f, none, false);
+  }
+  let h = buf_new(256);
+  while (true) {
+    let k = __memchr_bytes(f.buf, p.delim, f.pos);
+    if (k >= 0) {
+      buf_push_bytes_range(h, f.buf, f.pos, k + 1);
+      let line = buf_take_bytes(h);
+      buf_free(h);
+      return (RFile { ...f, pos: k + 1 }, line, true);
+    }
+    buf_push_bytes_range(h, f.buf, f.pos, f.buf.len());
+    if (f.eof) {
+      break;
+    }
+    match (f.r.read_chunk_bytes(CHUNK)) {
+      Ok(chunk) => {
+        f = RFile { ...f, buf: chunk, pos: 0, eof: chunk.len() == 0 };
+      },
+      Err(e) => {
+        panic("read error on " + name + ": " + gnu.io_error_text(e));
+      }
+    }
+  }
+  let line = buf_take_bytes(h);
+  buf_free(h);
+  return (RFile { ...f, buf: [], pos: 0 }, line, line.len() > 0);
+}
+
+function exec_read_line(p: Prog, own r: Run, cmd: Cmd): Run {
+  let lr: (RFile, u8[], boolean) = rfile_line(p, r.rfiles[cmd.out], cmd.name);
+  let rfiles = r.rfiles.with(cmd.out, lr.0);
+  if (!lr.2) {
+    return Run { ...r, rfiles: rfiles };
+  }
+  return Run { ...r, rfiles: rfiles, apps: r.apps.append(App { file: false, data: lr.1, name: "" }) };
+}
+
+// list writes the pattern space unambiguously, as l does.
+function exec_list(p: Prog, own r0: Run, cmd: Cmd): Run {
+  let width = if (cmd.num >= 0) { cmd.num as i32 } else { p.o.line_len };
+  let cur = r0.cur;
+  let r = missing_newline(p, r0, cur);
+  let h = r.outs[cur].h;
+  let col = 0;
+  for b in r.ps {
+    let esc = list_escape(b as i32);
+    if (width > 0 && col + esc.len() > width - 1) {
+      buf_push_byte(h, 92);
+      buf_push_byte(h, p.delim);
+      col = 0;
+    }
+    buf_push(h, esc);
+    col += esc.len();
+  }
+  buf_push_byte(h, 36);
+  buf_push_byte(h, p.delim);
+  settle(p, r, cur);
+  return r;
+}
+
+function list_escape(b: i32): string {
+  if (b == 92) {
+    return "\\\\";
+  }
+  if (b >= 32 && b < 127) {
+    return unsafe { string_from_bytes_unchecked([b as u8]) };
+  }
+  return match (b) {
+    7 => "\\a",
+    8 => "\\b",
+    12 => "\\f",
+    10 => "\\n",
+    13 => "\\r",
+    9 => "\\t",
+    11 => "\\v",
+    _ => "\\" + octal3(b),
+  };
+}
+
+function octal3(b: i32): string {
+  let d = "01234567";
+  return slice_unchecked(d, b / 64, b / 64 + 1) + slice_unchecked(d, b / 8 % 8, b / 8 % 8 + 1) + slice_unchecked(d, b % 8, b % 8 + 1);
+}
+
+// ---------------------------------------------------------------------------
+// e and the e flag
+
+// shell runs a command with /bin/sh and gives its standard output.
+function shell(p: Prog, r: Run, cmd: u8[]): u8[] {
+  flush_all(r);
+  let text = unsafe { string_from_bytes_unchecked(cmd) };
+  let pp = match (pipe()) {
+    Ok(made) => made,
+    Err(e) => {
+      panic("couldn't create pipe: " + gnu.io_error_text(e));
+      return [];
+    },
+  };
+  let pid = proc_fork();
+  if (pid == 0) {
+    pp.r.close();
+    pp.w.dup_onto(1);
+    proc_exec_as("/bin/sh", ["sh", "-c", text], environ());
+    exit(127);
+  }
+  pp.w.close();
+  let out = read_all(pp.r, "pipe");
+  pp.r.close();
+  proc_waitpid_status(pid);
+  return out;
+}
+
+function exec_command(p: Prog, own r: Run, cmd: Cmd): Run {
+  if (cmd.text.len() == 0) {
+    let out = shell(p, r, r.ps);
+    return Run { ...r, ps: chop(p, out) };
+  }
+  let out = shell(p, r, cmd.text);
+  let cur = r.cur;
+  return output_raw(p, r, cur, out);
+}
+
+function chop(p: Prog, out: u8[]): u8[] {
+  if (out.len() > 0 && out[out.len() - 1] as i32 == p.delim) {
+    return __bytes_range(out, 0, out.len() - 1);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// s
+
+// Case conversion state of a replacement: the mode that lasts, and the one
+// for the next character only.
+struct Cased { mode: i32, once: i32 }
+
+function push_cased(h: usize, t: u8[], lo: i32, hi: i32, cs: Cased): Cased {
+  if (lo >= hi) {
+    return cs;
+  }
+  if (cs.mode == CASE_ASIS && cs.once == CASE_ASIS) {
+    buf_push_bytes_range(h, t, lo, hi);
+    return cs;
+  }
+  let k = lo;
+  if (cs.once != CASE_ASIS) {
+    let b = t[k] as i32;
+    buf_push_byte(h, if (cs.once == CASE_UPPER_FIRST) { upper_byte(b) } else { lower_byte(b) });
+    k += 1;
+  }
+  while (k < hi) {
+    let b = t[k] as i32;
+    if (cs.mode == CASE_UPPER) {
+      b = upper_byte(b);
+    } else if (cs.mode == CASE_LOWER) {
+      b = lower_byte(b);
+    }
+    buf_push_byte(h, b);
+    k += 1;
+  }
+  return Cased { ...cs, once: CASE_ASIS };
+}
+
+function apply_case(cs: Cased, n: i32): Cased {
+  if (n == CASE_UPPER_FIRST || n == CASE_LOWER_FIRST) {
+    return Cased { ...cs, once: n };
+  }
+  return Cased { mode: n, once: CASE_ASIS };
+}
+
+// append_replacement writes the replacement of the match from `ms` to `me`.
+// `m` holds the groups when the replacement uses them.
+function append_replacement(h: usize, sub: Sub, ps: u8[], m: bre.BreMatch, ms: i32, me: i32): void {
+  let cs = Cased { mode: CASE_ASIS, once: CASE_ASIS };
+  for op in sub.ops {
+    if (op.kind == R_TEXT) {
+      cs = push_cased(h, op.text, 0, op.text.len(), cs);
+    } else if (op.kind == R_GROUP && op.n == 0) {
+      cs = push_cased(h, ps, ms, me, cs);
+    } else if (op.kind == R_GROUP) {
+      if (op.n < m.starts.len() && m.starts[op.n] >= 0) {
+        cs = push_cased(h, ps, m.starts[op.n], m.ends[op.n], cs);
+      }
+    } else {
+      cs = apply_case(cs, op.n);
+    }
+  }
+}
+
+// whole_match gives a match without its groups, for a replacement that
+// uses none.
+function whole_match(re: bre.Bre, ps: u8[], start: i32, len: i32): bre.BreMatch {
+  let r: (i32, i32) = re.search_from_bytes(ps, start, len);
+  return bre.BreMatch { matched: r.0 >= 0, end: r.1, starts: [r.0], ends: [r.1] };
+}
+
+function exec_subst(p: Prog, own r0: Run, sub: Sub): Run {
+  let rr: (Run, bre.Bre) = resolve_rx(p, r0, sub.rx);
+  let r = rr.0;
+  let re = rr.1;
+  if (p.rxs[sub.rx].empty && r.nosub[r.last_rx]) {
+    r = Run { ...r, nosub: r.nosub.with(r.last_rx, false) };
+    if (sub.refs > re.ngroups && p.o.posix == POSIX_EXTENDED) {
+      runtime_error(p, r, f"invalid reference \\{sub.refs} on `s' command's RHS");
+    }
+  }
+  let ps = r.ps;
+  let len = ps.len();
+  let start = 0;
+  let copy = 0;
+  let count: i64 = 0;
+  let prev = -1;
+  let h: usize = 0;
+  let did = false;
+  while (start <= len) {
+    let m = if (sub.refs > 0) { re.search_groups_bytes(ps, start, len) } else { whole_match(re, ps, start, len) };
+    if (!m.matched) {
+      break;
+    }
+    let ms = m.starts[0];
+    let me = m.ends[0];
+    if (ms == me && ms == prev) {
+      start = ms + 1;
+      continue;
+    }
+    count += 1;
+    prev = me;
+    if (count >= sub.nth) {
+      if (!did) {
+        h = buf_new(len + 64);
+        did = true;
+      }
+      buf_push_bytes_range(h, ps, copy, ms);
+      append_replacement(h, sub, ps, m, ms, me);
+      copy = me;
+      if (!sub.global) {
+        break;
+      }
+    }
+    start = if (ms == me) { me + 1 } else { me };
+  }
+  if (!did) {
+    return r;
+  }
+  buf_push_bytes_range(h, ps, copy, len);
+  let out = buf_take_bytes(h);
+  buf_free(h);
+  r = Run { ...r, ps: out, replaced: true };
+  return after_subst(p, r, sub);
+}
+
+// after_subst runs the p, e and w flags of a substitution that replaced.
+function after_subst(p: Prog, own r0: Run, sub: Sub): Run {
+  let r = r0;
+  let cur = r.cur;
+  if (sub.print == 1) {
+    r = output_ps(p, r, cur);
+  }
+  if (sub.eval) {
+    let out = shell(p, r, r.ps);
+    r = Run { ...r, ps: chop(p, out) };
+  }
+  if (sub.print == 2) {
+    r = output_ps(p, r, cur);
+  }
+  if (sub.out >= 0) {
+    r = output_ps(p, r, sub.out + 3);
+  }
+  return r;
+}
+
+// ---------------------------------------------------------------------------
+// The main loop
+
+function end_cycle(p: Prog, own r: Run): Run {
+  if (p.o.quiet) {
+    return r;
+  }
+  let cur = r.cur;
+  return output_ps(p, r, cur);
+}
+
+function process(p: Prog, own r0: Run): Run {
+  let r = r0;
+  while (true) {
+    r = read_pattern_space(p, r, false);
+    if (!r.got) {
+      return r;
+    }
+    while (true) {
+      r = run_script(p, r);
+      let end = r.end;
+      if (end == END_RESTART) {
+        continue;
+      }
+      if (end == END_CYCLE || end == END_QUIT) {
+        r = end_cycle(p, r);
+      }
+      if (end == END_QUIT) {
+        let cur = r.cur;
+        r = dump_append(p, missing_newline(p, r, cur));
+      }
+      if (end == END_QUIT || end == END_QUIT_SILENT) {
+        return close_input(p, r);
+      }
+      break;
+    }
+    if (p.o.unbuffered) {
+      flush_all(r);
+    }
+  }
+  return r;
+}
+
+function options(): gnu.Opt[] {
+  return [
+    gnu.flag("b", "binary", OPT_BINARY), gnu.flag("r", "regexp-extended", OPT_EXTENDED), gnu.flag("", "debug", OPT_DEBUG),
+    gnu.optional("i", "in-place", OPT_IN_PLACE), gnu.valued("e", "expression", OPT_EXPRESSION), gnu.valued("f", "file", OPT_FILE),
+    gnu.valued("l", "line-length", OPT_LINE_LENGTH), gnu.flag("z", "null-data", OPT_NULL_DATA), gnu.flag("", "zero-terminated", OPT_NULL_DATA),
+    gnu.flag("n", "quiet", OPT_QUIET), gnu.flag("", "posix", OPT_POSIX), gnu.flag("", "silent", OPT_QUIET), gnu.flag("", "sandbox", OPT_SANDBOX),
+    gnu.flag("s", "separate", OPT_SEPARATE), gnu.flag("u", "unbuffered", OPT_UNBUFFERED), gnu.flag("E", "", OPT_EXTENDED),
+    gnu.flag("", "follow-symlinks", OPT_FOLLOW), gnu.valued("V", "", OPT_USAGE),
+  ];
+}
+
+// atoi reads an optional sign and digits after blanks, as atoi does.
+function atoi(s: string): i32 {
+  let i = 0;
+  while (i < s.len() && is_space(s[i] as i32)) {
+    i += 1;
+  }
+  let neg = false;
+  if (i < s.len() && (s[i] == b'-' || s[i] == b'+')) {
+    neg = s[i] == b'-';
+    i += 1;
+  }
+  let n = 0;
+  while (i < s.len() && is_digit(s[i] as i32)) {
+    n = n * 10 + (s[i] as i32 - 48);
+    i += 1;
+  }
+  return if (neg) { -n } else { n };
+}
+
+// One arm for each option of sed.
+// fern-lint: allow cyclomatic-complexity
+function apply_option(c: Comp, m: gnu.OptMatch): Comp {
+  let o = c.o;
+  return match (m.id) {
+    OPT_EXPRESSION => compile_string(c, m.value.bytes()),
+    OPT_FILE => compile_file(c, m.value),
+    OPT_QUIET => Comp { ...c, o: Opts { ...o, quiet: true } },
+    OPT_EXTENDED => Comp { ...c, o: Opts { ...o, extended: true } },
+    OPT_IN_PLACE => Comp { ...c, o: Opts { ...o, in_place: true, separate: true, suffix: m.value } },
+    OPT_LINE_LENGTH => Comp { ...c, o: Opts { ...o, line_len: atoi(m.value) } },
+    OPT_NULL_DATA => Comp { ...c, o: Opts { ...o, zero: true } },
+    OPT_POSIX => Comp { ...c, o: Opts { ...o, posix: POSIX_BASIC } },
+    OPT_SANDBOX => Comp { ...c, o: Opts { ...o, sandbox: true } },
+    OPT_SEPARATE => Comp { ...c, o: Opts { ...o, separate: true } },
+    OPT_UNBUFFERED => Comp { ...c, o: Opts { ...o, unbuffered: true } },
+    OPT_FOLLOW => Comp { ...c, o: Opts { ...o, follow: true } },
+    OPT_DEBUG => {
+      gnu.error("this port does not have the option '--debug'");
+      exit(EXIT_BAD_USAGE);
+    },
+    OPT_USAGE => {
+      usage(EXIT_BAD_USAGE);
+      c
+    },
+    _ => c,
+  };
+}
+
+function main(): i32 {
+  let argv = args();
+  let posix = POSIX_EXTENDED;
+  if let Some(_) = env("POSIXLY_CORRECT") {
+    posix = POSIX_CORRECT;
+  }
+  let o = Opts { quiet: false, extended: false, separate: false, in_place: false, suffix: "", posix: posix, zero: false, unbuffered: false, line_len: 70, follow: false, sandbox: false };
+  let c = comp_new(o);
+  let g = gnu.getopt_new(argv, options(), "sed", help_text(), EXIT_BAD_USAGE).in_package("sed");
+  let have_script = false;
+  while (true) {
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    let Some(m) = r.0 else {
+      break;
+    };
+    if (m.id == OPT_EXPRESSION || m.id == OPT_FILE) {
+      have_script = true;
+    }
+    c = apply_option(c, m);
+  }
+  let ops = g.operands();
+  if (!have_script) {
+    if (ops.len() == 0) {
+      usage(EXIT_BAD_USAGE);
+    }
+    c = compile_string(c, ops[0].bytes());
+    ops = ops.drop(1);
+  }
+  let p = finish_program(c);
+  if (p.o.in_place && ops.len() == 0) {
+    panic("no input files");
+  }
+  if (ops.len() == 0) {
+    ops = ["-"];
+  }
+  let inp = Inp { files: ops, next: 0, r: stdin(), open: false, name: "-", edit: no_edit() };
+  let outs = make_outs(p);
+  let r = Run { ps: [], chomped: true, hold: [], hchomped: true, replaced: false, line: 0, end: END_NONE, code: 0, got: false, ibuf: [], ipos: 0, ieof: false, apps: [], ranges: initial_ranges(p), rend: zeros_i64(p.cmds.len()), last_rx: -1, nosub: p.rxs.map((x: Rx) => x.nosub), outs: outs, missing: falses(outs.len()), cur: OUT_STDOUT, rfiles: make_rfiles(p), inp: inp, bad: false };
+  r = process(p, r);
+  flush_all(r);
+  close_outputs(r);
+  if (r.bad) {
+    return EXIT_BAD_INPUT;
+  }
+  return r.code;
+}
