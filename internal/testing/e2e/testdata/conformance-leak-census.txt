@@ -1,3 +1,4 @@
+# 2026-11-13: a_branch_that_returns_gives_its_if_expression_no_type has balanced allocations on x86-64.
 # 2026-11-13: a_match_arm_that_is_a_void_if_falls_through has balanced allocations on x86-64.
 # 2026-11-13: generic_nominal_callback_signatures has balanced allocations and zero live bytes on all three targets.
 # 2026-11-13: owned_callback_result_composition has balanced allocations and zero live allocations on all three main targets.
@@ -94,6 +95,7 @@
 # Measured 2026-10-04: 569 fixtures, 567 clean.
 # 2026-11-09: tls_closed_connection_rejects_operations has zero unpaired allocations under RC trace.
 a_binding_arm_can_follow_a_literal_arm               0
+a_branch_that_returns_gives_its_if_expression_no_type 0
 a_builtin_method_does_not_see_the_programs_variants  0
 a_float_literal_array_takes_the_width_of_its_first_use 0
 a_float_array_or_a_tuple_element_takes_the_type_of_its_first_use 0

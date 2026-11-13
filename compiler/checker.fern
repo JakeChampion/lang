@@ -31708,6 +31708,9 @@ pub function first_returned(body: ast.Stmt[], scope: Scope): (ast.Expr, Scope) {
       },
       _ => {}
     }
+    if (parser.branch_stmts_diverge([st])) {
+      return (none, scope);
+    }
     scope = bind_stmt(st, scope);
   }
   return (none, scope);
