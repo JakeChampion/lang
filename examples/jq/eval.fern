@@ -119,7 +119,16 @@ pub function run(f: filter.Ast, input: json.JsonValue, e: Env): Outputs {
       return build_object(keys, values, 0, [], [], input, e);
     },
     filter.Compare(op, a, b) => {
-      return run_compare(op, a, b, input, e);
+      return run_binary(op, a, b, input, e);
+    },
+    filter.Arith(op, a, b) => {
+      return run_binary(op, a, b, input, e);
+    },
+    filter.Alt(a, b) => {
+      return run_alt(a, b, input, e);
+    },
+    filter.Call(name, args) => {
+      return call(name, args, input, e);
     },
     filter.And(a, b) => {
       return run_logic(false, a, b, input, e);
@@ -410,19 +419,33 @@ function object_of(names: string[], items: json.JsonValue[]): json.JsonObject {
 }
 
 // jq takes each right value, and then each left value.
-function run_compare(op: string, a: filter.Ast, b: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+function run_binary(op: string, a: filter.Ast, b: filter.Ast, input: json.JsonValue, e: Env): Outputs {
   let rights = run(b, input, e);
   let out = ok([]);
   for r in rights.values {
     let lefts = run(a, input, e);
     for l in lefts.values {
-      out = out.then(one(json.JBool(compare_holds(op, order(l, r)))));
+      out = out.then(binary(op, l, r));
+      if (out.failed()) {
+        return out;
+      }
     }
     if (lefts.failed()) {
       return Outputs { ...out, error: lefts.error };
     }
   }
   return Outputs { ...out, error: rights.error };
+}
+
+function binary(op: string, l: json.JsonValue, r: json.JsonValue): Outputs {
+  return match (op) {
+    "+" => add(l, r),
+    "-" => subtract(l, r),
+    "*" => multiply(l, r),
+    "/" => divide(l, r),
+    "%" => remainder(l, r),
+    _ => one(json.JBool(compare_holds(op, order(l, r)))),
+  };
 }
 
 function compare_holds(op: string, c: i32): boolean {
@@ -583,4 +606,411 @@ pub function order(a: json.JsonValue, b: json.JsonValue): i32 {
       return 0;
     }
   }
+}
+
+// ---- Arithmetic ----
+
+function computed(x: f64): json.JsonValue {
+  return json.JNumber(number.format(x));
+}
+
+function cannot(l: json.JsonValue, r: json.JsonValue, what: string): Outputs {
+  return fail(type_name(l) + " (" + shown(l) + ") and " + type_name(r) + " (" + shown(r) + ") cannot be " + what);
+}
+
+function add(l: json.JsonValue, r: json.JsonValue): Outputs {
+  if let json.JNull = l {
+    return one(r);
+  }
+  match (r) {
+    json.JNull => {
+      return one(l);
+    },
+    json.JNumber(y) => {
+      if let json.JNumber(x) = l {
+        return one(computed(number.value(x) + number.value(y)));
+      }
+    },
+    json.JString(y) => {
+      if let json.JString(x) = l {
+        return one(json.JString(x + y));
+      }
+    },
+    json.JArray(y) => {
+      if let json.JArray(x) = l {
+        return one(json.JArray(x.concat(y)));
+      }
+    },
+    json.JObject(y) => {
+      if let json.JObject(x) = l {
+        let o = x;
+        for k in y.keys() {
+          o = o.insert(k, y.get_or(k, json.JNull));
+        }
+        return one(json.JObject(o));
+      }
+    },
+    _ => {}
+  }
+  return cannot(l, r, "added");
+}
+
+function subtract(l: json.JsonValue, r: json.JsonValue): Outputs {
+  match (r) {
+    json.JNumber(y) => {
+      if let json.JNumber(x) = l {
+        return one(computed(number.value(x) - number.value(y)));
+      }
+    },
+    json.JArray(y) => {
+      if let json.JArray(x) = l {
+        let kept: json.JsonValue[] = [];
+        for v in x {
+          if (!holds(y, v)) {
+            kept = kept.append(v);
+          }
+        }
+        return one(json.JArray(kept));
+      }
+    },
+    _ => {}
+  }
+  return cannot(l, r, "subtracted");
+}
+
+function holds(items: json.JsonValue[], v: json.JsonValue): boolean {
+  for x in items {
+    if (order(x, v) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function multiply(l: json.JsonValue, r: json.JsonValue): Outputs {
+  match (l) {
+    json.JNumber(x) => {
+      if let json.JNumber(y) = r {
+        return one(computed(number.value(x) * number.value(y)));
+      }
+      if let json.JString(t) = r {
+        return repeat(t, number.value(x));
+      }
+    },
+    json.JString(t) => {
+      if let json.JNumber(y) = r {
+        return repeat(t, number.value(y));
+      }
+    },
+    json.JObject(x) => {
+      if let json.JObject(y) = r {
+        return one(json.JObject(merge(x, y)));
+      }
+    },
+    _ => {}
+  }
+  return cannot(l, r, "multiplied");
+}
+
+// `t` the whole number of times of `n`. A negative `n` gives null.
+function repeat(t: string, n: f64): Outputs {
+  if (n != n || n < 0.0) {
+    return one(json.JNull);
+  }
+  if (n * (t.len() as f64) >= 2147483647.0) {
+    return fail("Repeat string result too long");
+  }
+  return one(json.JString(t.repeat(n as i32)));
+}
+
+// The entries of `b` on those of `a`. Two objects with one key merge in turn.
+function merge(a: json.JsonObject, b: json.JsonObject): json.JsonObject {
+  let o = a;
+  for k in b.keys() {
+    let v = b.get_or(k, json.JNull);
+    if let json.JObject(y) = v {
+      if let json.JObject(x) = a.get_or(k, json.JNull) {
+        v = json.JObject(merge(x, y));
+      }
+    }
+    o = o.insert(k, v);
+  }
+  return o;
+}
+
+function divide(l: json.JsonValue, r: json.JsonValue): Outputs {
+  match (r) {
+    json.JNumber(y) => {
+      if let json.JNumber(x) = l {
+        if (number.value(y) == 0.0) {
+          return cannot(l, r, "divided because the divisor is zero");
+        }
+        return one(computed(number.value(x) / number.value(y)));
+      }
+    },
+    json.JString(y) => {
+      if let json.JString(x) = l {
+        return one(json.JArray(split(x, y)));
+      }
+    },
+    _ => {}
+  }
+  return cannot(l, r, "divided");
+}
+
+// The parts of `s` between each `sep`. An empty `sep` gives each code point.
+function split(s: string, sep: string): json.JsonValue[] {
+  let out: json.JsonValue[] = [];
+  if (s.len() == 0) {
+    return out;
+  }
+  if (sep.len() == 0) {
+    let starts = char_starts(s);
+    for i in 0..starts.len() - 1 {
+      out = out.append(json.JString(slice_unchecked(s, starts[i], starts[i + 1]).to_owned()));
+    }
+    return out;
+  }
+  for part in s.split(sep) {
+    out = out.append(json.JString(part));
+  }
+  return out;
+}
+
+// The whole part of the size of `x`, held to the range of an i64 as jq does.
+function magnitude(x: f64): u64 {
+  if (x <= -9223372036854775808.0) {
+    return 9223372036854775808u64;
+  }
+  if (x >= 9223372036854775807.0) {
+    return 9223372036854775807u64;
+  }
+  if (x < 0.0) {
+    return (-x) as u64;
+  }
+  return x as u64;
+}
+
+// jq takes the remainder of the whole parts. The sign is that of the left.
+function remainder(l: json.JsonValue, r: json.JsonValue): Outputs {
+  let json.JNumber(x) = l else {
+    return cannot(l, r, "divided (remainder)");
+  };
+  let json.JNumber(y) = r else {
+    return cannot(l, r, "divided (remainder)");
+  };
+  let a = number.value(x);
+  let b = number.value(y);
+  if (a != a || b != b) {
+    return one(json.JNull);
+  }
+  let d = magnitude(b);
+  if (d == 0u64) {
+    return cannot(l, r, "divided (remainder) because the divisor is zero");
+  }
+  let m = (magnitude(a) % d) as f64;
+  if (a < 0.0) {
+    return one(computed(-m));
+  }
+  return one(computed(m));
+}
+
+// `a // b` gives the values of `a` that are not false or null, and the values
+// of `b` when `a` has none.
+function run_alt(a: filter.Ast, b: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+  let o = run(a, input, e);
+  let kept: json.JsonValue[] = [];
+  for v in o.values {
+    if (truthy(v)) {
+      kept = kept.append(v);
+    }
+  }
+  if (o.failed() || kept.len() > 0) {
+    return Outputs { values: kept, error: o.error };
+  }
+  return run(b, input, e);
+}
+
+// ---- Functions ----
+
+function call(name: string, args: filter.Ast[], input: json.JsonValue, e: Env): Outputs {
+  return match (name) {
+    "empty" => ok([]),
+    "not" => one(json.JBool(!truthy(input))),
+    "type" => one(json.JString(type_name(input))),
+    "length" => length(input),
+    "keys" => keys(input, true),
+    "keys_unsorted" => keys(input, false),
+    "has" => run_has(args[0], input, e),
+    "map" => collect(run_pipe(iterate(input), args[0], e)),
+    "select" => run_select(args[0], input, e),
+    "add" => sum(iterate(input)),
+    "to_entries" => to_entries(input),
+    "from_entries" => from_entries(input),
+    "tostring" => one(to_string(input)),
+    _ => one(json.JString(output.compact(input))),
+  };
+}
+
+function collect(o: Outputs): Outputs {
+  if (o.failed()) {
+    return fail(o.error);
+  }
+  return one(json.JArray(o.values));
+}
+
+function whole(n: i32): json.JsonValue {
+  return json.JNumber(n.to_string());
+}
+
+function length(v: json.JsonValue): Outputs {
+  return match (v) {
+    json.JNull => one(whole(0)),
+    json.JNumber(t) => {
+      let x = number.value(t);
+      if (x < 0.0) { one(computed(-x)) } else { one(computed(x)) }
+    },
+    json.JString(s) => one(whole(char_starts(s).len() - 1)),
+    json.JArray(items) => one(whole(items.len())),
+    json.JObject(o) => one(whole(o.len())),
+    _ => fail(type_name(v) + " (" + shown(v) + ") has no length"),
+  };
+}
+
+function keys(v: json.JsonValue, in_order: boolean): Outputs {
+  let out: json.JsonValue[] = [];
+  match (v) {
+    json.JObject(o) => {
+      let names = o.keys();
+      if (in_order) {
+        names = sorted(names);
+      }
+      for k in names {
+        out = out.append(json.JString(k));
+      }
+    },
+    json.JArray(items) => {
+      for i in 0..items.len() {
+        out = out.append(whole(i));
+      }
+    },
+    _ => {
+      return fail(type_name(v) + " (" + shown(v) + ") has no keys");
+    }
+  }
+  return one(json.JArray(out));
+}
+
+function run_has(key: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+  let ks = run(key, input, e);
+  let out = ok([]);
+  for k in ks.values {
+    out = out.then(has(input, k));
+    if (out.failed()) {
+      return out;
+    }
+  }
+  return Outputs { ...out, error: ks.error };
+}
+
+function has(v: json.JsonValue, k: json.JsonValue): Outputs {
+  if let json.JObject(o) = v {
+    if let json.JString(s) = k {
+      return one(json.JBool(o.contains(s)));
+    }
+  }
+  if let json.JArray(items) = v {
+    if let json.JNumber(t) = k {
+      // jq cuts the index to its whole part, so -0.5 is the index 0.
+      let x = number.value(t);
+      return one(json.JBool(items.len() > 0 && x > -1.0 && x < items.len() as f64));
+    }
+  }
+  return fail("Cannot check whether " + type_name(v) + " has a " + type_name(k) + " key");
+}
+
+function run_select(cond: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+  let conds = run(cond, input, e);
+  let kept: json.JsonValue[] = [];
+  for c in conds.values {
+    if (truthy(c)) {
+      kept = kept.append(input);
+    }
+  }
+  return Outputs { values: kept, error: conds.error };
+}
+
+function sum(o: Outputs): Outputs {
+  if (o.failed()) {
+    return fail(o.error);
+  }
+  let total: json.JsonValue = json.JNull;
+  for v in o.values {
+    let next = add(total, v);
+    if (next.failed()) {
+      return next;
+    }
+    total = next.values[0];
+  }
+  return one(total);
+}
+
+function to_entries(v: json.JsonValue): Outputs {
+  let ks = keys(v, false);
+  if (ks.failed()) {
+    return ks;
+  }
+  let json.JArray(names) = ks.values[0] else {
+    return ks;
+  };
+  let out: json.JsonValue[] = [];
+  for k in names {
+    let item = index(v, k);
+    out = out.append(json.JObject(json.object_of(["key", "value"], [k, item.values[0]])));
+  }
+  return one(json.JArray(out));
+}
+
+// The first of the fields `names` of `v` that is not false or null, or null.
+function first_field(v: json.JsonValue, names: string[]): Outputs {
+  for name in names {
+    let o = index(v, json.JString(name));
+    if (o.failed() || truthy(o.values[0])) {
+      return o;
+    }
+  }
+  return one(json.JNull);
+}
+
+// jq 1.7: `map({(.key // .Key // .name // .Name): (if has("value") then
+// .value else .Value end)}) | add | . //= {}`.
+function from_entries(v: json.JsonValue): Outputs {
+  let entries = iterate(v);
+  if (entries.failed()) {
+    return entries;
+  }
+  let o = json.object();
+  for x in entries.values {
+    let key = first_field(x, ["key", "Key", "name", "Name"]);
+    if (key.failed()) {
+      return key;
+    }
+    let json.JString(name) = key.values[0] else {
+      return fail("Cannot use " + type_name(key.values[0]) + " (" + shown(key.values[0]) + ") as object key");
+    };
+    let present = has(x, json.JString("value"));
+    if (present.failed()) {
+      return present;
+    }
+    let field = if (truthy(present.values[0])) { "value" } else { "Value" };
+    o = o.insert(name, index(x, json.JString(field)).values[0]);
+  }
+  return one(json.JObject(o));
+}
+
+function to_string(v: json.JsonValue): json.JsonValue {
+  if let json.JString(_) = v {
+    return v;
+  }
+  return json.JString(output.compact(v));
 }

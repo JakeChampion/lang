@@ -23,6 +23,9 @@ pub enum Ast {
   EmptyArray,
   Object(Ast[], Ast[]),
   Compare(string, Ast, Ast),
+  Arith(string, Ast, Ast),
+  Alt(Ast, Ast),
+  Call(string, Ast[]),
   And(Ast, Ast),
   Or(Ast, Ast),
   Negate(Ast),
@@ -353,12 +356,6 @@ function unexpected(t: Tok): string {
 }
 
 function punct_message(x: string): string {
-  if (x == "+" || x == "-" || x == "*" || x == "/" || x == "%") {
-    return "arithmetic " + NOT_YET;
-  }
-  if (x == "//") {
-    return "the alternative operator " + NOT_YET;
-  }
   if (x == "=" || x == "|=" || x == "+=" || x == "-=" || x == "*=" || x == "/=" || x == "%=" || x == "//=") {
     return "assignment " + NOT_YET;
   }
@@ -388,11 +385,20 @@ function parse_pipe(p: P): (Ast, P) {
 }
 
 function parse_comma(p: P): (Ast, P) {
-  let (left, q) = parse_or(p);
+  let (left, q) = parse_alt(p);
   while (q.error.len() == 0 && q.is_punct(",")) {
-    let (right, r) = parse_or(q.advance());
+    let (right, r) = parse_alt(q.advance());
     left = Comma(left, right);
     q = r;
+  }
+  return (left, q);
+}
+
+function parse_alt(p: P): (Ast, P) {
+  let (left, q) = parse_or(p);
+  if (q.error.len() == 0 && q.is_punct("//")) {
+    let (right, r) = parse_alt(q.advance());
+    return (Alt(left, right), r);
   }
   return (left, q);
 }
@@ -427,18 +433,59 @@ function compare_op(p: P): string {
 }
 
 function parse_compare(p: P): (Ast, P) {
-  let (left, q) = parse_negate(p);
+  let (left, q) = parse_add(p);
   let op = compare_op(q);
   if (q.error.len() > 0 || op.len() == 0) {
     return (left, q);
   }
-  let (right, r) = parse_negate(q.advance());
+  let (right, r) = parse_add(q.advance());
   if (compare_op(r).len() > 0) {
     return (left, r.fail("syntax error, unexpected '" + compare_op(r) + "'"));
   }
   return (Compare(op, left, right), r);
 }
 
+function parse_add(p: P): (Ast, P) {
+  let (left, q) = parse_multiply(p);
+  while (q.error.len() == 0 && (q.is_punct("+") || q.is_punct("-"))) {
+    let op = if (q.is_punct("+")) { "+" } else { "-" };
+    let (right, r) = parse_multiply(q.advance());
+    left = Arith(op, left, right);
+    q = r;
+  }
+  return (left, q);
+}
+
+function multiply_op(p: P): string {
+  if let TPunct(x) = p.peek() {
+    if (x == "*" || x == "/" || x == "%") {
+      return x;
+    }
+  }
+  return "";
+}
+
+function parse_multiply(p: P): (Ast, P) {
+  let (left, q) = parse_unary(p);
+  while (q.error.len() == 0 && multiply_op(q).len() > 0) {
+    let op = multiply_op(q);
+    let (right, r) = parse_unary(q.advance());
+    left = Arith(op, left, right);
+    q = r;
+  }
+  return (left, q);
+}
+
+// The minus takes the product after it, so `-1 * 2` is `-(1 * 2)`.
+function parse_unary(p: P): (Ast, P) {
+  if (p.is_punct("-")) {
+    let (inner, q) = parse_multiply(p.advance());
+    return (Negate(inner), q);
+  }
+  return parse_postfix(p);
+}
+
+// The minus of an object value, which takes no operator after it.
 function parse_negate(p: P): (Ast, P) {
   if (p.is_punct("-")) {
     let (inner, q) = parse_negate(p.advance());
@@ -562,7 +609,55 @@ function parse_word(x: string, p: P): (Ast, P) {
   if (x == "if" || x == "reduce" || x == "foreach" || x == "try" || x == "def" || x == "label" || x == "import" || x == "include") {
     return (Identity, p.fail("'" + x + "' " + NOT_YET));
   }
-  return (Identity, p.fail("the function " + x + " " + NOT_YET));
+  return parse_call(x, p.advance());
+}
+
+// The number of arguments of each function that the port has.
+function arity(name: string): i32 {
+  return match (name) {
+    "has" => 1,
+    "map" => 1,
+    "select" => 1,
+    "add" => 0,
+    "empty" => 0,
+    "from_entries" => 0,
+    "keys" => 0,
+    "keys_unsorted" => 0,
+    "length" => 0,
+    "not" => 0,
+    "to_entries" => 0,
+    "tojson" => 0,
+    "tostring" => 0,
+    "type" => 0,
+    _ => -1,
+  };
+}
+
+// The arguments of the function `name`, when it has some: `(e; e)`.
+function parse_call(name: string, p: P): (Ast, P) {
+  let args: Ast[] = [];
+  let q = p;
+  if (q.is_punct("(")) {
+    q = q.advance();
+    while (q.error.len() == 0) {
+      let (arg, r) = parse_pipe(q);
+      args = args.append(arg);
+      q = r;
+      if (q.is_punct(")")) {
+        q = q.advance();
+        break;
+      }
+      q = q.expect(";");
+    }
+  }
+  if (q.error.len() == 0 && arity(name) != args.len()) {
+    let called = name + "/" + args.len().to_string();
+    if (arity(name) >= 0) {
+      return (Identity, p.fail(called + " is not defined"));
+    }
+    return (Identity, p.fail("the function " + called + " " + NOT_YET));
+  }
+  return (Call(name, args), q);
 }
 
 function parse_group(x: string, p: P): (Ast, P) {
@@ -668,6 +763,9 @@ pub function undefined_var(f: Ast, names: string[]): string {
     Collect(a) => undefined_var(a, names),
     Object(keys, values) => first_undefined(keys.concat(values), names),
     Compare(_, a, b) => first_undefined([a, b], names),
+    Arith(_, a, b) => first_undefined([a, b], names),
+    Alt(a, b) => first_undefined([a, b], names),
+    Call(_, args) => first_undefined(args, names),
     And(a, b) => first_undefined([a, b], names),
     Or(a, b) => first_undefined([a, b], names),
     Negate(a) => undefined_var(a, names),

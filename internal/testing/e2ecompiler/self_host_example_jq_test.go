@@ -17,7 +17,7 @@ import (
 // jqSuiteFloor is the number of cases of jq.test that the port passes. A case
 // in a part of the language the port does not have yet is skipped, and every
 // other case must pass.
-const jqSuiteFloor = 56
+const jqSuiteFloor = 107
 
 const jqNotYet = "is not in this port yet"
 
@@ -187,6 +187,14 @@ func TestSelfHostExampleJqAgainstJq(t *testing.T) {
 		{[]string{"-c", ".[] | .x?"}, "[1,{\"x\":2}]"},
 		{[]string{"-c", "$x"}, "null"},
 		{[]string{"-c", "{a: (1,2), b: (3,4)}"}, "null"},
+		{[]string{"-c", "to_entries | map(select(.value > 1)) | from_entries"}, "{\"a\":1,\"b\":2,\"c\":3}"},
+		{[]string{"-c", "[.[] | .a // \"none\"] , (map(.a) | add)"}, "[{\"a\":1},{},{\"a\":2.5}]"},
+		{[]string{"-cn", "[1 + 2 * 3 - 4 / 2 % 3, 0.1 + 0.2, 1e17 + 0, -9.7 % 3, \"ab\" * 2, \"a,b\" / \",\"]"}, ""},
+		{[]string{"-c", ".[] | length"}, "[[1],\"a\u00e9\",-5,true,3]"},
+		{[]string{"-c", ".a + 1"}, "{\"a\":\"x\"}\n{\"a\":1}"},
+		{[]string{"-cn", "1 % 0"}, ""},
+		{[]string{"-c", "keys, has(\"a\"), (.a | has(0)), has(0)"}, "{\"b\":1,\"a\":[2]}"},
+		{[]string{"-r", "map(tostring) | add"}, "[1,\"a\",[1.0],null]"},
 	}
 	for _, c := range cases {
 		run := func(path string) (string, string, int) {
