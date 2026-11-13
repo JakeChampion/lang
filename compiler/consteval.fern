@@ -139,23 +139,10 @@ function shown(v: i64, ty: string): string {
 // in the type, so their result does not wrap in 64 bits.
 function step_leaves(op: string, a: i64, b: i64, ty: string): boolean {
   if (ty == "u64") {
-    return match (op) {
-      "+" => (a + b) as u64 < a as u64,
-      "-" => a as u64 < b as u64,
-      "*" => a != 0 && (a * b) as u64 / (a as u64) != b as u64,
-      "<<" => (a << b) as u64 >> b as u64 != a as u64,
-      _ => false,
-    };
+    return u64_step_leaves(op, a, b);
   }
   if (ty == "i64") {
-    return match (op) {
-      "+" => b > 0 && a > I64_MAX - b || b < 0 && a < I64_MIN - b,
-      "-" => b < 0 && a > I64_MAX + b || b > 0 && a < I64_MIN + b,
-      "*" => a != 0 && b != 0 && (a == -1i64 && b == I64_MIN || b == -1i64 && a == I64_MIN || a * b / b != a),
-      "/" => a == I64_MIN && b == -1i64,
-      "<<" => a << b >> b != a,
-      _ => false,
-    };
+    return i64_step_leaves(op, a, b);
   }
   if (ty == "u32" && op == "*") {
     return a as u64 * (b as u64) > 4294967295u64;
@@ -170,14 +157,54 @@ function step_leaves(op: string, a: i64, b: i64, ty: string): boolean {
   };
 }
 
+function u64_step_leaves(op: string, a: i64, b: i64): boolean {
+  return match (op) {
+    "+" => (a + b) as u64 < a as u64,
+    "-" => a as u64 < b as u64,
+    "*" => a != 0 && (a * b) as u64 / (a as u64) != b as u64,
+    "<<" => (a << b) as u64 >> b as u64 != a as u64,
+    _ => false,
+  };
+}
+
+function i64_step_leaves(op: string, a: i64, b: i64): boolean {
+  return match (op) {
+    "+" => i64_add_leaves(a, b),
+    "-" => i64_sub_leaves(a, b),
+    "*" => i64_mul_leaves(a, b),
+    "/" => a == I64_MIN && b == -1i64,
+    "<<" => a << b >> b != a,
+    _ => false,
+  };
+}
+
+function i64_add_leaves(a: i64, b: i64): boolean {
+  return b > 0 && a > I64_MAX - b || b < 0 && a < I64_MIN - b;
+}
+
+function i64_sub_leaves(a: i64, b: i64): boolean {
+  return b < 0 && a > I64_MAX + b || b > 0 && a < I64_MIN + b;
+}
+
+function i64_mul_leaves(a: i64, b: i64): boolean {
+  if (a == 0 || b == 0) {
+    return false;
+  }
+  return a == -1i64 && b == I64_MIN || b == -1i64 && a == I64_MIN || a * b / b != a;
+}
+
 // The E047 of a step that leaves the declared type, or None. An operand
 // outside the type is a literal that the literal range rule reports.
+function shift_out_of_range(op: string, b: i64, bits: i64): boolean {
+  return (op == "<<" || op == ">>") && (b < 0 || b >= bits);
+}
+
 function checked_step(op: string, a: i64, b: i64, ty: string): Option[Value] {
   let bits = width_bits(ty);
   if (bits == 0 || !holds(a, ty) || !holds(b, ty)) {
     return None;
   }
-  if ((op == "<<" || op == ">>") && (b < 0 || b >= bits)) {
+  if (shift_out_of_range(op, b, bits)) {
     return Some(Value { ...refuse("shift count " + util.i64_to_string(b) + " is not less than the " + util.i64_to_string(bits) + " bits of " + ty), code: "E047" });
   }
   if (op == "/" && b == 0 || !step_leaves(op, a, b, ty)) {
@@ -467,6 +494,17 @@ function elements(elems: ast.Expr[], ty: parser.TypeRef, names: string[], values
   return Value { ...out, size: total };
 }
 
+function evaluate_unary(u: ast.ExprUnary, ty: parser.TypeRef, names: string[], values: Value[], width: string): Value {
+  let operand = evaluate(u.operand, ty, names, values);
+  // The literal range rule judges a negated literal.
+  if (u.op == "-" && !is_number(u.operand)) {
+    if let Some(refused) = checked_negate(operand, width) {
+      return refused;
+    }
+  }
+  return unary(u.op, operand, width);
+}
+
 pub function evaluate(e: ast.Expr, ty: parser.TypeRef, names: string[], values: Value[]): Value {
   let width = scalar_width(ty);
   match (e) {
@@ -483,14 +521,7 @@ pub function evaluate(e: ast.Expr, ty: parser.TypeRef, names: string[], values: 
       return earlier_value(id.name, names, values);
     },
     ast.ExprUnary(u) => {
-      let operand = evaluate(u.operand, ty, names, values);
-      // The literal range rule judges a negated literal.
-      if (u.op == "-" && !is_number(u.operand)) {
-        if let Some(refused) = checked_negate(operand, width) {
-          return refused;
-        }
-      }
-      return unary(u.op, operand, width);
+      return evaluate_unary(u, ty, names, values, width);
     },
     ast.ExprBinary(b) => {
       return evaluate_binary(b, ty, names, values);
