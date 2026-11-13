@@ -1,0 +1,290 @@
+// The command line of age: Go's flag package rules, and the checks that age
+// 1.1.1 makes before it reads any input.
+import "std/array";
+import "std/option";
+import "./text";
+
+pub const USAGE: string[] = [
+  "Usage:",
+  "    age [--encrypt] (-r RECIPIENT | -R PATH)... [--armor] [-o OUTPUT] [INPUT]",
+  "    age --decrypt [-i PATH]... [-o OUTPUT] [INPUT]",
+  "",
+  "Options:",
+  "    -e, --encrypt               Encrypt the input to the output. This is the default.",
+  "    -d, --decrypt               Decrypt the input to the output.",
+  "    -o, --output OUTPUT         Write the result to the file at path OUTPUT.",
+  "    -a, --armor                 Encrypt to the PEM-like ASCII armor.",
+  "    -r, --recipient RECIPIENT   Encrypt to RECIPIENT, an age1... public key. Can be repeated.",
+  "    -R, --recipients-file PATH  Encrypt to the recipients in the file at PATH. Can be repeated.",
+  "    -i, --identity PATH         Use the identity file at PATH. Can be repeated.",
+  "",
+  "INPUT is the standard input when it is missing or \"-\". OUTPUT is the",
+  "standard output when it is missing or \"-\". This port writes OUTPUT only when",
+  "all of the input decrypts: a file that does not decrypt leaves OUTPUT as it was.",
+  "",
+  "An identity file holds one or more secret keys (\"AGE-SECRET-KEY-1...\"), one",
+  "for each line. Empty lines and lines that start with \"#\" are comments.",
+];
+
+pub struct Opts {
+  encrypt: boolean,
+  decrypt: boolean,
+  passphrase: boolean,
+  armor: boolean,
+  version: boolean,
+  output: string,
+  recipients: string[],
+  recipient_files: string[],
+  identities: string[],
+  plugins: string[],
+  inputs: string[],
+}
+
+// The result of the flags: the options, a request for the usage, or Go's
+// message for a bad flag (exit 2).
+pub enum Parsed {
+  Run(Opts),
+  Help,
+  Bad(string),
+}
+
+const TRUE_WORDS: string[] = ["1", "t", "T", "TRUE", "true", "True"];
+
+const FALSE_WORDS: string[] = ["0", "f", "F", "FALSE", "false", "False"];
+
+// Go's strconv.ParseBool.
+function bool_value(v: string): Option[boolean] {
+  for w in TRUE_WORDS {
+    if (w == v) {
+      return Some(true);
+    }
+  }
+  for w in FALSE_WORDS {
+    if (w == v) {
+      return Some(false);
+    }
+  }
+  return None;
+}
+
+function set_bool(o: Opts, name: string, v: boolean): Option[Opts] {
+  return match (name) {
+    "e" | "encrypt" => Some(Opts { ...o, encrypt: v }),
+    "d" | "decrypt" => Some(Opts { ...o, decrypt: v }),
+    "p" | "passphrase" => Some(Opts { ...o, passphrase: v }),
+    "a" | "armor" => Some(Opts { ...o, armor: v }),
+    "version" => Some(Opts { ...o, version: v }),
+    _ => None,
+  };
+}
+
+function set_value(o: Opts, name: string, v: string): Option[Opts] {
+  return match (name) {
+    "o" | "output" => Some(Opts { ...o, output: v }),
+    "r" | "recipient" => Some(Opts { ...o, recipients: o.recipients.append(v) }),
+    "R" | "recipients-file" => Some(Opts { ...o, recipient_files: o.recipient_files.append(v) }),
+    "i" | "identity" => Some(Opts { ...o, identities: o.identities.append(v) }),
+    "j" => Some(Opts { ...o, plugins: o.plugins.append(v) }),
+    _ => None,
+  };
+}
+
+function takes_value(name: string): boolean {
+  return match (name) {
+    "o" | "output" | "r" | "recipient" | "R" | "recipients-file" | "i" | "identity" | "j" => true,
+    _ => false,
+  };
+}
+
+// The state of the flag parser after one argument: the options, the index of
+// the next argument, and whether the flags have ended.
+struct Step { o: Opts, next: i32, ended: boolean }
+
+enum Stepped {
+  Went(Step),
+  Stopped(Parsed),
+}
+
+// A flag with a value. The value is after "=" or in the next argument.
+function value_flag(o: Opts, args: string[], at: i32, name: string, given: Option[string]): Stepped {
+  if let Some(v) = given {
+    return Went(Step { o: set_value(o, name, v).unwrap_or(o), next: at, ended: false });
+  }
+  if (at >= args.len()) {
+    return Stopped(Bad("flag needs an argument: -" + name));
+  }
+  return Went(Step { o: set_value(o, name, args[at]).unwrap_or(o), next: at + 1, ended: false });
+}
+
+function bool_flag(o: Opts, at: i32, name: string, given: Option[string]): Stepped {
+  let v = match (given) {
+    Some(word) => bool_value(word),
+    None => Some(true),
+  };
+  let Some(on) = v else {
+    return Stopped(Bad(f"invalid boolean value {text.quote(given.unwrap_or("").as_bytes())} for -{name}: parse error"));
+  };
+  let Some(next) = set_bool(o, name, on) else {
+    if (name == "h" || name == "help") {
+      return Stopped(Help);
+    }
+    return Stopped(Bad("flag provided but not defined: -" + name));
+  };
+  return Went(Step { o: next, next: at, ended: false });
+}
+
+// The name of a flag and the value after its "=".
+function split_flag(flag: string): (string, Option[string]) {
+  return match (flag.index_of("=")) {
+    Some(e) => (flag[0:e].unwrap_or("").to_owned(), Some(flag[e + 1:flag.len()].unwrap_or("").to_owned())),
+    None => (flag, None),
+  };
+}
+
+// Go's flag.FlagSet.parseOne for args[at].
+function parse_one(o: Opts, args: string[], at: i32): Stepped {
+  let s = args[at];
+  if (s.len() < 2 || s[0] != b'-') {
+    return Went(Step { o: o, next: at, ended: true });
+  }
+  if (s == "--") {
+    return Went(Step { o: o, next: at + 1, ended: true });
+  }
+  let dashes = if (s[1] == b'-') { 2 } else { 1 };
+  let flag = s[dashes:s.len()].unwrap_or("").to_owned();
+  if (flag.len() == 0 || flag[0] == b'-' || flag[0] == b'=') {
+    return Stopped(Bad("bad flag syntax: " + s));
+  }
+  let (name, given) = split_flag(flag);
+  if (takes_value(name)) {
+    return value_flag(o, args, at + 1, name, given);
+  }
+  return bool_flag(o, at + 1, name, given);
+}
+
+// Go's flag.Parse over the arguments after the program name. Parsing stops
+// at the first argument that is not a flag, and after "--".
+pub function parse(args: string[]): Parsed {
+  let o = Opts { encrypt: false, decrypt: false, passphrase: false, armor: false, version: false, output: "", recipients: [], recipient_files: [], identities: [], plugins: [], inputs: [] };
+  let i = 0;
+  while (i < args.len()) {
+    match (parse_one(o, args, i)) {
+      Stopped(p) => {
+        return p;
+      },
+      Went(step) => {
+        o = step.o;
+        i = step.next;
+        if (step.ended) {
+          break;
+        }
+      }
+    }
+  }
+  return Run(Opts { ...o, inputs: array.slice(args, i, args.len()) });
+}
+
+// A failure that age reports with "age: error: " and its hints.
+pub struct Fatal { msg: string, hints: string[] }
+
+pub function fatal(msg: string): Fatal {
+  return Fatal { msg: msg, hints: [] };
+}
+
+function hinted(msg: string, hints: string[]): Option[Fatal] {
+  return Some(Fatal { msg: msg, hints: hints });
+}
+
+const SHELL_PUNCTUATION: string = "_@%+=:,./-";
+
+function alnum(c: u8): boolean {
+  return c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c >= b'0' && c <= b'9';
+}
+
+// An argument that a POSIX shell takes as it is: age's [\w@%+=:,./-]*.
+function shell_safe(s: string): boolean {
+  for i in 0..s.len() {
+    if (!alnum(s[i]) && SHELL_PUNCTUATION.index_of(s[i:i + 1].unwrap_or("")).is_none()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// age's message for two or more INPUT arguments. argv has the program name.
+function too_many(argv: string[], inputs: string[]): Fatal {
+  let quoted: string[] = [];
+  for a in inputs {
+    quoted = quoted.append(text.quote(a.as_bytes()));
+  }
+  let msg = "too many INPUT arguments: " + quoted.join(" ");
+  if (!inputs[1].starts_with("-")) {
+    return Fatal { msg: msg, hints: ["only a single input file may be specified at a time"] };
+  }
+  let hints = ["the input file must be specified after all flags"];
+  for a in argv {
+    if (!shell_safe(a)) {
+      return Fatal { msg: msg, hints: hints };
+    }
+  }
+  let at = argv.len() - inputs.len();
+  let moved = array.slice(argv, 0, at).concat(array.slice(argv, at + 1, argv.len())).append(argv[at]);
+  return Fatal { msg: msg, hints: hints.append("did you mean:").append("    " + moved.join(" ")) };
+}
+
+function decrypt_conflict(o: Opts): Option[Fatal] {
+  if (o.encrypt) {
+    return Some(fatal("-e/--encrypt can't be used with -d/--decrypt"));
+  }
+  if (o.armor) {
+    return hinted("-a/--armor can't be used with -d/--decrypt", ["note that armored files are detected automatically"]);
+  }
+  if (o.passphrase) {
+    return hinted("-p/--passphrase can't be used with -d/--decrypt", ["note that password protected files are detected automatically"]);
+  }
+  if (o.recipients.len() > 0) {
+    return hinted("-r/--recipient can't be used with -d/--decrypt", ["did you mean to use -i/--identity to specify a private key?"]);
+  }
+  if (o.recipient_files.len() > 0) {
+    return hinted("-R/--recipients-file can't be used with -d/--decrypt", ["did you mean to use -i/--identity to specify a private key?"]);
+  }
+  return None;
+}
+
+function passphrase_conflict(o: Opts, ids: i32): Option[Fatal] {
+  if (o.recipients.len() > 0) {
+    return Some(fatal("-p/--passphrase can't be combined with -r/--recipient"));
+  }
+  if (o.recipient_files.len() > 0) {
+    return Some(fatal("-p/--passphrase can't be combined with -R/--recipients-file"));
+  }
+  if (ids > 0) {
+    return Some(fatal("-p/--passphrase can't be combined with -i/--identity and -j"));
+  }
+  return Some(fatal("-p/--passphrase is not supported by this port yet"));
+}
+
+function encrypt_conflict(o: Opts): Option[Fatal] {
+  let ids = o.identities.len() + o.plugins.len();
+  if (ids > 0 && !o.encrypt) {
+    return hinted("-i/--identity and -j can't be used in encryption mode unless symmetric encryption is explicitly selected with -e/--encrypt", ["did you forget to specify -d/--decrypt?"]);
+  }
+  if (o.recipients.len() + o.recipient_files.len() + ids == 0 && !o.passphrase) {
+    return hinted("missing recipients", ["did you forget to specify -r/--recipient, -R/--recipients-file or -p/--passphrase?"]);
+  }
+  if (o.passphrase) {
+    return passphrase_conflict(o, ids);
+  }
+  return None;
+}
+
+// The checks that age makes after the flags, in its order.
+pub function check(argv: string[], o: Opts): Option[Fatal] {
+  if (o.inputs.len() > 1) {
+    return Some(too_many(argv, o.inputs));
+  }
+  if (o.decrypt) {
+    return decrypt_conflict(o);
+  }
+  return encrypt_conflict(o);
+}
