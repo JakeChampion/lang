@@ -146,7 +146,24 @@ function proven(f: ssa.SFunc, at: i32[], defs: ssa.SInst[], site: Site): Site {
   if (shape == "" || defs[ins.args[1]].kind_tag != ssa.CONST_INT || stores_to(f, at, site)) {
     return no_site();
   }
-  return Site { ...site, shape: shape, tested: tested_shape(f, at, defs, site.p, site.box) == shape };
+  let out = Site { ...site, shape: shape, tested: tested_shape(f, at, defs, site.p, site.box) == shape };
+  if (!out.tested && !keeps_word(f, out, defs, b)) {
+    return no_site();
+  }
+  return out;
+}
+
+// Whether a store of a word of the box is redundant. A token of an untested
+// shape can have another shape, as in a reuse across two record types. A
+// shape test of it is of no use when the box side keeps no word.
+function keeps_word(f: ssa.SFunc, site: Site, defs: ssa.SInst[], b: ssa.SBlock): boolean {
+  let def_at = def_blocks(f);
+  for k in site.k + 1..b.insts.len() {
+    if (b.insts[k].kind_tag == ssa.ST_AT && b.insts[k].imm != 0 && redundant(f, site, defs, def_at, b, k)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // The shape that b stores to the first word of the result of the instruction
