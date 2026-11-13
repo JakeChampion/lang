@@ -17,6 +17,7 @@ import "core/cmp";
 import "core/map";
 import "std/crypto";
 import "std/hex";
+import "./index";
 import "./log";
 import "./objects";
 import "./pack";
@@ -24,7 +25,7 @@ import "./refs";
 import "./rev";
 import "./store";
 
-const USAGE: string = "usage: git hash-object [-w] [-t KIND] [--stdin] [FILE...]\n   or: git cat-file (-t | -s | -p | -e) NAME\n   or: git cat-file (--batch | --batch-check)\n   or: git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...\n   or: git verify-pack [-v] FILE.idx...\n   or: git ls-tree [-r] [-t] [-d] [-l] [--name-only] [--full-tree] TREE\n   or: git log [-n N] [--oneline] [--format=FORMAT] [NAME]";
+const USAGE: string = "usage: git hash-object [-w] [-t KIND] [--stdin] [FILE...]\n   or: git cat-file (-t | -s | -p | -e) NAME\n   or: git cat-file (--batch | --batch-check)\n   or: git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...\n   or: git verify-pack [-v] FILE.idx...\n   or: git ls-tree [-r] [-t] [-d] [-l] [--name-only] [--full-tree] TREE\n   or: git log [-n N] [--oneline] [--format=FORMAT] [NAME]\n   or: git index-pack [-o FILE.idx] FILE.pack";
 
 function fatal(message: string): i32 {
   eprint("fatal: " + message);
@@ -609,6 +610,55 @@ function log_command(argv: string[]): i32 {
   return 0;
 }
 
+// ---- index-pack ----
+
+function index_pack(argv: string[]): i32 {
+  let out = "";
+  let file = "";
+  let i = 0;
+  while (i < argv.len()) {
+    if (argv[i] == "-o" && i + 1 < argv.len()) {
+      i += 1;
+      out = argv[i];
+    } else if (argv[i].starts_with("-") || file.len() > 0) {
+      return usage();
+    } else {
+      file = argv[i];
+    }
+    i += 1;
+  }
+  if (file.len() == 0) {
+    return usage();
+  }
+  let data = match (read_file_bytes(file)) {
+    Ok(bytes) => bytes,
+    Err(e) => {
+      return fatal("could not open '" + file + "' for reading: " + why(e));
+    },
+  };
+  if (out.len() == 0 && !file.ends_with(".pack")) {
+    return fatal("packfile name '" + file + "' does not end with '.pack'");
+  }
+  if (out.len() > 0 && !out.ends_with(".idx")) {
+    return fatal("packfile name '" + out + "' does not end with '.idx'");
+  }
+  let stem = if (out.len() > 0) { objects.part(out, 0, out.len() - 4) } else { objects.part(file, 0, file.len() - 5) };
+  let built = match (index.build(data)) {
+    Ok(b) => b,
+    Err(message) => {
+      return fatal(message);
+    },
+  };
+  if let Err(e) = write_file_bytes(stem + ".idx", built.idx) {
+    return fatal("unable to create '" + stem + ".idx': " + why(e));
+  }
+  if let Err(e) = write_file_bytes(stem + ".rev", built.rev) {
+    return fatal("unable to create '" + stem + ".rev': " + why(e));
+  }
+  put_line(built.name);
+  return 0;
+}
+
 // ---- verify-pack ----
 
 function plural(n: i32): string {
@@ -693,10 +743,10 @@ function verify_one(file: string, verbose: boolean): boolean {
   for k in 0..order.len() {
     let name = pack.hex_name_at(idx, order[k]);
     let offset = pack.offset_at(idx, order[k]);
-    let Ok(chain) = pack.chain_of(data, idx, offset) else {
+    let Ok(chain) = pack.chain_of(data, (name: u8[]): i32 => pack.offset_of(idx, name), offset) else {
       return false;
     };
-    let Ok(o) = pack.object_at(data, idx, offset) else {
+    let Ok(o) = pack.object_at(data, (name: u8[]): i32 => pack.offset_of(idx, name), offset) else {
       return false;
     };
     if (objects.hash_of(o.kind, o.body) != name) {
@@ -769,6 +819,7 @@ function main(): i32 {
     "verify-pack" => verify_pack(rest),
     "ls-tree" => ls_tree(rest),
     "log" => log_command(rest),
+    "index-pack" => index_pack(rest),
     _ => {
       eprint("git: '" + argv[1] + "' is not a command of this port.");
       1

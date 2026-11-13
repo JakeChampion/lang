@@ -99,7 +99,8 @@ pub function read(s: Store, name: string): Found {
       if (offset < 0) {
         return Found { store: s, object: Err("the packfile of " + name + " is larger than this port reads") };
       }
-      let object = pack.object_at(s.packs[i].data, s.packs[i].idx, offset);
+      let idx = s.packs[i].idx;
+      let object = pack.object_at(s.packs[i].data, (base: u8[]): i32 => pack.offset_of(idx, base), offset);
       return Found { store: s, object: object };
     }
   }

@@ -4,7 +4,7 @@ A subset of the plumbing commands of git, in Fern (#15591). The port reads
 and writes the object store of a real repository.
 
 This is slices 1 to 4: loose objects, packfiles with their deltas, the
-refs, the operators of a revision, and six commands.
+refs, the operators of a revision, and seven commands.
 
 ## Commands
 
@@ -16,6 +16,7 @@ git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...
 git verify-pack [-v] FILE.idx...
 git ls-tree [-r] [-t] [-d] [-l] [--name-only] [--full-tree] TREE
 git log [-n N] [--oneline] [--format=FORMAT] [NAME]
+git index-pack [-o FILE.idx] FILE.pack
 ```
 
 - `hash-object` prints the name of the object for each file, and for the
@@ -46,6 +47,10 @@ git log [-n N] [--oneline] [--format=FORMAT] [NAME]
   placeholders are `%H`, `%h`, `%T`, `%t`, `%P`, `%p`, `%s`, `%b`, `%B`,
   `%n` and `%%`. For the author they are `%an`, `%ae`, `%ad` and `%at`,
   and `%cn`, `%ce`, `%cd` and `%ct` for the committer.
+
+- `index-pack` makes the index of a packfile and its reverse index, and
+  prints the checksum of the packfile. The two files have the bytes that
+  git writes.
 
 A name is a full hash, a short hash of four digits or more, `HEAD`, or a
 ref. The port looks for a ref as git does: the name, then the name below
@@ -78,26 +83,52 @@ The standard output, the messages and the exit status are those of git
 - `refs.fern`: the repository of the current directory, and the names.
 - `rev.fern`: the operators of a revision.
 - `log.fern`: the fields of a commit and the text that `log` prints.
+- `index.fern`: the index of a packfile, made from the packfile.
 - `git.fern`: the command line.
 
 ## What it does not have yet
 
 - A packfile larger than 2 GiB, and the index of version 1.
+
 - The multi-pack index and the commit graph. The port reads each index of
   `objects/pack`, and it reads a whole packfile when it needs one object
   of it.
+
 - The other forms of a revision: `@{N}`, `^{/TEXT}`, `:/TEXT` and the
   ranges. git prints one more line when `^` or `~` follows an object that
   is not a commit, and the port does not print it.
+
 - `ls-tree` with a path after the tree.
+
 - `hash-object -w` for a commit, a tree or a tag. git checks the form of
   such an object before it writes one, and the port does not have that
   check. The port prints the name of such an object without `-w`.
+
 - `log` with a range, a path, a graph, a diff, or a date format. The
   default text gives a tab the width of 8 columns, and a wide character
   has one column.
-- `index-pack`.
+
+- `index-pack` from the standard input, and the completion of a thin
+  pack. For a packfile that is not sound, the exit status is that of git
+  and the message is not.
+
 - Repositories with SHA-256 names.
+
+## Speed
+
+The times are for one run on x86-64, on the repository of Fern: 978
+commits in a shallow clone, and a packfile of 275 MB with 33,899 objects.
+git 2.43 has four threads for `index-pack`, and the port has one.
+
+| Command | git | The port |
+|---|---|---|
+| `log` (978 commits) | 0.02 s | 0.25 s |
+| `index-pack` (3.3 MB) | 0.14 s | 0.25 s |
+| `index-pack` (275 MB) | 3.0 s | 10.9 s |
+
+For `log`, the port reads the whole packfile of 275 MB to get its
+commits. For `index-pack`, the port inflates an object again for each
+delta that has it as a base. git keeps a cache of bases.
 
 ## Tests
 
@@ -113,5 +144,6 @@ The standard output, the messages and the exit status are those of git
   by offset and then by name. Each object and each line of `verify-pack -v`
   are those of git. The last commit of the repository is a merge, and the
   operators give each parent. The port refuses a packfile with one changed
-  byte. The test also has a shallow clone, and a store of 16,400 objects
+  byte. The index and the reverse index of `index-pack` have the bytes of
+  git. The test also has a shallow clone, and a store of 16,400 objects
   where a short name has 8 digits.

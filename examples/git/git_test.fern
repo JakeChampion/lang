@@ -2,7 +2,10 @@
 // object file, the lines of a tree, the deltas, and the text of a commit.
 import "std/test";
 import "std/array";
+import "std/crypto";
+import "std/deflate";
 import "std/hex";
+import "./index";
 import "./log";
 import "./objects";
 import "./pack";
@@ -204,6 +207,45 @@ function test_commit_text(): test.TestOutcome {
   return test.pass();
 }
 
+// A packfile of one blob with the content `body`, which is shorter than
+// 16 bytes.
+function tiny_pack(body: u8[]): u8[] {
+  let sum = deflate.adler32(body);
+  let data: u8[] = [b'P', b'A', b'C', b'K', 0, 0, 0, 2, 0, 0, 0, 1, (48 + body.len()) as u8, 120, 156];
+  data = data.concat(deflate.deflate(body));
+  data = data.append((sum >> 24) as u8).append((sum >> 16 & 255) as u8).append((sum >> 8 & 255) as u8).append((sum & 255) as u8);
+  return data.concat(crypto.sha1(data));
+}
+
+// The index that the port makes for a packfile.
+function test_index(): test.TestOutcome {
+  let data = tiny_pack("hello\n".bytes());
+  let Ok(built) = index.build(data) else {
+    return test.fail("a packfile of one blob is refused");
+  };
+  let name = unhex("ce013625030ba8dba906f756967f9e9ca394464a");
+  if (!pack.index_ok(built.idx) || pack.count(built.idx) != 1 || pack.offset_of(built.idx, name) != 12) {
+    return test.fail("the index of one blob");
+  }
+  if (built.name != hex.encode(array.slice(data, data.len() - 20, data.len())) || built.rev.len() != 12 + 4 + 40) {
+    return test.fail("the checksum and the reverse index");
+  }
+  let Ok(o) = pack.object_at(data, (base: u8[]): i32 => pack.offset_of(built.idx, base), 12) else {
+    return test.fail("the object is not read with the index");
+  };
+  if (o.kind != "blob" || o.body.len() != 6) {
+    return test.fail("the object of the index");
+  }
+  let bad = data.with(14, data[14] ^ 1);
+  if let Ok(_) = index.build(bad) {
+    return test.fail("a packfile with a changed byte is accepted");
+  }
+  if let Ok(_) = index.build(array.slice(data, 0, 20)) {
+    return test.fail("a short packfile is accepted");
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let r = test.new("git");
   r = r.it("the names of objects", test_names);
@@ -214,5 +256,6 @@ function main(): i32 {
   r = r.it("the header of a packed object", test_entry);
   r = r.it("the fields of a commit", test_commit_fields);
   r = r.it("the text of a commit", test_commit_text);
+  r = r.it("the index of a packfile", test_index);
   return r.finish();
 }

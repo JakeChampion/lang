@@ -353,6 +353,42 @@ func TestSelfHostExampleGitPacked(t *testing.T) {
 				compare("", "log", "-2", "side")
 				compare("", "log", "--max-count=4", "--pretty=format:%B|", "HEAD~1")
 				compare("", "log", "--format=%t %T", "v1")
+
+				// index-pack: the index and the reverse index have the bytes of git.
+				data, err := os.ReadFile(strings.TrimSuffix(idx, ".idx") + ".pack")
+				if err != nil {
+					t.Fatal(err)
+				}
+				made := map[string]string{}
+				for _, tool := range []gitTool{oracle, port} {
+					dir := t.TempDir()
+					if err := os.WriteFile(filepath.Join(dir, "p.pack"), data, 0o644); err != nil {
+						t.Fatal(err)
+					}
+					for _, args := range [][]string{{"index-pack", "p.pack"}, {"index-pack", "-o", "q.idx", "p.pack"}, {"index-pack", "-o", "q.other", "p.pack"}, {"index-pack", "nosuch.pack"}} {
+						out, stderr, code := tool.run(t, dir, "", args...)
+						made[tool.name] += fmt.Sprintf("%v: %d %q %q\n", args, code, out, stderr)
+					}
+					for _, name := range []string{"p.idx", "p.rev", "q.idx", "q.rev"} {
+						b, err := os.ReadFile(filepath.Join(dir, name))
+						if err != nil {
+							t.Fatalf("%s index-pack made no %s: %v", tool.name, name, err)
+						}
+						made[tool.name] += fmt.Sprintf("%s: %x\n", name, b)
+					}
+					// A packfile with one changed byte is refused. The message is not that of git.
+					bad := append([]byte(nil), data...)
+					bad[len(bad)/2] ^= 1
+					if err := os.WriteFile(filepath.Join(dir, "bad.pack"), bad, 0o644); err != nil {
+						t.Fatal(err)
+					}
+					if _, _, code := tool.run(t, dir, "", "index-pack", "bad.pack"); code != 128 {
+						t.Errorf("%s index-pack of a changed packfile: exit %d, want 128", tool.name, code)
+					}
+				}
+				if made[port.name] != made[oracle.name] {
+					t.Errorf("index-pack:\n got %s\nwant %s", made[port.name], made[oracle.name])
+				}
 			}
 			check(idx)
 			if _, stderr, code := oracle.run(t, top, "", "-c", "repack.useDeltaBaseOffset=false", "repack", "-q", "-a", "-d", "-f", "--depth=10"); code != 0 {
