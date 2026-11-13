@@ -1046,8 +1046,8 @@ jobs:
       - uses: ./.github/actions/gnu-coreutils
         with:
           host: ${{ matrix.host }}
-      # TestSelfHostExampleRgAgainstRipgrep compares examples/rg with ripgrep 14.1.0.
-      - uses: ./.github/actions/ripgrep
+      # The differential tests of examples/rg and examples/markdown need their references.
+      - uses: ./.github/actions/port-oracles
       - name: run self-host shard ${{ matrix.shard }}/${{ matrix.nshard }} (prebuilt binaries, four workers)
         id: run
         env:

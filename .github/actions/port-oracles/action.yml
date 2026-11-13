@@ -1,0 +1,33 @@
+name: port-oracles
+description: >
+  Install the reference programs that the differential tests of the ports
+  compare with: ripgrep 14.1.0 for examples/rg and cmark 0.30.2 for
+  examples/markdown, from the Ubuntu 24.04 archive. The step fails when apt
+  gives a different release, because each test pins its release.
+runs:
+  using: composite
+  steps:
+    - uses: ./.github/actions/disable-chrome-apt
+    - name: Install ripgrep and cmark
+      shell: bash
+      # timeout runs under sudo, so the signal stops apt, not the sudo wrapper.
+      run: |
+        set -euo pipefail
+        for try in 1 2 3; do
+          if sudo timeout 120 apt-get update -qq && sudo timeout 120 apt-get install -y -qq --no-install-recommends ripgrep cmark; then
+            break
+          fi
+          echo "apt attempt $try failed" >&2
+          sleep $((try * 10))
+        done
+        check() {
+          local want="$1" got
+          got="$("${@:2}" | head -1)"
+          echo "$got"
+          case "$got" in
+            "$want"*) ;;
+            *) echo "the ports pin $want; apt gave $got" >&2; exit 1 ;;
+          esac
+        }
+        check 'ripgrep 14.1.0' rg --version
+        check 'cmark 0.30.2 ' cmark --version

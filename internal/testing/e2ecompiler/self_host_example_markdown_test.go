@@ -152,7 +152,11 @@ func TestSelfHostExampleMarkdownSpec(t *testing.T) {
 func TestSelfHostExampleMarkdownAgainstCmark(t *testing.T) {
 	ref, err := exec.LookPath("cmark")
 	if err != nil {
-		t.Skip("no cmark on PATH")
+		t.Fatalf("cmark 0.30.2 is required on PATH: %v", err)
+	}
+	version, err := exec.Command(ref, "--version").Output()
+	if err != nil || !strings.HasPrefix(string(version), "cmark 0.30.2 ") {
+		t.Fatalf("the oracle is cmark 0.30.2, but %s gives %q (%v)", ref, strings.SplitN(string(version), "\n", 2)[0], err)
 	}
 	bin := buildMarkdown(t)
 	cases := []string{
