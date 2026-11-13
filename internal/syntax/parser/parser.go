@@ -4379,8 +4379,8 @@ func (p *parser) parseUse(parent *ast.Block) error {
 
 func (p *parser) parseLet(captureRest bool) (ast.Stmt, error) {
 	kw := p.advance()
-	qualifiedRecord := p.qualifiedRecordPatternAhead()
-	if p.atLetBindingHead() && !qualifiedRecord {
+	patternHead := p.atPatternHead()
+	if p.atLetBindingHead() && !patternHead {
 		return p.parseLetBinding(kw.Pos)
 	}
 	start := p.i
@@ -4404,7 +4404,7 @@ func (p *parser) parseLet(captureRest bool) (ast.Stmt, error) {
 	if err != nil {
 		return nil, err
 	}
-	if qualifiedRecord && len(pats) == 1 && !p.match(lexer.Keyword, "else") {
+	if patternHead && len(pats) == 1 && !p.match(lexer.Keyword, "else") {
 		d, err := p.irrefutableDestructure(kw.Pos, pats[0], destructureSite, "")
 		if err != nil {
 			return nil, err
@@ -4628,14 +4628,6 @@ func (p *parser) recordPatternBraceAt(i int) int {
 		return i
 	}
 	return -1
-}
-
-func (p *parser) qualifiedRecordPatternAhead() bool {
-	i := p.i
-	if p.peek().Kind == lexer.Ident && p.peekAt(1).Kind == lexer.Punct && p.peekAt(1).Text == "@" {
-		i += 2
-	}
-	return p.recordPatternBraceAt(i) > i+1
 }
 
 func (p *parser) parseDestructure(kwPos ast.Position) (ast.Stmt, error) {

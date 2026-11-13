@@ -501,6 +501,41 @@ function parse_destructure_names_nested(p: Par): (string, i32, boolean, Par) {
   return (names, count, true, p);
 }
 
+// The kind of the first element of the tuple at `p` that can fail to match.
+function refutable_tuple_element(p: Par): string {
+  if (p.too_deep()) {
+    return "";
+  }
+  p = p.with_depth(p.depth + 1).advance();
+  while (p.peek_punct() != ")" && !p.at_end()) {
+    if (p.peek_punct() == "(") {
+      let inner = refutable_tuple_element(p);
+      if (inner.len() > 0) {
+        return inner;
+      }
+      p = p.advance().skip_to_close(")");
+    } else if (p.peek_ident().len() == 0) {
+      return "a literal tuple element";
+    } else if (p.peek_punct_at(1) == "(" || p.peek_punct_at(1) == ".") {
+      return "a variant tuple element";
+    } else {
+      p = p.advance();
+    }
+    if (p.peek_punct() == ",") {
+      p = p.advance();
+    }
+  }
+  return "";
+}
+
+function refutable_tuple_message(tuple_start: Par, site: string): string {
+  let kind = refutable_tuple_element(tuple_start);
+  if (kind.len() == 0) {
+    kind = "a literal tuple element";
+  }
+  return refutable_binding_message(kind, site);
+}
+
 function parse_struct_pattern_fields(p: Par): (string, string, boolean, boolean, Par) {
   p = p.advance();
   let bindings = "";
@@ -6012,6 +6047,7 @@ function parse_let_stmt(p: Par): (ast.Stmt, Par) {
   let vcol = p.peek_col();
   p = p.advance();
   let at_bind = "";
+  let pattern_start = p;
   let qualified_record = qualified_record_pattern_ahead(p);
   if (p.peek_punct_at(1) == "@" && at_pattern_head(p) && !qualified_record) {
     at_bind = p.peek_ident();
@@ -6023,7 +6059,10 @@ function parse_let_stmt(p: Par): (ast.Stmt, Par) {
     let (tdnames, tdcount, tdok, tdp) = parse_destructure_names(p);
     p = tdp;
     if (!tdok) {
-      let problem = s_unknown_at("decl:" + refutable_binding_message("a literal tuple element", "destructuring binding"), vline, vcol);
+      if (let_else_ahead(pattern_start)) {
+        return parse_let_tuple_else(pattern_start, vline, vcol);
+      }
+      let problem = s_unknown_at("decl:" + refutable_tuple_message(tuple_start, "destructuring binding"), vline, vcol);
       p = tuple_start.advance().skip_to_close(")").expect("=");
       let (ignored, recovered) = parse_expr(p);
       return (problem, recovered.end_of(ignored));
@@ -6116,6 +6155,67 @@ function pattern_if_chain(stmt: ast.Stmt, p: Par, rt: string, value_form: boolea
 }
 
 // parse_pattern_if shares pattern and branch rules between the two if-let forms.
+struct TupleAlternatives { at: string, pats: ast.TupArm[], ok: boolean, par: Par }
+
+// `name @ (…) | (…)`: the tuple patterns of an `if let` or a let-else.
+function parse_tuple_alternatives(p: Par): TupleAlternatives {
+  let at = "";
+  if (p.peek_ident().len() > 0 && p.peek_punct_at(1) == "@") {
+    at = p.peek_ident();
+    p = p.advance().advance();
+  }
+  let pats: ast.TupArm[] = [];
+  let no_body: ast.Stmt[] = [];
+  let more = true;
+  while (more) {
+    let (kinds, binds, lits, elems, next) = parse_tuple_arm_pattern(p);
+    p = next;
+    if (kinds.len() == 0) {
+      return TupleAlternatives { at: at, pats: pats, ok: false, par: p };
+    }
+    pats = pats.append(ast.TupArm { is_wild: false, elem_kinds: kinds, binds: binds, lits: lits, elem_pats: elems, at_binding: "", guard: e_bool(true), has_guard: false, body: no_body, line: 0, col: 0, alt_cont: false });
+    more = p.peek_punct() == "|";
+    if (more) {
+      p = p.advance();
+    }
+  }
+  return TupleAlternatives { at: at, pats: pats, ok: true, par: p };
+}
+
+function tuple_alternative_arms(alts: TupleAlternatives, yes: ast.Stmt[], no: ast.Stmt[], line: i32, col: i32): ast.TupArm[] {
+  let arms: ast.TupArm[] = [];
+  for i in 0..alts.pats.len() {
+    let a = alts.pats[i];
+    arms = arms.append(ast.TupArm { is_wild: false, elem_kinds: a.elem_kinds, binds: a.binds, lits: a.lits, elem_pats: a.elem_pats, at_binding: alts.at, guard: e_bool(true), has_guard: false, body: yes, line: line, col: col, alt_cont: i > 0 });
+  }
+  let wk: i32[] = [];
+  let wb: string[] = [];
+  let wl: ast.Expr[] = [];
+  let wp: ast.Pattern[] = [];
+  return arms.append(ast.TupArm { is_wild: true, elem_kinds: wk, binds: wb, lits: wl, elem_pats: wp, at_binding: "", guard: e_bool(true), has_guard: false, body: no, line: line, col: col, alt_cont: false });
+}
+
+function let_else_ahead(start: Par): boolean {
+  let alts = parse_tuple_alternatives(start);
+  if (!alts.ok || alts.par.peek_punct() != "=") {
+    return false;
+  }
+  let (_, after) = parse_expr(alts.par.advance().with_no_struct(false));
+  return after.peek_keyword() == "else";
+}
+
+function parse_let_tuple_else(start: Par, vline: i32, vcol: i32): (ast.Stmt, Par) {
+  let alts = parse_tuple_alternatives(start);
+  let p = alts.par;
+  if (!alts.ok) {
+    return (s_unknown(p, "bad tuple pattern"), p);
+  }
+  let (scrut, sp) = parse_expr(p.expect("=").with_no_struct(false));
+  let (else_body, rest, rp) = parse_let_else_tail(sp.with_no_struct(start.no_struct));
+  let arms = tuple_alternative_arms(alts, rest, else_body, vline, vcol);
+  return (with_sugar_origin(build_tuple_match(scrut, arms, vline, vcol), "let_else", false), rp);
+}
+
 function parse_pattern_if(p: Par, value_form: boolean): IfChain {
   let rt = "i32";
   let value_local = "__il" + dl_itoa(p.peek_line()) + "_" + dl_itoa(p.peek_col()) + "_r";
@@ -6164,28 +6264,10 @@ function parse_pattern_if(p: Par, value_form: boolean): IfChain {
   if (p.peek_punct() == "(" || p.peek_ident().len() > 0 && p.peek_ident() != "_" && p.peek_punct_at(1) == "@" && p.peek_punct_at(2) == "(") {
     let ilt_line = p.peek_line();
     let ilt_col = p.peek_col();
-    let ilt_at = "";
-    if (p.peek_ident().len() > 0 && p.peek_punct_at(1) == "@") {
-      ilt_at = p.peek_ident();
-      p = p.advance();
-      p = p.advance();
-    }
-    let ilt_empty: ast.Stmt[] = [];
-    let ilt_pats: ast.TupArm[] = [];
-    let (ilt_kinds, ilt_binds, ilt_lits, ilt_elems, ilt_pp) = parse_tuple_arm_pattern(p);
-    p = ilt_pp;
-    if (ilt_kinds.len() == 0) {
+    let ilt = parse_tuple_alternatives(p);
+    p = ilt.par;
+    if (!ilt.ok) {
       return pattern_if_chain(s_unknown(p, "bad tuple pattern"), p, rt, value_form, value_local);
-    }
-    ilt_pats = ilt_pats.append(ast.TupArm { is_wild: false, elem_kinds: ilt_kinds, binds: ilt_binds, lits: ilt_lits, elem_pats: ilt_elems, at_binding: "", guard: e_bool(true), has_guard: false, body: ilt_empty, line: ilt_line, col: ilt_col, alt_cont: false });
-    while (p.peek_punct() == "|") {
-      p = p.advance();
-      let (ilo_kinds, ilo_binds, ilo_lits, ilo_elems, ilo_p) = parse_tuple_arm_pattern(p);
-      p = ilo_p;
-      if (ilo_kinds.len() == 0) {
-        return pattern_if_chain(s_unknown(p, "bad tuple pattern"), p, rt, value_form, value_local);
-      }
-      ilt_pats = ilt_pats.append(ast.TupArm { is_wild: false, elem_kinds: ilo_kinds, binds: ilo_binds, lits: ilo_lits, elem_pats: ilo_elems, at_binding: "", guard: e_bool(true), has_guard: false, body: ilt_empty, line: ilt_line, col: ilt_col, alt_cont: false });
     }
     p = p.expect("=");
     let ilt_saved = p.no_struct;
@@ -6194,18 +6276,7 @@ function parse_pattern_if(p: Par, value_form: boolean): IfChain {
     let branches = parse_pattern_if_branches(p, value_form, value_local);
     p = branches.par;
     rt = branches.rt;
-    let ilt_then = branches.yes;
-    let ilt_else = branches.no;
-    let ilt_arms: ast.TupArm[] = [];
-    for ilt_i in 0..ilt_pats.len() {
-      let ilt_a = ilt_pats[ilt_i];
-      ilt_arms = ilt_arms.append(ast.TupArm { is_wild: false, elem_kinds: ilt_a.elem_kinds, binds: ilt_a.binds, lits: ilt_a.lits, elem_pats: ilt_a.elem_pats, at_binding: ilt_at, guard: e_bool(true), has_guard: false, body: ilt_then, line: ilt_line, col: ilt_col, alt_cont: ilt_i > 0 });
-    }
-    let ilt_wk: i32[] = [];
-    let ilt_wb: string[] = [];
-    let ilt_wl: ast.Expr[] = [];
-    let ilt_wp: ast.Pattern[] = [];
-    ilt_arms = ilt_arms.append(ast.TupArm { is_wild: true, elem_kinds: ilt_wk, binds: ilt_wb, lits: ilt_wl, elem_pats: ilt_wp, at_binding: "", guard: e_bool(true), has_guard: false, body: ilt_else, line: ilt_line, col: ilt_col, alt_cont: false });
+    let ilt_arms = tuple_alternative_arms(ilt, branches.yes, branches.no, ilt_line, ilt_col);
     return pattern_if_chain(with_sugar_origin(build_tuple_match(ilt_scrut, ilt_arms, ilt_line, ilt_col), "if_let", branches.else_chained), p, rt, value_form, value_local);
   }
   // Literal and range patterns share the literal match builder.
@@ -7496,7 +7567,7 @@ function parse_pattern_param(p: Par): (ast.ParamDecl, ParamDestr, Par) {
     let (tnames, names_count, names_ok, names_p) = parse_destructure_names(p);
     p = names_p;
     if (!names_ok) {
-      let refused = tuple_start.refused_type(refutable_binding_message("a literal tuple element", "parameter"));
+      let refused = tuple_start.refused_type(refutable_tuple_message(tuple_start, "parameter"));
       let recovered = tuple_start.advance().skip_to_close(")");
       p = Par { ...recovered, type_errs: refused.type_errs };
       names = "__invalid_pattern";
