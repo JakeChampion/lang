@@ -338,23 +338,37 @@ function path(p: isa.ArrayProgram, capacity: i32, symbol: string, successor: i32
   return false;
 }
 
+// The position after the call that __fern_arr_box makes for a box with no
+// block on its list: the call to .Lalloc_fast_miss, or the one call to
+// __fern_alloc when the box has no such call.
 function allocator_successor(output: string): i32 {
   let p = isa.array_box_program(output);
   if (p.error != "") {
     return -1;
   }
-  let successor = -1;
+  let miss = successors(p, ".Lalloc_fast_miss");
+  let whole = successors(p, "__fern_alloc");
+  if (miss.len() > 1 || whole.len() > 1 || miss.len() + whole.len() != successors(p, "").len()) {
+    return -1;
+  }
+  if (miss.len() == 1) {
+    return miss[0];
+  }
+  return if (whole.len() == 1) { whole[0] } else { -1 };
+}
+
+// The positions after the calls to symbol, or after each call when symbol is
+// empty.
+function successors(p: isa.Program, symbol: string): i32[] {
+  let out: i32[] = [];
   let i = 0;
   for op in p.ops {
-    if (op.kind == 25) {
-      if (successor >= 0 || op.symbol != "__fern_alloc") {
-        return -1;
-      }
-      successor = i + 1;
+    if (op.kind == 25 && (symbol == "" || op.symbol == symbol)) {
+      out = out.append(i + 1);
     }
     i += 1;
   }
-  return successor;
+  return out;
 }
 
 pub function check(output: ssaprepare.Output, name: string): boolean {

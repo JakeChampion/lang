@@ -128,7 +128,18 @@ function bump(capacity: i32, h: Heap, a: Action): Next {
     return Next { heap: h, ok: false };
   }
   let b = Block { address: h.cursor, header: capacity as i64, rc: 1, generation: 1, live: true };
-  return Next { heap: Heap { ...h, cursor: h.cursor + size, blocks: h.blocks.append(b) }, ok: true };
+  return Next { heap: Heap { ...h, cursor: coloured(h, h.cursor + size), blocks: h.blocks.append(b) }, ok: true };
+}
+
+// The bump pointer after a block that ends at next. When the block crosses
+// a 64 KiB line, the pointer moves forward by 64 bytes times the low four
+// bits of the number of the line, unless that passes the end of the heap.
+function coloured(h: Heap, next: i64): i64 {
+  if (next % 65536 >= h.cursor % 65536) {
+    return next;
+  }
+  let moved = next + next / 65536 % 16 * 64;
+  return if (moved > h.end) { next } else { moved };
 }
 
 function push(h: Heap, a: Action): Next {

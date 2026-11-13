@@ -289,6 +289,18 @@ pub function allocator_program(output: string): Program {
   return selected_program(text.allocator(output), 6);
 }
 
+// The position in the allocator program of the label that takes the address
+// of an empty list. -1 when the allocator has no such label.
+pub function allocator_miss_entry(output: string): i32 {
+  let lines = text.allocator(output).lines;
+  for i in 0..lines.len() {
+    if (lines[i] == ".Lalloc_fast_miss:") {
+      return i;
+    }
+  }
+  return -1;
+}
+
 function selected_program(body: text.Body, mode: i32): Program {
   if (body.error != "") {
     return Program { ops: [], error: body.error };
@@ -351,7 +363,15 @@ function allocator_decode(line: string): Op {
   if (args.len() == 1) {
     return allocator_stack(name, args[0]);
   }
-  return if (args.len() == 2) { allocator_operands(name, args[0], args[1]) } else { empty(0) };
+  return if (args.len() == 2) { allocator_pair(name, args[0], args[1]) } else { empty(0) };
+}
+
+// Kind 48 is the test of the low 16 bits of %rdi against those of %rax.
+function allocator_pair(name: string, a: string, b: string): Op {
+  if (name == "cmpw" && a == "%ax" && b == "%di") {
+    return Op { ...empty(48), width: 16, source: 0, destination: 7 };
+  }
+  return allocator_operands(name, a, b);
 }
 
 function allocator_stack(name: string, operand: string): Op {
@@ -417,7 +437,7 @@ function array_box_decode(line: string): Op {
   }
   let name = slice_unchecked(line, 0, at).to_owned();
   let rest = slice_unchecked(line, at + 1, line.len()).to_owned().trim();
-  if (name == "call" && rest == "__fern_alloc") {
+  if (name == "call" && (rest == "__fern_alloc" || rest == ".Lalloc_fast_miss")) {
     return Op { ...empty(25), symbol: rest };
   }
   let args = operands(rest);

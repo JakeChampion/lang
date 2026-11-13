@@ -43,7 +43,7 @@ func TestSelfHostBumpAllocatorColoursEach64KLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	step := map[string][]string{
-		"x86-64-linux": {"shrq $16, %rdi\n    jnz .Lalloc_colour\n", "andq $15, %rdi\n    shlq $6, %rdi\n    addq %rdi, __fern_heap_ptr(%rip)"},
+		"x86-64-linux": {"cmpw %ax, %di\n    jb .Lalloc_colour\n", "andq $15, %rax\n    shlq $6, %rax\n    addq %rdi, %rax"},
 		"arm64-linux":  {"lsr x0, x0, #16\n    cbz x0, .Lalloc_plain\n", "and x0, x0, #15\n    lsl x0, x0, #6\n    add x3, x3, x0"},
 	}
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {

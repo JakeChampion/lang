@@ -495,17 +495,17 @@ function freelist_key(block: string, into: string): string {
   return "    movq " + block + ", " + into + "\n    shrq $12, " + into + "\n    xorq __fern_canary(%rip), " + into + "\n";
 }
 
-// %rax holds the block that the bump allocator made and %rdi its end. A
-// block that crosses a 64 KiB line moves the bump pointer forward by 0 to 960
+// %rax holds the block that the bump allocator made and %rdi its end. When
+// the block crosses a 64 KiB line, the bump pointer moves forward by 0 to 960
 // bytes, so blocks of one size do not stay a constant distance apart. Boxes
 // that a program makes at a constant distance, such as the spine of a tree,
-// then do not all use one cache set. done is the text that returns.
-function bump_colour(s: asmcore.EmitState, label: string, done: string): asmcore.EmitState {
-  s = s.write("    xorq %rax, %rdi\n    shrq $16, %rdi\n    jnz " + label + "\n");
-  s = s.write(done);
-  s = s.write(label + ":\n    movq __fern_heap_ptr(%rip), %rdi\n    shrq $16, %rdi\n    andq $15, %rdi\n    shlq $6, %rdi\n");
-  s = s.write("    addq %rdi, __fern_heap_ptr(%rip)\n");
-  return s.write(done);
+// then do not all use one cache set. The pointer does not pass the end of the
+// heap.
+function bump_colour(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    cmpw %ax, %di\n    jb .Lalloc_colour\n    ret\n");
+  s = s.write(".Lalloc_colour:\n    pushq %rax\n    movq %rdi, %rax\n    shrq $16, %rax\n    andq $15, %rax\n    shlq $6, %rax\n    addq %rdi, %rax\n");
+  s = s.write("    cmpq __fern_heap_end(%rip), %rax\n    ja .Lalloc_plain\n    movq %rax, __fern_heap_ptr(%rip)\n");
+  return s.write(".Lalloc_plain:\n    popq %rax\n    ret\n");
 }
 
 // Takes the head of the free list whose slot address is in %rdi into %rax,
@@ -3577,6 +3577,21 @@ function abort_trap(s: asmcore.EmitState, label: string, msg: string, text: stri
   return s;
 }
 
+// %rax holds the base of the arena. The arena past its first 4 MiB asks for
+// transparent huge pages, so a large heap takes one page fault for each 2 MiB.
+// A small program stays in the first 4 MiB and keeps 4 KiB pages. A kernel
+// with no huge pages refuses the call, and the arena works as before.
+function arena_huge_pages(s: asmcore.EmitState): asmcore.EmitState {
+  let small: i64 = 4194304;
+  if (s.heap_limit <= small) {
+    return s;
+  }
+  s = s.write("    leaq " + small.to_string() + "(%rax), %rdi\n");
+  s = s.write("    movabs $" + (s.heap_limit - small).to_string() + ", %rsi\n");
+  s = s.write("    movl $14, %edx\n    movl $28, %eax\n");
+  return s.syscall(28);
+}
+
 // The first allocation maps the arena.
 function emit_arena_map(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    pushq %rdi\n");
@@ -3602,6 +3617,7 @@ function emit_arena_map(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movabs $" + s.heap_limit.to_string() + ", %rcx\n");
   s = s.write("    addq %rax, %rcx\n");
   s = s.write("    movq %rcx, __fern_heap_end(%rip)\n");
+  s = arena_huge_pages(s);
   s = s.write("    popq %r11\n");
   s = s.write("    popq %r10\n");
   s = s.write("    popq %r9\n");
@@ -3801,7 +3817,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    cmpq __fern_heap_end(%rip), %rdi\n");
   s = s.write("    ja .Lalloc_oom\n");
   s = s.write("    movq %rdi, __fern_heap_ptr(%rip)\n");
-  s = bump_colour(s, ".Lalloc_colour", "    ret\n");
+  s = bump_colour(s);
   s = s.write(".Lalloc_full:\n");
   s = s.write("    pushq %rbp\n");
   s = s.write("    movq %rsp, %rbp\n");
@@ -3881,7 +3897,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    cmpq __fern_heap_end(%rip), %rdi\n");
   s = s.write("    ja .Lalloc_oom\n");
   s = s.write("    movq %rdi, __fern_heap_ptr(%rip)\n");
-  s = bump_colour(s, ".Lalloc_colour_framed", "    popq %rbp\n    ret\n");
+  s = s.write("    popq %rbp\n");
+  s = s.write("    ret\n");
   s = abort_trap(s, ".Lalloc_oom", ".Lmsg_oom", aborts.oom(), 125);
   if (asmcore.process_entry(s)) {
     s = emit_map_fail_trap(s);
