@@ -31677,7 +31677,7 @@ function value_block_tail_type(body: ast.Stmt[], s: Scope): typeinfo.Type {
 
 pub function first_returned(body: ast.Stmt[], scope: Scope): (ast.Expr, Scope) {
   let none: ast.Expr = ast.ExprUnknown { kind: parser.BARE_RETURN, line: 0, col: 0 };
-  for st in body {
+  for st in reachable_stmts(body) {
     match (st) {
       ast.StmtReturn(r) => {
         if (!parser.bare_return(r.value)) {
@@ -31717,12 +31717,21 @@ pub function first_returned(body: ast.Stmt[], scope: Scope): (ast.Expr, Scope) {
       },
       _ => {}
     }
-    if (parser.branch_stmts_diverge([st])) {
-      return (none, scope);
-    }
     scope = bind_stmt(st, scope);
   }
   return (none, scope);
+}
+
+// The statements up to the first one that diverges. The rest do not run.
+function reachable_stmts(body: ast.Stmt[]): ast.Stmt[] {
+  let out: ast.Stmt[] = [];
+  for st in body {
+    out = out.append(st);
+    if (parser.branch_stmts_diverge([st])) {
+      return out;
+    }
+  }
+  return out;
 }
 
 pub function arm_scope(arm: ast.MatchArm, s: Scope, whole: typeinfo.Type): Scope {
