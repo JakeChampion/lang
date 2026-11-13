@@ -55,7 +55,9 @@ repeat. At the next start, the track is there at that time, stopped.
 artist, the album, the artist of the album, the number, the year and the
 genre.
 `std/audio/tags` writes them to an MP3 or a FLAC file, and the file keeps
-its other tags. The player tells when it cannot write a file.
+its other tags. For a file of another app, Android asks the person to
+let Tune change it, with `std/android/media`. The player writes the file
+again when the app comes back. It tells when it cannot write a file.
 
 Shuffle puts
 the songs after the one that plays in a new order. Repeat has three
