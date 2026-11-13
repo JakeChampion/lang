@@ -771,14 +771,19 @@ Darwin.
 The same gate holds the ports of GNU diffutils in `diffutils/`. They use
 `coreutils/lib/gnu.fern`, with `getopt_new(...).in_package("diffutils")`.
 This changes two lines of output. The version line is
-`cmp (Fern diffutils) 0.1`. The usage hint starts with the program name, as
-GNU diffutils writes it.
+`PROGRAM (Fern diffutils) 0.1`, for example `diff (Fern diffutils) 0.1`.
+The usage hint starts with the program name, as GNU diffutils writes it.
+
+`diff` gives the normal, context and unified formats. An option out of its
+scope stops it with exit status 2. For standard input, GNU diff writes the
+current time in the header of `-u` and `-c`. Thus a corpus case that reads
+standard input in these formats gives `--label` for it.
 
 The harness gets the package of a program from the directory of its source.
 The oracle of a diffutils program is in `FERN_GNU_DIFFUTILS`. Its version
 line must contain `(GNU diffutils)`. The pin is 3.10, the release of
 ubuntu-24.04. `.github/actions/gnu-diffutils` builds it on each lane, macOS
-included. `diffutils/README.md` lists the programs.
+included. `diffutils/README.md` lists the programs and the scope of each.
 
 ## One binary
 
