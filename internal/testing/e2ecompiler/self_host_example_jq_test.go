@@ -17,7 +17,7 @@ import (
 // jqSuiteFloor is the number of cases of jq.test that the port passes. A case
 // in a part of the language the port does not have yet is skipped, and every
 // other case must pass.
-const jqSuiteFloor = 262
+const jqSuiteFloor = 274
 
 const jqNotYet = "is not in this port yet"
 
@@ -120,8 +120,29 @@ func jqNumbers(v any) any {
 	return v
 }
 
+// jqSuiteExitOK reports whether the exit status of the port is right for a
+// case of jq.test. The harness of jq reads the expected outputs and does not
+// look at an error after them, so a case can end in an error. With a jq
+// binary, the status and the stderr must be those of jq. With no jq binary,
+// a status of 5, the status of a filter error, is right after the outputs.
+func jqSuiteExitOK(c jqCase, code int, stderr, ref string) bool {
+	if code == 0 {
+		return true
+	}
+	if ref == "" {
+		return code == 5
+	}
+	cmd := exec.Command(ref, "-c", "--", c.program)
+	cmd.Stdin = strings.NewReader(c.input)
+	var refErr bytes.Buffer
+	cmd.Stderr = &refErr
+	_ = cmd.Run()
+	return cmd.ProcessState.ExitCode() == code && refErr.String() == stderr
+}
+
 func TestSelfHostExampleJqSuite(t *testing.T) {
 	bin := buildJq(t)
+	ref, _ := exec.LookPath("jq")
 	passed, skipped := 0, 0
 	for _, c := range jqCases(t, "../../../examples/jq/tests/jq.test") {
 		cmd := exec.Command(bin, "-c", "--", c.program)
@@ -151,7 +172,7 @@ func TestSelfHostExampleJqSuite(t *testing.T) {
 			}
 			want = append(want, v)
 		}
-		if cmd.ProcessState.ExitCode() != 0 || !reflect.DeepEqual(got, want) {
+		if !jqSuiteExitOK(c, cmd.ProcessState.ExitCode(), stderr.String(), ref) || !reflect.DeepEqual(got, want) {
 			t.Errorf("line %d: %q on %s: exit %d, got %s, want %v\n%s", c.line, c.program, c.input, cmd.ProcessState.ExitCode(), stdout.String(), c.expected, stderr.String())
 			continue
 		}
@@ -207,6 +228,9 @@ func TestSelfHostExampleJqAgainstJq(t *testing.T) {
 		{[]string{"-c", "."}, "[nan, Infinity, 1., .5, +1, 01] \"\\ud83d\\ude00\" \"a\xffb\" tru"},
 		{[]string{"-c", "tojson | fromjson, (.[0] | tostring | tonumber), ([.[1], 233] | implode)"}, "[1.50, 97]"},
 		{[]string{"-c", "fromjson"}, "\"[1,\"\n\"\"\n\"1 2\""},
+		{[]string{"-r", "@csv \"row: \\(.)\", @tsv, @sh, (map(tostring) | @base64 \"\\(.[1])\"), @html \"<\\(.[1])>\""}, "[1,\"a b\\t<c>'\",null]\n"},
+		{[]string{"-c", "\"\\(.a)-\\(.b[])\", @uri, (.a | @base64d)"}, "{\"a\":\"aGk=\",\"b\":[1,2]}\n"},
+		{[]string{"-c", "@nosuch"}, "1"},
 		{[]string{"-c", "group_by(.k) | map({k: .[0].k, n: length}), (sort_by(.v) | map(.v)), max_by(.v), unique_by(.k)"}, "[{\"k\":\"b\",\"v\":2},{\"k\":\"a\",\"v\":3},{\"k\":\"b\",\"v\":1}]\n"},
 		{[]string{"-c", "ascii_upcase, split(\", \"), indices(\", \"), explode[0:2], contains(\"b, c\"), ltrimstr(\"a, \")"}, "\"a, b, c\"\n5\n"},
 		{[]string{"-c", "with_entries(select(.value | contains([1])))"}, "{\"a\":[1,2],\"b\":[3]}\n"},

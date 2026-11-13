@@ -4,6 +4,7 @@
 // at a time, and an error stops the filter; `Outputs` holds the values before
 // the error and the error.
 import "std/json";
+import "std/base64";
 import "std/f64";
 import "std/string";
 import "std/utf8";
@@ -155,6 +156,12 @@ pub function run(f: filter.Ast, input: json.JsonValue, e: Env): Outputs {
         return o;
       }
       return ok(o.values).then(run(handler, o.error[0], e));
+    },
+    filter.Format(name) => {
+      return format(name, input);
+    },
+    filter.Interp(name, texts, parts) => {
+      return interpolate(name, texts, parts, parts.len() - 1, texts[parts.len()], input, e);
     },
     filter.If(cond, yes, no) => {
       return run_if(cond, yes, no, input, e);
@@ -2134,4 +2141,232 @@ function run_pow(base: filter.Ast, exponent: filter.Ast, input: json.JsonValue, 
     }
   }
   return Outputs { ...out, error: exponents.error };
+}
+
+// ---- Formats and string interpolation ----
+
+// The strings of a literal with interpolations. `tail` is the text after the
+// part `at`. jq takes each value of a later part, and then each value of the
+// part before it.
+function interpolate(name: string, texts: string[], parts: filter.Ast[], at: i32, tail: string, input: json.JsonValue, e: Env): Outputs {
+  if (at < 0) {
+    return one(json.JString(tail));
+  }
+  let vs = run(parts[at], input, e);
+  let out = ok([]);
+  for v in vs.values {
+    let f = format(name, v);
+    if (f.failed()) {
+      return out.then(f);
+    }
+    let json.JString(piece) = f.values[0] else {
+      return out;
+    };
+    out = out.then(interpolate(name, texts, parts, at - 1, texts[at] + piece + tail, input, e));
+    if (out.failed()) {
+      return out;
+    }
+  }
+  return Outputs { ...out, error: vs.error };
+}
+
+function text_of(v: json.JsonValue): string {
+  if let json.JString(s) = v {
+    return s;
+  }
+  return output.compact(v);
+}
+
+function format(name: string, v: json.JsonValue): Outputs {
+  return match (name) {
+    "text" => one(json.JString(text_of(v))),
+    "json" => one(json.JString(output.compact(v))),
+    "html" => one(json.JString(escaped(text_of(v), "html"))),
+    "uri" => one(json.JString(uri(text_of(v)))),
+    "csv" => row(name, v),
+    "tsv" => row(name, v),
+    "sh" => shell(v),
+    "base64" => one(json.JString(base64.encode(text_of(v).bytes()))),
+    "base64d" => base64_decoded(text_of(v)),
+    _ => fail(name + " is not a valid format"),
+  };
+}
+
+// The text of one byte in the format `name`, or "" when the byte stays. jq
+// writes a NUL as a backslash and a 0 in each of these formats.
+function escape_of(b: u8, name: string): string {
+  if (b == 0 as u8) {
+    return "\\0";
+  }
+  if (name == "html") {
+    return match (b) {
+      b'<' => "&lt;",
+      b'>' => "&gt;",
+      b'&' => "&amp;",
+      b'\'' => "&apos;",
+      b'"' => "&quot;",
+      _ => "",
+    };
+  }
+  if (name == "csv") {
+    return if (b == b'"') { "\"\"" } else { "" };
+  }
+  if (name == "sh") {
+    return if (b == b'\'') { "'\\''" } else { "" };
+  }
+  return match (b) {
+    b'\t' => "\\t",
+    b'\n' => "\\n",
+    b'\r' => "\\r",
+    b'\\' => "\\\\",
+    _ => "",
+  };
+}
+
+function escaped(s: string, name: string): string {
+  let out = "";
+  let from = 0;
+  for i in 0..s.len() {
+    let piece = escape_of(s[i], name);
+    if (piece.len() > 0) {
+      out += slice_unchecked(s, from, i).to_owned() + piece;
+      from = i + 1;
+    }
+  }
+  return out + slice_unchecked(s, from, s.len()).to_owned();
+}
+
+// Each byte but a letter, a digit and `-_.~` as a percent sign and two hex
+// digits in upper case.
+function uri(s: string): string {
+  let digits = "0123456789ABCDEF";
+  let out = "";
+  let from = 0;
+  for i in 0..s.len() {
+    let b = s[i];
+    let stays = b >= b'a' && b <= b'z' || b >= b'A' && b <= b'Z' || b >= b'0' && b <= b'9' || b == b'-' || b == b'_' || b == b'.' || b == b'~';
+    if (!stays) {
+      let n = b as i32;
+      out += slice_unchecked(s, from, i).to_owned() + "%" + slice_unchecked(digits, n / 16, n / 16 + 1).to_owned() + slice_unchecked(digits, n % 16, n % 16 + 1).to_owned();
+      from = i + 1;
+    }
+  }
+  return out + slice_unchecked(s, from, s.len()).to_owned();
+}
+
+// A row of `@csv` or of `@tsv`. null and NaN are empty fields.
+function row(name: string, v: json.JsonValue): Outputs {
+  let json.JArray(items) = v else {
+    return fail(type_name(v) + " (" + shown(v) + ") cannot be " + name + "-formatted, only array");
+  };
+  let fields: string[] = [];
+  for x in items {
+    match (x) {
+      json.JNull => {
+        fields = fields.append("");
+      },
+      json.JBool(_) => {
+        fields = fields.append(output.compact(x));
+      },
+      json.JNumber(t) => {
+        let n = number.value(t);
+        fields = fields.append(if (n != n) { "" } else { output.compact(x) });
+      },
+      json.JString(s) => {
+        if (name == "csv") {
+          fields = fields.append("\"" + escaped(s, name) + "\"");
+        } else {
+          fields = fields.append(escaped(s, name));
+        }
+      },
+      _ => {
+        return fail(type_name(x) + " (" + shown(x) + ") is not valid in a csv row");
+      }
+    }
+  }
+  if (name == "csv") {
+    return one(json.JString(fields.join(",")));
+  }
+  return one(json.JString(fields.join("\t")));
+}
+
+// The words of a shell command: each string in single quotes.
+function shell(v: json.JsonValue): Outputs {
+  let items = [v];
+  if let json.JArray(all) = v {
+    items = all;
+  }
+  let words: string[] = [];
+  for x in items {
+    match (x) {
+      json.JString(s) => {
+        words = words.append("'" + escaped(s, "sh") + "'");
+      },
+      json.JArray(_) => {
+        return fail(type_name(x) + " (" + shown(x) + ") can not be escaped for shell");
+      },
+      json.JObject(_) => {
+        return fail(type_name(x) + " (" + shown(x) + ") can not be escaped for shell");
+      },
+      _ => {
+        words = words.append(output.compact(x));
+      }
+    }
+  }
+  return one(json.JString(words.join(" ")));
+}
+
+function base64_digit(b: u8): i32 {
+  if (b >= b'A' && b <= b'Z') {
+    return (b - b'A') as i32;
+  }
+  if (b >= b'a' && b <= b'z') {
+    return (b - b'a') as i32 + 26;
+  }
+  if (b >= b'0' && b <= b'9') {
+    return (b - b'0') as i32 + 52;
+  }
+  if (b == b'+') {
+    return 62;
+  }
+  if (b == b'/') {
+    return 63;
+  }
+  return -1;
+}
+
+// jq reads to the first `=`, and gives U+FFFD for bytes that are not UTF-8.
+function base64_decoded(s: string): Outputs {
+  let bytes: u8[] = [];
+  let code = 0;
+  let pending = 0;
+  for i in 0..s.len() {
+    if (s[i] == b'=') {
+      break;
+    }
+    let d = base64_digit(s[i]);
+    if (d < 0) {
+      return fail("string (" + shown(json.JString(s)) + ") is not valid base64 data");
+    }
+    code = code * 64 + d;
+    pending += 1;
+    if (pending == 4) {
+      bytes = bytes.append((code >> 16 & 255) as u8).append((code >> 8 & 255) as u8).append((code & 255) as u8);
+      code = 0;
+      pending = 0;
+    }
+  }
+  if (pending == 1) {
+    return fail("string (" + shown(json.JString(s)) + ") trailing base64 byte found");
+  }
+  if (pending == 3) {
+    bytes = bytes.append((code >> 10 & 255) as u8).append((code >> 2 & 255) as u8);
+  } else if (pending == 2) {
+    bytes = bytes.append((code >> 4 & 255) as u8);
+  }
+  let text = unsafe { string_from_bytes_unchecked(bytes) };
+  if (utf8.is_valid(text)) {
+    return one(json.JString(text));
+  }
+  return one(json.JString(reader.repaired(text)));
 }

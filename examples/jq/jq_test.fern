@@ -528,13 +528,69 @@ function test_text_functions(): test.TestOutcome {
   ]);
 }
 
+function test_interpolation(): test.TestOutcome {
+  return checks([
+    ("\"a\\(1+2)b\"", "null", "\"a3b\""),
+    ("\"\\(1,2)-\\(3,4)\"", "null", "\"1-3\"\n\"2-3\"\n\"1-4\"\n\"2-4\""),
+    ("\"\\(\"x\")\\([1,\"a\"])\\({a:null})\\(null)\\(true)\\(1.50)\"", "null", "\"x[1,\\\"a\\\"]{\\\"a\\\":null}nulltrue1.50\""),
+    ("\"\\(.a)-\\(.b)\"", "{\"a\":[1],\"b\":\"s\"}", "\"[1]-s\""),
+    ("\"a\\(\"b\\(\"c\")\")\"", "null", "\"abc\""),
+    ("\"x\\(empty)y\"", "null", ""),
+    ("\"\\(1, error(\"e\"), 2)\"", "null", "\"1\"\nerror: e"),
+    ("\"\\(1 as $v | $v + 1)\\(if . then \"y\" else \"n\" end)\"", "true", "\"2y\""),
+    ("{\"a\\(1)\": 2, \"\\(1+1)\": 3}", "null", "{\"a1\":2,\"2\":3}"),
+    (".a.\"b\\(1)\", .\"a\"", "{\"a\":{\"b1\":5}}", "5\n{\"b1\":5}"),
+    ("\"\\(1)\" | type", "null", "\"string\""),
+    ("\"\\(.[0])\\(.[1])\" | tonumber", "[1,2]", "12"),
+    ("\"x)\" + \"\\(\")\")\"", "null", "\"x))\""),
+    ("\"\\(1\"", "null", "compile: syntax error, unexpected the end of the program"),
+    ("\"\\(1;2)\"", "null", "compile: syntax error, unexpected ';'"),
+  ]);
+}
+
+function test_formats(): test.TestOutcome {
+  return checks([
+    ("@text, @json", "[1,\"a\",null]", "\"[1,\\\"a\\\",null]\"\n\"[1,\\\"a\\\",null]\""),
+    ("@html", "\"<&'\\\">x\"", "\"&lt;&amp;&apos;&quot;&gt;x\""),
+    ("@html", "[1,\"<\"]", "\"[1,&quot;&lt;&quot;]\""),
+    ("@uri", "\"a b/ü?&=~-._\"", "\"a%20b%2F%C3%BC%3F%26%3D~-._\""),
+    ("@csv, @tsv", "[1,\"a\\\"b\",null,true,1.50,1e2]", "\"1,\\\"a\\\"\\\"b\\\",,true,1.50,1E+2\"\n\"1\\ta\\\"b\\t\\ttrue\\t1.50\\t1E+2\""),
+    ("@tsv", "[1,\"a\\tb\\\\c\\nd\\re\",null,false]", "\"1\\ta\\\\tb\\\\\\\\c\\\\nd\\\\re\\t\\tfalse\""),
+    ("@csv", "[[1]]", "error: array ([1]) is not valid in a csv row"),
+    ("@csv", "\"x\"", "error: string (\"x\") cannot be csv-formatted, only array"),
+    ("@tsv", "{\"a\":1}", "error: object ({\"a\":1}) cannot be tsv-formatted, only array"),
+    ("[nan] | @csv", "null", "\"\""),
+    ("@sh", "\"it's\"", "\"'it'\\\\''s'\""),
+    ("@sh", "[1,\"a b\",null,true]", "\"1 'a b' null true\""),
+    ("@sh", "[[1]]", "error: array ([1]) can not be escaped for shell"),
+    ("[.[] | @sh]", "[\"\",null]", "[\"''\",\"null\"]"),
+    ("@base64, (@base64 | @base64d)", "\"hello é\"", "\"aGVsbG8gw6k=\"\n\"hello é\""),
+    ("@base64", "1", "\"MQ==\""),
+    ("[.[] | @base64d]", "[\"aGVsbG8\",\"aGVsbG8=x\",\"====\",\"\",\"QUJDRA\",\"QUI=\\n\"]", "[\"hello\",\"hello\",\"\",\"\",\"ABCD\",\"AB\"]"),
+    ("@base64d | explode", "\"/+8=\"", "[65533,65533]"),
+    ("@base64d", "\"!!!\"", "error: string (\"!!!\") is not valid base64 data"),
+    ("@base64d", "\"Q\"", "error: string (\"Q\") trailing base64 byte found"),
+    ("@base64d", "\"_-8=\"", "error: string (\"_-8=\") is not valid base64 data"),
+    ("[97,0,98] | implode | @html, @uri, @sh, ([.] | @csv, @tsv)", "null", "\"a\\\\0b\"\n\"a%00b\"\n\"'a\\\\0b'\"\n\"\\\"a\\\\0b\\\"\"\n\"a\\\\0b\""),
+    ("@base64 \"x\\(\"hi\")y\\(1)\"", "null", "\"xaGk=yMQ==\""),
+    ("@json \"v=\\([1,\"a\"])\"", "null", "\"v=[1,\\\"a\\\"]\""),
+    ("@html \"<\\(.)>\"", "\"<b>\"", "\"<&lt;b&gt;>\""),
+    ("@sh \"echo \\(.) \\(1)\"", "\"a b\"", "\"echo 'a b' 1\""),
+    ("@csv \"\\(.)\"", "[\"a,b\",\"c\\\"d\"]", "\"\\\"a,b\\\",\\\"c\\\"\\\"d\\\"\""),
+    ("@uri \"q=\\(.)&r=\\(1)\"", "\"a b\"", "\"q=a%20b&r=1\""),
+    ("@json \"\\(1,2)\"", "null", "\"1\"\n\"2\""),
+    ("@foo", "null", "error: foo is not a valid format"),
+    ("@foo \"x\"", "null", "\"x\""),
+    ("@foo \"\\(1)\"", "null", "error: foo is not a valid format"),
+  ]);
+}
+
 function test_not_yet(): test.TestOutcome {
   return checks([
     (".a += 1", "null", "compile: assignment " + filter.NOT_YET),
     ("test(\"a\")", "null", "compile: the function test/1 " + filter.NOT_YET),
     ("exp", "null", "compile: the function exp/0 " + filter.NOT_YET),
     ("path(.)", "null", "compile: the function path/1 " + filter.NOT_YET),
-    ("\"\\(1)\"", "null", "compile: string interpolation " + filter.NOT_YET),
     (". as [$v] | $v", "null", "compile: a destructuring pattern " + filter.NOT_YET),
     (". as $v ?// [$v] | $v", "null", "compile: a destructuring alternative " + filter.NOT_YET),
     ("def f: 1; f", "null", "compile: 'def' " + filter.NOT_YET),
@@ -572,7 +628,7 @@ function test_stream(): test.TestOutcome {
 }
 
 function test_undefined_var(): test.TestOutcome {
-  for program in ["[$x, {$y}]", "$x + 1 * $y", "$x // $y", "map(has($y))", "if $x then 1 else $y end", "(1 as $y | $x) | $y", "reduce 1 as $z ($x; $z) | $y", "foreach $y as $z (1; 2; $z)", "try $x catch $y", "[limit($x; range($y))]"] {
+  for program in ["[$x, {$y}]", "$x + 1 * $y", "$x // $y", "map(has($y))", "if $x then 1 else $y end", "(1 as $y | $x) | $y", "reduce 1 as $z ($x; $z) | $y", "foreach $y as $z (1; 2; $z)", "try $x catch $y", "\"\\($x)\\($y)\"", "@json \"\\($y)\"", "[limit($x; range($y))]"] {
     let parsed = filter.parse(program);
     if (filter.undefined_var(parsed.ast, ["x"]) != "y") {
       return test.fail(program + ": got \"" + filter.undefined_var(parsed.ast, ["x"]) + "\", want \"y\"");
@@ -601,6 +657,8 @@ function main(): i32 {
   r = r.it("the reader: errors with their line and column", test_reader_errors);
   r = r.it("the reader: depth", test_reader_depth);
   r = r.it("fromjson, tonumber and implode", test_text_functions);
+  r = r.it("string interpolation", test_interpolation);
+  r = r.it("the formats", test_formats);
   r = r.it("the parts that the port leaves out", test_not_yet);
   r = r.it("number literals and computed numbers", test_numbers);
   r = r.it("pretty output", test_output);
