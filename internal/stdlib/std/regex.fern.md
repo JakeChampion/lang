@@ -4,7 +4,17 @@ This module evaluates regular expressions.
 
 ## Model
 
-A compiled expression retains its syntax tree, case policy, and capture metadata. Match values identify input spans. A compiled expression also keeps the set of bytes that can start a match. A search does not try a match at a byte outside that set.
+A compiled expression keeps a program for a Pike VM, its case policy, and capture metadata. Each search runs this program, so a span and its captures come from the same thread. Match values identify input spans. A compiled expression also keeps the set of bytes that can start a match. A search does not try a match at a byte outside that set.
+
+## Match rule
+
+A search gives the leftmost-first match, as Rust `regex`, Go `regexp` and RE2 do. The match starts at the leftmost offset where a match exists. At that offset, the search gives the match of the thread with the highest priority. Alternatives have priority from left to right, and `*`, `+`, `?` and `{n,m}` prefer one more repeat to one fewer. A thread stops at a state of the program that a thread of higher priority visited at the same offset. Thus a repeat that matches no byte ends its loop.
+
+For example, `foo|foobar` gives `foo` on "foobar", `(|a)*` gives an empty match on "aa", and `(?:b?(?:|a))*` gives "b" on "ba". PCRE uses the same rule. But it can give a different match when the body of a loop can match no byte.
+
+`longest` gives a copy of an expression that uses the leftmost-longest rule of POSIX. It gives `foobar` for `foo|foobar`. It is a method and not a second `compile`, because the rule controls the search and not the syntax. The pattern, its errors and its group numbers are the same under the two rules. Go has the same shape in `(*Regexp).Longest`, but a `Regex` is a value, so `longest` returns a copy.
+
+Each search method uses the rule of its expression: `find`, `find_at`, `find_all`, `captures`, `captures_all`, `replace` and its peers, and `split`. The captures come from the thread that gives the span of the match. Under `longest`, they come from the thread of highest priority that reaches the longest end. `is_full_match` asks if a match of the full text exists, so the rule does not change its result.
 
 ## Contracts
 
@@ -42,8 +52,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 
 <<7 function __rx_group_names(pattern: string): string[]>>
-
-<<8 function __rx_match(n: RNode, t: string, ti: i32, ci: boolean): i32[]>>
 
 
 <<10 function __rx_search_from(prog: Regex, text: string, from: i32): Option[Match]>>
@@ -108,7 +116,7 @@ import "std/utf8" as utf8;
 <<3 struct RGroupData>>=
 struct RGroupData { idx: i32, node: RNode }
 
-pub enum RNode {
+enum RNode {
   RChar(i32),
   RAny,
   RClass(u8[]),
@@ -304,17 +312,6 @@ function __rx_is_word(c: i32): boolean {
   return false;
 }
 
-function __rx_has(xs: i32[], v: i32): boolean {
-  let i = 0;
-  while (i < xs.len()) {
-    if (xs[i] == v) {
-      return true;
-    }
-    i += 1;
-  }
-  return false;
-}
-
 function __rx_fold(c: i32, ci: boolean): i32 {
   if (ci && c >= 65 && c <= 90) {
     return c + 32;
@@ -380,154 +377,6 @@ function __rx_class(mask: u8[], byte: i32, ci: boolean): boolean {
   }
   return mask[at] != 0;
 }
-
-function __rx_closure(inner: RNode, t: string, ti: i32, allow_zero: boolean, ci: boolean): i32[] {
-  let seen: i32[] = [];
-  let frontier: i32[] = [];
-  if (allow_zero) {
-    seen = seen.append(ti);
-    frontier = frontier.append(ti);
-  } else {
-    let first = __rx_match(inner, t, ti, ci);
-    let s = 0;
-    while (s < first.len()) {
-      if (!__rx_has(seen, first[s])) {
-        seen = seen.append(first[s]);
-        frontier = frontier.append(first[s]);
-      }
-      s += 1;
-    }
-  }
-  while (frontier.len() > 0) {
-    let nf: i32[] = [];
-    let m = 0;
-    while (m < frontier.len()) {
-      let sub = __rx_match(inner, t, frontier[m], ci);
-      let s2 = 0;
-      while (s2 < sub.len()) {
-        if (!__rx_has(seen, sub[s2])) {
-          seen = seen.append(sub[s2]);
-          nf = nf.append(sub[s2]);
-        }
-        s2 += 1;
-      }
-      m += 1;
-    }
-    frontier = nf;
-  }
-  return seen;
-}
-```
-
-### `8 function __rx_match(n: RNode, t: string, ti: i32, ci: boolean): i32[]`
-
-```fern
-<<8 function __rx_match(n: RNode, t: string, ti: i32, ci: boolean): i32[]>>=
-function __rx_match(n: RNode, t: string, ti: i32, ci: boolean): i32[] {
-  match (n) {
-    RChar(c) => {
-      let e: i32[] = [];
-      if (ti < t.len() && __rx_fold(t[ti] as i32, ci) == __rx_fold(c, ci)) {
-        e = e.append(ti + 1);
-      }
-      return e;
-    },
-    RAny => {
-      let e: i32[] = [];
-      if (ti < t.len()) {
-        e = e.append(ti + 1);
-      }
-      return e;
-    },
-    RClass(tok) => {
-      let e: i32[] = [];
-      if (ti < t.len() && __rx_class(tok, t[ti] as i32, ci)) {
-        e = e.append(ti + 1);
-      }
-      return e;
-    },
-    RStart => {
-      let e: i32[] = [];
-      if (__rx_assert_ok(0, t, ti)) {
-        e = e.append(ti);
-      }
-      return e;
-    },
-    REnd => {
-      let e: i32[] = [];
-      if (__rx_assert_ok(1, t, ti)) {
-        e = e.append(ti);
-      }
-      return e;
-    },
-    RBound(k) => {
-      let e: i32[] = [];
-      if (__rx_assert_ok(k, t, ti)) {
-        e = e.append(ti);
-      }
-      return e;
-    },
-    RSeq(xs) => {
-      let cur = [ti];
-      let k = 0;
-      while (k < xs.len()) {
-        let nextset: i32[] = [];
-        let m = 0;
-        while (m < cur.len()) {
-          let sub = __rx_match(xs[k], t, cur[m], ci);
-          let s = 0;
-          while (s < sub.len()) {
-            if (!__rx_has(nextset, sub[s])) {
-              nextset = nextset.append(sub[s]);
-            }
-            s += 1;
-          }
-          m += 1;
-        }
-        cur = nextset;
-        k += 1;
-      }
-      return cur;
-    },
-    RAlt(xs) => {
-      let out: i32[] = [];
-      let k = 0;
-      while (k < xs.len()) {
-        let sub = __rx_match(xs[k], t, ti, ci);
-        let s = 0;
-        while (s < sub.len()) {
-          if (!__rx_has(out, sub[s])) {
-            out = out.append(sub[s]);
-          }
-          s += 1;
-        }
-        k += 1;
-      }
-      return out;
-    },
-    ROpt(inner) => {
-      let out = [ti];
-      let sub = __rx_match(inner, t, ti, ci);
-      let s = 0;
-      while (s < sub.len()) {
-        if (!__rx_has(out, sub[s])) {
-          out = out.append(sub[s]);
-        }
-        s += 1;
-      }
-      return out;
-    },
-    RStar(inner) => {
-      return __rx_closure(inner, t, ti, true, ci);
-    },
-    RPlus(inner) => {
-      return __rx_closure(inner, t, ti, false, ci);
-    },
-    RGroup(gd) => {
-      return __rx_match(gd.node, t, ti, ci);
-    }
-  }
-}
 ```
 
 
@@ -536,30 +385,46 @@ function __rx_match(n: RNode, t: string, ti: i32, ci: boolean): i32[] {
 ```fern
 <<10 function __rx_search_from(prog: Regex, text: string, from: i32): Option[Match]>>=
 function __rx_search_from(prog: Regex, text: string, from: i32): Option[Match] {
+  let (start, end, _) = __rx_run(prog, text, from, 0, __rx_rule(prog));
+  if (start < 0) {
+    return None;
+  }
+  return Some(Match { start: start, end: end });
+}
+
+// The start, the end and the capture slots of the first match at or after
+// `from`. The start is -1 when there is no match. A search for a span alone
+// gives 0 for `nslots`.
+function __rx_run(prog: Regex, t: string, from: i32, nslots: i32, rule: RRule): (i32, i32, i32[]) {
+  let init = __rx_fill(nslots, -1);
   let ti = from;
   while (true) {
-    ti = prog.next_candidate(text, ti);
+    ti = prog.next_candidate(t, ti);
     if (ti < 0) {
-      return None;
+      return (-1, -1, []);
     }
-    let ends = __rx_match(prog.root, text, ti, prog.ci);
-    if (ends.len() > 0) {
-      let best = ends[0];
-      let i = 1;
-      while (i < ends.len()) {
-        if (ends[i] > best) {
-          best = ends[i];
-        }
-        i += 1;
-      }
-      return Some(Match { start: ti, end: best });
+    let (end, caps) = __rx_cvm_at(prog.program, t, ti, prog.ci, rule, init);
+    if (end >= 0) {
+      return (ti, end, caps);
     }
-    if (ti >= text.len()) {
-      return None;
+    if (ti >= t.len()) {
+      return (-1, -1, []);
     }
     ti += 1;
   }
-  return None;
+  return (-1, -1, []);
+}
+
+// The rule of a search. `RuleExists` stops at the first match that a thread
+// reaches, for a caller that needs only to know if a match exists.
+@derive(cmp.Eq)
+enum RRule { RuleFirst, RuleLongest, RuleExists }
+
+function __rx_rule(prog: Regex): RRule {
+  if (prog.leftmost_longest) {
+    return RuleLongest;
+  }
+  return RuleFirst;
 }
 ```
 
@@ -840,6 +705,9 @@ function __rx_addthread(st: RAdd, prog: RInst[], pc: i32, caps: i32[], t: string
       return __rx_addthread(st2, prog, sp.b, caps, t, ti);
     },
     ISave(slot) => {
+      if (slot >= caps.len()) {
+        return __rx_addthread(RAdd { seen: sn, gen: g, threads: ths }, prog, pc + 1, caps, t, ti);
+      }
       return __rx_addthread(RAdd { seen: sn, gen: g, threads: ths }, prog, pc + 1, caps.with(slot, ti), t, ti);
     },
     IAssert(k) => {
@@ -854,13 +722,20 @@ function __rx_addthread(st: RAdd, prog: RInst[], pc: i32, caps: i32[], t: string
   }
 }
 
-function __rx_cvm_at(prog: RInst[], t: string, ti0: i32, ci: boolean, init: i32[]): i32[] {
+// The end and the capture slots of the match that starts at `ti0`. The end is
+// -1 when there is no match. The threads are in priority order, and a thread
+// that comes to a visited (pc, offset) state stops. Under leftmost-first, the
+// first thread that reaches IMatch wins and stops the threads after it. Under
+// `RuleLongest`, the first thread to reach the longest end wins. A slot that
+// `init` does not hold is not recorded.
+function __rx_cvm_at(prog: RInst[], t: string, ti0: i32, ci: boolean, rule: RRule, init: i32[]): (i32, i32[]) {
   let seen = __rx_fill(prog.len(), 0);
   let gen = 1;
   let st = __rx_addthread(RAdd { seen: seen, gen: gen, threads: [] }, prog, 0, init, t, ti0);
   let clist = st.threads;
   seen = st.seen;
   let best: i32[] = [];
+  let best_end = -1;
   let pos = ti0;
   while (clist.len() > 0) {
     gen += 1;
@@ -885,8 +760,15 @@ function __rx_cvm_at(prog: RInst[], t: string, ti0: i32, ci: boolean, init: i32[
           }
         },
         IMatch => {
-          if (best.len() == 0 || pos > best[1]) {
+          if (rule != RuleLongest || pos > best_end) {
             best = th.caps;
+            best_end = pos;
+          }
+          if (rule == RuleExists) {
+            return (best_end, best);
+          }
+          if (rule == RuleFirst) {
+            break;
           }
         },
         IAssert(_) => {},
@@ -903,20 +785,15 @@ function __rx_cvm_at(prog: RInst[], t: string, ti0: i32, ci: boolean, init: i32[
     }
     pos += 1;
   }
-  return best;
+  return (best_end, best);
 }
 
-function __rx_csearch_from(prog: RInst[], t: string, from: i32, ci: boolean, nslots: i32): i32[] {
-  let init = __rx_fill(nslots, -1);
-  let ti = from;
-  while (ti <= t.len()) {
-    let caps = __rx_cvm_at(prog, t, ti, ci, init);
-    if (caps.len() > 0) {
-      return caps;
-    }
-    ti += 1;
+function __rx_csearch_from(prog: Regex, t: string, from: i32): i32[] {
+  let (start, _, caps) = __rx_run(prog, t, from, (prog.ngroups + 1) * 2, __rx_rule(prog));
+  if (start < 0) {
+    return [];
   }
-  return [];
+  return caps;
 }
 ```
 
@@ -1507,11 +1384,26 @@ function __rx_first_byte_into(n: RNode, ci: boolean, own set: u8[]): u8[] {
     return set;
   }
   for b in 0..256 {
-    if (__rx_match(n, unsafe { string_from_bytes_unchecked([b as u8]) }, 0, ci).len() > 0) {
+    if (__rx_byte_ok(n, b, ci)) {
       set = set.with(b, 1);
     }
   }
   return set;
+}
+
+// True when `b` matches `n`, a node of one byte.
+function __rx_byte_ok(n: RNode, b: i32, ci: boolean): boolean {
+  match (n) {
+    RChar(c) => {
+      return __rx_fold(b, ci) == __rx_fold(c, ci);
+    },
+    RClass(tok) => {
+      return __rx_class(tok, b, ci);
+    },
+    _ => {
+      return true;
+    }
+  }
 }
 
 function __rx_first_set(root: RNode, ci: boolean): u8[] {
@@ -1587,19 +1479,15 @@ function __rx_text(bytes: u8[]): Result[string, TextError] {
 }
 
 pub function (prog: Regex) captures(text: string): Option[Captures] {
-  let insts = prog.program;
-  let nslots = (prog.ngroups + 1) * 2;
-  let caps = __rx_csearch_from(insts, text, 0, prog.ci, nslots);
+  let caps = __rx_csearch_from(prog, text, 0);
   return __rx_caps_wrap(caps, text, prog.ngroups, prog.names);
 }
 
 pub function (prog: Regex) captures_all(text: string): Captures[] {
-  let insts = prog.program;
-  let nslots = (prog.ngroups + 1) * 2;
   let out: Captures[] = [];
   let pos = 0;
   while (pos <= text.len()) {
-    let caps = __rx_csearch_from(insts, text, pos, prog.ci, nslots);
+    let caps = __rx_csearch_from(prog, text, pos);
     let Some(c) = __rx_caps_wrap(caps, text, prog.ngroups, prog.names) else {
       return out;
     };
@@ -1631,8 +1519,8 @@ pub function compile(pattern: string): Result[Regex, CompileError] {
   }
   let first = __rx_first_set(r.node, ci);
   return Ok(Regex {
-    root: r.node, ci: ci, ngroups: r.g - 1, names: __rx_group_names(pattern), program: __rx_cprog(r.node),
-    first: first, lead: __rx_lead(first), prefix: __rx_prefix(r.node, ci),
+    ci: ci, ngroups: r.g - 1, names: __rx_group_names(pattern), program: __rx_cprog(r.node),
+    first: first, lead: __rx_lead(first), prefix: __rx_prefix(r.node, ci), leftmost_longest: false,
   });
 }
 
@@ -1785,23 +1673,25 @@ pub function (prog: Regex) index_of(text: string): Option[i32] {
   return None;
 }
 
+// The longest match from offset 0 ends at the end of the text exactly when a
+// match of the full text exists.
 pub function (prog: Regex) is_full_match(text: string): boolean {
-  let ends = __rx_match(prog.root, text, 0, prog.ci);
-  let i = 0;
-  while (i < ends.len()) {
-    if (ends[i] == text.len()) {
-      return true;
-    }
-    i += 1;
-  }
-  return false;
+  let (end, _) = __rx_cvm_at(prog.program, text, 0, prog.ci, RuleLongest, []);
+  return end == text.len();
+}
+
+// A copy of `prog` that gives the longest match at the leftmost start, as
+// POSIX does.
+pub function (prog: Regex) longest(): Regex {
+  return Regex {
+    ci: prog.ci, ngroups: prog.ngroups, names: prog.names, program: prog.program,
+    first: prog.first, lead: prog.lead, prefix: prog.prefix, leftmost_longest: true,
+  };
 }
 
 pub function (prog: Regex) is_match(text: string): boolean {
-  if let Some(_) = prog.find(text) {
-    return true;
-  }
-  return false;
+  let (start, _, _) = __rx_run(prog, text, 0, 0, RuleExists);
+  return start >= 0;
 }
 
 pub function (e: CompileError) message(): string {
@@ -1989,8 +1879,9 @@ struct RClassUnit { kind: i32, lo: i32, hi: i32 }
 // `first` marks each byte that can begin a match. It is empty when a match
 // can be empty or can begin with any byte. `lead` is the one byte that
 // `first` marks, or -1. Each match starts with the bytes of `prefix`, folded
-// to lower case under `ci`.
-pub struct Regex { root: RNode, ci: boolean, ngroups: i32, names: string[], program: RInst[], first: u8[], lead: i32, prefix: u8[] }
+// to lower case under `ci`. `leftmost_longest` selects the longest match at
+// the leftmost start in place of the first.
+pub struct Regex { ci: boolean, ngroups: i32, names: string[], program: RInst[], first: u8[], lead: i32, prefix: u8[], leftmost_longest: boolean }
 ```
 
 ### Module introduction
