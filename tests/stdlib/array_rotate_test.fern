@@ -34,6 +34,66 @@ function test_empty(): test.TestOutcome {
   return test.assert_true(array.rotate_left(e, 3).len() == 0);
 }
 
+function test_right_min_three(): test.TestOutcome {
+  let n = -2147483647 - 1;
+  return test.assert_eq_array([1, 2, 3].rotate_right(n), [3, 1, 2]);
+}
+
+function test_right_min_five(): test.TestOutcome {
+  let n = -2147483647 - 1;
+  return test.assert_eq_array(array.rotate_right([1, 2, 3, 4, 5], n), [4, 5, 1, 2, 3]);
+}
+
+function test_left_min(): test.TestOutcome {
+  let n = -2147483647 - 1;
+  return test.assert_eq_array([1, 2, 3].rotate_left(n), [2, 3, 1]);
+}
+
+function test_max_counts(): test.TestOutcome {
+  let xs = [1, 2, 3];
+  let got = xs.rotate_right(2147483647).concat(xs.rotate_left(2147483647));
+  return test.assert_eq_array(got, [3, 1, 2, 2, 3, 1]);
+}
+
+function test_negative_right(): test.TestOutcome {
+  let xs = [1, 2, 3, 4, 5];
+  let got = xs.rotate_right(-1).concat(xs.rotate_right(-7));
+  return test.assert_eq_array(got, [2, 3, 4, 5, 1, 3, 4, 5, 1, 2]);
+}
+
+function test_inverse_counts(): test.TestOutcome {
+  let xs = [1, 2, 3, 4, 5];
+  for n in [-2147483647 - 1, -2147483647, -7, -1, 0, 1, 7, 2147483647] {
+    let lr = xs.rotate_left(n).rotate_right(n);
+    let rl = xs.rotate_right(n).rotate_left(n);
+    for i in 0..xs.len() {
+      if (lr[i] != xs[i] || rl[i] != xs[i]) {
+        return test.fail("opposite rotations must restore the input");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function test_empty_extreme(): test.TestOutcome {
+  let xs: i32[] = [];
+  let n = -2147483647 - 1;
+  if (xs.rotate_right(n).len() != 0 || array.rotate_right(xs, 2147483647).len() != 0) {
+    return test.fail("an empty array must remain empty");
+  }
+  return test.assert_eq_array([7].rotate_right(n), [7]);
+}
+
+function test_string_min(): test.TestOutcome {
+  let xs = ["a", "b", "c"];
+  let n = -2147483647 - 1;
+  let ys = xs.rotate_right(n);
+  if (xs[0] != "a" || xs[1] != "b" || xs[2] != "c") {
+    return test.fail("rotation must preserve the source array");
+  }
+  return test.assert_eq_array(ys, ["c", "a", "b"]);
+}
+
 function test_moved(): test.TestOutcome {
   let down = [1, 2, 3, 4, 5].moved(1, 3);
   let up = array.moved([1, 2, 3, 4, 5], 3, 0);
@@ -53,6 +113,14 @@ function main(): i32 {
   r = r.it("full shift", test_full_shift);
   r = r.it("negative", test_negative);
   r = r.it("empty", test_empty);
+  r = r.it("right MIN length three", test_right_min_three);
+  r = r.it("right MIN length five", test_right_min_five);
+  r = r.it("left MIN", test_left_min);
+  r = r.it("MAX counts", test_max_counts);
+  r = r.it("negative right", test_negative_right);
+  r = r.it("opposite rotations", test_inverse_counts);
+  r = r.it("empty and singleton at extremes", test_empty_extreme);
+  r = r.it("string MIN and source value", test_string_min);
   r = r.it("moved", test_moved);
   return r.finish();
 }
