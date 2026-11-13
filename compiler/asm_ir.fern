@@ -3914,8 +3914,15 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    ret\n");
   if (!hev_on(s) && !s.has_need("alloc_count")) {
     s = s.write(".Larrbox_miss:\n");
-    s = s.write("    leaq __fern_freelist(%rip), %rax\n");
-    s = s.write("    subq %rax, %rdi\n");
+    if (s.harden) {
+      s = s.write("    leaq __fern_freelist(%rip), %rax\n");
+      s = s.write("    subq %rax, %rdi\n");
+    } else {
+      // The allocator takes the address of the empty list at this label, so
+      // it does not round the size and read the list again.
+      s = s.write("    call .Lalloc_fast_miss\n");
+      s = s.write("    jmp .Larrbox_hdr\n");
+    }
     s = s.write(".Larrbox_alloc:\n");
     s = s.write("    call __fern_alloc\n");
     s = s.write("    jmp .Larrbox_hdr\n");

@@ -1244,9 +1244,9 @@ func freshInit(info *Info, init ast.Expr) bool {
 	case *ast.MatchExpr:
 		return freshMatchValue(info, init)
 	case *ast.IfExpr:
-		return freshInit(info, init.Then) && freshInit(info, init.Else)
+		return freshScopedValue(info, nil, init.Then) && freshScopedValue(info, nil, init.Else)
 	case *ast.BlockExpr:
-		return init.Tail != nil && (freshInit(info, init.Tail) || freshScopedValue(info, init, init.Tail))
+		return init.Tail != nil && freshScopedValue(info, init, init.Tail)
 	case *ast.TupleLit:
 		return freshScopedValue(info, nil, init)
 	}
