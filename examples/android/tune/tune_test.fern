@@ -9,6 +9,7 @@ import "std/android/fonts";
 import "std/android/testkit";
 import "std/android/text";
 import "std/android/ui";
+import "std/android/ui/scene";
 import "std/android/ui/sim";
 import "std/audio/eq";
 import "std/audio/tags";
@@ -979,6 +980,43 @@ function test_the_person_lets_the_app_write_a_file(): test.TestOutcome {
   return test.assert_eq([yes, no, none].join(" | "), "true 2 1 Fern Morning false true | true 2 1 Morning Fern true true | false 1 1 Morning Fern true true");
 }
 
+// The top of the title of the track and the bottom of the spectrum on the
+// screen of the track, in pixels, or -1.
+function title_and_bars(s: sim.Sim[player.Player, tune.Msg]): (i32, i32) {
+  let title = -1;
+  let bars = -1;
+  for n in s.shell.host.lay.nodes {
+    match (n.paint) {
+      scene.Label(t, _, _, _, _) => {
+        if (t == "Slow Water" && title < 0) {
+          title = n.y;
+        }
+      },
+      scene.Custom(key, _, _) => {
+        if (key.starts_with("bars")) {
+          bars = n.y + n.h;
+        }
+      },
+      _ => {}
+    }
+  }
+  return (title, bars);
+}
+
+// On a short screen, the cover and the lyrics shrink to the room that the
+// rest of the screen leaves: the spectrum under them stays above the
+// title. The button of the lyrics is at the top, so no row wraps it.
+function test_the_track_screen_fits_a_short_screen(): test.TestOutcome {
+  let s = sim.after(sim.start(player.wrap(tune.start(paths())), player.program(device()), test_fonts(), 1080, 1700, 2.75), 50i64);
+  s = sim.tap(sim.tap(s, "Slow Water"), "Now playing, Slow Water");
+  let (t0, b0) = title_and_bars(s);
+  let top = match (sim.place_of(s, "Lyrics off", 0)) { Some((_, y)) => y < t0, None => false };
+  s = sim.tap(s, "Lyrics off");
+  let (t1, b1) = title_and_bars(s);
+  let got = [t0 > 0 && b0 > 0 && b0 <= t0, top, sim.shows(s, "Under the fern"), t1 > 0 && b1 > 0 && b1 <= t1];
+  return test.assert_eq(got.map((b: boolean): string => b.to_string()).join(" "), "true true true true");
+}
+
 function main(): i32 {
   let r = test.new("examples/android/tune");
   r = r.it("the scan reads the tags and the paths of its files", test_scan_reads_tags_and_paths);
@@ -1018,6 +1056,7 @@ function main(): i32 {
   r = r.it("the sound goes through the equalizer", test_the_equalizer_of_the_sound);
   r = r.it("the screen of the track shows the spectrum", test_the_spectrum);
   r = r.it("the player keeps its place for the next start", test_the_player_keeps_its_place);
+  r = r.it("the screen of the track fits a short screen", test_the_track_screen_fits_a_short_screen);
   r = r.it("the tags of a song change, and its file has them", test_the_tags_of_a_song_change);
   r = r.it("the person lets the app write a file of another app", test_the_person_lets_the_app_write_a_file);
   return r.finish();
