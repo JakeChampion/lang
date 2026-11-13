@@ -964,6 +964,35 @@ census on each target. In `TestSelfHostPoly1305KernelMisuse`, each backend
 and both interpreters must stop the program for a bad call. A bad call has a
 range outside the message or a state that is not 40 bytes.
 
+`TestSelfHostChaChaPolyKernelX86_64`, `…Arm64` (qemu), `…Wasm` and
+`TestSelfHostInterpChaChaPolyKernel` (both interpreters) check the fused AEAD
+kernels, `__chacha20_poly1305_seal_into` and `__chacha20_poly1305_open_into`.
+The native legs run the in-process assembler and GNU as. Each leg must print
+the same lines as a Go model, which composes the ChaCha20 and Poly1305
+models.
+
+The lines start with RFC 8439's AEAD answer. Then the program seals each
+length to 1024 and lengths around the first group and the later groups. The
+first group has 448 bytes of text on x86-64 and 192 on arm64. The later
+groups have 512 and 256 bytes. For each length, the program prints a digest
+of the whole buffer. A block counter that wraps, and views for the key and
+the counter, come last.
+
+In the program, each seal must give the buffer of `__chacha20_xor_into` and
+`__poly1305_blocks` in turn. Each open must give the text back with the
+verdict 0. Then the program changes one bit in the additional data, the
+ciphertext or the tag, and the open must give the verdict 1. A buffer with
+another holder, or a literal, is copied before the kernel writes it.
+
+`TestSelfHostChaChaPolyKernelCensus` runs the same program under the leak
+census on each target. In `TestSelfHostChaChaPolyKernelMisuse`, each backend
+and both interpreters must stop the program for a bad call. One bad call has
+a text and a tag outside the buffer. Another has additional data outside the
+buffer. Others have a negative offset or length, a key that is not 32 bytes
+or a counter block that is not 16 bytes. The constant-time gate seals and
+opens through these kernels, because `std/crypto/chacha20poly1305` calls
+them.
+
 ## Netlify deploys and the standalone smoke script
 
 Netlify runs `scripts/netlify-build`, which builds the playground's wasm

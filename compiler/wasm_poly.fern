@@ -97,21 +97,23 @@ function tail_wat(): string {
 // Poly1305 (RFC 8439): absorbs msg[at:at + n] into the 40-byte state h0, h1, h2, r0 and r1, each a little-endian
 // u64, one block at a time in limbs of 26 bits. The state is copied first if it has another holder. Each
 // 16-byte block gets 2^128, and a short last block gets a 1 byte after its end and no 2^128. Only the low 2
-// bits of h2 are read, r is clamped as it is read, and h leaves fully reduced.
+// bits of h2 are read, r is clamped as it is read, and h leaves fully reduced. $__fern_poly1305_at absorbs the
+// rem bytes at p into the state at sp.
 pub function funcs(): string {
   let o: string = "  (func $__fern_poly1305_blocks (param $buf i32) (param $msg i32) (param $at i32) (param $n i32) (result i32)\n"
-    + "    (local $copy i32) (local $sp i32) (local $p i32) (local $rem i32) (local $k i32)\n"
+    + "    (local $copy i32)\n" + wasm_aes.abort_unless("(i32.eq (i32.load (local.get $buf)) (i32.const 40))")
+    + wasm_aes.abort_unless("(i32.ge_s (i32.or (local.get $at) (local.get $n)) (i32.const 0))")
+    + wasm_aes.abort_unless("(i64.le_u (i64.add (i64.extend_i32_u (local.get $at)) (i64.extend_i32_u (local.get $n))) (i64.extend_i32_u (call $__fern_aes_view_len (local.get $msg))))")
+    + wasm_aes.own_wat() + "    (call $__fern_poly1305_at (i32.add (local.get $buf) (i32.const 8))\n"
+    + "      (i32.add (call $__fern_aes_view_data (local.get $msg)) (local.get $at)) (local.get $n))\n    (local.get $buf))\n"
+    + "  (func $__fern_poly1305_at (param $sp i32) (param $p i32) (param $rem i32) (local $k i32)\n"
     + "    (local $lo i64) (local $hi i64) (local $hib i64) (local $b i64) (local $mask i64)";
   for name in ["r", "s", "h", "d", "g"] {
     for j in 0..5 {
       o = o + " (local $" + name + limb(j) + " i64)";
     }
   }
-  o = o + "\n" + wasm_aes.abort_unless("(i32.eq (i32.load (local.get $buf)) (i32.const 40))")
-    + wasm_aes.abort_unless("(i32.ge_s (i32.or (local.get $at) (local.get $n)) (i32.const 0))")
-    + wasm_aes.abort_unless("(i64.le_u (i64.add (i64.extend_i32_u (local.get $at)) (i64.extend_i32_u (local.get $n))) (i64.extend_i32_u (call $__fern_aes_view_len (local.get $msg))))")
-    + wasm_aes.own_wat() + "    (local.set $sp (i32.add (local.get $buf) (i32.const 8)))\n"
-    + set("lo", "(i64.and (i64.load offset=24 (local.get $sp)) " + i64c("0x0ffffffc0fffffff") + ")")
+  o = o + "\n" + set("lo", "(i64.and (i64.load offset=24 (local.get $sp)) " + i64c("0x0ffffffc0fffffff") + ")")
     + set("hi", "(i64.and (i64.load offset=32 (local.get $sp)) " + i64c("0x0ffffffc0ffffffc") + ")")
     + split_add("r", g("lo"), g("hi"), "(i64.const 0)");
   for j in 1..5 {
@@ -119,7 +121,6 @@ pub function funcs(): string {
   }
   o = o + set("lo", "(i64.load (local.get $sp))") + set("hi", "(i64.load offset=8 (local.get $sp))")
     + split_add("h", g("lo"), g("hi"), "(i64.shl (i64.and (i64.load offset=16 (local.get $sp)) (i64.const 3)) (i64.const 24))")
-    + "    (local.set $p (i32.add (call $__fern_aes_view_data (local.get $msg)) (local.get $at)))\n    (local.set $rem (local.get $n))\n"
     + "    (block $done (loop $blk\n      (br_if $done (i32.eqz (local.get $rem)))\n"
     + "      (if (i32.ge_u (local.get $rem) (i32.const 16)) (then\n"
     + "        (local.set $lo (i64.load (local.get $p)))\n        (local.set $hi (i64.load offset=8 (local.get $p)))\n        (local.set $hib (i64.const 16777216))\n"
@@ -127,6 +128,56 @@ pub function funcs(): string {
     + "      (else\n" + tail_wat() + "      ))\n" + block_wat() + "      (br $blk)))\n" + finish_wat()
     + "    (i64.store (local.get $sp) (i64.or (i64.or (local.get $h0) (i64.shl (local.get $h1) (i64.const 26))) (i64.shl (local.get $h2) (i64.const 52))))\n"
     + "    (i64.store offset=8 (local.get $sp) (i64.or (i64.or (i64.shr_u (local.get $h2) (i64.const 12)) (i64.shl (local.get $h3) (i64.const 14))) (i64.shl (local.get $h4) (i64.const 40))))\n"
-    + "    (i64.store offset=16 (local.get $sp) (i64.shr_u (local.get $h4) (i64.const 24)))\n    (local.get $buf))\n";
+    + "    (i64.store offset=16 (local.get $sp) (i64.shr_u (local.get $h4) (i64.const 24))))\n";
   return o;
+}
+
+// The AEAD of RFC 8439 over buf[at:at + n] in place, with the two kernels in turn. The key stream of block ctr is
+// the one-time key, and the text starts at block ctr + 1. buf[aad_at:aad_at + aad_n] is the additional data, and
+// the tag is at buf[at + n:at + n + 16]. An open leaves 0 in buf[at + n] when the tag verifies and 1 when it does
+// not. The buffer is copied first if it has another holder. A scratch box holds the one-time key at t and the
+// Poly1305 state at t + 32. The next counter block is at t + 72 and a padded block at t + 88. The code zeroes
+// the box before it releases it.
+pub function aead_funcs(): string {
+  let params = "(param $key i32) (param $ctr i32) (param $buf i32) (param $aad_at i32) (param $aad_n i32) (param $at i32) (param $n i32)";
+  let args = "(local.get $key) (local.get $ctr) (local.get $buf) (local.get $aad_at) (local.get $aad_n) (local.get $at) (local.get $n)";
+  let len = "(i64.extend_i32_u (i32.load (local.get $buf)))";
+  let st = "(i32.add (local.get $t) (i32.const 32))";
+  let pad = "(i32.add (local.get $t) (i32.const 88))";
+  let ctr = "    (call $__fern_chacha20_at (local.get $kp) (i32.add (local.get $t) (i32.const 72)) (local.get $dp) (local.get $n))\n";
+  let hash = "    (call $__fern_poly1305_padded " + st + " (i32.add (i32.add (local.get $buf) (i32.const 8)) (local.get $aad_at)) (local.get $aad_n) " + pad + ")\n"
+    + "    (call $__fern_poly1305_padded " + st + " (local.get $dp) (local.get $n) " + pad + ")\n"
+    + "    (i64.store " + pad + " (i64.extend_i32_u (local.get $aad_n)))\n    (i64.store offset=8 " + pad + " (i64.extend_i32_u (local.get $n)))\n"
+    + "    (call $__fern_poly1305_at " + st + " " + pad + " (i32.const 16))\n";
+  return "  (func $__fern_poly1305_padded (param $sp i32) (param $p i32) (param $n i32) (param $pad i32) (local $full i32)\n"
+    + "    (local.set $full (i32.and (local.get $n) (i32.const -16)))\n    (call $__fern_poly1305_at (local.get $sp) (local.get $p) (local.get $full))\n"
+    + "    (if (i32.and (local.get $n) (i32.const 15)) (then\n      (memory.fill (local.get $pad) (i32.const 0) (i32.const 16))\n"
+    + "      (memory.copy (local.get $pad) (i32.add (local.get $p) (local.get $full)) (i32.and (local.get $n) (i32.const 15)))\n"
+    + "      (call $__fern_poly1305_at (local.get $sp) (local.get $pad) (i32.const 16)))))\n"
+    + "  (func $__fern_chacha20_poly1305_into " + params + " (param $seal i32) (result i32)\n"
+    + "    (local $copy i32) (local $tmp i32) (local $t i32) (local $kp i32) (local $dp i32) (local $tag i32) (local $lo i64) (local $hi i64)\n"
+    + wasm_aes.abort_unless("(i32.eq (call $__fern_aes_view_len (local.get $key)) (i32.const 32))")
+    + wasm_aes.abort_unless("(i32.eq (call $__fern_aes_view_len (local.get $ctr)) (i32.const 16))")
+    + wasm_aes.abort_unless("(i32.ge_s (i32.or (i32.or (local.get $aad_at) (local.get $aad_n)) (i32.or (local.get $at) (local.get $n))) (i32.const 0))")
+    + wasm_aes.abort_unless("(i64.le_u (i64.add (i64.add (i64.extend_i32_u (local.get $at)) (i64.extend_i32_u (local.get $n))) (i64.const 16)) " + len + ")")
+    + wasm_aes.abort_unless("(i64.le_u (i64.add (i64.extend_i32_u (local.get $aad_at)) (i64.extend_i32_u (local.get $aad_n))) " + len + ")")
+    + wasm_aes.own_wat()
+    + "    (local.set $tmp (call $__fern_aes_bytes (i32.const 104)))\n    (local.set $t (i32.add (local.get $tmp) (i32.const 8)))\n"
+    + "    (memory.fill (local.get $t) (i32.const 0) (i32.const 104))\n    (local.set $kp (call $__fern_aes_view_data (local.get $key)))\n"
+    + "    (memory.copy (i32.add (local.get $t) (i32.const 72)) (call $__fern_aes_view_data (local.get $ctr)) (i32.const 16))\n"
+    + "    (call $__fern_chacha20_at (local.get $kp) (i32.add (local.get $t) (i32.const 72)) (local.get $t) (i32.const 32))\n"
+    + "    (memory.copy (i32.add (local.get $t) (i32.const 56)) (local.get $t) (i32.const 16))\n"
+    + "    (i32.store offset=72 (local.get $t) (i32.add (i32.load offset=72 (local.get $t)) (i32.const 1)))\n"
+    + "    (local.set $dp (i32.add (i32.add (local.get $buf) (i32.const 8)) (local.get $at)))\n"
+    + "    (if (local.get $seal) (then\n" + ctr + hash + "    ) (else\n" + hash + ctr + "    ))\n"
+    + "    (local.set $lo (i64.add (i64.load offset=32 (local.get $t)) (i64.load offset=16 (local.get $t))))\n"
+    + "    (local.set $hi (i64.add (i64.add (i64.load offset=40 (local.get $t)) (i64.load offset=24 (local.get $t)))\n"
+    + "      (i64.extend_i32_u (i64.lt_u (local.get $lo) (i64.load offset=32 (local.get $t))))))\n"
+    + "    (local.set $tag (i32.add (local.get $dp) (local.get $n)))\n"
+    + "    (if (local.get $seal) (then (i64.store (local.get $tag) (local.get $lo)) (i64.store offset=8 (local.get $tag) (local.get $hi)))\n"
+    + "      (else (i32.store8 (local.get $tag) (i64.ne (i64.or (i64.xor (i64.load (local.get $tag)) (local.get $lo))\n"
+    + "        (i64.xor (i64.load offset=8 (local.get $tag)) (local.get $hi))) (i64.const 0)))))\n"
+    + "    (memory.fill (local.get $t) (i32.const 0) (i32.const 104))\n    (drop (call $__fern_arr_dec (local.get $tmp)))\n    (local.get $buf))\n"
+    + "  (func $__fern_chacha20_poly1305_seal_into " + params + " (result i32)\n    (call $__fern_chacha20_poly1305_into " + args + " (i32.const 1)))\n"
+    + "  (func $__fern_chacha20_poly1305_open_into " + params + " (result i32)\n    (call $__fern_chacha20_poly1305_into " + args + " (i32.const 0)))\n";
 }

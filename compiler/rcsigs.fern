@@ -210,6 +210,7 @@ pub function op_table(): OpTable {
   rows = add(rows, sealing_ops(), sig(4, effect_move(), result_fresh()));
   rows = add(rows, ["chacha20_xor_into"], sig(2, effect_move(), result_fresh()));
   rows = add(rows, ["poly1305_blocks"], sig(0, effect_move(), result_fresh()));
+  rows = add(rows, ["chacha20_poly1305_seal_into", "chacha20_poly1305_open_into"], sig(2, effect_move(), result_fresh()));
   rows = add(rows, ["ret_word"], inert(result_none()));
   rows = add(rows, ["call_word"], inert(result_unknown()));
   rows = add(rows, ["arr_push_owned", "arr_push_owned_i64", "arr_push_owned_f64", "arr_push_owned_u8"], sig(0, effect_move(), result_fresh()));
