@@ -847,8 +847,7 @@ function open_atx(p: P, cd: i32, len: i32): P {
     level += 1;
   }
   let q = advance(p, p.fns + len - p.off, false);
-  let id = q.count;
-  return set(add_child(q, cd, HEADING), id, A, level);
+  return set(add_child(q, cd, HEADING), q.count, A, level);
 }
 
 function open_fence(p: P, cd: i32, c: i32, len: i32): P {
