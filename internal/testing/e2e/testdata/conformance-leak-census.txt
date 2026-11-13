@@ -1,3 +1,4 @@
+# 2026-11-13: owned_callback_result_composition has balanced allocations and zero live allocations on all three main targets.
 # 2026-11-12: a_map_holds_named_functions is clean under RC trace.
 # 2026-11-12: literal_trees_take_the_type_of_their_use is clean under RC trace.
 # 2026-11-12: callback_aggregate_environment_loans has balanced allocations and zero live bytes on all three main targets.
@@ -277,6 +278,7 @@ checked_int_conversion                               0
 # 2026-11-11: checked_owned_nested_results has zero unpaired allocations under native RC trace.
 checked_owned_nested_results                         0
 checked_owned_results                                0
+owned_callback_result_composition                    0
 copied_call_results                                  0
 closing_a_socket_two_reactors_watch                  0
 closing_a_watched_socket                             0

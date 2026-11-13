@@ -33,8 +33,38 @@ function main(): i32 {
   r = r.it("lambdas", check_lambdas);
   r = r.it("fstrings", check_fstrings);
   r = r.it("qualified names", check_qualified_names);
+  r = r.it("owned grouped callback types", check_owned_grouped_callback_types);
+  r = r.it("owned composite type references", check_owned_composite_type_refs);
   r = r.it("struct patterns", check_struct_patterns);
   return r.finish();
+}
+
+function check_owned_grouped_callback_types(): test.TestOutcome {
+  let source = "function factory(): own (() => own (() => i32)) { return (): own (() => i32) => (): i32 => 7; }";
+  let mod = parser.parse_module(lexer.tokenize(source));
+  if (mod.funcs.len() != 1) {
+    return test.fail("the callback factory declaration is missing");
+  }
+  if (mod.funcs[0].body.len() != 1) {
+    return test.fail("the callback factory contains a parser error");
+  }
+  return test.pass();
+}
+
+function check_owned_composite_type_refs(): test.TestOutcome {
+  let callback = parser.parse_type_ref("() => own (() => i32)");
+  if (!parser.ref_is_own(parser.ref_fn_result(callback))) {
+    return test.fail("the callback result lost its own prefix");
+  }
+  if (!parser.ref_is_fn_value(parser.ref_without_own(parser.ref_fn_result(callback)))) {
+    return test.fail("the owned callback result lost its function type");
+  }
+  let array = parser.parse_type_ref("() => own ((i32, i32)[])");
+  let result = parser.ref_ungroup(parser.ref_without_own(parser.ref_fn_result(array)));
+  if (result.array_depth != 1 || !result.is_tuple || result.args.len() != 2) {
+    return test.fail("the owned tuple array result lost its structure");
+  }
+  return test.pass();
 }
 
 function check_operator_precedence(): test.TestOutcome {
