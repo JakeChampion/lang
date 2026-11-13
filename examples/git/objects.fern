@@ -1,0 +1,213 @@
+// The object store of a git repository: the loose objects.
+//
+// A loose object is the file `objects/XX/YYYY...`, where `XXYYYY...` is the
+// SHA-1 of its content in hexadecimal. The file is a zlib stream of
+// `KIND SIZE\0` and the body.
+import "std/array";
+import "std/crypto";
+import "std/deflate";
+import "std/hex";
+import "std/string";
+
+pub struct Object { kind: string, body: u8[] }
+
+// The largest body that the port reads.
+const MAX_BODY: i32 = 1073741824;
+
+function hex_digit(b: u8): boolean {
+  return b >= b'0' && b <= b'9' || b >= b'a' && b <= b'f' || b >= b'A' && b <= b'F';
+}
+
+// True if `s` has `least` hexadecimal digits or more, and no other byte.
+pub function is_hex(s: string, least: i32): boolean {
+  if (s.len() < least) {
+    return false;
+  }
+  for i in 0..s.len() {
+    if (!hex_digit(s[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+pub function part(s: string, from: i32, to: i32): string {
+  return slice_unchecked(s, from, to).to_owned();
+}
+
+pub function header(kind: string, size: i32): u8[] {
+  return (kind + " " + size.to_string()).bytes().append(0);
+}
+
+// The name of the object of `kind` with `body`.
+pub function hash_of(kind: string, body: [u8]): string {
+  return hex.encode(crypto.sha1_new().update(header(kind, body.len())).update(body).finish());
+}
+
+pub function is_kind(kind: string): boolean {
+  return kind == "blob" || kind == "tree" || kind == "commit" || kind == "tag";
+}
+
+pub function loose_path(objects: string, name: string): string {
+  return objects + "/" + part(name, 0, 2) + "/" + part(name, 2, name.len());
+}
+
+// The kind and the size in `KIND SIZE\0`, and the place of the body.
+struct Header { kind: string, size: i32, body_at: i32, ok: boolean }
+
+function parse_header(data: u8[]): Header {
+  let bad = Header { kind: "", size: 0, body_at: 0, ok: false };
+  let space = -1;
+  let i = 0;
+  while (i < data.len() && data[i] != 0) {
+    if (data[i] == b' ' && space < 0) {
+      space = i;
+    }
+    i += 1;
+  }
+  if (i == data.len() || space <= 0 || space + 1 == i) {
+    return bad;
+  }
+  let size = 0;
+  for k in space + 1..i {
+    if (data[k] < b'0' || data[k] > b'9') {
+      return bad;
+    }
+    size = size * 10 + (data[k] - b'0') as i32;
+  }
+  let kind = unsafe { string_from_bytes_unchecked(array.slice(data, 0, space)) };
+  return Header { kind: kind, size: size, body_at: i + 1, ok: true };
+}
+
+// The loose object `name` of the store `objects`. The error is "missing"
+// when the store has no such file.
+pub function read_loose(objects: string, name: string): Result[Object, string] {
+  return match (read_file_bytes(loose_path(objects, name))) {
+    Ok(bytes) => decode(bytes, name),
+    Err(_) => Err("missing"),
+  };
+}
+
+// The object in the bytes of a loose object file.
+pub function decode(file: u8[], name: string): Result[Object, string] {
+  let data = match (deflate.zlib_decode(file, MAX_BODY)) {
+    Ok(bytes) => bytes,
+    Err(e) => {
+      return Err("loose object " + name + " is corrupt: " + e.message());
+    },
+  };
+  let h = parse_header(data);
+  if (!h.ok || h.body_at + h.size != data.len()) {
+    return Err("loose object " + name + " has a bad header");
+  }
+  return Ok(Object { kind: h.kind, body: array.slice(data, h.body_at, data.len()) });
+}
+
+// The bytes of the loose object file of `kind` with `body`.
+pub function encode(kind: string, body: [u8]): u8[] {
+  return zlib(header(kind, body.len()).concat(body));
+}
+
+function zlib(data: [u8]): u8[] {
+  let out: u8[] = [120, 156];
+  out = out.concat(deflate.deflate(data));
+  let sum = deflate.adler32(data);
+  return out.append((sum >> 24 & 255) as u8).append((sum >> 16 & 255) as u8).append((sum >> 8 & 255) as u8).append((sum & 255) as u8);
+}
+
+// Writes the object to the store when the store does not have it, and gives
+// its name.
+pub function write_loose(objects: string, kind: string, body: [u8]): Result[string, string] {
+  let name = hash_of(kind, body);
+  let path = loose_path(objects, name);
+  if let Ok(_) = stat(path) {
+    return Ok(name);
+  }
+  let dir = objects + "/" + part(name, 0, 2);
+  if let Err(e) = create_dir_all(dir) {
+    return Err("unable to create directory " + dir + ": " + e.message());
+  }
+  let temp = dir + "/tmp_obj_" + part(name, 2, 14);
+  if let Err(e) = write_file_bytes(temp, encode(kind, body)) {
+    return Err("unable to write " + temp + ": " + e.message());
+  }
+  if let Err(e) = rename(temp, path) {
+    return Err("unable to write " + path + ": " + e.message());
+  }
+  return Ok(name);
+}
+
+// ---- Trees ----
+
+function octal3(b: u8): u8[] {
+  return [b'\\', b'0' + (b >> 6), b'0' + (b >> 3 & 7), b'0' + (b & 7)];
+}
+
+function plain_name(name: u8[]): boolean {
+  for b in name {
+    if (b < 32 || b >= 127 || b == b'"' || b == b'\\') {
+      return false;
+    }
+  }
+  return true;
+}
+
+// A path as git writes it: in quotes with C escapes when it has a control
+// byte, a quote, a backslash or a byte that is not ASCII.
+pub function quoted(name: u8[]): u8[] {
+  if (plain_name(name)) {
+    return name;
+  }
+  let out: u8[] = [b'"'];
+  for b in name {
+    out = match (b) {
+      7 => out.append(b'\\').append(b'a'),
+      8 => out.append(b'\\').append(b'b'),
+      9 => out.append(b'\\').append(b't'),
+      10 => out.append(b'\\').append(b'n'),
+      11 => out.append(b'\\').append(b'v'),
+      12 => out.append(b'\\').append(b'f'),
+      13 => out.append(b'\\').append(b'r'),
+      34 => out.append(b'\\').append(b'"'),
+      92 => out.append(b'\\').append(b'\\'),
+      _ => if (b < 32 || b >= 127) { out.concat(octal3(b)) } else { out.append(b) },
+    };
+  }
+  return out.append(b'"');
+}
+
+function entry_kind(mode: string): string {
+  if (mode == "40000") {
+    return "tree";
+  }
+  if (mode == "160000") {
+    return "commit";
+  }
+  return "blob";
+}
+
+// The lines of `cat-file -p` for the body of a tree: the mode with six
+// digits, the kind, the name of the object, a tab, and the path.
+pub function tree_text(body: u8[]): Result[u8[], string] {
+  let out: u8[] = [];
+  let i = 0;
+  while (i < body.len()) {
+    let space = i;
+    while (space < body.len() && body[space] != b' ') {
+      space += 1;
+    }
+    let end = space + 1;
+    while (end < body.len() && body[end] != 0) {
+      end += 1;
+    }
+    if (space == i || end + 21 > body.len()) {
+      return Err("too-short tree object");
+    }
+    let mode = unsafe { string_from_bytes_unchecked(array.slice(body, i, space)) };
+    let line = "000000" + mode;
+    line = part(line, line.len() - 6, line.len()) + " " + entry_kind(mode) + " " + hex.encode(array.slice(body, end + 1, end + 21)) + "\t";
+    out = out.concat(line.bytes()).concat(quoted(array.slice(body, space + 1, end))).append(b'\n');
+    i = end + 21;
+  }
+  return Ok(out);
+}
