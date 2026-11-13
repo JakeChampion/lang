@@ -1,0 +1,165 @@
+// The results of a run: where each response ends, the tally, and the
+// summary in the layout of oha.
+import "core/cmp";
+import "std/f64";
+import "std/http";
+import "./histogram";
+
+// The error of a request that was in flight when the -z time ended.
+pub const ABORTED: string = "aborted due to deadline";
+
+pub struct Reply { status: i32, len: i32, keep_alive: boolean }
+
+pub enum Framed { Done(Reply), Partial, Bad(string) }
+
+// Frames the response at the start of `buf`. `eof` says that the peer closed
+// the connection after these bytes.
+pub function frame(buf: u8[], method: string, eof: boolean): Framed {
+  let limits = http.HttpLimits { ...http.limits(), body: 1 << 30 };
+  match (http.parse_response_framed(buf, method, eof, limits)) {
+    http.Complete(f) => {
+      return Done(Reply { status: f.response.status, len: f.len, keep_alive: f.keep_alive });
+    },
+    http.Incomplete => {
+      if (eof) {
+        if (buf.len() == 0) {
+          return Bad("connection closed");
+        }
+        return Bad("connection closed before the response was complete");
+      }
+      return Partial;
+    },
+    http.Malformed(code) => {
+      if (code == 431) {
+        return Bad("the response head is too large");
+      }
+      if (code == 413) {
+        return Bad("the response body is too large");
+      }
+      return Bad("malformed response");
+    }
+  }
+  return Partial;
+}
+
+pub struct Tally { latency: histogram.Histogram, statuses: i64[], errors: string[], error_counts: i64[] }
+
+pub function tally(): Tally {
+  let statuses: i64[] = [];
+  for _ in 0..1000 {
+    statuses = statuses.append(0);
+  }
+  let none: string[] = [];
+  let counts: i64[] = [];
+  return Tally { latency: histogram.new(), statuses: statuses, errors: none, error_counts: counts };
+}
+
+pub function (t: Tally) response(status: i32, latency_ns: i64): Tally {
+  return Tally { ...t, latency: t.latency.record(latency_ns), statuses: t.statuses.with(status, t.statuses[status] + 1) };
+}
+
+pub function (t: Tally) error(message: string): Tally {
+  for i in 0..t.errors.len() {
+    if (t.errors[i] == message) {
+      return Tally { ...t, error_counts: t.error_counts.with(i, t.error_counts[i] + 1) };
+    }
+  }
+  return Tally { ...t, errors: t.errors.append(message), error_counts: t.error_counts.append(1) };
+}
+
+pub function (t: Tally) failed(): i64 {
+  let n: i64 = 0;
+  for c in t.error_counts {
+    n += c;
+  }
+  return n;
+}
+
+function (t: Tally) aborted(): i64 {
+  for i in 0..t.errors.len() {
+    if (t.errors[i] == ABORTED) {
+      return t.error_counts[i];
+    }
+  }
+  return 0;
+}
+
+// The unit of the slowest latency: the summary gives every time in it.
+pub function unit(slowest_ns: i64): (string, f64) {
+  if (slowest_ns < 1000) {
+    return ("ns", 1.0);
+  }
+  if (slowest_ns < 1000000) {
+    return ("us", 1000.0);
+  }
+  if (slowest_ns < 1000000000) {
+    return ("ms", 1000000.0);
+  }
+  return ("secs", 1000000000.0);
+}
+
+function in_unit(ns: i64, u: (string, f64)): string {
+  return (ns as f64 / u.1).to_string_prec(4) + " " + u.0;
+}
+
+// The rows in the order of oha, the largest count first: (count, label).
+function ranked(labels: string[], counts: i64[]): (i64, string)[] {
+  let rows: (i64, string)[] = [];
+  for i in 0..labels.len() {
+    rows = rows.append((counts[i], labels[i]));
+  }
+  return cmp.sort_by(rows, (a: (i64, string), b: (i64, string)): i32 => if (a.0 != b.0) { if (a.0 > b.0) { -1 } else { 1 } } else { a.1.cmp(b.1) });
+}
+
+// The summary of a run that took `elapsed_ns`.
+pub function (t: Tally) summary(elapsed_ns: i64): string {
+  let out = t.totals(elapsed_ns);
+  let h = t.latency;
+  if (h.total > 0) {
+    let u = unit(h.max);
+    out += "\nResponse time distribution:\n";
+    for p in [1000, 2500, 5000, 7500, 9000, 9500, 9900, 9990, 9999] {
+      let percent = (p as f64 / 100.0).to_string_prec(2);
+      out += f"  {percent}% in " + in_unit(h.at(p as i64), u) + "\n";
+    }
+  }
+  out += "\nStatus code distribution:\n";
+  let codes: string[] = [];
+  let counts: i64[] = [];
+  for code in 0..t.statuses.len() {
+    if (t.statuses[code] > 0) {
+      codes = codes.append(code.to_string());
+      counts = counts.append(t.statuses[code]);
+    }
+  }
+  for row in ranked(codes, counts) {
+    out += f"  [{row.1}] {row.0} responses\n";
+  }
+  if (t.errors.len() > 0) {
+    out += "\nError distribution:\n";
+    for row in ranked(t.errors, t.error_counts) {
+      out += f"  [{row.0}] {row.1}\n";
+    }
+  }
+  return out;
+}
+
+// The first block of the summary. A request aborted at the end of -z counts
+// in the request rate, but not in the success rate.
+function (t: Tally) totals(elapsed_ns: i64): string {
+  let h = t.latency;
+  let failed = t.failed();
+  let counted = h.total + failed - t.aborted();
+  let rate = if (counted > 0) { h.total as f64 * 100.0 / (counted as f64) } else { 0.0 };
+  let u = unit(h.max);
+  let rps = if (elapsed_ns > 0) { (h.total + failed) as f64 * 1000000000.0 / (elapsed_ns as f64) } else { 0.0 };
+  let out = "Summary:\n";
+  out += "  Success rate:\t" + rate.to_string_prec(2) + "%\n";
+  out += "  Total:\t" + in_unit(elapsed_ns, u) + "\n";
+  if (h.total > 0) {
+    out += "  Slowest:\t" + in_unit(h.max, u) + "\n";
+    out += "  Fastest:\t" + in_unit(h.min, u) + "\n";
+    out += "  Average:\t" + in_unit(h.mean(), u) + "\n";
+  }
+  return out + "  Requests/sec:\t" + rps.to_string_prec(4) + "\n";
+}

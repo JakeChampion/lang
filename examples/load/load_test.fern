@@ -1,0 +1,246 @@
+// The parts of the load generator that do no I/O: the options, the request,
+// the histogram, the end of each response, and the summary.
+import "std/array";
+import "std/test";
+import "std/utf8";
+import "./histogram";
+import "./options";
+import "./report";
+
+function shown(args: string[]): string {
+  match (options.parse(args)) {
+    options.Run(o) => {
+      let z = match (o.duration) {
+        Some(d) => d.as_millis().to_string() + "ms",
+        None => "none",
+      };
+      return f"{o.host}:{o.port}{o.target} n={o.requests} c={o.connections} z={z} w={o.wait} m={o.method} H=[" + o.headers.join("|") + f"] d={o.body}";
+    },
+    options.Help => {
+      return "help";
+    },
+    options.Refused(why) => {
+      return "refused: " + why;
+    }
+  }
+  return "";
+}
+
+function test_options(): test.TestOutcome {
+  let got = [
+    shown(["http://127.0.0.1:8080/"]),
+    shown(["-n", "10k", "-c", "8", "http://localhost/a/b?x=1"]),
+    shown(["-n200", "-c3", "-m", "POST", "-d", "hi", "-H", "A: 1", "-H", "B:2  ", "http://h:9/"]),
+    shown(["--method", "HEAD", "-z", "1m 30s", "-w", "--no-tui", "http://h"]),
+    shown(["-z500ms", "http://h/", "-n", "2m"]),
+    shown(["--help", "http://h/"]),
+  ];
+  return test.assert_eq_array(got, [
+    "127.0.0.1:8080/ n=200 c=50 z=none w=false m=GET H=[] d=",
+    "localhost:80/a/b?x=1 n=10000 c=8 z=none w=false m=GET H=[] d=",
+    "h:9/ n=200 c=3 z=none w=false m=POST H=[A: 1|B: 2] d=hi",
+    "h:80/ n=200 c=50 z=90000ms w=true m=HEAD H=[] d=",
+    "h:80/ n=2000000 c=50 z=500ms w=false m=GET H=[] d=",
+    "help",
+  ]);
+}
+
+function test_refusals(): test.TestOutcome {
+  let got = [
+    shown([]),
+    shown(["http://a/", "http://b/"]),
+    shown(["-x", "http://a/"]),
+    shown(["http://a/", "-n"]),
+    shown(["-n", "0", "http://a/"]),
+    shown(["-n", "12x", "http://a/"]),
+    shown(["-c", "70000", "http://a/"]),
+    shown(["-z", "10", "http://a/"]),
+    shown(["-z", "0s", "http://a/"]),
+    shown(["-m", "GE T", "http://a/"]),
+    shown(["-H", "no colon", "http://a/"]),
+    shown(["-H", "Bad Name: x", "http://a/"]),
+    shown(["-H", "Content-Length: 3", "http://a/"]),
+    shown(["https://a/"]),
+    shown(["ftp://a/"]),
+  ];
+  return test.assert_eq_array(got, [
+    "refused: give one URL",
+    "refused: give one URL",
+    "refused: unknown option -x",
+    "refused: -n needs a value",
+    "refused: -n 0 must be more than 0",
+    "refused: -n 12x is not a count",
+    "refused: -c 70000 is more than 65536 connections",
+    "refused: -z 10 is not a duration such as 10s, 500ms or 1m",
+    "refused: -z 0s must be longer than 0",
+    "refused: -m GE T is not a method",
+    "refused: -H no colon is not a field such as \"Name: value\"",
+    "refused: -H Bad Name: x has no valid field name",
+    "refused: -H Content-Length is not allowed: the tool frames the body of -d itself",
+    "refused: https URLs are not supported yet: use an http URL",
+    "refused: ftp://a/ is not an http URL",
+  ]);
+}
+
+function request_of(args: string[]): string {
+  match (options.parse(args)) {
+    options.Run(o) => {
+      match (utf8.from_bytes(options.request(o))) {
+        Ok(text) => {
+          return text;
+        },
+        Err(_) => {
+          return "not UTF-8";
+        }
+      }
+    },
+    _ => {
+      return "not parsed";
+    }
+  }
+  return "";
+}
+
+function test_request(): test.TestOutcome {
+  let got = [
+    request_of(["http://127.0.0.1/"]),
+    request_of(["-m", "POST", "-d", "{}", "-H", "Content-Type: application/json", "http://h:8080/p?q"]),
+    request_of(["-m", "PUT", "-H", "host: other", "-H", "user-agent: me", "http://h/"]),
+  ];
+  return test.assert_eq_array(got, [
+    "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nUser-Agent: fern-load/0.1\r\nAccept: */*\r\n\r\n",
+    "POST /p?q HTTP/1.1\r\nHost: h:8080\r\nUser-Agent: fern-load/0.1\r\nAccept: */*\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}",
+    "PUT / HTTP/1.1\r\nAccept: */*\r\nhost: other\r\nuser-agent: me\r\nContent-Length: 0\r\n\r\n",
+  ]);
+}
+
+// Every value is in its bucket, and the buckets follow each other with no gap.
+// A bucket is at most 1/1024 of its lowest value wide.
+function test_buckets(): test.TestOutcome {
+  for i in 0..histogram.BUCKETS - 1 {
+    if (histogram.highest(i) + 1 != histogram.lowest(i + 1)) {
+      return test.fail(f"bucket {i} ends at {histogram.highest(i)}, bucket {i + 1} starts at {histogram.lowest(i + 1)}");
+    }
+    let width = histogram.highest(i) - histogram.lowest(i) + 1;
+    if (width > 1 && width * 1024 > histogram.lowest(i)) {
+      return test.fail(f"bucket {i} is {width} wide at {histogram.lowest(i)}");
+    }
+  }
+  let v: i64 = 1;
+  while (v < 1 << 46) {
+    for x in [v - 1, v, v + 1, v * 3 / 2] {
+      let i = histogram.index_of(x);
+      if (x < histogram.lowest(i) || x > histogram.highest(i)) {
+        return test.fail(f"{x} is not in bucket {i}");
+      }
+    }
+    v *= 2;
+  }
+  let last = histogram.BUCKETS - 1;
+  return test.assert_eq_array([histogram.index_of(-5), histogram.index_of(2047), histogram.index_of(2048), histogram.index_of(1 << 50)], [0, 2047, 2048, last]);
+}
+
+function test_percentiles(): test.TestOutcome {
+  let h = histogram.new();
+  for k in 1..10001 {
+    h = h.record(k as i64 * 1000);
+  }
+  let got: i64[] = [];
+  for p in [1000, 5000, 9900, 9999, 10000] {
+    got = got.append(h.at(p as i64));
+  }
+  let small = histogram.new().record(7).record(3).record(5);
+  let none = histogram.new();
+  return test.assert_eq_array(got.concat([h.min, h.max, h.mean(), small.at(5000), small.at(10000), small.min, small.mean(), none.at(5000)]), [
+    1000447, 5001215, 9904127, 10000000, 10000000, 1000, 10000000, 5000500, 5, 7, 3, 5, 0,
+  ]);
+}
+
+function framed(raw: string, method: string, eof: boolean): string {
+  match (report.frame(raw.bytes(), method, eof)) {
+    report.Done(r) => {
+      return f"done {r.status} {r.len} {r.keep_alive}";
+    },
+    report.Partial => {
+      return "partial";
+    },
+    report.Bad(why) => {
+      return "bad: " + why;
+    }
+  }
+  return "";
+}
+
+function test_framing(): test.TestOutcome {
+  let head = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n";
+  let chunked = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nhell\r\n1\r\no\r\n0\r\n\r\n";
+  let got = [
+    framed(head + "hello", "GET", false),
+    framed(head + "hel", "GET", false),
+    framed("HTTP/1.1 200 OK\r\nContent-Le", "GET", false),
+    framed(head + "helloHTTP/1.1", "GET", false),
+    framed(chunked, "GET", false),
+    framed(chunked.take(chunked.len() - 3), "GET", false),
+    framed("HTTP/1.1 503 Busy\r\nConnection: close\r\nContent-Length: 0\r\n\r\n", "GET", false),
+    framed("HTTP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n", "GET", false),
+    framed("HTTP/1.1 200 OK\r\n\r\nto the end", "GET", false),
+    // Without the keep-alive flag: std/http gives true for a body that ends at the close.
+    framed("HTTP/1.1 200 OK\r\n\r\nto the end", "GET", true).take(11),
+    framed(head, "HEAD", false),
+    framed("HTTP/1.1 204 No Content\r\n\r\n", "GET", false),
+    framed("", "GET", true),
+    framed(head + "hel", "GET", true),
+    framed("HTTX/1.1 200 OK\r\n\r\n", "GET", false),
+  ];
+  return test.assert_eq_array(got, [
+    "done 200 43 true",
+    "partial",
+    "partial",
+    "done 200 43 true",
+    "done 200 67 true",
+    "partial",
+    "done 503 59 false",
+    "done 200 38 false",
+    "partial",
+    "done 200 29",
+    "done 200 38 true",
+    "done 204 27 true",
+    "bad: connection closed",
+    "bad: connection closed before the response was complete",
+    "bad: malformed response",
+  ]);
+}
+
+function test_summary(): test.TestOutcome {
+  let t = report.tally().response(200, 1000000).response(404, 3000000).response(200, 2000000).error("connection closed").error(report.ABORTED);
+  let want = "Summary:\n  Success rate:\t75.00%\n  Total:\t10.0000 ms\n  Slowest:\t3.0000 ms\n  Fastest:\t1.0000 ms\n  Average:\t2.0000 ms\n  Requests/sec:\t500.0000\n\nResponse time distribution:\n  10.00% in 1.0004 ms\n  25.00% in 1.0004 ms\n  50.00% in 2.0009 ms\n  75.00% in 3.0000 ms\n  90.00% in 3.0000 ms\n  95.00% in 3.0000 ms\n  99.00% in 3.0000 ms\n  99.90% in 3.0000 ms\n  99.99% in 3.0000 ms\n\nStatus code distribution:\n  [200] 2 responses\n  [404] 1 responses\n\nError distribution:\n  [1] aborted due to deadline\n  [1] connection closed\n";
+  return test.assert_eq(t.summary(10000000), want);
+}
+
+function test_summary_without_responses(): test.TestOutcome {
+  let t = report.tally().error("Connection refused").error("Connection refused");
+  let want = "Summary:\n  Success rate:\t0.00%\n  Total:\t500.0000 ns\n  Requests/sec:\t4000000.0000\n\nStatus code distribution:\n\nError distribution:\n  [2] Connection refused\n";
+  return test.assert_eq(t.summary(500), want);
+}
+
+function test_units(): test.TestOutcome {
+  let got: string[] = [];
+  for ns in [999, 1000, 999999, 1000000, 999999999, 1000000000] {
+    got = got.append(report.unit(ns as i64).0);
+  }
+  return test.assert_eq_array(got, ["ns", "us", "us", "ms", "ms", "secs"]);
+}
+
+function main(): i32 {
+  let r = test.new("load");
+  r = r.it("the options of oha, in any order", test_options);
+  r = r.it("each invalid option gets a message", test_refusals);
+  r = r.it("the request has the method, the target, the fields and the body", test_request);
+  r = r.it("the buckets cover every value with three significant digits", test_buckets);
+  r = r.it("the percentiles, the extremes and the mean", test_percentiles);
+  r = r.it("a response is complete only when its framing says so", test_framing);
+  r = r.it("the summary has the layout of oha", test_summary);
+  r = r.it("a run with no response has no latency lines", test_summary_without_responses);
+  r = r.it("the unit follows the slowest latency", test_units);
+  return r.finish();
+}
