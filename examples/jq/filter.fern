@@ -1,0 +1,686 @@
+// The jq language: the lexer, the parser and the evaluator. A port of the
+// documented behaviour of jq 1.7 (https://jqlang.github.io/jq/manual/v1.7/).
+//
+// A filter takes one JSON value and gives zero or more values. The evaluator
+// collects the outputs of a filter in an array. An error stops the filter, and
+// the outputs before it stay, as they do in jq.
+import "std/json";
+import "std/string";
+import "std/utf8";
+import "./number";
+
+pub enum Ast {
+  Identity,
+  Literal(json.JsonValue),
+  Var(string),
+  Index(Ast, Ast),
+  Slice(Ast, Ast, Ast),
+  Iterate(Ast),
+  Optional(Ast),
+  Pipe(Ast, Ast),
+  Comma(Ast, Ast),
+  Collect(Ast),
+  EmptyArray,
+  Object(Ast[], Ast[]),
+  Compare(string, Ast, Ast),
+  And(Ast, Ast),
+  Or(Ast, Ast),
+  Negate(Ast),
+}
+
+// The text that marks a part of the language that this port does not have yet.
+pub const NOT_YET: string = "is not in this port yet";
+
+// ---- Lexer ----
+
+pub enum Tok {
+  TDot,
+  TField(string),
+  TIdent(string),
+  TVar(string),
+  TNumber(string),
+  TString(string),
+  TPunct(string),
+  TEnd,
+}
+
+struct Lexed { toks: Tok[], error: string }
+
+function is_ident_start(b: u8): boolean {
+  return b >= b'a' && b <= b'z' || b >= b'A' && b <= b'Z' || b == b'_';
+}
+
+function is_ident_char(b: u8): boolean {
+  return is_ident_start(b) || b >= b'0' && b <= b'9';
+}
+
+function is_digit(b: u8): boolean {
+  return b >= b'0' && b <= b'9';
+}
+
+function ident_end(s: string, i: i32): i32 {
+  let j = i;
+  while (j < s.len() && (is_ident_char(s[j]) || j + 1 < s.len() && s[j] == b':' && s[j + 1] == b':')) {
+    if (s[j] == b':') {
+      j += 2;
+    } else {
+      j += 1;
+    }
+  }
+  return j;
+}
+
+function number_end(s: string, i: i32): i32 {
+  let j = i;
+  while (j < s.len() && is_digit(s[j])) {
+    j += 1;
+  }
+  if (j < s.len() && s[j] == b'.') {
+    j += 1;
+    while (j < s.len() && is_digit(s[j])) {
+      j += 1;
+    }
+  }
+  if (j < s.len() && (s[j] == b'e' || s[j] == b'E')) {
+    let k = j + 1;
+    if (k < s.len() && (s[k] == b'+' || s[k] == b'-')) {
+      k += 1;
+    }
+    if (k < s.len() && is_digit(s[k])) {
+      j = k;
+      while (j < s.len() && is_digit(s[j])) {
+        j += 1;
+      }
+    }
+  }
+  return j;
+}
+
+function text(s: string, from: i32, to: i32): string {
+  return slice_unchecked(s, from, to).to_owned();
+}
+
+function hex_digit(b: u8): i32 {
+  if (is_digit(b)) {
+    return (b - b'0') as i32;
+  }
+  if (b >= b'a' && b <= b'f') {
+    return (b - b'a') as i32 + 10;
+  }
+  if (b >= b'A' && b <= b'F') {
+    return (b - b'A') as i32 + 10;
+  }
+  return -1;
+}
+
+function hex4(s: string, i: i32): i32 {
+  if (i + 4 > s.len()) {
+    return -1;
+  }
+  let v = 0;
+  for k in i..i + 4 {
+    let d = hex_digit(s[k]);
+    if (d < 0) {
+      return -1;
+    }
+    v = v * 16 + d;
+  }
+  return v;
+}
+
+struct Scanned { value: string, end: i32, error: string }
+
+function codepoint_text(cp: i32): string {
+  if let Some(ch) = utf8.char_from_i32(cp) {
+    return utf8.encode(ch);
+  }
+  return "�";
+}
+
+// The string literal that starts at the quote at `i`.
+function scan_string(s: string, i: i32): Scanned {
+  let out = "";
+  let j = i + 1;
+  let run = j;
+  while (j < s.len()) {
+    let b = s[j];
+    if (b == b'"') {
+      return Scanned { value: out + text(s, run, j), end: j + 1, error: "" };
+    }
+    if (b != b'\\') {
+      j += 1;
+      continue;
+    }
+    out += text(s, run, j);
+    if (j + 1 >= s.len()) {
+      break;
+    }
+    let e = s[j + 1];
+    j += 2;
+    if (e == b'(') {
+      return Scanned { value: "", end: j, error: "string interpolation " + NOT_YET };
+    }
+    if (e == b'u') {
+      let cp = hex4(s, j);
+      if (cp < 0) {
+        return Scanned { value: "", end: j, error: "invalid \\u escape" };
+      }
+      j += 4;
+      if (cp >= 0xd800 && cp < 0xdc00 && j + 6 <= s.len() && s[j] == b'\\' && s[j + 1] == b'u') {
+        let lo = hex4(s, j + 2);
+        if (lo >= 0xdc00 && lo < 0xe000) {
+          cp = 0x10000 + (cp - 0xd800) * 1024 + (lo - 0xdc00);
+          j += 6;
+        }
+      }
+      out += codepoint_text(cp);
+    } else {
+      out += match (e) {
+        b'n' => "\n",
+        b't' => "\t",
+        b'r' => "\r",
+        b'b' => "\x08",
+        b'f' => "\x0c",
+        b'"' => "\"",
+        b'\\' => "\\",
+        b'/' => "/",
+        _ => "\\" + text(s, j - 1, j),
+      };
+    }
+    run = j;
+  }
+  return Scanned { value: "", end: j, error: "unterminated string literal" };
+}
+
+function two_char_punct(s: string, i: i32): string {
+  if (i + 1 >= s.len()) {
+    return "";
+  }
+  let p = text(s, i, i + 2);
+  if (p == "==" || p == "!=" || p == "<=" || p == ">=" || p == "//" || p == "|=" || p == "+=" || p == "-=" || p == "?/") {
+    return p;
+  }
+  return "";
+}
+
+pub function lex(s: string): Lexed {
+  let toks: Tok[] = [];
+  let i = 0;
+  while (i < s.len()) {
+    let b = s[i];
+    if (b == b' ' || b == b'\t' || b == b'\n' || b == b'\r') {
+      i += 1;
+    } else if (b == b'#') {
+      while (i < s.len() && s[i] != b'\n') {
+        i += 1;
+      }
+    } else if (b == b'.') {
+      if (i + 1 < s.len() && is_ident_start(s[i + 1])) {
+        let e = ident_end(s, i + 1);
+        toks = toks.append(TField(text(s, i + 1, e)));
+        i = e;
+      } else if (i + 1 < s.len() && s[i + 1] == b'.') {
+        toks = toks.append(TPunct(".."));
+        i += 2;
+      } else if (i + 1 < s.len() && is_digit(s[i + 1])) {
+        let e = number_end(s, i);
+        toks = toks.append(TNumber("0" + text(s, i, e)));
+        i = e;
+      } else {
+        toks = toks.append(TDot);
+        i += 1;
+      }
+    } else if (b == b'$') {
+      let e = ident_end(s, i + 1);
+      toks = toks.append(TVar(text(s, i + 1, e)));
+      i = e;
+    } else if (is_ident_start(b)) {
+      let e = ident_end(s, i);
+      toks = toks.append(TIdent(text(s, i, e)));
+      i = e;
+    } else if (is_digit(b)) {
+      let e = number_end(s, i);
+      toks = toks.append(TNumber(text(s, i, e)));
+      i = e;
+    } else if (b == b'"') {
+      let sc = scan_string(s, i);
+      if (sc.error.len() > 0) {
+        return Lexed { toks: toks, error: sc.error };
+      }
+      toks = toks.append(TString(sc.value));
+      i = sc.end;
+    } else if (b == b'@') {
+      return Lexed { toks: toks, error: "the format " + text(s, i, ident_end(s, i + 1)) + " " + NOT_YET };
+    } else {
+      let two = two_char_punct(s, i);
+      if (two.len() > 0) {
+        toks = toks.append(TPunct(two));
+        i += 2;
+      } else {
+        toks = toks.append(TPunct(text(s, i, i + 1)));
+        i += 1;
+      }
+    }
+  }
+  return Lexed { toks: toks.append(TEnd), error: "" };
+}
+
+// ---- Parser ----
+
+pub struct Parsed { ast: Ast, error: string }
+
+struct P { toks: Tok[], at: i32, error: string }
+
+function (p: P) peek(): Tok {
+  return p.toks[p.at];
+}
+
+function (p: P) advance(): P {
+  return P { ...p, at: p.at + 1 };
+}
+
+function (p: P) fail(message: string): P {
+  if (p.error.len() > 0) {
+    return p;
+  }
+  return P { ...p, error: message };
+}
+
+function (p: P) is_punct(s: string): boolean {
+  if let TPunct(x) = p.peek() {
+    return x == s;
+  }
+  return false;
+}
+
+function (p: P) is_ident(s: string): boolean {
+  if let TIdent(x) = p.peek() {
+    return x == s;
+  }
+  return false;
+}
+
+function (p: P) expect(s: string): P {
+  if (p.is_punct(s)) {
+    return p.advance();
+  }
+  if let TPunct(x) = p.peek() {
+    if (punct_message(x).contains(NOT_YET)) {
+      return p.fail(punct_message(x));
+    }
+  }
+  if (p.is_ident("as")) {
+    return p.fail(keyword_message("as"));
+  }
+  return p.fail("syntax error, expected '" + s + "' but got " + describe(p.peek()));
+}
+
+function describe(t: Tok): string {
+  return match (t) {
+    TDot => "'.'",
+    TField(f) => "'." + f + "'",
+    TIdent(x) => "'" + x + "'",
+    TVar(v) => "'$" + v + "'",
+    TNumber(n) => "'" + n + "'",
+    TString(_) => "a string",
+    TPunct(x) => "'" + x + "'",
+    TEnd => "the end of the program",
+  };
+}
+
+pub function parse(program: string): Parsed {
+  let lx = lex(program);
+  if (lx.error.len() > 0) {
+    return Parsed { ast: Identity, error: lx.error };
+  }
+  let p = P { toks: lx.toks, at: 0, error: "" };
+  let (ast, q) = parse_pipe(p);
+  if (q.error.len() == 0) {
+    if let TEnd = q.peek() {
+      return Parsed { ast: ast, error: "" };
+    }
+    q = q.fail(unexpected(q.peek()));
+  }
+  return Parsed { ast: Identity, error: q.error };
+}
+
+function unexpected(t: Tok): string {
+  return match (t) {
+    TPunct(x) => punct_message(x),
+    TIdent(x) => keyword_message(x),
+    _ => "syntax error, unexpected " + describe(t),
+  };
+}
+
+function punct_message(x: string): string {
+  if (x == "+" || x == "-" || x == "*" || x == "/" || x == "%") {
+    return "arithmetic " + NOT_YET;
+  }
+  if (x == "//") {
+    return "the alternative operator " + NOT_YET;
+  }
+  if (x == "=" || x == "|=" || x == "+=" || x == "-=" || x == "*=" || x == "/=" || x == "%=" || x == "//=") {
+    return "assignment " + NOT_YET;
+  }
+  if (x == "..") {
+    return "recursion " + NOT_YET;
+  }
+  return "syntax error, unexpected '" + x + "'";
+}
+
+function keyword_message(x: string): string {
+  if (x == "as") {
+    return "variable binding " + NOT_YET;
+  }
+  return "syntax error, unexpected '" + x + "'";
+}
+
+function parse_pipe(p: P): (Ast, P) {
+  let (left, q) = parse_comma(p);
+  if (q.error.len() == 0 && q.is_punct("|")) {
+    let (right, r) = parse_pipe(q.advance());
+    return (Pipe(left, right), r);
+  }
+  if (q.error.len() == 0 && q.is_ident("as")) {
+    return (left, q.fail(keyword_message("as")));
+  }
+  return (left, q);
+}
+
+function parse_comma(p: P): (Ast, P) {
+  let (left, q) = parse_or(p);
+  while (q.error.len() == 0 && q.is_punct(",")) {
+    let (right, r) = parse_or(q.advance());
+    left = Comma(left, right);
+    q = r;
+  }
+  return (left, q);
+}
+
+function parse_or(p: P): (Ast, P) {
+  let (left, q) = parse_and(p);
+  while (q.error.len() == 0 && q.is_ident("or")) {
+    let (right, r) = parse_and(q.advance());
+    left = Or(left, right);
+    q = r;
+  }
+  return (left, q);
+}
+
+function parse_and(p: P): (Ast, P) {
+  let (left, q) = parse_compare(p);
+  while (q.error.len() == 0 && q.is_ident("and")) {
+    let (right, r) = parse_compare(q.advance());
+    left = And(left, right);
+    q = r;
+  }
+  return (left, q);
+}
+
+function compare_op(p: P): string {
+  if let TPunct(x) = p.peek() {
+    if (x == "==" || x == "!=" || x == "<" || x == "<=" || x == ">" || x == ">=") {
+      return x;
+    }
+  }
+  return "";
+}
+
+function parse_compare(p: P): (Ast, P) {
+  let (left, q) = parse_negate(p);
+  let op = compare_op(q);
+  if (q.error.len() > 0 || op.len() == 0) {
+    return (left, q);
+  }
+  let (right, r) = parse_negate(q.advance());
+  if (compare_op(r).len() > 0) {
+    return (left, r.fail("syntax error, unexpected '" + compare_op(r) + "'"));
+  }
+  return (Compare(op, left, right), r);
+}
+
+function parse_negate(p: P): (Ast, P) {
+  if (p.is_punct("-")) {
+    let (inner, q) = parse_negate(p.advance());
+    return (Negate(inner), q);
+  }
+  return parse_postfix(p);
+}
+
+function parse_postfix(p: P): (Ast, P) {
+  let (t, q) = parse_primary(p);
+  while (q.error.len() == 0) {
+    match (q.peek()) {
+      TField(f) => {
+        t = Index(t, Literal(json.JString(f)));
+        q = q.advance();
+      },
+      TDot => {
+        let r = q.advance();
+        if let TString(s) = r.peek() {
+          t = Index(t, Literal(json.JString(s)));
+          q = r.advance();
+        } else if (r.is_punct("[")) {
+          let (u, w) = parse_brackets(t, r);
+          t = u;
+          q = w;
+        } else {
+          return (t, r.fail("syntax error, unexpected " + describe(r.peek())));
+        }
+      },
+      TPunct(x) => {
+        if (x == "[") {
+          let (u, w) = parse_brackets(t, q);
+          t = u;
+          q = w;
+        } else if (x == "?") {
+          t = Optional(t);
+          q = q.advance();
+        } else {
+          return (t, q);
+        }
+      },
+      _ => {
+        return (t, q);
+      }
+    }
+  }
+  return (t, q);
+}
+
+// `[` at `p`, after the term `t`: an iteration, an index or a slice.
+function parse_brackets(t: Ast, p: P): (Ast, P) {
+  let q = p.advance();
+  if (q.is_punct("]")) {
+    return (Iterate(t), q.advance());
+  }
+  if (q.is_punct(":")) {
+    let (to, r) = parse_pipe(q.advance());
+    return (Slice(t, Literal(json.JNull), to), r.expect("]"));
+  }
+  let (key, r) = parse_pipe(q);
+  if (r.error.len() == 0 && r.is_punct(":")) {
+    let s = r.advance();
+    if (s.is_punct("]")) {
+      return (Slice(t, key, Literal(json.JNull)), s.advance());
+    }
+    let (to, u) = parse_pipe(s);
+    return (Slice(t, key, to), u.expect("]"));
+  }
+  return (Index(t, key), r.expect("]"));
+}
+
+function parse_primary(p: P): (Ast, P) {
+  match (p.peek()) {
+    TDot => {
+      let q = p.advance();
+      if let TString(s) = q.peek() {
+        return (Index(Identity, Literal(json.JString(s))), q.advance());
+      }
+      if (q.is_punct("[")) {
+        return parse_brackets(Identity, q);
+      }
+      return (Identity, q);
+    },
+    TField(f) => {
+      return (Index(Identity, Literal(json.JString(f))), p.advance());
+    },
+    TNumber(n) => {
+      return (Literal(json.JNumber(number.canonical(n))), p.advance());
+    },
+    TString(s) => {
+      return (Literal(json.JString(s)), p.advance());
+    },
+    TVar(v) => {
+      if (v == "__loc__") {
+        return (Identity, p.fail("$__loc__ " + NOT_YET));
+      }
+      return (Var(v), p.advance());
+    },
+    TIdent(x) => {
+      return parse_word(x, p);
+    },
+    TPunct(x) => {
+      return parse_group(x, p);
+    },
+    TEnd => {
+      return (Identity, p.fail("syntax error, unexpected the end of the program"));
+    }
+  }
+}
+
+function parse_word(x: string, p: P): (Ast, P) {
+  if (x == "true") {
+    return (Literal(json.JBool(true)), p.advance());
+  }
+  if (x == "false") {
+    return (Literal(json.JBool(false)), p.advance());
+  }
+  if (x == "null") {
+    return (Literal(json.JNull), p.advance());
+  }
+  if (x == "if" || x == "reduce" || x == "foreach" || x == "try" || x == "def" || x == "label" || x == "import" || x == "include") {
+    return (Identity, p.fail("'" + x + "' " + NOT_YET));
+  }
+  return (Identity, p.fail("the function " + x + " " + NOT_YET));
+}
+
+function parse_group(x: string, p: P): (Ast, P) {
+  if (x == "(") {
+    let (inner, q) = parse_pipe(p.advance());
+    return (inner, q.expect(")"));
+  }
+  if (x == "[") {
+    let q = p.advance();
+    if (q.is_punct("]")) {
+      return (EmptyArray, q.advance());
+    }
+    let (inner, r) = parse_pipe(q);
+    return (Collect(inner), r.expect("]"));
+  }
+  if (x == "{") {
+    return parse_object(p.advance());
+  }
+  return (Identity, p.fail(unexpected(TPunct(x))));
+}
+
+// The entries of `{...}` after its brace.
+function parse_object(p: P): (Ast, P) {
+  let keys: Ast[] = [];
+  let values: Ast[] = [];
+  let q = p;
+  if (q.is_punct("}")) {
+    return (Object(keys, values), q.advance());
+  }
+  while (q.error.len() == 0) {
+    let (key, implied, r) = parse_object_key(q);
+    q = r;
+    if (q.is_punct(":")) {
+      let (value, s) = parse_object_value(q.advance());
+      keys = keys.append(key);
+      values = values.append(value);
+      q = s;
+    } else {
+      keys = keys.append(key);
+      values = values.append(implied);
+    }
+    if (q.is_punct("}")) {
+      return (Object(keys, values), q.advance());
+    }
+    q = q.expect(",");
+  }
+  return (Object(keys, values), q);
+}
+
+// A key, and the value that `{key}` without a `:` takes.
+function parse_object_key(p: P): (Ast, Ast, P) {
+  match (p.peek()) {
+    TIdent(x) => {
+      let k = Literal(json.JString(x));
+      return (k, Index(Identity, k), p.advance());
+    },
+    TString(s) => {
+      let k = Literal(json.JString(s));
+      return (k, Index(Identity, k), p.advance());
+    },
+    TVar(v) => {
+      if (v == "__loc__") {
+        return (Identity, Identity, p.fail("$__loc__ " + NOT_YET));
+      }
+      return (Literal(json.JString(v)), Var(v), p.advance());
+    },
+    TNumber(n) => {
+      return (Identity, Identity, p.fail("Cannot use number (" + n + ") as object key"));
+    },
+    TPunct(x) => {
+      if (x == "(") {
+        let (k, q) = parse_pipe(p.advance());
+        return (k, Index(Identity, k), q.expect(")"));
+      }
+      return (Identity, Identity, p.fail(unexpected(p.peek())));
+    },
+    _ => {
+      return (Identity, Identity, p.fail(unexpected(p.peek())));
+    }
+  }
+}
+
+// A value of an object entry: terms joined by `|`, with no comma.
+function parse_object_value(p: P): (Ast, P) {
+  let (left, q) = parse_negate(p);
+  if (q.error.len() == 0 && q.is_punct("|")) {
+    let (right, r) = parse_object_value(q.advance());
+    return (Pipe(left, right), r);
+  }
+  return (left, q);
+}
+
+// The first variable of `f` that is not one of `names`, or "".
+pub function undefined_var(f: Ast, names: string[]): string {
+  return match (f) {
+    Var(v) => if (names.contains(v)) { "" } else { v },
+    Index(a, b) => first_undefined([a, b], names),
+    Slice(a, b, c) => first_undefined([a, b, c], names),
+    Iterate(a) => undefined_var(a, names),
+    Optional(a) => undefined_var(a, names),
+    Pipe(a, b) => first_undefined([a, b], names),
+    Comma(a, b) => first_undefined([a, b], names),
+    Collect(a) => undefined_var(a, names),
+    Object(keys, values) => first_undefined(keys.concat(values), names),
+    Compare(_, a, b) => first_undefined([a, b], names),
+    And(a, b) => first_undefined([a, b], names),
+    Or(a, b) => first_undefined([a, b], names),
+    Negate(a) => undefined_var(a, names),
+    _ => "",
+  };
+}
+
+function first_undefined(fs: Ast[], names: string[]): string {
+  for f in fs {
+    let v = undefined_var(f, names);
+    if (v.len() > 0) {
+      return v;
+    }
+  }
+  return "";
+}
