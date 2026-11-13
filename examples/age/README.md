@@ -210,48 +210,35 @@ as plain files and gives a header failure, as age does.
 
 ## Performance
 
-The test file has 1 GiB from `/dev/urandom`. Each tool encrypts it to one
-X25519 recipient and decrypts it with the identity. Each time is the best
-of 3 runs. The host is a 4-core Intel Xeon at 2.10 GHz (x86-64) with
-Linux. The port is built with `fern -O -target x86-64-linux`. rage is not
-installed on the host, so it is not in the table.
+The input is 1 GiB of zeros in a sparse file. Each tool encrypts it to one
+X25519 recipient, and decrypts the file that age made with the identity.
+The output goes to `/dev/null`.
+
+Each time is the best of 7 runs, with the two tools in turn. The host is a 4-core Intel Xeon (2.10 GHz, 3.2 GHz with
+turbo) with Linux, and other jobs used it at the same time. The port is
+built with `fern -O -target x86-64-linux`. rage is not installed on the
+host, so it is not in the table.
 
 | Operation | age 1.1.1 | Fern port | Port / age |
 | --- | ---: | ---: | ---: |
-| Encrypt, file to file (`-o`) | 1.37 s | 5.17 s | 3.8 |
-| Decrypt, file to file (`-o`) | 1.98 s | 4.75 s | 2.4 |
-| Encrypt to `/dev/null` | 0.62 s | 4.13 s | 6.7 |
-| Decrypt to `/dev/null` | 1.05 s | 4.15 s | 4.0 |
+| Encrypt to `/dev/null` | 0.62 s | 0.68 s | 1.11 |
+| Decrypt to `/dev/null` | 0.96 s | 0.78 s | 0.81 |
 
-The port is slower than age. The goal is to be faster than age and rage,
-so the port does not meet it yet. These are the causes:
+The port decrypts faster than age. It encrypts slower than age. A profile
+of each tool (`perf record`) shows the causes:
 
-- **ChaCha20.** About 98% of the instructions of a decryption are in
-  `std/crypto/chacha20poly1305` (callgrind, 8 MiB). The kernel seals at
-  about 310 MB/s, and ChaCha20 alone is at about 345 MB/s. It computes one
-  64-byte block at a time with scalar `u32` operations. It writes each
-  keystream word with four byte updates. age uses the assembly of
-  golang.org/x/crypto, which computes many blocks at a time with AVX2 or
-  NEON.
+- **Port, encrypt.** `__fern_chacha20_xor_into` takes 49% of the time,
+  `__fern_poly1305_blocks` 25%, the copy of `read` in the kernel 18%, and
+  the copy that adds the room for the tag 5%. ChaCha20 runs at about 1.07
+  cycles for each byte (AVX2, eight blocks at a time). Poly1305 runs at
+  about 0.54 cycles for each byte (AVX2, four blocks at a time).
+- **age, encrypt.** One block of the AVX2 assembly of golang.org/x/crypto
+  takes 52% of the time, and the copy of `read` in the kernel 39%. That
+  assembly computes ChaCha20 in the vector registers and Poly1305 in the
+  general registers in the same loop. Thus the two run at the same time,
+  at about 1.2 cycles for each byte for both.
 
-- **Poly1305.** Poly1305 alone is at about 1.25 GB/s. After a vector
-  ChaCha20, it becomes the limit.
-
-- **I/O.** The port reads one sealed chunk and writes one plaintext chunk
-  with one system call each, as age does. The file-to-file times include
-  up to about 1 s of disk writes for each tool.
-
-The fix is a ChaCha20 kernel builtin for each backend, as `__aes_ctr32` is
-for AES-GCM (`docs/NET-P4-TLS-PLAN.md`). It must do 8 blocks for each step
-with AVX2 on x86-64 and 4 blocks with NEON on arm64. wasm32-wasi keeps the
-scalar code. Fern has no vector type with `u32` lanes, so the kernel must
-be in the compiler. Then a Poly1305 with 64-bit limbs and the `mulx`
-multiply can remove the next limit. This work is not in this slice.
-
-- **`array.slice`.** On `u8[]`, `array.slice` appends each byte by
-  itself, and it uses 46% of the instructions of a decryption. The
-  byte-copy pass of the compiler takes only a loop that counts from 0
-  (#15706). The table has the times with the fix of the pass. Without
-  it, decryption to a file takes 8.3 s and encryption takes 6.5 s.
-
-The issue for the ChaCha20 kernel is #15708.
+The port computes ChaCha20 and then Poly1305, at about 1.6 cycles for each
+byte for both. To encrypt faster than age, the port needs a seal kernel
+like that of golang.org/x/crypto. Its ChaCha20 loop also computes Poly1305
+in the general registers.
