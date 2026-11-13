@@ -563,7 +563,7 @@ function test_output(): test.TestOutcome {
 }
 
 function test_stream(): test.TestOutcome {
-  let st = input.stream("﻿1 2\n{\"a\":\n1}[3]\n\n\"x\"");
+  let st = input.stream("\u{feff}1 2\n{\"a\":\n1}[3]\n\n\"x\"");
   let got: string[] = [];
   for t in st.texts {
     got = got.append(output.compact(t.value) + "@" + t.line.to_string());

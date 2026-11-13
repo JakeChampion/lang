@@ -18,9 +18,68 @@ function is_control_byte(b: i32): boolean {
   return b < 32 || b == 127;
 }
 
+// The code points that a reader cannot see or that reorder the display. The
+// Go formatter (internal/syntax/printer/format.go) holds the same ranges.
+const HIDDEN_SCALARS: i32[] = [
+  0x80, 0xA0, 0xAD, 0xAD, 0x600, 0x605, 0x61C, 0x61C, 0x6DD, 0x6DD,
+  0x70F, 0x70F, 0x8E2, 0x8E2, 0x1680, 0x1680, 0x180E, 0x180E,
+  0x2000, 0x200F, 0x2028, 0x202F, 0x205F, 0x2064, 0x2066, 0x206F,
+  0x3000, 0x3000, 0xFEFF, 0xFEFF, 0xFFF9, 0xFFFB, 0x110BD, 0x110BD,
+  0x110CD, 0x110CD, 0x13430, 0x1343F, 0x1BCA0, 0x1BCA3,
+  0x1D173, 0x1D17A, 0xE0001, 0xE0001, 0xE0020, 0xE007F,
+];
+
+function hidden_scalar(cp: i32): boolean {
+  let k = 0;
+  while (k < HIDDEN_SCALARS.len()) {
+    if (cp >= HIDDEN_SCALARS[k] && cp <= HIDDEN_SCALARS[k + 1]) {
+      return true;
+    }
+    k += 2;
+  }
+  return false;
+}
+
+// The length of the UTF-8 sequence that starts with byte b.
+function utf8_width(b: i32): i32 {
+  if (b >= 0xF0) {
+    return 4;
+  }
+  if (b >= 0xE0) {
+    return 3;
+  }
+  return 2;
+}
+
+function utf8_scalar(s: string, i: i32, width: i32): i32 {
+  let cp = s[i] as i32 & 0x7F >> width;
+  for k in 1..width {
+    cp = cp << 6 | s[i + k] as i32 & 0x3F;
+  }
+  return cp;
+}
+
+function append_scalar_escape(out: u8[], cp: i32): u8[] {
+  let a = out.append(92 as u8).append(117 as u8).append(123 as u8);
+  let shift = 20;
+  while (shift > 0 && (cp >> shift & 15) == 0) {
+    shift -= 4;
+  }
+  while (shift >= 0) {
+    a = a.append(util.hex_digit(cp >> shift & 15));
+    shift -= 4;
+  }
+  return a.append(125 as u8);
+}
+
 function escape_lit_body(s: string, fstring: boolean): string {
   let out: u8[] = [];
+  let skip = 0;
   for i in 0..s.len() {
+    if (skip > 0) {
+      skip -= 1;
+      continue;
+    }
     let b = s[i] as i32;
     if (b == 34) {
       out = out.append(92 as u8);
@@ -42,6 +101,17 @@ function escape_lit_body(s: string, fstring: boolean): string {
       out = out.append(b as u8);
     } else if (is_control_byte(b)) {
       out = append_hex_escape(out, b);
+    } else if (b >= 0xC0 && i + utf8_width(b) <= s.len()) {
+      let width = utf8_width(b);
+      let cp = utf8_scalar(s, i, width);
+      if (hidden_scalar(cp)) {
+        out = append_scalar_escape(out, cp);
+      } else {
+        for k in 0..width {
+          out = out.append(s[i + k]);
+        }
+      }
+      skip = width - 1;
     } else {
       out = out.append(s[i]);
     }

@@ -1466,6 +1466,22 @@ func TestFormatWritesUnicodeEscapesAsCharacters(t *testing.T) {
 	}
 }
 
+func TestFormatKeepsHiddenScalarsEscaped(t *testing.T) {
+	for _, tc := range []struct{ src, want string }{
+		{"function f(): string { return \"\\u{feff}a\\u{200b}b\\u{202e}c\\u{85}\\u{a0}\\u{e007f}\"; }", `return "\u{feff}a\u{200b}b\u{202e}c\u{85}\u{a0}\u{e007f}";`},
+		{"function f(): string { return \"\u202e\u2066x\"; }", `return "\u{202e}\u{2066}x";`},
+		{"function f(s: string): string { return f\"\\u{2028}{s}é\"; }", `return f"\u{2028}{s}é";`},
+	} {
+		got := formatSrc(t, tc.src)
+		if !strings.Contains(got, tc.want) {
+			t.Fatalf("want %q in:\n%s", tc.want, got)
+		}
+		if again := formatSrc(t, got); again != got {
+			t.Fatalf("not idempotent:\n%s\n---\n%s", got, again)
+		}
+	}
+}
+
 func TestFormatKeepsListInteriorComments(t *testing.T) {
 	src := `struct S { a: i32, b: i32 }
 function g(a: i32, b: i32): i32 { return a + b; }

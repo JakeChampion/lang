@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
@@ -1805,10 +1806,40 @@ func (f *formatter) writeStringBody(lit string, fstring bool) {
 			f.b.WriteString(`}}`)
 		case c < 0x20 || c == 0x7f:
 			fmt.Fprintf(&f.b, `\x%02x`, c)
+		case c >= 0x80:
+			r, size := utf8.DecodeRuneInString(lit[i:])
+			if hiddenScalar(r) {
+				fmt.Fprintf(&f.b, `\u{%x}`, r)
+			} else {
+				f.b.WriteString(lit[i : i+size])
+			}
+			i += size - 1
 		default:
 			f.b.WriteByte(c)
 		}
 	}
+}
+
+// hiddenScalars are the code points that a reader cannot see or that reorder
+// the display: the C1 controls, the format characters, the line and paragraph
+// separators and the spaces other than U+0020. compiler/printer.fern holds
+// the same ranges.
+var hiddenScalars = [][2]rune{
+	{0x80, 0xA0}, {0xAD, 0xAD}, {0x600, 0x605}, {0x61C, 0x61C}, {0x6DD, 0x6DD},
+	{0x70F, 0x70F}, {0x8E2, 0x8E2}, {0x1680, 0x1680}, {0x180E, 0x180E},
+	{0x2000, 0x200F}, {0x2028, 0x202F}, {0x205F, 0x2064}, {0x2066, 0x206F},
+	{0x3000, 0x3000}, {0xFEFF, 0xFEFF}, {0xFFF9, 0xFFFB}, {0x110BD, 0x110BD},
+	{0x110CD, 0x110CD}, {0x13430, 0x1343F}, {0x1BCA0, 0x1BCA3},
+	{0x1D173, 0x1D17A}, {0xE0001, 0xE0001}, {0xE0020, 0xE007F},
+}
+
+func hiddenScalar(r rune) bool {
+	for _, span := range hiddenScalars {
+		if r >= span[0] && r <= span[1] {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {

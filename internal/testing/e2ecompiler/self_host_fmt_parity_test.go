@@ -1911,6 +1911,12 @@ function main(): i32 {
 		"return s.len() + f.len();\n" +
 		"}\n"},
 
+	{"string-hidden-scalars", "function main(): i32 {\n" +
+		"let s: string = \"\\u{feff}a\\u{200b}\u202e\\u{85}\\u{a0}é\\u{e007f}\";\n" +
+		"let f: string = f\"\\u{2028}{s}\u2066\";\n" +
+		"return s.len() + f.len();\n" +
+		"}\n"},
+
 	{"use-sugar", `function maybe_double(n: i32, cb: (i32) => Option[i32]): Option[i32] {
 return cb(n + n);
 }
