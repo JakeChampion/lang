@@ -64,15 +64,17 @@ function first_read(insts: ssa.SInst[], p: i32, v: i32, f: ssasem.Func): i32[] {
   return [];
 }
 
-// Above a call, only a read that cannot trap and holds no count moves: the
-// call can have effects, and a counted result would hold `v` across it.
+// Above a call, only a field read with no count moves. A call can have
+// effects, so a read that can trap stays below it. A call can change the
+// length of an array in place (`__arr_set_len`), but not a field. A counted
+// result would hold `v` across the call.
 function reads(ins: ssa.SInst, v: i32, call: boolean, f: ssasem.Func): boolean {
   if (ins.args.len() == 0 || ins.args[0] != v) {
     return false;
   }
   let k = ins.kind_tag;
   if (call) {
-    return (k == ssasem.record_get() || k == ssasem.length()) && !ssasem.counted(f, f.values[ins.result]);
+    return k == ssasem.record_get() && !ssasem.counted(f, f.values[ins.result]);
   }
   return k == ssasem.array_get() || k == ssasem.length();
 }
