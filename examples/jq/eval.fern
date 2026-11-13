@@ -8,6 +8,7 @@ import "std/base64";
 import "std/f64";
 import "std/string";
 import "std/utf8";
+import "./dates";
 import "./filter";
 import "./number";
 import "./output";
@@ -992,6 +993,9 @@ function run_alt(a: filter.Ast, b: filter.Ast, input: json.JsonValue, e: Env): O
 
 // ---- Functions ----
 
+// Not inline: `run` calls itself, and this body in it makes each level of a
+// jq function use two times the stack (#15730).
+@noinline
 function call(name: string, args: filter.Ast[], input: json.JsonValue, e: Env): Outputs {
   return match (name) {
     "empty" => ok([]),
@@ -2180,7 +2184,8 @@ function call_number(name: string, args: filter.Ast[], input: json.JsonValue, e:
     "isnan" => one(json.JBool(number_is(name, input))),
     "isinfinite" => one(json.JBool(number_is(name, input))),
     "isnormal" => one(json.JBool(number_is(name, input))),
-    "pow" => run_pow(args[0], args[1], input, e),
+    "pow" => run_pow(name, args[0], args[1], input, e),
+    "atan2" => run_pow(name, args[0], args[1], input, e),
     "floor" => math_of(name, input),
     "ceil" => math_of(name, input),
     "round" => math_of(name, input),
@@ -2192,7 +2197,7 @@ function call_number(name: string, args: filter.Ast[], input: json.JsonValue, e:
     "log10" => math_of(name, input),
     "exp2" => math_of(name, input),
     "exp10" => math_of(name, input),
-    _ => of_type(name, input),
+    _ => call_dates(name, args, input, e),
   };
 }
 
@@ -2235,12 +2240,187 @@ function math_of(name: string, v: json.JsonValue): Outputs {
     "log2" => x.log2(),
     "log10" => x.log10(),
     "exp2" => x.exp2(),
-    _ => x.exp10(),
+    "exp10" => x.exp10(),
+    _ => circular(name, x),
   }));
 }
 
-// jq takes each exponent, and then each base.
-function run_pow(base: filter.Ast, exponent: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+function circular(name: string, x: f64): f64 {
+  return match (name) {
+    "sin" => x.sin(),
+    "cos" => x.cos(),
+    "tan" => x.tan(),
+    "asin" => x.asin(),
+    "acos" => x.acos(),
+    "atan" => x.atan(),
+    "sinh" => x.sinh(),
+    "cosh" => x.cosh(),
+    "tanh" => x.tanh(),
+    "cbrt" => x.cbrt(),
+    "log1p" => x.log1p(),
+    _ => x.expm1(),
+  };
+}
+
+// ---- Dates ----
+
+function call_dates(name: string, args: filter.Ast[], input: json.JsonValue, e: Env): Outputs {
+  return match (name) {
+    "builtins" => one(json.JArray(texts(filter.functions()))),
+    "now" => one(computed(now_unix_ms() as f64 / 1000.0)),
+    "gmtime" => broken_down(name, input),
+    "localtime" => broken_down(name, input),
+    "mktime" => make_time(input),
+    "strftime" => run_strftime(name, args[0], input, e),
+    "strflocaltime" => run_strftime(name, args[0], input, e),
+    "strptime" => run_strptime(args[0], input, e),
+    "sin" => math_of(name, input),
+    "cos" => math_of(name, input),
+    "tan" => math_of(name, input),
+    _ => call_last(name, input),
+  };
+}
+
+function call_last(name: string, input: json.JsonValue): Outputs {
+  return match (name) {
+    "asin" => math_of(name, input),
+    "acos" => math_of(name, input),
+    "atan" => math_of(name, input),
+    "sinh" => math_of(name, input),
+    "cosh" => math_of(name, input),
+    "tanh" => math_of(name, input),
+    "cbrt" => math_of(name, input),
+    "log1p" => math_of(name, input),
+    "expm1" => math_of(name, input),
+    _ => of_type(name, input),
+  };
+}
+
+function texts(names: string[]): json.JsonValue[] {
+  let out: json.JsonValue[] = [];
+  for name in names {
+    out = out.append(json.JString(name));
+  }
+  return out;
+}
+
+function tm_value(t: dates.Tm, seconds: f64): json.JsonValue {
+  let parts: json.JsonValue[] = [];
+  for n in [t.year, t.mon, t.mday, t.hour, t.min] {
+    parts = parts.append(json.JNumber(n.to_string()));
+  }
+  parts = parts.append(computed(seconds));
+  parts = parts.append(json.JNumber(t.wday.to_string()));
+  return json.JArray(parts.append(json.JNumber(t.yday.to_string())));
+}
+
+// `gmtime` and `localtime`. The seconds keep the fraction of the input.
+function broken_down(name: string, input: json.JsonValue): Outputs {
+  let json.JNumber(text) = input else {
+    return fail(name + "() requires numeric inputs");
+  };
+  let x = number.value(text);
+  if (!(x >= -67768040609740800.0 && x < 67768036191676800.0)) {
+    return fail("error converting number of seconds since epoch to datetime");
+  }
+  let t = dates.gmtime(x.trunc() as i64);
+  return one(tm_value(t, t.sec as f64 + (x - x.floor())));
+}
+
+// The time of an array of 8 numbers. jq cuts each number to an integer.
+function tm_of(items: json.JsonValue[]): dates.Tm[] {
+  let ns: i64[] = [];
+  for item in items {
+    if let json.JNumber(text) = item {
+      ns = ns.append(number.value(text).trunc() as i64);
+    }
+  }
+  if (items.len() < 8 || ns.len() != items.len()) {
+    return [];
+  }
+  return [dates.Tm { year: ns[0], mon: ns[1], mday: ns[2], hour: ns[3], min: ns[4], sec: ns[5], wday: ns[6], yday: ns[7] }];
+}
+
+function make_time(input: json.JsonValue): Outputs {
+  let json.JArray(items) = input else {
+    return fail("mktime requires array inputs");
+  };
+  let t = tm_of(items);
+  if (t.len() == 0) {
+    return fail("mktime requires parsed datetime inputs");
+  }
+  let seconds = dates.timegm(t[0]);
+  if (seconds == -1) {
+    return fail("invalid gmtime representation");
+  }
+  if (seconds == -2) {
+    return fail("mktime not supported on this platform");
+  }
+  return one(json.JNumber(seconds.to_string()));
+}
+
+// The time of the input of `strftime`: an array, or a number of seconds.
+function time_input(name: string, input: json.JsonValue): (dates.Tm[], Outputs) {
+  let needs = fail(name + "/1 requires parsed datetime inputs");
+  match (input) {
+    json.JNumber(_) => {
+      let parts = broken_down("gmtime", input);
+      if (parts.failed()) {
+        return ([], parts);
+      }
+      return time_input(name, parts.values[0]);
+    },
+    json.JArray(items) => {
+      let t = tm_of(items);
+      return (t, if (t.len() == 0) { needs } else { ok([]) });
+    },
+    _ => {
+      return ([], needs);
+    }
+  }
+}
+
+function run_strftime(name: string, format: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+  let formats = run(format, input, e);
+  let out = ok([]);
+  for f in formats.values {
+    let (t, bad) = time_input(name, input);
+    if (bad.failed()) {
+      return out.then(bad);
+    }
+    let json.JString(text) = f else {
+      return out.then(fail(name + "/1 requires a string format"));
+    };
+    let made = dates.strftime(text, t[0]);
+    if (made.len() == 0) {
+      return out.then(fail(name + "/1: unknown system failure"));
+    }
+    out = out.then(one(json.JString(made)));
+  }
+  return Outputs { ...out, error: formats.error };
+}
+
+function run_strptime(format: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+  let formats = run(format, input, e);
+  let out = ok([]);
+  for f in formats.values {
+    let json.JString(text) = input else {
+      return out.then(fail("strptime/1 requires string inputs and arguments"));
+    };
+    let json.JString(form) = f else {
+      return out.then(fail("strptime/1 requires string inputs and arguments"));
+    };
+    let (t, matched) = dates.strptime(text, form);
+    if (!matched) {
+      return out.then(fail("date " + output.compact(input) + " does not match format " + output.compact(f)));
+    }
+    out = out.then(one(tm_value(t, t.sec as f64)));
+  }
+  return Outputs { ...out, error: formats.error };
+}
+
+// `pow` and `atan2`. jq takes each second argument, and then each first.
+function run_pow(name: string, base: filter.Ast, exponent: filter.Ast, input: json.JsonValue, e: Env): Outputs {
   let exponents = run(exponent, input, e);
   let out = ok([]);
   for y in exponents.values {
@@ -2254,7 +2434,7 @@ function run_pow(base: filter.Ast, exponent: filter.Ast, input: json.JsonValue, 
       if (bad_b.failed()) {
         return out.then(bad_b);
       }
-      out = out.then(one(computed(a.pow(b))));
+      out = out.then(one(computed(if (name == "pow") { a.pow(b) } else { a.atan2(b) })));
     }
     if (bases.failed()) {
       return Outputs { ...out, error: bases.error };
