@@ -772,7 +772,7 @@ function __rx_pack_mask(own masks: i32[], tok: u8[], ci: boolean): i32[] {
     let word = 0;
     for bit in 0..32 {
       if (tok[base + w * 32 + bit] != 0) {
-        word = word | 1 << bit;
+        word |= 1 << bit;
       }
     }
     masks = masks.append(word);
@@ -1233,7 +1233,7 @@ function __rx_dfa_start_ctx(job: i32, nctx: i32): i32 {
     ctx = 1;
   }
   if (nctx == 3 && job / nctx % 2 == 1) {
-    ctx = ctx | 4;
+    ctx |= 4;
   }
   return ctx | __rx_dfa_kind_ctx(job % nctx, nctx);
 }
@@ -1242,7 +1242,7 @@ function __rx_dfa_start_ctx(job: i32, nctx: i32): i32 {
 function __rx_dfa_step_ctx(byte: i32, kind: i32, nctx: i32): i32 {
   let ctx = __rx_dfa_kind_ctx(kind, nctx);
   if (nctx == 3 && __rx_is_word(byte)) {
-    ctx = ctx | 4;
+    ctx |= 4;
   }
   return ctx;
 }
