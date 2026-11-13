@@ -13175,8 +13175,21 @@ function reset_trampoline(t: i32, top: i32): i32[] {
   return b;
 }
 
+// -cpu-limit: prlimit64 sets the soft and the hard limit of RLIMIT_CPU before
+// main runs. The kernel sends SIGXCPU at the limit.
+function emit_cpu_limit(s: asmcore.EmitState): asmcore.EmitState {
+  if (s.cpu_limit <= 0i64) {
+    return s;
+  }
+  let n = util.i64_to_string(s.cpu_limit);
+  s = s.write("    subq $16, %rsp\n    movq $" + n + ", (%rsp)\n    movq $" + n + ", 8(%rsp)\n");
+  s = s.write("    xorl %edi, %edi\n    xorl %esi, %esi\n    movq %rsp, %rdx\n    xorl %r10d, %r10d\n    movl $302, %eax\n").syscall(302);
+  return s.write("    addq $16, %rsp\n");
+}
+
 function emit_process_finish(mod: parser.Module, own s: asmcore.EmitState): asmcore.EmitState {
   if (asmcore.has_main(mod)) {
+    s = emit_cpu_limit(s);
     s = s.write("    call __fn_main\n");
     if (s.has_need("task")) {
       s = s.write("    pushq %rax\n    call __fern_task_close_drop\n    popq %rax\n");

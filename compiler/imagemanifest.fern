@@ -81,7 +81,8 @@ function manifest_candidate(b: u8[], start: i32, end: i32): boolean {
   return true;
 }
 
-// "harden=1" prints as "harden: yes"; a value that is not a flag prints as it is.
+// "harden=1" prints as "harden: yes"; a value that is not a flag prints as it
+// is, and so does each number: a limit or the quarantine budget.
 function manifest_field(field: string): string {
   let eq = __memchr(field, 61, 0);
   if (eq < 0) {
@@ -89,6 +90,9 @@ function manifest_field(field: string): string {
   }
   let key = slice_unchecked(field, 0, eq).to_owned();
   let value = slice_unchecked(field, eq + 1, field.len()).to_owned();
+  if (key.ends_with("_limit") || key == "quarantine") {
+    return key + ": " + value;
+  }
   if (value == "1") {
     value = "yes";
   } else if (value == "0") {
