@@ -75,7 +75,7 @@ struct State {
   binding: ssasem.Binding,
   requests: Request[],
   foreign: i32[],
-  handers: util.NameIndex,
+  handers: Handers,
   shadows: string[],
   views: string[],
   name: string,
@@ -2889,8 +2889,7 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
   if (ssasem.contract_variables(contract).len() > 0) {
     return invoke_method(recv, c.args, contract, s, written_binding(c, contract, s), destination_binding(contract, expected));
   }
-  let kept = keeps(s, contract);
-  let lent = lend(widen(Value { s: s, id: recv }, contract.params[0]), contract.params[0], contract.modes[0], kept);
+  let lent = lend(widen(Value { s: s, id: recv }, contract.params[0]), contract.params[0], contract.modes[0], keeps(s, contract, 0));
   s = lent.s;
   recv = lent.id;
   if (!semtypes.equal(s.values[recv], contract.params[0])) {
@@ -2898,7 +2897,7 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
   }
   let ids: i32[] = [recv];
   for i in 0..c.args.len() {
-    let v = lend(expr(c.args[i], s, contract.params[i + 1]), contract.params[i + 1], contract.modes[i + 1], kept);
+    let v = lend(expr(c.args[i], s, contract.params[i + 1]), contract.params[i + 1], contract.modes[i + 1], keeps(s, contract, i + 1));
     s = v.s;
     if (!s.ok) {
       return v;
@@ -3116,11 +3115,15 @@ function lend(v: Value, param: typeinfo.Type, m: i32, kept: boolean): Value {
   return define(empty.s, ssa.BINARY, [v.id, empty.id], 0, "+", param);
 }
 
-function keeps(s: State, contract: ssasem.Contract): boolean {
+// True if the callee can hand back its parameter `at` in its result.
+function keeps(s: State, contract: ssasem.Contract, at: i32): boolean {
   // A scalar result cannot contain a borrowed string. Method names alone
   // can mark an unrelated scalar reader as a function that returns a borrow.
   let t = contract.result;
-  return !ssasem.is_integer(t) && !ssasem.is_bool(t) && !ssasem.is_float(t) && s.handers.has(contract.name);
+  if (ssasem.is_integer(t) || ssasem.is_bool(t) || ssasem.is_float(t)) {
+    return false;
+  }
+  return (s.handers.mask(contract.name) & param_bit(at)) != 0;
 }
 
 function indirect_call(c: ast.ExprCall, callee: i32, s: State, statement: boolean): Value {
@@ -3892,8 +3895,7 @@ function invoke_method(recv: i32, args: ast.Expr[], contract: ssasem.Contract, s
   if (!written.ok) {
     return refused(s, written.why);
   }
-  let kept = keeps(s, contract);
-  let v = lend(Value { s: s, id: recv }, contract.params[0], contract.modes[0], kept);
+  let v = lend(Value { s: s, id: recv }, contract.params[0], contract.modes[0], keeps(s, contract, 0));
   s = v.s;
   if (!s.ok) {
     return v;
@@ -3920,8 +3922,7 @@ function invoke_rest(ids: i32[], bound: ssasem.Binding, args: ast.Expr[], base: 
     if (!semtypes.concrete(want, false)) {
       want = ssasem.substitute(want, later_binding(bound, args, i + 1, base, contract, s));
     }
-    let kept = keeps(s, contract);
-    let v = kernel_argument(lend(expr(args[i], s, want), want, contract.modes[at], kept), want);
+    let v = kernel_argument(lend(expr(args[i], s, want), want, contract.modes[at], keeps(s, contract, at)), want);
     s = v.s;
     if (!s.ok) {
       return v;
@@ -5929,7 +5930,7 @@ function refuse(why: string): Produced {
   return Produced { ok: false, why: why, func: ssasem.Func { source_positions: sourcepos.no_source(), graph: graph, values: [], params: [], result: typeinfo.t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], schema_checked: false }, modes: [], template: false, key: "", requests: [], bodyless: false, analysis: None, view_escape: 0, dropped: false };
 }
 
-function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contracts, binding: ssasem.Binding, name: string, handers: util.NameIndex, shadows: string[], views: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[], debug_lines: boolean): State {
+function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contracts, binding: ssasem.Binding, name: string, handers: Handers, shadows: string[], views: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[], debug_lines: boolean): State {
   let entry = ssa.SBlock { id: 0, insts: [], term: t_none(), preds: [] };
   return State {
     ok: true, why: "", blocks: [], cur: entry, live: true, next_block: 1, values: [],
@@ -6946,7 +6947,7 @@ function unresolved_result_spelling(fd: parser.FuncDecl, s: State): string {
   return "inferred from the first returned value";
 }
 
-function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contracts, binding: ssasem.Binding, name: string, handers: util.NameIndex, shadows: string[], views: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[], finalizers: ssasem.Finalizer[], memo: SchemaMemo, debug_lines: boolean): Made {
+function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contracts, binding: ssasem.Binding, name: string, handers: Handers, shadows: string[], views: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[], finalizers: ssasem.Finalizer[], memo: SchemaMemo, debug_lines: boolean): Made {
   if (fd.import_iface.len() > 0) {
     return Made { p: external_entry(), memo: memo };
   }
@@ -7015,14 +7016,52 @@ function method_name_of(key: string): string {
   return slice_unchecked(key, at + 1, key.len()).to_owned();
 }
 
-struct Handers { keys: util.NameIndex, methods: util.NameIndex }
+// The parameters that each declaration can hand back in its result. Bit `p`
+// of `masks[i]` is parameter `p` of the declaration `keys.names[i]`, and the
+// receiver is parameter 0. `method_masks` joins the declarations that have
+// one method name.
+pub struct Handers { keys: util.NameIndex, masks: i64[], methods: util.NameIndex, method_masks: i64[] }
 
-function handers_with(h: Handers, key: string): Handers {
-  let m = method_name_of(key);
-  if (m.len() > 0 && !h.methods.has(m)) {
-    return Handers { keys: h.keys.added(key), methods: h.methods.added(m) };
+// Each parameter after the 62nd has the bit of the 62nd.
+function param_bit(at: i32): i64 {
+  let one: i64 = 1;
+  if (at > 62) {
+    return one << 62;
   }
-  return Handers { ...h, keys: h.keys.added(key) };
+  return one << at as i64;
+}
+
+function every_param(): i64 {
+  return -1;
+}
+
+function (h: Handers) mask(key: string): i64 {
+  let at = h.keys.find(key);
+  if (at < 0) {
+    return 0;
+  }
+  return h.masks[at];
+}
+
+function handers_with(h: Handers, key: string, mask: i64): Handers {
+  let keys = h.keys;
+  let masks = h.masks;
+  let at = keys.find(key);
+  if (at < 0) {
+    keys = keys.added(key);
+    masks = masks.append(mask);
+  } else {
+    masks = masks.with(at, masks[at] | mask);
+  }
+  let m = method_name_of(key);
+  if (m.len() == 0) {
+    return Handers { ...h, keys: keys, masks: masks };
+  }
+  let mat = h.methods.find(m);
+  if (mat < 0) {
+    return Handers { keys: keys, masks: masks, methods: h.methods.added(m), method_masks: h.method_masks.append(mask) };
+  }
+  return Handers { keys: keys, masks: masks, methods: h.methods, method_masks: h.method_masks.with(mat, h.method_masks[mat] | mask) };
 }
 
 function return_exprs(st: ast.Stmt, own acc: ast.Expr[]): ast.Expr[] {
@@ -7032,62 +7071,82 @@ function return_exprs(st: ast.Stmt, own acc: ast.Expr[]): ast.Expr[] {
   return acc;
 }
 
-function escapes_in(e: ast.Expr, names: string[], known: Handers): boolean {
+// The names of a body that can hold a parameter, and the parameters that
+// each name can hold.
+struct Carried { names: string[], sets: i64[] }
+
+function reach_all(es: ast.Expr[], c: Carried, known: Handers): i64 {
+  let out: i64 = 0;
+  for e in es {
+    out = out | reach(e, c, known);
+  }
+  return out;
+}
+
+// The parameters that the value of `e` can hold.
+function reach(e: ast.Expr, c: Carried, known: Handers): i64 {
   if let ast.ExprIdent(id) = e {
-    return util.index_of_str(names, id.name) >= 0;
+    let at = util.index_of_str(c.names, id.name);
+    if (at < 0) {
+      return 0;
+    }
+    return c.sets[at];
   }
   if let ast.ExprStructLit(sl) = e {
-    for v in sl.field_values {
-      if (escapes_in(v, names, known)) {
-        return true;
-      }
+    let out = reach_all(sl.field_values, c, known);
+    if (sl.has_base) {
+      out = out | reach(sl.base, c, known);
     }
-    return sl.has_base && escapes_in(sl.base, names, known);
+    return out;
   }
   if let ast.ExprArray(a) = e {
-    for v in a.elements {
-      if (escapes_in(v, names, known)) {
-        return true;
-      }
-    }
-    return false;
+    return reach_all(a.elements, c, known);
   }
   if let ast.ExprTuple(t) = e {
-    for v in t.elements {
-      if (escapes_in(v, names, known)) {
-        return true;
-      }
-    }
-    return false;
+    return reach_all(t.elements, c, known);
   }
   if let ast.ExprMapLit(m) = e {
-    for v in m.keys {
-      if (escapes_in(v, names, known)) {
-        return true;
-      }
-    }
-    for v in m.vals {
-      if (escapes_in(v, names, known)) {
-        return true;
-      }
-    }
-    return false;
+    return reach_all(m.keys, c, known) | reach_all(m.vals, c, known);
   }
-  if let ast.ExprCall(c) = e {
-    if (!known_callee(c, known)) {
-      return false;
+  if let ast.ExprCall(call) = e {
+    return reach_call(call, c, known);
+  }
+  // A part of a value can hold what the value holds.
+  if let ast.ExprFieldAccess(fa) = e {
+    return reach(fa.obj, c, known);
+  }
+  if let ast.ExprIndex(ix) = e {
+    return reach(ix.array, c, known);
+  }
+  return 0;
+}
+
+// A call hands back the arguments in the positions that its callee hands
+// back. A call through a field can be a method, whose first argument is
+// parameter 1, or a function of a module, whose first argument is parameter 0.
+function reach_call(call: ast.ExprCall, c: Carried, known: Handers): i64 {
+  let kept = kept_params(call, known);
+  if (kept == 0) {
+    return 0;
+  }
+  let out: i64 = 0;
+  if let ast.ExprFieldAccess(fa) = call.callee {
+    if ((kept & param_bit(0)) != 0) {
+      out = reach(fa.obj, c, known);
     }
-    for a in c.args {
-      if (escapes_in(a, names, known)) {
-        return true;
+    for i in 0..call.args.len() {
+      if ((kept & (param_bit(i) | param_bit(i + 1))) != 0) {
+        out = out | reach(call.args[i], c, known);
       }
     }
-    if let ast.ExprFieldAccess(fa) = c.callee {
-      return escapes_in(fa.obj, names, known);
-    }
-    return false;
+    return out;
   }
-  return false;
+  for i in 0..call.args.len() {
+    if ((kept & param_bit(i)) != 0) {
+      out = out | reach(call.args[i], c, known);
+    }
+  }
+  return out;
 }
 
 function stores_argument(name: string): boolean {
@@ -7100,14 +7159,23 @@ function stores_argument(name: string): boolean {
   return name == "append" || name == "with" || name == "insert" || name == "cell_new";
 }
 
-function known_callee(c: ast.ExprCall, known: Handers): boolean {
+function kept_params(c: ast.ExprCall, known: Handers): i64 {
   if let ast.ExprIdent(id) = c.callee {
-    return stores_argument(id.name) || known.keys.has(id.name);
+    if (stores_argument(id.name)) {
+      return every_param();
+    }
+    return known.mask(id.name);
   }
   if let ast.ExprFieldAccess(fa) = c.callee {
-    return stores_argument(fa.field) || known.methods.has(fa.field);
+    if (stores_argument(fa.field)) {
+      return every_param();
+    }
+    let at = known.methods.find(fa.field);
+    if (at >= 0) {
+      return known.method_masks[at];
+    }
   }
-  return false;
+  return 0;
 }
 
 struct Bound { name: string, value: ast.Expr }
@@ -7122,8 +7190,14 @@ function bound_exprs(st: ast.Stmt, own acc: Bound[]): Bound[] {
   return acc;
 }
 
-function hands_back(fd: parser.FuncDecl, known: Handers): boolean {
+// The parameters of `fd` that its result can hold.
+function hands_back(fd: parser.FuncDecl, known: Handers): i64 {
   let names = decl_param_names(fd);
+  let sets: i64[] = [];
+  for i in 0..names.len() {
+    sets = sets.append(param_bit(i));
+  }
+  let c = Carried { names: names, sets: sets };
   let binds: Bound[] = [];
   let outs: ast.Expr[] = [];
   for st in fd.body {
@@ -7134,35 +7208,37 @@ function hands_back(fd: parser.FuncDecl, known: Handers): boolean {
   while (grew) {
     grew = false;
     for b in binds {
-      if (util.index_of_str(names, b.name) < 0 && escapes_in(b.value, names, known)) {
-        names = names.append(b.name);
+      let held = reach(b.value, c, known);
+      let at = util.index_of_str(c.names, b.name);
+      if (at < 0 && held != 0) {
+        c = Carried { names: c.names.append(b.name), sets: c.sets.append(held) };
+        grew = true;
+      } else if (at >= 0 && (c.sets[at] | held) != c.sets[at]) {
+        c = Carried { names: c.names, sets: c.sets.with(at, c.sets[at] | held) };
         grew = true;
       }
     }
   }
-  for e in outs {
-    if (escapes_in(e, names, known)) {
-      return true;
-    }
-  }
-  return false;
+  return reach_all(outs, c, known);
 }
 
-function handers(mod: parser.Module): util.NameIndex {
+function handers(mod: parser.Module): Handers {
   let none: string[] = [];
-  let found = Handers { keys: util.name_index(none), methods: util.name_index(none) };
+  let found = Handers { keys: util.name_index(none), masks: [], methods: util.name_index(none), method_masks: [] };
   let changed = true;
   while (changed) {
     changed = false;
     for fd in mod.funcs {
       let key = parser.decl_key(fd);
-      if (!found.keys.has(key) && hands_back(fd, found)) {
-        found = handers_with(found, key);
+      let have = found.mask(key);
+      let held = hands_back(fd, found);
+      if ((have | held) != have) {
+        found = handers_with(found, key, held);
         changed = true;
       }
     }
   }
-  return found.keys;
+  return found;
 }
 
 function contracts(mod: parser.Module, scopes: checker.Scope[]): ssasem.Contracts {
