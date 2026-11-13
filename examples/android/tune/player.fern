@@ -26,7 +26,7 @@ import "./tune";
 // `keep` keeps the folder of the library for the next start. `decode` gives an
 // image from the bytes of a JPEG or a PNG file, at a size. `save` keeps
 // the text of the library for the next start, and `keep_lists` keeps the
-// text of the playlists. `keep_prefs` keeps the text of the settings, and `keep_place` keeps the text of the place of the player. `write_bytes` writes a file, and tells that it did. `ask_write` asks the person to let the app change a file, and tells that the question shows. `write_text` writes a text file, and tells that it
+// text of the playlists. `keep_prefs` keeps the text of the settings, and `keep_place` keeps the text of the place of the player. `write_bytes` writes a file, and tells that it did. `ask_write` asks the person to let the app change a file, and tells that the question shows. `to_back` puts the app behind the other apps. `write_text` writes a text file, and tells that it
 // did. `kept` gives the bytes
 // that `put` kept under a name, or no bytes. `show` tells
 // Android the track that plays and its state. `wake` keeps the phone
@@ -52,6 +52,7 @@ pub struct Device {
   keep_place: (string) => void,
   write_bytes: (string, u8[]) => boolean,
   ask_write: (string) => boolean,
+  to_back: () => void,
   write_text: (string, string) => boolean,
   kept: (string) => u8[],
   put: (string, u8[]) => void,
@@ -246,6 +247,10 @@ function done(dev: Device, own p: Player, want: tune.Want): Player {
         return Player { model: tune.update(m, tune.Asking(i)), deck: deck, incoming: incoming };
       }
       return Player { model: tune.update(m, tune.Retagged(i, ok)), deck: deck, incoming: incoming };
+    },
+    tune.ToBack => {
+      dev.to_back();
+      return Player { model: m, deck: deck, incoming: incoming };
     },
     tune.KeepPlace => {
       dev.keep_place(library.place_text(tune.place(m)));
