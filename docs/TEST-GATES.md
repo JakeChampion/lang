@@ -1004,6 +1004,15 @@ steps. The test checks that model against `math/big`. The moduli have 1 to 40
 limbs, with the top bit set and clear. The values are zero, all ones and
 pseudo-random limbs, as views and as arrays.
 
+`TestSelfHostScryptKernelX86_64`, `…Arm64` (qemu), `…Wasm` and
+`TestSelfHostInterpScryptKernel` check the scrypt BlockMix kernel
+(`__scrypt_block_mix`). Each leg must print the same blocks as the Go model
+for r from 1 to 5 and for r = 8. The test checks the Salsa20/8 core of the
+model against the vector of RFC 7914. The program keeps a second holder of
+the array, so the kernel must copy it. `TestSelfHostScryptKernelMisuse`
+stops a block outside the array and an output that overlaps an input.
+`std/crypto/scrypt` checks the full KDF against RFC 7914 and OpenSSL.
+
 `TestSelfHostMontMulKernelCensus` runs the program under the leak census on
 each target. In `TestSelfHostMontMulKernelMisuse`, each backend and both
 interpreters must stop the program when a value does not have the limb count

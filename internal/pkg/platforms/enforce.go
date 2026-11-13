@@ -255,6 +255,7 @@ var coreBuiltins = map[string]bool{
 	"__chacha20_xor_into": true,
 	"__poly1305_blocks":   true,
 	"__mont_mul":          true,
+	"__scrypt_block_mix":  true,
 
 	"map_new":                     true,
 	"cell_new":                    true,

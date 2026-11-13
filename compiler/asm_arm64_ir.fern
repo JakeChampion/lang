@@ -12431,6 +12431,68 @@ function a64_mont_mul(s: asmcore.EmitState): string {
     + "    .size __fern_mont_mul, .-__fern_mont_mul\n";
 }
 
+// The scrypt BlockMix (RFC 7914) of b[from:from + 16r] ^ b[mix:mix + 16r] into b[to:to + 16r]. b is an i64
+// array, and each 64-byte block holds its words in the order 0, 5, 10, 15, 4, 9, 14, 3, 8, 13, 2, 7, 12, 1, 6,
+// 11. Thus each 16-byte row is a diagonal of the Salsa20 matrix. x0 is b, w1 from, w2 mix, w3 to and w4 r. x0
+// returns b, copied first if it has another holder. The blocks must lie in b, and the output block must be
+// apart from both inputs. In the loop, x1 and x2 step through the inputs, x3 and x5 are the even and odd
+// outputs, and v0 to v3 hold X. Only r steers a branch.
+function a64_scrypt_block_mix(s: asmcore.EmitState): string {
+  let o: string = "    .global __fern_scrypt_block_mix\n    .type __fern_scrypt_block_mix, %function\n__fern_scrypt_block_mix:\n"
+    + rt_frame_of(s, 64) + "    mov x29, sp\n    str x0, [x29, #56]\n    sxtw x1, w1\n    sxtw x2, w2\n    sxtw x3, w3\n    sxtw x4, w4\n"
+    + "    cmp x4, #1\n    b.lt .Lsa_bad\n    lsl x9, x4, #4\n    ldr x10, [x0]\n";
+  for reg in ["x1", "x2", "x3"] {
+    o = o + "    tbnz " + reg + ", #63, .Lsa_bad\n    add x11, " + reg + ", x9\n    cmp x11, x10\n    b.hi .Lsa_bad\n";
+  }
+  for reg in ["x1", "x2"] {
+    o = o + "    subs x11, x3, " + reg + "\n    cneg x11, x11, mi\n    cmp x11, x9\n    b.lo .Lsa_bad\n";
+  }
+  o = o + "    ldur w11, [x0, #-8]\n    cmp w11, #1\n    b.eq .Lsa_own\n"
+    + "    stp x1, x2, [x29, #16]\n    stp x3, x4, [x29, #32]\n    str x0, [x29, #48]\n    mov x0, x10\n    bl __fern_arr_box\n    str x0, [x29, #56]\n"
+    + "    ldr x1, [x29, #48]\n    ldr x3, [x1]\n    add x1, x1, #8\n    add x2, x0, #8\n    mov x4, #0\n"
+    + ".Lsa_cp:\n    ldr x5, [x1, x4, lsl #3]\n    str x5, [x2, x4, lsl #3]\n    add x4, x4, #1\n    cmp x4, x3\n    b.lo .Lsa_cp\n"
+    + "    ldr x0, [x29, #48]\n    str x0, [sp, #-16]!\n    bl __fn___fern_arr_dec\n    add sp, sp, #16\n"
+    + "    ldp x1, x2, [x29, #16]\n    ldp x3, x4, [x29, #32]\n"
+    + ".Lsa_own:\n    ldr x0, [x29, #56]\n    add x0, x0, #8\n    add x1, x0, x1, lsl #3\n    add x2, x0, x2, lsl #3\n    add x3, x0, x3, lsl #3\n"
+    + "    add x5, x3, x4, lsl #6\n    lsl x6, x4, #7\n    sub x6, x6, #64\n    add x7, x1, x6\n    add x8, x2, x6\n"
+    + "    ldp q0, q1, [x7]\n    ldp q2, q3, [x7, #32]\n    ldp q16, q17, [x8]\n    ldp q18, q19, [x8, #32]\n";
+  for k in 0..4 {
+    let x = "v" + util.i32_to_string(k) + ".16b";
+    o = o + "    eor " + x + ", " + x + ", v" + util.i32_to_string(16 + k) + ".16b\n";
+  }
+  return o + ".Lsa_loop:\n" + a64_salsa_block("x3") + a64_salsa_block("x5") + "    subs x4, x4, #1\n    b.ne .Lsa_loop\n"
+    + "    ldr x0, [x29, #56]\n" + rt_unframe_of(s, 64) + "    ret\n.Lsa_bad:\n    b __fern_slice_abort\n"
+    + "    .size __fern_scrypt_block_mix, .-__fern_scrypt_block_mix\n";
+}
+
+// X ^= the next 64-byte blocks at x1 and x2, then X = Salsa20/8(X), written to `out`. All three step on.
+function a64_salsa_block(out: string): string {
+  let o = "    ldp q16, q17, [x1]\n    ldp q18, q19, [x1, #32]\n    ldp q20, q21, [x2]\n    ldp q22, q23, [x2, #32]\n";
+  for k in 0..4 {
+    let x = "v" + util.i32_to_string(k) + ".16b";
+    o = o + "    eor " + x + ", " + x + ", v" + util.i32_to_string(16 + k) + ".16b\n    eor " + x + ", " + x + ", v" + util.i32_to_string(20 + k) + ".16b\n"
+      + "    orr v" + util.i32_to_string(4 + k) + ".16b, " + x + ", " + x + "\n";
+  }
+  for _ in 0..4 {
+    o = o + a64_salsa_step(0, 3, 1, 7) + a64_salsa_step(1, 0, 2, 9) + a64_salsa_step(2, 1, 3, 13) + a64_salsa_step(3, 2, 0, 18)
+      + "    ext v1.16b, v1.16b, v1.16b, #12\n    ext v2.16b, v2.16b, v2.16b, #8\n    ext v3.16b, v3.16b, v3.16b, #4\n"
+      + a64_salsa_step(0, 1, 3, 7) + a64_salsa_step(3, 0, 2, 9) + a64_salsa_step(2, 3, 1, 13) + a64_salsa_step(1, 2, 0, 18)
+      + "    ext v1.16b, v1.16b, v1.16b, #4\n    ext v2.16b, v2.16b, v2.16b, #8\n    ext v3.16b, v3.16b, v3.16b, #12\n";
+  }
+  for k in 0..4 {
+    let x = "v" + util.i32_to_string(k) + ".4s";
+    o = o + "    add " + x + ", " + x + ", v" + util.i32_to_string(4 + k) + ".4s\n";
+  }
+  return o + "    stp q0, q1, [" + out + "]\n    stp q2, q3, [" + out + ", #32]\n    add x1, x1, #64\n    add x2, x2, #64\n    add " + out + ", " + out + ", #64\n";
+}
+
+// Row z ^= (row x + row y) rotated left by n, in each 32-bit lane.
+function a64_salsa_step(x: i32, y: i32, z: i32, n: i32): string {
+  let zr = "v" + util.i32_to_string(z) + ".16b";
+  return "    add v16.4s, v" + util.i32_to_string(x) + ".4s, v" + util.i32_to_string(y) + ".4s\n    shl v17.4s, v16.4s, #" + util.i32_to_string(n) + "\n"
+    + "    sri v17.4s, v16.4s, #" + util.i32_to_string(32 - n) + "\n    eor " + zr + ", " + zr + ", v17.16b\n";
+}
+
 // h = h r, with h2 at most 7 on entry. The result has h2 at most 4, so h is below 2p. x4 to x8 and x15 change.
 function a64_poly_mul(): string {
   return "    mul x4, x12, x9\n    umulh x5, x12, x9\n    mul x6, x13, x11\n    umulh x7, x13, x11\n    adds x4, x4, x6\n    adc x5, x5, x7\n"
@@ -12703,6 +12765,10 @@ function emit_rt_byte_kernels(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("mont_mul")) {
     let mm = a64_mont_mul(s);
     s = s.write(mm);
+  }
+  if (s.has_need("scrypt")) {
+    let sm = a64_scrypt_block_mix(s);
+    s = s.write(sm);
   }
   if (s.has_need("sha256") || s.has_need("sha1") || s.has_need("sha1x8")) {
     s = s.write("    .arch_extension sha2\n");

@@ -16,6 +16,7 @@ import "./wasm_aes";
 import "./wasm_chacha";
 import "./wasm_poly";
 import "./wasm_mont";
+import "./wasm_scrypt";
 import "./physicalbody";
 import "./wasmlocals";
 import "./rtbytecopy";
@@ -351,6 +352,9 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   }
   if (module_emits_op_cached(cache, "mont_mul")) {
     out = out.append("@uses_mont_mul");
+  }
+  if (module_emits_op_cached(cache, "scrypt_block_mix")) {
+    out = out.append("@uses_scrypt");
   }
   if (module_emits_op_cached(cache, "poly1305_blocks")) {
     out = out.append("@uses_poly1305");
@@ -732,6 +736,9 @@ function byte_kernel_name(tag: i32): string {
   if (tag == ir.K_MONT_MUL) {
     return "$__fern_mont_mul";
   }
+  if (tag == ir.K_SCRYPT_BLOCK_MIX) {
+    return "$__fern_scrypt_block_mix";
+  }
   if (tag == ir.K_POLY1305_BLOCKS) {
     return "$__fern_poly1305_blocks";
   }
@@ -746,7 +753,7 @@ function byte_kernel_name(tag: i32): string {
 
 function crypto_helper_parts(needs: string[], own parts: string[]): string[] {
   let aead = need(needs, "@uses_chacha20poly1305");
-  if (need(needs, "@uses_aes_gcm") || need(needs, "@uses_chacha20") || need(needs, "@uses_poly1305") || aead || need(needs, "@uses_mont_mul")) {
+  if (need(needs, "@uses_aes_gcm") || need(needs, "@uses_chacha20") || need(needs, "@uses_poly1305") || aead || need(needs, "@uses_mont_mul") || need(needs, "@uses_scrypt")) {
     parts = parts.append(wasm_aes.view_funcs());
   }
   if (need(needs, "@uses_aes_gcm")) {
@@ -763,6 +770,9 @@ function crypto_helper_parts(needs: string[], own parts: string[]): string[] {
   }
   if (need(needs, "@uses_mont_mul")) {
     parts = parts.append(wasm_mont.funcs());
+  }
+  if (need(needs, "@uses_scrypt")) {
+    parts = parts.append(wasm_scrypt.funcs());
   }
   if (need(needs, "@uses_bswap")) {
     parts = parts.append(wasm_aes.bswap_funcs());

@@ -212,6 +212,17 @@ func arm64FormCases() []string {
 	} {
 		add("%s", f)
 	}
+	// The forms of the scrypt BlockMix kernel, __fern_scrypt_block_mix.
+	for _, f := range []string{
+		"ldp q0, q1, [x7]", "ldp q2, q3, [x7, #32]", "ldp q22, q23, [x2, #32]", "stp q0, q1, [x3]", "stp q2, q3, [x5, #32]",
+		"eor v1.16b, v1.16b, v17.16b", "eor v3.16b, v3.16b, v23.16b", "orr v4.16b, v0.16b, v0.16b", "add v16.4s, v0.4s, v3.4s",
+		"add v3.4s, v3.4s, v7.4s", "shl v17.4s, v16.4s, #7", "sri v17.4s, v16.4s, #25", "shl v17.4s, v16.4s, #18", "sri v17.4s, v16.4s, #14",
+		"ext v1.16b, v1.16b, v1.16b, #12", "ext v2.16b, v2.16b, v2.16b, #8", "ext v3.16b, v3.16b, v3.16b, #4",
+		"cneg x11, x11, mi", "subs x11, x3, x1", "add x1, x0, x1, lsl #3", "add x5, x3, x4, lsl #6", "lsl x6, x4, #7",
+		"ldur w11, [x0, #-8]", "ldr x5, [x1, x4, lsl #3]", "str x5, [x2, x4, lsl #3]", "sxtw x4, w4",
+	} {
+		add("%s", f)
+	}
 	return out
 }
 

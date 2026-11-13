@@ -410,6 +410,38 @@ func montFormCases() []string {
 	}
 }
 
+// scryptFormCases are the forms of the scrypt BlockMix kernel, __fern_scrypt_block_mix.
+func scryptFormCases() []string {
+	return []string{
+		"vmovdqu 32(%r10), %xmm2",
+		"vpxor 48(%r11), %xmm3, %xmm3",
+		"vpxor 16(%rsi), %xmm1, %xmm1",
+		"vpxor (%rdx), %xmm0, %xmm0",
+		"vmovdqu %xmm0, %xmm4",
+		"vmovdqu %xmm3, %xmm7",
+		"vmovdqu %xmm3, 48(%r9)",
+		"vmovdqu %xmm0, (%rdi)",
+		"vpaddd %xmm3, %xmm0, %xmm8",
+		"vpaddd %xmm7, %xmm3, %xmm3",
+		"vpslld $7, %xmm8, %xmm9",
+		"vpsrld $25, %xmm8, %xmm8",
+		"vpxor %xmm9, %xmm1, %xmm1",
+		"vpxor %xmm8, %xmm0, %xmm0",
+		"pshufd $147, %xmm1, %xmm1",
+		"pshufd $78, %xmm2, %xmm2",
+		"pshufd $57, %xmm3, %xmm3",
+		"leaq -64(%rsi,%rcx,2), %r10",
+		"leaq -64(%rdx,%rcx,2), %r11",
+		"leaq (%rax,%rsi,8), %rsi",
+		"leaq (%rdi,%rcx), %r9",
+		"leaq (%rcx,%r9), %rax",
+		"cmpl $1, -8(%rdi)",
+		"pushq -40(%rbp)",
+		"movslq %r8d, %r8",
+		"shlq $6, %rcx",
+	}
+}
+
 // polyFormCases are the forms of the Poly1305 kernel, __fern_poly1305_blocks.
 func polyFormCases() []string {
 	return []string{
@@ -503,6 +535,7 @@ func TestSelfHostX86FormsMatchGas(t *testing.T) {
 	cases = append(cases, polyFormCases()...)
 	cases = append(cases, chachaPolyFormCases()...)
 	cases = append(cases, montFormCases()...)
+	cases = append(cases, scryptFormCases()...)
 
 	if len(cases) < 300 {
 		t.Fatalf("the matrix produced only %d cases; it is meant to be a product of mnemonics, forms and widths", len(cases))

@@ -1026,7 +1026,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		c.info.FuncSigs[n] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8Arr, rangeBound, rangeBound, rangeBound, rangeBound}, Result: u8Arr}
 	}
 	limbView := ast.SliceType{Elem: ast.NumberType{Width: 64, Signed: true}}
-	c.info.FuncSigs["__mont_mul"] = &ast.FuncType{Params: []ast.Type{limbView, limbView, limbView}, Result: ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}}}
+	limbArr := ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}}
+	c.info.FuncSigs["__mont_mul"] = &ast.FuncType{Params: []ast.Type{limbView, limbView, limbView}, Result: limbArr}
+	c.info.FuncSigs["__scrypt_block_mix"] = &ast.FuncType{Params: []ast.Type{limbArr, rangeBound, rangeBound, rangeBound, rangeBound}, Result: limbArr}
 	c.info.FuncSigs["__sha256_hw"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.BoolType{}}
 	c.info.FuncSigs["__sha256_hw_blocks"] = &ast.FuncType{Params: []ast.Type{u8View, u8View}, Result: u8Arr}
 	c.info.FuncSigs["__sha1_hw"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.BoolType{}}

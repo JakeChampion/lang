@@ -463,6 +463,14 @@ four products of 32-bit halves (`compiler/wasm_mont.fern`).
 Only the limb count steers a branch in the Montgomery kernels, so they do not
 leak a limb.
 
+The scrypt BlockMix runs in one kernel on each backend
+(`__scrypt_block_mix`). The kernel keeps the 16 words of each 64-byte block
+in diagonal order, so each 16-byte row is a diagonal of the Salsa20 matrix.
+The x86-64 kernel keeps the four rows in `xmm0` to `xmm3` and rotates with
+`vpslld` and `vpsrld`. The arm64 kernel uses `shl` and `sri`, and `ext`
+turns the rows between the column and the row rounds. The wasm kernel holds
+the 16 words in locals. Only the block size r steers a branch.
+
 Anything above this level (AVX-512, …) needs runtime dispatch first, and none
 of it is used. AVX-512 is deliberately not taken: Intel removed it from
 consumer parts at Alder Lake, so a v4 baseline would drop hardware a v3 one

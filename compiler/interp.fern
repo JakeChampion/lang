@@ -7085,6 +7085,90 @@ function call_mont_mul(heap: interpheap.Heap, args: Value[]): Value {
   return v_arr_of(heap, out, "i64");
 }
 
+// __scrypt_block_mix keeps the 16 words of each 64-byte block in this order, two to a slot, the first in the
+// low half. Each row of 4 positions is a diagonal of the Salsa20 matrix.
+const SCRYPT_ORDER: i32[] = [0, 5, 10, 15, 4, 9, 14, 3, 8, 13, 2, 7, 12, 1, 6, 11];
+
+// The Salsa20/8 core of RFC 7914: eight rounds, and then the input added to the output.
+function salsa20_8(w: u32[]): u32[] {
+  let x = w;
+  let qs: i32[][] = [[0, 4, 8, 12], [5, 9, 13, 1], [10, 14, 2, 6], [15, 3, 7, 11], [0, 1, 2, 3], [5, 6, 7, 4], [10, 11, 8, 9], [15, 12, 13, 14]];
+  for _ in 0..4 {
+    for q in qs {
+      x = x.with(q[1], x[q[1]] ^ rotl32(x[q[0]] + x[q[3]], 7));
+      x = x.with(q[2], x[q[2]] ^ rotl32(x[q[1]] + x[q[0]], 9));
+      x = x.with(q[3], x[q[3]] ^ rotl32(x[q[2]] + x[q[1]], 13));
+      x = x.with(q[0], x[q[0]] ^ rotl32(x[q[3]] + x[q[2]], 18));
+    }
+  }
+  for k in 0..16 {
+    x = x.with(k, x[k] + w[k]);
+  }
+  return x;
+}
+
+// XORs the words of the block at b[at:] into x, in RFC order.
+function scrypt_xor_words(x: u32[], b: u64[], at: i32): u32[] {
+  for k in 0..8 {
+    let v = b[at + k];
+    x = x.with(SCRYPT_ORDER[2 * k], x[SCRYPT_ORDER[2 * k]] ^ v as u32);
+    x = x.with(SCRYPT_ORDER[2 * k + 1], x[SCRYPT_ORDER[2 * k + 1]] ^ (v >> 32) as u32);
+  }
+  return x;
+}
+
+// __scrypt_block_mix: the BlockMix of RFC 7914 of b[from:from + 16r] ^ b[mix:mix + 16r], written to
+// b[to:to + 16r]. The even outputs go to the first half of the output and the odd outputs to the second half.
+function scrypt_block_mix(b: u64[], from: i32, mix: i32, to: i32, r: i32): u64[] {
+  let x: u32[] = [];
+  for _ in 0..16 {
+    x = x.append(0 as u32);
+  }
+  x = scrypt_xor_words(scrypt_xor_words(x, b, from + 16 * r - 8), b, mix + 16 * r - 8);
+  for i in 0..2 * r {
+    x = salsa20_8(scrypt_xor_words(scrypt_xor_words(x, b, from + 8 * i), b, mix + 8 * i));
+    let at = to + 8 * (i / 2 + i % 2 * r);
+    for k in 0..8 {
+      b = b.with(at + k, x[SCRYPT_ORDER[2 * k]] as u64 | x[SCRYPT_ORDER[2 * k + 1]] as u64 << 32);
+    }
+  }
+  return b;
+}
+
+// Whether three blocks of 16r slots lie in n slots, with the output block apart from both inputs.
+function scrypt_blocks_fit(n: i64, from: i64, mix: i64, to: i64, r: i64): boolean {
+  if (r < 1 || from < 0 || mix < 0 || to < 0) {
+    return false;
+  }
+  let h = 16 * r;
+  if (from + h > n || mix + h > n || to + h > n) {
+    return false;
+  }
+  return (to - from >= h || from - to >= h) && (to - mix >= h || mix - to >= h);
+}
+
+function call_scrypt_block_mix(heap: interpheap.Heap, args: Value[]): Value {
+  let ls = limb_args([args[0]]);
+  if (args.len() != 5 || ls.len() != 1) {
+    return v_err("__scrypt_block_mix: expected b, from, mix, to and r");
+  }
+  let at: i64[] = [];
+  for k in 1..5 {
+    if (!is_int_like(args[k])) {
+      return v_err("__scrypt_block_mix: expected b, from, mix, to and r");
+    }
+    at = at.append(vint_as_i64(args[k]));
+  }
+  if (!scrypt_blocks_fit(ls[0].len() as i64, at[0], at[1], at[2], at[3])) {
+    return v_err("__scrypt_block_mix: a block is outside the array or the output overlaps an input");
+  }
+  let out: Value[] = [];
+  for w in scrypt_block_mix(ls[0], at[0] as i32, at[1] as i32, at[2] as i32, at[3] as i32) {
+    out = out.append(v_int64(w as i64));
+  }
+  return v_arr_of(heap, out, "i64");
+}
+
 // __poly1305_blocks: the state holds h0, h1, h2, r0 and r1 as little-endian u64. Each 16-byte block of
 // msg[at:at + n] is added with 2^128 and multiplied by r. A short last block gets a 1 byte after its end and
 // no 2^128. h leaves fully reduced mod 2^130 - 5.
@@ -8395,6 +8479,9 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
   }
   if (name == "__mont_mul") {
     return call_mont_mul(heap, args);
+  }
+  if (name == "__scrypt_block_mix") {
+    return call_scrypt_block_mix(heap, args);
   }
   if (args.len() == 0 && checker.is_sha_hw_builtin(name)) {
     return v_bool(false);
