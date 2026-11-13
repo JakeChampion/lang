@@ -2,8 +2,8 @@
 
 Status: [reference] the `compiler/sembytecopy.fern` pass as shipped.
 
-The typed semantic pass in `compiler/sembytecopy.fern` recognizes zero-based
-byte walks before ownership planning:
+The typed semantic pass in `compiler/sembytecopy.fern` recognizes byte walks
+before ownership planning:
 
 ```fern
 let i = 0;
@@ -22,6 +22,13 @@ The third shape is the LZ77 back-reference copy. Its source is the receiver
 itself, so when `dist` is less than `n` the appended bytes repeat the last
 `dist` bytes. A read of `a[from + i]` with an invariant `from` is the same
 copy. Its distance is the receiver's length before the loop minus `from`.
+
+The counter of the first, second and fourth shapes can start at any
+invariant value, as in `let i = lo; while (i < hi) { ... }`. The copy is then
+`max(hi - lo, 0)` bytes from `lo` plus the offset. The pass computes the
+difference in 64 bits. A difference above the largest `i32` is longer than
+any array. The pass then gives the helper that `i32`, and the helper aborts
+as the loop does. A back-reference loop must start at 0.
 
 The fourth shape is the for-each loop over the source. Its lowering reads the
 element at a hidden index, and increments the index in a step block between

@@ -37,6 +37,8 @@
 # gave http.__plain_path a [u8] parameter, and the inliner does not splice a
 # function with an array view parameter (#15093). http_hello.ir is 0.62% over
 # main before #15076 and 0.40% under main after it. Pinned at the measured value.
+# 2026-11-13: #15650, perf-aarch64 job 131921596806 on a896cb12. The spill rank by live length keeps more loop values of the rbtree insert in registers: aarch64/perceus_rbtree .text -4.2% and .ir -6.1%, perceus_rbtree_ck .text -6.2% and .ir -5.7%. Pinned at the measured values.
+# 2026-11-13: #15650, a local scripts/perf-bench count on main 3005c182, which gives the pinned 21868422 before the change. The allocator ranks a spill by the live length of a value. In http__parse_request a value with holes now looks cheap to keep, and two other values spill in its place, so x86_64/http_hello.ir grows 1.04%. Pinned at the measured value.
 # 2026-11-10: PR #15079, perf-x86_64 job 129626601778 on 3e6ab400. x86_64/http_hello.ir grows 1.91% with f79f524d of #15076, as the .text rows above do. Pinned at its measured value.
 # 2026-11-10: PR #15079, perf-aarch64 job 129615058796 on a32eafd2, and a local scripts/perf-bench count for x86_64. http_hello.text grows 6.2% on aarch64 and 7.1% on x86_64 with f79f524d of #15076, which reads a request target through a view: the parent of f79f524d emits 16542 aarch64 lines and f79f524d emits 17568. This PR changes no emitted code. Pinned at the measured values.
 # 2026-11-09: Main job 129506310350 measured aarch64/video_qtrle.text at 5600.
@@ -358,7 +360,7 @@ x86_64/enum_match.ir	29250077
 # Evidence: docs/benchmarks/compiler-interpreter-http-ci-2026-11-10/. Tolerances stay unchanged.
 # 2026-11-10: Current rows follow main e23f590d and its measured HTTP reductions.
 x86_64/http_hello.text	15691
-x86_64/http_hello.ir	21868422
+x86_64/http_hello.ir	22096422
 x86_64/int_loop.text	292
 x86_64/int_loop.ir	12000077
 x86_64/map_int.text	8488
@@ -707,10 +709,10 @@ x86_64/perceus_deriv.text	2651
 x86_64/perceus_deriv.ir	64168424
 x86_64/perceus_nqueens.text	1548
 x86_64/perceus_nqueens.ir	81923493
-x86_64/perceus_rbtree.text	2779
-x86_64/perceus_rbtree.ir	34234517
-x86_64/perceus_rbtree_ck.text	3071
-x86_64/perceus_rbtree_ck.ir	35339157
+x86_64/perceus_rbtree.text	2690
+x86_64/perceus_rbtree.ir	31429877
+x86_64/perceus_rbtree_ck.text	2918
+x86_64/perceus_rbtree_ck.ir	32576757
 # 2026-11-12 (#15554): PR #15558 job 131516922622 on main 1bbf2294 measures
 # 13 aarch64 rows below their pins: deflate_decode.text -1.76%,
 # deflate_encode.text -1.06%, ordmap_insert.ir -3.63%, perceus_cfold.text

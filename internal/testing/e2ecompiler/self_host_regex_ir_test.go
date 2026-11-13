@@ -48,8 +48,8 @@ function main(): i32 { if ({ let __checked_regex_0: regex.Regex = match (regex.c
 	{"group-plus", `import "std/regex";
 import "std/result";
 function main(): i32 { if ({ let __checked_regex_0: regex.Regex = match (regex.compile("(ab)+c")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_0.is_match("ababc") }) { return 42; } return 0; }`},
-	// Capturing groups -> RGroup + the compiled RInst capture program
-	// (Pike-VM thread simulation with RThread[] state).
+	// Capturing groups -> RGroup + the packed capture program that the
+	// Pike VM runs from the start that the DFAs find.
 	{"captures", `import "std/regex";
 import "std/result";
 function main(): i32 {

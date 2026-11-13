@@ -2649,6 +2649,8 @@ TestSelfHostSSADependencyVerificationIRWasm 3
 TestSelfHostSSADependencyVerificationIRX86_64 3
 TestSelfHostSSAExtraCallerRegisters 6
 TestSelfHostSSAFixedMemoryReads 10
+TestSelfHostSSAHotLoopArm64 60
+TestSelfHostSSAHotLoopX86_64 30
 TestSelfHostSSAKindRegistry 2
 TestSelfHostSSALayoutReadySuccessor 3
 TestSelfHostSSALifetimeDependencies 15
@@ -2662,6 +2664,7 @@ TestSelfHostSSALiftGivesEachBlockOneID 3
 TestSelfHostSSALiftNamesANegativeKind 4
 TestSelfHostSSALiftPtrWidthIsAConstant 4
 TestSelfHostSSALiftResultContracts 9
+TestSelfHostSSALiveLengths 36
 TestSelfHostSSALoopTailBlockEmittedOnce 2
 TestSelfHostSSALowWordIndex 4
 TestSelfHostSSAParamIntervalArm64 4
