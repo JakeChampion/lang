@@ -172,7 +172,9 @@ pub function fold_stmt_nodes[T](st: ast.Stmt, own acc: T, visit_stmt: (ast.Stmt,
     ast.StmtMatch(m) => {
       acc = fold_expr_nodes(m.scrutinee, acc, visit_stmt, visit_expr, descend);
       for arm in m.arms {
-        acc = fold_pattern_nodes(arm.pattern, acc, visit_stmt, visit_expr, descend);
+        for pe in pattern_exprs(arm.pattern) {
+          acc = fold_expr_nodes(pe, acc, visit_stmt, visit_expr, descend);
+        }
         if (arm.has_guard) {
           acc = fold_expr_nodes(arm.guard, acc, visit_stmt, visit_expr, descend);
         }
@@ -290,7 +292,9 @@ pub function fold_stmt_own_pruned[T](st: ast.Stmt, own acc: T, visit: (ast.Expr,
     ast.StmtMatch(m) => {
       acc = fold_expr_pruned(m.scrutinee, acc, visit, descend);
       for arm in m.arms {
-        acc = fold_pattern_pruned(arm.pattern, acc, visit, descend);
+        for pe in pattern_exprs(arm.pattern) {
+          acc = fold_expr_pruned(pe, acc, visit, descend);
+        }
         if (arm.has_guard) {
           acc = fold_expr_pruned(arm.guard, acc, visit, descend);
         }
@@ -440,7 +444,7 @@ pub function map_stmt(st: ast.Stmt, visit: (ast.Expr) => ast.Expr): ast.Stmt {
         if (arm.has_guard) {
           g = map_expr(arm.guard, visit);
         }
-        let pattern = map_pattern_exprs(arm.pattern, (pe: ast.Expr): ast.Expr => map_expr(pe, visit));
+        let pattern = map_pattern(arm.pattern, visit);
         arms = arms.append(ast.MatchArm { ...arm, pattern: pattern, body: map_stmts(arm.body, visit), guard: g });
       }
       return ast.StmtMatch { ...mt, scrutinee: map_expr(mt.scrutinee, visit), arms: arms };
@@ -1142,20 +1146,6 @@ pub function pattern_exprs(p: ast.Pattern): ast.Expr[] {
   return [lp.lit];
 }
 
-function fold_pattern_nodes[T](p: ast.Pattern, own acc: T, visit_stmt: (ast.Stmt, own T) => T, visit_expr: (ast.Expr, own T) => T, descend: (ast.Expr) => boolean): T {
-  for pe in pattern_exprs(p) {
-    acc = fold_expr_nodes(pe, acc, visit_stmt, visit_expr, descend);
-  }
-  return acc;
-}
-
-function fold_pattern_pruned[T](p: ast.Pattern, own acc: T, visit: (ast.Expr, own T) => T, descend: (ast.Expr) => boolean): T {
-  for pe in pattern_exprs(p) {
-    acc = fold_expr_pruned(pe, acc, visit, descend);
-  }
-  return acc;
-}
-
 // map_pattern_where maps the expressions of a literal pattern. The flag it
 // gives is `changed`, or true when the pattern changed.
 function map_pattern_where[T](p: ast.Pattern, acc: T, changed: boolean, visit_stmt: (ast.Stmt, T) => (ast.Stmt, T, boolean), visit: (ast.Expr, T) => (ast.Expr, T, boolean), applies: (ast.Expr) => boolean): (ast.Pattern, T, boolean) {
@@ -1170,14 +1160,12 @@ function map_pattern_where[T](p: ast.Pattern, acc: T, changed: boolean, visit_st
   return (p, ha, changed);
 }
 
-pub function map_pattern_exprs(p: ast.Pattern, f: (ast.Expr) => ast.Expr): ast.Pattern {
+// map_pattern maps the expressions of a literal pattern with visit.
+pub function map_pattern(p: ast.Pattern, visit: (ast.Expr) => ast.Expr): ast.Pattern {
   let ast.PatLiteral(lp) = p else {
     return p;
   };
-  if (lp.has_range) {
-    return ast.PatLiteral { ...lp, lit: f(lp.lit), range_hi: f(lp.range_hi) };
-  }
-  return ast.PatLiteral { ...lp, lit: f(lp.lit) };
+  return ast.PatLiteral { ...lp, lit: map_expr(lp.lit, visit), range_hi: map_expr(lp.range_hi, visit) };
 }
 
 pub function scalar_pattern_binders(p: ast.Pattern): string[] {
@@ -1505,6 +1493,13 @@ function cs_bind(c: ConstSubst, packed: string): ConstSubst {
   return ConstSubst { ...c, bound: bound };
 }
 
+function cs_pattern(p: ast.Pattern, c: ConstSubst): ast.Pattern {
+  let ast.PatLiteral(lp) = p else {
+    return p;
+  };
+  return ast.PatLiteral { ...lp, lit: cs_expr(lp.lit, c), range_hi: cs_expr(lp.range_hi, c) };
+}
+
 function cs_expr(e: ast.Expr, c: ConstSubst): ast.Expr {
   let (out, tail, handled) = map_expr_where(e, c, cs_stmt_at, cs_expr_at, descend_all);
   return out;
@@ -1616,7 +1611,7 @@ function cs_stmt_at(st: ast.Stmt, c: ConstSubst): (ast.Stmt, ConstSubst, boolean
     ast.StmtMatch(m) => {
       let arms: ast.MatchArm[] = [];
       for arm in m.arms {
-        let pattern = map_pattern_exprs(arm.pattern, (pe: ast.Expr): ast.Expr => cs_expr(pe, c));
+        let pattern = cs_pattern(arm.pattern, c);
         let inner = c;
         for n in pattern_binders(arm.pattern, []) {
           inner = cs_bind(inner, n);

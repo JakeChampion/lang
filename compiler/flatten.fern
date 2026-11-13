@@ -850,8 +850,8 @@ function rewrite_pattern(p: ast.Pattern, ctx: RewriteCtx): ast.Pattern {
       }
       return ast.PatVariant { ...pv, type_name: rewrite_variant_name(pv.type_name, ctx), nested: nested, tup_pats: tuple_patterns, lit_cond: cond };
     },
-    ast.PatLiteral(_) => {
-      return astwalk.map_pattern_exprs(p, (e: ast.Expr): ast.Expr => rewrite_expr(e, ctx));
+    ast.PatLiteral(lp) => {
+      return ast.PatLiteral { ...lp, lit: rewrite_expr(lp.lit, ctx), range_hi: rewrite_expr(lp.range_hi, ctx) };
     },
     _ => {
       return p;
