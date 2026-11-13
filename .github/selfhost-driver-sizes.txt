@@ -643,11 +643,17 @@
 # merge with main 4e38d84c. Main grew them past the 5% tolerance:
 # checker_codes_run +5.1%, checker_modload_run +6.0%, asm_run +5.4%,
 # asm_ir_run +5.5%. The 5% tolerance is unchanged.
+# 2026-11-13: three rows measured by driver-sizes-x86_64 job 132091435608 on a
+# merge with main f29fcfdf. The stage0 pin 629da26 (04b292bf) builds them
+# larger: interp_run +5.4%, asm_modload_run +5.0% and fern.fern +5.1%. The 5%
+# tolerance is unchanged.
+# 2026-11-13: runtime_run measured 17506224 bytes (+5.0%) by driver-sizes-x86_64
+# job 132133327747 on main 88a72e60. The 5% tolerance is unchanged.
 fern.fern/stage2 16710816
-fern.fern 16658288
-drivers/runtime_run.fern 16672112
+fern.fern 17504544
+drivers/runtime_run.fern 17506224
 drivers/asm_load_run.fern 13366720
-drivers/asm_modload_run.fern 11387536
+drivers/asm_modload_run.fern 11961344
 drivers/asm_ir_run.fern 11028400
 drivers/asm_run.fern 10091776
 drivers/wasm_ir_run.fern 9677328
@@ -656,4 +662,4 @@ drivers/wasm_runio_run.fern 9663024
 drivers/asm_pathprobe_run.fern 5756560
 drivers/checker_modload_run.fern 4356448
 drivers/checker_codes_run.fern 4051184
-drivers/interp_run.fern 2835808
+drivers/interp_run.fern 2988240
