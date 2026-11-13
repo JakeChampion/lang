@@ -314,13 +314,11 @@ pub function exit_qemu(code: i32): void {
   }
 }
 
-// Masks both legacy PICs, enables the local APIC, and starts its timer in
+// Enables the local APIC, and starts its timer in
 // periodic mode on the timer vector: the bus clock divided by 16, 62500 counts
 // for each period.
 pub function apic_init(): void {
   unsafe {
-    __port_out8(0x21, 0xff);
-    __port_out8(0xa1, 0xff);
     __mmio_store32(LAPIC + 0xf0, 0x1ff);
     __mmio_store32(LAPIC + 0x3e0, 3);
     __mmio_store32(LAPIC + 0x320, 0x20000 | TIMER_IRQ);
