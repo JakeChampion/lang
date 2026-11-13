@@ -94,6 +94,16 @@ function tagged(name: string, file: u8[]): string {
   return "none";
 }
 
+// An M4A file with ALAC sound gives its tags and its length. A file with
+// no tags takes its title from its name.
+function test_an_alac_file(): test.TestOutcome {
+  let short = "none";
+  if let Some(t) = library.track(["m"], "m/d.m4a", fixture.alac24().len() as i64, library.parts_of(fixture.alac24())) {
+    short = t.format + " " + t.title + "," + t.artist + " " + (t.ms >= 230i64 && t.ms <= 270i64).to_string();
+  }
+  return test.assert_eq(tagged("e.m4a", fixture.alac16()) + " | " + short, "M4A e,Unknown artist,Unknown album,0 true | M4A Lossless,Fixture true");
+}
+
 function test_m4a_ogg_and_opus_files(): test.TestOutcome {
   return test.assert_eq(tagged("a.m4a", fixture.m4a()) + " | " + tagged("b.ogg", fixture.ogg()) + " | " + tagged("c.opus", fixture.opus()), "M4A Short m4a,Fixture,Formats,2 true | OGG Short ogg,Fixture,Formats,2 true | OPUS Short opus,Fixture,Formats,2 true");
 }
@@ -161,6 +171,7 @@ function main(): i32 {
   r = r.it("an MP3 file tells its length, or its bytes and its bit rate do", test_the_length_of_an_mp3_file);
   r = r.it("a scan reads parts of a file", test_a_scan_reads_parts_of_a_file);
   r = r.it("an M4A, an Ogg Vorbis and an Opus file give their tags and their length", test_m4a_ogg_and_opus_files);
+  r = r.it("an M4A file with ALAC sound gives its tags and its length", test_an_alac_file);
   r = r.it("a tag gives the picture of its album", test_a_picture_in_a_tag);
   r = r.it("the library is a text that the player reads back", test_the_text_of_a_library);
   r = r.it("the playlists are a text, and an M3U file gives paths", test_playlist_texts);

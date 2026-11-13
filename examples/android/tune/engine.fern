@@ -1,5 +1,5 @@
-// The decoder of the player: it reads a WAV, a FLAC, an MP3, an M4A, an Ogg
-// Vorbis or an Opus file that is
+// The decoder of the player: it reads a WAV, a FLAC, an MP3, an M4A with
+// AAC or ALAC sound, an Ogg Vorbis or an Opus file that is
 // in memory, and gives its sound a part at a time as 16-bit samples. It has
 // no Android code, so engine_test.fern runs it on the host.
 import "std/audio/aac";
@@ -8,6 +8,7 @@ import "std/audio/flac";
 import "std/audio/linear";
 import "std/audio/mp3";
 import "std/audio/mp4";
+import "std/audio/mp4/alac" as mp4_alac;
 import "std/audio/mp4/tables";
 import "std/audio/opusfile";
 import "std/audio/pcm";
@@ -32,6 +33,8 @@ pub const M4A: i32 = 3;
 pub const VORBIS: i32 = 4;
 
 pub const OPUS: i32 = 5;
+
+pub const ALAC: i32 = 6;
 
 // The frames of one part of a WAV file.
 const WAV_PART: i32 = 4096;
@@ -72,9 +75,13 @@ pub struct Deck {
 // makes a new one, and the place of each packet in the file.
 pub struct Aac { decoder: aac.Decoder, config: aac_config.Config, packets: tables.Packet[] }
 
+// The decoder of an M4A file with ALAC sound: its stream, the frames of
+// one packet, and the bits of a sample.
+pub struct Alac { stream: mp4_alac.Stream, frames: i32, bits: i32 }
+
 // The decoder that a deck owns, for a format whose decoder only one owner
 // can use.
-pub enum Codec { Plain, Packets(Aac), Vorbis(vorbis_seek.Cursor), Opus(opusfile.SeekCursor) }
+pub enum Codec { Plain, Packets(Aac), Lossless(Alac), Vorbis(vorbis_seek.Cursor), Opus(opusfile.SeekCursor) }
 
 // The frames of samples of one AAC packet.
 const AAC_FRAMES: i64 = 1024i64;
@@ -154,9 +161,10 @@ function open_mp3(head: u8[], size: i32, end: i32): Option[Deck] {
   return Some(Deck { ...blank(MP3, head), size: size, rate: t.sample_rate, channels: t.channels, total: t.declared_frames as i64 * (h.frames as i64), offset: t.data_offset, first: t.data_offset, last: last });
 }
 
+// An M4A file with AAC sound, or with ALAC sound.
 function open_m4a(bytes: u8[]): Option[Deck] {
   let Ok(index) = mp4.inspect(bytes, mp4.default_limits()) else {
-    return None;
+    return open_alac(bytes);
   };
   for track in index.tracks {
     if (track.enabled && track.configurations.len() > 0 && track.packets.len() > 0) {
@@ -166,6 +174,26 @@ function open_m4a(bytes: u8[]): Option[Deck] {
       };
       let total = track.packets.len() as i64 * AAC_FRAMES;
       return Some(Deck { ...blank(M4A, bytes), rate: config.sample_rate, channels: config.channels, total: total, codec: Packets(Aac { decoder: decoder, config: config, packets: track.packets }) });
+    }
+  }
+  return None;
+}
+
+// An M4A file with ALAC sound: its first track that is on.
+function open_alac(bytes: u8[]): Option[Deck] {
+  let Ok(index) = mp4_alac.inspect(bytes, mp4_alac.default_limits()) else {
+    return None;
+  };
+  for i in 0..index.track_count() {
+    let Ok(info) = index.information(i) else {
+      return None;
+    };
+    if (info.enabled && info.packets > 0) {
+      let Ok(stream) = index.stream(i, limits()) else {
+        return None;
+      };
+      let total = info.packets as i64 * (info.frame_length as i64);
+      return Some(Deck { ...blank(ALAC, bytes), rate: info.format.sample_rate, channels: info.format.channels, total: total, codec: Lossless(Alac { stream: stream, frames: info.frame_length, bits: info.format.bits_per_sample }) });
     }
   }
   return None;
@@ -448,6 +476,48 @@ function pull_m4a(own d: Deck): (Deck, i32[]) {
   return (Deck { ...rest, at: at, codec: Packets(Aac { decoder: next, config: config, packets: packets }) }, from_floats(frame.samples));
 }
 
+// The samples `samples` of `bits` bits as 16-bit samples.
+function sixteen(own samples: i32[], bits: i32): i32[] {
+  if (bits == 16) {
+    return samples;
+  }
+  let out = samples;
+  for k in 0..out.len() {
+    out = out.with(k, if (bits > 16) { out[k] >> bits - 16 } else { out[k] << 16 - bits });
+  }
+  return out;
+}
+
+// The next packet of an M4A file with ALAC sound.
+function pull_alac(own d: Deck): (Deck, i32[]) {
+  let (rest, codec) = parted(d);
+  let Lossless(a) = codec else {
+    return ended(rest);
+  };
+  let Alac { stream, frames, bits } = a;
+  let n = (rest.at / (frames.max(1) as i64)) as i32;
+  if (n >= stream.information().packets) {
+    return ended(rest);
+  }
+  let Ok((next, samples)) = stream.decode_packet(rest.bytes, n, limits()) else {
+    return ended(rest);
+  };
+  let at = (n + 1) as i64 * (frames as i64);
+  return (Deck { ...rest, at: at, codec: Lossless(Alac { stream: next, frames: frames, bits: bits }) }, sixteen(samples, bits));
+}
+
+// The deck at the packet of an ALAC file that has `part` of the file. An
+// ALAC packet does not need the packet before it.
+function seek_alac(own d: Deck, part: f64): Deck {
+  let (rest, codec) = parted(d);
+  let Lossless(a) = codec else {
+    return rest;
+  };
+  let step = a.frames.max(1) as i64;
+  let at = (part * (rest.total as f64)) as i64 / step * step;
+  return Deck { ...rest, at: at, done: false, codec: Lossless(a) };
+}
+
 // The deck at the packet of an M4A file that has `part` of the file, with
 // a new decoder: a decoder keeps a part of the packet before.
 function seek_m4a(own d: Deck, part: f64): Deck {
@@ -525,6 +595,9 @@ pub function (own d: Deck) pull(): (Deck, i32[]) {
   if (d.kind == M4A) {
     return pull_m4a(d);
   }
+  if (d.kind == ALAC) {
+    return pull_alac(d);
+  }
   if (d.kind == VORBIS || d.kind == OPUS) {
     return pull_ogg(d);
   }
@@ -597,6 +670,9 @@ pub function (own d: Deck) seek(part: f64): Deck {
   }
   if (d.kind == M4A) {
     return seek_m4a(d, to);
+  }
+  if (d.kind == ALAC) {
+    return seek_alac(d, to);
   }
   if (d.kind == VORBIS || d.kind == OPUS) {
     return seek_ogg(d, to);

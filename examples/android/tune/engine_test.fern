@@ -229,6 +229,22 @@ function test_m4a_ogg_and_opus_play(): test.TestOutcome {
   return test.assert_eq(played(fixture.m4a()) + " | " + played(fixture.ogg()) + " | " + played(fixture.opus()), "22050 1 true true true true | 22050 1 true true true true | 48000 1 true true true true");
 }
 
+// An M4A file with ALAC sound plays as one with AAC sound does. A 24-bit
+// file plays as 16-bit samples.
+function test_alac_plays(): test.TestOutcome {
+  let Some(deck) = engine.open(fixture.alac24()) else {
+    return test.fail("the 24-bit file does not open");
+  };
+  let head = deck.rate.to_string() + " " + deck.channels.to_string() + " " + (deck.kind == engine.ALAC).to_string();
+  let (all, parts, end) = drained(deck);
+  let most = 0;
+  for v in all {
+    most = most.max(v).max(-v);
+  }
+  let wide = (most > 8000 && most < 32768).to_string() + " " + near((all.len() / 2) as i64 * 1000i64 / 8000i64, 250i64, 40i64).to_string();
+  return test.assert_eq(played(fixture.alac16()) + " | " + head + " " + wide, "8000 1 true true true true | 8000 2 true true true");
+}
+
 function main(): i32 {
   let r = test.new("examples/android/tune engine");
   r = r.it("a WAV file plays each sample", test_wav_plays_each_sample);
@@ -237,6 +253,7 @@ function main(): i32 {
   r = r.it("bytes that are not sound do not open", test_other_bytes_do_not_open);
   r = r.it("an MP3 file tells its length in frames of samples", test_mp3_length);
   r = r.it("an M4A, an Ogg Vorbis and an Opus file play", test_m4a_ogg_and_opus_play);
+  r = r.it("an M4A file with ALAC sound plays", test_alac_plays);
   r = r.it("a file plays from a window of it", test_a_file_plays_from_a_window);
   return r.finish();
 }
