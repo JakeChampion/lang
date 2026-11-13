@@ -1,4 +1,6 @@
 # 2026-11-13: owned_callback_result_composition has balanced allocations and zero live allocations on all three main targets.
+# 2026-11-13: task_handle_with_a_made_up_id keeps 5 blocks at its abort (was 7), and
+# task_resumed_with_another_function keeps 10 (was 11), on main at f2c331f55c.
 # 2026-11-12: a_map_holds_named_functions is clean under RC trace.
 # 2026-11-12: literal_trees_take_the_type_of_their_use is clean under RC trace.
 # 2026-11-12: callback_aggregate_environment_loans has balanced allocations and zero live bytes on all three main targets.
@@ -1344,9 +1346,9 @@ target_os_linux                                      0
 target_os_named                                      0
 target_os_wasi                                       0
 task_deadline_builtins_answer_at_once_in_the_interpreter 4
-task_handle_with_a_made_up_id                        7
+task_handle_with_a_made_up_id                        5
 task_resumed_after_it_ended                          6
-task_resumed_with_another_function                   11
+task_resumed_with_another_function                   10
 task_started_two_times                               2
 tasks_agree_without_a_scheduler                      10
 tco_sum                                              0

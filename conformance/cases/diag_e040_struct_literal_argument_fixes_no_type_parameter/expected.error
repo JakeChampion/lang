@@ -1,0 +1,1 @@
+main.fern:18:15: error[E040]: could not infer type parameter T for struct W — supply it explicitly at the construction site (e.g. W[i32] { ... }) or annotate the binding (e.g. let x: W[i32] = ...)

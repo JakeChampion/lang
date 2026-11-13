@@ -1,0 +1,55 @@
+// Borrow one granted asset while native AAC reads relative packet offsets.
+import "std/android/video/source";
+import "std/video/frame";
+import "./audio_pcm";
+
+pub struct Input { seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError] }
+
+function read_chunk(at: Cell[i64], length: i64, count: i32, read_at: (i64, i32) => Result[u8[], frame.VideoError]): Result[u8[], IoError] {
+  if (length < 0i64 || count < 0 || count > 4096) {
+    return Err(Other("content", "asset read limit", 22));
+  }
+  let request = (length - at.get()).min(count as i64) as i32;
+  if (request == 0) {
+    return Ok([]);
+  }
+  let bytes = match (read_at(at.get(), request)) { Ok(value) => value, Err(error) => { return Err(Other("content", error.message(), 0)); } };
+  if (bytes.len() > request) {
+    return Err(Other("content", "oversized asset read", 0));
+  }
+  at.set(at.get() + bytes.len() as i64);
+  return Ok(bytes);
+}
+
+pub function input_with(length: i64, read_at: (i64, i32) => Result[u8[], frame.VideoError]): Input {
+  let at = cell_new(0i64);
+  let seek = (offset: i64): Result[i64, IoError] => {
+    if (offset < 0i64 || offset > length) {
+      return Err(Other("content", "asset offset", 22));
+    }
+    at.set(offset);
+    return Ok(offset);
+  };
+  let read = (count: i32): Result[u8[], IoError] => read_chunk(at, length, count, read_at);
+  return Input { seek: seek, read: read };
+}
+
+pub function input(src: source.Source): Input {
+  return input_with(src.length, (offset: i64, count: i32): Result[u8[], frame.VideoError] => src.read_at(offset, count));
+}
+
+pub function open_with(length: i64, read_at: (i64, i32) => Result[u8[], frame.VideoError], media_us: i64): Result[(audio_pcm.Stream, Input), frame.VideoError] {
+  if (length <= 0i64) {
+    return Err(frame.Header);
+  }
+  if (length > audio_pcm.MAX_INPUT as i64) {
+    return Err(frame.Limit);
+  }
+  let io = input_with(length, read_at);
+  let stream = audio_pcm.open_with(length, io.seek, io.read, media_us)?;
+  return Ok((stream, io));
+}
+
+pub function open(src: source.Source, media_us: i64): Result[(audio_pcm.Stream, Input), frame.VideoError] {
+  return open_with(src.length, (offset: i64, count: i32): Result[u8[], frame.VideoError] => src.read_at(offset, count), media_us);
+}
