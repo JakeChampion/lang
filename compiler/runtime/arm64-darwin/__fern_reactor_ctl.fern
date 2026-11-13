@@ -59,23 +59,9 @@ function __fern_reactor_ctl(r_fd: i32, op: i32, fd: i32, arg: i32): i32 {
     }
     return __syscall4(46, fd as i64, act2 as i64, 0, 8) as i32;
   }
-  // Darwin has no parent-death signal. A watchdog process waits for the
-  // parent or this process to exit, and sends SIGTERM to this process if the
-  // parent exits first. The two sides of the raw fork differ in getpid.
+  // Darwin has no parent-death signal, so a watchdog process sends one.
   if (op == 6) {
-    let parent = __syscall3(39, 0, 0, 0) as i32;
-    if (parent == 1) {
-      return -3;
-    }
-    let me = __syscall3(20, 0, 0, 0) as i32;
-    let forked = __syscall3(2, 0, 0, 0) as i32;
-    if (forked < 0) {
-      return forked;
-    }
-    if (__syscall3(20, 0, 0, 0) as i32 != me) {
-      __fern_watch_parent(parent, me);
-    }
-    return 0;
+    return __fern_watch_parent_start();
   }
   if (op != 1 && op != 2) {
     return -22;
