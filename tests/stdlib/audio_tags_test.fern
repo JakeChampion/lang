@@ -288,6 +288,64 @@ function test_pictures(): test.TestOutcome {
   return test.assert_eq(got.join(" / "), "255,216,255,224,1,2,3 / 255,216,255,224,1,2,3 / 255,216,255,224,1,2,3 / 255,216,255,224,1,2,3 / 255,216,255,224,1,2,3 / ");
 }
 
+// The fields that `retagged` writes, with the lyrics and the gain that it
+// keeps.
+function written(t: tags.Tags): string {
+  return show(t) + "|" + t.genre + "|" + t.lyrics + "|" + cents(t.gain);
+}
+
+// The last bytes of `file`, from `from`.
+function tail(file: u8[], from: i32): string {
+  let out: string[] = [];
+  for i in from..file.len() {
+    out = out.append(file[i].to_string());
+  }
+  return out.join(",");
+}
+
+function test_writing_id3(): test.TestOutcome {
+  let user = (name: string, value: string): u8[] => joined([bytes_of("TXXX"), wire.put_be([], (name.len() + value.len() + 2) as u64, 4), [0u8, 0u8, 0u8], bytes_of(name), [0u8], bytes_of(value)]);
+  let lyrics = joined([[0u8], bytes_of("eng"), [0u8], bytes_of("Words")]);
+  let apic = joined([[0u8], bytes_of("image/jpeg"), [0u8, 3u8, 0u8], image()]);
+  let frames = joined([frame3("TIT2", 0u8, bytes_of("Old")), frame3("TPE1", 0u8, bytes_of("Someone")), frame3("TYER", 0u8, bytes_of("1999")), bytes_of("USLT"), wire.put_be([], lyrics.len() as u64, 4), [0u8, 0u8], lyrics, user("REPLAYGAIN_TRACK_GAIN", "-3.00 dB"), bytes_of("APIC"), wire.put_be([], apic.len() as u64, 4), [0u8, 0u8], apic]);
+  let audio: u8[] = [255u8, 251u8, 144u8, 0u8, 7u8];
+  let v23 = joined([id3(3u8, 0u8, frames), audio]);
+  let fresh = tags.Tags { ...tags.none(), title: "Café ☕", artist: "Fern", album: "First Light", track: 3, year: 2026, genre: "Folk" };
+  let Some(out) = tags.retagged(v23, fresh) else {
+    return test.fail("the v2.3 tag is not written");
+  };
+  // A file with no tag gets one of the version 2.4, and its audio stays.
+  let Some(bare) = tags.retagged(audio, tags.Tags { ...tags.none(), title: "New" }) else {
+    return test.fail("no tag is written to an MP3 file with no tag");
+  };
+  let none = [tags.retagged(bytes_of("RIFF....WAVE"), fresh).is_none(), tags.retagged(id3(2u8, 0u8, []), fresh).is_none(), tags.retagged(id3(3u8, 128u8, []), fresh).is_none(), tags.retagged(bytes_of("not sound"), fresh).is_none()];
+  let got = [written(tags.read(out)), shown(tags.picture(out)), out[3].to_string(), tail(out, out.len() - 5), written(tags.read(bare)), bare[3].to_string(), tail(bare, bare.len() - 5), none.map((b: boolean): string => b.to_string()).join(",")];
+  return test.assert_eq(got.join(" / "), "Café ☕|Fern|First Light||3|2026|Folk|Words|-300 / " + shown(image()) + " / 3 / 255,251,144,0,7 / New||||0|0|||0 / 4 / 255,251,144,0,7 / true,true,true,true");
+}
+
+function test_writing_flac(): test.TestOutcome {
+  let info: u8[] = [];
+  for i in 0..34 {
+    info = info.append(7u8);
+  }
+  let list = joined([comment("fern encoder"), wire.put_le([], 3u64, 4), comment("title=Old"), comment("REPLAYGAIN_TRACK_GAIN=-2.5 dB"), comment("LYRICS=Words")]);
+  let pic = picture_block();
+  let audio: u8[] = [255u8, 248u8, 1u8, 2u8];
+  let flac = joined([bytes_of("fLaC"), [0u8, 0u8, 0u8, 34u8], info, [4u8], wire.put_be([], list.len() as u64, 3), list, [134u8], wire.put_be([], pic.len() as u64, 3), pic, audio]);
+  let fresh = tags.Tags { ...tags.none(), title: "New", artist: "Fern", album_artist: "Friends", track: 2 };
+  let Some(out) = tags.retagged(flac, fresh) else {
+    return test.fail("the FLAC file is not written");
+  };
+  // A FLAC file with only its stream block gets a comment block after it,
+  // and the comment block is the last one.
+  let plain = joined([bytes_of("fLaC"), [128u8, 0u8, 0u8, 34u8], info, audio]);
+  let Some(added) = tags.retagged(plain, fresh) else {
+    return test.fail("the FLAC file with no comments is not written");
+  };
+  let got = [written(tags.read(out)), tags.read(out).album_artist, shown(tags.picture(out)), tail(out, out.len() - 4), out[4].to_string(), show(tags.read(added)), added[4].to_string(), added[42].to_string(), tail(added, added.len() - 4)];
+  return test.assert_eq(got.join(" / "), "New|Fern||Friends|2|0||Words|-250 / Friends / " + shown(image()) + " / 255,248,1,2 / 0 / New|Fern||Friends|2|0 / 0 / 132 / 255,248,1,2");
+}
+
 function main(): i32 {
   let r = test.new("std/audio/tags");
   r = r.it("an ID3v2.3 tag has texts in UTF-16 and in Latin-1", test_id3v23);
@@ -303,6 +361,8 @@ function main(): i32 {
   r = r.it("a file holds its lyrics", test_lyrics);
   r = r.it("a file holds the gain of its track", test_gain);
   r = r.it("a file holds the gain of its album", test_album_gain);
+  r = r.it("an MP3 file gets new tags and keeps its other frames", test_writing_id3);
+  r = r.it("a FLAC file gets new comments and keeps its other blocks", test_writing_flac);
   r = r.it("bytes that are not tags give empty tags", test_bytes_that_are_not_tags);
   return r.finish();
 }

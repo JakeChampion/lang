@@ -208,7 +208,7 @@ pub function no_sound(): Sound {
 // player holds of the device before Android destroys the activity, or
 // keep the playlists for the next start, or write a playlist as an M3U
 // file, or keep the settings.
-pub enum Want { Load(i32), Follow(i32), Resume, Hold, Seek(f64), Scan, Grant, List(string), Keep(string), Quit, KeepLists, WriteList(string), KeepPrefs, KeepPlace }
+pub enum Want { Load(i32), Follow(i32), Resume, Hold, Seek(f64), Scan, Grant, List(string), Keep(string), Quit, KeepLists, WriteList(string), KeepPrefs, KeepPlace, WriteTags(i32) }
 
 // `fresh` tells that the player did not look for its files yet: it looks
 // at its first Beat, after the screen shows.
@@ -283,6 +283,8 @@ pub struct Model {
   tint: boolean,
   fade_s: i32,
   gain: Gain,
+  editing: i32,
+  draft: Draft,
   tone: i32[],
   filters: eq.Equalizer,
   tuning: boolean,
@@ -339,7 +341,7 @@ pub struct Model {
 
 // A player with no track yet, which reads the files `scan`.
 pub function start(scan: string[]): Model {
-  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", album_by: "", genre: "", place: "", sort: BY_ALBUM, speed: 100, pitch: 0, sleep_min: 0, sleep_us: 0i64, salt: 0, level: LEVEL_TRACK, tint: true, fade_s: 0, gain: no_gain(), tone: [0, 0, 0, 0, 0], filters: eq.new(0, 1, []), tuning: false, bars: [], settings: false, look: LOOK_SYSTEM, hidden: [], off: [], query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, chosen: [], detail: false, lined: false, error: "", wants: [], sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false, covers: [], bare: [], pictures: [], art: None, lyrics: [], sung: false, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: false, wanted: [], playlists: [], list: "", adding: [], naming: false, name: "" };
+  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", album_by: "", genre: "", place: "", sort: BY_ALBUM, speed: 100, pitch: 0, sleep_min: 0, sleep_us: 0i64, salt: 0, level: LEVEL_TRACK, tint: true, fade_s: 0, gain: no_gain(), editing: -1, draft: draft_of(plain("", "", "", 0i64)), tone: [0, 0, 0, 0, 0], filters: eq.new(0, 1, []), tuning: false, bars: [], settings: false, look: LOOK_SYSTEM, hidden: [], off: [], query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, chosen: [], detail: false, lined: false, error: "", wants: [], sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false, covers: [], bare: [], pictures: [], art: None, lyrics: [], sung: false, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: false, wanted: [], playlists: [], list: "", adding: [], naming: false, name: "" };
 }
 
 // A player with the tracks `tracks` and the playlists `playlists` that it
@@ -380,6 +382,55 @@ pub function tint_color(m: Model): Option[i32] {
     }
   }
   return None;
+}
+
+// The texts of the tags of a track while the person changes them: the
+// title, the artist, the album, the artist of the album, the number, the
+// year and the genre.
+pub struct Draft { title: string, artist: string, album: string, by: string, number: string, year: string, genre: string }
+
+// The names of the fields of a draft, in the order of `drafted`.
+pub const DRAFT_FIELDS: string[] = ["Title", "Artist", "Album", "Album artist", "Number", "Year", "Genre"];
+
+pub function draft_of(t: Track): Draft {
+  return Draft { title: t.title, artist: t.artist, album: t.album, by: t.by, number: if (t.number > 0) { t.number.to_string() } else { "" }, year: if (t.year > 0) { t.year.to_string() } else { "" }, genre: t.genre };
+}
+
+// The texts of the draft `d`, in the order of `DRAFT_FIELDS`.
+function drafted(d: Draft): string[] {
+  return [d.title, d.artist, d.album, d.by, d.number, d.year, d.genre];
+}
+
+// The draft `d` with the field `k` of `DRAFT_FIELDS` at `text`.
+function with_draft(d: Draft, k: i32, text: string): Draft {
+  return match (k) {
+    0 => Draft { ...d, title: text },
+    1 => Draft { ...d, artist: text },
+    2 => Draft { ...d, album: text },
+    3 => Draft { ...d, by: text },
+    4 => Draft { ...d, number: text },
+    5 => Draft { ...d, year: text },
+    _ => Draft { ...d, genre: text },
+  };
+}
+
+// The number of a text of digits, or 0.
+pub function draft_number(text: string): i32 {
+  let n = 0;
+  for i in 0..text.len() {
+    if (text[i] < b'0' || text[i] > b'9' || n > 100000) {
+      return 0;
+    }
+    n = n * 10 + (text[i] - b'0') as i32;
+  }
+  return n;
+}
+
+// The track `t` with the tags of the draft `d`. A field with no text takes
+// the text of the track, as the scan does.
+pub function retitled(t: Track, d: Draft): Track {
+  let artist = if (d.artist.len() > 0) { d.artist } else { t.artist };
+  return Track { ...t, title: if (d.title.len() > 0) { d.title } else { t.title }, artist: artist, album: if (d.album.len() > 0) { d.album } else { t.album }, by: if (d.by.len() > 0) { d.by } else { artist }, number: draft_number(d.number), year: draft_number(d.year), genre: d.genre, artists: names(artist) };
 }
 
 // Where the player was: the paths of its queue, the place of the track in
@@ -485,8 +536,12 @@ pub function start_in(home: string, folder: string): Model {
 // `Tuning` shows or hides the screen of the equalizer. `Boost` sets the
 // gain of a band from the part of its slider, and `Preset` gives each band
 // the gain of a preset. `Restore` puts the player at a place that it kept,
-// and `Away` keeps the place when the app goes away.
-pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean), Menu(i32), MenuClosed, PlayNext, Enqueue, Lined(boolean), Jump(i32), Drop(i32), Shift(i32, i32), Closing, Walk(string[]), Listed(string, string[]), OpenList(string), AddTo, SaveQueue, ToList(string), NewList, Named(string), Create, Unlist(i32), Relist(i32, i32), DeleteList, Favorite, Imported(string, string[]), Export, Exported(string), Genre(string), Place(string), Sort, ToAlbum, ToArtist, Details, Speed, Pitch, Sleep, Slept(i64), Lyrics, Settings(boolean), Look, Tint, Fade, Tuning(boolean), Boost(i32, f64), Preset(i32), Restore(Place), Away, TabShown(i32), Hide, Unhide(string), ShuffleAll(i32), PlayList(string), Level }
+// and `Away` keeps the place when the app goes away. `EditTags` shows the
+// tags of the chosen track in a draft, `Typed` changes a field of it, and
+// `SaveTags` writes the draft to the file. `Retagged` tells that the file
+// of a track has the tags of the draft, or that the player cannot write
+// them.
+pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean), Menu(i32), MenuClosed, PlayNext, Enqueue, Lined(boolean), Jump(i32), Drop(i32), Shift(i32, i32), Closing, Walk(string[]), Listed(string, string[]), OpenList(string), AddTo, SaveQueue, ToList(string), NewList, Named(string), Create, Unlist(i32), Relist(i32, i32), DeleteList, Favorite, Imported(string, string[]), Export, Exported(string), Genre(string), Place(string), Sort, ToAlbum, ToArtist, Details, Speed, Pitch, Sleep, Slept(i64), Lyrics, Settings(boolean), Look, Tint, Fade, Tuning(boolean), Boost(i32, f64), Preset(i32), Restore(Place), Away, EditTags, Typed(i32, string), SaveTags, Retagged(i32, boolean), TabShown(i32), Hide, Unhide(string), ShuffleAll(i32), PlayList(string), Level }
 
 // The key of the album of a track: the artist that the album is under,
 // and its name.
@@ -1206,8 +1261,12 @@ function setting(name: string, detail: string, button: string, m: Msg): ui.El[Ms
 }
 
 // The screen of the settings: the theme, the folder of the library, the
-// tabs, and the directories that the person hides.
+// tabs, and the directories that the person hides. Its screen of the
+// equalizer shows in its place.
 function settings(m: Model): ui.El[Msg] {
+  if (m.tuning) {
+    return tuner(m);
+  }
   let head = ui.row([ui.text("Settings").sized(28.0).weighted(700).wide(), ui.text_button("Up", Up)]).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0);
   let folder = m.folder;
   if (folder.len() == 0) {
@@ -1348,6 +1407,34 @@ function db_label(db: i32): string {
   return db.to_string() + " dB";
 }
 
+// The player after the file of the track `i` got the tags of the draft, or
+// after the player could not write them.
+function retagged(m: Model, i: i32, ok: boolean): Model {
+  if (i < 0 || i >= m.tracks.len()) {
+    return m;
+  }
+  if (!ok) {
+    return Model { ...m, error: "Tune cannot change the tags of " + leaf(m.tracks[i].path) };
+  }
+  return Model { ...m, tracks: m.tracks.with(i, retitled(m.tracks[i], m.draft)), editing: -1, error: "", dirty: true };
+}
+
+// The screen where the person changes the tags of a track.
+function editor(m: Model): ui.El[Msg] {
+  let t = m.tracks[m.editing];
+  let head = ui.row([ui.text("Edit tags").sized(28.0).weighted(700).wide(), ui.text_button("Cancel", Up)]).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0);
+  let rows: ui.El[Msg][] = [head, ui.text(leaf(t.path)).colored(ui.MUTED).clamped(1).padding_xy(16.0, 0.0)];
+  let texts = drafted(m.draft);
+  for k in 0..DRAFT_FIELDS.len() {
+    rows = rows.append(ui.column([ui.text(DRAFT_FIELDS[k]).sized(12.0).colored(ui.MUTED), ui.field("tag-" + k.to_string(), texts[k], DRAFT_FIELDS[k]).on_edit((text: string): Msg => Typed(k, text))]).spaced(2.0).padding_xy(16.0, 0.0));
+  }
+  if (m.error.len() > 0) {
+    rows = rows.append(ui.text(m.error).colored(ui.PRIMARY).padding_xy(16.0, 0.0));
+  }
+  rows = rows.append(ui.row([ui.space(), ui.button("Save", SaveTags)]).padding_xy(16.0, 0.0));
+  return ui.column(rows).spaced(10.0).padding_xy(0.0, 16.0).aligned(ui.STRETCH).scroll("editor");
+}
+
 // The screen of the equalizer: a slider for each band, and the presets.
 function tuner(m: Model): ui.El[Msg] {
   let head = ui.row([ui.text("Equalizer").sized(28.0).weighted(700).wide(), ui.text_button("Up", Up)]).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0);
@@ -1444,7 +1531,7 @@ function menu(m: Model): ui.El[Msg] {
     name = t.title;
     more = more.append(ui.text_button("Album", ToAlbum)).append(ui.text_button("Artist", ToArtist)).append(ui.text_button("Details", Details));
     if (m.detail) {
-      kids = [details(t)];
+      kids = [details(t), ui.row([ui.text_button("Edit tags", EditTags)])];
     }
   }
   let first = ui.row([ui.text_button("Play next", PlayNext), ui.text_button("Add to queue", Enqueue), ui.space(), ui.text_button("Close", MenuClosed)]).spaced(8.0).aligned(ui.CENTER);
@@ -1606,8 +1693,8 @@ pub function view(m: Model, s: ui.Screen): ui.El[Msg] {
   if (m.choosing) {
     return chooser(m);
   }
-  if (m.settings && m.tuning) {
-    return tuner(m);
+  if (m.editing >= 0 && m.editing < m.tracks.len()) {
+    return editor(m);
   }
   if (m.settings) {
     return settings(m);
@@ -1852,6 +1939,9 @@ function finished(m: Model): Model {
 function went_up(m: Model): Model {
   if (m.choosing) {
     return Model { ...m, choosing: false };
+  }
+  if (m.editing >= 0) {
+    return Model { ...m, editing: -1, error: "" };
   }
   if (m.tuning) {
     return Model { ...m, tuning: false };
@@ -2103,6 +2193,25 @@ pub function update(own m: Model, msg: Msg): Model {
     Restore(p) => {
       return restored(m, p);
     },
+    EditTags => {
+      if (m.chosen.len() != 1) {
+        return m;
+      }
+      let i = m.chosen[0];
+      return Model { ...m, editing: i, draft: draft_of(m.tracks[i]), chosen: [], detail: false, error: "" };
+    },
+    Typed(k, text) => {
+      return Model { ...m, draft: with_draft(m.draft, k, text) };
+    },
+    SaveTags => {
+      if (m.editing < 0) {
+        return m;
+      }
+      return Model { ...m, wants: m.wants.append(WriteTags(m.editing)) };
+    },
+    Retagged(i, ok) => {
+      return retagged(m, i, ok);
+    },
     Away => {
       return Model { ...m, wants: m.wants.append(KeepPlace) };
     },
@@ -2279,7 +2388,7 @@ pub function beat(m: Model): i32 {
 }
 
 pub function back(m: Model): Option[Msg] {
-  if (m.adding.len() > 0) {
+  if (m.editing >= 0 || m.adding.len() > 0) {
     return Some(Up);
   }
   if (m.lined) {
