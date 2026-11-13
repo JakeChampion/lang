@@ -1,0 +1,1277 @@
+[
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-nqueens",
+      "13"
+    ],
+    "exit": 0,
+    "wall_ns": 870014623,
+    "user_seconds": 0.783584,
+    "system_seconds": 0.08410899999999999,
+    "peak_rss_bytes": 194641920,
+    "minor_faults": 47728,
+    "major_faults": 0,
+    "language": "fern",
+    "workload": "nqueens",
+    "size": 13,
+    "repeat": 0
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-nqueens",
+      "13"
+    ],
+    "exit": 0,
+    "wall_ns": 784614361,
+    "user_seconds": 0.751231,
+    "system_seconds": 0.024111999999999998,
+    "peak_rss_bytes": 103874560,
+    "minor_faults": 342,
+    "major_faults": 0,
+    "language": "koka",
+    "workload": "nqueens",
+    "size": 13,
+    "repeat": 0
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/lean-nqueens",
+      "13"
+    ],
+    "exit": 0,
+    "wall_ns": 1228012759,
+    "user_seconds": 1.1887240000000001,
+    "system_seconds": 0.023964,
+    "peak_rss_bytes": 139034624,
+    "minor_faults": 449,
+    "major_faults": 0,
+    "language": "lean",
+    "workload": "nqueens",
+    "size": 13,
+    "repeat": 0
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-nqueens",
+      "13"
+    ],
+    "exit": 0,
+    "wall_ns": 776768694,
+    "user_seconds": 0.763035,
+    "system_seconds": 0.012001,
+    "peak_rss_bytes": 103845888,
+    "minor_faults": 344,
+    "major_faults": 0,
+    "language": "koka",
+    "workload": "nqueens",
+    "size": 13,
+    "repeat": 1
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/lean-nqueens",
+      "13"
+    ],
+    "exit": 0,
+    "wall_ns": 1248946164,
+    "user_seconds": 1.221026,
+    "system_seconds": 0.020005,
+    "peak_rss_bytes": 138952704,
+    "minor_faults": 444,
+    "major_faults": 0,
+    "language": "lean",
+    "workload": "nqueens",
+    "size": 13,
+    "repeat": 1
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-nqueens",
+      "13"
+    ],
+    "exit": 0,
+    "wall_ns": 988919236,
+    "user_seconds": 0.885323,
+    "system_seconds": 0.093266,
+    "peak_rss_bytes": 194641920,
+    "minor_faults": 47726,
+    "major_faults": 0,
+    "language": "fern",
+    "workload": "nqueens",
+    "size": 13,
+    "repeat": 1
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/lean-nqueens",
+      "13"
+    ],
+    "exit": 0,
+    "wall_ns": 1182986607,
+    "user_seconds": 1.143858,
+    "system_seconds": 0.027646999999999998,
+    "peak_rss_bytes": 139014144,
+    "minor_faults": 443,
+    "major_faults": 0,
+    "language": "lean",
+    "workload": "nqueens",
+    "size": 13,
+    "repeat": 2
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-nqueens",
+      "13"
+    ],
+    "exit": 0,
+    "wall_ns": 868997075,
+    "user_seconds": 0.800122,
+    "system_seconds": 0.068005,
+    "peak_rss_bytes": 194641920,
+    "minor_faults": 47725,
+    "major_faults": 0,
+    "language": "fern",
+    "workload": "nqueens",
+    "size": 13,
+    "repeat": 2
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-nqueens",
+      "13"
+    ],
+    "exit": 0,
+    "wall_ns": 818367864,
+    "user_seconds": 0.7974859999999999,
+    "system_seconds": 0.011961999999999999,
+    "peak_rss_bytes": 103800832,
+    "minor_faults": 342,
+    "major_faults": 0,
+    "language": "koka",
+    "workload": "nqueens",
+    "size": 13,
+    "repeat": 2
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-nqueens",
+      "13"
+    ],
+    "exit": 0,
+    "wall_ns": 892494957,
+    "user_seconds": 0.813418,
+    "system_seconds": 0.075852,
+    "peak_rss_bytes": 194641920,
+    "minor_faults": 47725,
+    "major_faults": 0,
+    "language": "fern",
+    "workload": "nqueens",
+    "size": 13,
+    "repeat": 3
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-nqueens",
+      "13"
+    ],
+    "exit": 0,
+    "wall_ns": 785679690,
+    "user_seconds": 0.7596229999999999,
+    "system_seconds": 0.019867,
+    "peak_rss_bytes": 103858176,
+    "minor_faults": 343,
+    "major_faults": 0,
+    "language": "koka",
+    "workload": "nqueens",
+    "size": 13,
+    "repeat": 3
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/lean-nqueens",
+      "13"
+    ],
+    "exit": 0,
+    "wall_ns": 1129578053,
+    "user_seconds": 1.101716,
+    "system_seconds": 0.019986999999999998,
+    "peak_rss_bytes": 138956800,
+    "minor_faults": 447,
+    "major_faults": 0,
+    "language": "lean",
+    "workload": "nqueens",
+    "size": 13,
+    "repeat": 3
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-nqueens",
+      "13"
+    ],
+    "exit": 0,
+    "wall_ns": 784918414,
+    "user_seconds": 0.7651439999999999,
+    "system_seconds": 0.016005,
+    "peak_rss_bytes": 103813120,
+    "minor_faults": 341,
+    "major_faults": 0,
+    "language": "koka",
+    "workload": "nqueens",
+    "size": 13,
+    "repeat": 4
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/lean-nqueens",
+      "13"
+    ],
+    "exit": 0,
+    "wall_ns": 1153617463,
+    "user_seconds": 1.115238,
+    "system_seconds": 0.035983,
+    "peak_rss_bytes": 138977280,
+    "minor_faults": 446,
+    "major_faults": 0,
+    "language": "lean",
+    "workload": "nqueens",
+    "size": 13,
+    "repeat": 4
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-nqueens",
+      "13"
+    ],
+    "exit": 0,
+    "wall_ns": 874093613,
+    "user_seconds": 0.788697,
+    "system_seconds": 0.084143,
+    "peak_rss_bytes": 194641920,
+    "minor_faults": 47726,
+    "major_faults": 0,
+    "language": "fern",
+    "workload": "nqueens",
+    "size": 13,
+    "repeat": 4
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-rbtree",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 1156091382,
+    "user_seconds": 1.04675,
+    "system_seconds": 0.105547,
+    "peak_rss_bytes": 302383104,
+    "minor_faults": 74013,
+    "major_faults": 0,
+    "language": "fern",
+    "workload": "rbtree",
+    "size": 4200000,
+    "repeat": 0
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-rbtree",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 596846247,
+    "user_seconds": 0.569221,
+    "system_seconds": 0.02,
+    "peak_rss_bytes": 139538432,
+    "minor_faults": 360,
+    "major_faults": 0,
+    "language": "koka",
+    "workload": "rbtree",
+    "size": 4200000,
+    "repeat": 0
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/lean-rbtree",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 1784954557,
+    "user_seconds": 1.725237,
+    "system_seconds": 0.043996,
+    "peak_rss_bytes": 210403328,
+    "minor_faults": 488,
+    "major_faults": 0,
+    "language": "lean",
+    "workload": "rbtree",
+    "size": 4200000,
+    "repeat": 0
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-rbtree",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 631672198,
+    "user_seconds": 0.604818,
+    "system_seconds": 0.015941,
+    "peak_rss_bytes": 139505664,
+    "minor_faults": 358,
+    "major_faults": 0,
+    "language": "koka",
+    "workload": "rbtree",
+    "size": 4200000,
+    "repeat": 1
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/lean-rbtree",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 1784015612,
+    "user_seconds": 1.703256,
+    "system_seconds": 0.06394,
+    "peak_rss_bytes": 210247680,
+    "minor_faults": 490,
+    "major_faults": 0,
+    "language": "lean",
+    "workload": "rbtree",
+    "size": 4200000,
+    "repeat": 1
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-rbtree",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 1245153243,
+    "user_seconds": 1.091868,
+    "system_seconds": 0.13746899999999998,
+    "peak_rss_bytes": 302383104,
+    "minor_faults": 74014,
+    "major_faults": 0,
+    "language": "fern",
+    "workload": "rbtree",
+    "size": 4200000,
+    "repeat": 1
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/lean-rbtree",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 1748428054,
+    "user_seconds": 1.705598,
+    "system_seconds": 0.035990999999999995,
+    "peak_rss_bytes": 210427904,
+    "minor_faults": 489,
+    "major_faults": 0,
+    "language": "lean",
+    "workload": "rbtree",
+    "size": 4200000,
+    "repeat": 2
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-rbtree",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 1273170139,
+    "user_seconds": 1.159069,
+    "system_seconds": 0.09841599999999999,
+    "peak_rss_bytes": 302383104,
+    "minor_faults": 74013,
+    "major_faults": 0,
+    "language": "fern",
+    "workload": "rbtree",
+    "size": 4200000,
+    "repeat": 2
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-rbtree",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 622233168,
+    "user_seconds": 0.587588,
+    "system_seconds": 0.024051,
+    "peak_rss_bytes": 139530240,
+    "minor_faults": 361,
+    "major_faults": 0,
+    "language": "koka",
+    "workload": "rbtree",
+    "size": 4200000,
+    "repeat": 2
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-rbtree",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 1326200303,
+    "user_seconds": 1.177982,
+    "system_seconds": 0.13589299999999999,
+    "peak_rss_bytes": 302383104,
+    "minor_faults": 74014,
+    "major_faults": 0,
+    "language": "fern",
+    "workload": "rbtree",
+    "size": 4200000,
+    "repeat": 3
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-rbtree",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 647801071,
+    "user_seconds": 0.5706709999999999,
+    "system_seconds": 0.046944,
+    "peak_rss_bytes": 139554816,
+    "minor_faults": 362,
+    "major_faults": 0,
+    "language": "koka",
+    "workload": "rbtree",
+    "size": 4200000,
+    "repeat": 3
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/lean-rbtree",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 1703304114,
+    "user_seconds": 1.664483,
+    "system_seconds": 0.032304,
+    "peak_rss_bytes": 210255872,
+    "minor_faults": 488,
+    "major_faults": 0,
+    "language": "lean",
+    "workload": "rbtree",
+    "size": 4200000,
+    "repeat": 3
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-rbtree",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 609683872,
+    "user_seconds": 0.586361,
+    "system_seconds": 0.016027,
+    "peak_rss_bytes": 139497472,
+    "minor_faults": 363,
+    "major_faults": 0,
+    "language": "koka",
+    "workload": "rbtree",
+    "size": 4200000,
+    "repeat": 4
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/lean-rbtree",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 1772224879,
+    "user_seconds": 1.696467,
+    "system_seconds": 0.040639,
+    "peak_rss_bytes": 210268160,
+    "minor_faults": 490,
+    "major_faults": 0,
+    "language": "lean",
+    "workload": "rbtree",
+    "size": 4200000,
+    "repeat": 4
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-rbtree",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 1294465725,
+    "user_seconds": 1.170744,
+    "system_seconds": 0.119598,
+    "peak_rss_bytes": 302383104,
+    "minor_faults": 74015,
+    "major_faults": 0,
+    "language": "fern",
+    "workload": "rbtree",
+    "size": 4200000,
+    "repeat": 4
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-rbtree-ck",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 2690531963,
+    "user_seconds": 1.928185,
+    "system_seconds": 0.755173,
+    "peak_rss_bytes": 2156789760,
+    "minor_faults": 526787,
+    "major_faults": 0,
+    "language": "fern",
+    "workload": "rbtree-ck",
+    "size": 4200000,
+    "repeat": 0
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-rbtree-ck",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 1667372690,
+    "user_seconds": 1.522327,
+    "system_seconds": 0.139815,
+    "peak_rss_bytes": 1207042048,
+    "minor_faults": 901,
+    "major_faults": 0,
+    "language": "koka",
+    "workload": "rbtree-ck",
+    "size": 4200000,
+    "repeat": 0
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/lean-rbtree-ck",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 2733146166,
+    "user_seconds": 2.49084,
+    "system_seconds": 0.22341899999999998,
+    "peak_rss_bytes": 1449852928,
+    "minor_faults": 1135,
+    "major_faults": 0,
+    "language": "lean",
+    "workload": "rbtree-ck",
+    "size": 4200000,
+    "repeat": 0
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-rbtree-ck",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 1824323472,
+    "user_seconds": 1.5892140000000001,
+    "system_seconds": 0.198928,
+    "peak_rss_bytes": 1207058432,
+    "minor_faults": 900,
+    "major_faults": 0,
+    "language": "koka",
+    "workload": "rbtree-ck",
+    "size": 4200000,
+    "repeat": 1
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/lean-rbtree-ck",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 2874168537,
+    "user_seconds": 2.58893,
+    "system_seconds": 0.246639,
+    "peak_rss_bytes": 1449926656,
+    "minor_faults": 1118,
+    "major_faults": 0,
+    "language": "lean",
+    "workload": "rbtree-ck",
+    "size": 4200000,
+    "repeat": 1
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-rbtree-ck",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 3007131115,
+    "user_seconds": 2.1494619999999998,
+    "system_seconds": 0.842726,
+    "peak_rss_bytes": 2156920832,
+    "minor_faults": 526787,
+    "major_faults": 0,
+    "language": "fern",
+    "workload": "rbtree-ck",
+    "size": 4200000,
+    "repeat": 1
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/lean-rbtree-ck",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 2836264449,
+    "user_seconds": 2.571609,
+    "system_seconds": 0.239617,
+    "peak_rss_bytes": 1449963520,
+    "minor_faults": 1116,
+    "major_faults": 0,
+    "language": "lean",
+    "workload": "rbtree-ck",
+    "size": 4200000,
+    "repeat": 2
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-rbtree-ck",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 3245619297,
+    "user_seconds": 2.441257,
+    "system_seconds": 0.7581289999999999,
+    "peak_rss_bytes": 2156920832,
+    "minor_faults": 526788,
+    "major_faults": 0,
+    "language": "fern",
+    "workload": "rbtree-ck",
+    "size": 4200000,
+    "repeat": 2
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-rbtree-ck",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 1627173207,
+    "user_seconds": 1.438584,
+    "system_seconds": 0.183745,
+    "peak_rss_bytes": 1207099392,
+    "minor_faults": 905,
+    "major_faults": 0,
+    "language": "koka",
+    "workload": "rbtree-ck",
+    "size": 4200000,
+    "repeat": 2
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-rbtree-ck",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 3270192080,
+    "user_seconds": 2.455139,
+    "system_seconds": 0.7918029999999999,
+    "peak_rss_bytes": 2156920832,
+    "minor_faults": 526789,
+    "major_faults": 0,
+    "language": "fern",
+    "workload": "rbtree-ck",
+    "size": 4200000,
+    "repeat": 3
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-rbtree-ck",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 1658914175,
+    "user_seconds": 1.470027,
+    "system_seconds": 0.168823,
+    "peak_rss_bytes": 1207087104,
+    "minor_faults": 902,
+    "major_faults": 0,
+    "language": "koka",
+    "workload": "rbtree-ck",
+    "size": 4200000,
+    "repeat": 3
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/lean-rbtree-ck",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 2863417285,
+    "user_seconds": 2.645582,
+    "system_seconds": 0.19878099999999999,
+    "peak_rss_bytes": 1449816064,
+    "minor_faults": 1122,
+    "major_faults": 0,
+    "language": "lean",
+    "workload": "rbtree-ck",
+    "size": 4200000,
+    "repeat": 3
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-rbtree-ck",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 1789054945,
+    "user_seconds": 1.5224419999999999,
+    "system_seconds": 0.213474,
+    "peak_rss_bytes": 1207087104,
+    "minor_faults": 905,
+    "major_faults": 0,
+    "language": "koka",
+    "workload": "rbtree-ck",
+    "size": 4200000,
+    "repeat": 4
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/lean-rbtree-ck",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 2768495519,
+    "user_seconds": 2.507195,
+    "system_seconds": 0.228844,
+    "peak_rss_bytes": 1449869312,
+    "minor_faults": 1119,
+    "major_faults": 0,
+    "language": "lean",
+    "workload": "rbtree-ck",
+    "size": 4200000,
+    "repeat": 4
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-rbtree-ck",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 2754180596,
+    "user_seconds": 2.061007,
+    "system_seconds": 0.6850839999999999,
+    "peak_rss_bytes": 2156920832,
+    "minor_faults": 526789,
+    "major_faults": 0,
+    "language": "fern",
+    "workload": "rbtree-ck",
+    "size": 4200000,
+    "repeat": 4
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-deriv",
+      "10"
+    ],
+    "exit": 0,
+    "wall_ns": 1327763373,
+    "user_seconds": 1.022715,
+    "system_seconds": 0.303298,
+    "peak_rss_bytes": 891289600,
+    "minor_faults": 217802,
+    "major_faults": 0,
+    "language": "fern",
+    "workload": "deriv",
+    "size": 10,
+    "repeat": 0
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-deriv",
+      "10"
+    ],
+    "exit": 0,
+    "wall_ns": 831604575,
+    "user_seconds": 0.777065,
+    "system_seconds": 0.051924,
+    "peak_rss_bytes": 481423360,
+    "minor_faults": 539,
+    "major_faults": 0,
+    "language": "koka",
+    "workload": "deriv",
+    "size": 10,
+    "repeat": 0
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/lean-deriv",
+      "10"
+    ],
+    "exit": 0,
+    "wall_ns": 1133960844,
+    "user_seconds": 1.017424,
+    "system_seconds": 0.112039,
+    "peak_rss_bytes": 579379200,
+    "minor_faults": 674,
+    "major_faults": 0,
+    "language": "lean",
+    "workload": "deriv",
+    "size": 10,
+    "repeat": 0
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-deriv",
+      "10"
+    ],
+    "exit": 0,
+    "wall_ns": 944881266,
+    "user_seconds": 0.868261,
+    "system_seconds": 0.071951,
+    "peak_rss_bytes": 481443840,
+    "minor_faults": 540,
+    "major_faults": 0,
+    "language": "koka",
+    "workload": "deriv",
+    "size": 10,
+    "repeat": 1
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/lean-deriv",
+      "10"
+    ],
+    "exit": 0,
+    "wall_ns": 1097733288,
+    "user_seconds": 0.9853179999999999,
+    "system_seconds": 0.099883,
+    "peak_rss_bytes": 579510272,
+    "minor_faults": 674,
+    "major_faults": 0,
+    "language": "lean",
+    "workload": "deriv",
+    "size": 10,
+    "repeat": 1
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-deriv",
+      "10"
+    ],
+    "exit": 0,
+    "wall_ns": 1502612950,
+    "user_seconds": 1.168944,
+    "system_seconds": 0.331194,
+    "peak_rss_bytes": 891289600,
+    "minor_faults": 217803,
+    "major_faults": 0,
+    "language": "fern",
+    "workload": "deriv",
+    "size": 10,
+    "repeat": 1
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/lean-deriv",
+      "10"
+    ],
+    "exit": 0,
+    "wall_ns": 1118610227,
+    "user_seconds": 1.025248,
+    "system_seconds": 0.088406,
+    "peak_rss_bytes": 579514368,
+    "minor_faults": 675,
+    "major_faults": 0,
+    "language": "lean",
+    "workload": "deriv",
+    "size": 10,
+    "repeat": 2
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-deriv",
+      "10"
+    ],
+    "exit": 0,
+    "wall_ns": 1592347131,
+    "user_seconds": 1.300398,
+    "system_seconds": 0.283497,
+    "peak_rss_bytes": 891289600,
+    "minor_faults": 217802,
+    "major_faults": 0,
+    "language": "fern",
+    "workload": "deriv",
+    "size": 10,
+    "repeat": 2
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-deriv",
+      "10"
+    ],
+    "exit": 0,
+    "wall_ns": 929443265,
+    "user_seconds": 0.804527,
+    "system_seconds": 0.11347,
+    "peak_rss_bytes": 481398784,
+    "minor_faults": 540,
+    "major_faults": 0,
+    "language": "koka",
+    "workload": "deriv",
+    "size": 10,
+    "repeat": 2
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-deriv",
+      "10"
+    ],
+    "exit": 0,
+    "wall_ns": 1453426938,
+    "user_seconds": 1.178162,
+    "system_seconds": 0.271882,
+    "peak_rss_bytes": 891289600,
+    "minor_faults": 217802,
+    "major_faults": 0,
+    "language": "fern",
+    "workload": "deriv",
+    "size": 10,
+    "repeat": 3
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-deriv",
+      "10"
+    ],
+    "exit": 0,
+    "wall_ns": 841549756,
+    "user_seconds": 0.7705409999999999,
+    "system_seconds": 0.067938,
+    "peak_rss_bytes": 481509376,
+    "minor_faults": 543,
+    "major_faults": 0,
+    "language": "koka",
+    "workload": "deriv",
+    "size": 10,
+    "repeat": 3
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/lean-deriv",
+      "10"
+    ],
+    "exit": 0,
+    "wall_ns": 1210804714,
+    "user_seconds": 1.118086,
+    "system_seconds": 0.083952,
+    "peak_rss_bytes": 579313664,
+    "minor_faults": 673,
+    "major_faults": 0,
+    "language": "lean",
+    "workload": "deriv",
+    "size": 10,
+    "repeat": 3
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-deriv",
+      "10"
+    ],
+    "exit": 0,
+    "wall_ns": 850991350,
+    "user_seconds": 0.792504,
+    "system_seconds": 0.056116,
+    "peak_rss_bytes": 481411072,
+    "minor_faults": 542,
+    "major_faults": 0,
+    "language": "koka",
+    "workload": "deriv",
+    "size": 10,
+    "repeat": 4
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/lean-deriv",
+      "10"
+    ],
+    "exit": 0,
+    "wall_ns": 1121632861,
+    "user_seconds": 1.019907,
+    "system_seconds": 0.09465799999999999,
+    "peak_rss_bytes": 579469312,
+    "minor_faults": 674,
+    "major_faults": 0,
+    "language": "lean",
+    "workload": "deriv",
+    "size": 10,
+    "repeat": 4
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-deriv",
+      "10"
+    ],
+    "exit": 0,
+    "wall_ns": 1537794761,
+    "user_seconds": 1.197322,
+    "system_seconds": 0.31798,
+    "peak_rss_bytes": 891289600,
+    "minor_faults": 217805,
+    "major_faults": 0,
+    "language": "fern",
+    "workload": "deriv",
+    "size": 10,
+    "repeat": 4
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-cfold",
+      "20"
+    ],
+    "exit": 0,
+    "wall_ns": 281474014,
+    "user_seconds": 0.21548699999999998,
+    "system_seconds": 0.06416999999999999,
+    "peak_rss_bytes": 219676672,
+    "minor_faults": 53844,
+    "major_faults": 0,
+    "language": "fern",
+    "workload": "cfold",
+    "size": 20,
+    "repeat": 0
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-cfold",
+      "20"
+    ],
+    "exit": 0,
+    "wall_ns": 201174616,
+    "user_seconds": 0.135853,
+    "system_seconds": 0.051021,
+    "peak_rss_bytes": 164524032,
+    "minor_faults": 28990,
+    "major_faults": 0,
+    "language": "koka",
+    "workload": "cfold",
+    "size": 20,
+    "repeat": 0
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/lean-cfold",
+      "20"
+    ],
+    "exit": 0,
+    "wall_ns": 236954365,
+    "user_seconds": 0.195285,
+    "system_seconds": 0.040049,
+    "peak_rss_bytes": 174551040,
+    "minor_faults": 20908,
+    "major_faults": 0,
+    "language": "lean",
+    "workload": "cfold",
+    "size": 20,
+    "repeat": 0
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-cfold",
+      "20"
+    ],
+    "exit": 0,
+    "wall_ns": 182916613,
+    "user_seconds": 0.137452,
+    "system_seconds": 0.044468999999999995,
+    "peak_rss_bytes": 164683776,
+    "minor_faults": 28993,
+    "major_faults": 0,
+    "language": "koka",
+    "workload": "cfold",
+    "size": 20,
+    "repeat": 1
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/lean-cfold",
+      "20"
+    ],
+    "exit": 0,
+    "wall_ns": 205978031,
+    "user_seconds": 0.173251,
+    "system_seconds": 0.032258999999999996,
+    "peak_rss_bytes": 174702592,
+    "minor_faults": 20910,
+    "major_faults": 0,
+    "language": "lean",
+    "workload": "cfold",
+    "size": 20,
+    "repeat": 1
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-cfold",
+      "20"
+    ],
+    "exit": 0,
+    "wall_ns": 259823359,
+    "user_seconds": 0.201946,
+    "system_seconds": 0.056566,
+    "peak_rss_bytes": 219676672,
+    "minor_faults": 53845,
+    "major_faults": 0,
+    "language": "fern",
+    "workload": "cfold",
+    "size": 20,
+    "repeat": 1
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/lean-cfold",
+      "20"
+    ],
+    "exit": 0,
+    "wall_ns": 217340031,
+    "user_seconds": 0.184419,
+    "system_seconds": 0.031989,
+    "peak_rss_bytes": 174645248,
+    "minor_faults": 20907,
+    "major_faults": 0,
+    "language": "lean",
+    "workload": "cfold",
+    "size": 20,
+    "repeat": 2
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-cfold",
+      "20"
+    ],
+    "exit": 0,
+    "wall_ns": 263292632,
+    "user_seconds": 0.210034,
+    "system_seconds": 0.052509999999999994,
+    "peak_rss_bytes": 219807744,
+    "minor_faults": 53846,
+    "major_faults": 0,
+    "language": "fern",
+    "workload": "cfold",
+    "size": 20,
+    "repeat": 2
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-cfold",
+      "20"
+    ],
+    "exit": 0,
+    "wall_ns": 177236227,
+    "user_seconds": 0.128334,
+    "system_seconds": 0.048125,
+    "peak_rss_bytes": 164769792,
+    "minor_faults": 28992,
+    "major_faults": 0,
+    "language": "koka",
+    "workload": "cfold",
+    "size": 20,
+    "repeat": 2
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-cfold",
+      "20"
+    ],
+    "exit": 0,
+    "wall_ns": 284506255,
+    "user_seconds": 0.22222999999999998,
+    "system_seconds": 0.059461,
+    "peak_rss_bytes": 219807744,
+    "minor_faults": 53846,
+    "major_faults": 0,
+    "language": "fern",
+    "workload": "cfold",
+    "size": 20,
+    "repeat": 3
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-cfold",
+      "20"
+    ],
+    "exit": 0,
+    "wall_ns": 166641806,
+    "user_seconds": 0.142207,
+    "system_seconds": 0.023701,
+    "peak_rss_bytes": 164687872,
+    "minor_faults": 28991,
+    "major_faults": 0,
+    "language": "koka",
+    "workload": "cfold",
+    "size": 20,
+    "repeat": 3
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/lean-cfold",
+      "20"
+    ],
+    "exit": 0,
+    "wall_ns": 276698212,
+    "user_seconds": 0.211781,
+    "system_seconds": 0.064015,
+    "peak_rss_bytes": 174698496,
+    "minor_faults": 20907,
+    "major_faults": 0,
+    "language": "lean",
+    "workload": "cfold",
+    "size": 20,
+    "repeat": 3
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-cfold",
+      "20"
+    ],
+    "exit": 0,
+    "wall_ns": 216785329,
+    "user_seconds": 0.159964,
+    "system_seconds": 0.055982,
+    "peak_rss_bytes": 164683776,
+    "minor_faults": 28991,
+    "major_faults": 0,
+    "language": "koka",
+    "workload": "cfold",
+    "size": 20,
+    "repeat": 4
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/lean-cfold",
+      "20"
+    ],
+    "exit": 0,
+    "wall_ns": 273234739,
+    "user_seconds": 0.23549299999999998,
+    "system_seconds": 0.031629,
+    "peak_rss_bytes": 174759936,
+    "minor_faults": 20908,
+    "major_faults": 0,
+    "language": "lean",
+    "workload": "cfold",
+    "size": 20,
+    "repeat": 4
+  },
+  {
+    "command": [
+      "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-cfold",
+      "20"
+    ],
+    "exit": 0,
+    "wall_ns": 318405030,
+    "user_seconds": 0.241615,
+    "system_seconds": 0.074992,
+    "peak_rss_bytes": 219676672,
+    "minor_faults": 53845,
+    "major_faults": 0,
+    "language": "fern",
+    "workload": "cfold",
+    "size": 20,
+    "repeat": 4
+  }
+]
