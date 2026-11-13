@@ -152,6 +152,41 @@ class NativeContentDiagnosticsTests(unittest.TestCase):
             with self.subTest(length=len(expected)), self.assertRaises(AssertionError):
                 check.native_content_metrics(self.line(), expected)
 
+    def test_content_audio_requires_both_cursor_and_byte_evidence(self):
+        audio = NativeAvDiagnosticsTests().log()
+        source = 'W/fern: videotest: native AV source=content\n'
+        log = audio + source + self.line()
+        metrics = check.native_content_av_metrics(log, self.data)
+        self.assertEqual(metrics['audio']['cursor_peak_samples'], [2048, 2048])
+        self.assertEqual(metrics['content']['bytes'], len(self.data))
+        for changed in [audio + self.line(), log + source, log.replace('source=content', 'source=file'),
+                        source + self.line(), audio + source, log.replace('peak_samples=2048', 'peak_samples=2049')]:
+            with self.subTest(log=changed), self.assertRaises(AssertionError):
+                check.native_content_av_metrics(changed, self.data)
+
+    def test_native_content_launch_uses_the_same_permission(self):
+        def device(*args, **kwargs):
+            if args == ('shell', 'getprop', 'ro.build.version.sdk'):
+                return '34\n'
+            if args[:3] == ('shell', 'am', 'start'):
+                raise RuntimeError('launch sentinel')
+            return ''
+
+        uri = 'content://media/external/video/media/42'
+        with tempfile.TemporaryDirectory() as directory, patch.object(check, 'adb', side_effect=device) as calls:
+            with self.assertRaisesRegex(RuntimeError, 'launch sentinel'):
+                check.main('video.apk', directory, av_uri=uri)
+            commands = [call.args for call in calls.call_args_list]
+            grant = ('shell', 'pm', 'grant', check.PACKAGE, 'android.permission.READ_MEDIA_VIDEO')
+            start = next(command for command in commands if command[:3] == ('shell', 'am', 'start'))
+            self.assertLess(commands.index(grant), commands.index(start))
+            self.assertEqual(start[-5:], ('--es', 'av_uri', uri, '-d', uri))
+
+    def test_fixture_sources_are_exclusive(self):
+        with patch.object(check, 'adb') as calls, self.assertRaises(AssertionError):
+            check.main('video.apk', 'unused', av_uri='content://media/42', av_path='/private.mp4')
+        calls.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

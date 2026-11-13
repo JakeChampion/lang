@@ -795,3 +795,16 @@ The original synthetic transport controls remain in the same required check.
 Host AAudio controls cover partial writes, backpressure, pause/resume, seek origins, rate rejection, startup failure, and exact cleanup counts.
 Normal and sanitizer Fern libraries run against both normal and undefined-behavior-sanitizer C controls.
 ARM64 shared compilation remains separate from execution. Representative device power, latency, and lip-sync qualification remain unmeasured.
+
+The same bounded native AAC path also accepts a granted content URI through the `av_uri` fixture extra.
+Relative packet offsets use `Source.read_at` and a separate logical cursor, without a shared-position seek.
+The app retains the source until both audio and video consumers finish.
+Seek creates a new logical cursor and AAC state while the video decoder retains its borrowed source.
+Source hashes use four-KiB chunks before playback. This remains bounded synchronous fixture setup.
+
+The existing MediaStore emulator round adds a fresh AVC/AAC item with independent binary readback.
+It requires both the native-content digest and the native-AAC cursor diagnostics before and after the seek.
+Host controls use real asset descriptors at ordinary and eight-GiB offsets, with seven-byte short reads and physical truncation.
+These controls also call the app's actual pause, resume, and pump handlers with content audio and no private-file reader.
+Unused video and graphics imports abort if these audio controls call them.
+The existing private-file, content-video, and platform MediaPlayer rounds remain required.

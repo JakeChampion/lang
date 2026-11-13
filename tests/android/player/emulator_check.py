@@ -6,6 +6,7 @@ Requires adb, FFmpeg, and ffprobe. Set ANDROID_SERIAL for a physical device.
 """
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import importlib.util
 import json
 import hashlib
 from pathlib import Path
@@ -192,6 +193,14 @@ def write_media(uri, path):
     assert hashlib.sha256(actual).digest() == hashlib.sha256(data).digest(), "MediaStore fixture differs"
 
 
+def native_content_fixture(video, output):
+    path = Path(__file__).resolve().parents[1] / 'video' / 'native_av_fixture.py'
+    spec = importlib.util.spec_from_file_location('native_content_fixture', path)
+    fixture = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fixture)
+    fixture.create(video, output)
+
+
 def main(apk, directory, video_apk=None, byte_fixture=None):
     out = Path(directory).resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -202,6 +211,7 @@ def main(apk, directory, video_apk=None, byte_fixture=None):
     mapped = False
     media_uri = None
     video_uri = None
+    native_uri = None
     try:
         adb("install", "-r", apk)
         adb("reverse", "tcp:" + port, "tcp:" + port)
@@ -219,11 +229,22 @@ def main(apk, directory, video_apk=None, byte_fixture=None):
             runner = Path(__file__).resolve().parents[1] / "video" / "emulator_check.py"
             subprocess.run([sys.executable, str(runner), video_apk,
                             str(out / "video-content"), video_uri], check=True, timeout=180)
+            native_path = out / 'native-content-av.mp4'
+            native_content_fixture(Path(byte_fixture), native_path)
+            native_uri = insert_media()
+            write_media(native_uri, native_path)
+            (out / 'native-av-content-uri.txt').write_text(native_uri + '\n')
+            subprocess.run([sys.executable, str(runner), video_apk, str(out / 'native-av-content'),
+                            '--native-av-uri', native_uri], check=True, timeout=180)
     finally:
         try:
             try:
-                if video_uri is not None:
-                    adb("shell", "content", "delete", "--uri", video_uri)
+                try:
+                    if native_uri is not None:
+                        adb("shell", "content", "delete", "--uri", native_uri)
+                finally:
+                    if video_uri is not None:
+                        adb("shell", "content", "delete", "--uri", video_uri)
             finally:
                 if media_uri is not None:
                     adb("shell", "content", "delete", "--uri", media_uri)
