@@ -410,10 +410,7 @@ pub function bars_run(env: usize, thiz: usize): void {
 // its home screen.
 @jni("dev.fern.paper.Home extends android.app.NativeActivity", "void onNewIntent(android.content.Intent)")
 pub function home_new_intent(env: usize, thiz: usize, intent: usize): void {
-  let activity = android.live_activity(env);
-  if (activity != 0 as usize) {
-    android.send(activity, control.KIND_HOME, 0 as usize);
-  }
+  let sent = android.tell(env, control.KIND_HOME, 0 as usize);
 }
 
 // --- location and weather
@@ -674,10 +671,7 @@ function hold(e: usize, j: bindings.Classes, service: usize, sbn: bindings.Statu
   }
   let cancelled = done(j.notification_listener_service.cancel_notification(e, bindings.NotificationListenerService { ref: service }, key));
   drop(e, n.ref);
-  let activity = android.live_activity(e);
-  if (activity != 0 as usize) {
-    android.send(activity, control.KIND_HELD, 0 as usize);
-  }
+  let sent = android.tell(e, control.KIND_HELD, 0 as usize);
 }
 
 // Writes the notification `n` of `sbn` to the held file, and keeps its

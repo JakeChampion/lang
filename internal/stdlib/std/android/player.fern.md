@@ -7,7 +7,7 @@ Sources include paths, file URIs, HTTP streams, and granted content URIs.
 
 `MediaPlayer` reads the stream, decodes it, keeps the audio and the video in time, and shows the video on a `Surface`. It reads a progressive file, such as MP4, Matroska or WebM, and HLS. The app declares a @jni class that implements the five listener interfaces of the player. Its native methods call `prepared`, `completed`, `failed`, `info` and `seeked`. `new` makes one player and one listener of that class.
 
-The listener runs on the main thread of the app. Each callback sends an event to the loop thread of the live activity, which the loop gives to the app as a `Posted` event. `event` decodes it as a `Change`.
+The listener runs on the main thread of the app. Each callback sends an event to the live loop of the app with `android.tell`. The loop gives it to the app as a `Posted` event. `event` decodes it as a `Change`.
 
 `open` starts to prepare a stream, and `Prepared` comes when the player can start. `show` puts the video on the window of the activity: it calls `Window.release_cpu` first, because a window has one producer of pixels at a time. `hide` takes the video off the window, so the app can lock the window and draw on it again. Do not lock the window between `show` and `hide`.
 
@@ -563,10 +563,7 @@ function post(e: usize, kind: i32, arg: usize): void {
     return;
   }
   defer end(e);
-  let activity: usize = android.live_activity(e);
-  if (activity != 0 as usize) {
-    android.send(activity, kind, arg);
-  }
+  let sent = android.tell(e, kind, arg);
 }
 
 pub function prepared(e: usize, listener: usize, mp: usize): void {
