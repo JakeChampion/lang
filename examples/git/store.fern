@@ -37,7 +37,7 @@ pub function open(dir: string): Store {
 }
 
 // The packfile `i` with its data.
-function loaded(own s: Store, i: i32): Store {
+function loaded(s: Store, i: i32): Store {
   if (s.packs[i].loaded) {
     return s;
   }
@@ -50,7 +50,7 @@ function loaded(own s: Store, i: i32): Store {
 
 // The object `name`: the loose object, or the object of the first packfile
 // that has the name. The error is "missing" when no place has it.
-pub function read(own s: Store, name: string): Found {
+pub function read(s: Store, name: string): Found {
   let loose = objects.read_loose(s.objects, name);
   let absent = match (loose) {
     Ok(_) => false,

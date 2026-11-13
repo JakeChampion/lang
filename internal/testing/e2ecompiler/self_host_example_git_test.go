@@ -146,6 +146,38 @@ func TestSelfHostExampleGitAgainstGit(t *testing.T) {
 				{"HEAD\nnosuch\n" + tree + "\n\nv1\n" + blob + "\n", []string{"cat-file", "--batch-check"}},
 				{"HEAD\nnosuch\n" + blob + "\nv1", []string{"cat-file", "--batch"}},
 				{"", []string{"cat-file", "--batch-check"}},
+				{"", []string{"rev-parse", "HEAD^{tree}", "HEAD:", "HEAD:d", "HEAD:d/e/f.bin", "v1^{commit}", "v1^{}", "v1^{tag}", "v1^{tree}", "HEAD^0", "HEAD~0"}},
+				{"", []string{"rev-parse", "HEAD^"}},
+				{"", []string{"rev-parse", "HEAD~1"}},
+				{"", []string{"rev-parse", "HEAD:nosuch"}},
+				{"", []string{"rev-parse", "--verify", "HEAD:nosuch"}},
+				{"", []string{"rev-parse", "HEAD^{bogus}"}},
+				{"", []string{"rev-parse", "HEAD^{"}},
+				{"", []string{"cat-file", "-p", "HEAD:a.txt"}},
+				{"", []string{"cat-file", "-t", "v1^{tree}"}},
+				{"", []string{"cat-file", "-p", "HEAD:nosuch"}},
+				{"", []string{"cat-file", "-s", "HEAD:d"}},
+				{"HEAD:a.txt\nHEAD^{tree}\nv1^{}\nHEAD:nosuch\nHEAD^\n", []string{"cat-file", "--batch-check"}},
+				{"", []string{"ls-tree", "HEAD"}},
+				{"", []string{"ls-tree", "-r", "HEAD"}},
+				{"", []string{"ls-tree", "-t", "HEAD"}},
+				{"", []string{"ls-tree", "-r", "-t", "HEAD"}},
+				{"", []string{"ls-tree", "-d", "HEAD"}},
+				{"", []string{"ls-tree", "-d", "-r", "HEAD"}},
+				{"", []string{"ls-tree", "-d", "-t", "HEAD"}},
+				{"", []string{"ls-tree", "-l", "HEAD"}},
+				{"", []string{"ls-tree", "-r", "-t", "--long", "HEAD"}},
+				{"", []string{"ls-tree", "--name-only", "HEAD"}},
+				{"", []string{"ls-tree", "--name-only", "-r", "-t", "HEAD"}},
+				{"", []string{"ls-tree", "--full-tree", "-r", "HEAD"}},
+				{"", []string{"ls-tree", "v1"}},
+				{"", []string{"ls-tree", "HEAD:d"}},
+				{"", []string{"ls-tree", "HEAD^{tree}"}},
+				{"", []string{"ls-tree", "nosuch"}},
+				{"", []string{"ls-tree", "HEAD:nosuch"}},
+				{"", []string{"ls-tree", "HEAD:a.txt"}},
+				{"", []string{"hash-object", "-t", "bogus", "nosuchfile"}},
+				{"x", []string{"hash-object", "-t", "bogus", "--stdin"}},
 				{"", []string{"hash-object", "a.txt"}},
 				{"", []string{"hash-object", "a.txt", "sp ace.txt"}},
 				{"", []string{"hash-object", "nosuchfile"}},
@@ -153,14 +185,14 @@ func TestSelfHostExampleGitAgainstGit(t *testing.T) {
 				{"abc", []string{"hash-object", "--stdin"}},
 				{"abc", []string{"hash-object", "--stdin", "a.txt"}},
 			}
-			for _, dir := range []string{top, filepath.Join(top, "d")} {
+			for _, dir := range []string{top, filepath.Join(top, "d"), filepath.Join(top, "d", "e")} {
 				for _, c := range cases {
 					args := c.args
 					if dir != top && c.args[0] == "hash-object" {
 						args = nil
 						for _, a := range c.args {
 							if strings.HasSuffix(a, ".txt") || a == "nosuchfile" {
-								a = "../" + a
+								a = strings.Repeat("../", strings.Count(strings.TrimPrefix(dir, top), string(filepath.Separator))) + a
 							}
 							args = append(args, a)
 						}
@@ -200,7 +232,7 @@ func TestSelfHostExampleGitAgainstGit(t *testing.T) {
 
 // gitPackedFixture makes a repository whose objects are in one packfile,
 // with chains of deltas: each commit changes one more line of a file of
-// 400 lines. It gives the path of the index of the packfile.
+// 400 lines. The last commit is a merge of two parents. It gives the path of the index of the packfile.
 func gitPackedFixture(t *testing.T, oracle gitTool, dir string) string {
 	t.Helper()
 	must := func(args ...string) string {
@@ -231,6 +263,14 @@ func gitPackedFixture(t *testing.T, oracle gitTool, dir string) string {
 		must("add", "-A")
 		must(append(id, "commit", "-q", "-m", fmt.Sprintf("commit %d", i))...)
 	}
+	must("checkout", "-q", "-b", "side", "HEAD~2")
+	if err := os.WriteFile(filepath.Join(dir, "side.txt"), []byte("side\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	must("add", "-A")
+	must(append(id, "commit", "-q", "-m", "on the side")...)
+	must("checkout", "-q", "main")
+	must(append(id, "merge", "-q", "--no-ff", "-m", "merge", "side")...)
 	must(append(id, "tag", "-a", "v1", "-m", "tag one")...)
 	must("gc", "-q", "--aggressive", "--prune=now")
 	return gitPackIndex(t, dir)
@@ -288,6 +328,13 @@ func TestSelfHostExampleGitPacked(t *testing.T) {
 				compare("", "rev-parse", "--short", "HEAD")
 				compare("", "cat-file", "-p", "HEAD")
 				compare("", "cat-file", "-p", "v1")
+				compare("", "rev-parse", "HEAD^", "HEAD^1", "HEAD^2", "HEAD~2", "HEAD^^", "HEAD^2~1", "HEAD^2^{tree}", "v1^{}", "v1~3", "HEAD^0", "HEAD~4:small.txt", "side^:big.txt")
+				compare("", "rev-parse", "HEAD^3")
+				compare("", "rev-parse", "HEAD~99")
+				compare("", "cat-file", "-p", "HEAD^2")
+				compare("", "cat-file", "-p", "HEAD~5:small.txt")
+				compare("", "ls-tree", "-l", "HEAD")
+				compare("", "ls-tree", "-r", "HEAD^2")
 			}
 			check(idx)
 			if _, stderr, code := oracle.run(t, top, "", "-c", "repack.useDeltaBaseOffset=false", "repack", "-q", "-a", "-d", "-f", "--depth=10"); code != 0 {

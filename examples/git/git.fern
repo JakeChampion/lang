@@ -6,6 +6,7 @@
 //   $ git cat-file (--batch | --batch-check)       # names on the standard input
 //   $ git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...
 //   $ git verify-pack [-v] FILE.idx...
+//   $ git ls-tree [-r] [-t] [-d] [-l] [--name-only] [--full-tree] TREE
 //
 // The port reads loose objects and packfiles, and writes loose objects.
 import "std/array";
@@ -18,9 +19,10 @@ import "std/hex";
 import "./objects";
 import "./pack";
 import "./refs";
+import "./rev";
 import "./store";
 
-const USAGE: string = "usage: git hash-object [-w] [-t KIND] [--stdin] [FILE...]\n   or: git cat-file (-t | -s | -p | -e) NAME\n   or: git cat-file (--batch | --batch-check)\n   or: git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...\n   or: git verify-pack [-v] FILE.idx...";
+const USAGE: string = "usage: git hash-object [-w] [-t KIND] [--stdin] [FILE...]\n   or: git cat-file (-t | -s | -p | -e) NAME\n   or: git cat-file (--batch | --batch-check)\n   or: git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...\n   or: git verify-pack [-v] FILE.idx...\n   or: git ls-tree [-r] [-t] [-d] [-l] [--name-only] [--full-tree] TREE";
 
 function fatal(message: string): i32 {
   eprint("fatal: " + message);
@@ -97,6 +99,14 @@ function hash_args(argv: string[]): HashArgs {
 
 // Prints the name of the object with `body`, and writes it when `-w` is set.
 function hash_one(a: HashArgs, body: u8[]): i32 {
+  if (!objects.is_kind(a.kind)) {
+    return fatal("invalid object type \"" + a.kind + "\"");
+  }
+  // git checks the form of a commit, a tree and a tag before it writes one.
+  // The port does not have that check, so it writes blobs only.
+  if (a.write && a.kind != "blob") {
+    return fatal("this port writes blobs only: it does not check the form of a " + a.kind);
+  }
   if (!a.write) {
     put_line(objects.hash_of(a.kind, body));
     return 0;
@@ -118,14 +128,6 @@ function hash_object(argv: string[]): i32 {
   let a = hash_args(argv);
   if (a.bad.len() > 0) {
     return usage();
-  }
-  if (!objects.is_kind(a.kind)) {
-    return fatal("invalid object type \"" + a.kind + "\"");
-  }
-  // git checks the form of a commit, a tree and a tag before it writes one.
-  // The port does not have that check, so it writes blobs only.
-  if (a.write && a.kind != "blob") {
-    return fatal("this port writes blobs only: it does not check the form of a " + a.kind);
   }
   if (a.stdin) {
     let body = match (io.read_all_stdin_bytes()) {
@@ -177,12 +179,12 @@ function pretty(o: objects.Object): Result[u8[], string] {
 }
 
 function cat_one(r: refs.Repo, mode: string, name: string): i32 {
-  let s = store.open(r.objects());
-  let hash = refs.resolve(r, s, name);
+  let found = rev.parse(r, store.open(r.objects()), name);
+  let hash = found.hash;
   if (hash.len() == 0) {
-    return fatal("Not a valid object name " + name);
+    return fatal(if (found.message.len() > 0) { found.message } else { "Not a valid object name " + name });
   }
-  let o = match (store.read(s, hash).object) {
+  let o = match (store.read(found.store, hash).object) {
     Ok(found) => found,
     Err(message) => {
       if (mode == "-e") {
@@ -228,7 +230,9 @@ function cat_batch(r: refs.Repo, contents: boolean): i32 {
   let s = store.open(r.objects());
   for i in 0..count {
     let name = lines[i];
-    let hash = refs.resolve(r, s, name);
+    let named = rev.parse(r, s, name);
+    s = named.store;
+    let hash = named.hash;
     let found: Result[objects.Object, string] = Err("missing");
     if (hash.len() > 0) {
       let got = store.read(s, hash);
@@ -313,16 +317,147 @@ function rev_parse(argv: string[]): i32 {
     } else if (x == "--git-dir") {
       put_line(r.shown);
     } else {
-      let hash = refs.resolve(r, s, x);
+      let named = rev.parse(r, s, x);
+      s = named.store;
+      let hash = named.hash;
       if (hash.len() == 0 && verify) {
         return fatal("Needed a single revision");
       }
       if (hash.len() == 0) {
         put_line(x);
-        return fatal("ambiguous argument '" + x + AMBIGUOUS);
+        return fatal(if (named.message.len() > 0) { named.message } else { "ambiguous argument '" + x + AMBIGUOUS });
       }
       put_line(if (short > 0) { refs.short_of(s, hash, short) } else { hash });
     }
+  }
+  return 0;
+}
+
+// ---- ls-tree ----
+
+struct LsOpts { recurse: boolean, trees: boolean, only_trees: boolean, long: boolean, names: boolean, full: boolean }
+
+// The lines of a tree so far, and the store after the reads.
+struct Listing { store: store.Store, out: u8[], ok: boolean }
+
+// The size column of `ls-tree -l`: seven places, or `-` for an entry that
+// is not a blob.
+function size_column(l: Listing, e: objects.TreeEntry): (store.Store, string) {
+  if (objects.entry_kind(e.mode) != "blob") {
+    return (l.store, "       -");
+  }
+  let got = store.read(l.store, e.hash);
+  let size = match (got.object) {
+    Ok(o) => o.body.len().to_string(),
+    Err(_) => "-",
+  };
+  return (got.store, " " + size.pad_start_str(7, " "));
+}
+
+// Adds the line of the entry `e`, whose path from the start is `path`.
+function ls_line(l: Listing, e: objects.TreeEntry, path: u8[], o: LsOpts): Listing {
+  if (o.names) {
+    return Listing { ...l, out: l.out.concat(objects.quoted(path)).append(b'\n') };
+  }
+  let head = objects.entry_head(e);
+  let st = l.store;
+  if (o.long) {
+    let (after, column) = size_column(l, e);
+    st = after;
+    head += column;
+  }
+  return Listing { store: st, out: l.out.concat((head + "\t").bytes()).concat(objects.quoted(path)).append(b'\n'), ok: l.ok };
+}
+
+// Adds the lines of the tree `hash`, whose path from the start is `prefix`.
+function ls_walk(l: Listing, hash: string, prefix: u8[], o: LsOpts): Listing {
+  let got = store.read(l.store, hash);
+  let entries = match (got.object) {
+    Ok(t) => if (t.kind == "tree") { objects.tree_entries(t.body) } else { Err("not a tree") },
+    Err(why) => Err(why),
+  };
+  let Ok(list) = entries else {
+    return Listing { store: got.store, out: l.out, ok: false };
+  };
+  let now = Listing { store: got.store, out: l.out, ok: l.ok };
+  for e in list {
+    let path = prefix.concat(e.name);
+    let is_tree = e.mode == "40000";
+    if (is_tree && (!o.recurse || o.trees || o.only_trees) || !is_tree && !o.only_trees) {
+      now = ls_line(now, e, path, o);
+    }
+    if (is_tree && o.recurse) {
+      now = ls_walk(now, e.hash, path.append(b'/'), o);
+    }
+  }
+  return now;
+}
+
+function ls_tree(argv: string[]): i32 {
+  let o = LsOpts { recurse: false, trees: false, only_trees: false, long: false, names: false, full: false };
+  let names: string[] = [];
+  for x in argv {
+    if (x == "-r") {
+      o = LsOpts { ...o, recurse: true };
+    } else if (x == "-t") {
+      o = LsOpts { ...o, trees: true };
+    } else if (x == "-d") {
+      o = LsOpts { ...o, only_trees: true };
+    } else if (x == "-l" || x == "--long") {
+      o = LsOpts { ...o, long: true };
+    } else if (x == "--name-only" || x == "--name-status") {
+      o = LsOpts { ...o, names: true };
+    } else if (x == "--full-tree") {
+      o = LsOpts { ...o, full: true };
+    } else if (x.starts_with("-")) {
+      return usage();
+    } else {
+      names = names.append(x);
+    }
+  }
+  if (names.len() == 0) {
+    return usage();
+  }
+  if (names.len() > 1) {
+    return fatal("this port lists a whole tree: a path after the tree is not in it yet");
+  }
+  let (repo, status) = repo_or_fail();
+  if (status != 0) {
+    return status;
+  }
+  let r = repo[0];
+  let named = rev.parse(r, store.open(r.objects()), names[0]);
+  if (named.hash.len() == 0) {
+    return fatal("Not a valid object name " + names[0]);
+  }
+  let top = rev.at_path(named.store, named.hash, "");
+  if (top.hash.len() == 0) {
+    return fatal("not a tree object");
+  }
+  // Below the top of the worktree, git lists the tree of the current
+  // directory. With the trees shown, each directory on the way has a line.
+  let from = Listing { store: top.store, out: [], ok: true };
+  let hash = top.hash;
+  if (!o.full) {
+    let parts = r.prefix.split("/").filter((p: string): boolean => p.len() > 0);
+    for i in 0..parts.len() {
+      let next = rev.at_path(from.store, hash, parts[i]);
+      if (next.hash.len() == 0) {
+        return 0;
+      }
+      hash = next.hash;
+      from = Listing { ...from, store: next.store };
+      if (o.trees || o.only_trees && o.recurse) {
+        let up = parts.len() - 1 - i;
+        let name = if (up == 0) { "./" } else { "../".repeat(up) };
+        from = ls_line(from, objects.TreeEntry { mode: "40000", name: [], hash: hash }, name.bytes(), o);
+      }
+    }
+  }
+  let listed = ls_walk(from, hash, [], o);
+  put(listed.out);
+  if (!listed.ok) {
+    return fatal("unable to read a tree of " + names[0]);
   }
   return 0;
 }
@@ -485,6 +620,7 @@ function main(): i32 {
     "cat-file" => cat_file(rest),
     "rev-parse" => rev_parse(rest),
     "verify-pack" => verify_pack(rest),
+    "ls-tree" => ls_tree(rest),
     _ => {
       eprint("git: '" + argv[1] + "' is not a command of this port.");
       1
