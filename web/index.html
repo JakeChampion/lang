@@ -881,7 +881,7 @@
 </div>
 
 <script>
-// Compile the runtime independently of the editor module.
+// Compile the shared runtime in a worker, outside the page thread.
 (function () {
   // The self-host compiler (web/playground.wasm), compiled once here and
   // instantiated afresh for every run by web/wasi-shim.js, so nothing one
@@ -894,7 +894,19 @@
   } catch (e) { /* the parent is another origin */ }
   var url = new URL("playground.wasm", location.href).href;
   if (!host.__fernDriverModule) {
-    host.__fernDriverModule = host.WebAssembly.compileStreaming(host.fetch(url));
+    host.__fernDriverModule = new host.Promise(function (resolve, reject) {
+      var worker = new host.Worker(new URL("compile-worker.js", location.href).href);
+      worker.onmessage = function (e) {
+        worker.terminate();
+        if (e.data.error !== undefined) reject(new Error(e.data.error));
+        else resolve(e.data.module);
+      };
+      worker.onerror = function (e) {
+        worker.terminate();
+        reject(new Error(e.message));
+      };
+      worker.postMessage(url);
+    });
   }
   window.__fernDriverReady = host.__fernDriverModule;
   window.__fernDriverReady.then(function () {

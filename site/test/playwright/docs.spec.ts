@@ -495,3 +495,21 @@ test("the error code index lists each kind of code", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Errors", exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "E030", exact: true })).toHaveAttribute("href", "e030/");
 });
+
+
+test("the playground compiles its runtime outside the page thread", async ({ page }) => {
+  await page.addInitScript(() => {
+    WebAssembly.compileStreaming = () => Promise.reject(new Error("compile on the page thread"));
+  });
+  await page.goto("tutorial/types/");
+  const frame = page.frameLocator("figure.fern-playground iframe").first();
+  await expect(frame.locator("#status")).toContainText("ready", { timeout: 90_000 });
+  await expect(frame.locator("#out")).toContainText("0,0", { timeout: 90_000 });
+});
+
+test("a runtime compile error reaches the playground status", async ({ page }) => {
+  await page.route("**/playground.wasm", (route) => route.fulfill({ status: 500, body: "test refusal" }));
+  await page.goto("tutorial/types/");
+  const frame = page.frameLocator("figure.fern-playground iframe").first();
+  await expect(frame.locator("#status")).toContainText("wasm load failed:", { timeout: 60_000 });
+});
