@@ -1824,6 +1824,16 @@ pub function is_sha_blocks_op(tag: i32): boolean {
   return tag == 410 || tag == 441 || tag == 553;
 }
 
+// The runtime need of a SHA block kernel that each native backend has. Its
+// symbol is `__fern_<need>_hw_blocks`. Other ops give "".
+pub function sha_blocks_need(tag: i32): string {
+  return match (tag) {
+    410 => "sha256",
+    553 => "sha1x8",
+    _ => "",
+  };
+}
+
 // The cksum and IEEE CRC-32 updates, each in its string and its array form.
 pub function is_crc32_op(tag: i32): boolean {
   return tag == 309 || tag == 373 || tag == 480 || tag == 481;

@@ -1994,6 +1994,16 @@ function x86_sha1x8_rounds(): string {
   return o;
 }
 
+function emit_rt_sha(s: asmcore.EmitState): asmcore.EmitState {
+  if (s.has_need("sha256")) {
+    s = emit_rt_sha256(s);
+  }
+  if (s.has_need("sha1x8")) {
+    s = emit_rt_sha1x8(s);
+  }
+  return s;
+}
+
 function emit_rt_sha1x8(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .section .rodata\n    .align 16\n.Lsx8_consts:\n    .byte 3,2,1,0,7,6,5,4,11,10,9,8,15,14,13,12,3,2,1,0,7,6,5,4,11,10,9,8,15,14,13,12\n");
   for k in ["1518500249", "1859775393", "2400959708", "3395469782"] {
@@ -5287,13 +5297,10 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (ir.is_aes_gcm_op(o.kind_tag)) {
     return emit_aes_gcm_op(o, s);
   }
-  if (o.kind_tag == ir.K_SHA256_HW_BLOCKS) {
-    s = s.need("sha256").need("heap");
-    return s.write("    popq %rsi\n    popq %rdi\n    call __fern_sha256_hw_blocks\n    pushq %rax\n");
-  }
-  if (o.kind_tag == ir.K_SHA1X8_HW_BLOCKS) {
-    s = s.need("sha1x8").need("heap");
-    return s.write("    popq %rsi\n    popq %rdi\n    call __fern_sha1x8_hw_blocks\n    pushq %rax\n");
+  let sha = ir.sha_blocks_need(o.kind_tag);
+  if (sha != "") {
+    s = s.need(sha).need("heap");
+    return s.write("    popq %rsi\n    popq %rdi\n    call __fern_" + sha + "_hw_blocks\n    pushq %rax\n");
   }
   if (o.kind_tag == ir.K_OUTER_MUL_F64) {
     return emit_outer_mul_f64(s);
@@ -12735,12 +12742,7 @@ function emit_entry_core_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("aes_gcm")) {
     s = emit_rt_aes_gcm(s);
   }
-  if (s.has_need("sha256")) {
-    s = emit_rt_sha256(s);
-  }
-  if (s.has_need("sha1x8")) {
-    s = emit_rt_sha1x8(s);
-  }
+  s = emit_rt_sha(s);
   if (s.has_need("sum_bytes")) {
     s = emit_rt_sum_bytes(s);
   }

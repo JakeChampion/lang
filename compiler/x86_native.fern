@@ -3643,12 +3643,21 @@ function x86_gas_vperm2i128(own a: X86Asm, rest: string): X86Asm {
   return a;
 }
 
-function x86_gas_vex_three(own a: X86Asm, mnem: string, rest: string): X86Asm {
-  if (mnem == "vshufps") {
-    return x86_gas_vex_shuffle(a, rest);
-  }
+// The VEX forms of four operands: an immediate, two sources and a destination.
+function x86_gas_vex_imm_four(mnem: string): boolean {
+  return mnem == "vshufps" || mnem == "vperm2i128";
+}
+
+function x86_gas_vex_four(own a: X86Asm, mnem: string, rest: string): X86Asm {
   if (mnem == "vperm2i128") {
     return x86_gas_vperm2i128(a, rest);
+  }
+  return x86_gas_vex_shuffle(a, rest);
+}
+
+function x86_gas_vex_three(own a: X86Asm, mnem: string, rest: string): X86Asm {
+  if (x86_gas_vex_imm_four(mnem)) {
+    return x86_gas_vex_four(a, mnem, rest);
   }
   let ops = x86_gas_split_ops(rest);
   if (ops.len() != 3) {
@@ -6529,7 +6538,7 @@ function x86_gas_system_verdict(v: MnemVerdict, mnem: string): Option[MnemVerdic
 
 function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
   let v = MnemVerdict { vz: mnem == "vzeroupper", fixed: x86_gas_fixed_op(mnem), a_kind: GK_NONE, a_ext: -1, a_sfx: 0, sfx: 0, b_kind: GK_NONE, b_ext: -1, vshift: x86_gas_vshift_op(mnem), c_kind: GK_NONE, c_ext: -1 };
-  if (mnem == "vshufps" || mnem == "vperm2i128" || x86_vex_three_op(mnem) >= 0 || x86_vex_shift_imm(mnem) >= 0) {
+  if (x86_gas_vex_imm_four(mnem) || x86_vex_three_op(mnem) >= 0 || x86_vex_shift_imm(mnem) >= 0) {
     return MnemVerdict { ...v, a_kind: GK_VEX_THREE };
   }
   let bmi = x86_gas_bmi_verdict(v, mnem);

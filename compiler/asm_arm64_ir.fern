@@ -629,13 +629,10 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (ir.is_aes_gcm_op(o.kind_tag)) {
     return emit_aes_gcm_op(o, s);
   }
-  if (o.kind_tag == ir.K_SHA256_HW_BLOCKS) {
-    s = s.need("sha256").need("heap");
-    return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_sha256_hw_blocks\n    str x0, [sp, #-16]!\n");
-  }
-  if (o.kind_tag == ir.K_SHA1X8_HW_BLOCKS) {
-    s = s.need("sha1x8").need("heap");
-    return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_sha1x8_hw_blocks\n    str x0, [sp, #-16]!\n");
+  let sha = ir.sha_blocks_need(o.kind_tag);
+  if (sha != "") {
+    s = s.need(sha).need("heap");
+    return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_" + sha + "_hw_blocks\n    str x0, [sp, #-16]!\n");
   }
   if (o.kind_tag == ir.K_OUTER_MUL_F64) {
     return emit_outer_mul_f64(s);
