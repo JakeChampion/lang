@@ -323,6 +323,270 @@ function test_counter_range(): test.TestOutcome {
   return test.assert_eq(past + "|" + far, "aead: the data needs more blocks than the 32-bit block counter has left|aead: the data needs more blocks than the 32-bit block counter has left");
 }
 
+// The quarter rounds of a double round of the scalar reference: the four columns, then the four diagonals.
+const QUARTER_ROUNDS: i32[] = [0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15, 0, 5, 10, 15, 1, 6, 11, 12, 2, 7, 8, 13, 3, 4, 9, 14];
+
+function le32(b: [u8], at: i32): u32 {
+  return b[at] as u32 | b[at + 1] as u32 << 8 | b[at + 2] as u32 << 16 | b[at + 3] as u32 << 24;
+}
+
+function rotl(v: u32, n: u32): u32 {
+  return v << n | v >> 32 - n;
+}
+
+function ref_block(st: u32[]): u32[] {
+  let x = st;
+  for r in 0..80 {
+    let q = 4 * (r % 8);
+    let a = QUARTER_ROUNDS[q];
+    let b = QUARTER_ROUNDS[q + 1];
+    let c = QUARTER_ROUNDS[q + 2];
+    let d = QUARTER_ROUNDS[q + 3];
+    x = x.with(a, x[a] + x[b]);
+    x = x.with(d, rotl(x[d] ^ x[a], 16));
+    x = x.with(c, x[c] + x[d]);
+    x = x.with(b, rotl(x[b] ^ x[c], 12));
+    x = x.with(a, x[a] + x[b]);
+    x = x.with(d, rotl(x[d] ^ x[a], 8));
+    x = x.with(c, x[c] + x[d]);
+    x = x.with(b, rotl(x[b] ^ x[c], 7));
+  }
+  for k in 0..16 {
+    x = x.with(k, x[k] + st[k]);
+  }
+  return x;
+}
+
+// The scalar ChaCha20 of RFC 8439, one block at a time: the reference for the kernel.
+function ref_xor(key: [u8], nonce: [u8], counter: u32, data: [u8]): u8[] {
+  let st: u32[] = [0x61707865, 0x3320646e, 0x79622d32, 0x6b206574];
+  for k in 0..8 {
+    st = st.append(le32(key, 4 * k));
+  }
+  st = st.append(counter);
+  for k in 0..3 {
+    st = st.append(le32(nonce, 4 * k));
+  }
+  let out = __alloc_u8(data.len());
+  let ks: u32[] = [];
+  for i in 0..data.len() {
+    if (i % 64 == 0) {
+      ks = ref_block(st);
+      st = st.with(12, st[12] + 1);
+    }
+    out = out.with(i, data[i] ^ (ks[i % 64 >> 2] >> ((i & 3) * 8) as u32 & 255) as u8);
+  }
+  return out;
+}
+
+function pattern(n: i32, seed: i32): u8[] {
+  let out = __alloc_u8(n);
+  for i in 0..n {
+    out = out.with(i, (i * 7 + seed & 255) as u8);
+  }
+  return out;
+}
+
+// Each length to 129, and lengths around the groups of four and eight blocks that the kernels run.
+function lengths(): i32[] {
+  let out: i32[] = [];
+  for n in 0..130 {
+    out = out.append(n);
+  }
+  for n in [255, 256, 257, 511, 512, 513, 1023, 1024, 1025, 2047, 2048, 2049, 4095, 4096, 4097] {
+    out = out.append(n);
+  }
+  return out;
+}
+
+function same(a: [u8], b: [u8]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function test_xor_lengths(): test.TestOutcome {
+  let key = key_seq(3);
+  let nonce = pattern(12, 40);
+  let Ok(k) = chacha20poly1305.key(key) else {
+    return test.fail("a 32-byte key was refused");
+  };
+  for n in lengths() {
+    let data = pattern(n, n);
+    let Ok(got) = k.chacha20_xor(nonce, 7, data) else {
+      return test.fail("length " + n.to_string() + " was refused");
+    };
+    if (!same(got, ref_xor(key, nonce, 7, data))) {
+      return test.fail("length " + n.to_string() + " differs from the scalar reference");
+    }
+  }
+  return test.pass();
+}
+
+function le64_block(a: i32, b: i32): u8[] {
+  let out = __alloc_u8(16);
+  for i in 0..4 {
+    out = out.with(i, (a >> 8 * i & 255) as u8).with(8 + i, (b >> 8 * i & 255) as u8);
+  }
+  return out;
+}
+
+// RFC 8439 2.8: the aad and the ciphertext, each padded to 16 bytes, then both lengths.
+function mac_data(aad: [u8], ct: [u8]): u8[] {
+  let pad_a = (16 - aad.len() % 16) % 16;
+  let pad_c = (16 - ct.len() % 16) % 16;
+  let out = __alloc_u8(aad.len() + pad_a + ct.len() + pad_c + 16);
+  out = __bytes_into(out, 0, aad, 0, aad.len());
+  out = __bytes_into(out, aad.len() + pad_a, ct, 0, ct.len());
+  return __bytes_into(out, aad.len() + pad_a + ct.len() + pad_c, le64_block(aad.len(), ct.len()), 0, 16);
+}
+
+function test_seal_lengths(): test.TestOutcome {
+  let key = key_seq(5);
+  let nonce = pattern(12, 77);
+  let Ok(k) = chacha20poly1305.key(key) else {
+    return test.fail("a 32-byte key was refused");
+  };
+  for n in lengths() {
+    let data = pattern(n, 3 * n);
+    let aad = pattern(n % 37, n);
+    let Ok(sealed) = k.seal(nonce, data, aad) else {
+      return test.fail("length " + n.to_string() + " was refused");
+    };
+    let ct = ref_xor(key, nonce, 1, data);
+    let Ok(tag) = chacha20poly1305.poly1305(ref_xor(key, nonce, 0, __alloc_u8(32)), mac_data(aad, ct)) else {
+      return test.fail("poly1305 refused its key");
+    };
+    if (!same(sealed[0:n], ct) || !same(sealed[n:n + 16], tag)) {
+      return test.fail("length " + n.to_string() + " sealed differently from the scalar reference");
+    }
+    let Ok(opened) = k.open(nonce, sealed, aad) else {
+      return test.fail("length " + n.to_string() + " did not open");
+    };
+    if (!same(opened, data)) {
+      return test.fail("length " + n.to_string() + " opened differently");
+    }
+  }
+  return test.pass();
+}
+
+// Poly1305 in five limbs of 26 bits, the reference for the module's 64-bit limbs. The message is padded as
+// RFC 8439 section 2.5 pads it.
+function ref_poly1305(key: [u8], msg: [u8]): u8[] {
+  let t0 = le32(key, 0);
+  let t1 = le32(key, 4);
+  let t2 = le32(key, 8);
+  let t3 = le32(key, 12);
+  let r: u64[] = [(t0 & 0x3ffffff) as u64, ((t0 >> 26 | t1 << 6) & 0x3ffff03) as u64, ((t1 >> 20 | t2 << 12) & 0x3ffc0ff) as u64, ((t2 >> 14 | t3 << 18) & 0x3f03fff) as u64, (t3 >> 8 & 0x00fffff) as u64];
+  let h: u64[] = [0, 0, 0, 0, 0];
+  let at = 0;
+  while (at < msg.len()) {
+    let block = __alloc_u8(17);
+    let n = msg.len() - at;
+    if (n > 16) {
+      n = 16;
+    }
+    block = __bytes_into(block, 0, msg, at, n).with(n, 1 as u8);
+    let m0 = le32(block, 0);
+    let m1 = le32(block, 4);
+    let m2 = le32(block, 8);
+    let m3 = le32(block, 12);
+    let m: u64[] = [(m0 & 0x3ffffff) as u64, ((m0 >> 26 | m1 << 6) & 0x3ffffff) as u64, ((m1 >> 20 | m2 << 12) & 0x3ffffff) as u64, ((m2 >> 14 | m3 << 18) & 0x3ffffff) as u64, (m3 >> 8) as u64 | block[16] as u64 << 24];
+    for i in 0..5 {
+      h = h.with(i, h[i] + m[i]);
+    }
+    let d: u64[] = [0, 0, 0, 0, 0];
+    for i in 0..5 {
+      for j in 0..5 {
+        let k = (i + j) % 5;
+        let rj = r[j];
+        if (i + j >= 5) {
+          rj = rj * 5;
+        }
+        d = d.with(k, d[k] + h[i] * rj);
+      }
+    }
+    let c: u64 = 0;
+    for i in 0..5 {
+      let v = d[i] + c;
+      h = h.with(i, v & 0x3ffffff);
+      c = v >> 26;
+    }
+    h = h.with(0, h[0] + c * 5);
+    h = h.with(1, h[1] + (h[0] >> 26)).with(0, h[0] & 0x3ffffff);
+    at += 16;
+  }
+  let c: u64 = 0;
+  for i in 1..6 {
+    let v = h[i % 5] + c;
+    if (i == 5) {
+      v = h[0] + c * 5;
+    }
+    h = h.with(i % 5, v & 0x3ffffff);
+    c = v >> 26;
+  }
+  h = h.with(1, h[1] + c);
+  let g: u64[] = [];
+  c = 5;
+  for i in 0..5 {
+    let v = h[i] + c;
+    g = g.append(v & 0x3ffffff);
+    c = v >> 26;
+  }
+  let take_g = c == 1 as u64;
+  if (take_g) {
+    h = g;
+  }
+  let lo = h[0] | h[1] << 26 | h[2] << 52;
+  let hi = h[2] >> 12 | h[3] << 14 | h[4] << 40;
+  let s0 = le32(key, 16) as u64 | le32(key, 20) as u64 << 32;
+  let s1 = le32(key, 24) as u64 | le32(key, 28) as u64 << 32;
+  let w0 = lo + s0;
+  let w1 = hi + s1;
+  if (w0 < lo) {
+    w1 = w1 + 1;
+  }
+  let tag = __alloc_u8(16);
+  for i in 0..8 {
+    let shift = (8 * i) as u64;
+    tag = tag.with(i, (w0 >> shift & 255) as u8).with(8 + i, (w1 >> shift & 255) as u8);
+  }
+  return tag;
+}
+
+function filled_with(n: i32, b: u8): u8[] {
+  let out = __alloc_u8(n);
+  for i in 0..n {
+    out = out.with(i, b);
+  }
+  return out;
+}
+
+// The keys have the largest r after the clamp, an s that carries out of each half, and a pattern. The messages
+// are 0xff bytes, which keep the accumulator near its bound, and a pattern.
+function test_poly1305_lengths(): test.TestOutcome {
+  let keys: u8[][] = [filled_with(32, 255 as u8), pattern(32, 9), key_seq(1)];
+  for key in keys {
+    for n in lengths() {
+      for msg in [filled_with(n, 255 as u8), pattern(n, n)] {
+        let Ok(got) = chacha20poly1305.poly1305(key, msg) else {
+          return test.fail("a 32-byte key was refused");
+        };
+        if (!same(got, ref_poly1305(key, msg))) {
+          return test.fail("length " + n.to_string() + " differs from the 26-bit reference under key " + hex.encode(key));
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let r = test.new("std/crypto/chacha20poly1305");
   r = r.it("chacha20 block, RFC 8439 2.3.2", test_block);
@@ -341,6 +605,9 @@ function main(): i32 {
   r = r.it("a key built once", test_key_built_once);
   r = r.it("seal and open in place, RFC 8439 under a sequence number", test_in_place);
   r = r.it("the in-place calls refuse additional data that overlaps the text", test_in_place_refuses_an_overlap);
+  r = r.it("chacha20 matches the scalar reference at each length", test_xor_lengths);
+  r = r.it("seal matches the scalar reference and poly1305 at each length", test_seal_lengths);
+  r = r.it("poly1305 matches the 26-bit reference at each length", test_poly1305_lengths);
   return r.finish();
 }
 

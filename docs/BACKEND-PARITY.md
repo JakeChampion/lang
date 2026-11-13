@@ -417,6 +417,15 @@ lanes in the 32-bit lanes of the AVX2 registers. On arm64 it runs the lanes
 one after another on the SHA-1 instructions. On wasm the lanes run through
 the generated rounds.
 
+ChaCha20 runs in one kernel on each backend (`__chacha20_xor_into`). It XORs
+the key stream over a range of a byte array in place. On x86-64 the kernel
+does eight blocks at a time in the 32-bit lanes of the AVX2 registers. On
+arm64 it does four blocks at a time in the NEON registers. On wasm it does
+one block at a time in `i32` locals (`compiler/wasm_chacha.fern`).
+
+The ChaCha20 kernels have no table and no branch on the key or the text.
+Thus they do not leak through the cache or the branch predictor.
+
 Anything above this level (AVX-512, …) needs runtime dispatch first, and none
 of it is used. AVX-512 is deliberately not taken: Intel removed it from
 consumer parts at Alder Lake, so a v4 baseline would drop hardware a v3 one

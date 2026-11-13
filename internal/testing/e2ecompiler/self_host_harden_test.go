@@ -69,6 +69,21 @@ import "std/crypto";
 import "std/hash/cksum";
 import "std/hash/crc32";
 import "std/crypto/aes_gcm";
+import "std/crypto/chacha20poly1305";
+
+// Byte 299 of the ChaCha20 key stream from block 1, which a short last group of blocks gives.
+function stream_byte(): u64 {
+  match (chacha20poly1305.key("0123456789abcdef0123456789abcdef".bytes())) {
+    Ok(k) => {
+      match (k.chacha20_xor("0123456789ab".bytes(), 1, __alloc_u8(300))) {
+        Ok(s) => { return s[299] as u64; },
+        Err(e) => { return 1000 as u64; }
+      }
+    },
+    Err(e) => { return 1001 as u64; }
+  }
+  return 1002 as u64;
+}
 
 function sealed_len(): u64 {
   let plain: u8[] = "hardened frames".bytes();
@@ -107,6 +122,8 @@ function main(): i32 {
   buf_push(b, " ");
   buf_push_decimal(b, sealed_len());
   buf_push(b, " ");
+  buf_push_decimal(b, stream_byte());
+  buf_push(b, " ");
   buf_push_bytes_range(b, "framed bytes".bytes(), 0, 6);
   if (args().len() > 9) {
     let r: ProcessResult = subprocess("/bin/true", [], "");
@@ -117,7 +134,7 @@ function main(): i32 {
 }
 `
 
-const hardenFramesWant = "1219131554 891568578 186 169 229 31 framed"
+const hardenFramesWant = "1219131554 891568578 186 169 229 31 98 framed"
 
 // hardenFrameHelpers are the hand-written runtime helpers that hardenFramesSrc
 // links. The ones it also runs have a PAC control each.
@@ -136,6 +153,7 @@ var hardenFrameHelpers = []struct {
 	{"__fern_sha256_hw_blocks:", true},
 	{"__fern_sha1_hw_blocks:", true},
 	{"__fern_sha1x8_hw_blocks:", true},
+	{"__fern_chacha20_xor_into:", true},
 	{"__fn___fern_subprocess:", false},
 	{"__fern_oob_abort_leaf:", false},
 }

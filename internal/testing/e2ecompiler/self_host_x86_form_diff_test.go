@@ -351,6 +351,35 @@ func vexFormCases() []string {
 	}
 }
 
+// chachaFormCases are the forms of the ChaCha20 kernel, __fern_chacha20_xor_into.
+func chachaFormCases() []string {
+	return []string{
+		"vpshufb 0(%r10), %ymm12, %ymm12",
+		"vpshufb 32(%r10), %ymm15, %ymm15",
+		"vpaddd 64(%r10), %ymm0, %ymm0",
+		"vpaddd 384(%rsp), %ymm13, %ymm13",
+		"vpxor 480(%rsi), %ymm4, %ymm4",
+		"vpxor %ymm0, %ymm0, %ymm0",
+		"vmovq %rax, %xmm0",
+		"vpbroadcastd %xmm0, %ymm0",
+		"vpslld $12, %ymm4, %ymm10",
+		"vpsrld $20, %ymm7, %ymm7",
+		"vpsrld $25, %ymm5, %ymm5",
+		"vmovdqu %ymm0, 1504(%rsp)",
+		"vmovdqu 832(%rsp), %ymm8",
+		"andq $-32, %rsp",
+		"subq $1536, %rsp",
+		"movq (%rsi,%rcx), %rax",
+		"xorq 1024(%rsp,%rcx), %rax",
+		"movq %rax, (%rsi,%rcx)",
+		"movzbl 1024(%rsp,%rcx), %r9d",
+		"movb %al, (%rsi,%rcx)",
+		"leaq 8(%rcx), %rax",
+		"movslq %r8d, %r8",
+		"subl $1, %eax",
+	}
+}
+
 func TestSelfHostX86FormsMatchGas(t *testing.T) {
 	var cases []string
 	cases = append(cases, aluFormCases()...)
@@ -358,6 +387,7 @@ func TestSelfHostX86FormsMatchGas(t *testing.T) {
 	cases = append(cases, extendLeaFormCases()...)
 	cases = append(cases, miscFormCases()...)
 	cases = append(cases, vexFormCases()...)
+	cases = append(cases, chachaFormCases()...)
 
 	if len(cases) < 300 {
 		t.Fatalf("the matrix produced only %d cases; it is meant to be a product of mnemonics, forms and widths", len(cases))

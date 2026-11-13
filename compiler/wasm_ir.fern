@@ -13,6 +13,7 @@ import "./asmcore";
 import "./astwalk";
 import "./ircore";
 import "./wasm_aes";
+import "./wasm_chacha";
 import "./physicalbody";
 import "./wasmlocals";
 import "./rtbytecopy";
@@ -342,6 +343,9 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   }
   if (module_uses_sha_hw_blocks(cache)) {
     out = out.append("@uses_sha_hw_blocks");
+  }
+  if (module_emits_op_cached(cache, "chacha20_xor_into")) {
+    out = out.append("@uses_chacha20");
   }
   if (module_uses_aes_gcm(cache) || has_kind(kinds, "bswap")) {
     out = out.append("@uses_bswap");
@@ -704,6 +708,36 @@ pub function module_uses_aes_gcm(cache: irtables.LowerResult[]): boolean {
 pub function module_uses_sha_hw_blocks(cache: irtables.LowerResult[]): boolean {
   return module_emits_op_cached(cache, "sha256_hw_blocks") || module_emits_op_cached(cache, "sha1_hw_blocks")
     || module_emits_op_cached(cache, "sha1x8_hw_blocks");
+}
+
+// The helper that runs a byte kernel op.
+function byte_kernel_name(tag: i32): string {
+  if (ir.is_aes_gcm_op(tag)) {
+    return wasm_aes.kernel_name(tag);
+  }
+  if (tag == ir.K_CHACHA20_XOR_INTO) {
+    return "$__fern_chacha20_xor_into";
+  }
+  return "$__fern_sha_hw_blocks";
+}
+
+function crypto_helper_parts(needs: string[], own parts: string[]): string[] {
+  if (need(needs, "@uses_aes_gcm") || need(needs, "@uses_chacha20")) {
+    parts = parts.append(wasm_aes.view_funcs());
+  }
+  if (need(needs, "@uses_aes_gcm")) {
+    parts = parts.append(wasm_aes.funcs());
+  }
+  if (need(needs, "@uses_chacha20")) {
+    parts = parts.append(wasm_chacha.funcs());
+  }
+  if (need(needs, "@uses_bswap")) {
+    parts = parts.append(wasm_aes.bswap_funcs());
+  }
+  if (need(needs, "@uses_sha_hw_blocks")) {
+    parts = parts.append(sha_hw_blocks_helper());
+  }
+  return parts;
 }
 
 function sha_hw_blocks_helper(): string {
@@ -5153,11 +5187,8 @@ function emit_str_op_wat(o: ir.Op): string {
   if (o.kind_tag == ir.K_CRC32_IEEE_ARRAY) {
     return "    call $__fern_crc32_ieee_array\n";
   }
-  if (ir.is_aes_gcm_op(o.kind_tag)) {
-    return "    call " + wasm_aes.kernel_name(o.kind_tag) + "\n";
-  }
-  if (ir.is_sha_blocks_op(o.kind_tag)) {
-    return "    call $__fern_sha_hw_blocks\n";
+  if (ir.is_byte_kernel_op(o.kind_tag)) {
+    return "    call " + byte_kernel_name(o.kind_tag) + "\n";
   }
   if (o.kind_tag == ir.K_CRC32_CKSUM) {
     return "    call $__fern_crc32_cksum\n";
@@ -10312,15 +10343,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (need(needs, "@uses_crc32_ieee")) {
     parts = parts.append(crc32_ieee_helpers(crc32_table));
   }
-  if (need(needs, "@uses_aes_gcm")) {
-    parts = parts.append(wasm_aes.funcs());
-  }
-  if (need(needs, "@uses_bswap")) {
-    parts = parts.append(wasm_aes.bswap_funcs());
-  }
-  if (need(needs, "@uses_sha_hw_blocks")) {
-    parts = parts.append(sha_hw_blocks_helper());
-  }
+  parts = crypto_helper_parts(needs, parts);
   if (need(needs, "@uses_ascii_run")) {
     parts = parts.append(ascii_run_helper());
   }
