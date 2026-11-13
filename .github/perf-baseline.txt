@@ -1,3 +1,7 @@
+# 2026-11-13: main e10454a275 (#15596), local perf-bench on x86_64. A value of an enum with
+# no payload is no longer counted, so the rebuilds of rbtree retain and release no Color.
+# perceus_rbtree.ir -10.22%, .text -6.82%; perceus_rbtree_ck.ir -7.54%, .text -6.15%.
+# Each row moves to its measured value. Keep all tolerances.
 # 2026-11-12: PR #15532 at 140e81519b, perf-aarch64 job 131459432086.
 # Fifteen aarch64 rows of the perceus, pmap, pvec and ordmap programs got 1.0% to 4.4% faster.
 # A change of main after 12e1326ff7 gives that gain: the arm64 binaries of these programs are
@@ -684,10 +688,10 @@ x86_64/perceus_deriv.text	2581
 x86_64/perceus_deriv.ir	64168424
 x86_64/perceus_nqueens.text	1548
 x86_64/perceus_nqueens.ir	81923493
-x86_64/perceus_rbtree.text	2861
-x86_64/perceus_rbtree.ir	42230837
-x86_64/perceus_rbtree_ck.text	2943
-x86_64/perceus_rbtree_ck.ir	41602517
+x86_64/perceus_rbtree.text	2666
+x86_64/perceus_rbtree.ir	37915477
+x86_64/perceus_rbtree_ck.text	2762
+x86_64/perceus_rbtree_ck.ir	38467317
 # 2026-11-12 (#15554): PR #15558 job 131516922622 on main 1bbf2294 measures
 # 13 aarch64 rows below their pins: deflate_decode.text -1.76%,
 # deflate_encode.text -1.06%, ordmap_insert.ir -3.63%, perceus_cfold.text
