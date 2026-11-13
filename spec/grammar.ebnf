@@ -227,20 +227,29 @@ ArmBody     = ValueBlock | Expr ;
 LetStmt     = LetNoSemi ';'
             | 'let' LetElsePatterns '=' Expr 'else' Block ';'
             ;
-# A leading tuple or bare record field pattern selects an unconditional
-# binding. A plain name before '=' also binds unconditionally.
-# Qualified field patterns can name enum variants and admit a miss branch.
+# A bare record field pattern selects an unconditional binding, and so does
+# a plain name before '='. A tuple pattern with an `else` is refutable: the
+# else branch runs when one element does not match. Qualified field patterns
+# can name enum variants and admit a miss branch.
 LetElsePatterns
             = LetElseHead { '|' Pattern } ;
 LetElseHead = LetElseAt
             | VariantPattern
             | LiteralPattern
+            | LetElseTuple
             | QualifiedFieldPattern
             | QualifiedPatternName
             | IDENT '|' Pattern
             ;
-LetElseAt   = IDENT '@' ( VariantPattern | LiteralPattern
+LetElseAt   = IDENT '@' ( VariantPattern | LiteralPattern | LetElseTuple
                         | QualifiedFieldPattern | BindingPattern ) ;
+# A tuple of names is a destructure, so a refutable tuple has at least one
+# element that can fail to match.
+LetElseTuple
+            = '(' { DestructurePos ',' } LetElseElem { ',' Pattern } [ ',' ] ')' ;
+LetElseElem = VariantPattern | LiteralPattern | QualifiedFieldPattern
+            | LetElseTuple | IDENT '@' Pattern
+            ;
 QualifiedFieldPattern
             = QualifiedPatternName '{' [ StructPatFields ] '}' ;
 QualifiedPatternName

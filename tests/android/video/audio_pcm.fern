@@ -91,17 +91,29 @@ function positioned(own decoder: cursor.Cursor, media_us: i64): Result[(cursor.C
   return Ok((sought, first as i32 * 2));
 }
 
-function from_reader(reader: Reader, media_us: i64): Result[Stream, frame.VideoError] {
+function open_in(bytes: i64, seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError], media_us: i64, limits: file.Limits): Result[Stream, frame.VideoError] {
   if (media_us < 0i64) {
     return Err(frame.Header);
   }
-  let limits = file_limits();
-  let index = match (file.inspect(reader, limits)) { Ok(value) => value, Err(value) => { return Err(read_error(value)); } };
+  let index = match (file.inspect_with(bytes, seek, read, limits)) { Ok(value) => value, Err(value) => { return Err(read_error(value)); } };
   let number = selected(index)?;
   let decoder = match (cursor.create(index, number, limits)) { Ok(value) => value, Err(value) => { return Err(read_error(value)); } };
   let info = decoder.info();
   let (sought, first) = positioned(decoder, media_us)?;
   return Ok(Stream { decoder: sought, samples: [], first: first, info: info });
+}
+
+pub function open_with(bytes: i64, seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError], media_us: i64): Result[Stream, frame.VideoError] {
+  return open_in(bytes, seek, read, media_us, file_limits());
+}
+
+function from_reader(reader: Reader, media_us: i64): Result[Stream, frame.VideoError] {
+  if (media_us < 0i64) {
+    return Err(frame.Header);
+  }
+  let bytes = match (reader.seek(0i64, 2)) { Ok(value) => value, Err(_) => { return Err(frame.Platform); } };
+  let limits = file_limits();
+  return open_in(bytes, (offset: i64): Result[i64, IoError] => reader.seek(offset, 0), (count: i32): Result[u8[], IoError] => reader.read_chunk_bytes(count), media_us, file.Limits { ...limits, max_operations: limits.max_operations - 1 });
 }
 
 pub function open(path: string, media_us: i64): Result[(Stream, Reader), frame.VideoError] {
@@ -124,9 +136,9 @@ function convert(samples: [f32]): Result[pcm.Block, frame.VideoError] {
   return match (pcm.quantize(samples, format, pcm.Limits { max_input_bytes: MAX_INPUT, max_samples: 2048 })) { Ok(value) => Ok(value), Err(value) => Err(error(value)) };
 }
 
-pub function (own state: Stream) step(reader: Reader): Result[(Stream, StreamEvent), frame.VideoError] {
+pub function (own state: Stream) step_with(seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError]): Result[(Stream, StreamEvent), frame.VideoError] {
   let Stream { decoder, samples, first, info } = state;
-  let (next, event) = match (decoder.step_into(samples, reader)) { Ok(value) => value, Err(value) => { return Err(read_error(value)); } };
+  let (next, event) = match (decoder.step_into_with(samples, seek, read)) { Ok(value) => value, Err(value) => { return Err(read_error(value)); } };
   match (event) {
     cursor.BufferPending(buffer) => {
       return Ok((Stream { decoder: next, samples: buffer, first: first, info: info }, StreamPending));
@@ -139,4 +151,8 @@ pub function (own state: Stream) step(reader: Reader): Result[(Stream, StreamEve
       return Ok((Stream { decoder: next, samples: block.samples, first: first, info: info }, StreamSamples(quantized)));
     }
   }
+}
+
+pub function (own state: Stream) step(reader: Reader): Result[(Stream, StreamEvent), frame.VideoError] {
+  return state.step_with((offset: i64): Result[i64, IoError] => reader.seek(offset, 0), (count: i32): Result[u8[], IoError] => reader.read_chunk_bytes(count));
 }
