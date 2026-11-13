@@ -271,12 +271,12 @@ failing on an unknown method.
 | Operation             | Returns              |
 | --------------------- | -------------------- |
 | `len()`               | `i32`                |
-| `has(k)`              | `boolean`            |
+| `contains(k)`         | `boolean`            |
 | `get(k)`              | `Option[V]`          |
 | `get_or(k, fallback)` | `V`                  |
 | `keys()` / `values()` | `K[]` / `V[]`        |
 | `insert(k, v)`        | the updated map      |
-| `without(k)`          | `(Map[K, V], boolean)` — the map, and whether the key was there |
+| `remove(k)`           | the updated map      |
 | `cleared()`           | an empty map         |
 
 The last three return an updated map. Rebind the result with
