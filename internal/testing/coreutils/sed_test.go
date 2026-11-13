@@ -23,6 +23,21 @@ func sedCases(t *testing.T) []invocation {
 	cases = append(cases, sedScriptCases()...)
 	cases = append(cases, sedOptionCases()...)
 	cases = append(cases, sedBigCases()...)
+	cases = append(cases, sedCaptureCases()...)
+	return cases
+}
+
+// sedCaptureCases: the groups of a match where more than one division of the
+// match is possible.
+func sedCaptureCases() []invocation {
+	var cases []invocation
+	for _, script := range []string{
+		`s/\(a\|ab\)\(c\|bcd\)\(d*\)/[\1|\2|\3]/`, `s/\(a*\)\(ab\)*b/[\1|\2]/`, `s/\(a*\)\(a*\)/[\1|\2]/`,
+		`s/\(x*\)\(\w*\)/[\1|\2]/g`, `s/\(.*\)\(b\)/[\1|\2]/`, `s/\(a\)\|\(b\)/[\1|\2]/g`,
+		`s/\(a*\)*/[\1]/g`, `s/\(ab\|a\)\(bc\|c\)*/[\1|\2]/`,
+	} {
+		cases = append(cases, invocation{name: "groups " + script, args: []string{script}, stdin: "abcdab\nabcabc\naaa\n"})
+	}
 	return cases
 }
 

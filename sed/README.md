@@ -84,3 +84,55 @@ builds GNU sed 4.9 from source with `.github/actions/gnu-sed`.
 
 The cases come from the documented behaviour of GNU sed and from runs of the
 GNU binary. No case comes from the test suite of GNU sed.
+
+## Performance
+
+The input is a file of 100 MiB: 2,295,335 lines of 3 to 14 words from a set
+of 32 words. The file is in the page cache, and the output goes to
+`/dev/null`. Each value is the best of seven runs, with the runs of the two
+programs in turn, on a 4-core x86-64 container, 2026-11-13. Other jobs ran
+on the container at the same time, so a value can change by 20% from one set
+of runs to the next. The two programs give the same output for each script.
+
+| Script | GNU sed 4.9 | Fern sed |
+|---|--:|--:|
+| `s/foo/bar/g` | 0.379 s | 0.220 s |
+| `-n '/lazy dog/p'` | 0.247 s | 0.190 s |
+| `-n '/[0-9]x\|q[a-z]*z/p'` | 0.167 s | 0.180 s |
+| `y/abcdefghij/ABCDEFGHIJ/` | 0.195 s | 0.180 s |
+| `-n '1000000,1100000p'` | 0.084 s | 0.062 s |
+| `-n '$p'` | 0.099 s | 0.071 s |
+| `-n '$='` | 0.085 s | 0.063 s |
+| `p` | 0.169 s | 0.134 s |
+| `d` | 0.086 s | 0.077 s |
+| `s/\(fox\) \(\w*\)/\2 \1/g` | 0.626 s | 0.491 s |
+| `-E 's/(a\|e)+/X/g'` | 5.821 s | 1.767 s |
+
+The port is faster on each script but one. On the regex
+`[0-9]x\|q[a-z]*z` the two programs are equal within the noise:
+`perf stat` over nine runs gives 178 ms to 200 ms for the port and 198 ms to
+214 ms for GNU sed. No literal string starts a match of that regex. Thus
+the port finds each byte that can start a match with the set scan of the
+runtime. The scan takes one third of the time, and it reads one byte at a
+time.
+
+These changes made the port faster.
+
+The changes in the port:
+
+- Each cycle gives the state of the run to the next step through `own`
+  parameters. Thus each step changes the state in place, and does not copy
+  the record of the run for each line.
+- The `s` command finds the groups of a match only when its replacement
+  uses them.
+
+The changes in the shared code:
+
+- In `coreutils/lib/bre.fern`, a regex that is one literal string gives
+  its match from the literal search, without the DFA.
+- A regex that few bytes can start runs the DFA only from those bytes.
+- A regex with at most two repetitions and no repeated group gets its
+  groups from a walk to the end of the match, without the thread list.
+- On x86-64, the runtime maps an input of fewer than 256 bytes with the
+  scalar loop. The AVX2 loop with sixteen table lookups cost more than the
+  scalar loop on the short lines of `y`.

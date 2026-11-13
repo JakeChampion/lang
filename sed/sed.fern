@@ -1840,9 +1840,25 @@ function finish_edit(p: Prog, own r: Run, e: Edit): Run {
 // read_pattern_space empties the append queue, then reads the next line into
 // the pattern space, or after it with `append`, as N does.
 function read_pattern_space(p: Prog, own r0: Run, append: boolean): Run {
-  let r = dump_append(p, r0);
-  let old = r.ps;
-  r = Run { ...r, replaced: false };
+  let r = r0;
+  if (r.apps.len() > 0) {
+    r = dump_append(p, r);
+  }
+  if (!append && r.inp.open) {
+    let k = __memchr_bytes(r.ibuf, p.delim, r.ipos);
+    if (k >= 0) {
+      return Run { ...r, ipos: k + 1, ps: __bytes_range(r.ibuf, r.ipos, k), chomped: true, line: r.line + 1, got: true, replaced: false };
+    }
+  }
+  return read_next_line(p, r, append);
+}
+
+// read_next_line reads a line that the fast path of read_pattern_space does
+// not take: a line after the pattern space for N, a line past the input
+// buffer, or the first line of the next file.
+function read_next_line(p: Prog, own r0: Run, append: boolean): Run {
+  let old = r0.ps;
+  let r = Run { ...r0, replaced: false };
   while (true) {
     if (r.inp.open) {
       let k = __memchr_bytes(r.ibuf, p.delim, r.ipos);
@@ -2363,11 +2379,10 @@ function append_replacement(h: usize, sub: Sub, ps: u8[], m: bre.BreMatch, ms: i
   }
 }
 
-// whole_match gives a match without its groups, for a replacement that
-// uses none.
-function whole_match(re: bre.Bre, ps: u8[], start: i32, len: i32): bre.BreMatch {
-  let r: (i32, i32) = re.search_from_bytes(ps, start, len);
-  return bre.BreMatch { matched: r.0 >= 0, end: r.1, starts: [r.0], ends: [r.1] };
+// no_groups stands for the groups of a match whose replacement uses none.
+function no_groups(): bre.BreMatch {
+  let none: i32[] = [];
+  return bre.BreMatch { matched: false, end: 0, starts: none, ends: none };
 }
 
 function exec_subst(p: Prog, own r0: Run, sub: Sub): Run {
@@ -2388,13 +2403,25 @@ function exec_subst(p: Prog, own r0: Run, sub: Sub): Run {
   let prev = -1;
   let h: usize = 0;
   let did = false;
+  let groups = no_groups();
   while (start <= len) {
-    let m = if (sub.refs > 0) { re.search_groups_bytes(ps, start, len) } else { whole_match(re, ps, start, len) };
-    if (!m.matched) {
+    let m = groups;
+    let ms = -1;
+    let me = -1;
+    if (sub.refs > 0) {
+      m = re.search_groups_bytes(ps, start, len);
+      if (m.matched) {
+        ms = m.starts[0];
+        me = m.ends[0];
+      }
+    } else {
+      let (fs, fe) = re.search_from_bytes(ps, start, len);
+      ms = fs;
+      me = fe;
+    }
+    if (ms < 0) {
       break;
     }
-    let ms = m.starts[0];
-    let me = m.ends[0];
     if (ms == me && ms == prev) {
       start = ms + 1;
       continue;
