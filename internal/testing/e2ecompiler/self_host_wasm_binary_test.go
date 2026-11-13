@@ -282,3 +282,90 @@ function main(): i32 {
     return 2;
 }
 `
+
+// The narrow 64-bit loads and stores have the opcodes and the alignments of
+// the WebAssembly specification (#15755). The module checks each one against
+// a value in memory, and wasm-tools reads back each instruction.
+func TestSelfHostWasmBinaryNarrowI64Memory(t *testing.T) {
+	wasmtime, err := exec.LookPath("wasmtime")
+	if err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	wasmtools, err := exec.LookPath("wasm-tools")
+	if err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
+	asmWatPath := buildWatbinAssembler(t, gcc, runner, driverBin, dir)
+
+	const wat = `(module
+  (memory (export "memory") 1)
+  (func $check (result i32)
+    (i64.store (i32.const 64) (i64.const -2))
+    (if (i64.ne (i64.load8_u (i32.const 64)) (i64.const 254)) (then (return (i32.const 1))))
+    (if (i64.ne (i64.load8_s (i32.const 64)) (i64.const -2)) (then (return (i32.const 2))))
+    (if (i64.ne (i64.load16_u (i32.const 64)) (i64.const 65534)) (then (return (i32.const 3))))
+    (if (i64.ne (i64.load16_s (i32.const 64)) (i64.const -2)) (then (return (i32.const 4))))
+    (if (i64.ne (i64.load32_u (i32.const 64)) (i64.const 4294967294)) (then (return (i32.const 5))))
+    (if (i64.ne (i64.load32_s (i32.const 64)) (i64.const -2)) (then (return (i32.const 6))))
+    (i64.store8 (i32.const 80) (i64.const 511))
+    (if (i64.ne (i64.load (i32.const 80)) (i64.const 255)) (then (return (i32.const 7))))
+    (i64.store16 (i32.const 88) (i64.const 131071))
+    (if (i64.ne (i64.load (i32.const 88)) (i64.const 65535)) (then (return (i32.const 8))))
+    (i64.store32 (i32.const 96) (i64.const -1))
+    (if (i64.ne (i64.load (i32.const 96)) (i64.const 4294967295)) (then (return (i32.const 9))))
+    (if (i64.ne (i64.load8_u offset=1 (i32.const 63)) (i64.const 254)) (then (return (i32.const 10))))
+    (if (i64.ne (i64.load32_u offset=4 (i32.const 60)) (i64.const 4294967294)) (then (return (i32.const 11))))
+    (i32.const 0))
+  (export "check" (func $check)))
+`
+	if err := os.WriteFile(filepath.Join(dir, "target.wat"), []byte(wat), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wasmPath := assembleWithWatbin(t, wasmtime, asmWatPath, dir, "narrow")
+	if out, err := exec.Command(wasmtools, "validate", wasmPath).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools validate: %v\n%s", err, out)
+	}
+	text, err := exec.Command(wasmtools, "print", wasmPath).Output()
+	if err != nil {
+		t.Fatalf("wasm-tools print: %v", err)
+	}
+	for _, m := range []string{"i64.load8_u", "i64.load8_s", "i64.load16_u", "i64.load16_s", "i64.load32_u", "i64.load32_s", "i64.store8", "i64.store16", "i64.store32", "i64.load8_u offset=1", "i64.load32_u offset=4"} {
+		if !strings.Contains(string(text), m) {
+			t.Errorf("the disassembly has no %s", m)
+		}
+	}
+	reference := filepath.Join(dir, "reference.wasm")
+	if out, err := exec.Command(wasmtools, "parse", filepath.Join(dir, "target.wat"), "-o", reference).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools parse: %v\n%s", err, out)
+	}
+	want, err := exec.Command(wasmtools, "print", reference).Output()
+	if err != nil {
+		t.Fatalf("wasm-tools print: %v", err)
+	}
+	if got := codeLines(string(text)); got != codeLines(string(want)) {
+		t.Errorf("the instructions differ from those of wasm-tools parse:\n%s\nwant:\n%s", got, codeLines(string(want)))
+	}
+	out, err := exec.Command(wasmtime, "run", "--invoke", "check", wasmPath).Output()
+	if err != nil {
+		t.Fatalf("wasmtime run: %v", err)
+	}
+	if strings.TrimSpace(string(out)) != "0" {
+		t.Errorf("check gave %q, want 0: the number is the first check that failed", strings.TrimSpace(string(out)))
+	}
+}
+
+// codeLines keeps the lines of a disassembly that hold a memory instruction.
+func codeLines(text string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, ".load") || strings.Contains(line, ".store") {
+			b.WriteString(strings.TrimSpace(line))
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
+}

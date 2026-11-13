@@ -130,6 +130,12 @@ function elf_static_executable_data_x86(text: u8[], data: i32[]): i32[] {
   return elf_image(body, 7, elf_em_x86_64());
 }
 
+// The text of an image starts at a multiple of 64, so that `.align` up to
+// 64 in the text and in the read-only data holds for the address.
+function elf_text_align(n: i32): i32 {
+  return (n + 63) / 64 * 64;
+}
+
 pub function elf_text_off_x86(): i32 {
   return elf_eh_size() + 2 * elf_ph_size();
 }
@@ -244,7 +250,7 @@ function elf_so_phnum(note: boolean): i32 {
 }
 
 pub function elf_text_off_so(note: boolean): i32 {
-  return elf_align16(elf_eh_size() + elf_so_phnum(note) * elf_ph_size());
+  return elf_text_align(elf_eh_size() + elf_so_phnum(note) * elf_ph_size());
 }
 
 pub function elf_eh_hdr_off_so(text_len: i32, note: boolean): i32 {
@@ -659,7 +665,7 @@ pub function elf_data_vaddr_pie_wx_unwind(text_len: i32, hdr_len: i32, eh_len: i
 }
 
 pub function elf_x86_wx_text_off(): i32 {
-  return elf_align16(elf_eh_size() + elf_image_phnum(true, false, true) * elf_ph_size());
+  return elf_text_align(elf_eh_size() + elf_image_phnum(true, false, true) * elf_ph_size());
 }
 
 pub function elf_x86_wx_text_vaddr(): i32 {
@@ -714,7 +720,7 @@ pub function elf_program_x86_wx(text: u8[], hdr: i32[], eh: i32[], data: i32[], 
 
 function elf_image_executable(text: u8[], hdr: i32[], eh: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32, base: i64, e_type: i32, unwind_ph: boolean, note: ElfNote, nx_stack: boolean, page_align: i32, relro: i32, data_alignment: i32): u8[] {
   let nph = elf_image_phnum(unwind_ph, note.bytes.len() > 0, nx_stack);
-  let headers = elf_align16(elf_eh_size() + nph * elf_ph_size());
+  let headers = elf_text_align(elf_eh_size() + nph * elf_ph_size());
   let has_unwind = hdr.len() > 0 && eh.len() > 0;
   let hdr_off = 0;
   let eh_off = 0;
@@ -969,7 +975,7 @@ function elf_note_ph(own buf: i32[], note: ElfNote, base: i64, off: i32): i32[] 
 // The text offset of a PIE image without unwind tables, such as the Android
 // executable: the headers, with one more when the image carries the note.
 pub function elf_text_vaddr_pie(note: boolean): i32 {
-  return elf_align16(elf_eh_size() + elf_image_phnum(false, note, true) * elf_ph_size());
+  return elf_text_align(elf_eh_size() + elf_image_phnum(false, note, true) * elf_ph_size());
 }
 
 // The data address of that image: the note follows the text.
@@ -1061,7 +1067,7 @@ pub function elf_arm64_linux_image(image: [u8], base: i64, size: i64): u8[] {
 
 // The text offset of a PVH kernel image, which has one note header more.
 pub function elf_text_off_pvh(): i32 {
-  return elf_align16(elf_eh_size() + elf_image_phnum(false, true, true) * elf_ph_size());
+  return elf_text_align(elf_eh_size() + elf_image_phnum(false, true, true) * elf_ph_size());
 }
 
 // The data offset of a PVH kernel image: the page after the text and the note.
@@ -1821,7 +1827,7 @@ function elf_opt_shdr(out: i32[], present: boolean, name: i32, off: i32, size: i
 }
 
 pub function elf_wx_text_off(note: boolean): i32 {
-  return elf_align16(elf_eh_size() + elf_image_phnum(true, note, true) * elf_ph_size());
+  return elf_text_align(elf_eh_size() + elf_image_phnum(true, note, true) * elf_ph_size());
 }
 
 pub function elf_func_sym_names(lab_names: string[], lab_offs: i32[], lab_secs: i32[], sec_filter: i32, text_end: i32): string[] {

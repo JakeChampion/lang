@@ -915,12 +915,17 @@ function offset_atom_value(n: SExpr): i32 {
   return parse_dec(slice_unchecked(n.text, 7, n.text.len()));
 }
 
+// The natural alignment of a memory instruction, as a power of two: the
+// width that the name gives after `load` or `store`, or the width of the type.
 function memarg_align(op: string): i32 {
-  if (op == "i32.load8_u" || op == "i32.load8_s" || op == "i32.store8") {
+  if (op.ends_with("load8_u") || op.ends_with("load8_s") || op.ends_with("store8")) {
     return 0;
   }
-  if (op == "i32.load16_u" || op == "i32.load16_s" || op == "i32.store16") {
+  if (op.ends_with("load16_u") || op.ends_with("load16_s") || op.ends_with("store16")) {
     return 1;
+  }
+  if (op.ends_with("load32_u") || op.ends_with("load32_s") || op.ends_with("store32")) {
+    return 2;
   }
   if (op == "i64.load" || op == "f64.load" || op == "i64.store" || op == "f64.store") {
     return 3;
@@ -938,6 +943,12 @@ function mem_load_opcode(op: string): i32 {
     "i32.load8_s" => 44,
     "i32.load16_s" => 46,
     "i32.load16_u" => 47,
+    "i64.load8_s" => 48,
+    "i64.load8_u" => 49,
+    "i64.load16_s" => 50,
+    "i64.load16_u" => 51,
+    "i64.load32_s" => 52,
+    "i64.load32_u" => 53,
     _ => 0,
   };
 }
@@ -950,6 +961,9 @@ function mem_store_opcode(op: string): i32 {
     "f64.store" => 57,
     "i32.store8" => 58,
     "i32.store16" => 59,
+    "i64.store8" => 60,
+    "i64.store16" => 61,
+    "i64.store32" => 62,
     _ => 0,
   };
 }
