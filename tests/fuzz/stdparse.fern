@@ -519,6 +519,9 @@ function inflate_refusal(e: deflate.InflateError): string {
     deflate.BadChecksum => {
       return "checksum";
     },
+    deflate.BadLength => {
+      return "length";
+    },
     deflate.BadHeader(_) => {
       return "header";
     },

@@ -8,7 +8,7 @@ function never_cancel(): boolean {
 }
 
 function error_name(error: deflate.InflateError): string {
-  return match (error) { deflate.Truncated => "truncated", deflate.Malformed(_) => "malformed", deflate.OutputLimit => "limit", deflate.BadChecksum => "checksum", deflate.BadHeader(_) => "header" };
+  return match (error) { deflate.Truncated => "truncated", deflate.Malformed(_) => "malformed", deflate.OutputLimit => "limit", deflate.BadChecksum => "checksum", deflate.BadLength => "length", deflate.BadHeader(_) => "header" };
 }
 
 function same(a: [u8], b: [u8]): boolean {
