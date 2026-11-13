@@ -1,7 +1,9 @@
 // A CommonMark command line: `md [FILE...]`. It reads the files one after
-// the other, or stdin when there is none, and writes their HTML to stdout.
-// It replaces each byte sequence that is not UTF-8 with U+FFFD, as cmark does.
+// the other, or stdin when there is none, and writes their HTML to stdout a
+// part at a time. It replaces each byte sequence that is not UTF-8 with
+// U+FFFD, as cmark does.
 import "std/io";
+import "std/io_buffered";
 import "./markdown";
 
 function read_inputs(files: string[]): Result[u8[], string] {
@@ -48,11 +50,12 @@ function main(): i32 {
   buf_push_bytes_range(text_buf, bytes, 0, bytes.len());
   let text = buf_take(text_buf);
   buf_free(text_buf);
-  let out = buf_new(text.len() + text.len() / 4 + 64);
-  markdown.render(out, text);
-  let html = buf_take_bytes(out);
-  buf_free(out);
-  if let Err(e) = stdout().write_bytes(html) {
+  let w = io_buffered.buf_writer_new(stdout(), 65536);
+  let done = match (markdown.write(w, text, 65536)) {
+    Ok(rest) => rest.flush(),
+    Err(e) => Err(e),
+  };
+  if let Err(e) = done {
     eprint("md: could not write stdout: " + e.message());
     return 1;
   }
