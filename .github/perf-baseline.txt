@@ -33,6 +33,7 @@
 # gave http.__plain_path a [u8] parameter, and the inliner does not splice a
 # function with an array view parameter (#15093). http_hello.ir is 0.62% over
 # main before #15076 and 0.40% under main after it. Pinned at the measured value.
+# 2026-11-13: #15650, perf-aarch64 job 131921596806 on a896cb12. The spill rank by live length keeps more loop values of the rbtree insert in registers: aarch64/perceus_rbtree .text -4.2% and .ir -6.1%, perceus_rbtree_ck .text -6.2% and .ir -5.7%. Pinned at the measured values.
 # 2026-11-13: #15650, a local scripts/perf-bench count on main 3005c182, which gives the pinned 21868422 before the change. The allocator ranks a spill by the live length of a value. In http__parse_request a value with holes now looks cheap to keep, and two other values spill in its place, so x86_64/http_hello.ir grows 1.04%. Pinned at the measured value.
 # 2026-11-10: PR #15079, perf-x86_64 job 129626601778 on 3e6ab400. x86_64/http_hello.ir grows 1.91% with f79f524d of #15076, as the .text rows above do. Pinned at its measured value.
 # 2026-11-10: PR #15079, perf-aarch64 job 129615058796 on a32eafd2, and a local scripts/perf-bench count for x86_64. http_hello.text grows 6.2% on aarch64 and 7.1% on x86_64 with f79f524d of #15076, which reads a request target through a view: the parent of f79f524d emits 16542 aarch64 lines and f79f524d emits 17568. This PR changes no emitted code. Pinned at the measured values.
@@ -721,10 +722,10 @@ aarch64/perceus_deriv.text	2957
 aarch64/perceus_deriv.ir	77989395
 aarch64/perceus_nqueens.text	1812
 aarch64/perceus_nqueens.ir	90387246
-aarch64/perceus_rbtree.text	3086
-aarch64/perceus_rbtree.ir	38431007
-aarch64/perceus_rbtree_ck.text	3412
-aarch64/perceus_rbtree_ck.ir	39089087
+aarch64/perceus_rbtree.text	2957
+aarch64/perceus_rbtree.ir	36071167
+aarch64/perceus_rbtree_ck.text	3199
+aarch64/perceus_rbtree_ck.ir	36856287
 # 2026-11-01: #13988 keeps the original main pvec instruction gates.
 # Fresh measurements remain within their unchanged 1% tolerance.
 # 2026-11-07: PR #14490 adds the fixed QTRLE workload. Existing limits stay unchanged.
