@@ -280,6 +280,7 @@ checked_int_conversion                               0
 # 2026-11-11: checked_owned_nested_results has zero unpaired allocations under native RC trace.
 checked_owned_nested_results                         0
 checked_owned_results                                0
+future_array_literal_goes_to_gather                  2
 owned_callback_result_composition                    0
 copied_call_results                                  0
 closing_a_socket_two_reactors_watch                  0

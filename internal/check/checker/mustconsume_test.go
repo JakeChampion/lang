@@ -19,6 +19,7 @@ func wantE067(t *testing.T, name, src, msgFragment string) {
 const ticketDecl = `@must_consume
 struct Ticket { id: i32 }
 function sink(t: Ticket): Ticket { return t; }
+function spend(own t: Ticket): void {}
 `
 
 const pendingDecl = `@must_consume
@@ -29,7 +30,7 @@ func TestMustConsumeCleanShapes(t *testing.T) {
 	cases := []struct{ name, src string }{
 		{"consumed_on_both_arms", ticketDecl + `function f(n: i32): void {
     let t: Ticket = Ticket { id: 1 };
-    if (n > 0) { sink(t); } else { sink(t); }
+    if (n > 0) { spend(t); } else { spend(t); }
 }`},
 		{"returned", ticketDecl + `function f(): Ticket {
     let t: Ticket = Ticket { id: 1 };
@@ -60,8 +61,8 @@ function f(): i32 {
 function f(): void {
     take(Ticket { id: 9 });
 }`},
-		{"non_own_param_passed_on", ticketDecl + `function f(t: Ticket): void {
-    sink(t);
+		{"non_own_param_passed_on", ticketDecl + `function f(t: Ticket): Ticket {
+    return sink(t);
 }`},
 		{"match_consumes_enum", pendingDecl + `function f(p: Pending): i32 {
     match (p) {
@@ -72,19 +73,19 @@ function f(): void {
 }`},
 		{"consumed_before_early_return", ticketDecl + `function f(n: i32): i32 {
     let t: Ticket = Ticket { id: 1 };
-    sink(t);
+    spend(t);
     if (n > 5) { return 1; }
     return 0;
 }`},
 		{"field_read_is_neutral", ticketDecl + `function f(): i32 {
     let t: Ticket = Ticket { id: 7 };
     let n: i32 = t.id;
-    sink(t);
+    spend(t);
     return n;
 }`},
 		{"stored_into_marked_struct", ticketDecl + `@must_consume
 struct Envelope { inner: Ticket }
-function open_env(e: Envelope): Envelope { return e; }
+function open_env(own e: Envelope): void {}
 function f(): void {
     let t: Ticket = Ticket { id: 1 };
     let e: Envelope = Envelope { inner: t };
@@ -107,14 +108,18 @@ func TestMustConsumeLeaks(t *testing.T) {
 		{"plain_leak", ticketDecl + `function f(): void {
     let t: Ticket = Ticket { id: 1 };
 }`, scopeMsg},
+		{"call_result_not_used", ticketDecl + `function f(): void {
+    let t: Ticket = Ticket { id: 1 };
+    sink(t);
+}`, "is the result of a call and is not used"},
 		{"one_arm_leaks", ticketDecl + `function f(n: i32): void {
     let t: Ticket = Ticket { id: 1 };
-    if (n > 0) { sink(t); }
+    if (n > 0) { spend(t); }
 }`, scopeMsg},
 		{"early_return_leaks", ticketDecl + `function f(n: i32): i32 {
     let t: Ticket = Ticket { id: 1 };
     if (n > 5) { return 1; }
-    sink(t);
+    spend(t);
     return 0;
 }`, scopeMsg},
 		{"non_own_param_dropped", ticketDecl + `function f(t: Ticket): void {
@@ -126,7 +131,7 @@ func TestMustConsumeLeaks(t *testing.T) {
 		{"loop_consume_does_not_discharge", ticketDecl + `function f(n: i32): void {
     let t: Ticket = Ticket { id: 1 };
     while (n > 0) {
-        sink(t);
+        spend(t);
         n = n - 1;
     }
 }`, scopeMsg},
