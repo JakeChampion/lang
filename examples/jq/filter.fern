@@ -465,6 +465,10 @@ const PRELUDE: string = "def abs: if . < 0 then - . else . end;"
   + "def JOIN($idx; f): [.[] | [., $idx[f]]];"
   + "def JOIN($idx; stream; f): stream | [., $idx[f]];"
   + "def JOIN($idx; stream; f; g): stream | [., $idx[f]] | g;"
+  + "def todateiso8601: strftime(\"%Y-%m-%dT%H:%M:%SZ\");"
+  + "def fromdateiso8601: strptime(\"%Y-%m-%dT%H:%M:%SZ\") | mktime;"
+  + "def todate: todateiso8601;"
+  + "def fromdate: fromdateiso8601;"
   + "def IN(s): any(s == .; .);"
   + "def IN(src; s): any(src == s; .);"
   + "def bsearch($target):"
@@ -1170,7 +1174,7 @@ function parse_fold(each: boolean, p: P): (Ast, P) {
 }
 
 // Each function that the port has, as "name/arguments".
-function functions(): string[] {
+pub function functions(): string[] {
   return [
     "add/0", "all/0", "all/1", "all/2", "any/0", "any/1", "any/2", "arrays/0", "ascii_downcase/0",
     "ascii_upcase/0", "booleans/0", "ceil/0", "contains/1", "del/1", "delpaths/1", "empty/0", "endswith/1",
@@ -1185,7 +1189,10 @@ function functions(): string[] {
     "sort_by/1", "split/1", "sqrt/0", "startswith/1", "strings/0", "to_entries/0", "tojson/0", "tonumber/0",
     "tostring/0", "trunc/0", "type/0", "unique/0", "unique_by/1", "until/2", "utf8bytelength/0", "values/0",
     "walk/1", "while/2", "with_entries/1", "debug/0", "debug/1", "abs/0", "transpose/0", "pick/1",
-    "bsearch/1", "IN/1", "IN/2", "INDEX/1", "INDEX/2", "JOIN/2", "JOIN/3", "JOIN/4",
+    "bsearch/1", "IN/1", "IN/2", "INDEX/1", "INDEX/2", "JOIN/2", "JOIN/3", "JOIN/4", "sin/0", "cos/0", "tan/0", "asin/0",
+    "acos/0", "atan/0", "atan2/2", "sinh/0", "cosh/0", "tanh/0", "cbrt/0", "log1p/0", "expm1/0", "builtins/0", "now/0",
+    "gmtime/0", "localtime/0", "mktime/0", "strftime/1", "strflocaltime/1", "strptime/1", "todate/0", "fromdate/0",
+    "todateiso8601/0", "fromdateiso8601/0",
   ];
 }
 

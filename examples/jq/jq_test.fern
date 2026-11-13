@@ -996,6 +996,108 @@ function test_prelude(): test.TestOutcome {
   ]);
 }
 
+function test_dates(): test.TestOutcome {
+  return checks([
+    ("gmtime", "1425599507", "[2015,2,5,23,51,47,4,63]"),
+    ("gmtime", "1425599621.678", "[2015,2,5,23,53,41.67799997329712,4,63]"),
+    ("gmtime", "-1", "[1969,11,31,23,59,59,3,364]"),
+    ("gmtime", "-86400.5", "[1969,11,31,0,0,0.5,3,364]"),
+    ("gmtime", "951782400", "[2000,1,29,0,0,0,2,59]"),
+    ("gmtime", "1e18", "error: error converting number of seconds since epoch to datetime"),
+    ("gmtime", "\"a\"", "error: gmtime() requires numeric inputs"),
+    ("localtime", "1425599507", "[2015,2,5,23,51,47,4,63]"),
+    ("localtime", "null", "error: localtime() requires numeric inputs"),
+    ("mktime", "[2015,2,5,23,51,47,4,63]", "1425599507"),
+    ("mktime", "[2015,2,5,23,51,47.9,4,63]", "1425599507"),
+    ("mktime", "[2015,14,35,25,61,61,0,0]", "1459821721"),
+    ("mktime", "[2015,2,5,23,51,47]", "error: mktime requires parsed datetime inputs"),
+    ("mktime", "[1969,11,31,23,59,59,0,0]", "error: invalid gmtime representation"),
+    ("mktime", "[1969,11,31,23,59,58,0,0]", "error: mktime not supported on this platform"),
+    ("mktime", "\"a\"", "error: mktime requires array inputs"),
+    ("mktime", "[\"a\",1,2,3,4,5,6,7]", "error: mktime requires parsed datetime inputs"),
+    ("mktime", "[0,0,1,0,0,0,0,0]", "-62167219200"),
+    ("gmtime | mktime", "1425599507", "1425599507"),
+    ("todate", "1425599507.9", "\"2015-03-05T23:51:47Z\""),
+    ("todate", "-1", "\"1969-12-31T23:59:59Z\""),
+    ("todate", "\"x\"", "error: strftime/1 requires parsed datetime inputs"),
+    ("fromdate", "\"2015-03-05T23:51:47Z\"", "1425599507"),
+    ("fromdate", "\"2015-03-05T23:51:47\"", "error: date \"2015-03-05T23:51:47\" does not match format \"%Y-%m-%dT%H:%M:%SZ\""),
+    ("fromdateiso8601 | todateiso8601", "\"2000-02-29T00:00:00Z\"", "\"2000-02-29T00:00:00Z\""),
+    ("now | type", "null", "\"number\""),
+  ]);
+}
+
+function test_strftime(): test.TestOutcome {
+  return checks([
+    ("strftime(\"%Y-%m-%dT%H:%M:%SZ\")", "[2015,2,5,23,51,47,4,63]", "\"2015-03-05T23:51:47Z\""),
+    ("strftime(\"%A, %B %d, %Y\")", "1435677542.822351", "\"Tuesday, June 30, 2015\""),
+    ("strftime(\"%a %b %e %H:%M:%S %Z %Y | %j %U %w %u %y %C %G %g %V %W %p %I %l %k %D %F %T %R %r %c %x %X %h %n %t %% %s %z\")", "1425599507", "\"Thu Mar  5 23:51:47 UTC 2015 | 064 09 4 4 15 20 2015 15 10 09 PM 11 11 23 03/05/15 2015-03-05 23:51:47 23:51 11:51:47 PM Thu Mar  5 23:51:47 2015 03/05/15 23:51:47 Mar \\n \\t % 1425599507 +0000\""),
+    ("strftime(\"%G-W%V-%u %U %W %P\")", "[2021,0,3,0,0,0,0,2]", "\"2020-W53-7 01 00 am\""),
+    ("strftime(\"%G-W%V-%u %U %W\")", "[2020,11,31,0,0,0,4,365]", "\"2020-W53-4 52 52\""),
+    ("strftime(\"%G-W%V %g\")", "[2026,0,1,0,0,0,4,0]", "\"2026-W01 26\""),
+    ("strftime(\"%Y %j %a %U %V\")", "[2015,2,5,23,51,47,0,0]", "\"2015 001 Sun 01 52\""),
+    ("strftime(\"%Y %C %y\")", "[12345,0,1,0,0,0,4,0]", "\"12345 123 45\""),
+    ("strftime(\"%I %l %p\"), strftime(\"%s\")", "[2015,2,5,12,0,0,4,63]", "\"12 12 PM\"\n\"1425556800\""),
+    ("strftime(\"%Y\", \"%m\")", "1425599507", "\"2015\"\n\"03\""),
+    ("strftime(\"%Q %\")", "1425599507", "\"%Q %\""),
+    ("strftime(\"\")", "1425599507", "error: strftime/1: unknown system failure"),
+    ("strftime(\"%Y\")", "\"x\"", "error: strftime/1 requires parsed datetime inputs"),
+    ("strftime(\"%Y\")", "[2015,2,5]", "error: strftime/1 requires parsed datetime inputs"),
+    ("try strftime(\"%Y\") catch .", "[\"a\",1,2,3,4,5,6,7]", "\"strftime/1 requires parsed datetime inputs\""),
+    ("try strflocaltime(\"%Y\") catch .", "[\"a\",1,2,3,4,5,6,7]", "\"strflocaltime/1 requires parsed datetime inputs\""),
+    ("strflocaltime(\"%Y-%m-%dT%H:%M:%S %Z\")", "1425599507", "\"2015-03-05T23:51:47 UTC\""),
+  ]);
+}
+
+function test_strptime(): test.TestOutcome {
+  return checks([
+    ("strptime(\"%Y-%m-%dT%H:%M:%SZ\")", "\"2015-03-05T23:51:47Z\"", "[2015,2,5,23,51,47,4,63]"),
+    ("strptime(\"%Y-%m-%dT%H:%M:%SZ\") | mktime", "\"2015-03-05T23:51:47Z\"", "1425599507"),
+    ("strptime(\"%d %b %Y\")", "\"5 Mar 2015\"", "[2015,2,5,0,0,0,4,63]"),
+    ("strptime(\"%A, %B %d, %Y\")", "\"thursday, march 05, 2015\"", "[2015,2,5,0,0,0,4,63]"),
+    ("strptime(\"%a %Y-%m-%d\")", "\"Mon 2015-03-05\"", "[2015,2,5,0,0,0,1,63]"),
+    ("strptime(\"%T\")", "\"10:20:30\"", "[1900,0,0,10,20,30,8,367]"),
+    ("strptime(\"%Y\")", "\"2015\"", "[2015,0,0,0,0,0,3,-1]"),
+    ("strptime(\"%Y-%j\")", "\"2015-064\"", "[2015,2,5,0,0,0,4,63]"),
+    ("strptime(\"%Y-%j\")", "\"2015-366\"", "[2015,11,32,0,0,0,5,365]"),
+    ("strptime(\"%s\")", "\"1425599507\"", "[2015,2,5,23,51,47,4,63]"),
+    ("strptime(\"%y/%m/%d\")", "\"15/03/05\"", "[2015,2,5,0,0,0,4,63]"),
+    ("strptime(\"%y\")", "\"70\"", "[1970,0,0,0,0,0,3,-1]"),
+    ("strptime(\"%r\")", "\"11:51:47 PM\"", "[1900,0,0,23,51,47,8,367]"),
+    ("strptime(\"%I:%M %p\")", "\"12:10 AM\"", "[1900,0,0,0,10,0,8,367]"),
+    ("strptime(\"%Y - %m - %d\")", "\"  2015 -  3 - 5\"", "[2015,2,5,0,0,0,4,63]"),
+    ("strptime(\"%Y%m%d\")", "\"20150305\"", "[2015,2,5,0,0,0,4,63]"),
+    ("strptime(\"%Y-%m-%d\")", "\"2015-02-31\"", "[2015,1,31,0,0,0,2,61]"),
+    ("strptime(\"%Y-%m-%d\")", "\"2015-13-05\"", "error: date \"2015-13-05\" does not match format \"%Y-%m-%d\""),
+    ("strptime(\"%Y-%m-%d\")", "\"2015-03-05junk\"", "error: date \"2015-03-05junk\" does not match format \"%Y-%m-%d\""),
+    ("strptime(\"%Y-%m-%dT\")", "\"2015-03-05\"", "error: date \"2015-03-05\" does not match format \"%Y-%m-%dT\""),
+    ("strptime(\"%Y-%m-%d %z\")", "\"2015-03-05 +01:00\"", "[2015,2,5,0,0,0,4,63]"),
+    ("strptime(\"%Y-%m-%d %Z\")", "\"2015-03-05 UTC\"", "[2015,2,5,0,0,0,4,63]"),
+    ("strptime(\"%c\")", "\"Thu Mar  5 23:51:47 2015\"", "[2015,2,5,23,51,47,4,63]"),
+    ("strptime(\"%Q\")", "\"2015\"", "error: date \"2015\" does not match format \"%Q\""),
+    ("strptime(\"%Y\")", "1", "error: strptime/1 requires string inputs and arguments"),
+    ("strptime(1)", "\"2015\"", "error: strptime/1 requires string inputs and arguments"),
+  ]);
+}
+
+function test_circular(): test.TestOutcome {
+  return checks([
+    ("map(sin, cos)", "[0, 0.5, 2]", "[0,1,0.479425538604203,0.8775825618903728,0.9092974268256817,-0.4161468365471424]"),
+    ("map(asin, acos, atan)", "[0, 0.5, 1]", "[0,1.5707963267948966,0,0.5235987755982989,1.0471975511965979,0.4636476090008061,1.5707963267948966,0,0.7853981633974483]"),
+    ("map(sinh, cosh, tanh)", "[0, 0.5]", "[0,1,0,0.5210953054937474,1.1276259652063807,0.46211715726000974]"),
+    ("map(log1p, expm1)", "[0, 1]", "[0,0,0.6931471805599453,1.718281828459045]"),
+    ("map(cbrt)", "[27, -8, 1e300, 0.001]", "[3,-2,1e+100,0.1]"),
+    ("atan * 4 * 1000000 | floor / 1000000", "1", "3.141592"),
+    ("[atan2(1, 2; 3, 4)]", "null", "[0.3217505543966422,0.5880026035475675,0.24497866312686414,0.4636476090008061]"),
+    ("atan2(0; -1)", "null", "3.141592653589793"),
+    ("atan2(\"a\"; 1)", "null", "error: string (\"a\") number required"),
+    ("sin", "\"a\"", "error: string (\"a\") number required"),
+    ("builtins | length > 10", "null", "true"),
+    ("builtins | map(select(. == \"map/1\" or . == \"empty/0\" or . == \"IN/2\")) | sort", "null", "[\"IN/2\",\"empty/0\",\"map/1\"]"),
+    ("builtins | any(.[:1] == \"_\")", "null", "false"),
+  ]);
+}
+
 function test_not_yet(): test.TestOutcome {
   return checks([
     (".a = .b = 1", "null", "compile: syntax error, unexpected '='"),
@@ -1076,6 +1178,10 @@ function main(): i32 {
   r = r.it("destructuring alternatives", test_pattern_alternatives);
   r = r.it("label and break", test_labels);
   r = r.it("functions that the port has as jq text, and $__loc__", test_prelude);
+  r = r.it("gmtime, mktime, todate and fromdate", test_dates);
+  r = r.it("strftime", test_strftime);
+  r = r.it("strptime", test_strptime);
+  r = r.it("the circular functions, cbrt and builtins", test_circular);
   r = r.it("the parts that the port leaves out", test_not_yet);
   r = r.it("number literals and computed numbers", test_numbers);
   r = r.it("pretty output", test_output);

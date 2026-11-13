@@ -68,6 +68,13 @@ The port has these functions for paths, types and numbers:
 - The number functions `ceil`, `exp10`, `exp2`, `fabs`, `floor`, `infinite`,
   `isinfinite`, `isnan`, `isnormal`, `log`, `log10`, `log2`, `nan`, `pow`,
   `round`, `sqrt` and `trunc`.
+- The functions `acos`, `asin`, `atan`, `atan2`, `cbrt`, `cos`, `cosh`,
+  `expm1`, `log1p`, `sin`, `sinh`, `tan` and `tanh`.
+- The date functions `fromdate`, `fromdateiso8601`, `gmtime`, `localtime`,
+  `mktime`, `now`, `strflocaltime`, `strftime`, `strptime`, `todate` and
+  `todateiso8601`.
+- `builtins`, which gives the name and the number of arguments of each
+  function.
 - The functions `isempty`, `not`, `tojson`, `tostring` and `type`.
 
 The command line has these parts:
@@ -133,6 +140,19 @@ A math function with no exact result can differ from jq in its last digit.
 jq takes these results from the C library, and they differ from one C library
 to the next. The exact results are the same: `exp10` of 2 is 100.
 
+## Dates
+
+`dates.fern` has the calendar, `strftime` and `strptime`. The results are
+those of jq 1.7 with glibc and the time zone UTC.
+
+- The time zone is always UTC. `localtime` is `gmtime`, and `strflocaltime`
+  is `strftime`. `%Z` gives `UTC` and `%z` gives `+0000`.
+- `strftime` has the conversions of C for the C locale. It has no flags and
+  no widths: a conversion that it does not have stays as it is in the format.
+- `strptime` gives 8 for the day of the week and 367 for the day of the year
+  when the text has no date, as jq does with glibc.
+- `mktime` gives an error for the results -1 and -2, as jq does.
+
 ## What it does not have yet
 
 - Modules: `import`, `include` and `modulemeta`.
@@ -148,7 +168,7 @@ A program that uses one of them stops with exit 3 and a message that ends in
 - `tests/jq.test` is the test suite of jq 1.7 (see
   `licenses/jq/NOTICE.txt`). `TestSelfHostExampleJqSuite` runs each case
   whose program the port has and compares the outputs as JSON values, as
-  jq does. 402 cases pass, and each of the others is in a part of the language
+  jq does. 415 cases pass, and each of the others is in a part of the language
   that the port does not have yet.
 - `TestSelfHostExampleJqAgainstJq` runs the command line and the `jq` binary
   on the same arguments and input, and compares their stdout, stderr and exit

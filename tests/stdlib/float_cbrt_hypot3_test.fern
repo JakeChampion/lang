@@ -8,6 +8,30 @@ function test_cbrt_perfect(): test.TestOutcome {
   return test.assert_eq_f64_near(8.0.cbrt(), 2.0, 0.001);
 }
 
+// A cube has its exact root, at each size. The largest and the smallest
+// numbers have the nearest root.
+function test_cbrt_exact(): test.TestOutcome {
+  for n in [3.0, 7.0, 10.0, 99.0, 12345.0, 200000.0] {
+    if ((n * n * n).cbrt() != n) {
+      return test.fail("cbrt of the cube of " + n.to_string() + " is " + (n * n * n).cbrt().to_string());
+    }
+  }
+  if (1e300.cbrt() != 1e100 || 1e-300.cbrt() != 1e-100 || 0.001.cbrt() != 0.1) {
+    return test.fail("cbrt of a power of 1000");
+  }
+  if (1.7976931348623157e308.cbrt() != 5.643803094122362e102 || 5e-324.cbrt() != 1.7031839360032603e-108) {
+    return test.fail("cbrt at the limits");
+  }
+  if (2.0.cbrt() != 1.2599210498948732 || (0.0 - 2.0).cbrt() != 0.0 - 1.2599210498948732) {
+    return test.fail("cbrt 2");
+  }
+  let inf = 1.0 / 0.0;
+  if (inf.cbrt() != inf || (0.0 - inf).cbrt() != 0.0 - inf) {
+    return test.fail("cbrt of an infinity");
+  }
+  return test.pass();
+}
+
 function test_cbrt_negative(): test.TestOutcome {
   return test.assert_eq_f64_near((0.0 - 8.0).cbrt(), 0.0 - 2.0, 0.001);
 }
@@ -48,6 +72,7 @@ function float_near(a: f64, b: f64): boolean {
 function main(): i32 {
   let r = test.new("std/f64 cbrt/hypot3");
   r = r.it("cbrt perfect cube", test_cbrt_perfect);
+  r = r.it("cbrt is exact for a cube, and the nearest number at the limits", test_cbrt_exact);
   r = r.it("cbrt negative", test_cbrt_negative);
   r = r.it("cbrt fractional", test_cbrt_fractional);
   r = r.it("hypot3 pythagorean", test_hypot3_pythagorean);
