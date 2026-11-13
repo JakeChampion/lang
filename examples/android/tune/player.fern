@@ -7,6 +7,8 @@ import "std/android/draw";
 import "std/android/ui";
 import "std/i32";
 import "std/i64";
+import "std/audio/eq";
+import "std/audio/spectrum";
 import "std/audio/tags";
 import "std/audio/wire";
 import "std/option";
@@ -592,6 +594,33 @@ function faded(own incoming: Option[Incoming], ready: i32[], fresh: i32, t0: f64
   return (Some(next), out);
 }
 
+// The equalizer `filters` for the sound `sound` with the gains `tone`. A
+// new rate or a new number of channels gives a new equalizer.
+pub function tuned(filters: eq.Equalizer, sound: tune.Sound, tone: i32[]): eq.Equalizer {
+  let bands = tune.tone_bands(tone);
+  if (filters.rate() != sound.rate || filters.channels() != sound.channels.max(1)) {
+    return eq.new(sound.rate, sound.channels, bands);
+  }
+  let old = filters.bands();
+  let same = old.len() == bands.len();
+  for i in 0..bands.len().min(old.len()) {
+    same = same && old[i].db == bands[i].db;
+  }
+  if (same) {
+    return filters;
+  }
+  return filters.retuned(bands);
+}
+
+// The samples `ready` with those from `from` on through the equalizer.
+pub function equalized(filters: eq.Equalizer, own ready: i32[], from: i32): (eq.Equalizer, i32[]) {
+  if (filters.flat() || from >= ready.len()) {
+    return (filters, ready);
+  }
+  let (after, done) = filters.run(array.slice(ready, from, ready.len()));
+  return (after, array.slice(ready, 0, from).concat(done));
+}
+
 // While a track plays: reads the file until the player has enough samples
 // ready, gives the sound what it takes, and tells the time of the track.
 // In the last seconds of a crossfade, the next track fades in over it.
@@ -609,7 +638,9 @@ function pumped(dev: Device, own m: tune.Model, own deck: Option[engine.Voice], 
   let left = d.deck.duration_ms() - d.deck.position_ms();
   let each_ms = (ready.len() - fresh) as i64 * 1000i64 / ((sound.rate * sound.channels).max(1) as i64) * (m.speed as i64) / 100i64;
   let (inc, out) = faded(fading_in(dev, m, left, fade_ms, incoming), ready, fresh, fade_part(left + each_ms, fade_ms), fade_part(left, fade_ms), m);
-  ready = out;
+  let (filters, heard) = equalized(tuned(m.filters, sound, m.tone), out, fresh);
+  ready = heard;
+  let bars = if (m.open) { tune.fallen(m.bars, spectrum.levels(ready, sound.channels, sound.rate, tune.BARS)) } else { m.bars };
   let wrote = dev.write(sound, ready);
   let kept = rest(ready, wrote);
   let each = (sound.rate * sound.channels).max(1) as i64;
@@ -617,7 +648,7 @@ function pumped(dev: Device, own m: tune.Model, own deck: Option[engine.Voice], 
   let at = (d.deck.position_ms() - waiting).max(0i64);
   let length = d.deck.duration_ms();
   let ended = d.deck.done && kept.len() == 0;
-  let after = tune.Model { ...m, pending: kept, at_ms: at, length_ms: length };
+  let after = tune.Model { ...m, pending: kept, at_ms: at, length_ms: length, filters: filters, bars: bars };
   if (after.sleep_us > 0i64) {
     after = tune.update(after, tune.Slept(wrote as i64 * 1000000i64 / each));
   }

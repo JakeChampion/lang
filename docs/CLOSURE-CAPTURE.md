@@ -75,6 +75,22 @@ function f(): i32 {
 The fix for a reference capture is to **return the new value from the
 closure** instead of writing it back.
 
+## Loop bindings
+
+Each turn of a `for` loop binds its own loop variable. This is true for a loop over an array and for a loop over a range. A closure that a turn makes keeps the value of that turn:
+
+```
+let fs: (() => i32)[] = [];
+for i in 0..3 {
+    fs = fs.append((): i32 => i);
+}
+// fs gives 0, 1 and 2.
+```
+
+The body cannot assign the index of a range (`E091`), so the index does not change in a turn. A variable that the body assigns is one shared cell, as the rule above says. A closure that captures such a variable reads its last value.
+
+The compiler steps a hidden counter for a range loop whose body makes a closure. The body then starts with `let i = counter`. A loop with no closure keeps its counter as the index. The Go interpreter gives the index a new cell after each turn. `TestRangeIndexCaptureIsPerTurn` and `TestSelfHostInterpRangeIndexCaptureIsPerTurn` hold the rule.
+
 ### The enclosing scope's store is `E049` too
 
 The capture is shared, so the *enclosing* scope writes the same box, and what

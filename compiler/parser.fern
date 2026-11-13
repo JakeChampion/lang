@@ -19268,6 +19268,25 @@ function literal_suffix_of(e: ast.Expr): string {
   }
 }
 
+function makes_closure(stmts: ast.Stmt[]): boolean {
+  let found = false;
+  for st in stmts {
+    found = astwalk.fold_stmt_nodes(st, found, keep_found, lambda_found, astwalk.descend_all);
+  }
+  return found;
+}
+
+function keep_found(st: ast.Stmt, own found: boolean): boolean {
+  return found;
+}
+
+function lambda_found(e: ast.Expr, own found: boolean): boolean {
+  if let ast.ExprLambda(_) = e {
+    return true;
+  }
+  return found;
+}
+
 function inclusive_range_loop(fr: ast.StmtFor, dbody: ast.Stmt[], ivar: ast.Stmt, hivar: ast.Stmt, hi_name: string): ast.Stmt[] {
   let v = fr.var_name;
   let go_name = "$go_" + v;
@@ -19368,8 +19387,18 @@ function desugar_ranges_one(st: ast.Stmt): ast.Stmt[] {
       if (rargs.len() == 2) {
         // A nested `for _` must not step this counter.
         let fr = ast.StmtFor { ...written, var_name: discard_name(written.var_name, written.line, written.col, 0) };
-        let hi_name = "$hi_" + fr.var_name;
         let rty = range_bound_type(rargs);
+        if (makes_closure(dbody)) {
+          // Each turn binds its own index, so a closure keeps the index of its turn.
+          let counter = "$turn_" + fr.var_name;
+          let turn: ast.Stmt[] = [s_var(fr.var_name, rty, e_ident(counter))];
+          for st in dbody {
+            turn = turn.append(st);
+          }
+          dbody = turn;
+          fr = ast.StmtFor { ...fr, var_name: counter };
+        }
+        let hi_name = "$hi_" + fr.var_name;
         let hivar = s_var(hi_name, rty, rargs[1]);
         if (range_call_name(fr.iter) == "__range_incl") {
           return inclusive_range_loop(fr, dbody, s_var(fr.var_name, rty, rargs[0]), hivar, hi_name);
