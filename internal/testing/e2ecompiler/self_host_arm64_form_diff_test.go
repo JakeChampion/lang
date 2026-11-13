@@ -185,6 +185,15 @@ func arm64FormCases() []string {
 	} {
 		add("%s", f)
 	}
+	// The forms of the Poly1305 kernel, __fern_poly1305_blocks.
+	for _, f := range []string{
+		"mul x4, x12, x9", "umulh x15, x13, x9", "adds x4, x4, x6", "adcs x13, x13, x5", "adc x7, x7, xzr", "adc x14, x14, x7",
+		"adds x4, x12, #5", "add x11, x10, x10, lsr #2", "and x8, x14, #0xfffffffffffffffc", "and x14, x14, #3",
+		"movz x4, #0xfffc", "movk x4, #0x0fff, lsl #48", "csel x12, x4, x12, ne", "ldp x12, x13, [x0, #8]", "stp xzr, xzr, [x29, #224]",
+		"ldrb w6, [x1, x4]", "strb w6, [x5, x4]",
+	} {
+		add("%s", f)
+	}
 	return out
 }
 

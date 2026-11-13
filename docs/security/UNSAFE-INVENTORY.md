@@ -142,7 +142,7 @@ The audit of their internal range checks belongs to SEC-005 and SEC-035.
 - Typed allocations: `__alloc_bool`, `__alloc_i32`, `__alloc_i64`, `__alloc_f64`, `__alloc_u8`. Every payload word is zero at allocation ([ERASURE-AND-QUOTAS.md](ERASURE-AND-QUOTAS.md)), so a fresh array carries no obligation.
 - Arithmetic and text conversion: `__abs_f64`, `__ceil_f64`, `__floor_f64`, `__round_f64`, `__sqrt_f64`, `__trunc_f64`, `__scale_f64`, `__outer_mul_f64`, `__inner_mul_add_f64`, `__clz32`, `__clz64`, `__ctz32`, `__ctz64`, `__popcount32`, `__popcount64`, `__mulhi_u64`, `__ptr_width`, the `__primitive_*_to_string` family.
 - Lanes: the `__f64x2_*` and `__f32x4_*` families.
-- Cryptographic kernels: `__aes_expand_key`, `__aes_ctr32`, `__aes_gcm_seal_into`, `__aes_gcm_open_into`, `__ghash`, `__sha1_hw`, `__sha1_hw_blocks`, `__sha1x8_hw`, `__sha1x8_hw_blocks`, `__sha256_hw`, `__sha256_hw_blocks`, `__chacha20_xor_into`. Their buffer contracts belong to SEC-037.
+- Cryptographic kernels: `__aes_expand_key`, `__aes_ctr32`, `__aes_gcm_seal_into`, `__aes_gcm_open_into`, `__ghash`, `__sha1_hw`, `__sha1_hw_blocks`, `__sha1x8_hw`, `__sha1x8_hw_blocks`, `__sha256_hw`, `__sha256_hw_blocks`, `__chacha20_xor_into`, `__poly1305_blocks`. Their buffer contracts belong to SEC-037.
 - Diagnostics: `__ct_secret`, `__ct_public`, `__heap_alloc_count`, `__heap_bump_bytes`, `__rc_underflow_count`, `__map_hash_seed`.
 
 ## Raw floor

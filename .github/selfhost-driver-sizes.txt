@@ -15,6 +15,9 @@
 # The PR changes one test and one document. The drift of main grew checker_codes_run 5.1%,
 # checker_modload_run 6.0%, asm_run 5.4% and asm_ir_run 5.5%. Each moves to its measured value.
 # The 5% tolerance is unchanged.
+# 2026-11-13: PR #15756 at 908d1798bb, driver-sizes-x86_64 job 132068231621.
+# Pin asm_load_run to 13366720 bytes (+5.1%). Main at 629da263 measures
+# 13308880; the Poly1305 kernels of #15756 add 57840. The 5% tolerance is unchanged.
 # 2026-11-11: PR #15233 at c9ce8161bd, driver-sizes-x86_64 job 130271740223.
 # Pin runtime_run to 16668464 bytes. The local stock build agrees. The 5% tolerance is unchanged.
 # Evidence: docs/benchmarks/callback-result-ci-2026-11-11/.
@@ -643,7 +646,7 @@
 fern.fern/stage2 16710816
 fern.fern 16658288
 drivers/runtime_run.fern 16672112
-drivers/asm_load_run.fern 12721632
+drivers/asm_load_run.fern 13366720
 drivers/asm_modload_run.fern 11387536
 drivers/asm_ir_run.fern 11028400
 drivers/asm_run.fern 10091776
