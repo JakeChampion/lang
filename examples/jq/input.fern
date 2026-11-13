@@ -2,7 +2,7 @@
 // them, and an optional byte order mark at the start.
 import "std/json";
 import "std/string";
-import "./number";
+import "./reader";
 
 // One JSON text of the input, and the number of lines that jq has read when
 // the text ends. jq reads a line at a time, so that is the line of the text,
@@ -11,81 +11,20 @@ pub struct Text { value: json.JsonValue, line: i32 }
 
 pub struct Stream { texts: Text[], error: string }
 
-function is_space(b: u8): boolean {
-  return b == b' ' || b == b'\t' || b == b'\n' || b == b'\r';
-}
-
-function is_structural(b: u8): boolean {
-  return is_space(b) || b == b'[' || b == b']' || b == b'{' || b == b'}' || b == b',' || b == b':' || b == b'"';
-}
-
-// The end of the JSON text that starts at `i`.
-function text_end(s: string, i: i32): i32 {
-  let b = s[i];
-  if (b != b'[' && b != b'{' && b != b'"') {
-    let j = i;
-    while (j < s.len() && !is_structural(s[j])) {
-      j += 1;
-    }
-    if (j == i) {
-      return i + 1;
-    }
-    return j;
-  }
-  let depth = 0;
-  let j = i;
-  let in_string = false;
-  while (j < s.len()) {
-    let c = s[j];
-    if (in_string) {
-      if (c == b'\\') {
-        j += 1;
-      } else if (c == b'"') {
-        in_string = false;
-        if (depth == 0) {
-          return j + 1;
-        }
-      }
-    } else if (c == b'"') {
-      in_string = true;
-    } else if (c == b'[' || c == b'{') {
-      depth += 1;
-    } else if (c == b']' || c == b'}') {
-      depth -= 1;
-      if (depth == 0) {
-        return j + 1;
-      }
-    }
-    j += 1;
-  }
-  return s.len();
-}
-
 // The values of the text, with each number literal in the form jq writes.
+// The error is the parse error of jq, with its line and its column.
 pub function stream(s: string): Stream {
-  let texts: Text[] = [];
-  let i = 0;
+  let start = 0;
   if (s.len() >= 3 && s[0] == 0xef as u8 && s[1] == 0xbb as u8 && s[2] == 0xbf as u8) {
-    i = 3;
+    start = 3;
   }
-  while (i < s.len()) {
-    if (is_space(s[i])) {
-      i += 1;
-      continue;
-    }
-    let end = text_end(s, i);
-    let piece = slice_unchecked(s, i, end).to_owned();
-    match (json.parse(piece)) {
-      Ok(v) => {
-        texts = texts.append(Text { value: canonical(v), line: lines_read(s, end) });
-      },
-      Err(e) => {
-        return Stream { texts: texts, error: e.message() + " at line " + lines_read(s, end).to_string() };
-      }
-    }
-    i = end;
+  let body = slice_unchecked(s, start, s.len()).to_owned();
+  let r = reader.read(body);
+  let texts: Text[] = [];
+  for v in r.values {
+    texts = texts.append(Text { value: v.value, line: lines_read(body, v.end) });
   }
-  return Stream { texts: texts, error: "" };
+  return Stream { texts: texts, error: r.error };
 }
 
 function lines_read(s: string, end: i32): i32 {
@@ -99,30 +38,4 @@ function lines_read(s: string, end: i32): i32 {
     }
   }
   return n;
-}
-
-pub function canonical(v: json.JsonValue): json.JsonValue {
-  match (v) {
-    json.JNumber(t) => {
-      return json.JNumber(number.canonical(t));
-    },
-    json.JArray(items) => {
-      let out: json.JsonValue[] = [];
-      for x in items {
-        out = out.append(canonical(x));
-      }
-      return json.JArray(out);
-    },
-    json.JObject(o) => {
-      let keys = o.keys();
-      let values: json.JsonValue[] = [];
-      for k in keys {
-        values = values.append(canonical(o.get_or(k, json.JNull)));
-      }
-      return json.JObject(json.object_of(keys, values));
-    },
-    _ => {
-      return v;
-    }
-  }
 }

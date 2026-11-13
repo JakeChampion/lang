@@ -1,0 +1,474 @@
+// The JSON reader of jq 1.7: its grammar, its messages, and the line and the
+// column in each message.
+//
+// jq reads more than JSON. A number can be `nan`, `infinity`, `1.`, `.5` or
+// `+1`, and the values of a stream need no separator between them. A value
+// at the top level is complete as soon as its last byte is read, so `1,` gives
+// the 1 and then an error for the comma.
+import "std/json";
+import "std/string";
+import "std/utf8";
+import "./filter";
+import "./number";
+
+// One value, and the offset in the text just after it.
+pub struct Value { value: json.JsonValue, end: i32 }
+
+// The values before the first error, and the error with its place.
+pub struct Read { values: Value[], error: string }
+
+// jq allows this many open arrays, objects and keys.
+const MAX_DEPTH: i32 = 256;
+
+enum Frame {
+  Items(json.JsonValue[]),
+  Fields(json.JsonObject),
+  Key(string),
+}
+
+struct State { stack: Frame[], next: json.JsonValue[], out: Value[], line: i32, column: i32 }
+
+function is_space(b: u8): boolean {
+  return b == b' ' || b == b'\t' || b == b'\n' || b == b'\r';
+}
+
+function is_structure(b: u8): boolean {
+  return b == b'[' || b == b']' || b == b'{' || b == b'}' || b == b',' || b == b':';
+}
+
+function (st: State) place(at_end: boolean): string {
+  let where = " at line " + st.line.to_string() + ", column " + st.column.to_string();
+  if (at_end) {
+    return " at EOF" + where;
+  }
+  return where;
+}
+
+// The values of `s`, which has no byte order mark.
+pub function read(s: string): Read {
+  let st = State { stack: [], next: [], out: [], line: 1, column: 0 };
+  let token = -1;
+  let i = 0;
+  while (i < s.len()) {
+    let b = s[i];
+    st = st.step(b);
+    if (!is_space(b) && !is_structure(b) && b != b'"') {
+      if (token < 0) {
+        token = i;
+      }
+      i += 1;
+      continue;
+    }
+    // jq loses the value of a literal when the byte that ends the literal is
+    // an error itself, as in `1,`.
+    let kept = st.out;
+    if (token >= 0) {
+      let (after, bad) = st.literal(slice_unchecked(s, token, i).to_owned(), i);
+      if (bad.len() > 0) {
+        return Read { values: st.out, error: bad + st.place(false) };
+      }
+      st = after;
+      token = -1;
+    }
+    if (is_structure(b)) {
+      let (after, bad) = st.structure(b);
+      if (bad.len() > 0) {
+        return Read { values: kept, error: bad + st.place(false) };
+      }
+      st = after.done(i + 1);
+    } else if (b == b'"') {
+      let end = i + 1;
+      let closed = false;
+      while (end < s.len() && !closed) {
+        st = st.step(s[end]);
+        if (s[end] == b'"') {
+          closed = true;
+        } else if (s[end] == b'\\' && end + 1 < s.len()) {
+          end += 1;
+          st = st.step(s[end]);
+        }
+        end += 1;
+      }
+      if (!closed) {
+        return Read { values: st.out, error: "Unfinished string" + st.place(true) };
+      }
+      let (text, bad) = unescape(slice_unchecked(s, i + 1, end - 1).to_owned());
+      if (bad.len() == 0) {
+        let (after, twice) = st.value(json.JString(text));
+        st = after.done(end);
+        bad = twice;
+      }
+      if (bad.len() > 0) {
+        return Read { values: st.out, error: bad + st.place(false) };
+      }
+      i = end - 1;
+    }
+    i += 1;
+  }
+  if (token >= 0) {
+    let (after, bad) = st.literal(slice_unchecked(s, token, s.len()).to_owned(), s.len());
+    if (bad.len() > 0) {
+      return Read { values: st.out, error: bad + st.place(true) };
+    }
+    st = after;
+  }
+  if (st.stack.len() > 0) {
+    return Read { values: st.out, error: "Unfinished JSON term" + st.place(true) };
+  }
+  return Read { values: st.out, error: "" };
+}
+
+// The line and the column after the byte `b`.
+function (st: State) step(b: u8): State {
+  if (b == b'\n') {
+    return State { ...st, line: st.line + 1, column: 0 };
+  }
+  return State { ...st, column: st.column + 1 };
+}
+
+// A value at the top level is complete. `end` is the offset after it.
+function (st: State) done(end: i32): State {
+  if (st.stack.len() > 0 || st.next.len() == 0) {
+    return st;
+  }
+  return State { ...st, next: [], out: st.out.append(Value { value: st.next[0], end: end }) };
+}
+
+function (st: State) value(v: json.JsonValue): (State, string) {
+  if (st.next.len() > 0) {
+    return (st, "Expected separator between values");
+  }
+  return (State { ...st, next: [v] }, "");
+}
+
+// The literal `text` ends at the offset `end`.
+function (st: State) literal(text: string, end: i32): (State, string) {
+  let (v, bad) = literal_value(text);
+  if (bad.len() > 0) {
+    return (st, bad);
+  }
+  let (after, twice) = st.value(v);
+  return (after.done(end), twice);
+}
+
+function literal_value(text: string): (json.JsonValue, string) {
+  let word = "";
+  let v: json.JsonValue = json.JNull;
+  if (text[0] == b't') {
+    word = "true";
+    v = json.JBool(true);
+  } else if (text[0] == b'f') {
+    word = "false";
+    v = json.JBool(false);
+  } else if (text.len() > 1 && text[0] == b'n' && text[1] == b'u') {
+    word = "null";
+  }
+  if (word.len() > 0) {
+    if (text != word) {
+      return (v, "Invalid literal");
+    }
+    return (v, "");
+  }
+  let t = number_text(text);
+  if (t.len() == 0) {
+    return (v, "Invalid numeric literal");
+  }
+  return (json.JNumber(t), "");
+}
+
+// The number text of a literal, or "" when it is not a number. jq reads a
+// decimal with an optional sign, and `nan`, `inf` and `infinity` in any case.
+function number_text(whole: string): string {
+  let text = c_string(whole);
+  if (text.len() == 0) {
+    return "";
+  }
+  let body = text;
+  let negative = false;
+  if (text[0] == b'-' || text[0] == b'+') {
+    negative = text[0] == b'-';
+    body = slice_unchecked(text, 1, text.len()).to_owned();
+  }
+  let name = body.to_ascii_lower();
+  if (name == "nan") {
+    return number.format(0.0 / 0.0);
+  }
+  if (name == "inf" || name == "infinity") {
+    if (negative) {
+      return number.format(-1.0 / 0.0);
+    }
+    return number.format(1.0 / 0.0);
+  }
+  if (!number.is_decimal(text)) {
+    return "";
+  }
+  return number.canonical(text);
+}
+
+// `s` to its first NUL. jq reads a number, and writes the text of a message,
+// as a C string.
+pub function c_string(s: string): string {
+  for i in 0..s.len() {
+    if (s[i] == 0 as u8) {
+      return slice_unchecked(s, 0, i).to_owned();
+    }
+  }
+  return s;
+}
+
+function (st: State) structure(b: u8): (State, string) {
+  if (b == b'[' || b == b'{') {
+    if (st.stack.len() >= MAX_DEPTH) {
+      return (st, "Exceeds depth limit for parsing");
+    }
+    if (st.next.len() > 0) {
+      return (st, "Expected separator between values");
+    }
+    if (b == b'[') {
+      return (State { ...st, stack: st.stack.append(Items([])) }, "");
+    }
+    return (State { ...st, stack: st.stack.append(Fields(json.object())) }, "");
+  }
+  if (b == b':') {
+    return st.colon();
+  }
+  if (b == b',') {
+    return st.comma();
+  }
+  if (b == b']') {
+    return st.close_array();
+  }
+  return st.close_object();
+}
+
+function (st: State) top(): Frame {
+  return st.stack[st.stack.len() - 1];
+}
+
+function (st: State) pop(): State {
+  let rest: Frame[] = [];
+  for i in 0..st.stack.len() - 1 {
+    rest = rest.append(st.stack[i]);
+  }
+  return State { ...st, stack: rest };
+}
+
+// The stack with `f` in the place of its top frame, and no pending value.
+function (st: State) replace(f: Frame): State {
+  let below = st.pop();
+  return State { ...below, stack: below.stack.append(f), next: [] };
+}
+
+function (st: State) colon(): (State, string) {
+  if (st.next.len() == 0) {
+    return (st, "Expected string key before ':'");
+  }
+  if (st.stack.len() == 0) {
+    return (st, "':' not as part of an object");
+  }
+  let Fields(_) = st.top() else {
+    return (st, "':' not as part of an object");
+  };
+  let json.JString(k) = st.next[0] else {
+    return (st, "Object keys must be strings");
+  };
+  return (State { ...st, stack: st.stack.append(Key(k)), next: [] }, "");
+}
+
+// The pending value goes into the open array, or into the open object below
+// the key.
+function (st: State) store(): (State, string) {
+  match (st.top()) {
+    Items(items) => {
+      return (st.replace(Items(items.append(st.next[0]))), "");
+    },
+    Key(k) => {
+      let below = st.pop();
+      let Fields(o) = below.top() else {
+        return (st, "Objects must consist of key:value pairs");
+      };
+      let fields = o;
+      fields = fields.insert(k, st.next[0]);
+      return (below.replace(Fields(fields)), "");
+    },
+    Fields(_) => {
+      return (st, "Objects must consist of key:value pairs");
+    }
+  }
+}
+
+function (st: State) comma(): (State, string) {
+  if (st.next.len() == 0 || st.stack.len() == 0) {
+    return (st, "Expected value before ','");
+  }
+  return st.store();
+}
+
+function (st: State) close_array(): (State, string) {
+  if (st.stack.len() == 0) {
+    return (st, "Unmatched ']'");
+  }
+  let Items(items) = st.top() else {
+    return (st, "Unmatched ']'");
+  };
+  if (st.next.len() > 0) {
+    return st.pop().value_after(json.JArray(items.append(st.next[0])));
+  }
+  if (items.len() > 0) {
+    return (st, "Expected another array element");
+  }
+  return st.pop().value_after(json.JArray(items));
+}
+
+function (st: State) close_object(): (State, string) {
+  if (st.stack.len() == 0) {
+    return (st, "Unmatched '}'");
+  }
+  let filled = st;
+  if (st.next.len() > 0) {
+    let Key(_) = st.top() else {
+      return (st, "Objects must consist of key:value pairs");
+    };
+    let (stored, bad) = st.store();
+    if (bad.len() > 0) {
+      return (st, bad);
+    }
+    filled = stored;
+  } else {
+    let Fields(o) = st.top() else {
+      return (st, "Unmatched '}'");
+    };
+    if (o.len() > 0) {
+      return (st, "Expected another key-value pair");
+    }
+  }
+  let Fields(o) = filled.top() else {
+    return (st, "Unmatched '}'");
+  };
+  return filled.pop().value_after(json.JObject(o));
+}
+
+// `v` is the pending value, in the place of the one that it closed.
+function (st: State) value_after(v: json.JsonValue): (State, string) {
+  return (State { ...st, next: [v] }, "");
+}
+
+// The text of a string from the bytes between its quotes.
+function unescape(raw: string): (string, string) {
+  let out = "";
+  let i = 0;
+  let from = 0;
+  while (i < raw.len()) {
+    let b = raw[i];
+    if (b < 0x20 as u8) {
+      return ("", "Invalid string: control characters from U+0000 through U+001F must be escaped");
+    }
+    if (b != b'\\') {
+      i += 1;
+      continue;
+    }
+    out += slice_unchecked(raw, from, i).to_owned();
+    let (text, size, bad) = escape(raw, i + 1);
+    if (bad.len() > 0) {
+      return ("", bad);
+    }
+    out += text;
+    i += 1 + size;
+    from = i;
+  }
+  out += slice_unchecked(raw, from, raw.len()).to_owned();
+  if (utf8.is_valid(out)) {
+    return (out, "");
+  }
+  return (repaired(out), "");
+}
+
+// The text of the escape after the backslash at `i - 1`, and its size.
+function escape(raw: string, i: i32): (string, i32, string) {
+  if (i >= raw.len()) {
+    return ("", 0, "Invalid escape");
+  }
+  let simple = simple_escape(raw[i]);
+  if (simple.len() > 0) {
+    return (simple, 1, "");
+  }
+  if (raw[i] != b'u') {
+    return ("", 0, "Invalid escape");
+  }
+  if (i + 5 > raw.len()) {
+    return ("", 0, "Invalid \\uXXXX escape");
+  }
+  let cp = filter.hex4(raw, i + 1);
+  if (cp < 0) {
+    return ("", 0, "Invalid characters in \\uXXXX escape");
+  }
+  if (cp < 0xd800 || cp > 0xdbff) {
+    return (filter.codepoint_text(cp), 5, "");
+  }
+  // A high surrogate needs the escape of a low surrogate after it.
+  let low = -1;
+  if (i + 6 < raw.len() && raw[i + 5] == b'\\' && raw[i + 6] == b'u') {
+    low = filter.hex4(raw, i + 7);
+  }
+  if (low < 0xdc00 || low > 0xdfff) {
+    return ("", 0, "Invalid \\uXXXX\\uXXXX surrogate pair escape");
+  }
+  return (filter.codepoint_text(0x10000 + (cp - 0xd800 << 10) + (low - 0xdc00)), 11, "");
+}
+
+function simple_escape(b: u8): string {
+  if (b == b'"' || b == b'\\' || b == b'/') {
+    return filter.codepoint_text(b as i32);
+  }
+  if (b == b'b') {
+    return filter.codepoint_text(8);
+  }
+  if (b == b'f') {
+    return filter.codepoint_text(12);
+  }
+  if (b == b'n') {
+    return "\n";
+  }
+  if (b == b'r') {
+    return "\r";
+  }
+  if (b == b't') {
+    return "\t";
+  }
+  return "";
+}
+
+// `s` with U+FFFD in the place of each sequence that is not UTF-8.
+function repaired(s: string): string {
+  let out = "";
+  let i = 0;
+  while (i < s.len()) {
+    if let Some((cp, size)) = utf8.decode_at(s, i) {
+      out += slice_unchecked(s, i, i + size).to_owned();
+      i += size;
+      continue;
+    }
+    out += filter.codepoint_text(0xfffd);
+    i += bad_size(s, i);
+  }
+  return out;
+}
+
+// The size of the bad sequence at `i`: its first byte, and the continuation
+// bytes that its first byte calls for and that are there.
+function bad_size(s: string, i: i32): i32 {
+  let b = s[i] as i32;
+  let want = 1;
+  if (b >= 0xc2 && b < 0xe0) {
+    want = 2;
+  } else if (b >= 0xe0 && b < 0xf0) {
+    want = 3;
+  } else if (b >= 0xf0 && b < 0xf5) {
+    want = 4;
+  }
+  let size = 1;
+  while (size < want && i + size < s.len() && (s[i + size] as i32 & 0xc0) == 0x80) {
+    size += 1;
+  }
+  return size;
+}

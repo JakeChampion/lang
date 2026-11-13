@@ -38,13 +38,14 @@ The port has these functions:
 - The functions with a key `group_by`, `max_by`, `min_by`, `sort_by` and
   `unique_by`.
 - The string functions `ascii_downcase`, `ascii_upcase`, `endswith`,
-  `explode`, `ltrimstr`, `rtrimstr`, `split` with one argument,
-  `startswith` and `utf8bytelength`.
+  `explode`, `fromjson`, `implode`, `ltrimstr`, `rtrimstr`, `split` with one argument,
+  `startswith`, `tonumber` and `utf8bytelength`.
 - The search functions `contains`, `index`, `indices`, `inside` and `rindex`.
 - The selectors `arrays`, `booleans`, `iterables`, `nulls`, `numbers`,
   `objects`, `scalars`, `select`, `strings` and `values`.
-- The number functions `ceil`, `fabs`, `floor`, `infinite`, `isinfinite`,
-  `isnan`, `isnormal`, `log`, `nan`, `pow`, `round`, `sqrt` and `trunc`.
+- The number functions `ceil`, `exp10`, `exp2`, `fabs`, `floor`, `infinite`,
+  `isinfinite`, `isnan`, `isnormal`, `log`, `log10`, `log2`, `nan`, `pow`,
+  `round`, `sqrt` and `trunc`.
 - The functions `isempty`, `not`, `tojson`, `tostring` and `type`.
 
 The command line has these parts:
@@ -61,6 +62,20 @@ jq makes the outputs one at a time. The outputs and their order are the
 same, and `first`, `limit`, `any` and `all` stop at the same output. But a
 generator that has no end, such as `recurse(. + 1)` in a `limit`, does not
 stop in the port.
+
+## Input
+
+`reader.fern` is the JSON reader of jq 1.7: its grammar, its messages, and
+the line and the column in each message. `fromjson` and `tonumber` use it
+also.
+
+- jq reads more than JSON. A number can be `nan`, `infinity`, `1.`, `.5` or
+  `+1`, and the values of a stream need no separator between them.
+- A value at the top level is complete at its last byte. So `{"a":1}}` gives
+  the object, and then the error for the second `}`.
+- A sequence of bytes that is not UTF-8 is U+FFFD in a string.
+- A parse error stops the command line with `jq: parse error:`, the message,
+  and exit 5.
 
 ## Numbers
 
@@ -80,14 +95,17 @@ compares a literal with a computed number as two f64 values. The port
 compares them as decimals, so the two can differ when the literal has more
 than 17 significant digits.
 
+A math function with no exact result can differ from jq in its last digit.
+jq takes these results from the C library, and they differ from one C library
+to the next. The exact results are the same: `exp10` of 2 is 100.
+
 ## What it does not have yet
 
 - The assignment operators.
 - String interpolation, and formats such as `@base64`.
 - Destructuring patterns in a binding, and `?//`.
 - `label` and `def`.
-- Each function that is not in the lists above. `exp`, `exp2`, `exp10`,
-  `log2` and `log10` wait for #15661.
+- Each function that is not in the lists above. `exp` waits for #15661.
 
 A program that uses one of them stops with exit 3 and a message that ends in
 "is not in this port yet". The next slices of #15585 add them.
@@ -99,7 +117,7 @@ A program that uses one of them stops with exit 3 and a message that ends in
 - `tests/jq.test` is the test suite of jq 1.7 (see
   `licenses/jq/NOTICE.txt`). `TestSelfHostExampleJqSuite` runs each case
   whose program the port has and compares the outputs as JSON values, as
-  jq does. 254 cases pass, and each of the others is in a part of the language
+  jq does. 262 cases pass, and each of the others is in a part of the language
   that the port does not have yet.
 - `TestSelfHostExampleJqAgainstJq` runs the command line and the `jq` binary
   on the same arguments and input, and compares their stdout, stderr and exit

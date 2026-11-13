@@ -121,7 +121,7 @@ function hex_digit(b: u8): i32 {
   return -1;
 }
 
-function hex4(s: string, i: i32): i32 {
+pub function hex4(s: string, i: i32): i32 {
   if (i + 4 > s.len()) {
     return -1;
   }
@@ -138,7 +138,7 @@ function hex4(s: string, i: i32): i32 {
 
 struct Scanned { value: string, end: i32, error: string }
 
-function codepoint_text(cp: i32): string {
+pub function codepoint_text(cp: i32): string {
   if let Some(ch) = utf8.char_from_i32(cp) {
     return utf8.encode(ch);
   }
@@ -707,16 +707,16 @@ function functions(): string[] {
   return [
     "add/0", "all/0", "all/1", "all/2", "any/0", "any/1", "any/2", "arrays/0", "ascii_downcase/0",
     "ascii_upcase/0", "booleans/0", "ceil/0", "contains/1", "empty/0", "endswith/1", "error/0", "error/1",
-    "explode/0", "fabs/0", "first/0", "first/1", "flatten/0", "flatten/1",
-    "floor/0", "from_entries/0", "group_by/1", "has/1", "in/1", "index/1", "indices/1", "infinite/0",
-    "inside/1", "isempty/1", "isinfinite/0", "isnan/0", "isnormal/0", "iterables/0", "join/1", "keys/0",
-    "keys_unsorted/0", "last/0", "last/1", "length/0", "limit/2", "log/0", "ltrimstr/1",
-    "map/1", "max/0", "max_by/1", "min/0", "min_by/1", "nan/0", "not/0", "nth/1", "nth/2", "nulls/0",
-    "numbers/0", "objects/0", "pow/2", "range/1", "range/2", "range/3", "recurse/0", "recurse/1", "recurse/2",
-    "reverse/0", "rindex/1", "round/0", "rtrimstr/1", "scalars/0", "select/1", "sort/0", "sort_by/1",
-    "split/1", "sqrt/0", "startswith/1", "strings/0", "to_entries/0", "tojson/0", "tostring/0", "trunc/0",
-    "type/0", "unique/0", "unique_by/1", "until/2", "utf8bytelength/0", "values/0", "while/2",
-    "with_entries/1",
+    "exp10/0", "exp2/0", "explode/0", "fabs/0", "first/0", "first/1", "flatten/0", "flatten/1", "floor/0",
+    "from_entries/0", "fromjson/0", "group_by/1", "has/1", "implode/0", "in/1", "index/1", "indices/1",
+    "infinite/0", "inside/1", "isempty/1", "isinfinite/0", "isnan/0", "isnormal/0", "iterables/0", "join/1",
+    "keys/0", "keys_unsorted/0", "last/0", "last/1", "length/0", "limit/2", "log/0", "log10/0", "log2/0",
+    "ltrimstr/1", "map/1", "max/0", "max_by/1", "min/0", "min_by/1", "nan/0", "not/0", "nth/1", "nth/2",
+    "nulls/0", "numbers/0", "objects/0", "pow/2", "range/1", "range/2", "range/3", "recurse/0", "recurse/1",
+    "recurse/2", "reverse/0", "rindex/1", "round/0", "rtrimstr/1", "scalars/0", "select/1", "sort/0",
+    "sort_by/1", "split/1", "sqrt/0", "startswith/1", "strings/0", "to_entries/0", "tojson/0", "tonumber/0",
+    "tostring/0", "trunc/0", "type/0", "unique/0", "unique_by/1", "until/2", "utf8bytelength/0", "values/0",
+    "while/2", "with_entries/1",
   ];
 }
 
