@@ -5691,7 +5691,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_str_eq", "__fn___fern_str_free",
     "__fn___fern_arr_dec.r", "__fn___fern_str_free.r",
     "__fn___fern_arr_dec.u", "__fn___fern_str_free.u",
-    "__fn___fern_str_eq.r", "__fn___fern_arr_inc_elems.r", "__fn___fern_alloc_reuse.r",
+    "__fn___fern_str_eq.r", "__fn___fern_arr_inc_elems.r", "__fn___fern_alloc_reuse.r", "__fn___fern_alloc_reuse.f",
   ];
   for i in 0..names.len() {
     s = s.write(".globl " + names[i] + "\n");

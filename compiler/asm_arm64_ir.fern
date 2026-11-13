@@ -4428,8 +4428,8 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
     return ssa_back_copy(ins, reg_of, lp, SlowSaves { mask: ssa_cold_mask(fr, ins), base: fr.cold_base }, s);
   }
   if (ssa.fresh_alloc_call(ins)) {
-    s = ssa_parallel_moves([reg_of[ins.args[1]]], [0], helper_call_needs(ins.str, s));
-    return ssa_store(reg_of, ins.result, "x0", asmcore.ssa_x0_forget(ssa_bl_sym(s, "__fern_arr_box")));
+    s = ssa_parallel_moves([reg_of[ins.args[1]]], [8], helper_call_needs(ins.str, s));
+    return ssa_store(reg_of, ins.result, "x0", asmcore.ssa_x0_forget(ssa_bl_sym(s, "__fn___fern_alloc_reuse.f")));
   }
   if (ssa.inline_reuse_call(ins) && !s.size) {
     return ssa_reuse_alloc(ins, reg_of, lp, SlowSaves { mask: ssa_cold_mask(fr, ins), base: fr.cold_base }, s);
@@ -10329,6 +10329,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write(rt_unframe(s));
   s = s.write("    ldr x1, [sp], #16\n");
   s = s.write(".Lsarelo_fresh:\n");
+  s = s.write("__fn___fern_alloc_reuse.f:\n");
   s = s.write("    mov x0, x1\n");
   s = s.write("    b __fern_arr_box\n");
   s = s.write(".Lsarelo_ret:\n");
