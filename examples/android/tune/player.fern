@@ -269,12 +269,7 @@ function done(dev: Device, own p: Player, want: tune.Want): Player {
       return Player { model: tune.update(m, tune.Exported(told)), deck: deck, incoming: incoming };
     },
     tune.Quit => {
-      dev.close(m.sound);
-      if (m.awake.wake != 0 as usize) {
-        dev.sleep(m.awake);
-      }
-      dev.quit(tune.now_title(m));
-      return wrap(tune.Model { ...m, sound: tune.no_sound(), pending: [], awake: tune.Awake { wake: 0 as usize, wifi: 0 as usize } });
+      return wrap(closed(dev, m));
     }
   }
 }
@@ -703,6 +698,22 @@ function settled(dev: Device, own p: Player, until: i64): Player {
     m = covered_until(dev, m, until);
   }
   return pumped(dev, m, deck, incoming);
+}
+
+// The state after the player gave back the sound, the locks that keep the
+// phone awake, and what it holds of Android. The app closes it so when it
+// closes, and when its loop ends with no window. A state with no sound is
+// closed already.
+pub function closed(dev: Device, own m: tune.Model): tune.Model {
+  if (m.sound.ptr == 0 as usize && m.awake.wake == 0 as usize) {
+    return m;
+  }
+  dev.close(m.sound);
+  if (m.awake.wake != 0 as usize) {
+    dev.sleep(m.awake);
+  }
+  dev.quit(tune.now_title(m));
+  return tune.Model { ...m, sound: tune.no_sound(), pending: [], awake: tune.Awake { wake: 0 as usize, wifi: 0 as usize } };
 }
 
 // The player after the device did each thing that the state wants.

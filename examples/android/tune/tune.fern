@@ -2195,6 +2195,11 @@ pub function update(own m: Model, msg: Msg): Model {
       return shifted(m, from, to);
     },
     Closing => {
+      // A track that plays goes on with no window, and the app closes when
+      // it stops.
+      if (m.playing) {
+        return Model { ...m, wants: m.wants.append(KeepPlace) };
+      }
       return Model { ...m, wants: m.wants.append(KeepPlace).append(Quit) };
     },
     Restore(p) => {

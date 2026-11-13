@@ -20,6 +20,10 @@ track was open, and its time went on. Then the check starts the app a
 second time. So the decoder gave its samples to the sound of the device
 in time.
 
+With the setting that destroys each activity that goes away, the track
+plays on after the Destroy. A new start takes the loop over, and a stop
+with no window ends the loop.
+
 It fails on a crash in logcat. OUT_DIR gets the frames and logcat.
 """
 
@@ -171,11 +175,39 @@ def main(apk, out):
     screen(out, "shortcut")
     if session_state() != 3:
         fail(f"the shortcut did not play the library: the state of the session is {session_state()}")
-    adb("shell", "input", "keyevent", "127")
-    time.sleep(2)
-    adb("shell", "input", "keyevent", "4")
-    if not wait_for(r"tune: closed with (\d+) tracks", timeout=10):
-        fail("the back key did not close the app after the shortcut")
+
+    # Android destroys each activity that goes away. The loop of the app
+    # lives on while a track plays, and a new start takes that loop over:
+    # the app does not start a second time. A stop with no window ends the
+    # loop, and the app tells where the player was.
+    adb("shell", "settings", "put", "global", "always_finish_activities", "1")
+    try:
+        adb("shell", "input", "keyevent", "3")
+        time.sleep(5)
+        if session_state() != 3:
+            fail("the track does not play after Android destroyed the activity: " + session_text()[:400])
+        if re.search(r"tune: closed with", logcat()):
+            fail("the loop of the app ended with the activity while a track played")
+        adb("shell", "am", "start", "-W", "-n", PACKAGE + "/android.app.NativeActivity")
+        time.sleep(4)
+        width, height, pixels = screen(out, "taken-over")
+        same = count(pixels, (pixels[0], pixels[1], pixels[2]), step=7)
+        total = len(pixels) // 4 // 7
+        if same * 100 > total * 99:
+            fail(f"the screen is blank after a new activity took the loop over: {same} of {total} pixels have one colour")
+        starts = len(re.findall(r"tune: starts", logcat()))
+        if starts != 1:
+            fail(f"the app started {starts} times: a new activity must take the loop over")
+        adb("shell", "input", "keyevent", "3")
+        time.sleep(3)
+        adb("shell", "input", "keyevent", "127")
+        m = wait_for(r"tune: closed with (\d+) tracks at track (-?\d+), (\d+):(\d\d) of (\d+):(\d\d), playing (\w+)", timeout=10)
+        if not m:
+            fail("the stop with no window did not end the loop of the app")
+        elif m.group(7) != "false":
+            fail(f"the loop ended while a track played: {m.group(0)!r}")
+    finally:
+        adb("shell", "settings", "put", "global", "always_finish_activities", "0")
 
     # Android knows the widget of the app, which tells that it read the
     # provider file and the layout of the APK. The update broadcast starts
