@@ -1022,6 +1022,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	c.info.FuncSigs["__chacha20_xor_into"] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8Arr, rangeBound, rangeBound}, Result: u8Arr}
 	c.info.FuncSigs["__poly1305_blocks"] = &ast.FuncType{Params: []ast.Type{u8Arr, u8View, rangeBound, rangeBound}, Result: u8Arr}
+	for _, n := range []string{"__chacha20_poly1305_seal_into", "__chacha20_poly1305_open_into"} {
+		c.info.FuncSigs[n] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8Arr, rangeBound, rangeBound, rangeBound, rangeBound}, Result: u8Arr}
+	}
 	c.info.FuncSigs["__sha256_hw"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.BoolType{}}
 	c.info.FuncSigs["__sha256_hw_blocks"] = &ast.FuncType{Params: []ast.Type{u8View, u8View}, Result: u8Arr}
 	c.info.FuncSigs["__sha1_hw"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.BoolType{}}
@@ -15619,8 +15622,10 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				for i, a := range n.Args {
 					if i < len(vr.payloads) && destSub != nil {
 						c.expectedType = substituteType(vr.payloads[i], destSub)
-					} else if i < len(vr.payloads) && c.expectedEnumName(substituteType(vr.payloads[i], sub)) != "" {
-						c.expectedType = substituteType(vr.payloads[i], sub)
+					} else if i < len(vr.payloads) {
+						if hint := substituteType(vr.payloads[i], sub); !containsParamType(hint) || c.expectedEnumName(hint) != "" {
+							c.expectedType = hint
+						}
 					}
 					at := c.checkExpr(a, s)
 					c.expectedType = nil

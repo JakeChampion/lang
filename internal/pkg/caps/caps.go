@@ -247,6 +247,9 @@ var Ungated = map[string]bool{
 	"slice_unchecked":             true,
 	"int_to_string":               true,
 
+	"__chacha20_poly1305_seal_into": true,
+	"__chacha20_poly1305_open_into": true,
+
 	"string_from_bytes_range_unchecked": true,
 	"share_unchecked":                   true,
 }

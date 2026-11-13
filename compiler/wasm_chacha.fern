@@ -64,20 +64,22 @@ function xor_wat(): string {
 
 // RFC 8439's ChaCha20 over buf[at:at + n] in place, one block at a time: the key is 32 bytes, and the 16
 // bytes of ctr are the block counter and the nonce. The buffer is copied first if it has another holder.
+// $__fern_chacha20_at XORs the key stream over the rem bytes at p, with the key at kp and the counter block at cp.
 pub function funcs(): string {
   let o: string = "  (func $__fern_chacha20_xor_into (param $key i32) (param $ctr i32) (param $buf i32) (param $at i32) (param $n i32) (result i32)\n"
-    + "    (local $copy i32) (local $kp i32) (local $cp i32) (local $p i32) (local $rem i32) (local $c i32) (local $r i32) (local $w i32)";
-  for i in 0..16 {
-    o = o + " (local $x" + util.i32_to_string(i) + " i32)";
-  }
-  o = o + "\n" + wasm_aes.abort_unless("(i32.eq (call $__fern_aes_view_len (local.get $key)) (i32.const 32))")
+    + "    (local $copy i32)\n"
+    + wasm_aes.abort_unless("(i32.eq (call $__fern_aes_view_len (local.get $key)) (i32.const 32))")
     + wasm_aes.abort_unless("(i32.eq (call $__fern_aes_view_len (local.get $ctr)) (i32.const 16))")
     + wasm_aes.abort_unless("(i32.ge_s (i32.or (local.get $at) (local.get $n)) (i32.const 0))")
     + wasm_aes.abort_unless("(i64.le_u (i64.add (i64.extend_i32_u (local.get $at)) (i64.extend_i32_u (local.get $n))) (i64.extend_i32_u (i32.load (local.get $buf))))")
     + wasm_aes.own_wat()
-    + "    (local.set $kp (call $__fern_aes_view_data (local.get $key)))\n    (local.set $cp (call $__fern_aes_view_data (local.get $ctr)))\n"
-    + "    (local.set $c (i32.load (local.get $cp)))\n    (local.set $p (i32.add (i32.add (local.get $buf) (i32.const 8)) (local.get $at)))\n"
-    + "    (local.set $rem (local.get $n))\n    (block $done (loop $blk\n      (br_if $done (i32.eqz (local.get $rem)))\n";
+    + "    (call $__fern_chacha20_at (call $__fern_aes_view_data (local.get $key)) (call $__fern_aes_view_data (local.get $ctr))\n"
+    + "      (i32.add (i32.add (local.get $buf) (i32.const 8)) (local.get $at)) (local.get $n))\n    (local.get $buf))\n"
+    + "  (func $__fern_chacha20_at (param $kp i32) (param $cp i32) (param $p i32) (param $rem i32) (local $c i32) (local $r i32) (local $w i32)";
+  for i in 0..16 {
+    o = o + " (local $x" + util.i32_to_string(i) + " i32)";
+  }
+  o = o + "\n    (local.set $c (i32.load (local.get $cp)))\n    (block $done (loop $blk\n      (br_if $done (i32.eqz (local.get $rem)))\n";
   for i in 0..16 {
     o += set_x(i, start_word(i));
   }
@@ -86,5 +88,5 @@ pub function funcs(): string {
   for i in 0..16 {
     o += set_x(i, "(i32.add " + x(i) + " " + start_word(i) + ")");
   }
-  return o + "      (local.set $c (i32.add (local.get $c) (i32.const 1)))\n" + xor_wat() + "    ))\n    (local.get $buf))\n";
+  return o + "      (local.set $c (i32.add (local.get $c) (i32.const 1)))\n" + xor_wat() + "    )))\n";
 }

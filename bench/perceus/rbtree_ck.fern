@@ -124,3 +124,9 @@ pub function count_true(t: Tree): i64 {
 pub function count_head(trees: Trees): i64 {
   return match (trees) { Cons(t, _) => count_true(t), NoTrees => count_true(Leaf) };
 }
+
+// The count of the trees that make_tree kept. A driver reads it, so that the
+// compiler cannot remove the list as a value that nothing reads.
+pub function length(trees: Trees, n: i64): i64 {
+  return match (trees) { Cons(_, rest) => length(rest, n + 1i64), NoTrees => n };
+}

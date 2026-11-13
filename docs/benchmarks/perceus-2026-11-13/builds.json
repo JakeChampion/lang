@@ -1,0 +1,372 @@
+[
+  {
+    "language": "fern",
+    "workload": "nqueens",
+    "commands": [
+      [
+        "/home/user/lang/bin/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-nqueens",
+        "/home/user/lang/bench/perceus/fern/run_nqueens.fern",
+        "/home/user/lang/internal/stdlib"
+      ]
+    ],
+    "binary_sha256": "77db43284a14e9494785f9726f93ded3b0f4f0074a273f85dd06b4b3cf02839b",
+    "binary_bytes": 14256
+  },
+  {
+    "language": "fern-census",
+    "workload": "nqueens",
+    "commands": [
+      [
+        "/home/user/lang/bin/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-census-nqueens",
+        "/home/user/lang/bench/perceus/fern/run_nqueens.fern",
+        "/home/user/lang/internal/stdlib"
+      ]
+    ],
+    "environment": {
+      "FERN_LEAKCHECK": "1"
+    },
+    "binary_sha256": "58132c294bfba45bb65e700f2ad3924dbaaf963aa5d28cb7c173424de48540c9",
+    "binary_bytes": 15056
+  },
+  {
+    "language": "koka",
+    "workload": "nqueens",
+    "commands": [
+      [
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/dl-koka/bin/koka",
+        "-O2",
+        "--builddir=/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-build",
+        "-o",
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-nqueens",
+        "/home/user/lang/bench/perceus/koka/nqueens.kk"
+      ]
+    ],
+    "binary_sha256": "7ad4cccf1ce1ba20b3bf38eb2a9d04209e424895d533a3df7b4c05a29fa30514",
+    "binary_bytes": 15078072
+  },
+  {
+    "language": "lean",
+    "workload": "nqueens",
+    "commands": [
+      [
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/dl-lean/lean-4.34.1-linux/bin/lean",
+        "-c",
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/nqueens.c",
+        "/home/user/lang/bench/perceus/lean/nqueens.lean"
+      ],
+      [
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/dl-lean/lean-4.34.1-linux/bin/leanc",
+        "-O3",
+        "-o",
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/lean-nqueens",
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/nqueens.c"
+      ]
+    ],
+    "binary_sha256": "b3f555e2d5663eb4be7f291c3a1caed825ffaf38923e0e0553b9069cd25a88a0",
+    "binary_bytes": 4483744
+  },
+  {
+    "language": "fern",
+    "workload": "rbtree",
+    "commands": [
+      [
+        "/home/user/lang/bin/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-rbtree",
+        "/home/user/lang/bench/perceus/fern/run_rbtree.fern",
+        "/home/user/lang/internal/stdlib"
+      ]
+    ],
+    "binary_sha256": "f28a90415fda365222026bbeaffd0f023e65333dec77c83ee902e6465dccce36",
+    "binary_bytes": 18656
+  },
+  {
+    "language": "fern-census",
+    "workload": "rbtree",
+    "commands": [
+      [
+        "/home/user/lang/bin/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-census-rbtree",
+        "/home/user/lang/bench/perceus/fern/run_rbtree.fern",
+        "/home/user/lang/internal/stdlib"
+      ]
+    ],
+    "environment": {
+      "FERN_LEAKCHECK": "1"
+    },
+    "binary_sha256": "61fc167a632cb429783c9ef7554c910f94e4680fa7f75e59648c2621249fac30",
+    "binary_bytes": 19344
+  },
+  {
+    "language": "koka",
+    "workload": "rbtree",
+    "commands": [
+      [
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/dl-koka/bin/koka",
+        "-O2",
+        "--builddir=/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-build",
+        "-o",
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-rbtree",
+        "/home/user/lang/bench/perceus/koka/rbtree.kk"
+      ]
+    ],
+    "binary_sha256": "51351b4705459ea81a810814419cc812accb2e58aff067ebed538e827ed54ed7",
+    "binary_bytes": 15326464
+  },
+  {
+    "language": "lean",
+    "workload": "rbtree",
+    "commands": [
+      [
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/dl-lean/lean-4.34.1-linux/bin/lean",
+        "-c",
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/rbtree.c",
+        "/home/user/lang/bench/perceus/lean/rbtree.lean"
+      ],
+      [
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/dl-lean/lean-4.34.1-linux/bin/leanc",
+        "-O3",
+        "-o",
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/lean-rbtree",
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/rbtree.c"
+      ]
+    ],
+    "binary_sha256": "b3b3a987f3448e46052f06e868ae7af13f65de98d25279f38beda809fc52f875",
+    "binary_bytes": 4494240
+  },
+  {
+    "language": "fern",
+    "workload": "rbtree-ck",
+    "commands": [
+      [
+        "/home/user/lang/bin/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-rbtree-ck",
+        "/home/user/lang/bench/perceus/fern/run_rbtree_ck.fern",
+        "/home/user/lang/internal/stdlib"
+      ]
+    ],
+    "binary_sha256": "49295409faab7a3fe7a91251a686277cdf1b3154ee080121a33310e48939239e",
+    "binary_bytes": 16928
+  },
+  {
+    "language": "fern-census",
+    "workload": "rbtree-ck",
+    "commands": [
+      [
+        "/home/user/lang/bin/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-census-rbtree-ck",
+        "/home/user/lang/bench/perceus/fern/run_rbtree_ck.fern",
+        "/home/user/lang/internal/stdlib"
+      ]
+    ],
+    "environment": {
+      "FERN_LEAKCHECK": "1"
+    },
+    "binary_sha256": "7a4aba651b03d088a2e9b8be1b15f2cf4d74e9443c6e7ee0229cbb1038fe8554",
+    "binary_bytes": 17728
+  },
+  {
+    "language": "koka",
+    "workload": "rbtree-ck",
+    "commands": [
+      [
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/dl-koka/bin/koka",
+        "-O2",
+        "--builddir=/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-build",
+        "-o",
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-rbtree-ck",
+        "/home/user/lang/bench/perceus/koka/rbtree-ck.kk"
+      ]
+    ],
+    "binary_sha256": "fb70c107f762604868226e652b7a08ffbfaedcaed1fd8abfa92ec069c826bdb3",
+    "binary_bytes": 15173904
+  },
+  {
+    "language": "lean",
+    "workload": "rbtree-ck",
+    "commands": [
+      [
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/dl-lean/lean-4.34.1-linux/bin/lean",
+        "-c",
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/rbtree-ck.c",
+        "/home/user/lang/bench/perceus/lean/rbtree-ck.lean"
+      ],
+      [
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/dl-lean/lean-4.34.1-linux/bin/leanc",
+        "-O3",
+        "-o",
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/lean-rbtree-ck",
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/rbtree-ck.c"
+      ]
+    ],
+    "binary_sha256": "2920187ba83edf4809680b367b7b21bb7bed5cde708de31ac0dcd90861a9fd0d",
+    "binary_bytes": 4495240
+  },
+  {
+    "language": "fern",
+    "workload": "deriv",
+    "commands": [
+      [
+        "/home/user/lang/bin/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-deriv",
+        "/home/user/lang/bench/perceus/fern/run_deriv.fern",
+        "/home/user/lang/internal/stdlib"
+      ]
+    ],
+    "binary_sha256": "d96dfecb2934a10c5dd9014c32f7b294382250c61bf475e526fcedc34aeec58d",
+    "binary_bytes": 37824
+  },
+  {
+    "language": "fern-census",
+    "workload": "deriv",
+    "commands": [
+      [
+        "/home/user/lang/bin/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-census-deriv",
+        "/home/user/lang/bench/perceus/fern/run_deriv.fern",
+        "/home/user/lang/internal/stdlib"
+      ]
+    ],
+    "environment": {
+      "FERN_LEAKCHECK": "1"
+    },
+    "binary_sha256": "85546fe6ffed182c194512d2a6939ca11332ac46dd2d4d3bdb992a3ea2a9b790",
+    "binary_bytes": 38624
+  },
+  {
+    "language": "koka",
+    "workload": "deriv",
+    "commands": [
+      [
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/dl-koka/bin/koka",
+        "-O2",
+        "--builddir=/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-build",
+        "-o",
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-deriv",
+        "/home/user/lang/bench/perceus/koka/deriv.kk"
+      ]
+    ],
+    "binary_sha256": "9e8a67d0586f5aa18529713515b702b5bd30bc995736acb9f7ae83c7483e82c5",
+    "binary_bytes": 15077408
+  },
+  {
+    "language": "lean",
+    "workload": "deriv",
+    "commands": [
+      [
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/dl-lean/lean-4.34.1-linux/bin/lean",
+        "-c",
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/deriv.c",
+        "/home/user/lang/bench/perceus/lean/deriv.lean"
+      ],
+      [
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/dl-lean/lean-4.34.1-linux/bin/leanc",
+        "-O3",
+        "-o",
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/lean-deriv",
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/deriv.c"
+      ]
+    ],
+    "binary_sha256": "5cef63acdd8ccb0ce0970099a8a6afba483d8ec2d6d6cdf8b5d2b93e6404f9ee",
+    "binary_bytes": 4505320
+  },
+  {
+    "language": "fern",
+    "workload": "cfold",
+    "commands": [
+      [
+        "/home/user/lang/bin/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-cfold",
+        "/home/user/lang/bench/perceus/fern/run_cfold.fern",
+        "/home/user/lang/internal/stdlib"
+      ]
+    ],
+    "binary_sha256": "a822856942c62d7424fb6423fbf3b9adbbbd0b5441c47f97c2a27bae255c68c8",
+    "binary_bytes": 12032
+  },
+  {
+    "language": "fern-census",
+    "workload": "cfold",
+    "commands": [
+      [
+        "/home/user/lang/bin/fern",
+        "-target",
+        "x86-64-linux",
+        "-o",
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/fern-census-cfold",
+        "/home/user/lang/bench/perceus/fern/run_cfold.fern",
+        "/home/user/lang/internal/stdlib"
+      ]
+    ],
+    "environment": {
+      "FERN_LEAKCHECK": "1"
+    },
+    "binary_sha256": "981a64d2a6051bd9f32108f80d98d2e33a8bd4ebcdd401b8667f28d5f632c78e",
+    "binary_bytes": 12800
+  },
+  {
+    "language": "koka",
+    "workload": "cfold",
+    "commands": [
+      [
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/dl-koka/bin/koka",
+        "-O2",
+        "--builddir=/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-build",
+        "-o",
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/koka-cfold",
+        "/home/user/lang/bench/perceus/koka/cfold.kk"
+      ]
+    ],
+    "binary_sha256": "085a96a63ed650192369b2bf0585cafe76bcb4c79381776a8a22c7d058c4649d",
+    "binary_bytes": 14976384
+  },
+  {
+    "language": "lean",
+    "workload": "cfold",
+    "commands": [
+      [
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/dl-lean/lean-4.34.1-linux/bin/lean",
+        "-c",
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/cfold.c",
+        "/home/user/lang/bench/perceus/lean/cfold.lean"
+      ],
+      [
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/dl-lean/lean-4.34.1-linux/bin/leanc",
+        "-O3",
+        "-o",
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/lean-cfold",
+        "/tmp/claude-0/-home-user-lang/07c6c7ba-337a-5969-a15a-40d680a71e23/scratchpad/perc-main/cfold.c"
+      ]
+    ],
+    "binary_sha256": "fb6380015016615ce71ffbdb34c185d1934867b21291d0f8b04fe4ba4c584e5f",
+    "binary_bytes": 4498232
+  }
+]

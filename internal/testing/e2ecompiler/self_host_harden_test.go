@@ -85,6 +85,19 @@ function stream_byte(): u64 {
   return 1002 as u64;
 }
 
+function chacha_sealed_len(): u64 {
+  match (chacha20poly1305.key("0123456789abcdef0123456789abcdef".bytes())) {
+    Ok(k) => {
+      match (k.seal("0123456789ab".bytes(), "hardened frames".bytes(), "".bytes())) {
+        Ok(sealed) => { return sealed.len() as u64; },
+        Err(e) => { return 1000 as u64; }
+      }
+    },
+    Err(e) => { return 1001 as u64; }
+  }
+  return 1002 as u64;
+}
+
 function sealed_len(): u64 {
   let plain: u8[] = "hardened frames".bytes();
   match (aes_gcm.key("0123456789abcdef".bytes())) {
@@ -124,6 +137,8 @@ function main(): i32 {
   buf_push(b, " ");
   buf_push_decimal(b, stream_byte());
   buf_push(b, " ");
+  buf_push_decimal(b, chacha_sealed_len());
+  buf_push(b, " ");
   buf_push_bytes_range(b, "framed bytes".bytes(), 0, 6);
   if (args().len() > 9) {
     let r: ProcessResult = subprocess("/bin/true", [], "");
@@ -134,7 +149,7 @@ function main(): i32 {
 }
 `
 
-const hardenFramesWant = "1219131554 891568578 186 169 229 31 98 framed"
+const hardenFramesWant = "1219131554 891568578 186 169 229 31 98 31 framed"
 
 // hardenFrameHelpers are the hand-written runtime helpers that hardenFramesSrc
 // links. The ones it also runs have a PAC control each.
@@ -154,6 +169,7 @@ var hardenFrameHelpers = []struct {
 	{"__fern_sha1_hw_blocks:", true},
 	{"__fern_sha1x8_hw_blocks:", true},
 	{"__fern_chacha20_xor_into:", true},
+	{"__fern_chacha20_poly1305_seal_into:", true},
 	{"__fn___fern_subprocess:", false},
 	{"__fern_oob_abort_leaf:", false},
 }

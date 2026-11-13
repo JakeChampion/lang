@@ -91,6 +91,11 @@ pub struct EmitState {
   ssa_lane_slots: boolean[],
   ssa_trap_suffix: string,
   ssa_x0: i32,
+  // The last 64-bit load from a frame slot, and the output position after
+  // it. A store of that register to that slot at that position is redundant.
+  slot_load_at: i32,
+  slot_load_reg: string,
+  slot_load_disp: i32,
   ssa_boxed: boolean[],
   reg_entries: irtables.SigReg,
   float_abi: irtables.SigReg,
@@ -636,6 +641,9 @@ pub function new_state(): EmitState {
     ssa_lane_slots: [],
     ssa_trap_suffix: "",
     ssa_x0: -1,
+    slot_load_at: -1,
+    slot_load_reg: "",
+    slot_load_disp: 0,
     ssa_boxed: [],
     reg_entries: irtables.sig_reg_of([]),
     float_abi: irtables.sig_reg_of([]),
@@ -981,6 +989,15 @@ pub function (s: EmitState) write(text: string): EmitState {
   }
   buf_push(s.out, text);
   return s;
+}
+
+// The position of the next write in the output, or -1 while a capture
+// takes the writes.
+pub function (s: EmitState) out_pos(): i32 {
+  if (s.capture != 0 as usize) {
+    return -1;
+  }
+  return buf_len(s.out);
 }
 
 pub function (s: EmitState) take_text(): string {
