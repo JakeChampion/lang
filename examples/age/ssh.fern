@@ -1,0 +1,1045 @@
+// SSH keys for age: the SSH wire format, authorized_keys lines, OpenSSH
+// private key files, and the ssh-ed25519 and ssh-rsa stanzas of age's
+// agessh package. The messages are those of age 1.1.1 and of
+// golang.org/x/crypto/ssh.
+import "std/array";
+import "std/crypto";
+import "std/crypto/chacha20poly1305";
+import "std/crypto/ed25519";
+import "std/crypto/rsa";
+import "std/crypto/sha2";
+import "std/crypto/x25519";
+import "std/hex";
+import "std/option";
+import "./bcrypt";
+import "./format";
+import "./text";
+
+const ED25519_LABEL: string = "age-encryption.org/v1/ssh-ed25519";
+
+const RSA_LABEL: string = "age-encryption.org/v1/ssh-rsa";
+
+const NO_KEY: string = "ssh: no key found";
+
+// An SSH public key. wire is its SSH wire encoding, as Go's
+// ssh.PublicKey.Marshal gives it.
+pub enum Public {
+  Ed25519Public(u8[], u8[]),
+  RsaPublic(u8[], rsa.PublicKey),
+  // A key of another type, which age does not use: its type name.
+  OtherPublic(string),
+}
+
+pub function (k: Public) kind(): string {
+  return match (k) {
+    Ed25519Public(_, _) => "ssh-ed25519",
+    RsaPublic(_, _) => "ssh-rsa",
+    OtherPublic(t) => t,
+  };
+}
+
+// An SSH private key that age uses: the public key and the secret parts.
+pub enum Private {
+  // The public key, and the 32-byte seed.
+  Ed25519Private(Public, u8[]),
+  RsaPrivate(Public, rsa.PrivateKey),
+}
+
+// A reader of the SSH wire format: big-endian uint32 values and strings
+// with a uint32 length.
+struct Wire { b: u8[], at: i32 }
+
+function wire_of(b: [u8]): Wire {
+  return Wire { b: text.copy(b), at: 0 };
+}
+
+function read_u32(w: Wire): Option[(Wire, i64)] {
+  if (w.b.len() - w.at < 4) {
+    return None;
+  }
+  let v = w.b[w.at] as i64 << 24 | w.b[w.at + 1] as i64 << 16 | w.b[w.at + 2] as i64 << 8 | w.b[w.at + 3] as i64;
+  return Some((Wire { ...w, at: w.at + 4 }, v));
+}
+
+function read_string(w: Wire): Option[(Wire, u8[])] {
+  let (v, n) = read_u32(w)?;
+  if (n > (v.b.len() - v.at) as i64) {
+    return None;
+  }
+  let end = v.at + n as i32;
+  return Some((Wire { ...v, at: end }, array.slice(v.b, v.at, end)));
+}
+
+function rest_of(w: Wire): u8[] {
+  return array.slice(w.b, w.at, w.b.len());
+}
+
+function put_string(own out: u8[], s: [u8]): u8[] {
+  let n = s.len();
+  out = out.append((n >> 24 & 255) as u8).append((n >> 16 & 255) as u8).append((n >> 8 & 255) as u8).append((n & 255) as u8);
+  return out.concat(s);
+}
+
+// The minimal SSH mpint of a positive big-endian integer.
+function mpint(b: [u8]): u8[] {
+  let at = 0;
+  while (at < b.len() && b[at] == 0) {
+    at += 1;
+  }
+  let v = text.copy(b[at:b.len()]);
+  if (v.len() > 0 && v[0] >= 128) {
+    return put_string([], [0u8].concat(v));
+  }
+  return put_string([], v);
+}
+
+// The value of an SSH mpint that is not negative, with no leading zeros.
+function positive(m: [u8]): Option[u8[]] {
+  if (m.len() > 0 && m[0] >= 128) {
+    return None;
+  }
+  let at = 0;
+  while (at < m.len() && m[at] == 0) {
+    at += 1;
+  }
+  return Some(text.copy(m[at:m.len()]));
+}
+
+pub function ed25519_wire(key: [u8]): u8[] {
+  return put_string(put_string([], "ssh-ed25519".as_bytes()), key);
+}
+
+function rsa_wire(n: [u8], e: [u8]): u8[] {
+  return put_string([], "ssh-rsa".as_bytes()).concat(mpint(e)).concat(mpint(n));
+}
+
+// The value of a big-endian integer of at most 3 bytes.
+function small(b: [u8]): i64 {
+  let v = 0i64;
+  for c in b {
+    v = v << 8 | c as i64;
+  }
+  return v;
+}
+
+// ssh's check of an RSA exponent: at most 24 bits, odd and at least 3.
+function exponent(raw: [u8]): Result[u8[], string] {
+  let Some(e) = positive(raw) else {
+    return Err("ssh: incorrect exponent");
+  };
+  if (e.len() > 3) {
+    return Err("ssh: exponent too large");
+  }
+  let v = small(e);
+  if (v < 3 || v % 2 == 0) {
+    return Err("ssh: incorrect exponent");
+  }
+  return Ok(e);
+}
+
+function parse_rsa(w: Wire): Result[Public, string] {
+  let Some((w1, e_raw)) = read_string(w) else {
+    return Err("ssh: short read");
+  };
+  let Some((w2, n_raw)) = read_string(w1) else {
+    return Err("ssh: short read");
+  };
+  if (w2.at != w2.b.len()) {
+    return Err("ssh: trailing junk in public key");
+  }
+  let e = exponent(e_raw)?;
+  let Some(n) = positive(n_raw) else {
+    return Err("ssh: the modulus is negative");
+  };
+  return match (rsa.public_key(n, e)) {
+    Ok(k) => Ok(RsaPublic(rsa_wire(n, e), k)),
+    Err(why) => Err(why.message()),
+  };
+}
+
+// Go's ssh.ParsePublicKey for the key types that age uses.
+pub function parse_public(b: [u8]): Result[Public, string] {
+  let Some((w, kind)) = read_string(wire_of(b)) else {
+    return Err("ssh: short read");
+  };
+  let t = text.ascii(kind);
+  if (t == "ssh-rsa") {
+    return parse_rsa(w);
+  }
+  if (t == "ssh-ed25519") {
+    let Some((w1, key)) = read_string(w) else {
+      return Err("ssh: short read");
+    };
+    if (key.len() != 32) {
+      return Err(f"ssh: invalid size {key.len()} for Ed25519 public key");
+    }
+    if (w1.at != w1.b.len()) {
+      return Err("ssh: trailing junk in public key");
+    }
+    return Ok(Ed25519Public(ed25519_wire(key), key));
+  }
+  if (t == "ssh-dss") {
+    return parse_dss(w);
+  }
+  if (OTHER_KEYS.index_of(" " + t + " ").is_some()) {
+    return Ok(OtherPublic(t));
+  }
+  return Err(f"ssh: unknown key algorithm: {t}");
+}
+
+// The other key types that x/crypto/ssh parses. The port does not check
+// their bodies.
+const OTHER_KEYS: string = " ecdsa-sha2-nistp256 ecdsa-sha2-nistp384 ecdsa-sha2-nistp521 sk-ecdsa-sha2-nistp256@openssh.com sk-ssh-ed25519@openssh.com ssh-rsa-cert-v01@openssh.com ssh-dss-cert-v01@openssh.com ssh-ed25519-cert-v01@openssh.com ecdsa-sha2-nistp256-cert-v01@openssh.com ecdsa-sha2-nistp384-cert-v01@openssh.com ecdsa-sha2-nistp521-cert-v01@openssh.com sk-ecdsa-sha2-nistp256-cert-v01@openssh.com sk-ssh-ed25519-cert-v01@openssh.com ";
+
+// ssh's parseDSA: p, q, g and y, and p has 1024 bits.
+function parse_dss(w: Wire): Result[Public, string] {
+  let Some((w1, p)) = read_string(w) else {
+    return Err("ssh: short read");
+  };
+  let w2 = w1;
+  for _ in 0..3 {
+    let Some((v, _)) = read_string(w2) else {
+      return Err("ssh: short read");
+    };
+    w2 = v;
+  }
+  if (w2.at != w2.b.len()) {
+    return Err("ssh: trailing junk in public key");
+  }
+  let Some(pv) = positive(p) else {
+    return Err("ssh: unsupported DSA key size");
+  };
+  if (pv.len() != 128 || pv[0] < 128) {
+    return Err("ssh: unsupported DSA key size");
+  }
+  return Ok(OtherPublic("ssh-dss"));
+}
+
+function blank(c: u8): boolean {
+  return c == b' ' || c == b'\t';
+}
+
+function space_at(b: [u8]): i32 {
+  for i in 0..b.len() {
+    if (blank(b[i])) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+// Go's bytes.TrimSpace for ASCII.
+function trim(b: [u8]): u8[] {
+  let from = 0;
+  let to = b.len();
+  while (from < to && text.blank(b[from:from + 1])) {
+    from += 1;
+  }
+  while (to > from && text.blank(b[to - 1:to])) {
+    to -= 1;
+  }
+  return text.copy(b[from:to]);
+}
+
+// ssh's parseAuthorizedKey: the base64 key, then an optional comment.
+function key_field(b: [u8]): Option[Public] {
+  let s = trim(b);
+  let i = space_at(s);
+  let end = if (i < 0) { s.len() } else { i };
+  let blob = text.b64_lax(s[0:end])?;
+  return match (parse_public(blob)) {
+    Ok(k) => Some(k),
+    Err(_) => None,
+  };
+}
+
+// The index after the options field of an authorized_keys line, or -1.
+function after_options(s: [u8]): i32 {
+  let quoted = false;
+  let i = 0;
+  while (i < s.len()) {
+    let b = s[i];
+    if (!quoted && blank(b)) {
+      break;
+    }
+    if (b == b'"' && (i == 0 || s[i - 1] != b'\\')) {
+      quoted = !quoted;
+    }
+    i += 1;
+  }
+  while (i < s.len() && blank(s[i])) {
+    i += 1;
+  }
+  if (i == s.len()) {
+    return -1;
+  }
+  return i;
+}
+
+// One line of ssh.ParseAuthorizedKey: a key type, the key and a comment,
+// maybe after an options field.
+function authorized_line(line: [u8]): Option[Public] {
+  let s = trim(line);
+  if (s.len() == 0 || s[0] == b'#') {
+    return None;
+  }
+  let i = space_at(s);
+  if (i < 0) {
+    return None;
+  }
+  if let Some(k) = key_field(s[i:s.len()]) {
+    return Some(k);
+  }
+  let at = after_options(s);
+  if (at < 0) {
+    return None;
+  }
+  let t = array.slice(s, at, s.len());
+  let j = space_at(t);
+  if (j < 0) {
+    return None;
+  }
+  return key_field(t[j:t.len()]);
+}
+
+// Go's ssh.ParseAuthorizedKey: the first key in the text.
+pub function parse_authorized(b: [u8]): Result[Public, string] {
+  let start = 0;
+  while (start < b.len()) {
+    let end = start;
+    while (end < b.len() && b[end] != b'\n') {
+      end += 1;
+    }
+    let line = b[start:end];
+    let cut = 0;
+    while (cut < line.len() && line[cut] != b'\r') {
+      cut += 1;
+    }
+    if let Some(k) = authorized_line(line[0:cut]) {
+      return Ok(k);
+    }
+    start = end + 1;
+  }
+  return Err(NO_KEY);
+}
+
+// age's sshKeyType: the type of an SSH key line that age does not use.
+pub function key_type(line: [u8]): Option[string] {
+  let s = text.ascii(line);
+  let fields = s.split(" ");
+  if (fields.len() < 2) {
+    return None;
+  }
+  let blob = text.b64_lax(fields[1].as_bytes())?;
+  let (_, kind) = read_string(wire_of(blob))?;
+  if (text.ascii(kind) == fields[0]) {
+    return Some(fields[0]);
+  }
+  return None;
+}
+
+// The Curve25519 public key of an Ed25519 key.
+function montgomery_of(key: [u8]): Result[u8[], string] {
+  return match (ed25519.public_key(key)) {
+    Ok(k) => Ok(k.montgomery()),
+    Err(_) => Err("invalid Ed25519 public key: edwards25519: invalid point encoding"),
+  };
+}
+
+// The wire form, and for Ed25519 the Curve25519 public key, of a key that
+// age can encrypt to. age's NewEd25519Recipient and NewRSARecipient.
+pub enum Recipient {
+  Ed25519To(u8[], u8[]),
+  RsaTo(u8[], rsa.PublicKey),
+}
+
+pub function recipient_of(k: Public): Result[Recipient, string] {
+  match (k) {
+    Ed25519Public(wire, key) => {
+      return Ok(Ed25519To(wire, montgomery_of(key)?));
+    },
+    RsaPublic(wire, key) => {
+      if (key.bytes < 256) {
+        return Err("RSA key size is too small");
+      }
+      return Ok(RsaTo(wire, key));
+    },
+    OtherPublic(t) => {
+      return Err(f"unknown SSH recipient type: {text.quote(t.as_bytes())}");
+    }
+  }
+  return Err("");
+}
+
+// age's agessh.ParseRecipient.
+pub function parse_recipient(arg: string): Result[Recipient, string] {
+  let k = match (parse_authorized(arg.as_bytes())) {
+    Ok(k) => k,
+    Err(why) => {
+      return Err(f"malformed SSH recipient: {text.quote(arg.as_bytes())}: {why}");
+    },
+  };
+  return match (k) {
+    OtherPublic(t) => Err(f"unknown SSH recipient type: {text.quote(t.as_bytes())}"),
+    _ => match (recipient_of(k)) {
+      Ok(r) => Ok(r),
+      Err(why) => Err(f"malformed SSH recipient: {text.quote(arg.as_bytes())}: {why}"),
+    },
+  };
+}
+
+// age's sshFingerprint: the first 4 bytes of SHA-256 of the wire form.
+pub function fingerprint(wire: [u8]): string {
+  return text.b64_raw(crypto.sha256(wire)[0:4]);
+}
+
+function key_of(own k: u8[]): Result[chacha20poly1305.Key, string] {
+  let key = chacha20poly1305.key(k);
+  crypto.erase(k);
+  return match (key) {
+    Ok(key) => Ok(key),
+    Err(e) => Err(e.message()),
+  };
+}
+
+// The wrapping key of an ssh-ed25519 stanza. shared is the X25519 shared
+// secret, and the tweak of the SSH key multiplies it.
+function ed25519_key(shared: [u8], share: [u8], public: [u8], wire: [u8]): Result[chacha20poly1305.Key, string] {
+  let tweak = crypto.hkdf_sha256(wire, [], ED25519_LABEL.as_bytes(), 32);
+  let tweaked = match (x25519.x25519(tweak, shared)) {
+    Ok(t) => t,
+    Err(_) => [],
+  };
+  let k = crypto.hkdf_sha256(text.copy(share).concat(public), tweaked, ED25519_LABEL.as_bytes(), 32);
+  crypto.erase(tweaked);
+  return key_of(k);
+}
+
+function seal(key: chacha20poly1305.Key, file_key: [u8]): Result[u8[], string] {
+  return match (key.seal(format.ZERO_IV, file_key, [])) {
+    Ok(b) => {
+      __ct_public(b);
+      Ok(b)
+    },
+    Err(e) => Err(e.message()),
+  };
+}
+
+// The stanza that wraps the file key to an SSH recipient. random gives 32
+// fresh bytes: the ephemeral scalar of ssh-ed25519, or the OAEP seed of
+// ssh-rsa.
+pub function wrap(file_key: [u8], r: Recipient, own random: u8[]): Result[format.Stanza, string] {
+  return match (r) {
+    Ed25519To(wire, public) => wrap_ed25519(file_key, wire, public, random),
+    RsaTo(wire, public) => wrap_rsa(file_key, wire, public, random),
+  };
+}
+
+// age's Ed25519Recipient.Wrap. ephemeral is a fresh secret scalar.
+function wrap_ed25519(file_key: [u8], wire: [u8], public: [u8], own ephemeral: u8[]): Result[format.Stanza, string] {
+  __ct_secret(ephemeral);
+  let share = match (x25519.public_key(ephemeral)) {
+    Ok(p) => p,
+    Err(e) => {
+      return Err(e.message());
+    },
+  };
+  __ct_public(share);
+  let shared = match (x25519.x25519(ephemeral, public)) {
+    Ok(s) => s,
+    Err(e) => {
+      return Err(e.message());
+    },
+  };
+  crypto.erase(ephemeral);
+  let key = ed25519_key(shared, share, public, wire)?;
+  return Ok(format.Stanza { kind: "ssh-ed25519", args: [fingerprint(wire), text.b64_raw(share)], body: seal(key, file_key)? });
+}
+
+// age's RSARecipient.Wrap with the OAEP seed.
+function wrap_rsa(file_key: [u8], wire: [u8], public: rsa.PublicKey, seed: [u8]): Result[format.Stanza, string] {
+  let body = match (public.encrypt_oaep(sha2.Hash.Sha256, seed, file_key, RSA_LABEL.as_bytes())) {
+    Ok(c) => c,
+    Err(e) => {
+      return Err(e.message());
+    },
+  };
+  __ct_public(body);
+  return Ok(format.Stanza { kind: "ssh-rsa", args: [fingerprint(wire)], body: body });
+}
+
+// An SSH identity: the wire form of its public key and its secret.
+pub enum Identity {
+  // The Curve25519 secret scalar and public key.
+  Ed25519Id(u8[], u8[], u8[]),
+  RsaId(u8[], rsa.PrivateKey),
+}
+
+// age's NewEd25519Identity and NewRSAIdentity.
+pub function identity_of(k: Private): Result[Identity, string] {
+  match (k) {
+    Ed25519Private(public, seed) => {
+      let wire = match (public) {
+        Ed25519Public(w, _) => w,
+        _ => [],
+      };
+      let scalar = array.slice(crypto.sha512(seed), 0, 32);
+      __ct_secret(scalar);
+      let ours = match (x25519.public_key(scalar)) {
+        Ok(p) => p,
+        Err(e) => {
+          return Err(e.message());
+        },
+      };
+      __ct_public(ours);
+      return Ok(Ed25519Id(wire, scalar, ours));
+    },
+    RsaPrivate(public, key) => {
+      let wire = match (public) {
+        RsaPublic(w, _) => w,
+        _ => [],
+      };
+      return Ok(RsaId(wire, key));
+    }
+  }
+  return Err("");
+}
+
+// The recipient of an identity, for -e -i.
+pub function recipient_of_identity(id: Identity): Recipient {
+  return match (id) {
+    Ed25519Id(wire, _, ours) => Ed25519To(wire, ours),
+    RsaId(wire, key) => RsaTo(wire, key.public_key()),
+  };
+}
+
+// The ephemeral share of an ssh-ed25519 stanza.
+function ed25519_share(st: format.Stanza): Result[u8[], string] {
+  if (st.args.len() != 2) {
+    return Err("invalid ssh-ed25519 recipient block");
+  }
+  let share = match (text.decode_string(st.args[1].as_bytes())) {
+    Ok(b) => b,
+    Err(why) => {
+      return Err("failed to parse ssh-ed25519 recipient: " + why);
+    },
+  };
+  if (share.len() != 32) {
+    return Err("invalid ssh-ed25519 recipient block");
+  }
+  return Ok(share);
+}
+
+// The wrapping key of an ssh-ed25519 stanza on the side of the identity.
+function identity_key(scalar: [u8], share: [u8], ours: [u8], wire: [u8]): Result[chacha20poly1305.Key, string] {
+  let shared = match (x25519.x25519(scalar, share)) {
+    Ok(s) => s,
+    Err(_) => {
+      return Err("invalid X25519 recipient: crypto/ecdh: bad X25519 remote ECDH input: low order point");
+    },
+  };
+  return ed25519_key(shared, share, ours, wire);
+}
+
+function unwrap_ed25519(st: format.Stanza, wire: [u8], scalar: [u8], ours: [u8]): format.Unwrapped {
+  if (st.kind != "ssh-ed25519") {
+    return format.Incorrect;
+  }
+  let share = match (ed25519_share(st)) {
+    Ok(b) => b,
+    Err(why) => {
+      return format.Invalid(why);
+    },
+  };
+  if (st.args[0] != fingerprint(wire)) {
+    return format.Incorrect;
+  }
+  let key = match (identity_key(scalar, share, ours, wire)) {
+    Ok(k) => k,
+    Err(why) => {
+      return format.Invalid(why);
+    },
+  };
+  return match (key.open(format.ZERO_IV, st.body, [])) {
+    Ok(file_key) => format.FileKey(file_key),
+    Err(_) => format.Invalid("failed to decrypt file key: chacha20poly1305: message authentication failed"),
+  };
+}
+
+function unwrap_rsa(st: format.Stanza, wire: [u8], key: rsa.PrivateKey): format.Unwrapped {
+  if (st.kind != "ssh-rsa") {
+    return format.Incorrect;
+  }
+  if (st.args.len() != 1) {
+    return format.Invalid("invalid ssh-rsa recipient block");
+  }
+  if (st.args[0] != fingerprint(wire)) {
+    return format.Incorrect;
+  }
+  return match (key.decrypt_oaep(sha2.Hash.Sha256, st.body, RSA_LABEL.as_bytes())) {
+    Ok(file_key) => format.FileKey(file_key),
+    Err(_) => format.Invalid("failed to decrypt file key: crypto/rsa: decryption error"),
+  };
+}
+
+// age's unwrap of one stanza with an SSH identity.
+pub function unwrap(st: format.Stanza, id: Identity): format.Unwrapped {
+  return match (id) {
+    Ed25519Id(wire, scalar, ours) => unwrap_ed25519(st, wire, scalar, ours),
+    RsaId(wire, key) => unwrap_rsa(st, wire, key),
+  };
+}
+
+// The check of an encrypted SSH key on the stanzas: age asks for its
+// passphrase only when a stanza has its type and its fingerprint.
+pub function encrypted_match(stanzas: format.Stanza[], k: Public): Result[boolean, string] {
+  let kind = k.kind();
+  let wire = match (k) {
+    Ed25519Public(w, _) => w,
+    RsaPublic(w, _) => w,
+    OtherPublic(_) => [],
+  };
+  for st in stanzas {
+    if (st.kind != kind) {
+      continue;
+    }
+    if (st.args.len() < 1) {
+      return Err(f"invalid {kind} recipient block");
+    }
+    if (st.args[0] == fingerprint(wire)) {
+      return Ok(true);
+    }
+  }
+  return Ok(false);
+}
+
+// A PEM block: its type, whether its headers mark it encrypted, and its
+// bytes.
+struct Pem { kind: string, encrypted: boolean, bytes: u8[] }
+
+function index_from(b: [u8], s: string, from: i32): i32 {
+  let n = s.len();
+  let i = from;
+  while (i + n <= b.len()) {
+    if (text.has_prefix(b[i:b.len()], s)) {
+      return i;
+    }
+    i += 1;
+  }
+  return -1;
+}
+
+// The end of the line at at, after its "\n", or the end of b.
+function line_end(b: [u8], at: i32): i32 {
+  let i = at;
+  while (i < b.len() && b[i] != b'\n') {
+    i += 1;
+  }
+  return i;
+}
+
+// The body of a PEM block, with its header lines. A line with a ":" is a
+// header, before the first line that has none.
+function pem_body(b: [u8], from: i32, to: i32): (boolean, u8[]) {
+  let encrypted = false;
+  let body: u8[] = [];
+  let headers = true;
+  let at = from;
+  while (at < to) {
+    let end = line_end(b, at);
+    let stop = if (end < to) { end } else { to };
+    let line = trim(b[at:stop]);
+    if (headers && index_from(line, ":", 0) >= 0) {
+      if (text.has_prefix(line, "Proc-Type:") && index_from(line, "ENCRYPTED", 0) >= 0) {
+        encrypted = true;
+      }
+    } else {
+      headers = headers && line.len() == 0;
+      body = body.concat(line);
+    }
+    at = end + 1;
+  }
+  return (encrypted, body);
+}
+
+// Go's pem.Decode, for the first block.
+function pem_decode(b: [u8]): Option[Pem] {
+  let begin = if (text.has_prefix(b, "-----BEGIN ")) { 0 } else { index_from(b, "\n-----BEGIN ", 0) + 1 };
+  if (begin <= 0 && !text.has_prefix(b, "-----BEGIN ")) {
+    return None;
+  }
+  let type_end = index_from(b, "-----", begin + 11);
+  if (type_end < 0) {
+    return None;
+  }
+  let kind = text.ascii(b[begin + 11:type_end]);
+  let body_start = line_end(b, type_end) + 1;
+  let footer = "-----END " + kind + "-----";
+  let end = index_from(b, footer, body_start);
+  if (end < 0 || body_start > end) {
+    return None;
+  }
+  let (encrypted, body) = pem_body(b, body_start, end);
+  let bytes = text.b64_lax(body)?;
+  return Some(Pem { kind: kind, encrypted: encrypted, bytes: bytes });
+}
+
+// A private key file that ParseRawPrivateKey reads: a key, a key that
+// needs a passphrase (with its public key when the file has one), or
+// the message of the failure.
+pub enum Parsed {
+  Key(Private),
+  NeedsPassphrase(Option[Public]),
+  Bad(string),
+}
+
+const OPENSSH_MAGIC: string = "openssh-key-v1\x00";
+
+// ssh's checkOpenSSHKeyPadding: the bytes 1, 2, 3 and on.
+function padding_ok(pad: [u8]): boolean {
+  for i in 0..pad.len() {
+    if (pad[i] as i32 != i + 1) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function openssh_ed25519(rest: Wire): Parsed {
+  let Some((w1, public)) = read_string(rest) else {
+    return Bad("ssh: short read");
+  };
+  let Some((w2, private)) = read_string(w1) else {
+    return Bad("ssh: short read");
+  };
+  let Some((w3, _)) = read_string(w2) else {
+    return Bad("ssh: short read");
+  };
+  if (private.len() != 64) {
+    return Bad("ssh: private key unexpected length");
+  }
+  if (!padding_ok(rest_of(w3))) {
+    return Bad("ssh: padding not as expected");
+  }
+  let seed = array.slice(private, 0, 32);
+  __ct_secret(seed);
+  let key = array.slice(private, 32, 64);
+  return Key(Ed25519Private(Ed25519Public(ed25519_wire(key), key), seed));
+}
+
+// The fields of an OpenSSH RSA private key: n, e, d, iqmp, p, q.
+function rsa_fields(rest: Wire): Result[(u8[][], Wire), string] {
+  let out: u8[][] = [];
+  let w = rest;
+  for _ in 0..6 {
+    let Some((v, field)) = read_string(w) else {
+      return Err("ssh: short read");
+    };
+    let Some(p) = positive(field) else {
+      return Err("crypto/rsa: invalid key");
+    };
+    out = out.append(p);
+    w = v;
+  }
+  return Ok((out, w));
+}
+
+function openssh_rsa(rest: Wire): Parsed {
+  let (f, w) = match (rsa_fields(rest)) {
+    Ok(x) => x,
+    Err(why) => { return Bad(why); },
+  };
+  let Some((w1, _)) = read_string(w) else {
+    return Bad("ssh: short read");
+  };
+  if (!padding_ok(rest_of(w1))) {
+    return Bad("ssh: padding not as expected");
+  }
+  return match (rsa.private_key(f[0], f[1], f[2], f[4], f[5])) {
+    Ok(key) => {
+      __ct_secret(key.d);
+      Key(RsaPrivate(RsaPublic(rsa_wire(f[0], f[1]), key.public_key()), key))
+    },
+    Err(e) => Bad(e.message()),
+  };
+}
+
+// The fields of the openssh-key-v1 header: the cipher, the KDF, the KDF
+// options, the public key and the private block.
+struct OpenSsh { cipher: string, kdf: string, kdf_opts: u8[], public: u8[], block: u8[] }
+
+function openssh_header(b: [u8]): Result[OpenSsh, string] {
+  if (!text.has_prefix(b, OPENSSH_MAGIC)) {
+    return Err("ssh: invalid openssh private key format");
+  }
+  let w = wire_of(b[OPENSSH_MAGIC.len():b.len()]);
+  let Some((w1, cipher)) = read_string(w) else {
+    return Err("ssh: short read");
+  };
+  let Some((w2, kdf)) = read_string(w1) else {
+    return Err("ssh: short read");
+  };
+  let Some((w3, kdf_opts)) = read_string(w2) else {
+    return Err("ssh: short read");
+  };
+  let Some((w4, count)) = read_u32(w3) else {
+    return Err("ssh: short read");
+  };
+  let Some((w5, public)) = read_string(w4) else {
+    return Err("ssh: short read");
+  };
+  let Some((_, block)) = read_string(w5) else {
+    return Err("ssh: short read");
+  };
+  if (count != 1i64) {
+    return Err("ssh: multi-key files are not supported");
+  }
+  return Ok(OpenSsh { cipher: text.ascii(cipher), kdf: text.ascii(kdf), kdf_opts: kdf_opts, public: public, block: block });
+}
+
+// The private block of a key with no passphrase, or the block that the
+// passphrase decrypts.
+// x/crypto's unencryptedOpenSSHKey: an encrypted key gives its public key.
+function plain_block(h: OpenSsh): Result[u8[], Parsed] {
+  if (h.cipher != "none" || h.kdf != "none") {
+    return match (parse_public(h.public)) {
+      Ok(k) => Err(NeedsPassphrase(Some(k))),
+      Err(why) => Err(Bad("ssh: failed to parse embedded public key: " + why)),
+    };
+  }
+  if (h.kdf_opts.len() != 0) {
+    return Err(Bad("ssh: invalid openssh private key"));
+  }
+  return Ok(h.block);
+}
+
+function openssh_block(h: OpenSsh, passphrase: Option[u8[]]): Result[u8[], Parsed] {
+  let Some(pass) = passphrase else {
+    return plain_block(h);
+  };
+  if (h.cipher == "none" || h.kdf == "none") {
+    return Err(NeedsPassphrase(None));
+  }
+  return match (bcrypt.decrypt_block(h.cipher, h.kdf, h.kdf_opts, h.block, pass)) {
+    Ok(b) => Ok(b),
+    Err(why) => Err(Bad(why)),
+  };
+}
+
+// ssh's parseOpenSSHPrivateKey. With no passphrase, an encrypted key gives
+// its public key.
+// The private block after its two equal check words: the key type and the
+// rest. The words differ when the passphrase is wrong.
+function checked_block(block: [u8]): Option[(Wire, string)] {
+  let (b1, check1) = read_u32(wire_of(block))?;
+  let (b2, check2) = read_u32(b1)?;
+  let (b3, kind) = read_string(b2)?;
+  if (check1 != check2) {
+    return None;
+  }
+  return Some((b3, text.ascii(kind)));
+}
+
+function openssh_with(b: [u8], passphrase: Option[u8[]]): Parsed {
+  let h = match (openssh_header(b)) {
+    Ok(h) => h,
+    Err(why) => {
+      return Bad(why);
+    },
+  };
+  let block = match (openssh_block(h, passphrase)) {
+    Ok(b) => b,
+    Err(p) => {
+      return p;
+    },
+  };
+  let wrong = if (h.cipher != "none") { "x509: decryption password incorrect" } else { "ssh: malformed OpenSSH key" };
+  let Some((b3, t)) = checked_block(block) else {
+    return Bad(wrong);
+  };
+  if (t == "ssh-ed25519") {
+    return openssh_ed25519(b3);
+  }
+  if (t == "ssh-rsa") {
+    return openssh_rsa(b3);
+  }
+  return Bad("ssh: unhandled key type");
+}
+
+// The private key matches the public key.
+pub function same_public(k: Private, p: Public): boolean {
+  let (a, b) = match (k) {
+    Ed25519Private(q, _) => (wire_of_public(q), wire_of_public(p)),
+    RsaPrivate(q, _) => (wire_of_public(q), wire_of_public(p)),
+  };
+  return a == b;
+}
+
+function wire_of_public(k: Public): u8[] {
+  return match (k) {
+    Ed25519Public(w, _) => w,
+    RsaPublic(w, _) => w,
+    OtherPublic(_) => [],
+  };
+}
+
+// ssh's ParseRawPrivateKeyWithPassphrase for an OpenSSH key file.
+pub function decrypt_private(b: [u8], passphrase: [u8]): Parsed {
+  let Some(block) = pem_decode(b) else {
+    return Bad(NO_KEY);
+  };
+  if (block.kind != "OPENSSH PRIVATE KEY") {
+    return Bad(f"ssh: the encrypted {block.kind} format is not supported by this port");
+  }
+  return openssh_with(block.bytes, Some(text.copy(passphrase)));
+}
+
+// ssh's ParseRawPrivateKey for the key types that age uses.
+pub function parse_private(b: [u8]): Parsed {
+  let Some(block) = pem_decode(b) else {
+    return Bad(NO_KEY);
+  };
+  if (block.encrypted) {
+    return NeedsPassphrase(None);
+  }
+  if (block.kind == "OPENSSH PRIVATE KEY") {
+    return openssh_with(block.bytes, None);
+  }
+  if (block.kind == "RSA PRIVATE KEY") {
+    return pkcs1(block.bytes);
+  }
+  if (block.kind == "PRIVATE KEY") {
+    return pkcs8(block.bytes);
+  }
+  if (block.kind == "EC PRIVATE KEY") {
+    return Bad("unsupported SSH identity type: *ecdsa.PrivateKey");
+  }
+  if (block.kind == "DSA PRIVATE KEY") {
+    return Bad("unsupported SSH identity type: *dsa.PrivateKey");
+  }
+  return Bad(f"ssh: unsupported key type {text.quote(block.kind.as_bytes())}");
+}
+
+// One DER element at w.at: its tag and its contents.
+function der(w: Wire): Option[(Wire, u8, u8[])] {
+  if (w.b.len() - w.at < 2) {
+    return None;
+  }
+  let tag = w.b[w.at];
+  let first = w.b[w.at + 1] as i32;
+  let at = w.at + 2;
+  let n = first;
+  if (first >= 128) {
+    let count = first - 128;
+    if (count < 1 || count > 3 || w.b.len() - at < count) {
+      return None;
+    }
+    n = 0;
+    for _ in 0..count {
+      n = n << 8 | w.b[at] as i32;
+      at += 1;
+    }
+  }
+  if (n > w.b.len() - at) {
+    return None;
+  }
+  return Some((Wire { ...w, at: at + n }, tag, array.slice(w.b, at, at + n)));
+}
+
+// A DER element with the tag that the caller wants.
+function der_of(w: Wire, want: u8): Option[(Wire, u8[])] {
+  let (v, tag, body) = der(w)?;
+  if (tag != want) {
+    return None;
+  }
+  return Some((v, body));
+}
+
+const DER_INTEGER: u8 = 2u8;
+
+const DER_OCTETS: u8 = 4u8;
+
+const DER_OID: u8 = 6u8;
+
+const DER_SEQUENCE: u8 = 48u8;
+
+// The integers of a DER SEQUENCE that holds only integers.
+function der_integers(b: [u8]): Option[u8[][]] {
+  let (_, body) = der_of(wire_of(b), DER_SEQUENCE)?;
+  let w = wire_of(body);
+  let out: u8[][] = [];
+  while (w.at < w.b.len()) {
+    let (v, n) = der_of(w, DER_INTEGER)?;
+    out = out.append(positive(n)?);
+    w = v;
+  }
+  return Some(out);
+}
+
+// Go's x509.ParsePKCS1PrivateKey: version, n, e, d, p, q and the CRT values.
+function pkcs1(b: [u8]): Parsed {
+  let Some(f) = der_integers(b) else {
+    return Bad("x509: failed to parse private key (use ParsePKCS8PrivateKey instead for this key format)");
+  };
+  if (f.len() < 9 || f[0].len() != 0) {
+    return Bad("x509: unsupported private key version");
+  }
+  return match (rsa.private_key(f[1], f[2], f[3], f[4], f[5])) {
+    Ok(key) => {
+      __ct_secret(key.d);
+      Key(RsaPrivate(RsaPublic(rsa_wire(f[1], f[2]), key.public_key()), key))
+    },
+    Err(e) => Bad(e.message()),
+  };
+}
+
+const OID_RSA: string = "2a864886f70d010101";
+
+const OID_ED25519: string = "2b6570";
+
+// Go's x509.ParsePKCS8PrivateKey for RSA and Ed25519 keys.
+function pkcs8(b: [u8]): Parsed {
+  let bad = "x509: failed to parse private key (use ParseECPrivateKey instead for this key format)";
+  let Some((_, body)) = der_of(wire_of(b), DER_SEQUENCE) else {
+    return Bad(bad);
+  };
+  let Some((w1, _)) = der_of(wire_of(body), DER_INTEGER) else {
+    return Bad(bad);
+  };
+  let Some((w2, algorithm)) = der_of(w1, DER_SEQUENCE) else {
+    return Bad(bad);
+  };
+  let Some((_, key)) = der_of(w2, DER_OCTETS) else {
+    return Bad(bad);
+  };
+  let Some((_, oid)) = der_of(wire_of(algorithm), DER_OID) else {
+    return Bad(bad);
+  };
+  let id = hex.encode(oid);
+  if (id == OID_RSA) {
+    return pkcs1(key);
+  }
+  if (id == OID_ED25519) {
+    return pkcs8_ed25519(key);
+  }
+  return Bad("x509: PKCS#8 wrapping contained private key with unknown algorithm");
+}
+
+// The seed of a PKCS#8 Ed25519 key, in an OCTET STRING.
+function pkcs8_ed25519(key: [u8]): Parsed {
+  let Some((_, seed)) = der_of(wire_of(key), DER_OCTETS) else {
+    return Bad("x509: invalid Ed25519 private key: asn1: structure error");
+  };
+  if (seed.len() != 32) {
+    return Bad(f"x509: invalid Ed25519 private key length: {seed.len()}");
+  }
+  __ct_secret(seed);
+  return match (ed25519.private_key(seed)) {
+    Ok(k) => {
+      let public = k.public_point();
+      __ct_public(public);
+      Key(Ed25519Private(Ed25519Public(ed25519_wire(public), public), seed))
+    },
+    Err(e) => Bad(e.message()),
+  };
+}

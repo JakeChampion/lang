@@ -1,0 +1,233 @@
+// age-keygen — make an age key pair, or give the recipients of an identity
+// file.
+//
+// A port of age-keygen from age 1.1.1 (age-encryption.org).
+//
+//   $ age-keygen -o key.txt         # write a new key pair to key.txt
+//   $ age-keygen -y key.txt         # write the recipients of key.txt
+import "std/array";
+import "std/rand";
+import "std/time";
+import "std/tz";
+import "./goflag";
+import "./keys";
+import "./text";
+
+const USAGE: string[] = [
+  "Usage:",
+  "    age-keygen [-o OUTPUT]",
+  "    age-keygen -y [-o OUTPUT] [INPUT]",
+  "",
+  "Options:",
+  "    -o, --output OUTPUT       Write the result to the file at path OUTPUT.",
+  "    -y                        Write the recipients of an identity file.",
+  "",
+  "age-keygen makes a new X25519 key pair and writes it to the standard output",
+  "or to OUTPUT. With OUTPUT, it also writes the public key to the standard",
+  "error. age-keygen does not write over an OUTPUT that is there.",
+  "",
+  "With -y, age-keygen reads an identity file from INPUT or from the standard",
+  "input. It writes the recipient of each key, one for each line, to OUTPUT or",
+  "to the standard output.",
+];
+
+const NAMES: goflag.Names = goflag.Names { bools: ["version", "y"], values: ["o", "output"] };
+
+// The size limit of an identity file, as in age.
+const IDENTITY_LIMIT: i32 = 16777216;
+
+function fail(msg: string): i32 {
+  eprint("age-keygen: error: " + msg);
+  return 1;
+}
+
+function q(s: string): string {
+  return text.quote(s.as_bytes());
+}
+
+struct Opts { version: boolean, convert: boolean, output: string }
+
+function options(flags: goflag.Flag[]): Opts {
+  let o = Opts { version: false, convert: false, output: "" };
+  for f in flags {
+    o = match (f) {
+      goflag.BoolFlag(name, v) => if (name == "y") { Opts { ...o, convert: v } } else { Opts { ...o, version: v } },
+      goflag.ValueFlag(_, v) => Opts { ...o, output: v },
+    };
+  }
+  return o;
+}
+
+// The output file, made with mode 0600 as os.OpenFile makes it. It must not
+// be there.
+function create(path: string): Result[Writer, string] {
+  let w = match (open_exclusive(path)) {
+    Ok(w) => w,
+    Err(e) => {
+      return Err(f"failed to open output file {q(path)}: open {path}: {text.errno_text(e)}");
+    },
+  };
+  let mask = umask(63);
+  umask(mask);
+  if let Err(e) = chmod(path, 384 & ~mask) {
+    w.close();
+    return Err(f"failed to open output file {q(path)}: chmod {path}: {text.errno_text(e)}");
+  }
+  return Ok(w);
+}
+
+// All of the input, up to the size limit, or the error of a read.
+function read_all(r: Reader, name: string): Result[u8[], string] {
+  let out: u8[] = [];
+  while (out.len() < IDENTITY_LIMIT) {
+    match (r.read_chunk_bytes(IDENTITY_LIMIT - out.len())) {
+      Ok(b) => {
+        if (b.len() == 0) {
+          return Ok(out);
+        }
+        out = out.concat(b);
+      },
+      Err(e) => {
+        return Err(f"read {name}: {text.errno_text(e)}");
+      }
+    }
+  }
+  return Ok(out);
+}
+
+// age-keygen -y: the recipient of each key of the identity file.
+function convert(input: Reader, name: string, out: Writer): Option[string] {
+  let content = match (read_all(input, name)) {
+    Ok(b) => b,
+    Err(why) => {
+      return Some("failed to parse input: failed to read secret keys file: " + why);
+    },
+  };
+  let found = match (keys.parse_identities(content)) {
+    Ok(ks) => ks,
+    Err(why) => {
+      return Some("failed to parse input: " + why);
+    },
+  };
+  for k in found {
+    if let Err(e) = out.write(keys.recipient_text(k.public) + "\n") {
+      return Some("write: " + text.errno_text(e));
+    }
+  }
+  return None;
+}
+
+// The time now in the local time zone, as Go's time.RFC3339 writes it.
+function created(): string {
+  let now = time.timestamp_from_unix(now_unix_ms() / 1000i64);
+  return tz.local_zone().at(now).format_rfc3339();
+}
+
+// A new key pair. The public key goes to the standard error too when out is
+// not a terminal.
+function generate(out: Writer): Option[string] {
+  match (out.stat()) {
+    Ok(st) => {
+      if (st.is_file && (st.mode & 4u32) != 0u32) {
+        eprint("age-keygen: warning: writing secret key to a world-readable file");
+      }
+    },
+    Err(_) => {}
+  }
+  let k = match (keys.key_of(rand.bytes(32))) {
+    Ok(k) => k,
+    Err(why) => {
+      return Some("internal error: " + why);
+    },
+  };
+  let recipient = keys.recipient_text(k.public);
+  if (!out.isatty()) {
+    eprint("Public key: " + recipient);
+  }
+  let text_out = f"# created: {created()}\n# public key: {recipient}\n{keys.secret_text(k.scalar)}\n";
+  if let Err(e) = out.write(text_out) {
+    return Some("write: " + text.errno_text(e));
+  }
+  return None;
+}
+
+// The input: the standard input for "" and "-".
+function open_input(name: string): Result[Reader, string] {
+  if (name == "" || name == "-") {
+    return Ok(stdin());
+  }
+  return match (open_reader(name)) {
+    Ok(r) => Ok(r),
+    Err(e) => Err(f"failed to open input file {q(name)}: open {name}: {text.errno_text(e)}"),
+  };
+}
+
+// The output: the standard output, or a new file.
+function output(path: string): Result[Writer, string] {
+  if (path == "") {
+    return Ok(stdout());
+  }
+  return create(path);
+}
+
+// The input and the name that a read error shows.
+function input_of(inputs: string[]): Result[(Reader, string), string] {
+  let name = if (inputs.len() > 0) { inputs[0] } else { "" };
+  let shown = if (name == "" || name == "-") { "/dev/stdin" } else { name };
+  return Ok((open_input(name)?, shown));
+}
+
+// The work of age-keygen after the flags, or its message.
+function work(o: Opts, inputs: string[]): Option[string] {
+  let out = match (output(o.output)) {
+    Ok(w) => w,
+    Err(why) => {
+      return Some(why);
+    },
+  };
+  let (input, shown) = match (input_of(inputs)) {
+    Ok(x) => x,
+    Err(why) => { return Some(why); },
+  };
+  let failed = if (o.convert) { convert(input, shown, out) } else { generate(out) };
+  if (failed.is_some() || o.output == "") {
+    return failed;
+  }
+  return match (out.close()) {
+    Ok(_) => None,
+    Err(e) => Some(f"failed to close output file {q(o.output)}: {text.errno_text(e)}"),
+  };
+}
+
+function run(o: Opts, inputs: string[]): i32 {
+  if (inputs.len() != 0 && !o.convert || inputs.len() > 1 && o.convert) {
+    return fail("too many arguments");
+  }
+  if (o.version) {
+    print("v1.1.1-fern");
+    return 0;
+  }
+  return match (work(o, inputs)) {
+    Some(why) => fail(why),
+    None => 0,
+  };
+}
+
+function main(): i32 {
+  let argv = args();
+  match (goflag.parse(NAMES, array.slice(argv, 1, argv.len()))) {
+    goflag.Help => {
+      eprint(USAGE.join("\n"));
+      return 0;
+    },
+    goflag.Bad(why) => {
+      eprint(why);
+      eprint(USAGE.join("\n"));
+      return 2;
+    },
+    goflag.Run(flags, rest) => {
+      return run(options(flags), rest);
+    }
+  }
+  return 0;
+}
