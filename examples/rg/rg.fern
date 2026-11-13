@@ -1,0 +1,146 @@
+// rg — search files for a regular expression.
+//
+// A port of ripgrep (github.com/BurntSushi/ripgrep). This slice searches the
+// files on the command line, or the standard input, with std/regex.
+//
+//   $ rg PATTERN FILE...        # the matching lines
+//   $ rg -n -C2 PATTERN FILE    # with line numbers and two lines of context
+//   $ rg -c -e A -e B FILE      # the count of lines that match A or B
+//   $ cmd | rg -o PATTERN       # each match of the standard input
+import "std/io";
+import "std/regex";
+import "./search";
+
+const FLUSH_BYTES: i32 = 65536;
+
+// The text of an error from the operating system, as ripgrep writes it.
+function os_error(e: IoError): string {
+  match (e) {
+    NotFound(_) => {
+      return "No such file or directory (os error 2)";
+    },
+    PermissionDenied(_) => {
+      return "Permission denied (os error 13)";
+    },
+    Other(_, _, 20) => {
+      return "Not a directory (os error 20)";
+    },
+    Other(_, _, 21) => {
+      return "Is a directory (os error 21)";
+    },
+    _ => {
+      return e.message();
+    }
+  }
+}
+
+function read_input(path: string): Result[u8[], IoError] {
+  if (path == "-") {
+    return io.read_all_stdin_bytes();
+  }
+  return read_file_bytes(path);
+}
+
+// Writes the buffer when it is full, or when `all` is true.
+function flush(h: usize, all: boolean): boolean {
+  if (!all && buf_len(h) < FLUSH_BYTES) {
+    return true;
+  }
+  if let Err(_) = stdout().write_bytes(buf_take_bytes(h)) {
+    return false;
+  }
+  return true;
+}
+
+function compiled(o: search.Options): Option[regex.Regex] {
+  match (regex.compile(search.pattern(o))) {
+    Ok(re) => {
+      return Some(re);
+    },
+    Err(e) => {
+      eprint("rg: regex parse error: " + e.to_string());
+      return None;
+    }
+  }
+  return None;
+}
+
+// Searches one path. The result is None after the message for a file that
+// cannot be read. With one thread, ripgrep names the operation.
+function search_path(p: search.Printer, re: regex.Regex, path: string, threads: i32, h: usize, written: boolean): Option[search.Outcome] {
+  match (read_input(path)) {
+    Ok(bytes) => {
+      let name = if (path == "-") { "<stdin>" } else { path };
+      return Some(search.search(p, re, unsafe { string_from_bytes_unchecked(bytes) }, name, h, written));
+    },
+    Err(e) => {
+      if (threads == 1) {
+        eprint("rg: " + path + ": IO error for operation on " + path + ": " + os_error(e));
+      } else {
+        eprint("rg: " + path + ": " + os_error(e));
+      }
+      return None;
+    }
+  }
+  return None;
+}
+
+// 0 when a line is selected, 1 when none is, and 2 after an error.
+function status(matched: boolean, failed: boolean): i32 {
+  if (failed) {
+    return 2;
+  }
+  if (matched) {
+    return 0;
+  }
+  return 1;
+}
+
+// Searches each path in turn and gives the exit status.
+function search_all(p: search.Printer, re: regex.Regex, paths: string[], threads: i32): i32 {
+  let h = buf_new(FLUSH_BYTES);
+  let code = search_into(p, re, paths, threads, h);
+  buf_free(h);
+  return code;
+}
+
+function search_into(p: search.Printer, re: regex.Regex, paths: string[], threads: i32, h: usize): i32 {
+  let written = false;
+  let matched = false;
+  let failed = false;
+  for path in paths {
+    match (search_path(p, re, path, threads, h, written)) {
+      Some(out) => {
+        written = out.written;
+        matched = matched || out.matched;
+        if (!flush(h, false)) {
+          return 2;
+        }
+      },
+      None => {
+        failed = true;
+      }
+    }
+  }
+  if (!flush(h, true)) {
+    return 2;
+  }
+  return status(matched, failed);
+}
+
+function main(): i32 {
+  let argv = args();
+  let o = match (search.parse(argv.drop(1))) {
+    Ok(v) => v,
+    Err(why) => {
+      eprint("rg: " + why);
+      return 2;
+    },
+  };
+  let Some(re) = compiled(o) else {
+    return 2;
+  };
+  let threads = if (o.threads > 0) { o.threads } else { cpu_count() as i32 };
+  let paths = if (o.paths.len() == 0) { ["-"] } else { o.paths };
+  return search_all(search.printer(o, isatty(1)), re, paths, threads);
+}
