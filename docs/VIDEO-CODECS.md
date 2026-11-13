@@ -188,6 +188,29 @@ Interlaced pictures, separate color planes, slice groups, redundant pictures, an
 Entropy data, complete slice coverage, recovery-point SEI interpretation, and native pixel decode remain outside this reader.
 The caller retains and closes the source. Blocking I/O must run outside the Android loop callback.
 
+`std/video/hevc_input` groups base-layer HEVC Annex B NAL units into coded-picture access units.
+It reuses bounded NAL input and the native SPS and PPS validators.
+The first-slice flag separates pictures. Subsequent slices retain the same PPS, NAL type, and temporal identifier.
+AUD and prefix parameter or SEI NAL units belong to the next picture. Suffix SEI and filler remain with the current picture.
+
+EOS and EOB have empty payloads and end the current picture. EOS requires IRAP in the next access unit.
+EOB permits no subsequent NAL unit.
+
+The stream retains at most 16 SPS records, 64 PPS records, and one pending NAL.
+Cached PPS validation refreshes against the current SPS before a slice uses it.
+The 8 KiB SPS and 64 KiB PPS ceilings bound raw parameter payloads to 4,325,376 bytes.
+Separate byte, unit, packet, input-window, and operation limits remain active.
+Each step performs at most one source read and emits at most one event.
+
+Packets preserve original prefix offsets and use canonical four-byte prefixes.
+IRAP identifies types 16 through 21. IDR identifies types 19 and 20 only, without a general random-access safety claim.
+Slice inspection copies at most eight unescaped bytes. The limits do not define an exact process-memory bound.
+Multilayer input, separate color planes, and reserved or unspecified NAL types return `Unsupported`.
+
+VPS, SEI, and filler payloads remain opaque. The reader does not resolve VPS references or assign timestamps.
+It does not validate entropy data, complete slice headers or coverage, or decoded pixels.
+The caller retains and closes the source. Blocking I/O must run outside the Android loop callback.
+
 `std/video/hevc/pps` inspects one base-layer PPS with its matching complete SPS NAL.
 It reports prediction, quantizer, tile, filter, scaling, and range-extension metadata through exact trailing bits.
 The reader reuses the SPS syntax and checks its sequence identifier, coding-block geometry, and precision bounds.
@@ -561,6 +584,17 @@ The AVC access-unit comparison also uses this reader to check incompatible SPS a
 That comparison requires a C compiler, the FFmpeg development headers, and `pkg-config`.
 Normal native and WASI tests use checked-in references and malformed syntax controls, without an FFmpeg dependency.
 The malformed-input cases cover packet truncation, runs, skips, dimensions, output budgets, and integer overflow.
+
+`scripts/check-video-hevc-input-interop` compares twelve cases with 234 coded pictures from fresh x265 streams.
+Native and real WASI output match FFprobe picture positions, canonical payloads, and all FFmpeg decoded planes.
+For terminal EOS/EOB, FFprobe emits a separate control-only packet.
+The comparison joins only the exact empty EOS/EOB pair to the preceding picture and verifies every byte.
+This follows the access-unit association in [ITU-T H.265](https://www.itu.int/rec/T-REC-H.265-202407-S/en), clause 7.4.2.4.4.
+
+The coded bitstream reader independently rejects an incompatible bit-depth PPS pair.
+For an incompatible tile grid, it accepts the syntax. The comparison derives the invalid grid from independent SPS and PPS fields.
+That control applies the tile-column bound in clause 7.4.3.3, without an external rejection claim.
+The existing malformed-input controls remain independent of FFmpeg.
 
 `scripts/test-video` executes the native suite with the sanitizer and the WASI suite.
 It also builds ARM64 Android shared libraries.

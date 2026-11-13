@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""Compare native HEVC access units with FFprobe packets and FFmpeg planes."""
+import importlib.util
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+os.chdir(ROOT)
+compiler = os.environ.get("FERN") or subprocess.check_output(["./bootstrap/bootstrap.sh", "stage0"], text=True).strip()
+binary = ROOT / "build/video/hevc-input-reference"
+binary.parent.mkdir(parents=True, exist_ok=True)
+target = {"x86_64": "x86-64-linux", "aarch64": "arm64-linux", "arm64": "arm64-darwin"}[os.uname().machine]
+subprocess.run([compiler, "-stdlib", str(ROOT / "internal/stdlib"), "-target", target, "-sanitize", "-heap-limit", "16M",
+                "-o", str(binary), "scripts/video-reference/hevc-input.fern"], check=True)
+wasm = binary.with_suffix(".wasm")
+subprocess.run([compiler, "-stdlib", str(ROOT / "internal/stdlib"), "-target", "wasm32-wasi", "-o", str(wasm),
+                "scripts/video-reference/hevc-input.fern"], check=True)
+
+
+def units(data):
+    markers = list(re.finditer(b"\x00{2,}\x01", data))
+    return [data[m.end():markers[i + 1].start() if i + 1 < len(markers) else len(data)].rstrip(b"\0")
+            for i, m in enumerate(markers)]
+
+
+def encode(directory, name, profile, pixel_format, options, size="64x48"):
+    path = directory / f"{name}.hevc"
+    params = "log-level=error:pools=none:frame-threads=1:keyint=6:min-keyint=6:scenecut=0:repeat-headers=1:" + options
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"testsrc2=size={size}:rate=25",
+                    "-frames:v", "18", "-c:v", "libx265", "-preset", "ultrafast", "-threads", "1",
+                    "-profile:v", profile, "-pix_fmt", pixel_format, "-x265-params", params, "-f", "hevc", str(path)], check=True)
+    return path
+
+
+def decoded(path):
+    return subprocess.check_output(["ffmpeg", "-v", "error", "-i", str(path), "-vsync", "0",
+                                    "-pix_fmt", "yuv444p16le", "-f", "rawvideo", "-"])
+
+
+def picture_packets(packets, data):
+    last = packets[-1]
+    at, size = int(last["pos"]), int(last["size"])
+    trailing = units(data[at:at + size])
+    if all(unit[0] >> 1 & 63 >= 32 for unit in trailing):
+        assert trailing == [b"\x48\x01", b"\x4a\x01"]
+        assert len(packets) > 1 and at + size == len(data)
+        previous = packets[-2]
+        assert int(previous["pos"]) + int(previous["size"]) == at
+        packets = packets[:-2] + [dict(previous, size=str(int(previous["size"]) + size))]
+        print("EOS/EOB: FFprobe terminal control packet joins the prior picture; every byte remains", flush=True)
+    return packets
+
+
+def compare(path, frames):
+    data = path.read_bytes()
+    metadata = json.loads(subprocess.check_output(["ffprobe", "-v", "error", "-show_packets", "-show_streams",
+                                                  "-show_entries", "packet=pos,size,flags:stream=width,height", "-of", "json", str(path)]))
+    native = subprocess.run([str(binary), str(path)], capture_output=True, text=True, check=True)
+    wasi = subprocess.check_output(["wasmtime", "run", "--dir", ".", str(wasm), path.name],
+                                   cwd=path.parent, text=True).splitlines()
+    lines = native.stdout.splitlines()
+    assert re.search(r"leakcheck: allocs=(\d+) frees=\1 live_bytes=0", native.stderr), native.stderr
+    assert "fern-sanitizer:" not in native.stderr
+    packets = picture_packets(metadata["packets"], data)
+    assert lines == wasi and len(lines) == len(packets) == frames
+    rebuilt = bytearray()
+    for line, packet in zip(lines, packets, strict=True):
+        tag, offset, irap, idr, payload = line.split()
+        at, size = int(packet["pos"]), int(packet["size"])
+        original = units(data[at:at + size])
+        canonical = b"".join(b"\x00\x00\x00\x01" + unit for unit in original)
+        kind = next(unit[0] >> 1 & 63 for unit in original if unit[0] >> 1 & 63 < 32)
+        assert tag == "H" and int(offset) == at and bytes.fromhex(payload) == canonical
+        assert int(irap) == int(16 <= kind <= 21) and int(idr) == int(kind in (19, 20))
+        rebuilt += canonical
+    restored = path.with_name("fern-" + path.name)
+    restored.write_bytes(rebuilt)
+    info = metadata["streams"][0]
+    pixels = decoded(path)
+    assert pixels == decoded(restored) and len(pixels) == frames * int(info["width"]) * int(info["height"]) * 6
+    print(f"{path.name}: {frames} native/WASI access units match FFprobe; all FFmpeg planes match", flush=True)
+
+
+def parameter_context(fixtures, oracle, mode):
+    if mode == "syntax":
+        return oracle.returncode == 0
+    assert mode == "tile_grid" and oracle.returncode == 0, oracle.stderr.decode()
+    fields = fixtures.hevc.syntax.references.trace_fields(oracle.stderr.decode())
+    ctb = 1 << (3 + fields["log2_min_luma_coding_block_size_minus3"]
+                + fields["log2_diff_max_min_luma_coding_block_size"])
+    columns = (fields["pic_width_in_luma_samples"] + ctb - 1) // ctb
+    return fields["num_tile_columns_minus1"] < columns
+
+
+def parameter_reuse(directory):
+    spec = importlib.util.spec_from_file_location("hevc_input_vectors", ROOT / "scripts/gen-video-hevc-input-fixtures.py")
+    fixtures = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fixtures)
+    trace = fixtures.hevc.syntax.build_trace("HEVC", "hevc-input-parameter-trace")
+    for index, (name, before, after, picture, mode) in enumerate(fixtures.incompatible_pairs()):
+        for sequence, valid in ((before, True), (after, False)):
+            pair = directory / "parameter-pair.bin"
+            pair.write_bytes(fixtures.hevc.vps() + b"\0\0\1" + sequence + b"\0\0\1" + picture)
+            oracle = subprocess.run([str(trace), str(pair)], capture_output=True)
+            assert parameter_context(fixtures, oracle, mode) == valid, oracle.stderr.decode()
+        path = directory / f"stale-pps-{index}.hevc"
+        path.write_bytes(b"".join(b"\0\0\0\1" + unit for unit in
+                                 (before, picture, fixtures.slice_nal(), after, fixtures.slice_nal())))
+        native = subprocess.run([str(binary), str(path)], capture_output=True, text=True)
+        wasi = subprocess.run(["wasmtime", "run", "--dir", ".", str(wasm), path.name],
+                              cwd=directory, capture_output=True, text=True)
+        assert native.returncode == wasi.returncode == 1
+        assert native.stdout == wasi.stdout and len(native.stdout.splitlines()) == 1
+        assert "invalid video header or packet" in native.stderr and "invalid video header or packet" in wasi.stderr
+        assert re.search(r"leakcheck: allocs=(\d+) frees=\1 live_bytes=0", native.stderr), native.stderr
+        detail = "FFmpeg syntax refusal" if mode == "syntax" else "tile-grid constraint from independent CBS fields"
+        print(f"{name}: native/WASI refusal matches {detail}", flush=True)
+
+
+with tempfile.TemporaryDirectory() as temporary:
+    directory = Path(temporary)
+    cases = [
+        ("main", "main", "yuv420p", "bframes=0:aud=0"),
+        ("cropped", "main", "yuv420p", "bframes=0:aud=0", "62x46"),
+        ("main-slices", "main", "yuv420p", "bframes=0:aud=0:pools=1:wpp=1:slices=3:ctu=32", "128x128"),
+        ("main-bframes", "main", "yuv420p", "bframes=2:aud=0"),
+        ("main-aud", "main", "yuv420p", "bframes=0:aud=1"),
+        ("main10", "main10", "yuv420p10le", "bframes=2:aud=0"),
+        ("main12", "main12", "yuv420p12le", "bframes=0:aud=0"),
+        ("main42210", "main422-10", "yuv422p10le", "bframes=0:aud=0"),
+        ("main4448", "main444-8", "yuv444p", "bframes=0:aud=0"),
+        ("open-gop", "main", "yuv420p", "bframes=2:open-gop=1:aud=0"),
+    ]
+    paths = [encode(directory, *case) for case in cases]
+    for path in paths:
+        compare(path, 18)
+    ended = directory / "end-markers.hevc"
+    ended.write_bytes(paths[0].read_bytes() + b"\0\0\0\1\x48\x01\0\0\0\1\x4a\x01")
+    compare(ended, 18)
+    joined = directory / "parameter-replacement.hevc"
+    joined.write_bytes(paths[3].read_bytes() + paths[5].read_bytes())
+    compare(joined, 36)
+    parameter_reuse(directory)
