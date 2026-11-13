@@ -88,22 +88,32 @@ const WIDGET_NEXT: string = "dev.fern.tune.widget.NEXT";
 
 const WIDGET_PREVIOUS: string = "dev.fern.tune.widget.PREVIOUS";
 
-// What the widget shows: the item 0 is the track and opens the app, and
-// the items 1 to 3 are the buttons. The middle button plays or stops.
+// What the widget shows while the player runs: the item 0 is the track
+// and opens the app, and the items 1 to 3 are the buttons. The middle
+// button plays or stops.
 function widget_look(title: string, playing: boolean): widget.Look {
   if (playing) {
-    return widget.Look { texts: [(0, title), (2, "Pause")], actions: [(1, WIDGET_PREVIOUS), (2, WIDGET_PAUSE), (3, WIDGET_NEXT)], opens: [0] };
+    return widget.Look { texts: [(0, title), (2, "Pause")], actions: [(1, WIDGET_PREVIOUS), (2, WIDGET_PAUSE), (3, WIDGET_NEXT)], opens: [0], starts: [] };
   }
-  return widget.Look { texts: [(0, title), (2, "Play")], actions: [(1, WIDGET_PREVIOUS), (2, WIDGET_PLAY), (3, WIDGET_NEXT)], opens: [0] };
+  return widget.Look { texts: [(0, title), (2, "Play")], actions: [(1, WIDGET_PREVIOUS), (2, WIDGET_PLAY), (3, WIDGET_NEXT)], opens: [0], starts: [] };
+}
+
+// What the widget shows while the app does not run: each button starts the
+// app with its action, and the app plays from the place that it kept.
+function closed_look(title: string): widget.Look {
+  return widget.Look { texts: [(0, title), (2, "Play")], actions: [], opens: [0], starts: [(1, WIDGET_PREVIOUS), (2, WIDGET_PLAY), (3, WIDGET_NEXT)] };
 }
 
 // The provider of the widget of the home screen. A button of the widget
 // sends the command of its media button to the player, when the player
-// runs. A new widget shows the name of the app.
+// runs. With no player, the widget takes the look that starts the app. A
+// new widget shows the name of the app.
 @jni("dev.fern.tune.Widget extends android.appwidget.AppWidgetProvider", "void onReceive(android.content.Context, android.content.Intent)")
 pub function widget_receive(env: usize, thiz: usize, context: usize, intent: usize): void {
   let action = widget.action(env, intent);
-  if (action == WIDGET_PLAY) {
+  if (android.live_activity(env) == 0 as usize) {
+    let shown = widget.show(env, context, WIDGET, closed_look("Fern Tune"));
+  } else if (action == WIDGET_PLAY) {
     session.play(env);
   } else if (action == WIDGET_PAUSE) {
     session.pause(env);
@@ -111,8 +121,6 @@ pub function widget_receive(env: usize, thiz: usize, context: usize, intent: usi
     session.next(env);
   } else if (action == WIDGET_PREVIOUS) {
     session.previous(env);
-  } else if (action == widget.UPDATE && android.live_activity(env) == 0 as usize) {
-    let shown = widget.show(env, context, WIDGET, widget_look("Fern Tune", false));
   }
 }
 
@@ -139,11 +147,13 @@ function show(ctx: usize, media: Media, now: tune.Now): void {
   }
 }
 
-// Stops the foreground service, and ends the media session and the focus
-// request. The activity is valid until its Destroy event ends, so the
-// player calls this for that event.
-function quit(ctx: usize, media: Media): void {
+// Stops the foreground service, ends the media session and the focus
+// request, and gives the widget the look that starts the app with the
+// last track `title`. The activity is valid until its Destroy event ends,
+// so the player calls this for that event.
+function quit(ctx: usize, media: Media, title: string): void {
   service.stop(ctx, SERVICE);
+  let shown = widget.show(android.env(ctx), android.activity_object(ctx), WIDGET, closed_look(title));
   if let Some(s) = media.session {
     session.close(ctx, s);
   }
@@ -238,11 +248,12 @@ function device(ctx: usize, dir: string, roots: string[], media: Media): player.
     save: (text: string): void => { let saved = write_file(dir + "/../library.tsv", text); },
     keep_lists: (text: string): void => { let saved = write_file(dir + "/../playlists.txt", text); },
     keep_prefs: (text: string): void => { let saved = write_file(dir + "/../settings.txt", text); },
+    keep_place: (text: string): void => { let saved = write_file(dir + "/../place.txt", text); },
     write_text: (path: string, text: string): boolean => write_file(path, text).is_ok(),
     kept: (name: string): u8[] => read(dir + "/../covers/" + name),
     put: (name: string, bytes: u8[]): void => { let kept = write_file_bytes(dir + "/../covers/" + name, bytes); },
     show: (now: tune.Now): void => show(ctx, media, now),
-    quit: (): void => quit(ctx, media),
+    quit: (title: string): void => quit(ctx, media, title),
     wake: (): tune.Awake => wake(ctx),
     sleep: (a: tune.Awake): void => service.release_awake(ctx, service.Awake { wake: a.wake, wifi: a.wifi }),
     size: (path: string): i64 => size(path),
@@ -339,6 +350,9 @@ function system(e: android.Event): Option[tune.Msg] {
     android.Resume => {
       return Some(tune.Returned);
     },
+    android.Stop => {
+      return Some(tune.Away);
+    },
     android.Destroy => {
       return Some(tune.Closing);
     },
@@ -373,11 +387,18 @@ function app_main(ctx: usize): usize {
   if (!shortcuts.set(ctx, [shortcuts.Shortcut { id: "shuffle", label: "Shuffle all", action: SHUFFLE }, shortcuts.Shortcut { id: "favorites", label: "Favorites", action: FAVORITES }])) {
     log.info("tune: the launcher took no shortcuts");
   }
+  first = tune.update(first, tune.Restore(library.place_from(read_file(android.data_dir(ctx) + "/place.txt").unwrap_or(""))));
   let action = shortcuts.action(ctx);
   if (action == SHUFFLE) {
     first = tune.update(first, tune.ShuffleAll((dev.now() / 1000000i64 % 60000i64) as i32));
   } else if (action == FAVORITES) {
     first = tune.update(first, tune.PlayList(tune.FAVORITES));
+  } else if (action == WIDGET_PLAY) {
+    first = tune.update(first, tune.Play(true));
+  } else if (action == WIDGET_NEXT) {
+    first = tune.update(first, tune.Next);
+  } else if (action == WIDGET_PREVIOUS) {
+    first = tune.update(tune.update(first, tune.Previous), tune.Play(true));
   }
   let last = app.run(ctx, player.wrap(first), player.program(dev).with_system(system)).model;
   log.info("tune: closed with " + last.tracks.len().to_string() + " tracks at track " + last.current.to_string() + ", " + tune.clock(last.at_ms) + " of " + tune.clock(last.length_ms) + ", playing " + last.playing.to_string());

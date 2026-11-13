@@ -38,8 +38,43 @@ function references(): test.TestOutcome {
   return test.pass();
 }
 
+// A stream gives the samples of each packet. With no edits, its packets
+// together are the samples of the whole track: 43 of the 44 tracks have
+// no edits.
+// fern-lint: allow cyclomatic-complexity
+function streams(): test.TestOutcome {
+  let whole = 0;
+  for vector in mp4_alac_vectors.all() {
+    let Ok(encoded) = ref.unpack(vector.encoded) else {
+      return test.fail("encoded reference");
+    };
+    let index = match (alac.inspect(encoded, alac.default_limits())) { Ok(value) => value, Err(e) => { return test.fail(vector.name + ": inspect: " + e.message()); } };
+    let audio = match (alac.decode_track(encoded, index, 0, alac.default_limits())) { Ok(value) => value, Err(e) => { return test.fail(vector.name + ": decode: " + e.message()); } };
+    let s = match (index.stream(0, alac.default_limits().audio)) { Ok(value) => value, Err(e) => { return test.fail(vector.name + ": stream: " + e.message()); } };
+    let info = s.information();
+    if (info.packets != vector.packets || info.format.channels != vector.channels) {
+      return test.fail(vector.name + ": stream metadata");
+    }
+    let all: i32[] = [];
+    for n in 0..info.packets {
+      let (next, samples) = match (s.decode_packet(encoded, n, alac.default_limits().audio)) { Ok(value) => value, Err(e) => { return test.fail(vector.name + ": packet " + n.to_string() + ": " + e.message()); } };
+      s = next;
+      for v in samples {
+        all = all.append(v);
+      }
+    }
+    if (all == audio.samples) {
+      whole += 1;
+    } else if (all.len() < audio.samples.len()) {
+      return test.fail(vector.name + ": the packets are shorter than the track");
+    }
+  }
+  return test.assert_eq(whole.to_string(), "43");
+}
+
 function main(): i32 {
   let runner = test.new("Independent integer M4A ALAC playback");
   runner = runner.it("44 independent container and packet references, depths, layouts, clocks, and final short packets", references);
+  runner = runner.it("a stream decodes one packet at a time", streams);
   return runner.finish();
 }

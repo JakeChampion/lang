@@ -1,0 +1,176 @@
+// Check initial audio setup through the actual app handler during activity pause.
+import "./app";
+import "./audio_content";
+import "./audio_pcm";
+import "std/android";
+import "std/android/video/source";
+
+@import("libaaudio.so", "av_audio_reset")
+function reset(): void;
+
+@import("libaaudio.so", "av_audio_count")
+function count(what: i32): i32;
+
+@import("libaaudio.so", "av_audio_mode")
+function mode(value: i32): void;
+
+function empty(): app.App {
+  return app.App { ctx: 0 as usize, playback: None, fd: -1, content: None, sound: None, audio_reader: None, content_audio: None, stage: 0, resume_ns: 0i64, started_ns: 1000000000i64, done: false, lifecycle_pause_ns: Some(1000000000i64), lifecycle_was_playing: false };
+}
+
+function close(own s: app.App, code: i32): i32 {
+  let _ = app.step_at(s, android.WindowDestroyed(android.Window { ptr: 0 as usize }), 34000000000i64);
+  return code;
+}
+
+function dormant(s: app.App): boolean {
+  let Some(sound) = s.sound else {
+    return false;
+  };
+  return !s.done && sound.paused_ns.is_some() && sound.started_ns == 0i64 && sound.at == 0 && sound.samples.len() == 0 && sound.peak == 0 && count(0) == 0 && count(2) == 0;
+}
+
+function file_position(s: app.App): Option[i64] {
+  if let Some(reader) = s.audio_reader {
+    return Some(reader.seek(0i64, 1).unwrap_or(-1i64));
+  }
+  return None;
+}
+
+function observed(own s: app.App, reads: Cell[i32], seeks: Cell[i32]): app.App {
+  let Some(io) = s.content_audio else {
+    return s;
+  };
+  let read = (count: i32): Result[u8[], IoError] => {
+    reads.set(reads.get() + 1);
+    return io.read(count);
+  };
+  let seek = (offset: i64): Result[i64, IoError] => {
+    seeks.set(seeks.get() + 1);
+    return io.seek(offset);
+  };
+  return app.App { ...s, content_audio: Some(audio_content.Input { seek: seek, read: read }) };
+}
+
+function quiet(s: app.App, reads: Cell[i32], seeks: Cell[i32], position: Option[i64]): boolean {
+  return dormant(s) && reads.get() == 0 && seeks.get() == 0 && file_position(s) == position;
+}
+
+function background(own s: app.App, reads: Cell[i32], seeks: Cell[i32]): Result[app.App, i32] {
+  let position = file_position(s);
+  s = app.window_started_at(s, 2000000000i64);
+  s = app.step_at(s, android.Pause, 3000000000i64);
+  s = app.step_at(s, android.Tick, 32000000000i64);
+  s = app.pump_sound(s);
+  if (!quiet(s, reads, seeks, position)) {
+    return Err(close(s, 111));
+  }
+  s = app.step_at(s, android.Resume, 32000000000i64);
+  s = app.step_at(s, android.Resume, 32000000000i64);
+  let Some(sound) = s.sound else {
+    return Err(close(s, 112));
+  };
+  if (s.done || sound.paused_ns.is_some() || count(0) != 0 || count(2) != 0 || reads.get() != 0) {
+    return Err(close(s, 113));
+  }
+  return Ok(s);
+}
+
+function first_write(own s: app.App, reads: Cell[i32]): Result[app.App, i32] {
+  for work in 0..8192 {
+    if (s.done || count(2) > 0) {
+      return Ok(s);
+    }
+    let before = reads.get();
+    let writes = count(2);
+    s = app.pump_sound(s);
+    if (reads.get() - before > 8 || count(2) - writes > 1) {
+      return Err(close(s, 114));
+    }
+  }
+  return Err(close(s, 115));
+}
+
+function backpressure(own s: app.App, reads: Cell[i32], seeks: Cell[i32]): Result[app.App, i32] {
+  let before = reads.get();
+  let offsets = seeks.get();
+  mode(2);
+  s = app.pump_sound(s);
+  s = app.step_at(s, android.Pause, 33000000000i64);
+  let writes = count(2);
+  s = app.pump_sound(s);
+  s = app.step_at(s, android.Resume, 34000000000i64);
+  if (reads.get() != before || seeks.get() != offsets || count(2) != writes || count(0) != 2) {
+    return Err(close(s, 116));
+  }
+  return Ok(s);
+}
+
+function drain(own s: app.App): i32 {
+  mode(0);
+  for work in 0..8192 {
+    let Some(sound) = s.sound else {
+      return close(s, 117);
+    };
+    if (sound.at == sound.total) {
+      let good = !s.done && !sound.failed && sound.peak <= 2048 && sound.started_ns > 0i64 && count(0) == 2;
+      return close(s, if (good) { 0 } else { 118 });
+    }
+    s = app.pump_sound(s);
+  }
+  return close(s, 119);
+}
+
+function progress(own s: app.App, reads: Cell[i32], seeks: Cell[i32], fail_start: boolean): i32 {
+  let first = match (first_write(s, reads)) { Ok(value) => value, Err(code) => { return code; } };
+  if (fail_start) {
+    let good = first.done && first.sound.is_none() && count(0) == 1 && count(3) == 1;
+    return close(first, if (good) { 0 } else { 120 });
+  }
+  let checked = match (backpressure(first, reads, seeks)) { Ok(value) => value, Err(code) => { return code; } };
+  return drain(checked);
+}
+
+function begin(src: source.Source, private_file: boolean): Result[app.App, i32] {
+  if (private_file) {
+    let path = "build/video/native-av-check/stream-fixture.mp4";
+    let (stream, reader) = match (audio_pcm.open(path, 0i64)) { Ok(value) => value, Err(_) => { return Err(122); } };
+    return Ok(app.start_sound(empty(), stream, reader, path));
+  }
+  return Ok(app.start_content_sound(empty(), src, 0i64));
+}
+
+function round(src: source.Source, write_mode: i32, private_file: boolean): i32 {
+  reset();
+  mode(write_mode);
+  let state = match (begin(src, private_file)) { Ok(value) => value, Err(code) => { return code; } };
+  if (!dormant(state)) {
+    return close(state, 110);
+  }
+  let reads = cell_new(0);
+  let seeks = cell_new(0);
+  let watched = observed(state, reads, seeks);
+  let resumed = match (background(watched, reads, seeks)) { Ok(value) => value, Err(code) => { return code; } };
+  let code = progress(resumed, reads, seeks, write_mode == 4);
+  return if (code != 0 || count(3) == 1) { code } else { 121 };
+}
+
+function modes(src: source.Source, private_file: boolean): i32 {
+  for write_mode in [1, 2, 4] {
+    let code = round(src, write_mode, private_file);
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}
+
+pub function run(src: source.Source): i32 {
+  for private_file in [false, true] {
+    let code = modes(src, private_file);
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}

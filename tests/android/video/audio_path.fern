@@ -47,6 +47,18 @@ function write(own state: State): State {
   return State { ...state, at: state.at + wrote };
 }
 
+function stream_write(own state: State): State {
+  // A zero start time marks a stream before its first AAudio start request.
+  let next = write(state);
+  if (next.failed || next.started_ns != 0i64) {
+    return next;
+  }
+  if (!next.music.start()) {
+    return State { ...next, failed: true };
+  }
+  return State { ...next, started_ns: monotonic_ns() };
+}
+
 pub function pump(own state: State): State {
   if (state.failed || state.paused_ns.is_some() || state.at == state.total) {
     return state;
@@ -60,7 +72,7 @@ pub function pump_with(own state: State, seek: (i64) => Result[i64, IoError], re
   }
   for work in 0..8 {
     if (state.at - state.base < state.samples.len()) {
-      return write(state);
+      return stream_write(state);
     }
     state = fill(state, seek, read);
     if (state.failed) {
@@ -68,7 +80,7 @@ pub function pump_with(own state: State, seek: (i64) => Result[i64, IoError], re
     }
   }
   if (state.at - state.base < state.samples.len()) {
-    return write(state);
+    return stream_write(state);
   }
   return state;
 }
@@ -86,26 +98,30 @@ function primed(own state: State, seek: (i64) => Result[i64, IoError], read: (i3
       return Err(frame.Platform);
     }
     if (next.samples.len() > 0) {
-      if (!next.music.start()) {
-        next.close();
-        return Err(frame.Platform);
-      }
-      return Ok(State { ...next, started_ns: monotonic_ns() });
+      return Ok(next);
     }
   }
   next.close();
   return Err(frame.Limit);
 }
 
-pub function create_with(own stream: audio_pcm.Stream, seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError], path: string): Result[State, frame.VideoError] {
+function stream_state(own stream: audio_pcm.Stream, path: string, paused: Option[i64]): Result[State, frame.VideoError] {
   let total = stream.info().frames as i32 * 2;
   let first = stream.first;
   let music = match (open_music()) {
     Ok(value) => value,
     Err(error) => { return Err(error); },
   };
-  let state = State { music: music, samples: [], at: first, first: first, origin: playback_clock.AudioOrigin { frame_position: 0i64, media_us: first as i64 * 1000000i64 / 96000i64 }, started_ns: 0i64, paused_ns: None, failed: false, base: first, total: total, source: Some(stream), path: path, peak: 0 };
+  return Ok(State { music: music, samples: [], at: first, first: first, origin: playback_clock.AudioOrigin { frame_position: 0i64, media_us: first as i64 * 1000000i64 / 96000i64 }, started_ns: 0i64, paused_ns: paused, failed: false, base: first, total: total, source: Some(stream), path: path, peak: 0 });
+}
+
+pub function create_with(own stream: audio_pcm.Stream, seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError], path: string): Result[State, frame.VideoError] {
+  let state = stream_state(stream, path, None)?;
   return primed(state, seek, read);
+}
+
+pub function create_suspended(own stream: audio_pcm.Stream, path: string, now_ns: i64): Result[State, frame.VideoError] {
+  return stream_state(stream, path, Some(now_ns));
 }
 
 pub function create_stream(own stream: audio_pcm.Stream, reader: Reader, path: string): Result[State, frame.VideoError] {
@@ -160,7 +176,13 @@ pub function (own state: State) resume(now_ns: i64): State {
   let Some(paused) = state.paused_ns else {
     return state;
   };
-  if (now_ns < paused || !state.music.start()) {
+  if (now_ns < paused) {
+    return State { ...state, failed: true };
+  }
+  if (state.started_ns == 0i64) {
+    return State { ...state, paused_ns: None };
+  }
+  if (!state.music.start()) {
     return State { ...state, failed: true };
   }
   return State { ...state, started_ns: state.started_ns + now_ns - paused, paused_ns: None };

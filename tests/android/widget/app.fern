@@ -6,7 +6,7 @@ import "std/android/widget";
 @jni("dev.fern.widgettest.Row extends android.appwidget.AppWidgetProvider", "void onReceive(android.content.Context, android.content.Intent)")
 pub function on_receive(env: usize, thiz: usize, context: usize, intent: usize): void {
   if (widget.action(env, intent) == widget.UPDATE) {
-    let shown = widget.show(env, context, "dev.fern.widgettest.Row", widget.Look { texts: [(0, "Ready")], actions: [(1, "dev.fern.widgettest.GO")], opens: [0] });
+    let shown = widget.show(env, context, "dev.fern.widgettest.Row", widget.Look { texts: [(0, "Ready")], actions: [(1, "dev.fern.widgettest.GO")], opens: [0], starts: [] });
   }
 }
 

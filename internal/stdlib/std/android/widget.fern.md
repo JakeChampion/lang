@@ -6,7 +6,7 @@ This module shows the texts and sets the buttons of the app widget of an app, on
 
 `fern -apk` puts a widget in the app when the app has two things. The first is the list `widget` of the `[android]` table of `fern.toml`, which names the items of the row of the widget: `text:title:Song` is a text, and `button:next:Next` is a button. The second is a @jni class that extends `android.appwidget.AppWidgetProvider`. Android sends that class a broadcast when the person adds the widget, and when the person taps a button of it.
 
-The items have numbers from 0, in the order of the list. `show` gives each widget of the app its texts and the actions of its buttons. A tap on an item with an action sends the provider class a broadcast with that action. A tap on an item that `opens` starts the app.
+The items have numbers from 0, in the order of the list. `show` gives each widget of the app its texts and the actions of its buttons. A tap on an item with an action sends the provider class a broadcast with that action. A tap on an item that `opens` starts the app. A tap on an item of `starts` starts the app with the action of the item. The app reads that action from the Intent that started it. An app uses `starts` for the buttons of a widget while the app does not run, because then no player can take a broadcast.
 
 Android keeps what `show` gave it while the app does not run. So the widget shows the last state of the app, and its buttons start the process of the app when the process is not there.
 
@@ -42,9 +42,10 @@ The numbers of the resources are those that `fern -apk` gives the layout of the 
 ```fern
 <<widget>>=
 // What a widget shows: the text of each item of `texts`, the action that
-// each item of `actions` sends to the provider class, and the items of
-// `opens`, which start the app.
-pub struct Look { texts: (i32, string)[], actions: (i32, string)[], opens: i32[] }
+// each item of `actions` sends to the provider class, the items of
+// `opens`, which start the app, and the items of `starts`, which start the
+// app with an action.
+pub struct Look { texts: (i32, string)[], actions: (i32, string)[], opens: i32[], starts: (i32, string)[] }
 
 // The action of the broadcast that Android sends when the person adds a
 // widget, and when the phone starts.
@@ -106,6 +107,21 @@ function on_tap(e: usize, views: usize, item: i32, pending: usize): void {
   }
 }
 
+// A copy of the Intent `launch` that starts the app with the action
+// `name`.
+function started_with(e: usize, launch: usize, name: string): usize {
+  if (launch == 0 as usize) {
+    return 0 as usize;
+  }
+  let intent: usize = new_object(e, jni.find_class(e, "android/content/Intent"), "(Landroid/content/Intent;)V", [launch]);
+  let label: usize = jni.new_string(e, name);
+  let aimed: usize = jni.call_object(e, intent, "setAction", "(Ljava/lang/String;)Landroid/content/Intent;", [label]);
+  for local in [aimed, label] {
+    let dropped: usize = jni.delete_local_ref(e, local);
+  }
+  return intent;
+}
+
 // The RemoteViews of `look` for the package `package` and the provider
 // class `provider`.
 function views_of(e: usize, context: usize, package: usize, provider: string, look: Look): usize {
@@ -126,11 +142,17 @@ function views_of(e: usize, context: usize, package: usize, provider: string, lo
       let dropped: usize = jni.delete_local_ref(e, local);
     }
   }
-  if (look.opens.len() > 0) {
+  if (look.opens.len() > 0 || look.starts.len() > 0) {
     let manager: usize = jni.call_object(e, context, "getPackageManager", "()Landroid/content/pm/PackageManager;", []);
     let launch: usize = jni.call_object(e, manager, "getLaunchIntentForPackage", "(Ljava/lang/String;)Landroid/content/Intent;", [package]);
     for item in look.opens {
       on_tap(e, views, item, call_static(e, pending_class, "getActivity", "(Landroid/content/Context;ILandroid/content/Intent;I)L" + PENDING + ";", [context, (64 + item) as usize, launch, PENDING_FLAGS as usize]));
+    }
+    for pair in look.starts {
+      let (item, name) = pair;
+      let intent: usize = started_with(e, launch, name);
+      on_tap(e, views, item, call_static(e, pending_class, "getActivity", "(Landroid/content/Context;ILandroid/content/Intent;I)L" + PENDING + ";", [context, (128 + item) as usize, intent, PENDING_FLAGS as usize]));
+      let dropped: usize = jni.delete_local_ref(e, intent);
     }
     for local in [launch, manager] {
       let dropped: usize = jni.delete_local_ref(e, local);

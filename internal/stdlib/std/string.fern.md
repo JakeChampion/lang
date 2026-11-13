@@ -15,6 +15,9 @@ A scalar wider than the size occupies one larger chunk.
 A zero or negative size returns the whole nonempty string as one chunk.
 An empty string returns no chunks. Array `chunks` returns no chunks for a nonpositive size.
 
+String width helpers preserve the input when the requested code-point width does not exceed its current width.
+This rule includes zero and negative widths, including `i32.MIN`.
+
 ## Executable example
 
 ```fern test name=std-string-example
@@ -2083,8 +2086,15 @@ function __codepoint_offset(s: string, k: i32): i32 {
   return i;
 }
 
+function __padding_needed(width: i32, current: i32): i32 {
+  if (width <= current) {
+    return 0;
+  }
+  return width - current;
+}
+
 pub function (s: string) pad_start(n: i32, ch: char): string {
-  let short = n - s.codepoint_count();
+  let short = __padding_needed(n, s.codepoint_count());
   if (short <= 0) {
     return s;
   }
@@ -2108,7 +2118,7 @@ pub function (s: string) pad_start(n: i32, ch: char): string {
 }
 
 pub function (s: string) pad_end(n: i32, ch: char): string {
-  let short = n - s.codepoint_count();
+  let short = __padding_needed(n, s.codepoint_count());
   if (short <= 0) {
     return s;
   }
@@ -2132,7 +2142,7 @@ pub function (s: string) pad_end(n: i32, ch: char): string {
 }
 
 pub function (s: string) zfill(width: i32): string {
-  let need = width - s.codepoint_count();
+  let need = __padding_needed(width, s.codepoint_count());
   if (need <= 0) {
     return s;
   }
@@ -2292,7 +2302,7 @@ function __str_index_ci(s: string, needle: string): i32 {
 ```fern
 <<35 pub function (s: string) pad_start_str(width: i32, fill: string): string>>=
 pub function (s: string) pad_start_str(width: i32, fill: string): string {
-  let short = width - s.codepoint_count();
+  let short = __padding_needed(width, s.codepoint_count());
   let flen = fill.codepoint_count();
   if (short <= 0 || flen == 0) {
     return s;
@@ -2302,7 +2312,7 @@ pub function (s: string) pad_start_str(width: i32, fill: string): string {
 }
 
 pub function (s: string) pad_end_str(width: i32, fill: string): string {
-  let short = width - s.codepoint_count();
+  let short = __padding_needed(width, s.codepoint_count());
   let flen = fill.codepoint_count();
   if (short <= 0 || flen == 0) {
     return s;
@@ -2312,7 +2322,7 @@ pub function (s: string) pad_end_str(width: i32, fill: string): string {
 }
 
 pub function (s: string) center(width: i32, ch: char): string {
-  let total = width - s.codepoint_count();
+  let total = __padding_needed(width, s.codepoint_count());
   if (total <= 0) {
     return s;
   }

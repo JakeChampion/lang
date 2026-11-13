@@ -1,3 +1,8 @@
 function __fern_open_with(path: string, flags: i32, write: i32): Result[i32, IoError] {
-  return __fern_open_res(path, __fern_open_flags(flags, write), 438);
+  // Bit 1024 of the flag word makes a file that the open creates private to its owner.
+  let mode = 438;
+  if ((flags & 1024) != 0) {
+    mode = 384;
+  }
+  return __fern_open_res(path, __fern_open_flags(flags, write), mode);
 }

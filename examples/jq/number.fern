@@ -115,9 +115,40 @@ pub function canonical(s: string): string {
   return out + "E" + adjusted.to_string();
 }
 
+// The texts of the three computed numbers that have no digits.
+const NAN: string = "nan";
+
+const INFINITY: string = "inf";
+
+const MINUS_INFINITY: string = "-inf";
+
+// The text of a number as jq writes it. NaN is null, and an infinity is the
+// largest finite f64 of its sign.
+pub function written(t: string): string {
+  if (t == NAN) {
+    return "null";
+  }
+  if (t == INFINITY) {
+    return "1.7976931348623157e+308";
+  }
+  if (t == MINUS_INFINITY) {
+    return "-1.7976931348623157e+308";
+  }
+  return t;
+}
+
 // The f64 of a number text, as jq compares numbers. An out-of-range literal
 // is an infinity.
 pub function value(s: string): f64 {
+  if (s == NAN) {
+    return 0.0 / 0.0;
+  }
+  if (s == INFINITY) {
+    return 1.0 / 0.0;
+  }
+  if (s == MINUS_INFINITY) {
+    return -1.0 / 0.0;
+  }
   match (f64.parse_f64(s)) {
     Ok(v) => {
       return v;
@@ -166,11 +197,16 @@ function exponent_text(e: i32): string {
   return sign + n.to_string();
 }
 
-// A computed number as jq writes it. NaN is null, and an infinity is the
-// largest finite f64 of its sign.
+// The text of a computed number: the shortest digits of a finite f64.
 pub function format(x: f64): string {
   if (x != x) {
-    return "null";
+    return NAN;
+  }
+  if (x > 1.7976931348623157e308) {
+    return INFINITY;
+  }
+  if (x < -1.7976931348623157e308) {
+    return MINUS_INFINITY;
   }
   let sign = "";
   if (x < 0.0 || x == 0.0 && 1.0 / x < 0.0) {
@@ -179,9 +215,6 @@ pub function format(x: f64): string {
   let a = x;
   if (a < 0.0) {
     a = -a;
-  }
-  if (a > 1.7976931348623157e308) {
-    a = 1.7976931348623157e308;
   }
   let s = shortest(a);
   let n = s.digits.len();
@@ -205,6 +238,13 @@ pub function format(x: f64): string {
 // number literals so, and the shortest digits of two f64 values order as the
 // f64 values do.
 pub function compare(a: string, b: string): i32 {
+  // jq orders NaN below each number, and below NaN also.
+  if (a == NAN) {
+    return -1;
+  }
+  if (b == NAN) {
+    return 1;
+  }
   let x = decimal(a);
   let y = decimal(b);
   if (!x.ok || !y.ok) {

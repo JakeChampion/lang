@@ -1,0 +1,68 @@
+// A built-in handle is a value column of a Map.
+// A Reader and a Writer are descriptor numbers. A Socket is a 64-bit
+// word, and the handle here has a close count above zero, so a column that
+// keeps only 32 bits makes the builtin refuse it.
+import "core/map";
+
+function send(s: Socket): i32 {
+  return tcp_send_bytes(s, [7u8]);
+}
+
+function sockets(): i32 {
+  let ls: Socket = tcp_listen(0);
+  let port = tcp_local_port(ls);
+  let lo: u8[] = [127u8, 0u8, 0u8, 1u8];
+  for i in 0..3 {
+    let c: Socket = tcp_connect_with(lo, port, false);
+    let a: Socket = tcp_accept(ls);
+    tcp_close(a);
+    tcp_close(c);
+  }
+  let s: Socket = tcp_connect_with(lo, port, false);
+  let peer: Socket = tcp_accept(ls);
+  let by_name: Map[string, Socket] = map_new(4);
+  by_name = by_name.insert("client", s);
+  by_name = by_name.insert("server", peer);
+  print("by name " + by_name.len().to_string() + " " + send(by_name.get_or("client", peer)).to_string());
+  match (by_name.get("server")) {
+    Some(x) => {
+      print("get " + send(x).to_string());
+    },
+    None => {
+      print("get none");
+    }
+  }
+  let sent = 0;
+  for v in by_name.values() {
+    sent = sent + send(v);
+  }
+  print("values " + sent.to_string());
+  by_name = by_name.remove("server");
+  print("after delete " + by_name.len().to_string() + " " + by_name.contains("server").to_string());
+  let by_number: Map[i32, Socket] = map_new(4);
+  for i in 0..40 {
+    by_number = by_number.insert(i, s);
+  }
+  print("grown " + by_number.len().to_string() + " " + send(by_number.get_or(39, peer)).to_string());
+  return tcp_close(s) + tcp_close(peer) + tcp_close(ls);
+}
+
+function standard(): i32 {
+  let readers: Map[string, Reader] = map_new(4);
+  readers = readers.insert("in", stdin());
+  let writers: Map[i32, Writer] = map_new(4);
+  writers = writers.insert(1, stdout());
+  writers = writers.insert(2, stderr());
+  for i in 3..40 {
+    writers = writers.insert(i, stdout());
+  }
+  writers.get_or(1, stderr()).write("written through the map\n");
+  writers.get_or(39, stderr()).write("written after the map grew\n");
+  print("readers " + readers.len().to_string() + " " + (readers.get_or("in", stdin()).fd == stdin().fd).to_string() + " writers " + writers.len().to_string());
+  return 0;
+}
+
+function main(): i32 {
+  print("closed " + sockets().to_string());
+  return standard();
+}
