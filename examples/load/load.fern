@@ -1,12 +1,14 @@
 // load: an HTTP/1.1 load generator with the command line of oha. Each of
 // -c connections sends its next request when the previous response is
-// complete, and keeps the connection open between requests.
+// complete, or with -q when the timetable says that the request is due. A
+// connection stays open between requests.
 import "std/async";
 import "std/dns";
 import "std/net";
 import "std/time";
 import "./options";
 import "./report";
+import "./schedule";
 
 const CLOSED: i32 = 0;
 
@@ -33,6 +35,11 @@ struct Run {
   conns: Conn[],
   by_fd: i32[],
   ready: i32[],
+  // A stack of the connections that wait for the next request of -q: the
+  // first `parked_n` items.
+  parked: i32[],
+  parked_n: i32,
+  schedule: schedule.Schedule,
   tally: report.Tally,
   drv: async.RealDriver,
 }
@@ -107,50 +114,88 @@ function run(o: options.Options): i32 {
   }
   let conns: Conn[] = [];
   let ready: i32[] = [];
+  let parked: i32[] = [];
   for i in 0..n {
     conns = conns.append(closed());
     ready = ready.append(i);
+    parked = parked.append(-1);
   }
+  let plan = match (o.rate) {
+    Some(q) => schedule.fixed(start, q),
+    None => schedule.closed(start),
+  };
   let none: i32[] = [];
-  let r = drive(Run { addr: addr, request: options.request(o), method: o.method, limit: limit, deadline: deadline, issued: 0, busy: 0, conns: conns, by_fd: none, ready: ready, tally: report.tally(), drv: async.real_driver() }, o.wait);
+  let r = drive(Run { addr: addr, request: options.request(o), method: o.method, limit: limit, deadline: deadline, issued: 0, busy: 0, conns: conns, by_fd: none, ready: ready, parked: parked, parked_n: 0, schedule: plan, tally: report.tally(), drv: async.real_driver() }, o.wait);
   let elapsed = monotonic_ns() - start;
   for i in 0..r.conns.len() {
     r = shut(r, i);
   }
-  print(r.tally.summary(elapsed));
+  if (o.json) {
+    print(r.tally.json(elapsed));
+  } else {
+    print(r.tally.summary(elapsed));
+  }
   return 0;
 }
 
-// Runs the requests until none is left in flight.
+// Runs the requests until none is left in flight and none is left to send.
 function drive(own r: Run, wait: boolean): Run {
   while (true) {
     r = start_ready(r);
     if (r.deadline > 0 && monotonic_ns() >= r.deadline) {
       r = stop(r, wait);
     }
-    if (r.busy == 0) {
+    if (r.busy == 0 && (r.issued >= r.limit || r.parked_n == 0)) {
       return r;
     }
-    let timeout: Option[Duration] = None;
-    if (r.deadline > 0) {
-      timeout = Some(time.duration_nanos(r.deadline - monotonic_ns()));
-    }
-    let events = r.drv.wait(r.conns.len(), timeout);
+    let events = r.drv.wait(r.conns.len(), timeout(r));
     r = dispatch(r, events);
   }
   return r;
 }
 
-// Starts a request on each connection in `ready`, and on each that a failed
-// start puts back.
+// The wait of the reactor: to the end of -z, or to the next request of -q
+// when a connection waits for it.
+function timeout(r: Run): Option[Duration] {
+  let now = monotonic_ns();
+  let left: Option[Duration] = None;
+  if (r.deadline > 0) {
+    left = Some(time.duration_nanos(r.deadline - now));
+  }
+  if (r.parked_n == 0 || r.issued >= r.limit) {
+    return left;
+  }
+  let next = r.schedule.wait(r.issued, now);
+  if let Some(d) = left {
+    if (d.as_nanos() < next.as_nanos()) {
+      return left;
+    }
+  }
+  return Some(next);
+}
+
+// Starts a request on each connection in `ready`, on each that a failed
+// start puts back, and on a parked connection for each request that is due.
 function start_ready(own r: Run): Run {
   let none: i32[] = [];
-  while (r.ready.len() > 0) {
+  while (true) {
+    r = wake(r);
+    if (r.ready.len() == 0) {
+      return r;
+    }
     let starting = r.ready;
     r = Run { ...r, ready: none };
     for i in starting {
       r = begin(r, i);
     }
+  }
+  return r;
+}
+
+function wake(own r: Run): Run {
+  let now = monotonic_ns();
+  while (r.parked_n > 0 && r.issued < r.limit && r.schedule.starts(r.issued, now).is_some()) {
+    r = Run { ...r, parked_n: r.parked_n - 1, ready: r.ready.append(r.parked[r.parked_n - 1]) };
   }
   return r;
 }
@@ -185,22 +230,32 @@ function stop(own r: Run, wait: boolean): Run {
   return r;
 }
 
-// Starts the next request on connection `i`, when one is left to send.
+// Starts the next request on connection `i`, when one is left to send and
+// it is due. When it is not due, the connection waits in `parked`.
 function begin(own r: Run, i: i32): Run {
   let c = r.conns[i];
-  if (r.issued >= r.limit || r.deadline > 0 && monotonic_ns() >= r.deadline) {
-    if (c.sock.is_some()) {
-      return Run { ...r, conns: r.conns.with(i, Conn { ...c, phase: IDLE }) };
-    }
-    return r;
+  let now = monotonic_ns();
+  if (r.issued >= r.limit || r.deadline > 0 && now >= r.deadline) {
+    return idle(r, i);
   }
+  let Some(started) = r.schedule.starts(r.issued, now) else {
+    return idle(Run { ...r, parked: r.parked.with(r.parked_n, i), parked_n: r.parked_n + 1 }, i);
+  };
   let none: u8[] = [];
-  r = Run { ...r, issued: r.issued + 1, busy: r.busy + 1, conns: r.conns.with(i, Conn { ...c, started: monotonic_ns(), buf: none }) };
+  r = Run { ...r, issued: r.issued + 1, busy: r.busy + 1, conns: r.conns.with(i, Conn { ...c, started: started, buf: none }) };
   if (c.sock.is_some()) {
     let request = r.request;
     return send(r, i, request);
   }
   return connect(r, i);
+}
+
+function idle(own r: Run, i: i32): Run {
+  let c = r.conns[i];
+  if (c.sock.is_some()) {
+    return Run { ...r, conns: r.conns.with(i, Conn { ...c, phase: IDLE }) };
+  }
+  return r;
 }
 
 function connect(own r: Run, i: i32): Run {

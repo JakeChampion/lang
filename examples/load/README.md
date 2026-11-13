@@ -2,8 +2,9 @@
 
 An HTTP load generator with the command line of
 [oha](https://github.com/hatoo/oha). It sends requests to one URL at a fixed
-concurrency and gives the latency distribution. This version is slice 1 of
-#15592: HTTP/1.1 with keep-alive on one CPU.
+concurrency or at a fixed rate. It gives the latency distribution as text or
+as JSON. This version is slices 1 and 2 of #15592: HTTP/1.1 with keep-alive on
+one CPU.
 
 ```
 $ load -n 2000 -c 10 http://127.0.0.1:8080/
@@ -35,6 +36,7 @@ Status code distribution:
 ```
 $ fern -O -target x86-64-linux -o load examples/load/load.fern   # or arm64-linux
 $ load -z 10s -c 50 http://127.0.0.1:8080/
+$ load -q 1000 -z 10s -c 50 --output-format json http://127.0.0.1:8080/
 ```
 
 ## Options
@@ -45,6 +47,9 @@ $ load -z 10s -c 50 http://127.0.0.1:8080/
 | `-z DURATION` | Send requests for DURATION instead of a count, for example `10s`, `500ms`, `1m` or `1m 30s`. |
 | `-w`, `--wait-ongoing-requests-after-deadline` | At the end of `-z`, wait for the requests in flight. |
 | `-c CONNECTIONS` | Use CONNECTIONS connections at the same time. The default is 50. |
+| `-q RATE` | Send RATE requests each second, across all connections, for example `1000` or `0.5`. The maximum is 1,000,000,000. See [The rate of -q](#the-rate-of--q). |
+| `--latency-correction` | Accepted for compatibility with oha. The tool always corrects the latency of `-q`. |
+| `--output-format FORMAT` | `text` (the default) or `json`. See [The JSON summary](#the-json-summary). |
 | `-m METHOD`, `--method METHOD` | The method. The default is `GET`. |
 | `-H "Name: value"` | Add a header field. Give `-H` again for each field. |
 | `-d BODY` | Send BODY as the request body, with a `Content-Length` field. |
@@ -74,15 +79,73 @@ times in the summary use the unit of the slowest response: `ns`, `us`, `ms` or
 - **Error distribution** gives the count of each error. It is only there when
   a request failed.
 
-The latency of a request starts when the request starts. For the first request
-on a connection, it includes the time to connect.
+The latency of a request starts when the request starts. With `-q`, it starts
+when the request is due. For the first request on a connection, it includes
+the time to connect.
+
+## The rate of -q
+
+With `-q RATE`, the tool sends requests on a timetable. Request k (k = 0, 1,
+2, and so on) is due at T0 + k / RATE seconds. T0 is the start of the run.
+
+A free connection sends the next request at the time that it is due. When all
+connections are busy, a request that is due waits for the first connection
+that becomes free. The requests go out in the order of the timetable. Thus
+`-c` is the maximum number of requests in flight.
+
+The latency of a request starts when it is due, not when it goes out. Thus
+when the server stops, each request that is due during the stop gets the wait
+in its latency. This is the correction for
+coordinated omission of wrk2.
+
+With `-n COUNT`, the tool sends COUNT requests. The run takes at least
+(COUNT - 1) / RATE seconds.
+
+With `-z DURATION`, the tool sends each request that is due before the end of
+DURATION. That is not more than DURATION × RATE requests, rounded up. Some
+requests can be due at the end with no free connection. The tool does not
+send them, and the summary does not count them.
+
+The tool waits in the reactor to 1 ms before the next request is due. Then it
+polls. Thus a request goes out not more than one loop of the reactor after it
+is due.
+
+Without `-q`, each connection sends its next request when the response to
+the previous request is complete.
+
+## The JSON summary
+
+`--output-format json` writes one JSON object with the keys of
+`oha --output-format json` (oha 1.16) for the values that the tool measures.
+Times are in seconds, except in `metrics.latency_ms`. A latency is `null`
+when there is no response.
+
+| Key | Contents |
+| --- | --- |
+| `summary` | `successRate` (a fraction from 0 to 1), `total`, `slowest`, `fastest`, `average` and `requestsPerSec` |
+| `metrics` | `success_rate`, `requests_per_sec`, and `latency_ms` with `min`, `mean`, `p50`, `p95`, `p99` and `max` in milliseconds to three decimals |
+| `latencyPercentiles` | `p10`, `p25`, `p50`, `p75`, `p90`, `p95`, `p99`, `p99.9` and `p99.99` |
+| `statusCodeDistribution` | The count of each status code, for example `{"200": 1000}` |
+| `errorDistribution` | The count of each error message |
+
+These oha keys are not in the JSON summary, because the tool does not
+measure their values:
+
+- `summary.totalData`, `summary.sizePerRequest` and `summary.sizePerSec`
+- `responseTimeHistogram`
+- `firstByteHistogram` and `firstBytePercentiles`
+- `rps`
+- `details`
 
 ## Differences from oha
 
 - The tool uses one CPU. oha uses a thread for each core. Slice 3 adds a
   reactor for each CPU.
-- There is no `-q` rate and no JSON output. Slice 2 adds them, with the
-  correction for coordinated omission.
+- With `-q`, the tool always corrects the latency for coordinated omission.
+  oha does this only with `--latency-correction`.
+- A percentile is the highest value of its histogram bucket, with three
+  significant digits. oha gives the exact value.
+- `--output-format` has no `csv` or `quiet`.
 - There is no HTTPS. An `https` URL gives exit code 2. Slice 3 adds HTTPS.
 - The tool refuses a `Content-Length` or `Transfer-Encoding` field from `-H`,
   because the tool frames the body of `-d` itself.
@@ -116,7 +179,7 @@ bucket. It is not more than the slowest response or less than the fastest.
 
 The table compares the tool with oha 1.16.0 at `-c 50` for 10 seconds. The
 server was the `std/serve` hello server of
-`internal/testing/e2e/fernload_test.go`, on the same host.
+`internal/testing/e2e/load_example_test.go`, on the same host.
 The runs of the two tools alternated. Slice 3 makes the full benchmark.
 
 | Tool | Requests/sec (mean of 3) | CPU time for each request |
@@ -137,16 +200,16 @@ The host was a 4-core x86-64 container (Intel Xeon at 2.1 GHz, Linux 6.18) on
 | --- | --- |
 | `load.fern` | The command: the connections and the reactor loop |
 | `options.fern` | The command line and the request bytes |
-| `report.fern` | The framing of a response, the tally and the summary |
+| `schedule.fern` | The timetable of `-q` |
+| `report.fern` | The framing of a response, the tally, and the text and JSON summaries |
 | `histogram.fern` | The latency histogram |
 | `load_test.fern` | The unit tests |
 
 ## Tests
 
 - `TestSelfHostExampleLoadUnit` runs `load_test.fern` on x86-64, arm64 and
-  wasm32-wasi, with a balanced leak census. It tests the options, the request,
-  the histogram buckets and percentiles, how `std/http` frames responses, and
-  the summary.
+  wasm32-wasi, with a balanced leak census. It tests the options, the request, the
+  timetable of `-q`, the histogram, the response ends and the summaries.
 - `TestSelfHostExampleLoadHTTP` runs the command on x86-64 and arm64 against a
   Go `net/http` server that counts its requests and connections. It checks
   that the count of the server is the count of the tool with `-n`, `-z` and
@@ -155,3 +218,12 @@ The host was a 4-core x86-64 container (Intel Xeon at 2.1 GHz, Linux 6.18) on
   `-m`, `-H`, `-d`, and the usage errors.
 
 Both are in `internal/testing/e2ecompiler/self_host_example_load_test.go`.
+
+In the `rate json` case of `TestSelfHostExampleLoadHTTP`, the server stops for
+50 ms on each 20th request. The tool sends at `-q 200 -c 1`. The test reads
+the JSON summary with `encoding/json`. It checks the count of requests, and
+that the corrected p75 and p99 show the stops.
+
+`TestLoadExampleX86_64` and `TestLoadExampleInterp` in
+`internal/testing/e2e/load_example_test.go` run the tool with `-q` against
+a `std/serve` hello, natively and under `-interp`.

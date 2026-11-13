@@ -1,12 +1,19 @@
 // The results of a run: where each response ends, the tally, and the
-// summary in the layout of oha.
+// summary in the text layout or the JSON layout of oha.
 import "core/cmp";
 import "std/f64";
 import "std/http";
+import "std/json";
 import "./histogram";
 
 // The error of a request that was in flight when the -z time ended.
 pub const ABORTED: string = "aborted due to deadline";
+
+// The percentiles of the summaries in hundredths of a percent, and their
+// names in the JSON summary.
+const PERCENTS: i64[] = [1000, 2500, 5000, 7500, 9000, 9500, 9900, 9990, 9999];
+
+const PERCENT_NAMES: string[] = ["p10", "p25", "p50", "p75", "p90", "p95", "p99", "p99.9", "p99.99"];
 
 pub struct Reply { status: i32, len: i32, keep_alive: boolean }
 
@@ -118,21 +125,13 @@ pub function (t: Tally) summary(elapsed_ns: i64): string {
   if (h.total > 0) {
     let u = unit(h.max);
     out += "\nResponse time distribution:\n";
-    for p in [1000, 2500, 5000, 7500, 9000, 9500, 9900, 9990, 9999] {
+    for p in PERCENTS {
       let percent = (p as f64 / 100.0).to_string_prec(2);
-      out += f"  {percent}% in " + in_unit(h.at(p as i64), u) + "\n";
+      out += f"  {percent}% in " + in_unit(h.at(p), u) + "\n";
     }
   }
   out += "\nStatus code distribution:\n";
-  let codes: string[] = [];
-  let counts: i64[] = [];
-  for code in 0..t.statuses.len() {
-    if (t.statuses[code] > 0) {
-      codes = codes.append(code.to_string());
-      counts = counts.append(t.statuses[code]);
-    }
-  }
-  for row in ranked(codes, counts) {
+  for row in t.codes() {
     out += f"  [{row.1}] {row.0} responses\n";
   }
   if (t.errors.len() > 0) {
@@ -144,22 +143,124 @@ pub function (t: Tally) summary(elapsed_ns: i64): string {
   return out;
 }
 
-// The first block of the summary. A request aborted at the end of -z counts
-// in the request rate, but not in the success rate.
+// The count of each status code, the largest first: (count, code).
+function (t: Tally) codes(): (i64, string)[] {
+  let codes: string[] = [];
+  let counts: i64[] = [];
+  for code in 0..t.statuses.len() {
+    if (t.statuses[code] > 0) {
+      codes = codes.append(code.to_string());
+      counts = counts.append(t.statuses[code]);
+    }
+  }
+  return ranked(codes, counts);
+}
+
+// The first block of the summary.
 function (t: Tally) totals(elapsed_ns: i64): string {
   let h = t.latency;
-  let failed = t.failed();
-  let counted = h.total + failed - t.aborted();
-  let rate = if (counted > 0) { h.total as f64 * 100.0 / (counted as f64) } else { 0.0 };
   let u = unit(h.max);
-  let rps = if (elapsed_ns > 0) { (h.total + failed) as f64 * 1000000000.0 / (elapsed_ns as f64) } else { 0.0 };
   let out = "Summary:\n";
-  out += "  Success rate:\t" + rate.to_string_prec(2) + "%\n";
+  out += "  Success rate:\t" + (t.success() * 100.0).to_string_prec(2) + "%\n";
   out += "  Total:\t" + in_unit(elapsed_ns, u) + "\n";
   if (h.total > 0) {
     out += "  Slowest:\t" + in_unit(h.max, u) + "\n";
     out += "  Fastest:\t" + in_unit(h.min, u) + "\n";
     out += "  Average:\t" + in_unit(h.mean(), u) + "\n";
   }
-  return out + "  Requests/sec:\t" + rps.to_string_prec(4) + "\n";
+  return out + "  Requests/sec:\t" + t.rps(elapsed_ns).to_string_prec(4) + "\n";
+}
+
+// The responses divided by the requests that ended. A request aborted at the
+// end of -z is not in it.
+function (t: Tally) success(): f64 {
+  let counted = t.latency.total + t.failed() - t.aborted();
+  if (counted == 0) {
+    return 0.0;
+  }
+  return t.latency.total as f64 / (counted as f64);
+}
+
+// The requests that ended for each second. A request aborted at the end of
+// -z is in it.
+function (t: Tally) rps(elapsed_ns: i64): f64 {
+  if (elapsed_ns <= 0) {
+    return 0.0;
+  }
+  return (t.latency.total + t.failed()) as f64 * 1000000000.0 / (elapsed_ns as f64);
+}
+
+// A number as serde_json writes an f64: an integral value has `.0`.
+pub function number(x: f64): json.JsonValue {
+  let text = x.to_string();
+  for c in text.bytes() {
+    if (c == 46 as u8 || c == 101 as u8) {
+      return json.JNumber(text);
+    }
+  }
+  return json.JNumber(text + ".0");
+}
+
+function seconds(ns: i64): json.JsonValue {
+  return number(ns as f64 / 1000000000.0);
+}
+
+// A latency in seconds, or null when there was no response.
+function (t: Tally) in_seconds(ns: i64): json.JsonValue {
+  if (t.latency.total == 0) {
+    return json.JNull;
+  }
+  return seconds(ns);
+}
+
+// A latency in milliseconds with three decimals, as in the `metrics` object
+// of oha, or null when there was no response.
+function (t: Tally) in_millis(ns: i64): json.JsonValue {
+  if (t.latency.total == 0) {
+    return json.JNull;
+  }
+  return number(((ns + 500) / 1000) as f64 / 1000.0);
+}
+
+function counts(rows: (i64, string)[]): json.JsonValue {
+  let o = json.object();
+  for row in rows {
+    o = o.insert(row.1, json.JNumber(row.0.to_string()));
+  }
+  return json.JObject(o);
+}
+
+// The JSON summary of a run that took `elapsed_ns`, with the keys of
+// `oha --output-format json` for what the tool measures.
+pub function (t: Tally) json(elapsed_ns: i64): string {
+  let h = t.latency;
+  let summary = json.from([
+    ("successRate", number(t.success())),
+    ("total", seconds(elapsed_ns)),
+    ("slowest", t.in_seconds(h.max)),
+    ("fastest", t.in_seconds(h.min)),
+    ("average", t.in_seconds(h.mean())),
+    ("requestsPerSec", number(t.rps(elapsed_ns))),
+  ]);
+  let latency_ms = json.from([
+    ("min", t.in_millis(h.min)),
+    ("mean", t.in_millis(h.mean())),
+    ("p50", t.in_millis(h.at(5000))),
+    ("p95", t.in_millis(h.at(9500))),
+    ("p99", t.in_millis(h.at(9900))),
+    ("max", t.in_millis(h.max)),
+  ]);
+  let metrics = json.from([("success_rate", number(t.success())), ("requests_per_sec", number(t.rps(elapsed_ns))), ("latency_ms", json.JObject(latency_ms))]);
+  let percentiles = json.object();
+  for i in 0..PERCENTS.len() {
+    percentiles = percentiles.insert(PERCENT_NAMES[i], t.in_seconds(h.at(PERCENTS[i])));
+  }
+  let doc = json.from([
+    ("summary", json.JObject(summary)),
+    ("metrics", json.JObject(metrics)),
+    ("latencyPercentiles", json.JObject(percentiles)),
+    ("statusCodeDistribution", counts(t.codes())),
+    ("errorDistribution", counts(ranked(t.errors, t.error_counts))),
+  ]);
+  return json.encode_pretty(json.JObject(doc), 2);
 }
