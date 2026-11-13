@@ -471,6 +471,17 @@ pub function inline_reuse_call(ins: SInst): boolean {
   return reuse_alloc_call(ins) && ins.imm != REUSE_NULL;
 }
 
+// A reuse allocation that tests its token inline. A build for size calls the
+// helper instead.
+pub function slow_reuse_call(ins: SInst, size: boolean): boolean {
+  return !size && inline_reuse_call(ins);
+}
+
+// A reuse allocation that the emitters expand inline.
+pub function alloc_inline(ins: SInst, size: boolean): boolean {
+  return fresh_alloc_call(ins) || slow_reuse_call(ins, size);
+}
+
 // A call that the allocator counts: it returns, and its result is not the
 // block's own return value.
 pub function counted_call(blk: SBlock, k: i32): boolean {
@@ -516,7 +527,7 @@ pub function cold_positions(f: SFunc, size: boolean, back: boolean): i32[] {
         }
       } else if (cold[bi] && inst_is_call(ins.kind_tag) && !never_returns(ins) && !returns_call(blk, k)) {
         kind = COLD_BRANCH;
-      } else if (!size && inline_reuse_call(ins)) {
+      } else if (slow_reuse_call(ins, size)) {
         kind = COLD_SLOW;
       }
       out = out.append(kind);
