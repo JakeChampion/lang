@@ -1,0 +1,122 @@
+// A const name in a match arm is a literal pattern of the value of the const.
+// It does not bind a new name.
+
+const OPT_A: i32 = 1;
+
+const OPT_B = 2;
+
+const BYTE_X: u8 = 120;
+
+const BIG: u64 = 9000000000;
+
+const NEG: i64 = -5;
+
+const NAME: string = "fern";
+
+const YES: boolean = true;
+
+const SHIFTED: i32 = 1 << 3;
+
+const LOW: i32 = 10;
+
+const HIGH: i32 = 20;
+
+function kind(id: i32): string {
+  return match (id) {
+    OPT_A => "a",
+    OPT_B => "b",
+    n => f"other {n}",
+  };
+}
+
+function byte_kind(c: u8): i32 {
+  match (c) {
+    BYTE_X => {
+      return 1;
+    },
+    b'y' => {
+      return 2;
+    },
+    _ => {
+      return 0;
+    }
+  }
+}
+
+function alternatives(c: u8): i32 {
+  return match (c) {
+    BYTE_X | b'y' => 1,
+    n => n as i32,
+  };
+}
+
+function at_binding(c: u8): i32 {
+  return match (c) {
+    m @ BYTE_X => m as i32 + 1000,
+    _ => 0,
+  };
+}
+
+function payload(v: Option[u8]): i32 {
+  return match (v) {
+    Some(BYTE_X) => 1,
+    Some(_) => 2,
+    None => 3,
+  };
+}
+
+function tuple(c: u8, k: i32): i32 {
+  return match ((c, k)) {
+    (BYTE_X, OPT_A) => 1,
+    _ => 0,
+  };
+}
+
+function range(v: i32): string {
+  return match (v) {
+    LOW..HIGH => "in",
+    HIGH..=30 => "high",
+    _ => "out",
+  };
+}
+
+function computed(v: i32): i32 {
+  match (v) {
+    SHIFTED => {
+      return 1;
+    },
+    n => {
+      return n;
+    }
+  }
+}
+
+function main(): i32 {
+  print(kind(1));
+  print(kind(2));
+  print(kind(3));
+  print(byte_kind(b'x'));
+  print(byte_kind(b'y'));
+  print(byte_kind(b'z'));
+  print(alternatives(b'x'));
+  print(alternatives(b'y'));
+  print(alternatives(7 as u8));
+  print(at_binding(b'x'));
+  print(at_binding(b'z'));
+  print(payload(Some(b'x')));
+  print(payload(Some(b'z')));
+  print(payload(None));
+  print(tuple(b'x', 1));
+  print(tuple(b'x', 2));
+  print(match (9000000000 as u64) { BIG => "big", _ => "small" });
+  print(match (-(5 as i64)) { NEG => "neg", _ => "other" });
+  print(match ("fern") { NAME => "name", _ => "other" });
+  let flag = false;
+  print(match (flag) { YES => "yes", _ => "no" });
+  print(range(15));
+  print(range(20));
+  print(range(31));
+  print(computed(8));
+  print(computed(9));
+  return 0;
+}

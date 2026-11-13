@@ -1,0 +1,19 @@
+// __fern_watch_parent_start is op 6 of reactor_ctl on Darwin: it links the
+// calling worker to its parent. It forks a watchdog, which runs
+// __fern_watch_parent. The two sides of the raw fork differ in getpid, so the
+// code does not read the return registers of the fork call.
+function __fern_watch_parent_start(): i32 {
+  let parent = __syscall3(39, 0, 0, 0) as i32;
+  if (parent == 1) {
+    return -3;
+  }
+  let me = __syscall3(20, 0, 0, 0) as i32;
+  let forked = __syscall3(2, 0, 0, 0) as i32;
+  if (forked < 0) {
+    return forked;
+  }
+  if (__syscall3(20, 0, 0, 0) as i32 != me) {
+    __fern_watch_parent(parent, me);
+  }
+  return 0;
+}

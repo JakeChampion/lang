@@ -1,0 +1,21 @@
+const HIDDEN: u8 = 9;
+
+const SHIFT: i32 = 2 << 2;
+
+pub function byte_kind(c: u8): i32 {
+  return match (c) {
+    HIDDEN => 1,
+    _ => 0,
+  };
+}
+
+pub function shifted(v: i32): i32 {
+  match (v) {
+    SHIFT => {
+      return 1;
+    },
+    n => {
+      return n;
+    }
+  }
+}

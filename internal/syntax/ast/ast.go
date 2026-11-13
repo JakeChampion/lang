@@ -553,7 +553,8 @@ func CloneStmt(s Stmt) Stmt {
 			ac := *arm
 			ac.Guard = CloneExpr(arm.Guard)
 			ac.Body = CloneBlock(arm.Body)
-			ac.TupleElems = append([]TuplePatElem(nil), arm.TupleElems...)
+			ac.Literal, ac.RangeHi = CloneExpr(arm.Literal), CloneExpr(arm.RangeHi)
+			ac.TupleElems, ac.Payloads = clonePatElems(arm.TupleElems), clonePayloads(arm.Payloads)
 			ac.Bindings, ac.BindingTypes, ac.FieldNames = clonePatternNames(arm.Bindings, arm.BindingTypes, arm.FieldNames)
 			c.Arms[i] = &ac
 		}
@@ -597,6 +598,37 @@ func CloneStmt(s Stmt) Stmt {
 		return &c
 	}
 	panic(fmt.Sprintf("ast: CloneStmt: unhandled statement kind %T (add a case for it)", s))
+}
+
+func clonePatElems(elems []TuplePatElem) []TuplePatElem {
+	if elems == nil {
+		return nil
+	}
+	out := make([]TuplePatElem, len(elems))
+	for i, e := range elems {
+		out[i] = clonePatElem(e)
+	}
+	return out
+}
+
+func clonePayloads(elems []*TuplePatElem) []*TuplePatElem {
+	if elems == nil {
+		return nil
+	}
+	out := make([]*TuplePatElem, len(elems))
+	for i, e := range elems {
+		if e != nil {
+			c := clonePatElem(*e)
+			out[i] = &c
+		}
+	}
+	return out
+}
+
+func clonePatElem(e TuplePatElem) TuplePatElem {
+	e.Literal, e.RangeHi = CloneExpr(e.Literal), CloneExpr(e.RangeHi)
+	e.Nested, e.VariantPayloads = clonePatElems(e.Nested), clonePayloads(e.VariantPayloads)
+	return e
 }
 
 func CloneExpr(e Expr) Expr {
@@ -725,7 +757,8 @@ func CloneExpr(e Expr) Expr {
 				a.Guard = CloneExpr(arm.Guard)
 			}
 			a.Body = CloneExpr(arm.Body)
-			a.TupleElems = append([]TuplePatElem(nil), arm.TupleElems...)
+			a.Literal, a.RangeHi = CloneExpr(arm.Literal), CloneExpr(arm.RangeHi)
+			a.TupleElems, a.Payloads = clonePatElems(arm.TupleElems), clonePayloads(arm.Payloads)
 			a.Bindings, a.BindingTypes, a.FieldNames = clonePatternNames(arm.Bindings, arm.BindingTypes, arm.FieldNames)
 			c.Arms[i] = &a
 		}
@@ -1775,6 +1808,36 @@ type MatchExprArm struct {
 	Payloads        []*TuplePatElem
 	AltCont         bool
 	Body            Expr
+}
+
+// PatternExprs gives the expressions of the pattern of a: each literal and
+// range bound, also in its tuple elements and payloads. A const name in a
+// pattern is such an expression.
+func (a *MatchArm) PatternExprs() []*Expr {
+	return patternExprs(&a.Literal, &a.RangeHi, a.TupleElems, a.Payloads, nil)
+}
+
+func (a *MatchExprArm) PatternExprs() []*Expr {
+	return patternExprs(&a.Literal, &a.RangeHi, a.TupleElems, a.Payloads, nil)
+}
+
+func patternExprs(lit, hi *Expr, elems []TuplePatElem, payloads []*TuplePatElem, out []*Expr) []*Expr {
+	if *lit != nil {
+		out = append(out, lit)
+	}
+	if *hi != nil {
+		out = append(out, hi)
+	}
+	for i := range elems {
+		e := &elems[i]
+		out = patternExprs(&e.Literal, &e.RangeHi, e.Nested, e.VariantPayloads, out)
+	}
+	for _, e := range payloads {
+		if e != nil {
+			out = patternExprs(&e.Literal, &e.RangeHi, e.Nested, e.VariantPayloads, out)
+		}
+	}
+	return out
 }
 
 func (a *MatchArm) Binders() []string {

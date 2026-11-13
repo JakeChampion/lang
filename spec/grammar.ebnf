@@ -310,8 +310,13 @@ TuplePattern
             = '(' Pattern { ',' Pattern } [ ',' ] ')' ;
 VariantPattern
             = QualName '(' [ Pattern { ',' Pattern } [ ',' ] ] ')' ;
+# A top-level const name is a literal of the value of the const. A lone name
+# derives as a BindingPattern, and the parser then reads it as that literal.
 LiteralPattern
-            = LiteralValue [ ( '..=' | '..' ) LiteralValue ] ;
+            = LiteralValue [ ( '..=' | '..' ) RangeBound ]
+            | IDENT ( '..=' | '..' ) RangeBound
+            ;
+RangeBound  = LiteralValue | IDENT ;
 LiteralValue
             = [ '-' ] ( NUMBER | FLOAT ) | STRING | CHAR | BYTE | 'true' | 'false' ;
 BindingPattern

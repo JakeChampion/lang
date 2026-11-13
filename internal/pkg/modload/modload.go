@@ -1648,6 +1648,9 @@ func (r *rewriter) rewriteStmt(s ast.Stmt) {
 		for _, arm := range x.Arms {
 			r.rewriteVariantPattern(&arm.VariantModule, &arm.VariantName, arm.NamedFields, arm.P)
 			r.rewritePatElems(arm.Payloads, arm.TupleElems, arm.P)
+			for _, pe := range arm.PatternExprs() {
+				r.rewriteExpr(pe)
+			}
 			r.withScope(arm.Binders(), func() {
 				if arm.Guard != nil {
 					r.rewriteExpr(&arm.Guard)
@@ -1831,6 +1834,9 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 		for _, arm := range x.Arms {
 			r.rewriteVariantPattern(&arm.VariantModule, &arm.VariantName, arm.NamedFields, arm.P)
 			r.rewritePatElems(arm.Payloads, arm.TupleElems, arm.P)
+			for _, pe := range arm.PatternExprs() {
+				r.rewriteExpr(pe)
+			}
 			r.withScope(arm.Binders(), func() {
 				if arm.Guard != nil {
 					r.rewriteExpr(&arm.Guard)

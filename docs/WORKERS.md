@@ -1,8 +1,8 @@
 # Workers
 
 Status: [reference] shipped: `std/worker` with `spawn`, `join` and `poll`, the
-`send` parameter mode and `E100`. A worker is a process on native Linux and
-Android, and `std/sim` implements the scheduler seam. Every other engine runs a worker
+`send` parameter mode and `E100`. A worker is a process on native Linux,
+Android and macOS, and `std/sim` implements the scheduler seam. Every other engine runs a worker
 inline. Real threads are not shipped.
 
 ## The model
@@ -107,8 +107,8 @@ in `TestSelfHostCheckerCodesX86_64` pin both checkers to the same codes.
 ## Sequential degrade
 
 On an engine without a process per worker, `spawn` runs the body before it
-returns, and `join` returns the stored result. The interpreters, wasm and
-Darwin do the same.
+returns, and `join` returns the stored result. The interpreters and wasm do
+the same.
 
 The body runs at `spawn`, not at `join`, for one reason. A closure and the
 scope around it share the cell of a captured scalar (`CLOSURE-CAPTURE.md`).
@@ -152,9 +152,19 @@ at a box the parent owns. `__send_copy` builds a fresh tree. Every box of
 that tree is inside the region, because the child's cursor is there and its
 free lists are empty.
 
-The module decides at `spawn`. A native Linux or Android program forks. The
-interpreters map no region, and wasm and Darwin keep the inline order of
+The module decides at `spawn`. A native Linux, Android or macOS program
+forks. The interpreters map no region, and wasm keeps the inline order of
 step 1.
+
+A worker ends when its parent ends, so no worker runs detached. Linux and
+Android set `PR_SET_PDEATHSIG` to SIGTERM in the child. macOS has no such
+signal. There the child forks a watchdog process, which waits with kqueue
+for the exit of the parent or of the worker. If the parent exits first, or
+is gone before the watch starts, the watchdog sends SIGTERM to the worker.
+Then it exits.
+
+The macOS runtime makes its system calls directly, so the child calls no
+function of libSystem.
 
 An Android app is a library in a process that the Java runtime owns, with
 threads of its own. The child is a copy of one thread only, and a lock that

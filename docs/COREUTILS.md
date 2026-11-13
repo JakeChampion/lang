@@ -766,6 +766,20 @@ Darwin.
    workaround. That is the project's standing order and it is doubly so here,
    where the whole exercise is to find them.
 
+## diffutils
+
+The same gate holds the ports of GNU diffutils in `diffutils/`. They use
+`coreutils/lib/gnu.fern`, with `getopt_new(...).in_package("diffutils")`.
+This changes two lines of output. The version line is
+`cmp (Fern diffutils) 0.1`. The usage hint starts with the program name, as
+GNU diffutils writes it.
+
+The harness gets the package of a program from the directory of its source.
+The oracle of a diffutils program is in `FERN_GNU_DIFFUTILS`. Its version
+line must contain `(GNU diffutils)`. The pin is 3.10, the release of
+ubuntu-24.04. `.github/actions/gnu-diffutils` builds it on each lane, macOS
+included. `diffutils/README.md` lists the programs.
+
 ## One binary
 
 `coreutils/multicall/fern-coreutils.fern` is every utility in a single
