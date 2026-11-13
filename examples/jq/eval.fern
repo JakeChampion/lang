@@ -5,6 +5,7 @@
 // the error and the error.
 import "std/json";
 import "std/string";
+import "std/utf8";
 import "./filter";
 import "./number";
 import "./output";
@@ -278,6 +279,9 @@ pub function index(v: json.JsonValue, k: json.JsonValue): Outputs {
           return one(json.JNull);
         }
         return one(items[i]);
+      }
+      if let json.JArray(part) = k {
+        return one(json.JArray(positions(items, part)));
       }
       return index_error(v, k);
     },
@@ -896,7 +900,7 @@ function call_more(name: string, args: filter.Ast[], input: json.JsonValue, e: E
     "reverse" => reverse(input),
     "min" => extreme(input, true),
     "max" => extreme(input, false),
-    "unique" => unique(input),
+    "unique" => by("unique", filter.Identity, input, e),
     "join" => run_join(args[0], input, e),
     "flatten" => run_flatten(args, input, e),
     "any" => quantify(true, args, input, e),
@@ -905,6 +909,37 @@ function call_more(name: string, args: filter.Ast[], input: json.JsonValue, e: E
     "first" => first(args, input, e),
     "last" => last(args, input, e),
     "limit" => run_limit(args[0], args[1], input, e),
+    "while" => run_while(args[0], args[1], input, e),
+    "until" => run_until(args[0], args[1], input, e),
+    "nth" => nth(args, input, e),
+    "isempty" => is_empty(run(args[0], input, e)),
+    "with_entries" => with_entries(args[0], input, e),
+    "sort_by" => by("sort", args[0], input, e),
+    "group_by" => by("group", args[0], input, e),
+    "unique_by" => by("unique", args[0], input, e),
+    "min_by" => by("min", args[0], input, e),
+    "max_by" => by("max", args[0], input, e),
+    _ => call_text(name, args, input, e),
+  };
+}
+
+function call_text(name: string, args: filter.Ast[], input: json.JsonValue, e: Env): Outputs {
+  return match (name) {
+    "ascii_downcase" => ascii_case(input, false),
+    "ascii_upcase" => ascii_case(input, true),
+    "explode" => explode(input),
+    "utf8bytelength" => byte_length(input),
+    "startswith" => with_argument(name, args[0], input, e),
+    "endswith" => with_argument(name, args[0], input, e),
+    "ltrimstr" => with_argument(name, args[0], input, e),
+    "rtrimstr" => with_argument(name, args[0], input, e),
+    "split" => with_argument(name, args[0], input, e),
+    "contains" => with_argument(name, args[0], input, e),
+    "inside" => with_argument(name, args[0], input, e),
+    "in" => with_argument(name, args[0], input, e),
+    "indices" => with_argument(name, args[0], input, e),
+    "index" => with_argument(name, args[0], input, e),
+    "rindex" => with_argument(name, args[0], input, e),
     _ => of_type(name, input),
   };
 }
@@ -1338,27 +1373,6 @@ function extreme(v: json.JsonValue, least: boolean): Outputs {
   return one(best);
 }
 
-function unique(v: json.JsonValue): Outputs {
-  let items = iterate(v);
-  if (items.failed()) {
-    return items;
-  }
-  let json.JArray(_) = v else {
-    let wrapped: json.JsonValue[] = [];
-    for x in items.values {
-      wrapped = wrapped.append(json.JArray([x]));
-    }
-    return fail(type_name(v) + " (" + shown(v) + ") and array (" + shown(json.JArray(wrapped)) + ") cannot be sorted, as they are not both arrays");
-  };
-  let out: json.JsonValue[] = [];
-  for x in sorted_values(items.values) {
-    if (out.len() == 0 || order(out[out.len() - 1], x) != 0) {
-      out = out.append(x);
-    }
-  }
-  return one(json.JArray(out));
-}
-
 function run_join(sep: filter.Ast, input: json.JsonValue, e: Env): Outputs {
   let seps = run(sep, input, e);
   let out = ok([]);
@@ -1575,4 +1589,393 @@ function limit(n: json.JsonValue, f: filter.Ast, input: json.JsonValue, e: Env):
     }
   }
   return Outputs { values: kept, error: o.error };
+}
+
+// ---- Functions with a key ----
+
+// `sort_by`, `group_by`, `unique_by`, `min_by` and `max_by`. The key of an
+// item is the array of the outputs of `f` on it.
+function by(what: string, f: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+  let items = iterate(input);
+  if (items.failed()) {
+    return items;
+  }
+  let pairs: json.JsonValue[] = [];
+  let ks: json.JsonValue[] = [];
+  for i in 0..items.values.len() {
+    let k = run(f, items.values[i], e);
+    if (k.failed()) {
+      return Outputs { values: [], error: k.error };
+    }
+    ks = ks.append(json.JArray(k.values));
+    pairs = pairs.append(json.JArray([json.JArray(k.values), whole(i)]));
+  }
+  let json.JArray(_) = input else {
+    let both = type_name(input) + " (" + shown(input) + ") and array (" + shown(json.JArray(ks)) + ")";
+    if (what == "min" || what == "max") {
+      return fail(both + " cannot be iterated over");
+    }
+    return fail(both + " cannot be sorted, as they are not both arrays");
+  };
+  if (what == "min" || what == "max") {
+    return one(extreme_by(items.values, ks, what == "min"));
+  }
+  return one(json.JArray(grouped(what, items.values, sorted_values(pairs))));
+}
+
+function extreme_by(items: json.JsonValue[], ks: json.JsonValue[], least: boolean): json.JsonValue {
+  if (items.len() == 0) {
+    return json.JNull;
+  }
+  let best = 0;
+  for i in 1..items.len() {
+    let c = order(ks[i], ks[best]);
+    if (least && c < 0 || !least && c >= 0) {
+      best = i;
+    }
+  }
+  return items[best];
+}
+
+// `pairs` holds each key and the place of its item, in the order of the keys.
+function grouped(what: string, items: json.JsonValue[], pairs: json.JsonValue[]): json.JsonValue[] {
+  let out: json.JsonValue[] = [];
+  let group: json.JsonValue[] = [];
+  let last: json.JsonValue = json.JNull;
+  for p in pairs {
+    let item = items[place(p)];
+    let k = index(p, whole(0)).values[0];
+    let same = group.len() > 0 && order(last, k) == 0;
+    last = k;
+    if (what == "sort") {
+      out = out.append(item);
+    } else if (what == "unique") {
+      if (!same) {
+        out = out.append(item);
+      }
+      group = [item];
+    } else if (same) {
+      group = group.append(item);
+    } else {
+      if (group.len() > 0) {
+        out = out.append(json.JArray(group));
+      }
+      group = [item];
+    }
+  }
+  if (what == "group" && group.len() > 0) {
+    out = out.append(json.JArray(group));
+  }
+  return out;
+}
+
+function place(pair: json.JsonValue): i32 {
+  if let json.JNumber(t) = index(pair, whole(1)).values[0] {
+    return number.value(t) as i32;
+  }
+  return 0;
+}
+
+function with_entries(f: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+  let entries = to_entries(input);
+  if (entries.failed()) {
+    return entries;
+  }
+  let mapped = collect(run_pipe(iterate(entries.values[0]), f, e));
+  if (mapped.failed()) {
+    return mapped;
+  }
+  return from_entries(mapped.values[0]);
+}
+
+function is_empty(o: Outputs): Outputs {
+  if (o.values.len() > 0) {
+    return one(json.JBool(false));
+  }
+  if (o.failed()) {
+    return o;
+  }
+  return one(json.JBool(true));
+}
+
+// jq 1.7: `def _while: if cond then ., (update | _while) else empty end`.
+function run_while(cond: filter.Ast, update: filter.Ast, v: json.JsonValue, e: Env): Outputs {
+  let conds = run(cond, v, e);
+  let out = ok([]);
+  for c in conds.values {
+    if (!truthy(c)) {
+      continue;
+    }
+    out = out.then(one(v));
+    let nexts = run(update, v, e);
+    for n in nexts.values {
+      out = out.then(run_while(cond, update, n, e));
+      if (out.failed()) {
+        return out;
+      }
+    }
+    if (nexts.failed()) {
+      return Outputs { ...out, error: nexts.error };
+    }
+  }
+  return Outputs { ...out, error: conds.error };
+}
+
+// jq 1.7: `def _until: if cond then . else (next | _until) end`.
+function run_until(cond: filter.Ast, next: filter.Ast, v: json.JsonValue, e: Env): Outputs {
+  let conds = run(cond, v, e);
+  let out = ok([]);
+  for c in conds.values {
+    if (truthy(c)) {
+      out = out.then(one(v));
+      continue;
+    }
+    let nexts = run(next, v, e);
+    for n in nexts.values {
+      out = out.then(run_until(cond, next, n, e));
+      if (out.failed()) {
+        return out;
+      }
+    }
+    if (nexts.failed()) {
+      return Outputs { ...out, error: nexts.error };
+    }
+  }
+  return Outputs { ...out, error: conds.error };
+}
+
+// `nth(n)` is `.[n]`. `nth(n; f)` counts down from `n + 1` with `-`, as jq
+// 1.7 does, and gives the output at which the count is 0 or less.
+function nth(args: filter.Ast[], input: json.JsonValue, e: Env): Outputs {
+  let counts = run(args[0], input, e);
+  let out = ok([]);
+  for n in counts.values {
+    if (args.len() == 1) {
+      out = out.then(index(input, n));
+    } else {
+      out = out.then(nth_output(n, args[1], input, e));
+    }
+    if (out.failed()) {
+      return out;
+    }
+  }
+  return Outputs { ...out, error: counts.error };
+}
+
+function nth_output(n: json.JsonValue, f: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+  if (order(n, whole(0)) < 0) {
+    return fail("nth doesn't support negative indices");
+  }
+  let start = add(n, whole(1));
+  if (start.failed()) {
+    return start;
+  }
+  let left = start.values[0];
+  let o = run(f, input, e);
+  for v in o.values {
+    let less = subtract(left, whole(1));
+    if (less.failed()) {
+      return less;
+    }
+    left = less.values[0];
+    if (order(left, whole(0)) <= 0) {
+      return one(v);
+    }
+  }
+  return Outputs { values: [], error: o.error };
+}
+
+// ---- Strings ----
+
+function ascii_case(v: json.JsonValue, upper: boolean): Outputs {
+  let json.JString(s) = v else {
+    return fail("explode input must be a string");
+  };
+  if (upper) {
+    return one(json.JString(s.to_ascii_upper()));
+  }
+  return one(json.JString(s.to_ascii_lower()));
+}
+
+function explode(v: json.JsonValue): Outputs {
+  let json.JString(s) = v else {
+    return fail("explode input must be a string");
+  };
+  let out: json.JsonValue[] = [];
+  let i = 0;
+  while (i < s.len()) {
+    let Some((cp, size)) = utf8.decode_at(s, i) else {
+      break;
+    };
+    out = out.append(whole(cp));
+    i += size;
+  }
+  return one(json.JArray(out));
+}
+
+function byte_length(v: json.JsonValue): Outputs {
+  if let json.JString(s) = v {
+    return one(whole(s.len()));
+  }
+  return fail(type_name(v) + " (" + shown(v) + ") only strings have UTF-8 byte length");
+}
+
+// A function of the input and each output of its one argument.
+function with_argument(name: string, arg: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+  let args = run(arg, input, e);
+  let out = ok([]);
+  for a in args.values {
+    out = out.then(apply(name, input, a));
+    if (out.failed()) {
+      return out;
+    }
+  }
+  return Outputs { ...out, error: args.error };
+}
+
+function apply(name: string, v: json.JsonValue, a: json.JsonValue): Outputs {
+  return match (name) {
+    "contains" => contains_checked(v, a),
+    "inside" => contains_checked(a, v),
+    "in" => has(a, v),
+    "indices" => indices(v, a),
+    "index" => index_of(v, a, false),
+    "rindex" => index_of(v, a, true),
+    _ => text_function(name, v, a),
+  };
+}
+
+function text_function(name: string, v: json.JsonValue, a: json.JsonValue): Outputs {
+  let trims = name == "ltrimstr" || name == "rtrimstr";
+  let json.JString(s) = v else {
+    return if (trims) { one(v) } else { fail(text_error(name)) };
+  };
+  let json.JString(t) = a else {
+    return if (trims) { one(v) } else { fail(text_error(name)) };
+  };
+  return match (name) {
+    "startswith" => one(json.JBool(s.starts_with(t))),
+    "endswith" => one(json.JBool(s.ends_with(t))),
+    "split" => one(json.JArray(split(s, t))),
+    "ltrimstr" => if (s.starts_with(t)) { one(json.JString(slice_unchecked(s, t.len(), s.len()).to_owned())) } else { one(v) },
+    _ => if (s.ends_with(t)) { one(json.JString(slice_unchecked(s, 0, s.len() - t.len()).to_owned())) } else { one(v) },
+  };
+}
+
+function text_error(name: string): string {
+  if (name == "split") {
+    return "split input and separator must be strings";
+  }
+  return name + "() requires string inputs";
+}
+
+function contains_checked(a: json.JsonValue, b: json.JsonValue): Outputs {
+  if (rank(a) != rank(b)) {
+    return fail(type_name(a) + " (" + shown(a) + ") and " + type_name(b) + " (" + shown(b) + ") cannot have their containment checked");
+  }
+  return one(json.JBool(contains(a, b)));
+}
+
+// An object holds each key of `b` with a value that contains that of `b`. An
+// array holds, for each item of `b`, an item that contains it. A string holds
+// `b` as a part. Other values are equal.
+function contains(a: json.JsonValue, b: json.JsonValue): boolean {
+  match (a) {
+    json.JObject(x) => {
+      if let json.JObject(y) = b {
+        for k in y.keys() {
+          if (!x.contains(k) || !contains(x.get_or(k, json.JNull), y.get_or(k, json.JNull))) {
+            return false;
+          }
+        }
+        return true;
+      }
+    },
+    json.JArray(x) => {
+      if let json.JArray(y) = b {
+        for want in y {
+          if (!any_contains(x, want)) {
+            return false;
+          }
+        }
+        return true;
+      }
+    },
+    json.JString(x) => {
+      if let json.JString(y) = b {
+        return x.contains(y);
+      }
+    },
+    _ => {}
+  }
+  return order(a, b) == 0;
+}
+
+function any_contains(items: json.JsonValue[], want: json.JsonValue): boolean {
+  for x in items {
+    if (contains(x, want)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Each place in `items` at which `part` starts.
+function positions(items: json.JsonValue[], part: json.JsonValue[]): json.JsonValue[] {
+  let out: json.JsonValue[] = [];
+  if (part.len() == 0) {
+    return out;
+  }
+  for i in 0..items.len() {
+    let here = i + part.len() <= items.len();
+    for j in 0..part.len() {
+      if (here && order(items[i + j], part[j]) != 0) {
+        here = false;
+      }
+    }
+    if (here) {
+      out = out.append(whole(i));
+    }
+  }
+  return out;
+}
+
+// jq 1.7 gives the byte offsets in a string.
+function indices(v: json.JsonValue, a: json.JsonValue): Outputs {
+  if let json.JArray(items) = v {
+    if let json.JArray(_) = a {
+      return index(v, a);
+    }
+    return one(json.JArray(positions(items, [a])));
+  }
+  if let json.JString(s) = v {
+    if let json.JString(t) = a {
+      let out: json.JsonValue[] = [];
+      if (t.len() > 0) {
+        for i in 0..s.len() - t.len() + 1 {
+          if (slice_unchecked(s, i, i + t.len()).to_owned() == t) {
+            out = out.append(whole(i));
+          }
+        }
+      }
+      return one(json.JArray(out));
+    }
+  }
+  return index(v, a);
+}
+
+// jq 1.7: `indices($i) | .[0]`, and `.[-1:][0]` for the last.
+function index_of(v: json.JsonValue, a: json.JsonValue, from_end: boolean): Outputs {
+  let found = indices(v, a);
+  if (found.failed()) {
+    return found;
+  }
+  if (!from_end) {
+    return index(found.values[0], whole(0));
+  }
+  let tail = slice(found.values[0], whole(-1), json.JNull);
+  if (tail.failed()) {
+    return tail;
+  }
+  return index(tail.values[0], whole(0));
 }
