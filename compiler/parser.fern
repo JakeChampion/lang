@@ -8185,8 +8185,9 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
   let declared_bound = bounded_tps.len() > 0;
   for ui in 0..unbounded_tps.len() {
     let un = unbounded_tps[ui];
-    let feeds = feeds_user_parametric(ret_type, un) || feeds_map_typearg(ret_type, un);
-    let bindable = false;
+    let callback_feeds = fn_param_feeds_nominal(params, un);
+    let feeds = feeds_user_parametric(ret_type, un) || feeds_map_typearg(ret_type, un) || callback_feeds;
+    let bindable = callback_feeds;
     for pj in 0..params.len() {
       if (feeds_user_parametric(params[pj].type_name, un) || feeds_map_typearg(params[pj].type_name, un)) {
         feeds = true;
@@ -13642,7 +13643,8 @@ function fn_param_promoted(fd: FuncDecl): boolean {
         plain = true;
       }
     }
-    if (plain || feeds_user_parametric(fd.ret_type, v) || feeds_map_typearg(fd.ret_type, v)) {
+    if (plain || feeds_user_parametric(fd.ret_type, v) || feeds_map_typearg(fd.ret_type, v)
+      || fn_param_feeds_nominal(fd.params, v)) {
       continue;
     }
     if (has_fn_param_arg_var(fd.params, v) || has_fn_param_ret_var(fd.params, v)) {
@@ -23707,6 +23709,17 @@ function all_fn_param_bound(params: ast.ParamDecl[], tps: string[]): boolean {
     }
   }
   return tps.len() > 0;
+}
+
+function fn_param_feeds_nominal(params: ast.ParamDecl[], name: string): boolean {
+  for pd in params {
+    if (is_fn_contract_tag(pd.type_name)
+      && (feeds_user_parametric(pd.fn_ret, name) || feeds_map_typearg(pd.fn_ret, name)
+      || feeds_user_parametric(pd.fn_param_types, name) || feeds_map_typearg(pd.fn_param_types, name))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function has_fn_param_ret_var(params: ast.ParamDecl[], name: string): boolean {

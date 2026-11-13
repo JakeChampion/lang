@@ -1,0 +1,36 @@
+enum Fut[T] { Ready(T), Gone }
+struct Box[T] { item: T }
+
+function end[T](k: (i32) => Fut[T]): i32 {
+  let r = k(7);
+  return match (r) { Ready(_) => 1, Gone => 0 };
+}
+
+function records[T](k: (i32) => Box[T]): T {
+  return k(9).item;
+}
+
+function arrays[T](k: (i32) => Fut[T][]): i32 {
+  return k(3).len() as i32;
+}
+
+function input[T](k: (Fut[T]) => i32): i32 {
+  return k(Gone);
+}
+
+function ready(n: i32): Fut[i32] { return Ready(n); }
+
+function main(): i32 {
+  let k = (n: i32): Fut[i32] => Ready(n);
+  if (end(k) != 1 || end[i32](k) != 1 || end(ready) != 1) { return 1; }
+  let wide = (n: i32): Fut[string] => Ready("value " + n.to_string());
+  if (end(wide) != 1) { return 2; }
+  let boxed = (n: i32): Box[string] => Box { item: "box " + n.to_string() };
+  if (records(boxed) != "box 9") { return 3; }
+  let many = (n: i32): Fut[i32][] => [Ready(n), Gone];
+  if (arrays(many) != 2) { return 4; }
+  let consume = (r: Fut[i32]): i32 => match (r) { Ready(n) => n, Gone => 42 };
+  if (input(consume) != 42) { return 5; }
+  print("generic nominal callback signatures");
+  return 0;
+}

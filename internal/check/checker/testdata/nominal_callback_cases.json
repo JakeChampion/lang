@@ -1,0 +1,57 @@
+[
+  {
+    "Name": "lambda_enum",
+    "Source": "enum Fut[T] { Ready(T), Gone }\nfunction end[T](k:(i32)=>Fut[T]):i32{let r=k(1);return 1;} function main():i32{let k=(n:i32):Fut[i32]=>Ready(n);return end(k);}\n",
+    "Want": ""
+  },
+  {
+    "Name": "explicit_enum",
+    "Source": "enum Fut[T] { Ready(T), Gone }\nfunction end[T](k:(i32)=>Fut[T]):i32{let r=k(1);return 1;} function main():i32{let k=(n:i32):Fut[i32]=>Ready(n);return end[i32](k);}\n",
+    "Want": ""
+  },
+  {
+    "Name": "named_enum",
+    "Source": "enum Fut[T] { Ready(T), Gone }\nfunction end[T](k:(i32)=>Fut[T]):i32{let r=k(1);return 1;} function ready(n:i32):Fut[i32]{return Ready(n);} function main():i32{return end(ready);}\n",
+    "Want": ""
+  },
+  {
+    "Name": "array_enum",
+    "Source": "enum Fut[T] { Ready(T), Gone }\nfunction end[T](k:(i32)=>Fut[T][]):i32{let r=k(1);return 1;} function main():i32{let k=(n:i32):Fut[i32][]=>[Ready(n)];return end(k);}\n",
+    "Want": ""
+  },
+  {
+    "Name": "input_enum",
+    "Source": "enum Fut[T] { Ready(T), Gone }\nfunction end[T](k:(Fut[T])=>i32):i32{return 1;} function main():i32{let k=(r:Fut[i32]):i32=>1;return end(k);}\n",
+    "Want": ""
+  },
+  {
+    "Name": "direct_enum",
+    "Source": "enum Fut[T] { Ready(T), Gone }\nfunction end[T](r:Fut[T]):i32{return 1;} function main():i32{let r:Fut[i32]=Ready(1);return end(r);}\n",
+    "Want": ""
+  },
+  {
+    "Name": "option_result",
+    "Source": "function end[T](k:(i32)=>Option[T]):i32{let r=k(1);return 1;} function main():i32{let k=(n:i32):Option[i32]=>Some(n);return end(k);}\n",
+    "Want": ""
+  },
+  {
+    "Name": "record_result",
+    "Source": "struct Box[T]{item:T} function end[T](k:(i32)=>Box[T]):i32{let r=k(1);return 1;} function main():i32{let k=(n:i32):Box[i32]=>Box{item:n};return end(k);}\n",
+    "Want": ""
+  },
+  {
+    "Name": "distinct_enum",
+    "Source": "enum Fut[T] { Ready(T), Gone } enum Other[T] { OtherReady(T), OtherGone } function end[T](k:(i32)=>Fut[T]):i32{return 1;} function main():i32{let k=(n:i32):Other[i32]=>OtherReady(n); return end[i32](k);}",
+    "Want": "E038"
+  },
+  {
+    "Name": "distinct_record",
+    "Source": "struct Box[T] {item:T} struct Other[T] {item:T} function end[T](k:(i32)=>Box[T]):i32{return 1;} function main():i32{let k=(n:i32):Other[i32]=>Other {item:n}; return end[i32](k);}",
+    "Want": "E038"
+  },
+  {
+    "Name": "wrong_payload",
+    "Source": "enum Fut[T] { Ready(T), Gone } function end[T](k:(i32)=>Fut[T]):i32{return 1;} function main():i32{let k=(n:i32):Fut[string]=>Ready(\"text\"); return end[i32](k);}",
+    "Want": "E038"
+  }
+]

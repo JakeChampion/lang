@@ -30,6 +30,7 @@ function main(): i32 {
   r = r.it("tuples", check_tuples);
   r = r.it("break and continue", check_break_and_continue);
   r = r.it("generics", check_generics);
+  r = r.it("generic nominal callback signatures", check_nominal_callback_signatures);
   r = r.it("lambdas", check_lambdas);
   r = r.it("fstrings", check_fstrings);
   r = r.it("qualified names", check_qualified_names);
@@ -38,6 +39,18 @@ function main(): i32 {
   r = r.it("invalid ownership prefixes", check_invalid_ownership_prefixes);
   r = r.it("struct patterns", check_struct_patterns);
   return r.finish();
+}
+
+function check_nominal_callback_signatures(): test.TestOutcome {
+  let prefix = "enum Fut[T] { Ready(T), Gone } struct Box[T] { item: T } ";
+  for signature in ["(i32) => Fut[T]", "(i32) => Fut[T][]", "(Fut[T]) => i32", "(i32) => Box[T]"] {
+    let source = prefix + "function end[T](k: " + signature + "): i32 { return 1; }";
+    let mod = parser.parse_module(lexer.tokenize(source));
+    if (mod.funcs.len() != 1 || mod.funcs[0].type_params.len() != 1) {
+      return test.fail("a nominal callback signature must specialize its type parameter: " + signature);
+    }
+  }
+  return test.pass();
 }
 
 function check_owned_grouped_callback_types(): test.TestOutcome {

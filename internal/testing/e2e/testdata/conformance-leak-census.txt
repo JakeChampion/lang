@@ -1,3 +1,4 @@
+# 2026-11-13: generic_nominal_callback_signatures has six allocations and six frees on x86-64.
 # 2026-11-13: owned_callback_result_composition has balanced allocations and zero live allocations on all three main targets.
 # 2026-11-13: task_handle_with_a_made_up_id keeps 5 blocks at its abort (was 7), and
 # task_resumed_with_another_function keeps 10 (was 11), on main at f2c331f55c.
@@ -465,6 +466,7 @@ general_reuse_struct                                 0
 general_reuse_tuple                                  0
 generic_arms_agree_in_type_argument                  0
 generic_array_callbacks_keep_their_types              0
+generic_nominal_callback_signatures                   0
 generic_array_method_chain                           0
 generic_array_methods                                0
 generic_array_statistics                             0
