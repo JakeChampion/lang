@@ -1066,17 +1066,20 @@ func mentionsBesideFields(c *ast.Call, name, field string) int {
 }
 
 // assignsWhole reports `name = value` where value does not read name.
-func assignsWhole(st ast.Stmt, name string) bool {
+// wholeAssignment gives the statement st when it assigns the whole of name.
+func wholeAssignment(st ast.Stmt, name string) *ast.Assign {
 	es, ok := st.(*ast.ExprStmt)
 	if !ok {
-		return false
+		return nil
 	}
 	asn, ok := es.Expr.(*ast.Assign)
 	if !ok {
-		return false
+		return nil
 	}
-	id, ok := asn.Target.(*ast.Ident)
-	return ok && id.Name == name && !StmtReferencesName(asn.Value, name)
+	if id, ok := asn.Target.(*ast.Ident); ok && id.Name == name {
+		return asn
+	}
+	return nil
 }
 
 // loopRepeats reports a loop that runs c again on the same owner: one that
@@ -2490,8 +2493,10 @@ func (r settleReach) refs(n ast.Node, name string) bool {
 // read the taken value.
 func stmtsSettle(info *Info, stmts []ast.Stmt, name string, reach settleReach) (live, settled bool) {
 	for _, st := range stmts {
-		if assignsWhole(st, name) {
-			return false, true
+		// The value is read before the store, so only its reads can see
+		// the taken value.
+		if asn := wholeAssignment(st, name); asn != nil {
+			return reach.refs(asn.Value, name), !reach.refs(asn.Value, name)
 		}
 		switch x := st.(type) {
 		case *ast.Match:

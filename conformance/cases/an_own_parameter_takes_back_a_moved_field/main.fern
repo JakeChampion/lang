@@ -1,0 +1,29 @@
+// A field of an own parameter moves into a call. An assignment then gives
+// the parameter a new value that replaces the field, so a later read of the
+// parameter reads the new value, not the moved field.
+
+import "std/array";
+
+struct S { xs: i32[], n: i32 }
+
+function take_back(own r: S, i: i32): S {
+  let (x, xs) = r.xs.swap_at(i, 0);
+  r = S { ...r, xs: xs, n: r.n + x };
+  return r;
+}
+
+function into_new(own r: S, i: i32): S {
+  let (x, xs) = r.xs.swap_at(i, 0);
+  let d = S { ...r, xs: xs, n: r.n + x };
+  return d;
+}
+
+function main(): i32 {
+  let a = take_back(S { xs: [1, 2, 3], n: 0 }, 1);
+  print(a.n);
+  print(a.xs[1]);
+  let b = into_new(S { xs: [4, 5, 6], n: 10 }, 2);
+  print(b.n);
+  print(b.xs[2]);
+  return 0;
+}
