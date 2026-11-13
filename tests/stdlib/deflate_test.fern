@@ -178,6 +178,10 @@ function test_bad_checksums(): test.TestOutcome {
   if (bytes_text(deflate.gunzip(__codec_bytes(hex.decode("1f8b08000000000000034b2e4a5648ce484dce06006237cc2b09000000")), 1024)) != "error: the checksum does not match the decompressed data") {
     return test.fail("gzip CRC-32: " + bytes_text(deflate.gunzip(__codec_bytes(hex.decode("1f8b08000000000000034b2e4a5648ce484dce06006237cc2b09000000")), 1024)));
   }
+  let length = bytes_text(deflate.gunzip(__codec_bytes(hex.decode("1f8b08000000000002ff4b2e4a4c5248ce484d2d4e0500adef6a1a0c000000")), 1024));
+  if (length != "error: the stored length does not match the decompressed data") {
+    return test.fail("gzip ISIZE: " + length);
+  }
   return test.assert_eq(bytes_text(deflate.zlib_decode(__codec_bytes(hex.decode("78daabcac94c52482b4acc4d4d010019b90440")), 1024)), "error: the checksum does not match the decompressed data");
 }
 
@@ -211,7 +215,10 @@ function lcg_bytes(n: i32): u8[] {
 }
 
 function round_trip(input: u8[]): string {
-  let packed = deflate.deflate(input);
+  return packed_round_trip(input, deflate.deflate(input));
+}
+
+function packed_round_trip(input: u8[], packed: u8[]): string {
   match (deflate.inflate(packed, input.len() + 1)) {
     Ok(got) => {
       if (got.out.len() != input.len() || got.consumed != packed.len()) {
@@ -294,6 +301,55 @@ function test_gzip_round_trip(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
+function level_corpus(): u8[] {
+  let out = varied();
+  let i = 0;
+  while (i < 2000) {
+    out = __appended(out, "line " + (i * 7 % 300).to_string() + " of the corpus\n");
+    i += 1;
+  }
+  return out;
+}
+
+function test_deflate_levels(): test.TestOutcome {
+  let input = level_corpus();
+  let sizes: i32[] = [];
+  let level = 1;
+  while (level <= 9) {
+    let packed = deflate.deflate_level(input, level);
+    let got = packed_round_trip(input, packed);
+    if (!got.starts_with("ok ")) {
+      return test.fail("level " + level.to_string() + ": " + got);
+    }
+    sizes = sizes.append(packed.len());
+    level += 1;
+  }
+  let fast = hex.encode(deflate.deflate_level(input, 1)) == hex.encode(deflate.deflate_fast(input));
+  let default = hex.encode(deflate.deflate_level(input, 6)) == hex.encode(deflate.deflate(input));
+  let ordered = sizes[8] <= sizes[5] && sizes[5] <= sizes[1];
+  return test.assert_eq(fast.to_string() + " " + default.to_string() + " " + ordered.to_string(), "true true true");
+}
+
+function test_gzip_levels(): test.TestOutcome {
+  let input = level_corpus();
+  let one = deflate.gzip_level(input, 1);
+  let nine = deflate.gzip_level(input, 9);
+  let same = hex.encode(deflate.gzip_level(input, 6)) == hex.encode(deflate.gzip(input));
+  for packed in [one, nine] {
+    match (deflate.gunzip(packed, input.len())) {
+      Ok(out) => {
+        if (hex.encode(out) != hex.encode(input)) {
+          return test.fail("the output differs");
+        }
+      },
+      Err(e) => {
+        return test.fail(e.message());
+      }
+    }
+  }
+  return test.assert_eq(one[8].to_string() + " " + nine[8].to_string() + " " + same.to_string(), "4 2 true");
+}
+
 function test_deflate_flushed(): test.TestOutcome {
   let input = "0123456789".repeat(300).bytes();
   let packed = deflate.deflate_flushed(input, 9);
@@ -342,6 +398,8 @@ function main(): i32 {
   r = r.it("every match length reads back", test_deflate_varied);
   r = r.it("blocks of each kind in one stream", test_deflate_blocks);
   r = r.it("gzip reads back", test_gzip_round_trip);
+  r = r.it("each level reads back", test_deflate_levels);
+  r = r.it("gzip marks the fastest and the smallest levels", test_gzip_levels);
   return r.finish();
 }
 

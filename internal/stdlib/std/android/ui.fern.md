@@ -28,7 +28,7 @@ The methods of `El` set them, and they set the padding, the gap, the background,
 
 `on_move` lets a person move the rows of a `list`: a long press lifts a row, and the row goes with the finger. `on_swipe` lets a person drag a row across the list to take it out.
 
-A color is a pixel word of `std/android/draw`, or a role: `PRIMARY`, `ON_PRIMARY`, `INK`, `MUTED`, `SURFACE`, `OUTLINE`, `BACKGROUND` and `TRACK`. A role takes its color from the `Theme`, which is light or dark as the system is. `button`, `outlined_button`, `card`, `toggle`, `progress` and `divider` are elements in the look of Material 3.
+A color is a pixel word of `std/android/draw`, or a role: `PRIMARY`, `ON_PRIMARY`, `INK`, `MUTED`, `SURFACE`, `OUTLINE`, `BACKGROUND` and `TRACK`. A role takes its color from the `Theme`, which is light or dark as the system is. `seeded` makes a theme from one color, for example the key color of an album cover. `button`, `outlined_button`, `card`, `toggle`, `progress` and `divider` are elements in the look of Material 3.
 
 ### Messages
 
@@ -145,6 +145,23 @@ The colors are the baseline colors of Material 3. A role is a pixel word with no
 // `track` is behind the bar of `progress`, and `pressed` is over the
 // element under a finger.
 pub struct Theme { background: i32, surface: i32, primary: i32, on_primary: i32, ink: i32, muted: i32, outline: i32, track: i32, pressed: i32 }
+
+// The colors of the light theme, or of the dark theme, from the color
+// `seed`. The primary color has the hue of the seed, and the surfaces and
+// the text have a hint of it, as the dynamic colors of Android do.
+pub function seeded(seed: i32, dark: boolean): Theme {
+  let s = draw.lch_of(seed);
+  let c = s.c.max(0.04).min(0.15);
+  let tone = (l: f64, chroma: f64): i32 => draw.color_of(draw.Lch { l: l, c: chroma, h: s.h });
+  if (dark) {
+    let ink = tone(0.93, 0.012);
+    let outline = tone(0.66, 0.03);
+    return Theme { background: tone(0.17, 0.012), surface: tone(0.23, 0.022), primary: tone(0.82, c * 0.8), on_primary: tone(0.3, c * 0.6), ink: ink, muted: tone(0.81, 0.025), outline: outline, track: draw.with_alpha(outline, 77), pressed: draw.with_alpha(ink, 31) };
+  }
+  let ink = tone(0.21, 0.014);
+  let outline = tone(0.58, 0.03);
+  return Theme { background: tone(0.985, 0.01), surface: tone(0.95, 0.022), primary: tone(0.48, c), on_primary: draw.rgb(255, 255, 255), ink: ink, muted: tone(0.42, 0.025), outline: outline, track: draw.with_alpha(outline, 77), pressed: draw.with_alpha(ink, 31) };
+}
 
 // The colors of the light theme, or of the dark theme.
 pub function theme(dark: boolean): Theme {

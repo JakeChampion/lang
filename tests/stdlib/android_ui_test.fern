@@ -1040,6 +1040,23 @@ function test_a_held_row_scrolls_its_list(): test.TestOutcome {
   return test.assert_eq(got, "true true false");
 }
 
+// A seeded theme has the hue of its seed in its primary color, a light
+// background in the light theme and a dark one in the dark theme, and
+// text that stands out from its background.
+function test_a_seeded_theme(): test.TestOutcome {
+  let seed = draw.rgb(30, 120, 220);
+  let hue = draw.lch_of(seed).h;
+  let light = ui.seeded(seed, false);
+  let dark = ui.seeded(seed, true);
+  let p = draw.lch_of(light.primary);
+  let pd = draw.lch_of(dark.primary);
+  let got = ((p.h - hue).abs() < 0.1).to_string() + " " + ((pd.h - hue).abs() < 0.1).to_string();
+  got = got + " " + (draw.lch_of(light.background).l > 0.95).to_string() + " " + (draw.lch_of(dark.background).l < 0.25).to_string();
+  got = got + " " + (draw.lch_of(light.background).l - draw.lch_of(light.ink).l > 0.6).to_string() + " " + (draw.lch_of(dark.ink).l - draw.lch_of(dark.background).l > 0.6).to_string();
+  got = got + " " + (light.track >> 24 & 255).to_string() + " " + (light.primary != ui.theme(false).primary).to_string();
+  return test.assert_eq(got, "true true true true true true 77 true");
+}
+
 function main(): i32 {
   let r = test.new("std/android/ui");
   r = r.it("a column puts its elements one below the other", test_column);
@@ -1050,6 +1067,7 @@ function main(): i32 {
   r = r.it("a stack puts its elements one over the other", test_stack);
   r = r.it("a text wraps and clamps", test_text_wraps);
   r = r.it("a role takes its color from the theme", test_roles_take_the_theme);
+  r = r.it("a seeded theme takes the hue of its seed", test_a_seeded_theme);
   r = r.it("a theme follows the state of the program", test_a_theme_follows_the_state);
   r = r.it("the tree stays out of the bars of the system", test_safe_area);
   r = r.it("a button has the size of Material", test_button);

@@ -2376,13 +2376,13 @@ function slot_takeable(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], go
     return false;
   }
   if (field) {
-    return field_takeable(got) && is_record(box) && !semtypes.is_env(box);
+    return field_takeable(f, got) && is_record(box) && !semtypes.is_env(box);
   }
   if (element) {
-    return field_takeable(got) && typeinfo.is_tuple(box);
+    return field_takeable(f, got) && typeinfo.is_tuple(box);
   }
   if (slot) {
-    return field_takeable(got) && typeinfo.is_owned_array(box);
+    return field_takeable(f, got) && typeinfo.is_owned_array(box);
   }
   if (!ssasem.counted(f, got) || !is_union(box)) {
     return false;
@@ -2658,8 +2658,10 @@ function other_slot_get(later: ssa.SInst, take: ssa.SInst): boolean {
   return other_payload_get(later, take.args[0], take.imm);
 }
 
-function field_takeable(t: typeinfo.Type): boolean {
-  if (ssasem.is_view(t) || ssasem.is_text(t)) {
+// A slot of the type `t` can give its value away. A value with no count,
+// such as an enum with no payload, has nothing to give.
+function field_takeable(f: ssasem.Func, t: typeinfo.Type): boolean {
+  if (ssasem.is_view(t) || ssasem.is_text(t) || !ssasem.counted(f, t)) {
     return false;
   }
   return typeinfo.is_array(t) || ssasem.is_map(t) || is_record(t) && !semtypes.is_env(t) || is_union(t);

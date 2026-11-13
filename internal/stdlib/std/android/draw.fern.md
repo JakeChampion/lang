@@ -12,6 +12,8 @@ Over transparent pixels, a shape gives premultiplied pixels: each channel holds 
 
 An `Image` holds 4 bytes for each pixel, red, green, blue and alpha, row by row with no stride. `std/android/image` decodes one, and `image` copies a part of it into a frame. `cover_size` gives the size of an image scaled to fill a box with its shape kept. The box then shows the middle of the image. `clip_corners` rounds the corners of an opaque image on a flat background.
 
+`Lch` is a color in the OKLCH space: a lightness from 0 to 1, a chroma, and a hue. Equal steps of lightness look equal, so a theme can make its colors from one hue. `lch_of` and `color_of` change a pixel word to it and back. `key_color` gives the color that an image shows most, for example the color of an album cover.
+
 Text uses the Fern raster of DejaVu Sans Mono in `std/android/font`. Each glyph pixel has a coverage from 0 to 15, and the text color blends over the frame by that coverage. `scale` draws each raster pixel as a square of `scale` by `scale` pixels.
 
 ## Contracts
@@ -27,6 +29,8 @@ The pixels of a frame are valid until the window is posted. A rectangle or text 
 <<frames>>
 
 <<images>>
+
+<<colors>>
 
 <<text>>
 ```
@@ -463,6 +467,141 @@ function outside(f: Frame, cx: i32, cy: i32, x0: i32, y0: i32, r: i32, color: i3
       put(f, x, y, color, 15 - cover(dist(x, y, cx as f64, cy as f64), r as f64));
     }
   }
+}
+```
+
+### `colors`
+
+`color_of` keeps the lightness and the hue of a color that no pixel word can show. It makes the chroma smaller until the color fits.
+
+`key_color` looks at the image at 48 by 48 pixels at most. A pixel counts when a person sees it as a color, not as grey, black or white. It goes into one of 24 hues, by weight of its chroma. The key color is the mean of the pixels of the heaviest hue.
+
+```fern
+<<colors>>=
+// A color in the OKLCH space: the lightness `l` from 0 to 1, the chroma
+// `c` from 0, and the hue `h` in radians.
+pub struct Lch { l: f64, c: f64, h: f64 }
+
+const HUES: i32 = 24;
+
+function linear(v: i32): f64 {
+  let c = v as f64 / 255.0;
+  if (c <= 0.04045) {
+    return c / 12.92;
+  }
+  return ((c + 0.055) / 1.055).pow(2.4);
+}
+
+function encoded(c: f64): i32 {
+  let v = c.max(0.0).min(1.0);
+  if (v <= 0.0031308) {
+    return (v * 12.92 * 255.0).round() as i32;
+  }
+  return ((1.055 * v.pow(1.0 / 2.4) - 0.055) * 255.0).round() as i32;
+}
+
+// The OKLCH form of the pixel word `color`. The alpha is not part of it.
+pub function lch_of(color: i32): Lch {
+  let r = linear(color & 255);
+  let g = linear(color >> 8 & 255);
+  let b = linear(color >> 16 & 255);
+  let l = (0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b).cbrt();
+  let m = (0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b).cbrt();
+  let s = (0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b).cbrt();
+  let a = 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s;
+  let bb = 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s;
+  return Lch { l: 0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s, c: (a * a + bb * bb).sqrt(), h: bb.atan2(a) };
+}
+
+// The linear red, green and blue of `lch`.
+function linear_rgb(lch: Lch): (f64, f64, f64) {
+  let a = lch.c * lch.h.cos();
+  let b = lch.c * lch.h.sin();
+  let l = lch.l + 0.3963377774 * a + 0.2158037573 * b;
+  let m = lch.l - 0.1055613458 * a - 0.0638541728 * b;
+  let s = lch.l - 0.0894841775 * a - 1.2914855480 * b;
+  let l3 = l * l * l;
+  let m3 = m * m * m;
+  let s3 = s * s * s;
+  return (4.0767416621 * l3 - 3.3077115913 * m3 + 0.2309699292 * s3, -1.2684380046 * l3 + 2.6097574011 * m3 - 0.3413193965 * s3, -0.0041960863 * l3 - 0.7034186147 * m3 + 1.7076147010 * s3);
+}
+
+function fits(v: f64): boolean {
+  return v >= -0.0005 && v <= 1.0005;
+}
+
+// The opaque pixel word of `lch`.
+pub function color_of(lch: Lch): i32 {
+  let at = lch;
+  for turn in 0..16 {
+    let (r, g, b) = linear_rgb(at);
+    if (fits(r) && fits(g) && fits(b) || at.c < 0.001) {
+      return rgb(encoded(r), encoded(g), encoded(b));
+    }
+    at = Lch { ...at, c: at.c * 0.85 };
+  }
+  let (r, g, b) = linear_rgb(at);
+  return rgb(encoded(r), encoded(g), encoded(b));
+}
+
+// The pixel word `color` with the alpha `a`.
+pub function with_alpha(color: i32, a: i32): i32 {
+  return color & 16777215 | (a & 255) << 24;
+}
+
+// The hue of a pixel that a person sees as a color, from 0 to HUES - 1, or
+// -1 for a grey, a dark, a light or a transparent pixel.
+function hue_of(color: i32): i32 {
+  if (alpha_of(color) < 128) {
+    return -1;
+  }
+  let lch = lch_of(color);
+  if (lch.c < 0.03 || lch.l < 0.15 || lch.l > 0.95) {
+    return -1;
+  }
+  let turn = (lch.h + 3.141592653589793) / (2.0 * 3.141592653589793);
+  return (turn * (HUES as f64)) as i32 % HUES;
+}
+
+// The color that `img` shows most, or None when it shows no color.
+pub function (img: Image) key_color(): Option[i32] {
+  let small = img;
+  if (img.width > 48 || img.height > 48) {
+    small = img.scaled(48.min(img.width), 48.min(img.height));
+  }
+  let weights: f64[] = [];
+  let sums: i64[] = [];
+  for k in 0..HUES {
+    weights = weights.append(0.0);
+    sums = sums.append(0i64).append(0i64).append(0i64).append(0i64);
+  }
+  for y in 0..small.height {
+    for x in 0..small.width {
+      let color = small.pixel(x, y);
+      let hue = hue_of(color);
+      if (hue >= 0) {
+        weights = weights.with(hue, weights[hue] + lch_of(color).c);
+        let at = hue * 4;
+        sums = sums.with(at, sums[at] + (color & 255) as i64).with(at + 1, sums[at + 1] + (color >> 8 & 255) as i64).with(at + 2, sums[at + 2] + (color >> 16 & 255) as i64).with(at + 3, sums[at + 3] + 1i64);
+      }
+    }
+  }
+  return heaviest(weights, sums);
+}
+
+// The mean color of the heaviest hue of `weights`, or None.
+function heaviest(weights: f64[], sums: i64[]): Option[i32] {
+  let best = -1;
+  for k in 0..weights.len() {
+    if (weights[k] > 0.0 && (best < 0 || weights[k] > weights[best])) {
+      best = k;
+    }
+  }
+  if (best < 0) {
+    return None;
+  }
+  let n = sums[best * 4 + 3];
+  return Some(rgb((sums[best * 4] / n) as i32, (sums[best * 4 + 1] / n) as i32, (sums[best * 4 + 2] / n) as i32));
 }
 ```
 

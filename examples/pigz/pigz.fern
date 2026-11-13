@@ -1,0 +1,217 @@
+// pigz — compress and decompress gzip files.
+//
+// A port of pigz (zlib.net/pigz). This version compresses on one CPU.
+//
+//   $ pigz file              # writes file.gz and removes file
+//   $ pigz -d file.gz        # writes file and removes file.gz
+//   $ pigz -9 -k file        # the smallest output, and file stays
+//   $ pigz -c file > out.gz  # writes to the standard output
+//   $ pigz -t file.gz        # tests file.gz
+//
+// With no file, pigz reads the standard input and writes the standard output.
+import "std/io";
+import "std/result";
+import "./gz";
+
+function warn(text: string): void {
+  eprint("pigz: " + text);
+}
+
+function write_out(bytes: u8[]): boolean {
+  match (stdout().write_bytes(bytes)) {
+    Ok(_) => {
+      return true;
+    },
+    Err(e) => {
+      warn("abort: write error on <stdout> (" + e.message() + ")");
+      return false;
+    }
+  }
+}
+
+// The standard input to the standard output. The result is false after an
+// error.
+function stream(o: gz.Options): boolean {
+  let Ok(data) = io.read_all_stdin_bytes() else {
+    warn("abort: read error on <stdin>");
+    return false;
+  };
+  if (!o.decompress && !o.test) {
+    return write_out(gz.compress(data, o.level, "", 0u32));
+  }
+  match (gz.decompress(data)) {
+    Ok(out) => {
+      if (o.test) {
+        return true;
+      }
+      return write_out(out);
+    },
+    Err(why) => {
+      warn("skipping: <stdin>" + why);
+      return false;
+    }
+  }
+}
+
+// The name of the output of `path`, or None when pigz skips the file. The
+// second value is false when the skip is an error.
+function output_name(o: gz.Options, path: string): (Option[string], boolean) {
+  if (o.decompress) {
+    match (gz.decompressed_name(path)) {
+      Some(name) => {
+        return (Some(name), true);
+      },
+      None => {
+        warn("skipping: " + path + " does not have compressed suffix");
+        return (None, false);
+      }
+    }
+  }
+  if (path.ends_with(".gz")) {
+    warn("skipping: " + path + " ends with .gz");
+    return (None, true);
+  }
+  return (Some(gz.compressed_name(path)), true);
+}
+
+// Where the output of a file goes. Skip(true) is a skip that is not an error.
+enum Target {
+  ToStdout,
+  ToFile(string),
+  Skip(boolean),
+}
+
+// The status of `path`, or None after the message for a missing file or a
+// directory.
+function source(path: string): Option[FileStat] {
+  let Ok(st) = stat(path) else {
+    warn("skipping: " + path + " does not exist");
+    return None;
+  };
+  if (st.is_dir) {
+    warn("skipping: " + path + " is a directory");
+    return None;
+  }
+  return Some(st);
+}
+
+// A test writes nothing, so its target is the standard output.
+function destination(o: gz.Options, path: string): Target {
+  if (o.test) {
+    return ToStdout;
+  }
+  if (o.stdout) {
+    if (!o.decompress && !o.force && path.ends_with(".gz")) {
+      warn("skipping: " + path + " ends with .gz");
+      return Skip(true);
+    }
+    return ToStdout;
+  }
+  let (out, ok) = output_name(o, path);
+  let Some(name) = out else {
+    return Skip(ok);
+  };
+  if (!o.force && stat(name).is_ok()) {
+    warn("skipping: " + name + " exists");
+    return Skip(false);
+  }
+  return ToFile(name);
+}
+
+// The compressed or decompressed bytes of `path`, or None after the message
+// for a stream that does not decode.
+function converted(o: gz.Options, path: string, data: u8[], st: FileStat): Option[u8[]] {
+  if (!o.decompress && !o.test) {
+    return Some(gz.compress(data, o.level, gz.base_name(path), st.mtime as u32));
+  }
+  match (gz.decompress(data)) {
+    Ok(out) => {
+      return Some(out);
+    },
+    Err(why) => {
+      warn("skipping: " + path + why);
+      return None;
+    }
+  }
+  return None;
+}
+
+// Writes `name` with the mode of `path`, then removes `path` unless -k.
+function replaced(o: gz.Options, path: string, name: string, result: u8[], st: FileStat): boolean {
+  if let Err(e) = write_file_bytes(name, result) {
+    warn("skipping: " + name + " could not be written (" + e.message() + ")");
+    return false;
+  }
+  if let Err(_) = chmod(name, (st.mode & 4095u32) as i32) {
+    warn(name + ": the mode of " + path + " could not be kept");
+  }
+  if (o.keep) {
+    return true;
+  }
+  if let Err(e) = remove_file(path) {
+    warn(path + " could not be removed (" + e.message() + ")");
+    return false;
+  }
+  return true;
+}
+
+// One file. The result is false after an error.
+function file(o: gz.Options, path: string): boolean {
+  if (path == "-") {
+    return stream(o);
+  }
+  let Some(st) = source(path) else {
+    return false;
+  };
+  let target = destination(o, path);
+  if let Skip(ok) = target {
+    return ok;
+  }
+  let Ok(data) = read_file_bytes(path) else {
+    warn("skipping: " + path + " is not readable");
+    return false;
+  };
+  let Some(result) = converted(o, path, data, st) else {
+    return false;
+  };
+  if (o.test) {
+    return true;
+  }
+  if let ToFile(name) = target {
+    return replaced(o, path, name, result, st);
+  }
+  return write_out(result);
+}
+
+function main(): i32 {
+  let argv = args();
+  let rest: string[] = [];
+  for i in 1..argv.len() {
+    rest = rest.append(argv[i]);
+  }
+  match (gz.parse(rest)) {
+    gz.Abort(why) => {
+      warn("abort: " + why);
+      return 22;
+    },
+    gz.Run(o) => {
+      if (o.files.len() == 0) {
+        if (stream(o)) {
+          return 0;
+        }
+        return 1;
+      }
+      let failed = false;
+      for path in o.files {
+        if (!file(o, path)) {
+          failed = true;
+        }
+      }
+      if (failed) {
+        return 1;
+      }
+      return 0;
+    }
+  }
+  return 0;
+}
