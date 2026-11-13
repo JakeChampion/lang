@@ -1,3 +1,4 @@
+# 2026-11-13: a_match_arm_that_is_a_void_if_falls_through has balanced allocations on x86-64.
 # 2026-11-13: owned_callback_result_composition has balanced allocations and zero live allocations on all three main targets.
 # 2026-11-13: task_handle_with_a_made_up_id keeps 5 blocks at its abort (was 7), and
 # task_resumed_with_another_function keeps 10 (was 11), on main at f2c331f55c.
@@ -105,6 +106,7 @@ a_literal_handed_to_reactor_wait_is_fresh            0
 a_literal_local_takes_the_type_of_an_index_read 0
 a_map_holds_named_functions                          0
 a_map_key_eq_may_take_its_keys_owned                 0
+a_match_arm_that_is_a_void_if_falls_through          0
 a_match_value_of_owned_arms_is_owned                 0
 a_module_calls_methods_its_imports_reach             0
 a_module_does_not_see_a_sibling_imports_variants     0
