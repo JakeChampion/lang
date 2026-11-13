@@ -357,7 +357,6 @@ const (
 	CauseRecursion  = "fern: recursion limit"
 )
 
-
 // MaxCallDepth is the number of Fern calls that can be active at one time.
 // One call takes about 11 KB of the Go stack, so the limit of fern -interp,
 // 1 000 000, is out of reach here.
