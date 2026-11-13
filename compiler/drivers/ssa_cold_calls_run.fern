@@ -102,8 +102,8 @@ function main(): i32 {
   failures = check(kept.reg_of[1] >= 0, "cold calls leave the hot phi a register", failures);
   failures = check(spilled.reg_of[1] < 0, "calls spill the hot phi", failures);
   let sp = split_paths();
-  let crossing = ssalive.call_crossers(sp, ssa.hard_call_positions(sp, []));
-  failures = check(crossing.len() == sp.nvals, "call_crossers covers every value", failures);
+  let crossing = ssalive.lives(sp, ssa.hard_call_positions(sp, [])).crossing;
+  failures = check(crossing.len() == sp.nvals, "the crossing set covers every value", failures);
   failures = check(!crossing[0] && !crossing[1] && !crossing[3], "a value dead after a call does not cross it", failures);
   failures = check(crossing[5] && !crossing[6], "a value live across a call in its own block crosses it", failures);
   let by_live = ssa.regalloc_linear_fixed(sp, 3, 0, -1, false, [], [], [], 0, 0, ssafixed.none(), [], crossing);

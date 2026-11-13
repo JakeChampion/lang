@@ -214,6 +214,18 @@ pub function (t: Tags) empty(): boolean {
 
 ```fern
 <<texts>>=
+function __fits(at: i32, size: i32, end: i32): boolean {
+  return at >= 0 && at <= end && size >= 0 && size <= end - at;
+}
+
+// The caller validates the start. Narrow the length only after the bound.
+function __clipped_end(at: i32, size: u64, end: i32): i32 {
+  if (size > (end - at) as u64) {
+    return end;
+  }
+  return at + size as i32;
+}
+
 // The first number in `s`, or 0: 3 for "3/12", and 2019 for "2019-05-01".
 function number(s: string): i32 {
   let n = 0;
@@ -453,7 +465,7 @@ function after_text(input: [u8], at: i32, to: i32, wide: boolean): i32 {
 // The tags with the gain in a frame of the person from `from` to `to`:
 // such a frame has a description and then a value.
 function with_user_frame(t: Tags, input: [u8], from: i32, to: i32): Tags {
-  if (from + 2 > to || to > input.len()) {
+  if (!__fits(from, 2, to) || to > input.len()) {
     return t;
   }
   let kind = input[from];
@@ -465,7 +477,7 @@ function with_user_frame(t: Tags, input: [u8], from: i32, to: i32): Tags {
 // The text of a lyrics frame from `from` to `to`: a language of three
 // letters and a description come before it.
 function frame_lyrics(input: [u8], from: i32, to: i32): string {
-  if (from + 4 > to || to > input.len()) {
+  if (!__fits(from, 4, to) || to > input.len()) {
     return "";
   }
   let kind = input[from];
@@ -498,13 +510,21 @@ function frame_name(input: [u8], at: i32, n: i32): string {
 function frames_start(input: [u8], start: i32, end: i32): i32 {
   let version = input[start + 3] as i32;
   let at = start + 10;
-  if (version < 3 || (input[start + 5] as i32 & 64) == 0 || at + 4 > end) {
+  if (version < 3 || (input[start + 5] as i32 & 64) == 0) {
     return at;
   }
-  if (version == 4) {
-    return at + syncsafe(input, at);
+  if (!__fits(at, 4, end)) {
+    return end;
   }
-  return at + 4 + wire.be(input, at, 4) as i32;
+  if (version == 4) {
+    let size = syncsafe(input, at);
+    return if (__fits(at, size, end)) { at + size } else { end };
+  }
+  let size = wire.be(input, at, 4);
+  if (size > (end - at - 4) as u64) {
+    return end;
+  }
+  return at + 4 + size as i32;
 }
 
 // The tags of the frames of the version `version` from `from` to `end`.
@@ -518,13 +538,13 @@ function frames(input: [u8], from: i32, end: i32, version: i32): Tags {
   let names = id3_names();
   let t = none();
   let at = from;
-  while (at + head <= end) {
+  while (__fits(at, head, end)) {
     let id = frame_name(input, at, name);
     let size = wire.be(input, at + name, name) as i32;
     if (version == 4) {
       size = syncsafe(input, at + 4);
     }
-    if (id.len() == 0 || size <= 0 || at + head + size > end) {
+    if (id.len() == 0 || size <= 0 || !__fits(at + head, size, end)) {
       return t;
     }
     t = with_frame(t, names, id, input, at + head, at + head + size);
@@ -548,10 +568,10 @@ function with_frame(t: Tags, names: (string, i32)[], id: string, input: [u8], fr
 // The tags of the ID3v2 tag that starts at the byte `start`, or empty
 // tags.
 pub function id3v2_at(input: [u8], start: i32): Tags {
-  if (start < 0 || start + 10 > input.len() || !wire.tag(input, start, "ID3")) {
+  if (!__fits(start, 10, input.len()) || !wire.tag(input, start, "ID3")) {
     return none();
   }
-  let end = (start + 10 + syncsafe(input, start + 6)).min(input.len());
+  let end = __clipped_end(start + 10, syncsafe(input, start + 6) as u64, input.len());
   return frames(input, frames_start(input, start, end), end, input[start + 3] as i32);
 }
 
@@ -600,22 +620,29 @@ function with_comment(t: Tags, comment: string): Tags {
 // The tags of the Vorbis comments from `from` to `to`: the name of the
 // encoder, then the number of the comments, then each comment after its
 // length.
+function __comment_start(input: [u8], from: i32, to: i32): Option[i32] {
+  if (!__fits(from, 8, to) || to > input.len()) {
+    return None;
+  }
+  let vendor = wire.le(input, from, 4);
+  if (vendor > (to - from - 8) as u64) {
+    return None;
+  }
+  return Some(from + 4 + vendor as i32);
+}
+
 function comments(input: [u8], from: i32, to: i32): Tags {
   let t = none();
-  if (from + 8 > to) {
+  let Some(at) = __comment_start(input, from, to) else {
     return t;
-  }
-  let at = from + 4 + wire.le(input, from, 4) as i32;
-  if (at < from || at + 4 > to) {
-    return t;
-  }
+  };
   let count = wire.le(input, at, 4) as i32;
   at += 4;
   let seen = 0;
-  while (seen < count && at + 4 <= to) {
+  while (seen < count && __fits(at, 4, to)) {
     let n = wire.le(input, at, 4) as i32;
     at += 4;
-    if (n < 0 || at + n > to) {
+    if (!__fits(at, n, to)) {
       return t;
     }
     t = with_comment(t, utf8_text(input, at, at + n));
@@ -631,13 +658,16 @@ pub function flac(input: [u8]): Tags {
     return none();
   }
   let at = 4;
-  while (at + 4 <= input.len()) {
+  while (__fits(at, 4, input.len())) {
     let head = input[at] as i32;
     let size = wire.be(input, at + 1, 3) as i32;
     if ((head & 127) == 4) {
-      return comments(input, at + 4, (at + 4 + size).min(input.len()));
+      return comments(input, at + 4, __clipped_end(at + 4, size as u64, input.len()));
     }
     if ((head & 128) != 0) {
+      return none();
+    }
+    if (!__fits(at + 4, size, input.len())) {
       return none();
     }
     at += 4 + size;
@@ -657,13 +687,17 @@ function info_names(): (string, i32)[] {
 function info(input: [u8], from: i32, to: i32): Tags {
   let t = none();
   let at = from;
-  while (at + 8 <= to) {
+  while (__fits(at, 8, to)) {
     let size = wire.le(input, at + 4, 4) as i32;
-    if (size < 0 || at + 8 + size > to) {
+    if (!__fits(at + 8, size, to)) {
       return t;
     }
     t = with_field(t, field_of(info_names(), frame_name(input, at, 4)), utf8_text(input, at + 8, at + 8 + size));
-    at += 8 + size + size % 2;
+    at += 8 + size;
+    if (at == to) {
+      return t;
+    }
+    at += size % 2;
   }
   return t;
 }
@@ -675,19 +709,23 @@ pub function wav(input: [u8]): Tags {
     return none();
   }
   let at = 12;
-  while (at + 8 <= input.len()) {
-    let size = wire.le(input, at + 4, 4) as i32;
-    if (size < 0) {
-      return none();
-    }
-    let end = (at + 8 + size).min(input.len());
-    if (wire.tag(input, at, "LIST") && at + 12 <= end && wire.tag(input, at + 8, "INFO")) {
+  while (__fits(at, 8, input.len())) {
+    let size = wire.le(input, at + 4, 4);
+    let end = __clipped_end(at + 8, size, input.len());
+    if (wire.tag(input, at, "LIST") && __fits(at, 12, end) && wire.tag(input, at + 8, "INFO")) {
       return info(input, at + 12, end);
     }
     if (wire.tag(input, at, "id3 ") || wire.tag(input, at, "ID3 ")) {
       return id3v2_at(input, at + 8);
     }
-    at += 8 + size + size % 2;
+    if (size > (input.len() - at - 8) as u64) {
+      return none();
+    }
+    at += 8 + size as i32;
+    if (at == input.len()) {
+      return none();
+    }
+    at += (size % 2u64) as i32;
   }
   return none();
 }
@@ -704,15 +742,18 @@ The items of the `ilst` box have a name of four bytes and a `data` box. The valu
 // ends at `to`.
 function box_in(input: [u8], from: i32, to: i32, kind: string): (i32, i32) {
   let at = from;
-  while (at >= from && at + 8 <= to) {
-    let size = wire.be(input, at, 4) as i32;
-    if (size < 8) {
+  while (__fits(at, 8, to)) {
+    let size = wire.be(input, at, 4);
+    if (size < 8u64) {
       return (-1, -1);
     }
     if (wire.tag(input, at + 4, kind)) {
-      return (at + 8, (at + size).min(to));
+      return (at + 8, __clipped_end(at, size, to));
     }
-    at += size;
+    if (size > (to - at) as u64) {
+      return (-1, -1);
+    }
+    at += size as i32;
   }
   return (-1, -1);
 }
@@ -753,7 +794,7 @@ function mp4_field(input: [u8], at: i32): i32 {
 // The text of its `name` box starts after 4 bytes of version and flags.
 function free_field(input: [u8], from: i32, to: i32): i32 {
   let (name, name_end) = box_in(input, from, to, "name");
-  if (name < 0 || name + 4 > name_end) {
+  if (!__fits(name, 4, name_end)) {
     return -1;
   }
   return field_of(gain_names(), utf8_text(input, name + 4, name_end).to_upper());
@@ -784,21 +825,25 @@ function ilst(input: [u8]): (i32, i32) {
 pub function mp4(input: [u8]): Tags {
   let t = none();
   let (at, end) = ilst(input);
-  while (at >= 0 && at + 8 <= end) {
-    let size = wire.be(input, at, 4) as i32;
-    if (size < 8) {
+  while (__fits(at, 8, end)) {
+    let size = wire.be(input, at, 4);
+    if (size < 8u64) {
       return t;
     }
-    let field = item_field(input, at, (at + size).min(end));
-    let (value, value_end) = box_in(input, at + 8, (at + size).min(end), "data");
-    if (field == TRACK && value >= 0 && value + 12 <= value_end) {
+    let item_end = __clipped_end(at, size, end);
+    let field = item_field(input, at, item_end);
+    let (value, value_end) = box_in(input, at + 8, item_end, "data");
+    if (field == TRACK && __fits(value, 12, value_end)) {
       t = Tags { ...t, track: wire.be(input, value + 10, 2) as i32 };
-    } else if (field == GENRE_NUMBER && value >= 0 && value + 10 <= value_end) {
+    } else if (field == GENRE_NUMBER && __fits(value, 10, value_end)) {
       t = with_field(t, GENRE, genre_name(wire.be(input, value + 8, 2) as i32 - 1));
-    } else if (field >= 0 && value >= 0 && value + 8 <= value_end) {
+    } else if (field >= 0 && __fits(value, 8, value_end)) {
       t = with_field(t, field, utf8_text(input, value + 8, value_end));
     }
-    at += size;
+    if (size > (end - at) as u64) {
+      return t;
+    }
+    at += size as i32;
   }
   return t;
 }
@@ -957,10 +1002,10 @@ function kept_frames(input: [u8], from: i32, end: i32, version: i32): u8[] {
   let written = written_ids();
   let out: u8[] = [];
   let at = from;
-  while (at + 10 <= end) {
+  while (__fits(at, 10, end)) {
     let id = frame_name(input, at, 4);
     let size = if (version == 4) { syncsafe(input, at + 4) } else { wire.be(input, at + 4, 4) as i32 };
-    if (id.len() == 0 || size <= 0 || at + 10 + size > end) {
+    if (id.len() == 0 || size <= 0 || !__fits(at + 10, size, end)) {
       return out;
     }
     if (!has(written, id)) {
@@ -1028,20 +1073,19 @@ function field_comments(t: Tags): string[] {
 // `to`, but for those that `retagged` writes.
 function kept_comments(input: [u8], from: i32, to: i32): (u8[], string[]) {
   let kept: string[] = [];
-  let vendor_end = if (from + 8 > to) { -1 } else { from + 4 + wire.le(input, from, 4) as i32 };
-  if (vendor_end < from + 4 || vendor_end + 4 > to) {
+  let Some(vendor_end) = __comment_start(input, from, to) else {
     return (bytes_of("Fern"), kept);
-  }
+  };
   let vendor = appended([], input[from + 4:vendor_end]);
   let count = wire.le(input, vendor_end, 4) as i32;
   let at = vendor_end + 4;
   let written = written_names();
   for _ in 0..count {
-    if (at + 4 > to) {
+    if (!__fits(at, 4, to)) {
       return (vendor, kept);
     }
     let n = wire.le(input, at, 4) as i32;
-    if (n < 0 || at + 4 + n > to) {
+    if (!__fits(at + 4, n, to)) {
       return (vendor, kept);
     }
     if (!is_written(input, at + 4, at + 4 + n, written)) {
@@ -1076,14 +1120,15 @@ function comment_block(vendor: [u8], comments: string[]): u8[] {
 // Vorbis comment block, the byte after it, and its flag of the last block.
 // A block that goes past the end gives no bytes and -1.
 function flac_block(input: [u8], at: i32, t: Tags): (u8[], i32, boolean) {
-  if (at + 4 > input.len()) {
+  if (!__fits(at, 4, input.len())) {
     return ([], -1, true);
   }
   let head = input[at] as i32;
-  let next = at + 4 + wire.be(input, at + 1, 3) as i32;
-  if (next > input.len()) {
+  let size = wire.be(input, at + 1, 3) as i32;
+  if (!__fits(at + 4, size, input.len())) {
     return ([], -1, true);
   }
+  let next = at + 4 + size;
   if ((head & 127) != 4) {
     return (appended([(head & 127) as u8], input[at + 1:next]), next, (head & 128) != 0);
   }
@@ -1169,7 +1214,7 @@ function range(input: [u8], from: i32, to: i32): u8[] {
 // frame of the version 2.2 has a format of three letters where the others
 // have a MIME type.
 function frame_picture(input: [u8], from: i32, to: i32, version: i32): u8[] {
-  if (from + 6 > to) {
+  if (!__fits(from, 6, to)) {
     return [];
   }
   let wide = input[from] == 1u8 || input[from] == 2u8;
@@ -1182,27 +1227,30 @@ function frame_picture(input: [u8], from: i32, to: i32, version: i32): u8[] {
 
 // The image of the first picture frame of the ID3v2 tag at `start`.
 function id3_picture(input: [u8], start: i32): u8[] {
-  if (start < 0 || start + 10 > input.len() || !wire.tag(input, start, "ID3")) {
+  if (!__fits(start, 10, input.len()) || !wire.tag(input, start, "ID3")) {
     return [];
   }
-  let end = (start + 10 + syncsafe(input, start + 6)).min(input.len());
+  let end = __clipped_end(start + 10, syncsafe(input, start + 6) as u64, input.len());
   let version = input[start + 3] as i32;
   let name = if (version == 2) { 3 } else { 4 };
   let head = if (version == 2) { 6 } else { 10 };
   let at = frames_start(input, start, end);
-  while (at + head <= end) {
+  while (__fits(at, head, end)) {
     let id = frame_name(input, at, name);
-    let size = wire.be(input, at + name, name) as i32;
+    let size = wire.be(input, at + name, name);
     if (version == 4) {
-      size = syncsafe(input, at + 4);
+      size = syncsafe(input, at + 4) as u64;
     }
-    if (id.len() == 0 || size <= 0) {
+    if (id.len() == 0 || size == 0u64) {
       return [];
     }
     if (id == "APIC" || id == "PIC") {
-      return frame_picture(input, at + head, (at + head + size).min(end), version);
+      return frame_picture(input, at + head, __clipped_end(at + head, size, end), version);
     }
-    at += head + size;
+    if (size > (end - at - head) as u64) {
+      return [];
+    }
+    at += head + size as i32;
   }
   return [];
 }
@@ -1211,30 +1259,41 @@ function id3_picture(input: [u8], start: i32): u8[] {
 // MIME type, its description, four numbers, and then the image after its
 // length.
 function block_picture(input: [u8], from: i32, to: i32): u8[] {
-  let p = from + 4;
-  for part in 0..2 {
-    if (p + 4 > to) {
-      return [];
-    }
-    p += 4 + wire.be(input, p, 4) as i32;
-  }
-  p += 16;
-  if (p < from || p + 4 > to) {
+  if (!__fits(from, 4, to)) {
     return [];
   }
-  let n = wire.be(input, p, 4) as i32;
-  return range(input, p + 4, (p + 4 + n).min(to));
+  let p = from + 4;
+  for part in 0..2 {
+    if (!__fits(p, 4, to)) {
+      return [];
+    }
+    let size = wire.be(input, p, 4);
+    p += 4;
+    if (size > (to - p) as u64) {
+      return [];
+    }
+    p += size as i32;
+  }
+  if (!__fits(p, 20, to)) {
+    return [];
+  }
+  p += 16;
+  let n = wire.be(input, p, 4);
+  return range(input, p + 4, __clipped_end(p + 4, n, to));
 }
 
 function flac_picture(input: [u8]): u8[] {
   let at = 4;
-  while (at + 4 <= input.len()) {
+  while (__fits(at, 4, input.len())) {
     let head = input[at] as i32;
     let size = wire.be(input, at + 1, 3) as i32;
     if ((head & 127) == 6) {
-      return block_picture(input, at + 4, (at + 4 + size).min(input.len()));
+      return block_picture(input, at + 4, __clipped_end(at + 4, size as u64, input.len()));
     }
     if ((head & 128) != 0) {
+      return [];
+    }
+    if (!__fits(at + 4, size, input.len())) {
       return [];
     }
     at += 4 + size;
@@ -1246,20 +1305,16 @@ function flac_picture(input: [u8]): u8[] {
 // from `from` to `to`.
 function comment_picture(input: [u8], from: i32, to: i32): u8[] {
   let name = "METADATA_BLOCK_PICTURE=";
-  if (from + 8 > to) {
+  let Some(at) = __comment_start(input, from, to) else {
     return [];
-  }
-  let at = from + 4 + wire.le(input, from, 4) as i32;
-  if (at < from || at + 4 > to) {
-    return [];
-  }
+  };
   let count = wire.le(input, at, 4) as i32;
   at += 4;
   let seen = 0;
-  while (seen < count && at + 4 <= to) {
+  while (seen < count && __fits(at, 4, to)) {
     let n = wire.le(input, at, 4) as i32;
     at += 4;
-    if (n < 0 || at + n > to) {
+    if (!__fits(at, n, to)) {
       return [];
     }
     if (n > name.len() && utf8_text(input, at, at + name.len()).to_upper() == name) {
@@ -1287,18 +1342,21 @@ function ogg_picture(input: [u8]): u8[] {
 
 function mp4_picture(input: [u8]): u8[] {
   let (at, end) = ilst(input);
-  while (at >= 0 && at + 8 <= end) {
-    let size = wire.be(input, at, 4) as i32;
-    if (size < 8) {
+  while (__fits(at, 8, end)) {
+    let size = wire.be(input, at, 4);
+    if (size < 8u64) {
       return [];
     }
     if (wire.tag(input, at + 4, "covr")) {
-      let (value, value_end) = box_in(input, at + 8, (at + size).min(end), "data");
-      if (value >= 0) {
+      let (value, value_end) = box_in(input, at + 8, __clipped_end(at, size, end), "data");
+      if (__fits(value, 8, value_end)) {
         return range(input, value + 8, value_end);
       }
     }
-    at += size;
+    if (size > (end - at) as u64) {
+      return [];
+    }
+    at += size as i32;
   }
   return [];
 }

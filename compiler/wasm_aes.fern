@@ -10,7 +10,7 @@ function i64c(v: string): string {
 
 // A view is an array (tag 0), a string or a borrowed descriptor
 // {len | 1 << 31, data} (tag 2), or a frame window holding {data, len} (tag 3).
-function view_funcs(): string {
+pub function view_funcs(): string {
   return "  (func $__fern_aes_view_data (param $v i32) (result i32)\n"
     + "    (if (result i32) (i32.and (local.get $v) (i32.const 2))\n"
     + "      (then (if (result i32) (i32.and (local.get $v) (i32.const 1))\n"
@@ -379,7 +379,7 @@ function ghash_func(): string {
     + "    (local.get $out))\n";
 }
 
-function abort_unless(cond: string): string {
+pub function abort_unless(cond: string): string {
   return "    (if (i32.eqz " + cond + ") (then (call $__fern_abort_slice) (unreachable)))\n";
 }
 
@@ -395,7 +395,8 @@ function gcm_checks_wat(): string {
     + abort_unless("(i64.le_u (i64.add (i64.extend_i32_u (local.get $aad_at)) (i64.extend_i32_u (local.get $aad_n))) " + len + ")");
 }
 
-function gcm_own_wat(): string {
+// A buffer with another holder is copied, and the kernel writes the copy.
+pub function own_wat(): string {
   return "    (if (i32.eqz (call $__fern_rc_is_unique (local.get $buf))) (then\n"
     + "      (local.set $copy (call $__fern_aes_bytes (i32.load (local.get $buf))))\n"
     + "      (memory.copy (i32.add (local.get $copy) (i32.const 8)) (i32.add (local.get $buf) (i32.const 8)) (i32.load (local.get $buf)))\n"
@@ -419,7 +420,7 @@ function gcm_func(): string {
   let ctr = "    (call $__fern_aes_ctr_at (local.get $rkp) (local.get $rounds) (local.get $j0) (local.get $dp) (local.get $dp) (local.get $n))\n";
   return "  (func $__fern_aes_gcm_into " + params + " (param $seal i32) (result i32)\n"
     + "    (local $kl i32) (local $rounds i32) (local $copy i32) (local $tmp i32) (local $j0 i32) (local $s i32) (local $lens i32) (local $rkp i32) (local $hp i32) (local $dp i32) (local $ivp i32) (local $tag i32)\n"
-    + gcm_checks_wat() + gcm_own_wat()
+    + gcm_checks_wat() + own_wat()
     + "    (local.set $tmp (call $__fern_aes_bytes (i32.const 48)))\n"
     + "    (local.set $j0 (i32.add (local.get $tmp) (i32.const 8)))\n    (local.set $s (i32.add (local.get $tmp) (i32.const 24)))\n    (local.set $lens (i32.add (local.get $tmp) (i32.const 40)))\n"
     + "    (local.set $rkp (call $__fern_aes_view_data (local.get $rk)))\n    (local.set $hp (call $__fern_aes_view_data (local.get $h)))\n"
@@ -451,6 +452,6 @@ pub function kernel_name(tag: i32): string {
 }
 
 pub function funcs(): string {
-  return view_funcs() + sbox_func() + ortho_func() + interleave_funcs() + shift_rows_func() + mix_columns_func()
+  return sbox_func() + ortho_func() + interleave_funcs() + shift_rows_func() + mix_columns_func()
     + encrypt_func() + sub_word_func() + expand_key_func() + ctr_at_func() + ctr32_func() + ghash_at_func() + ghash_func() + gcm_func();
 }

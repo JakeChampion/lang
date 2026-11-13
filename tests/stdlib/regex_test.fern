@@ -287,8 +287,251 @@ function test_literal_prefix(): test.TestOutcome {
   return test.assert_eq_array(got, [" 3-7", " 1-4 5-8", " 0-5 6-8", " 0-1 2-4", " 0-3 8-11", ""]);
 }
 
+// The span of the first match, and with `longest` the span of the
+// leftmost-longest match.
+function rule_span(pattern: string, text: string, longest: boolean): string {
+  let Ok(compiled) = regex.compile(pattern) else {
+    return "invalid regex";
+  };
+  let re = if (longest) { compiled.longest() } else { compiled };
+  let Some(m) = re.find(text) else {
+    return "none";
+  };
+  return m.start.to_string() + "-" + m.end.to_string();
+}
+
+// Each group of the first match as "start-end", with "unset" for a group that
+// did not take part.
+function rule_groups(pattern: string, text: string, longest: boolean): string {
+  let Ok(compiled) = regex.compile(pattern) else {
+    return "invalid regex";
+  };
+  let re = if (longest) { compiled.longest() } else { compiled };
+  let Some(c) = re.captures(text) else {
+    return "none";
+  };
+  let out = "";
+  for i in 0..c.group_count() + 1 {
+    if (i > 0) {
+      out += " ";
+    }
+    match ((c.group_start(i), c.group_end(i))) {
+      (Some(s), Some(e)) => {
+        out += s.to_string() + "-" + e.to_string();
+      },
+      _ => {
+        out += "unset";
+      }
+    }
+  }
+  return out;
+}
+
+const RULE_SPANS: string[][] = [
+  ["foo|foobar", "foobar"], ["(?:a|ab)*", "abab"], ["x*|foo", "foo"], ["x(|a)*", "xaa"],
+  ["(|a)+", "aa"], ["x(a|)*", "xaa"], ["a(?:b|bc)d?", "abcd"], ["(?i)FOO|foobar", "FooBar"], ["(?:b?(?:|a))*", "ba"],
+];
+
+function test_leftmost_first_spans(): test.TestOutcome {
+  let got: string[] = [];
+  for row in RULE_SPANS {
+    got = got.append(rule_span(row[0], row[1], false));
+  }
+  return test.assert_eq_array(got, ["0-3", "0-1", "0-0", "0-1", "0-0", "0-3", "0-2", "0-3", "0-1"]);
+}
+
+function test_longest_spans(): test.TestOutcome {
+  let got: string[] = [];
+  for row in RULE_SPANS {
+    got = got.append(rule_span(row[0], row[1], true));
+  }
+  return test.assert_eq_array(got, ["0-6", "0-4", "0-3", "0-3", "0-2", "0-3", "0-4", "0-6", "0-2"]);
+}
+
+const RULE_GROUPS: string[][] = [
+  ["(a|ab)", "xab"], ["((?:a|ab)(c?))", "abc"], ["(a|ab)(c|bcd)(d*)", "abcd"], ["x(|a)*", "xaa"],
+  ["(a*)(a|b)*", "aab"], ["(?:(a)|b)*", "ab"], ["((a)|b)+", "ab"], ["(a|)*", "b"],
+];
+
+function test_leftmost_first_captures(): test.TestOutcome {
+  let got: string[] = [];
+  for row in RULE_GROUPS {
+    got = got.append(rule_groups(row[0], row[1], false));
+  }
+  return test.assert_eq_array(got, [
+    "1-2 1-2", "0-1 0-1 1-1", "0-4 0-1 1-4 4-4", "0-1 1-1",
+    "0-3 0-2 2-3", "0-2 0-1", "0-2 1-2 0-1", "0-0 0-0",
+  ]);
+}
+
+function test_longest_captures(): test.TestOutcome {
+  let got: string[] = [];
+  for row in RULE_GROUPS {
+    got = got.append(rule_groups(row[0], row[1], true));
+  }
+  return test.assert_eq_array(got, [
+    "1-3 1-3", "0-3 0-3 2-3", "0-4 0-1 1-4 4-4", "0-3 2-3",
+    "0-3 0-2 2-3", "0-2 0-1", "0-2 1-2 0-1", "0-0 0-0",
+  ]);
+}
+
+// find_all, find_at, replace_all, split and captures_all follow the rule of
+// the expression.
+function rule_methods(longest: boolean): string[] {
+  let Ok(compiled) = regex.compile("foo|foobar") else {
+    return ["invalid regex"];
+  };
+  let re = if (longest) { compiled.longest() } else { compiled };
+  let all = "";
+  for m in re.find_all("foobar foo") {
+    all += " " + m.start.to_string() + "-" + m.end.to_string();
+  }
+  let at = match (re.find_at("foobar foobar", 1)) { Some(m) => m.start.to_string() + "-" + m.end.to_string(), None => "none" };
+  let replaced = match (re.replace_all("foobar foo", "X")) { Ok(text) => text, Err(e) => e.to_string() };
+  let parts = match (re.split("afoobarb")) { Ok(xs) => xs.join(","), Err(e) => e.to_string() };
+  return [all, at, replaced, parts].append(rule_group_methods(longest));
+}
+
+function rule_group_methods(longest: boolean): string {
+  let Ok(compiled) = regex.compile("(foo|foobar)") else {
+    return "invalid regex";
+  };
+  let re = if (longest) { compiled.longest() } else { compiled };
+  let groups = "";
+  for c in re.captures_all("foobar foo") {
+    let Ok(Some(g)) = c.group(1) else {
+      return "no group";
+    };
+    groups += " " + g;
+  }
+  let templated = match (re.replace_all_groups("foobar", "<$1>")) { Ok(text) => text, Err(e) => e.to_string() };
+  return groups + " " + templated;
+}
+
+// A thread of a later start can reach the match while a thread of an earlier
+// start still lives. The earlier start wins when it reaches the match too.
+const START_SPANS: string[][] = [
+  ["abcd|bc", "abcd"], ["abce|bc", "abcd"], ["a\\w*z|b", "abbbz"], ["xa*y|a", "xaaay"],
+];
+
+function test_overlapping_starts(): test.TestOutcome {
+  let got: string[] = [];
+  for row in START_SPANS {
+    got = got.append(rule_span(row[0], row[1], false) + " " + rule_span(row[0], row[1], true));
+  }
+  got = got.append(rule_groups("(a+)b|(a)c", "aaac", false));
+  got = got.append(rule_groups("(a+)b|(a)c", "aaac", true));
+  return test.assert_eq_array(got, ["0-4 0-4", "1-3 1-3", "0-5 0-5", "0-5 0-5", "2-4 unset 2-3", "2-4 unset 2-3"]);
+}
+
+// `unit` repeated 2 to the power `n` times.
+function doubled(unit: string, n: i32): string {
+  let out = unit;
+  for _ in 0..n {
+    out = out + out;
+  }
+  return out;
+}
+
+// One pass over the text: each offset starts a thread. A search that runs
+// the program again from each start takes quadratic time here.
+function test_many_starts(): test.TestOutcome {
+  let text = doubled("a", 12);
+  let Ok(re) = regex.compile("a*b") else {
+    return test.fail("a*b does not compile");
+  };
+  let Ok(alt) = regex.compile("(?:a|ab)*c") else {
+    return test.fail("(?:a|ab)*c does not compile");
+  };
+  let Ok(all) = regex.compile("a*") else {
+    return test.fail("a* does not compile");
+  };
+  let got = [
+    span_text(re.find(text)), span_text(re.find(text + "b")), span_text(alt.find(text + "c")),
+    re.count(text).to_string(), re.is_match(text).to_string(), alt.is_match(text).to_string(),
+    all.is_full_match(text).to_string(), all.is_full_match(text + "b").to_string(),
+  ];
+  return test.assert_eq_array(got, ["none", "0-4097", "0-4097", "0", "false", "false", "true", "false"]);
+}
+
+function span_text(m: Option[regex.Match]): string {
+  let Some(found) = m else {
+    return "none";
+  };
+  return found.start.to_string() + "-" + found.end.to_string();
+}
+
+// `count` gives the length of `find_all`, with the empty matches.
+function test_count_is_find_all(): test.TestOutcome {
+  let got: string[] = [];
+  for row in [["a*", "baaab"], ["\\b", "ab cd"], ["x|", "axxb"], ["\\w+", "one two  three"]] {
+    let Ok(re) = regex.compile(row[0]) else {
+      return test.fail(row[0] + " does not compile");
+    };
+    got = got.append(re.count(row[1]).to_string() + "=" + re.find_all(row[1]).len().to_string());
+  }
+  return test.assert_eq_array(got, ["4=4", "4=4", "5=5", "3=3"]);
+}
+
+// The DFA of this pattern has more than 8,000 states, over the limit, so
+// the Pike VM does each search.
+function test_dfa_limit(): test.TestOutcome {
+  let Ok(re) = regex.compile("[ab]*a[ab]{12}") else {
+    return test.fail("the pattern does not compile");
+  };
+  let text = "bbbbbabbbbbbbbbbbbx";
+  let groups = match (re.captures(text)) { Some(c) => match (c.group_end(0)) { Some(e) => e.to_string(), None => "unset" }, None => "none" };
+  let got = [
+    span_text(re.find(text)), span_text(re.find_at(text, 1)), span_text(re.find("ab")), re.is_match(text).to_string(),
+    re.count(text + text).to_string(), re.is_full_match(slice_unchecked(text, 0, 18) + "").to_string(), groups,
+  ];
+  return test.assert_eq_array(got, ["0-18", "1-18", "none", "true", "2", "true", "18"]);
+}
+
+// For the assertions, a DFA column holds the kind of the next byte. The
+// first state holds the bytes on each side of the first offset.
+function test_assertion_contexts(): test.TestOutcome {
+  let got = [
+    spans("\\bfoo\\b", "foo foobar barfoo foo"), spans("^ab|cd$", "abcd abcd"), spans("\\b{start}\\w+\\b{end}", "ab cd"),
+    spans("(?i)ab\\B", "ABc aB"), span_at("x$", "xx", 0), span_at("^x", "xx", 1), span_at("\\bx", "axx x", 1),
+    spans("\\b{end-half}", "a b"), spans("\\b{start-half}c", "cc c"),
+  ];
+  let full: string[] = [];
+  for row in [["\\w+$", "abc"], ["^a\\b", "a"], ["^a\\b", "ab"], ["a\\B", "a"], ["(?:a|b)+\\b{end}", "abab"]] {
+    let Ok(re) = regex.compile(row[0]) else {
+      return test.fail(row[0] + " does not compile");
+    };
+    full = full.append(re.is_full_match(row[1]).to_string());
+  }
+  return test.assert_eq_array(got.concat(full), [
+    " 0-3 18-21", " 0-2 7-9", " 0-2 3-5", " 0-2", "1-2", "none", "4-5", " 1-1 3-3", " 0-1 3-4",
+    "true", "true", "false", "false", "true",
+  ]);
+}
+
+function test_rule_in_each_method(): test.TestOutcome {
+  let got = rule_methods(false);
+  for row in rule_methods(true) {
+    got = got.append(row);
+  }
+  return test.assert_eq_array(got, [
+    " 0-3 7-10", "7-10", "Xbar X", "a,barb", " foo foo <foo>bar",
+    " 0-6 7-10", "7-13", "X X", "a,b", " foobar foo <foobar>",
+  ]);
+}
+
 function main(): i32 {
   let r = test.new("std/regex");
+  r = r.it("leftmost-first spans", test_leftmost_first_spans);
+  r = r.it("longest spans", test_longest_spans);
+  r = r.it("leftmost-first captures", test_leftmost_first_captures);
+  r = r.it("longest captures", test_longest_captures);
+  r = r.it("match rule in each method", test_rule_in_each_method);
+  r = r.it("overlapping starts", test_overlapping_starts);
+  r = r.it("many starts in one pass", test_many_starts);
+  r = r.it("count is the length of find_all", test_count_is_find_all);
+  r = r.it("over the DFA limit", test_dfa_limit);
+  r = r.it("assertion contexts", test_assertion_contexts);
   r = r.it("next_candidate", test_next_candidate);
   r = r.it("literal prefix", test_literal_prefix);
   r = r.it("find_at", test_find_at);

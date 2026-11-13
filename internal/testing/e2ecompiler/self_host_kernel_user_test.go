@@ -388,12 +388,51 @@ func TestSelfHostKernelX86UserModeOnQemu(t *testing.T) {
 	}
 }
 
+// The process counts down from 2^26 and then calls exit_group. That is longer
+// than a period of the PIT, whose IRQ 0 a legacy PIC at its reset base gives
+// as vector 0. So the run ends in the syscall only when the reset entry masked
+// the legacy PICs.
+var userModeX86SpinMainSrc = strings.Replace(userModeX86MainSrc[:strings.Index(userModeX86MainSrc, "  let faults = 0;\n")],
+	"return [0xbfu8, 7u8, 0u8, 0u8, 0u8, 0xb8u8, 1u8, 0u8, 0u8, 0u8, 0x0fu8, 0x05u8, 0x8du8, 0x78u8, 1u8, 0xb8u8, 0xe7u8, 0u8, 0u8, 0u8, 0x0fu8, 0x05u8, 0x48u8, 0x8bu8, 0x0au8, 0xffu8, 0xe3u8];",
+	"return [0xb9u8, 0u8, 0u8, 0u8, 4u8, 0xffu8, 0xc9u8, 0x75u8, 0xfcu8, 0xb8u8, 0xe7u8, 0u8, 0u8, 0u8, 0x0fu8, 0x05u8];", 1) + `  let kind = 0i64;
+  unsafe {
+    kind = __user_run(frame);
+  }
+  print("kind " + kind.to_string() + " vector " + reg(frame, 20).to_string() + " rax " + reg(frame, 0).to_string());
+  return 0;
+}
+`
+
+func TestSelfHostKernelX86UserModeMasksLegacyPIC(t *testing.T) {
+	if !strings.Contains(userModeX86SpinMainSrc, "0xb9u8") {
+		t.Fatal("the spin code did not replace the code of the user-mode program")
+	}
+	qemu := e2eharness.QemuSystem(t, "qemu-system-x86_64")
+	cli := buildSelfHostCLI(t)
+	src := writeTickProgram(t, userModeX86BoardSrc, userModeX86SpinMainSrc)
+	out := filepath.Join(t.TempDir(), "kernel.elf")
+	if msg, err := cli.compileCmd("x86-64-kernel", out, src, "-ram", kernelX86RAM).CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, msg)
+	}
+	console, err := bootQemu(t, qemu, "-M", "microvm", "-cpu", "max", "-m", "128M",
+		"-nodefaults", "-no-user-config", "-nographic", "-no-reboot", "-serial", "stdio",
+		"-device", "isa-debug-exit,iobase=0xf4,iosize=4", "-kernel", out, "-append", "fern=pvh")
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 1 {
+		t.Fatalf("qemu: %v, want exit status 1 from isa-debug-exit; console:\n%s", err, console)
+	}
+	if want := "kind 0 vector 0 rax 231\n"; !strings.Contains(string(console), want) {
+		t.Errorf("console:\n%s\nwant %q", console, want)
+	}
+}
+
 // The x86-64 image has a gate for each vector, a GDT with the ring 3
 // segments, a TSS, and the SYSCALL registers, even with no @interrupt handler.
 func TestSelfHostUserRunX86Gates(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	text := emitKernelAsm(t, cli, "x86-64-kernel", kernelX86RAM, userRunSrc)
 	wantInOrder(t, "x86-64-kernel", text, []string{
+		"    movb $255, %al\n    movl $33, %edx\n    outb %al, %dx\n    movl $161, %edx\n    outb %al, %dx\n",
 		"    leaq __fern_user_gates(%rip), %rax\n",
 		"    lidt (%rsp)\n",
 		"    call __fern_user_init\n",

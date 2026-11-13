@@ -1,9 +1,15 @@
-# 2026-11-13: PR #15683, perf-x86_64 job 131830388790 and perf-aarch64 job 131830388796 on the merge
-# with main 910ea591. #15649 merged before its perf lane reported, so these rows hold three changes:
-# the aarch64 rows of #15647, the token keep pass of #15649 and the token pairs of #15683.
-# perceus_rbtree.ir is -9.6% on x86_64 and -12.9% on aarch64, perceus_rbtree_ck.ir -8.5% and -10.2%.
-# ordmap_insert.ir and pmap_insert.ir fall 2.2% to 3.6%. aarch64/pvec_with.ir rises 1.17%, and ten
-# .text rows grow 1.1% to 6.5%. Each row moves to its measured value. Keep all tolerances.
+# 2026-11-13: PR #15739, perf-x86_64 job 132017371022 and perf-aarch64 job 132017370985 on the merge
+# with main 629da263. Twelve rows of perceus_cfold, perceus_deriv, perceus_rbtree, perceus_rbtree_ck,
+# pmap_insert and pvec_with are 1.0% to 4.8% below their pins. #15739 removes a conformance case and
+# a lowering branch that no program reaches, so these are values of main. Each row moves to its
+# measured value. Keep all tolerances.
+# 2026-11-13: PR #15703, perf-aarch64 job 131909319515 on the merge with main 3005c182.
+# The four aarch64 perceus_rbtree rows are 4.2% to 6.6% below their pins. #15703 changes only
+# the checkers, so these are values of main. Each row moves to its measured value. Keep all
+# tolerances.
+# 2026-11-13: PR #15684 jobs 131832783238 and 131832783245 tested merge df16f1f9 with main 5e4d66b7.
+# These rows use the reported measurements after the main compiler changes.
+# The media reference change does not alter the compiler or workloads. Tolerances stay unchanged.
 # 2026-11-13: PR #15649, perf-x86_64 job 131794350593 on the merge with main bece4d5b. #15647 tests a
 # reuse allocation inline. perceus_rbtree.ir -4.20%, perceus_rbtree_ck.ir -3.43%, pmap_insert.ir
 # -1.35%. The .text rows of five programs grew 2.2% to 4.3%, because each site has its token test
@@ -36,6 +42,8 @@
 # gave http.__plain_path a [u8] parameter, and the inliner does not splice a
 # function with an array view parameter (#15093). http_hello.ir is 0.62% over
 # main before #15076 and 0.40% under main after it. Pinned at the measured value.
+# 2026-11-13: #15650, perf-aarch64 job 131921596806 on a896cb12. The spill rank by live length keeps more loop values of the rbtree insert in registers: aarch64/perceus_rbtree .text -4.2% and .ir -6.1%, perceus_rbtree_ck .text -6.2% and .ir -5.7%. Pinned at the measured values.
+# 2026-11-13: #15650, a local scripts/perf-bench count on main 3005c182, which gives the pinned 21868422 before the change. The allocator ranks a spill by the live length of a value. In http__parse_request a value with holes now looks cheap to keep, and two other values spill in its place, so x86_64/http_hello.ir grows 1.04%. Pinned at the measured value.
 # 2026-11-10: PR #15079, perf-x86_64 job 129626601778 on 3e6ab400. x86_64/http_hello.ir grows 1.91% with f79f524d of #15076, as the .text rows above do. Pinned at its measured value.
 # 2026-11-10: PR #15079, perf-aarch64 job 129615058796 on a32eafd2, and a local scripts/perf-bench count for x86_64. http_hello.text grows 6.2% on aarch64 and 7.1% on x86_64 with f79f524d of #15076, which reads a request target through a view: the parent of f79f524d emits 16542 aarch64 lines and f79f524d emits 17568. This PR changes no emitted code. Pinned at the measured values.
 # 2026-11-09: Main job 129506310350 measured aarch64/video_qtrle.text at 5600.
@@ -345,10 +353,10 @@ x86_64/closure_call.text	963
 x86_64/closure_call.ir	41178167
 # 2026-11-01 (#13347): CI41317429107 measures both lower x86 DEFLATE counts.
 x86_64/deflate_decode.ir	32877120
-x86_64/deflate_decode.text	12645
+x86_64/deflate_decode.text	12480
 x86_64/deflate_encode.ir	41579468
 # 2026-11-05: PR #14207, perf-x86_64 job 126960802774 on the merge with main 6dba1dcb measures lower values for the changed rows below. The rows that rise keep their limits.
-x86_64/deflate_encode.text	7252
+x86_64/deflate_encode.text	7145
 x86_64/enum_match.text	934
 x86_64/enum_match.ir	29250077
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
@@ -357,7 +365,7 @@ x86_64/enum_match.ir	29250077
 # Evidence: docs/benchmarks/compiler-interpreter-http-ci-2026-11-10/. Tolerances stay unchanged.
 # 2026-11-10: Current rows follow main e23f590d and its measured HTTP reductions.
 x86_64/http_hello.text	15691
-x86_64/http_hello.ir	21868422
+x86_64/http_hello.ir	22096422
 x86_64/int_loop.text	292
 x86_64/int_loop.ir	12000077
 x86_64/map_int.text	8488
@@ -366,14 +374,14 @@ x86_64/map_probe_chain.text	8492
 # 2026-11-10: PR #15106, CI job 129860813857 on b45460dd72 measured this count.
 # Bank the measured reduction after main 5d6c692eb2. Keep the tolerance unchanged.
 x86_64/map_probe_chain.ir	238091314
-x86_64/map_string.text	9311
+x86_64/map_string.text	9419
 # 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured x86_64/map_string.ir at 51764454 (was 53037751). The tolerance is unchanged.
 x86_64/map_string.ir	51764454	2
 x86_64/ordmap_insert.text	5394
 x86_64/ordmap_insert.ir	72741595
-x86_64/pmap_insert.text	2935
-x86_64/pmap_insert.ir	48522363
-x86_64/pvec_with.text	3056
+x86_64/pmap_insert.text	2933
+x86_64/pmap_insert.ir	48527043
+x86_64/pvec_with.text	2994
 x86_64/pvec_with.ir	50694324
 x86_64/record_update.ir	36120760
 x86_64/record_update.text	981
@@ -381,22 +389,22 @@ x86_64/sort_inplace.text	1538
 x86_64/sort_inplace.ir	36583718
 x86_64/sort_ints.text	1778
 x86_64/sort_ints.ir	23120269
-x86_64/sort_strings.text	3098
-x86_64/sort_strings.ir	96173451
-x86_64/string_build.text	1926
-x86_64/string_build.ir	42886116
+x86_64/sort_strings.text	3142
+x86_64/sort_strings.ir	95020165
+x86_64/string_build.text	1987
+x86_64/string_build.ir	38746123
 x86_64/string_count_byte.text	1321
 x86_64/string_count_byte.ir	41173368
 x86_64/string_find_byte.text	1593
 x86_64/string_find_byte.ir	43687425
 x86_64/string_rfind_byte.text	1741
 x86_64/string_rfind_byte.ir	43695768
-x86_64/string_scan.text	2166
+x86_64/string_scan.text	2227
 x86_64/string_scan.ir	52670002
 x86_64/string_slice.text	944
 x86_64/string_slice.ir	38460093
-x86_64/struct_drop.text	2341
-x86_64/struct_drop.ir	200820598
+x86_64/struct_drop.text	2402
+x86_64/struct_drop.ir	197940612
 x86_64/tokenize.text	1247
 x86_64/tokenize.ir	37860093
 x86_64/utf8_ingest_unchecked.text	7735
@@ -639,9 +647,9 @@ aarch64/closure_call.ir	46002179
 # 2026-10-26 (#13496): CI40296315314 reports seven lower ARM64 instruction counts.
 # 2026-11-01 (#13347): one-allocation table fills lower the measured ARM64 decode count.
 aarch64/deflate_decode.ir	34895281
-aarch64/deflate_decode.text	13478
+aarch64/deflate_decode.text	13241
 aarch64/deflate_encode.ir	43566583
-aarch64/deflate_encode.text	7910
+aarch64/deflate_encode.text	7735
 aarch64/enum_match.text	1165
 aarch64/enum_match.ir	24975095
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
@@ -658,15 +666,15 @@ aarch64/map_probe_chain.text	8507
 # 2026-11-10: PR #15022 at 206df7ee, ARM64 CI job 129589649703.
 # Bank 230251856 guest instructions from run 42743098908. Keep the 1% tolerance.
 aarch64/map_probe_chain.ir	230251856
-aarch64/map_string.text	9472
+aarch64/map_string.text	9588
 # 2026-10-26 (#13496): CI40297899459 reports the current map instruction count.
 # 2026-11-11 (#15258): perf-aarch64 job 130456686122 measured aarch64/map_string.ir at 49757676 (was 53247468). The tolerance is unchanged.
 aarch64/map_string.ir	49757676	2
 aarch64/ordmap_insert.text	5868
 aarch64/ordmap_insert.ir	88147332
 aarch64/pmap_insert.text	3214
-aarch64/pmap_insert.ir	59202985
-aarch64/pvec_with.text	3318
+aarch64/pmap_insert.ir	58518189
+aarch64/pvec_with.text	3243
 aarch64/pvec_with.ir	54871287
 aarch64/record_update.text	1216
 aarch64/record_update.ir	34494442
@@ -676,21 +684,21 @@ aarch64/sort_inplace.ir	43684079
 # 2026-11-05: PR #14207, perf-aarch64 job 126960803294 reports sort_ints.text 7.5% and sort_ints.ir 18.0% lower.
 aarch64/sort_ints.text	2063
 aarch64/sort_ints.ir	24753301
-aarch64/sort_strings.text	3488
-aarch64/sort_strings.ir	100996546
-aarch64/string_build.text	2292
-aarch64/string_build.ir	46680569
+aarch64/sort_strings.text	3536
+aarch64/sort_strings.ir	99216935
+aarch64/string_build.text	2357
+aarch64/string_build.ir	42360567
 aarch64/string_count_byte.text	1495
 aarch64/string_count_byte.ir	295207223
 aarch64/string_find_byte.text	1906
 aarch64/string_find_byte.ir	55921279
 aarch64/string_rfind_byte.text	2013
 aarch64/string_rfind_byte.ir	55941911
-aarch64/string_scan.text	2491
+aarch64/string_scan.text	2556
 aarch64/string_scan.ir	59787692
 aarch64/string_slice.text	1188
 aarch64/string_slice.ir	43620107
-aarch64/struct_drop.text	2598
+aarch64/struct_drop.text	2663
 aarch64/struct_drop.ir	218300904
 aarch64/tokenize.text	1444
 aarch64/tokenize.ir	38350109
@@ -700,16 +708,16 @@ aarch64/utf8_ingest_validated.text	8735
 aarch64/utf8_ingest_validated.ir	6229114
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
-x86_64/perceus_cfold.text	1974
+x86_64/perceus_cfold.text	1938
 x86_64/perceus_cfold.ir	47742110
 x86_64/perceus_deriv.text	2651
 x86_64/perceus_deriv.ir	64168424
 x86_64/perceus_nqueens.text	1548
 x86_64/perceus_nqueens.ir	81923493
-x86_64/perceus_rbtree.text	2740
-x86_64/perceus_rbtree.ir	32839637
-x86_64/perceus_rbtree_ck.text	2966
-x86_64/perceus_rbtree_ck.ir	33983957
+x86_64/perceus_rbtree.text	2600
+x86_64/perceus_rbtree.ir	31429877
+x86_64/perceus_rbtree_ck.text	2795
+x86_64/perceus_rbtree_ck.ir	32576757
 # 2026-11-12 (#15554): PR #15558 job 131516922622 on main 1bbf2294 measures
 # 13 aarch64 rows below their pins: deflate_decode.text -1.76%,
 # deflate_encode.text -1.06%, ordmap_insert.ir -3.63%, perceus_cfold.text
@@ -717,16 +725,16 @@ x86_64/perceus_rbtree_ck.ir	33983957
 # perceus_deriv.ir -1.25%, perceus_nqueens.ir -1.85%, perceus_rbtree.text
 # -1.40%, perceus_rbtree.ir -10.29%, perceus_rbtree_ck.ir -9.17%,
 # pmap_insert.ir -2.07%, pvec_with.ir -2.85%. The tolerances are unchanged.
-aarch64/perceus_cfold.text	2258
+aarch64/perceus_cfold.text	2183
 aarch64/perceus_cfold.ir	54945203
-aarch64/perceus_deriv.text	2957
-aarch64/perceus_deriv.ir	77989395
+aarch64/perceus_deriv.text	2927
+aarch64/perceus_deriv.ir	77209395
 aarch64/perceus_nqueens.text	1812
 aarch64/perceus_nqueens.ir	90387246
-aarch64/perceus_rbtree.text	3028
-aarch64/perceus_rbtree.ir	37480927
-aarch64/perceus_rbtree_ck.text	3269
-aarch64/perceus_rbtree_ck.ir	38345727
+aarch64/perceus_rbtree.text	2842
+aarch64/perceus_rbtree.ir	35415487
+aarch64/perceus_rbtree_ck.text	3039
+aarch64/perceus_rbtree_ck.ir	36653727
 # 2026-11-01: #13988 keeps the original main pvec instruction gates.
 # Fresh measurements remain within their unchanged 1% tolerance.
 # 2026-11-07: PR #14490 adds the fixed QTRLE workload. Existing limits stay unchanged.
@@ -739,7 +747,7 @@ x86_64/video_qtrle.ir 1717224731
 # aarch64/video_qtrle.text at 5600, down from 5682. Keep the existing tolerance.
 # Main 4a044282 and candidate code 6f6bddfc emit identical assembly for this benchmark.
 # Evidence: docs/benchmarks/compiler-interpreter-ci-2026-11-10/.
-aarch64/video_qtrle.text 5600
+aarch64/video_qtrle.text 5522
 aarch64/video_qtrle.ir 1559097809
 # 2026-11-09: QTRLE scalar run validation removes per-run result storage.
 # Pinned to local native Callgrind and cross-target assembly measurements.
@@ -748,3 +756,8 @@ aarch64/video_qtrle.ir 1559097809
 # from #14910 changes the string-count rows. Parent 97af82fc and IVF head
 # cbed65e0 produce identical assembly, binaries, and Callgrind counts.
 # Pin both measured rows. Keep the 1% tolerance.
+# 2026-11-13: main f29fcfdf. #15752 adds the adopt path to __fern_string_from_bytes_u8:
+# 63 more aarch64 lines in map_string, sort_strings, string_build, string_scan and
+# struct_drop. The string .ir rows fall, string_build up to 9.7%. aarch64: perf-aarch64
+# job 132091435610 on #15742 merged with f29fcfdf. x86-64: local perf-bench and
+# callgrind on f29fcfdf. Tolerances are unchanged.

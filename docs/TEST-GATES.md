@@ -905,6 +905,10 @@ runner gates its own ISA. It proves only what the probes execute: a
 secret-dependent path the inputs do not take is not reported. Every later
 crypto kernel adds its own case.
 
+The ChaCha20-Poly1305 probe seals 1000 bytes. Thus it reaches the groups of
+four blocks of the x86-64 Poly1305 kernel. It also reaches the groups of
+eight blocks of the ChaCha20 kernel.
+
 The AES-GCM kernels (`__aes_expand_key`, `__aes_ctr32`, `__ghash`, and the
 in-place pair `__aes_gcm_seal_into` / `__aes_gcm_open_into`) are checked on
 their own against known answers on every target by
@@ -921,6 +925,44 @@ is copied before it is written. `…MisuseX86_64`, `…MisuseArm64`,
 `…MisuseWasm` and the interpreter leg hold each region outside the buffer,
 a short schedule and a wrong-length iv to stopping the program. A wrong
 kernel on one backend fails that backend's leg even when the others agree.
+
+The ChaCha20 kernel (`__chacha20_xor_into`) is checked on its own by
+`TestSelfHostChaCha20KernelX86_64`, `…Arm64` (qemu), `…Wasm` and
+`TestSelfHostInterpChaCha20Kernel` (both interpreters). The native legs run
+the in-process assembler and GNU as. Each leg must print the same lines as a
+Go model.
+
+The lines start with RFC 8439's block and cipher answers. Then the program
+prints a digest of the whole buffer for each length to 1024. It also prints
+one for lengths around the groups of four and eight blocks. A block counter
+that wraps, and views for the key and the counter, come last. A buffer with
+another holder, or a literal, is copied before the kernel writes it.
+
+`TestSelfHostChaCha20KernelCensus` runs the same program under the leak
+census on each target. In `TestSelfHostChaCha20KernelMisuse`, each backend
+and both interpreters must stop the program for a bad call. A bad call has a
+range outside the buffer, a key that is not 32 bytes or a counter block that
+is not 16 bytes.
+
+The Poly1305 kernel (`__poly1305_blocks`) is checked on its own by
+`TestSelfHostPoly1305KernelX86_64`, `…Arm64` (qemu), `…Wasm` and
+`TestSelfHostInterpPoly1305Kernel` (both interpreters). The native legs run
+the in-process assembler and GNU as. Each leg must print the same lines as a
+Go model in `math/big`.
+
+The lines start with RFC 8439's Poly1305 tag. Then the program prints the
+state after the kernel absorbs each length to 1024 and some longer lengths.
+The x86-64 kernel takes groups of four blocks from 256 bytes, so these
+lengths cross each path and each tail. There are three start states: a
+pattern, all ones with 0xff messages (the largest r and the most carries),
+and h above p with high bits in h2 that the kernel does not read. A state
+with another holder, or a literal, is copied before the kernel writes it.
+Two calls split at a block boundary must give the state of one call.
+
+`TestSelfHostPoly1305KernelCensus` runs the same program under the leak
+census on each target. In `TestSelfHostPoly1305KernelMisuse`, each backend
+and both interpreters must stop the program for a bad call. A bad call has a
+range outside the message or a state that is not 40 bytes.
 
 ## Netlify deploys and the standalone smoke script
 

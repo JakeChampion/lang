@@ -354,16 +354,6 @@ function bsd(): irtables.LowerState {
   return reader(bsd_name(), [ir.op_load_local(1), ir.op_bsd_sum()], [ir.op_load_local(1), ir.packed(ir.op_bsd_sum_bytes())], 2);
 }
 
-// The returned string owns a copy of the borrowed bytes.
-// A frame view can lose its storage even if its descriptor remains.
-pub function string_name(): string {
-  return "__sem_byte_view_string";
-}
-
-function string_copy(): irtables.LowerState {
-  return reader(string_name(), [ir.op_const_str(""), ir.op_str_concat()], [ir.packed(ir.op_str_from_bytes())], 1);
-}
-
 // A kernel helper serves one builtin. The view lowering calls the other helpers itself.
 pub function served_builtin(helper: string): string {
   if (helper == crc32_name()) {
@@ -385,7 +375,7 @@ pub function served_builtin(helper: string): string {
 }
 
 pub function state_helpers(): irtables.LowerState[] {
-  return [length(), data(), slice(8), slice(32), slice(64), release(), crc32(), crc32_ieee(), mismatch(), sum(), bsd(), string_copy()];
+  return [length(), data(), slice(8), slice(32), slice(64), release(), crc32(), crc32_ieee(), mismatch(), sum(), bsd()];
 }
 
 pub function helpers(): Result[irtables.Lowered, irtables.LowerState][] {

@@ -488,6 +488,23 @@ pub function get_object_array_element(env: usize, array: usize, index: i32): usi
   return call2(env, 173, array, index as usize);
 }
 
+// A new byte[] of `n` zeros.
+pub function new_byte_array(env: usize, n: i32): usize {
+  return call1(env, 176, n as usize);
+}
+
+// Puts the bytes `values` in `array` from the index `start`.
+pub function set_byte_array_region(env: usize, array: usize, start: i32, values: [u8]): void {
+  unsafe {
+    let buf: usize = alloc_buffer(values.len() + 4);
+    for k in 0..values.len() {
+      __store_u8(buf + k as usize, values[k] as i32);
+    }
+    let done: usize = call4(env, 208, array, start as usize, values.len() as usize, buf);
+    free_buffer(buf);
+  }
+}
+
 // A new int[] of `n` zeros.
 pub function new_int_array(env: usize, n: i32): usize {
   return call1(env, 179, n as usize);

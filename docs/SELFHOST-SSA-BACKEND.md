@@ -74,7 +74,9 @@ lowered function it:
    each of those tests decided (`ssa.split_tokens`), gives each other reuse
    allocation of such a token a branch on the token, so that the side with
    the box writes neither the shape nor a word that the box already has
-   (`ssatokenkeep.keeps`), marks each reuse
+   (`ssatokenkeep.keeps`), gives a cons-tail loop with two hole positions
+   one phi for the address of its hole (`ssaholeaddr.addresses`), marks each
+   reuse
    allocation whose token is null so that it calls the fresh entry of the
    helper with no test (`ssa.fresh_boxes`), then turns each branch whose two arms
    compute a few pure integer values and meet again, at a join's phis or at
@@ -474,11 +476,20 @@ from the operand's definition without passing the header
 before it outlives it, as the loop header's phi does at each merge of an
 else-if chain inside the loop, is mated with the first operand that dies by
 the merge instead. With no register free, the
-value spilled is the one read least per position its interval covers, each
+value spilled is the one read least per position at which it is live, each
 read weighted 8 per enclosing loop (`ssa.cheapest_active`): a value that sits
 across a whole loop body frees more by leaving than a temporary read on the
 next line, and taking that rule instead of the lowest raw weight made the
-`std/crypto` digests 1.3x to 4x faster (#10615). The eviction spills the
+`std/crypto` digests 1.3x to 4x faster (#10615).
+
+The live positions come from the block liveness (`ssalive.lives`), not from
+the interval. An interval runs from the first position to the last in block
+order. An exit block after a later loop can read a value. The interval of that
+value then covers the loop, but the value is dead in the loop. With the
+interval as the count, the `diff` port spilled `x` and `y` in its snake loops
+(#15650). The temporaries of the other loop took their registers.
+
+The eviction spills the
 values that shared the register only where their intervals still reach the
 evicting value; one that ended keeps it (`ssa.still_holds`). A spilled value takes its
 phi mate's frame slot by the same rule (`ssa.assign_spill_slots`), so a loop

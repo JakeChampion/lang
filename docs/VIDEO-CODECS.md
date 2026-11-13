@@ -165,6 +165,22 @@ Other extensions and nonzero profile spaces return `Unsupported`.
 Profile constraint bits remain opaque. The reader does not resolve VPS references or validate pictures, level constraints, or decoder support.
 The native pixel-decode table remains unchanged.
 
+`std/video/avc/input` groups ordinary progressive Annex B input into access units.
+It reuses the bounded NAL reader and the native SPS and PPS validators.
+Picture identity includes frame numbers, parameter identifiers, reference status, IDR identifiers, and picture-order fields.
+Multiple slices remain in one access unit. Prefix metadata belongs to the following picture.
+
+Each step performs at most one bounded source read and emits at most one event.
+Limits bound encoded access-unit bytes, units per access unit, packet count, and the underlying NAL input.
+The stream retains at most 32 sequence records, 256 picture records, and one pending NAL.
+Slice inspection copies at most 64 unescaped bytes, without a complete slice-payload copy.
+Returned packets contain canonical four-byte Annex B prefixes and an IDR flag, without assigned timestamps.
+
+The supported path requires matching parameter sets before each slice.
+Interlaced pictures, separate color planes, slice groups, redundant pictures, and partitioned or extended slices return `Unsupported`.
+Entropy data, complete slice coverage, recovery-point SEI interpretation, and native pixel decode remain outside this reader.
+The caller retains and closes the source. Blocking I/O must run outside the Android loop callback.
+
 `std/video/hevc/pps` inspects one base-layer PPS with its matching complete SPS NAL.
 It reports prediction, quantizer, tile, filter, scaling, and range-extension metadata through exact trailing bits.
 The reader reuses the SPS syntax and checks its sequence identifier, coding-block geometry, and precision bounds.
@@ -394,6 +410,8 @@ The header frame count remains advisory.
 The caller retains and closes the source after success or failure.
 
 The input-buffer limit excludes retained packet events and does not define an exact process-memory bound.
+The shared source buffer transfers an owned read chunk directly when its current window is empty.
+The [source-buffer allocation control](benchmarks/video-source-buffer-2026-11-13/README.md) compares identical reads with one frozen compiler.
 Blocking source reads must run outside the Android loop callback.
 
 IVF support does not establish VP8, VP9, or AV1 software decode support.
@@ -729,6 +747,10 @@ It checks every packet field and byte against FFprobe and the original file.
 Both index paths must agree. Extracted packets retain every decoded plane through independent libaom and dav1d decoders.
 Synthetic configuration references establish header syntax only. FFmpeg remains test-only.
 
+The file reference keeps its reader open until all packet windows finish.
+It reads each payload through `std/audio/file`, with 31-byte chunks and a one-MiB window limit.
+It does not retain the complete encoded file or cast file offsets to signed 32-bit indices.
+
 The configuration format follows AOM AV1 ISOBMFF version 1.3.0.
 The record can omit a sequence header. The API then reports no sequence maximum and does not read media to obtain it.
 The existing sequence parser still checks a present header through its trailing bits and bounded zero padding.
@@ -757,6 +779,16 @@ The muxer's complete record supplies level and chroma-location identifiers that 
 Both Fern index paths preserve every packet field and byte through native sanitizer and real WASI executables.
 Independent FFmpeg and libvpx decoders compare every plane with the original raw input before and after extraction.
 FFmpeg remains test-only. Fern does not decode VP9 pixels.
+
+Both common-codec reference suites also create sparse MP4 files with media above eight GiB.
+Each sparse file uses `co64` offsets and an extended-size `free` box.
+Native sanitizer and real WASI results must match every FFprobe packet field and the original encoded bytes.
+Both independent decoders must reproduce the same planes from the sparse file.
+
+The native packet references use Fern's existing 16-MiB heap limit for these checks.
+The original helpers pass the small controls but exhaust that heap on the sparse controls.
+The bounded helpers pass both controls with zero live bytes at exit.
+This checks the reference programs on this corpus. It does not define a general RSS bound or establish native VP9 or AV1 pixel decode.
 
 ## Native AAC and lower-level Android video integration
 

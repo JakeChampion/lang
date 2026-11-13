@@ -2310,14 +2310,13 @@ func TestClosureCapturesGenericValue(t *testing.T) {
 function main(): i32 { return apply(7, (n: i32): i32 => n + 1); }`); err != nil {
 		t.Fatalf("a generic-typed capture should be accepted, got: %v", err)
 	}
-	err := checkSource(t, `function log(): void { print("x"); }
-function main(): i32 {
-    let done = log();
+	if err := checkSource(t, `function main(): i32 {
+    let done = ();
     let f = () => done;
+    f();
     return 0;
-}`)
-	if err == nil || !hasCode(err, "E044") {
-		t.Fatalf("want E044 on a captured void, got: %v", err)
+}`); err != nil {
+		t.Fatalf("a captured unit binding should be accepted, got: %v", err)
 	}
 }
 

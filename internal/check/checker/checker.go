@@ -66,9 +66,9 @@ type Info struct {
 	CallOwnedResult func(*ast.Call) bool
 	// DeclaredMethod reports a method with a body in this program.
 	DeclaredMethod func(*ast.Call) bool
-	// CallSignatureBorrows reports a signature with a borrowed handle-bearing parameter.
-	CallSignatureBorrows func(*ast.Call) bool
-	TypeHoldsNoHandle    func(ast.Type) bool
+	// CallScopedFresh checks each input that can lend in a compound result.
+	CallScopedFresh   func(*ast.Call) bool
+	TypeHoldsNoHandle func(ast.Type) bool
 	// CallBorrowsBeside reports a plain call whose result can borrow from
 	// an argument other than the plain name given.
 	CallBorrowsBeside func(*ast.Call, string) bool
@@ -1020,6 +1020,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	for _, n := range []string{"__aes_gcm_seal_into", "__aes_gcm_open_into"} {
 		c.info.FuncSigs[n] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8View, u64, u8Arr, rangeBound, rangeBound, rangeBound, rangeBound}, Result: u8Arr}
 	}
+	c.info.FuncSigs["__chacha20_xor_into"] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8Arr, rangeBound, rangeBound}, Result: u8Arr}
+	c.info.FuncSigs["__poly1305_blocks"] = &ast.FuncType{Params: []ast.Type{u8Arr, u8View, rangeBound, rangeBound}, Result: u8Arr}
 	c.info.FuncSigs["__sha256_hw"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.BoolType{}}
 	c.info.FuncSigs["__sha256_hw_blocks"] = &ast.FuncType{Params: []ast.Type{u8View, u8View}, Result: u8Arr}
 	c.info.FuncSigs["__sha1_hw"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.BoolType{}}
@@ -3101,12 +3103,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		return ok && call.Method != nil && c.resultAnalysed[id.Name]
 	}
 	c.info.TypeHoldsNoHandle = c.holdsNoHandle
-	c.info.CallSignatureBorrows = func(call *ast.Call) bool {
-		if id, ok := call.Callee.(*ast.Ident); ok {
-			return c.signatureResultBorrows(id.Name)
-		}
-		return true
-	}
+	c.info.CallScopedFresh = c.scopedCallFresh
 	c.info.CallBorrowsBeside = c.callSiteBorrowsBeside
 	c.info.NoReturn = NoReturnFuncs(prog)
 
@@ -14711,14 +14708,9 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 		if mySiblings[name] {
 			return
 		}
-		switch t.(type) {
-		case ast.VoidType:
-			c.errfCode(fn.P, "E044", "captured variable %q has unsupported type %s", name, t)
-		default:
-			c.captureView(fn.P, name, t)
-			captured[name] = t
-			captureOrder = append(captureOrder, name)
-		}
+		c.captureView(fn.P, name, t)
+		captured[name] = t
+		captureOrder = append(captureOrder, name)
 	}
 	c.captureOuter = outer
 	c.captureChain = append(c.captureChain, captureEntry{sink: c.captureSink, scope: outer, outer: prev})
@@ -16747,8 +16739,6 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				return
 			}
 			switch t.(type) {
-			case ast.VoidType:
-				c.errfCode(n.P, "E044", "captured variable %q has unsupported type %s", name, t)
 			case ast.LanesType:
 				c.errfCode(n.P, "E085", "a lambda cannot capture %q of type %s; a lane value lives only in a local, a parameter or a result", name, t)
 			default:

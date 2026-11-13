@@ -579,6 +579,8 @@ is the number of slots it leaves.
 | `vishru` | 551 | 2 | 1 |
 | `sha1x8_hw` | 552 | 0 | 1 |
 | `sha1x8_hw_blocks` | 553 | 2 | 1 |
+| `chacha20_xor_into` | 554 | 5 | 1 |
+| `poly1305_blocks` | 555 | 4 | 1 |
 <!-- END ir_effects_run -->
 
 `vpermute` preserves all lane bits in two 128-bit inputs.

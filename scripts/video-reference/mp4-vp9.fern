@@ -1,42 +1,18 @@
 // Emit VP9 packet metadata and original encoded bytes for an independent decoder.
 import "std/video/mp4";
-import "std/video/mp4/file" as mp4file;
 import "std/io";
-import "std/hex";
-
-function inspect(input: [u8], path: string, seekable: boolean): Result[mp4.Index, string] {
-  if (!seekable) {
-    return match (mp4.inspect(input, mp4.default_limits())) { Ok(value) => Ok(value), Err(error) => Err(error.message()) };
-  }
-  let Ok(reader) = open_reader(path) else {
-    return Err("open");
-  };
-  let result = mp4file.inspect(reader, mp4file.default_limits());
-  let _ = reader.close();
-  return match (result) { Ok(value) => Ok(value), Err(error) => Err(error.message()) };
-}
+import "./mp4-packet-input" as packets;
 
 function main(): i32 {
   let a = args();
   if (a.len() != 3) {
     return 1;
   }
+  if (a[1] == "file") {
+    return packets.status(packets.seekable(a[2], mp4.VP9));
+  }
   let Ok(input) = io.read_input_bytes(a[2]) else {
     return 2;
   };
-  let Ok(index) = inspect(input, a[2], a[1] == "file") else {
-    return 3;
-  };
-  for track in index.tracks {
-    let config = track.descriptions[0];
-    if (config.codec != mp4.VP9 || config.config.length_size != 0 || config.config.csd1.len() != 0) {
-      return 6;
-    }
-    print("T " + track.clock.scale.to_string() + " " + config.format.width.to_string() + " " + config.format.height.to_string());
-    print("C " + hex.encode(config.config.csd0));
-    for p in track.packets {
-      print("P " + p.offset.to_string() + " " + p.bytes.to_string() + " " + p.decode_time.to_string() + " " + p.presentation_time.to_string() + " " + p.duration.to_string() + " " + p.sync.to_string() + " " + hex.encode(input[p.offset as i32:p.offset as i32 + p.bytes]));
-    }
-  }
-  return 0;
+  return packets.status(packets.complete(input, mp4.VP9));
 }

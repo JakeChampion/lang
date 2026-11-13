@@ -19,7 +19,8 @@ outputs = {}
 for name in ('vp9-configuration', 'mp4-vp9'):
     binary = ROOT / ('build/video/' + name + '-reference')
     wasm = binary.with_suffix('.wasm')
-    for output, architecture, flags in ((binary, target, ['-sanitize']), (wasm, 'wasm32-wasi', [])):
+    native_flags = ['-sanitize', '-heap-limit', '16M'] if name == 'mp4-vp9' else ['-sanitize']
+    for output, architecture, flags in ((binary, target, native_flags), (wasm, 'wasm32-wasi', [])):
         subprocess.run([compiler, '-stdlib', str(ROOT / 'internal/stdlib'), '-target', architecture, *flags,
                         '-o', str(output), 'scripts/video-reference/' + name + '.fern'], check=True)
     outputs[name] = (binary, wasm)
@@ -52,6 +53,15 @@ with tempfile.TemporaryDirectory() as temporary:
         assert list(map(int, run('vp9-configuration', config))) == values, name
         lines = run('mp4-vp9', path, 'complete')
         assert lines == run('mp4-vp9', path, 'file'), name
+        sparse = directory / (name + '-sparse.mp4')
+        sparse_metadata = fixtures.mp4.sparse_media(path, sparse)
+        sparse_lines = run('mp4-vp9', sparse, 'file')
+        assert sparse_lines[:2] == lines[:2]
+        for wide, small, packet in zip(sparse_lines[2:], lines[2:], sparse_metadata['packets'], strict=True):
+            assert wide.split()[2:] == small.split()[2:]
+            assert int(wide.split()[1]) == int(packet['pos']) > 4294967295
+            assert list(map(int, wide.split()[1:6])) == [int(packet[k]) for k in ('pos', 'size', 'dts', 'pts', 'duration')]
+            assert wide.split()[6] == str('K' in packet['flags']).lower()
         stream = metadata['streams'][0]
         assert lines[0] == f'T {stream["time_base"].split("/")[1]} 64 36'
         assert lines[1] == 'C ' + fixtures.private(values).hex()
@@ -73,7 +83,9 @@ with tempfile.TemporaryDirectory() as temporary:
         for decoder in ('vp9', 'libvpx-vp9'):
             assert decode(path, decoder, name) == raw, (name, decoder, 'original')
             assert decode(restored, decoder, name) == raw, (name, decoder, 'extracted')
+            assert decode(sparse, decoder, name) == raw, (name, decoder, 'sparse')
         print('Muxer record, CBS keyframe, color fields, CodecPrivate, every packet, and lossless planes:', name)
+        print('Sparse co64 file: native/WASI packets above 4 GiB and both independent decoders:', name)
     good = bytes([1, 0, 0, 0, 0, 10, 130, 1, 1, 1, 0, 0])
     for i, data in enumerate((good[:1] + bytes([1]) + good[2:], good[:-1] + bytes([1]),
                               good[:4] + bytes([4]) + good[5:], good + bytes([0]))):

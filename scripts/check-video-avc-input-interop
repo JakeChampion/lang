@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+"""Compare native AVC access units with FFprobe packets and FFmpeg planes."""
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import tempfile
+
+ROOT = Path(__file__).resolve().parent.parent
+os.chdir(ROOT)
+compiler = os.environ.get("FERN") or subprocess.check_output(["./bootstrap/bootstrap.sh", "stage0"], text=True).strip()
+binary = ROOT / "build/video/avc-input-reference"
+binary.parent.mkdir(parents=True, exist_ok=True)
+target = {"x86_64": "x86-64-linux", "aarch64": "arm64-linux", "arm64": "arm64-darwin"}[os.uname().machine]
+subprocess.run([compiler, "-stdlib", str(ROOT / "internal/stdlib"), "-target", target, "-sanitize", "-o", str(binary),
+                "scripts/video-reference/avc-input.fern"], check=True)
+wasm = binary.with_suffix(".wasm")
+subprocess.run([compiler, "-stdlib", str(ROOT / "internal/stdlib"), "-target", "wasm32-wasi", "-o", str(wasm),
+                "scripts/video-reference/avc-input.fern"], check=True)
+
+
+def units(data):
+    markers = list(re.finditer(b"\x00{2,}\x01", data))
+    return [data[m.end():markers[i + 1].start() if i + 1 < len(markers) else len(data)].rstrip(b"\0")
+            for i, m in enumerate(markers)]
+
+
+def encode(directory, name, profile, pixel_format, options, size="64x48"):
+    path = directory / f"{name}.h264"
+    params = "keyint=6:min-keyint=6:scenecut=0:repeat-headers=1:" + options
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"testsrc2=size={size}:rate=25",
+                    "-frames:v", "18", "-c:v", "libx264", "-threads", "1", "-profile:v", profile,
+                    "-pix_fmt", pixel_format, "-x264-params", params, "-f", "h264", str(path)], check=True)
+    return path
+
+
+def decoded(path):
+    return subprocess.check_output(["ffmpeg", "-v", "error", "-i", str(path), "-vsync", "0",
+                                    "-pix_fmt", "yuv444p16le", "-f", "rawvideo", "-"])
+
+
+def compare(path, frames):
+    data = path.read_bytes()
+    metadata = json.loads(subprocess.check_output(["ffprobe", "-v", "error", "-show_packets",
+                                                  "-show_streams", "-show_entries", "packet=pos,size,flags:stream=width,height", "-of", "json", str(path)]))
+    native = subprocess.check_output([str(binary), str(path)], text=True).splitlines()
+    wasi = subprocess.check_output(["wasmtime", "run", "--dir", ".", str(wasm), path.name],
+                                   cwd=path.parent, text=True).splitlines()
+    assert native == wasi and len(native) == len(metadata["packets"]) == frames
+    rebuilt = bytearray()
+    for line, packet in zip(native, metadata["packets"], strict=True):
+        tag, offset, idr, payload = line.split()
+        at, size = int(packet["pos"]), int(packet["size"])
+        original = units(data[at:at + size])
+        canonical = b"".join(b"\x00\x00\x00\x01" + unit for unit in original)
+        assert tag == "A" and int(offset) == at and bytes.fromhex(payload) == canonical
+        assert int(idr) == int(any(unit[0] & 31 == 5 for unit in original))
+        rebuilt += canonical
+    restored = path.with_name("fern-" + path.name)
+    restored.write_bytes(rebuilt)
+    pixels = decoded(path)
+    info = metadata["streams"][0]
+    assert pixels == decoded(restored) and len(pixels) == frames * int(info["width"]) * int(info["height"]) * 6
+    print(f"{path.name}: {frames} native/WASI access units match FFprobe; all FFmpeg planes match", flush=True)
+
+
+with tempfile.TemporaryDirectory() as temporary:
+    directory = Path(temporary)
+    cases = [
+        ("baseline", "baseline", "yuv420p", "bframes=0:slices=1:aud=0"),
+        ("cropped", "baseline", "yuv420p", "bframes=0:slices=3:aud=0", "62x46"),
+        ("baseline-slices", "baseline", "yuv420p", "bframes=0:slices=3:aud=1"),
+        ("main-bframes", "main", "yuv420p", "bframes=2:slices=3:aud=0"),
+        ("high-aud", "high", "yuv420p", "bframes=3:slices=3:aud=1"),
+        ("high10", "high10", "yuv420p10le", "bframes=2:slices=3:aud=0"),
+        ("high422", "high422", "yuv422p", "bframes=2:slices=2:aud=0"),
+        ("high444", "high444", "yuv444p", "bframes=2:slices=3:aud=0"),
+        ("nonzero-ids", "high", "yuv420p", "bframes=2:slices=3:aud=0:sps-id=17"),
+        ("open-gop", "high", "yuv420p", "bframes=3:slices=3:aud=0:open-gop=1"),
+        ("cbr-filler", "high", "yuv420p", "bframes=2:slices=3:aud=1:nal-hrd=cbr:vbv-bufsize=128:vbv-maxrate=128:bitrate=128:force-cfr=1"),
+    ]
+    paths = []
+    for case in cases:
+        path = encode(directory, *case)
+        compare(path, 18)
+        paths.append(path)
+    joined = directory / "parameter-replacement.h264"
+    joined.write_bytes(paths[3].read_bytes() + paths[5].read_bytes())
+    compare(joined, 36)

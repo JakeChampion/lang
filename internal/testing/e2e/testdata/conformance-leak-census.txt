@@ -108,6 +108,7 @@ a_generic_enum_payload_keeps_template_closures       0
 a_handler_fans_out_on_its_scheduler                  2
 a_literal_handed_to_reactor_wait_is_fresh            0
 a_literal_local_takes_the_type_of_an_index_read 0
+a_local_holds_a_void_value                           0
 a_map_holds_named_functions                          0
 a_map_key_eq_may_take_its_keys_owned                 0
 a_match_arm_that_is_a_void_if_falls_through          0

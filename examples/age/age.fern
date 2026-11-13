@@ -1,0 +1,693 @@
+// age — encrypt and decrypt files in the age v1 format.
+//
+// A port of age 1.1.1 (age-encryption.org) for X25519 recipients.
+//
+//   $ age -r age1... -o file.age file          # encrypt to a recipient
+//   $ age -a -r age1... file > file.age        # encrypt to the ASCII armor
+//   $ age -d -i key.txt -o file file.age       # decrypt
+//
+// With no INPUT, age reads the standard input. With no -o, it writes the
+// standard output. A file given with -o gets its bytes only after all of the
+// input decrypts: the bytes go to a temporary file beside it, which takes
+// its name at the end.
+import "std/array";
+import "std/crypto";
+import "std/crypto/chacha20poly1305";
+import "std/hex";
+import "std/option";
+import "std/rand";
+import "./cli";
+import "./format";
+import "./keys";
+import "./source";
+import "./text";
+
+const MANGLED_CRLF: string = "age-encryption.org/v1\r";
+
+// "age-encryption.org/v1" in UTF-16 with a byte-order mark, cut to the
+// length of MANGLED_CRLF.
+const MANGLED_UTF16: u8[] = [0xffu8, 0xfeu8, b'a', 0u8, b'g', 0u8, b'e', 0u8, b'-', 0u8, b'e', 0u8, b'n', 0u8, b'c', 0u8, b'r', 0u8, b'y', 0u8, b'p', 0u8];
+
+const STDIN_NAME: string = "/dev/stdin";
+
+function q(s: string): string {
+  return text.quote(s.as_bytes());
+}
+
+function report(f: cli.Fatal): i32 {
+  eprint("age: error: " + f.msg);
+  for h in f.hints {
+    eprint("age: hint: " + h);
+  }
+  return 1;
+}
+
+// A file read whole: its bytes, or the error of a read after the open.
+enum Content {
+  Read(u8[]),
+  ReadFailed(string),
+}
+
+// Reads up to limit bytes of a file, or of the standard input for "-". The
+// error is for the open.
+function read_named(name: string, stdin_used: boolean, limit: i32, open_failed: string): Result[Content, string] {
+  if (name == "-" && stdin_used) {
+    return Err("standard input is used for multiple purposes");
+  }
+  let r = if (name == "-") {
+    stdin()
+  } else {
+    match (open_reader(name)) {
+      Ok(r) => r,
+      Err(e) => {
+        return Err(f"{open_failed}: open {name}: {text.errno_text(e)}");
+      },
+    }
+  };
+  let shown = if (name == "-") { STDIN_NAME } else { name };
+  let raw = source.open_raw(r, shown);
+  let (t, b) = source.raw_peek(raw, limit);
+  if (b.len() < limit) {
+    if let Some(f) = t.fail {
+      if (!f.is_eof()) {
+        return Ok(ReadFailed(f.message()));
+      }
+    }
+  }
+  return Ok(Read(b));
+}
+
+function identity_file(name: string, stdin_used: boolean): Result[keys.Identity[], string] {
+  let content = read_named(name, stdin_used, 16777216, "failed to open file")?;
+  match (content) {
+    Read(b) => {
+      if (text.has_prefix(b, "age-encryption") || text.has_prefix(b, "-----BEGIN AGE")) {
+        return Err("passphrase-protected identity files are not supported by this port yet");
+      }
+      if (text.has_prefix(b, "-----BEGIN")) {
+        return Err(f"SSH identity in {q(name)}: SSH keys are not supported by this port");
+      }
+      match (keys.identities(b)) {
+        Ok(ids) => {
+          return Ok(ids);
+        },
+        Err(why) => {
+          return Err(f"failed to read {q(name)}: {why}");
+        }
+      }
+    },
+    ReadFailed(why) => {
+      return Err(f"failed to read {q(name)}: failed to read secret keys file: {why}");
+    }
+  }
+  return Err("");
+}
+
+function identities(o: cli.Opts, stdin_used: boolean): Result[keys.Identity[], cli.Fatal] {
+  if (o.plugins.len() > 0) {
+    return Err(cli.fatal("-j: plugins are not supported by this port"));
+  }
+  let out: keys.Identity[] = [];
+  for name in o.identities {
+    match (identity_file(name, stdin_used)) {
+      Ok(ids) => {
+        out = out.concat(ids);
+      },
+      Err(why) => {
+        return Err(cli.fatal(f"reading {q(name)}: {why}"));
+      }
+    }
+  }
+  return Ok(out);
+}
+
+function recipient_file(name: string, stdin_used: boolean): Result[u8[][], string] {
+  return match (read_named(name, stdin_used, 16777216, "failed to open recipient file")) {
+    Ok(Read(b)) => keys.recipients_file(b, name),
+    Ok(ReadFailed(why)) => Err(f"{q(name)}: failed to read recipients file: {why}"),
+    Err(why) => Err(why),
+  };
+}
+
+function recipients(o: cli.Opts, stdin_used: boolean): Result[u8[][], cli.Fatal] {
+  let out: u8[][] = [];
+  for arg in o.recipients {
+    match (keys.parse_recipient(arg)) {
+      Ok(k) => {
+        out = out.append(k);
+      },
+      Err(why) => {
+        return Err(cli.fatal(why));
+      }
+    }
+  }
+  for name in o.recipient_files {
+    match (recipient_file(name, stdin_used)) {
+      Ok(ks) => {
+        out = out.concat(ks);
+      },
+      Err(why) => {
+        return Err(cli.fatal(f"failed to parse recipient file {q(name)}: {why}"));
+      }
+    }
+  }
+  for id in identities(o, stdin_used)? {
+    out = out.append(id.public);
+  }
+  return Ok(out);
+}
+
+// Where the result goes: the standard output, or the file at path through a
+// temporary file in the same directory. A path that is there and is not a
+// regular file, such as a device, takes the bytes directly. After an error,
+// fail holds the message and the sink writes nothing more.
+struct Sink {
+  path: string,
+  w: Option[Writer],
+  temp: string,
+  armor: boolean,
+  started: boolean,
+  // Bytes for the armor that do not fill a line yet.
+  pending: u8[],
+  fail: Option[string],
+}
+
+function sink_to(path: string, armor: boolean): Sink {
+  let w = if (path == "" || path == "-") { Some(stdout()) } else { None };
+  return Sink { path: path, w: w, temp: "", armor: armor, started: false, pending: [], fail: None };
+}
+
+function to_file(k: Sink): boolean {
+  return k.path != "" && k.path != "-";
+}
+
+function directory_of(path: string): string {
+  return match (path.last_index_of("/")) {
+    Some(at) => path[0:at + 1].unwrap_or("").to_owned(),
+    None => "",
+  };
+}
+
+function failed(own k: Sink, why: string): Sink {
+  return Sink { ...k, fail: Some(why) };
+}
+
+// Opens the output file on the first write, as age does.
+function sink_open(own k: Sink): Sink {
+  if (k.w.is_some() || k.fail.is_some()) {
+    return k;
+  }
+  let direct = match (lstat(k.path)) {
+    Ok(st) => !st.is_file,
+    Err(_) => false,
+  };
+  let temp = if (direct) { "" } else { directory_of(k.path) + ".age-" + hex.encode(rand.bytes(8)) + ".tmp" };
+  let opened = if (direct) { open_writer(k.path) } else { open_exclusive(temp) };
+  let path = k.path;
+  return match (opened) {
+    Ok(w) => Sink { ...k, w: Some(w), temp: temp },
+    Err(e) => failed(k, f"open {path}: {text.errno_text(e)}"),
+  };
+}
+
+function write_raw(own k: Sink, b: [u8]): Sink {
+  k = sink_open(k);
+  if (k.fail.is_some()) {
+    return k;
+  }
+  let Some(w) = k.w else {
+    return k;
+  };
+  if let Err(e) = w.write_bytes(b) {
+    let name = if (to_file(k)) { k.path } else { "/dev/stdout" };
+    return failed(k, f"write {name}: {text.errno_text(e)}");
+  }
+  return k;
+}
+
+// The armor lines for the whole groups of 48 bytes in b[0:n].
+function armor_lines(b: [u8], n: i32): string {
+  let out = "";
+  let at = 0;
+  while (at + 48 <= n) {
+    out += text.b64_padded(b[at:at + 48]) + "\n";
+    at += 48;
+  }
+  return out;
+}
+
+function sink_write(own k: Sink, b: [u8]): Sink {
+  if (!k.armor) {
+    return write_raw(k, b);
+  }
+  let head = if (k.started) { "" } else { source.ARMOR_HEADER + "\n" };
+  let all = k.pending.concat(b);
+  let whole = all.len() / 48 * 48;
+  let lines = head + armor_lines(all, whole);
+  let rest = array.slice(all, whole, all.len());
+  let t = Sink { ...k, started: true, pending: rest };
+  if (lines.len() == 0) {
+    return t;
+  }
+  return write_raw(t, lines.as_bytes());
+}
+
+// Gives the temporary file the mode that os.Create gives a new file, then
+// the name of the output.
+function install(temp: string, path: string): Option[string] {
+  let mask = umask(63);
+  umask(mask);
+  if let Err(e) = chmod(temp, 438 & ~mask) {
+    remove_file(temp);
+    return Some(f"chmod {temp}: {text.errno_text(e)}");
+  }
+  if let Err(e) = rename(temp, path) {
+    remove_file(temp);
+    return Some(f"rename {temp} {path}: {text.errno_text(e)}");
+  }
+  return None;
+}
+
+// Closes the output file. A temporary file then takes the output's name.
+function sink_close(own k: Sink): Option[string] {
+  let path = k.path;
+  let temp = k.temp;
+  let closed = match (k.w) {
+    Some(w) => w.close(),
+    None => Ok(()),
+  };
+  if let Err(e) = closed {
+    if (temp != "") {
+      remove_file(temp);
+    }
+    return Some(f"failed to close output file {q(path)}: {text.errno_text(e)}");
+  }
+  if (temp == "") {
+    return None;
+  }
+  return install(temp, path);
+}
+
+// Ends the armor and closes the output.
+function sink_finish(own k: Sink): Option[string] {
+  if (k.armor) {
+    let head = if (k.started) { "" } else { source.ARMOR_HEADER + "\n" };
+    let last = if (k.pending.len() > 0) { text.b64_padded(k.pending) + "\n" } else { "" };
+    k = write_raw(Sink { ...k, started: true, pending: [] }, (head + last + source.ARMOR_FOOTER + "\n").as_bytes());
+  }
+  if (!to_file(k)) {
+    return k.fail;
+  }
+  k = sink_open(k);
+  if let Some(why) = k.fail {
+    sink_abort(k);
+    return Some(why);
+  }
+  return sink_close(k);
+}
+
+// Closes the file of a sink that did not finish and removes its temporary
+// file.
+function sink_abort(own k: Sink): void {
+  if (!to_file(k)) {
+    return;
+  }
+  let temp = k.temp;
+  match (k.w) {
+    Some(w) => {
+      w.close();
+    },
+    None => {}
+  }
+  if (temp != "") {
+    remove_file(temp);
+  }
+}
+
+// A sealed chunk of the payload, and whether it is the last one by its
+// length, or age's message for a payload that ends too soon.
+enum Sealed {
+  Chunk(u8[], boolean),
+  Cut(string),
+}
+
+function next_sealed(own s: source.Src, index: i64): (source.Src, Sealed) {
+  let (t, sealed, f) = source.read_full(s, format.SEALED);
+  let Some(e) = f else {
+    return (t, Chunk(sealed, false));
+  };
+  return match (e) {
+    source.Eof => (t, Cut("unexpected EOF")),
+    source.Short => if (index != 0 && sealed.len() == 16) {
+      (t, Cut("last chunk is empty, try age v1.0.0, and please consider reporting this"))
+    } else {
+      (t, Chunk(sealed, true))
+    },
+    _ => (t, Cut(e.message())),
+  };
+}
+
+// Opens a chunk. A full chunk that does not open as a middle chunk can be the
+// last one. The result is the plaintext and whether the chunk was the last.
+function open_sealed(key: chacha20poly1305.Key, index: i64, own sealed: u8[], last: boolean): Option[(u8[], boolean)] {
+  let n = sealed.len() - 16;
+  let spare = if (last) { [] } else { array.slice(sealed, 0, sealed.len()) };
+  if let Some(b) = format.open_chunk(key, index, last, sealed) {
+    return Some((b, last));
+  }
+  if (last) {
+    return None;
+  }
+  return match (format.open_chunk(key, index, true, spare)) {
+    Some(b) => Some((b, true)),
+    None => None,
+  };
+}
+
+// age's check for bytes after the last chunk.
+function after_last(own s: source.Src): Option[string] {
+  let (_, g) = source.read_one(s);
+  return match (g) {
+    None => Some("trailing data after end of encrypted file"),
+    Some(source.Eof) => None,
+    Some(e) => Some("non-EOF error reading after end of encrypted file: " + e.message()),
+  };
+}
+
+// The decrypted payload, written chunk by chunk as each one authenticates.
+// age's stream.Reader.
+function decrypt_stream(own s: source.Src, own out: Sink, key: chacha20poly1305.Key): (Sink, Option[string]) {
+  let index = 0i64;
+  loop {
+    let (t, next) = next_sealed(s, index);
+    s = t;
+    let (sealed, by_length) = match (next) {
+      Chunk(b, l) => (b, l),
+      Cut(why) => { return (out, Some(why)); },
+    };
+    let n = sealed.len() - 16;
+    let Some((plain, last)) = open_sealed(key, index, sealed, by_length) else {
+      return (out, Some("failed to decrypt and authenticate payload chunk"));
+    };
+    let text_part = plain[0:n];
+    __ct_public(text_part);
+    out = sink_write(out, text_part);
+    if (out.fail.is_some()) {
+      let why = out.fail;
+      return (out, why);
+    }
+    index += 1;
+    if (last) {
+      return (out, after_last(s));
+    }
+  }
+  return (out, None);
+}
+
+function scrypt_refusal(h: format.Header): Option[string] {
+  for st in h.stanzas {
+    if (st.kind == "scrypt" && h.stanzas.len() != 1) {
+      return Some("an scrypt recipient must be the only one");
+    }
+  }
+  if (h.stanzas.len() == 1 && h.stanzas[0].kind == "scrypt") {
+    return Some("passphrase-encrypted files are not supported by this port yet");
+  }
+  return None;
+}
+
+// The file key from the first identity that unwraps a stanza, in age's order.
+function file_key_of(h: format.Header, ids: keys.Identity[]): Result[u8[], string] {
+  if let Some(why) = scrypt_refusal(h) {
+    return Err(why);
+  }
+  for id in ids {
+    for st in h.stanzas {
+      match (format.unwrap(st, id.scalar, id.public)) {
+        format.FileKey(k) => {
+          return Ok(k);
+        },
+        format.Invalid(why) => {
+          return Err(why);
+        },
+        format.Incorrect => {}
+      }
+    }
+  }
+  return Err("no identity matched any of the recipients");
+}
+
+// The header and the input after it, or age's message.
+function read_header(own input: source.Raw): (source.Src, Result[format.Header, cli.Fatal]) {
+  let (raw, head) = source.raw_peek(input, MANGLED_CRLF.len());
+  if (text.equals(head, MANGLED_CRLF) || head == MANGLED_UTF16) {
+    return (source.plain(raw), Err(cli.Fatal { msg: "invalid header intro", hints: ["it looks like this file was corrupted by PowerShell redirection", "consider using -o or -a to encrypt files in PowerShell"] }));
+  }
+  let (t, parsed) = format.parse(source.start(raw));
+  return match (parsed) {
+    Ok(h) => (t, Ok(h)),
+    Err(why) => (t, Err(cli.fatal("failed to read header: " + why))),
+  };
+}
+
+// The key of the payload, after the header MAC verifies.
+function payload_key_of(own s: source.Src, h: format.Header, ids: keys.Identity[]): (source.Src, Result[chacha20poly1305.Key, string]) {
+  let file_key = match (file_key_of(h, ids)) {
+    Ok(k) => k,
+    Err(why) => {
+      return (s, Err(why));
+    },
+  };
+  if (!format.mac_ok(file_key, h)) {
+    return (s, Err("bad header MAC"));
+  }
+  let (t, nonce, f) = source.read_full(s, 16);
+  if let Some(e) = f {
+    return (t, Err("failed to read nonce: " + e.message()));
+  }
+  let key = format.payload_key(file_key, nonce);
+  crypto.erase(file_key);
+  return match (key) {
+    Ok(k) => (t, Ok(k)),
+    Err(e) => (t, Err(e.message())),
+  };
+}
+
+function decrypt(o: cli.Opts, own input: source.Raw, stdin_used: boolean): Option[cli.Fatal] {
+  let ids = match (identities(o, stdin_used)) {
+    Ok(ids) => ids,
+    Err(f) => {
+      return Some(f);
+    },
+  };
+  let (s, parsed) = read_header(input);
+  let h = match (parsed) {
+    Ok(h) => h,
+    Err(f) => {
+      return Some(f);
+    },
+  };
+  let (t, keyed) = payload_key_of(s, h, ids);
+  let key = match (keyed) {
+    Ok(k) => k,
+    Err(why) => {
+      return Some(cli.fatal(why));
+    },
+  };
+  let (out, failed) = decrypt_stream(t, sink_to(o.output, false), key);
+  if let Some(why) = failed {
+    sink_abort(out);
+    return Some(cli.fatal(why));
+  }
+  return sink_finish(out).map((why: string) => cli.fatal(why));
+}
+
+// A chunk of plaintext, and whether the input ended in it.
+struct Plain { bytes: u8[], ended: boolean }
+
+function read_plain(own s: source.Src): (source.Src, Result[Plain, string]) {
+  let (t, chunk, f) = source.read_full(s, format.CHUNK);
+  return match (f) {
+    None => (t, Ok(Plain { bytes: chunk, ended: false })),
+    Some(source.Eof) | Some(source.Short) => (t, Ok(Plain { bytes: chunk, ended: true })),
+    Some(e) => (t, Err(e.message())),
+  };
+}
+
+const TAG_ROOM: u8[] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+
+// A full chunk is the last one when the input ends after it, so each chunk is
+// sealed after the read of the next one.
+function encrypt_stream(own s: source.Src, own out: Sink, key: chacha20poly1305.Key): (Sink, Option[string]) {
+  let index = 0i64;
+  let (t, first) = read_plain(s);
+  s = t;
+  let cur = match (first) {
+    Ok(p) => p,
+    Err(why) => { return (out, Some(why)); },
+  };
+  loop {
+    let next = Plain { bytes: [], ended: true };
+    if (!cur.ended) {
+      let (u, r) = read_plain(s);
+      s = u;
+      next = match (r) {
+        Ok(p) => p,
+        Err(why) => { return (out, Some(why)); },
+      };
+    }
+    let last = cur.ended || next.bytes.len() == 0;
+    let n = cur.bytes.len();
+    let sealed = match (format.seal_chunk(key, index, last, cur.bytes.concat(TAG_ROOM), n)) {
+      Ok(b) => b,
+      Err(e) => {
+        return (out, Some(e.message()));
+      },
+    };
+    __ct_public(sealed);
+    out = sink_write(out, sealed);
+    if (out.fail.is_some() || last) {
+      let why = out.fail;
+      return (out, why);
+    }
+    cur = next;
+    index += 1;
+  }
+  return (out, None);
+}
+
+// The header for a fresh file key and the payload key. Only the file key's
+// stanzas and the MAC leave this function.
+function seal_header(rs: u8[][], nonce: [u8]): Result[(format.Header, chacha20poly1305.Key), string] {
+  let file_key = rand.bytes(16);
+  __ct_secret(file_key);
+  let stanzas: format.Stanza[] = [];
+  for r in rs {
+    let ephemeral = rand.bytes(32);
+    __ct_secret(ephemeral);
+    let st = format.wrap(file_key, r, ephemeral);
+    crypto.erase(ephemeral);
+    stanzas = stanzas.append(st?);
+  }
+  let unsigned = format.Header { stanzas: stanzas, mac: [] };
+  let mac = format.header_mac(file_key, unsigned);
+  __ct_public(mac);
+  let key = format.payload_key(file_key, nonce);
+  crypto.erase(file_key);
+  return match (key) {
+    Ok(k) => Ok((format.Header { ...unsigned, mac: mac }, k)),
+    Err(e) => Err(e.message()),
+  };
+}
+
+// The header and the nonce, as age.Encrypt writes them.
+function start_output(o: cli.Opts, h: format.Header, nonce: [u8]): (Sink, Option[string]) {
+  let out = sink_write(sink_to(o.output, o.armor), format.marshal(h).as_bytes());
+  if let Some(why) = out.fail {
+    return (out, Some("failed to write header: " + why));
+  }
+  out = sink_write(out, nonce);
+  if let Some(why) = out.fail {
+    return (out, Some("failed to write nonce: " + why));
+  }
+  return (out, None);
+}
+
+function encrypt(o: cli.Opts, own input: source.Raw, stdin_used: boolean): Option[cli.Fatal] {
+  let rs = match (recipients(o, stdin_used)) {
+    Ok(rs) => rs,
+    Err(f) => {
+      return Some(f);
+    },
+  };
+  let nonce = rand.bytes(16);
+  let (h, key) = match (seal_header(rs, nonce)) {
+    Ok(hk) => hk,
+    Err(why) => { return Some(cli.fatal(why)); },
+  };
+  let (out, started) = start_output(o, h, nonce);
+  if let Some(why) = started {
+    sink_abort(out);
+    return Some(cli.fatal(why));
+  }
+  let (done, failed) = encrypt_stream(source.plain(input), out, key);
+  if let Some(why) = failed {
+    sink_abort(done);
+    return Some(cli.fatal(why));
+  }
+  return sink_finish(done).map((why: string) => cli.fatal(why));
+}
+
+function finish(failed: Option[cli.Fatal]): i32 {
+  return match (failed) {
+    Some(f) => report(f),
+    None => 0,
+  };
+}
+
+// The input file, or the standard input for "" and "-".
+function open_input(name: string): Result[source.Raw, cli.Fatal] {
+  if (name == "" || name == "-") {
+    return Ok(source.open_raw(stdin(), STDIN_NAME));
+  }
+  return match (open_reader(name)) {
+    Ok(r) => Ok(source.open_raw(r, name)),
+    Err(e) => Err(cli.fatal(f"failed to open input file {q(name)}: open {name}: {text.errno_text(e)}")),
+  };
+}
+
+// age refuses to write a binary file to a terminal unless "-o -" asks for it.
+function terminal_refusal(o: cli.Opts): Option[cli.Fatal] {
+  if (o.output != "" || o.decrypt || o.armor || !stdout().isatty()) {
+    return None;
+  }
+  return Some(cli.Fatal { msg: "refusing to output binary to the terminal", hints: ["did you mean to use -a/--armor?", "force anyway with \"-o -\""] });
+}
+
+function run(argv: string[], o: cli.Opts): i32 {
+  if let Some(f) = cli.check(argv, o) {
+    return report(f);
+  }
+  let name = if (o.inputs.len() > 0) { o.inputs[0] } else { "" };
+  let input = match (open_input(name)) {
+    Ok(raw) => raw,
+    Err(f) => {
+      return report(f);
+    },
+  };
+  if let Some(f) = terminal_refusal(o) {
+    return report(f);
+  }
+  let stdin_used = name == "" || name == "-";
+  if (o.decrypt) {
+    return finish(decrypt(o, input, stdin_used));
+  }
+  return finish(encrypt(o, input, stdin_used));
+}
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() == 1) {
+    eprint(cli.USAGE.join("\n"));
+    return 1;
+  }
+  match (cli.parse(array.slice(argv, 1, argv.len()))) {
+    cli.Help => {
+      eprint(cli.USAGE.join("\n"));
+      return 0;
+    },
+    cli.Bad(why) => {
+      eprint(why);
+      eprint(cli.USAGE.join("\n"));
+      return 2;
+    },
+    cli.Run(o) => {
+      if (o.version) {
+        print("v1.1.1-fern");
+        return 0;
+      }
+      return run(argv, o);
+    }
+  }
+  return 0;
+}

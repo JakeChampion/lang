@@ -13,7 +13,10 @@ echo '{"a":[1,2]}' | ./jq -c '.a[] , {b: .a}'
 
 The port has these parts of the language:
 
-- Paths: `.`, `.a`, `."a-b"`, `.[e]`, `.[e:e]`, `.[]`, and the postfix `?`.
+- Paths: `.`, `.a`, `."a-b"`, `.[e]`, `.[e:e]` and `.[]`.
+- The postfix `?`. After a step of a path it guards that step only, as in
+  jq: `.a.b?` is an error when `.a` is an error. After each other term it is
+  `try`.
 - The pipe `|` and the comma `,`.
 - Literals: numbers, strings, `true`, `false` and `null`.
 - Array construction `[e]` and object construction `{a, "b": e, (e): e, $x}`.
@@ -21,11 +24,21 @@ The port has these parts of the language:
 - The arithmetic operators `+ - * / %` on each type that jq defines them for.
 - The alternative operator `//`.
 - `if`, with `elif` and `else`.
-- The binding `e as $x | e`, with one variable.
-- `reduce` and `foreach`.
+- The binding `e as $x | e`, and a destructuring pattern in the place of
+  the variable: `. as [$a, {b: $c}]`
+- The operator `?//`, which gives the next pattern after an error
+- `reduce` and `foreach`, with a variable or a pattern.
+- `def`, with filter parameters and `$` parameters. A function can call
+  itself.
 - `try`, with `catch`. An error holds a JSON value, as in jq.
 - `..`, which is `recurse`.
+- String interpolation, in a literal, in an object key and after a dot.
+- The update operators `=`, `|=`, `+=`, `-=`, `*=`, `/=`, `%=` and `//=`.
+- The formats `@text`, `@json`, `@html`, `@uri`, `@csv`, `@tsv`, `@sh`,
+  `@base64` and `@base64d`, alone and before a string.
 - An array as an index: `.[[1, 2]]` gives each place of that part.
+- `label $name | body`, and `break $name`, which stops the body
+- `$__loc__`, which gives the file and the line of the program
 
 The port has these functions:
 
@@ -41,11 +54,27 @@ The port has these functions:
   `explode`, `fromjson`, `implode`, `ltrimstr`, `rtrimstr`, `split` with one argument,
   `startswith`, `tonumber` and `utf8bytelength`.
 - The search functions `contains`, `index`, `indices`, `inside` and `rindex`.
+- The functions `IN`, `INDEX`, `JOIN`, `abs`, `bsearch`, `pick` and
+  `transpose`, with the definitions of jq
+- `debug`, which writes its input or its messages to the standard error
+  output
+
+The port has these functions for paths, types and numbers:
+
+- The path functions `del`, `delpaths`, `getpath`, `map_values`, `path`,
+  `paths`, `setpath` and `walk`.
 - The selectors `arrays`, `booleans`, `iterables`, `nulls`, `numbers`,
   `objects`, `scalars`, `select`, `strings` and `values`.
 - The number functions `ceil`, `exp10`, `exp2`, `fabs`, `floor`, `infinite`,
   `isinfinite`, `isnan`, `isnormal`, `log`, `log10`, `log2`, `nan`, `pow`,
   `round`, `sqrt` and `trunc`.
+- The functions `acos`, `asin`, `atan`, `atan2`, `cbrt`, `cos`, `cosh`,
+  `expm1`, `log1p`, `sin`, `sinh`, `tan` and `tanh`.
+- The date functions `fromdate`, `fromdateiso8601`, `gmtime`, `localtime`,
+  `mktime`, `now`, `strflocaltime`, `strftime`, `strptime`, `todate` and
+  `todateiso8601`.
+- `builtins`, which gives the name and the number of arguments of each
+  function.
 - The functions `isempty`, `not`, `tojson`, `tostring` and `type`.
 
 The command line has these parts:
@@ -63,6 +92,12 @@ same, and `first`, `limit`, `any` and `all` stop at the same output. But a
 generator that has no end, such as `recurse(. + 1)` in a `limit`, does not
 stop in the port.
 
+A `break` stops the body of its `label` after the body made each output. So
+a `label` does not stop a generator that has no end.
+
+jq gives an error for a path step after a destructuring pattern in `path`.
+The port gives the path.
+
 ## Input
 
 `reader.fern` is the JSON reader of jq 1.7: its grammar, its messages, and
@@ -76,6 +111,12 @@ also.
 - A sequence of bytes that is not UTF-8 is U+FFFD in a string.
 - A parse error stops the command line with `jq: parse error:`, the message,
   and exit 5.
+
+## Recursion
+
+jq makes a tail call with no new stack frame. The port does not, so the depth
+of a function that calls itself has the limit of the stack. A depth of 3000 is
+good on x86-64 and arm64. On wasm32-wasi the limit of wasmtime is lower.
 
 ## Numbers
 
@@ -99,12 +140,22 @@ A math function with no exact result can differ from jq in its last digit.
 jq takes these results from the C library, and they differ from one C library
 to the next. The exact results are the same: `exp10` of 2 is 100.
 
+## Dates
+
+`dates.fern` has the calendar, `strftime` and `strptime`. The results are
+those of jq 1.7 with glibc and the time zone UTC.
+
+- The time zone is always UTC. `localtime` is `gmtime`, and `strflocaltime`
+  is `strftime`. `%Z` gives `UTC` and `%z` gives `+0000`.
+- `strftime` has the conversions of C for the C locale. It has no flags and
+  no widths: a conversion that it does not have stays as it is in the format.
+- `strptime` gives 8 for the day of the week and 367 for the day of the year
+  when the text has no date, as jq does with glibc.
+- `mktime` gives an error for the results -1 and -2, as jq does.
+
 ## What it does not have yet
 
-- The assignment operators.
-- String interpolation, and formats such as `@base64`.
-- Destructuring patterns in a binding, and `?//`.
-- `label` and `def`.
+- Modules: `import`, `include` and `modulemeta`.
 - Each function that is not in the lists above. `exp` waits for #15661.
 
 A program that uses one of them stops with exit 3 and a message that ends in
@@ -117,7 +168,7 @@ A program that uses one of them stops with exit 3 and a message that ends in
 - `tests/jq.test` is the test suite of jq 1.7 (see
   `licenses/jq/NOTICE.txt`). `TestSelfHostExampleJqSuite` runs each case
   whose program the port has and compares the outputs as JSON values, as
-  jq does. 262 cases pass, and each of the others is in a part of the language
+  jq does. 415 cases pass, and each of the others is in a part of the language
   that the port does not have yet.
 - `TestSelfHostExampleJqAgainstJq` runs the command line and the `jq` binary
   on the same arguments and input, and compares their stdout, stderr and exit

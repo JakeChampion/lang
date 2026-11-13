@@ -3540,6 +3540,13 @@ function x86_broadcast_op(mnem: string): i32 {
 
 function x86_gas_vex_move(own a: X86Asm, mnem: string, src: string, dst: string): X86Asm {
   let store = x86_gas_has_paren(dst);
+  // As GNU as does, a move between registers takes the store form when only the source is above 7, so that the
+  // short VEX prefix can name it.
+  let sv = x86_gas_vreg(src);
+  let dv = x86_gas_vreg(dst);
+  if (!store && sv >= 0 && dv >= 0 && (sv & 15) >= 8 && (dv & 15) < 8) {
+    store = true;
+  }
   let v = x86_gas_vreg(dst);
   if (store) {
     v = x86_gas_vreg(src);
@@ -3572,9 +3579,9 @@ function x86_gas_is_vex_two(mnem: string): boolean {
 
 // The opcode of each VEX three-operand integer and FMA instruction: 256 plus
 // the 0F opcode, or 512 plus the 0F38 opcode.
-const VEX_THREE_NAMES: string[] = ["vfmadd213ps", "vfmadd213pd", "vpcmpeqb", "vmulpd", "vpsubusb", "vpminub", "vpand", "vpmullw", "vpmulhuw", "vpaddusb", "vpor", "vpxor", "vpsubb", "vpshufb", "vpcmpgtq", "vpackuswb", "vpmaddubsw", "vpmaddwd", "vpsadbw", "vpunpckldq", "vpunpckhdq", "vpunpcklqdq", "vpunpckhqdq", "vpaddb", "vpmaxub", "vpaddsb", "vpsubsb", "vpavgb", "vpminsb", "vpmaxsb", "vpcmpgtb", "vpaddw", "vpaddd", "vpsubw", "vpsubd", "vpaddsw", "vpaddusw", "vpsubsw", "vpsubusw", "vpminsw", "vpmaxsw", "vpminuw", "vpmaxuw", "vpminsd", "vpmaxsd", "vpminud", "vpmaxud", "vpavgw", "vpcmpeqw", "vpcmpeqd", "vpcmpgtw", "vpcmpgtd", "vpmulld", "vpsllw", "vpslld", "vpsrld", "vpsraw", "vpsrad", "vpsrlw"];
+const VEX_THREE_NAMES: string[] = ["vfmadd213ps", "vfmadd213pd", "vpcmpeqb", "vmulpd", "vpsubusb", "vpminub", "vpand", "vpmullw", "vpmulhuw", "vpaddusb", "vpor", "vpxor", "vpsubb", "vpshufb", "vpcmpgtq", "vpackuswb", "vpmaddubsw", "vpmaddwd", "vpsadbw", "vpunpckldq", "vpunpckhdq", "vpunpcklqdq", "vpunpckhqdq", "vpaddb", "vpmaxub", "vpaddsb", "vpsubsb", "vpavgb", "vpminsb", "vpmaxsb", "vpcmpgtb", "vpaddw", "vpaddd", "vpsubw", "vpsubd", "vpaddsw", "vpaddusw", "vpsubsw", "vpsubusw", "vpminsw", "vpmaxsw", "vpminuw", "vpmaxuw", "vpminsd", "vpmaxsd", "vpminud", "vpmaxud", "vpavgw", "vpcmpeqw", "vpcmpeqd", "vpcmpgtw", "vpcmpgtd", "vpmulld", "vpsllw", "vpslld", "vpsrld", "vpsraw", "vpsrad", "vpsrlw", "vpaddq", "vpmuludq"];
 
-const VEX_THREE_OPS: i32[] = [680, 680, 372, 345, 472, 474, 475, 469, 484, 476, 491, 495, 504, 512, 567, 359, 516, 501, 502, 354, 362, 364, 365, 508, 478, 492, 488, 480, 568, 572, 356, 509, 510, 505, 506, 493, 477, 489, 473, 490, 494, 570, 574, 569, 573, 571, 575, 483, 373, 374, 357, 358, 576, 497, 498, 466, 481, 482, 465];
+const VEX_THREE_OPS: i32[] = [680, 680, 372, 345, 472, 474, 475, 469, 484, 476, 491, 495, 504, 512, 567, 359, 516, 501, 502, 354, 362, 364, 365, 508, 478, 492, 488, 480, 568, 572, 356, 509, 510, 505, 506, 493, 477, 489, 473, 490, 494, 570, 574, 569, 573, 571, 575, 483, 373, 374, 357, 358, 576, 497, 498, 466, 481, 482, 465, 468, 500];
 
 // Each shift by an immediate: its 0F opcode times 8, plus the /digit.
 const VEX_SHIFT_NAMES: string[] = ["vpsrlw", "vpsrld", "vpslld", "vpsrlq", "vpsllq"];
@@ -3708,16 +3715,33 @@ function x86_gas_andn(own a: X86Asm, mnem: string, size: i32, rest: string): X86
     }
     let ix = !m.is_rip && m.has_index && m.index >= 8;
     let bs = !m.is_rip && m.base >= 8;
-    util.push_bytes(a.code, x86_vex([], dst >= 8, ix, bs, 2, size == 64, inv, false, 0));
-    buf_push_byte(a.code, 242);
+    util.push_bytes(a.code, x86_vex([], dst >= 8, ix, bs, 2, size == 64, inv, false, x86_vex_gpr_pp(mnem)));
+    buf_push_byte(a.code, x86_vex_gpr_op(mnem));
     return x86_gas_membytes(a, dst, m, 0);
   }
   let other = x86_gas_reg_w(ops[0], size);
   if (other < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  util.push_bytes(a.code, x86_rec_andn_rr(size, dst, inv, other));
+  util.push_bytes(a.code, x86_rec_vex_gpr_rr(x86_vex_gpr_pp(mnem), x86_vex_gpr_op(mnem), size, dst, inv, other));
   return a;
+}
+
+// andn and mulx share a form: the ModRM reg operand is the destination, VEX.vvvv the second register
+// operand (andn's inverted source, mulx's low half), and ModRM r/m the source. These are the VEX pp field
+// and the 0F38 opcode.
+function x86_vex_gpr_pp(mnem: string): i32 {
+  if (mnem == "mulxq" || mnem == "mulxl") {
+    return 3;
+  }
+  return 0;
+}
+
+function x86_vex_gpr_op(mnem: string): i32 {
+  if (mnem == "mulxq" || mnem == "mulxl") {
+    return 246;
+  }
+  return 242;
 }
 
 function x86_shiftx_pp(mnem: string): i32 {
@@ -3771,8 +3795,12 @@ pub function x86_rec_shiftx_rr(size: i32, pp: i32, dst: i32, src: i32, count: i3
 }
 
 pub function x86_rec_andn_rr(size: i32, dst: i32, inverted: i32, other: i32): i32[] {
-  let b = x86_vex([], dst >= 8, false, other >= 8, 2, size == 64, inverted, false, 0);
-  return b.append(242).append(x86_modrm(3, dst, other));
+  return x86_rec_vex_gpr_rr(0, 242, size, dst, inverted, other);
+}
+
+function x86_rec_vex_gpr_rr(pp: i32, op: i32, size: i32, dst: i32, vvvv: i32, other: i32): i32[] {
+  let b = x86_vex([], dst >= 8, false, other >= 8, 2, size == 64, vvvv, false, pp);
+  return b.append(op).append(x86_modrm(3, dst, other));
 }
 
 function x86_gas_rorx(own a: X86Asm, mnem: string, size: i32, rest: string): X86Asm {
@@ -6499,8 +6527,8 @@ function x86_line_memoable(l: GasLine): boolean {
 struct MnemVerdict { vz: boolean, fixed: i32, a_kind: i32, a_ext: i32, a_sfx: i32, sfx: i32, b_kind: i32, b_ext: i32, vshift: i32, c_kind: i32, c_ext: i32 }
 
 function x86_gas_bmi_verdict(v: MnemVerdict, mnem: string): MnemVerdict {
-  if (mnem == "andnl" || mnem == "andnq") {
-    return MnemVerdict { ...v, a_kind: GK_ANDN, a_ext: if (mnem == "andnq") { 64 } else { 32 } };
+  if (mnem == "andnl" || mnem == "andnq" || mnem == "mulxl" || mnem == "mulxq") {
+    return MnemVerdict { ...v, a_kind: GK_ANDN, a_ext: if (mnem == "andnq" || mnem == "mulxq") { 64 } else { 32 } };
   }
   if (mnem == "rorxl") {
     return MnemVerdict { ...v, a_kind: GK_RORX, a_ext: 32 };

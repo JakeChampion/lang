@@ -1,0 +1,400 @@
+// The input of age, plain or in the ASCII armor, read as Go's bufio and
+// armor readers read it. An error stays until the bytes before it are read,
+// so each message comes at the point where age gives it.
+import "std/array";
+import "std/option";
+import "./text";
+
+pub const ARMOR_HEADER: string = "-----BEGIN AGE ENCRYPTED FILE-----";
+
+pub const ARMOR_FOOTER: string = "-----END AGE ENCRYPTED FILE-----";
+
+// The size of one read from the file.
+const READ: i32 = 65552;
+
+// Go's io.EOF, io.ErrUnexpectedEOF, a read error, and an armor error.
+pub enum Fail {
+  Eof,
+  Short,
+  Io(string),
+  Armor(string),
+}
+
+pub function (f: Fail) message(): string {
+  return match (f) {
+    Eof => "EOF",
+    Short => "unexpected EOF",
+    Io(m) => m,
+    Armor(m) => "invalid armor: " + m,
+  };
+}
+
+pub function (f: Fail) is_eof(): boolean {
+  return match (f) {
+    Eof => true,
+    _ => false,
+  };
+}
+
+// The bytes of a file. With no reader, the bytes in buf are all there is.
+pub struct Raw { r: Option[Reader], name: string, buf: u8[], pos: i32, fail: Option[Fail] }
+
+pub function open_raw(r: Reader, name: string): Raw {
+  return Raw { r: Some(r), name: name, buf: [], pos: 0, fail: None };
+}
+
+pub function raw_bytes(b: u8[]): Raw {
+  return Raw { r: None, name: "", buf: b, pos: 0, fail: None };
+}
+
+// One read of up to n bytes. An empty result is the end of the file.
+function read_some(s: Raw, n: i32): Result[u8[], Fail] {
+  let Some(r) = s.r else {
+    return Ok([]);
+  };
+  match (r.read_chunk_bytes(n)) {
+    Ok(b) => {
+      return Ok(b);
+    },
+    Err(e) => {
+      return Err(Io(f"read {s.name}: {text.errno_text(e)}"));
+    }
+  }
+}
+
+// Adds the bytes of one read to the buffer, or sets the error.
+function raw_more(own s: Raw): Raw {
+  if (s.fail.is_some()) {
+    return s;
+  }
+  match (read_some(s, READ)) {
+    Ok(b) => {
+      if (b.len() == 0) {
+        return Raw { ...s, fail: Some(Eof) };
+      }
+      return Raw { ...s, buf: array.slice(s.buf, s.pos, s.buf.len()).concat(b), pos: 0 };
+    },
+    Err(f) => {
+      return Raw { ...s, fail: Some(f) };
+    }
+  }
+}
+
+// Up to n bytes from the start, as bufio's Peek gives them. Nothing is
+// consumed.
+pub function raw_peek(own s: Raw, n: i32): (Raw, u8[]) {
+  while (s.buf.len() - s.pos < n && s.fail.is_none()) {
+    s = raw_more(s);
+  }
+  let end = if (s.buf.len() - s.pos < n) { s.buf.len() } else { s.pos + n };
+  let got = array.slice(s.buf, s.pos, end);
+  return (s, got);
+}
+
+// Go's bufio ReadBytes('\n'): the line with its newline, or the rest of the
+// file and the error that ended it.
+function raw_line(own s: Raw): (Raw, u8[], Option[Fail]) {
+  let scan = s.pos;
+  loop {
+    while (scan < s.buf.len()) {
+      if (s.buf[scan] == b'\n') {
+        let line = array.slice(s.buf, s.pos, scan + 1);
+        return (Raw { ...s, pos: scan + 1 }, line, None);
+      }
+      scan += 1;
+    }
+    if let Some(f) = s.fail {
+      let rest = array.slice(s.buf, s.pos, s.buf.len());
+      return (Raw { ...s, pos: s.buf.len() }, rest, Some(f));
+    }
+    let consumed = s.pos;
+    s = raw_more(s);
+    scan -= consumed - s.pos;
+  }
+  return (s, [], None);
+}
+
+// Up to n bytes and an error other than the end of the file, as
+// io.ReadAll(io.LimitReader(r, n)) gives them.
+function raw_take(own s: Raw, n: i32): (Raw, u8[], Option[Fail]) {
+  let (t, got) = raw_peek(s, n);
+  let f = if (got.len() < n) { t.fail } else { None };
+  let rest = Raw { ...t, pos: t.pos + got.len() };
+  if let Some(e) = f {
+    if (!e.is_eof()) {
+      return (rest, got, f);
+    }
+  }
+  return (rest, got, None);
+}
+
+// The input as age reads it. When armored, buf holds the decoded bytes.
+pub struct Src { raw: Raw, armored: boolean, started: boolean, buf: u8[], pos: i32, fail: Option[Fail] }
+
+// A plain input takes the bytes that a peek left in raw.
+pub function plain(own raw: Raw): Src {
+  let rest = array.slice(raw.buf, raw.pos, raw.buf.len());
+  return Src { raw: Raw { ...raw, buf: [], pos: 0 }, armored: false, started: true, buf: rest, pos: 0, fail: None };
+}
+
+// The input, armored when its first bytes after white space are the armor
+// header.
+pub function start(own raw: Raw): Src {
+  let (t, head) = raw_peek(raw, 1024 + ARMOR_HEADER.len());
+  let at = 0;
+  while (at < head.len() && at < 1024 && text.blank(head[at:at + 1])) {
+    at += 1;
+  }
+  if (text.has_prefix(head[at:head.len()], ARMOR_HEADER)) {
+    return armored(t);
+  }
+  return plain(t);
+}
+
+pub function armored(own raw: Raw): Src {
+  return Src { raw: raw, armored: true, started: false, buf: [], pos: 0, fail: None };
+}
+
+function add(own s: Src, b: [u8]): Src {
+  return Src { ...s, buf: array.slice(s.buf, s.pos, s.buf.len()).concat(b), pos: 0 };
+}
+
+function fail_with(own s: Src, f: Fail): Src {
+  return Src { ...s, fail: Some(f) };
+}
+
+// The armor reader's error: io.EOF stays as it is, and each other error
+// gets the prefix "invalid armor: ".
+function armor_fail(own s: Src, f: Fail): Src {
+  return match (f) {
+    Eof => fail_with(s, Eof),
+    _ => fail_with(s, Armor(f.message())),
+  };
+}
+
+// The armor reader's getLine: a line without its "\n" and "\r".
+function armor_line(own s: Src): (Src, u8[], Option[Fail]) {
+  let (raw, line, f) = raw_line(s.raw);
+  let t = Src { ...s, raw: raw };
+  if let Some(e) = f {
+    if (!e.is_eof()) {
+      return (t, line, f);
+    }
+    if (line.len() == 0) {
+      return (t, line, Some(Short));
+    }
+  }
+  let n = line.len();
+  if (n > 0 && line[n - 1] == b'\n') {
+    n -= 1;
+  }
+  if (n > 0 && line[n - 1] == b'\r') {
+    n -= 1;
+  }
+  return (t, array.slice(line, 0, n), None);
+}
+
+// The end of the armor: up to 1024 bytes of white space, then the end of the
+// file.
+function drain(own s: Src): Src {
+  let (raw, rest, f) = raw_take(s.raw, 1024);
+  let t = Src { ...s, raw: raw };
+  if let Some(e) = f {
+    return armor_fail(t, e);
+  }
+  if (!text.blank(rest)) {
+    return armor_fail(t, Io("trailing data after armored file"));
+  }
+  if (rest.len() == 1024) {
+    return armor_fail(t, Io("too much trailing whitespace"));
+  }
+  return fail_with(t, Eof);
+}
+
+// One Read of age's armor reader: the bytes of one line of the armor.
+// The first line of the armor, after up to 1024 bytes of lines that hold
+// only white space.
+function armor_start(own s: Src): Src {
+  let skipped = 0;
+  loop {
+    let (t, line, f) = armor_line(s);
+    if let Some(e) = f {
+      return armor_fail(t, e);
+    }
+    if (!text.blank(line)) {
+      if (!text.equals(line, ARMOR_HEADER)) {
+        return armor_fail(t, Io("invalid first line: " + text.quote(line)));
+      }
+      return Src { ...t, started: true };
+    }
+    skipped += line.len() + 1;
+    if (skipped > 1024) {
+      return armor_fail(t, Io("too much leading whitespace"));
+    }
+    s = t;
+  }
+  return s;
+}
+
+// After a line shorter than 48 bytes, the closing line must come.
+function armor_end(own s: Src, line: [u8], decoded: [u8]): Src {
+  let (u, end, g) = armor_line(s);
+  if let Some(e) = g {
+    return armor_fail(u, e);
+  }
+  if (!text.equals(end, ARMOR_FOOTER)) {
+    return armor_fail(u, Io("invalid closing line: " + text.quote(end)));
+  }
+  if (line.len() == 0) {
+    return armor_fail(u, Io("empty line before the closing line"));
+  }
+  return drain(add(u, decoded));
+}
+
+function armor_more(own s: Src): Src {
+  if (!s.started) {
+    s = armor_start(s);
+    if (s.fail.is_some()) {
+      return s;
+    }
+  }
+  let (t, line, f) = armor_line(s);
+  if let Some(e) = f {
+    return armor_fail(t, e);
+  }
+  if (text.equals(line, ARMOR_FOOTER)) {
+    return drain(t);
+  }
+  if (line.len() > 64) {
+    return armor_fail(t, Io("column limit exceeded"));
+  }
+  return match (text.b64_decode(line, true)) {
+    Ok(decoded) => if (decoded.len() == 48) {
+      add(t, decoded)
+    } else {
+      armor_end(t, line, decoded)
+    },
+    Err(at) => armor_fail(t, Io(f"illegal base64 data at input byte {at}")),
+  };
+}
+
+// Adds at least one byte to the buffer, or sets the error.
+function more(own s: Src): Src {
+  if (s.fail.is_some()) {
+    return s;
+  }
+  if (s.armored) {
+    return armor_more(s);
+  }
+  if let Some(f) = s.raw.fail {
+    return fail_with(s, f);
+  }
+  match (read_some(s.raw, READ)) {
+    Ok(b) => {
+      if (b.len() == 0) {
+        return fail_with(s, Eof);
+      }
+      return add(s, b);
+    },
+    Err(f) => {
+      return fail_with(s, f);
+    }
+  }
+}
+
+pub function avail(s: Src): i32 {
+  return s.buf.len() - s.pos;
+}
+
+// Go's bufio ReadBytes('\n') on the input.
+pub function read_line(own s: Src): (Src, u8[], Option[Fail]) {
+  let scan = s.pos;
+  loop {
+    while (scan < s.buf.len()) {
+      if (s.buf[scan] == b'\n') {
+        let line = array.slice(s.buf, s.pos, scan + 1);
+        return (Src { ...s, pos: scan + 1 }, line, None);
+      }
+      scan += 1;
+    }
+    if let Some(f) = s.fail {
+      let rest = array.slice(s.buf, s.pos, s.buf.len());
+      return (Src { ...s, pos: s.buf.len() }, rest, Some(f));
+    }
+    let consumed = s.pos;
+    s = more(s);
+    scan -= consumed - s.pos;
+  }
+  return (s, [], None);
+}
+
+// Go's bufio Peek(n): None when n bytes are there, else the error.
+pub function peek(own s: Src, n: i32): (Src, Option[Fail]) {
+  while (avail(s) < n) {
+    if let Some(f) = s.fail {
+      return (s, Some(f));
+    }
+    s = more(s);
+  }
+  return (s, None);
+}
+
+pub function next_is(s: Src, p: string): boolean {
+  return avail(s) >= p.len() && text.has_prefix(s.buf[s.pos:s.buf.len()], p);
+}
+
+// Go's io.ReadFull for n bytes. A short read at the end of the file is
+// Short, and the bytes it got come with it.
+pub function read_full(own s: Src, n: i32): (Src, u8[], Option[Fail]) {
+  if (avail(s) == 0 && !s.armored && s.fail.is_none()) {
+    return read_direct(s, n);
+  }
+  while (avail(s) < n && s.fail.is_none()) {
+    s = more(s);
+  }
+  let got = avail(s);
+  if (got >= n) {
+    let b = array.slice(s.buf, s.pos, s.pos + n);
+    return (Src { ...s, pos: s.pos + n }, b, None);
+  }
+  let rest = array.slice(s.buf, s.pos, s.buf.len());
+  let t = Src { ...s, pos: s.buf.len() };
+  let Some(f) = t.fail else {
+    return (t, rest, None);
+  };
+  if (!f.is_eof()) {
+    return (t, rest, Some(f));
+  }
+  if (got == 0) {
+    return (t, rest, Some(Eof));
+  }
+  return (t, rest, Some(Short));
+}
+
+// read_full on a plain input with an empty buffer: the reads go straight
+// into the result.
+function read_direct(own s: Src, n: i32): (Src, u8[], Option[Fail]) {
+  let out: u8[] = [];
+  while (out.len() < n) {
+    match (read_some(s.raw, n - out.len())) {
+      Ok(b) => {
+        if (b.len() == 0) {
+          let f = if (out.len() == 0) { Eof } else { Short };
+          return (fail_with(s, Eof), out, Some(f));
+        }
+        out = if (out.len() == 0) { b } else { out.concat(b) };
+      },
+      Err(f) => {
+        return (fail_with(s, f), out, Some(f));
+      }
+    }
+  }
+  return (s, out, None);
+}
+
+// One Read of one byte after the last chunk: None when a byte is there, else
+// the error that ends the input.
+pub function read_one(own s: Src): (Src, Option[Fail]) {
+  let (t, f) = peek(s, 1);
+  return (t, f);
+}

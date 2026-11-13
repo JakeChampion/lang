@@ -1,0 +1,90 @@
+import "./util";
+import "./wasm_aes";
+
+function x(i: i32): string {
+  return "(local.get $x" + util.i32_to_string(i) + ")";
+}
+
+function set_x(i: i32, v: string): string {
+  return "        (local.set $x" + util.i32_to_string(i) + " " + v + ")\n";
+}
+
+// The quarter rounds of a ChaCha20 double round: the four columns, then the four diagonals.
+const QUARTER_ROUNDS: i32[] = [0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15, 0, 5, 10, 15, 1, 6, 11, 12, 2, 7, 8, 13, 3, 4, 9, 14];
+
+function rounds_wat(): string {
+  let o = "";
+  for q in 0..8 {
+    let a = QUARTER_ROUNDS[4 * q];
+    let b = QUARTER_ROUNDS[4 * q + 1];
+    let c = QUARTER_ROUNDS[4 * q + 2];
+    let d = QUARTER_ROUNDS[4 * q + 3];
+    o = o + set_x(a, "(i32.add " + x(a) + " " + x(b) + ")") + set_x(d, "(i32.rotl (i32.xor " + x(d) + " " + x(a) + ") (i32.const 16))")
+      + set_x(c, "(i32.add " + x(c) + " " + x(d) + ")") + set_x(b, "(i32.rotl (i32.xor " + x(b) + " " + x(c) + ") (i32.const 12))")
+      + set_x(a, "(i32.add " + x(a) + " " + x(b) + ")") + set_x(d, "(i32.rotl (i32.xor " + x(d) + " " + x(a) + ") (i32.const 8))")
+      + set_x(c, "(i32.add " + x(c) + " " + x(d) + ")") + set_x(b, "(i32.rotl (i32.xor " + x(b) + " " + x(c) + ") (i32.const 7))");
+  }
+  return o;
+}
+
+// Word i of the start state: the constants, the key at kp, the block counter c and the nonce at cp + 4.
+function start_word(i: i32): string {
+  let sigma: string[] = ["1634760805", "857760878", "2036477234", "1797285236"];
+  if (i < 4) {
+    return "(i32.const " + sigma[i] + ")";
+  }
+  if (i < 12) {
+    return "(i32.load offset=" + util.i32_to_string(4 * (i - 4)) + " (local.get $kp))";
+  }
+  if (i == 12) {
+    return "(local.get $c)";
+  }
+  return "(i32.load offset=" + util.i32_to_string(4 * (i - 12)) + " (local.get $cp))";
+}
+
+// The key stream of one block XORed over the text at p: a whole block, or the rem bytes left.
+function xor_wat(): string {
+  let o = "      (if (i32.ge_u (local.get $rem) (i32.const 64)) (then\n";
+  for i in 0..16 {
+    let off = util.i32_to_string(4 * i);
+    o = o + "        (i32.store offset=" + off + " (local.get $p) (i32.xor (i32.load offset=" + off + " (local.get $p)) " + x(i) + "))\n";
+  }
+  o += "        (local.set $p (i32.add (local.get $p) (i32.const 64)))\n        (local.set $rem (i32.sub (local.get $rem) (i32.const 64)))\n        (br $blk)))\n";
+  o += "      (block $part\n";
+  for i in 0..16 {
+    o = o + "        (local.set $w " + x(i) + ")\n        (br_if $part (i32.lt_u (local.get $rem) (i32.const 4)))\n"
+      + "        (i32.store (local.get $p) (i32.xor (i32.load (local.get $p)) (local.get $w)))\n"
+      + "        (local.set $p (i32.add (local.get $p) (i32.const 4)))\n        (local.set $rem (i32.sub (local.get $rem) (i32.const 4)))\n";
+  }
+  return o + "      )\n      (block $end (loop $byte\n        (br_if $end (i32.eqz (local.get $rem)))\n"
+    + "        (i32.store8 (local.get $p) (i32.xor (i32.load8_u (local.get $p)) (local.get $w)))\n"
+    + "        (local.set $w (i32.shr_u (local.get $w) (i32.const 8)))\n        (local.set $p (i32.add (local.get $p) (i32.const 1)))\n"
+    + "        (local.set $rem (i32.sub (local.get $rem) (i32.const 1)))\n        (br $byte)))\n      (br $done)\n";
+}
+
+// RFC 8439's ChaCha20 over buf[at:at + n] in place, one block at a time: the key is 32 bytes, and the 16
+// bytes of ctr are the block counter and the nonce. The buffer is copied first if it has another holder.
+pub function funcs(): string {
+  let o: string = "  (func $__fern_chacha20_xor_into (param $key i32) (param $ctr i32) (param $buf i32) (param $at i32) (param $n i32) (result i32)\n"
+    + "    (local $copy i32) (local $kp i32) (local $cp i32) (local $p i32) (local $rem i32) (local $c i32) (local $r i32) (local $w i32)";
+  for i in 0..16 {
+    o = o + " (local $x" + util.i32_to_string(i) + " i32)";
+  }
+  o = o + "\n" + wasm_aes.abort_unless("(i32.eq (call $__fern_aes_view_len (local.get $key)) (i32.const 32))")
+    + wasm_aes.abort_unless("(i32.eq (call $__fern_aes_view_len (local.get $ctr)) (i32.const 16))")
+    + wasm_aes.abort_unless("(i32.ge_s (i32.or (local.get $at) (local.get $n)) (i32.const 0))")
+    + wasm_aes.abort_unless("(i64.le_u (i64.add (i64.extend_i32_u (local.get $at)) (i64.extend_i32_u (local.get $n))) (i64.extend_i32_u (i32.load (local.get $buf))))")
+    + wasm_aes.own_wat()
+    + "    (local.set $kp (call $__fern_aes_view_data (local.get $key)))\n    (local.set $cp (call $__fern_aes_view_data (local.get $ctr)))\n"
+    + "    (local.set $c (i32.load (local.get $cp)))\n    (local.set $p (i32.add (i32.add (local.get $buf) (i32.const 8)) (local.get $at)))\n"
+    + "    (local.set $rem (local.get $n))\n    (block $done (loop $blk\n      (br_if $done (i32.eqz (local.get $rem)))\n";
+  for i in 0..16 {
+    o += set_x(i, start_word(i));
+  }
+  o = o + "      (local.set $r (i32.const 10))\n      (loop $round\n" + rounds_wat()
+    + "        (local.set $r (i32.sub (local.get $r) (i32.const 1)))\n        (br_if $round (local.get $r)))\n";
+  for i in 0..16 {
+    o += set_x(i, "(i32.add " + x(i) + " " + start_word(i) + ")");
+  }
+  return o + "      (local.set $c (i32.add (local.get $c) (i32.const 1)))\n" + xor_wat() + "    ))\n    (local.get $buf))\n";
+}

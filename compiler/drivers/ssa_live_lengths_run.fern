@@ -1,0 +1,68 @@
+import "../ssa";
+import "../ssafixed";
+import "../ssalive";
+import "../util";
+
+function inst(kind: i32, v: i32, args: i32[], str: string): ssa.SInst {
+  return ssa.SInst { kind_tag: kind, result: v, args: args, imm: 0, str: str };
+}
+
+function jump(to: i32): ssa.STerm {
+  return ssa.STerm { kind_tag: ssa.TERM_BR, cond: 0, target: to, t: 0, f: 0, value: 0 };
+}
+
+function branch(cond: i32, t: i32, f: i32): ssa.STerm {
+  return ssa.STerm { kind_tag: ssa.TERM_BRIF, cond: cond, target: 0, t: t, f: f, value: 0 };
+}
+
+function ret(v: i32): ssa.STerm {
+  return ssa.STerm { kind_tag: ssa.TERM_RET, cond: 0, target: 0, t: 0, f: 0, value: v };
+}
+
+// v1 is read in the first loop and in b7, the exit of that loop, which is laid
+// out after the second loop. Its interval covers the second loop, where it is
+// dead. v0 is live through both loops. With four registers, the second loop's
+// body must spill v0 or v1.
+function two_loops(): ssa.SFunc {
+  let b0 = ssa.SBlock { id: 0, insts: [inst(ssa.CONST_INT, 0, [], ""), inst(ssa.CONST_INT, 1, [], "")], term: jump(1), preds: [] };
+  let b1 = ssa.SBlock { id: 1, insts: [inst(ssa.PHI, 2, [1, 6], ""), inst(ssa.BINARY, 3, [2, 0], "lt_s")], term: branch(3, 2, 3), preds: [0, 9] };
+  let b2 = ssa.SBlock { id: 2, insts: [inst(ssa.BINARY, 4, [2, 1], "add"), inst(ssa.BINARY, 5, [4, 1], "eq")], term: branch(5, 7, 9), preds: [1] };
+  let b9 = ssa.SBlock { id: 9, insts: [inst(ssa.BINARY, 6, [4, 1], "add")], term: jump(1), preds: [2] };
+  let b3 = ssa.SBlock { id: 3, insts: [], term: jump(4), preds: [1] };
+  let b4 = ssa.SBlock { id: 4, insts: [inst(ssa.PHI, 7, [0, 12], ""), inst(ssa.BINARY, 8, [7, 0], "lt_s")], term: branch(8, 5, 6), preds: [3, 5] };
+  let body: ssa.SInst[] = [inst(ssa.BINARY, 9, [7, 7], "add"), inst(ssa.BINARY, 10, [9, 0], "xor"), inst(ssa.BINARY, 11, [10, 9], "add"), inst(ssa.BINARY, 12, [11, 0], "sub")];
+  let b5 = ssa.SBlock { id: 5, insts: body, term: jump(4), preds: [4] };
+  let b6 = ssa.SBlock { id: 6, insts: [inst(ssa.BINARY, 13, [7, 0], "add")], term: ret(13), preds: [4] };
+  let b7 = ssa.SBlock { id: 7, insts: [inst(ssa.BINARY, 14, [1, 1], "add")], term: ret(14), preds: [2] };
+  return ssa.SFunc { name: "two_loops", nparams: 0, nvals: 15, blocks: [b0, b1, b2, b9, b3, b4, b5, b6, b7], entry: 0, takes_env: false };
+}
+
+function check(ok: boolean, what: string, failures: i32): i32 {
+  if (ok) {
+    return failures;
+  }
+  print("FAIL " + what);
+  return failures + 1;
+}
+
+function main(): i32 {
+  let failures = 0;
+  let f = two_loops();
+  let live = ssalive.lives(f, ssa.hard_call_positions(f, []));
+  let lens = live.lengths;
+  failures = check(lens.len() == f.nvals, "a live length for every value", failures);
+  if (lens.len() != f.nvals) {
+    print("failures=" + util.i32_to_string(failures));
+    return failures;
+  }
+  failures = check(lens[1] == 11, "v1 is live in the first loop and its exit only: " + util.i32_to_string(lens[1]), failures);
+  failures = check(lens[0] == 21, "v0 is live up to its last read: " + util.i32_to_string(lens[0]), failures);
+  failures = check(lens[4] == 4 && lens[9] == 3 && lens[13] == 2, "a value is live from its definition to its last read", failures);
+  failures = check(lens[7] == 5, "a loop phi is live up to its last read, not to the back edge: " + util.i32_to_string(lens[7]), failures);
+  let by_live = ssa.regalloc_linear_fixed_costs(f, 4, 0, -1, false, [], [], [], 0, 0, ssafixed.none(), [], live.crossing, lens, ssa.SpillCosts { fold_alu_rhs: false });
+  let by_span = ssa.regalloc_linear_fixed_costs(f, 4, 0, -1, false, [], [], [], 0, 0, ssafixed.none(), [], live.crossing, [], ssa.SpillCosts { fold_alu_rhs: false });
+  failures = check(by_live.reg_of[1] >= 0 && by_live.reg_of[0] < 0, "with live lengths the value dead in the second loop keeps its register", failures);
+  failures = check(by_span.reg_of[1] < 0 && by_span.reg_of[0] >= 0, "with interval spans the value dead in the second loop is spilled", failures);
+  print("failures=" + util.i32_to_string(failures));
+  return failures;
+}

@@ -1,0 +1,852 @@
+// The ignore rules of the rg port: ignore files, the -g globs and the -t
+// file types, with the precedence of the ignore crate of ripgrep 14.1.0.
+import "core/cmp";
+import "std/glob";
+import "std/option";
+import "std/string";
+import "./types";
+
+// The answer of a matcher for a path.
+pub const NONE: i32 = 0;
+
+pub const IGNORE: i32 = 1;
+
+pub const KEEP: i32 = 2;
+
+// One line of an ignore file. A whitelist rule starts with `!`, and a
+// directory rule ends with `/`.
+struct Rule { glob: glob.Glob, whitelist: boolean, dir_only: boolean }
+
+// The rules of one ignore file, and the directory that they apply to.
+// `ignores` counts the rules that are not whitelist rules.
+pub struct Matcher { root: string, rules: Rule[], ignores: i32 }
+
+// A matcher and the messages of the lines that did not compile.
+pub struct Loaded { m: Matcher, errors: string[] }
+
+// The text of an error from the operating system, as ripgrep writes it.
+pub function os_error(e: IoError): string {
+  match (e) {
+    NotFound(_) => {
+      return "No such file or directory (os error 2)";
+    },
+    PermissionDenied(_) => {
+      return "Permission denied (os error 13)";
+    },
+    Other(_, _, 20) => {
+      return "Not a directory (os error 20)";
+    },
+    Other(_, _, 21) => {
+      return "Is a directory (os error 21)";
+    },
+    _ => {
+      return e.message();
+    }
+  }
+}
+
+// `path` without a leading "./".
+pub function strip_dot(path: string): string {
+  if (path.starts_with("./")) {
+    return slice_unchecked(path, 2, path.len()).to_owned();
+  }
+  return path;
+}
+
+// `dir` joined with `name`, as Rust's Path::join does it.
+pub function join(dir: string, name: string): string {
+  if (name.starts_with("/") || dir.len() == 0) {
+    return name;
+  }
+  if (dir.ends_with("/")) {
+    return dir + name;
+  }
+  return dir + "/" + name;
+}
+
+pub function empty(root: string): Matcher {
+  return Matcher { root: strip_dot(root), rules: [], ignores: 0 };
+}
+
+function is_space(c: u8): boolean {
+  return c == b' ' || c == b'\t' || c == b'\n' || c == b'\r' || c == 11u8 || c == 12u8;
+}
+
+function trim_end(s: string): string {
+  let end = s.len();
+  while (end > 0 && is_space(s[end - 1])) {
+    end -= 1;
+  }
+  return slice_unchecked(s, 0, end).to_owned();
+}
+
+function rest(s: string, from: i32): string {
+  return slice_unchecked(s, from, s.len()).to_owned();
+}
+
+// A line of an ignore file without its marks: the glob text, and whether
+// the line starts with `!`, starts with `/`, and ends with `/`.
+struct Marks { text: string, whitelist: boolean, anchored: boolean, dir_only: boolean }
+
+function marks_of(line: string): Marks {
+  let m = Marks { text: line, whitelist: false, anchored: false, dir_only: false };
+  if (line.starts_with("\\!") || line.starts_with("\\#")) {
+    m = Marks { ...m, text: rest(line, 1) };
+  } else {
+    if (m.text.starts_with("!")) {
+      m = Marks { ...m, text: rest(m.text, 1), whitelist: true };
+    }
+    if (m.text.starts_with("/")) {
+      m = Marks { ...m, text: rest(m.text, 1), anchored: true };
+    }
+  }
+  if (!m.text.ends_with("/")) {
+    return m;
+  }
+  let text = slice_unchecked(m.text, 0, m.text.len() - 1).to_owned();
+  if (text.ends_with("\\")) {
+    text = slice_unchecked(text, 0, text.len() - 1).to_owned();
+  }
+  return Marks { ...m, text: text, dir_only: true };
+}
+
+// The glob of a line: one with no `/` matches in any directory, and one
+// that ends with `/**` matches what is in the directory only.
+function glob_text(m: Marks): string {
+  let actual = m.text;
+  if (!m.anchored && __memchr(m.text, 47, 0) < 0 && !m.text.starts_with("**/") && m.text != "**") {
+    actual = "**/" + m.text;
+  }
+  if (actual.ends_with("/**")) {
+    actual += "/*";
+  }
+  return actual;
+}
+
+// The rule of one line, as the gitignore builder of the ignore crate makes
+// it. A line that starts with `#` or that is empty has no rule.
+function rule_of(raw: string, ci: boolean): Result[Option[Rule], string] {
+  if (raw.starts_with("#")) {
+    return Ok(None);
+  }
+  let line = if (raw.ends_with("\\ ")) { raw } else { trim_end(raw) };
+  if (line.len() == 0) {
+    return Ok(None);
+  }
+  let m = marks_of(line);
+  let actual = glob_text(m);
+  let opts = glob.GlobOptions { literal_separator: true, backslash_escape: true, case_insensitive: ci };
+  match (glob.compile(actual, opts)) {
+    Ok(g) => {
+      return Ok(Some(Rule { glob: g, whitelist: m.whitelist, dir_only: m.dir_only }));
+    },
+    Err(e) => {
+      return Err(f"error parsing glob '{raw}': {e.reason}");
+    }
+  }
+  return Ok(None);
+}
+
+// Adds one line. `tag` names the line in a message.
+function add_line(l: Loaded, raw: string, ci: boolean, tag: string): Loaded {
+  match (rule_of(raw, ci)) {
+    Ok(Some(r)) => {
+      let ignores = if (r.whitelist) { l.m.ignores } else { l.m.ignores + 1 };
+      return Loaded { ...l, m: Matcher { ...l.m, rules: l.m.rules.append(r), ignores: ignores } };
+    },
+    Ok(None()) => {
+      return l;
+    },
+    Err(why) => {
+      return Loaded { ...l, errors: l.errors.append(tag + why) };
+    }
+  }
+  return l;
+}
+
+// Adds each line of `text`, as Rust's BufRead::lines splits it.
+function add_text(l: Loaded, text: string, ci: boolean, file: string): Loaded {
+  let out = l;
+  let start = 0;
+  let n = 1;
+  if (text.starts_with("\u{FEFF}")) {
+    start = 3;
+  }
+  while (start < text.len()) {
+    let end = __memchr(text, 10, start);
+    if (end < 0) {
+      end = text.len();
+    }
+    let stop = if (end > start && text[end - 1] == b'\r') { end - 1 } else { end };
+    out = add_line(out, slice_unchecked(text, start, stop).to_owned(), ci, f"{file}: line {n}: ");
+    start = end + 1;
+    n += 1;
+  }
+  return out;
+}
+
+// The rules of the ignore file `file`, matched from `root`. As in the
+// ignore crate, a file that cannot be read has no rules and no message.
+pub function load(root: string, file: string, ci: boolean): Loaded {
+  let Ok(text) = read_file(file) else {
+    return parse(root, "", ci, file);
+  };
+  return parse(root, text, ci, file);
+}
+
+// The rules of the text of the ignore file `file`, matched from `root`.
+pub function parse(root: string, text: string, ci: boolean, file: string): Loaded {
+  let none: string[] = [];
+  return add_text(Loaded { m: empty(root), errors: none }, text, ci, file);
+}
+
+// `path` relative to the root of the matcher, as the ignore crate strips
+// it: by bytes, and only when the path has a `/`.
+function (m: Matcher) strip(path: string): string {
+  let p = strip_dot(path);
+  if (m.root == "." || __memchr(p, 47, 0) < 0 || !p.starts_with(m.root)) {
+    return p;
+  }
+  let q = rest(p, m.root.len());
+  if (q.starts_with("/")) {
+    return rest(q, 1);
+  }
+  return q;
+}
+
+// The answer of the last rule that matches `path`.
+pub function (m: Matcher) matched(path: string, is_dir: boolean): i32 {
+  if (m.rules.len() == 0) {
+    return NONE;
+  }
+  let p = m.strip(path);
+  let k = m.rules.len() - 1;
+  while (k >= 0) {
+    let r = m.rules[k];
+    if ((!r.dir_only || is_dir) && r.glob.matches(p)) {
+      return if (r.whitelist) { KEEP } else { IGNORE };
+    }
+    k -= 1;
+  }
+  return NONE;
+}
+
+// The -g and --iglob globs. A glob keeps a path and a `!` glob ignores it.
+// When a glob without `!` is given, a file that no glob matches is ignored.
+pub function overrides(cwd: string, globs: string[], iglobs: string[], ci: boolean): Result[Matcher, string] {
+  let none: string[] = [];
+  let l = Loaded { m: empty(cwd), errors: none };
+  for g in globs {
+    l = add_line(l, g, ci, "");
+  }
+  for g in iglobs {
+    l = add_line(l, g, true, "");
+  }
+  if (l.errors.len() > 0) {
+    return Err(l.errors[0]);
+  }
+  return Ok(l.m);
+}
+
+pub function (m: Matcher) override(path: string, is_dir: boolean): i32 {
+  if (m.rules.len() == 0) {
+    return NONE;
+  }
+  let v = m.matched(path, is_dir);
+  if (v == KEEP) {
+    return IGNORE;
+  }
+  if (v == IGNORE) {
+    return KEEP;
+  }
+  if (m.ignores > 0 && !is_dir) {
+    return IGNORE;
+  }
+  return NONE;
+}
+
+// A file type: its name and its globs.
+pub struct TypeDef { name: string, globs: string[] }
+
+// A -t or -T choice, with the compiled globs of its type.
+struct Selection { globs: glob.Glob[], negated: boolean }
+
+pub struct Types { defs: TypeDef[], selections: Selection[], selected: boolean }
+
+const INVALID_TYPE: string = "invalid definition (format is type:glob, e.g., html:*.html)";
+
+function default_defs(): TypeDef[] {
+  let defs: TypeDef[] = [];
+  for line in types.DEFAULT_TYPES {
+    let colon = __memchr(line, 58, 0);
+    defs = defs.append(TypeDef { name: slice_unchecked(line, 0, colon).to_owned(), globs: rest(line, colon + 2).split(", ") });
+  }
+  return defs;
+}
+
+function find_def(defs: TypeDef[], name: string): i32 {
+  for i in 0..defs.len() {
+    if (defs[i].name == name) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function add_globs(defs: TypeDef[], name: string, globs: string[]): TypeDef[] {
+  let i = find_def(defs, name);
+  if (i < 0) {
+    return defs.append(TypeDef { name: name, globs: globs });
+  }
+  return defs.with(i, TypeDef { name: name, globs: array_concat(defs[i].globs, globs) });
+}
+
+function array_concat(a: string[], b: string[]): string[] {
+  let out = a;
+  for x in b {
+    out = out.append(x);
+  }
+  return out;
+}
+
+function is_type_name(name: string): boolean {
+  if (name == "all" || name.len() == 0) {
+    return false;
+  }
+  for i in 0..name.len() {
+    let c = name[i];
+    if (!(c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c >= b'0' && c <= b'9')) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// --type-add: `name:glob`, or `name:include:a,b`.
+function add_def(defs: TypeDef[], def: string): Result[TypeDef[], string] {
+  let parts = def.split(":");
+  if (parts.len() == 2 && parts[0].len() > 0 && parts[1].len() > 0) {
+    if (!is_type_name(parts[0])) {
+      return Err(INVALID_TYPE);
+    }
+    return Ok(add_globs(defs, parts[0], [parts[1]]));
+  }
+  if (parts.len() != 3 || parts[0].len() == 0 || parts[1] != "include" || parts[2].len() == 0) {
+    return Err(INVALID_TYPE);
+  }
+  return add_include(defs, parts[0], parts[2]);
+}
+
+// `name:include:a,b`: the globs of the types a and b.
+function add_include(defs: TypeDef[], name: string, types: string): Result[TypeDef[], string] {
+  let globs: string[] = [];
+  for t in types.split(",") {
+    let i = find_def(defs, t);
+    if (i < 0) {
+      return Err(INVALID_TYPE);
+    }
+    globs = array_concat(globs, defs[i].globs);
+  }
+  if (!is_type_name(name)) {
+    return Err(INVALID_TYPE);
+  }
+  return Ok(add_globs(defs, name, globs));
+}
+
+function without_def(defs: TypeDef[], name: string): TypeDef[] {
+  let out: TypeDef[] = [];
+  for d in defs {
+    if (d.name != name) {
+      out = out.append(d);
+    }
+  }
+  return out;
+}
+
+function type_glob(pattern: string): Result[glob.Glob, string] {
+  let opts = glob.GlobOptions { literal_separator: true, backslash_escape: true, case_insensitive: false };
+  match (glob.compile(pattern, opts)) {
+    Ok(g) => {
+      return Ok(g);
+    },
+    Err(e) => {
+      return Err(e.message());
+    }
+  }
+  return Err("");
+}
+
+function selection(defs: TypeDef[], name: string, negated: boolean): Result[Selection, string] {
+  let i = find_def(defs, name);
+  if (i < 0) {
+    return Err("unrecognized file type: " + name);
+  }
+  let globs: glob.Glob[] = [];
+  for g in defs[i].globs {
+    globs = globs.append(type_glob(g)?);
+  }
+  return Ok(Selection { globs: globs, negated: negated });
+}
+
+// The names that a -t or -T value selects. "all" is every type.
+function selected_names(defs: TypeDef[], name: string): string[] {
+  if (name != "all") {
+    return [name];
+  }
+  let names: string[] = [];
+  for d in defs {
+    names = names.append(d.name);
+  }
+  return names;
+}
+
+function change_defs(defs: TypeDef[], change: string): Result[TypeDef[], string] {
+  if (change.starts_with("add:")) {
+    return add_def(defs, rest(change, 4));
+  }
+  if (change.starts_with("clear:")) {
+    return Ok(without_def(defs, rest(change, 6)));
+  }
+  return Ok(defs);
+}
+
+// The types after the changes of --type-add, --type-clear, -t and -T, in
+// the order of the command line. A choice names a type of the final set.
+pub function build_types(changes: string[]): Result[Types, string] {
+  let defs = default_defs();
+  for c in changes {
+    defs = change_defs(defs, c)?;
+  }
+  let sels: Selection[] = [];
+  let selected = false;
+  for c in changes {
+    if (c.starts_with("+") || c.starts_with("-")) {
+      let negated = c.starts_with("-");
+      selected = selected || !negated;
+      for name in selected_names(defs, rest(c, 1)) {
+        sels = sels.append(selection(defs, name, negated)?);
+      }
+    }
+  }
+  return Ok(Types { defs: defs, selections: sels, selected: selected });
+}
+
+// The lines of --type-list: each type by name, with its globs in order.
+pub function (t: Types) listing(): string[] {
+  let lines: string[] = [];
+  for d in t.defs {
+    lines = lines.append(d.name + ": " + cmp.sort(d.globs).join(", "));
+  }
+  return cmp.sort(lines);
+}
+
+// The answer of the types for a file: a later choice wins over an earlier
+// one, and with a -t choice a file of no chosen type is ignored.
+pub function (t: Types) matched(path: string, is_dir: boolean): i32 {
+  if (is_dir || t.selections.len() == 0) {
+    return NONE;
+  }
+  let name = base_name(path);
+  let k = t.selections.len() - 1;
+  while (k >= 0) {
+    let s = t.selections[k];
+    for g in s.globs {
+      if (g.matches(name)) {
+        return if (s.negated) { IGNORE } else { KEEP };
+      }
+    }
+    k -= 1;
+  }
+  return if (t.selected) { IGNORE } else { NONE };
+}
+
+pub function base_name(path: string): string {
+  if (path.len() == 0) {
+    return path;
+  }
+  return rest(path, __rmemchr(path, 47, path.len() - 1) + 1);
+}
+
+// The ignore files of one directory. An absolute level is a parent of the
+// directory where a walk starts.
+pub struct Level {
+  dir: string,
+  custom: Matcher,
+  dot: Matcher,
+  git: Matcher,
+  exclude: Matcher,
+  has_git: boolean,
+  absolute: boolean,
+}
+
+// What the walk ignores. `dot` reads .ignore and .rgignore, `vcs` reads
+// .gitignore, `exclude` reads .git/info/exclude, and `parents` uses the
+// ignore files above the root of the walk.
+pub struct Config {
+  skip_hidden: boolean,
+  dot: boolean,
+  vcs: boolean,
+  exclude: boolean,
+  global: boolean,
+  parents: boolean,
+  require_git: boolean,
+  ci: boolean,
+  overrides: Matcher,
+  types: Types,
+  explicit: Matcher[],
+  global_rules: Matcher,
+}
+
+// The levels from the outermost to the innermost, and the absolute path of
+// the root of the walk ("" when it has none).
+pub struct Stack { levels: Level[], base: string }
+
+function exists(path: string): boolean {
+  match (stat(path)) {
+    Ok(_) => {
+      return true;
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function trimmed(s: string): string {
+  let start = 0;
+  while (start < s.len() && is_space(s[start])) {
+    start += 1;
+  }
+  return trim_end(rest(s, start));
+}
+
+// The directory of the git files of `dir`: `.git`, or for a worktree the
+// directory that its `.git` file names, or that one's common directory.
+//
+// As in the ignore crate, the `gitdir:` path is relative to the current
+// directory, and a relative common directory starts with ".". None means
+// that the directory has no exclude file.
+function git_dir(cfg: Config, dir: string): Option[string] {
+  let dot_git = join(dir, ".git");
+  let Ok(st) = stat(dot_git) else {
+    return Some(dot_git);
+  };
+  if (!cfg.require_git || !st.is_file) {
+    return Some(dot_git);
+  }
+  let Ok(text) = read_file(dot_git) else {
+    return None;
+  };
+  let line = first_line(text);
+  if (!line.starts_with("gitdir: ")) {
+    return None;
+  }
+  let real = rest(line, 8);
+  let Ok(common) = read_file(join(real, "commondir")) else {
+    return None;
+  };
+  let c = first_line(common);
+  if (c.starts_with(".")) {
+    return Some(join(real, c));
+  }
+  return Some(c);
+}
+
+// The first line of `text`, as Rust's BufRead::lines gives it.
+function first_line(text: string): string {
+  let end = __memchr(text, 10, 0);
+  if (end < 0) {
+    end = text.len();
+  }
+  if (end > 0 && text[end - 1] == b'\r') {
+    end -= 1;
+  }
+  return slice_unchecked(text, 0, end).to_owned();
+}
+
+function message_of(errors: string[]): string {
+  return errors.join("\n");
+}
+
+// The level of `dir` and the message of its ignore files ("" for none).
+pub function level(cfg: Config, dir: string, absolute: boolean): (Level, string) {
+  let errors: string[] = [];
+  let custom = empty(dir);
+  let dot = empty(dir);
+  let git = empty(dir);
+  let ex = empty(dir);
+  if (cfg.dot) {
+    let c = load(dir, join(dir, ".rgignore"), cfg.ci);
+    let d = load(dir, join(dir, ".ignore"), cfg.ci);
+    custom = c.m;
+    dot = d.m;
+    errors = array_concat(array_concat(errors, c.errors), d.errors);
+  }
+  if (cfg.vcs) {
+    let g = load(dir, join(dir, ".gitignore"), cfg.ci);
+    git = g.m;
+    errors = array_concat(errors, g.errors);
+  }
+  if (cfg.exclude) {
+    if let Some(gd) = git_dir(cfg, dir) {
+      let x = load(dir, join(gd, "info/exclude"), cfg.ci);
+      ex = x.m;
+      errors = array_concat(errors, x.errors);
+    }
+  }
+  let check = if (absolute) { cfg.vcs } else { cfg.vcs || cfg.exclude };
+  let has_git = cfg.require_git && check && exists(join(dir, ".git"));
+  let l = Level { dir: dir, custom: custom, dot: dot, git: git, exclude: ex, has_git: has_git, absolute: absolute };
+  return (l, message_of(errors));
+}
+
+// `path` made absolute and without "." and ".." parts, or "" when it does
+// not exist.
+pub function canonical(path: string): string {
+  if (!exists(path)) {
+    return "";
+  }
+  let full = path;
+  if (!path.starts_with("/")) {
+    let Ok(cwd) = getcwd() else {
+      return "";
+    };
+    full = join(cwd, path);
+  }
+  let parts: string[] = [];
+  for part in full.split("/") {
+    if (part == "..") {
+      parts = parts.take(if (parts.len() > 0) { parts.len() - 1 } else { 0 });
+    } else if (part != "" && part != ".") {
+      parts = parts.append(part);
+    }
+  }
+  return "/" + parts.join("/");
+}
+
+// The stack for a walk from `root`: the levels of its parents, outermost
+// first, and the message of their ignore files ("" for none).
+pub function parents(cfg: Config, root: string): (Stack, string) {
+  let none: Level[] = [];
+  if (!cfg.parents && !cfg.vcs && !cfg.exclude && !cfg.global) {
+    return (Stack { levels: none, base: "" }, "");
+  }
+  let base = canonical(root);
+  if (base == "") {
+    return (Stack { levels: none, base: "" }, "");
+  }
+  let up: string[] = [];
+  let at = base;
+  while (at != "/") {
+    at = parent_of(at);
+    up = up.append(at);
+  }
+  let dirs = up.reverse();
+  let levels: Level[] = [];
+  let errors: string[] = [];
+  for d in dirs {
+    let (l, why) = level(cfg, d, true);
+    levels = levels.append(l);
+    if (why != "") {
+      errors = errors.append(why);
+    }
+  }
+  return (Stack { levels: levels, base: base }, message_of(errors));
+}
+
+function parent_of(abs: string): string {
+  let slash = __rmemchr(abs, 47, abs.len() - 1);
+  if (slash <= 0) {
+    return "/";
+  }
+  return slice_unchecked(abs, 0, slash).to_owned();
+}
+
+pub function (s: Stack) push(l: Level): Stack {
+  return Stack { ...s, levels: s.levels.append(l) };
+}
+
+// The first answer that is not NONE.
+function first(a: i32, b: i32): i32 {
+  return if (a != NONE) { a } else { b };
+}
+
+// The answers of one level's four ignore files, in their order of
+// precedence: .rgignore, .ignore, .gitignore, then .git/info/exclude.
+struct Found { custom: i32, dot: i32, git: i32, exclude: i32, saw_git: boolean }
+
+function look(f: Found, l: Level, path: string, is_dir: boolean, any_git: boolean): Found {
+  let use_git = any_git && !f.saw_git;
+  let custom = first(f.custom, l.custom.matched(path, is_dir));
+  let dot = first(f.dot, l.dot.matched(path, is_dir));
+  let git = if (use_git) { first(f.git, l.git.matched(path, is_dir)) } else { f.git };
+  let ex = if (use_git) { first(f.exclude, l.exclude.matched(path, is_dir)) } else { f.exclude };
+  return Found { custom: custom, dot: dot, git: git, exclude: ex, saw_git: f.saw_git || l.has_git };
+}
+
+// The path that the ignore crate gives to the ignore files of the parents:
+// the absolute root joined with `path` less the directory of the innermost
+// level.
+function parent_path(s: Stack, path: string): string {
+  let dir = strip_dot(s.levels[s.levels.len() - 1].dir);
+  if (!path.starts_with(dir)) {
+    return join(s.base, path);
+  }
+  let p = rest(path, dir.len());
+  if (p.starts_with("/")) {
+    p = rest(p, 1);
+  }
+  return join(s.base, p);
+}
+
+function any_git(s: Stack, cfg: Config): boolean {
+  if (!cfg.require_git) {
+    return true;
+  }
+  for l in s.levels {
+    if (l.has_git) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The answer of the ignore files for `path`.
+function matched_ignore(s: Stack, cfg: Config, path: string, is_dir: boolean): i32 {
+  let git = any_git(s, cfg);
+  let f = Found { custom: NONE, dot: NONE, git: NONE, exclude: NONE, saw_git: false };
+  let k = s.levels.len() - 1;
+  while (k >= 0 && !s.levels[k].absolute) {
+    f = look(f, s.levels[k], path, is_dir, git);
+    k -= 1;
+  }
+  if (cfg.parents && s.base != "" && k >= 0) {
+    let abs = parent_path(s, path);
+    while (k >= 0) {
+      f = look(f, s.levels[k], abs, is_dir, git);
+      k -= 1;
+    }
+  }
+  let explicit = NONE;
+  let e = cfg.explicit.len() - 1;
+  while (e >= 0 && explicit == NONE) {
+    explicit = cfg.explicit[e].matched(path, is_dir);
+    e -= 1;
+  }
+  let global = if (git) { cfg.global_rules.matched(path, is_dir) } else { NONE };
+  return first(f.custom, first(f.dot, first(f.git, first(f.exclude, first(global, explicit)))));
+}
+
+function has_rules(cfg: Config): boolean {
+  return cfg.dot || cfg.global || cfg.vcs || cfg.exclude || cfg.explicit.len() > 0;
+}
+
+// The answer for an entry of a walk: the -g globs first, then the ignore
+// files, then the types, then the rule for hidden files.
+pub function verdict(s: Stack, cfg: Config, path: string, is_dir: boolean): i32 {
+  let p = strip_dot(path);
+  let o = cfg.overrides.override(p, is_dir);
+  if (o != NONE) {
+    return o;
+  }
+  let kept = NONE;
+  if (has_rules(cfg)) {
+    let m = matched_ignore(s, cfg, p, is_dir);
+    if (m == IGNORE) {
+      return m;
+    }
+    kept = m;
+  }
+  let t = cfg.types.matched(p, is_dir);
+  if (t != NONE) {
+    return t;
+  }
+  if (kept == NONE && cfg.skip_hidden && base_name(p).starts_with(".")) {
+    return IGNORE;
+  }
+  return kept;
+}
+
+// The global gitignore: core.excludesFile of the git configuration, or
+// $XDG_CONFIG_HOME/git/ignore, or $HOME/.config/git/ignore.
+pub function global_path(): string {
+  let home = env("HOME").unwrap_or("");
+  let xdg = env("XDG_CONFIG_HOME").unwrap_or("");
+  let configs = [join(home, ".gitconfig")];
+  if (xdg != "") {
+    configs = configs.append(join(xdg, "git/config"));
+  } else if (home != "") {
+    configs = configs.append(join(home, ".config/git/config"));
+  }
+  for c in configs {
+    if let Ok(text) = read_file(c) {
+      let p = excludes_file(text);
+      if (p != "") {
+        return p.replace("~", home);
+      }
+    }
+  }
+  if (xdg != "") {
+    return join(xdg, "git/ignore");
+  }
+  if (home == "") {
+    return "";
+  }
+  return join(home, ".config/git/ignore");
+}
+
+// The value of the first `excludesfile = ...` line, in any case.
+function excludes_file(text: string): string {
+  for raw in text.split("\n") {
+    let line = trimmed(raw);
+    let eq = __memchr(line, 61, 0);
+    if (eq < 0 || trimmed(slice_unchecked(line, 0, eq).to_owned()).to_ascii_lower() != "excludesfile") {
+      continue;
+    }
+    let v = trimmed(rest(line, eq + 1));
+    if (v.starts_with("\"")) {
+      v = trimmed(rest(v, 1));
+    }
+    if (v.ends_with("\"")) {
+      v = trimmed(slice_unchecked(v, 0, v.len() - 1).to_owned());
+    }
+    if (v.len() > 0 && __memchr(v, 32, 0) < 0) {
+      return v;
+    }
+  }
+  return "";
+}
+
+// The rules of the global gitignore, from the root "".
+pub function global(ci: boolean): Loaded {
+  let none: string[] = [];
+  let path = global_path();
+  match (stat(path)) {
+    Ok(st) => {
+      if (st.is_file) {
+        return load("", path, ci);
+      }
+    },
+    Err(_) => {}
+  }
+  return Loaded { m: empty(""), errors: none };
+}
+
+// The rules of an --ignore-file, from the root "".
+pub function explicit_file(path: string, ci: boolean): Loaded {
+  let none: string[] = [];
+  let l = Loaded { m: empty(""), errors: none };
+  match (read_file(path)) {
+    Ok(text) => {
+      return add_text(l, text, ci, path);
+    },
+    Err(Other(_, _, 21)) => {
+      return Loaded { ...l, errors: [path + ": line 1: Is a directory (os error 21)"] };
+    },
+    Err(e) => {
+      return Loaded { ...l, errors: [path + ": " + os_error(e)] };
+    }
+  }
+  return l;
+}
