@@ -1,0 +1,14 @@
+examples/rg/testdata/ripgrep-tests.json holds the cases of the integration tests of ripgrep 14.1.1.
+Reference: https://github.com/BurntSushi/ripgrep/tree/14.1.1/tests
+Each case has the files that the test makes, its command line, its directory and its standard input.
+The cases do not hold the expected output. The test runs ripgrep itself for that.
+
+examples/rg/testdata/sherlock-nul.txt is tests/data/sherlock-nul.txt of ripgrep 14.1.1.
+examples/rg/types.fern holds the file types that ripgrep 14.1.0 writes with --type-list.
+
+Copyright (c) 2015 Andrew Gallant.
+ripgrep has the Unlicense and the MIT license. This repository uses the MIT license.
+The full text of the MIT license of ripgrep is in LICENSE-MIT.
+
+The Fern port in examples/rg does not copy source code from ripgrep.
+It implements the behaviour of ripgrep 14.1.0.

@@ -1839,9 +1839,18 @@ predicate and it is deliberately narrow: `s + ""` and `s.len()` read the value
 and build something of their own, which is what keeps `lent_views`' `copied()`
 calls reclaiming the views they are lent. The container builtins — `append`,
 `with`, `insert`, `cell_new` — and the union constructors count as keeping,
-because `return acc.append(w)` hands `w` out inside the array. `semsource.lend` consults the set: where the callee is in
-it, a view is not retagged but COPIED (`v + ""`, an owned string), and that
-copy is what the call is handed.
+because `return acc.append(w)` hands `w` out inside the array. The set is
+kept for each parameter: `handers` records which parameters of a declaration
+its result can hold, and a call hands back only the arguments in those
+positions. A parameter of any type counts, because a caller can lend its own
+string inside a value that it builds. A field read or an index read holds
+what its value holds, so `return Named { name: p.text }` hands `p` back.
+`semsource.lend` consults the set: where
+the callee hands back the parameter that takes the view, the view is not
+retagged but COPIED (`v + ""`, an owned string), and that copy is what the
+call is handed. A view that goes to a parameter the callee only reads is lent
+with no copy, whatever the result type is (#15719,
+`TestSelfHostLentViewArgument`).
 
 Returning the box is only the smallest shape of this. The self-host lexer's
 `number_tok`/`quoted_tok`/`ident_tok` each store a lent view in the Token they

@@ -1,0 +1,664 @@
+// The command line of the rg port: the options and their parse.
+//
+// The flags, their values and their messages are those of ripgrep 14.1.0.
+import "core/cmp";
+import "std/string";
+
+// What rg does: write the selected lines, count them, name the files with
+// or without a selected line, list the files to search, or list the types.
+@derive(cmp.Eq)
+pub enum Mode {
+  Lines,
+  Count,
+  CountMatches,
+  Files,
+  Without,
+  List,
+  TypeList,
+}
+
+pub struct Options {
+  patterns: string[],
+  paths: string[],
+  // The switches that are on, one bit for each entry of SWITCHES.
+  on: i64,
+  mode: Mode,
+  // 0 is case sensitive, 1 is -i and 2 is -S.
+  case: i32,
+  line_number: boolean,
+  after: i32,
+  before: i32,
+  context: i32,
+  color: string,
+  with_filename: i32,
+  heading: i32,
+  // -1 is the default, 0 is --no-mmap and 1 is --mmap.
+  mmap: i32,
+  // 0 is the default, 1 is --binary and 2 is -a.
+  binary: i32,
+  threads: i32,
+  max_count: i32,
+  max_depth: i32,
+  unrestricted: i32,
+  // "" is no sort.
+  sort: string,
+  sort_reverse: boolean,
+  path_separator: string,
+  globs: string[],
+  iglobs: string[],
+  // Each change to the types in order: "+name", "-name", "add:def" or
+  // "clear:name".
+  types: string[],
+  ignore_files: string[],
+  // The largest file that the walk searches, in bytes, or -1.
+  max_filesize: i64,
+  // The line between groups of context, or None for no line.
+  context_separator: Option[string],
+}
+
+struct Step { o: Options, next: i32 }
+
+// The switches that are one bit of `Options.on`: the long name, the long
+// name that turns the switch off ("" for none), and the short letter.
+pub const INVERT: i32 = 0;
+
+pub const WORD: i32 = 1;
+
+pub const FIXED: i32 = 2;
+
+pub const ONLY: i32 = 3;
+
+pub const HIDDEN: i32 = 4;
+
+pub const FOLLOW: i32 = 5;
+
+pub const NO_IGNORE_DOT: i32 = 6;
+
+pub const NO_IGNORE_VCS: i32 = 7;
+
+pub const NO_IGNORE_PARENT: i32 = 8;
+
+pub const NO_IGNORE_EXCLUDE: i32 = 9;
+
+pub const NO_IGNORE_GLOBAL: i32 = 10;
+
+pub const NO_IGNORE_FILES: i32 = 11;
+
+pub const NO_REQUIRE_GIT: i32 = 12;
+
+pub const NULL: i32 = 13;
+
+pub const QUIET: i32 = 14;
+
+pub const LINE: i32 = 15;
+
+pub const GLOB_CASE: i32 = 16;
+
+pub const IGNORE_FILE_CASE: i32 = 17;
+
+pub const NO_MESSAGES: i32 = 18;
+
+pub const NO_IGNORE_MESSAGES: i32 = 19;
+
+pub const INCLUDE_ZERO: i32 = 20;
+
+const SWITCHES: string[] = [
+  "invert-match", "word-regexp", "fixed-strings", "only-matching", "hidden", "follow",
+  "no-ignore-dot", "no-ignore-vcs", "no-ignore-parent", "no-ignore-exclude", "no-ignore-global",
+  "no-ignore-files", "no-require-git", "null", "quiet", "line-regexp", "glob-case-insensitive",
+  "ignore-file-case-insensitive", "no-messages", "no-ignore-messages", "include-zero",
+];
+
+const SWITCHES_OFF: string[] = [
+  "no-invert-match", "", "no-fixed-strings", "", "no-hidden", "no-follow",
+  "ignore-dot", "ignore-vcs", "ignore-parent", "ignore-exclude", "ignore-global",
+  "ignore-files", "require-git", "", "", "", "no-glob-case-insensitive",
+  "no-ignore-file-case-insensitive", "messages", "ignore-messages", "no-include-zero",
+];
+
+// The other switches.
+const OTHER_SWITCHES: string[] = [
+  "ignore-case", "case-sensitive", "smart-case", "line-number", "no-line-number",
+  "count", "count-matches", "files-with-matches", "files-without-match", "files", "type-list",
+  "with-filename", "no-filename", "heading", "no-heading", "mmap", "no-mmap", "text", "no-text",
+  "binary", "no-binary", "no-ignore", "ignore", "unrestricted", "sort-files", "no-sort-files",
+  "no-context-separator",
+];
+
+// The switches that set_case_or_lines handles.
+const OUTPUT_SWITCHES: string[] = [
+  "ignore-case", "case-sensitive", "smart-case", "line-number", "no-line-number",
+  "with-filename", "no-filename", "heading", "no-heading",
+];
+
+const VALUE_FLAGS: string[] = [
+  "after-context", "before-context", "context", "regexp", "threads", "color", "max-count",
+  "max-depth", "maxdepth", "glob", "iglob", "type", "type-not", "type-add", "type-clear",
+  "ignore-file", "path-separator", "sort", "sortr", "max-filesize", "context-separator",
+];
+
+// The type flags, and the prefix of each in `Options.types`.
+const TYPE_FLAGS: string[] = ["type", "type-not", "type-add", "type-clear"];
+
+const TYPE_PREFIXES: string[] = ["+", "-", "add:", "clear:"];
+
+// Each short flag and its long name.
+const SHORT_FLAGS: string = "isSvwFxnNclo0qHIABCejmdgtTaL.u";
+
+const SHORT_NAMES: string[] = [
+  "ignore-case", "case-sensitive", "smart-case", "invert-match", "word-regexp", "fixed-strings",
+  "line-regexp", "line-number", "no-line-number", "count", "files-with-matches", "only-matching",
+  "null", "quiet", "with-filename", "no-filename", "after-context", "before-context", "context",
+  "regexp", "threads", "max-count", "max-depth", "glob", "type", "type-not", "text", "follow",
+  "hidden", "unrestricted",
+];
+
+pub function defaults(): Options {
+  return Options {
+    patterns: [], paths: [], on: 0i64, mode: Lines, case: 0, line_number: false, after: -1,
+    before: -1, context: -1, color: "auto", with_filename: -1, heading: -1, mmap: -1, binary: 0,
+    threads: 0, max_count: -1, max_depth: -1, unrestricted: 0, sort: "", sort_reverse: false,
+    path_separator: "", globs: [], iglobs: [], types: [], ignore_files: [], max_filesize: -1i64,
+    context_separator: Some("--"),
+  };
+}
+
+// Whether switch `bit` is on.
+pub function (o: Options) has(bit: i32): boolean {
+  return (o.on >> bit as i64 & 1i64) == 1i64;
+}
+
+function with_bit(o: Options, bit: i32, yes: boolean): Options {
+  let mask = 1i64 << bit as i64;
+  if (yes) {
+    return Options { ...o, on: o.on | mask };
+  }
+  return Options { ...o, on: o.on & ~mask };
+}
+
+function index_of(names: string[], name: string): i32 {
+  for i in 0..names.len() {
+    if (names[i] == name) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+// The long name of a short flag, or "".
+function long_name(c: u8): string {
+  let i = __memchr(SHORT_FLAGS, c as i32, 0);
+  if (i < 0) {
+    return "";
+  }
+  return SHORT_NAMES[i];
+}
+
+function takes_value(name: string): boolean {
+  return index_of(VALUE_FLAGS, name) >= 0;
+}
+
+function known(name: string): boolean {
+  return takes_value(name) || index_of(OTHER_SWITCHES, name) >= 0 || index_of(SWITCHES, name) >= 0 || name != "" && index_of(SWITCHES_OFF, name) >= 0;
+}
+
+function set_case_or_lines(o: Options, name: string): Options {
+  return match (name) {
+    "ignore-case" => Options { ...o, case: 1 },
+    "case-sensitive" => Options { ...o, case: 0 },
+    "smart-case" => Options { ...o, case: 2 },
+    "line-number" => Options { ...o, line_number: true },
+    "no-line-number" => Options { ...o, line_number: false },
+    "with-filename" => Options { ...o, with_filename: 1 },
+    "no-filename" => Options { ...o, with_filename: 0 },
+    "heading" => Options { ...o, heading: 1 },
+    _ => Options { ...o, heading: 0 },
+  };
+}
+
+// A later mode flag takes the place of an earlier one.
+function set_mode(o: Options, name: string): Options {
+  let mode = match (name) {
+    "count" => Count,
+    "count-matches" => CountMatches,
+    "files-with-matches" => Files,
+    "files-without-match" => Without,
+    "files" => List,
+    _ => TypeList,
+  };
+  return Options { ...o, mode: mode };
+}
+
+// --no-ignore and its negation set five switches.
+function set_no_ignore(o: Options, yes: boolean): Options {
+  let next = o;
+  for bit in [NO_IGNORE_DOT, NO_IGNORE_EXCLUDE, NO_IGNORE_GLOBAL, NO_IGNORE_PARENT, NO_IGNORE_VCS] {
+    next = with_bit(next, bit, yes);
+  }
+  return next;
+}
+
+// -u, -uu and -uuu: --no-ignore, then --hidden, then --binary.
+function unrestrict(o: Options, flag: string): Result[Options, string] {
+  let n = o.unrestricted + 1;
+  if (n > 3) {
+    return Err("error parsing flag " + flag + ": flag can only be repeated up to 3 times");
+  }
+  let next = Options { ...o, unrestricted: n };
+  if (n == 1) {
+    return Ok(set_no_ignore(next, true));
+  }
+  if (n == 2) {
+    return Ok(with_bit(next, HIDDEN, true));
+  }
+  return Ok(Options { ...next, binary: 1 });
+}
+
+function set_search_switch(o: Options, name: string): Options {
+  return match (name) {
+    "mmap" => Options { ...o, mmap: 1 },
+    "no-mmap" => Options { ...o, mmap: 0 },
+    "text" => Options { ...o, binary: 2 },
+    "binary" => Options { ...o, binary: 1 },
+    "no-text" | "no-binary" => Options { ...o, binary: 0 },
+    "no-ignore" => set_no_ignore(o, true),
+    "ignore" => set_no_ignore(o, false),
+    _ => set_other_switch(o, name),
+  };
+}
+
+function set_other_switch(o: Options, name: string): Options {
+  return match (name) {
+    "sort-files" => Options { ...o, sort: "path", sort_reverse: false },
+    "no-context-separator" => Options { ...o, context_separator: None },
+    _ => Options { ...o, sort: "" },
+  };
+}
+
+function is_mode(name: string): boolean {
+  return index_of(["count", "count-matches", "files-with-matches", "files-without-match", "files", "type-list"], name) >= 0;
+}
+
+function set_switch(o: Options, name: string, flag: string): Result[Options, string] {
+  let on = index_of(SWITCHES, name);
+  if (on >= 0) {
+    return Ok(with_bit(o, on, true));
+  }
+  let off = index_of(SWITCHES_OFF, name);
+  if (off >= 0) {
+    return Ok(with_bit(o, off, false));
+  }
+  if (name == "unrestricted") {
+    return unrestrict(o, flag);
+  }
+  if (is_mode(name)) {
+    return Ok(set_mode(o, name));
+  }
+  if (index_of(OUTPUT_SWITCHES, name) >= 0) {
+    return Ok(set_case_or_lines(o, name));
+  }
+  return Ok(set_search_switch(o, name));
+}
+
+// A decimal count as ripgrep reads it, or the reason it is not one.
+pub function parse_count(text: string): Result[i32, string] {
+  if (text.len() == 0) {
+    return Err("cannot parse integer from empty string");
+  }
+  let n = 0u64;
+  for i in 0..text.len() {
+    let d = text[i] as i32 - 48;
+    if (d < 0 || d > 9) {
+      return Err("invalid digit found in string");
+    }
+    if (n > 1844674407370955161u64 || n == 1844674407370955161u64 && d > 5) {
+      return Err("number too large to fit in target type");
+    }
+    n = n * 10u64 + d as u64;
+  }
+  if (n > 2147483647u64) {
+    return Ok(2147483647);
+  }
+  return Ok(n as i32);
+}
+
+// A size for --max-filesize: digits and an optional K, M or G, as ripgrep
+// reads it, or the reason it is not one.
+pub function parse_size(flag: string, value: string): Result[i64, string] {
+  let why = "error parsing flag " + flag + ": invalid size: ";
+  let unit = if (value.len() > 0) { __memchr("KMG", value[value.len() - 1] as i32, 0) } else { -1 };
+  let digits = if (unit >= 0) { slice_unchecked(value, 0, value.len() - 1).to_owned() } else { value };
+  let n = match (size_digits(digits)) {
+    Ok(v) => v,
+    Err(format) => {
+      return Err(if (format) {
+        why + f"invalid format for size '{value}', which should be a non-empty sequence of digits followed by an optional 'K', 'M' or 'G' suffix"
+      } else {
+        why + f"invalid integer found in size '{value}': number too large to fit in target type"
+      });
+    },
+  };
+  let shift = (unit + 1) as u64 * 10u64;
+  if (unit >= 0 && n > 18446744073709551615u64 >> shift) {
+    return Err(why + f"size too big in '{value}'");
+  }
+  let size = n << shift;
+  return Ok(if (size > 9223372036854775807u64) { 9223372036854775807i64 } else { size as i64 });
+}
+
+// The value of the digits of a size. The error is true for a text that is
+// not digits, and false for a value too large for a u64.
+function size_digits(digits: string): Result[u64, boolean] {
+  if (digits.len() == 0) {
+    return Err(true);
+  }
+  let n = 0u64;
+  for i in 0..digits.len() {
+    let d = digits[i] as i32 - 48;
+    if (d < 0 || d > 9) {
+      return Err(true);
+    }
+    if (n > 1844674407370955161u64 || n == 1844674407370955161u64 && d > 5) {
+      return Err(false);
+    }
+    n = n * 10u64 + d as u64;
+  }
+  return Ok(n);
+}
+
+// `text` with the escapes \\, \n, \r, \t, \0 and \xHH made bytes, as
+// ripgrep reads a separator.
+pub function unescape(text: string): string {
+  let out = "";
+  let i = 0;
+  while (i < text.len()) {
+    if (text[i] != b'\\' || i + 1 >= text.len()) {
+      out += slice_unchecked(text, i, i + 1);
+      i += 1;
+      continue;
+    }
+    let (piece, used) = escape_at(text, i + 1);
+    out += piece;
+    i += 1 + used;
+  }
+  return out;
+}
+
+// The byte of the escape whose letter is at `at`, and the count of bytes
+// that it takes after the `\`.
+function escape_at(text: string, at: i32): (string, i32) {
+  let c = text[at];
+  if (c == b'x' && at + 2 < text.len() && hex(text[at + 1]) >= 0 && hex(text[at + 2]) >= 0) {
+    let b = hex(text[at + 1]) * 16 + hex(text[at + 2]);
+    return (unsafe { string_from_bytes_unchecked([b as u8]) }, 3);
+  }
+  return match (c) {
+    b'n' => ("\n", 1),
+    b'r' => ("\r", 1),
+    b't' => ("\t", 1),
+    b'0' => ("\x00", 1),
+    b'\\' => ("\\", 1),
+    _ => ("\\" + slice_unchecked(text, at, at + 1), 1),
+  };
+}
+
+function hex(c: u8): i32 {
+  if (c >= b'0' && c <= b'9') {
+    return c as i32 - 48;
+  }
+  let l = c | 32u8;
+  if (l >= b'a' && l <= b'f') {
+    return l as i32 - 87;
+  }
+  return -1;
+}
+
+function choice(flag: string, value: string, choices: string[]): Result[string, string] {
+  if (index_of(choices, value) < 0) {
+    return Err("error parsing flag " + flag + ": choice '" + value + "' is unrecognized");
+  }
+  return Ok(value);
+}
+
+function set_sort(o: Options, name: string, flag: string, value: string): Result[Options, string] {
+  let kind = choice(flag, value, ["none", "path", "modified", "accessed", "created"])?;
+  if (kind == "none") {
+    return Ok(Options { ...o, sort: "" });
+  }
+  return Ok(Options { ...o, sort: kind, sort_reverse: name == "sortr" });
+}
+
+function set_path_separator(o: Options, flag: string, value: string): Result[Options, string] {
+  if (value.len() != 1) {
+    return Err(f"error parsing flag {flag}: A path separator must be exactly one byte, but the given separator is {value.len()} bytes: {value}\nIn some shells on Windows '/' is automatically expanded. Use '//' instead.");
+  }
+  return Ok(Options { ...o, path_separator: value });
+}
+
+// The flags whose value is text.
+function set_text(o: Options, name: string, flag: string, value: string): Result[Options, string] {
+  let t = index_of(TYPE_FLAGS, name);
+  if (t >= 0) {
+    return Ok(Options { ...o, types: o.types.append(TYPE_PREFIXES[t] + value) });
+  }
+  return match (name) {
+    "regexp" => Ok(Options { ...o, patterns: o.patterns.append(value) }),
+    "color" => Ok(Options { ...o, color: choice(flag, value, ["never", "auto", "always", "ansi"])? }),
+    "glob" => Ok(Options { ...o, globs: o.globs.append(value) }),
+    "iglob" => Ok(Options { ...o, iglobs: o.iglobs.append(value) }),
+    "ignore-file" => Ok(Options { ...o, ignore_files: o.ignore_files.append(value) }),
+    _ => set_path_separator(o, flag, value),
+  };
+}
+
+function set_value(o: Options, name: string, flag: string, value: string): Result[Options, string] {
+  if (name == "sort" || name == "sortr") {
+    return set_sort(o, name, flag, value);
+  }
+  if (name == "max-filesize") {
+    return Ok(Options { ...o, max_filesize: parse_size(flag, value)? });
+  }
+  if (name == "context-separator") {
+    return Ok(Options { ...o, context_separator: Some(unescape(value)) });
+  }
+  if (index_of(["after-context", "before-context", "context", "threads", "max-count", "max-depth", "maxdepth"], name) < 0) {
+    return set_text(o, name, flag, value);
+  }
+  let n = match (parse_count(value)) {
+    Ok(v) => v,
+    Err(why) => {
+      return Err("error parsing flag " + flag + ": value is not a valid number: " + why);
+    },
+  };
+  return Ok(set_count(o, name, n));
+}
+
+function set_count(o: Options, name: string, n: i32): Options {
+  return match (name) {
+    "after-context" => Options { ...o, after: n },
+    "before-context" => Options { ...o, before: n },
+    "context" => Options { ...o, context: n },
+    "threads" => Options { ...o, threads: n },
+    "max-count" => Options { ...o, max_count: n },
+    _ => Options { ...o, max_depth: n },
+  };
+}
+
+function missing(flag: string): string {
+  return "missing value for flag " + flag + ": missing argument for option '" + flag + "'";
+}
+
+// `--name` or `--name=value` at args[at - 1].
+function long_flag(o: Options, args: string[], at: i32): Result[Step, string] {
+  let arg = args[at - 1];
+  let eq = __memchr(arg, 61, 2);
+  let name = slice_unchecked(arg, 2, arg.len()).to_owned();
+  if (eq >= 0) {
+    name = slice_unchecked(arg, 2, eq).to_owned();
+  }
+  let flag = "--" + name;
+  if (!known(name)) {
+    return Err("unrecognized flag " + flag);
+  }
+  if (!takes_value(name)) {
+    if (eq >= 0) {
+      return Err("invalid CLI arguments: unexpected argument for option '" + flag + "': \"" + slice_unchecked(arg, eq + 1, arg.len()) + "\"");
+    }
+    return Ok(Step { o: set_switch(o, name, flag)?, next: at });
+  }
+  if (eq >= 0) {
+    let next = set_value(o, name, flag, slice_unchecked(arg, eq + 1, arg.len()).to_owned())?;
+    return Ok(Step { o: next, next: at });
+  }
+  if (at >= args.len()) {
+    return Err(missing(flag));
+  }
+  let next = set_value(o, name, flag, args[at])?;
+  return Ok(Step { o: next, next: at + 1 });
+}
+
+// A cluster such as `-in` or `-nA1` at args[at - 1].
+function short_flags(o: Options, args: string[], at: i32): Result[Step, string] {
+  let arg = args[at - 1];
+  let opts = o;
+  for j in 1..arg.len() {
+    let name = long_name(arg[j]);
+    let flag = "-" + slice_unchecked(arg, j, j + 1);
+    if (name == "") {
+      return Err("unrecognized flag " + flag);
+    }
+    if (takes_value(name)) {
+      if (j + 1 < arg.len()) {
+        let next = set_value(opts, name, flag, slice_unchecked(arg, j + 1, arg.len()).to_owned())?;
+        return Ok(Step { o: next, next: at });
+      }
+      if (at >= args.len()) {
+        return Err(missing(flag));
+      }
+      let next = set_value(opts, name, flag, args[at])?;
+      return Ok(Step { o: next, next: at + 1 });
+    }
+    opts = set_switch(opts, name, flag)?;
+  }
+  return Ok(Step { o: opts, next: at });
+}
+
+// The options of a command line without its program name. The error is the
+// message after "rg: ".
+pub function parse(args: string[]): Result[Options, string] {
+  let o = defaults();
+  let positional: string[] = [];
+  let flags = true;
+  let at = 0;
+  while (at < args.len()) {
+    let arg = args[at];
+    at += 1;
+    if (!flags || arg == "-" || !arg.starts_with("-")) {
+      positional = positional.append(arg);
+    } else if (arg == "--") {
+      flags = false;
+    } else {
+      let step = if (arg.starts_with("--")) { long_flag(o, args, at)? } else { short_flags(o, args, at)? };
+      o = step.o;
+      at = step.next;
+    }
+  }
+  return with_patterns(normalize(o), positional);
+}
+
+// As in ripgrep, -o turns -c into --count-matches, and -v turns
+// --count-matches into -c.
+function normalize(o: Options): Options {
+  if (o.mode == CountMatches && o.has(INVERT)) {
+    return Options { ...o, mode: Count };
+  }
+  if (o.mode == Count && o.has(ONLY)) {
+    return Options { ...o, mode: CountMatches };
+  }
+  return o;
+}
+
+// Whether the mode searches. --files and --type-list take no pattern.
+pub function (o: Options) searches(): boolean {
+  return o.mode != List && o.mode != TypeList;
+}
+
+// Without -e, the first positional argument is the pattern.
+function with_patterns(o: Options, positional: string[]): Result[Options, string] {
+  if (o.patterns.len() > 0 || !o.searches()) {
+    return Ok(Options { ...o, paths: positional });
+  }
+  if (positional.len() == 0) {
+    return Err("ripgrep requires at least one pattern to execute a search");
+  }
+  return Ok(Options { ...o, patterns: [positional[0]], paths: positional.drop(1) });
+}
+
+const META: string = "\\.+*?()|[]{}^$";
+
+// `text` with each metacharacter escaped, for -F.
+pub function escape(text: string): string {
+  let out = "";
+  for i in 0..text.len() {
+    if (__memchr(META, text[i] as i32, 0) >= 0) {
+      out += "\\";
+    }
+    out += slice_unchecked(text, i, i + 1);
+  }
+  return out;
+}
+
+// Whether a pattern has an ASCII capital letter, for -S. As in ripgrep, a
+// letter after a `\` does not count.
+function has_upper(p: string): boolean {
+  let i = 0;
+  while (i < p.len()) {
+    let c = p[i];
+    if (c == b'\\') {
+      i += 2;
+      continue;
+    }
+    if (c >= b'A' && c <= b'Z') {
+      return true;
+    }
+    i += 1;
+  }
+  return false;
+}
+
+function ignores_case(o: Options): boolean {
+  if (o.case != 2) {
+    return o.case == 1;
+  }
+  for p in o.patterns {
+    if (has_upper(p)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// One pattern for std/regex from the -e patterns and the flags.
+pub function pattern(o: Options): string {
+  let parts: string[] = [];
+  for p in o.patterns {
+    if (o.has(FIXED)) {
+      parts = parts.append(escape(p));
+    } else {
+      parts = parts.append(p);
+    }
+  }
+  let body = parts[0];
+  if (parts.len() > 1) {
+    body = "(?:" + parts.join(")|(?:") + ")";
+  }
+  if (o.has(LINE)) {
+    body = "^(?:" + body + ")$";
+  } else if (o.has(WORD)) {
+    body = "\\b{start-half}(?:" + body + ")\\b{end-half}";
+  }
+  if (ignores_case(o)) {
+    body = "(?i)" + body;
+  }
+  return body;
+}
