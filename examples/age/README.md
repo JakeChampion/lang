@@ -221,24 +221,21 @@ host, so it is not in the table.
 
 | Operation | age 1.1.1 | Fern port | Port / age |
 | --- | ---: | ---: | ---: |
-| Encrypt to `/dev/null` | 0.62 s | 0.68 s | 1.11 |
-| Decrypt to `/dev/null` | 0.96 s | 0.78 s | 0.81 |
+| Encrypt to `/dev/null` | 0.58 s | 0.53 s | 0.91 |
+| Decrypt to `/dev/null` | 1.02 s | 0.68 s | 0.67 |
 
-The port decrypts faster than age. It encrypts slower than age. A profile
-of each tool (`perf record`) shows the causes:
+The port encrypts and decrypts faster than age. The best CPU time (user and
+system) of 7 encrypts is 0.52 s for the port and 0.65 s for age.
 
-- **Port, encrypt.** `__fern_chacha20_xor_into` takes 49% of the time,
-  `__fern_poly1305_blocks` 25%, the copy of `read` in the kernel 18%, and
-  the copy that adds the room for the tag 5%. ChaCha20 runs at about 1.07
-  cycles for each byte (AVX2, eight blocks at a time). Poly1305 runs at
-  about 0.54 cycles for each byte (AVX2, four blocks at a time).
-- **age, encrypt.** One block of the AVX2 assembly of golang.org/x/crypto
-  takes 52% of the time, and the copy of `read` in the kernel 39%. That
-  assembly computes ChaCha20 in the vector registers and Poly1305 in the
-  general registers in the same loop. Thus the two run at the same time,
-  at about 1.2 cycles for each byte for both.
+The port seals and opens each chunk in one kernel of the compiler,
+`__fern_chacha20_poly1305_seal_into` or `__fern_chacha20_poly1305_open_into`.
+The kernel computes ChaCha20 in the AVX2 registers, eight blocks at a time.
+It computes Poly1305 in the general registers among the rounds of ChaCha20,
+so the two run at the same time. The AVX2 assembly of golang.org/x/crypto,
+which age uses, does the same. The kernel seals at about 1.1 cycles for each
+byte. Before the fused kernel, the port computed ChaCha20 and then Poly1305
+at about 1.6 cycles for each byte. Then it encrypted in 0.63 s on the same
+host.
 
-The port computes ChaCha20 and then Poly1305, at about 1.6 cycles for each
-byte for both. To encrypt faster than age, the port needs a seal kernel
-like that of golang.org/x/crypto. Its ChaCha20 loop also computes Poly1305
-in the general registers.
+Two copies remain in the encrypt path of the port: the copy of `read` in the
+kernel, and the copy that adds the room for the tag to each chunk.
