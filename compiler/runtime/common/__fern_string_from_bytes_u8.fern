@@ -1,6 +1,26 @@
-function __fern_string_from_bytes_u8(a: i32[]): string {
-  let n = a.len();
+function __fern_string_from_bytes_u8(a: usize): string {
+  let n = __load_i32(a);
+  if (__fern_rc_is_unique(a) != 0) {
+    let words = __load_i32(a - 16);
+    let used = (n + 7) / 8;
+    if (words == used) {
+      return __raw_string(a + 8, n);
+    }
+    // A grown string records its block size ahead of its count, and its bytes start one word later.
+    __store_i64(a - 16, (words + 3) as i64);
+    let i = used;
+    while (i > 0) {
+      i -= 1;
+      let at = a + 8 + (i * 8) as usize;
+      __store_i64(at + 8, __load_i64(at));
+    }
+    let s = __raw_string(a + 16, n);
+    // The grown-string marker, as grown_marker in asm_ir.fern.
+    __store_i32(a - 4, 1196576599);
+    return s;
+  }
   let p = __raw_alloc(n);
-  __memcpy(p, __raw_arr_ptr(a) + 8, n);
+  __memcpy(p, a + 8, n);
+  __fern_rc_dec(a);
   return __raw_string(p, n);
 }
