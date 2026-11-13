@@ -18,11 +18,12 @@ pub type Scalar = IntValue | FloatValue | BoolValue | StringValue | Aggregate;
 // A definite error is reported at once. Any other error waits for the type
 // check, because an ill-typed initializer is a type error.
 // size is the number of scalars in the value: 1 for a scalar, and the sum of
-// the elements for an aggregate.
-pub struct Value { data: Scalar, error: string, definite: boolean, size: i32 }
+// the elements for an aggregate. code is the code of a definite error that is
+// not E093.
+pub struct Value { data: Scalar, error: string, definite: boolean, size: i32, code: string }
 
 function empty(): Value {
-  return Value { data: Aggregate {  }, error: "", definite: false, size: 1 };
+  return Value { data: Aggregate {  }, error: "", definite: false, size: 1, code: "" };
 }
 
 function fail(message: string): Value {
@@ -31,6 +32,19 @@ function fail(message: string): Value {
 
 function refuse(message: string): Value {
   return Value { ...empty(), error: message, definite: true };
+}
+
+// E047: a step of a constant expression leaves the declared type.
+function leaves(step: string, ty: string): Value {
+  return Value { ...refuse(step + " does not fit in " + ty), code: "E047" };
+}
+
+// The code of the definite error of v.
+pub function error_code(v: Value): string {
+  if (v.code.len() > 0) {
+    return v.code;
+  }
+  return "E093";
 }
 
 const DEFERRED: string = "reads a const that did not fold";
@@ -65,22 +79,117 @@ function number(v: i64, ty: string): Value {
   if (ty == "u8") {
     n = (v as u8) as i64;
   }
-  return Value { data: IntValue { value: n }, error: "", definite: false, size: 1 };
+  return Value { ...empty(), data: IntValue { value: n } };
 }
 
 function floating(v: f64): Value {
-  return Value { data: FloatValue { value: v }, error: "", definite: false, size: 1 };
+  return Value { ...empty(), data: FloatValue { value: v } };
 }
 
 function logical(v: boolean): Value {
-  return Value { data: BoolValue { value: v }, error: "", definite: false, size: 1 };
+  return Value { ...empty(), data: BoolValue { value: v } };
 }
 
 function unsigned(ty: string): boolean {
   return ty == "u8" || ty == "u32" || ty == "u64";
 }
 
+const I64_MIN: i64 = -9223372036854775808;
+
+const I64_MAX: i64 = 9223372036854775807;
+
+// The bits of a declared integer type of a known width, or 0.
+function width_bits(ty: string): i64 {
+  if (ty == "u8") {
+    return 8;
+  }
+  if (ty == "i32" || ty == "u32") {
+    return 32;
+  }
+  if (ty == "i64" || ty == "u64") {
+    return 64;
+  }
+  return 0;
+}
+
+// True when the type holds v. A value of 64 bits is its bit pattern.
+function holds(v: i64, ty: string): boolean {
+  if (ty == "u8") {
+    return v >= 0 && v <= 255;
+  }
+  if (ty == "i32") {
+    return v >= -2147483648i64 && v <= 2147483647i64;
+  }
+  if (ty == "u32") {
+    return v >= 0 && v <= 4294967295i64;
+  }
+  return true;
+}
+
+// An operand of the type, as the diagnostic shows it.
+function shown(v: i64, ty: string): string {
+  if (ty == "u64") {
+    return (v as u64).to_string();
+  }
+  return util.i64_to_string(v);
+}
+
+// True when the exact sum, difference, product, quotient or left shift of two
+// values of the type is outside the type. The operands of a narrow type are
+// in the type, so their result does not wrap in 64 bits.
+function step_leaves(op: string, a: i64, b: i64, ty: string): boolean {
+  if (ty == "u64") {
+    return match (op) {
+      "+" => (a + b) as u64 < a as u64,
+      "-" => a as u64 < b as u64,
+      "*" => a != 0 && (a * b) as u64 / (a as u64) != b as u64,
+      "<<" => (a << b) as u64 >> b as u64 != a as u64,
+      _ => false,
+    };
+  }
+  if (ty == "i64") {
+    return match (op) {
+      "+" => b > 0 && a > I64_MAX - b || b < 0 && a < I64_MIN - b,
+      "-" => b < 0 && a > I64_MAX + b || b > 0 && a < I64_MIN + b,
+      "*" => a != 0 && b != 0 && (a == -1i64 && b == I64_MIN || b == -1i64 && a == I64_MIN || a * b / b != a),
+      "/" => a == I64_MIN && b == -1i64,
+      "<<" => a << b >> b != a,
+      _ => false,
+    };
+  }
+  if (ty == "u32" && op == "*") {
+    return a as u64 * (b as u64) > 4294967295u64;
+  }
+  return match (op) {
+    "+" => !holds(a + b, ty),
+    "-" => !holds(a - b, ty),
+    "*" => !holds(a * b, ty),
+    "/" => !holds(a / b, ty),
+    "<<" => !holds(a << b, ty),
+    _ => false,
+  };
+}
+
+// The E047 of a step that leaves the declared type, or None. An operand
+// outside the type is a literal that the literal range rule reports.
+function checked_step(op: string, a: i64, b: i64, ty: string): Option[Value] {
+  let bits = width_bits(ty);
+  if (bits == 0 || !holds(a, ty) || !holds(b, ty)) {
+    return None;
+  }
+  if ((op == "<<" || op == ">>") && (b < 0 || b >= bits)) {
+    return Some(Value { ...refuse("shift count " + util.i64_to_string(b) + " is not less than the " + util.i64_to_string(bits) + " bits of " + ty), code: "E047" });
+  }
+  if (op == "/" && b == 0 || !step_leaves(op, a, b, ty)) {
+    return None;
+  }
+  return Some(leaves(shown(a, ty) + " " + op + " " + shown(b, ty), ty));
+}
+
 function integer_binary(op: string, a: i64, b: i64, ty: string): Value {
+  if let Some(refused) = checked_step(op, a, b, ty) {
+    return refused;
+  }
   if (op == "+") {
     return number(a + b, ty);
   }
@@ -223,7 +332,7 @@ function joined(a: string, b: string): Value {
   if (a.len() + b.len() > MAX_CONST_STRING) {
     return refuse("string of more than " + util.i32_to_string(MAX_CONST_STRING) + " bytes in constant expression");
   }
-  return Value { data: StringValue { value: a + b }, error: "", definite: false, size: 1 };
+  return Value { ...empty(), data: StringValue { value: a + b } };
 }
 
 function string_binary(op: string, a: string, b: string): Value {
@@ -276,6 +385,27 @@ function binary_values(op: string, left: Scalar, right: Scalar, ty: string): Val
       return fail("binary `" + op + "` operands aren't both numbers");
     }
   }
+}
+
+// The E047 of a negation that leaves the declared type, or None.
+function checked_negate(v: Value, ty: string): Option[Value] {
+  if (v.error.len() > 0 || width_bits(ty) == 0) {
+    return None;
+  }
+  let IntValue(n) = v.data else {
+    return None;
+  };
+  let out = !holds(n.value, ty) || !holds(0 - n.value, ty);
+  if (ty == "u64") {
+    out = n.value != 0;
+  }
+  if (ty == "i64") {
+    out = n.value == I64_MIN;
+  }
+  if (!out || !holds(n.value, ty)) {
+    return None;
+  }
+  return Some(leaves("-(" + shown(n.value, ty) + ")", ty));
 }
 
 function unary(op: string, v: Value, ty: string): Value {
@@ -347,13 +477,20 @@ pub function evaluate(e: ast.Expr, ty: parser.TypeRef, names: string[], values: 
       return logical(b.value);
     },
     ast.ExprString(s) => {
-      return Value { data: StringValue { value: s.value }, error: "", definite: false, size: 1 };
+      return Value { ...empty(), data: StringValue { value: s.value } };
     },
     ast.ExprIdent(id) => {
       return earlier_value(id.name, names, values);
     },
     ast.ExprUnary(u) => {
-      return unary(u.op, evaluate(u.operand, ty, names, values), width);
+      let operand = evaluate(u.operand, ty, names, values);
+      // The literal range rule judges a negated literal.
+      if (u.op == "-" && !is_number(u.operand)) {
+        if let Some(refused) = checked_negate(operand, width) {
+          return refused;
+        }
+      }
+      return unary(u.op, operand, width);
     },
     ast.ExprBinary(b) => {
       return evaluate_binary(b, ty, names, values);
@@ -371,6 +508,13 @@ pub function evaluate(e: ast.Expr, ty: parser.TypeRef, names: string[], values: 
       return empty();
     }
   }
+}
+
+function is_number(e: ast.Expr): boolean {
+  if let ast.ExprNumber(_) = e {
+    return true;
+  }
+  return false;
 }
 
 pub function settle(v: Value, ty: string): Value {

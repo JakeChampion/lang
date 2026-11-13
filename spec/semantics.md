@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**150 of 153** claims are pinned by a conformance case. The remaining
+**151 of 154** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -109,7 +109,7 @@ of them.
 | `IS-13` | `docs/INTEGER-SEMANTICS.md` | `<<\|` clamps exactly where `<<?` is `None`, to `MIN` for a negative value and `MAX` otherwise; `0 <<\| n` is `0` | `int_saturating_shl` |
 | `IS-14` | `docs/INTEGER-SEMANTICS.md` | A checked or saturating shift on `usize` is rejected (`E009`) | `shift_usize_rejected` |
 | `IS-15` | `docs/INTEGER-SEMANTICS.md` | A `/` or `%` whose divisor evaluates to zero inside a `const` initializer is rejected (`E093`) | `const_div_by_zero_rejected` |
-| `IS-16` | `docs/INTEGER-SEMANTICS.md` | A declared `const` evaluates at its declared width: `+ - * <<` wrap there and a shift count masks to it | `const_folds_at_declared_width` |
+| `IS-16` | `docs/INTEGER-SEMANTICS.md` | A declared `const` evaluates in its declared type: a step of `+ - * / <<` or a negation whose exact value is outside the type, and a shift count that is not less than the width, are rejected (`E047`) | `diag_e047_const_step_leaves_its_type` |
 | `IS-17` | `docs/INTEGER-SEMANTICS.md` | Widening integer casts extend by the source signedness, then interpret the destination bits | `integer_conversion_boundaries` |
 | `IS-18` | `docs/INTEGER-SEMANTICS.md` | Narrowing integer casts retain the low destination-width bits | `integer_conversion_boundaries` |
 | `IS-19` | `docs/INTEGER-SEMANTICS.md` | Checked integer casts return `None` outside the destination range and `Some` at representable boundaries | `integer_conversion_boundaries` |
@@ -232,6 +232,7 @@ of them.
 | `OR-02` | `docs/OWNED-RESULTS.md` | An owned generic result cannot transfer a borrowed parameter without a copy contract (`E051`) | `diag_e051_checked_result_borrows` |
 | `OR-03` | `docs/OWNED-RESULTS.md` | An ordinary-result function cannot satisfy an owned-result function type (`E003`) | `diag_e003_checked_result_strengthening` |
 | `OR-04` | `docs/OWNED-RESULTS.md` | Ordinary call results containing only immutable copyable data can transfer their own reference while COW preserves borrowed sources | `copied_call_results` |
+| `OR-05` | `docs/OWNED-RESULTS.md` | A returned nested record replacement retains its transfer proof through genuine variant constructors. Borrowed owners and retained aliases prevent the transfer | `nested_owned_field_variant` |
 
 ## Every gap this index opened with is now closed
 

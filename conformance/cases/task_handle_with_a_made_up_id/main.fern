@@ -1,18 +1,20 @@
-// A task handle is a plain struct, so a program can write one. A handle
-// whose id names no task record stops the program with status 134. It does
-// not read past the task table.
+// Only std/async builds a task handle. `task_adopted` is unsafe: its caller
+// proves that the id is the id of a parked task. A handle whose id names no
+// task record stops the program with status 134. It does not read past the
+// task table.
 import "std/async";
 
 function main(): i32 {
-  let real = async.task_new((): i32 => 7);
   print("made");
-  let forged = async.Task { id: 100000, entry: real.entry, shared: real.shared };
-  match (async.task_start(forged)) {
-    Done(v) => {
-      print("ran");
-    },
-    Suspended(_) => {
-      print("parked");
+  unsafe {
+    let forged = async.task_adopted(100000, (): i32 => 7);
+    match (async.task_resume(forged, async.Wake.TimedOut)) {
+      Done(v) => {
+        print("ran");
+      },
+      Suspended(_) => {
+        print("parked");
+      }
     }
   }
   return 0;

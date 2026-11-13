@@ -99,6 +99,7 @@ function merge_values(a: guard.Arena, block: ssa.SBlock, edges: Edge[], nvals: i
     if (op.kind_tag == ssa.PHI) {
       let identity = zero.id;
       let kind = 0;
+      let number = false;
       let scalar = zero.id;
       for e in edges {
         let pos = util.index_of_i32(block.preds, e.predecessor);
@@ -109,9 +110,10 @@ function merge_values(a: guard.Arena, block: ssa.SBlock, edges: Edge[], nvals: i
         }
         if (!guard.is_constant(arena, e.path, 0)) {
           let value = e.values[slot];
-          if (value.kind != 0 && value.kind != 1) {
+          if (value.kind != 0 && value.kind != 1 && value.kind != 3) {
             return failed(arena, "unreadable phi operand");
           }
+          number = number || value.kind == 3;
           let available: guard.Built = match (implies(arena, e.path, value.available)) { Ok(value) => value, Err(error) => { return failed(error.arena, error.message); } };
           if (!guard.is_constant(available.arena, available.id, 0)) {
             return failed(available.arena, "unavailable phi operand");
@@ -135,10 +137,17 @@ function merge_values(a: guard.Arena, block: ssa.SBlock, edges: Edge[], nvals: i
           identity = sum.id;
         }
       }
+      if (kind == 1 && number) {
+        return failed(arena, "number phi reference");
+      }
       if (kind == 1 && !guard.is_constant(arena, scalar, 0)) {
         return failed(arena, "non-null scalar phi reference");
       }
-      bindings = bindings.append(Binding { result: op.result, value: Value { kind: kind, identity: identity, available: path } });
+      if (number) {
+        bindings = bindings.append(Binding { result: op.result, value: Value { kind: 3, identity: zero.id, available: path } });
+      } else {
+        bindings = bindings.append(Binding { result: op.result, value: Value { kind: kind, identity: identity, available: path } });
+      }
     }
   }
   return Ok(Joined { arena: arena, bindings: bindings, path: path });

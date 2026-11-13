@@ -1,0 +1,8 @@
+// spec: IS-16
+// A shift in a const initializer by the width of the declared type, or by
+// more, is an error. The same shift in a `let` masks its count.
+const Y: i32 = 1 << 40;
+
+function main(): i32 {
+    return Y;
+}

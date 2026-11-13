@@ -702,7 +702,8 @@ pub function module_uses_aes_gcm(cache: irtables.LowerResult[]): boolean {
 }
 
 pub function module_uses_sha_hw_blocks(cache: irtables.LowerResult[]): boolean {
-  return module_emits_op_cached(cache, "sha256_hw_blocks") || module_emits_op_cached(cache, "sha1_hw_blocks");
+  return module_emits_op_cached(cache, "sha256_hw_blocks") || module_emits_op_cached(cache, "sha1_hw_blocks")
+    || module_emits_op_cached(cache, "sha1x8_hw_blocks");
 }
 
 function sha_hw_blocks_helper(): string {
@@ -1201,14 +1202,12 @@ pub function task_funcs(lc: boolean, count: boolean): string {
     + "        (local.set $h (i32.add (local.get $h) (i32.const 1)))\n"
     + "        (br $probe))))\n"
     + "    (local.get $e))\n"
-    + "  (func $__fern_task_fd_gen (param $fd i32) (result i32) (local $e i32)\n"
-    + "    (if (i32.or (i32.eqz (local.get $fd)) (i32.eqz (global.get $__fern_fd_cap))) (then (return (i32.const 0))))\n"
-    + "    (local.set $e (call $__fern_fd_slot (global.get $__fern_fd_tab) (global.get $__fern_fd_cap) (local.get $fd)))\n"
-    + "    (if (i32.ne (i32.load (local.get $e)) (local.get $fd)) (then (return (i32.const 0))))\n"
-    + "    (i32.load offset=4 (local.get $e)))\n"
-    + "  (func $__fern_task_fd_closed (param $fd i32) (result i32) (local $e i32) (local $cap i32) (local $nt i32) (local $i i32) (local $o i32) (local $d i32)\n"
+    + "  (func $__fern_task_fd_gen (param $fd i32) (result i32) (local $e i32) (local $cap i32) (local $nt i32) (local $i i32) (local $o i32) (local $d i32)\n"
     + "    (if (i32.eqz (local.get $fd)) (then (return (i32.const 0))))\n"
     + "    (local.set $cap (global.get $__fern_fd_cap))\n"
+    + "    (if (local.get $cap) (then\n"
+    + "      (local.set $e (call $__fern_fd_slot (global.get $__fern_fd_tab) (local.get $cap) (local.get $fd)))\n"
+    + "      (if (i32.eq (i32.load (local.get $e)) (local.get $fd)) (then (return (i32.load offset=4 (local.get $e)))))))\n"
     + "    (if (i32.ge_u (i32.shl (i32.add (global.get $__fern_fd_len) (i32.const 1)) (i32.const 1)) (local.get $cap)) (then\n"
     + "      (local.set $cap (select (i32.shl (local.get $cap) (i32.const 1)) (i32.const 64) (local.get $cap)))\n"
     + "      (local.set $nt (call $__fern_task_zalloc (i32.shl (local.get $cap) (i32.const 3))))\n"
@@ -1227,6 +1226,11 @@ pub function task_funcs(lc: boolean, count: boolean): string {
     + "    (if (i32.eqz (i32.load (local.get $e))) (then\n"
     + "      (i32.store (local.get $e) (local.get $fd))\n"
     + "      (global.set $__fern_fd_len (i32.add (global.get $__fern_fd_len) (i32.const 1)))))\n"
+    + "    (i32.load offset=4 (local.get $e)))\n"
+    + "  (func $__fern_task_fd_closed (param $fd i32) (result i32) (local $e i32)\n"
+    + "    (if (i32.or (i32.eqz (local.get $fd)) (i32.eqz (global.get $__fern_fd_cap))) (then (return (i32.const 0))))\n"
+    + "    (local.set $e (call $__fern_fd_slot (global.get $__fern_fd_tab) (global.get $__fern_fd_cap) (local.get $fd)))\n"
+    + "    (if (i32.ne (i32.load (local.get $e)) (local.get $fd)) (then (return (i32.const 0))))\n"
     + "    (i32.store offset=4 (local.get $e) (i32.add (i32.load offset=4 (local.get $e)) (i32.const 1)))\n"
     + "    (i32.const 0))\n"
     + "  (func $__fern_task_cancelled (result i32)\n"

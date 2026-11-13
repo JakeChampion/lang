@@ -1711,10 +1711,16 @@ function lift_callee_returns_fn(mfuncs: MFuncs, callee: string): boolean {
   return false;
 }
 
+function spells_fn(type_name: string): boolean {
+  return type_name == "fn" || fn_param_from_spelling("", type_name).type_name == "fn";
+}
+
+// The parameter `idx` of `callee` is a function. An instance of a generic
+// function spells a parameter of the type T = (i32) => i32 in full.
 function lift_callee_param_is_fn(mfuncs: MFuncs, callee: string, idx: i32): boolean {
   let i = mfuncs.head[util.hash_bucket(callee, mfuncs.head.len())];
   while (i >= 0) {
-    if (mfuncs.decls[i].name == callee && idx < mfuncs.decls[i].params.len() && mfuncs.decls[i].params[idx].type_name == "fn") {
+    if (mfuncs.decls[i].name == callee && idx < mfuncs.decls[i].params.len() && spells_fn(mfuncs.decls[i].params[idx].type_name)) {
       return true;
     }
     i = mfuncs.next[i];

@@ -193,6 +193,13 @@ function unit_checks(): void {
   let scalars = must(both(partial.arena, block, [scalar_yes, scalar], 3), 23);
   require(scalars.bindings[0].value.kind == 0 && scalars.bindings[0].value.identity == old.id, 24);
   require(build_failed(phi.is_null(scalars.arena, scalars.bindings[0].value, one.id), "reference null test required"), 25);
+  let number_yes = phi.Edge { ...yes, values: unique_values.with(0, value(3, zero.id, u.id)) };
+  let number_no = phi.Edge { ...no, values: shared_values.with(1, value(3, zero.id, shared.id)) };
+  let numbers = must(both(scalars.arena, block, [number_yes, number_no], 3), 75);
+  require(numbers.bindings[0].value.kind == 3 && numbers.bindings[0].value.identity == zero.id, 76);
+  let mixed = must(both(numbers.arena, block, [number_yes, scalar], 3), 77);
+  require(mixed.bindings[0].value.kind == 3, 78);
+  reject(both(mixed.arena, block, [yes, number_no], 3), "number phi reference", 79);
   let pair = ssa.SBlock { ...block, insts: [inst(2, [0, 1]), inst(3, [1, 0])] };
   let pair_yes = phi.Edge { ...yes, values: blank(4).with(0, value(1, old.id, u.id)).with(1, value(1, fresh.id, u.id)) };
   let pair_no = phi.Edge { ...no, values: blank(4).with(0, value(1, old.id, shared.id)).with(1, value(1, fresh.id, shared.id)) };

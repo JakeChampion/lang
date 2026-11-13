@@ -110,7 +110,7 @@ These take typed values, but they change ownership, layout, or control flow outs
 | `__c_call0` to `__c_call6`, with `_f32` and `_f64` forms | A foreign call through a code address. The address and the argument contract are the caller's proof. |
 | `__c_callv(fn, ints, floats, kind)` | A foreign call that loads the argument registers from two arrays. `ints` holds 14 words and `floats` holds the words that `kind` needs, and both must stay live for the call. The compiler writes this call for an `@import`, and `compiler/cabi.fern` computes the two arrays. |
 | `__task_new`, `__task_free`, `__task_enter`, `__task_leave`, `__task_park`, `__task_wait`, `__task_set_ready`, `__task_set_cancelled`, `__task_cancelled`, `__task_timeout`, `__task_cur` | Runtime scheduler hooks. A task id must be live and the state transition must be valid. |
-| `__task_fd_gen` | Reads the number of closes of a descriptor number in this process. The descriptor does not have to be open. |
+| `__task_fd_gen` | Observes a descriptor generation. Later closes change this generation. The descriptor does not have to be open. |
 | `__syscall3` to `__syscall6` | Arbitrary kernel calls. Admitted only in runtime helper sources today. |
 | `__tcp_close_unchecked(s)` | It closes a `Socket` through a borrow. No copy of the socket can be used after the call, and no other copy can be closed. The interpreter needs it for the reason that `close_unchecked` exists. |
 | `__fd_close(fd)` | It closes a descriptor number that has no handle type, such as a reactor or a timer. The number must not belong to a handle, and the caller must not use it again. |
@@ -142,7 +142,7 @@ The audit of their internal range checks belongs to SEC-005 and SEC-035.
 - Typed allocations: `__alloc_bool`, `__alloc_i32`, `__alloc_i64`, `__alloc_f64`, `__alloc_u8`. Every payload word is zero at allocation ([ERASURE-AND-QUOTAS.md](ERASURE-AND-QUOTAS.md)), so a fresh array carries no obligation.
 - Arithmetic and text conversion: `__abs_f64`, `__ceil_f64`, `__floor_f64`, `__round_f64`, `__sqrt_f64`, `__trunc_f64`, `__scale_f64`, `__outer_mul_f64`, `__inner_mul_add_f64`, `__clz32`, `__clz64`, `__ctz32`, `__ctz64`, `__popcount32`, `__popcount64`, `__mulhi_u64`, `__ptr_width`, the `__primitive_*_to_string` family.
 - Lanes: the `__f64x2_*` and `__f32x4_*` families.
-- Cryptographic kernels: `__aes_expand_key`, `__aes_ctr32`, `__aes_gcm_seal_into`, `__aes_gcm_open_into`, `__ghash`, `__sha1_hw`, `__sha1_hw_blocks`, `__sha256_hw`, `__sha256_hw_blocks`. Their buffer contracts belong to SEC-037.
+- Cryptographic kernels: `__aes_expand_key`, `__aes_ctr32`, `__aes_gcm_seal_into`, `__aes_gcm_open_into`, `__ghash`, `__sha1_hw`, `__sha1_hw_blocks`, `__sha1x8_hw`, `__sha1x8_hw_blocks`, `__sha256_hw`, `__sha256_hw_blocks`. Their buffer contracts belong to SEC-037.
 - Diagnostics: `__ct_secret`, `__ct_public`, `__heap_alloc_count`, `__heap_bump_bytes`, `__rc_underflow_count`, `__map_hash_seed`.
 
 ## Raw floor

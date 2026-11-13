@@ -629,9 +629,10 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (ir.is_aes_gcm_op(o.kind_tag)) {
     return emit_aes_gcm_op(o, s);
   }
-  if (o.kind_tag == ir.K_SHA256_HW_BLOCKS) {
-    s = s.need("sha256").need("heap");
-    return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_sha256_hw_blocks\n    str x0, [sp, #-16]!\n");
+  let sha = ir.sha_blocks_need(o.kind_tag);
+  if (sha != "") {
+    s = s.need(sha).need("heap");
+    return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_" + sha + "_hw_blocks\n    str x0, [sp, #-16]!\n");
   }
   if (o.kind_tag == ir.K_OUTER_MUL_F64) {
     return emit_outer_mul_f64(s);
@@ -4412,10 +4413,10 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
     return ssa_call(ins, reg_of, lp, s);
   }
   if (k == ssa.FLAT_OP) {
-    return ssa_flat_op(ins, reg_of, lp, r, s);
+    return ssa_flat_op(ins, reg_of, r, s);
   }
   if (k == ssa.DYN_DISPATCH) {
-    return ssa_dyn_dispatch(ins, reg_of, lp, s);
+    return ssa_dyn_dispatch(ins, reg_of, s);
   }
   if (k == ssa.STR_VIEW) {
     return ssa_str_view(ins, reg_of, ssa_view_off(fr, ins.result), s);
@@ -5269,7 +5270,7 @@ function emit_dir_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 }
 
 // fern-lint: allow cyclomatic-complexity
-function emit_stack_op(o: ir.Op, lp: string, r: irtables.Lowered, s: asmcore.EmitState): asmcore.EmitState {
+function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asmcore.EmitState {
   if (o.kind_tag == ir.K_TCP_POLLABLE || o.kind_tag == ir.K_SEND_ADOPT || o.kind_tag == ir.K_SEND_ROOT) {
     return s;
   }
@@ -5282,9 +5283,9 @@ function emit_stack_op(o: ir.Op, lp: string, r: irtables.Lowered, s: asmcore.Emi
     s = s.need("sha1").need("heap");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_sha1_hw_blocks\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == ir.K_MEMCPY) {
-    s = emit_arm64_op_memcpy(o, lp, s);
+    s = emit_arm64_op_memcpy(s);
   } else if (o.kind_tag == ir.K_MEMSET) {
-    s = emit_arm64_op_memset(lp, s);
+    s = emit_arm64_op_memset(s);
   } else if (o.kind_tag == ir.K_FREE) {
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
     let owned = s.leak_check && s.rt_owned_allocs;
@@ -5789,18 +5790,19 @@ function emit_stack_op(o: ir.Op, lp: string, r: irtables.Lowered, s: asmcore.Emi
   return s;
 }
 
-function emit_arm64_op_memset(lp: string, st: asmcore.EmitState): asmcore.EmitState {
-  let (mi, s) = loop_key(st);
+function emit_arm64_op_memset(s: asmcore.EmitState): asmcore.EmitState {
+  let tag = asmcore.fresh_label(s);
+  s = tag.state;
   s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-  s = s.write(lp + "ms" + mi + ":\n");
-  s = s.write("    cbz x2, " + lp + "msd" + mi + "\n");
+  s = s.write(tag.name + "ms:\n");
+  s = s.write("    cbz x2, " + tag.name + "msd\n");
   s = s.write("    strb w1, [x0], #1\n    sub x2, x2, #1\n");
-  s = s.write("    b " + lp + "ms" + mi + "\n");
-  s = s.write(lp + "msd" + mi + ":\n");
+  s = s.write("    b " + tag.name + "ms\n");
+  s = s.write(tag.name + "msd:\n");
   return s.write("    mov x0, #0\n    str x0, [sp, #-16]!\n");
 }
 
-function ssa_dyn_dispatch(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+function ssa_dyn_dispatch(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   s = asmcore.ssa_x0_forget(s);
   let args: asmcore.DynArg[] = [];
   let moved = false;
@@ -5819,11 +5821,11 @@ function ssa_dyn_dispatch(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.
       args = args.append(asmcore.DynArg { reg: "", off: ssa_slot_off(ssa.spill_slot(reg_of[v])) - s.ssa_save });
     }
   }
-  s = emit_dyn_dispatch_chain(ins.str, args, ins.imm, lp, s);
+  s = emit_dyn_dispatch_chain(ins.str, args, s);
   return ssa_store(reg_of, ins.result, "x0", asmcore.ssa_x0_forget(s));
 }
 
-function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irtables.Lowered, s: asmcore.EmitState): asmcore.EmitState {
+function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], r: irtables.Lowered, s: asmcore.EmitState): asmcore.EmitState {
   let kind = r.ops[ins.imm].kind_tag;
   if (kind == ir.K_TCP_POLLABLE) {
     s = asmcore.ssa_x0_forget(s);
@@ -5838,7 +5840,7 @@ function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irtables.Lowe
   s = asmcore.ssa_x0_forget(s);
   let outer = s.capture;
   let h = buf_new(256);
-  s = emit_stack_op(r.ops[ins.imm], lp, r, asmcore.EmitState { ...s, capture: h });
+  s = emit_stack_op(r.ops[ins.imm], r, asmcore.EmitState { ...s, capture: h });
   let arm = buf_take(h);
   buf_free(h);
   s = asmcore.EmitState { ...s, capture: outer };
@@ -5984,16 +5986,11 @@ function ssa_load_helper_args(reg_of: i32[], args: i32[], s: asmcore.EmitState):
   return ssa_parallel_moves(srcs, dsts, s);
 }
 
-// The SSA lowering can emit one op in two blocks, so a loop label takes a
-// number of its own, not the index of the op.
-function loop_key(s: asmcore.EmitState): (string, asmcore.EmitState) {
-  return (util.i32_to_string(s.label_n), asmcore.EmitState { ...s, label_n: s.label_n + 1 });
-}
-
-function emit_arm64_op_memcpy(o: ir.Op, lp: string, st: asmcore.EmitState): asmcore.EmitState {
-  let (mi, s) = loop_key(st);
-  s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-  s = arm64_copy_bytes(s, CopyRegs { dst: "x0", src: "x1", n: "x2", tmp: "x4", src_end: "x9", dst_end: "x10" }, lp + "mc" + mi, lp + "mct" + mi, lp + "mcb" + mi, lp + "mcd" + mi);
+function emit_arm64_op_memcpy(s: asmcore.EmitState): asmcore.EmitState {
+  let tag = asmcore.fresh_label(s);
+  let t = tag.name;
+  s = tag.state.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+  s = arm64_copy_bytes(s, CopyRegs { dst: "x0", src: "x1", n: "x2", tmp: "x4", src_end: "x9", dst_end: "x10" }, t + "mc", t + "mct", t + "mcb", t + "mcd");
   s = s.write("    mov x0, #0\n    str x0, [sp, #-16]!\n");
 
   return s;
@@ -6262,11 +6259,14 @@ function dyn_arg_load(s: asmcore.EmitState, reg: string, a: asmcore.DynArg): asm
   return fr_ldr(s, reg, a.off);
 }
 
-function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], i: i32, lp: string, own s: asmcore.EmitState): asmcore.EmitState {
+function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], own s: asmcore.EmitState): asmcore.EmitState {
+  let tag = asmcore.fresh_label(s);
+  s = tag.state;
+  let key = tag.name;
   let dargc = args.len();
   s = dyn_arg_load(s, "x0", args[0]);
   s = s.write("    ldr x1, [x0]\n");
-  let dend = lp + "dynend" + util.i32_to_string(i);
+  let dend = key + "dynend";
   let dfi = 0;
   let darmn = 0;
   while (dfi < s.funcs.len()) {
@@ -6278,7 +6278,7 @@ function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], i: i32, l
       let dbn = ddbn;
       let dlit = asmcore.shape_ref(s, dbn);
       s = dlit.state;
-      let dnext = lp + "dynnext" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
+      let dnext = key + "dynnext" + util.i32_to_string(darmn);
       s = s.write("    adrp x2, " + dlit.label + "\n");
       s = s.write("    add x2, x2, :lo12:" + dlit.label + "\n");
       s = s.write("    cmp x1, x2\n    b.ne " + dnext + "\n");
@@ -6303,8 +6303,8 @@ function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], i: i32, l
     if (irtables.dyn_arm_matches(dfd, arms) && dfd.receiver_type.len() > 0
       && !asmcore.recv_is_array(dfd.receiver_type)
       && irtables.decl_is_enum(s.struct_decls, ddbn)) {
-      let dehit = lp + "dynehit" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
-      let denext = lp + "dynnext" + util.i32_to_string(i) + "_" + util.i32_to_string(darmn);
+      let dehit = key + "dynehit" + util.i32_to_string(darmn);
+      let denext = key + "dynnext" + util.i32_to_string(darmn);
       let dvi = 0;
       while (dvi < s.struct_decls.decls.len()) {
         if (s.struct_decls.decls[dvi].enum_owner == ddbn) {
@@ -12270,9 +12270,53 @@ function a64_sha1_blocks(s: asmcore.EmitState): string {
     + ".Lsha1_ret:\n    ldr x0, [x29, #40]\n" + rt_unframe_of(s, 48) + "    ret\n    .size __fern_sha1_hw_blocks, .-__fern_sha1_hw_blocks\n";
 }
 
+// The eight lanes of a word-major state run one after another on the SHA-1
+// instructions. Word w of lane k is at byte 4 * (8 * w + k), and a group of
+// 512 bytes holds one block of each lane.
+function a64_sha1x8_blocks(s: asmcore.EmitState): string {
+  let o: string = "    .global __fern_sha1x8_hw_blocks\n    .type __fern_sha1x8_hw_blocks, %function\n__fern_sha1x8_hw_blocks:\n"
+    + rt_frame_of(s, 48) + "    mov x29, sp\n"
+    + a64_aes_view("x1", "x3", "x4", ".Lsx8_data") + "    str x3, [x29, #16]\n    str x4, [x29, #24]\n"
+    + a64_aes_view("x0", "x3", "x5", ".Lsx8_st") + "    str x3, [x29, #32]\n"
+    + "    mov x0, #160\n    cmp x5, #160\n    b.hs .Lsx8_stok\n    mov x0, #0\n.Lsx8_stok:\n"
+    + a64_aes_alloc("40") + "    ldr x4, [x0]\n    cbz x4, .Lsx8_ret\n    ldr x3, [x29, #32]\n    add x6, x0, #8\n";
+  for j in 0..10 {
+    o += "    ld1 {v0.16b}, [x3]\n    st1 {v0.16b}, [x6]\n    add x3, x3, #16\n    add x6, x6, #16\n";
+  }
+  let k: u32[] = [0x5a827999, 0x6ed9eba1, 0x8f1bbcdc, 0xca62c1d6];
+  for i in 0..4 {
+    o = o + "    movz w8, #" + util.i32_to_string((k[i] & 0xffff) as i32) + "\n    movk w8, #" + util.i32_to_string((k[i] >> 16) as i32)
+      + ", lsl #16\n    dup v" + util.i32_to_string(16 + i) + ".4s, w8\n";
+  }
+  o += "    ldr x1, [x29, #16]\n    ldr x4, [x29, #24]\n.Lsx8_loop:\n    cmp x4, #512\n    b.lo .Lsx8_ret\n    ldr x7, [x29, #40]\n    add x7, x7, #8\n";
+  for lane in 0..8 {
+    o = o + "    add x8, x1, #" + util.i32_to_string(64 * lane) + "\n";
+    for w in 0..4 {
+      o = o + "    ldr w9, [x7, #" + util.i32_to_string(4 * lane + 32 * w) + "]\n    ins v0.s[" + util.i32_to_string(w) + "], w9\n";
+    }
+    o = o + "    ldr w9, [x7, #" + util.i32_to_string(4 * lane + 128) + "]\n    ins v1.s[0], w9\n";
+    for j in 4..8 {
+      let v = "v" + util.i32_to_string(j);
+      o = o + "    ld1 {" + v + ".16b}, [x8]\n    add x8, x8, #16\n    rev32 " + v + ".16b, " + v + ".16b\n";
+    }
+    o = o + "    orr v20.16b, v0.16b, v0.16b\n    orr v21.16b, v1.16b, v1.16b\n" + a64_sha1_rounds()
+      + "    add v0.4s, v0.4s, v20.4s\n    add v1.4s, v1.4s, v21.4s\n";
+    for w in 0..4 {
+      o = o + "    umov w9, v0.s[" + util.i32_to_string(w) + "]\n    str w9, [x7, #" + util.i32_to_string(4 * lane + 32 * w) + "]\n";
+    }
+    o = o + "    umov w9, v1.s[0]\n    str w9, [x7, #" + util.i32_to_string(4 * lane + 128) + "]\n";
+  }
+  return o + "    add x1, x1, #512\n    sub x4, x4, #512\n    b .Lsx8_loop\n"
+    + ".Lsx8_ret:\n    ldr x0, [x29, #40]\n" + rt_unframe_of(s, 48) + "    ret\n    .size __fern_sha1x8_hw_blocks, .-__fern_sha1x8_hw_blocks\n";
+}
+
 function emit_rt_sha(s: asmcore.EmitState): asmcore.EmitState {
-  if (s.has_need("sha256") || s.has_need("sha1")) {
+  if (s.has_need("sha256") || s.has_need("sha1") || s.has_need("sha1x8")) {
     s = s.write("    .arch_extension sha2\n");
+  }
+  if (s.has_need("sha1x8")) {
+    let sha1x8 = a64_sha1x8_blocks(s);
+    s = s.write(sha1x8);
   }
   if (s.has_need("sha256")) {
     let sha256 = a64_sha256_blocks(s);

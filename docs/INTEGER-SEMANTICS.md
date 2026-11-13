@@ -267,18 +267,20 @@ declaration writes down — an UNDECLARED const's literal stays polymorphic and
 settles at its use site — and a clamp bound cannot be guessed. The compiler
 reports ``operator `+|` not allowed in integer constant expressions``.
 
-A declared const's width IS available, and the wrapping operators fold at it:
-`const W: i32 = (2147483647 + 1) / 2` is −1073741824, the same value the
-expression produces as code, and a shift count masks to the declared width
-(`& 31` for i32) rather than to 63. An undeclared const still folds in int64,
-so it can disagree with the same expression written at a narrower width.
+A declared const's type IS available, and the initializer must stay in it.
+Each step of `+`, `-`, `*`, `/`, `<<` and each negation is computed exactly.
+A step whose value is outside the declared type is a compile error:
+``error[E047]: const W: 255 + 1 does not fit in u8``. A shift count that is
+not less than the width of the type is also E047. The same expression as
+code wraps, so a `const` and a `let` differ here: the constant has no
+run-time value that a reader must predict. `~` and the other bit operators
+cannot leave the type. An undeclared const and a `usize` const still fold in
+int64 with no check.
 
 A `/` or `%` whose divisor evaluates to zero in a const initializer is a
 compile error, ``error[E093]: const A: division by zero in constant
 expression`` (or `modulo by zero`), rather than the `0` or dividend the same
-division gives as code. The divisor is evaluated at the declared width, so
-`const Z: i32 = 2147483647 + 1 + 2147483647 + 1` is a zero divisor and the
-same sum declared `i64` is not. A float `/` by zero is not an error: it folds
+division gives as code. A float `/` by zero is not an error: it folds
 to ±Inf or NaN, as `docs/FLOAT-SEMANTICS.md` describes.
 
 ## Checked arithmetic (opt-in)

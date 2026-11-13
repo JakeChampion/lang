@@ -55,9 +55,9 @@
     "want": "E051"
   },
   {
-    "name": "nested field transfer wrapped variant remains unproved",
+    "name": "nested field transfer in variant",
     "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S} enum Wrapped{Wrap(O)} function f(own o:O):own Wrapped{let s=o.s;return Wrap(O{...o,s:S{...s,xs:filter(s.xs)}});}",
-    "want": "E051"
+    "want": ""
   },
   {
     "name": "tuple nested field transfer",
@@ -102,6 +102,116 @@
   {
     "name": "repeatable callback nested field transfer refused",
     "source": "struct H{fd:i32} function(own h:H)close():void{} struct S{xs:H[],n:i32} struct O{s:S} function keep(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} function f(own o:O):()=>O{let s=o.s;return()=>O{...o,s:S{...s,xs:keep(s.xs)}};}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "nested field transfer in Some",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S} enum Wrapped{Wrap(O)} function f(own o:O):own Option[O]{let s=o.s;return Some(O{...o,s:S{...s,xs:filter(s.xs)}});}",
+    "want": ""
+  },
+  {
+    "name": "nested field transfer in Ok",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S} enum Wrapped{Wrap(O)} function f(own o:O):own Result[O,i32]{let s=o.s;return Ok(O{...o,s:S{...s,xs:filter(s.xs)}});}",
+    "want": ""
+  },
+  {
+    "name": "nested field transfer in nested variants",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S} enum Wrapped{Wrap(O)} function f(own o:O):own Option[Wrapped]{let s=o.s;return Some(Wrap(O{...o,s:S{...s,xs:filter(s.xs)}}));}",
+    "want": ""
+  },
+  {
+    "name": "nested field transfer in qualified variant",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S} enum Wrapped{Wrap(O)} function f(own o:O):own Wrapped{let s=o.s;return Wrapped.Wrap(O{...o,s:S{...s,xs:filter(s.xs)}});}",
+    "want": ""
+  },
+  {
+    "name": "nested field transfer in variant tuple",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S} enum Wrapped{Wrap(O)} enum Pack{Packed((O,i32))}function f(own o:O):own Pack{let s=o.s;return Packed((O{...o,s:S{...s,xs:filter(s.xs)}},1));}",
+    "want": ""
+  },
+  {
+    "name": "variant nested field borrowed owner refused",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S} enum Wrapped{Wrap(O)} function f(o:O):own Wrapped{let s=o.s;return Wrap(O{...o,s:S{...s,xs:filter(s.xs)}});}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "variant nested field retained alias refused",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S} enum Wrapped{Wrap(O)} enum Pair{Pairing(O,S)}function f(own o:O):own Pair{let s=o.s;return Pairing(O{...o,s:S{...s,xs:filter(s.xs)}},s);}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "variant nested field duplicate owner refused",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S} enum Wrapped{Wrap(O)} enum Pair{Pairing(O,O)}function f(own o:O):own Pair{let s=o.s;return Pairing(O{...o,s:S{...s,xs:filter(s.xs)}},o);}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "variant nested field deferred owner refused",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S} enum Wrapped{Wrap(O)} function cleanup(own o:O):void{}function f(own o:O):own Wrapped{defer{cleanup(o);}let s=o.s;return Wrap(O{...o,s:S{...s,xs:filter(s.xs)}});}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "variant nested field repeatable capture refused",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S} enum Wrapped{Wrap(O)} function f(own o:O):own Wrapped{let build=():own Wrapped=>{let s=o.s;return Wrap(O{...o,s:S{...s,xs:filter(s.xs)}});};return build();}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "variant name shadowed by callback retains refusal",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S} enum Wrapped{Wrap(O)} function f(own o:O,Wrap:(O)=>i32):i32{let s=o.s;return Wrap(O{...o,s:S{...s,xs:filter(s.xs)}});}",
+    "want": "E051"
+  },
+  {
+    "name": "variant owner shadowed by receiver retains refusal",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S} enum Wrapped{Wrap(O)} struct Factory{} function(factory:Factory)Wrap(o:O):i32{return 0;}function f(own o:O,Wrapped:Factory):i32{let s=o.s;return Wrapped.Wrap(O{...o,s:S{...s,xs:filter(s.xs)}});}",
+    "want": "E051"
+  },
+  {
+    "name": "owned callback parameter nested variant transfer",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S} enum Wrapped{Wrap(O)} function f(own o:O):own Wrapped{let build=(own held:O):own Wrapped=>{let s=held.s;return Wrap(O{...held,s:S{...s,xs:filter(s.xs)}});};return build(o);}",
+    "want": ""
+  },
+  {
+    "name": "owned callback parameter direct nested transfer",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S} enum Wrapped{Wrap(O)} function f(own o:O):own O{let build=(own held:O):own O=>{let s=held.s;return O{...held,s:S{...s,xs:filter(s.xs)}};};return build(o);}",
+    "want": ""
+  },
+  {
+    "name": "owned callback parameter tuple nested transfer",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S} enum Wrapped{Wrap(O)} function f(own o:O):own (O,i32){let build=(own held:O):own (O,i32)=>{let s=held.s;return (O{...held,s:S{...s,xs:filter(s.xs)}},1);};return build(o);}",
+    "want": ""
+  },
+  {
+    "name": "borrowed callback parameter nested variant refused",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S} enum Wrapped{Wrap(O)} function f(own o:O):own Wrapped{let build=(held:O):own Wrapped=>{let s=held.s;return Wrap(O{...held,s:S{...s,xs:filter(s.xs)}});};return build(o);}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "owned callback parameter retained alias refused",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S} enum Wrapped{Wrap(O)} enum Pair{Pairing(O,S)}function f(own o:O):own Pair{let build=(own held:O):own Pair=>{let s=held.s;return Pairing(O{...held,s:S{...s,xs:filter(s.xs)}},s);};return build(o);}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "owned callback parameter retains caller move refusal",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S} enum Wrapped{Wrap(O)} function f(own o:O):own (Wrapped,O){let build=(own held:O):own Wrapped=>{let s=held.s;return Wrap(O{...held,s:S{...s,xs:filter(s.xs)}});};let wrapped=build(o);return(wrapped,o);}",
+    "want": "E050|E051"
+  },
+  {
+    "name": "outer alias remains available after callback declaration",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S} enum Wrapped{Wrap(O)} function f(own o:O,own p:O):own(O,Wrapped){let build=(own held:O):own Wrapped=>{let s=held.s;return Wrap(O{...held,s:S{...s,xs:filter(s.xs)}});};let inner=o.s;return(O{...o,s:S{...inner,xs:filter(inner.xs)}},build(p));}",
+    "want": ""
+  },
+  {
+    "name": "copyable captured data alias in immediate callback",
+    "source": "struct Data{xs:i32[],n:i32}struct Box{data:Data}function grow(own xs:i32[]):own i32[]{return xs.append(1);}function f(own o:Box):own Box{let s=o.data;return (():own Box=>{return Box{...o,data:Data{...s,xs:grow(s.xs)}};})();}",
+    "want": ""
+  },
+  {
+    "name": "separate callback bindings keep their aliases",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S} enum Wrapped{Wrap(O)} function f(own o:O,own p:O):own(Wrapped,Wrapped){let a=(own held:O):own Wrapped=>{let s=held.s;return Wrap(O{...held,s:S{...s,xs:filter(s.xs)}});};let b=(own held:O):own Wrapped=>{let s=held.s;return Wrap(O{...held,s:S{...s,xs:filter(s.xs)}});};return(a(o),b(p));}",
+    "want": ""
+  },
+  {
+    "name": "callback alias from another owner remains borrowed",
+    "source": "struct H{fd:i32}function(own h:H)close():void{} struct S{xs:H[],n:i32} function filter(own xs:H[]):own H[]{let out:H[]=[];for h in xs{out=out.append(h);}return out;} struct O{s:S} enum Wrapped{Wrap(O)} function f(own o:O,other:O):own Wrapped{let build=(own held:O,source:O):own Wrapped=>{let s=source.s;let n=held.s.n;return Wrap(O{...held,s:S{...s,xs:filter(s.xs)}});};return build(o,other);}",
     "want": "E050|E051"
   }
 ]
