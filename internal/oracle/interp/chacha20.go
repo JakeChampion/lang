@@ -60,6 +60,13 @@ func builtinChaCha20XorInto(_ *Interp, args []Value) (Value, error) {
 	if len(key) != 32 || len(ctr) != 16 || at < 0 || n < 0 || int64(at)+int64(n) > int64(len(buf)) {
 		return nil, fmt.Errorf("%s: range out of bounds", name)
 	}
+	chacha20XOR(key, ctr, buf[int(at):int(at)+int(n)])
+	return byteArray(buf), nil
+}
+
+// chacha20XOR XORs the key stream over data in place, from the block counter
+// and the nonce in the 16 bytes of ctr.
+func chacha20XOR(key, ctr, data []byte) {
 	in := [16]uint32{0x61707865, 0x3320646e, 0x79622d32, 0x6b206574}
 	for k := 0; k < 8; k++ {
 		in[4+k] = binary.LittleEndian.Uint32(key[4*k:])
@@ -67,7 +74,6 @@ func builtinChaCha20XorInto(_ *Interp, args []Value) (Value, error) {
 	for k := 0; k < 4; k++ {
 		in[12+k] = binary.LittleEndian.Uint32(ctr[4*k:])
 	}
-	data := buf[int(at) : int(at)+int(n)]
 	var ks [64]byte
 	for off := 0; off < len(data); off += 64 {
 		chacha20Block(&ks, &in)
@@ -76,5 +82,4 @@ func builtinChaCha20XorInto(_ *Interp, args []Value) (Value, error) {
 			data[off+k] ^= ks[k]
 		}
 	}
-	return byteArray(buf), nil
 }

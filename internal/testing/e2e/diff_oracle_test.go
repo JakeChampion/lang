@@ -138,17 +138,17 @@ func interpLoaded(t *testing.T, src string) *interp.Interp {
 	t.Helper()
 	prog, _, err := modload.LoadSource(src)
 	if err != nil {
-		t.Fatalf("load: %v\nsrc:\n%s", err, src)
+		oracleRefused(t, "load", err, src)
 	}
 	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v\nsrc:\n%s", err, src)
+		oracleRefused(t, "constfold", err, src)
 	}
 	info, err := checker.Check(prog)
 	if err != nil {
-		t.Fatalf("check: %v\nsrc:\n%s", err, src)
+		oracleRefused(t, "check", err, src)
 	}
 	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v\nsrc:\n%s", err, src)
+		oracleRefused(t, "monomorph", err, src)
 	}
 	i := interp.New()
 	i.SetDynCoercions(info.DynCoercions)

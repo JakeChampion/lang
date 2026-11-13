@@ -138,7 +138,7 @@ function main(): i32 {
   let twice = ssa.SFunc { ...f, blocks: [f.blocks[0], b1, f.blocks[2], b3, b4] };
   let tw = ssa.block_loop_weights(twice);
   failures = check(tw[1] == 8 && tw[2] == 8 && tw[3] == 8 && tw[4] == 1, "a loop with two back edges weighs 8", failures);
-  let nulls = ssa.drop_null_counts(counted_nulls());
+  let nulls = ssa.form(counted_nulls(), false).f;
   failures = check(!has(nulls, 2), "a count taken on a constant null goes", failures);
   failures = check(!has(nulls, 3), "a count given back on a constant null goes", failures);
   failures = check(has(nulls, 4), "a count given back on a parameter stays", failures);

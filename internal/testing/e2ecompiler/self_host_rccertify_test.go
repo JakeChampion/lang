@@ -531,6 +531,15 @@ function pick(name: string): Case {
         let insts: ssa.SInst[] = [param(0), call(1, "__fern_rc_dec", [0]), const_int(2, 1), inst(50, 3, [2], 0, "exit"), const_int(4, 0)];
         return Case { f: one_block(1, 5, insts, ret(4)), modes: [borrow], returns_unit: false };
     }
+    if (name == "frame-view-kept" || name == "wasm-frame-view-kept") {
+        // A view of a borrowed string in the frame, with no release.
+        let insts: ssa.SInst[] = [param(0), inst(51, 1, [0], 1, ""), const_int(2, 0)];
+        return Case { f: one_block(1, 3, insts, ret(2)), modes: [borrow], returns_unit: false };
+    }
+    if (name == "wasm-frame-view-released") {
+        let insts: ssa.SInst[] = [param(0), inst(51, 1, [0], 1, ""), call(2, "__fern_rc_dec", [1]), const_int(3, 0)];
+        return Case { f: one_block(1, 4, insts, ret(3)), modes: [borrow], returns_unit: false };
+    }
     if (name == "leak-in-an-endless-loop") {
         let b0 = block(0, [], [], br(1));
         let b1 = block(1, [0, 1], [fresh_box(0)], br(1));
@@ -551,7 +560,12 @@ function main(): i32 {
     // A case's call_word names op 0, the first pair word, or op 1, the
     // first slot's lane.
     let irops: ir.Op[] = [ir.op_call_pair_word(0), ir.op_call_scalar_word(0), ir.op_ret_pair_word(0), ir.op_ret_scalar_word(0)];
-    let r: rccertify.Report = rccertify.certify(c.f, irops, abis.lookup("case"), abis, rcsigs.table(), rcsigs.op_table());
+    // On wasm a view in the frame is a copy on the heap, which holds a unit.
+    let ops: rcsigs.OpTable = rcsigs.op_table();
+    if (av[1] == "wasm-frame-view-kept" || av[1] == "wasm-frame-view-released") {
+        ops = rcsigs.with_owned_frame_views(ops);
+    }
+    let r: rccertify.Report = rccertify.certify(c.f, irops, abis.lookup("case"), abis, rcsigs.table(), ops);
     for x in r.findings {
         print(rccertify.render("case", x));
     }
@@ -632,6 +646,9 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"unit-held-into-an-exit", nil, 0, ""},
 		{"borrow-released-before-an-exit", []string{"spent without a unit of v0"}, 0, ""},
 		{"leak-in-an-endless-loop", []string{"leaked where it dies of v0"}, 0, ""},
+		{"frame-view-kept", nil, 0, ""},
+		{"wasm-frame-view-kept", []string{"leaked at return of v1"}, 0, ""},
+		{"wasm-frame-view-released", nil, 0, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

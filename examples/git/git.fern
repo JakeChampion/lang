@@ -1,0 +1,332 @@
+// git — a subset of the plumbing commands of git, on the object store of a
+// real repository.
+//
+//   $ git hash-object [-w] [-t KIND] [--stdin] [FILE...]
+//   $ git cat-file (-t | -s | -p | -e) NAME
+//   $ git cat-file (--batch | --batch-check)       # names on the standard input
+//   $ git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...
+//
+// This slice reads and writes loose objects. An object in a packfile is not
+// found yet.
+import "std/array";
+import "std/errno";
+import "std/io";
+import "std/string";
+import "./objects";
+import "./refs";
+
+const USAGE: string = "usage: git hash-object [-w] [-t KIND] [--stdin] [FILE...]\n   or: git cat-file (-t | -s | -p | -e) NAME\n   or: git cat-file (--batch | --batch-check)\n   or: git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...";
+
+function fatal(message: string): i32 {
+  eprint("fatal: " + message);
+  return 128;
+}
+
+// The text of the C library for the error, as git writes it.
+function why(e: IoError): string {
+  let n = errno.of(e);
+  if (n == errno.ENOENT) {
+    return "No such file or directory";
+  }
+  if (n == errno.EACCES) {
+    return "Permission denied";
+  }
+  if (n == errno.EISDIR) {
+    return "Is a directory";
+  }
+  return e.message();
+}
+
+function usage(): i32 {
+  eprint(USAGE);
+  return 129;
+}
+
+function put(bytes: u8[]): void {
+  let _ = stdout().write_bytes(bytes);
+}
+
+function put_line(text: string): void {
+  put((text + "\n").bytes());
+}
+
+// The repository, or the exit status after its message.
+function repo_or_fail(): (refs.Repo[], i32) {
+  return match (refs.find()) {
+    Ok(r) => ([r], 0),
+    Err(message) => {
+      eprint(message);
+      ([], 128)
+    },
+  };
+}
+
+// ---- hash-object ----
+
+struct HashArgs { write: boolean, stdin: boolean, kind: string, files: string[], bad: string }
+
+function hash_args(argv: string[]): HashArgs {
+  let a = HashArgs { write: false, stdin: false, kind: "blob", files: [], bad: "" };
+  let i = 0;
+  let flags = true;
+  while (i < argv.len()) {
+    let x = argv[i];
+    if (flags && x == "--") {
+      flags = false;
+    } else if (flags && x == "-w") {
+      a = HashArgs { ...a, write: true };
+    } else if (flags && x == "--stdin") {
+      a = HashArgs { ...a, stdin: true };
+    } else if (flags && x == "-t" && i + 1 < argv.len()) {
+      a = HashArgs { ...a, kind: argv[i + 1] };
+      i += 1;
+    } else if (flags && x.starts_with("-") && x.len() > 1) {
+      return HashArgs { ...a, bad: x };
+    } else {
+      a = HashArgs { ...a, files: a.files.append(x) };
+    }
+    i += 1;
+  }
+  return a;
+}
+
+// Prints the name of the object with `body`, and writes it when `-w` is set.
+function hash_one(a: HashArgs, body: u8[]): i32 {
+  if (!a.write) {
+    put_line(objects.hash_of(a.kind, body));
+    return 0;
+  }
+  let (repo, status) = repo_or_fail();
+  if (status != 0) {
+    return status;
+  }
+  return match (objects.write_loose(repo[0].objects(), a.kind, body)) {
+    Ok(name) => {
+      put_line(name);
+      0
+    },
+    Err(message) => fatal(message),
+  };
+}
+
+function hash_object(argv: string[]): i32 {
+  let a = hash_args(argv);
+  if (a.bad.len() > 0) {
+    return usage();
+  }
+  if (!objects.is_kind(a.kind)) {
+    return fatal("invalid object type \"" + a.kind + "\"");
+  }
+  // git checks the form of a commit, a tree and a tag before it writes one.
+  // The port does not have that check, so it writes blobs only.
+  if (a.write && a.kind != "blob") {
+    return fatal("this port writes blobs only: it does not check the form of a " + a.kind);
+  }
+  if (a.stdin) {
+    let body = match (io.read_all_stdin_bytes()) {
+      Ok(bytes) => bytes,
+      Err(e) => {
+        return fatal("unable to read the standard input: " + e.message());
+      },
+    };
+    let status = hash_one(a, body);
+    if (status != 0) {
+      return status;
+    }
+  }
+  for file in a.files {
+    let body = match (read_file_bytes(file)) {
+      Ok(bytes) => bytes,
+      Err(e) => {
+        return fatal("could not open '" + shown_path(file) + "' for reading: " + why(e));
+      },
+    };
+    let status = hash_one(a, body);
+    if (status != 0) {
+      return status;
+    }
+  }
+  return 0;
+}
+
+// The path as git names it in a message: from the top of the worktree.
+function shown_path(file: string): string {
+  if (file.starts_with("/")) {
+    return file;
+  }
+  return match (refs.find()) {
+    Ok(r) => r.prefix + file,
+    Err(_) => file,
+  };
+}
+
+// ---- cat-file ----
+
+// The text of `cat-file -p`: the lines of a tree, or the body of each other
+// kind.
+function pretty(o: objects.Object): Result[u8[], string] {
+  if (o.kind == "tree") {
+    return objects.tree_text(o.body);
+  }
+  return Ok(o.body);
+}
+
+function cat_one(r: refs.Repo, mode: string, name: string): i32 {
+  let hash = refs.resolve(r, name);
+  if (hash.len() == 0) {
+    return fatal("Not a valid object name " + name);
+  }
+  let o = match (objects.read_loose(r.objects(), hash)) {
+    Ok(found) => found,
+    Err(message) => {
+      if (mode == "-e") {
+        return 1;
+      }
+      if (message != "missing") {
+        return fatal(message);
+      }
+      if (mode == "-p") {
+        return fatal("Not a valid object name " + name);
+      }
+      return fatal("git cat-file: could not get object info");
+    },
+  };
+  if (mode == "-t") {
+    put_line(o.kind);
+  } else if (mode == "-s") {
+    put_line(o.body.len().to_string());
+  } else if (mode == "-p") {
+    match (pretty(o)) {
+      Ok(text) => {
+        put(text);
+      },
+      Err(message) => {
+        return fatal(message);
+      }
+    }
+  }
+  return 0;
+}
+
+// `--batch` and `--batch-check`: one name for each line of the standard
+// input.
+function cat_batch(r: refs.Repo, contents: boolean): i32 {
+  let input = match (io.read_all_stdin()) {
+    Ok(text) => text,
+    Err(e) => {
+      return fatal("unable to read the standard input: " + e.message());
+    },
+  };
+  let lines = input.split("\n");
+  let count = if (input.ends_with("\n") || input.len() == 0) { lines.len() - 1 } else { lines.len() };
+  for i in 0..count {
+    let name = lines[i];
+    let hash = refs.resolve(r, name);
+    let found = if (hash.len() == 0) { Err("missing") } else { objects.read_loose(r.objects(), hash) };
+    match (found) {
+      Ok(o) => {
+        put_line(hash + " " + o.kind + " " + o.body.len().to_string());
+        if (contents) {
+          put(o.body);
+          put("\n".bytes());
+        }
+      },
+      Err(_) => {
+        put_line(name + " missing");
+      }
+    }
+  }
+  return 0;
+}
+
+function cat_file(argv: string[]): i32 {
+  if (argv.len() == 0) {
+    return usage();
+  }
+  let mode = argv[0];
+  let batch = mode == "--batch" || mode == "--batch-check";
+  let single = mode == "-t" || mode == "-s" || mode == "-p" || mode == "-e";
+  if (!(batch && argv.len() == 1) && !(single && argv.len() == 2)) {
+    return usage();
+  }
+  let (repo, status) = repo_or_fail();
+  if (status != 0) {
+    return status;
+  }
+  if (batch) {
+    return cat_batch(repo[0], mode == "--batch");
+  }
+  return cat_one(repo[0], mode, argv[1]);
+}
+
+// ---- rev-parse ----
+
+const AMBIGUOUS: string = "': unknown revision or path not in the working tree.\nUse '--' to separate paths from revisions, like this:\n'git <command> [<revision>...] -- [<file>...]'";
+
+// The digits after `--short=`, or 7. A number below 4 is 4, as in git.
+function short_length(flag: string): i32 {
+  if (!flag.starts_with("--short=")) {
+    return 7;
+  }
+  let n = 0;
+  for i in 8..flag.len() {
+    if (flag[i] < b'0' || flag[i] > b'9') {
+      return 7;
+    }
+    n = n * 10 + (flag[i] - b'0') as i32;
+  }
+  if (n < 4) {
+    return 4;
+  }
+  if (n > 40) {
+    return 40;
+  }
+  return n;
+}
+
+function rev_parse(argv: string[]): i32 {
+  let (repo, status) = repo_or_fail();
+  if (status != 0) {
+    return status;
+  }
+  let r = repo[0];
+  let verify = false;
+  let short = 0;
+  for x in argv {
+    if (x == "--verify") {
+      verify = true;
+    } else if (x == "--short" || x.starts_with("--short=")) {
+      short = short_length(x);
+    } else if (x == "--git-dir") {
+      put_line(r.shown);
+    } else {
+      let hash = refs.resolve(r, x);
+      if (hash.len() == 0 && verify) {
+        return fatal("Needed a single revision");
+      }
+      if (hash.len() == 0) {
+        put_line(x);
+        return fatal("ambiguous argument '" + x + AMBIGUOUS);
+      }
+      put_line(if (short > 0) { refs.short_of(r, hash, short) } else { hash });
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() < 2) {
+    return usage();
+  }
+  let rest = array.slice(argv, 2, argv.len());
+  return match (argv[1]) {
+    "hash-object" => hash_object(rest),
+    "cat-file" => cat_file(rest),
+    "rev-parse" => rev_parse(rest),
+    _ => {
+      eprint("git: '" + argv[1] + "' is not a command of this port.");
+      1
+    },
+  };
+}
