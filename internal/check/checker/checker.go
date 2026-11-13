@@ -66,9 +66,9 @@ type Info struct {
 	CallOwnedResult func(*ast.Call) bool
 	// DeclaredMethod reports a method with a body in this program.
 	DeclaredMethod func(*ast.Call) bool
-	// CallSignatureBorrows reports a signature with a borrowed handle-bearing parameter.
-	CallSignatureBorrows func(*ast.Call) bool
-	TypeHoldsNoHandle    func(ast.Type) bool
+	// CallScopedFresh checks each input that can lend in a compound result.
+	CallScopedFresh   func(*ast.Call) bool
+	TypeHoldsNoHandle func(ast.Type) bool
 	// CallBorrowsBeside reports a plain call whose result can borrow from
 	// an argument other than the plain name given.
 	CallBorrowsBeside func(*ast.Call, string) bool
@@ -3100,12 +3100,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		return ok && call.Method != nil && c.resultAnalysed[id.Name]
 	}
 	c.info.TypeHoldsNoHandle = c.holdsNoHandle
-	c.info.CallSignatureBorrows = func(call *ast.Call) bool {
-		if id, ok := call.Callee.(*ast.Ident); ok {
-			return c.signatureResultBorrows(id.Name)
-		}
-		return true
-	}
+	c.info.CallScopedFresh = c.scopedCallFresh
 	c.info.CallBorrowsBeside = c.callSiteBorrowsBeside
 	c.info.NoReturn = NoReturnFuncs(prog)
 

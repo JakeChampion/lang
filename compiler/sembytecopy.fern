@@ -193,7 +193,7 @@ function header(f: ssasem.Func, ix: Index, h: ssa.SBlock): Loop {
     return no;
   }
   let phis = header_phis(f, h, chain.values);
-  if (!phis.ok || !literal(ix, phis.counter.args[outer], 0)) {
+  if (!phis.ok || !invariant(ix, phis.counter.args[outer], shape)) {
     return no;
   }
   let array = phis.array;
@@ -313,6 +313,9 @@ function body_loop(f: ssasem.Func, ix: Index, l: Loop): Loop {
 function back_loop(f: ssasem.Func, ix: Index, l: Loop, update: ssa.SInst): Loop {
   let no = no_loop();
   let read = ix.defs[update.args[1]];
+  if (!literal(ix, l.counter.args[l.outer], 0)) {
+    return no;
+  }
   if (!own_read(read, l)) {
     return no;
   }
@@ -402,7 +405,7 @@ pub function rewrite(f: ssasem.Func, contracts: ssasem.Contract[]): Rewritten {
       l = body_loop(out, ix, l);
     }
     if (l.ok) {
-      out = replace(out, l, contracts);
+      out = replace(out, ix, l, contracts);
       changed = true;
       ix = index(out);
     }
@@ -458,15 +461,69 @@ function or_start(v: i32, zero: i32): i32 {
   return v;
 }
 
-function replace(f: ssasem.Func, l: Loop, contracts: ssasem.Contract[]): ssasem.Func {
+// A start other than 0 copies max(end - start, 0) bytes from start + offset.
+// The difference is computed in 64 bits. A count past the largest i32 is
+// longer than any array, so it becomes that i32 and the helper aborts as the
+// loop does.
+struct Span { insts: ssa.SInst[], types: typeinfo.Type[], count: i32, from: i32, at: i32 }
+
+function wide(): typeinfo.Type {
+  return typeinfo.TypeI32 { is_char: false, width: 64, unsigned: false, polymorphic: false };
+}
+
+function emit(sp: Span, kind: i32, args: i32[], text: string, t: typeinfo.Type, next: i32): Span {
+  let ins = ssa.SInst { kind_tag: kind, result: next + sp.insts.len(), args: args, imm: 0, str: text };
+  return Span { ...sp, insts: sp.insts.append(ins), types: sp.types.append(t) };
+}
+
+function last(sp: Span): i32 {
+  return sp.insts[sp.insts.len() - 1].result;
+}
+
+function span(ix: Index, l: Loop, narrow: typeinfo.Type, next: i32): Span {
+  let start = l.counter.args[l.outer];
+  let sp = Span { insts: [], types: [], count: l.count, from: or_start(l.from, start), at: or_start(l.at, start) };
+  if (literal(ix, start, 0)) {
+    return sp;
+  }
+  let w = wide();
+  sp = emit(sp, ssasem.cast(), [start], "", w, next);
+  sp = emit(sp, ssasem.cast(), [l.count], "", w, next);
+  sp = emit(sp, ssa.BINARY, [next + 1, next], "-", w, next);
+  sp = emit(sp, ssa.CONST_INT, [], "63", w, next);
+  sp = emit(sp, ssa.BINARY, [next + 2, next + 3], ">>", w, next);
+  sp = emit(sp, ssa.BINARY, [next + 2, next + 4], "&", w, next);
+  sp = emit(sp, ssa.BINARY, [next + 2, next + 5], "-", w, next);
+  sp = emit(sp, ssa.CONST_INT, [], "2147483647", w, next);
+  sp = emit(sp, ssa.BINARY, [next + 6, next + 7], "-", w, next);
+  sp = emit(sp, ssa.BINARY, [next + 8, next + 3], ">>", w, next);
+  sp = emit(sp, ssa.BINARY, [next + 8, next + 9], "&", w, next);
+  sp = emit(sp, ssa.BINARY, [next + 7, next + 10], "+", w, next);
+  sp = emit(sp, ssasem.cast(), [next + 11], "", narrow, next);
+  sp = Span { ...sp, count: last(sp) };
+  if (l.from >= 0) {
+    sp = emit(sp, ssa.BINARY, [start, l.from], "+", narrow, next);
+    sp = Span { ...sp, from: last(sp) };
+  }
+  if (l.at >= 0) {
+    sp = emit(sp, ssa.BINARY, [start, l.at], "+", narrow, next);
+    sp = Span { ...sp, at: last(sp) };
+  }
+  return sp;
+}
+
+function replace(f: ssasem.Func, ix: Index, l: Loop, contracts: ssasem.Contract[]): ssasem.Func {
   let fresh = f.values.len();
   let values = f.values.append(f.values[l.counter.result]);
   let distance: ssa.SInst[] = [];
   let zero = l.counter.args[l.outer];
-  let from = or_start(l.from, zero);
-  let at = or_start(l.at, zero);
   let receiver = l.array.args[l.outer];
-  let args = [receiver, l.src, from, l.count];
+  let sp = span(ix, l, f.values[l.counter.result], values.len());
+  values = util.append_all(values, sp.types);
+  distance = sp.insts;
+  let from = sp.from;
+  let at = sp.at;
+  let args = [receiver, l.src, from, sp.count];
   let ci = 0;
   if (l.back) {
     distance = rebased_distance(l, receiver, values.len());
@@ -480,7 +537,7 @@ function replace(f: ssasem.Func, l: Loop, contracts: ssasem.Contract[]): ssasem.
     args = [receiver, dist, l.count];
     ci = 2;
   } else if (l.update.kind_tag == ssasem.with()) {
-    args = [receiver, at, l.src, from, l.count];
+    args = [receiver, at, l.src, from, sp.count];
     ci = 1;
   }
   let call = ssa.SInst { ...l.update, result: l.array.result, kind_tag: ssasem.call(), args: args, str: contracts[ci].name, imm: 0 };
