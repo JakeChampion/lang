@@ -165,6 +165,22 @@ Other extensions and nonzero profile spaces return `Unsupported`.
 Profile constraint bits remain opaque. The reader does not resolve VPS references or validate pictures, level constraints, or decoder support.
 The native pixel-decode table remains unchanged.
 
+`std/video/avc/input` groups ordinary progressive Annex B input into access units.
+It reuses the bounded NAL reader and the native SPS and PPS validators.
+Picture identity includes frame numbers, parameter identifiers, reference status, IDR identifiers, and picture-order fields.
+Multiple slices remain in one access unit. Prefix metadata belongs to the following picture.
+
+Each step performs at most one bounded source read and emits at most one event.
+Limits bound encoded access-unit bytes, units per access unit, packet count, and the underlying NAL input.
+The stream retains at most 32 sequence records, 256 picture records, and one pending NAL.
+Slice inspection copies at most 64 unescaped bytes, without a complete slice-payload copy.
+Returned packets contain canonical four-byte Annex B prefixes and an IDR flag, without assigned timestamps.
+
+The supported path requires matching parameter sets before each slice.
+Interlaced pictures, separate color planes, slice groups, redundant pictures, and partitioned or extended slices return `Unsupported`.
+Entropy data, complete slice coverage, recovery-point SEI interpretation, and native pixel decode remain outside this reader.
+The caller retains and closes the source. Blocking I/O must run outside the Android loop callback.
+
 `std/video/hevc/pps` inspects one base-layer PPS with its matching complete SPS NAL.
 It reports prediction, quantizer, tile, filter, scaling, and range-extension metadata through exact trailing bits.
 The reader reuses the SPS syntax and checks its sequence identifier, coding-block geometry, and precision bounds.
