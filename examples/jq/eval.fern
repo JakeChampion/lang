@@ -2004,6 +2004,10 @@ function call_number(name: string, args: filter.Ast[], input: json.JsonValue, e:
     "fabs" => math_of(name, input),
     "sqrt" => math_of(name, input),
     "log" => math_of(name, input),
+    "log2" => math_of(name, input),
+    "log10" => math_of(name, input),
+    "exp2" => math_of(name, input),
+    "exp10" => math_of(name, input),
     _ => of_type(name, input),
   };
 }
@@ -2043,7 +2047,11 @@ function math_of(name: string, v: json.JsonValue): Outputs {
     "trunc" => x.trunc(),
     "fabs" => x.abs(),
     "sqrt" => x.sqrt(),
-    _ => x.log(),
+    "log" => x.log(),
+    "log2" => x.log2(),
+    "log10" => x.log10(),
+    "exp2" => x.exp2(),
+    _ => x.exp10(),
   }));
 }
 

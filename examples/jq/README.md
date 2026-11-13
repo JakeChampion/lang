@@ -43,8 +43,9 @@ The port has these functions:
 - The search functions `contains`, `index`, `indices`, `inside` and `rindex`.
 - The selectors `arrays`, `booleans`, `iterables`, `nulls`, `numbers`,
   `objects`, `scalars`, `select`, `strings` and `values`.
-- The number functions `ceil`, `fabs`, `floor`, `infinite`, `isinfinite`,
-  `isnan`, `isnormal`, `log`, `nan`, `pow`, `round`, `sqrt` and `trunc`.
+- The number functions `ceil`, `exp10`, `exp2`, `fabs`, `floor`, `infinite`,
+  `isinfinite`, `isnan`, `isnormal`, `log`, `log10`, `log2`, `nan`, `pow`,
+  `round`, `sqrt` and `trunc`.
 - The functions `isempty`, `not`, `tojson`, `tostring` and `type`.
 
 The command line has these parts:
@@ -80,14 +81,17 @@ compares a literal with a computed number as two f64 values. The port
 compares them as decimals, so the two can differ when the literal has more
 than 17 significant digits.
 
+A math function with no exact result can differ from jq in its last digit.
+jq takes these results from the C library, and they differ from one C library
+to the next. The exact results are the same: `exp10` of 2 is 100.
+
 ## What it does not have yet
 
 - The assignment operators.
 - String interpolation, and formats such as `@base64`.
 - Destructuring patterns in a binding, and `?//`.
 - `label` and `def`.
-- Each function that is not in the lists above. `exp`, `exp2`, `exp10`,
-  `log2` and `log10` wait for #15661.
+- Each function that is not in the lists above. `exp` waits for #15661.
 
 A program that uses one of them stops with exit 3 and a message that ends in
 "is not in this port yet". The next slices of #15585 add them.
@@ -99,7 +103,7 @@ A program that uses one of them stops with exit 3 and a message that ends in
 - `tests/jq.test` is the test suite of jq 1.7 (see
   `licenses/jq/NOTICE.txt`). `TestSelfHostExampleJqSuite` runs each case
   whose program the port has and compares the outputs as JSON values, as
-  jq does. 254 cases pass, and each of the others is in a part of the language
+  jq does. 256 cases pass, and each of the others is in a part of the language
   that the port does not have yet.
 - `TestSelfHostExampleJqAgainstJq` runs the command line and the `jq` binary
   on the same arguments and input, and compares their stdout, stderr and exit
