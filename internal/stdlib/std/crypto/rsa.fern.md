@@ -1,14 +1,14 @@
-# RSA signature verification
+# RSA signatures and encryption
 
-This module validates RSA signatures under RFC 8017.
+This module verifies RSA signatures and encrypts with RSA-OAEP under RFC 8017.
 
 ## Model
 
-A public key stores the modulus, exponent, and encoded size. Construction validates these integer inputs before signature verification.
+A public key stores the modulus, exponent, and encoded size. Construction validates these integer inputs before signature verification. A private key adds the private exponent and the Montgomery form of the modulus.
 
 ## Contracts
 
-PKCS#1 v1.5 and PSS are separate verification methods on the public key. Both use an explicit SHA-2 selector and return false for an invalid signature.
+PKCS#1 v1.5 and PSS are separate verification methods on the public key. Both use an explicit SHA-2 selector and return false for an invalid signature. OAEP encryption takes its seed from the caller. OAEP decryption does not branch or index on a secret value, and all of its failures give one error.
 
 ## Module assembly
 
@@ -41,13 +41,19 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<12 function __mgf1(hash: sha2.Hash, seed: [u8], len: i32): u8[]>>
 
 <<13 pub function (key: PublicKey) verify_pss(hash: sha2.Hash, msg: [u8], sig: [u8]): boolean>>
+
+<<14 pub struct PrivateKey>>
+
+<<15 constant-time exponentiation>>
+
+<<16 OAEP>>
 ```
 
 ### `module introduction`
 
 ```fern
 <<module introduction>>=
-// This module validates RSA signatures under RFC 8017.
+// This module verifies RSA signatures and encrypts with RSA-OAEP under RFC 8017.
 ```
 
 ### `dependencies 2`
@@ -56,6 +62,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<dependencies 2>>=
 import "std/bigint";
 import "std/crypto/sha2";
+import "std/crypto/montgomery";
+import "std/hex";
 import "core/error";
 import "core/cmp";
 ```
@@ -69,6 +77,11 @@ pub enum RsaError {
   ModulusTooLarge(i32),
   EvenModulus,
   BadExponent,
+  InvalidPrime,
+  InvalidModulus,
+  InvalidExponents,
+  MessageTooLong,
+  Decryption,
 }
 ```
 
@@ -107,6 +120,21 @@ pub function (e: RsaError) message(): string {
     },
     BadExponent => {
       return "rsa: the exponent must be odd, at least 3 and at most 31 bits";
+    },
+    InvalidPrime => {
+      return "rsa: a prime of the private key is 1 or less";
+    },
+    InvalidModulus => {
+      return "rsa: the product of the primes is not the modulus";
+    },
+    InvalidExponents => {
+      return "rsa: d * e is not 1 modulo p - 1 and q - 1";
+    },
+    MessageTooLong => {
+      return "rsa: the message is too long for the key";
+    },
+    Decryption => {
+      return "rsa: decryption error";
     }
   }
   return "";
@@ -410,5 +438,210 @@ pub function (key: PublicKey) verify_pss(hash: sha2.Hash, msg: [u8], sig: [u8]):
     }
   }
   return false;
+}
+```
+
+### `14 pub struct PrivateKey`
+
+A private key keeps its public key, the Montgomery form of the modulus and the private exponent d. Construction checks the key as Go's `rsa.PrivateKey.Validate` does. The check uses `std/bigint`, which is not constant-time, so a caller marks the key secret after construction.
+
+```fern
+<<14 pub struct PrivateKey>>=
+pub struct PrivateKey { public: PublicKey, m: montgomery.Modulus, d: u8[] }
+
+function __one(): bigint.BigInt {
+  return bigint.from_u64(1 as u64);
+}
+
+// d * e is 1 modulo prime - 1.
+function __inverse_mod(d: bigint.BigInt, e: bigint.BigInt, prime: bigint.BigInt): boolean {
+  return d.mul(e).divmod(prime.sub(__one())).1.cmp(__one()) == 0;
+}
+
+// The private key of an RSA key pair with two primes.
+pub function private_key(modulus: [u8], exponent: [u8], d: [u8], p: [u8], q: [u8]): Result[PrivateKey, RsaError] {
+  let public = public_key(modulus, exponent)?;
+  let bp = __from_be(p);
+  let bq = __from_be(q);
+  if (bp.cmp(__one()) <= 0 || bq.cmp(__one()) <= 0) {
+    return Err(InvalidPrime);
+  }
+  if (bp.mul(bq).cmp(public.n) != 0) {
+    return Err(InvalidModulus);
+  }
+  let bd = __from_be(d);
+  if (!__inverse_mod(bd, public.e, bp) || !__inverse_mod(bd, public.e, bq)) {
+    return Err(InvalidExponents);
+  }
+  let m = montgomery.modulus(hex.encode(modulus), public.bytes);
+  return Ok(PrivateKey { public: public, m: m, d: __to_be(bd, public.bytes) });
+}
+
+pub function (k: PrivateKey) public_key(): PublicKey {
+  return k.public;
+}
+```
+
+### `15 constant-time exponentiation`
+
+The private exponent is secret. The exponentiation reads d four bits at a time from a table of 16 powers. It selects each table entry with a mask, so no branch and no index depends on d. The public exponent takes the plain square-and-multiply.
+
+```fern
+<<15 constant-time exponentiation>>=
+// 1 when a == b, else 0, with no branch.
+function __eq_mask(a: i64, b: i64): i64 {
+  return (a ^ b) - 1 as i64 >> 63 & 1 as i64;
+}
+
+function __pow_secret(m: montgomery.Modulus, base: [i64], d: [u8]): i64[] {
+  let table: i64[][] = [m.one];
+  let i = 1;
+  while (i < 16) {
+    table = table.append(montgomery.mul(m, table[i - 1], base));
+    i += 1;
+  }
+  let r = m.one;
+  for byte in d {
+    let shift = 4;
+    while (shift >= 0) {
+      r = montgomery.mul(m, r, r);
+      r = montgomery.mul(m, r, r);
+      r = montgomery.mul(m, r, r);
+      r = montgomery.mul(m, r, r);
+      let nibble = (byte >> shift as u8 & 15 as u8) as i64;
+      let pick = table[0];
+      let k = 1;
+      while (k < 16) {
+        pick = montgomery.select(pick, table[k], __eq_mask(k as i64, nibble));
+        k += 1;
+      }
+      r = montgomery.mul(m, r, pick);
+      shift -= 4;
+    }
+  }
+  return r;
+}
+
+function __pow_public(m: montgomery.Modulus, base: [i64], e: bigint.BigInt): i64[] {
+  let r = m.one;
+  let i = e.bit_length() - 1;
+  while (i >= 0) {
+    r = montgomery.mul(m, r, r);
+    if (e.bit(i)) {
+      r = montgomery.mul(m, r, base);
+    }
+    i -= 1;
+  }
+  return r;
+}
+```
+
+### `16 OAEP`
+
+RSAES-OAEP (RFC 8017 section 7.1) with MGF1 over the same digest. `encrypt_oaep` takes the seed from the caller, as the deterministic entry points of `std/crypto/mlkem768` do. The seed has the length of the digest. `decrypt_oaep` checks the padding with no branch on its bytes. Only the verdict and the start of the message become public.
+
+```fern
+<<16 OAEP>>=
+function __xor_into(own a: u8[], b: [u8]): u8[] {
+  let i = 0;
+  while (i < a.len()) {
+    a = a.with(i, a[i] ^ b[i]);
+    i += 1;
+  }
+  return a;
+}
+
+// RSAES-OAEP-ENCRYPT of msg under the label, with a seed of hash.size() bytes.
+pub function (key: PublicKey) encrypt_oaep(hash: sha2.Hash, seed: [u8], msg: [u8], label: [u8]): Result[u8[], RsaError] {
+  let k = key.bytes;
+  let h_len = hash.size();
+  if (msg.len() > k - 2 * h_len - 2 || seed.len() != h_len) {
+    return Err(MessageTooLong);
+  }
+  let db = __alloc_u8(k - h_len - 1);
+  let l_hash = hash.digest(label);
+  let i = 0;
+  while (i < h_len) {
+    db = db.with(i, l_hash[i]);
+    i += 1;
+  }
+  let at = db.len() - msg.len();
+  db = db.with(at - 1, 1 as u8);
+  i = 0;
+  while (i < msg.len()) {
+    db = db.with(at + i, msg[i]);
+    i += 1;
+  }
+  let masked_db = __xor_into(db, __mgf1(hash, seed, k - h_len - 1));
+  let masked_seed = __xor_into(__range(seed, 0, h_len), __mgf1(hash, masked_db, h_len));
+  let em = __alloc_u8(k);
+  i = 0;
+  while (i < h_len) {
+    em = em.with(1 + i, masked_seed[i]);
+    i += 1;
+  }
+  i = 0;
+  while (i < masked_db.len()) {
+    em = em.with(1 + h_len + i, masked_db[i]);
+    i += 1;
+  }
+  let m = montgomery.modulus(hex.encode(__to_be(key.n, k)), k);
+  let c = __pow_public(m, montgomery.from_bytes(m, em), key.e);
+  return Ok(montgomery.to_bytes(m, c));
+}
+
+// 1 when b is 0, else 0, with no branch.
+function __zero_mask(b: u8): i64 {
+  return b as i64 - 1 as i64 >> 63 & 1 as i64;
+}
+
+// The checks of EM after the decryption: the first byte is 0, the label
+// hash matches, and a 1 ends the zero padding. The result is the verdict
+// and the index of the message, and both are public.
+function __oaep_unpad(em: [u8], l_hash: [u8]): (boolean, i32) {
+  let h_len = l_hash.len();
+  let good = __zero_mask(em[0]);
+  let i = 0;
+  while (i < h_len) {
+    good &= __zero_mask(em[1 + h_len + i] ^ l_hash[i]);
+    i += 1;
+  }
+  let looking = 1 as i64;
+  let index = 0 as i64;
+  i = 1 + 2 * h_len;
+  while (i < em.len()) {
+    let zero = __zero_mask(em[i]);
+    let one = __zero_mask(em[i] ^ 1 as u8);
+    index |= 0 as i64 - (looking & one) & i as i64;
+    looking &= zero;
+    i += 1;
+  }
+  good &= 1 as i64 - looking;
+  let verdict = __alloc_u8(5).with(0, good as u8).with(1, (index & 255 as i64) as u8).with(2, (index >> 8 & 255 as i64) as u8).with(3, (index >> 16 & 255 as i64) as u8).with(4, (index >> 24 & 255 as i64) as u8);
+  __ct_public(verdict);
+  return (verdict[0] == 1 as u8, verdict[1] as i32 | verdict[2] as i32 << 8 | verdict[3] as i32 << 16 | verdict[4] as i32 << 24);
+}
+
+// RSAES-OAEP-DECRYPT of c under the label.
+pub function (key: PrivateKey) decrypt_oaep(hash: sha2.Hash, c: [u8], label: [u8]): Result[u8[], RsaError] {
+  let k = key.public.bytes;
+  let h_len = hash.size();
+  if (c.len() != k || k < 2 * h_len + 2 || __from_be(c).cmp(key.public.n) >= 0) {
+    return Err(Decryption);
+  }
+  let em = montgomery.to_bytes(key.m, __pow_secret(key.m, montgomery.from_bytes(key.m, c), key.d));
+  let seed = __xor_into(__range(em, 1, h_len), __mgf1(hash, __range(em, 1 + h_len, k - h_len - 1), h_len));
+  let db = __xor_into(__range(em, 1 + h_len, k - h_len - 1), __mgf1(hash, seed, k - h_len - 1));
+  let full = __alloc_u8(k).with(0, em[0]);
+  let i = 0;
+  while (i < db.len()) {
+    full = full.with(1 + h_len + i, db[i]);
+    i += 1;
+  }
+  let (good, index) = __oaep_unpad(full, hash.digest(label));
+  if (!good) {
+    return Err(Decryption);
+  }
+  return Ok(__range(full, index + 1, k - index - 1));
 }
 ```

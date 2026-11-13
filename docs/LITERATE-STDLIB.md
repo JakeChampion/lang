@@ -82,7 +82,7 @@ They are outside the public library inventory below.
 | `std/crypto/mlkem768` | [ML-KEM-768 key encapsulation](../internal/stdlib/std/crypto/mlkem768.fern.md) |
 | `std/crypto/montgomery` | [Montgomery modular arithmetic](../internal/stdlib/std/crypto/montgomery.fern.md) |
 | `std/crypto/p256` | [NIST P-256 arithmetic](../internal/stdlib/std/crypto/p256.fern.md) |
-| `std/crypto/rsa` | [RSA signature verification](../internal/stdlib/std/crypto/rsa.fern.md) |
+| `std/crypto/rsa` | [RSA signatures and encryption](../internal/stdlib/std/crypto/rsa.fern.md) |
 | `std/crypto/scrypt` | [scrypt key derivation](../internal/stdlib/std/crypto/scrypt.fern.md) |
 | `std/crypto/sha2` | [SHA-2 selection for signatures](../internal/stdlib/std/crypto/sha2.fern.md) |
 | `std/crypto/x25519` | [X25519 key agreement](../internal/stdlib/std/crypto/x25519.fern.md) |
