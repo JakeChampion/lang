@@ -23,7 +23,7 @@ function options(args: string[]): string {
       if (o.test) {
         flags += "t";
       }
-      return flags + " " + o.level.to_string() + " [" + o.files.join(",") + "]";
+      return flags + " " + o.level.to_string() + " p" + o.processes.to_string() + " [" + o.files.join(",") + "]";
     },
     gz.Abort(why) => {
       return "abort: " + why;
@@ -42,17 +42,22 @@ function test_parse(): test.TestOutcome {
     options(["-", "--", "-c"]),
   ];
   return test.assert_eq_array(got, [
-    " 6 []",
-    "dc 6 [a.gz]",
-    "k 9 [a,b]",
-    "dcfkt 6 [x]",
-    " 3 []",
-    " 6 [-,-c]",
+    " 6 p0 []",
+    "dc 6 p0 [a.gz]",
+    "k 9 p0 [a,b]",
+    "dcfkt 6 p0 [x]",
+    " 3 p0 []",
+    " 6 p0 [-,-c]",
   ]);
 }
 
+function test_parse_processes(): test.TestOutcome {
+  let got = [options(["-p", "4", "a"]), options(["-p2"]), options(["-kp", "3", "a"]), options(["--processes", "8"])];
+  return test.assert_eq_array(got, [" 6 p4 [a]", " 6 p2 []", "k 6 p3 [a]", " 6 p8 []"]);
+}
+
 function test_parse_refusals(): test.TestOutcome {
-  let got = [options(["-x"]), options(["-dx"]), options(["--bogus"]), options(["-0"]), options(["-10"]), options(["-11"])];
+  let got = [options(["-x"]), options(["-dx"]), options(["--bogus"]), options(["-0"]), options(["-10"]), options(["-11"]), options(["-p", "0"]), options(["-p", "x"]), options(["-c", "-p"]), options(["--processes=2"])];
   return test.assert_eq_array(got, [
     "abort: invalid option: -x",
     "abort: invalid option: -x",
@@ -60,6 +65,10 @@ function test_parse_refusals(): test.TestOutcome {
     "abort: only levels 1..9 are allowed",
     "abort: only levels 1..9 are allowed",
     "abort: only levels 1..9 are allowed",
+    "abort: invalid number of processes: 0",
+    "abort: invalid numeric parameter: x",
+    "abort: missing parameter after -p",
+    "abort: invalid option: --processes=2",
   ]);
 }
 
@@ -77,8 +86,8 @@ function test_names(): test.TestOutcome {
 }
 
 function test_header(): test.TestOutcome {
-  let named = gz.compress("hi\n".bytes(), 9, "a", 1700000000u32);
-  let plain = gz.compress("hi\n".bytes(), 1, "", 0u32);
+  let named = gz.compress("hi\n".bytes(), 9, "a", 1700000000u32, 1);
+  let plain = gz.compress("hi\n".bytes(), 1, "", 0u32, 1);
   return test.assert_eq(hex.encode(named[0:12]) + " " + hex.encode(plain[0:10]), "1f8b080800f1536502036100 1f8b0800000000000403");
 }
 
@@ -95,15 +104,15 @@ function round(data: u8[]): string {
 }
 
 function test_members(): test.TestOutcome {
-  let one = gz.compress("hi\n".bytes(), 6, "a", 0u32);
-  let two = one.concat(gz.compress("yo\n".bytes(), 1, "", 0u32));
+  let one = gz.compress("hi\n".bytes(), 6, "a", 0u32, 1);
+  let two = one.concat(gz.compress("yo\n".bytes(), 1, "", 0u32, 1));
   let garbage = one.concat("garbage\n".bytes());
   let none: u8[] = [];
   return test.assert_eq_array([round(one), round(two), round(garbage), round(none)], ["ok 68690a", "ok 68690a796f0a", "ok 68690a", "error unrecognized format"]);
 }
 
 function test_refusals(): test.TestOutcome {
-  let good = gz.compress("the quick brown fox jumps over the lazy dog\n".repeat(20).bytes(), 6, "", 0u32);
+  let good = gz.compress("the quick brown fox jumps over the lazy dog\n".repeat(20).bytes(), 6, "", 0u32, 1);
   let n = good.len();
   let crc = good.with(n - 8, good[n - 8] ^ 1 as u8);
   let length = good.with(n - 4, good[n - 4] ^ 1 as u8);
@@ -120,10 +129,34 @@ function test_refusals(): test.TestOutcome {
   ]);
 }
 
+// More than three blocks of lines that repeat across the block boundaries.
+function large(): u8[] {
+  let out: u8[] = [];
+  let i = 0;
+  while (out.len() < 400000) {
+    out = out.concat(("line " + (i * 7 % 5003).to_string() + " of the large input\n").bytes());
+    i += 1;
+  }
+  return out;
+}
+
+function test_parallel(): test.TestOutcome {
+  let input = large();
+  let one = gz.compress(input, 6, "", 0u32, 1);
+  let two = gz.compress(input, 6, "", 0u32, 2);
+  let four = gz.compress(input, 6, "", 0u32, 4);
+  let fast = gz.compress(input, 1, "", 0u32, 3);
+  let same = hex.encode(two) == hex.encode(four);
+  let back = round(two) == round(one) && round(fast) == round(one) && round(one).starts_with("ok ");
+  return test.assert_eq(same.to_string() + " " + back.to_string(), "true true");
+}
+
 function main(): i32 {
   let r = test.new("pigz");
   r = r.it("options and file names in any order", test_parse);
-  r = r.it("an invalid option or level aborts", test_parse_refusals);
+  r = r.it("the count of processes", test_parse_processes);
+  r = r.it("an invalid option, level or count aborts", test_parse_refusals);
+  r = r.it("the blocks of the workers join into one stream", test_parallel);
   r = r.it("the names of the output files", test_names);
   r = r.it("the header keeps the name, the time and the level", test_header);
   r = r.it("each member decodes, and bytes after the last are ignored", test_members);
