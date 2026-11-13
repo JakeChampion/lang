@@ -46,8 +46,8 @@ func TestSelfHostELFSymtab(t *testing.T) {
 	}
 
 	le16 := func(off int) uint64 { return uint64(raw[off]) | uint64(raw[off+1])<<8 }
-	// The code follows the header block at the next 16-byte boundary.
-	textVA := 0x400000 + (le16(52)+le16(56)*le16(54)+15)&^15
+	// The code follows the header block at the next 64-byte boundary.
+	textVA := 0x400000 + (le16(52)+le16(56)*le16(54)+63)&^63
 	nmOut, err := exec.Command("nm", img).Output()
 	if err != nil {
 		t.Fatalf("nm on the emitted image: %v", err)

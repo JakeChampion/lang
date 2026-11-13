@@ -2344,12 +2344,12 @@ function x86_poly_vcarry(): string {
 }
 
 function emit_rt_poly1305(s: asmcore.EmitState): asmcore.EmitState {
-  return s.write("    .section .rodata\n    .align 16\n.Lpb_consts:\n    .quad 67108863,67108863,67108863,67108863\n    .quad 16777216,16777216,16777216,16777216\n"
+  return s.write("    .section .rodata\n    .align 32\n.Lpb_consts:\n    .quad 67108863,67108863,67108863,67108863\n    .quad 16777216,16777216,16777216,16777216\n"
     + "    .quad 1152921487695413247,1152921487695413244\n    .section .text\n" + x86_poly1305_blocks());
 }
 
 function emit_rt_chacha20(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("    .section .rodata\n    .align 16\n.Lcc_consts:\n    .byte 2,3,0,1,6,7,4,5,10,11,8,9,14,15,12,13,2,3,0,1,6,7,4,5,10,11,8,9,14,15,12,13\n"
+  s = s.write("    .section .rodata\n    .align 32\n.Lcc_consts:\n    .byte 2,3,0,1,6,7,4,5,10,11,8,9,14,15,12,13,2,3,0,1,6,7,4,5,10,11,8,9,14,15,12,13\n"
     + "    .byte 3,0,1,2,7,4,5,6,11,8,9,10,15,12,13,14,3,0,1,2,7,4,5,6,11,8,9,10,15,12,13,14\n    .long 0,1,2,3,4,5,6,7\n    .long 8,8,8,8,8,8,8,8\n");
   for k in ["1634760805", "857760878", "2036477234", "1797285236"] {
     s = s.write("    .long " + k + "," + k + "," + k + "," + k + "," + k + "," + k + "," + k + "," + k + "\n");
@@ -2358,7 +2358,7 @@ function emit_rt_chacha20(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function emit_rt_sha1x8(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("    .section .rodata\n    .align 16\n.Lsx8_consts:\n    .byte 3,2,1,0,7,6,5,4,11,10,9,8,15,14,13,12,3,2,1,0,7,6,5,4,11,10,9,8,15,14,13,12\n");
+  s = s.write("    .section .rodata\n    .align 32\n.Lsx8_consts:\n    .byte 3,2,1,0,7,6,5,4,11,10,9,8,15,14,13,12,3,2,1,0,7,6,5,4,11,10,9,8,15,14,13,12\n");
   for k in ["1518500249", "1859775393", "2400959708", "3395469782"] {
     s = s.write("    .long " + k + "," + k + "," + k + "," + k + "," + k + "," + k + "," + k + "," + k + "\n");
   }
