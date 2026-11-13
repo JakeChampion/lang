@@ -1,21 +1,22 @@
 name: port-oracles
 description: >
   Install the reference programs that the differential tests of the ports
-  compare with: ripgrep 14.1.0 for examples/rg, cmark 0.30.2 for
-  examples/markdown and age 1.1.1 for examples/age, from the Ubuntu 24.04
-  archive. The step fails when apt
-  gives a different release, because each test pins its release.
+  compare with: ripgrep 14.1.0 for examples/rg and cmark 0.30.2 for
+  examples/markdown from the Ubuntu 24.04 archive, and age 1.3.2 for
+  examples/age from the release archive of age. The step fails when apt
+  gives a different release, or when the age archive has a different
+  SHA-256, because each test pins its release.
 runs:
   using: composite
   steps:
     - uses: ./.github/actions/disable-chrome-apt
-    - name: Install ripgrep, cmark and age
+    - name: Install ripgrep and cmark
       shell: bash
       # timeout runs under sudo, so the signal stops apt, not the sudo wrapper.
       run: |
         set -euo pipefail
         for try in 1 2 3; do
-          if sudo timeout 120 apt-get update -qq && sudo timeout 120 apt-get install -y -qq --no-install-recommends ripgrep cmark age; then
+          if sudo timeout 120 apt-get update -qq && sudo timeout 120 apt-get install -y -qq --no-install-recommends ripgrep cmark; then
             break
           fi
           echo "apt attempt $try failed" >&2
@@ -32,5 +33,35 @@ runs:
         }
         check 'ripgrep 14.1.0' rg --version
         check 'cmark 0.30.2 ' cmark --version
-        check '1.1.1' age --version
-        check '1.1.1' age-keygen --version
+    - name: Install age 1.3.2
+      shell: bash
+      env:
+        VER: v1.3.2
+      run: |
+        set -euo pipefail
+        case "$(uname -m)" in
+          x86_64) arch=amd64; sum=cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10 ;;
+          aarch64) arch=arm64; sum=6b8dc4333c53a5a57c9e5834e3a48f92605d7154014cd07269ff3327db5d37f4 ;;
+          *) echo "no age release for $(uname -m)" >&2; exit 1 ;;
+        esac
+        work="$(mktemp -d)"
+        tarball="age-$VER-linux-$arch.tar.gz"
+        for try in 1 2 3; do
+          if curl -fsSL -o "$work/$tarball" "https://github.com/FiloSottile/age/releases/download/$VER/$tarball"; then
+            break
+          fi
+          echo "download attempt $try failed" >&2
+          sleep $((try * 10))
+        done
+        echo "$sum  $work/$tarball" | sha256sum -c -
+        tar -xzf "$work/$tarball" -C "$work"
+        sudo install -m 0755 "$work/age/age" "$work/age/age-keygen" /usr/local/bin/
+        rm -rf "$work"
+        for tool in age age-keygen; do
+          got="$("$tool" --version)"
+          echo "$tool $got"
+          if [ "$got" != "$VER" ]; then
+            echo "the age port pins $VER; $(command -v "$tool") gives $got" >&2
+            exit 1
+          fi
+        done

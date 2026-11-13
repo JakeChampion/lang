@@ -148,15 +148,24 @@ pub function plain(own raw: Raw): Src {
 // The input, armored when its first bytes after white space are the armor
 // header.
 pub function start(own raw: Raw): Src {
-  let (t, head) = raw_peek(raw, 1024 + ARMOR_HEADER.len());
-  let at = 0;
-  while (at < head.len() && at < 1024 && text.blank(head[at:at + 1])) {
-    at += 1;
-  }
-  if (text.has_prefix(head[at:head.len()], ARMOR_HEADER)) {
+  let (t, head) = raw_peek(raw, PEEK);
+  if (after_space(head, ARMOR_HEADER)) {
     return armored(t);
   }
   return plain(t);
+}
+
+// The bytes that age peeks at to find the armor header after white space.
+pub const PEEK: i32 = 1058;
+
+// True when the first PEEK bytes of a file, after white space, start with p.
+pub function after_space(head: [u8], p: string): boolean {
+  let n = if (head.len() < PEEK) { head.len() } else { PEEK };
+  let at = 0;
+  while (at < n && text.blank(head[at:at + 1])) {
+    at += 1;
+  }
+  return text.has_prefix(head[at:n], p);
 }
 
 pub function armored(own raw: Raw): Src {
@@ -245,7 +254,7 @@ function armor_start(own s: Src): Src {
 }
 
 // After a line shorter than 48 bytes, the closing line must come.
-function armor_end(own s: Src, line: [u8], decoded: [u8]): Src {
+function armor_end(own s: Src, decoded: [u8]): Src {
   let (u, end, g) = armor_line(s);
   if let Some(e) = g {
     return armor_fail(u, e);
@@ -253,10 +262,23 @@ function armor_end(own s: Src, line: [u8], decoded: [u8]): Src {
   if (!text.equals(end, ARMOR_FOOTER)) {
     return armor_fail(u, Io("invalid closing line: " + text.quote(end)));
   }
-  if (line.len() == 0) {
-    return armor_fail(u, Io("empty line before the closing line"));
-  }
   return drain(add(u, decoded));
+}
+
+// The checks of an armor line before its base64.
+function bad_armor_line(line: [u8]): Option[string] {
+  if (line.len() == 0) {
+    return Some("empty line in armored data");
+  }
+  if (line.len() > 64) {
+    return Some("column limit exceeded");
+  }
+  for c in line {
+    if (c == b'\r' || c == b'\n') {
+      return Some("unexpected newline character");
+    }
+  }
+  return None;
 }
 
 function armor_more(own s: Src): Src {
@@ -273,14 +295,14 @@ function armor_more(own s: Src): Src {
   if (text.equals(line, ARMOR_FOOTER)) {
     return drain(t);
   }
-  if (line.len() > 64) {
-    return armor_fail(t, Io("column limit exceeded"));
+  if let Some(why) = bad_armor_line(line) {
+    return armor_fail(t, Io(why));
   }
   return match (text.b64_decode(line, true)) {
     Ok(decoded) => if (decoded.len() == 48) {
       add(t, decoded)
     } else {
-      armor_end(t, line, decoded)
+      armor_end(t, decoded)
     },
     Err(at) => armor_fail(t, Io(f"illegal base64 data at input byte {at}")),
   };
@@ -314,14 +336,19 @@ pub function avail(s: Src): i32 {
   return s.buf.len() - s.pos;
 }
 
-// Go's bufio ReadBytes('\n') on the input.
-pub function read_line(own s: Src): (Src, u8[], Option[Fail]) {
+// Go's bufio ReadBytes('\n') on the input. A line longer than max bytes
+// stops after max + 1 bytes with no error: the caller refuses it.
+pub function read_line(own s: Src, max: i32): (Src, u8[], Option[Fail]) {
   let scan = s.pos;
   loop {
     while (scan < s.buf.len()) {
       if (s.buf[scan] == b'\n') {
         let line = array.slice(s.buf, s.pos, scan + 1);
         return (Src { ...s, pos: scan + 1 }, line, None);
+      }
+      if (scan - s.pos >= max) {
+        let long = array.slice(s.buf, s.pos, scan + 1);
+        return (Src { ...s, pos: scan + 1 }, long, None);
       }
       scan += 1;
     }
