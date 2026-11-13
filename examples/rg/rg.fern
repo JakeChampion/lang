@@ -511,7 +511,7 @@ function context_of(o: flags.Options, paths: string[]): Ctx {
 function items_of(ctx: Ctx, o: flags.Options, cfg: ignore.Config, paths: string[]): walk.Item[] {
   let (ino, dev) = stdout_file();
   let w = walk.Walk {
-    cfg: cfg, follow: o.has(flags.FOLLOW), max_depth: o.max_depth, sorted: o.sort == "path" && !o.sort_reverse,
+    cfg: cfg, max_filesize: o.max_filesize, follow: o.has(flags.FOLLOW), max_depth: o.max_depth, sorted: o.sort == "path" && !o.sort_reverse,
     threads: ctx.threads, stdout_ino: if (o.searches()) { ino } else { 0i64 }, stdout_dev: dev,
   };
   let items = walk.walk(w, paths);

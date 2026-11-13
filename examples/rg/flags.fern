@@ -50,6 +50,10 @@ pub struct Options {
   // "clear:name".
   types: string[],
   ignore_files: string[],
+  // The largest file that the walk searches, in bytes, or -1.
+  max_filesize: i64,
+  // The line between groups of context, or None for no line.
+  context_separator: Option[string],
 }
 
 struct Step { o: Options, next: i32 }
@@ -118,6 +122,7 @@ const OTHER_SWITCHES: string[] = [
   "count", "count-matches", "files-with-matches", "files-without-match", "files", "type-list",
   "with-filename", "no-filename", "heading", "no-heading", "mmap", "no-mmap", "text", "no-text",
   "binary", "no-binary", "no-ignore", "ignore", "unrestricted", "sort-files", "no-sort-files",
+  "no-context-separator",
 ];
 
 // The switches that set_case_or_lines handles.
@@ -129,7 +134,7 @@ const OUTPUT_SWITCHES: string[] = [
 const VALUE_FLAGS: string[] = [
   "after-context", "before-context", "context", "regexp", "threads", "color", "max-count",
   "max-depth", "maxdepth", "glob", "iglob", "type", "type-not", "type-add", "type-clear",
-  "ignore-file", "path-separator", "sort", "sortr",
+  "ignore-file", "path-separator", "sort", "sortr", "max-filesize", "context-separator",
 ];
 
 // The type flags, and the prefix of each in `Options.types`.
@@ -153,7 +158,8 @@ pub function defaults(): Options {
     patterns: [], paths: [], on: 0i64, mode: Lines, case: 0, line_number: false, after: -1,
     before: -1, context: -1, color: "auto", with_filename: -1, heading: -1, mmap: -1, binary: 0,
     threads: 0, max_count: -1, max_depth: -1, unrestricted: 0, sort: "", sort_reverse: false,
-    path_separator: "", globs: [], iglobs: [], types: [], ignore_files: [],
+    path_separator: "", globs: [], iglobs: [], types: [], ignore_files: [], max_filesize: -1i64,
+    context_separator: Some("--"),
   };
 }
 
@@ -257,7 +263,14 @@ function set_search_switch(o: Options, name: string): Options {
     "no-text" | "no-binary" => Options { ...o, binary: 0 },
     "no-ignore" => set_no_ignore(o, true),
     "ignore" => set_no_ignore(o, false),
+    _ => set_other_switch(o, name),
+  };
+}
+
+function set_other_switch(o: Options, name: string): Options {
+  return match (name) {
     "sort-files" => Options { ...o, sort: "path", sort_reverse: false },
+    "no-context-separator" => Options { ...o, context_separator: None },
     _ => Options { ...o, sort: "" },
   };
 }
@@ -309,6 +322,97 @@ pub function parse_count(text: string): Result[i32, string] {
   return Ok(n as i32);
 }
 
+// A size for --max-filesize: digits and an optional K, M or G, as ripgrep
+// reads it, or the reason it is not one.
+pub function parse_size(flag: string, value: string): Result[i64, string] {
+  let why = "error parsing flag " + flag + ": invalid size: ";
+  let unit = if (value.len() > 0) { __memchr("KMG", value[value.len() - 1] as i32, 0) } else { -1 };
+  let digits = if (unit >= 0) { slice_unchecked(value, 0, value.len() - 1).to_owned() } else { value };
+  let n = match (size_digits(digits)) {
+    Ok(v) => v,
+    Err(format) => {
+      return Err(if (format) {
+        why + f"invalid format for size '{value}', which should be a non-empty sequence of digits followed by an optional 'K', 'M' or 'G' suffix"
+      } else {
+        why + f"invalid integer found in size '{value}': number too large to fit in target type"
+      });
+    },
+  };
+  let shift = (unit + 1) as u64 * 10u64;
+  if (unit >= 0 && n > 18446744073709551615u64 >> shift) {
+    return Err(why + f"size too big in '{value}'");
+  }
+  let size = n << shift;
+  return Ok(if (size > 9223372036854775807u64) { 9223372036854775807i64 } else { size as i64 });
+}
+
+// The value of the digits of a size. The error is true for a text that is
+// not digits, and false for a value too large for a u64.
+function size_digits(digits: string): Result[u64, boolean] {
+  if (digits.len() == 0) {
+    return Err(true);
+  }
+  let n = 0u64;
+  for i in 0..digits.len() {
+    let d = digits[i] as i32 - 48;
+    if (d < 0 || d > 9) {
+      return Err(true);
+    }
+    if (n > 1844674407370955161u64 || n == 1844674407370955161u64 && d > 5) {
+      return Err(false);
+    }
+    n = n * 10u64 + d as u64;
+  }
+  return Ok(n);
+}
+
+// `text` with the escapes \\, \n, \r, \t, \0 and \xHH made bytes, as
+// ripgrep reads a separator.
+pub function unescape(text: string): string {
+  let out = "";
+  let i = 0;
+  while (i < text.len()) {
+    if (text[i] != b'\\' || i + 1 >= text.len()) {
+      out += slice_unchecked(text, i, i + 1);
+      i += 1;
+      continue;
+    }
+    let (piece, used) = escape_at(text, i + 1);
+    out += piece;
+    i += 1 + used;
+  }
+  return out;
+}
+
+// The byte of the escape whose letter is at `at`, and the count of bytes
+// that it takes after the `\`.
+function escape_at(text: string, at: i32): (string, i32) {
+  let c = text[at];
+  if (c == b'x' && at + 2 < text.len() && hex(text[at + 1]) >= 0 && hex(text[at + 2]) >= 0) {
+    let b = hex(text[at + 1]) * 16 + hex(text[at + 2]);
+    return (unsafe { string_from_bytes_unchecked([b as u8]) }, 3);
+  }
+  return match (c) {
+    b'n' => ("\n", 1),
+    b'r' => ("\r", 1),
+    b't' => ("\t", 1),
+    b'0' => ("\x00", 1),
+    b'\\' => ("\\", 1),
+    _ => ("\\" + slice_unchecked(text, at, at + 1), 1),
+  };
+}
+
+function hex(c: u8): i32 {
+  if (c >= b'0' && c <= b'9') {
+    return c as i32 - 48;
+  }
+  let l = c | 32u8;
+  if (l >= b'a' && l <= b'f') {
+    return l as i32 - 87;
+  }
+  return -1;
+}
+
 function choice(flag: string, value: string, choices: string[]): Result[string, string] {
   if (index_of(choices, value) < 0) {
     return Err("error parsing flag " + flag + ": choice '" + value + "' is unrecognized");
@@ -350,6 +454,12 @@ function set_text(o: Options, name: string, flag: string, value: string): Result
 function set_value(o: Options, name: string, flag: string, value: string): Result[Options, string] {
   if (name == "sort" || name == "sortr") {
     return set_sort(o, name, flag, value);
+  }
+  if (name == "max-filesize") {
+    return Ok(Options { ...o, max_filesize: parse_size(flag, value)? });
+  }
+  if (name == "context-separator") {
+    return Ok(Options { ...o, context_separator: Some(unescape(value)) });
   }
   if (index_of(["after-context", "before-context", "context", "threads", "max-count", "max-depth", "maxdepth"], name) < 0) {
     return set_text(o, name, flag, value);

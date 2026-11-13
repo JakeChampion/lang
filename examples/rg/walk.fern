@@ -12,6 +12,8 @@ pub struct Item { path: string, explicit: boolean, message: string, error: boole
 // writes to, which the walk skips (0 for none).
 pub struct Walk {
   cfg: ignore.Config,
+  // The largest file to search, in bytes, or -1.
+  max_filesize: i64,
   follow: boolean,
   max_depth: i32,
   sorted: boolean,
@@ -63,6 +65,17 @@ function kind_of(path: string, e: DirEntry): u32 {
     return DT_REG;
   }
   return st.mode & 0o170000u32;
+}
+
+// Whether the file is larger than --max-filesize.
+function too_big(w: Walk, path: string): boolean {
+  if (w.max_filesize < 0i64) {
+    return false;
+  }
+  let Ok(st) = stat(path) else {
+    return false;
+  };
+  return st.size > w.max_filesize;
 }
 
 // Whether `path` is the file of the standard output.
@@ -129,7 +142,7 @@ function entry(w: Walk, dir: string, e: DirEntry, stack: ignore.Stack, depth: i3
   if (is_dir) {
     return directory(w, path, stack, depth + 1, items);
   }
-  if (kind == DT_REG && !is_stdout(w, path, e.ino)) {
+  if (kind == DT_REG && !is_stdout(w, path, e.ino) && !too_big(w, path)) {
     return items.append(file(path, false));
   }
   return items;

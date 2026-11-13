@@ -31,6 +31,8 @@ misc/count
 misc/count_matches
 misc/count_matches_inverted
 misc/count_matches_via_only
+misc/include_zero/1
+misc/include_zero/2
 misc/include_zero_override/1
 misc/include_zero_override/2
 misc/files_with_matches
@@ -41,6 +43,12 @@ misc/before_context
 misc/before_context_line_numbers
 misc/context
 misc/context_line_numbers
+misc/max_filesize_parse_error_length
+misc/max_filesize_parse_error_suffix
+misc/max_filesize_parse_no_suffix
+misc/max_filesize_parse_k_suffix
+misc/max_filesize_parse_m_suffix
+misc/max_filesize_suffix_overflow
 misc/ignore_hidden
 misc/no_ignore_hidden
 misc/ignore_git
@@ -111,7 +119,12 @@ feature/f1404_nothing_searched_ignored/1
 feature/f1404_nothing_searched_ignored/2
 feature/f2288_context_partial_override
 feature/f2288_context_partial_override_rev
+feature/no_context_sep
+feature/no_context_sep_overrides
+feature/no_context_sep_overridden
+feature/context_sep
 feature/context_sep_default
+feature/context_sep_empty
 regression/r16
 regression/r25/1
 regression/r25/2

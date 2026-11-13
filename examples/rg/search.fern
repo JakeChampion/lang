@@ -23,6 +23,10 @@ pub struct Printer {
   separator: string,
   max_count: i32,
   quiet: boolean,
+  // The line between groups of context, or None.
+  context_separator: Option[string],
+  // With -c, also the files with no selected line.
+  include_zero: boolean,
 }
 
 // The result of one file. `matched` says whether it has a selected line,
@@ -71,6 +75,7 @@ pub function printer(o: flags.Options, tty: boolean, one_file: boolean): Printer
     mode: o.mode, invert: o.has(flags.INVERT), only_matching: o.has(flags.ONLY), line_number: o.line_number,
     after: after, before: before, color: color, show_name: show_name, heading: heading, terminator: terminator,
     separator: o.path_separator, max_count: o.max_count, quiet: o.has(flags.QUIET),
+    context_separator: o.context_separator, include_zero: o.has(flags.INCLUDE_ZERO),
   };
 }
 
@@ -503,10 +508,19 @@ pub function file_separator(p: Printer): string {
   if (p.heading) {
     return "\n";
   }
-  if (p.after > 0 || p.before > 0) {
-    return "--\n";
+  return context_line(p);
+}
+
+// The line between groups of context: the separator and a line terminator,
+// or "" without context or with --no-context-separator.
+function context_line(p: Printer): string {
+  if (p.after == 0 && p.before == 0) {
+    return "";
   }
-  return "";
+  return match (p.context_separator) {
+    Some(sep) => sep + "\n",
+    None => "",
+  };
 }
 
 // Whether a written line at `start` to `end` stops the search, as the sink
@@ -530,8 +544,8 @@ function stops(s: Scan, g: Group, start: i32, end: i32): Group {
 
 // The separator between two groups of lines of one file.
 function push_separator(p: Printer, h: usize, g: Group, first: i32): void {
-  if ((p.after > 0 || p.before > 0) && g.last > 0 && first > g.last + 1) {
-    buf_push(h, "--\n");
+  if (g.last > 0 && first > g.last + 1) {
+    buf_push(h, context_line(p));
   }
 }
 
@@ -702,12 +716,19 @@ function summary(p: Printer, re: regex.Regex, s: Scan, name: string, h: usize, w
   if (p.quiet) {
     return outcome(c.lines > 0, written, c.upto);
   }
-  let listed = if (p.mode == flags.Without) { c.lines == 0 } else { c.lines > 0 };
-  if (!listed) {
+  if (!listed(p, c)) {
     return outcome(false, written, c.upto);
   }
   push_summary(p, h, name, c);
-  return outcome(true, true, c.upto);
+  return outcome(c.lines > 0 || p.mode == flags.Without, true, c.upto);
+}
+
+// Whether a summary mode writes the line of a file.
+function listed(p: Printer, c: Counted): boolean {
+  if (p.mode == flags.Without) {
+    return c.lines == 0;
+  }
+  return c.lines > 0 || p.include_zero && p.mode != flags.Files;
 }
 
 // The line of a file for -c, --count-matches, -l or --files-without-match.

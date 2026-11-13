@@ -624,6 +624,50 @@ function test_binary_buffers(): test.TestOutcome {
   ]);
 }
 
+function size_of(value: string): string {
+  return match (flags.parse_size("--max-filesize", value)) {
+    Ok(n) => n.to_string(),
+    Err(why) => why,
+  };
+}
+
+function test_max_filesize(): test.TestOutcome {
+  let why = "error parsing flag --max-filesize: invalid size: ";
+  let format = "', which should be a non-empty sequence of digits followed by an optional 'K', 'M' or 'G' suffix";
+  return test.assert_eq_array(
+    [
+      size_of("50"), size_of("4K"), size_of("1M"), size_of("2G"), size_of("45k"), size_of(""), size_of("K"),
+      size_of("44444444444444444444"), size_of("34359738368G"),
+    ],
+    [
+      "50", "4096", "1048576", "2147483648", why + "invalid format for size '45k" + format,
+      why + "invalid format for size '" + format, why + "invalid format for size 'K" + format,
+      why + "invalid integer found in size '44444444444444444444': number too large to fit in target type",
+      why + "size too big in '34359738368G'",
+    ],
+  );
+}
+
+function test_separators_and_zero(): test.TestOutcome {
+  let text = "foo\nx\ny\nfoo\nz\n";
+  return test.assert_eq_array(
+    [
+      run(["-A1", "--context-separator", "XX", "foo", "a"], text),
+      run(["-A1", "--context-separator=", "foo", "a"], text),
+      run(["-A1", "--no-context-separator", "foo", "a"], text),
+      run(["-A1", "--no-context-separator", "--context-separator", "a\\tb", "foo", "a"], text),
+      run(["-c", "--include-zero", "zzz", "a", "b"], text),
+      run(["-c", "--include-zero", "--no-include-zero", "zzz", "a", "b"], text),
+      run(["-l", "--include-zero", "zzz", "a"], text),
+      flags.unescape("a\\x41\\n\\\\\\q"),
+    ],
+    [
+      "foo\nx\nXX\nfoo\nz\n0", "foo\nx\n\nfoo\nz\n0", "foo\nx\nfoo\nz\n0", "foo\nx\na\tb\nfoo\nz\n0",
+      "a:0\n1", "1", "1", "aA\n\\\\q",
+    ],
+  );
+}
+
 function main(): i32 {
   let r = test.new("rg");
   r = r.it("parse walk flags", test_parse_walk);
@@ -636,6 +680,8 @@ function main(): i32 {
   r = r.it("max count", test_max_count);
   r = r.it("heading and null", test_heading_and_null);
   r = r.it("binary buffers", test_binary_buffers);
+  r = r.it("max filesize", test_max_filesize);
+  r = r.it("context separator and include zero", test_separators_and_zero);
   r = r.it("parse", test_parse);
   r = r.it("parse errors", test_parse_errors);
   r = r.it("pattern", test_pattern);

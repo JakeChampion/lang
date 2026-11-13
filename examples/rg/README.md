@@ -43,11 +43,13 @@ searches the current directory, and it writes each name without the leading
 | `-n`, `-N` | `--line-number`, `--no-line-number` | Line numbers on or off. |
 | `-c` | `--count` | The count of selected lines, or with `-o` of matches. |
 | | `--count-matches` | The count of matches. |
+| | `--include-zero` | With `-c`, also the files with a count of 0. |
 | `-l` | `--files-with-matches` | The names of the files with a selected line. |
 | | `--files-without-match` | The names of the files with no selected line. |
 | `-q` | `--quiet` | No output. The search stops at the first match. |
 | `-o` | `--only-matching` | Each match on a line of its own. |
 | `-A N`, `-B N`, `-C N` | `--after-context`, `--before-context`, `--context` | Context lines. `-A` and `-B` take precedence over `-C`. |
+| | `--context-separator S`, `--no-context-separator` | The line between groups of context, with the escapes `\n`, `\t` and `\xHH`, or no line. |
 | `-H`, `-I` | `--with-filename`, `--no-filename` | File names on or off. |
 | | `--heading`, `--no-heading` | The file name on a line of its own, before the lines of the file. |
 | `-0` | `--null` | A NUL byte after each file name. |
@@ -62,6 +64,7 @@ searches the current directory, and it writes each name without the leading
 | `-.` | `--hidden` | Search hidden files and directories. |
 | `-L` | `--follow` | Follow symbolic links. |
 | `-d N` | `--max-depth N` | Go down at most N directories. |
+| | `--max-filesize N` | Search no walked file larger than N bytes. `K`, `M` and `G` after N multiply it by 1024 once, twice or three times. |
 | `-g G` | `--glob G` | Search only the files that match a glob. A glob with `!` excludes. |
 | | `--iglob G`, `--glob-case-insensitive` | The globs ignore the case. |
 | `-t T`, `-T T` | `--type T`, `--type-not T` | Search only the files of a type, or not those files. `all` is each type. |
@@ -192,8 +195,7 @@ order of the walk.
 
 - **Not in this slice.** `--json`, `-r`, `-U`, `-f`, `--column`, `-b`,
   `--vimgrep`, `--stats`, `--crlf`, `--null-data`, `--passthru`, `-M`,
-  `--trim`, `--max-filesize`, `--context-separator`, `--include-zero`,
-  `--stop-on-nonmatch`, `-E`, `--pre` and `--colors`. The heading and the
+  `--trim`, `--stop-on-nonmatch`, `-E`, `--pre` and `--colors`. The heading and the
   line numbers on a terminal are also not in this slice.
 
 ## Tests
@@ -206,12 +208,12 @@ order of the walk.
   wasm32-wasi with the leak census.
 
 - `TestSelfHostExampleRgAgainstRipgrep` runs the port and `/usr/bin/rg`
-  14.1.0 with 230 command lines on the same files, on x86-64 and on arm64.
+  14.1.0 with 235 command lines on the same files, on x86-64 and on arm64.
   The stdout, the stderr and the exit status must be the same. The files
   include an empty file and a file with no last line terminator. They also
   include CRLF lines, a line of 209,008 bytes, UTF-8 text and four binary
   files. The cases include each option, a missing file, the standard input
-  and the errors. 85 cases walk two trees with each kind of ignore file, a
+  and the errors. 90 cases walk two trees with each kind of ignore file, a
   link, hidden files and a binary file of 70 KiB.
 
   The test fails when `/usr/bin/rg` is not ripgrep 14.1.0. A case with more
@@ -223,7 +225,7 @@ order of the walk.
   tests of ripgrep 14.1.1 (`testdata/ripgrep-tests.json`, from
   `tests/*.rs`) with the port and with `/usr/bin/rg`. Each case makes its
   files in a new directory, and each run gets `--path-separator / -j1`.
-  `testdata/ripgrep-pass.txt` names the 206 of 306 cases that give the
+  `testdata/ripgrep-pass.txt` names the 219 of 306 cases that give the
   output of ripgrep. The test fails when a named case fails, and when a case
   that it does not name passes. Most of the other cases use options that
   are not in this slice, or Unicode in a pattern. The licence is in
