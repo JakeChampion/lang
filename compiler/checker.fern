@@ -26916,6 +26916,9 @@ function ow_without_names(names: string[], drop: string[]): string[] {
 
 function ow_value_arm_borrows(arm: ast.Stmt[], ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: BorrowContext, handles_only: boolean): boolean {
   if (arm.len() != 1) {
+    if let Some(lent) = ow_let_tail_borrows(arm, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only) {
+      return lent;
+    }
     return true;
   }
   match (arm[0]) {
@@ -26932,6 +26935,35 @@ function ow_value_arm_borrows(arm: ast.Stmt[], ofuncs: OwnFuncs, borrowed: strin
       return true;
     }
   }
+}
+
+// ow_let_tail_borrows tests an arm of `let` statements and a final value.
+// The arm borrows when the value borrows. A name borrows when its
+// initializer borrows. It gives None for an arm of another shape.
+function ow_let_tail_borrows(arm: ast.Stmt[], ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: BorrowContext, handles_only: boolean): Option[boolean] {
+  if (arm.len() < 2) {
+    return None;
+  }
+  let ast.StmtReturn(r) = arm[arm.len() - 1] else {
+    return None;
+  };
+  let inner = borrowed;
+  let inner_locals = locals;
+  for k in 0..arm.len() - 1 {
+    let ast.StmtVar(v) = arm[k] else {
+      return None;
+    };
+    if (util.contains(v.name, ",")) {
+      return None;
+    }
+    let lends = ow_expr_borrows(v.init, ofuncs, inner, inner_locals, values, borrows, builtins, lenders, handles_only);
+    inner = ow_without_names(inner, [v.name]);
+    inner_locals = ow_without_names(inner_locals, [v.name]);
+    if (lends) {
+      inner = inner.append(v.name);
+    }
+  }
+  return Some(ow_expr_borrows(r.value, ofuncs, inner, inner_locals, values, borrows, builtins, lenders, handles_only));
 }
 
 function ow_borrow_value_copy(ty: typeinfo.Type, lenders: BorrowContext): boolean {

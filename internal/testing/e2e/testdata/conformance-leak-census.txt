@@ -1,3 +1,4 @@
+# 2026-11-13: owned_let_arm_result_in_loop has no allocations on x86-64.
 # 2026-11-13: a_branch_that_returns_gives_its_if_expression_no_type has balanced allocations on x86-64.
 # 2026-11-13: a_match_arm_that_is_a_void_if_falls_through has balanced allocations on x86-64.
 # 2026-11-13: generic_nominal_callback_signatures has balanced allocations and zero live bytes on all three targets.
@@ -846,6 +847,7 @@ own_takes_replaced_field_of_owned_base               0
 own_transfer                                         0
 own_tree_match                                       0
 owned_field_match_data                               0
+owned_let_arm_result_in_loop                         0
 owned_match_results_rebuild_literal                 0
 owned_state_restored_on_each_loop_jump               0
 package_scoped_stdlib_helpers                        0
