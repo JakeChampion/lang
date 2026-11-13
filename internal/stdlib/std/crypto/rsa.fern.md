@@ -443,11 +443,23 @@ pub function (key: PublicKey) verify_pss(hash: sha2.Hash, msg: [u8], sig: [u8]):
 
 ### `14 pub struct PrivateKey`
 
-A private key keeps its public key, the Montgomery form of the modulus and the private exponent d. Construction checks the key as Go's `rsa.PrivateKey.Validate` does. The check uses `std/bigint`, which is not constant-time, so a caller marks the key secret after construction.
+A private key keeps its public key and the values of the Chinese remainder theorem (CRT): the Montgomery forms of p and q, dp = d mod (p - 1), dq = d mod (q - 1), and qinv = q^-1 mod p. It also keeps the Montgomery form of the modulus n for the check of each decryption. Construction checks the key as Go's `rsa.PrivateKey.Validate` does, and computes the CRT values. That work uses `std/bigint`, which is not constant-time, so a caller marks the key secret after construction.
 
 ```fern
 <<14 pub struct PrivateKey>>=
-pub struct PrivateKey { public: PublicKey, m: montgomery.Modulus, d: u8[] }
+// The CRT values are big-endian bytes: p and q, dp and dq with the length
+// of p and q, and qinv with the length of p.
+pub struct PrivateKey {
+  public: PublicKey,
+  m: montgomery.Modulus,
+  p: u8[],
+  q: u8[],
+  p_bits: i32,
+  q_bits: i32,
+  dp: u8[],
+  dq: u8[],
+  qinv: u8[],
+}
 
 function __one(): bigint.BigInt {
   return bigint.from_u64(1 as u64);
@@ -474,7 +486,21 @@ pub function private_key(modulus: [u8], exponent: [u8], d: [u8], p: [u8], q: [u8
     return Err(InvalidExponents);
   }
   let m = montgomery.modulus(hex.encode(modulus), public.bytes);
-  return Ok(PrivateKey { public: public, m: m, d: __to_be(bd, public.bytes) });
+  let p_bits = bp.bit_length();
+  let q_bits = bq.bit_length();
+  let p_bytes = __to_be(bp, (p_bits + 7) / 8);
+  let q_bytes = __to_be(bq, (q_bits + 7) / 8);
+  let mp = montgomery.modulus_of(p_bytes, p_bits);
+  let dp = __to_be(bd.divmod(bp.sub(__one())).1, p_bytes.len());
+  let dq = __to_be(bd.divmod(bq.sub(__one())).1, q_bytes.len());
+  let qinv = montgomery.to_bytes(mp, montgomery.inv(mp, montgomery.from_bytes(mp, q_bytes)));
+  return Ok(PrivateKey { public: public, m: m, p: p_bytes, q: q_bytes, p_bits: p_bits, q_bits: q_bits, dp: dp, dq: dq, qinv: qinv });
+}
+
+// The secret values of the key, for a caller that marks them secret under
+// the constant-time gate after construction: p, q, dp, dq and qinv.
+pub function (k: PrivateKey) secrets(): u8[][] {
+  return [k.p, k.q, k.dp, k.dq, k.qinv];
 }
 
 pub function (k: PrivateKey) public_key(): PublicKey {
@@ -520,6 +546,35 @@ function __pow_secret(m: montgomery.Modulus, base: [i64], d: [u8]): i64[] {
     }
   }
   return r;
+}
+
+// c^d mod n by the CRT, as Go's crypto/rsa computes it:
+//   m1 = c^dp mod p, m2 = c^dq mod q, h = qinv (m1 - m2) mod p, m = m2 + h q.
+// Each value of the steps is secret. As Go does, the result is checked: m^e
+// must be c again, so a fault in the computation gives an error and no
+// value. Only the verdict of the check is public.
+function __decrypt(key: PrivateKey, c: [u8]): Result[u8[], RsaError] {
+  let mp = montgomery.modulus_of(key.p, key.p_bits);
+  let mq = montgomery.modulus_of(key.q, key.q_bits);
+  let m1 = __pow_secret(mp, montgomery.from_bytes(mp, c), key.dp);
+  let m2 = montgomery.to_bytes(mq, __pow_secret(mq, montgomery.from_bytes(mq, c), key.dq));
+  let diff = montgomery.sub(mp, m1, montgomery.from_bytes(mp, m2));
+  let h = montgomery.to_bytes(mp, montgomery.mul(mp, diff, montgomery.from_bytes(mp, key.qinv)));
+  let hq = montgomery.mul(key.m, montgomery.plain(key.m, h), montgomery.from_bytes(key.m, key.q));
+  let m = montgomery.add(key.m, hq, montgomery.plain(key.m, m2));
+  let again = montgomery.to_bytes(key.m, __pow_public(key.m, montgomery.mul(key.m, m, key.m.r2), key.public.e));
+  let diff_c = 0 as u8;
+  let i = 0;
+  while (i < c.len()) {
+    diff_c = diff_c | again[i] ^ c[i];
+    i += 1;
+  }
+  let verdict = __alloc_u8(1).with(0, diff_c);
+  __ct_public(verdict);
+  if (verdict[0] != 0) {
+    return Err(Decryption);
+  }
+  return Ok(montgomery.plain_bytes(key.m, m));
 }
 
 function __pow_public(m: montgomery.Modulus, base: [i64], e: bigint.BigInt): i64[] {
@@ -629,7 +684,7 @@ pub function (key: PrivateKey) decrypt_oaep(hash: sha2.Hash, c: [u8], label: [u8
   if (c.len() != k || k < 2 * h_len + 2 || __from_be(c).cmp(key.public.n) >= 0) {
     return Err(Decryption);
   }
-  let em = montgomery.to_bytes(key.m, __pow_secret(key.m, montgomery.from_bytes(key.m, c), key.d));
+  let em = __decrypt(key, c)?;
   let seed = __xor_into(__range(em, 1, h_len), __mgf1(hash, __range(em, 1 + h_len, k - h_len - 1), h_len));
   let db = __xor_into(__range(em, 1 + h_len, k - h_len - 1), __mgf1(hash, seed, k - h_len - 1));
   let full = __alloc_u8(k).with(0, em[0]);

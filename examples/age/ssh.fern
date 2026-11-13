@@ -904,7 +904,7 @@ function openssh_rsa(rest: Wire): Parsed {
   }
   return match (rsa.private_key(f[0], f[1], f[2], f[4], f[5])) {
     Ok(key) => {
-      __ct_secret(key.d);
+      mark_rsa(key);
       Key(RsaPrivate(RsaPublic(rsa_wire(f[0], f[1]), key.public_key()), key))
     },
     Err(e) => Bad(e.message()),
@@ -1123,6 +1123,14 @@ function der_integers(b: [u8]): Option[u8[][]] {
   return Some(out);
 }
 
+// The secret values of an RSA key become secret after the checks of the
+// key, which are not constant-time, as in Go.
+function mark_rsa(k: rsa.PrivateKey): void {
+  for s in k.secrets() {
+    __ct_secret(s);
+  }
+}
+
 // Go's x509.ParsePKCS1PrivateKey: version, n, e, d, p, q and the CRT values.
 function pkcs1(b: [u8]): Parsed {
   let Some(f) = der_integers(b) else {
@@ -1133,7 +1141,7 @@ function pkcs1(b: [u8]): Parsed {
   }
   return match (rsa.private_key(f[1], f[2], f[3], f[4], f[5])) {
     Ok(key) => {
-      __ct_secret(key.d);
+      mark_rsa(key);
       Key(RsaPrivate(RsaPublic(rsa_wire(f[1], f[2]), key.public_key()), key))
     },
     Err(e) => Bad(e.message()),
