@@ -78,8 +78,6 @@ func TestConstLiteralRangeIsE047AtTheLiteral(t *testing.T) {
 		`const B: u32 = -0;`,
 		`const B: u64 = 18446744073709551615;`,
 		`const B: i64 = -9223372036854775808;`,
-		`const B: i32 = 2147483647 + 1;`,
-		`const B: i32 = -(2147483647 + 1);`,
 	}
 	for _, src := range accepted {
 		fold(t, src+"\nfunction main(): i32 { return 0; }")

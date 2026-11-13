@@ -268,14 +268,14 @@ function t_array(elem: typeinfo.Type): typeinfo.Type {
 }
 
 pub function is_sha_hw_builtin(name: string): boolean {
-  return name == "__sha256_hw" || name == "__sha1_hw";
+  return name == "__sha256_hw" || name == "__sha1_hw" || name == "__sha1x8_hw";
 }
 
 function byte_kernel_arity(name: string): i32 {
   if (name == "__aes_expand_key") {
     return 1;
   }
-  if (name == "__sha256_hw_blocks" || name == "__sha1_hw_blocks") {
+  if (name == "__sha256_hw_blocks" || name == "__sha1_hw_blocks" || name == "__sha1x8_hw_blocks") {
     return 2;
   }
   if (name == "__aes_ctr32" || name == "__ghash") {
@@ -18406,7 +18406,7 @@ function const_init(mod: parser.Module): ConstInit {
           }
           let value = consteval.settle(consteval.evaluate(r.value, parser.parse_type_ref(fd.ret_type), evaluated_names, values), fd.ret_type);
           if (value.definite) {
-            out = ConstInit { ...out, diags: out.diags.append(dg_at("E093", "const " + fd.name + ": " + value.error, fd.line, fd.col)) };
+            out = ConstInit { ...out, diags: out.diags.append(dg_at(consteval.error_code(value), "const " + fd.name + ": " + value.error, fd.line, fd.col)) };
             continue;
           }
           evaluated_names = evaluated_names.append(fd.name);
@@ -18595,7 +18595,7 @@ const REGISTERED_INTRINSICS: string[] = [
   "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_string_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
   "__task_cancelled", "__task_cur", "__task_enter", "__task_fd_gen", "__task_free", "__task_leave", "__task_new", "__task_park", "__task_park_until", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_until", "__task_wait",
   "__send_copy", "__send_adopt", "__send_root", "__send_release", "__heap_adopt", "__worker_region", "__worker_exit", "__worker_reap", "__worker_unmap",
-  "__abs_f64", "__aes_ctr32", "__aes_expand_key", "__aes_gcm_open_into", "__aes_gcm_seal_into", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__alloc", "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_reuse", "__alloc_u8", "__alloc_u8_uninit", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len",
+  "__abs_f64", "__aes_ctr32", "__aes_expand_key", "__aes_gcm_open_into", "__aes_gcm_seal_into", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__sha1x8_hw", "__sha1x8_hw_blocks", "__alloc", "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_reuse", "__alloc_u8", "__alloc_u8_uninit", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len",
   "__ascii_run", "__bsd_sum", "__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32",
   "__c_call1_f64", "__c_call2", "__c_call2_f32", "__c_call2_f64", "__c_call3", "__c_call3_f32", "__c_call3_f64",
   "__c_call4", "__c_call4_f32", "__c_call4_f64", "__c_call5", "__c_call5_f32", "__c_call5_f64",
@@ -23473,7 +23473,7 @@ function lu_field_dies(fx: LuFn, call: ast.Expr, fa: ast.ExprFieldAccess, q: ast
 
 // No path after the statement that holds the call reads q.field, and the
 // statement does not read it after q. A later mention in a branch that the
-// call does not reach is not a read.
+// call does not reach is not a read. No path goes on after a return.
 function lu_field_path_dead(fx: LuFn, site: LuSite, q: ast.ExprIdent, field: string): boolean {
   if (site.frames.len() == 0) {
     return false;
@@ -23484,6 +23484,9 @@ function lu_field_path_dead(fx: LuFn, site: LuSite, q: ast.ExprIdent, field: str
     if (o.name == q.name && (o.line > q.line || o.line == q.line && o.col > q.col) && lu_reads_path(facts, o.line, o.col, field)) {
       return false;
     }
+  }
+  if let ast.StmtReturn(_) = inner.stmts[inner.idx] {
+    return true;
   }
   return !lu_path_live_from(fx.noret, site.frames, site.frames.len() - 1, q.name, lu_binding_level(site.frames, q.name), field);
 }
@@ -25108,7 +25111,7 @@ function ow_jump(label: string, breaks: boolean, moved: MovedEntry[], ctx: OwnCt
   return OwnWalk { moved: moved, diags: [] };
 }
 
-struct OwNestedUses { name: string, reads: i32, declarations: i32, assigned: boolean }
+struct OwNestedUses { name: string, reads: i32, declarations: i32, assigned: boolean, source_root: string, source_field: string }
 
 function ow_nested_use_expr(e: ast.Expr, own state: OwNestedUses): own OwNestedUses {
   return if (ow_ident_name(e) == state.name) { OwNestedUses { ...state, reads: state.reads + 1 } } else { state };
@@ -25116,9 +25119,7 @@ function ow_nested_use_expr(e: ast.Expr, own state: OwNestedUses): own OwNestedU
 
 function ow_nested_use_stmt(st: ast.Stmt, own state: OwNestedUses): own OwNestedUses {
   if let ast.StmtVar(v) = st {
-    if (v.name == state.name) {
-      return OwNestedUses { ...state, declarations: state.declarations + 1 };
-    }
+    return ow_nested_binding(v, state);
   }
   if let ast.StmtAssign(a) = st {
     if (a.target == state.name) {
@@ -25128,8 +25129,19 @@ function ow_nested_use_stmt(st: ast.Stmt, own state: OwNestedUses): own OwNested
   return state;
 }
 
+function ow_nested_binding(v: ast.StmtVar, own state: OwNestedUses): own OwNestedUses {
+  if (v.name != state.name) {
+    return state;
+  }
+  state = OwNestedUses { ...state, declarations: state.declarations + 1 };
+  if let ast.ExprFieldAccess(field) = v.init {
+    return OwNestedUses { ...state, source_root: ow_ident_name(field.obj), source_field: field.field };
+  }
+  return state;
+}
+
 function ow_nested_uses(body: ast.Stmt[], name: string): OwNestedUses {
-  let state = OwNestedUses { name: name, reads: 0, declarations: 0, assigned: false };
+  let state = OwNestedUses { name: name, reads: 0, declarations: 0, assigned: false, source_root: "", source_field: "" };
   for st in body {
     state = astwalk.fold_stmt_nodes(st, state, ow_nested_use_stmt, ow_nested_use_expr, astwalk.descend_all);
   }
@@ -25141,21 +25153,14 @@ function ow_nested_field_alias(alias: string, root: string, field: string, value
   if (uses.declarations != 1 || uses.assigned || uses.reads != ow_count_ident(value, alias)) {
     return false;
   }
-  for st in body {
-    if let ast.StmtVar(v) = st {
-      if (v.name == alias) {
-        return ow_is_field_read(v.init, root, field);
-      }
-    }
-  }
-  return false;
+  return uses.source_root == root && uses.source_field == field;
 }
 
 // The returned record replaces the complete field that owns the alias.
 function ow_nested_field_moves(value: ast.Expr, ctx: OwnCtx): string[] {
-  if let ast.ExprTuple(tuple) = value {
+  if let Some(parts) = ow_nested_field_parts(value, ctx) {
     let out: string[] = [];
-    for element in tuple.elements {
+    for element in parts {
       out = util.append_all(out, ow_nested_field_moves(element, ctx));
     }
     return out;
@@ -25178,6 +25183,25 @@ function ow_nested_field_moves(value: ast.Expr, ctx: OwnCtx): string[] {
     }
   }
   return out;
+}
+
+function ow_nested_field_parts(value: ast.Expr, ctx: OwnCtx): Option[ast.Expr[]] {
+  if let ast.ExprTuple(tuple) = value {
+    return Some(tuple.elements);
+  }
+  if let ast.ExprCall(call) = value {
+    if (ow_nested_variant(call.callee, ctx)) {
+      return Some(call.args);
+    }
+  }
+  return None;
+}
+
+function ow_nested_variant(callee: ast.Expr, ctx: OwnCtx): boolean {
+  if let ast.ExprIdent(id) = callee {
+    return ow_builtin_variant(ctx, id.name) || ow_variant_known(ctx, id.name, "");
+  }
+  return ow_qualified_ctor(callee, ctx);
 }
 
 // A literal based on q that replaces q.f moves q.f into an own parameter in
@@ -27082,7 +27106,7 @@ function ow_fresh_builtins(): string[] {
     "__socket_from_fd", "tcp_accept", "tcp_accept_with", "tcp_connect_with", "tcp_listen", "tcp_listen_with",
     "udp_bind", "udp_bind_with", "unix_connect", "unix_listen",
     "termios_get", "uname_field", "window_size",
-    "__bytes_owned", "__bytes_range", "__bytes_into", "__aes_expand_key", "__aes_ctr32", "__ghash", "__aes_gcm_seal_into", "__aes_gcm_open_into", "__sha256_hw_blocks", "__sha1_hw_blocks",
+    "__bytes_owned", "__bytes_range", "__bytes_into", "__aes_expand_key", "__aes_ctr32", "__ghash", "__aes_gcm_seal_into", "__aes_gcm_open_into", "__sha256_hw_blocks", "__sha1_hw_blocks", "__sha1x8_hw_blocks",
   ];
   return out;
 }

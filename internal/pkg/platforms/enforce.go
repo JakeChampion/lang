@@ -250,6 +250,8 @@ var coreBuiltins = map[string]bool{
 	"__sha256_hw_blocks":  true,
 	"__sha1_hw":           true,
 	"__sha1_hw_blocks":    true,
+	"__sha1x8_hw":         true,
+	"__sha1x8_hw_blocks":  true,
 
 	"map_new":                     true,
 	"cell_new":                    true,

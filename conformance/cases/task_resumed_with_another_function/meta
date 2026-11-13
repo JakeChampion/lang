@@ -1,4 +1,5 @@
 waiver: harness-limit
 reason: the program stops through exit(134). The wasmtime command line
   reports each exit status above 125 as 1, so the wasm legs cannot observe
-  134. The interpreter and the native legs pin the status.
+  134. A task does not park in the interpreters, so they have no parked
+  task that `task_adopted` can name. The native legs pin the status.

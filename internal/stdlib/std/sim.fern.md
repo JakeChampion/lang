@@ -453,7 +453,7 @@ the clock to the wait's deadline and resumes the task.
 impl worker.Scheduler for Sim {
   function admit(self: Sim, run: () => usize): i32 {
     let t: async.Task[usize] = async.task_new(run);
-    let index: i32 = __slot_add(self, WorkerSlot { id: t.id, root: 0i64, set: [], until: None, done: false });
+    let index: i32 = __slot_add(self, WorkerSlot { id: async.task_id(t), root: 0i64, set: [], until: None, done: false });
     __slot_set(self, index, __turned(t, async.task_start(t)));
     __worker_turns(self, 0 - 1);
     return index;
@@ -479,12 +479,12 @@ function __slot_set(s: Sim, index: i32, slot: WorkerSlot): void {
 function __turned(t: async.Task[usize], st: async.TaskStatus[usize]): WorkerSlot {
   match (st) {
     Done(root) => {
-      return WorkerSlot { id: t.id, root: root as i64, set: [], until: None, done: true };
+      return WorkerSlot { id: async.task_id(t), root: root as i64, set: [], until: None, done: true };
     },
     Suspended(w) => {
       unsafe {
-        let root: usize = __send_root(t.entry);
-        return WorkerSlot { id: t.id, root: root as i64, set: w.set, until: w.until, done: false };
+        let root: usize = __send_root(async.task_entry(t));
+        return WorkerSlot { id: async.task_id(t), root: root as i64, set: w.set, until: w.until, done: false };
       }
     }
   }
@@ -551,8 +551,11 @@ function __next_slot(s: Sim): i32 {
 
 function __resume_slot(s: Sim, index: i32): void {
   let slot = s.workers.get()[index];
-  let t = async.task_adopted(slot.id, __adopt_thunk(slot.root as usize));
-  s.clock_ns.set(__wait_due(async.Wait { set: slot.set, until: slot.until }, s.clock_ns.get(), None));
-  __slot_set(s, index, __turned(t, async.task_resume(t, async.Wake.TimedOut)));
+  unsafe {
+    // The slot holds the id and the rooted thunk of the task that parked.
+    let t = async.task_adopted(slot.id, __adopt_thunk(slot.root as usize));
+    s.clock_ns.set(__wait_due(async.Wait { set: slot.set, until: slot.until }, s.clock_ns.get(), None));
+    __slot_set(s, index, __turned(t, async.task_resume(t, async.Wake.TimedOut)));
+  }
 }
 ```

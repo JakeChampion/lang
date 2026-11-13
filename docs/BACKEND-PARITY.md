@@ -411,6 +411,12 @@ baseline has them (`__sha256_hw`, #10615), and std/crypto's generated rounds
 on wasm. SHA-1 runs the SHA-1 instructions on arm64 (`__sha1_hw`) and the
 generated rounds on x86-64 and wasm.
 
+`std/crypto`'s `Sha1x8` hashes eight
+messages at once (`__sha1x8_hw_blocks`). On x86-64 its kernel runs the eight
+lanes in the 32-bit lanes of the AVX2 registers. On arm64 it runs the lanes
+one after another on the SHA-1 instructions. On wasm the lanes run through
+the generated rounds.
+
 Anything above this level (AVX-512, …) needs runtime dispatch first, and none
 of it is used. AVX-512 is deliberately not taken: Intel removed it from
 consumer parts at Alder Lake, so a v4 baseline would drop hardware a v3 one

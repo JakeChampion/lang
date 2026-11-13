@@ -186,6 +186,8 @@ var Ungated = map[string]bool{
 	"__sha256_hw_blocks":          true,
 	"__sha1_hw":                   true,
 	"__sha1_hw_blocks":            true,
+	"__sha1x8_hw":                 true,
+	"__sha1x8_hw_blocks":          true,
 	"signal_ignore":               true,
 	"signal_default":              true,
 	"signal_catch":                true,

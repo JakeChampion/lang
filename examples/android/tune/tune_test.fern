@@ -409,7 +409,7 @@ function test_the_queue(): test.TestOutcome {
   let built = order(s.shell.app.model);
   s = sim.tap(sim.tap(sim.tap(s, "Now playing, Tagged Song"), "Next"), "Queue");
   saved(s, "tune-queue");
-  let shows = sim.shows(s, "4 songs · hold a song to take it out");
+  let shows = sim.shows(s, "4 songs" + tune.MOVE_HINT);
   s = sim.send(s, tune.Drop(3));
   let less = order(s.shell.app.model);
   s = sim.send(sim.send(s, tune.Jump(2)), tune.Finished);
@@ -498,7 +498,7 @@ function test_playlists(): test.TestOutcome {
   let kept = lists(s.shell.app.model);
   s = sim.tap(sim.tap(sim.tap(s, "Library"), "Lists"), "mix");
   saved(s, "tune-playlist");
-  let shown = sim.shows(s, "2 songs · hold a song to take it out");
+  let shown = sim.shows(s, "2 songs" + tune.MOVE_HINT);
   s = sim.tap(s, "Export");
   let wrote = s.shell.app.model.error;
   s = sim.tap(s, "Slow Water");
@@ -706,6 +706,41 @@ function test_a_track_follows_the_one_that_ends(): test.TestOutcome {
   return test.assert_eq([chosen, wanted(ended) + "@" + ended.current.to_string(), wanted(next), wanted(again), last.playing.to_string()].join(" | "), "load 0 | follow 1@1 | load 1 | follow 0 | false");
 }
 
+// The middle of the first element that shows `label`, or (0, 0).
+function middle_of(s: sim.Sim[player.Player, tune.Msg], label: string): (i32, i32) {
+  return sim.place_of(s, label, 0).unwrap_or((0, 0));
+}
+
+// On the screen of the queue, a long press and a drag move a song, and the
+// track that plays goes on. A swipe takes a song out. A playlist moves its
+// songs in the same way, and the path that the library does not have stays
+// in the playlist.
+function test_rows_move_and_swipe(): test.TestOutcome {
+  let s = sim.tap(sim.hold(started(), "Tagged Song"), "Add to queue");
+  s = sim.tap(sim.hold(s, "Quick Light"), "Play next");
+  s = sim.tap(sim.hold(s, "Slow Water"), "Add to queue");
+  s = sim.tap(sim.hold(s, "Morning Fern"), "Play next");
+  s = sim.tap(sim.tap(sim.tap(s, "Now playing, Tagged Song"), "Next"), "Queue");
+  let m = s.shell.app.model;
+  let before = order(m);
+  let (x, y0) = middle_of(s, m.tracks[m.queue[0]].title);
+  let (_, y2) = middle_of(s, m.tracks[m.queue[2]].title);
+  let last = m.tracks[m.queue[3]].title;
+  s = sim.hold_drag(s, x, y0, x, y2, 320i64, 0i64);
+  let moved = order(s.shell.app.model) + " " + s.shell.app.model.tracks[s.shell.app.model.current].title;
+  let (_, ly) = middle_of(s, last);
+  s = sim.drag(s, 100, ly, 1000, ly, 160i64);
+  let swiped = order(s.shell.app.model);
+  let l = sim.tap(sim.tap(sim.tap(started(), "Library"), "Lists"), "mix");
+  let (lx, ly0) = middle_of(l, "Slow Water");
+  l = sim.hold_drag(l, lx, ly0, lx, ly0 + 176, 320i64, 0i64);
+  let paths = "";
+  if let Some(p) = tune.playlist(l.shell.app.model, "mix") {
+    paths = p.paths.join(",");
+  }
+  return test.assert_eq(before + " | " + moved + " | " + swiped + " | " + paths, "0,1,3,2@1 | 1,3,0,2@0 Morning Fern | 1,3,0@0 | music/loose/x1.wav,music/Fern/First Light/02 Slow Water.wav,music/Fern/missing.mp3");
+}
+
 function main(): i32 {
   let r = test.new("examples/android/tune");
   r = r.it("the scan reads the tags and the paths of its files", test_scan_reads_tags_and_paths);
@@ -722,6 +757,7 @@ function main(): i32 {
   r = r.it("the media buttons of Android play, stop and go to a time", test_the_media_buttons_of_android);
   r = r.it("the player stops for a call and plays again after it", test_the_audio_focus);
   r = r.it("the menu of a song puts it in the queue", test_the_queue);
+  r = r.it("a long press moves a row and a swipe takes it out", test_rows_move_and_swipe);
   r = r.it("the list that shows is the queue", test_a_list_is_the_queue);
   r = r.it("an album has its picture from a tag or from an image file", test_the_picture_of_an_album);
   r = r.it("the player gives the device back when the activity ends", test_the_player_gives_the_device_back);

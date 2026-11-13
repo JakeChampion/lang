@@ -1143,7 +1143,7 @@ func withinLiteralOf(body ast.Node, c *ast.Call, name string) bool {
 // fieldPathDead reports that no path after holder reads q.field. A mention
 // of q reads the path unless it reads another field, or is the base of an
 // update literal that replaces field. A later mention in a branch that
-// holder does not reach is not a read.
+// holder does not reach is not a read, and no path goes on after a return.
 func fieldPathDead(info *Info, bf *bodyFrames, holder ast.Node, q *ast.Ident, field string, order IdentOrder, fieldOf map[*ast.Ident]string, updates map[*ast.Ident]map[string]bool) bool {
 	frames := bf.of(holder)
 	if len(frames) == 0 {
@@ -1174,6 +1174,9 @@ func fieldPathDead(info *Info, bf *bodyFrames, holder ast.Node, q *ast.Ident, fi
 		}
 		return !later
 	})
+	if _, returns := inner.stmts[inner.idx].(*ast.Return); returns {
+		return !later
+	}
 	return !later && !liveFromReads(info, frames, len(frames)-1, q.Name, bindingLevel(frames, q.Name), reads)
 }
 

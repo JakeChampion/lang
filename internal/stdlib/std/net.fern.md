@@ -1528,7 +1528,7 @@ pub function read_deadline(sock: Socket, max: i32, deadline: Duration): Result[R
   return read_watched(sock, max, deadline, 1);
 }
 
-// The number of closes of the descriptor number of sock in this process.
+// A generation changes when this descriptor closes after its first observation.
 function __closes(sock: Socket): i32 {
   unsafe {
     return __task_fd_gen(sock.fd);
