@@ -2889,7 +2889,8 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
   if (ssasem.contract_variables(contract).len() > 0) {
     return invoke_method(recv, c.args, contract, s, written_binding(c, contract, s), destination_binding(contract, expected));
   }
-  let lent = lend(widen(Value { s: s, id: recv }, contract.params[0]), contract.params[0], contract.modes[0], keeps(s, contract, 0));
+  let kept = keeps(s, contract, 0);
+  let lent = lend(widen(Value { s: s, id: recv }, contract.params[0]), contract.params[0], contract.modes[0], kept);
   s = lent.s;
   recv = lent.id;
   if (!semtypes.equal(s.values[recv], contract.params[0])) {
@@ -2897,7 +2898,8 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
   }
   let ids: i32[] = [recv];
   for i in 0..c.args.len() {
-    let v = lend(expr(c.args[i], s, contract.params[i + 1]), contract.params[i + 1], contract.modes[i + 1], keeps(s, contract, i + 1));
+    let kept_arg = keeps(s, contract, i + 1);
+    let v = lend(expr(c.args[i], s, contract.params[i + 1]), contract.params[i + 1], contract.modes[i + 1], kept_arg);
     s = v.s;
     if (!s.ok) {
       return v;
@@ -3888,7 +3890,8 @@ function invoke_method(recv: i32, args: ast.Expr[], contract: ssasem.Contract, s
   if (!written.ok) {
     return refused(s, written.why);
   }
-  let v = lend(Value { s: s, id: recv }, contract.params[0], contract.modes[0], keeps(s, contract, 0));
+  let kept = keeps(s, contract, 0);
+  let v = lend(Value { s: s, id: recv }, contract.params[0], contract.modes[0], kept);
   s = v.s;
   if (!s.ok) {
     return v;
@@ -3915,7 +3918,9 @@ function invoke_rest(ids: i32[], bound: ssasem.Binding, args: ast.Expr[], base: 
     if (!semtypes.concrete(want, false)) {
       want = ssasem.substitute(want, later_binding(bound, args, i + 1, base, contract, s));
     }
-    let v = kernel_argument(lend(expr(args[i], s, want), want, contract.modes[at], keeps(s, contract, at)), want);
+    // Before the argument: the state must have no other reader while `expr` grows it.
+    let kept = keeps(s, contract, at);
+    let v = kernel_argument(lend(expr(args[i], s, want), want, contract.modes[at], kept), want);
     s = v.s;
     if (!s.ok) {
       return v;
