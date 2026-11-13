@@ -4,6 +4,7 @@ import "../ircore";
 import "../irtables";
 import "../physicalbody";
 import "../semrecords";
+import "../ssa";
 import "../ssasem";
 import "../ssaprepare";
 import "../ssacreditbound" as bound;
@@ -93,6 +94,89 @@ function helper_schema(rows: ssaprepare.Emitted[], arch: string): void {
   check(changed, arch, false);
 }
 
+function incoming_id(f: ssa.SFunc): i32 {
+  for b in f.blocks {
+    for op in b.insts {
+      if (op.kind_tag == ssa.PARAM && op.imm == 1) {
+        return op.result;
+      }
+    }
+  }
+  return -1;
+}
+
+function changed_instruction(row: ssaprepare.Emitted, block: i32, instruction: i32, op: ssa.SInst): ssaprepare.Emitted {
+  let f = row.body.formed.f;
+  let b = f.blocks[block];
+  let next = ssa.SFunc { ...f, blocks: f.blocks.with(block, ssa.SBlock { ...b, insts: b.insts.with(instruction, op) }) };
+  return ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, formed: ssa.Formed { ...row.body.formed, f: next } } };
+}
+
+function shape_header(op: ssa.SInst): boolean {
+  return op.kind_tag == ssa.LD_AT && op.args.len() == 1 && op.imm == 0 && op.str == "";
+}
+
+function shape_comparison(op: ssa.SInst, header: i32): boolean {
+  return op.kind_tag == ssa.BINARY && op.str == "eq" && op.args.len() == 2 && (op.args[0] == header || op.args[1] == header);
+}
+
+function header_checks(rows: ssaprepare.Emitted[], row: ssaprepare.Emitted, block: i32, instruction: i32, arch: string): void {
+  let b = row.body.formed.f.blocks[block];
+  let op = b.insts[instruction];
+  let incoming = incoming_id(row.body.formed.f);
+  require(incoming >= 0, 95);
+  let rest = without(rows, row.label_name);
+  for invalid in [ssa.SInst { ...op, args: [incoming] }, ssa.SInst { ...op, imm: 8 }] {
+    check(rest.append(changed_instruction(row, block, instruction, invalid)), arch, false);
+  }
+  let comparisons = 0;
+  let shape_constants = 0;
+  let contracts = selected.contracts(row);
+  let old_shape = semrecords.name_of(contracts[0].params[0]);
+  for index in 0..b.insts.len() {
+    let comparison = b.insts[index];
+    if (shape_comparison(comparison, op.result)) {
+      check(rest.append(changed_instruction(row, block, index, ssa.SInst { ...comparison, imm: 32 })), arch, false);
+      comparisons += 1;
+    }
+    if (comparison.kind_tag == ssa.SHAPE_ADDR) {
+      check(rest.append(changed_instruction(row, block, index, ssa.SInst { ...comparison, str: old_shape })), arch, false);
+      shape_constants += 1;
+    }
+  }
+  require(comparisons == 1 && shape_constants == 1, 96);
+}
+
+function allocation_flags(rows: ssaprepare.Emitted[], row: ssaprepare.Emitted, block: i32, instruction: i32, arch: string): void {
+  let op = row.body.formed.f.blocks[block].insts[instruction];
+  let rest = without(rows, row.label_name);
+  check(rest.append(changed_instruction(row, block, instruction, ssa.SInst { ...op, imm: 0 })), arch, true);
+  for invalid in [ssa.REUSE_NULL, 16] {
+    check(rest.append(changed_instruction(row, block, instruction, ssa.SInst { ...op, imm: invalid })), arch, false);
+  }
+}
+
+function shape_guards(rows: ssaprepare.Emitted[], row: ssaprepare.Emitted, arch: string): void {
+  let f = row.body.formed.f;
+  let headers = 0;
+  let allocations = 0;
+  for block in 0..f.blocks.len() {
+    let b = f.blocks[block];
+    for instruction in 0..b.insts.len() {
+      if (shape_header(b.insts[instruction])) {
+        header_checks(rows, row, block, instruction, arch);
+        headers += 1;
+      }
+      let op = b.insts[instruction];
+      if (ssa.reuse_alloc_call(op) && op.imm == ssa.REUSE_SPLIT) {
+        allocation_flags(rows, row, block, instruction, arch);
+        allocations += 1;
+      }
+    }
+  }
+  require(headers == 1 && allocations == 1, 97);
+}
+
 function boundary(rows: ssaprepare.Emitted[], row: ssaprepare.Emitted, arch: string): void {
   let rest = without(rows, row.label_name);
   check(rest, arch, false);
@@ -108,6 +192,9 @@ function boundary(rows: ssaprepare.Emitted[], row: ssaprepare.Emitted, arch: str
   if (row.label_name == "__sem_release_Parent") {
     check(rest.append(ssaprepare.Emitted { ...row, context: ssaprepare.Context { ...row.context, rc_free_debug: true } }), arch, false);
     shortcut(rows, row, arch);
+  }
+  if (row.label_name == "replace") {
+    shape_guards(rows, row, arch);
   }
 }
 

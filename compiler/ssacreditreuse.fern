@@ -15,7 +15,7 @@ pub struct ScalarField { root: i32, offset: i32 }
 
 struct CheckedCall { name: string, returns: boolean[], exits: boolean[] }
 
-struct Context { arena: guard.Arena, ids: i32[], values: phi.Value[], state: State, unique: i32, temp: i32, error: string }
+struct Context { arena: guard.Arena, ids: i32[], values: phi.Value[], state: State, unique: i32, temp: i32, error: string, old_shape: string }
 
 function failed(c: Context, why: string): Context {
   if (c.error != "") {
@@ -241,6 +241,22 @@ function reuse_donor(c: Context, donor: phi.Value, composed: boolean): Context {
   return out;
 }
 
+function shape_address(op: ssa.SInst, shape: string): boolean {
+  return op.kind_tag == ssa.SHAPE_ADDR && op.args.len() == 0 && op.imm == 0 && op.str == shape;
+}
+
+function distinct_old_header(c: Context, op: ssa.SInst, shape: string): boolean {
+  return c.old_shape != "" && c.old_shape != shape && op.kind_tag == ssa.LD_AT && op.args.len() == 1 && op.imm == 0 && op.str == "" && old_parent_on_path(c, c.values[op.args[0]]);
+}
+
+function distinct_shapes(op: ssa.SInst, a: phi.Value, b: phi.Value): boolean {
+  return op.imm == 64 && (a.kind == 5 && b.kind == 2 || a.kind == 2 && b.kind == 5);
+}
+
+function reuse_allocation(op: ssa.SInst): boolean {
+  return ssa.reuse_alloc_call(op) && (ssa.plain_imm(op) == 0 || op.imm == ssa.REUSE_SPLIT);
+}
+
 function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, release: string, fields: ScalarField[], calls: CheckedCall[], composed: boolean): Context {
   let out = c;
   let args: i32[] = [];
@@ -266,8 +282,14 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
     kind = 0;
     out = literal(out, op.imm);
     identity = out.temp;
-  } else if (op.kind_tag == ssa.SHAPE_ADDR && op.args.len() == 0 && op.imm == 0 && op.str == shape) {
-    kind = 2;
+  } else if (shape_address(op, shape) || distinct_old_header(out, op, shape)) {
+    if (op.kind_tag == ssa.SHAPE_ADDR) {
+      kind = 2;
+    } else {
+      out = parent(out, out.values[op.args[0]]);
+      // Kind 5 is the proved old parent header, distinct from the result shape.
+      kind = 5;
+    }
   } else if (op.kind_tag == ssa.COPY && op.args.len() == 1 && op.imm == 0 && op.str == "") {
     let v = out.values[op.args[0]];
     kind = v.kind;
@@ -298,7 +320,9 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
     let a = out.values[op.args[0]];
     let b = out.values[op.args[1]];
     kind = 0;
-    if (a.kind == 0 && b.kind == 0) {
+    if (distinct_shapes(op, a, b)) {
+      identity = 0;
+    } else if (a.kind == 0 && b.kind == 0) {
       out = calc(out, 2, a.identity, b.identity);
       identity = out.temp;
     } else if (a.kind == 1 && b.kind == 0 || a.kind == 0 && b.kind == 1) {
@@ -418,7 +442,7 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
   } else if (op.kind_tag == ssa.CALL && call_index(calls, op.str) >= 0) {
     out = scalar_call(out, op, calls[call_index(calls, op.str)]);
     kind = 0;
-  } else if (op.kind_tag == ssa.CALL && op.str == "__fern_alloc_reuse" && op.args.len() == 2 && ssa.plain_imm(op) == 0) {
+  } else if (reuse_allocation(op)) {
     let donor = out.values[op.args[0]];
     let words = out.values[op.args[1]];
     if (donor.kind != 1 || words.kind != 0) {
@@ -655,7 +679,7 @@ pub function check_fields(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, sha
 }
 
 pub function check_calls(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: string, fields: ScalarField[], assertions: ssa.SFunc[]): helper.Proof {
-  return check_body(f, drop, release, shape, fields, assertions, false);
+  return check_body(f, drop, release, shape, fields, assertions, false, "");
 }
 
 pub function check_invocations(wrapper: ssa.SFunc, producers: ssa.SFunc[], f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, old_shape: string, new_shape: string, fields: ScalarField[], assertions: ssa.SFunc[]): helper.Proof {
@@ -663,7 +687,7 @@ pub function check_invocations(wrapper: ssa.SFunc, producers: ssa.SFunc[], f: ss
   if (!boundary.proof.ok) {
     return boundary.proof;
   }
-  return check_body(f, drop, release, new_shape, fields, assertions, true);
+  return check_body(f, drop, release, new_shape, fields, assertions, true, old_shape);
 }
 
 function returned(c: Context, value: i32, composed: boolean): Context {
@@ -695,7 +719,7 @@ function returned(c: Context, value: i32, composed: boolean): Context {
   return c;
 }
 
-function check_body(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: string, fields: ScalarField[], assertions: ssa.SFunc[], composed: boolean): helper.Proof {
+function check_body(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: string, fields: ScalarField[], assertions: ssa.SFunc[], composed: boolean, old_shape: string): helper.Proof {
   let calls: CheckedCall[] = [];
   for assertion in assertions {
     if (assertion.name == f.name || assertion.name == drop.name || assertion.name == release.name || call_index(calls, assertion.name) >= 0) {
@@ -755,7 +779,7 @@ function check_body(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: st
     incoming = incoming.append(Incoming { state: state, edges: [] });
     done = done.append(false);
   }
-  let c = Context { arena: u.arena, ids: ids, values: values, state: empty, unique: u.id, temp: 0, error: "" };
+  let c = Context { arena: u.arena, ids: ids, values: values, state: empty, unique: u.id, temp: 0, error: "", old_shape: old_shape };
   let remaining = f.blocks.len();
   while (remaining > 0 && c.error == "") {
     let chosen = -1;
