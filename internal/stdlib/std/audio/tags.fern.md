@@ -1002,10 +1002,10 @@ function kept_frames(input: [u8], from: i32, end: i32, version: i32): u8[] {
   let written = written_ids();
   let out: u8[] = [];
   let at = from;
-  while (at + 10 <= end) {
+  while (__fits(at, 10, end)) {
     let id = frame_name(input, at, 4);
     let size = if (version == 4) { syncsafe(input, at + 4) } else { wire.be(input, at + 4, 4) as i32 };
-    if (id.len() == 0 || size <= 0 || at + 10 + size > end) {
+    if (id.len() == 0 || size <= 0 || !__fits(at + 10, size, end)) {
       return out;
     }
     if (!has(written, id)) {
@@ -1073,20 +1073,19 @@ function field_comments(t: Tags): string[] {
 // `to`, but for those that `retagged` writes.
 function kept_comments(input: [u8], from: i32, to: i32): (u8[], string[]) {
   let kept: string[] = [];
-  let vendor_end = if (from + 8 > to) { -1 } else { from + 4 + wire.le(input, from, 4) as i32 };
-  if (vendor_end < from + 4 || vendor_end + 4 > to) {
+  let Some(vendor_end) = __comment_start(input, from, to) else {
     return (bytes_of("Fern"), kept);
-  }
+  };
   let vendor = appended([], input[from + 4:vendor_end]);
   let count = wire.le(input, vendor_end, 4) as i32;
   let at = vendor_end + 4;
   let written = written_names();
   for _ in 0..count {
-    if (at + 4 > to) {
+    if (!__fits(at, 4, to)) {
       return (vendor, kept);
     }
     let n = wire.le(input, at, 4) as i32;
-    if (n < 0 || at + 4 + n > to) {
+    if (!__fits(at + 4, n, to)) {
       return (vendor, kept);
     }
     if (!is_written(input, at + 4, at + 4 + n, written)) {
@@ -1121,14 +1120,15 @@ function comment_block(vendor: [u8], comments: string[]): u8[] {
 // Vorbis comment block, the byte after it, and its flag of the last block.
 // A block that goes past the end gives no bytes and -1.
 function flac_block(input: [u8], at: i32, t: Tags): (u8[], i32, boolean) {
-  if (at + 4 > input.len()) {
+  if (!__fits(at, 4, input.len())) {
     return ([], -1, true);
   }
   let head = input[at] as i32;
-  let next = at + 4 + wire.be(input, at + 1, 3) as i32;
-  if (next > input.len()) {
+  let size = wire.be(input, at + 1, 3) as i32;
+  if (!__fits(at + 4, size, input.len())) {
     return ([], -1, true);
   }
+  let next = at + 4 + size;
   if ((head & 127) != 4) {
     return (appended([(head & 127) as u8], input[at + 1:next]), next, (head & 128) != 0);
   }

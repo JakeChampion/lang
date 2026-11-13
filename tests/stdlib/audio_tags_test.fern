@@ -491,6 +491,35 @@ function test_tag_prefix_bounds(): test.TestOutcome {
   return test.pass();
 }
 
+function test_retagged_length_bounds(): test.TestOutcome {
+  let fresh = tags.Tags { ...tags.none(), title: "new" };
+  let lyrics = joined([[0u8], bytes_of("eng"), [0u8], bytes_of("kept")]);
+  let uslt = joined([bytes_of("USLT"), wire.put_be([], lyrics.len() as u64, 4), [0u8, 0u8], lyrics]);
+  for n in bound_lengths() {
+    let bad_frame = joined([bytes_of("XXXX"), wire.put_be([], n, 4), [0u8, 0u8]]);
+    let mp3 = id3(3u8, 0u8, joined([uslt, bad_frame]));
+    let comments = joined([wire.put_le([], 0u64, 4), wire.put_le([], 3u64, 4), comment("LYRICS=kept"), wire.put_le([], n, 4)]);
+    let flac = flac_block(4u8, comments);
+    for file in [mp3, flac] {
+      let Some(out) = tags.retagged(file, fresh) else {
+        return test.fail("a malformed field prevents the tag update");
+      };
+      let t = tags.read(out);
+      if (t.title != "new" || t.lyrics != "kept") {
+        return test.fail("a malformed field loses a prior retained field");
+      }
+    }
+    let bad_vendor = flac_block(4u8, joined([wire.put_le([], n, 4), wire.put_le([], 2u64, 4)]));
+    let Some(out) = tags.retagged(bad_vendor, fresh) else {
+      return test.fail("a malformed vendor prevents the tag update");
+    };
+    if (tags.read(out).title != "new") {
+      return test.fail("a malformed vendor loses the new title");
+    }
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let r = test.new("std/audio/tags");
   r = r.it("an ID3v2.3 tag has texts in UTF-16 and in Latin-1", test_id3v23);
@@ -517,5 +546,6 @@ function main(): i32 {
   r = r.it("RIFF lengths keep prior fields", test_riff_length_bounds);
   r = r.it("MP4 boxes retain their available fields", test_mp4_length_bounds);
   r = r.it("all incomplete tag prefixes return", test_tag_prefix_bounds);
+  r = r.it("tag updates keep bounded prior fields", test_retagged_length_bounds);
   return r.finish();
 }
