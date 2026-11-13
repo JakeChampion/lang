@@ -71,7 +71,10 @@ lowered function it:
    caller brings its `&&` or `||` as such a phi), and prunes again;
 4. once the certifier has read that form, gives each side of a uniqueness
    test its own copy of the blocks that test the reuse token again, with
-   each of those tests decided (`ssa.split_tokens`), marks each reuse
+   each of those tests decided (`ssa.split_tokens`), gives each other reuse
+   allocation of such a token a branch on the token, so that the side with
+   the box writes neither the shape nor a word that the box already has
+   (`ssatokenkeep.keeps`), marks each reuse
    allocation whose token is null so that it calls the fresh entry of the
    helper with no test (`ssa.fresh_boxes`), then turns each branch whose two arms
    compute a few pure integer values and meet again, at a join's phis or at

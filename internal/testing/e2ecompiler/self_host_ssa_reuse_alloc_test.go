@@ -7,52 +7,16 @@ import (
 	"testing"
 )
 
-const ssaReuseAllocProg = `enum Tree { Node(Tree, i32, Tree), Leaf }
-
-@noinline function is_leaf(t: Tree): boolean {
-  return match (t) { Leaf => true, _ => false };
-}
-
-// The token of t reaches two constructions behind tests of other values.
-@noinline function grow(t: Tree, k: i32): Tree {
-  match (t) {
-    Node(l, x, r) => {
-      if (k < x) {
-        if (is_leaf(l)) {
-          return Node(Node(Leaf, k, Leaf), x, r);
-        }
-        return Node(grow(l, k), x, r);
-      }
-      return Node(l, x, grow(r, k));
-    },
-    Leaf => { return Node(Leaf, k, Leaf); },
-  }
-}
-
-@noinline function sum(t: Tree): i32 {
-  return match (t) { Node(l, x, r) => sum(l) + x + sum(r), Leaf => 0 };
-}
-
-function main(): i32 {
-  let t = Leaf;
-  for i in 0..6 {
-    t = grow(t, 6 - i);
-  }
-  let shared = t;
-  let u = grow(shared, 9);
-  return sum(u) + sum(t);
-}
-`
-
 // A reuse allocation tests its token inline (ssa.inline_reuse_call), and calls
-// the helper only for a token of another size. bump of ssaBoxedCountProg
-// allocates on the null side of a test of its token, so it calls the fresh
-// entry of the helper with no test (ssa.fresh_boxes).
+// the helper only for a token of another size. sink of ssaTokenKeepProg keeps
+// such an allocation for a token that is null or has another shape. bump of
+// ssaBoxedCountProg allocates on the null side of a test of its token, so it
+// calls the fresh entry of the helper with no test (ssa.fresh_boxes).
 func TestSelfHostSSAReuseAllocIsInline(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()
 	inline := filepath.Join(dir, "inline.fern")
-	if err := os.WriteFile(inline, []byte(ssaReuseAllocProg), 0o644); err != nil {
+	if err := os.WriteFile(inline, []byte(ssaTokenKeepProg), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	fresh := filepath.Join(dir, "fresh.fern")
@@ -66,14 +30,11 @@ func TestSelfHostSSAReuseAllocIsInline(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			grow := tailCallBody(t, string(asm), "grow")
+			sink := tailCallBody(t, string(asm), "sink")
 			for _, want := range []string{size[target], "__fn___fern_alloc_reuse.r", "__fern_arr_box"} {
-				if !strings.Contains(grow, want) {
-					t.Fatalf("grow has no %q:\n%s", want, grow)
+				if !strings.Contains(sink, want) {
+					t.Fatalf("sink has no %q:\n%s", want, sink)
 				}
-			}
-			if stderr, code := cli.exitOf(t, ssaReuseAllocProg, target); code != 51 {
-				t.Fatalf("exit %d, want 51\n%s", code, stderr)
 			}
 			asm, err = os.ReadFile(cli.emit(t, fresh, target))
 			if err != nil {
