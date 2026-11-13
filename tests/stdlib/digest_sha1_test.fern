@@ -78,6 +78,30 @@ function test_update_bytes_and_oneshot(): test.TestOutcome {
   return test.assert_eq(via_bytes, "a9993e364706816aba3e25717850c26c9cd0d89d");
 }
 
+// Each lane of a Sha1x8 must match a Sha1 that absorbs the same blocks. The
+// 76 bytes after the second group are not a whole group, so no lane takes them.
+function test_eight_lanes(): test.TestOutcome {
+  let bs = __pseudo();
+  let base = crypto.sha1_new().update(bs[9000:9064]);
+  let lanes = base.x8().blocks(bs[0:1100]);
+  for k in 0..8 {
+    let one = base.update(bs[64 * k:64 * k + 64]).update(bs[512 + 64 * k:576 + 64 * k]);
+    let want: u32[] = [one.h0, one.h1, one.h2, one.h3, one.h4];
+    for w in 0..5 {
+      if (lanes.word(w, k) != want[w]) {
+        return test.fail("lane " + k.to_string() + " word " + w.to_string() + ": " + lanes.word(w, k).to_string() + " != " + want[w].to_string());
+      }
+    }
+  }
+  let same = base.x8().blocks(bs[0:100]);
+  for k in 0..8 {
+    if (same.word(0, k) != base.h0) {
+      return test.fail("a partial group changed lane " + k.to_string());
+    }
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let r = test.new("std/crypto SHA-1");
   r = r.it("empty", test_empty);
@@ -87,5 +111,6 @@ function main(): i32 {
   r = r.it("million a, 1000x1000", test_million_a_chunked);
   r = r.it("7-byte updates", test_seven_byte_updates);
   r = r.it("update_bytes + one-shot", test_update_bytes_and_oneshot);
+  r = r.it("eight lanes match one lane each", test_eight_lanes);
   return r.finish();
 }

@@ -35,6 +35,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<generated data 3>>
 
+<<sha1 on eight lanes>>
+
 <<4 function __mac_digest(hlen: i32, msg: [u8]): u8[]>>
 
 <<5 pub function hmac_sha256(key: [u8], msg: [u8]): u8[]>>
@@ -3360,6 +3362,61 @@ pub function blake2b(s: [u8], out_len: i32): u8[] {
 }
 
 // <<< generated
+```
+
+### `sha1 on eight lanes`
+
+`Sha1x8` holds eight SHA-1 states, one for each lane. A step absorbs one block into each lane. A search that tries many messages with the same prefix uses it: the prefix makes one `Sha1`, and `x8` copies its chaining value into the eight lanes.
+
+The state is word-major: word `w` of lane `k` is at byte `4 * (8 * w + k)`. A group of 512 bytes holds one block for each lane, and the block of lane `k` starts at byte `64 * k`. On x86-64 one call of the kernel runs the eight lanes in the 32-bit lanes of the AVX2 registers. On arm64 the kernel runs the lanes one after another on the SHA-1 instructions. Other engines run each lane through the block function of `Sha1`.
+
+```fern
+<<sha1 on eight lanes>>=
+/// Eight SHA-1 states. Word `w` of lane `k` is at byte `4 * (8 * w + k)`.
+pub struct Sha1x8 { state: u8[] }
+
+/// Eight copies of the chaining value of `h`. The bytes after the last whole
+/// block of `h` are not in the copies.
+pub function (h: Sha1) x8(): Sha1x8 {
+  let words: u32[] = [h.h0, h.h1, h.h2, h.h3, h.h4];
+  let st = __zero_u8(160);
+  for w in 0..5 {
+    for k in 0..8 {
+      st = __put_le32(st, 4 * (8 * w + k), words[w]);
+    }
+  }
+  return Sha1x8 { state: st };
+}
+
+/// Absorbs each whole group of 512 bytes of `bs`. A group holds the block of
+/// lane `k` at byte `64 * k`. The bytes after the last whole group are ignored.
+pub function (h: Sha1x8) blocks(bs: [u8]): Sha1x8 {
+  if (__sha1x8_hw()) {
+    return Sha1x8 { state: __sha1x8_hw_blocks(h.state, bs) };
+  }
+  let st = __bytes_into(__zero_u8(160), 0, h.state, 0, 160);
+  for k in 0..8 {
+    let lane = Sha1 {
+      ...sha1_new(),
+      h0: h.word(0, k), h1: h.word(1, k), h2: h.word(2, k), h3: h.word(3, k), h4: h.word(4, k),
+    };
+    let g = 0;
+    while (g + 512 <= bs.len()) {
+      lane = __sha1_blocks(lane, bs, g + 64 * k, 1);
+      g += 512;
+    }
+    let words: u32[] = [lane.h0, lane.h1, lane.h2, lane.h3, lane.h4];
+    for w in 0..5 {
+      st = __put_le32(st, 4 * (8 * w + k), words[w]);
+    }
+  }
+  return Sha1x8 { state: st };
+}
+
+/// Word `w` of the state of lane `lane`.
+pub function (h: Sha1x8) word(w: i32, lane: i32): u32 {
+  return __get_le32(h.state, 4 * (8 * w + lane));
+}
 ```
 
 ### `4 function __mac_digest(hlen: i32, msg: [u8]): u8[]`

@@ -1889,6 +1889,129 @@ function emit_rt_sha256(s: asmcore.EmitState): asmcore.EmitState {
   return s.write("    .section .text\n" + x86_sha256_blocks());
 }
 
+// SHA-1 on eight messages at once, one per 32-bit lane of the ymm registers.
+// The state is word-major: word w of lane k is at byte 4 * (8 * w + k). A
+// group of 512 bytes holds one block of each lane, lane k at byte 64 * k.
+function x86_sha1x8_blocks(): string {
+  let o: string = "    .globl __fern_sha1x8_hw_blocks\n    .type __fern_sha1x8_hw_blocks, @function\n__fern_sha1x8_hw_blocks:\n"
+    + "    pushq %rbp\n    movq %rsp, %rbp\n    subq $576, %rsp\n"
+    + x86_aes_view("%rsi", "%r8", "%r9", ".Lsx8_data") + "    movq %r8, -24(%rbp)\n    movq %r9, -32(%rbp)\n"
+    + x86_aes_view("%rdi", "%r8", "%r10", ".Lsx8_st") + "    movq %r8, -8(%rbp)\n"
+    + "    movl $160, %edi\n    cmpq $160, %r10\n    jae .Lsx8_stok\n    xorl %edi, %edi\n.Lsx8_stok:\n"
+    + x86_aes_alloc() + "    testq %rdi, %rdi\n    jz .Lsx8_ret\n    movq -8(%rbp), %r8\n";
+  for j in 0..5 {
+    let off = util.i32_to_string(32 * j);
+    o = o + "    vmovdqu " + off + "(%r8), %ymm0\n    vmovdqu %ymm0, " + util.i32_to_string(8 + 32 * j) + "(%rax)\n";
+  }
+  o += "    leaq .Lsx8_consts(%rip), %r10\n    vmovdqu (%r10), %ymm15\n    movq -24(%rbp), %rsi\n    movq -32(%rbp), %rdx\n";
+  o += ".Lsx8_loop:\n    cmpq $512, %rdx\n    jb .Lsx8_ret\n";
+  o = o + x86_sha1x8_transpose(0) + x86_sha1x8_transpose(1) + "    movq -48(%rbp), %rax\n";
+  for j in 0..5 {
+    o = o + "    vmovdqu " + util.i32_to_string(8 + 32 * j) + "(%rax), %ymm" + util.i32_to_string(j) + "\n";
+  }
+  o += x86_sha1x8_rounds();
+  for j in 0..5 {
+    let off = util.i32_to_string(8 + 32 * j);
+    let y = "%ymm" + util.i32_to_string(j);
+    o = o + "    vpaddd " + off + "(%rax), " + y + ", " + y + "\n    vmovdqu " + y + ", " + off + "(%rax)\n";
+  }
+  return o + "    addq $512, %rsi\n    subq $512, %rdx\n    jmp .Lsx8_loop\n"
+    + ".Lsx8_ret:\n    vzeroupper\n" + x86_aes_epilogue() + "    .size __fern_sha1x8_hw_blocks, .-__fern_sha1x8_hw_blocks\n";
+}
+
+function ymm(n: i32): string {
+  return "%ymm" + util.i32_to_string(n);
+}
+
+// x86_sha1x8_transpose writes the words 8 * half to 8 * half + 7 of the eight
+// blocks at (%rsi) to the schedule at (%rsp), one ymm for each word.
+function x86_sha1x8_transpose(half: i32): string {
+  let o = "";
+  for k in 0..8 {
+    o = o + "    vmovdqu " + util.i32_to_string(64 * k + 32 * half) + "(%rsi), " + ymm(k) + "\n";
+  }
+  // Each row is [regs of src1, src2, dst]; AT&T order puts src2 first.
+  let steps: i32[][] = [
+    [0, 1, 8, 0], [0, 1, 9, 1], [2, 3, 10, 0], [2, 3, 11, 1], [4, 5, 0, 0], [4, 5, 1, 1], [6, 7, 2, 0], [6, 7, 3, 1],
+    [8, 10, 4, 2], [8, 10, 5, 3], [9, 11, 6, 2], [9, 11, 7, 3], [0, 2, 8, 2], [0, 2, 9, 3], [1, 3, 10, 2], [1, 3, 11, 3],
+  ];
+  let names: string[] = ["vpunpckldq", "vpunpckhdq", "vpunpcklqdq", "vpunpckhqdq"];
+  for st in steps {
+    o = o + "    " + names[st[3]] + " " + ymm(st[1]) + ", " + ymm(st[0]) + ", " + ymm(st[2]) + "\n";
+  }
+  // Rows of [src1, src2, imm, dst, word]: word i of each lane in one register.
+  let perms: i32[][] = [
+    [4, 8, 32, 0, 0], [4, 8, 49, 1, 4], [5, 9, 32, 2, 1], [5, 9, 49, 3, 5],
+    [6, 10, 32, 12, 2], [6, 10, 49, 13, 6], [7, 11, 32, 14, 3], [7, 11, 49, 4, 7],
+  ];
+  for p in perms {
+    let dst = ymm(p[3]);
+    o = o + "    vperm2i128 $" + util.i32_to_string(p[2]) + ", " + ymm(p[1]) + ", " + ymm(p[0]) + ", " + dst + "\n"
+      + "    vpshufb %ymm15, " + dst + ", " + dst + "\n    vmovdqu " + dst + ", " + util.i32_to_string(32 * (8 * half + p[4])) + "(%rsp)\n";
+  }
+  return o;
+}
+
+function x86_rotl(src: string, n: i32, tmp: string): string {
+  return "    vpslld $" + util.i32_to_string(n) + ", " + src + ", " + tmp + "\n    vpsrld $" + util.i32_to_string(32 - n) + ", " + src + ", " + src
+    + "\n    vpor " + tmp + ", " + src + ", " + src + "\n";
+}
+
+// x86_sha1x8_rounds runs the 80 rounds on a..e in ymm0..ymm4. The names
+// rotate each round, and after 80 rounds they are back in place.
+function x86_sha1x8_rounds(): string {
+  let r: i32[] = [0, 1, 2, 3, 4];
+  let o = "";
+  for t in 0..80 {
+    let a = ymm(r[0]);
+    let b = ymm(r[1]);
+    let c = ymm(r[2]);
+    let d = ymm(r[3]);
+    let e = ymm(r[4]);
+    if (t % 20 == 0) {
+      o = o + "    vmovdqu " + util.i32_to_string(32 + 32 * (t / 20)) + "(%r10), %ymm8\n";
+    }
+    let w = util.i32_to_string(32 * (t % 16)) + "(%rsp)";
+    if (t >= 16) {
+      o = o + "    vmovdqu " + util.i32_to_string(32 * ((t - 3) % 16)) + "(%rsp), %ymm9\n"
+        + "    vpxor " + util.i32_to_string(32 * ((t - 8) % 16)) + "(%rsp), %ymm9, %ymm9\n"
+        + "    vpxor " + util.i32_to_string(32 * ((t - 14) % 16)) + "(%rsp), %ymm9, %ymm9\n"
+        + "    vpxor " + w + ", %ymm9, %ymm9\n" + x86_rotl("%ymm9", 1, "%ymm10") + "    vmovdqu %ymm9, " + w + "\n";
+      w = "%ymm9";
+    }
+    if (t < 20) {
+      o = o + "    vpxor " + d + ", " + c + ", %ymm5\n    vpand " + b + ", %ymm5, %ymm5\n    vpxor " + d + ", %ymm5, %ymm5\n";
+    } else if (t >= 40 && t < 60) {
+      o = o + "    vpor " + c + ", " + b + ", %ymm5\n    vpand " + d + ", %ymm5, %ymm5\n    vpand " + c + ", " + b + ", %ymm6\n    vpor %ymm6, %ymm5, %ymm5\n";
+    } else {
+      o = o + "    vpxor " + c + ", " + b + ", %ymm5\n    vpxor " + d + ", %ymm5, %ymm5\n";
+    }
+    o = o + "    vpaddd %ymm8, " + e + ", " + e + "\n    vpaddd " + w + ", " + e + ", " + e + "\n    vpaddd %ymm5, " + e + ", " + e + "\n"
+      + "    vpslld $5, " + a + ", %ymm6\n    vpsrld $27, " + a + ", %ymm7\n    vpor %ymm7, %ymm6, %ymm6\n    vpaddd %ymm6, " + e + ", " + e + "\n"
+      + x86_rotl(b, 30, "%ymm6");
+    r = [r[4], r[0], r[1], r[2], r[3]];
+  }
+  return o;
+}
+
+function emit_rt_sha(s: asmcore.EmitState): asmcore.EmitState {
+  if (s.has_need("sha256")) {
+    s = emit_rt_sha256(s);
+  }
+  if (s.has_need("sha1x8")) {
+    s = emit_rt_sha1x8(s);
+  }
+  return s;
+}
+
+function emit_rt_sha1x8(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    .section .rodata\n    .align 16\n.Lsx8_consts:\n    .byte 3,2,1,0,7,6,5,4,11,10,9,8,15,14,13,12,3,2,1,0,7,6,5,4,11,10,9,8,15,14,13,12\n");
+  for k in ["1518500249", "1859775393", "2400959708", "3395469782"] {
+    s = s.write("    .long " + k + "," + k + "," + k + "," + k + "," + k + "," + k + "," + k + "," + k + "\n");
+  }
+  return s.write("    .section .text\n" + x86_sha1x8_blocks());
+}
+
 function emit_rt_crc32_cksum(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .section .rodata\n");
   s = s.write("    .align 16\n");
@@ -5174,9 +5297,10 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (ir.is_aes_gcm_op(o.kind_tag)) {
     return emit_aes_gcm_op(o, s);
   }
-  if (o.kind_tag == ir.K_SHA256_HW_BLOCKS) {
-    s = s.need("sha256").need("heap");
-    return s.write("    popq %rsi\n    popq %rdi\n    call __fern_sha256_hw_blocks\n    pushq %rax\n");
+  let sha = ir.sha_blocks_need(o.kind_tag);
+  if (sha != "") {
+    s = s.need(sha).need("heap");
+    return s.write("    popq %rsi\n    popq %rdi\n    call __fern_" + sha + "_hw_blocks\n    pushq %rax\n");
   }
   if (o.kind_tag == ir.K_OUTER_MUL_F64) {
     return emit_outer_mul_f64(s);
@@ -10756,6 +10880,8 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     s = s.write("    pushq $1\n");
   } else if (o.kind_tag == ir.K_SHA1_HW) {
     s = s.write("    pushq $0\n");
+  } else if (o.kind_tag == ir.K_SHA1X8_HW) {
+    s = s.write("    pushq $1\n");
   } else if (o.kind_tag == ir.K_SHA1_HW_BLOCKS) {
     s = s.write("    addq $16, %rsp\n    xorl %edi, %edi\n    call __fern_arr_box\n    movq $0, (%rax)\n    pushq %rax\n").need("heap");
   } else if (o.kind_tag == ir.K_MEMCPY) {
@@ -12619,9 +12745,7 @@ function emit_entry_core_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("aes_gcm")) {
     s = emit_rt_aes_gcm(s);
   }
-  if (s.has_need("sha256")) {
-    s = emit_rt_sha256(s);
-  }
+  s = emit_rt_sha(s);
   if (s.has_need("sum_bytes")) {
     s = emit_rt_sum_bytes(s);
   }
