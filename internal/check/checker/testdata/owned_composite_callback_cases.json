@@ -1,0 +1,52 @@
+[
+  {
+    "name": "nested owned callback result factory",
+    "source": "struct H{n:i32} function(own h:H)close():i32{return h.n;} function f():own(()=>own(()=>i32)){return ():own(()=>i32)=>():i32=>7;}",
+    "want": ""
+  },
+  {
+    "name": "nested owned tuple result factory",
+    "source": "struct H{n:i32} function(own h:H)close():i32{return h.n;} function f():own(()=>own(i32,i32)){return ():own(i32,i32)=>(1,2);}",
+    "want": ""
+  },
+  {
+    "name": "nested owned tuple array result factory",
+    "source": "struct H{n:i32} function(own h:H)close():i32{return h.n;} function f():own(()=>own((i32,i32)[])){return ():own((i32,i32)[])=>[(1,2)];}",
+    "want": ""
+  },
+  {
+    "name": "nested owned callback argument type",
+    "source": "struct H{n:i32} function(own h:H)close():i32{return h.n;} function f(cb:(own (()=>i32))=>i32):i32{return cb(():i32=>7);}",
+    "want": ""
+  },
+  {
+    "name": "owned nested callback array element",
+    "source": "struct H{n:i32} function(own h:H)close():i32{return h.n;} function f(fs:((()=>own(i32,i32)))[]):i32{let p=fs[0]();return p.0;}",
+    "want": ""
+  },
+  {
+    "name": "owned grouped resource callback result",
+    "source": "struct H{n:i32} function(own h:H)close():i32{return h.n;} function f(cb:()=>own(H,H)):own(H,H){return cb();}",
+    "want": ""
+  },
+  {
+    "name": "owned callback tuple result rejects wrong return",
+    "source": "struct H{n:i32} function(own h:H)close():i32{return h.n;} function f(make:()=>own(i32,i32)):string{return make().0;}",
+    "want": "E002"
+  },
+  {
+    "name": "owned callback function result rejects wrong return",
+    "source": "struct H{n:i32} function(own h:H)close():i32{return h.n;} function f(make:()=>own(()=>i32)):string{return make()();}",
+    "want": "E002"
+  },
+  {
+    "name": "nested owned callback result cannot strengthen promise",
+    "source": "struct H{n:i32} function(own h:H)close():i32{return h.n;} function f():own(()=>own(()=>own H)){return ():own(()=>own H)=>():H=>H{n:1};}",
+    "want": "E002|E003|E038|E051"
+  },
+  {
+    "name": "nested owned callback result cannot return captured borrow",
+    "source": "struct H{n:i32} function(own h:H)close():i32{return h.n;} function f(h:H):own(()=>own(()=>own H)){return ():own(()=>own H)=>():own H=>h;}",
+    "want": "E051"
+  }
+]
