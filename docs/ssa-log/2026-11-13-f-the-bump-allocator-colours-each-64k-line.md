@@ -32,12 +32,18 @@ A cache model with one set showed it. Cachegrind at 420,000 inserts:
 When a block crosses a 64 KiB line, the bump allocator moves its pointer
 forward by 0 to 960 bytes. The step is 64 bytes times the low four bits of the
 number of the 64 KiB line. Blocks of one size are then not a constant distance
-apart. The cost is three instructions for each block that the bump allocator
-makes, and about 0.7% of the heap.
+apart. The pointer does not pass the end of the heap. The cost is about 0.7%
+of the heap.
 
-On x86-64 the step is in `.Lalloc_fast_miss` and in `.Lalloc_nofl`
-(`bump_colour` in `compiler/asm_ir.fern`). On arm64 it is in `.Lalloc_nofl`,
-which `__fern_alloc_bump` shares.
+On x86-64 the test is in `.Lalloc_fast_miss` (`bump_colour` in
+`compiler/asm_ir.fern`). It is a 16-bit compare of the end of the block
+against its start, and one branch. It adds two instructions to each bump
+block. On arm64 the step is in `.Lalloc_nofl`, which `__fern_alloc_bump`
+shares, and adds three.
+
+The machine models of the x86-64 allocator follow the step.
+`compiler/ssaallocatormachine.fern` runs each way of its two branches, and
+`compiler/ssasmallheap.fern` moves its cursor in the same way.
 
 ## Measured
 
@@ -59,9 +65,9 @@ Wall time, median of five, in milliseconds:
 | nqueens 13 | 955 | 951 | 802 |
 
 The deriv times are in the noise of this container: eight more pairs of runs
-gave 1349 to 1861 before and 1534 to 1742 after. Its instruction count at size 8 goes
-from 104,183,096 to 105,206,075. That is the three instructions for each bump
-block.
+gave 1349 to 1861 before and 1534 to 1742 after. The first form of the step had three instructions for each bump block. With
+it, the instruction count of deriv at size 8 went from 104,183,096 to
+105,206,075.
 
 rbtree-ck does not change: 6.9M D1 misses before and after at 420,000
 inserts, and five pairs of runs at 4,200,000 inserts gave the same times. Its
