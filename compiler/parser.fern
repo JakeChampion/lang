@@ -10574,7 +10574,7 @@ function callable_ret_spelling(t: string): string {
   if (t.len() == 0) {
     return "";
   }
-  let r = parse_type_ref(t);
+  let r = ref_ungroup(parse_type_ref(t));
   if (!r.is_fn || r.args.len() == 0) {
     return "";
   }
@@ -10586,7 +10586,7 @@ function callable_param_spellings(t: string): string[] {
   if (t.len() == 0) {
     return none;
   }
-  let r = parse_type_ref(t);
+  let r = ref_ungroup(parse_type_ref(t));
   if (!r.is_fn) {
     return none;
   }
