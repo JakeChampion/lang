@@ -1460,6 +1460,92 @@ function emit_rt_signal_flags(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
+function emit_rt_scans(s: asmcore.EmitState): asmcore.EmitState {
+  if (s.has_need("utf8_blocks")) {
+    s = emit_rt_utf8_blocks(s);
+  }
+  if (s.has_need("scan_set")) {
+    s = s.write(x86_scan_set());
+  }
+  return s;
+}
+
+// __fern_scan_set scans with a set that is not a constant: rax holds the bytes,
+// rcx the start, r8 the length and rdx the set. It reads the first bytes one at a
+// time. If 16 bytes or more are left after them, it builds the registers of a
+// nibble set and does the block scan of a constant set. The index goes in rcx.
+function x86_scan_set(): string {
+  let head = asmcore.SCAN_SET_HEAD;
+  let bits: u8[] = [];
+  for k in 0..32 {
+    bits = bits.append((1 + k / 16) as u8);
+  }
+  let r = "    .section .rodata\n    .balign 32\n__fern_scan_set_masks:\n" + asmcore.byte_rows(asmcore.scan_set_masks().concat(bits));
+  r = r + "    .section .text\n    .globl __fern_scan_set\n    .type __fern_scan_set, @function\n__fern_scan_set:\n";
+  r = r + "    testq %rcx, %rcx\n    jns .Lscan_set_from\n    xorq %rcx, %rcx\n.Lscan_set_from:\n    movq (%rdx), %rsi\n";
+  r = r + "    leaq " + util.i32_to_string(head) + "(%rcx), %r10\n    leaq " + util.i32_to_string(head + 16) + "(%rcx), %r9\n";
+  r = r + "    cmpq %r8, %r9\n    cmovgq %r8, %r10\n";
+  r += x86_scan_set_head() + ".Lscan_set_build:\n    cmpq %r8, %rcx\n    jge .Lscan_set_end\n";
+  r = r + "    movq %rsp, %rdi\n" + x86_scan_set_members() + x86_scan_set_tables();
+  let names = [".Lscan_set_loop", ".Lscan_set_hit16", ".Lscan_set_tail", ".Lscan_set_last", ".Lscan_set_done", ".Lscan_set_half", ".Lscan_set_rest"];
+  r += scan_set_loop(names, asmcore.ScanShape { nibble: true, invert: false, range: false, bytes: [] }, "");
+  r += "    movq %rdi, %rsp\n    ret\n.Lscan_set_end:\n    movq %r8, %rcx\n.Lscan_set_ret:\n    ret\n";
+  return r + "    .size __fern_scan_set, .-__fern_scan_set\n";
+}
+
+// Reads the bytes from rcx to r10, four at a time while it can.
+function x86_scan_set_head(): string {
+  let r = ".Lscan_set_head:\n    leaq 4(%rcx), %r9\n    cmpq %r10, %r9\n    jg .Lscan_set_one\n";
+  for k in 0..4 {
+    let skip = ".Lscan_set_skip" + util.i32_to_string(k);
+    r = r + "    movzbq " + util.i32_to_string(k) + "(%rax,%rcx), %r9\n    cmpq %rsi, %r9\n    jae " + skip + "\n";
+    r = r + "    cmpb $0, 8(%rdx,%r9)\n    jne .Lscan_set_hit" + util.i32_to_string(k) + "\n" + skip + ":\n";
+  }
+  r += "    addq $4, %rcx\n    jmp .Lscan_set_head\n";
+  for k in 0..3 {
+    r = r + ".Lscan_set_hit" + util.i32_to_string(3 - k) + ":\n    addq $1, %rcx\n";
+  }
+  r += ".Lscan_set_hit0:\n    ret\n.Lscan_set_one:\n    cmpq %r10, %rcx\n    jge .Lscan_set_build\n    movzbq (%rax,%rcx), %r9\n";
+  r += "    cmpq %rsi, %r9\n    jae .Lscan_set_next\n    cmpb $0, 8(%rdx,%r9)\n    jne .Lscan_set_ret\n";
+  return r + ".Lscan_set_next:\n    addq $1, %rcx\n    jmp .Lscan_set_one\n";
+}
+
+// 96(%r11) gets the 256 entries of the set: the set itself, or a copy below rsp
+// with zeros after a shorter set.
+function x86_scan_set_members(): string {
+  let zero = "";
+  for j in 0..8 {
+    zero = zero + "    vmovdqu %ymm0, " + util.i32_to_string(96 + 32 * j) + "(%r11)\n";
+  }
+  let r = "    leaq -88(%rdx), %r11\n    cmpq $256, %rsi\n    jae .Lscan_set_tables\n";
+  r = r + "    subq $352, %rsp\n    movq %rsp, %r11\n    vpxor %ymm0, %ymm0, %ymm0\n" + zero + "    xorq %r10, %r10\n";
+  r = r + ".Lscan_set_copy:\n    cmpq %rsi, %r10\n    jae .Lscan_set_tables\n    movzbq 8(%rdx,%r10), %r9\n";
+  return r + "    movb %r9b, 96(%r11,%r10)\n    addq $1, %r10\n    jmp .Lscan_set_copy\n";
+}
+
+// Row pair p of the entries sets bit 2p of a byte in the low lane of ymm2 (rows
+// 0 to 7) or ymm3 (rows 8 to 15), and bit 2p + 1 in the high lane, where the
+// entry is zero. Each register then gets its two lanes merged and inverted.
+function x86_scan_set_tables(): string {
+  let r = ".Lscan_set_tables:\n    leaq __fern_scan_set_masks(%rip), %r9\n";
+  r = r + "    vmovdqu 64(%r9), %ymm8\n    vpxor %ymm9, %ymm9, %ymm9\n    vpxor %ymm2, %ymm2, %ymm2\n    vpxor %ymm3, %ymm3, %ymm3\n";
+  for p in 0..4 {
+    for half in 0..2 {
+      let acc = "%ymm" + util.i32_to_string(2 + half);
+      r = r + "    vmovdqu " + util.i32_to_string(96 + 128 * half + 32 * p) + "(%r11), %ymm0\n    vpcmpeqb %ymm9, %ymm0, %ymm0\n";
+      r = r + "    vpand %ymm8, %ymm0, %ymm0\n    vpor %ymm0, " + acc + ", " + acc + "\n";
+    }
+    r += "    vpslld $2, %ymm8, %ymm8\n";
+  }
+  r = r + "    vperm2i128 $1, %ymm2, %ymm2, %ymm0\n    vpor %ymm0, %ymm2, %ymm2\n";
+  r = r + "    vperm2i128 $1, %ymm3, %ymm3, %ymm0\n    vpor %ymm0, %ymm3, %ymm3\n";
+  r = r + "    vpcmpeqb %ymm9, %ymm9, %ymm9\n    vpxor %ymm9, %ymm2, %ymm2\n    vpxor %ymm9, %ymm3, %ymm3\n";
+  for k in 0..4 {
+    r = r + "    vbroadcasti128 " + util.i32_to_string(16 * k) + "(%r9), %ymm" + util.i32_to_string(4 + k) + "\n";
+  }
+  return r;
+}
+
 function emit_rt_utf8_blocks(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(asmcore.utf8_tables("__fern_utf8_tables"));
   s = s.write("    .section .text\n    .globl __fern_utf8_blocks\n    .type __fern_utf8_blocks, @function\n__fern_utf8_blocks:\n");
@@ -5534,57 +5620,56 @@ function ir_f2u_sat_rax(width: i32, lb: string, d: string): string {
 
 function emit_scan_set_blocks(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   let names: string[] = [];
-  while (names.len() < 9) {
+  while (names.len() < 8) {
     let lo = asmcore.fresh_label(s);
     names = names.append(lo.name);
     s = lo.state;
   }
   let lit = asmcore.add_string_lit(asmcore.EmitState { ...s }, asmcore.scan_set_tables(o.str));
   s = lit.state;
-  let tables = asmcore.str_lit_label(s, lit.idx);
-  let l_from_ok = names[0];
-  let l_loop = names[1];
-  let l_hit16 = names[2];
-  let l_tail = names[3];
-  let l_hit = names[4];
-  let l_end = names[5];
-  let l_done = names[6];
-  let l_half = names[7];
-  let l_rest = names[8];
-  s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n");
-  if (o.kind_tag == ir.K_SCAN_SET_BYTES) {
-    s = s.write("    movq (%rax), %r8\n    addq $8, %rax\n");
-  } else {
-    s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
-  }
-  s = s.write("    testq %rcx, %rcx\n    jns " + l_from_ok + "\n    xorq %rcx, %rcx\n");
-  s = s.write(l_from_ok + ":\n    leaq " + tables + "(%rip), %r11\n");
-  s = s.write("    leaq (%rax,%rcx), %r9\n    leaq -16(%rax,%r8), %r10\n");
-  s = s.write("    cmpq %r10, %r9\n    jg " + l_tail + "\n");
+  s = s.write(scan_set_operands(o) + "    testq %rcx, %rcx\n    jns " + names[7] + "\n    xorq %rcx, %rcx\n");
+  s = s.write(names[7] + ":\n    leaq " + asmcore.str_lit_label(s, lit.idx) + "(%rip), %r11\n");
   let shape = asmcore.scan_set_shape(o.str);
-  s = s.write(scan_set_setup(shape));
-  s = s.write(l_loop + ":\n    leaq 16(%r9), %rdx\n    cmpq %r10, %rdx\n    jg " + l_half + "\n");
-  s = s.write("    vmovdqu (%r9), %ymm0\n" + scan_set_classify(shape, "ymm") + "    vpmovmskb %ymm1, %edx\n");
-  if (shape.invert) {
-    s = s.write("    notl %edx\n");
+  return s.write(scan_set_loop(names, shape, scan_set_setup(shape)) + "    pushq %rcx\n");
+}
+
+function scan_set_operands(o: ir.Op): string {
+  let r = "    popq %rdx\n    popq %rcx\n    popq %rax\n";
+  if (o.kind_tag == ir.K_SCAN_SET_BYTES) {
+    return r + "    movq (%rax), %r8\n    addq $8, %rax\n";
   }
-  s = s.write("    testl %edx, %edx\n    jnz " + l_hit16 + "\n");
-  s = s.write("    addq $32, %r9\n    jmp " + l_loop + "\n");
-  s = s.write(l_half + ":\n    cmpq %r10, %r9\n    jg " + l_rest + "\n");
-  s = s.write("    vmovdqu (%r9), %xmm0\n" + scan_set_classify(shape, "xmm") + "    vpmovmskb %xmm1, %edx\n");
+  return r + "    movq 8(%rax), %r8\n    movq (%rax), %rax\n";
+}
+
+// The block scan of a byte set. rax holds the bytes, rcx the start, r8 the
+// length and r11 a table of asmcore.scan_set_tables. `setup` loads the vector
+// registers of `shape`. The index goes in rcx.
+function scan_set_loop(names: string[], shape: asmcore.ScanShape, setup: string): string {
+  let l_loop = names[0];
+  let l_hit16 = names[1];
+  let l_tail = names[2];
+  let l_end = names[3];
+  let l_done = names[4];
+  let l_half = names[5];
+  let l_rest = names[6];
+  let r = "    leaq (%rax,%rcx), %r9\n    leaq -16(%rax,%r8), %r10\n    cmpq %r10, %r9\n    jg " + l_tail + "\n" + setup;
+  r = r + l_loop + ":\n    leaq 16(%r9), %rdx\n    cmpq %r10, %rdx\n    jg " + l_half + "\n";
+  r = r + "    vmovdqu (%r9), %ymm0\n" + scan_set_classify(shape, "ymm") + "    vpmovmskb %ymm1, %edx\n";
   if (shape.invert) {
-    s = s.write("    xorl $65535, %edx\n");
+    r += "    notl %edx\n";
   }
-  s = s.write("    testl %edx, %edx\n    jnz " + l_hit16 + "\n    addq $16, %r9\n");
-  s = s.write(l_rest + ":\n    vzeroupper\n    movq %r9, %rcx\n    subq %rax, %rcx\n    jmp " + l_tail + "\n");
-  s = s.write(l_hit16 + ":\n    vzeroupper\n    bsfl %edx, %edx\n    subq %rax, %r9\n    addq %rdx, %r9\n");
-  s = s.write("    pushq %r9\n    jmp " + l_done + "\n");
-  s = s.write(l_tail + ":\n    cmpq %r8, %rcx\n    jge " + l_end + "\n");
-  s = s.write("    movzbq (%rax,%rcx), %r9\n    cmpb $0, 96(%r11,%r9)\n    jne " + l_hit + "\n");
-  s = s.write("    addq $1, %rcx\n    jmp " + l_tail + "\n");
-  s = s.write(l_hit + ":\n    pushq %rcx\n    jmp " + l_done + "\n");
-  s = s.write(l_end + ":\n    pushq %r8\n");
-  return s.write(l_done + ":\n");
+  r = r + "    testl %edx, %edx\n    jnz " + l_hit16 + "\n    addq $32, %r9\n    jmp " + l_loop + "\n";
+  r = r + l_half + ":\n    cmpq %r10, %r9\n    jg " + l_rest + "\n";
+  r = r + "    vmovdqu (%r9), %xmm0\n" + scan_set_classify(shape, "xmm") + "    vpmovmskb %xmm1, %edx\n";
+  if (shape.invert) {
+    r += "    xorl $65535, %edx\n";
+  }
+  r = r + "    testl %edx, %edx\n    jnz " + l_hit16 + "\n    addq $16, %r9\n";
+  r = r + l_rest + ":\n    vzeroupper\n    movq %r9, %rcx\n    subq %rax, %rcx\n";
+  r = r + l_tail + ":\n    cmpq %r8, %rcx\n    jge " + l_end + "\n";
+  r = r + "    movzbq (%rax,%rcx), %r9\n    cmpb $0, 96(%r11,%r9)\n    jne " + l_done + "\n    addq $1, %rcx\n    jmp " + l_tail + "\n";
+  r = r + l_hit16 + ":\n    vzeroupper\n    bsfl %edx, %edx\n    subq %rax, %r9\n    leaq (%r9,%rdx), %rcx\n    jmp " + l_done + "\n";
+  return r + l_end + ":\n    movq %r8, %rcx\n" + l_done + ":\n";
 }
 
 function scan_set_setup(shape: asmcore.ScanShape): string {
@@ -6350,74 +6435,13 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
+// A set that is not a constant goes to __fern_scan_set, which builds the two
+// nibble tables of the set at run time.
 function emit_scan_set(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (ir.is_block_scan_set(o)) {
     return emit_scan_set_blocks(o, s);
   }
-  let slo = asmcore.fresh_label(s);
-  let s_loop = slo.name;
-  let slo2 = asmcore.fresh_label(slo.state);
-  let s_short = slo2.name;
-  let slo3 = asmcore.fresh_label(slo2.state);
-  let s_short_next = slo3.name;
-  let slo4 = asmcore.fresh_label(slo3.state);
-  let s_hit = slo4.name;
-  let slo5 = asmcore.fresh_label(slo4.state);
-  let s_end = slo5.name;
-  let slo6 = asmcore.fresh_label(slo5.state);
-  let s_done = slo6.name;
-  let slo7 = asmcore.fresh_label(slo6.state);
-  let s_from_ok = slo7.name;
-  let slo8 = asmcore.fresh_label(slo7.state);
-  let s_one = slo8.name;
-  let hits: string[] = [];
-  s = slo8.state;
-  while (hits.len() < 4) {
-    let hl = asmcore.fresh_label(s);
-    hits = hits.append(hl.name);
-    s = hl.state;
-  }
-  s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n");
-  if (o.kind_tag == ir.K_SCAN_SET_BYTES) {
-    s = s.write("    movq (%rax), %r8\n    addq $8, %rax\n");
-  } else {
-    s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
-  }
-  s = s.write("    testq %rcx, %rcx\n    jns " + s_from_ok + "\n    xorq %rcx, %rcx\n");
-  s = s.write(s_from_ok + ":\n    movq (%rdx), %r9\n");
-  if (o.kind_tag != ir.K_SCAN_SET_BYTES || ir.is_packed(o)) {
-    s = s.write("    cmpq $256, %r9\n    jb " + s_short + "\n");
-    s = s.write("    cmpq %r8, %rcx\n    jge " + s_end + "\n");
-    s = s.write("    leaq (%rax,%rcx), %r10\n    leaq (%rax,%r8), %r11\n    leaq -4(%r11), %rcx\n");
-    s = s.write(s_loop + ":\n    cmpq %rcx, %r10\n    ja " + s_one + "\n");
-    for k in 0..4 {
-      s = s.write("    movzbq " + util.i32_to_string(k) + "(%r10), %r9\n");
-      s = s.write("    " + set_entry_test(o, "%r9") + "\n    jne " + hits[k] + "\n");
-    }
-    s = s.write("    addq $4, %r10\n    jmp " + s_loop + "\n");
-    s = s.write(s_one + ":\n    cmpq %r11, %r10\n    jae " + s_end + "\n");
-    s = s.write("    movzbq (%r10), %r9\n");
-    s = s.write("    " + set_entry_test(o, "%r9") + "\n    jne " + hits[0] + "\n");
-    s = s.write("    addq $1, %r10\n    jmp " + s_one + "\n");
-    s = s.write(hits[3] + ":\n    addq $1, %r10\n");
-    s = s.write(hits[2] + ":\n    addq $1, %r10\n");
-    s = s.write(hits[1] + ":\n    addq $1, %r10\n");
-    s = s.write(hits[0] + ":\n    subq %rax, %r10\n    pushq %r10\n    jmp " + s_done + "\n");
-  }
-  s = s.write(s_short + ":\n");
-  s = s.write("    cmpq %r8, %rcx\n    jge " + s_end + "\n");
-  if (o.kind_tag == ir.K_SCAN_SET_BYTES && !ir.is_packed(o)) {
-    s = s.write("    movzbq (%rax,%rcx,8), %r10\n");
-  } else {
-    s = s.write("    movzbq (%rax,%rcx), %r10\n");
-  }
-  s = s.write("    cmpq %r9, %r10\n    jae " + s_short_next + "\n");
-  s = s.write("    " + set_entry_test(o, "%r10") + "\n    jne " + s_hit + "\n");
-  s = s.write(s_short_next + ":\n    addq $1, %rcx\n    jmp " + s_short + "\n");
-  s = s.write(s_hit + ":\n    pushq %rcx\n    jmp " + s_done + "\n");
-  s = s.write(s_end + ":\n    pushq %r8\n");
-  s = s.write(s_done + ":\n");
-  return s;
+  return s.write(scan_set_operands(o) + "    call __fern_scan_set\n    pushq %rcx\n").need("scan_set");
 }
 
 function ssa_reg(k: i32): string {
@@ -13333,10 +13357,7 @@ function emit_entry_core_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("sum_bytes")) {
     s = emit_rt_sum_bytes(s);
   }
-  if (s.has_need("utf8_blocks")) {
-    s = emit_rt_utf8_blocks(s);
-  }
-  return s;
+  return emit_rt_scans(s);
 }
 
 function emit_entry_environment(s: asmcore.EmitState): asmcore.EmitState {
