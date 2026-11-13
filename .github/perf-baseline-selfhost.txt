@@ -1,3 +1,6 @@
+# 2026-11-13: PR #15683, perf-x86_64 job 131830388790 on the merge with main 910ea591. The token keep
+# pass of #15649 and the token pairs of #15683 move the emit of six programs by -1.6% to +3.2% on the
+# three targets. Each row moves to its measured value. Keep all tolerances.
 # 2026-11-13: PR #15649, perf-x86_64 job 131794350593 on the merge with main bece4d5b. #15647 tests a
 # reuse allocation inline, so the emit of seven programs grew 1.1% to 4.3% on x86-64 and arm64. Each
 # row moves to its measured value. Keep all tolerances.
@@ -284,7 +287,7 @@ selfhost/arm64-linux/byte_copy_append.emit	1518
 selfhost/arm64-linux/byte_copy_with.emit	1469
 selfhost/arm64-linux/call_overhead.emit	442
 selfhost/arm64-linux/closure_call.emit	1198
-selfhost/arm64-linux/deflate_decode.emit	13320
+selfhost/arm64-linux/deflate_decode.emit	13478
 selfhost/arm64-linux/deflate_encode.emit	7910
 selfhost/arm64-linux/enum_match.emit	1161
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
@@ -299,7 +302,7 @@ selfhost/arm64-linux/map_probe_chain.emit	8514
 selfhost/arm64-linux/map_string.emit	9472
 selfhost/arm64-linux/ordmap_insert.emit	5816
 selfhost/arm64-linux/pmap_insert.emit	3261
-selfhost/arm64-linux/pvec_with.emit	3230
+selfhost/arm64-linux/pvec_with.emit	3318
 selfhost/arm64-linux/record_update.emit	1216
 selfhost/arm64-linux/sort_inplace.emit	1725
 # 2026-11-05: PR #14207, perf-x86_64 job 126960802774 on the merge with main 6dba1dcb measures lower values for the changed rows below. The rows that rise keep their limits.
@@ -365,7 +368,7 @@ selfhost/x86-64-linux/byte_copy_append.emit	1283
 selfhost/x86-64-linux/byte_copy_with.emit	1240
 selfhost/x86-64-linux/call_overhead.emit	347
 selfhost/x86-64-linux/closure_call.emit	955
-selfhost/x86-64-linux/deflate_decode.emit	12469
+selfhost/x86-64-linux/deflate_decode.emit	12645
 selfhost/x86-64-linux/deflate_encode.emit	7283
 selfhost/x86-64-linux/enum_match.emit	935
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
@@ -374,9 +377,9 @@ selfhost/x86-64-linux/int_loop.emit	292
 selfhost/x86-64-linux/map_int.emit	8478
 selfhost/x86-64-linux/map_probe_chain.emit	8482
 selfhost/x86-64-linux/map_string.emit	9311
-selfhost/x86-64-linux/ordmap_insert.emit	5377
-selfhost/x86-64-linux/pmap_insert.emit	2966
-selfhost/x86-64-linux/pvec_with.emit	2994
+selfhost/x86-64-linux/ordmap_insert.emit	5432
+selfhost/x86-64-linux/pmap_insert.emit	2935
+selfhost/x86-64-linux/pvec_with.emit	3056
 selfhost/x86-64-linux/record_update.emit	981
 selfhost/x86-64-linux/sort_inplace.emit	1534
 selfhost/x86-64-linux/sort_ints.emit	1774
@@ -396,7 +399,7 @@ selfhost/x86-64-linux/utf8_ingest_validated.emit	8318
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
 selfhost/x86-64-linux/perceus_cfold.emit	1974
-selfhost/arm64-linux/perceus_cfold.emit	2224
+selfhost/arm64-linux/perceus_cfold.emit	2258
 selfhost/wasm32-wasi/perceus_cfold.emit	1766
 selfhost/x86-64-linux/perceus_deriv.emit	2651
 selfhost/arm64-linux/perceus_deriv.emit	2937
@@ -404,12 +407,12 @@ selfhost/wasm32-wasi/perceus_deriv.emit	2831
 selfhost/x86-64-linux/perceus_nqueens.emit	1548
 selfhost/arm64-linux/perceus_nqueens.emit	1797
 selfhost/wasm32-wasi/perceus_nqueens.emit	1267
-selfhost/x86-64-linux/perceus_rbtree.emit	2779
-selfhost/arm64-linux/perceus_rbtree.emit	3107
-selfhost/wasm32-wasi/perceus_rbtree.emit	3747
-selfhost/x86-64-linux/perceus_rbtree_ck.emit	2874
-selfhost/arm64-linux/perceus_rbtree_ck.emit	3177
-selfhost/wasm32-wasi/perceus_rbtree_ck.emit	4069
+selfhost/x86-64-linux/perceus_rbtree.emit	2740
+selfhost/arm64-linux/perceus_rbtree.emit	3028
+selfhost/wasm32-wasi/perceus_rbtree.emit	3688
+selfhost/x86-64-linux/perceus_rbtree_ck.emit	2966
+selfhost/arm64-linux/perceus_rbtree_ck.emit	3269
+selfhost/wasm32-wasi/perceus_rbtree_ck.emit	4010
 # 2026-11-07: PR #14490 adds QTRLE emitted-size measurements from the local current compiler.
 # Existing limits and tolerances stay unchanged.
 # 2026-11-08: #14770. Pin the measured reduction from the corrected display roots.

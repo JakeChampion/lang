@@ -4284,6 +4284,55 @@ function first_claim_of(f: ssasem.Func, p: Plan, b: ssa.SBlock, slots: i32): i32
   return -1;
 }
 
+// The construction of the slot count in b that keeps the most fields of d
+// in their slots. The first one when no construction keeps more.
+function best_claim_of(f: ssasem.Func, p: Plan, b: ssa.SBlock, slots: i32, d: i32): i32 {
+  let best = first_claim_of(f, p, b, slots);
+  if (best < 0) {
+    return best;
+  }
+  let reads = donor_reads(f, d);
+  let most = kept_fields(reads, b.insts[best]);
+  for pos in best + 1..b.insts.len() {
+    let ins = b.insts[pos];
+    if (ins.kind_tag != ssa.PARAM && ins.kind_tag != ssa.PHI && recipient_slots(f, p, ins) == slots && kept_fields(reads, ins) > most) {
+      best = pos;
+      most = kept_fields(reads, ins);
+    }
+  }
+  return best;
+}
+
+// values[k] is a read of the field at slots[k] of one value.
+struct FieldReads { values: i32[], slots: i32[] }
+
+function donor_reads(f: ssasem.Func, d: i32): FieldReads {
+  let values: i32[] = [];
+  let slots: i32[] = [];
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if ((ins.kind_tag == ssasem.variant_get() || ins.kind_tag == ssasem.record_get()) && ins.args.len() == 1 && ins.args[0] == d) {
+        values = values.append(ins.result);
+        slots = slots.append(ins.imm);
+      }
+    }
+  }
+  return FieldReads { values: values, slots: slots };
+}
+
+// The count of operands of the construction that are the field of their own
+// slot.
+function kept_fields(r: FieldReads, ins: ssa.SInst): i32 {
+  let n = 0;
+  for i in 0..ins.args.len() {
+    let k = util.index_of_i32(r.values, ins.args[i]);
+    if (k >= 0 && r.slots[k] == i) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
 struct Routes { targets: i32[], ways: i32[][], nulls: i32[][] }
 
 struct RouteGraph { at: i32[], claims: i32[][], dies: i32[][], reads: VariantReads }
@@ -4527,7 +4576,7 @@ function served_by(f: ssasem.Func, p: Plan, idx: i32[][], g: RouteGraph, own c: 
   let k = 0;
   while (k < r.targets.len()) {
     let to = f.graph.blocks[g.at[r.targets[k]]];
-    let at_build = first_claim_of(f, p, to, h.slots);
+    let at_build = best_claim_of(f, p, to, h.slots, d);
     if (util.index_of_i32(c.to, to.id) < 0 && util.index_of_i32(to.insts[at_build].args, d) < 0
       && !served_in_block(f, p, idx, g.reads, to, at_build, h.slots)) {
       targets = targets.append(to.id);
