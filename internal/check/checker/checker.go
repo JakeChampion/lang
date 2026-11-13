@@ -12367,10 +12367,14 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		if call, ok := n.Init.(*ast.Call); ok && unannotated {
 			c.openCallLet = call
 		}
+		initErrs := len(c.errors)
 		got := c.checkExpr(n.Init, s)
 		c.openCallLet = nil
 		c.expectedType = nil
 		c.elemHint = nil
+		if len(c.errors) == initErrs {
+			c.requireValue(n.Init, got)
+		}
 		if n.Type != nil {
 			c.settleNumeric(n.Init, n.Type)
 			got = c.postSettleType(n.Init, got)
