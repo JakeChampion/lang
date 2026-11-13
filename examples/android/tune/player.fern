@@ -26,7 +26,7 @@ import "./tune";
 // `keep` keeps the folder of the library for the next start. `decode` gives an
 // image from the bytes of a JPEG or a PNG file, at a size. `save` keeps
 // the text of the library for the next start, and `keep_lists` keeps the
-// text of the playlists. `keep_prefs` keeps the text of the settings, and `keep_place` keeps the text of the place of the player. `write_bytes` writes a file, and tells that it did. `ask_write` asks the person to let the app change a file, and tells that the question shows. `write_text` writes a text file, and tells that it
+// text of the playlists. `keep_prefs` keeps the text of the settings, and `keep_place` keeps the text of the place of the player. `write_bytes` writes a file, and tells that it did. `ask_write` asks the person to let the app change a file, and tells that the question shows. `to_back` puts the app behind the other apps. `write_text` writes a text file, and tells that it
 // did. `kept` gives the bytes
 // that `put` kept under a name, or no bytes. `show` tells
 // Android the track that plays and its state. `wake` keeps the phone
@@ -52,6 +52,7 @@ pub struct Device {
   keep_place: (string) => void,
   write_bytes: (string, u8[]) => boolean,
   ask_write: (string) => boolean,
+  to_back: () => void,
   write_text: (string, string) => boolean,
   kept: (string) => u8[],
   put: (string, u8[]) => void,
@@ -247,6 +248,10 @@ function done(dev: Device, own p: Player, want: tune.Want): Player {
       }
       return Player { model: tune.update(m, tune.Retagged(i, ok)), deck: deck, incoming: incoming };
     },
+    tune.ToBack => {
+      dev.to_back();
+      return Player { model: m, deck: deck, incoming: incoming };
+    },
     tune.KeepPlace => {
       dev.keep_place(library.place_text(tune.place(m)));
       return Player { model: m, deck: deck, incoming: incoming };
@@ -264,12 +269,7 @@ function done(dev: Device, own p: Player, want: tune.Want): Player {
       return Player { model: tune.update(m, tune.Exported(told)), deck: deck, incoming: incoming };
     },
     tune.Quit => {
-      dev.close(m.sound);
-      if (m.awake.wake != 0 as usize) {
-        dev.sleep(m.awake);
-      }
-      dev.quit(tune.now_title(m));
-      return wrap(tune.Model { ...m, sound: tune.no_sound(), pending: [], awake: tune.Awake { wake: 0 as usize, wifi: 0 as usize } });
+      return wrap(closed(dev, m));
     }
   }
 }
@@ -698,6 +698,22 @@ function settled(dev: Device, own p: Player, until: i64): Player {
     m = covered_until(dev, m, until);
   }
   return pumped(dev, m, deck, incoming);
+}
+
+// The state after the player gave back the sound, the locks that keep the
+// phone awake, and what it holds of Android. The app closes it so when it
+// closes, and when its loop ends with no window. A state with no sound is
+// closed already.
+pub function closed(dev: Device, own m: tune.Model): tune.Model {
+  if (m.sound.ptr == 0 as usize && m.awake.wake == 0 as usize) {
+    return m;
+  }
+  dev.close(m.sound);
+  if (m.awake.wake != 0 as usize) {
+    dev.sleep(m.awake);
+  }
+  dev.quit(tune.now_title(m));
+  return tune.Model { ...m, sound: tune.no_sound(), pending: [], awake: tune.Awake { wake: 0 as usize, wifi: 0 as usize } };
 }
 
 // The player after the device did each thing that the state wants.

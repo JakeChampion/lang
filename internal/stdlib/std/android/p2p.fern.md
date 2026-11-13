@@ -6,7 +6,7 @@ This module connects two phones with Wi-Fi Direct, for a NativeActivity app of `
 
 Wi-Fi Direct connects two phones with no access point: one phone becomes the group owner, and the other connects to it. `WifiP2pManager` reports the state, the peers and the group through broadcasts. The app declares a @jni class that extends `android.content.BroadcastReceiver`, with a native `onReceive` that calls `received`.
 
-`start` registers the receiver. `received` sends the broadcasts to the loop thread of the live activity, which `android.live_activity` names. The loop gives them to the app as `Posted` events. `event` decodes them.
+`start` registers the receiver. `received` sends the broadcasts to the live loop of the app with `android.tell`. The loop gives them to the app as `Posted` events. `event` decodes them.
 
 Discovery needs `NEARBY_WIFI_DEVICES` from API level 33, and `ACCESS_FINE_LOCATION` before that. The commands report no result: the broadcasts that follow give the state. `connect` makes Android ask the user of the other phone to accept the invitation.
 
@@ -170,8 +170,7 @@ pub function stop(ctx: usize, p: Manager): void {
 // its arguments. It sends the state, the peers or the group to the loop
 // thread.
 pub function received(e: usize, receiver: usize, intent: usize): void {
-  let activity: usize = android.live_activity(e);
-  if (activity == 0 as usize || intent == 0 as usize) {
+  if (android.live_loop(e) == 0 as usize || intent == 0 as usize) {
     return;
   }
   let action: string = android.intent_action(e, intent);
@@ -181,11 +180,11 @@ pub function received(e: usize, receiver: usize, intent: usize): void {
     if (enabled == 2) {
       on = 1 as usize;
     }
-    android.send(activity, STATE, on);
+    let sent = android.tell(e, STATE, on);
   } else if (action == ACTIONS[1]) {
-    android.send(activity, PEERS, android.text_buffer(peers_text(e, intent_extra(e, intent, "wifiP2pDeviceList"))));
+    let sent = android.tell(e, PEERS, android.text_buffer(peers_text(e, intent_extra(e, intent, "wifiP2pDeviceList"))));
   } else if (action == ACTIONS[2]) {
-    android.send(activity, GROUP, android.text_buffer(group_text(e, intent_extra(e, intent, "wifiP2pInfo"))));
+    let sent = android.tell(e, GROUP, android.text_buffer(group_text(e, intent_extra(e, intent, "wifiP2pInfo"))));
   }
 }
 

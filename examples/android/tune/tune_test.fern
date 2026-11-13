@@ -178,6 +178,7 @@ function device(): player.Device {
     keep_place: (text: string): void => {},
     write_bytes: (path: string, bytes: u8[]): boolean => path.starts_with("music/") && tags.read(bytes).title == "Fern Morning",
     ask_write: (path: string): boolean => false,
+    to_back: (): void => {},
     write_text: (path: string, text: string): boolean => path.starts_with("music/") && text.starts_with("#EXTM3U\nFern/First Light/02 Slow Water.wav\n"),
     kept: (name: string): u8[] => [],
     put: (name: string, bytes: u8[]): void => {},
@@ -321,12 +322,21 @@ function test_repeat_and_previous(): test.TestOutcome {
   return test.assert_eq(repeated + " " + before.to_string() + " " + s.shell.app.model.current.to_string() + " " + near(s.shell.app.model.at_ms, 0i64, 100i64).to_string(), "3 true 2 2 true");
 }
 
+// The back key closes the screen of the track. Then, while a track plays,
+// it puts the app behind the other apps and the track plays on. When no
+// track plays, it closes the app.
 function test_back_closes_the_track_then_the_app(): test.TestOutcome {
-  let s = sim.tap(sim.tap(started(), "Slow Water"), "Now playing, Slow Water");
+  let backs = 0;
+  let dev = player.Device { ...device(), to_back: (): void => { backs += 1; } };
+  let s = sim.after(sim.start(player.wrap(tune.start(paths())), player.program(dev), test_fonts(), 1080, 2400, 2.75), 50i64);
+  s = sim.tap(sim.tap(s, "Slow Water"), "Now playing, Slow Water");
   let open = s.shell.app.model.open;
   s = sim.back(s);
   let closed = !s.shell.app.model.open && !sim.finished(s);
-  return test.assert_eq(open.to_string() + " " + closed.to_string() + " " + sim.finished(sim.back(s)).to_string(), "true true true");
+  s = sim.back(s);
+  let away = !sim.finished(s) && s.shell.app.model.playing && backs == 1;
+  s = sim.back(sim.send(s, tune.Play(false)));
+  return test.assert_eq([open, closed, away, sim.finished(s)].map((b: boolean): string => b.to_string()).join(" "), "true true true true");
 }
 
 function test_a_player_with_no_files_looks_for_them(): test.TestOutcome {
@@ -458,12 +468,26 @@ function test_the_picture_of_an_album(): test.TestOutcome {
 
 // Android destroys the activity while a track plays: the player gives the
 // sound and the locks back, and keeps its track for the next state.
+// The sound, the wake locks and the deck of the player, as a text.
+function held(s: sim.Sim[player.Player, tune.Msg]): string {
+  let m = s.shell.app.model;
+  return (m.sound.ptr != 0 as usize).to_string() + " " + (m.awake.wake != 0 as usize).to_string() + " " + s.shell.app.deck.is_some().to_string();
+}
+
+// When Android destroys the activity, a track that plays goes on: the
+// player keeps the device. A player that does not play gives the device
+// back, and so does `closed` at the end of a loop with no window.
 function test_the_player_gives_the_device_back(): test.TestOutcome {
   let s = sim.after(sim.tap(started(), "Slow Water"), 100i64);
-  let before = (s.shell.app.model.sound.ptr != 0 as usize).to_string() + " " + (s.shell.app.model.awake.wake != 0 as usize).to_string() + " " + s.shell.app.deck.is_some().to_string();
+  let before = held(s);
   let t = sim.after(sim.send(s, tune.Closing), 100i64);
-  let m = t.shell.app.model;
-  return test.assert_eq(before + " | " + (m.sound.ptr != 0 as usize).to_string() + " " + (m.awake.wake != 0 as usize).to_string() + " " + t.shell.app.deck.is_some().to_string() + " " + m.current.to_string() + " " + m.playing.to_string(), "true true true | false false false 2 true");
+  let on = held(t) + " " + t.shell.app.model.current.to_string() + " " + t.shell.app.model.playing.to_string();
+  let u = sim.after(sim.send(sim.send(t, tune.Play(false)), tune.Closing), 100i64);
+  let after = held(u);
+  let w = sim.after(sim.tap(started(), "Slow Water"), 100i64);
+  let ended = player.closed(device(), tune.Model { ...w.shell.app.model });
+  let freed = (ended.sound.ptr == 0 as usize && ended.awake.wake == 0 as usize).to_string();
+  return test.assert_eq([before, on, after, freed].join(" | "), "true true true | true true true 2 true | false false false | true");
 }
 
 // The player starts with the library that it saved. A track whose file is
@@ -874,7 +898,8 @@ function wants_of(m: tune.Model): string {
 }
 
 // The player keeps its place when it stops, when the app goes away, and
-// when the app closes. At the next start it opens the track of the place
+// when the app closes. A track that plays goes on when Android destroys
+// the activity, and the app closes only when no track plays. At the next start it opens the track of the place
 // at its time, and does not play until the person plays.
 function test_the_player_keeps_its_place(): test.TestOutcome {
   let s = sim.tap(started(), "Slow Water");
@@ -885,7 +910,7 @@ function test_the_player_keeps_its_place(): test.TestOutcome {
   let track = m.tracks[m.current].path;
   let stops = wants_of(tune.update(tune.Model { ...m, wants: [] }, tune.Toggle));
   let away = wants_of(tune.update(tune.Model { ...m, wants: [] }, tune.Away));
-  let closes = wants_of(tune.update(tune.Model { ...m, wants: [] }, tune.Closing));
+  let closes = wants_of(tune.update(tune.Model { ...m, wants: [] }, tune.Closing)) + " " + wants_of(tune.update(tune.Model { ...m, playing: false, wants: [] }, tune.Closing));
   let back = sim.send(started(), tune.Restore(kept));
   let r = back.shell.app.model;
   let same = r.current >= 0 && r.tracks[r.current].path == track && r.queue.len() == m.queue.len() && r.shuffle;
@@ -893,7 +918,7 @@ function test_the_player_keeps_its_place(): test.TestOutcome {
   let plays = sim.send(back, tune.Play(true)).shell.app.model.playing;
   let missing = tune.update(tune.Model { ...started().shell.app.model, wants: [] }, tune.Restore(tune.Place { ...kept, paths: ["/nowhere.mp3"], spot: 0 })).current;
   let lost = tune.update(tune.Model { ...started().shell.app.model, wants: [] }, tune.Restore(tune.Place { ...kept, paths: ["/nowhere.mp3", track], spot: 0, at_ms: 9000i64 }));
-  return test.assert_eq([stops, away, closes, same.to_string(), at, plays.to_string(), missing.to_string(), (lost.tracks[lost.current].path == track).to_string() + " " + lost.at_ms.to_string()].join(" | "), "hold,place | place | place,quit | true | true false | true | -1 | true 0");
+  return test.assert_eq([stops, away, closes, same.to_string(), at, plays.to_string(), missing.to_string(), (lost.tracks[lost.current].path == track).to_string() + " " + lost.at_ms.to_string()].join(" | "), "hold,place | place | place place,quit | true | true false | true | -1 | true 0");
 }
 
 // "Edit tags" of the details of a song shows its tags. Save writes them to
@@ -963,7 +988,7 @@ function main(): i32 {
   r = r.it("a track stops, and goes to a part of its length", test_pause_and_seek);
   r = r.it("the next track plays at the end, and a bad file stops the player", test_the_next_track_plays_at_the_end);
   r = r.it("a track plays again, and the track before it plays", test_repeat_and_previous);
-  r = r.it("the back key closes the track, then the app", test_back_closes_the_track_then_the_app);
+  r = r.it("the back key closes the track, puts a playing app away, then closes it", test_back_closes_the_track_then_the_app);
   r = r.it("a player with no files shows its screen, then looks for them", test_a_player_with_no_files_looks_for_them);
   r = r.it("a scan adds no track two times", test_a_scan_adds_no_track_two_times);
   r = r.it("a person chooses the folder of the library", test_a_person_chooses_the_folder_of_the_library);
@@ -974,7 +999,7 @@ function main(): i32 {
   r = r.it("the theme takes the color of the cover", test_the_theme_takes_the_color_of_the_cover);
   r = r.it("the list that shows is the queue", test_a_list_is_the_queue);
   r = r.it("an album has its picture from a tag or from an image file", test_the_picture_of_an_album);
-  r = r.it("the player gives the device back when the activity ends", test_the_player_gives_the_device_back);
+  r = r.it("a track plays on after the activity, and the player gives the device back when it stops", test_the_player_gives_the_device_back);
   r = r.it("the player starts with the library that it saved", test_the_saved_library);
   r = r.it("the person makes playlists, and the scan reads an M3U file", test_playlists);
   r = r.it("a genre, a directory and each artist of a track show their songs", test_groups_and_orders);

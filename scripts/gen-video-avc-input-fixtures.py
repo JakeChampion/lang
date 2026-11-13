@@ -81,6 +81,46 @@ def controls():
                                              [slice_nal(frame=0, idr=True)]]
     yield "parameter replacement", [[s, p, slice_nal(frame=1)],
                                     [sequence(poc=0), pps.make(bottom=1), slice_nal(order=0, bottom=True, b=1)]]
+    yield from replacement_controls()
+
+
+def replacement_sequence(**options):
+    return syntax.make(**({'profile': 244, 'poc': 2, 'width': 3, 'height': 2,
+                          'crop': (0, 0, 0, 0)} | options))
+
+
+def replacement_controls():
+    ten = replacement_sequence(depth=10)
+    eight = replacement_sequence(depth=8)
+    low, plain = pps.make(qp=-38), pps.make()
+    first = [ten, low, slice_nal(frame=1)]
+    yield "cached PPS accepts a compatible SPS replacement", [[ten, plain, slice_nal(frame=1)],
+                                                              [eight, slice_nal(frame=2)]]
+    yield "new PPS replaces the stale PPS before use", [first, [eight, plain, slice_nal(frame=2)]]
+    yield "unused stale PPS does not reject another PPS", [[ten, low, pps.make(id=1), slice_nal(frame=1)],
+                                                           [eight, slice_nal(frame=2, parameter=1)]]
+    yield "cached PPS becomes valid again", [[ten, low, pps.make(id=1), slice_nal(frame=1)],
+                                             [eight, slice_nal(frame=2, parameter=1)],
+                                             [ten, slice_nal(frame=3)]]
+    yield "repeated SPS keeps a cached PPS", [first, [ten, slice_nal(frame=2)]]
+    scaled = pps.make(extension=True, transform=1, scaling=True, chroma=1)
+    yield "scaled PPS survives a compatible depth change", [[ten, scaled, slice_nal(frame=1)],
+                                                            [eight, slice_nal(frame=2)]]
+    yield "separate SPS entries keep their PPS association", [[ten, replacement_sequence(id=1), low,
+                                                              pps.make(id=1, sequence=1), slice_nal(frame=1)],
+                                                             [replacement_sequence(id=1, depth=10),
+                                                              slice_nal(frame=2, parameter=1)]]
+    yield "all PPS cache entries survive repeated replacements", [
+        [ten] + [pps.make(id=i) for i in range(256)] + [slice_nal(frame=1)],
+        [eight, slice_nal(frame=2, parameter=255)],
+        [ten, slice_nal(frame=3, parameter=0)],
+        [eight, slice_nal(frame=4, parameter=127)],
+    ]
+
+
+def incompatible_pairs():
+    yield "cached PPS follows the current bit depth", replacement_sequence(depth=10), replacement_sequence(depth=8), pps.make(qp=-38), "Header"
+    yield "cached PPS follows the current scaling syntax", replacement_sequence(chroma=1), replacement_sequence(chroma=3), pps.make(extension=True, transform=1, scaling=True, chroma=1), "Truncated"
 
 
 def invalid():
@@ -98,6 +138,13 @@ def invalid():
     yield "field pictures remain unsupported", [sequence(poc=2, only=0), p], "Unsupported"
     yield "slice groups remain unsupported", [s, pps.make(groups=2)], "Unsupported"
     yield "redundant pictures remain unsupported", [s, pps.make(redundant=1)], "Unsupported"
+    for name, before, after, picture, category in incompatible_pairs():
+        yield name, [before, picture, slice_nal(frame=1), after, slice_nal(frame=2)], category
+    yield "full PPS cache drops on a stale parameter error", (
+        [replacement_sequence(depth=10)]
+        + [pps.make(id=i, qp=-38 if i == 255 else 0) for i in range(256)]
+        + [slice_nal(frame=1), replacement_sequence(depth=8), slice_nal(frame=2, parameter=255)]
+    ), "Header"
 
 
 def main():
