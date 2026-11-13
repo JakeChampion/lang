@@ -7,6 +7,13 @@ The caller retains and closes the source.
 
 The stream requires an SPS and PPS before their first slice.
 It retains at most 32 sequence records and 256 picture records.
+Each picture record retains its original PPS NAL and the SPS generation that validated it.
+
+After that SPS changes, the reader rechecks the PPS before a matching slice uses it.
+A successful check refreshes the cached metadata. Unused records do not reject unrelated pictures.
+Each retained PPS obeys the configured NAL and packet limits and the separate 64 KiB PPS ceiling.
+The cache therefore retains at most 16 MiB of PPS payloads, in addition to its scalar records.
+
 Separate limits bound NAL input, encoded access-unit bytes, units per access unit, and access-unit count.
 Slice identity uses frame numbers, parameter identifiers, reference status, IDR identifiers, and picture-order fields.
 Only the first 64 unescaped slice bytes enter temporary header storage.
@@ -36,13 +43,13 @@ pub struct Packet { offset: i64, idr: boolean, bytes: u8[] }
 
 pub enum Event { Waiting, PacketReady(Packet), End }
 
-struct SequenceSlot { value: avc.SliceSequence }
+struct SequenceSlot { value: avc.SliceSequence, generation: i64 }
 
-struct PictureSlot { value: avc.PictureParameters }
+struct PictureSlot { value: avc.PictureParameters, encoded: u8[], generation: i64 }
 
 struct Identity { parameter_id: i32, frame_num: i32, reference: boolean, idr: boolean, idr_id: i32, order_type: i32, order_a: i32, order_b: i32 }
 
-pub struct Stream { units: nals.Stream, sequences: SequenceSlot[], pictures: PictureSlot[], packet: u8[], packet_offset: i64, packet_units: i32, last: Option[Identity], pending: Option[nals.Unit], pending_offset: i64, forced: boolean, finished: boolean, packets: i32, limits: Limits }
+pub struct Stream { units: nals.Stream, sequences: SequenceSlot[], pictures: PictureSlot[], next_sequence: i64, packet: u8[], packet_offset: i64, packet_units: i32, last: Option[Identity], pending: Option[nals.Unit], pending_offset: i64, forced: boolean, finished: boolean, packets: i32, limits: Limits }
 
 pub struct Step { stream: Stream, event: Event }
 
@@ -55,22 +62,13 @@ pub function create(limits: Limits): Result[Stream, nals.ReadError] {
     return Err(nals.ReadVideo(frame.Limit));
   }
   let units = nals.create(limits.input)?;
-  return Ok(Stream { units: units, sequences: [], pictures: [], packet: [], packet_offset: 0i64, packet_units: 0, last: None, pending: None, pending_offset: 0i64, forced: false, finished: false, packets: 0, limits: limits });
+  return Ok(Stream { units: units, sequences: [], pictures: [], next_sequence: 0i64, packet: [], packet_offset: 0i64, packet_units: 0, last: None, pending: None, pending_offset: 0i64, forced: false, finished: false, packets: 0, limits: limits });
 }
 
-function sequence(stream: Stream, id: i32): Result[avc.SliceSequence, frame.VideoError] {
+function sequence(stream: Stream, id: i32): Result[SequenceSlot, frame.VideoError] {
   for slot in stream.sequences {
     if (slot.value.sequence.sequence_id == id) {
-      return Ok(slot.value);
-    }
-  }
-  return Err(frame.State);
-}
-
-function picture(stream: Stream, id: i32): Result[avc.PictureParameters, frame.VideoError] {
-  for slot in stream.pictures {
-    if (slot.value.parameter_id == id) {
-      return Ok(slot.value);
+      return Ok(slot);
     }
   }
   return Err(frame.State);
@@ -81,15 +79,17 @@ function store_sequence(own stream: Stream, input: [u8]): Result[Stream, frame.V
   if (!value.sequence.frame_mbs_only || value.sequence.separate_colour_plane) {
     return Err(frame.Unsupported);
   }
+  let slot = SequenceSlot { value: value, generation: stream.next_sequence };
+  stream = Stream { ...stream, next_sequence: stream.next_sequence + 1i64 };
   for i in 0..stream.sequences.len() {
     if (stream.sequences[i].value.sequence.sequence_id == value.sequence.sequence_id) {
-      return Ok(Stream { ...stream, sequences: stream.sequences.with(i, SequenceSlot { value: value }) });
+      return Ok(Stream { ...stream, sequences: stream.sequences.with(i, slot) });
     }
   }
   if (stream.sequences.len() >= 32) {
     return Err(frame.Limit);
   }
-  return Ok(Stream { ...stream, sequences: stream.sequences.append(SequenceSlot { value: value }) });
+  return Ok(Stream { ...stream, sequences: stream.sequences.append(slot) });
 }
 
 function picture_ids(input: [u8]): Result[(i32, i32), frame.VideoError] {
@@ -102,26 +102,48 @@ function picture_ids(input: [u8]): Result[(i32, i32), frame.VideoError] {
   return Ok((id as i32, parent as i32));
 }
 
-function store_picture(own stream: Stream, input: [u8]): Result[Stream, frame.VideoError] {
-  let (_, parent) = picture_ids(input)?;
-  let context = sequence(stream, parent)?;
-  let value = avc.inspect_pps(input, context.sequence, stream.limits.video)?;
+function checked_picture(input: [u8], context: avc.SliceSequence, limits: frame.Limits): Result[avc.PictureParameters, frame.VideoError] {
+  let value = avc.inspect_pps(input, context.sequence, limits)?;
   if (value.slice_group_count != 1 || value.redundant_pic_cnt_present) {
     return Err(frame.Unsupported);
   }
+  return Ok(value);
+}
+
+function store_picture(own stream: Stream, input: u8[]): Result[Stream, frame.VideoError] {
+  let (_, parent) = picture_ids(input)?;
+  let context = sequence(stream, parent)?;
+  let value = checked_picture(input, context.value, stream.limits.video)?;
+  let slot = PictureSlot { value: value, encoded: input, generation: context.generation };
   for i in 0..stream.pictures.len() {
     if (stream.pictures[i].value.parameter_id == value.parameter_id) {
-      return Ok(Stream { ...stream, pictures: stream.pictures.with(i, PictureSlot { value: value }) });
+      return Ok(Stream { ...stream, pictures: stream.pictures.with(i, slot) });
     }
   }
   if (stream.pictures.len() >= 256) {
     return Err(frame.Limit);
   }
-  return Ok(Stream { ...stream, pictures: stream.pictures.append(PictureSlot { value: value }) });
+  return Ok(Stream { ...stream, pictures: stream.pictures.append(slot) });
 }
 
-function parameters(own stream: Stream, input: [u8], kind: i32): Result[Stream, frame.VideoError] {
+function parameters(own stream: Stream, input: u8[], kind: i32): Result[Stream, frame.VideoError] {
   return match (kind) { 7 => store_sequence(stream, input), 8 => store_picture(stream, input), _ => Ok(stream) };
+}
+
+function current_picture(own stream: Stream, id: i32): Result[(Stream, avc.PictureParameters), frame.VideoError] {
+  for i in 0..stream.pictures.len() {
+    let slot = stream.pictures[i];
+    if (slot.value.parameter_id == id) {
+      let context = sequence(stream, slot.value.sequence_id)?;
+      if (slot.generation == context.generation) {
+        return Ok((stream, slot.value));
+      }
+      let value = checked_picture(slot.encoded, context.value, stream.limits.video)?;
+      let updated = PictureSlot { value: value, encoded: slot.encoded, generation: context.generation };
+      return Ok((Stream { ...stream, pictures: stream.pictures.with(i, updated) }, value));
+    }
+  }
+  return Err(frame.State);
 }
 
 function optional_delta(input: [u8], at: i64, present: boolean): Result[i32, frame.VideoError] {
@@ -157,21 +179,35 @@ function slice_fields(input: [u8], at: i64, context: avc.SliceSequence, pps: avc
   return Ok(Identity { parameter_id: pps.parameter_id, frame_num: number as i32, reference: (header & 96u8) != 0u8, idr: idr, idr_id: id as i32, order_type: context.order_type, order_a: a, order_b: b });
 }
 
-function slice_identity(stream: Stream, input: [u8]): Result[Identity, frame.VideoError] {
-  let bytes = avc.rbsp_prefix(input[1:], 64)?;
-  let (kind_at, first) = avc.ue(bytes, 0i64)?;
-  let (parameter_at, kind) = avc.bounded_ue(bytes, kind_at, 9u32)?;
-  let (fields_at, id) = avc.bounded_ue(bytes, parameter_at, 255u32)?;
-  let pps = picture(stream, id as i32)?;
-  let context = sequence(stream, pps.sequence_id)?;
+function check_slice(first: u32, kind: u32, header: u8, context: avc.SliceSequence): Result[void, frame.VideoError] {
   let units = context.sequence.coded.width / 16 * (context.sequence.coded.height / 16);
   if (first >= units as u32) {
     return Err(frame.Header);
   }
-  if ((input[0] & 31u8) == 5u8 && kind % 5u32 != 2u32 && kind % 5u32 != 4u32) {
+  if ((header & 31u8) == 5u8 && kind % 5u32 != 2u32 && kind % 5u32 != 4u32) {
     return Err(frame.Header);
   }
-  return slice_fields(bytes, fields_at, context, pps, input[0]);
+  return Ok(());
+}
+
+function slice_identity(own stream: Stream, input: [u8]): Result[(Stream, Identity), frame.VideoError] {
+  let bytes = avc.rbsp_prefix(input[1:], 64)?;
+  let (kind_at, first) = avc.ue(bytes, 0i64)?;
+  let (parameter_at, kind) = avc.bounded_ue(bytes, kind_at, 9u32)?;
+  let (fields_at, id) = avc.bounded_ue(bytes, parameter_at, 255u32)?;
+  let (updated, pps) = current_picture(stream, id as i32)?;
+  let context = sequence(updated, pps.sequence_id)?;
+  check_slice(first, kind, input[0], context.value)?;
+  let identity = slice_fields(bytes, fields_at, context.value, pps, input[0])?;
+  return Ok((updated, identity));
+}
+
+function unit_identity(own stream: Stream, input: [u8], kind: i32): Result[(Stream, Option[Identity]), frame.VideoError] {
+  if (kind == 1 || kind == 5) {
+    let (updated, value) = slice_identity(stream, input)?;
+    return Ok((updated, Some(value)));
+  }
+  return Ok((stream, None));
 }
 
 function different(a: Identity, b: Identity): boolean {
@@ -235,23 +271,27 @@ function emit(own stream: Stream): Result[Step, frame.VideoError] {
   return Ok(Step { stream: Stream { ...stream, packet: [], packet_units: 0, last: None, forced: false, packets: stream.packets + 1 }, event: PacketReady(packet) });
 }
 
+function append_unit(own stream: Stream, unit: nals.Unit, offset: i64, kind: i32, identity: Option[Identity]): Result[Step, frame.VideoError] {
+  if (stream.packet_units >= stream.limits.max_units_per_packet) {
+    return Err(frame.Limit);
+  }
+  let updated = parameters(stream, unit.bytes, kind)?;
+  let at = if (updated.packet_units == 0) { offset } else { updated.packet_offset };
+  let bytes = append_packet(updated.packet, unit.bytes, updated.limits.video.max_packet_bytes)?;
+  let last = if (identity.is_some()) { identity } else { updated.last };
+  return Ok(Step { stream: Stream { ...updated, packet: bytes, packet_offset: at, packet_units: updated.packet_units + 1, last: last, forced: kind == 10 || kind == 11 }, event: Waiting });
+}
+
 function accept(own stream: Stream, unit: nals.Unit, offset: i64): Result[Step, frame.VideoError] {
   if (stream.packets >= stream.limits.max_packets) {
     return Err(frame.Limit);
   }
   let kind = nal_kind(unit.bytes)?;
-  let identity = if (kind == 1 || kind == 5) { Some(slice_identity(stream, unit.bytes)?) } else { None };
-  if (boundary(stream, kind, identity)) {
-    return emit(Stream { ...stream, pending: Some(unit), pending_offset: offset });
+  let (prepared, identity) = unit_identity(stream, unit.bytes, kind)?;
+  if (boundary(prepared, kind, identity)) {
+    return emit(Stream { ...prepared, pending: Some(unit), pending_offset: offset });
   }
-  if (stream.packet_units >= stream.limits.max_units_per_packet) {
-    return Err(frame.Limit);
-  }
-  stream = parameters(stream, unit.bytes, kind)?;
-  let at = if (stream.packet_units == 0) { offset } else { stream.packet_offset };
-  let bytes = append_packet(stream.packet, unit.bytes, stream.limits.video.max_packet_bytes)?;
-  let last = if (identity.is_some()) { identity } else { stream.last };
-  return Ok(Step { stream: Stream { ...stream, packet: bytes, packet_offset: at, packet_units: stream.packet_units + 1, last: last, forced: kind == 10 || kind == 11 }, event: Waiting });
+  return append_unit(prepared, unit, offset, kind, identity);
 }
 
 function finish(own stream: Stream): Result[Step, frame.VideoError] {

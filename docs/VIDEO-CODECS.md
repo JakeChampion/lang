@@ -173,6 +173,13 @@ Multiple slices remain in one access unit. Prefix metadata belongs to the follow
 Each step performs at most one bounded source read and emits at most one event.
 Limits bound encoded access-unit bytes, units per access unit, packet count, and the underlying NAL input.
 The stream retains at most 32 sequence records, 256 picture records, and one pending NAL.
+Each picture record retains its original bounded PPS NAL for validation after an SPS changes.
+
+Before the next matching slice, the reader validates that PPS against the current SPS and refreshes its cached metadata.
+Unused stale records do not reject unrelated pictures. A new PPS replaces its old record before use.
+Each PPS obeys the configured NAL and packet limits and the 64 KiB PPS ceiling.
+The cache retains at most 16 MiB of PPS payloads, without an exact process-memory claim.
+
 Slice inspection copies at most 64 unescaped bytes, without a complete slice-payload copy.
 Returned packets contain canonical four-byte Annex B prefixes and an IDR flag, without assigned timestamps.
 
@@ -549,6 +556,9 @@ Normal tests use checked-in references and verify all sync-sample starts and bou
 Eight fresh streams cover profile, precision, chroma, crop, interlace, color metadata, and HRD cases.
 Six synthetic headers cover scaling lists, separate color planes, 255 picture-order offsets, and two maximum HRD tables.
 FFmpeg's coded bitstream reader independently accepts those synthetic headers.
+
+The AVC access-unit comparison also uses this reader to check incompatible SPS and cached PPS pairs.
+That comparison requires a C compiler, the FFmpeg development headers, and `pkg-config`.
 Normal native and WASI tests use checked-in references and malformed syntax controls, without an FFmpeg dependency.
 The malformed-input cases cover packet truncation, runs, skips, dimensions, output budgets, and integer overflow.
 
