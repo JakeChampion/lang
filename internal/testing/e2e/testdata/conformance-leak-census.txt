@@ -405,6 +405,7 @@ eval_order_aggregate_literal                         0
 evaluation_order_effects                            0
 exit                                                 0
 exit_42                                              0
+exit_after_a_worker_keeps_its_status                 0
 exit_code                                            0
 exit_diverges                                        0
 exit_diverges_let_else_taken                         0
@@ -1450,6 +1451,7 @@ while_sum                                            0
 wide_array_append_grow                               0
 wide_shift_by_variable                               0
 wider_use_settles_a_nested_payload_literal           0
+worker_exit_is_a_worker_failure                      0
 worker_runs_in_its_own_process                       0
 worker_runs_on_the_simulation                        4
 worker_send_bound                                    0
