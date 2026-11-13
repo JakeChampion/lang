@@ -1848,7 +1848,12 @@ what its value holds, so `return Named { name: p.text }` hands `p` back.
 `semsource.lend` consults the set: where
 the callee hands back the parameter that takes the view, the view is not
 retagged but COPIED (`v + ""`, an owned string), and that copy is what the
-call is handed. A view that goes to a parameter the callee only reads is lent
+call is handed. A callee keeps a parameter also when its body stores it where it
+stays after the call: as the argument of a cell `set`, as a capture of a
+closure (a `__mkclo$` call), or as an argument that a second callee stores.
+`handers` keeps those parameters in a second mask, and `lend` copies a view
+for them whatever the result type is (#15741,
+`TestSelfHostStoredViewArgument`). A view that goes to a parameter the callee only reads is lent
 with no copy, whatever the result type is (#15719,
 `TestSelfHostLentViewArgument`).
 
