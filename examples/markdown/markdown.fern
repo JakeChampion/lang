@@ -1,0 +1,191 @@
+// CommonMark 0.31.2 to HTML. The output is the output of cmark for the same
+// input, with raw HTML allowed.
+import "std/i32";
+import "./blocks";
+import "./inlines";
+
+// The HTML of the CommonMark document `src`.
+pub function to_html(src: string): string {
+  let b = buf_new(src.len() + src.len() / 4 + 64);
+  render(b, src);
+  let out = buf_take(b);
+  buf_free(b);
+  return out;
+}
+
+// Writes the HTML of the CommonMark document `src` to the byte builder `out`.
+pub function render(out: usize, src: string): void {
+  let d = blocks.parse(src);
+  let t = inlines.tables();
+  let cur = d.get(0, blocks.FIRST);
+  let open = false;
+  let entering = true;
+  while (cur != blocks.NONE) {
+    let k = d.get(cur, blocks.KIND);
+    let container = k == blocks.QUOTE || k == blocks.LIST || k == blocks.ITEM;
+    if (entering) {
+      open = enter(out, d, cur, t, open);
+      if (container && d.get(cur, blocks.FIRST) != blocks.NONE) {
+        cur = d.get(cur, blocks.FIRST);
+        continue;
+      }
+    }
+    if (container) {
+      open = leave(out, d, cur, open);
+    }
+    let next = d.get(cur, blocks.NEXT);
+    if (next != blocks.NONE) {
+      cur = next;
+      entering = true;
+    } else {
+      cur = d.get(cur, blocks.PARENT);
+      entering = false;
+      if (cur == 0) {
+        cur = blocks.NONE;
+      }
+    }
+  }
+}
+
+// Starts a new line of output when the output does not end with a line feed.
+function cr(out: usize, open: boolean): void {
+  if (open) {
+    buf_push_byte(out, 10);
+  }
+}
+
+// Writes the start of the block `node`, or all of it for a leaf block. Gives
+// true when the output does not end with a line feed.
+function enter(out: usize, d: blocks.Doc, node: i32, t: inlines.Tables, open: boolean): boolean {
+  let k = d.get(node, blocks.KIND);
+  if (k == blocks.PARAGRAPH) {
+    return paragraph(out, d, node, t, open);
+  }
+  cr(out, open);
+  if (k == blocks.QUOTE) {
+    buf_push(out, "<blockquote>\n");
+  } else if (k == blocks.LIST) {
+    list_start(out, d, node);
+  } else if (k == blocks.ITEM) {
+    buf_push(out, "<li>");
+    return true;
+  } else if (k == blocks.CODE) {
+    code(out, d, node, t);
+  } else if (k == blocks.HTML) {
+    lines(out, d, d.get(node, blocks.SFROM), d.get(node, blocks.STO));
+  } else if (k == blocks.HEADING) {
+    let level = d.get(node, blocks.A).to_string();
+    buf_push(out, "<h" + level + ">");
+    inlines.render(out, d, d.get(node, blocks.SFROM), d.get(node, blocks.STO), t);
+    buf_push(out, "</h" + level + ">\n");
+  } else if (k == blocks.RULE) {
+    buf_push(out, "<hr />\n");
+  }
+  return false;
+}
+
+function leave(out: usize, d: blocks.Doc, node: i32, open: boolean): boolean {
+  let k = d.get(node, blocks.KIND);
+  if (k == blocks.QUOTE) {
+    cr(out, open);
+    buf_push(out, "</blockquote>\n");
+  } else if (k == blocks.LIST) {
+    if (d.has_flag(node, blocks.F_ORDERED)) {
+      buf_push(out, "</ol>\n");
+    } else {
+      buf_push(out, "</ul>\n");
+    }
+  } else {
+    buf_push(out, "</li>\n");
+  }
+  return false;
+}
+
+function list_start(out: usize, d: blocks.Doc, node: i32): void {
+  if (!d.has_flag(node, blocks.F_ORDERED)) {
+    buf_push(out, "<ul>\n");
+  } else if (d.get(node, blocks.B) == 1) {
+    buf_push(out, "<ol>\n");
+  } else {
+    buf_push(out, "<ol start=\"" + d.get(node, blocks.B).to_string() + "\">\n");
+  }
+}
+
+// A paragraph in an item of a tight list has no `<p>` tags.
+function paragraph(out: usize, d: blocks.Doc, node: i32, t: inlines.Tables, open: boolean): boolean {
+  let from = d.get(node, blocks.SFROM);
+  let to = d.get(node, blocks.STO);
+  let up = d.get(d.get(node, blocks.PARENT), blocks.PARENT);
+  if (up != blocks.NONE && d.get(up, blocks.KIND) == blocks.LIST && d.has_flag(up, blocks.F_TIGHT)) {
+    let last = inlines.render(out, d, from, to, t);
+    if (last < 0) {
+      return open;
+    }
+    return last != 10;
+  }
+  cr(out, open);
+  buf_push(out, "<p>");
+  inlines.render(out, d, from, to, t);
+  buf_push(out, "</p>\n");
+  return false;
+}
+
+// The lines `from` to `to`, each with a line feed after it.
+function lines(out: usize, d: blocks.Doc, from: i32, to: i32): void {
+  for k in from..to {
+    for _ in 0..d.segs[k * 3] {
+      buf_push_byte(out, 32);
+    }
+    buf_push_range(out, d.src, d.segs[k * 3 + 1], d.segs[k * 3 + 2]);
+    buf_push_byte(out, 10);
+  }
+}
+
+function code(out: usize, d: blocks.Doc, node: i32, t: inlines.Tables): void {
+  let from = d.get(node, blocks.SFROM);
+  let to = d.get(node, blocks.STO);
+  if (d.has_flag(node, blocks.F_FENCED)) {
+    let lang = info_word(d, from);
+    from += 1;
+    if (lang.len() > 0) {
+      buf_push(out, "<pre><code class=\"language-");
+      inlines.escape(out, lang, 0, lang.len(), t);
+      buf_push(out, "\">");
+    } else {
+      buf_push(out, "<pre><code>");
+    }
+  } else {
+    buf_push(out, "<pre><code>");
+  }
+  for k in from..to {
+    for _ in 0..d.segs[k * 3] {
+      buf_push_byte(out, 32);
+    }
+    inlines.escape(out, d.src, d.segs[k * 3 + 1], d.segs[k * 3 + 2], t);
+    buf_push_byte(out, 10);
+  }
+  buf_push(out, "</code></pre>\n");
+}
+
+// The first word of the info string of a fenced code block, which is on the
+// line `k`.
+function info_word(d: blocks.Doc, k: i32): string {
+  let a = d.segs[k * 3 + 1];
+  let b = d.segs[k * 3 + 2];
+  while (a < b && is_space(d.src[a] as i32)) {
+    a += 1;
+  }
+  while (b > a && is_space(d.src[b - 1] as i32)) {
+    b -= 1;
+  }
+  let info = inlines.unescape(slice_unchecked(d.src, a, b).to_owned());
+  let e = 0;
+  while (e < info.len() && !is_space(info[e] as i32)) {
+    e += 1;
+  }
+  return slice_unchecked(info, 0, e).to_owned();
+}
+
+function is_space(c: i32): boolean {
+  return c == 32 || c >= 9 && c <= 13;
+}

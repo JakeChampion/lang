@@ -1,0 +1,1011 @@
+// The block structure of a CommonMark 0.31.2 document. This is the first of
+// the two phases in the appendix of the spec. The parser reads the source one
+// line at a time and builds a tree of blocks. The second phase, the inline
+// parse, reads the text of the paragraphs and headings that this phase
+// finds.
+//
+// The tree is a table of i32 fields, NS fields for each node. A leaf block
+// keeps no copy of its text: it holds a range of line segments, and each
+// segment is a range of the source.
+import "core/map";
+import "std/string";
+import "./refs";
+import "./tags";
+
+pub const DOCUMENT: i32 = 0;
+
+pub const QUOTE: i32 = 1;
+
+pub const LIST: i32 = 2;
+
+pub const ITEM: i32 = 3;
+
+pub const CODE: i32 = 4;
+
+pub const HTML: i32 = 5;
+
+pub const PARAGRAPH: i32 = 6;
+
+pub const HEADING: i32 = 7;
+
+pub const RULE: i32 = 8;
+
+pub const NONE: i32 = -1;
+
+// The fields of a node.
+pub const KIND: i32 = 0;
+
+pub const PARENT: i32 = 1;
+
+pub const FIRST: i32 = 2;
+
+pub const LAST: i32 = 3;
+
+pub const NEXT: i32 = 4;
+
+pub const PREV: i32 = 5;
+
+pub const FLAGS: i32 = 6;
+
+// The first segment of a leaf block, and the segment after its last one.
+pub const SFROM: i32 = 7;
+
+pub const STO: i32 = 8;
+
+pub const LINE: i32 = 9;
+
+// The heading level, the marker of a list, the fence character of a code
+// block, or the kind of an HTML block.
+pub const A: i32 = 10;
+
+// The start number of an ordered list, or the length of a code fence.
+pub const B: i32 = 11;
+
+// The column of a list marker, or the indent of a code fence.
+pub const C: i32 = 12;
+
+// The width of a list marker and the spaces after it.
+pub const D: i32 = 13;
+
+pub const NS: i32 = 14;
+
+// The flags of a node.
+const F_BLANK: i32 = 1;
+
+const F_CHECKED: i32 = 2;
+
+pub const F_TIGHT: i32 = 4;
+
+pub const F_FENCED: i32 = 8;
+
+pub const F_ORDERED: i32 = 16;
+
+// A parsed document. A segment is three fields: the spaces that a partly
+// used tab gives at the start of the line, and the start and end of the line
+// in `src`.
+pub struct Doc { src: string, n: i32[], segs: i32[], refs: Map[string, refs.Ref] }
+
+pub function (d: Doc) get(node: i32, field: i32): i32 {
+  return d.n[node * NS + field];
+}
+
+pub function (d: Doc) has_flag(node: i32, flag: i32): boolean {
+  return (d.n[node * NS + FLAGS] & flag) != 0;
+}
+
+struct P {
+  src: string,
+  n: i32[],
+  count: i32,
+  segs: i32[],
+  nseg: i32,
+  stack: i32[],
+  depth: i32,
+  refs: Map[string, refs.Ref],
+  line: i32,
+  le: i32,
+  off: i32,
+  col: i32,
+  fns: i32,
+  fnscol: i32,
+  indent: i32,
+  blank: boolean,
+  partial: boolean,
+}
+
+@inline
+function get(p: P, node: i32, field: i32): i32 {
+  return p.n[node * NS + field];
+}
+
+@inline
+function set(p: P, node: i32, field: i32, v: i32): P {
+  return P { ...p, n: p.n.with(node * NS + field, v) };
+}
+
+@inline
+function has_flag(p: P, node: i32, flag: i32): boolean {
+  return (get(p, node, FLAGS) & flag) != 0;
+}
+
+function set_flag(p: P, node: i32, flag: i32, on: boolean): P {
+  let f = get(p, node, FLAGS);
+  if (on == ((f & flag) != 0)) {
+    return p;
+  }
+  return set(p, node, FLAGS, f ^ flag);
+}
+
+@inline
+function kind(p: P, node: i32): i32 {
+  return get(p, node, KIND);
+}
+
+@inline
+function top(p: P): i32 {
+  return p.stack[p.depth - 1];
+}
+
+// The byte at `i` on the current line. The parser sees a line feed at the
+// end of every line, and nothing after it.
+@inline
+function at(p: P, i: i32): i32 {
+  if (i < p.le) {
+    return p.src[i] as i32;
+  }
+  if (i == p.le) {
+    return 10;
+  }
+  return 0;
+}
+
+function is_space_or_tab(c: i32): boolean {
+  return c == 32 || c == 9;
+}
+
+function can_contain(parent: i32, child: i32): boolean {
+  if (parent == DOCUMENT || parent == QUOTE || parent == ITEM) {
+    return child != ITEM;
+  }
+  return parent == LIST && child == ITEM;
+}
+
+function accepts_lines(k: i32): boolean {
+  return k == PARAGRAPH || k == HEADING || k == CODE || k == HTML;
+}
+
+// Finds the first byte after the spaces and tabs at the offset, and sets the
+// indent and the blank flag from it.
+function first_nonspace(p: P): P {
+  if (p.fns > p.off) {
+    return P { ...p, indent: p.fnscol - p.col, blank: at(p, p.fns) == 10 };
+  }
+  let i = p.off;
+  let col = p.col;
+  let tab = 4 - p.col % 4;
+  let c = at(p, i);
+  while (c == 32 || c == 9) {
+    if (c == 32) {
+      col += 1;
+      tab -= 1;
+      if (tab == 0) {
+        tab = 4;
+      }
+    } else {
+      col += tab;
+      tab = 4;
+    }
+    i += 1;
+    c = at(p, i);
+  }
+  return P { ...p, fns: i, fnscol: col, indent: col - p.col, blank: c == 10 };
+}
+
+// Moves the offset on by `count` bytes, or by `count` columns when `columns`
+// is true. A tab that is wider than the columns that are left is used only in
+// part.
+function advance(p: P, count: i32, columns: boolean): P {
+  let off = p.off;
+  let col = p.col;
+  let partial = p.partial;
+  let left = count;
+  while (left > 0) {
+    let c = at(p, off);
+    if (c == 0) {
+      break;
+    }
+    if (c == 9) {
+      let tab = 4 - col % 4;
+      if (columns) {
+        partial = tab > left;
+        let step = tab;
+        if (left < tab) {
+          step = left;
+        }
+        col += step;
+        if (!partial) {
+          off += 1;
+        }
+        left -= step;
+      } else {
+        partial = false;
+        col += tab;
+        off += 1;
+        left -= 1;
+      }
+    } else {
+      partial = false;
+      off += 1;
+      col += 1;
+      left -= 1;
+    }
+  }
+  return P { ...p, off: off, col: col, partial: partial };
+}
+
+function advance_to_fns(p: P): P {
+  return advance(p, p.fns - p.off, false);
+}
+
+// Adds the rest of the line, up to `end`, to the leaf block `node`.
+function add_line_to(p: P, node: i32, end: i32): P {
+  let pad = 0;
+  let start = p.off;
+  if (p.partial) {
+    start += 1;
+    pad = 4 - p.col % 4;
+  }
+  if (start > end) {
+    start = end;
+  }
+  let nseg = p.nseg + 1;
+  let q = P { ...p, segs: p.segs.append(pad).append(start).append(end), nseg: nseg };
+  return set(q, node, STO, nseg);
+}
+
+function add_line(p: P, node: i32): P {
+  return add_line_to(p, node, p.le);
+}
+
+// Closes open blocks until the block at `depth` is the deepest open block.
+function close_below(p: P, depth: i32): P {
+  let q = p;
+  while (q.depth - 1 > depth) {
+    q = close_top(q);
+  }
+  return q;
+}
+
+function close_top(p: P): P {
+  let node = top(p);
+  return finalize(P { ...p, depth: p.depth - 1 }, node);
+}
+
+// Adds a new block of `k` as the last child of the open block at `depth`, or
+// of the nearest open block above it that can hold it. Each open block below
+// the parent closes. The new block is the deepest open block.
+function add_child(p: P, depth: i32, k: i32): P {
+  let q = close_below(p, depth);
+  while (!can_contain(kind(q, top(q)), k)) {
+    q = close_top(q);
+  }
+  let parent = top(q);
+  let id = q.count;
+  let last = get(q, parent, LAST);
+  q = new_node(q, k, parent, last);
+  if (last == NONE) {
+    q = set(q, parent, FIRST, id);
+  } else {
+    q = set(q, last, NEXT, id);
+  }
+  q = set(q, parent, LAST, id);
+  if (q.depth < q.stack.len()) {
+    return P { ...q, stack: q.stack.with(q.depth, id), depth: q.depth + 1 };
+  }
+  return P { ...q, stack: q.stack.append(id), depth: q.depth + 1 };
+}
+
+// Appends a node with the fields in their order: kind, parent, first child,
+// last child, next, previous, flags, the segment range, the line, A, B, C and
+// D.
+function new_node(p: P, k: i32, parent: i32, prev: i32): P {
+  let nseg = p.nseg;
+  let line = p.line;
+  let n = p.n.append(k).append(parent).append(NONE).append(NONE).append(NONE).append(prev).append(0).append(nseg).append(nseg).append(line).append(0).append(0).append(0).append(0);
+  return P { ...p, count: p.count + 1, n: n };
+}
+
+function unlink(p: P, node: i32): P {
+  let parent = get(p, node, PARENT);
+  let prev = get(p, node, PREV);
+  let next = get(p, node, NEXT);
+  let q = p;
+  if (prev == NONE) {
+    q = set(q, parent, FIRST, next);
+  } else {
+    q = set(q, prev, NEXT, next);
+  }
+  if (next == NONE) {
+    q = set(q, parent, LAST, prev);
+  } else {
+    q = set(q, next, PREV, prev);
+  }
+  return q;
+}
+
+// The text of the segments `from` to `to`, a line feed after each line.
+pub function seg_text(src: string, segs: i32[], from: i32, to: i32): string {
+  let b = buf_new(64);
+  for k in from..to {
+    for _ in 0..segs[k * 3] {
+      buf_push_byte(b, 32);
+    }
+    buf_push_range(b, src, segs[k * 3 + 1], segs[k * 3 + 2]);
+    buf_push_byte(b, 10);
+  }
+  let out = buf_take(b);
+  buf_free(b);
+  return out;
+}
+
+// Takes the link reference definitions at the start of a paragraph out of
+// its lines. Gives false when no text is left.
+function take_defs(p: P, node: i32): (P, boolean) {
+  let from = get(p, node, SFROM);
+  let to = get(p, node, STO);
+  if (from == to) {
+    return (p, false);
+  }
+  if (p.segs[from * 3] > 0 || p.src[p.segs[from * 3 + 1]] != b'[') {
+    return (p, true);
+  }
+  let text = seg_text(p.src, p.segs, from, to);
+  let (end, found) = refs.take_defs(text, p.refs);
+  let k = from;
+  let pos = 0;
+  while (pos < end) {
+    pos += p.segs[k * 3] + p.segs[k * 3 + 2] - p.segs[k * 3 + 1] + 1;
+    k += 1;
+  }
+  let q = set(P { ...p, refs: found }, node, SFROM, k);
+  return (q, k < to);
+}
+
+// Removes the blank lines at the end of an indented code block.
+function trim_code(p: P, node: i32): P {
+  let from = get(p, node, SFROM);
+  let to = get(p, node, STO);
+  while (to > from && blank_segment(p, to - 1)) {
+    to -= 1;
+  }
+  return set(p, node, STO, to);
+}
+
+function blank_segment(p: P, k: i32): boolean {
+  for i in p.segs[k * 3 + 1]..p.segs[k * 3 + 2] {
+    if (!is_space_or_tab(p.src[i] as i32)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// True when the block ends with a blank line. A list or an item ends with
+// one when its last child does. The answer is kept in the flags, so the
+// check of each list reads each block once.
+function ends_blank(p: P, node: i32): (P, boolean) {
+  let q = p;
+  let cur = node;
+  loop {
+    if (has_flag(q, cur, F_CHECKED)) {
+      return (q, has_flag(q, cur, F_BLANK));
+    }
+    q = set_flag(q, cur, F_CHECKED, true);
+    let k = kind(q, cur);
+    let last = get(q, cur, LAST);
+    if (k != LIST && k != ITEM || last == NONE) {
+      return (q, has_flag(q, cur, F_BLANK));
+    }
+    cur = last;
+  }
+}
+
+// A list is loose when a blank line is between two of its items, or between
+// two blocks of one item.
+function list_tight(p: P, list: i32): (P, boolean) {
+  let q = p;
+  let item = get(q, list, FIRST);
+  while (item != NONE) {
+    let next = get(q, item, NEXT);
+    if (has_flag(q, item, F_BLANK) && next != NONE) {
+      return (q, false);
+    }
+    let sub = get(q, item, FIRST);
+    while (sub != NONE) {
+      let sub_next = get(q, sub, NEXT);
+      if (next != NONE || sub_next != NONE) {
+        let (r, blank) = ends_blank(q, sub);
+        q = r;
+        if (blank) {
+          return (q, false);
+        }
+      }
+      sub = sub_next;
+    }
+    item = next;
+  }
+  return (q, true);
+}
+
+function finalize(p: P, node: i32): P {
+  let k = kind(p, node);
+  if (k == PARAGRAPH) {
+    let (q, has_text) = take_defs(p, node);
+    if (!has_text) {
+      return unlink(q, node);
+    }
+    return q;
+  }
+  if (k == CODE && !has_flag(p, node, F_FENCED)) {
+    return trim_code(p, node);
+  }
+  if (k == LIST) {
+    let (q, tight) = list_tight(p, node);
+    return set_flag(q, node, F_TIGHT, tight);
+  }
+  return p;
+}
+
+// The test of an open block against the start of the current line: 0 when
+// the block does not go on, 1 when it does, and 2 when the line closes the
+// block and ends there.
+function continues(p: P, node: i32): (P, i32) {
+  let k = kind(p, node);
+  if (k == QUOTE) {
+    return quote_continues(p);
+  }
+  if (k == ITEM) {
+    return item_continues(p, node);
+  }
+  if (k == CODE) {
+    return code_continues(p, node);
+  }
+  if (k == HEADING || p.blank && (k == PARAGRAPH || k == HTML && get(p, node, A) >= 6)) {
+    return (p, 0);
+  }
+  return (p, 1);
+}
+
+function quote_continues(p: P): (P, i32) {
+  if (p.indent <= 3 && at(p, p.fns) == 62) {
+    return (after_quote_marker(advance(p, p.indent + 1, true)), 1);
+  }
+  return (p, 0);
+}
+
+// Moves the offset over the space or tab after a `>`, if there is one.
+function after_quote_marker(p: P): P {
+  if (is_space_or_tab(at(p, p.off))) {
+    return advance(p, 1, true);
+  }
+  return p;
+}
+
+// An item goes on at a line with the indent of its content, and at a blank
+// line when the item is not empty.
+function item_continues(p: P, node: i32): (P, i32) {
+  let width = get(p, node, C) + get(p, node, D);
+  if (p.indent >= width) {
+    return (advance(p, width, true), 1);
+  }
+  if (p.blank && get(p, node, FIRST) != NONE) {
+    return (advance_to_fns(p), 1);
+  }
+  return (p, 0);
+}
+
+function code_continues(p: P, node: i32): (P, i32) {
+  if (!has_flag(p, node, F_FENCED)) {
+    if (p.indent >= 4) {
+      return (advance(p, 4, true), 1);
+    }
+    if (p.blank) {
+      return (advance_to_fns(p), 1);
+    }
+    return (p, 0);
+  }
+  let fence = get(p, node, A);
+  if (p.indent <= 3 && at(p, p.fns) == fence) {
+    let len = closing_fence(p, p.fns, fence);
+    if (len >= get(p, node, B)) {
+      let q = advance(p, len, false);
+      return (close_top(q), 2);
+    }
+  }
+  let q = p;
+  let i = get(p, node, C);
+  while (i > 0 && is_space_or_tab(at(q, q.off))) {
+    q = advance(q, 1, true);
+    i -= 1;
+  }
+  return (q, 1);
+}
+
+// The length of a closing code fence of `fence` at `i`, or 0.
+function closing_fence(p: P, i: i32, fence: i32): i32 {
+  let j = i;
+  while (at(p, j) == fence) {
+    j += 1;
+  }
+  let len = j - i;
+  if (len < 3) {
+    return 0;
+  }
+  while (is_space_or_tab(at(p, j))) {
+    j += 1;
+  }
+  if (at(p, j) != 10) {
+    return 0;
+  }
+  return len;
+}
+
+// The length of an opening code fence at `i`, or 0. The info string of a
+// backtick fence has no backtick.
+function opening_fence(p: P, i: i32): i32 {
+  let fence = at(p, i);
+  let j = i;
+  while (at(p, j) == fence) {
+    j += 1;
+  }
+  let len = j - i;
+  if (len < 3) {
+    return 0;
+  }
+  if (fence == 96) {
+    let k = j;
+    while (k < p.le) {
+      if (p.src[k] == b'`') {
+        return 0;
+      }
+      k += 1;
+    }
+  }
+  return len;
+}
+
+// The length of the start of an ATX heading at `i`: one to six `#`, then
+// spaces and tabs or the end of the line. Gives 0 when there is none.
+function atx_start(p: P, i: i32): i32 {
+  let j = i;
+  while (at(p, j) == 35 && j - i < 7) {
+    j += 1;
+  }
+  let level = j - i;
+  if (level > 6) {
+    return 0;
+  }
+  let c = at(p, j);
+  if (c == 10) {
+    return level + 1;
+  }
+  if (!is_space_or_tab(c)) {
+    return 0;
+  }
+  while (is_space_or_tab(at(p, j))) {
+    j += 1;
+  }
+  return j - i;
+}
+
+// 1 for a line of `=` and 2 for a line of `-`, with optional spaces and tabs
+// after it, or 0.
+function setext_level(p: P, i: i32): i32 {
+  let c = at(p, i);
+  let j = i;
+  while (at(p, j) == c) {
+    j += 1;
+  }
+  while (is_space_or_tab(at(p, j))) {
+    j += 1;
+  }
+  if (at(p, j) != 10) {
+    return 0;
+  }
+  if (c == 61) {
+    return 1;
+  }
+  return 2;
+}
+
+// True for three or more `*`, `-` or `_` of one kind, with only spaces and
+// tabs between them.
+function is_rule(p: P, i: i32): boolean {
+  let c = at(p, i);
+  if (c != 42 && c != 45 && c != 95) {
+    return false;
+  }
+  let count = 0;
+  let j = i;
+  let d = c;
+  while (d == c || is_space_or_tab(d)) {
+    if (d == c) {
+      count += 1;
+    }
+    j += 1;
+    d = at(p, j);
+  }
+  return count >= 3 && d == 10;
+}
+
+// The end of the text of an ATX heading: the line without a closing
+// sequence of `#` and without the spaces at its end.
+function atx_text_end(p: P, start: i32): i32 {
+  let e = rtrim(p, start, p.le);
+  let k = e - 1;
+  while (k >= start && p.src[k] == b'#') {
+    k -= 1;
+  }
+  if (k != e - 1 && k >= start && is_space_or_tab(p.src[k] as i32)) {
+    return rtrim(p, start, k);
+  }
+  if (k != e - 1 && k < start) {
+    return start;
+  }
+  return e;
+}
+
+function rtrim(p: P, start: i32, end: i32): i32 {
+  let e = end;
+  while (e > start && refs.is_space(p.src[e - 1] as i32)) {
+    e -= 1;
+  }
+  return e;
+}
+
+pub function parse(source: string): Doc {
+  let src = without_nul(source);
+  let p = P { src: src, n: [], count: 0, segs: [], nseg: 0, stack: [0], depth: 1, refs: Map { }, line: 0, le: 0, off: 0, col: 0, fns: 0, fnscol: 0, indent: 0, blank: false, partial: false };
+  p = new_node(p, DOCUMENT, NONE, NONE);
+  let n = src.len();
+  let ends = __alloc_u8(14).with(10, 1 as u8).with(13, 1 as u8);
+  if (__memchr(src, 13, 0) < 0) {
+    ends = [];
+  }
+  let pos = bom_length(src);
+  while (pos < n) {
+    let le = line_end(src, pos, ends);
+    p = process_line(p, pos, le);
+    pos = le + 1;
+    if (le + 1 < n && src[le] == b'\r' && src[le + 1] == b'\n') {
+      pos += 1;
+    }
+  }
+  while (p.depth > 0) {
+    p = close_top(p);
+  }
+  return Doc { src: p.src, n: p.n, segs: p.segs, refs: p.refs };
+}
+
+// 3 when the source starts with a UTF-8 byte order mark, and 0 otherwise.
+function bom_length(s: string): i32 {
+  if (s.len() >= 3 && s[0] == 0xEF as u8 && s[1] == 0xBB as u8 && s[2] == 0xBF as u8) {
+    return 3;
+  }
+  return 0;
+}
+
+// The index of the line ending after `pos`, or the length of the source. A
+// source with a carriage return gives the table of line ending bytes `ends`,
+// and other sources give an empty table.
+function line_end(src: string, pos: i32, ends: u8[]): i32 {
+  if (ends.len() > 0) {
+    return __scan_set(src, pos, ends);
+  }
+  let le = __memchr(src, 10, pos);
+  if (le < 0) {
+    return src.len();
+  }
+  return le;
+}
+
+// The source with each NUL byte replaced by U+FFFD.
+function without_nul(s: string): string {
+  if (__memchr(s, 0, 0) < 0) {
+    return s;
+  }
+  let b = buf_new(s.len() + 16);
+  let from = 0;
+  let i = __memchr(s, 0, 0);
+  while (i >= 0) {
+    buf_push_range(b, s, from, i);
+    buf_push(b, "�");
+    from = i + 1;
+    i = __memchr(s, 0, from);
+  }
+  buf_push_range(b, s, from, s.len());
+  let out = buf_take(b);
+  buf_free(b);
+  return out;
+}
+
+function process_line(p0: P, ls: i32, le: i32): P {
+  let p = P { ...p0, line: p0.line + 1, le: le, off: ls, col: 0, fns: ls, fnscol: 0, indent: 0, blank: false, partial: false };
+  let i = 1;
+  let all = true;
+  while (i < p.depth) {
+    p = first_nonspace(p);
+    let (q, verdict) = continues(p, p.stack[i]);
+    p = q;
+    if (verdict == 2) {
+      return p;
+    }
+    if (verdict == 0) {
+      all = false;
+      break;
+    }
+    i += 1;
+  }
+  let matched = i - 1;
+  let maybe_lazy = kind(p, top(p)) == PARAGRAPH;
+  let cd = matched;
+  let ck = kind(p, p.stack[cd]);
+  while (ck != CODE && ck != HTML) {
+    p = first_nonspace(p);
+    let (q, started) = open_block(p, cd, all, maybe_lazy);
+    p = q;
+    if (!started) {
+      break;
+    }
+    cd = p.depth - 1;
+    ck = kind(p, top(p));
+    if (accepts_lines(ck)) {
+      break;
+    }
+    maybe_lazy = false;
+  }
+  return add_text(p, cd, matched);
+}
+
+// Opens the block that starts at the first byte after the indent, if one
+// does. The new block is the deepest open block.
+function open_block(p: P, cd: i32, all: boolean, maybe_lazy: boolean): (P, boolean) {
+  let ck = kind(p, p.stack[cd]);
+  let c = at(p, p.fns);
+  if (p.indent >= 4) {
+    if (maybe_lazy || p.blank) {
+      return (p, false);
+    }
+    return (add_child(advance(p, 4, true), cd, CODE), true);
+  }
+  if (c == 62) {
+    let q = after_quote_marker(advance(p, p.fns + 1 - p.off, false));
+    return (add_child(q, cd, QUOTE), true);
+  }
+  let (q, started) = open_leaf(p, cd, c, ck == PARAGRAPH || maybe_lazy);
+  if (started) {
+    return (q, true);
+  }
+  return open_line_block(q, cd, all, c, ck);
+}
+
+// The blocks that start with `#`, a code fence or `<`: an ATX heading, a
+// fenced code block and an HTML block.
+function open_leaf(p: P, cd: i32, c: i32, in_paragraph: boolean): (P, boolean) {
+  if (c == 35) {
+    let len = atx_start(p, p.fns);
+    if (len > 0) {
+      return (open_atx(p, cd, len), true);
+    }
+  }
+  if (c == 96 || c == 126) {
+    let len = opening_fence(p, p.fns);
+    if (len > 0) {
+      return (open_fence(p, cd, c, len), true);
+    }
+  }
+  if (c == 60) {
+    let hk = tags.block_start(p.src, p.fns, p.le, in_paragraph);
+    if (hk > 0) {
+      let id = p.count;
+      return (set(add_child(p, cd, HTML), id, A, hk), true);
+    }
+  }
+  return (p, false);
+}
+
+// The blocks that start with `=`, `-`, `*`, `_`, `+` or a digit: a setext
+// heading line, a thematic break and a list item.
+function open_line_block(p: P, cd: i32, all: boolean, c: i32, ck: i32): (P, boolean) {
+  if (ck == PARAGRAPH && (c == 61 || c == 45)) {
+    let level = setext_level(p, p.fns);
+    if (level > 0) {
+      return (setext(p, p.stack[cd], level), true);
+    }
+  }
+  if (!(ck == PARAGRAPH && !all) && is_rule(p, p.fns)) {
+    let q = add_child(p, cd, RULE);
+    return (advance(q, q.le - q.off, false), true);
+  }
+  return open_item(p, cd, c, ck);
+}
+
+// Makes the paragraph `para` a setext heading, unless it holds only link
+// reference definitions. Then the line is text of the paragraph.
+function setext(p: P, para: i32, level: i32): P {
+  let (q, has_text) = take_defs(p, para);
+  if (!has_text) {
+    return q;
+  }
+  let r = set(set(q, para, KIND, HEADING), para, A, level);
+  return advance(r, r.le - r.off, false);
+}
+
+function open_atx(p: P, cd: i32, len: i32): P {
+  let level = 0;
+  while (at(p, p.fns + level) == 35) {
+    level += 1;
+  }
+  let q = advance(p, p.fns + len - p.off, false);
+  let id = q.count;
+  return set(add_child(q, cd, HEADING), id, A, level);
+}
+
+function open_fence(p: P, cd: i32, c: i32, len: i32): P {
+  let offset = p.fns - p.off;
+  let q = add_child(p, cd, CODE);
+  let id = q.count - 1;
+  q = set_flag(set(set(set(q, id, A, c), id, B, len), id, C, offset), id, F_FENCED, true);
+  return advance(q, q.fns + len - q.off, false);
+}
+
+// A list item, and the list around it when the item does not continue the
+// open list.
+function open_item(p: P, cd: i32, c: i32, ck: i32): (P, boolean) {
+  let m = list_marker(p, c);
+  let i = p.fns + m.len;
+  if (m.len == 0 || !refs.is_space(at(p, i))) {
+    return (p, false);
+  }
+  if (ck == PARAGRAPH && (m.ordered && m.start != 1 || rest_is_blank(p, i))) {
+    return (p, false);
+  }
+  return (add_item(p, cd, m), true);
+}
+
+// A list marker: `-`, `+` or `*`, or one to nine digits and `.` or `)`. A
+// length of 0 is no marker.
+struct Marker { len: i32, ordered: boolean, mark: i32, start: i32 }
+
+function list_marker(p: P, c: i32): Marker {
+  if (c == 42 || c == 45 || c == 43) {
+    return Marker { len: 1, ordered: false, mark: c, start: 0 };
+  }
+  let i = p.fns;
+  let start = 0;
+  while (i - p.fns < 9 && at(p, i) >= 48 && at(p, i) <= 57) {
+    start = start * 10 + at(p, i) - 48;
+    i += 1;
+  }
+  let mark = at(p, i);
+  if (i == p.fns || mark != 46 && mark != 41) {
+    return Marker { len: 0, ordered: false, mark: 0, start: 0 };
+  }
+  return Marker { len: i + 1 - p.fns, ordered: true, mark: mark, start: start };
+}
+
+// True when only spaces and tabs are after `i` on the line.
+function rest_is_blank(p: P, i: i32): boolean {
+  let j = i;
+  while (is_space_or_tab(at(p, j))) {
+    j += 1;
+  }
+  return at(p, j) == 10;
+}
+
+function add_item(p: P, cd: i32, m: Marker): P {
+  let ordered = m.ordered;
+  let mark = m.mark;
+  let len = m.len;
+  let marker_col = p.indent;
+  let q = advance(p, p.fns + len - p.off, false);
+  let saved = q;
+  while (q.col - saved.col <= 5 && is_space_or_tab(at(q, q.off))) {
+    q = advance(q, 1, true);
+  }
+  let spaces = q.col - saved.col;
+  let width = len + spaces;
+  if (spaces >= 5 || spaces < 1 || at(q, q.off) == 10) {
+    width = len + 1;
+    q = P { ...q, off: saved.off, col: saved.col, partial: saved.partial };
+    if (spaces > 0) {
+      q = advance(q, 1, true);
+    }
+  }
+  let container = q.stack[cd];
+  let same = kind(q, container) == LIST && has_flag(q, container, F_ORDERED) == ordered && get(q, container, A) == mark;
+  if (!same) {
+    q = add_child(q, cd, LIST);
+    let list = q.count - 1;
+    q = set_flag(set(set(q, list, A, mark), list, B, m.start), list, F_ORDERED, ordered);
+    cd = q.depth - 1;
+  }
+  q = add_child(q, cd, ITEM);
+  let item = q.count - 1;
+  return set(set(q, item, C, marker_col), item, D, width);
+}
+
+// Adds the text that is left on the line to the right block: a lazy line to
+// the open paragraph, or a line to the deepest open block, or a line to a new
+// paragraph.
+function add_text(p0: P, cd: i32, matched: i32): P {
+  let p = mark_blank(first_nonspace(p0), p0.stack[cd]);
+  let current = top(p);
+  if (current != p.stack[matched] && cd == matched && !p.blank && kind(p, current) == PARAGRAPH) {
+    return add_line(p, current);
+  }
+  return add_to(close_below(p, cd), cd);
+}
+
+// Keeps in the flags whether the line is a blank line at the end of
+// `container`, and of the last child of `container`. The ancestors of
+// `container` do not end with a blank line.
+function mark_blank(p0: P, container: i32): P {
+  let p = p0;
+  let last = get(p, container, LAST);
+  if (p.blank && last != NONE) {
+    p = set_flag(p, last, F_BLANK, true);
+  }
+  p = set_flag(p, container, F_BLANK, p.blank && blank_counts(p, container));
+  let up = get(p, container, PARENT);
+  while (up != NONE) {
+    p = set_flag(p, up, F_BLANK, false);
+    up = get(p, up, PARENT);
+  }
+  return p;
+}
+
+// False for the blocks whose blank lines do not make a list loose: a block
+// quote, a heading, a thematic break, a fenced code block, and a list item
+// that is empty on its first line.
+function blank_counts(p: P, node: i32): boolean {
+  let k = kind(p, node);
+  if (k == QUOTE || k == HEADING || k == RULE) {
+    return false;
+  }
+  if (k == CODE) {
+    return !has_flag(p, node, F_FENCED);
+  }
+  if (k == ITEM) {
+    return get(p, node, LAST) != NONE || get(p, node, LINE) != p.line;
+  }
+  return true;
+}
+
+// Adds the line to the deepest open block, which is at `cd`.
+function add_to(p: P, cd: i32): P {
+  let container = p.stack[cd];
+  let ck = kind(p, container);
+  if (ck == CODE) {
+    return add_line(p, container);
+  }
+  if (ck == HTML) {
+    let q = add_line(p, container);
+    if (tags.block_end(get(q, container, A), q.src, q.fns, q.le)) {
+      return close_top(q);
+    }
+    return q;
+  }
+  if (p.blank) {
+    return p;
+  }
+  if (ck == HEADING) {
+    let q = advance_to_fns(p);
+    return add_line_to(q, container, atx_text_end(q, q.off));
+  }
+  if (ck == PARAGRAPH) {
+    return add_line(advance_to_fns(p), container);
+  }
+  let id = p.count;
+  return add_line(advance_to_fns(add_child(p, cd, PARAGRAPH)), id);
+}

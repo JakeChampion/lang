@@ -1,0 +1,325 @@
+// The block phase of the CommonMark renderer, and the text, escapes and line
+// breaks of its inline phase. Each expected text is the output of cmark 0.30.2
+// with --unsafe, except where a comment gives a change of spec 0.31.2. A case
+// whose text needs inline parsing, which the next slice adds, checks the
+// shape of the block tree instead.
+import "core/map";
+import "std/test";
+import "./blocks";
+import "./inlines";
+import "./markdown";
+import "./refs";
+import "./tags";
+
+function checks(cases: (string, string)[]): test.TestOutcome {
+  for c in cases {
+    let (md, want) = c;
+    let got = markdown.to_html(md);
+    if (got != want) {
+      return test.fail("\"" + md + "\": got \"" + got + "\", want \"" + want + "\"");
+    }
+  }
+  return test.pass();
+}
+
+const NAMES: string[] = ["doc", "quote", "list", "li", "code", "html", "p", "h", "hr"];
+
+// The block tree under `node`, such as `quote(p2),list(li(p1))`: the kind of
+// each block, and the number of lines of a leaf.
+function shape(d: blocks.Doc, node: i32): string {
+  let out = "";
+  let cur = d.get(node, blocks.FIRST);
+  while (cur != blocks.NONE) {
+    if (out.len() > 0) {
+      out += ",";
+    }
+    let k = d.get(cur, blocks.KIND);
+    out += NAMES[k];
+    if (k == blocks.QUOTE || k == blocks.LIST || k == blocks.ITEM) {
+      out += "(" + shape(d, cur) + ")";
+    } else if (k != blocks.RULE) {
+      out += (d.get(cur, blocks.STO) - d.get(cur, blocks.SFROM)).to_string();
+    }
+    cur = d.get(cur, blocks.NEXT);
+  }
+  return out;
+}
+
+function shapes(cases: (string, string)[]): test.TestOutcome {
+  for c in cases {
+    let (md, want) = c;
+    let got = shape(blocks.parse(md), 0);
+    if (got != want) {
+      return test.fail("\"" + md + "\": got " + got + ", want " + want);
+    }
+  }
+  return test.pass();
+}
+
+function test_paragraphs(): test.TestOutcome {
+  return checks([
+    ("", ""),
+    ("\n\n", ""),
+    ("aaa\n\nbbb\n", "<p>aaa</p>\n<p>bbb</p>\n"),
+    ("aaa\n   bbb\n", "<p>aaa\nbbb</p>\n"),
+    ("  aaa\n bbb", "<p>aaa\nbbb</p>\n"),
+    ("aaa     \nbbb     \n", "<p>aaa<br />\nbbb</p>\n"),
+    ("a\\\nb", "<p>a<br />\nb</p>\n"),
+    ("a\\\\\nb", "<p>a\\\nb</p>\n"),
+    ("a\t \nb\\", "<p>a\nb\\</p>\n"),
+    ("\\*a\\* \\q & a < b > \"c\"", "<p>*a* \\q &amp; a &lt; b &gt; &quot;c&quot;</p>\n"),
+  ]);
+}
+
+function test_headings(): test.TestOutcome {
+  return checks([
+    ("# foo\n## foo\n###### foo", "<h1>foo</h1>\n<h2>foo</h2>\n<h6>foo</h6>\n"),
+    ("####### foo\n#5 bolt", "<p>####### foo\n#5 bolt</p>\n"),
+    ("# foo ##   \n### b ###\n# #\n#\n### ###\n# foo#\n# foo \\#", "<h1>foo</h1>\n<h3>b</h3>\n<h1></h1>\n<h1></h1>\n<h3></h3>\n<h1>foo#</h1>\n<h1>foo #</h1>\n"),
+    ("    # foo\nbar\n    # baz", "<pre><code># foo\n</code></pre>\n<p>bar\n# baz</p>\n"),
+    ("Foo\n===\n\nBar\n  ---  \n", "<h1>Foo</h1>\n<h2>Bar</h2>\n"),
+    ("Foo\nbar\n===", "<h1>Foo\nbar</h1>\n"),
+    ("Foo\n= =", "<p>Foo\n= =</p>\n"),
+    ("> foo\n---", "<blockquote>\n<p>foo</p>\n</blockquote>\n<hr />\n"),
+    ("- foo\n---", "<ul>\n<li>foo</li>\n</ul>\n<hr />\n"),
+    ("Foo\n    ===", "<p>Foo\n===</p>\n"),
+  ]);
+}
+
+function test_rules(): test.TestOutcome {
+  return checks([
+    ("***\n---\n___", "<hr />\n<hr />\n<hr />\n"),
+    (" - - -\n**  * ** * ** * **\n-     -      -      -", "<hr />\n<hr />\n<hr />\n"),
+    ("--\n**\n+++\n===", "<h1>--\n**\n+++</h1>\n"),
+    ("--\n**\n__", "<p>--\n**\n__</p>\n"),
+    ("_____________________________________\n    ***", "<hr />\n<pre><code>***\n</code></pre>\n"),
+    ("Foo\n***\nbar", "<p>Foo</p>\n<hr />\n<p>bar</p>\n"),
+    ("* Foo\n* * *\n* Bar", "<ul>\n<li>Foo</li>\n</ul>\n<hr />\n<ul>\n<li>Bar</li>\n</ul>\n"),
+    ("- Foo\n- * * *", "<ul>\n<li>Foo</li>\n<li>\n<hr />\n</li>\n</ul>\n"),
+  ]);
+}
+
+function test_code(): test.TestOutcome {
+  return checks([
+    ("    a simple\n      indented code block", "<pre><code>a simple\n  indented code block\n</code></pre>\n"),
+    ("    chunk1\n\n    chunk2\n  \n \n \n    chunk3\n", "<pre><code>chunk1\n\nchunk2\n\n\n\nchunk3\n</code></pre>\n"),
+    ("    foo  \n      \n    \n", "<pre><code>foo  \n</code></pre>\n"),
+    ("    <a/>\n    *hi*", "<pre><code>&lt;a/&gt;\n*hi*\n</code></pre>\n"),
+    ("```\n<\n >\n```", "<pre><code>&lt;\n &gt;\n</code></pre>\n"),
+    ("````\naaa\n```\n``````", "<pre><code>aaa\n```\n</code></pre>\n"),
+    ("```\n\n  \n```\n```", "<pre><code>\n  \n</code></pre>\n<pre><code></code></pre>\n"),
+    ("> ```\n> aaa\n\nbbb", "<blockquote>\n<pre><code>aaa\n</code></pre>\n</blockquote>\n<p>bbb</p>\n"),
+    ("   ```\n   aaa\n    aaa\n  aaa\n   ```", "<pre><code>aaa\n aaa\naaa\n</code></pre>\n"),
+    ("```ruby startline=3 $%@#$\ndef foo(x)\n```", "<pre><code class=\"language-ruby\">def foo(x)\n</code></pre>\n"),
+    ("~~~ a\\*b \"c\" `\nx\n~~~", "<pre><code class=\"language-a*b\">x\n</code></pre>\n"),
+    ("```\naaa\n  ```  \n~~~", "<pre><code>aaa\n</code></pre>\n<pre><code></code></pre>\n"),
+  ]);
+}
+
+function test_quotes(): test.TestOutcome {
+  return checks([
+    ("> # Foo\n> bar\n> baz", "<blockquote>\n<h1>Foo</h1>\n<p>bar\nbaz</p>\n</blockquote>\n"),
+    ("> bar\nbaz\n> foo", "<blockquote>\n<p>bar\nbaz\nfoo</p>\n</blockquote>\n"),
+    (">", "<blockquote>\n</blockquote>\n"),
+    ("> foo\n\n> bar", "<blockquote>\n<p>foo</p>\n</blockquote>\n<blockquote>\n<p>bar</p>\n</blockquote>\n"),
+    ("> > > foo\nbar", "<blockquote>\n<blockquote>\n<blockquote>\n<p>foo\nbar</p>\n</blockquote>\n</blockquote>\n</blockquote>\n"),
+    (">     code\n\n>    not code", "<blockquote>\n<pre><code>code\n</code></pre>\n</blockquote>\n<blockquote>\n<p>not code</p>\n</blockquote>\n"),
+    ("> - a\n- b", "<blockquote>\n<ul>\n<li>a</li>\n</ul>\n</blockquote>\n<ul>\n<li>b</li>\n</ul>\n"),
+  ]);
+}
+
+function test_lists(): test.TestOutcome {
+  return checks([
+    ("- foo\n- bar\n+ baz", "<ul>\n<li>foo</li>\n<li>bar</li>\n</ul>\n<ul>\n<li>baz</li>\n</ul>\n"),
+    ("1. foo\n2. bar\n3) baz", "<ol>\n<li>foo</li>\n<li>bar</li>\n</ol>\n<ol start=\"3\">\n<li>baz</li>\n</ol>\n"),
+    ("- a\n- b\n\n- c", "<ul>\n<li>\n<p>a</p>\n</li>\n<li>\n<p>b</p>\n</li>\n<li>\n<p>c</p>\n</li>\n</ul>\n"),
+    ("- a\n  - b\n\n    c\n- d", "<ul>\n<li>a\n<ul>\n<li>\n<p>b</p>\n<p>c</p>\n</li>\n</ul>\n</li>\n<li>d</li>\n</ul>\n"),
+    ("-\n  foo\n-\n  ```\n  bar\n  ```", "<ul>\n<li>foo</li>\n<li>\n<pre><code>bar\n</code></pre>\n</li>\n</ul>\n"),
+    ("-\n\n  foo", "<ul>\n<li></li>\n</ul>\n<p>foo</p>\n"),
+    ("123456789. ok\n\n1234567890. not ok\n\n0. ok\n\n-1. not ok", "<ol start=\"123456789\">\n<li>ok</li>\n</ol>\n<p>1234567890. not ok</p>\n<ol start=\"0\">\n<li>ok</li>\n</ol>\n<p>-1. not ok</p>\n"),
+    ("123456789. ok\n1234567890. lazy\n0. same list", "<ol start=\"123456789\">\n<li>ok\n1234567890. lazy</li>\n<li>same list</li>\n</ol>\n"),
+    ("The number of windows in my house is\n14.  The number of doors is 6.", "<p>The number of windows in my house is\n14.  The number of doors is 6.</p>\n"),
+    ("-    one\n\n     two", "<ul>\n<li>\n<p>one</p>\n<p>two</p>\n</li>\n</ul>\n"),
+    ("- one\n\n two", "<ul>\n<li>one</li>\n</ul>\n<p>two</p>\n"),
+    ("1.     indented code\n\n   paragraph", "<ol>\n<li>\n<pre><code>indented code\n</code></pre>\n<p>paragraph</p>\n</li>\n</ol>\n"),
+    ("- a\n - b\n  - c\n   - d\n    - e", "<ul>\n<li>a</li>\n<li>b</li>\n<li>c</li>\n<li>d\n- e</li>\n</ul>\n"),
+    ("* a\n*\n\n* c", "<ul>\n<li>\n<p>a</p>\n</li>\n<li></li>\n<li>\n<p>c</p>\n</li>\n</ul>\n"),
+    ("- a\n- ```\n  b\n\n\n  ```\n- c", "<ul>\n<li>a</li>\n<li>\n<pre><code>b\n\n\n</code></pre>\n</li>\n<li>c</li>\n</ul>\n"),
+    ("- foo\n\n\n  bar", "<ul>\n<li>\n<p>foo</p>\n<p>bar</p>\n</li>\n</ul>\n"),
+  ]);
+}
+
+function test_tabs(): test.TestOutcome {
+  return checks([
+    ("\tfoo\tbaz\t\tbim", "<pre><code>foo\tbaz\t\tbim\n</code></pre>\n"),
+    ("  - foo\n\n\tbar", "<ul>\n<li>\n<p>foo</p>\n<p>bar</p>\n</li>\n</ul>\n"),
+    ("- foo\n\n\t\tbar", "<ul>\n<li>\n<p>foo</p>\n<pre><code>  bar\n</code></pre>\n</li>\n</ul>\n"),
+    (">\t\tfoo", "<blockquote>\n<pre><code>  foo\n</code></pre>\n</blockquote>\n"),
+    ("-\t\tfoo", "<ul>\n<li>\n<pre><code>  foo\n</code></pre>\n</li>\n</ul>\n"),
+    ("#\tFoo", "<h1>Foo</h1>\n"),
+    ("*\t*\t*\t", "<hr />\n"),
+  ]);
+}
+
+function test_html_blocks(): test.TestOutcome {
+  return checks([
+    ("<div>\n*foo*\n\nbar", "<div>\n*foo*\n<p>bar</p>\n"),
+    ("<div>\n\n  \n</div>", "<div>\n</div>\n"),
+    (" <div>\n  *hello*\n         <foo><a>", " <div>\n  *hello*\n         <foo><a>\n"),
+    ("<DIV CLASS=\"foo\">\n\nx", "<DIV CLASS=\"foo\">\n<p>x</p>\n"),
+    ("<a href=\"foo\">\n*bar*\n</a>", "<a href=\"foo\">\n*bar*\n</a>\n"),
+    ("<Warning>\n*bar*\n</Warning>", "<Warning>\n*bar*\n</Warning>\n"),
+    ("<pre language=\"haskell\"><code>\nimport Text.HTML.TagSoup\n\nmain :: IO ()\n</code></pre>\nokay", "<pre language=\"haskell\"><code>\nimport Text.HTML.TagSoup\n\nmain :: IO ()\n</code></pre>\n<p>okay</p>\n"),
+    ("<style\n  type=\"text/css\">\n\nfoo", "<style\n  type=\"text/css\">\n\nfoo\n"),
+    ("<!-- foo -->*bar*\nbaz", "<!-- foo -->*bar*\n<p>baz</p>\n"),
+    ("<!-->\nx\n\n<!--\n\n-->", "<!-->\n<p>x</p>\n<!--\n\n-->\n"),
+    ("<?php\n\n  echo '>';\n\n?>\nokay", "<?php\n\n  echo '>';\n\n?>\n<p>okay</p>\n"),
+    ("<!DOCTYPE html>", "<!DOCTYPE html>\n"),
+    ("<![CDATA[\nfunction matchwo(a,b)\n\n]]>\nokay", "<![CDATA[\nfunction matchwo(a,b)\n\n]]>\n<p>okay</p>\n"),
+    ("> <div>\n> foo\n\nbar", "<blockquote>\n<div>\nfoo\n</blockquote>\n<p>bar</p>\n"),
+    ("- <div>\n- foo", "<ul>\n<li>\n<div>\n</li>\n<li>foo</li>\n</ul>\n"),
+    ("<a b c='d' e=f g=\"h\" i:j.k-l_m/>\n</x-y >", "<a b c='d' e=f g=\"h\" i:j.k-l_m/>\n</x-y >\n"),
+    ("<pre/>\n<a b=>", "<pre/>\n<a b=>\n"),
+  ]);
+}
+
+// Blocks whose text holds raw HTML, emphasis or a link that the inline phase
+// does not parse yet.
+function test_block_shapes(): test.TestOutcome {
+  return shapes([
+    ("<table><tr><td>\n<pre>\n**Hello**,\n\n_world_.\n</pre>\n</td></tr></table>\n", "html3,p2,html1"),
+    ("Foo\n<a href=\"bar\">\nbaz", "p3"),
+    ("Foo\n<div>\nbaz", "p1,html2"),
+    ("- a\n</pre>", "list(li(p2))"),
+    ("- a\n<x>\n\n<x>", "list(li(p2)),html1"),
+    // Spec 0.31.2: `<!` and any letter starts kind 4, `search` is a name of
+    // kind 6, and `source` is not.
+    ("<!doctype\nhtml>", "html2"),
+    ("a\n<search>\nb", "p1,html2"),
+    ("a\n<source>\nb", "p3"),
+    ("[foo]: /url\n\n[foo]", "p1"),
+    ("# [Foo]\n[foo]: /url\n> bar", "h1,quote(p1)"),
+    ("- [a]: /u\n\n  b\n- c", "list(li(p1),li(p1))"),
+    ("> a\n- b\n\n  c\n> d", "quote(p1),list(li(p1,p1)),quote(p1)"),
+  ]);
+}
+
+// cmark keeps the spaces at the start of a lazy line after a backslash hard
+// break, and does not start an HTML block of kind 7 on a lazy line.
+function test_cmark_details(): test.TestOutcome {
+  return checks([
+    ("> a\\\n  \tb", "<blockquote>\n<p>a<br />\n  \tb</p>\n</blockquote>\n"),
+    ("a\x00b", "<p>a�b</p>\n"),
+    ("a\r\nb\rc\r\n\r\n    d\r\n", "<p>a\nb\nc</p>\n<pre><code>d\n</code></pre>\n"),
+    ("[foo]: /url\n===", "<p>===</p>\n"),
+    ("[foo]: /url\nbar\n===", "<h1>bar</h1>\n"),
+    ("- [a]: /u\n\n  b\n- c", "<ul>\n<li>b</li>\n<li>c</li>\n</ul>\n"),
+  ]);
+}
+
+// A byte order mark at the start of the source is not text.
+function test_bom(): test.TestOutcome {
+  let bom = (0xFEFF as char).to_string();
+  return test.assert_eq(markdown.to_html(bom + "# a\n" + bom), "<h1>a</h1>\n<p>" + bom + "</p>\n");
+}
+
+function ref_is(d: blocks.Doc, label: string, dest: string, title: string): string {
+  match (d.refs.get(label)) {
+    Some(r) => {
+      if (r.dest != dest || r.title != title) {
+        return label + ": got (" + r.dest + ", " + r.title + ")";
+      }
+      return "";
+    },
+    None => {
+      return label + ": no definition";
+    }
+  }
+}
+
+function test_definitions(): test.TestOutcome {
+  let d = blocks.parse("[Foo  Bar]: /url 'the title'\n[ẞ]: <a b>\n[foo bar]: /other\n[t]:\n/u\n\"multi\nline\"\n> [q]: (x) (paren)\n[e]: <>\n[n]: /u \"no\" x\n[x]:\n");
+  let errors = [
+    ref_is(d, "foo bar", "/url", "the title"), ref_is(d, "ss", "a b", ""), ref_is(d, "t", "/u", "multi\nline"), ref_is(d, "q", "(x)", "paren"), ref_is(d, "e", "", ""),
+  ];
+  for e in errors {
+    if (e.len() > 0) {
+      return test.fail(e);
+    }
+  }
+  if (d.refs.contains("n") || d.refs.contains("x") || d.refs.len() != 5) {
+    return test.fail("a line that is not a definition is a definition");
+  }
+  return checks([
+    ("[foo]: /url \"title\"\n\nx", "<p>x</p>\n"),
+    ("[foo]: /url \"title\" ok", "<p>[foo]: /url &quot;title&quot; ok</p>\n"),
+    ("[foo]: /url\n\"title\" ok", "<p>&quot;title&quot; ok</p>\n"),
+    ("[foo]:\n\n[foo]", "<p>[foo]:</p>\n<p>[foo]</p>\n"),
+    ("    [foo]: /url", "<pre><code>[foo]: /url\n</code></pre>\n"),
+    ("Foo\n[bar]: /baz", "<p>Foo\n[bar]: /baz</p>\n"),
+    ("# Foo\n[foo]: /url\n> bar", "<h1>Foo</h1>\n<blockquote>\n<p>bar</p>\n</blockquote>\n"),
+    ("[foo]: /foo-url \"foo\"\n[bar]: /bar-url\n  \"bar\"\n[baz]: /baz-url\n\nx", "<p>x</p>\n"),
+  ]);
+}
+
+function test_normalize(): test.TestOutcome {
+  let cases = [("Foo  Bar", "foo bar"), ("  a\t\nb ", "a b"), ("ẞ", "ss"), ("ΑΓΩ", "αγω"), ("x", "x")];
+  for c in cases {
+    let (label, want) = c;
+    if (refs.normalize(label) != want) {
+      return test.fail(label + ": got \"" + refs.normalize(label) + "\", want \"" + want + "\"");
+    }
+  }
+  if (refs.label_end("[a\\]b]", 0) != 6 || refs.label_end("[a[b]", 0) != -1 || refs.label_end("[" + "x".repeat(1000) + "]", 0) != -1) {
+    return test.fail("label_end");
+  }
+  return test.pass();
+}
+
+function test_tags(): test.TestOutcome {
+  let opens = [("<a>", 3), ("<a/>", 4), ("<a b='c'>", 9), ("<a b=\"c\" d>", 11), ("<a b=c >", 8), ("<a b=>", -1), ("<1>", -1), ("<a-b_c>", -1), ("<a \"b\">", -1)];
+  for c in opens {
+    let (s, want) = c;
+    if (tags.open_tag_end(s, 0, s.len()) != want) {
+      return test.fail(s + ": got " + tags.open_tag_end(s, 0, s.len()).to_string());
+    }
+  }
+  if (tags.closing_tag_end("</a >", 0, 5) != 5 || tags.closing_tag_end("</a b>", 0, 6) != -1) {
+    return test.fail("closing_tag_end");
+  }
+  let starts = [("<script>", 1), ("<TEXTAREA", 1), ("<!-- x", 2), ("<?x", 3), ("<!x", 4), ("<![CDATA[", 5), ("</div>", 6), ("<td/>", 6), ("<x>", 7), ("<x> y", 0), ("<pre/>", 7)];
+  for c in starts {
+    let (s, want) = c;
+    if (tags.block_start(s, 0, s.len(), false) != want) {
+      return test.fail(s + ": kind " + tags.block_start(s, 0, s.len(), false).to_string());
+    }
+  }
+  if (tags.block_start("<x>", 0, 3, true) != 0 || !tags.block_end(1, "a </STYLE> b", 0, 12) || tags.block_end(2, "-- >", 0, 4)) {
+    return test.fail("a kind 7 start in a paragraph, or an end condition");
+  }
+  return test.pass();
+}
+
+function test_unescape(): test.TestOutcome {
+  return test.assert_eq(inlines.unescape("a\\*b\\c\\\\d\\"), "a*b\\c\\d\\");
+}
+
+function main(): i32 {
+  let r = test.new("markdown");
+  r = r.it("paragraphs, escapes and line breaks", test_paragraphs);
+  r = r.it("ATX and setext headings", test_headings);
+  r = r.it("thematic breaks", test_rules);
+  r = r.it("indented and fenced code blocks", test_code);
+  r = r.it("block quotes", test_quotes);
+  r = r.it("lists and list items", test_lists);
+  r = r.it("tabs", test_tabs);
+  r = r.it("HTML blocks", test_html_blocks);
+  r = r.it("the block tree of text that needs inlines", test_block_shapes);
+  r = r.it("details that cmark gives", test_cmark_details);
+  r = r.it("a byte order mark", test_bom);
+  r = r.it("link reference definitions", test_definitions);
+  r = r.it("label normalization", test_normalize);
+  r = r.it("tags and HTML block conditions", test_tags);
+  r = r.it("backslash unescaping", test_unescape);
+  return r.finish();
+}
