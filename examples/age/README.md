@@ -396,18 +396,18 @@ The input is 1 GiB of zeros in a sparse file. Each tool encrypts it to one
 X25519 recipient, and decrypts the file that age made with the identity.
 The output goes to `/dev/null`.
 
-Each time is the best of 7 runs, with the two tools in turn. The host is a 4-core Intel Xeon (2.10 GHz, 3.2 GHz with
-turbo) with Linux, and other jobs used it at the same time. The port is
-built with `fern -O -target x86-64-linux`. rage is not installed on the
+Each time is the best of 7 runs, with the two tools in turn. The host is a
+4-core Intel Xeon (2.10 GHz, 3.2 GHz with turbo) with Linux, and other jobs
+used it at the same time. age is the release binary of age 1.3.2. The port
+is built with `fern -O -target x86-64-linux`. rage is not installed on the
 host, so it is not in the table.
 
-| Operation | age 1.1.1 | Fern port | Port / age |
+| Operation | age 1.3.2 | Fern port | Port / age |
 | --- | ---: | ---: | ---: |
-| Encrypt to `/dev/null` | 0.58 s | 0.53 s | 0.91 |
-| Decrypt to `/dev/null` | 1.02 s | 0.68 s | 0.67 |
+| Encrypt to `/dev/null` | 0.60 s | 0.56 s | 0.94 |
+| Decrypt to `/dev/null` | 0.95 s | 0.64 s | 0.68 |
 
-The port encrypts and decrypts faster than age. The best CPU time (user and
-system) of 7 encrypts is 0.52 s for the port and 0.65 s for age.
+The port encrypts and decrypts faster than age.
 
 The port seals and opens each chunk in one kernel of the compiler,
 `__fern_chacha20_poly1305_seal_into` or `__fern_chacha20_poly1305_open_into`.
@@ -416,29 +416,38 @@ It computes Poly1305 in the general registers among the rounds of ChaCha20,
 so the two run at the same time. The AVX2 assembly of golang.org/x/crypto,
 which age uses, does the same. The kernel seals at about 1.1 cycles for each
 byte. Before the fused kernel, the port computed ChaCha20 and then Poly1305
-at about 1.6 cycles for each byte. Then it encrypted in 0.63 s on the same
-host.
+at about 1.6 cycles for each byte.
 
 Two copies remain in the encrypt path of the port: the copy of `read` in the
 kernel, and the copy that adds the room for the tag to each chunk.
 
-### Passphrases and SSH keys
+### Passphrases and keys
 
-Each time is the best of 3 runs on the same host. A run with a passphrase
-includes about 0.03 s for the Python program that drives the
-pseudo-terminal. Other jobs ran on the host at the same time.
+Each scrypt time is the best of 12 runs, with the two tools in turn. Each
+other time with a passphrase is the best of 5 runs, and each time with no
+passphrase is the best of 21 runs. A run with a passphrase includes about
+0.03 s for the Python program that drives the pseudo-terminal. Other jobs
+ran on the host at the same time.
 
-| Operation | age 1.1.1 | Fern port | Port / age |
+| Operation | age 1.3.2 | Fern port | Port / age |
 | --- | ---: | ---: | ---: |
-| Decrypt, scrypt work factor 2^18 | 0.80 s | 0.89 s | 1.1 |
-| Encrypt, scrypt work factor 2^18 | 0.77 s | 0.98 s | 1.3 |
-| Decrypt with an Ed25519 SSH key | 0.005 s | 0.003 s | 0.6 |
-| Decrypt with an RSA-2048 SSH key | 0.006 s | 0.034 s | 5.7 |
-| Decrypt with an RSA-3072 SSH key | 0.007 s | 0.101 s | 14 |
-| Decrypt with an Ed25519 SSH key with a passphrase (16 bcrypt rounds) | 0.16 s | 0.17 s | 1.1 |
+| Decrypt, scrypt work factor 2^18 | 0.634 s | 0.619 s | 0.98 |
+| Encrypt, scrypt work factor 2^18 | 0.611 s | 0.571 s | 0.93 |
+| Decrypt with a hybrid (ML-KEM-768 + X25519) key | 2.1 ms | 0.5 ms | 0.24 |
+| Encrypt to a hybrid recipient | 2.0 ms | 0.6 ms | 0.30 |
+| Decrypt with an Ed25519 SSH key | 1.7 ms | 0.4 ms | 0.24 |
+| Decrypt with an RSA-2048 SSH key | 3.4 ms | 3.4 ms | 1.0 |
+| Decrypt with an RSA-3072 SSH key | 7.1 ms | 7.4 ms | 1.04 |
+| Decrypt with an Ed25519 SSH key with a passphrase (16 bcrypt rounds) | 0.108 s | 0.129 s | 1.19 |
 
-`std/crypto/scrypt` takes 0.88 s for N = 2^18 and r = 8, and OpenSSL
-takes 0.70 s. It keeps two 32-bit words in each `i64` slot, so its memory
-is 256 MiB, as in age. The RSA decryption has no CRT and uses 26-bit
-limbs, so it is slower than Go's. The decryption takes a fraction of the
-time of a file of 64 KiB or more.
+`std/crypto/scrypt` runs BlockMix in the compiler kernel
+`__scrypt_block_mix`. That kernel keeps four rows of a block in the vector
+registers, in the diagonal order of the Salsa20 matrix. For N = 2^18 and
+r = 8, the KDF takes 0.59 s alone, and OpenSSL takes 0.61 s. The kernel
+takes 76% of that time, and page faults take most of the rest. The memory
+is 256 MiB, as in age.
+
+The RSA decryption uses the CRT with 64-bit limbs, and the port takes the
+CRT coefficient from the key file. Each Montgomery product is a loop of Fern
+code. The bcrypt KDF of an OpenSSH key with a passphrase is Fern code with
+no kernel, so it is slower than Go's.
