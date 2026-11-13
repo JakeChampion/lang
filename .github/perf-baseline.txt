@@ -1,3 +1,8 @@
+# 2026-11-13: PR #15784, perf-aarch64 job 132189918558 on the merge with main 38768eb2.
+# perceus_rbtree_ck .text +7.7% and .ir +31.5%; string_slice.ir -42.4%, tokenize.ir -12.7%,
+# utf8_ingest_unchecked.ir -2.4% and utf8_ingest_validated.ir -1.5%. The code that main and
+# #15784 emit for rbtree_ck, string_slice and tokenize is the same byte for byte on arm64,
+# so these are values of main. Each row moves to its measured value. Keep all tolerances.
 # 2026-11-13: PR #15739, perf-x86_64 job 132017371022 and perf-aarch64 job 132017370985 on the merge
 # with main 629da263. Twelve rows of perceus_cfold, perceus_deriv, perceus_rbtree, perceus_rbtree_ck,
 # pmap_insert and pvec_with are 1.0% to 4.8% below their pins. #15739 removes a conformance case and
@@ -697,15 +702,15 @@ aarch64/string_rfind_byte.ir	55941911
 aarch64/string_scan.text	2556
 aarch64/string_scan.ir	59787692
 aarch64/string_slice.text	1188
-aarch64/string_slice.ir	43620107
+aarch64/string_slice.ir	25140119
 aarch64/struct_drop.text	2663
 aarch64/struct_drop.ir	218300904
 aarch64/tokenize.text	1444
-aarch64/tokenize.ir	38350109
+aarch64/tokenize.ir	33490121
 aarch64/utf8_ingest_unchecked.text	8188
-aarch64/utf8_ingest_unchecked.ir	2689511
+aarch64/utf8_ingest_unchecked.ir	2623953
 aarch64/utf8_ingest_validated.text	8735
-aarch64/utf8_ingest_validated.ir	6229114
+aarch64/utf8_ingest_validated.ir	6137553
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
 x86_64/perceus_cfold.text	1938
@@ -733,8 +738,8 @@ aarch64/perceus_nqueens.text	1812
 aarch64/perceus_nqueens.ir	90387246
 aarch64/perceus_rbtree.text	2842
 aarch64/perceus_rbtree.ir	35415487
-aarch64/perceus_rbtree_ck.text	3039
-aarch64/perceus_rbtree_ck.ir	36653727
+aarch64/perceus_rbtree_ck.text	3274
+aarch64/perceus_rbtree_ck.ir	48193420
 # 2026-11-01: #13988 keeps the original main pvec instruction gates.
 # Fresh measurements remain within their unchanged 1% tolerance.
 # 2026-11-07: PR #14490 adds the fixed QTRLE workload. Existing limits stay unchanged.
