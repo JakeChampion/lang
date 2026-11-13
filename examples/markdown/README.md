@@ -151,15 +151,15 @@ follow spec 0.31.2, the port follows the spec:
 ## Speed
 
 Measured 2026-11-13 on the 4-core x86-64 container, with other work on the
-machine: the median of 7 runs, and the peak memory. Each program reads the
+machine: the median of 15 runs, and the peak memory. Each program reads the
 input from a file and writes to `/dev/null`. md4c 0.4.8 runs through a small
 driver of `md_html` with `MD_DIALECT_COMMONMARK`, which writes each part of
 the HTML when md4c gives it.
 
 | input | `md` | cmark 0.30.2 | md4c 0.4.8 |
 |---|---:|---:|---:|
-| the Markdown of `docs/`, 23.9 MB | 0.118 s, 33 MB | 0.453 s, 220 MB | 0.129 s, 28 MB |
-| the 652 spec examples, repeated to 16.9 MB | 0.353 s, 66 MB | 1.160 s, 444 MB | 0.409 s, 44 MB |
+| the Markdown of `docs/`, 23.9 MB | 0.119 s, 33 MB | 0.451 s, 220 MB | 0.136 s, 28 MB |
+| the 652 spec examples, repeated to 16.9 MB | 0.372 s, 66 MB | 1.112 s, 444 MB | 0.414 s, 44 MB |
 
 callgrind counts 210 M instructions for `md` on the first 6 MB of the
 `docs/` input, and 305 M for md4c. The inline phase is 58% of the count of
