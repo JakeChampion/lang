@@ -285,7 +285,9 @@ function test_definitions(): test.TestOutcome {
 }
 
 function test_normalize(): test.TestOutcome {
-  let cases = [("Foo  Bar", "foo bar"), ("  a\t\nb ", "a b"), ("ẞ", "ss"), ("ΑΓΩ", "αγω"), ("x", "x")];
+  let cases = [
+    ("Foo  Bar", "foo bar"), ("  a\t\nb ", "a b"), ("ẞ", "ss"), ("ΑΓΩ", "αγω"), ("x", "x"), ("foo bar-1 ~[x]", "foo bar-1 ~[x]"), ("a  b", "a b"), ("a ", "a"), (" a", "a"), ("aZ", "az"),
+  ];
   for c in cases {
     let (label, want) = c;
     if (refs.normalize(label) != want) {

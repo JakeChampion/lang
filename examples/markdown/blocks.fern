@@ -178,6 +178,7 @@ function has_flag(p: P, d: i32, flag: i32): boolean {
   return (p.st[d * SS + S_FLAGS] & flag) != 0;
 }
 
+@inline
 function set_flag(p: P, d: i32, flag: i32, on: boolean): P {
   let f = sget(p, d, S_FLAGS);
   if (on == ((f & flag) != 0)) {

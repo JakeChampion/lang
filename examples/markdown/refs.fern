@@ -232,6 +232,9 @@ pub function parse_def(s: string, i: i32): Def {
 // The form of a label that two matching labels share: Unicode case folding,
 // with each run of whitespace made one space, and no space at either end.
 pub function normalize(label: string): string {
+  if (is_normal(label)) {
+    return label.to_owned();
+  }
   let folded = label.case_fold();
   let b = buf_new(folded.len());
   let gap = false;
@@ -252,6 +255,27 @@ pub function normalize(label: string): string {
   let out = buf_take(b);
   buf_free(b);
   return out;
+}
+
+// True when `normalize` gives the label as it is: ASCII with no capital
+// letter, and one space between two words.
+function is_normal(label: string): boolean {
+  let n = label.len();
+  if (n == 0 || label[0] == b' ' || label[n - 1] == b' ') {
+    return false;
+  }
+  for i in 0..n {
+    let c = label[i] as i32;
+    if (c == 32 && label[i - 1] == b' ' || c != 32 && !keeps(c)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// True for a printable ASCII byte that is not a capital letter.
+function keeps(c: i32): boolean {
+  return c > 32 && c < 127 && (c < 65 || c > 90);
 }
 
 // Adds each definition at the start of `s` to `refs`. The first definition of
