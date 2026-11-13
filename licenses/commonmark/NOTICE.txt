@@ -8,5 +8,11 @@ spec.json is the JSON that test/spec_tests.py --dump-tests writes for spec.txt.
 spec.json has the same CC-BY-SA 4.0 license as the spec.
 The full license text of the spec repository is in LICENSE.txt.
 
+examples/markdown/entities.fern holds the names of the named character references of the HTML Standard and the characters that each name gives.
+Reference: https://html.spec.whatwg.org/multipage/named-characters.html
+Copyright (C) WHATWG (Apple, Google, Mozilla, Microsoft).
+The HTML Standard has the Creative Commons CC-BY 4.0 license: https://creativecommons.org/licenses/by/4.0/
+scripts/gen-markdown-tables.py writes the file from the table in the Python standard library (html.entities.html5).
+
 The Fern port in examples/markdown does not copy source code from cmark or from the spec repository.
 It implements the behaviour of the CommonMark Spec 0.31.2, and its output is the HTML of cmark.
