@@ -17,7 +17,7 @@ import (
 // jqSuiteFloor is the number of cases of jq.test that the port passes. A case
 // in a part of the language the port does not have yet is skipped, and every
 // other case must pass.
-const jqSuiteFloor = 274
+const jqSuiteFloor = 334
 
 const jqNotYet = "is not in this port yet"
 
@@ -231,6 +231,11 @@ func TestSelfHostExampleJqAgainstJq(t *testing.T) {
 		{[]string{"-r", "@csv \"row: \\(.)\", @tsv, @sh, (map(tostring) | @base64 \"\\(.[1])\"), @html \"<\\(.[1])>\""}, "[1,\"a b\\t<c>'\",null]\n"},
 		{[]string{"-c", "\"\\(.a)-\\(.b[])\", @uri, (.a | @base64d)"}, "{\"a\":\"aGk=\",\"b\":[1,2]}\n"},
 		{[]string{"-c", "@nosuch"}, "1"},
+		{[]string{"-c", ".a.b |= . + 1 | .c //= [] | .c += [.a.b] | del(.d[0, -1]) | [paths(numbers)]"}, "{\"a\":{\"b\":1},\"d\":[1,2,3]}\n"},
+		{[]string{"-c", "[.[].a?], [.[] | .a?], (.[2].a.b? // \"none\")"}, "[1,{\"a\":2},{\"a\":{\"b\":3}}]\n"},
+		{[]string{"-c", ".[].a.b?"}, "[{\"a\":{\"b\":1}},5]\n"},
+		{[]string{"-c", "path(.a | tostring), (.a = 1)"}, "{\"a\":[1]}\n"},
+		{[]string{"-c", "walk(if type == \"object\" then del(.x) else . end), (.. |= (numbers |= . * 2))"}, "[{\"x\":1,\"y\":[2,{\"x\":3}]},4]\n"},
 		{[]string{"-c", "group_by(.k) | map({k: .[0].k, n: length}), (sort_by(.v) | map(.v)), max_by(.v), unique_by(.k)"}, "[{\"k\":\"b\",\"v\":2},{\"k\":\"a\",\"v\":3},{\"k\":\"b\",\"v\":1}]\n"},
 		{[]string{"-c", "ascii_upcase, split(\", \"), indices(\", \"), explode[0:2], contains(\"b, c\"), ltrimstr(\"a, \")"}, "\"a, b, c\"\n5\n"},
 		{[]string{"-c", "with_entries(select(.value | contains([1])))"}, "{\"a\":[1,2],\"b\":[3]}\n"},

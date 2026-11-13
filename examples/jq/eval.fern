@@ -103,17 +103,19 @@ pub function run(f: filter.Ast, input: json.JsonValue, e: Env): Outputs {
       return lookup(e, name);
     },
     filter.Index(target, key) => {
-      return run_index(target, key, input, e);
+      return run_index(target, key, input, e, false);
     },
     filter.Slice(target, from, to) => {
-      return run_slice(target, from, to, input, e);
+      return run_slice(target, from, to, input, e, false);
     },
     filter.Iterate(target) => {
       return each(run(target, input, e), iterate);
     },
-    filter.Optional(inner) => {
-      let o = run(inner, input, e);
-      return ok(o.values);
+    filter.Optional(step) => {
+      return run_guarded(step, input, e);
+    },
+    filter.Try(inner) => {
+      return ok(run(inner, input, e).values);
     },
     filter.Pipe(a, b) => {
       return run_pipe(run(a, input, e), b, e);
@@ -159,6 +161,9 @@ pub function run(f: filter.Ast, input: json.JsonValue, e: Env): Outputs {
     },
     filter.Format(name) => {
       return format(name, input);
+    },
+    filter.Update(op, target, value) => {
+      return run_update(op, target, value, input, e);
     },
     filter.Interp(name, texts, parts) => {
       return interpolate(name, texts, parts, parts.len() - 1, texts[parts.len()], input, e);
@@ -237,13 +242,35 @@ function negate(v: json.JsonValue): Outputs {
 }
 
 // The index runs on the input. jq takes each key, and then each target.
-function run_index(target: filter.Ast, key: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+// The step `step` with a `?`: an error of the step itself gives no output.
+// An error of the path before the step stays an error.
+function run_guarded(step: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+  return match (step) {
+    filter.Index(target, key) => run_index(target, key, input, e, true),
+    filter.Slice(target, from, to) => run_slice(target, from, to, input, e, true),
+    filter.Iterate(target) => each(run(target, input, e), iterate_guarded),
+    _ => ok(run(step, input, e).values),
+  };
+}
+
+function guarded(o: Outputs, guard: boolean): Outputs {
+  if (guard && o.failed()) {
+    return ok(o.values);
+  }
+  return o;
+}
+
+function iterate_guarded(v: json.JsonValue): Outputs {
+  return guarded(iterate(v), true);
+}
+
+function run_index(target: filter.Ast, key: filter.Ast, input: json.JsonValue, e: Env, guard: boolean): Outputs {
   let keys = run(key, input, e);
   let out = ok([]);
   for k in keys.values {
     let targets = run(target, input, e);
     for t in targets.values {
-      out = out.then(index(t, k));
+      out = out.then(guarded(index(t, k), guard));
       if (out.failed()) {
         return out;
       }
@@ -253,6 +280,14 @@ function run_index(target: filter.Ast, key: filter.Ast, input: json.JsonValue, e
     }
   }
   return Outputs { ...out, error: keys.error };
+}
+
+// The slice of `v` that the path element `{"start": a, "end": b}` names.
+function slice_of(v: json.JsonValue, o: json.JsonObject): Outputs {
+  if (!o.contains("start") || !o.contains("end")) {
+    return fail("Array/string slice indices must be integers");
+  }
+  return slice(v, o.get_or("start", json.JNull), o.get_or("end", json.JNull));
 }
 
 function index_error(v: json.JsonValue, k: json.JsonValue): Outputs {
@@ -293,6 +328,15 @@ pub function index(v: json.JsonValue, k: json.JsonValue): Outputs {
       if let json.JArray(part) = k {
         return one(json.JArray(positions(items, part)));
       }
+      if let json.JObject(o) = k {
+        return slice_of(v, o);
+      }
+      return index_error(v, k);
+    },
+    json.JString(_) => {
+      if let json.JObject(o) = k {
+        return slice_of(v, o);
+      }
       return index_error(v, k);
     },
     _ => {
@@ -328,7 +372,7 @@ function ceil_index(x: f64): i32 {
   return i;
 }
 
-function run_slice(target: filter.Ast, from: filter.Ast, to: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+function run_slice(target: filter.Ast, from: filter.Ast, to: filter.Ast, input: json.JsonValue, e: Env, guard: boolean): Outputs {
   let tos = run(to, input, e);
   let out = ok([]);
   for t in tos.values {
@@ -336,7 +380,7 @@ function run_slice(target: filter.Ast, from: filter.Ast, to: filter.Ast, input: 
     for f in froms.values {
       let targets = run(target, input, e);
       for v in targets.values {
-        out = out.then(slice(v, f, t));
+        out = out.then(guarded(slice(v, f, t), guard));
         if (out.failed()) {
           return out;
         }
@@ -374,7 +418,7 @@ function bound(b: json.JsonValue, fallback: i32, len: i32, up: boolean): (i32, s
       }
     },
     _ => {
-      return (0, "Start and end indices of an array slice must be numbers");
+      return (0, "Array/string slice indices must be integers");
     }
   }
   if (i < 0) {
@@ -390,7 +434,7 @@ function bounds(f: json.JsonValue, t: json.JsonValue, len: i32): Bounds {
   let (start, e1) = bound(f, 0, len, false);
   let (end, e2) = bound(t, len, len, true);
   if (e1.len() > 0 || e2.len() > 0) {
-    return Bounds { start: 0, end: 0, error: e1 + e2 };
+    return Bounds { start: 0, end: 0, error: if (e1.len() > 0) { e1 } else { e2 } };
   }
   if (end < start) {
     end = start;
@@ -924,6 +968,14 @@ function call_more(name: string, args: filter.Ast[], input: json.JsonValue, e: E
     "first" => first(args, input, e),
     "last" => last(args, input, e),
     "limit" => run_limit(args[0], args[1], input, e),
+    "path" => paths_of(args[0], input, e),
+    "paths" => with_keys(paths_of(paths_filter(args), input, e)),
+    "getpath" => run_getpath(args[0], input, e),
+    "setpath" => run_setpath(args[0], args[1], input, e),
+    "delpaths" => run_delpaths(args[0], input, e),
+    "del" => run_del(args[0], input, e),
+    "map_values" => run_update("|=", filter.Iterate(filter.Identity), args[0], input, e),
+    "walk" => walk(input, args[0], e),
     "while" => run_while(args[0], args[1], input, e),
     "until" => run_until(args[0], args[1], input, e),
     "nth" => nth(args, input, e),
@@ -2369,4 +2421,879 @@ function base64_decoded(s: string): Outputs {
     return one(json.JString(text));
   }
   return one(json.JString(reader.repaired(text)));
+}
+
+// ---- Paths ----
+
+// A value that a path expression gave, and the path to it. `tracked` is the
+// value that the path gives in the input. jq follows a path only from a value
+// that is that same value, which `attached` says.
+struct PathItem { path: json.JsonValue[], tracked: json.JsonValue, value: json.JsonValue, attached: boolean }
+
+struct PathOuts { items: PathItem[], error: json.JsonValue[] }
+
+function path_ok(items: PathItem[]): PathOuts {
+  return PathOuts { items: items, error: [] };
+}
+
+function path_fail(message: string): PathOuts {
+  return PathOuts { items: [], error: [json.JString(message)] };
+}
+
+function (o: PathOuts) failed(): boolean {
+  return o.error.len() > 0;
+}
+
+function (o: PathOuts) then(more: PathOuts): PathOuts {
+  return PathOuts { items: o.items.concat(more.items), error: more.error };
+}
+
+// The value as jq shows it in a message about a path: cut to 26 bytes and
+// "..." when it is longer than 29.
+function shown_long(v: json.JsonValue): string {
+  let s = output.compact(v);
+  if (s.len() > 29) {
+    return slice_unchecked(s, 0, 26).to_owned() + "...";
+  }
+  return s;
+}
+
+function on_path(it: PathItem, key: json.JsonValue, v: json.JsonValue): PathItem {
+  return PathItem { path: it.path.append(key), tracked: v, value: v, attached: true };
+}
+
+// A value that no path step gave. jq holds it to be the tracked value when it
+// is the same null or boolean, or the same value through a variable.
+function off_path(it: PathItem, v: json.JsonValue, through_variable: boolean): PathItem {
+  let simple = match (v) {
+    json.JNull => true,
+    json.JBool(_) => true,
+    _ => through_variable,
+  };
+  return PathItem { path: it.path, tracked: it.tracked, value: v, attached: simple && order(v, it.tracked) == 0 };
+}
+
+function run_paths(f: filter.Ast, it: PathItem, e: Env): PathOuts {
+  match (f) {
+    filter.Identity => {
+      return path_ok([it]);
+    },
+    filter.Index(target, key) => {
+      return paths_index(target, key, it, e, false);
+    },
+    filter.Slice(target, from, to) => {
+      return paths_slice(target, from, to, it, e, false);
+    },
+    filter.Iterate(target) => {
+      return paths_iterate(run_paths(target, it, e), false);
+    },
+    filter.Optional(step) => {
+      return paths_guarded(step, it, e);
+    },
+    filter.Try(inner) => {
+      return path_ok(run_paths(inner, it, e).items);
+    },
+    filter.Pipe(a, b) => {
+      return paths_each(run_paths(a, it, e), b, e);
+    },
+    filter.Comma(a, b) => {
+      let o = run_paths(a, it, e);
+      if (o.failed()) {
+        return o;
+      }
+      return o.then(run_paths(b, it, e));
+    },
+    filter.If(cond, yes, no) => {
+      return paths_if(cond, yes, no, it, e);
+    },
+    filter.Alt(a, b) => {
+      return paths_alt(a, b, it, e);
+    },
+    filter.Bind(source, name, body) => {
+      return paths_bind(source, name, body, it, e);
+    },
+    filter.Foreach(source, name, init, update, extract) => {
+      return paths_foreach(source, name, init, [update, extract], it, e);
+    },
+    filter.Catch(body, handler) => {
+      let o = run_paths(body, it, e);
+      if (!o.failed()) {
+        return o;
+      }
+      return path_ok(o.items).then(run_paths(handler, off_path(it, o.error[0], false), e));
+    },
+    filter.Call(name, args) => {
+      return paths_call(name, args, it, e);
+    },
+    filter.Var(_) => {
+      return paths_plain(f, it, e, true);
+    },
+    _ => {
+      return paths_plain(f, it, e, false);
+    }
+  }
+}
+
+// A filter that makes no path step: each output is off the path.
+function paths_plain(f: filter.Ast, it: PathItem, e: Env, through_variable: boolean): PathOuts {
+  let vs = run(f, it.value, e);
+  let items: PathItem[] = [];
+  for v in vs.values {
+    items = items.append(off_path(it, v, through_variable));
+  }
+  return PathOuts { items: items, error: vs.error };
+}
+
+function paths_guarded(step: filter.Ast, it: PathItem, e: Env): PathOuts {
+  return match (step) {
+    filter.Index(target, key) => paths_index(target, key, it, e, true),
+    filter.Slice(target, from, to) => paths_slice(target, from, to, it, e, true),
+    filter.Iterate(target) => paths_iterate(run_paths(target, it, e), true),
+    _ => path_ok(run_paths(step, it, e).items),
+  };
+}
+
+// The path outputs of `step` from each item of `o`.
+function paths_each(o: PathOuts, step: filter.Ast, e: Env): PathOuts {
+  let out = path_ok([]);
+  for it in o.items {
+    out = out.then(run_paths(step, it, e));
+    if (out.failed()) {
+      return out;
+    }
+  }
+  return PathOuts { ...out, error: o.error };
+}
+
+function paths_iterate(o: PathOuts, guard: boolean): PathOuts {
+  let out = path_ok([]);
+  for it in o.items {
+    out = out.then(path_iterate(it, guard));
+    if (out.failed()) {
+      return out;
+    }
+  }
+  return PathOuts { ...out, error: o.error };
+}
+
+function path_iterate(it: PathItem, guard: boolean): PathOuts {
+  if (!it.attached) {
+    return path_fail("Invalid path expression near attempt to iterate through " + shown_long(it.value));
+  }
+  let items: PathItem[] = [];
+  match (it.value) {
+    json.JArray(all) => {
+      for i in 0..all.len() {
+        items = items.append(on_path(it, whole(i), all[i]));
+      }
+    },
+    json.JObject(o) => {
+      for k in o.keys() {
+        items = items.append(on_path(it, json.JString(k), o.get_or(k, json.JNull)));
+      }
+    },
+    _ => {
+      if (guard) {
+        return path_ok([]);
+      }
+      return path_fail("Cannot iterate over " + type_name(it.value) + " (" + shown(it.value) + ")");
+    }
+  }
+  return path_ok(items);
+}
+
+// One step from `it` with the key `k`. The value comes from `index`.
+function path_step(it: PathItem, k: json.JsonValue, guard: boolean): PathOuts {
+  if (!it.attached) {
+    return path_fail("Invalid path expression near attempt to access element " + shown(k) + " of " + shown_long(it.value));
+  }
+  let v = index(it.value, k);
+  if (v.failed()) {
+    if (guard) {
+      return path_ok([]);
+    }
+    return PathOuts { items: [], error: v.error };
+  }
+  return path_ok([on_path(it, k, v.values[0])]);
+}
+
+function paths_index(target: filter.Ast, key: filter.Ast, it: PathItem, e: Env, guard: boolean): PathOuts {
+  let keys = run(key, it.value, e);
+  let out = path_ok([]);
+  for k in keys.values {
+    let targets = run_paths(target, it, e);
+    for t in targets.items {
+      out = out.then(path_step(t, k, guard));
+      if (out.failed()) {
+        return out;
+      }
+    }
+    if (targets.failed()) {
+      return PathOuts { ...out, error: targets.error };
+    }
+  }
+  return PathOuts { ...out, error: keys.error };
+}
+
+function paths_slice(target: filter.Ast, from: filter.Ast, to: filter.Ast, it: PathItem, e: Env, guard: boolean): PathOuts {
+  let tos = run(to, it.value, e);
+  let out = path_ok([]);
+  for t in tos.values {
+    let froms = run(from, it.value, e);
+    for f in froms.values {
+      let key = json.JObject(json.object_of(["start", "end"], [f, t]));
+      let targets = run_paths(target, it, e);
+      for x in targets.items {
+        out = out.then(path_step(x, key, guard));
+        if (out.failed()) {
+          return out;
+        }
+      }
+      if (targets.failed()) {
+        return PathOuts { ...out, error: targets.error };
+      }
+    }
+    if (froms.failed()) {
+      return PathOuts { ...out, error: froms.error };
+    }
+  }
+  return PathOuts { ...out, error: tos.error };
+}
+
+function paths_if(cond: filter.Ast, yes: filter.Ast, no: filter.Ast, it: PathItem, e: Env): PathOuts {
+  let conds = run(cond, it.value, e);
+  let out = path_ok([]);
+  for c in conds.values {
+    if (truthy(c)) {
+      out = out.then(run_paths(yes, it, e));
+    } else {
+      out = out.then(run_paths(no, it, e));
+    }
+    if (out.failed()) {
+      return out;
+    }
+  }
+  return PathOuts { ...out, error: conds.error };
+}
+
+function paths_alt(a: filter.Ast, b: filter.Ast, it: PathItem, e: Env): PathOuts {
+  let o = run_paths(a, it, e);
+  let kept: PathItem[] = [];
+  for x in o.items {
+    if (truthy(x.value)) {
+      kept = kept.append(x);
+    }
+  }
+  if (o.failed() || kept.len() > 0) {
+    return PathOuts { items: kept, error: o.error };
+  }
+  return run_paths(b, it, e);
+}
+
+function paths_bind(source: filter.Ast, name: string, body: filter.Ast, it: PathItem, e: Env): PathOuts {
+  let sources = run(source, it.value, e);
+  let out = path_ok([]);
+  for v in sources.values {
+    out = out.then(run_paths(body, it, e.with(name, v)));
+    if (out.failed()) {
+      return out;
+    }
+  }
+  return PathOuts { ...out, error: sources.error };
+}
+
+// jq keeps the value of the state of a `foreach` and not its path. Each
+// update starts at the path of the `foreach` itself.
+function paths_foreach(source: filter.Ast, name: string, init: filter.Ast, steps: filter.Ast[], it: PathItem, e: Env): PathOuts {
+  let inits = run(init, it.value, e);
+  let out = path_ok([]);
+  for first in inits.values {
+    let state = first;
+    let sources = run(source, it.value, e);
+    for x in sources.values {
+      let scope = e.with(name, x);
+      let updates = run_paths(steps[0], off_path(it, state, true), scope);
+      out = out.then(paths_each(updates, steps[1], scope));
+      if (out.failed()) {
+        return out;
+      }
+      state = json.JNull;
+      if (updates.items.len() > 0) {
+        state = updates.items[updates.items.len() - 1].value;
+      }
+    }
+    if (sources.failed()) {
+      return PathOuts { ...out, error: sources.error };
+    }
+  }
+  return PathOuts { ...out, error: inits.error };
+}
+
+// The functions that keep a path. Each other function gives values that are
+// off the path.
+function paths_call(name: string, args: filter.Ast[], it: PathItem, e: Env): PathOuts {
+  let key = name + "/" + args.len().to_string();
+  return match (key) {
+    "empty/0" => path_ok([]),
+    "select/1" => paths_if(args[0], filter.Identity, filter.Call("empty", []), it, e),
+    "recurse/0" => paths_recurse(it, filter.Optional(filter.Iterate(filter.Identity)), [], e),
+    "recurse/1" => paths_recurse(it, args[0], [], e),
+    "recurse/2" => paths_recurse(it, args[0], [args[1]], e),
+    "first/0" => path_step(it, whole(0), false),
+    "last/0" => path_step(it, whole(-1), false),
+    "first/1" => paths_limit(whole(1), args[0], it, e),
+    "limit/2" => paths_limits(args[0], args[1], it, e),
+    "nth/1" => paths_index(filter.Identity, args[0], it, e, false),
+    "getpath/1" => paths_getpath(args[0], it, e),
+    _ => paths_other(name, args, it, e),
+  };
+}
+
+// A selector by type keeps the path. Each other function is off the path.
+function paths_other(name: string, args: filter.Ast[], it: PathItem, e: Env): PathOuts {
+  let selectors = ["values", "nulls", "scalars", "iterables", "arrays", "objects", "booleans", "numbers", "strings"];
+  if (args.len() == 0 && selectors.contains(name)) {
+    if (of_type(name, it.value).values.len() > 0) {
+      return path_ok([it]);
+    }
+    return path_ok([]);
+  }
+  return paths_plain(filter.Call(name, args), it, e, false);
+}
+
+function paths_recurse(it: PathItem, f: filter.Ast, conds: filter.Ast[], e: Env): PathOuts {
+  let out = path_ok([it]);
+  let nexts = run_paths(f, it, e);
+  for x in nexts.items {
+    let held = one(json.JBool(true));
+    if (conds.len() > 0) {
+      held = run(conds[0], x.value, e);
+    }
+    for h in held.values {
+      if (truthy(h)) {
+        out = out.then(paths_recurse(x, f, conds, e));
+        if (out.failed()) {
+          return out;
+        }
+      }
+    }
+    if (held.failed()) {
+      return PathOuts { ...out, error: held.error };
+    }
+  }
+  return PathOuts { ...out, error: nexts.error };
+}
+
+function paths_limits(n: filter.Ast, f: filter.Ast, it: PathItem, e: Env): PathOuts {
+  let counts = run(n, it.value, e);
+  let out = path_ok([]);
+  for c in counts.values {
+    out = out.then(paths_limit(c, f, it, e));
+    if (out.failed()) {
+      return out;
+    }
+  }
+  return PathOuts { ...out, error: counts.error };
+}
+
+function paths_limit(n: json.JsonValue, f: filter.Ast, it: PathItem, e: Env): PathOuts {
+  let sign = order(n, whole(0));
+  if (sign == 0) {
+    return path_ok([]);
+  }
+  let o = run_paths(f, it, e);
+  if (sign < 0) {
+    return o;
+  }
+  let left = n;
+  let kept: PathItem[] = [];
+  for x in o.items {
+    let less = subtract(left, whole(1));
+    if (less.failed()) {
+      return PathOuts { items: kept, error: less.error };
+    }
+    left = less.values[0];
+    kept = kept.append(x);
+    if (order(left, whole(0)) <= 0) {
+      return path_ok(kept);
+    }
+  }
+  return PathOuts { items: kept, error: o.error };
+}
+
+function paths_getpath(arg: filter.Ast, it: PathItem, e: Env): PathOuts {
+  let ps = run(arg, it.value, e);
+  let out = path_ok([]);
+  for p in ps.values {
+    let json.JArray(keys) = p else {
+      return out.then(path_fail("Path must be specified as an array"));
+    };
+    let v = getpath(it.value, keys, 0);
+    if (v.failed()) {
+      return out.then(PathOuts { items: [], error: v.error });
+    }
+    out = out.then(path_ok([PathItem { path: it.path.concat(keys), tracked: v.values[0], value: v.values[0], attached: it.attached }]));
+  }
+  return PathOuts { ...out, error: ps.error };
+}
+
+// The paths that `f` gives on `input`, each as an array of its keys.
+function paths_of(f: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+  let o = run_paths(f, PathItem { path: [], tracked: input, value: input, attached: true }, e);
+  let paths: json.JsonValue[] = [];
+  for it in o.items {
+    if (!it.attached) {
+      return Outputs { values: paths, error: [json.JString("Invalid path expression with result " + shown_long(it.value))] };
+    }
+    paths = paths.append(json.JArray(it.path));
+  }
+  return Outputs { values: paths, error: o.error };
+}
+
+// jq 1.7: `path(recurse) | select(length > 0)`, and `recurse | select(f)`
+// when `paths` has a filter.
+function paths_filter(args: filter.Ast[]): filter.Ast {
+  let all: filter.Ast = filter.Call("recurse", []);
+  if (args.len() > 0) {
+    return filter.Pipe(all, filter.Call("select", [args[0]]));
+  }
+  return all;
+}
+
+function with_keys(o: Outputs): Outputs {
+  let kept: json.JsonValue[] = [];
+  for p in o.values {
+    if (order(p, json.JArray([])) != 0) {
+      kept = kept.append(p);
+    }
+  }
+  return Outputs { values: kept, error: o.error };
+}
+
+function getpath(v: json.JsonValue, keys: json.JsonValue[], at: i32): Outputs {
+  if (at == keys.len()) {
+    return one(v);
+  }
+  if let json.JNull = v {
+    return one(v);
+  }
+  let child = index(v, keys[at]);
+  if (child.failed()) {
+    return child;
+  }
+  return getpath(child.values[0], keys, at + 1);
+}
+
+function run_getpath(arg: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+  let ps = run(arg, input, e);
+  let out = ok([]);
+  for p in ps.values {
+    let json.JArray(keys) = p else {
+      return out.then(fail("Path must be specified as an array"));
+    };
+    out = out.then(getpath(input, keys, 0));
+    if (out.failed()) {
+      return out;
+    }
+  }
+  return Outputs { ...out, error: ps.error };
+}
+
+// `v` with `x` at the path `keys` from `at`. A null on the way becomes an
+// object or an array.
+function setpath(v: json.JsonValue, keys: json.JsonValue[], at: i32, x: json.JsonValue): Outputs {
+  if (at == keys.len()) {
+    return one(x);
+  }
+  let child = index(v, keys[at]);
+  if (child.failed()) {
+    return child;
+  }
+  let inner = setpath(child.values[0], keys, at + 1, x);
+  if (inner.failed()) {
+    return inner;
+  }
+  return set(v, keys[at], inner.values[0]);
+}
+
+function set(v: json.JsonValue, k: json.JsonValue, x: json.JsonValue): Outputs {
+  match (k) {
+    json.JString(name) => {
+      if let json.JNull = v {
+        return one(json.JObject(json.object_of([name], [x])));
+      }
+      if let json.JObject(o) = v {
+        let fields = o;
+        fields = fields.insert(name, x);
+        return one(json.JObject(fields));
+      }
+    },
+    json.JNumber(t) => {
+      if let json.JNull = v {
+        return set_item([], number.value(t), x);
+      }
+      if let json.JArray(items) = v {
+        return set_item(items, number.value(t), x);
+      }
+    },
+    json.JObject(o) => {
+      if let json.JNull = v {
+        return set_slice([], o, x);
+      }
+      if let json.JArray(items) = v {
+        return set_slice(items, o, x);
+      }
+      if let json.JString(_) = v {
+        return fail("Cannot update string slices");
+      }
+    },
+    _ => {}
+  }
+  return index_error(v, k);
+}
+
+function set_item(items: json.JsonValue[], at: f64, x: json.JsonValue): Outputs {
+  if (at != at) {
+    return fail("Cannot set array element at NaN index");
+  }
+  let i = at as i32;
+  if (i < 0) {
+    i += items.len();
+  }
+  if (i < 0) {
+    return fail("Out of bounds negative array index");
+  }
+  if (i > 536870911) {
+    return fail("Array index too large");
+  }
+  let out = items;
+  while (out.len() <= i) {
+    out = out.append(json.JNull);
+  }
+  return one(json.JArray(out.with(i, x)));
+}
+
+function set_slice(items: json.JsonValue[], o: json.JsonObject, x: json.JsonValue): Outputs {
+  let b = slice_bounds(o, items.len());
+  if (b.error.len() > 0) {
+    return fail(b.error);
+  }
+  let json.JArray(more) = x else {
+    return fail("A slice of an array can only be assigned another array");
+  };
+  let out: json.JsonValue[] = [];
+  for i in 0..b.start {
+    out = out.append(items[i]);
+  }
+  out = out.concat(more);
+  for i in b.end..items.len() {
+    out = out.append(items[i]);
+  }
+  return one(json.JArray(out));
+}
+
+// The bounds of the path element `{"start": a, "end": b}` in an array of
+// `len` items.
+function slice_bounds(o: json.JsonObject, len: i32): Bounds {
+  if (!o.contains("start") || !o.contains("end")) {
+    return Bounds { start: 0, end: 0, error: "Array/string slice indices must be integers" };
+  }
+  return bounds(o.get_or("start", json.JNull), o.get_or("end", json.JNull), len);
+}
+
+function run_setpath(path: filter.Ast, value: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+  let xs = run(value, input, e);
+  let out = ok([]);
+  for x in xs.values {
+    let ps = run(path, input, e);
+    for p in ps.values {
+      let json.JArray(keys) = p else {
+        return out.then(fail("Path must be specified as an array"));
+      };
+      out = out.then(setpath(input, keys, 0, x));
+      if (out.failed()) {
+        return out;
+      }
+    }
+    if (ps.failed()) {
+      return Outputs { ...out, error: ps.error };
+    }
+  }
+  return Outputs { ...out, error: xs.error };
+}
+
+// `v` with no value at each path of `paths`.
+function delpaths(v: json.JsonValue, paths: json.JsonValue): Outputs {
+  let json.JArray(all) = paths else {
+    return fail("Paths must be specified as an array");
+  };
+  let sorted_paths: json.JsonValue[][] = [];
+  for p in sorted_values(all) {
+    let json.JArray(keys) = p else {
+      return fail("Path must be specified as array, not " + type_name(p));
+    };
+    if (keys.len() == 0) {
+      return one(json.JNull);
+    }
+    sorted_paths = sorted_paths.append(keys);
+  }
+  return delete_paths(v, sorted_paths, 0);
+}
+
+// `v` with no value at each of the sorted paths, which all have the same
+// keys before `at`. A run of paths with one key at `at` goes down into that
+// key, but when the first path of the run ends there, the key itself goes.
+// The keys that go leave `v` in one step, so each index is a place of `v` as
+// it was.
+function delete_paths(v: json.JsonValue, paths: json.JsonValue[][], at: i32): Outputs {
+  let out = v;
+  let ends: json.JsonValue[] = [];
+  let i = 0;
+  while (i < paths.len()) {
+    let key = paths[i][at];
+    let run: json.JsonValue[][] = [];
+    let j = i;
+    while (j < paths.len() && order(paths[j][at], key) == 0) {
+      run = run.append(paths[j]);
+      j += 1;
+    }
+    if (paths[i].len() == at + 1) {
+      ends = ends.append(key);
+    } else {
+      let child = index(out, key);
+      if (child.failed()) {
+        return child;
+      }
+      let inner = one(json.JNull);
+      if let json.JNull = child.values[0] {
+        inner = ok([]);
+      } else {
+        inner = delete_paths(child.values[0], run, at + 1);
+      }
+      if (inner.failed()) {
+        return inner;
+      }
+      if (inner.values.len() > 0) {
+        let next = set(out, key, inner.values[0]);
+        if (next.failed()) {
+          return next;
+        }
+        out = next.values[0];
+      }
+    }
+    i = j;
+  }
+  return delete_keys(out, ends);
+}
+
+function delete_keys(v: json.JsonValue, keys: json.JsonValue[]): Outputs {
+  if (keys.len() == 0) {
+    return one(v);
+  }
+  match (v) {
+    json.JNull => {
+      return one(v);
+    },
+    json.JObject(o) => {
+      let fields = o;
+      for k in keys {
+        let json.JString(name) = k else {
+          return fail("Cannot delete " + type_name(k) + " field of object");
+        };
+        fields = fields.remove(name);
+      }
+      return one(json.JObject(fields));
+    },
+    json.JArray(items) => {
+      return delete_items(items, keys);
+    },
+    _ => {
+      return fail("Cannot delete fields from " + type_name(v));
+    }
+  }
+}
+
+// `items` with no item at each key: an index, an index from the end, or a
+// slice. Each key is a place of `items` as it is now.
+function delete_items(items: json.JsonValue[], keys: json.JsonValue[]): Outputs {
+  let gone: boolean[] = [];
+  for i in 0..items.len() {
+    gone = gone.append(false);
+  }
+  for k in keys {
+    let start = 0;
+    let end = 0;
+    match (k) {
+      json.JNumber(t) => {
+        start = number.value(t) as i32;
+        if (start < 0) {
+          start += items.len();
+        }
+        end = start + 1;
+      },
+      json.JObject(o) => {
+        let b = slice_bounds(o, items.len());
+        if (b.error.len() > 0) {
+          return fail(b.error);
+        }
+        start = b.start;
+        end = b.end;
+      },
+      _ => {
+        return fail("Cannot delete " + type_name(k) + " element of array");
+      }
+    }
+    for i in start..end {
+      if (i >= 0 && i < items.len()) {
+        gone = gone.with(i, true);
+      }
+    }
+  }
+  let out: json.JsonValue[] = [];
+  for i in 0..items.len() {
+    if (!gone[i]) {
+      out = out.append(items[i]);
+    }
+  }
+  return one(json.JArray(out));
+}
+
+function run_delpaths(arg: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+  let ps = run(arg, input, e);
+  let out = ok([]);
+  for p in ps.values {
+    out = out.then(delpaths(input, p));
+    if (out.failed()) {
+      return out;
+    }
+  }
+  return Outputs { ...out, error: ps.error };
+}
+
+function run_del(f: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+  let ps = paths_of(f, input, e);
+  if (ps.failed()) {
+    return Outputs { values: [], error: ps.error };
+  }
+  return delpaths(input, json.JArray(ps.values));
+}
+
+// ---- Updates ----
+
+// `target = value` sets each path of `target` to each output of `value`.
+// The other operators change the value at each path: `|=` with a filter, and
+// `+=` and the others with the operator and each output of `value`.
+function run_update(op: string, target: filter.Ast, value: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+  if (op == "|=") {
+    return modify(op, target, value, json.JNull, input, e);
+  }
+  let xs = run(value, input, e);
+  let out = ok([]);
+  for x in xs.values {
+    if (op == "=") {
+      out = out.then(assign(target, x, input, e));
+    } else {
+      out = out.then(modify(op, target, value, x, input, e));
+    }
+    if (out.failed()) {
+      return out;
+    }
+  }
+  return Outputs { ...out, error: xs.error };
+}
+
+function assign(target: filter.Ast, x: json.JsonValue, input: json.JsonValue, e: Env): Outputs {
+  let ps = paths_of(target, input, e);
+  if (ps.failed()) {
+    return Outputs { values: [], error: ps.error };
+  }
+  let out = input;
+  for p in ps.values {
+    let json.JArray(keys) = p else {
+      continue;
+    };
+    let next = setpath(out, keys, 0, x);
+    if (next.failed()) {
+      return next;
+    }
+    out = next.values[0];
+  }
+  return one(out);
+}
+
+// The new value for `v` in an update. `|=` takes the first output of the
+// filter, and no output deletes the path.
+function updated(op: string, f: filter.Ast, x: json.JsonValue, v: json.JsonValue, e: Env): Outputs {
+  if (op == "|=") {
+    return run(f, v, e);
+  }
+  if (op == "//") {
+    return if (truthy(v)) { one(v) } else { one(x) };
+  }
+  return binary(op, v, x);
+}
+
+function modify(op: string, target: filter.Ast, f: filter.Ast, x: json.JsonValue, input: json.JsonValue, e: Env): Outputs {
+  let ps = paths_of(target, input, e);
+  if (ps.failed()) {
+    return Outputs { values: [], error: ps.error };
+  }
+  let out = input;
+  let gone: json.JsonValue[] = [];
+  for p in ps.values {
+    let json.JArray(keys) = p else {
+      continue;
+    };
+    let old = getpath(out, keys, 0);
+    if (old.failed()) {
+      return old;
+    }
+    let news = updated(op, f, x, old.values[0], e);
+    if (news.values.len() == 0) {
+      if (news.failed()) {
+        return news;
+      }
+      gone = gone.append(p);
+      continue;
+    }
+    let next = setpath(out, keys, 0, news.values[0]);
+    if (next.failed()) {
+      return next;
+    }
+    out = next.values[0];
+  }
+  return delpaths(out, json.JArray(gone));
+}
+
+// jq 1.7: `def w: if type == "object" then map_values(w) elif type ==
+// "array" then map(w) else . end | f`.
+function walk(v: json.JsonValue, f: filter.Ast, e: Env): Outputs {
+  let rebuilt = v;
+  match (v) {
+    json.JObject(o) => {
+      let fields = json.object();
+      for k in o.keys() {
+        let inner = walk(o.get_or(k, json.JNull), f, e);
+        if (inner.values.len() > 0) {
+          fields = fields.insert(k, inner.values[0]);
+        } else if (inner.failed()) {
+          return inner;
+        }
+      }
+      rebuilt = json.JObject(fields);
+    },
+    json.JArray(items) => {
+      let out: json.JsonValue[] = [];
+      for x in items {
+        let inner = walk(x, f, e);
+        if (inner.failed()) {
+          return Outputs { values: [], error: inner.error };
+        }
+        out = out.concat(inner.values);
+      }
+      rebuilt = json.JArray(out);
+    },
+    _ => {}
+  }
+  return run(f, rebuilt, e);
 }

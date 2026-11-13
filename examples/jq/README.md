@@ -13,7 +13,10 @@ echo '{"a":[1,2]}' | ./jq -c '.a[] , {b: .a}'
 
 The port has these parts of the language:
 
-- Paths: `.`, `.a`, `."a-b"`, `.[e]`, `.[e:e]`, `.[]`, and the postfix `?`.
+- Paths: `.`, `.a`, `."a-b"`, `.[e]`, `.[e:e]` and `.[]`.
+- The postfix `?`. After a step of a path it guards that step only, as in
+  jq: `.a.b?` is an error when `.a` is an error. After each other term it is
+  `try`.
 - The pipe `|` and the comma `,`.
 - Literals: numbers, strings, `true`, `false` and `null`.
 - Array construction `[e]` and object construction `{a, "b": e, (e): e, $x}`.
@@ -26,6 +29,7 @@ The port has these parts of the language:
 - `try`, with `catch`. An error holds a JSON value, as in jq.
 - `..`, which is `recurse`.
 - String interpolation, in a literal, in an object key and after a dot.
+- The update operators `=`, `|=`, `+=`, `-=`, `*=`, `/=`, `%=` and `//=`.
 - The formats `@text`, `@json`, `@html`, `@uri`, `@csv`, `@tsv`, `@sh`,
   `@base64` and `@base64d`, alone and before a string.
 - An array as an index: `.[[1, 2]]` gives each place of that part.
@@ -44,6 +48,11 @@ The port has these functions:
   `explode`, `fromjson`, `implode`, `ltrimstr`, `rtrimstr`, `split` with one argument,
   `startswith`, `tonumber` and `utf8bytelength`.
 - The search functions `contains`, `index`, `indices`, `inside` and `rindex`.
+
+The port has these functions for paths, types and numbers:
+
+- The path functions `del`, `delpaths`, `getpath`, `map_values`, `path`,
+  `paths`, `setpath` and `walk`.
 - The selectors `arrays`, `booleans`, `iterables`, `nulls`, `numbers`,
   `objects`, `scalars`, `select`, `strings` and `values`.
 - The number functions `ceil`, `exp10`, `exp2`, `fabs`, `floor`, `infinite`,
@@ -104,7 +113,6 @@ to the next. The exact results are the same: `exp10` of 2 is 100.
 
 ## What it does not have yet
 
-- The assignment operators.
 - Destructuring patterns in a binding, and `?//`.
 - `label` and `def`.
 - Each function that is not in the lists above. `exp` waits for #15661.
@@ -119,7 +127,7 @@ A program that uses one of them stops with exit 3 and a message that ends in
 - `tests/jq.test` is the test suite of jq 1.7 (see
   `licenses/jq/NOTICE.txt`). `TestSelfHostExampleJqSuite` runs each case
   whose program the port has and compares the outputs as JSON values, as
-  jq does. 274 cases pass, and each of the others is in a part of the language
+  jq does. 334 cases pass, and each of the others is in a part of the language
   that the port does not have yet.
 - `TestSelfHostExampleJqAgainstJq` runs the command line and the `jq` binary
   on the same arguments and input, and compares their stdout, stderr and exit
