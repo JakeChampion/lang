@@ -26,7 +26,7 @@ function screen(): ui.Screen {
 }
 
 // The messages of the elements and of the programs of these tests.
-enum Msg { Go, Row(i32), Cell(i32), Pick(i32), Open, Menu(i32), Under, Agree, Add, Switch, Clear, Left, Beat, Frame, Name(string), Sent, Next, Note(string), Slid(i32) }
+enum Msg { Go, Row(i32), Cell(i32), Pick(i32), Open, Menu(i32), Under, Agree, Add, Switch, Clear, Left, Beat, Frame, Name(string), Sent, Next, Note(string), Slid(i32), Moved(i32, i32), Gone(i32) }
 
 // The name of the message and its number, as one word.
 function name_of(m: Msg): string {
@@ -51,6 +51,12 @@ function name_of(m: Msg): string {
     },
     Agree => {
       return "ok0";
+    },
+    Moved(a, b) => {
+      return "moved" + a.to_string() + "to" + b.to_string();
+    },
+    Gone(i) => {
+      return "gone" + i.to_string();
     },
     _ => {
       return "other";
@@ -77,7 +83,7 @@ function number_of(b: ui.Built[Msg], n: scene.Node): i32 {
 }
 
 function laid_on(root: ui.El[Msg], s: ui.Screen, focus: ui.Focus): ui.Built[Msg] {
-  return ui.layout(root, fonts(), s, map_new(4), focus);
+  return ui.layout(root, fonts(), s, map_new(4), focus, ui.no_grab());
 }
 
 function laid(root: ui.El[Msg]): ui.Built[Msg] {
@@ -91,7 +97,7 @@ function plain(root: ui.El[Msg]): ui.Layout {
 
 function scrolled(root: ui.El[Msg], name: string, to: i32): ui.Built[Msg] {
   let offsets: Map[string, i32] = map_new(4);
-  return ui.layout(root, fonts(), screen(), offsets.insert(name, to), ui.no_focus());
+  return ui.layout(root, fonts(), screen(), offsets.insert(name, to), ui.no_focus(), ui.no_grab());
 }
 
 function label(s: string): ui.El[Msg] {
@@ -879,6 +885,161 @@ function test_the_meter_shows_the_cost_of_a_frame(): test.TestOutcome {
   return test.assert_eq(got, "2 24 200 view 3  layout 12  paint 40  access 7  frame 62  step 1234 ms");
 }
 
+// A list of `names`, 50 dp a row, that moves and swipes its rows.
+function order_list(names: string[]): ui.El[Msg] {
+  return ui.list("order", names.len(), 50.0, (i: i32): ui.El[Msg] => ui.row([label(names[i])]).wide().on_tap(Pick(i)).on_long(Menu(i))).on_move((a: i32, b: i32): Msg => Moved(a, b)).on_swipe((i: i32): Msg => Gone(i));
+}
+
+function order_names(n: i32): string[] {
+  let out: string[] = [];
+  for i in 0..n {
+    out = out.append("R" + i.to_string());
+  }
+  return out;
+}
+
+// The x and the y of the text `t` in `nodes`, or (-1, -1).
+function place_of_text(nodes: scene.Node[], t: string): (i32, i32) {
+  for n in nodes {
+    match (n.paint) {
+      scene.Label(said, _, _, _, _) => {
+        if (said == t) {
+          return (n.x, n.y);
+        }
+      },
+      _ => {}
+    }
+  }
+  return (-1, -1);
+}
+
+function y_text(nodes: scene.Node[], t: string): string {
+  let (_, y) = place_of_text(nodes, t);
+  return y.to_string();
+}
+
+function maybe_name(m: Option[Msg]): string {
+  return m.map((x: Msg): string => name_of(x)).unwrap_or("none");
+}
+
+function test_a_held_row_goes_with_the_finger(): test.TestOutcome {
+  let root = order_list(order_names(10));
+  let lay = plain(root);
+  let (a, _) = ui.touch(ui.no_input(), lay, 0, 100, 125, 0i64, 1.0);
+  let wait = ui.long_wait(a, 0i64);
+  let (b, none) = ui.long_press(a, 400000000i64);
+  // The finger goes 65 pixels down: the row is nearer the place 3 than 2.
+  let (c, _) = ui.touch(b, lay, 2, 100, 190, 450000000i64, 1.0);
+  let held = ui.layout(root, fonts(), screen(), map_new(4), ui.no_focus(), c.grab);
+  let nodes = held.layout().nodes;
+  let got = wait.to_string() + " " + none.is_none().to_string() + " " + b.grab.row.to_string() + " " + y_text(nodes, "R2") + " " + y_text(nodes, "R3") + " " + y_text(nodes, "R4") + " " + maybe_name(ui.dropped(held.messages(), held.layout(), c));
+  let (d, tap) = ui.touch(c, lay, 1, 100, 190, 500000000i64, 1.0);
+  got = got + " " + tap.is_none().to_string() + " " + d.grab.list.len().to_string();
+  return test.assert_eq(got, "400 true 2 165 100 200 moved2to3 true 0");
+}
+
+function test_a_row_swipes_across(): test.TestOutcome {
+  let root = order_list(order_names(10));
+  let lay = plain(root);
+  let (a, _) = ui.touch(ui.no_input(), lay, 0, 50, 125, 0i64, 1.0);
+  // The drag starts at 60, past the slop, so the row moves 90 pixels.
+  let (b, _) = ui.touch(a, lay, 2, 60, 126, 16000000i64, 1.0);
+  let (far, _) = ui.touch(b, lay, 2, 150, 127, 32000000i64, 1.0);
+  let (near, _) = ui.touch(b, lay, 2, 120, 127, 32000000i64, 1.0);
+  let swiped = ui.layout(root, fonts(), screen(), map_new(4), ui.no_focus(), far.grab);
+  let (x, _) = place_of_text(swiped.layout().nodes, "R2");
+  let (x3, _) = place_of_text(swiped.layout().nodes, "R3");
+  let back = ui.layout(root, fonts(), screen(), map_new(4), ui.no_focus(), near.grab);
+  let got = x.to_string() + " " + x3.to_string() + " " + far.offset("order").to_string() + " " + maybe_name(ui.dropped(swiped.messages(), swiped.layout(), far)) + " " + maybe_name(ui.dropped(back.messages(), back.layout(), near));
+  return test.assert_eq(got, "90 0 0 gone2 none");
+}
+
+struct Order { names: string[], said: string }
+
+function order_view(m: Order, s: ui.Screen): ui.El[Msg] {
+  return order_list(m.names);
+}
+
+// `names` with the name at `from` moved to `to`.
+function moved_names(names: string[], from: i32, to: i32): string[] {
+  let rest: string[] = [];
+  for i in 0..names.len() {
+    if (i != from) {
+      rest = rest.append(names[i]);
+    }
+  }
+  let out: string[] = [];
+  for i in 0..rest.len() {
+    if (i == to) {
+      out = out.append(names[from]);
+    }
+    out = out.append(rest[i]);
+  }
+  if (to >= rest.len()) {
+    out = out.append(names[from]);
+  }
+  return out;
+}
+
+function order_update(own m: Order, msg: Msg): Order {
+  match (msg) {
+    Moved(a, b) => {
+      return Order { names: moved_names(m.names, a, b), said: name_of(msg) };
+    },
+    Gone(i) => {
+      let kept: string[] = [];
+      for k in 0..m.names.len() {
+        if (k != i) {
+          kept = kept.append(m.names[k]);
+        }
+      }
+      return Order { names: kept, said: name_of(msg) };
+    },
+    _ => {
+      return Order { ...m, said: name_of(msg) };
+    }
+  }
+}
+
+function order_sim(): sim.Sim[Order, Msg] {
+  return sim.start(Order { names: order_names(20), said: "" }, ui.program(order_view, order_update), fonts(), 200, 400, 1.0);
+}
+
+function first_texts(s: sim.Sim[Order, Msg], n: i32): string {
+  let t = sim.texts(s);
+  let out: string[] = [];
+  for i in 0..n.min(t.len()) {
+    out = out.append(t[i]);
+  }
+  return out.join(" ");
+}
+
+function test_a_program_moves_and_swipes_rows(): test.TestOutcome {
+  let s = sim.hold_drag(order_sim(), 100, 125, 100, 275, 160i64, 0i64);
+  let moved = s.shell.app.said + ": " + first_texts(s, 7);
+  s = sim.drag(s, 50, 175, 190, 178, 96i64);
+  let swiped = s.shell.app.said + ": " + first_texts(s, 4);
+  s = sim.hold(s, "R0");
+  let held = s.shell.app.said + " " + s.shell.host.input.grab.list.len().to_string();
+  return test.assert_eq(moved + " | " + swiped + " | " + held, "moved2to5: R0 R1 R3 R4 R5 R2 R6 | gone3: R0 R1 R3 R5 | menu0 0");
+}
+
+function test_a_held_row_scrolls_its_list(): test.TestOutcome {
+  // The finger takes the row 1 into the bottom row of the list and stays
+  // there for a second, so the list scrolls under it.
+  let s = sim.hold_drag(order_sim(), 100, 75, 100, 380, 160i64, 1000i64);
+  let at = s.shell.host.input.offset("order");
+  let names = s.shell.app.names;
+  let to = 0;
+  for i in 0..names.len() {
+    if (names[i] == "R1") {
+      to = i;
+    }
+  }
+  let got = (at > 200 && at <= 600).to_string() + " " + (to == 1 + (305 + at + 25) / 50).to_string() + " " + s.shell.host.input.flinging().to_string();
+  return test.assert_eq(got, "true true false");
+}
+
 function main(): i32 {
   let r = test.new("std/android/ui");
   r = r.it("a column puts its elements one below the other", test_column);
@@ -903,6 +1064,10 @@ function main(): i32 {
   r = r.it("a drag scrolls and does not tap", test_drag_scrolls_and_does_not_tap);
   r = r.it("a fling goes on and stops at the end", test_fling_goes_on_and_stops_at_the_end);
   r = r.it("a finger that stays presses long", test_long_press);
+  r = r.it("a held row goes with the finger", test_a_held_row_goes_with_the_finger);
+  r = r.it("a row swipes across", test_a_row_swipes_across);
+  r = r.it("a program moves and swipes rows", test_a_program_moves_and_swipes_rows);
+  r = r.it("a held row scrolls its list", test_a_held_row_scrolls_its_list);
   r = r.it("the node under the finger shows pressed", test_pressed_node_shows);
   r = r.it("a modal element takes the touches", test_modal_takes_the_touches);
   r = r.it("a program closes its final state during Destroy", test_program_closes_final_state);
