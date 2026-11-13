@@ -507,17 +507,24 @@ pub function keygen_derand(d: [u8], z: [u8]): Result[KeyPair, MlKemError] {
   return Ok(__keygen(d, z));
 }
 
-pub function encaps_derand(ek: [u8], m: [u8]): Result[Encapsulation, MlKemError] {
+// The checks of FIPS 203 section 7.2 on an encapsulation key: its length and
+// its modulus.
+pub function check_encapsulation_key(ek: [u8]): Result[void, MlKemError] {
   if (ek.len() != 1184) {
     return Err(EncapsulationKeyLength(ek.len()));
   }
+  if (!__same(__encode(__alloc_u8(1152), 0, __decode12(ek, 0), 768, 12), ek, 1152)) {
+    return Err(EncapsulationKeyModulus);
+  }
+  return Ok(());
+}
+
+pub function encaps_derand(ek: [u8], m: [u8]): Result[Encapsulation, MlKemError] {
+  check_encapsulation_key(ek)?;
   if (m.len() != 32) {
     return Err(MessageLength(m.len()));
   }
   let t = __decode12(ek, 0);
-  if (!__same(__encode(__alloc_u8(1152), 0, t, 768, 12), ek, 1152)) {
-    return Err(EncapsulationKeyModulus);
-  }
   let kr = __g(m, __h(ek));
   return Ok(Encapsulation { shared_secret: __bytes_into(__alloc_u8(32), 0, kr, 0, 32), ciphertext: __encrypt(t, ek[1152:1184], m, kr[32:64]) });
 }

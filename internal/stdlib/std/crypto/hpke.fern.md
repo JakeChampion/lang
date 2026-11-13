@@ -162,6 +162,18 @@ pub function mlkem768x25519_key(seed: [u8]): Result[HybridKey, HpkeError] {
   return Ok(HybridKey { public_key: public_key, decapsulation_key: pq.decapsulation_key, scalar: scalar });
 }
 
+// The checks of a public key before use: its length and the modulus of its
+// ML-KEM-768 part. The X25519 part can be any 32 bytes.
+pub function mlkem768x25519_check_public_key(public_key: [u8]): Result[void, HpkeError] {
+  if (public_key.len() != PUBLIC_KEY_SIZE) {
+    return Err(PublicKeyLength(public_key.len()));
+  }
+  if let Err(_) = mlkem768.check_encapsulation_key(public_key[0:1184]) {
+    return Err(PublicKey);
+  }
+  return Ok(());
+}
+
 // Encapsulation with caller-supplied randomness: the ML-KEM-768 message in
 // the first 32 bytes, and the ephemeral X25519 scalar in the last 32 bytes.
 pub function mlkem768x25519_encap_derand(public_key: [u8], randomness: [u8]): Result[Encapsulation, HpkeError] {

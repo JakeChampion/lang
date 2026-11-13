@@ -194,7 +194,16 @@ function test_lengths(): test.TestOutcome {
   if (refusal(hpke.mlkem768x25519_encap_derand(high, b(IKM_E))) != "hpke: the ML-KEM-768 encapsulation key has a coefficient not below q") {
     return test.fail("modulus");
   }
+  if (refusal(hpke.mlkem768x25519_check_public_key(high)) != "hpke: the ML-KEM-768 encapsulation key has a coefficient not below q") {
+    return test.fail("check of the modulus");
+  }
+  if (refusal(hpke.mlkem768x25519_check_public_key(pk[0:1215])) != "hpke: the public key is 1215 bytes, want 1216") {
+    return test.fail("check of the length");
+  }
   let zero = __bytes_into(__alloc_u8(1216), 0, pk, 0, 1184);
+  if (refusal(hpke.mlkem768x25519_check_public_key(zero)) != "accepted") {
+    return test.fail("check of a low-order X25519 part");
+  }
   return test.assert_eq(refusal(hpke.mlkem768x25519_encap_derand(zero, b(IKM_E))), "hpke: the X25519 shared secret is all zeros");
 }
 
