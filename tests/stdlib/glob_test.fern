@@ -80,8 +80,120 @@ function test_many_stars_finish(): test.TestOutcome {
     && glob.is_match("**/a*a*a*a", "x/y/" + text));
 }
 
+// The options of a gitignore glob.
+function git_options(ci: boolean): glob.GlobOptions {
+  return glob.GlobOptions { literal_separator: true, backslash_escape: true, case_insensitive: ci };
+}
+
+// Whether `pattern`, compiled with `opts`, matches each text: "1" or "0".
+function matches(pattern: string, opts: glob.GlobOptions, texts: string[]): string {
+  match (glob.compile(pattern, opts)) {
+    Ok(g) => {
+      let out = "";
+      for t in texts {
+        out += if (g.matches(t)) { "1" } else { "0" };
+      }
+      return out;
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function test_compile_recursive(): test.TestOutcome {
+  let o = git_options(false);
+  return test.assert_eq_array(
+    [
+      matches("**/foo", o, ["foo", "a/b/foo", "/foo", "a/foox", "xfoo"]),
+      matches("foo/**", o, ["foo/a", "foo/a/b", "foo", "foo/"]),
+      matches("a/**/b", o, ["a/b", "a/x/b", "a/x/y/b", "ab", "a/xb"]),
+      matches("**", o, ["", "a", "a/b/c"]),
+      matches("a**b", o, ["ab", "axxb", "ax/b"]),
+      matches("**a", o, ["a", "xa", "x/a"]),
+    ],
+    ["11100", "1101", "11100", "111", "110", "110"],
+  );
+}
+
+function test_compile_classes_and_groups(): test.TestOutcome {
+  let o = git_options(false);
+  return test.assert_eq_array(
+    [
+      matches("[a-c]x", o, ["ax", "cx", "dx", "/x"]),
+      matches("[!a-c]x", o, ["ax", "dx", "/x"]),
+      matches("[]]", o, ["]", "a"]),
+      matches("[a-]", o, ["a", "-", "b"]),
+      matches("*.{rs,c}", o, ["a.rs", "a.c", "a.h", "d/a.rs"]),
+      matches("x{a,b}y{c,d}", o, ["xayc", "xbyd", "xyc"]),
+      matches("{,a}x", o, ["ax", "x"]),
+      matches("\\*\\?", o, ["*?", "ab"]),
+      matches("a?c", o, ["abc", "a/c", "ac"]),
+    ],
+    ["1100", "011", "10", "110", "1100", "110", "10", "10", "100"],
+  );
+}
+
+function test_compile_options(): test.TestOutcome {
+  let plain = glob.GlobOptions { literal_separator: false, backslash_escape: false, case_insensitive: false };
+  return test.assert_eq_array(
+    [
+      matches("*.TXT", git_options(true), ["a.txt", "A.TxT", "a.tx"]),
+      matches("[A-C]x", git_options(true), ["bx", "BX"]),
+      matches("*.c", plain, ["a/b.c", "b.c"]),
+      matches("a?c", plain, ["a/c"]),
+      matches("a\\b", plain, ["a\\b"]),
+    ],
+    ["110", "11", "11", "1", "1"],
+  );
+}
+
+function test_compile_errors(): test.TestOutcome {
+  let o = git_options(false);
+  return test.assert_eq_array(
+    [
+      matches("a[", o, []),
+      matches("[z-a]", o, []),
+      matches("{a", o, []),
+      matches("{a,{b}}", o, []),
+      matches("a\\", o, []),
+    ],
+    [
+      "error parsing glob 'a[': unclosed character class; missing ']'",
+      "error parsing glob '[z-a]': invalid range; 'z' > 'a'",
+      "error parsing glob '{a': unclosed alternate group; missing '}' (maybe escape '{' with '[{]'?)",
+      "error parsing glob '{a,{b}}': nested alternate groups are not allowed",
+      "error parsing glob 'a\\': dangling '\\'",
+    ],
+  );
+}
+
+// A long text and a glob with many stars: the automaton takes linear time.
+function test_compile_many_stars(): test.TestOutcome {
+  let text = "";
+  for i in 0..200 {
+    text = text + "a";
+  }
+  let o = git_options(false);
+  let long = slice_unchecked(text, 0, 70).to_owned();
+  return test.assert_eq_array(
+    [
+      matches("*a*a*a*a*a*a*a*a*a*a*b", o, [text]),
+      matches("x/**/a*a*a*a", o, ["x/y/z/" + text]),
+      matches("x/" + long + "*", o, ["x/" + text, "x/" + long, "x/b" + long, "x/" + long + "/c"]),
+    ],
+    ["0", "1", "1100"],
+  );
+}
+
 function main(): i32 {
   let r = test.new("std/glob");
+  r = r.it("compile: recursive", test_compile_recursive);
+  r = r.it("compile: classes and groups", test_compile_classes_and_groups);
+  r = r.it("compile: options", test_compile_options);
+  r = r.it("compile: errors", test_compile_errors);
+  r = r.it("compile: many stars", test_compile_many_stars);
   r = r.it("literal", test_literal);
   r = r.it("star no-cross", test_star_no_cross);
   r = r.it("question", test_question);
