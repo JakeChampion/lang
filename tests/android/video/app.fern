@@ -356,12 +356,12 @@ pub function step_at(own s: App, e: android.Event, now: i64): App {
   match (e) {
     android.WindowCreated(w) => {
       if (!s.done) {
-        return start(s, w);
+        return window_started_at(start(s, w), now);
       }
       return s;
     },
     android.WindowDestroyed(_) => {
-      return cleanup(s);
+      return App { ...cleanup(s), stage: 0, resume_ns: 0i64, lifecycle_was_playing: false };
     },
     android.Tick => {
       return tick_at(s, now);
@@ -376,6 +376,19 @@ pub function step_at(own s: App, e: android.Event, now: i64): App {
       return s;
     }
   }
+}
+
+// The window callback and host controls share this state transition after setup.
+pub function window_started_at(own s: App, now: i64): App {
+  if (s.done) {
+    return s;
+  }
+  let paused = s.lifecycle_pause_ns.is_some();
+  s = App { ...s, stage: 0, resume_ns: 0i64, started_ns: now, lifecycle_pause_ns: None, lifecycle_was_playing: false };
+  if (paused) {
+    return pause_lifecycle(s, now);
+  }
+  return s;
 }
 
 function pause_lifecycle(own s: App, now: i64): App {
