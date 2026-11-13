@@ -351,6 +351,67 @@ function test_mask(): test.TestOutcome {
   return test.assert_eq(got.join(" "), "255,0 128,0 0,0 255,0 31,128");
 }
 
+// An image of `w` by `h` pixels, each of the pixel word `color`.
+function solid(w: i32, h: i32, color: i32): draw.Image {
+  let px: u8[] = [];
+  for i in 0..w * h {
+    px = px.append((color & 255) as u8).append((color >> 8 & 255) as u8).append((color >> 16 & 255) as u8).append((color >> 24 & 255) as u8);
+  }
+  return draw.Image { width: w, height: h, pixels: px };
+}
+
+// The largest difference of one channel of two pixel words.
+function channel_gap(a: i32, b: i32): i32 {
+  let gap = 0;
+  for shift in [0, 8, 16] {
+    gap = gap.max(((a >> shift & 255) - (b >> shift & 255)).abs());
+  }
+  return gap;
+}
+
+// A pixel word goes to OKLCH and back with each channel kept, white has a
+// lightness of 1, and a grey has no chroma.
+function test_lch_round_trip(): test.TestOutcome {
+  let worst = 0;
+  for color in [draw.rgb(255, 0, 0), draw.rgb(12, 200, 90), draw.rgb(40, 40, 220), draw.rgb(250, 240, 10), draw.rgb(128, 128, 128), draw.rgb(1, 2, 3)] {
+    worst = worst.max(channel_gap(draw.color_of(draw.lch_of(color)), color));
+  }
+  let white = draw.lch_of(draw.rgb(255, 255, 255));
+  let grey = draw.lch_of(draw.rgb(128, 128, 128));
+  let got = worst.to_string() + " " + ((white.l - 1.0).abs() < 0.001).to_string() + " " + (grey.c < 0.001).to_string();
+  return test.assert_eq(got, "0 true true");
+}
+
+// A color that no pixel word shows keeps its lightness and its hue, with
+// less chroma.
+function test_color_of_fits_a_wide_color(): test.TestOutcome {
+  let wide = draw.Lch { l: 0.6, c: 0.5, h: 2.0 };
+  let back = draw.lch_of(draw.color_of(wide));
+  let got = ((back.l - 0.6).abs() < 0.02).to_string() + " " + ((back.h - 2.0).abs() < 0.05).to_string() + " " + (back.c < 0.5).to_string();
+  return test.assert_eq(got, "true true true");
+}
+
+// The key color of an image is the color of its pixels with the most
+// chroma. Grey and transparent pixels do not count, and an image of grey
+// alone has no key color.
+function test_key_color(): test.TestOutcome {
+  let px: u8[] = [];
+  for i in 0..100 {
+    if (i < 30) {
+      px = px.append(200u8).append(30u8).append(40u8).append(255u8);
+    } else if (i < 40) {
+      px = px.append(30u8).append(60u8).append(200u8).append(0u8);
+    } else {
+      px = px.append(120u8).append(120u8).append(120u8).append(255u8);
+    }
+  }
+  let img = draw.Image { width: 10, height: 10, pixels: px };
+  let key = img.key_color().unwrap_or(0);
+  let big = solid(100, 80, draw.rgb(20, 160, 60)).key_color().unwrap_or(0);
+  let got = channel_gap(key, draw.rgb(200, 30, 40)).to_string() + " " + (channel_gap(big, draw.rgb(20, 160, 60)) <= 1).to_string() + " " + solid(4, 4, draw.rgb(90, 90, 90)).key_color().is_none().to_string();
+  return test.assert_eq(got, "0 true true");
+}
+
 function main(): i32 {
   let r = test.new("std/android/draw");
   r = r.it("rgb packs red, green and blue", test_rgb);
@@ -377,5 +438,8 @@ function main(): i32 {
   r = r.it("blend_frame blends a frame by an alpha", test_blend_frame);
   r = r.it("mask blends a colour by a coverage map", test_mask);
   r = r.it("a blend over a transparent pixel is premultiplied", test_premultiplied);
+  r = r.it("a color goes to OKLCH and back", test_lch_round_trip);
+  r = r.it("color_of fits a color that no pixel word shows", test_color_of_fits_a_wide_color);
+  r = r.it("key_color is the color with the most chroma", test_key_color);
   return r.finish();
 }
