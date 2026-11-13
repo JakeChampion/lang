@@ -380,6 +380,36 @@ func chachaFormCases() []string {
 	}
 }
 
+// montFormCases are the forms of the Montgomery product kernel, __fern_mont_mul.
+func montFormCases() []string {
+	return []string{
+		"mulxq (%rsi), %rax, %rbx",
+		"mulxq (%r10), %r8, %r9",
+		"mulxq (%rsi,%r13,8), %rax, %r8",
+		"mulxq (%r10,%r13,8), %r8, %rdx",
+		"addq (%r11,%r13,8), %rax",
+		"addq (%r11), %rax",
+		"adcq $0, %rbx",
+		"adcq $0, %r9",
+		"imulq -64(%rbp), %rdx",
+		"movq %rax, -8(%r11,%r13,8)",
+		"movq %rax, -8(%r11,%rcx,8)",
+		"movq (%rdi,%r12,8), %r14",
+		"movq %rax, (%r11,%r13,8)",
+		"sbbq (%r10,%r13,8), %rax",
+		"sbbq %rax, %rax",
+		"sbbq %rdx, %rbx",
+		"sbbq %r8, %r8",
+		"leaq 1(%r13), %r13",
+		"decq %r12",
+		"notq %rax",
+		"orq -56(%rbp), %rax",
+		"addq $-1, %r8",
+		"negq %r8",
+		"movq $0, -56(%rbp)",
+	}
+}
+
 // polyFormCases are the forms of the Poly1305 kernel, __fern_poly1305_blocks.
 func polyFormCases() []string {
 	return []string{
@@ -472,6 +502,7 @@ func TestSelfHostX86FormsMatchGas(t *testing.T) {
 	cases = append(cases, chachaFormCases()...)
 	cases = append(cases, polyFormCases()...)
 	cases = append(cases, chachaPolyFormCases()...)
+	cases = append(cases, montFormCases()...)
 
 	if len(cases) < 300 {
 		t.Fatalf("the matrix produced only %d cases; it is meant to be a product of mnemonics, forms and widths", len(cases))

@@ -6996,6 +6996,95 @@ function add_carry(a: u64, b: u64, c: u64): (u64, u64) {
   return (t, k);
 }
 
+// __mont_mul: one Montgomery product of a and b by coarsely integrated operand scanning (CIOS). m[0] is
+// n0 = -p^-1 mod 2^64 and m[1:] the n limbs of p, little-endian. The result is the CIOS sum a b R^-1 mod p in
+// n limbs, less p when that is not negative.
+function mont_mul_limbs(a: u64[], b: u64[], m: u64[]): u64[] {
+  let n = m.len() - 1;
+  let n0 = m[0];
+  let t: u64[] = [];
+  for k in 0..n {
+    t = t.append(0 as u64);
+  }
+  let top: u64 = 0;
+  for i in 0..n {
+    let (s, c0) = add_carry(t[0], a[i] * b[0], 0);
+    let c1 = __mulhi_u64(a[i], b[0]) + c0;
+    let q = s * n0;
+    let (_, d0) = add_carry(s, q * m[1], 0);
+    let c2 = __mulhi_u64(q, m[1]) + d0;
+    for j in 1..n {
+      let (u0, e0) = add_carry(t[j], a[i] * b[j], 0);
+      let (u, e1) = add_carry(u0, c1, 0);
+      c1 = __mulhi_u64(a[i], b[j]) + e0 + e1;
+      let (v0, f0) = add_carry(u, q * m[j + 1], 0);
+      let (v, f1) = add_carry(v0, c2, 0);
+      c2 = __mulhi_u64(q, m[j + 1]) + f0 + f1;
+      t = t.with(j - 1, v);
+    }
+    let (u0, e0) = add_carry(top, c1, 0);
+    let (u, e1) = add_carry(u0, c2, 0);
+    t = t.with(n - 1, u);
+    top = e0 + e1;
+  }
+  let borrow: u64 = 0;
+  for j in 0..n {
+    let (_, bo) = sub_borrow(t[j], m[j + 1], borrow);
+    borrow = bo;
+  }
+  let mask = 0 as u64 - (borrow ^ 1 | top);
+  borrow = 0;
+  for j in 0..n {
+    let (d, bo) = sub_borrow(t[j], m[j + 1] & mask, borrow);
+    t = t.with(j, d);
+    borrow = bo;
+  }
+  return t;
+}
+
+// The difference a - b - c and its borrow, for a borrow c of 0 or 1.
+function sub_borrow(a: u64, b: u64, c: u64): (u64, u64) {
+  let d = a - b;
+  let e = d - c;
+  let k: u64 = if (a < b || d < c) { 1 } else { 0 };
+  return (e, k);
+}
+
+function limb_args(args: Value[]): u64[][] {
+  let out: u64[][] = [];
+  for v in args {
+    let VArr(av) = v else {
+      return out;
+    };
+    let l: u64[] = [];
+    for i in 0..arr_len(av) {
+      let e = arr_at(av, i);
+      if (!is_int_like(e)) {
+        return out;
+      }
+      l = l.append(vint_as_i64(e) as u64);
+    }
+    out = out.append(l);
+  }
+  return out;
+}
+
+function call_mont_mul(heap: interpheap.Heap, args: Value[]): Value {
+  let ls = limb_args(args);
+  if (args.len() != 3 || ls.len() != 3) {
+    return v_err("__mont_mul: expected the i64 limbs of a, b and m");
+  }
+  let n = ls[2].len() - 1;
+  if (n < 1 || ls[0].len() != n || ls[1].len() != n) {
+    return v_err("__mont_mul: the limbs of a and b do not match the modulus");
+  }
+  let out: Value[] = [];
+  for w in mont_mul_limbs(ls[0], ls[1], ls[2]) {
+    out = out.append(v_int64(w as i64));
+  }
+  return v_arr_of(heap, out, "i64");
+}
+
 // __poly1305_blocks: the state holds h0, h1, h2, r0 and r1 as little-endian u64. Each 16-byte block of
 // msg[at:at + n] is added with 2^128 and multiplied by r. A short last block gets a 1 byte after its end and
 // no 2^128. h leaves fully reduced mod 2^130 - 5.
@@ -8303,6 +8392,9 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
   }
   if (is_byte_into_kernel(name)) {
     return call_byte_into_kernel(heap, name, args);
+  }
+  if (name == "__mont_mul") {
+    return call_mont_mul(heap, args);
   }
   if (args.len() == 0 && checker.is_sha_hw_builtin(name)) {
     return v_bool(false);

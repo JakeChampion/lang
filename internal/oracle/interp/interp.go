@@ -812,6 +812,7 @@ func New() *Interp {
 	registerChaCha20(i)
 	registerPoly1305(i)
 	registerChaCha20Poly1305(i)
+	registerMontMul(i)
 	i.Builtins["__rc_underflow_count"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
 	registerBitCount := func(name string, width int, count func(uint64, int) int) {
 		i.Builtins[name] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {

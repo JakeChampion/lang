@@ -1025,6 +1025,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	for _, n := range []string{"__chacha20_poly1305_seal_into", "__chacha20_poly1305_open_into"} {
 		c.info.FuncSigs[n] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8Arr, rangeBound, rangeBound, rangeBound, rangeBound}, Result: u8Arr}
 	}
+	limbView := ast.SliceType{Elem: ast.NumberType{Width: 64, Signed: true}}
+	c.info.FuncSigs["__mont_mul"] = &ast.FuncType{Params: []ast.Type{limbView, limbView, limbView}, Result: ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}}}
 	c.info.FuncSigs["__sha256_hw"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.BoolType{}}
 	c.info.FuncSigs["__sha256_hw_blocks"] = &ast.FuncType{Params: []ast.Type{u8View, u8View}, Result: u8Arr}
 	c.info.FuncSigs["__sha1_hw"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.BoolType{}}

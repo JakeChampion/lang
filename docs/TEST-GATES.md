@@ -996,6 +996,19 @@ or a counter block that is not 16 bytes. The constant-time gate seals and
 opens through these kernels, because `std/crypto/chacha20poly1305` calls
 them.
 
+`TestSelfHostMontMulKernelX86_64`, `…Arm64` (qemu), `…Wasm` and
+`TestSelfHostInterpMontMulKernel` (both interpreters) check the Montgomery
+product kernel (`__mont_mul`). The native legs run the in-process assembler
+and GNU as. Each leg must print the same limbs as a Go model of the CIOS
+steps. The test checks that model against `math/big`. The moduli have 1 to 40
+limbs, with the top bit set and clear. The values are zero, all ones and
+pseudo-random limbs, as views and as arrays.
+
+`TestSelfHostMontMulKernelCensus` runs the program under the leak census on
+each target. In `TestSelfHostMontMulKernelMisuse`, each backend and both
+interpreters must stop the program when a value does not have the limb count
+of the modulus.
+
 ## Netlify deploys and the standalone smoke script
 
 Netlify runs `scripts/netlify-build`, which builds the playground's wasm

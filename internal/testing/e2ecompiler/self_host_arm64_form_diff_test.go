@@ -204,6 +204,14 @@ func arm64FormCases() []string {
 	} {
 		add("%s", f)
 	}
+	// The forms of the Montgomery product kernel, __fern_mont_mul.
+	for _, f := range []string{
+		"ldr x4, [x8, x3, lsl #3]", "str x6, [x12, x16, lsl #3]", "str xzr, [x12, x3, lsl #3]", "umulh x5, x13, x5",
+		"adc x16, xzr, xzr", "adc x15, x16, xzr", "sbcs x5, x5, x6", "cset x5, hs", "neg x5, x5", "cmp xzr, xzr",
+		"subs x11, x11, #1", "stp x10, x11, [x29, #32]", "orr x5, x5, x15", "and x6, x6, x5",
+	} {
+		add("%s", f)
+	}
 	return out
 }
 

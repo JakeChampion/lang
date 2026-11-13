@@ -6709,6 +6709,7 @@ function byte_scan_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
     "__poly1305_blocks" => Lowered { found: true, r: emit(r, ir.packed(ir.op_poly1305_blocks())) },
     "__chacha20_poly1305_seal_into" => Lowered { found: true, r: emit(r, ir.packed(ir.op_chacha20_poly1305_seal_into())) },
     "__chacha20_poly1305_open_into" => Lowered { found: true, r: emit(r, ir.packed(ir.op_chacha20_poly1305_open_into())) },
+    "__mont_mul" => Lowered { found: true, r: emit(r, ir.packed(ir.op_mont_mul())) },
     "__scan_set" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_set())) },
     "__scan_set_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_set_bytes())) },
     "__count_runs" => Lowered { found: true, r: emit(r, ir.packed(ir.op_count_runs())) },

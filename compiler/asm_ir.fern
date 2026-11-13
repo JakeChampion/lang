@@ -2029,6 +2029,9 @@ function emit_rt_byte_kernels(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("poly1305")) {
     s = emit_rt_poly1305(s);
   }
+  if (s.has_need("mont_mul")) {
+    s = emit_rt_mont_mul(s);
+  }
   return s;
 }
 
@@ -2358,6 +2361,54 @@ function x86_poly_vcarry(): string {
     }
   }
   return o;
+}
+
+// One Montgomery product (CIOS) of a and b under the modulus in m: m[0] is n0 = -p^-1 mod 2^64 and m[1:] the n
+// limbs of p, little-endian. a and b have n limbs each (views or arrays). rax returns a new array of n limbs:
+// the CIOS sum a b R^-1 mod p, less p when that is not negative. rdi is a, rsi b and rdx m. In the loop, rdi
+// holds a, rsi b, r10 p, r11 the sum T, rcx n, r12 i, r13 j, r14 a_i, r15 q, rbx the carry of a_i b and r9
+// the carry of q p. The bit above the limbs of T is at -56(%rbp), and n0 at -64(%rbp). Only the counters
+// steer a branch.
+function x86_mont_mul(): string {
+  return "    .globl __fern_mont_mul\n    .type __fern_mont_mul, @function\n__fern_mont_mul:\n"
+    + "    pushq %rbp\n    movq %rsp, %rbp\n    subq $112, %rsp\n"
+    + "    movq %rbx, -72(%rbp)\n    movq %r12, -80(%rbp)\n    movq %r13, -88(%rbp)\n    movq %r14, -96(%rbp)\n    movq %r15, -104(%rbp)\n"
+    + x86_aes_view("%rdx", "%r10", "%rcx", ".Lmm_m") + x86_aes_view("%rsi", "%r9", "%r8", ".Lmm_b")
+    + x86_aes_view("%rdi", "%rdi", "%rax", ".Lmm_a")
+    + "    subq $1, %rcx\n    jle __fern_slice_abort\n    cmpq %rcx, %rax\n    jne __fern_slice_abort\n    cmpq %rcx, %r8\n    jne __fern_slice_abort\n"
+    + "    movq (%r10), %rax\n    movq %rax, -64(%rbp)\n    addq $8, %r10\n    movq %r9, %rsi\n"
+    + "    movq %rdi, -8(%rbp)\n    movq %rsi, -16(%rbp)\n    movq %r10, -24(%rbp)\n    movq %rcx, -32(%rbp)\n"
+    + "    movq %rcx, %rdi\n    call __fern_arr_box\n    movq %rax, -48(%rbp)\n"
+    + "    movq -8(%rbp), %rdi\n    movq -16(%rbp), %rsi\n    movq -24(%rbp), %r10\n    movq -32(%rbp), %rcx\n    leaq 8(%rax), %r11\n"
+    + "    xorl %eax, %eax\n    xorl %r13d, %r13d\n.Lmm_zero:\n    movq %rax, (%r11,%r13,8)\n    addq $1, %r13\n    cmpq %rcx, %r13\n    jb .Lmm_zero\n"
+    + "    movq $0, -56(%rbp)\n    xorl %r12d, %r12d\n"
+    + ".Lmm_outer:\n    movq (%rdi,%r12,8), %r14\n"
+    + "    movq %r14, %rdx\n    mulxq (%rsi), %rax, %rbx\n    addq (%r11), %rax\n    adcq $0, %rbx\n"
+    + "    movq %rax, %rdx\n    imulq -64(%rbp), %rdx\n    movq %rdx, %r15\n"
+    + "    mulxq (%r10), %r8, %r9\n    addq %r8, %rax\n    adcq $0, %r9\n"
+    + "    movl $1, %r13d\n    cmpq %rcx, %r13\n    jae .Lmm_last\n"
+    + ".Lmm_inner:\n    movq %r14, %rdx\n    mulxq (%rsi,%r13,8), %rax, %r8\n    addq (%r11,%r13,8), %rax\n    adcq $0, %r8\n"
+    + "    addq %rbx, %rax\n    adcq $0, %r8\n    movq %r8, %rbx\n"
+    + "    movq %r15, %rdx\n    mulxq (%r10,%r13,8), %r8, %rdx\n    addq %r8, %rax\n    adcq $0, %rdx\n"
+    + "    addq %r9, %rax\n    adcq $0, %rdx\n    movq %rdx, %r9\n    movq %rax, -8(%r11,%r13,8)\n"
+    + "    addq $1, %r13\n    cmpq %rcx, %r13\n    jb .Lmm_inner\n"
+    + ".Lmm_last:\n    movq -56(%rbp), %rax\n    xorl %r8d, %r8d\n    addq %rbx, %rax\n    adcq $0, %r8\n    addq %r9, %rax\n    adcq $0, %r8\n"
+    + "    movq %rax, -8(%r11,%rcx,8)\n    movq %r8, -56(%rbp)\n"
+    + "    addq $1, %r12\n    cmpq %rcx, %r12\n    jb .Lmm_outer\n"
+    // The borrow of T - p, then T - (p & mask), where the mask is all ones when the bit above T is set or T is
+    // at least p. In the first loop, lea and dec keep the carry flag. The second loop keeps the borrow in r8.
+    + "    xorl %r13d, %r13d\n    movq %rcx, %r12\n"
+    + ".Lmm_cmp:\n    movq (%r11,%r13,8), %rax\n    sbbq (%r10,%r13,8), %rax\n    leaq 1(%r13), %r13\n    decq %r12\n    jnz .Lmm_cmp\n"
+    + "    sbbq %rax, %rax\n    notq %rax\n    orq -56(%rbp), %rax\n    andq $1, %rax\n    negq %rax\n"
+    + "    xorl %r13d, %r13d\n    xorl %r8d, %r8d\n"
+    + ".Lmm_sub:\n    movq (%r10,%r13,8), %rdx\n    andq %rax, %rdx\n    movq (%r11,%r13,8), %rbx\n    addq $-1, %r8\n    sbbq %rdx, %rbx\n"
+    + "    sbbq %r8, %r8\n    negq %r8\n    movq %rbx, (%r11,%r13,8)\n    addq $1, %r13\n    cmpq %rcx, %r13\n    jb .Lmm_sub\n"
+    + "    movq -72(%rbp), %rbx\n    movq -80(%rbp), %r12\n    movq -88(%rbp), %r13\n    movq -96(%rbp), %r14\n    movq -104(%rbp), %r15\n"
+    + x86_aes_epilogue() + "    .size __fern_mont_mul, .-__fern_mont_mul\n";
+}
+
+function emit_rt_mont_mul(s: asmcore.EmitState): asmcore.EmitState {
+  return s.write(x86_mont_mul());
 }
 
 function emit_rt_poly1305(s: asmcore.EmitState): asmcore.EmitState {

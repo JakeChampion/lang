@@ -12393,6 +12393,44 @@ function a64_poly1305_blocks(s: asmcore.EmitState): string {
     + rt_unframe_of(s, 256) + "    ret\n.Lpa_bad:\n    b __fern_slice_abort\n    .size __fern_poly1305_blocks, .-__fern_poly1305_blocks\n";
 }
 
+// One Montgomery product (CIOS) of a and b under the modulus in m: m[0] is n0 = -p^-1 mod 2^64 and m[1:] the n
+// limbs of p, little-endian. a and b have n limbs each (views or arrays). x0 returns a new array of n limbs:
+// the CIOS sum a b R^-1 mod p, less p when that is not negative. x0 is a, x1 b and x2 m. In the loop, x8 holds
+// a, x9 b, x10 p, x11 n, x12 the sum T, x3 i, x2 j, x4 a_i, x13 q, x14 n0, x15 the bit above T, x7 the carry of
+// a_i b and x17 the carry of q p. Only the counters steer a branch.
+function a64_mont_mul(s: asmcore.EmitState): string {
+  return "    .global __fern_mont_mul\n    .type __fern_mont_mul, %function\n__fern_mont_mul:\n"
+    + rt_frame_of(s, 80) + "    mov x29, sp\n"
+    + a64_aes_view("x2", "x10", "x11", ".Lma_m") + a64_aes_view("x1", "x9", "x12", ".Lma_b") + a64_aes_view("x0", "x8", "x13", ".Lma_a")
+    + "    subs x11, x11, #1\n    b.le .Lma_bad\n    cmp x13, x11\n    b.ne .Lma_bad\n    cmp x12, x11\n    b.ne .Lma_bad\n"
+    + "    ldr x14, [x10]\n    add x10, x10, #8\n    stp x8, x9, [x29, #16]\n    stp x10, x11, [x29, #32]\n    str x14, [x29, #48]\n"
+    + "    mov x0, x11\n    bl __fern_arr_box\n    str x0, [x29, #56]\n"
+    + "    ldp x8, x9, [x29, #16]\n    ldp x10, x11, [x29, #32]\n    ldr x14, [x29, #48]\n    add x12, x0, #8\n"
+    + "    mov x3, #0\n.Lma_zero:\n    str xzr, [x12, x3, lsl #3]\n    add x3, x3, #1\n    cmp x3, x11\n    b.lo .Lma_zero\n"
+    + "    mov x15, #0\n    mov x3, #0\n"
+    + ".Lma_outer:\n    ldr x4, [x8, x3, lsl #3]\n    ldr x5, [x9]\n    mul x6, x4, x5\n    umulh x7, x4, x5\n"
+    + "    ldr x5, [x12]\n    adds x6, x6, x5\n    adc x7, x7, xzr\n    mul x13, x6, x14\n"
+    + "    ldr x5, [x10]\n    mul x16, x13, x5\n    umulh x17, x13, x5\n    adds x16, x16, x6\n    adc x17, x17, xzr\n"
+    + "    mov x2, #1\n    cmp x2, x11\n    b.hs .Lma_last\n"
+    + ".Lma_inner:\n    ldr x5, [x9, x2, lsl #3]\n    mul x6, x4, x5\n    umulh x16, x4, x5\n"
+    + "    ldr x5, [x12, x2, lsl #3]\n    adds x6, x6, x5\n    adc x16, x16, xzr\n    adds x6, x6, x7\n    adc x7, x16, xzr\n"
+    + "    ldr x5, [x10, x2, lsl #3]\n    mul x16, x13, x5\n    umulh x5, x13, x5\n    adds x6, x6, x16\n    adc x5, x5, xzr\n"
+    + "    adds x6, x6, x17\n    adc x17, x5, xzr\n    sub x16, x2, #1\n    str x6, [x12, x16, lsl #3]\n"
+    + "    add x2, x2, #1\n    cmp x2, x11\n    b.lo .Lma_inner\n"
+    + ".Lma_last:\n    adds x6, x15, x7\n    adc x16, xzr, xzr\n    adds x6, x6, x17\n    adc x15, x16, xzr\n"
+    + "    sub x16, x11, #1\n    str x6, [x12, x16, lsl #3]\n    add x3, x3, #1\n    cmp x3, x11\n    b.lo .Lma_outer\n"
+    // The borrow of T - p, then T - (p & mask), where the mask is all ones when the bit above T is set or T is
+    // at least p. add, sub, and and cbnz keep the flags, so the borrow runs through each loop.
+    + "    mov x2, #0\n    mov x7, x11\n    cmp xzr, xzr\n"
+    + ".Lma_cmp:\n    ldr x5, [x12, x2, lsl #3]\n    ldr x6, [x10, x2, lsl #3]\n    sbcs x5, x5, x6\n    add x2, x2, #1\n    sub x7, x7, #1\n    cbnz x7, .Lma_cmp\n"
+    + "    cset x5, hs\n    orr x5, x5, x15\n    neg x5, x5\n"
+    + "    mov x2, #0\n    mov x7, x11\n    cmp xzr, xzr\n"
+    + ".Lma_sub:\n    ldr x6, [x10, x2, lsl #3]\n    and x6, x6, x5\n    ldr x4, [x12, x2, lsl #3]\n    sbcs x4, x4, x6\n    str x4, [x12, x2, lsl #3]\n"
+    + "    add x2, x2, #1\n    sub x7, x7, #1\n    cbnz x7, .Lma_sub\n"
+    + "    ldr x0, [x29, #56]\n" + rt_unframe_of(s, 80) + "    ret\n.Lma_bad:\n    b __fern_slice_abort\n"
+    + "    .size __fern_mont_mul, .-__fern_mont_mul\n";
+}
+
 // h = h r, with h2 at most 7 on entry. The result has h2 at most 4, so h is below 2p. x4 to x8 and x15 change.
 function a64_poly_mul(): string {
   return "    mul x4, x12, x9\n    umulh x5, x12, x9\n    mul x6, x13, x11\n    umulh x7, x13, x11\n    adds x4, x4, x6\n    adc x5, x5, x7\n"
@@ -12661,6 +12699,10 @@ function emit_rt_byte_kernels(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("chacha20poly1305_open")) {
     let opener = a64_chacha20_poly1305(s, false);
     s = s.write(opener);
+  }
+  if (s.has_need("mont_mul")) {
+    let mm = a64_mont_mul(s);
+    s = s.write(mm);
   }
   if (s.has_need("sha256") || s.has_need("sha1") || s.has_need("sha1x8")) {
     s = s.write("    .arch_extension sha2\n");
