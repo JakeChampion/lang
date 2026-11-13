@@ -66,8 +66,8 @@ func TestSelfHostClosureCallInRegisters(t *testing.T) {
 		t.Errorf("apply: want a call through the environment in %%rax with no argument pushed:\n%s", apply)
 	}
 	sev := condBranchBody(t, string(asm), "seven")
-	if !strings.Contains(sev, "call *8(%rax)") || pushes(sev) != 8 {
-		t.Errorf("seven: want its eight arguments pushed for a call through the environment in %%rax:\n%s", sev)
+	if !strings.Contains(sev, "call *8(%rax)") || pushes(sev) != 2 || !strings.Contains(sev, "subq $48, %rsp") {
+		t.Errorf("seven: want only its seventh and eighth arguments pushed for a call through the environment in %%rax:\n%s", sev)
 	}
 	if !regexp.MustCompile(`__fn_\S*clo\d+\.r\b`).Match(asm) {
 		t.Errorf("no function value names a closure's .r entry")

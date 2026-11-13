@@ -165,11 +165,14 @@ function with parameters now has two entries:
   either way.
 
 A direct call to a function the same unit emits (`reg_entries`, built by
-`emit_module_funcs`), with one to six arguments, moves its arguments into
-the pool in parallel (`ssa_parallel_moves`, which phi edges use too) and
-calls the `.r` entry: no pushes and no pop. A call through a function value
-passes its arguments in the pool too, pushing every one as well only past the
-pool's size (`ssa_call_ind`). On x86-64 the value names its callee's `.r`
+`emit_module_funcs`) moves its first six arguments into the pool in parallel
+(`ssa_parallel_moves`, which phi edges use too) and calls the `.r` entry.
+With six arguments or fewer there are no pushes and no pop. Past six, the
+caller pushes only the rest, where the stack entry reads them. Then it
+reserves the six slots below them with no store (`ssa_stack_args`). A call through
+a function value passes its arguments the same way (`ssa_call_ind`). A tail
+call takes six arguments at most, and reads no view in the frame
+(`ssa.tails_of`). On x86-64 the value names its callee's `.r`
 entry. On arm64 it names `.k`, which takes every argument in an integer
 register and moves each f64 parameter into the float register `.r` reads it
 from, since a call through a function value need not know the callee's float
@@ -247,9 +250,7 @@ The rest of the track, in order:
 2. Indirect calls, function addresses, closures and dyn dispatch move to
    the `.r` entries together — the one step that can miscompile silently,
    since both symbols exist.
-3. More than six arguments: the caller reserves the stack slots of the
-   first six and pushes the rest where the stack ABI puts them.
-4. Once nothing refers to a stack entry, the shims go.
+3. Once nothing refers to a stack entry, the shims go.
 
 ## A variant or a pair returned in two or three words
 
