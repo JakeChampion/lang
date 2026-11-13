@@ -8,7 +8,8 @@ The parsers do not trim whitespace or accept digit separators.
 
 | Module | Decimal parser | Radix parser |
 |---|---|---|
-| `std/i32` | `parse_i32`, `parse_u8` | `parse_i32_radix`, `parse_u8_radix` |
+| `std/i32` | `parse_i32` | `parse_i32_radix` |
+| `std/u8` | `parse_u8` | `parse_u8_radix` |
 | `std/i64` | `parse_i64` | `parse_i64_radix` |
 | `std/u32` | `parse_u32` | `parse_u32_radix` |
 | `std/u64` | `parse_u64`, `parse_usize` | `parse_u64_radix`, `parse_usize_radix` |

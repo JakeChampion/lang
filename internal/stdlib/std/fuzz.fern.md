@@ -46,6 +46,7 @@ import "std/array";
 import "std/rand";
 import "core/cmp";
 import "std/test";
+import "std/u8";
 ```
 
 ### `2 pub const DEFAULT_ITERATIONS: i32`

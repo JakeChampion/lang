@@ -3829,7 +3829,7 @@ function scalar_integer_module(lb: string): string {
     return "std/u64";
   }
   if (lb == "u8") {
-    return "std/i32";
+    return "std/u8";
   }
   if (lb == "u32" || lb == "u16") {
     return "std/u32";
@@ -3844,9 +3844,7 @@ function scalar_integer_module(lb: string): string {
 }
 
 // scalar_module_for: the stdlib module carrying a scalar type's method surface,
-// "" for a type whose methods are not in one. u8 uses std/i32, not std/u32 —
-// every `pub function (b: u8) …` in the stdlib is declared there, so naming
-// std/u32 made the hint unfollowable.
+// "" for a type whose methods are not in one.
 function scalar_module_for(t: typeinfo.Type): string {
   match (t) {
     typeinfo.TypeI32(it) => {
