@@ -2185,7 +2185,7 @@ function send_body(t: typeinfo.Type, f: ssasem.Func, name: string): irtables.Low
     return irtables.LowerState { ...r, ok: false, why: why };
   }
   if (ssasem.is_string(t)) {
-    return send_string(r, f);
+    return send_string(r);
   }
   if let typeinfo.TypeArray(a) = t {
     return send_array(r, a.elem, f);
@@ -2438,18 +2438,11 @@ function seen_free(f: ssasem.Func): irtables.LowerState {
   return emit_all(r, [ir.op_const_i32(0), ir.op_return()]);
 }
 
-// A string copies through a byte array, which the helper releases once the
-// fresh string holds its own bytes.
-function send_string(own r: irtables.LowerState, f: ssasem.Func): irtables.LowerState {
-  let bytes = 2;
-  r = reserve(r, bytes + 1);
+// A string copies through a fresh byte array, which the new string takes over.
+function send_string(own r: irtables.LowerState): irtables.LowerState {
   r = emit(r, ir.op_load_local(0));
   r = emit(r, ir.counted(ir.packed(ir.op_str_bytes())));
-  r = emit(r, ir.op_store_local(bytes));
-  r = emit(r, ir.op_load_local(bytes));
   r = emit(r, ir.packed(ir.op_str_from_bytes()));
-  let u8s: typeinfo.Type = typeinfo.TypeArray { elem: typeinfo.TypeI32 { width: 8, unsigned: true, is_char: false, polymorphic: false }, view: false };
-  r = release(r, bytes, u8s, f);
   return emit(r, ir.op_return());
 }
 
@@ -6712,6 +6705,8 @@ function byte_scan_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
     "__crc32_cksum_array" => Lowered { found: true, r: emit(r, ir.op_call_direct(ssabytes.crc32_name(), 2)) },
     "__crc32_ieee_array" => Lowered { found: true, r: emit(r, ir.op_call_direct(ssabytes.crc32_ieee_name(), 2)) },
     "__ascii_run" => Lowered { found: true, r: emit(r, ir.op_ascii_run()) },
+    "__chacha20_xor_into" => Lowered { found: true, r: emit(r, ir.packed(ir.op_chacha20_xor_into())) },
+    "__poly1305_blocks" => Lowered { found: true, r: emit(r, ir.packed(ir.op_poly1305_blocks())) },
     "__scan_set" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_set())) },
     "__scan_set_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_set_bytes())) },
     "__count_runs" => Lowered { found: true, r: emit(r, ir.packed(ir.op_count_runs())) },

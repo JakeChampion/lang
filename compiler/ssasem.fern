@@ -359,13 +359,13 @@ pub function fresh_result_builtin(name: string): boolean {
 const FRESH_RESULT_BUILTINS: string[] = [
   "__bytes_owned", "__bytes_range", "__bytes_into", "__aes_expand_key", "__aes_ctr32", "__ghash",
   "__aes_gcm_seal_into", "__aes_gcm_open_into", "__sha256_hw_blocks", "__sha1_hw_blocks", "__sha1x8_hw_blocks",
+  "__chacha20_xor_into", "__poly1305_blocks",
 ];
 
 // A builtin that reads or writes its borrowed arguments in place and keeps no
 // reference to them, so the call adds no holder.
 pub function holds_no_argument(name: string): boolean {
-  return name == "__arr_set_len" || name == "__str_bytes" || name == "__bytes_data" || name == "__ct_secret" || name == "__ct_public" || name == "string_from_bytes_unchecked"
-    || name == "string_from_bytes_range_unchecked";
+  return name == "__arr_set_len" || name == "__str_bytes" || name == "__bytes_data" || name == "__ct_secret" || name == "__ct_public" || name == "string_from_bytes_range_unchecked";
 }
 
 // The positions of the array arguments a builtin reaches raw: the arrays it

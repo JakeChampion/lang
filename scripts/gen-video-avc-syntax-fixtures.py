@@ -123,7 +123,7 @@ def make(**options):
     if poc == 0:
         w.ue(0)
     elif poc == 1:
-        w.u(0, 1)
+        w.u(options.get("delta_zero", 0), 1)
         w.se(-1)
         w.se(2)
         count = options.get("cycle", 255)

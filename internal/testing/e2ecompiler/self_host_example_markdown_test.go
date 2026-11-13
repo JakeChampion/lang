@@ -19,7 +19,7 @@ import (
 // whose HTML the port gives exactly. The test fails when an example in the set
 // fails, and when an example outside the set passes, so the set moves with
 // each change to the port.
-const markdownSpecPass = "1-14,16,18-19,21,24,28-31,36,42-55,57-65,67-79,83-120,122-137,139-144,146-147,149-151,153-154,156-166,169-175,178-186,189-191,197,199,207-213,219-326,347-348,351-354,358-363,365-368,371-372,374-375,379-380,383-388,391-392,397-398,400-401,420-421,434-436,439,448,451,488,490,493,497,508,511,513,545-548,551-552,563,590,592,602,606-612,618-622,624,632-637,644-652"
+const markdownSpecPass = "1-652"
 
 func TestSelfHostExampleMarkdownUnit(t *testing.T) {
 	path, err := filepath.Abs("../../../examples/markdown/markdown_test.fern")
@@ -145,10 +145,13 @@ func TestSelfHostExampleMarkdownSpec(t *testing.T) {
 	}
 }
 
-// The command line gives the HTML of cmark for documents whose text needs no
-// inline parse beyond escapes and line breaks. cmark 0.30.2, the version in
-// the package archives, has the HTML block rules of spec 0.30, so no case
-// uses the tags `search` or `source`, or `<!` and a lower-case letter.
+// The command line gives the HTML of cmark. cmark 0.30.2 is the version in
+// the package archives. Where it does not follow spec 0.31.2, the port
+// follows the spec (see examples/markdown/README.md). Thus no case uses the
+// tags `search` or `source`, `<!` and a lower-case letter, or a comment that
+// spec 0.31.2 changed. No case has a symbol such as `£` next to a delimiter
+// run, or a `_` closer after a `_` closer that found no opener. No case has
+// a definition whose title is not the end of its line.
 func TestSelfHostExampleMarkdownAgainstCmark(t *testing.T) {
 	ref, err := exec.LookPath("cmark")
 	if err != nil {
@@ -178,6 +181,16 @@ func TestSelfHostExampleMarkdownAgainstCmark(t *testing.T) {
 		"a\r\nb\r\n\r\n    c\r\n- d\re\n",
 		"\ufeff# bom\n",
 		"a\x00b\n",
+		"*a* **b** _c_ __d__ ***e*** *f **g** h* *(a)* **[b](c)** 5*6*7 a_b_c\n",
+		"*foo**bar**baz* ***foo** bar* foo***bar***baz **foo*bar** *a\nb*\n",
+		"`code` `` a`b `` ` x ` `\n` ```a`` a\\*b \\[c\\] \\q &amp; &copy; &#35; &#x41; &#0; &bogus; &copy\n",
+		"[a](/u \"t\") [b](<c d> 'e') [c][d] [d] [D][] [e]() ![i](/j \"k\") [f](/g(h)i \"&quot;\")\n\n[d]: /url (title)\n",
+		"<http://a.b/c?d=e&f> <x@y.z> <A+b:c> <a href=\"x\"> </b> <?p ?> <![CDATA[x]]> <!X y> <a@b> <3>\n",
+		"a  \nb\\\nc\n  d\\\n e\n\n[link *em `code`*](/u?a=b&c=ö \"t&amp;\")\n",
+		"![a *b* [c](d) `e` <f>](g) [[nested]](/u) [a [b](c) d](e) [x ![y](z) w](v)\n",
+		"> *a\n> b* `c\n> d`\n\n- [e\n  f](g)\n\n1. **h\n   i**\n",
+		"[foo][bar] [bar] [baz][]\n\n[BAR]: /b 'one'\n[baz]: <x y> \"two\"\n[foo]: /f\n",
+		"a <b> &lt;c&gt; \"d\" 'e' f > g & h\n# *i* `j` [k](l)\nm\n===\n",
 	}
 	for _, c := range cases {
 		cmd := exec.Command(ref, "--unsafe")
@@ -190,5 +203,44 @@ func TestSelfHostExampleMarkdownAgainstCmark(t *testing.T) {
 		if code != 0 || got != string(want) {
 			t.Errorf("md on %q: exit %d\ngot  %q\nwant %q\n%s", c, code, got, want, stderr)
 		}
+	}
+	// md writes the HTML of a long document in parts of 64 KiB. It reads a
+	// file argument with no copy when the file is valid UTF-8. A code fence
+	// that does not close holds the rest of a document, so that case is not
+	// in the long document.
+	var parts []string
+	for _, c := range cases {
+		if !strings.HasSuffix(c, "open") {
+			parts = append(parts, c)
+		}
+	}
+	long := strings.Repeat(strings.Join(parts, "\n\n")+"\n\n", 100)
+	cmd := exec.Command(ref, "--unsafe")
+	cmd.Stdin = strings.NewReader(long)
+	want, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("cmark on the long document: %v", err)
+	}
+	if len(want) < 4*65536 {
+		t.Fatalf("the HTML of the long document has %d bytes, want 4 parts of 64 KiB or more", len(want))
+	}
+	if got, stderr, code := runMarkdown(t, bin, long); code != 0 || got != string(want) {
+		t.Errorf("md on the long document: exit %d, %d bytes, want %d\n%s", code, len(got), len(want), stderr)
+	}
+	file := filepath.Join(t.TempDir(), "long.md")
+	if err := os.WriteFile(file, []byte(long), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := exec.Command(bin, file).Output(); err != nil || string(got) != string(want) {
+		t.Errorf("md on the long document as a file: %v, %d bytes, want %d", err, len(got), len(want))
+	}
+	// A file that is not valid UTF-8 gives the same HTML as stdin.
+	bad := "a\xffb *c\xe2\x82* \xf0\x9f\n"
+	if err := os.WriteFile(file, []byte(bad), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fromStdin, _, _ := runMarkdown(t, bin, bad)
+	if got, err := exec.Command(bin, file).Output(); err != nil || string(got) != fromStdin || !strings.Contains(fromStdin, "�") {
+		t.Errorf("md on a file that is not UTF-8: %v\ngot   %q\nstdin %q", err, got, fromStdin)
 	}
 }

@@ -1,0 +1,53 @@
+// Measure byte-source reads without a codec or platform decoder.
+import "std/audio/source";
+import "std/i32";
+import "std/result";
+
+function consume(reader: Reader, chunk: i32): Result[u32, string] {
+  let buffer = match (source.create(source.Limits { chunk_size: chunk, max_buffer_bytes: chunk })) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+  let total = 0;
+  let hash = 2166136261u32;
+  loop {
+    let (next, ready) = match (buffer.ensure_reader(1, reader)) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+    buffer = next;
+    if (!ready) {
+      print("bytes=" + total.to_string());
+      return Ok(hash);
+    }
+    let count = buffer.available();
+    for byte in buffer.view() {
+      hash = (hash ^ byte as u32) * 16777619u32;
+    }
+    total += count;
+    buffer = match (buffer.advance(count)) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+  }
+}
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 3) {
+    return 2;
+  }
+  let Ok(reader) = open_reader(argv[1]) else {
+    return 3;
+  };
+  let chunk = i32.parse_i32_radix(argv[2], 10).unwrap_or(0);
+  let allocations = __heap_alloc_count();
+  let fresh = __heap_bump_bytes();
+  let result = consume(reader, chunk);
+  let count = __heap_alloc_count() - allocations;
+  let bytes = __heap_bump_bytes() - fresh;
+  let closed = reader.close();
+  match (result) {
+    Ok(hash) => {
+      print("hash=" + hash.to_string());
+    },
+    Err(error) => {
+      eprint(error);
+      return 4;
+    }
+  }
+  print("allocations=" + count.to_string());
+  print("fresh_bytes=" + bytes.to_string());
+  return match (closed) { Ok(_) => 0, Err(_) => 5 };
+}

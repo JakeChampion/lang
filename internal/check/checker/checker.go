@@ -1020,6 +1020,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	for _, n := range []string{"__aes_gcm_seal_into", "__aes_gcm_open_into"} {
 		c.info.FuncSigs[n] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8View, u64, u8Arr, rangeBound, rangeBound, rangeBound, rangeBound}, Result: u8Arr}
 	}
+	c.info.FuncSigs["__chacha20_xor_into"] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8Arr, rangeBound, rangeBound}, Result: u8Arr}
+	c.info.FuncSigs["__poly1305_blocks"] = &ast.FuncType{Params: []ast.Type{u8Arr, u8View, rangeBound, rangeBound}, Result: u8Arr}
 	c.info.FuncSigs["__sha256_hw"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.BoolType{}}
 	c.info.FuncSigs["__sha256_hw_blocks"] = &ast.FuncType{Params: []ast.Type{u8View, u8View}, Result: u8Arr}
 	c.info.FuncSigs["__sha1_hw"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.BoolType{}}
@@ -14704,14 +14706,9 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 		if mySiblings[name] {
 			return
 		}
-		switch t.(type) {
-		case ast.VoidType:
-			c.errfCode(fn.P, "E044", "captured variable %q has unsupported type %s", name, t)
-		default:
-			c.captureView(fn.P, name, t)
-			captured[name] = t
-			captureOrder = append(captureOrder, name)
-		}
+		c.captureView(fn.P, name, t)
+		captured[name] = t
+		captureOrder = append(captureOrder, name)
 	}
 	c.captureOuter = outer
 	c.captureChain = append(c.captureChain, captureEntry{sink: c.captureSink, scope: outer, outer: prev})
@@ -16740,8 +16737,6 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				return
 			}
 			switch t.(type) {
-			case ast.VoidType:
-				c.errfCode(n.P, "E044", "captured variable %q has unsupported type %s", name, t)
 			case ast.LanesType:
 				c.errfCode(n.P, "E085", "a lambda cannot capture %q of type %s; a lane value lives only in a local, a parameter or a result", name, t)
 			default:

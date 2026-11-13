@@ -53,7 +53,7 @@ source plus expected output and any implementation can be run against it
 `fern -check`). So a diagnostic rule with only Go-side coverage is a rule
 the compiler is never checked against.
 
-**92 of 115** codes are pinned by a conformance case. The table
+**92 of 114** codes are pinned by a conformance case. The table
 below is verified against reality by `TestDiagnosticsIndexIsAccurate`:
 a code with no explanation, an explanation with no row, a claimed case
 that does not exist or does not actually emit the code, and a `—` on a
@@ -116,7 +116,6 @@ language does not have. It is deleted.
 | `E041` | Operator error | `diag_e041` |
 | `E042` | `?` operator error | `diag_e042` |
 | `E043` | Struct literal field error | `err_unknown_field` |
-| `E044` | Captured variable has unsupported type | — |
 | `E045` | Map key / value type error | `err_map_key_no_hash` |
 | `E046` | Tuple field access error | `diag_e046` |
 | `E047` | Integer literal out of range | `diag_e047` |

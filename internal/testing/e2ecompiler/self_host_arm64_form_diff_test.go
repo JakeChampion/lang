@@ -173,6 +173,27 @@ func arm64FormCases() []string {
 		add("stp %s, %s, [x7, #-1024]!", q.a, q.b)
 		add("ldp %s, %s, [sp, #1008]", q.a, q.b)
 	}
+	// The forms of the ChaCha20 kernel, __fern_chacha20_xor_into.
+	for _, f := range []string{
+		"rev32 v13.8h, v13.8h", "tbl v12.16b, {v12.16b}, v22.16b", "ushr v4.4s, v23.4s, #20", "sli v4.4s, v23.4s, #12",
+		"ushr v7.4s, v26.4s, #25", "sli v7.4s, v26.4s, #7", "add v0.4s, v0.4s, v4.4s", "eor v23.16b, v4.16b, v8.16b",
+		"zip1 v23.4s, v0.4s, v1.4s", "zip2 v24.4s, v0.4s, v1.4s", "zip1 v27.2d, v23.2d, v25.2d", "zip2 v30.2d, v24.2d, v26.2d",
+		"dup v13.4s, v19.s[1]", "dup v0.4s, v16.s[0]", "dup v21.4s, w9", "ins v23.d[1], x10", "ins v16.s[3], w9",
+		"orr v12.16b, v20.16b, v20.16b", "movi v23.16b, #0", "movz x9, #1, lsl #32", "movk x10, #3, lsl #32",
+		"movk x9, #1541, lsl #48", "ldr q31, [x1, #240]", "str q31, [x1, #240]", "str q27, [x29, #464]",
+		"stp d8, d9, [x29, #104]", "ldp d14, d15, [x29, #152]", "ld1 {v17.16b}, [x9]", "subs w9, w9, #1",
+	} {
+		add("%s", f)
+	}
+	// The forms of the Poly1305 kernel, __fern_poly1305_blocks.
+	for _, f := range []string{
+		"mul x4, x12, x9", "umulh x15, x13, x9", "adds x4, x4, x6", "adcs x13, x13, x5", "adc x7, x7, xzr", "adc x14, x14, x7",
+		"adds x4, x12, #5", "add x11, x10, x10, lsr #2", "and x8, x14, #0xfffffffffffffffc", "and x14, x14, #3",
+		"movz x4, #0xfffc", "movk x4, #0x0fff, lsl #48", "csel x12, x4, x12, ne", "ldp x12, x13, [x0, #8]", "stp xzr, xzr, [x29, #224]",
+		"ldrb w6, [x1, x4]", "strb w6, [x5, x4]",
+	} {
+		add("%s", f)
+	}
 	return out
 }
 

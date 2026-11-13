@@ -21,6 +21,14 @@ func TestUnitValueChecks(t *testing.T) {
 			 function main(): i32 { return 0; }`},
 		{"bound to a variable",
 			`function main(): i32 { let u = (); return 0; }`},
+		{"void call bound to a variable",
+			`function nothing(): void { return; }
+			 function main(): i32 { let u = nothing(); return 0; }`},
+		{"void if expression bound to a variable",
+			`function nothing(): void { return; }
+			 function main(): i32 { let u = if (true) { nothing() } else { nothing() }; return 0; }`},
+		{"unit binding copied to a variable",
+			`function main(): i32 { let u = (); let w = u; return 0; }`},
 		{"unit binding as a payload",
 			`function main(): i32 { let u = (); let o: Option[void] = Some(u); return 0; }`},
 		{"matched unit as a payload",

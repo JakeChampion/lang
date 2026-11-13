@@ -42,6 +42,9 @@ pub enum Ast {
   And(Ast, Ast),
   Or(Ast, Ast),
   Negate(Ast),
+  // `label $name | body`. A `break $name` in the body stops the body.
+  Label(string, Ast),
+  Break(string),
 }
 
 // The text that marks a part of the language that this port does not have yet.
@@ -59,6 +62,8 @@ pub enum Tok {
   TInterp(string[], string[]),
   TFormat(string),
   TPunct(string),
+  // `$__loc__`, with its line.
+  TLoc(i32),
   TEnd,
 }
 
@@ -285,6 +290,23 @@ function two_char_punct(s: string, i: i32): string {
   return "";
 }
 
+// The line of the byte `at` of `s`. The first line is 1.
+function line_of(s: string, at: i32): i32 {
+  let line = 1;
+  for i in 0..at {
+    if (s[i] == b'\n') {
+      line += 1;
+    }
+  }
+  return line;
+}
+
+// The value of `$__loc__` on `line`.
+function location(line: i32): Ast {
+  let o = json.object().insert("file", json.JString("<top-level>"));
+  return Literal(json.JObject(o.insert("line", json.JNumber(line.to_string()))));
+}
+
 pub function lex(s: string): Lexed {
   let toks: Tok[] = [];
   let i = 0;
@@ -314,7 +336,8 @@ pub function lex(s: string): Lexed {
       }
     } else if (b == b'$') {
       let e = ident_end(s, i + 1);
-      toks = toks.append(TVar(text(s, i + 1, e)));
+      let name = text(s, i + 1, e);
+      toks = toks.append(if (name == "__loc__") { TLoc(line_of(s, i)) } else { TVar(name) });
       i = e;
     } else if (is_ident_start(b)) {
       let e = ident_end(s, i);
@@ -419,12 +442,57 @@ function describe(t: Tok): string {
     TInterp(_, _) => "a string",
     TFormat(f) => "'@" + f + "'",
     TPunct(x) => "'" + x + "'",
+    TLoc(_) => "'$__loc__'",
     TEnd => "the end of the program",
   };
 }
 
 pub function parse(program: string): Parsed {
-  return parse_in(program, []);
+  let parsed = parse_in(program, []);
+  if (parsed.error.len() > 0) {
+    return parsed;
+  }
+  return Parsed { ast: defined_before(parse_in(PRELUDE, []).ast, parsed.ast), error: "" };
+}
+
+// The functions that the port has as jq text, as jq has them.
+const PRELUDE: string = "def abs: if . < 0 then - . else . end;"
+  + "def transpose: [range(0; map(length) | max // 0) as $i | [.[][$i]]];"
+  + "def pick(f): . as $in | reduce path(f) as $a (null; setpath($a; $in | getpath($a)));"
+  + "def debug(msgs): (msgs | debug | empty), .;"
+  + "def INDEX(stream; f): reduce stream as $row ({}; .[$row | f | tostring] = $row);"
+  + "def INDEX(f): INDEX(.[]; f);"
+  + "def JOIN($idx; f): [.[] | [., $idx[f]]];"
+  + "def JOIN($idx; stream; f): stream | [., $idx[f]];"
+  + "def JOIN($idx; stream; f; g): stream | [., $idx[f]] | g;"
+  + "def todateiso8601: strftime(\"%Y-%m-%dT%H:%M:%SZ\");"
+  + "def fromdateiso8601: strptime(\"%Y-%m-%dT%H:%M:%SZ\") | mktime;"
+  + "def todate: todateiso8601;"
+  + "def fromdate: fromdateiso8601;"
+  + "def IN(s): any(s == .; .);"
+  + "def IN(src; s): any(src == s; .);"
+  + "def bsearch($target):"
+  + "  if length == 0 then -1"
+  + "  elif length == 1 then (if $target == .[0] then 0 elif $target < .[0] then -1 else -2 end)"
+  + "  else . as $in | [0, length - 1, null]"
+  + "    | until(.[0] > .[1];"
+  + "        if .[2] != null then (.[1] = -1)"
+  + "        else (((.[1] + .[0]) / 2) | floor) as $mid | $in[$mid] as $monkey"
+  + "          | if $monkey == $target then (.[2] = $mid)"
+  + "            elif .[0] == .[1] then (.[1] = -1)"
+  + "            elif $monkey < $target then (.[0] = ($mid + 1))"
+  + "            else (.[1] = ($mid - 1)) end"
+  + "        end)"
+  + "    | if .[2] == null then (if $in[.[0]] < $target then (-2 - .[0]) else (-1 - .[0]) end) else .[2] end"
+  + "  end;"
+  + ".";
+
+// `program` after each definition of `defs`.
+function defined_before(defs: Ast, program: Ast): Ast {
+  if let Def(name, params, body, rest) = defs {
+    return Def(name, params, body, defined_before(rest, program));
+  }
+  return program;
 }
 
 // The filter of `program`, which can call the functions of `defs`.
@@ -600,9 +668,10 @@ function parse_unary(p: P): (Ast, P) {
   }
   let (source, q) = if (p.is_ident("try")) { parse_try(p.advance()) } else { parse_postfix(p) };
   if (q.error.len() == 0 && q.is_ident("as")) {
-    let (name, r) = parse_binding(q);
+    let held = "*" + q.at.to_string();
+    let (alts, r) = parse_binding(q, held);
     let (body, t) = parse_pipe(r.expect("|"));
-    return (Bind(source, name, body), t);
+    return (bound(source, held, alts, body), t);
   }
   return (source, q);
 }
@@ -629,20 +698,208 @@ function parse_try_operand(p: P): (Ast, P) {
   return parse_postfix(p);
 }
 
-// `as $name` at `p`.
-function parse_binding(p: P): (string, P) {
+// One variable of a pattern, and the filter that gives its value.
+struct Binding { name: string, source: Ast }
+
+// `as PATTERN` at `p`, and each `?// PATTERN` after it. Each pattern takes
+// the value of the variable `held`.
+function parse_binding(p: P, held: string): (Binding[][], P) {
+  let alts: Binding[][] = [];
   let q = p.expect_word("as");
-  if let TVar(v) = q.peek() {
-    let r = q.advance();
-    if (r.is_punct("?/")) {
-      return ("", r.fail("a destructuring alternative " + NOT_YET));
+  while (q.error.len() == 0) {
+    let (found, r) = parse_pattern(q, Var(held), []);
+    alts = alts.append(found);
+    q = r;
+    if (!q.is_punct("?/")) {
+      break;
     }
-    return (v, r);
+    q = q.advance().expect("/");
   }
-  if (q.is_punct("[") || q.is_punct("{")) {
-    return ("", q.fail("a destructuring pattern " + NOT_YET));
+  return (alts, q);
+}
+
+// The pattern at `p` for the value of `source`. An array or an object keeps
+// its value in a variable that no program can name.
+function parse_pattern(p: P, source: Ast, found: Binding[]): (Binding[], P) {
+  if let TVar(v) = p.peek() {
+    return (found.append(Binding { name: v, source: source }), p.advance());
   }
-  return ("", q.fail("syntax error, unexpected " + describe(q.peek())));
+  let held = "*" + p.at.to_string();
+  let all = found.append(Binding { name: held, source: source });
+  if (p.is_punct("[")) {
+    return parse_array_pattern(p.advance(), Var(held), all);
+  }
+  if (p.is_punct("{")) {
+    return parse_object_pattern(p.advance(), Var(held), all);
+  }
+  return (found, p.fail(unexpected(p.peek())));
+}
+
+function parse_array_pattern(p: P, held: Ast, found: Binding[]): (Binding[], P) {
+  let all = found;
+  let q = p;
+  let i = 0;
+  while (q.error.len() == 0) {
+    let (more, r) = parse_pattern(q, Index(held, Literal(json.JNumber(i.to_string()))), all);
+    all = more;
+    if (r.is_punct("]")) {
+      return (all, r.advance());
+    }
+    q = r.expect(",");
+    i += 1;
+  }
+  return (all, q);
+}
+
+// When two entries of an object pattern have the same variable, jq keeps
+// the value from the first entry. `kept` binds such a variable again.
+function parse_object_pattern(p: P, held: Ast, found: Binding[]): (Binding[], P) {
+  let q = p;
+  let all = found;
+  let kept: Binding[] = [];
+  let seen: string[] = [];
+  while (q.error.len() == 0) {
+    let (entry, r) = parse_pattern_entry(q, held, []);
+    all = all.concat(entry);
+    for name in pattern_names([entry]) {
+      if (!seen.contains(name)) {
+        seen = seen.append(name);
+        let first = "*" + q.at.to_string() + name;
+        all = all.append(Binding { name: first, source: Var(name) });
+        kept = kept.append(Binding { name: name, source: Var(first) });
+      }
+    }
+    if (r.is_punct("}")) {
+      return (all.concat(kept), r.advance());
+    }
+    q = r.expect(",");
+  }
+  return (found, q);
+}
+
+// `$name`, `$name: PATTERN` or `KEY: PATTERN` at `p`.
+function parse_pattern_entry(p: P, held: Ast, found: Binding[]): (Binding[], P) {
+  if let TVar(v) = p.peek() {
+    let part = "*" + p.at.to_string();
+    let all = found.append(Binding { name: part, source: Index(held, Literal(json.JString(v))) });
+    all = all.append(Binding { name: v, source: Var(part) });
+    let q = p.advance();
+    if (q.is_punct(":")) {
+      return parse_pattern(q.advance(), Var(part), all);
+    }
+    return (all, q);
+  }
+  let (key, q) = parse_pattern_key(p);
+  if (q.error.len() > 0) {
+    return (found, q);
+  }
+  return parse_pattern(q.expect(":"), Index(held, key), found);
+}
+
+function parse_pattern_key(p: P): (Ast, P) {
+  match (p.peek()) {
+    TIdent(x) => {
+      return (Literal(json.JString(x)), p.advance());
+    },
+    TString(_) => {
+      return parse_string("text", p);
+    },
+    TInterp(_, _) => {
+      return parse_string("text", p);
+    },
+    _ => {
+      if (p.is_punct("(")) {
+        let (key, q) = parse_pipe(p.advance());
+        if let Literal(json.JNumber(n)) = key {
+          return (Identity, p.fail("Cannot use number (" + n + ") as object key"));
+        }
+        return (key, q.expect(")"));
+      }
+      return (Identity, p.fail(unexpected(p.peek())));
+    }
+  }
+}
+
+// `body` with each variable of `bs`. A later variable hides an earlier one.
+function nested(bs: Binding[], body: Ast): Ast {
+  let out = body;
+  let i = bs.len() - 1;
+  while (i >= 0) {
+    out = Bind(bs[i].source, bs[i].name, out);
+    i -= 1;
+  }
+  return out;
+}
+
+// Each variable that a program can name in `alts`, one time.
+function pattern_names(alts: Binding[][]): string[] {
+  let names: string[] = [];
+  for bs in alts {
+    for b in bs {
+      if (!b.name.starts_with("*") && !names.contains(b.name)) {
+        names = names.append(b.name);
+      }
+    }
+  }
+  return names;
+}
+
+// `source as PATTERNS | body`. `held` is the variable that the patterns take.
+function bound(source: Ast, held: string, alts: Binding[][], body: Ast): Ast {
+  if (alts.len() == 0) {
+    return Identity;
+  }
+  if (alts.len() == 1 && alts[0].len() == 1) {
+    return Bind(source, alts[0][0].name, body);
+  }
+  if (alts.len() == 1) {
+    return Bind(source, held, nested(alts[0], body));
+  }
+  let origin = held + "in";
+  return Bind(Identity, origin, Bind(source, held, alternatives(alts, 0, origin, body)));
+}
+
+// The alternative `at` has each variable of each alternative: one that it
+// does not bind is null. An error in it gives the next alternative on the
+// input, which the variable `origin` holds.
+function alternatives(alts: Binding[][], at: i32, origin: string, body: Ast): Ast {
+  let nulls: Binding[] = [];
+  for name in pattern_names(alts) {
+    nulls = nulls.append(Binding { name: name, source: Literal(json.JNull) });
+  }
+  let this = nested(nulls, nested(alts[at], body));
+  if (at + 1 == alts.len()) {
+    return this;
+  }
+  return Catch(this, Pipe(Var(origin), alternatives(alts, at + 1, origin, body)));
+}
+
+// The source and the variable of a `reduce` or a `foreach` with patterns.
+// The source gives an array of the variables, and `unpacked` binds them again.
+function packed(source: Ast, held: string, alts: Binding[][]): (Ast, string) {
+  if (alts.len() == 1 && alts[0].len() == 1) {
+    return (source, alts[0][0].name);
+  }
+  let names = pattern_names(alts);
+  let all = Var(names[names.len() - 1]);
+  let i = names.len() - 2;
+  while (i >= 0) {
+    all = Comma(Var(names[i]), all);
+    i -= 1;
+  }
+  return (bound(source, held, alts, Collect(all)), held);
+}
+
+function unpacked(held: string, alts: Binding[][], body: Ast): Ast {
+  if (alts.len() == 1 && alts[0].len() == 1) {
+    return body;
+  }
+  let bs: Binding[] = [];
+  let names = pattern_names(alts);
+  for i in 0..names.len() {
+    bs = bs.append(Binding { name: names[i], source: Index(Var(held), Literal(json.JNumber(i.to_string()))) });
+  }
+  return nested(bs, body);
 }
 
 // The minus of an object value, which takes no operator after it.
@@ -765,10 +1022,10 @@ function parse_primary(p: P): (Ast, P) {
       return parse_format(f, p.advance());
     },
     TVar(v) => {
-      if (v == "__loc__") {
-        return (Identity, p.fail("$__loc__ " + NOT_YET));
-      }
       return (Var(v), p.advance());
+    },
+    TLoc(line) => {
+      return (location(line), p.advance());
     },
     TIdent(x) => {
       return parse_word(x, p);
@@ -844,7 +1101,16 @@ function parse_word(x: string, p: P): (Ast, P) {
   if (x == "def") {
     return parse_def(p.advance());
   }
-  if (x == "label" || x == "import" || x == "include") {
+  if (x == "label") {
+    return parse_label(p.advance());
+  }
+  if (x == "break") {
+    let TVar(name) = p.advance().peek() else {
+      return (Identity, p.advance().fail(unexpected(p.advance().peek())));
+    };
+    return (Break(name), p.advance().advance());
+  }
+  if (x == "import" || x == "include") {
     return (Identity, p.fail("'" + x + "' " + NOT_YET));
   }
   return parse_call(x, p.advance());
@@ -868,27 +1134,47 @@ function parse_if(p: P): (Ast, P) {
   return (If(cond, yes, Identity), r.expect_word("end"));
 }
 
+// `$name | BODY` at `p`, after `label`.
+function parse_label(p: P): (Ast, P) {
+  let TVar(name) = p.peek() else {
+    return (Identity, p.fail(unexpected(p.peek())));
+  };
+  let (body, q) = parse_pipe(p.advance().expect("|"));
+  return (Label(name, body), q);
+}
+
+// The variable that holds the label `name`.
+pub function label_var(name: string): string {
+  return "*label-" + name;
+}
+
 // `TERM as $x (INIT; UPDATE)` at `p`. A `foreach` can have `; EXTRACT`.
 function parse_fold(each: boolean, p: P): (Ast, P) {
   let (source, q) = parse_postfix(p);
   if (q.error.len() > 0) {
     return (Identity, q);
   }
-  let (name, r) = parse_binding(q);
+  let held = "*" + q.at.to_string();
+  let (alts, r) = parse_binding(q, held);
   let (init, t) = parse_pipe(r.expect("("));
-  let (update, u) = parse_pipe(t.expect(";"));
+  let (step, u) = parse_pipe(t.expect(";"));
+  if (u.error.len() > 0) {
+    return (Identity, u);
+  }
+  let (values, name) = packed(source, held, alts);
+  let update = unpacked(held, alts, step);
   if (!each) {
-    return (Reduce(source, name, init, update), u.expect(")"));
+    return (Reduce(values, name, init, update), u.expect(")"));
   }
-  if (u.error.len() == 0 && u.is_punct(";")) {
+  if (u.is_punct(";")) {
     let (extract, w) = parse_pipe(u.advance());
-    return (Foreach(source, name, init, update, extract), w.expect(")"));
+    return (Foreach(values, name, init, update, unpacked(held, alts, extract)), w.expect(")"));
   }
-  return (Foreach(source, name, init, update, Identity), u.expect(")"));
+  return (Foreach(values, name, init, update, Identity), u.expect(")"));
 }
 
 // Each function that the port has, as "name/arguments".
-function functions(): string[] {
+pub function functions(): string[] {
   return [
     "add/0", "all/0", "all/1", "all/2", "any/0", "any/1", "any/2", "arrays/0", "ascii_downcase/0",
     "ascii_upcase/0", "booleans/0", "ceil/0", "contains/1", "del/1", "delpaths/1", "empty/0", "endswith/1",
@@ -902,7 +1188,11 @@ function functions(): string[] {
     "reverse/0", "rindex/1", "round/0", "rtrimstr/1", "scalars/0", "select/1", "setpath/2", "sort/0",
     "sort_by/1", "split/1", "sqrt/0", "startswith/1", "strings/0", "to_entries/0", "tojson/0", "tonumber/0",
     "tostring/0", "trunc/0", "type/0", "unique/0", "unique_by/1", "until/2", "utf8bytelength/0", "values/0",
-    "walk/1", "while/2", "with_entries/1",
+    "walk/1", "while/2", "with_entries/1", "debug/0", "debug/1", "abs/0", "transpose/0", "pick/1",
+    "bsearch/1", "IN/1", "IN/2", "INDEX/1", "INDEX/2", "JOIN/2", "JOIN/3", "JOIN/4", "sin/0", "cos/0", "tan/0", "asin/0",
+    "acos/0", "atan/0", "atan2/2", "sinh/0", "cosh/0", "tanh/0", "cbrt/0", "log1p/0", "expm1/0", "builtins/0", "now/0",
+    "gmtime/0", "localtime/0", "mktime/0", "strftime/1", "strflocaltime/1", "strptime/1", "todate/0", "fromdate/0",
+    "todateiso8601/0", "fromdateiso8601/0",
   ];
 }
 
@@ -1083,10 +1373,10 @@ function parse_object_key(p: P): (Ast, Ast, P) {
       return (k, Index(Identity, k), q);
     },
     TVar(v) => {
-      if (v == "__loc__") {
-        return (Identity, Identity, p.fail("$__loc__ " + NOT_YET));
-      }
       return (Literal(json.JString(v)), Var(v), p.advance());
+    },
+    TLoc(line) => {
+      return (Literal(json.JString("__loc__")), location(line), p.advance());
     },
     TNumber(n) => {
       return (Identity, Identity, p.fail("Cannot use number (" + n + ") as object key"));
@@ -1142,6 +1432,8 @@ pub function undefined_var(f: Ast, names: string[]): string {
     And(a, b) => first_undefined([a, b], names),
     Or(a, b) => first_undefined([a, b], names),
     Negate(a) => undefined_var(a, names),
+    Label(name, body) => undefined_var(body, names.append(label_var(name))),
+    Break(name) => if (names.contains(label_var(name))) { "" } else { label_var(name) },
     _ => "",
   };
 }

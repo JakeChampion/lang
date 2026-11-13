@@ -604,7 +604,7 @@ var freshBuiltinMethods = map[string]bool{"open_dir": true, "open_reader": true,
 var freshResultBuiltins = map[string]bool{
 	"share_unchecked": true,
 	"__bytes_owned":   true, "__bytes_range": true, "__bytes_into": true, "__aes_expand_key": true, "__aes_ctr32": true,
-	"__ghash": true, "__aes_gcm_seal_into": true, "__aes_gcm_open_into": true, "__sha256_hw_blocks": true, "__sha1_hw_blocks": true, "__sha1x8_hw_blocks": true,
+	"__ghash": true, "__aes_gcm_seal_into": true, "__aes_gcm_open_into": true, "__sha256_hw_blocks": true, "__sha1_hw_blocks": true, "__sha1x8_hw_blocks": true, "__chacha20_xor_into": true, "__poly1305_blocks": true,
 	"open_reader": true, "open_writer": true, "open_appender": true, "open_exclusive": true,
 	"open_reader_with": true, "open_writer_with": true, "open_dir": true,
 	"__socket_from_fd": true, "tcp_accept": true, "tcp_accept_with": true, "tcp_connect_with": true, "tcp_listen": true, "tcp_listen_with": true,
