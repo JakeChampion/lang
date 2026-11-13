@@ -6277,7 +6277,7 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   if (name == "__fern_u64_to_string") {
     s = s.need("u64_to_string");
   }
-  if (name == "__fern_slice_abort") {
+  if (name == "__fern_slice_abort" || name == "__fern_alloc_size_abort") {
     s = s.need("heap");
   }
   s = s.need_array_helper(name);

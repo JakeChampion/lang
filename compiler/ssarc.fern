@@ -6481,7 +6481,23 @@ function word_bytes(name: string): i32 {
   return 4;
 }
 
+function checked_alloc_length(own r: irtables.LowerState, ins: ssa.SInst): irtables.LowerState {
+  r = emit(r, ir.op_drop());
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  r = emit(r, ir.op_const_i64(2147483647i64));
+  r = emit(r, ir.op_bin("gt_u", 64, true));
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_call_direct("__fern_alloc_size_abort", 0));
+  r = emit(r, ir.op_drop());
+  r = emit(r, ir.op_end());
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  return emit(r, ir.op_int_wrap(false));
+}
+
 function raw_memory_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
+  if (ins.str == "__alloc_len") {
+    return Lowered { found: true, r: checked_alloc_length(r, ins) };
+  }
   if (ins.str == "__bytes_data") {
     return Lowered { found: true, r: emit(r, ssabytes.read_data(ins.args[0])) };
   }

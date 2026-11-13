@@ -8104,6 +8104,16 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
   if (name == "map_new" || name == "__map_new_i32") {
     return v_map_new();
   }
+  if (name == "__alloc_len") {
+    if (args.len() != 1 || !is_int_like(args[0])) {
+      return v_err("__alloc_len: expected 1 integer argument");
+    }
+    let n = vint_as_i64(args[0]);
+    if (n < 0i64 || n > 2147483647i64) {
+      return v_abort(aborts.alloc_size(), "length " + util.i64_to_string(n));
+    }
+    return v_int(n as i32);
+  }
   if (name == "__alloc_u8" || name == "__alloc_u8_uninit" || name == "__alloc_i32" || name == "__alloc_i64" || name == "__alloc_f64" || name == "__alloc_bool") {
     if (args.len() != 1) {
       return v_err(name + ": expected 1 arg (n)");

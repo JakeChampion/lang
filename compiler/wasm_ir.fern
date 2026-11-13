@@ -999,6 +999,9 @@ function slot_in_list(list: i32[], x: i32): boolean {
 }
 
 function wasm_helper_symbol(name: string): string {
+  if (name == "__fern_alloc_size_abort") {
+    return "$__fern_alloc_size_abort";
+  }
   if (name == "__fern_oob_abort") {
     return "$__fern_oob_abort";
   }
@@ -9174,6 +9177,7 @@ pub function rc_runtime_helpers(heap_base: i32): string {
   let o = "";
   o += "  (func $__fern_oob_abort (result i32) (call $__fern_abort_arr) (unreachable))\n";
   o += "  (func $__fern_slice_abort (result i32) (call $__fern_abort_slice) (unreachable))\n";
+  o += "  (func $__fern_alloc_size_abort (result i32) (call $__fern_abort_alloc) (unreachable))\n";
   o += "  (func $__alloc (param $n i32) (result i32)\n";
   o += "    (call $__fern_alloc (local.get $n)))\n";
   o += "  (func $__free (param $p i32) (result i32)\n";

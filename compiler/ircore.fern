@@ -83,7 +83,7 @@ pub function is_task_runtime_fn(name: string): boolean {
 }
 
 pub function is_fern_helper(name: string): boolean {
-  return name == "__fern_oob_abort" || name == "__fern_slice_abort" || is_rc_helper(name)
+  return name == "__fern_oob_abort" || name == "__fern_slice_abort" || name == "__fern_alloc_size_abort" || is_rc_helper(name)
     || is_release_helper(name)
     || is_text_helper(name) || rtbytecopy.is_helper(name);
 }
@@ -157,7 +157,7 @@ pub function is_c_call(name: string): boolean {
 }
 
 pub function ir_helper_symbol(name: string): string {
-  if (name == "__fern_oob_abort" || name == "__fern_slice_abort") {
+  if (name == "__fern_oob_abort" || name == "__fern_slice_abort" || name == "__fern_alloc_size_abort") {
     return name;
   }
   if (name == "__fern_rc_inc") {
