@@ -1,3 +1,8 @@
+# 2026-11-13: PR #15739, local FERN_CLIFF_REPORT runs on x86_64. #15727 built the table of handed-back
+# parameters with a copy of each array for each update: main 6b9870db measures 44420464 bytes and
+# 447184 crossings, and main 8a69bf1a (#15727) 55783632 and 470785. The table now changes in place.
+# The head of #15739 measures 21663128 bytes and 365821 crossings. Both rows move to those values.
+# Keep the 1% tolerance.
 # 2026-11-13: PR #15643, a local scripts/cliff-bench run on its tree. checker.cliff_bytes is 44442920
 # and checker.cliff_count 447302. Main 312303b6 measures 44442648 and 447302. The checker source of
 # #15600 and #15623 is larger. Re-bank both rows. Keep the 1% tolerance.
@@ -172,7 +177,7 @@
 # This is an inherited main cost of the merges after 710af42c. The 1% tolerance is unchanged.
 # 2026-11-12 (#15474): a local scripts/cliff-bench run on main f2aa998b measures 44,566,616 copied bytes (was 45,149,488), 1.29% less. The win is the new ceiling. The tolerance is unchanged.
 # 2026-11-12 (#15471): `scripts/cliff-bench` measured 42,809,472 copied bytes when a union resolves through its members (was 44,566,616). The 1% tolerance is unchanged.
-x86_64/checker.cliff_bytes	44442920
+x86_64/checker.cliff_bytes	21663128
 # 2026-11-11: Bank checker.cliff_count 378075 -> 373796 after main reverts.
 # Exact CI 42958185608 / job 130320191632 measures source ca80bd07aba3.
 # That source tree equals main 38399ecf. The 1% tolerance stays unchanged.
@@ -180,4 +185,4 @@ x86_64/checker.cliff_bytes	44442920
 # 2026-11-12: the same job measured x86_64/checker.cliff_count at 461488 (was 379346). The tolerance is unchanged.
 # 2026-11-12 (#15474): the same run measures x86_64/checker.cliff_count at 461615 (was 461488). The tolerance is unchanged.
 # 2026-11-12 (#15471): the same run measured x86_64/checker.cliff_count at 438998 (was 461615). The tolerance is unchanged.
-x86_64/checker.cliff_count	447302
+x86_64/checker.cliff_count	365821
