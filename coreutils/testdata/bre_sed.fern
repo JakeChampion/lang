@@ -1,0 +1,150 @@
+import "../lib/bre";
+
+// The syntax of GNU sed: ERE, the I and M flags, --posix, and the errors of
+// a repetition with nothing to repeat.
+
+function err_of(pat: string, ext: boolean): string {
+  return bre.bre_compile_syntax(pat, bre.sed_syntax(ext, false, false, false)).err;
+}
+
+function span(pat: string, subj: string, ext: boolean, icase: boolean, multi: boolean, posix: boolean): string {
+  let re = bre.bre_compile_syntax(pat, bre.sed_syntax(ext, icase, multi, posix));
+  if (re.err.len() > 0) {
+    return "error " + re.err;
+  }
+  let m = re.search_groups_bytes(subj.bytes(), 0, subj.len());
+  if (!m.matched) {
+    return "none";
+  }
+  let out = "";
+  for g in 0..m.starts.len() {
+    out = out + f"{m.starts[g]},{m.ends[g]};";
+  }
+  return out;
+}
+
+function ere(pat: string, subj: string): string {
+  return span(pat, subj, true, false, false, false);
+}
+
+function bre_of(pat: string, subj: string): string {
+  return span(pat, subj, false, false, false, false);
+}
+
+function check_ere(): i32 {
+  if (ere("a+b?", "xaab") != "1,4;" || ere("(a|b)+", "xabba") != "1,5;4,5;" || ere("a{2,}", "aaaa") != "0,4;") {
+    return 1;
+  }
+  if (ere("a{,2}", "aaa") != "0,2;" || ere("()", "x") != "0,0;0,0;" || ere("(|a)b", "ab") != "0,2;0,1;") {
+    return 2;
+  }
+  if (ere("x^a", "x^a") != "none" || ere("a$b", "a$b") != "none" || ere("\\+\\?", "a+?") != "1,3;") {
+    return 3;
+  }
+  if (ere("(a)\\1", "xaa") != "1,3;1,2;" || ere("a**", "aa") != "0,2;" || ere("a{1}{2}", "aaa") != "0,2;") {
+    return 4;
+  }
+  if (ere("a\\{1\\}", "a{1}") != "0,4;" || ere("\\(a\\)", "(a)") != "0,3;" || ere("a\\|b", "a|b") != "0,3;") {
+    return 5;
+  }
+  return 0;
+}
+
+function check_ere_errors(): i32 {
+  let badrpt = "Invalid preceding regular expression";
+  if (err_of("*a", true) != badrpt || err_of("a|*b", true) != badrpt || err_of("(+a)", true) != badrpt) {
+    return 11;
+  }
+  if (err_of("^*", true) != badrpt || err_of("a$*", true) != badrpt || err_of("\\b*", true) != badrpt || err_of("{1}", true) != badrpt) {
+    return 12;
+  }
+  if (err_of("a{1", true) != "Unmatched \\{" || err_of("a{x}", true) != "Invalid content of \\{\\}" || err_of("a{2,1}", true) != "Invalid content of \\{\\}") {
+    return 13;
+  }
+  if (err_of("a)", true) != "Unmatched ) or \\)" || err_of("(a", true) != "Unmatched ( or \\(" || err_of("(a)\\2", true) != "Invalid back reference") {
+    return 14;
+  }
+  if (err_of("a{32768}", true) != "Regular expression too big" || err_of("(^)*", true) != "" || err_of("(a|)", true) != "") {
+    return 15;
+  }
+  return 0;
+}
+
+function check_bre(): i32 {
+  let badrpt = "Invalid preceding regular expression";
+  if (err_of("a**", false) != badrpt || err_of("a\\{2\\}*", false) != badrpt || err_of("a\\+*", false) != badrpt) {
+    return 21;
+  }
+  if (err_of("\\{1\\}", false) != badrpt || err_of("^\\{1\\}", false) != badrpt || err_of("\\(\\{1\\}\\)", false) != badrpt) {
+    return 22;
+  }
+  if (err_of("a*\\+", false) != "" || err_of("^*", false) != "" || err_of("\\(*a\\)", false) != "") {
+    return 23;
+  }
+  if (bre_of("\\(*a\\)", "x*a") != "1,3;1,3;" || bre_of("a\\|^b", "b") != "0,1;" || bre_of("x\\(^a\\)", "x^a") != "none") {
+    return 24;
+  }
+  if (bre_of("a$*", "ab") != "0,1;" || bre_of("\\b*", "$*") != "none" || bre_of("a\\{,2\\}", "aaa") != "0,2;") {
+    return 25;
+  }
+  if (err_of("[b-a]", false) != "Invalid range end" || bre.bre_compile("[b-a]").err != "") {
+    return 26;
+  }
+  return 0;
+}
+
+function check_flags(): i32 {
+  if (span("[A-Z]b", "xab", false, true, false, false) != "1,3;" || span("[^a]", "Ab", false, true, false, false) != "1,2;") {
+    return 31;
+  }
+  if (span("\\(a\\)\\1", "xaA", false, true, false, false) != "1,3;1,2;" || span("HELLO", "say hello", false, true, false, false) != "4,9;") {
+    return 32;
+  }
+  if (span("a.b", "a\nb", false, false, true, false) != "none" || span("a[^x]b", "a\nb", false, false, true, false) != "none") {
+    return 33;
+  }
+  if (span("a.b", "a\nb", false, false, false, false) != "0,3;" || span("^b$", "a\nb\nc", false, false, true, false) != "2,3;") {
+    return 34;
+  }
+  if (span("\\`a", "b\na", false, false, true, false) != "none" || span("b\\'", "b\nb", false, false, true, false) != "2,3;") {
+    return 35;
+  }
+  if (span("a\\+", "aa+", false, false, false, true) != "1,3;" || span("\\w", "w", false, false, false, true) != "0,1;" || span("a\\|b", "a|b", false, false, false, true) != "0,3;") {
+    return 36;
+  }
+  return 0;
+}
+
+function check_search_from(): i32 {
+  let re = bre.bre_compile_syntax("^a\\|\\<b", bre.sed_syntax(false, false, false, false));
+  let text = "aab b".bytes();
+  let m = re.search_groups_bytes(text, 1, text.len());
+  if (!m.matched || m.starts[0] != 4) {
+    return 41;
+  }
+  let first = re.search_groups_bytes(text, 0, text.len());
+  if (!first.matched || first.starts[0] != 0 || first.ends[0] != 1) {
+    return 42;
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let r = check_ere();
+  if (r != 0) {
+    return r;
+  }
+  r = check_ere_errors();
+  if (r != 0) {
+    return r;
+  }
+  r = check_bre();
+  if (r != 0) {
+    return r;
+  }
+  r = check_flags();
+  if (r != 0) {
+    return r;
+  }
+  return check_search_from();
+}

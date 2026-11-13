@@ -66,6 +66,46 @@ function (s: Input) same_range(a: i32, b: i32, n: i32): boolean {
   }
 }
 
+// same_text compares the `n` bytes at `a` with the bytes at `b`. Under icase
+// the two cases of a letter are equal.
+function same_text(re: Bre, s: Input, a: i32, b: i32, n: i32): boolean {
+  if (!re.icase) {
+    return s.same_range(a, b, n);
+  }
+  for k in 0..n {
+    if (fold_byte(s.at(a + k)) != fold_byte(s.at(b + k))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function fold_byte(c: i32): i32 {
+  if (c >= 65 && c <= 90) {
+    return c + 32;
+  }
+  return c;
+}
+
+// search_groups_bytes gives the leftmost-longest match that starts at or
+// after `from`, with its groups. Offset 0 is the start of the subject for ^,
+// \` and the word assertions, and `hi` is its end.
+pub function (re: Bre) search_groups_bytes(text: u8[], from: i32, hi: i32): BreMatch {
+  let input = byte_input(text);
+  let r: (i32, i32) = re.search_from_input(input, from, hi);
+  let no: i32[] = [];
+  if (r.0 < 0) {
+    return BreMatch { matched: false, end: 0, starts: no, ends: no };
+  }
+  if (re.ngroups == 0) {
+    return caps_to_match(no, re, r.0, r.1);
+  }
+  if (re.backref) {
+    return exec_backtrack(re, input, r.0, 0, hi);
+  }
+  return exec_threads_from(re, input, r.0, r.1, 0, hi);
+}
+
 pub function (re: Bre) exec(text: string): BreMatch {
   return re.exec_input(text_input(text));
 }
@@ -180,16 +220,28 @@ function assert_buf_end(): i32 {
   return 5;
 }
 
-pub struct Bre { insts: Inst[], classes: u8[], ngroups: i32, nmarks: i32, backref: boolean, err: string, newline_anchor: boolean, first: u8[], empty_ok: boolean, pre: u8[], pre_bol: boolean, pre_eol: boolean, literal: boolean, alts: u8[][], seen0: i32[], dfa: DfaCache, bclass: u8[], reps: i32[], cx_lo: boolean, cx_nl: boolean, cx_word: boolean }
+pub struct Bre { insts: Inst[], classes: u8[], ngroups: i32, nmarks: i32, backref: boolean, err: string, newline_anchor: boolean, first: u8[], empty_ok: boolean, pre: u8[], pre_bol: boolean, pre_eol: boolean, literal: boolean, alts: u8[][], seen0: i32[], dfa: DfaCache, bclass: u8[], reps: i32[], cx_lo: boolean, cx_nl: boolean, cx_word: boolean, icase: boolean }
 
-pub struct Syntax { emacs: boolean, newline_anchor: boolean }
+// The syntax of a pattern. `extended` selects ERE. `gnu_ops` gives the GNU
+// operators: \+, \? and \| in BRE, and \w, \W, \s, \S, \b, \B, \<, \>, \`
+// and \'. `invalid_dup` makes a leading interval an error, and also a `*` or
+// an interval after another repetition. `multiline` makes ^ and $ match at a
+// newline, and stops . and [^...] from matching a newline. `no_empty_ranges`
+// makes a range whose end comes before its start an error.
+pub struct Syntax { emacs: boolean, newline_anchor: boolean, extended: boolean, icase: boolean, gnu_ops: boolean, invalid_dup: boolean, multiline: boolean, no_empty_ranges: boolean }
 
 pub function posix_basic(): Syntax {
-  return Syntax { emacs: false, newline_anchor: false };
+  return Syntax { emacs: false, newline_anchor: false, extended: false, icase: false, gnu_ops: true, invalid_dup: false, multiline: false, no_empty_ranges: false };
 }
 
 pub function emacs_syntax(): Syntax {
-  return Syntax { emacs: true, newline_anchor: true };
+  return Syntax { emacs: true, newline_anchor: true, extended: false, icase: false, gnu_ops: true, invalid_dup: false, multiline: false, no_empty_ranges: false };
+}
+
+// The syntax of GNU sed: BRE or ERE, with the I and M flags. `posix` is
+// --posix, which removes the GNU operators.
+pub function sed_syntax(extended: boolean, icase: boolean, multiline: boolean, posix: boolean): Syntax {
+  return Syntax { emacs: false, newline_anchor: multiline, extended: extended, icase: icase, gnu_ops: !posix, invalid_dup: !extended, multiline: multiline, no_empty_ranges: true };
 }
 
 pub struct BreMatch { matched: boolean, end: i32, starts: i32[], ends: i32[] }
@@ -240,6 +292,10 @@ function err_erange(): string {
 
 function err_esize(): string {
   return "Regular expression too big";
+}
+
+function err_badrpt(): string {
+  return "Invalid preceding regular expression";
 }
 
 function dup_max(): i32 {
@@ -296,7 +352,7 @@ function nd_assert(): i32 {
   return 10;
 }
 
-struct P { pat: Input, i: i32, nodes: Node[], classes: u8[], ngroups: i32, done: i32, err: string, emacs: boolean }
+struct P { pat: Input, i: i32, nodes: Node[], classes: u8[], ngroups: i32, done: i32, err: string, emacs: boolean, ext: boolean, icase: boolean, gnu: boolean, inv_dup: boolean, multiline: boolean, no_empty: boolean }
 
 function group_bit(n: i32): i32 {
   return 1 << n - 1;
@@ -536,6 +592,9 @@ function parse_bracket(p0: P): (P, i32) {
       return (p, 0);
     }
   }
+  if (p.icase) {
+    t = fold_table(t);
+  }
   if (negate) {
     let k = 0;
     while (k < 256) {
@@ -546,7 +605,24 @@ function parse_bracket(p0: P): (P, i32) {
       }
       k += 1;
     }
+    if (p.multiline) {
+      t = t.with(10, 0 as u8);
+    }
   }
+  return add_table(p, t);
+}
+
+// fold_table adds the other case of each letter in the table.
+function fold_table(own t: u8[]): u8[] {
+  for b in 65..91 {
+    if (t[b] as i32 != 0 || t[b + 32] as i32 != 0) {
+      t = t.with(b, 1 as u8).with(b + 32, 1 as u8);
+    }
+  }
+  return t;
+}
+
+function add_table(p: P, t: u8[]): (P, i32) {
   let idx = p.classes.len() / 256;
   let cs = p.classes;
   let j = 0;
@@ -581,6 +657,9 @@ function bracket_one(p0: P, t0: u8[]): (P, u8[]) {
   if (!range_ok(hi)) {
     return (fail(p, err_erange()), t);
   }
+  if (p.no_empty && lo.byte > hi.byte) {
+    return (fail(p, err_erange()), t);
+  }
   p = P { ...p, i: hi.next };
   let b = lo.byte;
   while (b <= hi.byte) {
@@ -607,21 +686,12 @@ function union_table(t0: u8[], other: u8[]): u8[] {
 
 function shorthand_table(p0: P, which: i32): (P, i32) {
   let t = __alloc_u8(256);
-  let b = 0;
-  while (b < 256) {
+  for b in 0..256 {
     if (shorthand_has(which, b)) {
       t = t.with(b, 1 as u8);
     }
-    b += 1;
   }
-  let idx = p0.classes.len() / 256;
-  let cs = p0.classes;
-  let j = 0;
-  while (j < 256) {
-    cs = cs.append(t[j]);
-    j += 1;
-  }
-  return (P { ...p0, classes: cs }, idx);
+  return add_table(p0, t);
 }
 
 function shorthand_has(which: i32, b: i32): boolean {
@@ -639,22 +709,67 @@ function shorthand_has(which: i32, b: i32): boolean {
 }
 
 function any_table(p0: P): (P, i32) {
-  let idx = p0.classes.len() / 256;
-  let cs = p0.classes;
-  let skip = 0;
-  if (p0.emacs) {
-    skip = 10;
+  let t = all_bytes();
+  if (p0.emacs || p0.multiline) {
+    t = t.with(10, 0 as u8);
   }
-  let j = 0;
-  while (j < 256) {
-    if (j == skip) {
-      cs = cs.append(0 as u8);
-    } else {
-      cs = cs.append(1 as u8);
+  return add_table(p0, t);
+}
+
+// The width of the group, alternation and interval operators: ( in ERE, \(
+// in BRE.
+function token_width(p: P): i32 {
+  if (p.ext) {
+    return 1;
+  }
+  return 2;
+}
+
+function alt_at(p: P, k: i32): boolean {
+  if (p.ext) {
+    return byte_at(p, k) == 124;
+  }
+  return p.gnu && esc_at(p, k, 124);
+}
+
+function close_at(p: P, k: i32): boolean {
+  if (p.ext) {
+    return byte_at(p, k) == 41;
+  }
+  return esc_at(p, k, 41);
+}
+
+function interval_at(p: P, k: i32): boolean {
+  if (p.ext) {
+    return byte_at(p, k) == 123;
+  }
+  return !p.emacs && esc_at(p, k, 123);
+}
+
+function interval_close_at(p: P, k: i32): boolean {
+  if (p.ext) {
+    return byte_at(p, k) == 125;
+  }
+  return esc_at(p, k, 125);
+}
+
+// The width of the repetition operator at `k`, or 0 when there is none.
+function dup_width(p: P, k: i32): i32 {
+  let b = byte_at(p, k);
+  if (b == 42) {
+    return 1;
+  }
+  if (p.ext || p.emacs) {
+    if (b == 43 || b == 63) {
+      return 1;
     }
-    j += 1;
+  } else if (p.gnu && b == 92 && (byte_at(p, k + 1) == 43 || byte_at(p, k + 1) == 63)) {
+    return 2;
   }
-  return (P { ...p0, classes: cs }, idx);
+  if (interval_at(p, k)) {
+    return token_width(p);
+  }
+  return 0;
 }
 
 function parse_alt(p0: P): (P, i32) {
@@ -662,9 +777,9 @@ function parse_alt(p0: P): (P, i32) {
   let r: (P, i32) = parse_branch(p0);
   let p = r.0;
   let left = r.1;
-  while (p.err.len() == 0 && esc_at(p, p.i, 124)) {
+  while (p.err.len() == 0 && alt_at(p, p.i)) {
     let sofar = p.done;
-    p = P { ...p, i: p.i + 2, done: outer };
+    p = P { ...p, i: p.i + token_width(p), done: outer };
     let r2: (P, i32) = parse_branch(p);
     p = P { ...r2.0, done: r2.0.done | sofar };
     let n: (P, i32) = add_node(p, Node { kind: nd_alt(), a: left, b: r2.1, c: 0 });
@@ -681,7 +796,7 @@ function parse_branch(p0: P): (P, i32) {
     if (p.err.len() > 0) {
       return (p, empty_node(p, cur));
     }
-    if (at_end(p) || esc_at(p, p.i, 124) || esc_at(p, p.i, 41)) {
+    if (at_end(p) || alt_at(p, p.i) || close_at(p, p.i)) {
       break;
     }
     let r: (P, i32) = parse_piece(p, cur < 0);
@@ -710,36 +825,33 @@ function empty_node(p: P, cur: i32): i32 {
   return 0;
 }
 
+// An anchor takes no repetition. In BRE the operator after it is a literal
+// character, and in ERE it is an error.
 function parse_piece(p0: P, first: boolean): (P, i32) {
   let r: (P, i32) = parse_atom(p0, first);
   let p = r.0;
   let node = r.1;
-  if (p.err.len() > 0 || p.nodes[node].kind == nd_bol() || p.nodes[node].kind == nd_assert()) {
+  if (p.err.len() > 0) {
     return (p, node);
   }
+  let kind = p.nodes[node].kind;
+  if (kind == nd_bol() || kind == nd_assert() || p.ext && kind == nd_eol()) {
+    if (p.ext && dup_width(p, p.i) > 0) {
+      return (fail(p, err_badrpt()), node);
+    }
+    return (p, node);
+  }
+  let reps = 0;
   while (true) {
-    if (byte_at(p, p.i) == 42) {
-      p = P { ...p, i: p.i + 1 };
-      let s: (P, i32) = add_node(p, Node { kind: nd_rep(), a: node, b: 0, c: 0 - 1 });
-      p = s.0;
-      node = s.1;
-      continue;
+    let w = dup_width(p, p.i);
+    if (w == 0) {
+      break;
     }
-    if (plus_at(p, p.i)) {
-      p = P { ...p, i: p.i + op_width(p) };
-      let pl: (P, i32) = add_node(p, Node { kind: nd_rep(), a: node, b: 1, c: 0 - 1 });
-      p = pl.0;
-      node = pl.1;
-      continue;
+    if (reps > 0 && p.inv_dup && (byte_at(p, p.i) == 42 || interval_at(p, p.i))) {
+      return (fail(p, err_badrpt()), node);
     }
-    if (query_at(p, p.i)) {
-      p = P { ...p, i: p.i + op_width(p) };
-      let q: (P, i32) = add_node(p, Node { kind: nd_rep(), a: node, b: 0, c: 1 });
-      p = q.0;
-      node = q.1;
-      continue;
-    }
-    if (!p.emacs && esc_at(p, p.i, 123)) {
+    reps += 1;
+    if (interval_at(p, p.i)) {
       let iv: (P, i32) = parse_interval(p, node);
       p = iv.0;
       node = iv.1;
@@ -748,34 +860,20 @@ function parse_piece(p0: P, first: boolean): (P, i32) {
       }
       continue;
     }
-    break;
+    let op = byte_at(p, p.i + w - 1);
+    let min = if (op == 43) { 1 } else { 0 };
+    let max = if (op == 63) { 1 } else { -1 };
+    p = P { ...p, i: p.i + w };
+    let s: (P, i32) = add_node(p, Node { kind: nd_rep(), a: node, b: min, c: max });
+    p = s.0;
+    node = s.1;
   }
   return (p, node);
 }
 
-function plus_at(p: P, k: i32): boolean {
-  if (p.emacs) {
-    return byte_at(p, k) == 43;
-  }
-  return esc_at(p, k, 43);
-}
-
-function query_at(p: P, k: i32): boolean {
-  if (p.emacs) {
-    return byte_at(p, k) == 63;
-  }
-  return esc_at(p, k, 63);
-}
-
-function op_width(p: P): i32 {
-  if (p.emacs) {
-    return 1;
-  }
-  return 2;
-}
-
 function parse_interval(p0: P, node: i32): (P, i32) {
-  let p = P { ...p0, i: p0.i + 2 };
+  let w = token_width(p0);
+  let p = P { ...p0, i: p0.i + w };
   let lo: (i32, i32) = read_count(p, p.i);
   let min = lo.0;
   let k = lo.1;
@@ -787,13 +885,13 @@ function parse_interval(p0: P, node: i32): (P, i32) {
     max = hi.0;
     k = hi.1;
   }
-  if (!esc_at(p, k, 125)) {
+  if (!interval_close_at(p, k)) {
     if (has_close_brace(p, k)) {
       return (fail(p, err_badbr()), node);
     }
     return (fail(p, err_ebrace()), node);
   }
-  p = P { ...p, i: k + 2 };
+  p = P { ...p, i: k + w };
   if (!valid_interval(min, max, comma)) {
     return (fail(p, err_badbr()), node);
   }
@@ -801,15 +899,15 @@ function parse_interval(p0: P, node: i32): (P, i32) {
     return (fail(p, err_esize()), node);
   }
   if (comma && max < 0) {
-    return add_node(p, Node { kind: nd_rep(), a: node, b: min, c: 0 - 1 });
+    return add_node(p, Node { kind: nd_rep(), a: node, b: min, c: -1 });
   }
   return add_node(p, Node { kind: nd_rep(), a: node, b: min, c: max });
 }
 
 function has_close_brace(p: P, from: i32): boolean {
   let k = from;
-  while (k + 1 < p.pat.len()) {
-    if (esc_at(p, k, 125)) {
+  while (k < p.pat.len()) {
+    if (interval_close_at(p, k)) {
       return true;
     }
     k += 1;
@@ -852,16 +950,25 @@ function valid_interval(min: i32, max: i32, comma: boolean): boolean {
   return lo <= max;
 }
 
+// An atom. In ERE, ^ and $ are anchors everywhere, and a repetition operator
+// here has nothing to repeat. In BRE, ^ is an anchor only at the start of a
+// branch, and $ only at its end.
 function parse_atom(p0: P, first: boolean): (P, i32) {
   let p = p0;
   let b = byte_at(p, p.i);
-  if (b == 94 && first) {
+  if (b == 94 && (first || p.ext)) {
     p = P { ...p, i: p.i + 1 };
     return add_node(p, Node { kind: nd_bol(), a: 0, b: 0, c: 0 });
   }
-  if (b == 36 && dollar_is_anchor(p, p.i + 1)) {
+  if (b == 36 && (p.ext || dollar_is_anchor(p, p.i + 1))) {
     p = P { ...p, i: p.i + 1 };
     return add_node(p, Node { kind: nd_eol(), a: 0, b: 0, c: 0 });
+  }
+  if (p.ext && dup_width(p, p.i) > 0) {
+    return (fail(p, err_badrpt()), 0);
+  }
+  if (p.ext && b == 40) {
+    return parse_group(P { ...p, i: p.i + 1 });
   }
   if (b == 46) {
     p = P { ...p, i: p.i + 1 };
@@ -879,15 +986,24 @@ function parse_atom(p0: P, first: boolean): (P, i32) {
   if (b == 92) {
     return parse_escape(p);
   }
-  p = P { ...p, i: p.i + 1 };
-  return add_node(p, Node { kind: nd_char(), a: b, b: 0, c: 0 });
+  return char_node(P { ...p, i: p.i + 1 }, b);
+}
+
+// A literal byte. Under icase a letter matches both of its cases.
+function char_node(p: P, c: i32): (P, i32) {
+  if (p.icase && is_alpha(c)) {
+    let t = __alloc_u8(256).with(c | 32, 1 as u8).with(c & 223, 1 as u8);
+    let tb: (P, i32) = add_table(p, t);
+    return add_node(tb.0, Node { kind: nd_class(), a: tb.1, b: 0, c: 0 });
+  }
+  return add_node(p, Node { kind: nd_char(), a: c, b: 0, c: 0 });
 }
 
 function dollar_is_anchor(p: P, next: i32): boolean {
   if (next >= p.pat.len()) {
     return true;
   }
-  return esc_at(p, next, 41) || esc_at(p, next, 124);
+  return close_at(p, next) || alt_at(p, next);
 }
 
 function parse_escape(p0: P): (P, i32) {
@@ -896,11 +1012,14 @@ function parse_escape(p0: P): (P, i32) {
   if (c < 0) {
     return (fail(p, err_eescape()), 0);
   }
-  if (c == 40) {
+  if (!p.ext && c == 40) {
     return parse_group(P { ...p, i: p.i + 2 });
   }
-  if (c == 41) {
+  if (!p.ext && c == 41) {
     return (fail(p, err_eparen_close()), 0);
+  }
+  if (!p.ext && c == 123 && p.inv_dup) {
+    return (fail(p, err_badrpt()), 0);
   }
   if (c >= 49 && c <= 57) {
     p = P { ...p, i: p.i + 2 };
@@ -909,19 +1028,18 @@ function parse_escape(p0: P): (P, i32) {
     }
     return add_node(p, Node { kind: nd_backref(), a: c - 48, b: 0, c: 0 });
   }
-  let sh = shorthand_index(c);
+  let sh = if (p.gnu) { shorthand_index(c) } else { -1 };
   if (sh >= 0) {
     p = P { ...p, i: p.i + 2 };
     let st: (P, i32) = shorthand_table(p, sh);
     return add_node(st.0, Node { kind: nd_class(), a: st.1, b: 0, c: 0 });
   }
-  let az = assert_index(c);
+  let az = if (p.gnu) { assert_index(c) } else { -1 };
   if (az >= 0) {
     p = P { ...p, i: p.i + 2 };
     return add_node(p, Node { kind: nd_assert(), a: az, b: 0, c: 0 });
   }
-  p = P { ...p, i: p.i + 2 };
-  return add_node(p, Node { kind: nd_char(), a: c, b: 0, c: 0 });
+  return char_node(P { ...p, i: p.i + 2 }, c);
 }
 
 function shorthand_index(c: i32): i32 {
@@ -969,10 +1087,10 @@ function parse_group(p0: P): (P, i32) {
   if (p.err.len() > 0) {
     return (p, 0);
   }
-  if (!esc_at(p, p.i, 41)) {
+  if (!close_at(p, p.i)) {
     return (fail(p, err_eparen_open()), 0);
   }
-  p = mark_group_done(P { ...p, i: p.i + 2 }, n);
+  p = mark_group_done(P { ...p, i: p.i + token_width(p) }, n);
   return add_node(p, Node { kind: nd_group(), a: r.1, b: n, c: 0 });
 }
 
@@ -1207,26 +1325,22 @@ pub function bre_compile_bytes_syntax(pat: u8[], syntax: Syntax): Bre {
 function compile_input(pat: Input, syntax: Syntax): Bre {
   let nodes: Node[] = [Node { kind: nd_empty(), a: 0, b: 0, c: 0 }];
   let cls: u8[] = [];
-  let none_first: u8[] = [];
   let no_alts: u8[][] = [];
-  let no_seen: i32[] = [];
-  let p = P { pat: pat, i: 0, nodes: nodes, classes: cls, ngroups: 0, done: 0, err: "", emacs: syntax.emacs };
+  let p = P { pat: pat, i: 0, nodes: nodes, classes: cls, ngroups: 0, done: 0, err: "", emacs: syntax.emacs, ext: syntax.extended, icase: syntax.icase, gnu: syntax.gnu_ops, inv_dup: syntax.invalid_dup, multiline: syntax.multiline, no_empty: syntax.no_empty_ranges };
   let r: (P, i32) = parse_alt(p);
   p = r.0;
   if (p.err.len() == 0 && !at_end(p)) {
     p = fail(p, err_eparen_close());
   }
   if (p.err.len() > 0) {
-    let no_insts: Inst[] = [];
-    return Bre { insts: no_insts, classes: p.classes, ngroups: 0, nmarks: 0, backref: false, err: p.err, newline_anchor: syntax.newline_anchor, first: none_first, empty_ok: true, pre: none_first, pre_bol: false, pre_eol: false, literal: false, alts: no_alts, seen0: no_seen, dfa: dfa_cache(), bclass: none_first, reps: no_seen, cx_lo: false, cx_nl: false, cx_word: false };
+    return failed_bre(p.err, syntax);
   }
   let empty: Inst[] = [];
   let c = C { insts: empty, nmarks: 0, err: "" };
   c = compile_node(C { ...c, insts: empty }, p.nodes, r.1);
   c = emit(c, Inst { op: op_match(), a: 0, b: 0 });
   if (c.err.len() > 0) {
-    let none: Inst[] = [];
-    return Bre { insts: none, classes: p.classes, ngroups: 0, nmarks: 0, backref: false, err: c.err, newline_anchor: syntax.newline_anchor, first: none_first, empty_ok: true, pre: none_first, pre_bol: false, pre_eol: false, literal: false, alts: no_alts, seen0: no_seen, dfa: dfa_cache(), bclass: none_first, reps: no_seen, cx_lo: false, cx_nl: false, cx_word: false };
+    return failed_bre(c.err, syntax);
   }
   let fm: (u8[], boolean) = fastmap(c.insts, p.classes);
   let pre: (u8[], boolean, i32) = prefix_scan(c.insts);
@@ -1238,7 +1352,15 @@ function compile_input(pat: Input, syntax: Syntax): Bre {
   let cx_nl = syntax.newline_anchor && has_op(c.insts, op_bol());
   let cx_word = reads_word(c.insts);
   let bclass = byte_classes(c.insts, p.classes, cx_nl || syntax.newline_anchor && has_op(c.insts, op_eol()), cx_word);
-  return Bre { insts: c.insts, classes: p.classes, ngroups: p.ngroups, nmarks: c.nmarks, backref: has_backref(p.nodes), err: "", newline_anchor: syntax.newline_anchor, first: fm.0, empty_ok: fm.1, pre: pre.0, pre_bol: pre.1, pre_eol: tail.0, literal: tail.1, alts: alts, seen0: fill(c.insts.len(), -1), dfa: dfa_cache(), bclass: bclass, reps: class_reps(bclass), cx_lo: reads_lo(c.insts), cx_nl: cx_nl, cx_word: cx_word };
+  return Bre { insts: c.insts, classes: p.classes, ngroups: p.ngroups, nmarks: c.nmarks, backref: has_backref(p.nodes), err: "", newline_anchor: syntax.newline_anchor, first: fm.0, empty_ok: fm.1, pre: pre.0, pre_bol: pre.1, pre_eol: tail.0, literal: tail.1, alts: alts, seen0: fill(c.insts.len(), -1), dfa: dfa_cache(), bclass: bclass, reps: class_reps(bclass), cx_lo: reads_lo(c.insts), cx_nl: cx_nl, cx_word: cx_word, icase: syntax.icase };
+}
+
+function failed_bre(err: string, syntax: Syntax): Bre {
+  let no_bytes: u8[] = [];
+  let no_alts: u8[][] = [];
+  let no_ints: i32[] = [];
+  let no_insts: Inst[] = [];
+  return Bre { insts: no_insts, classes: no_bytes, ngroups: 0, nmarks: 0, backref: false, err: err, newline_anchor: syntax.newline_anchor, first: no_bytes, empty_ok: true, pre: no_bytes, pre_bol: false, pre_eol: false, literal: false, alts: no_alts, seen0: no_ints, dfa: dfa_cache(), bclass: no_bytes, reps: no_ints, cx_lo: false, cx_nl: false, cx_word: false, icase: false };
 }
 
 function fastmap(insts: Inst[], classes: u8[]): (u8[], boolean) {
@@ -1596,7 +1718,7 @@ function step(m0: M, pc0: i32, pos0: i32, zw0: boolean): (boolean, M) {
         return (false, m);
       }
       let n = e - s;
-      if (pos + n > m.hi || !m.text.same_range(pos, s, n)) {
+      if (pos + n > m.hi || !same_text(m.re, m.text, pos, s, n)) {
         return (false, m);
       }
       pc += 1;
