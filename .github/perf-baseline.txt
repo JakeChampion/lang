@@ -353,10 +353,10 @@ x86_64/closure_call.text	963
 x86_64/closure_call.ir	41178167
 # 2026-11-01 (#13347): CI41317429107 measures both lower x86 DEFLATE counts.
 x86_64/deflate_decode.ir	32877120
-x86_64/deflate_decode.text	12645
+x86_64/deflate_decode.text	12480
 x86_64/deflate_encode.ir	41579468
 # 2026-11-05: PR #14207, perf-x86_64 job 126960802774 on the merge with main 6dba1dcb measures lower values for the changed rows below. The rows that rise keep their limits.
-x86_64/deflate_encode.text	7252
+x86_64/deflate_encode.text	7145
 x86_64/enum_match.text	934
 x86_64/enum_match.ir	29250077
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
@@ -374,7 +374,7 @@ x86_64/map_probe_chain.text	8492
 # 2026-11-10: PR #15106, CI job 129860813857 on b45460dd72 measured this count.
 # Bank the measured reduction after main 5d6c692eb2. Keep the tolerance unchanged.
 x86_64/map_probe_chain.ir	238091314
-x86_64/map_string.text	9311
+x86_64/map_string.text	9419
 # 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured x86_64/map_string.ir at 51764454 (was 53037751). The tolerance is unchanged.
 x86_64/map_string.ir	51764454	2
 x86_64/ordmap_insert.text	5394
@@ -389,22 +389,22 @@ x86_64/sort_inplace.text	1538
 x86_64/sort_inplace.ir	36583718
 x86_64/sort_ints.text	1778
 x86_64/sort_ints.ir	23120269
-x86_64/sort_strings.text	3098
-x86_64/sort_strings.ir	96173451
-x86_64/string_build.text	1926
-x86_64/string_build.ir	42886116
+x86_64/sort_strings.text	3142
+x86_64/sort_strings.ir	95020165
+x86_64/string_build.text	1987
+x86_64/string_build.ir	38746123
 x86_64/string_count_byte.text	1321
 x86_64/string_count_byte.ir	41173368
 x86_64/string_find_byte.text	1593
 x86_64/string_find_byte.ir	43687425
 x86_64/string_rfind_byte.text	1741
 x86_64/string_rfind_byte.ir	43695768
-x86_64/string_scan.text	2166
+x86_64/string_scan.text	2227
 x86_64/string_scan.ir	52670002
 x86_64/string_slice.text	944
 x86_64/string_slice.ir	38460093
-x86_64/struct_drop.text	2341
-x86_64/struct_drop.ir	200820598
+x86_64/struct_drop.text	2402
+x86_64/struct_drop.ir	197940612
 x86_64/tokenize.text	1247
 x86_64/tokenize.ir	37860093
 x86_64/utf8_ingest_unchecked.text	7735
@@ -647,9 +647,9 @@ aarch64/closure_call.ir	46002179
 # 2026-10-26 (#13496): CI40296315314 reports seven lower ARM64 instruction counts.
 # 2026-11-01 (#13347): one-allocation table fills lower the measured ARM64 decode count.
 aarch64/deflate_decode.ir	34895281
-aarch64/deflate_decode.text	13478
+aarch64/deflate_decode.text	13241
 aarch64/deflate_encode.ir	43566583
-aarch64/deflate_encode.text	7910
+aarch64/deflate_encode.text	7735
 aarch64/enum_match.text	1165
 aarch64/enum_match.ir	24975095
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
@@ -666,7 +666,7 @@ aarch64/map_probe_chain.text	8507
 # 2026-11-10: PR #15022 at 206df7ee, ARM64 CI job 129589649703.
 # Bank 230251856 guest instructions from run 42743098908. Keep the 1% tolerance.
 aarch64/map_probe_chain.ir	230251856
-aarch64/map_string.text	9472
+aarch64/map_string.text	9588
 # 2026-10-26 (#13496): CI40297899459 reports the current map instruction count.
 # 2026-11-11 (#15258): perf-aarch64 job 130456686122 measured aarch64/map_string.ir at 49757676 (was 53247468). The tolerance is unchanged.
 aarch64/map_string.ir	49757676	2
@@ -684,21 +684,21 @@ aarch64/sort_inplace.ir	43684079
 # 2026-11-05: PR #14207, perf-aarch64 job 126960803294 reports sort_ints.text 7.5% and sort_ints.ir 18.0% lower.
 aarch64/sort_ints.text	2063
 aarch64/sort_ints.ir	24753301
-aarch64/sort_strings.text	3488
-aarch64/sort_strings.ir	100996546
-aarch64/string_build.text	2292
-aarch64/string_build.ir	46680569
+aarch64/sort_strings.text	3536
+aarch64/sort_strings.ir	99216935
+aarch64/string_build.text	2357
+aarch64/string_build.ir	42360567
 aarch64/string_count_byte.text	1495
 aarch64/string_count_byte.ir	295207223
 aarch64/string_find_byte.text	1906
 aarch64/string_find_byte.ir	55921279
 aarch64/string_rfind_byte.text	2013
 aarch64/string_rfind_byte.ir	55941911
-aarch64/string_scan.text	2491
+aarch64/string_scan.text	2556
 aarch64/string_scan.ir	59787692
 aarch64/string_slice.text	1188
 aarch64/string_slice.ir	43620107
-aarch64/struct_drop.text	2598
+aarch64/struct_drop.text	2663
 aarch64/struct_drop.ir	218300904
 aarch64/tokenize.text	1444
 aarch64/tokenize.ir	38350109
@@ -747,7 +747,7 @@ x86_64/video_qtrle.ir 1717224731
 # aarch64/video_qtrle.text at 5600, down from 5682. Keep the existing tolerance.
 # Main 4a044282 and candidate code 6f6bddfc emit identical assembly for this benchmark.
 # Evidence: docs/benchmarks/compiler-interpreter-ci-2026-11-10/.
-aarch64/video_qtrle.text 5600
+aarch64/video_qtrle.text 5522
 aarch64/video_qtrle.ir 1559097809
 # 2026-11-09: QTRLE scalar run validation removes per-run result storage.
 # Pinned to local native Callgrind and cross-target assembly measurements.
@@ -756,3 +756,8 @@ aarch64/video_qtrle.ir 1559097809
 # from #14910 changes the string-count rows. Parent 97af82fc and IVF head
 # cbed65e0 produce identical assembly, binaries, and Callgrind counts.
 # Pin both measured rows. Keep the 1% tolerance.
+# 2026-11-13: main f29fcfdf. #15752 adds the adopt path to __fern_string_from_bytes_u8:
+# 63 more aarch64 lines in map_string, sort_strings, string_build, string_scan and
+# struct_drop. The string .ir rows fall, string_build up to 9.7%. aarch64: perf-aarch64
+# job 132091435610 on #15742 merged with f29fcfdf. x86-64: local perf-bench and
+# callgrind on f29fcfdf. Tolerances are unchanged.
