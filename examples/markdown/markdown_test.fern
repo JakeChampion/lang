@@ -152,6 +152,26 @@ function test_lists(): test.TestOutcome {
   ]);
 }
 
+// The parser finds a loose list when a block gets a next sibling, and a
+// paragraph that holds only link reference definitions is not a sibling.
+// The empty item, the block quote and the fenced code block end with a
+// blank line that does not make the list loose.
+function test_loose_lists(): test.TestOutcome {
+  return checks([
+    ("- a\n\n  [x]: /u\n", "<ul>\n<li>a</li>\n</ul>\n"),
+    ("- a\n\n  [x]: /u\n- b\n", "<ul>\n<li>\n<p>a</p>\n</li>\n<li>\n<p>b</p>\n</li>\n</ul>\n"),
+    ("- # h\n  [x]: /u\n\n  b\n- c\n", "<ul>\n<li>\n<h1>h</h1>\nb</li>\n<li>c</li>\n</ul>\n"),
+    ("- a\n\n  [x]: /u\n\n  b\n", "<ul>\n<li>\n<p>a</p>\n<p>b</p>\n</li>\n</ul>\n"),
+    ("- a\n  - b\n\n- c\n", "<ul>\n<li>\n<p>a</p>\n<ul>\n<li>b</li>\n</ul>\n</li>\n<li>\n<p>c</p>\n</li>\n</ul>\n"),
+    ("- a\n  - b\n\n  c\n", "<ul>\n<li>\n<p>a</p>\n<ul>\n<li>b</li>\n</ul>\n<p>c</p>\n</li>\n</ul>\n"),
+    ("- \n\n- a\n", "<ul>\n<li></li>\n<li>\n<p>a</p>\n</li>\n</ul>\n"),
+    ("- a\n  > b\n\n- c\n", "<ul>\n<li>\n<p>a</p>\n<blockquote>\n<p>b</p>\n</blockquote>\n</li>\n<li>\n<p>c</p>\n</li>\n</ul>\n"),
+    ("- a\n\n- b\n\n[x]: /u\n", "<ul>\n<li>\n<p>a</p>\n</li>\n<li>\n<p>b</p>\n</li>\n</ul>\n"),
+    ("> - a\n>\n> - b\n", "<blockquote>\n<ul>\n<li>\n<p>a</p>\n</li>\n<li>\n<p>b</p>\n</li>\n</ul>\n</blockquote>\n"),
+    ("- a\n  ```\n  x\n\n  ```\n- b\n", "<ul>\n<li>a\n<pre><code>x\n\n</code></pre>\n</li>\n<li>b</li>\n</ul>\n"),
+  ]);
+}
+
 function test_tabs(): test.TestOutcome {
   return checks([
     ("\tfoo\tbaz\t\tbim", "<pre><code>foo\tbaz\t\tbim\n</code></pre>\n"),
@@ -461,6 +481,7 @@ function main(): i32 {
   r = r.it("indented and fenced code blocks", test_code);
   r = r.it("block quotes", test_quotes);
   r = r.it("lists and list items", test_lists);
+  r = r.it("loose and tight lists", test_loose_lists);
   r = r.it("tabs", test_tabs);
   r = r.it("HTML blocks", test_html_blocks);
   r = r.it("the block tree of text that needs inlines", test_block_shapes);
