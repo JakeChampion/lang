@@ -1,3 +1,6 @@
+# 2026-11-13: main 629da26337ad, run 43462658703, job 132017621069.
+# Bank eleven lower emitted sizes from the complete 120-metric report in
+# artifact 14058032152. All other rows and all tolerances stay fixed.
 # 2026-11-13: PR #15695, perf-x86_64 job 131880155145 on the merge with main 04b4f337. A cons-tail
 # loop carries the address of its hole, and the emit of perceus_rbtree and perceus_rbtree_ck falls
 # 1.6% to 2.4% on x86-64 and arm64. Each row moves to its measured value. Keep all tolerances.
@@ -304,8 +307,8 @@ selfhost/arm64-linux/map_int.emit	8504
 selfhost/arm64-linux/map_probe_chain.emit	8514
 selfhost/arm64-linux/map_string.emit	9472
 selfhost/arm64-linux/ordmap_insert.emit	5816
-selfhost/arm64-linux/pmap_insert.emit	3261
-selfhost/arm64-linux/pvec_with.emit	3318
+selfhost/arm64-linux/pmap_insert.emit	3220
+selfhost/arm64-linux/pvec_with.emit	3243
 selfhost/arm64-linux/record_update.emit	1216
 selfhost/arm64-linux/sort_inplace.emit	1725
 # 2026-11-05: PR #14207, perf-x86_64 job 126960802774 on the merge with main 6dba1dcb measures lower values for the changed rows below. The rows that rise keep their limits.
@@ -382,7 +385,7 @@ selfhost/x86-64-linux/map_probe_chain.emit	8482
 selfhost/x86-64-linux/map_string.emit	9311
 selfhost/x86-64-linux/ordmap_insert.emit	5432
 selfhost/x86-64-linux/pmap_insert.emit	2933
-selfhost/x86-64-linux/pvec_with.emit	3056
+selfhost/x86-64-linux/pvec_with.emit	2994
 selfhost/x86-64-linux/record_update.emit	981
 selfhost/x86-64-linux/sort_inplace.emit	1534
 selfhost/x86-64-linux/sort_ints.emit	1774
@@ -401,8 +404,8 @@ selfhost/x86-64-linux/utf8_ingest_unchecked.emit	7735
 selfhost/x86-64-linux/utf8_ingest_validated.emit	8318
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
-selfhost/x86-64-linux/perceus_cfold.emit	1974
-selfhost/arm64-linux/perceus_cfold.emit	2258
+selfhost/x86-64-linux/perceus_cfold.emit	1938
+selfhost/arm64-linux/perceus_cfold.emit	2183
 selfhost/wasm32-wasi/perceus_cfold.emit	1766
 selfhost/x86-64-linux/perceus_deriv.emit	2651
 selfhost/arm64-linux/perceus_deriv.emit	2937
@@ -410,12 +413,12 @@ selfhost/wasm32-wasi/perceus_deriv.emit	2831
 selfhost/x86-64-linux/perceus_nqueens.emit	1548
 selfhost/arm64-linux/perceus_nqueens.emit	1797
 selfhost/wasm32-wasi/perceus_nqueens.emit	1267
-selfhost/x86-64-linux/perceus_rbtree.emit	2690
-selfhost/arm64-linux/perceus_rbtree.emit	2957
-selfhost/wasm32-wasi/perceus_rbtree.emit	3747
-selfhost/x86-64-linux/perceus_rbtree_ck.emit	2918
-selfhost/arm64-linux/perceus_rbtree_ck.emit	3191
-selfhost/wasm32-wasi/perceus_rbtree_ck.emit	4069
+selfhost/x86-64-linux/perceus_rbtree.emit	2600
+selfhost/arm64-linux/perceus_rbtree.emit	2842
+selfhost/wasm32-wasi/perceus_rbtree.emit	3688
+selfhost/x86-64-linux/perceus_rbtree_ck.emit	2795
+selfhost/arm64-linux/perceus_rbtree_ck.emit	3039
+selfhost/wasm32-wasi/perceus_rbtree_ck.emit	4010
 # 2026-11-07: PR #14490 adds QTRLE emitted-size measurements from the local current compiler.
 # Existing limits and tolerances stay unchanged.
 # 2026-11-08: #14770. Pin the measured reduction from the corrected display roots.

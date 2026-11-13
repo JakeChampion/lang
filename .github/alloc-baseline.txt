@@ -1,3 +1,7 @@
+# 2026-11-13: main 629da26337ad, run 43462658703, job 132017621069.
+# Artifact 14058032152 measures 47,750,529 allocations and frees, up from
+# 47,089,912. Record the inherited cost; do not claim a source optimization.
+# The tolerance and the workflow drift limit stay fixed.
 # 2026-11-13: PR #15643, a local scripts/selfhost-alloc-bench run on its tree (main 312303b6 and the
 # const-pattern fixes). It measures 47089912 checker allocations and frees. The perf-x86_64 job
 # 131751756991 measured 47083993 on main 312303b6 and #15634. The checker source of #15600 and #15623
@@ -137,5 +141,5 @@
 x86_64/checker.allocs	46095444
 x86_64/checker.frees	46095444
 # 2026-11-12: main at 74fc6d81, with the worklist and the merges of that day, measures 54,483,586 on the dev container.
-x86_64/checker.allocs	47089912
-x86_64/checker.frees	47089912
+x86_64/checker.allocs	47750529
+x86_64/checker.frees	47750529
