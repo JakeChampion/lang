@@ -884,7 +884,28 @@ function call(name: string, args: filter.Ast[], input: json.JsonValue, e: Env): 
     "to_entries" => to_entries(input),
     "from_entries" => from_entries(input),
     "tostring" => one(to_string(input)),
-    _ => one(json.JString(output.compact(input))),
+    "tojson" => one(json.JString(output.compact(input))),
+    _ => call_more(name, args, input, e),
+  };
+}
+
+function call_more(name: string, args: filter.Ast[], input: json.JsonValue, e: Env): Outputs {
+  return match (name) {
+    "range" => run_range(args, input, e),
+    "sort" => sort(input),
+    "reverse" => reverse(input),
+    "min" => extreme(input, true),
+    "max" => extreme(input, false),
+    "unique" => unique(input),
+    "join" => run_join(args[0], input, e),
+    "flatten" => run_flatten(args, input, e),
+    "any" => quantify(true, args, input, e),
+    "all" => quantify(false, args, input, e),
+    "recurse" => run_recurse(args, input, e),
+    "first" => first(args, input, e),
+    "last" => last(args, input, e),
+    "limit" => run_limit(args[0], args[1], input, e),
+    _ => of_type(name, input),
   };
 }
 
@@ -1136,4 +1157,422 @@ function fold(each: boolean, sources: Outputs, name: string, first: json.JsonVal
     return out;
   }
   return one(state);
+}
+
+// ---- Generators and arrays ----
+
+// `values`, `nulls`, `scalars` and the other selectors by type.
+function of_type(name: string, v: json.JsonValue): Outputs {
+  let t = type_name(v);
+  let nested = t == "array" || t == "object";
+  let keep = match (name) {
+    "values" => t != "null",
+    "nulls" => t == "null",
+    "scalars" => !nested,
+    "iterables" => nested,
+    "arrays" => t == "array",
+    "objects" => t == "object",
+    "booleans" => t == "boolean",
+    "numbers" => t == "number",
+    _ => t == "string",
+  };
+  if (keep) {
+    return one(v);
+  }
+  return ok([]);
+}
+
+// jq takes each start, then each end, then each step.
+function run_range(args: filter.Ast[], input: json.JsonValue, e: Env): Outputs {
+  let froms = one(whole(0));
+  let upto = args[0];
+  if (args.len() > 1) {
+    froms = run(args[0], input, e);
+    upto = args[1];
+  }
+  let out = ok([]);
+  for f in froms.values {
+    let tos = run(upto, input, e);
+    for t in tos.values {
+      if (args.len() < 3) {
+        out = out.then(count(f, t));
+      } else {
+        out = out.then(run_steps(f, t, args[2], input, e));
+      }
+      if (out.failed()) {
+        return out;
+      }
+    }
+    if (tos.failed()) {
+      return Outputs { ...out, error: tos.error };
+    }
+  }
+  return Outputs { ...out, error: froms.error };
+}
+
+function count(from: json.JsonValue, upto: json.JsonValue): Outputs {
+  let json.JNumber(f) = from else {
+    return fail("Range bounds must be numeric");
+  };
+  let json.JNumber(t) = upto else {
+    return fail("Range bounds must be numeric");
+  };
+  let out: json.JsonValue[] = [];
+  let x = number.value(f);
+  let end = number.value(t);
+  while (x < end) {
+    out = out.append(computed(x));
+    x += 1.0;
+  }
+  return ok(out);
+}
+
+function run_steps(from: json.JsonValue, upto: json.JsonValue, by: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+  let bys = run(by, input, e);
+  let out = ok([]);
+  for b in bys.values {
+    out = out.then(steps(from, upto, b));
+    if (out.failed()) {
+      return out;
+    }
+  }
+  return Outputs { ...out, error: bys.error };
+}
+
+// `range(from; upto; by)` compares and adds as `<`, `>` and `+` do, so a
+// bound that is not a number has the order of its type.
+function steps(from: json.JsonValue, upto: json.JsonValue, by: json.JsonValue): Outputs {
+  let direction = order(by, whole(0));
+  let out: json.JsonValue[] = [];
+  if (direction == 0) {
+    return ok(out);
+  }
+  let x = from;
+  while (order(x, upto) * direction < 0) {
+    out = out.append(x);
+    let next = add(x, by);
+    if (next.failed()) {
+      return Outputs { values: out, error: next.error };
+    }
+    x = next.values[0];
+  }
+  return ok(out);
+}
+
+// A stable merge sort in the order of jq.
+function sorted_values(items: json.JsonValue[]): json.JsonValue[] {
+  if (items.len() < 2) {
+    return items;
+  }
+  let half = items.len() / 2;
+  let left: json.JsonValue[] = [];
+  let right: json.JsonValue[] = [];
+  for i in 0..items.len() {
+    if (i < half) {
+      left = left.append(items[i]);
+    } else {
+      right = right.append(items[i]);
+    }
+  }
+  left = sorted_values(left);
+  right = sorted_values(right);
+  let out: json.JsonValue[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < left.len() || j < right.len()) {
+    if (j == right.len() || i < left.len() && order(left[i], right[j]) <= 0) {
+      out = out.append(left[i]);
+      i += 1;
+    } else {
+      out = out.append(right[j]);
+      j += 1;
+    }
+  }
+  return out;
+}
+
+function sort(v: json.JsonValue): Outputs {
+  if let json.JArray(items) = v {
+    return one(json.JArray(sorted_values(items)));
+  }
+  return fail(type_name(v) + " (" + shown(v) + ") cannot be sorted, as it is not an array");
+}
+
+// jq 1.7: `[.[length - 1 - range(0; length)]]`.
+function reverse(v: json.JsonValue): Outputs {
+  let n = length(v);
+  if (n.failed()) {
+    return n;
+  }
+  let out: json.JsonValue[] = [];
+  if let json.JArray(items) = v {
+    let i = items.len() - 1;
+    while (i >= 0) {
+      out = out.append(items[i]);
+      i -= 1;
+    }
+    return one(json.JArray(out));
+  }
+  if (order(n.values[0], whole(0)) == 0) {
+    return one(json.JArray(out));
+  }
+  return fail("Cannot index " + type_name(v) + " with number");
+}
+
+// Of equal values, `min` gives the first and `max` gives the last.
+function extreme(v: json.JsonValue, least: boolean): Outputs {
+  let json.JArray(items) = v else {
+    let what = type_name(v) + " (" + shown(v) + ")";
+    return fail(what + " and " + what + " cannot be iterated over");
+  };
+  if (items.len() == 0) {
+    return one(json.JNull);
+  }
+  let best = items[0];
+  for i in 1..items.len() {
+    let c = order(items[i], best);
+    if (least && c < 0 || !least && c >= 0) {
+      best = items[i];
+    }
+  }
+  return one(best);
+}
+
+function unique(v: json.JsonValue): Outputs {
+  let items = iterate(v);
+  if (items.failed()) {
+    return items;
+  }
+  let json.JArray(_) = v else {
+    let wrapped: json.JsonValue[] = [];
+    for x in items.values {
+      wrapped = wrapped.append(json.JArray([x]));
+    }
+    return fail(type_name(v) + " (" + shown(v) + ") and array (" + shown(json.JArray(wrapped)) + ") cannot be sorted, as they are not both arrays");
+  };
+  let out: json.JsonValue[] = [];
+  for x in sorted_values(items.values) {
+    if (out.len() == 0 || order(out[out.len() - 1], x) != 0) {
+      out = out.append(x);
+    }
+  }
+  return one(json.JArray(out));
+}
+
+function run_join(sep: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+  let seps = run(sep, input, e);
+  let out = ok([]);
+  for s in seps.values {
+    out = out.then(join(input, s));
+    if (out.failed()) {
+      return out;
+    }
+  }
+  return Outputs { ...out, error: seps.error };
+}
+
+// jq 1.7 adds the parts with `+`: a boolean or a number as its text, null as
+// "", and each other value as it is.
+function join(v: json.JsonValue, sep: json.JsonValue): Outputs {
+  let items = iterate(v);
+  if (items.failed()) {
+    return items;
+  }
+  let text: json.JsonValue = json.JNull;
+  for x in items.values {
+    let left = one(json.JString(""));
+    if let json.JString(_) = text {
+      left = add(text, sep);
+    }
+    if (left.failed()) {
+      return left;
+    }
+    let part = x;
+    let t = type_name(x);
+    if (t == "boolean" || t == "number") {
+      part = to_string(x);
+    } else if (t == "null") {
+      part = json.JString("");
+    }
+    let next = add(left.values[0], part);
+    if (next.failed()) {
+      return next;
+    }
+    text = next.values[0];
+  }
+  if (truthy(text)) {
+    return one(text);
+  }
+  return one(json.JString(""));
+}
+
+function run_flatten(args: filter.Ast[], input: json.JsonValue, e: Env): Outputs {
+  if (args.len() == 0) {
+    return flatten(input, whole(-1));
+  }
+  let depths = run(args[0], input, e);
+  let out = ok([]);
+  for d in depths.values {
+    if (order(d, whole(0)) < 0) {
+      return out.then(fail("flatten depth must not be negative"));
+    }
+    out = out.then(flatten(input, d));
+    if (out.failed()) {
+      return out;
+    }
+  }
+  return Outputs { ...out, error: depths.error };
+}
+
+// An array in `v` opens while `depth` is not 0, as `_flatten` of jq 1.7 does.
+function flatten(v: json.JsonValue, depth: json.JsonValue): Outputs {
+  let items = iterate(v);
+  if (items.failed()) {
+    return items;
+  }
+  let out: json.JsonValue[] = [];
+  for x in items.values {
+    let opens = false;
+    if let json.JArray(_) = x {
+      opens = order(depth, whole(0)) != 0;
+    }
+    if (!opens) {
+      out = out.append(x);
+      continue;
+    }
+    let less = subtract(depth, whole(1));
+    if (less.failed()) {
+      return less;
+    }
+    let inner = flatten(x, less.values[0]);
+    if (inner.failed()) {
+      return inner;
+    }
+    if let json.JArray(more) = inner.values[0] {
+      out = out.concat(more);
+    }
+  }
+  return one(json.JArray(out));
+}
+
+// `any` and `all`, with a generator and a condition when the call has them.
+// The first value that decides the answer stops the search.
+function quantify(is_any: boolean, args: filter.Ast[], input: json.JsonValue, e: Env): Outputs {
+  let source = if (args.len() == 2) { run(args[0], input, e) } else { iterate(input) };
+  let cond = if (args.len() == 0) { filter.Identity } else { args[args.len() - 1] };
+  for v in source.values {
+    let conds = run(cond, v, e);
+    for c in conds.values {
+      if (truthy(c) == is_any) {
+        return one(json.JBool(is_any));
+      }
+    }
+    if (conds.failed()) {
+      return Outputs { values: [], error: conds.error };
+    }
+  }
+  if (source.failed()) {
+    return Outputs { values: [], error: source.error };
+  }
+  return one(json.JBool(!is_any));
+}
+
+function run_recurse(args: filter.Ast[], input: json.JsonValue, e: Env): Outputs {
+  if (args.len() == 0) {
+    return recurse(input, filter.Optional(filter.Iterate(filter.Identity)), [], e);
+  }
+  let conds: filter.Ast[] = [];
+  if (args.len() == 2) {
+    conds = [args[1]];
+  }
+  return recurse(input, args[0], conds, e);
+}
+
+// `v`, and then the same for each output of `f` on `v`. With a condition,
+// an output goes on one time for each true value of the condition.
+function recurse(v: json.JsonValue, f: filter.Ast, conds: filter.Ast[], e: Env): Outputs {
+  let out = one(v);
+  let nexts = run(f, v, e);
+  for x in nexts.values {
+    let held = one(json.JBool(true));
+    if (conds.len() > 0) {
+      held = run(conds[0], x, e);
+    }
+    for h in held.values {
+      if (truthy(h)) {
+        out = out.then(recurse(x, f, conds, e));
+        if (out.failed()) {
+          return out;
+        }
+      }
+    }
+    if (held.failed()) {
+      return Outputs { ...out, error: held.error };
+    }
+  }
+  return Outputs { ...out, error: nexts.error };
+}
+
+function first(args: filter.Ast[], input: json.JsonValue, e: Env): Outputs {
+  if (args.len() == 0) {
+    return index(input, whole(0));
+  }
+  let o = run(args[0], input, e);
+  if (o.values.len() > 0) {
+    return one(o.values[0]);
+  }
+  return o;
+}
+
+function last(args: filter.Ast[], input: json.JsonValue, e: Env): Outputs {
+  if (args.len() == 0) {
+    return index(input, whole(-1));
+  }
+  let o = run(args[0], input, e);
+  if (o.failed()) {
+    return Outputs { values: [], error: o.error };
+  }
+  if (o.values.len() == 0) {
+    return one(json.JNull);
+  }
+  return one(o.values[o.values.len() - 1]);
+}
+
+function run_limit(n: filter.Ast, f: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+  let counts = run(n, input, e);
+  let out = ok([]);
+  for c in counts.values {
+    out = out.then(limit(c, f, input, e));
+    if (out.failed()) {
+      return out;
+    }
+  }
+  return Outputs { ...out, error: counts.error };
+}
+
+// jq 1.7 counts down from `n` with `-`, and stops at 0 or less. A negative
+// `n` gives each output.
+function limit(n: json.JsonValue, f: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+  let sign = order(n, whole(0));
+  if (sign == 0) {
+    return ok([]);
+  }
+  let o = run(f, input, e);
+  if (sign < 0) {
+    return o;
+  }
+  let left = n;
+  let kept: json.JsonValue[] = [];
+  for v in o.values {
+    let less = subtract(left, whole(1));
+    if (less.failed()) {
+      return Outputs { values: kept, error: less.error };
+    }
+    left = less.values[0];
+    kept = kept.append(v);
+    if (order(left, whole(0)) <= 0) {
+      return ok(kept);
+    }
+  }
+  return Outputs { values: kept, error: o.error };
 }
