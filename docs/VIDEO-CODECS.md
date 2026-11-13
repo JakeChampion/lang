@@ -394,6 +394,8 @@ The header frame count remains advisory.
 The caller retains and closes the source after success or failure.
 
 The input-buffer limit excludes retained packet events and does not define an exact process-memory bound.
+The shared source buffer transfers an owned read chunk directly when its current window is empty.
+The [source-buffer allocation control](benchmarks/video-source-buffer-2026-11-13/README.md) compares identical reads with one frozen compiler.
 Blocking source reads must run outside the Android loop callback.
 
 IVF support does not establish VP8, VP9, or AV1 software decode support.

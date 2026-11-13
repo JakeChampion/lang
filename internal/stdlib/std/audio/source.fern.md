@@ -10,6 +10,10 @@ An empty successful read means permanent EOF. I/O errors remain distinct from co
 `view` borrows the remaining bytes. `advance` consumes a checked prefix.
 The same source must continue from its current position across calls.
 
+An empty buffer takes ownership of the next chunk without a second byte-array copy.
+A nonempty buffer preserves its unread prefix before it appends the next chunk.
+Shared chunk values retain their original bytes through the normal array ownership rules.
+
 ```fern
 <<*>>=
 // Retain a bounded byte window across short audio source reads.
@@ -79,6 +83,10 @@ function compact(buffer: Buffer): u8[] {
 }
 
 function extend(own buffer: Buffer, own chunk: u8[]): Buffer {
+  if (buffer.available() == 0) {
+    let ended = chunk.len() == 0;
+    return Buffer { ...buffer, bytes: chunk, position: 0, eof: ended };
+  }
   let bytes = if (buffer.position == 0) { buffer.bytes } else { compact(buffer) };
   for byte in chunk {
     bytes = bytes.append(byte);
