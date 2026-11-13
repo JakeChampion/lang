@@ -25,7 +25,7 @@ const (
 var indexedReceivers = map[string]bool{
 	"string": true, "i32": true, "u8": true, "i64": true, "u32": true, "u64": true,
 	"usize": true, "f32": true, "f64": true, "boolean": true, "char": true,
-	"Option": true, "Result": true,
+	"Option": true, "Result": true, "IoError": true, "StreamFault": true,
 }
 
 func buildStdlibMethodIndex(t *testing.T) (map[string]map[string]string, map[string]map[string]string) {
