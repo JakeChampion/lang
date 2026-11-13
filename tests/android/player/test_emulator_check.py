@@ -158,6 +158,30 @@ class ContentSourceTests(unittest.TestCase):
                 with self.assertRaises(AssertionError):
                     check.write_media("content://media/external/video/media/42", path)
 
+    def test_native_content_failure_removes_all_created_items(self):
+        items = ['content://media/external/video/media/' + str(value) for value in (42, 43, 44)]
+        server = Mock(server_address=('127.0.0.1', 12345))
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(check, 'write_fixture'), \
+                patch.object(check, 'handler_for'), \
+                patch.object(check, 'ThreadingHTTPServer', return_value=server), \
+                patch.object(check.threading, 'Thread'), \
+                patch.object(check, 'run_playback'), \
+                patch.object(check, 'native_content_fixture'), \
+                patch.object(check, 'insert_media', side_effect=items), \
+                patch.object(check, 'write_media') as write, \
+                patch.object(check, 'adb') as device, \
+                patch.object(check.subprocess, 'run', side_effect=[None, subprocess.CalledProcessError(1, 'native URI')]) as run:
+            with self.assertRaises(subprocess.CalledProcessError):
+                check.main('player.apk', directory, 'video.apk', 'byte.mp4')
+            self.assertEqual(write.call_args_list[-1].args[0], items[2])
+            self.assertEqual(run.call_args_list[-1].args[0][-2:], ['--native-av-uri', items[2]])
+            deletions = [call.args[-1] for call in device.call_args_list
+                         if call.args[:3] == ('shell', 'content', 'delete')]
+            self.assertEqual(deletions, list(reversed(items)))
+            server.shutdown.assert_called_once()
+            server.server_close.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3803,6 +3803,10 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
   }
   if (ins.str == "exit") {
     s = ssa_load(reg_of, ins.args[0], "x0", s);
+    if (asmcore.process_entry(s)) {
+      s = s.need("task_close_exit");
+      s = s.write("    str x0, [sp, #-16]!\n    bl __fern_task_close_drop\n    ldr x0, [sp], #16\n");
+    }
     if (s.leak_check) {
       s = s.write("    mov x19, x0\n    bl __fern_lc_report_exit\n    mov x0, x19\n");
     }
@@ -6562,12 +6566,18 @@ function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
   s = s.write("    mov x29, sp\n");
   if (asmcore.declares_main(s.funcs)) {
     s = s.write("    bl __fn_main\n");
+    if (s.has_need("task")) {
+      s = s.write("    str x0, [sp, #-16]!\n    bl __fern_task_close_drop\n    ldr x0, [sp], #16\n");
+    }
     if (s.leak_check) {
       s = s.write("    mov x19, x0\n");
       s = s.write("    bl __fern_lc_report\n");
       s = s.write("    mov x0, x19\n");
     }
   } else {
+    if (s.has_need("task")) {
+      s = s.write("    bl __fern_task_close_drop\n");
+    }
     if (s.leak_check) {
       s = s.write("    bl __fern_lc_report\n");
     }
@@ -10964,6 +10974,26 @@ function emit_rt_net(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   return s;
 }
 
+// Release the process-owned close table before the final heap report.
+function emit_task_close_drop(s: asmcore.EmitState): asmcore.EmitState {
+  if (!asmcore.process_entry(s) || !s.has_need("task") && !s.has_need("task_close_exit")) {
+    return s;
+  }
+  s = s.write("    .text\n    .globl __fern_task_close_drop\n__fern_task_close_drop:\n");
+  if (!s.has_need("task")) {
+    return s.write("    ret\n");
+  }
+  s = s.write("    stp x29, x30, [sp, #-16]!\n    adrp x9, __fern_task_state\n    add x9, x9, :lo12:__fern_task_state\n    ldr x0, [x9, #56]\n    cbz x0, .Ltask_close_drop_done\n    str xzr, [x9, #56]\n    ldr x1, [x0]\n    add x1, x1, #1\n    lsl x1, x1, #3\n");
+  if (s.leak_check) {
+    s = lc_rt_req_free(s);
+  }
+  s = s.write("    bl __fern_raw_free\n");
+  if (s.leak_check) {
+    s = lc_rt_uncount(s, "__fern_lc_free_bytes", "__fern_lc_free_count");
+  }
+  return s.write(".Ltask_close_drop_done:\n    ldp x29, x30, [sp], #16\n    ret\n");
+}
+
 function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   if (s.has_need("heap")) {
     s = emit_rt_arena_and_alloc(s, darwin);
@@ -11004,7 +11034,7 @@ function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
   s = emit_san_waf_abort(s);
   s = emit_san_hbo_abort(s);
   s = emit_san_abort(s);
-  return s;
+  return emit_task_close_drop(s);
 }
 
 function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {

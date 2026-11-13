@@ -50,6 +50,7 @@ void AAudioStreamBuilder_setPerformanceMode(void *b, int32_t n) { assert(b == (v
 void AAudioStreamBuilder_setUsage(void *b, int32_t n) { assert(b == (void *)(uintptr_t)123 && n == 1); }
 void AAudioStreamBuilder_setContentType(void *b, int32_t n) { assert(b == (void *)(uintptr_t)123 && n == 2); }
 void AAudioStreamBuilder_setInputPreset(void) { abort(); }
+void AAudioStream_getTimestamp(void) { abort(); }
 void AAudioStreamBuilder_setBufferCapacityInFrames(void *b, int32_t n) { assert(b == (void *)(uintptr_t)123 && n == 12000); }
 int32_t AAudioStreamBuilder_openStream(void *b, void **out) {
     assert(b == (void *)(uintptr_t)123 && count < 16);

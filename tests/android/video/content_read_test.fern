@@ -1,4 +1,5 @@
 import "./content_read";
+import "./audio_content";
 import "std/video/frame";
 import "std/test";
 
@@ -105,11 +106,106 @@ function source_failures(): test.TestOutcome {
   return test.pass();
 }
 
+function audio_limits(): test.TestOutcome {
+  let calls = cell_new(0);
+  let read = (_offset: i64, _count: i32): Result[u8[], frame.VideoError] => {
+    calls.set(calls.get() + 1);
+    return Err(frame.Platform);
+  };
+  for length in [-1i64, 0i64, 2097153i64] {
+    let expected = if (length > 2097152i64) { frame.Limit } else { frame.Header };
+    match (audio_content.open_with(length, read, 0i64)) {
+      Err(value) => {
+        if (value != expected) {
+          return test.fail("AAC content length error before I/O");
+        }
+      },
+      _ => {
+        return test.fail("AAC content length accepted");
+      }
+    }
+  }
+  if (calls.get() != 0) {
+    return test.fail("AAC length guard accessed source");
+  }
+  return test.pass();
+}
+
+function audio_requests(): test.TestOutcome {
+  let calls = cell_new(0);
+  let read = (_offset: i64, _count: i32): Result[u8[], frame.VideoError] => {
+    calls.set(calls.get() + 1);
+    return Err(frame.Platform);
+  };
+  let io = audio_content.input_with(100i64, read);
+  for offset in [-1i64, 101i64, 9223372036854775807i64] {
+    if let Ok(_) = io.seek(offset) {
+      return test.fail("logical seek outside asset");
+    }
+  }
+  for count in [-1, 4097, 2147483647] {
+    match (io.read(count)) {
+      Err(Other(_, message, 22)) => {
+        if (message != "asset read limit") {
+          return test.fail("AAC content request reached I/O");
+        }
+      },
+      _ => {
+        return test.fail("AAC content request guard");
+      }
+    }
+  }
+  if (calls.get() != 0) {
+    return test.fail("AAC request guard accessed source");
+  }
+  return test.pass();
+}
+
+function audio_pattern(offset: i64, count: i32): Result[u8[], frame.VideoError] {
+  if (offset < 0i64 || offset >= 3i64 || count != (3i64 - offset) as i32) {
+    return Err(frame.Platform);
+  }
+  return Ok(if (offset == 0i64) { [0u8, 1u8] } else { [2u8] });
+}
+
+function audio_sizes(first: [u8], second: [u8], end: [u8], calls: i32): boolean {
+  return first.len() == 2 && second.len() == 1 && end.len() == 0 && calls == 2;
+}
+
+function audio_ranges(): test.TestOutcome {
+  let calls = cell_new(0);
+  let read = (offset: i64, count: i32): Result[u8[], frame.VideoError] => {
+    calls.set(calls.get() + 1);
+    return audio_pattern(offset, count);
+  };
+  let io = audio_content.input_with(3i64, read);
+  let first = match (io.read(4096)) { Ok(value) => value, Err(_) => { return test.fail("first short asset read"); } };
+  let second = match (io.read(4096)) { Ok(value) => value, Err(_) => { return test.fail("final asset clamp"); } };
+  let end = match (io.read(1)) { Ok(value) => value, Err(_) => { return test.fail("declared asset EOF"); } };
+  if (!audio_sizes(first, second, end, calls.get())) {
+    return test.fail("relative short-read progress and EOF without I/O");
+  }
+  return test.pass();
+}
+
+function audio_oversized(): test.TestOutcome {
+  let read = (_offset: i64, _count: i32): Result[u8[], frame.VideoError] => Ok([0u8, 1u8, 2u8, 3u8]);
+  let io = audio_content.input_with(3i64, read);
+  let Err(Other(_, message, _)) = io.read(3) else {
+    return test.fail("oversized content callback accepted");
+  };
+  return if (message == "oversized asset read") { test.pass() } else { test.fail("content callback error") };
+}
+
 function main(): i32 {
   let runner = test.new("bounded native content fixture hash");
   runner = runner.it("FIPS abc reference", abc);
   runner = runner.it("independent digests, short reads, and exact two-MiB boundary", digests);
   runner = runner.it("length limits precede all source reads", early_limits);
   runner = runner.it("premature EOF, oversized reads, I/O errors, and declared EOF", source_failures);
+  runner = runner.it("AAC content length guards precede positional reads", audio_limits);
+  runner = runner.it("AAC content seek and request guards precede positional reads", audio_requests);
+  runner = runner.it("AAC relative short reads, final clamp, and declared EOF", audio_ranges);
+  runner = runner.it("AAC content callback cannot exceed its request", audio_oversized);
   return runner.finish();
 }
