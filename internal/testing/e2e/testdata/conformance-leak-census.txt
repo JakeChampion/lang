@@ -95,6 +95,7 @@
 # 2026-11-09: tls_closed_connection_rejects_operations has zero unpaired allocations under RC trace.
 a_binding_arm_can_follow_a_literal_arm               0
 a_builtin_method_does_not_see_the_programs_variants  0
+a_const_in_a_tuple_or_payload_pattern_matches_its_value 0
 a_float_literal_array_takes_the_width_of_its_first_use 0
 a_float_array_or_a_tuple_element_takes_the_type_of_its_first_use 0
 a_function_named_like_an_intrinsic_is_a_plain_call   0
@@ -151,6 +152,7 @@ an_imported_module_does_not_see_the_programs_variants 0
 an_index_read_gives_a_literal_array_its_element_type 0
 an_integer_literal_array_takes_the_element_type_of_append 0
 an_io_error_pattern_beside_std_net                   0
+an_own_parameter_takes_back_a_moved_field            0
 an_unannotated_unit_variant_takes_the_type_of_its_use 0
 an_unannotated_variant_takes_an_array_of_its_enum    0
 append_on_a_literal_array_local_takes_the_width_of_its_destination 0
@@ -286,6 +288,9 @@ checked_int_conversion                               0
 checked_owned_nested_results                         0
 checked_owned_results                                0
 future_array_literal_goes_to_gather                  2
+match_arm_names_a_const                              0
+match_arm_names_a_const_of_its_module                0
+match_on_a_const_scrutinee                           0
 owned_callback_result_composition                    0
 copied_call_results                                  0
 closing_a_socket_two_reactors_watch                  0
@@ -1257,7 +1262,6 @@ shadow_rc_binder_forin                               0
 shadow_rc_loop_carried_redecl                        0
 shadow_rc_struct_sibling_scopes                      0
 shadow_rhs_reads_outer                               0
-shadow_tuple_binder_over_const                       0
 shadowed_builtin_variant                             0
 share_owner_result_survives_aliases                  0
 share_unchecked_gives_own_a_shared_value             0
@@ -1451,6 +1455,7 @@ vec_lane_kernels                                     0
 view_of_branch_value                                 0
 view_param_returned_after_loop                       0
 views_in_aggregates_stay_local                       0
+void_value_arm_falls_through                         0
 void_value_if_statement                              0
 wasi_http_error_code_names                           0
 wasi_http_handler_computes_body                      0

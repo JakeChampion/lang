@@ -1,7 +1,6 @@
-# 2026-11-13: PR #15644, perf-x86_64 job 131763921477 on the merge with main 312303b6.
-# checker.cliff_bytes is 1.77% above its pin and checker.cliff_count is 1.89% above its pin.
-# #15644 changes one function of the checker by four lines. The drift of main gave the growth.
-# Each row moves to its measured value. Keep all tolerances.
+# 2026-11-13: PR #15643, a local scripts/cliff-bench run on its tree. checker.cliff_bytes is 44442920
+# and checker.cliff_count 447302. Main 312303b6 measures 44442648 and 447302. The checker source of
+# #15600 and #15623 is larger. Re-bank both rows. Keep the 1% tolerance.
 # 2026-11-12: PR #15497 at 83222cb2a8, perf-x86_64 job 131205638421.
 # The job measured checker.cliff_bytes at 43667784. A fresh-main local run agrees.
 # Re-bank this row. The 1% tolerance and the cliff count stay unchanged.
@@ -173,7 +172,7 @@
 # This is an inherited main cost of the merges after 710af42c. The 1% tolerance is unchanged.
 # 2026-11-12 (#15474): a local scripts/cliff-bench run on main f2aa998b measures 44,566,616 copied bytes (was 45,149,488), 1.29% less. The win is the new ceiling. The tolerance is unchanged.
 # 2026-11-12 (#15471): `scripts/cliff-bench` measured 42,809,472 copied bytes when a union resolves through its members (was 44,566,616). The 1% tolerance is unchanged.
-x86_64/checker.cliff_bytes	44442656
+x86_64/checker.cliff_bytes	44442920
 # 2026-11-11: Bank checker.cliff_count 378075 -> 373796 after main reverts.
 # Exact CI 42958185608 / job 130320191632 measures source ca80bd07aba3.
 # That source tree equals main 38399ecf. The 1% tolerance stays unchanged.

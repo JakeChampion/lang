@@ -453,6 +453,24 @@ pub function back_copy_call(ins: SInst): boolean {
   return ins.kind_tag == CALL && ins.result >= 0 && ins.str == "__fern_bytes_append_back";
 }
 
+pub function reuse_alloc_call(ins: SInst): boolean {
+  return ins.kind_tag == CALL && ins.result >= 0 && ins.str == "__fern_alloc_reuse" && ins.args.len() == 2;
+}
+
+// The imm of a reuse allocation whose token is null (fresh_boxes).
+pub const REUSE_NULL: i32 = 7;
+
+// A reuse allocation that always allocates.
+pub function fresh_alloc_call(ins: SInst): boolean {
+  return reuse_alloc_call(ins) && ins.imm == REUSE_NULL;
+}
+
+// A reuse allocation that calls only when its token is null or has another
+// size.
+pub function inline_reuse_call(ins: SInst): boolean {
+  return reuse_alloc_call(ins) && ins.imm != REUSE_NULL;
+}
+
 // A call that the allocator counts: it returns, and its result is not the
 // block's own return value.
 pub function counted_call(blk: SBlock, k: i32): boolean {
@@ -498,6 +516,8 @@ pub function cold_positions(f: SFunc, size: boolean, back: boolean): i32[] {
         }
       } else if (cold[bi] && inst_is_call(ins.kind_tag) && !never_returns(ins) && !returns_call(blk, k)) {
         kind = COLD_BRANCH;
+      } else if (!size && inline_reuse_call(ins)) {
+        kind = COLD_SLOW;
       }
       out = out.append(kind);
     }
@@ -3883,6 +3903,59 @@ pub function split_tokens(f: SFunc): SFunc {
     g = token_split(g, at);
   }
   return g;
+}
+
+// Marks each reuse allocation whose token is null.
+pub function fresh_boxes(f: SFunc): SFunc {
+  if (!has_reuse_alloc(f)) {
+    return f;
+  }
+  let defs = inst_defs(f);
+  let at = block_positions(f);
+  let blocks = f.blocks;
+  for bi in 0..f.blocks.len() {
+    let b = f.blocks[bi];
+    let insts = b.insts;
+    for k in 0..b.insts.len() {
+      let ins = b.insts[k];
+      if (reuse_alloc_call(ins) && null_token(f, at, defs, b, ins.args[0])) {
+        insts = insts.with(k, SInst { ...ins, imm: REUSE_NULL });
+      }
+    }
+    blocks = blocks.with(bi, SBlock { ...b, insts: insts });
+  }
+  return SFunc { ...f, blocks: blocks };
+}
+
+function has_reuse_alloc(f: SFunc): boolean {
+  for b in f.blocks {
+    for ins in b.insts {
+      if (reuse_alloc_call(ins)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// The token is the constant, or the block is the null side of a test of it.
+function null_token(f: SFunc, at: i32[], defs: SInst[], b: SBlock, tok: i32): boolean {
+  if (const_is(defs, tok, 0i64)) {
+    return true;
+  }
+  if (b.preds.len() != 1) {
+    return false;
+  }
+  let p = position_of(at, b.preds[0]);
+  if (p < 0) {
+    return false;
+  }
+  let term = f.blocks[p].term;
+  let side = token_test(f.blocks[p], defs, tok);
+  if (side == 1) {
+    return term.f == b.id && term.t != b.id;
+  }
+  return side == 0 && term.t == b.id && term.f != b.id;
 }
 
 // p, t, f and m are block positions: p ends in the uniqueness test, t and f

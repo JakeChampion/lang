@@ -1,7 +1,7 @@
-# 2026-11-13: PR #15644, perf-x86_64 job 131763921477 on the merge with main 312303b6.
-# Forty .bytes rows are 1.0% to 4.0% above their pins, on arm64-linux and x86-64-linux, the
-# rows of startup and int_loop among them. Those programs import no stdlib module, so #15644
-# does not move them. The drift of main gave the growth. Each row moves to its measured value.
+# 2026-11-13: PR #15643, perf-x86_64 job 131751756991 and perf-aarch64 job 131751756801 on main
+# 312303b6. Forty profile rows grew 48 to 96 bytes on x86-64 and arm64. The growth is in each program,
+# so it is in the runtime or in the startup code of main, not in one benchmark. Each row moves to its
+# measured value. Keep all tolerances.
 # 2026-11-10: PR #15089 retains the revised HTTP repair from #15087.
 # Bank measured HTTP code reductions after main c9547605. Keep all tolerances.
 # Evidence: docs/benchmarks/video-avc-pps-main-2026-11-10/.

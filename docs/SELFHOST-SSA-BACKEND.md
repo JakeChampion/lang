@@ -71,7 +71,9 @@ lowered function it:
    caller brings its `&&` or `||` as such a phi), and prunes again;
 4. once the certifier has read that form, gives each side of a uniqueness
    test its own copy of the blocks that test the reuse token again, with
-   each of those tests decided (`ssa.split_tokens`), then turns each branch whose two arms
+   each of those tests decided (`ssa.split_tokens`), marks each reuse
+   allocation whose token is null so that it calls the allocator directly
+   (`ssa.fresh_boxes`), then turns each branch whose two arms
    compute a few pure integer values and meet again, at a join's phis or at
    a return each, into straight-line code (`ssa.select_branches`): the arms'
    instructions move up into the branching block and each value they chose
@@ -231,11 +233,12 @@ net-bench hello server is 2,206,008 bytes on x86-64 by default and
 
 The rest of the track, in order:
 
-1. The other hand-written helpers with arguments (`str_concat`,
-   `alloc_reuse`), each by its own argument order. `str_eq` and
-   `arr_inc_elems` have their `.r` entries, and `str_eq` answers unequal
-   lengths, and a first byte that differs from a literal operand's, inline
-   before calling its entry.
+1. The other hand-written helper with arguments (`str_concat`), by its own
+   argument order. `str_eq`, `arr_inc_elems` and `alloc_reuse` have their
+   `.r` entries. `str_eq` answers unequal lengths, and a first byte that
+   differs from a literal operand's, inline before calling its entry.
+   `alloc_reuse` returns a token of the right size inline, and calls its
+   entry only for a token of another size (`ssa.inline_reuse_call`).
 2. Indirect calls, function addresses, closures and dyn dispatch move to
    the `.r` entries together — the one step that can miscompile silently,
    since both symbols exist.

@@ -1,11 +1,7 @@
-# 2026-11-13: PR #15644, perf-x86_64 job 131763921477 on the merge with main 312303b6.
-# x86_64/deflate_encode.text measured 7252 against a pin of 7166, 1.20% above it. The change
-# that moved the row is not known. The row moves to its measured value. Keep all tolerances.
-# 2026-11-13: PR #15644, perf-aarch64 job 131763923348 on the merge with main 312303b6.
-# aarch64/deflate_encode.text measured 7910 against a pin of 7815, 1.22% above it. Its .ir row
-# is 0.52% below its pin. #15644 moves the usize functions from std/u64 to std/usize, and
-# deflate_encode calls none of them. The change that moved the row is not known.
-# The row moves to its measured value. Keep all tolerances.
+# 2026-11-13: PR #15643, perf-x86_64 job 131751756991 and perf-aarch64 job 131751756801 on the merge of
+# #15634 with main 312303b6. #15609 changed the deflate encoder, and deflate_encode.text grew 1.2% on
+# both targets. #15634 changes only the checker, so these are values of main. Each row moves to its
+# measured value. Keep all tolerances.
 # 2026-11-13: PR #15598, perf-aarch64 job 131666038838 on the merge with main b7e60e3b.
 # The four aarch64 perceus_rbtree rows are 6.1% to 6.4% below their pins. 29695657 pinned the
 # x86_64 rows that #15596 moved, and not these. #15598 changes signatures in std/async and

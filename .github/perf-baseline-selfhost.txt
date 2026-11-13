@@ -1,7 +1,6 @@
-# 2026-11-13: PR #15644, perf-x86_64 job 131763921477 on the merge with main 312303b6.
-# Nine emit rows moved. deflate_decode on wasm and deflate_encode on arm64 and wasm grew 1.0%
-# to 3.2%. perceus_rbtree and perceus_rbtree_ck fell 2.6% to 6.8% on the three targets.
-# #15644 does not change code generation. Each row moves to its measured value.
+# 2026-11-13: PR #15643, the same jobs as perf-baseline.txt on main 312303b6. The deflate emit rows of
+# #15609 grew 1.0% to 3.2%, and the perceus_rbtree rows are 2.6% to 6.8% below their pins. Each row
+# moves to its measured value. Keep all tolerances.
 # 2026-11-12: main 6f8937ce, run 43285985869, perf-x86_64 job 131423863245.
 # The ssa changes of that day grew the emit of perceus_rbtree and perceus_rbtree_ck 5.0% to 8.1%
 # on the three targets. Each row moves to its measured value. Keep all tolerances.

@@ -138,6 +138,30 @@ function test_gain(): test.TestOutcome {
   return test.assert_eq(id3_gain.title + " " + ((id3_gain.gain * 100.0).round() as i32).to_string() + " " + ((tags.read(flac_of("REPLAYGAIN_TRACK_GAIN=+2.5 dB")).gain * 100.0).round() as i32).to_string() + " " + ((tags.read(flac_of("R128_TRACK_GAIN=-512")).gain * 100.0).round() as i32).to_string() + " " + ((tags.none().gain * 100.0) as i32).to_string(), "Song -648 250 300 0");
 }
 
+// A gain in hundredths of a dB.
+function cents(gain: f64): string {
+  return ((gain * 100.0).round() as i32).to_string();
+}
+
+function test_album_gain(): test.TestOutcome {
+  let user = (name: string, value: string): u8[] => joined([bytes_of("TXXX"), wire.put_be([], (name.len() + value.len() + 2) as u64, 4), [0u8, 0u8, 0u8], bytes_of(name), [0u8], bytes_of(value)]);
+  let id3_gains = tags.read(id3(3u8, 0u8, joined([user("REPLAYGAIN_TRACK_GAIN", "-6.48 dB"), user("REPLAYGAIN_ALBUM_GAIN", "-7.25 dB")])));
+  let list = joined([comment("fern encoder"), wire.put_le([], 2u64, 4), comment("replaygain_album_gain=+1.5 dB"), comment("R128_ALBUM_GAIN=-768")]);
+  let info: u8[] = [];
+  for i in 0..34 {
+    info = info.append(0u8);
+  }
+  let flac = tags.read(joined([bytes_of("fLaC"), [0u8, 0u8, 0u8, 34u8], info, [132u8], wire.put_be([], list.len() as u64, 3), list]));
+  // A free item of MP4 has its name in a `name` box after 4 bytes of
+  // version and flags.
+  let free = (name: string, value: string): u8[] => box(bytes_of("----"), joined([box(bytes_of("mean"), joined([[0u8, 0u8, 0u8, 0u8], bytes_of("com.apple.iTunes")])), box(bytes_of("name"), joined([[0u8, 0u8, 0u8, 0u8], bytes_of(name)])), box(bytes_of("data"), joined([[0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 0u8, 0u8], bytes_of(value)]))]));
+  let ilst = joined([free("replaygain_track_gain", "-2.00 dB"), free("replaygain_album_gain", "-3.10 dB"), free("iTunNORM", "1"), item(named("nam"), bytes_of("Song"))]);
+  let m4a = tags.mp4(box(bytes_of("moov"), box(bytes_of("udta"), box(bytes_of("meta"), joined([[0u8, 0u8, 0u8, 0u8], box(bytes_of("ilst"), ilst)])))));
+  let got = [cents(id3_gains.gain), cents(id3_gains.album_gain), cents(flac.gain), cents(flac.album_gain), m4a.title, cents(m4a.gain), cents(m4a.album_gain), cents(tags.none().album_gain)];
+  // The second album gain of the FLAC file is that of Opus: -768 / 256 + 5.
+  return test.assert_eq(got.join(" "), "-648 -725 0 200 Song -200 -310 0");
+}
+
 function comment(s: string): u8[] {
   return joined([wire.put_le([], s.len() as u64, 4), bytes_of(s)]);
 }
@@ -278,6 +302,7 @@ function main(): i32 {
   r = r.it("a genre is a text or a number of the ID3v1 list", test_genres);
   r = r.it("a file holds its lyrics", test_lyrics);
   r = r.it("a file holds the gain of its track", test_gain);
+  r = r.it("a file holds the gain of its album", test_album_gain);
   r = r.it("bytes that are not tags give empty tags", test_bytes_that_are_not_tags);
   return r.finish();
 }

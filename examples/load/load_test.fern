@@ -1,11 +1,14 @@
 // The parts of the load generator that do no I/O: the options, the request,
-// the histogram, the end of each response, and the summary.
+// the timetable of -q, the histogram, the end of each response, and the
+// summaries.
 import "std/array";
+import "std/json";
 import "std/test";
 import "std/utf8";
 import "./histogram";
 import "./options";
 import "./report";
+import "./schedule";
 
 function shown(args: string[]): string {
   match (options.parse(args)) {
@@ -79,6 +82,89 @@ function test_refusals(): test.TestOutcome {
     "refused: -H Content-Length is not allowed: the tool frames the body of -d itself",
     "refused: https URLs are not supported yet: use an http URL",
     "refused: ftp://a/ is not an http URL",
+  ]);
+}
+
+function rate_shown(args: string[]): string {
+  match (options.parse(args)) {
+    options.Run(o) => {
+      let q = match (o.rate) {
+        Some(r) => r.to_string(),
+        None => "none",
+      };
+      return f"q={q} json={o.json}";
+    },
+    options.Help => {
+      return "help";
+    },
+    options.Refused(why) => {
+      return "refused: " + why;
+    }
+  }
+  return "";
+}
+
+function test_rate_options(): test.TestOutcome {
+  let got = [
+    rate_shown(["http://h/"]),
+    rate_shown(["-q", "100", "http://h/"]),
+    rate_shown(["-q0.5", "--output-format", "json", "--latency-correction", "http://h/"]),
+    rate_shown(["--output-format", "text", "-q", "2e3", "http://h/"]),
+    rate_shown(["-q", "0", "http://h/"]),
+    rate_shown(["-q", "-5", "http://h/"]),
+    rate_shown(["-q", "nan", "http://h/"]),
+    rate_shown(["-q", "1e10", "http://h/"]),
+    rate_shown(["-q", "fast", "http://h/"]),
+    rate_shown(["http://h/", "-q"]),
+    rate_shown(["--output-format", "csv", "http://h/"]),
+    rate_shown(["http://h/", "--output-format"]),
+  ];
+  return test.assert_eq_array(got, [
+    "q=none json=false",
+    "q=100 json=false",
+    "q=0.5 json=true",
+    "q=2000 json=false",
+    "refused: -q 0 must be more than 0 and not more than 1000000000",
+    "refused: -q -5 must be more than 0 and not more than 1000000000",
+    "refused: -q nan must be more than 0 and not more than 1000000000",
+    "refused: -q 1e10 must be more than 0 and not more than 1000000000",
+    "refused: -q fast is not a rate such as 100 or 0.5",
+    "refused: -q needs a value",
+    "refused: --output-format csv is not supported: use text or json",
+    "refused: --output-format needs a value",
+  ]);
+}
+
+// A fake clock: at 1000 requests per second, one connection is free at each
+// time of `free`, and gets the response at the same index of `done`. The
+// first response takes 3 ms, so the next three requests go out late, and
+// each counts the wait in its latency.
+function test_schedule(): test.TestOutcome {
+  let s = schedule.fixed(1000000, 1000.0);
+  let free: i64[] = [1000000, 4000000, 4100000, 4200000, 5000000];
+  let done: i64[] = [4000000, 4100000, 4200000, 4300000, 5100000];
+  let latencies: i64[] = [];
+  for k in 0..free.len() {
+    match (s.starts(k as i64, free[k])) {
+      Some(start) => {
+        latencies = latencies.append(done[k] - start);
+      },
+      None => {
+        return test.fail(f"request {k} is not due at {free[k]}");
+      }
+    }
+  }
+  if (s.starts(4, 4300000).is_some() || s.starts(4, 4999999).is_some()) {
+    return test.fail("request 4 starts before it is due at 5000000");
+  }
+  let third = schedule.fixed(0, 3.0);
+  let open = schedule.closed(7);
+  let waits: i64[] = [];
+  for now in [2500000, 3999999, 4100000, 6000000] {
+    waits = waits.append(s.wait(4, now as i64).as_nanos());
+  }
+  return test.assert_eq_array(latencies.concat([s.due(0), s.due(5), third.due(1), third.due(3), open.starts(9, 123).unwrap_or(0)]).concat(waits), [
+    3000000, 2100000, 1200000, 300000, 100000, 1000000, 6000000, 333333333, 1000000000, 123, 2000000, 1000000, 0, 0,
   ]);
 }
 
@@ -222,6 +308,33 @@ function test_summary_without_responses(): test.TestOutcome {
   return test.assert_eq(t.summary(500), want);
 }
 
+function test_json(): test.TestOutcome {
+  let t = report.tally().response(200, 1000000).response(404, 3000000).response(200, 2000000).error("connection closed").error(report.ABORTED);
+  let want = "{\n  \"summary\": {\n    \"successRate\": 0.75,\n    \"total\": 0.01,\n    \"slowest\": 0.003,\n    \"fastest\": 0.001,\n    \"average\": 0.002,\n    \"requestsPerSec\": 500.0\n  },\n  \"metrics\": {\n    \"success_rate\": 0.75,\n    \"requests_per_sec\": 500.0,\n    \"latency_ms\": {\n      \"min\": 1.0,\n      \"mean\": 2.0,\n      \"p50\": 2.001,\n      \"p95\": 3.0,\n      \"p99\": 3.0,\n      \"max\": 3.0\n    }\n  },\n  \"latencyPercentiles\": {\n    \"p10\": 0.001000447,\n    \"p25\": 0.001000447,\n    \"p50\": 0.002000895,\n    \"p75\": 0.003,\n    \"p90\": 0.003,\n    \"p95\": 0.003,\n    \"p99\": 0.003,\n    \"p99.9\": 0.003,\n    \"p99.99\": 0.003\n  },\n  \"statusCodeDistribution\": {\n    \"200\": 2,\n    \"404\": 1\n  },\n  \"errorDistribution\": {\n    \"aborted due to deadline\": 1,\n    \"connection closed\": 1\n  }\n}";
+  return test.assert_eq(t.json(10000000), want);
+}
+
+function test_json_without_responses(): test.TestOutcome {
+  let t = report.tally().error("Connection refused").error("Connection refused");
+  let want = "{\n  \"summary\": {\n    \"successRate\": 0.0,\n    \"total\": 5e-7,\n    \"slowest\": null,\n    \"fastest\": null,\n    \"average\": null,\n    \"requestsPerSec\": 4000000.0\n  },\n  \"metrics\": {\n    \"success_rate\": 0.0,\n    \"requests_per_sec\": 4000000.0,\n    \"latency_ms\": {\n      \"min\": null,\n      \"mean\": null,\n      \"p50\": null,\n      \"p95\": null,\n      \"p99\": null,\n      \"max\": null\n    }\n  },\n  \"latencyPercentiles\": {\n    \"p10\": null,\n    \"p25\": null,\n    \"p50\": null,\n    \"p75\": null,\n    \"p90\": null,\n    \"p95\": null,\n    \"p99\": null,\n    \"p99.9\": null,\n    \"p99.99\": null\n  },\n  \"statusCodeDistribution\": {},\n  \"errorDistribution\": {\n    \"Connection refused\": 2\n  }\n}";
+  return test.assert_eq(t.json(500), want);
+}
+
+function test_numbers(): test.TestOutcome {
+  let got: string[] = [];
+  for x in [1.0, 0.0, 0.25, 1234.5, 1e-7, 123456789012.0] {
+    match (report.number(x)) {
+      json.JNumber(text) => {
+        got = got.append(text);
+      },
+      _ => {
+        got = got.append("not a number");
+      }
+    }
+  }
+  return test.assert_eq_array(got, ["1.0", "0.0", "0.25", "1234.5", "1e-7", "123456789012.0"]);
+}
+
 function test_units(): test.TestOutcome {
   let got: string[] = [];
   for ns in [999, 1000, 999999, 1000000, 999999999, 1000000000] {
@@ -234,12 +347,17 @@ function main(): i32 {
   let r = test.new("load");
   r = r.it("the options of oha, in any order", test_options);
   r = r.it("each invalid option gets a message", test_refusals);
+  r = r.it("-q and --output-format", test_rate_options);
+  r = r.it("the timetable of -q counts the wait for a busy connection", test_schedule);
   r = r.it("the request has the method, the target, the fields and the body", test_request);
   r = r.it("the buckets cover every value with three significant digits", test_buckets);
   r = r.it("the percentiles, the extremes and the mean", test_percentiles);
   r = r.it("a response is complete only when its framing says so", test_framing);
   r = r.it("the summary has the layout of oha", test_summary);
   r = r.it("a run with no response has no latency lines", test_summary_without_responses);
+  r = r.it("the JSON summary has the keys and units of oha", test_json);
+  r = r.it("the JSON latencies of a run with no response are null", test_json_without_responses);
+  r = r.it("a JSON number is as serde_json writes an f64", test_numbers);
   r = r.it("the unit follows the slowest latency", test_units);
   return r.finish();
 }

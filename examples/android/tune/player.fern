@@ -77,7 +77,7 @@ pub struct Player { model: tune.Model, deck: Option[engine.Voice], incoming: Opt
 // deck that the sound did not take yet, and what the player shows for it.
 // `voice` is None when the track cannot fade in, for example at another
 // rate.
-pub struct Incoming { track: i32, voice: Option[engine.Voice], pending: i32[], gain: f64, art: Option[draw.Image], lyrics: tune.Line[], length_ms: i64 }
+pub struct Incoming { track: i32, voice: Option[engine.Voice], pending: i32[], gain: tune.Gain, art: Option[draw.Image], lyrics: tune.Line[], length_ms: i64 }
 
 // A player with the state `model` and no deck.
 pub function wrap(own model: tune.Model): Player {
@@ -85,7 +85,7 @@ pub function wrap(own model: tune.Model): Player {
 }
 
 // A file of a track that the player opened, with what it shows for it.
-struct Opened { deck: engine.Deck, art: Option[draw.Image], lyrics: tune.Line[], gain: f64 }
+struct Opened { deck: engine.Deck, art: Option[draw.Image], lyrics: tune.Line[], gain: tune.Gain }
 
 // The track `i` opened, or None when the player cannot play its file.
 function opened(dev: Device, m: tune.Model, i: i32): Option[Opened] {
@@ -102,7 +102,7 @@ function opened(dev: Device, m: tune.Model, i: i32): Option[Opened] {
     art = dev.decode(picture, ART, ART);
   }
   let told = tags.read(deck.bytes);
-  return Some(Opened { deck: deck, art: art, lyrics: lyrics(dev, path, told.lyrics), gain: told.gain });
+  return Some(Opened { deck: deck, art: art, lyrics: lyrics(dev, path, told.lyrics), gain: tune.Gain { track: told.gain, album: told.album_gain } });
 }
 
 // The lyrics of the track at `path`: those of the LRC file with its name,
@@ -553,7 +553,7 @@ function fading_in(dev: Device, m: tune.Model, left_ms: i64, fade_ms: i64, own i
   }
   let none: Option[engine.Voice] = None;
   let Some(o) = opened(dev, m, next) else {
-    return Some(Incoming { track: next, voice: none, pending: [], gain: 0.0, art: None, lyrics: [], length_ms: 0i64 });
+    return Some(Incoming { track: next, voice: none, pending: [], gain: tune.no_gain(), art: None, lyrics: [], length_ms: 0i64 });
   };
   let Opened { deck, art, lyrics: words, gain } = o;
   let length = deck.duration_ms();
@@ -573,7 +573,7 @@ function mixed(own inc: Incoming, ready: i32[], from: i32, t0: f64, t1: f64, m: 
     return (Incoming { track: track, voice: None, pending: pending, gain: gain, art: art, lyrics: words, length_ms: length_ms }, ready);
   };
   let n = ready.len() - from;
-  let (moved, theirs) = filled(v, pending, n, m.speed as f64 / 100.0, m.pitch, if (m.level) { gain } else { 0.0 });
+  let (moved, theirs) = filled(v, pending, n, m.speed as f64 / 100.0, m.pitch, tune.leveled(m, gain));
   let take = n.min(theirs.len());
   let out = array.slice(ready, 0, from).concat(crossed(array.slice(ready, from, ready.len()), array.slice(theirs, 0, take), t0, t1, m.sound.channels));
   return (Incoming { track: track, voice: Some(moved), pending: array.slice(theirs, take, theirs.len()), gain: gain, art: art, lyrics: words, length_ms: length_ms }, out);
@@ -604,7 +604,7 @@ function pumped(dev: Device, own m: tune.Model, own deck: Option[engine.Voice], 
   };
   let sound = m.sound;
   let fresh = m.pending.len();
-  let (d, ready) = filled(first, m.pending, sound.rate * sound.channels / READY_PARTS, m.speed as f64 / 100.0, m.pitch, if (m.level) { m.gain } else { 0.0 });
+  let (d, ready) = filled(first, m.pending, sound.rate * sound.channels / READY_PARTS, m.speed as f64 / 100.0, m.pitch, tune.leveled(m, m.gain));
   let fade_ms = m.fade_s as i64 * 1000i64;
   let left = d.deck.duration_ms() - d.deck.position_ms();
   let each_ms = (ready.len() - fresh) as i64 * 1000i64 / ((sound.rate * sound.channels).max(1) as i64) * (m.speed as i64) / 100i64;

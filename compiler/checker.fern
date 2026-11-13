@@ -23033,8 +23033,9 @@ function lu_reads_path(f: LuFacts, line: i32, col: i32, field: string): boolean 
 function lu_stmts_settle(reach: LuReach, stmts: ast.Stmt[], name: string): i32 {
   let chain = LuChain { flag: "", settles: true, result: LU_NOT_ARM };
   for st in stmts {
-    if (lu_assigns_whole(st, name)) {
-      return LU_SETTLED;
+    let whole = lu_whole_assign(reach, st, name);
+    if (whole != LU_CONTINUES) {
+      return whole;
     }
     chain = lu_chain_next(reach, st, name, chain);
     let r = lu_settle_step(reach, st, name, chain);
@@ -23356,11 +23357,19 @@ function lu_call_never_returns(e: ast.Expr, noret: util.NameIndex, bound: boolea
   return false;
 }
 
-function lu_assigns_whole(st: ast.Stmt, name: string): boolean {
-  if let ast.StmtAssign(a) = st {
-    return a.target == name && astwalk.count_ident_expr(a.value, name) == 0;
+// A whole assignment to name settles unless its value reads the taken value.
+// The value is read before the store. Another statement continues.
+function lu_whole_assign(reach: LuReach, st: ast.Stmt, name: string): i32 {
+  let ast.StmtAssign(a) = st else {
+    return LU_CONTINUES;
+  };
+  if (a.target != name) {
+    return LU_CONTINUES;
   }
-  return false;
+  if (lu_reach_reads_expr(reach, a.value, name)) {
+    return LU_LIVE;
+  }
+  return LU_SETTLED;
 }
 
 function lu_live_from(noret: util.NameIndex, frames: LuFrame[], level: i32, name: string, scope: i32): boolean {
