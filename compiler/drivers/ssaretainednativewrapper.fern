@@ -129,22 +129,24 @@ function header_checks(rows: ssaprepare.Emitted[], row: ssaprepare.Emitted, bloc
   for invalid in [ssa.SInst { ...op, args: [incoming] }, ssa.SInst { ...op, imm: 8 }] {
     check(rest.append(changed_instruction(row, block, instruction, invalid)), arch, false);
   }
-  let comparisons = 0;
-  let shape_constants = 0;
+  let comparison_found = false;
+  let shape_found = false;
   let contracts = selected.contracts(row);
   let old_shape = semrecords.name_of(contracts[0].params[0]);
   for index in 0..b.insts.len() {
     let comparison = b.insts[index];
     if (shape_comparison(comparison, op.result)) {
+      require(!comparison_found, 96);
       check(rest.append(changed_instruction(row, block, index, ssa.SInst { ...comparison, imm: 32 })), arch, false);
-      comparisons += 1;
+      comparison_found = true;
     }
     if (comparison.kind_tag == ssa.SHAPE_ADDR) {
+      require(!shape_found, 96);
       check(rest.append(changed_instruction(row, block, index, ssa.SInst { ...comparison, str: old_shape })), arch, false);
-      shape_constants += 1;
+      shape_found = true;
     }
   }
-  require(comparisons == 1 && shape_constants == 1, 96);
+  require(comparison_found && shape_found, 96);
 }
 
 function allocation_flags(rows: ssaprepare.Emitted[], row: ssaprepare.Emitted, block: i32, instruction: i32, arch: string): void {
@@ -158,23 +160,25 @@ function allocation_flags(rows: ssaprepare.Emitted[], row: ssaprepare.Emitted, b
 
 function shape_guards(rows: ssaprepare.Emitted[], row: ssaprepare.Emitted, arch: string): void {
   let f = row.body.formed.f;
-  let headers = 0;
-  let allocations = 0;
+  let header_found = false;
+  let allocation_found = false;
   for block in 0..f.blocks.len() {
     let b = f.blocks[block];
     for instruction in 0..b.insts.len() {
       if (shape_header(b.insts[instruction])) {
+        require(!header_found, 97);
         header_checks(rows, row, block, instruction, arch);
-        headers += 1;
+        header_found = true;
       }
       let op = b.insts[instruction];
       if (ssa.reuse_alloc_call(op) && op.imm == ssa.REUSE_SPLIT) {
+        require(!allocation_found, 97);
         allocation_flags(rows, row, block, instruction, arch);
-        allocations += 1;
+        allocation_found = true;
       }
     }
   }
-  require(headers == 1 && allocations == 1, 97);
+  require(header_found && allocation_found, 97);
 }
 
 function boundary(rows: ssaprepare.Emitted[], row: ssaprepare.Emitted, arch: string): void {
