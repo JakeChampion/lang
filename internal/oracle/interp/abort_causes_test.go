@@ -11,7 +11,7 @@ func TestAbortCausesMatchTheCompiler(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, cause := range []string{CauseArrOOB, CauseStrOOB, CauseSliceRange, CauseAllocSize} {
+	for _, cause := range []string{CauseArrOOB, CauseStrOOB, CauseSliceRange, CauseAllocSize, CauseRecursion} {
 		if !strings.Contains(string(src), "return \""+cause+"\";") {
 			t.Errorf("compiler/aborts.fern has no cause line %q", cause)
 		}

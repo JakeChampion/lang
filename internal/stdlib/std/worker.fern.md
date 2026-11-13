@@ -25,7 +25,7 @@ Every other engine runs the worker on the `Inline` scheduler, which runs the bod
 A `Worker` is `@must_consume`: a program joins every worker it spawns (E067).
 `join` consumes the worker and returns its result. A second join is refused (E051).
 `poll` never waits. It consumes the worker and returns `Finished` with the result, or `Running` with the worker, which the caller polls or joins later.
-A worker that exits with a signal or without a result stops the program with exit 134.
+A worker that exits with a signal or without a result stops the program with exit 134. A call of `exit` in a worker body is such a worker. The two interpreters run a body in the process of the program, and they stop the same way.
 A process worker ends when its parent ends: it gets SIGTERM. On Linux and Android the kernel sends it. macOS has no such signal, so a watchdog process sends it. The watchdog waits for the exit of the parent or of the worker, with kqueue.
 
 ## Executable example

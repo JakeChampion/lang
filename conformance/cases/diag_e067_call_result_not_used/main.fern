@@ -1,0 +1,17 @@
+// A call whose result is a `@must_consume` value, written as a statement,
+// drops the value and its obligation.
+@must_consume
+struct Ticket { id: i32 }
+
+function issue(id: i32): Ticket {
+    return Ticket { id: id };
+}
+
+function redeem(own t: Ticket): i32 {
+    return t.id;
+}
+
+function main(): i32 {
+    issue(1);
+    return redeem(issue(2));
+}

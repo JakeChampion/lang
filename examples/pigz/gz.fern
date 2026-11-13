@@ -1,0 +1,257 @@
+// The parts of pigz that do no I/O: the options, the names of the output
+// files, the gzip header, and the messages for a stream that does not decode.
+import "std/deflate" as deflate;
+import "std/hash/crc32";
+import "std/string";
+
+pub struct Options {
+  decompress: boolean,
+  stdout: boolean,
+  force: boolean,
+  keep: boolean,
+  test: boolean,
+  level: i32,
+  files: string[],
+}
+
+pub enum Parsed {
+  Run(Options),
+  Abort(string),
+}
+
+function defaults(): Options {
+  return Options { decompress: false, stdout: false, force: false, keep: false, test: false, level: 6, files: [] };
+}
+
+// Options can come before and after the file names, as in pigz. `--` ends
+// the options, and `-` is the standard input.
+pub function parse(args: string[]): Parsed {
+  let o = defaults();
+  let options = true;
+  for arg in args {
+    if (!options || arg == "-" || !arg.starts_with("-")) {
+      o = Options { ...o, files: o.files.append(arg) };
+      continue;
+    }
+    if (arg == "--") {
+      options = false;
+      continue;
+    }
+    match (option(o, arg)) {
+      Run(next) => {
+        o = next;
+      },
+      Abort(why) => {
+        return Abort(why);
+      }
+    }
+  }
+  return Run(o);
+}
+
+function option(o: Options, arg: string): Parsed {
+  if (!arg.starts_with("--")) {
+    return shorts(o, arg);
+  }
+  match (long(o, arg)) {
+    Some(next) => {
+      return Run(next);
+    },
+    None => {
+      return Abort("invalid option: " + arg);
+    }
+  }
+  return Abort("invalid option: " + arg);
+}
+
+function long(o: Options, arg: string): Option[Options] {
+  if (arg == "--stdout" || arg == "--to-stdout") {
+    return Some(Options { ...o, stdout: true });
+  }
+  if (arg == "--decompress" || arg == "--uncompress") {
+    return Some(Options { ...o, decompress: true });
+  }
+  if (arg == "--force") {
+    return Some(Options { ...o, force: true });
+  }
+  if (arg == "--keep") {
+    return Some(Options { ...o, keep: true });
+  }
+  if (arg == "--test") {
+    return Some(Options { ...o, test: true });
+  }
+  if (arg == "--fast") {
+    return Some(Options { ...o, level: 1 });
+  }
+  if (arg == "--best") {
+    return Some(Options { ...o, level: 9 });
+  }
+  return None;
+}
+
+// A group of one-letter options, such as `-dc` or `-9k`. A run of digits is
+// one level.
+function shorts(o: Options, arg: string): Parsed {
+  let bytes = arg.bytes();
+  let i = 1;
+  while (i < bytes.len()) {
+    if (digit(bytes[i])) {
+      let end = i;
+      while (end < bytes.len() && digit(bytes[end])) {
+        end += 1;
+      }
+      let level = number(bytes, i, end);
+      if (level < 1 || level > 9) {
+        return Abort("only levels 1..9 are allowed");
+      }
+      o = Options { ...o, level: level };
+      i = end;
+      continue;
+    }
+    let Some(next) = letter(o, bytes[i]) else {
+      return Abort("invalid option: -" + arg.drop(i).take(1));
+    };
+    o = next;
+    i += 1;
+  }
+  return Run(o);
+}
+
+function digit(c: u8): boolean {
+  return c >= 48 as u8 && c <= 57 as u8;
+}
+
+// The decimal value of bytes[from:end], which hold only digits. A value past
+// 99 reads as 100, which no level is.
+function number(bytes: u8[], from: i32, end: i32): i32 {
+  if (end - from > 2) {
+    return 100;
+  }
+  let n = 0;
+  for i in from..end {
+    n = n * 10 + (bytes[i] - 48 as u8) as i32;
+  }
+  return n;
+}
+
+function letter(o: Options, c: u8): Option[Options] {
+  if (c == 99 as u8) {
+    return Some(Options { ...o, stdout: true });
+  }
+  if (c == 100 as u8) {
+    return Some(Options { ...o, decompress: true });
+  }
+  if (c == 102 as u8) {
+    return Some(Options { ...o, force: true });
+  }
+  if (c == 107 as u8) {
+    return Some(Options { ...o, keep: true });
+  }
+  if (c == 116 as u8) {
+    return Some(Options { ...o, test: true });
+  }
+  return None;
+}
+
+// The name that a compression of `path` writes.
+pub function compressed_name(path: string): string {
+  return path + ".gz";
+}
+
+// The name that a decompression of `path` writes, or None for a name with no
+// suffix that pigz knows.
+pub function decompressed_name(path: string): Option[string] {
+  if (path.ends_with(".gz") && path.len() > 3) {
+    return Some(path.take(path.len() - 3));
+  }
+  if (path.ends_with(".tgz") && path.len() > 4) {
+    return Some(path.take(path.len() - 4) + ".tar");
+  }
+  return None;
+}
+
+// The last component of `path`, which the header keeps as the original name.
+pub function base_name(path: string): string {
+  let bytes = path.bytes();
+  let at = bytes.len();
+  while (at > 0 && bytes[at - 1] != 47 as u8) {
+    at -= 1;
+  }
+  return path.drop(at);
+}
+
+function put_le32(own out: u8[], v: u32): u8[] {
+  return out.append((v & 255u32) as u8).append((v >> 8 & 255u32) as u8).append((v >> 16 & 255u32) as u8).append((v >> 24) as u8);
+}
+
+// One gzip member, as pigz writes it: the original name and modification time
+// when the input is a file, the level in the extra flags, and the Unix OS byte.
+pub function compress(data: [u8], level: i32, name: string, mtime: u32): u8[] {
+  let flags = 0 as u8;
+  if (name.len() > 0) {
+    flags = 8 as u8;
+  }
+  let xfl = 0 as u8;
+  if (level <= 1) {
+    xfl = 4 as u8;
+  } else if (level >= 9) {
+    xfl = 2 as u8;
+  }
+  let out = put_le32([31 as u8, 139 as u8, 8 as u8, flags], mtime).append(xfl).append(3 as u8);
+  if (name.len() > 0) {
+    out = out.concat(name.bytes()).append(0 as u8);
+  }
+  out = out.concat(deflate.deflate_level(data, level));
+  out = put_le32(out, crc32.of(data));
+  return put_le32(out, data.len() as u32);
+}
+
+// The decompressed bytes of each gzip member of `data`, in order. Bytes after
+// the last member that do not start another member are ignored, as pigz does.
+// An error is the text that pigz prints after the file name.
+pub function decompress(data: [u8]): Result[u8[], string] {
+  if (data.len() < 2 || data[0] != 31 as u8 || data[1] != 139 as u8) {
+    return Err(" unrecognized format");
+  }
+  let out: u8[] = [];
+  let at = 0;
+  while (at + 1 < data.len() && data[at] == 31 as u8 && data[at + 1] == 139 as u8) {
+    match (deflate.gzip_member(data, at, 2147483647 - out.len())) {
+      Ok(member) => {
+        out = out.concat(member.out);
+        at += member.consumed;
+      },
+      Err(e) => {
+        return Err(refusal(e, data.len() - at));
+      }
+    }
+  }
+  return Ok(out);
+}
+
+function refusal(e: deflate.InflateError, left: i32): string {
+  match (e) {
+    deflate.BadHeader(_) => {
+      return " unrecognized format";
+    },
+    deflate.Truncated => {
+      if (left <= 10) {
+        return " unrecognized format";
+      }
+      return ": corrupted -- incomplete deflate data";
+    },
+    deflate.Malformed(what) => {
+      return ": corrupted -- invalid deflate data (" + what + ")";
+    },
+    deflate.BadChecksum => {
+      return ": corrupted -- crc32 mismatch";
+    },
+    deflate.BadLength => {
+      return ": corrupted -- length mismatch";
+    },
+    deflate.OutputLimit => {
+      return ": corrupted -- the output is longer than 2 GiB";
+    }
+  }
+  return " unrecognized format";
+}

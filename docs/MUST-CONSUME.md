@@ -48,10 +48,8 @@ allow-list in `parseAttribute`). A checked binding of a marked type requires
 - repeated consumption is outside the E067 guarantee.
   E050 separately checks uses after an `own` parameter moves.
   Neither check proves exactly-once behavior for an external resource.
-- a DISCARDED call result of a marked type (`sink(t);` where sink
-  returns the marked value and the result is dropped) is not
-  tracked in slice 1 — only bindings are. E055-style
-  discarded-result checking is the natural follow-up.
+- a DISCARDED call result of a marked type (`issue(1);` where
+  `issue` returns the marked value and the statement drops it).
 
 ## Rules (slice 1 — deliberately E063-shaped)
 
@@ -74,8 +72,15 @@ it claims:
 3. Storing into an UNMARKED container is reported as a violation
    at the store site ("obligation laundered into unmarked type") —
    this keeps slice 1 sound without inter-type obligation flow.
+   One array literal is not a store: an array literal that is an
+   argument of a call goes to the callee with the obligation of
+   each element, as in `async.gather([a, b])`.
 4. Closures capturing a marked value: violation in slice 1
    (capture semantics for obligations need design; forbid first).
+   One closure carries its captures: a closure that is a payload of
+   a marked variant, as the continuation of `Pending` in
+   `async.Future` is. The marked value holds the closure, so the
+   obligation stays in the checked world.
 5. New error code **E067**, `fern -explain E067` entry, message
    naming the type, the binding, and the unconsumed path's exit
    point.

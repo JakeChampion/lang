@@ -1,0 +1,129 @@
+// The text that jq 1.7 writes for a value: compact for `-c`, and with an
+// indent of two spaces otherwise.
+import "std/json";
+import "std/string";
+
+function hex(n: i32): string {
+  return slice_unchecked("0123456789abcdef", n, n + 1).to_owned();
+}
+
+// A string in quotes. jq escapes the control characters and DEL, and writes
+// every other character as it is.
+pub function quoted(s: string): string {
+  let out = "\"";
+  let run = 0;
+  for i in 0..s.len() {
+    let b = s[i];
+    let esc = "";
+    if (b == b'"') {
+      esc = "\\\"";
+    } else if (b == b'\\') {
+      esc = "\\\\";
+    } else if (b == b'\n') {
+      esc = "\\n";
+    } else if (b == b'\t') {
+      esc = "\\t";
+    } else if (b == b'\r') {
+      esc = "\\r";
+    } else if (b == 8 as u8) {
+      esc = "\\b";
+    } else if (b == 12 as u8) {
+      esc = "\\f";
+    } else if (b < 32 as u8 || b == 127 as u8) {
+      esc = "\\u00" + hex((b / (16 as u8)) as i32) + hex((b % (16 as u8)) as i32);
+    }
+    if (esc.len() > 0) {
+      out += slice_unchecked(s, run, i).to_owned() + esc;
+      run = i + 1;
+    }
+  }
+  return out + slice_unchecked(s, run, s.len()).to_owned() + "\"";
+}
+
+pub function compact(v: json.JsonValue): string {
+  match (v) {
+    json.JNull => {
+      return "null";
+    },
+    json.JBool(b) => {
+      if (b) {
+        return "true";
+      }
+      return "false";
+    },
+    json.JNumber(t) => {
+      return t;
+    },
+    json.JString(s) => {
+      return quoted(s);
+    },
+    json.JArray(items) => {
+      let out = "[";
+      for i in 0..items.len() {
+        if (i > 0) {
+          out += ",";
+        }
+        out += compact(items[i]);
+      }
+      return out + "]";
+    },
+    json.JObject(o) => {
+      let out = "{";
+      let keys = o.keys();
+      for i in 0..keys.len() {
+        if (i > 0) {
+          out += ",";
+        }
+        out += quoted(keys[i]) + ":" + compact(o.get_or(keys[i], json.JNull));
+      }
+      return out + "}";
+    }
+  }
+}
+
+function spaces(n: i32): string {
+  let out = "";
+  for i in 0..n {
+    out += " ";
+  }
+  return out;
+}
+
+// The value at a depth of `depth` indents. An empty array or object stays on
+// its line.
+pub function pretty(v: json.JsonValue, depth: i32): string {
+  match (v) {
+    json.JArray(items) => {
+      if (items.len() == 0) {
+        return "[]";
+      }
+      let inner = spaces(2 * (depth + 1));
+      let out = "[";
+      for i in 0..items.len() {
+        if (i > 0) {
+          out += ",";
+        }
+        out += "\n" + inner + pretty(items[i], depth + 1);
+      }
+      return out + "\n" + spaces(2 * depth) + "]";
+    },
+    json.JObject(o) => {
+      let keys = o.keys();
+      if (keys.len() == 0) {
+        return "{}";
+      }
+      let inner = spaces(2 * (depth + 1));
+      let out = "{";
+      for i in 0..keys.len() {
+        if (i > 0) {
+          out += ",";
+        }
+        out += "\n" + inner + quoted(keys[i]) + ": " + pretty(o.get_or(keys[i], json.JNull), depth + 1);
+      }
+      return out + "\n" + spaces(2 * depth) + "}";
+    },
+    _ => {
+      return compact(v);
+    }
+  }
+}

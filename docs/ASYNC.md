@@ -106,12 +106,21 @@ virtual one.
 ## 4. `Future[T]`
 
 ```fern
+@must_consume
 pub enum Future[T] {
     Ready(T),
     Pending(Wait, (Wake) => Future[T]),
     Cancelled,
 }
 ```
+
+**A future is used exactly one time.** `Future` is `@must_consume`, so a
+future that nothing waits for is E067: the program does not start a task
+and then drop it. `block_on`, `wait`, `gather`, `race` and `with_deadline`
+take their futures as `own` parameters, so a second wait for one future is
+E051. `async.cancel(f)` ends a future whose value the program does not
+take. An array literal of futures goes to a combinator as its argument,
+as in `async.gather([a, b])`.
 
 A `Pending` future holds its wait and a continuation. Whatever drives
 the future waits on the `Wait` and calls the continuation with the
@@ -156,6 +165,11 @@ pending input.
 
 Three functions drive a future to its end. Each answers `Option[T]`:
 `Some` with the value, or `None` when the future ends cancelled.
+
+A future is waited one time. `wait`, `block_on`, `sim.block_on`, `gather`,
+`race` and `with_deadline` take their futures as `own`, so the checker
+refuses a second wait of one future (`E051`). A function that passes a
+future on to one of them takes it as `own` also.
 
 - **`async.wait(f)`** parks the task that calls it on the scheduler of
   that task: the `std/serve` loop, `sim.run_tasks`, or a combinator's

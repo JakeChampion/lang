@@ -1,0 +1,12 @@
+// A parameter of a `@must_consume` type with type arguments has the
+// obligation of its type.
+@must_consume
+enum Slot[T] { Full(T), Empty }
+
+function ignores(s: Slot[i32]): i32 {
+    return 1;
+}
+
+function main(): i32 {
+    return ignores(Full(2));
+}

@@ -86,6 +86,7 @@ import "std/time";
 ```fern
 <<3 pub enum Future[T]>>=
 // A pending future resumed with Cancelled releases what it holds.
+@must_consume
 pub enum Future[T] {
   Ready(T),
   Pending(Wait, (Wake) => Future[T]),
@@ -467,7 +468,7 @@ input count, and a wake builds new nodes only on that path.
 <<14 future combinators>>=
 // Ready with every value, in input order, when all of `fs` are ready.
 // Cancelled when one of them ends cancelled: the others are cancelled with it.
-pub function gather[T](fs: Future[T][]): Future[T[]] {
+pub function gather[T](own fs: Future[T][]): Future[T[]] {
   return __gather(__tree(fs, 0, fs.len()));
 }
 
@@ -495,7 +496,7 @@ function __gather_woken[T](t: __Tree[T], wake: Wake): Future[T[]] {
 // Ready with the index and value of the first of `fs` to be ready; a tie goes
 // to the lower index. The others are cancelled. Cancelled when every one of
 // them ends cancelled, and so when `fs` is empty.
-pub function race[T](fs: Future[T][]): Future[(i32, T)] {
+pub function race[T](own fs: Future[T][]): Future[(i32, T)] {
   return __race(__tree(fs, 0, fs.len()));
 }
 
@@ -521,7 +522,7 @@ function __race_woken[T](t: __Tree[T], wake: Wake): Future[(i32, T)] {
 // Ready with `Some(value)` for each of `fs` that is ready by `until`, and None
 // for each that is cancelled or still pending then. The pending ones are
 // cancelled at `until`. A deadline equal to an input's own deadline wins.
-pub function with_deadline[T](until: Instant, fs: Future[T][]): Future[Option[T][]] {
+pub function with_deadline[T](until: Instant, own fs: Future[T][]): Future[Option[T][]] {
   return __deadline(until, __tree(fs, 0, fs.len()));
 }
 
@@ -679,7 +680,11 @@ function __cancel_all[T](t: __Tree[T]): i32 {
     },
     Leaf(f) => {
       if let Pending(w, k) = f {
-        let gone = k(Wake.Cancelled);
+        // The future of a continuation that is resumed with Cancelled holds
+        // nothing, so it ends here.
+        match (k(Wake.Cancelled)) {
+          _ => {}
+        }
         return 1;
       }
     },
@@ -1087,7 +1092,7 @@ one.
 <<24 waiting>>=
 // None when the calling task is cancelled, and when no task is current and
 // `f` must wait. `f` is cancelled in both cases.
-pub function wait[T](f: Future[T]): Option[T] {
+pub function wait[T](own f: Future[T]): Option[T] {
   let cur = f;
   while (true) {
     match (cur) {
@@ -1106,11 +1111,29 @@ pub function wait[T](f: Future[T]): Option[T] {
       }
     }
   }
-  return None;
+  // The loop does not end. This match ends the obligation of `cur`.
+  match (cur) {
+    Ready(v) => {
+      return Some(v);
+    },
+    _ => {
+      return None;
+    }
+  }
+}
+
+// Ends a future whose value the program does not take. A pending future is
+// resumed with Cancelled, which releases what it holds.
+pub function cancel[T](own f: Future[T]): void {
+  if let Pending(w, k) = f {
+    match (k(Wake.Cancelled)) {
+      _ => {}
+    }
+  }
 }
 
 // None when the calling task is cancelled, which `f` then is too.
-pub function block_on[T](f: Future[T]): Option[T] {
+pub function block_on[T](own f: Future[T]): Option[T] {
   let cur = f;
   while (true) {
     match (cur) {
@@ -1129,7 +1152,15 @@ pub function block_on[T](f: Future[T]): Option[T] {
       }
     }
   }
-  return None;
+  // The loop does not end. This match ends the obligation of `cur`.
+  match (cur) {
+    Ready(v) => {
+      return Some(v);
+    },
+    _ => {
+      return None;
+    }
+  }
 }
 
 // Waits for any (fd, interest) pair of `set` to become ready (1 readable, 2
