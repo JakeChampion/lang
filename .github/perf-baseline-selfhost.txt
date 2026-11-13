@@ -252,6 +252,22 @@
 # Re-pinned 2026-10-25 (#13402) on ordmap_insert.emit: std/ordmap is a B+ tree,
 # a larger module (x86-64 5507, arm64 5868, wasm 6960), measured by the dev
 # container's perf-bench-selfhost run.
+#
+# Re-pinned 2026-11-13 (#15564) from the perf lanes of run 43328532022. #15554
+# and #15564 give each side of a uniqueness test its own code.
+# x86-64-linux/deflate_decode.emit 12766 to 12469,
+# arm64-linux/deflate_decode.emit 13560 to 13320,
+# x86-64-linux/perceus_cfold.emit 1954 to 1892, arm64-linux/perceus_cfold.emit
+# 2213 to 2150, x86-64-linux/perceus_deriv.emit 2722 to 2581,
+# arm64-linux/perceus_deriv.emit 3025 to 2878,
+# x86-64-linux/perceus_nqueens.emit 1587 to 1548,
+# arm64-linux/perceus_nqueens.emit 1842 to 1797,
+# x86-64-linux/perceus_rbtree.emit 2987 to 2861,
+# arm64-linux/perceus_rbtree.emit 3340 to 3200,
+# x86-64-linux/perceus_rbtree_ck.emit 3081 to 2943,
+# arm64-linux/perceus_rbtree_ck.emit 3402 to 3271,
+# x86-64-linux/pmap_insert.emit 2942 to 2884, arm64-linux/pmap_insert.emit
+# 3249 to 3188, arm64-linux/pvec_with.emit 3211 to 3178.
 
 selfhost/arm64-linux/array_append.emit	1403
 selfhost/arm64-linux/array_index.emit	1401
@@ -262,7 +278,7 @@ selfhost/arm64-linux/byte_copy_append.emit	1518
 selfhost/arm64-linux/byte_copy_with.emit	1469
 selfhost/arm64-linux/call_overhead.emit	442
 selfhost/arm64-linux/closure_call.emit	1198
-selfhost/arm64-linux/deflate_decode.emit	13560
+selfhost/arm64-linux/deflate_decode.emit	13320
 selfhost/arm64-linux/deflate_encode.emit	7829
 selfhost/arm64-linux/enum_match.emit	1161
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
@@ -276,8 +292,8 @@ selfhost/arm64-linux/map_int.emit	8504
 selfhost/arm64-linux/map_probe_chain.emit	8514
 selfhost/arm64-linux/map_string.emit	9472
 selfhost/arm64-linux/ordmap_insert.emit	5741
-selfhost/arm64-linux/pmap_insert.emit	3249
-selfhost/arm64-linux/pvec_with.emit	3211
+selfhost/arm64-linux/pmap_insert.emit	3188
+selfhost/arm64-linux/pvec_with.emit	3178
 selfhost/arm64-linux/record_update.emit	1216
 selfhost/arm64-linux/sort_inplace.emit	1725
 # 2026-11-05: PR #14207, perf-x86_64 job 126960802774 on the merge with main 6dba1dcb measures lower values for the changed rows below. The rows that rise keep their limits.
@@ -343,7 +359,7 @@ selfhost/x86-64-linux/byte_copy_append.emit	1283
 selfhost/x86-64-linux/byte_copy_with.emit	1240
 selfhost/x86-64-linux/call_overhead.emit	347
 selfhost/x86-64-linux/closure_call.emit	955
-selfhost/x86-64-linux/deflate_decode.emit	12766
+selfhost/x86-64-linux/deflate_decode.emit	12469
 selfhost/x86-64-linux/deflate_encode.emit	7206
 selfhost/x86-64-linux/enum_match.emit	935
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
@@ -353,7 +369,7 @@ selfhost/x86-64-linux/map_int.emit	8478
 selfhost/x86-64-linux/map_probe_chain.emit	8482
 selfhost/x86-64-linux/map_string.emit	9311
 selfhost/x86-64-linux/ordmap_insert.emit	5377
-selfhost/x86-64-linux/pmap_insert.emit	2942
+selfhost/x86-64-linux/pmap_insert.emit	2884
 selfhost/x86-64-linux/pvec_with.emit	2953
 selfhost/x86-64-linux/record_update.emit	981
 selfhost/x86-64-linux/sort_inplace.emit	1534
@@ -373,20 +389,20 @@ selfhost/x86-64-linux/utf8_ingest_unchecked.emit	7735
 selfhost/x86-64-linux/utf8_ingest_validated.emit	8318
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
-selfhost/x86-64-linux/perceus_cfold.emit	1954
-selfhost/arm64-linux/perceus_cfold.emit	2213
+selfhost/x86-64-linux/perceus_cfold.emit	1892
+selfhost/arm64-linux/perceus_cfold.emit	2150
 selfhost/wasm32-wasi/perceus_cfold.emit	1766
-selfhost/x86-64-linux/perceus_deriv.emit	2722
-selfhost/arm64-linux/perceus_deriv.emit	3025
+selfhost/x86-64-linux/perceus_deriv.emit	2581
+selfhost/arm64-linux/perceus_deriv.emit	2878
 selfhost/wasm32-wasi/perceus_deriv.emit	2831
-selfhost/x86-64-linux/perceus_nqueens.emit	1587
-selfhost/arm64-linux/perceus_nqueens.emit	1842
+selfhost/x86-64-linux/perceus_nqueens.emit	1548
+selfhost/arm64-linux/perceus_nqueens.emit	1797
 selfhost/wasm32-wasi/perceus_nqueens.emit	1267
-selfhost/x86-64-linux/perceus_rbtree.emit	2987
-selfhost/arm64-linux/perceus_rbtree.emit	3340
+selfhost/x86-64-linux/perceus_rbtree.emit	2861
+selfhost/arm64-linux/perceus_rbtree.emit	3200
 selfhost/wasm32-wasi/perceus_rbtree.emit	3854
-selfhost/x86-64-linux/perceus_rbtree_ck.emit	3081
-selfhost/arm64-linux/perceus_rbtree_ck.emit	3402
+selfhost/x86-64-linux/perceus_rbtree_ck.emit	2943
+selfhost/arm64-linux/perceus_rbtree_ck.emit	3271
 selfhost/wasm32-wasi/perceus_rbtree_ck.emit	4176
 # 2026-11-07: PR #14490 adds QTRLE emitted-size measurements from the local current compiler.
 # Existing limits and tolerances stay unchanged.

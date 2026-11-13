@@ -104,6 +104,18 @@
 # Raw reports and unchanged tolerances: docs/benchmarks/pair-return-ci-repair-2026-10-28/ci-perf/.
 # 2026-10-27: first measurement, from scripts/profile-costs on the follow-on branch of #13677 at the profile-costs commit.
 # Host: Linux 6.18.44-fc-v165, Intel(R) Xeon(R) Processor @ 2.80GHz, valgrind 3.22.0. Rows are deterministic; the default tolerance applies.
+#
+# Re-pinned 2026-11-13 (#15564) from the perf lanes of run 43328532022. #15554
+# and #15564 give each side of a uniqueness test its own code.
+# arm64-linux/deflate_decode.hardened.bytes 64920 to 64200,
+# arm64-linux/deflate_decode.hardened.emit 15177 to 14939,
+# arm64-linux/deflate_decode.safe.bytes 58712 to 57784,
+# arm64-linux/deflate_decode.safe.emit 13560 to 13320,
+# x86-64-linux/deflate_decode.hardened.bytes 55872 to 55024,
+# x86-64-linux/deflate_decode.hardened.emit 13293 to 13084,
+# x86-64-linux/deflate_decode.minimal.bytes 46688 to 46112,
+# x86-64-linux/deflate_decode.safe.bytes 51376 to 50624,
+# x86-64-linux/deflate_decode.safe.emit 12766 to 12469.
 profile/arm64-linux/array_append.diagnostic.bytes	14248
 profile/arm64-linux/array_append.diagnostic.emit	1857
 profile/arm64-linux/array_append.hardened.bytes	8600
@@ -131,12 +143,12 @@ profile/arm64-linux/closure_call.safe.emit	1199
 # 2026-11-05: PR #14207, perf-x86_64 job 126960802774 on the merge with main 6dba1dcb measures lower values for the changed rows below. The rows that rise keep their limits.
 profile/arm64-linux/deflate_decode.diagnostic.bytes	118168
 profile/arm64-linux/deflate_decode.diagnostic.emit	13870
-profile/arm64-linux/deflate_decode.hardened.bytes	64920
-profile/arm64-linux/deflate_decode.hardened.emit	15177
+profile/arm64-linux/deflate_decode.hardened.bytes	64200
+profile/arm64-linux/deflate_decode.hardened.emit	14939
 profile/arm64-linux/deflate_decode.minimal.bytes	53048
 profile/arm64-linux/deflate_decode.minimal.emit	12103
-profile/arm64-linux/deflate_decode.safe.bytes	58712
-profile/arm64-linux/deflate_decode.safe.emit	13560
+profile/arm64-linux/deflate_decode.safe.bytes	57784
+profile/arm64-linux/deflate_decode.safe.emit	13320
 profile/arm64-linux/enum_match.diagnostic.bytes	13416
 profile/arm64-linux/enum_match.diagnostic.emit	1700
 profile/arm64-linux/enum_match.hardened.bytes	7528
@@ -223,14 +235,14 @@ profile/x86-64-linux/deflate_decode.diagnostic.bytes	109520
 # 2026-11-05: main 01a92579b (#14222), perf-x86_64 job 127187970930 measures lower values for the row below. The rows that rise keep their limits.
 profile/x86-64-linux/deflate_decode.diagnostic.emit	12887
 profile/x86-64-linux/deflate_decode.diagnostic.ir	45857493
-profile/x86-64-linux/deflate_decode.hardened.bytes	55872
-profile/x86-64-linux/deflate_decode.hardened.emit	13293
+profile/x86-64-linux/deflate_decode.hardened.bytes	55024
+profile/x86-64-linux/deflate_decode.hardened.emit	13084
 profile/x86-64-linux/deflate_decode.hardened.ir	33840579
-profile/x86-64-linux/deflate_decode.minimal.bytes	46688
+profile/x86-64-linux/deflate_decode.minimal.bytes	46112
 profile/x86-64-linux/deflate_decode.minimal.emit	11402
 profile/x86-64-linux/deflate_decode.minimal.ir	39191644
-profile/x86-64-linux/deflate_decode.safe.bytes	51376
-profile/x86-64-linux/deflate_decode.safe.emit	12766
+profile/x86-64-linux/deflate_decode.safe.bytes	50624
+profile/x86-64-linux/deflate_decode.safe.emit	12469
 profile/x86-64-linux/deflate_decode.safe.ir	32880607
 profile/x86-64-linux/enum_match.diagnostic.bytes	10960
 profile/x86-64-linux/enum_match.diagnostic.emit	1351
