@@ -121,7 +121,7 @@ function apply(f: filter.Ast, input: json.JsonValue, at: string, o: Options): bo
     write_value(v, o);
   }
   if (out.error.len() > 0) {
-    eprint("jq: error (at " + at + "): " + out.error);
+    eprint("jq: error (at " + at + ")" + out.message());
     return false;
   }
   return true;

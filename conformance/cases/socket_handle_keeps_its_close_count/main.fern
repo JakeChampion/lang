@@ -1,0 +1,124 @@
+// A Socket is a 64-bit word: the descriptor number, and above it the close
+// count of that number. Three closes come first, so the handle here has a
+// count above zero. Each place that holds the handle must keep the whole
+// word, or the builtin refuses a handle that is valid.
+
+struct Conn { id: i32, sock: Socket, tag: string }
+
+struct Pool { socks: Socket[], spare: Option[Socket] }
+
+enum Slot { Empty, Held(Socket), Named(string, Socket) }
+
+trait Dialer {
+  function dial(self: Self, port: i32): Socket;
+}
+
+struct Local { n: i32 }
+
+impl Dialer for Local {
+  function dial(self: Local, port: i32): Socket {
+    return tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
+  }
+}
+
+function send(s: Socket): i32 {
+  return tcp_send_bytes(s, [7u8]);
+}
+
+function dial(port: i32): Socket {
+  return tcp_connect_with([127u8, 0u8, 0u8, 1u8], port, false);
+}
+
+function first[T](xs: T[]): T {
+  return xs[0];
+}
+
+function conn(s: Socket): Conn {
+  return Conn { id: 4, sock: s, tag: "c" };
+}
+
+function renamed(c: Conn): Conn {
+  return Conn { ...c, id: c.id + 1 };
+}
+
+function sock_of(c: Conn): Socket {
+  return c.sock;
+}
+
+function later(s: Socket): () => i32 {
+  return (): i32 => send(s);
+}
+
+function maybe(s: Socket, yes: boolean): Option[Socket] {
+  if (yes) {
+    return Some(s);
+  }
+  return None;
+}
+
+function via(d: dyn Dialer, port: i32): Socket {
+  return d.dial(port);
+}
+
+function ok(label: string, sent: i32): void {
+  print(label + " " + sent.to_string());
+}
+
+function main(): i32 {
+  let ls: Socket = tcp_listen(0);
+  let port = tcp_local_port(ls);
+  // Three closes give the next descriptor number a close count of 3.
+  for i in 0..3 {
+    let c: Socket = dial(port);
+    let a: Socket = tcp_accept(ls);
+    tcp_close(a);
+    tcp_close(c);
+  }
+  let s: Socket = dial(port);
+  let peer: Socket = tcp_accept(ls);
+  let arr = [s];
+  let grown: Socket[] = [];
+  grown = grown.append(s);
+  let tup = (s, 5, "t");
+  let c = conn(s);
+  let c2 = renamed(c);
+  let pool = Pool { socks: [s, s], spare: Some(s) };
+  let held: Slot = Held(s);
+  let named: Slot = Named("n", s);
+  let k = later(s);
+  let viad: Socket = via(Local { n: 1 }, port);
+  let peer2: Socket = tcp_accept(ls);
+  ok("local", send(s));
+  ok("array", send(arr[0]));
+  ok("grown", send(grown[0]));
+  ok("generic", send(first(arr)));
+  ok("tuple", send(tup.0));
+  ok("record", send(c.sock));
+  ok("update", send(c2.sock) + c2.id);
+  ok("field result", send(sock_of(c2)));
+  ok("nested array", send(pool.socks[1]));
+  match (pool.spare) {
+    Some(x) => { ok("nested option", send(x)); },
+    None => {}
+  }
+  match (maybe(s, true)) {
+    Some(x) => { ok("option result", send(x)); },
+    None => {}
+  }
+  match (held) {
+    Held(x) => { ok("variant", send(x)); },
+    _ => {}
+  }
+  match (named) {
+    Named(n, x) => { ok("variant pair " + n, send(x)); },
+    _ => {}
+  }
+  ok("callback", k());
+  ok("dyn result", send(viad));
+  for x in pool.socks {
+    ok("loop", send(x));
+  }
+  let closed: i32 = tcp_close(viad) + tcp_close(peer2) + tcp_close(s) + tcp_close(peer) + tcp_close(ls);
+  print("closed " + closed.to_string());
+  return 0;
+}

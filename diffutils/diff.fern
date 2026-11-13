@@ -1,0 +1,2290 @@
+import "core/cmp";
+import "std/tz";
+import "std/errno";
+import "../coreutils/lib/gnu";
+import "../coreutils/lib/timefmt";
+import "../coreutils/lib/filetype";
+
+const EXIT_DIFFER: i32 = 1;
+
+const EXIT_TROUBLE: i32 = 2;
+
+const STYLE_NONE: i32 = 0;
+
+const STYLE_NORMAL: i32 = 1;
+
+const STYLE_CONTEXT: i32 = 2;
+
+const STYLE_UNIFIED: i32 = 3;
+
+const STYLE_ED: i32 = 4;
+
+const STYLE_FORWARD_ED: i32 = 5;
+
+const STYLE_RCS: i32 = 6;
+
+const STYLE_IFDEF: i32 = 7;
+
+const STYLE_SDIFF: i32 = 8;
+
+const WS_NONE: i32 = 0;
+
+const WS_CHANGE: i32 = 4;
+
+const WS_ALL: i32 = 5;
+
+const OPT_NORMAL: i32 = 1;
+
+const OPT_BRIEF: i32 = 2;
+
+const OPT_IDENTICAL: i32 = 3;
+
+const OPT_C: i32 = 4;
+
+const OPT_CONTEXT: i32 = 5;
+
+const OPT_U: i32 = 6;
+
+const OPT_UNIFIED: i32 = 7;
+
+const OPT_LABEL: i32 = 8;
+
+const OPT_RECURSIVE: i32 = 9;
+
+const OPT_NEW_FILE: i32 = 10;
+
+const OPT_UNIDIRECTIONAL: i32 = 11;
+
+const OPT_IGNORE_CASE: i32 = 12;
+
+const OPT_SPACE_CHANGE: i32 = 13;
+
+const OPT_ALL_SPACE: i32 = 14;
+
+const OPT_BLANK_LINES: i32 = 15;
+
+const OPT_TEXT: i32 = 16;
+
+const OPT_MINIMAL: i32 = 17;
+
+const OPT_HORIZON: i32 = 18;
+
+const OPT_SPEED: i32 = 19;
+
+const OPT_NO_EFFECT: i32 = 20;
+
+const OPT_DIGIT: i32 = 100;
+
+const OPT_UNSUPPORTED: i32 = 200;
+
+const LIN_MAX: i64 = 9223372036854775807;
+
+const CONTEXT_MAX: i64 = 2305843009213693951;
+
+const SNAKE_LIMIT: i32 = 20;
+
+const OFFSET_MAX: i32 = 2147483647;
+
+const K_NONEXISTENT: i32 = -1;
+
+const K_UNOPENED: i32 = -2;
+
+const K_STDIN: i32 = 0;
+
+const K_ERROR: i32 = -3;
+
+const OUT_CHUNK: i32 = 65536;
+
+function help_text(): string {
+  let out = "Usage: " + gnu.prog() + " [OPTION]... FILES\n";
+  out += "Compare FILES line by line.\n";
+  out += "\n";
+  out += "Mandatory arguments to long options are mandatory for short options too.\n";
+  out += "      --normal                  output a normal diff (the default)\n";
+  out += "  -q, --brief                   report only when files differ\n";
+  out += "  -s, --report-identical-files  report when two files are the same\n";
+  out += "  -c, -C NUM, --context[=NUM]   output NUM (default 3) lines of copied context\n";
+  out += "  -u, -U NUM, --unified[=NUM]   output NUM (default 3) lines of unified context\n";
+  out += "  -e, --ed                      output an ed script\n";
+  out += "  -n, --rcs                     output an RCS format diff\n";
+  out += "  -y, --side-by-side            output in two columns\n";
+  out += "  -W, --width=NUM               output at most NUM (default 130) print columns\n";
+  out += "      --left-column             output only the left column of common lines\n";
+  out += "      --suppress-common-lines   do not output common lines\n";
+  out += "\n";
+  out += "  -p, --show-c-function         show which C function each change is in\n";
+  out += "  -F, --show-function-line=RE   show the most recent line matching RE\n";
+  out += "      --label LABEL             use LABEL instead of file name and timestamp\n";
+  out += "                                  (can be repeated)\n";
+  out += "\n";
+  out += "  -t, --expand-tabs             expand tabs to spaces in output\n";
+  out += "  -T, --initial-tab             make tabs line up by prepending a tab\n";
+  out += "      --tabsize=NUM             tab stops every NUM (default 8) print columns\n";
+  out += "      --suppress-blank-empty    suppress space or tab before empty output lines\n";
+  out += "  -l, --paginate                pass output through 'pr' to paginate it\n";
+  out += "\n";
+  out += "  -r, --recursive                 recursively compare any subdirectories found\n";
+  out += "      --no-dereference            don't follow symbolic links\n";
+  out += "  -N, --new-file                  treat absent files as empty\n";
+  out += "      --unidirectional-new-file   treat absent first files as empty\n";
+  out += "      --ignore-file-name-case     ignore case when comparing file names\n";
+  out += "      --no-ignore-file-name-case  consider case when comparing file names\n";
+  out += "  -x, --exclude=PAT               exclude files that match PAT\n";
+  out += "  -X, --exclude-from=FILE         exclude files that match any pattern in FILE\n";
+  out += "  -S, --starting-file=FILE        start with FILE when comparing directories\n";
+  out += "      --from-file=FILE1           compare FILE1 to all operands;\n";
+  out += "                                    FILE1 can be a directory\n";
+  out += "      --to-file=FILE2             compare all operands to FILE2;\n";
+  out += "                                    FILE2 can be a directory\n";
+  out += "\n";
+  out += "  -i, --ignore-case               ignore case differences in file contents\n";
+  out += "  -E, --ignore-tab-expansion      ignore changes due to tab expansion\n";
+  out += "  -Z, --ignore-trailing-space     ignore white space at line end\n";
+  out += "  -b, --ignore-space-change       ignore changes in the amount of white space\n";
+  out += "  -w, --ignore-all-space          ignore all white space\n";
+  out += "  -B, --ignore-blank-lines        ignore changes where lines are all blank\n";
+  out += "  -I, --ignore-matching-lines=RE  ignore changes where all lines match RE\n";
+  out += "\n";
+  out += "  -a, --text                      treat all files as text\n";
+  out += "      --strip-trailing-cr         strip trailing carriage return on input\n";
+  out += "\n";
+  out += "  -D, --ifdef=NAME                output merged file with '#ifdef NAME' diffs\n";
+  out += "      --GTYPE-group-format=GFMT   format GTYPE input groups with GFMT\n";
+  out += "      --line-format=LFMT          format all input lines with LFMT\n";
+  out += "      --LTYPE-line-format=LFMT    format LTYPE input lines with LFMT\n";
+  out += "    These format options provide fine-grained control over the output\n";
+  out += "      of diff, generalizing -D/--ifdef.\n";
+  out += "    LTYPE is 'old', 'new', or 'unchanged'.  GTYPE is LTYPE or 'changed'.\n";
+  out += "    GFMT (only) may contain:\n";
+  out += "      %<  lines from FILE1\n";
+  out += "      %>  lines from FILE2\n";
+  out += "      %=  lines common to FILE1 and FILE2\n";
+  out += "      %[-][WIDTH][.[PREC]]{doxX}LETTER  printf-style spec for LETTER\n";
+  out += "        LETTERs are as follows for new group, lower case for old group:\n";
+  out += "          F  first line number\n";
+  out += "          L  last line number\n";
+  out += "          N  number of lines = L-F+1\n";
+  out += "          E  F-1\n";
+  out += "          M  L+1\n";
+  out += "      %(A=B?T:E)  if A equals B then T else E\n";
+  out += "    LFMT (only) may contain:\n";
+  out += "      %L  contents of line\n";
+  out += "      %l  contents of line, excluding any trailing newline\n";
+  out += "      %[-][WIDTH][.[PREC]]{doxX}n  printf-style spec for input line number\n";
+  out += "    Both GFMT and LFMT may contain:\n";
+  out += "      %%  %\n";
+  out += "      %c'C'  the single character C\n";
+  out += "      %c'\\OOO'  the character with octal code OOO\n";
+  out += "      C    the character C (other characters represent themselves)\n";
+  out += "\n";
+  out += "  -d, --minimal            try hard to find a smaller set of changes\n";
+  out += "      --horizon-lines=NUM  keep NUM lines of the common prefix and suffix\n";
+  out += "      --speed-large-files  assume large files and many scattered small changes\n";
+  out += "      --color[=WHEN]       color output; WHEN is 'never', 'always', or 'auto';\n";
+  out += "                             plain --color means --color='auto'\n";
+  out += "      --palette=PALETTE    the colors to use when --color is active; PALETTE is\n";
+  out += "                             a colon-separated list of terminfo capabilities\n";
+  out += "\n";
+  out += "      --help               display this help and exit\n";
+  out += "  -v, --version            output version information and exit\n";
+  out += "\n";
+  out += "FILES are 'FILE1 FILE2' or 'DIR1 DIR2' or 'DIR FILE' or 'FILE DIR'.\n";
+  out += "If --from-file or --to-file is given, there are no restrictions on FILE(s).\n";
+  out += "If a FILE is '-', read standard input.\n";
+  out += "Exit status is 0 if inputs are the same, 1 if different, 2 if trouble.\n";
+  return out;
+}
+
+struct Cfg {
+  style: i32,
+  context: i64,
+  explicit_context: boolean,
+  ocontext: i64,
+  prev: i32,
+  horizon: i64,
+  brief: boolean,
+  identical: boolean,
+  ignore_case: boolean,
+  white: i32,
+  blank: boolean,
+  text: boolean,
+  new_file: boolean,
+  unidirectional: boolean,
+  recursive: boolean,
+  minimal: boolean,
+  speed: boolean,
+  labels: string[],
+  switches: string,
+  unsupported: string,
+}
+
+// The options that this port does not give, in the order of their ids from
+// OPT_UNSUPPORTED up. Each has its own id, as getopt treats two options with
+// one id as the same option.
+function unsupported_names(): string[] {
+  return [
+    "--changed-group-format", "--color", "--ed", "--exclude", "--exclude-from", "--expand-tabs", "--forward-ed", "--from-file", "--ifdef", "--ignore-file-name-case",
+    "--ignore-matching-lines", "--ignore-tab-expansion", "--ignore-trailing-space", "--inhibit-hunk-merge", "--initial-tab", "--left-column", "--line-format", "--new-group-format",
+    "--new-line-format", "--no-dereference", "--old-group-format", "--old-line-format", "--paginate", "--rcs", "--sdiff-merge-assist", "--show-c-function", "--show-function-line",
+    "--side-by-side", "--starting-file", "--strip-trailing-cr", "--suppress-blank-empty", "--suppress-common-lines", "--tabsize", "--to-file", "--unchanged-group-format",
+    "--unchanged-line-format", "--width",
+  ];
+}
+
+function un(k: i32): i32 {
+  return OPT_UNSUPPORTED + k;
+}
+
+// The options of GNU diff in the order of its table, which is the order of
+// the names in an ambiguity message.
+function options(): gnu.Opt[] {
+  let opts: gnu.Opt[] = [
+    gnu.flag("", "binary", OPT_NO_EFFECT), gnu.flag("q", "brief", OPT_BRIEF), gnu.valued("", "changed-group-format", un(0)), gnu.optional_long("", "color", un(1)),
+    gnu.valued_optional_long("C", "context", OPT_CONTEXT), gnu.flag("e", "ed", un(2)), gnu.valued("x", "exclude", un(3)), gnu.valued("X", "exclude-from", un(4)),
+    gnu.flag("t", "expand-tabs", un(5)), gnu.flag("f", "forward-ed", un(6)), gnu.valued("", "from-file", un(7)), gnu.flag("", "help", gnu.help_id()),
+    gnu.valued("", "horizon-lines", OPT_HORIZON), gnu.valued("D", "ifdef", un(8)), gnu.flag("w", "ignore-all-space", OPT_ALL_SPACE), gnu.flag("B", "ignore-blank-lines", OPT_BLANK_LINES),
+    gnu.flag("i", "ignore-case", OPT_IGNORE_CASE), gnu.flag("", "ignore-file-name-case", un(9)), gnu.valued("I", "ignore-matching-lines", un(10)),
+    gnu.flag("b", "ignore-space-change", OPT_SPACE_CHANGE), gnu.flag("E", "ignore-tab-expansion", un(11)), gnu.flag("Z", "ignore-trailing-space", un(12)),
+    gnu.flag("", "inhibit-hunk-merge", un(13)), gnu.flag("T", "initial-tab", un(14)), gnu.valued("L", "label", OPT_LABEL), gnu.flag("", "left-column", un(15)),
+    gnu.valued("", "line-format", un(16)), gnu.flag("d", "minimal", OPT_MINIMAL), gnu.flag("N", "new-file", OPT_NEW_FILE), gnu.valued("", "new-group-format", un(17)),
+    gnu.valued("", "new-line-format", un(18)), gnu.flag("", "no-dereference", un(19)), gnu.flag("", "no-ignore-file-name-case", OPT_NO_EFFECT + 1), gnu.flag("", "normal", OPT_NORMAL),
+    gnu.valued("", "old-group-format", un(20)), gnu.valued("", "old-line-format", un(21)), gnu.flag("l", "paginate", un(22)), gnu.valued("", "palette", OPT_NO_EFFECT + 2),
+    gnu.flag("n", "rcs", un(23)), gnu.flag("r", "recursive", OPT_RECURSIVE), gnu.flag("s", "report-identical-files", OPT_IDENTICAL), gnu.flag("", "sdiff-merge-assist", un(24)),
+    gnu.flag("p", "show-c-function", un(25)), gnu.valued("F", "show-function-line", un(26)), gnu.flag("y", "side-by-side", un(27)), gnu.flag("H", "speed-large-files", OPT_SPEED),
+    gnu.valued("S", "starting-file", un(28)), gnu.flag("", "strip-trailing-cr", un(29)), gnu.flag("", "suppress-blank-empty", un(30)), gnu.flag("", "suppress-common-lines", un(31)),
+    gnu.valued("", "tabsize", un(32)), gnu.flag("a", "text", OPT_TEXT), gnu.valued("", "to-file", un(33)), gnu.valued("", "unchanged-group-format", un(34)),
+    gnu.valued("", "unchanged-line-format", un(35)), gnu.flag("P", "unidirectional-new-file", OPT_UNIDIRECTIONAL), gnu.valued_optional_long("U", "unified", OPT_UNIFIED),
+    gnu.flag("v", "version", gnu.version_id()), gnu.valued("W", "width", un(36)), gnu.flag("c", "", OPT_C), gnu.flag("u", "", OPT_U), gnu.flag("h", "", OPT_NO_EFFECT + 3),
+  ];
+  for d in 0..10 {
+    opts = opts.append(gnu.flag(digit_text(d), "", OPT_DIGIT + d));
+  }
+  return opts;
+}
+
+function digit_text(d: i32): string {
+  return unsafe { string_from_bytes_unchecked([(48 + d) as u8]) };
+}
+
+function usage_error(msg: string): void {
+  gnu.error(msg);
+  gnu.try_help_in("diffutils", EXIT_TROUBLE);
+}
+
+function is_space(c: i32): boolean {
+  return c == 32 || c >= 9 && c <= 13;
+}
+
+// strtoimax in base 10: the value and the index where the number stops. With
+// no digits, the index is 0, the start of the text.
+function strtoimax(s: string): (i64, i32) {
+  let i = 0;
+  while (i < s.len() && is_space(s[i] as i32)) {
+    i += 1;
+  }
+  let neg = false;
+  if (i < s.len() && (s[i] == b'+' || s[i] == b'-')) {
+    neg = s[i] == b'-';
+    i += 1;
+  }
+  let start = i;
+  let v = 0 as i64;
+  let over = false;
+  while (i < s.len() && s[i] >= b'0' && s[i] <= b'9') {
+    let d = (s[i] - b'0') as i64;
+    if (v > (LIN_MAX - d) / 10i64) {
+      over = true;
+    } else {
+      v = v * 10i64 + d;
+    }
+    i += 1;
+  }
+  if (i == start) {
+    return (0i64, 0);
+  }
+  if (over) {
+    v = LIN_MAX;
+  }
+  return (if (neg) { -v } else { v }, i);
+}
+
+function specify_style(cfg: Cfg, style: i32): Cfg {
+  if (cfg.style != STYLE_NONE && cfg.style != style) {
+    usage_error("conflicting output style options");
+  }
+  return Cfg { ...cfg, style: style };
+}
+
+function context_option(cfg: Cfg, m: gnu.OptMatch, style: i32): Cfg {
+  let n = 3i64;
+  if (m.has_value || !m.long_form) {
+    let r = strtoimax(m.value);
+    if (r.1 != m.value.len() || r.0 < 0i64) {
+      usage_error("invalid context length '" + m.value + "'");
+    }
+    n = if (r.0 > CONTEXT_MAX) { CONTEXT_MAX } else { r.0 };
+  }
+  let c = specify_style(cfg, style);
+  if (c.context < n) {
+    c = Cfg { ...c, context: n };
+  }
+  return Cfg { ...c, explicit_context: true };
+}
+
+function digit_option(cfg: Cfg, d: i32): Cfg {
+  if (cfg.prev < OPT_DIGIT || cfg.prev > OPT_DIGIT + 9) {
+    return Cfg { ...cfg, ocontext: d as i64 };
+  }
+  if (LIN_MAX / 10i64 < cfg.ocontext) {
+    return Cfg { ...cfg, ocontext: LIN_MAX };
+  }
+  let v = 10i64 * cfg.ocontext;
+  if (v > LIN_MAX - d as i64) {
+    return Cfg { ...cfg, ocontext: LIN_MAX };
+  }
+  return Cfg { ...cfg, ocontext: v + d as i64 };
+}
+
+function horizon_option(cfg: Cfg, v: string): Cfg {
+  let r = strtoimax(v);
+  if (r.1 != v.len() || r.0 < 0i64) {
+    usage_error("invalid horizon length '" + v + "'");
+  }
+  if (cfg.horizon < r.0) {
+    return Cfg { ...cfg, horizon: r.0 };
+  }
+  return cfg;
+}
+
+function label_option(cfg: Cfg, v: string): Cfg {
+  if (cfg.labels.len() >= 2) {
+    gnu.error("too many file label options");
+    exit(EXIT_TROUBLE);
+  }
+  return Cfg { ...cfg, labels: cfg.labels.append(v) };
+}
+
+// The output style that GNU diff selects for an option that this port does
+// not have. A conflict with that style gives the error of GNU diff.
+function unsupported_style(id: i32): i32 {
+  return match (id - OPT_UNSUPPORTED) {
+    0 | 8 | 16 | 17 | 18 | 20 | 21 | 34 | 35 => STYLE_IFDEF,
+    2 => STYLE_ED,
+    6 => STYLE_FORWARD_ED,
+    23 => STYLE_RCS,
+    27 => STYLE_SDIFF,
+    _ => STYLE_NONE,
+  };
+}
+
+function unsupported_option(cfg: Cfg, id: i32): Cfg {
+  let c = cfg;
+  let style = unsupported_style(id);
+  if (style != STYLE_NONE) {
+    c = specify_style(c, style);
+  }
+  if (c.unsupported.len() == 0) {
+    c = Cfg { ...c, unsupported: unsupported_names()[id - OPT_UNSUPPORTED] };
+  }
+  return c;
+}
+
+function apply(cfg: Cfg, m: gnu.OptMatch): Cfg {
+  if (m.id >= OPT_UNSUPPORTED) {
+    return unsupported_option(cfg, m.id);
+  }
+  if (m.id >= OPT_DIGIT) {
+    return digit_option(cfg, m.id - OPT_DIGIT);
+  }
+  return match (m.id) {
+    OPT_NORMAL => specify_style(cfg, STYLE_NORMAL),
+    OPT_BRIEF => Cfg { ...cfg, brief: true },
+    OPT_IDENTICAL => Cfg { ...cfg, identical: true },
+    OPT_C => context_flag(cfg, STYLE_CONTEXT),
+    OPT_U => context_flag(cfg, STYLE_UNIFIED),
+    OPT_CONTEXT => context_option(cfg, m, STYLE_CONTEXT),
+    OPT_UNIFIED => context_option(cfg, m, STYLE_UNIFIED),
+    OPT_LABEL => label_option(cfg, m.value),
+    OPT_RECURSIVE => Cfg { ...cfg, recursive: true },
+    OPT_NEW_FILE => Cfg { ...cfg, new_file: true },
+    OPT_UNIDIRECTIONAL => Cfg { ...cfg, unidirectional: true },
+    OPT_IGNORE_CASE => Cfg { ...cfg, ignore_case: true },
+    OPT_SPACE_CHANGE => Cfg { ...cfg, white: if (cfg.white < WS_CHANGE) { WS_CHANGE } else { cfg.white } },
+    OPT_ALL_SPACE => Cfg { ...cfg, white: WS_ALL },
+    OPT_BLANK_LINES => Cfg { ...cfg, blank: true },
+    OPT_TEXT => Cfg { ...cfg, text: true },
+    OPT_MINIMAL => Cfg { ...cfg, minimal: true },
+    OPT_HORIZON => horizon_option(cfg, m.value),
+    OPT_SPEED => Cfg { ...cfg, speed: true },
+    _ => cfg,
+  };
+}
+
+function context_flag(cfg: Cfg, style: i32): Cfg {
+  let c = specify_style(cfg, style);
+  if (c.context < 3i64) {
+    return Cfg { ...c, context: 3i64 };
+  }
+  return c;
+}
+
+// The argv elements that getopt took as options, shell-quoted, each after a
+// space. This is the text that follows "diff" in the header of a file
+// compared inside a directory.
+function switch_text(argv: string[], taken: boolean[]): string {
+  let out = "";
+  for i in 1..argv.len() {
+    if (taken[i]) {
+      out += " " + gnu.quote_style(argv[i], 1);
+    }
+  }
+  return out;
+}
+
+// One call of getopt went from argv element `from` to `to`. It first passed
+// over `operands` operands, then took an option and maybe its value.
+function mark_taken(own taken: boolean[], from: i32, to: i32, operands: i32): boolean[] {
+  for i in from + operands..to {
+    taken = taken.with(i, true);
+  }
+  return taken;
+}
+
+function parse(argv: string[]): (Cfg, string[]) {
+  let empty: string[] = [];
+  let cfg = Cfg { style: STYLE_NONE, context: 0i64, explicit_context: false, ocontext: -1i64, prev: -1, horizon: 0i64, brief: false, identical: false, ignore_case: false, white: WS_NONE, blank: false, text: false, new_file: false, unidirectional: false, recursive: false, minimal: false, speed: false, labels: empty, switches: "", unsupported: "" };
+  let g = gnu.getopt_new(argv, options(), "diff", help_text(), EXIT_TROUBLE).in_package("diffutils");
+  let taken: boolean[] = [];
+  for _ in 0..argv.len() {
+    taken = taken.append(false);
+  }
+  while (true) {
+    let from = g.index();
+    let ops = g.operands().len();
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    let Some(m) = r.0 else {
+      taken = mark_dashdash(taken, argv, from, g.index());
+      break;
+    };
+    taken = mark_taken(taken, from, g.index(), g.operands().len() - ops);
+    cfg = Cfg { ...apply(cfg, m), prev: m.id };
+  }
+  cfg = finish_options(cfg);
+  return (Cfg { ...cfg, switches: switch_text(argv, taken) }, g.operands());
+}
+
+// A "--" that ends the options is part of the switches. The operands are not.
+function mark_dashdash(own taken: boolean[], argv: string[], from: i32, to: i32): boolean[] {
+  for i in from..to {
+    if (argv[i] == "--") {
+      return taken.with(i, true);
+    }
+    if (gnu.is_option(argv[i])) {
+      return taken;
+    }
+  }
+  return taken;
+}
+
+function finish_options(cfg: Cfg): Cfg {
+  let c = cfg;
+  if (c.style == STYLE_NONE) {
+    c = Cfg { ...c, style: STYLE_NORMAL };
+  }
+  let styled = c.style == STYLE_CONTEXT || c.style == STYLE_UNIFIED;
+  if (c.ocontext >= 0i64 && styled && (c.context < c.ocontext || c.ocontext < c.context && !c.explicit_context)) {
+    c = Cfg { ...c, context: if (c.ocontext > CONTEXT_MAX) { CONTEXT_MAX } else { c.ocontext } };
+  }
+  if (c.horizon < c.context) {
+    c = Cfg { ...c, horizon: c.context };
+  }
+  return c;
+}
+
+// The state of one run: the options, the output buffer and the time zone.
+struct Run { cfg: Cfg, out: usize, zone: tz.Zone }
+
+function flush_out(run: Run): void {
+  if (buf_len(run.out) == 0) {
+    return;
+  }
+  let bytes = buf_take_bytes(run.out);
+  if let Err(e) = stdout().write_bytes(bytes) {
+    gnu.error("standard output: " + gnu.io_error_text(e));
+    exit(EXIT_TROUBLE);
+  }
+}
+
+function maybe_flush(run: Run): void {
+  if (buf_len(run.out) >= OUT_CHUNK) {
+    flush_out(run);
+  }
+}
+
+function put(run: Run, s: string): void {
+  buf_push(run.out, s);
+  maybe_flush(run);
+}
+
+function fail(run: Run, msg: string): void {
+  flush_out(run);
+  gnu.error(msg);
+}
+
+function fatal(run: Run, msg: string): void {
+  fail(run, msg);
+  exit(EXIT_TROUBLE);
+}
+
+// One operand of a comparison: its name, how it was found and its status.
+struct Side { name: string, kind: i32, st: FileStat, err: i32, err_text: string }
+
+// The directories that hold the files of a comparison, with the status of
+// each directory above them, to find a loop.
+struct Parent { names: string[], stats0: FileStat[], stats1: FileStat[] }
+
+function zero_stat(): FileStat {
+  return FileStat { is_file: false, is_dir: false, size: 0i64, mode: 0 as u32, nlink: 0 as u32, uid: 0 as u32, gid: 0 as u32, dev: 0i64, rdev: 0i64, ino: 0i64, blksize: 0i64, blocks: 0i64, atime: 0i64, atime_nsec: 0i64, mtime: 0i64, mtime_nsec: 0i64, ctime: 0i64, ctime_nsec: 0i64, btime: 0i64, btime_nsec: 0i64 };
+}
+
+function is_dir(s: Side): boolean {
+  return filetype.is_dir(s.st.mode);
+}
+
+function is_reg(s: Side): boolean {
+  return filetype.is_reg(s.st.mode);
+}
+
+function error_side(name: string, e: IoError): Side {
+  return Side { name: name, kind: K_ERROR, st: zero_stat(), err: errno.of(e), err_text: gnu.io_error_text(e) };
+}
+
+function stdin_side(name: string): Side {
+  match (stdin().stat()) {
+    Ok(st) => {
+      let s = st;
+      if (filetype.is_reg(st.mode)) {
+        match (stdin().seek(0i64, 1)) {
+          Ok(pos) => {
+            let left = st.size - pos;
+            s = FileStat { ...s, size: if (left < 0i64) { 0i64 } else { left } };
+          },
+          Err(e) => {
+            return error_side(name, e);
+          }
+        }
+      }
+      let now = now_ns();
+      s = FileStat { ...s, mtime: now / 1000000000i64, mtime_nsec: now % 1000000000i64 };
+      return Side { name: name, kind: K_STDIN, st: s, err: 0, err_text: "" };
+    },
+    Err(e) => {
+      return error_side(name, e);
+    }
+  }
+}
+
+function stat_side(name: string): Side {
+  if (name == "-") {
+    return stdin_side(name);
+  }
+  return match (stat(name)) {
+    Ok(st) => Side { name: name, kind: K_UNOPENED, st: st, err: 0, err_text: "" },
+    Err(e) => error_side(name, e),
+  };
+}
+
+// gnulib last_component: the last part of a file name, trailing slashes kept.
+function last_component(s: string): string {
+  let base = 0;
+  while (base < s.len() && s[base] == b'/') {
+    base += 1;
+  }
+  let slash = false;
+  for i in base..s.len() {
+    if (s[i] == b'/') {
+      slash = true;
+    } else if (slash) {
+      base = i;
+      slash = false;
+    }
+  }
+  return slice_unchecked(s, base, s.len()) + "";
+}
+
+// gnulib file_name_concat: the directory without its trailing slashes, one
+// slash, then the name without its leading slashes.
+function file_name_concat(dir: string, base: string): string {
+  let comp = dir.len() - last_component(dir).len();
+  let n = dir.len();
+  while (n > comp + 1 && dir[n - 1] == b'/') {
+    n -= 1;
+  }
+  let sep = n > comp && dir[n - 1] != b'/';
+  let b = 0;
+  while (b < base.len() && base[b] == b'/') {
+    b += 1;
+  }
+  let head = slice_unchecked(dir, 0, n) + "";
+  let rest = slice_unchecked(base, b, base.len()) + "";
+  if (sep) {
+    return head + "/" + rest;
+  }
+  return head + rest;
+}
+
+function same_file(a: FileStat, b: FileStat): boolean {
+  return a.dev == b.dev && a.ino == b.ino;
+}
+
+function same_attributes(a: FileStat, b: FileStat): boolean {
+  return a.mode == b.mode && a.nlink == b.nlink && a.uid == b.uid && a.gid == b.gid && a.size == b.size && a.mtime == b.mtime && a.mtime_nsec == b.mtime_nsec && a.ctime == b.ctime && a.ctime_nsec == b.ctime_nsec;
+}
+
+function label_or(run: Run, f: i32, name: string): string {
+  if (run.cfg.labels.len() > f) {
+    return run.cfg.labels[f];
+  }
+  return name;
+}
+
+// The two sides of a comparison after the stat step: the -N and -P rules turn
+// a missing file into an empty one.
+function stat_both(run: Run, parent: Option[Parent], names: string[], present: boolean[]): Side[] {
+  let sides: Side[] = [];
+  for f in 0..2 {
+    let s = Side { name: names[f], kind: K_NONEXISTENT, st: zero_stat(), err: 0, err_text: "" };
+    if (present[f]) {
+      if (f == 1 && present[0] && names[1] == names[0]) {
+        s = Side { ...sides[0], name: names[1] };
+      } else {
+        s = stat_side(names[f]);
+      }
+    }
+    sides = sides.append(s);
+  }
+  let top = match (parent) {
+    Some(_) => false,
+    None => true,
+  };
+  for f in 0..2 {
+    let s = sides[f];
+    let other = sides[1 - f];
+    if (run.cfg.new_file || f == 0 && run.cfg.unidirectional) {
+      let empty_backup = s.kind == K_UNOPENED && filetype.is_reg(s.st.mode) && (s.st.mode & 511 as u32) == 0 as u32 && s.st.size == 0i64;
+      let absent = s.kind == K_ERROR && (s.err == errno.ENOENT || s.err == errno.EBADF) && top && (other.kind == K_UNOPENED || other.kind == K_STDIN);
+      if (empty_backup || absent) {
+        sides = sides.with(f, Side { ...s, kind: K_NONEXISTENT });
+      }
+    }
+  }
+  for f in 0..2 {
+    if (sides[f].kind == K_NONEXISTENT) {
+      sides = sides.with(f, Side { ...sides[f], st: FileStat { ...zero_stat(), mode: sides[1 - f].st.mode } });
+    }
+  }
+  return sides;
+}
+
+function compare_files(run: Run, parent: Option[Parent], name0: Option[string], name1: Option[string]): i32 {
+  let has0 = match (name0) {
+    Some(_) => true,
+    None => false,
+  };
+  let has1 = match (name1) {
+    Some(_) => true,
+    None => false,
+  };
+  let base0 = match (name0) {
+    Some(n) => n,
+    None => "",
+  };
+  let base1 = match (name1) {
+    Some(n) => n,
+    None => base0,
+  };
+  if (!has0) {
+    base0 = base1;
+  }
+  let dirs: string[] = [];
+  let top = true;
+  if let Some(p) = parent {
+    dirs = p.names;
+    top = false;
+    if (!(has0 && has1 || run.cfg.unidirectional && has1 || run.cfg.new_file)) {
+      put(run, "Only in " + dirs[if (has0) { 0 } else { 1 }] + ": " + base0 + "\n");
+      return EXIT_DIFFER;
+    }
+  }
+  let names: string[] = [base0, base1];
+  if (!top) {
+    names = [file_name_concat(dirs[0], base0), file_name_concat(dirs[1], base1)];
+  }
+  let sides = stat_both(run, parent, names, [has0, has1]);
+  let status = 0;
+  for f in 0..2 {
+    if (sides[f].kind == K_ERROR) {
+      fail(run, sides[f].name + ": " + sides[f].err_text);
+      status = EXIT_TROUBLE;
+    }
+  }
+  if (status == 0 && top && is_dir(sides[0]) != is_dir(sides[1])) {
+    let r = dir_and_file(run, sides);
+    sides = r.0;
+    status = r.1;
+  }
+  if (status == 0) {
+    status = compare_sides(run, parent, sides, base0);
+  }
+  if (status == 0) {
+    if (run.cfg.identical && !is_dir(sides[0])) {
+      put(run, "Files " + label_or(run, 0, sides[0].name) + " and " + label_or(run, 1, sides[1].name) + " are identical\n");
+    }
+  } else {
+    flush_out(run);
+  }
+  return status;
+}
+
+// A directory and a file on the command line: compare the file with the file
+// of the same base name in the directory.
+function dir_and_file(run: Run, sides: Side[]): (Side[], i32) {
+  let fnm = if (is_dir(sides[0])) { 1 } else { 0 };
+  let dir = 1 - fnm;
+  if (sides[fnm].name == "-") {
+    fatal(run, "cannot compare '-' to a directory");
+  }
+  let name = file_name_concat(sides[dir].name, last_component(sides[fnm].name));
+  return match (stat(name)) {
+    Ok(st) => (sides.with(dir, Side { ...sides[dir], name: name, st: st }), 0),
+    Err(e) => {
+      fail(run, name + ": " + gnu.io_error_text(e));
+      (sides.with(dir, Side { ...sides[dir], name: name }), EXIT_TROUBLE)
+    },
+  };
+}
+
+function regular_or_link(s: Side): boolean {
+  return filetype.is_reg(s.st.mode) || filetype.is_link(s.st.mode);
+}
+
+function pretend_binary(cfg: Cfg): boolean {
+  return cfg.brief && !cfg.blank && !cfg.ignore_case && cfg.white == WS_NONE;
+}
+
+function compare_sides(run: Run, parent: Option[Parent], sides: Side[], base0: string): i32 {
+  let a = sides[0];
+  let b = sides[1];
+  let missing = a.kind == K_NONEXISTENT || b.kind == K_NONEXISTENT;
+  if (a.kind == K_NONEXISTENT && b.kind == K_NONEXISTENT) {
+    return 0;
+  }
+  if (!missing && same_file(a.st, b.st) && same_attributes(a.st, b.st)) {
+    return 0;
+  }
+  let has_parent = match (parent) {
+    Some(_) => true,
+    None => false,
+  };
+  if (is_dir(a) && is_dir(b)) {
+    if (has_parent && !run.cfg.recursive) {
+      put(run, "Common subdirectories: " + a.name + " and " + b.name + "\n");
+      return 0;
+    }
+    return diff_dirs(run, parent, sides);
+  }
+  if (is_dir(a) || is_dir(b) || has_parent && !(regular_or_link(a) && regular_or_link(b))) {
+    return different_kinds(run, parent, sides, base0);
+  }
+  if (pretend_binary(run.cfg) && is_reg(a) && is_reg(b) && a.st.size != b.st.size && a.st.size > 0i64 && b.st.size > 0i64) {
+    report_differ(run, sides, "Files ");
+    return EXIT_DIFFER;
+  }
+  return compare_contents(run, has_parent, sides);
+}
+
+// Two files that are not both regular files, or a directory and a file
+// inside directories: GNU diff does not compare them.
+function different_kinds(run: Run, parent: Option[Parent], sides: Side[], base0: string): i32 {
+  let a = sides[0];
+  let b = sides[1];
+  if (a.kind == K_NONEXISTENT || b.kind == K_NONEXISTENT) {
+    if ((is_dir(a) || is_dir(b)) && run.cfg.recursive && (run.cfg.new_file || run.cfg.unidirectional && a.kind == K_NONEXISTENT)) {
+      return diff_dirs(run, parent, sides);
+    }
+    let Some(p) = parent else {
+      return EXIT_TROUBLE;
+    };
+    put(run, "Only in " + p.names[if (a.kind == K_NONEXISTENT) { 1 } else { 0 }] + ": " + base0 + "\n");
+    return EXIT_DIFFER;
+  }
+  put(run, "File " + label_or(run, 0, a.name) + " is a " + filetype.type_name(a.st.mode, a.st.size) + " while file " + label_or(run, 1, b.name) + " is a " + filetype.type_name(b.st.mode, b.st.size) + "\n");
+  return EXIT_DIFFER;
+}
+
+function compare_contents(run: Run, nested: boolean, sides: Side[]): i32 {
+  let t0 = read_side(sides[0]);
+  let t1 = read_side(sides[1]);
+  let status = 0;
+  for t in [t0, t1] {
+    if (t.err.len() > 0) {
+      fail(run, t.err);
+      status = EXIT_TROUBLE;
+    }
+  }
+  if (status != 0) {
+    return status;
+  }
+  return diff_2_files(run, nested, sides, t0, t1);
+}
+
+// A file's contents, as read: the bytes, the block size of the file and an
+// error message when the read failed.
+struct Contents { bytes: u8[], blksize: i64, err: string }
+
+function read_stream(r: Reader, name: string, blksize: i64): Contents {
+  let h = buf_new(65536);
+  while (true) {
+    match (r.read_chunk_bytes(65536)) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          break;
+        }
+        buf_push_bytes_range(h, chunk, 0, chunk.len());
+      },
+      Err(e) => {
+        buf_free(h);
+        let none: u8[] = [];
+        return Contents { bytes: none, blksize: blksize, err: name + ": " + gnu.io_error_text(e) };
+      }
+    }
+  }
+  let bytes = buf_take_bytes(h);
+  buf_free(h);
+  return Contents { bytes: bytes, blksize: blksize, err: "" };
+}
+
+function read_side(s: Side): Contents {
+  let none: u8[] = [];
+  if (s.kind == K_NONEXISTENT) {
+    return Contents { bytes: none, blksize: -1i64, err: "" };
+  }
+  if (s.kind == K_STDIN) {
+    return read_stream(stdin(), s.name, s.st.blksize);
+  }
+  if (filetype.is_reg(s.st.mode)) {
+    return match (read_file_bytes(s.name)) {
+      Ok(bytes) => Contents { bytes: bytes, blksize: s.st.blksize, err: "" },
+      Err(e) => Contents { bytes: none, blksize: s.st.blksize, err: s.name + ": " + gnu.io_error_text(e) },
+    };
+  }
+  return match (open_reader(s.name)) {
+    Ok(r) => read_stream(r, s.name, s.st.blksize),
+    Err(e) => Contents { bytes: none, blksize: s.st.blksize, err: s.name + ": " + gnu.io_error_text(e) },
+  };
+}
+
+// The first buffer that GNU diff reads holds a multiple of the block size and
+// of the word size. A file is binary when that buffer holds a NUL.
+function looks_binary(c: Contents): boolean {
+  if (c.blksize < 0i64) {
+    return false;
+  }
+  let size = c.blksize;
+  if (size == 0i64) {
+    size = 8i64;
+  } else if (size % 8i64 != 0i64) {
+    let a = size;
+    let b = 8i64;
+    while (b != 0i64) {
+      let t = a % b;
+      a = b;
+      b = t;
+    }
+    size = size / a * 8i64;
+  }
+  let n = if (size < c.bytes.len() as i64) { size as i32 } else { c.bytes.len() };
+  for i in 0..n {
+    if (c.bytes[i] == 0 as u8) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function diff_dirs(run: Run, parent: Option[Parent], sides: Side[]): i32 {
+  let stats0: FileStat[] = [];
+  let stats1: FileStat[] = [];
+  if let Some(p) = parent {
+    stats0 = p.stats0;
+    stats1 = p.stats1;
+  }
+  let loop0 = sides[0].kind == K_NONEXISTENT || in_chain(stats0, sides[0].st);
+  let loop1 = sides[1].kind == K_NONEXISTENT || in_chain(stats1, sides[1].st);
+  if (loop0 && loop1) {
+    fail(run, sides[if (sides[0].kind == K_NONEXISTENT) { 1 } else { 0 }].name + ": recursive directory loop");
+    return EXIT_TROUBLE;
+  }
+  let lists: string[][] = [];
+  let status = 0;
+  for f in 0..2 {
+    let none: string[] = [];
+    let names = none;
+    if (sides[f].kind != K_NONEXISTENT) {
+      match (read_dir(sides[f].name)) {
+        Ok(ns) => {
+          names = cmp.sort(ns);
+        },
+        Err(e) => {
+          fail(run, sides[f].name + ": " + gnu.io_error_text(e));
+          status = EXIT_TROUBLE;
+        }
+      }
+    }
+    lists = lists.append(names);
+  }
+  if (status != 0) {
+    return status;
+  }
+  let here = Parent { names: [sides[0].name, sides[1].name], stats0: stats0.append(sides[0].st), stats1: stats1.append(sides[1].st) };
+  let a = lists[0];
+  let b = lists[1];
+  let i = 0;
+  let j = 0;
+  let val = 0;
+  while (i < a.len() || j < b.len()) {
+    let order = if (i >= a.len()) { 1 } else if (j >= b.len()) { -1 } else if (a[i] < b[j]) { -1 } else if (a[i] > b[j]) { 1 } else { 0 };
+    let n0: Option[string] = None;
+    let n1: Option[string] = None;
+    if (order <= 0) {
+      n0 = Some(a[i]);
+      i += 1;
+    }
+    if (order >= 0) {
+      n1 = Some(b[j]);
+      j += 1;
+    }
+    let v = compare_files(run, Some(here), n0, n1);
+    if (v > val) {
+      val = v;
+    }
+  }
+  return val;
+}
+
+function in_chain(chain: FileStat[], st: FileStat): boolean {
+  for s in chain {
+    if (same_file(s, st)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// GNU diff's c_escape gives a file name for a header line. A name with a
+// space, a quote, a backslash or a control byte gets double quotes and C
+// escapes.
+function c_escape(s: string): string {
+  let need = false;
+  for i in 0..s.len() {
+    let c = s[i] as i32;
+    if (c == 32 || c < 32 || c >= 128 || c == 34 || c == 92) {
+      need = true;
+      break;
+    }
+  }
+  if (!need) {
+    return s;
+  }
+  let h = buf_new(s.len() + 8);
+  buf_push_byte(h, 34);
+  for i in 0..s.len() {
+    let c = s[i] as i32;
+    let letter = match (c) {
+      7 => b'a',
+      8 => b'b',
+      9 => b't',
+      10 => b'n',
+      11 => b'v',
+      12 => b'f',
+      13 => b'r',
+      34 => b'"',
+      92 => b'\\',
+      _ => 0 as u8,
+    };
+    if (letter != 0 as u8) {
+      buf_push_byte(h, 92);
+      buf_push_byte(h, letter as i32);
+    } else if (c < 32 || c >= 128) {
+      buf_push_byte(h, 92);
+      buf_push_byte(h, 48 + c / 64);
+      buf_push_byte(h, 48 + c / 8 % 8);
+      buf_push_byte(h, 48 + c % 8);
+    } else {
+      buf_push_byte(h, c);
+    }
+  }
+  buf_push_byte(h, 34);
+  let text = buf_take(h);
+  buf_free(h);
+  return text;
+}
+
+// One file prepared for the comparison. `buf` ends in a newline: when the file
+// does not, one is added and `missing` is set. `starts` holds the offset of
+// each line and, last, the length of `buf`.
+struct Text { buf: u8[], missing: boolean, starts: i32[] }
+
+function prepare(bytes: u8[]): Text {
+  let missing = bytes.len() > 0 && bytes[bytes.len() - 1] != b'\n';
+  let buf = bytes;
+  if (missing) {
+    buf = buf.append(b'\n');
+  }
+  let starts = __alloc_i32(__count_byte_bytes(buf, 10) + 1);
+  let k = 0;
+  let at = 0;
+  while (at < buf.len()) {
+    starts = starts.with(k, at);
+    k += 1;
+    at = __memchr_bytes(buf, 10, at) + 1;
+  }
+  starts = starts.with(k, buf.len());
+  return Text { buf: buf, missing: missing, starts: starts };
+}
+
+function line_count(t: Text): i32 {
+  return t.starts.len() - 1;
+}
+
+// The line index that starts at byte `off`, which is a line start.
+function line_at(t: Text, off: i32): i32 {
+  let lo = 0;
+  let hi = t.starts.len() - 1;
+  while (lo < hi) {
+    let mid = (lo + hi) / 2;
+    if (t.starts[mid] < off) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
+}
+
+// find_identical_ends: the common prefix and suffix that the comparison can
+// skip, at line boundaries, less `horizon` lines at each end. It gives the
+// first line of the middle part, and its length in lines in each file.
+function identical_ends(a: Text, b: Text, horizon: i64): (i32, i32, i32) {
+  let n0 = a.buf.len();
+  let n1 = b.buf.len();
+  let m0 = if (a.missing) { 1 } else { 0 };
+  let m1 = if (b.missing) { 1 } else { 0 };
+  let n = if (n0 < n1) { n0 } else { n1 };
+  let k = __mismatch_bytes(a.buf, 0, b.buf, 0, n);
+  if (k > n) {
+    k = n;
+  }
+  if (n0 - m0 < k != n1 - m1 < k) {
+    k -= 1;
+  }
+  let h = horizon;
+  while (k != 0) {
+    if (a.buf[k - 1] == b'\n') {
+      if (h == 0i64) {
+        break;
+      }
+      h -= 1i64;
+    }
+    k -= 1;
+  }
+  let prefix_end = k;
+  let s0 = n0;
+  let s1 = n1;
+  if (a.missing == b.missing) {
+    let p0 = n0;
+    let p1 = n1;
+    let beg0 = prefix_end + (if (n0 < n1) { 0 } else { n0 - n1 });
+    while (p0 != beg0) {
+      if (a.buf[p0 - 1] != b.buf[p1 - 1]) {
+        beg0 = p0;
+        break;
+      }
+      p0 -= 1;
+      p1 -= 1;
+    }
+    let at_line = (p0 == 0 || a.buf[p0 - 1] == b'\n') && (p1 == 0 || b.buf[p1 - 1] == b'\n');
+    let i = horizon + (if (at_line) { 0i64 } else { 1i64 });
+    while (i > 0i64 && p0 != n0) {
+      i -= 1i64;
+      p0 = __memchr_bytes(a.buf, 10, p0) + 1;
+    }
+    s0 = p0;
+    s1 = p1 + (p0 - beg0);
+  }
+  let first = line_at(a, prefix_end);
+  return (first, line_at(a, s0) - first, line_at(b, s1) - first);
+}
+
+// The equivalence classes of the lines of the middle part: two lines get the
+// same class when they compare equal under the options.
+struct Classes { eq0: i32[], eq1: i32[], count: i32 }
+
+// The canonical byte at `i` of a line that ends at `hi`, under -b or -w, and
+// the index after it. The byte is -1 at the end of the line.
+function canon_next(buf: u8[], i: i32, hi: i32, white: i32, fold: boolean): (i32, i32) {
+  let j = i;
+  if (white == WS_ALL) {
+    while (j < hi && is_space(buf[j] as i32)) {
+      j += 1;
+    }
+  } else if (white == WS_CHANGE && j < hi && is_space(buf[j] as i32)) {
+    while (j < hi && is_space(buf[j] as i32)) {
+      j += 1;
+    }
+    if (j == hi) {
+      return (-1, j);
+    }
+    return (32, j);
+  }
+  if (j >= hi) {
+    return (-1, j);
+  }
+  let c = buf[j] as i32;
+  if (fold && c >= 65 && c <= 90) {
+    c += 32;
+  }
+  return (c, j + 1);
+}
+
+function hash_plain(buf: u8[], lo: i32, hi: i32): u64 {
+  let h = 0 as u64;
+  for i in lo..hi {
+    h = (h << 7 as u64 | h >> 57 as u64) + buf[i] as u64;
+  }
+  return h;
+}
+
+function hash_canon(buf: u8[], lo: i32, hi: i32, white: i32, fold: boolean): u64 {
+  let h = 0 as u64;
+  let i = lo;
+  while (true) {
+    let r = canon_next(buf, i, hi, white, fold);
+    if (r.0 < 0) {
+      break;
+    }
+    h = (h << 7 as u64 | h >> 57 as u64) + r.0 as u64;
+    i = r.1;
+  }
+  return h;
+}
+
+function lines_equal(cfg: Cfg, a: u8[], alo: i32, ahi: i32, b: u8[], blo: i32, bhi: i32): boolean {
+  if (cfg.white == WS_NONE) {
+    if (ahi - alo != bhi - blo) {
+      return false;
+    }
+    let n = ahi - alo;
+    if (__mismatch_bytes(a, alo, b, blo, n) >= n) {
+      return true;
+    }
+    if (!cfg.ignore_case) {
+      return false;
+    }
+    for k in 0..n {
+      let x = a[alo + k] as i32;
+      let y = b[blo + k] as i32;
+      if (x >= 65 && x <= 90) {
+        x += 32;
+      }
+      if (y >= 65 && y <= 90) {
+        y += 32;
+      }
+      if (x != y) {
+        return false;
+      }
+    }
+    return true;
+  }
+  let i = alo;
+  let j = blo;
+  while (true) {
+    let x = canon_next(a, i, ahi, cfg.white, cfg.ignore_case);
+    let y = canon_next(b, j, bhi, cfg.white, cfg.ignore_case);
+    if (x.0 != y.0) {
+      return false;
+    }
+    if (x.0 < 0) {
+      return true;
+    }
+    i = x.1;
+    j = y.1;
+  }
+  return true;
+}
+
+// The class of each line of the middle part of both files: two lines get the
+// same class when they compare equal under the options. A line without a
+// newline is in a class of its own unless -b or -w is given.
+//
+// The table is chained, as in GNU diff, with about three lines for each
+// bucket. A first pass puts a 31-bit hash of each line in its slot of `eq0`
+// or `eq1`. Thus the table loop that follows is short. A bucket entry and
+// a chain link hold a hash in bits 32 to 62, a bit that says more entries
+// follow, and a class. `keys` holds the first line of each class, which
+// later lines compare against: its hash, its file in bit 31 and its line.
+//
+// Before a table lookup, the loop compares a line with the class of the line
+// after the last match. Most lines of the second file follow the first.
+function classes(cfg: Cfg, texts: Text[], first: i32, lens: i32[]): Classes {
+  let lines = lens[0] + lens[1];
+  let bits = 9;
+  while (1 << bits < lines / 3) {
+    bits += 1;
+  }
+  let buckets = __alloc_i64(1 << bits);
+  let chain = __alloc_i64(lines + 1);
+  let keys = __alloc_i64(lines + 1);
+  let count = 0;
+  let plain = cfg.white == WS_NONE && !cfg.ignore_case;
+  let eq0 = __alloc_i32(lens[0]);
+  let eq1 = __alloc_i32(lens[1]);
+  let tx = Sources { buf0: texts[0].buf, buf1: texts[1].buf, starts0: texts[0].starts, starts1: texts[1].starts, part0: partial_line(cfg, texts[0]), part1: partial_line(cfg, texts[1]) };
+  for f in 0..2 {
+    let buf = if (f == 0) { tx.buf0 } else { tx.buf1 };
+    let starts = if (f == 0) { tx.starts0 } else { tx.starts1 };
+    for k in 0..lens[f] {
+      let lo = starts[first + k];
+      let hi = starts[first + k + 1] - 1;
+      let h = if (plain) { hash_plain(buf, lo, hi) } else { hash_canon(buf, lo, hi, cfg.white, cfg.ignore_case) };
+      let folded = (h ^ h >> 31 as u64) as i32 & 2147483647;
+      if (f == 0) {
+        eq0 = eq0.with(k, folded);
+      } else {
+        eq1 = eq1.with(k, folded);
+      }
+    }
+  }
+  for f in 0..2 {
+    let guess = 0;
+    for k in 0..lens[f] {
+      let i = first + k;
+      let top = (if (f == 0) { eq0[k] } else { eq1[k] }) as i64;
+      let c = 0;
+      if (guess > 0 && keys[guess] >> 32i64 == top && same_line(cfg, tx, keys[guess], f, i)) {
+        c = guess;
+      } else {
+        let b = (top as u64 * (0x9e3779b97f4a7c15 as u64) >> (64 - bits) as u64) as i32;
+        let e = buckets[b];
+        while (e != 0i64) {
+          let ec = (e & 2147483647i64) as i32;
+          if (e >> 32i64 == top && same_line(cfg, tx, keys[ec], f, i)) {
+            c = ec;
+            break;
+          }
+          if ((e & 2147483648i64) == 0i64) {
+            break;
+          }
+          e = chain[ec];
+        }
+        if (c == 0) {
+          count += 1;
+          c = count;
+          keys = keys.with(c, top << 32i64 | f as i64 << 31i64 | i as i64);
+          let head = buckets[b];
+          chain = chain.with(c, head);
+          buckets = buckets.with(b, top << 32i64 | (if (head != 0i64) { 2147483648i64 } else { 0i64 }) | c as i64);
+        }
+      }
+      if (f == 0) {
+        eq0 = eq0.with(k, c);
+      } else {
+        eq1 = eq1.with(k, c);
+      }
+      let key = keys[c];
+      let after = (key & 2147483647i64) as i32 + 1 - first;
+      guess = 0;
+      if ((key & 2147483648i64) == 0i64 && after < lens[0] && (f == 1 || after <= k)) {
+        guess = eq0[after];
+      }
+    }
+  }
+  return Classes { eq0: eq0, eq1: eq1, count: count + 1 };
+}
+
+// The two prepared files, as the class table reads them.
+struct Sources { buf0: u8[], buf1: u8[], starts0: i32[], starts1: i32[], part0: i32, part1: i32 }
+
+// Whether line i of file f equals the first line of a class, given its key.
+function same_line(cfg: Cfg, tx: Sources, key: i64, f: i32, i: i32): boolean {
+  let rf = (key >> 31i64 & 1i64) as i32;
+  let rl = (key & 2147483647i64) as i32;
+  let rpart = rl == (if (rf == 0) { tx.part0 } else { tx.part1 });
+  let part = i == (if (f == 0) { tx.part0 } else { tx.part1 });
+  if (rpart != part) {
+    return false;
+  }
+  let rbuf = if (rf == 0) { tx.buf0 } else { tx.buf1 };
+  let rstarts = if (rf == 0) { tx.starts0 } else { tx.starts1 };
+  let buf = if (f == 0) { tx.buf0 } else { tx.buf1 };
+  let starts = if (f == 0) { tx.starts0 } else { tx.starts1 };
+  let rlo = rstarts[rl];
+  let rhi = rstarts[rl + 1] - 1;
+  let lo = starts[i];
+  let hi = starts[i + 1] - 1;
+  if (cfg.white == WS_NONE && !cfg.ignore_case) {
+    let n = hi - lo;
+    return rhi - rlo == n && __mismatch_bytes(rbuf, rlo, buf, lo, n) >= n;
+  }
+  return lines_equal(cfg, rbuf, rlo, rhi, buf, lo, hi);
+}
+
+// The line of a file that is in a class of its own because it has no
+// newline, or -1.
+function partial_line(cfg: Cfg, t: Text): i32 {
+  if (t.missing && cfg.white < WS_CHANGE) {
+    return line_count(t) - 1;
+  }
+  return -1;
+}
+
+// discard_confusing_lines, first step: 1 marks a line that matches no line of
+// the other file, 2 a line that matches so many that it is only provisionally
+// discardable.
+function discard_marks(eq: i32[], counts: i32[]): u8[] {
+  let end = eq.len();
+  let d = __alloc_u8(end);
+  let many = 5;
+  let tem = end / 64;
+  while (true) {
+    tem = tem >> 2;
+    if (tem <= 0) {
+      break;
+    }
+    many *= 2;
+  }
+  for i in 0..end {
+    let nmatch = counts[eq[i]];
+    if (nmatch == 0) {
+      d = d.with(i, 1 as u8);
+    } else if (nmatch > many) {
+      d = d.with(i, 2 as u8);
+    }
+  }
+  return d;
+}
+
+// discard_confusing_lines, second step: a provisional discard stands only in
+// the middle of a run of discards.
+function settle_marks(own d: u8[]): u8[] {
+  let end = d.len();
+  let i = 0;
+  while (i < end) {
+    if (d[i] == 2 as u8) {
+      d = d.with(i, 0 as u8);
+    } else if (d[i] != 0 as u8) {
+      let j = i;
+      let provisional = 0;
+      while (j < end && d[j] != 0 as u8) {
+        if (d[j] == 2 as u8) {
+          provisional += 1;
+        }
+        j += 1;
+      }
+      while (j > i && d[j - 1] == 2 as u8) {
+        j -= 1;
+        d = d.with(j, 0 as u8);
+        provisional -= 1;
+      }
+      let length = j - i;
+      if (provisional * 4 > length) {
+        while (j > i) {
+          j -= 1;
+          if (d[j] == 2 as u8) {
+            d = d.with(j, 0 as u8);
+          }
+        }
+      } else {
+        d = settle_run(d, i, length);
+        i += length - 1;
+      }
+    }
+    i += 1;
+  }
+  return d;
+}
+
+function settle_run(own d: u8[], i: i32, length: i32): u8[] {
+  let minimum = 1;
+  let tem = length >> 2;
+  while (true) {
+    tem = tem >> 2;
+    if (tem <= 0) {
+      break;
+    }
+    minimum = minimum << 1;
+  }
+  minimum += 1;
+  let j = 0;
+  let consec = 0;
+  while (j < length) {
+    if (d[i + j] != 2 as u8) {
+      consec = 0;
+    } else {
+      consec += 1;
+      if (minimum == consec) {
+        j -= consec;
+      } else if (minimum < consec) {
+        d = d.with(i + j, 0 as u8);
+      }
+    }
+    j += 1;
+  }
+  d = settle_edge(d, i, length, 1);
+  return settle_edge(d, i + length - 1, length, -1);
+}
+
+// Cancel the provisional discards at one end of a run, until three real
+// discards in a row or the first real discard eight lines in.
+function settle_edge(own d: u8[], at: i32, length: i32, step: i32): u8[] {
+  let consec = 0;
+  for j in 0..length {
+    let k = at + j * step;
+    if (j >= 8 && d[k] == 1 as u8) {
+      break;
+    }
+    if (d[k] == 2 as u8) {
+      consec = 0;
+      d = d.with(k, 0 as u8);
+    } else if (d[k] == 0 as u8) {
+      consec = 0;
+    } else {
+      consec += 1;
+    }
+    if (consec == 3) {
+      break;
+    }
+  }
+  return d;
+}
+
+// The lines that the main comparison sees, as classes, and the index of each
+// in the middle part.
+struct Kept { classes: i32[], real: i32[] }
+
+function keep_lines(eq: i32[], d: u8[], minimal: boolean): Kept {
+  let n = 0;
+  for i in 0..eq.len() {
+    if (minimal || d[i] == 0 as u8) {
+      n += 1;
+    }
+  }
+  let cls = __alloc_i32(n);
+  let real = __alloc_i32(n);
+  let j = 0;
+  for i in 0..eq.len() {
+    if (minimal || d[i] == 0 as u8) {
+      cls = cls.with(j, eq[i]);
+      real = real.with(j, i);
+      j += 1;
+    }
+  }
+  return Kept { classes: cls, real: real };
+}
+
+// The change flags of both files in one array, as GNU diff lays them out: a
+// zero before and after each file, file 0 at 1 and file 1 at len0 + 3.
+function flag_base(f: i32, len0: i32): i32 {
+  return if (f == 0) { 1 } else { len0 + 3 };
+}
+
+function mark_discards(own flags: u8[], d: u8[], base: i32, minimal: boolean): u8[] {
+  if (minimal) {
+    return flags;
+  }
+  for i in 0..d.len() {
+    if (d[i] != 0 as u8) {
+      flags = flags.with(base + i, 1 as u8);
+    }
+  }
+  return flags;
+}
+
+// The layout of the work space of diag: the forward diagonals at `fo`, the
+// backward ones at `bo`, and at `ps` four slots for the partition it finds.
+struct Space { fo: i32, bo: i32, ps: i32, heuristic: boolean, too_expensive: i32 }
+
+function part(own v: i32[], sp: Space, x: i32, y: i32, lo_min: boolean, hi_min: boolean): i32[] {
+  v = v.with(sp.ps, x);
+  v = v.with(sp.ps + 1, y);
+  v = v.with(sp.ps + 2, if (lo_min) { 1 } else { 0 });
+  return v.with(sp.ps + 3, if (hi_min) { 1 } else { 0 });
+}
+
+// The diag function of GNU diffseq.h: the midpoint of the shortest edit
+// script for the box [xoff, xlim) x [yoff, ylim), with GNU's heuristics.
+function diag(own v: i32[], sp: Space, xv: i32[], yv: i32[], xoff: i32, xlim: i32, yoff: i32, ylim: i32, find_minimal: boolean): i32[] {
+  let fo = sp.fo;
+  let bo = sp.bo;
+  let dmin = xoff - ylim;
+  let dmax = xlim - yoff;
+  let fmid = xoff - yoff;
+  let bmid = xlim - ylim;
+  let fmin = fmid;
+  let fmax = fmid;
+  let bmin = bmid;
+  let bmax = bmid;
+  let odd = (fmid - bmid & 1) != 0;
+  v = v.with(fo + fmid, xoff);
+  v = v.with(bo + bmid, xlim);
+  let c = 1;
+  while (true) {
+    let big_snake = false;
+    if (fmin > dmin) {
+      fmin -= 1;
+      v = v.with(fo + fmin - 1, -1);
+    } else {
+      fmin += 1;
+    }
+    if (fmax < dmax) {
+      fmax += 1;
+      v = v.with(fo + fmax + 1, -1);
+    } else {
+      fmax -= 1;
+    }
+    let d = fmax;
+    while (d >= fmin) {
+      let tlo = v[fo + d - 1];
+      let thi = v[fo + d + 1];
+      let x0 = if (tlo < thi) { thi } else { tlo + 1 };
+      let x = x0;
+      let y = x0 - d;
+      while (x < xlim && y < ylim && xv[x] == yv[y]) {
+        x += 1;
+        y += 1;
+      }
+      if (x - x0 > SNAKE_LIMIT) {
+        big_snake = true;
+      }
+      v = v.with(fo + d, x);
+      if (odd && bmin <= d && d <= bmax && v[bo + d] <= x) {
+        return part(v, sp, x, y, true, true);
+      }
+      d -= 2;
+    }
+    if (bmin > dmin) {
+      bmin -= 1;
+      v = v.with(bo + bmin - 1, OFFSET_MAX);
+    } else {
+      bmin += 1;
+    }
+    if (bmax < dmax) {
+      bmax += 1;
+      v = v.with(bo + bmax + 1, OFFSET_MAX);
+    } else {
+      bmax -= 1;
+    }
+    d = bmax;
+    while (d >= bmin) {
+      let tlo = v[bo + d - 1];
+      let thi = v[bo + d + 1];
+      let x0 = if (tlo < thi) { tlo } else { thi - 1 };
+      let x = x0;
+      let y = x0 - d;
+      while (xoff < x && yoff < y && xv[x - 1] == yv[y - 1]) {
+        x -= 1;
+        y -= 1;
+      }
+      if (x0 - x > SNAKE_LIMIT) {
+        big_snake = true;
+      }
+      v = v.with(bo + d, x);
+      if (!odd && fmin <= d && d <= fmax && x <= v[fo + d]) {
+        return part(v, sp, x, y, true, true);
+      }
+      d -= 2;
+    }
+    if (!find_minimal) {
+      if (200 < c && big_snake && sp.heuristic) {
+        let fw = best_forward(v, sp, xv, yv, xoff, xlim, yoff, ylim, fmin, fmax, fmid, c);
+        if (fw.0 > 0i64) {
+          return part(v, sp, fw.1, fw.2, true, false);
+        }
+        let bw = best_backward(v, sp, xv, yv, xoff, xlim, yoff, ylim, bmin, bmax, bmid, c);
+        if (bw.0 > 0i64) {
+          return part(v, sp, bw.1, bw.2, false, true);
+        }
+      }
+      if (c >= sp.too_expensive) {
+        return give_up(v, sp, xoff, xlim, yoff, ylim, fmin, fmax, bmin, bmax);
+      }
+    }
+    c += 1;
+  }
+  return v;
+}
+
+function abs_i64(v: i64): i64 {
+  return if (v < 0i64) { -v } else { v };
+}
+
+// The forward diagonal that made the most progress, when it ends in a snake
+// of SNAKE_LIMIT lines: (progress, x, y), progress 0 when there is none.
+function best_forward(v: i32[], sp: Space, xv: i32[], yv: i32[], xoff: i32, xlim: i32, yoff: i32, ylim: i32, fmin: i32, fmax: i32, fmid: i32, c: i32): (i64, i32, i32) {
+  let best = 0i64;
+  let bx = 0;
+  let by = 0;
+  let d = fmax;
+  while (d >= fmin) {
+    let dd = (d - fmid) as i64;
+    let x = v[sp.fo + d];
+    let y = x - d;
+    let gain = (x - xoff) as i64 * 2i64 - dd;
+    if (gain > 12i64 * (c as i64 + abs_i64(dd)) && gain > best && xoff + SNAKE_LIMIT <= x && x < xlim && yoff + SNAKE_LIMIT <= y && y < ylim) {
+      let k = 1;
+      while (xv[x - k] == yv[y - k]) {
+        if (k == SNAKE_LIMIT) {
+          best = gain;
+          bx = x;
+          by = y;
+          break;
+        }
+        k += 1;
+      }
+    }
+    d -= 2;
+  }
+  return (best, bx, by);
+}
+
+function best_backward(v: i32[], sp: Space, xv: i32[], yv: i32[], xoff: i32, xlim: i32, yoff: i32, ylim: i32, bmin: i32, bmax: i32, bmid: i32, c: i32): (i64, i32, i32) {
+  let best = 0i64;
+  let bx = 0;
+  let by = 0;
+  let d = bmax;
+  while (d >= bmin) {
+    let dd = (d - bmid) as i64;
+    let x = v[sp.bo + d];
+    let y = x - d;
+    let gain = (xlim - x) as i64 * 2i64 + dd;
+    if (gain > 12i64 * (c as i64 + abs_i64(dd)) && gain > best && xoff < x && x <= xlim - SNAKE_LIMIT && yoff < y && y <= ylim - SNAKE_LIMIT) {
+      let k = 0;
+      while (xv[x + k] == yv[y + k]) {
+        if (k == SNAKE_LIMIT - 1) {
+          best = gain;
+          bx = x;
+          by = y;
+          break;
+        }
+        k += 1;
+      }
+    }
+    d -= 2;
+  }
+  return (best, bx, by);
+}
+
+// The search cost too much: give the point halfway between the best results
+// until now.
+function give_up(own v: i32[], sp: Space, xoff: i32, xlim: i32, yoff: i32, ylim: i32, fmin: i32, fmax: i32, bmin: i32, bmax: i32): i32[] {
+  let fxybest = -1;
+  let fxbest = 0;
+  let d = fmax;
+  while (d >= fmin) {
+    let x = v[sp.fo + d];
+    if (x > xlim) {
+      x = xlim;
+    }
+    let y = x - d;
+    if (ylim < y) {
+      x = ylim + d;
+      y = ylim;
+    }
+    if (fxybest < x + y) {
+      fxybest = x + y;
+      fxbest = x;
+    }
+    d -= 2;
+  }
+  let bxybest = OFFSET_MAX;
+  let bxbest = 0;
+  d = bmax;
+  while (d >= bmin) {
+    let x = v[sp.bo + d];
+    if (x < xoff) {
+      x = xoff;
+    }
+    let y = x - d;
+    if (y < yoff) {
+      x = yoff + d;
+      y = yoff;
+    }
+    if (x + y < bxybest) {
+      bxybest = x + y;
+      bxbest = x;
+    }
+    d -= 2;
+  }
+  if (xlim + ylim - bxybest < fxybest - (xoff + yoff)) {
+    return part(v, sp, fxbest, fxybest - fxbest, true, false);
+  }
+  return part(v, sp, bxbest, bxybest - bxbest, false, true);
+}
+
+function push5(own s: i32[], top: i32, a: i32, b: i32, c: i32, d: i32, e: i32): i32[] {
+  let vals: i32[] = [a, b, c, d, e];
+  for k in 0..5 {
+    if (top + k < s.len()) {
+      s = s.with(top + k, vals[k]);
+    } else {
+      s = s.append(vals[k]);
+    }
+  }
+  return s;
+}
+
+// compareseq: mark the lines that the shortest edit script deletes and
+// inserts. GNU recurses into one half and loops on the other. Here a stack
+// holds the halves that wait, which gives the same marks.
+function compareseq(own flags: u8[], x: Kept, y: Kept, len0: i32, minimal: boolean, heuristic: boolean): u8[] {
+  let xv = x.classes;
+  let yv = y.classes;
+  let n = xv.len();
+  let m = yv.len();
+  let diags = n + m + 3;
+  let too_expensive = 1;
+  let dg = diags;
+  while (dg != 0) {
+    too_expensive = too_expensive << 1;
+    dg = dg >> 2;
+  }
+  if (too_expensive < 4096) {
+    too_expensive = 4096;
+  }
+  if (minimal) {
+    too_expensive = OFFSET_MAX;
+  }
+  let sp = Space { fo: m + 1, bo: diags + m + 1, ps: 2 * diags, heuristic: heuristic, too_expensive: too_expensive };
+  let v = __alloc_i32(2 * diags + 4);
+  let base1 = flag_base(1, len0);
+  let stack = push5(__alloc_i32(0), 0, 0, n, 0, m, if (minimal) { 1 } else { 0 });
+  let top = 5;
+  while (top > 0) {
+    top -= 5;
+    let xoff = stack[top];
+    let xlim = stack[top + 1];
+    let yoff = stack[top + 2];
+    let ylim = stack[top + 3];
+    let find_minimal = stack[top + 4] != 0;
+    while (true) {
+      while (xoff < xlim && yoff < ylim && xv[xoff] == yv[yoff]) {
+        xoff += 1;
+        yoff += 1;
+      }
+      while (xoff < xlim && yoff < ylim && xv[xlim - 1] == yv[ylim - 1]) {
+        xlim -= 1;
+        ylim -= 1;
+      }
+      if (xoff == xlim) {
+        for k in yoff..ylim {
+          flags = flags.with(base1 + y.real[k], 1 as u8);
+        }
+        break;
+      }
+      if (yoff == ylim) {
+        for k in xoff..xlim {
+          flags = flags.with(1 + x.real[k], 1 as u8);
+        }
+        break;
+      }
+      v = diag(v, sp, xv, yv, xoff, xlim, yoff, ylim, find_minimal);
+      let xmid = v[sp.ps];
+      let ymid = v[sp.ps + 1];
+      let lo_min = v[sp.ps + 2];
+      let hi_min = v[sp.ps + 3];
+      stack = push5(stack, top, xmid, xlim, ymid, ylim, hi_min);
+      top += 5;
+      xlim = xmid;
+      ylim = ymid;
+      find_minimal = lo_min != 0;
+    }
+  }
+  return flags;
+}
+
+// shift_boundaries: move each run of changes back to merge it with an
+// earlier run. Then move it forward as far as possible. Then move it back to
+// align it with a run of changes in the other file.
+function shift_boundaries(own flags: u8[], eqs: i32[][], len0: i32): u8[] {
+  for f in 0..2 {
+    let cb = flag_base(f, len0);
+    let ob = flag_base(1 - f, len0);
+    let equivs = eqs[f];
+    let i = 0;
+    let j = 0;
+    let i_end = equivs.len();
+    while (true) {
+      while (i < i_end && flags[cb + i] == 0 as u8) {
+        while (flags[ob + j] != 0 as u8) {
+          j += 1;
+        }
+        j += 1;
+        i += 1;
+      }
+      if (i == i_end) {
+        break;
+      }
+      let start = i;
+      i += 1;
+      while (flags[cb + i] != 0 as u8) {
+        i += 1;
+      }
+      while (flags[ob + j] != 0 as u8) {
+        j += 1;
+      }
+      let corresponding = i_end;
+      while (true) {
+        let runlength = i - start;
+        while (start != 0 && equivs[start - 1] == equivs[i - 1]) {
+          start -= 1;
+          flags = flags.with(cb + start, 1 as u8);
+          i -= 1;
+          flags = flags.with(cb + i, 0 as u8);
+          while (flags[cb + start - 1] != 0 as u8) {
+            start -= 1;
+          }
+          j -= 1;
+          while (flags[ob + j] != 0 as u8) {
+            j -= 1;
+          }
+        }
+        corresponding = if (flags[ob + j - 1] != 0 as u8) { i } else { i_end };
+        while (i != i_end && equivs[start] == equivs[i]) {
+          flags = flags.with(cb + start, 0 as u8);
+          start += 1;
+          flags = flags.with(cb + i, 1 as u8);
+          i += 1;
+          while (flags[cb + i] != 0 as u8) {
+            i += 1;
+          }
+          j += 1;
+          while (flags[ob + j] != 0 as u8) {
+            corresponding = i;
+            j += 1;
+          }
+        }
+        if (runlength == i - start) {
+          break;
+        }
+      }
+      while (corresponding < i) {
+        start -= 1;
+        flags = flags.with(cb + start, 1 as u8);
+        i -= 1;
+        flags = flags.with(cb + i, 0 as u8);
+        j -= 1;
+        while (flags[ob + j] != 0 as u8) {
+          j -= 1;
+        }
+      }
+    }
+  }
+  return flags;
+}
+
+// The edit script: each change as its first line in each file, counted from
+// the start of the middle part, and the counts of deleted and inserted lines.
+struct Script { line0: i32[], line1: i32[], del: i32[], ins: i32[] }
+
+function build_script(flags: u8[], len0: i32, len1: i32): Script {
+  let b1 = flag_base(1, len0);
+  let l0: i32[] = [];
+  let l1: i32[] = [];
+  let dl: i32[] = [];
+  let il: i32[] = [];
+  let i0 = 0;
+  let i1 = 0;
+  while (i0 < len0 || i1 < len1) {
+    if (flags[1 + i0] != 0 as u8 || flags[b1 + i1] != 0 as u8) {
+      let s0 = i0;
+      let s1 = i1;
+      while (flags[1 + i0] != 0 as u8) {
+        i0 += 1;
+      }
+      while (flags[b1 + i1] != 0 as u8) {
+        i1 += 1;
+      }
+      l0 = l0.append(s0);
+      l1 = l1.append(s1);
+      dl = dl.append(i0 - s0);
+      il = il.append(i1 - s1);
+    }
+    i0 += 1;
+    i1 += 1;
+  }
+  return Script { line0: l0, line1: l1, del: dl, ins: il };
+}
+
+// The edit script of two prepared files under the options, with the first
+// line of the middle part.
+function diff_texts(cfg: Cfg, a: Text, b: Text): (Script, i32) {
+  let ends = identical_ends(a, b, cfg.horizon);
+  let first = ends.0;
+  let len0 = ends.1;
+  let len1 = ends.2;
+  let cls = classes(cfg, [a, b], first, [len0, len1]);
+  let counts0 = __alloc_i32(cls.count);
+  let counts1 = __alloc_i32(cls.count);
+  for c in cls.eq0 {
+    counts0 = counts0.with(c, counts0[c] + 1);
+  }
+  for c in cls.eq1 {
+    counts1 = counts1.with(c, counts1[c] + 1);
+  }
+  let d0 = settle_marks(discard_marks(cls.eq0, counts1));
+  let d1 = settle_marks(discard_marks(cls.eq1, counts0));
+  let flags = __alloc_u8(len0 + len1 + 4);
+  flags = mark_discards(flags, d0, flag_base(0, len0), cfg.minimal);
+  flags = mark_discards(flags, d1, flag_base(1, len0), cfg.minimal);
+  let x = keep_lines(cls.eq0, d0, cfg.minimal);
+  let y = keep_lines(cls.eq1, d1, cfg.minimal);
+  flags = compareseq(flags, x, y, len0, cfg.minimal, cfg.speed);
+  flags = shift_boundaries(flags, [cls.eq0, cls.eq1], len0);
+  return (build_script(flags, len0, len1), first);
+}
+
+// Two files to report on: the prepared texts, the first line of the middle
+// part, the names for the header and the status of each file.
+struct Pair { a: Text, b: Text, first: i32, names: string[], labels: string[], stats: FileStat[], nested: boolean }
+
+// A hunk: the kinds of change in it (1 deletes, 2 inserts, 3 both, 0 when
+// each line is one that -B ignores) and its bounds in each file, counted
+// from the start of the middle part.
+struct Hunk { kind: i32, first0: i32, last0: i32, first1: i32, last1: i32 }
+
+function blank_line(cfg: Cfg, t: Text, i: i32): boolean {
+  let lo = t.starts[i];
+  let hi = t.starts[i + 1] - 1;
+  if (cfg.white >= WS_CHANGE) {
+    for k in lo..hi {
+      if (!is_space(t.buf[k] as i32)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return hi == lo;
+}
+
+function all_blank(cfg: Cfg, t: Text, from: i32, n: i32): boolean {
+  for i in from..from + n {
+    if (!blank_line(cfg, t, i)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// analyze_hunk for the changes lo..=hi of the script.
+function analyze(cfg: Cfg, p: Pair, s: Script, lo: i32, hi: i32): Hunk {
+  let trivial = cfg.blank;
+  let from = 0;
+  let to = 0;
+  for k in lo..hi + 1 {
+    from += s.del[k];
+    to += s.ins[k];
+    if (trivial) {
+      trivial = all_blank(cfg, p.a, p.first + s.line0[k], s.del[k]) && all_blank(cfg, p.b, p.first + s.line1[k], s.ins[k]);
+    }
+  }
+  let kind = 0;
+  if (!trivial) {
+    kind = (if (from > 0) { 1 } else { 0 }) | (if (to > 0) { 2 } else { 0 });
+  }
+  return Hunk { kind: kind, first0: s.line0[lo], last0: s.line0[hi] + s.del[hi] - 1, first1: s.line1[lo], last1: s.line1[hi] + s.ins[hi] - 1 };
+}
+
+function any_change(cfg: Cfg, p: Pair, s: Script): boolean {
+  if (!cfg.blank) {
+    return s.line0.len() > 0;
+  }
+  for k in 0..s.line0.len() {
+    if (analyze(cfg, p, s, k, k).kind != 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// One line of a file with the mark before it. A line without a newline gets
+// one, then GNU's note.
+function put_line(run: Run, t: Text, i: i32, mark: string): void {
+  buf_push(run.out, mark);
+  let lo = t.starts[i];
+  let hi = t.starts[i + 1];
+  if (t.missing && i == line_count(t) - 1) {
+    buf_push_bytes_range(run.out, t.buf, lo, hi - 1);
+    buf_push(run.out, "\n\\ No newline at end of file\n");
+  } else {
+    buf_push_bytes_range(run.out, t.buf, lo, hi);
+  }
+  maybe_flush(run);
+}
+
+function time_text(run: Run, st: FileStat): string {
+  let fmt = if (run.cfg.style == STYLE_UNIFIED) { "%Y-%m-%d %H:%M:%S.%N %z" } else { "%a %b %e %T %Y" };
+  return timefmt.strftime(fmt, run.zone, st.mtime, st.mtime_nsec);
+}
+
+function header_line(run: Run, p: Pair, f: i32, mark: string): string {
+  if (p.labels[f].len() > 0) {
+    return mark + " " + p.labels[f] + "\n";
+  }
+  return mark + " " + p.names[f] + "\t" + time_text(run, p.stats[f]) + "\n";
+}
+
+// begin_output: the lines that come before the first hunk of a comparison.
+function begin_output(run: Run, p: Pair): void {
+  if (p.nested) {
+    put(run, "diff" + run.cfg.switches + " " + p.names[0] + " " + p.names[1] + "\n");
+  }
+  if (run.cfg.style == STYLE_UNIFIED) {
+    put(run, header_line(run, p, 0, "---") + header_line(run, p, 1, "+++"));
+  } else if (run.cfg.style == STYLE_CONTEXT) {
+    put(run, header_line(run, p, 0, "***") + header_line(run, p, 1, "---"));
+  }
+}
+
+function range_text(p: Pair, a: i32, b: i32, sep: string): string {
+  let ta = a + p.first + 1;
+  let tb = b + p.first + 1;
+  if (tb > ta) {
+    return f"{ta}" + sep + f"{tb}";
+  }
+  return f"{tb}";
+}
+
+function unified_range(p: Pair, a: i32, b: i32): string {
+  let ta = a + p.first + 1;
+  let tb = b + p.first + 1;
+  if (tb < ta) {
+    return f"{tb},0";
+  }
+  if (tb == ta) {
+    return f"{tb}";
+  }
+  return f"{ta}," + f"{tb - ta + 1}";
+}
+
+function print_normal(run: Run, p: Pair, s: Script): void {
+  let begun = false;
+  for k in 0..s.line0.len() {
+    let h = analyze(run.cfg, p, s, k, k);
+    if (h.kind == 0) {
+      continue;
+    }
+    if (!begun) {
+      begin_output(run, p);
+      begun = true;
+    }
+    let letter = match (h.kind) {
+      1 => "d",
+      2 => "a",
+      _ => "c",
+    };
+    put(run, range_text(p, h.first0, h.last0, ",") + letter + range_text(p, h.first1, h.last1, ",") + "\n");
+    if ((h.kind & 1) != 0) {
+      for i in h.first0..h.last0 + 1 {
+        put_line(run, p.a, p.first + i, "< ");
+      }
+    }
+    if (h.kind == 3) {
+      put(run, "---\n");
+    }
+    if ((h.kind & 2) != 0) {
+      for i in h.first1..h.last1 + 1 {
+        put_line(run, p.b, p.first + i, "> ");
+      }
+    }
+  }
+}
+
+// find_hunk: the last change of the hunk that starts at change k. Changes
+// closer than 2 * context + 1 lines join, and closer than context lines when
+// the second one is ignorable.
+function hunk_end(run: Run, s: Script, ignore: boolean[], k: i32): i32 {
+  let ctx = run.cfg.context;
+  let e = k;
+  while (e + 1 < s.line0.len()) {
+    let top0 = s.line0[e] + s.del[e];
+    let thresh = if (ignore[e + 1]) { ctx } else { 2i64 * ctx + 1i64 };
+    if ((s.line0[e + 1] - top0) as i64 >= thresh) {
+      break;
+    }
+    e += 1;
+  }
+  return e;
+}
+
+// The hunk widened by the context lines, within the file.
+function widen(run: Run, p: Pair, h: Hunk): Hunk {
+  let ctx = run.cfg.context;
+  let lo = -(p.first as i64);
+  let v0 = (line_count(p.a) - p.first) as i64;
+  let v1 = (line_count(p.b) - p.first) as i64;
+  let f0 = h.first0 as i64 - ctx;
+  let f1 = h.first1 as i64 - ctx;
+  let l0 = if (h.last0 as i64 < v0 - ctx) { h.last0 as i64 + ctx } else { v0 - 1i64 };
+  let l1 = if (h.last1 as i64 < v1 - ctx) { h.last1 as i64 + ctx } else { v1 - 1i64 };
+  return Hunk { ...h, first0: (if (f0 < lo) { lo } else { f0 }) as i32, first1: (if (f1 < lo) { lo } else { f1 }) as i32, last0: l0 as i32, last1: l1 as i32 };
+}
+
+function print_context(run: Run, p: Pair, s: Script): void {
+  let n = s.line0.len();
+  let ignore: boolean[] = [];
+  for k in 0..n {
+    ignore = ignore.append(run.cfg.blank && analyze(run.cfg, p, s, k, k).kind == 0);
+  }
+  let begun = false;
+  let k = 0;
+  while (k < n) {
+    let e = hunk_end(run, s, ignore, k);
+    let h = analyze(run.cfg, p, s, k, e);
+    if (h.kind != 0) {
+      if (!begun) {
+        begin_output(run, p);
+        begun = true;
+      }
+      let w = widen(run, p, h);
+      if (run.cfg.style == STYLE_UNIFIED) {
+        unified_hunk(run, p, s, k, w);
+      } else {
+        context_hunk(run, p, s, k, e, w);
+      }
+    }
+    k = e + 1;
+  }
+}
+
+function context_hunk(run: Run, p: Pair, s: Script, k: i32, e: i32, w: Hunk): void {
+  put(run, "***************\n*** " + range_text(p, w.first0, w.last0, ",") + " ****\n");
+  if ((w.kind & 1) != 0) {
+    let c = k;
+    for i in w.first0..w.last0 + 1 {
+      while (c <= e && s.line0[c] + s.del[c] <= i) {
+        c += 1;
+      }
+      let mark = "  ";
+      if (c <= e && s.line0[c] <= i) {
+        mark = if (s.ins[c] > 0) { "! " } else { "- " };
+      }
+      put_line(run, p.a, p.first + i, mark);
+    }
+  }
+  put(run, "--- " + range_text(p, w.first1, w.last1, ",") + " ----\n");
+  if ((w.kind & 2) != 0) {
+    let c = k;
+    for i in w.first1..w.last1 + 1 {
+      while (c <= e && s.line1[c] + s.ins[c] <= i) {
+        c += 1;
+      }
+      let mark = "  ";
+      if (c <= e && s.line1[c] <= i) {
+        mark = if (s.del[c] > 0) { "! " } else { "+ " };
+      }
+      put_line(run, p.b, p.first + i, mark);
+    }
+  }
+}
+
+function unified_hunk(run: Run, p: Pair, s: Script, k: i32, w: Hunk): void {
+  put(run, "@@ -" + unified_range(p, w.first0, w.last0) + " +" + unified_range(p, w.first1, w.last1) + " @@\n");
+  let i = w.first0;
+  let j = w.first1;
+  let c = k;
+  while (i <= w.last0 || j <= w.last1) {
+    if (c >= s.line0.len() || i < s.line0[c]) {
+      put_line(run, p.a, p.first + i, " ");
+      i += 1;
+      j += 1;
+    } else {
+      for _ in 0..s.del[c] {
+        put_line(run, p.a, p.first + i, "-");
+        i += 1;
+      }
+      for _ in 0..s.ins[c] {
+        put_line(run, p.b, p.first + j, "+");
+        j += 1;
+      }
+      c += 1;
+    }
+  }
+}
+
+function report_differ(run: Run, sides: Side[], what: string): void {
+  put(run, what + label_or(run, 0, sides[0].name) + " and " + label_or(run, 1, sides[1].name) + " differ\n");
+}
+
+function binary_differ(sides: Side[], c0: Contents, c1: Contents): boolean {
+  let a = sides[0];
+  let b = sides[1];
+  let sized = (a.kind == K_NONEXISTENT || is_reg(a)) && (b.kind == K_NONEXISTENT || is_reg(b));
+  if (sized && a.st.size != b.st.size && a.st.size > 0i64 && b.st.size > 0i64) {
+    return true;
+  }
+  let n = c0.bytes.len();
+  return n != c1.bytes.len() || __mismatch_bytes(c0.bytes, 0, c1.bytes, 0, n) < n;
+}
+
+function diff_2_files(run: Run, nested: boolean, sides: Side[], c0: Contents, c1: Contents): i32 {
+  let cfg = run.cfg;
+  let binary = pretend_binary(cfg) || !cfg.text && (looks_binary(c0) || looks_binary(c1));
+  if (binary) {
+    if (!binary_differ(sides, c0, c1)) {
+      return 0;
+    }
+    report_differ(run, sides, if (cfg.brief) { "Files " } else { "Binary files " });
+    return EXIT_DIFFER;
+  }
+  let a = prepare(c0.bytes);
+  let b = prepare(c1.bytes);
+  let r = diff_texts(cfg, a, b);
+  let s = r.0;
+  let labels: string[] = [if (cfg.labels.len() > 0) { cfg.labels[0] } else { "" }, if (cfg.labels.len() > 1) { cfg.labels[1] } else { "" }];
+  let names: string[] = [c_escape(label_or(run, 0, sides[0].name)), c_escape(label_or(run, 1, sides[1].name))];
+  let p = Pair { a: a, b: b, first: r.1, names: names, labels: labels, stats: [sides[0].st, sides[1].st], nested: nested };
+  if (!any_change(cfg, p, s)) {
+    return 0;
+  }
+  if (cfg.brief) {
+    report_differ(run, sides, "Files ");
+  } else if (cfg.style == STYLE_NORMAL) {
+    print_normal(run, p, s);
+  } else {
+    print_context(run, p, s);
+  }
+  return EXIT_DIFFER;
+}
+
+function main(): i32 {
+  let argv = args();
+  let parsed = parse(argv);
+  let cfg = parsed.0;
+  let ops = parsed.1;
+  if (cfg.unsupported.len() > 0) {
+    gnu.error("this port does not have the option '" + cfg.unsupported + "'");
+    return EXIT_TROUBLE;
+  }
+  if (ops.len() < 2) {
+    usage_error("missing operand after '" + argv[argv.len() - 1] + "'");
+  }
+  if (ops.len() > 2) {
+    usage_error("extra operand '" + ops[2] + "'");
+  }
+  let run = Run { cfg: cfg, out: buf_new(2 * OUT_CHUNK), zone: tz.local_zone() };
+  let status = compare_files(run, None, Some(ops[0]), Some(ops[1]));
+  flush_out(run);
+  buf_free(run.out);
+  return status;
+}

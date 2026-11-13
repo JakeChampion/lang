@@ -3228,20 +3228,50 @@ function call_host_fs_list(heap: interpheap.Heap, name: string, path: string): V
   };
 }
 
-// A guest Socket runs as its descriptor number, which the host takes as a Socket.
+// A guest Socket is a 64-bit word, as in a compiled program: the descriptor
+// number, and above it the close count that the number had at that time.
+function socket_word(fd: i32): Value {
+  if (fd < 0) {
+    return v_int64(fd as i64);
+  }
+  unsafe {
+    return v_int64((__task_fd_gen(fd) as u32) as i64 << 32i64 | fd as i64);
+  }
+}
+
+// The number of a guest Socket, or -1 when the number closed after the word was made.
+function guest_socket_number(word: i64): i32 {
+  if (word < 0i64) {
+    return word as i32;
+  }
+  let fd = (word & 4294967295i64) as i32;
+  unsafe {
+    if ((__task_fd_gen(fd) as u32) as i64 != word >> 32i64) {
+      return -1;
+    }
+  }
+  return fd;
+}
+
 function host_socket(args: Value[], i: i32): Socket {
   unsafe {
-    return __socket_from_fd(arg_i32(args, i));
+    return __socket_from_fd(guest_socket_number(arg_i64(args, i)));
   }
 }
 
 function socket_number(s: Socket): Value {
-  return v_int(s.fd);
+  return socket_word(s.fd);
 }
 
 function call_host_net(name: string, args: Value[]): Value {
   if (name == "__socket_from_fd") {
-    return arg_at(args, 0);
+    return socket_word(arg_i32(args, 0));
+  }
+  // The argument is a number with no handle, so it has no close count.
+  if (name == "__fd_close") {
+    unsafe {
+      return v_int(__fd_close(arg_i32(args, 0)));
+    }
   }
   if (util.has_str(["udp_sendto", "udp_sendto_bytes", "udp_sendmmsg"], name)) {
     return call_host_udp_send(name, args);
@@ -3422,7 +3452,7 @@ function call_host_tcp_fd(name: string, args: Value[]): Value {
     }
     return socket_number(accepted);
   }
-  if (util.has_str(["tcp_close", "__tcp_close_unchecked", "__fd_close"], name)) {
+  if (util.has_str(["tcp_close", "__tcp_close_unchecked"], name)) {
     unsafe {
       return v_int(__tcp_close_unchecked(sock));
     }
@@ -5768,19 +5798,22 @@ function eval_expr_field_access(fa: ast.ExprFieldAccess, env: Env): Value {
       }
       return v_err(handle_kind(hv) + " has no field `" + fa.field + "`");
     },
-    VInt(_) => {
-      return socket_field(ov, fa.field);
-    },
     _ => {
-      return v_err("can only field-access a struct or tuple");
+      return socket_field(ov, fa.field);
     }
   }
 }
 
-// A Socket runs as its descriptor number, which is also its fd.
 function socket_field(ov: Value, field: string): Value {
-  if (field == "fd") {
-    return ov;
+  let word = false;
+  if let VInt(_) = ov {
+    word = true;
+  }
+  if let VInt64(_) = ov {
+    word = true;
+  }
+  if (word && field == "fd") {
+    return v_int(guest_socket_number(vint_as_i64(ov)));
   }
   return v_err("can only field-access a struct or tuple");
 }

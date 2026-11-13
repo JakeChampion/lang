@@ -6132,6 +6132,19 @@ func (e *env) declare(name string, v Value) {
 	arrOwn(v)
 }
 
+// detach gives name a new cell, so a closure that captured its old cell
+// keeps the value that the cell has now.
+func (e *env) detach(name string) {
+	for cur := e; cur != nil; cur = cur.parent {
+		if v, ok := cur.vars[name]; ok {
+			if slot, ok := v.(*binding); ok {
+				cur.vars[name] = slot.value
+			}
+			return
+		}
+	}
+}
+
 func (e *env) releaseScope() {
 	for _, v := range e.vars {
 		if _, captured := v.(*binding); captured {
@@ -6391,6 +6404,9 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 			}
 			if r.flow == flowContinue && r.label != "" && r.label != x.Label {
 				return r, nil
+			}
+			if x.RangeIndex != "" {
+				inner.detach(x.RangeIndex)
 			}
 			if x.Step != nil {
 				if _, err := i.execStmt(x.Step, inner); err != nil {

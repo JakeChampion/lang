@@ -1,8 +1,8 @@
 // A counted or array loop steps after its body, and a `continue` that targets
 // the loop takes the step with it: plain, labelled, from a nested loop, from a
 // match arm, through a label a nested loop reuses. A body that rebinds the
-// counter or defers work steps at the head. A closure sees the counter's last
-// value.
+// counter or defers work steps at the head. A closure sees the counter of its
+// turn.
 
 function plain(n: i32): i32 {
   let t = 0;

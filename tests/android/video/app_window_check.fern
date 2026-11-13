@@ -1,0 +1,180 @@
+// Exercise window destruction with native AAC and owned content descriptors.
+import "./app";
+import "./audio_content";
+import "./audio_path";
+import "std/android";
+import "std/android/video/source";
+import "std/video/frame";
+
+@import("libandroid.so", "mock_source_env")
+function env(): usize;
+
+@import("libandroid.so", "mock_source_context")
+function context(): usize;
+
+@import("libandroid.so", "mock_source_descriptors")
+function descriptors(): i32;
+
+@import("libaaudio.so", "av_audio_reset")
+function reset(): void;
+
+@import("libaaudio.so", "av_audio_count")
+function count(what: i32): i32;
+
+@import("libaaudio.so", "av_audio_mode")
+function mode(value: i32): void;
+
+function open(own s: app.App, reads: Cell[i32]): Result[app.App, i32] {
+  let src = match (source.open(env(), context(), "content://mock/native-aac", 2097152i64)) { Ok(value) => value, Err(_) => { return Err(91); } };
+  let read = (offset: i64, count: i32): Result[u8[], frame.VideoError] => {
+    reads.set(reads.get() + 1);
+    return src.read_at(offset, count);
+  };
+  let (stream, io) = match (audio_content.open_with(src.length, read, 0i64)) {
+    Ok(value) => value, Err(_) => { let _ = src.close(); return Err(92); },
+  };
+  let sound = match (audio_path.create_with(stream, io.seek, io.read, "")) {
+    Ok(value) => value, Err(_) => { let _ = src.close(); return Err(93); },
+  };
+  return Ok(app.App { ...s, content: Some(src), sound: Some(sound), content_audio: Some(io) });
+}
+
+function empty(stage: i32): app.App {
+  return app.App { ctx: 0 as usize, playback: None, fd: -1, content: None, sound: None, audio_reader: None, content_audio: None, stage: stage, resume_ns: 1500000000i64, started_ns: 1000000000i64, done: false, lifecycle_pause_ns: None, lifecycle_was_playing: false };
+}
+
+function cleared(s: app.App): boolean {
+  return s.playback.is_none() && s.content.is_none() && s.sound.is_none() && s.audio_reader.is_none() && s.content_audio.is_none() && s.fd == -1;
+}
+
+function pending(s: app.App): boolean {
+  let Some(sound) = s.sound else {
+    return false;
+  };
+  return sound.at == 6 && sound.at - sound.base < sound.samples.len();
+}
+
+function reset_stage(s: app.App): boolean {
+  return cleared(s) && s.stage == 0 && s.resume_ns == 0i64 && !s.done && !s.lifecycle_was_playing;
+}
+
+function failed(own s: app.App, code: i32): Result[app.App, i32] {
+  let _ = app.step_at(s, android.WindowDestroyed(android.Window { ptr: 0 as usize }), 63000000000i64);
+  return Err(code);
+}
+
+function destroy(own s: app.App, reads: Cell[i32], background: boolean): Result[app.App, i32] {
+  if (!pending(s)) {
+    return failed(s, 105);
+  }
+  if (background) {
+    s = app.step_at(s, android.Pause, 1200000000i64);
+  }
+  let before = reads.get();
+  let writes = count(2);
+  s = app.step_at(s, android.WindowDestroyed(android.Window { ptr: 0 as usize }), 2000000000i64);
+  if (!reset_stage(s)) {
+    return failed(s, 94);
+  }
+  s = app.step_at(s, android.WindowDestroyed(android.Window { ptr: 0 as usize }), 2100000000i64);
+  s = app.step_at(s, android.Tick, 31000000000i64);
+  if (!cleared(s) || count(3) != 1 || reads.get() != before || count(2) != writes) {
+    return failed(s, 95);
+  }
+  return Ok(s);
+}
+
+function restarted(own s: app.App, reads: Cell[i32], background: boolean): Result[app.App, i32] {
+  s = app.window_started_at(s, 32000000000i64);
+  if (!fresh_header(s, background) || !pending(s)) {
+    return failed(s, 98);
+  }
+  let waited = wait_background(s, reads, background)?;
+  return resume_fresh(waited, background);
+}
+
+function fresh_header(s: app.App, background: boolean): boolean {
+  let Some(sound) = s.sound else {
+    return false;
+  };
+  return s.stage == 0 && s.resume_ns == 0i64 && s.started_ns == 32000000000i64 && sound.paused_ns.is_some() == background;
+}
+
+function wait_background(own s: app.App, reads: Cell[i32], background: boolean): Result[app.App, i32] {
+  let before = reads.get();
+  let writes = count(2);
+  if (background) {
+    s = app.step_at(s, android.Tick, 62000000000i64);
+    s = app.pump_sound(s);
+    if (reads.get() != before || count(2) != writes || s.lifecycle_pause_ns != Some(32000000000i64)) {
+      return failed(s, 99);
+    }
+  }
+  return Ok(s);
+}
+
+function resume_fresh(own s: app.App, background: boolean): Result[app.App, i32] {
+  s = app.step_at(s, android.Resume, 62000000000i64);
+  let expected = if (background) { 62000000000i64 } else { 32000000000i64 };
+  if (s.started_ns == expected && s.lifecycle_pause_ns.is_none() && !s.done) {
+    return Ok(s);
+  }
+  return failed(s, 100);
+}
+
+function drain(own s: app.App): Result[app.App, i32] {
+  for work in 0..8192 {
+    let Some(sound) = s.sound else {
+      return failed(s, 101);
+    };
+    if (sound.at == sound.total) {
+      if (!sound.failed && sound.paused_ns.is_none()) {
+        return Ok(s);
+      }
+      return failed(s, 102);
+    }
+    s = app.pump_sound(s);
+  }
+  return failed(s, 103);
+}
+
+function round(stage: i32, background: boolean): i32 {
+  reset();
+  mode(1);
+  let before = descriptors();
+  let reads = cell_new(0);
+  let started = match (open(empty(stage), reads)) { Ok(value) => value, Err(code) => { return code; } };
+  let stopped = match (destroy(started, reads, background)) { Ok(value) => value, Err(code) => { return code; } };
+  if (!cleared(stopped) || descriptors() != before) {
+    return 96;
+  }
+  return reopen(stopped, reads, background, before);
+}
+
+function reopen(own s: app.App, reads: Cell[i32], background: boolean, before: i32): i32 {
+  let fresh = match (open(s, reads)) { Ok(value) => value, Err(code) => { return code; } };
+  let resumed = match (restarted(fresh, reads, background)) { Ok(value) => value, Err(code) => { return code; } };
+  mode(0);
+  let finished = match (drain(resumed)) { Ok(value) => value, Err(code) => { return code; } };
+  let closed = app.step_at(finished, android.WindowDestroyed(android.Window { ptr: 0 as usize }), 63000000000i64);
+  return if (cleared(closed) && count(3) == 2 && descriptors() == before) { 0 } else { 104 };
+}
+
+function completed(): boolean {
+  let state = app.App { ...empty(3), done: true };
+  let closed = app.step_at(state, android.WindowDestroyed(android.Window { ptr: 0 as usize }), 63000000000i64);
+  let next = app.window_started_at(closed, 64000000000i64);
+  return cleared(next) && next.done;
+}
+
+pub function run(): i32 {
+  for stage in 0..4 {
+    for background in [false, true] {
+      let code = round(stage, background);
+      if (code != 0) {
+        return code;
+      }
+    }
+  }
+  return if (completed()) { 0 } else { 106 };
+}

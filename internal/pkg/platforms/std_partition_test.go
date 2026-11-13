@@ -115,6 +115,7 @@ var stdModuleReach = map[string]string{
 	"std/url":           "",
 	"std/user_net":      "mmio,privileged",
 	"std/user_process":  "mmio,privileged",
+	"std/usize":         "",
 	"std/utf8":          "",
 	"std/uuid":          "now,random",
 	"std/worker":        "arena,fs,log,proc,reactor",

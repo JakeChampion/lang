@@ -23,6 +23,14 @@ pub enum Ast {
   EmptyArray,
   Object(Ast[], Ast[]),
   Compare(string, Ast, Ast),
+  Arith(string, Ast, Ast),
+  Alt(Ast, Ast),
+  Call(string, Ast[]),
+  Catch(Ast, Ast),
+  If(Ast, Ast, Ast),
+  Bind(Ast, string, Ast),
+  Reduce(Ast, string, Ast, Ast),
+  Foreach(Ast, string, Ast, Ast, Ast),
   And(Ast, Ast),
   Or(Ast, Ast),
   Negate(Ast),
@@ -309,8 +317,12 @@ function (p: P) expect(s: string): P {
       return p.fail(punct_message(x));
     }
   }
-  if (p.is_ident("as")) {
-    return p.fail(keyword_message("as"));
+  return p.fail("syntax error, expected '" + s + "' but got " + describe(p.peek()));
+}
+
+function (p: P) expect_word(s: string): P {
+  if (p.is_ident(s)) {
+    return p.advance();
   }
   return p.fail("syntax error, expected '" + s + "' but got " + describe(p.peek()));
 }
@@ -353,12 +365,6 @@ function unexpected(t: Tok): string {
 }
 
 function punct_message(x: string): string {
-  if (x == "+" || x == "-" || x == "*" || x == "/" || x == "%") {
-    return "arithmetic " + NOT_YET;
-  }
-  if (x == "//") {
-    return "the alternative operator " + NOT_YET;
-  }
   if (x == "=" || x == "|=" || x == "+=" || x == "-=" || x == "*=" || x == "/=" || x == "%=" || x == "//=") {
     return "assignment " + NOT_YET;
   }
@@ -369,9 +375,6 @@ function punct_message(x: string): string {
 }
 
 function keyword_message(x: string): string {
-  if (x == "as") {
-    return "variable binding " + NOT_YET;
-  }
   return "syntax error, unexpected '" + x + "'";
 }
 
@@ -381,18 +384,24 @@ function parse_pipe(p: P): (Ast, P) {
     let (right, r) = parse_pipe(q.advance());
     return (Pipe(left, right), r);
   }
-  if (q.error.len() == 0 && q.is_ident("as")) {
-    return (left, q.fail(keyword_message("as")));
-  }
   return (left, q);
 }
 
 function parse_comma(p: P): (Ast, P) {
-  let (left, q) = parse_or(p);
+  let (left, q) = parse_alt(p);
   while (q.error.len() == 0 && q.is_punct(",")) {
-    let (right, r) = parse_or(q.advance());
+    let (right, r) = parse_alt(q.advance());
     left = Comma(left, right);
     q = r;
+  }
+  return (left, q);
+}
+
+function parse_alt(p: P): (Ast, P) {
+  let (left, q) = parse_or(p);
+  if (q.error.len() == 0 && q.is_punct("//")) {
+    let (right, r) = parse_alt(q.advance());
+    return (Alt(left, right), r);
   }
   return (left, q);
 }
@@ -427,18 +436,103 @@ function compare_op(p: P): string {
 }
 
 function parse_compare(p: P): (Ast, P) {
-  let (left, q) = parse_negate(p);
+  let (left, q) = parse_add(p);
   let op = compare_op(q);
   if (q.error.len() > 0 || op.len() == 0) {
     return (left, q);
   }
-  let (right, r) = parse_negate(q.advance());
+  let (right, r) = parse_add(q.advance());
   if (compare_op(r).len() > 0) {
     return (left, r.fail("syntax error, unexpected '" + compare_op(r) + "'"));
   }
   return (Compare(op, left, right), r);
 }
 
+function parse_add(p: P): (Ast, P) {
+  let (left, q) = parse_multiply(p);
+  while (q.error.len() == 0 && (q.is_punct("+") || q.is_punct("-"))) {
+    let op = if (q.is_punct("+")) { "+" } else { "-" };
+    let (right, r) = parse_multiply(q.advance());
+    left = Arith(op, left, right);
+    q = r;
+  }
+  return (left, q);
+}
+
+function multiply_op(p: P): string {
+  if let TPunct(x) = p.peek() {
+    if (x == "*" || x == "/" || x == "%") {
+      return x;
+    }
+  }
+  return "";
+}
+
+function parse_multiply(p: P): (Ast, P) {
+  let (left, q) = parse_unary(p);
+  while (q.error.len() == 0 && multiply_op(q).len() > 0) {
+    let op = multiply_op(q);
+    let (right, r) = parse_unary(q.advance());
+    left = Arith(op, left, right);
+    q = r;
+  }
+  return (left, q);
+}
+
+// The minus takes the product after it, so `-1 * 2` is `-(1 * 2)`.
+function parse_unary(p: P): (Ast, P) {
+  if (p.is_punct("-")) {
+    let (inner, q) = parse_multiply(p.advance());
+    return (Negate(inner), q);
+  }
+  let (source, q) = if (p.is_ident("try")) { parse_try(p.advance()) } else { parse_postfix(p) };
+  if (q.error.len() == 0 && q.is_ident("as")) {
+    let (name, r) = parse_binding(q);
+    let (body, t) = parse_pipe(r.expect("|"));
+    return (Bind(source, name, body), t);
+  }
+  return (source, q);
+}
+
+// The body of a `try` at `p`, and its `catch` when it has one. `try e` is
+// `e?`.
+function parse_try(p: P): (Ast, P) {
+  let (body, q) = parse_try_operand(p);
+  if (q.error.len() == 0 && q.is_ident("catch")) {
+    let (handler, r) = parse_try_operand(q.advance());
+    return (Catch(body, handler), r);
+  }
+  return (Optional(body), q);
+}
+
+function parse_try_operand(p: P): (Ast, P) {
+  if (p.is_ident("try")) {
+    return parse_try(p.advance());
+  }
+  if (p.is_punct("-")) {
+    let (inner, q) = parse_try_operand(p.advance());
+    return (Negate(inner), q);
+  }
+  return parse_postfix(p);
+}
+
+// `as $name` at `p`.
+function parse_binding(p: P): (string, P) {
+  let q = p.expect_word("as");
+  if let TVar(v) = q.peek() {
+    let r = q.advance();
+    if (r.is_punct("?/")) {
+      return ("", r.fail("a destructuring alternative " + NOT_YET));
+    }
+    return (v, r);
+  }
+  if (q.is_punct("[") || q.is_punct("{")) {
+    return ("", q.fail("a destructuring pattern " + NOT_YET));
+  }
+  return ("", q.fail("syntax error, unexpected " + describe(q.peek())));
+}
+
+// The minus of an object value, which takes no operator after it.
 function parse_negate(p: P): (Ast, P) {
   if (p.is_punct("-")) {
     let (inner, q) = parse_negate(p.advance());
@@ -559,10 +653,106 @@ function parse_word(x: string, p: P): (Ast, P) {
   if (x == "null") {
     return (Literal(json.JNull), p.advance());
   }
-  if (x == "if" || x == "reduce" || x == "foreach" || x == "try" || x == "def" || x == "label" || x == "import" || x == "include") {
+  if (x == "if") {
+    return parse_if(p.advance());
+  }
+  if (x == "reduce" || x == "foreach") {
+    return parse_fold(x == "foreach", p.advance());
+  }
+  if (x == "then" || x == "elif" || x == "else" || x == "end" || x == "as" || x == "and" || x == "or" || x == "catch" || x == "try") {
+    return (Identity, p.fail(keyword_message(x)));
+  }
+  if (x == "def" || x == "label" || x == "import" || x == "include") {
     return (Identity, p.fail("'" + x + "' " + NOT_YET));
   }
-  return (Identity, p.fail("the function " + x + " " + NOT_YET));
+  return parse_call(x, p.advance());
+}
+
+// The condition of an `if` or an `elif` at `p`, and the rest to its `end`.
+function parse_if(p: P): (Ast, P) {
+  let (cond, q) = parse_pipe(p);
+  let (yes, r) = parse_pipe(q.expect_word("then"));
+  if (r.error.len() > 0) {
+    return (Identity, r);
+  }
+  if (r.is_ident("elif")) {
+    let (no, t) = parse_if(r.advance());
+    return (If(cond, yes, no), t);
+  }
+  if (r.is_ident("else")) {
+    let (no, t) = parse_pipe(r.advance());
+    return (If(cond, yes, no), t.expect_word("end"));
+  }
+  return (If(cond, yes, Identity), r.expect_word("end"));
+}
+
+// `TERM as $x (INIT; UPDATE)` at `p`. A `foreach` can have `; EXTRACT`.
+function parse_fold(each: boolean, p: P): (Ast, P) {
+  let (source, q) = parse_postfix(p);
+  if (q.error.len() > 0) {
+    return (Identity, q);
+  }
+  let (name, r) = parse_binding(q);
+  let (init, t) = parse_pipe(r.expect("("));
+  let (update, u) = parse_pipe(t.expect(";"));
+  if (!each) {
+    return (Reduce(source, name, init, update), u.expect(")"));
+  }
+  if (u.error.len() == 0 && u.is_punct(";")) {
+    let (extract, w) = parse_pipe(u.advance());
+    return (Foreach(source, name, init, update, extract), w.expect(")"));
+  }
+  return (Foreach(source, name, init, update, Identity), u.expect(")"));
+}
+
+// The number of arguments of each function that the port has.
+function arity(name: string): i32 {
+  return match (name) {
+    "has" => 1,
+    "map" => 1,
+    "select" => 1,
+    "add" => 0,
+    "empty" => 0,
+    "error" => 1,
+    "from_entries" => 0,
+    "keys" => 0,
+    "keys_unsorted" => 0,
+    "length" => 0,
+    "not" => 0,
+    "to_entries" => 0,
+    "tojson" => 0,
+    "tostring" => 0,
+    "type" => 0,
+    _ => -1,
+  };
+}
+
+// The arguments of the function `name`, when it has some: `(e; e)`.
+function parse_call(name: string, p: P): (Ast, P) {
+  let args: Ast[] = [];
+  let q = p;
+  if (q.is_punct("(")) {
+    q = q.advance();
+    while (q.error.len() == 0) {
+      let (arg, r) = parse_pipe(q);
+      args = args.append(arg);
+      q = r;
+      if (q.is_punct(")")) {
+        q = q.advance();
+        break;
+      }
+      q = q.expect(";");
+    }
+  }
+  let fits = arity(name) == args.len() || name == "error" && args.len() == 0;
+  if (q.error.len() == 0 && !fits) {
+    let called = name + "/" + args.len().to_string();
+    if (arity(name) >= 0) {
+      return (Identity, p.fail(called + " is not defined"));
+    }
+    return (Identity, p.fail("the function " + called + " " + NOT_YET));
+  }
+  return (Call(name, args), q);
 }
 
 function parse_group(x: string, p: P): (Ast, P) {
@@ -597,6 +787,10 @@ function parse_object(p: P): (Ast, P) {
     q = r;
     if (q.is_punct(":")) {
       let (value, s) = parse_object_value(q.advance());
+      // `{$x: e}` takes the value of `$x` as the key.
+      if let Var(_) = implied {
+        key = implied;
+      }
       keys = keys.append(key);
       values = values.append(value);
       q = s;
@@ -668,6 +862,14 @@ pub function undefined_var(f: Ast, names: string[]): string {
     Collect(a) => undefined_var(a, names),
     Object(keys, values) => first_undefined(keys.concat(values), names),
     Compare(_, a, b) => first_undefined([a, b], names),
+    Arith(_, a, b) => first_undefined([a, b], names),
+    Alt(a, b) => first_undefined([a, b], names),
+    Call(_, args) => first_undefined(args, names),
+    Catch(a, b) => first_undefined([a, b], names),
+    If(a, b, c) => first_undefined([a, b, c], names),
+    Bind(source, name, body) => first_scoped([source], [body], name, names),
+    Reduce(source, name, init, update) => first_scoped([source, init], [update], name, names),
+    Foreach(source, name, init, update, extract) => first_scoped([source, init], [update, extract], name, names),
     And(a, b) => first_undefined([a, b], names),
     Or(a, b) => first_undefined([a, b], names),
     Negate(a) => undefined_var(a, names),
@@ -683,4 +885,13 @@ function first_undefined(fs: Ast[], names: string[]): string {
     }
   }
   return "";
+}
+
+// `outer` sees `names`, and `inner` sees `name` also.
+function first_scoped(outer: Ast[], inner: Ast[], name: string, names: string[]): string {
+  let v = first_undefined(outer, names);
+  if (v.len() > 0) {
+    return v;
+  }
+  return first_undefined(inner, names.append(name));
 }

@@ -25,7 +25,14 @@ Each one exposes its descriptor as the field `fd`, and `close` consumes its rece
 `Socket` is the built-in handle of the socket API. `tcp_listen`, `tcp_listen_with`, `tcp_accept`, `tcp_connect_with`, `udp_bind`, `udp_bind_with`, `unix_listen` and `unix_connect` return one. The other `tcp_*` and `udp_*` builtins borrow it, and `tcp_close` consumes it.
 A descriptor with no handle type, such as a reactor or a timer, closes through `__fd_close`, which only an unsafe block can call.
 A failed open returns a `Socket` whose `fd` is the negative error number.
-At run time a `Socket` is its descriptor number in compiled code and in both interpreters.
+At run time a `Socket` is a 64-bit word in compiled code and in the compiler's interpreter.
+The low half is the descriptor number.
+The high half is the close count that the runtime held for that number when the handle was made.
+The close kernel of each target increments the count of a number.
+Each builtin that borrows a `Socket`, and each read of `fd`, compares the two counts.
+When they differ, the builtin gets the number -1 and returns the error of a bad descriptor, and `fd` reads as -1.
+Thus a copy of a handle is refused after the descriptor closes, also when a new connection has the same number (#15049).
+The Go interpreter gives each socket a number that it does not use again, so it needs no count.
 
 A `Socket` does not convert to or from an `i32`.
 Only `__socket_from_fd`, in an unsafe block, makes a `Socket` from a number.
@@ -36,7 +43,7 @@ A waiter such as `async.wait_any` still takes the descriptor number, which a `So
 
 The `std/fetch` pool owns each socket that it dials, in a table of descriptor numbers.
 A test `Transport` names a connection by an `i32`, and it cannot make a `Socket`.
-The compiler's interpreter keeps a guest `Socket` as its descriptor number, because a guest `Cell` can hold a number but not a host handle.
+The compiler's interpreter keeps a guest `Socket` as the same 64-bit word, because a guest `Cell` can hold a number but not a host handle.
 A `resource R` declaration is the WIT import surface only.
 Its `own R` and `borrow R` types erase to `i32`, and no standard library type uses them.
 
