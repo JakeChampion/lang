@@ -9,11 +9,12 @@ The handle discipline is recorded in [HANDLE-AUDIT.md](HANDLE-AUDIT.md), and the
 | Surface | Native rule |
 |---|---|
 | `open_reader`, `open_writer`, `open_appender`, `open_exclusive` | One `openat` through `__fern_open_res` with a fixed flag word per builtin. `open_exclusive` carries `O_CREAT` and `O_EXCL` and creates with mode 0600; the others create with mode 0666 under the umask |
-| `open_reader_with`, `open_writer_with` | The same open with a flag word the caller composes. Bit 512 is `O_NOFOLLOW`, bit 4 is `O_EXCL`, bit 1 is `O_CREAT`, and bit 16 is `O_DIRECTORY` |
+| `open_reader_with`, `open_writer_with` | The same open with a flag word the caller composes. Bit 512 is `O_NOFOLLOW`, bit 4 is `O_EXCL`, bit 1 is `O_CREAT`, and bit 16 is `O_DIRECTORY`. Bit 1024 is not a host flag: a file that the open creates gets mode 0600 and not mode 0666. `wasm32-wasi` has no file modes and ignores the bit |
 | `open_dir` and the `Dir` methods | A directory descriptor opened with `O_DIRECTORY`, `O_NOFOLLOW` and `O_CLOEXEC`. `access`, `chmod`, `chown`, `lstat`, `open_dir`, `remove_dir`, `remove_file` and `entries` run relative to it, so a path component the caller already resolved cannot be swapped under them |
 | `Dir.open_reader`, `Dir.open_writer`, `Dir.open_reader_with`, `Dir.open_writer_with` | One `openat` on the directory descriptor with `O_NOFOLLOW` and `O_CLOEXEC`. The forms with a flag word take the word of `open_reader_with` and `open_writer_with`. `Dir.open_writer` creates and truncates with mode 0666 under the umask. A symbolic link in the entry's place fails with `ELOOP` |
 | `temp_dir(prefix)` | A directory `<root>/<prefix>-<16 hex digits>` with mode 0700. The root is `TMPDIR` when that is an absolute path, and `/tmp` otherwise |
 | `io.temp_file(prefix)` | A regular file `<root>/<prefix>-<16 hex digits>` opened exclusively with mode 0600, returned with its path and its writer |
+| `io.temp_file_in(dir, prefix)` | The same file as an entry of a `Dir` handle: one `openat` on the handle with `O_CREAT`, `O_EXCL`, `O_NOFOLLOW` and mode 0600. No path of the directory resolves a second time. The path of the result is the name of the entry |
 | `rename_noreplace`, `rename_exchange` | `renameat2` with `RENAME_NOREPLACE` and `RENAME_EXCHANGE`, so a rename cannot overwrite a file that appeared between a check and the move |
 | `pipe`, `reactor_new`, `ring_new` | Created with `O_CLOEXEC` |
 | A path, a program name, an argument or an environment entry | Refused with `EINVAL` when it holds a NUL byte, before a system call sees it. A pathname unix socket follows the same rule. A Linux abstract socket name starts with a NUL byte and can hold more |
@@ -74,6 +75,7 @@ The original file is still readable through the open handle.
 The hosted interpreter fixture `interp_hosted/native.fern` runs the same opens under both interpreters, and the two must print the same lines.
 
 The `std/filesystem_ops` suite gains a `temp_file` round trip and the separator refusal, and passes natively on both targets and under the Go oracle.
+The suite also makes a file with `io.temp_file_in` in a directory handle. The entry must be a regular file with mode 0600, must hold the three written bytes, and must go through `Dir.remove_file`. A prefix with a separator must be refused. A second case opens a path with bits 1, 4 and 1024 of the flag word, and the file must have mode 0600.
 
 ```sh
 go test ./internal/testing/e2ecompiler -run 'TestSelfHostTempFiles' -count=1 -timeout 0

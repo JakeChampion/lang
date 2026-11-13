@@ -3518,7 +3518,7 @@ function routed_box(t: typeinfo.Type): boolean {
 }
 
 function cell_column(t: typeinfo.Type): boolean {
-  return ssasem.wide_map_key(t) || ssasem.float_map_value(t);
+  return ssasem.wide_map_key(t) || ssasem.wide_map_value(t) || ssasem.float_map_value(t);
 }
 
 function routed_map_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irtables.LowerState {

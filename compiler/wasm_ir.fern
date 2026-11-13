@@ -1203,7 +1203,7 @@ pub function task_funcs(lc: boolean, count: boolean): string {
     + "        (br $probe))))\n"
     + "    (local.get $e))\n"
     + "  (func $__fern_task_fd_gen (param $fd i32) (result i32) (local $e i32) (local $cap i32) (local $nt i32) (local $i i32) (local $o i32) (local $d i32)\n"
-    + "    (if (i32.eqz (local.get $fd)) (then (return (i32.const 0))))\n"
+    + "    (if (i32.le_s (local.get $fd) (i32.const 0)) (then (return (i32.const 0))))\n"
     + "    (local.set $cap (global.get $__fern_fd_cap))\n"
     + "    (if (local.get $cap) (then\n"
     + "      (local.set $e (call $__fern_fd_slot (global.get $__fern_fd_tab) (local.get $cap) (local.get $fd)))\n"
@@ -3974,10 +3974,10 @@ pub function tcp_send_buf_func(): string {
   return o;
 }
 
-// A handle that is not valid arrives as a number below 1, which is the address
-// of no socket record. The result is the code of a bad descriptor.
+// A handle that is not valid arrives as a negative number, which is the
+// address of no socket record. The result is the code of a bad descriptor.
 function closed_socket_guard(param: string): string {
-  return "    (if (i32.le_s (local.get $" + param + ") (i32.const 0)) (then (return (i32.const -8))))\n";
+  return "    (if (i32.lt_s (local.get $" + param + ") (i32.const 0)) (then (return (i32.const -8))))\n";
 }
 
 // With sends linked, a connection's output stream is flushed before it is

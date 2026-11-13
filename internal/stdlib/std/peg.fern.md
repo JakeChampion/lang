@@ -444,11 +444,25 @@ function __peg_result(r: i32, st: PegState, input: string): Result[PegMatch, Peg
 ```fern
 <<13 pub function parse(g: Grammar, input: string): Result[PegMatch, PegError]>>=
 pub function parse(g: Grammar, input: string): Result[PegMatch, PegError] {
+  return parse_with_depth(g, input, 2048);
+}
+
+// parse_with_depth is parse with a lower depth limit. depth is the number of
+// rule references that one match can be inside, the start rule included. A
+// value above 2048 gives 2048: a caller can lower the limit of the module and
+// cannot raise it.
+pub function parse_with_depth(g: Grammar, input: string, depth: i32): Result[PegMatch, PegError] {
   let tn: string[] = [];
   let ts: i32[] = [];
   let te: i32[] = [];
   let st = PegState { tn: tn, ts: ts, te: te, furthest: 0 };
-  let (r, s2) = __peg_run(g, PRef(g.start), input, 0, st, 0, [], []);
+  let start = 0;
+  if (depth < 0) {
+    start = 2048;
+  } else if (depth < 2048) {
+    start = 2048 - depth;
+  }
+  let (r, s2) = __peg_run(g, PRef(g.start), input, 0, st, start, [], []);
   return __peg_result(r, s2, input);
 }
 

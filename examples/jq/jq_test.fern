@@ -328,10 +328,93 @@ function test_arrays(): test.TestOutcome {
   ]);
 }
 
+function test_strings(): test.TestOutcome {
+  return checks([
+    ("ascii_downcase, ascii_upcase", "\"aBcé\"", "\"abcé\"\n\"ABCé\""),
+    ("ascii_downcase", "1", "error: explode input must be a string"),
+    ("[startswith(\"ab\", \"b\"), endswith(\"bc\", \"b\")]", "\"abc\"", "[true,false,true,false]"),
+    ("startswith(1)", "\"abc\"", "error: startswith() requires string inputs"),
+    ("endswith(\"a\")", "1", "error: endswith() requires string inputs"),
+    ("[ltrimstr(\"a\", \"x\", 1), rtrimstr(\"c\", \"x\")]", "\"abc\"", "[\"bc\",\"abc\",\"abc\",\"ab\",\"abc\"]"),
+    ("ltrimstr(\"a\")", "1", "1"),
+    ("split(\",\"), split(\"\")", "\"a,b\"", "[\"a\",\"b\"]\n[\"a\",\",\",\"b\"]"),
+    ("split(1)", "\"a\"", "error: split input and separator must be strings"),
+    ("explode, utf8bytelength", "\"aé\"", "[97,233]\n3"),
+    ("explode", "1", "error: explode input must be a string"),
+    ("utf8bytelength", "1", "error: number (1) only strings have UTF-8 byte length"),
+    ("contains(\"bar\")", "\"foobar\"", "true"),
+    ("contains([\"ba\"]), contains([[2]])", "[\"foobar\",\"baz\",[1,2]]", "true\ntrue"),
+    ("contains({a:[{b:3}]}), contains({b:1})", "{\"a\":[1,2,{\"b\":3}],\"c\":1}", "true\nfalse"),
+    ("[.[] | contains(.)]", "[1,null,true]", "[true,true,true]"),
+    ("contains(\"a\")", "1", "error: number (1) and string (\"a\") cannot have their containment checked"),
+    ("contains(false)", "true", "error: boolean (true) and boolean (false) cannot have their containment checked"),
+    ("inside(\"abc\"), in({a:1})", "\"a\"", "true\ntrue"),
+    ("indices(\", \"), indices(\"\")", "\"a,b, cd, efg\"", "[3,7]\n[]"),
+    ("indices(\"a\"), index(\"a\"), rindex(\"a\"), index(\"x\")", "\"aéa\"", "[0,3]\n0\n3\nnull"),
+    ("indices(1), indices([1,2]), indices([]), .[[1]]", "[0,1,2,1,3,1,2]", "[1,3,5]\n[1,5]\n[]\n[1,3,5]"),
+    ("indices(\"aa\")", "\"aaa\"", "[0,1]"),
+    ("[.[] | indices(1)?]", "[null,\"a\",5]", "[null]"),
+    ("indices(1)", "\"a\"", "error: Cannot index string with number"),
+  ]);
+}
+
+function test_keyed(): test.TestOutcome {
+  return checks([
+    ("sort_by(length)", "[[1,2],[3]]", "[[3],[1,2]]"),
+    ("sort_by(.a), sort_by(.b, .a)", "[{\"a\":2,\"b\":1},{\"a\":1,\"b\":2}]", "[{\"a\":1,\"b\":2},{\"a\":2,\"b\":1}]\n[{\"a\":2,\"b\":1},{\"a\":1,\"b\":2}]"),
+    ("sort_by(.[0])", "[[2,\"b\"],[1,\"a\"],[2,\"a\"]]", "[[1,\"a\"],[2,\"b\"],[2,\"a\"]]"),
+    ("sort_by(empty)", "[2,1]", "[2,1]"),
+    ("group_by(. % 2)", "[3,1,2]", "[[2],[3,1]]"),
+    ("unique_by(.a)", "[{\"a\":1,\"b\":1},{\"a\":1,\"b\":2},{\"a\":0}]", "[{\"a\":0},{\"a\":1,\"b\":1}]"),
+    ("min_by(.a), max_by(.a)", "[{\"a\":1},{\"a\":3},{\"a\":2},{\"a\":3,\"b\":0}]", "{\"a\":1}\n{\"a\":3,\"b\":0}"),
+    ("[min_by(.a), group_by(.), sort_by(.)]", "[]", "[null,[],[]]"),
+    ("sort_by(.a)", "[1,2]", "error: Cannot index number with string \"a\""),
+    ("sort_by(.)", "1", "error: Cannot iterate over number (1)"),
+    ("group_by(.)", "{\"a\":1}", "error: object ({\"a\":1}) and array ([[1]]) cannot be sorted, as they are not both arrays"),
+    ("min_by(.)", "{\"a\":1}", "error: object ({\"a\":1}) and array ([[1]]) cannot be iterated over"),
+    ("with_entries(select(.value > 1))", "{\"a\":1,\"b\":2}", "{\"b\":2}"),
+    ("with_entries({key: (.key + \"x\"), value})", "{\"a\":1}", "{\"ax\":1}"),
+    ("with_entries(.key)", "{\"a\":1}", "error: Cannot index string with string \"key\""),
+    ("[isempty(empty), isempty(1), isempty(1, error(\"x\"))]", "null", "[true,false,false]"),
+    ("isempty(error(\"x\"))", "null", "error: x"),
+    ("[while(. > 0; . - 2)], [until(. > 100; . * 2)]", "5", "[5,3,1]\n[160]"),
+    ("nth(1), [nth(1; .[])], [nth(1.5; .[])], [nth(5; .[])]", "[5,6,7]", "6\n[6]\n[7]\n[]"),
+    ("nth(-1; 1)", "null", "error: nth doesn't support negative indices"),
+  ]);
+}
+
+function test_nan_and_math(): test.TestOutcome {
+  return checks([
+    ("[nan, infinite, -infinite]", "null", "[null,1.7976931348623157e+308,-1.7976931348623157e+308]"),
+    ("[nan + 1, (1e1000 - 1e1000) + 1, nan * 0, nan % 2, 5 % nan, infinite - infinite]", "null", "[null,null,null,null,null,null]"),
+    ("[nan | type, (nan % 2 | type), (nan | tostring), (nan | length | type)]", "null", "[\"number\",\"number\",\"null\",\"number\"]"),
+    ("[nan < nan, nan == nan, nan > nan, nan < 1, 1 < nan]", "null", "[true,false,false,true,false]"),
+    ("[nan, 1, null, -infinite] | sort, min, max", "null", "[null,null,-1.7976931348623157e+308,1]\nnull\n1"),
+    ("[[nan, nan] | unique | length, ([nan] | index(nan)), ([nan] | contains([nan]))]", "null", "[2,null,false]"),
+    ("if nan then 1 else 2 end", "null", "1"),
+    ("[.[nan], .[1:nan], .[nan:1], .[nan:nan], has(nan)]", "[0,1,2]", "[null,[1,2],[0],[0,1,2],false]"),
+    ("[.[nan:], .[:nan]]", "\"abc\"", "[\"abc\",\"abc\"]"),
+    ("[infinite == infinite, 1e1000 == infinite, 1.7976931348623157e308 == infinite, infinite > 1e308]", "null", "[true,true,false,true]"),
+    ("[infinite + 1, infinite / 2, (infinite | floor), infinite % 3, 5 % infinite]", "null", "[1.7976931348623157e+308,1.7976931348623157e+308,1.7976931348623157e+308,1,5]"),
+    ("[.[] | isnan]", "[1,\"a\",null]", "[false,false,false]"),
+    ("[nan, infinite, 1, 0, -infinite, 1e-320] | map(isnan), map(isinfinite), map(isnormal)", "null", "[true,false,false,false,false,false]\n[false,true,false,false,true,false]\n[false,false,true,false,false,false]"),
+    ("map(floor), map(ceil), map(round), map(trunc), map(fabs)", "[1.5,-1.5,2.5,-0.0]", "[1,-2,2,-0]\n[2,-1,3,-0]\n[2,-2,3,-0]\n[1,-1,2,-0]\n[1.5,1.5,2.5,0]"),
+    ("map(sqrt)", "[2,-1,0.1]", "[1.4142135623730951,null,0.31622776601683794]"),
+    ("map(log)", "[1,10,0.1,0]", "[0,2.302585092994046,-2.3025850929940455,-1.7976931348623157e+308]"),
+    ("[pow(2;10), pow(2;0.5), pow(-8; 1/3), pow(0;0), pow(2;1024)]", "null", "[1024,1.4142135623730951,null,1,1.7976931348623157e+308]"),
+    ("[pow((2,3);(1,2))]", "null", "[2,3,4,9]"),
+    ("sqrt", "\"a\"", "error: string (\"a\") number required"),
+    ("floor", "null", "error: null (null) number required"),
+    ("pow(2;\"a\")", "null", "error: string (\"a\") number required"),
+  ]);
+}
+
 function test_not_yet(): test.TestOutcome {
   return checks([
     (".a += 1", "null", "compile: assignment " + filter.NOT_YET),
-    ("ltrimstr(\"a\")", "null", "compile: the function ltrimstr/1 " + filter.NOT_YET),
+    ("test(\"a\")", "null", "compile: the function test/1 " + filter.NOT_YET),
+    ("implode", "null", "compile: the function implode/0 " + filter.NOT_YET),
+    ("exp2", "null", "compile: the function exp2/0 " + filter.NOT_YET),
     ("path(.)", "null", "compile: the function path/1 " + filter.NOT_YET),
     ("\"\\(1)\"", "null", "compile: string interpolation " + filter.NOT_YET),
     (". as [$v] | $v", "null", "compile: a destructuring pattern " + filter.NOT_YET),
@@ -393,6 +476,9 @@ function main(): i32 {
   r = r.it("try, catch and error", test_errors_caught);
   r = r.it("range, recurse, first, last, limit, any and all", test_generators);
   r = r.it("sort, reverse, min, max, unique, join and flatten", test_arrays);
+  r = r.it("string functions, contains and indices", test_strings);
+  r = r.it("functions with a key, with_entries, while, until and nth", test_keyed);
+  r = r.it("nan, infinite and the math functions", test_nan_and_math);
   r = r.it("the parts that the port leaves out", test_not_yet);
   r = r.it("number literals and computed numbers", test_numbers);
   r = r.it("pretty output", test_output);

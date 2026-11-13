@@ -1,6 +1,7 @@
 // The text that jq 1.7 writes for a value: compact for `-c`, and with an
 // indent of two spaces otherwise.
 import "std/json";
+import "./number";
 import "std/string";
 
 function hex(n: i32): string {
@@ -52,7 +53,7 @@ pub function compact(v: json.JsonValue): string {
       return "false";
     },
     json.JNumber(t) => {
-      return t;
+      return number.written(t);
     },
     json.JString(s) => {
       return quoted(s);

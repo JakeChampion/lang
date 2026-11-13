@@ -151,8 +151,151 @@ function test_class_escape_group_numbering(): test.TestOutcome {
   return test.assert_true(m.group_count() == 1 && require_regex_text(group) == "b" && at(m.group_index("n"), 1));
 }
 
+// The spans of the matches of `pattern` in `text`, as "start-end" words.
+function spans(pattern: string, text: string): string {
+  let Ok(compiled) = regex.compile(pattern) else {
+    return "invalid regex";
+  };
+  let out = "";
+  for m in compiled.find_all(text) {
+    out += " " + m.start.to_string() + "-" + m.end.to_string();
+  }
+  return out;
+}
+
+function span_at(pattern: string, text: string, start: i32): string {
+  let Ok(compiled) = regex.compile(pattern) else {
+    return "invalid regex";
+  };
+  let Some(m) = compiled.find_at(text, start) else {
+    return "none";
+  };
+  return m.start.to_string() + "-" + m.end.to_string();
+}
+
+function test_find_at(): test.TestOutcome {
+  let got = [
+    span_at("o+", "foo boo", 0), span_at("o+", "foo boo", 2), span_at("o+", "foo boo", 3),
+    span_at("o+", "foo boo", 7), span_at("o+", "foo boo", 8), span_at("o+", "foo boo", -4),
+    span_at("^b", "ab", 1), span_at("\\bfoo", "xfoo foo", 1), span_at("x*", "ab", 2),
+  ];
+  return test.assert_eq_array(got, ["1-3", "2-3", "5-7", "none", "none", "1-3", "none", "5-8", "2-2"]);
+}
+
+function test_word_boundaries(): test.TestOutcome {
+  let got = [
+    spans("\\b{start-half}-foo\\b{end-half}", "-foo- (foo) x-foo"),
+    spans("\\b-foo\\b", "-foo- (foo)"),
+    spans("\\b{start}foo", "xfoo foo"),
+    spans("foo\\b{end}", "foox foo"),
+    spans("\\b{end-half}", "ab c"),
+    spans("\\b{start-half}", "ab c"),
+    spans("\\b{start}\\w+\\b{end}", "one two"),
+  ];
+  return test.assert_eq_array(got, [" 0-4", "", " 5-8", " 5-8", " 2-2 4-4", " 0-0 3-3", " 0-3 4-7"]);
+}
+
+function test_word_boundary_captures(): test.TestOutcome {
+  let Ok(compiled) = regex.compile("\\b{start-half}(?<w>-?foo)\\b{end-half}") else {
+    return test.fail("invalid regex");
+  };
+  let Some(m) = compiled.captures("xfoo -foo") else {
+    return test.fail("no match");
+  };
+  let Ok(group) = m.group_named("w") else {
+    return test.fail("invalid UTF-8");
+  };
+  return test.assert_eq(require_regex_text(group), "-foo");
+}
+
+function boundary_error(pattern: string): string {
+  match (regex.compile(pattern)) {
+    Ok(_) => {
+      return "compiled";
+    },
+    Err(e) => {
+      return e.to_string();
+    }
+  }
+  return "";
+}
+
+function test_word_boundary_errors(): test.TestOutcome {
+  let got = [boundary_error("a\\b{bogus}"), boundary_error("\\b{start"), boundary_error("\\b{}")];
+  return test.assert_eq_array(got, [
+    "regex byte 1: unknown word boundary",
+    "regex byte 0: unknown word boundary",
+    "regex byte 0: unknown word boundary",
+  ]);
+}
+
+// Each pattern skips the bytes that cannot begin a match. The spans must be
+// those of a search that tries every byte.
+function test_first_byte_skip(): test.TestOutcome {
+  let got = [
+    spans("Sherlock", "a Sherlock, SHERLOCK Sherlock"),
+    spans("(?i)sh", "xSH sh Sh sH"),
+    spans("[0-9]x", "a1x 22x x3"),
+    spans("cat|dog", "hotdog cat"),
+    spans("a?b", "ccab b"),
+    spans("x*y", "zzy y"),
+    spans("a*", "ba"),
+    spans("\\bfoo|bar$", "foofoo bar"),
+    spans("(?:a|b)+c", "xxabbcc"),
+    spans("c", "abc"),
+  ];
+  return test.assert_eq_array(got, [
+    " 2-10 21-29",
+    " 1-3 4-6 7-9 10-12",
+    " 1-3 5-7",
+    " 3-6 7-10",
+    " 2-4 5-6",
+    " 2-3 4-5",
+    " 0-0 1-2 2-2",
+    " 0-3 7-10",
+    " 2-6",
+    " 2-3",
+  ]);
+}
+
+function candidate(pattern: string, text: string, from: i32): i32 {
+  let Ok(compiled) = regex.compile(pattern) else {
+    return -2;
+  };
+  return compiled.next_candidate(text, from);
+}
+
+function test_next_candidate(): test.TestOutcome {
+  let got = [
+    candidate("Holmes", "a Hol Holmes", 0), candidate("Holmes", "a Hol Holmes", 7), candidate("Holmes", "xx Holm", 0),
+    candidate("(?i)holmes", "x HOLMES", 0), candidate("cat|dog", "a dog", 0), candidate("a*", "bbb", 2),
+    candidate("a*", "bbb", 3), candidate("a*", "bbb", 4), candidate("z", "abc", 0), candidate("\\bab", "cab ab", 0),
+  ];
+  return test.assert_eq_array(got, [6, -1, -1, 2, 2, 2, 3, -1, -1, 1]);
+}
+
+// A match must start with the literal prefix, folded under (?i).
+function test_literal_prefix(): test.TestOutcome {
+  let got = [
+    spans("abcd", "abcabcd abc"),
+    spans("(?i)abc", "xAbC aBc ab"),
+    spans("ab*c", "abbbc ac abd"),
+    spans("ab?", "a ab"),
+    spans("a{2}b", "aab ab aaab"),
+    spans("sherlock holmes", "sherlock holme"),
+  ];
+  return test.assert_eq_array(got, [" 3-7", " 1-4 5-8", " 0-5 6-8", " 0-1 2-4", " 0-3 8-11", ""]);
+}
+
 function main(): i32 {
   let r = test.new("std/regex");
+  r = r.it("next_candidate", test_next_candidate);
+  r = r.it("literal prefix", test_literal_prefix);
+  r = r.it("find_at", test_find_at);
+  r = r.it("word boundaries", test_word_boundaries);
+  r = r.it("word boundaries in captures", test_word_boundary_captures);
+  r = r.it("word boundary errors", test_word_boundary_errors);
+  r = r.it("first-byte skip", test_first_byte_skip);
   r = r.it("match anywhere", test_match_anywhere);
   r = r.it("anchors", test_anchors);
   r = r.it("classes + quantifiers", test_classes_and_quantifiers);

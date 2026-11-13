@@ -209,13 +209,48 @@ A temporary file is created exclusively, with mode 0600, under a name that carri
 <<7 pub function temp_file(prefix: string): Result[TempFile, IoError]>>=
 pub struct TempFile { path: string, file: Writer }
 
-pub function temp_file(prefix: string): Result[TempFile, IoError] {
-  let i = 0;
-  while (i < prefix.len()) {
-    if (prefix[i] == 47 as u8) {
-      return Err(Other(prefix, "Invalid argument", 22));
+function __has_separator(prefix: string): boolean {
+  for b in prefix.bytes() {
+    if (b == 47 as u8) {
+      return true;
     }
-    i += 1;
+  }
+  return false;
+}
+
+// temp_file_in is temp_file with its directory given as a handle. The open is
+// relative to the handle, so no path of the directory resolves a second time.
+// The path of the result is the name of the entry in that directory.
+pub function temp_file_in(dir: Dir, prefix: string): Result[TempFile, IoError] {
+  if (__has_separator(prefix)) {
+    return Err(Other(prefix, "Invalid argument", 22));
+  }
+  let tries = 0;
+  while (tries < 64) {
+    let name = prefix + "-" + __hex_name(random_bytes(8));
+    // Bit 1 creates the file, bit 4 refuses a name that exists, and bit 1024
+    // gives the new file mode 0600.
+    match (dir.open_writer_with(name, 1029)) {
+      Ok(w) => {
+        return Ok(TempFile { path: name, file: w });
+      },
+      Err(e) => {
+        match (e) {
+          AlreadyExists(_) => {},
+          _ => {
+            return Err(e);
+          }
+        }
+      }
+    }
+    tries += 1;
+  }
+  return Err(AlreadyExists(prefix));
+}
+
+pub function temp_file(prefix: string): Result[TempFile, IoError] {
+  if (__has_separator(prefix)) {
+    return Err(Other(prefix, "Invalid argument", 22));
   }
   let tries = 0;
   while (tries < 64) {
