@@ -31,6 +31,74 @@ function test_codepoint_count(): test.TestOutcome {
   return test.assert_eq("a𝄞é".codepoint_count(), 3);
 }
 
+@noinline
+function minimum_width(): i32 {
+  return -2147483647 - 1;
+}
+
+function test_min_pad_start(): test.TestOutcome {
+  return test.assert_eq("é".pad_start(minimum_width(), '.'), "é");
+}
+
+function test_min_pad_end(): test.TestOutcome {
+  return test.assert_eq("é".pad_end(minimum_width(), '.'), "é");
+}
+
+function test_min_pad_start_str(): test.TestOutcome {
+  return test.assert_eq("é".pad_start_str(minimum_width(), "ab"), "é");
+}
+
+function test_min_pad_end_str(): test.TestOutcome {
+  return test.assert_eq("é".pad_end_str(minimum_width(), "ab"), "é");
+}
+
+function test_min_center(): test.TestOutcome {
+  return test.assert_eq("é".center(minimum_width(), '.'), "é");
+}
+
+function test_min_zfill(): test.TestOutcome {
+  return test.assert_eq("-7".zfill(minimum_width()), "-7");
+}
+
+function test_negative_widths(): test.TestOutcome {
+  let s = "éab";
+  for width in [minimum_width(), minimum_width() + 1, -1, 0] {
+    if (s.pad_start(width, '.') != s || s.pad_end(width, '.') != s
+      || s.pad_start_str(width, "中x") != s || s.pad_end_str(width, "中x") != s
+      || s.center(width, '.') != s || s.zfill(width) != s) {
+      return test.fail("a smaller width must preserve the input");
+    }
+  }
+  return test.pass();
+}
+
+function test_unicode_string_fill(): test.TestOutcome {
+  let got = "é".pad_start_str(4, "中x") + "|" + "é".pad_end_str(4, "中x");
+  return test.assert_eq(got, "中x中é|é中x中");
+}
+
+function test_empty_and_equal_widths(): test.TestOutcome {
+  let s = "";
+  let width = minimum_width();
+  if (s.pad_start(width, '.') != s || s.pad_end(width, '.') != s
+    || s.pad_start_str(width, "ab") != s || s.pad_end_str(width, "ab") != s
+    || s.center(width, '.') != s || s.zfill(width) != s) {
+    return test.fail("a negative width must preserve the empty string");
+  }
+  let t = "é";
+  if (t.pad_start(1, '.') != t || t.pad_end(1, '.') != t
+    || t.pad_start_str(1, "ab") != t || t.pad_end_str(1, "ab") != t
+    || t.center(1, '.') != t || t.zfill(1) != t) {
+    return test.fail("an equal width must preserve the input");
+  }
+  return test.assert_eq("".pad_start(2, 'é'), "éé");
+}
+
+function test_zfill_signs(): test.TestOutcome {
+  let got = "-7".zfill(5) + "|" + "+7".zfill(5) + "|" + "-7".zfill(-1) + "|" + "+7".zfill(minimum_width());
+  return test.assert_eq(got, "-0007|+0007|-7|+7");
+}
+
 function main(): i32 {
   let r = test.new("std/string widths");
   r = r.it("pad_end matches table", test_pad_end_matches_table);
@@ -40,5 +108,15 @@ function main(): i32 {
   r = r.it("zfill", test_zfill);
   r = r.it("already wide", test_already_wide);
   r = r.it("codepoint_count", test_codepoint_count);
+  r = r.it("minimum pad_start", test_min_pad_start);
+  r = r.it("minimum pad_end", test_min_pad_end);
+  r = r.it("minimum pad_start_str", test_min_pad_start_str);
+  r = r.it("minimum pad_end_str", test_min_pad_end_str);
+  r = r.it("minimum center", test_min_center);
+  r = r.it("minimum zfill", test_min_zfill);
+  r = r.it("negative widths", test_negative_widths);
+  r = r.it("Unicode string fill", test_unicode_string_fill);
+  r = r.it("empty and equal widths", test_empty_and_equal_widths);
+  r = r.it("zfill signs", test_zfill_signs);
   return r.finish();
 }
