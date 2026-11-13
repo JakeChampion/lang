@@ -9523,6 +9523,12 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    cmp x3, x4\n");
   s = s.write("    ldr x4, [sp], #16\n");
   s = s.write("    b.hi .Lalloc_oom\n");
+  // A block that crosses a 64 KiB line moves the bump pointer forward by 0 to
+  // 960 bytes, so blocks of one size do not stay a constant distance apart
+  // and the boxes of a tree spine do not all use one cache set.
+  s = s.write("    eor x0, x3, x2\n    lsr x0, x0, #16\n    cbz x0, .Lalloc_plain\n");
+  s = s.write("    lsr x0, x3, #16\n    and x0, x0, #15\n    lsl x0, x0, #6\n    add x3, x3, x0\n");
+  s = s.write(".Lalloc_plain:\n");
   s = s.write("    str x3, [x1]\n");
   s = s.write("    mov x0, x2\n");
   s = s.write(rt_unframe(s));

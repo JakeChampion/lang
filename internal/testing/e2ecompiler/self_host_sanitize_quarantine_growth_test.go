@@ -81,8 +81,10 @@ func TestSelfHostSanitizeQuarantineGrowth(t *testing.T) {
 			if unbounded := bump("-sanitize", "-quarantine", "0"); unbounded < 100000*88 {
 				t.Errorf("-quarantine 0 bumped %d bytes; no bound keeps 88 bytes per release, 8800000 in all", unbounded)
 			}
-			if bounded := bump("-sanitize", "-quarantine", "1M"); bounded < 1<<20 || bounded > 1<<20+4096 {
-				t.Errorf("-quarantine 1M bumped %d bytes; want the budget plus one block", bounded)
+			// The bump allocator skips at most 960 bytes at each of the 16 lines
+			// of 64 KiB that the budget covers.
+			if bounded := bump("-sanitize", "-quarantine", "1M"); bounded < 1<<20 || bounded > 1<<20+4096+16*960 {
+				t.Errorf("-quarantine 1M bumped %d bytes; want the budget plus one block and the skipped bytes", bounded)
 			}
 		})
 	}

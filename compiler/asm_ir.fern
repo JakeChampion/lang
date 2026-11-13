@@ -495,6 +495,19 @@ function freelist_key(block: string, into: string): string {
   return "    movq " + block + ", " + into + "\n    shrq $12, " + into + "\n    xorq __fern_canary(%rip), " + into + "\n";
 }
 
+// %rax holds the block that the bump allocator made and %rdi its end. A
+// block that crosses a 64 KiB line moves the bump pointer forward by 0 to 960
+// bytes, so blocks of one size do not stay a constant distance apart. Boxes
+// that a program makes at a constant distance, such as the spine of a tree,
+// then do not all use one cache set. done is the text that returns.
+function bump_colour(s: asmcore.EmitState, label: string, done: string): asmcore.EmitState {
+  s = s.write("    xorq %rax, %rdi\n    shrq $16, %rdi\n    jnz " + label + "\n");
+  s = s.write(done);
+  s = s.write(label + ":\n    movq __fern_heap_ptr(%rip), %rdi\n    shrq $16, %rdi\n    andq $15, %rdi\n    shlq $6, %rdi\n");
+  s = s.write("    addq %rdi, __fern_heap_ptr(%rip)\n");
+  return s.write(done);
+}
+
 // Takes the head of the free list whose slot address is in %rdi into %rax,
 // or the random one of its first eight under -harden; zero when empty.
 function freelist_take_head(s: asmcore.EmitState, miss: string): asmcore.EmitState {
@@ -3788,7 +3801,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    cmpq __fern_heap_end(%rip), %rdi\n");
   s = s.write("    ja .Lalloc_oom\n");
   s = s.write("    movq %rdi, __fern_heap_ptr(%rip)\n");
-  s = s.write("    ret\n");
+  s = bump_colour(s, ".Lalloc_colour", "    ret\n");
   s = s.write(".Lalloc_full:\n");
   s = s.write("    pushq %rbp\n");
   s = s.write("    movq %rsp, %rbp\n");
@@ -3868,8 +3881,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    cmpq __fern_heap_end(%rip), %rdi\n");
   s = s.write("    ja .Lalloc_oom\n");
   s = s.write("    movq %rdi, __fern_heap_ptr(%rip)\n");
-  s = s.write("    popq %rbp\n");
-  s = s.write("    ret\n");
+  s = bump_colour(s, ".Lalloc_colour_framed", "    popq %rbp\n    ret\n");
   s = abort_trap(s, ".Lalloc_oom", ".Lmsg_oom", aborts.oom(), 125);
   if (asmcore.process_entry(s)) {
     s = emit_map_fail_trap(s);
