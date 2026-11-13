@@ -17,7 +17,7 @@ import (
 // jqSuiteFloor is the number of cases of jq.test that the port passes. A case
 // in a part of the language the port does not have yet is skipped, and every
 // other case must pass.
-const jqSuiteFloor = 349
+const jqSuiteFloor = 402
 
 const jqNotYet = "is not in this port yet"
 
@@ -238,6 +238,8 @@ func TestSelfHostExampleJqAgainstJq(t *testing.T) {
 		{[]string{"-c", "def fac: if . <= 1 then 1 else . * (. - 1 | fac) end; def twice(f): f | f; def add($n): . + $n; map(fac), (.[0] | twice(add(10))), [.[] | add(1, 2)]"}, "[3,5]\n"},
 		{[]string{"-c", "walk(if type == \"object\" then del(.x) else . end), (.. |= (numbers |= . * 2))"}, "[{\"x\":1,\"y\":[2,{\"x\":3}]},4]\n"},
 		{[]string{"-c", "group_by(.k) | map({k: .[0].k, n: length}), (sort_by(.v) | map(.v)), max_by(.v), unique_by(.k)"}, "[{\"k\":\"b\",\"v\":2},{\"k\":\"a\",\"v\":3},{\"k\":\"b\",\"v\":1}]\n"},
+		{[]string{"-c", "debug, debug(\"m\", .[0]) | .[] as [$a, {b: $c}] ?// $a | [$a, $c]"}, "[[1,{\"b\":2}],3]\n"},
+		{[]string{"-c", "[label $out | .[] | if . > 2 then break $out else . end], pick(.[1]), transpose?, {$__loc__}"}, "[1,2,3]\n[[1],[2,3]]\n"},
 		{[]string{"-c", "ascii_upcase, split(\", \"), indices(\", \"), explode[0:2], contains(\"b, c\"), ltrimstr(\"a, \")"}, "\"a, b, c\"\n5\n"},
 		{[]string{"-c", "with_entries(select(.value | contains([1])))"}, "{\"a\":[1,2],\"b\":[3]}\n"},
 		{[]string{"-c", "[nan, infinite, (. - .), (.[0]? // nan)] | sort, map(isnan), (.[0] < .[1])"}, "1e1000\n"},

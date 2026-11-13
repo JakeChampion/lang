@@ -16,7 +16,8 @@ import "./reader";
 // `error` is empty, or it holds the one value of the error.
 pub struct Outputs { values: json.JsonValue[], error: json.JsonValue[] }
 
-pub struct Env { names: string[], values: json.JsonValue[], funcs: Func[] }
+// `labels` counts each `label` that runs now.
+pub struct Env { names: string[], values: json.JsonValue[], funcs: Func[], labels: i32 }
 
 // A function of a `def`, or an argument of a call. `scope` holds the one
 // environment of the definition, or of the call for an argument. An argument
@@ -24,15 +25,32 @@ pub struct Env { names: string[], values: json.JsonValue[], funcs: Func[] }
 struct Func { name: string, params: string[], body: filter.Ast, scope: Env[], argument: boolean }
 
 pub function env(): Env {
-  return Env { names: [], values: [], funcs: [] };
+  return Env { names: [], values: [], funcs: [], labels: 0 };
 }
 
 pub function (e: Env) with(name: string, value: json.JsonValue): Env {
-  return Env { names: e.names.append(name), values: e.values.append(value), funcs: e.funcs };
+  return Env { names: e.names.append(name), values: e.values.append(value), funcs: e.funcs, labels: e.labels };
 }
 
 function (e: Env) define(f: Func): Env {
-  return Env { names: e.names, values: e.values, funcs: e.funcs.append(f) };
+  return Env { names: e.names, values: e.values, funcs: e.funcs.append(f), labels: e.labels };
+}
+
+// The environment for the body of the label `name`. The variable of the
+// label holds a number that no other label has while the body runs.
+function (e: Env) labelled(name: string): Env {
+  let inner = Env { ...e, labels: e.labels + 1 };
+  return inner.with(filter.label_var(name), whole(e.labels));
+}
+
+// The error that a `break` to the label with the number `id` raises.
+function break_to(id: json.JsonValue): json.JsonValue {
+  return json.JObject(json.object().insert("__jq", id));
+}
+
+// True if `o` stopped on a `break` to the label of `inner`.
+function broke(error: json.JsonValue[], inner: Env): boolean {
+  return error.len() > 0 && order(error[0], break_to(whole(inner.labels - 1))) == 0;
 }
 
 // The last function of `e` with this name and this number of parameters.
@@ -173,7 +191,7 @@ pub function run(f: filter.Ast, input: json.JsonValue, e: Env): Outputs {
     filter.Call(name, args) => {
       let found = e.find(name, args.len());
       if (found.len() > 0) {
-        return call_defined(found[0], args, 0, input, e, callee_scope(found[0]));
+        return call_defined(found[0], args, 0, input, e, callee_scope(found[0], e));
       }
       return call(name, args, input, e);
     },
@@ -216,6 +234,21 @@ pub function run(f: filter.Ast, input: json.JsonValue, e: Env): Outputs {
     },
     filter.Negate(inner) => {
       return each(run(inner, input, e), negate);
+    },
+    filter.Label(name, body) => {
+      let inner = e.labelled(name);
+      let o = run(body, input, inner);
+      if (broke(o.error, inner)) {
+        return ok(o.values);
+      }
+      return o;
+    },
+    filter.Break(name) => {
+      let id = lookup(e, filter.label_var(name));
+      if (id.failed()) {
+        return id;
+      }
+      return raise(break_to(id.values[0]));
     }
   }
 }
@@ -962,6 +995,7 @@ function run_alt(a: filter.Ast, b: filter.Ast, input: json.JsonValue, e: Env): O
 function call(name: string, args: filter.Ast[], input: json.JsonValue, e: Env): Outputs {
   return match (name) {
     "empty" => ok([]),
+    "debug" => debug(input),
     "error" => run_error(args, input, e),
     "not" => one(json.JBool(!truthy(input))),
     "type" => one(json.JString(type_name(input))),
@@ -978,6 +1012,12 @@ function call(name: string, args: filter.Ast[], input: json.JsonValue, e: Env): 
     "tojson" => one(json.JString(output.compact(input))),
     _ => call_more(name, args, input, e),
   };
+}
+
+// jq writes the value to the standard error output, and gives the input.
+function debug(input: json.JsonValue): Outputs {
+  eprint("[\"DEBUG:\"," + output.compact(input) + "]");
+  return one(input);
 }
 
 function call_more(name: string, args: filter.Ast[], input: json.JsonValue, e: Env): Outputs {
@@ -2553,12 +2593,20 @@ function run_paths(f: filter.Ast, it: PathItem, e: Env): PathOuts {
     filter.Call(name, args) => {
       let found = e.find(name, args.len());
       if (found.len() > 0) {
-        return paths_defined(found[0], args, 0, it, e, callee_scope(found[0]));
+        return paths_defined(found[0], args, 0, it, e, callee_scope(found[0], e));
       }
       return paths_call(name, args, it, e);
     },
     filter.Def(name, params, body, rest) => {
       return run_paths(rest, it, e.define(Func { name: name, params: params, body: body, scope: [e], argument: false }));
+    },
+    filter.Label(name, body) => {
+      let inner = e.labelled(name);
+      let o = run_paths(body, it, inner);
+      if (broke(o.error, inner)) {
+        return path_ok(o.items);
+      }
+      return o;
     },
     filter.Var(_) => {
       return paths_plain(f, it, e, true);
@@ -3337,11 +3385,12 @@ function walk(v: json.JsonValue, f: filter.Ast, e: Env): Outputs {
 
 // The environment for the body of `f`, before its parameters. A function
 // sees itself, so that it can call itself.
-function callee_scope(f: Func): Env {
+function callee_scope(f: Func, caller: Env): Env {
+  let scope = Env { ...f.scope[0], labels: caller.labels };
   if (f.argument) {
-    return f.scope[0];
+    return scope;
   }
-  return f.scope[0].define(f);
+  return scope.define(f);
 }
 
 // The outputs of the body of `f` with its parameters from `at` bound in
