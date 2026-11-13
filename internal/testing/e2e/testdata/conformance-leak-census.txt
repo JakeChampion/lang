@@ -286,6 +286,9 @@ checked_int_conversion                               0
 checked_owned_nested_results                         0
 checked_owned_results                                0
 future_array_literal_goes_to_gather                  2
+match_arm_names_a_const                              0
+match_arm_names_a_const_of_its_module                0
+match_on_a_const_scrutinee                           0
 owned_callback_result_composition                    0
 copied_call_results                                  0
 closing_a_socket_two_reactors_watch                  0
@@ -1451,6 +1454,7 @@ vec_lane_kernels                                     0
 view_of_branch_value                                 0
 view_param_returned_after_loop                       0
 views_in_aggregates_stay_local                       0
+void_value_arm_falls_through                         0
 void_value_if_statement                              0
 wasi_http_error_code_names                           0
 wasi_http_handler_computes_body                      0
