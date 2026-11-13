@@ -905,6 +905,10 @@ runner gates its own ISA. It proves only what the probes execute: a
 secret-dependent path the inputs do not take is not reported. Every later
 crypto kernel adds its own case.
 
+The ChaCha20-Poly1305 probe seals 1000 bytes. Thus it reaches the groups of
+four blocks of the x86-64 Poly1305 kernel. It also reaches the groups of
+eight blocks of the ChaCha20 kernel.
+
 The AES-GCM kernels (`__aes_expand_key`, `__aes_ctr32`, `__ghash`, and the
 in-place pair `__aes_gcm_seal_into` / `__aes_gcm_open_into`) are checked on
 their own against known answers on every target by

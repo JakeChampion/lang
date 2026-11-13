@@ -102,7 +102,7 @@ function same(a: u8[], b: u8[]): boolean {
 function main(): i32 {
   let key: u8[] = filled(32, 1);
   let nonce: u8[] = filled(12, 2);
-  let plaintext: u8[] = filled(200, 3);
+  let plaintext: u8[] = filled(1000, 3);
   let aad: u8[] = filled(17, 4);
   __ct_secret(key);
   __ct_secret(plaintext);
