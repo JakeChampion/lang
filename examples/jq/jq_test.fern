@@ -267,11 +267,72 @@ function test_errors_caught(): test.TestOutcome {
   ]);
 }
 
+function test_generators(): test.TestOutcome {
+  return checks([
+    ("[range(5)], [range(2;5)], [range(0;10;3)], [range(5;0;-2)], [range(0;1;0)]", "null", "[0,1,2,3,4]\n[2,3,4]\n[0,3,6,9]\n[5,3,1]\n[]"),
+    ("[range(2.5)], [range(0;1;0.3)], [range(-1)]", "null", "[0,1,2]\n[0,0.3,0.6,0.8999999999999999]\n[]"),
+    ("[range(1,2;3,4)], [range(0,1;3;1,2)]", "null", "[1,2,1,2,3,2,2,3]\n[0,1,2,0,2,1,2,1]"),
+    ("[range(0;2;null)], [range(1;3;true)]", "null", "[]\n[]"),
+    ("range(\"a\")", "null", "error: Range bounds must be numeric"),
+    ("[range(0;2;\"a\")]", "null", "error: number (0) and string (\"a\") cannot be added"),
+    ("[..]", "[[1,[2]],{\"a\":3}]", "[[[1,[2]],{\"a\":3}],[1,[2]],1,[2],2,{\"a\":3},3]"),
+    ("[recurse(if . < 5 then . + 1 else empty end)], [recurse(. * .; . < 100)]", "2", "[2,3,4,5]\n[2,4,16]"),
+    ("[.. | numbers]", "{\"a\":[1,{\"b\":[2]}]}", "[1,2]"),
+    ("[first(range(10))], [first(empty)], [last(range(5))], [last(empty)]", "null", "[0]\n[]\n[4]\n[null]"),
+    ("first, last", "[1,2,3]", "1\n3"),
+    ("first", "1", "error: Cannot index number with number"),
+    ("[first(1, error(\"x\"))], [limit(1; 1, error(\"x\"))]", "null", "[1]\n[1]"),
+    ("last(1, error(\"x\"))", "null", "error: x"),
+    ("[limit(3; range(10))], [limit(0; 1,2)], [limit(-1; 1,2)], [limit(1,2; 5,6,7)], [limit(1.5; 1,2,3)]", "null", "[0,1,2]\n[]\n[1,2]\n[5,5,6]\n[1,2]"),
+    ("[limit(\"a\"; 1,2)]", "null", "error: string (\"a\") and number (1) cannot be subtracted"),
+    ("any, all", "[1,null]", "true\nfalse"),
+    ("[any, all]", "[]", "[false,true]"),
+    ("[any(. > 1), all(. > 1)]", "[1,2]", "[true,false]"),
+    ("any(1, error(\"x\"); . == 1), all(false, error(\"x\"); .)", "null", "true\nfalse"),
+    ("all(1, error(\"x\"); . == 1)", "null", "error: x"),
+    ("any", "1", "error: Cannot iterate over number (1)"),
+    ("[.[]|scalars], [.[]|iterables], [.[]|nulls], [.[]|values]", "[1,null,\"a\",[],{}]", "[1,null,\"a\"]\n[[],{}]\n[null]\n[1,\"a\",[],{}]"),
+    ("[.[]|booleans], [.[]|numbers], [.[]|strings], [.[]|arrays], [.[]|objects]", "[true,1,\"a\",[],{}]", "[true]\n[1]\n[\"a\"]\n[[]]\n[{}]"),
+    ("range(1;2;3;4)", "null", "compile: range/4 is not defined"),
+    ("..a", "null", "compile: syntax error, unexpected 'a'"),
+  ]);
+}
+
+function test_arrays(): test.TestOutcome {
+  return checks([
+    ("sort", "[null,true,false,0,\"a\",[1],{\"a\":1},-1,\"A\",[0],{}]", "[null,false,true,-1,0,\"A\",\"a\",[0],[1],{},{\"a\":1}]"),
+    ("sort", "[{\"a\":2,\"b\":1},{\"a\":1}]", "[{\"a\":1},{\"a\":2,\"b\":1}]"),
+    ("sort", "{\"a\":1}", "error: object ({\"a\":1}) cannot be sorted, as it is not an array"),
+    ("[.[] | reverse]", "[[1,2,3],null,{},0,\"\"]", "[[3,2,1],[],[],[],[]]"),
+    ("reverse", "\"abc\"", "error: Cannot index string with number"),
+    ("reverse", "true", "error: boolean (true) has no length"),
+    ("min, max", "[3,1,2]", "1\n3"),
+    ("min, max", "[1.0,1]", "1.0\n1"),
+    ("[min, max]", "[]", "[null,null]"),
+    ("min", "1", "error: number (1) and number (1) cannot be iterated over"),
+    ("unique", "[1,2,1,[1],[1],\"a\",1.0]", "[1,2,\"a\",[1]]"),
+    ("unique", "{\"a\":1}", "error: object ({\"a\":1}) and array ([[1]]) cannot be sorted, as they are not both arrays"),
+    ("unique", "1", "error: Cannot iterate over number (1)"),
+    ("join(\"-\")", "[\"a\",1,null,true,\"b\"]", "\"a-1--true-b\""),
+    ("join(\",\", \"-\")", "[\"a\",\"b\"]", "\"a,b\"\n\"a-b\""),
+    ("[.[] | join(\"x\")]", "[[],[null,null],{\"a\":\"p\",\"b\":\"q\"}]", "[\"\",\"x\",\"pxq\"]"),
+    ("join(null), join(1)", "[\"a\"]", "\"a\"\n\"a\""),
+    ("join(\",\")", "[1,[2]]", "error: string (\"1,\") and array ([2]) cannot be added"),
+    ("join(1)", "[\"a\",\"b\"]", "error: string (\"a\") and number (1) cannot be added"),
+    ("flatten, flatten(0,1)", "[1,[2,[3,[4]]]]", "[1,2,3,4]\n[1,[2,[3,[4]]]]\n[1,2,[3,[4]]]"),
+    ("flatten", "{\"a\":[1],\"b\":2}", "[1,2]"),
+    ("flatten(-1)", "[1,[2]]", "error: flatten depth must not be negative"),
+    ("flatten(\"a\")", "[1,[2]]", "error: string (\"a\") and number (1) cannot be subtracted"),
+    ("flatten", "1", "error: Cannot iterate over number (1)"),
+    ("flatten | sort | join(\",\")", "[[3,1],[2]]", "\"1,2,3\""),
+  ]);
+}
+
 function test_not_yet(): test.TestOutcome {
   return checks([
     (".a += 1", "null", "compile: assignment " + filter.NOT_YET),
-    ("sort", "null", "compile: the function sort/0 " + filter.NOT_YET),
-    ("limit(1; .)", "null", "compile: the function limit/2 " + filter.NOT_YET),
+    ("ltrimstr(\"a\")", "null", "compile: the function ltrimstr/1 " + filter.NOT_YET),
+    ("path(.)", "null", "compile: the function path/1 " + filter.NOT_YET),
     ("\"\\(1)\"", "null", "compile: string interpolation " + filter.NOT_YET),
     (". as [$v] | $v", "null", "compile: a destructuring pattern " + filter.NOT_YET),
     (". as $v ?// [$v] | $v", "null", "compile: a destructuring alternative " + filter.NOT_YET),
@@ -310,7 +371,7 @@ function test_stream(): test.TestOutcome {
 }
 
 function test_undefined_var(): test.TestOutcome {
-  for program in ["[$x, {$y}]", "$x + 1 * $y", "$x // $y", "map(has($y))", "if $x then 1 else $y end", "(1 as $y | $x) | $y", "reduce 1 as $z ($x; $z) | $y", "foreach $y as $z (1; 2; $z)", "try $x catch $y"] {
+  for program in ["[$x, {$y}]", "$x + 1 * $y", "$x // $y", "map(has($y))", "if $x then 1 else $y end", "(1 as $y | $x) | $y", "reduce 1 as $z ($x; $z) | $y", "foreach $y as $z (1; 2; $z)", "try $x catch $y", "[limit($x; range($y))]"] {
     let parsed = filter.parse(program);
     if (filter.undefined_var(parsed.ast, ["x"]) != "y") {
       return test.fail(program + ": got \"" + filter.undefined_var(parsed.ast, ["x"]) + "\", want \"y\"");
@@ -330,6 +391,8 @@ function main(): i32 {
   r = r.it("functions", test_functions);
   r = r.it("if, bindings, reduce and foreach", test_control);
   r = r.it("try, catch and error", test_errors_caught);
+  r = r.it("range, recurse, first, last, limit, any and all", test_generators);
+  r = r.it("sort, reverse, min, max, unique, join and flatten", test_arrays);
   r = r.it("the parts that the port leaves out", test_not_yet);
   r = r.it("number literals and computed numbers", test_numbers);
   r = r.it("pretty output", test_output);
