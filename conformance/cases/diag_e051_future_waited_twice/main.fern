@@ -1,0 +1,32 @@
+// A future is waited one time. `block_on`, `wait`, `gather`, `race` and
+// `with_deadline` take their futures as `own`, so a second wait of one
+// future is refused. A wait of each of two futures is not.
+import "std/async";
+
+function work(n: i32): i32 {
+  return n + 1;
+}
+
+function each_one_time(): i32 {
+  let a = async.spawn((): i32 => work(2));
+  let b = async.spawn((): i32 => work(3));
+  match (async.block_on(async.gather([a, b]))) {
+    Some(v) => {
+      return v[0] + v[1];
+    },
+    None => {
+      return 0;
+    }
+  }
+}
+
+function one_two_times(): i32 {
+  let f = async.spawn((): i32 => work(2));
+  let first = async.block_on(f);
+  let second = async.block_on(f);
+  return 0;
+}
+
+function main(): i32 {
+  return each_one_time() + one_two_times() - 7;
+}
