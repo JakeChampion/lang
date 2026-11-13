@@ -1,0 +1,28 @@
+function first[T](xs: T[], d: T): T {
+  if (xs.len() > 0) {
+    return xs[0];
+  }
+  return d;
+}
+
+function twice[T](x: T): T[] {
+  return [x, x];
+}
+
+function double(n: i32): i32 {
+  return n * 2;
+}
+
+function main(): i32 {
+  let empty: ((i32) => i32)[] = [];
+  let f = first(empty, (n: i32): i32 => n + 1);
+  print(f(1).to_string());
+  let g = first(empty, double);
+  print(g(5).to_string());
+  let fs = twice((n: i32): i32 => n * 3);
+  print(fs.len().to_string());
+  print(fs[1](4).to_string());
+  let h = first(fs, double);
+  print(h(2).to_string());
+  return 0;
+}
