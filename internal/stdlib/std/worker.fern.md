@@ -12,7 +12,7 @@ A type parameter is send-safe when its bound names `Send`. The bound holds for e
 
 Fern values are immutable, so a copied tree and a shared tree cannot be told apart by any accepted program. The copy is unobservable.
 
-On Linux and Android a worker is a process. `spawn` maps a shared region and forks. The child adopts the region as its heap, runs the body, copies the result into the region, and exits. `join` waits for the child, copies the result into the parent heap, and removes the region.
+On Linux, Android and macOS a worker is a process. `spawn` maps a shared region and forks. The child adopts the region as its heap, runs the body, copies the result into the region, and exits. `join` waits for the child, copies the result into the parent heap, and removes the region.
 
 Every other engine runs the worker on the `Inline` scheduler, which runs the body at `spawn`. That is one of the schedules a process can produce.
 
@@ -26,7 +26,7 @@ A `Worker` is `@must_consume`: a program joins every worker it spawns (E067).
 `join` consumes the worker and returns its result. A second join is refused (E051).
 `poll` never waits. It consumes the worker and returns `Finished` with the result, or `Running` with the worker, which the caller polls or joins later.
 A worker that exits with a signal or without a result stops the program with exit 134. A call of `exit` in a worker body is such a worker. The two interpreters run a body in the process of the program, and they stop the same way.
-A process worker ends when its parent ends: the kernel sends it SIGTERM.
+A process worker ends when its parent ends: it gets SIGTERM. On Linux and Android the kernel sends it. macOS has no such signal, so a watchdog process sends it. The watchdog waits for the exit of the parent or of the worker, with kqueue.
 
 ## Executable example
 
@@ -83,7 +83,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 // This module runs a closure as a worker and joins its result.
 //
 // A value crosses the worker boundary only by copy, and only a send-safe
-// value is admitted (E100). On Linux and Android a worker is a process that
+// value is admitted (E100). On Linux, Android and macOS a worker is a process that
 // writes its result into a shared region. Every other engine runs the worker
 // on a scheduler, and the default scheduler runs it inline.
 ```
@@ -101,15 +101,15 @@ pub struct Worker[T] { sched: Option[dyn Scheduler], index: i32, pid: i32, regio
 
 ### `3 pub function spawn[T: Send](send body: () => T): Worker[T]`
 
-Runs `body` as a worker. The closure's captures and its result cross the worker boundary, so both must be send-safe (E100). A native Linux or Android program runs the worker as a process. Every other engine runs the body on the `Inline` scheduler before `spawn` returns. The interpreters map no region, so they take the inline path of `__spawn_process`.
+Runs `body` as a worker. The closure's captures and its result cross the worker boundary, so both must be send-safe (E100). A native Linux, Android or macOS program runs the worker as a process. Every other engine runs the body on the `Inline` scheduler before `spawn` returns. The interpreters map no region, so they take the inline path of `__spawn_process`.
 
 ```fern
 <<3 pub function spawn[T: Send](send body: () => T): Worker[T]>>=
 /// Runs `body` as a worker and returns the handle that `join` takes.
 pub function spawn[T: Send](send body: () => T): Worker[T] {
-  // Android has the syscalls of Linux. The child makes no call into the C
-  // library or the Java runtime of the app.
-  if (target_os() == "linux" || target_os() == "android") {
+  // The child makes no call into a C library or into the Java runtime of an
+  // app. The test of target_os folds, so wasm keeps no process path.
+  if (target_os() == "linux" || target_os() == "android" || target_os() == "darwin") {
     return __spawn_process(body);
   }
   return __spawn_on(inline(), body);
@@ -140,8 +140,8 @@ function __spawn_process[T: Send](own body: () => T): Worker[T] {
     return __spawn_on(inline(), body);
   }
   if (pid == 0) {
-    // The kernel ends the worker when its parent ends, so no worker runs
-    // detached. A parent that ended before this call sends nothing, so the
+    // The worker ends when its parent ends, so no worker runs detached:
+    // Linux sends the signal, and on macOS a watchdog process sends it. A parent that ended before this call sends nothing, so the
     // worker also ends when its parent is not the process that made it.
     let linked = reactor_ctl(-1, 6, 0, 0);
     let now = __stat_pid(true);
@@ -220,7 +220,7 @@ pub function (own w: Worker[T: Send]) join(): T {
     },
     None => {}
   }
-  if (target_os() == "linux" || target_os() == "android") {
+  if (target_os() == "linux" || target_os() == "android" || target_os() == "darwin") {
     let status = __wait_worker(w.pid);
     return __join_process(w, status);
   }
@@ -244,7 +244,7 @@ function __join_scheduled[T](s: dyn Scheduler, index: i32): T {
 
 ### `6 function __join_process[T: Send](own w: Worker[T], status: i32): T`
 
-Copies the result of the process that exited with `status` into the parent heap. The original tree leaves the worker region through bulk reclamation. It never enters the parent's free lists. Only a native Linux or Android program reaches this function.
+Copies the result of the process that exited with `status` into the parent heap. The original tree leaves the worker region through bulk reclamation. It never enters the parent's free lists. Only a native Linux, Android or macOS program reaches this function.
 
 ```fern
 <<6 function __join_process[T: Send](own w: Worker[T], status: i32): T>>=
@@ -290,7 +290,7 @@ pub enum Polled[T] { Finished(T), Running(Worker[T]) }
 /// Returns `Finished` with the result of a finished worker, or `Running` with
 /// the worker. It does not wait. The call consumes the worker.
 pub function (own w: Worker[T: Send]) poll(): Polled[T] {
-  if (target_os() == "linux" || target_os() == "android") {
+  if (target_os() == "linux" || target_os() == "android" || target_os() == "darwin") {
     if (w.pid > 0) {
       let status = proc_waitpid_nohang(w.pid);
       if (status == -1 || status == -4) {

@@ -1,0 +1,364 @@
+// load: an HTTP/1.1 load generator with the command line of oha. Each of
+// -c connections sends its next request when the previous response is
+// complete, and keeps the connection open between requests.
+import "std/async";
+import "std/dns";
+import "std/net";
+import "std/time";
+import "./options";
+import "./report";
+
+const CLOSED: i32 = 0;
+
+const CONNECTING: i32 = 1;
+
+const SENDING: i32 = 2;
+
+const READING: i32 = 3;
+
+const IDLE: i32 = 4;
+
+const READ_SIZE: i32 = 16384;
+
+struct Conn { sock: Option[Socket], phase: i32, started: i64, buf: u8[], unsent: u8[] }
+
+struct Run {
+  addr: net.SocketAddr,
+  request: u8[],
+  method: string,
+  limit: i64,
+  deadline: i64,
+  issued: i64,
+  busy: i32,
+  conns: Conn[],
+  by_fd: i32[],
+  ready: i32[],
+  tally: report.Tally,
+  drv: async.RealDriver,
+}
+
+function main(): i32 {
+  let argv = args();
+  let rest: string[] = [];
+  for i in 1..argv.len() {
+    rest = rest.append(argv[i]);
+  }
+  match (options.parse(rest)) {
+    options.Run(o) => {
+      return run(o);
+    },
+    options.Help => {
+      print(options.USAGE);
+      return 0;
+    },
+    options.Refused(why) => {
+      eprint(f"load: {why}");
+      eprint(options.USAGE);
+      return 2;
+    }
+  }
+  return 2;
+}
+
+function resolve(host: string, port: i32): Result[net.SocketAddr, string] {
+  match (net.ip_parse(host)) {
+    Ok(ip) => {
+      return Ok(net.socket_addr(ip, port));
+    },
+    Err(_) => {}
+  }
+  match (dns.resolve(host)) {
+    Ok(ips) => {
+      if (ips.len() > 0) {
+        return Ok(net.socket_addr(ips[0], port));
+      }
+      return Err(f"{host} has no address");
+    },
+    Err(e) => {
+      return Err(f"{host}: {e.message()}");
+    }
+  }
+  return Err(f"{host} has no address");
+}
+
+function closed(): Conn {
+  let none: u8[] = [];
+  return Conn { sock: None, phase: CLOSED, started: 0, buf: none, unsent: none };
+}
+
+function run(o: options.Options): i32 {
+  let addr = match (resolve(o.host, o.port)) {
+    Ok(a) => a,
+    Err(why) => {
+      eprint(f"load: {why}");
+      return 1;
+    },
+  };
+  let start = monotonic_ns();
+  let deadline: i64 = 0;
+  let limit = o.requests;
+  if let Some(d) = o.duration {
+    deadline = start + d.as_nanos();
+    limit = 9223372036854775807;
+  }
+  let n = o.connections;
+  if (limit < n as i64) {
+    n = limit as i32;
+  }
+  let conns: Conn[] = [];
+  let ready: i32[] = [];
+  for i in 0..n {
+    conns = conns.append(closed());
+    ready = ready.append(i);
+  }
+  let none: i32[] = [];
+  let r = drive(Run { addr: addr, request: options.request(o), method: o.method, limit: limit, deadline: deadline, issued: 0, busy: 0, conns: conns, by_fd: none, ready: ready, tally: report.tally(), drv: async.real_driver() }, o.wait);
+  let elapsed = monotonic_ns() - start;
+  for i in 0..r.conns.len() {
+    r = shut(r, i);
+  }
+  print(r.tally.summary(elapsed));
+  return 0;
+}
+
+// Runs the requests until none is left in flight.
+function drive(own r: Run, wait: boolean): Run {
+  while (true) {
+    r = start_ready(r);
+    if (r.deadline > 0 && monotonic_ns() >= r.deadline) {
+      r = stop(r, wait);
+    }
+    if (r.busy == 0) {
+      return r;
+    }
+    let timeout: Option[Duration] = None;
+    if (r.deadline > 0) {
+      timeout = Some(time.duration_nanos(r.deadline - monotonic_ns()));
+    }
+    let events = r.drv.wait(r.conns.len(), timeout);
+    r = dispatch(r, events);
+  }
+  return r;
+}
+
+// Starts a request on each connection in `ready`, and on each that a failed
+// start puts back.
+function start_ready(own r: Run): Run {
+  let none: i32[] = [];
+  while (r.ready.len() > 0) {
+    let starting = r.ready;
+    r = Run { ...r, ready: none };
+    for i in starting {
+      r = begin(r, i);
+    }
+  }
+  return r;
+}
+
+// Steps the connection of each (descriptor, readiness) pair.
+function dispatch(own r: Run, events: i32[]): Run {
+  let k = 0;
+  while (k + 1 < events.len()) {
+    let fd = events[k];
+    let at = if (fd >= 0 && fd < r.by_fd.len()) { r.by_fd[fd] } else { -1 };
+    if (at >= 0) {
+      r = step(r, at);
+    }
+    k += 2;
+  }
+  return r;
+}
+
+// At the end of the -z time, no request starts. A request in flight is
+// aborted, or with -w it is complete when its response is.
+function stop(own r: Run, wait: boolean): Run {
+  r = Run { ...r, limit: r.issued, deadline: 0 };
+  if (wait) {
+    return r;
+  }
+  for i in 0..r.conns.len() {
+    let phase = r.conns[i].phase;
+    if (phase == CONNECTING || phase == SENDING || phase == READING) {
+      r = shut(Run { ...r, tally: r.tally.error(report.ABORTED), busy: r.busy - 1 }, i);
+    }
+  }
+  return r;
+}
+
+// Starts the next request on connection `i`, when one is left to send.
+function begin(own r: Run, i: i32): Run {
+  let c = r.conns[i];
+  if (r.issued >= r.limit || r.deadline > 0 && monotonic_ns() >= r.deadline) {
+    if (c.sock.is_some()) {
+      return Run { ...r, conns: r.conns.with(i, Conn { ...c, phase: IDLE }) };
+    }
+    return r;
+  }
+  let none: u8[] = [];
+  r = Run { ...r, issued: r.issued + 1, busy: r.busy + 1, conns: r.conns.with(i, Conn { ...c, started: monotonic_ns(), buf: none }) };
+  if (c.sock.is_some()) {
+    let request = r.request;
+    return send(r, i, request);
+  }
+  return connect(r, i);
+}
+
+function connect(own r: Run, i: i32): Run {
+  match (net.connect_start(r.addr)) {
+    Ok(sock) => {
+      let fd = sock.fd;
+      r.drv.watch(fd, 2);
+      let by_fd = r.by_fd;
+      while (by_fd.len() <= fd) {
+        by_fd = by_fd.append(-1);
+      }
+      let c = r.conns[i];
+      return Run { ...r, by_fd: by_fd.with(fd, i), conns: r.conns.with(i, Conn { ...c, sock: Some(sock), phase: CONNECTING }) };
+    },
+    Err(e) => {
+      return fail(r, i, e.message());
+    }
+  }
+  return r;
+}
+
+function step(own r: Run, i: i32): Run {
+  let c = r.conns[i];
+  let Some(sock) = c.sock else {
+    return r;
+  };
+  if (c.phase == CONNECTING) {
+    match (net.connect_result(sock)) {
+      Ok(_) => {
+        r.drv.watch(sock.fd, 1);
+        let request = r.request;
+        return send(r, i, request);
+      },
+      Err(net.InProgress) => {
+        return r;
+      },
+      Err(e) => {
+        return fail(r, i, e.message());
+      }
+    }
+  }
+  if (c.phase == SENDING) {
+    return send(r, i, c.unsent);
+  }
+  if (c.phase == READING) {
+    return read(r, i, sock);
+  }
+  // The server closed an idle connection, or sent bytes that no request
+  // asked for.
+  return shut(r, i);
+}
+
+function send(own r: Run, i: i32, data: u8[]): Run {
+  let c = r.conns[i];
+  let Some(sock) = c.sock else {
+    return fail(r, i, "connection closed");
+  };
+  match (net.write_rest(sock, data)) {
+    Ok(rest) => {
+      if (rest.len() > 0) {
+        if (c.phase != SENDING) {
+          r.drv.watch(sock.fd, 2);
+        }
+        return Run { ...r, conns: r.conns.with(i, Conn { ...c, phase: SENDING, unsent: rest }) };
+      }
+      if (c.phase == SENDING) {
+        r.drv.watch(sock.fd, 1);
+      }
+      let none: u8[] = [];
+      return Run { ...r, conns: r.conns.with(i, Conn { ...c, phase: READING, unsent: none }) };
+    },
+    Err(e) => {
+      return fail(r, i, e.message());
+    }
+  }
+  return r;
+}
+
+// Reads once. The reactor reports the socket again while bytes wait.
+function read(own r: Run, i: i32, sock: Socket): Run {
+  match (net.read_up_to(sock, READ_SIZE)) {
+    Ok(got) => {
+      if (got.len() == 0) {
+        return ended(r, i);
+      }
+      return received(r, i, got);
+    },
+    Err(net.WouldBlock) => {
+      return r;
+    },
+    Err(e) => {
+      return fail(r, i, e.message());
+    }
+  }
+  return r;
+}
+
+function received(own r: Run, i: i32, got: u8[]): Run {
+  let c = r.conns[i];
+  let buf = if (c.buf.len() == 0) { got } else { c.buf.concat(got) };
+  match (report.frame(buf, r.method, false)) {
+    report.Done(reply) => {
+      return complete(r, i, reply.status, reply.keep_alive && reply.len == buf.len());
+    },
+    report.Partial => {
+      return Run { ...r, conns: r.conns.with(i, Conn { ...c, buf: buf }) };
+    },
+    report.Bad(why) => {
+      return fail(r, i, why);
+    }
+  }
+  return r;
+}
+
+// The server closed the connection: the response ends here, or it is
+// incomplete.
+function ended(own r: Run, i: i32): Run {
+  let buf = r.conns[i].buf;
+  match (report.frame(buf, r.method, true)) {
+    report.Done(reply) => {
+      return complete(r, i, reply.status, false);
+    },
+    report.Partial => {
+      return fail(r, i, "connection closed");
+    },
+    report.Bad(why) => {
+      return fail(r, i, why);
+    }
+  }
+  return r;
+}
+
+// Counts the response to the request of connection `i`, and starts the next
+// request on it, on the same connection when `keep` is true.
+function complete(own r: Run, i: i32, status: i32, keep: boolean): Run {
+  let latency = monotonic_ns() - r.conns[i].started;
+  r = Run { ...r, busy: r.busy - 1, tally: r.tally.response(status, latency) };
+  if (!keep) {
+    r = shut(r, i);
+  }
+  return begin(r, i);
+}
+
+// Counts the request of connection `i` as failed. The next request starts
+// on a new connection from the main loop, so a server that refuses every
+// connection does not make a deep recursion.
+function fail(own r: Run, i: i32, why: string): Run {
+  r = shut(Run { ...r, busy: r.busy - 1, tally: r.tally.error(why) }, i);
+  return Run { ...r, ready: r.ready.append(i) };
+}
+
+function shut(own r: Run, i: i32): Run {
+  let (c, conns) = r.conns.swap_at(i, closed());
+  let d = Run { ...r, conns: conns };
+  if let Some(sock) = c.sock {
+    let by_fd = d.by_fd.with(sock.fd, -1);
+    let _ = net.close(sock);
+    return Run { ...d, by_fd: by_fd };
+  }
+  return d;
+}

@@ -185,6 +185,9 @@ func rewriteExprChildren(n Node, rw *rewriter) {
 	case *MatchExpr:
 		x.Tag = rewriteExpr(x.Tag, rw)
 		for i := range x.Arms {
+			for _, pe := range x.Arms[i].PatternExprs() {
+				*pe = rewriteExpr(*pe, rw)
+			}
 			if x.Arms[i].Guard != nil {
 				x.Arms[i].Guard = rewriteExpr(x.Arms[i].Guard, rw)
 			}
@@ -257,6 +260,9 @@ func rewriteStmtChildren(n Node, rw *rewriter) {
 	case *Match:
 		x.Tag = rewriteExpr(x.Tag, rw)
 		for ai := range x.Arms {
+			for _, pe := range x.Arms[ai].PatternExprs() {
+				*pe = rewriteExpr(*pe, rw)
+			}
 			if x.Arms[ai].Guard != nil {
 				x.Arms[ai].Guard = rewriteExpr(x.Arms[ai].Guard, rw)
 			}
@@ -374,6 +380,9 @@ func walkChildren(n Node, fn func(Node) bool) {
 	case *MatchExpr:
 		Walk(x.Tag, fn)
 		for _, a := range x.Arms {
+			for _, pe := range a.PatternExprs() {
+				Walk(*pe, fn)
+			}
 			if a.Guard != nil {
 				Walk(a.Guard, fn)
 			}
@@ -439,6 +448,9 @@ func walkChildren(n Node, fn func(Node) bool) {
 	case *Match:
 		Walk(x.Tag, fn)
 		for _, a := range x.Arms {
+			for _, pe := range a.PatternExprs() {
+				Walk(*pe, fn)
+			}
 			if a.Guard != nil {
 				Walk(a.Guard, fn)
 			}

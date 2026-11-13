@@ -22,12 +22,17 @@ func registerCorpus(util string, cases func(*testing.T) []invocation) {
 
 func utilNames(t *testing.T) []string {
 	t.Helper()
-	matches, err := filepath.Glob(filepath.Join(repoRoot(t), "coreutils", "*.fern"))
+	return packageUtilNames(t, gnuPackages[0])
+}
+
+func packageUtilNames(t *testing.T, pkg gnuPackage) []string {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(repoRoot(t), pkg.name, "*.fern"))
 	if err != nil {
-		t.Fatalf("glob coreutils: %v", err)
+		t.Fatalf("glob %s: %v", pkg.name, err)
 	}
 	if len(matches) == 0 {
-		t.Fatal("no coreutils/*.fern found — the gate is looking in the wrong place")
+		t.Fatalf("no %s/*.fern found — the gate is looking in the wrong place", pkg.name)
 	}
 	names := make([]string, 0, len(matches))
 	for _, m := range matches {
@@ -36,10 +41,21 @@ func utilNames(t *testing.T) []string {
 	return names
 }
 
+// portNames gives the ports of every package. utilNames gives only those of
+// coreutils, which are also the members of the multicall binary.
+func portNames(t *testing.T) []string {
+	t.Helper()
+	var names []string
+	for _, pkg := range gnuPackages {
+		names = append(names, packageUtilNames(t, pkg)...)
+	}
+	return names
+}
+
 func TestSelfHostCoreutilsCoverage(t *testing.T) {
-	for _, util := range utilNames(t) {
+	for _, util := range portNames(t) {
 		if _, ok := corpusRegistry[util]; !ok {
-			t.Errorf("coreutils/%s.fern is not in the corpus registry — every utility is compiled and run both ways, so add registerCorpus(%q, ...) to internal/testing/coreutils/%s_test.go", util, util, util)
+			t.Errorf("%s/%s.fern is not in the corpus registry — every utility is compiled and run both ways, so add registerCorpus(%q, ...) to internal/testing/coreutils/%s_test.go", packageOf(t, util).name, util, util, util)
 		}
 	}
 }
@@ -97,19 +113,19 @@ func selfHostBin(t *testing.T, util string) string {
 	root := repoRoot(t)
 	bin := filepath.Join(selfHostBinDir, util)
 	argv := crossArgv(selfHostCompiler(t), "-target", fernTarget(t), "-o", bin,
-		filepath.Join(root, "coreutils", util+".fern"),
+		utilSource(t, util),
 		filepath.Join(root, "internal", "stdlib"))
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = append(os.Environ(), "FERN_STRICT_IR=1")
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("self-host compile coreutils/%s.fern: %v\n%s", util, err, out)
+		t.Fatalf("self-host compile %s: %v\n%s", utilSource(t, util), err, out)
 	}
 	selfHostBins[util] = bin
 	return bin
 }
 
 func TestSelfHostCoreutilsParity(t *testing.T) {
-	for _, util := range utilNames(t) {
+	for _, util := range portNames(t) {
 		cases, ok := corpusRegistry[util]
 		if !ok {
 			continue

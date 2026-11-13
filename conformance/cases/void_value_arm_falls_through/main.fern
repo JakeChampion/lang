@@ -1,0 +1,37 @@
+// An arm whose body is an if expression or a match expression of type void
+// is a statement. The statement after the match still runs.
+
+function note(tag: string): void {
+  print(tag);
+}
+
+function f(n: i32, raw: boolean): void {
+  match (n) {
+    1 => if (raw) { note("raw") } else { note("cooked") },
+    2 => if (raw) { note("a"); note("b") } else if (n == 2) { note("two") } else { note("c") },
+    3 => match (raw) { true => note("t"), false => note("f") },
+    _ => note("other"),
+  }
+  note("after");
+}
+
+function g(v: Option[i32]): void {
+  match (v) {
+    Some(k) => if (k > 0) { note("positive") } else { note("other") },
+    None => note("none"),
+  }
+  note("after");
+}
+
+function main(): i32 {
+  f(1, true);
+  f(1, false);
+  f(2, true);
+  f(2, false);
+  f(3, true);
+  f(4, true);
+  g(Some(1));
+  g(Some(-1));
+  g(None);
+  return 0;
+}

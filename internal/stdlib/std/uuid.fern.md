@@ -55,6 +55,7 @@ import "std/hex";
 import "std/i32";
 import "core/error";
 import "core/cmp";
+import "std/u8";
 ```
 
 ### `2 pub enum ParseErrorKind`

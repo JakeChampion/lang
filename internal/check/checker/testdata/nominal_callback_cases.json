@@ -1,0 +1,127 @@
+[
+  {
+    "Name": "lambda_enum",
+    "Source": "enum Fut[T] { Ready(T), Gone }\nfunction end[T](k:(i32)=>Fut[T]):i32{let r=k(1);return 1;} function main():i32{let k=(n:i32):Fut[i32]=>Ready(n);return end(k);}\n",
+    "Want": ""
+  },
+  {
+    "Name": "explicit_enum",
+    "Source": "enum Fut[T] { Ready(T), Gone }\nfunction end[T](k:(i32)=>Fut[T]):i32{let r=k(1);return 1;} function main():i32{let k=(n:i32):Fut[i32]=>Ready(n);return end[i32](k);}\n",
+    "Want": ""
+  },
+  {
+    "Name": "named_enum",
+    "Source": "enum Fut[T] { Ready(T), Gone }\nfunction end[T](k:(i32)=>Fut[T]):i32{let r=k(1);return 1;} function ready(n:i32):Fut[i32]{return Ready(n);} function main():i32{return end(ready);}\n",
+    "Want": ""
+  },
+  {
+    "Name": "array_enum",
+    "Source": "enum Fut[T] { Ready(T), Gone }\nfunction end[T](k:(i32)=>Fut[T][]):i32{let r=k(1);return 1;} function main():i32{let k=(n:i32):Fut[i32][]=>[Ready(n)];return end(k);}\n",
+    "Want": ""
+  },
+  {
+    "Name": "input_enum",
+    "Source": "enum Fut[T] { Ready(T), Gone }\nfunction end[T](k:(Fut[T])=>i32):i32{return 1;} function main():i32{let k=(r:Fut[i32]):i32=>1;return end(k);}\n",
+    "Want": ""
+  },
+  {
+    "Name": "direct_enum",
+    "Source": "enum Fut[T] { Ready(T), Gone }\nfunction end[T](r:Fut[T]):i32{return 1;} function main():i32{let r:Fut[i32]=Ready(1);return end(r);}\n",
+    "Want": ""
+  },
+  {
+    "Name": "option_result",
+    "Source": "function end[T](k:(i32)=>Option[T]):i32{let r=k(1);return 1;} function main():i32{let k=(n:i32):Option[i32]=>Some(n);return end(k);}\n",
+    "Want": ""
+  },
+  {
+    "Name": "record_result",
+    "Source": "struct Box[T]{item:T} function end[T](k:(i32)=>Box[T]):i32{let r=k(1);return 1;} function main():i32{let k=(n:i32):Box[i32]=>Box{item:n};return end(k);}\n",
+    "Want": ""
+  },
+  {
+    "Name": "distinct_enum",
+    "Source": "enum Fut[T] { Ready(T), Gone } enum Other[T] { OtherReady(T), OtherGone } function end[T](k:(i32)=>Fut[T]):i32{return 1;} function main():i32{let k=(n:i32):Other[i32]=>OtherReady(n); return end[i32](k);}",
+    "Want": "E038"
+  },
+  {
+    "Name": "distinct_record",
+    "Source": "struct Box[T] {item:T} struct Other[T] {item:T} function end[T](k:(i32)=>Box[T]):i32{return 1;} function main():i32{let k=(n:i32):Other[i32]=>Other {item:n}; return end[i32](k);}",
+    "Want": "E038"
+  },
+  {
+    "Name": "wrong_payload",
+    "Source": "enum Fut[T] { Ready(T), Gone } function end[T](k:(i32)=>Fut[T]):i32{return 1;} function main():i32{let k=(n:i32):Fut[string]=>Ready(\"text\"); return end[i32](k);}",
+    "Want": "E038"
+  },
+  {
+    "Name": "nested_result",
+    "Source": "enum Fut[T] { Ready(T), Gone } struct Box[T] { item:T }\nfunction run[T](k:(i32)=>(()=>Fut[T])):i32{let r=k(1)();return 7;} function main():i32{let k=(n:i32):(()=>Fut[i32]) => ():Fut[i32]=>Ready(n);print(run(k).to_string());return 0;}\n",
+    "Want": ""
+  },
+  {
+    "Name": "nested_input",
+    "Source": "enum Fut[T] { Ready(T), Gone } struct Box[T] { item:T }\nfunction run[T](k:((Fut[T])=>i32)=>i32):i32{return 7;} function main():i32{let k=(f:(Fut[i32])=>i32):i32=>1;print(run(k).to_string());return 0;}\n",
+    "Want": ""
+  },
+  {
+    "Name": "callback_tuple",
+    "Source": "enum Fut[T] { Ready(T), Gone } struct Box[T] { item:T }\nfunction run[T](k:(i32)=>(Fut[T],i32)):i32{let r=k(1);return 7;} function main():i32{let k=(n:i32):(Fut[i32],i32)=>(Ready(n),n);print(run(k).to_string());return 0;}\n",
+    "Want": ""
+  },
+  {
+    "Name": "receiver_method",
+    "Source": "enum Fut[T] { Ready(T), Gone } struct Box[T] { item:T }\nfunction (x:i32) run[T](k:(i32)=>Fut[T]):i32{let r=k(x);return 7;} function main():i32{let k=(n:i32):Fut[i32]=>Ready(n);let x=1;print(x.run(k).to_string());return 0;}\n",
+    "Want": ""
+  },
+  {
+    "Name": "factory_return",
+    "Source": "enum Fut[T] { Ready(T), Gone } struct Box[T] { item:T }\nfunction make[T](k:(i32)=>T):((i32)=>Fut[T]){return(n:i32):Fut[T]=>Ready(k(n));} function main():i32{let k=(n:i32):i32=>n;let f=make(k);let r=f(1);print(7);return 0;}\n",
+    "Want": ""
+  },
+  {
+    "Name": "forward_callback",
+    "Source": "enum Fut[T] { Ready(T), Gone } struct Box[T] { item:T }\nfunction run[T](k:(i32)=>Fut[T]):i32{let r=k(1);return 7;} function forward[T](k:(i32)=>Fut[T]):i32{return run(k);} function main():i32{let k=(n:i32):Fut[i32]=>Ready(n);print(forward(k).to_string());return 0;}\n",
+    "Want": ""
+  },
+  {
+    "Name": "generic_function_arg",
+    "Source": "enum Fut[T] { Ready(T), Gone } struct Box[T] { item:T }\nfunction ready[T](x:T):Fut[T]{return Ready(x);} function run[T](k:(T)=>Fut[T],x:T):i32{let r=k(x);return 7;} function main():i32{print(run(ready,1).to_string());return 0;}\n",
+    "Want": ""
+  },
+  {
+    "Name": "nominal_tuple_input",
+    "Source": "enum Fut[T] { Ready(T), Gone } struct Box[T] { item:T }\nfunction run[T](k:((Fut[T],i32))=>i32):i32{return 7;} function main():i32{let k=(p:(Fut[i32],i32)):i32=>p.1;print(run(k).to_string());return 0;}\n",
+    "Want": ""
+  },
+  {
+    "Name": "record_method",
+    "Source": "enum Fut[T] { Ready(T), Gone } struct Box[T] { item:T }\nstruct Host {n:i32} function (x:Host) run[T](k:(i32)=>Fut[T]):i32{let r=k(x.n);return 7;} function main():i32{let k=(n:i32):Fut[i32]=>Ready(n);let x=Host {n:1};print(x.run(k).to_string());return 0;}\n\n",
+    "Want": ""
+  },
+  {
+    "Name": "record_input",
+    "Source": "enum Fut[T] { Ready(T), Gone } struct Host { n:i32 } function (h:Host) run[T](k:(Fut[T])=>i32):i32{return k(Gone);} function main():i32{let h=Host {n:1};let k=(r:Fut[i32]):i32=>7;print(h.run(k).to_string());return 0;}\n",
+    "Want": ""
+  },
+  {
+    "Name": "record_nested_input",
+    "Source": "enum Fut[T] { Ready(T), Gone } struct Host { n:i32 } function (h:Host) run[T](k:((Fut[T])=>i32)=>i32):i32{return 7;} function main():i32{let h=Host {n:1};let k=(f:(Fut[i32])=>i32):i32=>7;print(h.run(k).to_string());return 0;}\n",
+    "Want": ""
+  },
+  {
+    "Name": "primitive_wrong_payload",
+    "Source": "enum Fut[T] { Ready(T), Gone } function (x:i32) run[T](k:(i32)=>Fut[T]):i32{return 1;} function main():i32{let n=1;let k=(x:i32):Fut[string]=>Ready(\"x\");return n.run[i32](k);}",
+    "Want": "E038"
+  },
+  {
+    "Name": "method_input_wrong_payload",
+    "Source": "enum Fut[T] { Ready(T), Gone } struct Host {n:i32} function (h:Host) run[T](k:(Fut[T])=>i32):i32{return 1;} function main():i32{let h=Host {n:1};let k=(v:Fut[string]):i32=>1;return h.run[i32](k);}",
+    "Want": "E038"
+  },
+  {
+    "Name": "nested_named_function",
+    "Source": "enum Fut[T] { Ready(T), Gone } struct Host { n:i32 } function (h:Host) run[T](k:((Fut[T])=>i32)=>i32):i32{return 7;} function helper(f:(Fut[i32])=>i32):i32{return f(Gone);} function main():i32{let h=Host {n:1};return h.run(helper);}",
+    "Want": ""
+  }
+]

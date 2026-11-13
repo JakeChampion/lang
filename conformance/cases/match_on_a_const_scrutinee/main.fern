@@ -1,0 +1,20 @@
+// A match on a const has a scrutinee that folds to a literal. Each arm of
+// the match value stays, so the match still has a value.
+
+const YES: boolean = true;
+
+const ONE: i32 = 1;
+
+function main(): i32 {
+  let a = match (YES) { true => 1, _ => 0 };
+  let b = match (YES) { true => 1, false => 0 };
+  let c = match (ONE) { 1 => 10, _ => 0 };
+  let d = match (ONE) { 2 => 10, _ => 20 };
+  let e = match (ONE) { 2 => 10, n => n + 30 };
+  print(a);
+  print(b);
+  print(c);
+  print(d);
+  print(e);
+  return 0;
+}

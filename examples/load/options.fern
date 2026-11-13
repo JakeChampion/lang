@@ -1,0 +1,269 @@
+// The command line of the load generator, and the request that it sends.
+import "std/format";
+import "std/string";
+import "std/url";
+
+pub struct Options {
+  host: string,
+  port: i32,
+  target: string,
+  requests: i64,
+  duration: Option[Duration],
+  connections: i32,
+  wait: boolean,
+  method: string,
+  headers: string[],
+  body: string,
+}
+
+pub enum Parsed { Run(Options), Help, Refused(string) }
+
+pub const USAGE: string = "Usage: load [-n COUNT] [-c CONNECTIONS] [-z DURATION] [-w] [-m METHOD] [-H \"Name: value\"]... [-d BODY] URL";
+
+function defaults(): Options {
+  let none: string[] = [];
+  return Options { host: "", port: 80, target: "/", requests: 200, duration: None, connections: 50, wait: false, method: "GET", headers: none, body: "" };
+}
+
+// Reads the arguments after the program name.
+pub function parse(args: string[]): Parsed {
+  let o = defaults();
+  let urls: string[] = [];
+  let i = 0;
+  while (i < args.len()) {
+    let arg = args[i];
+    if (arg == "-h" || arg == "--help") {
+      return Help;
+    }
+    if (!arg.starts_with("-") || arg == "-") {
+      urls = urls.append(arg);
+      i += 1;
+      continue;
+    }
+    match (option(o, args, i)) {
+      Ok(next) => {
+        o = next.0;
+        i = next.1;
+      },
+      Err(why) => {
+        return Refused(why);
+      }
+    }
+  }
+  if (urls.len() != 1) {
+    return Refused("give one URL");
+  }
+  return with_url(o, urls[0]);
+}
+
+// Reads the option at `args[i]`, and gives the index of the argument after
+// it and its value.
+function option(o: Options, args: string[], i: i32): Result[(Options, i32), string] {
+  let arg = args[i];
+  if (arg == "-w" || arg == "--wait-ongoing-requests-after-deadline") {
+    return Ok((Options { ...o, wait: true }, i + 1));
+  }
+  if (arg == "--no-tui") {
+    return Ok((o, i + 1));
+  }
+  let name = value_option(arg);
+  if (name.len() == 0) {
+    return Err(f"unknown option {arg}");
+  }
+  let value = if (arg.starts_with("--")) { "" } else { arg.drop(2) };
+  let next = i + 1;
+  if (value.len() == 0) {
+    if (next >= args.len()) {
+      return Err(f"{name} needs a value");
+    }
+    value = args[next];
+    next += 1;
+  }
+  return Ok((with_value(o, name, value)?, next));
+}
+
+// The option that takes a value and starts `arg`, such as `-n` in `-n200`,
+// or "" when there is none. `--method` is `-m`.
+function value_option(arg: string): string {
+  if (arg == "--method") {
+    return "-m";
+  }
+  for name in ["-n", "-c", "-z", "-m", "-H", "-d"] {
+    if (arg.starts_with(name)) {
+      return name;
+    }
+  }
+  return "";
+}
+
+function with_count(o: Options, name: string, value: string): Result[Options, string] {
+  let n = count(name, value)?;
+  if (name == "-n") {
+    return Ok(Options { ...o, requests: n });
+  }
+  if (n > 65536) {
+    return Err(f"-c {value} is more than 65536 connections");
+  }
+  return Ok(Options { ...o, connections: n as i32 });
+}
+
+function with_value(o: Options, name: string, value: string): Result[Options, string] {
+  if (name == "-n" || name == "-c") {
+    return with_count(o, name, value);
+  }
+  if (name == "-z") {
+    return Ok(Options { ...o, duration: Some(duration(value)?) });
+  }
+  if (name == "-m") {
+    if (!token(value)) {
+      return Err(f"-m {value} is not a method");
+    }
+    return Ok(Options { ...o, method: value });
+  }
+  if (name == "-H") {
+    return Ok(Options { ...o, headers: o.headers.append(header(value)?) });
+  }
+  return Ok(Options { ...o, body: value });
+}
+
+// A positive count, with the suffix `k` (1,000) or `m` (1,000,000) as oha
+// accepts.
+pub function count(name: string, value: string): Result[i64, string] {
+  let digits = value;
+  let scale: i64 = 1;
+  if (value.ends_with("k")) {
+    digits = value.take(value.len() - 1);
+    scale = 1000;
+  } else if (value.ends_with("m")) {
+    digits = value.take(value.len() - 1);
+    scale = 1000000;
+  }
+  if (digits.len() == 0 || digits.len() > 12) {
+    return Err(f"{name} {value} is not a count");
+  }
+  let n: i64 = 0;
+  for c in digits.bytes() {
+    if (c < 48 as u8 || c > 57 as u8) {
+      return Err(f"{name} {value} is not a count");
+    }
+    n = n * 10 + (c - 48 as u8) as i64;
+  }
+  if (n == 0) {
+    return Err(f"{name} {value} must be more than 0");
+  }
+  return Ok(n * scale);
+}
+
+// A duration such as `10s`, `500ms`, `1m` or `1m 30s`.
+pub function duration(value: string): Result[Duration, string] {
+  match (format.parse_duration(value)) {
+    Ok(d) => {
+      if (d.is_zero()) {
+        return Err(f"-z {value} must be longer than 0");
+      }
+      return Ok(d);
+    },
+    Err(e) => {
+      return Err(f"-z {value} is not a duration such as 10s, 500ms or 1m");
+    }
+  }
+}
+
+// A field `Name: value`, given back as `Name: value` with the spaces around
+// the value removed.
+pub function header(field: string): Result[string, string] {
+  let Some(colon) = field.index_of(":") else {
+    return Err(f"-H {field} is not a field such as \"Name: value\"");
+  };
+  let name = field.take(colon);
+  let value = field.drop(colon + 1).trim();
+  if (!token(name)) {
+    return Err(f"-H {field} has no valid field name");
+  }
+  for c in value.bytes() {
+    if (c == 13 as u8 || c == 10 as u8 || c == 0 as u8) {
+      return Err(f"-H {name} has a control character in its value");
+    }
+  }
+  let lower = name.to_ascii_lower();
+  if (lower == "content-length" || lower == "transfer-encoding") {
+    return Err(f"-H {name} is not allowed: the tool frames the body of -d itself");
+  }
+  return Ok(f"{name}: {value}");
+}
+
+// Whether `s` is an HTTP token (RFC 9110 section 5.6.2).
+pub function token(s: string): boolean {
+  if (s.len() == 0) {
+    return false;
+  }
+  for c in s.bytes() {
+    let alnum = c >= 48 as u8 && c <= 57 as u8 || c >= 65 as u8 && c <= 90 as u8 || c >= 97 as u8 && c <= 122 as u8;
+    if (!alnum && !symbol(c)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function symbol(c: u8): boolean {
+  for s in "!#$%&'*+-.^_`|~".bytes() {
+    if (s == c) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function with_url(o: Options, raw: string): Parsed {
+  let Ok(u) = url.parse(raw) else {
+    return Refused(f"{raw} is not a URL");
+  };
+  if (u.scheme == "https") {
+    return Refused("https URLs are not supported yet: use an http URL");
+  }
+  if (u.scheme != "http") {
+    return Refused(f"{raw} is not an http URL");
+  }
+  if (u.host.len() == 0) {
+    return Refused(f"{raw} has no host");
+  }
+  let target = if (u.path.len() == 0) { "/" } else { u.path };
+  if (u.query.len() > 0) {
+    target = f"{target}?{u.query}";
+  }
+  let port = if (u.port == 0) { 80 } else { u.port };
+  return Run(Options { ...o, host: u.host, port: port, target: target });
+}
+
+// Whether the headers of -H set the field `name`.
+function has_header(o: Options, name: string): boolean {
+  for h in o.headers {
+    if (h.take(name.len() + 1).to_ascii_lower() == name + ":") {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The bytes of one request. Every request of a run is the same.
+pub function request(o: Options): u8[] {
+  let head = f"{o.method} {o.target} HTTP/1.1\r\n";
+  if (!has_header(o, "host")) {
+    let authority = if (o.port == 80) { o.host } else { f"{o.host}:{o.port}" };
+    head += f"Host: {authority}\r\n";
+  }
+  if (!has_header(o, "user-agent")) {
+    head += "User-Agent: fern-load/0.1\r\n";
+  }
+  if (!has_header(o, "accept")) {
+    head += "Accept: */*\r\n";
+  }
+  for h in o.headers {
+    head += h + "\r\n";
+  }
+  if (o.body.len() > 0 || o.method == "POST" || o.method == "PUT" || o.method == "PATCH") {
+    head += f"Content-Length: {o.body.len()}\r\n";
+  }
+  return (head + "\r\n" + o.body).bytes();
+}

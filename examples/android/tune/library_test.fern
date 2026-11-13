@@ -136,11 +136,11 @@ function test_the_lines_of_lyrics(): test.TestOutcome {
 }
 
 function test_the_text_of_the_settings(): test.TestOutcome {
-  let p = tune.Prefs { look: tune.LOOK_DARK, sort: tune.BY_YEAR, hidden: ["/m/a b", "/m/c"], off: [tune.GENRES, tune.FOLDERS], level: false, tint: false };
+  let p = tune.Prefs { look: tune.LOOK_DARK, sort: tune.BY_YEAR, hidden: ["/m/a b", "/m/c"], off: [tune.GENRES, tune.FOLDERS], level: false, tint: false, fade: 6 };
   let back = library.prefs_from(library.prefs_text(p) + "\nnot a line\nhidden \n");
   let none = library.prefs_from("");
-  let got = [back.look.to_string(), back.sort.to_string(), back.hidden.join(","), back.off.map((t: i32): string => t.to_string()).join(","), none.look.to_string() + none.sort.to_string() + none.hidden.len().to_string() + none.off.len().to_string() + back.level.to_string() + none.level.to_string() + back.tint.to_string() + none.tint.to_string()];
-  return test.assert_eq(got.join(" | "), "2 | 2 | /m/a b,/m/c | 4,5 | 0000falsetruefalsetrue");
+  let got = [back.look.to_string(), back.sort.to_string(), back.hidden.join(","), back.off.map((t: i32): string => t.to_string()).join(","), none.look.to_string() + none.sort.to_string() + none.hidden.len().to_string() + none.off.len().to_string() + back.level.to_string() + none.level.to_string() + back.tint.to_string() + none.tint.to_string(), back.fade.to_string() + none.fade.to_string()];
+  return test.assert_eq(got.join(" | "), "2 | 2 | /m/a b,/m/c | 4,5 | 0000falsetruefalsetrue | 60");
 }
 
 function main(): i32 {

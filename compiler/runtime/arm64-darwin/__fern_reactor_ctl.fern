@@ -59,27 +59,9 @@ function __fern_reactor_ctl(r_fd: i32, op: i32, fd: i32, arg: i32): i32 {
     }
     return __syscall4(46, fd as i64, act2 as i64, 0, 8) as i32;
   }
+  // Darwin has no parent-death signal, so a watchdog process sends one.
   if (op == 6) {
-    let ppid = __syscall3(39, 0, 0, 0) as i32;
-    if (ppid == 1) {
-      return -3;
-    }
-    let pch = __raw_scratch(32);
-    let proc_filter: i32 = -5;
-    let proc_flags = 17;
-    __raw_store_ptr(pch, 0, ppid as usize);
-    __raw_store8(pch, 8, proc_filter & 255);
-    __raw_store8(pch, 9, proc_filter >> 8 & 255);
-    __raw_store8(pch, 10, proc_flags);
-    __raw_store8(pch, 11, 0);
-    __raw_store_ptr(pch, 2, 0);
-    __raw_store_ptr(pch, 3, 0);
-    __raw_store8(pch, 12, 0);
-    __raw_store8(pch, 13, 0);
-    __raw_store8(pch, 14, 0);
-    __raw_store8(pch, 15, 0);
-    __raw_store8(pch, 15, 128);
-    return __syscall6(363, r_fd as i64, pch as i64, 1, 0, 0, 0) as i32;
+    return __fern_watch_parent_start();
   }
   if (op != 1 && op != 2) {
     return -22;

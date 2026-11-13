@@ -110,6 +110,7 @@ var stdModuleReach = map[string]string{
 	"std/tz":            "env,fs",
 	"std/u32":           "",
 	"std/u64":           "",
+	"std/u8":            "",
 	"std/unicode":       "",
 	"std/url":           "",
 	"std/user_net":      "mmio,privileged",

@@ -19,8 +19,6 @@ var untypedLiteralFoldCases = []struct {
 	{"i64_shift_count_masks_to_63", "i64", "@ << 64", "1", "1"},
 }
 
-// A constant declaration refuses these steps with E047
-// (self_host_const_evaluation_test.go), so the folded side is a let.
 func untypedLiteralFoldSource(ty, expr, seed, want string) string {
 	return "@noinline function runtime(s: " + ty + "): " + ty + " { return " + strings.ReplaceAll(expr, "@", "s") + "; }\n" +
 		"function main(): i32 {\n" +
