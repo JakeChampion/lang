@@ -109,6 +109,14 @@ function main(): i32 {
   let Ok(k) = chacha20poly1305.key(key) else {
     return 7;
   };
+  let Ok(stream) = k.chacha20_xor(nonce, 1, plaintext) else {
+    return 8;
+  };
+  __ct_public(stream);
+  let Ok(mac) = chacha20poly1305.poly1305(key, plaintext) else {
+    return 9;
+  };
+  __ct_public(mac);
   match (k.seal(nonce, plaintext, aad)) {
     Ok(sealed) => {
       __ct_public(sealed);

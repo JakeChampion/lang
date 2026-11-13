@@ -10,6 +10,8 @@ ChaCha20 runs in the compiler's kernel `__chacha20_xor_into`, which XORs the key
 
 Poly1305 runs in the kernel `__poly1305_blocks`, which absorbs a range of a byte array into a 40-byte state: h and then r. On x86-64 the kernel does four blocks at a time from 256 bytes (AVX2, in limbs of 26 bits), and one block at a time in 64-bit limbs below that. The kernel leaves h fully reduced, so the tag is h plus s.
 
+Seal and open run in the kernels `__chacha20_poly1305_seal_into` and `__chacha20_poly1305_open_into`. Each kernel does the whole AEAD over a range of a byte array in one pass. On x86-64 and arm64, Poly1305 runs in the general registers among the vector rounds of ChaCha20, so the two run at the same time. On wasm, the kernel calls the two kernels above in turn.
+
 ## Contracts
 
 Building a key checks its length, and each message checks its nonce length. Open returns an error when authentication fails. The caller supplies the nonce for each message.
@@ -34,15 +36,11 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<7 function __poly_new(key: [u8]): u8[]>>
 
-<<8 function __poly_padded(own st: u8[], b: [u8], from: i32, len: i32): u8[]>>
+<<8 function __poly_finish(own st: u8[], s: [u8]): u8[]>>
 
-<<9 function __poly_finish(own st: u8[], s: [u8]): u8[]>>
+<<9 pub function poly1305(key: [u8], msg: [u8]): Result[u8[], aead.AeadError]>>
 
-<<10 pub function poly1305(key: [u8], msg: [u8]): Result[u8[], aead.AeadError]>>
-
-<<11 function __aead_tag(k: Key, ctr: u8[], aad: [u8], ct: [u8], from: i32, len: i32): u8[]>>
-
-<<12 pub function (k: Key) seal(nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError]>>
+<<10 pub function (k: Key) seal(nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError]>>
 ```
 
 ### `module introduction`
@@ -145,29 +143,10 @@ function __poly_new(key: [u8]): u8[] {
 }
 ```
 
-### `8 function __poly_padded(own st: u8[], b: [u8], from: i32, len: i32): u8[]`
+### `8 function __poly_finish(own st: u8[], s: [u8]): u8[]`
 
 ```fern
-<<8 function __poly_padded(own st: u8[], b: [u8], from: i32, len: i32): u8[]>>=
-// Absorbs b[from:from + len] padded with zeros to a multiple of 16 bytes, as the AEAD of RFC 8439 pads its
-// additional data and its ciphertext.
-function __poly_padded(own st: u8[], b: [u8], from: i32, len: i32): u8[] {
-  let full = len - len % 16;
-  st = __poly1305_blocks(st, b, from, full);
-  if (full == len) {
-    return st;
-  }
-  let last = __bytes_into(__alloc_u8(16), 0, b, from + full, len - full);
-  st = __poly1305_blocks(st, last, 0, 16);
-  crypto.erase(last);
-  return st;
-}
-```
-
-### `9 function __poly_finish(own st: u8[], s: [u8]): u8[]`
-
-```fern
-<<9 function __poly_finish(own st: u8[], s: [u8]): u8[]>>=
+<<8 function __poly_finish(own st: u8[], s: [u8]): u8[]>>=
 // The tag: h, which the kernel leaves below p, plus s, mod 2^128. The state is erased.
 function __poly_finish(own st: u8[], s: [u8]): u8[] {
   let h0 = __le64(st, 0);
@@ -179,10 +158,10 @@ function __poly_finish(own st: u8[], s: [u8]): u8[] {
 }
 ```
 
-### `10 pub function poly1305(key: [u8], msg: [u8]): Result[u8[], aead.AeadError]`
+### `9 pub function poly1305(key: [u8], msg: [u8]): Result[u8[], aead.AeadError]`
 
 ```fern
-<<10 pub function poly1305(key: [u8], msg: [u8]): Result[u8[], aead.AeadError]>>=
+<<9 pub function poly1305(key: [u8], msg: [u8]): Result[u8[], aead.AeadError]>>=
 pub function poly1305(key: [u8], msg: [u8]): Result[u8[], aead.AeadError] {
   if (key.len() != 32) {
     return Err(aead.KeyLength(key.len()));
@@ -192,27 +171,10 @@ pub function poly1305(key: [u8], msg: [u8]): Result[u8[], aead.AeadError] {
 }
 ```
 
-### `11 function __aead_tag(k: Key, ctr: u8[], aad: [u8], ct: [u8], from: i32, len: i32): u8[]`
+### `10 pub function (k: Key) seal(nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError]`
 
 ```fern
-<<11 function __aead_tag(k: Key, ctr: u8[], aad: [u8], ct: [u8], from: i32, len: i32): u8[]>>=
-// ctr holds block counter 0, whose key stream starts with the one-time Poly1305 key.
-function __aead_tag(k: Key, ctr: u8[], aad: [u8], ct: [u8], from: i32, len: i32): u8[] {
-  let otk = __chacha20_xor_into(k.k, ctr, __alloc_u8(32), 0, 32);
-  let st = __poly_padded(__poly_new(otk), aad, 0, aad.len());
-  st = __poly_padded(st, ct, from, len);
-  let lens = __put_le64(__put_le64(__alloc_u8(16), 0, aad.len() as u64), 8, len as u64);
-  st = __poly1305_blocks(st, lens, 0, 16);
-  let tag = __poly_finish(st, otk[16:32]);
-  crypto.erase(otk);
-  return tag;
-}
-```
-
-### `12 pub function (k: Key) seal(nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError]`
-
-```fern
-<<12 pub function (k: Key) seal(nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError]>>=
+<<10 pub function (k: Key) seal(nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError]>>=
 pub function (k: Key) seal(nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
   unsafe {
     let n = plaintext.len();
@@ -240,36 +202,28 @@ pub function (k: Key) open(nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[], a
 }
 
 // Seals buf[at:at + n] in place under the nonce iv ^ seq, authenticating buf[aad_at:aad_at + aad_n], with the
-// tag at buf[at + n:at + n + 16]: the in-place form std/crypto/aes_gcm's Key.seal_in_place has.
+// tag at buf[at + n:at + n + 16]: the in-place form std/crypto/aes_gcm's Key.seal_in_place has. A region outside
+// the buffer aborts, as an out-of-range slice does.
 pub function (k: Key) seal_in_place(iv: [u8], seq: u64, own buf: u8[], aad_at: i32, aad_n: i32, at: i32, n: i32): Result[u8[], aead.AeadError] {
   let ctr = __counter_block(iv, seq, 0)?;
   if (aead.overlaps(aad_at, aad_n, at, n)) {
     return Err(aead.Overlap);
   }
-  let text = buf[at:at + n].len();
-  buf = __chacha20_xor_into(k.k, ctr.with(0, 1 as u8), buf, at, text);
-  let tag = __aead_tag(k, ctr, buf[aad_at:aad_at + aad_n], buf, at, text);
-  return Ok(__bytes_into(buf, at + text, tag, 0, 16));
+  return Ok(__chacha20_poly1305_seal_into(k.k, ctr, buf, aad_at, aad_n, at, n));
 }
 
-// Opens buf[at:at + n] in place, the tag at buf[at + n:at + n + 16]; a tag that does not verify returns Forged
-// before anything is decrypted.
+// Opens buf[at:at + n] in place, the tag at buf[at + n:at + n + 16]. The kernel decrypts and checks the tag in
+// one pass. A tag that does not verify returns Forged and drops the buffer.
 pub function (k: Key) open_in_place(iv: [u8], seq: u64, own buf: u8[], aad_at: i32, aad_n: i32, at: i32, n: i32): Result[u8[], aead.AeadError] {
   let ctr = __counter_block(iv, seq, 0)?;
   if (aead.overlaps(aad_at, aad_n, at, n)) {
     return Err(aead.Overlap);
   }
-  let text = buf[at:at + n].len();
-  let want = __aead_tag(k, ctr, buf[aad_at:aad_at + aad_n], buf, at, text);
-  let diff = 0;
-  for i in 0..16 {
-    diff |= want[i] ^ buf[at + text + i];
-  }
-  want = want.with(0, diff);
-  __ct_public(want[0:1]);
-  if (want[0] != 0) {
+  buf = __chacha20_poly1305_open_into(k.k, ctr, buf, aad_at, aad_n, at, n);
+  __ct_public(buf[at + n:at + n + 1]);
+  if (buf[at + n] != 0) {
     return Err(aead.Forged);
   }
-  return Ok(__chacha20_xor_into(k.k, ctr.with(0, 1 as u8), buf, at, text));
+  return Ok(buf);
 }
 ```

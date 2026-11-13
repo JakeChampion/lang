@@ -178,6 +178,19 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 		t.Errorf("verdict %q disagrees with the summary %q", m[0], leakSummaryLine(stderr))
 	}
 
+	exiting := `function main(): i32 { unsafe { let p: usize = __alloc(24); exit(9); return 1; } }`
+	wat = wasmLcCompile(t, runner, driverBin, exiting, []string{"FERN_SANITIZE=1"})
+	stderr, exit = wasmLcRun(t, dir, "san_exiting", wat)
+	if exit != 9 {
+		t.Fatalf("exiting exited %d, want 9", exit)
+	}
+	if strings.Contains(stderr, "fern-sanitizer:") {
+		t.Errorf("a run that exit() ended drew a verdict: %q", stderr)
+	}
+	if summary := leakSummaryLine(stderr); !strings.HasSuffix(summary, "live_bytes=24 from=exit") {
+		t.Errorf("exiting census %q, want live_bytes=24 from=exit", summary)
+	}
+
 	clean := `function main(): i32 { unsafe { let i: i32 = 0; while (i < 100) { let a: usize = __alloc(64); __free(a, 64); i = i + 1; } return 0;  } }`
 	wat = wasmLcCompile(t, runner, driverBin, clean, []string{"FERN_SANITIZE=1"})
 	stderr, exit = wasmLcRun(t, dir, "san_clean", wat)

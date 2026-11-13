@@ -194,6 +194,16 @@ func arm64FormCases() []string {
 	} {
 		add("%s", f)
 	}
+	// The forms of the fused kernels, __fern_chacha20_poly1305_seal_into and __fern_chacha20_poly1305_open_into.
+	for _, f := range []string{
+		"ldp x4, x5, [x0]", "add x0, x0, #16", "ldr x7, [x1, x6]", "ldr x8, [x5, x6]", "str x7, [x1, x6]", "add x7, x6, #8",
+		"cmp x7, x2", "subs x2, x2, #192", "subs x2, x2, #256", "sub x3, x3, x0", "add x0, x0, x3",
+		"stp xzr, xzr, [x29, #64]", "ldp x4, x5, [x29, #240]", "stp x4, x5, [x29, #48]", "str q23, [x29, #464]",
+		"sxtw x6, w6", "mov w3, #8", "subs w3, w3, #1", "eor x4, x4, x12", "orr x4, x4, x5", "cset w4, ne", "strb w4, [x3]",
+		"stp x12, x13, [x3]",
+	} {
+		add("%s", f)
+	}
 	return out
 }
 
