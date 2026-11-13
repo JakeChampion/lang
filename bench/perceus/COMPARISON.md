@@ -10,7 +10,9 @@ Apache license covers these sources and adaptations.
 drivers around the tested kernels. Each program prints the same answers,
 including both constant-fold values and every derivative's leaf count.
 Checkpoint construction retains every fifth tree; its final result counts
-true values in the final tree, as Koka does.
+true values in the final tree, as Koka does. The Fern driver also reads the
+length of the list of retained trees. Without that read the Fern compiler
+removes the list, because nothing reads it, and no insert copies a path.
 
 `lean/` adapts the older Lean inputs to Lean 4.34.1. Changes qualify constructor
 names that now conflict with type classes, make recursive arguments explicit,
