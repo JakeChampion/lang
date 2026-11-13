@@ -5355,27 +5355,24 @@ function discarded_tail(body: ast.Stmt[]): ast.Stmt[] {
   for i in 0..body.len() - 1 {
     out = out.append(body[i]);
   }
-  match (body[body.len() - 1]) {
-    ast.StmtReturn(r) => {
-      if (parser.bare_return(r.value)) {
-        return body;
-      }
-      return out.append(ast.StmtExpr { value: r.value, line: r.line, op: "" });
-    },
-    ast.StmtIf(f) => {
-      return out.append(ast.StmtIf { ...f, then_body: discarded_tail(f.then_body), else_body: discarded_tail(f.else_body) });
-    },
-    ast.StmtMatch(m) => {
-      let arms: ast.MatchArm[] = [];
-      for arm in m.arms {
-        arms = arms.append(ast.MatchArm { ...arm, body: discarded_tail(arm.body) });
-      }
-      return out.append(ast.StmtMatch { ...m, arms: arms });
-    },
-    _ => {
+  let tail = body[body.len() - 1];
+  if let ast.StmtReturn(r) = tail {
+    if (parser.bare_return(r.value)) {
       return body;
     }
+    return out.append(ast.StmtExpr { value: r.value, line: r.line, op: "" });
   }
+  if let ast.StmtIf(f) = tail {
+    return out.append(ast.StmtIf { ...f, then_body: discarded_tail(f.then_body), else_body: discarded_tail(f.else_body) });
+  }
+  if let ast.StmtMatch(m) = tail {
+    let arms: ast.MatchArm[] = [];
+    for arm in m.arms {
+      arms = arms.append(ast.MatchArm { ...arm, body: discarded_tail(arm.body) });
+    }
+    return out.append(ast.StmtMatch { ...m, arms: arms });
+  }
+  return body;
 }
 
 function stmt(st: ast.Stmt, s: State): State {
