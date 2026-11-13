@@ -92,6 +92,45 @@ def split_media(source, target):
     target.write_bytes(output)
 
 
+def sparse_media(source, target, offset=8589934592):
+    """Place the same packets above 4 GiB without a large physical payload."""
+    original = source.read_bytes()
+    samples = packets(source)['packets']
+    prefix = bytearray()
+    movie = b''
+    at = 0
+    while at < len(original):
+        size, tag = struct.unpack_from('>I4s', original, at)
+        assert 8 <= size <= len(original) - at
+        if tag == b'moov':
+            assert not movie
+            movie = original[at:at + size]
+        elif tag != b'mdat':
+            prefix += original[at:at + size]
+        at += size
+    assert movie and samples
+    payload = bytearray()
+    offsets = []
+    for sample in samples:
+        pos, size = int(sample['pos']), int(sample['size'])
+        assert 0 <= pos <= len(original) - size and size > 0
+        offsets.append(offset + 8 + len(payload))
+        payload += original[pos:pos + size]
+    prefix += split_tables(compact_tables(movie), offsets)
+    free = offset - len(prefix)
+    assert free >= 16 and offset > 4294967295
+    with target.open('wb') as output:
+        output.write(prefix)
+        output.write(struct.pack('>I4sQ', 1, b'free', free))
+        output.seek(offset)
+        output.write(struct.pack('>I4s', len(payload) + 8, b'mdat'))
+        output.write(payload)
+    assert target.stat().st_blocks * 512 < 1048576
+    reference = packets(target)
+    assert [int(p['pos']) for p in reference['packets']] == offsets
+    return reference
+
+
 def explicit_sync(data, count):
     output = bytearray()
     at = 0

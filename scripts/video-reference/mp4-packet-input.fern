@@ -1,0 +1,64 @@
+// Read common-codec packet references through bounded indexed file windows.
+import "std/video/mp4";
+import "std/video/mp4/file" as mp4file;
+import "std/audio/file";
+import "std/audio/source";
+import "std/hex";
+
+function packet(reader: Reader, value: mp4.Packet): Result[string, string] {
+  let window = match (file.create(value.offset, value.bytes, source.Limits { chunk_size: 31, max_buffer_bytes: 1048576 })) {
+    Ok(value) => value, Err(error) => { return Err(error.message()); },
+  };
+  while (!window.ready) {
+    window = match (window.step(reader)) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+  }
+  return Ok(hex.encode(window.view()));
+}
+
+function emit(index: mp4.Index, expected: mp4.Codec, payload: (mp4.Packet) => Result[string, string]): Result[void, string] {
+  for track in index.tracks {
+    let config = track.descriptions[0];
+    if (config.codec != expected || config.config.length_size != 0 || config.config.csd1.len() != 0) {
+      return Err("unexpected video description");
+    }
+    print("T " + track.clock.scale.to_string() + " " + config.format.width.to_string() + " " + config.format.height.to_string());
+    print("C " + hex.encode(config.config.csd0));
+    for p in track.packets {
+      let data = payload(p)?;
+      print("P " + p.offset.to_string() + " " + p.bytes.to_string() + " " + p.decode_time.to_string() + " " + p.presentation_time.to_string() + " " + p.duration.to_string() + " " + p.sync.to_string() + " " + data);
+    }
+  }
+  return Ok(());
+}
+
+pub function complete(own input: u8[], expected: mp4.Codec): Result[void, string] {
+  let index = match (mp4.inspect(input, mp4.default_limits())) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+  return emit(index, expected, (p: mp4.Packet): Result[string, string] => Ok(hex.encode(input[p.offset as i32:p.offset as i32 + p.bytes])));
+}
+
+function from_reader(reader: Reader, expected: mp4.Codec): Result[void, string] {
+  let index = match (mp4file.inspect(reader, mp4file.default_limits())) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+  return emit(index, expected, (p: mp4.Packet): Result[string, string] => packet(reader, p));
+}
+
+pub function seekable(path: string, expected: mp4.Codec): Result[void, string] {
+  let Ok(reader) = open_reader(path) else {
+    return Err("open");
+  };
+  let result = from_reader(reader, expected);
+  let closed = reader.close();
+  return match (result) {
+    Err(error) => Err(error),
+    Ok(_) => match (closed) { Ok(_) => Ok(()), Err(error) => Err(error.message()) },
+  };
+}
+
+pub function status(result: Result[void, string]): i32 {
+  return match (result) {
+    Ok(_) => 0,
+    Err(error) => {
+      eprint(error);
+      return if (error == "open") { 2 } else if (error == "unexpected video description") { 6 } else { 3 };
+    },
+  };
+}
