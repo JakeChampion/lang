@@ -541,6 +541,11 @@ The unit workflow runs this script on x86-64 and ARM64 hosts.
 
 The compiler differential suite includes the native video, MP4 packet and file-input, codec-policy, and source-range tests.
 The host ABI tests cover JNI discovery, candidate failures, software recovery, and resource cleanup.
+
+Native process cleanup controls observe descriptor generations before each close.
+This forces the lazy generation table to allocate before return or explicit exit.
+The controls check generation increments, table growth, exit status, and deliberate application leaks.
+Unobserved closes retain their separate zero-allocation control.
 They also cover encoder states, direct packet views, muxer order, extraction, pause, seek, and EOS.
 The content-source mock checks real descriptor ranges, close-on-exec, JNI failures, and repeated open/close cycles.
 

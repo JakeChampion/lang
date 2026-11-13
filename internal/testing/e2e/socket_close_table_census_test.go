@@ -28,7 +28,12 @@ func TestSocketCloseTableCensusX86_64(t *testing.T) {
 				}
 				program := `function main(): i32 {
   for fd in [72, 145, 300] {
-    unsafe { let s: Socket = __socket_from_fd(fd); let _ = tcp_close(s); }
+    unsafe {
+      let generation = __task_fd_gen(fd);
+      let s: Socket = __socket_from_fd(fd);
+      let _ = tcp_close(s);
+      if (__task_fd_gen(fd) != generation + 1) { return 1; }
+    }
   }
   ` + lost + "\n  " + finish + "\n}\n"
 				if err := os.WriteFile(source, []byte(program), 0o644); err != nil {
@@ -71,7 +76,12 @@ func TestSocketCloseExitBeforeTableUseX86_64(t *testing.T) {
 	source := filepath.Join(dir, "late-close.fern")
 	program := `@noinline function stop(): void { exit(17); }
 function main(): i32 {
-  unsafe { let s: Socket = __socket_from_fd(300); let _ = tcp_close(s); }
+  unsafe {
+    let generation = __task_fd_gen(300);
+    let s: Socket = __socket_from_fd(300);
+    let _ = tcp_close(s);
+    if (__task_fd_gen(300) != generation + 1) { return 1; }
+  }
   stop();
   return 0;
 }
@@ -85,7 +95,7 @@ function main(): i32 {
 	}
 	_, stderr, code := runSplit(t, runX86_64Bin(runner, bin))
 	n, top, traceErr := pairRcTrace(stderr)
-	if code != 17 || traceErr != nil || n != 0 {
+	if code != 17 || traceErr != nil || n != 0 || !strings.Contains(stderr, "rctrace a ") {
 		t.Fatalf("exit %d, unpaired %d: %s, %v\n%s", code, n, top, traceErr, stderr)
 	}
 }
