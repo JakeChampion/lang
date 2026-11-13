@@ -591,10 +591,17 @@ function char_width(c: i32): i32 {
 // True when only a line feed is between two of the lines `from` to `to` of
 // `d` in the source. Then the text is a part of the source.
 function in_source(d: blocks.Doc, from: i32, to: i32): boolean {
-  for k in from..to {
-    if (d.segs[k * 3] != 0 || k > from && (d.segs[k * 3 + 1] != d.segs[k * 3 - 1] + 1 || d.src[d.segs[k * 3 - 1]] != b'\n')) {
+  let prev = d.segs[from];
+  if (blocks.seg_pad(prev) != 0) {
+    return false;
+  }
+  for k in from + 1..to {
+    let s = d.segs[k];
+    let end = blocks.seg_end(prev);
+    if (blocks.seg_pad(s) != 0 || blocks.seg_start(s) != end + 1 || d.src[end] != b'\n') {
       return false;
     }
+    prev = s;
   }
   return true;
 }
@@ -603,15 +610,16 @@ function in_source(d: blocks.Doc, from: i32, to: i32): boolean {
 // lines.
 function joined(d: blocks.Doc, from: i32, to: i32): string {
   let src = d.src;
-  let b = buf_new(d.segs[to * 3 - 1] - d.segs[from * 3 + 1] + 16);
+  let b = buf_new(blocks.seg_end(d.segs[to - 1]) - blocks.seg_start(d.segs[from]) + 16);
   for k in from..to {
     if (k > from) {
       buf_push_byte(b, 10);
     }
-    for _ in 0..d.segs[k * 3] {
+    let s = d.segs[k];
+    for _ in 0..blocks.seg_pad(s) {
       buf_push_byte(b, 32);
     }
-    buf_push_range(b, src, d.segs[k * 3 + 1], d.segs[k * 3 + 2]);
+    buf_push_range(b, src, blocks.seg_start(s), blocks.seg_end(s));
   }
   let text = buf_take(b);
   buf_free(b);
@@ -624,8 +632,8 @@ pub function render(out: usize, d: blocks.Doc, from: i32, to: i32, w: Work): Wor
     return w;
   }
   if (in_source(d, from, to)) {
-    let a = d.segs[from * 3 + 1];
-    return inline(out, d.src, a, rtrim(d.src, a, d.segs[to * 3 - 1]), d, w);
+    let a = blocks.seg_start(d.segs[from]);
+    return inline(out, d.src, a, rtrim(d.src, a, blocks.seg_end(d.segs[to - 1])), d, w);
   }
   let text = joined(d, from, to);
   return inline(out, text, 0, rtrim(text, 0, text.len()), d, w);
