@@ -1,0 +1,10 @@
+examples/age/testdata/cctv holds the age test vectors of the C2SP CCTV project.
+Reference: https://github.com/C2SP/CCTV/tree/b88c4b206254ac543df240097e0f1fcc6a664821/age/testdata
+
+Copyright (c) 2022 The age Authors.
+The vectors have the 0BSD, CC0 1.0 or Unlicense license, at the choice of the user.
+This repository uses them under 0BSD. The full license text is in 0BSD.txt.
+
+The 147 files are copies with no change.
+The Fern port in examples/age does not copy source code from age.
+It implements the age v1 format of age-encryption.org/v1.

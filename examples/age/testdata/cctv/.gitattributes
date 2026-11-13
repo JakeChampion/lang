@@ -1,0 +1,2 @@
+# The vectors are byte-exact test inputs: no line-ending conversion.
+* -text -diff
