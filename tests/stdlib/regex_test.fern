@@ -258,8 +258,39 @@ function test_first_byte_skip(): test.TestOutcome {
   ]);
 }
 
+function candidate(pattern: string, text: string, from: i32): i32 {
+  let Ok(compiled) = regex.compile(pattern) else {
+    return -2;
+  };
+  return compiled.next_candidate(text, from);
+}
+
+function test_next_candidate(): test.TestOutcome {
+  let got = [
+    candidate("Holmes", "a Hol Holmes", 0), candidate("Holmes", "a Hol Holmes", 7), candidate("Holmes", "xx Holm", 0),
+    candidate("(?i)holmes", "x HOLMES", 0), candidate("cat|dog", "a dog", 0), candidate("a*", "bbb", 2),
+    candidate("a*", "bbb", 3), candidate("a*", "bbb", 4), candidate("z", "abc", 0), candidate("\\bab", "cab ab", 0),
+  ];
+  return test.assert_eq_array(got, [6, -1, -1, 2, 2, 2, 3, -1, -1, 1]);
+}
+
+// A match must start with the literal prefix, folded under (?i).
+function test_literal_prefix(): test.TestOutcome {
+  let got = [
+    spans("abcd", "abcabcd abc"),
+    spans("(?i)abc", "xAbC aBc ab"),
+    spans("ab*c", "abbbc ac abd"),
+    spans("ab?", "a ab"),
+    spans("a{2}b", "aab ab aaab"),
+    spans("sherlock holmes", "sherlock holme"),
+  ];
+  return test.assert_eq_array(got, [" 3-7", " 1-4 5-8", " 0-5 6-8", " 0-1 2-4", " 0-3 8-11", ""]);
+}
+
 function main(): i32 {
   let r = test.new("std/regex");
+  r = r.it("next_candidate", test_next_candidate);
+  r = r.it("literal prefix", test_literal_prefix);
   r = r.it("find_at", test_find_at);
   r = r.it("word boundaries", test_word_boundaries);
   r = r.it("word boundaries in captures", test_word_boundary_captures);

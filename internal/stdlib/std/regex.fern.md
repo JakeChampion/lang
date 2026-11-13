@@ -10,7 +10,7 @@ A compiled expression retains its syntax tree, case policy, and capture metadata
 
 Search and complete-match operations have different purposes. Compilation returns a typed error for invalid patterns. Text output methods report invalid UTF-8 through a typed error. Byte output methods preserve raw bytes.
 
-`find_at` starts a search at a byte offset. Its assertions examine the full text, so `^` matches only at offset 0. `\b{start}` and `\b{end}` match at the start and at the end of a word. `\b{start-half}` matches where no word byte comes before, and `\b{end-half}` matches where no word byte comes after.
+`next_candidate` gives the first offset at or after a byte offset where a match can start, or -1. A caller can skip the text before that offset. `find_at` starts a search at a byte offset. Its assertions examine the full text, so `^` matches only at offset 0. `\b{start}` and `\b{end}` match at the start and at the end of a word. `\b{start-half}` matches where no word byte comes before, and `\b{end-half}` matches where no word byte comes after.
 
 ## Executable example
 
@@ -537,18 +537,10 @@ function __rx_match(n: RNode, t: string, ti: i32, ci: boolean): i32[] {
 <<10 function __rx_search_from(prog: Regex, text: string, from: i32): Option[Match]>>=
 function __rx_search_from(prog: Regex, text: string, from: i32): Option[Match] {
   let ti = from;
-  let filtered = prog.first.len() > 0;
   while (true) {
-    if (prog.lead >= 0) {
-      ti = __memchr(text, prog.lead, ti);
-      if (ti < 0) {
-        return None;
-      }
-    } else if (filtered) {
-      ti = __scan_set(text, ti, prog.first);
-      if (ti >= text.len()) {
-        return None;
-      }
+    ti = prog.next_candidate(text, ti);
+    if (ti < 0) {
+      return None;
     }
     let ends = __rx_match(prog.root, text, ti, prog.ci);
     if (ends.len() > 0) {
@@ -1535,6 +1527,40 @@ function __rx_first_set(root: RNode, ci: boolean): u8[] {
   return [];
 }
 
+// The bytes of the literal that starts each match of `root`.
+function __rx_prefix(root: RNode, ci: boolean): u8[] {
+  let out: u8[] = [];
+  match (root) {
+    RChar(c) => {
+      return [__rx_fold(c, ci) as u8];
+    },
+    RSeq(xs) => {
+      for x in xs {
+        let RChar(c) = x else {
+          return out;
+        };
+        out = out.append(__rx_fold(c, ci) as u8);
+      }
+      return out;
+    },
+    _ => {
+      return out;
+    }
+  }
+}
+
+function __rx_has_prefix(prog: Regex, text: string, at: i32): boolean {
+  if (at + prog.prefix.len() > text.len()) {
+    return false;
+  }
+  for k in 0..prog.prefix.len() {
+    if (__rx_fold(text[at + k] as i32, prog.ci) != prog.prefix[k] as i32) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function __rx_lead(first: u8[]): i32 {
   let lead = -1;
   for b in 0..first.len() {
@@ -1606,7 +1632,7 @@ pub function compile(pattern: string): Result[Regex, CompileError] {
   let first = __rx_first_set(r.node, ci);
   return Ok(Regex {
     root: r.node, ci: ci, ngroups: r.g - 1, names: __rx_group_names(pattern), program: __rx_cprog(r.node),
-    first: first, lead: __rx_lead(first),
+    first: first, lead: __rx_lead(first), prefix: __rx_prefix(r.node, ci),
   });
 }
 
@@ -1628,6 +1654,37 @@ pub function (prog: Regex) find_at(text: string, start: i32): Option[Match] {
     return __rx_search_from(prog, text, 0);
   }
   return __rx_search_from(prog, text, start);
+}
+
+// The first offset at or after `from` where a match can start, or -1. The
+// text before that offset holds no match. A pattern that can match an empty
+// span can start at each offset.
+pub function (prog: Regex) next_candidate(text: string, from: i32): i32 {
+  if (from > text.len()) {
+    return -1;
+  }
+  if (prog.first.len() == 0) {
+    return from;
+  }
+  let ti = from;
+  while (true) {
+    if (prog.lead >= 0) {
+      ti = __memchr(text, prog.lead, ti);
+      if (ti < 0) {
+        return -1;
+      }
+    } else {
+      ti = __scan_set(text, ti, prog.first);
+      if (ti >= text.len()) {
+        return -1;
+      }
+    }
+    if (__rx_has_prefix(prog, text, ti)) {
+      return ti;
+    }
+    ti += 1;
+  }
+  return -1;
 }
 
 pub function (prog: Regex) find_all(text: string): Match[] {
@@ -1931,8 +1988,9 @@ struct RClassUnit { kind: i32, lo: i32, hi: i32 }
 
 // `first` marks each byte that can begin a match. It is empty when a match
 // can be empty or can begin with any byte. `lead` is the one byte that
-// `first` marks, or -1.
-pub struct Regex { root: RNode, ci: boolean, ngroups: i32, names: string[], program: RInst[], first: u8[], lead: i32 }
+// `first` marks, or -1. Each match starts with the bytes of `prefix`, folded
+// to lower case under `ci`.
+pub struct Regex { root: RNode, ci: boolean, ngroups: i32, names: string[], program: RInst[], first: u8[], lead: i32, prefix: u8[] }
 ```
 
 ### Module introduction
