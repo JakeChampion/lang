@@ -439,7 +439,7 @@ function simple_escape(b: u8): string {
 }
 
 // `s` with U+FFFD in the place of each sequence that is not UTF-8.
-function repaired(s: string): string {
+pub function repaired(s: string): string {
   let out = "";
   let i = 0;
   while (i < s.len()) {
