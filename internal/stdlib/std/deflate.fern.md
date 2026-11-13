@@ -1864,17 +1864,17 @@ function __tokens(input: [u8], window: i32, depth: i32, nice: i32, start: i32): 
   let held = (-1, 0);
   let skip = 0;
   let pos = 0;
-  while (pos < start) {
-    if (pos + 3 < n) {
-      let w = __le32(input, pos);
-      let h3 = ((w << 8) * 506832829u32 >> 17) as i32;
-      let h4 = (w * 506832829u32 >> 16) as i32;
-      prev = prev.with(pos & window - 1, head3[h3] as i64 << 32 | (head4[h4] as u32) as i64);
-      head3 = head3.with(h3, pos);
-      head4 = head4.with(h4, pos);
-    }
+  let primed = cmp.min(start, n - 3);
+  while (pos < primed) {
+    let w = __le32(input, pos);
+    let h3 = ((w << 8) * 506832829u32 >> 17) as i32;
+    let h4 = (w * 506832829u32 >> 16) as i32;
+    prev = prev.with(pos & window - 1, head3[h3] as i64 << 32 | (head4[h4] as u32) as i64);
+    head3 = head3.with(h3, pos);
+    head4 = head4.with(h4, pos);
     pos += 1;
   }
+  pos = start;
   while (pos < n) {
     let c3 = -1;
     let c4 = -1;
