@@ -8229,6 +8229,19 @@ function ssa_back_copy(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSav
   return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s.lab_def(en.lab)));
 }
 
+// A reuse allocation returns its token inline when the token has the size,
+// and calls the allocator directly when the token is null.
+function ssa_reuse_alloc(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves, s: asmcore.EmitState): asmcore.EmitState {
+  let id = util.i32_to_string(ins.result);
+  let fresh = asmcore.lab_new(helper_arg_moves(ins, reg_of, s), lp + "raf" + id);
+  let en = asmcore.lab_new(fresh.state, lp + "rae" + id);
+  s = ssa_branch(en.state.write("    testq %rax, %rax\n"), J_JZ, fresh.lab);
+  s = ssa_branch(s.write("    cmpq %rsi, -16(%rax)\n"), J_JE, en.lab);
+  s = ssa_branch(ssa_call_saving(s, "__fn___fern_alloc_reuse.r", saves), J_JMP, en.lab);
+  s = ssa_call_saving(s.lab_def(fresh.lab).write("    movq %rsi, %rdi\n"), "__fern_arr_box", saves);
+  return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s.lab_def(en.lab)));
+}
+
 // An instruction whose caller registers are saved around its call.
 function ssa_saved_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr: SsaFrame, r: irtables.Lowered, saves: SlowSaves, own s: asmcore.EmitState): asmcore.EmitState {
   if (saves.mask != 0 && asmcore.ssa_inline_rc_dec(blk.insts[ii], s)) {
@@ -9681,6 +9694,13 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
   let k = ins.kind_tag;
   if (ssa.back_copy_call(ins) && asmcore.ssa_inline_back(s)) {
     return ssa_back_copy(ins, reg_of, lp, SlowSaves { mask: ssa_cold_mask(fr, ins), base: fr.cold_base, save: fr.nsave }, s);
+  }
+  if (ssa.fresh_alloc_call(ins)) {
+    s = ssa_parallel_moves([reg_of[ins.args[1]]], [2], helper_call_needs(ins.str, s));
+    return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(ssa_call_sym(s, "__fern_arr_box")));
+  }
+  if (ssa.inline_reuse_call(ins) && !s.size) {
+    return ssa_reuse_alloc(ins, reg_of, lp, SlowSaves { mask: ssa_cold_mask(fr, ins), base: fr.cold_base, save: fr.nsave }, s);
   }
   if (k == ssa.CALL) {
     return ssa_call(ins, reg_of, lp, s);

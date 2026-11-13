@@ -6,7 +6,11 @@ import (
 )
 
 func countUserCalls(asm []byte, callee string) int {
-	needle := []byte("call " + callee)
+	return countUserLines(asm, "call "+callee)
+}
+
+func countUserLines(asm []byte, text string) int {
+	needle := []byte(text)
 	helperPrefix := []byte("__fn___fern_")
 	count := 0
 	inHelper := false
@@ -57,6 +61,8 @@ func countUserStrFreeReclaims(asm []byte) int {
 	return countUserCalls(asm, "__fn___fern_str_free")
 }
 
+// An inline reuse allocation has one call for a null token. That call is not
+// an allocation site of its own.
 func countUserArrBoxAllocs(asm []byte) int {
-	return countUserCalls(asm, "__fern_arr_box")
+	return countUserCalls(asm, "__fern_arr_box") - countUserLines(asm, "cmpq %rsi, -16(%rax)")
 }
