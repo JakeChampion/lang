@@ -60,6 +60,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<module introduction>>=
 // This module compares strings with shell glob patterns.
+import "core/cmp";
+import "core/error";
 import "std/array";
 import "std/u8";
 ```
@@ -219,6 +221,14 @@ pub struct GlobError { glob: string, reason: string }
 pub function (e: GlobError) message(): string {
   return f"error parsing glob '{e.glob}': {e.reason}";
 }
+
+pub function (e: GlobError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for GlobError {}
+
+impl cmp.Display for GlobError {}
 
 // A compiled glob. It matches when one of its variants matches. A variant is
 // the glob with one choice for each `{a,b}` group.

@@ -10,10 +10,10 @@ import (
 
 // The copy of an Order is nine boxes: the record, its string, its array,
 // two items, their two strings, the tuple and the tuple's string. Each of
-// the four strings copies through one temporary byte array, which the
-// helper frees. The table of copied boxes is one more allocation, and a
-// second one where a box of the source can have more than one owner. The
-// two lines are the allocation count of the copy and the copy's contents.
+// the four strings takes over the byte array it copies through, so it adds no
+// box. The table of copied boxes is one more allocation, and a second one
+// where a box of the source can have more than one owner. The two lines are
+// the allocation count of the copy and the copy's contents.
 const sendCopyProg = `import "std/i64";
 
 struct Item { name: string, qty: i32 }
@@ -59,9 +59,9 @@ func TestSelfHostSendCopyAllocatesFreshBoxes(t *testing.T) {
 				if err := cmd.Run(); err != nil {
 					t.Fatalf("sanitize=%v: %v: stdout %q; stderr %s", sanitize, err, &stdout, &stderr)
 				}
-				want := "15\nadanutrush3\n"
+				want := "11\nadanutrush3\n"
 				if target == "wasm32-wasi" {
-					want = "14\nadanutrush3\n"
+					want = "10\nadanutrush3\n"
 				}
 				if got := stdout.String(); got != want {
 					t.Errorf("sanitize=%v: stdout %q, want %q", sanitize, got, want)

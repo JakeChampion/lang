@@ -426,6 +426,18 @@ one block at a time in `i32` locals (`compiler/wasm_chacha.fern`).
 The ChaCha20 kernels have no table and no branch on the key or the text.
 Thus they do not leak through the cache or the branch predictor.
 
+Poly1305 runs in one kernel on each backend (`__poly1305_blocks`). It absorbs
+a range of a byte array into a 40-byte state. From 256 bytes, the x86-64
+kernel does four blocks at a time in the 64-bit lanes of the AVX2 registers.
+These lanes hold limbs of 26 bits. Below that, and for the blocks after the groups of four,
+it does one block at a time on `mulx` (BMI2) in 64-bit limbs. On arm64 it does
+one block at a time on `mul` and `umulh` in 64-bit limbs. On wasm it does one
+block at a time in `i64` locals, in limbs of 26 bits
+(`compiler/wasm_poly.fern`).
+
+The Poly1305 kernels have no table and no branch on the key or the message.
+The length of the message alone selects the path.
+
 Anything above this level (AVX-512, …) needs runtime dispatch first, and none
 of it is used. AVX-512 is deliberately not taken: Intel removed it from
 consumer parts at Alder Lake, so a v4 baseline would drop hardware a v3 one

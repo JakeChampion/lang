@@ -2014,6 +2014,9 @@ function emit_rt_byte_kernels(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("chacha20")) {
     s = emit_rt_chacha20(s);
   }
+  if (s.has_need("poly1305")) {
+    s = emit_rt_poly1305(s);
+  }
   return s;
 }
 
@@ -2145,6 +2148,204 @@ function x86_chacha_out(half: i32, full: boolean): string {
     }
   }
   return o;
+}
+
+// Poly1305 (RFC 8439) absorbs msg[at:at + n] into the 40-byte state: h0, h1, h2, r0 and r1, each a little-endian
+// u64. rdi is the state, rsi the message (a view), edx at and ecx n. rax returns the state, copied first if it
+// has another holder. Each 16-byte block gets 2^128, and a short last block gets a 1 byte after its end and
+// no 2^128. Only the low 2 bits of h2 are read, r is clamped as it is read, and h leaves fully reduced.
+//
+// From 256 bytes, the kernel runs four blocks at a time in the 64-bit lanes of the ymm registers, in five
+// limbs of 26 bits: H in ymm0 to ymm4, the products in ymm5 to ymm9. A group of four blocks goes to the lanes
+// in the order 0, 2, 1, 3. Each group but the last multiplies by r^4. The last group multiplies lane by lane
+// by r^4, r^2, r^3 and r. The rest is one block at a time in rbx (r0), r12 (r1), r13 (5 r1 / 4), and r14, r15
+// and r8 (h). Below the aligned rsp, the table for r^4 is at 0, the table for the last group at 288, the
+// lanes of H at 576 and a short last block at 736. Each table holds r0 to r4 and then 5 r1 to 5 r4. The code
+// zeroes that area before it returns.
+function x86_poly1305_blocks(): string {
+  let o: string = "    .globl __fern_poly1305_blocks\n    .type __fern_poly1305_blocks, @function\n__fern_poly1305_blocks:\n"
+    + "    pushq %rbp\n    movq %rsp, %rbp\n    subq $256, %rsp\n    movq %rdi, -48(%rbp)\n"
+    + "    movslq %edx, %rdx\n    movq %rdx, -24(%rbp)\n    movslq %ecx, %rcx\n    movq %rcx, -16(%rbp)\n"
+    + x86_aes_view("%rsi", "%r10", "%r11", ".Lpb_m") + "    movq %r10, -8(%rbp)\n"
+    + "    movq -24(%rbp), %rax\n    orq -16(%rbp), %rax\n    js __fern_slice_abort\n"
+    + "    movq -24(%rbp), %rax\n    addq -16(%rbp), %rax\n    cmpq %r11, %rax\n    ja __fern_slice_abort\n"
+    + "    movq -48(%rbp), %r8\n    movq (%r8), %r9\n    cmpq $40, %r9\n    jne __fern_slice_abort\n" + x86_aes_gcm_own(".Lpb")
+    + "    movq %rbx, -56(%rbp)\n    movq %r12, -64(%rbp)\n    movq %r13, -72(%rbp)\n    movq %r14, -80(%rbp)\n    movq %r15, -88(%rbp)\n"
+    + "    subq $768, %rsp\n    andq $-32, %rsp\n    leaq .Lpb_consts(%rip), %r10\n    movq -48(%rbp), %rax\n"
+    + "    movq 8(%rax), %r14\n    movq 16(%rax), %r15\n    movq 24(%rax), %r8\n    andq $3, %r8\n"
+    + "    movq 32(%rax), %rbx\n    andq 64(%r10), %rbx\n    movq 40(%rax), %r12\n    andq 72(%r10), %r12\n"
+    + "    movq %r12, %r13\n    shrq $2, %r13\n    addq %r12, %r13\n"
+    + "    movq -8(%rbp), %rsi\n    addq -24(%rbp), %rsi\n    movq -16(%rbp), %rdi\n"
+    + "    movq %rdi, %rax\n    andq $-16, %rax\n    cmpq $256, %rax\n    jb .Lpb_one\n    andq $-64, %rax\n    movq %rax, -96(%rbp)\n"
+    + x86_poly_vector() + ".Lpb_one:\n    cmpq $16, %rdi\n    jb .Lpb_part\n"
+    + "    addq (%rsi), %r14\n    adcq 8(%rsi), %r15\n    adcq $1, %r8\n" + x86_poly_mul()
+    + "    addq $16, %rsi\n    subq $16, %rdi\n    jmp .Lpb_one\n"
+    + ".Lpb_part:\n    testq %rdi, %rdi\n    jz .Lpb_done\n    movq $0, 736(%rsp)\n    movq $0, 744(%rsp)\n    xorl %ecx, %ecx\n"
+    + ".Lpb_pc:\n    movzbl (%rsi,%rcx), %eax\n    movb %al, 736(%rsp,%rcx)\n    addq $1, %rcx\n    cmpq %rdi, %rcx\n    jb .Lpb_pc\n"
+    + "    movl $1, %eax\n    movb %al, 736(%rsp,%rcx)\n    addq 736(%rsp), %r14\n    adcq 744(%rsp), %r15\n    adcq $0, %r8\n" + x86_poly_mul()
+    + ".Lpb_done:\n" + x86_poly_reduce() + "    movq -48(%rbp), %rax\n    movq %r14, 8(%rax)\n    movq %r15, 16(%rax)\n    movq %r8, 24(%rax)\n"
+    + "    vpxor %ymm0, %ymm0, %ymm0\n";
+  for j in 0..24 {
+    o = o + "    vmovdqu %ymm0, " + util.i32_to_string(32 * j) + "(%rsp)\n";
+  }
+  return o + "    vzeroupper\n    movq -56(%rbp), %rbx\n    movq -64(%rbp), %r12\n    movq -72(%rbp), %r13\n    movq -80(%rbp), %r14\n    movq -88(%rbp), %r15\n"
+    + x86_aes_epilogue() + "    .size __fern_poly1305_blocks, .-__fern_poly1305_blocks\n";
+}
+
+// h = h r, with h2 at most 7 on entry. The result has h2 at most 4, so h is below 2p. rax, rcx, rdx and r9 to
+// r11 change.
+function x86_poly_mul(): string {
+  return "    movq %r14, %rdx\n    mulxq %rbx, %r9, %r10\n    mulxq %r12, %r11, %rcx\n    movq %r15, %rdx\n    mulxq %r13, %rax, %rdx\n"
+    + "    addq %rax, %r9\n    adcq %rdx, %r10\n    movq %r15, %rdx\n    mulxq %rbx, %rax, %rdx\n    addq %rax, %r11\n    adcq %rdx, %rcx\n"
+    + "    movq %r8, %rax\n    imulq %r13, %rax\n    addq %rax, %r11\n    adcq $0, %rcx\n    imulq %rbx, %r8\n    addq %r10, %r11\n    adcq %rcx, %r8\n"
+    + "    movq %r9, %r14\n    movq %r11, %r15\n    movq %r8, %rax\n    andq $-4, %rax\n    andq $3, %r8\n    movq %rax, %rcx\n    shrq $2, %rcx\n"
+    + "    addq %rcx, %rax\n    addq %rax, %r14\n    adcq $0, %r15\n    adcq $0, %r8\n";
+}
+
+// h below 2p becomes h mod p: h - p is h + 5 less 2^130, taken when that sum reaches bit 130.
+function x86_poly_reduce(): string {
+  return "    movq %r14, %rax\n    addq $5, %rax\n    movq %r15, %rcx\n    adcq $0, %rcx\n    movq %r8, %rdx\n    adcq $0, %rdx\n"
+    + "    movq %rdx, %r9\n    shrq $2, %r9\n    negq %r9\n    andq $3, %rdx\n"
+    + "    xorq %r14, %rax\n    andq %r9, %rax\n    xorq %rax, %r14\n    xorq %r15, %rcx\n    andq %r9, %rcx\n    xorq %rcx, %r15\n"
+    + "    xorq %r8, %rdx\n    andq %r9, %rdx\n    xorq %rdx, %r8\n";
+}
+
+// Limb k of h (r14, r15 and r8) in five limbs of 26 bits, in rax. rcx changes.
+function x86_poly_limb(k: i32): string {
+  let m = "    andq $67108863, %rax\n";
+  if (k == 0) {
+    return "    movq %r14, %rax\n" + m;
+  }
+  if (k == 1) {
+    return "    movq %r14, %rax\n    shrq $26, %rax\n" + m;
+  }
+  if (k == 2) {
+    return "    movq %r14, %rax\n    shrq $52, %rax\n    movq %r15, %rcx\n    shlq $12, %rcx\n    orq %rcx, %rax\n" + m;
+  }
+  if (k == 3) {
+    return "    movq %r15, %rax\n    shrq $14, %rax\n" + m;
+  }
+  return "    movq %r15, %rax\n    shrq $40, %rax\n    movq %r8, %rcx\n    shlq $24, %rcx\n    orq %rcx, %rax\n";
+}
+
+// Writes the limbs of h, which is r^power, to its lane of the table for the last group, and for r^4 also to
+// all four lanes of the r^4 table.
+function x86_poly_power(power: i32): string {
+  let lanes: i32[] = [3, 1, 2, 0];
+  let lane = lanes[power - 1];
+  let o = "";
+  for k in 0..5 {
+    o += x86_poly_limb(k);
+    o = o + "    movq %rax, " + util.i32_to_string(288 + 32 * k + 8 * lane) + "(%rsp)\n";
+    if (k > 0) {
+      o = o + "    leaq (%rax,%rax,4), %rcx\n    movq %rcx, " + util.i32_to_string(288 + 32 * (4 + k) + 8 * lane) + "(%rsp)\n";
+    }
+    if (power == 4) {
+      for j in 0..4 {
+        o = o + "    movq %rax, " + util.i32_to_string(32 * k + 8 * j) + "(%rsp)\n";
+        if (k > 0) {
+          o = o + "    movq %rcx, " + util.i32_to_string(32 * (4 + k) + 8 * j) + "(%rsp)\n";
+        }
+      }
+    }
+  }
+  return o;
+}
+
+// The vector part: -96(%rbp) bytes from rsi, a multiple of 64 and at least 256. h is in r14, r15 and r8 before
+// and after. rsi and rdi move past those bytes.
+function x86_poly_vector(): string {
+  let o: string = "    movq %r14, -104(%rbp)\n    movq %r15, -112(%rbp)\n    movq %r8, -120(%rbp)\n"
+    + "    movq %rbx, %r14\n    movq %r12, %r15\n    xorl %r8d, %r8d\n" + x86_poly_power(1);
+  for power in 2..5 {
+    o = o + x86_poly_mul() + x86_poly_power(power);
+  }
+  o = o + "    movq -104(%rbp), %r14\n    movq -112(%rbp), %r15\n    movq -120(%rbp), %r8\n    vpxor %ymm0, %ymm0, %ymm0\n";
+  for k in 0..5 {
+    o = o + "    vmovdqu %ymm0, " + util.i32_to_string(576 + 32 * k) + "(%rsp)\n";
+  }
+  for k in 0..5 {
+    o = o + x86_poly_limb(k) + "    movq %rax, " + util.i32_to_string(576 + 32 * k) + "(%rsp)\n";
+  }
+  for k in 0..5 {
+    o = o + "    vmovdqu " + util.i32_to_string(576 + 32 * k) + "(%rsp), " + ymm(k) + "\n";
+  }
+  o = o + "    leaq .Lpb_consts(%rip), %r10\n    vmovdqu (%r10), %ymm15\n    vmovdqu 32(%r10), %ymm14\n"
+    + "    movq -96(%rbp), %rcx\n    subq %rcx, %rdi\n.Lpb_vloop:\n" + x86_poly_load()
+    + "    movq %rsp, %rdx\n    cmpq $64, %rcx\n    jne .Lpb_vt\n    leaq 288(%rsp), %rdx\n.Lpb_vt:\n" + x86_poly_vmul() + x86_poly_vcarry();
+  for k in 0..5 {
+    o = o + "    vmovdqu " + ymm(5 + k) + ", " + ymm(k) + "\n";
+  }
+  o += "    addq $64, %rsi\n    subq $64, %rcx\n    jnz .Lpb_vloop\n";
+  for k in 0..5 {
+    o = o + "    vmovdqu " + ymm(k) + ", " + util.i32_to_string(576 + 32 * k) + "(%rsp)\n";
+  }
+  let regs: string[] = ["%rax", "%rcx", "%rdx", "%r9", "%r11"];
+  for k in 0..5 {
+    let at = 576 + 32 * k;
+    o = o + "    movq " + util.i32_to_string(at) + "(%rsp), " + regs[k] + "\n";
+    for j in 1..4 {
+      o = o + "    addq " + util.i32_to_string(at + 8 * j) + "(%rsp), " + regs[k] + "\n";
+    }
+  }
+  return o + "    shlq $26, %rcx\n    addq %rcx, %rax\n    movq %rdx, %rcx\n    shlq $52, %rcx\n    shrq $12, %rdx\n    addq %rcx, %rax\n    adcq $0, %rdx\n"
+    + "    shlq $14, %r9\n    addq %r9, %rdx\n    movq %r11, %r8\n    shrq $24, %r8\n    shlq $40, %r11\n    addq %r11, %rdx\n    adcq $0, %r8\n"
+    + "    movq %rax, %r14\n    movq %rdx, %r15\n    movq %r8, %rax\n    andq $-4, %rax\n    andq $3, %r8\n    movq %rax, %rcx\n    shrq $2, %rcx\n"
+    + "    addq %rcx, %rax\n    addq %rax, %r14\n    adcq $0, %r15\n    adcq $0, %r8\n";
+}
+
+// Four blocks at rsi split into limbs of 26 bits and added to H, lanes in the block order 0, 2, 1, 3.
+function x86_poly_load(): string {
+  return "    vmovdqu (%rsi), %ymm10\n    vmovdqu 32(%rsi), %ymm11\n    vpunpckhqdq %ymm11, %ymm10, %ymm12\n    vpunpcklqdq %ymm11, %ymm10, %ymm10\n"
+    + "    vpsrlq $40, %ymm12, %ymm13\n    vpor %ymm14, %ymm13, %ymm13\n    vpaddq %ymm13, %ymm4, %ymm4\n"
+    + "    vpsrlq $14, %ymm12, %ymm13\n    vpand %ymm15, %ymm13, %ymm13\n    vpaddq %ymm13, %ymm3, %ymm3\n"
+    + "    vpsllq $12, %ymm12, %ymm12\n    vpsrlq $52, %ymm10, %ymm13\n    vpor %ymm12, %ymm13, %ymm13\n    vpand %ymm15, %ymm13, %ymm13\n    vpaddq %ymm13, %ymm2, %ymm2\n"
+    + "    vpsrlq $26, %ymm10, %ymm13\n    vpand %ymm15, %ymm13, %ymm13\n    vpaddq %ymm13, %ymm1, %ymm1\n"
+    + "    vpand %ymm15, %ymm10, %ymm10\n    vpaddq %ymm10, %ymm0, %ymm0\n";
+}
+
+// The table entry that limb i of H takes for limb j of the product: r(j - i), or 5 r(5 + j - i) when i > j.
+function x86_poly_coef(i: i32, j: i32): string {
+  if (i <= j) {
+    return util.i32_to_string(32 * (j - i)) + "(%rdx)";
+  }
+  return util.i32_to_string(32 * (9 + j - i)) + "(%rdx)";
+}
+
+// D = H times the table at rdx, limb by limb in each lane.
+function x86_poly_vmul(): string {
+  let o = "";
+  for j in 0..5 {
+    o = o + "    vpmuludq " + x86_poly_coef(0, j) + ", %ymm0, " + ymm(5 + j) + "\n";
+  }
+  for i in 1..5 {
+    for j in 0..5 {
+      let t = ymm(10 + j % 2);
+      o = o + "    vpmuludq " + x86_poly_coef(i, j) + ", " + ymm(i) + ", " + t + "\n    vpaddq " + t + ", " + ymm(5 + j) + ", " + ymm(5 + j) + "\n";
+    }
+  }
+  return o;
+}
+
+// The carries of D, which leave each limb a little over 26 bits at most. The carry out of limb 4 comes back
+// to limb 0 times 5.
+function x86_poly_vcarry(): string {
+  let steps: i32[][] = [[3, 4], [0, 1], [4, 0], [1, 2], [2, 3], [0, 1], [3, 4]];
+  let o = "";
+  for st in steps {
+    let a = ymm(5 + st[0]);
+    let b = ymm(5 + st[1]);
+    o = o + "    vpsrlq $26, " + a + ", %ymm10\n    vpand %ymm15, " + a + ", " + a + "\n    vpaddq %ymm10, " + b + ", " + b + "\n";
+    if (st[0] == 4) {
+      o = o + "    vpsllq $2, %ymm10, %ymm10\n    vpaddq %ymm10, " + b + ", " + b + "\n";
+    }
+  }
+  return o;
+}
+
+function emit_rt_poly1305(s: asmcore.EmitState): asmcore.EmitState {
+  return s.write("    .section .rodata\n    .align 16\n.Lpb_consts:\n    .quad 67108863,67108863,67108863,67108863\n    .quad 16777216,16777216,16777216,16777216\n"
+    + "    .quad 1152921487695413247,1152921487695413244\n    .section .text\n" + x86_poly1305_blocks());
 }
 
 function emit_rt_chacha20(s: asmcore.EmitState): asmcore.EmitState {

@@ -51,6 +51,9 @@ func TestRawStringPointerComesFromRawAlloc(t *testing.T) {
 					continue
 				}
 				name := strings.TrimSpace(arg)
+				if uniqueArrayAdoption(chunk, name, loc[0]) {
+					continue
+				}
 				if !bareAddrArgRe.MatchString(name) {
 					t.Errorf("%s:%d: __raw_string's pointer is `%s` — it has to be "+
 						"the bare name of a __raw_alloc result, whose reserved 24-byte header "+
@@ -116,6 +119,85 @@ func coverageStringTransfer(chunk genFnChunk, name string, call int, allocator s
 		}
 	}
 	return false
+}
+
+var arrayAdoptArgRe = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*)\s*\+\s*(8|16)$`)
+
+// A unique array box has 24 bytes ahead of data+8 and, with a spare word,
+// ahead of data+16, so the string header goes into the array's own block.
+// The pointer must be a usize parameter that the function does not rebind,
+// and the call must be inside the test that the parameter is unique.
+func uniqueArrayAdoption(chunk genFnChunk, arg string, call int) bool {
+	m := arrayAdoptArgRe.FindStringSubmatch(arg)
+	if m == nil || call < 0 || call > len(chunk.text) {
+		return false
+	}
+	name := regexp.QuoteMeta(m[1])
+	param := regexp.MustCompile(`^(?:pub )?function\s+[A-Za-z_][A-Za-z0-9_]*\s*\([^)]*\b` + name + `\s*:\s*usize\b`)
+	if !param.MatchString(chunk.text) {
+		return false
+	}
+	rebound := regexp.MustCompile(`(?m)(?:^\s*|\blet\s+)` + name + `\s*(?::[^;=\n]+)?(?:(?:[+\-*/%&|^]|<<|>>)?=[^=]|\+\+|--)`)
+	if rebound.MatchString(chunk.text) {
+		return false
+	}
+	guard := regexp.MustCompile(`if\s*\(\s*__fern_rc_is_unique\(\s*` + name + `\s*\)\s*!=\s*0\s*\)\s*\{`)
+	before := chunk.text[:call]
+	locs := guard.FindAllStringIndex(before, -1)
+	if len(locs) == 0 {
+		return false
+	}
+	depth := 0
+	for _, c := range before[locs[len(locs)-1][1]-1:] {
+		switch c {
+		case '{':
+			depth++
+		case '}':
+			depth--
+		}
+	}
+	return depth > 0
+}
+
+func TestUniqueArrayAdoption(t *testing.T) {
+	const helper = `function adopt(a: usize): string {
+  let n = __load_i32(a);
+  if (__fern_rc_is_unique(a) != 0) {
+    return __raw_string(a + 8, n);
+  }
+  return "";
+}`
+	cases := []struct {
+		name, source string
+		want         bool
+	}{
+		{"guarded-header", helper, true},
+		{"guarded-spare-word", strings.Replace(helper, "a + 8", "a + 16", 1), true},
+		{"other-offset", strings.Replace(helper, "a + 8", "a + 24", 1), false},
+		{"unguarded", strings.Replace(helper, "if (__fern_rc_is_unique(a) != 0)", "if (n > 0)", 1), false},
+		{"after-guard", strings.Replace(helper, "    return __raw_string(a + 8, n);\n  }", "  }\n  return __raw_string(a + 8, n);", 1), false},
+		{"other-guard", strings.Replace(helper, "__fern_rc_is_unique(a)", "__fern_rc_is_unique(n)", 1), false},
+		{"array-parameter", strings.Replace(helper, "a: usize", "a: i32[]", 1), false},
+		{"rebound", strings.Replace(helper, "  let n", "  a = a + 8;\n  let n", 1), false},
+		{"compound-rebound", strings.Replace(helper, "  let n", "  a += 8;\n  let n", 1), false},
+		{"shadowed", strings.Replace(helper, "  let n", "  let a: usize = __raw_scratch(8);\n  let n", 1), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			chunks := splitGeneratorFns(tc.source)
+			if len(chunks) != 1 {
+				t.Fatal("expected one function")
+			}
+			at := strings.Index(tc.source, "__raw_string(")
+			arg, ok := firstArg(tc.source, at+len("__raw_string"))
+			if !ok {
+				t.Fatal("unbalanced call")
+			}
+			if got := uniqueArrayAdoption(chunks[0], strings.TrimSpace(arg), at); got != tc.want {
+				t.Fatalf("adoption = %t, want %t", got, tc.want)
+			}
+		})
+	}
 }
 
 func TestRawAllocBindAcceptsBothSpellings(t *testing.T) {

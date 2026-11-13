@@ -48,6 +48,12 @@ function max_once_insts(): i32 {
   return 400;
 }
 
+// A function with one call, when its caller calls itself. Each level of the
+// recursion pays for the frame of the spliced body.
+function max_once_in_cycle_insts(): i32 {
+  return 100;
+}
+
 function max_shared_callers(): i32 {
   return 2;
 }
@@ -93,7 +99,9 @@ pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][
 }
 
 function splice_plan(funcs0: ssasem.Func[], ix: util.NameIndex, calls: i32[], inlinable: boolean[], unnamed: boolean[], always: boolean[], size: boolean): Spliceable {
-  let cycle = ownership.cycles(callees_of_all(funcs0, ix));
+  let callees = callees_of_all(funcs0, ix);
+  let cycle = ownership.cycles(callees);
+  let deep = called_from_cycle(callees, cycle);
   let leaves: boolean[] = [];
   let once: boolean[] = [];
   let shared: boolean[] = [];
@@ -106,7 +114,8 @@ function splice_plan(funcs0: ssasem.Func[], ix: util.NameIndex, calls: i32[], in
     small = small.append(is_shared && small_shared_body(f));
     leaves = leaves.append(is_leaf);
     shared = shared.append(is_shared);
-    once = once.append(is_shared || other && once_spliceable(f, calls[i]));
+    let once_limit = if (deep[i]) { max_once_in_cycle_insts() } else { max_once_insts() };
+    once = once.append(is_shared || other && once_spliceable(f, calls[i], once_limit));
   }
   return Spliceable { ix: ix, owners: resource_owners(funcs0), leaves: leaves, once: once, shared: shared, small: small, inlinable: inlinable, calls: calls, unnamed: unnamed, always: always, cycle: cycle, size: size };
 }
@@ -147,8 +156,21 @@ function leaf_spliceable(f: ssasem.Func, inlinable: boolean, size: boolean): boo
   return !size && inlinable && (leaf(f) || updater(f));
 }
 
-function once_spliceable(f: ssasem.Func, calls: i32): boolean {
-  return calls == 1 && !lends_view(f) && spliceable(f, max_once_insts());
+function once_spliceable(f: ssasem.Func, calls: i32, limit: i32): boolean {
+  return calls == 1 && !lends_view(f) && spliceable(f, limit);
+}
+
+// True for each function that a function on a cycle of the call graph calls.
+function called_from_cycle(callees: i32[][], cycle: i32[]): boolean[] {
+  let out = __alloc_bool(callees.len());
+  for j in 0..callees.len() {
+    if (cycle[j] >= 0) {
+      for i in callees[j] {
+        out = out.with(i, true);
+      }
+    }
+  }
+  return out;
 }
 
 // An @inline function is spliced at every call, as one called once is. Its

@@ -1021,6 +1021,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		c.info.FuncSigs[n] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8View, u64, u8Arr, rangeBound, rangeBound, rangeBound, rangeBound}, Result: u8Arr}
 	}
 	c.info.FuncSigs["__chacha20_xor_into"] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8Arr, rangeBound, rangeBound}, Result: u8Arr}
+	c.info.FuncSigs["__poly1305_blocks"] = &ast.FuncType{Params: []ast.Type{u8Arr, u8View, rangeBound, rangeBound}, Result: u8Arr}
 	c.info.FuncSigs["__sha256_hw"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.BoolType{}}
 	c.info.FuncSigs["__sha256_hw_blocks"] = &ast.FuncType{Params: []ast.Type{u8View, u8View}, Result: u8Arr}
 	c.info.FuncSigs["__sha1_hw"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.BoolType{}}
@@ -12363,14 +12364,10 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		if call, ok := n.Init.(*ast.Call); ok && unannotated {
 			c.openCallLet = call
 		}
-		initErrs := len(c.errors)
 		got := c.checkExpr(n.Init, s)
 		c.openCallLet = nil
 		c.expectedType = nil
 		c.elemHint = nil
-		if _, declaredVoid := n.Type.(ast.VoidType); len(c.errors) == initErrs && (n.Type == nil || declaredVoid) {
-			c.requireValue(n.Init, got)
-		}
 		if n.Type != nil {
 			c.settleNumeric(n.Init, n.Type)
 			got = c.postSettleType(n.Init, got)
