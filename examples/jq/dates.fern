@@ -89,7 +89,7 @@ function name_of(names: string[], at: i64, short: boolean): string {
 }
 
 function padded(n: i64, width: i32, fill: string): string {
-  let digits = if (n < 0) { (0 - n).to_string() } else { n.to_string() };
+  let digits = if (n < 0) { (-n).to_string() } else { n.to_string() };
   let out = digits;
   while (out.len() + (if (n < 0) { 1 } else { 0 }) < width) {
     out = fill + out;
@@ -201,7 +201,7 @@ pub function strftime(format: string, t: Tm): string {
   let i = 0;
   while (i < format.len()) {
     if (format[i] != b'%' || i + 1 == format.len()) {
-      out = out + slice_unchecked(format, i, i + 1);
+      out += slice_unchecked(format, i, i + 1);
       i += 1;
       continue;
     }
@@ -213,7 +213,7 @@ pub function strftime(format: string, t: Tm): string {
     if (field.len() == 0) {
       field = slice_unchecked(format, i, i + 2).to_owned();
     }
-    out = out + field;
+    out += field;
     i += 2;
   }
   return out;
