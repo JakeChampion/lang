@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Compare native AVC access units with FFprobe packets and FFmpeg planes."""
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -65,6 +66,31 @@ def compare(path, frames):
     print(f"{path.name}: {frames} native/WASI access units match FFprobe; all FFmpeg planes match", flush=True)
 
 
+def parameter_reuse(directory):
+    spec = importlib.util.spec_from_file_location("avc_input_vectors", ROOT / "scripts/gen-video-avc-input-fixtures.py")
+    fixtures = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fixtures)
+    trace = fixtures.syntax.build_trace(name="avc-input-parameter-trace")
+    messages = {"Header": "invalid video header or packet", "Truncated": "incomplete video packet"}
+    for index, (name, before, after, picture, category) in enumerate(fixtures.incompatible_pairs()):
+        for sequence, valid in ((before, True), (after, False)):
+            pair = directory / "parameter-pair.bin"
+            pair.write_bytes(sequence + b"\0\0\1" + picture)
+            oracle = subprocess.run([str(trace), str(pair)], capture_output=True)
+            assert (oracle.returncode == 0) == valid, oracle.stderr.decode()
+        path = directory / f"stale-pps-{index}.h264"
+        path.write_bytes(b"".join(b"\0\0\0\1" + unit for unit in
+                                 (before, picture, fixtures.slice_nal(frame=1), after, fixtures.slice_nal(frame=2))))
+        native = subprocess.run([str(binary), str(path)], capture_output=True, text=True)
+        wasi = subprocess.run(["wasmtime", "run", "--dir", ".", str(wasm), path.name],
+                              cwd=directory, capture_output=True, text=True)
+        assert native.returncode == wasi.returncode == 1
+        assert native.stdout == wasi.stdout and len(native.stdout.splitlines()) == 1
+        assert messages[category] in native.stderr and messages[category] in wasi.stderr
+        assert re.search(r"leakcheck: allocs=(\d+) frees=\1 live_bytes=0", native.stderr), native.stderr
+        print(f"{name}: native/WASI refusal matches independent FFmpeg parameter checks", flush=True)
+
+
 with tempfile.TemporaryDirectory() as temporary:
     directory = Path(temporary)
     cases = [
@@ -88,3 +114,4 @@ with tempfile.TemporaryDirectory() as temporary:
     joined = directory / "parameter-replacement.h264"
     joined.write_bytes(paths[3].read_bytes() + paths[5].read_bytes())
     compare(joined, 36)
+    parameter_reuse(directory)

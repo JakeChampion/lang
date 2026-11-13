@@ -208,7 +208,7 @@ pub function no_sound(): Sound {
 // player holds of the device before Android destroys the activity, or
 // keep the playlists for the next start, or write a playlist as an M3U
 // file, or keep the settings.
-pub enum Want { Load(i32), Follow(i32), Resume, Hold, Seek(f64), Scan, Grant, List(string), Keep(string), Quit, KeepLists, WriteList(string), KeepPrefs, KeepPlace, WriteTags(i32) }
+pub enum Want { Load(i32), Follow(i32), Resume, Hold, Seek(f64), Scan, Grant, List(string), Keep(string), Quit, KeepLists, WriteList(string), KeepPrefs, KeepPlace, WriteTags(i32), ToBack }
 
 // `fresh` tells that the player did not look for its files yet: it looks
 // at its first Beat, after the screen shows.
@@ -543,8 +543,9 @@ pub function start_in(home: string, folder: string): Model {
 // of a track has the tags of the draft, or that the player cannot write
 // them. `Asking` tells that the system asks the person to let the app
 // change the file of a track: the player writes it again when the app
-// comes back.
-pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean), Menu(i32), MenuClosed, PlayNext, Enqueue, Lined(boolean), Jump(i32), Drop(i32), Shift(i32, i32), Closing, Walk(string[]), Listed(string, string[]), OpenList(string), AddTo, SaveQueue, ToList(string), NewList, Named(string), Create, Unlist(i32), Relist(i32, i32), DeleteList, Favorite, Imported(string, string[]), Export, Exported(string), Genre(string), Place(string), Sort, ToAlbum, ToArtist, Details, Speed, Pitch, Sleep, Slept(i64), Lyrics, Settings(boolean), Look, Tint, Fade, Tuning(boolean), Boost(i32, f64), Preset(i32), Restore(Place), Away, EditTags, Typed(i32, string), SaveTags, Retagged(i32, boolean), Asking(i32), TabShown(i32), Hide, Unhide(string), ShuffleAll(i32), PlayList(string), Level }
+// comes back. `Background` puts the app behind the other apps, and the
+// track plays on.
+pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean), Menu(i32), MenuClosed, PlayNext, Enqueue, Lined(boolean), Jump(i32), Drop(i32), Shift(i32, i32), Closing, Walk(string[]), Listed(string, string[]), OpenList(string), AddTo, SaveQueue, ToList(string), NewList, Named(string), Create, Unlist(i32), Relist(i32, i32), DeleteList, Favorite, Imported(string, string[]), Export, Exported(string), Genre(string), Place(string), Sort, ToAlbum, ToArtist, Details, Speed, Pitch, Sleep, Slept(i64), Lyrics, Settings(boolean), Look, Tint, Fade, Tuning(boolean), Boost(i32, f64), Preset(i32), Restore(Place), Away, EditTags, Typed(i32, string), SaveTags, Retagged(i32, boolean), Asking(i32), Background, TabShown(i32), Hide, Unhide(string), ShuffleAll(i32), PlayList(string), Level }
 
 // The key of the album of a track: the artist that the album is under,
 // and its name.
@@ -2194,6 +2195,11 @@ pub function update(own m: Model, msg: Msg): Model {
       return shifted(m, from, to);
     },
     Closing => {
+      // A track that plays goes on with no window, and the app closes when
+      // it stops.
+      if (m.playing) {
+        return Model { ...m, wants: m.wants.append(KeepPlace) };
+      }
       return Model { ...m, wants: m.wants.append(KeepPlace).append(Quit) };
     },
     Restore(p) => {
@@ -2220,6 +2226,9 @@ pub function update(own m: Model, msg: Msg): Model {
     },
     Asking(i) => {
       return Model { ...m, asking: i };
+    },
+    Background => {
+      return Model { ...m, wants: m.wants.append(KeepPlace).append(ToBack) };
     },
     Away => {
       return Model { ...m, wants: m.wants.append(KeepPlace) };
@@ -2411,6 +2420,10 @@ pub function back(m: Model): Option[Msg] {
   }
   if (m.choosing || m.settings || !rooted(m)) {
     return Some(Up);
+  }
+  // The back key does not stop a track that plays.
+  if (m.playing) {
+    return Some(Background);
   }
   return None;
 }
