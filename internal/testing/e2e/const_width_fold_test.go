@@ -5,30 +5,32 @@ import (
 	"testing"
 )
 
-func TestConstFoldMatchesRuntimeAtDeclaredWidth(t *testing.T) {
+func TestLetFoldMatchesRuntimeAtDeclaredWidth(t *testing.T) {
 	cases := []struct {
 		name string
 		ty   string
 		expr string
 		seed string
+		want string
 	}{
-		{"i32_add_overflow_then_halve", "i32", "(@ + 1) / 2", "2147483647"},
-		{"i32_shift_count_over_width", "i32", "(@ << 33) & 255", "1"},
-		{"u8_add_wraps_at_8_bits", "u8", "(@ + 1) / 2", "255"},
-		{"u32_subtract_wraps", "u32", "@ - 1", "0"},
-		{"i32_multiply_wraps", "i32", "@ * 100000", "100000"},
-		{"u32_divide_is_unsigned", "u32", "(@ - 2) / 2", "0"},
-		{"u32_shift_right_is_logical", "u32", "(@ - 1) >> 1", "0"},
-		{"i32_shift_right_is_arithmetic", "i32", "(@ - 8) >> 33", "0"},
-		{"i64_shift_count_masks_to_63", "i64", "@ << 64", "1"},
+		{"i32_add_overflow_then_halve", "i32", "(@ + 1) / 2", "2147483647", "-1073741824"},
+		{"i32_shift_count_over_width", "i32", "(@ << 33) & 255", "1", "2"},
+		{"u8_add_wraps_at_8_bits", "u8", "(@ + 1) / 2", "255", "0"},
+		{"u32_subtract_wraps", "u32", "@ - 1", "0", "4294967295"},
+		{"i32_multiply_wraps", "i32", "@ * 100000", "100000", "1410065408"},
+		{"u32_divide_is_unsigned", "u32", "(@ - 2) / 2", "0", "2147483647"},
+		{"u32_shift_right_is_logical", "u32", "(@ - 1) >> 1", "0", "2147483647"},
+		{"i32_shift_right_is_arithmetic", "i32", "(@ - 8) >> 33", "0", "-4"},
+		{"i64_shift_count_masks_to_63", "i64", "@ << 64", "1", "1"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			src := "const K: " + c.ty + " = " + strings.ReplaceAll(c.expr, "@", c.seed) + ";\n" +
+			src := "@noinline function runtime(s: " + c.ty + "): " + c.ty + " { return " + strings.ReplaceAll(c.expr, "@", "s") + "; }\n" +
 				"function main(): i32 {\n" +
-				"    let s: " + c.ty + " = " + c.seed + ";\n" +
-				"    let r: " + c.ty + " = " + strings.ReplaceAll(c.expr, "@", "s") + ";\n" +
-				"    if (K == r) { return 0; }\n" +
+				"    let folded: " + c.ty + " = " + strings.ReplaceAll(c.expr, "@", c.seed) + ";\n" +
+				"    let r: " + c.ty + " = runtime(" + c.seed + ");\n" +
+				"    let want: " + c.ty + " = " + c.want + ";\n" +
+				"    if (folded == want && r == want) { return 0; }\n" +
 				"    return 7;\n}\n"
 			assertExitsZeroEverywhere(t, src)
 		})
