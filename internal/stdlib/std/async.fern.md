@@ -809,7 +809,7 @@ pub enum TaskStatus[T] { Done(T), Suspended(Wait) }
 // Each copy of a task's handle shares one TaskShared, so a copy that is used
 // after the task moved on reads the task's state, not a freed record.
 // `step` counts the parks, and `wait` is what the task waits for now.
-pub struct TaskShared { phase: i32, step: i32, wait: Wait }
+struct TaskShared { phase: i32, step: i32, wait: Wait }
 
 const TASK_NEW: i32 = 0;
 
@@ -821,7 +821,9 @@ const TASK_DONE: i32 = 3;
 
 const TASK_CANCELLED: i32 = 4;
 
-pub struct Task[T] { id: i32, entry: () => T, shared: Cell[TaskShared] }
+// Only this module builds a handle or reads its fields, so a program cannot
+// pair an id with another function or with another state.
+pub opaque struct Task[T] { id: i32, entry: () => T, shared: Cell[TaskShared] }
 ```
 
 ### `19 pub function task_new[T](entry: () => T): Task[T]`
@@ -834,9 +836,20 @@ pub function task_new[T](entry: () => T): Task[T] {
   }
 }
 
-// The handle of a task that another scheduler parked under `id`.
-pub function task_adopted[T](id: i32, entry: () => T): Task[T] {
+// The handle of a task that another scheduler parked under `id`. The caller
+// proves that `id` is the id of that task and that `entry` is its entry.
+pub unsafe function task_adopted[T](id: i32, entry: () => T): Task[T] {
   return Task { id: id, entry: entry, shared: cell_new(__task_shared(TASK_PARKED)) };
+}
+
+// The id of the runtime record of the task.
+pub function task_id[T](t: Task[T]): i32 {
+  return t.id;
+}
+
+// The entry that the task runs.
+pub function task_entry[T](t: Task[T]): () => T {
+  return t.entry;
 }
 
 function __task_shared(phase: i32): TaskShared {

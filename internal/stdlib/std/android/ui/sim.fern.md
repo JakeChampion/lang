@@ -6,7 +6,7 @@ This module runs a program of `std/android/ui` on the host with no phone, for th
 
 A `Sim` holds the shell of a program and a `Device` that draws nothing. `start` gives the program a window and draws its first frame.
 
-Each function then does what a person does. `tap` and `hold` find an element by the text that it shows, or by what an accessibility service reads for it. `drag` moves a finger, and `type_in` types a text into a field. `enter` presses the action key of the keyboard, `key` presses a key of a hardware keyboard, and `back` presses the back key. `after` lets time go by, and `send` gives the program a message with no touch.
+Each function then does what a person does. `tap` and `hold` find an element by the text that it shows, or by what an accessibility service reads for it. `drag` moves a finger, `hold_drag` moves a finger after a long press, and `type_in` types a text into a field. `enter` presses the action key of the keyboard, `key` presses a key of a hardware keyboard, and `back` presses the back key. `after` lets time go by, and `send` gives the program a message with no touch. `place_of` gives the place of an element, for a gesture that starts or ends there.
 
 After each event, the simulator draws a frame, as the display does at the next vsync. So the layout that the test reads is the layout that the person sees.
 
@@ -233,7 +233,7 @@ function middle(n: scene.Node): Option[(i32, i32)] {
 
 // Where a person puts a finger for `label`: the middle of the element
 // number `nth`, from 0, that shows or says `label`.
-function place_of[S, M](s: Sim[S, M], label: string, nth: i32): Option[(i32, i32)] {
+pub function place_of[S, M](s: Sim[S, M], label: string, nth: i32): Option[(i32, i32)] {
   let seen = 0;
   for n in s.shell.host.lay.nodes {
     if (labelled(n, label)) {
@@ -298,14 +298,36 @@ pub function slide[S, M](own s: Sim[S, M], label: string, part: f64): Sim[S, M] 
 // A finger goes down at x0 and y0, moves to x1 and y1 in `ms`
 // milliseconds, and lifts there. A frame draws each 16 ms.
 pub function drag[S, M](own s: Sim[S, M], x0: i32, y0: i32, x1: i32, y1: i32, ms: i64): Sim[S, M] {
-  let t = event(s, android.Touch(0, x0 as f32, y0 as f32));
+  let t = moved_to(event(s, android.Touch(0, x0 as f32, y0 as f32)), (x0, y0), (x1, y1), ms);
+  return event(t, android.Touch(1, x1 as f32, y1 as f32));
+}
+
+// A finger stays for 600 ms at x0 and y0, so a long press lifts the row of
+// a list that moves its rows. Then the finger moves to x1 and y1 in `ms`
+// milliseconds, stays there for `stay` milliseconds, and lifts. A frame
+// draws each 16 ms.
+pub function hold_drag[S, M](own s: Sim[S, M], x0: i32, y0: i32, x1: i32, y1: i32, ms: i64, stay: i64): Sim[S, M] {
+  let held = after(event(s, android.Touch(0, x0 as f32, y0 as f32)), 600i64);
+  let t = moved_to(held, (x0, y0), (x1, y1), ms);
+  for i in 0..(stay / FRAME_MS) as i32 {
+    t = frame(later(t, FRAME_MS));
+  }
+  return event(t, android.Touch(1, x1 as f32, y1 as f32));
+}
+
+// The finger that is down at `from` moves to `to` in `ms` milliseconds,
+// with one move for each frame.
+function moved_to[S, M](own s: Sim[S, M], from: (i32, i32), to: (i32, i32), ms: i64): Sim[S, M] {
+  let (x0, y0) = from;
+  let (x1, y1) = to;
+  let t = s;
   let steps = (ms / FRAME_MS).max(1i64) as i32;
   for i in 1..steps + 1 {
     let x = x0 + (x1 - x0) * i / steps;
     let y = y0 + (y1 - y0) * i / steps;
     t = event(later(t, FRAME_MS), android.Touch(2, x as f32, y as f32));
   }
-  return event(t, android.Touch(1, x1 as f32, y1 as f32));
+  return t;
 }
 
 // A tap on the field `name`, then the keyboard of the system gives it the

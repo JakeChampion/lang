@@ -688,6 +688,13 @@ x86_64/perceus_rbtree.text	2861
 x86_64/perceus_rbtree.ir	42230837
 x86_64/perceus_rbtree_ck.text	2943
 x86_64/perceus_rbtree_ck.ir	41602517
+# 2026-11-12 (#15554): PR #15558 job 131516922622 on main 1bbf2294 measures
+# 13 aarch64 rows below their pins: deflate_decode.text -1.76%,
+# deflate_encode.text -1.06%, ordmap_insert.ir -3.63%, perceus_cfold.text
+# -1.56%, perceus_cfold.ir -6.34%, perceus_deriv.text -1.91%,
+# perceus_deriv.ir -1.25%, perceus_nqueens.ir -1.85%, perceus_rbtree.text
+# -1.40%, perceus_rbtree.ir -10.29%, perceus_rbtree_ck.ir -9.17%,
+# pmap_insert.ir -2.07%, pvec_with.ir -2.85%. The tolerances are unchanged.
 aarch64/perceus_cfold.text	2150
 aarch64/perceus_cfold.ir	54945203
 aarch64/perceus_deriv.text	2878

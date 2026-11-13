@@ -1,0 +1,7 @@
+// spec: IS-16
+// Operands with a suffix are in the declared type, and their sum is not.
+const BYTE: u8 = 200u8 + 100u8;
+
+function main(): i32 {
+    return BYTE as i32;
+}
