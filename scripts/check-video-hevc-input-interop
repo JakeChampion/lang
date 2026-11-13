@@ -55,6 +55,15 @@ def picture_packets(packets, data):
     return packets
 
 
+def prefix_offset(data, at):
+    for marker in re.finditer(b"\x00{2,}\x01", data):
+        if marker.start() <= at < marker.end():
+            assert data[marker.start():at] == b"\0" * (at - marker.start())
+            assert data[at:marker.end()] in (b"\0\0\1", b"\0\0\0\1")
+            return marker.start()
+    raise AssertionError(f"FFprobe packet offset {at} does not identify a start prefix")
+
+
 def compare(path, frames):
     data = path.read_bytes()
     metadata = json.loads(subprocess.check_output(["ffprobe", "-v", "error", "-show_packets", "-show_streams",
@@ -74,7 +83,7 @@ def compare(path, frames):
         original = units(data[at:at + size])
         canonical = b"".join(b"\x00\x00\x00\x01" + unit for unit in original)
         kind = next(unit[0] >> 1 & 63 for unit in original if unit[0] >> 1 & 63 < 32)
-        assert tag == "H" and int(offset) == at and bytes.fromhex(payload) == canonical
+        assert tag == "H" and int(offset) == prefix_offset(data, at) and bytes.fromhex(payload) == canonical
         assert int(irap) == int(16 <= kind <= 21) and int(idr) == int(kind in (19, 20))
         rebuilt += canonical
     restored = path.with_name("fern-" + path.name)

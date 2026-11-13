@@ -587,6 +587,8 @@ The malformed-input cases cover packet truncation, runs, skips, dimensions, outp
 
 `scripts/check-video-hevc-input-interop` compares twelve cases with 234 coded pictures from fresh x265 streams.
 Native and real WASI output match FFprobe picture positions, canonical payloads, and all FFmpeg decoded planes.
+FFprobe versions can report the three-byte suffix of a four-byte start prefix as the packet position.
+The comparison resolves the complete prefix from source bytes and verifies every payload byte.
 For terminal EOS/EOB, FFprobe emits a separate control-only packet.
 The comparison joins only the exact empty EOS/EOB pair to the preceding picture and verifies every byte.
 This follows the access-unit association in [ITU-T H.265](https://www.itu.int/rec/T-REC-H.265-202407-S/en), clause 7.4.2.4.4.
