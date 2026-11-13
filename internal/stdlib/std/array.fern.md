@@ -872,6 +872,17 @@ pub function rotate_right[T](xs: T[], n: i32): T[] {
   return rotate_left(xs, 0 - n);
 }
 
+// `xs` with the element at `from` moved to the index `to`. The elements
+// between the two keep their order. An index outside `xs` gives `xs`.
+pub function moved[T](xs: T[], from: i32, to: i32): T[] {
+  let n = xs.len();
+  if (from < 0 || from >= n || to < 0 || to >= n) {
+    return xs;
+  }
+  let rest = slice(xs, 0, from).concat(slice(xs, from + 1, n));
+  return slice(rest, 0, to).append(xs[from]).concat(slice(rest, to, n - 1));
+}
+
 pub function take[T](xs: T[], n: i32): T[] {
   return xs.truncate(n);
 }
@@ -1327,6 +1338,10 @@ pub function (xs: T[]) rotate_left(n: i32): T[] {
 
 pub function (xs: T[]) rotate_right(n: i32): T[] {
   return rotate_right(xs, n);
+}
+
+pub function (xs: T[]) moved(from: i32, to: i32): T[] {
+  return moved(xs, from, to);
 }
 
 pub function (xs: T[]) reduce(f: (T, T) => T): Option[T] {

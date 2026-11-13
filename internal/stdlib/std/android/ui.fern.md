@@ -16,21 +16,25 @@ The executable example below is such an app.
 
 `column` puts its elements one below the other, `row` puts them side by side, and `stack` puts them one over the other. `text` shows a text, which wraps at the width of its box. `picture` shows an image, and `canvas` shows what a function of the app draws. `box` is an empty rectangle, and `space` takes the room that is left.
 
-Each element has a width and a height: `Hug` takes the size of what the element holds, `Grow` takes a share of the room that is left, and `Exact` is a size in dp. The methods of `El` set them, and they set the padding, the gap, the background, the corners and the border. Sizes are in dp, and text sizes are in sp: a text grows with the font size that the person set for the system. `align` sets where a column or a row puts its elements across it, and `justify` sets where it puts them along it.
+Each element has a width and a height. `Hug` takes the size of what the element holds, and `Grow` takes a share of the room that is left. `Exact` is a size in dp.
+
+The methods of `El` set them, and they set the padding, the gap, the background, the corners and the border. Sizes are in dp, and text sizes are in sp: a text grows with the font size that the person set for the system. `align` sets where a column or a row puts its elements across it, and `justify` sets where it puts them along it.
 
 `on_tap` gives an element a message. A tap on the element gives that message to `update`. A message can hold values: the row of a list, for example. `on_long` does the same for a long press. `slider` is a bar with a thumb, and `on_slide` gives each element the message of a finger that moves across it.
 
 `field` is a text field of one line, and `area` is a text field of more than one line. A tap gives a field the focus and shows the keyboard of the system, and a tap on its text puts the caret there. The program keeps the text. `on_edit` gives the field a function that makes a message from the new text, and each change gives that message to `update`. `view` gives the field the text that it shows. `on_submit` gives the field the message of the action key of the keyboard.
 
-`scroll` makes a column a list that scrolls down, and a row a list that scrolls across, with the fling of an Android list and a spring at each end. `list` is a list that makes only the rows that show, so a list of many rows costs as much as a short one. Each list has a name, which keeps its position from frame to frame.
+`scroll` makes a column a list that scrolls down, and a row a list that scrolls across. Each list has the fling of an Android list and a spring at each end. `list` is a list that makes only the rows that show, so a list of many rows costs as much as a short one. Each list has a name, which keeps its position from frame to frame.
+
+`on_move` lets a person move the rows of a `list`: a long press lifts a row, and the row goes with the finger. `on_swipe` lets a person drag a row across the list to take it out.
 
 A color is a pixel word of `std/android/draw`, or a role: `PRIMARY`, `ON_PRIMARY`, `INK`, `MUTED`, `SURFACE`, `OUTLINE`, `BACKGROUND` and `TRACK`. A role takes its color from the `Theme`, which is light or dark as the system is. `button`, `outlined_button`, `card`, `toggle`, `progress` and `divider` are elements in the look of Material 3.
 
 ### Messages
 
-An element gives the messages of `on_tap`, `on_long`, `on_edit` and `on_submit`. A program gives the others. `with_tick` gives a message each time the time of its `wait` goes by. `with_frames` gives a message for each frame while its `animating` is true, with the time of the frame. `with_back` gives a message for the back key, or lets the back key close the app. `with_system` gives a message for an event of `std/android` that this module does not use itself.
-`with_close` takes the final state during Destroy and returns its closed state.
-The callback runs before Android frees the context or detaches the loop thread from the JVM.
+An element gives the messages of `on_tap`, `on_long`, `on_slide`, `on_edit` and `on_submit`, and a list gives the messages of `on_move` and `on_swipe`. A program gives the others. `with_tick` gives a message each time the time of its `wait` goes by. `with_frames` gives a message for each frame while its `animating` is true, with the time of the frame. `with_back` gives a message for the back key, or lets the back key close the app. `with_system` gives a message for an event of `std/android` that this module does not use itself.
+
+`with_close` takes the final state during Destroy and returns its closed state. The callback runs before Android frees the context or detaches the loop thread from the JVM.
 
 `with_theme` gives the colors for the light system and for the dark system. `with_theme_of` gives them for the state of the program also.
 
@@ -79,7 +83,7 @@ function update(own m: Model, msg: Msg): Model {
 
 function main(): i32 {
   let screen = ui.Screen { w: 400, h: 800, d: 2.0, dark: false, theme: ui.theme(false), left: 0, top: 0, right: 0, bottom: 0, font: 1.0 };
-  let lay = ui.layout(view(Model { count: 0 }, screen), text.Fonts { faces: [], weights: [] }, screen, map_new(4), ui.no_focus());
+  let lay = ui.layout(view(Model { count: 0 }, screen), text.Fonts { faces: [], weights: [] }, screen, map_new(4), ui.no_focus(), ui.no_grab());
   let next = update(Model { count: 0 }, lay.taps[0]);
   if (lay.nodes.len() == 3 && lay.taps.len() == 1 && next.count == 1) {
     return 0;
@@ -297,10 +301,14 @@ pub struct El[M] {
   // The message of a finger that is down on the element or moves on it,
   // from the part of the width that the finger is at.
   slide: Option[(f64) => M],
+  // A list: the message of a row that a finger moved to a new place, and
+  // the message of a row that a finger swiped away.
+  moves: Option[(i32, i32) => M],
+  swipes: Option[(i32) => M],
 }
 
 function element[M](kind: i32, kids: El[M][]): El[M] {
-  return El { kind: kind, kids: kids, w: Hug, h: Hug, pad: Edges { left: 0.0, top: 0.0, right: 0.0, bottom: 0.0 }, gap: 0.0, align: START, justify: START, bg: 0, radius: 0.0, edge: 0, edge_width: 0.0, tap: None, long: None, barrier: false, say: "", list: "", content: "", size: 14.0, weight: 400, ink: INK, lines: 0, key: "", image: None, paint: None, count: 0, row: 0.0, build: None, field: "", hint: "", edit: None, submit: None, slide: None };
+  return El { kind: kind, kids: kids, w: Hug, h: Hug, pad: Edges { left: 0.0, top: 0.0, right: 0.0, bottom: 0.0 }, gap: 0.0, align: START, justify: START, bg: 0, radius: 0.0, edge: 0, edge_width: 0.0, tap: None, long: None, barrier: false, say: "", list: "", content: "", size: 14.0, weight: 400, ink: INK, lines: 0, key: "", image: None, paint: None, count: 0, row: 0.0, build: None, field: "", hint: "", edit: None, submit: None, slide: None, moves: None, swipes: None };
 }
 
 // The elements one below the other.
@@ -506,6 +514,20 @@ pub function (e: El[M]) on_long(m: M): El[M] {
   return El { ...e, long: Some(m) };
 }
 
+// A long press on a row of the list lifts the row, and a drag moves it.
+// When the finger lifts, the list gives the message that `moved` makes
+// from the row and its new place. Only a `list` moves its rows.
+pub function (e: El[M]) on_move(moved: (i32, i32) => M): El[M] {
+  return El { ...e, moves: Some(moved) };
+}
+
+// A drag across a row of the list moves the row across. When the finger
+// lifts two fifths of the width of the list away, the list gives the
+// message that `swiped` makes from the row. Only a `list` swipes its rows.
+pub function (e: El[M]) on_swipe(swiped: (i32) => M): El[M] {
+  return El { ...e, swipes: Some(swiped) };
+}
+
 // Touches do not go to the elements below this one.
 pub function (e: El[M]) modal(): El[M] {
   return El { ...e, barrier: true };
@@ -631,7 +653,7 @@ function bounded(v: i32): boolean {
   return v < UNBOUNDED / 2;
 }
 
-struct Env { fonts: text.Fonts, d: f64, font: f64, theme: Theme, offsets: Map[string, i32], focus: Focus }
+struct Env { fonts: text.Fonts, d: f64, font: f64, theme: Theme, offsets: Map[string, i32], focus: Focus, grab: Grab }
 
 function px(env: Env, dp: f64): i32 {
   return (dp * env.d).round() as i32;
@@ -872,8 +894,11 @@ The elements of a list get the name of the list as their group, and the rows of 
 <<placement>>=
 // A list that scrolls: its name, its box, and how far it can scroll. It
 // scrolls across when `across` is true, and down when it is false.
-// `parent` is the name of the list that it is in, or "".
-pub struct Scroller { name: string, x: i32, y: i32, w: i32, h: i32, limit: i32, across: boolean, parent: string }
+// `parent` is the name of the list that it is in, or "". A `list` has
+// `count` rows of `row` pixels, and other lists have a `row` of 0.
+// `moves` and `swipes` are the indexes of the functions of `on_move` and
+// `on_swipe` in `Messages`, or -1.
+pub struct Scroller { name: string, x: i32, y: i32, w: i32, h: i32, limit: i32, across: boolean, parent: string, row: i32, count: i32, moves: i32, swipes: i32 }
 
 // The nodes of a screen, and its lists.
 pub struct Layout { nodes: scene.Node[], scrollers: Scroller[] }
@@ -889,13 +914,13 @@ pub struct FieldMessages[M] { name: string, edit: Option[(string) => M], submit:
 // node that gives a message has the name `MESSAGE_ACTION` and the index of
 // the message in `taps`. The tap action of a node that a finger slides on
 // has the name `SLIDER_ACTION` and the index of its function in `slides`.
-pub struct Messages[M] { taps: M[], fields: FieldMessages[M][], slides: ((f64) => M)[] }
+pub struct Messages[M] { taps: M[], fields: FieldMessages[M][], slides: ((f64) => M)[], moves: ((i32, i32) => M)[], swipes: ((i32) => M)[] }
 
 // The name of the tap action of a node that a finger slides on.
 pub const SLIDER_ACTION: string = "slider";
 
 pub function no_messages[M](): Messages[M] {
-  return Messages { taps: [], fields: [], slides: [] };
+  return Messages { taps: [], fields: [], slides: [], moves: [], swipes: [] };
 }
 
 // The name of the action of a node that gives a message. An accessibility
@@ -903,7 +928,7 @@ pub function no_messages[M](): Messages[M] {
 pub const MESSAGE_ACTION: string = "button";
 
 // A screen: its nodes, its lists and its messages.
-pub struct Built[M] { nodes: scene.Node[], scrollers: Scroller[], taps: M[], fields: FieldMessages[M][], slides: ((f64) => M)[] }
+pub struct Built[M] { nodes: scene.Node[], scrollers: Scroller[], taps: M[], fields: FieldMessages[M][], slides: ((f64) => M)[], moves: ((i32, i32) => M)[], swipes: ((i32) => M)[] }
 
 // The nodes and the lists of the screen.
 pub function (b: Built[M]) layout(): Layout {
@@ -912,7 +937,7 @@ pub function (b: Built[M]) layout(): Layout {
 
 // The messages of the screen.
 pub function (b: Built[M]) messages(): Messages[M] {
-  return Messages { taps: b.taps, fields: b.fields, slides: b.slides };
+  return Messages { taps: b.taps, fields: b.fields, slides: b.slides, moves: b.moves, swipes: b.swipes };
 }
 
 // The screen with the message `m`, and the action that gives it. No
@@ -920,7 +945,7 @@ pub function (b: Built[M]) messages(): Messages[M] {
 function with_message[M](own out: Built[M], m: Option[M]): (Built[M], scene.Action) {
   if let Some(message) = m {
     let at = out.taps.len();
-    return (Built { nodes: out.nodes, scrollers: out.scrollers, taps: out.taps.append(message), fields: out.fields, slides: out.slides }, scene.Action { name: MESSAGE_ACTION, arg: at });
+    return (Built { nodes: out.nodes, scrollers: out.scrollers, taps: out.taps.append(message), fields: out.fields, slides: out.slides, moves: out.moves, swipes: out.swipes }, scene.Action { name: MESSAGE_ACTION, arg: at });
   }
   return (out, scene.no_action());
 }
@@ -1018,7 +1043,7 @@ function place_text[M](env: Env, e: El[M], x: i32, y: i32, w: i32, clip: Clip, o
     let n = scene.node(x + shift(e.align, w - lw), y + i * t.line, lw, t.line, scene.Label(l, t.px, t.face, 0, color));
     nodes = nodes.append(clipped(n, clip));
   }
-  return Built { nodes: nodes, scrollers: out.scrollers, taps: out.taps, fields: out.fields, slides: out.slides };
+  return Built { nodes: nodes, scrollers: out.scrollers, taps: out.taps, fields: out.fields, slides: out.slides, moves: out.moves, swipes: out.swipes };
 }
 
 // What a field shows: its lines, the index of the first character of each
@@ -1157,7 +1182,7 @@ function place_field[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, clip
   for n in ns {
     nodes = nodes.append(clipped(n, clip));
   }
-  return Built { nodes: nodes, scrollers: out.scrollers, taps: out.taps, fields: out.fields, slides: out.slides };
+  return Built { nodes: nodes, scrollers: out.scrollers, taps: out.taps, fields: out.fields, slides: out.slides, moves: out.moves, swipes: out.swipes };
 }
 
 // The rows of a list that show, each in its box.
@@ -1166,16 +1191,103 @@ function place_rows[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, clip:
   let limit = (e.count * row - h).max(0);
   let at = offset_of(env, e.list, limit, h);
   let inner = Clip { ...clip, group: e.list, c0: clip.c0.max(y), c1: clip.c1.min(y + h) };
-  let o = Built { nodes: out.nodes, scrollers: out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit, across: false, parent: clip.group }), taps: out.taps, fields: out.fields, slides: out.slides };
+  let moves = index_of_some(out.moves.len(), e.moves.is_some());
+  let swipes = index_of_some(out.swipes.len(), e.swipes.is_some());
+  let lists = out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit, across: false, parent: clip.group, row: row, count: e.count, moves: moves, swipes: swipes });
+  let o = Built { nodes: out.nodes, scrollers: lists, taps: out.taps, fields: out.fields, slides: out.slides, moves: with_some(out.moves, e.moves), swipes: with_some(out.swipes, e.swipes) };
   let Some(build) = e.build else {
     return o;
   };
   let first = (at / row).max(0).min(e.count);
   let last = ((at + h + row - 1) / row).max(first).min(e.count);
+  let g = env.grab;
+  if (g.list == e.list && g.row >= 0 && g.row < e.count) {
+    return held_rows(env, build, g, e.count, x, y - at, w, row, (first, last), inner, o);
+  }
   for i in first..last {
     o = place(env, build(i), x, y + i * row - at, w, row, inner, o);
   }
   return o;
+}
+
+// The index that a function gets at the end of a list of `len`, or -1
+// when there is no function.
+function index_of_some(len: i32, some: boolean): i32 {
+  if (some) {
+    return len;
+  }
+  return -1;
+}
+
+function with_some[T](own xs: T[], x: Option[T]): T[] {
+  if let Some(v) = x {
+    return xs.append(v);
+  }
+  return xs;
+}
+
+// The place of the row `i` while the held row `from` is at the place `to`:
+// the rows between the two make room for it.
+function slot_of(i: i32, from: i32, to: i32): i32 {
+  if (from < i && i <= to) {
+    return i - 1;
+  }
+  if (to <= i && i < from) {
+    return i + 1;
+  }
+  return i;
+}
+
+// The rows of a list of `count` rows from `top`, while a finger holds the
+// row of `g`. `shown` has the first place that shows and the place after
+// the last one. The held row goes with the finger over a surface, and the
+// other rows make room for it at its new place. A held row that has not
+// moved keeps its place in the order of the nodes, so its node does not
+// change.
+function held_rows[M](env: Env, build: (i32) => El[M], g: Grab, count: i32, x: i32, top: i32, w: i32, row: i32, shown: (i32, i32), clip: Clip, own out: Built[M]): Built[M] {
+  let (first, last) = shown;
+  let to = target(g, row, count);
+  let still = g.shift == 0;
+  let o = out;
+  for i in (first - 1).max(0)..(last + 1).min(count) {
+    let slot = held_slot(i, g, to);
+    if (i == g.row && still) {
+      o = with_lift(env, o, clip, x, top + slot * row, w, row);
+    }
+    if ((i != g.row || still) && slot >= first && slot < last) {
+      o = place(env, build(i), x, top + slot * row, w, row, clip, o);
+    }
+  }
+  if (still) {
+    return o;
+  }
+  let (lx, ly) = lifted_at(g, x, top + g.row * row);
+  return place(env, build(g.row), lx, ly, w, row, clip, with_lift(env, o, clip, lx, ly, w, row));
+}
+
+// The place of the row `i` while the row of `g` is held at the place `to`.
+// A row that swipes moves no other row.
+function held_slot(i: i32, g: Grab, to: i32): i32 {
+  if (g.across) {
+    return i;
+  }
+  return slot_of(i, g.row, to);
+}
+
+// Where the held row of `g` is, when its place is at x and y.
+function lifted_at(g: Grab, x: i32, y: i32): (i32, i32) {
+  if (g.across) {
+    return (x + g.shift, y);
+  }
+  return (x, y + g.shift);
+}
+
+// The screen with the surface of a held row in the box x, y, w, h.
+function with_lift[M](env: Env, own out: Built[M], clip: Clip, x: i32, y: i32, w: i32, h: i32): Built[M] {
+  let r = px(env, 12.0);
+  let base = clipped(scene.node(x, y, w, h, scene.Fill(env.theme.surface, r)), clip);
+  let tint = clipped(scene.node(x, y, w, h, scene.Fill(env.theme.pressed, r)), clip);
+  return Built { nodes: out.nodes.append(base).append(tint), scrollers: out.scrollers, taps: out.taps, fields: out.fields, slides: out.slides, moves: out.moves, swipes: out.swipes };
 }
 
 // The elements of a row, each in its box, from the column `left` on. An
@@ -1214,7 +1326,7 @@ function place_row[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, clip: 
   }
   if (scrolls) {
     let limit = (total - w).max(0);
-    let o = Built { nodes: out.nodes, scrollers: out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit, across: true, parent: clip.group }), taps: out.taps, fields: out.fields, slides: out.slides };
+    let o = Built { nodes: out.nodes, scrollers: out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit, across: true, parent: clip.group, row: 0, count: 0, moves: -1, swipes: -1 }), taps: out.taps, fields: out.fields, slides: out.slides, moves: out.moves, swipes: out.swipes };
     let inner = Clip { ...clip, group: e.list, left: clip.left.max(x), right: clip.right.min(x + w) };
     return place_along(env, e, ss, x - offset_of(env, e.list, limit, w), y, h, gap, inner, o);
   }
@@ -1260,7 +1372,7 @@ function place_column[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, cli
   }
   if (scrolls) {
     let limit = (total - h).max(0);
-    let o = Built { nodes: out.nodes, scrollers: out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit, across: false, parent: clip.group }), taps: out.taps, fields: out.fields, slides: out.slides };
+    let o = Built { nodes: out.nodes, scrollers: out.scrollers.append(Scroller { name: e.list, x: x, y: y, w: w, h: h, limit: limit, across: false, parent: clip.group, row: 0, count: 0, moves: -1, swipes: -1 }), taps: out.taps, fields: out.fields, slides: out.slides, moves: out.moves, swipes: out.swipes };
     let inner = Clip { ...clip, group: e.list, c0: clip.c0.max(y), c1: clip.c1.min(y + h) };
     return place_down(env, e, ss, x, y - offset_of(env, e.list, limit, h), w, gap, inner, o);
   }
@@ -1288,7 +1400,7 @@ function place[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, clip: Clip
   for n in own_nodes(env, e, x, y, w, h, clip, tap, long) {
     nodes = nodes.append(n);
   }
-  let o = Built { nodes: nodes, scrollers: both.scrollers, taps: both.taps, fields: fields, slides: slides };
+  let o = Built { nodes: nodes, scrollers: both.scrollers, taps: both.taps, fields: fields, slides: slides, moves: both.moves, swipes: both.swipes };
   let ix = x + px(env, e.pad.left);
   let iy = y + px(env, e.pad.top);
   let iw = (w - px(env, e.pad.left) - px(env, e.pad.right)).max(0);
@@ -1318,9 +1430,9 @@ function place[M](env: Env, e: El[M], x: i32, y: i32, w: i32, h: i32, clip: Clip
 // The nodes, the lists and the messages of the tree `root` on the screen `s`. The tree
 // takes the part of the screen that is free, or its exact size. `offsets`
 // has how far each list scrolls, by its name. `focus` has the field that
-// has the focus, and its caret.
-pub function layout[M](root: El[M], fonts: text.Fonts, s: Screen, offsets: Map[string, i32], focus: Focus): Built[M] {
-  let env = Env { fonts: fonts, d: s.d, font: s.font, theme: s.theme, offsets: offsets, focus: focus };
+// has the focus, and its caret. `grab` has the row that a finger holds.
+pub function layout[M](root: El[M], fonts: text.Fonts, s: Screen, offsets: Map[string, i32], focus: Focus, grab: Grab): Built[M] {
+  let env = Env { fonts: fonts, d: s.d, font: s.font, theme: s.theme, offsets: offsets, focus: focus, grab: grab };
   let w = (s.w - s.left - s.right).max(0);
   let h = (s.h - s.top - s.bottom).max(0);
   if (exact(env, root.w) >= 0) {
@@ -1329,7 +1441,7 @@ pub function layout[M](root: El[M], fonts: text.Fonts, s: Screen, offsets: Map[s
   if (exact(env, root.h) >= 0) {
     h = exact(env, root.h);
   }
-  return place(env, root, s.left, s.top, w, h, Clip { group: "", c0: 0, c1: scene.NO_CLIP, left: 0, right: scene.NO_CLIP }, Built { nodes: [], scrollers: [], taps: [], fields: [], slides: [] });
+  return place(env, root, s.left, s.top, w, h, Clip { group: "", c0: 0, c1: scene.NO_CLIP, left: 0, right: scene.NO_CLIP }, Built { nodes: [], scrollers: [], taps: [], fields: [], slides: [], moves: [], swipes: [] });
 }
 ```
 
@@ -1341,6 +1453,10 @@ A touch that starts on a list and drags scrolls the list. A drag across scrolls 
 
 A finger can pull a list past its end, and the list goes half as far as the finger. When the finger lifts, the list springs back. A fling that reaches the end of its list goes past it by its speed and springs back too.
 
+A long press on a row of a `list` with `on_move` lifts the row. The row goes with the finger, and the other rows make room for it. When the finger is in the top row or the bottom row of the list, the list scrolls under the held row. It scrolls as far as 12 rows in a second. When the finger lifts, the list gives the message of `on_move` with the row and its new place. A finger that lifts before it moves gives the long press message of the node under it.
+
+A drag across a row of a `list` with `on_swipe` moves the row across, and scrolls no list. When the finger lifts two fifths of the width of the list away, the list gives the message of `on_swipe` with the row. Nearer, the row goes back to its place.
+
 ```fern
 <<gestures>>=
 const SLOP_DP: f64 = 8.0;
@@ -1351,15 +1467,41 @@ const LONG_PRESS_NS: i64 = 400000000i64;
 // that it went down, and the node that it went down on. `inner` is the
 // list under the finger. After the finger passes the slop, `group` is the
 // list that it drags, across or down, and `scroll0` is how far that list
-// was pulled when the drag started.
-pub struct Press { active: boolean, x0: i32, y0: i32, x: i32, y: i32, at: i64, moved: boolean, fired: boolean, target: Option[scene.Node], inner: string, group: string, across: boolean, scroll0: i32, samples: motion.Sample[] }
+// was pulled when the drag started. `row` is the row of `inner` under the
+// finger when `inner` moves or swipes its rows, and -1 when it does not.
+// `lifts` tells that a long press lifts that row.
+pub struct Press { active: boolean, x0: i32, y0: i32, x: i32, y: i32, at: i64, moved: boolean, fired: boolean, target: Option[scene.Node], inner: string, group: string, across: boolean, scroll0: i32, samples: motion.Sample[], row: i32, lifts: boolean }
+
+// The row `row` that a finger holds in the list `list`. The row goes with
+// the finger across the list when `across` is true, and down the list when
+// it is false. `shift` is how far the row is from its place, in pixels.
+// `from` is where the finger was along the list when the row started to
+// move, and `scroll0` is how far the list scrolled then. `pull` is from -1
+// to 1: how fast the list scrolls under the row, up or down. `at` is the
+// time of the last scroll.
+pub struct Grab { list: string, row: i32, across: boolean, shift: i32, from: i32, scroll0: i32, pull: f64, at: i64 }
 
 // The finger, the list that flings, the list that springs back to its end,
-// and how far each list scrolls.
-pub struct Input { press: Press, flung: string, fling: motion.Fling, sprung: string, spring: motion.Spring, offsets: Map[string, i32] }
+// how far each list scrolls, and the row that the finger holds.
+pub struct Input { press: Press, flung: string, fling: motion.Fling, sprung: string, spring: motion.Spring, offsets: Map[string, i32], grab: Grab }
 
 function no_press(): Press {
-  return Press { active: false, x0: 0, y0: 0, x: 0, y: 0, at: 0i64, moved: false, fired: false, target: None, inner: "", group: "", across: false, scroll0: 0, samples: [] };
+  return Press { active: false, x0: 0, y0: 0, x: 0, y: 0, at: 0i64, moved: false, fired: false, target: None, inner: "", group: "", across: false, scroll0: 0, samples: [], row: -1, lifts: false };
+}
+
+// No row that a finger holds.
+pub function no_grab(): Grab {
+  return Grab { list: "", row: -1, across: false, shift: 0, from: 0, scroll0: 0, pull: 0.0, at: 0i64 };
+}
+
+// The place that the row of `g` goes to in a list of `count` rows of `row`
+// pixels.
+function target(g: Grab, row: i32, count: i32): i32 {
+  if (g.across) {
+    return g.row;
+  }
+  let by = (g.shift as f64 / (row.max(1) as f64)).round() as i32;
+  return (g.row + by).max(0).min(count - 1);
 }
 
 function no_spring(): motion.Spring {
@@ -1367,7 +1509,7 @@ function no_spring(): motion.Spring {
 }
 
 pub function no_input(): Input {
-  return Input { press: no_press(), flung: "", fling: motion.no_fling(), sprung: "", spring: no_spring(), offsets: map_new(8) };
+  return Input { press: no_press(), flung: "", fling: motion.no_fling(), sprung: "", spring: no_spring(), offsets: map_new(8), grab: no_grab() };
 }
 
 // The list `name` of `lay`.
@@ -1436,9 +1578,44 @@ function pulled(at: i32, limit: i32): i32 {
   return at;
 }
 
+// The row at `y` of the list `name` of `lay` when the list moves or swipes
+// its rows, or -1.
+function row_at(inp: Input, lay: Layout, name: string, y: i32): i32 {
+  let Some(s) = scroller_of(lay, name) else {
+    return -1;
+  };
+  let at = y - s.y + inp.offset(name);
+  if (s.row <= 0 || s.moves < 0 && s.swipes < 0 || at < 0) {
+    return -1;
+  }
+  let row = at / s.row;
+  if (row >= s.count) {
+    return -1;
+  }
+  return row;
+}
+
+// The list `name` of `lay` moves its rows.
+function moves_rows(lay: Layout, name: string): boolean {
+  if let Some(s) = scroller_of(lay, name) {
+    return s.moves >= 0;
+  }
+  return false;
+}
+
+// The list `name` of `lay` swipes its rows.
+function swipes_rows(lay: Layout, name: string): boolean {
+  if let Some(s) = scroller_of(lay, name) {
+    return s.swipes >= 0;
+  }
+  return false;
+}
+
 function down(inp: Input, lay: Layout, x: i32, y: i32, now: i64): Input {
-  let press = Press { ...no_press(), active: true, x0: x, y0: y, x: x, y: y, at: now, target: scene.hit(lay.nodes, x, y), inner: scene.group_at(lay.nodes, x, y) };
-  return Input { ...inp, press: press, flung: "", fling: motion.no_fling(), sprung: "", spring: no_spring() };
+  let inner = scene.group_at(lay.nodes, x, y);
+  let row = row_at(inp, lay, inner, y);
+  let press = Press { ...no_press(), active: true, x0: x, y0: y, x: x, y: y, at: now, target: scene.hit(lay.nodes, x, y), inner: inner, row: row, lifts: row >= 0 && moves_rows(lay, inner) };
+  return Input { ...inp, press: press, flung: "", fling: motion.no_fling(), sprung: "", spring: no_spring(), grab: no_grab() };
 }
 
 // The finger of `p` went down on a node that it slides on.
@@ -1470,14 +1647,56 @@ function along(p: Press, x: i32, y: i32): i32 {
   return y;
 }
 
+// The input with the held row where the finger is, and with the speed of
+// the list under it: a finger in the top row or the bottom row of the list
+// scrolls it. The row stays at its place until the finger moves.
+function held(inp: Input, lay: Layout, now: i64): Input {
+  let g = inp.grab;
+  let p = inp.press;
+  if (!p.moved) {
+    return inp;
+  }
+  if (g.across) {
+    return Input { ...inp, grab: Grab { ...g, shift: p.x - g.from } };
+  }
+  let pull = 0.0;
+  if let Some(s) = scroller_of(lay, g.list) {
+    let edge = s.row.max(1);
+    if (p.y < s.y + edge) {
+      pull = 0.0 - ((s.y + edge - p.y) as f64 / (edge as f64)).min(1.0);
+    }
+    if (p.y > s.y + s.h - edge) {
+      pull = ((p.y - (s.y + s.h - edge)) as f64 / (edge as f64)).min(1.0);
+    }
+  }
+  let at = g.at;
+  if (g.pull == 0.0) {
+    at = now;
+  }
+  return Input { ...inp, grab: Grab { ...g, shift: p.y - g.from + inp.offset(g.list) - g.scroll0, pull: pull, at: at } };
+}
+
+// The press of `p` drags across a row of a list that swipes its rows.
+function swipes(lay: Layout, p: Press): boolean {
+  return p.across && p.row >= 0 && !on_slider(p) && swipes_rows(lay, p.inner);
+}
+
 function moved(inp: Input, lay: Layout, x: i32, y: i32, now: i64, d: f64): Input {
   let p = inp.press;
   let slop = (SLOP_DP * d) as i32;
-  if (!p.moved && (x - p.x0).abs() <= slop && (y - p.y0).abs() <= slop) {
+  let within = !p.moved && (x - p.x0).abs() <= slop && (y - p.y0).abs() <= slop;
+  if (inp.grab.list.len() > 0) {
+    return held(Input { ...inp, press: Press { ...p, x: x, y: y, moved: p.moved || !within } }, lay, now);
+  }
+  if (within) {
     return Input { ...inp, press: Press { ...p, x: x, y: y } };
   }
   if (!p.moved) {
     p = dragged(inp, lay, x, y);
+    if (swipes(lay, p)) {
+      let g = Grab { ...no_grab(), list: p.inner, row: p.row, across: true, from: x, at: now };
+      return held(Input { ...inp, press: Press { ...p, x: x, y: y, group: "" }, grab: g }, lay, now);
+    }
   }
   let at = along(p, x, y);
   let next = Input { ...inp, press: Press { ...p, x: x, y: y, samples: motion.track(p.samples, motion.Sample { t: now, y: at as f64 }) } };
@@ -1505,7 +1724,10 @@ function released(inp: Input, lay: Layout, p: Press, x: i32, y: i32, now: i64, d
 
 function up(inp: Input, lay: Layout, x: i32, y: i32, now: i64, d: f64): (Input, Option[scene.Node]) {
   let p = inp.press;
-  let rest = Input { ...inp, press: no_press() };
+  let rest = Input { ...inp, press: no_press(), grab: no_grab() };
+  if (inp.grab.list.len() > 0) {
+    return (rest, None);
+  }
   if (p.moved) {
     if (p.group.len() == 0) {
       return (rest, None);
@@ -1541,7 +1763,7 @@ pub function touch(inp: Input, lay: Layout, action: i32, x: i32, y: i32, now: i6
     return up(inp, lay, x, y, now, d);
   }
   if (action == 3) {
-    return (Input { ...inp, press: no_press() }, None);
+    return (Input { ...inp, press: no_press(), grab: no_grab() }, None);
   }
   return (inp, None);
 }
@@ -1561,10 +1783,16 @@ function long_target(inp: Input): Option[scene.Node] {
   return None;
 }
 
+// A long press of the finger can lift the row under it.
+function can_lift(inp: Input): boolean {
+  let p = inp.press;
+  return p.active && p.lifts && !p.moved && !p.fired && inp.grab.list.len() == 0 && !on_slider(p);
+}
+
 // The milliseconds from `now` to the long press of the finger, or -1 when
 // no long press can come.
 pub function long_wait(inp: Input, now: i64): i32 {
-  if (long_target(inp).is_none()) {
+  if (long_target(inp).is_none() && !can_lift(inp)) {
     return -1;
   }
   let left = inp.press.at + LONG_PRESS_NS - now;
@@ -1575,20 +1803,62 @@ pub function long_wait(inp: Input, now: i64): i32 {
 }
 
 // The input at the time `now`, and the node of a long press when its time
-// came. `long_message` gives the message of that node.
+// came. `long_message` gives the message of that node. A long press on a
+// row of a list that moves its rows lifts the row, and gives no node.
 pub function long_press(inp: Input, now: i64): (Input, Option[scene.Node]) {
+  let p = inp.press;
+  if (now - p.at < LONG_PRESS_NS) {
+    return (inp, None);
+  }
+  if (can_lift(inp)) {
+    let g = Grab { ...no_grab(), list: p.inner, row: p.row, from: p.y, scroll0: inp.offset(p.inner), at: now };
+    return (Input { ...inp, press: Press { ...p, fired: true }, grab: g }, None);
+  }
   let Some(n) = long_target(inp) else {
     return (inp, None);
   };
-  if (now - inp.press.at < LONG_PRESS_NS) {
-    return (inp, None);
-  }
-  return (Input { ...inp, press: Press { ...inp.press, fired: true } }, Some(n));
+  return (Input { ...inp, press: Press { ...p, fired: true } }, Some(n));
 }
 
-// A list flings, or springs back to its end.
+// The message of `on_swipe` for the row of `g` in the list `s`, when the
+// row is two fifths of the width of the list away.
+function swiped_message[M](said: Messages[M], s: Scroller, g: Grab): Option[M] {
+  if (s.swipes < 0 || s.swipes >= said.swipes.len() || g.shift.abs() * 5 < s.w * 2) {
+    return None;
+  }
+  let swiped = said.swipes[s.swipes];
+  return Some(swiped(g.row));
+}
+
+// The row that the finger holds, when it lifts: its message of `on_move`
+// with its new place, or its message of `on_swipe`. `inp` is the input
+// before the finger lifts. A row that the finger did not move gives the
+// long press message of the node under the finger.
+pub function dropped[M](said: Messages[M], lay: Layout, inp: Input): Option[M] {
+  let g = inp.grab;
+  let Some(s) = scroller_of(lay, g.list) else {
+    return None;
+  };
+  if (g.across) {
+    return swiped_message(said, s, g);
+  }
+  if (!inp.press.moved) {
+    let Some(n) = inp.press.target else {
+      return None;
+    };
+    return long_message(said, lay, n);
+  }
+  let to = target(g, s.row, s.count);
+  if (to == g.row || s.moves < 0 || s.moves >= said.moves.len()) {
+    return None;
+  }
+  let moved = said.moves[s.moves];
+  return Some(moved(g.row, to));
+}
+
+// A list flings, springs back to its end, or scrolls under a held row.
 pub function (inp: Input) flinging(): boolean {
-  return motion.moving(inp.fling) || inp.sprung.len() > 0;
+  return motion.moving(inp.fling) || inp.sprung.len() > 0 || inp.grab.pull != 0.0;
 }
 
 // The input with the list that flings at its place at the time `now`. A
@@ -1642,7 +1912,23 @@ function settled(inp: Input, lay: Layout): Input {
 // The input at the frame time `now`: the list that flings moves, and the
 // list that is past its end springs back.
 pub function advance(inp: Input, lay: Layout, now: i64): Input {
-  return settled(sprung(flung(inp, lay, now), now), lay);
+  return settled(carried(sprung(flung(inp, lay, now), now), lay, now), lay);
+}
+
+// The input with the list under a held row scrolled for the time since its
+// last scroll. The list goes as far as 12 rows in a second.
+function carried(inp: Input, lay: Layout, now: i64): Input {
+  let g = inp.grab;
+  if (g.pull == 0.0) {
+    return inp;
+  }
+  let Some(s) = scroller_of(lay, g.list) else {
+    return inp;
+  };
+  let dt = (now - g.at).max(0i64).min(100000000i64);
+  let by = (g.pull * ((s.row * 12) as f64) * (dt as f64) / 1000000000.0).round() as i32;
+  let to = (inp.offset(g.list) + by).max(0).min(s.limit);
+  return held(scrolled(Input { ...inp, grab: Grab { ...g, at: now } }, g.list, to), lay, now);
 }
 
 // The corner radius of what `n` shows.
@@ -1716,7 +2002,7 @@ pub function shown(inp: Input, lay: Layout, pressed: i32): scene.Node[] {
   let Some(t) = p.target else {
     return lay.nodes;
   };
-  if (!p.active || p.moved || on_slider(p)) {
+  if (!p.active || p.moved || on_slider(p) || inp.grab.list.len() > 0) {
     return lay.nodes;
   }
   let out: scene.Node[] = [];
@@ -2005,7 +2291,7 @@ function drawn[S, M](own s: Shell[S, M], p: Program[S, M], ns: i64): Shell[S, M]
   let t1 = s.host.dev.now();
   let animating = p.animating(s.app);
   let host = advanced(synced(s.host, root), ns);
-  let built = layout(root, host.fonts, screen, host.input.offsets, Focus { field: host.focus, caret: host.caret });
+  let built = layout(root, host.fonts, screen, host.input.offsets, Focus { field: host.focus, caret: host.caret }, host.input.grab);
   let cost = Cost { ...aged(host.cost, host.frames), view: ms_between(t0, t1), layout: ms_between(t1, host.dev.now()) };
   let over: scene.Node[] = [];
   if (p.meter) {
@@ -2056,7 +2342,7 @@ function pressed(own h: Host): Host {
 // field has the focus, with its caret where the tap was.
 function field_tapped[M](h: Host, f: El[M], n: scene.Node, x: i32, y: i32): Host {
   let sc = h.screen;
-  let env = Env { fonts: h.fonts, d: sc.d, font: sc.font, theme: sc.theme, offsets: h.input.offsets, focus: Focus { field: h.focus, caret: h.caret } };
+  let env = Env { fonts: h.fonts, d: sc.d, font: sc.font, theme: sc.theme, offsets: h.input.offsets, focus: Focus { field: h.focus, caret: h.caret }, grab: h.input.grab };
   let left = px(env, f.pad.left);
   let top = px(env, f.pad.top);
   let caret = caret_at(env, f, n.x + left, n.y + top, n.w - left - px(env, f.pad.right), n.h - top - px(env, f.pad.bottom), x, y);
@@ -2074,22 +2360,36 @@ function slid[S, M](own s: Shell[S, M], p: Program[S, M], input: Input, n: scene
   return told_maybe(Shell { app: s.app, host: changed(host), said: s.said }, p, m);
 }
 
-function touched[S, M](own s: Shell[S, M], p: Program[S, M], action: i32, x: i32, y: i32): Shell[S, M] {
-  let h = s.host;
-  let target = h.input.press.target;
-  let (input, tapped) = touch(h.input, h.lay, action, x, y, h.dev.now(), h.screen.d);
+// The slider node that the finger is on, while it is down or moves.
+// `target` is the node of the press before the touch `action`.
+function slider_held(target: Option[scene.Node], input: Input, action: i32): Option[scene.Node] {
   let held = target;
   if (action == 0) {
     held = input.press.target;
   }
   if let Some(n) = held {
     if (n.tap.name == SLIDER_ACTION && action <= 2) {
-      return slid(s, p, input, n, x, action == 0);
+      return Some(n);
     }
+  }
+  return None;
+}
+
+function touched[S, M](own s: Shell[S, M], p: Program[S, M], action: i32, x: i32, y: i32): Shell[S, M] {
+  let h = s.host;
+  let before = h.input;
+  let target = h.input.press.target;
+  let (input, tapped) = touch(h.input, h.lay, action, x, y, h.dev.now(), h.screen.d);
+  if let Some(n) = slider_held(target, input, action) {
+    return slid(s, p, input, n, x, action == 0);
   }
   let host = Host { ...h, input: input };
   if (action == 0) {
     host = pressed(Host { ...h, input: input });
+  }
+  if (action == 1 && before.grab.list.len() > 0) {
+    let m = dropped(s.said, h.lay, before);
+    return told_maybe(Shell { app: s.app, host: changed(host), said: s.said }, p, m);
   }
   let Some(on) = tapped else {
     return Shell { app: s.app, host: changed(host), said: s.said };
@@ -2271,17 +2571,15 @@ function ticked[S, M](own s: Shell[S, M], p: Program[S, M]): Shell[S, M] {
   if (!long && tick_left(h, p.wait(s.app), now) != 0) {
     return s;
   }
-  let host = Host { ...h, ticked: now };
-  let m: Option[M] = p.tick;
   if (long) {
     let (input, pressed) = long_press(h.input, now);
-    host = Host { ...h, input: input };
-    m = None;
+    let m: Option[M] = None;
     if let Some(n) = pressed {
       m = long_message(s.said, h.lay, n);
     }
+    return told_maybe(Shell { app: s.app, host: changed(Host { ...h, input: input }), said: s.said }, p, m);
   }
-  return told_maybe(Shell { app: s.app, host: host, said: s.said }, p, m);
+  return told_maybe(Shell { app: s.app, host: Host { ...h, ticked: now }, said: s.said }, p, p.tick);
 }
 
 function accessed[S, M](own s: Shell[S, M], p: Program[S, M], id: i32, action: i32): Shell[S, M] {

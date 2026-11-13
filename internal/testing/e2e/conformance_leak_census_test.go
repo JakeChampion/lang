@@ -25,13 +25,8 @@ type censusRow struct {
 }
 
 func TestRawStoragePathsLeakCensusX86_64(t *testing.T) {
-	const name = "raw_storage_paths_keep_literals_fresh"
-	want, pinned := loadCensus(t)[name]
-	if !pinned {
-		t.Fatalf("%s is not in the leak census", name)
-	}
 	_, runner := x86_64Tooling(t)
-	bin, err := buildTracedX86_64(t, filepath.Join(conformanceCases, name, "main.fern"), t.TempDir())
+	bin, err := buildTracedX86_64(t, filepath.Join(conformanceCases, "raw_storage_paths_keep_literals_fresh", "main.fern"), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,8 +41,8 @@ func TestRawStoragePathsLeakCensusX86_64(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != want {
-		t.Fatalf("raw storage: %d unpaired allocations, pinned at %d: %s", n, want, top)
+	if n != 0 {
+		t.Fatalf("raw storage: %d unpaired allocations: %s", n, top)
 	}
 }
 

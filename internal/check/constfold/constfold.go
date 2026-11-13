@@ -4,6 +4,8 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"math/big"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -465,6 +467,12 @@ func foldUnary(n *ast.Unary, w intWidth, operand ast.Expr) (ast.Expr, error) {
 	case "-":
 		switch v := operand.(type) {
 		case *ast.NumberLit:
+			// The literal range rule judges a negated literal.
+			if _, literal := n.Operand.(*ast.NumberLit); !literal {
+				if exact := new(big.Int).Neg(w.exact(v.Value)); !w.holds(exact) {
+					return nil, w.leaves(n.P, "-("+w.exact(v.Value).String()+")")
+				}
+			}
 			return &ast.NumberLit{P: n.P, Value: w.trunc(-v.Value)}, nil
 		case *ast.FloatLit:
 			return &ast.FloatLit{P: n.P, Value: -v.Value, Width: v.Width}, nil
@@ -604,6 +612,63 @@ func (w intWidth) trunc(v int64) int64 {
 	return int64(uint64(v) << shift >> shift)
 }
 
+// name is the spelling of the declared type, such as u8.
+func (w intWidth) name() string {
+	if w.signed {
+		return "i" + strconv.Itoa(w.bits)
+	}
+	return "u" + strconv.Itoa(w.bits)
+}
+
+// exact is the value of an operand of the declared type. An unsigned value of
+// 64 bits is stored as its bit pattern.
+func (w intWidth) exact(v int64) *big.Int {
+	if w.unsigned() && w.bits == 64 {
+		return new(big.Int).SetUint64(uint64(v))
+	}
+	return big.NewInt(v)
+}
+
+// holds reports that the declared type has the value. A const with no
+// declared width folds in 64 bits and holds each value.
+func (w intWidth) holds(v *big.Int) bool {
+	if !w.known() {
+		return true
+	}
+	if !w.signed {
+		return v.Sign() >= 0 && v.BitLen() <= w.bits
+	}
+	limit := new(big.Int).Lsh(big.NewInt(1), uint(w.bits-1))
+	return v.Cmp(new(big.Int).Neg(limit)) >= 0 && v.Cmp(limit) < 0
+}
+
+// leaves is E047 for a step of a constant expression whose exact value the
+// declared type does not hold.
+func (w intWidth) leaves(p ast.Position, step string) error {
+	return &Error{Pos: p, Msg: step + " does not fit in " + w.name(), ErrCode: "E047"}
+}
+
+// exactBinary is the exact value of an arithmetic step, or nil for an
+// operator that cannot leave the declared type.
+func (w intWidth) exactBinary(op string, l, r int64) *big.Int {
+	a, b := w.exact(l), w.exact(r)
+	switch op {
+	case "+":
+		return a.Add(a, b)
+	case "-":
+		return a.Sub(a, b)
+	case "*":
+		return a.Mul(a, b)
+	case "/":
+		if b.Sign() != 0 {
+			return a.Quo(a, b)
+		}
+	case "<<":
+		return a.Lsh(a, uint(r))
+	}
+	return nil
+}
+
 func (w intWidth) shiftMask() uint64 {
 	if !w.known() || w.bits > 32 {
 		return 63
@@ -616,6 +681,16 @@ func foldNumberBinary(n *ast.Binary, w intWidth, l, r int64) (ast.Expr, error) {
 		return &ast.NumberLit{P: n.P, Value: w.trunc(v)}, nil
 	}
 	count := uint64(r) & w.shiftMask()
+	if w.known() {
+		if (n.Op == "<<" || n.Op == ">>") && (r < 0 || r >= int64(w.bits)) {
+			return nil, &Error{Pos: n.P, Msg: fmt.Sprintf("shift count %d is not less than the %d bits of %s", r, w.bits, w.name()), ErrCode: "E047"}
+		}
+		// An operand outside the type is a literal that the literal range
+		// rule reports.
+		if exact := w.exactBinary(n.Op, l, r); exact != nil && w.holds(w.exact(l)) && w.holds(w.exact(r)) && !w.holds(exact) {
+			return nil, w.leaves(n.P, fmt.Sprintf("%s %s %s", w.exact(l), n.Op, w.exact(r)))
+		}
+	}
 	switch n.Op {
 	case "+":
 		return num(l + r)

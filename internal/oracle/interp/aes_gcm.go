@@ -14,10 +14,10 @@ func registerAESGCM(i *Interp) {
 	i.Builtins["__ghash"] = &Builtin{Fn: builtinGHASH}
 	i.Builtins["__aes_gcm_seal_into"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) { return aesGCMInto("__aes_gcm_seal_into", args, true) }}
 	i.Builtins["__aes_gcm_open_into"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) { return aesGCMInto("__aes_gcm_open_into", args, false) }}
-	for _, name := range []string{"__sha256_hw", "__sha1_hw"} {
+	for _, name := range []string{"__sha256_hw", "__sha1_hw", "__sha1x8_hw"} {
 		i.Builtins[name] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Bool(false), nil }}
 	}
-	for _, name := range []string{"__sha256_hw_blocks", "__sha1_hw_blocks"} {
+	for _, name := range []string{"__sha256_hw_blocks", "__sha1_hw_blocks", "__sha1x8_hw_blocks"} {
 		i.Builtins[name] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 			if _, err := byteViews(name, args, 2); err != nil {
 				return nil, err

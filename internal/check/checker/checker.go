@@ -1024,6 +1024,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.FuncSigs["__sha256_hw_blocks"] = &ast.FuncType{Params: []ast.Type{u8View, u8View}, Result: u8Arr}
 	c.info.FuncSigs["__sha1_hw"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.BoolType{}}
 	c.info.FuncSigs["__sha1_hw_blocks"] = &ast.FuncType{Params: []ast.Type{u8View, u8View}, Result: u8Arr}
+	c.info.FuncSigs["__sha1x8_hw"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.BoolType{}}
+	c.info.FuncSigs["__sha1x8_hw_blocks"] = &ast.FuncType{Params: []ast.Type{u8View, u8View}, Result: u8Arr}
 	for _, n := range []string{"__clz32", "__ctz32", "__popcount32"} {
 		c.info.FuncSigs[n] = &ast.FuncType{
 			Params: []ast.Type{ast.NumberType{Width: 32, Signed: false}},

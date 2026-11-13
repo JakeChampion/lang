@@ -800,8 +800,7 @@ enum Ints { More(i32, Ints), Done }
 function bumped(xs: Ints): Ints { match (xs) { More(h, t) => { return More(h + 1, bumped(t)); }, Done => { return Done; } } }
 function positives(xs: Ints): Ints { match (xs) { More(h, t) => { if (h < 0) { return positives(t); } return More(h, positives(t)); }, Done => { return Done; } } }
 function last_of(xs: Ints, d: i32): i32 { match (xs) { More(h, t) => { return last_of(t, h); }, Done => { return d; } } }
-// Holes at different payload positions cannot share one fill, so both calls
-// stay calls.
+// Holes at different payload positions: the loop carries the position of the hole.
 enum Swap { Front(Swap, i32), Back(i32, Swap), Stop }
 function flipped(m: Swap): Swap { match (m) { Front(n, k) => { return Back(k, flipped(n)); }, Back(k, n) => { return Front(flipped(n), k); }, Stop => { return Stop; } } }
 `
