@@ -18,32 +18,128 @@ function is_control_byte(b: i32): boolean {
   return b < 32 || b == 127;
 }
 
+// The size of the UTF-8 sequence that the byte `b` starts, or 0.
+function sequence_size(b: i32): i32 {
+  if (b >= 0xc2 && b < 0xe0) {
+    return 2;
+  }
+  if (b >= 0xe0 && b < 0xf0) {
+    return 3;
+  }
+  if (b >= 0xf0 && b < 0xf5) {
+    return 4;
+  }
+  return 0;
+}
+
+// The scalar of the UTF-8 sequence at `i` and its size. The size is 0 when the
+// bytes there are not one sequence.
+function scalar_at(s: string, i: i32): (i32, i32) {
+  let size = sequence_size(s[i] as i32);
+  if (size == 0 || i + size > s.len()) {
+    return (0, 0);
+  }
+  let cp = s[i] as i32 & 0xff >> size + 1;
+  for k in 1..size {
+    let c = s[i + k] as i32;
+    if ((c & 0xc0) != 0x80) {
+      return (0, 0);
+    }
+    cp = cp << 6 | c & 0x3f;
+  }
+  return (cp, size);
+}
+
+// The first and the last scalar of each range that a reader cannot see, or
+// that changes the order of the text on the screen: the C1 controls, and the
+// Unicode categories Cf, Zl, Zp and Zs. internal/syntax/printer/format.go
+// holds the same ranges.
+function hidden_ranges(): i32[] {
+  return [
+    0x80, 0xa0, 0xad, 0xad, 0x600, 0x605, 0x61c, 0x61c, 0x6dd, 0x6dd, 0x70f, 0x70f, 0x890, 0x891, 0x8e2, 0x8e2,
+    0x1680, 0x1680, 0x180e, 0x180e, 0x2000, 0x200f, 0x2028, 0x202f, 0x205f, 0x2064, 0x2066, 0x206f, 0x3000,
+    0x3000, 0xfeff, 0xfeff, 0xfff9, 0xfffb, 0x110bd, 0x110bd, 0x110cd, 0x110cd, 0x13430, 0x1343f, 0x1bca0,
+    0x1bca3, 0x1d173, 0x1d17a, 0xe0001, 0xe0001, 0xe0020, 0xe007f,
+  ];
+}
+
+function is_hidden_scalar(cp: i32, ranges: i32[]): boolean {
+  let k = 0;
+  while (k < ranges.len()) {
+    if (cp >= ranges[k] && cp <= ranges[k + 1]) {
+      return true;
+    }
+    k += 2;
+  }
+  return false;
+}
+
+// `\u{XXXX}` for the scalar `cp`, with 4 hex digits or more.
+function append_scalar_escape(out: u8[], cp: i32): u8[] {
+  let a = out;
+  a = a.append(92 as u8);
+  a = a.append(117 as u8);
+  a = a.append(123 as u8);
+  let shift = 20;
+  while (shift >= 0) {
+    let d = cp >> shift & 15;
+    if (shift <= 12 || cp >> shift != 0) {
+      if (d < 10) {
+        a = a.append((48 + d) as u8);
+      } else {
+        a = a.append((55 + d) as u8);
+      }
+    }
+    shift -= 4;
+  }
+  return a.append(125 as u8);
+}
+
+// The byte `b` of a literal as the source has it.
+function append_lit_byte(out: u8[], b: i32, fstring: boolean): u8[] {
+  let a = out;
+  if (b == 34) {
+    a = a.append(92 as u8);
+    return a.append(34 as u8);
+  }
+  if (b == 92) {
+    a = a.append(92 as u8);
+    return a.append(92 as u8);
+  }
+  if (b == 10) {
+    a = a.append(92 as u8);
+    return a.append(110 as u8);
+  }
+  if (b == 9) {
+    a = a.append(92 as u8);
+    return a.append(116 as u8);
+  }
+  if (b == 13) {
+    a = a.append(92 as u8);
+    return a.append(114 as u8);
+  }
+  if (fstring && (b == 123 || b == 125)) {
+    a = a.append(b as u8);
+    return a.append(b as u8);
+  }
+  if (is_control_byte(b)) {
+    return append_hex_escape(a, b);
+  }
+  return a.append(b as u8);
+}
+
 function escape_lit_body(s: string, fstring: boolean): string {
   let out: u8[] = [];
-  for i in 0..s.len() {
-    let b = s[i] as i32;
-    if (b == 34) {
-      out = out.append(92 as u8);
-      out = out.append(34 as u8);
-    } else if (b == 92) {
-      out = out.append(92 as u8);
-      out = out.append(92 as u8);
-    } else if (b == 10) {
-      out = out.append(92 as u8);
-      out = out.append(110 as u8);
-    } else if (b == 9) {
-      out = out.append(92 as u8);
-      out = out.append(116 as u8);
-    } else if (b == 13) {
-      out = out.append(92 as u8);
-      out = out.append(114 as u8);
-    } else if (fstring && (b == 123 || b == 125)) {
-      out = out.append(b as u8);
-      out = out.append(b as u8);
-    } else if (is_control_byte(b)) {
-      out = append_hex_escape(out, b);
+  let ranges = hidden_ranges();
+  let i = 0;
+  while (i < s.len()) {
+    let (cp, size) = scalar_at(s, i);
+    if (size > 0 && is_hidden_scalar(cp, ranges)) {
+      out = append_scalar_escape(out, cp);
+      i += size;
     } else {
-      out = out.append(s[i]);
+      out = append_lit_byte(out, s[i] as i32, fstring);
+      i += 1;
     }
   }
   unsafe {
