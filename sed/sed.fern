@@ -118,6 +118,10 @@ const OUT_STDERR: i32 = 2;
 
 const CHUNK: i32 = 65536;
 
+// The buffer of stdio for a file. GNU sed writes a w file or the file of
+// -i only when this buffer is full, at the end, or after each line with -u.
+const BLOCK: i32 = 4096;
+
 const KIND_FILE: i32 = 0;
 
 const KIND_STDOUT: i32 = 1;
@@ -1428,22 +1432,66 @@ function falses(n: i32): boolean[] {
 // ---------------------------------------------------------------------------
 // Output
 
-function flush_out(o: Out): void {
-  if (buf_len(o.h) == 0) {
+// write_out writes the first n bytes of output i and keeps the rest. An
+// error names the output as GNU sed does: a flush fails as fflush, and
+// else the write of `items` bytes fails as fwrite.
+function write_out(r: Run, i: i32, n: i32, name: string, items: i32): void {
+  if (n == 0) {
     return;
   }
+  let o = r.outs[i];
   let bytes = buf_take_bytes(o.h);
-  if let Err(e) = o.w.write_bytes(bytes) {
-    panic("couldn't write " + f"{bytes.len()}" + " items to " + o.name + ": " + gnu.io_error_text(e));
+  if (n < bytes.len()) {
+    buf_push_bytes_range(o.h, bytes, n, bytes.len());
+  }
+  let res = if (n < bytes.len()) { o.w.write_bytes(__bytes_range(bytes, 0, n)) } else { o.w.write_bytes(bytes) };
+  if let Err(e) = res {
+    if (items < 0) {
+      fail(r, "couldn't flush " + name + ": " + gnu.io_error_text(e));
+    }
+    let noun = if (items == 1) { "item" } else { "items" };
+    fail(r, f"couldn't write {items} {noun} to {name}: " + gnu.io_error_text(e));
   }
 }
 
-// settle writes a full buffer out. A file other than standard output is
-// written after each write, as GNU sed flushes it.
+function flush_out(r: Run, i: i32): void {
+  write_out(r, i, buf_len(r.outs[i].h), r.outs[i].name, -1);
+}
+
+// put adds bytes lo..hi of text to output i. A file writes its full blocks
+// when the buffer of stdio would overflow, as one fwrite of GNU sed does.
+function put(r: Run, i: i32, text: u8[], lo: i32, hi: i32): void {
+  buf_push_bytes_range(r.outs[i].h, text, lo, hi);
+  if (r.outs[i].kind == KIND_FILE) {
+    spill(r, i, hi - lo);
+  }
+}
+
+function put_byte(r: Run, i: i32, b: i32): void {
+  buf_push_byte(r.outs[i].h, b);
+  if (r.outs[i].kind == KIND_FILE) {
+    spill(r, i, 1);
+  }
+}
+
+function spill(r: Run, i: i32, items: i32): void {
+  let t = buf_len(r.outs[i].h);
+  if (t > BLOCK) {
+    write_out(r, i, t / BLOCK * BLOCK, r.outs[i].name, items);
+  }
+}
+
+// settle ends a write to output i: with -u all of it goes out, standard
+// error has no buffer, and standard output writes a full buffer.
 function settle(p: Prog, r: Run, i: i32): void {
   let o = r.outs[i];
-  if (o.kind != KIND_STDOUT || p.o.unbuffered || buf_len(o.h) >= CHUNK) {
-    flush_out(o);
+  let n = buf_len(o.h);
+  if (p.o.unbuffered) {
+    flush_out(r, i);
+  } else if (o.kind == KIND_STDERR) {
+    write_out(r, i, n, o.name, n);
+  } else if (o.kind == KIND_STDOUT && n >= CHUNK) {
+    write_out(r, i, n, o.name, n);
   }
 }
 
@@ -1451,16 +1499,15 @@ function missing_newline(p: Prog, own r: Run, i: i32): Run {
   if (!r.missing[i]) {
     return r;
   }
-  buf_push_byte(r.outs[i].h, p.delim);
+  put_byte(r, i, p.delim);
   return Run { ...r, missing: r.missing.with(i, false) };
 }
 
 function output_pattern(p: Prog, own r0: Run, i: i32, text: u8[], lo: i32, hi: i32, chomped: boolean): Run {
   let r = missing_newline(p, r0, i);
-  let h = r.outs[i].h;
-  buf_push_bytes_range(h, text, lo, hi);
+  put(r, i, text, lo, hi);
   if (chomped) {
-    buf_push_byte(h, p.delim);
+    put_byte(r, i, p.delim);
   } else {
     r = Run { ...r, missing: r.missing.with(i, true) };
   }
@@ -1471,10 +1518,9 @@ function output_pattern(p: Prog, own r0: Run, i: i32, text: u8[], lo: i32, hi: i
 // output_ps writes the pattern space, as p and the end of a cycle do.
 function output_ps(p: Prog, own r0: Run, i: i32): Run {
   let r = missing_newline(p, r0, i);
-  let h = r.outs[i].h;
-  buf_push_bytes_range(h, r.ps, 0, r.ps.len());
+  put(r, i, r.ps, 0, r.ps.len());
   if (r.chomped) {
-    buf_push_byte(h, p.delim);
+    put_byte(r, i, p.delim);
   } else {
     r = Run { ...r, missing: r.missing.with(i, true) };
   }
@@ -1484,7 +1530,7 @@ function output_ps(p: Prog, own r0: Run, i: i32): Run {
 
 function output_raw(p: Prog, own r0: Run, i: i32, text: u8[]): Run {
   let r = missing_newline(p, r0, i);
-  buf_push_bytes_range(r.outs[i].h, text, 0, text.len());
+  put(r, i, text, 0, text.len());
   settle(p, r, i);
   return r;
 }
@@ -1520,11 +1566,11 @@ function dump_append(p: Prog, own r0: Run): Run {
     let cur = r.cur;
     r = missing_newline(p, r, cur);
     if (!a.file) {
-      buf_push_bytes_range(r.outs[cur].h, a.data, 0, a.data.len());
+      put(r, cur, a.data, 0, a.data.len());
       continue;
     }
     let data = read_appended(a.name);
-    buf_push_bytes_range(r.outs[cur].h, data, 0, data.len());
+    put(r, cur, data, 0, data.len());
   }
   settle(p, r, r.cur);
   return r;
@@ -1560,18 +1606,46 @@ function close_outputs(r: Run): void {
   }
 }
 
-function flush_all(r: Run): void {
-  for o in r.outs {
-    flush_out(o);
+// close_all writes the rest of each output at the end of the run, in the
+// order of GNU sed: the w files from the last one opened, then standard
+// output. GNU sed then no longer knows the name of a w file.
+function close_all(r: Run): void {
+  let k = r.outs.len() - 1;
+  while (k > OUT_STDERR) {
+    if (r.outs[k].kind == KIND_FILE) {
+      write_out(r, k, buf_len(r.outs[k].h), "<unknown>", -1);
+    }
+    k -= 1;
   }
+  flush_out(r, OUT_STDOUT);
+  flush_out(r, OUT_STDERR);
+}
+
+// stop ends the run as the exit of GNU sed does: stdio writes what it
+// holds, and the temporary file of -i goes away.
+function stop(r: Run, msg: string, code: i32): void {
+  if let Err(_) = r.outs[OUT_STDERR].w.write_bytes(buf_take_bytes(r.outs[OUT_STDERR].h)) {}
+  say(msg.bytes());
+  if let Some(e) = r.inp.edit {
+    if let Err(_) = remove_file(e.tmp) {}
+  }
+  for k in 0..r.outs.len() {
+    if (k != OUT_EDIT && buf_len(r.outs[k].h) > 0) {
+      if let Err(_) = r.outs[k].w.write_bytes(buf_take_bytes(r.outs[k].h)) {}
+    }
+  }
+  exit(code);
+}
+
+// fail stops the run on an error of the system.
+function fail(r: Run, msg: string): void {
+  stop(r, msg, EXIT_PANIC);
 }
 
 // runtime_error stops the run on an error in the script, such as an empty
 // regex with no regex before it.
 function runtime_error(p: Prog, r: Run, msg: string): void {
-  flush_all(r);
-  say((p.where + ": " + msg).bytes());
-  exit(EXIT_BAD_USAGE);
+  stop(r, p.where + ": " + msg, EXIT_BAD_USAGE);
 }
 
 // ---------------------------------------------------------------------------
@@ -1581,14 +1655,14 @@ function no_edit(): Option[Edit] {
   return None;
 }
 
-function read_chunk(p: Prog, rd: Reader, name: string): u8[] {
+function read_chunk(p: Prog, r: Run): u8[] {
   let size = if (p.o.unbuffered) { 1 } else { CHUNK };
-  match (rd.read_chunk_bytes(size)) {
+  match (r.inp.r.read_chunk_bytes(size)) {
     Ok(chunk) => {
       return chunk;
     },
     Err(e) => {
-      panic("read error on " + name + ": " + gnu.io_error_text(e));
+      fail(r, "read error on " + r.inp.name + ": " + gnu.io_error_text(e));
     }
   }
   let none: u8[] = [];
@@ -1602,7 +1676,7 @@ function read_long_line(p: Prog, own r0: Run): Run {
   let h = buf_new(r.ibuf.len() - r.ipos + CHUNK);
   buf_push_bytes_range(h, r.ibuf, r.ipos, r.ibuf.len());
   while (!r.ieof) {
-    let chunk = read_chunk(p, r.inp.r, r.inp.name);
+    let chunk = read_chunk(p, r);
     if (chunk.len() == 0) {
       r = Run { ...r, ieof: true };
       break;
@@ -1634,7 +1708,7 @@ function has_data(p: Prog, own r: Run): (Run, boolean) {
   if (r.ieof) {
     return (r, false);
   }
-  let chunk = read_chunk(p, r.inp.r, r.inp.name);
+  let chunk = read_chunk(p, r);
   if (chunk.len() == 0) {
     return (Run { ...r, ieof: true, ibuf: [], ipos: 0 }, false);
   }
@@ -1729,29 +1803,25 @@ function dir_part(path: string): string {
   return slice_unchecked(path, 0, k + 1) + "";
 }
 
-function base_part(path: string): string {
-  let d = dir_part(path);
-  return slice_unchecked(path, d.len(), path.len()) + "";
-}
-
 function start_edit(p: Prog, own r: Run, path: string): Run {
   let st = match (r.inp.r.stat()) {
     Ok(s) => s,
     Err(e) => {
-      panic("couldn't edit " + path + ": " + gnu.io_error_text(e));
+      fail(r, "couldn't edit " + path + ": " + gnu.io_error_text(e));
       return r;
     },
   };
   if (!st.is_file) {
-    panic("couldn't edit " + path + ": not a regular file");
+    fail(r, "couldn't edit " + path + ": not a regular file");
   }
-  let made = make_temp(dir_part(path));
+  let dir = dir_part(path);
+  let made = make_temp(r, if (dir == "") { "./" } else { dir });
   let out = Out { name: made.0, w: made.1, h: buf_new(CHUNK), kind: KIND_FILE };
   let edit = Edit { target: path, tmp: made.0, st: st };
   return Run { ...r, inp: Inp { ...r.inp, edit: Some(edit) }, outs: r.outs.with(OUT_EDIT, out), cur: OUT_EDIT, missing: r.missing.with(OUT_EDIT, false) };
 }
 
-function make_temp(dir: string): (string, Writer) {
+function make_temp(r: Run, dir: string): (string, Writer) {
   let letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   let last = "";
   for _ in 0..100 {
@@ -1767,36 +1837,31 @@ function make_temp(dir: string): (string, Writer) {
       },
       Err(e) => {
         if (gnu.io_error_text(e) != "File exists") {
-          panic("couldn't open temporary file " + name + ": " + gnu.io_error_text(e));
+          fail(r, "couldn't open temporary file " + name + ": " + gnu.io_error_text(e));
         }
       }
     }
   }
-  panic("couldn't open temporary file " + last + ": File exists");
+  fail(r, "couldn't open temporary file " + last + ": File exists");
   return (last, stdout());
 }
 
 // backup_name gives the name of the backup of `target`: each * of the
-// suffix becomes the base name, else the suffix follows the name. A name
-// without a slash stays in the directory of the file.
+// suffix becomes the name of the file as it was given, else the suffix
+// follows that name.
 function backup_name(target: string, suffix: string): string {
-  let base = base_part(target);
+  if (!suffix.contains("*")) {
+    return target + suffix;
+  }
   let name = "";
-  if (suffix.contains("*")) {
-    for k in 0..suffix.len() {
-      if (suffix[k] == b'*') {
-        name = name + base;
-      } else {
-        name = name + slice_unchecked(suffix, k, k + 1);
-      }
+  for k in 0..suffix.len() {
+    if (suffix[k] == b'*') {
+      name = name + target;
+    } else {
+      name = name + slice_unchecked(suffix, k, k + 1);
     }
-  } else {
-    name = base + suffix;
   }
-  if (name.contains("/")) {
-    return name;
-  }
-  return dir_part(target) + name;
+  return name;
 }
 
 // The run state holds the handles, so they close through a borrow, and the
@@ -1811,13 +1876,13 @@ function close_input(p: Prog, own r: Run): Run {
     }
   }
   if let Some(e) = r.inp.edit {
-    return finish_edit(p, Run { ...r, inp: Inp { ...r.inp, open: false, edit: no_edit() }, ibuf: [], ipos: 0 }, e);
+    return finish_edit(p, Run { ...r, inp: Inp { ...r.inp, open: false }, ibuf: [], ipos: 0 }, e);
   }
   return Run { ...r, inp: Inp { ...r.inp, open: false }, ibuf: [], ipos: 0 };
 }
 
 function finish_edit(p: Prog, own r: Run, e: Edit): Run {
-  flush_out(r.outs[OUT_EDIT]);
+  flush_out(r, OUT_EDIT);
   buf_free(r.outs[OUT_EDIT].h);
   unsafe {
     r.outs[OUT_EDIT].w.close_unchecked();
@@ -1829,14 +1894,14 @@ function finish_edit(p: Prog, own r: Run, e: Edit): Run {
   if (p.o.suffix.len() > 0 && p.o.suffix != "*") {
     let backup = backup_name(e.target, p.o.suffix);
     if let Err(err) = rename(e.target, backup) {
-      panic("cannot rename " + e.target + ": " + gnu.io_error_text(err));
+      fail(r, "cannot rename " + e.target + ": " + gnu.io_error_text(err));
     }
   }
   if let Err(err) = rename(e.tmp, e.target) {
-    panic("cannot rename " + e.tmp + ": " + gnu.io_error_text(err));
+    fail(r, "cannot rename " + e.tmp + ": " + gnu.io_error_text(err));
   }
   let idle = Out { ...r.outs[OUT_STDOUT], name: "", kind: KIND_FILE };
-  return Run { ...r, cur: OUT_STDOUT, outs: r.outs.with(OUT_EDIT, idle) };
+  return Run { ...r, cur: OUT_STDOUT, outs: r.outs.with(OUT_EDIT, idle), inp: Inp { ...r.inp, edit: no_edit() } };
 }
 
 // read_pattern_space empties the append queue, then reads the next line into
@@ -2187,7 +2252,7 @@ function exec_append_next(p: Prog, own r0: Run): Run {
 }
 
 // rfile_line takes the next line of an R file, with its delimiter.
-function rfile_line(p: Prog, f0: RFile, name: string): (RFile, u8[], boolean) {
+function rfile_line(p: Prog, r: Run, f0: RFile, name: string): (RFile, u8[], boolean) {
   let f = f0;
   let none: u8[] = [];
   if (!f.ok) {
@@ -2211,7 +2276,7 @@ function rfile_line(p: Prog, f0: RFile, name: string): (RFile, u8[], boolean) {
         f = RFile { ...f, buf: chunk, pos: 0, eof: chunk.len() == 0 };
       },
       Err(e) => {
-        panic("read error on " + name + ": " + gnu.io_error_text(e));
+        fail(r, "read error on " + name + ": " + gnu.io_error_text(e));
       }
     }
   }
@@ -2221,7 +2286,7 @@ function rfile_line(p: Prog, f0: RFile, name: string): (RFile, u8[], boolean) {
 }
 
 function exec_read_line(p: Prog, own r: Run, cmd: Cmd): Run {
-  let lr: (RFile, u8[], boolean) = rfile_line(p, r.rfiles[cmd.out], cmd.name);
+  let lr: (RFile, u8[], boolean) = rfile_line(p, r, r.rfiles[cmd.out], cmd.name);
   let rfiles = r.rfiles.with(cmd.out, lr.0);
   if (!lr.2) {
     return Run { ...r, rfiles: rfiles };
@@ -2248,6 +2313,9 @@ function exec_list(p: Prog, own r0: Run, cmd: Cmd): Run {
   }
   buf_push_byte(h, 36);
   buf_push_byte(h, p.delim);
+  if (r.outs[cur].kind == KIND_FILE) {
+    spill(r, cur, buf_len(h));
+  }
   settle(p, r, cur);
   return r;
 }
@@ -2279,24 +2347,23 @@ function octal3(b: i32): string {
 // ---------------------------------------------------------------------------
 // e and the e flag
 
-// shell runs a command with /bin/sh and gives its standard output. WASI
-// has no processes.
+// shell runs a command with /bin/sh and gives its standard output. As in
+// GNU sed, the output of sed stays in its buffers. WASI has no processes.
 function shell(p: Prog, r: Run, cmd: u8[]): u8[] {
-  flush_all(r);
   if (target_os() == "wasi") {
-    panic("couldn't run a command: this system has no processes");
+    fail(r, "couldn't run a command: this system has no processes");
     return [];
   } else {
-    return run_shell(cmd);
+    return run_shell(r, cmd);
   }
 }
 
-function run_shell(cmd: u8[]): u8[] {
+function run_shell(r: Run, cmd: u8[]): u8[] {
   let text = unsafe { string_from_bytes_unchecked(cmd) };
   let pp = match (pipe()) {
     Ok(made) => made,
     Err(e) => {
-      panic("couldn't create pipe: " + gnu.io_error_text(e));
+      fail(r, "couldn't create pipe: " + gnu.io_error_text(e));
       return [];
     },
   };
@@ -2521,7 +2588,7 @@ function process(p: Prog, own r0: Run): Run {
       break;
     }
     if (p.o.unbuffered) {
-      flush_all(r);
+      flush_out(r, OUT_STDOUT);
     }
   }
   return r;
@@ -2626,7 +2693,7 @@ function main(): i32 {
   let outs = make_outs(p);
   let r = Run { ps: [], chomped: true, hold: [], hchomped: true, replaced: false, line: 0, end: END_NONE, code: 0, got: false, ibuf: [], ipos: 0, ieof: false, apps: [], ranges: initial_ranges(p), rend: zeros_i64(p.cmds.len()), last_rx: -1, nosub: p.rxs.map((x: Rx) => x.nosub), outs: outs, missing: falses(outs.len()), cur: OUT_STDOUT, rfiles: make_rfiles(p), inp: inp, bad: false };
   r = process(p, r);
-  flush_all(r);
+  close_all(r);
   close_outputs(r);
   if (r.bad) {
     return EXIT_BAD_INPUT;

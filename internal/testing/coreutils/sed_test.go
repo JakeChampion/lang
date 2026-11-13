@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -41,8 +42,8 @@ func sedCaptureCases() []invocation {
 	return cases
 }
 
-// sedTree holds the input files, the script files, a directory and two
-// links of the cases that read files or edit them in place.
+// sedTree holds the input files, the script files, the directories and
+// two links of the cases that read files or edit them in place.
 func sedTree(t *testing.T, dir string) {
 	t.Helper()
 	files := map[string]string{
@@ -56,13 +57,28 @@ func sedTree(t *testing.T, dir string) {
 		}
 		writeFile(t, dir, name, content)
 	}
-	if err := os.Mkdir(filepath.Join(dir, "d"), 0o755); err != nil {
-		t.Fatal(err)
+	for _, sub := range []string{"d", "old_sub", "bak/sub"} {
+		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	for link, target := range map[string]string{"link": "f3", "dlink": "sub/f"} {
 		if err := os.Symlink(target, filepath.Join(dir, link)); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+// sedFullTree adds the link "full" to /dev/full, a w file that cannot be
+// written.
+func sedFullTree(t *testing.T, dir string) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("/dev/full is a Linux device")
+	}
+	sedTree(t, dir)
+	if err := os.Symlink("/dev/full", filepath.Join(dir, "full")); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -737,6 +753,27 @@ func sedOptionCases() []invocation {
 		{name: "sed -ni p f3", args: []string{"-ni", "p", "f3"}, seedTree: sedTree},
 		{name: "sed -in p f3", args: []string{"-in", "p", "f3"}, seedTree: sedTree},
 		{name: "sed -i $!d f3 empty na", args: []string{"-i", "$!d", "f3", "empty", "na"}, seedTree: sedTree},
+		{name: "backup with * in a prefix", args: []string{"-iold_*", "s/^/X/", "sub/f"}, seedTree: sedTree},
+		{name: "backup with * in a directory", args: []string{"--in-place=bak/*", "s/^/X/", "sub/f"}, seedTree: sedTree},
+		{name: "backup with * before a suffix", args: []string{"-i*~", "s/^/X/", "sub/f"}, seedTree: sedTree},
+		{name: "backup in a directory that is not there", args: []string{"-ip_*_s", "s/^/X/", "sub/f"}, seedTree: sedTree},
+		{name: "backup of a bare name in no directory", args: []string{"--in-place=nodir/*", "s/^/X/", "f3"}, seedTree: sedTree},
+		{name: "a read error keeps the output before it", args: []string{"w o", "f3", "d"}, seedTree: sedTree},
+		{name: "a read error first, then a file", args: []string{"-n", "p;w o", "d", "f3"}, seedTree: sedTree},
+		{name: "in place on a directory, then a file", args: []string{"-i", "s/1/X/", "d", "f3"}, seedTree: sedTree},
+		{name: "a script error in place removes the temporary file", args: []string{"-i", "w o\ns//y/", "f3"}, seedTree: sedTree},
+		{name: "r of a w file before its buffer is full", args: []string{"w o\nr o", "f3"}, seedTree: sedTree},
+		{name: "e of a w file before its buffer is full", args: []string{"w o\n$e cat o", "f3"}, seedTree: sedTree},
+		{name: "e of a w file with -u", args: []string{"-u", "w o\n2e cat o", "f3"}, seedTree: sedTree},
+		{name: "e keeps the output of sed in its buffer", args: []string{"2e echo hi >&2", "f3"}, merged: true, seedTree: sedTree},
+		{name: "w to a full device", args: []string{"w full"}, stdin: "a\nb\nc\n", seedTree: sedFullTree},
+		{name: "w to a full device with -u", args: []string{"-u", "w full"}, stdin: "a\nb\nc\n", seedTree: sedFullTree},
+		{name: "w to a full device and e", args: []string{"w full\n2e echo hi"}, stdin: "a\nb\nc\n", seedTree: sedFullTree},
+		{name: "in place on a full device", args: []string{"-i", "s/a/b/", "full", "f3"}, seedTree: sedFullTree},
+		{name: "p to a full stdout", args: []string{"p"}, stdin: "a\nb\n", stdout: stdoutFull},
+		{name: "p to a full stdout with -u", args: []string{"-u", "p"}, stdin: "a\nb\n", stdout: stdoutFull},
+		{name: "e to a full stdout", args: []string{"e echo hi"}, stdin: "a\n", stdout: stdoutFull},
+		{name: "w /dev/stdout to a full stdout", args: []string{"-n", "w /dev/stdout"}, stdin: "a\n", stdout: stdoutFull},
 	}
 }
 
@@ -748,6 +785,10 @@ func sedBigCases() []invocation {
 		{name: "address over a big file", args: []string{"-n", "/9999/p", "big"}, seedTree: sedBigTree},
 		{name: "range then quit in a big file", args: []string{"-n", "30000,30005p;30005q", "big"}, seedTree: sedBigTree},
 		{name: "pairs of lines in a big file", args: []string{"$!N;s/\\n/ /", "big"}, seedTree: sedBigTree},
+		{name: "r of a w file after many blocks", args: []string{"-n", "w o\n1000r o\n1000q", "big"}, seedTree: sedBigTree},
+		{name: "r of a w file after a long line", args: []string{"-n", "w o\n2r o", "long"}, seedTree: sedBigTree},
+		{name: "r of a w file after a long line and a short one", args: []string{"-n", "w o\n3r o", "long"}, seedTree: sedBigTree},
+		{name: "r of the w file of s", args: []string{"-n", "s/foo/&/w o\n500r o\n500q", "big"}, seedTree: sedBigTree},
 		{name: "list of a long line", args: []string{"-n", "l 50", "long"}, seedTree: sedBigTree},
 		{name: "a long match", args: []string{"s/x*/<&>/", "long"}, seedTree: sedBigTree},
 		{name: "the last line of a long file without a newline", args: []string{"-n", "$p", "long"}, seedTree: sedBigTree},

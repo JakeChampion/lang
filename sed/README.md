@@ -60,13 +60,21 @@ The exit status is the code of `q` or `Q`, or one of these:
 
 ## What the port does not do
 
-- `--debug`. GNU sed then prints the script and a trace of each cycle in a
-  form of its own. The port stops with exit status 1 and the message
-  `this port does not have the option '--debug'`.
-- Multibyte characters. The port works on bytes, as GNU sed does in the C
-  locale. The corpus runs in the C locale.
-- A write error in the middle of a large output names the bytes of the
-  port's buffer. GNU sed names the items of its last write to stdio.
+`--debug` is not in the port. GNU sed then prints the script and a trace of
+each cycle in a form of its own. The port stops with exit status 1 and the
+message `this port does not have the option '--debug'`.
+
+These differences remain:
+
+- The port works on bytes, as GNU sed does in the C locale. Thus it does
+  not know multibyte characters.
+- The port writes standard output in blocks of 64 KiB, and GNU sed writes
+  it in blocks of 4 KiB. Thus a write error on standard output after the
+  first 4 KiB gives a different message. The port names the bytes of its
+  block, and GNU sed names the bytes of its last write. A w file and the
+  file of `-i` use the blocks of GNU sed, and give the same messages.
+- On wasm32-wasi, the `e` command and the `e` flag stop with an error,
+  because WASI has no processes.
 
 ## Tests
 
