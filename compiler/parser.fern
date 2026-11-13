@@ -9706,22 +9706,28 @@ function fn_spelling_params(t: string): string {
   return ref_fn_param_spellings(r);
 }
 
+// A function type, in parentheses when it is the element of an array.
+function render_fn_ref(t: TypeRef): string {
+  let inner = "(";
+  let f = 0;
+  while (f + 1 < t.args.len()) {
+    if (f > 0) {
+      inner += ", ";
+    }
+    inner += render_type_ref(t.args[f]);
+    f += 1;
+  }
+  inner = inner + ") => " + render_type_ref(t.args[t.args.len() - 1]);
+  if (t.array_depth > 0) {
+    return "(" + inner + ")";
+  }
+  return inner;
+}
+
 pub function render_type_ref(t: TypeRef): string {
   let inner = "";
   if (t.is_fn) {
-    inner = "(";
-    let f = 0;
-    while (f + 1 < t.args.len()) {
-      if (f > 0) {
-        inner += ", ";
-      }
-      inner += render_type_ref(t.args[f]);
-      f += 1;
-    }
-    inner = inner + ") => " + render_type_ref(t.args[t.args.len() - 1]);
-    if (t.array_depth > 0) {
-      inner = "(" + inner + ")";
-    }
+    inner = render_fn_ref(t);
   } else if (t.is_tuple) {
     inner = "(";
     for i in 0..t.args.len() {

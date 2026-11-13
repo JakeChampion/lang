@@ -710,6 +710,32 @@ pub function reference(t: typeinfo.Type): boolean {
   }
 }
 
+// A value of an enum whose variants hold no field is the address of a static
+// object, so it has no count to keep.
+pub function counted(f: Func, t: typeinfo.Type): boolean {
+  return counted_in(f.enums, f.finalizers, t);
+}
+
+pub function counted_in(enums: semrecords.Enum[], finalizers: Finalizer[], t: typeinfo.Type): boolean {
+  if let typeinfo.TypeUnion(u) = t {
+    return !static_enum(enums, finalizers, u, t);
+  }
+  return reference(t);
+}
+
+function static_enum(enums: semrecords.Enum[], finalizers: Finalizer[], u: typeinfo.TypeUnion, t: typeinfo.Type): boolean {
+  let at = semrecords.find_enum(enums, t);
+  if (at < 0 || enums[at].layout != semrecords.layout_variant() || finalizer_index(finalizers, u.name).is_some()) {
+    return false;
+  }
+  for v in enums[at].variants {
+    if (v.fields.len() > 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
 pub function text_constant(t: typeinfo.Type): boolean {
   return is_wide(t) || is_u32(t);
 }
@@ -1792,7 +1818,7 @@ function arr_concat_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): strin
     return "array concat operand type";
   }
   if let typeinfo.TypeArray(a) = result {
-    if (!a.view && !reference(a.elem)) {
+    if (!a.view && !counted(f, a.elem)) {
       return "";
     }
   }
@@ -3823,7 +3849,7 @@ function cell_read_has_drop_hazard(f: Func): boolean {
   }
   let checked: string[] = [];
   for t in f.values {
-    if (!reference(t)) {
+    if (!counted(f, t)) {
       continue;
     }
     let key = type_key(t);
@@ -4054,7 +4080,7 @@ function held_finalizers(f: Func, rows: Finalizer[]): i32[] {
   let out: i32[] = [];
   let checked: string[] = [];
   for t in f.values {
-    if (!reference(t)) {
+    if (!counted(f, t)) {
       continue;
     }
     let key = type_key(t);
@@ -5170,7 +5196,7 @@ function crosses_jump(f: Func, a: i32, parents: i32[][], defs: ssa.SInst[]): boo
     return true;
   }
   let t = f.values[a];
-  if (!reference(t) || holds_view(f, t) || is_map(t)) {
+  if (!counted(f, t) || holds_view(f, t) || is_map(t)) {
     return false;
   }
   let k = defs[a].kind_tag;

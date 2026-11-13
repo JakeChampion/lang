@@ -62,23 +62,7 @@ function __fern_subprocess(cmd: string, args: string[], input: string): ProcessR
     if (has_nul) {
       __fern_sp_exec_failed(cmdz, clen, -22);
     }
-    let rc0 = __syscall3(221, cmdz as i64, argv as i64, envp as i64) as i32;
-    let pre = __raw_alloc(9);
-    __raw_store8(pre, 0, 47);
-    __raw_store8(pre, 1, 98);
-    __raw_store8(pre, 2, 105);
-    __raw_store8(pre, 3, 110);
-    __raw_store8(pre, 4, 47);
-    __fern_sp_exec_at(pre, 5, cmdz, clen, argv, envp);
-    __raw_store8(pre, 1, 117);
-    __raw_store8(pre, 2, 115);
-    __raw_store8(pre, 3, 114);
-    __raw_store8(pre, 4, 47);
-    __raw_store8(pre, 5, 98);
-    __raw_store8(pre, 6, 105);
-    __raw_store8(pre, 7, 110);
-    __raw_store8(pre, 8, 47);
-    __fern_sp_exec_at(pre, 9, cmdz, clen, argv, envp);
+    let rc0 = __fern_sp_exec_path(cmdz, clen, argv, envp);
     __fern_sp_exec_failed(cmdz, clen, rc0);
   }
   __syscall3(57, in_r as i64, 0, 0);

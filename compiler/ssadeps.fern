@@ -347,7 +347,7 @@ pub function boxed_values(f: ssa.SFunc): boolean[] {
   for bi in 0..f.blocks.len() {
     let insts = f.blocks[bi].insts;
     for k in 0..insts.len() {
-      if (counts_box(insts[k]) && out[insts[k].args[0]] && !loaded_before(insts, k, insts[k].args[0]) && !loaded_above(dom, loads[insts[k].args[0]], bi)) {
+      if (counts_box(insts[k]) && out[insts[k].args[0]] && !loaded_before(insts, k, insts[k].args[0]) && !loaded_above(dom, loads, insts[k].args[0], bi)) {
         out = out.with(insts[k].args[0], false);
       }
     }
@@ -382,20 +382,21 @@ function loads_from(ins: ssa.SInst, v: i32): boolean {
   return ins.kind_tag == ssa.LD_AT && ins.args.len() == 1 && ins.args[0] == v && ins.imm >= 0;
 }
 
-// For each counted value, the positions of the blocks that load from it.
-function load_blocks(f: ssa.SFunc, counted: boolean[]): i32[][] {
-  let out: i32[][] = [];
-  for _ in 0..f.nvals {
-    out = out.append([]);
-  }
+// The loads from counted values: values[k] is loaded from in the block at position blocks[k].
+struct LoadSites { values: i32[], blocks: i32[] }
+
+function load_blocks(f: ssa.SFunc, counted: boolean[]): LoadSites {
+  let values: i32[] = [];
+  let blocks: i32[] = [];
   for bi in 0..f.blocks.len() {
     for ins in f.blocks[bi].insts {
-      if (ins.kind_tag == ssa.LD_AT && ins.args.len() == 1 && ins.imm >= 0 && ins.args[0] >= 0 && counted[ins.args[0]] && !contains(out[ins.args[0]], bi)) {
-        out = out.with(ins.args[0], out[ins.args[0]].append(bi));
+      if (ins.kind_tag == ssa.LD_AT && ins.args.len() == 1 && ins.imm >= 0 && ins.args[0] >= 0 && counted[ins.args[0]]) {
+        values = values.append(ins.args[0]);
+        blocks = blocks.append(bi);
       }
     }
   }
-  return out;
+  return LoadSites { values: values, blocks: blocks };
 }
 
 function loaded_before(insts: ssa.SInst[], k: i32, v: i32): boolean {
@@ -407,9 +408,9 @@ function loaded_before(insts: ssa.SInst[], k: i32, v: i32): boolean {
   return false;
 }
 
-function loaded_above(dom: Dom, blocks: i32[], bi: i32): boolean {
-  for d in blocks {
-    if (d != bi && dom_holds(dom, bi, d)) {
+function loaded_above(dom: Dom, loads: LoadSites, v: i32, bi: i32): boolean {
+  for k in 0..loads.values.len() {
+    if (loads.values[k] == v && loads.blocks[k] != bi && dom_holds(dom, bi, loads.blocks[k])) {
       return true;
     }
   }

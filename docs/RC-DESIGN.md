@@ -185,6 +185,12 @@ halves (`docs/rc-log/2026-09-21-owned-by-default-alone-is-a-regression.md`).
 
 ### 1.3 The unit plan
 
+A value has a unit only when its type is counted (`ssasem.counted`). An enum
+whose variants hold no field is not counted, because each of its values is
+the address of a static object. The plan, the physical lowering and the
+certifier use the same predicate. A parameter of such a type keeps its
+declared mode, and the certifier reads it as a word (`physicalbody.abis`).
+
 `ssaunits.plan` walks the graph backwards and writes, per **step** (an
 instruction, an edge, the entry, a return), which values are **supplied**
 (moved into a construction, a callee's counted slot, a store, a return),

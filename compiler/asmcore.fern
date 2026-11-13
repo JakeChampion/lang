@@ -115,6 +115,9 @@ pub struct EmitState {
   leak_check: boolean,
   backtrace: boolean,
   profile: i32,
+  cover: boolean,
+  symbols: boolean,
+  optimize: boolean,
   var_rows: boolean,
   shared: boolean,
   size: boolean,
@@ -657,6 +660,9 @@ pub function new_state(): EmitState {
     leak_check: false,
     backtrace: false,
     profile: rtprofile.mode(),
+    cover: false,
+    symbols: false,
+    optimize: false,
     shared: false,
     size: false,
     harden: false,
@@ -710,7 +716,7 @@ pub function leak_check_on(): boolean {
   return envflag.on("FERN_LEAKCHECK");
 }
 
-pub struct Switches { backtrace: boolean, sanitize: boolean, sandbox: boolean, leak_check: boolean, rc_free_debug: boolean, var_rows: boolean, shared: boolean, size: boolean, harden: boolean, heap_limit: i64, quarantine: i64, pie: boolean, profile: string, target: string, line_maps: util.LineMap[], ram_base: i64, ram_size: i64, interrupts: string[], early: string, secondary: string, user_mode: boolean }
+pub struct Switches { backtrace: boolean, sanitize: boolean, sandbox: boolean, cover: boolean, symbols: boolean, optimize: boolean, leak_check: boolean, rc_free_debug: boolean, var_rows: boolean, shared: boolean, size: boolean, harden: boolean, heap_limit: i64, quarantine: i64, pie: boolean, profile: string, target: string, line_maps: util.LineMap[], ram_base: i64, ram_size: i64, interrupts: string[], early: string, secondary: string, user_mode: boolean }
 
 // The -sanitize quarantine budget in bytes when no -quarantine was given: 64 MiB.
 pub function quarantine_default(): i64 {
@@ -726,11 +732,11 @@ pub function arena_bytes(limit: i64): i64 {
 }
 
 pub function env_switches(): Switches {
-  return Switches { backtrace: backtrace_on(), sanitize: sanitize_on(), sandbox: sandbox_on(), leak_check: leak_check_on(), rc_free_debug: rc_free_debug_on(), var_rows: false, shared: false, size: size_on(), harden: false, heap_limit: 0i64, quarantine: quarantine_default(), pie: false, profile: "", target: "", line_maps: [], ram_base: 0i64, ram_size: 0i64, interrupts: [], early: "", secondary: "", user_mode: false };
+  return Switches { backtrace: backtrace_on(), sanitize: sanitize_on(), sandbox: sandbox_on(), cover: false, symbols: false, optimize: false, leak_check: leak_check_on(), rc_free_debug: rc_free_debug_on(), var_rows: false, shared: false, size: size_on(), harden: false, heap_limit: 0i64, quarantine: quarantine_default(), pie: false, profile: "", target: "", line_maps: [], ram_base: 0i64, ram_size: 0i64, interrupts: [], early: "", secondary: "", user_mode: false };
 }
 
 pub function with_switches(s: EmitState, sw: Switches): EmitState {
-  return EmitState { ...s, backtrace: sw.backtrace, var_rows: sw.var_rows, shared: sw.shared, size: sw.size, harden: sw.harden, pie: sw.pie, heap_limit: arena_bytes(sw.heap_limit), quarantine: sw.quarantine, build_profile: sw.profile, build_target: sw.target, ram_base: sw.ram_base, ram_size: sw.ram_size, interrupts: sw.interrupts, early: sw.early, secondary: sw.secondary, user_mode: sw.user_mode, line_maps: sw.line_maps, sanitize: sw.sanitize, sandbox: sw.sandbox, leak_check: sw.sanitize || sw.leak_check, rc_free_debug: sw.sanitize || sw.rc_free_debug };
+  return EmitState { ...s, backtrace: sw.backtrace, var_rows: sw.var_rows, shared: sw.shared, size: sw.size, harden: sw.harden, pie: sw.pie, heap_limit: arena_bytes(sw.heap_limit), quarantine: sw.quarantine, build_profile: sw.profile, build_target: sw.target, ram_base: sw.ram_base, ram_size: sw.ram_size, interrupts: sw.interrupts, early: sw.early, secondary: sw.secondary, user_mode: sw.user_mode, line_maps: sw.line_maps, sanitize: sw.sanitize, sandbox: sw.sandbox, cover: sw.cover, symbols: sw.symbols, optimize: sw.optimize, leak_check: sw.sanitize || sw.leak_check, rc_free_debug: sw.sanitize || sw.rc_free_debug };
 }
 
 // A `.loc` row names the document line of a literate module, not its tangled line.
@@ -749,23 +755,24 @@ function flag01(on: boolean): string {
 // The build manifest stamped into every native executable and shared
 // object, which `fern -manifest` and std/mitigations read back.
 pub function build_manifest(s: EmitState): string {
-  return manifest_line(s.build_target, s.build_profile, [s.harden, s.pie, s.sanitize, s.backtrace, s.size, s.shared], s.heap_limit, s.quarantine);
+  return manifest_line(s.build_target, s.build_profile, [s.harden, s.pie, s.sanitize, s.backtrace, s.size, s.shared, s.sandbox, s.cover, s.symbols, s.optimize], s.heap_limit, s.quarantine, s.profile);
 }
 
 // The manifest of a wasm module, from the switches its build took. A wasm
 // module has no arena, so its heap_limit is 0.
 pub function switches_manifest(sw: Switches): string {
-  return manifest_line(sw.target, sw.profile, [sw.harden, sw.pie, sw.sanitize, sw.backtrace, sw.size, sw.shared], 0i64, sw.quarantine);
+  return manifest_line(sw.target, sw.profile, [sw.harden, sw.pie, sw.sanitize, sw.backtrace, sw.size, sw.shared, sw.sandbox, sw.cover, sw.symbols, sw.optimize], 0i64, sw.quarantine, rtprofile.mode());
 }
 
-// flags: harden, pie, sanitize, backtrace, size, shared, in that order.
-function manifest_line(target: string, profile: string, flags: boolean[], heap_limit: i64, quarantine: i64): string {
-  let names = ["harden", "pie", "sanitize", "backtrace", "size", "shared"];
+// flags: harden, pie, sanitize, backtrace, size, shared, sandbox, cover,
+// symbols, optimize, in that order. profiling is the FERN_PROFILE mode.
+function manifest_line(target: string, profile: string, flags: boolean[], heap_limit: i64, quarantine: i64, profiling: i32): string {
+  let names = ["harden", "pie", "sanitize", "backtrace", "size", "shared", "sandbox", "cover", "symbols", "optimize"];
   let out = "FERNBUILD1 target=" + target + " profile=" + profile;
   for i in 0..names.len() {
     out = out + " " + names[i] + "=" + flag01(flags[i]);
   }
-  return out + " heap_limit=" + util.i64_to_string(heap_limit) + " quarantine=" + util.i64_to_string(quarantine);
+  return out + " heap_limit=" + util.i64_to_string(heap_limit) + " quarantine=" + util.i64_to_string(quarantine) + " profiling=" + rtprofile.name(profiling);
 }
 
 pub function emit_build_manifest(s: EmitState): EmitState {
