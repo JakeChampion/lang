@@ -17,7 +17,7 @@ import (
 // jqSuiteFloor is the number of cases of jq.test that the port passes. A case
 // in a part of the language the port does not have yet is skipped, and every
 // other case must pass.
-const jqSuiteFloor = 141
+const jqSuiteFloor = 203
 
 const jqNotYet = "is not in this port yet"
 
@@ -197,6 +197,9 @@ func TestSelfHostExampleJqAgainstJq(t *testing.T) {
 		{[]string{"-r", "map(tostring) | add"}, "[1,\"a\",[1.0],null]"},
 		{[]string{"-c", "if . == 1 then error({\"a\": .}) elif . == 2 then error(\"two\") else try error(\"x\") catch . end"}, "1\n2\n3\n"},
 		{[]string{"-c", "reduce .[] as $x (0; . + $x), [foreach .[] as $x (0; . + $x; [$x, .])]"}, "[1,2,3]\n"},
+		{[]string{"-c", "[.. | numbers] | sort, unique, min, max, (map(tostring) | join(\",\")), [limit(2; .[])]"}, "{\"a\":[3,{\"b\":[1,3.0]}],\"c\":2}\n"},
+		{[]string{"-c", "flatten(1), any, all, reverse, first, last, [range(length)]"}, "[[1,[2]],null,\"a\"]\n"},
+		{[]string{"-c", "sort"}, "{\"a\":1}\n[2,1]\n"},
 	}
 	for _, c := range cases {
 		run := func(path string) (string, string, int) {

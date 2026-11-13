@@ -368,9 +368,6 @@ function punct_message(x: string): string {
   if (x == "=" || x == "|=" || x == "+=" || x == "-=" || x == "*=" || x == "/=" || x == "%=" || x == "//=") {
     return "assignment " + NOT_YET;
   }
-  if (x == "..") {
-    return "recursion " + NOT_YET;
-  }
   return "syntax error, unexpected '" + x + "'";
 }
 
@@ -705,26 +702,25 @@ function parse_fold(each: boolean, p: P): (Ast, P) {
   return (Foreach(source, name, init, update, Identity), u.expect(")"));
 }
 
-// The number of arguments of each function that the port has.
-function arity(name: string): i32 {
-  return match (name) {
-    "has" => 1,
-    "map" => 1,
-    "select" => 1,
-    "add" => 0,
-    "empty" => 0,
-    "error" => 1,
-    "from_entries" => 0,
-    "keys" => 0,
-    "keys_unsorted" => 0,
-    "length" => 0,
-    "not" => 0,
-    "to_entries" => 0,
-    "tojson" => 0,
-    "tostring" => 0,
-    "type" => 0,
-    _ => -1,
-  };
+// Each function that the port has, as "name/arguments".
+function functions(): string[] {
+  return [
+    "add/0", "all/0", "all/1", "all/2", "any/0", "any/1", "any/2", "arrays/0", "booleans/0", "empty/0",
+    "error/0", "error/1", "first/0", "first/1", "flatten/0", "flatten/1", "from_entries/0", "has/1",
+    "iterables/0", "join/1", "keys/0", "keys_unsorted/0", "last/0", "last/1", "length/0", "limit/2",
+    "map/1", "max/0", "min/0", "not/0", "nulls/0", "numbers/0", "objects/0", "range/1", "range/2",
+    "range/3", "recurse/0", "recurse/1", "recurse/2", "reverse/0", "scalars/0", "select/1", "sort/0",
+    "strings/0", "to_entries/0", "tojson/0", "tostring/0", "type/0", "unique/0", "values/0",
+  ];
+}
+
+function has_name(name: string): boolean {
+  for f in functions() {
+    if (f.starts_with(name + "/")) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // The arguments of the function `name`, when it has some: `(e; e)`.
@@ -744,10 +740,9 @@ function parse_call(name: string, p: P): (Ast, P) {
       q = q.expect(";");
     }
   }
-  let fits = arity(name) == args.len() || name == "error" && args.len() == 0;
-  if (q.error.len() == 0 && !fits) {
-    let called = name + "/" + args.len().to_string();
-    if (arity(name) >= 0) {
+  let called = name + "/" + args.len().to_string();
+  if (q.error.len() == 0 && !functions().contains(called)) {
+    if (has_name(name)) {
       return (Identity, p.fail(called + " is not defined"));
     }
     return (Identity, p.fail("the function " + called + " " + NOT_YET));
@@ -770,6 +765,9 @@ function parse_group(x: string, p: P): (Ast, P) {
   }
   if (x == "{") {
     return parse_object(p.advance());
+  }
+  if (x == "..") {
+    return (Call("recurse", []), p.advance());
   }
   return (Identity, p.fail(unexpected(TPunct(x))));
 }
