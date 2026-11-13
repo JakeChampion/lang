@@ -14,20 +14,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// splitManifest gives the assembly without its FERNBUILD1 manifest line, and
-// that line.
-func splitManifest(asm string) (code, manifest string) {
-	var b strings.Builder
-	for _, line := range strings.SplitAfter(asm, "\n") {
-		if strings.Contains(line, "FERNBUILD1 ") {
-			manifest = line
-			continue
-		}
-		b.WriteString(line)
-	}
-	return b.String(), manifest
-}
-
 func TestSelfHostCLIX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -443,6 +429,21 @@ function main(): i32 {
 		}
 	})
 
+	buildOptimize := regexp.MustCompile(`(?m)^__fern_build:\n[ \t]+\.ascii "FERNBUILD1 [^\n"]* optimize=([01]) `)
+	foldCode := func(t *testing.T, asm []byte, want byte) []byte {
+		t.Helper()
+		notes := buildOptimize.FindAllSubmatchIndex(asm, -1)
+		if len(notes) != 1 {
+			t.Fatalf("build note count = %d, want 1", len(notes))
+		}
+		at := notes[0][2]
+		if asm[at] != want {
+			t.Fatalf("build note optimize = %c, want %c", asm[at], want)
+		}
+		code := bytes.Clone(asm)
+		code[at] = '0'
+		return code
+	}
 	foldCase := func(t *testing.T, name, src string, wantExit int, unwanted ...string) {
 		t.Helper()
 		srcPath := filepath.Join(dir, name+".fern")
@@ -462,12 +463,7 @@ function main(): i32 {
 		if code != 0 {
 			t.Fatalf("-O emit exited %d, want 0", code)
 		}
-		optCode, optManifest := splitManifest(string(optAsm))
-		defCode, defManifest := splitManifest(string(defAsm))
-		if !strings.Contains(optManifest, " optimize=1 ") || !strings.Contains(defManifest, " optimize=0 ") {
-			t.Errorf("%s: the manifests do not record -O:\n-O: %s\ndefault: %s", name, optManifest, defManifest)
-		}
-		if optCode != defCode {
+		if !bytes.Equal(foldCode(t, optAsm, '1'), foldCode(t, defAsm, '0')) {
 			t.Errorf("%s: -O changed the emitted code; folding is meant to run on every build\n"+
 				"--- -O ---\n%s\n--- default ---\n%s", name, optAsm, defAsm)
 		}

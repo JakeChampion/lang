@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"testing"
 )
 
@@ -62,7 +63,7 @@ function main(): i32 {
 					if msg, err := runX86_64Bin(cli.runner, cli.bin, args...).CombinedOutput(); err != nil {
 						t.Fatalf("compile (debug=%v): %v\n%s", debug, err, msg)
 					}
-					text = append(text, nativeProgramText(t, out, target))
+					text = append(text, nativeProgramText(t, out, target, debug))
 				}
 				if !bytes.Equal(text[0], text[1]) {
 					t.Errorf("-g changes native instructions: plain %d bytes, debug %d bytes", len(text[0]), len(text[1]))
@@ -72,9 +73,14 @@ function main(): i32 {
 	}
 }
 
-func nativeProgramText(t *testing.T, path, target string) []byte {
+func nativeProgramText(t *testing.T, path, target string, debug bool) []byte {
 	t.Helper()
 	if target == "arm64-darwin" {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		normalizeDebugBuildSymbols(t, raw, debug)
 		f, err := macho.Open(path)
 		if err != nil {
 			t.Fatal(err)
@@ -109,9 +115,31 @@ func nativeProgramText(t *testing.T, path, target string) []byte {
 			if start < p.Off || start-p.Off >= uint64(len(data)) {
 				t.Fatal("invalid executable payload offset")
 			}
-			return data[start-p.Off:]
+			return normalizeDebugBuildSymbols(t, data[start-p.Off:], debug)
 		}
 	}
 	t.Fatal("missing executable load")
 	return nil
+}
+
+// The manifest records -g even when the instructions are unchanged.
+// Validate that flag, then normalize its one byte for the code comparison.
+func normalizeDebugBuildSymbols(t *testing.T, data []byte, debug bool) []byte {
+	t.Helper()
+	note := regexp.MustCompile(`FERNBUILD1 [^\n]* symbols=([01]) `)
+	matches := note.FindAllSubmatchIndex(data, -1)
+	if len(matches) != 1 {
+		t.Fatalf("build note count = %d, want 1", len(matches))
+	}
+	at := matches[0][2]
+	want := byte('0')
+	if debug {
+		want = '1'
+	}
+	if data[at] != want {
+		t.Fatalf("build note symbols = %c, want %c", data[at], want)
+	}
+	code := bytes.Clone(data)
+	code[at] = '0'
+	return code
 }

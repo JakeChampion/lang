@@ -33,8 +33,8 @@ func TestSelfHostTypeResolve(t *testing.T) {
 		"(Foo, Shape) => tuple<struct:Foo, union:Shape>\n" +
 		"(i32, string, boolean) => tuple<i32, string, bool>\n" +
 		"(string, (i32, boolean)) => tuple<string, tuple<i32, bool>>\n" +
-		"(i32) => unknown(unrecognised type name: (i32))\n" +
-		"() => unknown(unrecognised type name: ())\n" +
+		"(i32) => i32\n" +
+		"() => unknown(unrecognised type name: )\n" +
 		"Map[string, i32] => map<string, i32>\n" +
 		"Map[i32, Foo] => map<i32, struct:Foo>\n" +
 		"Map[string, Map[i32, string]] => map<string, map<i32, string>>\n" +
