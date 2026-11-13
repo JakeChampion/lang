@@ -14682,7 +14682,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
       }
     },
     _ => {
-      out = call_diags(c.callee, s);
+      out = callee_diags(c, s, dest);
     }
   }
   let dests = variant_payload_dests(c, dest, s, s.call_param_types(c));
@@ -16050,6 +16050,17 @@ pub function lambda_body_scope(lm: ast.ExprLambda, s: Scope): Scope {
     return lsc.with_block_ret(lambda_ret_type(lm, s));
   }
   return lsc.with_ret_type(lambda_ret_type(lm, s));
+}
+
+// The body of a value block (a match or an if in value position) returns to
+// the destination of the block.
+function callee_diags(c: ast.ExprCall, s: Scope, dest: typeinfo.Type): util.Diag[] {
+  if let ast.ExprLambda(lm) = c.callee {
+    if (parser.is_value_block(c) && !is_unknown(dest)) {
+      return stmts_call_diags(lm.body, lambda_body_scope(lm, s).with_block_ret(dest));
+    }
+  }
+  return call_diags(c.callee, s);
 }
 
 function call_diags_lambda(lm: ast.ExprLambda, s: Scope, out: util.Diag[]): util.Diag[] {

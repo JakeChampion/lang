@@ -1,0 +1,51 @@
+// A generic call in an arm of a match, or in a branch of an if, takes its
+// type parameter from the destination of the match or the if. The
+// destination is a return, an annotated binding, or a parameter.
+import "std/result";
+
+function unexpected[T](n: i32): Result[T, string] {
+    return Err(f"bad {n}");
+}
+
+function in_match(n: i32): Result[i32, string] {
+    return match (n) { 1 => Ok(1), _ => unexpected(n) };
+}
+
+function in_if(n: i32): Result[string, string] {
+    return if (n == 1) { Ok("one") } else { unexpected(n) };
+}
+
+function nested(n: i32, m: i32): Result[boolean, string] {
+    return match (n) {
+        1 => match (m) { 1 => Ok(true), _ => unexpected(m) },
+        _ => unexpected(n),
+    };
+}
+
+function in_binding(n: i32): i32 {
+    let r: Result[i32, string] = match (n) { 2 => Ok(20), _ => unexpected(n) };
+    return r.unwrap_or(-1);
+}
+
+function count(r: Result[i32, string]): i32 {
+    return r.unwrap_or(0);
+}
+
+function in_argument(n: i32): i32 {
+    return count(match (n) { 3 => Ok(30), _ => unexpected(n) });
+}
+
+function main(): i32 {
+    print(in_match(1).unwrap_or(0));
+    print(in_match(2).is_err());
+    print(in_if(1).unwrap_or(""));
+    print(in_if(5).is_err());
+    print(nested(1, 1).unwrap_or(false));
+    print(nested(1, 2).is_err());
+    print(nested(2, 1).is_err());
+    print(in_binding(2));
+    print(in_binding(3));
+    print(in_argument(3));
+    print(in_argument(4));
+    return 0;
+}

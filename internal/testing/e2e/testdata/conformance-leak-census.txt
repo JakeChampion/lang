@@ -478,6 +478,7 @@ generic_associated_fn                                0
 generic_box                                          0
 generic_call_binds_through_closure_array_param       0
 generic_call_gives_its_expected_type_to_an_array_argument 0
+generic_call_in_a_value_block_takes_its_destination 0
 generic_call_in_struct_field                         0
 generic_call_infers_from_variant_argument            0
 generic_call_takes_its_type_from_its_destination_inside_a_value 0
