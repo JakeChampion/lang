@@ -12,7 +12,8 @@ The parsers do not trim whitespace or accept digit separators.
 | `std/u8` | `parse_u8` | `parse_u8_radix` |
 | `std/i64` | `parse_i64` | `parse_i64_radix` |
 | `std/u32` | `parse_u32` | `parse_u32_radix` |
-| `std/u64` | `parse_u64`, `parse_usize` | `parse_u64_radix`, `parse_usize_radix` |
+| `std/u64` | `parse_u64` | `parse_u64_radix` |
+| `std/usize` | `parse_usize` | `parse_usize_radix` |
 | `std/f32` | `parse_f32` | — |
 | `std/f64` | `parse_f64` | — |
 

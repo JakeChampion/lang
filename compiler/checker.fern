@@ -3825,8 +3825,11 @@ function retired_collection_spelling(ns: string, method: string): string {
 }
 
 function scalar_integer_module(lb: string): string {
-  if (lb == "u64" || lb == "usize") {
+  if (lb == "u64") {
     return "std/u64";
+  }
+  if (lb == "usize") {
+    return "std/usize";
   }
   if (lb == "u8") {
     return "std/u8";

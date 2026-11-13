@@ -11,6 +11,7 @@ import "std/string";
 import "std/result";
 import "std/json";
 import "std/u8";
+import "std/usize";
 
 function rendered[T: cmp.Display](x: T): string {
   return x.to_string();
@@ -434,7 +435,7 @@ function main(): i32 {
     return 12;
   }
   if (target_arch() == "wasm32") {
-    match (u64.parse_usize("4294967295")) {
+    match (usize.parse_usize("4294967295")) {
       Ok(n) => {
         if (n.to_string() != "4294967295") {
           return 13;
@@ -444,11 +445,11 @@ function main(): i32 {
         return 14;
       }
     }
-    if (u64.parse_usize("4294967296").is_ok()) {
+    if (usize.parse_usize("4294967296").is_ok()) {
       return 15;
     }
   } else {
-    match (u64.parse_usize("18446744073709551615")) {
+    match (usize.parse_usize("18446744073709551615")) {
       Ok(n) => {
         if (n.to_string() != "18446744073709551615") {
           return 16;
@@ -458,7 +459,7 @@ function main(): i32 {
         return 17;
       }
     }
-    if (u64.parse_usize("18446744073709551616").is_ok()) {
+    if (usize.parse_usize("18446744073709551616").is_ok()) {
       return 18;
     }
   }
@@ -524,7 +525,7 @@ function main(): i32 {
       }
     }
     let max_size: usize = 0 as usize - 1 as usize;
-    match (u64.parse_usize_radix(max_size.to_string_radix(radix), radix)) {
+    match (usize.parse_usize_radix(max_size.to_string_radix(radix), radix)) {
       Ok(value) => {
         if (value != max_size) {
           return 29;
