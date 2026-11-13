@@ -1199,6 +1199,9 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq $1, %rdx\n");
     s = s.write("    call .Lhev_w\n");
     if (s.sanitize) {
+      // The frames above an exit() call are never unwound, so what they hold is no leak.
+      s = s.write("    cmpq $0, __fern_lc_exited(%rip)\n");
+      s = s.write("    jne .Lsan_leak_done\n");
       s = s.write("    movq __fern_lc_alloc_bytes(%rip), %rax\n");
       s = s.write("    subq __fern_lc_free_bytes(%rip), %rax\n");
       s = s.write("    testq %rax, %rax\n");

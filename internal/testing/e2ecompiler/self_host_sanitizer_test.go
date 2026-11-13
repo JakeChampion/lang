@@ -187,6 +187,44 @@ func TestSelfHostSanitizeBoxFreeIsQuarantined(t *testing.T) {
 	}
 }
 
+// main holds a block across a call that leaves through exit().
+const sanSelfHostExitHoldsSrc = `@noinline
+function stop(code: i32): i32 {
+    exit(code);
+    return 0;
+}
+
+function main(): i32 {
+    unsafe {
+        let p: usize = __alloc(24);
+        let r = stop(7);
+        __free(p, 24);
+        return r;
+    }
+}`
+
+// A run that exit() ends keeps the census, marked from=exit, and draws no
+// leak verdict: the frames above the call are never unwound.
+func TestSelfHostSanitizeExitDrawsNoLeakVerdict(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			stderr, code := cli.exitOf(t, sanSelfHostExitHoldsSrc, target, "FERN_SANITIZE=1")
+			if code != 7 {
+				t.Fatalf("exit=%d stderr=%q, want 7 (exit() carries its status)", code, stderr)
+			}
+			if strings.Contains(stderr, "fern-sanitizer:") {
+				t.Errorf("a run that exit() ended drew a finding: %q", stderr)
+			}
+			summary := leakSummaryLine(stderr)
+			var allocs, frees, live int64
+			if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil || live <= 0 || !strings.HasSuffix(summary, " from=exit") {
+				t.Errorf("census %q, want live bytes held by main and the from=exit mark", summary)
+			}
+		})
+	}
+}
+
 var sanBacktraceRe = regexp.MustCompile(`backtrace:\n(  0x[0-9a-f]{16}\n)+`)
 
 func TestSelfHostSanitizeReportCarriesBacktrace(t *testing.T) {

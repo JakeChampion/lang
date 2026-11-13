@@ -15622,8 +15622,10 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				for i, a := range n.Args {
 					if i < len(vr.payloads) && destSub != nil {
 						c.expectedType = substituteType(vr.payloads[i], destSub)
-					} else if i < len(vr.payloads) && c.expectedEnumName(substituteType(vr.payloads[i], sub)) != "" {
-						c.expectedType = substituteType(vr.payloads[i], sub)
+					} else if i < len(vr.payloads) {
+						if hint := substituteType(vr.payloads[i], sub); !containsParamType(hint) || c.expectedEnumName(hint) != "" {
+							c.expectedType = hint
+						}
 					}
 					at := c.checkExpr(a, s)
 					c.expectedType = nil
