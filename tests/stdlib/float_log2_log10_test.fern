@@ -1,58 +1,95 @@
 import "std/test";
 import "std/f64";
 
-function test_log2_pow2(): test.TestOutcome {
-  return test.assert_eq_f64_near(8.0.log2(), 3.0, 0.0001);
+// 2 to the power n, for n from -1074 to 1023.
+function pow2(n: i32): f64 {
+  if (n < -1022) {
+    return f64_from_bits(1 << (n + 1074) as i64);
+  }
+  return f64_from_bits((n + 1023) as i64 << 52);
 }
 
-function test_log2_large(): test.TestOutcome {
-  return test.assert_eq_f64_near(1024.0.log2(), 10.0, 0.0001);
+function test_log2_powers(): test.TestOutcome {
+  for n in -1074..1024 {
+    let got = pow2(n).log2();
+    if (got != n as f64) {
+      return test.fail("log2 of 2^" + n.to_string() + ": got " + got.to_string());
+    }
+  }
+  return test.pass();
 }
 
-function test_log2_below_one(): test.TestOutcome {
-  return test.assert_eq_f64_near(0.5.log2(), 0.0 - 1.0, 0.0001);
+function test_log10_powers(): test.TestOutcome {
+  let p = 1.0;
+  for n in 0..23 {
+    if (p.log10() != n as f64) {
+      return test.fail("log10 of 1e" + n.to_string() + ": got " + p.log10().to_string());
+    }
+    if (n > 0 && (1.0 / p).log10() != -(n as f64)) {
+      return test.fail("log10 of 1e-" + n.to_string() + ": got " + (1.0 / p).log10().to_string());
+    }
+    p *= 10.0;
+  }
+  return test.pass();
 }
 
-function test_log2_one(): test.TestOutcome {
-  return test.assert_eq_f64_near(1.0.log2(), 0.0, 0.0001);
+// The results of the C library for values with no exact result.
+function test_log2_values(): test.TestOutcome {
+  let cases = [(10.0, 3.321928094887362), (3.0, 1.584962500721156), (0.3, -1.7369655941662063), (0.7, -0.5145731728297583), (1.0000000000000002, 3.203426503814917e-16), (0.9999999999999999, -1.6017132519074588e-16), (5e-324, -1074.0), (1.7976931348623157e308, 1024.0)];
+  for c in cases {
+    let (x, want) = c;
+    if (x.log2() != want) {
+      return test.fail("log2 of " + x.to_string() + ": got " + x.log2().to_string() + ", want " + want.to_string());
+    }
+  }
+  return test.pass();
 }
 
-function test_log10_pow10(): test.TestOutcome {
-  return test.assert_eq_f64_near(1000.0.log10(), 3.0, 0.0001);
+function test_log10_values(): test.TestOutcome {
+  let cases = [(2.0, 0.3010299956639812), (0.1, -1.0), (3.0, 0.47712125471966244), (7.0, 0.8450980400142568), (12345.678, 4.091514945509202), (5e-324, -323.3062153431158), (1.7976931348623157e308, 308.25471555991675)];
+  for c in cases {
+    let (x, want) = c;
+    if (x.log10() != want) {
+      return test.fail("log10 of " + x.to_string() + ": got " + x.log10().to_string() + ", want " + want.to_string());
+    }
+  }
+  return test.pass();
 }
 
-function test_log10_hundred(): test.TestOutcome {
-  return test.assert_eq_f64_near(100.0.log10(), 2.0, 0.0001);
-}
-
-function test_log10_below_one(): test.TestOutcome {
-  return test.assert_eq_f64_near(0.01.log10(), 0.0 - 2.0, 0.0001);
+function test_special(): test.TestOutcome {
+  let inf = 1.0 / 0.0;
+  if (0.0.log2() != -inf || 0.0.log10() != -inf || (-0.0).log2() != -inf) {
+    return test.fail("the log of 0 is not -infinity");
+  }
+  if (inf.log2() != inf || inf.log10() != inf) {
+    return test.fail("the log of infinity is not infinity");
+  }
+  let a = (-1.0).log2();
+  let b = (-1.0).log10();
+  let c = (0.0 / 0.0).log2();
+  if (a == a || b == b || c == c) {
+    return test.fail("the log of a negative number or of NaN is not NaN");
+  }
+  return test.pass();
 }
 
 function test_f32(): test.TestOutcome {
-  if (!float_near((16.0 as f32).log2() as f64, 4.0)) {
+  if ((16.0 as f32).log2() as f64 != 4.0) {
     return test.fail("log2 f32");
   }
-  return test.assert_eq_f64_near((10000.0 as f32).log10() as f64, 4.0, 0.001);
-}
-
-function float_near(a: f64, b: f64): boolean {
-  let d = a - b;
-  if (d < 0.0) {
-    d = 0.0 - d;
+  if ((10000.0 as f32).log10() as f64 != 4.0) {
+    return test.fail("log10 f32");
   }
-  return d < 0.001;
+  return test.pass();
 }
 
 function main(): i32 {
   let r = test.new("std/f64 log2/log10");
-  r = r.it("log2 power of two", test_log2_pow2);
-  r = r.it("log2 large", test_log2_large);
-  r = r.it("log2 below one", test_log2_below_one);
-  r = r.it("log2 one", test_log2_one);
-  r = r.it("log10 power of ten", test_log10_pow10);
-  r = r.it("log10 hundred", test_log10_hundred);
-  r = r.it("log10 below one", test_log10_below_one);
+  r = r.it("log2 of each power of 2 is exact", test_log2_powers);
+  r = r.it("log10 of each power of 10 is exact", test_log10_powers);
+  r = r.it("log2 values", test_log2_values);
+  r = r.it("log10 values", test_log10_values);
+  r = r.it("zero, infinity, negative and NaN", test_special);
   r = r.it("f32", test_f32);
   return r.finish();
 }
