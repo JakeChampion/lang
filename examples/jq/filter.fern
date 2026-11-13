@@ -16,7 +16,10 @@ pub enum Ast {
   Index(Ast, Ast),
   Slice(Ast, Ast, Ast),
   Iterate(Ast),
+  // `?` after one step of a path: an error of that step gives no output.
   Optional(Ast),
+  // `e?` and `try e`: an error of `e` stops `e` with no error.
+  Try(Ast),
   Pipe(Ast, Ast),
   Comma(Ast, Ast),
   Collect(Ast),
@@ -29,6 +32,9 @@ pub enum Ast {
   Catch(Ast, Ast),
   Interp(string, string[], Ast[]),
   Format(string),
+  Update(string, Ast, Ast),
+  // `def name(params): body; rest`. A parameter with a `$` is a variable also.
+  Def(string, string[], Ast, Ast),
   If(Ast, Ast, Ast),
   Bind(Ast, string, Ast),
   Reduce(Ast, string, Ast, Ast),
@@ -269,8 +275,11 @@ function two_char_punct(s: string, i: i32): string {
   if (i + 1 >= s.len()) {
     return "";
   }
+  if (i + 2 < s.len() && text(s, i, i + 3) == "//=") {
+    return "//=";
+  }
   let p = text(s, i, i + 2);
-  if (p == "==" || p == "!=" || p == "<=" || p == ">=" || p == "//" || p == "|=" || p == "+=" || p == "-=" || p == "?/") {
+  if (p == "==" || p == "!=" || p == "<=" || p == ">=" || p == "//" || p == "|=" || p == "+=" || p == "-=" || p == "*=" || p == "/=" || p == "%=" || p == "?/") {
     return p;
   }
   return "";
@@ -334,7 +343,7 @@ pub function lex(s: string): Lexed {
       let two = two_char_punct(s, i);
       if (two.len() > 0) {
         toks = toks.append(TPunct(two));
-        i += 2;
+        i += two.len();
       } else {
         toks = toks.append(TPunct(text(s, i, i + 1)));
         i += 1;
@@ -348,7 +357,8 @@ pub function lex(s: string): Lexed {
 
 pub struct Parsed { ast: Ast, error: string }
 
-struct P { toks: Tok[], at: i32, error: string }
+// `defs` holds each function that a `def` gave, as "name/arguments".
+struct P { toks: Tok[], at: i32, error: string, defs: string[] }
 
 function (p: P) peek(): Tok {
   return p.toks[p.at];
@@ -414,11 +424,16 @@ function describe(t: Tok): string {
 }
 
 pub function parse(program: string): Parsed {
+  return parse_in(program, []);
+}
+
+// The filter of `program`, which can call the functions of `defs`.
+function parse_in(program: string, defs: string[]): Parsed {
   let lx = lex(program);
   if (lx.error.len() > 0) {
     return Parsed { ast: Identity, error: lx.error };
   }
-  let p = P { toks: lx.toks, at: 0, error: "" };
+  let p = P { toks: lx.toks, at: 0, error: "", defs: defs };
   let (ast, q) = parse_pipe(p);
   if (q.error.len() == 0) {
     if let TEnd = q.peek() {
@@ -438,9 +453,6 @@ function unexpected(t: Tok): string {
 }
 
 function punct_message(x: string): string {
-  if (x == "=" || x == "|=" || x == "+=" || x == "-=" || x == "*=" || x == "/=" || x == "%=" || x == "//=") {
-    return "assignment " + NOT_YET;
-  }
   return "syntax error, unexpected '" + x + "'";
 }
 
@@ -467,8 +479,39 @@ function parse_comma(p: P): (Ast, P) {
   return (left, q);
 }
 
-function parse_alt(p: P): (Ast, P) {
+// The operator of an update at `p`: "=", "|=", or the arithmetic operator of
+// `+=` and the others. It is "" when `p` is not at an update.
+function update_op(p: P): string {
+  if let TPunct(x) = p.peek() {
+    if (x == "=" || x == "|=") {
+      return x;
+    }
+    if (x == "+=" || x == "-=" || x == "*=" || x == "/=" || x == "%=") {
+      return text(x, 0, 1);
+    }
+    if (x == "//=") {
+      return "//";
+    }
+  }
+  return "";
+}
+
+// An update does not group: `.a = .b = 1` is a syntax error.
+function parse_update(p: P): (Ast, P) {
   let (left, q) = parse_or(p);
+  let op = update_op(q);
+  if (q.error.len() > 0 || op.len() == 0) {
+    return (left, q);
+  }
+  let (right, r) = parse_or(q.advance());
+  if (r.error.len() == 0 && update_op(r).len() > 0) {
+    return (left, r.fail(unexpected(r.peek())));
+  }
+  return (Update(op, left, right), r);
+}
+
+function parse_alt(p: P): (Ast, P) {
+  let (left, q) = parse_update(p);
   if (q.error.len() == 0 && q.is_punct("//")) {
     let (right, r) = parse_alt(q.advance());
     return (Alt(left, right), r);
@@ -572,7 +615,7 @@ function parse_try(p: P): (Ast, P) {
     let (handler, r) = parse_try_operand(q.advance());
     return (Catch(body, handler), r);
   }
-  return (Optional(body), q);
+  return (Try(body), q);
 }
 
 function parse_try_operand(p: P): (Ast, P) {
@@ -611,13 +654,28 @@ function parse_negate(p: P): (Ast, P) {
   return parse_postfix(p);
 }
 
+// Whether the term at `p` starts with a step of a path: `.a`, `."a"`, `.[`.
+function starts_with_step(p: P): boolean {
+  if let TField(_) = p.peek() {
+    return true;
+  }
+  if let TDot = p.peek() {
+    let q = p.advance();
+    return q.is_string() || q.is_punct("[");
+  }
+  return false;
+}
+
 function parse_postfix(p: P): (Ast, P) {
   let (t, q) = parse_primary(p);
+  // jq reads a `?` after a step as a guard of that step only.
+  let after_step = starts_with_step(p);
   while (q.error.len() == 0) {
     match (q.peek()) {
       TField(f) => {
         t = Index(t, Literal(json.JString(f)));
         q = q.advance();
+        after_step = true;
       },
       TDot => {
         let r = q.advance();
@@ -632,15 +690,18 @@ function parse_postfix(p: P): (Ast, P) {
         } else {
           return (t, r.fail("syntax error, unexpected " + describe(r.peek())));
         }
+        after_step = true;
       },
       TPunct(x) => {
         if (x == "[") {
           let (u, w) = parse_brackets(t, q);
           t = u;
           q = w;
+          after_step = true;
         } else if (x == "?") {
-          t = Optional(t);
+          t = if (after_step) { Optional(t) } else { Try(t) };
           q = q.advance();
+          after_step = false;
         } else {
           return (t, q);
         }
@@ -738,7 +799,7 @@ function parse_string(format: string, p: P): (Ast, P) {
     TInterp(texts, sources) => {
       let parts: Ast[] = [];
       for source in sources {
-        let inner = parse(source);
+        let inner = parse_in(source, p.defs);
         if (inner.error.len() > 0) {
           return (Identity, p.fail(inner.error));
         }
@@ -780,7 +841,10 @@ function parse_word(x: string, p: P): (Ast, P) {
   if (x == "then" || x == "elif" || x == "else" || x == "end" || x == "as" || x == "and" || x == "or" || x == "catch" || x == "try") {
     return (Identity, p.fail(keyword_message(x)));
   }
-  if (x == "def" || x == "label" || x == "import" || x == "include") {
+  if (x == "def") {
+    return parse_def(p.advance());
+  }
+  if (x == "label" || x == "import" || x == "include") {
     return (Identity, p.fail("'" + x + "' " + NOT_YET));
   }
   return parse_call(x, p.advance());
@@ -827,17 +891,18 @@ function parse_fold(each: boolean, p: P): (Ast, P) {
 function functions(): string[] {
   return [
     "add/0", "all/0", "all/1", "all/2", "any/0", "any/1", "any/2", "arrays/0", "ascii_downcase/0",
-    "ascii_upcase/0", "booleans/0", "ceil/0", "contains/1", "empty/0", "endswith/1", "error/0", "error/1",
-    "exp10/0", "exp2/0", "explode/0", "fabs/0", "first/0", "first/1", "flatten/0", "flatten/1", "floor/0",
-    "from_entries/0", "fromjson/0", "group_by/1", "has/1", "implode/0", "in/1", "index/1", "indices/1",
-    "infinite/0", "inside/1", "isempty/1", "isinfinite/0", "isnan/0", "isnormal/0", "iterables/0", "join/1",
-    "keys/0", "keys_unsorted/0", "last/0", "last/1", "length/0", "limit/2", "log/0", "log10/0", "log2/0",
-    "ltrimstr/1", "map/1", "max/0", "max_by/1", "min/0", "min_by/1", "nan/0", "not/0", "nth/1", "nth/2",
-    "nulls/0", "numbers/0", "objects/0", "pow/2", "range/1", "range/2", "range/3", "recurse/0", "recurse/1",
-    "recurse/2", "reverse/0", "rindex/1", "round/0", "rtrimstr/1", "scalars/0", "select/1", "sort/0",
+    "ascii_upcase/0", "booleans/0", "ceil/0", "contains/1", "del/1", "delpaths/1", "empty/0", "endswith/1",
+    "error/0", "error/1", "exp10/0", "exp2/0", "explode/0", "fabs/0", "first/0", "first/1", "flatten/0",
+    "flatten/1", "floor/0", "from_entries/0", "fromjson/0", "getpath/1", "group_by/1", "has/1", "implode/0",
+    "in/1", "index/1", "indices/1", "infinite/0", "inside/1", "isempty/1", "isinfinite/0", "isnan/0",
+    "isnormal/0", "iterables/0", "join/1", "keys/0", "keys_unsorted/0", "last/0", "last/1", "length/0",
+    "limit/2", "log/0", "log10/0", "log2/0", "ltrimstr/1", "map/1", "map_values/1", "max/0", "max_by/1",
+    "min/0", "min_by/1", "nan/0", "not/0", "nth/1", "nth/2", "nulls/0", "numbers/0", "objects/0", "path/1",
+    "paths/0", "paths/1", "pow/2", "range/1", "range/2", "range/3", "recurse/0", "recurse/1", "recurse/2",
+    "reverse/0", "rindex/1", "round/0", "rtrimstr/1", "scalars/0", "select/1", "setpath/2", "sort/0",
     "sort_by/1", "split/1", "sqrt/0", "startswith/1", "strings/0", "to_entries/0", "tojson/0", "tonumber/0",
     "tostring/0", "trunc/0", "type/0", "unique/0", "unique_by/1", "until/2", "utf8bytelength/0", "values/0",
-    "while/2", "with_entries/1",
+    "walk/1", "while/2", "with_entries/1",
   ];
 }
 
@@ -848,6 +913,73 @@ function has_name(name: string): boolean {
     }
   }
   return false;
+}
+
+// `name(params): body; rest` after a `def`. The body can call the function
+// itself and its parameters, and the rest can call the function.
+function parse_def(p: P): (Ast, P) {
+  let TIdent(name) = p.peek() else {
+    return (Identity, p.fail("syntax error, unexpected " + describe(p.peek())));
+  };
+  let q = p.advance();
+  let params: string[] = [];
+  if (q.is_punct("(")) {
+    q = q.advance();
+    while (q.error.len() == 0) {
+      match (q.peek()) {
+        TIdent(x) => {
+          params = params.append(x);
+        },
+        TVar(x) => {
+          params = params.append("$" + x);
+        },
+        _ => {
+          return (Identity, q.fail("syntax error, unexpected " + describe(q.peek())));
+        }
+      }
+      q = q.advance();
+      if (q.is_punct(")")) {
+        q = q.advance();
+        break;
+      }
+      q = q.expect(";");
+    }
+  }
+  q = q.expect(":");
+  let outer = p.defs;
+  let own = outer.append(name + "/" + params.len().to_string());
+  let inner = own;
+  for x in params {
+    inner = inner.append(param_name(x) + "/0");
+  }
+  let (body, r) = parse_pipe(P { ...q, defs: inner });
+  let t = P { ...r, defs: own }.expect(";");
+  if (t.error.len() > 0) {
+    return (Identity, t);
+  }
+  if let TEnd = t.peek() {
+    return (Identity, t.fail("Top-level program not given (try \".\")"));
+  }
+  let (rest, u) = parse_pipe(t);
+  return (Def(name, params, body, rest), P { ...u, defs: outer });
+}
+
+// Whether a `def` in scope has this name, with any number of parameters.
+function (p: P) defines(name: string): boolean {
+  for d in p.defs {
+    if (d.starts_with(name + "/")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The name of a parameter with no `$`.
+pub function param_name(x: string): string {
+  if (x.starts_with("$")) {
+    return text(x, 1, x.len());
+  }
+  return x;
 }
 
 // The arguments of the function `name`, when it has some: `(e; e)`.
@@ -868,8 +1000,8 @@ function parse_call(name: string, p: P): (Ast, P) {
     }
   }
   let called = name + "/" + args.len().to_string();
-  if (q.error.len() == 0 && !functions().contains(called)) {
-    if (has_name(name)) {
+  if (q.error.len() == 0 && !functions().contains(called) && !p.defs.contains(called)) {
+    if (has_name(name) || p.defines(name)) {
       return (Identity, p.fail(called + " is not defined"));
     }
     return (Identity, p.fail("the function " + called + " " + NOT_YET));
@@ -990,6 +1122,7 @@ pub function undefined_var(f: Ast, names: string[]): string {
     Slice(a, b, c) => first_undefined([a, b, c], names),
     Iterate(a) => undefined_var(a, names),
     Optional(a) => undefined_var(a, names),
+    Try(a) => undefined_var(a, names),
     Pipe(a, b) => first_undefined([a, b], names),
     Comma(a, b) => first_undefined([a, b], names),
     Collect(a) => undefined_var(a, names),
@@ -1000,6 +1133,8 @@ pub function undefined_var(f: Ast, names: string[]): string {
     Call(_, args) => first_undefined(args, names),
     Catch(a, b) => first_undefined([a, b], names),
     Interp(_, _, parts) => first_undefined(parts, names),
+    Update(_, a, b) => first_undefined([a, b], names),
+    Def(_, params, body, rest) => undefined_in_def(params, body, rest, names),
     If(a, b, c) => first_undefined([a, b, c], names),
     Bind(source, name, body) => first_scoped([source], [body], name, names),
     Reduce(source, name, init, update) => first_scoped([source, init], [update], name, names),
@@ -1028,4 +1163,19 @@ function first_scoped(outer: Ast[], inner: Ast[], name: string, names: string[])
     return v;
   }
   return first_undefined(inner, names.append(name));
+}
+
+// The variables of a `def`: the body sees each `$` parameter also.
+function undefined_in_def(params: string[], body: Ast, rest: Ast, names: string[]): string {
+  let inner = names;
+  for x in params {
+    if (x.starts_with("$")) {
+      inner = inner.append(param_name(x));
+    }
+  }
+  let v = undefined_var(body, inner);
+  if (v.len() > 0) {
+    return v;
+  }
+  return undefined_var(rest, names);
 }
