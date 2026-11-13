@@ -653,7 +653,7 @@ function test_the_settings(): test.TestOutcome {
   let kept = s.shell.app.model.tracks.len();
   s = sim.after(sim.tap(sim.tap(s, "Settings"), "Show"), 300i64);
   let again = s.shell.app.model.tracks.len().to_string() + " " + s.shell.app.model.hidden.len().to_string();
-  let next = tune.start_with("music", "", [], [], tune.Prefs { look: tune.LOOK_LIGHT, sort: tune.BY_NAME, hidden: ["music/loose"], off: [tune.FOLDERS], level: true, tint: true });
+  let next = tune.start_with("music", "", [], [], tune.Prefs { look: tune.LOOK_LIGHT, sort: tune.BY_NAME, hidden: ["music/loose"], off: [tune.FOLDERS], level: true, tint: true, fade: 0 });
   let started = [next.look, next.sort, next.hidden.len(), next.off.len()].map((n: i32): string => n.to_string()).join("");
   return test.assert_eq([light.to_string(), dark.to_string(), painted.to_string(), tabs.map((b: boolean): string => b.to_string()).join(","), hidden, kept.to_string(), again, started].join(" | "), "true | true | true | true,false,true,false,true | music/loose 3 0 | 3 | 4 0 | 1111");
 }
@@ -760,6 +760,55 @@ function test_the_theme_takes_the_color_of_the_cover(): test.TestOutcome {
   return test.assert_eq(got, "true true true");
 }
 
+// The mix of a crossfade keeps the end of a track at the start of the
+// fade, gives the next track at its end, and has equal power between.
+function test_the_mix_of_a_crossfade(): test.TestOutcome {
+  let a: i32[] = [1000, -1000, 1000, -1000];
+  let b: i32[] = [2000, 2000, 2000, 2000];
+  let start = player.crossed(a, b, 0.0, 0.0, 2);
+  let end = player.crossed(a, b, 1.0, 1.0, 2);
+  let half = player.crossed(a, b, 0.5, 0.5, 2);
+  let short = player.crossed(a, [2000], 0.5, 0.5, 2);
+  let show = (xs: i32[]): string => xs.map((v: i32): string => v.to_string()).join(",");
+  return test.assert_eq(show(start) + " | " + show(end) + " | " + show(half) + " | " + show(short), "1000,-1000,1000,-1000 | 2000,2000,2000,2000 | 2121,707,2121,707 | 2121,-707,707,-707");
+}
+
+// The track that follows is the next one of the queue, the first one again
+// with repeat, the same one with repeat one, and none at the end.
+function test_the_track_that_follows(): test.TestOutcome {
+  let m = tune.start([]);
+  for t in [song("/m/a.mp3", "A", "Ada", "Ada", "One", 2001, 3000i64, ""), song("/m/b.mp3", "B", "Ada", "Ada", "One", 2001, 3000i64, "")] {
+    m = tune.update(m, tune.Found(t));
+  }
+  let none = tune.following(m);
+  let first = tune.update(m, tune.Pick(0));
+  let last = tune.update(tune.Model { ...first, wants: [] }, tune.Finished);
+  let got = [tune.following(first), tune.following(last), tune.following(tune.Model { ...last, repeat: tune.REPEAT_ALL }), tune.following(tune.Model { ...last, repeat: tune.REPEAT_ONE }), none];
+  return test.assert_eq(got.map((v: i32): string => v.to_string()).join(" "), "1 -1 0 1 -1");
+}
+
+// With a crossfade, the next track opens in the last seconds of the track
+// that plays and fades in. When the track ends, the next one goes on from
+// where the fade took it, and the setting stays for the next start.
+function test_a_track_fades_into_the_next(): test.TestOutcome {
+  let s = sim.tap(sim.tap(started(), "Settings"), "Off");
+  let fade = s.shell.app.model.fade_s;
+  s = sim.tap(sim.back(s), "Morning Fern");
+  let m = s.shell.app.model;
+  let next = tune.following(m);
+  s = sim.send(s, tune.SeekMs(m.length_ms - 2000i64));
+  s = sim.after(s, 1000i64);
+  let opened = "none";
+  if let Some(inc) = s.shell.app.incoming {
+    opened = (inc.track == next).to_string() + " " + inc.voice.is_some().to_string();
+  }
+  s = sim.after(s, 3000i64);
+  let after = s.shell.app.model;
+  let kept = library.prefs_from(library.prefs_text(tune.prefs(after))).fade;
+  let got = [fade.to_string(), opened, (after.current == next).to_string(), (after.at_ms > 500i64).to_string(), s.shell.app.incoming.is_none().to_string(), kept.to_string()];
+  return test.assert_eq(got.join(" | "), "3 | true true | true | true | true | 3");
+}
+
 function main(): i32 {
   let r = test.new("examples/android/tune");
   r = r.it("the scan reads the tags and the paths of its files", test_scan_reads_tags_and_paths);
@@ -791,6 +840,9 @@ function main(): i32 {
   r = r.it("the settings choose the theme, the tabs and the hidden folders", test_the_settings);
   r = r.it("the shortcuts of the launcher play the library or a playlist", test_the_shortcuts_of_the_launcher);
   r = r.it("a track follows the one that ends in the same stream", test_a_track_follows_the_one_that_ends);
+  r = r.it("the mix of a crossfade has equal power", test_the_mix_of_a_crossfade);
+  r = r.it("the track that follows the one that plays", test_the_track_that_follows);
+  r = r.it("a track fades into the next one", test_a_track_fades_into_the_next);
   r = r.it("the settings switch the same loudness of each track", test_the_same_loudness);
   return r.finish();
 }
