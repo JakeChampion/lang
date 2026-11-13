@@ -581,6 +581,8 @@ is the number of slots it leaves.
 | `sha1x8_hw_blocks` | 553 | 2 | 1 |
 | `chacha20_xor_into` | 554 | 5 | 1 |
 | `poly1305_blocks` | 555 | 4 | 1 |
+| `chacha20_poly1305_seal_into` | 556 | 7 | 1 |
+| `chacha20_poly1305_open_into` | 557 | 7 | 1 |
 <!-- END ir_effects_run -->
 
 `vpermute` preserves all lane bits in two 128-bit inputs.
