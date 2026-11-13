@@ -357,10 +357,6 @@ const (
 	CauseRecursion  = "fern: recursion limit"
 )
 
-// inlineWorkerAdmit is the method of std/worker that runs a worker body in
-// this process.
-const inlineWorkerAdmit = "__method_worker__Inline_admit"
-
 // MaxCallDepth is the number of Fern calls that can be active at one time.
 // One call takes about 11 KB of the Go stack, so the limit of fern -interp,
 // 1 000 000, is out of reach here.
@@ -1517,6 +1513,13 @@ func New() *Interp {
 	i.Builtins["__task_set_cancelled"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) { return nil, taskRecord(args) }}
 	// A handle of this interpreter is not reused, so no count can change.
 	i.Builtins["__task_fd_gen"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
+	// __task_inline adds its argument to the number of worker bodies that run
+	// in this process, and gives the new number.
+	i.Builtins["__task_inline"] = &Builtin{Fn: func(i *Interp, args []Value) (Value, error) {
+		delta, _ := args[0].(Number)
+		i.workerDepth += int(delta)
+		return Number(i.workerDepth), nil
+	}}
 	i.Builtins["__task_cancelled"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
 	i.Builtins["f32_bits"] = &Builtin{Fn: builtinF32Bits}
 	i.Builtins["f32_from_bits"] = &Builtin{Fn: builtinF32FromBits}
@@ -6198,10 +6201,6 @@ func (i *Interp) callFunc(fn *ast.FuncDecl, args []Value) (Value, error) {
 	}
 	i.callDepth++
 	defer func() { i.callDepth-- }()
-	if fn.Name == inlineWorkerAdmit {
-		i.workerDepth++
-		defer func() { i.workerDepth-- }()
-	}
 	e := newEnv(nil)
 	for k, p := range fn.Params {
 		e.declare(p.Name, args[k])

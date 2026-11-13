@@ -32,6 +32,7 @@ pub function provided_names(): string[] {
     "__fern_task_set_cancelled",
     "__fern_task_fd_closed",
     "__fern_task_fd_gen",
+    "__fern_task_inline",
     "__fern_task_cancelled",
     "__fern_task_mode",
     "__fern_task_reserve",

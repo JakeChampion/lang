@@ -122,13 +122,22 @@ function ts_nominal(mod: parser.Module, t: string): boolean {
   return false;
 }
 
+// The lowering puts each `exit` through the gate of std/worker, so a use of
+// `exit` is a use of that function too.
+function ts_ident_roots(name: string, own acc: string[]): string[] {
+  if (name == "exit") {
+    acc = acc.append(ts_free_root("worker__exit_status"));
+  }
+  return acc.append(ts_free_root(name));
+}
+
 function ts_name_of(e: ast.Expr, own acc: string[]): string[] {
   match (e) {
     ast.ExprBytes(_) => {
       return acc;
     },
     ast.ExprIdent(id) => {
-      return acc.append(ts_free_root(id.name));
+      return ts_ident_roots(id.name, acc);
     },
     ast.ExprBinary(b) => {
       let m = ts_op_method(b.op);

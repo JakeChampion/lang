@@ -25,7 +25,7 @@ Every other engine runs the worker on the `Inline` scheduler, which runs the bod
 A `Worker` is `@must_consume`: a program joins every worker it spawns (E067).
 `join` consumes the worker and returns its result. A second join is refused (E051).
 `poll` never waits. It consumes the worker and returns `Finished` with the result, or `Running` with the worker, which the caller polls or joins later.
-A worker that exits with a signal or without a result stops the program with exit 134. A call of `exit` in a worker body is such a worker. The two interpreters run a body in the process of the program, and they stop the same way.
+A worker that exits with a signal or without a result stops the program with exit 134. A call of `exit` in a worker body is such a worker. A body on the `Inline` scheduler runs in the process of the program, and the program stops the same way: `exit_status` gives each `exit` the status 134 while such a body runs. A native program takes that path when the kernel refuses the fork.
 A process worker ends when its parent ends: it gets SIGTERM. On Linux and Android the kernel sends it. macOS has no such signal, so a watchdog process sends it. The watchdog waits for the exit of the parent or of the worker, with kqueue.
 
 ## Executable example
@@ -374,9 +374,29 @@ pub function inline(): Inline {
   return Inline { roots: cell_new(none) };
 }
 
+// exit_status gives the status that an `exit` ends the program with. The
+// compiler puts each `exit` of a program that has this module through it.
+// While a worker body runs in the process of the program, an `exit` is a
+// worker that ended with no result, as it is for a worker process.
+pub function exit_status(code: i32): i32 {
+  unsafe {
+    if (__task_inline(0) == 0) {
+      return code;
+    }
+  }
+  eprint("worker: the worker exited with status " + code.to_string() + " and no result");
+  return 134;
+}
+
 impl Scheduler for Inline {
   function admit(self: Inline, run: () => usize): i32 {
+    unsafe {
+      __task_inline(1);
+    }
     let root: usize = run();
+    unsafe {
+      __task_inline(-1);
+    }
     let roots: i64[] = self.roots.get();
     self.roots.set(roots.append(root as i64));
     return roots.len();
