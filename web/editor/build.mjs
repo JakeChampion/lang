@@ -6,7 +6,10 @@ import path from "node:path";
 const root = fileURLToPath(new URL(".", import.meta.url));
 const result = await build({
   absWorkingDir: root,
-  entryPoints: ["index.js"],
+  entryPoints: {"editor-deps": "index.js"},
+  outdir: fileURLToPath(new URL("..", import.meta.url)),
+  chunkNames: "editor-deps-[hash]",
+  splitting: true,
   bundle: true,
   format: "esm",
   platform: "browser",
@@ -24,5 +27,7 @@ const notices = await Promise.all(packages.map(async name => {
   const text = await readFile(path.join(root, "node_modules", name, "LICENSE"), "utf8");
   return name + "\n" + text.replaceAll("*/", "* /");
 }));
-await writeFile(new URL("../editor-deps.js", import.meta.url),
-  result.outputFiles[0].text + "\n/*!\n" + notices.join("\n\n") + "\n*/\n");
+const entry = fileURLToPath(new URL("../editor-deps.js", import.meta.url));
+const license = "\n/*!\n" + notices.join("\n\n") + "\n*/\n";
+await Promise.all(result.outputFiles.map(file =>
+  writeFile(file.path, file.text + (file.path === entry ? license : ""))));

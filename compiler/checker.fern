@@ -21456,33 +21456,50 @@ function lu_safe_constructor(fx: LuFn, e: ast.Expr): boolean {
 }
 
 function lu_compound_call_fresh(fx: LuFn, call: ast.ExprCall): boolean {
+  if (lu_checked_result_call(fx, call)) {
+    return true;
+  }
   if let ast.ExprFieldAccess(field) = call.callee {
     let found = false;
     for method in fx.lenders.methods {
       if (method.name == field.field) {
         found = true;
-        for lend in method.lend {
-          if (lend) {
-            return false;
-          }
+        if (!lu_compound_inputs_fresh(fx, method, util.append_all([field.obj], call.args))) {
+          return false;
         }
       }
     }
     return found;
   }
   if let ast.ExprIdent(id) = call.callee {
-    let row = fx.lenders.names.find(id.name);
-    if (row < 0) {
+    if (util.has_str(fx.params, id.name) || lu_decl_count(fx, id.name) > 0) {
       return false;
     }
-    for lend in fx.lenders.rows[row].lend {
-      if (lend) {
+    let row = fx.lenders.names.find(id.name);
+    if (row < 0) {
+      return fx.builtins.has(id.name);
+    }
+    return lu_compound_inputs_fresh(fx, fx.lenders.rows[row], call.args);
+  }
+  return false;
+}
+
+// An input that can lend is a fresh call result, rather than a retained local.
+function lu_compound_inputs_fresh(fx: LuFn, row: OwnLend, args: ast.Expr[]): boolean {
+  for i in 0..row.lend.len() {
+    if (row.lend[i]) {
+      if (i >= args.len()) {
+        return false;
+      }
+      let ast.ExprCall(input) = args[i] else {
+        return false;
+      };
+      if (!lu_fresh_value(fx, args[i]) || !lu_compound_call_fresh(fx, input)) {
         return false;
       }
     }
-    return true;
   }
-  return false;
+  return true;
 }
 
 function lu_if_body_fresh(fx: LuFn, body: ast.Stmt[]): boolean {

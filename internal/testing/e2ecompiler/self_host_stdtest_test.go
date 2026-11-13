@@ -1,6 +1,7 @@
 package e2ecompiler
 
 import (
+	"crypto/sha256"
 	"errors"
 	"os"
 	"os/exec"
@@ -178,6 +179,11 @@ func TestSelfHostStdTestInterp(t *testing.T) {
 				wantStr = stripLinesWithPrefix(wantStr, tc.stripPrefix)
 			}
 			if gotStr != wantStr {
+				if executable, err := os.ReadFile(cli); err != nil {
+					t.Logf("read self-host interpreter %s: %v", cli, err)
+				} else {
+					t.Logf("self-host interpreter %s SHA256 %x", cli, sha256.Sum256(executable))
+				}
 				t.Errorf("TAP output mismatch:\n--- self-host interp ---\n%s\n--- oracle interp ---\n%s", gotStr, wantStr)
 			}
 		})
