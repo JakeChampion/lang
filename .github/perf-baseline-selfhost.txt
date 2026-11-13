@@ -1,3 +1,6 @@
+# 2026-11-13: PR #15643, the same jobs as perf-baseline.txt on main 312303b6. The deflate emit rows of
+# #15609 grew 1.0% to 3.2%, and the perceus_rbtree rows are 2.6% to 6.8% below their pins. Each row
+# moves to its measured value. Keep all tolerances.
 # 2026-11-12: main 6f8937ce, run 43285985869, perf-x86_64 job 131423863245.
 # The ssa changes of that day grew the emit of perceus_rbtree and perceus_rbtree_ck 5.0% to 8.1%
 # on the three targets. Each row moves to its measured value. Keep all tolerances.
@@ -279,7 +282,7 @@ selfhost/arm64-linux/byte_copy_with.emit	1469
 selfhost/arm64-linux/call_overhead.emit	442
 selfhost/arm64-linux/closure_call.emit	1198
 selfhost/arm64-linux/deflate_decode.emit	13320
-selfhost/arm64-linux/deflate_encode.emit	7829
+selfhost/arm64-linux/deflate_encode.emit	7910
 selfhost/arm64-linux/enum_match.emit	1161
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
 # 2026-11-10: PR #15022, CI 42754163314 records the inherited HTTP benchmark changes.
@@ -318,8 +321,8 @@ selfhost/wasm32-wasi/byte_copy_append.emit	571
 selfhost/wasm32-wasi/byte_copy_with.emit	586
 selfhost/wasm32-wasi/call_overhead.emit	119
 selfhost/wasm32-wasi/closure_call.emit	504
-selfhost/wasm32-wasi/deflate_decode.emit	20140
-selfhost/wasm32-wasi/deflate_encode.emit	11811
+selfhost/wasm32-wasi/deflate_decode.emit	20449
+selfhost/wasm32-wasi/deflate_encode.emit	12188
 selfhost/wasm32-wasi/enum_match.emit	545
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
 # 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured selfhost/wasm32-wasi/http_hello.emit at 19326 (was 19039). The tolerance is unchanged.
@@ -398,12 +401,12 @@ selfhost/wasm32-wasi/perceus_deriv.emit	2831
 selfhost/x86-64-linux/perceus_nqueens.emit	1548
 selfhost/arm64-linux/perceus_nqueens.emit	1797
 selfhost/wasm32-wasi/perceus_nqueens.emit	1267
-selfhost/x86-64-linux/perceus_rbtree.emit	2861
-selfhost/arm64-linux/perceus_rbtree.emit	3200
-selfhost/wasm32-wasi/perceus_rbtree.emit	3854
-selfhost/x86-64-linux/perceus_rbtree_ck.emit	2943
-selfhost/arm64-linux/perceus_rbtree_ck.emit	3271
-selfhost/wasm32-wasi/perceus_rbtree_ck.emit	4176
+selfhost/x86-64-linux/perceus_rbtree.emit	2666
+selfhost/arm64-linux/perceus_rbtree.emit	2994
+selfhost/wasm32-wasi/perceus_rbtree.emit	3747
+selfhost/x86-64-linux/perceus_rbtree_ck.emit	2762
+selfhost/arm64-linux/perceus_rbtree_ck.emit	3070
+selfhost/wasm32-wasi/perceus_rbtree_ck.emit	4069
 # 2026-11-07: PR #14490 adds QTRLE emitted-size measurements from the local current compiler.
 # Existing limits and tolerances stay unchanged.
 # 2026-11-08: #14770. Pin the measured reduction from the corrected display roots.
