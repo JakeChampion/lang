@@ -1,6 +1,6 @@
 # Audio file tags
 
-This module reads what an audio file holds about itself: the title, the artist, the album, the genre, the track number, the lyrics, and the gains of the track and of its album.
+This module reads what an audio file holds about itself: the title, the artist, the album, the genre, the track number, the lyrics, and the gains of the track and of its album. It also writes the texts and the numbers of the tags of an MP3 or a FLAC file.
 
 ## Model
 
@@ -79,6 +79,8 @@ function main(): i32 {
 
 <<pictures>>
 
+<<writing>>
+
 <<files>>
 ```
 
@@ -86,7 +88,8 @@ function main(): i32 {
 
 ```fern
 <<module introduction>>=
-// This module reads the tags of an MP3, a FLAC or a WAV file.
+// This module reads the tags of an MP3, a FLAC, a WAV, an MP4 or an Ogg
+// file, and writes those of an MP3 or a FLAC file.
 import "std/audio/wire";
 import "std/base64";
 import "std/result";
@@ -850,6 +853,301 @@ pub function ogg(input: [u8]): Tags {
     return comments(packet, 7, packet.len());
   }
   return none();
+}
+```
+
+### `writing`
+
+`retagged` gives the file with the texts and the numbers of `t`: the title, the artist, the album, the artist of the album, the track number, the year and the genre. A field that is "" or 0 has no frame or comment.
+
+- An MP3 file gets an ID3v2 tag. A tag of the version 2.3 stays at 2.3, with its texts in UTF-16. A tag of the version 2.4 and a new tag have their texts in UTF-8. Each other frame of the tag stays: pictures, lyrics and gains.
+- A FLAC file gets a new Vorbis comment block in the place of the old one. Each other comment and each other block stay.
+
+Other formats give None. An ID3v2 tag of the version 2.2 also gives None, and so does a tag with unsynchronisation or a footer. A FLAC file whose blocks go past its end also gives None.
+
+```fern
+<<writing>>=
+// The bytes of padding after the frames of a new ID3v2 tag.
+const PADDING: i32 = 512;
+
+// The frames that `retagged` writes.
+function written_ids(): string[] {
+  return ["TIT2", "TPE1", "TALB", "TPE2", "TRCK", "TDRC", "TYER", "TCON"];
+}
+
+// The comments that `retagged` writes.
+function written_names(): string[] {
+  return ["TITLE", "ARTIST", "ALBUM", "ALBUMARTIST", "ALBUM ARTIST", "TRACKNUMBER", "DATE", "YEAR", "GENRE"];
+}
+
+function has(names: string[], name: string): boolean {
+  for n in names {
+    if (n == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function appended(own out: u8[], more: [u8]): u8[] {
+  for b in more {
+    out = out.append(b);
+  }
+  return out;
+}
+
+function bytes_of(text: string): u8[] {
+  let out: u8[] = [];
+  for i in 0..text.len() {
+    out = out.append(text[i]);
+  }
+  return out;
+}
+
+function syncsafe_bytes(n: i32): u8[] {
+  return [(n >> 21 & 127) as u8, (n >> 14 & 127) as u8, (n >> 7 & 127) as u8, (n & 127) as u8];
+}
+
+// The text as UTF-16 with a byte order mark, little-endian. A byte that is
+// not UTF-8 gives U+FFFD.
+function utf16_bytes(text: string): u8[] {
+  let out: u8[] = [255u8, 254u8];
+  let i = 0;
+  while (i < text.len()) {
+    let (cp, n) = utf8.decode_at(text, i).unwrap_or((65533, 1));
+    if (cp >= 65536) {
+      out = wire.put_le(out, (55296 + (cp - 65536 >> 10)) as u64, 2);
+      out = wire.put_le(out, (56320 + (cp - 65536 & 1023)) as u64, 2);
+    } else {
+      out = wire.put_le(out, cp as u64, 2);
+    }
+    i += n;
+  }
+  return out;
+}
+
+// A text frame of ID3v2 of the version `version`.
+function text_frame(id: string, text: string, version: i32): u8[] {
+  let body = if (version == 4) { appended([3u8], bytes_of(text)) } else { appended([1u8], utf16_bytes(text)) };
+  let size = if (version == 4) { syncsafe_bytes(body.len()) } else { wire.put_be([], body.len() as u64, 4) };
+  return appended(appended(appended(bytes_of(id), size), [0u8, 0u8]), body);
+}
+
+// The frames of the fields of `t` that are not "" or 0.
+function field_frames(t: Tags, version: i32): u8[] {
+  let out: u8[] = [];
+  for pair in [("TIT2", t.title), ("TPE1", t.artist), ("TALB", t.album), ("TPE2", t.album_artist), ("TCON", t.genre)] {
+    let (id, text) = pair;
+    if (text.len() > 0) {
+      out = appended(out, text_frame(id, text, version));
+    }
+  }
+  if (t.track > 0) {
+    out = appended(out, text_frame("TRCK", t.track.to_string(), version));
+  }
+  if (t.year > 0) {
+    out = appended(out, text_frame(if (version == 4) { "TDRC" } else { "TYER" }, t.year.to_string(), version));
+  }
+  return out;
+}
+
+// The frames from `from` to `end` of a tag of the version `version`, but
+// for those that `retagged` writes. Padding ends the frames.
+function kept_frames(input: [u8], from: i32, end: i32, version: i32): u8[] {
+  let written = written_ids();
+  let out: u8[] = [];
+  let at = from;
+  while (at + 10 <= end) {
+    let id = frame_name(input, at, 4);
+    let size = if (version == 4) { syncsafe(input, at + 4) } else { wire.be(input, at + 4, 4) as i32 };
+    if (id.len() == 0 || size <= 0 || at + 10 + size > end) {
+      return out;
+    }
+    if (!has(written, id)) {
+      out = appended(out, input[at:at + 10 + size]);
+    }
+    at += 10 + size;
+  }
+  return out;
+}
+
+// An ID3v2 tag of the version `version` with the frames `frames`.
+function id3_tag(frames: [u8], version: i32): u8[] {
+  let out = appended(appended(bytes_of("ID3"), [version as u8, 0u8, 0u8]), syncsafe_bytes(frames.len() + PADDING));
+  out = appended(out, frames);
+  for _ in 0..PADDING {
+    out = out.append(0u8);
+  }
+  return out;
+}
+
+function retagged_mp3(input: [u8], t: Tags): Option[u8[]] {
+  if (!wire.tag(input, 0, "ID3")) {
+    if (input.len() < 2 || input[0] != 255u8 || (input[1] & 224u8) != 224u8) {
+      return None;
+    }
+    return Some(appended(id3_tag(field_frames(t, 4), 4), input));
+  }
+  if (input.len() < 10) {
+    return None;
+  }
+  let version = input[3] as i32;
+  let flags = input[5] as i32;
+  let end = 10 + syncsafe(input, 6);
+  if (version < 3 || version > 4 || (flags & 144) != 0 || end > input.len()) {
+    return None;
+  }
+  let frames = appended(field_frames(t, version), kept_frames(input, frames_start(input, 0, end), end, version));
+  return Some(appended(id3_tag(frames, version), input[end:]));
+}
+
+// A Vorbis comment: its length, then its text.
+function comment_bytes(text: string): u8[] {
+  return appended(wire.put_le([], text.len() as u64, 4), bytes_of(text));
+}
+
+// The comments of `t` that are not "" or 0, as `NAME=value`.
+function field_comments(t: Tags): string[] {
+  let out: string[] = [];
+  for pair in [("TITLE", t.title), ("ARTIST", t.artist), ("ALBUM", t.album), ("ALBUMARTIST", t.album_artist), ("GENRE", t.genre)] {
+    let (name, text) = pair;
+    if (text.len() > 0) {
+      out = out.append(name + "=" + text);
+    }
+  }
+  if (t.track > 0) {
+    out = out.append("TRACKNUMBER=" + t.track.to_string());
+  }
+  if (t.year > 0) {
+    out = out.append("DATE=" + t.year.to_string());
+  }
+  return out;
+}
+
+// The vendor and the comments of the Vorbis comment block from `from` to
+// `to`, but for those that `retagged` writes.
+function kept_comments(input: [u8], from: i32, to: i32): (u8[], string[]) {
+  let kept: string[] = [];
+  let vendor_end = if (from + 8 > to) { -1 } else { from + 4 + wire.le(input, from, 4) as i32 };
+  if (vendor_end < from + 4 || vendor_end + 4 > to) {
+    return (bytes_of("Fern"), kept);
+  }
+  let vendor = appended([], input[from + 4:vendor_end]);
+  let count = wire.le(input, vendor_end, 4) as i32;
+  let at = vendor_end + 4;
+  let written = written_names();
+  for _ in 0..count {
+    if (at + 4 > to) {
+      return (vendor, kept);
+    }
+    let n = wire.le(input, at, 4) as i32;
+    if (n < 0 || at + 4 + n > to) {
+      return (vendor, kept);
+    }
+    if (!is_written(input, at + 4, at + 4 + n, written)) {
+      kept = kept.append(utf8.from_bytes_lossy(input[at + 4:at + 4 + n]));
+    }
+    at += 4 + n;
+  }
+  return (vendor, kept);
+}
+
+// The comment from `from` to `to` has a name of `written`.
+function is_written(input: [u8], from: i32, to: i32, written: string[]): boolean {
+  let eq = from;
+  while (eq < to && input[eq] != b'=') {
+    eq += 1;
+  }
+  return eq > from && eq < to && has(written, utf8_text(input, from, eq).to_upper());
+}
+
+// A Vorbis comment block of FLAC: its type 4, its size, its vendor and its
+// comments.
+function comment_block(vendor: [u8], comments: string[]): u8[] {
+  let body = appended(wire.put_le([], vendor.len() as u64, 4), vendor);
+  body = wire.put_le(body, comments.len() as u64, 4);
+  for c in comments {
+    body = appended(body, comment_bytes(c));
+  }
+  return appended(appended([4u8], wire.put_be([], body.len() as u64, 3)), body);
+}
+
+// The block of FLAC at `at` with the comments of `t` when it is the
+// Vorbis comment block, the byte after it, and its flag of the last block.
+// A block that goes past the end gives no bytes and -1.
+function flac_block(input: [u8], at: i32, t: Tags): (u8[], i32, boolean) {
+  if (at + 4 > input.len()) {
+    return ([], -1, true);
+  }
+  let head = input[at] as i32;
+  let next = at + 4 + wire.be(input, at + 1, 3) as i32;
+  if (next > input.len()) {
+    return ([], -1, true);
+  }
+  if ((head & 127) != 4) {
+    return (appended([(head & 127) as u8], input[at + 1:next]), next, (head & 128) != 0);
+  }
+  let (vendor, kept) = kept_comments(input, at + 4, next);
+  let all = field_comments(t);
+  for c in kept {
+    all = all.append(c);
+  }
+  return (comment_block(vendor, all), next, (head & 128) != 0);
+}
+
+// The blocks with a new Vorbis comment block after the first one, when
+// they have no such block.
+function with_comment_block(own blocks: u8[][], t: Tags): u8[][] {
+  for b in blocks {
+    if ((b[0] & 127u8) == 4u8) {
+      return blocks;
+    }
+  }
+  let out: u8[][] = [];
+  for i in 0..blocks.len() {
+    out = out.append(blocks[i]);
+    if (i == 0) {
+      out = out.append(comment_block(bytes_of("Fern"), field_comments(t)));
+    }
+  }
+  return out;
+}
+
+// The FLAC file with the comments of `t` in its Vorbis comment block. A
+// file with no such block gets one after its first block. The last block
+// keeps the flag of the last block.
+function retagged_flac(input: [u8], t: Tags): Option[u8[]] {
+  let blocks: u8[][] = [];
+  let at = 4;
+  let last = false;
+  while (!last) {
+    let (block, next, end) = flac_block(input, at, t);
+    if (next < 0) {
+      return None;
+    }
+    blocks = blocks.append(block);
+    at = next;
+    last = end;
+  }
+  let all = with_comment_block(blocks, t);
+  let out = bytes_of("fLaC");
+  for i in 0..all.len() {
+    let b = all[i];
+    if (i == all.len() - 1) {
+      b = b.with(0, b[0] | 128u8);
+    }
+    out = appended(out, b);
+  }
+  return Some(appended(out, input[at:]));
+}
+
+// The file `input` with the fields of `t` in its tags, or None for a
+// format or a tag that this module does not write.
+pub function retagged(input: [u8], t: Tags): Option[u8[]] {
+  if (wire.tag(input, 0, "fLaC")) {
+    return retagged_flac(input, t);
+  }
+  return retagged_mp3(input, t);
 }
 ```
 
