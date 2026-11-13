@@ -103,6 +103,9 @@ pub function (re: Bre) search_groups_bytes(text: u8[], from: i32, hi: i32): BreM
   if (re.backref) {
     return exec_backtrack(re, input, r.0, 0, hi);
   }
+  if (re.few_paths) {
+    return exec_backtrack_to(re, input, r.0, r.1, 0, hi);
+  }
   return exec_threads_from(re, input, r.0, r.1, 0, hi);
 }
 
@@ -220,7 +223,7 @@ function assert_buf_end(): i32 {
   return 5;
 }
 
-pub struct Bre { insts: Inst[], classes: u8[], ngroups: i32, nmarks: i32, backref: boolean, err: string, newline_anchor: boolean, first: u8[], empty_ok: boolean, pre: u8[], pre_bol: boolean, pre_eol: boolean, literal: boolean, alts: u8[][], seen0: i32[], dfa: DfaCache, bclass: u8[], reps: i32[], cx_lo: boolean, cx_nl: boolean, cx_word: boolean, icase: boolean }
+pub struct Bre { insts: Inst[], classes: u8[], ngroups: i32, nmarks: i32, backref: boolean, err: string, newline_anchor: boolean, first: u8[], empty_ok: boolean, pre: u8[], pre_bol: boolean, pre_eol: boolean, literal: boolean, alts: u8[][], seen0: i32[], dfa: DfaCache, bclass: u8[], reps: i32[], cx_lo: boolean, cx_nl: boolean, cx_word: boolean, icase: boolean, sparse: boolean, few_paths: boolean }
 
 // The syntax of a pattern. `extended` selects ERE. `gnu_ops` gives the GNU
 // operators: \+, \? and \| in BRE, and \w, \W, \s, \S, \b, \B, \<, \>, \`
@@ -1352,7 +1355,7 @@ function compile_input(pat: Input, syntax: Syntax): Bre {
   let cx_nl = syntax.newline_anchor && has_op(c.insts, op_bol());
   let cx_word = reads_word(c.insts);
   let bclass = byte_classes(c.insts, p.classes, cx_nl || syntax.newline_anchor && has_op(c.insts, op_eol()), cx_word);
-  return Bre { insts: c.insts, classes: p.classes, ngroups: p.ngroups, nmarks: c.nmarks, backref: has_backref(p.nodes), err: "", newline_anchor: syntax.newline_anchor, first: fm.0, empty_ok: fm.1, pre: pre.0, pre_bol: pre.1, pre_eol: tail.0, literal: tail.1, alts: alts, seen0: fill(c.insts.len(), -1), dfa: dfa_cache(), bclass: bclass, reps: class_reps(bclass), cx_lo: reads_lo(c.insts), cx_nl: cx_nl, cx_word: cx_word, icase: syntax.icase };
+  return Bre { insts: c.insts, classes: p.classes, ngroups: p.ngroups, nmarks: c.nmarks, backref: has_backref(p.nodes), err: "", newline_anchor: syntax.newline_anchor, first: fm.0, empty_ok: fm.1, pre: pre.0, pre_bol: pre.1, pre_eol: tail.0, literal: tail.1, alts: alts, seen0: fill(c.insts.len(), -1), dfa: dfa_cache(), bclass: bclass, reps: class_reps(bclass), cx_lo: reads_lo(c.insts), cx_nl: cx_nl, cx_word: cx_word, icase: syntax.icase, sparse: !fm.1 && count_set(fm.0) <= sparse_max(), few_paths: few_paths(p.nodes) };
 }
 
 function failed_bre(err: string, syntax: Syntax): Bre {
@@ -1360,7 +1363,7 @@ function failed_bre(err: string, syntax: Syntax): Bre {
   let no_alts: u8[][] = [];
   let no_ints: i32[] = [];
   let no_insts: Inst[] = [];
-  return Bre { insts: no_insts, classes: no_bytes, ngroups: 0, nmarks: 0, backref: false, err: err, newline_anchor: syntax.newline_anchor, first: no_bytes, empty_ok: true, pre: no_bytes, pre_bol: false, pre_eol: false, literal: false, alts: no_alts, seen0: no_ints, dfa: dfa_cache(), bclass: no_bytes, reps: no_ints, cx_lo: false, cx_nl: false, cx_word: false, icase: false };
+  return Bre { insts: no_insts, classes: no_bytes, ngroups: 0, nmarks: 0, backref: false, err: err, newline_anchor: syntax.newline_anchor, first: no_bytes, empty_ok: true, pre: no_bytes, pre_bol: false, pre_eol: false, literal: false, alts: no_alts, seen0: no_ints, dfa: dfa_cache(), bclass: no_bytes, reps: no_ints, cx_lo: false, cx_nl: false, cx_word: false, icase: false, sparse: false, few_paths: false };
 }
 
 function fastmap(insts: Inst[], classes: u8[]): (u8[], boolean) {
@@ -1788,13 +1791,7 @@ function regs_at_save(own caps: i32[], in: Inst, pos: i32, ngroups: i32): i32[] 
 }
 
 function fresh_caps(n: i32): i32[] {
-  let c: i32[] = [];
-  let k = 0;
-  while (k < n) {
-    c = c.append(-1);
-    k += 1;
-  }
-  return c;
+  return fill(n, -1);
 }
 
 function (re: Bre) exec_input(text: Input): BreMatch {
@@ -2260,6 +2257,13 @@ function dfa_put(re: Bre, own d: Dfa): void {
 }
 
 function (re: Bre) search_from_input(text: Input, lo: i32, hi: i32): (i32, i32) {
+  if (re.literal && !re.pre_bol && !re.pre_eol) {
+    let at = find_literal(text, re.pre, lo, hi);
+    if (at < 0) {
+      return (-1, -1);
+    }
+    return (at, at + re.pre.len());
+  }
   let start = lo;
   while (start <= hi) {
     start = next_start(re, text, start, hi);
@@ -2382,7 +2386,49 @@ function (re: Bre) search_range_input(text: Input, lo: i32, hi: i32): boolean {
     }
     return false;
   }
+  if (re.sparse && hi == text.len()) {
+    return sparse_search(re, text, from, lo, hi);
+  }
   return dfa_run(re, text, from, lo, hi, true) >= 0;
+}
+
+// The most bytes that can start a match for sparse_search to scan for them.
+function sparse_max(): i32 {
+  return 64;
+}
+
+function count_set(t: u8[]): i32 {
+  let n = 0;
+  for b in t {
+    if (b as i32 != 0) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
+// sparse_search runs the DFA from each byte that can start a match, when few
+// bytes can: the scan for such a byte is faster than a step of the DFA. When
+// the bytes are dense it goes on with one pass of the DFA.
+function sparse_search(re: Bre, text: Input, from: i32, lo: i32, hi: i32): boolean {
+  let i = from;
+  let tries = 0;
+  let limit = (hi - from) / 16 + 4;
+  while (i < hi) {
+    i = text.scan_set(i, re.first);
+    if (i >= hi) {
+      return false;
+    }
+    if (dfa_run(re, text, i, lo, hi, false) >= 0) {
+      return true;
+    }
+    tries += 1;
+    if (tries > limit) {
+      return dfa_run(re, text, i + 1, lo, hi, true) >= 0;
+    }
+    i += 1;
+  }
+  return false;
 }
 
 function exec_at(re: Bre, text: Input, start: i32, lo: i32, hi: i32): BreMatch {
@@ -2401,20 +2447,57 @@ function exec_at(re: Bre, text: Input, start: i32, lo: i32, hi: i32): BreMatch {
 }
 
 function exec_backtrack(re: Bre, text: Input, start: i32, lo: i32, hi: i32): BreMatch {
-  let no: i32[] = [];
   let end = hi;
   while (end >= start) {
-    let m = M { text: text, lo: lo, hi: hi, re: re, target: end, caps: fresh_caps(re.ngroups * 4), marks: fresh_caps(re.nmarks), have_zw: false, zw_caps: no };
-    let r: (boolean, M) = step(m, 0, start, false);
-    if (r.0) {
-      return caps_to_match(r.1.caps, re, start, end);
-    }
-    if (r.1.have_zw) {
-      return caps_to_match(r.1.zw_caps, re, start, end);
+    let m = exec_backtrack_to(re, text, start, end, lo, hi);
+    if (m.matched) {
+      return m;
     }
     end -= 1;
   }
+  let no: i32[] = [];
   return BreMatch { matched: false, end: 0, starts: no, ends: no };
+}
+
+// exec_backtrack_to gives the groups of a match from `start` to `end`.
+function exec_backtrack_to(re: Bre, text: Input, start: i32, end: i32, lo: i32, hi: i32): BreMatch {
+  let no: i32[] = [];
+  let m = M { text: text, lo: lo, hi: hi, re: re, target: end, caps: fresh_caps(re.ngroups * 4), marks: fresh_caps(re.nmarks), have_zw: false, zw_caps: no };
+  let r: (boolean, M) = step(m, 0, start, false);
+  if (r.0) {
+    return caps_to_match(r.1.caps, re, start, end);
+  }
+  if (r.1.have_zw) {
+    return caps_to_match(r.1.zw_caps, re, start, end);
+  }
+  return BreMatch { matched: false, end: 0, starts: no, ends: no };
+}
+
+// few_paths tells whether a backtracking walk to a known end stays cheap:
+// at most two repetitions, and none of a group, an alternation or another
+// repetition.
+function few_paths(nodes: Node[]): boolean {
+  let reps = 0;
+  for n in nodes {
+    if (n.kind == nd_rep()) {
+      reps += 1;
+      if (reps > 2 || !plain_body(nodes, n.a)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function plain_body(nodes: Node[], at: i32): boolean {
+  let n = nodes[at];
+  if (n.kind == nd_group() || n.kind == nd_alt() || n.kind == nd_rep()) {
+    return false;
+  }
+  if (n.kind == nd_cat()) {
+    return plain_body(nodes, n.a) && plain_body(nodes, n.b);
+  }
+  return true;
 }
 
 function zw_stamp(gen: i32): i32 {
@@ -2641,11 +2724,11 @@ function slice_i32(a: i32[], from: i32, n: i32): i32[] {
 }
 
 function fill(n: i32, v: i32): i32[] {
-  let a: i32[] = [];
-  let k = 0;
-  while (k < n) {
-    a = a.append(v);
-    k += 1;
+  let a = __alloc_i32(n);
+  if (v != 0) {
+    for k in 0..n {
+      a = a.with(k, v);
+    }
   }
   return a;
 }

@@ -126,11 +126,41 @@ function check_search_from(): i32 {
   if (!first.matched || first.starts[0] != 0 || first.ends[0] != 1) {
     return 42;
   }
+  if (bre_of("\\(fox\\) \\(\\w*\\)", "a fox jumps") != "2,11;2,5;6,11;" || bre_of("\\(a*\\)\\(a*\\)", "aaa") != "0,3;0,3;3,3;") {
+    return 43;
+  }
+  return 0;
+}
+
+// The literal search and the scan for the bytes that can start a match must
+// give what the DFA gives.
+function check_fast_paths(): i32 {
+  let lit = bre.bre_compile("ab");
+  let text = "xxabcab".bytes();
+  let a: (i32, i32) = lit.search_from_bytes(text, 0, text.len());
+  let b: (i32, i32) = lit.search_from_bytes(text, 3, text.len());
+  let c: (i32, i32) = lit.search_from_bytes(text, 6, text.len());
+  if (a.0 != 2 || a.1 != 4 || b.0 != 5 || b.1 != 7 || c.0 != -1) {
+    return 51;
+  }
+  let sparse = bre.bre_compile("[0-9]x\\|q[a-z]*z");
+  if (!sparse.search_bytes("the quiz".bytes()) || sparse.search_bytes("quick fox".bytes()) || !sparse.search_bytes("a 1x b".bytes())) {
+    return 52;
+  }
+  let dense = bre.bre_compile("[0-9][0-9]x");
+  let digits = "1".repeat(4000) + "1x";
+  if (!dense.search_bytes(digits.bytes()) || dense.search_bytes("1".repeat(4000).bytes())) {
+    return 53;
+  }
   return 0;
 }
 
 function main(): i32 {
-  let r = check_ere();
+  let r = check_fast_paths();
+  if (r != 0) {
+    return r;
+  }
+  r = check_ere();
   if (r != 0) {
     return r;
   }
