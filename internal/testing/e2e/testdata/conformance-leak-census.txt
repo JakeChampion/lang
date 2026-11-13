@@ -1,3 +1,6 @@
+# 2026-11-12: d7938131ab gives the task runtime a table of the closes of each descriptor
+# (__fern_task_fd_closed). The table lives for the process, as the pool of the task runtime does.
+# Ten fixtures that close a socket now keep that one block: each row moves from 0 to 1.
 # 2026-11-12: a_map_holds_named_functions is clean under RC trace.
 # 2026-11-12: literal_trees_take_the_type_of_their_use is clean under RC trace.
 # 2026-11-12: callback_aggregate_environment_loans has balanced allocations and zero live bytes on all three main targets.
@@ -96,7 +99,7 @@ a_generic_call_takes_its_type_arguments_from_its_first_use 0
 a_generic_enum_kept_generic_recurses_through_its_own_method 0
 a_generic_enum_payload_keeps_template_closures       0
 a_handler_fans_out_on_its_scheduler                  2
-a_literal_handed_to_reactor_wait_is_fresh            0
+a_literal_handed_to_reactor_wait_is_fresh            1
 a_literal_local_takes_the_type_of_an_index_read 0
 a_map_holds_named_functions                          0
 a_map_key_eq_may_take_its_keys_owned                 0
@@ -195,7 +198,7 @@ array_rotate_wrap_and_negative                       0
 array_sort                                           0
 array_tuple_cmp_traits                               0
 array_tuple_trait_impls                              0
-array_views_see_builtin_writes                       0
+array_views_see_builtin_writes                       1
 array_with_narrow_index                              0
 array_with_rc_elem_drop                              0
 arrow_lambda_block_body                              0
@@ -278,8 +281,8 @@ checked_int_conversion                               0
 checked_owned_nested_results                         0
 checked_owned_results                                0
 copied_call_results                                  0
-closing_a_socket_two_reactors_watch                  0
-closing_a_watched_socket                             0
+closing_a_socket_two_reactors_watch                  1
+closing_a_watched_socket                             1
 closure_adder                                        0
 closure_capture_rebind_enum_variant                  0
 closure_capture_shared_cell                          0
@@ -872,7 +875,7 @@ range_for_nested                                     0
 range_ignores_names_in_the_users_scope               0
 range_value                                          0
 raw_array_keeps_its_capacity                         0
-raw_storage_paths_keep_literals_fresh                 0
+raw_storage_paths_keep_literals_fresh                 1
 rc_borrowed_box_field                                0
 rc_borrowed_payload_array                            0
 rc_corpus_accumulator_seeded_from_array_element      0
@@ -1259,9 +1262,9 @@ slice_unchecked_oob                                  0
 slice_views                                          0
 smallest_int_literal                                 0
 snapshot_local_shared_field                          0
-socket_from_fd                                       0
-socket_handle_round_trip                             0
-socket_udp_round_trip                                0
+socket_from_fd                                       1
+socket_handle_round_trip                             1
+socket_udp_round_trip                                1
 some_branch                                          0
 sort_strings_delegation_wasm                         0
 split_once                                           0
@@ -1347,8 +1350,8 @@ task_resumed_with_another_function                   11
 task_started_two_times                               2
 tasks_agree_without_a_scheduler                      10
 tco_sum                                              0
-tcp_recv_waits_for_data                              0
-tcp_send_nonblocking_partial                         0
+tcp_recv_waits_for_data                              1
+tcp_send_nonblocking_partial                         1
 text_api_owners                                      0
 three_arms_bind_p                                    0
 time_leap                                            0
