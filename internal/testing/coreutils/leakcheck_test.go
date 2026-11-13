@@ -69,11 +69,10 @@ func leakcheckBin(t *testing.T, util string) string {
 		}
 		leakcheckBinDir = dir
 	}
-	root := repoRoot(t)
-	e2eharness.TrackFernSources(t, filepath.Join(root, "coreutils"), util+".fern")
+	src := utilSource(t, util)
+	e2eharness.TrackFernSources(t, filepath.Dir(src), util+".fern")
 	bin := filepath.Join(leakcheckBinDir, util)
-	cmd := exec.Command(e2eharness.BuildLangBinForInterp(t), "-target", fernTarget(t), "-o", bin,
-		filepath.Join(root, "coreutils", util+".fern"))
+	cmd := exec.Command(e2eharness.BuildLangBinForInterp(t), "-target", fernTarget(t), "-o", bin, src)
 	cmd.Env = append(os.Environ(), "FERN_LEAKCHECK=1")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("compile %s with FERN_LEAKCHECK: %v\n%s", util, err, out)
@@ -98,7 +97,7 @@ func census(stderr []byte) (allocs, frees, live int64, exited, ok bool) {
 }
 
 func TestCorpusFreesWhatItAllocates(t *testing.T) {
-	for _, util := range utilNames(t) {
+	for _, util := range portNames(t) {
 		cases, ok := corpusRegistry[util]
 		if !ok {
 			continue
