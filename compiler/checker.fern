@@ -18058,27 +18058,10 @@ function value_diags(e: ast.Expr, s: Scope): util.Diag[] {
   if let ast.ExprIdent(_) = e {
     return [];
   }
-  if (!is_void(check_expr(e, s)) || parser.is_unit_expr(e) || !arms_void(e, s)) {
+  if (!is_void(check_expr(e, s)) || parser.is_unit_expr(e)) {
     return [];
   }
   return [dg_at("E072", "a void expression is not a value here; call it as a statement, and write `()` if you meant the unit value", expr_line(e), expr_col(e))];
-}
-
-// A value block whose arms differ has its E031 already.
-function arms_void(e: ast.Expr, s: Scope): boolean {
-  if let ast.ExprCall(c) = e {
-    if let ast.ExprLambda(lm) = c.callee {
-      if (parser.is_value_block(c)) {
-        for arm in mx_body_result_exprs(lm.body) {
-          let t = check_expr(arm, s);
-          if (!is_void(t) && !is_unknown(t)) {
-            return false;
-          }
-        }
-      }
-    }
-  }
-  return true;
 }
 
 // An unannotated map local that settle_literal_locals could not give a type.
@@ -18116,9 +18099,6 @@ function stmts_assign_diags_mode(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]
           out = util.append_diags(out, int_range_diags(v.init, "i64", false));
         }
         out = util.append_diags(out, open_map_diags(v, cur));
-        if (v.type_name.len() == 0 || v.type_name == "void") {
-          out = util.append_diags(out, value_diags(v.init, cur));
-        }
         out = util.append_diags(out, var_pattern_diags(v, cur, tuple_pattern));
       },
       ast.StmtAssign(a) => {
