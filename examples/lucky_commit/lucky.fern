@@ -271,27 +271,69 @@ pub function job(algo: Algo, p: Processed, spec: Spec): Job {
   return Job { algo: algo, prefix: prefix, dynamic: dynamic, spec: spec };
 }
 
-function scatter(block: u8[], spec: i64): u8[] {
+// scatter writes the padding of `spec` at byte `at` of `blocks`.
+function scatter(blocks: u8[], at: i32, spec: i64): u8[] {
   for bit in 0..DYNAMIC_PADDING {
-    block = block.with(padding_byte(bit), padding_char(spec, bit));
+    blocks = blocks.with(at + padding_byte(bit), padding_char(spec, bit));
   }
-  return block;
+  return blocks;
 }
 
-// step changes the padding of `spec` in `block` to the padding of `spec + 1`.
-// Only the bits that the increment changes are written.
-function step(block: u8[], spec: i64): u8[] {
-  let next = spec + 1;
-  let changed = spec ^ next;
+// advance changes the padding at byte `at` of `blocks` from the padding of
+// `from` to the padding of `to`. Only the bits that differ are written.
+function advance(blocks: u8[], at: i32, from: i64, to: i64): u8[] {
+  let changed = from ^ to;
   let bit = 0;
   while (changed != 0 && bit < DYNAMIC_PADDING) {
     if ((changed & 1) == 1) {
-      block = block.with(padding_byte(bit), padding_char(next, bit));
+      blocks = blocks.with(at + padding_byte(bit), padding_char(to, bit));
     }
     changed >>= 1;
     bit += 1;
   }
-  return block;
+  return blocks;
+}
+
+// advance_lanes changes the padding of each lane of a group from `from + k`
+// to `to + k`. Both are multiples of 8, so each lane changes the same bits.
+function advance_lanes(group: u8[], from: i64, to: i64): u8[] {
+  let changed = from ^ to;
+  let bit = 0;
+  while (changed != 0 && bit < DYNAMIC_PADDING) {
+    if ((changed & 1) == 1) {
+      let at = padding_byte(bit);
+      let ch = padding_char(to, bit);
+      for k in 0..8 {
+        group = group.with(64 * k + at, ch);
+      }
+    }
+    changed >>= 1;
+    bit += 1;
+  }
+  return group;
+}
+
+// lanes gives eight copies of each dynamic block, in the group layout of
+// `crypto.Sha1x8`: block b of lane k is at byte 512 * b + 64 * k.
+function lanes(dynamic: u8[]): u8[] {
+  let out: u8[] = [];
+  for b in 0..dynamic.len() / 64 {
+    for _ in 0..8 {
+      for i in 0..64 {
+        out = out.append(dynamic[64 * b + i]);
+      }
+    }
+  }
+  return out;
+}
+
+function lane_matches(h: crypto.Sha1x8, k: i32, spec: Spec): boolean {
+  for w in 0..5 {
+    if ((h.word(w, k) & spec.mask[w]) != spec.data[w]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // search_range tries the specifiers from `start` for `count` attempts, and
@@ -303,27 +345,35 @@ pub function search_range(j: Job, start: i64, count: i64): Option[i64] {
   };
 }
 
+// search_sha1 tries eight specifiers at a time: lane k of a step tries
+// `s + k`, where `s` is a multiple of 8. The lanes are checked in order, so
+// the first match is the lowest.
 function search_sha1(j: Job, start: i64, end: i64): Option[i64] {
-  let base = crypto.sha1_new().update(j.prefix);
-  let block = scatter(j.dynamic, start);
-  let d = j.spec.data;
-  let m = j.spec.mask;
-  let s = start;
+  let base = crypto.sha1_new().update(j.prefix).x8();
+  let s = start - start % 8;
+  let group = lanes(j.dynamic);
+  for k in 0..8 {
+    group = scatter(group, 64 * k, s + k as i64);
+  }
+  let d0 = j.spec.data[0];
+  let m0 = j.spec.mask[0];
   while (s < end) {
-    let h = base.update(block);
-    if ((h.h0 & m[0]) == d[0] && (h.h1 & m[1]) == d[1] && (h.h2 & m[2]) == d[2] && (h.h3 & m[3]) == d[3]
-      && (h.h4 & m[4]) == d[4]) {
-      return Some(s);
+    let h = base.blocks(group);
+    for k in 0..8 {
+      let spec = s + k as i64;
+      if ((h.word(0, k) & m0) == d0 && spec >= start && spec < end && lane_matches(h, k, j.spec)) {
+        return Some(spec);
+      }
     }
-    block = step(block, s);
-    s += 1;
+    group = advance_lanes(group, s, s + 8);
+    s += 8;
   }
   return None;
 }
 
 function search_sha256(j: Job, start: i64, end: i64): Option[i64] {
   let base = crypto.sha256_new().update(j.prefix);
-  let block = scatter(j.dynamic, start);
+  let block = scatter(j.dynamic, 0, start);
   let d = j.spec.data;
   let m = j.spec.mask;
   let s = start;
@@ -333,7 +383,7 @@ function search_sha256(j: Job, start: i64, end: i64): Option[i64] {
       && (h.h4 & m[4]) == d[4] && (h.h5 & m[5]) == d[5] && (h.h6 & m[6]) == d[6] && (h.h7 & m[7]) == d[7]) {
       return Some(s);
     }
-    block = step(block, s);
+    block = advance(block, 0, s, s + 1);
     s += 1;
   }
   return None;
