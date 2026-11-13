@@ -120,7 +120,7 @@ var interpSlowStdTests = map[string]bool{
 	"aac": true, "aac_boundary": true, "aac_kernel": true,
 	"brotli": true, "deflate": true, "flac_input": true, "flac_file": true, "ed25519": true, "http_compress": true,
 	"http_h2": true, "http_h3q": true, "http_multipart": true, "http_websocket": true,
-	"mitigations": true, "mlkem768": true, "mp3": true, "mp3_input": true, "mp3_file": true, "mp3_seek": true, "montgomery": true, "opus": true, "opus_band_analysis": true,
+	"hpke": true, "mitigations": true, "mlkem768": true, "mp3": true, "mp3_input": true, "mp3_file": true, "mp3_seek": true, "montgomery": true, "opus": true, "opus_band_analysis": true,
 	// Full free-format PCM and seek controls use compiled gates. Independent smoke stays here.
 	"mp3_freeformat":          true,
 	"mp3_freeformat_boundary": true,
@@ -693,6 +693,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"field25519", langSrcAbs(t, "tests/stdlib/field25519_test.fern"), ""},
 		{"x25519", langSrcAbs(t, "tests/stdlib/x25519_test.fern"), ""},
 		{"mlkem768", langSrcAbs(t, "tests/stdlib/mlkem768_test.fern"), ""},
+		{"hpke", langSrcAbs(t, "tests/stdlib/hpke_test.fern"), ""},
 		{"montgomery", langSrcAbs(t, "tests/stdlib/montgomery_test.fern"), ""},
 		{"p256", langSrcAbs(t, "tests/stdlib/p256_test.fern"), ""},
 		{"ed25519", langSrcAbs(t, "tests/stdlib/ed25519_test.fern"), ""},

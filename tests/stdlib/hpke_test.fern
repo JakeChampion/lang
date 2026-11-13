@@ -1,0 +1,212 @@
+import "std/test";
+import "std/hex";
+import "std/codec";
+import "std/crypto" as crypto;
+import "std/crypto/hpke";
+
+// The MLKEM768-X25519, HKDF-SHA256, ChaCha20Poly1305 vector of the
+// draft-ietf-hpke-pq test vectors, as filippo.io/hpke v0.4.0 holds them.
+// The long values are given by their SHA3-256 hash.
+const SEED: string = "b3f98b03126a431ccecc62ae0f68e102c2d8e1cc7b21ba85d821d8e31761e0f8";
+
+const IKM_E: string = "a3a869097e0241158eca5dc6c9e695f9e0d2ee5db51c09c435aab69d56509a43d94ff76d7d47cf79ecf75394261236cec024bd849cc782e14f7f0738af83daed";
+
+const INFO: string = "34663634363532303666366532303631323034373732363536333639363136653230353537323665";
+
+const PUBLIC_KEY_HASH: string = "9341ea5055dd2d881a61b7057f9ea202115cf01665472c4b122337cb2b707990";
+
+const ENC_HASH: string = "98372be612bddfe5ae19a4ded0d53bdb7d1040f626f4fb3d971d775d2e702bf7";
+
+const SHARED_SECRET: string = "b90cf181d95351d1091569487caaf6c3434eeb181a2c4c04631980ce139afa67";
+
+const PT: string = "34323635363137353734373932303639373332303734373237353734363832633230373437323735373436383230363236353631373537343739";
+
+const CT0: string = "ac355d192158cd54250e1702be51e9d2eafe5f9292a9f153e02a2323e1ff071a30947836c38c63c986c28ccf05e00d4e5fe066a48ab8d5b39c69d32da80c93dc868daa0f853a6cbdd640";
+
+const CT1: string = "712e40f2971afcfbf899f766c47d815265c1a0f52dba3bd68dfe6d14918f114b1d85f5ed0409a9b6caa370f1ed94b9d564080dd7468f629881db3aee6db91b5479a634ff18b819694d43";
+
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
+  return [];
+}
+
+function b(s: string): u8[] {
+  return __codec_bytes(hex.decode(s));
+}
+
+function __h(x: [u8]): string {
+  return hex.encode(crypto.sha3_256(x));
+}
+
+function key(): hpke.HybridKey {
+  match (hpke.mlkem768x25519_key(b(SEED))) {
+    Ok(k) => {
+      return k;
+    },
+    Err(e) => {
+      eprint(e.message());
+      exit(97);
+    }
+  }
+  return hpke.HybridKey { public_key: [], decapsulation_key: [], scalar: [] };
+}
+
+function sender(): hpke.Sender {
+  match (hpke.setup_sender_derand(key().public_key, b(INFO), b(IKM_E))) {
+    Ok(s) => {
+      return s;
+    },
+    Err(e) => {
+      eprint(e.message());
+      exit(96);
+    }
+  }
+  return hpke.Sender { enc: [], context: hpke.key_schedule(0, [], []) };
+}
+
+function refusal[T](r: Result[T, hpke.HpkeError]): string {
+  return match (r) {
+    Ok(_) => "accepted",
+    Err(e) => e.message(),
+  };
+}
+
+function test_key(): test.TestOutcome {
+  let k = key();
+  return test.assert_eq(__h(k.public_key), PUBLIC_KEY_HASH);
+}
+
+function test_encap(): test.TestOutcome {
+  let e = hpke.mlkem768x25519_encap_derand(key().public_key, b(IKM_E));
+  let Ok(e) = e else {
+    return test.fail("refused");
+  };
+  if (__h(e.enc) != ENC_HASH) {
+    return test.fail("enc");
+  }
+  return test.assert_eq(hex.encode(e.shared_secret), SHARED_SECRET);
+}
+
+function test_decap(): test.TestOutcome {
+  let enc = sender().enc;
+  return test.assert_eq(
+    match (hpke.mlkem768x25519_decap(key(), enc)) {
+      Ok(ss) => hex.encode(ss),
+      Err(e) => e.message(),
+    },
+    SHARED_SECRET,
+  );
+}
+
+function test_key_schedule(): test.TestOutcome {
+  let c = hpke.key_schedule(hpke.KEM_MLKEM768_X25519, b(SHARED_SECRET), b(INFO));
+  if (hex.encode(c.key) != "4a4c042267e8ec360c83b2baf0d5e3dcca73a86531cdf67ec41d95bccfe12387") {
+    return test.fail("key");
+  }
+  if (hex.encode(c.base_nonce) != "5ddfaaee10a4dfd0d8e1b49f") {
+    return test.fail("base nonce");
+  }
+  if (hex.encode(c.export(b("70736575646f72616e646f6d30"), 32)) != "74e80a263b1c880d6d71a7525e6ba39ddf1024e53e32765d91db4924d44baff1") {
+    return test.fail("export");
+  }
+  return test.assert_eq(hex.encode(c.exporter_secret), "145e4b99cabeaa6f5a380367d140d308746ea25d96f937288f85403b5c4384ae");
+}
+
+function test_seal_sequence(): test.TestOutcome {
+  let (ct0, c) = sender().context.seal(b("436f756e742d30"), b(PT));
+  if (hex.encode(ct0) != CT0) {
+    return test.fail("sequence number 0");
+  }
+  let (ct1, _) = c.seal(b("436f756e742d31"), b(PT));
+  return test.assert_eq(hex.encode(ct1), CT1);
+}
+
+function test_open_sequence(): test.TestOutcome {
+  let Ok(c) = hpke.setup_recipient(key(), sender().enc, b(INFO)) else {
+    return test.fail("setup");
+  };
+  let Ok(first) = c.open(b("436f756e742d30"), b(CT0)) else {
+    return test.fail("sequence number 0");
+  };
+  if (hex.encode(first.0) != PT) {
+    return test.fail("plaintext 0");
+  }
+  if (refusal(first.1.open(b("436f756e742d30"), b(CT0))) != "hpke: the message does not authenticate") {
+    return test.fail("a replay at sequence number 1");
+  }
+  return test.assert_eq(
+    match (first.1.open(b("436f756e742d31"), b(CT1))) {
+      Ok(r) => hex.encode(r.0),
+      Err(e) => e.message(),
+    },
+    PT,
+  );
+}
+
+function test_refusals(): test.TestOutcome {
+  let k = key();
+  let enc = sender().enc;
+  let bad = "hpke: the message does not authenticate";
+  let Ok(c) = hpke.setup_recipient(k, enc, b(INFO)) else {
+    return test.fail("setup");
+  };
+  if (refusal(c.open(b("436f756e742d31"), b(CT0))) != bad) {
+    return test.fail("wrong aad");
+  }
+  if (refusal(c.open([], b(CT0)[0:15])) != bad) {
+    return test.fail("short message");
+  }
+  let flipped = enc.with(0, enc[0] ^ 1 as u8);
+  let Ok(implicit) = hpke.setup_recipient(k, flipped, b(INFO)) else {
+    return test.fail("implicit rejection");
+  };
+  if (refusal(implicit.open(b("436f756e742d30"), b(CT0))) != bad) {
+    return test.fail("ML-KEM ciphertext with one bit changed");
+  }
+  let low = __bytes_into(__alloc_u8(1120), 0, enc, 0, 1088);
+  if (refusal(hpke.setup_recipient(k, low, b(INFO))) != "hpke: the X25519 shared secret is all zeros") {
+    return test.fail("zero share");
+  }
+  return test.assert_eq(refusal(hpke.setup_recipient(k, enc[0:1119], b(INFO))), "hpke: the encapsulated key is 1119 bytes, want 1120");
+}
+
+function test_lengths(): test.TestOutcome {
+  let pk = key().public_key;
+  if (refusal(hpke.mlkem768x25519_key(b(SEED)[0:31])) != "hpke: the seed is 31 bytes, want 32") {
+    return test.fail("seed");
+  }
+  if (refusal(hpke.mlkem768x25519_encap_derand(pk[0:1215], b(IKM_E))) != "hpke: the public key is 1215 bytes, want 1216") {
+    return test.fail("public key");
+  }
+  if (refusal(hpke.mlkem768x25519_encap_derand(pk, b(IKM_E)[0:63])) != "hpke: the randomness is 63 bytes, want 64") {
+    return test.fail("randomness");
+  }
+  let high = pk.with(0, 0xff as u8).with(1, pk[1] | 0x0f as u8);
+  if (refusal(hpke.mlkem768x25519_encap_derand(high, b(IKM_E))) != "hpke: the ML-KEM-768 encapsulation key has a coefficient not below q") {
+    return test.fail("modulus");
+  }
+  let zero = __bytes_into(__alloc_u8(1216), 0, pk, 0, 1184);
+  return test.assert_eq(refusal(hpke.mlkem768x25519_encap_derand(zero, b(IKM_E))), "hpke: the X25519 shared secret is all zeros");
+}
+
+function main(): i32 {
+  let r = test.new("std/crypto/hpke");
+  r = r.it("MLKEM768-X25519 public key of a seed", test_key);
+  r = r.it("encapsulation with fixed randomness", test_encap);
+  r = r.it("decapsulation", test_decap);
+  r = r.it("key schedule, base nonce and export", test_key_schedule);
+  r = r.it("seal with sequence numbers 0 and 1", test_seal_sequence);
+  r = r.it("open in sequence", test_open_sequence);
+  r = r.it("refusals on the recipient side", test_refusals);
+  r = r.it("lengths and bad public keys", test_lengths);
+  return r.finish();
+}
