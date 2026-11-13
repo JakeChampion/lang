@@ -182,13 +182,13 @@ pub function (t: Table) lookup(name: string): Sig {
 
 function fresh_ops(): string[] {
   return [
-    "alloc_u8", "raw_arr_box", "tuple_make_k", "dyn_box", "str_concat", "str_from_bytes", "str_from_bytes_range",
+    "alloc_u8", "raw_arr_box", "tuple_make_k", "dyn_box", "str_concat", "str_from_bytes_range",
     "buf_take", "buf_take_bytes", "arr_slice", "raw_string",
   ];
 }
 
 function move_ops(): string[] {
-  return ["scale_f64_in_place"];
+  return ["scale_f64_in_place", "str_from_bytes"];
 }
 
 // The operand is given up and the result is its address, a plain word.

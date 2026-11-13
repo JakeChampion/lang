@@ -7981,14 +7981,20 @@ pub function u64_to_string_helper(): string {
   return o;
 }
 
+// The helper consumes the array. A unique array becomes the string in its own
+// block. The length stays at offset 0, and the bytes move down four bytes.
 pub function string_from_bytes_helper(): string {
   let o = "";
   o += "  (func $__fern_string_from_bytes (param $arr i32) (result i32)\n";
   o += "    (local $n i32) (local $s i32)\n";
   o += "    (local.set $n (i32.load (local.get $arr)))\n";
+  o += "    (if (call $__fern_rc_is_unique (local.get $arr)) (then\n";
+  o += "      (memory.copy (i32.add (local.get $arr) (i32.const 4)) (i32.add (local.get $arr) (i32.const 8)) (local.get $n))\n";
+  o += "      (return (local.get $arr))))\n";
   o += "    (local.set $s (call $__fern_str_box (i32.add (i32.const 4) (local.get $n))))\n";
   o += "    (i32.store (local.get $s) (local.get $n))\n";
   o += "    (memory.copy (i32.add (local.get $s) (i32.const 4)) (i32.add (local.get $arr) (i32.const 8)) (local.get $n))\n";
+  o += "    (drop (call $__fern_arr_dec (local.get $arr)))\n";
   o += "    (local.get $s))\n";
   return o;
 }
