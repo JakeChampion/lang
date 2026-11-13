@@ -1,0 +1,58 @@
+function note(tag: string): void { print(tag); }
+
+function then_returns(n: i32, stop: boolean): void {
+  match (n) {
+    1 => if (stop) { note("stop"); return; } else { note("go") },
+    _ => note("other"),
+  }
+  note("after");
+}
+
+function else_returns(n: i32, stop: boolean): void {
+  match (n) {
+    1 => if (stop) { note("go") } else { note("stop"); return; },
+    _ => note("other"),
+  }
+  note("after");
+}
+
+function valued(stop: boolean): i32 {
+  let v = if (stop) { note("stop"); return 9; } else { 5 };
+  return v + 1;
+}
+
+function matched(n: i32): i32 {
+  let v = match (n) {
+    0 => { note("zero"); return -1; },
+    _ => n * 2,
+  };
+  return v + 1;
+}
+
+function looped(): void {
+  let i = 0;
+  while (i < 4) {
+    i += 1;
+    match (i) {
+      2 => if (i > 0) { note("skip"); continue; } else { note("never") },
+      3 => if (i > 0) { note("leave"); break; } else { note("never") },
+      _ => note("step"),
+    }
+    note("tail");
+  }
+  note("done");
+}
+
+function main(): i32 {
+  then_returns(1, true);
+  then_returns(1, false);
+  then_returns(2, true);
+  else_returns(1, true);
+  else_returns(1, false);
+  print(valued(true));
+  print(valued(false));
+  print(matched(0));
+  print(matched(4));
+  looped();
+  return 0;
+}
