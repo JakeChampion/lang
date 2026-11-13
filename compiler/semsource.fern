@@ -7922,6 +7922,10 @@ function aes_gcm_contracts(): ssasem.Contract[] {
       name: "__chacha20_xor_into", params: [view, view, bytes, typeinfo.t_i32(), typeinfo.t_i32()],
       modes: [b, b, ssaunits.counted_mode(), ssaunits.value_mode(), ssaunits.value_mode()], result: bytes,
     },
+    ssasem.Contract {
+      name: "__poly1305_blocks", params: [bytes, view, typeinfo.t_i32(), typeinfo.t_i32()],
+      modes: [ssaunits.counted_mode(), b, ssaunits.value_mode(), ssaunits.value_mode()], result: bytes,
+    },
   ];
 }
 

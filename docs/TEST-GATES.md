@@ -940,6 +940,26 @@ and both interpreters must stop the program for a bad call. A bad call has a
 range outside the buffer, a key that is not 32 bytes or a counter block that
 is not 16 bytes.
 
+The Poly1305 kernel (`__poly1305_blocks`) is checked on its own by
+`TestSelfHostPoly1305KernelX86_64`, `…Arm64` (qemu), `…Wasm` and
+`TestSelfHostInterpPoly1305Kernel` (both interpreters). The native legs run
+the in-process assembler and GNU as. Each leg must print the same lines as a
+Go model in `math/big`.
+
+The lines start with RFC 8439's Poly1305 tag. Then the program prints the
+state after the kernel absorbs each length to 1024 and some longer lengths.
+The x86-64 kernel takes groups of four blocks from 256 bytes, so these
+lengths cross each path and each tail. There are three start states: a
+pattern, all ones with 0xff messages (the largest r and the most carries),
+and h above p with high bits in h2 that the kernel does not read. A state
+with another holder, or a literal, is copied before the kernel writes it.
+Two calls split at a block boundary must give the state of one call.
+
+`TestSelfHostPoly1305KernelCensus` runs the same program under the leak
+census on each target. In `TestSelfHostPoly1305KernelMisuse`, each backend
+and both interpreters must stop the program for a bad call. A bad call has a
+range outside the message or a state that is not 40 bytes.
+
 ## Netlify deploys and the standalone smoke script
 
 Netlify runs `scripts/netlify-build`, which builds the playground's wasm

@@ -1,0 +1,132 @@
+import "./util";
+import "./wasm_aes";
+
+function g(name: string): string {
+  return "(local.get $" + name + ")";
+}
+
+function set(name: string, v: string): string {
+  return "      (local.set $" + name + " " + v + ")\n";
+}
+
+function i64c(v: string): string {
+  return "(i64.const " + v + ")";
+}
+
+function limb(i: i32): string {
+  return util.i32_to_string(i);
+}
+
+const MASK: string = "(i64.const 67108863)";
+
+// The limbs of 26 bits of the 130-bit value lo + hi * 2^64 + top * 2^128 added to the limbs named p0 to p4.
+function split_add(p: string, lo: string, hi: string, top: string): string {
+  return set(p + "0", "(i64.add " + g(p + "0") + " (i64.and " + lo + " " + MASK + "))")
+    + set(p + "1", "(i64.add " + g(p + "1") + " (i64.and (i64.shr_u " + lo + " (i64.const 26)) " + MASK + "))")
+    + set(p + "2", "(i64.add " + g(p + "2") + " (i64.and (i64.or (i64.shr_u " + lo + " (i64.const 52)) (i64.shl " + hi + " (i64.const 12))) " + MASK + "))")
+    + set(p + "3", "(i64.add " + g(p + "3") + " (i64.and (i64.shr_u " + hi + " (i64.const 14)) " + MASK + "))")
+    + set(p + "4", "(i64.add " + g(p + "4") + " (i64.or (i64.shr_u " + hi + " (i64.const 40)) " + top + "))");
+}
+
+// Limb j of h r: the sum over i of h_i times r(j - i), or 5 r(5 + j - i) when i > j.
+function product(j: i32): string {
+  let sum = "";
+  for i in 0..5 {
+    let k = if (i <= j) { "r" + limb(j - i) } else { "s" + limb(5 + j - i) };
+    let term = "(i64.mul " + g("h" + limb(i)) + " " + g(k) + ")";
+    sum = if (i == 0) { term } else { "(i64.add " + sum + " " + term + ")" };
+  }
+  return set("d" + limb(j), sum);
+}
+
+// Moves the bits above 26 of limb a to limb b, times `times`.
+function carry(from: string, to: string, times: i32): string {
+  let c = "(i64.shr_u " + g(from) + " (i64.const 26))";
+  if (times == 5) {
+    c = "(i64.mul " + c + " (i64.const 5))";
+  }
+  return set(to, "(i64.add " + g(to) + " " + c + ")") + set(from, "(i64.and " + g(from) + " " + MASK + ")");
+}
+
+// One block, lo + hi * 2^64 plus hib * 2^104 in limb 4, added to h, and h multiplied by r.
+function block_wat(): string {
+  let o = split_add("h", g("lo"), g("hi"), g("hib"));
+  for j in 0..5 {
+    o += product(j);
+  }
+  o = o + carry("d0", "d1", 1) + carry("d1", "d2", 1) + carry("d2", "d3", 1) + carry("d3", "d4", 1) + carry("d4", "d0", 5) + carry("d0", "d1", 1);
+  for j in 0..5 {
+    o += set("h" + limb(j), g("d" + limb(j)));
+  }
+  return o;
+}
+
+// h fully reduced: the carries go round once more, and h - p is taken when h + 5 reaches 2^130.
+function finish_wat(): string {
+  let o = carry("h1", "h2", 1) + carry("h2", "h3", 1) + carry("h3", "h4", 1) + carry("h4", "h0", 5) + carry("h0", "h1", 1);
+  o += set("g0", "(i64.add " + g("h0") + " (i64.const 5))");
+  for j in 1..5 {
+    o += set("g" + limb(j), "(i64.add " + g("h" + limb(j)) + " (i64.shr_u " + g("g" + limb(j - 1)) + " (i64.const 26)))");
+    o += set("g" + limb(j - 1), "(i64.and " + g("g" + limb(j - 1)) + " " + MASK + ")");
+  }
+  o += set("g4", "(i64.sub " + g("g4") + " (i64.const 67108864))");
+  o += set("mask", "(i64.sub (i64.shr_u " + g("g4") + " (i64.const 63)) (i64.const 1))");
+  for j in 0..5 {
+    let k = limb(j);
+    o += set("h" + k, "(i64.or (i64.and " + g("h" + k) + " (i64.xor " + g("mask") + " (i64.const -1))) (i64.and " + g("g" + k) + " " + g("mask") + "))");
+  }
+  // h is below 2^130 now, so these carries leave each limb below 2^26.
+  return o + carry("h0", "h1", 1) + carry("h1", "h2", 1) + carry("h2", "h3", 1) + carry("h3", "h4", 1);
+}
+
+// The bytes of a short last block, with a 1 byte after them, in lo and hi.
+function tail_wat(): string {
+  return "        (local.set $lo (i64.const 0))\n        (local.set $hi (i64.const 0))\n        (local.set $k (i32.const 0))\n"
+    + "        (block $got (loop $byte\n          (br_if $got (i32.ge_u (local.get $k) (local.get $rem)))\n"
+    + "          (local.set $b (i64.extend_i32_u (i32.load8_u (i32.add (local.get $p) (local.get $k)))))\n"
+    + "          (if (i32.lt_u (local.get $k) (i32.const 8))\n"
+    + "            (then (local.set $lo (i64.or (local.get $lo) (i64.shl (local.get $b) (i64.extend_i32_u (i32.shl (local.get $k) (i32.const 3)))))))\n"
+    + "            (else (local.set $hi (i64.or (local.get $hi) (i64.shl (local.get $b) (i64.extend_i32_u (i32.shl (i32.sub (local.get $k) (i32.const 8)) (i32.const 3))))))))\n"
+    + "          (local.set $k (i32.add (local.get $k) (i32.const 1)))\n          (br $byte)))\n"
+    + "        (if (i32.lt_u (local.get $rem) (i32.const 8))\n"
+    + "          (then (local.set $lo (i64.or (local.get $lo) (i64.shl (i64.const 1) (i64.extend_i32_u (i32.shl (local.get $rem) (i32.const 3)))))))\n"
+    + "          (else (local.set $hi (i64.or (local.get $hi) (i64.shl (i64.const 1) (i64.extend_i32_u (i32.shl (i32.sub (local.get $rem) (i32.const 8)) (i32.const 3))))))))\n"
+    + "        (local.set $hib (i64.const 0))\n        (local.set $rem (i32.const 0))\n";
+}
+
+// Poly1305 (RFC 8439): absorbs msg[at:at + n] into the 40-byte state h0, h1, h2, r0 and r1, each a little-endian
+// u64, one block at a time in limbs of 26 bits. The state is copied first if it has another holder. Each
+// 16-byte block gets 2^128, and a short last block gets a 1 byte after its end and no 2^128. Only the low 2
+// bits of h2 are read, r is clamped as it is read, and h leaves fully reduced.
+pub function funcs(): string {
+  let o: string = "  (func $__fern_poly1305_blocks (param $buf i32) (param $msg i32) (param $at i32) (param $n i32) (result i32)\n"
+    + "    (local $copy i32) (local $sp i32) (local $p i32) (local $rem i32) (local $k i32)\n"
+    + "    (local $lo i64) (local $hi i64) (local $hib i64) (local $b i64) (local $mask i64)";
+  for name in ["r", "s", "h", "d", "g"] {
+    for j in 0..5 {
+      o = o + " (local $" + name + limb(j) + " i64)";
+    }
+  }
+  o = o + "\n" + wasm_aes.abort_unless("(i32.eq (i32.load (local.get $buf)) (i32.const 40))")
+    + wasm_aes.abort_unless("(i32.ge_s (i32.or (local.get $at) (local.get $n)) (i32.const 0))")
+    + wasm_aes.abort_unless("(i64.le_u (i64.add (i64.extend_i32_u (local.get $at)) (i64.extend_i32_u (local.get $n))) (i64.extend_i32_u (call $__fern_aes_view_len (local.get $msg))))")
+    + wasm_aes.own_wat() + "    (local.set $sp (i32.add (local.get $buf) (i32.const 8)))\n"
+    + set("lo", "(i64.and (i64.load offset=24 (local.get $sp)) " + i64c("0x0ffffffc0fffffff") + ")")
+    + set("hi", "(i64.and (i64.load offset=32 (local.get $sp)) " + i64c("0x0ffffffc0ffffffc") + ")")
+    + split_add("r", g("lo"), g("hi"), "(i64.const 0)");
+  for j in 1..5 {
+    o += set("s" + limb(j), "(i64.mul " + g("r" + limb(j)) + " (i64.const 5))");
+  }
+  o = o + set("lo", "(i64.load (local.get $sp))") + set("hi", "(i64.load offset=8 (local.get $sp))")
+    + split_add("h", g("lo"), g("hi"), "(i64.shl (i64.and (i64.load offset=16 (local.get $sp)) (i64.const 3)) (i64.const 24))")
+    + "    (local.set $p (i32.add (call $__fern_aes_view_data (local.get $msg)) (local.get $at)))\n    (local.set $rem (local.get $n))\n"
+    + "    (block $done (loop $blk\n      (br_if $done (i32.eqz (local.get $rem)))\n"
+    + "      (if (i32.ge_u (local.get $rem) (i32.const 16)) (then\n"
+    + "        (local.set $lo (i64.load (local.get $p)))\n        (local.set $hi (i64.load offset=8 (local.get $p)))\n        (local.set $hib (i64.const 16777216))\n"
+    + "        (local.set $p (i32.add (local.get $p) (i32.const 16)))\n        (local.set $rem (i32.sub (local.get $rem) (i32.const 16))))\n"
+    + "      (else\n" + tail_wat() + "      ))\n" + block_wat() + "      (br $blk)))\n" + finish_wat()
+    + "    (i64.store (local.get $sp) (i64.or (i64.or (local.get $h0) (i64.shl (local.get $h1) (i64.const 26))) (i64.shl (local.get $h2) (i64.const 52))))\n"
+    + "    (i64.store offset=8 (local.get $sp) (i64.or (i64.or (i64.shr_u (local.get $h2) (i64.const 12)) (i64.shl (local.get $h3) (i64.const 14))) (i64.shl (local.get $h4) (i64.const 40))))\n"
+    + "    (i64.store offset=16 (local.get $sp) (i64.shr_u (local.get $h4) (i64.const 24)))\n    (local.get $buf))\n";
+  return o;
+}

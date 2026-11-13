@@ -6713,6 +6713,7 @@ function byte_scan_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
     "__crc32_ieee_array" => Lowered { found: true, r: emit(r, ir.op_call_direct(ssabytes.crc32_ieee_name(), 2)) },
     "__ascii_run" => Lowered { found: true, r: emit(r, ir.op_ascii_run()) },
     "__chacha20_xor_into" => Lowered { found: true, r: emit(r, ir.packed(ir.op_chacha20_xor_into())) },
+    "__poly1305_blocks" => Lowered { found: true, r: emit(r, ir.packed(ir.op_poly1305_blocks())) },
     "__scan_set" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_set())) },
     "__scan_set_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_set_bytes())) },
     "__count_runs" => Lowered { found: true, r: emit(r, ir.packed(ir.op_count_runs())) },
