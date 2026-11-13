@@ -315,7 +315,7 @@ function round(i: i32): i32 {
     return s.len() + i;
 }
 function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 74, allocs: 200, frees: 200,
+			want: 74, allocs: 100, frees: 100,
 		},
 		{
 			name: "alias_with_post_read",
@@ -470,7 +470,7 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			src: `import "std/i32";
 function round(i: i32): i32 { let n: i32 = i + 100; let t: string = n.to_string(); let v: string = t; return v.len() + i; }
 function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
-			want: 21, allocs: 200, frees: 200,
+			want: 21, allocs: 100, frees: 100,
 		},
 		{
 			name: "string_alias_join_producer",
