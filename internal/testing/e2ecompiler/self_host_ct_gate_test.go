@@ -660,6 +660,9 @@ func TestSelfHostCtGateX86_64(t *testing.T) {
 	valgrind := e2eharness.Valgrind(t)
 	cli := buildSelfHostCLI(t)
 	ctGate(t, valgrind, ctCompile(t, cli.runner, cli.bin, cli.stdlib, "x86-64-linux"))
+	t.Run("examples/age", func(t *testing.T) {
+		ageCtGate(t, valgrind, ageGateBinary(t, cli.runner, cli.bin, cli.stdlib, "x86-64-linux"))
+	})
 }
 
 func TestSelfHostCtGateArm64(t *testing.T) {
@@ -671,6 +674,9 @@ func TestSelfHostCtGateArm64(t *testing.T) {
 	copySelfHostDriver(t, dir, "fern.fern")
 	cli := e2eharness.BuildSelfHostBinFor(t, dir, "fern.fern", "fern", e2eharness.TargetArm64Linux)
 	ctGate(t, valgrind, ctCompile(t, nil, cli, langSrcAbs(t, "internal/stdlib"), "arm64-linux"))
+	t.Run("examples/age", func(t *testing.T) {
+		ageCtGate(t, valgrind, ageGateBinary(t, nil, cli, langSrcAbs(t, "internal/stdlib"), "arm64-linux"))
+	})
 }
 
 func TestSelfHostCtMarksWasm(t *testing.T) {
