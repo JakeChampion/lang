@@ -7,7 +7,10 @@ import (
 	"testing"
 )
 
-func TestSelfHostSocketCloseWithoutObserverAllocatesNothingX86_64(t *testing.T) {
+// Each open records the close count of its number in the handle, so a socket
+// program has the table of counts. The table is the only allocation: a socket
+// has none of its own.
+func TestSelfHostSocketsAllocateOnlyTheCloseTableX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
 	const program = `function main(): i32 {
@@ -31,8 +34,13 @@ func TestSelfHostSocketCloseWithoutObserverAllocatesNothingX86_64(t *testing.T) 
 		t.Fatalf("run: %v\n%s", err, out)
 	}
 	events, _ := parseHev(t, string(out))
-	if len(events) != 2 || events[0].kind != "a" || events[1].kind != "f" || events[0].ptr != events[1].ptr {
-		t.Fatalf("want only the allocation control and its free, got:\n%s", out)
+	if len(events) != 4 {
+		t.Fatalf("want the allocation control, the close table, and the free of each, got:\n%s", out)
+	}
+	for at := 0; at < 4; at += 2 {
+		if events[at].kind != "a" || events[at+1].kind != "f" || events[at].ptr != events[at+1].ptr {
+			t.Fatalf("event %d is not an allocation that the next event frees:\n%s", at, out)
+		}
 	}
 }
 

@@ -114,7 +114,7 @@ These take typed values, but they change ownership, layout, or control flow outs
 | `__syscall3` to `__syscall6` | Arbitrary kernel calls. Admitted only in runtime helper sources today. |
 | `__tcp_close_unchecked(s)` | It closes a `Socket` through a borrow. No copy of the socket can be used after the call, and no other copy can be closed. The interpreter needs it for the reason that `close_unchecked` exists. |
 | `__fd_close(fd)` | It closes a descriptor number that has no handle type, such as a reactor or a timer. The number must not belong to a handle, and the caller must not use it again. |
-| `__socket_from_fd(fd)` | It makes a `Socket` for a descriptor number that the program did not open as one: a listener that `LISTEN_FDS` passes in, or a guest socket in the interpreter. The number must name a socket, and no other `Socket` may own it. |
+| `__socket_from_fd(fd)` | It makes a `Socket` for a descriptor number that the program did not open as one: a listener that `LISTEN_FDS` passes in, or a guest socket in the interpreter. The number must name a socket, and no other `Socket` may own it. The handle gets the close count that the number has at the call. |
 
 ## Unsafe built-in methods
 

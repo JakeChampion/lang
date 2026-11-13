@@ -24329,6 +24329,12 @@ pub function is_float_type_name(t: string): boolean {
   return t == "f64" || t == "f32";
 }
 
+// The names of the types that a 64-bit integer slot holds. A Socket is one:
+// its descriptor number, and above it the close count of that number.
+pub function is_wide_int_type_name(t: string): boolean {
+  return t == "i64" || t == "u64" || t == "Socket";
+}
+
 pub function float_settled_int(n: ast.ExprNumber): boolean {
   return n.is_float && n.suffix.len() == 0 && util.index_of_sub(n.text, ".") < 0
     && util.index_of_sub(n.text, "e") < 0 && util.index_of_sub(n.text, "E") < 0;
