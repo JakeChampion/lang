@@ -8,7 +8,7 @@ A media session holds the title of the track that plays, its picture, its length
 
 The app declares a @jni class that extends `android.media.session.MediaSession$Callback`. Each native method of that class calls the function of this module for its command: `play`, `pause`, `next`, `previous`, `stop` or `seek_to`. `new` makes one session with one callback of that class.
 
-The callback runs on the main thread of the app. It sends the command to the loop thread of the live activity, which `android.live_activity` names. The loop gives it to the app as a `Posted` event. `event` decodes it as a `Command`.
+The callback runs on the main thread of the app. It sends the command to the live loop of the app with `android.tell`. A loop that `android.keep_alive` keeps after the Destroy of its activity gets the command too. The loop gives it to the app as a `Posted` event. `event` decodes it as a `Command`.
 
 `set_track` gives the session the track, with the picture of its album when the app has one. Android shows the picture behind the media controls. `set_state` gives it the state of the player and the time of the track. Android counts the time on from there while the player plays. So call `set_state` only when the state changes or the player goes to a different time.
 
@@ -79,11 +79,7 @@ pub function event(e: android.Event): Option[Command] {
 }
 
 function command(e: usize, kind: i32, arg: usize): void {
-  let activity: usize = android.live_activity(e);
-  if (activity == 0 as usize) {
-    return;
-  }
-  android.send(activity, kind, arg);
+  let sent = android.tell(e, kind, arg);
 }
 
 // The onPlay of the app's callback: `e` is its JNIEnv. Each of these six

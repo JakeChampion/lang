@@ -14,7 +14,11 @@ The two threads take turns in the Fern code of the library: `__fern_busy` is a l
 
 The app draws the pixels itself: `lock` gives the frame of the window, `std/android/draw` draws rectangles and text on it, and `post` shows it. `request_frame` asks the display for its next frame, and the loop then gives `Vsync` to `step` at that vsync, so an app draws each frame of an animation at the time the display shows it. The window covers the whole screen, and `ContentRect` gives the part of it that the system bars and the keyboard leave free. `asset` reads a file that `fern -apk -apk-asset` put in the APK.
 
-Other modules send their own events to the loop thread with `send`, and the loop gives them to `step` as `Posted` events. `std/android/service` runs a foreground service, `std/android/p2p` uses Wi-Fi Direct, and `std/android/focus` asks for the audio focus. Each one decodes its `Posted` events. An app that uses none of them does not carry their code.
+Other modules send their own events to the loop thread with `tell`, and the loop gives them to `step` as `Posted` events. `tell` sends to the live loop of the process, which `live_loop` names. `std/android/service` runs a foreground service, `std/android/p2p` uses Wi-Fi Direct, and `std/android/focus` asks for the audio focus. Each one decodes its `Posted` events. An app that uses none of them does not carry their code.
+
+`keep_alive` keeps the loop running after the Destroy of its activity. A music player keeps its loop alive while a track plays: then the loop gives the events of its media session and of its service to `step` with no window. A new activity of the app takes that loop over, and `start` starts no second loop. When the loop has no activity and the app does not keep it alive, `run` returns. While the loop has no activity, `activity_object` gives the Application Context, and `detached` is true.
+
+A lock of the process guards the live loop. `start`, `tell` and the end of a loop with no activity take it, so a new activity does not take over a loop that ends.
 
 ## Contracts
 
@@ -187,6 +191,15 @@ function c_pthread_create(thread: usize, attr: usize, start: usize, arg: usize):
 
 @import("libc.so", "pthread_detach")
 function c_pthread_detach(thread: usize): i32;
+
+@import("libc.so", "pthread_mutex_lock")
+function c_mutex_lock(mutex: usize): i32;
+
+@import("libc.so", "pthread_mutex_trylock")
+function c_mutex_trylock(mutex: usize): i32;
+
+@import("libc.so", "pthread_mutex_unlock")
+function c_mutex_unlock(mutex: usize): i32;
 ```
 
 ### `events`
@@ -336,7 +349,7 @@ Only the UI thread can change the views of the activity. `immersive` sets bit 0 
 <<the UI thread>>=
 // The context block of an activity, which both threads share.
 @derive(ffi.CLayout)
-struct Context { message_read: i32, message_write: i32, reply_read: i32, reply_write: i32, activity: usize, thread: usize, env: usize, flags: i32, vsync_ns: i64, frame: i32, choreographer: usize, ui_read: i32, ui_write: i32, field: usize, watcher: usize, quiet: i32, focused: i32, host: usize, provider: usize, delegate_class: usize, tree_class: usize, tree: usize, hovered: i32, sent: i64 }
+struct Context { message_read: i32, message_write: i32, reply_read: i32, reply_write: i32, activity: usize, thread: usize, env: usize, flags: i32, vsync_ns: i64, frame: i32, choreographer: usize, ui_read: i32, ui_write: i32, field: usize, watcher: usize, quiet: i32, focused: i32, host: usize, provider: usize, delegate_class: usize, tree_class: usize, tree: usize, hovered: i32, sent: i64, kept: i32, app: usize, vm: usize, sdk: i32, dpi: i32, night: i32 }
 
 // ANativeActivity.
 @derive(ffi.CLayout)
@@ -406,33 +419,40 @@ function on_input_destroyed_entry(): usize;
 @callback("on_content_rect")
 function on_content_rect_entry(): usize;
 
-// The system property that names the live ANativeActivity of the process.
-// A component that can outlive the activity, such as a service, reads it,
-// so it does not reach an activity that Android freed.
-const LIVE: string = "dev.fern.android.activity";
+// The system property that names the context of the live loop of the
+// process. A component that can outlive the activity, such as a service,
+// reads it, so it does not reach a loop that ended.
+const LIVE: string = "dev.fern.android.loop";
 
-// Sets the property LIVE to `value`, or clears it when `value` is "".
-function set_live(e: usize, value: string): void {
+// The system property that names the lock of the live loop. `start` makes
+// the lock on the UI thread at the first start of the process, and it lives
+// as long as the process.
+const LOCK: string = "dev.fern.android.lock";
+
+// The reply of the loop thread to the Destroy message when it keeps
+// running with no activity.
+const KEPT_REPLY: i32 = 2;
+
+// Sets the property `key` to `value`, or clears it when `value` is "".
+function set_property(e: usize, key: string, value: string): void {
   let class: usize = jni.find_class(e, "java/lang/System");
-  let key: usize = jni.new_string(e, LIVE);
+  let name: usize = jni.new_string(e, key);
   if (value.len() == 0) {
-    let args: usize = jni.jvalues([key]);
+    let args: usize = jni.jvalues([name]);
     let old: usize = jni.call_static_object_method_a(e, class, jni.get_static_method_id(e, class, "clearProperty", "(Ljava/lang/String;)Ljava/lang/String;"), args);
     jni.free_buffer(args);
   } else {
-    let args: usize = jni.jvalues([key, jni.new_string(e, value)]);
+    let args: usize = jni.jvalues([name, jni.new_string(e, value)]);
     let old: usize = jni.call_static_object_method_a(e, class, jni.get_static_method_id(e, class, "setProperty", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"), args);
     jni.free_buffer(args);
   }
   let cleared: usize = jni.exception_clear(e);
 }
 
-// The ANativeActivity that runs now, or 0 when there is none: before its
-// start, or after its Destroy. Android starts and destroys an activity on the
-// UI thread, so call it there, as a service does in onStartCommand.
-pub function live_activity(e: usize): usize {
+// The number in the property `key`, or 0 when it has none.
+function number_property(e: usize, key: string): usize {
   let class: usize = jni.find_class(e, "java/lang/System");
-  let args: usize = jni.jvalues([jni.new_string(e, LIVE)]);
+  let args: usize = jni.jvalues([jni.new_string(e, key)]);
   let got: usize = jni.call_static_object_method_a(e, class, jni.get_static_method_id(e, class, "getProperty", "(Ljava/lang/String;)Ljava/lang/String;"), args);
   jni.free_buffer(args);
   let text: string = jni.string_of(e, got);
@@ -444,6 +464,77 @@ pub function live_activity(e: usize): usize {
     v = v * (10 as usize) + (c - 48u8) as usize;
   }
   return v;
+}
+
+// The lock of the live loop, which `start` makes when the process has none.
+// A zero pthread mutex is a mutex of the default kind.
+function made_lock(e: usize): usize {
+  let lock = number_property(e, LOCK);
+  if (lock != 0 as usize) {
+    return lock;
+  }
+  unsafe {
+    lock = __alloc(64);
+    for i in 0..64 {
+      __store_u8(lock + i as usize, 0);
+    }
+  }
+  set_property(e, LOCK, (lock as u64).to_string());
+  return lock;
+}
+
+// The context of the loop that runs now, or 0 when there is none. A
+// service or a callback reads it, and `tell` sends to it. The loop can end
+// after this call, so use `tell` to send it a message.
+pub function live_loop(e: usize): usize {
+  return number_property(e, LIVE);
+}
+
+// The ANativeActivity of the live loop, or 0 when there is none: before the
+// start, after the last Destroy, or while the loop runs with no activity.
+// Call it on the UI thread.
+pub function live_activity(e: usize): usize {
+  let lock = number_property(e, LOCK);
+  if (lock == 0 as usize) {
+    return 0 as usize;
+  }
+  unsafe {
+    let held: i32 = c_mutex_lock(lock);
+    let ctx = live_loop(e);
+    let activity = 0 as usize;
+    if (ctx != 0 as usize) {
+      activity = Context.c_load_activity(ctx);
+    }
+    let freed: i32 = c_mutex_unlock(lock);
+    return activity;
+  }
+}
+
+// Sends the message `kind` with `arg` to the live loop, and waits for its
+// reply. It is false when no loop runs. Call it on a thread other than the
+// loop thread, such as the UI thread in a callback of a Java class.
+pub function tell(e: usize, kind: i32, arg: usize): boolean {
+  let lock = number_property(e, LOCK);
+  if (lock == 0 as usize) {
+    return false;
+  }
+  unsafe {
+    let held: i32 = c_mutex_lock(lock);
+    let ctx = live_loop(e);
+    let sent = ctx != 0 as usize && deliver(ctx, kind, arg) >= 0;
+    let freed: i32 = c_mutex_unlock(lock);
+    return sent;
+  }
+}
+
+// Keeps the loop running after the Destroy of its activity while `on` is
+// true. Then the loop gives its events to the app with no window, and a new
+// activity of the app takes it over. When the loop has no activity and `on`
+// becomes false, `run` returns. Call it on the loop thread.
+pub function keep_alive(ctx: usize, on: boolean): void {
+  unsafe {
+    Context.c_store_kept(ctx, if (on) { 1 } else { 0 });
+  }
 }
 
 // The JNIEnv of the UI thread, which ANativeActivity holds.
@@ -458,7 +549,7 @@ function ui_env(activity: usize): usize {
 function new_context(activity: usize): usize {
   unsafe {
     let ctx: usize = __alloc(Context.c_size() as i32);
-    Context { message_read: 0, message_write: 0, reply_read: 0, reply_write: 0, activity: activity, thread: 0 as usize, env: 0 as usize, flags: 0, vsync_ns: 0i64, frame: 0, choreographer: 0 as usize, ui_read: 0, ui_write: 0, field: 0 as usize, watcher: 0 as usize, quiet: 0, focused: NO_ITEM, host: 0 as usize, provider: 0 as usize, delegate_class: 0 as usize, tree_class: 0 as usize, tree: 0 as usize, hovered: NO_ITEM, sent: 0i64 }.c_store(ctx);
+    Context { message_read: 0, message_write: 0, reply_read: 0, reply_write: 0, activity: activity, thread: 0 as usize, env: 0 as usize, flags: 0, vsync_ns: 0i64, frame: 0, choreographer: 0 as usize, ui_read: 0, ui_write: 0, field: 0 as usize, watcher: 0 as usize, quiet: 0, focused: NO_ITEM, host: 0 as usize, provider: 0 as usize, delegate_class: 0 as usize, tree_class: 0 as usize, tree: 0 as usize, hovered: NO_ITEM, sent: 0i64, kept: 0, app: 0 as usize, vm: NativeActivity.c_load_vm(activity), sdk: NativeActivity.c_load_sdk_version(activity), dpi: 0, night: 0 }.c_store(ctx);
     let ok: i32 = c_pipe2(ctx + Context.c_offset_message_read(), 524288) | c_pipe2(ctx + Context.c_offset_reply_read(), 524288) | c_pipe2(ctx + Context.c_offset_ui_read(), UI_PIPE_FLAGS);
     if (ok != 0) {
       __free(ctx, Context.c_size() as i32);
@@ -468,49 +559,128 @@ function new_context(activity: usize): usize {
   }
 }
 
-// Sets the callbacks of `activity` and starts the loop thread at
-// `thread_main`, a C function of one usize argument, such as an @callback
-// entry. The loop thread gets the context, which it gives to `run`. Call it
-// from ANativeActivity_onCreate.
-pub function start(activity: usize, thread_main: usize): void {
+// The callbacks of `activity` that send its events to the loop thread, and
+// the looper of the UI thread that watches the request pipe of `ctx`.
+function hook(activity: usize, ctx: usize): void {
   unsafe {
-    let ctx: usize = new_context(activity);
-    if (ctx == 0 as usize) {
-      c_activity_finish(activity);
-      return;
-    }
     let watched: i32 = c_looper_add_fd(c_looper_for_thread(), Context.c_load_ui_read(ctx), LOOPER_CALLBACK, 1, on_ui_request_entry(), ctx);
     NativeActivity.c_store_instance(activity, ctx);
     let cb: usize = NativeActivity.c_load_callbacks(activity);
     Callbacks { ...Callbacks.c_load(cb), on_start: on_start_entry(), on_resume: on_resume_entry(), on_pause: on_pause_entry(), on_stop: on_stop_entry(), on_destroy: on_destroy_entry(), on_window_focus_changed: on_focus_entry(), on_native_window_created: on_window_created_entry(), on_native_window_resized: on_window_resized_entry(), on_native_window_redraw_needed: on_window_redraw_entry(), on_native_window_destroyed: on_window_destroyed_entry(), on_input_queue_created: on_input_created_entry(), on_input_queue_destroyed: on_input_destroyed_entry(), on_content_rect_changed: on_content_rect_entry() }.c_store(cb);
+  }
+}
+
+// The loop `ctx`, which runs with no activity, takes `activity` over. It is
+// false when the request pipe of the activity cannot open.
+function taken_over(activity: usize, ctx: usize): boolean {
+  unsafe {
+    if (c_pipe2(ctx + Context.c_offset_ui_read(), UI_PIPE_FLAGS) != 0) {
+      return false;
+    }
+    Context { ...Context.c_load(ctx), activity: activity, field: 0 as usize, watcher: 0 as usize, quiet: 0, focused: NO_ITEM, host: 0 as usize, provider: 0 as usize, delegate_class: 0 as usize, tree_class: 0 as usize, tree: 0 as usize, hovered: NO_ITEM, sdk: NativeActivity.c_load_sdk_version(activity) }.c_store(ctx);
+  }
+  hook(activity, ctx);
+  return true;
+}
+
+// The Application Context of `activity`, as a global reference.
+function application(e: usize, activity: usize): usize {
+  unsafe {
+    let app: usize = jni.call_object(e, NativeActivity.c_load_clazz(activity), "getApplicationContext", "()Landroid/content/Context;", []);
+    if (jni.exception_occurred(e) != 0 as usize || app == 0 as usize) {
+      let cleared: usize = jni.exception_clear(e);
+      return 0 as usize;
+    }
+    let global: usize = jni.new_global_ref(e, app);
+    let local: usize = jni.delete_local_ref(e, app);
+    return global;
+  }
+}
+
+// Sets the callbacks of `activity` and starts the loop thread at
+// `thread_main`, a C function of one usize argument, such as an @callback
+// entry. The loop thread gets the context, which it gives to `run`. Call it
+// from ANativeActivity_onCreate. When a loop of the app runs with no
+// activity, `activity` takes it over, and no new loop starts.
+pub function start(activity: usize, thread_main: usize): void {
+  let e = ui_env(activity);
+  let lock = made_lock(e);
+  unsafe {
+    let held: i32 = c_mutex_lock(lock);
+    let live = live_loop(e);
+    if (live != 0 as usize && Context.c_load_activity(live) == 0 as usize) {
+      if (!taken_over(activity, live)) {
+        c_activity_finish(activity);
+      }
+      let freed: i32 = c_mutex_unlock(lock);
+      return;
+    }
+    let ctx: usize = new_context(activity);
+    if (ctx == 0 as usize) {
+      let freed: i32 = c_mutex_unlock(lock);
+      c_activity_finish(activity);
+      return;
+    }
+    Context.c_store_app(ctx, application(e, activity));
+    hook(activity, ctx);
     if (c_pthread_create(ctx + Context.c_offset_thread(), 0 as usize, thread_main, ctx) == 0) {
       let ignored: i32 = c_pthread_detach(Context.c_load_thread(ctx));
     }
+    set_property(e, LIVE, (ctx as u64).to_string());
+    let freed: i32 = c_mutex_unlock(lock);
   }
-  set_live(ui_env(activity), (activity as u64).to_string());
 }
 
-// Sends the message `kind` with `arg` to the loop thread of the
-// ANativeActivity `activity`, and waits for its reply. Call it on a thread
-// other than the loop thread.
-pub function send(activity: usize, kind: i32, arg: usize): void {
+// Sends the message `kind` with `arg` to the loop of `ctx`, and waits for
+// its reply. It gives the reply, or -1 when the loop did not take the
+// message. Call it on a thread other than the loop thread.
+function deliver(ctx: usize, kind: i32, arg: usize): i32 {
   unsafe {
-    let ctx: usize = NativeActivity.c_load_instance(activity);
     let size = Message.c_size();
     let msg: usize = __alloc(size as i32);
     Message { kind: kind, arg: arg }.c_store(msg);
+    let reply = 0 - 1;
     let sent: i64 = c_write(Context.c_load_message_write(ctx), msg, size);
-    if (sent == size as i64) {
-      let got: i64 = c_read(Context.c_load_reply_read(ctx), msg, 1 as usize);
+    if (sent == size as i64 && c_read(Context.c_load_reply_read(ctx), msg, 1 as usize) == 1i64) {
+      reply = __load_u8(msg) as i32;
     }
     __free(msg, size as i32);
-    if (kind == DESTROY) {
-      close_ui(activity, ctx);
-      let a: i32 = c_close(Context.c_load_message_write(ctx));
-      let b: i32 = c_close(Context.c_load_reply_read(ctx));
-      NativeActivity.c_store_instance(activity, 0 as usize);
-      __free(ctx, Context.c_size() as i32);
+    return reply;
+  }
+}
+
+// Sends the event `kind` of the activity `activity` to its loop, on the UI
+// thread. After the Destroy, the loop ends, or it runs on with no activity
+// when the app keeps it alive.
+function send(activity: usize, kind: i32, arg: usize): void {
+  unsafe {
+    let ctx: usize = NativeActivity.c_load_instance(activity);
+    if (ctx == 0 as usize) {
+      return;
     }
+    let reply = deliver(ctx, kind, arg);
+    if (kind != DESTROY) {
+      return;
+    }
+    close_ui(activity, ctx);
+    NativeActivity.c_store_instance(activity, 0 as usize);
+    if (reply == KEPT_REPLY) {
+      return;
+    }
+    let e = ui_env(activity);
+    let lock = made_lock(e);
+    let held: i32 = c_mutex_lock(lock);
+    if (live_loop(e) == ctx) {
+      set_property(e, LIVE, "");
+    }
+    let freed: i32 = c_mutex_unlock(lock);
+    let a: i32 = c_close(Context.c_load_message_write(ctx));
+    let b: i32 = c_close(Context.c_load_reply_read(ctx));
+    let app: usize = Context.c_load_app(ctx);
+    if (app != 0 as usize) {
+      let g: usize = jni.delete_global_ref(e, app);
+    }
+    __free(ctx, Context.c_size() as i32);
   }
 }
 
@@ -531,9 +701,6 @@ function on_stop(activity: usize): void {
 }
 
 function on_destroy(activity: usize): void {
-  if (live_activity(ui_env(activity)) == activity) {
-    set_live(ui_env(activity), "");
-  }
   send(activity, DESTROY, 0 as usize);
 }
 
@@ -667,7 +834,89 @@ function frame_event(ctx: usize): Option[Event] {
   }
 }
 
-struct Loop { ctx: usize, looper: usize, queue: usize, done: boolean }
+// `alone` tells that the loop ended with no activity, so it frees its
+// context itself.
+struct Loop { ctx: usize, looper: usize, queue: usize, done: boolean, alone: boolean }
+
+// The app keeps the loop alive.
+function kept_flag(ctx: usize): boolean {
+  unsafe {
+    return Context.c_load_kept(ctx) != 0;
+  }
+}
+
+// The app keeps the loop alive, and the loop is the live one of the process.
+// A loop of an older activity that a new activity replaced does not stay.
+function kept(ctx: usize): boolean {
+  unsafe {
+    return Context.c_load_kept(ctx) != 0 && live_loop(env(ctx)) == ctx;
+  }
+}
+
+// The loop after it ends, when it has no activity and the app does not keep
+// it alive. It ends only when it gets the lock, so no new activity takes it
+// over at the same time. Then it is no longer the live loop.
+function ended_alone(lp: Loop): Loop {
+  if (!detached(lp.ctx) || kept_flag(lp.ctx)) {
+    return lp;
+  }
+  let e = env(lp.ctx);
+  let lock = number_property(e, LOCK);
+  unsafe {
+    if (lock == 0 as usize || c_mutex_trylock(lock) != 0) {
+      return lp;
+    }
+    let out = lp;
+    if (detached(lp.ctx) && Context.c_load_kept(lp.ctx) == 0) {
+      if (live_loop(e) == lp.ctx) {
+        set_property(e, LIVE, "");
+      }
+      out = Loop { ...lp, done: true, alone: true };
+    }
+    let freed: i32 = c_mutex_unlock(lock);
+    return out;
+  }
+}
+
+// The state after the frame callback, which can run in the same poll as
+// another source.
+function framed[S](ctx: usize, own state: S, step: (own S, Event) => S): S {
+  let Some(e) = frame_event(ctx) else {
+    return state;
+  };
+  trace.begin("frame");
+  let out = step(state, e);
+  trace.end();
+  return out;
+}
+
+// The loop after the Destroy message, and the reply to it. The loop ends,
+// or it runs on with no activity when the app keeps it alive.
+function destroyed(lp: Loop): (Loop, i32) {
+  unsafe {
+    if (kept(lp.ctx)) {
+      Context.c_store_activity(lp.ctx, 0 as usize);
+      return (lp, KEPT_REPLY);
+    }
+    let closed: i32 = c_close(Context.c_load_message_read(lp.ctx));
+    return (Loop { ...lp, done: true }, 1);
+  }
+}
+
+// Closes the pipes of the context of a loop that ended with no activity,
+// and frees it.
+function free_alone(ctx: usize): void {
+  unsafe {
+    for fd in [Context.c_load_message_read(ctx), Context.c_load_message_write(ctx), Context.c_load_reply_read(ctx), Context.c_load_reply_write(ctx)] {
+      let closed: i32 = c_close(fd);
+    }
+    let app: usize = Context.c_load_app(ctx);
+    if (app != 0 as usize) {
+      let g: usize = jni.delete_global_ref(env(ctx), app);
+    }
+    __free(ctx, Context.c_size() as i32);
+  }
+}
 
 // Runs the loop of the app on the loop thread, from the context that `start`
 // gave to it. `step` takes the state with each event and gives the next
@@ -675,13 +924,14 @@ struct Loop { ctx: usize, looper: usize, queue: usize, done: boolean }
 // gives the milliseconds to wait for the next event before a Tick. It
 // returns the last state after the Destroy event.
 pub function run[S](ctx: usize, own state: S, step: (own S, Event) => S, timeout: (S) => i32): S {
-  let lp = Loop { ctx: ctx, looper: c_looper_prepare(1), queue: 0 as usize, done: false };
+  let lp = Loop { ctx: ctx, looper: c_looper_prepare(1), queue: 0 as usize, done: false, alone: false };
   let vm: usize = attach(ctx);
   unsafe {
     let added: i32 = c_looper_add_fd(lp.looper, Context.c_load_message_read(ctx), IDENT_MESSAGE, 1, 0 as usize, 0 as usize);
   }
   while (!lp.done) {
-    let wait: i32 = timeout(state);
+    let ending = detached(ctx) && !kept_flag(ctx);
+    let wait: i32 = if (ending) { 0 } else { timeout(state) };
     let ident: i32 = c_looper_poll_once(wait, 0 as usize, 0 as usize, 0 as usize);
     if (ident == IDENT_MESSAGE) {
       let (next_lp, next_state) = message(lp, state, step);
@@ -696,13 +946,12 @@ pub function run[S](ctx: usize, own state: S, step: (own S, Event) => S, timeout
     }
     // The UI thread frees the context after the Destroy reply.
     if (!lp.done) {
-      // The frame callback can run in the same poll as another source.
-      if let Some(e) = frame_event(ctx) {
-        trace.begin("frame");
-        state = step(state, e);
-        trace.end();
-      }
+      state = framed(ctx, state, step);
+      lp = ended_alone(lp);
     }
+  }
+  if (lp.alone) {
+    free_alone(ctx);
   }
   detach(vm);
   return state;
@@ -729,16 +978,20 @@ function message[S](lp: Loop, own state: S, step: (own S, Event) => S): (Loop, S
     } else if (kind > 0) {
       state = step(state, message_event(kind, arg));
     }
+    let reply = 1;
     if (kind == DESTROY) {
-      lp = Loop { ...lp, done: true };
-      let closed: i32 = c_close(Context.c_load_message_read(lp.ctx));
+      let (after, answer) = destroyed(lp);
+      lp = after;
+      reply = answer;
     }
+    let ends = lp.done;
     let reply_fd: i32 = Context.c_load_reply_write(lp.ctx);
-    if (kind == DESTROY) {
+    if (ends) {
       Context.c_store_reply_write(lp.ctx, 0 - 1);
     }
+    __store_u8(msg, reply);
     let sent: i64 = c_write(reply_fd, msg, 1 as usize);
-    if (kind == DESTROY) {
+    if (ends) {
       let closed_reply: i32 = c_close(reply_fd);
     }
     __free(msg, size as i32);
@@ -830,7 +1083,7 @@ struct InvokeInterface { reserved0: usize, reserved1: usize, reserved2: usize, d
 // JNIEnv in the context.
 function attach(ctx: usize): usize {
   unsafe {
-    let vm: usize = NativeActivity.c_load_vm(Context.c_load_activity(ctx));
+    let vm: usize = Context.c_load_vm(ctx);
     let attach_fn: usize = InvokeInterface.c_load_attach_current_thread(__load_ptr(vm));
     let ignored: usize = __c_call3(attach_fn, vm, ctx + Context.c_offset_env(), 0 as usize);
     return vm;
@@ -858,7 +1111,19 @@ pub function env(ctx: usize): usize {
 // The global reference of the NativeActivity object.
 pub function activity_object(ctx: usize): usize {
   unsafe {
-    return NativeActivity.c_load_clazz(Context.c_load_activity(ctx));
+    let activity: usize = Context.c_load_activity(ctx);
+    if (activity == 0 as usize) {
+      return Context.c_load_app(ctx);
+    }
+    return NativeActivity.c_load_clazz(activity);
+  }
+}
+
+// The loop runs now with no activity, after a Destroy that `keep_alive`
+// kept it through. Then `activity_object` gives the Application Context.
+pub function detached(ctx: usize): boolean {
+  unsafe {
+    return Context.c_load_activity(ctx) == 0 as usize;
   }
 }
 
@@ -893,7 +1158,7 @@ pub function intent_extra(ctx: usize, name: string): string {
 // The API level of the device.
 pub function sdk_version(ctx: usize): i32 {
   unsafe {
-    return NativeActivity.c_load_sdk_version(Context.c_load_activity(ctx));
+    return Context.c_load_sdk(ctx);
   }
 }
 
@@ -902,6 +1167,9 @@ pub function sdk_version(ctx: usize): i32 {
 // the backups of the user and to a new device: keep secrets in
 // `no_backup_dir`.
 pub function data_dir(ctx: usize): string {
+  if (detached(ctx)) {
+    return files_dir(ctx);
+  }
   let bytes: u8[] = [];
   unsafe {
     let path: usize = NativeActivity.c_load_internal_data_path(Context.c_load_activity(ctx));
@@ -964,13 +1232,34 @@ pub function request_permissions(ctx: usize, names: string[]): void {
 
 // Asks the activity to finish. The Destroy event follows.
 pub function finish(ctx: usize): void {
+  if (detached(ctx)) {
+    return;
+  }
   unsafe {
     c_activity_finish(Context.c_load_activity(ctx));
   }
 }
 
+// The directory of the private files of the Application Context.
+function files_dir(ctx: usize): string {
+  let e: usize = env(ctx);
+  let dir: usize = jni.call_object(e, activity_object(ctx), "getFilesDir", "()Ljava/io/File;", []);
+  if (jni.exception_occurred(e) != 0 as usize || dir == 0 as usize) {
+    let cleared: usize = jni.exception_clear(e);
+    return "";
+  }
+  let path: usize = jni.call_object(e, dir, "getAbsolutePath", "()Ljava/lang/String;", []);
+  let text = jni.string_of(e, path);
+  let a: usize = jni.delete_local_ref(e, path);
+  let b: usize = jni.delete_local_ref(e, dir);
+  return text;
+}
+
 // Keeps the screen on while the window shows, or stops that.
 pub function keep_screen_on(ctx: usize, on: boolean): void {
+  if (detached(ctx)) {
+    return;
+  }
   unsafe {
     let activity: usize = Context.c_load_activity(ctx);
     if (on) {
@@ -1031,6 +1320,9 @@ pub function utc_offset_ms(ctx: usize, unix_ms: i64): i32 {
 // The file `name` under assets/ in the APK, or None when the APK has no
 // such file.
 pub function asset(ctx: usize, name: string): Option[u8[]] {
+  if (detached(ctx)) {
+    return None;
+  }
   unsafe {
     let manager: usize = NativeActivity.c_load_asset_manager(Context.c_load_activity(ctx));
     let path: usize = jni.cstr(name);
@@ -1072,13 +1364,17 @@ pub function asset(ctx: usize, name: string): Option[u8[]] {
 // density-independent pixel.
 pub function density(ctx: usize): i32 {
   unsafe {
+    if (detached(ctx)) {
+      return Context.c_load_dpi(ctx).max(160);
+    }
     let config: usize = c_config_new();
     c_config_from_assets(config, NativeActivity.c_load_asset_manager(Context.c_load_activity(ctx)));
     let dpi: i32 = c_config_density(config);
     c_config_delete(config);
     if (dpi <= 0 || dpi == 65534 || dpi == 65535) {
-      return 160;
+      dpi = 160;
     }
+    Context.c_store_dpi(ctx, dpi);
     return dpi;
   }
 }
@@ -1108,10 +1404,14 @@ pub function font_scale(ctx: usize): f64 {
 // theme changes, unless its manifest handles the change of uiMode itself.
 pub function night_mode(ctx: usize): boolean {
   unsafe {
+    if (detached(ctx)) {
+      return Context.c_load_night(ctx) == UI_MODE_NIGHT_YES;
+    }
     let config: usize = c_config_new();
     c_config_from_assets(config, NativeActivity.c_load_asset_manager(Context.c_load_activity(ctx)));
     let night: i32 = c_config_night(config);
     c_config_delete(config);
+    Context.c_store_night(ctx, night);
     return night == UI_MODE_NIGHT_YES;
   }
 }
@@ -1119,6 +1419,9 @@ pub function night_mode(ctx: usize): boolean {
 // Moves the task of the activity behind the other apps, as the home key
 // does. The activity and its foreground service keep running.
 pub function to_background(ctx: usize): void {
+  if (detached(ctx)) {
+    return;
+  }
   let e: usize = env(ctx);
   let obj: usize = activity_object(ctx);
   let args: usize = jni.jvalues([1 as usize]);
@@ -1202,6 +1505,12 @@ pub(package) function hide_field(ctx: usize): void {
 
 function ui_request(ctx: usize, r: UiRequest): void {
   unsafe {
+    if (Context.c_load_ui_write(ctx) < 0) {
+      if (r.data != 0 as usize) {
+        free_bytes(r.data);
+      }
+      return;
+    }
     let req: usize = __alloc(UiRequest.c_size() as i32);
     r.c_store(req);
     let slot: usize = __alloc(8);
@@ -1391,6 +1700,8 @@ function close_ui(activity: usize, ctx: usize): void {
     __free(slot, 8);
     let a: i32 = c_close(read);
     let b: i32 = c_close(Context.c_load_ui_write(ctx));
+    Context.c_store_ui_read(ctx, 0 - 1);
+    Context.c_store_ui_write(ctx, 0 - 1);
     let e: usize = NativeActivity.c_load_env(activity);
     let field: usize = Context.c_load_field(ctx);
     if (field != 0 as usize) {
@@ -1438,7 +1749,7 @@ pub(package) function text_changed(env: usize, thiz: usize, editable: usize): vo
     let s: usize = jni.call_object(env, editable, "toString", "()Ljava/lang/String;", []);
     let text = jni.string_of(env, s);
     let a: usize = jni.delete_local_ref(env, s);
-    send(Context.c_load_activity(ctx), TEXT, text_buffer(text));
+    let got = deliver(ctx, TEXT, text_buffer(text));
   }
 }
 
@@ -1450,7 +1761,7 @@ pub(package) function text_action(env: usize, thiz: usize, action: i32): boolean
     return false;
   }
   unsafe {
-    send(Context.c_load_activity(ctx), TEXT_ACTION, action as usize);
+    let got = deliver(ctx, TEXT_ACTION, action as usize);
   }
   return true;
 }
@@ -1999,7 +2310,7 @@ function focus_action(ctx: usize, env: usize, id: i32, take: boolean): boolean {
 // thread, and tells the service.
 function click_action(ctx: usize, env: usize, id: i32, action: i32): void {
   unsafe {
-    send(Context.c_load_activity(ctx), ACCESS, id as usize << 8 | action as usize);
+    let got = deliver(ctx, ACCESS, id as usize << 8 | action as usize);
   }
   let kind = EVENT_CLICKED;
   if (action == ACCESS_LONG_CLICK) {
