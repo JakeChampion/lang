@@ -16,8 +16,8 @@ function replace(own p: Parent, child: Leaf): Other {
 ```
 
 The construction takes the token of `p`. No block proves the shape of the
-box, so `keeps` gave the allocation a block that compares the first word of
-the token with the shape of `Other`. The box is a `Parent`, so the compare is
+box. Thus `keeps` gave the allocation a block that compares the first word
+of the token with the shape of `Other`. The box is a `Parent`, so the compare is
 never true. The credit checker does not accept that form, and the driver
 stopped with exit code 89.
 
