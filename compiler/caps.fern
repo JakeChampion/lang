@@ -228,7 +228,7 @@ pub function direct_privileged(): string[] {
     "__rc_dec", "__rc_get", "__rc_inc", "__store_i32",
     "__store_i64", "__store_ptr", "__store_u8", "__str_bytes",
     "__syscall3", "__syscall4", "__syscall5", "__syscall6",
-    "__task_cancelled", "__task_cur", "__task_enter", "__task_fd_gen", "__task_free",
+    "__task_cancelled", "__task_cur", "__task_enter", "__task_fd_gen", "__task_free", "__task_inline",
     "__task_leave", "__task_new", "__task_park", "__task_park_until",
     "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_until",
     "__task_wait",

@@ -76,3 +76,90 @@ func TestSelfHostStoredViewArgument(t *testing.T) {
 		})
 	}
 }
+
+const storedViewLifetimeProgram = `import "std/string";
+struct Saved { text: string, n: i32 }
+@noinline function store_text(s: string, c: Cell[string]): i32 {
+  c.set(s);
+  return 0;
+}
+@noinline function store_through(s: string, c: Cell[string]): i32 {
+  return store_text(s, c);
+}
+@noinline function capture_text(s: string): () => string {
+  return (): string => s;
+}
+@noinline function capture_through(s: string): () => string {
+  return capture_text(s);
+}
+@noinline function save_result(s: string): Saved {
+  return Saved { text: s, n: 17 };
+}
+@noinline function fresh(unit: string): string { return unit.repeat(12); }
+@noinline function fill_cells(a: Cell[string], b: Cell[string]): i32 {
+  let src = fresh("ef");
+  return store_text(slice_unchecked(src, 2, 10), a)
+    + store_through(slice_unchecked(src, 4, 12), b);
+}
+@noinline function make_closure(): () => string {
+  let src = fresh("gh");
+  return capture_text(slice_unchecked(src, 2, 10));
+}
+@noinline function make_indirect_closure(): () => string {
+  let src = fresh("ij");
+  return capture_through(slice_unchecked(src, 2, 10));
+}
+@noinline function make_result(): Saved {
+  let src = fresh("kl");
+  return save_result(slice_unchecked(src, 2, 10));
+}
+@noinline function churn(): i32 {
+  let total = 0;
+  for i in 0..256 {
+    let junk = fresh("zq");
+    total += junk.len();
+  }
+  return total;
+}
+function main(): i32 {
+  let a = cell_new("");
+  let b = cell_new("");
+  if (fill_cells(a, b) != 0) { return 21; }
+  if (churn() != 6144) { return 20; }
+  if (a.get() != "efefefef") { return 22; }
+  if (b.get() != "efefefef") { return 23; }
+  let f = make_closure();
+  if (churn() != 6144) { return 20; }
+  if (f() != "ghghghgh") { return 24; }
+  let g = make_indirect_closure();
+  if (churn() != 6144) { return 20; }
+  if (g() != "ijijijij") { return 25; }
+  let saved = make_result();
+  if (churn() != 6144) { return 20; }
+  if (saved.text != "klklklkl" || saved.n != 17) { return 26; }
+  if (__rc_underflow_count() != 0) { return 27; }
+  print("stored views survive");
+  return 0;
+}
+`
+
+func TestSelfHostStoredViewLifetimeTargets(t *testing.T) {
+	cli := buildRuntimeCLI(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			for _, sanitize := range []bool{false, true} {
+				got, stderr := runLentView(t, cli, storedViewLifetimeProgram, target, sanitize)
+				if got != "stored views survive\n" {
+					t.Fatalf("sanitize=%v: got %q", sanitize, got)
+				}
+				if sanitize {
+					counts := lentViewLeak.FindStringSubmatch(stderr)
+					if counts[1] == "0" {
+						t.Fatalf("no allocations in the heap-churn control: %s", stderr)
+					}
+					t.Logf("allocs=%s frees=%s live_bytes=0", counts[1], counts[2])
+				}
+			}
+		})
+	}
+}

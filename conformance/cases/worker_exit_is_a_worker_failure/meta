@@ -1,7 +1,4 @@
 waiver: harness-limit
 reason: the program stops through exit(134). The wasmtime command line
   reports each exit status above 125 as 1, so the wasm legs cannot observe
-  134. On arm64-darwin a worker body runs in the process of the program,
-  and the runtime does not know that a worker runs, so `exit` there still
-  ends the program with its own status (#15051). The interpreters and the
-  Linux and Android legs pin the status.
+  134. The interpreters and the native legs pin the status.

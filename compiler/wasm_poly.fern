@@ -83,7 +83,7 @@ function finish_wat(): string {
 function tail_wat(): string {
   return "        (local.set $lo (i64.const 0))\n        (local.set $hi (i64.const 0))\n        (local.set $k (i32.const 0))\n"
     + "        (block $got (loop $byte\n          (br_if $got (i32.ge_u (local.get $k) (local.get $rem)))\n"
-    + "          (local.set $b (i64.extend_i32_u (i32.load8_u (i32.add (local.get $p) (local.get $k)))))\n"
+    + "          (local.set $b (i64.load8_u (i32.add (local.get $p) (local.get $k))))\n"
     + "          (if (i32.lt_u (local.get $k) (i32.const 8))\n"
     + "            (then (local.set $lo (i64.or (local.get $lo) (i64.shl (local.get $b) (i64.extend_i32_u (i32.shl (local.get $k) (i32.const 3)))))))\n"
     + "            (else (local.set $hi (i64.or (local.get $hi) (i64.shl (local.get $b) (i64.extend_i32_u (i32.shl (i32.sub (local.get $k) (i32.const 8)) (i32.const 3))))))))\n"

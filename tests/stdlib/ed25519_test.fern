@@ -260,6 +260,28 @@ function test_public_keys_that_do_not_decode(): test.TestOutcome {
   return test.assert_eq(refused(ed25519.public_key(__codec_bytes(hex.decode("0100000000000000000000000000000000000000000000000000000000000080")))), bad);
 }
 
+function montgomery_of(public: string): string {
+  match (ed25519.public_key(__codec_bytes(hex.decode(public)))) {
+    Ok(k) => {
+      return hex.encode(k.montgomery());
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+// The X25519 public key of SHA-512(seed)[0:32] for the TEST 1 seed is the
+// Montgomery form of the TEST 1 public key.
+function test_montgomery(): test.TestOutcome {
+  let want = "d85e07ec22b0ad881537c2f44d662d1a143cf830c57aca4305d85c7a90f6b62e";
+  if (montgomery_of("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a") != want) {
+    return test.fail("TEST 1 public key");
+  }
+  return test.assert_eq(montgomery_of("0100000000000000000000000000000000000000000000000000000000000000"), "0000000000000000000000000000000000000000000000000000000000000000");
+}
+
 function main(): i32 {
   let r = test.new("std/crypto/ed25519");
   r = r.it("RFC 8032 7.1 TEST 1", test_rfc_1);
@@ -273,6 +295,7 @@ function main(): i32 {
   r = r.it("non-canonical S", test_non_canonical_s);
   r = r.it("seed, key and signature lengths", test_lengths);
   r = r.it("public keys that do not decode", test_public_keys_that_do_not_decode);
+  r = r.it("the Montgomery form of a public key", test_montgomery);
   r = r.it("a key built once signs and verifies many messages", test_key_reused);
   r = r.it("erase consumes a private key", test_erase_key);
   r = r.it("erase preserves another key holder", test_erase_shared_key);

@@ -2358,7 +2358,7 @@ function x86_poly_vcarry(): string {
 }
 
 function emit_rt_poly1305(s: asmcore.EmitState): asmcore.EmitState {
-  return s.write("    .section .rodata\n    .align 16\n.Lpb_consts:\n    .quad 67108863,67108863,67108863,67108863\n    .quad 16777216,16777216,16777216,16777216\n"
+  return s.write("    .section .rodata\n    .align 32\n.Lpb_consts:\n    .quad 67108863,67108863,67108863,67108863\n    .quad 16777216,16777216,16777216,16777216\n"
     + "    .quad 1152921487695413247,1152921487695413244\n    .section .text\n" + x86_poly1305_blocks());
 }
 
@@ -2366,7 +2366,7 @@ function emit_rt_poly1305(s: asmcore.EmitState): asmcore.EmitState {
 // block counters and their step. The four words of "expand 32-byte k" follow, and then the masks that clamp r
 // of Poly1305.
 function emit_rt_chacha_consts(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("    .section .rodata\n    .align 16\n.Lcc_consts:\n    .byte 2,3,0,1,6,7,4,5,10,11,8,9,14,15,12,13,2,3,0,1,6,7,4,5,10,11,8,9,14,15,12,13\n"
+  s = s.write("    .section .rodata\n    .align 32\n.Lcc_consts:\n    .byte 2,3,0,1,6,7,4,5,10,11,8,9,14,15,12,13,2,3,0,1,6,7,4,5,10,11,8,9,14,15,12,13\n"
     + "    .byte 3,0,1,2,7,4,5,6,11,8,9,10,15,12,13,14,3,0,1,2,7,4,5,6,11,8,9,10,15,12,13,14\n    .long 0,1,2,3,4,5,6,7\n    .long 8,8,8,8,8,8,8,8\n");
   for k in ["1634760805", "857760878", "2036477234", "1797285236"] {
     s = s.write("    .long " + k + "," + k + "," + k + "," + k + "," + k + "," + k + "," + k + "," + k + "\n");
@@ -2500,7 +2500,7 @@ function x86_chacha20_poly1305(seal: boolean): string {
 }
 
 function emit_rt_sha1x8(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("    .section .rodata\n    .align 16\n.Lsx8_consts:\n    .byte 3,2,1,0,7,6,5,4,11,10,9,8,15,14,13,12,3,2,1,0,7,6,5,4,11,10,9,8,15,14,13,12\n");
+  s = s.write("    .section .rodata\n    .align 32\n.Lsx8_consts:\n    .byte 3,2,1,0,7,6,5,4,11,10,9,8,15,14,13,12,3,2,1,0,7,6,5,4,11,10,9,8,15,14,13,12\n");
   for k in ["1518500249", "1859775393", "2400959708", "3395469782"] {
     s = s.write("    .long " + k + "," + k + "," + k + "," + k + "," + k + "," + k + "," + k + "," + k + "\n");
   }
@@ -8842,14 +8842,42 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
 
 function ssa_reg_call_emit(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   let mask = s.float_mask(asmcore.sanitize_label(ins.str));
+  for a in ssa_nargs()..ins.args.len() {
+    if (asmcore.lane_param(mask, a)) {
+      ssa_lane_refuse("call of " + ins.str);
+    }
+  }
+  s = ssa_stack_args(reg_of, ins.args, 0, s);
   let srcs: i32[] = [];
   let dsts: i32[] = [];
-  for a in 0..ins.args.len() {
+  for a in 0..ssa_reg_args(ins.args.len()) {
     srcs = srcs.append(reg_of[ins.args[a]]);
     dsts = dsts.append(ssa_arg_loc(mask, a));
   }
   s = ssa_parallel_moves(srcs, dsts, s);
-  return ssa_call_sym(s, "__fn_" + asmcore.sanitize_label(ins.str) + ".r");
+  s = ssa_call_sym(s, "__fn_" + asmcore.sanitize_label(ins.str) + ".r");
+  return ssa_stack_args_drop(ins.args.len(), s);
+}
+
+// The arguments past the register count go on the stack where the stack
+// entry reads them, above a gap for the arguments that go in registers.
+function ssa_stack_args(reg_of: i32[], args: i32[], first: i32, s: asmcore.EmitState): asmcore.EmitState {
+  if (args.len() - first <= ssa_nargs()) {
+    return s;
+  }
+  let i = args.len() - 1;
+  while (i >= first + ssa_nargs()) {
+    s = ssa_push_operand(reg_of, args[i], s);
+    i -= 1;
+  }
+  return ssa_alu_ir(s, 5, 64, (8 * ssa_nargs()) as i64, "%rsp");
+}
+
+function ssa_stack_args_drop(argc: i32, s: asmcore.EmitState): asmcore.EmitState {
+  if (argc <= ssa_nargs()) {
+    return s;
+  }
+  return ssa_alu_ir(s, 0, 64, (8 * argc) as i64, "%rsp");
 }
 
 function ssa_release_entry(entry: ssaprepare.ReleaseEntry, lp: string, s: asmcore.EmitState): asmcore.EmitState {
@@ -8979,9 +9007,6 @@ function ssa_mem_at(ins: ssa.SInst, reg_of: i32[], c: i32, a: string, d: string,
 // A runtime function compiled from Fern has a `.r` entry that takes its
 // arguments in registers. One written in assembly has none.
 function ssa_register_runtime(ins: ssa.SInst, reg_of: i32[], target: string, s: asmcore.EmitState): boolean {
-  if (ins.args.len() > ssa_nargs()) {
-    return false;
-  }
   for a in ins.args {
     if (reg_of[a] == -1) {
       return false;
@@ -8995,14 +9020,15 @@ function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   s = ssa_str_marks(ins.str, s);
   let target = "__fern_" + ssa.runtime_helper_name(ins.str);
   if (ssa_register_runtime(ins, reg_of, target, s)) {
+    s = ssa_stack_args(reg_of, ins.args, 0, s);
     let srcs: i32[] = [];
     let dsts: i32[] = [];
-    for a in 0..ins.args.len() {
+    for a in 0..ssa_reg_args(ins.args.len()) {
       srcs = srcs.append(reg_of[ins.args[a]]);
-      dsts = dsts.append(ssa_arg_loc("", a));
+      dsts = dsts.append(a);
     }
     s = ssa_call_sym(ssa_parallel_moves(srcs, dsts, s), "__fn_" + target + ".r");
-    return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
+    return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(ssa_stack_args_drop(ins.args.len(), s)));
   }
   let argc = ins.args.len();
   let i = argc - 1;
@@ -10108,11 +10134,7 @@ function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   if (!ssa.slot_call(ins)) {
     s = ssa_load(reg_of, ins.args[0], "%rdx", s);
   }
-  let i = argc;
-  while (argc > ssa_nargs() && i >= 1) {
-    s = ssa_push_operand(reg_of, ins.args[i], s);
-    i -= 1;
-  }
+  s = ssa_stack_args(reg_of, ins.args, 1, s);
   let srcs: i32[] = [];
   let dsts: i32[] = [];
   let a = 0;
@@ -10131,10 +10153,7 @@ function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   } else {
     s = s.write("    call *%rdx\n");
   }
-  if (argc > ssa_nargs()) {
-    s = ssa_alu_ir(s, 0, 64, (argc * 8) as i64, "%rsp");
-  }
-  return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
+  return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(ssa_stack_args_drop(argc, s)));
 }
 
 // The word at a valid target is endbr64 (f3 0f 1e fa), read little-endian,
@@ -10794,8 +10813,13 @@ function ssa_call_result(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): a
 }
 
 function ssa_reg_params(f: ssa.SFunc): i32 {
-  if (f.nparams < ssa_nargs()) {
-    return f.nparams;
+  return ssa_reg_args(f.nparams);
+}
+
+// How many of `argc` arguments go in registers.
+function ssa_reg_args(argc: i32): i32 {
+  if (argc < ssa_nargs()) {
+    return argc;
   }
   return ssa_nargs();
 }
@@ -10817,7 +10841,7 @@ function ssa_reg_helper(sym: string, argc: i32): boolean {
 
 function ssa_reg_call(ins: ssa.SInst, s: asmcore.EmitState): boolean {
   let argc = ins.args.len();
-  if (ins.kind_tag != ssa.CALL || argc == 0 || argc > ssa_nargs() || ssa.rc_inlined(ins)) {
+  if (ins.kind_tag != ssa.CALL || argc == 0 || ssa.rc_inlined(ins)) {
     return false;
   }
   if (ircore.is_runtime_helper_call(ins.str, s) || ircore.is_c_call(ins.str)) {
@@ -10840,7 +10864,7 @@ function ssa_arg_prefs(f: ssa.SFunc, s: asmcore.EmitState): i32[] {
         continue;
       }
       let a = 0;
-      while (a < ins.args.len() && (!rt || a < 2)) {
+      while (a < ins.args.len() && a < ssa_nargs() && (!rt || a < 2)) {
         let v = ins.args[a];
         let r = ssa_arg_loc(s.float_mask(asmcore.sanitize_label(ins.str)), a);
         if (rt) {
@@ -10956,10 +10980,10 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   let fn_label = "__fn_" + asmcore.sanitize_label(label_name);
   let views = ssa.view_slots(f);
   let nspill = asmcore.ssa_lane_spill(f, ssa.spill_count(reg_of));
-  let tails = s.profile == 0;
+  let tails = ssa.tails_of(f, s.profile == 0);
   let leaf = s.profile == 0 && nspill == 0 && ssa.view_count(views) == 0 && !hev_on(s) && !ssa_calls_besides_tails(f, s, tails);
   let cold = ssa_cold_saves(f, alloc);
-  let bare = !leaf && ssa_slotless(nspill, views, cold) && !hev_on(s) && tails && f.nparams <= ssa_nargs();
+  let bare = !leaf && ssa_slotless(nspill, views, cold) && !hev_on(s) && tails.on && f.nparams <= ssa_nargs();
   let canary = 0;
   if (s.harden && !leaf && !bare) {
     canary = 8 * saved.len() + 8;
@@ -11206,11 +11230,11 @@ function ssa_resolve_tails(text: string, epilogue: string): string {
   return out + slice_unchecked(text, from, text.len());
 }
 
-function ssa_tail_call(blk: ssa.SBlock, ins: ssa.SInst, s: asmcore.EmitState, tails: boolean): boolean {
-  return tails && blk.insts.len() > 0 && ssa.returns_call(blk, blk.insts.len() - 1) && blk.insts[blk.insts.len() - 1].result == ins.result && (ssa_reg_call(ins, s) || asmcore.tail_allocator(ins) != "");
+function ssa_tail_call(blk: ssa.SBlock, ins: ssa.SInst, s: asmcore.EmitState, tails: ssa.Tails): boolean {
+  return ssa.may_tail(tails, ins) && blk.insts.len() > 0 && ssa.returns_call(blk, blk.insts.len() - 1) && blk.insts[blk.insts.len() - 1].result == ins.result && (ssa_reg_call(ins, s) && ins.args.len() <= ssa_nargs() || asmcore.tail_allocator(ins) != "");
 }
 
-function ssa_calls_besides_tails(f: ssa.SFunc, s: asmcore.EmitState, tails: boolean): boolean {
+function ssa_calls_besides_tails(f: ssa.SFunc, s: asmcore.EmitState, tails: ssa.Tails): boolean {
   for blk in f.blocks {
     for k in 0..blk.insts.len() {
       let ins = blk.insts[k];
@@ -13524,7 +13548,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .section .bss\n    .align 8\n__fern_cov_counters: .quad 0\n    .text\n");
   }
   if (s.has_need("task")) {
-    s = s.write("    .section .bss\n    .align 8\n__fern_task_state: .quad 0, 0, 0, 0, 0, 0, 0, 0\n    .text\n");
+    s = s.write("    .section .bss\n    .align 8\n__fern_task_state: .quad 0, 0, 0, 0, 0, 0, 0, 0, 0\n    .text\n");
   }
   if (s.has_need("str_print")) {
     s = s.write("    .text\n");

@@ -1,0 +1,134 @@
+// Go's flag package, as age and age-keygen use it: flags with one dash or
+// two, values after "=" or in the next argument, and Go's messages.
+import "std/array";
+import "std/option";
+import "./text";
+
+// A flag that the command line sets, in the order of the command line.
+pub enum Flag {
+  BoolFlag(string, boolean),
+  ValueFlag(string, string),
+}
+
+// The flags and the arguments after them, a request for the usage, or
+// Go's message for a bad flag (exit 2).
+pub enum Parsed {
+  Run(Flag[], string[]),
+  Help,
+  Bad(string),
+}
+
+// The names of the flags of one command.
+pub struct Names { bools: string[], values: string[] }
+
+const TRUE_WORDS: string[] = ["1", "t", "T", "TRUE", "true", "True"];
+
+const FALSE_WORDS: string[] = ["0", "f", "F", "FALSE", "false", "False"];
+
+function has(names: string[], name: string): boolean {
+  for n in names {
+    if (n == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Go's strconv.ParseBool.
+function bool_value(v: string): Option[boolean] {
+  if (has(TRUE_WORDS, v)) {
+    return Some(true);
+  }
+  if (has(FALSE_WORDS, v)) {
+    return Some(false);
+  }
+  return None;
+}
+
+// The state of the parser after one argument: the flags, the index of the
+// next argument, and whether the flags have ended.
+struct Step { flags: Flag[], next: i32, ended: boolean }
+
+enum Stepped {
+  Went(Step),
+  Stopped(Parsed),
+}
+
+// A flag with a value. The value is after "=" or in the next argument.
+function value_flag(flags: Flag[], args: string[], at: i32, name: string, given: Option[string]): Stepped {
+  if let Some(v) = given {
+    return Went(Step { flags: flags.append(ValueFlag(name, v)), next: at, ended: false });
+  }
+  if (at >= args.len()) {
+    return Stopped(Bad("flag needs an argument: -" + name));
+  }
+  return Went(Step { flags: flags.append(ValueFlag(name, args[at])), next: at + 1, ended: false });
+}
+
+function bool_flag(names: Names, flags: Flag[], at: i32, name: string, given: Option[string]): Stepped {
+  if (!has(names.bools, name)) {
+    if (name == "h" || name == "help") {
+      return Stopped(Help);
+    }
+    return Stopped(Bad("flag provided but not defined: -" + name));
+  }
+  let v = match (given) {
+    Some(word) => bool_value(word),
+    None => Some(true),
+  };
+  let Some(on) = v else {
+    return Stopped(Bad(f"invalid boolean value {text.quote(given.unwrap_or("").as_bytes())} for -{name}: parse error"));
+  };
+  return Went(Step { flags: flags.append(BoolFlag(name, on)), next: at, ended: false });
+}
+
+// The name of a flag and the value after its "=".
+function split_flag(flag: string): (string, Option[string]) {
+  return match (flag.index_of("=")) {
+    Some(e) => (flag[0:e].unwrap_or("").to_owned(), Some(flag[e + 1:flag.len()].unwrap_or("").to_owned())),
+    None => (flag, None),
+  };
+}
+
+// Go's flag.FlagSet.parseOne for args[at].
+function parse_one(names: Names, flags: Flag[], args: string[], at: i32): Stepped {
+  let s = args[at];
+  if (s.len() < 2 || s[0] != b'-') {
+    return Went(Step { flags: flags, next: at, ended: true });
+  }
+  if (s == "--") {
+    return Went(Step { flags: flags, next: at + 1, ended: true });
+  }
+  let dashes = if (s[1] == b'-') { 2 } else { 1 };
+  let flag = s[dashes:s.len()].unwrap_or("").to_owned();
+  if (flag.len() == 0 || flag[0] == b'-' || flag[0] == b'=') {
+    return Stopped(Bad("bad flag syntax: " + s));
+  }
+  let (name, given) = split_flag(flag);
+  if (has(names.values, name)) {
+    return value_flag(flags, args, at + 1, name, given);
+  }
+  return bool_flag(names, flags, at + 1, name, given);
+}
+
+// Go's flag.Parse over the arguments after the program name. Parsing stops
+// at the first argument that is not a flag, and after "--".
+pub function parse(names: Names, args: string[]): Parsed {
+  let flags: Flag[] = [];
+  let i = 0;
+  while (i < args.len()) {
+    match (parse_one(names, flags, args, i)) {
+      Stopped(p) => {
+        return p;
+      },
+      Went(step) => {
+        flags = step.flags;
+        i = step.next;
+        if (step.ended) {
+          break;
+        }
+      }
+    }
+  }
+  return Run(flags, array.slice(args, i, args.len()));
+}

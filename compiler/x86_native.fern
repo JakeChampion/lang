@@ -937,17 +937,19 @@ pub struct X86Asm {
   unknown: string[],
   cfi: gas.CfiState,
   pads: i32[],
+  // The largest alignment that the text or the read-only data asks for.
+  ro_align: i32,
   pad_labels: i32[],
   pad_marks: i32[],
 }
 
 function x86_asm_new(): X86Asm {
-  return X86Asm { code: buf_new(4096), text: [], rodata: [], ro: [], relro: [], relro_pad: 0, rfix_offs: [], rfix_names: [], rfix_idx: [], ro_base: -1, code_end: -1, bss_size: 0, data_offset: -1, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], afix_offs: [], afix_names: [], afix_idx: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: gas.empty_buckets(), lab_tail: gas.empty_buckets(), lab_next: [], fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: false, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: gas.cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
+  return X86Asm { code: buf_new(4096), text: [], rodata: [], ro: [], relro: [], relro_pad: 0, rfix_offs: [], rfix_names: [], rfix_idx: [], ro_base: -1, code_end: -1, bss_size: 0, data_offset: -1, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], afix_offs: [], afix_names: [], afix_idx: [], lab_names: [], lab_secs: [], lab_offs: [], lab_head: gas.empty_buckets(), lab_tail: gas.empty_buckets(), lab_next: [], fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: false, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: gas.cfi_new(cfi_profile_x86()), pads: [], ro_align: 16, pad_labels: [], pad_marks: [] };
 }
 
 function x86_asm_new_prepared(labs: GasLabels): X86Asm {
   let n = labs.names.len() + labs.nids;
-  return X86Asm { code: buf_new(4096), text: [], rodata: [], ro: [], relro: [], relro_pad: 0, rfix_offs: [], rfix_names: [], rfix_idx: [], ro_base: -1, code_end: -1, bss_size: 0, data_offset: -1, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], afix_offs: [], afix_names: [], afix_idx: [], lab_names: labs.names, lab_secs: util.filled_i32(n, -1), lab_offs: util.filled_i32(n, -1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: gas.cfi_new(cfi_profile_x86()), pads: [], pad_labels: [], pad_marks: [] };
+  return X86Asm { code: buf_new(4096), text: [], rodata: [], ro: [], relro: [], relro_pad: 0, rfix_offs: [], rfix_names: [], rfix_idx: [], ro_base: -1, code_end: -1, bss_size: 0, data_offset: -1, files: [], loc_offs: [], loc_files: [], loc_lines: [], loc_cols: [], loc_flags: [], dvars: [], dfix_offs: [], dfix_names: [], dfix_idx: [], afix_offs: [], afix_names: [], afix_idx: [], lab_names: labs.names, lab_secs: util.filled_i32(n, -1), lab_offs: util.filled_i32(n, -1), lab_head: labs.head, lab_tail: labs.tail, lab_next: labs.next, fixq: 0 as usize, fix_names: [], fixes: [], fix_tail_offs: [], fix_tail_bytes: [], relaxing: true, brq: 0 as usize, br_offs: [], br_hi: [], br_names: [], unknown: [], cfi: gas.cfi_new(cfi_profile_x86()), pads: [], ro_align: 16, pad_labels: [], pad_marks: [] };
 }
 
 pub function x86_eh_frame(a: X86Asm, text_vaddr: i64, eh_vaddr: i64): i32[] {
@@ -1564,6 +1566,10 @@ pub function x86_resolve_data(own a: X86Asm, text_vaddr: i32): X86Asm {
 }
 
 pub function x86_link(a: X86Asm, text_vaddr: i32, data_vaddr: i32): X86Asm {
+  if (text_vaddr % a.ro_align != 0) {
+    let bad = X86Asm { ...a, unknown: a.unknown.append(".align " + a.ro_align.to_string() + ": the text is at an address that is not a multiple of it") };
+    return x86_resolve_data(x86_patch(X86Asm { ...bad, data_offset: data_vaddr - text_vaddr }), text_vaddr);
+  }
   return x86_resolve_data(x86_patch(X86Asm { ...a, data_offset: data_vaddr - text_vaddr }), text_vaddr);
 }
 
@@ -1579,7 +1585,7 @@ function x86_fold_ro(own a: X86Asm): X86Asm {
   let ro = a.ro;
   let end = text.len();
   a = X86Asm { ...a, text: [], ro: [] };
-  while (text.len() % 16 != 0) {
+  while (text.len() % a.ro_align != 0) {
     text = text.append(0 as u8);
   }
   let base = text.len();
@@ -5778,8 +5784,13 @@ function x86_gas_align(own a: X86Asm, section: i32, line: string): X86Asm {
     return a;
   }
   // Refuse text alignment above an x86 page before materializing its padding.
-  if (align > 4096 || align > 16 && section != 0) {
+  // The read-only data is in the text segment, whose address is a multiple
+  // of 64. The other data sections have a base that is a multiple of 16.
+  if (align > 4096 || align > 64 && section == 3 || align > 16 && section != 0 && section != 3) {
     return x86_gas_bad(a, line);
+  }
+  if (align > a.ro_align && align <= 64 && (section == 0 || section == 3)) {
+    a = X86Asm { ...a, ro_align: align };
   }
   if (section == 2) {
     while (a.bss_size % align != 0) {
