@@ -1,0 +1,132 @@
+// The options, the names and the gzip framing of the pigz port.
+import "std/test";
+import "std/hex" as hex;
+import "std/array";
+import "./gz";
+
+function options(args: string[]): string {
+  match (gz.parse(args)) {
+    gz.Run(o) => {
+      let flags = "";
+      if (o.decompress) {
+        flags += "d";
+      }
+      if (o.stdout) {
+        flags += "c";
+      }
+      if (o.force) {
+        flags += "f";
+      }
+      if (o.keep) {
+        flags += "k";
+      }
+      if (o.test) {
+        flags += "t";
+      }
+      return flags + " " + o.level.to_string() + " [" + o.files.join(",") + "]";
+    },
+    gz.Abort(why) => {
+      return "abort: " + why;
+    }
+  }
+  return "";
+}
+
+function test_parse(): test.TestOutcome {
+  let got = [
+    options([]),
+    options(["-dc", "a.gz"]),
+    options(["a", "-9k", "b"]),
+    options(["--decompress", "--stdout", "--force", "--keep", "--test", "x"]),
+    options(["--fast", "--best", "-3"]),
+    options(["-", "--", "-c"]),
+  ];
+  return test.assert_eq_array(got, [
+    " 6 []",
+    "dc 6 [a.gz]",
+    "k 9 [a,b]",
+    "dcfkt 6 [x]",
+    " 3 []",
+    " 6 [-,-c]",
+  ]);
+}
+
+function test_parse_refusals(): test.TestOutcome {
+  let got = [options(["-x"]), options(["-dx"]), options(["--bogus"]), options(["-0"]), options(["-10"]), options(["-11"])];
+  return test.assert_eq_array(got, [
+    "abort: invalid option: -x",
+    "abort: invalid option: -x",
+    "abort: invalid option: --bogus",
+    "abort: only levels 1..9 are allowed",
+    "abort: only levels 1..9 are allowed",
+    "abort: only levels 1..9 are allowed",
+  ]);
+}
+
+function test_names(): test.TestOutcome {
+  let got = [
+    gz.compressed_name("a"),
+    gz.decompressed_name("a.gz").unwrap_or("none"),
+    gz.decompressed_name("x.tgz").unwrap_or("none"),
+    gz.decompressed_name("a").unwrap_or("none"),
+    gz.decompressed_name(".gz").unwrap_or("none"),
+    gz.base_name("dir/sub/file"),
+    gz.base_name("file"),
+  ];
+  return test.assert_eq_array(got, ["a.gz", "a", "x.tar", "none", "none", "file", "file"]);
+}
+
+function test_header(): test.TestOutcome {
+  let named = gz.compress("hi\n".bytes(), 9, "a", 1700000000u32);
+  let plain = gz.compress("hi\n".bytes(), 1, "", 0u32);
+  return test.assert_eq(hex.encode(named[0:12]) + " " + hex.encode(plain[0:10]), "1f8b080800f1536502036100 1f8b0800000000000403");
+}
+
+function round(data: u8[]): string {
+  match (gz.decompress(data)) {
+    Ok(out) => {
+      return "ok " + hex.encode(out);
+    },
+    Err(why) => {
+      return "error" + why;
+    }
+  }
+  return "";
+}
+
+function test_members(): test.TestOutcome {
+  let one = gz.compress("hi\n".bytes(), 6, "a", 0u32);
+  let two = one.concat(gz.compress("yo\n".bytes(), 1, "", 0u32));
+  let garbage = one.concat("garbage\n".bytes());
+  let none: u8[] = [];
+  return test.assert_eq_array([round(one), round(two), round(garbage), round(none)], ["ok 68690a", "ok 68690a796f0a", "ok 68690a", "error unrecognized format"]);
+}
+
+function test_refusals(): test.TestOutcome {
+  let good = gz.compress("the quick brown fox jumps over the lazy dog\n".repeat(20).bytes(), 6, "", 0u32);
+  let n = good.len();
+  let crc = good.with(n - 8, good[n - 8] ^ 1 as u8);
+  let length = good.with(n - 4, good[n - 4] ^ 1 as u8);
+  let short = array.slice(good, 0, n - 12);
+  let header = array.slice(good, 0, 10);
+  let magic = [31 as u8, 139 as u8].concat("junkjunk".bytes());
+  return test.assert_eq_array([round(crc), round(length), round(short), round(header), round(magic), round("hello".bytes())], [
+    "error: corrupted -- crc32 mismatch",
+    "error: corrupted -- length mismatch",
+    "error: corrupted -- incomplete deflate data",
+    "error unrecognized format",
+    "error unrecognized format",
+    "error unrecognized format",
+  ]);
+}
+
+function main(): i32 {
+  let r = test.new("pigz");
+  r = r.it("options and file names in any order", test_parse);
+  r = r.it("an invalid option or level aborts", test_parse_refusals);
+  r = r.it("the names of the output files", test_names);
+  r = r.it("the header keeps the name, the time and the level", test_header);
+  r = r.it("each member decodes, and bytes after the last are ignored", test_members);
+  r = r.it("each corrupt stream gets the message of pigz", test_refusals);
+  return r.finish();
+}
