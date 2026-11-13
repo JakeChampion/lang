@@ -1,0 +1,110 @@
+// The objects of a repository: the loose objects and the packfiles.
+import "std/array";
+import "std/hex";
+import "./objects";
+import "./pack";
+
+// One packfile. `idx` is its index. `data` is the packfile, which the store
+// reads when it needs an object of it.
+pub struct Packed { path: string, idx: u8[], data: u8[], loaded: boolean }
+
+pub struct Store { objects: string, packs: Packed[] }
+
+// The result of a read: the object, and the store with the packfile that
+// the read loaded.
+pub struct Found { store: Store, object: Result[objects.Object, string] }
+
+// The store of the directory `objects`, with the index of each packfile.
+pub function open(dir: string): Store {
+  let packs: Packed[] = [];
+  let names = match (read_dir(dir + "/pack")) {
+    Ok(ns) => ns,
+    Err(_) => {
+      return Store { objects: dir, packs: packs };
+    },
+  };
+  for n in names {
+    if (n.ends_with(".idx")) {
+      let path = dir + "/pack/" + objects.part(n, 0, n.len() - 4) + ".pack";
+      if let Ok(idx) = read_file_bytes(dir + "/pack/" + n) {
+        if (pack.index_ok(idx)) {
+          packs = packs.append(Packed { path: path, idx: idx, data: [], loaded: false });
+        }
+      }
+    }
+  }
+  return Store { objects: dir, packs: packs };
+}
+
+// The packfile `i` with its data.
+function loaded(own s: Store, i: i32): Store {
+  if (s.packs[i].loaded) {
+    return s;
+  }
+  let data = match (read_file_bytes(s.packs[i].path)) {
+    Ok(bytes) => bytes,
+    Err(_) => [],
+  };
+  return Store { ...s, packs: s.packs.with(i, Packed { ...s.packs[i], data: data, loaded: true }) };
+}
+
+// The object `name`: the loose object, or the object of the first packfile
+// that has the name. The error is "missing" when no place has it.
+pub function read(own s: Store, name: string): Found {
+  let loose = objects.read_loose(s.objects, name);
+  let absent = match (loose) {
+    Ok(_) => false,
+    Err(why) => why == "missing",
+  };
+  if (!absent) {
+    return Found { store: s, object: loose };
+  }
+  let Ok(raw) = hex.decode(name) else {
+    return Found { store: s, object: Err("missing") };
+  };
+  for i in 0..s.packs.len() {
+    let at = pack.find(s.packs[i].idx, raw);
+    if (at >= 0) {
+      s = loaded(s, i);
+      let offset = pack.offset_at(s.packs[i].idx, at);
+      if (offset < 0) {
+        return Found { store: s, object: Err("the packfile of " + name + " is larger than this port reads") };
+      }
+      let object = pack.object_at(s.packs[i].data, s.packs[i].idx, offset);
+      return Found { store: s, object: object };
+    }
+  }
+  return Found { store: s, object: Err("missing") };
+}
+
+// The loose objects whose name starts with `short`.
+function loose_with_prefix(s: Store, short: string): string[] {
+  let found: string[] = [];
+  let names = match (read_dir(s.objects + "/" + objects.part(short, 0, 2))) {
+    Ok(ns) => ns,
+    Err(_) => {
+      return found;
+    },
+  };
+  let rest = objects.part(short, 2, short.len());
+  for n in names {
+    if (n.len() == 38 && n.starts_with(rest)) {
+      found = found.append(objects.part(short, 0, 2) + n);
+    }
+  }
+  return found;
+}
+
+// The names that start with the hexadecimal digits `short`, one time each.
+// The search stops after two names: the caller needs to know one from many.
+pub function with_prefix(s: Store, short: string): string[] {
+  let found = loose_with_prefix(s, short);
+  for p in s.packs {
+    for name in pack.with_prefix(p.idx, short, 2) {
+      if (!found.contains(name)) {
+        found = found.append(name);
+      }
+    }
+  }
+  return found;
+}

@@ -4,6 +4,7 @@ import "std/test";
 import "std/array";
 import "std/hex";
 import "./objects";
+import "./pack";
 
 function unhex(s: string): u8[] {
   let Ok(b) = hex.decode(s) else {
@@ -91,11 +92,72 @@ function test_tree_lines(): test.TestOutcome {
   return test.pass();
 }
 
+// A delta: the size of the base, the size of the result, and then copy and
+// insert instructions.
+function test_delta(): test.TestOutcome {
+  let base = "0123456789abcdef".bytes();
+  // Copy 4 bytes from 10, insert "XY", copy 3 bytes from 0.
+  let delta: u8[] = [16, 9, 145, 10, 4, 2, 88, 89, 144, 3];
+  let got = match (pack.apply_delta(base, delta)) {
+    Ok(bytes) => hex.encode(bytes),
+    Err(why) => "error: " + why,
+  };
+  if (got != hex.encode("abcdXY012".bytes())) {
+    return test.fail("the delta gave " + got);
+  }
+  // A copy with no size byte takes 65536 bytes.
+  let big = "ab".repeat(40000).bytes();
+  let whole: u8[] = [128, 241, 4, 128, 128, 4, 128];
+  if let Ok(out) = pack.apply_delta(big, whole) {
+    if (out.len() != 65536 || out[65535] != b'b') {
+      return test.fail("the copy of 65536 bytes");
+    }
+  } else {
+    return test.fail("the copy of 65536 bytes is refused");
+  }
+  let bads: u8[][] = [[15, 9, 145, 10, 4], [16, 9, 145, 14, 4], [16, 9, 0], [16, 9, 2, 88], [16, 2, 145, 10, 4]];
+  for bad in bads {
+    if let Ok(_) = pack.apply_delta(base, bad) {
+      return test.fail("a bad delta is accepted: " + hex.encode(bad));
+    }
+  }
+  return test.pass();
+}
+
+// The header of a packed object: the kind, a size in parts of 4 and 7 bits,
+// and the offset or the name of the base of a delta.
+function test_entry(): test.TestOutcome {
+  let zero = __alloc_u8(12);
+  // A blob of 5 + 16 * 3 bytes.
+  let blob = zero.append(181).append(3);
+  let e = pack.entry_at(blob, 12);
+  if (!e.ok || e.kind != 3 || e.size != 53 || e.data_at != 14) {
+    return test.fail("the header of a blob");
+  }
+  // An OFS_DELTA of 7 bytes whose base is 300 bytes before: 0x81 0x2c.
+  let ofs = __alloc_u8(400).append(103).append(129).append(44);
+  let d = pack.entry_at(ofs, 400);
+  if (!d.ok || d.kind != pack.OFS_DELTA || d.size != 7 || d.base_offset != 100 || d.data_at != 403) {
+    return test.fail("the header of an OFS_DELTA: base " + d.base_offset.to_string());
+  }
+  let ref_delta = zero.append(119).concat(unhex("ce013625030ba8dba906f756967f9e9ca394464a"));
+  let r = pack.entry_at(ref_delta, 12);
+  if (!r.ok || r.kind != pack.REF_DELTA || hex.encode(r.base_name) != "ce013625030ba8dba906f756967f9e9ca394464a" || r.data_at != 33) {
+    return test.fail("the header of a REF_DELTA");
+  }
+  if (pack.entry_at(zero.append(181), 12).ok || pack.entry_at(blob, 4).ok || pack.entry_at(zero.append(103).append(140), 12).ok) {
+    return test.fail("a short header is accepted");
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let r = test.new("git");
   r = r.it("the names of objects", test_names);
   r = r.it("hexadecimal names, kinds and paths", test_hex_names);
   r = r.it("the loose object file", test_loose_file);
   r = r.it("the lines of a tree", test_tree_lines);
+  r = r.it("a delta", test_delta);
+  r = r.it("the header of a packed object", test_entry);
   return r.finish();
 }

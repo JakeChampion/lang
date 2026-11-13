@@ -5,17 +5,22 @@
 //   $ git cat-file (-t | -s | -p | -e) NAME
 //   $ git cat-file (--batch | --batch-check)       # names on the standard input
 //   $ git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...
+//   $ git verify-pack [-v] FILE.idx...
 //
-// This slice reads and writes loose objects. An object in a packfile is not
-// found yet.
+// The port reads loose objects and packfiles, and writes loose objects.
 import "std/array";
 import "std/errno";
 import "std/io";
 import "std/string";
+import "core/cmp";
+import "std/crypto";
+import "std/hex";
 import "./objects";
+import "./pack";
 import "./refs";
+import "./store";
 
-const USAGE: string = "usage: git hash-object [-w] [-t KIND] [--stdin] [FILE...]\n   or: git cat-file (-t | -s | -p | -e) NAME\n   or: git cat-file (--batch | --batch-check)\n   or: git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...";
+const USAGE: string = "usage: git hash-object [-w] [-t KIND] [--stdin] [FILE...]\n   or: git cat-file (-t | -s | -p | -e) NAME\n   or: git cat-file (--batch | --batch-check)\n   or: git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...\n   or: git verify-pack [-v] FILE.idx...";
 
 function fatal(message: string): i32 {
   eprint("fatal: " + message);
@@ -172,11 +177,12 @@ function pretty(o: objects.Object): Result[u8[], string] {
 }
 
 function cat_one(r: refs.Repo, mode: string, name: string): i32 {
-  let hash = refs.resolve(r, name);
+  let s = store.open(r.objects());
+  let hash = refs.resolve(r, s, name);
   if (hash.len() == 0) {
     return fatal("Not a valid object name " + name);
   }
-  let o = match (objects.read_loose(r.objects(), hash)) {
+  let o = match (store.read(s, hash).object) {
     Ok(found) => found,
     Err(message) => {
       if (mode == "-e") {
@@ -219,10 +225,16 @@ function cat_batch(r: refs.Repo, contents: boolean): i32 {
   };
   let lines = input.split("\n");
   let count = if (input.ends_with("\n") || input.len() == 0) { lines.len() - 1 } else { lines.len() };
+  let s = store.open(r.objects());
   for i in 0..count {
     let name = lines[i];
-    let hash = refs.resolve(r, name);
-    let found = if (hash.len() == 0) { Err("missing") } else { objects.read_loose(r.objects(), hash) };
+    let hash = refs.resolve(r, s, name);
+    let found: Result[objects.Object, string] = Err("missing");
+    if (hash.len() > 0) {
+      let got = store.read(s, hash);
+      s = got.store;
+      found = got.object;
+    }
     match (found) {
       Ok(o) => {
         put_line(hash + " " + o.kind + " " + o.body.len().to_string());
@@ -290,6 +302,7 @@ function rev_parse(argv: string[]): i32 {
     return status;
   }
   let r = repo[0];
+  let s = store.open(r.objects());
   let verify = false;
   let short = 0;
   for x in argv {
@@ -300,7 +313,7 @@ function rev_parse(argv: string[]): i32 {
     } else if (x == "--git-dir") {
       put_line(r.shown);
     } else {
-      let hash = refs.resolve(r, x);
+      let hash = refs.resolve(r, s, x);
       if (hash.len() == 0 && verify) {
         return fatal("Needed a single revision");
       }
@@ -308,10 +321,157 @@ function rev_parse(argv: string[]): i32 {
         put_line(x);
         return fatal("ambiguous argument '" + x + AMBIGUOUS);
       }
-      put_line(if (short > 0) { refs.short_of(r, hash, short) } else { hash });
+      put_line(if (short > 0) { refs.short_of(s, hash, short) } else { hash });
     }
   }
   return 0;
+}
+
+// ---- verify-pack ----
+
+function plural(n: i32): string {
+  return if (n == 1) { " object" } else { " objects" };
+}
+
+// The path of the packfile for the path of a packfile or of its index.
+function pack_path(file: string): string {
+  if (file.ends_with(".idx")) {
+    return objects.part(file, 0, file.len() - 4) + ".pack";
+  }
+  return file;
+}
+
+// The places of the index in the order of the offsets in the packfile.
+function by_offset(idx: u8[]): i32[] {
+  let keys: i64[] = [];
+  for i in 0..pack.count(idx) {
+    keys = keys.append(pack.offset_at(idx, i) as i64 << 32 | i as i64);
+  }
+  let sorted = cmp.sort_by(keys, (a: i64, b: i64): i32 => if (a < b) { -1 } else if (a > b) { 1 } else { 0 });
+  let order: i32[] = [];
+  for k in sorted {
+    order = order.append((k & 4294967295) as i32);
+  }
+  return order;
+}
+
+// The place in `order` of the object at `offset`, or -1.
+function at_offset(idx: u8[], order: i32[], offset: i32): i32 {
+  let lo = 0;
+  let hi = order.len();
+  while (lo < hi) {
+    let mid = lo + (hi - lo) / 2;
+    let o = pack.offset_at(idx, order[mid]);
+    if (o == offset) {
+      return order[mid];
+    }
+    if (o < offset) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return -1;
+}
+
+// True if the two checksums of the files hold: the SHA-1 of the packfile at
+// its end and in the index, and the SHA-1 of the index at its end.
+function checksums_ok(data: u8[], idx: u8[]): boolean {
+  let n = data.len();
+  let m = idx.len();
+  if (n < 32 || data[0] != b'P' || data[1] != b'A' || data[2] != b'C' || data[3] != b'K') {
+    return false;
+  }
+  let sum = hex.encode(crypto.sha1(array.slice(data, 0, n - 20)));
+  if (sum != hex.encode(array.slice(data, n - 20, n)) || sum != hex.encode(array.slice(idx, m - 40, m - 20))) {
+    return false;
+  }
+  return hex.encode(crypto.sha1(array.slice(idx, 0, m - 20))) == hex.encode(array.slice(idx, m - 20, m));
+}
+
+// Checks each object of one packfile: its chain of deltas gives an object
+// with the name that the index has. With `verbose`, it prints a line for
+// each object in the order of the packfile, and the lengths of the chains.
+function verify_one(file: string, verbose: boolean): boolean {
+  let path = pack_path(file);
+  let Ok(data) = read_file_bytes(path) else {
+    eprint("fatal: Cannot open existing pack file '" + file + "'");
+    return false;
+  };
+  let Ok(idx) = read_file_bytes(objects.part(path, 0, path.len() - 5) + ".idx") else {
+    eprint("fatal: Cannot open existing pack file '" + file + "'");
+    return false;
+  };
+  if (!pack.index_ok(idx) || !checksums_ok(data, idx)) {
+    return false;
+  }
+  let order = by_offset(idx);
+  let chains: i32[] = [];
+  let out: u8[] = [];
+  for k in 0..order.len() {
+    let name = pack.hex_name_at(idx, order[k]);
+    let offset = pack.offset_at(idx, order[k]);
+    let Ok(chain) = pack.chain_of(data, idx, offset) else {
+      return false;
+    };
+    let Ok(o) = pack.object_at(data, idx, offset) else {
+      return false;
+    };
+    if (objects.hash_of(o.kind, o.body) != name) {
+      return false;
+    }
+    let depth = chain.len() - 1;
+    while (chains.len() <= depth) {
+      chains = chains.append(0);
+    }
+    chains = chains.with(depth, chains[depth] + 1);
+    let end = if (k + 1 < order.len()) { pack.offset_at(idx, order[k + 1]) } else { data.len() - 20 };
+    let line = name + " " + (o.kind + "      ").take(6) + " " + pack.entry_at(data, offset).size.to_string() + " " + (end - offset).to_string() + " " + offset.to_string();
+    if (depth > 0) {
+      let base = at_offset(idx, order, chain[1]);
+      line = line + " " + depth.to_string() + " " + pack.hex_name_at(idx, base);
+    }
+    out = out.concat((line + "\n").bytes());
+  }
+  if (!verbose) {
+    return true;
+  }
+  put(out);
+  put_line("non delta: " + chains[0].to_string() + plural(chains[0]));
+  for d in 1..chains.len() {
+    if (chains[d] > 0) {
+      put_line("chain length = " + d.to_string() + ": " + chains[d].to_string() + plural(chains[d]));
+    }
+  }
+  put_line(path + ": ok");
+  return true;
+}
+
+function verify_pack(argv: string[]): i32 {
+  let verbose = false;
+  let files: string[] = [];
+  for x in argv {
+    if (x == "-v" || x == "--verbose") {
+      verbose = true;
+    } else if (x.starts_with("-") && x != "--") {
+      return usage();
+    } else if (x != "--") {
+      files = files.append(x);
+    }
+  }
+  if (files.len() == 0) {
+    return usage();
+  }
+  let status = 0;
+  for file in files {
+    if (!verify_one(file, verbose)) {
+      if (verbose) {
+        put_line(pack_path(file) + ": bad");
+      }
+      status = 1;
+    }
+  }
+  return status;
 }
 
 function main(): i32 {
@@ -324,6 +484,7 @@ function main(): i32 {
     "hash-object" => hash_object(rest),
     "cat-file" => cat_file(rest),
     "rev-parse" => rev_parse(rest),
+    "verify-pack" => verify_pack(rest),
     _ => {
       eprint("git: '" + argv[1] + "' is not a command of this port.");
       1

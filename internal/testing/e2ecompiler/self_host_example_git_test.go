@@ -2,6 +2,7 @@ package e2ecompiler
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -192,6 +193,126 @@ func TestSelfHostExampleGitAgainstGit(t *testing.T) {
 			}
 			if again, _, code := port.run(t, top, text, "hash-object", "-w", "--stdin"); code != 0 || again != name {
 				t.Errorf("the second write: exit %d, name %q", code, again)
+			}
+		})
+	}
+}
+
+// gitPackedFixture makes a repository whose objects are in one packfile,
+// with chains of deltas: each commit changes one more line of a file of
+// 400 lines. It gives the path of the index of the packfile.
+func gitPackedFixture(t *testing.T, oracle gitTool, dir string) string {
+	t.Helper()
+	must := func(args ...string) string {
+		t.Helper()
+		out, stderr, code := oracle.run(t, dir, "", args...)
+		if code != 0 {
+			t.Fatalf("git %v: exit %d\n%s", args, code, stderr)
+		}
+		return strings.TrimSpace(out)
+	}
+	must("init", "-q", "-b", "main", ".")
+	id := []string{"-c", "user.name=T", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"}
+	for i := 1; i <= 9; i++ {
+		var big strings.Builder
+		for line := 1; line <= 400; line++ {
+			if line <= i*40 && line%40 == 0 {
+				fmt.Fprintf(&big, "changed at %d\n", line)
+			} else {
+				fmt.Fprintf(&big, "line %d of the file\n", line)
+			}
+		}
+		if err := os.WriteFile(filepath.Join(dir, "big.txt"), []byte(big.String()), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "small.txt"), []byte(fmt.Sprintf("v%d\n", i)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		must("add", "-A")
+		must(append(id, "commit", "-q", "-m", fmt.Sprintf("commit %d", i))...)
+	}
+	must(append(id, "tag", "-a", "v1", "-m", "tag one")...)
+	must("gc", "-q", "--aggressive", "--prune=now")
+	return gitPackIndex(t, dir)
+}
+
+func gitPackIndex(t *testing.T, dir string) string {
+	t.Helper()
+	found, err := filepath.Glob(filepath.Join(dir, ".git", "objects", "pack", "*.idx"))
+	if err != nil || len(found) != 1 {
+		t.Fatalf("the fixture has %d packfiles, want 1", len(found))
+	}
+	return found[0]
+}
+
+// TestSelfHostExampleGitPacked reads a repository whose objects are in a
+// packfile: with deltas by offset, and then with deltas by name. Each
+// command gives the output of git, and verify-pack -v gives each line of
+// git for the packfile. A packfile with one changed byte is refused.
+func TestSelfHostExampleGitPacked(t *testing.T) {
+	oracle := gitOracle(t)
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			port := gitPort(t, cli, target)
+			top := t.TempDir()
+			idx := gitPackedFixture(t, oracle, top)
+			compare := func(stdin string, args ...string) string {
+				t.Helper()
+				wantOut, wantErr, wantCode := oracle.run(t, top, stdin, args...)
+				gotOut, gotErr, gotCode := port.run(t, top, stdin, args...)
+				if gotOut != wantOut || gotErr != wantErr || gotCode != wantCode {
+					t.Errorf("git %v:\n got exit %d, stdout %q, stderr %q\nwant exit %d, stdout %q, stderr %q", args, gotCode, gotOut, gotErr, wantCode, wantOut, wantErr)
+				}
+				return wantOut
+			}
+			check := func(idx string) {
+				t.Helper()
+				listing := compare("", "verify-pack", "-v", idx)
+				if !strings.Contains(listing, "chain length = 2:") {
+					t.Errorf("the fixture has no chain of two deltas:\n%s", listing)
+				}
+				compare("", "verify-pack", idx)
+				compare("", "verify-pack", "-v", strings.TrimSuffix(idx, ".idx")+".pack")
+				var names strings.Builder
+				for _, line := range strings.Split(listing, "\n") {
+					if f := strings.Fields(line); len(f) >= 5 && len(f[0]) == 40 {
+						names.WriteString(f[0] + "\n")
+						compare("", "cat-file", "-t", f[0])
+						compare("", "cat-file", "-p", f[0][:9])
+					}
+				}
+				compare(names.String()+"nosuch\n", "cat-file", "--batch-check")
+				compare(names.String(), "cat-file", "--batch")
+				compare("", "rev-parse", "HEAD", "main", "v1", "tags/v1")
+				compare("", "rev-parse", "--short", "HEAD")
+				compare("", "cat-file", "-p", "HEAD")
+				compare("", "cat-file", "-p", "v1")
+			}
+			check(idx)
+			if _, stderr, code := oracle.run(t, top, "", "-c", "repack.useDeltaBaseOffset=false", "repack", "-q", "-a", "-d", "-f", "--depth=10"); code != 0 {
+				t.Fatalf("git repack: exit %d\n%s", code, stderr)
+			}
+			idx = gitPackIndex(t, top)
+			check(idx)
+			compare("", "verify-pack", "-v", "nosuch.idx")
+
+			// One changed byte in the middle of the packfile: git and the port refuse it.
+			packed := strings.TrimSuffix(idx, ".idx") + ".pack"
+			data, err := os.ReadFile(packed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data[len(data)/2] ^= 0x40
+			if err := os.Chmod(packed, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(packed, data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, _, wantCode := oracle.run(t, top, "", "verify-pack", idx)
+			if _, _, gotCode := port.run(t, top, "", "verify-pack", idx); wantCode == 0 || gotCode != wantCode {
+				t.Errorf("verify-pack of a changed packfile: the port gives exit %d and git gives %d", gotCode, wantCode)
 			}
 		})
 	}
