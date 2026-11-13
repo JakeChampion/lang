@@ -1,37 +1,14 @@
-// The options, the pattern, the search and the output of the rg port.
+// The search of one file and its output in the rg port.
 //
 // The output is that of ripgrep 14.1.0 when its standard output is not a
 // terminal: no heading, and no line numbers unless -n.
 import "std/regex";
 import "std/string";
-
-pub enum Mode {
-  Lines,
-  Count,
-  Files,
-}
-
-pub struct Options {
-  patterns: string[],
-  paths: string[],
-  ignore_case: boolean,
-  invert: boolean,
-  word: boolean,
-  fixed: boolean,
-  line_number: boolean,
-  mode: Mode,
-  only_matching: boolean,
-  after: i32,
-  before: i32,
-  context: i32,
-  color: string,
-  with_filename: i32,
-  threads: i32,
-}
+import "./flags";
 
 // How one file is written. `show_name` and `color` are already resolved.
 pub struct Printer {
-  mode: Mode,
+  mode: flags.Mode,
   invert: boolean,
   only_matching: boolean,
   line_number: boolean,
@@ -39,24 +16,39 @@ pub struct Printer {
   before: i32,
   color: boolean,
   show_name: boolean,
+  heading: boolean,
+  // The byte after a file name: "" for the field separator, or NUL.
+  terminator: string,
+  // The byte that takes the place of `/` in a file name, or "".
+  separator: string,
+  max_count: i32,
+  quiet: boolean,
 }
 
-// The result of one file: whether it has a selected line, and whether the
-// output so far holds any bytes.
-pub struct Outcome { matched: boolean, written: boolean }
+// The result of one file. `matched` says whether it has a selected line,
+// and `written` says whether the output so far holds any bytes. `upto` is
+// the offset up to which the search read the file. `cap` is the capacity of
+// the line buffer after the search.
+pub struct Outcome { matched: boolean, written: boolean, upto: i32, cap: i32 }
 
-struct Step { o: Options, next: i32 }
+// How ripgrep reads one file and looks for binary data in it. It maps the
+// file into memory, or it reads the file through its line buffer. The next
+// search of the same thread keeps the capacity `cap` of that buffer.
+//
+// A file on the command line is "explicit": ripgrep makes each NUL byte a
+// line terminator. A file that a walk found is "implicit": the search stops
+// at the buffer that holds a NUL byte.
+pub struct Source { mapped: boolean, detect: i32, cap: i32 }
 
-const SHORT_FLAGS: string = "isvwFnNcloHIABCej";
+pub const DETECT_NONE: i32 = 0;
 
-const LONG_FLAGS: string[] = [
-  "ignore-case", "case-sensitive", "invert-match", "word-regexp", "fixed-strings",
-  "line-number", "no-line-number", "count", "files-with-matches", "only-matching",
-  "with-filename", "no-filename", "after-context", "before-context", "context",
-  "regexp", "threads", "color",
-];
+pub const DETECT_CONVERT: i32 = 1;
 
-const VALUE_FLAGS: string[] = ["after-context", "before-context", "context", "regexp", "threads", "color"];
+pub const DETECT_QUIT: i32 = 2;
+
+// The first capacity of ripgrep's line buffer, and the size of the start of
+// a mapped file that it examines for a NUL byte.
+pub const BUFFER: i32 = 65536;
 
 const PATH_COLOR: string = "\x1b[0m\x1b[35m";
 
@@ -66,301 +58,62 @@ const MATCH_COLOR: string = "\x1b[0m\x1b[1m\x1b[31m";
 
 const RESET: string = "\x1b[0m";
 
-const META: string = "\\.+*?()|[]{}^$";
-
-pub function defaults(): Options {
-  return Options {
-    patterns: [], paths: [], ignore_case: false, invert: false, word: false, fixed: false,
-    line_number: false, mode: Lines, only_matching: false, after: -1, before: -1, context: -1,
-    color: "auto", with_filename: -1, threads: 0,
-  };
-}
-
-// The long name of a short flag, or "".
-function long_name(c: u8): string {
-  let i = __memchr(SHORT_FLAGS, c as i32, 0);
-  if (i < 0) {
-    return "";
-  }
-  return LONG_FLAGS[i];
-}
-
-function takes_value(name: string): boolean {
-  for v in VALUE_FLAGS {
-    if (v == name) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function known(name: string): boolean {
-  for v in LONG_FLAGS {
-    if (v == name) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function set_match_switch(o: Options, name: string): Options {
-  if (name == "ignore-case") {
-    return Options { ...o, ignore_case: true };
-  }
-  if (name == "case-sensitive") {
-    return Options { ...o, ignore_case: false };
-  }
-  if (name == "invert-match") {
-    return Options { ...o, invert: true };
-  }
-  if (name == "word-regexp") {
-    return Options { ...o, word: true };
-  }
-  return Options { ...o, fixed: true };
-}
-
-function set_switch(o: Options, name: string): Options {
-  if (name == "line-number") {
-    return Options { ...o, line_number: true };
-  }
-  if (name == "no-line-number") {
-    return Options { ...o, line_number: false };
-  }
-  if (name == "count") {
-    return Options { ...o, mode: Count };
-  }
-  if (name == "files-with-matches") {
-    return Options { ...o, mode: Files };
-  }
-  if (name == "only-matching") {
-    return Options { ...o, only_matching: true };
-  }
-  if (name == "with-filename") {
-    return Options { ...o, with_filename: 1 };
-  }
-  if (name == "no-filename") {
-    return Options { ...o, with_filename: 0 };
-  }
-  return set_match_switch(o, name);
-}
-
-// A decimal count as ripgrep reads it, or the reason it is not one.
-pub function parse_count(text: string): Result[i32, string] {
-  if (text.len() == 0) {
-    return Err("cannot parse integer from empty string");
-  }
-  let n = 0u64;
-  for i in 0..text.len() {
-    let d = text[i] as i32 - 48;
-    if (d < 0 || d > 9) {
-      return Err("invalid digit found in string");
-    }
-    if (n > 1844674407370955161u64 || n == 1844674407370955161u64 && d > 5) {
-      return Err("number too large to fit in target type");
-    }
-    n = n * 10u64 + d as u64;
-  }
-  if (n > 2147483647u64) {
-    return Ok(2147483647);
-  }
-  return Ok(n as i32);
-}
-
-function set_color(o: Options, flag: string, value: string): Result[Options, string] {
-  if (value != "never" && value != "auto" && value != "always" && value != "ansi") {
-    return Err("error parsing flag " + flag + ": choice '" + value + "' is unrecognized");
-  }
-  return Ok(Options { ...o, color: value });
-}
-
-function set_value(o: Options, name: string, flag: string, value: string): Result[Options, string] {
-  if (name == "regexp") {
-    return Ok(Options { ...o, patterns: o.patterns.append(value) });
-  }
-  if (name == "color") {
-    return set_color(o, flag, value);
-  }
-  let n = match (parse_count(value)) {
-    Ok(v) => v,
-    Err(why) => {
-      return Err("error parsing flag " + flag + ": value is not a valid number: " + why);
-    },
-  };
-  return Ok(set_count(o, name, n));
-}
-
-function set_count(o: Options, name: string, n: i32): Options {
-  if (name == "after-context") {
-    return Options { ...o, after: n };
-  }
-  if (name == "before-context") {
-    return Options { ...o, before: n };
-  }
-  if (name == "context") {
-    return Options { ...o, context: n };
-  }
-  return Options { ...o, threads: n };
-}
-
-function missing(flag: string): string {
-  return "missing value for flag " + flag + ": missing argument for option '" + flag + "'";
-}
-
-// `--name` or `--name=value` at args[at - 1].
-function long_flag(o: Options, args: string[], at: i32): Result[Step, string] {
-  let arg = args[at - 1];
-  let eq = __memchr(arg, 61, 2);
-  let name = slice_unchecked(arg, 2, arg.len()).to_owned();
-  if (eq >= 0) {
-    name = slice_unchecked(arg, 2, eq).to_owned();
-  }
-  let flag = "--" + name;
-  if (!known(name)) {
-    return Err("unrecognized flag " + flag);
-  }
-  if (!takes_value(name)) {
-    if (eq >= 0) {
-      return Err("invalid CLI arguments: unexpected argument for option '" + flag + "': \"" + slice_unchecked(arg, eq + 1, arg.len()) + "\"");
-    }
-    return Ok(Step { o: set_switch(o, name), next: at });
-  }
-  if (eq >= 0) {
-    let next = set_value(o, name, flag, slice_unchecked(arg, eq + 1, arg.len()).to_owned())?;
-    return Ok(Step { o: next, next: at });
-  }
-  if (at >= args.len()) {
-    return Err(missing(flag));
-  }
-  let next = set_value(o, name, flag, args[at])?;
-  return Ok(Step { o: next, next: at + 1 });
-}
-
-// A cluster such as `-in` or `-nA1` at args[at - 1].
-function short_flags(o: Options, args: string[], at: i32): Result[Step, string] {
-  let arg = args[at - 1];
-  let opts = o;
-  for j in 1..arg.len() {
-    let name = long_name(arg[j]);
-    let flag = "-" + slice_unchecked(arg, j, j + 1);
-    if (name == "") {
-      return Err("unrecognized flag " + flag);
-    }
-    if (takes_value(name)) {
-      if (j + 1 < arg.len()) {
-        let next = set_value(opts, name, flag, slice_unchecked(arg, j + 1, arg.len()).to_owned())?;
-        return Ok(Step { o: next, next: at });
-      }
-      if (at >= args.len()) {
-        return Err(missing(flag));
-      }
-      let next = set_value(opts, name, flag, args[at])?;
-      return Ok(Step { o: next, next: at + 1 });
-    }
-    opts = set_switch(opts, name);
-  }
-  return Ok(Step { o: opts, next: at });
-}
-
-// The options of a command line without its program name. The error is the
-// message after "rg: ".
-pub function parse(args: string[]): Result[Options, string] {
-  let o = defaults();
-  let positional: string[] = [];
-  let flags = true;
-  let at = 0;
-  while (at < args.len()) {
-    let arg = args[at];
-    at += 1;
-    if (!flags || arg == "-" || !arg.starts_with("-")) {
-      positional = positional.append(arg);
-    } else if (arg == "--") {
-      flags = false;
-    } else {
-      let step = if (arg.starts_with("--")) { long_flag(o, args, at)? } else { short_flags(o, args, at)? };
-      o = step.o;
-      at = step.next;
-    }
-  }
-  return with_patterns(o, positional);
-}
-
-// Without -e, the first positional argument is the pattern.
-function with_patterns(o: Options, positional: string[]): Result[Options, string] {
-  if (o.patterns.len() > 0) {
-    return Ok(Options { ...o, paths: positional });
-  }
-  if (positional.len() == 0) {
-    return Err("ripgrep requires at least one pattern to execute a search");
-  }
-  return Ok(Options { ...o, patterns: [positional[0]], paths: positional.drop(1) });
-}
-
-// `text` with each metacharacter escaped, for -F.
-pub function escape(text: string): string {
-  let out = "";
-  for i in 0..text.len() {
-    if (__memchr(META, text[i] as i32, 0) >= 0) {
-      out += "\\";
-    }
-    out += slice_unchecked(text, i, i + 1);
-  }
-  return out;
-}
-
-// One pattern for std/regex from the -e patterns and the flags.
-pub function pattern(o: Options): string {
-  let parts: string[] = [];
-  for p in o.patterns {
-    if (o.fixed) {
-      parts = parts.append(escape(p));
-    } else {
-      parts = parts.append(p);
-    }
-  }
-  let body = parts[0];
-  if (parts.len() > 1) {
-    body = "(?:" + parts.join(")|(?:") + ")";
-  }
-  if (o.word) {
-    body = "\\b{start-half}(?:" + body + ")\\b{end-half}";
-  }
-  if (o.ignore_case) {
-    body = "(?i)" + body;
-  }
-  return body;
-}
-
-pub function printer(o: Options, tty: boolean): Printer {
-  let after = o.after;
-  if (after < 0) {
-    after = if (o.context < 0) { 0 } else { o.context };
-  }
-  let before = o.before;
-  if (before < 0) {
-    before = if (o.context < 0) { 0 } else { o.context };
-  }
+// The printer of the options. `one_file` is true when rg searches one file
+// or the standard input only.
+pub function printer(o: flags.Options, tty: boolean, one_file: boolean): Printer {
+  let after = context_lines(o.after, o.context);
+  let before = context_lines(o.before, o.context);
   let color = o.color == "always" || o.color == "ansi" || o.color == "auto" && tty;
-  let show_name = if (o.with_filename < 0) { o.paths.len() > 1 } else { o.with_filename == 1 };
+  let show_name = if (o.with_filename < 0) { !one_file } else { o.with_filename == 1 };
+  let heading = if (o.heading < 0) { tty } else { o.heading == 1 };
+  let terminator = if (o.has(flags.NULL)) { "\x00" } else { "" };
   return Printer {
-    mode: o.mode, invert: o.invert, only_matching: o.only_matching, line_number: o.line_number,
-    after: after, before: before, color: color, show_name: show_name,
+    mode: o.mode, invert: o.has(flags.INVERT), only_matching: o.has(flags.ONLY), line_number: o.line_number,
+    after: after, before: before, color: color, show_name: show_name, heading: heading, terminator: terminator,
+    separator: o.path_separator, max_count: o.max_count, quiet: o.has(flags.QUIET),
   };
 }
 
-function push_path(p: Printer, h: usize, name: string): void {
+// The lines of context of -A or -B, which take precedence over -C.
+function context_lines(own_count: i32, context: i32): i32 {
+  if (own_count >= 0) {
+    return own_count;
+  }
+  return if (context < 0) { 0 } else { context };
+}
+
+// The byte after a file name on a line of its own.
+function line_terminator(p: Printer): string {
+  return if (p.terminator != "") { p.terminator } else { "\n" };
+}
+
+// `name` with each `/` replaced with the path separator.
+function display(p: Printer, name: string): string {
+  if (p.separator == "" || p.separator == "/") {
+    return name;
+  }
+  return name.replace("/", p.separator);
+}
+
+pub function push_path(p: Printer, h: usize, name: string): void {
   if (p.color) {
     buf_push(h, PATH_COLOR);
-    buf_push(h, name);
+    buf_push(h, display(p, name));
     buf_push(h, RESET);
   } else {
-    buf_push(h, name);
+    buf_push(h, display(p, name));
   }
+}
+
+// A file name and the byte after it: the terminator, or `sep`.
+function push_name_field(p: Printer, h: usize, name: string, sep: string): void {
+  push_path(p, h, name);
+  buf_push(h, if (p.terminator != "") { p.terminator } else { sep });
 }
 
 function push_prefix(p: Printer, h: usize, name: string, ln: i32, sep: string): void {
-  if (p.show_name) {
-    push_path(p, h, name);
-    buf_push(h, sep);
+  if (p.show_name && !p.heading) {
+    push_name_field(p, h, name, sep);
   }
   if (p.line_number) {
     if (p.color) {
@@ -461,12 +214,12 @@ function push_only(p: Printer, re: regex.Regex, h: usize, name: string, ln: i32,
   }
 }
 
-function line_end(text: string, start: i32): i32 {
-  let end = __memchr(text, 10, start);
-  if (end < 0) {
-    return text.len();
+function line_end(text: string, start: i32, end: i32): i32 {
+  let at = __memchr(text, 10, start);
+  if (at < 0 || at > end) {
+    return end;
   }
-  return end;
+  return at;
 }
 
 // The start of the line before the line that starts at `start`.
@@ -497,12 +250,13 @@ function candidate(re: regex.Regex, text: string, c: Cursor): i32 {
   return at;
 }
 
-// The cursor at the line of the next candidate. The lines before it hold no
-// match.
-function jump(re: regex.Regex, text: string, c: Cursor): Cursor {
+// The cursor at the line of the next candidate before `end`. The lines
+// before it hold no match.
+function jump(re: regex.Regex, text: string, c: Cursor, end: i32): Cursor {
   let cand = candidate(re, text, c);
-  if (cand > text.len()) {
-    return Cursor { start: text.len(), ln: c.ln, cand: cand };
+  if (cand >= end) {
+    let last = if (end > c.start) { end } else { c.start };
+    return Cursor { start: last, ln: c.ln, cand: cand };
   }
   let start = c.start;
   if (cand > start) {
@@ -528,75 +282,256 @@ function advance(c: Cursor, end: i32): Cursor {
   return Cursor { ...c, start: end + 1, ln: c.ln + 1 };
 }
 
-function binary_message(p: Printer, h: usize, name: string, offset: i32): void {
+// The text of one file as the searcher sees it. The search reads to `end`.
+// The searcher knows that the file is binary from line `known_from` on
+// (-1 for never), or at the end of the search when `known_at_end`. With
+// `check_lines`, a written line that holds a NUL byte makes it known.
+// `offset` is the offset of the first NUL byte, and `quit` says which
+// message ripgrep writes.
+struct Scan {
+  text: string,
+  end: i32,
+  known_from: i32,
+  known_at_end: boolean,
+  check_lines: boolean,
+  offset: i32,
+  quit: boolean,
+}
+
+function plain(text: string): Scan {
+  return Scan { text: text, end: text.len(), known_from: -1, known_at_end: false, check_lines: false, offset: -1, quit: false };
+}
+
+// The start of the line `count` lines before the line that ends at `end`,
+// as lines::preceding in grep-searcher finds it. `floor` is the start of
+// the buffer.
+function preceding(text: string, floor: i32, end: i32, count: i32): i32 {
+  let pos = end;
+  if (pos == floor) {
+    return floor;
+  }
+  if (text[pos - 1] == b'\n') {
+    pos -= 1;
+  }
+  let n = count;
+  loop {
+    let i = if (pos > floor) { __rmemchr(text, 10, pos - 1) } else { -1 };
+    if (i < floor) {
+      return floor;
+    }
+    if (n == 0) {
+      return i + 1;
+    }
+    if (i == floor) {
+      return floor;
+    }
+    n -= 1;
+    pos = i;
+  }
+  return floor;
+}
+
+// A read of ripgrep's line buffer: its offset in the file, and the
+// capacity of the buffer.
+struct Fill { at: i32, cap: i32 }
+
+// The read of ripgrep's line buffer that gives it the byte at `upto`, or
+// the end of the file. Each fill keeps the last line when it is not
+// complete, and `keep` lines more for the context. When a line does not
+// fit, the buffer grows to three times its size.
+function fill_to(text: string, upto: i32, keep: i32, cap0: i32): Fill {
+  let cap = cap0;
+  let start = 0;
+  let end = 0;
+  loop {
+    let last = -1;
+    while (last < 0) {
+      if (end - start == cap) {
+        cap *= 3;
+      }
+      let n = cap - (end - start);
+      if (n > text.len() - end) {
+        n = text.len() - end;
+      }
+      if (upto < end + n || n == 0) {
+        return Fill { at: end, cap: cap };
+      }
+      let nl = __rmemchr(text, 10, end + n - 1);
+      if (nl >= end) {
+        last = nl + 1;
+      }
+      end += n;
+    }
+    start = if (keep == 0) { last } else { preceding(text, start, last, keep) };
+  }
+  return Fill { at: end, cap: cap };
+}
+
+// `text` with each NUL byte from `from` on made a line terminator.
+function convert(text: string, from: i32): string {
+  let bytes = text.bytes();
+  for i in from..bytes.len() {
+    if (bytes[i] == 0u8) {
+      bytes = bytes.with(i, 10u8);
+    }
+  }
+  return unsafe { string_from_bytes_unchecked(bytes) };
+}
+
+function after_line(text: string, at: i32): i32 {
+  if (at <= 0) {
+    return 0;
+  }
+  return __rmemchr(text, 10, at - 1) + 1;
+}
+
+// `text` without a UTF-8 byte order mark, which ripgrep drops.
+function without_bom(text: string): string {
+  if (text.starts_with("\u{FEFF}")) {
+    return slice_unchecked(text, 3, text.len()).to_owned();
+  }
+  return text;
+}
+
+// The scan of a file read from `src`.
+function scan(text: string, src: Source, keep: i32): Scan {
+  let nul = if (src.detect == DETECT_NONE) { -1 } else { __memchr(text, 0, 0) };
+  let s = plain(text);
+  let quit = src.detect == DETECT_QUIT;
+  if (src.mapped) {
+    if (nul >= 0 && nul < BUFFER) {
+      let end = if (quit) { 0 } else { text.len() };
+      return Scan { ...s, end: end, known_from: 0, offset: nul, quit: quit };
+    }
+    return Scan { ...s, check_lines: src.detect != DETECT_NONE, quit: quit };
+  }
+  if (nul < 0) {
+    return s;
+  }
+  let at = fill_to(text, nul, keep, src.cap).at;
+  let line = after_line(text, at);
+  if (quit) {
+    return Scan { ...s, end: line, known_at_end: true, offset: nul, quit: true };
+  }
+  return Scan { ...s, text: convert(text, at), end: text.len(), known_from: line, known_at_end: true, offset: nul };
+}
+
+function binary_message(p: Printer, h: usize, name: string, s: Scan): void {
   if (p.show_name) {
     push_path(p, h, name);
     buf_push(h, ": ");
   }
-  buf_push(h, "binary file matches (found \"\\0\" byte around offset " + offset.to_string() + ")\n");
+  let at = s.offset.to_string();
+  if (s.quit) {
+    buf_push(h, "WARNING: stopped searching binary file after match (found \"\\0\" byte around offset " + at + ")\n");
+  } else {
+    buf_push(h, "binary file matches (found \"\\0\" byte around offset " + at + ")\n");
+  }
 }
 
-// The count of the selected lines, or with -o of their matches. The second
-// value is false when no line is selected.
-function count(p: Printer, re: regex.Regex, text: string): (i32, boolean) {
-  let lines = 0;
-  let matches = 0;
+// The counts of a summary: of the selected lines, or with -o of their
+// matches, and of the selected lines, and whether the searcher found that
+// the file is binary.
+struct Counted { n: i32, lines: i32, binary: boolean, upto: i32 }
+
+// The counts of the selected lines. The count stops at -m, or with
+// `stop_first` at the first selected line.
+function count(p: Printer, re: regex.Regex, s: Scan, stop_first: boolean): Counted {
+  let text = s.text;
+  let n = Counted { n: 0, lines: 0, binary: false, upto: text.len() };
   let c = begin();
-  while (c.start < text.len()) {
+  while (c.start < s.end) {
     if (!p.invert) {
-      c = jump(re, text, c);
-      if (c.start >= text.len()) {
+      c = jump(re, text, c, s.end);
+      if (c.start >= s.end) {
         break;
       }
     }
-    let end = line_end(text, c.start);
+    let end = line_end(text, c.start, s.end);
     let (yes, next) = selected(re, text, c, end, p.invert);
     if (yes) {
-      lines += 1;
-      if (p.only_matching && !p.invert) {
-        matches += count_matches(re, slice_unchecked(text, c.start, end));
+      n = count_line(p, re, s, c.start, end, n);
+      if (n.binary || stop_first || n.lines == p.max_count) {
+        return Counted { ...n, upto: end };
       }
     }
     c = advance(next, end);
   }
-  if (p.only_matching) {
-    return (matches, lines > 0);
-  }
-  return (lines, lines > 0);
+  return Counted { ...n, binary: s.quit && (s.known_from == 0 || s.known_at_end) };
 }
 
-function any_selected(p: Printer, re: regex.Regex, text: string): boolean {
-  let c = begin();
-  while (c.start < text.len()) {
-    if (!p.invert) {
-      c = jump(re, text, c);
-      if (c.start >= text.len()) {
-        return false;
-      }
-    }
-    let end = line_end(text, c.start);
-    let (yes, next) = selected(re, text, c, end, p.invert);
-    if (yes) {
-      return true;
-    }
-    c = advance(next, end);
+// Counts one selected line. A mapped file in which the line holds a NUL
+// byte stops the search of a walk.
+function count_line(p: Printer, re: regex.Regex, s: Scan, start: i32, end: i32, n: Counted): Counted {
+  let line = slice_unchecked(s.text, start, end);
+  if (s.check_lines && s.quit && __memchr(line, 0, 0) >= 0) {
+    return Counted { ...n, n: 0, binary: true };
   }
-  return false;
+  let matches = if (p.mode == flags.CountMatches) { count_matches(re, line) } else { 1 };
+  return Counted { ...n, n: n.n + matches, lines: n.lines + 1 };
 }
 
-// Writes the lines before line `ln`, from line `first`, as context.
-function push_before(p: Printer, re: regex.Regex, h: usize, name: string, text: string, start: i32, ln: i32, first: i32): void {
-  let starts: i32[] = [];
-  let at = start;
-  for _ in first..ln {
-    at = previous_line(text, at);
-    starts = starts.append(at);
+// The state of a search in lines. `last` is the number of the last line
+// written, and `after_left` is the count of after-context lines still to
+// write. `wrote` says whether any output is written, and `count` is the
+// count of selected lines. `known` says whether the searcher knows that the
+// file is binary, and `stopped` says whether the search stopped.
+struct Group { last: i32, after_left: i32, wrote: boolean, count: i32, known: boolean, stopped: boolean, offset: i32 }
+
+// The start of the output of a file, before its first line: the separator
+// from the output of an earlier file, then the file name on a line of its
+// own for --heading.
+function push_first(p: Printer, h: usize, name: string, g: Group): void {
+  if (g.last != 0 || g.count != 0) {
+    return;
   }
-  let k = starts.len() - 1;
-  while (k >= 0) {
-    let s = starts[k];
-    push_line(p, re, h, name, ln - 1 - k, "-", slice_unchecked(text, s, line_end(text, s)));
-    k -= 1;
+  if (g.wrote) {
+    buf_push(h, file_separator(p));
+  }
+  if (p.heading && p.show_name) {
+    push_path(p, h, name);
+    buf_push(h, line_terminator(p));
+  }
+}
+
+// The separator that comes between the output of two files: an empty line
+// with --heading, and with context a `--` line.
+pub function file_separator(p: Printer): string {
+  if (p.mode != flags.Lines) {
+    return "";
+  }
+  if (p.heading) {
+    return "\n";
+  }
+  if (p.after > 0 || p.before > 0) {
+    return "--\n";
+  }
+  return "";
+}
+
+// Whether a written line at `start` to `end` stops the search, as the sink
+// of ripgrep stops once it knows that the file is binary. A mapped file
+// becomes binary at a written line that holds a NUL byte.
+function stops(s: Scan, g: Group, start: i32, end: i32): Group {
+  if (g.known) {
+    return Group { ...g, stopped: true };
+  }
+  if (s.known_from >= 0 && start >= s.known_from) {
+    return Group { ...g, known: true, stopped: true };
+  }
+  if (s.check_lines) {
+    let nul = __memchr(slice_unchecked(s.text, start, end), 0, 0);
+    if (nul >= 0) {
+      return Group { ...g, known: true, stopped: true, offset: start + nul };
+    }
+  }
+  return g;
+}
+
+// The separator between two groups of lines of one file.
+function push_separator(p: Printer, h: usize, g: Group, first: i32): void {
+  if ((p.after > 0 || p.before > 0) && g.last > 0 && first > g.last + 1) {
+    buf_push(h, "--\n");
   }
 }
 
@@ -608,90 +543,200 @@ function push_selected(p: Printer, re: regex.Regex, h: usize, name: string, ln: 
   }
 }
 
-// The selected lines and their context.
-// The context state of a file: the number of the last line written, the
-// count of after-context lines still to write, and whether any output is
-// written.
-struct Group { last: i32, after_left: i32, wrote: boolean }
-
-// Writes a selected line with its before-context, and a separator when the
-// line starts a new group.
-function push_group(p: Printer, re: regex.Regex, h: usize, name: string, text: string, start: i32, ln: i32, g: Group): Group {
-  let first = ln - p.before;
-  if (first <= g.last) {
-    first = g.last + 1;
+// Writes the lines before line `ln`, from line `first`, as context. The
+// search can stop at one of them.
+function push_before(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan, start: i32, ln: i32, first: i32, g0: Group): Group {
+  let starts: i32[] = [];
+  let at = start;
+  for _ in first..ln {
+    at = previous_line(s.text, at);
+    starts = starts.append(at);
   }
-  let context = p.after > 0 || p.before > 0;
-  if (context && g.wrote && (g.last == 0 || first > g.last + 1)) {
-    buf_push(h, "--\n");
+  let g = g0;
+  let k = starts.len() - 1;
+  while (k >= 0) {
+    let b = starts[k];
+    let e = line_end(s.text, b, s.text.len());
+    g = stops(s, g, b, e);
+    if (g.stopped) {
+      return g;
+    }
+    push_first(p, h, name, g);
+    push_line(p, re, h, name, ln - 1 - k, "-", slice_unchecked(s.text, b, e));
+    g = Group { ...g, last: ln - 1 - k, wrote: true };
+    k -= 1;
   }
-  push_before(p, re, h, name, text, start, ln, first);
-  push_selected(p, re, h, name, ln, slice_unchecked(text, start, line_end(text, start)));
-  return Group { last: ln, after_left: p.after, wrote: true };
+  return g;
 }
 
-function search_lines(p: Printer, re: regex.Regex, text: string, name: string, h: usize, written: boolean): Outcome {
-  let g = Group { last: 0, after_left: 0, wrote: written };
-  let matched = false;
+// Whether the selected line at `start` to `end` stops the search before its
+// sink: a mapped file in which the line holds a NUL byte. ripgrep checks
+// the line before it writes the separator.
+function stops_match(s: Scan, g: Group, start: i32, end: i32): Group {
+  if (!s.check_lines || g.known) {
+    return g;
+  }
+  let nul = __memchr(slice_unchecked(s.text, start, end), 0, 0);
+  if (nul < 0) {
+    return g;
+  }
+  return Group { ...g, known: true, stopped: s.quit, offset: start + nul };
+}
+
+// Writes a selected line with its before-context, and a separator when the
+// line starts a new group. Once the searcher knows that the file is
+// binary, the sink stops at the next line, and a selected line still
+// counts.
+function push_group(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan, start: i32, ln: i32, g0: Group): Group {
+  let first = ln - p.before;
+  if (first <= g0.last) {
+    first = g0.last + 1;
+  }
+  let g = g0;
+  if (first < ln) {
+    push_separator(p, h, g, first);
+    g = push_before(p, re, h, name, s, start, ln, first, g);
+    if (g.stopped) {
+      return g;
+    }
+  }
+  let end = line_end(s.text, start, s.text.len());
+  g = stops_match(s, g, start, end);
+  if (g.stopped) {
+    return g;
+  }
+  if (first == ln) {
+    push_separator(p, h, g, first);
+  }
+  if (g.known || s.known_from >= 0 && start >= s.known_from) {
+    return Group { ...g, count: g.count + 1, known: true, stopped: true };
+  }
+  push_first(p, h, name, g);
+  push_selected(p, re, h, name, ln, slice_unchecked(s.text, start, end));
+  let count = g.count + 1;
+  let stopped = count == p.max_count && p.after == 0;
+  return Group { ...g, last: ln, after_left: p.after, wrote: true, count: count, stopped: stopped };
+}
+
+// A selected line past -m: the sink of ripgrep writes it as a match in the
+// after-context, and it uses one line of that context.
+function push_over(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan, start: i32, end: i32, ln: i32, g0: Group): Group {
+  let g = stops(s, g0, start, end);
+  if (g.stopped) {
+    return g;
+  }
+  push_selected(p, re, h, name, ln, slice_unchecked(s.text, start, end));
+  let left = g.after_left - 1;
+  return Group { ...g, last: ln, after_left: left, stopped: left == 0 };
+}
+
+function push_after(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan, start: i32, end: i32, ln: i32, g0: Group): Group {
+  let g = stops(s, g0, start, end);
+  if (g.stopped) {
+    return g;
+  }
+  push_line(p, re, h, name, ln, "-", slice_unchecked(s.text, start, end));
+  let left = g.after_left - 1;
+  return Group { ...g, last: ln, after_left: left, stopped: left == 0 && g.count == p.max_count };
+}
+
+function step_line(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan, start: i32, end: i32, ln: i32, yes: boolean, g: Group): Group {
+  if (yes && g.count == p.max_count) {
+    return push_over(p, re, h, name, s, start, end, ln, g);
+  }
+  if (yes) {
+    return push_group(p, re, h, name, s, start, ln, g);
+  }
+  if (g.after_left > 0) {
+    return push_after(p, re, h, name, s, start, end, ln, g);
+  }
+  return g;
+}
+
+function search_lines(p: Printer, re: regex.Regex, s: Scan, name: string, h: usize, written: boolean): Outcome {
+  let g = Group { last: 0, after_left: 0, wrote: written, count: 0, known: false, stopped: false, offset: s.offset };
   let c = begin();
-  while (c.start < text.len()) {
+  let upto = s.text.len();
+  while (c.start < s.end && !g.stopped) {
     if (!p.invert && g.after_left == 0) {
-      c = jump(re, text, c);
-      if (c.start >= text.len()) {
+      c = jump(re, s.text, c, s.end);
+      if (c.start >= s.end) {
         break;
       }
     }
     let start = c.start;
-    let end = line_end(text, start);
-    let ln = c.ln + 1;
-    let (yes, next) = selected(re, text, c, end, p.invert);
+    let end = line_end(s.text, start, s.end);
+    let (yes, next) = selected(re, s.text, c, end, p.invert);
     c = advance(next, end);
-    if (yes) {
-      matched = true;
-      g = push_group(p, re, h, name, text, start, ln, g);
-    } else if (g.after_left > 0) {
-      push_line(p, re, h, name, ln, "-", slice_unchecked(text, start, end));
-      g = Group { ...g, last: ln, after_left: g.after_left - 1 };
-    }
+    g = step_line(p, re, h, name, s, start, end, c.ln, yes, g);
+    upto = end;
   }
-  return Outcome { matched: matched, written: g.wrote };
+  return finish_lines(p, h, name, s, g, if (g.stopped) { upto } else { s.text.len() });
 }
 
-// Searches the text of one file and writes its output to `h`. `written` says
-// whether an earlier file wrote output.
-pub function search(p: Printer, re: regex.Regex, text: string, name: string, h: usize, written: boolean): Outcome {
-  match (p.mode) {
-    Files => {
-      if (!any_selected(p, re, text)) {
-        return Outcome { matched: false, written: written };
-      }
-      push_path(p, h, name);
-      buf_push(h, "\n");
-      return Outcome { matched: true, written: true };
-    },
-    Count => {
-      let (n, matched) = count(p, re, text);
-      if (!matched) {
-        return Outcome { matched: false, written: written };
-      }
-      if (p.show_name) {
-        push_path(p, h, name);
-        buf_push(h, ":");
-      }
-      buf_push(h, n.to_string() + "\n");
-      return Outcome { matched: true, written: true };
-    },
-    Lines => {
-      let nul = __memchr(text, 0, 0);
-      if (nul < 0) {
-        return search_lines(p, re, text, name, h, written);
-      }
-      if (!any_selected(p, re, text)) {
-        return Outcome { matched: false, written: written };
-      }
-      binary_message(p, h, name, nul);
-      return Outcome { matched: true, written: true };
-    }
+// The end of a search in lines: the message for a binary file in which the
+// search found a line.
+function finish_lines(p: Printer, h: usize, name: string, s: Scan, g: Group, upto: i32): Outcome {
+  let early = g.stopped && !g.known;
+  let known = g.known || s.known_at_end && !early;
+  if (known && g.count > 0) {
+    binary_message(p, h, name, Scan { ...s, offset: g.offset });
+    return outcome(true, true, upto);
   }
-  return Outcome { matched: false, written: written };
+  return outcome(g.count > 0, g.wrote, upto);
+}
+
+function outcome(matched: boolean, written: boolean, upto: i32): Outcome {
+  return Outcome { matched: matched, written: written, upto: upto, cap: 0 };
+}
+
+// The output of a summary mode: -c, --count-matches, -l and
+// --files-without-match. As in ripgrep, a walked file in which the search
+// finds binary data has no output, and counts as a file with no match.
+function summary(p: Printer, re: regex.Regex, s: Scan, name: string, h: usize, written: boolean): Outcome {
+  let first = p.mode != flags.Count && p.mode != flags.CountMatches;
+  let c = count(p, re, s, first || p.quiet);
+  if (c.binary) {
+    return outcome(p.mode == flags.Without && !p.quiet, written, c.upto);
+  }
+  if (p.quiet) {
+    return outcome(c.lines > 0, written, c.upto);
+  }
+  let listed = if (p.mode == flags.Without) { c.lines == 0 } else { c.lines > 0 };
+  if (!listed) {
+    return outcome(false, written, c.upto);
+  }
+  push_summary(p, h, name, c);
+  return outcome(true, true, c.upto);
+}
+
+// The line of a file for -c, --count-matches, -l or --files-without-match.
+function push_summary(p: Printer, h: usize, name: string, c: Counted): void {
+  if (p.mode == flags.Without || p.mode == flags.Files) {
+    push_path(p, h, name);
+    buf_push(h, line_terminator(p));
+    return;
+  }
+  if (p.show_name) {
+    push_name_field(p, h, name, ":");
+  }
+  buf_push(h, c.n.to_string() + "\n");
+}
+
+// Searches the text of one file and writes its output to `h`. `src` says
+// how ripgrep reads the file, and `written` says whether an earlier file
+// wrote output.
+pub function search(p: Printer, re: regex.Regex, text: string, name: string, src: Source, h: usize, written: boolean): Outcome {
+  let t = without_bom(text);
+  let keep = if (p.after > p.before) { p.after } else { p.before };
+  let s = scan(t, src, keep);
+  let out = if (p.mode == flags.Lines && !p.quiet) { search_lines(p, re, s, name, h, written) } else { summary(p, re, s, name, h, written) };
+  if (src.mapped) {
+    return Outcome { ...out, cap: src.cap };
+  }
+  let upto = out.upto;
+  if (s.quit && s.offset >= 0 && s.offset < upto) {
+    upto = s.offset;
+  }
+  return Outcome { ...out, cap: fill_to(t, upto, keep, src.cap).cap };
 }

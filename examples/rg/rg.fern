@@ -1,45 +1,45 @@
 // rg — search files for a regular expression.
 //
-// A port of ripgrep (github.com/BurntSushi/ripgrep). This slice searches the
-// files on the command line, or the standard input, with std/regex.
+// A port of ripgrep (github.com/BurntSushi/ripgrep) with std/regex. It
+// searches the files on the command line, or the standard input. In a
+// directory, it searches each file that the ignore rules of ripgrep keep.
 //
-//   $ rg PATTERN FILE...        # the matching lines
+//   $ rg PATTERN                # the matching lines under the current directory
 //   $ rg -n -C2 PATTERN FILE    # with line numbers and two lines of context
-//   $ rg -c -e A -e B FILE      # the count of lines that match A or B
+//   $ rg -c -e A -e B DIR       # the count of lines that match A or B
+//   $ rg -t rust -g '!target' --files
 //   $ cmd | rg -o PATTERN       # each match of the standard input
+import "core/cmp";
 import "std/io";
 import "std/regex";
+import "std/worker";
+import "./flags";
+import "./ignore";
 import "./search";
+import "./walk";
 
 const FLUSH_BYTES: i32 = 65536;
 
-// The text of an error from the operating system, as ripgrep writes it.
-function os_error(e: IoError): string {
-  match (e) {
-    NotFound(_) => {
-      return "No such file or directory (os error 2)";
-    },
-    PermissionDenied(_) => {
-      return "Permission denied (os error 13)";
-    },
-    Other(_, _, 20) => {
-      return "Not a directory (os error 20)";
-    },
-    Other(_, _, 21) => {
-      return "Is a directory (os error 21)";
-    },
-    _ => {
-      return e.message();
-    }
-  }
+const NOTHING_SEARCHED: string = "No files were searched, which means ripgrep probably applied a filter you didn't expect.\nRunning with --debug will show why files are being skipped.";
+
+// What a search of files needs: the printer, the pattern, how to name and
+// read each file, and which messages to write.
+struct Ctx {
+  p: search.Printer,
+  pattern: string,
+  implicit: boolean,
+  mmap: boolean,
+  binary: i32,
+  threads: i32,
+  quiet: boolean,
+  messages: boolean,
+  ignore_messages: boolean,
 }
 
-function read_input(path: string): Result[u8[], IoError] {
-  if (path == "-") {
-    return io.read_all_stdin_bytes();
-  }
-  return read_file_bytes(path);
-}
+// The result of a search of some files: the output, the error messages,
+// whether a file matched, whether an error happened, and whether a file was
+// searched.
+struct Part { out: string, errors: string[], matched: boolean, failed: boolean, searched: boolean }
 
 // Writes the buffer when it is full, or when `all` is true.
 function flush(h: usize, all: boolean): boolean {
@@ -52,8 +52,8 @@ function flush(h: usize, all: boolean): boolean {
   return true;
 }
 
-function compiled(o: search.Options): Option[regex.Regex] {
-  match (regex.compile(search.pattern(o))) {
+function compiled(pattern: string): Option[regex.Regex] {
+  match (regex.compile(pattern)) {
     Ok(re) => {
       return Some(re);
     },
@@ -65,82 +65,510 @@ function compiled(o: search.Options): Option[regex.Regex] {
   return None;
 }
 
-// Searches one path. The result is None after the message for a file that
-// cannot be read. With one thread, ripgrep names the operation.
-function search_path(p: search.Printer, re: regex.Regex, path: string, threads: i32, h: usize, written: boolean): Option[search.Outcome] {
-  match (read_input(path)) {
-    Ok(bytes) => {
-      let name = if (path == "-") { "<stdin>" } else { path };
-      return Some(search.search(p, re, unsafe { string_from_bytes_unchecked(bytes) }, name, h, written));
-    },
-    Err(e) => {
-      if (threads == 1) {
-        eprint("rg: " + path + ": IO error for operation on " + path + ": " + os_error(e));
-      } else {
-        eprint("rg: " + path + ": " + os_error(e));
-      }
-      return None;
-    }
+function read_input(path: string): Result[u8[], IoError] {
+  if (path == "-") {
+    return io.read_all_stdin_bytes();
   }
-  return None;
+  return read_file_bytes(path);
 }
 
-// 0 when a line is selected, 1 when none is, and 2 after an error.
-function status(matched: boolean, failed: boolean): i32 {
+// The name of a file in the output. Without a path on the command line,
+// ripgrep drops the leading "./".
+function display_name(ctx: Ctx, path: string): string {
+  if (path == "-") {
+    return "<stdin>";
+  }
+  if (ctx.implicit) {
+    return ignore.strip_dot(path);
+  }
+  return path;
+}
+
+// How ripgrep reads a file, with the line buffer of capacity `cap`. -a
+// turns off the search for binary data, and --binary searches a walked file
+// as one on the command line.
+function source(ctx: Ctx, it: walk.Item, cap: i32): search.Source {
+  let mapped = ctx.mmap && it.path != "-";
+  let detect = if (ctx.binary == 2) {
+    search.DETECT_NONE
+  } else if (it.explicit || ctx.binary == 1) {
+    search.DETECT_CONVERT
+  } else {
+    search.DETECT_QUIT
+  };
+  return search.Source { mapped: mapped, detect: detect, cap: cap };
+}
+
+// Searches the files of `items` in order, and writes their output to `h`.
+// A message of the walk goes to the standard error at its place.
+function search_items(ctx: Ctx, re: regex.Regex, items: walk.Item[], h: usize): Part {
+  let none: string[] = [];
+  let r = Part { out: "", errors: none, matched: false, failed: false, searched: false };
+  let written = false;
+  let cap = search.BUFFER;
+  for it in items {
+    if (it.path == "") {
+      r = note(ctx, r, it.message, it.error);
+      continue;
+    }
+    r = Part { ...r, searched: true };
+    match (read_input(it.path)) {
+      Ok(bytes) => {
+        let text = unsafe { string_from_bytes_unchecked(bytes) };
+        let out = search.search(ctx.p, re, text, display_name(ctx, it.path), source(ctx, it, cap), h, written);
+        written = out.written;
+        cap = out.cap;
+        r = Part { ...r, matched: r.matched || out.matched };
+        if (!flush(h, false)) {
+          return Part { ...r, failed: true };
+        }
+      },
+      Err(e) => {
+        r = note(ctx, r, display_name(ctx, it.path) + ": " + ignore.os_error(e), true);
+      }
+    }
+    if (r.matched && ctx.quiet) {
+      break;
+    }
+  }
+  return r;
+}
+
+// Writes a message now, and records an error.
+function note(ctx: Ctx, r: Part, text: string, error: boolean): Part {
+  if (ctx.messages && (error || ctx.ignore_messages)) {
+    eprint("rg: " + text);
+  }
+  return Part { ...r, failed: r.failed || error };
+}
+
+// The search of one run of files in a worker. The output comes back as
+// text, and the parent writes it.
+function search_part(ctx: Ctx, items: walk.Item[]): Part {
+  let Ok(re) = regex.compile(ctx.pattern) else {
+    return Part { out: "", errors: [], matched: false, failed: true, searched: false };
+  };
+  let h = buf_new(FLUSH_BYTES);
+  let r = search_buffered(ctx, re, items, h);
+  let out = buf_take(h);
+  buf_free(h);
+  return Part { ...r, out: out };
+}
+
+// As search_items, but the output stays in the buffer.
+function search_buffered(ctx: Ctx, re: regex.Regex, items: walk.Item[], h: usize): Part {
+  let none: string[] = [];
+  let r = Part { out: "", errors: none, matched: false, failed: false, searched: false };
+  let written = false;
+  let cap = search.BUFFER;
+  for it in items {
+    r = Part { ...r, searched: true };
+    match (read_input(it.path)) {
+      Ok(bytes) => {
+        let text = unsafe { string_from_bytes_unchecked(bytes) };
+        let out = search.search(ctx.p, re, text, display_name(ctx, it.path), source(ctx, it, cap), h, written);
+        written = out.written;
+        cap = out.cap;
+        r = Part { ...r, matched: r.matched || out.matched };
+      },
+      Err(e) => {
+        r = Part { ...r, errors: r.errors.append(display_name(ctx, it.path) + ": " + ignore.os_error(e)), failed: true };
+      }
+    }
+    if (r.matched && ctx.quiet) {
+      break;
+    }
+  }
+  return r;
+}
+
+// The runs of files for `n` workers: file k goes to run k mod n, so that
+// each run has files from each part of the tree.
+function runs_of(items: walk.Item[], n: i32): walk.Item[][] {
+  let runs: walk.Item[][] = [];
+  for _ in 0..n {
+    let empty: walk.Item[] = [];
+    runs = runs.append(empty);
+  }
+  for i in 0..items.len() {
+    let k = i % n;
+    runs = runs.with(k, runs[k].append(items[i]));
+  }
+  return runs;
+}
+
+// The parts of the runs from `k` on. A worker searches each run but the
+// last, which the parent searches.
+function parts(ctx: Ctx, runs: walk.Item[][], k: i32): Part[] {
+  if (k == runs.len() - 1) {
+    return [search_part(ctx, runs[k])];
+  }
+  let run = runs[k];
+  let w = worker.spawn((): Part => search_part(ctx, run));
+  let rest = parts(ctx, runs, k + 1);
+  return [w.join()].concat(rest);
+}
+
+// Searches the files with `threads` workers. The messages of the walk come
+// first, then the output of each worker in turn.
+function search_parallel(ctx: Ctx, items: walk.Item[], threads: i32): Part {
+  let none: string[] = [];
+  let r = Part { out: "", errors: none, matched: false, failed: false, searched: false };
+  let files: walk.Item[] = [];
+  for it in items {
+    if (it.path == "") {
+      r = note(ctx, r, it.message, it.error);
+    } else {
+      files = files.append(it);
+    }
+  }
+  let n = if (files.len() < threads) { files.len() } else { threads };
+  if (n == 0) {
+    return r;
+  }
+  for part in parts(ctx, runs_of(files, n), 0) {
+    r = merge(ctx, r, part);
+  }
+  return r;
+}
+
+// Writes the output and the messages of a worker after those of the
+// earlier workers. `r.out` keeps "x" once any output is written.
+function merge(ctx: Ctx, r0: Part, part: Part): Part {
+  let r = r0;
+  for e in part.errors {
+    r = note(ctx, r, e, true);
+  }
+  if (part.out != "") {
+    let sep = search.file_separator(ctx.p);
+    if (r.out != "" && sep != "") {
+      print_raw(sep);
+    }
+    print_raw(part.out);
+    r = Part { ...r, out: "x" };
+  }
+  return Part { ...r, matched: r.matched || part.matched, failed: r.failed || part.failed, searched: r.searched || part.searched };
+}
+
+function print_raw(text: string): void {
+  let _ = stdout().write(text);
+}
+
+// 0 when a line is selected, 1 when none is, and 2 after an error. With
+// -q, a match gives 0 also after an error.
+function status(matched: boolean, failed: boolean, quiet: boolean): i32 {
+  if (matched && (quiet || !failed)) {
+    return 0;
+  }
   if (failed) {
     return 2;
-  }
-  if (matched) {
-    return 0;
   }
   return 1;
 }
 
-// Searches each path in turn and gives the exit status.
-function search_all(p: search.Printer, re: regex.Regex, paths: string[], threads: i32): i32 {
-  let h = buf_new(FLUSH_BYTES);
-  let code = search_into(p, re, paths, threads, h);
-  buf_free(h);
-  return code;
+// Whether the standard input can be read: a file, a pipe or a socket, as
+// ripgrep's heuristic asks.
+function stdin_readable(): boolean {
+  let Ok(st) = stdin().stat() else {
+    return false;
+  };
+  let kind = st.mode & 0o170000u32;
+  return kind == 0o100000u32 || kind == 0o010000u32 || kind == 0o140000u32;
 }
 
-function search_into(p: search.Printer, re: regex.Regex, paths: string[], threads: i32, h: usize): i32 {
-  let written = false;
-  let matched = false;
-  let failed = false;
-  for path in paths {
-    match (search_path(p, re, path, threads, h, written)) {
-      Some(out) => {
-        written = out.written;
-        matched = matched || out.matched;
-        if (!flush(h, false)) {
-          return 2;
-        }
-      },
-      None => {
-        failed = true;
-      }
+function is_file(path: string): boolean {
+  let Ok(st) = stat(path) else {
+    return false;
+  };
+  return st.is_file;
+}
+
+// Whether ripgrep maps the files into memory: with --mmap, or by default
+// for at most ten paths that are all files.
+function maps(o: flags.Options, paths: string[]): boolean {
+  if (o.mmap >= 0) {
+    return o.mmap == 1;
+  }
+  if (paths.len() > 10) {
+    return false;
+  }
+  for p in paths {
+    if (!is_file(p)) {
+      return false;
     }
   }
-  if (!flush(h, true)) {
-    return 2;
+  return true;
+}
+
+// The rules of the walk, or the message of a glob or a type that is not
+// valid.
+function config(o: flags.Options): Result[ignore.Config, string] {
+  let cwd = match (getcwd()) {
+    Ok(d) => d,
+    Err(_) => "",
+  };
+  let ov = ignore.overrides(cwd, o.globs, o.iglobs, o.has(flags.GLOB_CASE))?;
+  let ty = ignore.build_types(o.types)?;
+  let ci = o.has(flags.IGNORE_FILE_CASE);
+  let none: ignore.Matcher[] = [];
+  return Ok(ignore.Config {
+    skip_hidden: !o.has(flags.HIDDEN),
+    dot: !o.has(flags.NO_IGNORE_DOT),
+    vcs: !o.has(flags.NO_IGNORE_VCS),
+    exclude: !o.has(flags.NO_IGNORE_VCS) && !o.has(flags.NO_IGNORE_EXCLUDE),
+    global: !o.has(flags.NO_IGNORE_VCS) && !o.has(flags.NO_IGNORE_GLOBAL),
+    parents: !o.has(flags.NO_IGNORE_PARENT),
+    require_git: !o.has(flags.NO_REQUIRE_GIT),
+    ci: ci,
+    overrides: ov,
+    types: ty,
+    explicit: none,
+    global_rules: ignore.empty(""),
+  });
+}
+
+// The global gitignore and the --ignore-file rules, with their messages.
+function with_files(ctx: Ctx, o: flags.Options, cfg: ignore.Config): ignore.Config {
+  let c = cfg;
+  if (cfg.global) {
+    let g = ignore.global(cfg.ci);
+    c = ignore.Config { ...c, global_rules: g.m };
+    for e in g.errors {
+      note_now(ctx, e);
+    }
   }
-  return status(matched, failed);
+  if (o.has(flags.NO_IGNORE_FILES)) {
+    return c;
+  }
+  let explicit: ignore.Matcher[] = [];
+  for path in o.ignore_files {
+    let l = ignore.explicit_file(path, cfg.ci);
+    if (l.errors.len() > 0) {
+      note_now(ctx, l.errors.join("\n"));
+    }
+    explicit = explicit.append(l.m);
+  }
+  return ignore.Config { ...c, explicit: explicit };
+}
+
+function note_now(ctx: Ctx, text: string): void {
+  if (ctx.messages && ctx.ignore_messages) {
+    eprint("rg: " + text);
+  }
+}
+
+// The stat time that --sort and --sortr order by, or None.
+function time_of(path: string, kind: string): Option[(i64, i64)] {
+  let Ok(st) = stat(path) else {
+    return None;
+  };
+  return match (kind) {
+    "modified" => Some((st.mtime, st.mtime_nsec)),
+    "accessed" => Some((st.atime, st.atime_nsec)),
+    _ => Some((st.btime, st.btime_nsec)),
+  };
+}
+
+// The files in the order of --sortr path, or of a sort by a time. The
+// messages come first. Ascending times put a file with no time last.
+function sorted(o: flags.Options, items: walk.Item[]): walk.Item[] {
+  let msgs: walk.Item[] = [];
+  let files: walk.Item[] = [];
+  for it in items {
+    if (it.path == "") {
+      msgs = msgs.append(it);
+    } else {
+      files = files.append(it);
+    }
+  }
+  if (o.sort == "path") {
+    let by = cmp.sort_by(files, (a: walk.Item, b: walk.Item): i32 => path_order(b.path, a.path));
+    return msgs.concat(by);
+  }
+  let keyed = cmp.sort_by(files, (a: walk.Item, b: walk.Item): i32 => time_order(time_of(a.path, o.sort), time_of(b.path, o.sort), o.sort_reverse));
+  return msgs.concat(keyed);
+}
+
+function time_order(a: Option[(i64, i64)], b: Option[(i64, i64)], reverse: boolean): i32 {
+  let c = match (a) {
+    Some(x) => match (b) {
+      Some(y) => compare_times(x, y),
+      None => -1,
+    },
+    None => if (b == None) { 0 } else { 1 },
+  };
+  return if (reverse) { -c } else { c };
+}
+
+function compare_times(x: (i64, i64), y: (i64, i64)): i32 {
+  if (x.0 != y.0) {
+    return if (x.0 < y.0) { -1 } else { 1 };
+  }
+  if (x.1 != y.1) {
+    return if (x.1 < y.1) { -1 } else { 1 };
+  }
+  return 0;
+}
+
+// The order of two paths by their parts, as Rust's Path compares them.
+function path_order(a: string, b: string): i32 {
+  let x = a.split("/");
+  let y = b.split("/");
+  let n = if (x.len() < y.len()) { x.len() } else { y.len() };
+  for i in 0..n {
+    if (x[i] != y[i]) {
+      return if (cmp.lt(x[i], y[i])) { -1 } else { 1 };
+    }
+  }
+  return x.len() - y.len();
+}
+
+// --files: each file to search, one on each line.
+function list_files(ctx: Ctx, items: walk.Item[], o: flags.Options): i32 {
+  let h = buf_new(FLUSH_BYTES);
+  let r = Part { out: "", errors: [], matched: false, failed: false, searched: false };
+  let term = if (o.has(flags.NULL)) { "\x00" } else { "\n" };
+  for it in items {
+    if (it.path == "") {
+      r = note(ctx, r, it.message, it.error);
+      continue;
+    }
+    r = Part { ...r, matched: true };
+    if (ctx.quiet) {
+      break;
+    }
+    search.push_path(ctx.p, h, display_name(ctx, it.path));
+    buf_push(h, term);
+    if (!flush(h, false)) {
+      break;
+    }
+  }
+  let _ = flush(h, true);
+  buf_free(h);
+  return status(r.matched, r.failed, ctx.quiet);
+}
+
+function type_list(o: flags.Options): i32 {
+  match (ignore.build_types(o.types)) {
+    Ok(t) => {
+      for line in t.listing() {
+        print(line);
+      }
+      return 0;
+    },
+    Err(why) => {
+      eprint("rg: " + why);
+      return 2;
+    }
+  }
+  return 2;
+}
+
+// The file of the standard output, which a walk skips.
+function stdout_file(): (i64, i64) {
+  let Ok(st) = stdout().stat() else {
+    return (0i64, 0i64);
+  };
+  if (!st.is_file) {
+    return (0i64, 0i64);
+  }
+  return (st.ino, st.dev);
+}
+
+function threads_of(o: flags.Options, one_file: boolean): i32 {
+  if (o.sort != "" || one_file) {
+    return 1;
+  }
+  if (o.threads > 0) {
+    return o.threads;
+  }
+  let n = cpu_count() as i32;
+  return if (n > 12) { 12 } else { n };
+}
+
+// The paths to search. With none, ripgrep searches the standard input when
+// it can be read, and the current directory when not.
+function paths_of(o: flags.Options): string[] {
+  if (o.paths.len() > 0) {
+    return o.paths;
+  }
+  return if (o.searches() && stdin_readable()) { ["-"] } else { ["./"] };
+}
+
+function context_of(o: flags.Options, paths: string[]): Ctx {
+  let one_file = paths.len() == 1 && (paths[0] == "-" || is_file(paths[0]));
+  let threads = threads_of(o, one_file);
+  let pattern = if (o.searches()) { flags.pattern(o) } else { "" };
+  return Ctx {
+    p: search.printer(o, isatty(1), one_file), pattern: pattern, implicit: o.paths.len() == 0, mmap: maps(o, paths),
+    binary: o.binary, threads: threads, quiet: o.has(flags.QUIET), messages: !o.has(flags.NO_MESSAGES),
+    ignore_messages: !o.has(flags.NO_IGNORE_MESSAGES),
+  };
+}
+
+// The files to search and the messages of the walk, in the order of
+// --sort or --sortr.
+function items_of(ctx: Ctx, o: flags.Options, cfg: ignore.Config, paths: string[]): walk.Item[] {
+  let (ino, dev) = stdout_file();
+  let w = walk.Walk {
+    cfg: cfg, follow: o.has(flags.FOLLOW), max_depth: o.max_depth, sorted: o.sort == "path" && !o.sort_reverse,
+    threads: ctx.threads, stdout_ino: if (o.searches()) { ino } else { 0i64 }, stdout_dev: dev,
+  };
+  let items = walk.walk(w, paths);
+  if (o.sort != "" && (o.sort_reverse || o.sort != "path")) {
+    return sorted(o, items);
+  }
+  return items;
+}
+
+function run(o: flags.Options): i32 {
+  let paths = paths_of(o);
+  let ctx = context_of(o, paths);
+  let cfg = match (config(o)) {
+    Ok(c) => c,
+    Err(why) => {
+      eprint("rg: " + why);
+      return 2;
+    },
+  };
+  let items = items_of(ctx, o, with_files(ctx, o, cfg), paths);
+  if (!o.searches()) {
+    return list_files(ctx, items, o);
+  }
+  let Some(re) = compiled(ctx.pattern) else {
+    return 2;
+  };
+  let r = if (ctx.threads > 1) { search_parallel(ctx, items, ctx.threads) } else { search_serial(ctx, re, items) };
+  if (ctx.implicit && !r.searched) {
+    r = note(ctx, r, NOTHING_SEARCHED, true);
+  }
+  return status(r.matched, r.failed, ctx.quiet);
+}
+
+function search_serial(ctx: Ctx, re: regex.Regex, items: walk.Item[]): Part {
+  let h = buf_new(FLUSH_BYTES);
+  let r = search_items(ctx, re, items, h);
+  if (!flush(h, true)) {
+    r = Part { ...r, failed: true };
+  }
+  buf_free(h);
+  return r;
 }
 
 function main(): i32 {
   let argv = args();
-  let o = match (search.parse(argv.drop(1))) {
+  let o = match (flags.parse(argv.drop(1))) {
     Ok(v) => v,
     Err(why) => {
       eprint("rg: " + why);
       return 2;
     },
   };
-  let Some(re) = compiled(o) else {
-    return 2;
-  };
-  let threads = if (o.threads > 0) { o.threads } else { cpu_count() as i32 };
-  let paths = if (o.paths.len() == 0) { ["-"] } else { o.paths };
-  return search_all(search.printer(o, isatty(1)), re, paths, threads);
+  if (o.mode == flags.TypeList) {
+    return type_list(o);
+  }
+  if (o.searches() && o.max_count == 0) {
+    return 1;
+  }
+  return run(o);
 }

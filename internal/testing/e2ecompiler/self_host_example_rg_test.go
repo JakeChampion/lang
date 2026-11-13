@@ -2,10 +2,13 @@ package e2ecompiler
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -21,9 +24,16 @@ func TestSelfHostExampleRgUnit(t *testing.T) {
 	testCensusTargets(t, path)
 }
 
+// rgCase is one command line, with its standard input, and the directory
+// below the fixtures where it runs. With noStdin, the standard input is
+// /dev/null. With anyOrder, the lines of the output can come in any order,
+// as they do from ripgrep with more than one thread.
 type rgCase struct {
-	args  []string
-	stdin string
+	args     []string
+	stdin    string
+	dir      string
+	noStdin  bool
+	anyOrder bool
 }
 
 func rgArgs(line string) []string { return strings.Fields(line) }
@@ -231,17 +241,17 @@ func rgCases(dir string) []rgCase {
 	}
 	// The standard input.
 	cases = append(cases,
-		rgCase{rgArgs("foo"), stdinOf("a.txt")},
-		rgCase{rgArgs("-n foo -"), stdinOf("a.txt")},
-		rgCase{rgArgs("-j1 foo - a.txt"), stdinOf("w.txt")},
-		rgCase{rgArgs("-H foo"), stdinOf("a.txt")},
-		rgCase{rgArgs("-c foo"), stdinOf("a.txt")},
-		rgCase{rgArgs("-l foo -"), stdinOf("a.txt")},
-		rgCase{rgArgs("foo"), stdinOf("bin.dat")},
-		rgCase{rgArgs("-o -n o+"), stdinOf("crlf.txt")},
-		rgCase{rgArgs("foo"), ""},
+		rgCase{args: rgArgs("foo"), stdin: stdinOf("a.txt")},
+		rgCase{args: rgArgs("-n foo -"), stdin: stdinOf("a.txt")},
+		rgCase{args: rgArgs("-j1 foo - a.txt"), stdin: stdinOf("w.txt")},
+		rgCase{args: rgArgs("-H foo"), stdin: stdinOf("a.txt")},
+		rgCase{args: rgArgs("-c foo"), stdin: stdinOf("a.txt")},
+		rgCase{args: rgArgs("-l foo -"), stdin: stdinOf("a.txt")},
+		rgCase{args: rgArgs("foo"), stdin: stdinOf("bin.dat")},
+		rgCase{args: rgArgs("-o -n o+"), stdin: stdinOf("crlf.txt")},
+		rgCase{args: rgArgs("foo"), stdin: ""},
 	)
-	return cases
+	return append(cases, rgWalkCases()...)
 }
 
 type rgResult struct {
@@ -249,10 +259,22 @@ type rgResult struct {
 	code           int
 }
 
-func rgRun(t *testing.T, cmd *exec.Cmd, dir, stdin string) rgResult {
+// sorted is the result with the lines of the stdout in order.
+func (r rgResult) sorted() rgResult {
+	lines := strings.SplitAfter(r.stdout, "\n")
+	sort.Strings(lines)
+	return rgResult{strings.Join(lines, ""), r.stderr, r.code}
+}
+
+// rgRun runs one case in `dir`, or in the directory of the case below it.
+// The home directory is empty, so that no global gitignore applies.
+func rgRun(t *testing.T, cmd *exec.Cmd, dir string, c rgCase) rgResult {
 	t.Helper()
-	cmd.Dir = dir
-	cmd.Stdin = strings.NewReader(stdin)
+	cmd.Dir = filepath.Join(dir, c.dir)
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + filepath.Join(dir, "home")}
+	if !c.noStdin {
+		cmd.Stdin = strings.NewReader(c.stdin)
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	_ = cmd.Run()
@@ -262,10 +284,168 @@ func rgRun(t *testing.T, cmd *exec.Cmd, dir, stdin string) rgResult {
 	return rgResult{stdout.String(), stderr.String(), cmd.ProcessState.ExitCode()}
 }
 
-// TestSelfHostExampleRgAgainstRipgrep runs the port and ripgrep 14.1.0 with
-// the same command lines on the same files. The stdout, the stderr and the
-// exit status must be the same.
-func TestSelfHostExampleRgAgainstRipgrep(t *testing.T) {
+// rgTree writes the tree that the walk cases search. `tree` is a git
+// repository with each kind of ignore file. `plain` has a .gitignore and
+// no .git, so that ripgrep does not use the .gitignore.
+func rgTree(t *testing.T, dir string) {
+	t.Helper()
+	var big strings.Builder
+	for i := 0; big.Len() < 70000; i++ {
+		fmt.Fprintf(&big, "line %d of the text\n", i)
+		if i%500 == 0 {
+			big.WriteString("foo before the NUL byte\n")
+		}
+	}
+	big.WriteString("abc\x00def foo\nfoo after the NUL byte\n")
+	files := map[string]string{
+		"home/.keep":             "",
+		"tree/.git/info/exclude": "excluded.txt\n",
+		"tree/.gitignore":        "*.log\n/build/\n!keep.log\nsub/deep/\n# a comment\n\\#hash.txt\n",
+		"tree/.ignore":           "dot_ignored.txt\n",
+		"tree/.rgignore":         "!dot_ignored.txt\nrg_ignored.txt\n",
+		"tree/a.txt":             "foo here\nbar\n",
+		"tree/b.log":             "foo log\n",
+		"tree/keep.log":          "foo keep\n",
+		"tree/#hash.txt":         "foo hash\n",
+		"tree/build/out.txt":     "foo build\n",
+		"tree/src/build/x.txt":   "foo src build\n",
+		"tree/src/main.rs":       "fn foo() {}\n",
+		"tree/src/lib.c":         "int foo;\n",
+		"tree/src/Makefile":      "foo: bar\n",
+		"tree/sub/.gitignore":    "*.md\n",
+		"tree/sub/readme.md":     "foo md\n",
+		"tree/sub/y.txt":         "foo y\nfoo y again\n",
+		"tree/sub/deep/z.txt":    "foo deep\n",
+		"tree/.hidden.txt":       "foo hidden\n",
+		"tree/.hdir/h.txt":       "foo hdir\n",
+		"tree/dot_ignored.txt":   "foo dot\n",
+		"tree/rg_ignored.txt":    "foo rg\n",
+		"tree/excluded.txt":      "foo excluded\n",
+		"tree/bin.dat":           "foo\x00bar\n",
+		"tree/big.txt":           big.String(),
+		"tree/extra.ignore":      "a.txt\n",
+		"plain/.gitignore":       "*.txt\n",
+		"plain/p.txt":            "foo plain\n",
+		"plain/q.md":             "foo q\n",
+		"plain/nested/.ignore":   "r.md\n",
+		"plain/nested/r.md":      "foo r\n",
+		"plain/nested/s.md":      "foo s\n",
+	}
+	for name, text := range files {
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink("a.txt", filepath.Join(dir, "tree", "link.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("sub", filepath.Join(dir, "tree", "linkdir")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// rgWalkCases search the trees of rgTree. ripgrep writes the files of a
+// walk in the order of the walk only with one thread, so each case gives
+// -j1 or --sort. A case with no path runs with no standard input, as
+// ripgrep then searches the current directory.
+func rgWalkCases() []rgCase {
+	in := func(dir, line string) rgCase { return rgCase{args: rgArgs(line), dir: dir, noStdin: true} }
+	return []rgCase{
+		in("tree", "-j1 foo"),
+		in("tree", "--sort path foo"),
+		in("tree", "--sort path -n foo ."),
+		in("tree/src", "--sort path foo"),
+		in("tree/sub", "--sort path foo ../src"),
+		in("", "--sort path foo tree"),
+		in("", "--sort path foo tree/"),
+		in("", "--sortr path foo tree"),
+		in("", "--sort path foo tree plain"),
+		in("", "--sort path foo tree/a.txt tree/b.log tree/.hidden.txt"),
+		in("", "--sort path --hidden foo tree"),
+		in("", "--sort path -. foo tree"),
+		in("", "--sort path --no-ignore foo tree"),
+		in("", "--sort path --no-ignore --ignore foo tree"),
+		in("", "--sort path -u foo tree"),
+		in("", "--sort path -uu foo tree"),
+		in("", "--sort path -uuu foo tree"),
+		in("", "--sort path -uuuu foo tree"),
+		in("", "--sort path --no-ignore-vcs foo tree"),
+		in("", "--sort path --no-ignore-dot foo tree"),
+		in("", "--sort path --no-ignore-exclude foo tree"),
+		in("", "--sort path --no-ignore-parent foo"),
+		in("plain", "--sort path foo"),
+		in("plain", "--sort path --no-require-git foo"),
+		in("", "--sort path --ignore-file tree/extra.ignore foo tree"),
+		in("", "--sort path --ignore-file nofile foo tree"),
+		in("", "--sort path --max-depth 1 foo tree"),
+		in("", "--sort path --maxdepth=0 foo tree"),
+		in("", "--sort path -L foo tree"),
+		in("", "--sort path -g *.txt foo tree"),
+		in("", "--sort path -g !*.txt foo tree"),
+		in("", "--sort path -g *.txt -g !sub/** foo tree"),
+		in("", "--sort path -g *.log foo tree"),
+		in("", "--sort path --iglob *.TXT foo tree"),
+		in("", "--sort path --glob-case-insensitive -g *.TXT foo tree"),
+		in("", "--sort path -g [ foo tree"),
+		in("", "--sort path -t rust foo tree"),
+		in("", "--sort path -t c -t make foo tree"),
+		in("", "--sort path -T txt foo tree"),
+		in("", "--sort path --type-add log:*.log -t log --no-ignore foo tree"),
+		in("", "--sort path --type-add bad foo tree"),
+		in("", "--sort path -t bogus foo tree"),
+		in("", "--sort path --type-clear rust -t rust foo tree"),
+		in("", "--type-add zz:*.zz --type-list"),
+		in("", "--sort path --files tree"),
+		in("", "--sort path --files --null tree"),
+		in("", "--sort path --files -t rust tree"),
+		in("", "--sortr path --files tree plain"),
+		in("", "--sort path -l foo tree"),
+		in("", "--sort path -l --null foo tree"),
+		in("", "--sort path --files-without-match here tree"),
+		in("", "--sort path -c foo tree"),
+		in("", "--sort path -c --null foo tree"),
+		in("", "--sort path -co foo tree"),
+		in("", "--sort path -q foo tree"),
+		in("", "--sort path -q zzz tree"),
+		in("", "--sort path -m1 foo tree"),
+		in("", "--sort path -m1 -A1 foo tree/sub"),
+		in("", "--sort path -m0 foo tree"),
+		in("", "--sort path -x foo.here tree"),
+		in("", "--sort path -n --null foo tree/sub"),
+		in("", "--sort path --heading foo tree"),
+		in("", "--sort path --heading -n -A1 foo tree/sub tree/a.txt"),
+		in("", "--sort path --no-heading foo tree/sub"),
+		in("", "--sort path --path-separator \\ foo tree/sub"),
+		in("", "--sort path -C1 foo tree/sub tree/a.txt"),
+		in("", "--sort path --mmap foo tree"),
+		in("", "--sort path --no-mmap foo tree"),
+		in("", "--sort path foo tree/big.txt"),
+		in("", "--sort path --no-mmap foo tree/big.txt"),
+		in("", "--sort path -c foo tree/big.txt"),
+		in("", "--sort path --no-mmap -c foo tree/big.txt"),
+		in("", "--sort path -g big.txt foo tree"),
+		in("", "--sort path -g big.txt -c foo tree"),
+		in("", "--sort path -g big.txt -l foo tree"),
+		in("", "--sort path -g big.txt --binary foo tree"),
+		in("", "--sort path -g big.txt -a -c foo tree"),
+		in("", "--sort path -g big.txt -B1 foo tree"),
+		in("", "--sort path foo nosuchdir tree/sub"),
+		in("tree", "-j1 -g nomatch foo"),
+		in("", "foo tree/sub"),
+		{args: rgArgs("-j2 -c foo tree"), noStdin: true, anyOrder: true},
+		{args: rgArgs("-j3 -n foo tree"), noStdin: true, anyOrder: true},
+		{args: rgArgs("-j4 -l foo tree plain"), noStdin: true, anyOrder: true},
+		{args: rgArgs("-j2 --files tree"), noStdin: true, anyOrder: true},
+	}
+}
+
+// rgOracle fails the test when /usr/bin/rg is not ripgrep 14.1.0.
+func rgOracle(t *testing.T) {
+	t.Helper()
 	version, err := exec.Command(ripgrep, "--version").Output()
 	if err != nil {
 		t.Fatalf("ripgrep 14.1.0 is required at %s: %v", ripgrep, err)
@@ -273,40 +453,232 @@ func TestSelfHostExampleRgAgainstRipgrep(t *testing.T) {
 	if !strings.HasPrefix(string(version), "ripgrep 14.1.0") {
 		t.Fatalf("the oracle is ripgrep 14.1.0, but %s is %q", ripgrep, strings.SplitN(string(version), "\n", 2)[0])
 	}
-	cli := buildSelfHostCLI(t)
+}
+
+// rgPort builds the port for `target` and gives the command that runs it.
+func rgPort(t *testing.T, cli *selfHostCLI, target string) func(args ...string) *exec.Cmd {
+	t.Helper()
 	src, err := filepath.Abs("../../../examples/rg/rg.fern")
 	if err != nil {
 		t.Fatal(err)
 	}
+	if target == "x86-64-linux" {
+		bin := cli.x86Binary(t, src)
+		return func(args ...string) *exec.Cmd { return runX86_64Bin(cli.runner, bin, args...) }
+	}
+	_, qemu := arm64Tooling(t)
+	bin := cli.arm64Binary(t, src)
+	return func(args ...string) *exec.Cmd { return runArm64Bin(qemu, bin, args...) }
+}
+
+// TestSelfHostExampleRgAgainstRipgrep runs the port and ripgrep 14.1.0 with
+// the same command lines on the same files. The stdout, the stderr and the
+// exit status must be the same.
+func TestSelfHostExampleRgAgainstRipgrep(t *testing.T) {
+	rgOracle(t)
+	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()
 	rgFixtures(t, dir)
+	rgTree(t, dir)
 	cases := rgCases(dir)
 	if len(cases) < 60 {
 		t.Fatalf("%d cases, fewer than 60", len(cases))
 	}
 	want := make([]rgResult, len(cases))
 	for i, c := range cases {
-		want[i] = rgRun(t, exec.Command(ripgrep, c.args...), dir, c.stdin)
+		want[i] = rgRun(t, exec.Command(ripgrep, c.args...), dir, c)
+		if c.anyOrder {
+			want[i] = want[i].sorted()
+		}
 	}
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
-			var port func(args ...string) *exec.Cmd
-			if target == "x86-64-linux" {
-				bin := cli.x86Binary(t, src)
-				port = func(args ...string) *exec.Cmd { return runX86_64Bin(cli.runner, bin, args...) }
-			} else {
-				_, qemu := arm64Tooling(t)
-				bin := cli.arm64Binary(t, src)
-				port = func(args ...string) *exec.Cmd { return runArm64Bin(qemu, bin, args...) }
-			}
+			port := rgPort(t, cli, target)
 			for i, c := range cases {
-				got := rgRun(t, port(c.args...), dir, c.stdin)
+				got := rgRun(t, port(c.args...), dir, c)
+				if c.anyOrder {
+					got = got.sorted()
+				}
 				if got != want[i] {
-					t.Errorf("rg %q, stdin %q:\ngot  exit %d, stdout %q, stderr %q\nwant exit %d, stdout %q, stderr %q",
-						c.args, c.stdin, got.code, got.stdout, got.stderr, want[i].code, want[i].stdout, want[i].stderr)
+					t.Errorf("rg %q in %q, stdin %q:\ngot  exit %d, stdout %q, stderr %q\nwant exit %d, stdout %q, stderr %q",
+						c.args, c.dir, c.stdin, got.code, got.stdout, got.stderr, want[i].code, want[i].stdout, want[i].stderr)
 				}
 			}
 			t.Logf("%d command lines give the output of ripgrep", len(cases))
 		})
 	}
+}
+
+// rgVendored is a case of ripgrep's integration tests, as
+// examples/rg/testdata/ripgrep-tests.json holds it.
+type rgVendored struct {
+	Name  string        `json:"name"`
+	Args  []string      `json:"args"`
+	Cwd   string        `json:"cwd"`
+	Stdin *rgVendorFile `json:"stdin"`
+	Setup []rgVendorOp  `json:"setup"`
+}
+
+// rgVendorFile is the content of a file: text, base64 bytes, a constant of
+// the tests, a file of testdata, or a count of NUL bytes.
+type rgVendorFile struct {
+	Text   *string `json:"text"`
+	Base64 string  `json:"base64"`
+	Const  string  `json:"const"`
+	Data   string  `json:"data"`
+	Size   int64   `json:"size"`
+}
+
+// rgVendorOp is one step of a case: make a file or a directory, remove a
+// file, or make a symbolic link to a path in the directory of the case.
+type rgVendorOp struct {
+	Op     string `json:"op"`
+	Path   string `json:"path"`
+	Target string `json:"target"`
+	rgVendorFile
+}
+
+type rgVendorSuite struct {
+	Consts   map[string]string `json:"consts"`
+	Cases    []rgVendored      `json:"cases"`
+	testdata string
+}
+
+func (s *rgVendorSuite) bytes(t *testing.T, f rgVendorFile) []byte {
+	t.Helper()
+	switch {
+	case f.Text != nil:
+		return []byte(*f.Text)
+	case f.Base64 != "":
+		b, err := base64.StdEncoding.DecodeString(f.Base64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	case f.Const != "":
+		return []byte(s.Consts[f.Const])
+	case f.Data != "":
+		b, err := os.ReadFile(filepath.Join(s.testdata, f.Data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	return make([]byte, f.Size)
+}
+
+func (s *rgVendorSuite) setup(t *testing.T, dir string, c rgVendored) {
+	t.Helper()
+	for _, op := range c.Setup {
+		path := filepath.Join(dir, op.Path)
+		var err error
+		switch op.Op {
+		case "file":
+			if err = os.MkdirAll(filepath.Dir(path), 0o755); err == nil {
+				err = os.WriteFile(path, s.bytes(t, op.rgVendorFile), 0o644)
+			}
+		case "dir":
+			err = os.MkdirAll(path, 0o755)
+		case "remove":
+			err = os.Remove(path)
+		case "symlink":
+			err = os.Symlink(filepath.Join(dir, op.Target), path)
+		default:
+			t.Fatalf("%s: unknown step %q", c.Name, op.Op)
+		}
+		if err != nil {
+			t.Fatalf("%s: %v", c.Name, err)
+		}
+	}
+}
+
+// run runs one case in a new directory. Each run gets --path-separator /
+// first, as ripgrep's harness gives it, and -j1, so that ripgrep writes the
+// files in the order of its walk. The home directory is empty, so that no
+// global gitignore applies, and the standard input is /dev/null unless the
+// case gives one.
+func (s *rgVendorSuite) run(t *testing.T, prog func(args ...string) *exec.Cmd, c rgVendored) rgResult {
+	t.Helper()
+	dir := t.TempDir()
+	home := t.TempDir()
+	s.setup(t, dir, c)
+	cmd := prog(append([]string{"--path-separator", "/", "-j1"}, c.Args...)...)
+	cmd.Dir = filepath.Join(dir, c.Cwd)
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home}
+	if c.Stdin != nil {
+		cmd.Stdin = bytes.NewReader(s.bytes(t, *c.Stdin))
+	}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	_ = cmd.Run()
+	if cmd.ProcessState == nil {
+		t.Fatalf("%s did not start: %s", cmd.Path, &stderr)
+	}
+	// The temporary directory in a message differs from run to run.
+	return rgResult{stdout.String(), strings.ReplaceAll(stderr.String(), dir, "DIR"), cmd.ProcessState.ExitCode()}
+}
+
+// TestSelfHostExampleRgVendoredCases runs the cases of the integration
+// tests of ripgrep 14.1.1 with the port and with ripgrep 14.1.0. The
+// stdout, the stderr and the exit status must be the same for exactly the
+// cases that testdata/ripgrep-pass.txt names. A named case that fails is a
+// regression, and a case that passes must be named.
+func TestSelfHostExampleRgVendoredCases(t *testing.T) {
+	rgOracle(t)
+	testdata, err := filepath.Abs("../../../examples/rg/testdata")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(testdata, "ripgrep-tests.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	suite := rgVendorSuite{testdata: testdata}
+	if err := json.Unmarshal(raw, &suite); err != nil {
+		t.Fatal(err)
+	}
+	pinned := rgPinned(t, filepath.Join(testdata, "ripgrep-pass.txt"))
+	oracle := func(args ...string) *exec.Cmd { return exec.Command(ripgrep, args...) }
+	want := make([]rgResult, len(suite.Cases))
+	for i, c := range suite.Cases {
+		want[i] = suite.run(t, oracle, c)
+	}
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			port := rgPort(t, cli, target)
+			pass := 0
+			for i, c := range suite.Cases {
+				got := suite.run(t, port, c)
+				same := got == want[i]
+				if same {
+					pass++
+				}
+				if same && !pinned[c.Name] {
+					t.Errorf("%s passes, but testdata/ripgrep-pass.txt does not name it", c.Name)
+				}
+				if !same && pinned[c.Name] {
+					t.Errorf("%s regressed: rg %q:\ngot  exit %d, stdout %q, stderr %q\nwant exit %d, stdout %q, stderr %q",
+						c.Name, c.Args, got.code, got.stdout, got.stderr, want[i].code, want[i].stdout, want[i].stderr)
+				}
+			}
+			t.Logf("%d of %d vendored cases give the output of ripgrep", pass, len(suite.Cases))
+		})
+	}
+}
+
+// rgPinned reads the names of the cases that must pass.
+func rgPinned(t *testing.T, path string) map[string]bool {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned := map[string]bool{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "#") {
+			pinned[line] = true
+		}
+	}
+	return pinned
 }

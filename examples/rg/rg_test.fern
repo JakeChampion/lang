@@ -1,41 +1,40 @@
-// The options, the pattern and the output of the rg port.
+// The options, the pattern, the ignore rules and the output of the rg port.
 import "std/test";
 import "std/regex";
+import "./flags";
+import "./ignore";
 import "./search";
 
-function mode_name(m: search.Mode): string {
-  match (m) {
-    search.Lines => {
-      return "lines";
-    },
-    search.Count => {
-      return "count";
-    },
-    search.Files => {
-      return "files";
-    }
-  }
-  return "";
+function mode_name(m: flags.Mode): string {
+  return match (m) {
+    flags.Lines => "lines",
+    flags.Count => "count",
+    flags.CountMatches => "count-matches",
+    flags.Files => "files",
+    flags.Without => "without",
+    flags.List => "list",
+    flags.TypeList => "type-list",
+  };
 }
 
-function flags(o: search.Options): string {
+function switches(o: flags.Options): string {
   let out = "";
-  if (o.ignore_case) {
+  if (o.case == 1) {
     out += "i";
   }
-  if (o.invert) {
+  if (o.has(flags.INVERT)) {
     out += "v";
   }
-  if (o.word) {
+  if (o.has(flags.WORD)) {
     out += "w";
   }
-  if (o.fixed) {
+  if (o.has(flags.FIXED)) {
     out += "F";
   }
   if (o.line_number) {
     out += "n";
   }
-  if (o.only_matching) {
+  if (o.has(flags.ONLY)) {
     out += "o";
   }
   return out;
@@ -43,9 +42,9 @@ function flags(o: search.Options): string {
 
 // The options of `args` in one line, or the error.
 function options(args: string[]): string {
-  match (search.parse(args)) {
+  match (flags.parse(args)) {
     Ok(o) => {
-      return flags(o) + " " + mode_name(o.mode) + " A" + o.after.to_string() + " B" + o.before.to_string()
+      return switches(o) + " " + mode_name(o.mode) + " A" + o.after.to_string() + " B" + o.before.to_string()
         + " C" + o.context.to_string() + " " + o.color + " H" + o.with_filename.to_string() + " j" + o.threads.to_string()
         + " [" + o.patterns.join(",") + "] [" + o.paths.join(",") + "]";
     },
@@ -123,10 +122,10 @@ function test_parse_errors(): test.TestOutcome {
 }
 
 function pattern_of(args: string[]): string {
-  let Ok(o) = search.parse(args) else {
+  let Ok(o) = flags.parse(args) else {
     return "error";
   };
-  return search.pattern(o);
+  return flags.pattern(o);
 }
 
 function test_pattern(): test.TestOutcome {
@@ -148,10 +147,10 @@ function test_pattern(): test.TestOutcome {
 
 // The context, the file names and the color that `args` give.
 function printer_of(args: string[], tty: boolean): string {
-  let Ok(o) = search.parse(args) else {
+  let Ok(o) = flags.parse(args) else {
     return "error";
   };
-  let p = search.printer(o, tty);
+  let p = search.printer(o, tty, o.paths.len() <= 1);
   return "A" + p.after.to_string() + " B" + p.before.to_string() + " names " + p.show_name.to_string() + " color " + p.color.to_string();
 }
 
@@ -175,15 +174,24 @@ function test_printer(): test.TestOutcome {
 // The output of rg with `args` on a file `a` that holds `text`, then the
 // exit status that the outcome gives.
 function run(args: string[], text: string): string {
-  let Ok(o) = search.parse(args) else {
+  return run_from(args, text, MAPPED);
+}
+
+// A file on the command line that ripgrep maps into memory.
+const MAPPED: search.Source = search.Source { mapped: true, detect: search.DETECT_CONVERT, cap: search.BUFFER };
+
+// The output of rg with `args` on a file `a` that holds `text` and that
+// ripgrep reads from `src`, then the exit status.
+function run_from(args: string[], text: string, src: search.Source): string {
+  let Ok(o) = flags.parse(args) else {
     return "error";
   };
-  let Ok(re) = regex.compile(search.pattern(o)) else {
+  let Ok(re) = regex.compile(flags.pattern(o)) else {
     return "bad pattern";
   };
-  let p = search.printer(o, false);
+  let p = search.printer(o, false, o.paths.len() <= 1);
   let h = buf_new(256);
-  let first = search.search(p, re, text, "a", h, false);
+  let first = search.search(p, re, text, "a", src, h, false);
   let out = buf_take(h);
   buf_free(h);
   if (first.matched) {
@@ -256,17 +264,17 @@ function test_context(): test.TestOutcome {
 }
 
 function test_separator_between_files(): test.TestOutcome {
-  let Ok(o) = search.parse(["-A1", "foo", "a", "b"]) else {
+  let Ok(o) = flags.parse(["-A1", "foo", "a", "b"]) else {
     return test.fail("parse");
   };
-  let Ok(re) = regex.compile(search.pattern(o)) else {
+  let Ok(re) = regex.compile(flags.pattern(o)) else {
     return test.fail("bad pattern");
   };
-  let p = search.printer(o, false);
+  let p = search.printer(o, false, false);
   let h = buf_new(256);
-  let first = search.search(p, re, "x\n", "a", h, false);
-  let second = search.search(p, re, "foo\nbar\n", "b", h, first.written);
-  let third = search.search(p, re, "foo\n", "c", h, second.written);
+  let first = search.search(p, re, "x\n", "a", MAPPED, h, false);
+  let second = search.search(p, re, "foo\nbar\n", "b", MAPPED, h, first.written);
+  let third = search.search(p, re, "foo\n", "c", MAPPED, h, second.written);
   let out = buf_take(h);
   buf_free(h);
   return test.assert_true(!first.matched && second.matched && third.written && out == "b:foo\nb-bar\n--\nc:foo\n");
@@ -304,8 +312,330 @@ function test_binary(): test.TestOutcome {
   ]);
 }
 
+// The walk options of `args` in one line, or the error.
+function walk_options(args: string[]): string {
+  match (flags.parse(args)) {
+    Ok(o) => {
+      let bits = "";
+      for b in 0..21 {
+        bits += if (o.has(b)) { "1" } else { "0" };
+      }
+      return f"{mode_name(o.mode)} {bits} case{o.case} m{o.max_count} d{o.max_depth} u{o.unrestricted} bin{o.binary} mmap{o.mmap} head{o.heading} sort[{o.sort}{if (o.sort_reverse) { "r" } else { "" }}] sep[{o.path_separator}] g[{o.globs.join(",")}] ig[{o.iglobs.join(",")}] t[{o.types.join(",")}] f[{o.ignore_files.join(",")}] p[{o.patterns.join(",")}] [{o.paths.join(",")}]";
+    },
+    Err(why) => {
+      return "error: " + why;
+    }
+  }
+  return "";
+}
+
+function test_parse_walk(): test.TestOutcome {
+  let got = [
+    walk_options(["--hidden", "-L", "x"]),
+    walk_options(["-uuu", "x"]),
+    walk_options(["--no-ignore", "--ignore-vcs", "x"]),
+    walk_options(["-g", "*.rs", "--glob=!t/**", "--iglob", "*.C", "-tRust", "-T", "c", "--type-add", "a:*.a", "--type-clear", "b", "x"]),
+    walk_options(["--sort", "path", "--sortr=modified", "-m1", "-d", "2", "x"]),
+    walk_options(["--sort-files", "--maxdepth", "3", "--sort", "none", "x"]),
+    walk_options(["--files", "--null", "-q", "-x", "dir"]),
+    walk_options(["--files-without-match", "--heading", "--no-heading", "--mmap", "--no-mmap", "x"]),
+    walk_options(["-a", "--binary", "--path-separator", "\\", "--ignore-file", "i", "-S", "x"]),
+    walk_options(["--type-list"]),
+    walk_options(["--count-matches", "-v", "x"]),
+    walk_options(["-c", "-o", "x"]),
+  ];
+  return test.assert_eq_array(got, [
+    "lines 000011000000000000000 case0 m-1 d-1 u0 bin0 mmap-1 head-1 sort[] sep[] g[] ig[] t[] f[] p[x] []",
+    "lines 000010111110000000000 case0 m-1 d-1 u3 bin1 mmap-1 head-1 sort[] sep[] g[] ig[] t[] f[] p[x] []",
+    "lines 000000101110000000000 case0 m-1 d-1 u0 bin0 mmap-1 head-1 sort[] sep[] g[] ig[] t[] f[] p[x] []",
+    "lines 000000000000000000000 case0 m-1 d-1 u0 bin0 mmap-1 head-1 sort[] sep[] g[*.rs,!t/**] ig[*.C] t[+Rust,-c,add:a:*.a,clear:b] f[] p[x] []",
+    "lines 000000000000000000000 case0 m1 d2 u0 bin0 mmap-1 head-1 sort[modifiedr] sep[] g[] ig[] t[] f[] p[x] []",
+    "lines 000000000000000000000 case0 m-1 d3 u0 bin0 mmap-1 head-1 sort[] sep[] g[] ig[] t[] f[] p[x] []",
+    "list 000000000000011100000 case0 m-1 d-1 u0 bin0 mmap-1 head-1 sort[] sep[] g[] ig[] t[] f[] p[] [dir]",
+    "without 000000000000000000000 case0 m-1 d-1 u0 bin0 mmap0 head0 sort[] sep[] g[] ig[] t[] f[] p[x] []",
+    "lines 000000000000000000000 case2 m-1 d-1 u0 bin1 mmap-1 head-1 sort[] sep[\\] g[] ig[] t[] f[i] p[x] []",
+    "type-list 000000000000000000000 case0 m-1 d-1 u0 bin0 mmap-1 head-1 sort[] sep[] g[] ig[] t[] f[] p[] []",
+    "count 100000000000000000000 case0 m-1 d-1 u0 bin0 mmap-1 head-1 sort[] sep[] g[] ig[] t[] f[] p[x] []",
+    "count-matches 000100000000000000000 case0 m-1 d-1 u0 bin0 mmap-1 head-1 sort[] sep[] g[] ig[] t[] f[] p[x] []",
+  ]);
+}
+
+function test_parse_walk_errors(): test.TestOutcome {
+  let got = [
+    walk_options(["-uuuu", "x"]),
+    walk_options(["--sort", "size", "x"]),
+    walk_options(["--sortr"]),
+    walk_options(["--path-separator", "ab", "x"]),
+    walk_options(["-m", "x", "y"]),
+    walk_options(["--hidden=1", "x"]),
+    walk_options(["--max-depth=-1", "x"]),
+  ];
+  return test.assert_eq_array(got, [
+    "error: error parsing flag -u: flag can only be repeated up to 3 times",
+    "error: error parsing flag --sort: choice 'size' is unrecognized",
+    "error: missing value for flag --sortr: missing argument for option '--sortr'",
+    "error: error parsing flag --path-separator: A path separator must be exactly one byte, but the given separator is 2 bytes: ab\nIn some shells on Windows '/' is automatically expanded. Use '//' instead.",
+    "error: error parsing flag -m: value is not a valid number: invalid digit found in string",
+    "error: invalid CLI arguments: unexpected argument for option '--hidden': \"1\"",
+    "error: error parsing flag --max-depth: value is not a valid number: invalid digit found in string",
+  ]);
+}
+
+function test_smart_case(): test.TestOutcome {
+  let got = [
+    pattern_of(["-S", "foo"]),
+    pattern_of(["-S", "Foo"]),
+    pattern_of(["-S", "\\Wfoo"]),
+    pattern_of(["-S", "-e", "a", "-e", "B"]),
+    pattern_of(["-S", "-i", "Foo"]),
+    pattern_of(["-x", "a|b"]),
+  ];
+  return test.assert_eq_array(got, ["(?i)foo", "Foo", "(?i)\\Wfoo", "(?:a)|(?:B)", "(?i)Foo", "^(?:a|b)$"]);
+}
+
+// The answers of the rules of `text`, from the root `root`, for each path.
+// A path that ends with `/` is a directory.
+function answers(root: string, text: string, paths: string[]): string {
+  let l = ignore.parse(root, text, false, "gi");
+  let out = "";
+  for p in paths {
+    let dir = p.ends_with("/");
+    let path = if (dir) { slice_unchecked(p, 0, p.len() - 1).to_owned() } else { p };
+    out += ["-", "I", "K"][l.m.matched(path, dir)];
+  }
+  return out + " " + l.errors.join(";");
+}
+
+function test_gitignore(): test.TestOutcome {
+  let got = [
+    answers("./", "*.log\n!keep.log\n", ["a.log", "keep.log", "d/a.log", "a.txt"]),
+    answers("./", "/build/\n", ["build/", "build", "src/build/", "build/x"]),
+    answers("./", "doc/*.txt\n", ["doc/a.txt", "doc/x/a.txt", "x/doc/a.txt"]),
+    answers("./", "**/foo\nbar/**\n", ["foo", "x/y/foo", "bar", "bar/a", "bar/a/b"]),
+    answers("./", "\\#x\n\\!y\n# z\n#w\n", ["#x", "!y", "# z", "#w"]),
+    answers("./", "a  \nb\\ \n", ["a", "b ", "b"]),
+    answers("sub", "x/y\n", ["sub/x/y", "x/y", "subx/y"]),
+    answers("./", "a[\nok\n{b\n", ["ok", "a["]),
+    answers("./", "\u{FEFF}bom\r\ncr\r\n", ["bom", "cr"]),
+  ];
+  return test.assert_eq_array(got, [
+    "IKI- ",
+    "I--- ",
+    "I-- ",
+    "II-II ",
+    "II-- ",
+    "II- ",
+    "III ",
+    "I- gi: line 1: error parsing glob 'a[': unclosed character class; missing ']';gi: line 3: error parsing glob '{b': unclosed alternate group; missing '}' (maybe escape '{' with '[{]'?)",
+    "II ",
+  ]);
+}
+
+function test_overrides(): test.TestOutcome {
+  let Ok(keep) = ignore.overrides("/w", ["*.rs", "!t/**"], ["*.C"], false) else {
+    return test.fail("globs");
+  };
+  let Ok(skip) = ignore.overrides("/w", ["!*.rs"], [], false) else {
+    return test.fail("negated globs");
+  };
+  let got = [
+    keep.override("src/a.rs", false),
+    keep.override("t/a.rs", false),
+    keep.override("a.c", false),
+    keep.override("b.txt", false),
+    keep.override("src", true),
+    skip.override("a.rs", false),
+    skip.override("a.txt", false),
+  ];
+  let bad = match (ignore.overrides("/w", ["["], [], false)) {
+    Ok(_) => "",
+    Err(why) => why,
+  };
+  return test.assert_true(got == [ignore.KEEP, ignore.IGNORE, ignore.KEEP, ignore.IGNORE, ignore.NONE, ignore.IGNORE, ignore.NONE]
+    && bad == "error parsing glob '[': unclosed character class; missing ']'");
+}
+
+function type_answers(changes: string[], paths: string[]): string {
+  match (ignore.build_types(changes)) {
+    Ok(t) => {
+      let out = "";
+      for p in paths {
+        out += ["-", "I", "K"][t.matched(p, false)];
+      }
+      return out;
+    },
+    Err(why) => {
+      return why;
+    }
+  }
+  return "";
+}
+
+function test_types(): test.TestOutcome {
+  let Ok(all) = ignore.build_types([]) else {
+    return test.fail("defaults");
+  };
+  let rust: string[] = [];
+  for line in all.listing() {
+    if (line.starts_with("rust:")) {
+      rust = rust.append(line);
+    }
+  }
+  let got = [
+    type_answers(["+rust"], ["src/a.rs", "a.c", "Makefile"]),
+    type_answers(["-rust"], ["src/a.rs", "a.c"]),
+    type_answers(["+c", "-c"], ["a.c", "a.h"]),
+    type_answers(["+make", "+c"], ["Makefile", "x/GNUmakefile", "a.c", "a.rs"]),
+    type_answers(["add:foo:*.foo", "+foo"], ["a.foo", "a.bar"]),
+    type_answers(["add:foo:*.foo", "add:both:include:foo,rust", "+both"], ["a.foo", "a.rs", "a.c"]),
+    type_answers(["clear:rust", "+rust"], ["a.rs"]),
+    type_answers(["+nosuch"], ["a"]),
+    type_answers(["add:foo"], ["a"]),
+    type_answers(["add:all:*.x"], ["a"]),
+    type_answers(["add:x:include:nosuch"], ["a"]),
+  ];
+  return test.assert_eq_array(rust.concat(got), [
+    "rust: *.rs", "KII", "I-", "II", "KKKI", "KI", "KKI",
+    "unrecognized file type: rust", "unrecognized file type: nosuch",
+    "invalid definition (format is type:glob, e.g., html:*.html)",
+    "invalid definition (format is type:glob, e.g., html:*.html)",
+    "invalid definition (format is type:glob, e.g., html:*.html)",
+  ]);
+}
+
+// A level of the directory `dir` with the rules of three ignore files.
+function level_of(dir: string, custom: string, dot: string, git: string, has_git: boolean): ignore.Level {
+  return ignore.Level {
+    dir: dir, custom: ignore.parse(dir, custom, false, "r").m, dot: ignore.parse(dir, dot, false, "d").m,
+    git: ignore.parse(dir, git, false, "g").m, exclude: ignore.empty(dir), has_git: has_git, absolute: false,
+  };
+}
+
+function walk_config(require_git: boolean, skip_hidden: boolean): ignore.Config {
+  let none = ignore.empty("/w");
+  let types = match (ignore.build_types([])) {
+    Ok(t) => t,
+    Err(_) => {
+      return walk_config(require_git, skip_hidden);
+    },
+  };
+  let explicit: ignore.Matcher[] = [];
+  return ignore.Config {
+    skip_hidden: skip_hidden, dot: true, vcs: true, exclude: true, global: true, parents: true,
+    require_git: require_git, ci: false, overrides: none, types: types, explicit: explicit, global_rules: ignore.empty(""),
+  };
+}
+
+// The precedence of the ignore files: .rgignore over .ignore over
+// .gitignore, an inner directory over an outer one, and .gitignore only in
+// a git repository and not above its root.
+function test_precedence(): test.TestOutcome {
+  let outer = level_of("./", "", "", "*.a\n*.c\n", true);
+  let inner = level_of("./sub", "!x.b\n", "*.b\n!y.a\n", "!*.c\n", false);
+  let stack = ignore.Stack { levels: [outer, inner], base: "" };
+  let cfg = walk_config(true, true);
+  let got = [
+    ignore.verdict(stack, cfg, "./sub/z.a", false),
+    ignore.verdict(stack, cfg, "./sub/y.a", false),
+    ignore.verdict(stack, cfg, "./sub/z.b", false),
+    ignore.verdict(stack, cfg, "./sub/x.b", false),
+    ignore.verdict(stack, cfg, "./sub/z.c", false),
+    ignore.verdict(stack, cfg, "./sub/.h", false),
+    ignore.verdict(stack, walk_config(true, false), "./sub/.h", false),
+  ];
+  let repo = ignore.Stack { levels: [level_of("./", "", "", "*.a\n", false), level_of("./sub", "", "", "", true)], base: "" };
+  let plain = ignore.Stack { levels: [level_of("./", "", "", "*.a\n", false), level_of("./sub", "", "", "", false)], base: "" };
+  let git = [
+    ignore.verdict(repo, cfg, "./sub/z.a", false),
+    ignore.verdict(plain, cfg, "./sub/z.a", false),
+    ignore.verdict(plain, walk_config(false, true), "./sub/z.a", false),
+    ignore.verdict(ignore.Stack { levels: [outer], base: "" }, cfg, "./.y.a", false),
+  ];
+  return test.assert_eq_array(got.concat(git), [
+    ignore.IGNORE, ignore.KEEP, ignore.IGNORE, ignore.KEEP, ignore.KEEP, ignore.IGNORE, ignore.NONE,
+    ignore.NONE, ignore.NONE, ignore.IGNORE, ignore.IGNORE,
+  ]);
+}
+
+function test_max_count(): test.TestOutcome {
+  let text = "a1\na2\nb\na3\nc\nd\n";
+  let got = [
+    run(["-n", "-m1", "-A2", "a", "a"], text),
+    run(["-n", "-m2", "-A3", "a", "a"], text),
+    run(["-m1", "-c", "a", "a"], text),
+    run(["-m1", "-v", "a", "a"], text),
+    run(["-m2", "-l", "a", "a"], text),
+  ];
+  return test.assert_eq_array(got, ["1:a1\n2:a2\n3-b\n0", "1:a1\n2:a2\n3-b\n4:a3\n5-c\n0", "1\n0", "b\n0", "a\n0"]);
+}
+
+function test_heading_and_null(): test.TestOutcome {
+  let text = "foo\nbar\nfoo\n";
+  let got = [
+    run(["--heading", "-n", "foo", "a", "b"], text),
+    run(["--heading", "foo", "a"], text),
+    run(["--null", "-n", "foo", "a", "b"], text),
+    run(["--null", "--heading", "foo", "a", "b"], text),
+    run(["--null", "-l", "foo", "a", "b"], text),
+    run(["--null", "-c", "foo", "a", "b"], text),
+    run(["--files-without-match", "zzz", "a", "b"], text),
+    run(["--files-without-match", "foo", "a", "b"], text),
+    run(["-q", "foo", "a"], text),
+    run(["--path-separator", "\\", "-c", "foo", "a", "b"], text),
+  ];
+  return test.assert_eq_array(got, [
+    "a\n1:foo\n3:foo\n0", "foo\nfoo\n0", "a\x001:foo\na\x003:foo\n0", "a\x00foo\nfoo\n0", "a\x000", "a\x002\n0",
+    "a\n0", "1", "0", "a:2\n0",
+  ]);
+}
+
+// A text of more than 64 KiB with a NUL byte after the first buffer.
+function late_nul(): string {
+  let text = "foo first\n";
+  while (text.len() < 70000) {
+    text += "filler line of text\n";
+  }
+  return text + "a\x00b\nfoo last\n";
+}
+
+function test_binary_buffers(): test.TestOutcome {
+  let text = late_nul();
+  let read = search.Source { mapped: false, detect: search.DETECT_CONVERT, cap: search.BUFFER };
+  let walked = search.Source { mapped: false, detect: search.DETECT_QUIT, cap: search.BUFFER };
+  let grown = search.Source { ...walked, cap: search.BUFFER * 3 };
+  let got = [
+    run(["foo", "a"], text),
+    run_from(["foo", "a"], text, read),
+    run_from(["foo", "a"], text, walked),
+    run_from(["-c", "foo", "a"], text, walked),
+    run_from(["-l", "foo", "a"], text, walked),
+    run_from(["foo", "a"], text, grown),
+    run_from(["-c", "foo", "a"], text, read),
+  ];
+  let at = (text.len() - 12).to_string();
+  return test.assert_eq_array(got, [
+    "foo first\nfoo last\n0",
+    "foo first\nbinary file matches (found \"\\0\" byte around offset " + at + ")\n0",
+    "foo first\nWARNING: stopped searching binary file after match (found \"\\0\" byte around offset " + at + ")\n0",
+    "1",
+    "a\n0",
+    "1",
+    "2\n0",
+  ]);
+}
+
 function main(): i32 {
   let r = test.new("rg");
+  r = r.it("parse walk flags", test_parse_walk);
+  r = r.it("parse walk flag errors", test_parse_walk_errors);
+  r = r.it("smart case and line regexp", test_smart_case);
+  r = r.it("gitignore rules", test_gitignore);
+  r = r.it("globs", test_overrides);
+  r = r.it("types", test_types);
+  r = r.it("ignore precedence", test_precedence);
+  r = r.it("max count", test_max_count);
+  r = r.it("heading and null", test_heading_and_null);
+  r = r.it("binary buffers", test_binary_buffers);
   r = r.it("parse", test_parse);
   r = r.it("parse errors", test_parse_errors);
   r = r.it("pattern", test_pattern);

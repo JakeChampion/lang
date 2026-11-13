@@ -1,0 +1,185 @@
+// The directory walk of the rg port: the files that ripgrep 14.1.0 searches
+// for the paths of a command line, in its order with one thread.
+import "core/cmp";
+import "./ignore";
+
+// One item of a walk: a file to search, or a message. An error message
+// makes the exit status 2.
+pub struct Item { path: string, explicit: boolean, message: string, error: boolean }
+
+// The settings of a walk. `threads` decides the form of an error message.
+// `stdout_ino` and `stdout_dev` name the file that the standard output
+// writes to, which the walk skips (0 for none).
+pub struct Walk {
+  cfg: ignore.Config,
+  follow: boolean,
+  max_depth: i32,
+  sorted: boolean,
+  threads: i32,
+  stdout_ino: i64,
+  stdout_dev: i64,
+}
+
+// The kinds of DirEntry.kind: the file type bits of st_mode, or 0 when
+// readdir does not know the type.
+const DT_UNKNOWN: u32 = 0;
+
+const DT_DIR: u32 = 0o040000u32;
+
+const DT_REG: u32 = 0o100000u32;
+
+const DT_LNK: u32 = 0o120000u32;
+
+function file(path: string, explicit: boolean): Item {
+  return Item { path: path, explicit: explicit, message: "", error: false };
+}
+
+function message(text: string, error: boolean): Item {
+  return Item { path: "", explicit: false, message: text, error: error };
+}
+
+// The message for a path that the walk cannot read. With one thread,
+// ripgrep's walk names the operation.
+pub function io_message(w: Walk, path: string, e: IoError): string {
+  if (w.threads == 1) {
+    return path + ": IO error for operation on " + path + ": " + ignore.os_error(e);
+  }
+  return path + ": " + ignore.os_error(e);
+}
+
+// The kind of an entry: DT_DIR, DT_REG, or another kind. An unknown kind
+// comes from lstat.
+function kind_of(path: string, e: DirEntry): u32 {
+  if (e.kind != DT_UNKNOWN) {
+    return e.kind;
+  }
+  let Ok(st) = lstat(path) else {
+    return DT_UNKNOWN;
+  };
+  if (st.is_dir) {
+    return DT_DIR;
+  }
+  if (st.is_file) {
+    return DT_REG;
+  }
+  return st.mode & 0o170000u32;
+}
+
+// Whether `path` is the file of the standard output.
+function is_stdout(w: Walk, path: string, ino: i64): boolean {
+  if (w.stdout_ino == 0i64 || ino != w.stdout_ino) {
+    return false;
+  }
+  let Ok(st) = stat(path) else {
+    return false;
+  };
+  return st.dev == w.stdout_dev;
+}
+
+// The entries of `dir`, by name with --sort path.
+function entries(w: Walk, dir: string): Result[DirEntry[], IoError] {
+  let list = read_dir_ino(dir)?;
+  if (w.sorted) {
+    return Ok(cmp.sort_by_key(list, (e: DirEntry): string => e.name));
+  }
+  return Ok(list);
+}
+
+// The kind of the target of a link for -L, or an error message.
+function follow_kind(w: Walk, path: string): Result[u32, string] {
+  match (stat(path)) {
+    Ok(st) => {
+      if (st.is_dir) {
+        return Ok(DT_DIR);
+      }
+      return Ok(if (st.is_file) { DT_REG } else { DT_UNKNOWN });
+    },
+    Err(e) => {
+      return Err(io_message(w, path, e));
+    }
+  }
+  return Ok(DT_UNKNOWN);
+}
+
+// The kind of an entry, with -L the kind of the target of a link.
+function resolved_kind(w: Walk, path: string, e: DirEntry): Result[u32, string] {
+  let kind = kind_of(path, e);
+  if (kind == DT_LNK && w.follow) {
+    return follow_kind(w, path);
+  }
+  return Ok(kind);
+}
+
+// Adds the items of one entry of a directory at `depth`.
+function entry(w: Walk, dir: string, e: DirEntry, stack: ignore.Stack, depth: i32, own items: Item[]): Item[] {
+  if (w.max_depth >= 0 && depth > w.max_depth) {
+    return items;
+  }
+  let path = ignore.join(dir, e.name);
+  let kind = match (resolved_kind(w, path, e)) {
+    Ok(k) => k,
+    Err(why) => {
+      return items.append(message(why, true));
+    },
+  };
+  let is_dir = kind == DT_DIR;
+  if (ignore.verdict(stack, w.cfg, path, is_dir) == ignore.IGNORE) {
+    return items;
+  }
+  if (is_dir) {
+    return directory(w, path, stack, depth + 1, items);
+  }
+  if (kind == DT_REG && !is_stdout(w, path, e.ino)) {
+    return items.append(file(path, false));
+  }
+  return items;
+}
+
+// Adds the items of the directory `dir`, whose entries are at `depth`.
+function directory(w: Walk, dir: string, parent: ignore.Stack, depth: i32, own items: Item[]): Item[] {
+  let (l, why) = ignore.level(w.cfg, dir, false);
+  if (why != "") {
+    items = items.append(message(why, false));
+  }
+  let stack = parent.push(l);
+  match (entries(w, dir)) {
+    Ok(list) => {
+      for e in list {
+        items = entry(w, dir, e, stack, depth, items);
+      }
+    },
+    Err(err) => {
+      items = items.append(message(io_message(w, dir, err), true));
+    }
+  }
+  return items;
+}
+
+// The items of a walk of `roots` in order. A root that is not a directory
+// is searched whatever the ignore rules say.
+pub function walk(w: Walk, roots: string[]): Item[] {
+  let items: Item[] = [];
+  for root in roots {
+    if (root == "-") {
+      items = items.append(file(root, true));
+      continue;
+    }
+    match (stat(root)) {
+      Ok(st) => {
+        if (!st.is_dir) {
+          items = items.append(file(root, true));
+          continue;
+        }
+        let (stack, why) = ignore.parents(w.cfg, root);
+        if (why != "") {
+          items = items.append(message(why, true));
+        }
+        items = directory(w, root, stack, 1, items);
+      },
+      Err(e) => {
+        items = items.append(message(io_message(w, root, e), true));
+      }
+    }
+  }
+  return items;
+}
