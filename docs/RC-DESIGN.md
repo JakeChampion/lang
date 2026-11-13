@@ -509,6 +509,11 @@ pointer that flows through the program points past the header.
   carries its bytes behind the same block, and a grown one (the
   self-append's fallback, `__fern_str_grow_fresh`) records the block's
   capacity in the word ahead of its count and is freed at that capacity.
+- `string_from_bytes_unchecked` consumes its byte array. A unique array
+  becomes the string in its own block, with no allocation. It is a fused
+  string when its capacity is its length. Otherwise it is a grown string, and
+  its bytes move up one word. On wasm32 the bytes move down four bytes, and
+  the block keeps its size. A shared or immortal array is copied.
 - The count word is a signed 32-bit integer. A count below zero marks an
   **immortal** box (a literal, a static empty array, a `.rodata` closure
   cell): every retain, release and uniqueness test skips it, so a reuse never

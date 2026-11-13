@@ -3642,21 +3642,6 @@ function qualified_binding(c: ast.ExprCall, contract: ssasem.Contract, head: str
 }
 
 function free_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, statement: boolean, expected: typeinfo.Type): Value {
-  // The fresh byte copy has no other reader. This pass constructs the string directly from the borrowed source.
-  if (name == "string_from_bytes_unchecked" && c.args.len() == 1
-    && !util.has_str(s.shadows, name) && !util.has_str(s.shadows, "__bytes_owned")) {
-    if let ast.ExprCall(copy) = c.args[0] {
-      if let ast.ExprIdent(id) = copy.callee {
-        if (id.name == "__bytes_owned" && copy.args.len() == 1 && lookup(s, id.name) < 0) {
-          let contract: ssasem.Contract = ssasem.Contract {
-            name: ssabytes.string_name(), params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: true }],
-            modes: [ssaunits.borrow_mode()], result: typeinfo.t_string(),
-          };
-          return invoke(copy.args, contract, s, ssasem.unbound(), ssasem.unbound());
-        }
-      }
-    }
-  }
   if (is_slice_call(name, c)) {
     return string_slice(c, s);
   }
@@ -7971,6 +7956,10 @@ function aes_gcm_contracts(): ssasem.Contract[] {
       name: "__chacha20_xor_into", params: [view, view, bytes, typeinfo.t_i32(), typeinfo.t_i32()],
       modes: [b, b, ssaunits.counted_mode(), ssaunits.value_mode(), ssaunits.value_mode()], result: bytes,
     },
+    ssasem.Contract {
+      name: "__poly1305_blocks", params: [bytes, view, typeinfo.t_i32(), typeinfo.t_i32()],
+      modes: [ssaunits.counted_mode(), b, ssaunits.value_mode(), ssaunits.value_mode()], result: bytes,
+    },
   ];
 }
 
@@ -8112,7 +8101,7 @@ function string_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__memchr", params: [typeinfo.t_string(), typeinfo.t_i32(), typeinfo.t_i32()], modes: [ssaunits.borrow_mode(), ssaunits.value_mode(), ssaunits.value_mode()], result: typeinfo.t_i32() },
     ssasem.Contract { name: "write", params: [typeinfo.t_string()], modes: writer, result: typeinfo.t_void() },
     ssasem.Contract { name: "exit", params: [typeinfo.t_i32()], modes: [ssaunits.value_mode()], result: typeinfo.t_void() },
-    ssasem.Contract { name: "string_from_bytes_unchecked", params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }], modes: writer, result: typeinfo.t_string() },
+    ssasem.Contract { name: "string_from_bytes_unchecked", params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }], modes: [ssaunits.counted_mode()], result: typeinfo.t_string() },
     ssasem.Contract { name: "string_from_bytes_range_unchecked", params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }, typeinfo.t_i32(), typeinfo.t_i32()], modes: [ssaunits.borrow_mode(), ssaunits.value_mode(), ssaunits.value_mode()], result: typeinfo.t_string() },
     ssasem.Contract { name: "f64_bits", params: [typeinfo.t_f64()], modes: [ssaunits.value_mode()], result: typeinfo.t_i64() },
     ssasem.Contract { name: "f64_from_bits", params: [typeinfo.t_i64()], modes: [ssaunits.value_mode()], result: typeinfo.t_f64() },
