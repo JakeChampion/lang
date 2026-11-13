@@ -3115,8 +3115,12 @@ function lend(v: Value, param: typeinfo.Type, m: i32, kept: boolean): Value {
   return define(empty.s, ssa.BINARY, [v.id, empty.id], 0, "+", param);
 }
 
-// True if the callee can hand back its parameter `at` in its result.
+// True if the callee can keep its parameter `at`: in its result, or stored
+// where it outlives the call.
 function keeps(s: State, contract: ssasem.Contract, at: i32): boolean {
+  if ((s.handers.stored_mask(contract.name) & param_bit(at)) != 0) {
+    return true;
+  }
   // A scalar result cannot contain a borrowed string. Method names alone
   // can mark an unrelated scalar reader as a function that returns a borrow.
   let t = contract.result;
@@ -7020,7 +7024,9 @@ function method_name_of(key: string): string {
 // of `masks[i]` is parameter `p` of the declaration `keys.names[i]`, and the
 // receiver is parameter 0. `method_masks` joins the declarations that have
 // one method name.
-pub struct Handers { keys: util.NameIndex, masks: i64[], methods: util.NameIndex, method_masks: i64[] }
+// masks: the parameters that a result can hold. stored: the parameters that
+// a body can store where they outlive the call, as in a cell or a closure.
+pub struct Handers { keys: util.NameIndex, masks: i64[], stored: i64[], methods: util.NameIndex, method_masks: i64[], method_stored: i64[] }
 
 // Each parameter after the 62nd has the bit of the 62nd.
 function param_bit(at: i32): i64 {
@@ -7043,25 +7049,36 @@ function (h: Handers) mask(key: string): i64 {
   return h.masks[at];
 }
 
-function handers_with(h: Handers, key: string, mask: i64): Handers {
+function (h: Handers) stored_mask(key: string): i64 {
+  let at = h.keys.find(key);
+  if (at < 0) {
+    return 0;
+  }
+  return h.stored[at];
+}
+
+function handers_with(h: Handers, key: string, mask: i64, kept: i64): Handers {
   let keys = h.keys;
   let masks = h.masks;
+  let stored = h.stored;
   let at = keys.find(key);
   if (at < 0) {
     keys = keys.added(key);
     masks = masks.append(mask);
+    stored = stored.append(kept);
   } else {
     masks = masks.with(at, masks[at] | mask);
+    stored = stored.with(at, stored[at] | kept);
   }
   let m = method_name_of(key);
   if (m.len() == 0) {
-    return Handers { ...h, keys: keys, masks: masks };
+    return Handers { ...h, keys: keys, masks: masks, stored: stored };
   }
   let mat = h.methods.find(m);
   if (mat < 0) {
-    return Handers { keys: keys, masks: masks, methods: h.methods.added(m), method_masks: h.method_masks.append(mask) };
+    return Handers { keys: keys, masks: masks, stored: stored, methods: h.methods.added(m), method_masks: h.method_masks.append(mask), method_stored: h.method_stored.append(kept) };
   }
-  return Handers { keys: keys, masks: masks, methods: h.methods, method_masks: h.method_masks.with(mat, h.method_masks[mat] | mask) };
+  return Handers { keys: keys, masks: masks, stored: stored, methods: h.methods, method_masks: h.method_masks.with(mat, h.method_masks[mat] | mask), method_stored: h.method_stored.with(mat, h.method_stored[mat] | kept) };
 }
 
 function return_exprs(st: ast.Stmt, own acc: ast.Expr[]): ast.Expr[] {
@@ -7125,7 +7142,11 @@ function reach(e: ast.Expr, c: Carried, known: Handers): i64 {
 // back. A call through a field can be a method, whose first argument is
 // parameter 1, or a function of a module, whose first argument is parameter 0.
 function reach_call(call: ast.ExprCall, c: Carried, known: Handers): i64 {
-  let kept = kept_params(call, known);
+  return reach_args(call, kept_params(call, known), c, known);
+}
+
+// The parameters that the arguments of call in the positions of kept can hold.
+function reach_args(call: ast.ExprCall, kept: i64, c: Carried, known: Handers): i64 {
   if (kept == 0) {
     return 0;
   }
@@ -7156,7 +7177,7 @@ function stores_argument(name: string): boolean {
   if (name[0] >= b'A' && name[0] <= b'Z') {
     return true;
   }
-  return name == "append" || name == "with" || name == "insert" || name == "cell_new";
+  return name == "append" || name == "with" || name == "insert" || name == "cell_new" || parser.mkclo_body(name).len() > 0;
 }
 
 function kept_params(c: ast.ExprCall, known: Handers): i64 {
@@ -7178,6 +7199,34 @@ function kept_params(c: ast.ExprCall, known: Handers): i64 {
   return 0;
 }
 
+// The parameters of the callee of c that it can store where they outlive the
+// call. A cell's set stores its argument.
+function stored_params(c: ast.ExprCall, known: Handers): i64 {
+  if let ast.ExprIdent(id) = c.callee {
+    if (stores_argument(id.name)) {
+      return every_param();
+    }
+    return known.stored_mask(id.name);
+  }
+  if let ast.ExprFieldAccess(fa) = c.callee {
+    if (stores_argument(fa.field) || fa.field == "set") {
+      return every_param();
+    }
+    let at = known.methods.find(fa.field);
+    if (at >= 0) {
+      return known.method_stored[at];
+    }
+  }
+  return 0;
+}
+
+function call_exprs(e: ast.Expr, own acc: ast.ExprCall[]): ast.ExprCall[] {
+  if let ast.ExprCall(call) = e {
+    return acc.append(call);
+  }
+  return acc;
+}
+
 struct Bound { name: string, value: ast.Expr }
 
 function bound_exprs(st: ast.Stmt, own acc: Bound[]): Bound[] {
@@ -7190,8 +7239,9 @@ function bound_exprs(st: ast.Stmt, own acc: Bound[]): Bound[] {
   return acc;
 }
 
-// The parameters of `fd` that its result can hold.
-function hands_back(fd: parser.FuncDecl, known: Handers): i64 {
+// The parameters of `fd` that its result can hold, and those that its body
+// can store where they outlive the call.
+function hands_back(fd: parser.FuncDecl, known: Handers): (i64, i64) {
   let names = decl_param_names(fd);
   let sets: i64[] = [];
   for i in 0..names.len() {
@@ -7200,9 +7250,11 @@ function hands_back(fd: parser.FuncDecl, known: Handers): i64 {
   let c = Carried { names: names, sets: sets };
   let binds: Bound[] = [];
   let outs: ast.Expr[] = [];
+  let calls: ast.ExprCall[] = [];
   for st in fd.body {
     binds = astwalk.fold_stmt_spine(st, binds, bound_exprs);
     outs = astwalk.fold_stmt_spine(st, outs, return_exprs);
+    calls = astwalk.fold_stmt(st, calls, call_exprs);
   }
   let grew = true;
   while (grew) {
@@ -7219,21 +7271,26 @@ function hands_back(fd: parser.FuncDecl, known: Handers): i64 {
       }
     }
   }
-  return reach_all(outs, c, known);
+  let stored: i64 = 0;
+  for call in calls {
+    stored = stored | reach_args(call, stored_params(call, known), c, known);
+  }
+  return (reach_all(outs, c, known), stored);
 }
 
 function handers(mod: parser.Module): Handers {
   let none: string[] = [];
-  let found = Handers { keys: util.name_index(none), masks: [], methods: util.name_index(none), method_masks: [] };
+  let found = Handers { keys: util.name_index(none), masks: [], stored: [], methods: util.name_index(none), method_masks: [], method_stored: [] };
   let changed = true;
   while (changed) {
     changed = false;
     for fd in mod.funcs {
       let key = parser.decl_key(fd);
       let have = found.mask(key);
+      let had = found.stored_mask(key);
       let held = hands_back(fd, found);
-      if ((have | held) != have) {
-        found = handers_with(found, key, held);
+      if ((have | held.0) != have || (had | held.1) != had) {
+        found = handers_with(found, key, held.0, held.1);
         changed = true;
       }
     }

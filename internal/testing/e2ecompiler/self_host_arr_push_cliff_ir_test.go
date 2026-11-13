@@ -85,6 +85,28 @@ func TestSelfHostArrPushCliffIR(t *testing.T) {
 	}
 }
 
+// The scalar read that semhoist lifts above the call (#15681) also leaves a
+// balanced census, on each target.
+func TestSelfHostArrPushCliffScalarReadCensus(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, tc := range arrPushCliffIRCases {
+		if tc.name != "scalar-field-read-after-the-call-that-consumes-its-record" {
+			continue
+		}
+		for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+			t.Run(target, func(t *testing.T) {
+				stderr, code := cli.exitOf(t, tc.main+"\n", target, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+				if code != tc.want {
+					t.Fatalf("exit %d, want %d\n%s", code, tc.want, stderr)
+				}
+				assertBalancedCensus(t, stderr)
+			})
+		}
+		return
+	}
+	t.Fatal("the scalar field read case is missing from arrPushCliffIRCases")
+}
+
 const arrPushRecycledProg = `function fill(n: i32): i64[] {
     let out: i64[] = [];
     let i: i32 = 0;

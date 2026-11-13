@@ -1852,6 +1852,13 @@ call is handed. A view that goes to a parameter the callee only reads is lent
 with no copy, whatever the result type is (#15719,
 `TestSelfHostLentViewArgument`).
 
+A body can also keep a parameter where it outlives the call without a return:
+`c.set(s)` stores it in a cell, a closure captures it (a `__mkclo$` call), or a
+callee does one of these. `handers` records these parameters in a second set,
+`stored`, closed over the calls of the body to the same fixpoint. A stored
+parameter gets a copy whatever the result type is. The scalar-result shortcut
+applies only to the first set (#15741, `TestSelfHostLentViewKeptPerParameter`).
+
 Returning the box is only the smallest shape of this. The self-host lexer's
 `number_tok`/`quoted_tok`/`ident_tok` each store a lent view in the Token they
 build, which is why skipping any one of them left the probe faulting and only
