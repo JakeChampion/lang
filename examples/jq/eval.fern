@@ -10,6 +10,7 @@ import "std/utf8";
 import "./filter";
 import "./number";
 import "./output";
+import "./reader";
 
 // `error` is empty, or it holds the one value of the error.
 pub struct Outputs { values: json.JsonValue[], error: json.JsonValue[] }
@@ -935,6 +936,9 @@ function call_text(name: string, args: filter.Ast[], input: json.JsonValue, e: E
     "ascii_downcase" => ascii_case(input, false),
     "ascii_upcase" => ascii_case(input, true),
     "explode" => explode(input),
+    "implode" => implode(input),
+    "fromjson" => from_json(input),
+    "tonumber" => to_number(input),
     "utf8bytelength" => byte_length(input),
     "startswith" => with_argument(name, args[0], input, e),
     "endswith" => with_argument(name, args[0], input, e),
@@ -1818,6 +1822,59 @@ function explode(v: json.JsonValue): Outputs {
     i += size;
   }
   return one(json.JArray(out));
+}
+
+function implode(v: json.JsonValue): Outputs {
+  let json.JArray(items) = v else {
+    return fail("implode input must be an array");
+  };
+  let s = "";
+  for x in items {
+    let cp = 0.0 / 0.0;
+    if let json.JNumber(t) = x {
+      cp = number.value(t);
+    }
+    if (cp != cp) {
+      return fail(type_name(x) + " (" + shown(x) + ") can't be imploded, unicode codepoint needs to be numeric");
+    }
+    s += filter.codepoint_text(floor_index(cp));
+  }
+  return one(json.JString(s));
+}
+
+// The one value of the JSON text `v`, read as jq reads its input.
+function from_json(v: json.JsonValue): Outputs {
+  let json.JString(s) = v else {
+    return fail(type_name(v) + " (" + shown(v) + ") only strings can be parsed");
+  };
+  let r = reader.read(s);
+  let bad = r.error;
+  if (r.values.len() > 1) {
+    bad = "Unexpected extra JSON values";
+  } else if (r.values.len() == 0 && bad.len() == 0) {
+    bad = "Expected JSON value";
+  }
+  if (bad.len() > 0) {
+    return fail(bad + " (while parsing '" + reader.c_string(s) + "')");
+  }
+  return one(r.values[0].value);
+}
+
+function to_number(v: json.JsonValue): Outputs {
+  if let json.JNumber(_) = v {
+    return one(v);
+  }
+  let json.JString(_) = v else {
+    return fail(type_name(v) + " (" + shown(v) + ") cannot be parsed as a number");
+  };
+  let parsed = from_json(v);
+  if (parsed.failed()) {
+    return parsed;
+  }
+  if let json.JNumber(_) = parsed.values[0] {
+    return parsed;
+  }
+  return fail(type_name(v) + " (" + shown(v) + ") cannot be parsed as a number");
 }
 
 function byte_length(v: json.JsonValue): Outputs {
