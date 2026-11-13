@@ -59,7 +59,7 @@ const STDLIB_GROUPS = [
   ["Video", ["video_avc", "video_hevc", "video_hevc_pps", "video_vp9", "video_vp9_configuration", "video_av1", "video_av1_sequence", "video_av1_configuration", "video_frame", "video_playback_clock", "video_ivf", "video_ivf_input", "video_nal", "video_nal_input", "video_qtrle", "video_mp4", "video_mp4_file", "video_mp4_timing"]],
   ["Traits", ["cmp", "convert", "mem", "ops"]],
   ["Numbers", ["bigint", "f32", "f64", "f64_text", "i32", "i64", "math", "num", "number_parse", "rand", "simd", "u32",
-    "u64"]],
+    "u64", "u8"]],
   ["Files, I/O & time", ["async", "cli", "dotenv", "envflag", "errno", "cpio", "dma", "elf", "filetime", "frames", "io", "io_buffered", "ip", "pagetable", "raw", "tcp", "tcp_conn", "user_process", "virtio", "virtio_blk", "virtio_net", "virtio_rng",
     "log", "mitigations", "path", "signal", "stream", "time", "clock", "tz", "worker"]],
   ["Networking", ["dns", "fetch", "headers", "http", "http_accesslog", "http_auth", "http_cache", "http_compress", "http_cookie", "http_cors", "http_form", "http_forwarded", "http_grpc", "http_h2", "http_h2_frame", "http_h3", "http_h3q", "http_hpack", "http_huffman", "http_multipart", "http_qpack", "http_requestid", "http_router", "http_sse", "http_static", "http_testing", "http_trace", "http_websocket", "metrics", "net", "platform", "publicsuffix", "quic_conn", "quic_frames", "quic_packet", "quic_params", "quic_recovery", "quic_streams", "serve", "tcp_serve",
