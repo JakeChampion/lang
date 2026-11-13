@@ -125,7 +125,7 @@ func ageHybridMessages(t *testing.T, oracle, port ageTool, dir, r1, pq1 string) 
 		{"-e", "-i", "pq1", "-r", r1, "p"},
 		{"-e", "-i", "pq-id-and-x", "p"},
 		{"-r", pq1[:len(pq1)-1], "p"},
-		{"-r", change(pq1, 10, 'q'), "p"},
+		{"-r", change(pq1, 10, map[bool]byte{true: 'p', false: 'q'}[pq1[10] == 'q']), "p"},
 		{"-r", strings.ToUpper(pq1), "p"},
 		{"-r", "age1pq1qqqqqqqqqqqqq", "p"},
 		{"-d", "-i", "pq-id-checksum", "pq-ok"},
