@@ -121,6 +121,11 @@ gives it its texts. A tap on the track opens the app. While the player
 runs, the buttons send their commands to it. When the app closes, the
 buttons start the app, and it plays from the place that it kept.
 
+The back key does not stop a track that plays. At the top screen, it puts
+the app behind the other apps, and the track plays on. Then the buttons of
+the widget, of the notification and of a headset work with no window. When
+no track plays, the back key closes the app.
+
 When the player finds no file, it makes three tunes in its own directory:
 it makes the samples of a melody, and writes one FLAC file and two WAV
 files.

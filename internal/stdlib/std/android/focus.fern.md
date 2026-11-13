@@ -6,7 +6,7 @@ This module asks Android for the audio focus, for a NativeActivity app of `std/a
 
 Android gives the audio focus to one client at a time. A call takes it, and so does an app that starts to play or record. The app declares a @jni class that implements `android.media.AudioManager$OnAudioFocusChangeListener`, with a native `onAudioFocusChange` that calls `changed`.
 
-`new` makes one listener of that class, and a focus request for speech in a voice call. `changed` sends each change to the loop thread of the live activity, which `android.live_activity` names. The loop gives it to the app as a `Posted` event. `event` decodes it.
+`new` makes one listener of that class, and a focus request for speech in a voice call. `changed` sends each change to the live loop of the app with `android.tell`. The loop gives it to the app as a `Posted` event. `event` decodes it.
 
 `music` makes a focus request for music in place of speech. That request is not transient: a different app that plays stops, and it does not start again by itself.
 
@@ -183,10 +183,6 @@ pub function close(ctx: usize, f: Focus): void {
 // `change` are its arguments. It runs on the UI thread, and sends the change
 // to the loop thread.
 pub function changed(e: usize, listener: usize, change: i32): void {
-  let activity: usize = android.live_activity(e);
-  if (activity == 0 as usize) {
-    return;
-  }
-  android.send(activity, CHANGED, code_of(change));
+  let sent = android.tell(e, CHANGED, code_of(change));
 }
 ```

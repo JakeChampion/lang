@@ -5,16 +5,26 @@ Usage: emulator_check.py APK OUT_DIR
 
 It installs the APK, which fern -apk wrote, and starts its NativeActivity.
 The player makes its three tunes at the first start, and reads their
-files into its library. The check taps a track in the list, lets it play
-for some seconds, and presses the back key. Then it requires the line of
-the app in logcat: the library has the three tunes or more, a track plays,
-and its time went on. Before that, Android has the media session of the
-player, the media keys stop and start the track, and the player runs a
-foreground service. The check goes to the home screen and back: the track
-plays on, and the app draws its screen again and takes the back key. Then
-the check starts the app a second time. So the decoder
-gave its samples to the sound of the device in time. It fails on a crash
-in logcat. OUT_DIR gets the frames and logcat.
+files into its library. The check taps a track in the list and lets it
+play. Android has the media session of the player, the media keys stop
+and start the track, and the player runs a foreground service.
+
+The check goes to the home screen and back: the track plays on, and the
+app draws its screen again. The back key then puts the app away, and the
+track plays on. With no window, the buttons of the widget stop the track
+and start it again.
+
+After a stop, the back key closes the app, and the check requires the
+line of the app in logcat: the library has the three tunes or more, a
+track was open, and its time went on. Then the check starts the app a
+second time. So the decoder gave its samples to the sound of the device
+in time.
+
+With the setting that destroys each activity that goes away, the track
+plays on after the Destroy. A new start takes the loop over, and a stop
+with no window ends the loop.
+
+It fails on a crash in logcat. OUT_DIR gets the frames and logcat.
 """
 
 from pathlib import Path
@@ -100,6 +110,28 @@ def main(apk, out):
     # the time of the track is 2 seconds or more at the back key.
     adb("shell", "input", "keyevent", "88")
     time.sleep(2.5)
+
+    # The back key puts the app away while a track plays, and the track
+    # plays on. With no window, the buttons of the widget stop the track and
+    # start it again.
+    adb("shell", "input", "keyevent", "4")
+    time.sleep(3)
+    if session_state() != 3:
+        fail("the track does not play after the back key: " + session_text()[:400])
+    if re.search(r"tune: closed with", logcat()):
+        fail("the back key closed the app while a track played")
+    for action, state in (("PAUSE", 2), ("PLAY", 3)):
+        adb("shell", "am", "broadcast", "-a", "dev.fern.tune.widget." + action, "-n", PACKAGE + "/.Widget")
+        time.sleep(2)
+        if session_state() != state:
+            fail(f"the widget button {action} did not reach the player with no window: " + session_text()[:400])
+
+    # The back key closes the app when no track plays. The app tells where
+    # the player was.
+    adb("shell", "input", "keyevent", "127")
+    time.sleep(2)
+    adb("shell", "am", "start", "-W", "-n", PACKAGE + "/android.app.NativeActivity")
+    time.sleep(4)
     adb("shell", "input", "keyevent", "4")
     m = wait_for(r"tune: closed with (\d+) tracks at track (-?\d+), (\d+):(\d\d) of (\d+):(\d\d), playing (\w+)", timeout=10)
     if not m:
@@ -109,8 +141,8 @@ def main(apk, out):
         print(f"closed: {m.group(0)}", flush=True)
         if int(m.group(1)) < 3:
             fail(f"the library does not have its 3 tunes: {m.group(0)!r}")
-        elif track < 0 or m.group(7) != "true":
-            fail(f"no track plays: {m.group(0)!r}")
+        elif track < 0 or m.group(7) != "false":
+            fail(f"no track was open, or a track plays: {m.group(0)!r}")
         elif played < 1:
             fail(f"the time of the track did not go on: {m.group(0)!r}")
 
@@ -143,9 +175,39 @@ def main(apk, out):
     screen(out, "shortcut")
     if session_state() != 3:
         fail(f"the shortcut did not play the library: the state of the session is {session_state()}")
-    adb("shell", "input", "keyevent", "4")
-    if not wait_for(r"tune: closed with (\d+) tracks", timeout=10):
-        fail("the back key did not close the app after the shortcut")
+
+    # Android destroys each activity that goes away. The loop of the app
+    # lives on while a track plays, and a new start takes that loop over:
+    # the app does not start a second time. A stop with no window ends the
+    # loop, and the app tells where the player was.
+    adb("shell", "settings", "put", "global", "always_finish_activities", "1")
+    try:
+        adb("shell", "input", "keyevent", "3")
+        time.sleep(5)
+        if session_state() != 3:
+            fail("the track does not play after Android destroyed the activity: " + session_text()[:400])
+        if re.search(r"tune: closed with", logcat()):
+            fail("the loop of the app ended with the activity while a track played")
+        adb("shell", "am", "start", "-W", "-n", PACKAGE + "/android.app.NativeActivity")
+        time.sleep(4)
+        width, height, pixels = screen(out, "taken-over")
+        same = count(pixels, (pixels[0], pixels[1], pixels[2]), step=7)
+        total = len(pixels) // 4 // 7
+        if same * 100 > total * 99:
+            fail(f"the screen is blank after a new activity took the loop over: {same} of {total} pixels have one colour")
+        starts = len(re.findall(r"tune: starts", logcat()))
+        if starts != 1:
+            fail(f"the app started {starts} times: a new activity must take the loop over")
+        adb("shell", "input", "keyevent", "3")
+        time.sleep(3)
+        adb("shell", "input", "keyevent", "127")
+        m = wait_for(r"tune: closed with (\d+) tracks at track (-?\d+), (\d+):(\d\d) of (\d+):(\d\d), playing (\w+)", timeout=10)
+        if not m:
+            fail("the stop with no window did not end the loop of the app")
+        elif m.group(7) != "false":
+            fail(f"the loop ended while a track played: {m.group(0)!r}")
+    finally:
+        adb("shell", "settings", "put", "global", "always_finish_activities", "0")
 
     # Android knows the widget of the app, which tells that it read the
     # provider file and the layout of the APK. The update broadcast starts

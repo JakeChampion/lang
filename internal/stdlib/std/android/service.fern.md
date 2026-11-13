@@ -8,7 +8,7 @@ A foreground service keeps the process of the app at a high priority while its w
 
 From API level 31, a notice can require an unlocked phone for the action of the app. Then a person who holds a locked phone cannot use the action.
 
-A button of the notification sends an intent to the service. `command` then sends a message to the loop thread of the live activity, which `android.live_activity` names. The loop gives it to the app as a `Posted` event. After the Destroy of the activity, no message goes. `event` gives `Stopped` or `Action` for that event.
+A button of the notification sends an intent to the service. `command` then sends a message to the live loop of the app with `android.tell`. The loop gives it to the app as a `Posted` event. When no loop runs, no message goes. `event` gives `Stopped` or `Action` for that event.
 
 `start_media` starts the service with the token of a media session of `std/android/session`. Its notification is then the media controls of the app in the notification panel, and a tap on it opens the app. A notice with no label for the stop action has no stop action.
 
@@ -176,19 +176,14 @@ pub function command(e: usize, service: usize, intent: usize, n: Notice): i32 {
     stop_self(e, service);
     return NOT_STICKY;
   }
-  let activity: usize = android.live_activity(e);
   let action: string = android.intent_action(e, intent);
   if (action == STOP_ACTION) {
     stop_self(e, service);
-    if (activity != 0 as usize) {
-      android.send(activity, STOPPED, 0 as usize);
-    }
+    let sent = android.tell(e, STOPPED, 0 as usize);
     return NOT_STICKY;
   }
   if (action == APP_ACTION) {
-    if (activity != 0 as usize) {
-      android.send(activity, ACTION, 0 as usize);
-    }
+    let sent = android.tell(e, ACTION, 0 as usize);
     return NOT_STICKY;
   }
   let session: usize = jni.call_object(e, intent, "getParcelableExtra", "(Ljava/lang/String;)Landroid/os/Parcelable;", [jni.new_string(e, SESSION_EXTRA)]);
