@@ -429,6 +429,21 @@ function main(): i32 {
 		}
 	})
 
+	buildOptimize := regexp.MustCompile(`(?m)^__fern_build:\n[ \t]+\.ascii "FERNBUILD1 [^\n"]* optimize=([01]) `)
+	foldCode := func(t *testing.T, asm []byte, want byte) []byte {
+		t.Helper()
+		notes := buildOptimize.FindAllSubmatchIndex(asm, -1)
+		if len(notes) != 1 {
+			t.Fatalf("build note count = %d, want 1", len(notes))
+		}
+		at := notes[0][2]
+		if asm[at] != want {
+			t.Fatalf("build note optimize = %c, want %c", asm[at], want)
+		}
+		code := bytes.Clone(asm)
+		code[at] = '0'
+		return code
+	}
 	foldCase := func(t *testing.T, name, src string, wantExit int, unwanted ...string) {
 		t.Helper()
 		srcPath := filepath.Join(dir, name+".fern")
@@ -448,7 +463,7 @@ function main(): i32 {
 		if code != 0 {
 			t.Fatalf("-O emit exited %d, want 0", code)
 		}
-		if string(optAsm) != string(defAsm) {
+		if !bytes.Equal(foldCode(t, optAsm, '1'), foldCode(t, defAsm, '0')) {
 			t.Errorf("%s: -O changed the emitted code; folding is meant to run on every build\n"+
 				"--- -O ---\n%s\n--- default ---\n%s", name, optAsm, defAsm)
 		}

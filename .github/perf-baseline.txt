@@ -705,10 +705,12 @@ aarch64/perceus_deriv.text	2878
 aarch64/perceus_deriv.ir	77989395
 aarch64/perceus_nqueens.text	1812
 aarch64/perceus_nqueens.ir	90387246
-aarch64/perceus_rbtree.text	3200
-aarch64/perceus_rbtree.ir	45928447
-aarch64/perceus_rbtree_ck.text	3271
-aarch64/perceus_rbtree_ck.ir	45589727
+# 2026-11-13: PR #15605 pins four lower ARM64 tree rows from run 43360903398.
+# All tolerances and other metrics stay unchanged.
+aarch64/perceus_rbtree.text	2994
+aarch64/perceus_rbtree.ir	43047967
+aarch64/perceus_rbtree_ck.text	3070
+aarch64/perceus_rbtree_ck.ir	42721247
 # 2026-11-01: #13988 keeps the original main pvec instruction gates.
 # Fresh measurements remain within their unchanged 1% tolerance.
 # 2026-11-07: PR #14490 adds the fixed QTRLE workload. Existing limits stay unchanged.

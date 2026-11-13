@@ -25,7 +25,8 @@ function report(name: string, entry: () => i32): void {
   match (async.task_start(t)) {
     Suspended(w) => {
       unsafe {
-        print(name + " until " + __task_until(t.id).to_string() + " set " + __task_wait(t.id).len().to_string());
+        let id = async.task_id(t);
+        print(name + " until " + __task_until(id).to_string() + " set " + __task_wait(id).len().to_string());
       }
       match (async.task_resume(t, Woke(0))) {
         Done(v) => {
