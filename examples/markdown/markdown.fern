@@ -65,10 +65,14 @@ function step(out: usize, d: blocks.Doc, r: i32, s: State): State {
   }
   cr(out, s.open);
   if (k == blocks.HEADING) {
-    let level = d.value(r).to_string();
-    buf_push(out, "<h" + level + ">");
+    let digit = 48 + d.value(r);
+    buf_push(out, "<h");
+    buf_push_byte(out, digit);
+    buf_push_byte(out, 62);
     let w = inlines.render(out, d, d.from(r), d.to(r), s.w);
-    buf_push(out, "</h" + level + ">\n");
+    buf_push(out, "</h");
+    buf_push_byte(out, digit);
+    buf_push(out, ">\n");
     return State { ...s, w: w, open: false };
   }
   if (k == blocks.CODE) {
