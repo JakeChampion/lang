@@ -4,6 +4,7 @@
 // at a time, and an error stops the filter; `Outputs` holds the values before
 // the error and the error.
 import "std/json";
+import "std/f64";
 import "std/string";
 import "std/utf8";
 import "./filter";
@@ -271,11 +272,12 @@ pub function index(v: json.JsonValue, k: json.JsonValue): Outputs {
     },
     json.JArray(items) => {
       if let json.JNumber(t) = k {
-        let i = floor_index(number.value(t));
+        let x = number.value(t);
+        let i = floor_index(x);
         if (i < 0) {
           i += items.len();
         }
-        if (i < 0 || i >= items.len()) {
+        if (x != x || i < 0 || i >= items.len()) {
           return one(json.JNull);
         }
         return one(items[i]);
@@ -349,10 +351,15 @@ function bound(b: json.JsonValue, fallback: i32, len: i32, up: boolean): (i32, s
   match (b) {
     json.JNull => {},
     json.JNumber(t) => {
+      // A NaN bound is the end of its side, as a null bound is.
+      let x = number.value(t);
+      if (x != x) {
+        return (i, "");
+      }
       if (up) {
-        i = ceil_index(number.value(t));
+        i = ceil_index(x);
       } else {
-        i = floor_index(number.value(t));
+        i = floor_index(x);
       }
       if (i < 0) {
         i += len;
@@ -841,7 +848,7 @@ function remainder(l: json.JsonValue, r: json.JsonValue): Outputs {
   let a = number.value(x);
   let b = number.value(y);
   if (a != a || b != b) {
-    return one(json.JNull);
+    return one(computed(0.0 / 0.0));
   }
   let d = magnitude(b);
   if (d == 0u64) {
@@ -940,7 +947,7 @@ function call_text(name: string, args: filter.Ast[], input: json.JsonValue, e: E
     "indices" => with_argument(name, args[0], input, e),
     "index" => with_argument(name, args[0], input, e),
     "rindex" => with_argument(name, args[0], input, e),
-    _ => of_type(name, input),
+    _ => call_number(name, args, input, e),
   };
 }
 
@@ -1978,4 +1985,88 @@ function index_of(v: json.JsonValue, a: json.JsonValue, from_end: boolean): Outp
     return tail;
   }
   return index(tail.values[0], whole(0));
+}
+
+// ---- Numbers ----
+
+function call_number(name: string, args: filter.Ast[], input: json.JsonValue, e: Env): Outputs {
+  return match (name) {
+    "nan" => one(computed(0.0 / 0.0)),
+    "infinite" => one(computed(1.0 / 0.0)),
+    "isnan" => one(json.JBool(number_is(name, input))),
+    "isinfinite" => one(json.JBool(number_is(name, input))),
+    "isnormal" => one(json.JBool(number_is(name, input))),
+    "pow" => run_pow(args[0], args[1], input, e),
+    "floor" => math_of(name, input),
+    "ceil" => math_of(name, input),
+    "round" => math_of(name, input),
+    "trunc" => math_of(name, input),
+    "fabs" => math_of(name, input),
+    "sqrt" => math_of(name, input),
+    "log" => math_of(name, input),
+    _ => of_type(name, input),
+  };
+}
+
+// A value that is not a number is not NaN, not infinite and not normal.
+function number_is(name: string, v: json.JsonValue): boolean {
+  let json.JNumber(t) = v else {
+    return false;
+  };
+  let x = number.value(t);
+  if (name == "isnan") {
+    return x != x;
+  }
+  let size = x.abs();
+  if (name == "isinfinite") {
+    return size > 1.7976931348623157e308;
+  }
+  return size >= 2.2250738585072014e-308 && size <= 1.7976931348623157e308;
+}
+
+function number_of(v: json.JsonValue): (f64, Outputs) {
+  if let json.JNumber(t) = v {
+    return (number.value(t), ok([]));
+  }
+  return (0.0, fail(type_name(v) + " (" + shown(v) + ") number required"));
+}
+
+function math_of(name: string, v: json.JsonValue): Outputs {
+  let (x, bad) = number_of(v);
+  if (bad.failed()) {
+    return bad;
+  }
+  return one(computed(match (name) {
+    "floor" => x.floor(),
+    "ceil" => x.ceil(),
+    "round" => x.round(),
+    "trunc" => x.trunc(),
+    "fabs" => x.abs(),
+    "sqrt" => x.sqrt(),
+    _ => x.log(),
+  }));
+}
+
+// jq takes each exponent, and then each base.
+function run_pow(base: filter.Ast, exponent: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+  let exponents = run(exponent, input, e);
+  let out = ok([]);
+  for y in exponents.values {
+    let bases = run(base, input, e);
+    for x in bases.values {
+      let (a, bad_a) = number_of(x);
+      let (b, bad_b) = number_of(y);
+      if (bad_a.failed()) {
+        return out.then(bad_a);
+      }
+      if (bad_b.failed()) {
+        return out.then(bad_b);
+      }
+      out = out.then(one(computed(a.pow(b))));
+    }
+    if (bases.failed()) {
+      return Outputs { ...out, error: bases.error };
+    }
+  }
+  return Outputs { ...out, error: exponents.error };
 }

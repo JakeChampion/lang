@@ -17,7 +17,7 @@ import (
 // jqSuiteFloor is the number of cases of jq.test that the port passes. A case
 // in a part of the language the port does not have yet is skipped, and every
 // other case must pass.
-const jqSuiteFloor = 243
+const jqSuiteFloor = 254
 
 const jqNotYet = "is not in this port yet"
 
@@ -203,6 +203,8 @@ func TestSelfHostExampleJqAgainstJq(t *testing.T) {
 		{[]string{"-c", "group_by(.k) | map({k: .[0].k, n: length}), (sort_by(.v) | map(.v)), max_by(.v), unique_by(.k)"}, "[{\"k\":\"b\",\"v\":2},{\"k\":\"a\",\"v\":3},{\"k\":\"b\",\"v\":1}]\n"},
 		{[]string{"-c", "ascii_upcase, split(\", \"), indices(\", \"), explode[0:2], contains(\"b, c\"), ltrimstr(\"a, \")"}, "\"a, b, c\"\n5\n"},
 		{[]string{"-c", "with_entries(select(.value | contains([1])))"}, "{\"a\":[1,2],\"b\":[3]}\n"},
+		{[]string{"-c", "[nan, infinite, (. - .), (.[0]? // nan)] | sort, map(isnan), (.[0] < .[1])"}, "1e1000\n"},
+		{[]string{"-c", "map(floor, ceil, round, sqrt, fabs), [pow(.[0]; .[1])], .[nan]"}, "[2.5,-1.5]\n"},
 	}
 	for _, c := range cases {
 		run := func(path string) (string, string, int) {

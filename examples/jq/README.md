@@ -43,6 +43,8 @@ The port has these functions:
 - The search functions `contains`, `index`, `indices`, `inside` and `rindex`.
 - The selectors `arrays`, `booleans`, `iterables`, `nulls`, `numbers`,
   `objects`, `scalars`, `select`, `strings` and `values`.
+- The number functions `ceil`, `fabs`, `floor`, `infinite`, `isinfinite`,
+  `isnan`, `isnormal`, `log`, `nan`, `pow`, `round`, `sqrt` and `trunc`.
 - The functions `isempty`, `not`, `tojson`, `tostring` and `type`.
 
 The command line has these parts:
@@ -68,6 +70,9 @@ jq 1.7 writes a number in one of two forms, and the port does the same:
   it as the decNumber library does: `1.000`, `1E+2`, and `123.0` for `12.30e1`.
 - A computed number is an f64. jq writes its shortest digits, as
   `jvp_dtoa_fmt` does: `1e+17`, `1e-07`, `0.0001`.
+- jq writes NaN as `null`, and an infinity as the largest f64 of its sign.
+  The two stay numbers: NaN is below each number in the order, and it is not
+  equal to NaN.
 
 Two numbers compare as exact decimals, so
 `13911860366432393 == 13911860366432392` is false, as it is in jq 1.7. jq
@@ -81,7 +86,8 @@ than 17 significant digits.
 - String interpolation, and formats such as `@base64`.
 - Destructuring patterns in a binding, and `?//`.
 - `label` and `def`.
-- Each function that is not in the lists above.
+- Each function that is not in the lists above. `exp`, `exp2`, `exp10`,
+  `log2` and `log10` wait for #15661.
 
 A program that uses one of them stops with exit 3 and a message that ends in
 "is not in this port yet". The next slices of #15585 add them.
@@ -93,7 +99,7 @@ A program that uses one of them stops with exit 3 and a message that ends in
 - `tests/jq.test` is the test suite of jq 1.7 (see
   `licenses/jq/NOTICE.txt`). `TestSelfHostExampleJqSuite` runs each case
   whose program the port has and compares the outputs as JSON values, as
-  jq does. 243 cases pass, and each of the others is in a part of the language
+  jq does. 254 cases pass, and each of the others is in a part of the language
   that the port does not have yet.
 - `TestSelfHostExampleJqAgainstJq` runs the command line and the `jq` binary
   on the same arguments and input, and compares their stdout, stderr and exit
