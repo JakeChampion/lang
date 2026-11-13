@@ -17,7 +17,6 @@ func TestWasmSmoke(t *testing.T) {
 		t.Fatalf("wasmtime is not on PATH: the wasm32-wasi smoke gate cannot run, and a SKIP here would report a target nobody exercised")
 	}
 	fern := e2eharness.BuildLangBinForInterp(t)
-	root := repoRoot(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "in.txt"), []byte("x\ny\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -28,9 +27,10 @@ func TestWasmSmoke(t *testing.T) {
 		if bin, ok := built[util]; ok {
 			return bin
 		}
-		e2eharness.TrackFernSources(t, filepath.Join(root, "coreutils"), util+".fern")
+		src := utilSource(t, util)
+		e2eharness.TrackFernSources(t, filepath.Dir(src), util+".fern")
 		bin := filepath.Join(wasmDir, util+".wasm")
-		cmd := exec.Command(fern, "-target", "wasm32-wasi", "-o", bin, filepath.Join(root, "coreutils", util+".fern"))
+		cmd := exec.Command(fern, "-target", "wasm32-wasi", "-o", bin, src)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("compile %s for wasm32-wasi: %v\n%s", util, err, out)
 		}
@@ -62,6 +62,9 @@ func TestWasmSmoke(t *testing.T) {
 		{util: "dd", args: []string{"if=in.txt", "of=ddout", "bs=2", "status=noxfer"}, preopen: true},
 		{util: "dd", args: []string{"bs=3", "status=noxfer"}, stdin: "abcdefg"},
 		{util: "dd", args: []string{"if=nosuch", "status=noxfer"}, preopen: true},
+		{util: "sed", args: []string{"s/x/X/;$="}, stdin: "x\ny\n"},
+		{util: "sed", args: []string{"-n", "-E", "s/(y)/[\\1]/p", "in.txt"}, preopen: true},
+		{util: "sed", args: []string{"y/xy/XY/;l", "in.txt", "nosuch"}, preopen: true},
 	}
 	for _, c := range cases {
 		name := c.util + " " + strings.Join(c.args, " ")

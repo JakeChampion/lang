@@ -1822,8 +1822,10 @@ function finish_edit(p: Prog, own r: Run, e: Edit): Run {
   unsafe {
     r.outs[OUT_EDIT].w.close_unchecked();
   }
-  chown_at(e.tmp, e.st.uid as i32, e.st.gid as i32, false);
-  chmod(e.tmp, (e.st.mode & 4095) as i32);
+  if (target_os() != "wasi") {
+    chown_at(e.tmp, e.st.uid as i32, e.st.gid as i32, false);
+    chmod(e.tmp, (e.st.mode & 4095) as i32);
+  }
   if (p.o.suffix.len() > 0 && p.o.suffix != "*") {
     let backup = backup_name(e.target, p.o.suffix);
     if let Err(err) = rename(e.target, backup) {
@@ -2277,9 +2279,19 @@ function octal3(b: i32): string {
 // ---------------------------------------------------------------------------
 // e and the e flag
 
-// shell runs a command with /bin/sh and gives its standard output.
+// shell runs a command with /bin/sh and gives its standard output. WASI
+// has no processes.
 function shell(p: Prog, r: Run, cmd: u8[]): u8[] {
   flush_all(r);
+  if (target_os() == "wasi") {
+    panic("couldn't run a command: this system has no processes");
+    return [];
+  } else {
+    return run_shell(cmd);
+  }
+}
+
+function run_shell(cmd: u8[]): u8[] {
   let text = unsafe { string_from_bytes_unchecked(cmd) };
   let pp = match (pipe()) {
     Ok(made) => made,
