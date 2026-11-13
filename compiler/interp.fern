@@ -7708,7 +7708,7 @@ function str_hash_word(s: string, at: i32, n: i32): i64 {
 }
 
 function is_sha_blocks_name(name: string): boolean {
-  return name == "__sha256_hw_blocks" || name == "__sha1_hw_blocks";
+  return name == "__sha256_hw_blocks" || name == "__sha1_hw_blocks" || name == "__sha1x8_hw_blocks";
 }
 
 function str_hash_low32(h: i64): i32 {

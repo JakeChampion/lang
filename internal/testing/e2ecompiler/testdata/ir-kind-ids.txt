@@ -498,3 +498,5 @@ vimul=548
 vishl=549
 vishrs=550
 vishru=551
+sha1x8_hw=552
+sha1x8_hw_blocks=553

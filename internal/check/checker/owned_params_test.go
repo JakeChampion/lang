@@ -1298,8 +1298,9 @@ function step(own a: Asm, v: i32): Asm {
 }
 
 // A field moves in a branch that returns although a later statement on the
-// other path reads the whole (#14996). A read of the field after the move in
-// the branch, or a branch that does not return, stays E051.
+// other path reads the whole (#14996), also when the move is in the return
+// itself. A read of the field after the move in the branch, or a branch that
+// does not return, stays E051.
 func TestOwnGuardAllowsFieldMoveInReturningBranch(t *testing.T) {
 	wantOK(t, "field-move-returning-branch", fieldMovePrelude+`
 function step(own a: Asm, v: i32, flag: boolean): Asm {
@@ -1324,6 +1325,20 @@ function step(own a: Asm, v: i32, flag: boolean): Asm {
         let c = record(a.cfi, v);
     }
     return a;
+}`)
+	wantOK(t, "field-move-in-returning-statement", fieldMovePrelude+`
+function step(own a: Asm, v: i32, flag: boolean): i32 {
+    if (flag) {
+        return record(a.cfi, v).n;
+    }
+    return record(a.cfi, 0).n + a.code.len();
+}`)
+	wantE051(t, "field-move-in-returning-statement-read", fieldMovePrelude+`
+function step(own a: Asm, v: i32, flag: boolean): i32 {
+    if (flag) {
+        return record(a.cfi, v).n + a.cfi.n;
+    }
+    return record(a.cfi, 0).n + a.code.len();
 }`)
 }
 

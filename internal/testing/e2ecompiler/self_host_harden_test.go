@@ -103,6 +103,8 @@ function main(): i32 {
   buf_push(b, " ");
   buf_push_decimal(b, crypto.sha1(abc)[0] as u64);
   buf_push(b, " ");
+  buf_push_decimal(b, (crypto.sha1_new().x8().blocks(__alloc_u8(512)).word(0, 7) & 255 as u32) as u64);
+  buf_push(b, " ");
   buf_push_decimal(b, sealed_len());
   buf_push(b, " ");
   buf_push_bytes_range(b, "framed bytes".bytes(), 0, 6);
@@ -115,7 +117,7 @@ function main(): i32 {
 }
 `
 
-const hardenFramesWant = "1219131554 891568578 186 169 31 framed"
+const hardenFramesWant = "1219131554 891568578 186 169 229 31 framed"
 
 // hardenFrameHelpers are the hand-written runtime helpers that hardenFramesSrc
 // links. The ones it also runs have a PAC control each.
@@ -133,6 +135,7 @@ var hardenFrameHelpers = []struct {
 	{"__fern_aes_gcm_open_into:", true},
 	{"__fern_sha256_hw_blocks:", true},
 	{"__fern_sha1_hw_blocks:", true},
+	{"__fern_sha1x8_hw_blocks:", true},
 	{"__fn___fern_subprocess:", false},
 	{"__fern_oob_abort_leaf:", false},
 }

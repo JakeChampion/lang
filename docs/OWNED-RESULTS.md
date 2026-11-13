@@ -133,6 +133,12 @@ A tuple result can contain the same transfer within another tuple.
 Other tuple parts must preserve the same owner and alias restrictions.
 The `nested_owned_field_tuple` case checks transfer and cleanup on all three targets.
 
+Variant constructors can contain these nested record replacements.
+The same owner and alias restrictions apply through nested variants and tuple payloads.
+The proof identifies constructor declarations and respects shadowed names.
+The declaration search includes local aliases inside callbacks.
+The `nested_owned_field_variant` case checks cleanup through `Some` and a qualified variant.
+
 A numeric, boolean, or character COW array field copy does not retain a resource loan.
 This rule includes nested arrays.
 Resource arrays, mutable Cells, callbacks, and views keep their resource loans.
