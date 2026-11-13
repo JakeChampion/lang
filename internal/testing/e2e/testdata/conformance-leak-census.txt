@@ -599,7 +599,8 @@ init_option_control                                  0
 init_struct_update_control                           0
 init_variant_control                                 0
 inline_hints                                         0
-inline_worker_exit_is_a_worker_failure               0
+# 2026-11-13: inline_worker_exit_is_a_worker_failure stops through exit(134) inside a worker body, so the blocks that are live at that call stay unpaired: 3 on x86-64, in main run 43510761873 and on a local run.
+inline_worker_exit_is_a_worker_failure               3
 insert_dedup                                         0
 int_bit_accessors                                    0
 int_byte_swap                                        0
