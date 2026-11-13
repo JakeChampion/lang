@@ -5,3 +5,4 @@
 playground.wasm
 editor/node_modules/
 editor-deps.js
+editor-deps-*.js
