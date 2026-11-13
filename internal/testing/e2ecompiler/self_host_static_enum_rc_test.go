@@ -15,6 +15,7 @@ enum Color { Red, Black }
 enum Mark { Plain, Tagged(string) }
 enum Tree { Node(Color, Tree, i32, Tree), Leaf }
 struct Pen { color: Color, mark: Mark, width: i32 }
+struct Lens { color: Color, pen: Pen, key: u8[] }
 
 @noinline
 function paint(t: Tree, c: Color): Tree {
@@ -35,6 +36,22 @@ function shade(t: Tree): Color {
 @noinline
 function remark(p: Pen, m: Mark): Pen {
   return Pen { ...p, mark: m };
+}
+
+@noinline
+function pen_of(c: Color, key: u8[]): Pen {
+  return Pen { color: c, mark: Plain, width: key.len() };
+}
+
+@noinline
+function with_pen(l: Lens, key: u8[]): Lens {
+  return Lens { ...l, pen: pen_of(l.color, key) };
+}
+
+@noinline
+function recolor(l: Lens): Lens {
+  let m = Lens { ...l, color: Black };
+  return with_pen(m, [9u8, 9u8]);
 }
 
 @noinline
@@ -74,6 +91,8 @@ function main(): i32 {
   let cell: Cell[Color] = cell_new(Red);
   cell.set(Black);
   if (red(cell.get())) { return 7; }
+  let l = recolor(Lens { color: Red, pen: q, key: [1u8] });
+  if (red(l.color) || red(l.pen.color) || l.pen.width != 2) { return 8; }
   print("ok");
   return 0;
 }
@@ -115,7 +134,7 @@ func TestSelfHostStaticEnumHoldsNoCount(t *testing.T) {
 		t.Run(target, func(t *testing.T) {
 			stderr, code := cli.exitOfFile(t, src, target, nil, "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 			if code != 0 {
-				t.Fatalf("exit %d (1-7 name the check in main that failed): %s", code, stderr)
+				t.Fatalf("exit %d (1-8 name the check in main that failed): %s", code, stderr)
 			}
 			assertBalancedCensus(t, stderr)
 		})
