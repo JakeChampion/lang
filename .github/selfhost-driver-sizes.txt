@@ -1,3 +1,7 @@
+# 2026-11-13: PR #15784, driver-sizes-x86_64 job 132195198590 on the merge with main 38768eb2.
+# asm_ir_run grew 5.3% and fern.fern/stage2 5.2%. A local build of main and of #15784 gives
+# fern.fern 17616208 and 17617504 bytes (+1296), so the growth is the drift of main.
+# Pin asm_ir_run to 11613664 and fern.fern/stage2 to 17583504 bytes. The 5% tolerance is unchanged.
 # 2026-11-12: after PR #15527, on main 6f8937ce with the self-rebind exception of the checker.
 # driver-sizes-x86_64 job 131410502724 reported checker_modload_run at 4.4 MB, over the tolerance.
 # A local run of TestSelfHostWarmStockDriver measured 4356448 bytes, 5.05% above its prior bank.
@@ -652,12 +656,12 @@
 # tolerance is unchanged.
 # 2026-11-13: runtime_run measured 17506224 bytes (+5.0%) by driver-sizes-x86_64
 # job 132133327747 on main 88a72e60. The 5% tolerance is unchanged.
-fern.fern/stage2 16710816
+fern.fern/stage2 17583504
 fern.fern 17504544
 drivers/runtime_run.fern 17506224
 drivers/asm_load_run.fern 13460128
 drivers/asm_modload_run.fern 11961344
-drivers/asm_ir_run.fern 11028400
+drivers/asm_ir_run.fern 11613664
 drivers/asm_run.fern 10091776
 drivers/wasm_ir_run.fern 9677328
 drivers/wasm_run.fern 9688304
