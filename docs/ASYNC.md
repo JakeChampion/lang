@@ -157,6 +157,11 @@ pending input.
 Three functions drive a future to its end. Each answers `Option[T]`:
 `Some` with the value, or `None` when the future ends cancelled.
 
+A future is waited one time. `wait`, `block_on`, `sim.block_on`, `gather`,
+`race` and `with_deadline` take their futures as `own`, so the checker
+refuses a second wait of one future (`E051`). A function that passes a
+future on to one of them takes it as `own` also.
+
 - **`async.wait(f)`** parks the task that calls it on the scheduler of
   that task: the `std/serve` loop, `sim.run_tasks`, or a combinator's
   own wait. It reaches no clock and no reactor, so a handler can call it
