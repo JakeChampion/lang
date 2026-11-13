@@ -729,6 +729,10 @@ It checks every packet field and byte against FFprobe and the original file.
 Both index paths must agree. Extracted packets retain every decoded plane through independent libaom and dav1d decoders.
 Synthetic configuration references establish header syntax only. FFmpeg remains test-only.
 
+The file reference keeps its reader open until all packet windows finish.
+It reads each payload through `std/audio/file`, with 31-byte chunks and a one-MiB window limit.
+It does not retain the complete encoded file or cast file offsets to signed 32-bit indices.
+
 The configuration format follows AOM AV1 ISOBMFF version 1.3.0.
 The record can omit a sequence header. The API then reports no sequence maximum and does not read media to obtain it.
 The existing sequence parser still checks a present header through its trailing bits and bounded zero padding.
@@ -757,6 +761,16 @@ The muxer's complete record supplies level and chroma-location identifiers that 
 Both Fern index paths preserve every packet field and byte through native sanitizer and real WASI executables.
 Independent FFmpeg and libvpx decoders compare every plane with the original raw input before and after extraction.
 FFmpeg remains test-only. Fern does not decode VP9 pixels.
+
+Both common-codec reference suites also create sparse MP4 files with media above eight GiB.
+Each sparse file uses `co64` offsets and an extended-size `free` box.
+Native sanitizer and real WASI results must match every FFprobe packet field and the original encoded bytes.
+Both independent decoders must reproduce the same planes from the sparse file.
+
+The native packet references use Fern's existing 16-MiB heap limit for these checks.
+The original helpers pass the small controls but exhaust that heap on the sparse controls.
+The bounded helpers pass both controls with zero live bytes at exit.
+This checks the reference programs on this corpus. It does not define a general RSS bound or establish native VP9 or AV1 pixel decode.
 
 ## Native AAC and lower-level Android video integration
 

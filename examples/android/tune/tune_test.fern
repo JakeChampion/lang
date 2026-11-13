@@ -177,6 +177,7 @@ function device(): player.Device {
     keep_prefs: (text: string): void => {},
     keep_place: (text: string): void => {},
     write_bytes: (path: string, bytes: u8[]): boolean => path.starts_with("music/") && tags.read(bytes).title == "Fern Morning",
+    ask_write: (path: string): boolean => false,
     write_text: (path: string, text: string): boolean => path.starts_with("music/") && text.starts_with("#EXTM3U\nFern/First Light/02 Slow Water.wav\n"),
     kept: (name: string): u8[] => [],
     put: (name: string, bytes: u8[]): void => {},
@@ -919,6 +920,40 @@ function test_the_tags_of_a_song_change(): test.TestOutcome {
   return test.assert_eq([shows.to_string(), (m.editing == -1 && m.dirty).to_string(), saved, refused.to_string(), closed.to_string()].join(" | "), "true | true | Fern Morning 7 Fern | true | true");
 }
 
+// The tags of a song after Save on a device that writes the file when
+// `writes` tells so, and that asks the person when `asks` tells so. The
+// app comes back after the question.
+function saved_with(writes: (i32) => boolean, asks: boolean): string {
+  let tries = 0;
+  let asked = 0;
+  let dev = player.Device { ...device(), write_bytes: (path: string, bytes: u8[]): boolean => {
+    tries += 1;
+    return writes(tries);
+  }, ask_write: (path: string): boolean => {
+    asked += 1;
+    return asks;
+  } };
+  let s = sim.after(sim.start(player.wrap(tune.start(paths())), player.program(dev), test_fonts(), 1080, 2400, 2.75), 50i64);
+  s = sim.tap(sim.tap(sim.hold(s, "Morning Fern"), "Details"), "Edit tags");
+  s = sim.tap(sim.type_in(s, "tag-0", "Fern Morning"), "Save");
+  let waiting = s.shell.app.model.asking >= 0 && s.shell.app.model.editing >= 0;
+  s = sim.send(s, tune.Returned);
+  let m = s.shell.app.model;
+  let title = m.tracks.filter((t: tune.Track): boolean => t.path.ends_with("Morning Fern.flac"))[0].title;
+  return [waiting.to_string(), tries.to_string(), asked.to_string(), title, (m.editing >= 0).to_string(), (m.asking == -1).to_string()].join(" ");
+}
+
+// A file that the app cannot write makes the system ask the person. When
+// the app comes back, the player writes the file again: the tags change
+// when the person said yes, and the screen tells the error when not. A
+// file with no question fails at once.
+function test_the_person_lets_the_app_write_a_file(): test.TestOutcome {
+  let yes = saved_with((n: i32): boolean => n > 1, true);
+  let no = saved_with((n: i32): boolean => false, true);
+  let none = saved_with((n: i32): boolean => false, false);
+  return test.assert_eq([yes, no, none].join(" | "), "true 2 1 Fern Morning false true | true 2 1 Morning Fern true true | false 1 1 Morning Fern true true");
+}
+
 function main(): i32 {
   let r = test.new("examples/android/tune");
   r = r.it("the scan reads the tags and the paths of its files", test_scan_reads_tags_and_paths);
@@ -959,5 +994,6 @@ function main(): i32 {
   r = r.it("the screen of the track shows the spectrum", test_the_spectrum);
   r = r.it("the player keeps its place for the next start", test_the_player_keeps_its_place);
   r = r.it("the tags of a song change, and its file has them", test_the_tags_of_a_song_change);
+  r = r.it("the person lets the app write a file of another app", test_the_person_lets_the_app_write_a_file);
   return r.finish();
 }

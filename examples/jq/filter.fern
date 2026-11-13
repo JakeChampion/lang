@@ -27,6 +27,8 @@ pub enum Ast {
   Alt(Ast, Ast),
   Call(string, Ast[]),
   Catch(Ast, Ast),
+  Interp(string, string[], Ast[]),
+  Format(string),
   If(Ast, Ast, Ast),
   Bind(Ast, string, Ast),
   Reduce(Ast, string, Ast, Ast),
@@ -48,6 +50,8 @@ pub enum Tok {
   TVar(string),
   TNumber(string),
   TString(string),
+  TInterp(string[], string[]),
+  TFormat(string),
   TPunct(string),
   TEnd,
 }
@@ -136,7 +140,57 @@ pub function hex4(s: string, i: i32): i32 {
   return v;
 }
 
-struct Scanned { value: string, end: i32, error: string }
+// A string literal. `texts` holds the text before each `\(...)`, and
+// `sources` holds the program between each pair of parentheses.
+struct Scanned { value: string, end: i32, error: string, texts: string[], sources: string[] }
+
+// The offset of the `)` that ends the interpolation whose program starts at
+// `i`, or -1.
+function interp_end(s: string, i: i32): i32 {
+  let depth = 1;
+  let k = i;
+  while (k < s.len()) {
+    if (s[k] == b'"') {
+      k = string_end(s, k);
+      if (k < 0) {
+        return -1;
+      }
+      continue;
+    }
+    if (s[k] == b'(') {
+      depth += 1;
+    } else if (s[k] == b')') {
+      depth -= 1;
+      if (depth == 0) {
+        return k;
+      }
+    }
+    k += 1;
+  }
+  return -1;
+}
+
+// The offset after the string literal whose quote is at `i`, or -1.
+function string_end(s: string, i: i32): i32 {
+  let k = i + 1;
+  while (k < s.len()) {
+    if (s[k] == b'"') {
+      return k + 1;
+    }
+    if (s[k] != b'\\') {
+      k += 1;
+    } else if (k + 1 < s.len() && s[k + 1] == b'(') {
+      let e = interp_end(s, k + 2);
+      if (e < 0) {
+        return -1;
+      }
+      k = e + 1;
+    } else {
+      k += 2;
+    }
+  }
+  return -1;
+}
 
 pub function codepoint_text(cp: i32): string {
   if let Some(ch) = utf8.char_from_i32(cp) {
@@ -147,13 +201,15 @@ pub function codepoint_text(cp: i32): string {
 
 // The string literal that starts at the quote at `i`.
 function scan_string(s: string, i: i32): Scanned {
+  let texts: string[] = [];
+  let sources: string[] = [];
   let out = "";
   let j = i + 1;
   let run = j;
   while (j < s.len()) {
     let b = s[j];
     if (b == b'"') {
-      return Scanned { value: out + text(s, run, j), end: j + 1, error: "" };
+      return Scanned { value: out + text(s, run, j), end: j + 1, error: "", texts: texts, sources: sources };
     }
     if (b != b'\\') {
       j += 1;
@@ -166,12 +222,21 @@ function scan_string(s: string, i: i32): Scanned {
     let e = s[j + 1];
     j += 2;
     if (e == b'(') {
-      return Scanned { value: "", end: j, error: "string interpolation " + NOT_YET };
+      let close = interp_end(s, j);
+      if (close < 0) {
+        return Scanned { value: "", end: j, error: "syntax error, unexpected the end of the program", texts: [], sources: [] };
+      }
+      texts = texts.append(out);
+      sources = sources.append(text(s, j, close));
+      out = "";
+      j = close + 1;
+      run = j;
+      continue;
     }
     if (e == b'u') {
       let cp = hex4(s, j);
       if (cp < 0) {
-        return Scanned { value: "", end: j, error: "invalid \\u escape" };
+        return Scanned { value: "", end: j, error: "invalid \\u escape", texts: [], sources: [] };
       }
       j += 4;
       if (cp >= 0xd800 && cp < 0xdc00 && j + 6 <= s.len() && s[j] == b'\\' && s[j + 1] == b'u') {
@@ -197,7 +262,7 @@ function scan_string(s: string, i: i32): Scanned {
     }
     run = j;
   }
-  return Scanned { value: "", end: j, error: "unterminated string literal" };
+  return Scanned { value: "", end: j, error: "unterminated string literal", texts: [], sources: [] };
 }
 
 function two_char_punct(s: string, i: i32): string {
@@ -255,10 +320,16 @@ pub function lex(s: string): Lexed {
       if (sc.error.len() > 0) {
         return Lexed { toks: toks, error: sc.error };
       }
-      toks = toks.append(TString(sc.value));
+      if (sc.sources.len() > 0) {
+        toks = toks.append(TInterp(sc.texts.append(sc.value), sc.sources));
+      } else {
+        toks = toks.append(TString(sc.value));
+      }
       i = sc.end;
     } else if (b == b'@') {
-      return Lexed { toks: toks, error: "the format " + text(s, i, ident_end(s, i + 1)) + " " + NOT_YET };
+      let e = ident_end(s, i + 1);
+      toks = toks.append(TFormat(text(s, i + 1, e)));
+      i = e;
     } else {
       let two = two_char_punct(s, i);
       if (two.len() > 0) {
@@ -335,6 +406,8 @@ function describe(t: Tok): string {
     TVar(v) => "'$" + v + "'",
     TNumber(n) => "'" + n + "'",
     TString(_) => "a string",
+    TInterp(_, _) => "a string",
+    TFormat(f) => "'@" + f + "'",
     TPunct(x) => "'" + x + "'",
     TEnd => "the end of the program",
   };
@@ -548,9 +621,10 @@ function parse_postfix(p: P): (Ast, P) {
       },
       TDot => {
         let r = q.advance();
-        if let TString(s) = r.peek() {
-          t = Index(t, Literal(json.JString(s)));
-          q = r.advance();
+        if (r.is_string()) {
+          let (key, w) = parse_string("text", r);
+          t = Index(t, key);
+          q = w;
         } else if (r.is_punct("[")) {
           let (u, w) = parse_brackets(t, r);
           t = u;
@@ -605,8 +679,9 @@ function parse_primary(p: P): (Ast, P) {
   match (p.peek()) {
     TDot => {
       let q = p.advance();
-      if let TString(s) = q.peek() {
-        return (Index(Identity, Literal(json.JString(s))), q.advance());
+      if (q.is_string()) {
+        let (key, w) = parse_string("text", q);
+        return (Index(Identity, key), w);
       }
       if (q.is_punct("[")) {
         return parse_brackets(Identity, q);
@@ -619,8 +694,14 @@ function parse_primary(p: P): (Ast, P) {
     TNumber(n) => {
       return (Literal(json.JNumber(number.canonical(n))), p.advance());
     },
-    TString(s) => {
-      return (Literal(json.JString(s)), p.advance());
+    TString(_) => {
+      return parse_string("text", p);
+    },
+    TInterp(_, _) => {
+      return parse_string("text", p);
+    },
+    TFormat(f) => {
+      return parse_format(f, p.advance());
     },
     TVar(v) => {
       if (v == "__loc__") {
@@ -638,6 +719,46 @@ function parse_primary(p: P): (Ast, P) {
       return (Identity, p.fail("syntax error, unexpected the end of the program"));
     }
   }
+}
+
+function (p: P) is_string(): boolean {
+  return match (p.peek()) {
+    TString(_) => true,
+    TInterp(_, _) => true,
+    _ => false,
+  };
+}
+
+// The string literal at `p`. `format` is the format of its interpolations.
+function parse_string(format: string, p: P): (Ast, P) {
+  match (p.peek()) {
+    TString(s) => {
+      return (Literal(json.JString(s)), p.advance());
+    },
+    TInterp(texts, sources) => {
+      let parts: Ast[] = [];
+      for source in sources {
+        let inner = parse(source);
+        if (inner.error.len() > 0) {
+          return (Identity, p.fail(inner.error));
+        }
+        parts = parts.append(inner.ast);
+      }
+      return (Interp(format, texts, parts), p.advance());
+    },
+    _ => {
+      return (Identity, p.fail("syntax error, unexpected " + describe(p.peek())));
+    }
+  }
+}
+
+// `@format` alone is the format of the input. Before a string, it is the
+// format of each interpolation of that string.
+function parse_format(format: string, p: P): (Ast, P) {
+  if (p.is_string()) {
+    return parse_string(format, p);
+  }
+  return (Format(format), p);
 }
 
 function parse_word(x: string, p: P): (Ast, P) {
@@ -817,9 +938,17 @@ function parse_object_key(p: P): (Ast, Ast, P) {
       let k = Literal(json.JString(x));
       return (k, Index(Identity, k), p.advance());
     },
-    TString(s) => {
-      let k = Literal(json.JString(s));
-      return (k, Index(Identity, k), p.advance());
+    TString(_) => {
+      let (k, q) = parse_string("text", p);
+      return (k, Index(Identity, k), q);
+    },
+    TInterp(_, _) => {
+      let (k, q) = parse_string("text", p);
+      return (k, Index(Identity, k), q);
+    },
+    TFormat(f) => {
+      let (k, q) = parse_format(f, p.advance());
+      return (k, Index(Identity, k), q);
     },
     TVar(v) => {
       if (v == "__loc__") {
@@ -870,6 +999,7 @@ pub function undefined_var(f: Ast, names: string[]): string {
     Alt(a, b) => first_undefined([a, b], names),
     Call(_, args) => first_undefined(args, names),
     Catch(a, b) => first_undefined([a, b], names),
+    Interp(_, _, parts) => first_undefined(parts, names),
     If(a, b, c) => first_undefined([a, b, c], names),
     Bind(source, name, body) => first_scoped([source], [body], name, names),
     Reduce(source, name, init, update) => first_scoped([source, init], [update], name, names),

@@ -877,7 +877,7 @@ pub function rotate_right[T](xs: T[], n: i32): T[] {
     return [];
   }
   let shift = n % len;
-  return rotate_left(xs, 0 - shift);
+  return rotate_left(xs, -shift);
 }
 
 // `xs` with the element at `from` moved to the index `to`. The elements

@@ -12361,6 +12361,9 @@ function emit_idt_load(s: asmcore.EmitState): asmcore.EmitState {
     return s;
   }
   s = s.write("    .section .bss\n    .p2align 4\n__fern_idt:\n    .skip 4096\n    .text\n");
+  // The legacy 8259 PICs keep vector base 0 after a reset, where an IRQ arrives
+  // as a CPU exception. Both are masked before IF can be set.
+  s = s.write("    movb $255, %al\n    movl $33, %edx\n    outb %al, %dx\n    movl $161, %edx\n    outb %al, %dx\n");
   if (s.user_mode) {
     // Each vector has its own gate of 32 bytes, which knows its number.
     return s.write("    leaq __fern_idt(%rip), %rdi\n    leaq __fern_user_gates(%rip), %rax\n    movl $256, %ecx\n.Lidt_fill:\n    call __fern_idt_gate\n    addq $16, %rdi\n    addq $32, %rax\n    decl %ecx\n    jnz .Lidt_fill\n" + idt_register());
