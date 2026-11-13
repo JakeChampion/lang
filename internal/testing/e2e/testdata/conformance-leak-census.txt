@@ -1,3 +1,5 @@
+# 2026-11-13: inline_worker_exit_is_a_worker_failure (cffc9574) stops through the runtime abort
+# (status 134), so the worker handles and the closures of its two workers are live at the exit: 3 blocks.
 # 2026-11-13: a_branch_that_returns_gives_its_if_expression_no_type has balanced allocations on x86-64.
 # 2026-11-13: a_match_arm_that_is_a_void_if_falls_through has balanced allocations on x86-64.
 # 2026-11-13: generic_nominal_callback_signatures has balanced allocations and zero live bytes on all three targets.
@@ -599,7 +601,7 @@ init_option_control                                  0
 init_struct_update_control                           0
 init_variant_control                                 0
 inline_hints                                         0
-inline_worker_exit_is_a_worker_failure               0
+inline_worker_exit_is_a_worker_failure               3
 insert_dedup                                         0
 int_bit_accessors                                    0
 int_byte_swap                                        0
