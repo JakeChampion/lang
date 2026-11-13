@@ -746,6 +746,36 @@ pub function prefs_text(p: tune.Prefs): string {
   return lines.join("\n");
 }
 
+// The place as a text: a line for each of the spot, the time, shuffle and
+// repeat, and then a line for each path of the queue.
+pub function place_text(p: tune.Place): string {
+  let lines = ["spot " + p.spot.to_string(), "at " + p.at_ms.to_string(), "shuffle " + p.shuffle.to_string(), "repeat " + p.repeat.to_string()];
+  for path in p.paths {
+    lines = lines.append("track " + field(path));
+  }
+  return lines.join("\n");
+}
+
+// The place of a text of `place_text`.
+pub function place_from(text: string): tune.Place {
+  let p = tune.no_place();
+  for raw in text.split("\n") {
+    let line = raw.to_owned();
+    if (line.starts_with("spot ")) {
+      p = tune.Place { ...p, spot: signed_of(line.drop(5).to_owned()) };
+    } else if (line.starts_with("at ")) {
+      p = tune.Place { ...p, at_ms: number_of(line.drop(3).to_owned()) };
+    } else if (line.starts_with("shuffle ")) {
+      p = tune.Place { ...p, shuffle: line == "shuffle true" };
+    } else if (line.starts_with("repeat ")) {
+      p = tune.Place { ...p, repeat: number_of(line.drop(7).to_owned()) as i32 };
+    } else if (line.len() > 6 && line.starts_with("track ")) {
+      p = tune.Place { ...p, paths: p.paths.append(line.drop(6).to_owned()) };
+    }
+  }
+  return p;
+}
+
 // The settings of a text of `prefs_text`.
 pub function prefs_from(text: string): tune.Prefs {
   let p = tune.no_prefs();

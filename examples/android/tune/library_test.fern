@@ -135,6 +135,16 @@ function test_the_lines_of_lyrics(): test.TestOutcome {
   return test.assert_eq(show(timed) + " / " + show(plain) + " / " + library.lrc("").len().to_string() + " " + tune.line_at(timed, 12499i64).to_string() + tune.line_at(timed, 12500i64).to_string() + tune.line_at(timed, 0i64).to_string(), "1000=First|12500=Second line|20500=Twice|62345=Twice / -1=One|-1=Two|-1=[x] not a tag / 0 01-1");
 }
 
+// The place of the player is a text: its queue keeps the order of the
+// paths, and a path keeps its spaces.
+function test_the_text_of_the_place(): test.TestOutcome {
+  let p = tune.Place { paths: ["/m/b c.flac", "/m/a.mp3"], spot: 1, at_ms: 61234i64, shuffle: true, repeat: tune.REPEAT_ALL };
+  let back = library.place_from(library.place_text(p) + "\nnot a line\ntrack \n");
+  let none = library.place_from("");
+  let got = [back.paths.join("|"), back.spot.to_string(), back.at_ms.to_string(), back.shuffle.to_string(), back.repeat.to_string(), none.paths.len().to_string() + " " + none.spot.to_string()];
+  return test.assert_eq(got.join(" / "), "/m/b c.flac|/m/a.mp3 / 1 / 61234 / true / " + tune.REPEAT_ALL.to_string() + " / 0 -1");
+}
+
 function test_the_text_of_the_settings(): test.TestOutcome {
   let p = tune.Prefs { look: tune.LOOK_DARK, sort: tune.BY_YEAR, hidden: ["/m/a b", "/m/c"], off: [tune.GENRES, tune.FOLDERS], level: tune.LEVEL_ALBUM, tint: false, fade: 6, tone: [-3, 0, 12, 0, 5] };
   let back = library.prefs_from(library.prefs_text(p) + "\nnot a line\nhidden \n");
@@ -156,5 +166,6 @@ function main(): i32 {
   r = r.it("the playlists are a text, and an M3U file gives paths", test_playlist_texts);
   r = r.it("lyrics are lines with times or with none", test_the_lines_of_lyrics);
   r = r.it("the settings are a text", test_the_text_of_the_settings);
+  r = r.it("the place of the player is a text", test_the_text_of_the_place);
   return r.finish();
 }
