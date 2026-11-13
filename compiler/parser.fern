@@ -8238,17 +8238,17 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
   for ui in 0..unbounded_tps.len() {
     let un = unbounded_tps[ui];
     let callback_feeds = fn_param_feeds_nominal(params, un);
-    let feeds = feeds_user_parametric(ret_type, un) || feeds_map_typearg(ret_type, un) || callback_feeds;
+    let feeds = feeds_specialized_type(ret_type, un) || callback_feeds;
     let bindable = callback_feeds;
     for pj in 0..params.len() {
-      if (feeds_user_parametric(params[pj].type_name, un) || feeds_map_typearg(params[pj].type_name, un)) {
+      if (feeds_specialized_type(params[pj].type_name, un)) {
         feeds = true;
       }
       if (token_at_paren_depth0(params[pj].type_name, un) || token_in_tuple_param(params[pj].type_name, un)) {
         bindable = true;
       }
     }
-    let ret_bindable = feeds_user_parametric(ret_type, un) || feeds_map_typearg(ret_type, un);
+    let ret_bindable = feeds_specialized_type(ret_type, un);
     let promote = feeds && (bindable || ret_bindable);
     if (all_tps.len() == 1 && has_bare_scalar_param(params, un) && feeds_wide_container(ret_type, un)) {
       promote = true;
@@ -13701,7 +13701,7 @@ function fn_param_promoted(fd: FuncDecl): boolean {
         plain = true;
       }
     }
-    if (plain || feeds_user_parametric(fd.ret_type, v) || feeds_map_typearg(fd.ret_type, v)
+    if (plain || feeds_specialized_type(fd.ret_type, v)
       || fn_param_feeds_nominal(fd.params, v)) {
       continue;
     }
@@ -23769,11 +23769,14 @@ function all_fn_param_bound(params: ast.ParamDecl[], tps: string[]): boolean {
   return tps.len() > 0;
 }
 
+function feeds_specialized_type(ty: string, name: string): boolean {
+  return feeds_user_parametric(ty, name) || feeds_map_typearg(ty, name);
+}
+
 function fn_param_feeds_nominal(params: ast.ParamDecl[], name: string): boolean {
   for pd in params {
     if (is_fn_contract_tag(pd.type_name)
-      && (feeds_user_parametric(pd.fn_ret, name) || feeds_map_typearg(pd.fn_ret, name)
-      || feeds_user_parametric(pd.fn_param_types, name) || feeds_map_typearg(pd.fn_param_types, name))) {
+      && (feeds_specialized_type(pd.fn_ret, name) || feeds_specialized_type(pd.fn_param_types, name))) {
       return true;
     }
   }
