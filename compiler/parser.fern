@@ -10605,7 +10605,7 @@ function func_param_types_of(decls: FuncDecl[], name: string): string[] {
     if (decls[i].name == name && decls[i].receiver_type.len() == 0) {
       let k = 0;
       while (k < decls[i].params.len()) {
-        out = out.append(decls[i].params[k].type_name);
+        out = out.append(param_spelling(decls[i].params[k]));
         k += 1;
       }
       return out;

@@ -46,6 +46,7 @@ function input[T](k: (Fut[T]) => i32): i32 {
 }
 
 function ready(n: i32): Fut[i32] { return Ready(n); }
+function named_nested(f: (Fut[i32]) => i32): i32 { return f(Gone); }
 
 function main(): i32 {
   let k = (n: i32): Fut[i32] => Ready(n);
@@ -71,6 +72,7 @@ function main(): i32 {
   let nested = (f: (Fut[i32]) => i32): i32 => f(Gone);
   if (h.nested(nested) != 7) { return 11; }
   if (h.nested((f: (Fut[i32]) => i32): i32 => f(Gone)) != 7) { return 12; }
+  if (h.nested(named_nested) != 7) { return 13; }
   print("generic nominal callback signatures");
   return 0;
 }

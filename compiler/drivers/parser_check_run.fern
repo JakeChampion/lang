@@ -73,9 +73,9 @@ function check_callback_receiver_methods(): test.TestOutcome {
 }
 
 function check_nested_callback_method_instances(): test.TestOutcome {
-  let prefix = "enum Fut[T] { Ready(T), Gone } struct Host { n: i32 } function (h: Host) run[T](k: ((Fut[T]) => i32) => i32): i32 { return 7; } ";
-  for call in ["h.run(k)", "h.run((f: (Fut[i32]) => i32): i32 => 1)"] {
-    let source = prefix + "function main(): i32 { let h = Host { n: 1 }; let k = (f: (Fut[i32]) => i32): i32 => 1; return " + call + "; }";
+  let prefix = "enum Fut[T] { Ready(T), Gone } struct Host { n: i32 } function (h: Host) run[T](k: ((Fut[T]) => i32) => i32): i32 { return 7; } function named(f: (Fut[i32]) => i32): i32 { return f(Gone); } ";
+  for call in ["h.run(k)", "h.run((f: (Fut[i32]) => i32): i32 => 1)", "h.run(named)"] {
+    let source = prefix + "function main(): i32 { let h = Host { n: 1 }; let k = (f: (Fut[i32]) => i32): i32 => f(Gone); return " + call + "; }";
     let mod = parser.module_with_builtins_typed(parser.parse_module(lexer.tokenize(source)));
     let found = false;
     for fd in mod.funcs {

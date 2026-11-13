@@ -118,5 +118,10 @@
     "Name": "method_input_wrong_payload",
     "Source": "enum Fut[T] { Ready(T), Gone } struct Host {n:i32} function (h:Host) run[T](k:(Fut[T])=>i32):i32{return 1;} function main():i32{let h=Host {n:1};let k=(v:Fut[string]):i32=>1;return h.run[i32](k);}",
     "Want": "E038"
+  },
+  {
+    "Name": "nested_named_function",
+    "Source": "enum Fut[T] { Ready(T), Gone } struct Host { n:i32 } function (h:Host) run[T](k:((Fut[T])=>i32)=>i32):i32{return 7;} function helper(f:(Fut[i32])=>i32):i32{return f(Gone);} function main():i32{let h=Host {n:1};return h.run(helper);}",
+    "Want": ""
   }
 ]
