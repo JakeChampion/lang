@@ -6934,6 +6934,18 @@ function ssa_mov_rm0(s: asmcore.EmitState, size: i32, load: boolean, reg: string
 }
 
 function ssa_mov_rm_at(s: asmcore.EmitState, size: i32, load: boolean, reg: string, base: string, disp: i32, bare: boolean): asmcore.EmitState {
+  let slot = size == 64 && base == "%rbp" && !bare;
+  if (slot && !load && s.slot_load_at >= 0 && s.slot_load_at == s.out_pos() && s.slot_load_reg == reg && s.slot_load_disp == disp) {
+    return s;
+  }
+  s = ssa_mov_rm_emit(s, size, load, reg, base, disp, bare);
+  if (slot && load) {
+    return asmcore.EmitState { ...s, slot_load_at: s.out_pos(), slot_load_reg: reg, slot_load_disp: disp };
+  }
+  return s;
+}
+
+function ssa_mov_rm_emit(s: asmcore.EmitState, size: i32, load: boolean, reg: string, base: string, disp: i32, bare: boolean): asmcore.EmitState {
   if (s.records()) {
     let r = ssa_xreg(reg);
     let b = ssa_xreg(base);
@@ -10885,7 +10897,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   } else {
     s = ssa_frame(s, saved, frame, canary);
   }
-  s = asmcore.EmitState { ...s, ssa_save: save, ssa_lane_slots: asmcore.ssa_lane_slot_table(reg_of, lanes) };
+  s = asmcore.EmitState { ...s, ssa_save: save, ssa_lane_slots: asmcore.ssa_lane_slot_table(reg_of, lanes), slot_load_at: -1 };
   s = ssa_load_params(f, reg_of, s);
   let pos = 0;
   for bi in 0..f.blocks.len() {
