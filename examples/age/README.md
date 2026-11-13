@@ -1,26 +1,33 @@
 # age
 
-A Fern port of [age](https://age-encryption.org) 1.1.1, which encrypts
-files in the age v1 format. This port has the X25519 recipients and
-identities of age, the binary format and the ASCII armor.
+A Fern port of [age](https://age-encryption.org) 1.1.1 and of its key
+generator, age-keygen. age encrypts files in the age v1 format. This port
+has the X25519 recipients and identities of age, passphrases, SSH
+keys, the binary format and the ASCII armor.
 
 ```
 $ age -r age1... -o file.age file          # encrypt to a recipient
 $ age -r age1... -r age1... file > f.age   # encrypt to two recipients
 $ age -a -R recipients.txt file > f.asc    # encrypt to the ASCII armor
+$ age -p -o file.age file                  # encrypt with a passphrase
+$ age -R ~/.ssh/id_ed25519.pub file > f.age # encrypt to an SSH key
 $ age -e -i key.txt file > f.age           # encrypt to the key of an identity file
 $ age -d -i key.txt -o file file.age       # decrypt
-$ age -d -i key.txt < file.age > file      # decrypt the standard input
+$ age -d -i ~/.ssh/id_rsa file.age > file  # decrypt with an SSH key
+$ age -d file.age > file                   # decrypt with a passphrase
+$ age-keygen -o key.txt                    # make a key pair
+$ age-keygen -y key.txt                    # write the recipient of key.txt
 ```
 
 ## Build and run
 
 ```
-$ fern -O -target x86-64-linux -o age examples/age/age.fern   # or arm64-linux
+$ fern -O -target x86-64-linux -o age examples/age/age.fern          # or arm64-linux
+$ fern -O -target x86-64-linux -o age-keygen examples/age/keygen.fern
 ```
 
-Use `age-keygen` from age to make a key pair. This port has no key
-generator yet.
+The terminal code uses the termios flags of Linux, so the port runs on
+Linux.
 
 ## Options
 
@@ -30,28 +37,81 @@ generator yet.
 | `-d` | `--decrypt` | Decrypt. A file in the armor decrypts with no option. |
 | `-o PATH` | `--output PATH` | Write the result to PATH. `-` is the standard output. |
 | `-a` | `--armor` | Encrypt to the PEM-like ASCII armor. |
-| `-r KEY` | `--recipient KEY` | Encrypt to the `age1...` public key KEY. Can be repeated. |
+| `-p` | `--passphrase` | Encrypt with a passphrase. |
+| `-r KEY` | `--recipient KEY` | Encrypt to KEY: an `age1...` public key or an SSH public key. Can be repeated. |
 | `-R PATH` | `--recipients-file PATH` | Encrypt to the recipients in the file at PATH. Can be repeated. |
 | `-i PATH` | `--identity PATH` | Use the secret keys in the file at PATH. Can be repeated. |
 
 The flags follow the rules of the Go `flag` package, as in age. The input
 file comes after the flags. With no input file, or with `-`, the port reads
-the standard input. An identity file holds `AGE-SECRET-KEY-1...` lines.
-Empty lines and lines that start with `#` are comments.
+the standard input.
+
+An identity file holds `AGE-SECRET-KEY-1...` lines, or one SSH private
+key. Empty lines and lines that start with `#` are comments. An age file
+that a passphrase encrypts can also be an identity file. Then the port
+asks for the passphrase when it needs the keys.
+
+`age-keygen` has `-o PATH` and `-y`. Without `-y`, it makes a key pair.
+Its `# created:` line has the local time in the RFC 3339 format. With `-o`, it makes a new file with mode 0600 and writes
+`Public key: age1...` to the standard error. With `-y`, it writes the
+recipient of each key of an identity file.
+
+### Passphrases
+
+The port asks for a passphrase on the terminal, as age does: it opens
+`/dev/tty`, or it uses the standard input when that is a terminal. The
+terminal does not echo the passphrase. With no terminal, the message is
+that of age:
+
+```
+age: error: could not read passphrase: standard input is not a terminal, and /dev/tty is not available: open /dev/tty: no such device or address
+```
+
+`age -p` asks twice. For an empty passphrase, it makes a passphrase of 10
+random words from the BIP 39 list. It shows that passphrase on the
+terminal. The scrypt work factor is 2^18. A file with a work factor of
+more than 2^22 gives `scrypt work factor too large`. `age -d` with no `-i` asks for a
+passphrase only for a file that has one scrypt stanza.
+
+### SSH keys
+
+A recipient can be an `ssh-ed25519` or an `ssh-rsa` public key of 2048
+bits or more, in the `authorized_keys` format. In a recipients file, the
+port ignores an SSH key of another type, and it shows the message of age.
+
+An identity file can hold an SSH private key in these formats:
+
+- OpenSSH (`-----BEGIN OPENSSH PRIVATE KEY-----`), with or without a
+  passphrase. A key with a passphrase uses bcrypt and `aes256-ctr`, as
+  `ssh-keygen` makes it. The port asks for the passphrase only when a
+  stanza is for that key.
+
+- PKCS#1 (`-----BEGIN RSA PRIVATE KEY-----`) and PKCS#8
+  (`-----BEGIN PRIVATE KEY-----`) with no passphrase, for RSA and Ed25519.
 
 ## Files
 
 | File | Contents |
 | --- | --- |
 | `age.fern` | The command, the input and the output. |
-| `cli.fern` | The flags and the checks that age makes before it reads the input. |
+| `keygen.fern` | The `age-keygen` command. |
+| `cli.fern` | The flags of age and the checks that age makes before it reads the input. |
+| `goflag.fern` | Go's `flag` package, for both commands. |
 | `keys.fern` | Recipients, recipients files and identity files. |
 | `bech32.fern` | Bech32, and a constant-time decoder for a secret key line. |
-| `format.fern` | The header, its MAC, the X25519 stanza and the STREAM chunks. |
+| `format.fern` | The header, its MAC, the X25519 and scrypt stanzas and the STREAM chunks. |
+| `ssh.fern` | SSH keys: the wire format, `authorized_keys` lines, private key files, and the `ssh-ed25519` and `ssh-rsa` stanzas. |
+| `bcrypt.fern` | Blowfish, `bcrypt_pbkdf` and AES-256-CTR, for an OpenSSH key with a passphrase. |
+| `tty.fern` | The terminal: prompts with no echo, and the messages for the user at the terminal. |
+| `wordlist.fern` | The BIP 39 word list, for the passphrases that age makes. |
 | `source.fern` | The input as Go's `bufio` and armor readers read it. |
-| `text.fern` | Go's `%q` quotation, Go's strict base64 decoder and Go's names for system errors. |
+| `text.fern` | Go's `%q` quotation, Go's base64 decoders and Go's names for system errors. |
 | `age_test.fern` | The unit tests. |
 | `testdata/cctv` | The C2SP CCTV age test vectors (`licenses/age-cctv`). |
+| `testdata/ssh` | SSH test keys from Python's `cryptography` package. The passphrase of the encrypted keys is `ssh pass`. |
+
+The port uses `std/crypto/scrypt`, the RSA-OAEP of `std/crypto/rsa` and
+the Montgomery form of `std/crypto/ed25519`.
 
 ## Compatibility
 
@@ -67,7 +127,8 @@ age 1.1.1:
 
 age adds a last line to each error, which tells the user to report the
 error to the age project. The port does not write that line. The usage
-text is the text of the port. `--version` prints `v1.1.1-fern`.
+text is the text of the port. `--version` prints `v1.1.1-fern`. The same
+rules apply to `age-keygen`.
 
 ### Differences from age 1.1.1
 
@@ -97,17 +158,40 @@ armor. It accepts white space before the armor header. The CCTV vectors
 
 **scrypt.** A header that has an `scrypt` stanza and another stanza gives
 `an scrypt recipient must be the only one`, as the specification requires.
-age 1.1.1 tries the other stanzas.
+age 1.1.1 tries the other stanzas when `-i` names identities.
+
+**SSH keys.** These keys give a message of the port, where age gives the
+message of Go's parser:
+
+- A PEM private key with the `Proc-Type: 4,ENCRYPTED` header (the old
+  format of `ssh-keygen -m PEM`). age decrypts it after the passphrase.
+  The port encrypts to its `.pub` file, but it does not decrypt with it.
+
+- An OpenSSH private key that uses the `aes256-cbc` cipher.
+
+- An EC or a DSA private key. age parses it, then it refuses its type. The
+  port refuses the type with no check of the key, so a malformed key gives
+  the message for its type.
+
+- An ECDSA, a security-key or a certificate public key. The port knows the
+  type but does not check the key. A malformed key of one of these types
+  gives `unknown SSH recipient type` where age gives `ssh: no key found`.
+
+- An Ed25519 public key with a y value that is not canonical. Go's
+  edwards25519 accepts it, and the port refuses it.
 
 ### Not in this port
 
-- Passphrases: `-p`, files with an `scrypt` stanza, and identity files that
-  age encrypts with a passphrase. They give a message that says so.
+- Plugins (`-j`, `AGE-PLUGIN-...` and `age1name1...`). They give a message
+  that says so. The plugin protocol runs `age-plugin-NAME` with pipes, and
+  Fern has `proc_fork`, `proc_exec`, `pipe` and `dup_onto` for that. The
+  protocol has a state machine for each side, and a test needs a plugin.
+  This slice does not have that work.
 
-- SSH keys, plugins (`-j`, `AGE-PLUGIN-...` and `age1name1...`), and the
-  ML-KEM hybrid recipients (`AGE-SECRET-KEY-PQ-1...`).
-
-- `age-keygen`.
+- The ML-KEM-768 + X25519 hybrid recipients (`mlkem768x25519`,
+  `AGE-SECRET-KEY-PQ-1...`). age 1.1.1 does not have them: a later release
+  of age added them. The test holds the 20 hybrid vectors of the CCTV
+  suite in a list.
 
 - age buffers an armored file that a user types at a terminal. The port
   reads a terminal as it reads a file.
@@ -151,11 +235,26 @@ The secret values go through the constant-time gate of the repository:
   the verdict public. The ciphertext and the plaintext become public before
   the port writes them.
 
+- A passphrase is secret after the port reads its line. The check of the
+  second passphrase makes only the verdict public. scrypt reads its memory
+  at an index that depends on the passphrase. Thus `std/crypto/scrypt`
+  makes that index public, as each scrypt must.
+
+- The seed of an Ed25519 SSH key and the private exponent of an RSA SSH key
+  are secret. The RSA decryption reads the exponent with masks, and the
+  OAEP check makes only its verdict public. The base64 of a PEM file and
+  the checks of an RSA key are not constant-time, as in Go: the port marks
+  the key secret after them. Blowfish, for an OpenSSH key with a
+  passphrase, reads its tables at secret indexes, as OpenSSH does.
+
 `TestSelfHostCtGateX86_64/examples/age` runs the port under memcheck, and
 `TestSelfHostCtGateArm64/examples/age` does the same on an arm64 host. They
 encrypt, decrypt, read the armor, try a key that does not match and read a
-malformed key. A branch, an index or a write that depends on a secret byte
-fails the test.
+malformed key. They decrypt a CCTV scrypt file with the right passphrase
+and with a wrong one. They encrypt and decrypt with Ed25519 and RSA SSH
+keys.
+A branch, an index or a write that depends on a secret byte fails the
+test.
 
 ## Tests
 
@@ -166,12 +265,21 @@ parts:
 - Bech32 with the BIP 173 vectors, and the constant-time key decoder
   against the plain decoder.
 
-- Identity files and recipients, with their refusals.
+- Identity files and recipients, with their refusals, as age and as
+  age-keygen read them.
 
 - The CCTV `x25519` vector: the header, the MAC, the unwrap and the
   payload.
 
 - Each header and stanza refusal, with the message of age.
+
+- The scrypt stanza and each of its refusals.
+
+- `authorized_keys` lines, an `ssh-ed25519` wrap and unwrap, and
+  malformed SSH private key files.
+
+- `bcrypt_pbkdf` and AES-256-CTR against Python. The counter of the CTR
+  test carries over 32 bits.
 
 - The STREAM nonce and the last-chunk flag.
 
@@ -198,12 +306,35 @@ these checks:
 - The port gives the message and the exit code of age for 51 malformed
   files and 53 command lines.
 
+- Passphrases. Each tool gets a new pseudo-terminal, and the test types
+  the passphrase after the prompt. Each tool decrypts what the other
+  encrypts with `-p`, with and without `-a`. age decrypts with the
+  passphrase that the port makes. For 15 command lines, the two tools give
+  the same message, exit code and terminal text. These lines have wrong,
+  empty and unequal passphrases, a Ctrl-D, and identity files that a
+  passphrase encrypts. With no terminal, the two tools give the same
+  message.
+
+- SSH keys. Each tool decrypts what the other encrypts, with `-R` and
+  `-r`, for Ed25519, RSA-2048 and RSA-3072 keys, and the port reads
+  PKCS#1 and PKCS#8 keys. Both tools decrypt with OpenSSH keys that have a
+  passphrase. For 35 command lines, the two tools give the same message:
+  malformed keys and stanzas, a key that does not match, and keys of
+  other types.
+
+`TestSelfHostExampleAgeKeygen` runs the age-keygen port on x86-64 and
+arm64 against `/usr/bin/age-keygen`. Each key pair works with age. The
+`# created:` line has the time zone of `TZ`. `-o` makes a file with mode
+0600. For 16 command lines, the two tools give the same output and
+message.
+
 `TestSelfHostExampleAgeCCTV` decrypts the 147 vectors of the C2SP CCTV age
 suite on x86-64 and arm64. Each vector gives its expected result. The
-plaintext before a failure has the hash of the vector.
+plaintext before a failure has the hash of the vector. A vector with a
+passphrase runs on a pseudo-terminal. 127 vectors pass.
 
-41 vectors need scrypt or the ML-KEM hybrid recipients. The test holds
-their names, and it fails when one of them gives its expected result.
+The test holds the names of the 20 ML-KEM hybrid vectors. It fails when
+one of them gives its expected result.
 
 Four armor vectors do not start with the armor header. The port reads them
 as plain files and gives a header failure, as age does.
@@ -242,3 +373,24 @@ The port computes ChaCha20 and then Poly1305, at about 1.6 cycles for each
 byte for both. To encrypt faster than age, the port needs a seal kernel
 like that of golang.org/x/crypto. Its ChaCha20 loop also computes Poly1305
 in the general registers.
+
+### Passphrases and SSH keys
+
+Each time is the best of 3 runs on the same host. A run with a passphrase
+includes about 0.03 s for the Python program that drives the
+pseudo-terminal. Other jobs ran on the host at the same time.
+
+| Operation | age 1.1.1 | Fern port | Port / age |
+| --- | ---: | ---: | ---: |
+| Decrypt, scrypt work factor 2^18 | 0.80 s | 0.89 s | 1.1 |
+| Encrypt, scrypt work factor 2^18 | 0.77 s | 0.98 s | 1.3 |
+| Decrypt with an Ed25519 SSH key | 0.005 s | 0.003 s | 0.6 |
+| Decrypt with an RSA-2048 SSH key | 0.006 s | 0.034 s | 5.7 |
+| Decrypt with an RSA-3072 SSH key | 0.007 s | 0.101 s | 14 |
+| Decrypt with an Ed25519 SSH key with a passphrase (16 bcrypt rounds) | 0.16 s | 0.17 s | 1.1 |
+
+`std/crypto/scrypt` takes 0.88 s for N = 2^18 and r = 8, and OpenSSL
+takes 0.70 s. It keeps two 32-bit words in each `i64` slot, so its memory
+is 256 MiB, as in age. The RSA decryption has no CRT and uses 26-bit
+limbs, so it is slower than Go's. The decryption takes a fraction of the
+time of a file of 64 KiB or more.

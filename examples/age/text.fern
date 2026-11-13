@@ -231,6 +231,40 @@ function quantum(s: [u8], from: i32, pad: boolean): Quantum {
 // that Go reports. Go skips "\r" and "\n" in the input. This decoder refuses
 // them, as the age specification requires.
 pub function b64_decode(s: [u8], pad: boolean): Result[u8[], i32] {
+  return b64_decode_with(s, pad, true);
+}
+
+// Go's base64.StdEncoding with no Strict(): nonzero bits after the last
+// byte are not an error.
+pub function b64_lax(s: [u8]): Option[u8[]] {
+  return match (b64_decode_with(s, true, false)) {
+    Ok(b) => Some(b),
+    Err(_) => None,
+  };
+}
+
+// The bytes of a quantum after out. A strict decoder refuses bits after the
+// last byte.
+function quantum_bytes(own out: u8[], q: Quantum, strict: boolean): Result[u8[], i32] {
+  let b0 = (q.value >> 16 & 255) as u8;
+  let b1 = (q.value >> 8 & 255) as u8;
+  let b2 = (q.value & 255) as u8;
+  if (q.count == 4) {
+    return Ok(out.append(b0).append(b1).append(b2));
+  }
+  if (q.count == 3) {
+    if (strict && b2 != 0) {
+      return Err(q.next - 1);
+    }
+    return Ok(out.append(b0).append(b1));
+  }
+  if (strict && (b1 != 0 || b2 != 0)) {
+    return Err(q.next - 2);
+  }
+  return Ok(out.append(b0));
+}
+
+function b64_decode_with(s: [u8], pad: boolean, strict: boolean): Result[u8[], i32] {
   let out: u8[] = [];
   let si = 0;
   while (si < s.len()) {
@@ -241,22 +275,7 @@ pub function b64_decode(s: [u8], pad: boolean): Result[u8[], i32] {
       }
       return Ok(out);
     }
-    let b0 = (q.value >> 16 & 255) as u8;
-    let b1 = (q.value >> 8 & 255) as u8;
-    let b2 = (q.value & 255) as u8;
-    if (q.count == 4) {
-      out = out.append(b0).append(b1).append(b2);
-    } else if (q.count == 3) {
-      if (b2 != 0) {
-        return Err(q.next - 1);
-      }
-      out = out.append(b0).append(b1);
-    } else {
-      if (b1 != 0 || b2 != 0) {
-        return Err(q.next - 2);
-      }
-      out = out.append(b0);
-    }
+    out = quantum_bytes(out, q, strict)?;
     if (q.fail >= 0) {
       return Err(q.fail);
     }

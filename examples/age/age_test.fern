@@ -14,6 +14,10 @@ import "./format";
 import "./keys";
 import "./source";
 import "./text";
+import "./bcrypt";
+import "./ssh";
+import "./wordlist";
+import "std/string";
 
 // The x25519 vector of the C2SP CCTV age suite.
 const IDENTITY: string = "AGE-SECRET-KEY-1EGTZVFFV20835NWYV6270LXYVK2VKNX2MMDKWYKLMGR48UAWX40Q2P2LM0";
@@ -134,7 +138,7 @@ function test_secret_keys(): test.TestOutcome {
   ]);
 }
 
-function first_error(r: Result[keys.Identity[], string]): string {
+function first_error(r: Result[keys.X25519Key[], string]): string {
   return match (r) {
     Ok(ids) => "ok " + ids.len().to_string(),
     Err(why) => why,
@@ -166,7 +170,8 @@ function test_identity_files(): test.TestOutcome {
 
 function recipient(arg: string): string {
   return match (keys.parse_recipient(arg)) {
-    Ok(k) => "key " + k.len().to_string(),
+    Ok(keys.X25519To(k)) => "key " + k.len().to_string(),
+    Ok(_) => "another recipient",
     Err(why) => why,
   };
 }
@@ -621,6 +626,176 @@ function test_scan_lines(): test.TestOutcome {
   return test.assert_eq_array(got, ["a", "b", "", "c"]);
 }
 
+function scrypt_outcome(u: format.Unwrapped): string {
+  return match (u) {
+    format.FileKey(k) => "key " + hex.encode(k),
+    format.Incorrect => "incorrect",
+    format.Invalid(why) => why,
+  };
+}
+
+function scrypt_stanza(args: string[]): format.Stanza {
+  return format.Stanza { kind: "scrypt", args: args, body: __alloc_u8(32) };
+}
+
+// A stanza with work factor 4 unwraps under its passphrase only. Each
+// malformed stanza gets age's message before scrypt runs.
+function test_scrypt_stanza(): test.TestOutcome {
+  let salt = unhex("000102030405060708090a0b0c0d0e0f");
+  let Ok(st) = format.wrap_scrypt(unhex(FILE_KEY), "pass".bytes(), salt, 4) else {
+    return test.fail("wrap_scrypt");
+  };
+  let s = st.args[0];
+  let got = [
+    st.args[1],
+    scrypt_outcome(format.unwrap_scrypt(st, "pass".bytes())),
+    scrypt_outcome(format.unwrap_scrypt(st, "Pass".bytes())),
+    scrypt_outcome(format.unwrap_scrypt(format.Stanza { ...st, kind: "Scrypt" }, "pass".bytes())),
+    scrypt_outcome(format.unwrap_scrypt(scrypt_stanza([s]), "pass".bytes())),
+    scrypt_outcome(format.unwrap_scrypt(scrypt_stanza([s + "=", "4"]), "pass".bytes())),
+    scrypt_outcome(format.unwrap_scrypt(scrypt_stanza(["AAAA", "4"]), "pass".bytes())),
+    scrypt_outcome(format.unwrap_scrypt(scrypt_stanza([s, "04"]), "pass".bytes())),
+    scrypt_outcome(format.unwrap_scrypt(scrypt_stanza([s, "4x"]), "pass".bytes())),
+    scrypt_outcome(format.unwrap_scrypt(scrypt_stanza([s, "23"]), "pass".bytes())),
+    scrypt_outcome(format.unwrap_scrypt(scrypt_stanza([s, "9223372036854775807"]), "pass".bytes())),
+    scrypt_outcome(format.unwrap_scrypt(scrypt_stanza([s, "9223372036854775808"]), "pass".bytes())),
+    scrypt_outcome(format.unwrap_scrypt(format.Stanza { ...st, body: __alloc_u8(33) }, "pass".bytes())),
+  ];
+  return test.assert_eq_array(got, [
+    "4",
+    "key " + FILE_KEY,
+    "incorrect",
+    "incorrect",
+    "invalid scrypt recipient block",
+    "failed to parse scrypt salt: illegal base64 data at input byte 22",
+    "invalid scrypt recipient block",
+    "scrypt work factor encoding invalid: \"04\"",
+    "scrypt work factor encoding invalid: \"4x\"",
+    "scrypt work factor too large: 23",
+    "scrypt work factor too large: 9223372036854775807",
+    "failed to parse scrypt work factor: strconv.Atoi: parsing \"9223372036854775808\": value out of range",
+    "invalid scrypt recipient block: incorrect file key size",
+  ]);
+}
+
+function test_wordlist(): test.TestOutcome {
+  return test.assert_eq_array([wordlist.word(0), wordlist.word(1), wordlist.word(1024), wordlist.word(2047)], ["abandon", "ability", "length", "zoo"]);
+}
+
+// The ed25519 key of examples/age/testdata/ssh.
+const SSH_PUBLIC: string = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOycxXcMiOwXDFEiWrwMNEC4eqpSHmcwB1quUxWKkLin ed25519@test";
+
+const SSH_PRIVATE: string = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtz\nc2gtZWQyNTUxOQAAACDsnMV3DIjsFwxRIlq8DDRAuHqqUh5nMAdarlMVipC4pwAA\nAIgQzsyrEM7MqwAAAAtzc2gtZWQyNTUxOQAAACDsnMV3DIjsFwxRIlq8DDRAuHqq\nUh5nMAdarlMVipC4pwAAAED/aiqXGLS7Rj4mJ4Itm0F9pAQnesRhONCFleW+1npU\nauycxXcMiOwXDFEiWrwMNEC4eqpSHmcwB1quUxWKkLinAAAAAAECAwQF\n-----END OPENSSH PRIVATE KEY-----\n";
+
+function authorized(line: string): string {
+  return match (ssh.parse_authorized(line.bytes())) {
+    Ok(ssh.Ed25519Public(wire, _)) => "ed25519 " + ssh.fingerprint(wire),
+    Ok(k) => k.kind(),
+    Err(why) => why,
+  };
+}
+
+// ssh.ParseAuthorizedKey: comments, options, tabs and a type field that the
+// key does not have to match.
+function test_authorized_keys(): test.TestOutcome {
+  let key = SSH_PUBLIC.split(" ")[1];
+  let got = [
+    authorized(SSH_PUBLIC),
+    authorized("# c\n\n  " + SSH_PUBLIC + "\r\n"),
+    authorized("no-pty,command=\"a b\" " + SSH_PUBLIC),
+    authorized("ssh-rsa\t" + key),
+    authorized("ssh-ed25519 " + key[0:20].unwrap_or("")),
+    authorized("ssh-ed25519"),
+    authorized(""),
+  ];
+  return test.assert_eq_array(got, ["ed25519 6DvwTA", "ed25519 6DvwTA", "ed25519 6DvwTA", "ed25519 6DvwTA", "ssh: no key found", "ssh: no key found", "ssh: no key found"]);
+}
+
+// The private key gives the recipient of its public key, and a file key
+// wrapped to that recipient unwraps with the identity.
+function test_ssh_ed25519(): test.TestOutcome {
+  let Ok(public) = ssh.parse_authorized(SSH_PUBLIC.bytes()) else {
+    return test.fail("the public key");
+  };
+  let Ok(r) = ssh.recipient_of(public) else {
+    return test.fail("the recipient");
+  };
+  let ssh.Key(k) = ssh.parse_private(SSH_PRIVATE.bytes()) else {
+    return test.fail("the private key");
+  };
+  let Ok(id) = ssh.identity_of(k) else {
+    return test.fail("the identity");
+  };
+  let Ok(st) = ssh.wrap(unhex(FILE_KEY), r, __alloc_u8(32).with(0, 9u8)) else {
+    return test.fail("wrap");
+  };
+  if (st.args[0] != "6DvwTA" || !ssh.same_public(k, public)) {
+    return test.fail("the fingerprint");
+  }
+  return test.assert_eq(scrypt_outcome(ssh.unwrap(st, id)), "key " + FILE_KEY);
+}
+
+function private_error(pem: string): string {
+  return match (ssh.parse_private(pem.bytes())) {
+    ssh.Key(_) => "key",
+    ssh.NeedsPassphrase(_) => "passphrase",
+    ssh.Bad(why) => why,
+  };
+}
+
+function test_ssh_private_refusals(): test.TestOutcome {
+  let got = [
+    private_error("hello"),
+    private_error("-----BEGIN FOO-----\nAAAA\n-----END FOO-----\n"),
+    private_error("-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END OPENSSH PRIVATE KEY-----\n"),
+    private_error("-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,00\n\nAAAA\n-----END RSA PRIVATE KEY-----\n"),
+  ];
+  return test.assert_eq_array(got, ["ssh: no key found", "ssh: unsupported key type \"FOO\"", "ssh: invalid openssh private key format", "passphrase"]);
+}
+
+// bcrypt_pbkdf and AES-256-CTR against Python: a pure Python bcrypt_pbkdf
+// that age accepts, and the cryptography package's CTR mode, whose counter
+// carries over 32 bits.
+function test_bcrypt(): test.TestOutcome {
+  let Ok(k) = bcrypt.pbkdf("ssh pass".bytes(), unhex("000102030405060708090a0b0c0d0e0f"), 2i64, 48) else {
+    return test.fail("pbkdf");
+  };
+  let key = unhex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+  let got = [
+    hex.encode(k),
+    hex.encode(bcrypt.aes256_ctr(key, unhex("000000000000000000000000ffffffff"), __alloc_u8(40))),
+    hex.encode(bcrypt.aes256_ctr(key, unhex("ffffffffffffffffffffffffffffffff"), __alloc_u8(40))),
+  ];
+  return test.assert_eq_array(got, [
+    "fe6655515714f01aea64acf460b3a1f61ab58488d69df4c9076fdd6699e200dd7483cc7971fabb6f6fa73340c3351c83",
+    "b9c2739810cba157a9fe6a108c6e569e641d1a3a80becff6f0f38f9764fdcf96367ef82888315574",
+    "e999e41d4ca770da5387117b5d8f57eef29000b62a499fd0a9f39a6add2e7780f05d76ae4ab99fe5",
+  ]);
+}
+
+// age.ParseIdentities, which age-keygen -y uses, parses each line as a key.
+function test_library_identities(): test.TestOutcome {
+  let first = match (keys.parse_identities(("# c\n" + IDENTITY + "\n").bytes())) {
+    Ok(ks) => keys.recipient_text(ks[0].public),
+    Err(why) => why,
+  };
+  let second = match (keys.parse_identities("hello\n".bytes())) {
+    Ok(_) => "ok",
+    Err(why) => why,
+  };
+  let Ok(k) = keys.key_of(unhex("0000000000000000000000000000000000000000000000000000000000000001").concat([])) else {
+    return test.fail("key_of");
+  };
+  let round = match (keys.parse_identities(keys.secret_text(k.scalar).bytes())) {
+    Ok(ks) => keys.recipient_text(ks[0].public) == keys.recipient_text(k.public),
+    Err(_) => false,
+  };
+  if (!round) {
+    return test.fail("a new key does not parse back");
+  }
+  return test.assert_eq_array([first, second], ["age1xmwwc06ly3ee5rytxm9mflaz2u56jjj36s0mypdrwsvlul66mv4q47ryef", "error at line 1: malformed secret key: separator '1' at invalid position: pos=-1, len=5"]);
+}
+
 function main(): i32 {
   let r = test.new("age");
   r = r.it("bech32 decodes the BIP 173 vectors with age's messages", test_bech32_vectors);
@@ -639,5 +814,12 @@ function main(): i32 {
   r = r.it("the flags follow Go's flag package", test_flags);
   r = r.it("the checks after the flags, in age's order", test_checks);
   r = r.it("identity lines split as bufio.ScanLines splits them", test_scan_lines);
+  r = r.it("the scrypt stanza and each of its refusals", test_scrypt_stanza);
+  r = r.it("the BIP 39 word list", test_wordlist);
+  r = r.it("authorized_keys lines as ssh.ParseAuthorizedKey reads them", test_authorized_keys);
+  r = r.it("an ssh-ed25519 key wraps and unwraps a file key", test_ssh_ed25519);
+  r = r.it("malformed SSH private key files", test_ssh_private_refusals);
+  r = r.it("bcrypt_pbkdf and AES-256-CTR", test_bcrypt);
+  r = r.it("identity files as age-keygen -y reads them", test_library_identities);
   return r.finish();
 }

@@ -1,0 +1,122 @@
+// The terminal of age: prompts for passphrases with no echo, and messages
+// that only the user at the terminal sees. A port of age's tui.go and of
+// golang.org/x/term's ReadPassword on Linux.
+import "std/array";
+import "./text";
+
+// The Linux termios flags that ReadPassword changes.
+const ECHO: i64 = 8;
+
+const ICANON: i64 = 2;
+
+const ISIG: i64 = 1;
+
+const ICRNL: i64 = 256;
+
+// The input and the output of the terminal.
+struct Terminal { input: Reader, output: Writer, own_input: boolean }
+
+// age's withTerminal: /dev/tty, or the standard input when it is a terminal.
+function terminal(): Result[Terminal, string] {
+  match (open_reader("/dev/tty")) {
+    Ok(r) => {
+      return match (open_writer("/dev/tty")) {
+        Ok(w) => Ok(Terminal { input: r, output: w, own_input: true }),
+        Err(e) => Err("open /dev/tty: " + text.errno_text(e)),
+      };
+    },
+    Err(e) => {
+      if (stdin().isatty()) {
+        return match (open_writer("/dev/stdin")) {
+          Ok(w) => Ok(Terminal { input: stdin(), output: w, own_input: false }),
+          Err(f) => Err("open /dev/stdin: " + text.errno_text(f)),
+        };
+      }
+      return Err("standard input is not a terminal, and /dev/tty is not available: open /dev/tty: " + text.errno_text(e));
+    }
+  }
+}
+
+function close(own t: Terminal): void {
+  t.output.close();
+  if (t.own_input) {
+    t.input.close();
+  }
+}
+
+// x/term's readPasswordLine: one byte at a time up to "\n". A backspace
+// removes the byte before it, and "\r" is dropped.
+function password_line(r: Reader): Result[u8[], string] {
+  let out: u8[] = [];
+  loop {
+    let b = match (r.read_chunk_bytes(1)) {
+      Ok(b) => b,
+      Err(e) => {
+        return Err(text.errno_text(e));
+      },
+    };
+    // x/term reads with read(2), which gives no error at the end of a
+    // line that the user ends with Ctrl-D: it reads again.
+    if (b.len() == 0) {
+      continue;
+    }
+    let c = b[0];
+    if (c == b'\n') {
+      return Ok(out);
+    }
+    if (c == 8u8) {
+      if (out.len() > 0) {
+        out = array.slice(out, 0, out.len() - 1);
+      }
+    } else if (c != b'\r') {
+      out = out.append(c);
+    }
+  }
+  return Ok(out);
+}
+
+// x/term's ReadPassword: the terminal echoes nothing while the user types.
+function read_password(r: Reader): Result[u8[], string] {
+  let saved = match (r.termios_get()) {
+    Ok(t) => t,
+    Err(e) => {
+      return Err(text.errno_text(e));
+    },
+  };
+  let quiet = saved.with(3, saved[3] & ~ECHO | ICANON | ISIG).with(0, saved[0] | ICRNL);
+  if let Err(e) = r.termios_set(0, quiet) {
+    return Err(text.errno_text(e));
+  }
+  let line = password_line(r);
+  r.termios_set(0, saved);
+  return line;
+}
+
+// age's clearLine: a new line, then an escape sequence that erases it.
+const CLEAR_LINE: string = "\r\n\x1b[F\x1b[K";
+
+// age's readSecret: the prompt, then a line with no echo.
+pub function read_secret(prompt: string): Result[u8[], string] {
+  let t = terminal()?;
+  t.output.write(prompt + " ");
+  let s = read_password(t.input);
+  t.output.write(CLEAR_LINE);
+  close(t);
+  return s;
+}
+
+// age's printfToTerminal.
+pub function tell(msg: string): Option[string] {
+  let t = match (terminal()) {
+    Ok(t) => t,
+    Err(why) => {
+      return Some(why);
+    },
+  };
+  let wrote = t.output.write("age: " + msg + "\n");
+  close(t);
+  return match (wrote) {
+    Ok(_) => None,
+    Err(e) => Some("write /dev/tty: " + text.errno_text(e)),
+  };
+}

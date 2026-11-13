@@ -14,7 +14,7 @@ func TestSelfHostCryptoSuitesWasm(t *testing.T) {
 	wasmtime := e2eharness.Wasmtime(t)
 	cli := buildSelfHostCLI(t)
 	interp := buildLangBinForInterp(t)
-	for _, suite := range []string{"chacha20poly1305", "aes_gcm", "field25519", "x25519", "ed25519", "mlkem768", "montgomery", "p256", "rsa", "tls_client", "tls_der", "tls_handshake", "tls_keyschedule", "tls_keyshare", "tls_message", "tls_mozilla", "tls_record", "tls_server", "tls_identity_shared_key", "tls_verify", "tls_x509"} {
+	for _, suite := range []string{"chacha20poly1305", "aes_gcm", "field25519", "x25519", "ed25519", "mlkem768", "montgomery", "p256", "rsa", "scrypt", "tls_client", "tls_der", "tls_handshake", "tls_keyschedule", "tls_keyshare", "tls_message", "tls_mozilla", "tls_record", "tls_server", "tls_identity_shared_key", "tls_verify", "tls_x509"} {
 		t.Run(suite, func(t *testing.T) {
 			src := langSrcAbs(t, "tests/stdlib/"+suite+"_test.fern")
 			want, exit := e2eharness.InterpVerdict(t, interp, src)
@@ -80,6 +80,51 @@ func TestSelfHostECDSASuite(t *testing.T) {
 		t.Helper()
 		if err != nil || !strings.Contains(string(out), "# pass 10\n# fail 0\n") {
 			t.Fatalf("ecdsa suite: %v\n%s", err, out)
+		}
+	}
+	t.Run("x86-64", func(t *testing.T) {
+		out, err := runX86_64Bin(cli.runner, cli.x86Binary(t, src, "FERN_STRICT_IR=1")).Output()
+		check(t, out, err)
+	})
+	t.Run("arm64", func(t *testing.T) {
+		_, qemu := arm64Tooling(t)
+		out, err := runArm64Bin(qemu, cli.arm64Binary(t, src, "FERN_STRICT_IR=1")).Output()
+		check(t, out, err)
+	})
+	t.Run("wasm", func(t *testing.T) {
+		out, err := exec.Command(e2eharness.Wasmtime(t), "run", cli.wasmComponent(t, src, "FERN_STRICT_IR=1")).Output()
+		check(t, out, err)
+	})
+}
+
+// TestSelfHostScryptRFC7914 runs the two RFC 7914 vectors that the
+// interpreters are too slow for. Each one fills 1 MiB or 16 MiB.
+func TestSelfHostScryptRFC7914(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	src := filepath.Join(t.TempDir(), "main.fern")
+	prog := `import "std/hex";
+import "std/crypto/scrypt";
+function show(r: Result[u8[], scrypt.ScryptError]): string {
+  return match (r) {
+    Ok(b) => hex.encode(b),
+    Err(e) => e.message(),
+  };
+}
+function main(): i32 {
+  print(show(scrypt.key("password".as_bytes(), "NaCl".as_bytes(), 1024, 8, 16, 64)));
+  print(show(scrypt.key("pleaseletmein".as_bytes(), "SodiumChloride".as_bytes(), 16384, 8, 1, 64)));
+  return 0;
+}
+`
+	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	want := "fdbabe1c9d3472007856e7190d01e9fe7c6ad7cbc8237830e77376634b3731622eaf30d92e22a3886ff109279d9830dac727afb94a83ee6d8360cbdfa2cc0640\n" +
+		"7023bdcb3afd7348461c06cd81fd38ebfda8fbba904f8e3ea9b543f6545da1f2d5432955613f0fcf62d49705242a9af9e61e85dc0d651e40dfcf017b45575887\n"
+	check := func(t *testing.T, out []byte, err error) {
+		t.Helper()
+		if err != nil || string(out) != want {
+			t.Fatalf("scrypt RFC 7914 vectors: %v\n%s", err, out)
 		}
 	}
 	t.Run("x86-64", func(t *testing.T) {
