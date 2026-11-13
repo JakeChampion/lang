@@ -1,7 +1,6 @@
-# 2026-11-13: a_function_type_argument_binds_through_its_array has balanced allocations on x86-64.
-# 2026-11-13: main f2c331f5 measures task_handle_with_a_made_up_id at 5 (was 7) and task_resumed_with_another_function at 10 (was 11).
 # 2026-11-13: task_handle_with_a_made_up_id keeps 5 blocks at its abort (was 7), and
 # task_resumed_with_another_function keeps 10 (was 11), on main at f2c331f55c.
+# 2026-11-13: a_function_type_argument_binds_through_its_array has balanced allocations on x86-64.
 # 2026-11-12: a_map_holds_named_functions is clean under RC trace.
 # 2026-11-12: literal_trees_take_the_type_of_their_use is clean under RC trace.
 # 2026-11-12: callback_aggregate_environment_loans has balanced allocations and zero live bytes on all three main targets.
