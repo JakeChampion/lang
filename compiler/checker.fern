@@ -14726,13 +14726,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
 
       if (scope_variant_owner(id.name, s).len() > 0 || parser.builtin_enum_of(id.name).len() > 0) {
         for arg in c.args {
-          let unit_binding = false;
-          if let ast.ExprIdent(_) = arg {
-            unit_binding = true;
-          }
-          if (is_void(check_expr(arg, s)) && !parser.is_unit_expr(arg) && !unit_binding) {
-            out = out.append(dg_at("E072", "a void expression is not a value here; call it as a statement, and write `()` if you meant the unit value", expr_line(arg), expr_col(arg)));
-          }
+          out = util.append_diags(out, value_diags(arg, s));
         }
       }
       if (s.ident_binding(id) < 0) {
@@ -18037,6 +18031,35 @@ function var_pattern_diags(v: ast.StmtVar, s: Scope, tuple_pattern: boolean): ut
   return out;
 }
 
+// E072: a void expression where a value is needed. The unit value and a
+// binding that holds it are values.
+function value_diags(e: ast.Expr, s: Scope): util.Diag[] {
+  if let ast.ExprIdent(_) = e {
+    return [];
+  }
+  if (!is_void(check_expr(e, s)) || parser.is_unit_expr(e) || !arms_void(e, s)) {
+    return [];
+  }
+  return [dg_at("E072", "a void expression is not a value here; call it as a statement, and write `()` if you meant the unit value", expr_line(e), expr_col(e))];
+}
+
+// A value block whose arms differ has its E031 already.
+function arms_void(e: ast.Expr, s: Scope): boolean {
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprLambda(lm) = c.callee {
+      if (parser.is_value_block(c)) {
+        for arm in mx_body_result_exprs(lm.body) {
+          let t = check_expr(arm, s);
+          if (!is_void(t) && !is_unknown(t)) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+  return true;
+}
+
 // An unannotated map local that settle_literal_locals could not give a type.
 function open_map_diags(v: ast.StmtVar, s: Scope): util.Diag[] {
   if (v.type_name.len() > 0 || !bare_map(check_expr(v.init, s))) {
@@ -18072,6 +18095,9 @@ function stmts_assign_diags_mode(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]
           out = util.append_diags(out, int_range_diags(v.init, "i64", false));
         }
         out = util.append_diags(out, open_map_diags(v, cur));
+        if (v.type_name.len() == 0 || v.type_name == "void") {
+          out = util.append_diags(out, value_diags(v.init, cur));
+        }
         out = util.append_diags(out, var_pattern_diags(v, cur, tuple_pattern));
       },
       ast.StmtAssign(a) => {
@@ -28801,159 +28827,6 @@ function e057_fn_diags(fd: parser.FuncDecl, annots: Annot[], s: Scope): util.Dia
   return out;
 }
 
-struct E044Walk { void_fns: string[] }
-
-function e044_lambda_check(lam: ast.ExprLambda, line: i32, col: i32, wk: E044Walk, suspects: string[], labels: string[]): util.Diag[] {
-  let out: util.Diag[] = [];
-  if (suspects.len() == 0) {
-    return out;
-  }
-  let free = astwalk.collect_lambda_idents(lam, []);
-  for i in 0..suspects.len() {
-    if (util.has_str(free, suspects[i])) {
-      out = out.append(dg_at("E044", "captured variable \"" + suspects[i] + "\" has unsupported type " + labels[i], line, col));
-    }
-  }
-  return out;
-}
-
-function e044_without(suspects: string[], labels: string[], bound: string[]): (string[], string[]) {
-  let names: string[] = [];
-  let types: string[] = [];
-  for i in 0..suspects.len() {
-    if (!util.has_str(bound, suspects[i])) {
-      names = names.append(suspects[i]);
-      types = types.append(labels[i]);
-    }
-  }
-  return (names, types);
-}
-
-function e044_expr(e: ast.Expr, line: i32, col: i32, wk: E044Walk, suspects: string[], labels: string[]): util.Diag[] {
-  function visit(node: ast.Expr, own out: util.Diag[]): util.Diag[] {
-    if let ast.ExprLambda(lam) = node {
-      if (parser.is_written_lambda_origin(lam.origin)) {
-        out = util.append_diags(out, e044_lambda_check(lam, line, col, wk, suspects, labels));
-      }
-      let names = suspects;
-      let types = labels;
-      if (names.len() > 0 && lam.params.len() > 0) {
-        let bound: string[] = [];
-        for param in lam.params {
-          bound = astwalk.append_bound_name(bound, param.name);
-        }
-        let (next_names, next_types) = e044_without(names, types, bound);
-        names = next_names;
-        types = next_types;
-      }
-      out = util.append_diags(out, e044_stmts(lam.body, wk, names, types));
-    }
-    return out;
-  }
-  let out: util.Diag[] = [];
-  return astwalk.fold_expr_pruned(e, out, visit, astwalk.not_lambda);
-}
-
-function e044_stmts(stmts: ast.Stmt[], wk: E044Walk, suspects0: string[], labels0: string[]): util.Diag[] {
-  let out: util.Diag[] = [];
-  let suspects = suspects0;
-  let labels = labels0;
-  for stmt in stmts {
-    match (stmt) {
-      ast.StmtVar(v) => {
-        let names = suspects;
-        let types = labels;
-        if (suspects.len() > 0 && ast.var_binds_itself(v) && util.has_str(suspects, v.name)) {
-          let (next_names, next_types) = e044_without(suspects, labels, astwalk.append_bound_name([], v.name));
-          names = next_names;
-          types = next_types;
-        }
-        out = util.append_diags(out, e044_expr(v.init, v.line, v.col, wk, names, types));
-        if (suspects.len() > 0 && (util.has_str(suspects, v.name) || util.contains(v.name, ","))) {
-          let (next_names, next_types) = e044_without(suspects, labels, astwalk.append_bound_name([], v.name));
-          suspects = next_names;
-          labels = next_types;
-        }
-        let is_void_init = false;
-        match (v.init) {
-          ast.ExprCall(c) => {
-            match (c.callee) {
-              ast.ExprIdent(id) => {
-                for void_fn in wk.void_fns {
-                  if (void_fn == id.name) {
-                    is_void_init = true;
-                  }
-                }
-              },
-              _ => {}
-            }
-          },
-          _ => {}
-        }
-        if (is_void_init && v.type_name.len() == 0) {
-          suspects = suspects.append(v.name);
-          labels = labels.append("void");
-        }
-      },
-      ast.StmtReturn(r) => {
-        out = util.append_diags(out, e044_expr(r.value, r.line, r.col, wk, suspects, labels));
-      },
-      ast.StmtExpr(e) => {
-        out = util.append_diags(out, e044_expr(e.value, 0, 0, wk, suspects, labels));
-      },
-      ast.StmtAssign(a) => {
-        out = util.append_diags(out, e044_expr(a.value, a.line, a.col, wk, suspects, labels));
-      },
-      ast.StmtIf(f) => {
-        out = util.append_diags(out, e044_expr(f.cond, 0, 0, wk, suspects, labels));
-        out = util.append_diags(out, e044_stmts(f.then_body, wk, suspects, labels));
-        out = util.append_diags(out, e044_stmts(f.else_body, wk, suspects, labels));
-      },
-      ast.StmtWhile(w) => {
-        out = util.append_diags(out, e044_expr(w.cond, 0, 0, wk, suspects, labels));
-        out = util.append_diags(out, e044_stmts(w.body, wk, suspects, labels));
-      },
-      ast.StmtFor(fr) => {
-        out = util.append_diags(out, e044_expr(fr.iter, 0, 0, wk, suspects, labels));
-        let names = suspects;
-        let types = labels;
-        if (names.len() > 0) {
-          let (next_names, next_types) = e044_without(names, types, astwalk.append_bound_name([], fr.var_name));
-          names = next_names;
-          types = next_types;
-        }
-        out = util.append_diags(out, e044_stmts(fr.body, wk, names, types));
-      },
-      ast.StmtMatch(m) => {
-        out = util.append_diags(out, e044_expr(m.scrutinee, m.line, m.col, wk, suspects, labels));
-        for arm in m.arms {
-          let names = suspects;
-          let types = labels;
-          if (names.len() > 0) {
-            let (next_names, next_types) = e044_without(names, types, astwalk.pattern_binders(arm.pattern, []));
-            names = next_names;
-            types = next_types;
-          }
-          if (arm.has_guard) {
-            out = util.append_diags(out, e044_expr(arm.guard, arm.line, arm.col, wk, names, types));
-          }
-          out = util.append_diags(out, e044_stmts(arm.body, wk, names, types));
-        }
-      },
-      ast.StmtDefer(d) => {
-        let one: ast.Stmt[] = [d.action];
-        out = util.append_diags(out, e044_stmts(one, wk, suspects, labels));
-      },
-      _ => {}
-    }
-  }
-  return out;
-}
-
-function e044_diags(efn: parser.FuncDecl, void_fns: string[]): util.Diag[] {
-  return e044_stmts(efn.body, E044Walk { void_fns: void_fns }, [], []);
-}
-
 function e053_root_len(target: string): i32 {
   for i in 0..target.len() {
     let ch = target[i] as i32;
@@ -31342,17 +31215,6 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   }
   signature_diags = util.append_diags(signature_diags, handle_type_diags(mod, focus, e064_tn, annots));
   signature_diags = util.append_diags(signature_diags, const_kind_module_diags(mod, focus, annots));
-  let e044_void_fns: string[] = [];
-  for func in mod.funcs {
-    if (func.receiver_name.len() == 0 && func.ret_type == "void") {
-      e044_void_fns = e044_void_fns.append(func.name);
-    }
-  }
-  for func in mod.funcs {
-    if (in_focus(focus, func)) {
-      body_diags = util.append_diags(body_diags, e044_diags(func, e044_void_fns));
-    }
-  }
   let fip_names: string[] = [];
   let fbip_names: string[] = [];
   let str_ret_names: string[] = [];

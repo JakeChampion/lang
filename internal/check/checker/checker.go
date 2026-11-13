@@ -12362,10 +12362,14 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		if call, ok := n.Init.(*ast.Call); ok && unannotated {
 			c.openCallLet = call
 		}
+		initErrs := len(c.errors)
 		got := c.checkExpr(n.Init, s)
 		c.openCallLet = nil
 		c.expectedType = nil
 		c.elemHint = nil
+		if _, declaredVoid := n.Type.(ast.VoidType); len(c.errors) == initErrs && (n.Type == nil || declaredVoid) {
+			c.requireValue(n.Init, got)
+		}
 		if n.Type != nil {
 			c.settleNumeric(n.Init, n.Type)
 			got = c.postSettleType(n.Init, got)
@@ -14704,14 +14708,9 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 		if mySiblings[name] {
 			return
 		}
-		switch t.(type) {
-		case ast.VoidType:
-			c.errfCode(fn.P, "E044", "captured variable %q has unsupported type %s", name, t)
-		default:
-			c.captureView(fn.P, name, t)
-			captured[name] = t
-			captureOrder = append(captureOrder, name)
-		}
+		c.captureView(fn.P, name, t)
+		captured[name] = t
+		captureOrder = append(captureOrder, name)
 	}
 	c.captureOuter = outer
 	c.captureChain = append(c.captureChain, captureEntry{sink: c.captureSink, scope: outer, outer: prev})
@@ -16740,8 +16739,6 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				return
 			}
 			switch t.(type) {
-			case ast.VoidType:
-				c.errfCode(n.P, "E044", "captured variable %q has unsupported type %s", name, t)
 			case ast.LanesType:
 				c.errfCode(n.P, "E085", "a lambda cannot capture %q of type %s; a lane value lives only in a local, a parameter or a result", name, t)
 			default:
