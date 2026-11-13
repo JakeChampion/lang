@@ -7918,6 +7918,10 @@ function aes_gcm_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__sha1_hw_blocks", params: [view, view], modes: [b, b], result: bytes },
     ssasem.Contract { name: "__sha1x8_hw", params: [], modes: [], result: typeinfo.t_bool() },
     ssasem.Contract { name: "__sha1x8_hw_blocks", params: [view, view], modes: [b, b], result: bytes },
+    ssasem.Contract {
+      name: "__chacha20_xor_into", params: [view, view, bytes, typeinfo.t_i32(), typeinfo.t_i32()],
+      modes: [b, b, ssaunits.counted_mode(), ssaunits.value_mode(), ssaunits.value_mode()], result: bytes,
+    },
   ];
 }
 

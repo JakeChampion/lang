@@ -922,6 +922,24 @@ is copied before it is written. `…MisuseX86_64`, `…MisuseArm64`,
 a short schedule and a wrong-length iv to stopping the program. A wrong
 kernel on one backend fails that backend's leg even when the others agree.
 
+The ChaCha20 kernel (`__chacha20_xor_into`) is checked on its own by
+`TestSelfHostChaCha20KernelX86_64`, `…Arm64` (qemu), `…Wasm` and
+`TestSelfHostInterpChaCha20Kernel` (both interpreters). The native legs run
+the in-process assembler and GNU as. Each leg must print the same lines as a
+Go model.
+
+The lines start with RFC 8439's block and cipher answers. Then the program
+prints a digest of the whole buffer for each length to 1024. It also prints
+one for lengths around the groups of four and eight blocks. A block counter
+that wraps, and views for the key and the counter, come last. A buffer with
+another holder, or a literal, is copied before the kernel writes it.
+
+`TestSelfHostChaCha20KernelCensus` runs the same program under the leak
+census on each target. In `TestSelfHostChaCha20KernelMisuse`, each backend
+and both interpreters must stop the program for a bad call. A bad call has a
+range outside the buffer, a key that is not 32 bytes or a counter block that
+is not 16 bytes.
+
 ## Netlify deploys and the standalone smoke script
 
 Netlify runs `scripts/netlify-build`, which builds the playground's wasm

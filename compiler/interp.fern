@@ -6912,6 +6912,78 @@ function call_aes_gcm_into(heap: interpheap.Heap, name: string, args: Value[]): 
   return written_bytes(heap, args[4], buf);
 }
 
+function le32_at(b: u8[], at: i32): u32 {
+  return b[at] as u32 | b[at + 1] as u32 << 8 | b[at + 2] as u32 << 16 | b[at + 3] as u32 << 24;
+}
+
+function rotl32(v: u32, n: u32): u32 {
+  return v << n | v >> 32 - n;
+}
+
+// The quarter rounds of a ChaCha20 double round: the four columns, then the four diagonals.
+const CHACHA_QR: i32[] = [0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15, 0, 5, 10, 15, 1, 6, 11, 12, 2, 7, 8, 13, 3, 4, 9, 14];
+
+function chacha_qr(own x: u32[], q: i32): u32[] {
+  let a = CHACHA_QR[4 * q];
+  let b = CHACHA_QR[4 * q + 1];
+  let c = CHACHA_QR[4 * q + 2];
+  let d = CHACHA_QR[4 * q + 3];
+  x = x.with(a, x[a] + x[b]);
+  x = x.with(d, rotl32(x[d] ^ x[a], 16));
+  x = x.with(c, x[c] + x[d]);
+  x = x.with(b, rotl32(x[b] ^ x[c], 12));
+  x = x.with(a, x[a] + x[b]);
+  x = x.with(d, rotl32(x[d] ^ x[a], 8));
+  x = x.with(c, x[c] + x[d]);
+  return x.with(b, rotl32(x[b] ^ x[c], 7));
+}
+
+function chacha_block(st: u32[]): u32[] {
+  let x = st;
+  for r in 0..80 {
+    x = chacha_qr(x, r % 8);
+  }
+  for k in 0..16 {
+    x = x.with(k, x[k] + st[k]);
+  }
+  return x;
+}
+
+// RFC 8439's ChaCha20 over buf[at:at + n]. The first word of ctr is the block counter, and the nonce follows it.
+function chacha20_xor(key: u8[], ctr: u8[], text: u8[], at: i32, n: i32): u8[] {
+  let buf = text;
+  let st: u32[] = [0x61707865, 0x3320646e, 0x79622d32, 0x6b206574];
+  for k in 0..8 {
+    st = st.append(le32_at(key, 4 * k));
+  }
+  for k in 0..4 {
+    st = st.append(le32_at(ctr, 4 * k));
+  }
+  let ks: u32[] = [];
+  for i in 0..n {
+    if (i % 64 == 0) {
+      ks = chacha_block(st);
+      st = st.with(12, st[12] + 1);
+    }
+    let w = ks[i % 64 >> 2] >> ((i & 3) * 8) as u32;
+    buf = buf.with(at + i, buf[at + i] ^ (w & 255) as u8);
+  }
+  return buf;
+}
+
+function call_chacha20_xor_into(heap: interpheap.Heap, args: Value[]): Value {
+  if (args.len() != 5) {
+    return v_err("__chacha20_xor_into: expected key, ctr, buf, at and n");
+  }
+  let bs = byte_args([args[0], args[1], args[2]]);
+  let at = vint_as_i64(args[3]);
+  let n = vint_as_i64(args[4]);
+  if (bs.len() != 3 || bs[0].len() != 32 || bs[1].len() != 16 || at < 0 || n < 0 || at + n > bs[2].len() as i64) {
+    return v_err("__chacha20_xor_into: range out of bounds");
+  }
+  return written_bytes(heap, args[2], chacha20_xor(bs[0], bs[1], bs[2], at as i32, n as i32));
+}
+
 function call_aes_gcm(heap: interpheap.Heap, name: string, args: Value[]): Value {
   let want = aes_gcm_arity(name);
   let bs = byte_args(args);
@@ -8060,6 +8132,9 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
   }
   if (name == "__aes_gcm_seal_into" || name == "__aes_gcm_open_into") {
     return call_aes_gcm_into(heap, name, args);
+  }
+  if (name == "__chacha20_xor_into") {
+    return call_chacha20_xor_into(heap, args);
   }
   if (args.len() == 0 && checker.is_sha_hw_builtin(name)) {
     return v_bool(false);

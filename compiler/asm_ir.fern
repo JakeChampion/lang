@@ -1930,6 +1930,21 @@ function x86_sha1x8_transpose(half: i32): string {
   for k in 0..8 {
     o = o + "    vmovdqu " + util.i32_to_string(64 * k + 32 * half) + "(%rsi), " + ymm(k) + "\n";
   }
+  o += x86_transpose8();
+  for w in 0..8 {
+    let dst = ymm(X86_T8_OUT[w]);
+    o = o + "    vpshufb %ymm15, " + dst + ", " + dst + "\n    vmovdqu " + dst + ", " + util.i32_to_string(32 * (8 * half + w)) + "(%rsp)\n";
+  }
+  return o;
+}
+
+// The register that holds row k of the matrix that x86_transpose8 transposes.
+const X86_T8_OUT: i32[] = [0, 2, 12, 14, 1, 3, 13, 4];
+
+// x86_transpose8 transposes the 8 x 8 dwords in ymm0 to ymm7, row k in ymm k. Row k of the result is in
+// X86_T8_OUT[k], and ymm8 to ymm14 change.
+function x86_transpose8(): string {
+  let o = "";
   // Each row is [regs of src1, src2, dst]; AT&T order puts src2 first.
   let steps: i32[][] = [
     [0, 1, 8, 0], [0, 1, 9, 1], [2, 3, 10, 0], [2, 3, 11, 1], [4, 5, 0, 0], [4, 5, 1, 1], [6, 7, 2, 0], [6, 7, 3, 1],
@@ -1939,15 +1954,10 @@ function x86_sha1x8_transpose(half: i32): string {
   for st in steps {
     o = o + "    " + names[st[3]] + " " + ymm(st[1]) + ", " + ymm(st[0]) + ", " + ymm(st[2]) + "\n";
   }
-  // Rows of [src1, src2, imm, dst, word]: word i of each lane in one register.
-  let perms: i32[][] = [
-    [4, 8, 32, 0, 0], [4, 8, 49, 1, 4], [5, 9, 32, 2, 1], [5, 9, 49, 3, 5],
-    [6, 10, 32, 12, 2], [6, 10, 49, 13, 6], [7, 11, 32, 14, 3], [7, 11, 49, 4, 7],
-  ];
+  // Rows of [src1, src2, imm, dst].
+  let perms: i32[][] = [[4, 8, 32, 0], [4, 8, 49, 1], [5, 9, 32, 2], [5, 9, 49, 3], [6, 10, 32, 12], [6, 10, 49, 13], [7, 11, 32, 14], [7, 11, 49, 4]];
   for p in perms {
-    let dst = ymm(p[3]);
-    o = o + "    vperm2i128 $" + util.i32_to_string(p[2]) + ", " + ymm(p[1]) + ", " + ymm(p[0]) + ", " + dst + "\n"
-      + "    vpshufb %ymm15, " + dst + ", " + dst + "\n    vmovdqu " + dst + ", " + util.i32_to_string(32 * (8 * half + p[4])) + "(%rsp)\n";
+    o = o + "    vperm2i128 $" + util.i32_to_string(p[2]) + ", " + ymm(p[1]) + ", " + ymm(p[0]) + ", " + ymm(p[3]) + "\n";
   }
   return o;
 }
@@ -1994,14 +2004,156 @@ function x86_sha1x8_rounds(): string {
   return o;
 }
 
-function emit_rt_sha(s: asmcore.EmitState): asmcore.EmitState {
+function emit_rt_byte_kernels(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("sha256")) {
     s = emit_rt_sha256(s);
   }
   if (s.has_need("sha1x8")) {
     s = emit_rt_sha1x8(s);
   }
+  if (s.has_need("chacha20")) {
+    s = emit_rt_chacha20(s);
+  }
   return s;
+}
+
+// ChaCha20 (RFC 8439) over buf[at:at + n] in place, eight blocks at a time in the 32-bit lanes of the ymm
+// registers. rdi is the 32-byte key and rsi the block counter and the nonce (16 bytes, views), rdx the buffer,
+// ecx at and r8d n. rax returns the buffer, copied first if it has another holder. Below the aligned rsp, row i
+// of the start state is at 32 * i, row i of the key stream at 512 + 32 * i, and a short last group of blocks
+// at 1024 + 64 * block. The code zeroes that area before it returns.
+function x86_chacha20_xor_into(): string {
+  let o: string = "    .globl __fern_chacha20_xor_into\n    .type __fern_chacha20_xor_into, @function\n__fern_chacha20_xor_into:\n"
+    + "    pushq %rbp\n    movq %rsp, %rbp\n    subq $208, %rsp\n    movq %rdx, -48(%rbp)\n"
+    + "    movslq %ecx, %rcx\n    movq %rcx, -24(%rbp)\n    movslq %r8d, %r8\n    movq %r8, -32(%rbp)\n"
+    + x86_aes_view("%rsi", "%r10", "%r11", ".Lcc_c") + "    cmpq $16, %r11\n    jne __fern_slice_abort\n    movq %r10, -16(%rbp)\n"
+    + x86_aes_view("%rdi", "%r10", "%r11", ".Lcc_k") + "    cmpq $32, %r11\n    jne __fern_slice_abort\n    movq %r10, -8(%rbp)\n"
+    + "    movq -24(%rbp), %rax\n    orq -32(%rbp), %rax\n    js __fern_slice_abort\n"
+    + "    movq -48(%rbp), %r8\n    movq (%r8), %r9\n    movq -24(%rbp), %rax\n    addq -32(%rbp), %rax\n    cmpq %r9, %rax\n    ja __fern_slice_abort\n"
+    + x86_aes_gcm_own(".Lcc") + "    movq -32(%rbp), %rdx\n    testq %rdx, %rdx\n    jz .Lcc_ret\n"
+    + "    movq -48(%rbp), %rsi\n    addq $8, %rsi\n    addq -24(%rbp), %rsi\n"
+    + "    subq $1536, %rsp\n    andq $-32, %rsp\n    leaq .Lcc_consts(%rip), %r10\n" + x86_chacha_start();
+  o = o + ".Lcc_loop:\n" + x86_chacha_load() + "    movl $10, %eax\n.Lcc_round:\n" + x86_chacha_qr2([0, 4, 12], [1, 5, 13])
+    + x86_chacha_swap_c(768, 832) + x86_chacha_qr2([2, 6, 14], [3, 7, 15]) + x86_chacha_qr2([0, 5, 15], [1, 6, 12])
+    + x86_chacha_swap_c(832, 768) + x86_chacha_qr2([2, 7, 13], [3, 4, 14]) + "    subl $1, %eax\n    jnz .Lcc_round\n" + x86_chacha_finish()
+    + "    cmpq $512, %rdx\n    jb .Lcc_tail\n" + x86_chacha_out(0, true) + x86_chacha_out(1, true)
+    + "    addq $512, %rsi\n    subq $512, %rdx\n    jnz .Lcc_loop\n    jmp .Lcc_wipe\n.Lcc_tail:\n" + x86_chacha_out(0, false) + x86_chacha_out(1, false)
+    + "    xorl %ecx, %ecx\n.Lcc_tq:\n    leaq 8(%rcx), %rax\n    cmpq %rdx, %rax\n    ja .Lcc_tb\n"
+    + "    movq (%rsi,%rcx), %rax\n    xorq 1024(%rsp,%rcx), %rax\n    movq %rax, (%rsi,%rcx)\n    addq $8, %rcx\n    jmp .Lcc_tq\n"
+    + ".Lcc_tb:\n    cmpq %rdx, %rcx\n    jae .Lcc_wipe\n    movzbl (%rsi,%rcx), %eax\n    movzbl 1024(%rsp,%rcx), %r9d\n    xorl %r9d, %eax\n"
+    + "    movb %al, (%rsi,%rcx)\n    addq $1, %rcx\n    jmp .Lcc_tb\n.Lcc_wipe:\n    vpxor %ymm0, %ymm0, %ymm0\n";
+  for j in 0..48 {
+    o = o + "    vmovdqu %ymm0, " + util.i32_to_string(32 * j) + "(%rsp)\n";
+  }
+  return o + "    vzeroupper\n.Lcc_ret:\n" + x86_aes_epilogue() + "    .size __fern_chacha20_xor_into, .-__fern_chacha20_xor_into\n";
+}
+
+// The start state: the constants, the key, the eight block counters and the nonce, each word in all lanes.
+function x86_chacha_start(): string {
+  let o = "";
+  for i in 0..4 {
+    o = o + "    vmovdqu " + util.i32_to_string(128 + 32 * i) + "(%r10), %ymm0\n    vmovdqu %ymm0, " + util.i32_to_string(32 * i) + "(%rsp)\n";
+  }
+  for i in 4..16 {
+    let base = "-8";
+    let at = 4 * (i - 4);
+    if (i >= 12) {
+      base = "-16";
+      at = 4 * (i - 12);
+    }
+    o = o + "    movq " + base + "(%rbp), %r8\n    movl " + util.i32_to_string(at) + "(%r8), %eax\n    vmovq %rax, %xmm0\n    vpbroadcastd %xmm0, %ymm0\n";
+    if (i == 12) {
+      o += "    vpaddd 64(%r10), %ymm0, %ymm0\n";
+    }
+    o = o + "    vmovdqu %ymm0, " + util.i32_to_string(32 * i) + "(%rsp)\n";
+  }
+  return o;
+}
+
+// Word i of the state goes to ymm i, but words 10 and 11 wait in their key stream rows.
+function x86_chacha_load(): string {
+  let o = "";
+  for i in 0..16 {
+    let row = util.i32_to_string(32 * i) + "(%rsp), ";
+    if (i == 10 || i == 11) {
+      o = o + "    vmovdqu " + row + "%ymm10\n    vmovdqu %ymm10, " + util.i32_to_string(512 + 32 * i) + "(%rsp)\n";
+    } else {
+      o = o + "    vmovdqu " + row + ymm(i) + "\n";
+    }
+  }
+  return o;
+}
+
+// Two quarter rounds side by side. Each of q0 and q1 is [a, b, d], and their c words are in ymm8 and ymm9.
+function x86_chacha_qr2(q0: i32[], q1: i32[]): string {
+  let qs: i32[][] = [q0, q1];
+  let rots: i32[] = [0, 12, 0, 7];
+  let o = "";
+  for step in 0..4 {
+    for j in 0..2 {
+      let a = ymm(qs[j][0]);
+      let b = ymm(qs[j][1]);
+      let c = ymm(8 + j);
+      let d = ymm(qs[j][2]);
+      if (step % 2 == 0) {
+        o = o + "    vpaddd " + b + ", " + a + ", " + a + "\n    vpxor " + a + ", " + d + ", " + d + "\n    vpshufb " + util.i32_to_string(16 * step) + "(%r10), " + d + ", " + d + "\n";
+      } else {
+        o = o + "    vpaddd " + d + ", " + c + ", " + c + "\n    vpxor " + c + ", " + b + ", " + b + "\n" + x86_rotl(b, rots[step], ymm(10 + j));
+      }
+    }
+  }
+  return o;
+}
+
+// Parks the c words in ymm8 and ymm9 at `out` and takes the two at `back`.
+function x86_chacha_swap_c(out: i32, back: i32): string {
+  return "    vmovdqu %ymm8, " + util.i32_to_string(out) + "(%rsp)\n    vmovdqu %ymm9, " + util.i32_to_string(out + 32) + "(%rsp)\n"
+    + "    vmovdqu " + util.i32_to_string(back) + "(%rsp), %ymm8\n    vmovdqu " + util.i32_to_string(back + 32) + "(%rsp), %ymm9\n";
+}
+
+// Adds the start state to the rounds' output to make the key stream rows, and steps the eight block counters.
+function x86_chacha_finish(): string {
+  let o = "";
+  for i in 0..16 {
+    let row = util.i32_to_string(32 * i) + "(%rsp), ";
+    let ks = util.i32_to_string(512 + 32 * i) + "(%rsp)";
+    let reg = ymm(i);
+    if (i == 10 || i == 11) {
+      reg = "%ymm10";
+      o = o + "    vmovdqu " + ks + ", " + reg + "\n";
+    }
+    o = o + "    vpaddd " + row + reg + ", " + reg + "\n    vmovdqu " + reg + ", " + ks + "\n";
+  }
+  return o + "    vmovdqu 384(%rsp), %ymm0\n    vpaddd 96(%r10), %ymm0, %ymm0\n    vmovdqu %ymm0, 384(%rsp)\n";
+}
+
+// Transposes key stream words 8 * half to 8 * half + 7 into block order and XORs them over the text at rsi,
+// or with `full` false writes them to the area at 1024.
+function x86_chacha_out(half: i32, full: boolean): string {
+  let o = "";
+  for i in 0..8 {
+    o = o + "    vmovdqu " + util.i32_to_string(512 + 32 * (8 * half + i)) + "(%rsp), " + ymm(i) + "\n";
+  }
+  o += x86_transpose8();
+  for k in 0..8 {
+    let r = ymm(X86_T8_OUT[k]);
+    let off = util.i32_to_string(64 * k + 32 * half);
+    if (full) {
+      o = o + "    vpxor " + off + "(%rsi), " + r + ", " + r + "\n    vmovdqu " + r + ", " + off + "(%rsi)\n";
+    } else {
+      o = o + "    vmovdqu " + r + ", " + util.i32_to_string(1024 + 64 * k + 32 * half) + "(%rsp)\n";
+    }
+  }
+  return o;
+}
+
+function emit_rt_chacha20(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    .section .rodata\n    .align 16\n.Lcc_consts:\n    .byte 2,3,0,1,6,7,4,5,10,11,8,9,14,15,12,13,2,3,0,1,6,7,4,5,10,11,8,9,14,15,12,13\n"
+    + "    .byte 3,0,1,2,7,4,5,6,11,8,9,10,15,12,13,14,3,0,1,2,7,4,5,6,11,8,9,10,15,12,13,14\n    .long 0,1,2,3,4,5,6,7\n    .long 8,8,8,8,8,8,8,8\n");
+  for k in ["1634760805", "857760878", "2036477234", "1797285236"] {
+    s = s.write("    .long " + k + "," + k + "," + k + "," + k + "," + k + "," + k + "," + k + "," + k + "\n");
+  }
+  return s.write("    .section .text\n" + x86_chacha20_xor_into());
 }
 
 function emit_rt_sha1x8(s: asmcore.EmitState): asmcore.EmitState {
@@ -5298,10 +5450,15 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (ir.is_aes_gcm_op(o.kind_tag)) {
     return emit_aes_gcm_op(o, s);
   }
-  let sha = ir.sha_blocks_need(o.kind_tag);
-  if (sha != "") {
-    s = s.need(sha).need("heap");
-    return s.write("    popq %rsi\n    popq %rdi\n    call __fern_" + sha + "_hw_blocks\n    pushq %rax\n");
+  let kernel = ir.kernel_need(o.kind_tag);
+  if (kernel != "") {
+    s = s.need(kernel).need("heap");
+    let regs: string[] = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8"];
+    let pops = "";
+    for k in 0..ir.kernel_arity(o.kind_tag) {
+      pops = "    popq " + regs[k] + "\n" + pops;
+    }
+    return s.write(pops + "    call " + ir.kernel_symbol(o.kind_tag) + "\n    pushq %rax\n");
   }
   if (o.kind_tag == ir.K_OUTER_MUL_F64) {
     return emit_outer_mul_f64(s);
@@ -12783,7 +12940,7 @@ function emit_entry_core_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("aes_gcm")) {
     s = emit_rt_aes_gcm(s);
   }
-  s = emit_rt_sha(s);
+  s = emit_rt_byte_kernels(s);
   if (s.has_need("sum_bytes")) {
     s = emit_rt_sum_bytes(s);
   }
