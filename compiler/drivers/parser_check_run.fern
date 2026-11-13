@@ -35,6 +35,7 @@ function main(): i32 {
   r = r.it("qualified names", check_qualified_names);
   r = r.it("owned grouped callback types", check_owned_grouped_callback_types);
   r = r.it("owned composite type references", check_owned_composite_type_refs);
+  r = r.it("invalid ownership prefixes", check_invalid_ownership_prefixes);
   r = r.it("struct patterns", check_struct_patterns);
   return r.finish();
 }
@@ -63,6 +64,18 @@ function check_owned_composite_type_refs(): test.TestOutcome {
   let result = parser.ref_ungroup(parser.ref_without_own(parser.ref_fn_result(array)));
   if (result.array_depth != 1 || !result.is_tuple || result.args.len() != 2) {
     return test.fail("the owned tuple array result lost its structure");
+  }
+  return test.pass();
+}
+
+function check_invalid_ownership_prefixes(): test.TestOutcome {
+  let own = parser.parse_module(lexer.tokenize("function bad(f: (() => own;)): void {}"));
+  if (own.funcs.len() != 1 || own.funcs[0].body.len() == 0) {
+    return test.fail("an own prefix without a result type must fail");
+  }
+  let borrow = parser.parse_module(lexer.tokenize("function bad(f: (() => borrow(i32))): void {}"));
+  if (borrow.funcs.len() != 1 || borrow.funcs[0].body.len() == 0) {
+    return test.fail("a borrow prefix cannot qualify a grouped result");
   }
   return test.pass();
 }

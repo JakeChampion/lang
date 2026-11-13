@@ -6802,7 +6802,7 @@ function own_prefix_position(p: Par): boolean {
     return false;
   }
   if (prev == "=>") {
-    return true;
+    return starts_misused_handle_type(p.advance());
   }
   if (prev != "(" && prev != ",") {
     return false;
