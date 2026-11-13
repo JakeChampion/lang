@@ -2,15 +2,37 @@
 // `parent` or `worker` exits. If the event names `parent`, it sends SIGTERM to
 // `worker`: the parent exited first, or it was gone (ESRCH) before the watch.
 // If no watch starts, the worker runs unwatched, as on Linux when prctl fails.
+//
+// When a process exits, the kernel moves its children to launchd before it
+// posts NOTE_EXIT, and a watch added after the post never fires. So after the
+// watch is added, a worker whose parent is no longer `parent` gets SIGTERM.
 function __fern_watch_parent(parent: i32, worker: i32): void {
   let kq = __syscall3(362, 0, 0, 0) as i32;
   if (kq >= 0) {
-    let ev = __raw_alloc(96);
+    let ev = __raw_alloc(208);
+    let out = ev + 64 as usize;
+    let zero = ev + 128 as usize;
+    let info = ev + 144 as usize;
     __fern_watch_exit_event(ev, 0, parent);
     __fern_watch_exit_event(ev, 32, worker);
-    let n = __syscall6(363, kq as i64, ev as i64, 2, (ev + 64 as usize) as i64, 1, 0) as i32;
-    if (n > 0 && __raw_load_ptr(ev + 64 as usize, 0) as i32 == parent) {
-      __syscall3(37, worker as i64, 15, 0);
+    __raw_store_ptr(zero, 0, 0 as usize);
+    __raw_store_ptr(zero, 1, 0 as usize);
+    let n = __syscall6(363, kq as i64, ev as i64, 2, out as i64, 2, zero as i64) as i32;
+    if (n == 0) {
+      // proc_info PROC_PIDT_SHORTBSDINFO: pbsi_ppid is the second u32.
+      let got = __syscall6(336, 2, worker as i64, 13, 0, info as i64, 64) as i32;
+      if (got == 64 && (__raw_load_ptr(info, 0) >> 32) as i32 != parent) {
+        __syscall3(37, worker as i64, 15, 0);
+        __syscall3(1, 0, 0, 0);
+      }
+      n = __syscall6(363, kq as i64, 0, 0, out as i64, 1, 0) as i32;
+    }
+    let i = 0;
+    while (i < n) {
+      if (__raw_load_ptr(out, i * 4) as i32 == parent) {
+        __syscall3(37, worker as i64, 15, 0);
+      }
+      i += 1;
     }
   }
   __syscall3(1, 0, 0, 0);

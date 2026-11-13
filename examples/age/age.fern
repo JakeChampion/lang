@@ -939,37 +939,43 @@ function decrypt(o: cli.Opts, own input: source.Raw, stdin_used: boolean): Optio
   return sink_finish(out).map((why: string) => cli.fatal(why));
 }
 
-// The next chunk of plaintext and whether it is the last one. A full chunk is
-// the last one when the input ends after it.
-function next_plain(own s: source.Src): (source.Src, Result[(u8[], boolean), string]) {
+// A chunk of plaintext, and whether the input ended in it.
+struct Plain { bytes: u8[], ended: boolean }
+
+function read_plain(own s: source.Src): (source.Src, Result[Plain, string]) {
   let (t, chunk, f) = source.read_full(s, format.CHUNK);
-  if let Some(e) = f {
-    return match (e) {
-      source.Eof | source.Short => (t, Ok((chunk, true))),
-      _ => (t, Err(e.message())),
-    };
-  }
-  let (u, g) = source.peek(t, 1);
-  return match (g) {
-    None => (u, Ok((chunk, false))),
-    Some(source.Eof) => (u, Ok((chunk, true))),
-    Some(e) => (u, Err(e.message())),
+  return match (f) {
+    None => (t, Ok(Plain { bytes: chunk, ended: false })),
+    Some(source.Eof) | Some(source.Short) => (t, Ok(Plain { bytes: chunk, ended: true })),
+    Some(e) => (t, Err(e.message())),
   };
 }
 
 const TAG_ROOM: u8[] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
 
+// A full chunk is the last one when the input ends after it, so each chunk is
+// sealed after the read of the next one.
 function encrypt_stream(own s: source.Src, own out: Sink, key: chacha20poly1305.Key): (Sink, Option[string]) {
   let index = 0i64;
+  let (t, first) = read_plain(s);
+  s = t;
+  let cur = match (first) {
+    Ok(p) => p,
+    Err(why) => { return (out, Some(why)); },
+  };
   loop {
-    let (t, next) = next_plain(s);
-    s = t;
-    let (chunk, last) = match (next) {
-      Ok(c) => c,
-      Err(why) => { return (out, Some(why)); },
-    };
-    let n = chunk.len();
-    let sealed = match (format.seal_chunk(key, index, last, chunk.concat(TAG_ROOM), n)) {
+    let next = Plain { bytes: [], ended: true };
+    if (!cur.ended) {
+      let (u, r) = read_plain(s);
+      s = u;
+      next = match (r) {
+        Ok(p) => p,
+        Err(why) => { return (out, Some(why)); },
+      };
+    }
+    let last = cur.ended || next.bytes.len() == 0;
+    let n = cur.bytes.len();
+    let sealed = match (format.seal_chunk(key, index, last, cur.bytes.concat(TAG_ROOM), n)) {
       Ok(b) => b,
       Err(e) => {
         return (out, Some(e.message()));
@@ -981,6 +987,7 @@ function encrypt_stream(own s: source.Src, own out: Sink, key: chacha20poly1305.
       let why = out.fail;
       return (out, why);
     }
+    cur = next;
     index += 1;
   }
   return (out, None);

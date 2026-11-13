@@ -294,33 +294,31 @@ prefix before it runs the matcher.
 Each command searches `big.txt` with `-j1` and writes to a file. The time
 is the best of 5 runs, in milliseconds. The port finds each span with the
 DFAs of `std/regex`. The two programs ran one after the other in the same
-session.
+session, on a host that other jobs also used.
 
 | Command | ripgrep | Port | Ratio |
 | --- | ---: | ---: | ---: |
-| `rg 'Sherlock Holmes'` | 46 | 266 | 5.8 |
-| `rg -c 'Sherlock Holmes'` | 42 | 268 | 6.4 |
-| `rg -i 'sherlock holmes'` | 129 | 526 | 4.1 |
-| `rg -ic 'sherlock holmes'` | 117 | 479 | 4.1 |
-| `rg 'Sherlock Holmes\|...'` (five names) | 120 | 384 | 3.2 |
-| `rg -c 'Sherlock Holmes\|...'` | 110 | 374 | 3.4 |
-| `rg -c '\w+'` | 398 | 404 | 1.0 |
-| `rg -co '\w+'` | 3,356 | 2,471 | 0.74 |
+| `rg 'Sherlock Holmes'` | 46 | 173 | 3.8 |
+| `rg -c 'Sherlock Holmes'` | 47 | 163 | 3.5 |
+| `rg -i 'sherlock holmes'` | 123 | 401 | 3.3 |
+| `rg -ic 'sherlock holmes'` | 116 | 357 | 3.1 |
+| `rg 'Sherlock Holmes\|...'` (five names) | 124 | 300 | 2.4 |
+| `rg -c 'Sherlock Holmes\|...'` | 111 | 289 | 2.6 |
+| `rg -c '\w+'` | 326 | 366 | 1.1 |
+| `rg -co '\w+'` | 2,963 | 2,116 | 0.71 |
 
 Each output is the same as that of ripgrep, but `-co '\w+'`, for the
 reason above.
 
 ### Why the port is slower on literals
 
-1. **The read of the file.** For `rg -c 'Sherlock Holmes'`, about 240 ms
-   of the 271 ms is the input. `read_file_bytes` takes about 200 ms: one
-   `read` of about 115 ms into a new buffer, and then a copy of the 200 MiB
-   into a new array (`compiler/runtime/*/__fern_read_file_bytes_u8.fern`).
-   `string_from_bytes_unchecked` copies the bytes again, in about 40 ms.
+1. **The read of the file.** For `rg -c 'Sherlock Holmes'`, about 110 ms
+   of the 163 ms is the input. `read_file_bytes` reads the file into the
+   storage of the array with one `read`. `string_from_bytes_unchecked` takes
+   over that array with no copy (#15723).
 
-   ripgrep maps the file into memory and does not copy it. The fix is in the
-   runtime: read into the storage of the array, or map the file, and make a
-   string from a unique array without a copy.
+   ripgrep maps the file into memory and does not copy it. The fix that
+   remains is in the runtime: map the file.
 
 2. **The scan for a start.** When more than one byte can start a match,
    `__scan_set` reads four bytes in each turn with a table. `-i` scans for
@@ -344,39 +342,34 @@ nothing more.
 ### A tree of files
 
 Each command searches a checkout of this repository with its ignore rules:
-26,087 files to search, in the page cache. The time is the best of 5 runs,
+26,272 files to search, in the page cache. The time is the best of 5 runs,
 in milliseconds. The two programs ran one after the other in the same
-session, on a host that two other jobs also used. The output of the port is
+session, on a host that other jobs also used. The output of the port is
 the same as that of ripgrep, but for the order of the files with more than
 one thread.
 
 | Command | ripgrep | Port | Ratio |
 | --- | ---: | ---: | ---: |
-| `rg -j1 --files` | 70 | 55 | 0.8 |
-| `rg -j4 --files` | 48 | 55 | 1.1 |
-| `rg -j1 -c fn` | 224 | 474 | 2.1 |
-| `rg -c fn` (4 threads) | 113 | 276 | 2.4 |
-| `rg -j1 -ci sherlock` | 276 | 648 | 2.3 |
-| `rg -j1 -n --sort path TODO` | 280 | 383 | 1.4 |
+| `rg -j1 --files` | 57 | 51 | 0.9 |
+| `rg -j4 --files` | 53 | 61 | 1.2 |
+| `rg -j1 -c fn` | 266 | 431 | 1.6 |
+| `rg -c fn` (4 threads) | 156 | 271 | 1.7 |
+| `rg -j1 -ci sherlock` | 252 | 539 | 2.1 |
+| `rg -j1 -n --sort path TODO` | 272 | 322 | 1.2 |
 
 With one thread, the walk is faster than that of ripgrep. Before two changes to `std/glob`,
 the walk took 816 ms, and 95% of the time was in the automaton of a glob.
 Now the automaton stops at the first byte that leaves no state, and it
 keeps its states in the bits of a u64.
 
-In a search of the files, the port is slower for two reasons:
+In a search of the files, the port is slower because of the scan for a
+candidate. Half of the instructions of `rg -j1 -c fn` are in
+`Regex.next_candidate`. It finds each `f` with `__memchr`, and then it
+compares the literal prefix. ripgrep looks for the rarest byte with SIMD
+kernels. The string of each file takes over the array that
+`read_file_bytes` returns, with no copy (#15723).
 
-1. **The scan for a candidate.** Half of the instructions of `rg -j1 -c fn`
-   are in `Regex.next_candidate`. It finds each `f` with `__memchr`, and
-   then it compares the literal prefix. ripgrep looks for the rarest byte
-   with SIMD kernels.
-
-2. **A copy of each file.** `string_from_bytes_unchecked` copies the bytes
-   of each file into a new string (`__fern_string_from_bytes_u8`). This is
-   12% of the instructions of `rg -j1 -c fn`. The fix is in the runtime: a
-   string that takes the storage of a unique array, with no copy.
-
-With 4 threads, ripgrep is two times as fast as with one, and the port is
-1.7 times as fast. Each worker process of the port searches every fourth
+With 4 threads, ripgrep is 1.7 times as fast as with one, and the port is
+1.6 times as fast. Each worker process of the port searches every fourth
 file. The port walks the tree with one thread, and so `--files` is not
 faster with more threads.

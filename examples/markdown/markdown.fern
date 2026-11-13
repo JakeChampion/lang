@@ -1,6 +1,7 @@
 // CommonMark 0.31.2 to HTML. The output is the output of cmark for the same
 // input, with raw HTML allowed.
 import "std/i32";
+import "std/io_buffered";
 import "./blocks";
 import "./inlines";
 
@@ -16,37 +17,98 @@ pub function to_html(src: string): string {
 // Writes the HTML of the CommonMark document `src` to the byte builder `out`.
 pub function render(out: usize, src: string): void {
   let d = blocks.parse(src);
-  let w = inlines.work();
-  let cur = d.get(0, blocks.FIRST);
-  let open = false;
-  let entering = true;
-  while (cur != blocks.NONE) {
-    let k = d.get(cur, blocks.KIND);
-    let container = k == blocks.QUOTE || k == blocks.LIST || k == blocks.ITEM;
-    if (entering) {
-      let (w2, open2) = enter(out, d, cur, w, open);
-      w = w2;
-      open = open2;
-      if (container && d.get(cur, blocks.FIRST) != blocks.NONE) {
-        cur = d.get(cur, blocks.FIRST);
-        continue;
-      }
-    }
-    if (container) {
-      open = leave(out, d, cur, open);
-    }
-    let next = d.get(cur, blocks.NEXT);
-    if (next != blocks.NONE) {
-      cur = next;
-      entering = true;
-    } else {
-      cur = d.get(cur, blocks.PARENT);
-      entering = false;
-      if (cur == 0) {
-        cur = blocks.NONE;
-      }
+  let s = start();
+  for r in 0..d.count() {
+    s = step(out, d, r, s);
+  }
+}
+
+// Writes the HTML of the CommonMark document `src` to `w`. The writer gets
+// the HTML of a part of the document each time its buffer holds `part`
+// bytes or more.
+pub function write(w: io_buffered.BufWriter, src: string, part: i32): Result[io_buffered.BufWriter, IoError] {
+  let d = blocks.parse(src);
+  let out = w.handle();
+  let s = start();
+  let q = w;
+  for r in 0..d.count() {
+    s = step(out, d, r, s);
+    if (buf_len(out) >= part) {
+      let Ok(next) = q.flush() else {
+        return q.flush();
+      };
+      q = next;
     }
   }
+  return Ok(q);
+}
+
+// The state of the writer between two records. `w` holds the tables of the
+// inline phase. `open` is true when the output does not end with a line
+// feed. `tight` has an entry for each open container. The entry is 1 when
+// the paragraphs directly in the container have no `<p>` tags, as in an
+// item of a tight list.
+struct State { w: inlines.Work, open: boolean, tight: i32[], depth: i32 }
+
+function start(): State {
+  return State { w: inlines.work(), open: false, tight: [0], depth: 1 };
+}
+
+// Writes the record `r`.
+function step(out: usize, d: blocks.Doc, r: i32, s: State): State {
+  let k = d.kind(r);
+  if (k == blocks.PARAGRAPH) {
+    return paragraph(out, d, r, s);
+  }
+  if (k == blocks.END) {
+    return leave(out, d, r, s);
+  }
+  cr(out, s.open);
+  if (k == blocks.HEADING) {
+    let digit = 48 + d.value(r);
+    buf_push(out, "<h");
+    buf_push_byte(out, digit);
+    buf_push_byte(out, 62);
+    let w = inlines.render(out, d, d.from(r), d.to(r), s.w);
+    buf_push(out, "</h");
+    buf_push_byte(out, digit);
+    buf_push(out, ">\n");
+    return State { ...s, w: w, open: false };
+  }
+  if (k == blocks.CODE) {
+    code(out, d, r, s.w.t);
+  } else if (k == blocks.HTML) {
+    lines(out, d, d.from(r), d.to(r));
+  } else if (k == blocks.RULE) {
+    buf_push(out, "<hr />\n");
+  } else {
+    return enter(out, d, r, k, s);
+  }
+  return State { ...s, open: false };
+}
+
+// Writes the start of a container.
+function enter(out: usize, d: blocks.Doc, r: i32, k: i32, s: State): State {
+  if (k == blocks.QUOTE) {
+    buf_push(out, "<blockquote>\n");
+    return push(s, 0, false);
+  }
+  if (k == blocks.LIST) {
+    list_start(out, d, r);
+    if (d.has_flag(r, blocks.F_TIGHT)) {
+      return push(s, 1, false);
+    }
+    return push(s, 0, false);
+  }
+  buf_push(out, "<li>");
+  return push(s, s.tight[s.depth - 1], true);
+}
+
+function push(s: State, v: i32, open: boolean): State {
+  if (s.depth < s.tight.len()) {
+    return State { ...s, tight: s.tight.with(s.depth, v), depth: s.depth + 1, open: open };
+  }
+  return State { ...s, tight: s.tight.append(v), depth: s.depth + 1, open: open };
 }
 
 // Starts a new line of output when the output does not end with a line feed.
@@ -56,45 +118,14 @@ function cr(out: usize, open: boolean): void {
   }
 }
 
-// Writes the start of the block `node`, or all of it for a leaf block. Gives
-// the tables of the inline phase, and true when the output does not end with
-// a line feed.
-function enter(out: usize, d: blocks.Doc, node: i32, w: inlines.Work, open: boolean): (inlines.Work, boolean) {
-  let k = d.get(node, blocks.KIND);
-  if (k == blocks.PARAGRAPH) {
-    return paragraph(out, d, node, w, open);
-  }
-  cr(out, open);
+// Writes the end of a container.
+function leave(out: usize, d: blocks.Doc, r: i32, s: State): State {
+  let k = d.value(r);
   if (k == blocks.QUOTE) {
-    buf_push(out, "<blockquote>\n");
-  } else if (k == blocks.LIST) {
-    list_start(out, d, node);
-  } else if (k == blocks.ITEM) {
-    buf_push(out, "<li>");
-    return (w, true);
-  } else if (k == blocks.CODE) {
-    code(out, d, node, w.t);
-  } else if (k == blocks.HTML) {
-    lines(out, d, d.get(node, blocks.SFROM), d.get(node, blocks.STO));
-  } else if (k == blocks.HEADING) {
-    let level = d.get(node, blocks.A).to_string();
-    buf_push(out, "<h" + level + ">");
-    let q = inlines.render(out, d, d.get(node, blocks.SFROM), d.get(node, blocks.STO), w);
-    buf_push(out, "</h" + level + ">\n");
-    return (q, false);
-  } else if (k == blocks.RULE) {
-    buf_push(out, "<hr />\n");
-  }
-  return (w, false);
-}
-
-function leave(out: usize, d: blocks.Doc, node: i32, open: boolean): boolean {
-  let k = d.get(node, blocks.KIND);
-  if (k == blocks.QUOTE) {
-    cr(out, open);
+    cr(out, s.open);
     buf_push(out, "</blockquote>\n");
   } else if (k == blocks.LIST) {
-    if (d.has_flag(node, blocks.F_ORDERED)) {
+    if (d.has_flag(r, blocks.F_ORDERED)) {
       buf_push(out, "</ol>\n");
     } else {
       buf_push(out, "</ul>\n");
@@ -102,52 +133,53 @@ function leave(out: usize, d: blocks.Doc, node: i32, open: boolean): boolean {
   } else {
     buf_push(out, "</li>\n");
   }
-  return false;
+  return State { ...s, open: false, depth: s.depth - 1 };
 }
 
-function list_start(out: usize, d: blocks.Doc, node: i32): void {
-  if (!d.has_flag(node, blocks.F_ORDERED)) {
+function list_start(out: usize, d: blocks.Doc, r: i32): void {
+  let start = d.value(r);
+  if (!d.has_flag(r, blocks.F_ORDERED)) {
     buf_push(out, "<ul>\n");
-  } else if (d.get(node, blocks.B) == 1) {
+  } else if (start == 1) {
     buf_push(out, "<ol>\n");
   } else {
-    buf_push(out, "<ol start=\"" + d.get(node, blocks.B).to_string() + "\">\n");
+    buf_push(out, "<ol start=\"" + start.to_string() + "\">\n");
   }
 }
 
 // A paragraph in an item of a tight list has no `<p>` tags. The text of a
 // paragraph does not end with a line feed.
-function paragraph(out: usize, d: blocks.Doc, node: i32, w: inlines.Work, open: boolean): (inlines.Work, boolean) {
-  let from = d.get(node, blocks.SFROM);
-  let to = d.get(node, blocks.STO);
-  let up = d.get(d.get(node, blocks.PARENT), blocks.PARENT);
-  if (up != blocks.NONE && d.get(up, blocks.KIND) == blocks.LIST && d.has_flag(up, blocks.F_TIGHT)) {
+function paragraph(out: usize, d: blocks.Doc, r: i32, s: State): State {
+  let from = d.from(r);
+  let to = d.to(r);
+  if (s.tight[s.depth - 1] == 1) {
     let before = buf_len(out);
-    let q = inlines.render(out, d, from, to, w);
-    return (q, open || buf_len(out) > before);
+    let w = inlines.render(out, d, from, to, s.w);
+    return State { ...s, w: w, open: s.open || buf_len(out) > before };
   }
-  cr(out, open);
+  cr(out, s.open);
   buf_push(out, "<p>");
-  let q = inlines.render(out, d, from, to, w);
+  let w = inlines.render(out, d, from, to, s.w);
   buf_push(out, "</p>\n");
-  return (q, false);
+  return State { ...s, w: w, open: false };
 }
 
 // The lines `from` to `to`, each with a line feed after it.
 function lines(out: usize, d: blocks.Doc, from: i32, to: i32): void {
   for k in from..to {
-    for _ in 0..d.segs[k * 3] {
+    let s = d.segs[k];
+    for _ in 0..blocks.seg_pad(s) {
       buf_push_byte(out, 32);
     }
-    buf_push_range(out, d.src, d.segs[k * 3 + 1], d.segs[k * 3 + 2]);
+    buf_push_range(out, d.src, blocks.seg_start(s), blocks.seg_end(s));
     buf_push_byte(out, 10);
   }
 }
 
-function code(out: usize, d: blocks.Doc, node: i32, t: inlines.Tables): void {
-  let from = d.get(node, blocks.SFROM);
-  let to = d.get(node, blocks.STO);
-  if (d.has_flag(node, blocks.F_FENCED)) {
+function code(out: usize, d: blocks.Doc, r: i32, t: inlines.Tables): void {
+  let from = d.from(r);
+  let to = d.to(r);
+  if (d.has_flag(r, blocks.F_FENCED)) {
     let lang = info_word(d, from, t);
     from += 1;
     if (lang.len() > 0) {
@@ -161,10 +193,11 @@ function code(out: usize, d: blocks.Doc, node: i32, t: inlines.Tables): void {
     buf_push(out, "<pre><code>");
   }
   for k in from..to {
-    for _ in 0..d.segs[k * 3] {
+    let s = d.segs[k];
+    for _ in 0..blocks.seg_pad(s) {
       buf_push_byte(out, 32);
     }
-    inlines.escape(out, d.src, d.segs[k * 3 + 1], d.segs[k * 3 + 2], t);
+    inlines.escape(out, d.src, blocks.seg_start(s), blocks.seg_end(s), t);
     buf_push_byte(out, 10);
   }
   buf_push(out, "</code></pre>\n");
@@ -174,7 +207,7 @@ function code(out: usize, d: blocks.Doc, node: i32, t: inlines.Tables): void {
 // line `k`. As in cmark, the entity references go before the whitespace at
 // each end, and the backslash escapes after it.
 function info_word(d: blocks.Doc, k: i32, t: inlines.Tables): string {
-  let raw = inlines.decode(d.src, d.segs[k * 3 + 1], d.segs[k * 3 + 2], t);
+  let raw = inlines.decode(d.src, blocks.seg_start(d.segs[k]), blocks.seg_end(d.segs[k]), t);
   let a = 0;
   let b = raw.len();
   while (a < b && is_space(raw[a] as i32)) {

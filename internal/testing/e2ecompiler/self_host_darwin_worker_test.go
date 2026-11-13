@@ -95,29 +95,52 @@ func TestSelfHostArm64DarwinWorkers(t *testing.T) {
 		}
 	})
 	bin := compile(t, workerOrphanProg)
+	// The parent ends at once, so it races the watchdog. Each round is a new
+	// draw of that race.
 	for _, how := range []string{"exit", "abort"} {
 		t.Run("the worker ends with its parent/"+how, func(t *testing.T) {
-			var args []string
-			if how == "abort" {
-				args = []string{"abort"}
-			}
-			out, _ := exec.Command(bin, args...).Output()
-			first, _, _ := strings.Cut(string(out), "\n")
-			pid, err := strconv.Atoi(strings.TrimSpace(first))
-			if err != nil || pid <= 0 {
-				t.Fatalf("no worker pid in %q", out)
-			}
-			defer func() { _ = syscall.Kill(pid, syscall.SIGKILL) }()
-			deadline := time.Now().Add(5 * time.Second)
-			for {
-				if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
-					return
-				}
-				if time.Now().After(deadline) {
-					t.Fatalf("worker %d still runs 5 s after its parent ended", pid)
-				}
-				time.Sleep(20 * time.Millisecond)
+			for round := 0; round < 20; round++ {
+				darwinWorkerEndsWithParent(t, bin, how == "abort")
 			}
 		})
+	}
+}
+
+// darwinWorkerEndsWithParent runs workerOrphanProg once. Its stdout is a file,
+// not a pipe, so a worker that outlives its parent fails the deadline instead
+// of holding the read open.
+func darwinWorkerEndsWithParent(t *testing.T, bin string, abort bool) {
+	t.Helper()
+	var args []string
+	if abort {
+		args = []string{"abort"}
+	}
+	stdout, err := os.Create(filepath.Join(t.TempDir(), "stdout"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stdout.Close()
+	cmd := exec.Command(bin, args...)
+	cmd.Stdout = stdout
+	_ = cmd.Run()
+	out, err := os.ReadFile(stdout.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _, _ := strings.Cut(string(out), "\n")
+	pid, err := strconv.Atoi(strings.TrimSpace(first))
+	if err != nil || pid <= 0 {
+		t.Fatalf("no worker pid in %q", out)
+	}
+	defer func() { _ = syscall.Kill(pid, syscall.SIGKILL) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("worker %d still runs 5 s after its parent ended", pid)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }

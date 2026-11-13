@@ -476,7 +476,7 @@ function test_seal_lengths(): test.TestOutcome {
   return test.pass();
 }
 
-// Poly1305 in five limbs of 26 bits, the reference for the module's 64-bit limbs. The message is padded as
+// Poly1305 in five limbs of 26 bits, the reference for the kernel __poly1305_blocks. The message is padded as
 // RFC 8439 section 2.5 pads it.
 function ref_poly1305(key: [u8], msg: [u8]): u8[] {
   let t0 = le32(key, 0);
@@ -568,10 +568,109 @@ function filled_with(n: i32, b: u8): u8[] {
   return out;
 }
 
+function le64(b: [u8], at: i32): u64 {
+  return le32(b, at) as u64 | le32(b, at + 4) as u64 << 32;
+}
+
+// The carry out of the 64-bit sum s = a + b.
+function carry64(a: u64, b: u64, s: u64): u64 {
+  return (a & b | (a | b) & ~s) >> 63;
+}
+
+// Poly1305 in 64-bit limbs, the module's code before the kernel __poly1305_blocks, and a second reference for
+// it. The message is padded as RFC 8439 section 2.5 pads it.
+function ref64_poly1305(key: [u8], msg: [u8]): u8[] {
+  let r0 = le64(key, 0) & 0x0ffffffc0fffffff as u64;
+  let r1 = le64(key, 8) & 0x0ffffffc0ffffffc as u64;
+  let s1 = r1 + (r1 >> 2);
+  let h0: u64 = 0;
+  let h1: u64 = 0;
+  let h2: u64 = 0;
+  let at = 0;
+  while (at < msg.len()) {
+    let n = msg.len() - at;
+    let hibit: u64 = 1;
+    if (n > 16) {
+      n = 16;
+    }
+    let block = __bytes_into(__alloc_u8(16), 0, msg, at, n);
+    if (n < 16) {
+      block = block.with(n, 1 as u8);
+      hibit = 0;
+    }
+    let m0 = le64(block, 0);
+    let m1 = le64(block, 8);
+    let t0 = h0 + m0;
+    let c0 = carry64(h0, m0, t0);
+    let t1 = h1 + m1;
+    let c1 = carry64(h1, m1, t1);
+    h1 = t1 + c0;
+    h2 += hibit + c1 + carry64(t1, c0, h1);
+    h0 = t0;
+    let a = h0 * r0;
+    let b1 = h1 * s1;
+    let d0 = a + b1;
+    let d0_hi = __mulhi_u64(h0, r0) + __mulhi_u64(h1, s1) + carry64(a, b1, d0);
+    let e = h0 * r1;
+    let f = h1 * r0;
+    let d1 = e + f;
+    let d1_hi = __mulhi_u64(h0, r1) + __mulhi_u64(h1, r0) + carry64(e, f, d1);
+    let g = h2 * s1;
+    let d1g = d1 + g;
+    d1_hi += carry64(d1, g, d1g);
+    h1 = d1g + d0_hi;
+    h2 = h2 * r0 + d1_hi + carry64(d1g, d0_hi, h1);
+    let c = (h2 >> 2) * 5;
+    h2 &= 3;
+    h0 = d0 + c;
+    let k0 = carry64(d0, c, h0);
+    let n1 = h1 + k0;
+    h2 += carry64(h1, k0, n1);
+    h1 = n1;
+    at += 16;
+  }
+  let g0 = h0 + 5;
+  let g1 = h1 + carry64(h0, 5, g0);
+  let take_g = 0 - (h2 + carry64(h1, carry64(h0, 5, g0), g1) >> 2);
+  let f0 = h0 & ~take_g | g0 & take_g;
+  let f1 = h1 & ~take_g | g1 & take_g;
+  let s0 = le64(key, 16);
+  let w0 = f0 + s0;
+  let w1 = f1 + le64(key, 24) + carry64(f0, s0, w0);
+  let tag = __alloc_u8(16);
+  for i in 0..8 {
+    let shift = (8 * i) as u64;
+    tag = tag.with(i, (w0 >> shift & 255) as u8).with(8 + i, (w1 >> shift & 255) as u8);
+  }
+  return tag;
+}
+
 // The keys have the largest r after the clamp, an s that carries out of each half, and a pattern. The messages
-// are 0xff bytes, which keep the accumulator near its bound, and a pattern.
+// are 0xff bytes, which keep the accumulator near its bound and carry at each 2^64 boundary, and a pattern.
+// The 64-bit reference takes each length to 1024 and the lengths around the groups of four blocks that the
+// x86-64 kernel runs from 256 bytes, under the first two keys. The 26-bit reference takes the shorter list of
+// lengths under each key.
 function test_poly1305_lengths(): test.TestOutcome {
   let keys: u8[][] = [filled_with(32, 255 as u8), pattern(32, 9), key_seq(1)];
+  let long: i32[] = [];
+  for n in 0..1025 {
+    long = long.append(n);
+  }
+  for n in [2047, 2048, 2049, 4095, 4096, 4097] {
+    long = long.append(n);
+  }
+  let whole: u8[][] = [filled_with(4097, 255 as u8), pattern(4097, 11)];
+  for k in 0..2 {
+    for n in long {
+      let msg = whole[k][0:n];
+      let Ok(got) = chacha20poly1305.poly1305(keys[k], msg) else {
+        return test.fail("a 32-byte key was refused");
+      };
+      if (!same(got, ref64_poly1305(keys[k], msg))) {
+        return test.fail("length " + n.to_string() + " differs from the 64-bit reference under key " + hex.encode(keys[k]));
+      }
+    }
+  }
   for key in keys {
     for n in lengths() {
       for msg in [filled_with(n, 255 as u8), pattern(n, n)] {
@@ -607,7 +706,7 @@ function main(): i32 {
   r = r.it("the in-place calls refuse additional data that overlaps the text", test_in_place_refuses_an_overlap);
   r = r.it("chacha20 matches the scalar reference at each length", test_xor_lengths);
   r = r.it("seal matches the scalar reference and poly1305 at each length", test_seal_lengths);
-  r = r.it("poly1305 matches the 26-bit reference at each length", test_poly1305_lengths);
+  r = r.it("poly1305 matches the 64-bit and 26-bit references at each length", test_poly1305_lengths);
   return r.finish();
 }
 

@@ -22,31 +22,36 @@ function checks(cases: (string, string)[]): test.TestOutcome {
 
 const NAMES: string[] = ["doc", "quote", "list", "li", "code", "html", "p", "h", "hr"];
 
-// The block tree under `node`, such as `quote(p2),list(li(p1))`: the kind of
-// each block, and the number of lines of a leaf.
-function shape(d: blocks.Doc, node: i32): string {
+// The blocks from the record `r0` to the end of their container, such as
+// `quote(p2),list(li(p1))`: the kind of each block, and the number of lines
+// of a leaf. Gives the record after them too.
+function shape(d: blocks.Doc, r0: i32): (string, i32) {
   let out = "";
-  let cur = d.get(node, blocks.FIRST);
-  while (cur != blocks.NONE) {
+  let r = r0;
+  while (r < d.count() && d.kind(r) != blocks.END) {
     if (out.len() > 0) {
       out += ",";
     }
-    let k = d.get(cur, blocks.KIND);
+    let k = d.kind(r);
     out += NAMES[k];
     if (k == blocks.QUOTE || k == blocks.LIST || k == blocks.ITEM) {
-      out += "(" + shape(d, cur) + ")";
-    } else if (k != blocks.RULE) {
-      out += (d.get(cur, blocks.STO) - d.get(cur, blocks.SFROM)).to_string();
+      let (inner, end) = shape(d, r + 1);
+      out += "(" + inner + ")";
+      r = end + 1;
+    } else {
+      if (k != blocks.RULE) {
+        out += (d.to(r) - d.from(r)).to_string();
+      }
+      r += 1;
     }
-    cur = d.get(cur, blocks.NEXT);
   }
-  return out;
+  return (out, r);
 }
 
 function shapes(cases: (string, string)[]): test.TestOutcome {
   for c in cases {
     let (md, want) = c;
-    let got = shape(blocks.parse(md), 0);
+    let (got, _) = shape(blocks.parse(md), 0);
     if (got != want) {
       return test.fail("\"" + md + "\": got " + got + ", want " + want);
     }
@@ -144,6 +149,26 @@ function test_lists(): test.TestOutcome {
     ("* a\n*\n\n* c", "<ul>\n<li>\n<p>a</p>\n</li>\n<li></li>\n<li>\n<p>c</p>\n</li>\n</ul>\n"),
     ("- a\n- ```\n  b\n\n\n  ```\n- c", "<ul>\n<li>a</li>\n<li>\n<pre><code>b\n\n\n</code></pre>\n</li>\n<li>c</li>\n</ul>\n"),
     ("- foo\n\n\n  bar", "<ul>\n<li>\n<p>foo</p>\n<p>bar</p>\n</li>\n</ul>\n"),
+  ]);
+}
+
+// The parser finds a loose list when a block gets a next sibling, and a
+// paragraph that holds only link reference definitions is not a sibling.
+// The empty item, the block quote and the fenced code block end with a
+// blank line that does not make the list loose.
+function test_loose_lists(): test.TestOutcome {
+  return checks([
+    ("- a\n\n  [x]: /u\n", "<ul>\n<li>a</li>\n</ul>\n"),
+    ("- a\n\n  [x]: /u\n- b\n", "<ul>\n<li>\n<p>a</p>\n</li>\n<li>\n<p>b</p>\n</li>\n</ul>\n"),
+    ("- # h\n  [x]: /u\n\n  b\n- c\n", "<ul>\n<li>\n<h1>h</h1>\nb</li>\n<li>c</li>\n</ul>\n"),
+    ("- a\n\n  [x]: /u\n\n  b\n", "<ul>\n<li>\n<p>a</p>\n<p>b</p>\n</li>\n</ul>\n"),
+    ("- a\n  - b\n\n- c\n", "<ul>\n<li>\n<p>a</p>\n<ul>\n<li>b</li>\n</ul>\n</li>\n<li>\n<p>c</p>\n</li>\n</ul>\n"),
+    ("- a\n  - b\n\n  c\n", "<ul>\n<li>\n<p>a</p>\n<ul>\n<li>b</li>\n</ul>\n<p>c</p>\n</li>\n</ul>\n"),
+    ("- \n\n- a\n", "<ul>\n<li></li>\n<li>\n<p>a</p>\n</li>\n</ul>\n"),
+    ("- a\n  > b\n\n- c\n", "<ul>\n<li>\n<p>a</p>\n<blockquote>\n<p>b</p>\n</blockquote>\n</li>\n<li>\n<p>c</p>\n</li>\n</ul>\n"),
+    ("- a\n\n- b\n\n[x]: /u\n", "<ul>\n<li>\n<p>a</p>\n</li>\n<li>\n<p>b</p>\n</li>\n</ul>\n"),
+    ("> - a\n>\n> - b\n", "<blockquote>\n<ul>\n<li>\n<p>a</p>\n</li>\n<li>\n<p>b</p>\n</li>\n</ul>\n</blockquote>\n"),
+    ("- a\n  ```\n  x\n\n  ```\n- b\n", "<ul>\n<li>a\n<pre><code>x\n\n</code></pre>\n</li>\n<li>b</li>\n</ul>\n"),
   ]);
 }
 
@@ -260,7 +285,9 @@ function test_definitions(): test.TestOutcome {
 }
 
 function test_normalize(): test.TestOutcome {
-  let cases = [("Foo  Bar", "foo bar"), ("  a\t\nb ", "a b"), ("ẞ", "ss"), ("ΑΓΩ", "αγω"), ("x", "x")];
+  let cases = [
+    ("Foo  Bar", "foo bar"), ("  a\t\nb ", "a b"), ("ẞ", "ss"), ("ΑΓΩ", "αγω"), ("x", "x"), ("foo bar-1 ~[x]", "foo bar-1 ~[x]"), ("a  b", "a b"), ("a ", "a"), (" a", "a"), ("aZ", "az"),
+  ];
   for c in cases {
     let (label, want) = c;
     if (refs.normalize(label) != want) {
@@ -456,6 +483,7 @@ function main(): i32 {
   r = r.it("indented and fenced code blocks", test_code);
   r = r.it("block quotes", test_quotes);
   r = r.it("lists and list items", test_lists);
+  r = r.it("loose and tight lists", test_loose_lists);
   r = r.it("tabs", test_tabs);
   r = r.it("HTML blocks", test_html_blocks);
   r = r.it("the block tree of text that needs inlines", test_block_shapes);

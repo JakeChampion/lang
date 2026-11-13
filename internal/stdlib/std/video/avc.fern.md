@@ -145,10 +145,16 @@ function prevention(input: [u8], at: i32): Result[void, frame.VideoError] {
   return Ok(());
 }
 
-pub(package) function rbsp_bytes(input: [u8]): Result[u8[], frame.VideoError] {
+pub(package) function rbsp_prefix(input: [u8], maximum: i32): Result[u8[], frame.VideoError] {
+  if (maximum < 0) {
+    return Err(frame.Limit);
+  }
   let output: u8[] = [];
   let zeros = 0;
   for at in 0..input.len() {
+    if (output.len() == maximum) {
+      break;
+    }
     let byte = input[at];
     if (zeros == 2 && byte <= 3u8) {
       if (byte != 3u8) {
@@ -162,6 +168,10 @@ pub(package) function rbsp_bytes(input: [u8]): Result[u8[], frame.VideoError] {
     }
   }
   return Ok(output);
+}
+
+pub(package) function rbsp_bytes(input: [u8]): Result[u8[], frame.VideoError] {
+  return rbsp_prefix(input, input.len());
 }
 
 function extended(profile: i32): boolean {
@@ -574,14 +584,43 @@ pub(package) function trailing(input: [u8], at: i64): Result[void, frame.VideoEr
   return Ok(());
 }
 
-pub function inspect_sps(input: [u8], limits: frame.Limits): Result[Sequence, frame.VideoError] {
-  let bytes = parameter_bytes(input, limits, 7u8, MAX_SPS_BYTES)?;
+function sequence_bytes(bytes: [u8], limits: frame.Limits): Result[Sequence, frame.VideoError] {
   let p = prefix(bytes)?;
   let chroma = chroma_header(bytes, p)?;
   let pic = picture(bytes, chroma, limits)?;
   let (at, metadata) = vui(bytes, pic.at, pic.references)?;
   trailing(bytes, at)?;
   return Ok(Sequence { profile_idc: p.profile, level_idc: p.level, sequence_id: p.id, chroma_format_idc: chroma.idc, separate_colour_plane: chroma.separate, bit_depth_luma: chroma.luma, bit_depth_chroma: chroma.chroma, coded: pic.coded, visible: frame.Format { width: pic.coded.width - pic.crop.left - pic.crop.right, height: pic.coded.height - pic.crop.top - pic.crop.bottom }, crop: pic.crop, frame_mbs_only: pic.frame_only, mb_adaptive_frame_field: pic.adaptive, max_reference_frames: pic.references, vui: metadata });
+}
+
+pub function inspect_sps(input: [u8], limits: frame.Limits): Result[Sequence, frame.VideoError] {
+  let bytes = parameter_bytes(input, limits, 7u8, MAX_SPS_BYTES)?;
+  return sequence_bytes(bytes, limits);
+}
+
+pub(package) struct SliceSequence { sequence: Sequence, frame_bits: i32, order_type: i32, order_bits: i32, delta_zero: boolean }
+
+function slice_order(input: [u8], at: i64): Result[(i32, i32, i32, boolean), frame.VideoError] {
+  let (next, frame_bits) = bounded_ue(input, at, 12u32)?;
+  let (at, kind) = bounded_ue(input, next, 2u32)?;
+  if (kind == 0u32) {
+    let (_, bits) = bounded_ue(input, at, 12u32)?;
+    return Ok((frame_bits as i32 + 4, kind as i32, bits as i32 + 4, false));
+  }
+  if (kind == 1u32) {
+    let (_, zero) = read(input, at, 1)?;
+    return Ok((frame_bits as i32 + 4, kind as i32, 0, zero != 0u32));
+  }
+  return Ok((frame_bits as i32 + 4, kind as i32, 0, false));
+}
+
+pub(package) function inspect_slice_sequence(input: [u8], limits: frame.Limits): Result[SliceSequence, frame.VideoError] {
+  let bytes = parameter_bytes(input, limits, 7u8, MAX_SPS_BYTES)?;
+  let sequence = sequence_bytes(bytes, limits)?;
+  let p = prefix(bytes)?;
+  let chroma = chroma_header(bytes, p)?;
+  let (frame_bits, kind, order_bits, zero) = slice_order(bytes, chroma.at)?;
+  return Ok(SliceSequence { sequence: sequence, frame_bits: frame_bits, order_type: kind, order_bits: order_bits, delta_zero: zero });
 }
 
 pub const MAX_PPS_BYTES: i32 = 65536;

@@ -993,9 +993,6 @@ function run_alt(a: filter.Ast, b: filter.Ast, input: json.JsonValue, e: Env): O
 
 // ---- Functions ----
 
-// Not inline: `run` calls itself, and this body in it makes each level of a
-// jq function use two times the stack (#15730).
-@noinline
 function call(name: string, args: filter.Ast[], input: json.JsonValue, e: Env): Outputs {
   return match (name) {
     "empty" => ok([]),
