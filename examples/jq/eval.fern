@@ -16,14 +16,35 @@ import "./reader";
 // `error` is empty, or it holds the one value of the error.
 pub struct Outputs { values: json.JsonValue[], error: json.JsonValue[] }
 
-pub struct Env { names: string[], values: json.JsonValue[] }
+pub struct Env { names: string[], values: json.JsonValue[], funcs: Func[] }
+
+// A function of a `def`, or an argument of a call. `scope` holds the one
+// environment of the definition, or of the call for an argument. An argument
+// has no parameters and does not see itself.
+struct Func { name: string, params: string[], body: filter.Ast, scope: Env[], argument: boolean }
 
 pub function env(): Env {
-  return Env { names: [], values: [] };
+  return Env { names: [], values: [], funcs: [] };
 }
 
 pub function (e: Env) with(name: string, value: json.JsonValue): Env {
-  return Env { names: e.names.append(name), values: e.values.append(value) };
+  return Env { names: e.names.append(name), values: e.values.append(value), funcs: e.funcs };
+}
+
+function (e: Env) define(f: Func): Env {
+  return Env { names: e.names, values: e.values, funcs: e.funcs.append(f) };
+}
+
+// The last function of `e` with this name and this number of parameters.
+function (e: Env) find(name: string, count: i32): Func[] {
+  let i = e.funcs.len() - 1;
+  while (i >= 0) {
+    if (e.funcs[i].name == name && e.funcs[i].params.len() == count) {
+      return [e.funcs[i]];
+    }
+    i -= 1;
+  }
+  return [];
 }
 
 function ok(values: json.JsonValue[]): Outputs {
@@ -150,7 +171,14 @@ pub function run(f: filter.Ast, input: json.JsonValue, e: Env): Outputs {
       return run_alt(a, b, input, e);
     },
     filter.Call(name, args) => {
+      let found = e.find(name, args.len());
+      if (found.len() > 0) {
+        return call_defined(found[0], args, 0, input, e, callee_scope(found[0]));
+      }
       return call(name, args, input, e);
+    },
+    filter.Def(name, params, body, rest) => {
+      return run(rest, input, e.define(Func { name: name, params: params, body: body, scope: [e], argument: false }));
     },
     filter.Catch(body, handler) => {
       let o = run(body, input, e);
@@ -2523,7 +2551,14 @@ function run_paths(f: filter.Ast, it: PathItem, e: Env): PathOuts {
       return path_ok(o.items).then(run_paths(handler, off_path(it, o.error[0], false), e));
     },
     filter.Call(name, args) => {
+      let found = e.find(name, args.len());
+      if (found.len() > 0) {
+        return paths_defined(found[0], args, 0, it, e, callee_scope(found[0]));
+      }
       return paths_call(name, args, it, e);
+    },
+    filter.Def(name, params, body, rest) => {
+      return run_paths(rest, it, e.define(Func { name: name, params: params, body: body, scope: [e], argument: false }));
     },
     filter.Var(_) => {
       return paths_plain(f, it, e, true);
@@ -3296,4 +3331,59 @@ function walk(v: json.JsonValue, f: filter.Ast, e: Env): Outputs {
     _ => {}
   }
   return run(f, rebuilt, e);
+}
+
+// ---- Functions of a `def` ----
+
+// The environment for the body of `f`, before its parameters. A function
+// sees itself, so that it can call itself.
+function callee_scope(f: Func): Env {
+  if (f.argument) {
+    return f.scope[0];
+  }
+  return f.scope[0].define(f);
+}
+
+// The outputs of the body of `f` with its parameters from `at` bound in
+// `scope`. A parameter is the argument as a filter of the caller. A `$`
+// parameter is a variable for each output of the argument also, and jq takes
+// each value of an earlier parameter first.
+function call_defined(f: Func, args: filter.Ast[], at: i32, input: json.JsonValue, e: Env, scope: Env): Outputs {
+  if (at == args.len()) {
+    return run(f.body, input, scope);
+  }
+  let name = filter.param_name(f.params[at]);
+  let bound = scope.define(Func { name: name, params: [], body: args[at], scope: [e], argument: true });
+  if (name == f.params[at]) {
+    return call_defined(f, args, at + 1, input, e, bound);
+  }
+  let vs = run(args[at], input, e);
+  let out = ok([]);
+  for v in vs.values {
+    out = out.then(call_defined(f, args, at + 1, input, e, bound.with(name, v)));
+    if (out.failed()) {
+      return out;
+    }
+  }
+  return Outputs { ...out, error: vs.error };
+}
+
+function paths_defined(f: Func, args: filter.Ast[], at: i32, it: PathItem, e: Env, scope: Env): PathOuts {
+  if (at == args.len()) {
+    return run_paths(f.body, it, scope);
+  }
+  let name = filter.param_name(f.params[at]);
+  let bound = scope.define(Func { name: name, params: [], body: args[at], scope: [e], argument: true });
+  if (name == f.params[at]) {
+    return paths_defined(f, args, at + 1, it, e, bound);
+  }
+  let vs = run(args[at], it.value, e);
+  let out = path_ok([]);
+  for v in vs.values {
+    out = out.then(paths_defined(f, args, at + 1, it, e, bound.with(name, v)));
+    if (out.failed()) {
+      return out;
+    }
+  }
+  return PathOuts { ...out, error: vs.error };
 }

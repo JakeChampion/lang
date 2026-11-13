@@ -17,7 +17,7 @@ import (
 // jqSuiteFloor is the number of cases of jq.test that the port passes. A case
 // in a part of the language the port does not have yet is skipped, and every
 // other case must pass.
-const jqSuiteFloor = 334
+const jqSuiteFloor = 349
 
 const jqNotYet = "is not in this port yet"
 
@@ -235,6 +235,7 @@ func TestSelfHostExampleJqAgainstJq(t *testing.T) {
 		{[]string{"-c", "[.[].a?], [.[] | .a?], (.[2].a.b? // \"none\")"}, "[1,{\"a\":2},{\"a\":{\"b\":3}}]\n"},
 		{[]string{"-c", ".[].a.b?"}, "[{\"a\":{\"b\":1}},5]\n"},
 		{[]string{"-c", "path(.a | tostring), (.a = 1)"}, "{\"a\":[1]}\n"},
+		{[]string{"-c", "def fac: if . <= 1 then 1 else . * (. - 1 | fac) end; def twice(f): f | f; def add($n): . + $n; map(fac), (.[0] | twice(add(10))), [.[] | add(1, 2)]"}, "[3,5]\n"},
 		{[]string{"-c", "walk(if type == \"object\" then del(.x) else . end), (.. |= (numbers |= . * 2))"}, "[{\"x\":1,\"y\":[2,{\"x\":3}]},4]\n"},
 		{[]string{"-c", "group_by(.k) | map({k: .[0].k, n: length}), (sort_by(.v) | map(.v)), max_by(.v), unique_by(.k)"}, "[{\"k\":\"b\",\"v\":2},{\"k\":\"a\",\"v\":3},{\"k\":\"b\",\"v\":1}]\n"},
 		{[]string{"-c", "ascii_upcase, split(\", \"), indices(\", \"), explode[0:2], contains(\"b, c\"), ltrimstr(\"a, \")"}, "\"a, b, c\"\n5\n"},

@@ -33,6 +33,8 @@ pub enum Ast {
   Interp(string, string[], Ast[]),
   Format(string),
   Update(string, Ast, Ast),
+  // `def name(params): body; rest`. A parameter with a `$` is a variable also.
+  Def(string, string[], Ast, Ast),
   If(Ast, Ast, Ast),
   Bind(Ast, string, Ast),
   Reduce(Ast, string, Ast, Ast),
@@ -355,7 +357,8 @@ pub function lex(s: string): Lexed {
 
 pub struct Parsed { ast: Ast, error: string }
 
-struct P { toks: Tok[], at: i32, error: string }
+// `defs` holds each function that a `def` gave, as "name/arguments".
+struct P { toks: Tok[], at: i32, error: string, defs: string[] }
 
 function (p: P) peek(): Tok {
   return p.toks[p.at];
@@ -421,11 +424,16 @@ function describe(t: Tok): string {
 }
 
 pub function parse(program: string): Parsed {
+  return parse_in(program, []);
+}
+
+// The filter of `program`, which can call the functions of `defs`.
+function parse_in(program: string, defs: string[]): Parsed {
   let lx = lex(program);
   if (lx.error.len() > 0) {
     return Parsed { ast: Identity, error: lx.error };
   }
-  let p = P { toks: lx.toks, at: 0, error: "" };
+  let p = P { toks: lx.toks, at: 0, error: "", defs: defs };
   let (ast, q) = parse_pipe(p);
   if (q.error.len() == 0) {
     if let TEnd = q.peek() {
@@ -791,7 +799,7 @@ function parse_string(format: string, p: P): (Ast, P) {
     TInterp(texts, sources) => {
       let parts: Ast[] = [];
       for source in sources {
-        let inner = parse(source);
+        let inner = parse_in(source, p.defs);
         if (inner.error.len() > 0) {
           return (Identity, p.fail(inner.error));
         }
@@ -833,7 +841,10 @@ function parse_word(x: string, p: P): (Ast, P) {
   if (x == "then" || x == "elif" || x == "else" || x == "end" || x == "as" || x == "and" || x == "or" || x == "catch" || x == "try") {
     return (Identity, p.fail(keyword_message(x)));
   }
-  if (x == "def" || x == "label" || x == "import" || x == "include") {
+  if (x == "def") {
+    return parse_def(p.advance());
+  }
+  if (x == "label" || x == "import" || x == "include") {
     return (Identity, p.fail("'" + x + "' " + NOT_YET));
   }
   return parse_call(x, p.advance());
@@ -904,6 +915,73 @@ function has_name(name: string): boolean {
   return false;
 }
 
+// `name(params): body; rest` after a `def`. The body can call the function
+// itself and its parameters, and the rest can call the function.
+function parse_def(p: P): (Ast, P) {
+  let TIdent(name) = p.peek() else {
+    return (Identity, p.fail("syntax error, unexpected " + describe(p.peek())));
+  };
+  let q = p.advance();
+  let params: string[] = [];
+  if (q.is_punct("(")) {
+    q = q.advance();
+    while (q.error.len() == 0) {
+      match (q.peek()) {
+        TIdent(x) => {
+          params = params.append(x);
+        },
+        TVar(x) => {
+          params = params.append("$" + x);
+        },
+        _ => {
+          return (Identity, q.fail("syntax error, unexpected " + describe(q.peek())));
+        }
+      }
+      q = q.advance();
+      if (q.is_punct(")")) {
+        q = q.advance();
+        break;
+      }
+      q = q.expect(";");
+    }
+  }
+  q = q.expect(":");
+  let outer = p.defs;
+  let own = outer.append(name + "/" + params.len().to_string());
+  let inner = own;
+  for x in params {
+    inner = inner.append(param_name(x) + "/0");
+  }
+  let (body, r) = parse_pipe(P { ...q, defs: inner });
+  let t = P { ...r, defs: own }.expect(";");
+  if (t.error.len() > 0) {
+    return (Identity, t);
+  }
+  if let TEnd = t.peek() {
+    return (Identity, t.fail("Top-level program not given (try \".\")"));
+  }
+  let (rest, u) = parse_pipe(t);
+  return (Def(name, params, body, rest), P { ...u, defs: outer });
+}
+
+// Whether a `def` in scope has this name, with any number of parameters.
+function (p: P) defines(name: string): boolean {
+  for d in p.defs {
+    if (d.starts_with(name + "/")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The name of a parameter with no `$`.
+pub function param_name(x: string): string {
+  if (x.starts_with("$")) {
+    return text(x, 1, x.len());
+  }
+  return x;
+}
+
 // The arguments of the function `name`, when it has some: `(e; e)`.
 function parse_call(name: string, p: P): (Ast, P) {
   let args: Ast[] = [];
@@ -922,8 +1000,8 @@ function parse_call(name: string, p: P): (Ast, P) {
     }
   }
   let called = name + "/" + args.len().to_string();
-  if (q.error.len() == 0 && !functions().contains(called)) {
-    if (has_name(name)) {
+  if (q.error.len() == 0 && !functions().contains(called) && !p.defs.contains(called)) {
+    if (has_name(name) || p.defines(name)) {
       return (Identity, p.fail(called + " is not defined"));
     }
     return (Identity, p.fail("the function " + called + " " + NOT_YET));
@@ -1056,6 +1134,7 @@ pub function undefined_var(f: Ast, names: string[]): string {
     Catch(a, b) => first_undefined([a, b], names),
     Interp(_, _, parts) => first_undefined(parts, names),
     Update(_, a, b) => first_undefined([a, b], names),
+    Def(_, params, body, rest) => undefined_in_def(params, body, rest, names),
     If(a, b, c) => first_undefined([a, b, c], names),
     Bind(source, name, body) => first_scoped([source], [body], name, names),
     Reduce(source, name, init, update) => first_scoped([source, init], [update], name, names),
@@ -1084,4 +1163,19 @@ function first_scoped(outer: Ast[], inner: Ast[], name: string, names: string[])
     return v;
   }
   return first_undefined(inner, names.append(name));
+}
+
+// The variables of a `def`: the body sees each `$` parameter also.
+function undefined_in_def(params: string[], body: Ast, rest: Ast, names: string[]): string {
+  let inner = names;
+  for x in params {
+    if (x.starts_with("$")) {
+      inner = inner.append(param_name(x));
+    }
+  }
+  let v = undefined_var(body, inner);
+  if (v.len() > 0) {
+    return v;
+  }
+  return undefined_var(rest, names);
 }

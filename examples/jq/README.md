@@ -26,6 +26,8 @@ The port has these parts of the language:
 - `if`, with `elif` and `else`.
 - The binding `e as $x | e`, with one variable.
 - `reduce` and `foreach`.
+- `def`, with filter parameters and `$` parameters. A function can call
+  itself.
 - `try`, with `catch`. An error holds a JSON value, as in jq.
 - `..`, which is `recurse`.
 - String interpolation, in a literal, in an object key and after a dot.
@@ -89,6 +91,12 @@ also.
 - A parse error stops the command line with `jq: parse error:`, the message,
   and exit 5.
 
+## Recursion
+
+jq makes a tail call with no new stack frame. The port does not, so the depth
+of a function that calls itself has the limit of the stack. A depth of 3000 is
+good on x86-64 and arm64. On wasm32-wasi the limit of wasmtime is lower.
+
 ## Numbers
 
 jq 1.7 writes a number in one of two forms, and the port does the same:
@@ -114,7 +122,7 @@ to the next. The exact results are the same: `exp10` of 2 is 100.
 ## What it does not have yet
 
 - Destructuring patterns in a binding, and `?//`.
-- `label` and `def`.
+- `label` with `break`, `$__loc__`, and modules.
 - Each function that is not in the lists above. `exp` waits for #15661.
 
 A program that uses one of them stops with exit 3 and a message that ends in
@@ -127,7 +135,7 @@ A program that uses one of them stops with exit 3 and a message that ends in
 - `tests/jq.test` is the test suite of jq 1.7 (see
   `licenses/jq/NOTICE.txt`). `TestSelfHostExampleJqSuite` runs each case
   whose program the port has and compares the outputs as JSON values, as
-  jq does. 334 cases pass, and each of the others is in a part of the language
+  jq does. 349 cases pass, and each of the others is in a part of the language
   that the port does not have yet.
 - `TestSelfHostExampleJqAgainstJq` runs the command line and the `jq` binary
   on the same arguments and input, and compares their stdout, stderr and exit
