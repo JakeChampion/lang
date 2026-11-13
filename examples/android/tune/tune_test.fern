@@ -179,6 +179,7 @@ function device(): player.Device {
     write_bytes: (path: string, bytes: u8[]): boolean => path.starts_with("music/") && tags.read(bytes).title == "Fern Morning",
     ask_write: (path: string): boolean => false,
     to_back: (): void => {},
+    asked: (): tune.Msg[] => [],
     write_text: (path: string, text: string): boolean => path.starts_with("music/") && text.starts_with("#EXTM3U\nFern/First Light/02 Slow Water.wav\n"),
     kept: (name: string): u8[] => [],
     put: (name: string, bytes: u8[]): void => {},
@@ -700,6 +701,28 @@ function test_the_shortcuts_of_the_launcher(): test.TestOutcome {
   return test.assert_eq([all, (first != other).to_string(), none, order(list), list.playing.to_string(), tune.update(tune.start([]), tune.ShuffleAll(3)).playing.to_string()].join(" | "), "0123 truetrue | true | @-1 | 2,0@0 | true | false");
 }
 
+// A tap on a shortcut while the app runs gives the activity a new intent.
+// The player does its action at the next Resume, and one time only.
+function test_a_shortcut_reaches_the_player_that_runs(): test.TestOutcome {
+  let asks = 0;
+  let dev = player.Device { ...device(), asked: (): tune.Msg[] => {
+    asks += 1;
+    if (asks == 2) {
+      return [tune.ShuffleAll(41)];
+    }
+    return [];
+  } };
+  let s = sim.after(sim.start(player.wrap(tune.start(paths())), player.program(dev), test_fonts(), 1080, 2400, 2.75), 50i64);
+  let before = s.shell.app.model.playing.to_string();
+  s = sim.send(s, tune.Returned);
+  let first = s.shell.app.model.playing.to_string();
+  s = sim.send(s, tune.Returned);
+  let m = s.shell.app.model;
+  let second = m.playing.to_string() + m.shuffle.to_string() + " " + asks.to_string();
+  s = sim.send(sim.send(s, tune.Play(false)), tune.Returned);
+  return test.assert_eq([before, first, second, s.shell.app.model.playing.to_string()].join(" "), "false false truetrue 2 false");
+}
+
 // The loudness of the settings goes from the same level for each track to
 // the same level for each album, and then off. The player keeps it. A
 // file with no album gain plays at the gain of its track.
@@ -1009,6 +1032,7 @@ function main(): i32 {
   r = r.it("a track shows its lyrics", test_the_lyrics_of_a_track);
   r = r.it("the settings choose the theme, the tabs and the hidden folders", test_the_settings);
   r = r.it("the shortcuts of the launcher play the library or a playlist", test_the_shortcuts_of_the_launcher);
+  r = r.it("a shortcut reaches the player that runs", test_a_shortcut_reaches_the_player_that_runs);
   r = r.it("a track follows the one that ends in the same stream", test_a_track_follows_the_one_that_ends);
   r = r.it("the mix of a crossfade has equal power", test_the_mix_of_a_crossfade);
   r = r.it("the track that follows the one that plays", test_the_track_that_follows);
