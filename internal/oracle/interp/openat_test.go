@@ -47,7 +47,7 @@ func TestOpenAtFileDirectoryIdentity(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(path, "file"), []byte("replacement"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			file, err := openAtFile(dir, filepath.Join(path, tc.entry), tc.entry, tc.flags|oNofollow)
+			file, err := openAtFile(dir, filepath.Join(path, tc.entry), tc.entry, tc.flags|oNofollow, 0o666)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -100,7 +100,7 @@ func TestOpenAtFileRefusals(t *testing.T) {
 		{"bad\x00name", syscall.EINVAL},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			file, err := openAtFile(dir, filepath.Join(path, tc.name), tc.name, os.O_RDONLY|oNofollow)
+			file, err := openAtFile(dir, filepath.Join(path, tc.name), tc.name, os.O_RDONLY|oNofollow, 0o666)
 			if file != nil {
 				file.Close()
 			}

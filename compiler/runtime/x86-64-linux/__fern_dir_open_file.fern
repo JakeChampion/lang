@@ -3,5 +3,10 @@ function __fern_dir_open_file(dirfd: i32, path: string, flags: i32, write: i32):
   if (write == 2) {
     f = f | 512;
   }
-  return __fern_dir_openat(dirfd, path, f | 131072 | 524288, 438);
+  // Bit 1024 of the flag word makes a file that the open creates private to its owner.
+  let mode = 438;
+  if ((flags & 1024) != 0) {
+    mode = 384;
+  }
+  return __fern_dir_openat(dirfd, path, f | 131072 | 524288, mode);
 }
