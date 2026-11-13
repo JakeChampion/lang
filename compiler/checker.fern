@@ -14633,7 +14633,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
     if (di < dests.len()) {
       dest = dests[di];
     }
-    if (generic_fn_value_arg(c.args[di], s)) {
+    if (generic_fn_value_arg(c.args[di], s) || struct_lit_arg(c.args[di])) {
       dest = bound_param_dest(c, di, dest, s);
     }
     out = util.append_diags(out, dest_call_diags(c.args[di], dest, s));
@@ -15924,6 +15924,8 @@ function call_diags_struct_lit(sl: ast.ExprStructLit, dest_args: typeinfo.Type[]
     }
     if (args.len() == 0 && fsig.type_params.len() > 0) {
       args = struct_lit_args(sl, fsig, s);
+    }
+    if (sl.written.len() == 0 && fsig.type_params.len() > 0) {
       let utp = lit_uninferable_param(sl, fsig, args, s);
       if (utp.len() > 0) {
         out = out.append(dg_at("E040", "could not infer type parameter " + utp + " for struct " + sl.type_name + " — supply it explicitly at the construction site (e.g. " + sl.type_name + "[i32] { ... }) or annotate the binding (e.g. let x: " + sl.type_name + "[i32] = ...)", sl.line, sl.col));
@@ -16188,6 +16190,13 @@ function generic_fn_value_arg(e: ast.Expr, s: Scope): boolean {
   return false;
 }
 
+function struct_lit_arg(e: ast.Expr): boolean {
+  if let ast.ExprStructLit(_) = e {
+    return true;
+  }
+  return false;
+}
+
 function bound_param_dest(c: ast.ExprCall, di: i32, dest: typeinfo.Type, s: Scope): typeinfo.Type {
   if let ast.ExprIdent(cid) = c.callee {
     let Some(sig) = s.lookup_sig(cid.name) else {
@@ -16422,13 +16431,23 @@ function member_dest(name: string, dest: typeinfo.Type, s: Scope): typeinfo.Type
 }
 
 // A type argument that the destination leaves open comes from the fields of the literal.
+// A type variable of another function, such as a type parameter of the
+// callee in the type of its parameter. Nothing in this scope fixes it.
+function foreign_type_variable(t: typeinfo.Type, s: Scope): boolean {
+  let name = tvar_name(t);
+  if let typeinfo.TypeErased(e) = t {
+    name = e.name;
+  }
+  return name.len() > 0 && !util.has_str(s.tparams, name);
+}
+
 function lit_dest_args(sl: ast.ExprStructLit, dest_args: typeinfo.Type[], s: Scope): typeinfo.Type[] {
   let Some(ssig) = s.lookup_struct(sl.type_name) else {
     return dest_args;
   };
   let open = false;
   for a in dest_args {
-    open = open || type_contains_unknown(a);
+    open = open || type_contains_unknown(a) || foreign_type_variable(a, s);
   }
   if (!open || dest_args.len() != ssig.type_params.len()) {
     return dest_args;
@@ -16436,7 +16455,7 @@ function lit_dest_args(sl: ast.ExprStructLit, dest_args: typeinfo.Type[], s: Sco
   let own = struct_lit_args(sl, ssig, s);
   let out: typeinfo.Type[] = [];
   for i in 0..dest_args.len() {
-    if (type_contains_unknown(dest_args[i])) {
+    if (type_contains_unknown(dest_args[i]) || foreign_type_variable(dest_args[i], s)) {
       out = out.append(own[i]);
     } else {
       out = out.append(dest_args[i]);

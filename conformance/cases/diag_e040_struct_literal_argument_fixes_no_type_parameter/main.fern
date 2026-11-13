@@ -1,0 +1,20 @@
+// A struct literal in an argument does not take a type argument from a type
+// parameter of the callee that nothing at the call fixes.
+
+struct W[T] {
+  k: i32,
+}
+
+function early[T](w: W[T]): i32 {
+  return w.k;
+}
+
+function two[T](a: T, w: W[T]): i32 {
+  return w.k;
+}
+
+function main(): i32 {
+  let fixed = two(1, W { k: 2 });
+  print(early(W { k: 1 }).to_string());
+  return fixed;
+}
