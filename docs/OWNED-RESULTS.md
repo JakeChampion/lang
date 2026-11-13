@@ -5,6 +5,8 @@ Status: [reference]
 An `own` result promises an owned value to the caller.
 The checker validates each return.
 The promise is part of a function type.
+Grouped callback results retain the same contract for tuples, arrays, and function values.
+The `owned_callback_result_composition` case checks these forms on all three targets.
 
 ```fern
 function pass[T](own value: T): own T {
