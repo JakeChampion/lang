@@ -3159,7 +3159,14 @@ function __response_body(buf: u8[], from: i32, first_crlf: i32, headers_end: i32
     return Malformed(body.0);
   }
   let resp = HttpResponse { status: status, body: BodyBytes(body.1), headers: h, trailers: body.3, background: None };
-  return Complete(HttpResponseFramed { response: resp, len: body.2 - from, version: version, keep_alive: __persists(version, h, fields.4) });
+  let keep = __persists(version, h, fields.4) && !__ends_at_close(status, method, fields);
+  return Complete(HttpResponseFramed { response: resp, len: body.2 - from, version: version, keep_alive: keep });
+}
+
+// A body with no length and no chunked coding ends at the close of the
+// connection, so the connection does not persist (RFC 9112 section 9.3).
+function __ends_at_close(status: i32, method: string, fields: (i32, i32, i32, i32, i32)): boolean {
+  return method != "HEAD" && !bodiless(status) && fields.0 == -1 && fields.1 == -1;
 }
 
 function __response_payload(buf: u8[], at: i32, h: HeaderMap, fields: (i32, i32, i32, i32, i32), status: i32, method: string, eof: boolean, version: string, limits: HttpLimits): (i32, u8[], i32, HeaderMap) {

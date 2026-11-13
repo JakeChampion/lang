@@ -184,8 +184,7 @@ function test_framing(): test.TestOutcome {
     framed("HTTP/1.1 503 Busy\r\nConnection: close\r\nContent-Length: 0\r\n\r\n", "GET", false),
     framed("HTTP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n", "GET", false),
     framed("HTTP/1.1 200 OK\r\n\r\nto the end", "GET", false),
-    // Without the keep-alive flag: std/http gives true for a body that ends at the close.
-    framed("HTTP/1.1 200 OK\r\n\r\nto the end", "GET", true).take(11),
+    framed("HTTP/1.1 200 OK\r\n\r\nto the end", "GET", true),
     framed(head, "HEAD", false),
     framed("HTTP/1.1 204 No Content\r\n\r\n", "GET", false),
     framed("", "GET", true),
@@ -202,7 +201,7 @@ function test_framing(): test.TestOutcome {
     "done 503 59 false",
     "done 200 38 false",
     "partial",
-    "done 200 29",
+    "done 200 29 false",
     "done 200 38 true",
     "done 204 27 true",
     "bad: connection closed",
