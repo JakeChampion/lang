@@ -12,17 +12,39 @@ printf '# Title\n\n- a\n- b\n' | ./md
 `md` reads the files that it gets, or stdin when it gets none, and writes the
 HTML to stdout. A program can call `markdown.to_html(text)`, or
 `markdown.render(builder, text)` to write into a byte builder.
+`markdown.write(writer, text, part)` gives the HTML to a buffered writer each
+time that `part` bytes or more are ready. `md` uses it, so the HTML of a
+document is not in memory all at one time.
 
 ## How it works
 
 The renderer has the two phases of the appendix of the spec:
 
-1. `blocks.fern` reads the source one line at a time and builds the tree of
-   blocks. Each node is a row of i32 fields in one array. A paragraph, a
-   heading and a code block keep no copy of their text. Each holds a range of
-   line segments, and each segment is a range of the source.
+1. `blocks.fern` reads the source one line at a time. It keeps a stack of
+   the open blocks, and it writes the blocks to a log in the order of the
+   document. A container block has a record where it starts and an END
+   record where it ends. A leaf block gets its record when it closes. A
+   paragraph, a heading and a code block keep no copy of their text. Each
+   holds a range of line segments, and each segment is a range of the
+   source.
 2. `inlines.fern` parses and writes the text of each paragraph and heading.
-   `markdown.fern` walks the tree and writes the HTML into one byte builder.
+   `markdown.fern` reads the log in order and writes the HTML.
+
+md4c has the same design. A link reference definition can come after the
+link that uses it, so the inline phase starts after the last line. Until
+then, the log keeps all the blocks. A record is two i64 fields and a
+segment is one i64 field, so the log is small next to the source.
+
+A list is loose when a block in it ends with a blank line and is not its
+last block. Each container on the stack keeps what the parser must know of
+its last closed child. When the container gets a new child, the parser
+knows that the last child is not the last block, and it does the test. A
+paragraph that holds only link reference definitions is not a block, so
+its test waits until it closes.
+
+The cursor of the line is in local variables, not in the struct of the
+parser. A line that cannot start a block does not go through the tests of
+the block starts.
 
 The inline parser reads each byte of the text once. A constant table of 256
 entries makes `__scan_set` a vector scan, and the scan finds the next byte
@@ -129,14 +151,18 @@ follow spec 0.31.2, the port follows the spec:
 ## Speed
 
 Measured 2026-11-13 on the 4-core x86-64 container, with other work on the
-machine: the median of 7 runs, and the peak memory. md4c 0.4.8 runs through
-a small driver of `md_html` with `MD_DIALECT_COMMONMARK`.
+machine: the median of 7 runs, and the peak memory. Each program reads the
+input from a file and writes to `/dev/null`. md4c 0.4.8 runs through a small
+driver of `md_html` with `MD_DIALECT_COMMONMARK`, which writes each part of
+the HTML when md4c gives it.
 
 | input | `md` | cmark 0.30.2 | md4c 0.4.8 |
 |---|---:|---:|---:|
-| the Markdown of `docs/`, 23.9 MB | 0.248 s, 173 MB | 0.472 s, 219 MB | 0.137 s, 28 MB |
-| the 652 spec examples, repeated to 16.9 MB | 0.799 s, 360 MB | 1.176 s, 425 MB | 0.435 s, 44 MB |
+| the Markdown of `docs/`, 23.9 MB | 0.118 s, 33 MB | 0.453 s, 220 MB | 0.129 s, 28 MB |
+| the 652 spec examples, repeated to 16.9 MB | 0.353 s, 66 MB | 1.160 s, 444 MB | 0.409 s, 44 MB |
 
-The inline phase is about a quarter of the time of `md` on the spec
-examples. The block phase is most of the rest. It keeps the whole tree in
-memory, where md4c writes each block when it ends.
+callgrind counts 210 M instructions for `md` on the first 6 MB of the
+`docs/` input, and 305 M for md4c. The inline phase is 58% of the count of
+`md` there, and the block phase is 35%. On the first 4 MB of the spec input,
+the block phase is about half of the count. The link reference definitions
+are a sixth of the block phase there.

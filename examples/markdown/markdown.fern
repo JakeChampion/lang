@@ -43,11 +43,11 @@ pub function write(w: io_buffered.BufWriter, src: string, part: i32): Result[io_
   return Ok(q);
 }
 
-// The state of the writer between two records: the tables of the inline
-// phase, true when the output does not end with a line feed, and a stack
-// with an entry for each open container. The entry is 1 when the paragraphs
-// directly in the container have no `<p>` tags, which is true for an item of
-// a tight list.
+// The state of the writer between two records. `w` holds the tables of the
+// inline phase. `open` is true when the output does not end with a line
+// feed. `tight` has an entry for each open container. The entry is 1 when
+// the paragraphs directly in the container have no `<p>` tags, as in an
+// item of a tight list.
 struct State { w: inlines.Work, open: boolean, tight: i32[], depth: i32 }
 
 function start(): State {

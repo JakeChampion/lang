@@ -52,11 +52,11 @@ const F_LOOSE: i32 = 256;
 
 const F_PARA: i32 = 512;
 
-// The fields of an open block on the stack. S_A is the marker of a list, the
-// fence character of a code block, the kind of an HTML block or the level of
-// a heading. S_B is the start number of a list or the length of a code fence.
-// S_C is the column of a list marker or the indent of a code fence. S_D is
-// the width of a list marker and the spaces after it.
+// The fields of an open block on the stack. S_A is the marker of a list or
+// the fence character of a code block. It is the kind of an HTML block or
+// the level of a heading too. S_B is the start number of a list or the
+// length of a code fence. S_C is the column of a list marker or the indent
+// of a code fence. S_D is the width of a list marker and the spaces after it.
 const S_KIND: i32 = 0;
 
 const S_FLAGS: i32 = 1;
@@ -75,10 +75,10 @@ const S_FROM: i32 = 7;
 
 const S_LOG: i32 = 8;
 
-// What a list or a list item needs to know of its last closed child: NONE
-// when it has no child, else L_BLANK when the child ends with a blank line,
-// and L_DEEP with L_DEEP_BLANK for a child that is a list or an item that
-// is not empty. The last block in such a child gives the answer for it.
+// What a container must know of its last closed child, or NONE when it has
+// no child. L_BLANK is set when the child ends with a blank line. L_DEEP is
+// set for a child that is a list or an item that is not empty. For such a
+// child, its last block gives the answer, and L_DEEP_BLANK holds it.
 const S_LAST: i32 = 9;
 
 const SS: i32 = 16;
@@ -91,11 +91,11 @@ const L_DEEP_BLANK: i32 = 4;
 
 // A parsed document. The first field of a record holds the kind in its low
 // four bits, the flags above them, and a value from bit 16. The value is the
-// level of a heading, the start number of an ordered list, or the kind of
-// the container that an END record ends. The second field holds the first
-// segment of a leaf block, and from bit 32 the segment after its last one.
-// A segment is the start and the end of a line in `src`, with the spaces
-// that a partly used tab gives at the start of the line.
+// level of a heading or the start number of an ordered list. For an END
+// record, it is the kind of the container that ends. The second field holds
+// the first segment of a leaf block, and from bit 32 the segment after its
+// last one. A segment is the start and the end of a line in `src`. It holds
+// the spaces that a partly used tab gives at the start of the line too.
 pub struct Doc { src: string, log: i64[], segs: i64[], refs: Map[string, refs.Ref] }
 
 // The number of records.
