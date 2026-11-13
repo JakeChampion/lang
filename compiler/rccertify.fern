@@ -1062,7 +1062,7 @@ function simple_origin(w: Walk, ins: ssa.SInst): i32 {
     return org_fresh();
   }
   if (k == ssa.STR_VIEW) {
-    if (ins.imm == 0) {
+    if (ins.imm == 0 || w.ops.owned_frame_views) {
       return org_fresh();
     }
     return org_none();

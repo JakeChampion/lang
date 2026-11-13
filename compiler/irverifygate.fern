@@ -43,6 +43,10 @@ function physical_signatures(sigs: irverify.NameIndex, abis: rccertify.Abis): ir
   return irverify.NameIndex { ...sigs, params: params };
 }
 
+pub function with_owned_frame_views(g: Gate): Gate {
+  return Gate { ...g, rcops: rcsigs.with_owned_frame_views(g.rcops) };
+}
+
 pub function with_memo(g: Gate, m: rcmemo.Memo): Gate {
   if (g.certify != 2) {
     return g;
@@ -193,7 +197,7 @@ pub function certify_ops_or_refuse(fn_name: string, ops: ir.Op[], n_params: i32,
   }
   match (ssa_lift.lift_from_ir_prod(g.kinds, fn_name, n_params, n_locals, ops, false)) {
     Ok(lifted) => {
-      return certify_or_refuse(fn_name, ssa.register_form(lifted.func).f, ops, g);
+      return certify_or_refuse(fn_name, ssa.form(lifted.func, g.rcops.owned_frame_views).f, ops, g);
     },
     Err(message) => {
       if (g.census != 0 as usize) {
