@@ -217,19 +217,13 @@ function parse(argv: string[]): (Cfg, string[]) {
 }
 
 function apply(cfg: Cfg, m: gnu.OptMatch): Cfg {
-  if (m.id == OPT_PRINT_BYTES || m.id == OPT_PRINT_CHARS) {
-    return Cfg { ...cfg, print_bytes: true };
-  }
-  if (m.id == OPT_IGNORE) {
-    return ignore_option(cfg, m.value);
-  }
-  if (m.id == OPT_VERBOSE) {
-    return Cfg { ...cfg, verbose: true };
-  }
-  if (m.id == OPT_BYTES) {
-    return bytes_option(cfg, m.value);
-  }
-  return Cfg { ...cfg, quiet: true };
+  return match (m.id) {
+    OPT_PRINT_BYTES | OPT_PRINT_CHARS => Cfg { ...cfg, print_bytes: true },
+    OPT_IGNORE => ignore_option(cfg, m.value),
+    OPT_VERBOSE => Cfg { ...cfg, verbose: true },
+    OPT_BYTES => bytes_option(cfg, m.value),
+    _ => Cfg { ...cfg, quiet: true },
+  };
 }
 
 // One input: its name, its reader, its buffered bytes and the read position.

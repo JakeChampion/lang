@@ -246,7 +246,7 @@ function keep_applies(e: ast.Expr): boolean {
 function keep_expr(e: ast.Expr, a: i32): (ast.Expr, i32, boolean) {
   match (e) {
     ast.ExprLambda(lm) => {
-      if (lm.origin == parser.ORIGIN_IF_EXPR) {
+      if (lm.origin == parser.ORIGIN_IF_EXPR || lm.origin == parser.ORIGIN_MATCH_EXPR) {
         return (ast.ExprLambda { ...lm, body: prune_arm(lm.body) }, a, true);
       }
       return (e, a, false);

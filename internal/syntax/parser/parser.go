@@ -38,7 +38,7 @@ func ParseContext(ctx context.Context, src string) (*ast.Program, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := &parser{tokens: tokens, ctx: ctx}
+	p := &parser{tokens: tokens, ctx: ctx, constNames: scanConstNames(tokens)}
 	prog := p.parseProgram()
 	prog.Comments = comments
 	prog.BlankLines = blankLineNumbers(src)
@@ -52,6 +52,22 @@ func ParseContext(ctx context.Context, src string) (*ast.Program, error) {
 	}
 	elideLenBoundedChecks(prog)
 	return prog, nil
+}
+
+func scanConstNames(tokens []lexer.Token) map[string]bool {
+	names := map[string]bool{}
+	depth := 0
+	for i, t := range tokens {
+		switch {
+		case t.Kind == lexer.Punct && t.Text == "{":
+			depth++
+		case t.Kind == lexer.Punct && t.Text == "}":
+			depth--
+		case depth == 0 && t.Kind == lexer.Keyword && t.Text == "const" && i+1 < len(tokens) && tokens[i+1].Kind == lexer.Ident:
+			names[tokens[i+1].Text] = true
+		}
+	}
+	return names
 }
 
 func blankLineNumbers(src string) []int {
@@ -121,6 +137,12 @@ type parser struct {
 	nestN           int
 	depth           int
 	recvParams      *recvTypeParams
+	// constNames holds the consts declared at the top level. Such a name in
+	// a match arm is a literal pattern of the value of the const.
+	constNames map[string]bool
+	// bindOnly is set in a pattern that cannot fail: a destructure, a
+	// for-in head or a parameter. Each name in it binds.
+	bindOnly bool
 }
 
 // recvTypeParams holds the bounds a receiver type writes on its type
@@ -3306,7 +3328,7 @@ func (p *parser) forHeaderPatternAhead() bool {
 
 func (p *parser) parseForEachPattern(kw lexer.Token, label string) (ast.Stmt, error) {
 	pos := p.peek().Pos
-	pat, err := p.parseMatchPattern()
+	pat, err := p.parseBindingPattern()
 	if err != nil {
 		return nil, err
 	}
@@ -3482,6 +3504,10 @@ func isLiteralPatternStart(t lexer.Token) bool {
 func (p *parser) atLiteralPattern() bool {
 	if isLiteralPatternStart(p.peek()) {
 		return true
+	}
+	if t := p.peek(); t.Kind == lexer.Ident && p.constNames[t.Text] && !p.bindOnly {
+		n := p.peekAt(1)
+		return n.Kind != lexer.Punct || n.Text != "(" && n.Text != "." && n.Text != "{" && n.Text != "@"
 	}
 	if t := p.peek(); t.Kind == lexer.Punct && t.Text == "-" {
 		n := p.peekAt(1)
@@ -4384,7 +4410,10 @@ func (p *parser) parseLet(captureRest bool) (ast.Stmt, error) {
 		return p.parseLetBinding(kw.Pos)
 	}
 	start := p.i
+	prev := p.bindOnly
+	p.bindOnly = patternHead
 	pats, err := p.parseOrPatterns()
+	p.bindOnly = prev
 	if err != nil {
 		return nil, err
 	}
@@ -4500,7 +4529,7 @@ func (p *parser) atParamPattern() bool {
 
 func (p *parser) parseParamPattern() (ast.Param, *ast.Destructure, error) {
 	pos := p.peek().Pos
-	pat, err := p.parseMatchPattern()
+	pat, err := p.parseBindingPattern()
 	if err != nil {
 		return ast.Param{}, nil, err
 	}
@@ -4630,8 +4659,17 @@ func (p *parser) recordPatternBraceAt(i int) int {
 	return -1
 }
 
-func (p *parser) parseDestructure(kwPos ast.Position) (ast.Stmt, error) {
+// parseBindingPattern parses a pattern that cannot fail to match.
+func (p *parser) parseBindingPattern() (matchPattern, error) {
+	prev := p.bindOnly
+	p.bindOnly = true
 	pat, err := p.parseMatchPattern()
+	p.bindOnly = prev
+	return pat, err
+}
+
+func (p *parser) parseDestructure(kwPos ast.Position) (ast.Stmt, error) {
+	pat, err := p.parseBindingPattern()
 	if err != nil {
 		return nil, err
 	}

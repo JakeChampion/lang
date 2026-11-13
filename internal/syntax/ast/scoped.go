@@ -118,11 +118,8 @@ func (w *ScopeWalker) WalkStmt(st Stmt) {
 	case *Match:
 		w.WalkExpr(&x.Tag)
 		for _, arm := range x.Arms {
-			if arm.Literal != nil {
-				w.WalkExpr(&arm.Literal)
-			}
-			if arm.RangeHi != nil {
-				w.WalkExpr(&arm.RangeHi)
+			for _, pe := range arm.PatternExprs() {
+				w.WalkExpr(pe)
 			}
 			w.pushScope()
 			for _, b := range arm.Binders() {
@@ -179,6 +176,9 @@ func (w *ScopeWalker) WalkExpr(slot *Expr) {
 	case *MatchExpr:
 		w.WalkExpr(&x.Tag)
 		for _, arm := range x.Arms {
+			for _, pe := range arm.PatternExprs() {
+				w.WalkExpr(pe)
+			}
 			w.pushScope()
 			for _, b := range arm.Binders() {
 				w.Bind(b)

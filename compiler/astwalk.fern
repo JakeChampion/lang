@@ -172,6 +172,7 @@ pub function fold_stmt_nodes[T](st: ast.Stmt, own acc: T, visit_stmt: (ast.Stmt,
     ast.StmtMatch(m) => {
       acc = fold_expr_nodes(m.scrutinee, acc, visit_stmt, visit_expr, descend);
       for arm in m.arms {
+        acc = fold_pattern_nodes(arm.pattern, acc, visit_stmt, visit_expr, descend);
         if (arm.has_guard) {
           acc = fold_expr_nodes(arm.guard, acc, visit_stmt, visit_expr, descend);
         }
@@ -289,6 +290,7 @@ pub function fold_stmt_own_pruned[T](st: ast.Stmt, own acc: T, visit: (ast.Expr,
     ast.StmtMatch(m) => {
       acc = fold_expr_pruned(m.scrutinee, acc, visit, descend);
       for arm in m.arms {
+        acc = fold_pattern_pruned(arm.pattern, acc, visit, descend);
         if (arm.has_guard) {
           acc = fold_expr_pruned(arm.guard, acc, visit, descend);
         }
@@ -438,7 +440,8 @@ pub function map_stmt(st: ast.Stmt, visit: (ast.Expr) => ast.Expr): ast.Stmt {
         if (arm.has_guard) {
           g = map_expr(arm.guard, visit);
         }
-        arms = arms.append(ast.MatchArm { ...arm, body: map_stmts(arm.body, visit), guard: g });
+        let pattern = map_pattern_exprs(arm.pattern, (pe: ast.Expr): ast.Expr => map_expr(pe, visit));
+        arms = arms.append(ast.MatchArm { ...arm, pattern: pattern, body: map_stmts(arm.body, visit), guard: g });
       }
       return ast.StmtMatch { ...mt, scrutinee: map_expr(mt.scrutinee, visit), arms: arms };
     },
@@ -707,6 +710,9 @@ pub function map_stmt_where[T](st: ast.Stmt, acc: T, visit_stmt: (ast.Stmt, T) =
       changed = sh;
       let arms: ast.MatchArm[] = [];
       for arm in mt.arms {
+        let (pattern, pa, ph) = map_pattern_where(arm.pattern, a, changed, visit_stmt, visit, applies);
+        a = pa;
+        changed = ph;
         let g = arm.guard;
         if (arm.has_guard) {
           let (ge, ga, gh) = map_expr_where(arm.guard, a, visit_stmt, visit, applies);
@@ -717,7 +723,7 @@ pub function map_stmt_where[T](st: ast.Stmt, acc: T, visit_stmt: (ast.Stmt, T) =
         let (ab, aa, abh) = map_stmts_where_changed(arm.body, a, visit_stmt, visit, applies);
         a = aa;
         changed = changed || abh;
-        arms = arms.append(ast.MatchArm { ...arm, body: ab, guard: g });
+        arms = arms.append(ast.MatchArm { ...arm, pattern: pattern, body: ab, guard: g });
       }
       if (changed) {
         out = ast.StmtMatch { ...mt, scrutinee: se, arms: arms };
@@ -872,6 +878,13 @@ pub function collect_idents_expr(e: ast.Expr, own acc: string[]): string[] {
   return fold_expr_pruned(e, acc, ident_of, not_lambda);
 }
 
+function scoped_pattern_reads(p: ast.Pattern, bound: string[], own acc: string[], reads: (ast.Expr, own string[]) => string[]): string[] {
+  for pe in pattern_exprs(p) {
+    acc = scoped_reads(pe, bound, acc, reads);
+  }
+  return acc;
+}
+
 function scoped_reads(e: ast.Expr, bound: string[], own acc: string[], reads: (ast.Expr, own string[]) => string[]): string[] {
   for name in reads(e, []) {
     if (!util.has_str(bound, name)) {
@@ -927,6 +940,7 @@ function scoped_stmt_reads(st: ast.Stmt, bound: string[], own acc: string[], rea
         let arm_bound: string[] = [];
         arm_bound = util.append_all(arm_bound, bound);
         arm_bound = pattern_binders(arm.pattern, arm_bound);
+        acc = scoped_pattern_reads(arm.pattern, bound, acc, reads);
         if (arm.has_guard) {
           acc = scoped_reads(arm.guard, arm_bound, acc, reads);
         }
@@ -1114,6 +1128,56 @@ pub function collect_calls_stmt(st: ast.Stmt, want: util.NameIndex, own acc: Cal
     return call_site_of(e, want, a);
   }
   return fold_stmt(st, acc, visit);
+}
+
+// The expressions of a literal pattern: its value, and the upper bound of a
+// range.
+pub function pattern_exprs(p: ast.Pattern): ast.Expr[] {
+  let ast.PatLiteral(lp) = p else {
+    return [];
+  };
+  if (lp.has_range) {
+    return [lp.lit, lp.range_hi];
+  }
+  return [lp.lit];
+}
+
+function fold_pattern_nodes[T](p: ast.Pattern, own acc: T, visit_stmt: (ast.Stmt, own T) => T, visit_expr: (ast.Expr, own T) => T, descend: (ast.Expr) => boolean): T {
+  for pe in pattern_exprs(p) {
+    acc = fold_expr_nodes(pe, acc, visit_stmt, visit_expr, descend);
+  }
+  return acc;
+}
+
+function fold_pattern_pruned[T](p: ast.Pattern, own acc: T, visit: (ast.Expr, own T) => T, descend: (ast.Expr) => boolean): T {
+  for pe in pattern_exprs(p) {
+    acc = fold_expr_pruned(pe, acc, visit, descend);
+  }
+  return acc;
+}
+
+// map_pattern_where maps the expressions of a literal pattern. The flag it
+// gives is `changed`, or true when the pattern changed.
+function map_pattern_where[T](p: ast.Pattern, acc: T, changed: boolean, visit_stmt: (ast.Stmt, T) => (ast.Stmt, T, boolean), visit: (ast.Expr, T) => (ast.Expr, T, boolean), applies: (ast.Expr) => boolean): (ast.Pattern, T, boolean) {
+  let ast.PatLiteral(lp) = p else {
+    return (p, acc, changed);
+  };
+  let (le, la, lh) = map_expr_where(lp.lit, acc, visit_stmt, visit, applies);
+  let (he, ha, hh) = map_expr_where(lp.range_hi, la, visit_stmt, visit, applies);
+  if (lh || hh) {
+    return (ast.PatLiteral { ...lp, lit: le, range_hi: he }, ha, true);
+  }
+  return (p, ha, changed);
+}
+
+pub function map_pattern_exprs(p: ast.Pattern, f: (ast.Expr) => ast.Expr): ast.Pattern {
+  let ast.PatLiteral(lp) = p else {
+    return p;
+  };
+  if (lp.has_range) {
+    return ast.PatLiteral { ...lp, lit: f(lp.lit), range_hi: f(lp.range_hi) };
+  }
+  return ast.PatLiteral { ...lp, lit: f(lp.lit) };
 }
 
 pub function scalar_pattern_binders(p: ast.Pattern): string[] {
@@ -1552,6 +1616,7 @@ function cs_stmt_at(st: ast.Stmt, c: ConstSubst): (ast.Stmt, ConstSubst, boolean
     ast.StmtMatch(m) => {
       let arms: ast.MatchArm[] = [];
       for arm in m.arms {
+        let pattern = map_pattern_exprs(arm.pattern, (pe: ast.Expr): ast.Expr => cs_expr(pe, c));
         let inner = c;
         for n in pattern_binders(arm.pattern, []) {
           inner = cs_bind(inner, n);
@@ -1560,7 +1625,7 @@ function cs_stmt_at(st: ast.Stmt, c: ConstSubst): (ast.Stmt, ConstSubst, boolean
         if (arm.has_guard) {
           guard = cs_expr(guard, inner);
         }
-        arms = arms.append(ast.MatchArm { ...arm, guard: guard, body: cs_body(arm.body, inner) });
+        arms = arms.append(ast.MatchArm { ...arm, pattern: pattern, guard: guard, body: cs_body(arm.body, inner) });
       }
       return (ast.StmtMatch { ...m, scrutinee: cs_expr(m.scrutinee, c), arms: arms }, c, true);
     },

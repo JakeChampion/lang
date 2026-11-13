@@ -33253,14 +33253,25 @@ function annotate_arm_scope(arm: ast.MatchArm, s: Scope, whole: typeinfo.Type): 
   }
 }
 
+function annotate_pattern(pattern: ast.Pattern, whole: typeinfo.Type, s: Scope): ast.Pattern {
+  match (pattern) {
+    ast.PatVariant(pv) => {
+      return ast.PatVariant { ...pv, bare_name: false, scalar_binding: scalar_binding_name(pv, whole, s).len() > 0 };
+    },
+    ast.PatLiteral(lp) => {
+      return ast.PatLiteral { ...lp, lit: annotate_expr(lp.lit, s), range_hi: annotate_expr(lp.range_hi, s) };
+    },
+    ast.PatWildcard(_) => {
+      return pattern;
+    }
+  }
+}
+
 function annotate_match_stmt(m: ast.StmtMatch, s: Scope): ast.Stmt {
   let narms: ast.MatchArm[] = [];
   for arm in m.arms {
     let whole = check_expr(m.scrutinee, s);
-    let pattern = arm.pattern;
-    if let ast.PatVariant(pv) = pattern {
-      pattern = ast.PatVariant { ...pv, bare_name: false, scalar_binding: scalar_binding_name(pv, whole, s).len() > 0 };
-    }
+    let pattern = annotate_pattern(arm.pattern, whole, s);
     let asc = annotate_arm_scope(arm, s, whole);
     let g = arm.guard;
     if (arm.has_guard) {
