@@ -157,6 +157,9 @@ jobs:
           bombadil --version || true
           chromium --version || google-chrome --version || true
 
+      - name: Check the editor lifetime property
+        run: node --test web/test/bombadil/*.test.mjs
+
       - name: Run Bombadil
         run: ./web/test/run.sh
 
