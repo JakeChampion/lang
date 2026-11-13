@@ -1,0 +1,28 @@
+// spec: OR-01
+
+import "std/i32";
+
+function factory(): own (() => own (() => i32)) {
+  return (): own (() => i32) => (): i32 => 42;
+}
+
+function tuple_factory(): own (() => own (i32, i32)) {
+  return (): own (i32, i32) => (13, 29);
+}
+
+function array_factory(): own (() => own ((i32, i32)[])) {
+  return (): own (i32, i32)[] => [(13, 29)];
+}
+
+function main(): i32 {
+  let outer = factory();
+  let inner = outer();
+  print(inner());
+  let get_pair = tuple_factory();
+  let pair = get_pair();
+  print(pair.0 + pair.1);
+  let get_array = array_factory();
+  let items = get_array();
+  print(items[0].0 + items[0].1);
+  return 0;
+}
