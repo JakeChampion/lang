@@ -460,6 +460,10 @@ pub function reuse_alloc_call(ins: SInst): boolean {
 // The imm of a reuse allocation whose token is null (fresh_boxes).
 pub const REUSE_NULL: i32 = 7;
 
+// The imm of a reuse allocation that runs only for a token that is null or
+// has another shape (ssatokenkeep).
+pub const REUSE_SPLIT: i32 = 8;
+
 // A reuse allocation that always allocates.
 pub function fresh_alloc_call(ins: SInst): boolean {
   return reuse_alloc_call(ins) && ins.imm == REUSE_NULL;
@@ -517,24 +521,34 @@ pub function cold_positions(f: SFunc, size: boolean, back: boolean): i32[] {
   for bi in 0..f.blocks.len() {
     let blk = f.blocks[bi];
     for k in 0..blk.insts.len() {
-      let ins = blk.insts[k];
-      let kind = COLD_NONE;
-      if (cold_call(ins) || back && back_copy_call(ins)) {
-        kind = COLD_SLOW;
-      } else if (rc_inlined(ins)) {
-        if (!size) {
-          kind = COLD_INLINE;
-        }
-      } else if (cold[bi] && inst_is_call(ins.kind_tag) && !never_returns(ins) && !returns_call(blk, k)) {
-        kind = COLD_BRANCH;
-      } else if (slow_reuse_call(ins, size)) {
-        kind = COLD_SLOW;
-      }
-      out = out.append(kind);
+      out = out.append(cold_kind(blk, k, cold[bi], size, back));
     }
     out = out.append(COLD_NONE);
   }
   return out;
+}
+
+function cold_kind(blk: SBlock, k: i32, cold: boolean, size: boolean, back: boolean): i32 {
+  let ins = blk.insts[k];
+  if (cold_call(ins) || back && back_copy_call(ins)) {
+    return COLD_SLOW;
+  }
+  if (rc_inlined(ins)) {
+    return if (size) { COLD_NONE } else { COLD_INLINE };
+  }
+  if (cold_branch(blk, k, cold)) {
+    return COLD_BRANCH;
+  }
+  if (slow_reuse_call(ins, size)) {
+    return COLD_SLOW;
+  }
+  return COLD_NONE;
+}
+
+// A call in a cold block, or an allocation for a null token.
+function cold_branch(blk: SBlock, k: i32, cold: boolean): boolean {
+  let ins = blk.insts[k];
+  return (cold || fresh_alloc_call(ins)) && inst_is_call(ins.kind_tag) && !never_returns(ins) && !returns_call(blk, k);
 }
 
 pub function cold_blocks(f: SFunc): boolean[] {

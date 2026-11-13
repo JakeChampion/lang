@@ -1,0 +1,452 @@
+import "./util";
+import "./ssa";
+
+// A reuse token is a phi of a box and null behind a uniqueness test. A reuse
+// allocation of the token gets a branch on the token. One side is the box
+// when it has the shape that the allocation builds. That side writes neither
+// the shape nor a word that the box already has at the same offset. The
+// other side allocates and writes them.
+
+// p, fast, slow and m are block positions: p ends in the uniqueness test,
+// fast and slow are its arms and m holds the token phi. b and k locate the
+// reuse allocation.
+// shape is the shape that the allocation builds. tested says that a block
+// above p proved that shape for the box.
+struct Site { p: i32, fast: i32, slow: i32, m: i32, tok: i32, box: i32, b: i32, k: i32, shape: string, tested: boolean }
+
+function no_site(): Site {
+  return Site { p: -1, fast: -1, slow: -1, m: -1, tok: -1, box: -1, b: -1, k: -1, shape: "", tested: false };
+}
+
+pub function keeps(f: ssa.SFunc): ssa.SFunc {
+  let g = f;
+  for rounds in 0..32 {
+    if (!has_reuse(g)) {
+      return g;
+    }
+    let site = find_site(g);
+    if (site.b < 0) {
+      return rounds_done(g, rounds);
+    }
+    g = kept(g, site);
+  }
+  return ssa.prune_dead(g);
+}
+
+function rounds_done(g: ssa.SFunc, rounds: i32): ssa.SFunc {
+  if (rounds == 0) {
+    return g;
+  }
+  return ssa.prune_dead(g);
+}
+
+function has_reuse(f: ssa.SFunc): boolean {
+  for b in f.blocks {
+    for ins in b.insts {
+      if (unsplit(ins)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function unsplit(ins: ssa.SInst): boolean {
+  return ssa.reuse_alloc_call(ins) && ins.imm == 0;
+}
+
+function find_site(f: ssa.SFunc): Site {
+  let at = ssa.block_positions(f);
+  let defs = ssa.inst_defs(f);
+  let def_at = def_blocks(f);
+  for bi in 0..f.blocks.len() {
+    let b = f.blocks[bi];
+    for k in 0..b.insts.len() {
+      if (unsplit(b.insts[k])) {
+        let site = proven(f, at, defs, token_site(f, at, defs, def_at, bi, k));
+        if (site.b >= 0) {
+          return site;
+        }
+      }
+    }
+  }
+  return no_site();
+}
+
+// The site of the reuse allocation at index k of the block at bi, when its
+// token is a phi that takes a zero from one arm of a uniqueness test and the
+// tested box from the other arm.
+function token_site(f: ssa.SFunc, at: i32[], defs: ssa.SInst[], def_at: i32[], bi: i32, k: i32): Site {
+  let tok = f.blocks[bi].insts[k].args[0];
+  let phi = defs[tok];
+  let m = def_at[tok];
+  if (phi.kind_tag != ssa.PHI || phi.args.len() != 2 || m < 0 || f.blocks[m].preds.len() != 2) {
+    return no_site();
+  }
+  let mb = f.blocks[m];
+  for slot in 0..2 {
+    if (is_zero(defs, phi.args[slot])) {
+      let slow = ssa.position_of(at, mb.preds[slot]);
+      let fast = ssa.position_of(at, mb.preds[1 - slot]);
+      let p = test_block(f, at, defs, fast, slow, phi.args[1 - slot], mb.id);
+      if (p >= 0) {
+        return Site { ...no_site(), p: p, fast: fast, slow: slow, m: m, tok: tok, box: phi.args[1 - slot], b: bi, k: k };
+      }
+    }
+  }
+  return no_site();
+}
+
+function is_zero(defs: ssa.SInst[], v: i32): boolean {
+  return v >= 0 && v < defs.len() && defs[v].kind_tag == ssa.CONST_INT && defs[v].imm == 0;
+}
+
+// The position of the block that tests the uniqueness of box and branches to
+// the two arms, which both jump to the block with the id meet. -1 for another
+// shape.
+function test_block(f: ssa.SFunc, at: i32[], defs: ssa.SInst[], fast: i32, slow: i32, box: i32, meet: i32): i32 {
+  if (!arms(f, fast, slow, meet)) {
+    return -1;
+  }
+  let p = ssa.position_of(at, f.blocks[fast].preds[0]);
+  if (p < 0 || f.blocks[slow].preds[0] != f.blocks[p].id) {
+    return -1;
+  }
+  let term = f.blocks[p].term;
+  if (term.kind_tag != ssa.TERM_BRIF || term.t != f.blocks[fast].id || term.f != f.blocks[slow].id) {
+    return -1;
+  }
+  if (tests_unique(defs[term.cond], box)) {
+    return p;
+  }
+  return -1;
+}
+
+function tests_unique(c: ssa.SInst, box: i32): boolean {
+  return c.kind_tag == ssa.CALL && c.str == "__fern_rc_is_unique" && c.args.len() == 1 && c.args[0] == box;
+}
+
+function arms(f: ssa.SFunc, fast: i32, slow: i32, meet: i32): boolean {
+  return fast >= 0 && slow >= 0 && fast != slow && arm(f.blocks[fast], meet) && arm(f.blocks[slow], meet);
+}
+
+function arm(b: ssa.SBlock, meet: i32): boolean {
+  return b.preds.len() == 1 && b.term.kind_tag == ssa.TERM_BR && b.term.target == meet;
+}
+
+// The site with the shape that its allocation builds, when the size is a
+// constant and no store to the box can run first.
+function proven(f: ssa.SFunc, at: i32[], defs: ssa.SInst[], site: Site): Site {
+  if (site.b < 0) {
+    return site;
+  }
+  let b = f.blocks[site.b];
+  let ins = b.insts[site.k];
+  let shape = built_shape(b, defs, site.k);
+  if (shape == "" || defs[ins.args[1]].kind_tag != ssa.CONST_INT || stores_to(f, at, site)) {
+    return no_site();
+  }
+  return Site { ...site, shape: shape, tested: tested_shape(f, at, defs, site.p, site.box) == shape };
+}
+
+// The shape that b stores to the first word of the result of the instruction
+// at index k, "" for none.
+function built_shape(b: ssa.SBlock, defs: ssa.SInst[], k: i32): string {
+  let base = b.insts[k].result;
+  for j in k + 1..b.insts.len() {
+    let ins = b.insts[j];
+    if (ins.kind_tag == ssa.ST_AT && ins.args.len() == 2 && ins.args[0] == base && ins.imm == 0 && defs[ins.args[1]].kind_tag == ssa.SHAPE_ADDR) {
+      return defs[ins.args[1]].str;
+    }
+  }
+  return "";
+}
+
+// Whether a store to the box can run before the test with the same box, or
+// after the arms meet. A block that defines the box anew ends each walk.
+// A store to the result of another reuse allocation of the token is on
+// another path.
+function stores_to(f: ssa.SFunc, at: i32[], site: Site): boolean {
+  let home = def_blocks(f)[site.box];
+  let near = walked(f, at, site.m, home, true);
+  near = marked(walked(f, at, site.p, home, false), near);
+  for bi in 0..f.blocks.len() {
+    if (bi == home || bi == site.fast || bi == site.slow || near[bi]) {
+      for ins in f.blocks[bi].insts {
+        if (ins.kind_tag == ssa.ST_AT && ins.args.len() > 0 && ins.args[0] == site.box) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function marked(a: boolean[], b: boolean[]): boolean[] {
+  let out = a;
+  for i in 0..b.len() {
+    if (b[i]) {
+      out = out.with(i, true);
+    }
+  }
+  return out;
+}
+
+// The blocks that a walk from the block at start reaches, start included.
+// The walk goes down the successors or up the predecessors, and does not
+// enter the block at stop.
+function walked(f: ssa.SFunc, at: i32[], start: i32, stop: i32, down: boolean): boolean[] {
+  let seen = __alloc_bool(f.blocks.len());
+  let work: i32[] = [start];
+  let next = 0;
+  while (next < work.len()) {
+    let cur = work[next];
+    next += 1;
+    if (cur < 0 || cur == stop || seen[cur]) {
+      continue;
+    }
+    seen = seen.with(cur, true);
+    for id in neighbours(f.blocks[cur], down) {
+      work = work.append(ssa.position_of(at, id));
+    }
+  }
+  return seen;
+}
+
+function neighbours(b: ssa.SBlock, down: boolean): i32[] {
+  if (!down) {
+    return b.preds;
+  }
+  if (b.term.kind_tag == ssa.TERM_BR) {
+    return [b.term.target];
+  }
+  if (b.term.kind_tag == ssa.TERM_BRIF) {
+    return [b.term.t, b.term.f];
+  }
+  return [];
+}
+
+// The shape that a block above p proved for box: the block ends in a compare
+// of the first word of box with a shape address, and only its true side
+// leads to p. "" when no such block is in the eight blocks above p.
+function tested_shape(f: ssa.SFunc, at: i32[], defs: ssa.SInst[], p: i32, box: i32): string {
+  let cur = p;
+  for steps in 0..8 {
+    let b = f.blocks[cur];
+    if (b.preds.len() != 1) {
+      return "";
+    }
+    let up = ssa.position_of(at, b.preds[0]);
+    if (up < 0) {
+      return "";
+    }
+    let term = f.blocks[up].term;
+    if (term.kind_tag == ssa.TERM_BRIF && term.t == b.id && term.f != b.id) {
+      let shape = compared_shape(defs, defs[term.cond], box);
+      if (shape != "") {
+        return shape;
+      }
+    }
+    cur = up;
+  }
+  return "";
+}
+
+function compared_shape(defs: ssa.SInst[], c: ssa.SInst, box: i32): string {
+  if (c.kind_tag != ssa.BINARY || c.str != "eq" || c.args.len() != 2) {
+    return "";
+  }
+  let word = defs[c.args[0]];
+  let shape = defs[c.args[1]];
+  if (word.kind_tag == ssa.LD_AT && word.args.len() == 1 && word.args[0] == box && word.imm == 0 && shape.kind_tag == ssa.SHAPE_ADDR) {
+    return shape.str;
+  }
+  return "";
+}
+
+function stores_at(b: ssa.SBlock, base: i32, offset: i32): i32 {
+  let n = 0;
+  for ins in b.insts {
+    if (ins.kind_tag == ssa.ST_AT && ins.args.len() > 0 && ins.args[0] == base && ins.imm == offset) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
+// Whether the store writes the word that the box has at the same offset: a
+// load before the arms meet, or the phi of the loads of the two arms.
+function word_of_box(f: ssa.SFunc, site: Site, defs: ssa.SInst[], def_at: i32[], st: ssa.SInst, v: ssa.SInst): boolean {
+  if (loads_word(site, st, v)) {
+    return before_meet(f, site, def_at[v.result]);
+  }
+  if (v.kind_tag != ssa.PHI || v.args.len() != 2 || def_at[v.result] != site.m) {
+    return false;
+  }
+  for a in v.args {
+    if (!loads_word(site, st, defs[a]) || !before_meet(f, site, def_at[a])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function loads_word(site: Site, st: ssa.SInst, v: ssa.SInst): boolean {
+  return v.kind_tag == ssa.LD_AT && v.args.len() == 1 && v.args[0] == site.box && v.imm == st.imm && ssa.plain_str(v) == st.str;
+}
+
+// Whether the block at pos is an arm of the test, or is the test block or
+// one of the eight blocks above it.
+function before_meet(f: ssa.SFunc, site: Site, pos: i32): boolean {
+  if (pos == site.fast || pos == site.slow) {
+    return true;
+  }
+  let at = ssa.block_positions(f);
+  let cur = site.p;
+  for steps in 0..8 {
+    if (cur == pos) {
+      return true;
+    }
+    if (f.blocks[cur].preds.len() != 1) {
+      return false;
+    }
+    cur = ssa.position_of(at, f.blocks[cur].preds[0]);
+    if (cur < 0) {
+      return false;
+    }
+  }
+  return false;
+}
+
+// The position of the block that defines each value, -1 for none.
+function def_blocks(f: ssa.SFunc): i32[] {
+  let out = util.minus_ones(f.nvals);
+  for bi in 0..f.blocks.len() {
+    for ins in f.blocks[bi].insts {
+      if (ins.result >= 0 && ins.result < f.nvals) {
+        out = out.with(ins.result, bi);
+      }
+    }
+  }
+  return out;
+}
+
+// Whether the box and its shape make the store at index k of b redundant.
+function redundant(f: ssa.SFunc, site: Site, defs: ssa.SInst[], def_at: i32[], b: ssa.SBlock, k: i32): boolean {
+  let ins = b.insts[k];
+  let built = b.insts[site.k].result;
+  if (k <= site.k || ins.kind_tag != ssa.ST_AT || ins.args.len() != 2 || ins.args[0] != built || stores_at(b, built, ins.imm) != 1) {
+    return false;
+  }
+  let v = defs[ins.args[1]];
+  if (ins.imm == 0 && v.kind_tag == ssa.SHAPE_ADDR && v.str == site.shape) {
+    return true;
+  }
+  return word_of_box(f, site, defs, def_at, ins, v);
+}
+
+// The values and blocks that the split of a site adds. zero and null are the
+// null test of the token. made, size and shape belong to the side that
+// allocates. word, want and same are the shape test of the token.
+struct Names { zero: i32, null: i32, made: i32, size: i32, shape: i32, word: i32, want: i32, same: i32, alloc: i32, join: i32, check: i32 }
+
+function names(f: ssa.SFunc): Names {
+  let v = f.nvals;
+  let id = ssa.next_block_id(f);
+  return Names { zero: v, null: v + 1, made: v + 2, size: v + 3, shape: v + 4, word: v + 5, want: v + 6, same: v + 7, alloc: id, join: id + 1, check: id + 2 };
+}
+
+// The block of the site ends in a null test of the token. A token of an
+// untested shape then goes to a block that tests its shape. The other side is
+// a new block: the allocation and the redundant stores. The sides meet in a
+// new block, which holds the rest of the old block.
+function kept(f: ssa.SFunc, site: Site): ssa.SFunc {
+  let n = names(f);
+  let b = f.blocks[site.b];
+  let parts = split_insts(f, site, n);
+  let from = if (site.tested) { b.id } else { n.check };
+  let blocks: ssa.SBlock[] = [];
+  for bi in 0..f.blocks.len() {
+    if (bi == site.b) {
+      let top = entered_from(b, b.id, n.join);
+      let next = if (site.tested) { n.join } else { n.check };
+      blocks = blocks.append(ssa.SBlock { ...top, insts: parts.head, term: ssa.t_brif(n.null, n.alloc, next) });
+      if (!site.tested) {
+        blocks = blocks.append(ssa.SBlock { id: n.check, insts: shape_test(site, n), term: ssa.t_brif(n.same, n.join, n.alloc), preds: [b.id] });
+      }
+      blocks = blocks.append(ssa.SBlock { id: n.alloc, insts: parts.alloc, term: ssa.t_br(n.join), preds: alloc_preds(site, b.id, n) });
+      blocks = blocks.append(ssa.SBlock { id: n.join, insts: parts.rest, term: b.term, preds: [from, n.alloc] });
+    } else {
+      blocks = blocks.append(entered_from(f.blocks[bi], b.id, n.join));
+    }
+  }
+  return ssa.SFunc { ...f, nvals: f.nvals + 8, blocks: blocks };
+}
+
+function alloc_preds(site: Site, head: i32, n: Names): i32[] {
+  if (site.tested) {
+    return [head];
+  }
+  return [head, n.check];
+}
+
+function shape_test(site: Site, n: Names): ssa.SInst[] {
+  return [
+    ssa.SInst { kind_tag: ssa.LD_AT, result: n.word, args: [site.tok], imm: 0, str: "" },
+    ssa.SInst { kind_tag: ssa.SHAPE_ADDR, result: n.want, args: [], imm: 0, str: site.shape },
+    ssa.SInst { kind_tag: ssa.BINARY, result: n.same, args: [n.word, n.want], imm: 64, str: "eq" },
+  ];
+}
+
+struct Parts { head: ssa.SInst[], alloc: ssa.SInst[], rest: ssa.SInst[] }
+
+// A token with a tested shape is null on the side that allocates, so that
+// side calls the fresh entry of the helper.
+function split_insts(f: ssa.SFunc, site: Site, n: Names): Parts {
+  let defs = ssa.inst_defs(f);
+  let def_at = def_blocks(f);
+  let b = f.blocks[site.b];
+  let ins = b.insts[site.k];
+  let head: ssa.SInst[] = [];
+  for k in 0..site.k {
+    head = head.append(b.insts[k]);
+  }
+  head = head.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: n.zero, args: [], imm: 0, str: "" });
+  head = head.append(ssa.SInst { kind_tag: ssa.BINARY, result: n.null, args: [site.tok, n.zero], imm: 64, str: "eq" });
+  let mark = if (site.tested) { ssa.REUSE_NULL } else { ssa.REUSE_SPLIT };
+  let alloc: ssa.SInst[] = [
+    ssa.SInst { ...defs[ins.args[1]], result: n.size },
+    ssa.SInst { ...ins, result: n.made, args: [site.tok, n.size], imm: mark },
+    ssa.SInst { kind_tag: ssa.SHAPE_ADDR, result: n.shape, args: [], imm: 0, str: site.shape },
+  ];
+  let rest: ssa.SInst[] = [ssa.SInst { kind_tag: ssa.PHI, result: ins.result, args: [site.tok, n.made], imm: 0, str: "" }];
+  for k in site.k + 1..b.insts.len() {
+    if (redundant(f, site, defs, def_at, b, k)) {
+      alloc = alloc.append(on_fresh(b.insts[k], n));
+    } else {
+      rest = rest.append(b.insts[k]);
+    }
+  }
+  return Parts { head: head, alloc: alloc, rest: rest };
+}
+
+// The store with the fresh box as its base. The store of the shape takes the
+// shape address of the block that allocates.
+function on_fresh(st: ssa.SInst, n: Names): ssa.SInst {
+  if (st.imm == 0) {
+    return ssa.SInst { ...st, args: [n.made, n.shape] };
+  }
+  return ssa.SInst { ...st, args: [n.made, st.args[1]] };
+}
+
+// The block with each edge from the block old as an edge from the block now.
+function entered_from(b: ssa.SBlock, old: i32, now: i32): ssa.SBlock {
+  if (util.index_of_i32(b.preds, old) < 0) {
+    return b;
+  }
+  let preds: i32[] = [];
+  for p in b.preds {
+    preds = preds.append(if (p == old) { now } else { p });
+  }
+  return ssa.SBlock { ...b, preds: preds };
+}
