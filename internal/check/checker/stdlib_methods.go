@@ -9,6 +9,10 @@ import "github.com/jakechampion/lang/internal/syntax/ast"
 //
 // stdlibMethodIndex maps receiver and method names to their standard library modules.
 var stdlibMethodIndex = map[string]map[string]string{
+	"IoError": {
+		"message":   "core/error",
+		"to_string": "core/error",
+	},
 	"Option": {
 		"and":            "std/option",
 		"and_then":       "std/option",
@@ -58,6 +62,10 @@ var stdlibMethodIndex = map[string]map[string]string{
 		"transpose":      "std/result",
 		"unwrap_or":      "std/result",
 		"unwrap_or_else": "std/result",
+	},
+	"StreamFault": {
+		"message":   "core/error",
+		"to_string": "core/error",
 	},
 	"boolean": {
 		"cmp":        "core/cmp",
