@@ -208,7 +208,7 @@ pub function no_sound(): Sound {
 // player holds of the device before Android destroys the activity, or
 // keep the playlists for the next start, or write a playlist as an M3U
 // file, or keep the settings.
-pub enum Want { Load(i32), Follow(i32), Resume, Hold, Seek(f64), Scan, Grant, List(string), Keep(string), Quit, KeepLists, WriteList(string), KeepPrefs }
+pub enum Want { Load(i32), Follow(i32), Resume, Hold, Seek(f64), Scan, Grant, List(string), Keep(string), Quit, KeepLists, WriteList(string), KeepPrefs, KeepPlace }
 
 // `fresh` tells that the player did not look for its files yet: it looks
 // at its first Beat, after the screen shows.
@@ -382,6 +382,41 @@ pub function tint_color(m: Model): Option[i32] {
   return None;
 }
 
+// Where the player was: the paths of its queue, the place of the track in
+// the queue, the time in the track, shuffle and repeat.
+pub struct Place { paths: string[], spot: i32, at_ms: i64, shuffle: boolean, repeat: i32 }
+
+pub function no_place(): Place {
+  return Place { paths: [], spot: -1, at_ms: 0i64, shuffle: false, repeat: NO_REPEAT };
+}
+
+pub function place(m: Model): Place {
+  return Place { paths: m.queue.map((i: i32): string => m.tracks[i].path), spot: m.spot, at_ms: m.at_ms, shuffle: m.shuffle, repeat: m.repeat };
+}
+
+// The player at the place `p`, stopped, with the track open at its time. A
+// path that the library does not have leaves the queue. When the track of
+// the place is not there, the queue starts at its first track.
+function restored(m: Model, p: Place): Model {
+  let queue = songs_at(m, p.paths);
+  if (m.current >= 0 || queue.len() == 0) {
+    return m;
+  }
+  let spot = 0;
+  let at = 0i64;
+  if (p.spot >= 0 && p.spot < p.paths.len()) {
+    let found = queue.index_of(songs_at(m, [p.paths[p.spot]]).first().unwrap_or(-1));
+    if let Some(k) = found {
+      spot = k;
+      at = p.at_ms.max(0i64);
+    }
+  }
+  let i = queue[spot];
+  let length = m.tracks[i].ms;
+  let part = if (length > 0i64) { (at as f64 / (length as f64)).min(1.0) } else { 0.0 };
+  return Model { ...m, queue: queue, spot: spot, current: i, playing: false, at_ms: at, length_ms: length, shuffle: p.shuffle, repeat: p.repeat.max(0) % 3, wants: m.wants.append(Load(i)).append(Hold).append(Seek(part)) };
+}
+
 pub function start_with(home: string, folder: string, tracks: Track[], playlists: Playlist[], p: Prefs): Model {
   let m = start_in(home, folder);
   let have = m.have;
@@ -449,8 +484,9 @@ pub function start_in(home: string, folder: string): Model {
 // shortcuts of the launcher send them. `Level` goes to the next loudness.
 // `Tuning` shows or hides the screen of the equalizer. `Boost` sets the
 // gain of a band from the part of its slider, and `Preset` gives each band
-// the gain of a preset.
-pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean), Menu(i32), MenuClosed, PlayNext, Enqueue, Lined(boolean), Jump(i32), Drop(i32), Shift(i32, i32), Closing, Walk(string[]), Listed(string, string[]), OpenList(string), AddTo, SaveQueue, ToList(string), NewList, Named(string), Create, Unlist(i32), Relist(i32, i32), DeleteList, Favorite, Imported(string, string[]), Export, Exported(string), Genre(string), Place(string), Sort, ToAlbum, ToArtist, Details, Speed, Pitch, Sleep, Slept(i64), Lyrics, Settings(boolean), Look, Tint, Fade, Tuning(boolean), Boost(i32, f64), Preset(i32), TabShown(i32), Hide, Unhide(string), ShuffleAll(i32), PlayList(string), Level }
+// the gain of a preset. `Restore` puts the player at a place that it kept,
+// and `Away` keeps the place when the app goes away.
+pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean), Menu(i32), MenuClosed, PlayNext, Enqueue, Lined(boolean), Jump(i32), Drop(i32), Shift(i32, i32), Closing, Walk(string[]), Listed(string, string[]), OpenList(string), AddTo, SaveQueue, ToList(string), NewList, Named(string), Create, Unlist(i32), Relist(i32, i32), DeleteList, Favorite, Imported(string, string[]), Export, Exported(string), Genre(string), Place(string), Sort, ToAlbum, ToArtist, Details, Speed, Pitch, Sleep, Slept(i64), Lyrics, Settings(boolean), Look, Tint, Fade, Tuning(boolean), Boost(i32, f64), Preset(i32), Restore(Place), Away, TabShown(i32), Hide, Unhide(string), ShuffleAll(i32), PlayList(string), Level }
 
 // The key of the album of a track: the artist that the album is under,
 // and its name.
@@ -499,12 +535,18 @@ function listed_songs(m: Model, name: string): i32[] {
   let Some(p) = playlist(m, name) else {
     return [];
   };
+  return songs_at(m, p.paths);
+}
+
+// The numbers of the tracks of the paths `paths`, in their order. A path
+// that the library does not have gives no number.
+function songs_at(m: Model, paths: string[]): i32[] {
   let at: Map[string, i32] = map_new(64);
   for i in 0..m.tracks.len() {
     at = at.insert(m.tracks[i].path, i);
   }
   let out: i32[] = [];
-  for path in p.paths {
+  for path in paths {
     if let Some(i) = at.get(path) {
       out = out.append(i);
     }
@@ -944,6 +986,15 @@ pub function part(m: Model): f64 {
     return 0.0;
   }
   return (m.at_ms as f64 / (m.length_ms as f64)).max(0.0).min(1.0);
+}
+
+// The track that plays and its artist, or the name of the app.
+pub function now_title(m: Model): string {
+  if (m.current < 0 || m.current >= m.tracks.len()) {
+    return "Fern Tune";
+  }
+  let t = m.tracks[m.current];
+  return t.title + " · " + t.artist;
 }
 
 function title(m: Model): string {
@@ -1750,7 +1801,7 @@ function toggled(m: Model): Model {
     return started_from(m, 0);
   }
   if (m.playing) {
-    return Model { ...m, playing: false, lost: false, wants: m.wants.append(Hold) };
+    return Model { ...m, playing: false, lost: false, wants: m.wants.append(Hold).append(KeepPlace) };
   }
   return Model { ...m, playing: true, lost: false, wants: m.wants.append(Resume) };
 }
@@ -2047,7 +2098,13 @@ pub function update(own m: Model, msg: Msg): Model {
       return shifted(m, from, to);
     },
     Closing => {
-      return Model { ...m, wants: m.wants.append(Quit) };
+      return Model { ...m, wants: m.wants.append(KeepPlace).append(Quit) };
+    },
+    Restore(p) => {
+      return restored(m, p);
+    },
+    Away => {
+      return Model { ...m, wants: m.wants.append(KeepPlace) };
     },
     ShuffleAll(salt) => {
       if (m.tracks.len() == 0) {

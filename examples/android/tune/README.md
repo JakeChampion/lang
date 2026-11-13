@@ -5,7 +5,7 @@ The standard library of Fern decodes each file, and AAudio plays the
 samples. The app has a library with a search field. The track that plays has a
 screen of its own, with a bar that goes to a time.
 
-The player reads WAV, FLAC, MP3, M4A (AAC), Ogg Vorbis and Opus files in
+The player reads WAV, FLAC, MP3, M4A (AAC or ALAC), Ogg Vorbis and Opus files in
 mono or in stereo. It looks
 for them in the `music` directory of the private files of the app. It also
 looks in the `Music` and `Download` directories of the phone, and in each
@@ -39,8 +39,17 @@ lines with times, the screen shows the line that the track is at.
 
 A track that ends goes on to the next one in the same stream of sound.
 So no sound is lost between two tracks that have the same rate. With
-"Level" of the settings, a track plays at the gain that its file gives
-for ReplayGain, so the tracks have the same loudness.
+"Loudness" of the settings at "Track", a track plays at the ReplayGain
+gain of its file. So the tracks have the same loudness. At
+"Album", a track plays at the gain of its album, so an album keeps its
+steps of loudness. "Crossfade" fades the end of a track into the next one.
+
+"Equalizer" of the settings has a slider for each of five bands, from
+-12 to 12 dB, and the presets Flat, Bass, Vocal and Treble. The screen of
+the track shows the spectrum of the sound under the cover.
+
+The player keeps its queue, its track, the time in the track, shuffle and
+repeat. At the next start, the track is there at that time, stopped.
 
 Shuffle puts
 the songs after the one that plays in a new order. Repeat has three
@@ -100,8 +109,9 @@ library in a new order, and "Favorites" plays that playlist.
 The app has a widget for the home screen: the track that plays, with the
 buttons "Prev", "Play" or "Pause", and "Next". `fern -apk` makes its
 resources from the `widget` list of `fern.toml`, and `std/android/widget`
-gives it its texts. A tap on the track opens the app. The buttons work
-while the player runs.
+gives it its texts. A tap on the track opens the app. While the player
+runs, the buttons send their commands to it. When the app closes, the
+buttons start the app, and it plays from the place that it kept.
 
 When the player finds no file, it makes three tunes in its own directory:
 it makes the samples of a melody, and writes one FLAC file and two WAV
