@@ -29,7 +29,7 @@ function probe_costs(reads: i32, folded: boolean, rhs: boolean): ssa.Alloc {
     no_home = no_home.append(true);
   }
   if (folded) {
-    return ssa.regalloc_linear_fixed_costs(f, 1, 0, -1, false, no_home, [], [], 0, 0, ssafixed.none(), [], [], ssa.SpillCosts { fold_alu_rhs: true });
+    return ssa.regalloc_linear_fixed_costs(f, 1, 0, -1, false, no_home, [], [], 0, 0, ssafixed.none(), [], [], [], ssa.SpillCosts { fold_alu_rhs: true });
   }
   return ssa.regalloc_linear(f, 1, 0, -1, false, no_home, [], [], 0, 0);
 }

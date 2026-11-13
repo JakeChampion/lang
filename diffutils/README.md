@@ -121,17 +121,22 @@ each line with the line after the last match. A lookup in a table of
 2,000,000 lines is a cache miss.
 
 The time of the unrelated files is in the search for the middle snake, the
-`diag` function. There the port runs 4.70 G instructions and GNU diff runs
-2.61 G (callgrind). The causes are in the code that the compiler makes for
-the loop:
+`diag` function. There the port runs 4.07 G instructions and GNU diff runs
+2.27 G (callgrind, two files of 10,000 lines from 32 words). Nearly every
+diagonal reads the snake guard once and stops, so the cost is in the loop
+over the diagonals. Each diagonal takes about 54 instructions in the port
+and 32 in GNU diff:
 
-- A bounds check on each array access.
-- A sign extension after each `i32` addition.
-- Loop values that stay in stack slots.
-
-The fix is in the compiler. It must remove the bounds check of an index
-that a loop guard keeps below the length. Its register allocation must keep
-the loop values in registers.
+- A bounds check on each array access, about 11 instructions. The start of
+  a snake is a value that the loop reads from `v`, so no guard bounds it.
+  The compiler cannot remove these checks without a proof that it does not
+  have.
+- A sign extension after each `i32` addition, 4 instructions. An `i32`
+  wraps, so the extension is necessary. GNU diff uses 64-bit offsets.
+- Loads and stores of loop values in stack slots, about 6 instructions.
+  A value holds its register over its whole interval, also where it is
+  dead. Interference that follows liveness can remove more of these
+  (#15650).
 
 Native `i32` arrays use eight-byte slots. Thus the port uses more memory:
 201 MB at the peak for the large files, where GNU diff uses 125 MB.
