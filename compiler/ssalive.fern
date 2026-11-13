@@ -1,4 +1,5 @@
 import "./ssa";
+import "./util";
 
 pub struct Flow {
   ok: boolean,
@@ -264,18 +265,26 @@ function exposed(own up: i32[], def_b: i32[], def_k: i32[], bi: i32, k: i32, val
   return up;
 }
 
-// For each value, whether it is live just after a call that `hard` marks, by
-// position. A value is not live after the call that defines it. Empty when
-// the liveness cannot be computed.
-pub function call_crossers(f: ssa.SFunc, hard: boolean[]): boolean[] {
+// What the register allocator reads from the liveness. `crossing` gives, for
+// each value, whether it is live just after a call that `hard` marks, by
+// position. A value is not live after the call that defines it. `lengths`
+// gives the number of positions at which each value is live. Both are empty
+// when `compute` fails.
+pub struct Lives { crossing: boolean[], lengths: i32[] }
+
+pub function lives(f: ssa.SFunc, hard: boolean[]): Lives {
   let none: i32[][] = [];
   for v in 0..f.nvals {
     none = none.append([]);
   }
   let fl = compute(f, none);
   if (!fl.ok) {
-    return [];
+    return Lives { crossing: [], lengths: [] };
   }
+  return Lives { crossing: call_crossers(f, fl, hard), lengths: live_lengths(f, fl) };
+}
+
+function call_crossers(f: ssa.SFunc, fl: Flow, hard: boolean[]): boolean[] {
   let w = Cross { live: __alloc_bool(f.nvals), out: __alloc_bool(f.nvals) };
   let start = 0;
   for bi in 0..f.blocks.len() {
@@ -558,4 +567,65 @@ function compute_prepared(f: ssa.SFunc, dependencies: i32[][], keep: boolean[], 
     }
   }
   return Flow { ok: true, why: "", words: words, live_in: live_in, live_out: live_out, slot: slot, slot_value: slot_value, at: at, none: __alloc_bool(f.nvals) };
+}
+
+// The allocator gives one position to each instruction and to each terminator.
+function live_lengths(f: ssa.SFunc, fl: Flow): i32[] {
+  let len = __alloc_i32(f.nvals);
+  let seen = util.minus_ones(f.nvals);
+  let first = __alloc_i32(f.nvals);
+  let last = __alloc_i32(f.nvals);
+  let start = 0;
+  for bi in 0..f.blocks.len() {
+    let b = f.blocks[bi];
+    let term = start + b.insts.len();
+    let touched: i32[] = [];
+    for v in live_out_ids(fl, bi) {
+      seen = seen.with(v, bi);
+      first = first.with(v, start);
+      last = last.with(v, term);
+      touched = touched.append(v);
+    }
+    for k in 0..b.insts.len() {
+      let ins = b.insts[k];
+      let at = start + k;
+      if (ins.kind_tag != ssa.PHI) {
+        for a in ins.args {
+          if (a >= 0 && a < f.nvals) {
+            if (seen[a] != bi) {
+              seen = seen.with(a, bi);
+              first = first.with(a, start);
+              last = last.with(a, at);
+              touched = touched.append(a);
+            } else if (last[a] < at) {
+              last = last.with(a, at);
+            }
+          }
+        }
+      }
+      let r = ins.result;
+      if (r >= 0 && r < f.nvals) {
+        if (seen[r] != bi) {
+          seen = seen.with(r, bi);
+          last = last.with(r, at);
+          touched = touched.append(r);
+        }
+        first = first.with(r, at);
+      }
+    }
+    let tv = ssa.term_operand(b.term);
+    if (tv >= 0 && tv < f.nvals) {
+      if (seen[tv] != bi) {
+        seen = seen.with(tv, bi);
+        first = first.with(tv, start);
+        touched = touched.append(tv);
+      }
+      last = last.with(tv, term);
+    }
+    for v in touched {
+      len = len.with(v, len[v] + last[v] - first[v] + 1);
+    }
+    start = term + 1;
+  }
+  return len;
 }
