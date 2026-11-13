@@ -171,7 +171,8 @@ With six arguments or fewer there are no pushes and no pop. Past six, the
 caller pushes only the rest, where the stack entry reads them. Then it
 reserves the six slots below them with no store (`ssa_stack_args`). A call through
 a function value passes its arguments the same way (`ssa_call_ind`). A tail
-call takes six arguments at most. On x86-64 the value names its callee's `.r`
+call takes six arguments at most, and reads no view in the frame
+(`ssa.tails_of`). On x86-64 the value names its callee's `.r`
 entry. On arm64 it names `.k`, which takes every argument in an integer
 register and moves each f64 parameter into the float register `.r` reads it
 from, since a call through a function value need not know the callee's float

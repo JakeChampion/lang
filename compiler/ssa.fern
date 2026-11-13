@@ -4958,14 +4958,16 @@ pub function register_form(f: SFunc): Formed {
     g = pruned.f;
     trimmed = pruned.repl;
   }
-  g = combine_byte_stores(zero_extended_indices(drop_null_counts(g)));
+  g = combine_byte_stores(zero_extended_indices(drop_inert_counts(g)));
   return Formed { f: g, repl: compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(folded.repl, merged.repl), plain.repl), shared.repl), unwrapped.repl), extended.repl), bytes.repl), trimmed) };
 }
 
 // A count taken or given back on a constant null does nothing: the runtime
-// entries return at the floor test. The instruction goes.
-pub function drop_null_counts(f: SFunc): SFunc {
-  if (!counts_a_null(f)) {
+// entries return at the floor test. Nor does the release of a view the
+// function builds in its own frame, since its count is immortal. The
+// instruction goes.
+pub function drop_inert_counts(f: SFunc): SFunc {
+  if (!has_inert_counts(f)) {
     return f;
   }
   let defs = inst_defs(f);
@@ -4973,7 +4975,7 @@ pub function drop_null_counts(f: SFunc): SFunc {
   let nblocks: SBlock[] = [];
   let changed = false;
   for blk in f.blocks {
-    let kept = without_null_counts(blk, defs, uses);
+    let kept = without_inert_counts(blk, defs, uses);
     changed = changed || kept.insts.len() != blk.insts.len();
     nblocks = nblocks.append(kept);
   }
@@ -4983,18 +4985,23 @@ pub function drop_null_counts(f: SFunc): SFunc {
   return SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
 }
 
-// Whether the function holds both a zero constant and a count call, so the
-// common function pays one scan and no allocation.
-function counts_a_null(f: SFunc): boolean {
+// Whether the function holds a zero constant and a count call, or a frame
+// view and a view release, so the common function pays one scan and no
+// allocation.
+function has_inert_counts(f: SFunc): boolean {
   let zero = false;
   let counts = false;
+  let frame = false;
+  let views = false;
   for blk in f.blocks {
     for ins in blk.insts {
       zero = zero || zero_constant(ins);
       counts = counts || count_call(ins);
+      frame = frame || frame_view(ins);
+      views = views || view_release(ins);
     }
   }
-  return zero && counts;
+  return zero && counts || frame && views;
 }
 
 function zero_constant(ins: SInst): boolean {
@@ -5007,10 +5014,10 @@ function zero_constant(ins: SInst): boolean {
   return ins.kind_tag == CONST_I64 && ins.str.len() > 0 && util.lit_to_i64(ins.str) == 0i64;
 }
 
-function without_null_counts(blk: SBlock, defs: SInst[], uses: i32[]): SBlock {
+function without_inert_counts(blk: SBlock, defs: SInst[], uses: i32[]): SBlock {
   let ninsts: SInst[] = [];
   for ins in blk.insts {
-    if (!null_count(ins, defs, uses)) {
+    if (!inert_count(ins, defs, uses)) {
       ninsts = ninsts.append(ins);
     }
   }
@@ -5024,11 +5031,94 @@ function count_call(ins: SInst): boolean {
   return ins.kind_tag == CALL && ins.args.len() == 1 && (ins.str == "__fern_rc_dec" || ins.str == "__fern_rc_inc");
 }
 
-function null_count(ins: SInst, defs: SInst[], uses: i32[]): boolean {
-  if (!count_call(ins) || ins.result >= 0 && ins.result < uses.len() && uses[ins.result] > 0) {
+function view_release(ins: SInst): boolean {
+  return ins.kind_tag == CALL && ins.args.len() == 1 && (ins.str == "__fern_str_view_free" || tagged_view_release(ins.str));
+}
+
+// The releases of an array view, which take a descriptor tagged with bit 1.
+function tagged_view_release(name: string): boolean {
+  return name == "__sem_view_release" || name.starts_with("__sem_release_$view$");
+}
+
+// A view in the frame of its function, which the register backends build
+// with an immortal count (`str_slice frame:N`, `raw_string frame:N`).
+function frame_view(ins: SInst): boolean {
+  return ins.kind_tag == STR_VIEW && ins.imm >= 1;
+}
+
+function frame_view_at(defs: SInst[], v: i32): boolean {
+  return v >= 0 && v < defs.len() && frame_view(defs[v]);
+}
+
+function tagged_frame_view(defs: SInst[], v: i32): boolean {
+  if (v < 0 || v >= defs.len()) {
     return false;
   }
-  return const_is(defs, ins.args[0], 0i64);
+  let d = defs[v];
+  return d.kind_tag == BINARY && d.str == "add" && d.args.len() == 2 && frame_view_at(defs, d.args[0]) && const_is(defs, d.args[1], 2i64);
+}
+
+// Which calls may be tail calls: none when `on` is false, and none that
+// reads a view in the frame, since a tail call ends the frame. `framed` is
+// indexed by the value of a call, and empty when the function has no frame view.
+pub struct Tails { on: boolean, framed: boolean[] }
+
+pub function tails_of(f: SFunc, on: boolean): Tails {
+  if (!on) {
+    return Tails { on: false, framed: [] };
+  }
+  return Tails { on: true, framed: frame_view_calls(f) };
+}
+
+pub function may_tail(t: Tails, ins: SInst): boolean {
+  return t.on && !(ins.result >= 0 && ins.result < t.framed.len() && t.framed[ins.result]);
+}
+
+function frame_view_calls(f: SFunc): boolean[] {
+  let frame = false;
+  for blk in f.blocks {
+    for ins in blk.insts {
+      frame = frame || frame_view(ins);
+    }
+  }
+  if (!frame) {
+    return [];
+  }
+  let defs = inst_defs(f);
+  let out = __alloc_bool(f.nvals);
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (ins.result >= 0 && ins.result < f.nvals && calls(ins) && reads_frame_view(defs, ins)) {
+        out = out.with(ins.result, true);
+      }
+    }
+  }
+  return out;
+}
+
+function reads_frame_view(defs: SInst[], ins: SInst): boolean {
+  for a in ins.args {
+    if (frame_view_at(defs, a) || tagged_frame_view(defs, a)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function inert_count(ins: SInst, defs: SInst[], uses: i32[]): boolean {
+  if (ins.result >= 0 && ins.result < uses.len() && uses[ins.result] > 0) {
+    return false;
+  }
+  if (count_call(ins)) {
+    return const_is(defs, ins.args[0], 0i64);
+  }
+  if (!view_release(ins)) {
+    return false;
+  }
+  if (tagged_view_release(ins.str)) {
+    return tagged_frame_view(defs, ins.args[0]);
+  }
+  return frame_view_at(defs, ins.args[0]);
 }
 
 // An index reads a sign- and a zero-extended i32 the same: no length reaches 2^31, so a negative index fails either way.

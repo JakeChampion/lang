@@ -439,7 +439,10 @@ locals sit above `nvals`. It emits:
   whose every use reads it within one instruction (`ssaunits.frame_views`)
   builds its descriptor in three frame slots (`op_str_slice_frame`,
   `op_raw_string_frame`) that the release skips; any other slice builds it
-  on the heap (`__fern_str_borrow`). On the register backends both are
+  on the heap (`__fern_str_borrow`). The frame descriptor has an immortal
+  count on the register backends, so they emit no release for it
+  (`ssa.drop_inert_counts`). A call that reads it is not a tail call
+  (`ssa.tails_of`), because a tail call ends the frame. On the register backends both are
   native string boxes, which carry a data pointer. On wasm a string is an
   inline `{len, bytes}` block, and a callee cannot address its caller's
   locals, so there the frame form is a window: `{data, len}` in eight bytes
@@ -449,7 +452,8 @@ locals sit above `nvals`. It emits:
   is a counted `{len | 1 << 31, data}` box, told from a string by the top
   bit of its length. The view's string-arm reads (`ir.view_string`) and the
   wasm kernels that take a string or a view decode all three. A string
-  slice still copies its bytes on wasm (`$__fern_substr`).
+  slice still copies its bytes on wasm (`$__fern_substr`), so there its
+  release stays.
 
 What the lowering may assume: the plan verified; it re-derives the semantic
 facts it needs from the graph rather than trusting a sidecar. It refuses the

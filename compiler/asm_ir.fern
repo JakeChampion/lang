@@ -10637,10 +10637,10 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   let fn_label = "__fn_" + asmcore.sanitize_label(label_name);
   let views = ssa.view_slots(f);
   let nspill = asmcore.ssa_lane_spill(f, ssa.spill_count(reg_of));
-  let tails = s.profile == 0;
+  let tails = ssa.tails_of(f, s.profile == 0);
   let leaf = s.profile == 0 && nspill == 0 && ssa.view_count(views) == 0 && !hev_on(s) && !ssa_calls_besides_tails(f, s, tails);
   let cold = ssa_cold_saves(f, alloc);
-  let bare = !leaf && ssa_slotless(nspill, views, cold) && !hev_on(s) && tails && f.nparams <= ssa_nargs();
+  let bare = !leaf && ssa_slotless(nspill, views, cold) && !hev_on(s) && tails.on && f.nparams <= ssa_nargs();
   let canary = 0;
   if (s.harden && !leaf && !bare) {
     canary = 8 * saved.len() + 8;
@@ -10887,11 +10887,11 @@ function ssa_resolve_tails(text: string, epilogue: string): string {
   return out + slice_unchecked(text, from, text.len());
 }
 
-function ssa_tail_call(blk: ssa.SBlock, ins: ssa.SInst, s: asmcore.EmitState, tails: boolean): boolean {
-  return tails && blk.insts.len() > 0 && ssa.returns_call(blk, blk.insts.len() - 1) && blk.insts[blk.insts.len() - 1].result == ins.result && (ssa_reg_call(ins, s) && ins.args.len() <= ssa_nargs() || asmcore.tail_allocator(ins) != "");
+function ssa_tail_call(blk: ssa.SBlock, ins: ssa.SInst, s: asmcore.EmitState, tails: ssa.Tails): boolean {
+  return ssa.may_tail(tails, ins) && blk.insts.len() > 0 && ssa.returns_call(blk, blk.insts.len() - 1) && blk.insts[blk.insts.len() - 1].result == ins.result && (ssa_reg_call(ins, s) && ins.args.len() <= ssa_nargs() || asmcore.tail_allocator(ins) != "");
 }
 
-function ssa_calls_besides_tails(f: ssa.SFunc, s: asmcore.EmitState, tails: boolean): boolean {
+function ssa_calls_besides_tails(f: ssa.SFunc, s: asmcore.EmitState, tails: ssa.Tails): boolean {
   for blk in f.blocks {
     for k in 0..blk.insts.len() {
       let ins = blk.insts[k];
