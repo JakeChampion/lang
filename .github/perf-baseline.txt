@@ -1,3 +1,7 @@
+# 2026-11-13: PR #15703, perf-aarch64 job 131909319515 on the merge with main 3005c182.
+# The four aarch64 perceus_rbtree rows are 4.2% to 6.6% below their pins. #15703 changes only
+# the checkers, so these are values of main. Each row moves to its measured value. Keep all
+# tolerances.
 # 2026-11-13: PR #15684 jobs 131832783238 and 131832783245 tested merge df16f1f9 with main 5e4d66b7.
 # These rows use the reported measurements after the main compiler changes.
 # The media reference change does not alter the compiler or workloads. Tolerances stay unchanged.
@@ -720,10 +724,10 @@ aarch64/perceus_deriv.text	2957
 aarch64/perceus_deriv.ir	77989395
 aarch64/perceus_nqueens.text	1812
 aarch64/perceus_nqueens.ir	90387246
-aarch64/perceus_rbtree.text	3086
-aarch64/perceus_rbtree.ir	38431007
-aarch64/perceus_rbtree_ck.text	3412
-aarch64/perceus_rbtree_ck.ir	39089087
+aarch64/perceus_rbtree.text	2957
+aarch64/perceus_rbtree.ir	35905407
+aarch64/perceus_rbtree_ck.text	3191
+aarch64/perceus_rbtree_ck.ir	36653727
 # 2026-11-01: #13988 keeps the original main pvec instruction gates.
 # Fresh measurements remain within their unchanged 1% tolerance.
 # 2026-11-07: PR #14490 adds the fixed QTRLE workload. Existing limits stay unchanged.
