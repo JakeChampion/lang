@@ -13,6 +13,9 @@ Operations that require an element use options for empty input. Integer averages
 `chunks` and `chunks_exact` return no chunks when the size is zero or negative.
 This differs from `string.chunks`, which returns one chunk for a nonempty string at those sizes.
 
+`rotate_left` and `rotate_right` accept every i32 count and reduce it modulo the array length.
+Negative counts reverse the direction. An empty array remains empty.
+
 ## Executable example
 
 ```fern test name=std-array-example
@@ -869,7 +872,11 @@ pub function rotate_left[T](xs: T[], n: i32): T[] {
 }
 
 pub function rotate_right[T](xs: T[], n: i32): T[] {
-  return rotate_left(xs, 0 - n);
+  let len = xs.len();
+  if (len == 0) {
+    return [];
+  }
+  return rotate_left(xs, 0 - (n % len));
 }
 
 // `xs` with the element at `from` moved to the index `to`. The elements
