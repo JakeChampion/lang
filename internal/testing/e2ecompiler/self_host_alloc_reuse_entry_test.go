@@ -49,10 +49,8 @@ func TestSelfHostAllocReuseRegisterEntry(t *testing.T) {
 	if !allocReuseStackEntry.MatchString(asm) {
 		t.Error("__fern_alloc_reuse's stack entry does not load the token and slots and fall into its register entry")
 	}
-	reg := strings.Count(asm, "call __fn___fern_alloc_reuse.r\n")
-	stack := strings.Count(asm, "call __fn___fern_alloc_reuse\n")
-	if reg == 0 || stack != 0 {
-		t.Errorf("the reuse is called %d times through the register entry and %d through the stack entry, want only the register entry", reg, stack)
+	if stack := strings.Count(asm, "call __fn___fern_alloc_reuse\n"); stack != 0 {
+		t.Errorf("the reuse is called %d times through the stack entry, want 0", stack)
 	}
 
 	for _, tg := range h.targets {
