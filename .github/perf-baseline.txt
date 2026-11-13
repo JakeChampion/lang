@@ -1,7 +1,7 @@
-# 2026-11-13: PR #15635, perf-aarch64 job 131753359433 on main 312303b6.
-# aarch64/deflate_encode.text is 1.22% over its pin, 7815 to 7910. A change of main gives that
-# size: the arm64 binary is byte-identical with and without #15635. The row moves to its measured
-# value. Keep all tolerances.
+# 2026-11-13: PR #15643, perf-x86_64 job 131751756991 and perf-aarch64 job 131751756801 on the merge of
+# #15634 with main 312303b6. #15609 changed the deflate encoder, and deflate_encode.text grew 1.2% on
+# both targets. #15634 changes only the checker, so these are values of main. Each row moves to its
+# measured value. Keep all tolerances.
 # 2026-11-13: PR #15598, perf-aarch64 job 131666038838 on the merge with main b7e60e3b.
 # The four aarch64 perceus_rbtree rows are 6.1% to 6.4% below their pins. 29695657 pinned the
 # x86_64 rows that #15596 moved, and not these. #15598 changes signatures in std/async and
@@ -338,7 +338,7 @@ x86_64/deflate_decode.ir	32877120
 x86_64/deflate_decode.text	12486
 x86_64/deflate_encode.ir	41579468
 # 2026-11-05: PR #14207, perf-x86_64 job 126960802774 on the merge with main 6dba1dcb measures lower values for the changed rows below. The rows that rise keep their limits.
-x86_64/deflate_encode.text	7166
+x86_64/deflate_encode.text	7252
 x86_64/enum_match.text	934
 x86_64/enum_match.ir	29250077
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).

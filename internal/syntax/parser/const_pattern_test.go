@@ -43,10 +43,11 @@ function g(v: Option[i32]): i32 {
 	}
 }
 
-// A const inside a block is not a top-level const, so its name binds.
+// A const inside a block or a const type parameter is not a top-level
+// const, so its name binds.
 func TestConstNameScanIsTopLevel(t *testing.T) {
-	names := scanConstNames(mustTokens(t, "const A: i32 = 1;\nimpl X { const B: i32 = 2; }\npub const C = 3;\n"))
-	if !names["A"] || names["B"] || !names["C"] {
+	names := scanConstNames(mustTokens(t, "const A: i32 = 1;\nimpl X { const B: i32 = 2; }\npub const C = 3;\nfunction f[const D: i32](): i32 { return D; }\n"))
+	if !names["A"] || names["B"] || !names["C"] || names["D"] {
 		t.Errorf("got %v, want A and C only", names)
 	}
 }

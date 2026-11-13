@@ -3,6 +3,7 @@ package e2ecompiler
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestSelfHostExampleLoadUnit(t *testing.T) {
@@ -38,6 +40,13 @@ func newLoadServer(t *testing.T) *loadServer {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		s.requests.Add(1)
+		_, _ = w.Write([]byte("hello\n"))
+	})
+	// Every 20th request waits for loadStall.
+	mux.HandleFunc("/stall", func(w http.ResponseWriter, r *http.Request) {
+		if s.requests.Add(1)%20 == 0 {
+			time.Sleep(loadStall)
+		}
 		_, _ = w.Write([]byte("hello\n"))
 	})
 	mux.HandleFunc("/chunked", func(w http.ResponseWriter, r *http.Request) {
@@ -89,6 +98,59 @@ func hijack(t *testing.T, w http.ResponseWriter, raw string) {
 	_, _ = buf.WriteString(raw)
 	_ = buf.Flush()
 	_ = conn.Close()
+}
+
+const loadStall = 50 * time.Millisecond
+
+// loadJSON is the part of the JSON summary that the tests read.
+type loadJSON struct {
+	Summary struct {
+		SuccessRate    float64  `json:"successRate"`
+		Total          float64  `json:"total"`
+		Slowest        *float64 `json:"slowest"`
+		Fastest        *float64 `json:"fastest"`
+		Average        *float64 `json:"average"`
+		RequestsPerSec float64  `json:"requestsPerSec"`
+	} `json:"summary"`
+	Metrics struct {
+		LatencyMs map[string]*float64 `json:"latency_ms"`
+	} `json:"metrics"`
+	LatencyPercentiles     map[string]*float64 `json:"latencyPercentiles"`
+	StatusCodeDistribution map[string]int      `json:"statusCodeDistribution"`
+	ErrorDistribution      map[string]int      `json:"errorDistribution"`
+}
+
+// parseLoadJSON checks the top-level keys of the JSON summary and reads it.
+func parseLoadJSON(t *testing.T, out string) loadJSON {
+	t.Helper()
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out), &keys); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, out)
+	}
+	for _, k := range []string{"summary", "metrics", "latencyPercentiles", "statusCodeDistribution", "errorDistribution"} {
+		if _, ok := keys[k]; !ok {
+			t.Fatalf("no %q key\n%s", k, out)
+		}
+	}
+	if len(keys) != 5 {
+		t.Fatalf("%d top-level keys, want 5\n%s", len(keys), out)
+	}
+	var got loadJSON
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("JSON summary: %v\n%s", err, out)
+	}
+	if len(got.LatencyPercentiles) != 9 || len(got.Metrics.LatencyMs) != 6 {
+		t.Fatalf("%d percentiles and %d latency_ms values, want 9 and 6\n%s", len(got.LatencyPercentiles), len(got.Metrics.LatencyMs), out)
+	}
+	return got
+}
+
+func (j loadJSON) responses() int64 {
+	n := 0
+	for _, c := range j.StatusCodeDistribution {
+		n += c
+	}
+	return int64(n)
 }
 
 // loadSummary is what the tool reports.
@@ -302,6 +364,57 @@ func TestSelfHostExampleLoadHTTP(t *testing.T) {
 				if got.errors["Connection refused"] != 5 || len(got.statuses) != 0 {
 					t.Errorf("errors %v; want 5 refused connections\n%s", got.errors, got.text)
 				}
+				out, stderr, code := run(t, "-n", "3", "-c", "1", "--output-format", "json", "http://"+addr+"/")
+				if code != 0 {
+					t.Fatalf("exit %d\n%s%s", code, out, stderr)
+				}
+				j := parseLoadJSON(t, out)
+				if j.ErrorDistribution["Connection refused"] != 3 || j.responses() != 0 || j.Summary.Slowest != nil || j.LatencyPercentiles["p99"] != nil || j.Summary.SuccessRate != 0 {
+					t.Errorf("want 3 refused connections and null latencies\n%s", out)
+				}
+			})
+
+			// With -c 1, a stall delays the requests due after it. Their
+			// latency counts from the time each was due, so far more than
+			// one request in 20 is slow.
+			t.Run("rate json", func(t *testing.T) {
+				s := newLoadServer(t)
+				const rate, seconds = 200, 1
+				out, stderr, code := run(t, "-q", strconv.Itoa(rate), "-z", strconv.Itoa(seconds)+"s", "-c", "1", "-w", "--output-format", "json", s.URL+"/stall")
+				if code != 0 {
+					t.Fatalf("exit %d\n%s%s", code, out, stderr)
+				}
+				j := parseLoadJSON(t, out)
+				n := j.responses()
+				if n != s.requests.Load() || len(j.ErrorDistribution) != 0 || j.Summary.SuccessRate != 1 {
+					t.Errorf("%d responses, errors %v; the server got %d requests\n%s", n, j.ErrorDistribution, s.requests.Load(), out)
+				}
+				if n > rate*seconds+1 || n < rate*seconds/2 {
+					t.Errorf("%d requests at -q %d for %d s\n%s", n, rate, seconds, out)
+				}
+				stall := loadStall.Seconds()
+				p75, p99 := j.LatencyPercentiles["p75"], j.LatencyPercentiles["p99"]
+				if p99 == nil || *p99 < stall || p75 == nil || *p75 < stall/5 {
+					t.Errorf("p75 and p99 do not show the %v stalls\n%s", loadStall, out)
+				}
+				if ms := j.Metrics.LatencyMs["p99"]; ms == nil || *ms < stall*1000 {
+					t.Errorf("metrics.latency_ms.p99 is under %v\n%s", loadStall, out)
+				}
+				if j.Summary.Total < seconds-0.01 || j.Summary.Total > 2*seconds || j.Summary.RequestsPerSec > rate*1.05 {
+					t.Errorf("total %v s, %v requests/sec\n%s", j.Summary.Total, j.Summary.RequestsPerSec, out)
+				}
+			})
+
+			t.Run("rate count", func(t *testing.T) {
+				s := newLoadServer(t)
+				got := summary(t, "-n", "100", "-q", "500", "-c", "2", s.URL+"/")
+				if got.statuses[200] != 100 || len(got.errors) != 0 || s.requests.Load() != 100 {
+					t.Errorf("statuses %v, errors %v, server %d requests; want 100\n%s", got.statuses, got.errors, s.requests.Load(), got.text)
+				}
+				// The last request is due 99/500 s after the first.
+				if got.total < 0.198e9 || got.total > 1e9 {
+					t.Errorf("Total is %.0f ns, want about 0.2 s\n%s", got.total, got.text)
+				}
 			})
 
 			t.Run("usage", func(t *testing.T) {
@@ -312,6 +425,8 @@ func TestSelfHostExampleLoadHTTP(t *testing.T) {
 					{[]string{"https://127.0.0.1/"}, "load: https URLs are not supported yet: use an http URL\n"},
 					{[]string{"-z", "10", "http://127.0.0.1/"}, "load: -z 10 is not a duration such as 10s, 500ms or 1m\n"},
 					{[]string{}, "load: give one URL\n"},
+					{[]string{"-q", "0", "http://127.0.0.1/"}, "load: -q 0 must be more than 0 and not more than 1000000000\n"},
+					{[]string{"--output-format", "csv", "http://127.0.0.1/"}, "load: --output-format csv is not supported: use text or json\n"},
 				} {
 					out, stderr, code := run(t, tc.args...)
 					if code != 2 || out != "" || !strings.HasPrefix(stderr, tc.want) || !strings.Contains(stderr, "Usage: load ") {

@@ -17,7 +17,9 @@ var needRootSources = []string{
 	"asmcore.fern",
 }
 
-var marksNeed = regexp.MustCompile(`\.need\("([a-z0-9_]+)"\)`)
+// A has_need gate also counts: it catches a need that is marked through a
+// computed name, such as ir.sha_blocks_need.
+var marksNeed = regexp.MustCompile(`\.(?:has_)?need\("([a-z0-9_]+)"\)`)
 
 func allRuntimeNeedRootsBody(t *testing.T) string {
 	t.Helper()
@@ -47,7 +49,13 @@ func TestAllRuntimeNeedRootsCoversEveryLiteralNeed(t *testing.T) {
 		t.Fatal("all_runtime_need_roots parsed as empty — the extraction is broken, not the list")
 	}
 
-	ignored := map[string]bool{"x": true}
+	ignored := map[string]bool{
+		"x": true,
+		// runtime_need_deps adds it to each listed root that reads text.
+		"utf8_valid": true,
+		// The -cover counter slot. A per-module build is never instrumented.
+		"raw_cover": true,
+	}
 
 	marked := map[string][]string{}
 	for _, path := range needRootSources {

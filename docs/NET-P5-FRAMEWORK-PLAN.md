@@ -360,15 +360,15 @@ first among them.
    304, 206, `Cache-Control`) and fails on a note httplint rates BAD; the
    first run found the status line of a 206 and a 412 going out as
    "Status", so `http.status_text` now names every RFC 9110 code. The
-   load tool (landed): `tools/fernload/fernload.fern` sends at a fixed
+   load tool (landed): `examples/load` with `-q` sends at a fixed
    rate over kept connections, open-loop, and measures each request's
    latency from the moment the rate said it was due, so a stalled server
    shows the queueing a real client would see (wrk2's correction for
-   coordinated omission); the raw latency from the send is reported beside
-   it, as `metric<TAB>value` rows `scripts/perf-history` can record.
-   `TestFernloadX86_64` and `TestFernloadInterp` run it against a
-   `std/serve` hello and check every scheduled request was sent and
-   answered. Writing it found the interpreter's `connect_start` answering a
+   coordinated omission). Its command line and its text and JSON summaries
+   are those of oha (`examples/load/README.md`).
+   `TestLoadExampleX86_64` and `TestLoadExampleInterp` run it against a
+   `std/serve` hello. Writing its predecessor, `tools/fernload`, found the
+   interpreter's `connect_start` answering a
    blocking socket where the native one is non-blocking; it is
    non-blocking on both now.
 9. **The exit criteria.** The tutorial's routed JSON API with logging
