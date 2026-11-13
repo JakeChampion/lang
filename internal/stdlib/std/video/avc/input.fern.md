@@ -159,9 +159,9 @@ function slice_fields(input: [u8], at: i64, context: avc.SliceSequence, pps: avc
 
 function slice_identity(stream: Stream, input: [u8]): Result[Identity, frame.VideoError] {
   let bytes = avc.rbsp_prefix(input[1:], 64)?;
-  let (at, first) = avc.ue(bytes, 0i64)?;
-  let (at, kind) = avc.bounded_ue(bytes, at, 9u32)?;
-  let (at, id) = avc.bounded_ue(bytes, at, 255u32)?;
+  let (kind_at, first) = avc.ue(bytes, 0i64)?;
+  let (parameter_at, kind) = avc.bounded_ue(bytes, kind_at, 9u32)?;
+  let (fields_at, id) = avc.bounded_ue(bytes, parameter_at, 255u32)?;
   let pps = picture(stream, id as i32)?;
   let context = sequence(stream, pps.sequence_id)?;
   let units = context.sequence.coded.width / 16 * (context.sequence.coded.height / 16);
@@ -171,7 +171,7 @@ function slice_identity(stream: Stream, input: [u8]): Result[Identity, frame.Vid
   if ((input[0] & 31u8) == 5u8 && kind % 5u32 != 2u32 && kind % 5u32 != 4u32) {
     return Err(frame.Header);
   }
-  return slice_fields(bytes, at, context, pps, input[0]);
+  return slice_fields(bytes, fields_at, context, pps, input[0]);
 }
 
 function different(a: Identity, b: Identity): boolean {
