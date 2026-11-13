@@ -7645,6 +7645,11 @@ function emit_lc_report(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    mov x2, #1\n");
   s = s.write("    bl .Llc_write\n");
   if (s.sanitize) {
+    // The frames above an exit() call are never unwound, so what they hold is no leak.
+    s = s.write("    adrp x9, __fern_lc_exited\n");
+    s = s.write("    add x9, x9, :lo12:__fern_lc_exited\n");
+    s = s.write("    ldr x9, [x9]\n");
+    s = s.write("    cbnz x9, .Lsan_leak_done\n");
     s = s.write("    adrp x9, __fern_lc_alloc_bytes\n");
     s = s.write("    add x9, x9, :lo12:__fern_lc_alloc_bytes\n");
     s = s.write("    ldr x10, [x9]\n");

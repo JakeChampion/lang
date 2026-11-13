@@ -23,7 +23,11 @@ changes the code the backend emits — so it goes on the build, not on the run.
 | rc over-release (double free) | a `dec` sees a refcount already `<= 0` | `fern-sanitizer: rc over-release (double free)` + backtrace, exit 124 |
 | use-after-free | an `inc`/`dec` touches a quarantined block | `fern-sanitizer: use-after-free (touched a quarantined block)` + backtrace, exit 124 |
 | heap-buffer-overflow | a `__free` finds the redzone after a raw block written | `fern-sanitizer: heap-buffer-overflow (a raw block was written past its end)` + backtrace, exit 124 |
-| leak census | the process exits with live bytes outstanding | `leakcheck: …` summary + `fern-sanitizer: leak <K> bytes in <N> blocks` |
+| leak census | `main` returns with live bytes outstanding | `leakcheck: …` summary + `fern-sanitizer: leak <K> bytes in <N> blocks` |
+
+A run that the `exit()` builtin ends prints the census, marked ` from=exit`,
+but no leak verdict. The frames above the call are never unwound, so the
+program cannot free what they hold.
 
 **A clean run prints no `fern-sanitizer:` line at all.** That is the whole
 pass condition — you do not have to read the census numbers to know whether

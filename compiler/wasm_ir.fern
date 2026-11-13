@@ -8925,7 +8925,8 @@ function lc_report_funcs(sanitize: boolean, set_args: boolean, tables: string): 
   o += "    ))\n";
   o += lc_label("\n");
   if (sanitize) {
-    o += "    (if (i64.gt_s (local.get $live) (i64.const 0)) (then\n";
+    // The frames above an exit() call are never unwound, so what they hold is no leak.
+    o += "    (if (i32.and (i32.eqz (global.get $__fern_lc_exited)) (i64.gt_s (local.get $live) (i64.const 0))) (then\n";
     o += lc_label("fern-sanitizer: leak ");
     o += "    (call $__fern_lc_wrnum (local.get $live) (local.get $b))\n";
     o += lc_label(" bytes in ");
