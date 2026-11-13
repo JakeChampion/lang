@@ -138,8 +138,6 @@ TestF64TranscendentalUlpSelfHostX86_64 3
 TestFeatureDifferential 62
 TestFeatureDifferentialInterpArrayCOW 126
 TestFernFixtures 245
-TestFernloadInterp 15
-TestFernloadX86_64 15
 TestFetchAccumulatorStaysLinear 24
 TestFetchClient 26
 TestFetchClientInterp 11
@@ -218,6 +216,8 @@ TestLargeButRepresentableArrayGrowStillWorks 53
 TestLeakCheckAddressTakenNameArm64 52
 TestLinuxImageHasNoLogcat 39
 TestLinuxOnlyWrappersBuildEverywhere 8
+TestLoadExampleInterp 15
+TestLoadExampleX86_64 15
 TestMapBorrowedAliasCensus 2
 TestMapBorrowedAliasInterp 2
 TestMapBorrowedAliasSelfHostArm64 2

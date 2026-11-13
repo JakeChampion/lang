@@ -211,7 +211,7 @@ their responses corked into one write. The loop's single 4 KiB read buffer
 bounds how many that can be, so one connection cannot starve the others
 beyond a few dozen tiny requests, but the article's point is that it still
 costs the other connections' p99. Two things are worth measuring before
-anything is changed, and `tools/fernload` (open-loop, corrected for
+anything is changed, and `examples/load -q` (open-loop, corrected for
 coordinated omission) is the instrument: a cap on requests answered per
 readable event, and a "ready to served" latency histogram in
 `std/metrics.ServerMetrics` beside the request-duration one, which is the

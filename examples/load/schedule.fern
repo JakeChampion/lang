@@ -1,0 +1,47 @@
+// The timetable of -q. Request k (from 0) is due at `start + k / rate`
+// seconds. A request goes out when it is due and a connection is free, and
+// its latency starts at the time it was due: a request that waits for a busy
+// connection adds the wait to its latency.
+import "std/time";
+
+// With no rate, each request starts when a connection is free.
+pub struct Schedule { start: i64, rate: Option[f64] }
+
+pub function closed(start: i64): Schedule {
+  return Schedule { start: start, rate: None };
+}
+
+pub function fixed(start: i64, rate: f64): Schedule {
+  return Schedule { start: start, rate: Some(rate) };
+}
+
+pub function (s: Schedule) due(k: i64): i64 {
+  let Some(rate) = s.rate else {
+    return s.start;
+  };
+  return s.start + (k as f64 * 1000000000.0 / rate) as i64;
+}
+
+// The time from which the latency of request `k` counts, when a connection
+// is free at `now` to send it, or None when request `k` is not due yet.
+pub function (s: Schedule) starts(k: i64, now: i64): Option[i64] {
+  if (s.rate.is_none()) {
+    return Some(now);
+  }
+  let due = s.due(k);
+  if (due > now) {
+    return None;
+  }
+  return Some(due);
+}
+
+// How long the reactor can wait at `now` for request `k`. The wait of the
+// reactor has whole milliseconds and does not end early. Thus in the last
+// millisecond before the request is due, the wait is zero and the loop polls.
+pub function (s: Schedule) wait(k: i64, now: i64): Duration {
+  let ns = s.due(k) - now;
+  if (ns < 1000000) {
+    return time.DURATION_ZERO;
+  }
+  return time.duration_nanos(ns / 1000000 * 1000000);
+}
