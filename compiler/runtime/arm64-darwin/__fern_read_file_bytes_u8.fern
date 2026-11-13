@@ -34,7 +34,8 @@ function __fern_read_file_bytes_u8(path: string): Result[i32[], IoError] {
   if (cap < 1) {
     cap = 1;
   }
-  let buf = __raw_alloc(cap);
+  let b = __raw_arr_box((cap + 7) / 8);
+  let buf = b + 8;
   let got = 0;
   let bad = 0;
   let done = 0;
@@ -52,14 +53,12 @@ function __fern_read_file_bytes_u8(path: string): Result[i32[], IoError] {
           if (nc < 4096) {
             nc = 4096;
           }
-          let nb = __raw_alloc(nc);
-          let k = 0;
-          while (k < got) {
-            __raw_store8(nb, k, __raw_load8(buf, k));
-            k += 1;
-          }
-          let old_own = __raw_string(buf, cap);
-          buf = nb;
+          let nb = __raw_arr_box((nc + 7) / 8);
+          __memcpy(nb + 8, buf, got);
+          __store_i64(b, 0);
+          let old_own = __raw_array(b);
+          b = nb;
+          buf = nb + 8;
           cap = nc;
           __raw_store8(buf, got, __raw_load8(st, 0));
           got += 1;
@@ -83,12 +82,10 @@ function __fern_read_file_bytes_u8(path: string): Result[i32[], IoError] {
   }
   __syscall3(6, fd as i64, 0, 0);
   if (bad < 0) {
-    let buf_own0 = __raw_string(buf, cap);
+    __store_i64(b, 0);
+    let b_own = __raw_array(b);
     return Err(__fern_io_error(-bad, __fern_path_copy(pathz_own, plen)));
   }
-  let b = __raw_arr_box((got + 7) / 8);
   __store_i64(b, got as i64);
-  __memcpy(b + 8, buf, got);
-  let buf_own = __raw_string(buf, cap);
   return Ok(__raw_array(b));
 }
