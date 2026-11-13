@@ -24,8 +24,10 @@ The port has these parts of the language:
 - The arithmetic operators `+ - * / %` on each type that jq defines them for.
 - The alternative operator `//`.
 - `if`, with `elif` and `else`.
-- The binding `e as $x | e`, with one variable.
-- `reduce` and `foreach`.
+- The binding `e as $x | e`, and a destructuring pattern in the place of
+  the variable: `. as [$a, {b: $c}]`
+- The operator `?//`, which gives the next pattern after an error
+- `reduce` and `foreach`, with a variable or a pattern.
 - `def`, with filter parameters and `$` parameters. A function can call
   itself.
 - `try`, with `catch`. An error holds a JSON value, as in jq.
@@ -35,6 +37,8 @@ The port has these parts of the language:
 - The formats `@text`, `@json`, `@html`, `@uri`, `@csv`, `@tsv`, `@sh`,
   `@base64` and `@base64d`, alone and before a string.
 - An array as an index: `.[[1, 2]]` gives each place of that part.
+- `label $name | body`, and `break $name`, which stops the body
+- `$__loc__`, which gives the file and the line of the program
 
 The port has these functions:
 
@@ -50,6 +54,10 @@ The port has these functions:
   `explode`, `fromjson`, `implode`, `ltrimstr`, `rtrimstr`, `split` with one argument,
   `startswith`, `tonumber` and `utf8bytelength`.
 - The search functions `contains`, `index`, `indices`, `inside` and `rindex`.
+- The functions `IN`, `INDEX`, `JOIN`, `abs`, `bsearch`, `pick` and
+  `transpose`, with the definitions of jq
+- `debug`, which writes its input or its messages to the standard error
+  output
 
 The port has these functions for paths, types and numbers:
 
@@ -76,6 +84,12 @@ jq makes the outputs one at a time. The outputs and their order are the
 same, and `first`, `limit`, `any` and `all` stop at the same output. But a
 generator that has no end, such as `recurse(. + 1)` in a `limit`, does not
 stop in the port.
+
+A `break` stops the body of its `label` after the body made each output. So
+a `label` does not stop a generator that has no end.
+
+jq gives an error for a path step after a destructuring pattern in `path`.
+The port gives the path.
 
 ## Input
 
@@ -121,8 +135,7 @@ to the next. The exact results are the same: `exp10` of 2 is 100.
 
 ## What it does not have yet
 
-- Destructuring patterns in a binding, and `?//`.
-- `label` with `break`, `$__loc__`, and modules.
+- Modules: `import`, `include` and `modulemeta`.
 - Each function that is not in the lists above. `exp` waits for #15661.
 
 A program that uses one of them stops with exit 3 and a message that ends in
@@ -135,7 +148,7 @@ A program that uses one of them stops with exit 3 and a message that ends in
 - `tests/jq.test` is the test suite of jq 1.7 (see
   `licenses/jq/NOTICE.txt`). `TestSelfHostExampleJqSuite` runs each case
   whose program the port has and compares the outputs as JSON values, as
-  jq does. 349 cases pass, and each of the others is in a part of the language
+  jq does. 402 cases pass, and each of the others is in a part of the language
   that the port does not have yet.
 - `TestSelfHostExampleJqAgainstJq` runs the command line and the `jq` binary
   on the same arguments and input, and compares their stdout, stderr and exit
