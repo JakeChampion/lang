@@ -5,6 +5,7 @@ import "std/android/draw";
 import "core/cmp";
 import "core/map";
 import "std/android/ui";
+import "std/audio/eq";
 import "std/array";
 import "std/i32";
 import "std/i64";
@@ -85,6 +86,50 @@ pub const LEVEL_OFF: i32 = 0;
 pub const LEVEL_TRACK: i32 = 1;
 
 pub const LEVEL_ALBUM: i32 = 2;
+
+// The middle frequencies of the bands of the equalizer in Hz. The first
+// band is a low shelf, the last one is a high shelf, and the others are
+// peaks.
+pub const TONE_HZ: f64[] = [60.0, 230.0, 910.0, 3600.0, 14000.0];
+
+// The gain of a band of the equalizer goes from -TONE_DB to TONE_DB dB.
+pub const TONE_DB: i32 = 12;
+
+// The number of bars of the spectrum on the screen of the track.
+pub const BARS: i32 = 24;
+
+// The bands of the equalizer with the gains `tone` in dB.
+pub function tone_bands(tone: i32[]): eq.Band[] {
+  let last = TONE_HZ.len() - 1;
+  let out: eq.Band[] = [];
+  for i in 0..TONE_HZ.len() {
+    let db = if (i < tone.len()) { tone[i] as f64 } else { 0.0 };
+    if (i == 0) {
+      out = out.append(eq.Band { shape: eq.LowShelf, hz: TONE_HZ[i], db: db, q: 0.707 });
+    } else if (i == last) {
+      out = out.append(eq.Band { shape: eq.HighShelf, hz: TONE_HZ[i], db: db, q: 0.707 });
+    } else {
+      out = out.append(eq.Band { shape: eq.Peak, hz: TONE_HZ[i], db: db, q: 1.0 });
+    }
+  }
+  return out;
+}
+
+// The presets of the equalizer: a name, and the gain in dB of each band.
+pub function presets(): (string, i32[])[] {
+  return [("Flat", [0, 0, 0, 0, 0]), ("Bass", [6, 4, 0, 0, 0]), ("Vocal", [-2, 0, 4, 3, 0]), ("Treble", [0, 0, 0, 4, 6])];
+}
+
+// The name of the preset with the gains `tone`, or "Custom".
+pub function tone_name(tone: i32[]): string {
+  for p in presets() {
+    let (name, gains) = p;
+    if (gains == tone) {
+      return name;
+    }
+  }
+  return "Custom";
+}
 
 // The gains in dB that the file of a track gives for the track and for its
 // album, or 0.
@@ -178,7 +223,11 @@ pub enum Want { Load(i32), Follow(i32), Resume, Hold, Seek(f64), Scan, Grant, Li
 // time of the sleep timer in minutes, or 0, and `sleep_us` is the time of
 // sound that is left before the timer stops the player, in microseconds.
 // `salt` changes the order that shuffle gives. `level` is the loudness,
-// and `gain` has the gains of the file of the track that plays.
+// and `gain` has the gains of the file of the track that plays. `tone` has
+// the gain in dB of each band of the equalizer, and `filters` is the
+// equalizer that the sound goes through. `tuning` tells that the screen of
+// the equalizer shows. `bars` has the levels of the spectrum of the sound
+// that plays, from 0 to 1.
 // `settings` tells that the screen of the settings shows. `look` is the
 // theme that the person chose, and `tint` gives the theme the colors of
 // the cover of the track that plays. `fade_s` is the time in seconds that
@@ -234,6 +283,10 @@ pub struct Model {
   tint: boolean,
   fade_s: i32,
   gain: Gain,
+  tone: i32[],
+  filters: eq.Equalizer,
+  tuning: boolean,
+  bars: f64[],
   settings: boolean,
   look: i32,
   hidden: string[],
@@ -286,21 +339,21 @@ pub struct Model {
 
 // A player with no track yet, which reads the files `scan`.
 pub function start(scan: string[]): Model {
-  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", album_by: "", genre: "", place: "", sort: BY_ALBUM, speed: 100, pitch: 0, sleep_min: 0, sleep_us: 0i64, salt: 0, level: LEVEL_TRACK, tint: true, fade_s: 0, gain: no_gain(), settings: false, look: LOOK_SYSTEM, hidden: [], off: [], query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, chosen: [], detail: false, lined: false, error: "", wants: [], sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false, covers: [], bare: [], pictures: [], art: None, lyrics: [], sung: false, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: false, wanted: [], playlists: [], list: "", adding: [], naming: false, name: "" };
+  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", album_by: "", genre: "", place: "", sort: BY_ALBUM, speed: 100, pitch: 0, sleep_min: 0, sleep_us: 0i64, salt: 0, level: LEVEL_TRACK, tint: true, fade_s: 0, gain: no_gain(), tone: [0, 0, 0, 0, 0], filters: eq.new(0, 1, []), tuning: false, bars: [], settings: false, look: LOOK_SYSTEM, hidden: [], off: [], query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, chosen: [], detail: false, lined: false, error: "", wants: [], sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false, covers: [], bare: [], pictures: [], art: None, lyrics: [], sung: false, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: false, wanted: [], playlists: [], list: "", adding: [], naming: false, name: "" };
 }
 
 // A player with the tracks `tracks` and the playlists `playlists` that it
 // saved at an earlier time. The tracks are in the order of the library. It looks for the files again after the screen
 // shows, and gets the picture of each album.
 // The settings that the player keeps for its next start.
-pub struct Prefs { look: i32, sort: i32, hidden: string[], off: i32[], level: i32, tint: boolean, fade: i32 }
+pub struct Prefs { look: i32, sort: i32, hidden: string[], off: i32[], level: i32, tint: boolean, fade: i32, tone: i32[] }
 
 pub function no_prefs(): Prefs {
-  return Prefs { look: LOOK_SYSTEM, sort: BY_ALBUM, hidden: [], off: [], level: LEVEL_TRACK, tint: true, fade: 0 };
+  return Prefs { look: LOOK_SYSTEM, sort: BY_ALBUM, hidden: [], off: [], level: LEVEL_TRACK, tint: true, fade: 0, tone: [0, 0, 0, 0, 0] };
 }
 
 pub function prefs(m: Model): Prefs {
-  return Prefs { look: m.look, sort: m.sort, hidden: m.hidden, off: m.off, level: m.level, tint: m.tint, fade: m.fade_s };
+  return Prefs { look: m.look, sort: m.sort, hidden: m.hidden, off: m.off, level: m.level, tint: m.tint, fade: m.fade_s, tone: m.tone };
 }
 
 // The colors of the player: light or dark as the person chose, or as the
@@ -342,7 +395,7 @@ pub function start_with(home: string, folder: string, tracks: Track[], playlists
       last = key;
     }
   }
-  return Model { ...m, tracks: tracks, have: have, wanted: wanted, playlists: playlists, look: p.look % 3, sort: p.sort % 4, hidden: p.hidden, off: p.off, level: p.level % 3, tint: p.tint, fade_s: faded_to(p.fade) };
+  return Model { ...m, tracks: tracks, have: have, wanted: wanted, playlists: playlists, look: p.look % 3, sort: p.sort % 4, hidden: p.hidden, off: p.off, level: p.level % 3, tint: p.tint, fade_s: faded_to(p.fade), tone: toned(p.tone) };
 }
 
 // A player whose library is in `folder`, and whose person chooses a folder
@@ -394,7 +447,10 @@ pub function start_in(home: string, folder: string): Model {
 // puts a directory back. `ShuffleAll` plays each track of the library in
 // an order that its number chooses, and `PlayList` plays a playlist: the
 // shortcuts of the launcher send them. `Level` goes to the next loudness.
-pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean), Menu(i32), MenuClosed, PlayNext, Enqueue, Lined(boolean), Jump(i32), Drop(i32), Shift(i32, i32), Closing, Walk(string[]), Listed(string, string[]), OpenList(string), AddTo, SaveQueue, ToList(string), NewList, Named(string), Create, Unlist(i32), Relist(i32, i32), DeleteList, Favorite, Imported(string, string[]), Export, Exported(string), Genre(string), Place(string), Sort, ToAlbum, ToArtist, Details, Speed, Pitch, Sleep, Slept(i64), Lyrics, Settings(boolean), Look, Tint, Fade, TabShown(i32), Hide, Unhide(string), ShuffleAll(i32), PlayList(string), Level }
+// `Tuning` shows or hides the screen of the equalizer. `Boost` sets the
+// gain of a band from the part of its slider, and `Preset` gives each band
+// the gain of a preset.
+pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean), Menu(i32), MenuClosed, PlayNext, Enqueue, Lined(boolean), Jump(i32), Drop(i32), Shift(i32, i32), Closing, Walk(string[]), Listed(string, string[]), OpenList(string), AddTo, SaveQueue, ToList(string), NewList, Named(string), Create, Unlist(i32), Relist(i32, i32), DeleteList, Favorite, Imported(string, string[]), Export, Exported(string), Genre(string), Place(string), Sort, ToAlbum, ToArtist, Details, Speed, Pitch, Sleep, Slept(i64), Lyrics, Settings(boolean), Look, Tint, Fade, Tuning(boolean), Boost(i32, f64), Preset(i32), TabShown(i32), Hide, Unhide(string), ShuffleAll(i32), PlayList(string), Level }
 
 // The key of the album of a track: the artist that the album is under,
 // and its name.
@@ -1112,7 +1168,7 @@ function settings(m: Model): ui.El[Msg] {
   }
   let hidden = m.hidden;
   let rows = ui.list("hidden", hidden.len(), 48.0, (row: i32): ui.El[Msg] => ui.row([ui.text(hidden[row]).clamped(1).wide(), ui.text_button("Show", Unhide(hidden[row]))]).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0));
-  return ui.column([head, setting("Theme", "The colors of the player", look_label(m.look), Look), setting("Album colors", "The colors of the cover of the track that plays", toggle_label("Album", m.tint), Tint), setting("Crossfade", "The end of a track fades into the next one", fade_label(m.fade_s), Fade), setting("Loudness", "The same level for each track or each album that tells its gain", level_label(m.level), Level), setting("Folder", folder, "Choose", Choose), setting("Library", count(m.tracks.len(), "song"), "Scan", Rescan), ui.text("Tabs").weighted(700).padding_xy(16.0, 0.0), ui.row(tabs).spaced(4.0).padding_xy(16.0, 0.0).scroll("tab-settings"), ui.text(count(hidden.len(), "hidden folder")).weighted(700).padding_xy(16.0, 0.0), rows]).spaced(12.0).padding_xy(0.0, 16.0).aligned(ui.STRETCH);
+  return ui.column([head, setting("Theme", "The colors of the player", look_label(m.look), Look), setting("Album colors", "The colors of the cover of the track that plays", toggle_label("Album", m.tint), Tint), setting("Crossfade", "The end of a track fades into the next one", fade_label(m.fade_s), Fade), setting("Equalizer", "The loudness of the low, middle and high sounds", tone_name(m.tone), Tuning(true)), setting("Loudness", "The same level for each track or each album that tells its gain", level_label(m.level), Level), setting("Folder", folder, "Choose", Choose), setting("Library", count(m.tracks.len(), "song"), "Scan", Rescan), ui.text("Tabs").weighted(700).padding_xy(16.0, 0.0), ui.row(tabs).spaced(4.0).padding_xy(16.0, 0.0).scroll("tab-settings"), ui.text(count(hidden.len(), "hidden folder")).weighted(700).padding_xy(16.0, 0.0), rows]).spaced(12.0).padding_xy(0.0, 16.0).aligned(ui.STRETCH);
 }
 
 function sort_label(sort: i32): string {
@@ -1202,6 +1258,98 @@ function level_label(level: i32): string {
     return "Album";
   }
   return "Off";
+}
+
+// The gains `tone`, each kept from -TONE_DB to TONE_DB, for each band.
+function toned(tone: i32[]): i32[] {
+  let out: i32[] = [];
+  for i in 0..TONE_HZ.len() {
+    out = out.append(if (i < tone.len()) { tone[i].max(-TONE_DB).min(TONE_DB) } else { 0 });
+  }
+  return out;
+}
+
+// The player with the gain of the band `band` at the part `part` of its
+// slider, in steps of 1 dB.
+function boosted(m: Model, band: i32, part: f64): Model {
+  if (band < 0 || band >= m.tone.len()) {
+    return m;
+  }
+  let db = ((part.max(0.0).min(1.0) * 2.0 - 1.0) * (TONE_DB as f64)).round() as i32;
+  return Model { ...m, tone: m.tone.with(band, db), wants: m.wants.append(KeepPrefs) };
+}
+
+function hz_label(hz: f64): string {
+  if (hz >= 1000.0) {
+    let tenths = (hz / 100.0).round() as i32;
+    if (tenths % 10 == 0) {
+      return (tenths / 10).to_string() + " kHz";
+    }
+    return (tenths / 10).to_string() + "." + (tenths % 10).to_string() + " kHz";
+  }
+  return (hz.round() as i32).to_string() + " Hz";
+}
+
+function db_label(db: i32): string {
+  if (db > 0) {
+    return "+" + db.to_string() + " dB";
+  }
+  return db.to_string() + " dB";
+}
+
+// The screen of the equalizer: a slider for each band, and the presets.
+function tuner(m: Model): ui.El[Msg] {
+  let head = ui.row([ui.text("Equalizer").sized(28.0).weighted(700).wide(), ui.text_button("Up", Up)]).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0);
+  let rows: ui.El[Msg][] = [head];
+  for i in 0..TONE_HZ.len() {
+    let db = if (i < m.tone.len()) { m.tone[i] } else { 0 };
+    let part = (db + TONE_DB) as f64 / ((2 * TONE_DB) as f64);
+    let name = hz_label(TONE_HZ[i]);
+    rows = rows.append(ui.column([ui.row([ui.text(name).weighted(500), ui.space(), ui.text(db_label(db)).colored(ui.MUTED)]), ui.slider(part, (at: f64): Msg => Boost(i, at)).described("Gain of " + name)]).spaced(2.0).padding_xy(16.0, 0.0));
+  }
+  let chips: ui.El[Msg][] = [];
+  let all = presets();
+  for k in 0..all.len() {
+    let (name, gains) = all[k];
+    if (gains == m.tone) {
+      chips = chips.append(ui.button(name, Preset(k)));
+    } else {
+      chips = chips.append(ui.outlined_button(name, Preset(k)));
+    }
+  }
+  rows = rows.append(ui.row(chips).spaced(8.0).padding_xy(16.0, 0.0).scroll("presets"));
+  return ui.column(rows).spaced(16.0).padding_xy(0.0, 16.0).aligned(ui.STRETCH);
+}
+
+// The bars of the spectrum `bars` in the color `color`. The key changes
+// when a bar changes by a step of the 32 steps of its height.
+function spectrum(bars: f64[], color: i32): ui.El[Msg] {
+  let key = "bars";
+  for b in bars {
+    key = key + "," + ((b * 32.0) as i32).to_string();
+  }
+  let paint = (f: draw.Frame, x: i32, y: i32, w: i32, h: i32): void => {
+    let n = bars.len().max(1);
+    let gap = (w / n / 4).max(1);
+    for i in 0..bars.len() {
+      let x0 = x + w * i / n;
+      let x1 = x + w * (i + 1) / n - gap;
+      let tall = (h as f64 * bars[i].max(0.02)) as i32;
+      f.round_rect(x0, y + h - tall, (x1 - x0).max(1), tall, ((x1 - x0) / 2).min(tall / 2), color);
+    }
+  };
+  return ui.canvas(key, paint).width(280.0).height(48.0);
+}
+
+// The bars `old` of the spectrum after the levels `now`: a bar goes up at
+// once and falls by a part of its height at each step.
+pub function fallen(old: f64[], now: f64[]): f64[] {
+  let out: f64[] = [];
+  for i in 0..now.len() {
+    let before = if (i < old.len()) { old[i] } else { 0.0 };
+    out = out.append(now[i].max(before - 0.08));
+  }
+  return out;
 }
 
 function toggle_label(name: string, on: boolean): string {
@@ -1319,7 +1467,7 @@ function words(m: Model): ui.El[Msg] {
   return ui.column(shown).spaced(10.0).aligned(ui.CENTER).justified(ui.CENTER).height(280.0);
 }
 
-function now_playing(m: Model): ui.El[Msg] {
+function now_playing(m: Model, s: ui.Screen): ui.El[Msg] {
   let name = title(m);
   let format = "";
   if (m.current >= 0) {
@@ -1340,7 +1488,7 @@ function now_playing(m: Model): ui.El[Msg] {
   return ui.column(
     [
       ui.row([ui.text_button("Library", Closed)]),
-      ui.column([big]).centered().grow(1.0),
+      ui.column([big, spectrum(m.bars, s.theme.primary)]).spaced(12.0).centered().grow(1.0),
       ui.row([ui.column([ui.text(name).sized(22.0).weighted(700).clamped(2), ui.text(format).colored(ui.MUTED).clamped(1)]).spaced(4.0).wide(), ui.text_button(toggle_label("Favorite", favorite(m)), Favorite)]).spaced(8.0).aligned(ui.CENTER),
       ui.column([ui.slider(part(m), (at: f64): Msg => Sought((at * 1000.0 + 0.5) as i32)).described("Position"), ui.row([ui.text(clock(m.at_ms)).sized(12.0).colored(ui.MUTED), ui.space(), ui.text(clock(m.length_ms)).sized(12.0).colored(ui.MUTED)])]),
       ui.row([ui.text_button("Previous", Previous), ui.button(play_label(m), Toggle), ui.text_button("Next", Next)]).spaced(8.0).justified(ui.CENTER).aligned(ui.CENTER),
@@ -1407,6 +1555,9 @@ pub function view(m: Model, s: ui.Screen): ui.El[Msg] {
   if (m.choosing) {
     return chooser(m);
   }
+  if (m.settings && m.tuning) {
+    return tuner(m);
+  }
   if (m.settings) {
     return settings(m);
   }
@@ -1417,7 +1568,7 @@ pub function view(m: Model, s: ui.Screen): ui.El[Msg] {
     return line(m);
   }
   if (m.open && m.current >= 0) {
-    return now_playing(m);
+    return now_playing(m, s);
   }
   return library(m);
 }
@@ -1650,6 +1801,9 @@ function finished(m: Model): Model {
 function went_up(m: Model): Model {
   if (m.choosing) {
     return Model { ...m, choosing: false };
+  }
+  if (m.tuning) {
+    return Model { ...m, tuning: false };
   }
   if (m.settings) {
     return Model { ...m, settings: false };
@@ -1965,6 +2119,17 @@ pub function update(own m: Model, msg: Msg): Model {
     },
     Level => {
       return Model { ...m, level: (m.level + 1) % 3, wants: m.wants.append(KeepPrefs) };
+    },
+    Tuning(on) => {
+      return Model { ...m, tuning: on };
+    },
+    Boost(band, part) => {
+      return boosted(m, band, part);
+    },
+    Preset(which) => {
+      let all = presets();
+      let (_, gains) = all[which.max(0) % all.len()];
+      return Model { ...m, tone: gains, wants: m.wants.append(KeepPrefs) };
     },
     Look => {
       return Model { ...m, look: (m.look + 1) % 3, wants: m.wants.append(KeepPrefs) };

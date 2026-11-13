@@ -521,6 +521,14 @@ function number_of(text: string): i64 {
   return n;
 }
 
+// The number of a text of digits after an optional "-".
+function signed_of(text: string): i32 {
+  if (text.starts_with("-")) {
+    return -(number_of(text.drop(1).to_owned()) as i32);
+  }
+  return number_of(text) as i32;
+}
+
 // The tracks of a text of `to_text`. A line that does not have ten fields
 // gives no track.
 pub function from_text(text: string): tune.Track[] {
@@ -726,9 +734,9 @@ pub function lrc(text: string): tune.Line[] {
 }
 
 // The settings as a text: a line for the theme, a line for the order, a
-// line for the same loudness, a line for the colors of the cover, a line for the crossfade, a line for each list with no tab, and a line for each hidden directory.
+// line for the same loudness, a line for the colors of the cover, a line for the crossfade, a line for the gains of the equalizer, a line for each list with no tab, and a line for each hidden directory.
 pub function prefs_text(p: tune.Prefs): string {
-  let lines = ["look " + p.look.to_string(), "sort " + p.sort.to_string(), "level " + p.level.to_string(), "tint " + p.tint.to_string(), "fade " + p.fade.to_string()];
+  let lines = ["look " + p.look.to_string(), "sort " + p.sort.to_string(), "level " + p.level.to_string(), "tint " + p.tint.to_string(), "fade " + p.fade.to_string(), "tone " + p.tone.map((db: i32): string => db.to_string()).join(" ")];
   for tab in p.off {
     lines = lines.append("off " + tab.to_string());
   }
@@ -742,22 +750,41 @@ pub function prefs_text(p: tune.Prefs): string {
 pub function prefs_from(text: string): tune.Prefs {
   let p = tune.no_prefs();
   for raw in text.split("\n") {
-    let line = raw.to_owned();
-    if (line.starts_with("look ")) {
-      p = tune.Prefs { ...p, look: number_of(line.drop(5).to_owned()) as i32 };
-    } else if (line.starts_with("sort ")) {
-      p = tune.Prefs { ...p, sort: number_of(line.drop(5).to_owned()) as i32 };
-    } else if (line.starts_with("level ")) {
-      p = tune.Prefs { ...p, level: number_of(line.drop(6).to_owned()) as i32 };
-    } else if (line.starts_with("tint ")) {
-      p = tune.Prefs { ...p, tint: line != "tint false" };
-    } else if (line.starts_with("fade ")) {
-      p = tune.Prefs { ...p, fade: number_of(line.drop(5).to_owned()) as i32 };
-    } else if (line.starts_with("off ")) {
-      p = tune.Prefs { ...p, off: p.off.append(number_of(line.drop(4).to_owned()) as i32) };
-    } else if (line.len() > 7 && line.starts_with("hidden ")) {
-      p = tune.Prefs { ...p, hidden: p.hidden.append(line.drop(7).to_owned()) };
-    }
+    p = with_pref(p, raw.to_owned());
+  }
+  return p;
+}
+
+// The settings `p` with the line `line` of `prefs_text`.
+function with_pref(p: tune.Prefs, line: string): tune.Prefs {
+  if (line.starts_with("tone ")) {
+    return tune.Prefs { ...p, tone: line.drop(5).split(" ").map((t: string): i32 => signed_of(t.trim().to_owned())) };
+  }
+  if (line.starts_with("tint ")) {
+    return tune.Prefs { ...p, tint: line != "tint false" };
+  }
+  if (line.starts_with("off ")) {
+    return tune.Prefs { ...p, off: p.off.append(number_of(line.drop(4).to_owned()) as i32) };
+  }
+  if (line.len() > 7 && line.starts_with("hidden ")) {
+    return tune.Prefs { ...p, hidden: p.hidden.append(line.drop(7).to_owned()) };
+  }
+  return with_number_pref(p, line);
+}
+
+// The settings `p` with a line of `prefs_text` that gives one number.
+function with_number_pref(p: tune.Prefs, line: string): tune.Prefs {
+  if (line.starts_with("look ")) {
+    return tune.Prefs { ...p, look: number_of(line.drop(5).to_owned()) as i32 };
+  }
+  if (line.starts_with("sort ")) {
+    return tune.Prefs { ...p, sort: number_of(line.drop(5).to_owned()) as i32 };
+  }
+  if (line.starts_with("level ")) {
+    return tune.Prefs { ...p, level: number_of(line.drop(6).to_owned()) as i32 };
+  }
+  if (line.starts_with("fade ")) {
+    return tune.Prefs { ...p, fade: number_of(line.drop(5).to_owned()) as i32 };
   }
   return p;
 }
