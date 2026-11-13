@@ -26,7 +26,7 @@ function outputs(program: string, doc: string): string {
     lines = lines.append(output.compact(v));
   }
   if (out.error.len() > 0) {
-    lines = lines.append("error: " + out.error);
+    lines = lines.append("error" + out.message());
   }
   return lines.join("\n");
 }
@@ -238,6 +238,35 @@ function test_control(): test.TestOutcome {
   ]);
 }
 
+function test_errors_caught(): test.TestOutcome {
+  return checks([
+    ("try error(\"x\") catch .", "null", "\"x\""),
+    ("try error({a:1}) catch .a", "null", "1"),
+    ("[try error(null) catch ., try error catch .]", "5", "[null,5]"),
+    ("[try (1, error(\"x\"), 3)], [try (1, error(\"x\"), 3) catch .], [(1, error(\"x\"), 3)?]", "null", "[1]\n[1,\"x\"]\n[1]"),
+    ("try .a catch .", "5", "\"Cannot index number with string \\\"a\\\"\""),
+    ("try (1/0) catch .", "null", "\"number (1) and number (0) cannot be divided because the divisor is zero\""),
+    ("[try error(\"x\") catch (., .)]", "null", "[\"x\",\"x\"]"),
+    ("try error(\"x\") catch empty", "null", ""),
+    ("try error(\"x\") catch . + \"y\"", "null", "\"xy\""),
+    ("try try error(\"x\") catch error(\"y\") catch .", "null", "\"y\""),
+    ("try error(\"x\") catch . as $v | [$v]", "null", "[\"x\"]"),
+    ("try -1, try 1 + 2", "null", "-1\n3"),
+    ("map(try (if . == 1 then error({code: .}) else . end) catch .code * 10)", "[1,2]", "[10,20]"),
+    ("[error(empty)], try error((1,2)) catch .", "null", "[]\n1"),
+    ("try error(\"x\") // 3", "null", "3"),
+    ("error(\"x\")", "null", "error: x"),
+    ("error(\"\")", "null", "error: "),
+    ("error", "null", "error (not a string): null"),
+    ("1, error({a:[1]}), 2", "null", "1\nerror (not a string): {\"a\":[1]}"),
+    ("try error(\"x\") catch error(\"y\")", "null", "error: y"),
+    ("if error(\"x\") then 1 else 2 end", "null", "error: x"),
+    ("{a: try 1}", "null", "compile: syntax error, unexpected 'try'"),
+    ("try 1 catch", "null", "compile: syntax error, unexpected the end of the program"),
+    ("error(1;2)", "null", "compile: error/2 is not defined"),
+  ]);
+}
+
 function test_not_yet(): test.TestOutcome {
   return checks([
     (".a += 1", "null", "compile: assignment " + filter.NOT_YET),
@@ -246,7 +275,7 @@ function test_not_yet(): test.TestOutcome {
     ("\"\\(1)\"", "null", "compile: string interpolation " + filter.NOT_YET),
     (". as [$v] | $v", "null", "compile: a destructuring pattern " + filter.NOT_YET),
     (". as $v ?// [$v] | $v", "null", "compile: a destructuring alternative " + filter.NOT_YET),
-    ("try .a", "null", "compile: 'try' " + filter.NOT_YET),
+    ("def f: 1; f", "null", "compile: 'def' " + filter.NOT_YET),
   ]);
 }
 
@@ -281,7 +310,7 @@ function test_stream(): test.TestOutcome {
 }
 
 function test_undefined_var(): test.TestOutcome {
-  for program in ["[$x, {$y}]", "$x + 1 * $y", "$x // $y", "map(has($y))", "if $x then 1 else $y end", "(1 as $y | $x) | $y", "reduce 1 as $z ($x; $z) | $y", "foreach $y as $z (1; 2; $z)"] {
+  for program in ["[$x, {$y}]", "$x + 1 * $y", "$x // $y", "map(has($y))", "if $x then 1 else $y end", "(1 as $y | $x) | $y", "reduce 1 as $z ($x; $z) | $y", "foreach $y as $z (1; 2; $z)", "try $x catch $y"] {
     let parsed = filter.parse(program);
     if (filter.undefined_var(parsed.ast, ["x"]) != "y") {
       return test.fail(program + ": got \"" + filter.undefined_var(parsed.ast, ["x"]) + "\", want \"y\"");
@@ -300,6 +329,7 @@ function main(): i32 {
   r = r.it("the alternative operator", test_alternative);
   r = r.it("functions", test_functions);
   r = r.it("if, bindings, reduce and foreach", test_control);
+  r = r.it("try, catch and error", test_errors_caught);
   r = r.it("the parts that the port leaves out", test_not_yet);
   r = r.it("number literals and computed numbers", test_numbers);
   r = r.it("pretty output", test_output);

@@ -9,7 +9,8 @@ import "./filter";
 import "./number";
 import "./output";
 
-pub struct Outputs { values: json.JsonValue[], error: string }
+// `error` is empty, or it holds the one value of the error.
+pub struct Outputs { values: json.JsonValue[], error: json.JsonValue[] }
 
 pub struct Env { names: string[], values: json.JsonValue[] }
 
@@ -22,15 +23,30 @@ pub function (e: Env) with(name: string, value: json.JsonValue): Env {
 }
 
 function ok(values: json.JsonValue[]): Outputs {
-  return Outputs { values: values, error: "" };
+  return Outputs { values: values, error: [] };
 }
 
 function one(v: json.JsonValue): Outputs {
   return ok([v]);
 }
 
+function raise(v: json.JsonValue): Outputs {
+  return Outputs { values: [], error: [v] };
+}
+
 function fail(message: string): Outputs {
-  return Outputs { values: [], error: message };
+  return raise(json.JString(message));
+}
+
+// The error after "jq: error (at ...)", or "" when there is none.
+pub function (o: Outputs) message(): string {
+  if (o.error.len() == 0) {
+    return "";
+  }
+  if let json.JString(s) = o.error[0] {
+    return ": " + s;
+  }
+  return " (not a string): " + output.compact(o.error[0]);
 }
 
 function (o: Outputs) failed(): boolean {
@@ -108,7 +124,7 @@ pub function run(f: filter.Ast, input: json.JsonValue, e: Env): Outputs {
     filter.Collect(inner) => {
       let o = run(inner, input, e);
       if (o.failed()) {
-        return fail(o.error);
+        return Outputs { values: [], error: o.error };
       }
       return one(json.JArray(o.values));
     },
@@ -129,6 +145,13 @@ pub function run(f: filter.Ast, input: json.JsonValue, e: Env): Outputs {
     },
     filter.Call(name, args) => {
       return call(name, args, input, e);
+    },
+    filter.Catch(body, handler) => {
+      let o = run(body, input, e);
+      if (!o.failed()) {
+        return o;
+      }
+      return ok(o.values).then(run(handler, o.error[0], e));
     },
     filter.If(cond, yes, no) => {
       return run_if(cond, yes, no, input, e);
@@ -848,6 +871,7 @@ function run_alt(a: filter.Ast, b: filter.Ast, input: json.JsonValue, e: Env): O
 function call(name: string, args: filter.Ast[], input: json.JsonValue, e: Env): Outputs {
   return match (name) {
     "empty" => ok([]),
+    "error" => run_error(args, input, e),
     "not" => one(json.JBool(!truthy(input))),
     "type" => one(json.JString(type_name(input))),
     "length" => length(input),
@@ -864,9 +888,21 @@ function call(name: string, args: filter.Ast[], input: json.JsonValue, e: Env): 
   };
 }
 
+// `error` raises the input. `error(f)` raises the first output of `f`.
+function run_error(args: filter.Ast[], input: json.JsonValue, e: Env): Outputs {
+  if (args.len() == 0) {
+    return raise(input);
+  }
+  let o = run(args[0], input, e);
+  if (o.values.len() > 0) {
+    return raise(o.values[0]);
+  }
+  return o;
+}
+
 function collect(o: Outputs): Outputs {
   if (o.failed()) {
-    return fail(o.error);
+    return Outputs { values: [], error: o.error };
   }
   return one(json.JArray(o.values));
 }
@@ -954,7 +990,7 @@ function run_select(cond: filter.Ast, input: json.JsonValue, e: Env): Outputs {
 
 function sum(o: Outputs): Outputs {
   if (o.failed()) {
-    return fail(o.error);
+    return Outputs { values: [], error: o.error };
   }
   let total: json.JsonValue = json.JNull;
   for v in o.values {

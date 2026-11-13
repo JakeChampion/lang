@@ -26,6 +26,7 @@ pub enum Ast {
   Arith(string, Ast, Ast),
   Alt(Ast, Ast),
   Call(string, Ast[]),
+  Catch(Ast, Ast),
   If(Ast, Ast, Ast),
   Bind(Ast, string, Ast),
   Reduce(Ast, string, Ast, Ast),
@@ -484,13 +485,35 @@ function parse_unary(p: P): (Ast, P) {
     let (inner, q) = parse_multiply(p.advance());
     return (Negate(inner), q);
   }
-  let (source, q) = parse_postfix(p);
+  let (source, q) = if (p.is_ident("try")) { parse_try(p.advance()) } else { parse_postfix(p) };
   if (q.error.len() == 0 && q.is_ident("as")) {
     let (name, r) = parse_binding(q);
     let (body, t) = parse_pipe(r.expect("|"));
     return (Bind(source, name, body), t);
   }
   return (source, q);
+}
+
+// The body of a `try` at `p`, and its `catch` when it has one. `try e` is
+// `e?`.
+function parse_try(p: P): (Ast, P) {
+  let (body, q) = parse_try_operand(p);
+  if (q.error.len() == 0 && q.is_ident("catch")) {
+    let (handler, r) = parse_try_operand(q.advance());
+    return (Catch(body, handler), r);
+  }
+  return (Optional(body), q);
+}
+
+function parse_try_operand(p: P): (Ast, P) {
+  if (p.is_ident("try")) {
+    return parse_try(p.advance());
+  }
+  if (p.is_punct("-")) {
+    let (inner, q) = parse_try_operand(p.advance());
+    return (Negate(inner), q);
+  }
+  return parse_postfix(p);
 }
 
 // `as $name` at `p`.
@@ -636,10 +659,10 @@ function parse_word(x: string, p: P): (Ast, P) {
   if (x == "reduce" || x == "foreach") {
     return parse_fold(x == "foreach", p.advance());
   }
-  if (x == "then" || x == "elif" || x == "else" || x == "end" || x == "as" || x == "and" || x == "or" || x == "catch") {
+  if (x == "then" || x == "elif" || x == "else" || x == "end" || x == "as" || x == "and" || x == "or" || x == "catch" || x == "try") {
     return (Identity, p.fail(keyword_message(x)));
   }
-  if (x == "try" || x == "def" || x == "label" || x == "import" || x == "include") {
+  if (x == "def" || x == "label" || x == "import" || x == "include") {
     return (Identity, p.fail("'" + x + "' " + NOT_YET));
   }
   return parse_call(x, p.advance());
@@ -690,6 +713,7 @@ function arity(name: string): i32 {
     "select" => 1,
     "add" => 0,
     "empty" => 0,
+    "error" => 1,
     "from_entries" => 0,
     "keys" => 0,
     "keys_unsorted" => 0,
@@ -720,7 +744,8 @@ function parse_call(name: string, p: P): (Ast, P) {
       q = q.expect(";");
     }
   }
-  if (q.error.len() == 0 && arity(name) != args.len()) {
+  let fits = arity(name) == args.len() || name == "error" && args.len() == 0;
+  if (q.error.len() == 0 && !fits) {
     let called = name + "/" + args.len().to_string();
     if (arity(name) >= 0) {
       return (Identity, p.fail(called + " is not defined"));
@@ -840,6 +865,7 @@ pub function undefined_var(f: Ast, names: string[]): string {
     Arith(_, a, b) => first_undefined([a, b], names),
     Alt(a, b) => first_undefined([a, b], names),
     Call(_, args) => first_undefined(args, names),
+    Catch(a, b) => first_undefined([a, b], names),
     If(a, b, c) => first_undefined([a, b, c], names),
     Bind(source, name, body) => first_scoped([source], [body], name, names),
     Reduce(source, name, init, update) => first_scoped([source, init], [update], name, names),
