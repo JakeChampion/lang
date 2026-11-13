@@ -1542,8 +1542,14 @@ function __json_t_object(s: string, start: i32, own tape: u64[], depth: i32): (u
 ```fern
 <<33 pub function parse_document(s: string): Result[Document, JsonError]>>=
 pub function parse_document(s: string): Result[Document, JsonError] {
+  return parse_document_with_depth(s, 128);
+}
+
+// parse_document_with_depth is parse_document with a lower depth limit.
+// The rule for depth is that of parse_with_depth.
+pub function parse_document_with_depth(s: string, depth: i32): Result[Document, JsonError] {
   let empty: u64[] = [];
-  let (tape, end) = __json_t_value(s, __json_ws(s, 0), empty, 0);
+  let (tape, end) = __json_t_value(s, __json_ws(s, 0), empty, __json_start_depth(depth));
   let fail = -1 - end;
   if (end >= 0) {
     fail = __json_ws(s, end);
@@ -2656,8 +2662,27 @@ pub function error(message: string): JsonError {
 }
 
 pub function parse(s: string): Result[JsonValue, JsonError] {
+  return parse_with_depth(s, 128);
+}
+
+// The parsers count from this value up to 128, so a lower limit costs nothing.
+function __json_start_depth(depth: i32): i32 {
+  if (depth < 0) {
+    return 128;
+  }
+  if (depth > 128) {
+    return 0;
+  }
+  return 128 - depth;
+}
+
+// parse_with_depth is parse with a lower depth limit. depth is the number of
+// arrays and objects that one value can be inside, itself included. With 0,
+// only a scalar parses. A value above 128 gives 128: a caller can lower the
+// limit of the module and cannot raise it.
+pub function parse_with_depth(s: string, depth: i32): Result[JsonValue, JsonError] {
   let at = cell_new(0);
-  let v = __json_p_value(s, at, 0);
+  let v = __json_p_value(s, at, __json_start_depth(depth));
   let end = at.get();
   if (end < 0) {
     let off = -1 - end;

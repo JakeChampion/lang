@@ -12,8 +12,8 @@ The string representation decisions are in `docs/STR-VIEW-CONTRACT.md`, and the 
 | UTF-8 at the boundary | `read_file` validates the file and answers `InvalidUtf8`, and `std/utf8.from_bytes` validates bytes and answers `Err(Utf8Error)` with the offset of the first bad byte. `string_from_bytes_unchecked` is the only way to hold invalid bytes, and its name says so. |
 | Length | A string or array length is an `i32`, and a box holds at most 2^28 - 1 words, so a concatenation or a repeat past the ceiling aborts with the allocation size cause ([ARITHMETIC-AUDIT.md](ARITHMETIC-AUDIT.md)). |
 | Number parsing | Every parser answers `OutOfRange` above its type's range, `InvalidDigit(offset)` for a bad byte, and `EmptyInput` for nothing. There is no trim and no digit separator. |
-| JSON | The parser refuses a document nested deeper than 128 arrays or objects with a `JsonError`, so a hostile document cannot exhaust the stack. |
-| PEG | `std/peg` fails a match at a rule reference nested deeper than 2048, so a recursive grammar cannot exhaust the stack on a hostile input. |
+| JSON | The parser refuses a document nested deeper than 128 arrays or objects with a `JsonError`, so a hostile document cannot exhaust the stack. `json.parse_with_depth` and `json.parse_document_with_depth` take a lower limit. |
+| PEG | `std/peg` fails a match at a rule reference nested deeper than 2048, so a recursive grammar cannot exhaust the stack on a hostile input. `peg.parse_with_depth` takes a lower limit. |
 | Format strings | `f"..."` is compiled, so its placeholders are not data. `std/format.format` takes a specification at run time, and a width or precision now saturates at one million. |
 | Fuzzing | `std/fuzz` drives a target with mutated seeds, and `fernsmith` generates whole programs (`docs/FUZZING.md`). |
 
@@ -29,6 +29,8 @@ The `std parse limits` suite runs natively on x86-64 and on arm64 under QEMU, an
 
 - 128 nested arrays parse and 129 are refused, as are 100000.
 - A grammar of nested parentheses parses 2000 levels and refuses 2100.
+- With a limit of 4, four nested arrays parse and five are refused, in `json.parse_with_depth` and in `json.parse_document_with_depth`. A limit of 0 accepts only a scalar. A limit of 100000 gives the limit of the module: 128 levels parse and 129 are refused.
+- With a limit of 5, the grammar of nested parentheses parses 4 levels. With a limit of 4, it refuses them. A limit of 100000 gives the limit of the module.
 - `utf8.from_bytes` refuses a truncated sequence, an overlong encoding, and a surrogate, and accepts a valid three-byte sequence.
 - `parse_i32` refuses a value above the range and below it, and accepts the maximum.
 - A two-billion width and a fourteen-digit width pad to one million bytes, an eleven-digit precision stays within that bound, and a small width is unchanged.
@@ -37,6 +39,6 @@ The `std parse limits` suite runs natively on x86-64 and on arm64 under QEMU, an
 ## Remaining limits
 
 - The iteration count and the seed set bound the fuzz loops in the suite. `FuzzSelfHostStdJSON` and `FuzzSelfHostStdURL` run the JSON and URL parsers under `go test -fuzz` ([FUZZING-AUDIT.md](FUZZING-AUDIT.md)). `FuzzSelfHostStdUTF8` runs `utf8.from_bytes`, `utf8.is_valid` and `utf8.from_bytes_lossy` against Go's `unicode/utf8`. `TestSelfHostReaderCoverageGuidedFuzz` steers all three by the coverage of the Fern process.
-- The JSON depth limit is fixed at 128, and the PEG depth limit at 2048. A caller cannot lower them.
+- A caller can lower the JSON depth limit of 128 and the PEG depth limit of 2048. A caller cannot raise them. `json.decode` and the other typed readers use the limit of the module.
 - A format width of one million still allocates one megabyte per placeholder. A caller that formats untrusted specifications bounds them itself.
 - CSV and the header map are flat parsers with no limit of their own beyond the string ceiling. The HTTP parser bounds its request line, header block, header count and body (`HttpLimits`).

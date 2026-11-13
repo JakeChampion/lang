@@ -84,6 +84,63 @@ function test_json_depth_limit(): test.TestOutcome {
   return test.pass();
 }
 
+// One row of a lower limit: the text, the limit, and whether it must parse.
+struct Depth { text: string, limit: i32, parses: boolean }
+
+function depth_rows(): Depth[] {
+  return [
+    Depth { text: nested(4), limit: 4, parses: true },
+    Depth { text: nested(5), limit: 4, parses: false },
+    Depth { text: "7", limit: 0, parses: true },
+    Depth { text: "[]", limit: 0, parses: false },
+    Depth { text: "{\"a\": [1]}", limit: 2, parses: true },
+    Depth { text: "{\"a\": [[1]]}", limit: 2, parses: false },
+    Depth { text: "7", limit: -1, parses: true },
+    Depth { text: "[]", limit: -1, parses: false },
+    Depth { text: nested(128), limit: 100000, parses: true },
+    Depth { text: nested(129), limit: 100000, parses: false },
+  ];
+}
+
+// A caller lowers the depth limit of the two JSON parsers, and cannot raise it.
+function test_json_lower_depth_limit(): test.TestOutcome {
+  for row in depth_rows() {
+    let label = row.text.len().to_string() + " bytes at limit " + row.limit.to_string();
+    if (json.parse_with_depth(row.text, row.limit).is_ok() != row.parses) {
+      return test.fail("parse_with_depth: " + label);
+    }
+    if (json.parse_document_with_depth(row.text, row.limit).is_ok() != row.parses) {
+      return test.fail("parse_document_with_depth: " + label);
+    }
+  }
+  return test.pass();
+}
+
+// A caller lowers the depth limit of a PEG match, and cannot raise it.
+function test_peg_lower_depth_limit(): test.TestOutcome {
+  let rules: Map[string, peg.Pattern] = map_new(2);
+  rules = rules.insert("e", PChoice([PSeq([PLit("("), PRef("e"), PLit(")")]), PLit("x")]));
+  let Ok(g) = peg.grammar(rules, "e") else {
+    return test.fail("grammar should build");
+  };
+  if (!peg.parse_with_depth(g, parens(4), 5).is_ok()) {
+    return test.fail("4 levels refused at limit 5");
+  }
+  if (peg.parse_with_depth(g, parens(4), 4).is_ok()) {
+    return test.fail("4 levels accepted at limit 4");
+  }
+  if (peg.parse_with_depth(g, "x", 0).is_ok()) {
+    return test.fail("a rule matched at limit 0");
+  }
+  if (!peg.parse_with_depth(g, parens(2000), 100000).is_ok()) {
+    return test.fail("2000 levels refused at limit 100000");
+  }
+  if (peg.parse_with_depth(g, parens(2100), 100000).is_ok()) {
+    return test.fail("2100 levels accepted at limit 100000");
+  }
+  return test.pass();
+}
+
 function test_invalid_utf8_is_refused(): test.TestOutcome {
   let bad: u8[] = [0xc3 as u8, 0x28 as u8];
   if (utf8.from_bytes(bad).is_ok()) {
@@ -187,6 +244,8 @@ function main(): i32 {
   let r = test.new("std parse limits");
   r = r.it("json depth limit", test_json_depth_limit);
   r = r.it("peg depth limit", test_peg_depth_limit);
+  r = r.it("json lower depth limit", test_json_lower_depth_limit);
+  r = r.it("peg lower depth limit", test_peg_lower_depth_limit);
   r = r.it("invalid utf8 is refused", test_invalid_utf8_is_refused);
   r = r.it("number parse is bounded", test_number_parse_is_bounded);
   r = r.it("format width is bounded", test_format_width_is_bounded);
