@@ -240,7 +240,7 @@ function ref_is(d: blocks.Doc, label: string, dest: string, title: string): stri
 function test_definitions(): test.TestOutcome {
   let d = blocks.parse("[Foo  Bar]: /url 'the title'\n[ẞ]: <a b>\n[foo bar]: /other\n[t]:\n/u\n\"multi\nline\"\n> [q]: (x) (paren)\n[e]: <>\n[n]: /u \"no\" x\n[x]:\n");
   let errors = [
-    ref_is(d, "foo bar", "/url", "the title"), ref_is(d, "ss", "a b", ""), ref_is(d, "t", "/u", "multi\nline"), ref_is(d, "q", "(x)", "paren"), ref_is(d, "e", "", ""),
+    ref_is(d, "foo bar", "/url", "'the title'"), ref_is(d, "ss", "a b", ""), ref_is(d, "t", "/u", "\"multi\nline\""), ref_is(d, "q", "(x)", "(paren)"), ref_is(d, "e", "", ""),
   ];
   for e in errors {
     if (e.len() > 0) {
@@ -270,8 +270,25 @@ function test_normalize(): test.TestOutcome {
       return test.fail(label + ": got \"" + refs.normalize(label) + "\", want \"" + want + "\"");
     }
   }
-  if (refs.label_end("[a\\]b]", 0) != 6 || refs.label_end("[a[b]", 0) != -1 || refs.label_end("[" + "x".repeat(1000) + "]", 0) != -1) {
+  let long = "[" + "x".repeat(1000) + "]";
+  if (refs.label_end("[a\\]b]", 0, 6) != 6 || refs.label_end("[a[b]", 0, 5) != -1 || refs.label_end("[a]", 0, 2) != -1 || refs.label_end(long, 0, long.len()) != 1002 || refs.label_end("[x" + long, 0, long.len() + 2) != -1) {
     return test.fail("label_end");
+  }
+  return test.pass();
+}
+
+// A title is the longest match: a quote after a backslash ends it when no
+// later quote can.
+function test_titles(): test.TestOutcome {
+  let cases = [("\"a\"", 3), ("\"a\\\" b", 4), ("\"a\\\" b\"", 7), ("'a\\'", 4), ("(a\\)b)", 6), ("(a(b)", -1), ("(a\\)(b)", 4), ("\"a", -1), ("x", -1)];
+  for c in cases {
+    let (s, want) = c;
+    if (refs.title_end(s, 0, s.len()) != want) {
+      return test.fail(s + ": got " + refs.title_end(s, 0, s.len()).to_string());
+    }
+  }
+  if (refs.title_end("\"a\"", 0, 2) != -1 || refs.dest_end("a\x01b c", 0, 5) != 3 || refs.dest_end("(a)b)", 0, 5) != 4) {
+    return test.fail("an end of the text, or a destination");
   }
   return test.pass();
 }
@@ -321,5 +338,6 @@ function main(): i32 {
   r = r.it("label normalization", test_normalize);
   r = r.it("tags and HTML block conditions", test_tags);
   r = r.it("backslash unescaping", test_unescape);
+  r = r.it("link titles and destinations", test_titles);
   return r.finish();
 }
