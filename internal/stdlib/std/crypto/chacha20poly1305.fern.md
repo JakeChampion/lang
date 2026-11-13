@@ -32,9 +32,9 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<7 struct Poly>>
 
-<<8 function __poly_new(k0: u32, k1: u32, k2: u32, k3: u32): Poly>>
+<<8 function __poly_new(key: [u8]): Poly>>
 
-<<9 function __poly_finish(p: Poly, s0: u32, s1: u32, s2: u32, s3: u32): u8[]>>
+<<9 function __poly_finish(p: Poly, s0: u64, s1: u64): u8[]>>
 
 <<10 pub function poly1305(key: [u8], msg: [u8]): Result[u8[], aead.AeadError]>>
 
@@ -122,167 +122,115 @@ pub function (k: Key) chacha20_xor(nonce: [u8], counter: u32, data: [u8]): Resul
 
 ```fern
 <<7 struct Poly>>=
-struct Poly { r0: u32, r1: u32, r2: u32, r3: u32, r4: u32, h0: u32, h1: u32, h2: u32, h3: u32, h4: u32 }
-```
+// h is the accumulator in 64-bit limbs: h0 + h1 * 2^64 + h2 * 2^128.
+struct Poly { r0: u64, r1: u64, h0: u64, h1: u64, h2: u64 }
 
-### `8 function __poly_new(k0: u32, k1: u32, k2: u32, k3: u32): Poly`
-
-```fern
-<<8 function __poly_new(k0: u32, k1: u32, k2: u32, k3: u32): Poly>>=
-function __poly_new(k0: u32, k1: u32, k2: u32, k3: u32): Poly {
-  return Poly {
-    r0: k0 & 0x3ffffff,
-    r1: (k0 >> 26 | k1 << 6) & 0x3ffff03,
-    r2: (k1 >> 20 | k2 << 12) & 0x3ffc0ff,
-    r3: (k2 >> 14 | k3 << 18) & 0x3f03fff,
-    r4: k3 >> 8 & 0x00fffff,
-    h0: 0, h1: 0, h2: 0, h3: 0, h4: 0,
-  };
+function __le64(b: [u8], at: i32): u64 {
+  return b[at] as u64 | b[at + 1] as u64 << 8 | b[at + 2] as u64 << 16 | b[at + 3] as u64 << 24 | b[at + 4] as u64 << 32 | b[at + 5] as u64 << 40
+    | b[at + 6] as u64 << 48 | b[at + 7] as u64 << 56;
 }
 
+function __put_le64(own d: u8[], at: i32, v: u64): u8[] {
+  return __put_le32(__put_le32(d, at, (v & 0xffffffff as u64) as u32), at + 4, (v >> 32) as u32);
+}
+
+// The carry out of the 64-bit sum s = a + b, with no branch.
+function __carry(a: u64, b: u64, s: u64): u64 {
+  return (a & b | (a | b) & ~s) >> 63;
+}
+```
+
+### `8 function __poly_new(key: [u8]): Poly`
+
+```fern
+<<8 function __poly_new(key: [u8]): Poly>>=
+function __poly_new(key: [u8]): Poly {
+  return Poly { r0: __le64(key, 0) & 0x0ffffffc0fffffff as u64, r1: __le64(key, 8) & 0x0ffffffc0ffffffc as u64, h0: 0, h1: 0, h2: 0 };
+}
+
+// Absorbs b[from:from + len], 16 bytes at a time. A short last block is padded with zeros. With pad_one, it
+// also gets a 1 byte after the message and no 2^128 bit, as RFC 8439 section 2.5 pads a message. The
+// product with r is not fully reduced. After each block h2 is 4 or less, so h is less than 2p.
 function __poly_blocks(p: Poly, b: [u8], from: i32, len: i32, pad_one: boolean): Poly {
-  let r0 = p.r0 as u64;
-  let r1 = p.r1 as u64;
-  let r2 = p.r2 as u64;
-  let r3 = p.r3 as u64;
-  let r4 = p.r4 as u64;
-  let s1 = r1 * 5;
-  let s2 = r2 * 5;
-  let s3 = r3 * 5;
-  let s4 = r4 * 5;
+  let r0 = p.r0;
+  let r1 = p.r1;
+  let s1 = r1 + (r1 >> 2);
   let h0 = p.h0;
   let h1 = p.h1;
   let h2 = p.h2;
-  let h3 = p.h3;
-  let h4 = p.h4;
   let tail = __alloc_u8(16);
   let at = 0;
   while (at < len) {
-    let t0 = 0;
-    let t1 = 0;
-    let t2 = 0;
-    let t3 = 0;
-    let hibit = 1 << 24;
+    let m0: u64 = 0;
+    let m1: u64 = 0;
+    let hibit: u64 = 1;
     if (len - at >= 16) {
-      t0 = __le32(b, from + at);
-      t1 = __le32(b, from + at + 4);
-      t2 = __le32(b, from + at + 8);
-      t3 = __le32(b, from + at + 12);
+      m0 = __le64(b, from + at);
+      m1 = __le64(b, from + at + 8);
     } else {
-      let i = 0;
-      while (i < 16) {
+      for i in 0..16 {
         if (at + i < len) {
           tail = tail.with(i, b[from + at + i]);
         } else {
           tail = tail.with(i, 0 as u8);
         }
-        i += 1;
       }
       if (pad_one) {
         tail = tail.with(len - at, 1 as u8);
         hibit = 0;
       }
-      t0 = __le32(tail, 0);
-      t1 = __le32(tail, 4);
-      t2 = __le32(tail, 8);
-      t3 = __le32(tail, 12);
+      m0 = __le64(tail, 0);
+      m1 = __le64(tail, 8);
     }
-    h0 += t0 & 0x3ffffff;
-    h1 += (t0 >> 26 | t1 << 6) & 0x3ffffff;
-    h2 += (t1 >> 20 | t2 << 12) & 0x3ffffff;
-    h3 += (t2 >> 14 | t3 << 18) & 0x3ffffff;
-    h4 += t3 >> 8 | hibit;
-    let d0 = h0 as u64 * r0 + h1 as u64 * s4 + h2 as u64 * s3 + h3 as u64 * s2 + h4 as u64 * s1;
-    let d1 = h0 as u64 * r1 + h1 as u64 * r0 + h2 as u64 * s4 + h3 as u64 * s3 + h4 as u64 * s2;
-    let d2 = h0 as u64 * r2 + h1 as u64 * r1 + h2 as u64 * r0 + h3 as u64 * s4 + h4 as u64 * s3;
-    let d3 = h0 as u64 * r3 + h1 as u64 * r2 + h2 as u64 * r1 + h3 as u64 * r0 + h4 as u64 * s4;
-    let d4 = h0 as u64 * r4 + h1 as u64 * r3 + h2 as u64 * r2 + h3 as u64 * r1 + h4 as u64 * r0;
-    let c = d0 >> 26;
-    h0 = (d0 & 0x3ffffff) as u32;
-    d1 += c;
-    c = d1 >> 26;
-    h1 = (d1 & 0x3ffffff) as u32;
-    d2 += c;
-    c = d2 >> 26;
-    h2 = (d2 & 0x3ffffff) as u32;
-    d3 += c;
-    c = d3 >> 26;
-    h3 = (d3 & 0x3ffffff) as u32;
-    d4 += c;
-    c = d4 >> 26;
-    h4 = (d4 & 0x3ffffff) as u32;
-    h0 += c as u32 * 5;
-    let c2 = h0 >> 26;
-    h0 &= 0x3ffffff;
-    h1 += c2;
+    let t0 = h0 + m0;
+    let c0 = __carry(h0, m0, t0);
+    let t1 = h1 + m1;
+    let c1 = __carry(h1, m1, t1);
+    h1 = t1 + c0;
+    h2 += hibit + c1 + __carry(t1, c0, h1);
+    h0 = t0;
+    let a = h0 * r0;
+    let b1 = h1 * s1;
+    let d0 = a + b1;
+    let d0_hi = __mulhi_u64(h0, r0) + __mulhi_u64(h1, s1) + __carry(a, b1, d0);
+    let e = h0 * r1;
+    let f = h1 * r0;
+    let d1 = e + f;
+    let d1_hi = __mulhi_u64(h0, r1) + __mulhi_u64(h1, r0) + __carry(e, f, d1);
+    let g = h2 * s1;
+    let d1g = d1 + g;
+    d1_hi += __carry(d1, g, d1g);
+    h1 = d1g + d0_hi;
+    h2 = h2 * r0 + d1_hi + __carry(d1g, d0_hi, h1);
+    let c = (h2 >> 2) * 5;
+    h2 &= 3;
+    h0 = d0 + c;
+    let k0 = __carry(d0, c, h0);
+    let n1 = h1 + k0;
+    h2 += __carry(h1, k0, n1);
+    h1 = n1;
     at += 16;
   }
-  return Poly { ...p, h0: h0, h1: h1, h2: h2, h3: h3, h4: h4 };
+  return Poly { ...p, h0: h0, h1: h1, h2: h2 };
 }
 ```
 
-### `9 function __poly_finish(p: Poly, s0: u32, s1: u32, s2: u32, s3: u32): u8[]`
+### `9 function __poly_finish(p: Poly, s0: u64, s1: u64): u8[]`
 
 ```fern
-<<9 function __poly_finish(p: Poly, s0: u32, s1: u32, s2: u32, s3: u32): u8[]>>=
-function __poly_finish(p: Poly, s0: u32, s1: u32, s2: u32, s3: u32): u8[] {
-  let h0 = p.h0;
-  let h1 = p.h1;
-  let h2 = p.h2;
-  let h3 = p.h3;
-  let h4 = p.h4;
-  let c = h1 >> 26;
-  h1 &= 0x3ffffff;
-  h2 += c;
-  c = h2 >> 26;
-  h2 &= 0x3ffffff;
-  h3 += c;
-  c = h3 >> 26;
-  h3 &= 0x3ffffff;
-  h4 += c;
-  c = h4 >> 26;
-  h4 &= 0x3ffffff;
-  h0 += c * 5;
-  c = h0 >> 26;
-  h0 &= 0x3ffffff;
-  h1 += c;
-  let g0 = h0 + 5;
-  c = g0 >> 26;
-  g0 &= 0x3ffffff;
-  let g1 = h1 + c;
-  c = g1 >> 26;
-  g1 &= 0x3ffffff;
-  let g2 = h2 + c;
-  c = g2 >> 26;
-  g2 &= 0x3ffffff;
-  let g3 = h3 + c;
-  c = g3 >> 26;
-  g3 &= 0x3ffffff;
-  let g4 = h4 + c - (1 << 26);
-  let keep_g = (g4 >> 31) - 1;
-  let keep_h = keep_g ^ 0xffffffff;
-  h0 = h0 & keep_h | g0 & keep_g;
-  h1 = h1 & keep_h | g1 & keep_g;
-  h2 = h2 & keep_h | g2 & keep_g;
-  h3 = h3 & keep_h | g3 & keep_g;
-  h4 = h4 & keep_h | g4 & keep_g;
-  let w0 = h0 | h1 << 26;
-  let w1 = h1 >> 6 | h2 << 20;
-  let w2 = h2 >> 12 | h3 << 14;
-  let w3 = h3 >> 18 | h4 << 8;
-  let f = w0 as u64 + s0 as u64;
-  w0 = f as u32;
-  f = w1 as u64 + s1 as u64 + (f >> 32);
-  w1 = f as u32;
-  f = w2 as u64 + s2 as u64 + (f >> 32);
-  w2 = f as u32;
-  f = w3 as u64 + s3 as u64 + (f >> 32);
-  w3 = f as u32;
-  let tag = __alloc_u8(16);
-  tag = __put_le32(tag, 0, w0);
-  tag = __put_le32(tag, 4, w1);
-  tag = __put_le32(tag, 8, w2);
-  return __put_le32(tag, 12, w3);
+<<9 function __poly_finish(p: Poly, s0: u64, s1: u64): u8[]>>=
+// h is below 2p, so h - p is h + 5 less 2^130 exactly when that sum reaches bit 130.
+function __poly_finish(p: Poly, s0: u64, s1: u64): u8[] {
+  let g0 = p.h0 + 5;
+  let c0 = __carry(p.h0, 5, g0);
+  let g1 = p.h1 + c0;
+  let c1 = __carry(p.h1, c0, g1);
+  let take_g = 0 - (p.h2 + c1 >> 2);
+  let h0 = p.h0 & ~take_g | g0 & take_g;
+  let h1 = p.h1 & ~take_g | g1 & take_g;
+  let t0 = h0 + s0;
+  let t1 = h1 + s1 + __carry(h0, s0, t0);
+  return __put_le64(__put_le64(__alloc_u8(16), 0, t0), 8, t1);
 }
 ```
 
@@ -294,9 +242,8 @@ pub function poly1305(key: [u8], msg: [u8]): Result[u8[], aead.AeadError] {
   if (key.len() != 32) {
     return Err(aead.KeyLength(key.len()));
   }
-  let p = __poly_new(__le32(key, 0), __le32(key, 4), __le32(key, 8), __le32(key, 12));
-  p = __poly_blocks(p, msg, 0, msg.len(), true);
-  return Ok(__poly_finish(p, __le32(key, 16), __le32(key, 20), __le32(key, 24), __le32(key, 28)));
+  let p = __poly_blocks(__poly_new(key), msg, 0, msg.len(), true);
+  return Ok(__poly_finish(p, __le64(key, 16), __le64(key, 24)));
 }
 ```
 
@@ -307,21 +254,14 @@ pub function poly1305(key: [u8], msg: [u8]): Result[u8[], aead.AeadError] {
 // ctr holds block counter 0, whose key stream starts with the one-time Poly1305 key.
 function __aead_tag(k: Key, ctr: u8[], aad: [u8], ct: [u8], from: i32, len: i32): u8[] {
   let otk = __chacha20_xor_into(k.k, ctr, __alloc_u8(32), 0, 32);
-  let p = __poly_new(__le32(otk, 0), __le32(otk, 4), __le32(otk, 8), __le32(otk, 12));
-  p = __poly_blocks(p, aad, 0, aad.len(), false);
+  let p = __poly_blocks(__poly_new(otk), aad, 0, aad.len(), false);
   p = __poly_blocks(p, ct, from, len, false);
-  let lens = __alloc_u8(16);
-  lens = __put_le32(lens, 0, aad.len() as u32);
-  lens = __put_le32(lens, 4, 0);
-  lens = __put_le32(lens, 8, len as u32);
-  lens = __put_le32(lens, 12, 0);
+  let lens = __put_le64(__put_le64(__alloc_u8(16), 0, aad.len() as u64), 8, len as u64);
   p = __poly_blocks(p, lens, 0, 16, false);
-  let s0 = __le32(otk, 16);
-  let s1 = __le32(otk, 20);
-  let s2 = __le32(otk, 24);
-  let s3 = __le32(otk, 28);
+  let s0 = __le64(otk, 16);
+  let s1 = __le64(otk, 24);
   crypto.erase(otk);
-  return __poly_finish(p, s0, s1, s2, s3);
+  return __poly_finish(p, s0, s1);
 }
 ```
 

@@ -476,6 +476,117 @@ function test_seal_lengths(): test.TestOutcome {
   return test.pass();
 }
 
+// Poly1305 in five limbs of 26 bits, the reference for the module's 64-bit limbs. The message is padded as
+// RFC 8439 section 2.5 pads it.
+function ref_poly1305(key: [u8], msg: [u8]): u8[] {
+  let t0 = le32(key, 0);
+  let t1 = le32(key, 4);
+  let t2 = le32(key, 8);
+  let t3 = le32(key, 12);
+  let r: u64[] = [(t0 & 0x3ffffff) as u64, ((t0 >> 26 | t1 << 6) & 0x3ffff03) as u64, ((t1 >> 20 | t2 << 12) & 0x3ffc0ff) as u64, ((t2 >> 14 | t3 << 18) & 0x3f03fff) as u64, (t3 >> 8 & 0x00fffff) as u64];
+  let h: u64[] = [0, 0, 0, 0, 0];
+  let at = 0;
+  while (at < msg.len()) {
+    let block = __alloc_u8(17);
+    let n = msg.len() - at;
+    if (n > 16) {
+      n = 16;
+    }
+    block = __bytes_into(block, 0, msg, at, n).with(n, 1 as u8);
+    let m0 = le32(block, 0);
+    let m1 = le32(block, 4);
+    let m2 = le32(block, 8);
+    let m3 = le32(block, 12);
+    let m: u64[] = [(m0 & 0x3ffffff) as u64, ((m0 >> 26 | m1 << 6) & 0x3ffffff) as u64, ((m1 >> 20 | m2 << 12) & 0x3ffffff) as u64, ((m2 >> 14 | m3 << 18) & 0x3ffffff) as u64, (m3 >> 8) as u64 | block[16] as u64 << 24];
+    for i in 0..5 {
+      h = h.with(i, h[i] + m[i]);
+    }
+    let d: u64[] = [0, 0, 0, 0, 0];
+    for i in 0..5 {
+      for j in 0..5 {
+        let k = (i + j) % 5;
+        let rj = r[j];
+        if (i + j >= 5) {
+          rj = rj * 5;
+        }
+        d = d.with(k, d[k] + h[i] * rj);
+      }
+    }
+    let c: u64 = 0;
+    for i in 0..5 {
+      let v = d[i] + c;
+      h = h.with(i, v & 0x3ffffff);
+      c = v >> 26;
+    }
+    h = h.with(0, h[0] + c * 5);
+    h = h.with(1, h[1] + (h[0] >> 26)).with(0, h[0] & 0x3ffffff);
+    at += 16;
+  }
+  let c: u64 = 0;
+  for i in 1..6 {
+    let v = h[i % 5] + c;
+    if (i == 5) {
+      v = h[0] + c * 5;
+    }
+    h = h.with(i % 5, v & 0x3ffffff);
+    c = v >> 26;
+  }
+  h = h.with(1, h[1] + c);
+  let g: u64[] = [];
+  c = 5;
+  for i in 0..5 {
+    let v = h[i] + c;
+    g = g.append(v & 0x3ffffff);
+    c = v >> 26;
+  }
+  let take_g = c == 1 as u64;
+  if (take_g) {
+    h = g;
+  }
+  let lo = h[0] | h[1] << 26 | h[2] << 52;
+  let hi = h[2] >> 12 | h[3] << 14 | h[4] << 40;
+  let s0 = le32(key, 16) as u64 | le32(key, 20) as u64 << 32;
+  let s1 = le32(key, 24) as u64 | le32(key, 28) as u64 << 32;
+  let w0 = lo + s0;
+  let w1 = hi + s1;
+  if (w0 < lo) {
+    w1 = w1 + 1;
+  }
+  let tag = __alloc_u8(16);
+  for i in 0..8 {
+    let shift = (8 * i) as u64;
+    tag = tag.with(i, (w0 >> shift & 255) as u8).with(8 + i, (w1 >> shift & 255) as u8);
+  }
+  return tag;
+}
+
+function filled_with(n: i32, b: u8): u8[] {
+  let out = __alloc_u8(n);
+  for i in 0..n {
+    out = out.with(i, b);
+  }
+  return out;
+}
+
+// The keys have the largest r after the clamp, an s that carries out of each half, and a pattern. The messages
+// are 0xff bytes, which keep the accumulator near its bound, and a pattern.
+function test_poly1305_lengths(): test.TestOutcome {
+  let keys: u8[][] = [filled_with(32, 255 as u8), pattern(32, 9), key_seq(1)];
+  for key in keys {
+    for n in lengths() {
+      for msg in [filled_with(n, 255 as u8), pattern(n, n)] {
+        let Ok(got) = chacha20poly1305.poly1305(key, msg) else {
+          return test.fail("a 32-byte key was refused");
+        };
+        if (!same(got, ref_poly1305(key, msg))) {
+          return test.fail("length " + n.to_string() + " differs from the 26-bit reference under key " + hex.encode(key));
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let r = test.new("std/crypto/chacha20poly1305");
   r = r.it("chacha20 block, RFC 8439 2.3.2", test_block);
@@ -496,6 +607,7 @@ function main(): i32 {
   r = r.it("the in-place calls refuse additional data that overlaps the text", test_in_place_refuses_an_overlap);
   r = r.it("chacha20 matches the scalar reference at each length", test_xor_lengths);
   r = r.it("seal matches the scalar reference and poly1305 at each length", test_seal_lengths);
+  r = r.it("poly1305 matches the 26-bit reference at each length", test_poly1305_lengths);
   return r.finish();
 }
 
