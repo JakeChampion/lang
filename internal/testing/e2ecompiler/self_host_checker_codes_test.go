@@ -2657,6 +2657,27 @@ function main(): i32 { return 0; }
 		{"e065-literal-ok", "function f(): str {\n    return \"hi\";\n}\nfunction main(): i32 { return 0; }\n", nil},
 		{"e065-param-slice-ok", "function f(p: string): str {\n    return slice_unchecked(p, 0, 2);\n}\nfunction main(): i32 { return 0; }\n", nil},
 		{"e065-str-of-param-ok", "function f(p: str): str {\n    let t: str = p;\n    return t;\n}\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-field-of-param", strFieldPrelude + "function f(t: T, k: i32): str { return slice_unchecked(t.text, 0, k); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-nested-field-of-param", strFieldPrelude + "function f(o: Outer, k: i32): str { return slice_unchecked(o.inner.text, 0, k); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-field-of-receiver", strFieldPrelude + "function (t: T) f(k: i32): str { return slice_unchecked(t.text, 0, k); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-field-of-local-copy", strFieldPrelude + "function f(t: T, k: i32): str { let u = t; return slice_unchecked(u.text, 0, k); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-field-of-copy-of-copy", strFieldPrelude + "function f(t: T, k: i32): str { let u = t; let w = u; return slice_unchecked(w.text, 0, k); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-local-copy-of-field", strFieldPrelude + "function f(t: T, k: i32): str { let s = t.text; return slice_unchecked(s, 0, k); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-local-copy-of-string-param", strFieldPrelude + "function f(s: string, k: i32): str { let u = s; return slice_unchecked(u, 0, k); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-returned-copy-of-string-param", strFieldPrelude + "function f(s: string): str { let u = s; return u; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-option-of-field-of-param", strFieldPrelude + "function f(t: T, k: i32): Option[str] { return Some(slice_unchecked(t.text, 0, k)); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-caller-lends-field-of-param", strFieldPrelude + "function f(o: Outer, k: i32): str { return head(o.inner, k); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-field-of-local-struct", strFieldPrelude + "function f(k: i32): str { let t = T { text: \"a\" + \"b\", n: 1 }; return slice_unchecked(t.text, 0, k); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-copy-of-field-of-local", strFieldPrelude + "function f(k: i32): str { let u = mk(); let s = u.text; return slice_unchecked(s, 0, k); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-field-of-call-result", strFieldPrelude + "function f(k: i32): str { return slice_unchecked(mk().text, 0, k); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-field-of-reassigned-copy", strFieldPrelude + "function f(t: T, k: i32): str { let u = t; u = mk(); return slice_unchecked(u.text, 0, k); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-reassigned-copy-of-string-param", strFieldPrelude + "function f(s: string, k: i32): str { let u = s; u = \"a\" + \"b\"; return slice_unchecked(u, 0, k); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-field-of-redeclared-copy", strFieldPrelude + "function f(t: T, k: i32, c: boolean): str { if (c) { let u = t; return slice_unchecked(u.text, 0, k); } let u = mk(); return slice_unchecked(u.text, 0, k); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-option-of-field-of-local", strFieldPrelude + "function f(k: i32): Option[str] { let t = mk(); return Some(slice_unchecked(t.text, 0, k)); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-caller-lends-local-struct", strFieldPrelude + "function f(k: i32): str { let t = mk(); return head(t, k); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-caller-lends-local-receiver", strFieldPrelude + "function (t: T) tail(k: i32): str { return slice_unchecked(t.text, k, t.text.len()); }\nfunction f(k: i32): str { let t = mk(); return t.tail(k); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-caller-lends-call-result", strFieldPrelude + "function f(k: i32): str { return head(mk(), k); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-string-of-field-of-local", strFieldPrelude + "function text_of(t: T): string { return t.text; }\nfunction f(k: i32): str { let t = mk(); return slice_unchecked(text_of(t), 0, k); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
 		{"e032-use-nosig", "function main(): i32 {\n    use n <- q(1);\n    return n;\n}\n", []string{"E001", "E032"}},
 		{"e032-use-lastparam-not-fn", "function add(x: i32, y: i32): i32 { return x + y; }\nfunction main(): i32 {\n    use n <- add(1);\n    return n;\n}\n", []string{"E032", "E038"}},
 		{"e032-use-ok", "function apply(x: i32, cb: (i32) => i32): i32 { return cb(x); }\nfunction main(): i32 {\n    use n <- apply(41);\n    return n + 1;\n}\n", nil},
@@ -2983,6 +3004,12 @@ const handleLocalPrelude = "struct Handle { fd: i32 }\nstruct HPair { h: Handle,
 	"function mkp(): HPair { return HPair { h: Handle { fd: 1 }, n: 2 }; }\n" +
 	"function mks(): Slot { return Full(Handle { fd: 1 }); }\n" +
 	"function main(): i32 { return 0; }\n"
+
+// strFieldPrelude declares a record with a `string` field, a record that
+// holds it, and a view of the field that a caller lends its record to (#15796).
+const strFieldPrelude = "struct T { text: string, n: i32 }\nstruct Outer { inner: T, n: i32 }\n" +
+	"function mk(): T { return T { text: \"a\" + \"b\", n: 0 }; }\n" +
+	"function head(t: T, k: i32): str { return slice_unchecked(t.text, 0, k); }\n"
 
 func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 	checkerBin, runner, dir := buildCheckerCodesBin(t)
@@ -3566,6 +3593,27 @@ function main(): i32 { return 0; }`},
 		{"e051-last-use-loop-local-read-after", lastUsePrelude + "function f(): i32 { let t: i32 = 0; while (t < 3) { let b: i32[] = mk(t); t = t + keep(b, 1) + b.len(); } return t; }\n"},
 		{"e051-last-use-loop-local-inner-loop", lastUsePrelude + "function f(): i32 { let t: i32 = 0; while (t < 3) { let b: i32[] = mk(t); while (t < 2) { t = t + keep(b, 1); } t = t + 1; } return t; }\n"},
 		{"e051-last-use-loop-local-declared-twice", lastUsePrelude + "function f(): i32 { let t: i32 = 0; while (t < 3) { let b: i32[] = mk(t); t = t + keep(b, 1); } while (t < 6) { let b: i32[] = mk(t); t = t + keep(b, 1); } return t; }\n"},
+		{"e065-field-of-param", strFieldPrelude + "function f(t: T, k: i32): str { return slice_unchecked(t.text, 0, k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-nested-field-of-param", strFieldPrelude + "function f(o: Outer, k: i32): str { return slice_unchecked(o.inner.text, 0, k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-field-of-receiver", strFieldPrelude + "function (t: T) f(k: i32): str { return slice_unchecked(t.text, 0, k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-field-of-local-copy", strFieldPrelude + "function f(t: T, k: i32): str { let u = t; return slice_unchecked(u.text, 0, k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-field-of-copy-of-copy", strFieldPrelude + "function f(t: T, k: i32): str { let u = t; let w = u; return slice_unchecked(w.text, 0, k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-local-copy-of-field", strFieldPrelude + "function f(t: T, k: i32): str { let s = t.text; return slice_unchecked(s, 0, k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-local-copy-of-string-param", strFieldPrelude + "function f(s: string, k: i32): str { let u = s; return slice_unchecked(u, 0, k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-returned-copy-of-string-param", strFieldPrelude + "function f(s: string): str { let u = s; return u; }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-option-of-field-of-param", strFieldPrelude + "function f(t: T, k: i32): Option[str] { return Some(slice_unchecked(t.text, 0, k)); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-caller-lends-field-of-param", strFieldPrelude + "function f(o: Outer, k: i32): str { return head(o.inner, k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-field-of-local-struct", strFieldPrelude + "function f(k: i32): str { let t = T { text: \"a\" + \"b\", n: 1 }; return slice_unchecked(t.text, 0, k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-copy-of-field-of-local", strFieldPrelude + "function f(k: i32): str { let u = mk(); let s = u.text; return slice_unchecked(s, 0, k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-field-of-call-result", strFieldPrelude + "function f(k: i32): str { return slice_unchecked(mk().text, 0, k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-field-of-reassigned-copy", strFieldPrelude + "function f(t: T, k: i32): str { let u = t; u = mk(); return slice_unchecked(u.text, 0, k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-reassigned-copy-of-string-param", strFieldPrelude + "function f(s: string, k: i32): str { let u = s; u = \"a\" + \"b\"; return slice_unchecked(u, 0, k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-field-of-redeclared-copy", strFieldPrelude + "function f(t: T, k: i32, c: boolean): str { if (c) { let u = t; return slice_unchecked(u.text, 0, k); } let u = mk(); return slice_unchecked(u.text, 0, k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-option-of-field-of-local", strFieldPrelude + "function f(k: i32): Option[str] { let t = mk(); return Some(slice_unchecked(t.text, 0, k)); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-caller-lends-local-struct", strFieldPrelude + "function f(k: i32): str { let t = mk(); return head(t, k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-caller-lends-local-receiver", strFieldPrelude + "function (t: T) tail(k: i32): str { return slice_unchecked(t.text, k, t.text.len()); }\nfunction f(k: i32): str { let t = mk(); return t.tail(k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-caller-lends-call-result", strFieldPrelude + "function f(k: i32): str { return head(mk(), k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-string-of-field-of-local", strFieldPrelude + "function text_of(t: T): string { return t.text; }\nfunction f(k: i32): str { let t = mk(); return slice_unchecked(text_of(t), 0, k); }\nfunction main(): i32 { return 0; }\n"},
 	}
 
 	for _, tc := range progs {
