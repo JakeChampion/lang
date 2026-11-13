@@ -465,3 +465,151 @@ func TestSelfHostByteCopyLoopBounds(t *testing.T) {
 		}
 	}
 }
+
+const byteCopyArraySlice = `import "std/array";
+
+@noinline function bytes(n: i32): u8[] {
+  let a = __alloc_u8(n);
+  for i in 0..n {
+    a = a.with(i, (i * 7 + 1) as u8);
+  }
+  return a;
+}
+
+@noinline function same(a: u8[], from: i32, b: u8[]): boolean {
+  for i in 0..b.len() {
+    if (a[from + i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function main(): i32 {
+  let n = args().len() + 99;
+  let a = bytes(n);
+  let mid = array.slice(a, 3, n - 3);
+  if (mid.len() != n - 6 || !same(a, 3, mid)) { return 1; }
+  let clamped = array.slice(a, -5, n + 9);
+  if (clamped.len() != n || !same(a, 0, clamped)) { return 2; }
+  if (array.slice(a, 10, 4).len() != 0 || array.slice(a, 7, 7).len() != 0) { return 3; }
+  let words = array.slice([10, 20, 30, 40, 50], 1, 4);
+  if (words.len() != 3 || words[0] != 20 || words[2] != 40) { return 4; }
+  return 0;
+}
+`
+
+// std/array's slice on u8[] is one byte copy, not an append for each byte.
+func TestSelfHostByteCopyArraySlice(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			stderr, code := cli.exitOf(t, byteCopyArraySlice, target, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+			if code != 0 {
+				t.Fatalf("array.slice: exit %d, want 0\n%s", code, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+			src := filepath.Join(t.TempDir(), "slice.fern")
+			if err := os.WriteFile(src, []byte(byteCopyArraySlice), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			assembly, err := os.ReadFile(cli.emit(t, src, target))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(assembly), "__fern_bytes_append_range") {
+				t.Error("array.slice on u8[] does not reach __fern_bytes_append_range")
+			}
+		})
+	}
+}
+
+const byteCopyStartFunctions = `@noinline function bytes(n: i32): u8[] {
+  let a = __alloc_u8(n); let i = 0;
+  while (i < n) { a = a.with(i, (i * 7 + 1) as u8); i = i + 1; }
+  return a;
+}
+@noinline function span(own a: u8[], src: u8[], lo: i32, hi: i32): u8[] {
+  let i = lo;
+  while (i < hi) { a = a.append(src[i]); i = i + 1; }
+  return a;
+}
+@noinline function shifted(own a: u8[], src: u8[], lo: i32, hi: i32, k: i32): u8[] {
+  let i = lo;
+  while (i < hi) { a = a.append(src[i + k]); i = i + 1; }
+  return a;
+}
+@noinline function overwrite(own a: u8[], src: u8[], lo: i32, hi: i32): u8[] {
+  let i = lo;
+  while (i < hi) { a = a.with(i, src[i]); i = i + 1; }
+  return a;
+}
+@noinline function empty(): u8[] {
+  let out: u8[] = [];
+  return out;
+}
+@noinline function holds(a: u8[], src: u8[], from: i32, n: i32): boolean {
+  if (a.len() != n) { return false; }
+  let i = 0;
+  while (i < n) { if (a[i] != src[from + i]) { return false; } i = i + 1; }
+  return true;
+}
+`
+
+// A copy loop whose counter starts at an invariant value is one copy of
+// max(end - start, 0) bytes. A difference that wraps in i32 still gives the
+// result of the loop: nothing, or the bounds abort.
+func TestSelfHostByteCopyInvariantStart(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	pass := byteCopyStartFunctions + `function main(): i32 {
+  let n = args().len() + 9;
+  let src = bytes(n + 1);
+  if (!holds(span(empty(), src, 3, 8), src, 3, 5)) { return 1; }
+  if (span(empty(), src, 5, 5).len() != 0 || span(empty(), src, 7, 2).len() != 0) { return 2; }
+  if (span(empty(), src, 2147483000, 0 - 2147483000).len() != 0) { return 3; }
+  if (!holds(shifted(empty(), src, 1, 4, 5), src, 6, 3)) { return 4; }
+  let w = overwrite(bytes(n + 1), src, 2, 6);
+  if (!holds(w, src, 0, n + 1)) { return 5; }
+  return 0;
+}`
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			stderr, code := cli.exitOf(t, pass, target, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+			if code != 0 {
+				t.Fatalf("exit %d, want 0\n%s", code, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+			src := filepath.Join(t.TempDir(), "start.fern")
+			if err := os.WriteFile(src, []byte(pass), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			assembly, err := os.ReadFile(cli.emit(t, src, target))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, helper := range []string{"__fern_bytes_append_range", "__fern_bytes_write_range"} {
+				if !strings.Contains(string(assembly), helper) {
+					t.Errorf("a loop from an invariant start does not reach %s", helper)
+				}
+			}
+		})
+		for name, call := range map[string]string{
+			"negative-start":   "span(empty(), src, 0 - 1, 3)",
+			"past-the-end":     "span(empty(), src, 3, 12)",
+			"negative-offset":  "shifted(empty(), src, 0, 2, 0 - 1)",
+			"wrapping-count":   "span(empty(), src, 0 - 2147483000, 2147483000)",
+			"overwrite-beyond": "overwrite(bytes(4), src, 2, 6)",
+		} {
+			t.Run(target+"/"+name, func(t *testing.T) {
+				program := byteCopyStartFunctions + "function main(): i32 { let src = bytes(10); let out = " + call + "; return out.len(); }"
+				stderr, code := cli.exitOf(t, program, target, "FERN_SANITIZE=1")
+				if code == 0 {
+					t.Fatal("out-of-bounds copy returned")
+				}
+				if target != "wasm32-wasi" && (code != 134 || !strings.Contains(stderr, "fern: array index out of range")) {
+					t.Fatalf("bounds: exit %d, want array abort 134\n%s", code, stderr)
+				}
+			})
+		}
+	}
+}
