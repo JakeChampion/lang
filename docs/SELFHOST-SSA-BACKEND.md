@@ -74,7 +74,9 @@ lowered function it:
    each of those tests decided (`ssa.split_tokens`), gives each other reuse
    allocation of such a token a branch on the token, so that the side with
    the box writes neither the shape nor a word that the box already has
-   (`ssatokenkeep.keeps`), marks each reuse
+   (`ssatokenkeep.keeps`), gives a cons-tail loop with two hole positions
+   one phi for the address of its hole (`ssaholeaddr.addresses`), marks each
+   reuse
    allocation whose token is null so that it calls the fresh entry of the
    helper with no test (`ssa.fresh_boxes`), then turns each branch whose two arms
    compute a few pure integer values and meet again, at a join's phis or at
