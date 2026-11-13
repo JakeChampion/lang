@@ -48,6 +48,7 @@ func builtinDirOpenFile(structName string, access int, withFlags bool) func(*Int
 			return closedDir(), nil
 		}
 		flag := access
+		perm := os.FileMode(0o666)
 		if withFlags {
 			flags, ok := args[2].(Number)
 			if !ok {
@@ -58,8 +59,9 @@ func builtinDirOpenFile(structName string, access int, withFlags bool) func(*Int
 			if refused != nil {
 				return refused, nil
 			}
+			perm = openModeOf(int(flags))
 		}
-		f, err := openAtFile(d, path, name, flag|oNofollow)
+		f, err := openAtFile(d, path, name, flag|oNofollow, perm)
 		if err != nil {
 			return resultErr(classifyIoError(name, err)), nil
 		}

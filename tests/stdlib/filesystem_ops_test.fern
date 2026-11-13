@@ -63,6 +63,93 @@ function test_temp_file_round_trip(): test.TestOutcome {
   return test.pass();
 }
 
+// The body of the directory-relative case. Each step that fails gives its name.
+function temp_file_in_steps(dir: Dir): Result[string, string] {
+  let Ok(t) = io.temp_file_in(dir, "in") else {
+    return Err("temp_file_in");
+  };
+  let name = t.path;
+  let Ok(_) = t.file.write("abc") else {
+    return Err("write");
+  };
+  let Ok(_) = t.file.close() else {
+    return Err("close");
+  };
+  let Ok(st) = dir.lstat(name) else {
+    return Err("lstat");
+  };
+  if (!st.is_file || (st.mode & 511u32) != 384u32) {
+    return Err("mode " + (st.mode & 511u32).to_string());
+  }
+  let Ok(r) = dir.open_reader(name) else {
+    return Err("open_reader");
+  };
+  let Ok(bytes) = io.read_all_bytes(r) else {
+    return Err("read");
+  };
+  let Ok(_) = r.close() else {
+    return Err("close of the reader");
+  };
+  if (io.temp_file_in(dir, "a/b").is_ok()) {
+    return Err("a prefix with a separator was accepted");
+  }
+  let Ok(_) = dir.remove_file(name) else {
+    return Err("remove_file");
+  };
+  return Ok(name + " " + bytes.len().to_string());
+}
+
+// temp_file_in makes its file relative to a directory handle, with mode 0600.
+function test_temp_file_in_a_directory(): test.TestOutcome {
+  let Ok(root) = temp_dir("fs-in") else {
+    return test.fail("temp_dir returned Err");
+  };
+  let Ok(dir) = open_dir(root) else {
+    return test.fail("open_dir returned Err");
+  };
+  let done = temp_file_in_steps(dir);
+  let closed = dir.close();
+  let removed = remove_dir(root);
+  match (done) {
+    Ok(text) => {
+      if (!text.starts_with("in-") || !text.ends_with(" 3")) {
+        return test.fail("unexpected name and size: " + text);
+      }
+    },
+    Err(step) => {
+      return test.fail(step);
+    }
+  }
+  if (closed.is_err() || removed.is_err()) {
+    return test.fail("the directory did not close and go");
+  }
+  return test.pass();
+}
+
+// Bit 1024 of the flag word gives a file that the open creates mode 0600.
+function test_open_writer_with_private_bit(): test.TestOutcome {
+  let Ok(root) = temp_dir("fs-private") else {
+    return test.fail("temp_dir returned Err");
+  };
+  let path = root + "/private";
+  let Ok(w) = open_writer_with(path, 1029) else {
+    return test.fail("open_writer_with returned Err");
+  };
+  let closed = w.close();
+  let mode = 0u32;
+  match (stat(path)) {
+    Ok(st) => {
+      mode = st.mode & 511u32;
+    },
+    Err(_) => {}
+  }
+  let removed = remove_dir_all(root);
+  if (closed.is_err() || removed.is_err()) {
+    return test.fail("the file did not close and go");
+  }
+  return test.assert_eq(mode, 384u32);
+}
+
 function test_temp_file_refuses_a_separator(): test.TestOutcome {
   match (io.temp_file("a/b")) {
     Ok(t) => {
@@ -335,6 +422,8 @@ function main(): i32 {
   r = r.it("temp_dir returns absolute path", test_temp_dir_returns_abs_path);
   r = r.it("temp_file round trip", test_temp_file_round_trip);
   r = r.it("temp_file refuses a separator", test_temp_file_refuses_a_separator);
+  r = r.it("temp_file_in a directory", test_temp_file_in_a_directory);
+  r = r.it("open_writer_with private bit", test_open_writer_with_private_bit);
   r = r.it("read_dir lists what we wrote", test_read_dir_lists_what_we_wrote);
   r = r.it("remove_file removes a single file", test_remove_file_removes_a_single_file);
   r = r.it("remove_file on missing target errors", test_remove_file_on_missing_target_is_an_error);

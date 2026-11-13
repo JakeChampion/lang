@@ -4619,7 +4619,16 @@ func openWithHelper(i *Interp, args []Value, structName string, access int) (Val
 	if refused != nil {
 		return refused, nil
 	}
-	return openHelper(i, args[:1], structName, flag, 0o666)
+	return openHelper(i, args[:1], structName, flag, openModeOf(int(flags)))
+}
+
+// openModeOf gives the mode of a file that the open creates. Bit 1024 of the
+// flag word makes the file private to its owner.
+func openModeOf(flags int) os.FileMode {
+	if flags&1024 != 0 {
+		return 0o600
+	}
+	return 0o666
 }
 
 // openFlagsOf maps the portable flag word of the open_*_with builtins onto
