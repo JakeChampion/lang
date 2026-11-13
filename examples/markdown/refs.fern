@@ -7,7 +7,8 @@ import "std/string";
 import "std/unicode";
 
 // The destination and the title of a definition, as they are in the source.
-// Backslash escapes and entity references are not decoded yet.
+// Backslash escapes and entity references are not decoded yet. The title
+// keeps its quotes or parentheses, and is empty when there is no title.
 pub struct Ref { dest: string, title: string }
 
 // A definition that `parse_def` found: `end` is the index after its line, or
@@ -28,6 +29,14 @@ pub function is_space(c: i32): boolean {
 
 function at(s: string, i: i32): i32 {
   if (i < s.len()) {
+    return s[i] as i32;
+  }
+  return 0;
+}
+
+// The byte at `i` of a text that ends at `end`, or 0 after its end.
+function byte(s: string, i: i32, end: i32): i32 {
+  if (i < end) {
     return s[i] as i32;
   }
   return 0;
@@ -66,41 +75,42 @@ function spnl(s: string, i: i32): i32 {
   return j;
 }
 
-// The index after the `]` of a link label that starts at `i`, or -1. A label
-// has at most 999 characters and no unescaped bracket.
-pub function label_end(s: string, i: i32): i32 {
-  if (at(s, i) != 91) {
+// The index after the `]` of a link label that starts at `i`, or -1. The
+// text ends at `end`. A label has no unescaped bracket. As in cmark, it has
+// at most 1000 bytes, where the spec has at most 999 characters.
+pub function label_end(s: string, i: i32, end: i32): i32 {
+  if (byte(s, i, end) != 91) {
     return -1;
   }
   let j = i + 1;
   let n = 0;
-  while (j < s.len()) {
+  while (j < end) {
     let c = s[j] as i32;
     if (c == 91 || c == 93) {
       break;
     }
     j += 1;
     n += 1;
-    if (c == 92 && is_punct(at(s, j))) {
+    if (c == 92 && is_punct(byte(s, j, end))) {
       j += 1;
       n += 1;
     }
-    if (n > 999) {
+    if (n > 1000) {
       return -1;
     }
   }
-  if (at(s, j) == 93) {
+  if (byte(s, j, end) == 93) {
     return j + 1;
   }
   return -1;
 }
 
-// The end of a link destination that starts at `i`, or -1. A destination in
-// pointy brackets ends after its `>`.
-pub function dest_end(s: string, i: i32): i32 {
-  if (at(s, i) == 60) {
+// The end of a link destination that starts at `i`, or -1. The text ends
+// at `end`. A destination in pointy brackets ends after its `>`.
+pub function dest_end(s: string, i: i32, end: i32): i32 {
+  if (byte(s, i, end) == 60) {
     let j = i + 1;
-    while (j < s.len()) {
+    while (j < end) {
       let c = s[j] as i32;
       if (c == 62) {
         return j + 1;
@@ -115,59 +125,62 @@ pub function dest_end(s: string, i: i32): i32 {
     }
     return -1;
   }
-  return bare_dest_end(s, i);
+  return bare_dest_end(s, i, end);
 }
 
-// A destination without brackets: no space or control character, and each
-// unescaped parenthesis balanced, at most 32 deep.
+// A destination without brackets: no whitespace, and each unescaped
+// parenthesis balanced, at most 32 deep. As in cmark, a control character
+// other than whitespace is part of the destination.
 // fern-lint: allow cyclomatic-complexity
-function bare_dest_end(s: string, i: i32): i32 {
+function bare_dest_end(s: string, i: i32, end: i32): i32 {
   let j = i;
   let depth = 0;
-  while (j < s.len() && depth <= 32) {
+  while (j < end && depth <= 32) {
     let c = s[j] as i32;
-    if (c <= 32 || c == 127 || c == 41 && depth == 0) {
+    if (is_space(c) || c == 41 && depth == 0) {
       break;
     }
     if (c == 40) {
       depth += 1;
     } else if (c == 41) {
       depth -= 1;
-    } else if (c == 92 && is_punct(at(s, j + 1))) {
+    } else if (c == 92 && is_punct(byte(s, j + 1, end))) {
       j += 1;
     }
     j += 1;
   }
-  if (j == i && at(s, j) != 41 || j >= s.len() || depth != 0) {
+  if (j == i && byte(s, j, end) != 41 || j >= end || depth != 0) {
     return -1;
   }
   return j;
 }
 
 // The end of a link title that starts at `i`, or -1: text in double quotes,
-// in single quotes or in parentheses.
-pub function title_end(s: string, i: i32): i32 {
-  let open = at(s, i);
+// in single quotes or in parentheses. A quote in the text needs a backslash
+// before it. As in cmark, the title is the longest match. Thus a closing
+// quote after a backslash ends the title when no later quote can end it.
+pub function title_end(s: string, i: i32, end: i32): i32 {
+  let open = byte(s, i, end);
   let close = open;
   if (open == 40) {
     close = 41;
   } else if (open != 34 && open != 39) {
     return -1;
   }
-  let j = i + 1;
-  while (j < s.len()) {
+  let last = -1;
+  for j in i + 1..end {
     let c = s[j] as i32;
-    if (c == 92 && is_punct(at(s, j + 1))) {
-      j += 2;
-    } else if (c == close) {
-      return j + 1;
-    } else if (open == 40 && c == 40) {
-      return -1;
-    } else {
-      j += 1;
+    let escaped = s[j - 1] == b'\\';
+    if (c == close) {
+      last = j + 1;
+      if (!escaped) {
+        return last;
+      }
+    } else if (open == 40 && c == 40 && !escaped) {
+      return last;
     }
   }
-  return -1;
+  return last;
 }
 
 function has_text(s: string): boolean {
@@ -181,7 +194,7 @@ function has_text(s: string): boolean {
 
 // The definition that starts at `i` in the text of a paragraph.
 pub function parse_def(s: string, i: i32): Def {
-  let le = label_end(s, i);
+  let le = label_end(s, i, s.len());
   if (le < 0 || at(s, le) != 58) {
     return NO_DEF;
   }
@@ -190,7 +203,7 @@ pub function parse_def(s: string, i: i32): Def {
     return NO_DEF;
   }
   let ds = spnl(s, le + 1);
-  let de = dest_end(s, ds);
+  let de = dest_end(s, ds, s.len());
   if (de < 0) {
     return NO_DEF;
   }
@@ -201,12 +214,12 @@ pub function parse_def(s: string, i: i32): Def {
   let ts = spnl(s, de);
   let te = -1;
   if (ts > de) {
-    te = title_end(s, ts);
+    te = title_end(s, ts, s.len());
   }
   if (te > 0) {
     let end = line_end(s, skip_spaces(s, te));
     if (end >= 0) {
-      return Def { end: end, label: normalize(raw), dest: dest, title: slice_unchecked(s, ts + 1, te - 1).to_owned() };
+      return Def { end: end, label: normalize(raw), dest: dest, title: slice_unchecked(s, ts, te).to_owned() };
     }
   }
   let end = line_end(s, skip_spaces(s, de));

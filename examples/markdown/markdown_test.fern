@@ -1,8 +1,6 @@
-// The block phase of the CommonMark renderer, and the text, escapes and line
-// breaks of its inline phase. Each expected text is the output of cmark 0.30.2
-// with --unsafe, except where a comment gives a change of spec 0.31.2. A case
-// whose text needs inline parsing, which the next slice adds, checks the
-// shape of the block tree instead.
+// The CommonMark renderer. Each expected text is the output of cmark 0.30.2
+// with --unsafe, except where a comment gives a change of spec 0.31.2. Some
+// cases check the shape of the block tree.
 import "core/map";
 import "std/test";
 import "./blocks";
@@ -183,8 +181,7 @@ function test_html_blocks(): test.TestOutcome {
   ]);
 }
 
-// Blocks whose text holds raw HTML, emphasis or a link that the inline phase
-// does not parse yet.
+// The blocks of text that holds raw HTML, emphasis, links and definitions.
 function test_block_shapes(): test.TestOutcome {
   return shapes([
     ("<table><tr><td>\n<pre>\n**Hello**,\n\n_world_.\n</pre>\n</td></tr></table>\n", "html3,p2,html1"),
@@ -240,7 +237,7 @@ function ref_is(d: blocks.Doc, label: string, dest: string, title: string): stri
 function test_definitions(): test.TestOutcome {
   let d = blocks.parse("[Foo  Bar]: /url 'the title'\n[ẞ]: <a b>\n[foo bar]: /other\n[t]:\n/u\n\"multi\nline\"\n> [q]: (x) (paren)\n[e]: <>\n[n]: /u \"no\" x\n[x]:\n");
   let errors = [
-    ref_is(d, "foo bar", "/url", "the title"), ref_is(d, "ss", "a b", ""), ref_is(d, "t", "/u", "multi\nline"), ref_is(d, "q", "(x)", "paren"), ref_is(d, "e", "", ""),
+    ref_is(d, "foo bar", "/url", "'the title'"), ref_is(d, "ss", "a b", ""), ref_is(d, "t", "/u", "\"multi\nline\""), ref_is(d, "q", "(x)", "(paren)"), ref_is(d, "e", "", ""),
   ];
   for e in errors {
     if (e.len() > 0) {
@@ -270,8 +267,25 @@ function test_normalize(): test.TestOutcome {
       return test.fail(label + ": got \"" + refs.normalize(label) + "\", want \"" + want + "\"");
     }
   }
-  if (refs.label_end("[a\\]b]", 0) != 6 || refs.label_end("[a[b]", 0) != -1 || refs.label_end("[" + "x".repeat(1000) + "]", 0) != -1) {
+  let long = "[" + "x".repeat(1000) + "]";
+  if (refs.label_end("[a\\]b]", 0, 6) != 6 || refs.label_end("[a[b]", 0, 5) != -1 || refs.label_end("[a]", 0, 2) != -1 || refs.label_end(long, 0, long.len()) != 1002 || refs.label_end("[x" + long, 0, long.len() + 2) != -1) {
     return test.fail("label_end");
+  }
+  return test.pass();
+}
+
+// A title is the longest match: a quote after a backslash ends it when no
+// later quote can.
+function test_titles(): test.TestOutcome {
+  let cases = [("\"a\"", 3), ("\"a\\\" b", 4), ("\"a\\\" b\"", 7), ("'a\\'", 4), ("(a\\)b)", 6), ("(a(b)", -1), ("(a\\)(b)", 4), ("\"a", -1), ("x", -1)];
+  for c in cases {
+    let (s, want) = c;
+    if (refs.title_end(s, 0, s.len()) != want) {
+      return test.fail(s + ": got " + refs.title_end(s, 0, s.len()).to_string());
+    }
+  }
+  if (refs.title_end("\"a\"", 0, 2) != -1 || refs.dest_end("a\x01b c", 0, 5) != 3 || refs.dest_end("(a)b)", 0, 5) != 4) {
+    return test.fail("an end of the text, or a destination");
   }
   return test.pass();
 }
@@ -304,6 +318,136 @@ function test_unescape(): test.TestOutcome {
   return test.assert_eq(inlines.unescape("a\\*b\\c\\\\d\\"), "a*b\\c\\d\\");
 }
 
+// backslash escapes and entity references
+function test_escapes(): test.TestOutcome {
+  return checks([
+    ("\\!\\\"\\#\\$\\%\\&\\'\\(\\)\\*\\+\\,\\-\\.\\/\\:\\;\\<\\=\\>\\?\\@\\[\\\\\\]\\^\\_\\`\\{\\|\\}\\~", "<p>!&quot;#$%&amp;'()*+,-./:;&lt;=&gt;?@[\\]^_`{|}~</p>\n"),
+    ("\\\t\\A\\a\\ \\3\\φ\\«", "<p>\\\t\\A\\a\\ \\3\\φ\\«</p>\n"),
+    ("\\*not emphasized*\n\\<br/> not a tag\n\\[not a link](/foo)\n\\`not code`", "<p>*not emphasized*\n&lt;br/&gt; not a tag\n[not a link](/foo)\n`not code`</p>\n"),
+    ("&nbsp; &amp; &copy; &AElig; &Dcaron;\n&frac34; &HilbertSpace; &DifferentialD;\n&ClockwiseContourIntegral; &ngE;", "<p>\u{00A0} &amp; © Æ Ď\n¾ ℋ ⅆ\n∲ ≧̸</p>\n"),
+    ("&#35; &#1234; &#992; &#0; &#x22; &#XD06; &#xcab; &#xD800; &#1114112;", "<p># Ӓ Ϡ � &quot; ആ ಫ � �</p>\n"),
+    ("&nbsp &x; &#; &#x;\n&#87654321;\n&#abcdef0;\n&ThisIsNotDefined; &hi?; &copy &MadeUpEntity;", "<p>&amp;nbsp &amp;x; &amp;#; &amp;#x;\n&amp;#87654321;\n&amp;#abcdef0;\n&amp;ThisIsNotDefined; &amp;hi?; &amp;copy &amp;MadeUpEntity;</p>\n"),
+    ("&#42;foo&#42;\n*foo*\n&#42; foo\n\nfoo&#10;&#10;bar", "<p>*foo*\n<em>foo</em>\n* foo</p>\n<p>foo\n\nbar</p>\n"),
+    ("&lt;&gt;&quot;&amp;&apos; `f&ouml;&ouml;` &a1; &Aacute", "<p>&lt;&gt;&quot;&amp;' <code>f&amp;ouml;&amp;ouml;</code> &amp;a1; &amp;Aacute</p>\n"),
+    ("&AElig;&zwnj;&CounterClockwiseContourIntegral;&CounterClockwiseContourIntegralX; &b.; &x1;", "<p>Æ\u{200C}∳&amp;CounterClockwiseContourIntegralX; &amp;b.; &amp;x1;</p>\n"),
+    ("[foo](/f&ouml;&ouml; \"f&ouml;&ouml;\") [b](&#92;*) [c](\\&amp;)", "<p><a href=\"/f%C3%B6%C3%B6\" title=\"föö\">foo</a> <a href=\"*\">b</a> <a href=\"&amp;\">c</a></p>\n"),
+    ("``` f&ouml;&ouml;&#32;x\nfoo\n```", "<pre><code class=\"language-föö\">foo\n</code></pre>\n"),
+  ]);
+}
+
+// code spans
+function test_code_spans(): test.TestOutcome {
+  return checks([
+    ("`foo` `` foo ` bar `` ` `` ` `  ``  `", "<p><code>foo</code> <code>foo ` bar</code> <code>``</code> <code> `` </code></p>\n"),
+    ("` a` ` b `\n` `\n`  `", "<p><code> a</code> <code>b</code>\n<code> </code>\n<code>  </code></p>\n"),
+    ("``\nfoo\nbar  \nbaz\n``", "<p><code>foo bar   baz</code></p>\n"),
+    ("`foo   bar \nbaz` `foo\\`bar` ``foo`bar``", "<p><code>foo   bar  baz</code> <code>foo\\</code>bar<code> ``foo</code>bar``</p>\n"),
+    ("*foo`*` [not a `link](/foo`) `<a href=\"`\">` <a href=\"`\">`", "<p>*foo<code>*</code> [not a <code>link](/foo</code>) <code>&lt;a href=&quot;</code>&quot;&gt;<code> &lt;a href=&quot;</code>&quot;&gt;`</p>\n"),
+    ("```foo`` `foo `foo``bar``", "<p>```foo<code> `foo `foo</code>bar``</p>\n"),
+    ("> `a\n> b`\n\n- `c\n  d`", "<blockquote>\n<p><code>a b</code></p>\n</blockquote>\n<ul>\n<li><code>c d</code></li>\n</ul>\n"),
+  ]);
+}
+
+// emphasis and strong emphasis
+function test_emphasis(): test.TestOutcome {
+  return checks([
+    ("*foo bar* a * foo bar* a*\"foo\"* * a * foo*bar* 5*6*78", "<p><em>foo bar</em> a * foo bar* a*&quot;foo&quot;* * a * foo<em>bar</em> 5<em>6</em>78</p>\n"),
+    ("_foo bar_ _ foo bar_ foo_bar_ 5_6_78 пристаням_стремятся_ aa_\"bb\"_cc foo-_(bar)_", "<p><em>foo bar</em> _ foo bar_ foo_bar_ 5_6_78 пристаням_стремятся_ aa_&quot;bb&quot;<em>cc foo-</em>(bar)_</p>\n"),
+    ("*foo**bar**baz* ***foo** bar* *foo**bar*** foo***bar***baz foo******bar*********baz", "<p><em>foo<strong>bar</strong>baz</em> <em><strong>foo</strong> bar</em> <em>foo<strong>bar</strong></em> foo<em><strong>bar</strong></em>baz foo<strong><strong><strong>bar</strong></strong></strong>***baz</p>\n"),
+    ("**foo*bar*baz** *foo**bar* **foo*bar** __foo, __bar__, baz__ __foo_bar__", "<p><strong>foo<em>bar</em>baz</strong> <em>foo**bar</em> <strong>foo*bar</strong> <strong>foo, <strong>bar</strong>, baz</strong> <strong>foo_bar</strong></p>\n"),
+    ("*(**foo**)* **Gomphocarpus (*Gomphocarpus physocarpus*, syn.\n*Asclepias physocarpa*)**", "<p><em>(<strong>foo</strong>)</em> <strong>Gomphocarpus (<em>Gomphocarpus physocarpus</em>, syn.\n<em>Asclepias physocarpa</em>)</strong></p>\n"),
+    ("*foo _bar* baz_ **foo*bar baz* _foo __bar_ baz__ *a `*`* _a `_`_ **a<http://foo.bar/?q=**>", "<p><em>foo _bar</em> baz_ **foo<em>bar baz</em> <em>foo <em><em>bar</em> baz</em></em> <em>a <code>*</code></em> <em>a <code>_</code></em> **a<a href=\"http://foo.bar/?q=**\">http://foo.bar/?q=**</a></p>\n"),
+    ("***foo*** _____foo_____ ****foo* **foo* *foo**** ***foo** foo *foo**", "<p><em><strong>foo</strong></em> <em><strong><strong>foo</strong></strong></em> *<strong><em>foo</em> <em><em>foo</em> <em>foo</em></em></strong> <em><strong>foo</strong> foo <em>foo</em></em></p>\n"),
+    ("*a\nb*\n\n_a\n> b_", "<p><em>a\nb</em></p>\n<p>_a</p>\n<blockquote>\n<p>b_</p>\n</blockquote>\n"),
+  ]);
+}
+
+// links
+function test_links(): test.TestOutcome {
+  return checks([
+    ("[link](/uri \"title\") [link](/uri 'title') [link](/uri (title)) [link]() [link](<>) [](./target.md)", "<p><a href=\"/uri\" title=\"title\">link</a> <a href=\"/uri\" title=\"title\">link</a> <a href=\"/uri\" title=\"title\">link</a> <a href=\"\">link</a> <a href=\"\">link</a> <a href=\"./target.md\"></a></p>\n"),
+    ("[link](/my uri) [link](</my uri>) [a](<b)c>) [link](\\(foo\\)) [link](foo(and(bar))) [link](foo(and(bar)) [link](foo\\)\\:)", "<p>[link](/my uri) <a href=\"/my%20uri\">link</a> <a href=\"b)c\">a</a> <a href=\"(foo)\">link</a> <a href=\"foo(and(bar))\">link</a> [link](foo(and(bar)) <a href=\"foo):\">link</a></p>\n"),
+    ("[link](#fragment) [link](https://example.com#fragment) [link](foo\\bar) [link](foo%20b&auml;) [link](\"title\")", "<p><a href=\"#fragment\">link</a> <a href=\"https://example.com#fragment\">link</a> <a href=\"foo%5Cbar\">link</a> <a href=\"foo%20b%C3%A4\">link</a> <a href=\"%22title%22\">link</a></p>\n"),
+    ("[link](   /uri\n  \"title\"  ) [link] (/uri) [link [foo [bar]]](/uri) [link] bar](/uri) [link [bar](/uri)", "<p><a href=\"/uri\" title=\"title\">link</a> [link] (/uri) <a href=\"/uri\">link [foo [bar]]</a> [link] bar](/uri) [link <a href=\"/uri\">bar</a></p>\n"),
+    ("[link *foo **bar** `#`*](/uri) [![moon](moon.jpg)](/uri) [foo [bar](/uri)](/uri) [foo *[bar [baz](/uri)](/uri)*](/uri)", "<p><a href=\"/uri\">link <em>foo <strong>bar</strong> <code>#</code></em></a> <a href=\"/uri\"><img src=\"moon.jpg\" alt=\"moon\" /></a> [foo <a href=\"/uri\">bar</a>](/uri) [foo <em>[bar <a href=\"/uri\">baz</a>](/uri)</em>](/uri)</p>\n"),
+    ("*[foo*](/uri) [foo *bar](baz*) [foo`](/uri)` [foo<http://example.com/?search=](uri)>", "<p>*<a href=\"/uri\">foo*</a> <a href=\"baz*\">foo *bar</a> [foo<code>](/uri)</code> [foo<a href=\"http://example.com/?search=%5D(uri)\">http://example.com/?search=](uri)</a></p>\n"),
+    ("[foo][bar] [Foo][BAR] [ẞ][] [Bar][ ] [foo] [foo][] [*foo* bar] [bar]x [baz][bar\\]]\n\n[bar]: /url \"title\"\n[foo]: /f\n[SS]: /ss\n[*foo* bar]: /e\n[bar\\]]: /esc", "<p><a href=\"/url\" title=\"title\">foo</a> <a href=\"/url\" title=\"title\">Foo</a> <a href=\"/ss\">ẞ</a> <a href=\"/url\" title=\"title\">Bar</a> <a href=\"/f\">foo</a> <a href=\"/f\">foo</a> <a href=\"/e\"><em>foo</em> bar</a> <a href=\"/url\" title=\"title\">bar</a>x <a href=\"/esc\">baz</a></p>\n"),
+    ("[foo] bar\n[foo]\n[bar][foo\\!]\n[foo!]\n\n[foo]: /url1\n[foo!]: /url3", "<p><a href=\"/url1\">foo</a> bar\n<a href=\"/url1\">foo</a>\n[bar][foo!]\n<a href=\"/url3\">foo!</a></p>\n"),
+    ("[a](/u \"x\\\") [b](/u \"x\\\" y) [c](< b >) [d](/u\n'multi\nline') [e](/u \"\")", "<p>[a](/u &quot;x&quot;) [b](/u &quot;x&quot; y) <a href=\"b\">c</a> <a href=\"/u\" title=\"multi\nline\">d</a> <a href=\"/u\" title=\"\">e</a></p>\n"),
+    ("[a](/u?a=b&c=d) [b](a'b) [c](<a\"b>) [d](/fö) [e](\\[\\]) [f](</a\\>b>)", "<p><a href=\"/u?a=b&amp;c=d\">a</a> <a href=\"a&#x27;b\">b</a> <a href=\"a%22b\">c</a> <a href=\"/f%C3%B6\">d</a> <a href=\"%5B%5D\">e</a> <a href=\"/a%3Eb\">f</a></p>\n"),
+    ("[foo][bar][baz]\n\n[baz]: /url1\n[foo]: /url2", "<p>[foo]<a href=\"/url1\">bar</a></p>\n"),
+  ]);
+}
+
+// images
+function test_images(): test.TestOutcome {
+  return checks([
+    ("![foo](/url \"title\") ![foo *bar*](train.jpg \"tr*ai*n\") ![foo ![bar](/url)](/url2) ![foo [bar](/url)](/url2)", "<p><img src=\"/url\" alt=\"foo\" title=\"title\" /> <img src=\"train.jpg\" alt=\"foo bar\" title=\"tr*ai*n\" /> <img src=\"/url2\" alt=\"foo bar\" /> <img src=\"/url2\" alt=\"foo bar\" /></p>\n"),
+    ("![a *b* `c` <i>d</i> [e](f) ![g](h) &amp; \\*](i \"j\") ![a\nb  \nc\\\nd](e)", "<p><img src=\"i\" alt=\"a b c &lt;i&gt;d&lt;/i&gt; e g &amp; *\" title=\"j\" /> <img src=\"e\" alt=\"a b c d\" /></p>\n"),
+    ("![foo *bar*][] ![Foo][] ![foo] ![[foo]] \\![foo] !\\[foo]\n\n[foo *bar*]: train.jpg \"train & tracks\"\n[foo]: /url", "<p><img src=\"train.jpg\" alt=\"foo bar\" title=\"train &amp; tracks\" /> <img src=\"/url\" alt=\"Foo\" /> <img src=\"/url\" alt=\"foo\" /> ![<a href=\"/url\">foo</a>] !<a href=\"/url\">foo</a> ![foo]</p>\n"),
+    ("![<http://a.b> <x@y.z>](/u) ![](/u) ![a](<>)", "<p><img src=\"/u\" alt=\"http://a.b x@y.z\" /> <img src=\"/u\" alt=\"\" /> <img src=\"\" alt=\"a\" /></p>\n"),
+  ]);
+}
+
+// autolinks
+function test_autolinks(): test.TestOutcome {
+  return checks([
+    ("<http://foo.bar.baz> <https://foo.bar.baz/test?q=hello&id=22&boolean> <irc://foo.bar:2233/baz>", "<p><a href=\"http://foo.bar.baz\">http://foo.bar.baz</a> <a href=\"https://foo.bar.baz/test?q=hello&amp;id=22&amp;boolean\">https://foo.bar.baz/test?q=hello&amp;id=22&amp;boolean</a> <a href=\"irc://foo.bar:2233/baz\">irc://foo.bar:2233/baz</a></p>\n"),
+    ("<MAILTO:FOO@BAR.BAZ> <a+b+c:d> <made-up-scheme://foo,bar> <https://../> <localhost:5001/foo>", "<p><a href=\"MAILTO:FOO@BAR.BAZ\">MAILTO:FOO@BAR.BAZ</a> <a href=\"a+b+c:d\">a+b+c:d</a> <a href=\"made-up-scheme://foo,bar\">made-up-scheme://foo,bar</a> <a href=\"https://../\">https://../</a> <a href=\"localhost:5001/foo\">localhost:5001/foo</a></p>\n"),
+    ("<https://foo.bar/baz bim> <https://example.com/\\[\\> <foo@bar.example.com> <foo+special@Bar.baz-bar0.com>", "<p>&lt;https://foo.bar/baz bim&gt; <a href=\"https://example.com/%5C%5B%5C\">https://example.com/\\[\\</a> <a href=\"mailto:foo@bar.example.com\">foo@bar.example.com</a> <a href=\"mailto:foo+special@Bar.baz-bar0.com\">foo+special@Bar.baz-bar0.com</a></p>\n"),
+    ("<foo\\+@bar.example.com> <> < https://foo.bar > <m:abc> <foo.bar.baz> https://example.com foo@bar.example.com", "<p>&lt;foo+@bar.example.com&gt; &lt;&gt; &lt; https://foo.bar &gt; &lt;m:abc&gt; &lt;foo.bar.baz&gt; https://example.com foo@bar.example.com</p>\n"),
+    ("<http://a&amp;b&ouml;> <x@y-.z> <x@-y.z> <a@b.c.> <ab:c> <aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:b> <aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:b>", "<p><a href=\"http://a&amp;b%C3%B6\">http://a&amp;bö</a> &lt;x@y-.z&gt; &lt;x@-y.z&gt; &lt;a@b.c.&gt; <a href=\"ab:c\">ab:c</a> <a href=\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:b\">aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:b</a> &lt;aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:b&gt;</p>\n"),
+  ]);
+}
+
+// raw HTML
+function test_raw_html(): test.TestOutcome {
+  return checks([
+    ("<a><bab><c2c> <a/><b2/> <a  /><b2\ndata=\"foo\" > <a foo=\"bar\" bam = 'baz <em>\"</em>'\n_boolean zoop:33=zoop:33 />", "<p><a><bab><c2c> <a/><b2/> <a  /><b2\ndata=\"foo\" > <a foo=\"bar\" bam = 'baz <em>\"</em>'\n_boolean zoop:33=zoop:33 /></p>\n"),
+    ("Foo <responsive-image src=\"foo.jpg\" /> <33> <__> <a h*#ref=\"hi\"> <a href=\"hi'> <a href=hi'> < a><\nfoo><bar/ > <foo bar=baz\nbim!bop />", "<p>Foo <responsive-image src=\"foo.jpg\" /> &lt;33&gt; &lt;__&gt; &lt;a h*#ref=&quot;hi&quot;&gt; &lt;a href=&quot;hi'&gt; &lt;a href=hi'&gt; &lt; a&gt;&lt;\nfoo&gt;&lt;bar/ &gt; &lt;foo bar=baz\nbim!bop /&gt;</p>\n"),
+    ("<a href='bar'title=title> </a></foo > </a href=\"foo\"> foo <?php echo $a; ?> foo <!ELEMENT br EMPTY>", "<p>&lt;a href='bar'title=title&gt; </a></foo > &lt;/a href=&quot;foo&quot;&gt; foo <?php echo $a; ?> foo <!ELEMENT br EMPTY></p>\n"),
+    ("foo <![CDATA[>&<]]> foo <a href=\"&ouml;\"> foo <a href=\"\\*\"> <a href=\"\\\"\"> a <![cdata[x]]> b <?x <!X", "<p>foo <![CDATA[>&<]]> foo <a href=\"&ouml;\"> foo <a href=\"\\*\"> &lt;a href=&quot;&quot;&quot;&gt; a <![cdata[x]]> b &lt;?x &lt;!X</p>\n"),
+  ]);
+}
+
+// hard and soft line breaks
+function test_line_breaks(): test.TestOutcome {
+  return checks([
+    ("foo  \nbaz", "<p>foo<br />\nbaz</p>\n"),
+    ("foo\\\nbaz", "<p>foo<br />\nbaz</p>\n"),
+    ("foo       \nbaz", "<p>foo<br />\nbaz</p>\n"),
+    ("foo  \n     bar", "<p>foo<br />\nbar</p>\n"),
+    ("foo\\\n     bar", "<p>foo<br />\nbar</p>\n"),
+    ("*foo  \nbar* *foo\\\nbar*", "<p><em>foo<br />\nbar</em> <em>foo<br />\nbar</em></p>\n"),
+    ("`code  \nspan` `code\\\nspan`", "<p><code>code   span</code> <code>code\\ span</code></p>\n"),
+    ("<a href=\"foo  \nbar\"> <a href=\"foo\\\nbar\">", "<p><a href=\"foo  \nbar\"> <a href=\"foo\\\nbar\"></p>\n"),
+    ("foo\\", "<p>foo\\</p>\n"),
+    ("foo  ", "<p>foo</p>\n"),
+    ("### foo\\", "<h3>foo\\</h3>\n"),
+    ("### foo  ", "<h3>foo</h3>\n"),
+    ("foo \nbaz", "<p>foo\nbaz</p>\n"),
+    ("foo\t\nbar \t \nbaz", "<p>foo\nbar\nbaz</p>\n"),
+    ("a\\  \nb", "<p>a\\<br />\nb</p>\n"),
+    ("&amp;  \nb", "<p>&amp;<br />\nb</p>\n"),
+    ("> a  \n>   b\n\n- c\\\n  d", "<blockquote>\n<p>a<br />\nb</p>\n</blockquote>\n<ul>\n<li>c<br />\nd</li>\n</ul>\n"),
+  ]);
+}
+
+// Where spec 0.31.2 and cmark 0.30.2 do not agree, the port follows the
+// spec. cmark keeps one bottom for the openers of all `_` closers. It does
+// not count a symbol such as `£` as punctuation. It has the comments and
+// declarations of spec 0.30. It keeps the title of a definition when the
+// title is not the end of its line, and the line is text.
+function test_spec_over_cmark(): test.TestOutcome {
+  return checks([
+    ("__)_>__", "<p><strong>)_&gt;</strong></p>\n"),
+    ("_a*_*b_ *£*bravo. *€*charlie.", "<p><em>a*</em>*b_ *£*bravo. *€*charlie.</p>\n"),
+    ("foo <!-- this is a --\ncomment - with hyphens --> <!--> a --> <!---> b -->", "<p>foo <!-- this is a --\ncomment - with hyphens --> <!--> a --&gt; <!---> b --&gt;</p>\n"),
+    ("a <!doctype x> b", "<p>a <!doctype x> b</p>\n"),
+    ("[a]: /u\n\"t\" x\n\n[a]", "<p>&quot;t&quot; x</p>\n<p><a href=\"/u\">a</a></p>\n"),
+  ]);
+}
+
 function main(): i32 {
   let r = test.new("markdown");
   r = r.it("paragraphs, escapes and line breaks", test_paragraphs);
@@ -321,5 +465,15 @@ function main(): i32 {
   r = r.it("label normalization", test_normalize);
   r = r.it("tags and HTML block conditions", test_tags);
   r = r.it("backslash unescaping", test_unescape);
+  r = r.it("link titles and destinations", test_titles);
+  r = r.it("backslash escapes and entity references", test_escapes);
+  r = r.it("code spans", test_code_spans);
+  r = r.it("emphasis and strong emphasis", test_emphasis);
+  r = r.it("links", test_links);
+  r = r.it("images", test_images);
+  r = r.it("autolinks", test_autolinks);
+  r = r.it("raw HTML", test_raw_html);
+  r = r.it("hard and soft line breaks", test_line_breaks);
+  r = r.it("spec 0.31.2 where cmark 0.30.2 differs", test_spec_over_cmark);
   return r.finish();
 }
