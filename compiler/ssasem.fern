@@ -641,8 +641,10 @@ pub function is_u64(t: typeinfo.Type): boolean {
   return false;
 }
 
+// A Socket is a 64-bit word: its descriptor number, and above it the close
+// count that the number had when the handle was made.
 pub function is_wide(t: typeinfo.Type): boolean {
-  return is_i64(t) || is_u64(t);
+  return is_i64(t) || is_u64(t) || semtypes.is_socket(t);
 }
 
 pub function is_usize(t: typeinfo.Type): boolean {
@@ -2873,9 +2875,11 @@ pub function lends_handle(from: typeinfo.Type, to: typeinfo.Type): boolean {
   return false;
 }
 
-// The second case is the cast __socket_from_fd lowers to.
 function casts_descriptor(from: typeinfo.Type, to: typeinfo.Type): boolean {
-  return semtypes.is_fd_handle(from) && is_i32(to) || is_i32(from) && semtypes.is_socket(to);
+  if (semtypes.is_socket(from)) {
+    return is_u64(to);
+  }
+  return semtypes.is_fd_handle(from) && is_i32(to) || is_u64(from) && semtypes.is_socket(to);
 }
 
 pub function cast_admits(from: typeinfo.Type, to: typeinfo.Type): boolean {

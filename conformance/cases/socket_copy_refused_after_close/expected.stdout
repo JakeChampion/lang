@@ -1,0 +1,10 @@
+sent 1
+new connection sent 1
+array refused true
+tuple refused true
+record refused true
+variant refused true
+option refused true
+callback refused true
+local port refused true
+closed 0

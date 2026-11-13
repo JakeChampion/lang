@@ -1,0 +1,60 @@
+// A Socket holds the close count of its descriptor number. After the number
+// closes, each copy of the handle is refused, also when a new connection has
+// the same number.
+
+struct Conn { id: i32, sock: Socket }
+
+enum Slot { Empty, Held(Socket) }
+
+function send(s: Socket): i32 {
+  return tcp_send_bytes(s, [7u8]);
+}
+
+function later(s: Socket): () => i32 {
+  return (): i32 => send(s);
+}
+
+function refused(label: string, sent: i32): void {
+  print(label + " refused " + (sent < 0).to_string());
+}
+
+function main(): i32 {
+  let lo: u8[] = [127u8, 0u8, 0u8, 1u8];
+  let ls: Socket = tcp_listen_with(lo, 0, 16, false);
+  let port = tcp_local_port(ls);
+  let first: Socket = tcp_connect_with(lo, port, false);
+  let peer: Socket = tcp_accept(ls);
+  let in_array = [first];
+  let in_tuple = (first, 5);
+  let in_record = Conn { id: 1, sock: first };
+  let in_variant: Slot = Held(first);
+  let in_option: Option[Socket] = Some(first);
+  let in_callback = later(first);
+  print("sent " + send(in_array[0]).to_string());
+  unsafe {
+    __tcp_close_unchecked(first);
+  }
+  let second: Socket = tcp_connect_with(lo, port, false);
+  let other: Socket = tcp_accept(ls);
+  print("new connection sent " + send(second).to_string());
+  refused("array", send(in_array[0]));
+  refused("tuple", send(in_tuple.0));
+  refused("record", send(in_record.sock));
+  match (in_variant) {
+    Held(s) => {
+      refused("variant", send(s));
+    },
+    Empty => {}
+  }
+  match (in_option) {
+    Some(s) => {
+      refused("option", send(s));
+    },
+    None => {}
+  }
+  refused("callback", in_callback());
+  refused("local port", tcp_local_port(in_record.sock));
+  let closed: i32 = tcp_close(second) + tcp_close(other) + tcp_close(peer) + tcp_close(ls);
+  print("closed " + closed.to_string());
+  return 0;
+}
