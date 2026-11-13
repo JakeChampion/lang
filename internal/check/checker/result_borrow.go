@@ -631,6 +631,34 @@ func (c *checker) signatureResultBorrows(name string) bool {
 	return false
 }
 
+// A compound result can take a fresh call result from each input that can lend.
+func (c *checker) scopedCallFresh(call *ast.Call) bool {
+	if c.callOwnResults[call] {
+		return true
+	}
+	id, named := call.Callee.(*ast.Ident)
+	if !named || c.callValueCallees[call] {
+		return false
+	}
+	if !c.signatureResultBorrows(id.Name) {
+		return true
+	}
+	sig, known := c.info.FuncSigs[id.Name]
+	if !known {
+		return false
+	}
+	for i, arg := range call.Args {
+		if !c.paramCanLend(sig, c.ownFuncs[id.Name], i) {
+			continue
+		}
+		input, ok := arg.(*ast.Call)
+		if !ok || !freshInit(c.info, input) || !c.scopedCallFresh(input) {
+			return false
+		}
+	}
+	return true
+}
+
 // A call scrutinee is owned when its result is fresh: a variant, a fresh
 // method, a function with no borrowed parameter that can hold a
 // handle, or a function whose body returns a handle-bearing value with no borrow.
