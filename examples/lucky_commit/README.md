@@ -23,8 +23,7 @@ $ lucky_commit 00_111      # `_` matches any hex digit
 $ time lucky_commit --benchmark
 ```
 
-The tool runs `git`, and it looks for the program at `/bin/git` and at
-`/usr/bin/git`.
+The tool runs the `git` that it finds in `PATH`.
 
 ## How it works
 

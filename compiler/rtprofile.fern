@@ -25,6 +25,15 @@ pub function mode(): i32 {
   return 0;
 }
 
+// The FERN_PROFILE value of a mode that mode() accepts.
+pub function name(mode: i32): string {
+  let names = ["off", "cpu", "alloc", "cpu-pprof", "alloc-pprof"];
+  if (mode < 0 || mode >= names.len()) {
+    return "off";
+  }
+  return names[mode];
+}
+
 pub function allocation(mode: i32): boolean {
   return mode == 2 || mode == 4;
 }

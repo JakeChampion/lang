@@ -7491,6 +7491,7 @@ function enum_argument_from_ref(r: parser.TypeRef, tn: TypeNames): typeinfo.Type
 }
 
 function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
+  r = parser.ref_ungroup(r);
   if (r.array_depth > 0) {
     let elem = parser.elem_type_ref(r);
     return t_array(type_from_ref_names(elem, tn));
@@ -7632,6 +7633,7 @@ function callable_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Typ
 }
 
 function type_from_ref_subst(r: parser.TypeRef, tparams: string[], targs: typeinfo.Type[], tn: TypeNames): typeinfo.Type {
+  r = parser.ref_ungroup(r);
   if (r.array_depth > 0) {
     let elem = parser.elem_type_ref(r);
     return t_array(type_from_ref_subst(elem, tparams, targs, tn));

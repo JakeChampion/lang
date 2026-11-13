@@ -6863,16 +6863,23 @@ function misused_handle_word(p: Par, word: string): boolean {
   if (word != "own" && word != "borrow" || p.peek_ident_at(1).len() > 0) {
     return false;
   }
-  if (word == "borrow") {
-    return true;
-  }
+  return word == "borrow" || !own_prefix_position(p);
+}
+
+function own_prefix_position(p: Par): boolean {
   let next = p.punct_at(p.pos + 1);
   let prev = p.punct_at(p.pos - 1);
-  if (next == "," || next == ")" || prev != "(" && prev != ",") {
-    return true;
+  if (next == "," || next == ")") {
+    return false;
+  }
+  if (prev == "=>") {
+    return starts_misused_handle_type(p.advance());
+  }
+  if (prev != "(" && prev != ",") {
+    return false;
   }
   let open = enclosing_opener(p, p.pos - 1);
-  return open < 0 || p.punct_at(open) != "(" || !p.closer_followed_by(open, "(", ")", "=>", "");
+  return open >= 0 && p.punct_at(open) == "(" && p.closer_followed_by(open, "(", ")", "=>", "");
 }
 
 function enclosing_opener(p: Par, from: i32): i32 {
@@ -6891,6 +6898,10 @@ function enclosing_opener(p: Par, from: i32): i32 {
     j -= 1;
   }
   return -1;
+}
+
+function grouped_prefix_space(punct: string): string {
+  return if (punct == "(" || punct == "[") { " " } else { "" };
 }
 
 function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Par) {
@@ -6919,6 +6930,9 @@ function parse_type_paren_arrow(p: Par, top_arrow: boolean): (string, string, Pa
   let telem_after_comma = false;
   while (!p.at_end()) {
     let tpk = p.peek_punct();
+    if (tprev_prefix) {
+      tbuf += grouped_prefix_space(tpk);
+    }
     if (at_unit_type(p)) {
       tbuf += "void";
       p = p.refused_type(unit_type_message()).advance();
@@ -9632,7 +9646,11 @@ pub function ref_without_own(r: TypeRef): TypeRef {
   if (!ref_is_own(r)) {
     return r;
   }
-  return TypeRef { ...r, base: spelling_without_own(r.base) };
+  let base = spelling_without_own(r.base);
+  if (!plain_type_spelling(base)) {
+    return parse_type_ref(spelling_without_own(render_type_ref(r)));
+  }
+  return TypeRef { ...r, base: base };
 }
 
 pub function ref_fn_result(r: TypeRef): TypeRef {
@@ -9706,22 +9724,28 @@ function fn_spelling_params(t: string): string {
   return ref_fn_param_spellings(r);
 }
 
+// A function type, in parentheses when it is the element of an array.
+function render_fn_ref(t: TypeRef): string {
+  let inner = "(";
+  let f = 0;
+  while (f + 1 < t.args.len()) {
+    if (f > 0) {
+      inner += ", ";
+    }
+    inner += render_type_ref(t.args[f]);
+    f += 1;
+  }
+  inner = inner + ") => " + render_type_ref(t.args[t.args.len() - 1]);
+  if (t.array_depth > 0) {
+    return "(" + inner + ")";
+  }
+  return inner;
+}
+
 pub function render_type_ref(t: TypeRef): string {
   let inner = "";
   if (t.is_fn) {
-    inner = "(";
-    let f = 0;
-    while (f + 1 < t.args.len()) {
-      if (f > 0) {
-        inner += ", ";
-      }
-      inner += render_type_ref(t.args[f]);
-      f += 1;
-    }
-    inner = inner + ") => " + render_type_ref(t.args[t.args.len() - 1]);
-    if (t.array_depth > 0) {
-      inner = "(" + inner + ")";
-    }
+    inner = render_fn_ref(t);
   } else if (t.is_tuple) {
     inner = "(";
     for i in 0..t.args.len() {
