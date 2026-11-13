@@ -4109,19 +4109,19 @@ function token_copy(f: SFunc, sp: TokenSplit, defs: SInst[], arms: i32[], tok_va
         for a in ins.args {
           nargs = nargs.append(token_mapped(map, a));
         }
-        let again = same_load(loads, SInst { ...ins, args: nargs });
+        let copy = SInst { ...ins, args: nargs };
+        let again = same_load(loads, copy);
         if (again >= 0) {
           map = map.with(ins.result, again);
           continue;
         }
-        loads = without_stored(loads, SInst { ...ins, args: nargs });
-        let result = ins.result;
-        if (result >= 0) {
-          map = map.with(result, n);
-          result = n;
+        loads = without_stored(loads, copy);
+        if (copy.result >= 0) {
+          map = map.with(copy.result, n);
+          copy = SInst { ...copy, result: n };
           n += 1;
         }
-        insts = insts.append(SInst { ...ins, result: result, args: nargs });
+        insts = insts.append(copy);
       }
       prev = b.id;
     }
@@ -4358,6 +4358,9 @@ function token_joined(f: SFunc, sp: TokenSplit, region: boolean[], fast: TokenCo
 
 // The block with its reads renamed by map. no_phis leaves its phis out.
 function token_renamed(b: SBlock, map: i32[], no_phis: boolean): SBlock {
+  if (!no_phis && !token_reads_mapped(b, map)) {
+    return b;
+  }
   let insts: SInst[] = [];
   for ins in b.insts {
     if (no_phis && ins.kind_tag == PHI) {
@@ -4379,6 +4382,18 @@ function token_renamed(b: SBlock, map: i32[], no_phis: boolean): SBlock {
   return SBlock { ...b, insts: insts, term: term };
 }
 
+// Whether the block reads a value that map renames.
+function token_reads_mapped(b: SBlock, map: i32[]): boolean {
+  for ins in b.insts {
+    for a in ins.args {
+      if (token_mapped(map, a) != a) {
+        return true;
+      }
+    }
+  }
+  return token_mapped(map, b.term.cond) != b.term.cond || token_mapped(map, b.term.value) != b.term.value;
+}
+
 // The values that a block outside the copied ones reads.
 function token_read_outside(f: SFunc, region: boolean[], e: i32): boolean[] {
   let read = __alloc_bool(f.nvals);
@@ -4393,10 +4408,10 @@ function token_read_outside(f: SFunc, region: boolean[], e: i32): boolean[] {
       }
     }
     if (b.term.kind_tag == TERM_BRIF) {
-      read = marked_all(read, [b.term.cond]);
+      read = with_mark(read, b.term.cond);
     }
     if (b.term.kind_tag == TERM_RET) {
-      read = marked_all(read, [b.term.value]);
+      read = with_mark(read, b.term.value);
     }
   }
   return read;
@@ -4404,9 +4419,14 @@ function token_read_outside(f: SFunc, region: boolean[], e: i32): boolean[] {
 
 function marked_all(own marks: boolean[], values: i32[]): boolean[] {
   for v in values {
-    if (v >= 0 && v < marks.len()) {
-      marks = marks.with(v, true);
-    }
+    marks = with_mark(marks, v);
+  }
+  return marks;
+}
+
+function with_mark(own marks: boolean[], v: i32): boolean[] {
+  if (v >= 0 && v < marks.len()) {
+    return marks.with(v, true);
   }
   return marks;
 }
