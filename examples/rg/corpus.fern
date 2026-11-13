@@ -1,0 +1,80 @@
+// corpus — write a deterministic text of about N MiB to the standard output.
+//
+//   $ corpus 200 > big.txt
+//
+// The text is lines of words from a fixed list, chosen by a linear
+// congruential generator with a fixed seed. Some words are names in mixed
+// case, and some are Greek, for the benchmarks in README.md.
+import "std/io_buffered" as io_buffered;
+import "std/i32";
+
+const WORDS: string[] = [
+  "the", "of", "and", "a", "to", "in", "is", "you", "that", "it", "he", "was",
+  "for", "on", "are", "as", "with", "his", "they", "at", "be", "this", "have",
+  "from", "or", "one", "had", "by", "word", "but", "not", "what", "all",
+  "were", "we", "when", "your", "can", "said", "there", "use", "an", "each",
+  "which", "she", "do", "how", "their", "if", "will", "up", "other", "about",
+  "out", "many", "then", "them", "these", "so", "some", "her", "would",
+  "make", "like", "him", "into", "time", "has", "look", "two", "more",
+  "write", "go", "see", "number", "no", "way", "could", "people", "my",
+  "than", "first", "water", "been", "call", "who", "oil", "its", "now",
+  "find", "long", "down", "day", "did", "get", "come", "made", "may", "part",
+  "café", "naïve", "façade", "Zürich", "señor",
+];
+
+const RARE: string[] = [
+  "Sherlock Holmes", "sherlock holmes", "SHERLOCK HOLMES", "John Watson",
+  "Irene Adler", "Inspector Lestrade", "Professor Moriarty", "λόγος",
+  "ψυχή καὶ σῶμα", "ἀρετή", "Ἀθῆναι",
+];
+
+function next(x: u64): u64 {
+  return x * 6364136223846793005u64 + 1442695040888963407u64;
+}
+
+function pick(x: u64, n: i32): i32 {
+  return ((x >> 33u64) % (n as u64)) as i32;
+}
+
+function main(): i32 {
+  let argv = args();
+  let mib = 200;
+  if (argv.len() > 1) {
+    let Ok(n) = i32.parse_i32(argv[1]) else {
+      eprint("corpus: the size must be a count of MiB");
+      return 2;
+    };
+    mib = n;
+  }
+  let limit = mib as i64 * 1048576i64;
+  let w = io_buffered.buf_writer_new(stdout(), 65536);
+  let x = 42u64;
+  let written = 0i64;
+  while (written < limit) {
+    x = next(x);
+    let count = 4 + pick(x, 12);
+    let line = "";
+    for k in 0..count {
+      x = next(x);
+      let word = WORDS[pick(x, WORDS.len())];
+      if (pick(x, 97) == 0) {
+        x = next(x);
+        word = RARE[pick(x, RARE.len())];
+      }
+      if (k > 0) {
+        line += " ";
+      }
+      line += word;
+    }
+    line += "\n";
+    written += line.len() as i64;
+    let Ok(next_w) = w.write_string(line) else {
+      return 1;
+    };
+    w = next_w;
+  }
+  let Ok(_) = w.flush() else {
+    return 1;
+  };
+  return 0;
+}
