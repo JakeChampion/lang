@@ -1276,7 +1276,7 @@ func freshScopedValue(info *Info, block *ast.BlockExpr, value ast.Expr) bool {
 				return true
 			}
 		}
-		return freshInit(info, value) && (info == nil || info.CallSignatureBorrows == nil || !info.CallSignatureBorrows(x))
+		return freshInit(info, value) && (info == nil || info.CallScopedFresh == nil || info.CallScopedFresh(x))
 	case *ast.Ident:
 		if block == nil {
 			return freshInit(info, value)
