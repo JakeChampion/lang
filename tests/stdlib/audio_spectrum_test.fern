@@ -1,0 +1,79 @@
+// Tests of std/audio/spectrum: the bands of a sine, of silence, and of
+// two channels.
+import "std/array";
+import "std/audio/spectrum";
+import "std/test";
+
+function sine(hz: f64, amp: f64, frames: i32, channels: i32, rate: i32): i32[] {
+  let out: i32[] = [];
+  for k in 0..frames {
+    let v = (amp * (6.283185307179586 * hz * (k as f64) / (rate as f64)).sin()).round() as i32;
+    for _ in 0..channels {
+      out = out.append(v);
+    }
+  }
+  return out;
+}
+
+function loudest(xs: f64[]): i32 {
+  let top = 0;
+  for i in 0..xs.len() {
+    if (xs[i] > xs[top]) {
+      top = i;
+    }
+  }
+  return top;
+}
+
+function hundredths(x: f64): string {
+  return ((x * 100.0).round() as i32).to_string();
+}
+
+// A sine at half of full scale is 6 dB below full scale: 0.9 on the scale
+// of 60 dB. 1500 Hz is on a bin of the transform at 48 kHz.
+function test_a_sine(): test.TestOutcome {
+  let bands = spectrum.levels(sine(1500.0, 16384.0, 2048, 1, 48000), 1, 48000, 24);
+  let top = loudest(bands);
+  let inside = spectrum.band_hz(top, 24, 48000) <= 1500.0 && spectrum.band_hz(top + 1, 24, 48000) > 1500.0;
+  return test.assert_eq(inside.to_string() + " " + hundredths(bands[top]) + " " + (bands[0] < 0.1 && bands[23] < 0.1).to_string(), "true 90 true");
+}
+
+// The bands go from 40 Hz to 16 kHz, or to half of a lower rate.
+function test_the_edges(): test.TestOutcome {
+  let got = [spectrum.band_hz(0, 10, 48000), spectrum.band_hz(10, 10, 48000), spectrum.band_hz(10, 10, 22050), spectrum.band_hz(5, 10, 48000)].map((x: f64): string => x.round().to_string());
+  return test.assert_eq(got.join(" "), "40 16000 11025 800");
+}
+
+// Silence, no samples and a rate of 0 give levels of 0. A count of 0 gives
+// no levels.
+function test_silence(): test.TestOutcome {
+  let quiet: i32[] = [];
+  for _ in 0..3000 {
+    quiet = quiet.append(0);
+  }
+  let none: i32[] = [];
+  let sums = [spectrum.levels(quiet, 2, 44100, 12), spectrum.levels(none, 2, 44100, 12), spectrum.levels(sine(440.0, 9000.0, 1024, 1, 44100), 1, 0, 12)].map((xs: f64[]): string => xs.len().to_string() + ":" + hundredths(xs.fold(0.0, (a: f64, x: f64): f64 => a + x)));
+  return test.assert_eq(sums.join(" ") + " " + spectrum.levels(quiet, 1, 44100, 0).len().to_string(), "12:0 12:0 12:0 0");
+}
+
+// Two channels mix to one, and fewer frames than the transform take zeros
+// before them.
+function test_channels_and_short_input(): test.TestOutcome {
+  let mono = spectrum.levels(sine(3000.0, 12000.0, 1500, 1, 48000), 1, 48000, 16);
+  let stereo = spectrum.levels(sine(3000.0, 12000.0, 1500, 2, 48000), 2, 48000, 16);
+  let short = spectrum.levels(sine(3000.0, 12000.0, 300, 1, 48000), 1, 48000, 16);
+  let same = true;
+  for i in 0..16 {
+    same = same && (mono[i] - stereo[i]).abs() < 0.000001;
+  }
+  return test.assert_eq(same.to_string() + " " + (loudest(short) == loudest(mono)).to_string(), "true true");
+}
+
+function main(): i32 {
+  let r = test.new("std/audio/spectrum");
+  r = r.it("a sine is loudest in its band", test_a_sine);
+  r = r.it("the bands go from 40 Hz to 16 kHz", test_the_edges);
+  r = r.it("silence gives levels of 0", test_silence);
+  r = r.it("two channels mix to one, and a short input works", test_channels_and_short_input);
+  return r.finish();
+}
