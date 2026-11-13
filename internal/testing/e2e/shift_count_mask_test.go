@@ -8,9 +8,11 @@ import (
 	"testing"
 )
 
-const shiftCountMaskSrc = `const CA: i32 = 1 << 64;
-const CB: i32 = 1 << 65;
-const CC: i32 = 256 >> 65;
+// A shift count at run time is masked to the width of the operand. The
+// constants spell the masked counts: a constant shift of 32 or more is E047.
+const shiftCountMaskSrc = `const CA: i32 = 1 << (64 & 31);
+const CB: i32 = 1 << (65 & 31);
+const CC: i32 = 256 >> (65 & 31);
 
 function lsh(x: i32, c: i32): i32 { return x << c; }
 function rsh(x: i32, c: i32): i32 { return x >> c; }
