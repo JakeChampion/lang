@@ -31,6 +31,8 @@ function main(): i32 {
   r = r.it("break and continue", check_break_and_continue);
   r = r.it("generics", check_generics);
   r = r.it("generic nominal callback signatures", check_nominal_callback_signatures);
+  r = r.it("generic callback receiver methods", check_callback_receiver_methods);
+  r = r.it("nested callback method instances", check_nested_callback_method_instances);
   r = r.it("lambdas", check_lambdas);
   r = r.it("fstrings", check_fstrings);
   r = r.it("qualified names", check_qualified_names);
@@ -48,6 +50,41 @@ function check_nominal_callback_signatures(): test.TestOutcome {
     let mod = parser.parse_module(lexer.tokenize(source));
     if (mod.funcs.len() != 1 || mod.funcs[0].type_params.len() != 1) {
       return test.fail("a nominal callback signature must specialize its type parameter: " + signature);
+    }
+  }
+  return test.pass();
+}
+
+function check_callback_receiver_methods(): test.TestOutcome {
+  let prefix = "enum Fut[T] { Ready(T), Gone } struct Host { n: i32 } enum Choice { A, B } ";
+  for receiver in ["i32", "f64", "boolean", "string", "Host", "Choice"] {
+    for signature in ["(i32) => Fut[T]", "(Fut[T]) => i32", "((Fut[T]) => i32) => i32"] {
+      let source = prefix + "function (x: " + receiver + ") run[T](k: " + signature + "): i32 { return 1; }";
+      let mod = parser.register_struct_method_generics(parser.parse_module(lexer.tokenize(source)));
+      if (mod.funcs.len() != 1 || mod.funcs[0].name != "__smm_" + receiver + "_run") {
+        return test.fail("the generic receiver method needs a function template: " + receiver + " " + signature);
+      }
+      if (mod.funcs[0].type_params.len() != 1 || mod.funcs[0].params.len() != 2) {
+        return test.fail("the method template lost its type parameter or receiver");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function check_nested_callback_method_instances(): test.TestOutcome {
+  let prefix = "enum Fut[T] { Ready(T), Gone } struct Host { n: i32 } function (h: Host) run[T](k: ((Fut[T]) => i32) => i32): i32 { return 7; } ";
+  for call in ["h.run(k)", "h.run((f: (Fut[i32]) => i32): i32 => 1)"] {
+    let source = prefix + "function main(): i32 { let h = Host { n: 1 }; let k = (f: (Fut[i32]) => i32): i32 => 1; return " + call + "; }";
+    let mod = parser.module_with_builtins_typed(parser.parse_module(lexer.tokenize(source)));
+    let found = false;
+    for fd in mod.funcs {
+      if (fd.name == "__smm_Host_run__i32" && fd.type_params.len() == 0) {
+        found = true;
+      }
+    }
+    if (!found) {
+      return test.fail("a nested callback must bind the method type parameter: " + call);
     }
   }
   return test.pass();

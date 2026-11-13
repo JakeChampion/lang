@@ -1,5 +1,32 @@
 enum Fut[T] { Ready(T), Gone }
 struct Box[T] { item: T }
+struct Host { n: i32 }
+
+function (x: i32) nominal[T](k: (i32) => Fut[T]): i32 {
+  let r = k(x);
+  return match (r) { Ready(_) => x, Gone => 0 };
+}
+
+function (x: string) nominal[T](k: (i32) => Fut[T]): i32 {
+  return (x.len() as i32) + end(k);
+}
+
+function (x: f64) nominal[T](k: (i32) => Fut[T]): i32 {
+  return (x as i32) + end(k);
+}
+
+function (x: boolean) nominal[T](k: (i32) => Fut[T]): i32 {
+  if (x) { return end(k); }
+  return 0;
+}
+
+function (h: Host) by_input[T](k: (Fut[T]) => i32): i32 {
+  return k(Gone) + h.n;
+}
+
+function (h: Host) nested[T](k: ((Fut[T]) => i32) => i32): i32 {
+  return k((r: Fut[T]): i32 => match (r) { Ready(_) => 1, Gone => 2 }) + h.n;
+}
 
 function end[T](k: (i32) => Fut[T]): i32 {
   let r = k(7);
@@ -31,6 +58,19 @@ function main(): i32 {
   if (arrays(many) != 2) { return 4; }
   let consume = (r: Fut[i32]): i32 => match (r) { Ready(n) => n, Gone => 42 };
   if (input(consume) != 42) { return 5; }
+  let number = 7;
+  if (number.nominal(k) != 7) { return 6; }
+  let text = "value";
+  if (text.nominal(wide) != 6) { return 7; }
+  let fraction: f64 = 2.5;
+  if (fraction.nominal(k) != 3) { return 8; }
+  let flag = true;
+  if (flag.nominal(k) != 1) { return 9; }
+  let h = Host { n: 5 };
+  if (h.by_input(consume) != 47) { return 10; }
+  let nested = (f: (Fut[i32]) => i32): i32 => f(Gone);
+  if (h.nested(nested) != 7) { return 11; }
+  if (h.nested((f: (Fut[i32]) => i32): i32 => f(Gone)) != 7) { return 12; }
   print("generic nominal callback signatures");
   return 0;
 }

@@ -10006,7 +10006,7 @@ function spelling_mentions_tparam(name: string, tparams: string[]): boolean {
   if (name.len() == 0) {
     return false;
   }
-  for v in collect_tvars(name, []) {
+  for v in type_str_vars(name, []) {
     if (tp_index(v, tparams) >= 0) {
       return true;
     }
@@ -10235,7 +10235,7 @@ function lambda_param_types_of(e: ast.Expr, env: MEnv, funcs: MFns): string[] {
     ast.ExprLambda(lm) => {
       let out: string[] = [];
       for pi in 0..lm.params.len() {
-        out = out.append(lm.params[pi].type_name);
+        out = out.append(param_spelling(lm.params[pi]));
       }
       return out;
     },
@@ -11228,7 +11228,7 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
         if (li > 0) {
           lps += ", ";
         }
-        lps += lm.params[li].type_name;
+        lps += param_spelling(lm.params[li]);
       }
       let lret = lambda_ret_of(e, env, funcs);
       if (lret.len() == 0) {
@@ -13165,10 +13165,13 @@ pub function struct_receiver_typevars(recv: string): string[] {
 function smm_own_typevars(fd: FuncDecl, recv_vars: string[]): string[] {
   let all: string[] = [];
   for i in 0..fd.params.len() {
-    all = collect_tvars(fd.params[i].type_name, all);
-    all = collect_tvars(fd.params[i].fn_ret, all);
+    all = type_str_vars(fd.params[i].type_name, all);
+    all = type_str_vars(fd.params[i].fn_ret, all);
+    all = type_str_vars(fd.params[i].fn_param_types, all);
   }
-  all = collect_tvars(fd.ret_type, all);
+  all = type_str_vars(fd.ret_type, all);
+  all = type_str_vars(fd.ret_fn_ret, all);
+  all = type_str_vars(fd.ret_fn_param_types, all);
   let own: string[] = [];
   for j in 0..all.len() {
     if (!util.has_str(recv_vars, all[j])) {
@@ -13217,7 +13220,7 @@ function is_plain_method_tps(fd: FuncDecl, structs: StructDecl[], enums: EnumDec
   if (fd.type_params.len() == 0 || first_bracket(fd.receiver_type) >= 0) {
     return false;
   }
-  if (!is_plain_decl(fd.receiver_type, structs, enums)) {
+  if (!is_plain_receiver(fd.receiver_type, structs, enums)) {
     return false;
   }
   let own = smm_own_typevars(fd, []);
@@ -13229,7 +13232,10 @@ function is_plain_method_tps(fd: FuncDecl, structs: StructDecl[], enums: EnumDec
   return true;
 }
 
-function is_plain_decl(name: string, structs: StructDecl[], enums: EnumDecl[]): boolean {
+function is_plain_receiver(name: string, structs: StructDecl[], enums: EnumDecl[]): boolean {
+  if (typeinfo.is_primitive_type_name(name) && name != "void") {
+    return true;
+  }
   for sd in structs {
     if (sd.name == name && sd.type_params.len() == 0) {
       return true;
