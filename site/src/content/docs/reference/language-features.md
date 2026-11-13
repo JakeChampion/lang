@@ -245,6 +245,7 @@ there too:
 let whole @ Some(n) = lookup(id) else { return 0; };
 let Ok(Some(n)) = parse(s) else { return 0; };
 let Red(n) | Blue(n) = c else { return 0; };
+let (Some(a), Some(b)) = (x, y) else { return 0; };
 ```
 
 Both forms are one `match` after parsing — `if let`'s success arm is the

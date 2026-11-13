@@ -1,0 +1,1 @@
+a variant tuple element can fail to match, so it cannot be a destructuring binding pattern
