@@ -45,11 +45,11 @@ function main(): i32 {
     r = r + 64;
   }
 
-  // the capture engine reports the same leftmost-longest span the
-  // position-set matcher does
+  // captures and find give the same leftmost-first span: the first
+  // alternative wins
   let caps: regex.Captures = require_caps({ let __checked_regex_1: regex.Regex = match (regex.compile("(a|ab)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_1.captures("xab") });
   let span: regex.Match = require_match({ let __checked_regex_0: regex.Regex = match (regex.compile("(a|ab)")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_0.find("xab") });
-  if (at(caps.group_start(0), span.start) && at(caps.group_end(0), span.end) && require_regex_text(match (caps.group(1)) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "ab") {
+  if (at(caps.group_start(0), span.start) && at(caps.group_end(0), span.end) && require_regex_text(match (caps.group(1)) { Ok(__value) => __value, Err(__error) => { eprint(__error.to_string()); return 98; } }) == "a" && at(caps.group_end(0), 2)) {
     r = r + 128;
   }
 
