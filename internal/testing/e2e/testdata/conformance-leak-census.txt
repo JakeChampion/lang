@@ -699,6 +699,7 @@ map_keys                                             0
 map_keys_str                                         0
 map_literal                                          0
 map_narrow_int_keys                                  0
+map_of_builtin_handles                               0
 map_read_without_construction                        0
 map_str_delete                                       0
 map_str_iter                                         0

@@ -989,7 +989,7 @@ pub function is_supported_map(t: typeinfo.Type): boolean {
 }
 
 pub function wide_map_value(v: typeinfo.Type): boolean {
-  return is_integer(v) && is_wide(v);
+  return is_integer(v) && is_wide(v) || semtypes.is_socket(v);
 }
 
 pub function wide_map_key(k: typeinfo.Type): boolean {
@@ -1073,8 +1073,9 @@ function narrow_column(t: typeinfo.Type): boolean {
   return semtypes.is_never(t) || is_i32(t) || is_char(t) || is_u8(t) || is_u32(t) || is_bool(t) || is_usize(t);
 }
 
+// A Reader, a Writer and a Dir are descriptor numbers.
 pub function narrow_map_value(v: typeinfo.Type): boolean {
-  return semtypes.is_never(v) || is_bool(v) || is_char(v) || is_integer(v) && !is_wide(v);
+  return semtypes.is_never(v) || is_bool(v) || is_char(v) || is_integer(v) && !is_wide(v) || semtypes.is_fd_handle(v) && !is_wide(v);
 }
 
 pub function counted_map_value(v: typeinfo.Type): boolean {
