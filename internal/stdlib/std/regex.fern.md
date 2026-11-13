@@ -4,7 +4,9 @@ This module evaluates regular expressions.
 
 ## Model
 
-A compiled expression keeps a program for a Pike VM, its case policy, and capture metadata. Each search runs this program, so a span and its captures come from the same thread. A search runs its threads in one pass over the text. A new thread starts at each offset where a match can start, until a thread finds a match. The threads are in one array of words, and a step does not allocate. Thus a search takes time in proportion to the length of the text and the size of the program.
+A compiled expression keeps a program for a Pike VM, its case policy, and capture metadata. A search for captures runs this program, so the span and the captures of a match come from the same thread. The VM runs its threads in one pass over the text. A new thread starts at each offset where a match can start, until a thread finds a match. The threads are in one array of words, and a step does not allocate. Thus a search takes time in proportion to the length of the text and the size of the program.
+
+A compiled expression also keeps a forward DFA and a reverse DFA of the program, when they are in the limits of chunk 24. A DFA gives the same matches as the Pike VM, and a step of a DFA is one lookup in a table. A search for a span or for a match uses the DFAs. A search for captures runs the Pike VM from the start that the DFAs find.
 
 Match values identify input spans. A compiled expression also keeps the set of bytes that can start a match. A search does not try a match at a byte outside that set.
 
@@ -78,6 +80,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<22 packed program>>
 
 <<23 function __rx_exec(prog: Regex, t: string, from: i32, ns: i32, rule: RRule, anchored: boolean, own m: i32[]): i32[]>>
+
+<<24 function __rx_dfa(code: i32[], masks: i32[], forward: boolean): i32[]>>
 
 
 
@@ -387,7 +391,32 @@ function __rx_class(mask: u8[], byte: i32, ci: boolean): boolean {
 ```fern
 <<10 function __rx_search_from(prog: Regex, text: string, from: i32): Option[Match]>>=
 function __rx_search_from(prog: Regex, text: string, from: i32): Option[Match] {
-  return __rx_match(__rx_exec(prog, text, from, 1, __rx_rule(prog), false, []));
+  if (prog.rev.len() > 0 && !prog.leftmost_longest) {
+    let (start, end) = __rx_dfa_span(prog, text, from);
+    if (start < 0) {
+      return None;
+    }
+    return Some(Match { start: start, end: end });
+  }
+  return __rx_match(__rx_next(prog, text, from, 1, __rx_rule(prog), []));
+}
+
+// The first match at or after `from` in the first words of `m`, as
+// `__rx_exec` gives it, with `ns` slots. The DFAs find the span. The Pike VM
+// runs from its start for the captures and for the longest match.
+function __rx_next(prog: Regex, t: string, from: i32, ns: i32, rule: RRule, own m: i32[]): i32[] {
+  if (prog.rev.len() == 0) {
+    return __rx_exec(prog, t, from, ns, rule, false, m);
+  }
+  let (start, end) = __rx_dfa_span(prog, t, from);
+  if (start >= 0 && (ns > 1 || rule == RuleLongest)) {
+    return __rx_exec(prog, t, start, ns, rule, true, m);
+  }
+  if (m.len() < 3) {
+    m = __alloc_i32(3);
+  }
+  m = m.with(0, start);
+  return m.with(1, end);
 }
 
 // The span in the result of `__rx_exec`.
@@ -468,7 +497,7 @@ function __rx_replace_all_from(prog: Regex, text: string, repl: string, first: O
     if (nxt > text.len()) {
       break;
     }
-    mem = __rx_exec(prog, text, nxt, 1, rule, false, mem);
+    mem = __rx_next(prog, text, nxt, 1, rule, mem);
     next = __rx_match(mem);
   }
   buf_push_range(h, text, last, text.len());
@@ -517,7 +546,10 @@ function __rx_split(a: i32, b: i32): RInst {
   return ISplit(RSplit { a: a, b: b });
 }
 
-function __rx_emit(prog: RInst[], n: RNode): RInst[] {
+// With `rev`, the program of the reversed pattern: it matches the bytes of a
+// match from the last to the first, with each assertion seen from the other
+// side.
+function __rx_emit(prog: RInst[], n: RNode, rev: boolean): RInst[] {
   match (n) {
     RChar(c) => {
       return prog.append(IChar(c));
@@ -529,24 +561,25 @@ function __rx_emit(prog: RInst[], n: RNode): RInst[] {
       return prog.append(IClass(tok));
     },
     RStart => {
-      return prog.append(IAssert(0));
+      return prog.append(IAssert(__rx_mirror(0, rev)));
     },
     REnd => {
-      return prog.append(IAssert(1));
+      return prog.append(IAssert(__rx_mirror(1, rev)));
     },
     RBound(k) => {
-      return prog.append(IAssert(k));
+      return prog.append(IAssert(__rx_mirror(k, rev)));
     },
     RGroup(gd) => {
       let pg = prog.append(ISave(gd.idx + gd.idx));
-      pg = __rx_emit(pg, gd.node);
+      pg = __rx_emit(pg, gd.node, rev);
       return pg.append(ISave(gd.idx + gd.idx + 1));
     },
     RSeq(xs) => {
       let ps = prog;
       let k = 0;
       while (k < xs.len()) {
-        ps = __rx_emit(ps, xs[k]);
+        let x = if (rev) { xs[xs.len() - 1 - k] } else { xs[k] };
+        ps = __rx_emit(ps, x, rev);
         k += 1;
       }
       return ps;
@@ -560,12 +593,12 @@ function __rx_emit(prog: RInst[], n: RNode): RInst[] {
         if (k2 < nb - 1) {
           let sp = pa.len();
           pa = pa.append(__rx_split(0, 0));
-          pa = __rx_emit(pa, xs[k2]);
+          pa = __rx_emit(pa, xs[k2], rev);
           jmps = jmps.append(pa.len());
           pa = pa.append(IJmp(0));
           pa = pa.with(sp, __rx_split(sp + 1, pa.len()));
         } else {
-          pa = __rx_emit(pa, xs[k2]);
+          pa = __rx_emit(pa, xs[k2], rev);
         }
         k2 += 1;
       }
@@ -580,7 +613,7 @@ function __rx_emit(prog: RInst[], n: RNode): RInst[] {
     RStar(inner) => {
       let s1 = prog.len();
       let pst = prog.append(__rx_split(0, 0));
-      pst = __rx_emit(pst, inner);
+      pst = __rx_emit(pst, inner, rev);
       let s2 = pst.len();
       pst = pst.append(__rx_split(0, 0));
       let send = pst.len();
@@ -589,7 +622,7 @@ function __rx_emit(prog: RInst[], n: RNode): RInst[] {
     },
     RPlus(inner) => {
       let b1 = prog.len();
-      let pp = __rx_emit(prog, inner);
+      let pp = __rx_emit(prog, inner, rev);
       let sp2 = pp.len();
       pp = pp.append(__rx_split(0, 0));
       return pp.with(sp2, __rx_split(b1, sp2 + 1));
@@ -597,16 +630,16 @@ function __rx_emit(prog: RInst[], n: RNode): RInst[] {
     ROpt(inner) => {
       let s3 = prog.len();
       let po = prog.append(__rx_split(0, 0));
-      po = __rx_emit(po, inner);
+      po = __rx_emit(po, inner, rev);
       return po.with(s3, __rx_split(s3 + 1, po.len()));
     }
   }
 }
 
-function __rx_cprog(root: RNode): RInst[] {
+function __rx_cprog(root: RNode, rev: boolean): RInst[] {
   let prog: RInst[] = [];
   prog = prog.append(ISave(0));
-  prog = __rx_emit(prog, root);
+  prog = __rx_emit(prog, root, rev);
   prog = prog.append(ISave(1));
   return prog.append(IMatch);
 }
@@ -750,7 +783,7 @@ function __rx_pack_mask(own masks: i32[], tok: u8[], ci: boolean): i32[] {
 
 ### `23 function __rx_exec(prog: Regex, t: string, from: i32, ns: i32, rule: RRule, anchored: boolean, own m: i32[]): i32[]`
 
-The search runs the program once over the text, as a Pike VM. Each list of threads holds at most one thread for each instruction, so all the state of a search fits in one array of `i32` words. The array has this layout, for a program of `n` instructions and `ns` capture slots:
+The search runs the program once over the text, as a Pike VM. A list of threads holds at most one thread for each instruction. Thus all the state of a search fits in one array of `i32` words. The array has this layout, for a program of `n` instructions and `ns` capture slots:
 
 | Words | Contents |
 | --- | --- |
@@ -983,7 +1016,7 @@ function __rx_slots(prog: Regex, m: i32[], ns: i32): i32[] {
 
 function __rx_csearch_from(prog: Regex, t: string, from: i32): i32[] {
   let ns = (prog.ngroups + 1) * 2;
-  let m = __rx_exec(prog, t, from, ns, __rx_rule(prog), false, []);
+  let m = __rx_next(prog, t, from, ns, __rx_rule(prog), []);
   if (!__rx_found(m)) {
     return [];
   }
@@ -991,6 +1024,553 @@ function __rx_csearch_from(prog: Regex, t: string, from: i32): i32[] {
 }
 ```
 
+
+### `24 function __rx_dfa(code: i32[], masks: i32[], forward: boolean): i32[]`
+
+`compile` also builds two DFAs, before the first search. The forward DFA finds the end of the leftmost-first match, and the reverse DFA runs from that end to the start of the match. A search for a span uses the two DFAs, and a search for captures runs the Pike VM from the start that they find. A state of a DFA stands for a list of threads that the Pike VM can have. Thus a step of a DFA does the work of a step of the VM with one lookup in a table. The DFAs are part of the compiled value, so a search does not allocate, and a `Regex` stays a value that a worker can take.
+
+A state of the forward DFA keeps its threads in priority order. A state also records if a new thread starts at the next offset. A thread starts at each offset until a state holds a match. A match stops the threads after it, and it stops the new threads. Thus the forward DFA follows the rule of the Pike VM.
+
+The search records the offset of the last state that holds a match, and it stops at a state that holds no thread. When the search comes back to a state that only starts a thread, it goes to the next candidate offset.
+
+The reverse DFA runs the program of the reversed pattern, from the end of the match to the left, and it keeps each thread. It holds a match at each offset where a match that ends at the end offset starts. The leftmost of these offsets is the start of the leftmost-first match, because no match starts before the leftmost start.
+
+An assertion examines the bytes on each side of an offset. A column of the DFA table is a class of bytes together with the kind of the byte that follows: a word byte, another byte, or the end of the text. The first state of a search comes from the same kinds at its first offset, and from the offset 0.
+
+A DFA has limits on its size. A program has no DFA when it has more than `RX_DFA_PROGRAM` instructions. It also has no DFA when the DFA needs more than `RX_DFA_CELLS` transitions or `RX_DFA_WORK` closure steps. Then the Pike VM does all of the searches. A pattern such as `[ab]*a[ab]{12}` has more than 8,000 states, so it has no DFA.
+
+| Words | Contents |
+| --- | --- |
+| 0, 1, 2 | the count of columns, the count of byte kinds, and the offset of the dead state |
+| 3 to 258 | the first column of the class of each byte |
+| 259 to 514 | the kind of each byte when it follows: 1 for a word byte when the program has word assertions, else 0 |
+| 515 to 526 | the offset of the first state for each context |
+| from 527 | for each state, a word of flags and then the offset of the next state for each column |
+
+```fern
+<<24 function __rx_dfa(code: i32[], masks: i32[], forward: boolean): i32[]>>=
+// The limits of a DFA. A program over a limit runs on the Pike VM alone.
+const RX_DFA_PROGRAM: i32 = 2048;
+
+const RX_DFA_CELLS: i32 = 16384;
+
+const RX_DFA_WORK: i32 = 1048576;
+
+const RX_DFA_LA: i32 = 259;
+
+const RX_DFA_START: i32 = 515;
+
+const RX_DFA_HEAD: i32 = 527;
+
+// Flags of a DFA state: it holds a match, or it only starts a thread.
+const RX_DFA_MATCH: i32 = 1;
+
+const RX_DFA_RESTART: i32 = 2;
+
+// Builds the DFA of a packed program, or gives [] when the DFA is over a
+// limit. The forward DFA keeps the threads in priority order and starts a
+// thread at each offset, and a match stops the threads after it. The other
+// DFA is anchored and keeps each thread.
+// fern-lint: allow cyclomatic-complexity
+function __rx_dfa(code: i32[], masks: i32[], forward: boolean): i32[] {
+  let n = code.len() / 3;
+  if (n > RX_DFA_PROGRAM) {
+    return [];
+  }
+  let nctx = __rx_dfa_kinds(code);
+  let cls = __rx_byte_classes(code, masks, nctx == 3);
+  let ncls = cls[256];
+  let ncols = ncls * nctx;
+  let row = ncols + 1;
+  let nstart = 4 * nctx;
+  let tab = __alloc_i32(RX_DFA_HEAD + row);
+  tab = tab.with(0, ncols);
+  tab = tab.with(1, nctx);
+  tab = tab.with(2, RX_DFA_HEAD);
+  let rep = __alloc_i32(ncls);
+  for b in 0..256 {
+    let c = 255 - b;
+    rep = rep.with(cls[c], c);
+    tab = tab.with(3 + b, cls[b] * nctx);
+    if (nctx == 3 && __rx_is_word(b)) {
+      tab = tab.with(RX_DFA_LA + b, 1);
+    }
+  }
+  for col in 0..ncols {
+    tab = tab.with(RX_DFA_HEAD + 1 + col, RX_DFA_HEAD);  // the dead state stays dead
+  }
+  // Each key is the flag of a new thread, the count of threads, and the
+  // threads. The dead state is key 0.
+  let keys = [0, 0];
+  let koff = [0];
+  let slots = __alloc_i32(64);
+  slots = slots.with(__rx_dfa_hash(0, keys, 2, 0) & 63, 1);
+  let w = __alloc_i32(3 + 3 * n + 1);
+  let job = 0;
+  let total = nstart;  // the start jobs, then a job for each column of each new state
+  while (job < total) {
+    let src = 0;
+    let col = 0;
+    let ctx = 0;
+    if (job < nstart) {
+      ctx = __rx_dfa_start_ctx(job, nctx);
+    } else {
+      src = 1 + (job - nstart) / ncols;
+      col = (job - nstart) % ncols;
+      ctx = __rx_dfa_step_ctx(rep[col / nctx], col % nctx, nctx);
+    }
+    w = w.with(0, w[0] + 1);
+    w = w.with(1, 0);
+    let inject = forward;
+    if (job >= nstart) {
+      let ko = koff[src];
+      inject = keys[ko] != 0;
+      let byte = rep[col / nctx];
+      for k in 0..keys[ko + 1] {
+        let pc = keys[ko + 2 + k];
+        if (code[3 * pc] == RX_MATCH) {
+          if (forward) {
+            inject = false;
+            break;
+          }
+        } else if (__rx_takes(code, masks, pc, byte)) {
+          w = __rx_dfa_close(code, pc + 1, ctx, w);
+        }
+      }
+    }
+    if (inject || job < nstart) {
+      w = __rx_dfa_close(code, 0, ctx, w);
+    }
+    if (w[2] > RX_DFA_WORK) {
+      return [];
+    }
+    // A match stops the threads after it and the new threads.
+    let count = w[1];
+    let matched = false;
+    for k in 0..count {
+      if (!matched && code[3 * w[3 + n + k]] == RX_MATCH) {
+        matched = true;
+        if (forward) {
+          count = k + 1;
+          inject = false;
+        }
+      }
+    }
+    // Find the key, or add it as a new state.
+    let flag = if (inject) { 1 } else { 0 };
+    let h = __rx_dfa_hash(flag, w, 3 + n, count);
+    let mask = slots.len() - 1;
+    let i = h & mask;
+    let id = -1;
+    while (slots[i] != 0) {
+      let cand = slots[i] - 1;
+      if (__rx_dfa_same(keys, koff[cand], flag, w, 3 + n, count)) {
+        id = cand;
+        break;
+      }
+      i = i + 1 & mask;
+    }
+    if (id < 0) {
+      id = koff.len();
+      if ((id + 1) * ncols > RX_DFA_CELLS) {
+        return [];
+      }
+      koff = koff.append(keys.len());
+      keys = keys.append(flag);
+      keys = keys.append(count);
+      for k in 0..count {
+        keys = keys.append(w[3 + n + k]);
+      }
+      slots = slots.with(i, id + 1);
+      if (koff.len() * 2 > slots.len()) {
+        slots = __rx_dfa_rehash(keys, koff, slots.len() * 2);
+      }
+      let flags = if (matched) { RX_DFA_MATCH } else { 0 };
+      tab = tab.append(flags);
+      for _ in 0..ncols {
+        tab = tab.append(RX_DFA_HEAD);
+      }
+      total += ncols;
+    }
+    let to = RX_DFA_HEAD + id * row;
+    if (job < nstart) {
+      tab = tab.with(RX_DFA_START + job, to);
+      if (inject) {
+        tab = tab.with(to, tab[to] | RX_DFA_RESTART);
+      }
+    } else {
+      tab = tab.with(RX_DFA_HEAD + src * row + 1 + col, to);
+    }
+    job += 1;
+  }
+  return tab;
+}
+
+// The count of byte kinds that the assertions of a program need: 3 for word
+// assertions (another byte, a word byte, the end), 2 for `$` (a byte, the
+// end), else 1.
+function __rx_dfa_kinds(code: i32[]): i32 {
+  let kinds = 1;
+  for pc in 0..code.len() / 3 {
+    if (code[3 * pc] == RX_ASSERT) {
+      if (code[3 * pc + 1] >= 2) {
+        return 3;
+      }
+      if (code[3 * pc + 1] == 1) {
+        kinds = 2;
+      }
+    }
+  }
+  return kinds;
+}
+
+// The context of the first state of a job. Bit 1 is offset 0, and bit 2 is
+// the end of the text. Bit 4 is a word byte before the offset, and bit 8 is
+// a word byte after it.
+function __rx_dfa_start_ctx(job: i32, nctx: i32): i32 {
+  let ctx = 0;
+  if (job >= 2 * nctx) {
+    ctx = 1;
+  }
+  if (nctx == 3 && job / nctx % 2 == 1) {
+    ctx = ctx | 4;
+  }
+  return ctx | __rx_dfa_kind_ctx(job % nctx, nctx);
+}
+
+// The context after a step over `byte` to an offset where `kind` follows.
+function __rx_dfa_step_ctx(byte: i32, kind: i32, nctx: i32): i32 {
+  let ctx = __rx_dfa_kind_ctx(kind, nctx);
+  if (nctx == 3 && __rx_is_word(byte)) {
+    ctx = ctx | 4;
+  }
+  return ctx;
+}
+
+function __rx_dfa_kind_ctx(kind: i32, nctx: i32): i32 {
+  if (nctx > 1 && kind == nctx - 1) {
+    return 2;
+  }
+  if (kind == 1) {
+    return 8;
+  }
+  return 0;
+}
+
+// True when the instruction at `pc` takes `byte`: a char, a class, or any
+// byte.
+function __rx_takes(code: i32[], masks: i32[], pc: i32, byte: i32): boolean {
+  let op = code[3 * pc];
+  if (op == RX_CHAR) {
+    return byte == code[3 * pc + 1] || byte == code[3 * pc + 2];
+  }
+  if (op == RX_CLASS) {
+    return (masks[code[3 * pc + 1] + (byte >> 5)] >> (byte & 31) & 1) != 0;
+  }
+  return op == RX_ANY;
+}
+
+// Adds the threads of the closure of `entry` to the list in `w`, in priority
+// order. The first words of `w` are the generation stamp, the length of the
+// list and the count of closure steps. Then come a stamp for each
+// instruction, the list, and a stack.
+function __rx_dfa_close(code: i32[], entry: i32, ctx: i32, own w: i32[]): i32[] {
+  let n = code.len() / 3;
+  let gen = w[0];
+  let out = 3 + n;
+  let stk = out + n;
+  let count = w[1];
+  let work = w[2];
+  w = w.with(stk, entry);
+  let sp = 1;
+  while (sp > 0) {
+    sp -= 1;
+    let pc = w[stk + sp];
+    while (w[3 + pc] != gen) {
+      w = w.with(3 + pc, gen);
+      work += 1;
+      let op = code[3 * pc];
+      if (op == RX_SPLIT) {
+        w = w.with(stk + sp, code[3 * pc + 2]);
+        sp += 1;
+        pc = code[3 * pc + 1];
+      } else if (op == RX_JMP) {
+        pc = code[3 * pc + 1];
+      } else if (op == RX_SAVE) {
+        pc += 1;
+      } else if (op == RX_ASSERT) {
+        if (!__rx_ctx_ok(code[3 * pc + 1], ctx)) {
+          break;
+        }
+        pc += 1;
+      } else {
+        w = w.with(out + count, pc);
+        count += 1;
+        break;
+      }
+    }
+  }
+  w = w.with(1, count);
+  return w.with(2, work);
+}
+
+function __rx_ctx_ok(k: i32, ctx: i32): boolean {
+  if (k == 0) {
+    return (ctx & 1) != 0;
+  }
+  if (k == 1) {
+    return (ctx & 2) != 0;
+  }
+  return __rx_word_assert(k, (ctx & 4) != 0, (ctx & 8) != 0);
+}
+
+function __rx_dfa_hash(flag: i32, xs: i32[], at: i32, count: i32): i32 {
+  let h = flag * 31 + count + 7;
+  for k in 0..count {
+    h = (h * 31 + xs[at + k] + 1) % 1000003;
+  }
+  return h;
+}
+
+function __rx_dfa_same(keys: i32[], ko: i32, flag: i32, xs: i32[], at: i32, count: i32): boolean {
+  if (keys[ko] != flag || keys[ko + 1] != count) {
+    return false;
+  }
+  for k in 0..count {
+    if (keys[ko + 2 + k] != xs[at + k]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function __rx_dfa_rehash(keys: i32[], koff: i32[], size: i32): i32[] {
+  let slots = __alloc_i32(size);
+  for id in 0..koff.len() {
+    let ko = koff[id];
+    let mask = size - 1;
+    let i = __rx_dfa_hash(keys[ko], keys, ko + 2, keys[ko + 1]) & mask;
+    while (slots[i] != 0) {
+      i = i + 1 & mask;
+    }
+    slots = slots.with(i, id + 1);
+  }
+  return slots;
+}
+
+// The class of each byte, and the count of classes in word 256. Two bytes
+// are in one class when each instruction that takes a byte, and the word
+// test when `word` is true, takes both or neither. The classes are numbered in the
+// order of their first byte.
+function __rx_byte_classes(code: i32[], masks: i32[], word: boolean): i32[] {
+  let cls = __alloc_i32(257);
+  cls = cls.with(256, 1);
+  for pc in 0..code.len() / 3 {
+    let op = code[3 * pc];
+    if (op == RX_CHAR || op == RX_CLASS) {
+      cls = __rx_refine(cls, code, masks, pc);
+    }
+  }
+  if (word) {
+    cls = __rx_refine(cls, [], [], -1);
+  }
+  return cls;
+}
+
+// Splits each class of `cls` into the bytes that the instruction at `pc`
+// takes and the others. A `pc` of -1 is the word test.
+function __rx_refine(own cls: i32[], code: i32[], masks: i32[], pc: i32): i32[] {
+  let map = __alloc_i32(2 * cls[256]);
+  let count = 0;
+  for b in 0..256 {
+    let key = 2 * cls[b];
+    if (pc < 0 && __rx_is_word(b) || pc >= 0 && __rx_takes(code, masks, pc, b)) {
+      key += 1;
+    }
+    if (map[key] == 0) {
+      count += 1;
+      map = map.with(key, count);
+    }
+    cls = cls.with(b, map[key] - 1);
+  }
+  return cls.with(256, count);
+}
+
+// The end of the leftmost-first match that starts at or after the candidate
+// offset `c`, or -1. With `exists`, the end of the first match that the DFA
+// finds. The loop calls no function for a byte.
+// fern-lint: allow cyclomatic-complexity
+function __rx_dfa_end(prog: Regex, t: string, c: i32, exists: boolean): i32 {
+  let d = prog.fwd;
+  let nctx = d[1];
+  let dead = d[2];
+  let len = t.len();
+  let pos = c;
+  let cand = c;
+  let s = d[RX_DFA_START + __rx_dfa_first(d, t, pos, nctx)];
+  let skip = prog.first.len() > 0;
+  let end = -1;
+  while (true) {
+    let f = d[s];
+    if ((f & RX_DFA_MATCH) != 0) {
+      end = pos;
+      if (exists) {
+        break;
+      }
+    }
+    if (pos >= len || s == dead) {
+      break;
+    }
+    if ((f & RX_DFA_RESTART) != 0 && skip && pos > cand) {
+      cand = prog.next_candidate(t, pos);
+      if (cand < 0) {
+        break;
+      }
+      if (cand > pos) {
+        pos = cand;
+        s = d[RX_DFA_START + __rx_dfa_first(d, t, pos, nctx)];
+        continue;
+      }
+    }
+    let kind = 0;
+    if (nctx > 1) {
+      kind = nctx - 1;
+      if (pos + 1 < len) {
+        kind = d[RX_DFA_LA + t[pos + 1] as i32];
+      }
+    }
+    s = d[s + 1 + d[3 + t[pos] as i32] + kind];
+    pos += 1;
+  }
+  return end;
+}
+
+// The index of the first state of a forward search at `p`.
+function __rx_dfa_first(d: i32[], t: string, p: i32, nctx: i32): i32 {
+  let idx = 0;
+  if (p == 0) {
+    idx = 2 * nctx;
+  }
+  if (nctx == 3 && p > 0 && __rx_is_word(t[p - 1] as i32)) {
+    idx += nctx;
+  }
+  if (nctx > 1) {
+    if (p >= t.len()) {
+      idx += nctx - 1;
+    } else {
+      idx += d[RX_DFA_LA + t[p] as i32];
+    }
+  }
+  return idx;
+}
+
+// The index of the first state of a reverse search at `e`. The bytes before
+// `e` follow it, and the end of the reverse text is the offset 0.
+function __rx_dfa_last(d: i32[], t: string, e: i32, nctx: i32): i32 {
+  let idx = 0;
+  if (e == t.len()) {
+    idx = 2 * nctx;
+  }
+  if (nctx == 3 && e < t.len() && __rx_is_word(t[e] as i32)) {
+    idx += nctx;
+  }
+  if (nctx > 1) {
+    if (e == 0) {
+      idx += nctx - 1;
+    } else {
+      idx += d[RX_DFA_LA + t[e - 1] as i32];
+    }
+  }
+  return idx;
+}
+
+// The leftmost start at or after `lo` of a match that ends at `e`, or -1.
+// The reverse DFA reads the text from `e` to the left. Its offset 0 is the
+// end of the text.
+function __rx_dfa_start(prog: Regex, t: string, e: i32, lo: i32): i32 {
+  let d = prog.rev;
+  let nctx = d[1];
+  let dead = d[2];
+  let p = e;
+  let s = d[RX_DFA_START + __rx_dfa_last(d, t, e, nctx)];
+  let start = -1;
+  while (true) {
+    if ((d[s] & RX_DFA_MATCH) != 0) {
+      start = p;
+    }
+    if (p <= lo || s == dead) {
+      break;
+    }
+    let kind = 0;
+    if (nctx > 1) {
+      kind = nctx - 1;
+      if (p > 1) {
+        kind = d[RX_DFA_LA + t[p - 2] as i32];
+      }
+    }
+    s = d[s + 1 + d[3 + t[p - 1] as i32] + kind];
+    p -= 1;
+  }
+  return start;
+}
+
+// True when a first state of the forward DFA holds a match, so that a match
+// can be empty.
+function __rx_dfa_empty(d: i32[]): boolean {
+  for k in 0..4 * d[1] {
+    if ((d[d[RX_DFA_START + k]] & RX_DFA_MATCH) != 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The count of the matches from their ends alone. No match is empty, so each
+// search starts at the end of the last match.
+function __rx_dfa_count(prog: Regex, t: string): i32 {
+  let count = 0;
+  let pos = 0;
+  while (pos <= t.len()) {
+    let c = prog.next_candidate(t, pos);
+    if (c < 0) {
+      return count;
+    }
+    let e = __rx_dfa_end(prog, t, c, false);
+    if (e < 0) {
+      return count;
+    }
+    count += 1;
+    pos = e;
+  }
+  return count;
+}
+
+// The kind of an assertion in the reverse program when `rev` is true: `^`
+// and `$`, the start and the end of a word, and the two halves change places.
+function __rx_mirror(k: i32, rev: boolean): i32 {
+  if (!rev || k == 2 || k == 3) {
+    return k;
+  }
+  if (k <= 1) {
+    return 1 - k;
+  }
+  return k + 1 - 2 * (k % 2);
+}
+
+// The span of the leftmost-first match at or after `from`, or (-1, -1). The
+// expression has both DFAs.
+function __rx_dfa_span(prog: Regex, t: string, from: i32): (i32, i32) {
+  let c = prog.next_candidate(t, from);
+  if (c < 0) {
+    return (-1, -1);
+  }
+  let e = __rx_dfa_end(prog, t, c, false);
+  if (e < 0) {
+    return (-1, -1);
+  }
+  return (__rx_dfa_start(prog, t, e, c), e);
+}
+```
 
 ### `26 function __rx_span(c: RCaps, i: i32): (i32, i32)`
 
@@ -1683,7 +2263,7 @@ pub function (prog: Regex) captures_all(text: string): Captures[] {
   let out: Captures[] = [];
   let pos = 0;
   while (pos <= text.len()) {
-    m = __rx_exec(prog, text, pos, ns, rule, false, m);
+    m = __rx_next(prog, text, pos, ns, rule, m);
     if (!__rx_found(m)) {
       return out;
     }
@@ -1716,20 +2296,29 @@ pub function compile(pattern: string): Result[Regex, CompileError] {
     return Err(CompileError { kind: ProgramLimit, offset: pattern.len() });
   }
   let first = __rx_first_set(r.node, ci);
-  let (code, masks) = __rx_pack(__rx_cprog(r.node), ci);
+  let (code, masks) = __rx_pack(__rx_cprog(r.node, false), ci);
+  let fwd = __rx_dfa(code, masks, true);
+  let rev: i32[] = [];
+  if (fwd.len() > 0) {
+    let (rcode, rmasks) = __rx_pack(__rx_cprog(r.node, true), ci);
+    rev = __rx_dfa(rcode, rmasks, false);
+  }
   return Ok(Regex {
-    ci: ci, ngroups: r.g - 1, names: __rx_group_names(pattern), code: code, masks: masks,
+    ci: ci, ngroups: r.g - 1, names: __rx_group_names(pattern), code: code, masks: masks, fwd: fwd, rev: rev,
     first: first, lead: __rx_lead(first), prefix: __rx_prefix(r.node, ci), leftmost_longest: false,
   });
 }
 
 pub function (prog: Regex) count(text: string): i32 {
+  if (prog.fwd.len() > 0 && !prog.leftmost_longest && !__rx_dfa_empty(prog.fwd)) {
+    return __rx_dfa_count(prog, text);
+  }
   let rule = __rx_rule(prog);
   let m: i32[] = [];
   let count = 0;
   let pos = 0;
   while (pos <= text.len()) {
-    m = __rx_exec(prog, text, pos, 1, rule, false, m);
+    m = __rx_next(prog, text, pos, 1, rule, m);
     if (!__rx_found(m)) {
       return count;
     }
@@ -1792,7 +2381,7 @@ pub function (prog: Regex) find_all(text: string): Match[] {
   let out: Match[] = [];
   let pos = 0;
   while (pos <= text.len()) {
-    m = __rx_exec(prog, text, pos, 1, rule, false, m);
+    m = __rx_next(prog, text, pos, 1, rule, m);
     let Some(found) = __rx_match(m) else {
       return out;
     };
@@ -1890,6 +2479,9 @@ pub function (prog: Regex) index_of(text: string): Option[i32] {
 // The longest match from offset 0 ends at the end of the text exactly when a
 // match of the full text exists.
 pub function (prog: Regex) is_full_match(text: string): boolean {
+  if (prog.rev.len() > 0) {
+    return __rx_dfa_start(prog, text, text.len(), 0) == 0;
+  }
   let m = __rx_exec(prog, text, 0, 1, RuleLongest, true, []);
   return __rx_found(m) && m[1] == text.len();
 }
@@ -1898,12 +2490,16 @@ pub function (prog: Regex) is_full_match(text: string): boolean {
 // POSIX does.
 pub function (prog: Regex) longest(): Regex {
   return Regex {
-    ci: prog.ci, ngroups: prog.ngroups, names: prog.names, code: prog.code, masks: prog.masks,
+    ci: prog.ci, ngroups: prog.ngroups, names: prog.names, code: prog.code, masks: prog.masks, fwd: prog.fwd, rev: prog.rev,
     first: prog.first, lead: prog.lead, prefix: prog.prefix, leftmost_longest: true,
   };
 }
 
 pub function (prog: Regex) is_match(text: string): boolean {
+  if (prog.fwd.len() > 0) {
+    let c = prog.next_candidate(text, 0);
+    return c >= 0 && __rx_dfa_end(prog, text, c, true) >= 0;
+  }
   return __rx_found(__rx_exec(prog, text, 0, 0, RuleExists, false, []));
 }
 
@@ -1978,7 +2574,7 @@ pub function (prog: Regex) split(text: string): Result[string[], TextError] {
   let last = 0;
   let pos = 0;
   while (pos <= text.len()) {
-    mem = __rx_exec(prog, text, pos, 1, rule, false, mem);
+    mem = __rx_next(prog, text, pos, 1, rule, mem);
     let Some(m) = __rx_match(mem) else {
       if (!utf8.is_char_boundary(text, last)) {
         return Err(InvalidUtf8Output);
@@ -2014,7 +2610,7 @@ pub function (prog: Regex) split_bytes(text: string): u8[][] {
   let last = 0;
   let pos = 0;
   while (pos <= text.len()) {
-    mem = __rx_exec(prog, text, pos, 1, rule, false, mem);
+    mem = __rx_next(prog, text, pos, 1, rule, mem);
     let Some(m) = __rx_match(mem) else {
       out = out.append(__rx_bytes(text, last, text.len()));
       return out;
@@ -2095,12 +2691,13 @@ pub struct Match { start: i32, end: i32 }
 
 struct RClassUnit { kind: i32, lo: i32, hi: i32 }
 
-// `first` marks each byte that can begin a match. It is empty when a match
+// `fwd` and `rev` are the forward and the reverse DFA, or [] when a DFA is
+// over a limit. `rev` is [] when `fwd` is. `first` marks each byte that can begin a match. It is empty when a match
 // can be empty or can begin with any byte. `lead` is the one byte that
 // `first` marks, or -1. Each match starts with the bytes of `prefix`, folded
 // to lower case under `ci`. `leftmost_longest` selects the longest match at
 // the leftmost start in place of the first.
-pub struct Regex { ci: boolean, ngroups: i32, names: string[], code: i32[], masks: i32[], first: u8[], lead: i32, prefix: u8[], leftmost_longest: boolean }
+pub struct Regex { ci: boolean, ngroups: i32, names: string[], code: i32[], masks: i32[], fwd: i32[], rev: i32[], first: u8[], lead: i32, prefix: u8[], leftmost_longest: boolean }
 ```
 
 ### Module introduction

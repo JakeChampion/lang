@@ -132,19 +132,24 @@ skip and the literal prefix.
 "Pike VM" is the leftmost-first search. It gets each span from the Pike VM,
 and not from a walk of the syntax tree. It runs the VM again from each
 candidate start. "Flat VM" runs the VM in one pass over the text, with its
-threads in one array of words, and `count` makes no array of matches. The
-"Pike VM" and "Flat VM" columns ran one after the other in one session.
+threads in one array of words, and `count` makes no array of matches.
 
-| Pattern | Mode | Before | After | Pike VM | Flat VM | ripgrep |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| `Sherlock Holmes` | lines | 8,269 | 107 | 123 | 122 | 39 |
-| | find | 7,875 | 30 | 45 | 37 | 39 |
-| `(?i)sherlock holmes` | lines | 9,138 | 364 | 331 | 323 | 103 |
-| | find | 8,425 | 276 | 290 | 217 | 138 |
-| `Sherlock Holmes\|John Watson\|Irene Adler\|Inspector Lestrade\|Professor Moriarty` | lines | 40,615 | 267 | 381 | 311 | 104 |
-| | find | 38,936 | 230 | 302 | 208 | 117 |
-| `\w+` | lines | 409 | 394 | 690 | 550 | 353 |
-| | find | 7,336 | 7,140 | 14,010 | 7,980 | 3,005 |
+"DFA" finds each span with a forward DFA and a reverse DFA that `compile`
+builds. When no match can be empty, `count` needs only the ends of the
+matches, so it does not run the reverse DFA. `rg -co` writes each span, so
+the port runs both DFAs. The "Pike VM", "Flat VM", "DFA" and "ripgrep"
+columns ran one after the other in one session.
+
+| Pattern | Mode | Before | After | Pike VM | Flat VM | DFA | ripgrep |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `Sherlock Holmes` | lines | 8,269 | 107 | 130 | 140 | 108 | 44 |
+| | find | 7,875 | 30 | 46 | 32 | 24 | 46 |
+| `(?i)sherlock holmes` | lines | 9,138 | 364 | 418 | 404 | 303 | 118 |
+| | find | 8,425 | 276 | 288 | 286 | 198 | 146 |
+| `Sherlock Holmes\|John Watson\|Irene Adler\|Inspector Lestrade\|Professor Moriarty` | lines | 40,615 | 267 | 396 | 309 | 228 | 110 |
+| | find | 38,936 | 230 | 275 | 209 | 143 | 120 |
+| `\w+` | lines | 409 | 394 | 765 | 464 | 123 | 319 |
+| | find | 7,336 | 7,140 | 13,727 | 7,841 | 1,497 | 3,249 |
 
 The counts are the same as those of ripgrep, but for `\w+` in `find` mode:
 47,078,742 against 45,612,443, because `std/regex` knows only ASCII word
@@ -160,24 +165,25 @@ prefix before it runs the matcher.
 ### The port and ripgrep
 
 Each command searches `big.txt` with `-j1` and writes to a file. The time
-is the best of 5 runs, in milliseconds. The port uses the flat Pike VM for
-each span. The two programs ran one after the other in the same session.
+is the best of 5 runs, in milliseconds. The port finds each span with the
+DFAs of `std/regex`. The two programs ran one after the other in the same
+session.
 
 | Command | ripgrep | Port | Ratio |
 | --- | ---: | ---: | ---: |
-| `rg 'Sherlock Holmes'` | 46 | 267 | 5.8 |
-| `rg -c 'Sherlock Holmes'` | 44 | 249 | 5.7 |
-| `rg -i 'sherlock holmes'` | 130 | 506 | 3.9 |
-| `rg -ic 'sherlock holmes'` | 111 | 469 | 4.2 |
-| `rg 'Sherlock Holmes\|...'` (five names) | 118 | 509 | 4.3 |
-| `rg -c 'Sherlock Holmes\|...'` | 110 | 391 | 3.6 |
-| `rg -c '\w+'` | 383 | 790 | 2.1 |
-| `rg -co '\w+'` | 2,873 | 10,469 | 3.6 |
+| `rg 'Sherlock Holmes'` | 46 | 266 | 5.8 |
+| `rg -c 'Sherlock Holmes'` | 42 | 268 | 6.4 |
+| `rg -i 'sherlock holmes'` | 129 | 526 | 4.1 |
+| `rg -ic 'sherlock holmes'` | 117 | 479 | 4.1 |
+| `rg 'Sherlock Holmes\|...'` (five names) | 120 | 384 | 3.2 |
+| `rg -c 'Sherlock Holmes\|...'` | 110 | 374 | 3.4 |
+| `rg -c '\w+'` | 398 | 404 | 1.0 |
+| `rg -co '\w+'` | 3,356 | 2,471 | 0.74 |
 
 Each output is the same as that of ripgrep, but `-co '\w+'`, for the
 reason above.
 
-### Why the port is slower
+### Why the port is slower on literals
 
 1. **The read of the file.** For `rg -c 'Sherlock Holmes'`, about 240 ms
    of the 271 ms is the input. `read_file_bytes` takes about 200 ms: one
@@ -196,12 +202,12 @@ reason above.
    The fix is a SIMD kernel for a small byte set, or a scan for the least
    frequent byte of the literal.
 
-3. **The matcher.** `std/regex` runs a Pike VM. It does not allocate in a
-   step, but a step does the work of each thread, and the code that the
-   compiler makes for it uses many instructions for each byte: a test of
-   the reference count for each store to the array of the threads, and
-   loads of locals from the stack. ripgrep runs a lazy DFA, and a step of a
-   DFA is one lookup in a table.
+3. **The matcher is not the cause.** `std/regex` finds each span with two
+   DFAs, and a step of a DFA is one lookup in a table. With `\w+`, where
+   the search is most of the work, the port is faster than ripgrep. The
+   code that the compiler makes for the loop of a DFA can use fewer
+   instructions: it keeps each `i32` of the table in 8 bytes, and it
+   checks the bounds of each lookup.
 
 The line loop is not the cause. Without `-v`, the port goes from one
 candidate to the line of the next with `next_candidate`, and counts the
