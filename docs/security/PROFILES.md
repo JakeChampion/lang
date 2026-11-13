@@ -24,7 +24,10 @@ An unknown profile name exits 2 and names the four profiles.
 
 ## The build manifest
 
-Every native executable and shared object carries one line in its read-only data: `FERNBUILD1 target=... profile=... harden=... pie=... sanitize=... backtrace=... size=... shared=... heap_limit=... quarantine=...`.
+Every native executable and shared object carries one line in its read-only data: `FERNBUILD1 target=... profile=... harden=... pie=... sanitize=... backtrace=... size=... shared=... sandbox=... cover=... symbols=... optimize=... heap_limit=... quarantine=... profiling=...`.
+
+`sandbox` is `FERN_SANDBOX`, `cover` is `-cover`, `symbols` is `-g` (or a profiling build), `optimize` is `-O`, and `profiling` is the `FERN_PROFILE` mode, or `off`.
+
 A wasm core module carries the same line in its custom section `fern.build`, with `heap_limit=0`, because a wasm module has no arena.
 A component carries the line in its core module, so the component framing does not change.
 `fern -manifest IMAGE` prints it one field per line, and answers exit 1 with a cause for a file without one.

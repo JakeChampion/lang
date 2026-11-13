@@ -168,6 +168,41 @@ func TestSelfHostProfiles(t *testing.T) {
 			}
 		}
 	})
+	// The manifest names the switches that change what a build contains.
+	t.Run("switches", func(t *testing.T) {
+		build := func(name string, env []string, flags ...string) string {
+			t.Helper()
+			bin := filepath.Join(dir, "switches-"+name)
+			args := append(append([]string{"-target", "x86-64-linux"}, flags...), "-o", bin, src, cli.stdlib)
+			cmd := runX86_64Bin(cli.runner, cli.bin, args...)
+			cmd.Env = append(childEnv(), env...)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("build %s: %v\n%s", name, err, out)
+			}
+			out, errout, code := fern("-manifest", bin)
+			if code != 0 {
+				t.Fatalf("-manifest %s: exit %d\n%s", name, code, errout)
+			}
+			return out
+		}
+		cases := []struct {
+			name  string
+			env   []string
+			flags []string
+			want  []string
+		}{
+			{"plain", []string{"FERN_SANDBOX=0", "FERN_PROFILE=0"}, nil, []string{"sandbox: no", "cover: no", "symbols: no", "optimize: no", "profiling: off"}},
+			{"all", []string{"FERN_SANDBOX=1", "FERN_PROFILE=cpu"}, []string{"-g", "-O", "-cover"}, []string{"sandbox: yes", "cover: yes", "symbols: yes", "optimize: yes", "profiling: cpu"}},
+		}
+		for _, c := range cases {
+			out := build(c.name, c.env, c.flags...)
+			for _, line := range c.want {
+				if !strings.Contains(out, line+"\n") {
+					t.Errorf("the %s manifest lacks %q:\n%s", c.name, line, out)
+				}
+			}
+		}
+	})
 	t.Run("refusals", func(t *testing.T) {
 		if _, errout, code := fern("-profile", "bogus", "-target", "x86-64-linux", "-o", filepath.Join(dir, "x"), src, cli.stdlib); code != 2 || !strings.Contains(errout, "fern: -profile takes safe, hardened, diagnostic or minimal (got \"bogus\")") {
 			t.Errorf("a bad profile: exit %d, stderr %q", code, errout)
