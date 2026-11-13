@@ -50,6 +50,25 @@ function main(): i32 {
     if (c[5] != 9 || keep[4] != 4) { return 251; }
     return __arr_push_shared_count();
 }`, 1},
+	{"scalar-field-read-after-the-call-that-consumes-its-record", `struct P { n: i32[], count: i32, off: i32 }
+function set(p: P, node: i32, v: i32): P { return P { ...p, n: p.n.with(node, v) }; }
+@noinline
+function add(p: P): P { return P { ...p, n: p.n.append(0), count: p.count + 1 }; }
+@noinline
+function advance(p: P, k: i32): P { return P { ...p, off: p.off + k }; }
+@noinline
+function step(p: P, k: i32): P {
+    let q = advance(p, k);
+    return set(add(q), q.count, 7);
+}
+function main(): i32 {
+    let p = P { n: [], count: 0, off: 0 };
+    let i: i32 = 0;
+    while (i < 200) { p = step(p, 1); i = i + 1; }
+    if (p.n.len() != 200 || p.count != 200 || p.off != 200) { return 250; }
+    if (p.n[0] != 7 || p.n[199] != 7) { return 251; }
+    return __arr_push_shared_count();
+}`, 0},
 }
 
 func TestSelfHostArrPushCliffIR(t *testing.T) {

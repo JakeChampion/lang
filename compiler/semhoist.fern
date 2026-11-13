@@ -9,7 +9,7 @@ pub function hoist(f: ssasem.Func): Hoisted {
   let moved = 0;
   let blocks: ssa.SBlock[] = [];
   for b in g.blocks {
-    let (insts, n) = hoist_block(b.insts);
+    let (insts, n) = hoist_block(b.insts, f);
     blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
     moved += n;
   }
@@ -19,14 +19,15 @@ pub function hoist(f: ssasem.Func): Hoisted {
   return Hoisted { f: ssasem.Func { ...f, graph: ssa.SFunc { ...g, blocks: blocks } }, moved: moved };
 }
 
-function hoist_block(insts: ssa.SInst[]): (ssa.SInst[], i32) {
+function hoist_block(insts: ssa.SInst[], f: ssasem.Func): (ssa.SInst[], i32) {
   let moved = 0;
   let p = 0;
   while (p < insts.len()) {
-    let v = consumed(insts[p]);
     let lifted: i32[] = [];
-    if (v >= 0) {
-      lifted = first_read(insts, p, v);
+    for v in consumed(insts[p]) {
+      if (lifted.len() == 0) {
+        lifted = first_read(insts, p, v, f);
+      }
     }
     if (lifted.len() > 0) {
       insts = move_before(insts, p, lifted);
@@ -39,17 +40,23 @@ function hoist_block(insts: ssa.SInst[]): (ssa.SInst[], i32) {
   return (insts, moved);
 }
 
-function consumed(ins: ssa.SInst): i32 {
+// The values that `ins` can consume: the receiver of a write, or each
+// argument of a call.
+function consumed(ins: ssa.SInst): i32[] {
   if ((ins.kind_tag == ssasem.with() || ins.kind_tag == ssasem.append() || ins.kind_tag == ssasem.truncate()) && ins.args.len() > 0) {
-    return ins.args[0];
+    return [ins.args[0]];
   }
-  return -1;
+  if (ins.kind_tag == ssasem.call()) {
+    return ins.args;
+  }
+  return [];
 }
 
-function first_read(insts: ssa.SInst[], p: i32, v: i32): i32[] {
+function first_read(insts: ssa.SInst[], p: i32, v: i32, f: ssasem.Func): i32[] {
+  let call = insts[p].kind_tag == ssasem.call();
   let q = p + 1;
   while (q < insts.len() && passable(insts[q])) {
-    if (reads(insts[q], v)) {
+    if (reads(insts[q], v, call, f)) {
       return feeders(insts, p, q);
     }
     q += 1;
@@ -57,9 +64,17 @@ function first_read(insts: ssa.SInst[], p: i32, v: i32): i32[] {
   return [];
 }
 
-function reads(ins: ssa.SInst, v: i32): boolean {
+// Above a call, only a read that cannot trap and holds no count moves: the
+// call can have effects, and a counted result would hold `v` across it.
+function reads(ins: ssa.SInst, v: i32, call: boolean, f: ssasem.Func): boolean {
+  if (ins.args.len() == 0 || ins.args[0] != v) {
+    return false;
+  }
   let k = ins.kind_tag;
-  return (k == ssasem.array_get() || k == ssasem.length()) && ins.args.len() > 0 && ins.args[0] == v;
+  if (call) {
+    return (k == ssasem.record_get() || k == ssasem.length()) && !ssasem.counted(f, f.values[ins.result]);
+  }
+  return k == ssasem.array_get() || k == ssasem.length();
 }
 
 function passable(ins: ssa.SInst): boolean {
