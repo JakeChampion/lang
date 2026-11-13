@@ -5558,7 +5558,15 @@ function collect_parse_error(stmt: ast.Stmt, own errors: string[]): string[] {
   return errors;
 }
 
+// An unbraced arm that starts with `if` or `match` is that statement, the
+// same as the braced arm.
 function parse_match_stmt_body(p: Par): (ast.Stmt[], Par) {
+  if (p.peek_keyword() == "if" || p.peek_keyword() == "match") {
+    let (stmt, next) = parse_stmt(p);
+    if (next.type_errs.len() == p.type_errs.len() && !stmts_have_parse_error([stmt])) {
+      return ([stmt], next);
+    }
+  }
   if (p.peek_punct() != "{") {
     let (expr, next) = parse_expr(p);
     return ([s_expr(expr)], next);

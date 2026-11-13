@@ -3600,7 +3600,16 @@ type stmtRawArm struct {
 
 // parseMatchStmtBody reads a value block or a bare expression and discards
 // its value. The statement block keeps the arm's local scope.
+// parseMatchStmtBody reads the body of a statement arm. An unbraced body that
+// starts with `if` or `match` is that statement, the same as the braced arm.
 func (p *parser) parseMatchStmtBody() (*ast.Block, error) {
+	if t := p.peek(); t.Kind == lexer.Keyword && (t.Text == "if" || t.Text == "match") {
+		st, err := p.parseStmt()
+		if err != nil {
+			return nil, err
+		}
+		return &ast.Block{P: t.Pos, Stmts: []ast.Stmt{st}}, nil
+	}
 	if !p.match(lexer.Punct, "{") {
 		e, err := p.parseExpr()
 		if err != nil {
