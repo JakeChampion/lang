@@ -541,13 +541,13 @@ The unit workflow runs this script on x86-64 and ARM64 hosts.
 
 The compiler differential suite includes the native video, MP4 packet and file-input, codec-policy, and source-range tests.
 The host ABI tests cover JNI discovery, candidate failures, software recovery, and resource cleanup.
+They also cover encoder states, direct packet views, muxer order, extraction, pause, seek, and EOS.
+The content-source mock checks real descriptor ranges, close-on-exec, JNI failures, and repeated open/close cycles.
 
 Native process cleanup controls observe descriptor generations before each close.
 This forces the lazy generation table to allocate before return or explicit exit.
 The controls check generation increments, table growth, exit status, and deliberate application leaks.
 Unobserved closes retain their separate zero-allocation control.
-They also cover encoder states, direct packet views, muxer order, extraction, pause, seek, and EOS.
-The content-source mock checks real descriptor ranges, close-on-exec, JNI failures, and repeated open/close cycles.
 
 `scripts/check-android-content-reads` also checks short reads, a full 1 MiB payload, truncation, and unchanged descriptor positions.
 Native AAC and AVC packet checks cover asset offsets above 8 GiB.
@@ -811,5 +811,16 @@ The existing MediaStore emulator round adds a fresh AVC/AAC item with independen
 It requires both the native-content digest and the native-AAC cursor diagnostics before and after the seek.
 Host controls use real asset descriptors at ordinary and eight-GiB offsets, with seven-byte short reads and physical truncation.
 These controls also call the app's actual pause, resume, and pump handlers with content audio and no private-file reader.
+
+The app separates Android lifecycle pauses from its internal pause test while the window remains valid.
+Ticks and audio pumps stop during a lifecycle pause.
+Resume excludes the background interval from the watchdog and internal pause deadline.
+It preserves an internal pause that preceded the lifecycle pause.
+Duplicate lifecycle events do not restart audio or extend that interval.
+
+Host controls use synthetic timestamps, real file descriptors, AAudio mocks, and inert video handles.
+They check pauses above 30 seconds, clock positions, pending PCM, and unchanged source-read and audio-write counts.
+These controls provide no physical-device timing or lip-sync measurement.
+Window destruction still closes audio, video, and the borrowed source.
 Unused video and graphics imports abort if these audio controls call them.
 The existing private-file, content-video, and platform MediaPlayer rounds remain required.

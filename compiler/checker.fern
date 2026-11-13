@@ -3829,7 +3829,7 @@ function scalar_integer_module(lb: string): string {
     return "std/u64";
   }
   if (lb == "u8") {
-    return "std/i32";
+    return "std/u8";
   }
   if (lb == "u32" || lb == "u16") {
     return "std/u32";
@@ -3844,9 +3844,7 @@ function scalar_integer_module(lb: string): string {
 }
 
 // scalar_module_for: the stdlib module carrying a scalar type's method surface,
-// "" for a type whose methods are not in one. u8 uses std/i32, not std/u32 —
-// every `pub function (b: u8) …` in the stdlib is declared there, so naming
-// std/u32 made the hint unfollowable.
+// "" for a type whose methods are not in one.
 function scalar_module_for(t: typeinfo.Type): string {
   match (t) {
     typeinfo.TypeI32(it) => {
@@ -14684,7 +14682,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
       }
     },
     _ => {
-      out = call_diags(c.callee, s);
+      out = callee_diags(c, s, dest);
     }
   }
   let dests = variant_payload_dests(c, dest, s, s.call_param_types(c));
@@ -16052,6 +16050,17 @@ pub function lambda_body_scope(lm: ast.ExprLambda, s: Scope): Scope {
     return lsc.with_block_ret(lambda_ret_type(lm, s));
   }
   return lsc.with_ret_type(lambda_ret_type(lm, s));
+}
+
+// The body of a value block (a match or an if in value position) returns to
+// the destination of the block.
+function callee_diags(c: ast.ExprCall, s: Scope, dest: typeinfo.Type): util.Diag[] {
+  if let ast.ExprLambda(lm) = c.callee {
+    if (parser.is_value_block(c) && !is_unknown(dest)) {
+      return stmts_call_diags(lm.body, lambda_body_scope(lm, s).with_block_ret(dest));
+    }
+  }
+  return call_diags(c.callee, s);
 }
 
 function call_diags_lambda(lm: ast.ExprLambda, s: Scope, out: util.Diag[]): util.Diag[] {
@@ -33324,14 +33333,25 @@ function annotate_arm_scope(arm: ast.MatchArm, s: Scope, whole: typeinfo.Type): 
   }
 }
 
+function annotate_pattern(pattern: ast.Pattern, whole: typeinfo.Type, s: Scope): ast.Pattern {
+  match (pattern) {
+    ast.PatVariant(pv) => {
+      return ast.PatVariant { ...pv, bare_name: false, scalar_binding: scalar_binding_name(pv, whole, s).len() > 0 };
+    },
+    ast.PatLiteral(lp) => {
+      return ast.PatLiteral { ...lp, lit: annotate_expr(lp.lit, s), range_hi: annotate_expr(lp.range_hi, s) };
+    },
+    ast.PatWildcard(_) => {
+      return pattern;
+    }
+  }
+}
+
 function annotate_match_stmt(m: ast.StmtMatch, s: Scope): ast.Stmt {
   let narms: ast.MatchArm[] = [];
   for arm in m.arms {
     let whole = check_expr(m.scrutinee, s);
-    let pattern = arm.pattern;
-    if let ast.PatVariant(pv) = pattern {
-      pattern = ast.PatVariant { ...pv, bare_name: false, scalar_binding: scalar_binding_name(pv, whole, s).len() > 0 };
-    }
+    let pattern = annotate_pattern(arm.pattern, whole, s);
     let asc = annotate_arm_scope(arm, s, whole);
     let g = arm.guard;
     if (arm.has_guard) {

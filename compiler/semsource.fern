@@ -5336,11 +5336,46 @@ function prefix_loops(xs: Loop[], n: i32): Loop[] {
 function discard(e: ast.Expr, s: State): State {
   if let ast.ExprCall(c) = e {
     if (parser.is_value_block(c) && typeinfo.is_void(block_type(e, c, s, typeinfo.t_void()))) {
-      return stmts(parser.vb_body(c), s);
+      return stmts(discarded_tail(parser.vb_body(c)), s);
     }
     return call(e, c, s, true, typeinfo.t_void()).s;
   }
   return expr(e, s, typeinfo.unchecked()).s;
+}
+
+// The tail of a value block yields its value, as in value_block: a tail
+// return of a value, or the tails of the arms of a tail if or match. A
+// discarded block evaluates each of those values as a statement, and does
+// not return. A bare return yields nothing, so it stays a return.
+function discarded_tail(body: ast.Stmt[]): ast.Stmt[] {
+  if (body.len() == 0) {
+    return body;
+  }
+  let out: ast.Stmt[] = [];
+  for i in 0..body.len() - 1 {
+    out = out.append(body[i]);
+  }
+  match (body[body.len() - 1]) {
+    ast.StmtReturn(r) => {
+      if (parser.bare_return(r.value)) {
+        return body;
+      }
+      return out.append(ast.StmtExpr { value: r.value, line: r.line, op: "" });
+    },
+    ast.StmtIf(f) => {
+      return out.append(ast.StmtIf { ...f, then_body: discarded_tail(f.then_body), else_body: discarded_tail(f.else_body) });
+    },
+    ast.StmtMatch(m) => {
+      let arms: ast.MatchArm[] = [];
+      for arm in m.arms {
+        arms = arms.append(ast.MatchArm { ...arm, body: discarded_tail(arm.body) });
+      }
+      return out.append(ast.StmtMatch { ...m, arms: arms });
+    },
+    _ => {
+      return body;
+    }
+  }
 }
 
 function stmt(st: ast.Stmt, s: State): State {

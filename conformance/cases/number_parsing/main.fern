@@ -10,6 +10,7 @@ import "std/f64";
 import "std/string";
 import "std/result";
 import "std/json";
+import "std/u8";
 
 function rendered[T: cmp.Display](x: T): string {
   return x.to_string();
@@ -406,7 +407,7 @@ function main(): i32 {
   let Some(view) = original[1:5] else {
     return 6;
   };
-  if (i32.parse_u8(view).unwrap_or(0 as u8) != 255 as u8) {
+  if (u8.parse_u8(view).unwrap_or(0 as u8) != 255 as u8) {
     return 7;
   }
   match (i32.parse_i32_radix(s = "7f", radix = 16)) {
@@ -511,7 +512,7 @@ function main(): i32 {
       }
     }
     for n in [0 as u8, 1 as u8, 127 as u8, 255 as u8] {
-      match (i32.parse_u8_radix(n.to_string_radix(radix), radix)) {
+      match (u8.parse_u8_radix(n.to_string_radix(radix), radix)) {
         Ok(value) => {
           if (value != n) {
             return 27;

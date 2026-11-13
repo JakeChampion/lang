@@ -67,7 +67,10 @@ func TestSelfHostSSATokenSplitReusesLoads(t *testing.T) {
 	if end := strings.Index(form, "\n}\n"); end >= 0 {
 		form = form[:end]
 	}
-	colorLoads := strings.Count(form, "ld_at 8 rc ")
+	colorLoads := strings.Count(form, "ld_at 8 ")
+	if strings.Contains(form, "ld_at 8 rc ") {
+		t.Error("ins counts the payload-free Color field")
+	}
 	writeBacks := 0
 	for _, block := range regexp.MustCompile(`\n  b\d+:\n`).Split(form, -1) {
 		if strings.Contains(block, "st_at 24 ") && !strings.Contains(block, "__fern_alloc_reuse") && !strings.Contains(block, "arr_box") {

@@ -6,25 +6,26 @@ import (
 )
 
 var untypedLiteralFoldCases = []struct {
-	name, ty, expr, seed string
+	name, ty, expr, seed, want string
 }{
-	{"i32_add_overflow_then_halve", "i32", "(@ + 1) / 2", "2147483647"},
-	{"i32_shift_count_over_width", "i32", "(@ << 33) & 255", "1"},
-	{"u8_add_wraps_at_8_bits", "u8", "(@ + 1) / 2", "255"},
-	{"u32_subtract_wraps", "u32", "@ - 1", "0"},
-	{"i32_multiply_wraps", "i32", "@ * 100000", "100000"},
-	{"u32_divide_is_unsigned", "u32", "(@ - 2) / 2", "0"},
-	{"u32_shift_right_is_logical", "u32", "(@ - 1) >> 1", "0"},
-	{"i32_shift_right_is_arithmetic", "i32", "(@ - 8) >> 33", "0"},
-	{"i64_shift_count_masks_to_63", "i64", "@ << 64", "1"},
+	{"i32_add_overflow_then_halve", "i32", "(@ + 1) / 2", "2147483647", "-1073741824"},
+	{"i32_shift_count_over_width", "i32", "(@ << 33) & 255", "1", "2"},
+	{"u8_add_wraps_at_8_bits", "u8", "(@ + 1) / 2", "255", "0"},
+	{"u32_subtract_wraps", "u32", "@ - 1", "0", "4294967295"},
+	{"i32_multiply_wraps", "i32", "@ * 100000", "100000", "1410065408"},
+	{"u32_divide_is_unsigned", "u32", "(@ - 2) / 2", "0", "2147483647"},
+	{"u32_shift_right_is_logical", "u32", "(@ - 1) >> 1", "0", "2147483647"},
+	{"i32_shift_right_is_arithmetic", "i32", "(@ - 8) >> 33", "0", "-4"},
+	{"i64_shift_count_masks_to_63", "i64", "@ << 64", "1", "1"},
 }
 
-func untypedLiteralFoldSource(ty, expr, seed string) string {
-	return "const K: " + ty + " = " + strings.ReplaceAll(expr, "@", seed) + ";\n" +
+func untypedLiteralFoldSource(ty, expr, seed, want string) string {
+	return "@noinline function runtime(s: " + ty + "): " + ty + " { return " + strings.ReplaceAll(expr, "@", "s") + "; }\n" +
 		"function main(): i32 {\n" +
-		"    let s: " + ty + " = " + seed + ";\n" +
-		"    let r: " + ty + " = " + strings.ReplaceAll(expr, "@", "s") + ";\n" +
-		"    if (K == r) { return 0; }\n" +
+		"    let folded: " + ty + " = " + strings.ReplaceAll(expr, "@", seed) + ";\n" +
+		"    let r: " + ty + " = runtime(" + seed + ");\n" +
+		"    let want: " + ty + " = " + want + ";\n" +
+		"    if (folded == want && r == want) { return 0; }\n" +
 		"    return 7;\n}\n"
 }
 
@@ -39,7 +40,7 @@ const untypedLiteralBindingSrc = `function main(): i32 {
 func untypedLiteralFoldPrograms() map[string]string {
 	progs := map[string]string{"binding": untypedLiteralBindingSrc}
 	for _, c := range untypedLiteralFoldCases {
-		progs[c.name] = untypedLiteralFoldSource(c.ty, c.expr, c.seed)
+		progs[c.name] = untypedLiteralFoldSource(c.ty, c.expr, c.seed, c.want)
 	}
 	return progs
 }

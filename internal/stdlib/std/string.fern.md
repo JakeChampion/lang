@@ -128,6 +128,7 @@ import "core/int";
 import "core/utf8_scalar";
 import "std/i32";
 import "std/array";
+import "std/u8";
 ```
 ### `2 pub function (s: string) is_empty(): boolean`
 

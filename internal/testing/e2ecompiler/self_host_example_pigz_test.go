@@ -121,6 +121,30 @@ func TestSelfHostExamplePigzCLI(t *testing.T) {
 				}
 			})
 
+			t.Run("processes", func(t *testing.T) {
+				dir := t.TempDir()
+				if len(corpus) <= 3*131072 {
+					t.Fatalf("the corpus has %d bytes, too few for three blocks", len(corpus))
+				}
+				var outs [][]byte
+				for _, p := range []string{"1", "2", "4"} {
+					for _, level := range []string{"-1", "-9"} {
+						out, stderr, code := pigzRun(t, pigz, dir, corpus, level, "-p", p)
+						if code != 0 {
+							t.Fatalf("pigz %s -p %s: exit %d: %s", level, p, code, stderr)
+						}
+						if !bytes.Equal(gunzipWithGzip(t, out), corpus) {
+							t.Errorf("gzip -dc of pigz %s -p %s differs from the input", level, p)
+						}
+						outs = append(outs, out)
+					}
+				}
+				// The blocks do not depend on the count of workers.
+				if !bytes.Equal(outs[2], outs[4]) || !bytes.Equal(outs[3], outs[5]) {
+					t.Error("pigz -p 2 and pigz -p 4 must write the same bytes")
+				}
+			})
+
 			t.Run("files", func(t *testing.T) {
 				dir := t.TempDir()
 				f := filepath.Join(dir, "f")
@@ -195,6 +219,9 @@ func TestSelfHostExamplePigzCLI(t *testing.T) {
 					{[]string{"-x"}, 22, "pigz: abort: invalid option: -x\n"},
 					{[]string{"--bogus"}, 22, "pigz: abort: invalid option: --bogus\n"},
 					{[]string{"-0", "a"}, 22, "pigz: abort: only levels 1..9 are allowed\n"},
+					{[]string{"-p", "0", "a"}, 22, "pigz: abort: invalid number of processes: 0\n"},
+					{[]string{"-p", "x", "a"}, 22, "pigz: abort: invalid numeric parameter: x\n"},
+					{[]string{"a", "-p"}, 22, "pigz: abort: missing parameter after -p\n"},
 					{[]string{"nosuch"}, 1, "pigz: skipping: nosuch does not exist\n"},
 					{[]string{"d"}, 1, "pigz: skipping: d is a directory\n"},
 					{[]string{"-d", "a"}, 1, "pigz: skipping: a does not have compressed suffix\n"},

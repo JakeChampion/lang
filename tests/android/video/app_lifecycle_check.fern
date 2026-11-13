@@ -1,0 +1,122 @@
+// Inert video handles keep these controls outside the codec ABI.
+import "./app";
+import "std/android";
+import "std/android/video";
+import "std/android/video/player";
+import "std/android/video/extractor";
+import "std/android/video/capabilities";
+import "std/video/frame";
+import "std/video/playback_clock";
+
+@import("libaaudio.so", "av_audio_count")
+function count(what: i32): i32;
+
+function inert_player(): player.Player {
+  let request = capabilities.Request { mime: "video/avc", width: 128, height: 128, encoder: false, frame_rate: 30, bitrate: 0, profile: 0, level: 0, color_format: 0 };
+  let info = capabilities.CodecInfo { name: "inert lifecycle control", request: request, implementation: capabilities.Unknown, vendor: false, alias: false, supported: true, profiles: [], color_formats: [] };
+  let clock = playback_clock.Clock { media_us: 0i64, monotonic_ns: 1000000000i64, paused_ns: 1300000000i64, paused: true };
+  return player.Player { reader: extractor.Extractor { handle: 0 as usize, tracks: 0, max_packet_bytes: 4096 }, decoder: video.Decoder { handle: 0 as usize, scratch: 0 as usize, max_packet_bytes: 4096, max_pixels: 16384 }, decoder_live: true, format: video.CodecFormat { handle: 0 as usize }, info: info, request: request, policy: capabilities.PreferHardware, limits: frame.default_limits(), window: 0 as usize, clock: Some(clock), pending: None, paused: true, input_eos: false, output_eos: false, failed: false, config_next: 0, target_us: 0i64, last_input_us: 0i64, last_frame_us: 0i64, recovery_us: 0i64, fallback_used: false, scheduled_frames: 3i64, dropped_frames: 0i64 };
+}
+
+function close(s: app.App, code: i32): i32 {
+  if let Some(sound) = s.sound {
+    sound.close();
+  }
+  return code;
+}
+
+function stopped(s: app.App): boolean {
+  let Some(p) = s.playback else {
+    return false;
+  };
+  let Some(sound) = s.sound else {
+    return false;
+  };
+  return p.paused && sound.paused_ns.is_some() && !s.done;
+}
+
+function no_io(reads: Cell[i32], before: i32, writes: i32): boolean {
+  return reads.get() == before && count(2) == writes;
+}
+
+function running(s: app.App): boolean {
+  let Some(p) = s.playback else {
+    return false;
+  };
+  let Some(sound) = s.sound else {
+    return false;
+  };
+  return !p.paused && sound.paused_ns.is_none() && !s.done;
+}
+
+function position(s: app.App, now: i64): i64 {
+  let Some(p) = s.playback else {
+    return -1i64;
+  };
+  let Some(clock) = p.clock else {
+    return -1i64;
+  };
+  return match (clock.position(now)) { Ok(value) => value, Err(_) => -1i64 };
+}
+
+function internal_pause(own s: app.App, reads: Cell[i32]): Result[app.App, i32] {
+  s = app.pause_sound(app.App { ...s, playback: Some(inert_player()), stage: 1, resume_ns: 1500000000i64 }, 1300000000i64);
+  s = app.step_at(s, android.Pause, 1400000000i64);
+  let before = reads.get();
+  let writes = count(2);
+  s = app.step_at(s, android.Tick, 1600000000i64);
+  if (s.stage != 1 || !stopped(s) || !no_io(reads, before, writes)) {
+    return Err(close(s, 80));
+  }
+  s = app.step_at(s, android.Pause, 1700000000i64);
+  s = app.step_at(s, android.Tick, 31400000000i64);
+  if (!stopped(s) || !no_io(reads, before, writes)) {
+    return Err(close(s, 81));
+  }
+  return internal_resume(s, reads, before, writes);
+}
+
+function internal_resume(own s: app.App, reads: Cell[i32], before: i32, writes: i32): Result[app.App, i32] {
+  s = app.step_at(s, android.Resume, 31400000000i64);
+  if (s.started_ns != 31000000000i64 || s.resume_ns != 31500000000i64 || !stopped(s)) {
+    return Err(close(s, 82));
+  }
+  s = app.step_at(s, android.Resume, 31450000000i64);
+  s = app.step_at(s, android.Tick, 31450000000i64);
+  if (!stopped(s) || !no_io(reads, before, writes)) {
+    return Err(close(s, 83));
+  }
+  s = app.step_at(s, android.Tick, 31500000000i64);
+  if (s.stage != 2 || !running(s) || position(s, 31500000000i64) != 300000i64) {
+    return Err(close(s, 86));
+  }
+  return Ok(s);
+}
+
+function running_pause(own s: app.App, reads: Cell[i32]): Result[app.App, i32] {
+  s = app.step_at(s, android.Pause, 31600000000i64);
+  let before = reads.get();
+  let writes = count(2);
+  s = app.step_at(s, android.Pause, 31700000000i64);
+  s = app.step_at(s, android.Tick, 62600000000i64);
+  s = app.pump_sound(s);
+  if (!stopped(s) || !no_io(reads, before, writes)) {
+    return Err(close(s, 87));
+  }
+  s = app.step_at(s, android.Resume, 62600000000i64);
+  let Some(p) = s.playback else {
+    return Err(close(s, 88));
+  };
+  let Some(sound) = s.sound else {
+    return Err(89);
+  };
+  if (s.started_ns != 62000000000i64 || p.paused || sound.paused_ns.is_some() || position(s, 62600000000i64) != 400000i64) {
+    return Err(close(s, 90));
+  }
+  return Ok(app.App { ...s, playback: None, stage: 0, resume_ns: 0i64 });
+}
+
+pub function run(own s: app.App, reads: Cell[i32]): Result[app.App, i32] {
+  let next = internal_pause(s, reads)?;
+  return running_pause(next, reads);
+}

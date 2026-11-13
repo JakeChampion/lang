@@ -1,8 +1,7 @@
 # pigz
 
 A Fern port of [pigz](https://zlib.net/pigz/), which compresses and
-decompresses gzip files. This version compresses on one CPU. A later slice
-of #15589 adds the parallel compression of pigz.
+decompresses gzip files. It compresses on all CPUs.
 
 ```
 $ pigz file              # writes file.gz and removes file
@@ -29,9 +28,24 @@ $ fern -O -target x86-64-linux -o pigz examples/pigz/pigz.fern   # or arm64-linu
 | `-k` | `--keep` | Keep the input file. |
 | `-t` | `--test` | Test the integrity of each file and write nothing. |
 | `-1` to `-9` | `--fast`, `--best` | The compression level. The default is 6. |
+| `-p N` | `--processes N` | Compress with N processes. The default is one for each CPU. |
 
 Options can come before and after the file names. `--` ends the options, and
 `-` is the standard input. Letters can share one dash, for example `-dc`.
+
+## Parallel compression
+
+The input goes in blocks of 128 KiB, as in pigz. Each block has the 32 KiB
+before it as its dictionary. Each block but the last ends on a byte boundary
+with an empty stored block. So the blocks join into one deflate stream.
+
+Each `std/worker` worker compresses one run of consecutive blocks,
+and the parent compresses the last run. The output does not depend on the
+count of processes, except that one process gives one block. An input of
+128 KiB or less is one block.
+
+On macOS and on wasm32-wasi, `std/worker` runs the workers inline, so the
+compression uses one CPU there (#15584).
 
 ## Compatibility
 
@@ -51,10 +65,13 @@ The port has no level 0 and no level 11. `-0` and `-11` abort with exit 22.
 
 ## Tests
 
-- `gz_test.fern`: the options, the output names, the header, and the
-  messages for corrupt streams. `TestSelfHostExamplePigzUnit` runs it on
-  x86-64, arm64 and wasm32-wasi with the leak census.
+- `gz_test.fern`: the options, the output names, the header, the messages
+  for corrupt streams, and the parallel compression.
+  `TestSelfHostExamplePigzUnit` runs it on x86-64, arm64 and wasm32-wasi
+  with the leak census.
 - `TestSelfHostExamplePigzCLI` runs the CLI on x86-64 and arm64. `gzip` is
   the oracle: it decompresses the output of the port at levels 1, 6 and 9,
-  and the port decompresses the output of `gzip`. It also checks the files
-  that each option writes and removes, and each message and exit code.
+  and the port decompresses the output of `gzip`. With `-p 1`, `-p 2` and
+  `-p 4`, gzip decompresses each output, and `-p 2` and `-p 4` give the same
+  bytes. It also checks the files that each option writes and removes, and
+  each message and exit code.

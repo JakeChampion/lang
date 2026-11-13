@@ -1,17 +1,31 @@
 // pigz — compress and decompress gzip files.
 //
-// A port of pigz (zlib.net/pigz). This version compresses on one CPU.
+// A port of pigz (zlib.net/pigz). It compresses blocks of the input on all
+// CPUs, in std/worker workers.
 //
 //   $ pigz file              # writes file.gz and removes file
 //   $ pigz -d file.gz        # writes file and removes file.gz
 //   $ pigz -9 -k file        # the smallest output, and file stays
 //   $ pigz -c file > out.gz  # writes to the standard output
 //   $ pigz -t file.gz        # tests file.gz
+//   $ pigz -p 2 file         # compresses with two processes
 //
 // With no file, pigz reads the standard input and writes the standard output.
 import "std/io";
 import "std/result";
 import "./gz";
+
+// The workers of a compression: -p, or one for each CPU.
+function workers(o: gz.Options): i32 {
+  if (o.processes > 0) {
+    return o.processes;
+  }
+  let n = cpu_count() as i32;
+  if (n < 1) {
+    return 1;
+  }
+  return n;
+}
 
 function warn(text: string): void {
   eprint("pigz: " + text);
@@ -37,7 +51,7 @@ function stream(o: gz.Options): boolean {
     return false;
   };
   if (!o.decompress && !o.test) {
-    return write_out(gz.compress(data, o.level, "", 0u32));
+    return write_out(gz.compress(data, o.level, "", 0u32, workers(o)));
   }
   match (gz.decompress(data)) {
     Ok(out) => {
@@ -122,7 +136,7 @@ function destination(o: gz.Options, path: string): Target {
 // for a stream that does not decode.
 function converted(o: gz.Options, path: string, data: u8[], st: FileStat): Option[u8[]] {
   if (!o.decompress && !o.test) {
-    return Some(gz.compress(data, o.level, gz.base_name(path), st.mtime as u32));
+    return Some(gz.compress(data, o.level, gz.base_name(path), st.mtime as u32, workers(o)));
   }
   match (gz.decompress(data)) {
     Ok(out) => {

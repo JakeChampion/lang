@@ -23,38 +23,10 @@ func TestShadowedNameIsNotSubstituted(t *testing.T) {
 			src:  "function main(): i32 { let N: i32 = 7; N = 9; return N; }\n",
 		},
 		{
-			name: "match-binding",
-			src: "enum E { A(i32), B }\n" +
-				"function main(): i32 {\n    let e: E = E.A(7);\n" +
-				"    match (e) {\n        A(N) => { return N; },\n        B => { return 0; },\n    }\n}\n",
-		},
-		{
-			name: "tuple-match-binding",
-			src: "function main(): i32 {\n    let t: (i32, i32) = (7, 1);\n" +
-				"    match (t) {\n        (N, b) => { return N; }\n    }\n}\n",
-		},
-		{
-			name: "nested-tuple-match-binding",
-			src: "function main(): i32 {\n    let t: (i32, (i32, i32)) = (1, (7, 2));\n" +
-				"    match (t) {\n        (a, (N, c)) => { return N; }\n    }\n}\n",
-		},
-		{
-			name: "payload-sub-pattern-binding",
-			src: "enum I { S(i32), Z }\nenum O { H(I), E }\n" +
-				"function main(): i32 {\n    let o: O = H(S(7));\n" +
-				"    match (o) {\n        H(S(N)) => { return N; },\n" +
-				"        H(Z()) => { return 0; },\n        E => { return 0; },\n    }\n}\n",
-		},
-		{
 			name: "at-binding",
 			src: "enum E { A(i32), B }\nfunction take(e: E): i32 { match (e) { A(v) => { return v; }, B => { return 0; } } }\n" +
 				"function main(): i32 {\n    let e: E = E.A(7);\n" +
 				"    match (e) {\n        N @ A(v) => { return take(N); },\n        B => { return 0; },\n    }\n}\n",
-		},
-		{
-			name: "match-expr-tuple-binding",
-			src: "function main(): i32 {\n    let t: (i32, i32) = (7, 1);\n" +
-				"    return match (t) {\n        (N, b) => N\n    };\n}\n",
 		},
 		{
 			name: "for-each-var",
@@ -146,5 +118,51 @@ func TestAssignToShadowedNameIsFine(t *testing.T) {
 		if n := countIdents(prog, "N"); n == 0 {
 			t.Errorf("the local's references were substituted with the const's value;\nsource:\n%s", src)
 		}
+	}
+}
+
+// A const name in a match arm is a literal pattern that reads the const, so
+// the arm binds no name, and its body reads the const too.
+func TestConstNameInMatchArmReadsTheConst(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "match-binding",
+			src: "enum E { A(i32), B }\n" +
+				"function main(): i32 {\n    let e: E = E.A(7);\n" +
+				"    match (e) {\n        A(N) => { return N; },\n        B => { return 0; },\n    }\n}\n",
+		},
+		{
+			name: "tuple-match-binding",
+			src: "function main(): i32 {\n    let t: (i32, i32) = (7, 1);\n" +
+				"    match (t) {\n        (N, b) => { return N; }\n    }\n}\n",
+		},
+		{
+			name: "nested-tuple-match-binding",
+			src: "function main(): i32 {\n    let t: (i32, (i32, i32)) = (1, (7, 2));\n" +
+				"    match (t) {\n        (a, (N, c)) => { return N; }\n    }\n}\n",
+		},
+		{
+			name: "payload-sub-pattern-binding",
+			src: "enum I { S(i32), Z }\nenum O { H(I), E }\n" +
+				"function main(): i32 {\n    let o: O = H(S(7));\n" +
+				"    match (o) {\n        H(S(N)) => { return N; },\n" +
+				"        H(Z()) => { return 0; },\n        E => { return 0; },\n    }\n}\n",
+		},
+		{
+			name: "match-expr-tuple-binding",
+			src: "function main(): i32 {\n    let t: (i32, i32) = (7, 1);\n" +
+				"    return match (t) {\n        (N, b) => N\n    };\n}\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			prog := fold(t, "const N: i32 = 7;\n"+tc.src)
+			if n := countIdents(prog, "N"); n != 0 {
+				t.Errorf("%d references to N were not substituted with the const's value;\nsource:\n%s", n, tc.src)
+			}
+		})
 	}
 }

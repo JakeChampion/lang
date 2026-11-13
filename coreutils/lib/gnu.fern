@@ -109,7 +109,16 @@ pub function die(o: io_buffered.BufWriter, msg: string, status: i32): void {
 }
 
 pub function try_help(status: i32): void {
-  eprint("Try '" + prog() + " --help' for more information.");
+  try_help_in("coreutils", status);
+}
+
+// diffutils prefixes the hint with the program name, as it does each error.
+pub function try_help_in(package: string, status: i32): void {
+  let line = "Try '" + prog() + " --help' for more information.";
+  if (package == "diffutils") {
+    line = prog() + ": " + line;
+  }
+  eprint(line);
   exit(status);
 }
 
@@ -1184,8 +1193,8 @@ function print_help(help_text: string, status: i32, fail_status: i32): void {
   exit(status);
 }
 
-function print_version(name: string, status: i32, fail_status: i32): void {
-  write_out_with(name + " (Fern coreutils) " + version() + "\n", fail_status);
+function print_version(name: string, package: string, status: i32, fail_status: i32): void {
+  write_out_with(name + " (Fern " + package + ") " + version() + "\n", fail_status);
   exit(status);
 }
 
@@ -1220,7 +1229,7 @@ function short_byte(short: string): i32 {
 
 pub struct OptMatch { id: i32, value: string, has_value: boolean, long_form: boolean }
 
-pub struct Getopt { argv: string[], opts: Opt[], name: string, help: string, status: i32, fail: i32, in_order: boolean, report_operands: boolean, i: i32, cluster: string, operands: string[], past_dashdash: boolean, hint: string }
+pub struct Getopt { argv: string[], opts: Opt[], name: string, help: string, status: i32, fail: i32, in_order: boolean, report_operands: boolean, i: i32, cluster: string, operands: string[], past_dashdash: boolean, hint: string, package: string }
 
 pub function help_id(): i32 {
   return -1;
@@ -1242,7 +1251,13 @@ pub function getopt_new(argv: string[], opts: Opt[], name: string, help_text: st
     None => {}
   }
   let empty: string[] = [];
-  return Getopt { argv: argv, opts: all, name: name, help: help_text, status: status, fail: status, in_order: in_order, report_operands: false, i: 1, cluster: "", operands: empty, past_dashdash: false, hint: "" };
+  return Getopt { argv: argv, opts: all, name: name, help: help_text, status: status, fail: status, in_order: in_order, report_operands: false, i: 1, cluster: "", operands: empty, past_dashdash: false, hint: "", package: "coreutils" };
+}
+
+// The GNU package of the program: "coreutils" or "diffutils". It names the
+// package in the --version line and gives the form of the --help hint.
+pub function (g: Getopt) in_package(name: string): Getopt {
+  return Getopt { ...g, package: name };
 }
 
 pub function (g: Getopt) exit_failure(status: i32): Getopt {
@@ -1258,7 +1273,7 @@ function die_fault(g: Getopt, msg: string): void {
   if (g.hint.len() > 0) {
     eprint(g.hint);
   }
-  try_help(g.status);
+  try_help_in(g.package, g.status);
 }
 
 pub function (g: Getopt) in_order(): Getopt {
@@ -1419,7 +1434,7 @@ function short_option(g: Getopt): (Option[OptMatch], Getopt) {
     print_help(g.help, 0, g.fail);
   }
   if (o.id == version_id()) {
-    print_version(g.name, 0, g.fail);
+    print_version(g.name, g.package, 0, g.fail);
   }
   if (o.short_arg == 0) {
     return (Some(OptMatch { id: o.id, value: "", has_value: false, long_form: false }), Getopt { ...g, cluster: rest });
@@ -1500,7 +1515,7 @@ function long_option(g: Getopt, a: string): (Option[OptMatch], Getopt) {
     print_help(g.help, 0, g.fail);
   }
   if (o.id == version_id()) {
-    print_version(g.name, 0, g.fail);
+    print_version(g.name, g.package, 0, g.fail);
   }
   return (Some(OptMatch { id: o.id, value: value, has_value: has, long_form: true }), s);
 }
@@ -1533,7 +1548,7 @@ pub function sole_help_version_with(argv: string[], name: string, help_text: str
     print_help(help_text, status, fail_status);
   }
   if (argv[1] == "--version") {
-    print_version(name, status, fail_status);
+    print_version(name, "coreutils", status, fail_status);
   }
 }
 
