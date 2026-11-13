@@ -8237,8 +8237,9 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
   let declared_bound = bounded_tps.len() > 0;
   for ui in 0..unbounded_tps.len() {
     let un = unbounded_tps[ui];
-    let feeds = feeds_user_parametric(ret_type, un) || feeds_map_typearg(ret_type, un);
-    let bindable = false;
+    let callback_feeds = fn_param_feeds_nominal(params, un);
+    let feeds = feeds_user_parametric(ret_type, un) || feeds_map_typearg(ret_type, un) || callback_feeds;
+    let bindable = callback_feeds;
     for pj in 0..params.len() {
       if (feeds_user_parametric(params[pj].type_name, un) || feeds_map_typearg(params[pj].type_name, un)) {
         feeds = true;
@@ -10057,7 +10058,7 @@ function spelling_mentions_tparam(name: string, tparams: string[]): boolean {
   if (name.len() == 0) {
     return false;
   }
-  for v in collect_tvars(name, []) {
+  for v in type_str_vars(name, []) {
     if (tp_index(v, tparams) >= 0) {
       return true;
     }
@@ -10286,7 +10287,7 @@ function lambda_param_types_of(e: ast.Expr, env: MEnv, funcs: MFns): string[] {
     ast.ExprLambda(lm) => {
       let out: string[] = [];
       for pi in 0..lm.params.len() {
-        out = out.append(lm.params[pi].type_name);
+        out = out.append(param_spelling(lm.params[pi]));
       }
       return out;
     },
@@ -10625,7 +10626,7 @@ function callable_ret_spelling(t: string): string {
   if (t.len() == 0) {
     return "";
   }
-  let r = parse_type_ref(t);
+  let r = ref_ungroup(parse_type_ref(t));
   if (!r.is_fn || r.args.len() == 0) {
     return "";
   }
@@ -10637,7 +10638,7 @@ function callable_param_spellings(t: string): string[] {
   if (t.len() == 0) {
     return none;
   }
-  let r = parse_type_ref(t);
+  let r = ref_ungroup(parse_type_ref(t));
   if (!r.is_fn) {
     return none;
   }
@@ -10656,7 +10657,7 @@ function func_param_types_of(decls: FuncDecl[], name: string): string[] {
     if (decls[i].name == name && decls[i].receiver_type.len() == 0) {
       let k = 0;
       while (k < decls[i].params.len()) {
-        out = out.append(decls[i].params[k].type_name);
+        out = out.append(param_spelling(decls[i].params[k]));
         k += 1;
       }
       return out;
@@ -11279,7 +11280,7 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
         if (li > 0) {
           lps += ", ";
         }
-        lps += lm.params[li].type_name;
+        lps += param_spelling(lm.params[li]);
       }
       let lret = lambda_ret_of(e, env, funcs);
       if (lret.len() == 0) {
@@ -13216,10 +13217,13 @@ pub function struct_receiver_typevars(recv: string): string[] {
 function smm_own_typevars(fd: FuncDecl, recv_vars: string[]): string[] {
   let all: string[] = [];
   for i in 0..fd.params.len() {
-    all = collect_tvars(fd.params[i].type_name, all);
-    all = collect_tvars(fd.params[i].fn_ret, all);
+    all = type_str_vars(fd.params[i].type_name, all);
+    all = type_str_vars(fd.params[i].fn_ret, all);
+    all = type_str_vars(fd.params[i].fn_param_types, all);
   }
-  all = collect_tvars(fd.ret_type, all);
+  all = type_str_vars(fd.ret_type, all);
+  all = type_str_vars(fd.ret_fn_ret, all);
+  all = type_str_vars(fd.ret_fn_param_types, all);
   let own: string[] = [];
   for j in 0..all.len() {
     if (!util.has_str(recv_vars, all[j])) {
@@ -13268,7 +13272,7 @@ function is_plain_method_tps(fd: FuncDecl, structs: StructDecl[], enums: EnumDec
   if (fd.type_params.len() == 0 || first_bracket(fd.receiver_type) >= 0) {
     return false;
   }
-  if (!is_plain_decl(fd.receiver_type, structs, enums)) {
+  if (!is_plain_receiver(fd.receiver_type, structs, enums)) {
     return false;
   }
   let own = smm_own_typevars(fd, []);
@@ -13280,7 +13284,10 @@ function is_plain_method_tps(fd: FuncDecl, structs: StructDecl[], enums: EnumDec
   return true;
 }
 
-function is_plain_decl(name: string, structs: StructDecl[], enums: EnumDecl[]): boolean {
+function is_plain_receiver(name: string, structs: StructDecl[], enums: EnumDecl[]): boolean {
+  if (typeinfo.is_primitive_type_name(name) && name != "void") {
+    return true;
+  }
   for sd in structs {
     if (sd.name == name && sd.type_params.len() == 0) {
       return true;
@@ -13694,7 +13701,8 @@ function fn_param_promoted(fd: FuncDecl): boolean {
         plain = true;
       }
     }
-    if (plain || feeds_user_parametric(fd.ret_type, v) || feeds_map_typearg(fd.ret_type, v)) {
+    if (plain || feeds_user_parametric(fd.ret_type, v) || feeds_map_typearg(fd.ret_type, v)
+      || fn_param_feeds_nominal(fd.params, v)) {
       continue;
     }
     if (has_fn_param_arg_var(fd.params, v) || has_fn_param_ret_var(fd.params, v)) {
@@ -23759,6 +23767,17 @@ function all_fn_param_bound(params: ast.ParamDecl[], tps: string[]): boolean {
     }
   }
   return tps.len() > 0;
+}
+
+function fn_param_feeds_nominal(params: ast.ParamDecl[], name: string): boolean {
+  for pd in params {
+    if (is_fn_contract_tag(pd.type_name)
+      && (feeds_user_parametric(pd.fn_ret, name) || feeds_map_typearg(pd.fn_ret, name)
+      || feeds_user_parametric(pd.fn_param_types, name) || feeds_map_typearg(pd.fn_param_types, name))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function has_fn_param_ret_var(params: ast.ParamDecl[], name: string): boolean {

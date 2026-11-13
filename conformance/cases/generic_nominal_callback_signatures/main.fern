@@ -1,0 +1,78 @@
+enum Fut[T] { Ready(T), Gone }
+struct Box[T] { item: T }
+struct Host { n: i32 }
+
+function (x: i32) nominal[T](k: (i32) => Fut[T]): i32 {
+  let r = k(x);
+  return match (r) { Ready(_) => x, Gone => 0 };
+}
+
+function (x: string) nominal[T](k: (i32) => Fut[T]): i32 {
+  return (x.len() as i32) + end(k);
+}
+
+function (x: f64) nominal[T](k: (i32) => Fut[T]): i32 {
+  return (x as i32) + end(k);
+}
+
+function (x: boolean) nominal[T](k: (i32) => Fut[T]): i32 {
+  if (x) { return end(k); }
+  return 0;
+}
+
+function (h: Host) by_input[T](k: (Fut[T]) => i32): i32 {
+  return k(Gone) + h.n;
+}
+
+function (h: Host) nested[T](k: ((Fut[T]) => i32) => i32): i32 {
+  return k((r: Fut[T]): i32 => match (r) { Ready(_) => 1, Gone => 2 }) + h.n;
+}
+
+function end[T](k: (i32) => Fut[T]): i32 {
+  let r = k(7);
+  return match (r) { Ready(_) => 1, Gone => 0 };
+}
+
+function records[T](k: (i32) => Box[T]): T {
+  return k(9).item;
+}
+
+function arrays[T](k: (i32) => Fut[T][]): i32 {
+  return k(3).len() as i32;
+}
+
+function input[T](k: (Fut[T]) => i32): i32 {
+  return k(Gone);
+}
+
+function ready(n: i32): Fut[i32] { return Ready(n); }
+function named_nested(f: (Fut[i32]) => i32): i32 { return f(Gone); }
+
+function main(): i32 {
+  let k = (n: i32): Fut[i32] => Ready(n);
+  if (end(k) != 1 || end[i32](k) != 1 || end(ready) != 1) { return 1; }
+  let wide = (n: i32): Fut[string] => Ready("value " + n.to_string());
+  if (end(wide) != 1) { return 2; }
+  let boxed = (n: i32): Box[string] => Box { item: "box " + n.to_string() };
+  if (records(boxed) != "box 9") { return 3; }
+  let many = (n: i32): Fut[i32][] => [Ready(n), Gone];
+  if (arrays(many) != 2) { return 4; }
+  let consume = (r: Fut[i32]): i32 => match (r) { Ready(n) => n, Gone => 42 };
+  if (input(consume) != 42) { return 5; }
+  let number = 7;
+  if (number.nominal(k) != 7) { return 6; }
+  let text = "value";
+  if (text.nominal(wide) != 6) { return 7; }
+  let fraction: f64 = 2.5;
+  if (fraction.nominal(k) != 3) { return 8; }
+  let flag = true;
+  if (flag.nominal(k) != 1) { return 9; }
+  let h = Host { n: 5 };
+  if (h.by_input(consume) != 47) { return 10; }
+  let nested = (f: (Fut[i32]) => i32): i32 => f(Gone);
+  if (h.nested(nested) != 7) { return 11; }
+  if (h.nested((f: (Fut[i32]) => i32): i32 => f(Gone)) != 7) { return 12; }
+  if (h.nested(named_nested) != 7) { return 13; }
+  print("generic nominal callback signatures");
+  return 0;
+}
