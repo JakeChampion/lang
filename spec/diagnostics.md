@@ -116,7 +116,6 @@ language does not have. It is deleted.
 | `E041` | Operator error | `diag_e041` |
 | `E042` | `?` operator error | `diag_e042` |
 | `E043` | Struct literal field error | `err_unknown_field` |
-| `E044` | Captured variable has unsupported type | — |
 | `E045` | Map key / value type error | `err_map_key_no_hash` |
 | `E046` | Tuple field access error | `diag_e046` |
 | `E047` | Integer literal out of range | `diag_e047` |

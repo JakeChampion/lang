@@ -467,13 +467,12 @@ func TestSelfHostFormerlyExemptCodesGateX86_64(t *testing.T) {
 		{code: "E040", src: "function pick[T](a: T): T { return a; }\nfunction main(): i32 { return pick[i32, string](1); }\n"},
 		{code: "E041", src: "function main(): i32 { let xs: i32[] = [1,2]; let ys: i32[] = [1,2]; if (xs == ys) { return 1; } return 0; }\n"},
 		{code: "E042", src: "function main(): i32 { let n: i32 = 5; let m: i32 = n?; return m; }\n"},
-		{code: "E044", src: "function nothing(): void { }\nfunction main(): i32 { let v = nothing(); let g = (): i32 => { v; return 2; }; return g(); }\n"},
 		{code: "E051", src: "struct B { items: i32[] }\nfunction consume(own p: B): i32 { return p.items.len(); }\nfunction main(): i32 { let a: B = B { items: [1] }; let n: i32 = consume(a); return n + consume(a); }\n"},
 		{code: "E052", src: "function f(n: i32): i32 { if (n > 0) { return 1; } }\nfunction main(): i32 { return f(1); }\n"},
 		{code: "E064", src: "function f(a: Wibble): i32 { return 0; }\nfunction main(): i32 { return 0; }\n"},
 	}
-	if len(rows) != 18 {
-		t.Fatalf("the exclusion list #8461 measured held 18 codes; matrix has %d", len(rows))
+	if len(rows) != 17 {
+		t.Fatalf("the exclusion list #8461 measured held 18 codes, and E044 is retired; matrix has %d", len(rows))
 	}
 
 	for _, row := range rows {
