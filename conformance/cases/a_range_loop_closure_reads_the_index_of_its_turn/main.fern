@@ -1,0 +1,47 @@
+// Each turn of a range loop binds its own index, as a loop over an array
+// binds its own element. A closure that a turn makes reads the index of that
+// turn, not the index after the loop.
+import "std/array";
+
+function joined(fs: (() => i32)[]): string {
+  return fs.map((f: () => i32): string => f().to_string()).join(",");
+}
+
+function main(): i32 {
+  let elements: (() => i32)[] = [];
+  for v in [10, 20, 30] {
+    elements = elements.append((): i32 => v);
+  }
+  let exclusive: (() => i32)[] = [];
+  for i in 0..3 {
+    exclusive = exclusive.append((): i32 => i);
+  }
+  let inclusive: (() => i32)[] = [];
+  for i in 1..=3 {
+    inclusive = inclusive.append((): i32 => i * 10);
+  }
+  let skipped: (() => i32)[] = [];
+  for i in 0..6 {
+    if (i % 2 == 1) {
+      continue;
+    }
+    skipped = skipped.append((): i32 => i);
+  }
+  let nested: (() => i32)[] = [];
+  for a in 0..2 {
+    for b in 0..2 {
+      nested = nested.append((): i32 => a * 10 + b);
+    }
+  }
+  let shared = 0;
+  for i in 0..4 {
+    shared += i;
+  }
+  print(joined(elements));
+  print(joined(exclusive));
+  print(joined(inclusive));
+  print(joined(skipped));
+  print(joined(nested));
+  print(shared.to_string());
+  return 0;
+}

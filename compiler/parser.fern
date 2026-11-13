@@ -19365,6 +19365,16 @@ function desugar_ranges_one(st: ast.Stmt): ast.Stmt[] {
     ast.StmtFor(written) => {
       let dbody = desugar_ranges_block(written.body);
       let rargs = iter_range_args(written.iter);
+      if (rargs.len() == 2 && turn_binds_index(written, dbody)) {
+        // Each closure of the body reads the index of its own turn.
+        let counter = "$turn_" + written.var_name;
+        let bind = s_var(written.var_name, range_bound_type(rargs), e_ident(counter));
+        let body: ast.Stmt[] = [bind];
+        for st in dbody {
+          body = body.append(st);
+        }
+        return desugar_ranges_one(ast.StmtFor { ...written, var_name: counter, body: body });
+      }
       if (rargs.len() == 2) {
         // A nested `for _` must not step this counter.
         let fr = ast.StmtFor { ...written, var_name: discard_name(written.var_name, written.line, written.col, 0) };
@@ -19422,6 +19432,31 @@ function desugar_ranges_one(st: ast.Stmt): ast.Stmt[] {
       return [st];
     }
   }
+}
+
+// A body that makes a closure steps a hidden counter and binds the index
+// from it at the start of each turn, as a loop over an array binds its
+// element.
+function turn_binds_index(fr: ast.StmtFor, body: ast.Stmt[]): boolean {
+  if (fr.var_name == "_" || fr.var_name.starts_with("$turn_")) {
+    return false;
+  }
+  let found = false;
+  for st in body {
+    found = astwalk.fold_stmt_nodes(st, found, keep_stmt_flag, lambda_at, astwalk.descend_all);
+  }
+  return found;
+}
+
+function keep_stmt_flag(st: ast.Stmt, own acc: boolean): boolean {
+  return acc;
+}
+
+function lambda_at(e: ast.Expr, own acc: boolean): boolean {
+  if let ast.ExprLambda(_) = e {
+    return true;
+  }
+  return acc;
 }
 
 pub function desugar_ranges_func(fd: FuncDecl): FuncDecl {

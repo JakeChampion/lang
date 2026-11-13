@@ -6083,6 +6083,20 @@ func (e *env) captureCell(name string) (*binding, bool) {
 	return nil, false
 }
 
+// uncapture gives name a value of its own again after a closure captured it,
+// so the closure keeps its cell and a later capture gets a new one. Each turn
+// of a range loop binds its own index this way.
+func (e *env) uncapture(name string) {
+	for cur := e; cur != nil; cur = cur.parent {
+		if v, ok := cur.vars[name]; ok {
+			if slot, ok := v.(*binding); ok {
+				cur.vars[name] = slot.value
+			}
+			return
+		}
+	}
+}
+
 // slot is the entry of name, which is a *binding when a closure captured it.
 func (e *env) slot(name string) Value {
 	for cur := e; cur != nil; cur = cur.parent {
@@ -6391,6 +6405,9 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 			}
 			if r.flow == flowContinue && r.label != "" && r.label != x.Label {
 				return r, nil
+			}
+			if x.RangeIndex != "" {
+				inner.uncapture(x.RangeIndex)
 			}
 			if x.Step != nil {
 				if _, err := i.execStmt(x.Step, inner); err != nil {

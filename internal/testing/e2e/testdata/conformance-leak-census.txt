@@ -1,3 +1,4 @@
+# 2026-11-13: a_range_loop_closure_reads_the_index_of_its_turn is clean under RC trace.
 # 2026-11-13: a_match_arm_that_is_a_void_if_falls_through has balanced allocations on x86-64.
 # 2026-11-13: generic_nominal_callback_signatures has balanced allocations and zero live bytes on all three targets.
 # 2026-11-13: owned_callback_result_composition has balanced allocations and zero live allocations on all three main targets.
@@ -113,6 +114,7 @@ a_match_value_of_owned_arms_is_owned                 0
 a_module_calls_methods_its_imports_reach             0
 a_module_does_not_see_a_sibling_imports_variants     0
 a_module_names_variants_its_imports_reach            0
+a_range_loop_closure_reads_the_index_of_its_turn     0
 a_returned_value_match_returns_from_each_arm         0
 a_struct_literal_from_a_module_takes_its_type_arguments_from_its_fields 0
 a_struct_name_call_wraps_a_union_member_across_modules 0
