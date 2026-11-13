@@ -1,0 +1,309 @@
+// HTML tags (CommonMark 0.31.2, section 6.6) and the start and end
+// conditions of the seven kinds of HTML block (section 4.6).
+//
+// Each scanner reads `s` up to the limit `lim`. It sees a line feed at `lim`
+// and nothing after it, so a scan of one line stops at the end of the line.
+
+const BLOCK_NAMES: string[] = [
+  "address", "article", "aside", "base", "basefont", "blockquote", "body", "caption", "center", "col", "colgroup", "dd", "details", "dialog", "dir", "div", "dl", "dt", "fieldset", "figcaption",
+  "figure", "footer", "form", "frame", "frameset", "h1", "h2", "h3", "h4", "h5", "h6", "head", "header", "hr", "html", "iframe", "legend", "li", "link", "main",
+  "menu", "menuitem", "nav", "noframes", "ol", "optgroup", "option", "p", "param", "search", "section", "summary", "table", "tbody", "td", "tfoot", "th", "thead", "title", "tr",
+  "track", "ul",
+];
+
+const RAW_NAMES: string[] = ["pre", "script", "style", "textarea"];
+
+function at(s: string, i: i32, lim: i32): i32 {
+  if (i < lim) {
+    return s[i] as i32;
+  }
+  if (i == lim) {
+    return 10;
+  }
+  return 0;
+}
+
+function lower(c: i32): i32 {
+  if (c >= 65 && c <= 90) {
+    return c + 32;
+  }
+  return c;
+}
+
+function is_letter(c: i32): boolean {
+  return c >= 65 && c <= 90 || c >= 97 && c <= 122;
+}
+
+function is_digit(c: i32): boolean {
+  return c >= 48 && c <= 57;
+}
+
+// The whitespace that cmark allows inside a tag: space, tab, line feed,
+// vertical tab, form feed and carriage return.
+function is_tag_space(c: i32): boolean {
+  return c == 32 || c >= 9 && c <= 13;
+}
+
+// True when `word` is at `i`, with ASCII letters in any case.
+function word_at(s: string, i: i32, lim: i32, word: string): boolean {
+  for k in 0..word.len() {
+    if (lower(at(s, i + k, lim)) != word[k] as i32) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The end of the run of ASCII letters and digits at `i`.
+function name_end(s: string, i: i32, lim: i32): i32 {
+  let j = i;
+  while (is_letter(at(s, j, lim)) || is_digit(at(s, j, lim))) {
+    j += 1;
+  }
+  return j;
+}
+
+function name_in(s: string, i: i32, j: i32, lim: i32, names: string[]): boolean {
+  for name in names {
+    if (name.len() == j - i && word_at(s, i, lim, name)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function skip_tag_space(s: string, i: i32, lim: i32): i32 {
+  let j = i;
+  while (is_tag_space(at(s, j, lim))) {
+    j += 1;
+  }
+  return j;
+}
+
+// The end of a tag name at `i`: a letter, then letters, digits and hyphens.
+function tag_name_end(s: string, i: i32, lim: i32): i32 {
+  if (!is_letter(at(s, i, lim))) {
+    return -1;
+  }
+  let j = i + 1;
+  let c = at(s, j, lim);
+  while (is_letter(c) || is_digit(c) || c == 45) {
+    j += 1;
+    c = at(s, j, lim);
+  }
+  return j;
+}
+
+function is_attr_name_start(c: i32): boolean {
+  return is_letter(c) || c == 95 || c == 58;
+}
+
+function is_attr_name_char(c: i32): boolean {
+  return is_attr_name_start(c) || is_digit(c) || c == 46 || c == 45;
+}
+
+// The end of an attribute value at `i`, or -1.
+function attr_value_end(s: string, i: i32, lim: i32): i32 {
+  let q = at(s, i, lim);
+  if (q == 34 || q == 39) {
+    let j = i + 1;
+    while (at(s, j, lim) != q) {
+      if (at(s, j, lim) == 0) {
+        return -1;
+      }
+      j += 1;
+    }
+    return j + 1;
+  }
+  let j = i;
+  while (is_unquoted_char(at(s, j, lim))) {
+    j += 1;
+  }
+  if (j == i) {
+    return -1;
+  }
+  return j;
+}
+
+// A byte of an attribute value without quotes: not whitespace, NUL, `"`,
+// `'`, `=`, `<`, `>` or a backtick.
+function is_unquoted_char(c: i32): boolean {
+  if (c == 0 || is_tag_space(c)) {
+    return false;
+  }
+  return c != 34 && c != 39 && c != 61 && c != 60 && c != 62 && c != 96;
+}
+
+// The end of an attribute at `i`: whitespace, a name, and an optional value
+// specification. Gives -1 when there is no attribute at `i`.
+function attr_end(s: string, i: i32, lim: i32): i32 {
+  let j = skip_tag_space(s, i, lim);
+  if (j == i || !is_attr_name_start(at(s, j, lim))) {
+    return -1;
+  }
+  j += 1;
+  while (is_attr_name_char(at(s, j, lim))) {
+    j += 1;
+  }
+  let k = skip_tag_space(s, j, lim);
+  if (at(s, k, lim) != 61) {
+    return j;
+  }
+  let v = attr_value_end(s, skip_tag_space(s, k + 1, lim), lim);
+  if (v < 0) {
+    return j;
+  }
+  return v;
+}
+
+// The end of an open tag whose `<` is at `i`, or -1.
+pub function open_tag_end(s: string, i: i32, lim: i32): i32 {
+  let j = tag_name_end(s, i + 1, lim);
+  if (j < 0) {
+    return -1;
+  }
+  let a = attr_end(s, j, lim);
+  while (a >= 0) {
+    j = a;
+    a = attr_end(s, j, lim);
+  }
+  j = skip_tag_space(s, j, lim);
+  if (at(s, j, lim) == 47) {
+    j += 1;
+  }
+  if (at(s, j, lim) == 62) {
+    return j + 1;
+  }
+  return -1;
+}
+
+// The end of a closing tag whose `<` is at `i`, or -1.
+pub function closing_tag_end(s: string, i: i32, lim: i32): i32 {
+  if (at(s, i + 1, lim) != 47) {
+    return -1;
+  }
+  let j = tag_name_end(s, i + 2, lim);
+  if (j < 0) {
+    return -1;
+  }
+  j = skip_tag_space(s, j, lim);
+  if (at(s, j, lim) == 62) {
+    return j + 1;
+  }
+  return -1;
+}
+
+// The kind (1 to 7) of the HTML block that starts with the `<` at `i` on the
+// line that ends at `le`, or 0. Kind 7 cannot interrupt a paragraph, and
+// cannot start on a line that can be a lazy continuation line.
+pub function block_start(s: string, i: i32, le: i32, in_paragraph: boolean): i32 {
+  let c = at(s, i + 1, le);
+  if (c == 33) {
+    return bang_start(s, i, le);
+  }
+  if (c == 63) {
+    return 3;
+  }
+  let named = named_start(s, i, le, c == 47);
+  if (named > 0 || in_paragraph) {
+    return named;
+  }
+  return seventh_start(s, i, le, c == 47);
+}
+
+// Kind 1, `<pre` and the other names of raw text, or kind 6, the name of a
+// block element, or 0.
+function named_start(s: string, i: i32, le: i32, close: boolean): i32 {
+  let ns = i + 1;
+  if (close) {
+    ns += 1;
+  }
+  let ne = name_end(s, ns, le);
+  let after = at(s, ne, le);
+  let ends = is_tag_space(after) || after == 62;
+  if (!close && ends && name_in(s, ns, ne, le, RAW_NAMES)) {
+    return 1;
+  }
+  if ((ends || after == 47 && at(s, ne + 1, le) == 62) && name_in(s, ns, ne, le, BLOCK_NAMES)) {
+    return 6;
+  }
+  return 0;
+}
+
+// `<!--`, `<![CDATA[` or `<!` and a letter. As in cmark, the letters of
+// `CDATA` can be in any case.
+function bang_start(s: string, i: i32, le: i32): i32 {
+  if (at(s, i + 2, le) == 45 && at(s, i + 3, le) == 45) {
+    return 2;
+  }
+  if (word_at(s, i + 2, le, "[cdata[")) {
+    return 5;
+  }
+  if (is_letter(at(s, i + 2, le))) {
+    return 4;
+  }
+  return 0;
+}
+
+// A complete open or closing tag alone on its line. The spec leaves out the
+// names of kind 1, but cmark and commonmark.js do not, so `<pre/>` starts a
+// block of kind 7.
+function seventh_start(s: string, i: i32, le: i32, close: boolean): i32 {
+  let end = -1;
+  if (close) {
+    end = closing_tag_end(s, i, le);
+  } else {
+    end = open_tag_end(s, i, le);
+  }
+  if (end < 0) {
+    return 0;
+  }
+  let c = at(s, end, le);
+  while (c == 32 || c == 9 || c == 12) {
+    end += 1;
+    c = at(s, end, le);
+  }
+  if (end == le) {
+    return 7;
+  }
+  return 0;
+}
+
+// True when the text from `from` to the end of the line `le` holds the end
+// condition of an HTML block of `kind` 1 to 5.
+pub function block_end(kind: i32, s: string, from: i32, le: i32): boolean {
+  if (kind == 1) {
+    return contains_ci(s, from, le, "</script>") || contains_ci(s, from, le, "</pre>") || contains_ci(s, from, le, "</style>") || contains_ci(s, from, le, "</textarea>");
+  }
+  if (kind == 2) {
+    return contains_ci(s, from, le, "-->");
+  }
+  if (kind == 3) {
+    return contains_ci(s, from, le, "?>");
+  }
+  if (kind == 4) {
+    return contains_ci(s, from, le, ">");
+  }
+  if (kind == 5) {
+    return contains_ci(s, from, le, "]]>");
+  }
+  return false;
+}
+
+// True when `word`, which has no capital letters, is in `s[from:le]` with
+// ASCII letters in any case.
+function contains_ci(s: string, from: i32, le: i32, word: string): boolean {
+  let first = word[0] as i32;
+  let i = from;
+  while (i + word.len() <= le) {
+    let j = __memchr(slice_unchecked(s, 0, le), first, i);
+    if (j < 0 || j + word.len() > le) {
+      return false;
+    }
+    if (word_at(s, j, le, word)) {
+      return true;
+    }
+    i = j + 1;
+  }
+  return false;
+}
