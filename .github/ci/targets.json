@@ -29,7 +29,8 @@
     },
     "coreutils": {
       "inputs": [
-        "coreutils/**"
+        "coreutils/**",
+        "diffutils/**"
       ]
     },
     "examples": {

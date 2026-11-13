@@ -2,6 +2,7 @@
 import "./app";
 import "./audio_content";
 import "./audio_path";
+import "./app_lifecycle_check";
 
 @import("libaaudio.so", "av_audio_count")
 function count(what: i32): i32;
@@ -44,10 +45,11 @@ function drain(own s: app.App): i32 {
 }
 
 pub function run(own sound: audio_path.State, io: audio_content.Input, reads: Cell[i32], pause_first: boolean): i32 {
-  let state = app.App { ctx: 0 as usize, playback: None, fd: -1, content: None, sound: Some(sound), audio_reader: None, content_audio: Some(io), stage: 0, resume_ns: 0i64, started_ns: 1000000000i64, done: false };
+  let state = app.App { ctx: 0 as usize, playback: None, fd: -1, content: None, sound: Some(sound), audio_reader: None, content_audio: Some(io), stage: 0, resume_ns: 0i64, started_ns: 1000000000i64, done: false, lifecycle_pause_ns: None, lifecycle_was_playing: false };
   if (pause_first) {
     let next = match (paused(state, reads)) { Ok(value) => value, Err(code) => { return code; } };
-    return drain(next);
+    let checked = match (app_lifecycle_check.run(next, reads)) { Ok(value) => value, Err(code) => { return code; } };
+    return drain(checked);
   }
   return drain(state);
 }

@@ -1,6 +1,7 @@
 // What the player does on the device for the state of tune.fern: it reads
 // the file of a track, and gives its samples to a stream of sound. The
 // device is a set of functions, so a test gives one that plays nothing.
+import "std/array";
 import "core/cmp";
 import "std/android/draw";
 import "std/android/ui";
@@ -67,14 +68,41 @@ pub struct Device {
 // The samples that the player keeps ready, as a part of a second.
 const READY_PARTS: i32 = 5;
 
-// The player on a device: the state of tune.fern, and the deck that reads
-// the file of the track that plays. Only one owner uses a deck, so it is
-// not in the state.
-pub struct Player { model: tune.Model, deck: Option[engine.Voice] }
+// The player on a device: the state of tune.fern, the deck that reads the
+// file of the track that plays, and the next track while the end of this
+// one fades into it. Only one owner uses a deck, so it is not in the state.
+pub struct Player { model: tune.Model, deck: Option[engine.Voice], incoming: Option[Incoming] }
+
+// The next track of a crossfade: its number, its deck, the samples of its
+// deck that the sound did not take yet, and what the player shows for it.
+// `voice` is None when the track cannot fade in, for example at another
+// rate.
+pub struct Incoming { track: i32, voice: Option[engine.Voice], pending: i32[], gain: f64, art: Option[draw.Image], lyrics: tune.Line[], length_ms: i64 }
 
 // A player with the state `model` and no deck.
 pub function wrap(own model: tune.Model): Player {
-  return Player { model: model, deck: None };
+  return Player { model: model, deck: None, incoming: None };
+}
+
+// A file of a track that the player opened, with what it shows for it.
+struct Opened { deck: engine.Deck, art: Option[draw.Image], lyrics: tune.Line[], gain: f64 }
+
+// The track `i` opened, or None when the player cannot play its file.
+function opened(dev: Device, m: tune.Model, i: i32): Option[Opened] {
+  let path = m.tracks[i].path;
+  let Some(deck) = engine.open_file(dev.size(path), (at: i64, n: i32): u8[] => dev.part(path, at, n), engine.WINDOW) else {
+    return None;
+  };
+  let picture = tags.picture(deck.bytes);
+  if (picture.len() == 0) {
+    picture = folder_picture(dev, m, path);
+  }
+  let art: Option[draw.Image] = None;
+  if (picture.len() > 0) {
+    art = dev.decode(picture, ART, ART);
+  }
+  let told = tags.read(deck.bytes);
+  return Some(Opened { deck: deck, art: art, lyrics: lyrics(dev, path, told.lyrics), gain: told.gain });
 }
 
 // The lyrics of the track at `path`: those of the LRC file with its name,
@@ -101,21 +129,11 @@ function lyrics(dev: Device, path: string, words: string): tune.Line[] {
 // fill the memory or hold up the screen when it starts. Its first bytes
 // are the start of the file, with the tags.
 function loaded(dev: Device, own m: tune.Model, i: i32, follow: boolean): Player {
-  let path = m.tracks[i].path;
-  let Some(deck) = engine.open_file(dev.size(path), (at: i64, n: i32): u8[] => dev.part(path, at, n), engine.WINDOW) else {
+  let Some(o) = opened(dev, m, i) else {
     dev.close(m.sound);
     return wrap(tune.update(tune.Model { ...m, sound: tune.no_sound(), pending: [] }, tune.Failed("Tune cannot play " + m.tracks[i].title)));
   };
-  let picture = tags.picture(deck.bytes);
-  if (picture.len() == 0) {
-    picture = folder_picture(dev, m, path);
-  }
-  let art: Option[draw.Image] = None;
-  if (picture.len() > 0) {
-    art = dev.decode(picture, ART, ART);
-  }
-  let told = tags.read(deck.bytes);
-  let words = lyrics(dev, path, told.lyrics);
+  let Opened { deck, art, lyrics: words, gain } = o;
   let sound = m.sound;
   if (!follow || sound.ptr == 0 as usize || sound.rate != deck.rate || sound.channels != deck.channels) {
     dev.close(m.sound);
@@ -126,7 +144,25 @@ function loaded(dev: Device, own m: tune.Model, i: i32, follow: boolean): Player
     dev.start(sound);
   }
   let length = deck.duration_ms();
-  return Player { model: tune.Model { ...m, sound: sound, pending: [], at_ms: 0i64, length_ms: length, art: art, lyrics: words, gain: told.gain }, deck: Some(engine.voice(deck)) };
+  return Player { model: tune.Model { ...m, sound: sound, pending: [], at_ms: 0i64, length_ms: length, art: art, lyrics: words, gain: gain }, deck: Some(engine.voice(deck)), incoming: None };
+}
+
+// The player on the track `i` that follows the one that ended. The track
+// that faded in goes on from where it is, with its samples, and needs no
+// new stream. Each other track opens as `loaded` opens it.
+function followed(dev: Device, own m: tune.Model, own incoming: Option[Incoming], i: i32): Player {
+  let Some(inc) = incoming else {
+    return loaded(dev, m, i, true);
+  };
+  let Incoming { track, voice, pending, gain, art, lyrics: words, length_ms } = inc;
+  let Some(v) = voice else {
+    return loaded(dev, m, i, true);
+  };
+  if (track != i) {
+    return loaded(dev, m, i, true);
+  }
+  let at = v.deck.position_ms();
+  return Player { model: tune.Model { ...m, pending: pending, at_ms: at, length_ms: length_ms, art: art, lyrics: words, gain: gain }, deck: Some(v), incoming: None };
 }
 
 function sought(dev: Device, own m: tune.Model, own deck: Option[engine.Voice], part: f64): Player {
@@ -140,28 +176,28 @@ function sought(dev: Device, own m: tune.Model, own deck: Option[engine.Voice], 
   }
   let moved = d.seek(part);
   let at = moved.deck.position_ms();
-  return Player { model: tune.Model { ...m, pending: [], at_ms: at, told: "" }, deck: Some(moved) };
+  return Player { model: tune.Model { ...m, pending: [], at_ms: at, told: "" }, deck: Some(moved), incoming: None };
 }
 
 // fern-lint: allow cyclomatic-complexity
 // One arm for each thing that the state can want.
 // The player after the device did `want`.
 function done(dev: Device, own p: Player, want: tune.Want): Player {
-  let Player { model: m, deck } = p;
+  let Player { model: m, deck, incoming } = p;
   match (want) {
     tune.Load(i) => {
       return loaded(dev, m, i, false);
     },
     tune.Follow(i) => {
-      return loaded(dev, m, i, true);
+      return followed(dev, m, incoming, i);
     },
     tune.Resume => {
       dev.start(m.sound);
-      return Player { model: m, deck: deck };
+      return Player { model: m, deck: deck, incoming: incoming };
     },
     tune.Hold => {
       dev.pause(m.sound);
-      return Player { model: m, deck: deck };
+      return Player { model: m, deck: deck, incoming: incoming };
     },
     tune.Seek(part) => {
       return sought(dev, m, deck, part);
@@ -169,32 +205,32 @@ function done(dev: Device, own p: Player, want: tune.Want): Player {
     tune.Scan => {
       if (m.folder.len() > 0) {
         let folder = [m.folder];
-        return Player { model: tune.update(m, tune.Walk(folder)), deck: deck };
+        return Player { model: tune.update(m, tune.Walk(folder)), deck: deck, incoming: incoming };
       }
-      return Player { model: tune.update(m, tune.Walk(dev.roots)), deck: deck };
+      return Player { model: tune.update(m, tune.Walk(dev.roots)), deck: deck, incoming: incoming };
     },
     tune.List(dir) => {
-      return Player { model: tune.update(m, tune.Dirs(dir, dev.dirs(dir))), deck: deck };
+      return Player { model: tune.update(m, tune.Dirs(dir, dev.dirs(dir))), deck: deck, incoming: incoming };
     },
     tune.Keep(folder) => {
       dev.keep(folder);
-      return Player { model: m, deck: deck };
+      return Player { model: m, deck: deck, incoming: incoming };
     },
     tune.Grant => {
       dev.grant();
-      return Player { model: m, deck: deck };
+      return Player { model: m, deck: deck, incoming: incoming };
     },
     tune.KeepPrefs => {
       dev.keep_prefs(library.prefs_text(tune.prefs(m)));
-      return Player { model: m, deck: deck };
+      return Player { model: m, deck: deck, incoming: incoming };
     },
     tune.KeepLists => {
       dev.keep_lists(library.lists_text(m.playlists));
-      return Player { model: m, deck: deck };
+      return Player { model: m, deck: deck, incoming: incoming };
     },
     tune.WriteList(name) => {
       let told = exported(dev, m, name);
-      return Player { model: tune.update(m, tune.Exported(told)), deck: deck };
+      return Player { model: tune.update(m, tune.Exported(told)), deck: deck, incoming: incoming };
     },
     tune.Quit => {
       dev.close(m.sound);
@@ -477,17 +513,103 @@ function filled(own deck: engine.Voice, ready: i32[], enough: i32, speed: f64, p
   return (d, out);
 }
 
+// The samples `a` of the end of a track and `b` of the start of the next
+// one, over the same time, mixed with equal power. The part of the fade
+// goes from `t0` at the first frame to `t1` at the last one: 0 is `a`
+// alone and 1 is `b` alone. A sample of `a` with no sample of `b` fades
+// alone.
+pub function crossed(a: [i32], b: [i32], t0: f64, t1: f64, channels: i32): i32[] {
+  let c = channels.max(1);
+  let frames = (a.len() / c).max(1);
+  let out: i32[] = [];
+  for k in 0..a.len() {
+    let t = (t0 + (t1 - t0) * ((k / c) as f64 / (frames as f64))).max(0.0).min(1.0);
+    let angle = t * 1.5707963267948966;
+    let mine = a[k] as f64 * angle.cos();
+    let theirs = if (k < b.len()) { b[k] as f64 * angle.sin() } else { 0.0 };
+    out = out.append(((mine + theirs).round() as i32).max(-32768).min(32767));
+  }
+  return out;
+}
+
+// The part of the fade at `left_ms` before the end of a track, for a fade
+// of `fade_ms`.
+function fade_part(left_ms: i64, fade_ms: i64): f64 {
+  if (fade_ms <= 0i64) {
+    return 0.0;
+  }
+  return (1.0 - left_ms as f64 / (fade_ms as f64)).max(0.0).min(1.0);
+}
+
+// The next track opened to fade in, when the track that plays is in its
+// last `fade_ms` and the next one plays at the rate of the sound.
+function fading_in(dev: Device, m: tune.Model, left_ms: i64, fade_ms: i64, own incoming: Option[Incoming]): Option[Incoming] {
+  if (incoming.is_some() || fade_ms <= 0i64 || left_ms > fade_ms) {
+    return incoming;
+  }
+  let next = tune.following(m);
+  if (next < 0) {
+    return None;
+  }
+  let none: Option[engine.Voice] = None;
+  let Some(o) = opened(dev, m, next) else {
+    return Some(Incoming { track: next, voice: none, pending: [], gain: 0.0, art: None, lyrics: [], length_ms: 0i64 });
+  };
+  let Opened { deck, art, lyrics: words, gain } = o;
+  let length = deck.duration_ms();
+  if (deck.rate != m.sound.rate || deck.channels != m.sound.channels) {
+    return Some(Incoming { track: next, voice: none, pending: [], gain: gain, art: art, lyrics: words, length_ms: length });
+  }
+  return Some(Incoming { track: next, voice: Some(engine.voice(deck)), pending: [], gain: gain, art: art, lyrics: words, length_ms: length });
+}
+
+// The samples `ready` of the end of the track that plays, with the next
+// track faded in over the samples from `from` on, and that next track
+// after it gave them. The samples before `from` were mixed before. The
+// samples of the next track past the end of `ready` wait in its pending.
+function mixed(own inc: Incoming, ready: i32[], from: i32, t0: f64, t1: f64, m: tune.Model): (Incoming, i32[]) {
+  let Incoming { track, voice, pending, gain, art, lyrics: words, length_ms } = inc;
+  let Some(v) = voice else {
+    return (Incoming { track: track, voice: None, pending: pending, gain: gain, art: art, lyrics: words, length_ms: length_ms }, ready);
+  };
+  let n = ready.len() - from;
+  let (moved, theirs) = filled(v, pending, n, m.speed as f64 / 100.0, m.pitch, if (m.level) { gain } else { 0.0 });
+  let take = n.min(theirs.len());
+  let out = array.slice(ready, 0, from).concat(crossed(array.slice(ready, from, ready.len()), array.slice(theirs, 0, take), t0, t1, m.sound.channels));
+  return (Incoming { track: track, voice: Some(moved), pending: array.slice(theirs, take, theirs.len()), gain: gain, art: art, lyrics: words, length_ms: length_ms }, out);
+}
+
+// The samples `ready`, with the next track faded in over its new samples
+// from `fresh` on when a next track fades in.
+function faded(own incoming: Option[Incoming], ready: i32[], fresh: i32, t0: f64, t1: f64, m: tune.Model): (Option[Incoming], i32[]) {
+  let Some(inc) = incoming else {
+    return (None, ready);
+  };
+  if (ready.len() <= fresh) {
+    return (Some(inc), ready);
+  }
+  let (next, out) = mixed(inc, ready, fresh, t0, t1, m);
+  return (Some(next), out);
+}
+
 // While a track plays: reads the file until the player has enough samples
 // ready, gives the sound what it takes, and tells the time of the track.
-function pumped(dev: Device, own m: tune.Model, own deck: Option[engine.Voice]): Player {
+// In the last seconds of a crossfade, the next track fades in over it.
+function pumped(dev: Device, own m: tune.Model, own deck: Option[engine.Voice], own incoming: Option[Incoming]): Player {
   if (!m.playing) {
-    return Player { model: m, deck: deck };
+    return Player { model: m, deck: deck, incoming: incoming };
   }
   let Some(first) = deck else {
     return wrap(m);
   };
   let sound = m.sound;
+  let fresh = m.pending.len();
   let (d, ready) = filled(first, m.pending, sound.rate * sound.channels / READY_PARTS, m.speed as f64 / 100.0, m.pitch, if (m.level) { m.gain } else { 0.0 });
+  let fade_ms = m.fade_s as i64 * 1000i64;
+  let left = d.deck.duration_ms() - d.deck.position_ms();
+  let each_ms = (ready.len() - fresh) as i64 * 1000i64 / ((sound.rate * sound.channels).max(1) as i64) * (m.speed as i64) / 100i64;
+  let (inc, out) = faded(fading_in(dev, m, left, fade_ms, incoming), ready, fresh, fade_part(left + each_ms, fade_ms), fade_part(left, fade_ms), m);
+  ready = out;
   let wrote = dev.write(sound, ready);
   let kept = rest(ready, wrote);
   let each = (sound.rate * sound.channels).max(1) as i64;
@@ -500,29 +622,29 @@ function pumped(dev: Device, own m: tune.Model, own deck: Option[engine.Voice]):
     after = tune.update(after, tune.Slept(wrote as i64 * 1000000i64 / each));
   }
   if (ended) {
-    return Player { model: tune.update(after, tune.Finished), deck: Some(d) };
+    return Player { model: tune.update(after, tune.Finished), deck: Some(d), incoming: inc };
   }
-  return Player { model: after, deck: Some(d) };
+  return Player { model: after, deck: Some(d), incoming: inc };
 }
 
 // The player after it read paths of the library until the time `until`,
 // and after the sound got its next samples.
 function settled(dev: Device, own p: Player, until: i64): Player {
-  let Player { model, deck } = p;
+  let Player { model, deck, incoming } = p;
   let m = model;
   if (m.scan.len() > 0) {
     m = scanned_until(dev, m, until);
   } else if (m.wanted.len() > 0) {
     m = covered_until(dev, m, until);
   }
-  return pumped(dev, m, deck);
+  return pumped(dev, m, deck, incoming);
 }
 
 // The player after the device did each thing that the state wants.
 function turn(dev: Device, own p: Player, until: i64): Player {
-  let Player { model: asked, deck: held } = p;
+  let Player { model: asked, deck: held, incoming } = p;
   let wants = asked.wants;
-  let state = Player { model: tune.Model { ...asked, wants: [] }, deck: held };
+  let state = Player { model: tune.Model { ...asked, wants: [] }, deck: held, incoming: incoming };
   for want in wants {
     state = done(dev, state, want);
   }
@@ -564,9 +686,9 @@ function shown(dev: Device, own m: tune.Model): tune.Model {
 // The player after the message `msg`: `tune.update` gives the next state,
 // and then the device does what that state wants.
 function stepped(dev: Device, own p: Player, msg: tune.Msg): Player {
-  let Player { model, deck } = p;
-  let Player { model: after, deck: held } = run(dev, Player { model: tune.update(model, msg), deck: deck });
-  return Player { model: shown(dev, after), deck: held };
+  let Player { model, deck, incoming } = p;
+  let Player { model: after, deck: held, incoming: next } = run(dev, Player { model: tune.update(model, msg), deck: deck, incoming: incoming });
+  return Player { model: shown(dev, after), deck: held, incoming: next };
 }
 
 pub function program(dev: Device): ui.Program[Player, tune.Msg] {

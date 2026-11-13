@@ -330,6 +330,51 @@ function test_deflate_levels(): test.TestOutcome {
   return test.assert_eq(fast.to_string() + " " + default.to_string() + " " + ordered.to_string(), "true true true");
 }
 
+// The bytes of input[from:end] as an owned array.
+function part(input: u8[], from: i32, end: i32): u8[] {
+  let out: u8[] = [];
+  for i in from..end {
+    out = out.append(input[i]);
+  }
+  return out;
+}
+
+// input in blocks of `size` bytes, each with the bytes before it as its
+// dictionary, or with no dictionary.
+function blocks(input: u8[], size: i32, level: i32, dictionary: boolean): u8[] {
+  let out: u8[] = [];
+  let at = 0;
+  while (at < input.len() || at == 0) {
+    let end = at + size;
+    if (end > input.len()) {
+      end = input.len();
+    }
+    let dict: u8[] = [];
+    if (dictionary) {
+      dict = part(input, 0, at);
+    }
+    out = out.concat(deflate.deflate_block(dict, part(input, at, end), level, end == input.len()));
+    at = end;
+    if (end == input.len()) {
+      break;
+    }
+  }
+  return out;
+}
+
+function test_deflate_blocks_with_a_dictionary(): test.TestOutcome {
+  let input = level_corpus();
+  let got: string[] = [];
+  for level in [1, 6, 9] {
+    let joined = blocks(input, 5000, level, true);
+    let alone = blocks(input, 5000, level, false);
+    got = got.append(packed_round_trip(input, joined).starts_with("ok ").to_string() + " " + packed_round_trip(input, alone).starts_with("ok ").to_string() + " " + (joined.len() < alone.len()).to_string());
+  }
+  let none: u8[] = [];
+  got = got.append(packed_round_trip(none, deflate.deflate_block(none, none, 6, true)));
+  return test.assert_eq_array(got, ["true true true", "true true true", "true true true", "ok 2"]);
+}
+
 function test_gzip_levels(): test.TestOutcome {
   let input = level_corpus();
   let one = deflate.gzip_level(input, 1);
@@ -400,6 +445,7 @@ function main(): i32 {
   r = r.it("gzip reads back", test_gzip_round_trip);
   r = r.it("each level reads back", test_deflate_levels);
   r = r.it("gzip marks the fastest and the smallest levels", test_gzip_levels);
+  r = r.it("blocks with a dictionary join into one stream", test_deflate_blocks_with_a_dictionary);
   return r.finish();
 }
 

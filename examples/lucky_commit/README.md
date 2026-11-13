@@ -60,8 +60,8 @@ worker a range of 4,194,304 specifiers. The search returns the lowest
 specifier that matches, so the result does not change with the number of
 CPUs. It is the same commit that the upstream single-threaded search finds.
 
-`std/worker` runs a worker as a process on Linux and Android. On other
-targets, it runs each worker inline, so the search uses one CPU there.
+`std/worker` runs a worker as a process on Linux, Android and macOS. On
+wasm it runs each worker inline, so the search uses one CPU there.
 
 The `--benchmark` flag makes a search of 2^28 hashes that does not succeed.
 Upstream has the same flag with the same search, so you can compare the two.

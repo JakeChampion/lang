@@ -16,16 +16,12 @@ func TestAsyncCombinatorsPortable(t *testing.T) {
 	const src = `import "std/async";
 import "std/clock";
 import "std/time";
-// Each combinator takes its futures as owned, so each gets a new array.
-function futures(): async.Future[i32][] {
-    return [Ready(5), Ready(7), Ready(30)];
-}
 function main(): i32 {
-    let summed: i32[] = async.block_on(async.gather(futures())).unwrap_or([0, 0, 0]);
+    let summed: i32[] = async.block_on(async.gather([Ready(5), Ready(7), Ready(30)])).unwrap_or([0, 0, 0]);
     let sum: i32 = summed[0] + summed[1] + summed[2];   // 42
-    let won: (i32, i32) = async.block_on(async.race(futures())).unwrap_or((0 - 1, 0 - 1));  // (0, 5)
+    let won: (i32, i32) = async.block_on(async.race([Ready(5), Ready(7), Ready(30)])).unwrap_or((0 - 1, 0 - 1));  // (0, 5)
     let until: Instant = clock.instant().add(time.duration_millis(50));
-    let d: Option[i32][] = async.block_on(async.with_deadline(until, futures())).unwrap_or([]); // [Some(5),Some(7),Some(30)]
+    let d: Option[i32][] = async.block_on(async.with_deadline(until, [Ready(5), Ready(7), Ready(30)])).unwrap_or([]); // [Some(5),Some(7),Some(30)]
     let d2: i32 = 0;
     if (d.len() == 3) {
         match (d[2]) { Some(x) => { d2 = x; }, None => { } }

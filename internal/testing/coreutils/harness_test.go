@@ -293,18 +293,51 @@ Searched: %s`, gnuDirErr, strings.Join(gnuCandidates(), ", "))
 }
 
 func gnuCandidates() []string {
+	return gnuPackageCandidates(gnuPackages[0], "yes")
+}
+
+// gnuPackage is a GNU package that a directory of ports reproduces. The
+// directory has the name of the package.
+type gnuPackage struct {
+	name string
+	// env holds a PATH-style list of directories that hold the oracles.
+	env string
+}
+
+var gnuPackages = []gnuPackage{{"coreutils", "FERN_GNU_COREUTILS"}, {"diffutils", "FERN_GNU_DIFFUTILS"}}
+
+// gnuPackageCandidates gives the directories to search for an oracle of the
+// package, with the directory of `probe` from PATH after those of the env.
+func gnuPackageCandidates(pkg gnuPackage, probe string) []string {
 	var dirs []string
-	if d := os.Getenv("FERN_GNU_COREUTILS"); d != "" {
+	if d := os.Getenv(pkg.env); d != "" {
 		dirs = append(dirs, filepath.SplitList(d)...)
 	}
-	if p, err := exec.LookPath("yes"); err == nil {
+	if p, err := exec.LookPath(probe); err == nil {
 		dirs = append(dirs, filepath.Dir(p))
 	}
-	dirs = append(dirs, "/usr/bin", "/bin", "/usr/local/bin", "/opt/homebrew/opt/coreutils/libexec/gnubin")
-	if matches, err := filepath.Glob("/nix/store/*-coreutils-*/bin"); err == nil {
+	dirs = append(dirs, "/usr/bin", "/bin", "/usr/local/bin", "/opt/homebrew/opt/"+pkg.name+"/libexec/gnubin")
+	if matches, err := filepath.Glob("/nix/store/*-" + pkg.name + "-*/bin"); err == nil {
 		dirs = append(dirs, matches...)
 	}
 	return dirs
+}
+
+// packageOf gives the package of the port `util`.
+func packageOf(t *testing.T, util string) gnuPackage {
+	t.Helper()
+	for _, pkg := range gnuPackages[1:] {
+		if _, err := os.Stat(filepath.Join(repoRoot(t), pkg.name, util+".fern")); err == nil {
+			return pkg
+		}
+	}
+	return gnuPackages[0]
+}
+
+// utilSource gives the source file of the port `util`.
+func utilSource(t *testing.T, util string) string {
+	t.Helper()
+	return filepath.Join(repoRoot(t), packageOf(t, util).name, util+".fern")
 }
 
 const (
@@ -317,6 +350,10 @@ func gnuVersion(dir string) (string, error) {
 }
 
 func gnuVersionOf(bin string) (string, error) {
+	return gnuPackageVersionOf(gnuPackages[0], bin)
+}
+
+func gnuPackageVersionOf(pkg gnuPackage, bin string) (string, error) {
 	if _, err := os.Stat(bin); err != nil {
 		return "", err
 	}
@@ -335,17 +372,20 @@ func gnuVersionOf(bin string) (string, error) {
 	_ = cmd.Process.Kill()
 	_ = cmd.Wait()
 	first, _, _ := strings.Cut(string(out), "\n")
-	if !strings.Contains(first, "(GNU coreutils)") && !strings.Contains(first, "(coreutils)") {
+	if !strings.Contains(first, "(GNU "+pkg.name+")") && !strings.Contains(first, "("+pkg.name+")") {
 		if len(out) == 0 && readErr != nil {
 			return "", fmt.Errorf("%s: %w", bin, readErr)
 		}
-		return "", fmt.Errorf("%s is not GNU coreutils: %q", bin, first)
+		return "", fmt.Errorf("%s is not GNU %s: %q", bin, pkg.name, first)
 	}
 	return strings.TrimSpace(first), nil
 }
 
 func referenceBin(t *testing.T, util string) string {
 	t.Helper()
+	if pkg := packageOf(t, util); pkg != gnuPackages[0] {
+		return packageReferenceBin(t, pkg, util)
+	}
 	dir, ver := gnuDir(t)
 	refBinsMu.Lock()
 	defer refBinsMu.Unlock()
@@ -385,6 +425,38 @@ var (
 	refBinsMu sync.Mutex
 	refBins   = map[string]string{}
 )
+
+// packageReferenceBin is referenceBin for a package other than coreutils.
+func packageReferenceBin(t *testing.T, pkg gnuPackage, util string) string {
+	t.Helper()
+	refBinsMu.Lock()
+	defer refBinsMu.Unlock()
+	if bin, ok := refBins[util]; ok {
+		return bin
+	}
+	var tried []string
+	for _, cand := range gnuPackageCandidates(pkg, util) {
+		bin := filepath.Join(cand, util)
+		if _, err := os.Stat(bin); err != nil {
+			continue
+		}
+		if _, err := gnuPackageVersionOf(pkg, bin); err != nil {
+			tried = append(tried, fmt.Sprintf("%s (%v)", bin, err))
+			continue
+		}
+		refBins[util] = bin
+		return bin
+	}
+	t.Fatalf(`no GNU %[1]s %[2]s on this host.
+
+Rejected: %[3]s
+
+A utility whose oracle is missing cannot be gated, and a SKIP here would
+report a green suite that compared nothing. Add a directory that holds one
+to %[4]s, which takes a PATH-style list.`,
+		pkg.name, util, strings.Join(tried, ", "), pkg.env)
+	return ""
+}
 
 func fernTarget(t *testing.T) string {
 	t.Helper()
@@ -428,9 +500,8 @@ func fernBin(t *testing.T, util string) string {
 		fernBinDir = dir
 	}
 	fern := e2eharness.BuildLangBinForInterp(t)
-	root := repoRoot(t)
-	e2eharness.TrackFernSources(t, filepath.Join(root, "coreutils"), util+".fern")
-	src := filepath.Join(root, "coreutils", util+".fern")
+	src := utilSource(t, util)
+	e2eharness.TrackFernSources(t, filepath.Dir(src), util+".fern")
 	bin := filepath.Join(fernBinDir, util)
 	cmd := exec.Command(fern, "-target", fernTarget(t), "-o", bin, src)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -1268,7 +1339,7 @@ func rawByteFile(t *testing.T, dir, content string) string {
 func requireParityBinary(t *testing.T, util, ours string, cases []invocation) {
 	t.Helper()
 	ref := referenceBin(t, util)
-	_, ver := gnuDir(t)
+	ver, _ := gnuPackageVersionOf(packageOf(t, util), ref)
 	t.Logf("reference: %s (%s)", ref, ver)
 
 	for _, inv := range cases {
@@ -1486,7 +1557,7 @@ func requireHelpVersion(t *testing.T, util string, args []string, wantExit int, 
 
 func requireVersion(t *testing.T, util string, args []string, wantExit int) {
 	t.Helper()
-	requireHelpVersion(t, util, args, wantExit, util+" (Fern coreutils) ")
+	requireHelpVersion(t, util, args, wantExit, util+" (Fern "+packageOf(t, util).name+") ")
 }
 
 func requireHelp(t *testing.T, util string, args []string, wantExit int) {

@@ -726,9 +726,9 @@ pub function lrc(text: string): tune.Line[] {
 }
 
 // The settings as a text: a line for the theme, a line for the order, a
-// line for the same loudness, a line for the colors of the cover, a line for each list with no tab, and a line for each hidden directory.
+// line for the same loudness, a line for the colors of the cover, a line for the crossfade, a line for each list with no tab, and a line for each hidden directory.
 pub function prefs_text(p: tune.Prefs): string {
-  let lines = ["look " + p.look.to_string(), "sort " + p.sort.to_string(), "level " + p.level.to_string(), "tint " + p.tint.to_string()];
+  let lines = ["look " + p.look.to_string(), "sort " + p.sort.to_string(), "level " + p.level.to_string(), "tint " + p.tint.to_string(), "fade " + p.fade.to_string()];
   for tab in p.off {
     lines = lines.append("off " + tab.to_string());
   }
@@ -751,6 +751,8 @@ pub function prefs_from(text: string): tune.Prefs {
       p = tune.Prefs { ...p, level: line != "level false" };
     } else if (line.starts_with("tint ")) {
       p = tune.Prefs { ...p, tint: line != "tint false" };
+    } else if (line.starts_with("fade ")) {
+      p = tune.Prefs { ...p, fade: number_of(line.drop(5).to_owned()) as i32 };
     } else if (line.starts_with("off ")) {
       p = tune.Prefs { ...p, off: p.off.append(number_of(line.drop(4).to_owned()) as i32) };
     } else if (line.len() > 7 && line.starts_with("hidden ")) {

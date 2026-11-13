@@ -154,7 +154,8 @@ pub enum Want { Load(i32), Follow(i32), Resume, Hold, Seek(f64), Scan, Grant, Li
 // the same loudness.
 // `settings` tells that the screen of the settings shows. `look` is the
 // theme that the person chose, and `tint` gives the theme the colors of
-// the cover of the track that plays. `hidden` has the directories whose files
+// the cover of the track that plays. `fade_s` is the time in seconds that
+// the end of a track fades into the next one, or 0. `hidden` has the directories whose files
 // are not in the library, and `off` has the lists that have no tab. `open` tells that the screen of the
 // track shows. `current` is the number of the track that plays, or -1.
 // `sound` plays the track, and `pending` has the samples that the sound
@@ -204,6 +205,7 @@ pub struct Model {
   salt: i32,
   level: boolean,
   tint: boolean,
+  fade_s: i32,
   gain: f64,
   settings: boolean,
   look: i32,
@@ -257,21 +259,21 @@ pub struct Model {
 
 // A player with no track yet, which reads the files `scan`.
 pub function start(scan: string[]): Model {
-  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", album_by: "", genre: "", place: "", sort: BY_ALBUM, speed: 100, pitch: 0, sleep_min: 0, sleep_us: 0i64, salt: 0, level: true, tint: true, gain: 0.0, settings: false, look: LOOK_SYSTEM, hidden: [], off: [], query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, chosen: [], detail: false, lined: false, error: "", wants: [], sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false, covers: [], bare: [], pictures: [], art: None, lyrics: [], sung: false, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: false, wanted: [], playlists: [], list: "", adding: [], naming: false, name: "" };
+  return Model { fresh: true, tracks: [], scan: scan, tab: SONGS, artist: "", album: "", album_by: "", genre: "", place: "", sort: BY_ALBUM, speed: 100, pitch: 0, sleep_min: 0, sleep_us: 0i64, salt: 0, level: true, tint: true, fade_s: 0, gain: 0.0, settings: false, look: LOOK_SYSTEM, hidden: [], off: [], query: "", open: false, current: -1, playing: false, at_ms: 0i64, length_ms: 0i64, shuffle: false, repeat: NO_REPEAT, queue: [], spot: -1, chosen: [], detail: false, lined: false, error: "", wants: [], sound: no_sound(), pending: [], folder: "", home: "", choosing: false, dir: "", dirs: [], told: "", awake: Awake { wake: 0 as usize, wifi: 0 as usize }, asked: false, made: false, lost: false, covers: [], bare: [], pictures: [], art: None, lyrics: [], sung: false, have: map_new(64), seen: map_new(64), listed: map_new(64), walking: false, dirty: false, wanted: [], playlists: [], list: "", adding: [], naming: false, name: "" };
 }
 
 // A player with the tracks `tracks` and the playlists `playlists` that it
 // saved at an earlier time. The tracks are in the order of the library. It looks for the files again after the screen
 // shows, and gets the picture of each album.
 // The settings that the player keeps for its next start.
-pub struct Prefs { look: i32, sort: i32, hidden: string[], off: i32[], level: boolean, tint: boolean }
+pub struct Prefs { look: i32, sort: i32, hidden: string[], off: i32[], level: boolean, tint: boolean, fade: i32 }
 
 pub function no_prefs(): Prefs {
-  return Prefs { look: LOOK_SYSTEM, sort: BY_ALBUM, hidden: [], off: [], level: true, tint: true };
+  return Prefs { look: LOOK_SYSTEM, sort: BY_ALBUM, hidden: [], off: [], level: true, tint: true, fade: 0 };
 }
 
 pub function prefs(m: Model): Prefs {
-  return Prefs { look: m.look, sort: m.sort, hidden: m.hidden, off: m.off, level: m.level, tint: m.tint };
+  return Prefs { look: m.look, sort: m.sort, hidden: m.hidden, off: m.off, level: m.level, tint: m.tint, fade: m.fade_s };
 }
 
 // The colors of the player: light or dark as the person chose, or as the
@@ -313,7 +315,7 @@ pub function start_with(home: string, folder: string, tracks: Track[], playlists
       last = key;
     }
   }
-  return Model { ...m, tracks: tracks, have: have, wanted: wanted, playlists: playlists, look: p.look % 3, sort: p.sort % 4, hidden: p.hidden, off: p.off, level: p.level, tint: p.tint };
+  return Model { ...m, tracks: tracks, have: have, wanted: wanted, playlists: playlists, look: p.look % 3, sort: p.sort % 4, hidden: p.hidden, off: p.off, level: p.level, tint: p.tint, fade_s: faded_to(p.fade) };
 }
 
 // A player whose library is in `folder`, and whose person chooses a folder
@@ -360,13 +362,13 @@ pub function start_in(home: string, folder: string): Model {
 // sound that the player gave the phone, while the timer is on. `Lyrics`
 // shows the lyrics of the track in the place of its picture, or hides
 // them. `Settings` shows the screen of the settings or not. `Look` goes to
-// the next theme, and `Tint` takes the colors of the cover or not. `TabShown` gives a list its tab, or takes the tab away.
+// the next theme, `Tint` takes the colors of the cover or not, and `Fade` goes to the next time of the crossfade. `TabShown` gives a list its tab, or takes the tab away.
 // `Hide` takes the directory that shows out of the library, and `Unhide`
 // puts a directory back. `ShuffleAll` plays each track of the library in
 // an order that its number chooses, and `PlayList` plays a playlist: the
 // shortcuts of the launcher send them. `Level` sets or stops the same
 // loudness for each track.
-pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean), Menu(i32), MenuClosed, PlayNext, Enqueue, Lined(boolean), Jump(i32), Drop(i32), Shift(i32, i32), Closing, Walk(string[]), Listed(string, string[]), OpenList(string), AddTo, SaveQueue, ToList(string), NewList, Named(string), Create, Unlist(i32), Relist(i32, i32), DeleteList, Favorite, Imported(string, string[]), Export, Exported(string), Genre(string), Place(string), Sort, ToAlbum, ToArtist, Details, Speed, Pitch, Sleep, Slept(i64), Lyrics, Settings(boolean), Look, Tint, TabShown(i32), Hide, Unhide(string), ShuffleAll(i32), PlayList(string), Level }
+pub enum Msg { Search(string), Pick(i32), Toggle, Next, Previous, Sought(i32), Opened, Closed, Shuffled, Repeated, Beat, Finished, Failed(string), Tab(i32), Artist(string), Album(string, string), Up, Found(Track), Files(string[]), Rescan, Returned, Choose, Into(string), Out, Dirs(string, string[]), Use, Play(boolean), SeekMs(i64), Focus(boolean), Menu(i32), MenuClosed, PlayNext, Enqueue, Lined(boolean), Jump(i32), Drop(i32), Shift(i32, i32), Closing, Walk(string[]), Listed(string, string[]), OpenList(string), AddTo, SaveQueue, ToList(string), NewList, Named(string), Create, Unlist(i32), Relist(i32, i32), DeleteList, Favorite, Imported(string, string[]), Export, Exported(string), Genre(string), Place(string), Sort, ToAlbum, ToArtist, Details, Speed, Pitch, Sleep, Slept(i64), Lyrics, Settings(boolean), Look, Tint, Fade, TabShown(i32), Hide, Unhide(string), ShuffleAll(i32), PlayList(string), Level }
 
 // The key of the album of a track: the artist that the album is under,
 // and its name.
@@ -1084,7 +1086,7 @@ function settings(m: Model): ui.El[Msg] {
   }
   let hidden = m.hidden;
   let rows = ui.list("hidden", hidden.len(), 48.0, (row: i32): ui.El[Msg] => ui.row([ui.text(hidden[row]).clamped(1).wide(), ui.text_button("Show", Unhide(hidden[row]))]).spaced(8.0).aligned(ui.CENTER).padding_xy(16.0, 0.0));
-  return ui.column([head, setting("Theme", "The colors of the player", look_label(m.look), Look), setting("Album colors", "The colors of the cover of the track that plays", toggle_label("Album", m.tint), Tint), setting("Loudness", "The same level for each track that tells its gain", toggle_label("Level", m.level), Level), setting("Folder", folder, "Choose", Choose), setting("Library", count(m.tracks.len(), "song"), "Scan", Rescan), ui.text("Tabs").weighted(700).padding_xy(16.0, 0.0), ui.row(tabs).spaced(4.0).padding_xy(16.0, 0.0).scroll("tab-settings"), ui.text(count(hidden.len(), "hidden folder")).weighted(700).padding_xy(16.0, 0.0), rows]).spaced(12.0).padding_xy(0.0, 16.0).aligned(ui.STRETCH);
+  return ui.column([head, setting("Theme", "The colors of the player", look_label(m.look), Look), setting("Album colors", "The colors of the cover of the track that plays", toggle_label("Album", m.tint), Tint), setting("Crossfade", "The end of a track fades into the next one", fade_label(m.fade_s), Fade), setting("Loudness", "The same level for each track that tells its gain", toggle_label("Level", m.level), Level), setting("Folder", folder, "Choose", Choose), setting("Library", count(m.tracks.len(), "song"), "Scan", Rescan), ui.text("Tabs").weighted(700).padding_xy(16.0, 0.0), ui.row(tabs).spaced(4.0).padding_xy(16.0, 0.0).scroll("tab-settings"), ui.text(count(hidden.len(), "hidden folder")).weighted(700).padding_xy(16.0, 0.0), rows]).spaced(12.0).padding_xy(0.0, 16.0).aligned(ui.STRETCH);
 }
 
 function sort_label(sort: i32): string {
@@ -1141,6 +1143,29 @@ function art(name: string): (draw.Frame, i32, i32, i32, i32) => void {
       f.disc(x + w / 2, y + h / 2, r * (rings - k) / rings, color);
     }
   };
+}
+
+// The times of the crossfade in seconds: 0 is no crossfade.
+const FADES: i32[] = [0, 3, 6, 10];
+
+function next_fade(s: i32): i32 {
+  let at = FADES.index_of(s).unwrap_or(0);
+  return FADES[(at + 1) % FADES.len()];
+}
+
+// A time of the crossfade that the settings can hold, or 0.
+function faded_to(s: i32): i32 {
+  if (FADES.contains(s)) {
+    return s;
+  }
+  return 0;
+}
+
+function fade_label(s: i32): string {
+  if (s == 0) {
+    return "Off";
+  }
+  return s.to_string() + " s";
 }
 
 function toggle_label(name: string, on: boolean): string {
@@ -1558,6 +1583,24 @@ function went_back(m: Model): Model {
 // The player at the end of a track: the track again, or the next one.
 // The new track follows the old one in the same stream of sound, so no
 // sound is lost between the two.
+// The number of the track that plays when the track that plays ends, or
+// -1 when the player stops there.
+pub function following(m: Model): i32 {
+  if (m.spot < 0 || m.spot >= m.queue.len()) {
+    return -1;
+  }
+  if (m.repeat == REPEAT_ONE) {
+    return m.queue[m.spot];
+  }
+  if (m.spot + 1 < m.queue.len()) {
+    return m.queue[m.spot + 1];
+  }
+  if (m.repeat == REPEAT_ALL) {
+    return m.queue[0];
+  }
+  return -1;
+}
+
 function finished(m: Model): Model {
   let next = went_on(m, false);
   if (m.repeat == REPEAT_ONE) {
@@ -1892,6 +1935,9 @@ pub function update(own m: Model, msg: Msg): Model {
     },
     Tint => {
       return Model { ...m, tint: !m.tint, wants: m.wants.append(KeepPrefs) };
+    },
+    Fade => {
+      return Model { ...m, fade_s: next_fade(m.fade_s), wants: m.wants.append(KeepPrefs) };
     },
     TabShown(which) => {
       return tab_shown(m, which);

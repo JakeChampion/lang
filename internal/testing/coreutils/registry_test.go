@@ -25,12 +25,12 @@ func TestRegisterCorpusRejectsDuplicates(t *testing.T) {
 
 func TestCorpusRegistryHasNoStrays(t *testing.T) {
 	have := make(map[string]bool, len(corpusRegistry))
-	for _, util := range utilNames(t) {
+	for _, util := range portNames(t) {
 		have[util] = true
 	}
 	for util := range corpusRegistry {
 		if !have[util] {
-			t.Errorf("registerCorpus(%q, ...) has no coreutils/%s.fern — drop the registration with the utility", util, util)
+			t.Errorf("registerCorpus(%q, ...) has no coreutils/%s.fern or diffutils/%s.fern — drop the registration with the utility", util, util, util)
 		}
 	}
 }

@@ -1,0 +1,12 @@
+// An imported module names its own consts in its match arms. The module
+// prefix that the loader gives those consts reaches the arms too.
+
+import "./kinds";
+
+function main(): i32 {
+  print(kinds.byte_kind(9 as u8));
+  print(kinds.byte_kind(3 as u8));
+  print(kinds.shifted(8));
+  print(kinds.shifted(3));
+  return 0;
+}

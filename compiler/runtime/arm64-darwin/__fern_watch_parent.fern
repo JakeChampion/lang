@@ -1,0 +1,35 @@
+// __fern_watch_parent is the watchdog of a worker on Darwin. It waits until
+// `parent` or `worker` exits. If the event names `parent`, it sends SIGTERM to
+// `worker`: the parent exited first, or it was gone (ESRCH) before the watch.
+// If no watch starts, the worker runs unwatched, as on Linux when prctl fails.
+function __fern_watch_parent(parent: i32, worker: i32): void {
+  let kq = __syscall3(362, 0, 0, 0) as i32;
+  if (kq >= 0) {
+    let ev = __raw_alloc(96);
+    __fern_watch_exit_event(ev, 0, parent);
+    __fern_watch_exit_event(ev, 32, worker);
+    let n = __syscall6(363, kq as i64, ev as i64, 2, (ev + 64 as usize) as i64, 1, 0) as i32;
+    if (n > 0 && __raw_load_ptr(ev + 64 as usize, 0) as i32 == parent) {
+      __syscall3(37, worker as i64, 15, 0);
+    }
+  }
+  __syscall3(1, 0, 0, 0);
+}
+
+// One struct kevent at byte `at` of `ev`: EVFILT_PROC (-5) with EV_ADD and
+// EV_ONESHOT (17) and NOTE_EXIT (0x80000000) for `pid`.
+function __fern_watch_exit_event(ev: usize, at: i32, pid: i32): void {
+  let e = ev + at as usize;
+  __raw_store_ptr(e, 0, pid as usize);
+  let filter: i32 = -5;
+  __raw_store8(e, 8, filter & 255);
+  __raw_store8(e, 9, filter >> 8 & 255);
+  __raw_store8(e, 10, 17);
+  __raw_store8(e, 11, 0);
+  __raw_store8(e, 12, 0);
+  __raw_store8(e, 13, 0);
+  __raw_store8(e, 14, 0);
+  __raw_store8(e, 15, 128);
+  __raw_store_ptr(e, 2, 0 as usize);
+  __raw_store_ptr(e, 3, 0 as usize);
+}
