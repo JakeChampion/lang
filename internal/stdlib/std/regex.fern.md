@@ -4,11 +4,13 @@ This module evaluates regular expressions.
 
 ## Model
 
-A compiled expression retains its syntax tree, case policy, and capture metadata. Match values identify input spans.
+A compiled expression retains its syntax tree, case policy, and capture metadata. Match values identify input spans. A compiled expression also keeps the set of bytes that can start a match. A search does not try a match at a byte outside that set.
 
 ## Contracts
 
 Search and complete-match operations have different purposes. Compilation returns a typed error for invalid patterns. Text output methods report invalid UTF-8 through a typed error. Byte output methods preserve raw bytes.
+
+`next_candidate` gives the first offset at or after a byte offset where a match can start, or -1. A caller can skip the text before that offset. `find_at` starts a search at a byte offset. Its assertions examine the full text, so `^` matches only at offset 0. `\b{start}` and `\b{end}` match at the start and at the end of a word. `\b{start-half}` matches where no word byte comes before, and `\b{end-half}` matches where no word byte comes after.
 
 ## Executable example
 
@@ -44,7 +46,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<8 function __rx_match(n: RNode, t: string, ti: i32, ci: boolean): i32[]>>
 
 
-<<10 function __rx_search_from(root: RNode, text: string, from: i32, ci: boolean): Option[RMatch]>>
+<<10 function __rx_search_from(prog: Regex, text: string, from: i32): Option[Match]>>
 
 
 <<12 function __rx_advance(m: RMatch): i32>>
@@ -112,7 +114,7 @@ pub enum RNode {
   RClass(u8[]),
   RStart,
   REnd,
-  RBound(boolean),
+  RBound(i32),
   RSeq(RNode[]),
   RAlt(RNode[]),
   RStar(RNode),
@@ -458,11 +460,7 @@ function __rx_match(n: RNode, t: string, ti: i32, ci: boolean): i32[] {
       }
       return e;
     },
-    RBound(want) => {
-      let k = 3;
-      if (want) {
-        k = 2;
-      }
+    RBound(k) => {
       let e: i32[] = [];
       if (__rx_assert_ok(k, t, ti)) {
         e = e.append(ti);
@@ -533,14 +531,18 @@ function __rx_match(n: RNode, t: string, ti: i32, ci: boolean): i32[] {
 ```
 
 
-### `10 function __rx_search_from(root: RNode, text: string, from: i32, ci: boolean): Option[RMatch]`
+### `10 function __rx_search_from(prog: Regex, text: string, from: i32): Option[Match]`
 
 ```fern
-<<10 function __rx_search_from(root: RNode, text: string, from: i32, ci: boolean): Option[RMatch]>>=
-function __rx_search_from(root: RNode, text: string, from: i32, ci: boolean): Option[Match] {
+<<10 function __rx_search_from(prog: Regex, text: string, from: i32): Option[Match]>>=
+function __rx_search_from(prog: Regex, text: string, from: i32): Option[Match] {
   let ti = from;
   while (true) {
-    let ends = __rx_match(root, text, ti, ci);
+    ti = prog.next_candidate(text, ti);
+    if (ti < 0) {
+      return None;
+    }
+    let ends = __rx_match(prog.root, text, ti, prog.ci);
     if (ends.len() > 0) {
       let best = ends[0];
       let i = 1;
@@ -616,7 +618,7 @@ function __rx_replace_all_from(prog: Regex, text: string, repl: string, first: O
     if (nxt > text.len()) {
       break;
     }
-    next = __rx_search_from(prog.root, text, nxt, prog.ci);
+    next = __rx_search_from(prog, text, nxt);
   }
   buf_push_range(h, text, last, text.len());
   return __rx_finish(h);
@@ -681,11 +683,8 @@ function __rx_emit(prog: RInst[], n: RNode): RInst[] {
     REnd => {
       return prog.append(IAssert(1));
     },
-    RBound(want) => {
-      if (want) {
-        return prog.append(IAssert(2));
-      }
-      return prog.append(IAssert(3));
+    RBound(k) => {
+      return prog.append(IAssert(k));
     },
     RGroup(gd) => {
       let pg = prog.append(ISave(gd.idx + gd.idx));
@@ -776,10 +775,28 @@ function __rx_assert_ok(k: i32, t: string, ti: i32): boolean {
   if (ti < t.len()) {
     after = __rx_is_word(t[ti] as i32);
   }
+  return __rx_word_assert(k, before, after);
+}
+
+// Kinds 2 to 7: `\b`, `\B`, `\b{start}`, `\b{end}`, `\b{start-half}` and
+// `\b{end-half}`.
+function __rx_word_assert(k: i32, before: boolean, after: boolean): boolean {
   if (k == 2) {
     return before != after;
   }
-  return before == after;
+  if (k == 3) {
+    return before == after;
+  }
+  if (k == 4) {
+    return !before && after;
+  }
+  if (k == 5) {
+    return before && !after;
+  }
+  if (k == 6) {
+    return !before;
+  }
+  return !after;
 }
 
 function __rx_fill(n: i32, v: i32): i32[] {
@@ -1066,6 +1083,7 @@ pub enum CompileErrorKind {
   NestingLimit,
   InvalidClassRange,
   ProgramLimit,
+  UnknownBoundary,
 }
 
 pub enum TextError { InvalidUtf8Output }
@@ -1185,10 +1203,10 @@ function __rx_escape(errors: Cell[Option[CompileError]], p: string, i: i32, g: i
   }
   // Word-boundary assertions (zero-width).
   if (d == 98) {  // \b
-    return RParse { node: RBound(true), pos: i + 2, g: g };
+    return __rx_boundary(errors, p, i, g);
   }
   if (d == 66) {  // \B
-    return RParse { node: RBound(false), pos: i + 2, g: g };
+    return RParse { node: RBound(3), pos: i + 2, g: g };
   }
   // Escaped control bytes.
   if (d == 110) {  // \n
@@ -1205,6 +1223,31 @@ function __rx_escape(errors: Cell[Option[CompileError]], p: string, i: i32, g: i
   // NOTE: this includes `\1`…`\9` — they are literal digit bytes,
   // NOT backreferences (which this engine does not support).
   return RParse { node: RChar(d), pos: i + 2, g: g };
+}
+
+// `\b`, `\b{start}`, `\b{end}`, `\b{start-half}` or `\b{end-half}` at `i`.
+function __rx_boundary(errors: Cell[Option[CompileError]], p: string, i: i32, g: i32): RParse {
+  if (i + 2 >= p.len() || p[i + 2] != 123) {
+    return RParse { node: RBound(2), pos: i + 2, g: g };
+  }
+  let close = __memchr(p, 125, i + 3);
+  if (close < 0) {
+    return __rx_fail(errors, UnknownBoundary, i, p.len(), g);
+  }
+  let name = slice_unchecked(p, i + 3, close);
+  let kind = 0;
+  if (name == "start") {
+    kind = 4;
+  } else if (name == "end") {
+    kind = 5;
+  } else if (name == "start-half") {
+    kind = 6;
+  } else if (name == "end-half") {
+    kind = 7;
+  } else {
+    return __rx_fail(errors, UnknownBoundary, i, p.len(), g);
+  }
+  return RParse { node: RBound(kind), pos: close + 1, g: g };
 }
 
 function __rx_fail(errors: Cell[Option[CompileError]], kind: CompileErrorKind, offset: i32, end: i32, g: i32): RParse {
@@ -1373,6 +1416,164 @@ function __rx_shorthand_matches(kind: i32, byte: i32): boolean {
   return found;
 }
 
+// True when `n` can match without a byte.
+function __rx_nullable(n: RNode): boolean {
+  match (n) {
+    RSeq(xs) => {
+      return __rx_nullable_count(xs) == xs.len();
+    },
+    RAlt(xs) => {
+      return __rx_nullable_count(xs) > 0;
+    },
+    RPlus(inner) => {
+      return __rx_nullable(inner);
+    },
+    RGroup(gd) => {
+      return __rx_nullable(gd.node);
+    },
+    _ => {
+      return !__rx_consumes(n);
+    }
+  }
+}
+
+function __rx_nullable_count(xs: RNode[]): i32 {
+  let count = 0;
+  for x in xs {
+    if (__rx_nullable(x)) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+// True for a node that always matches one byte.
+function __rx_consumes(n: RNode): boolean {
+  match (n) {
+    RChar(_) => {
+      return true;
+    },
+    RAny => {
+      return true;
+    },
+    RClass(_) => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
+// Marks in `set` each byte that can begin a match of `n`.
+function __rx_first_into(n: RNode, ci: boolean, own set: u8[]): u8[] {
+  match (n) {
+    RSeq(xs) => {
+      for x in xs {
+        set = __rx_first_into(x, ci, set);
+        if (!__rx_nullable(x)) {
+          return set;
+        }
+      }
+      return set;
+    },
+    RAlt(xs) => {
+      for x in xs {
+        set = __rx_first_into(x, ci, set);
+      }
+      return set;
+    },
+    RStar(inner) => {
+      return __rx_first_into(inner, ci, set);
+    },
+    RPlus(inner) => {
+      return __rx_first_into(inner, ci, set);
+    },
+    ROpt(inner) => {
+      return __rx_first_into(inner, ci, set);
+    },
+    RGroup(gd) => {
+      return __rx_first_into(gd.node, ci, set);
+    },
+    _ => {
+      return __rx_first_byte_into(n, ci, set);
+    }
+  }
+}
+
+// Marks the bytes that a node of one byte matches. An assertion marks none.
+function __rx_first_byte_into(n: RNode, ci: boolean, own set: u8[]): u8[] {
+  if (!__rx_consumes(n)) {
+    return set;
+  }
+  for b in 0..256 {
+    if (__rx_match(n, unsafe { string_from_bytes_unchecked([b as u8]) }, 0, ci).len() > 0) {
+      set = set.with(b, 1);
+    }
+  }
+  return set;
+}
+
+function __rx_first_set(root: RNode, ci: boolean): u8[] {
+  if (__rx_nullable(root)) {
+    return [];
+  }
+  let set = __rx_first_into(root, ci, __alloc_u8(256));
+  for b in 0..256 {
+    if (set[b] == 0) {
+      return set;
+    }
+  }
+  return [];
+}
+
+// The bytes of the literal that starts each match of `root`.
+function __rx_prefix(root: RNode, ci: boolean): u8[] {
+  let out: u8[] = [];
+  match (root) {
+    RChar(c) => {
+      return [__rx_fold(c, ci) as u8];
+    },
+    RSeq(xs) => {
+      for x in xs {
+        let RChar(c) = x else {
+          return out;
+        };
+        out = out.append(__rx_fold(c, ci) as u8);
+      }
+      return out;
+    },
+    _ => {
+      return out;
+    }
+  }
+}
+
+function __rx_has_prefix(prog: Regex, text: string, at: i32): boolean {
+  if (at + prog.prefix.len() > text.len()) {
+    return false;
+  }
+  for k in 0..prog.prefix.len() {
+    if (__rx_fold(text[at + k] as i32, prog.ci) != prog.prefix[k] as i32) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function __rx_lead(first: u8[]): i32 {
+  let lead = -1;
+  for b in 0..first.len() {
+    if (first[b] != 0) {
+      if (lead >= 0) {
+        return -1;
+      }
+      lead = b;
+    }
+  }
+  return lead;
+}
+
 function __rx_text(bytes: u8[]): Result[string, TextError] {
   match (utf8.from_bytes(bytes)) {
     Ok(text) => {
@@ -1428,7 +1629,11 @@ pub function compile(pattern: string): Result[Regex, CompileError] {
   if (__rx_program_size(r.node, MAX_PROGRAM - 3) < 0) {
     return Err(CompileError { kind: ProgramLimit, offset: pattern.len() });
   }
-  return Ok(Regex { root: r.node, ci: ci, ngroups: r.g - 1, names: __rx_group_names(pattern), program: __rx_cprog(r.node) });
+  let first = __rx_first_set(r.node, ci);
+  return Ok(Regex {
+    root: r.node, ci: ci, ngroups: r.g - 1, names: __rx_group_names(pattern), program: __rx_cprog(r.node),
+    first: first, lead: __rx_lead(first), prefix: __rx_prefix(r.node, ci),
+  });
 }
 
 pub function (prog: Regex) count(text: string): i32 {
@@ -1436,14 +1641,57 @@ pub function (prog: Regex) count(text: string): i32 {
 }
 
 pub function (prog: Regex) find(text: string): Option[Match] {
-  return __rx_search_from(prog.root, text, 0, prog.ci);
+  return __rx_search_from(prog, text, 0);
+}
+
+// The first match that starts at or after `start`. The assertions see the
+// whole text, so `^` does not match at `start` unless `start` is 0.
+pub function (prog: Regex) find_at(text: string, start: i32): Option[Match] {
+  if (start > text.len()) {
+    return None;
+  }
+  if (start < 0) {
+    return __rx_search_from(prog, text, 0);
+  }
+  return __rx_search_from(prog, text, start);
+}
+
+// The first offset at or after `from` where a match can start, or -1. The
+// text before that offset holds no match. A pattern that can match an empty
+// span can start at each offset.
+pub function (prog: Regex) next_candidate(text: string, from: i32): i32 {
+  if (from > text.len()) {
+    return -1;
+  }
+  if (prog.first.len() == 0) {
+    return from;
+  }
+  let ti = from;
+  while (true) {
+    if (prog.lead >= 0) {
+      ti = __memchr(text, prog.lead, ti);
+      if (ti < 0) {
+        return -1;
+      }
+    } else {
+      ti = __scan_set(text, ti, prog.first);
+      if (ti >= text.len()) {
+        return -1;
+      }
+    }
+    if (__rx_has_prefix(prog, text, ti)) {
+      return ti;
+    }
+    ti += 1;
+  }
+  return -1;
 }
 
 pub function (prog: Regex) find_all(text: string): Match[] {
   let out: Match[] = [];
   let pos = 0;
   while (pos <= text.len()) {
-    let Some(m) = __rx_search_from(prog.root, text, pos, prog.ci) else {
+    let Some(m) = __rx_search_from(prog, text, pos) else {
       return out;
     };
     out = out.append(m);
@@ -1572,7 +1820,7 @@ pub function (prog: Regex) replace(text: string, repl: string): Result[string, T
 }
 
 pub function (prog: Regex) replace_all(text: string, repl: string): Result[string, TextError] {
-  let first = __rx_search_from(prog.root, text, 0, prog.ci);
+  let first = __rx_search_from(prog, text, 0);
   match (first) {
     None => {
       return Ok(text);
@@ -1583,7 +1831,7 @@ pub function (prog: Regex) replace_all(text: string, repl: string): Result[strin
 }
 
 pub function (prog: Regex) replace_all_bytes(text: string, repl: string): u8[] {
-  return __rx_replace_all_from(prog, text, repl, __rx_search_from(prog.root, text, 0, prog.ci));
+  return __rx_replace_all_from(prog, text, repl, __rx_search_from(prog, text, 0));
 }
 
 pub function (prog: Regex) replace_all_groups(text: string, tmpl: string): Result[string, TextError] {
@@ -1625,7 +1873,7 @@ pub function (prog: Regex) split(text: string): Result[string[], TextError] {
   let last = 0;
   let pos = 0;
   while (pos <= text.len()) {
-    let Some(m) = __rx_search_from(prog.root, text, pos, prog.ci) else {
+    let Some(m) = __rx_search_from(prog, text, pos) else {
       if (!utf8.is_char_boundary(text, last)) {
         return Err(InvalidUtf8Output);
       }
@@ -1658,7 +1906,7 @@ pub function (prog: Regex) split_bytes(text: string): u8[][] {
   let last = 0;
   let pos = 0;
   while (pos <= text.len()) {
-    let Some(m) = __rx_search_from(prog.root, text, pos, prog.ci) else {
+    let Some(m) = __rx_search_from(prog, text, pos) else {
       out = out.append(__rx_bytes(text, last, text.len()));
       return out;
     };
@@ -1709,6 +1957,9 @@ pub function (e: CompileError) to_string(): string {
     },
     ProgramLimit => {
       why = "compiled pattern exceeds " + MAX_PROGRAM.to_string() + " instructions";
+    },
+    UnknownBoundary => {
+      why = "unknown word boundary";
     }
   }
   return "regex byte " + e.offset.to_string() + ": " + why;
@@ -1735,7 +1986,11 @@ pub struct Match { start: i32, end: i32 }
 
 struct RClassUnit { kind: i32, lo: i32, hi: i32 }
 
-pub struct Regex { root: RNode, ci: boolean, ngroups: i32, names: string[], program: RInst[] }
+// `first` marks each byte that can begin a match. It is empty when a match
+// can be empty or can begin with any byte. `lead` is the one byte that
+// `first` marks, or -1. Each match starts with the bytes of `prefix`, folded
+// to lower case under `ci`.
+pub struct Regex { root: RNode, ci: boolean, ngroups: i32, names: string[], program: RInst[], first: u8[], lead: i32, prefix: u8[] }
 ```
 
 ### Module introduction

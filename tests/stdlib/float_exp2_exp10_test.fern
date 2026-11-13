@@ -1,61 +1,100 @@
 import "std/test";
 import "std/f64";
 
-function test_exp2_pow2(): test.TestOutcome {
-  return test.assert_eq_f64_near(3.0.exp2(), 8.0, 0.0001);
+// 2 to the power n, for n from -1074 to 1023.
+function pow2(n: i32): f64 {
+  if (n < -1022) {
+    return f64_from_bits(1 << (n + 1074) as i64);
+  }
+  return f64_from_bits((n + 1023) as i64 << 52);
 }
 
-function test_exp2_large(): test.TestOutcome {
-  return test.assert_eq_f64_near(10.0.exp2(), 1024.0, 0.0001);
+function test_exp2_whole(): test.TestOutcome {
+  for n in -1074..1024 {
+    let got = (n as f64).exp2();
+    if (got != pow2(n)) {
+      return test.fail("exp2 of " + n.to_string() + ": got " + got.to_string());
+    }
+  }
+  return test.pass();
 }
 
-function test_exp2_zero(): test.TestOutcome {
-  return test.assert_eq_f64_near(0.0.exp2(), 1.0, 0.0001);
+function test_exp10_whole(): test.TestOutcome {
+  let p = 1.0;
+  for n in 0..23 {
+    if ((n as f64).exp10() != p) {
+      return test.fail("exp10 of " + n.to_string() + ": got " + (n as f64).exp10().to_string());
+    }
+    if ((-(n as f64)).exp10() != 1.0 / p) {
+      return test.fail("exp10 of -" + n.to_string() + ": got " + (-(n as f64)).exp10().to_string());
+    }
+    p *= 10.0;
+  }
+  return test.pass();
 }
 
-function test_exp2_negative(): test.TestOutcome {
-  return test.assert_eq_f64_near((0.0 - 1.0).exp2(), 0.5, 0.0001);
+// The results of the C library for values with no exact result.
+function test_values(): test.TestOutcome {
+  let twos = [(0.5, 1.4142135623730951), (-0.5, 0.7071067811865476), (0.1, 1.0717734625362931), (10.5, 1448.1546878700494)];
+  for c in twos {
+    let (x, want) = c;
+    if (x.exp2() != want) {
+      return test.fail("exp2 of " + x.to_string() + ": got " + x.exp2().to_string() + ", want " + want.to_string());
+    }
+  }
+  let tens = [(0.5, 3.1622776601683795), (-0.5, 0.31622776601683794), (0.3, 1.9952623149688795), (2.5, 316.22776601683796), (308.0, 1e308), (-323.0, 1e-323)];
+  for c in tens {
+    let (x, want) = c;
+    if (x.exp10() != want) {
+      return test.fail("exp10 of " + x.to_string() + ": got " + x.exp10().to_string() + ", want " + want.to_string());
+    }
+  }
+  return test.pass();
 }
 
-function test_exp10_pow10(): test.TestOutcome {
-  return test.assert_eq_f64_near(3.0.exp10(), 1000.0, 0.0001);
-}
-
-function test_exp10_hundred(): test.TestOutcome {
-  return test.assert_eq_f64_near(2.0.exp10(), 100.0, 0.0001);
+function test_special(): test.TestOutcome {
+  let inf = 1.0 / 0.0;
+  if (1024.0.exp2() != inf || 309.0.exp10() != inf || inf.exp2() != inf || inf.exp10() != inf) {
+    return test.fail("a result above the range is not infinity");
+  }
+  if ((-1075.0).exp2() != 0.0 || (-324.0).exp10() != 0.0 || (-inf).exp2() != 0.0 || (-inf).exp10() != 0.0) {
+    return test.fail("a result below the range is not 0");
+  }
+  let a = (0.0 / 0.0).exp2();
+  let b = (0.0 / 0.0).exp10();
+  if (a == a || b == b) {
+    return test.fail("exp2 or exp10 of NaN is not NaN");
+  }
+  return test.pass();
 }
 
 function test_roundtrip(): test.TestOutcome {
-  if (!float_near(8.0.log2().exp2(), 8.0)) {
-    return test.fail("log2->exp2");
+  if (8.0.log2().exp2() != 8.0) {
+    return test.fail("exp2 of log2 of 8");
   }
-  return test.assert_eq_f64_near(1000.0.log10().exp10(), 1000.0, 0.001);
+  if (1000.0.log10().exp10() != 1000.0) {
+    return test.fail("exp10 of log10 of 1000");
+  }
+  return test.pass();
 }
 
 function test_f32(): test.TestOutcome {
-  if (!float_near((16.0 as f32).exp2() as f64, 65536.0)) {
+  if ((16.0 as f32).exp2() as f64 != 65536.0) {
     return test.fail("exp2 f32");
   }
-  return test.assert_eq_f64_near((2.0 as f32).exp10() as f64, 100.0, 0.001);
-}
-
-function float_near(a: f64, b: f64): boolean {
-  let d = a - b;
-  if (d < 0.0) {
-    d = 0.0 - d;
+  if ((2.0 as f32).exp10() as f64 != 100.0) {
+    return test.fail("exp10 f32");
   }
-  return d < 0.001;
+  return test.pass();
 }
 
 function main(): i32 {
   let r = test.new("std/f64 exp2/exp10");
-  r = r.it("exp2 power of two", test_exp2_pow2);
-  r = r.it("exp2 large", test_exp2_large);
-  r = r.it("exp2 zero", test_exp2_zero);
-  r = r.it("exp2 negative", test_exp2_negative);
-  r = r.it("exp10 power of ten", test_exp10_pow10);
-  r = r.it("exp10 hundred", test_exp10_hundred);
-  r = r.it("log/exp round-trip", test_roundtrip);
+  r = r.it("exp2 of each whole number is exact", test_exp2_whole);
+  r = r.it("exp10 of each whole number to 22 is exact", test_exp10_whole);
+  r = r.it("values", test_values);
+  r = r.it("infinity, zero and NaN", test_special);
+  r = r.it("log and exp go there and back", test_roundtrip);
   r = r.it("f32", test_f32);
   return r.finish();
 }
