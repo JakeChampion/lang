@@ -163,6 +163,13 @@ for the exit of the parent or of the worker. If the parent exits first, or
 is gone before the watch starts, the watchdog sends SIGTERM to the worker.
 Then it exits.
 
+When a process exits, the macOS kernel first moves its children to launchd
+and then posts the exit event. A watch added after that event
+does not fire. Thus, after it adds the watch, the watchdog reads the parent
+of the worker. If that parent is not the process that made the worker, the
+watchdog sends SIGTERM at once. A worker whose parent is launchd before the
+link starts exits at once.
+
 The macOS runtime makes its system calls directly, so the child calls no
 function of libSystem.
 
