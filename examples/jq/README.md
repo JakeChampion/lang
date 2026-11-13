@@ -11,13 +11,22 @@ echo '{"a":[1,2]}' | ./jq -c '.a[] , {b: .a}'
 
 ## What it has
 
-This is slice 1 of the port:
+The port has these parts of the language:
 
 - Paths: `.`, `.a`, `."a-b"`, `.[e]`, `.[e:e]`, `.[]`, and the postfix `?`.
 - The pipe `|` and the comma `,`.
 - Literals: numbers, strings, `true`, `false` and `null`.
 - Array construction `[e]` and object construction `{a, "b": e, (e): e, $x}`.
 - The comparisons `== != < <= > >=`, `and`, `or`, and the unary minus.
+- The arithmetic operators `+ - * / %` on each type that jq defines them for.
+- The alternative operator `//`.
+- `if`, with `elif` and `else`.
+- The binding `e as $x | e`, with one variable.
+- `reduce` and `foreach`.
+- `try`, with `catch`. An error holds a JSON value, as in jq.
+- The functions `add`, `empty`, `error`, `from_entries`, `has`, `keys`,
+  `keys_unsorted`, `length`, `map`, `not`, `select`, `to_entries`, `tojson`,
+  `tostring` and `type`.
 - The command line flags `-c`, `-r`, `-n`, `-s`, `--arg NAME VALUE` and `--`.
 
 The order of the outputs, the error messages, the line in `(at <stdin>:N)`
@@ -40,20 +49,23 @@ than 17 significant digits.
 
 ## What it does not have yet
 
-Arithmetic, `//`, the assignment operators, `..`, string interpolation,
-formats such as `@base64`, `as` bindings, `if`, `reduce`, `foreach`, `try`,
-`label`, `def`, and every builtin function. A program that uses one of them
-stops with exit 3 and a message that ends in "is not in this port yet".
-The next slices of #15585 add them.
+- The assignment operators and `..`.
+- String interpolation, and formats such as `@base64`.
+- Destructuring patterns in a binding, and `?//`.
+- `label` and `def`.
+- Each function that is not in the list above.
+
+A program that uses one of them stops with exit 3 and a message that ends in
+"is not in this port yet". The next slices of #15585 add them.
 
 ## Tests
 
-- `jq_test.fern` holds the unit cases of this slice. It runs on x86-64, arm64
+- `jq_test.fern` holds the unit cases. It runs on x86-64, arm64
   and wasm32-wasi with the leak census (`TestSelfHostExampleJqUnit`).
 - `tests/jq.test` is the test suite of jq 1.7 (see
   `licenses/jq/NOTICE.txt`). `TestSelfHostExampleJqSuite` runs each case
-  whose program is in this slice and compares the outputs as JSON values, as
-  jq does. 56 cases pass, and each of the others is in a part of the language
+  whose program the port has and compares the outputs as JSON values, as
+  jq does. 141 cases pass, and each of the others is in a part of the language
   that the port does not have yet.
 - `TestSelfHostExampleJqAgainstJq` runs the command line and the `jq` binary
   on the same arguments and input, and compares their stdout, stderr and exit
