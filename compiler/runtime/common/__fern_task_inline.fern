@@ -1,0 +1,6 @@
+function __fern_task_inline(delta: i32): i32 {
+  let st = __raw_task_state();
+  let depth = __raw_load_ptr(st, 8) as i32 + delta;
+  __raw_store_ptr(st, 8, depth as usize);
+  return depth;
+}

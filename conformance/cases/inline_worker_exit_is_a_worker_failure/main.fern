@@ -1,0 +1,18 @@
+// A worker body that runs on the inline scheduler runs in the process of the
+// program. An `exit` there is a worker that ended with no result, so the
+// program stops with status 134, as it does for a worker process. A native
+// program takes the same path when the kernel refuses the fork.
+import "std/worker";
+
+function leave(code: i32): i32 {
+  exit(code);
+  return code;
+}
+
+function main(): i32 {
+  let done = worker.spawn_on(worker.inline(), (): i32 => 4);
+  print("joined " + done.join().to_string());
+  let w = worker.spawn_on(worker.inline(), (): i32 => leave(3));
+  print("not reached " + w.join().to_string());
+  return 0;
+}

@@ -3733,6 +3733,24 @@ function socket_number(sock: Value): Value {
   return define(low.s, ssasem.cast(), [low.id], 0, "", typeinfo.t_i32());
 }
 
+// std/worker decides the status of an `exit`: inside a worker body that runs
+// in the process of the program, it is the status of a worker failure.
+function exit_argument(v: Value, name: string): Value {
+  if (name != "exit" || !v.s.ok || util.has_str(v.s.shadows, name)) {
+    return v;
+  }
+  let at = ssasem.find_contract(v.s.contracts, "worker__exit_status");
+  if (at < 0) {
+    return v;
+  }
+  let gate = v.s.contracts.list[at];
+  let s = v.s;
+  if (ssasem.find_contract_in(s.calls, gate.name) < 0) {
+    s = State { ...s, calls: s.calls.append(gate) };
+  }
+  return define(s, ssasem.call(), [v.id], 0, gate.name, typeinfo.t_i32());
+}
+
 // Only a kernel has a number parameter that the checker gives a Socket.
 function kernel_argument(v: Value, want: typeinfo.Type): Value {
   if (v.s.ok && semtypes.is_socket(v.s.values[v.id]) && ssasem.is_i32(want)) {
@@ -3909,7 +3927,7 @@ function invoke_rest(ids: i32[], bound: ssasem.Binding, args: ast.Expr[], base: 
       want = ssasem.substitute(want, later_binding(bound, args, i + 1, base, contract, s));
     }
     let kept = keeps(s, contract);
-    let v = kernel_argument(lend(expr(args[i], s, want), want, contract.modes[at], kept), want);
+    let v = exit_argument(kernel_argument(lend(expr(args[i], s, want), want, contract.modes[at], kept), want), contract.name);
     s = v.s;
     if (!s.ok) {
       return v;
@@ -7732,6 +7750,7 @@ function memory_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__task_set_ready", params: [typeinfo.t_i32(), typeinfo.t_i32()], modes: [v, v], result: typeinfo.t_void() },
     ssasem.Contract { name: "__task_set_cancelled", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_void() },
     ssasem.Contract { name: "__task_fd_gen", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
+    ssasem.Contract { name: "__task_inline", params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },
     ssasem.Contract { name: "__task_cancelled", params: [], modes: [], result: typeinfo.t_i32() },
     ssasem.Contract { name: "__memcpy", params: [typeinfo.t_usize(), typeinfo.t_usize(), typeinfo.t_i32()], modes: [v, v, v], result: typeinfo.t_void() },
     ssasem.Contract { name: "__memset", params: [typeinfo.t_usize(), typeinfo.t_i32(), typeinfo.t_i32()], modes: [v, v, v], result: typeinfo.t_void() },

@@ -2403,15 +2403,6 @@ function enosys_error(path: string): Value {
   return io_err_value(Other(path, "Function not implemented", enosys_errno()));
 }
 
-// 1 for the method of std/worker that runs a worker body in this process, the
-// `admit` of its inline scheduler, and 0 for each other function.
-function inline_worker(fd: parser.FuncDecl): i64 {
-  if (fd.name == "admit" && fd.receiver_type == "worker__Inline") {
-    return 1;
-  }
-  return 0;
-}
-
 // A worker that exits has no result, which stops the program as the join of
 // a worker process does.
 function worker_exit(heap: interpheap.Heap, name: string, args: Value[]): void {
@@ -2483,6 +2474,11 @@ function call_runtime_intrinsic(heap: interpheap.Heap, name: string, args: Value
   }
   if (util.has_str(["__task_cur", "__task_leave", "__task_cancelled", "__task_fd_gen"], name)) {
     return v_int(0);
+  }
+  // The number of worker bodies that run in this process.
+  if (name == "__task_inline") {
+    heap.workers.set(heap.workers.get() + arg_i64(args, 0));
+    return v_int(heap.workers.get() as i32);
   }
   if (util.has_str(["__task_park", "__task_park_until", "__task_timeout"], name)) {
     return v_int(-1);
@@ -6625,10 +6621,7 @@ function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: s
       for j in 0..fd.params.len() {
         env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
       }
-      let worker = inline_worker(fd);
-      heap.workers.set(heap.workers.get() + worker);
       let step = call_block(heap, fd.body, unsafe { share_unchecked(env) });
-      heap.workers.set(heap.workers.get() - worker);
       if (step.sig != 1) {
         return v_void();
       }
