@@ -2,6 +2,8 @@
 
 Status: [record] measurement snapshot of Fern against Koka and Lean on the standard Perceus workloads (#11907).
 
+A later snapshot is [PERCEUS-COMPARISON-2026-11-13.md](PERCEUS-COMPARISON-2026-11-13.md).
+
 These five-repeat measurements use the same native ARM Linux VM and the
 standard workload sizes from [#11907](https://github.com/JakeChampion/lang/issues/11907).
 Fern's median wall time is higher than both comparison languages for both

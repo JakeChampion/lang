@@ -7667,6 +7667,11 @@ function emit_lc_report(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    mov x2, #1\n");
   s = s.write("    bl .Llc_write\n");
   if (s.sanitize) {
+    // The frames above an exit() call are never unwound, so what they hold is no leak.
+    s = s.write("    adrp x9, __fern_lc_exited\n");
+    s = s.write("    add x9, x9, :lo12:__fern_lc_exited\n");
+    s = s.write("    ldr x9, [x9]\n");
+    s = s.write("    cbnz x9, .Lsan_leak_done\n");
     s = s.write("    adrp x9, __fern_lc_alloc_bytes\n");
     s = s.write("    add x9, x9, :lo12:__fern_lc_alloc_bytes\n");
     s = s.write("    ldr x10, [x9]\n");
@@ -12396,6 +12401,111 @@ function a64_poly_mul(): string {
     + "    and x8, x14, #0xfffffffffffffffc\n    and x14, x14, #3\n    add x8, x8, x8, lsr #2\n    adds x12, x12, x8\n    adcs x13, x13, xzr\n    adc x14, x14, xzr\n";
 }
 
+// Adds the 16 bytes at x0 to h as a block, multiplies h by r, and moves x0 past the bytes.
+function a64_cp_block(): string {
+  return "    ldp x4, x5, [x0]\n    add x0, x0, #16\n    adds x12, x12, x4\n    adcs x13, x13, x5\n    adc x14, x14, xzr\n    add x14, x14, #1\n" + a64_poly_mul();
+}
+
+// Absorbs x3 bytes at x0, with zeros after a short last block, as the AEAD pads its additional data and its
+// ciphertext. x0 moves past the bytes.
+function a64_cp_hash(p: string): string {
+  return p + "_h:\n    cmp x3, #16\n    b.lo " + p + "_hp\n" + a64_cp_block() + "    sub x3, x3, #16\n    b " + p + "_h\n"
+    + p + "_hp:\n    cbz x3, " + p + "_hd\n    stp xzr, xzr, [x29, #64]\n    mov x4, #0\n    add x5, x29, #64\n"
+    + p + "_hc:\n    ldrb w6, [x0, x4]\n    strb w6, [x5, x4]\n    add x4, x4, #1\n    cmp x4, x3\n    b.lo " + p + "_hc\n"
+    + "    add x0, x0, x3\n    ldp x4, x5, [x29, #64]\n    adds x12, x12, x4\n    adcs x13, x13, x5\n    adc x14, x14, xzr\n    add x14, x14, #1\n"
+    + a64_poly_mul() + p + "_hd:\n";
+}
+
+// XORs the key stream at x29 + ks over the x2 bytes at x1.
+function a64_cp_xor(p: string, ks: i32): string {
+  return "    mov x6, #0\n    add x5, x29, #" + util.i32_to_string(ks) + "\n"
+    + p + "_xq:\n    add x7, x6, #8\n    cmp x7, x2\n    b.hi " + p + "_xb\n    ldr x7, [x1, x6]\n    ldr x8, [x5, x6]\n    eor x7, x7, x8\n    str x7, [x1, x6]\n"
+    + "    add x6, x6, #8\n    b " + p + "_xq\n"
+    + p + "_xb:\n    cmp x6, x2\n    b.hs " + p + "_xd\n    ldrb w7, [x1, x6]\n    ldrb w8, [x5, x6]\n    eor w7, w7, w8\n    strb w7, [x1, x6]\n"
+    + "    add x6, x6, #1\n    b " + p + "_xb\n" + p + "_xd:\n";
+}
+
+// Four blocks of key stream into v0 to v15. With `hash`, the 256 bytes at x0 go into h among the rounds. Each
+// of the first eight double rounds takes two blocks. x0 moves past the 256 bytes, and w3 counts the rounds.
+function a64_cp_group(p: string, hash: boolean): string {
+  let cols = a64_chacha_qr4([[0, 4, 8, 12], [1, 5, 9, 13], [2, 6, 10, 14], [3, 7, 11, 15]]);
+  let diags = a64_chacha_qr4([[0, 5, 10, 15], [1, 6, 11, 12], [2, 7, 8, 13], [3, 4, 9, 14]]);
+  let o = a64_chacha_load();
+  if (hash) {
+    o = o + "    mov w3, #8\n" + p + "_rh:\n" + cols + a64_cp_block() + diags + a64_cp_block() + "    subs w3, w3, #1\n    b.ne " + p + "_rh\n"
+      + "    mov w3, #2\n";
+  } else {
+    o += "    mov w3, #10\n";
+  }
+  return o + p + "_r:\n" + cols + diags + "    subs w3, w3, #1\n    b.ne " + p + "_r\n" + a64_chacha_finish();
+}
+
+// ChaCha20-Poly1305 seals or opens buf[at:at + n] in place in one pass, as on x86-64. x0 is the 32-byte key,
+// and x1 is the block counter and the nonce (16 bytes, views). x2 is the buffer, w3 aad_at, w4 aad_n, w5 at
+// and w6 n. x0 returns the buffer, copied first if it has another holder.
+//
+// The first group of four blocks gives the one-time key and the first 192 bytes of text. Poly1305 takes those
+// bytes one block at a time. In each later group, Poly1305 takes 256 bytes of ciphertext among the rounds
+// of ChaCha20: a seal takes the group before, and an open takes its own group before the XOR. The rest is one
+// block at a time. x9 is r0, x10 r1, x11 5 r1 / 4, and x12 to x14 hold h. x0 points at the next ciphertext for
+// Poly1305, x1 at the text of the group, and x2 counts the bytes from there. s is at x29 + 48, a padded block at
+// x29 + 64 and a short last group of blocks at x29 + 224. The code zeroes them before it returns.
+function a64_chacha20_poly1305(s: asmcore.EmitState, seal: boolean): string {
+  let name: string = if (seal) { "__fern_chacha20_poly1305_seal_into" } else { "__fern_chacha20_poly1305_open_into" };
+  let p: string = if (seal) { ".Lacs" } else { ".Laco" };
+  let o: string = "    .global " + name + "\n    .type " + name + ", %function\n" + name + ":\n" + rt_frame_of(s, 480) + "    mov x29, sp\n"
+    + "    str x2, [x29, #96]\n    sxtw x3, w3\n    str x3, [x29, #80]\n    sxtw x4, w4\n    str x4, [x29, #88]\n"
+    + "    sxtw x5, w5\n    str x5, [x29, #32]\n    sxtw x6, w6\n    str x6, [x29, #40]\n"
+    + a64_aes_view("x1", "x9", "x10", p + "_c") + "    cmp x10, #16\n    b.ne " + p + "_bad\n    str x9, [x29, #24]\n"
+    + a64_aes_view("x0", "x9", "x10", p + "_k") + "    cmp x10, #32\n    b.ne " + p + "_bad\n    str x9, [x29, #16]\n"
+    + "    ldr x9, [x29, #80]\n    ldr x10, [x29, #88]\n    ldr x11, [x29, #32]\n    ldr x12, [x29, #40]\n"
+    + "    orr x13, x9, x10\n    orr x13, x13, x11\n    orr x13, x13, x12\n    tbnz x13, #63, " + p + "_bad\n"
+    + "    ldr x14, [x29, #96]\n    ldr x15, [x14]\n    add x13, x11, x12\n    add x13, x13, #16\n    cmp x13, x15\n    b.hi " + p + "_bad\n"
+    + "    add x13, x9, x10\n    cmp x13, x15\n    b.hi " + p + "_bad\n" + a64_aes_gcm_own(p)
+    + "    ldr x9, [x29, #96]\n    add x9, x9, #8\n    ldr x10, [x29, #32]\n    add x10, x9, x10\n    str x10, [x29, #32]\n"
+    + "    ldr x10, [x29, #80]\n    add x10, x9, x10\n    str x10, [x29, #80]\n"
+    + a64_chacha_pairs("stp") + a64_chacha_consts() + a64_cp_group(p + "_k0", false) + a64_chacha_out(false)
+    + "    ldp x9, x10, [x29, #224]\n"
+    + "    movz x4, #0xffff\n    movk x4, #0x0fff, lsl #16\n    movk x4, #0xfffc, lsl #32\n    movk x4, #0x0fff, lsl #48\n    and x9, x9, x4\n"
+    + "    movz x4, #0xfffc\n    movk x4, #0x0fff, lsl #16\n    movk x4, #0xfffc, lsl #32\n    movk x4, #0x0fff, lsl #48\n    and x10, x10, x4\n"
+    + "    add x11, x10, x10, lsr #2\n    ldp x4, x5, [x29, #240]\n    stp x4, x5, [x29, #48]\n    mov x12, #0\n    mov x13, #0\n    mov x14, #0\n"
+    + "    ldr x0, [x29, #80]\n    ldr x3, [x29, #88]\n" + a64_cp_hash(p + "_a")
+    + "    ldr x1, [x29, #32]\n    ldr x2, [x29, #40]\n    cmp x2, #192\n    b.ls " + p + "_hn\n    mov x2, #192\n" + p + "_hn:\n    mov x0, x1\n    mov x3, x2\n";
+  if (seal) {
+    o = o + a64_cp_xor(p + "_x0", 288) + a64_cp_hash(p + "_t0");
+  } else {
+    o = o + a64_cp_hash(p + "_t0") + a64_cp_xor(p + "_x0", 288);
+  }
+  o = o + "    ldr x2, [x29, #40]\n    subs x2, x2, #192\n    b.ls " + p + "_lens\n    add x1, x1, #192\n";
+  if (seal) {
+    o = o + a64_cp_group(p + "_g0", false) + "    cmp x2, #256\n    b.lo " + p + "_tail\n" + a64_chacha_out(true)
+      + "    add x1, x1, #256\n    subs x2, x2, #256\n    b.eq " + p + "_rest\n"
+      + p + "_loop:\n" + a64_cp_group(p + "_g1", true) + "    cmp x2, #256\n    b.lo " + p + "_tail\n" + a64_chacha_out(true)
+      + "    add x1, x1, #256\n    subs x2, x2, #256\n    b.ne " + p + "_loop\n    b " + p + "_rest\n"
+      + p + "_tail:\n" + a64_chacha_out(false) + a64_cp_xor(p + "_x1", 224)
+      + p + "_rest:\n    ldr x3, [x29, #32]\n    ldr x4, [x29, #40]\n    add x3, x3, x4\n    sub x3, x3, x0\n" + a64_cp_hash(p + "_t1");
+  } else {
+    o = o + p + "_loop:\n    cmp x2, #256\n    b.lo " + p + "_tail\n" + a64_cp_group(p + "_g1", true) + a64_chacha_out(true)
+      + "    add x1, x1, #256\n    subs x2, x2, #256\n    b.ne " + p + "_loop\n    b " + p + "_lens\n"
+      + p + "_tail:\n    mov x3, x2\n" + a64_cp_hash(p + "_t1") + a64_cp_group(p + "_g0", false) + a64_chacha_out(false) + a64_cp_xor(p + "_x1", 224);
+  }
+  o = o + p + "_lens:\n    ldr x4, [x29, #88]\n    ldr x5, [x29, #40]\n    adds x12, x12, x4\n    adcs x13, x13, x5\n    adc x14, x14, xzr\n    add x14, x14, #1\n"
+    + a64_poly_mul() + "    adds x4, x12, #5\n    adcs x5, x13, xzr\n    adc x6, x14, xzr\n    lsr x7, x6, #2\n    cmp x7, #0\n"
+    + "    csel x12, x4, x12, ne\n    csel x13, x5, x13, ne\n    ldp x4, x5, [x29, #48]\n    adds x12, x12, x4\n    adc x13, x13, x5\n"
+    + "    ldr x3, [x29, #32]\n    ldr x4, [x29, #40]\n    add x3, x3, x4\n";
+  if (seal) {
+    o += "    stp x12, x13, [x3]\n";
+  } else {
+    o += "    ldp x4, x5, [x3]\n    eor x4, x4, x12\n    eor x5, x5, x13\n    orr x4, x4, x5\n    cmp x4, #0\n    cset w4, ne\n    strb w4, [x3]\n";
+  }
+  o += "    movi v23.16b, #0\n    str q23, [x29, #48]\n    str q23, [x29, #64]\n";
+  for j in 0..16 {
+    o = o + "    str q23, [x29, #" + util.i32_to_string(224 + 16 * j) + "]\n";
+  }
+  return o + a64_chacha_pairs("ldp") + "    ldr x0, [x29, #96]\n" + rt_unframe_of(s, 480) + "    ret\n" + p + "_bad:\n    b __fern_slice_abort\n"
+    + "    .size " + name + ", .-" + name + "\n";
+}
+
 // Saves or restores d8 to d15, which the kernel uses and a call keeps.
 function a64_chacha_pairs(op: string): string {
   let out = "";
@@ -12543,6 +12653,14 @@ function emit_rt_byte_kernels(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("poly1305")) {
     let poly = a64_poly1305_blocks(s);
     s = s.write(poly);
+  }
+  if (s.has_need("chacha20poly1305_seal")) {
+    let sealer = a64_chacha20_poly1305(s, true);
+    s = s.write(sealer);
+  }
+  if (s.has_need("chacha20poly1305_open")) {
+    let opener = a64_chacha20_poly1305(s, false);
+    s = s.write(opener);
   }
   if (s.has_need("sha256") || s.has_need("sha1") || s.has_need("sha1x8")) {
     s = s.write("    .arch_extension sha2\n");

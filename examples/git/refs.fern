@@ -1,0 +1,227 @@
+// The repository of the current directory, and the names of its objects:
+// full and short hashes, `HEAD`, and the refs.
+import "std/string";
+import "./objects";
+
+// `dir` is the git directory. `common` holds the objects and the refs: it is
+// `dir`, or the directory that a linked worktree names. `prefix` is the path
+// from the top of the worktree to the current directory, with a `/` at its
+// end, or "".
+pub struct Repo { dir: string, common: string, prefix: string, shown: string }
+
+pub function (r: Repo) objects(): string {
+  return r.common + "/objects";
+}
+
+function is_dir(path: string): boolean {
+  return match (stat(path)) {
+    Ok(st) => st.is_dir,
+    Err(_) => false,
+  };
+}
+
+function is_file(path: string): boolean {
+  return match (stat(path)) {
+    Ok(st) => st.is_file,
+    Err(_) => false,
+  };
+}
+
+function first_line(text: string): string {
+  let end = 0;
+  while (end < text.len() && text[end] != b'\n' && text[end] != b'\r') {
+    end += 1;
+  }
+  return objects.part(text, 0, end);
+}
+
+function parent(path: string): string {
+  let i = path.len() - 1;
+  while (i > 0 && path[i] != b'/') {
+    i -= 1;
+  }
+  if (i <= 0) {
+    return "/";
+  }
+  return objects.part(path, 0, i);
+}
+
+function joined(base: string, path: string): string {
+  if (path.starts_with("/")) {
+    return path;
+  }
+  return base + "/" + path;
+}
+
+// The directory of the objects and the refs of the git directory `dir`.
+function common_of(dir: string): string {
+  return match (read_file(dir + "/commondir")) {
+    Ok(text) => joined(dir, first_line(text)),
+    Err(_) => dir,
+  };
+}
+
+// The git directory that the entry `.git` of `top` names, or "".
+function git_dir_of(top: string): string {
+  let entry = top + "/.git";
+  if (is_dir(entry)) {
+    return entry;
+  }
+  if let Ok(text) = read_file(entry) {
+    let line = first_line(text);
+    if (line.starts_with("gitdir: ")) {
+      return joined(top, objects.part(line, 8, line.len()));
+    }
+  }
+  return "";
+}
+
+const NOT_A_REPOSITORY: string = "fatal: not a git repository (or any of the parent directories): .git";
+
+// The repository of the current directory: `GIT_DIR`, or the `.git` of the
+// directory or of one of its parents.
+pub function find(): Result[Repo, string] {
+  if let Some(dir) = env("GIT_DIR") {
+    if (!is_dir(dir)) {
+      return Err("fatal: not a git repository: '" + dir + "'");
+    }
+    return Ok(Repo { dir: dir, common: common_of(dir), prefix: "", shown: dir });
+  }
+  let cwd = match (getcwd()) {
+    Ok(path) => path,
+    Err(_) => {
+      return Err(NOT_A_REPOSITORY);
+    },
+  };
+  let top = cwd;
+  while (true) {
+    let dir = git_dir_of(top);
+    if (dir.len() > 0) {
+      let prefix = if (top == cwd) { "" } else { objects.part(cwd, top.len() + 1, cwd.len()) + "/" };
+      let shown = if (top == cwd && dir == top + "/.git") { ".git" } else { dir };
+      return Ok(Repo { dir: dir, common: common_of(dir), prefix: prefix, shown: shown });
+    }
+    if (top == "/") {
+      return Err(NOT_A_REPOSITORY);
+    }
+    top = parent(top);
+  }
+  return Err(NOT_A_REPOSITORY);
+}
+
+// The hash of `name` in the file `packed-refs`, or "".
+function packed_ref(r: Repo, name: string): string {
+  let text = match (read_file(r.common + "/packed-refs")) {
+    Ok(t) => t,
+    Err(_) => {
+      return "";
+    },
+  };
+  for line in text.split("\n") {
+    if (line.len() > 41 && line[0] != b'#' && line[0] != b'^' && objects.part(line, 41, line.len()) == name) {
+      return objects.part(line, 0, 40);
+    }
+  }
+  return "";
+}
+
+// The hash that the ref `name` holds, or "". A ref can name a ref.
+function ref_hash(r: Repo, name: string, depth: i32): string {
+  if (depth > 5) {
+    return "";
+  }
+  let base = if (name.starts_with("refs/")) { r.common } else { r.dir };
+  let text = match (read_file(base + "/" + name)) {
+    Ok(t) => first_line(t),
+    Err(_) => {
+      return packed_ref(r, name);
+    },
+  };
+  if (text.starts_with("ref: ")) {
+    return ref_hash(r, objects.part(text, 5, text.len()), depth + 1);
+  }
+  if (text.len() == 40 && objects.is_hex(text, 40)) {
+    return text;
+  }
+  return "";
+}
+
+// A name at the top of the git directory is a ref when it has capital
+// letters, `_` and `-` only, as `HEAD` and `ORIG_HEAD`.
+function top_ref(name: string): boolean {
+  for i in 0..name.len() {
+    let b = name[i];
+    if (!(b >= b'A' && b <= b'Z' || b == b'_' || b == b'-')) {
+      return false;
+    }
+  }
+  return name.len() > 0;
+}
+
+// The hash of the ref that `name` means: git tries the name, then the name
+// under `refs/`, `refs/tags/`, `refs/heads/` and `refs/remotes/`.
+function named_ref(r: Repo, name: string): string {
+  let tries: string[] = [];
+  if (top_ref(name) || name.starts_with("refs/")) {
+    tries = tries.append(name);
+  }
+  for dir in ["refs/", "refs/tags/", "refs/heads/", "refs/remotes/"] {
+    tries = tries.append(dir + name);
+  }
+  tries = tries.append("refs/remotes/" + name + "/HEAD");
+  for t in tries {
+    let h = ref_hash(r, t, 0);
+    if (h.len() > 0) {
+      return h;
+    }
+  }
+  return "";
+}
+
+// The loose objects whose name starts with `short`.
+function loose_with_prefix(r: Repo, short: string): string[] {
+  let found: string[] = [];
+  let low = short.to_ascii_lower();
+  let names = match (read_dir(r.objects() + "/" + objects.part(low, 0, 2))) {
+    Ok(ns) => ns,
+    Err(_) => {
+      return found;
+    },
+  };
+  let rest = objects.part(low, 2, low.len());
+  for n in names {
+    if (n.len() == 38 && n.starts_with(rest)) {
+      found = found.append(objects.part(low, 0, 2) + n);
+    }
+  }
+  return found;
+}
+
+// The full hash that `name` means, or "": a full hash, a ref, or a short
+// hash of four digits or more that one loose object has.
+pub function resolve(r: Repo, name: string): string {
+  if (name.len() == 40 && objects.is_hex(name, 40)) {
+    return name.to_ascii_lower();
+  }
+  let h = named_ref(r, name);
+  if (h.len() > 0) {
+    return h;
+  }
+  if (name.len() >= 4 && name.len() < 40 && objects.is_hex(name, 4)) {
+    let found = loose_with_prefix(r, name);
+    if (found.len() == 1) {
+      return found[0];
+    }
+  }
+  return "";
+}
+
+// The shortest prefix of `hash`, of `least` digits or more, that no other
+// loose object has.
+pub function short_of(r: Repo, hash: string, least: i32): string {
+  let n = least;
+  while (n < 40 && loose_with_prefix(r, objects.part(hash, 0, n)).len() > 1) {
+    n += 1;
+  }
+  return objects.part(hash, 0, n);
+}

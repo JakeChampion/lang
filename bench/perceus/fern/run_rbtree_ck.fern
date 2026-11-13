@@ -7,6 +7,11 @@ function main(): i32 {
   let Some(n) = scale.read(4200000) else {
     return 2;
   };
-  print(rbtree_ck.count_head(rbtree_ck.make_tree(5i64, n as i64)).to_string());
+  let count = n as i64;
+  let trees = rbtree_ck.make_tree(5i64, count);
+  if (rbtree_ck.length(trees, 0i64) != count / 5i64 + 1i64) {
+    return 3;
+  }
+  print(rbtree_ck.count_head(trees).to_string());
   return 0;
 }

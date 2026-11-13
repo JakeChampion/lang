@@ -291,6 +291,9 @@ var coreBuiltins = map[string]bool{
 	"f64_bits":      true,
 	"f64_from_bits": true,
 
+	"__chacha20_poly1305_seal_into": true,
+	"__chacha20_poly1305_open_into": true,
+
 	"string_from_bytes_range_unchecked": true,
 	"share_unchecked":                   true,
 }

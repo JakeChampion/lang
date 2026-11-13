@@ -3,7 +3,11 @@ import "./perceus/rbtree_ck";
 function main(): i32 {
   let sum = 0i64;
   for _ in 0..160 {
-    let answer = rbtree_ck.count_head(rbtree_ck.make_tree(5i64, 257i64));
+    let trees = rbtree_ck.make_tree(5i64, 257i64);
+    if (rbtree_ck.length(trees, 0i64) != 52i64) {
+      return 124;
+    }
+    let answer = rbtree_ck.count_head(trees);
     if (answer != 25i64) {
       return 125;
     }

@@ -12,7 +12,7 @@ The mode itself is described in `docs/SANITIZER.md`, the allocator in [ALLOCATOR
 |---|---|---|
 | reference-count over-release | a decrement sees a count at or below zero | `fern-sanitizer: rc over-release (double free)`, a backtrace, exit 124 |
 | use after free | an increment or a decrement touches a quarantined block | `fern-sanitizer: use-after-free (touched a quarantined block)`, a backtrace, exit 124 |
-| leak census | the process exits with live bytes | `fern-sanitizer: leak <K> bytes in <N> blocks` |
+| leak census | `main` returns with live bytes | `fern-sanitizer: leak <K> bytes in <N> blocks`. A run that `exit()` ends gets no verdict, because the frames above the call are never unwound. |
 
 A clean run prints nothing, keeps its exit code and its output, and is the whole pass condition.
 Each fatal report goes through `__fern_report`, the same path as a bounds or arena abort. The cause and the frame-pointer backtrace locate the fault, and `-g` resolves the addresses to functions.
