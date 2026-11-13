@@ -1,3 +1,8 @@
+# 2026-11-13: PR #15784, perf-x86_64 job 132195198217 on the merge with main 38768eb2.
+# perceus_rbtree_ck .text +7.7% and .ir +29.1% (#15786); string_slice, tokenize and the two
+# utf8_ingest rows down. Main's compiler and #15784 emit the same code for each program of bench/ on
+# x86-64 and arm64, so these are values of main. Each row moves to its measured value. Keep all
+# tolerances.
 # 2026-11-13: PR #15784, perf-aarch64 job 132189918558 on the merge with main 38768eb2.
 # perceus_rbtree_ck .text +7.7% and .ir +31.5%; string_slice.ir -42.4%, tokenize.ir -12.7%,
 # utf8_ingest_unchecked.ir -2.4% and utf8_ingest_validated.ir -1.5%. The code that main and
@@ -407,15 +412,15 @@ x86_64/string_rfind_byte.ir	43695768
 x86_64/string_scan.text	2227
 x86_64/string_scan.ir	52670002
 x86_64/string_slice.text	944
-x86_64/string_slice.ir	38460093
+x86_64/string_slice.ir	23340107
 x86_64/struct_drop.text	2402
 x86_64/struct_drop.ir	197940612
-x86_64/tokenize.text	1247
-x86_64/tokenize.ir	37860093
+x86_64/tokenize.text	1193
+x86_64/tokenize.ir	32840107
 x86_64/utf8_ingest_unchecked.text	7735
-x86_64/utf8_ingest_unchecked.ir	2207993
+x86_64/utf8_ingest_unchecked.ir	2141652
 x86_64/utf8_ingest_validated.text	8318
-x86_64/utf8_ingest_validated.ir	5207391
+x86_64/utf8_ingest_validated.ir	5152651
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
@@ -721,8 +726,8 @@ x86_64/perceus_nqueens.text	1548
 x86_64/perceus_nqueens.ir	81923493
 x86_64/perceus_rbtree.text	2600
 x86_64/perceus_rbtree.ir	31429877
-x86_64/perceus_rbtree_ck.text	2795
-x86_64/perceus_rbtree_ck.ir	32576757
+x86_64/perceus_rbtree_ck.text	3009
+x86_64/perceus_rbtree_ck.ir	42059720
 # 2026-11-12 (#15554): PR #15558 job 131516922622 on main 1bbf2294 measures
 # 13 aarch64 rows below their pins: deflate_decode.text -1.76%,
 # deflate_encode.text -1.06%, ordmap_insert.ir -3.63%, perceus_cfold.text
