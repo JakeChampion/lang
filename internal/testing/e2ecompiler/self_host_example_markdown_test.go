@@ -78,9 +78,9 @@ func markdownSet(t *testing.T, list string) map[int]bool {
 	return set
 }
 
-func runMarkdown(t *testing.T, bin, input string) (string, string, int) {
+func runMarkdown(t *testing.T, bin, input string, args ...string) (string, string, int) {
 	t.Helper()
-	cmd := exec.Command(bin)
+	cmd := exec.Command(bin, args...)
 	cmd.Stdin = strings.NewReader(input)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -93,6 +93,7 @@ func runMarkdown(t *testing.T, bin, input string) (string, string, int) {
 
 // The spec runner of CommonMark normalizes the HTML before it compares it.
 // This test compares the exact text, because the port gives the HTML of cmark.
+// As the spec runner of cmark does, it gives md the option --unsafe.
 func TestSelfHostExampleMarkdownSpec(t *testing.T) {
 	data, err := os.ReadFile("../../../examples/markdown/tests/spec.json")
 	if err != nil {
@@ -116,7 +117,7 @@ func TestSelfHostExampleMarkdownSpec(t *testing.T) {
 			sections = append(sections, ex.Section)
 		}
 		total[ex.Section]++
-		got, stderr, code := runMarkdown(t, bin, ex.Markdown)
+		got, stderr, code := runMarkdown(t, bin, ex.Markdown, "--unsafe")
 		ok := code == 0 && got == ex.HTML
 		if ok {
 			passed[ex.Section]++
@@ -199,7 +200,7 @@ func TestSelfHostExampleMarkdownAgainstCmark(t *testing.T) {
 		if err != nil {
 			t.Fatalf("cmark on %q: %v", c, err)
 		}
-		got, stderr, code := runMarkdown(t, bin, c)
+		got, stderr, code := runMarkdown(t, bin, c, "--unsafe")
 		if code != 0 || got != string(want) {
 			t.Errorf("md on %q: exit %d\ngot  %q\nwant %q\n%s", c, code, got, want, stderr)
 		}
@@ -224,14 +225,14 @@ func TestSelfHostExampleMarkdownAgainstCmark(t *testing.T) {
 	if len(want) < 4*65536 {
 		t.Fatalf("the HTML of the long document has %d bytes, want 4 parts of 64 KiB or more", len(want))
 	}
-	if got, stderr, code := runMarkdown(t, bin, long); code != 0 || got != string(want) {
+	if got, stderr, code := runMarkdown(t, bin, long, "--unsafe"); code != 0 || got != string(want) {
 		t.Errorf("md on the long document: exit %d, %d bytes, want %d\n%s", code, len(got), len(want), stderr)
 	}
 	file := filepath.Join(t.TempDir(), "long.md")
 	if err := os.WriteFile(file, []byte(long), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := exec.Command(bin, file).Output(); err != nil || string(got) != string(want) {
+	if got, err := exec.Command(bin, "--unsafe", file).Output(); err != nil || string(got) != string(want) {
 		t.Errorf("md on the long document as a file: %v, %d bytes, want %d", err, len(got), len(want))
 	}
 	// A file that is not valid UTF-8 gives the same HTML as stdin.
