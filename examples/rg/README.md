@@ -67,14 +67,6 @@ ripgrep:
 
 ## Differences from ripgrep
 
-- **Leftmost-longest matches.** `std/regex` gives the longest match at the
-  leftmost start. ripgrep gives the match of the first alternative that
-  matches. The selected lines are the same. The spans of `-o` and of the
-  color are different when an alternative is a prefix of a later one:
-  `rg -o 'foo|foobar'` writes `foobar` where ripgrep writes `foo`. The
-  conformance case `regex_captures_all` makes leftmost-longest a part of the
-  language, so a change is a decision for the language.
-
 - **Bytes and ASCII.** `std/regex` reads bytes. `.` matches one byte, and
   `\w`, `\d`, `\s`, `\b`, `-w` and `-i` know only ASCII. ripgrep uses
   Unicode for each of these. `\p{...}`, inline flags other than `(?i)` at the
@@ -101,7 +93,7 @@ ripgrep:
   the leak census.
 
 - `TestSelfHostExampleRgAgainstRipgrep` runs the port and `/usr/bin/rg`
-  14.1.0 with 138 command lines on the same files, on x86-64 and on arm64.
+  14.1.0 with 145 command lines on the same files, on x86-64 and on arm64.
   The stdout, the stderr and the exit status must be the same. The files
   include an empty file and a file with no last line terminator. They also
   include CRLF lines, a line of 209,008 bytes, UTF-8 text and four binary
@@ -137,16 +129,19 @@ milliseconds. ripgrep's time is its whole run, with the read of the file.
 "Before" is `std/regex` before this slice, and "after" adds the first-byte
 skip and the literal prefix.
 
-| Pattern | Mode | Before | After | ripgrep |
-| --- | --- | ---: | ---: | ---: |
-| `Sherlock Holmes` | lines | 8,269 | 107 | 39 |
-| | find | 7,875 | 30 | 39 |
-| `(?i)sherlock holmes` | lines | 9,138 | 364 | 103 |
-| | find | 8,425 | 276 | 138 |
-| `Sherlock Holmes\|John Watson\|Irene Adler\|Inspector Lestrade\|Professor Moriarty` | lines | 40,615 | 267 | 104 |
-| | find | 38,936 | 230 | 117 |
-| `\w+` | lines | 409 | 394 | 353 |
-| | find | 7,336 | 7,140 | 3,005 |
+"Pike VM" is the leftmost-first search. It gets each span from the Pike VM,
+and not from a walk of the syntax tree.
+
+| Pattern | Mode | Before | After | Pike VM | ripgrep |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `Sherlock Holmes` | lines | 8,269 | 107 | 136 | 39 |
+| | find | 7,875 | 30 | 47 | 39 |
+| `(?i)sherlock holmes` | lines | 9,138 | 364 | 342 | 103 |
+| | find | 8,425 | 276 | 238 | 138 |
+| `Sherlock Holmes\|John Watson\|Irene Adler\|Inspector Lestrade\|Professor Moriarty` | lines | 40,615 | 267 | 322 | 104 |
+| | find | 38,936 | 230 | 289 | 117 |
+| `\w+` | lines | 409 | 394 | 738 | 353 |
+| | find | 7,336 | 7,140 | 14,135 | 3,005 |
 
 The counts are the same as those of ripgrep, but for `\w+` in `find` mode:
 47,078,742 against 45,612,443, because `std/regex` knows only ASCII word
@@ -154,7 +149,7 @@ bytes. ripgrep has no `\p{Greek}` peer to compare, because `std/regex` has
 no Unicode classes.
 
 Before this slice, `std/regex` ran its matcher at each byte of the text. The
-matcher walks the syntax tree and makes a new array for each node at each
+matcher walked the syntax tree and made a new array for each node at each
 position. So a literal ran at 25 MB/s. Now a search goes from one possible
 start to the next with `__memchr` or `__scan_set`, and checks the literal
 prefix before it runs the matcher.
@@ -162,18 +157,19 @@ prefix before it runs the matcher.
 ### The port and ripgrep
 
 Each command searches `big.txt` with `-j1` and writes to a file. The time
-is the best of 5 runs, in milliseconds.
+is the best of 5 runs, in milliseconds. The port uses the Pike VM for each
+span. The two programs ran one after the other in the same session.
 
 | Command | ripgrep | Port | Ratio |
 | --- | ---: | ---: | ---: |
-| `rg 'Sherlock Holmes'` | 43 | 338 | 7.9 |
-| `rg -c 'Sherlock Holmes'` | 36 | 271 | 7.5 |
-| `rg -i 'sherlock holmes'` | 116 | 528 | 4.6 |
-| `rg -ic 'sherlock holmes'` | 106 | 464 | 4.4 |
-| `rg 'Sherlock Holmes\|...'` (five names) | 116 | 514 | 4.4 |
-| `rg -c 'Sherlock Holmes\|...'` | 103 | 424 | 4.1 |
-| `rg -c '\w+'` | 342 | 747 | 2.2 |
-| `rg -co '\w+'` | 3,095 | 4,290 | 1.4 |
+| `rg 'Sherlock Holmes'` | 51 | 329 | 6.5 |
+| `rg -c 'Sherlock Holmes'` | 45 | 287 | 6.4 |
+| `rg -i 'sherlock holmes'` | 166 | 676 | 4.1 |
+| `rg -ic 'sherlock holmes'` | 138 | 608 | 4.4 |
+| `rg 'Sherlock Holmes\|...'` (five names) | 148 | 781 | 5.3 |
+| `rg -c 'Sherlock Holmes\|...'` | 142 | 632 | 4.5 |
+| `rg -c '\w+'` | 445 | 1,412 | 3.2 |
+| `rg -co '\w+'` | 4,428 | 15,899 | 3.6 |
 
 Each output is the same as that of ripgrep, but `-co '\w+'`, for the
 reason above.
@@ -197,11 +193,14 @@ reason above.
    The fix is a SIMD kernel for a small byte set, or a scan for the least
    frequent byte of the literal.
 
-3. **The matcher.** At each candidate, `std/regex` walks the syntax tree and
-   allocates. With `\w+`, each line has about ten matches, and this walk is
-   most of the time. ripgrep runs a lazy DFA. The fix is a DFA, or a thread
-   simulation that does not allocate in each step, as
-   `coreutils/lib/bre.fern` has for patterns without captures.
+3. **The matcher.** At each candidate, `std/regex` runs a Pike VM. In each
+   step, the VM makes new thread lists and a new record for each thread.
+   With `\w+`, each line has about ten matches, and these allocations are
+   most of the time. The walk of the syntax tree was faster on `\w+`. But
+   it cannot give the leftmost-first rule of ripgrep. ripgrep runs a lazy
+   DFA. The fix is a DFA, or a thread simulation that does not
+   allocate in each step, as `coreutils/lib/bre.fern` has for patterns
+   without captures.
 
 The line loop is not the cause. Without `-v`, the port goes from one
 candidate to the line of the next with `next_candidate`, and counts the

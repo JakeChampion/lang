@@ -55,6 +55,7 @@ func rgFixtures(t *testing.T, dir string) {
 		"bin2.dat":  "foo 1\nbar\nabc\x00def\nfoo 2\n",
 		"bin3.dat":  "abc\x00def\n",
 		"bin4.dat":  "a\x00foo\nzz\n",
+		"ab.txt":    "bbabb\nba\nfoobar xfoo\n",
 	}
 	for name, text := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
@@ -167,6 +168,15 @@ func rgCases(dir string) []rgCase {
 		`\bfoo\b w.txt`,
 		`-c \d+ many.txt`,
 		"-o (ab)+c? long.txt",
+		// Leftmost-first: the first alternative and the loop that ends on an
+		// empty repeat win, where leftmost-longest gives a longer match.
+		"-o foo|foobar w.txt",
+		"-o -e foo -e foobar ab.txt",
+		"-o -e foobar -e foo ab.txt",
+		"--color always x*|foo w.txt",
+		"--color always -n (?:foo|foob)a? ab.txt",
+		"-o (?:b?(?:|a))* ab.txt",
+		"-o b(|a)+ ab.txt",
 		"-c o{2,} a.txt",
 		"two.foo$ crlf.txt",
 		"café uni.txt",

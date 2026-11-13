@@ -67,7 +67,25 @@ function main(): i32 {
 
 var ssaFormBlock = regexp.MustCompile(`\n  b\d+:\n`)
 
-var ssaShapeStore = regexp.MustCompile(`= st_at v\d+ v\d+\n`)
+var ssaWordStore = regexp.MustCompile(`= st_at v\d+ (v\d+)\n`)
+
+var ssaShapeValue = regexp.MustCompile(`(v\d+) = shape_addr `)
+
+// The count of stores of a shape address to the first word of a box. A fill
+// through the address of a hole also stores at offset 0.
+func ssaShapeStores(form, block string) int {
+	shapes := map[string]bool{}
+	for _, m := range ssaShapeValue.FindAllStringSubmatch(form, -1) {
+		shapes[m[1]] = true
+	}
+	n := 0
+	for _, m := range ssaWordStore.FindAllStringSubmatch(block, -1) {
+		if shapes[m[1]] {
+			n++
+		}
+	}
+	return n
+}
 
 // A reuse allocation of a token that is its own box writes neither the shape
 // nor a word that the box already has (ssatokenkeep.keeps). grow and sink
@@ -98,7 +116,7 @@ func TestSelfHostSSATokenKeep(t *testing.T) {
 				if strings.Contains(block, "__fern_alloc_reuse") || strings.Contains(block, "arr_box") {
 					continue
 				}
-				shapes += len(ssaShapeStore.FindAllString(block, -1))
+				shapes += ssaShapeStores(form, block)
 				keys += strings.Count(block, "= st_at 16 ")
 			}
 			if shapes != 0 || keys > 1 {

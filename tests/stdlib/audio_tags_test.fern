@@ -346,6 +346,180 @@ function test_writing_flac(): test.TestOutcome {
   return test.assert_eq(got.join(" / "), "New|Fern||Friends|2|0||Words|-250 / Friends / " + shown(image()) + " / 255,248,1,2 / 0 / New|Fern||Friends|2|0 / 0 / 132 / 255,248,1,2");
 }
 
+// Large lengths are fields in small files, not large test allocations.
+function bound_lengths(): u64[] {
+  return [1000u64, 2147483632u64, 2147483647u64, 2147483648u64, 4294967295u64];
+}
+
+function flac_block(kind: u8, body: u8[]): u8[] {
+  return joined([bytes_of("fLaC"), [kind | 128u8], wire.put_be([], body.len() as u64, 3), body]);
+}
+
+function opus_comments(body: u8[]): u8[] {
+  return joined([page([bytes_of("OpusHead")]), page([joined([bytes_of("OpusTags"), body])])]);
+}
+
+function sized_box(kind: u8[], size: u64, body: u8[]): u8[] {
+  return joined([wire.put_be([], size, 4), kind, body]);
+}
+
+function metadata(items: u8[]): u8[] {
+  return box(bytes_of("moov"), box(bytes_of("udta"), box(bytes_of("meta"), joined([[0u8, 0u8, 0u8, 0u8], box(bytes_of("ilst"), items)]))));
+}
+
+function test_comment_length_bounds(): test.TestOutcome {
+  for n in [0u64, 1u64].concat(bound_lengths()) {
+    let body = joined([wire.put_le([], 0u64, 4), wire.put_le([], 3u64, 4), comment("TITLE=kept"), wire.put_le([], n, 4)]);
+    let flac = flac_block(4u8, body);
+    let ogg = opus_comments(body);
+    if (tags.flac(flac).title != "kept" || tags.ogg(ogg).title != "kept" || tags.picture(ogg).len() != 0) {
+      return test.fail("a comment length loses a prior field");
+    }
+  }
+  return test.pass();
+}
+
+function test_vendor_length_bounds(): test.TestOutcome {
+  for n in bound_lengths() {
+    let body = joined([wire.put_le([], n, 4), wire.put_le([], 2u64, 4)]);
+    let flac = flac_block(4u8, body);
+    let ogg = opus_comments(body);
+    if (!tags.flac(flac).empty() || !tags.ogg(ogg).empty() || tags.picture(ogg).len() != 0) {
+      return test.fail("a vendor length reads outside its block");
+    }
+  }
+  return test.pass();
+}
+
+function test_id3_frame_length_bounds(): test.TestOutcome {
+  for n in bound_lengths() {
+    let bad = joined([bytes_of("TPE1"), wire.put_be([], n, 4), [0u8, 0u8]]);
+    let file = id3(3u8, 0u8, joined([frame3("TIT2", 0u8, bytes_of("kept")), bad]));
+    if (tags.read(file).title != "kept" || tags.picture(file).len() != 0) {
+      return test.fail("an ID3 frame length loses a prior field");
+    }
+    if (!tags.read(id3(3u8, 64u8, wire.put_be([], n, 4))).empty()) {
+      return test.fail("an ID3 extension length reads outside its tag");
+    }
+  }
+  let v4 = id3(4u8, 64u8, syncsafe(268435455));
+  return test.assert_eq(tags.read(v4).empty().to_string() + " " + tags.picture(v4).len().to_string(), "true 0");
+}
+
+function test_id3_picture_length_bounds(): test.TestOutcome {
+  let art = joined([[0u8], bytes_of("image/jpeg"), [0u8, 3u8, 0u8], image()]);
+  for n in bound_lengths() {
+    let frame = joined([bytes_of("APIC"), wire.put_be([], n, 4), [0u8, 0u8], art]);
+    if (shown(tags.picture(id3(3u8, 0u8, frame))) != shown(image())) {
+      return test.fail("an ID3 picture length loses its available bytes");
+    }
+  }
+  let pic = joined([bytes_of("PIC"), wire.put_be([], 16777215u64, 3), [0u8], bytes_of("JPG"), [3u8, 0u8], image()]);
+  let v4 = joined([bytes_of("APIC"), syncsafe(268435455), [0u8, 0u8], art]);
+  return test.assert_eq(shown(tags.picture(id3(2u8, 0u8, pic))) + " / " + shown(tags.picture(id3(4u8, 0u8, v4))), shown(image()) + " / " + shown(image()));
+}
+
+function test_flac_picture_length_bounds(): test.TestOutcome {
+  for n in bound_lengths() {
+    let mime = joined([wire.put_be([], 3u64, 4), wire.put_be([], n, 4)]);
+    let description = joined([wire.put_be([], 3u64, 4), wire.put_be([], 0u64, 4), wire.put_be([], n, 4)]);
+    if (tags.picture(flac_block(6u8, mime)).len() != 0 || tags.picture(flac_block(6u8, description)).len() != 0) {
+      return test.fail("a FLAC picture header reads outside its block");
+    }
+    let block = joined([wire.put_be([], 3u64, 4), wire.put_be([], 0u64, 4), wire.put_be([], 0u64, 4), wire.put_be([], 1u64, 4), wire.put_be([], 1u64, 4), wire.put_be([], 24u64, 4), wire.put_be([], 0u64, 4), wire.put_be([], n, 4), image()]);
+    if (shown(tags.picture(flac_block(6u8, block))) != shown(image())) {
+      return test.fail("a FLAC picture length loses its available bytes");
+    }
+  }
+  return test.pass();
+}
+
+function test_riff_length_bounds(): test.TestOutcome {
+  for n in [0u64, 1u64].concat(bound_lengths()) {
+    let unknown = riff(joined([bytes_of("JUNK"), wire.put_le([], n, 4)]));
+    let info = joined([bytes_of("INFO"), chunk("INAM", bytes_of("kept\x00")), bytes_of("IART"), wire.put_le([], n, 4)]);
+    if (!tags.wav(unknown).empty() || tags.wav(riff(chunk("LIST", info))).title != "kept") {
+      return test.fail("a RIFF length loses a prior field");
+    }
+  }
+  for n in bound_lengths() {
+    let list = joined([bytes_of("LIST"), wire.put_le([], n, 4), bytes_of("INFO"), chunk("INAM", bytes_of("kept\x00"))]);
+    if (tags.wav(riff(list)).title != "kept") {
+      return test.fail("a clipped RIFF list loses its available fields");
+    }
+  }
+  return test.pass();
+}
+
+function test_mp4_length_bounds(): test.TestOutcome {
+  let value = joined([[0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 0u8, 0u8], bytes_of("kept")]);
+  for n in bound_lengths() {
+    let data = sized_box(bytes_of("data"), n, value);
+    let name = sized_box(named("nam"), n, data);
+    let ilst = sized_box(bytes_of("ilst"), n, name);
+    let meta = sized_box(bytes_of("meta"), n, joined([[0u8, 0u8, 0u8, 0u8], ilst]));
+    let udta = sized_box(bytes_of("udta"), n, meta);
+    let moov = sized_box(bytes_of("moov"), n, udta);
+    let file = joined([box(bytes_of("ftyp"), bytes_of("M4A ")), moov]);
+    let cover = metadata(sized_box(bytes_of("covr"), n, sized_box(bytes_of("data"), n, joined([[0u8, 0u8, 0u8, 13u8, 0u8, 0u8, 0u8, 0u8], image()]))));
+    if (tags.read(file).title != "kept" || tags.mp4(moov).title != "kept" || shown(tags.picture(cover)) != shown(image())) {
+      return test.fail("a clipped MP4 box loses its available fields");
+    }
+    let skip = joined([sized_box(bytes_of("free"), n, []), moov]);
+    if (!tags.mp4(skip).empty()) {
+      return test.fail("an MP4 skip reads outside its box");
+    }
+  }
+  return test.pass();
+}
+
+function test_tag_prefix_bounds(): test.TestOutcome {
+  let list = joined([wire.put_le([], 0u64, 4), wire.put_le([], 1u64, 4), comment("TITLE=kept")]);
+  let files = [flac_block(4u8, list), opus_comments(list), id3(3u8, 0u8, frame3("TIT2", 0u8, bytes_of("kept"))), riff(chunk("LIST", joined([bytes_of("INFO"), chunk("INAM", bytes_of("kept\x00"))]))), metadata(item(named("nam"), bytes_of("kept")))];
+  for file in files {
+    let prefix: u8[] = [];
+    for b in file {
+      // Both readers must return for every incomplete prefix.
+      let text = tags.read(prefix);
+      let picture = tags.picture(prefix);
+      if (text.title.len() > 4 || picture.len() != 0) {
+        return test.fail("a truncated tag invents bytes");
+      }
+      prefix = prefix.append(b);
+    }
+  }
+  return test.pass();
+}
+
+function test_retagged_length_bounds(): test.TestOutcome {
+  let fresh = tags.Tags { ...tags.none(), title: "new" };
+  let lyrics = joined([[0u8], bytes_of("eng"), [0u8], bytes_of("kept")]);
+  let uslt = joined([bytes_of("USLT"), wire.put_be([], lyrics.len() as u64, 4), [0u8, 0u8], lyrics]);
+  for n in bound_lengths() {
+    let bad_frame = joined([bytes_of("XXXX"), wire.put_be([], n, 4), [0u8, 0u8]]);
+    let mp3 = id3(3u8, 0u8, joined([uslt, bad_frame]));
+    let comments = joined([wire.put_le([], 0u64, 4), wire.put_le([], 3u64, 4), comment("LYRICS=kept"), wire.put_le([], n, 4)]);
+    let flac = flac_block(4u8, comments);
+    for file in [mp3, flac] {
+      let Some(out) = tags.retagged(file, fresh) else {
+        return test.fail("a malformed field prevents the tag update");
+      };
+      let t = tags.read(out);
+      if (t.title != "new" || t.lyrics != "kept") {
+        return test.fail("a malformed field loses a prior retained field");
+      }
+    }
+    let bad_vendor = flac_block(4u8, joined([wire.put_le([], n, 4), wire.put_le([], 2u64, 4)]));
+    let Some(out) = tags.retagged(bad_vendor, fresh) else {
+      return test.fail("a malformed vendor prevents the tag update");
+    };
+    if (tags.read(out).title != "new") {
+      return test.fail("a malformed vendor loses the new title");
+    }
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let r = test.new("std/audio/tags");
   r = r.it("an ID3v2.3 tag has texts in UTF-16 and in Latin-1", test_id3v23);
@@ -364,5 +538,14 @@ function main(): i32 {
   r = r.it("an MP3 file gets new tags and keeps its other frames", test_writing_id3);
   r = r.it("a FLAC file gets new comments and keeps its other blocks", test_writing_flac);
   r = r.it("bytes that are not tags give empty tags", test_bytes_that_are_not_tags);
+  r = r.it("comment lengths keep prior fields", test_comment_length_bounds);
+  r = r.it("vendor lengths stay inside their block", test_vendor_length_bounds);
+  r = r.it("ID3 frame and extension lengths stay bounded", test_id3_frame_length_bounds);
+  r = r.it("ID3 pictures retain their available bytes", test_id3_picture_length_bounds);
+  r = r.it("FLAC picture fields stay bounded", test_flac_picture_length_bounds);
+  r = r.it("RIFF lengths keep prior fields", test_riff_length_bounds);
+  r = r.it("MP4 boxes retain their available fields", test_mp4_length_bounds);
+  r = r.it("all incomplete tag prefixes return", test_tag_prefix_bounds);
+  r = r.it("tag updates keep bounded prior fields", test_retagged_length_bounds);
   return r.finish();
 }

@@ -1,0 +1,294 @@
+import "./util";
+import "./ssa";
+
+// A cons-tail loop with two hole positions carries its hole as a box and an
+// index. Each fill tests the index and stores to one of two offsets of the
+// box. `addresses` gives the loop one phi for the address of the hole, so a
+// fill is one store and the loop writes no index.
+
+// h and i are the phis of the box and of the index in the block at head. A
+// fill stores to offset when_eq of the box when the index is key, and to
+// offset when_ne when it is not. tests are the positions of the blocks that
+// test the index.
+struct Loop { head: i32, h: i32, i: i32, key: i32, when_eq: i32, when_ne: i32, tests: i32[] }
+
+function no_loop(): Loop {
+  return Loop { head: -1, h: -1, i: -1, key: 0, when_eq: -1, when_ne: -1, tests: [] };
+}
+
+pub function addresses(f: ssa.SFunc): ssa.SFunc {
+  let g = f;
+  for rounds in 0..4 {
+    let site = find_loop(g);
+    if (site.head < 0) {
+      return g;
+    }
+    g = ssa.prune_dead(with_address(g, site));
+  }
+  return g;
+}
+
+function find_loop(f: ssa.SFunc): Loop {
+  let defs = ssa.inst_defs(f);
+  let at = ssa.block_positions(f);
+  for head in 0..f.blocks.len() {
+    let b = f.blocks[head];
+    if (b.insts.len() >= 2 && b.insts[1].kind_tag == ssa.PHI && distinct(b.preds)) {
+      for ins in b.insts {
+        if (ins.kind_tag == ssa.PHI && all_consts(defs, ins.args)) {
+          let site = index_loop(f, at, defs, head, ins.result);
+          if (site.head >= 0) {
+            return site;
+          }
+        }
+      }
+    }
+  }
+  return no_loop();
+}
+
+function distinct(xs: i32[]): boolean {
+  for k in 0..xs.len() {
+    for j in 0..k {
+      if (xs[j] == xs[k]) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function all_consts(defs: ssa.SInst[], args: i32[]): boolean {
+  for a in args {
+    if (defs[a].kind_tag != ssa.CONST_INT) {
+      return false;
+    }
+  }
+  return args.len() > 0;
+}
+
+// The loop of the index phi i, when each use of i is a test of a fill and
+// each use of the box phi is a fill or a null test.
+function index_loop(f: ssa.SFunc, at: i32[], defs: ssa.SInst[], head: i32, i: i32): Loop {
+  let site = Loop { ...no_loop(), i: i };
+  for bi in 0..f.blocks.len() {
+    for ins in f.blocks[bi].insts {
+      if (util.index_of_i32(ins.args, i) >= 0) {
+        site = with_test(f, at, defs, site, bi, ins);
+        if (site.i < 0) {
+          return no_loop();
+        }
+      }
+    }
+  }
+  if (site.tests.len() == 0 || !box_phi(f, defs, head, site)) {
+    return no_loop();
+  }
+  return Loop { ...site, head: head };
+}
+
+// The loop with the fill that the compare ins of the block at bi decides.
+// A loop with i -1 when ins is not such a compare or the fill does not agree
+// with the fills before it.
+function with_test(f: ssa.SFunc, at: i32[], defs: ssa.SInst[], site: Loop, bi: i32, ins: ssa.SInst): Loop {
+  let b = f.blocks[bi];
+  if (!index_test(defs, b, ins, site.i)) {
+    return no_loop();
+  }
+  let t = ssa.position_of(at, b.term.t);
+  let e = ssa.position_of(at, b.term.f);
+  if (!fill_arms(f, at, b.id, t, e)) {
+    return no_loop();
+  }
+  let st = f.blocks[t].insts[0];
+  let found = Loop { ...site, h: st.args[0], key: defs[ins.args[1]].imm, when_eq: st.imm, when_ne: f.blocks[e].insts[0].imm };
+  if (site.tests.len() > 0 && !same_fill(site, found)) {
+    return no_loop();
+  }
+  return Loop { ...found, tests: site.tests.append(bi) };
+}
+
+// Whether ins compares the index i with a constant and b branches on it.
+function index_test(defs: ssa.SInst[], b: ssa.SBlock, ins: ssa.SInst, i: i32): boolean {
+  if (ins.kind_tag != ssa.BINARY || ins.str != "eq" || ins.args[0] != i || defs[ins.args[1]].kind_tag != ssa.CONST_INT) {
+    return false;
+  }
+  return b.term.kind_tag == ssa.TERM_BRIF && b.term.cond == ins.result && b.term.t != b.term.f;
+}
+
+function same_fill(a: Loop, b: Loop): boolean {
+  return a.h == b.h && a.key == b.key && a.when_eq == b.when_eq && a.when_ne == b.when_ne;
+}
+
+// Whether the blocks at t and e each hold one store of one value to one box,
+// have the block from as their one predecessor, and jump to one block that
+// only they enter.
+function fill_arms(f: ssa.SFunc, at: i32[], from: i32, t: i32, e: i32): boolean {
+  if (t < 0 || e < 0 || !fill_arm(f.blocks[t], from) || !fill_arm(f.blocks[e], from)) {
+    return false;
+  }
+  let a = f.blocks[t];
+  let b = f.blocks[e];
+  if (a.term.target != b.term.target || a.insts[0].args[0] != b.insts[0].args[0] || a.insts[0].args[1] != b.insts[0].args[1]) {
+    return false;
+  }
+  return fill_join(f, ssa.position_of(at, a.term.target));
+}
+
+function fill_join(f: ssa.SFunc, j: i32): boolean {
+  return j >= 0 && f.blocks[j].preds.len() == 2 && (f.blocks[j].insts.len() == 0 || f.blocks[j].insts[0].kind_tag != ssa.PHI);
+}
+
+function fill_arm(b: ssa.SBlock, from: i32): boolean {
+  if (b.preds.len() != 1 || b.preds[0] != from || b.insts.len() != 1 || b.term.kind_tag != ssa.TERM_BR) {
+    return false;
+  }
+  let st = b.insts[0];
+  return st.kind_tag == ssa.ST_AT && st.args.len() == 2 && st.str == "" && st.args[0] != st.args[1];
+}
+
+// Whether the box of the loop is a phi of the head block with each use a
+// fill of the loop or a null test, and each edge into the head gives a null
+// box or a constant index.
+function box_phi(f: ssa.SFunc, defs: ssa.SInst[], head: i32, site: Loop): boolean {
+  let phi = defs[site.h];
+  if (phi.kind_tag != ssa.PHI || util.index_of_i32(results(f.blocks[head]), site.h) < 0 || phi.args.len() != defs[site.i].args.len()) {
+    return false;
+  }
+  let fills = 0;
+  for b in f.blocks {
+    for ins in b.insts {
+      let n = box_use(defs, ins, site.h);
+      if (n < 0) {
+        return false;
+      }
+      fills += n;
+    }
+    if (b.term.kind_tag == ssa.TERM_RET && b.term.value == site.h) {
+      return false;
+    }
+  }
+  return fills == 2 * site.tests.len();
+}
+
+// 1 when ins stores to the box h, 0 when it does not read h or tests it
+// against null, -1 for another use.
+function box_use(defs: ssa.SInst[], ins: ssa.SInst, h: i32): i32 {
+  if (ins.result == h || util.index_of_i32(ins.args, h) < 0 || null_test(defs, ins, h)) {
+    return 0;
+  }
+  if (ins.kind_tag == ssa.ST_AT && ins.args[0] == h && ins.args[1] != h) {
+    return 1;
+  }
+  return -1;
+}
+
+function results(b: ssa.SBlock): i32[] {
+  let out: i32[] = [];
+  for ins in b.insts {
+    out = out.append(ins.result);
+  }
+  return out;
+}
+
+function null_test(defs: ssa.SInst[], ins: ssa.SInst, h: i32): boolean {
+  if (ins.kind_tag != ssa.BINARY || ins.str != "eq" && ins.str != "ne" || ins.args.len() != 2 || ins.args[0] != h) {
+    return false;
+  }
+  let z = defs[ins.args[1]];
+  return z.kind_tag == ssa.CONST_INT && z.imm == 0;
+}
+
+// The function with the address phi. Each edge into the head block computes
+// the address of its hole. Each test block stores through the address and
+// jumps past its two arms, which go away.
+function with_address(f: ssa.SFunc, site: Loop): ssa.SFunc {
+  let defs = ssa.inst_defs(f);
+  let at = ssa.block_positions(f);
+  let head = f.blocks[site.head];
+  let addr = f.nvals;
+  let gone = __alloc_bool(f.blocks.len());
+  let joins = util.minus_ones(f.blocks.len());
+  for c in site.tests {
+    let t = ssa.position_of(at, f.blocks[c].term.t);
+    gone = gone.with(t, true).with(ssa.position_of(at, f.blocks[c].term.f), true);
+    joins = joins.with(ssa.position_of(at, f.blocks[t].term.target), f.blocks[c].id);
+  }
+  let blocks: ssa.SBlock[] = [];
+  for bi in 0..f.blocks.len() {
+    if (!gone[bi]) {
+      let b = retested(f.blocks[bi], defs, site, addr);
+      if (util.index_of_i32(site.tests, bi) >= 0) {
+        b = filled(f, at, b, addr);
+      }
+      if (joins[bi] >= 0) {
+        b = ssa.SBlock { ...b, preds: [joins[bi]] };
+      }
+      if (bi == site.head) {
+        b = with_phi(b, defs, site, addr);
+      }
+      blocks = blocks.append(with_edge(b, defs, head, site, addr));
+    }
+  }
+  return ssa.SFunc { ...f, nvals: f.nvals + 1 + 2 * head.preds.len(), blocks: blocks };
+}
+
+// The block with each null test of the box as a null test of the address.
+function retested(b: ssa.SBlock, defs: ssa.SInst[], site: Loop, addr: i32): ssa.SBlock {
+  let insts: ssa.SInst[] = [];
+  for ins in b.insts {
+    if (null_test(defs, ins, site.h)) {
+      insts = insts.append(ssa.SInst { ...ins, args: [addr, ins.args[1]] });
+    } else {
+      insts = insts.append(ins);
+    }
+  }
+  return ssa.SBlock { ...b, insts: insts };
+}
+
+// The test block with the store through the address in place of its branch.
+function filled(f: ssa.SFunc, at: i32[], b: ssa.SBlock, addr: i32): ssa.SBlock {
+  let arm = f.blocks[ssa.position_of(at, b.term.t)];
+  let st = arm.insts[0];
+  let insts = b.insts.append(ssa.SInst { ...st, args: [addr, st.args[1]], imm: 0 });
+  return ssa.SBlock { ...b, insts: insts, term: ssa.t_br(arm.term.target) };
+}
+
+// The address that the edge of slot s gives: the null of a null box, or the
+// value that with_edge adds to the predecessor.
+function edge_address(defs: ssa.SInst[], site: Loop, addr: i32, s: i32): i32 {
+  let box = defs[site.h].args[s];
+  if (defs[box].kind_tag == ssa.CONST_INT && defs[box].imm == 0) {
+    return box;
+  }
+  return addr + 2 + 2 * s;
+}
+
+function with_phi(b: ssa.SBlock, defs: ssa.SInst[], site: Loop, addr: i32): ssa.SBlock {
+  let args: i32[] = [];
+  for s in 0..b.preds.len() {
+    args = args.append(edge_address(defs, site, addr, s));
+  }
+  let insts: ssa.SInst[] = [ssa.SInst { kind_tag: ssa.PHI, result: addr, args: args, imm: 0, str: "" }];
+  for ins in b.insts {
+    insts = insts.append(ins);
+  }
+  return ssa.SBlock { ...b, insts: insts };
+}
+
+// A predecessor of the head block with the address of the hole that its
+// edge gives: the box plus the offset that the index of the edge selects.
+function with_edge(b: ssa.SBlock, defs: ssa.SInst[], head: ssa.SBlock, site: Loop, addr: i32): ssa.SBlock {
+  let s = util.index_of_i32(head.preds, b.id);
+  if (s < 0 || edge_address(defs, site, addr, s) < addr) {
+    return b;
+  }
+  let offset = site.when_ne;
+  if (defs[defs[site.i].args[s]].imm == site.key) {
+    offset = site.when_eq;
+  }
+  let at = addr + 1 + 2 * s;
+  let insts = b.insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: at, args: [], imm: offset, str: "" });
+  insts = insts.append(ssa.SInst { kind_tag: ssa.BINARY, result: at + 1, args: [defs[site.h].args[s], at], imm: 64, str: "add" });
+  return ssa.SBlock { ...b, insts: insts };
+}

@@ -368,10 +368,12 @@ On `x86-64-kernel`:
 
 - The slot is an exception mnemonic from `"de"` (vector 0) to `"cp"` (vector
   21), or a number from `"32"` to `"255"` for an external interrupt.
-- The reset entry fills a 256-entry IDT in `.bss` with interrupt gates to a
-  park stub. Then it writes the gate of each handler and loads the IDT with
-  `lidt`. An image that calls `__user_run` has a gate for each vector, which
-  sends a trap from ring 3 to the trap frame (item 28 of the record).
+- The reset entry masks both legacy 8259 PICs. After a reset they deliver at
+  vector base 0, where an IRQ arrives as a CPU exception. Then
+  it fills a 256-entry IDT in `.bss` with interrupt gates to a park stub. It
+  writes the gate of each handler and loads the IDT with `lidt`. An image that
+  calls `__user_run` has a gate for each vector, which sends a trap from ring
+  3 to the trap frame (item 28 of the record).
 - The trampoline saves the nine caller-saved general registers and ymm0 to
   ymm15, because the baseline has AVX2. It clears the direction flag and calls
   the handler. Then it restores the registers, drops the error code that the
