@@ -901,15 +901,107 @@ function test_definitions(): test.TestOutcome {
   ]);
 }
 
+function test_patterns(): test.TestOutcome {
+  return checks([
+    (". as [$a, $b] | [$b, $a]", "[1,2]", "[2,1]"),
+    (". as [$a, $b] | [$a, $b]", "null", "[null,null]"),
+    (". as [$a] | $a", "5", "error: Cannot index number with number"),
+    (". as [$a] | $a", "\"abc\"", "error: Cannot index string with number"),
+    (". as {a: $v} | $v", "{\"a\":7}", "7"),
+    (". as {a: $v} | $v", "[1]", "error: Cannot index array with string \"a\""),
+    (". as {\"a\": $v} | $v", "{\"a\":7}", "7"),
+    (". as {$a} | $a", "{\"a\":7}", "7"),
+    (". as {$a: [$b]} | [$a, $b]", "{\"a\":[3]}", "[[3],3]"),
+    (". as {(\"a\", \"b\"): $v} | $v", "{\"a\":1,\"b\":2}", "1\n2"),
+    (". as {(.k): $v} | $v", "{\"k\":\"a\",\"a\":9}", "9"),
+    (". as {(1): $v} | $v", "{}", "compile: Cannot use number (1) as object key"),
+    (". as {a: {b: [$p, {$c}]}} | [$p, $c]", "{\"a\":{\"b\":[1,{\"c\":2}]}}", "[1,2]"),
+    (". as [[$a, $b], [$c, $d]] | [$a, $b, $c, $d]", "[[1,2],[3,4]]", "[1,2,3,4]"),
+    (". as [$a, $a] | $a", "[1,2]", "2"),
+    (". as {a: $v, b: $v} | $v", "{\"a\":1,\"b\":2}", "1"),
+    (". as {b: $v, a: [$v]} | $v", "{\"a\":[1],\"b\":2}", "2"),
+    (". as {(\"a\", \"b\"): $v, (\"c\", \"d\"): $w} | [$v, $w]", "{\"a\":1,\"b\":2,\"c\":3,\"d\":4}", "[1,3]\n[1,4]\n[2,3]\n[2,4]"),
+    (".[] as [$a, $b] | {a: $a, b: $b}", "[[1,2],[3]]", "{\"a\":1,\"b\":2}\n{\"a\":3,\"b\":null}"),
+    (". as [$a] | $b", "[1]", "error: $b is not defined"),
+    (". as [] | 1", "null", "compile: syntax error, unexpected ']'"),
+    (". as {a} | 1", "null", "compile: syntax error, expected ':' but got '}'"),
+    ("reduce .[] as [$a, $b] (0; . + $a * $b)", "[[1,2],[3,4]]", "14"),
+    ("reduce .[] as {(\"k\", \"z\"): $v} ([]; . + [$v])", "[{\"k\":\"a\"},{\"k\":\"b\"}]", "[\"a\",null,\"b\",null]"),
+    ("[foreach .[] as [$a, $b] (0; . + $a; [., $b])]", "[[1,2],[3,4]]", "[[1,2],[4,4]]"),
+    ("[foreach .[] as {a: $v} (0; . + $v)]", "[{\"a\":1},{\"a\":2}]", "[1,3]"),
+    ("[paths(. as [$a] | true)]", "[[1]]", "error: Cannot index number with number"),
+  ]);
+}
+
+function test_pattern_alternatives(): test.TestOutcome {
+  return checks([
+    (".[] | . as {$a, b: [$c, {$d}]} ?// [$a, {$b}, $e] ?// $f | [$a, $b, $c, $d, $e, $f]", "[{\"a\":1,\"b\":[2,{\"d\":3}]},[4,{\"b\":5,\"c\":6},7,8,9],\"foo\"]", "[1,null,2,3,null,null]\n[4,5,null,null,7,null]\n[null,null,null,null,null,\"foo\"]"),
+    (".[] as [$a] ?// $a | $a", "[[1,2],5]", "1\n5"),
+    (".[] as {a: $a} ?// {a: $a} ?// {a: $a} | $a", "[[3],[4],[5],6]", "error: Cannot index array with string \"a\""),
+    (".[] as {a: $a} ?// $a ?// {a: $a} | $a", "[[3],[4],[5],6]", "[3]\n[4]\n[5]\n6"),
+    (".[] as $a ?// {a: $a} ?// {a: $a} | $a", "[[3],[4],[5],6]", "[3]\n[4]\n[5]\n6"),
+    ("[.[] as [$a] ?// $a | if $a == 1 then error(\"x\") else $a end]", "[[1,2],5]", "[[1,2],5]"),
+    (". as [$a] ?// {a: $a} | $a", "5", "error: Cannot index number with string \"a\""),
+    ("reduce .[] as [$a] ?// $a (0; . + $a)", "[[1,2],4]", "5"),
+    (". as [$a] ?// | 1", "null", "compile: syntax error, unexpected '|'"),
+  ]);
+}
+
+function test_labels(): test.TestOutcome {
+  return checks([
+    ("[(label $here | .[] | if . > 1 then break $here else . end), \"hi!\"]", "[0,1,2]", "[0,1,\"hi!\"]"),
+    ("[(label $here | .[] | if . > 1 then break $here else . end), \"hi!\"]", "[0,2,1]", "[0,\"hi!\"]"),
+    ("[label $out | foreach .[] as $item ([3, null]; if .[0] < 1 then break $out else [.[0] - 1, $item] end; .[1])]", "[11,22,33,44,55,66,77,88,99]", "[11,22,33]"),
+    ("[label $if | range(10) | ., (select(. == 5) | break $if)]", "null", "[0,1,2,3,4,5]"),
+    ("[label $a | label $b | 1, break $a, 2]", "null", "[1]"),
+    ("[label $a | (label $b | 1, break $b, 2), 3]", "null", "[1,3]"),
+    ("[label $a | (label $a | 1, break $a, 2), 3]", "null", "[1,3]"),
+    ("def f(g): label $y | (g, 7); [label $x | (f(break $x), 1)]", "null", "[]"),
+    ("def f: label $x | (1, break $x, 2); [f, f]", "null", "[1,1]"),
+    ("[range(5) | label $l | if . == 2 then break $l else . end]", "null", "[0,1,3,4]"),
+    ("label $x | try (break $x) catch .", "null", "{\"__jq\":0}"),
+    ("[label $x | (break $x)?, 1]", "null", "[1]"),
+    ("[path(label $x | .a, break $x, .b)]", "null", "[[\"a\"]]"),
+    ("label $x | break $y", "null", "error: $*label-y is not defined"),
+    ("break $x", "null", "error: $*label-x is not defined"),
+    ("break", "null", "compile: syntax error, unexpected the end of the program"),
+    ("123 as $label | $label", "null", "123"),
+  ]);
+}
+
+function test_prelude(): test.TestOutcome {
+  return checks([
+    ("pick(.[1])", "[1,2,3]", "[null,2]"),
+    ("pick(.a.b, .d)", "{\"a\":{\"b\":1,\"c\":2},\"d\":3,\"e\":4}", "{\"a\":{\"b\":1},\"d\":3}"),
+    ("pick(first)", "[1,2,3]", "[1]"),
+    ("pick(.[-1])", "[1,2,3]", "error: Out of bounds negative array index"),
+    ("transpose", "[[1,2],[3]]", "[[1,3],[2,null]]"),
+    ("transpose", "[]", "[]"),
+    ("[bsearch(0, 1, 2, 3, 4, 5, 6, 7, 8)]", "[1,3,5,7]", "[-1,0,-2,1,-3,2,-4,3,-5]"),
+    ("[bsearch(3, 4, 5)]", "[4]", "[-1,0,-2]"),
+    ("bsearch(1)", "[]", "-1"),
+    ("map(try abs catch .)", "[-1,0,1,-0.5,null,\"a\"]", "[1,0,1,0.5,\"null (null) cannot be negated\",\"a\"]"),
+    ("IN(1, 2, 3)", "2", "true"),
+    ("IN(1, 3)", "2", "false"),
+    ("[IN(.[]; 2, 3)]", "[1,2]", "[true]"),
+    ("INDEX(.id)", "[{\"id\":1,\"v\":\"a\"},{\"id\":\"x\",\"v\":\"b\"}]", "{\"1\":{\"id\":1,\"v\":\"a\"},\"x\":{\"id\":\"x\",\"v\":\"b\"}}"),
+    ("INDEX(.[]; .v)", "[{\"id\":1,\"v\":\"a\"}]", "{\"a\":{\"id\":1,\"v\":\"a\"}}"),
+    ("JOIN({\"a\": 1, \"b\": 2}; .k)", "[{\"k\":\"a\"},{\"k\":\"z\"}]", "[[{\"k\":\"a\"},1],[{\"k\":\"z\"},null]]"),
+    ("[JOIN({\"a\": 1}; .[]; .k)]", "[{\"k\":\"a\"},{\"k\":\"z\"}]", "[[{\"k\":\"a\"},1],[{\"k\":\"z\"},null]]"),
+    ("[JOIN({\"a\": 1}; .[]; .k; .[1])]", "[{\"k\":\"a\"},{\"k\":\"z\"}]", "[1,null]"),
+    ("def abs: 5; abs", "-3", "5"),
+    ("{a, $__loc__}", "{\"a\":1}", "{\"a\":1,\"__loc__\":{\"file\":\"<top-level>\",\"line\":1}}"),
+    ("try error(\"\\($__loc__)\") catch .", "null", "\"{\\\"file\\\":\\\"<top-level>\\\",\\\"line\\\":1}\""),
+    ("1\n| $__loc__ | .line", "null", "2"),
+  ]);
+}
+
 function test_not_yet(): test.TestOutcome {
   return checks([
-    ("label $out | 1", "null", "compile: 'label' " + filter.NOT_YET),
     (".a = .b = 1", "null", "compile: syntax error, unexpected '='"),
     ("test(\"a\")", "null", "compile: the function test/1 " + filter.NOT_YET),
     ("exp", "null", "compile: the function exp/0 " + filter.NOT_YET),
     ("leaf_paths", "null", "compile: the function leaf_paths/0 " + filter.NOT_YET),
-    (". as [$v] | $v", "null", "compile: a destructuring pattern " + filter.NOT_YET),
-    (". as $v ?// [$v] | $v", "null", "compile: a destructuring alternative " + filter.NOT_YET),
   ]);
 }
 
@@ -980,6 +1072,10 @@ function main(): i32 {
   r = r.it("the update operators, map_values and walk", test_updates);
   r = r.it("several deletes in one container", test_deletes);
   r = r.it("functions of a def", test_definitions);
+  r = r.it("destructuring patterns", test_patterns);
+  r = r.it("destructuring alternatives", test_pattern_alternatives);
+  r = r.it("label and break", test_labels);
+  r = r.it("functions that the port has as jq text, and $__loc__", test_prelude);
   r = r.it("the parts that the port leaves out", test_not_yet);
   r = r.it("number literals and computed numbers", test_numbers);
   r = r.it("pretty output", test_output);
