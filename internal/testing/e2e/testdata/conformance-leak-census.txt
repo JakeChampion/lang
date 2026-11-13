@@ -1480,3 +1480,6 @@ nested_owned_field_tuple                           0
 
 # 2026-11-12: match_payload_self_update has balanced allocations and zero live bytes on all three main targets.
 match_payload_self_update                         0
+
+# 2026-11-12: nested_owned_field_variant has balanced allocations and zero live bytes on all three main targets.
+nested_owned_field_variant                         0
