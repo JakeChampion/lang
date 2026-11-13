@@ -1,3 +1,7 @@
+# 2026-11-13: PR #15598, perf-aarch64 job 131666038838 on the merge with main b7e60e3b.
+# The four aarch64 perceus_rbtree rows are 6.1% to 6.4% below their pins. 29695657 pinned the
+# x86_64 rows that #15596 moved, and not these. #15598 changes signatures in std/async and
+# std/sim only. Each row moves to its measured value. Keep all tolerances.
 # 2026-11-13: main e10454a275 (#15596), local perf-bench on x86_64. A value of an enum with
 # no payload is no longer counted, so the rebuilds of rbtree retain and release no Color.
 # perceus_rbtree.ir -10.22%, .text -6.82%; perceus_rbtree_ck.ir -7.54%, .text -6.15%.
@@ -705,8 +709,6 @@ aarch64/perceus_deriv.text	2878
 aarch64/perceus_deriv.ir	77989395
 aarch64/perceus_nqueens.text	1812
 aarch64/perceus_nqueens.ir	90387246
-# 2026-11-13: PR #15605 pins four lower ARM64 tree rows from run 43360903398.
-# All tolerances and other metrics stay unchanged.
 aarch64/perceus_rbtree.text	2994
 aarch64/perceus_rbtree.ir	43047967
 aarch64/perceus_rbtree_ck.text	3070

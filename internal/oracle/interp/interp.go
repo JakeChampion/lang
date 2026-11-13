@@ -354,7 +354,25 @@ const (
 	CauseAllocSize  = "fern: allocation size out of range"
 	CauseFreeRange  = "fern: release of memory outside the heap"
 	CauseDoubleFree = "fern: release of memory that is already free"
+	CauseRecursion  = "fern: recursion limit"
 )
+
+// inlineWorkerAdmit is the method of std/worker that runs a worker body in
+// this process.
+const inlineWorkerAdmit = "__method_worker__Inline_admit"
+
+// MaxCallDepth is the number of Fern calls that can be active at one time.
+// One call takes about 11 KB of the Go stack, so the limit of fern -interp,
+// 1 000 000, is out of reach here.
+const MaxCallDepth = 50000
+
+// tooDeep is the abort of a call at the recursion limit, at the call site.
+func (i *Interp) tooDeep() error {
+	if i.callDepth < MaxCallDepth {
+		return nil
+	}
+	return &Abort{CauseRecursion, fmt.Sprintf("%d calls are active, at line %d column %d", i.callDepth, i.callAt.Line, i.callAt.Col)}
+}
 
 const AbortStatus = 134
 
@@ -550,8 +568,14 @@ type Interp struct {
 	arraySetCopies  int
 	arrayCOW        arrayCOWMode
 	envs            []*env
-	moving          []Value
-	raw             rawMemory
+	// workerDepth is the number of worker bodies that run inline now.
+	workerDepth int
+	// callDepth is the number of Fern calls that are active.
+	callDepth int
+	// callAt is the position of the call expression that is being dispatched.
+	callAt ast.Position
+	moving []Value
+	raw    rawMemory
 }
 
 type arrayCOWMode int
@@ -5106,6 +5130,12 @@ func builtinExit(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("exit: expected number arg, got %T", args[0])
 	}
+	// A worker that exits has no result, which stops the program as the join
+	// of a worker process does.
+	if i.workerDepth > 0 {
+		fmt.Fprintf(i.Stderr, "worker: the worker exited with status %d and no result\n", int(n))
+		n = AbortStatus
+	}
 	if i.Exiter != nil {
 		i.Exiter(int(n))
 	}
@@ -6138,6 +6168,15 @@ type result struct {
 func (i *Interp) callFunc(fn *ast.FuncDecl, args []Value) (Value, error) {
 	if len(args) != len(fn.Params) {
 		return nil, fmt.Errorf("%s: expected %d args, got %d", fn.Name, len(fn.Params), len(args))
+	}
+	if err := i.tooDeep(); err != nil {
+		return nil, err
+	}
+	i.callDepth++
+	defer func() { i.callDepth-- }()
+	if fn.Name == inlineWorkerAdmit {
+		i.workerDepth++
+		defer func() { i.workerDepth-- }()
 	}
 	e := newEnv(nil)
 	for k, p := range fn.Params {
@@ -7602,6 +7641,7 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 		}
 	}
 	disownAll(args[:held])
+	i.callAt = c.P
 	if c.DynTrait != "" {
 		fa, ok := c.Callee.(*ast.FieldAccess)
 		if !ok {
@@ -7681,6 +7721,11 @@ func (i *Interp) callClosure(c *Closure, args []Value) (Value, error) {
 		}
 		return nil, fmt.Errorf("%s: expected %d args, got %d", name, len(c.Decl.Params), len(args))
 	}
+	if err := i.tooDeep(); err != nil {
+		return nil, err
+	}
+	i.callDepth++
+	defer func() { i.callDepth-- }()
 	e := newEnv(c.Env)
 	for k, p := range c.Decl.Params {
 		e.declare(p.Name, args[k])

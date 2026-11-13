@@ -1,0 +1,12 @@
+// A future that nothing waits for is a task that does not finish. A
+// `Future` is `@must_consume`, so the binding must reach a consuming use.
+import "std/async";
+
+function work(): i32 {
+    return 7;
+}
+
+function main(): i32 {
+    let f = async.spawn((): i32 => work());
+    return 0;
+}

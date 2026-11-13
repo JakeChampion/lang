@@ -1,0 +1,8 @@
+examples/jq/tests/jq.test is the test suite of jq 1.7.
+Reference: https://github.com/jqlang/jq/blob/jq-1.7/tests/jq.test
+
+Copyright (C) 2012 Stephen Dolan.
+The suite has the MIT license of jq. The full license text of jq is in COPYING.txt.
+
+The Fern port in examples/jq does not copy source code from jq.
+It implements the behaviour of the jq 1.7 manual.

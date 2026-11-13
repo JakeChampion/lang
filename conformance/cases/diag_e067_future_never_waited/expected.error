@@ -1,0 +1,1 @@
+value of @must_consume type "async.Future" bound to "f" may go out of scope without being consumed

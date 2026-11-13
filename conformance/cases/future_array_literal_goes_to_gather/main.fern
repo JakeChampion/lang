@@ -1,0 +1,24 @@
+// An array literal of futures that is an argument of a call goes to the
+// callee with the obligation of each future. `async.cancel` ends a future
+// whose value the program does not take.
+import "std/async";
+
+function work(n: i32): i32 {
+    return n * 2;
+}
+
+function main(): i32 {
+    let a = async.spawn((): i32 => work(1));
+    let b = async.spawn((): i32 => work(2));
+    let extra = async.spawn((): i32 => work(3));
+    async.cancel(extra);
+    match (async.block_on(async.gather([a, b]))) {
+        Some(v) => {
+            print((v[0] + v[1]).to_string());
+        },
+        None => {
+            print("cancelled");
+        }
+    }
+    return 0;
+}

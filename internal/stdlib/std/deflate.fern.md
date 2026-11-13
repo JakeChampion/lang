@@ -10,6 +10,8 @@ The DEFLATE decoder interprets bit fields, Huffman codes, and history references
 
 Output limits bound decompressed data. `Inflated` retains both the output and the consumed input count. Error values distinguish malformed data from incomplete data and output limits.
 
+The encoder has compression levels 1 to 9, as gzip has. `deflate_level` and `gzip_level` take the level. Level 1 is `deflate_fast`, and level 6 is `deflate` and `gzip`. A higher level visits more candidates at each position and gives smaller output.
+
 ## Module assembly
 
 The root chunk preserves the declaration order. The chunks below contain the complete implementation.
@@ -106,6 +108,7 @@ pub enum InflateError {
   Malformed(string),
   OutputLimit,
   BadChecksum,
+  BadLength,
   BadHeader(string),
 }
 
@@ -131,6 +134,9 @@ pub function (e: InflateError) message(): string {
     },
     BadChecksum => {
       return "the checksum does not match the decompressed data";
+    },
+    BadLength => {
+      return "the stored length does not match the decompressed data";
     },
     BadHeader(what) => {
       return "unsupported compressed data: " + what;
@@ -934,7 +940,7 @@ pub function gunzip(input: [u8], max_out: i32): Result[u8[], InflateError] {
   let out: u8[] = [];
   let at = 0;
   while (at < input.len()) {
-    let member = __gzip_member(input, at, max_out - out.len())?;
+    let member = gzip_member(input, at, max_out - out.len())?;
     out = __joined(out, member.out);
     at += member.consumed;
   }
@@ -958,7 +964,9 @@ function __joined(own out: u8[], more: [u8]): u8[] {
   return out;
 }
 
-function __gzip_member(input: [u8], from: i32, max_out: i32): Result[Inflated, InflateError] {
+// One gzip member at `from`: its header, its deflate data and its trailer.
+// `consumed` counts the bytes of the member.
+pub function gzip_member(input: [u8], from: i32, max_out: i32): Result[Inflated, InflateError] {
   let body = __gzip_header(input, from)?;
   let inflated = inflate_from(input, body, max_out)?;
   let trailer = body + inflated.consumed;
@@ -967,8 +975,11 @@ function __gzip_member(input: [u8], from: i32, max_out: i32): Result[Inflated, I
   }
   let crc = __le32(input, trailer);
   let isize = __le32(input, trailer + 4);
-  if (crc != crc32.new().update(inflated.out[:]).finish() || isize != inflated.out.len() as u32) {
+  if (crc != crc32.new().update(inflated.out[:]).finish()) {
     return Err(BadChecksum);
+  }
+  if (isize != inflated.out.len() as u32) {
+    return Err(BadLength);
   }
   return Ok(Inflated { out: inflated.out, consumed: trailer + 8 - from });
 }
@@ -1101,10 +1112,30 @@ pub function deflate_fast(input: [u8]): u8[] {
   return __deflated_tokens(input, __fast_tokens(input), true);
 }
 
+// Level 1 is deflate_fast and level 6 is deflate. A level outside 1 to 9 is
+// the nearest of the two ends.
+pub function deflate_level(input: [u8], level: i32): u8[] {
+  if (level <= 1) {
+    return deflate_fast(input);
+  }
+  let e = __effort(level);
+  return __deflated_tokens(input, __tokens(input, 32768, e.depth, e.nice), true);
+}
+
 pub function gzip(input: [u8]): u8[] {
+  return gzip_level(input, 6);
+}
+
+pub function gzip_level(input: [u8], level: i32): u8[] {
   let crc = crc32.new().update(input).finish();
-  let head = [31 as u8, 139 as u8, 8 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 255 as u8];
-  return __put_le32(__put_le32(__joined(head, deflate(input)), crc), input.len() as u32);
+  let xfl = 0;
+  if (level <= 1) {
+    xfl = 4;
+  } else if (level >= 9) {
+    xfl = 2;
+  }
+  let head = [31 as u8, 139 as u8, 8 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, xfl as u8, 255 as u8];
+  return __put_le32(__put_le32(__joined(head, deflate_level(input, level)), crc), input.len() as u32);
 }
 ```
 
@@ -1298,7 +1329,8 @@ function __log2(x: i32): i32 {
 ```fern
 <<25 function __deflated(input: [u8], window_bits: i32, final: boolean): u8[]>>=
 function __deflated(input: [u8], window_bits: i32, final: boolean): u8[] {
-  return __deflated_tokens(input, __tokens(input, 1 << window_bits), final);
+  let e = __effort(6);
+  return __deflated_tokens(input, __tokens(input, 1 << window_bits, e.depth, e.nice), final);
 }
 
 function __deflated_tokens(input: [u8], toks: i32[], final: boolean): u8[] {
@@ -1773,10 +1805,39 @@ function __put_header(w: __Bits, h: __Header): __Bits {
   return w;
 }
 
+// How far the search of a compression level looks at one position: the
+// candidates it visits and the match length that ends it.
+struct __Effort { depth: i32, nice: i32 }
+
+function __effort(level: i32): __Effort {
+  if (level <= 2) {
+    return __Effort { depth: 8, nice: 16 };
+  }
+  if (level == 3) {
+    return __Effort { depth: 16, nice: 32 };
+  }
+  if (level == 4) {
+    return __Effort { depth: 24, nice: 48 };
+  }
+  if (level == 5) {
+    return __Effort { depth: 30, nice: 58 };
+  }
+  if (level == 6) {
+    return __Effort { depth: 35, nice: 65 };
+  }
+  if (level == 7) {
+    return __Effort { depth: 64, nice: 128 };
+  }
+  if (level == 8) {
+    return __Effort { depth: 256, nice: 258 };
+  }
+  return __Effort { depth: 1024, nice: 258 };
+}
+
 // Both hashes have bounded chains. Each ring entry stores the four-byte
 // link in its low word and the three-byte link in its high word. Heads
 // refer only to positions whose ring entries have already been written.
-function __tokens(input: [u8], window: i32): i32[] {
+function __tokens(input: [u8], window: i32, depth: i32, nice: i32): i32[] {
   let n = input.len();
   let head3 = __filled(32768, -1);
   let head4 = __filled(65536, -1);
@@ -1799,8 +1860,8 @@ function __tokens(input: [u8], window: i32): i32[] {
       prev = prev.with(pos & window - 1, c3 as i64 << 32 | (c4 as u32) as i64);
     }
     let cur = (0, 0);
-    if (pos >= skip && held.0 < 65) {
-      cur = __longest(input, pos, c3, c4, prev, window, held.0);
+    if (pos >= skip && held.0 < nice) {
+      cur = __longest(input, pos, c3, c4, prev, window, held.0, depth, nice);
     }
     if (pos >= skip && held.0 >= 3 && cur.0 <= held.0) {
       out = out.append(held.0 << 16 | held.1);
@@ -1882,24 +1943,24 @@ function __common(input: [u8], from: i32, pos: i32): i32 {
 }
 
 // The longest match at pos, longer than a held match of 3 or more bytes. A
-// search visits at most 35 candidates and stops at a match of 65 bytes. The
-// search for the lazy step visits half as many. Three-byte matches use
+// search visits at most chain candidates and stops at a match of longest
+// bytes. The search for the lazy step visits half as many. Three-byte matches use
 // the requested window. If the newest three-byte hash entry is a collision
 // and no longer match exists, its chain supplies an earlier matching entry.
 @inline
-function __longest(input: [u8], pos: i32, c3: i32, cand: i32, prev: i64[], window: i32, held: i32): (i32, i32) {
+function __longest(input: [u8], pos: i32, c3: i32, cand: i32, prev: i64[], window: i32, held: i32, chain: i32, longest: i32): (i32, i32) {
   let max = cmp.min(258, input.len() - pos);
-  let nice = cmp.min(65, max);
+  let nice = cmp.min(longest, max);
   if (max < 4 || held >= nice) {
     return (0, 0);
   }
   let first = __le32(input, pos);
   let best_len = 0;
   let best_dist = 0;
-  let depth = 35;
+  let depth = chain;
   if (held >= 3) {
     best_len = held;
-    depth = 17;
+    depth = chain >> 1;
   } else if (c3 >= 0 && pos - c3 <= window && (__le32(input, c3) ^ first) << 8 == 0u32) {
     best_len = 3;
     best_dist = pos - c3;

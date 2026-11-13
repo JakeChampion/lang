@@ -1,0 +1,586 @@
+// The evaluator of the jq language.
+//
+// `run` gives the outputs of a filter for one input. jq gives the outputs one
+// at a time, and an error stops the filter; `Outputs` holds the values before
+// the error and the error.
+import "std/json";
+import "std/string";
+import "./filter";
+import "./number";
+import "./output";
+
+pub struct Outputs { values: json.JsonValue[], error: string }
+
+pub struct Env { names: string[], values: json.JsonValue[] }
+
+pub function env(): Env {
+  return Env { names: [], values: [] };
+}
+
+pub function (e: Env) with(name: string, value: json.JsonValue): Env {
+  return Env { names: e.names.append(name), values: e.values.append(value) };
+}
+
+function ok(values: json.JsonValue[]): Outputs {
+  return Outputs { values: values, error: "" };
+}
+
+function one(v: json.JsonValue): Outputs {
+  return ok([v]);
+}
+
+function fail(message: string): Outputs {
+  return Outputs { values: [], error: message };
+}
+
+function (o: Outputs) failed(): boolean {
+  return o.error.len() > 0;
+}
+
+// `more` after `o`, unless `o` already failed.
+function (o: Outputs) then(more: Outputs): Outputs {
+  return Outputs { values: o.values.concat(more.values), error: more.error };
+}
+
+pub function type_name(v: json.JsonValue): string {
+  return match (v) {
+    json.JNull => "null",
+    json.JBool(_) => "boolean",
+    json.JNumber(_) => "number",
+    json.JString(_) => "string",
+    json.JArray(_) => "array",
+    json.JObject(_) => "object",
+  };
+}
+
+// The value as an error message shows it: compact, and cut to 11 bytes and
+// "..." when it is longer than 14.
+pub function shown(v: json.JsonValue): string {
+  let s = output.compact(v);
+  if (s.len() > 14) {
+    return slice_unchecked(s, 0, 11).to_owned() + "...";
+  }
+  return s;
+}
+
+pub function truthy(v: json.JsonValue): boolean {
+  return match (v) {
+    json.JNull => false,
+    json.JBool(b) => b,
+    _ => true,
+  };
+}
+
+pub function run(f: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+  match (f) {
+    filter.Identity => {
+      return one(input);
+    },
+    filter.Literal(v) => {
+      return one(v);
+    },
+    filter.Var(name) => {
+      return lookup(e, name);
+    },
+    filter.Index(target, key) => {
+      return run_index(target, key, input, e);
+    },
+    filter.Slice(target, from, to) => {
+      return run_slice(target, from, to, input, e);
+    },
+    filter.Iterate(target) => {
+      return each(run(target, input, e), iterate);
+    },
+    filter.Optional(inner) => {
+      let o = run(inner, input, e);
+      return ok(o.values);
+    },
+    filter.Pipe(a, b) => {
+      return run_pipe(run(a, input, e), b, e);
+    },
+    filter.Comma(a, b) => {
+      let o = run(a, input, e);
+      if (o.failed()) {
+        return o;
+      }
+      return o.then(run(b, input, e));
+    },
+    filter.Collect(inner) => {
+      let o = run(inner, input, e);
+      if (o.failed()) {
+        return fail(o.error);
+      }
+      return one(json.JArray(o.values));
+    },
+    filter.EmptyArray => {
+      return one(json.JArray([]));
+    },
+    filter.Object(keys, values) => {
+      return build_object(keys, values, 0, [], [], input, e);
+    },
+    filter.Compare(op, a, b) => {
+      return run_compare(op, a, b, input, e);
+    },
+    filter.And(a, b) => {
+      return run_logic(false, a, b, input, e);
+    },
+    filter.Or(a, b) => {
+      return run_logic(true, a, b, input, e);
+    },
+    filter.Negate(inner) => {
+      return each(run(inner, input, e), negate);
+    }
+  }
+}
+
+function lookup(e: Env, name: string): Outputs {
+  let i = e.names.len() - 1;
+  while (i >= 0) {
+    if (e.names[i] == name) {
+      return one(e.values[i]);
+    }
+    i -= 1;
+  }
+  return fail("$" + name + " is not defined");
+}
+
+// The outputs of `step` for each value of `o`, in order.
+function each(o: Outputs, step: (json.JsonValue) => Outputs): Outputs {
+  let out = ok([]);
+  for v in o.values {
+    out = out.then(step(v));
+    if (out.failed()) {
+      return out;
+    }
+  }
+  return Outputs { ...out, error: o.error };
+}
+
+function run_pipe(o: Outputs, b: filter.Ast, e: Env): Outputs {
+  let out = ok([]);
+  for v in o.values {
+    out = out.then(run(b, v, e));
+    if (out.failed()) {
+      return out;
+    }
+  }
+  return Outputs { ...out, error: o.error };
+}
+
+function iterate(v: json.JsonValue): Outputs {
+  return match (v) {
+    json.JArray(items) => ok(items),
+    json.JObject(o) => ok(o.values()),
+    _ => fail("Cannot iterate over " + type_name(v) + " (" + shown(v) + ")"),
+  };
+}
+
+function negate(v: json.JsonValue): Outputs {
+  if let json.JNumber(t) = v {
+    return one(json.JNumber(number.format(-number.value(t))));
+  }
+  return fail(type_name(v) + " (" + shown(v) + ") cannot be negated");
+}
+
+// The index runs on the input. jq takes each key, and then each target.
+function run_index(target: filter.Ast, key: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+  let keys = run(key, input, e);
+  let out = ok([]);
+  for k in keys.values {
+    let targets = run(target, input, e);
+    for t in targets.values {
+      out = out.then(index(t, k));
+      if (out.failed()) {
+        return out;
+      }
+    }
+    if (targets.failed()) {
+      return Outputs { ...out, error: targets.error };
+    }
+  }
+  return Outputs { ...out, error: keys.error };
+}
+
+function index_error(v: json.JsonValue, k: json.JsonValue): Outputs {
+  if let json.JString(s) = k {
+    return fail("Cannot index " + type_name(v) + " with string \"" + s + "\"");
+  }
+  return fail("Cannot index " + type_name(v) + " with " + type_name(k));
+}
+
+pub function index(v: json.JsonValue, k: json.JsonValue): Outputs {
+  match (v) {
+    json.JNull => {
+      return match (k) {
+        json.JString(_) => one(json.JNull),
+        json.JNumber(_) => one(json.JNull),
+        json.JObject(_) => one(json.JNull),
+        _ => index_error(v, k),
+      };
+    },
+    json.JObject(o) => {
+      if let json.JString(s) = k {
+        return one(o.get_or(s, json.JNull));
+      }
+      return index_error(v, k);
+    },
+    json.JArray(items) => {
+      if let json.JNumber(t) = k {
+        let i = floor_index(number.value(t));
+        if (i < 0) {
+          i += items.len();
+        }
+        if (i < 0 || i >= items.len()) {
+          return one(json.JNull);
+        }
+        return one(items[i]);
+      }
+      return index_error(v, k);
+    },
+    _ => {
+      return index_error(v, k);
+    }
+  }
+}
+
+// The i32 of a floored index. An index past the range of i32 is outside any
+// array.
+function floor_index(x: f64): i32 {
+  if (x != x) {
+    return 0;
+  }
+  if (x >= 2147483647.0) {
+    return 2147483647;
+  }
+  if (x <= -2147483648.0) {
+    return -2147483647;
+  }
+  let i = x as i32;
+  if (i as f64 > x) {
+    i -= 1;
+  }
+  return i;
+}
+
+function ceil_index(x: f64): i32 {
+  let i = floor_index(x);
+  if (i as f64 < x && i < 2147483647) {
+    i += 1;
+  }
+  return i;
+}
+
+function run_slice(target: filter.Ast, from: filter.Ast, to: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+  let tos = run(to, input, e);
+  let out = ok([]);
+  for t in tos.values {
+    let froms = run(from, input, e);
+    for f in froms.values {
+      let targets = run(target, input, e);
+      for v in targets.values {
+        out = out.then(slice(v, f, t));
+        if (out.failed()) {
+          return out;
+        }
+      }
+      if (targets.failed()) {
+        return Outputs { ...out, error: targets.error };
+      }
+    }
+    if (froms.failed()) {
+      return Outputs { ...out, error: froms.error };
+    }
+  }
+  return Outputs { ...out, error: tos.error };
+}
+
+struct Bounds { start: i32, end: i32, error: string }
+
+function bound(b: json.JsonValue, fallback: i32, len: i32, up: boolean): (i32, string) {
+  let i = fallback;
+  match (b) {
+    json.JNull => {},
+    json.JNumber(t) => {
+      if (up) {
+        i = ceil_index(number.value(t));
+      } else {
+        i = floor_index(number.value(t));
+      }
+      if (i < 0) {
+        i += len;
+      }
+    },
+    _ => {
+      return (0, "Start and end indices of an array slice must be numbers");
+    }
+  }
+  if (i < 0) {
+    i = 0;
+  }
+  if (i > len) {
+    i = len;
+  }
+  return (i, "");
+}
+
+function bounds(f: json.JsonValue, t: json.JsonValue, len: i32): Bounds {
+  let (start, e1) = bound(f, 0, len, false);
+  let (end, e2) = bound(t, len, len, true);
+  if (e1.len() > 0 || e2.len() > 0) {
+    return Bounds { start: 0, end: 0, error: e1 + e2 };
+  }
+  if (end < start) {
+    end = start;
+  }
+  return Bounds { start: start, end: end, error: "" };
+}
+
+pub function slice(v: json.JsonValue, f: json.JsonValue, t: json.JsonValue): Outputs {
+  match (v) {
+    json.JNull => {
+      return one(json.JNull);
+    },
+    json.JArray(items) => {
+      let b = bounds(f, t, items.len());
+      if (b.error.len() > 0) {
+        return fail(b.error);
+      }
+      let part: json.JsonValue[] = [];
+      for i in b.start..b.end {
+        part = part.append(items[i]);
+      }
+      return one(json.JArray(part));
+    },
+    json.JString(s) => {
+      let starts = char_starts(s);
+      let b = bounds(f, t, starts.len() - 1);
+      if (b.error.len() > 0) {
+        return fail(b.error);
+      }
+      return one(json.JString(slice_unchecked(s, starts[b.start], starts[b.end]).to_owned()));
+    },
+    _ => {
+      return fail("Cannot index " + type_name(v) + " with object");
+    }
+  }
+}
+
+// The byte offset of each code point of `s`, and its length at the end.
+function char_starts(s: string): i32[] {
+  let out: i32[] = [];
+  for i in 0..s.len() {
+    if ((s[i] & 0xc0 as u8) != 0x80 as u8) {
+      out = out.append(i);
+    }
+  }
+  return out.append(s.len());
+}
+
+function build_object(keys: filter.Ast[], values: filter.Ast[], at: i32, names: string[], items: json.JsonValue[], input: json.JsonValue, e: Env): Outputs {
+  if (at == keys.len()) {
+    return one(json.JObject(object_of(names, items)));
+  }
+  let ks = run(keys[at], input, e);
+  let out = ok([]);
+  for k in ks.values {
+    let json.JString(name) = k else {
+      return out.then(fail("Cannot use " + type_name(k) + " (" + shown(k) + ") as object key"));
+    };
+    let vs = run(values[at], input, e);
+    for v in vs.values {
+      out = out.then(build_object(keys, values, at + 1, names.append(name), items.append(v), input, e));
+      if (out.failed()) {
+        return out;
+      }
+    }
+    if (vs.failed()) {
+      return Outputs { ...out, error: vs.error };
+    }
+  }
+  return Outputs { ...out, error: ks.error };
+}
+
+// A later entry with the same name replaces the value and keeps the place.
+function object_of(names: string[], items: json.JsonValue[]): json.JsonObject {
+  let o = json.object();
+  for i in 0..names.len() {
+    o = o.insert(names[i], items[i]);
+  }
+  return o;
+}
+
+// jq takes each right value, and then each left value.
+function run_compare(op: string, a: filter.Ast, b: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+  let rights = run(b, input, e);
+  let out = ok([]);
+  for r in rights.values {
+    let lefts = run(a, input, e);
+    for l in lefts.values {
+      out = out.then(one(json.JBool(compare_holds(op, order(l, r)))));
+    }
+    if (lefts.failed()) {
+      return Outputs { ...out, error: lefts.error };
+    }
+  }
+  return Outputs { ...out, error: rights.error };
+}
+
+function compare_holds(op: string, c: i32): boolean {
+  return match (op) {
+    "==" => c == 0,
+    "!=" => c != 0,
+    "<" => c < 0,
+    "<=" => c <= 0,
+    ">" => c > 0,
+    _ => c >= 0,
+  };
+}
+
+// `a and b` is false for a false left value and takes each right value
+// otherwise. `a or b` is true for a true left value.
+function run_logic(is_or: boolean, a: filter.Ast, b: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+  let lefts = run(a, input, e);
+  let out = ok([]);
+  for l in lefts.values {
+    if (truthy(l) == is_or) {
+      out = out.then(one(json.JBool(is_or)));
+      continue;
+    }
+    let rights = run(b, input, e);
+    for r in rights.values {
+      out = out.then(one(json.JBool(truthy(r))));
+    }
+    if (rights.failed()) {
+      return Outputs { ...out, error: rights.error };
+    }
+  }
+  return Outputs { ...out, error: lefts.error };
+}
+
+function rank(v: json.JsonValue): i32 {
+  return match (v) {
+    json.JNull => 0,
+    json.JBool(b) => if (b) { 2 } else { 1 },
+    json.JNumber(_) => 3,
+    json.JString(_) => 4,
+    json.JArray(_) => 5,
+    json.JObject(_) => 6,
+  };
+}
+
+function sign(c: i32): i32 {
+  if (c < 0) {
+    return -1;
+  }
+  if (c > 0) {
+    return 1;
+  }
+  return 0;
+}
+
+function compare_text(a: string, b: string): i32 {
+  let n = a.len();
+  if (b.len() < n) {
+    n = b.len();
+  }
+  for i in 0..n {
+    if (a[i] != b[i]) {
+      if (a[i] < b[i]) {
+        return -1;
+      }
+      return 1;
+    }
+  }
+  return sign(a.len() - b.len());
+}
+
+function sorted(names: string[]): string[] {
+  let out = names;
+  for i in 1..out.len() {
+    let j = i;
+    while (j > 0 && compare_text(out[j - 1], out[j]) > 0) {
+      let t = out[j];
+      out = out.with(j, out[j - 1]).with(j - 1, t);
+      j -= 1;
+    }
+  }
+  return out;
+}
+
+function compare_arrays(a: json.JsonValue[], b: json.JsonValue[]): i32 {
+  let n = a.len();
+  if (b.len() < n) {
+    n = b.len();
+  }
+  for i in 0..n {
+    let c = order(a[i], b[i]);
+    if (c != 0) {
+      return c;
+    }
+  }
+  return sign(a.len() - b.len());
+}
+
+// Objects compare by their sorted keys, and then by the values in the order
+// of those keys.
+function compare_objects(a: json.JsonObject, b: json.JsonObject): i32 {
+  let ka = sorted(a.keys());
+  let kb = sorted(b.keys());
+  let ja: json.JsonValue[] = [];
+  let jb: json.JsonValue[] = [];
+  for k in ka {
+    ja = ja.append(json.JString(k));
+  }
+  for k in kb {
+    jb = jb.append(json.JString(k));
+  }
+  let c = compare_arrays(ja, jb);
+  if (c != 0) {
+    return c;
+  }
+  for k in ka {
+    let d = order(a.get_or(k, json.JNull), b.get_or(k, json.JNull));
+    if (d != 0) {
+      return d;
+    }
+  }
+  return 0;
+}
+
+// The order of jq: null, false, true, numbers, strings, arrays, objects.
+pub function order(a: json.JsonValue, b: json.JsonValue): i32 {
+  let ra = rank(a);
+  let rb = rank(b);
+  if (ra != rb) {
+    return sign(ra - rb);
+  }
+  match (a) {
+    json.JNumber(x) => {
+      let json.JNumber(y) = b else {
+        return 0;
+      };
+      return number.compare(x, y);
+    },
+    json.JString(x) => {
+      let json.JString(y) = b else {
+        return 0;
+      };
+      return compare_text(x, y);
+    },
+    json.JArray(x) => {
+      let json.JArray(y) = b else {
+        return 0;
+      };
+      return compare_arrays(x, y);
+    },
+    json.JObject(x) => {
+      let json.JObject(y) = b else {
+        return 0;
+      };
+      return compare_objects(x, y);
+    },
+    _ => {
+      return 0;
+    }
+  }
+}

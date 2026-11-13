@@ -2403,7 +2403,26 @@ function enosys_error(path: string): Value {
   return io_err_value(Other(path, "Function not implemented", enosys_errno()));
 }
 
+// 1 for the method of std/worker that runs a worker body in this process, the
+// `admit` of its inline scheduler, and 0 for each other function.
+function inline_worker(fd: parser.FuncDecl): i64 {
+  if (fd.name == "admit" && fd.receiver_type == "worker__Inline") {
+    return 1;
+  }
+  return 0;
+}
+
+// A worker that exits has no result, which stops the program as the join of
+// a worker process does.
+function worker_exit(heap: interpheap.Heap, name: string, args: Value[]): void {
+  if (name == "exit" && heap.workers.get() > 0i64) {
+    eprint("worker: the worker exited with status " + util.i32_to_string(arg_i32(args, 0)) + " and no result");
+    exit(134);
+  }
+}
+
 function call_host(heap: interpheap.Heap, name: string, args: Value[]): Value {
+  worker_exit(heap, name, args);
   if (is_raw_floor(name)) {
     return v_err(name + " takes machine addresses, and the interpreter has no address space");
   }
@@ -5334,6 +5353,7 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
     return v_variant_in(env.heap, variant_enum, variant_name, arg_vals);
   }
   if (is_method) {
+    env.heap.call_at.set((c.line, c.col));
     return call_method_targs(env.heap, recv, recv_static, name, arg_vals, targs, env.funcs, env.aliases, env.type_decls);
   }
   if (targs.len() == 0 && callee_known && !is_closure) {
@@ -5348,6 +5368,7 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
         }
       }
     }
+    env.heap.call_at.set((c.line, c.col));
     return call_closure_mode(env.heap, closure_val, arg_vals, env.funcs, env.aliases, env.type_decls, inline_value);
   }
   if (!callee_known) {
@@ -5355,6 +5376,7 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
       return member;
     }
   }
+  env.heap.call_at.set((c.line, c.col));
   return call_func_targs(env.heap, name, arg_vals, targs, expect, env.funcs, env.aliases, env.type_decls);
 }
 
@@ -5836,6 +5858,31 @@ function aliases_with_enums(aliases: parser.TypeAlias[], types: parser.StructDec
   return out;
 }
 
+// The limit of the Fern calls that are active at one time.
+const MAX_CALL_DEPTH: i64 = 1000000;
+
+// The abort of a call at the recursion limit, at its call site, or None.
+function too_deep(heap: interpheap.Heap): Option[Value] {
+  let depth = heap.depth.get();
+  if (depth < MAX_CALL_DEPTH) {
+    return None;
+  }
+  let (line, col) = heap.call_at.get();
+  return Some(v_abort(aborts.recursion_limit(), util.i64_to_string(depth) + " calls are active, at line " + util.i32_to_string(line) + " column " + util.i32_to_string(col)));
+}
+
+// Runs the body of a call, which is one more active call while it runs.
+function call_block(heap: interpheap.Heap, body: ast.Stmt[], own env: Env): StepResult {
+  if let Some(abort) = too_deep(heap) {
+    return StepResult { env: env, ret: abort, sig: 1 };
+  }
+  let depth = heap.depth.get();
+  heap.depth.set(depth + 1i64);
+  let step = eval_block(body, env);
+  heap.depth.set(depth);
+  return step;
+}
+
 function call_closure(heap: interpheap.Heap, cv: Value, args: Value[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   return call_closure_mode(heap, cv, args, funcs, aliases, type_decls, false);
 }
@@ -5876,7 +5923,7 @@ function call_closure_mode(heap: interpheap.Heap, cv: Value, args: Value[], func
     let tail = eval_stmt(fv.body[fv.body.len() - 1], leading.env);
     return coerce_int_width(tail.ret, fv.ret_type);
   }
-  let step = eval_block(fv.body, unsafe { share_unchecked(env) });
+  let step = call_block(heap, fv.body, unsafe { share_unchecked(env) });
   if (step.sig != 1) {
     return v_void();
   }
@@ -5952,7 +5999,7 @@ function call_assoc(heap: interpheap.Heap, type_name: string, name: string, args
   for j in 0..fd.params.len() {
     env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
   }
-  let step = eval_block(fd.body, unsafe { share_unchecked(env) });
+  let step = call_block(heap, fd.body, unsafe { share_unchecked(env) });
   if (step.sig != 1) {
     return v_void();
   }
@@ -6545,7 +6592,10 @@ function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: s
       for j in 0..fd.params.len() {
         env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
       }
-      let step = eval_block(fd.body, unsafe { share_unchecked(env) });
+      let worker = inline_worker(fd);
+      heap.workers.set(heap.workers.get() + worker);
+      let step = call_block(heap, fd.body, unsafe { share_unchecked(env) });
+      heap.workers.set(heap.workers.get() - worker);
       if (step.sig != 1) {
         return v_void();
       }
@@ -8320,7 +8370,7 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
       for j in 0..fd.params.len() {
         env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
       }
-      let step = eval_block(fd.body, unsafe { share_unchecked(env) });
+      let step = call_block(heap, fd.body, unsafe { share_unchecked(env) });
       if (step.sig != 1) {
         return v_void();
       }
