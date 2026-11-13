@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
@@ -4449,7 +4450,7 @@ func builtinSubprocess(_ *Interp, args []Value) (Value, error) {
 		}
 		argv[i] = string(s)
 	}
-	c := exec.Command(string(cmdStr), argv...)
+	c := subprocessCommand(string(cmdStr), argv)
 	if len(stdinText) > 0 {
 		c.Stdin = strings.NewReader(string(stdinText))
 	}
@@ -4476,6 +4477,26 @@ func builtinSubprocess(_ *Interp, args []Value) (Value, error) {
 			"exit_code": Number(int64(exitCode)),
 		},
 	}, nil
+}
+
+// subprocessCommand finds `name` as execvp does, as the native runtimes do. An
+// empty element of PATH is the current directory, and without PATH the
+// directories are /bin and /usr/bin.
+func subprocessCommand(name string, argv []string) *exec.Cmd {
+	if _, set := os.LookupEnv("PATH"); !set && !strings.ContainsRune(name, '/') {
+		for _, dir := range []string{"/bin", "/usr/bin"} {
+			if st, err := os.Stat(filepath.Join(dir, name)); err == nil && st.Mode().IsRegular() && st.Mode()&0o111 != 0 {
+				c := exec.Command(filepath.Join(dir, name), argv...)
+				c.Args[0] = name
+				return c
+			}
+		}
+	}
+	c := exec.Command(name, argv...)
+	if errors.Is(c.Err, exec.ErrDot) {
+		c.Err = nil
+	}
+	return c
 }
 
 func classifyIoError(path string, err error) *Enum {

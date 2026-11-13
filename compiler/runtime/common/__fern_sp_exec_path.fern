@@ -1,0 +1,78 @@
+// __fern_sp_exec_path runs `cmdz` as execvp does. A name with a `/` runs as
+// given. Another name is tried in each directory of PATH, and an empty element
+// is the current directory. Without PATH the directories are /bin and /usr/bin.
+// It returns only when no try runs, with the error of the search: EACCES if a
+// try gave it, else the error that stopped the search, else ENOENT.
+function __fern_sp_exec_path(cmdz: usize, clen: i32, argv: usize, envp: usize): i32 {
+  let i = 0;
+  while (i < clen) {
+    if (__raw_load8(cmdz, i) == 47) {
+      return __fern_sp_exec_at(cmdz, 0, cmdz, clen, argv, envp);
+    }
+    i += 1;
+  }
+  let fallback = "/bin:/usr/bin";
+  let path = __raw_data(fallback);
+  let plen = fallback.len();
+  let found = __fern_sp_path_entry(envp);
+  if (found != 0 as usize) {
+    path = found + 5 as usize;
+    plen = 0;
+    while (__raw_load8(path, plen) != 0) {
+      plen += 1;
+    }
+  }
+  let denied = false;
+  let start = 0;
+  while (start <= plen) {
+    let end = start;
+    while (end < plen && __raw_load8(path, end) != 58) {
+      end += 1;
+    }
+    let rc = __fern_sp_exec_in(path + start as usize, end - start, cmdz, clen, argv, envp);
+    if (rc == -13) {
+      denied = true;
+    } else if (rc != -2 && rc != -20) {
+      return rc;
+    }
+    start = end + 1;
+  }
+  if (denied) {
+    return -13;
+  }
+  return -2;
+}
+
+// The entry `PATH=...` of `envp`, or 0.
+function __fern_sp_path_entry(envp: usize): usize {
+  if (envp == 0 as usize) {
+    return 0 as usize;
+  }
+  let idx = 0;
+  let entry = __raw_load_ptr(envp, 0);
+  while (entry != 0) {
+    if (__raw_load8(entry, 0) == 80 && __raw_load8(entry, 1) == 65 && __raw_load8(entry, 2) == 84 && __raw_load8(entry, 3) == 72
+      && __raw_load8(entry, 4) == 61) {
+      return entry;
+    }
+    idx += 1;
+    entry = __raw_load_ptr(envp, idx);
+  }
+  return 0 as usize;
+}
+
+// Tries `cmdz` in the directory of `dlen` bytes at `dir`. An empty directory
+// is the current one.
+function __fern_sp_exec_in(dir: usize, dlen: i32, cmdz: usize, clen: i32, argv: usize, envp: usize): i32 {
+  if (dlen == 0) {
+    return __fern_sp_exec_at(cmdz, 0, cmdz, clen, argv, envp);
+  }
+  let pre = __raw_alloc(dlen + 1);
+  let k = 0;
+  while (k < dlen) {
+    __raw_store8(pre, k, __raw_load8(dir, k));
+    k += 1;
+  }
+  __raw_store8(pre, dlen, 47);
+  return __fern_sp_exec_at(pre, dlen + 1, cmdz, clen, argv, envp);
+}
