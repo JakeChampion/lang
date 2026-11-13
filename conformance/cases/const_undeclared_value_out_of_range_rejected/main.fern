@@ -1,0 +1,2 @@
+const Z = 1 << 40;
+function main(): i32 { let x: i32 = Z; return x; }

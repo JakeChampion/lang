@@ -566,6 +566,17 @@ pub function settle(v: Value, ty: string): Value {
   return v;
 }
 
+// A value that folded in 64 bits, in the type that its reads settled on. A
+// value that the type does not hold is E047, as it is at the read.
+pub function settle_folded(v: Value, ty: string): Value {
+  if let IntValue(n) = v.data {
+    if (v.error.len() == 0 && integer_type(ty) && !holds(n.value, ty)) {
+      return Value { ...refuse("literal " + util.i64_to_string(n.value) + " does not fit in " + ty), code: "E047" };
+    }
+  }
+  return settle(v, ty);
+}
+
 function integer_type(ty: string): boolean {
   return ty == "i32" || ty == "i64" || ty == "u8" || ty == "u32" || ty == "u64" || ty == "usize";
 }

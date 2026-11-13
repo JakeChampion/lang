@@ -18390,6 +18390,16 @@ function const_ready(fd: parser.FuncDecl, names: string[], modules: string[], do
   return true;
 }
 
+// A const with a declared type folds in that type. A const with no declared
+// type folds in 64 bits with no step check, and its value must fit the type
+// that the parser settled for its reads.
+function folded_const(mod: parser.Module, fd: parser.FuncDecl, e: ast.Expr, names: string[], values: consteval.Value[]): consteval.Value {
+  if (util.has_str(mod.substituted_consts, fd.name)) {
+    return consteval.settle_folded(consteval.evaluate(e, parser.parse_type_ref(""), names, values), fd.ret_type);
+  }
+  return consteval.settle(consteval.evaluate(e, parser.parse_type_ref(fd.ret_type), names, values), fd.ret_type);
+}
+
 function const_init(mod: parser.Module): ConstInit {
   let out = ConstInit { diags: [], deferred: [], messages: [] };
   let earlier: string[] = [];
@@ -18404,7 +18414,7 @@ function const_init(mod: parser.Module): ConstInit {
             out = ConstInit { ...out, diags: util.append_diags(out.diags, pre) };
             continue;
           }
-          let value = consteval.settle(consteval.evaluate(r.value, parser.parse_type_ref(fd.ret_type), evaluated_names, values), fd.ret_type);
+          let value = folded_const(mod, fd, r.value, evaluated_names, values);
           if (value.definite) {
             out = ConstInit { ...out, diags: out.diags.append(dg_at(consteval.error_code(value), "const " + fd.name + ": " + value.error, fd.line, fd.col)) };
             continue;
