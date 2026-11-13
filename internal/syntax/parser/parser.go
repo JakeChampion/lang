@@ -59,9 +59,9 @@ func scanConstNames(tokens []lexer.Token) map[string]bool {
 	depth := 0
 	for i, t := range tokens {
 		switch {
-		case t.Kind == lexer.Punct && t.Text == "{":
+		case t.Kind == lexer.Punct && (t.Text == "{" || t.Text == "(" || t.Text == "["):
 			depth++
-		case t.Kind == lexer.Punct && t.Text == "}":
+		case t.Kind == lexer.Punct && (t.Text == "}" || t.Text == ")" || t.Text == "]"):
 			depth--
 		case depth == 0 && t.Kind == lexer.Keyword && t.Text == "const" && i+1 < len(tokens) && tokens[i+1].Kind == lexer.Ident:
 			names[tokens[i+1].Text] = true

@@ -40,12 +40,18 @@ function shadow_assign(): i32 {
 }
 
 
-function shadow_match(): i32 {
-    let e: E = E.A(7);
+// A const name in a pattern matches the value of the const. It binds no
+// name, so it does not hide the const.
+function pick(e: E): i32 {
     match (e) {
-        A(N) => { return N; },
+        A(N) => { return 1; },
+        A(_) => { return 2; },
         B => { return 0; },
     }
+}
+
+function const_in_pattern(): i32 {
+    return pick(E.A(5)) * 3 + pick(E.A(7)) + 2;
 }
 
 
@@ -82,7 +88,7 @@ function main(): i32 {
     if (shadow_param(7) == 7) { r = r + 1; }
     if (shadow_local() == 7) { r = r + 2; }
     if (shadow_assign() == 9) { r = r + 4; }
-    if (shadow_match() == 7) { r = r + 8; }
+    if (const_in_pattern() == 7) { r = r + 8; }
     if (shadow_for_each() == 7) { r = r + 16; }
     if (shadow_lambda() == 7) { r = r + 32; }
     if (shadow_destructure() == 8) { r = r + 64; }

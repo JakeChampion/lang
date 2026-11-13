@@ -1,0 +1,68 @@
+// A top-level const name in a tuple element, a nested tuple or a variant
+// payload is a literal pattern of the value of the const. It does not bind,
+// so the const keeps its value after the match.
+
+const helper: i32 = 100;
+
+enum Inner { Some1(i32), None1 }
+
+enum Outer2 { Holds(Inner), Empty }
+
+function tuple_element(t: (i32, i32)): i32 {
+  match (t) {
+    (helper, b) => {
+      return b;
+    },
+    (a, b) => {
+      return a + b;
+    }
+  }
+}
+
+function nested_tuple(t: (i32, (i32, i32))): i32 {
+  match (t) {
+    (a, (helper, c)) => {
+      return a + c;
+    },
+    _ => {
+      return 0;
+    }
+  }
+}
+
+function payload(o: Outer2): i32 {
+  match (o) {
+    Holds(Some1(helper)) => {
+      return 1;
+    },
+    Holds(Some1(n)) => {
+      return n;
+    },
+    Holds(None1()) => {
+      return 0;
+    },
+    Empty => {
+      return -1;
+    }
+  }
+}
+
+function match_expr(t: (i32, i32)): i32 {
+  return match (t) {
+    (helper, b) => b,
+    (a, _) => a,
+  };
+}
+
+function main(): i32 {
+  print(tuple_element((100, 4)));
+  print(tuple_element((3, 4)));
+  print(nested_tuple((1, (100, 4))));
+  print(nested_tuple((1, (2, 4))));
+  print(payload(Holds(Some1(100))));
+  print(payload(Holds(Some1(3))));
+  print(match_expr((100, 9)));
+  print(match_expr((8, 9)));
+  print(helper);
+  return 0;
+}
