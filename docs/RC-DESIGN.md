@@ -43,7 +43,11 @@ read of the union (`scrutinee_reads`), the form the source lowering gives a
 member binding's field read. It splices a function or an impl method
 declared `@inline` at every call, as it splices a function called once. The function must not be
 recursive, must have at most 400 instructions, and must only read its view
-parameters (`seminline.forced_spliceable`). It also splices, at every call, a
+parameters (`seminline.forced_spliceable`). A function called once from a
+function that calls itself, directly or through other functions, is spliced
+only when it has at most 100 instructions: each level of the recursion pays
+for the frame of the spliced body (`seminline.called_from_cycle`,
+`TestSelfHostInlineOnceInCycle`). It also splices, at every call, a
 private function of at most 40 instructions and no loop with an enum parameter
 that it only takes apart, directly or through a phi or a copy
 (`seminline.unpacker`).
