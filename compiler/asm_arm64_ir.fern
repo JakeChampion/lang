@@ -9462,6 +9462,11 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = alloc_take(s, "x3");
   s = s.write(rt_unframe(s));
   s = s.write("    ret\n");
+  // __fern_arr_box calls this entry when the list of its size class is
+  // empty. x0 holds the size in bytes, which is a multiple of 8.
+  s = s.write("__fern_alloc_bump:\n");
+  s = s.write(rt_frame(s));
+  s = s.write("    mov x29, sp\n");
   s = s.write(".Lalloc_nofl:\n");
   s = s.write("    adrp x1, __fern_heap_ptr\n");
   s = s.write("    add x1, x1, :lo12:__fern_heap_ptr\n");
@@ -9538,6 +9543,12 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write(".Larrbox_miss:\n");
     s = s.write("    add x1, x0, #3\n");
     s = s.write("    lsl x1, x1, #3\n");
+    s = s.write(rt_frame(s));
+    s = s.write("    mov x29, sp\n");
+    s = s.write("    str x0, [sp, #-16]!\n");
+    s = s.write("    mov x0, x1\n");
+    s = s.write("    bl __fern_alloc_bump\n");
+    s = s.write("    b .Larrbox_made\n");
     s = s.write(".Larrbox_alloc:\n");
     s = s.write(rt_frame(s));
     s = s.write("    mov x29, sp\n");
@@ -9551,6 +9562,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    lsl x0, x0, #3\n");
   }
   s = s.write("    bl __fern_alloc\n");
+  s = s.write(".Larrbox_made:\n");
   s = s.write("    ldr x1, [sp]\n");
   s = s.write("    str x1, [x0]\n");
   s = s.write("    mov w2, #1\n");
