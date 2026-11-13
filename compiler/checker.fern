@@ -18406,7 +18406,7 @@ function const_init(mod: parser.Module): ConstInit {
           }
           let value = consteval.settle(consteval.evaluate(r.value, parser.parse_type_ref(fd.ret_type), evaluated_names, values), fd.ret_type);
           if (value.definite) {
-            out = ConstInit { ...out, diags: out.diags.append(dg_at("E093", "const " + fd.name + ": " + value.error, fd.line, fd.col)) };
+            out = ConstInit { ...out, diags: out.diags.append(dg_at(consteval.error_code(value), "const " + fd.name + ": " + value.error, fd.line, fd.col)) };
             continue;
           }
           evaluated_names = evaluated_names.append(fd.name);

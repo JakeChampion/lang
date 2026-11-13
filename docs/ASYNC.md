@@ -244,10 +244,17 @@ function: it answers `Returned(v)` with no task record when `f` does not
 park, or `Parked(call, w)`, which the scheduler resumes with
 `call_resume`. `std/serve` holds a parked handler this way.
 
-**A handle that names no task.** A `Task` is a plain struct, so a program
-can write one. The runtime checks each use. A handle whose id names no live
-task record stops the program with status 134. So does a resume whose entry
-is not the function that parked: a function restores only a frame that it
+**A handle that names no task.** `Task` is an opaque struct, so only
+`std/async` builds a handle or reads its fields. A program that writes one
+gets E021. `task_id` and `task_entry` read the id and the entry.
+`task_adopted(id, entry)` rebuilds the handle of a parked task from them. It
+is an unsafe function, because its caller proves that the id and the entry
+belong to one parked task. `std/sim` uses it for a worker that waits in a
+slot of plain words.
+
+The runtime also checks each use. A handle whose id names no live task
+record stops the program with status 134. So does a resume whose entry is
+not the function that parked: a function restores only a frame that it
 saved. The interpreters give the same status for an id that they did not
 hand out.
 
