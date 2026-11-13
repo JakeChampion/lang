@@ -3513,13 +3513,6 @@ function destination_binding(contract: ssasem.Contract, expected: typeinfo.Type)
 }
 
 function call(e: ast.Expr, c: ast.ExprCall, s: State, statement: boolean, expected: typeinfo.Type): Value {
-  if (!statement && typeinfo.is_void(checked(e, s))) {
-    let done = discard(e, s);
-    if (!done.ok) {
-      return Value { s: done, id: -1 };
-    }
-    return unit_value(done);
-  }
   if (parser.is_value_block(c)) {
     return value_block(e, c, s, expected);
   }
