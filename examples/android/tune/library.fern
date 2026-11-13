@@ -748,7 +748,7 @@ pub function prefs_from(text: string): tune.Prefs {
     } else if (line.starts_with("sort ")) {
       p = tune.Prefs { ...p, sort: number_of(line.drop(5).to_owned()) as i32 };
     } else if (line.starts_with("level ")) {
-      p = tune.Prefs { ...p, level: line != "level false" };
+      p = tune.Prefs { ...p, level: number_of(line.drop(6).to_owned()) as i32 };
     } else if (line.starts_with("tint ")) {
       p = tune.Prefs { ...p, tint: line != "tint false" };
     } else if (line.starts_with("fade ")) {
