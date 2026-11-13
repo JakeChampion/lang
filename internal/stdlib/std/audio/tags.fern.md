@@ -1,6 +1,6 @@
 # Audio file tags
 
-This module reads what an audio file holds about itself: the title, the artist, the album, the genre, the track number, the lyrics and the gain.
+This module reads what an audio file holds about itself: the title, the artist, the album, the genre, the track number, the lyrics, and the gains of the track and of its album.
 
 ## Model
 
@@ -18,7 +18,9 @@ A field that the file does not give is "" or 0. `picture` gives the bytes of the
 
 The input is the whole file, or its start as far as the end of its tags. A tag that goes past the end of the input gives the fields before that point. No input makes the functions fail: bytes that are not a tag give empty tags.
 
-A track number such as `3/12` gives 3. A date such as `2019-05-01` gives the year 2019. A genre that is a number of the ID3v1 list, such as `(17)`, gives its name: `Rock`. A ReplayGain text such as `-6.48 dB` gives the gain -6.48. The gain of an Opus file is for a quieter level, so it gives 5 dB more.
+A track number such as `3/12` gives 3. A date such as `2019-05-01` gives the year 2019. A genre that is a number of the ID3v1 list, such as `(17)`, gives its name: `Rock`.
+
+A ReplayGain text such as `-6.48 dB` gives the gain -6.48. The gains of an Opus file are for a quieter level, so they give 5 dB more. `gain` is the gain of the track, and `album_gain` is the gain of its album. An album gain keeps the steps of loudness between the tracks of one album.
 
 ## Executable example
 
@@ -95,10 +97,10 @@ import "std/utf8";
 
 // What a file tells about its sound. A field that the file does not give
 // is "" or 0.
-pub struct Tags { title: string, artist: string, album: string, album_artist: string, track: i32, year: i32, genre: string, lyrics: string, gain: f64 }
+pub struct Tags { title: string, artist: string, album: string, album_artist: string, track: i32, year: i32, genre: string, lyrics: string, gain: f64, album_gain: f64 }
 
 pub function none(): Tags {
-  return Tags { title: "", artist: "", album: "", album_artist: "", track: 0, year: 0, genre: "", lyrics: "", gain: 0.0 };
+  return Tags { title: "", artist: "", album: "", album_artist: "", track: 0, year: 0, genre: "", lyrics: "", gain: 0.0, album_gain: 0.0 };
 }
 
 // The fields of the tags, for the tables of the names of each format.
@@ -125,6 +127,18 @@ const GAIN: i32 = 9;
 // below that of ReplayGain.
 const OPUS_GAIN: i32 = 10;
 
+// The gain of the album in dB, as ReplayGain writes it.
+const ALBUM_GAIN: i32 = 11;
+
+// The gain of the album of an Opus file, as for `OPUS_GAIN`.
+const OPUS_ALBUM_GAIN: i32 = 12;
+
+// The names of the gains in a frame of the person of ID3v2 and in a
+// free item of MP4.
+function gain_names(): (string, i32)[] {
+  return [("REPLAYGAIN_TRACK_GAIN", GAIN), ("REPLAYGAIN_ALBUM_GAIN", ALBUM_GAIN)];
+}
+
 // The tags with the text `text` in a field that is a number, a genre or
 // a gain.
 function with_value(t: Tags, field: i32, text: string): Tags {
@@ -143,11 +157,17 @@ function with_value(t: Tags, field: i32, text: string): Tags {
   if (field == OPUS_GAIN) {
     return Tags { ...t, gain: decibels(text) / 256.0 + 5.0 };
   }
+  if (field == ALBUM_GAIN) {
+    return Tags { ...t, album_gain: decibels(text) };
+  }
+  if (field == OPUS_ALBUM_GAIN) {
+    return Tags { ...t, album_gain: decibels(text) / 256.0 + 5.0 };
+  }
   return t;
 }
 
 // The tags with the text `text` in the field `field`. An empty text and a
-// field that is not one of the ten change nothing.
+// field that the module does not know change nothing.
 function with_field(t: Tags, field: i32, text: string): Tags {
   if (text.len() == 0) {
     return t;
@@ -183,7 +203,7 @@ function field_of(names: (string, i32)[], name: string): i32 {
 
 // The tags have no field.
 pub function (t: Tags) empty(): boolean {
-  return t.title.len() == 0 && t.artist.len() == 0 && t.album.len() == 0 && t.album_artist.len() == 0 && t.track == 0 && t.year == 0 && t.genre.len() == 0 && t.lyrics.len() == 0;
+  return t.title.len() == 0 && t.artist.len() == 0 && t.album.len() == 0 && t.album_artist.len() == 0 && t.track == 0 && t.year == 0 && t.genre.len() == 0 && t.lyrics.len() == 0 && t.gain == 0.0 && t.album_gain == 0.0;
 }
 ```
 
@@ -427,18 +447,16 @@ function after_text(input: [u8], at: i32, to: i32, wide: boolean): i32 {
   return to;
 }
 
-// The text of the track gain in a frame of the person from `from` to
-// `to`, or "": such a frame has a description and then a value.
-function frame_gain(input: [u8], from: i32, to: i32): string {
+// The tags with the gain in a frame of the person from `from` to `to`:
+// such a frame has a description and then a value.
+function with_user_frame(t: Tags, input: [u8], from: i32, to: i32): Tags {
   if (from + 2 > to || to > input.len()) {
-    return "";
+    return t;
   }
   let kind = input[from];
   let value = after_text(input, from + 1, to, kind == 1u8 || kind == 2u8);
-  if (text_as(input, kind, from + 1, value).to_upper() != "REPLAYGAIN_TRACK_GAIN") {
-    return "";
-  }
-  return text_as(input, kind, value, to);
+  let field = field_of(gain_names(), text_as(input, kind, from + 1, value).to_upper());
+  return with_field(t, field, text_as(input, kind, value, to));
 }
 
 // The text of a lyrics frame from `from` to `to`: a language of three
@@ -519,7 +537,7 @@ function with_frame(t: Tags, names: (string, i32)[], id: string, input: [u8], fr
     return with_field(t, LYRICS, frame_lyrics(input, from, to));
   }
   if (id == "TXXX" || id == "TXX") {
-    return with_field(t, GAIN, frame_gain(input, from, to));
+    return with_user_frame(t, input, from, to);
   }
   return with_field(t, field_of(names, id), frame_text(input, from, to));
 }
@@ -549,7 +567,7 @@ pub function id3v1(input: [u8]): Tags {
   if (input[at + 125] == 0u8) {
     track = input[at + 126] as i32;
   }
-  return Tags { title: latin1(input, at + 3, at + 33), artist: latin1(input, at + 33, at + 63), album: latin1(input, at + 63, at + 93), album_artist: "", track: track, year: number(latin1(input, at + 93, at + 97)), genre: genre_name(input[at + 127] as i32), lyrics: "", gain: 0.0 };
+  return Tags { title: latin1(input, at + 3, at + 33), artist: latin1(input, at + 33, at + 63), album: latin1(input, at + 63, at + 93), album_artist: "", track: track, year: number(latin1(input, at + 93, at + 97)), genre: genre_name(input[at + 127] as i32), lyrics: "", gain: 0.0, album_gain: 0.0 };
 }
 ```
 
@@ -558,7 +576,7 @@ pub function id3v1(input: [u8]): Tags {
 ```fern
 <<Vorbis comments>>=
 function vorbis_names(): (string, i32)[] {
-  return [("TITLE", TITLE), ("ARTIST", ARTIST), ("ALBUM", ALBUM), ("ALBUMARTIST", ALBUM_ARTIST), ("ALBUM ARTIST", ALBUM_ARTIST), ("TRACKNUMBER", TRACK), ("DATE", YEAR), ("YEAR", YEAR), ("GENRE", GENRE), ("LYRICS", LYRICS), ("UNSYNCEDLYRICS", LYRICS), ("REPLAYGAIN_TRACK_GAIN", GAIN), ("R128_TRACK_GAIN", OPUS_GAIN)];
+  return [("TITLE", TITLE), ("ARTIST", ARTIST), ("ALBUM", ALBUM), ("ALBUMARTIST", ALBUM_ARTIST), ("ALBUM ARTIST", ALBUM_ARTIST), ("TRACKNUMBER", TRACK), ("DATE", YEAR), ("YEAR", YEAR), ("GENRE", GENRE), ("LYRICS", LYRICS), ("UNSYNCEDLYRICS", LYRICS), ("REPLAYGAIN_TRACK_GAIN", GAIN), ("REPLAYGAIN_ALBUM_GAIN", ALBUM_GAIN), ("R128_TRACK_GAIN", OPUS_GAIN), ("R128_ALBUM_GAIN", OPUS_ALBUM_GAIN)];
 }
 
 // The tags with the Vorbis comment `NAME=value`. The name has small or
@@ -674,7 +692,7 @@ pub function wav(input: [u8]): Tags {
 
 ### `MP4`
 
-The items of the `ilst` box have a name of four bytes and a `data` box. The value of the `data` box starts after 8 bytes of type and locale. The item `trkn` has the track number in the bytes 2 and 3 of its value.
+The items of the `ilst` box have a name of four bytes and a `data` box. The value of the `data` box starts after 8 bytes of type and locale. The item `trkn` has the track number in the bytes 2 and 3 of its value. A free item `----` has a `mean` box, a `name` box and a `data` box. The name of a gain is as in a frame of the person of ID3v2.
 
 ```fern
 <<MP4>>=
@@ -699,6 +717,9 @@ function box_in(input: [u8], from: i32, to: i32, kind: string): (i32, i32) {
 // The item `gnre` of `ilst`: the number of an ID3v1 genre, plus 1.
 const GENRE_NUMBER: i32 = 7;
 
+// A free item of `ilst`, whose `name` box gives its field.
+const FREE: i32 = 13;
+
 // The field of the item of `ilst` at `at`, or -1.
 function mp4_field(input: [u8], at: i32): i32 {
   if (wire.tag(input, at, "aART")) {
@@ -710,6 +731,9 @@ function mp4_field(input: [u8], at: i32): i32 {
   if (wire.tag(input, at, "gnre")) {
     return GENRE_NUMBER;
   }
+  if (wire.tag(input, at, "----")) {
+    return FREE;
+  }
   if (input[at] != 169u8) {
     return -1;
   }
@@ -720,6 +744,25 @@ function mp4_field(input: [u8], at: i32): i32 {
     }
   }
   return -1;
+}
+
+// The field of the free item whose boxes are from `from` to `to`, or -1.
+// The text of its `name` box starts after 4 bytes of version and flags.
+function free_field(input: [u8], from: i32, to: i32): i32 {
+  let (name, name_end) = box_in(input, from, to, "name");
+  if (name < 0 || name + 4 > name_end) {
+    return -1;
+  }
+  return field_of(gain_names(), utf8_text(input, name + 4, name_end).to_upper());
+}
+
+// The field of the item of `ilst` from `at` to `to`, or -1.
+function item_field(input: [u8], at: i32, to: i32): i32 {
+  let field = mp4_field(input, at + 4);
+  if (field == FREE) {
+    return free_field(input, at + 8, to);
+  }
+  return field;
 }
 
 // The content of the `ilst` box of an MP4 file, or -1 and -1.
@@ -743,7 +786,7 @@ pub function mp4(input: [u8]): Tags {
     if (size < 8) {
       return t;
     }
-    let field = mp4_field(input, at + 4);
+    let field = item_field(input, at, (at + size).min(end));
     let (value, value_end) = box_in(input, at + 8, (at + size).min(end), "data");
     if (field == TRACK && value >= 0 && value + 12 <= value_end) {
       t = Tags { ...t, track: wire.be(input, value + 10, 2) as i32 };
