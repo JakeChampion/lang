@@ -19379,43 +19379,50 @@ pub function desugar_ranges_block(body: ast.Stmt[]): ast.Stmt[] {
   return out;
 }
 
+// The `while` loop of the range loop `written`, with the body `body` and
+// the bounds `rargs`.
+function range_loop(written: ast.StmtFor, body: ast.Stmt[], rargs: ast.Expr[]): ast.Stmt[] {
+  let dbody = body;
+  // A nested `for _` must not step this counter.
+  let fr = ast.StmtFor { ...written, var_name: discard_name(written.var_name, written.line, written.col, 0) };
+  let rty = range_bound_type(rargs);
+  if (makes_closure(dbody)) {
+    // Each turn binds its own index, so a closure keeps the index of its turn.
+    let counter = "$turn_" + fr.var_name;
+    let turn: ast.Stmt[] = [s_var(fr.var_name, rty, e_ident(counter))];
+    for st in dbody {
+      turn = turn.append(st);
+    }
+    dbody = turn;
+    fr = ast.StmtFor { ...fr, var_name: counter };
+  }
+  let hi_name = "$hi_" + fr.var_name;
+  let hivar = s_var(hi_name, rty, rargs[1]);
+  if (range_call_name(fr.iter) == "__range_incl") {
+    return inclusive_range_loop(fr, dbody, s_var(fr.var_name, rty, rargs[0]), hivar, hi_name);
+  }
+  let incr = s_assign(fr.var_name, e_binary("+", e_ident(fr.var_name), e_number("1", "", false)));
+  let (stepped, plain) = step_continues(dbody, StepCtx { step: incr, var_name: fr.var_name, label: fr.label, depth: 0, shadowed: false });
+  if (!plain.shadowed) {
+    let cond = e_binary("<", e_ident(fr.var_name), e_ident(hi_name));
+    return [s_var(fr.var_name, rty, rargs[0]), hivar, with_loop_label(s_while(cond, stepped.append(incr)), fr.label)];
+  }
+  let ivar = s_var(fr.var_name, rty, e_binary("-", rargs[0], e_number("1", "", false)));
+  let brk = s_if(e_binary(">=", e_ident(fr.var_name), e_ident(hi_name)), [s_break()], []);
+  let wbody: ast.Stmt[] = [incr, brk];
+  for k in 0..dbody.len() {
+    wbody = wbody.append(dbody[k]);
+  }
+  return [ivar, hivar, with_loop_label(s_while(e_bool(true), wbody), fr.label)];
+}
+
 function desugar_ranges_one(st: ast.Stmt): ast.Stmt[] {
   match (st) {
     ast.StmtFor(written) => {
       let dbody = desugar_ranges_block(written.body);
       let rargs = iter_range_args(written.iter);
       if (rargs.len() == 2) {
-        // A nested `for _` must not step this counter.
-        let fr = ast.StmtFor { ...written, var_name: discard_name(written.var_name, written.line, written.col, 0) };
-        let rty = range_bound_type(rargs);
-        if (makes_closure(dbody)) {
-          // Each turn binds its own index, so a closure keeps the index of its turn.
-          let counter = "$turn_" + fr.var_name;
-          let turn: ast.Stmt[] = [s_var(fr.var_name, rty, e_ident(counter))];
-          for st in dbody {
-            turn = turn.append(st);
-          }
-          dbody = turn;
-          fr = ast.StmtFor { ...fr, var_name: counter };
-        }
-        let hi_name = "$hi_" + fr.var_name;
-        let hivar = s_var(hi_name, rty, rargs[1]);
-        if (range_call_name(fr.iter) == "__range_incl") {
-          return inclusive_range_loop(fr, dbody, s_var(fr.var_name, rty, rargs[0]), hivar, hi_name);
-        }
-        let incr = s_assign(fr.var_name, e_binary("+", e_ident(fr.var_name), e_number("1", "", false)));
-        let (stepped, plain) = step_continues(dbody, StepCtx { step: incr, var_name: fr.var_name, label: fr.label, depth: 0, shadowed: false });
-        if (!plain.shadowed) {
-          let cond = e_binary("<", e_ident(fr.var_name), e_ident(hi_name));
-          return [s_var(fr.var_name, rty, rargs[0]), hivar, with_loop_label(s_while(cond, stepped.append(incr)), fr.label)];
-        }
-        let ivar = s_var(fr.var_name, rty, e_binary("-", rargs[0], e_number("1", "", false)));
-        let brk = s_if(e_binary(">=", e_ident(fr.var_name), e_ident(hi_name)), [s_break()], []);
-        let wbody: ast.Stmt[] = [incr, brk];
-        for k in 0..dbody.len() {
-          wbody = wbody.append(dbody[k]);
-        }
-        return [ivar, hivar, with_loop_label(s_while(e_bool(true), wbody), fr.label)];
+        return range_loop(written, dbody, rargs);
       }
       return [ast.StmtFor { ...written, iter: dr_expr(written.iter), body: dbody }];
     },
