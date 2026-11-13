@@ -1,0 +1,23 @@
+function both(x: Option[i32], y: Option[i32]): i32 {
+  let (Some(a), Some(b)) = (x, y) else {
+    return 0;
+  };
+  return a + b;
+}
+function second_after_one(t: (i32, i32)): i32 {
+  let (1, b) = t else { return 0; };
+  return b;
+}
+function pair_sum(x: Option[i32], y: Option[i32]): i32 {
+  let w @ (Some(a), _) = (x, y) else { return 0; };
+  let (_, rest) = w;
+  match (rest) { Some(r) => { return a + r; }, None => { return a; } }
+  return 0;
+}
+function either(x: Option[i32], y: Option[i32]): i32 {
+  let (Some(a), _) | (_, Some(a)) = (x, y) else { return 0; };
+  return a;
+}
+function main(): i32 {
+  return either(None, Some(7)) + either(Some(2), None) * 10 + either(None, None) + both(Some(3), Some(4)) * 10 + both(Some(1), None) + second_after_one((1, 5)) + second_after_one((2, 9)) + pair_sum(Some(100), Some(20)) + pair_sum(None, Some(1));
+}
