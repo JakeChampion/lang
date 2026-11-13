@@ -20,7 +20,7 @@ function work(xs: Cell[i32[]], label: string): i32 {
 }
 
 // Each level keeps `guard` in its frame while the task below it resumes.
-function resume_at(depth: i32, f: async.Future[i32], guard: i64): i64 {
+function resume_at(depth: i32, own f: async.Future[i32], guard: i64): i64 {
   if (depth > 0) {
     let inner = resume_at(depth - 1, f, guard + 1);
     return inner + guard;

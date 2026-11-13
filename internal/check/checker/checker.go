@@ -12487,7 +12487,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 			}
 		}
 	case *ast.ExprStmt:
-		c.checkExpr(n.Expr, s)
+		c.checkDiscardedObligation(n.Expr, c.checkExpr(n.Expr, s))
 		c.checkUnusedCollectionResult(n.Expr)
 	case *ast.Match:
 		c.checkMatch(n, s)

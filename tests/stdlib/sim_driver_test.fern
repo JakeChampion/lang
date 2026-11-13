@@ -200,6 +200,7 @@ function test_chain_suspension_count(): test.TestOutcome {
     }
     guard += 1;
   }
+  async.cancel(f);
   return test.fail("chain never resolved");
 }
 
@@ -207,6 +208,7 @@ function test_time_only_advances_when_driven(): test.TestOutcome {
   let d = sim.new(3);
   let f = sim.future_at(sim.at(time.duration_millis(90)), 1);
   if (d.elapsed().as_nanos() != 0 as i64) {
+    async.cancel(f);
     return test.fail("making a future moved the clock");
   }
   let v = sim.block_on(d, f).unwrap_or(0);

@@ -9448,10 +9448,14 @@ function mc_enum_marked(name: string, enums: parser.EnumDecl[]): boolean {
   return false;
 }
 
-function mc_marked_type_name(tn: string, structs: parser.StructDecl[], enums: parser.EnumDecl[]): string {
-  if (tn.len() == 0) {
+// The name of the marked struct or enum of the type `written`, without its
+// type arguments, or "".
+function mc_marked_type_name(written: string, structs: parser.StructDecl[], enums: parser.EnumDecl[]): string {
+  let ty = parser.parse_type_ref(written);
+  if (ty.array_depth != 0 || ty.is_tuple || ty.base.len() == 0) {
     return "";
   }
+  let tn = ty.base;
   if (mc_struct_marked(tn, structs)) {
     return tn;
   }
@@ -9534,6 +9538,9 @@ function mc_call_consumes(c: ast.ExprCall, name: string, tname: string, report: 
       return (true, none);
     }
   }
+  if (mc_array_arg_holds(c.args, name) || owner.len() > 0 && mc_enum_marked(owner, enums) && mc_closure_arg_holds(c.args, name)) {
+    return (true, none);
+  }
   for arg in c.args {
     if (mc_is_binding(arg, name)) {
       if (owner.len() == 0 || mc_enum_marked(owner, enums)) {
@@ -9561,6 +9568,57 @@ function mc_call_consumes(c: ast.ExprCall, name: string, tname: string, report: 
     return (true, kd);
   }
   return mc_list_consumes(c.args, name, tname, report, structs, enums);
+}
+
+// An array literal that is an argument of a call goes to the callee with the
+// obligation of each element.
+function mc_array_arg_holds(args: ast.Expr[], name: string): boolean {
+  for arg in args {
+    if let ast.ExprArray(ar) = arg {
+      for element in ar.elements {
+        if (mc_is_binding(element, name)) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+// A closure that is a payload of a marked variant carries the obligation of
+// each value that it captures, as the continuation of a pending future does.
+function mc_closure_arg_holds(args: ast.Expr[], name: string): boolean {
+  for arg in args {
+    if let ast.ExprLambda(lm) = arg {
+      if (mc_mentions_stmts(lm.body, name)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// E067 for a call whose result is a @must_consume value, written as a
+// statement: the value and its obligation are dropped.
+function mc_discarded_diags(st: ast.StmtExpr, cur: Scope, structs: parser.StructDecl[], enums: parser.EnumDecl[]): util.Diag[] {
+  let ast.ExprCall(c) = st.value else {
+    return [];
+  };
+  let tn = "";
+  match (check_expr(st.value, cur)) {
+    typeinfo.TypeStruct(ts) => {
+      tn = ts.name;
+    },
+    typeinfo.TypeUnion(tu) => {
+      tn = tu.name;
+    },
+    _ => {}
+  }
+  let marked = mc_marked_type_name(tn, structs, enums);
+  if (marked.len() == 0) {
+    return [];
+  }
+  return [dg_at("E067", "value of @must_consume type \"" + marked + "\" is the result of a call and is not used — bind it and consume it", c.line, c.col)];
 }
 
 function mc_structlit_consumes(sl: ast.ExprStructLit, name: string, tname: string, report: boolean, structs: parser.StructDecl[], enums: parser.EnumDecl[]): (boolean, util.Diag[]) {
@@ -9600,7 +9658,7 @@ function mc_expr_consumes(e: ast.Expr, name: string, tname: string, report: bool
         if (mc_is_binding(element, name)) {
           let d: util.Diag[] = [];
           if (report) {
-            d = d.append(dg_at("E067", "value of @must_consume type \"" + tname + "\" stored into an array literal — arrays cannot carry consumption obligations; consume the value directly", expr_line(element), expr_col(element)));
+            d = d.append(dg_at("E067", "value of @must_consume type \"" + tname + "\" stored into an array literal — arrays cannot carry consumption obligations; consume the value directly", ar.line, ar.col));
           }
           return (true, d);
         }
@@ -9623,7 +9681,7 @@ function mc_expr_consumes(e: ast.Expr, name: string, tname: string, report: bool
       if (mc_mentions_stmts(lm.body, name)) {
         let d3: util.Diag[] = [];
         if (report) {
-          d3 = d3.append(dg_at("E067", "value of @must_consume type \"" + tname + "\" captured by a closure — obligations cannot flow into closures; consume the value directly", 0, 0));
+          d3 = d3.append(dg_at("E067", "value of @must_consume type \"" + tname + "\" captured by a closure — obligations cannot flow into closures; consume the value directly", lm.line, lm.col));
         }
         return (true, d3);
       }
@@ -9844,9 +9902,13 @@ function mc_walk_body(stmts: ast.Stmt[], s: Scope, structs: parser.StructDecl[],
         out = util.append_diags(out, mc_walk_body(fr.body, for_body_scope(fr, cur), structs, enums));
       },
       ast.StmtMatch(m) => {
+        let whole = check_expr(m.scrutinee, cur);
         for arm in m.arms {
-          out = util.append_diags(out, mc_walk_body(arm.body, cur, structs, enums));
+          out = util.append_diags(out, mc_walk_body(arm.body, annotate_arm_scope(arm, cur, whole), structs, enums));
         }
+      },
+      ast.StmtExpr(e) => {
+        out = util.append_diags(out, mc_discarded_diags(e, cur, structs, enums));
       },
       _ => {}
     }
