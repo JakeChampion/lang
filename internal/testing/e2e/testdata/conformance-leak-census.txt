@@ -148,6 +148,7 @@ an_imported_module_does_not_see_the_programs_variants 0
 an_index_read_gives_a_literal_array_its_element_type 0
 an_integer_literal_array_takes_the_element_type_of_append 0
 an_io_error_pattern_beside_std_net                   0
+an_own_parameter_takes_back_a_moved_field            0
 an_unannotated_unit_variant_takes_the_type_of_its_use 0
 an_unannotated_variant_takes_an_array_of_its_enum    0
 append_on_a_literal_array_local_takes_the_width_of_its_destination 0
