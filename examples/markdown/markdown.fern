@@ -65,32 +65,39 @@ function step(out: usize, d: blocks.Doc, r: i32, s: State): State {
   }
   cr(out, s.open);
   if (k == blocks.HEADING) {
-    let level = d.get(r, blocks.A).to_string();
+    let level = d.value(r).to_string();
     buf_push(out, "<h" + level + ">");
-    let w = inlines.render(out, d, d.get(r, blocks.SFROM), d.get(r, blocks.STO), s.w);
+    let w = inlines.render(out, d, d.from(r), d.to(r), s.w);
     buf_push(out, "</h" + level + ">\n");
     return State { ...s, w: w, open: false };
   }
   if (k == blocks.CODE) {
     code(out, d, r, s.w.t);
   } else if (k == blocks.HTML) {
-    lines(out, d, d.get(r, blocks.SFROM), d.get(r, blocks.STO));
+    lines(out, d, d.from(r), d.to(r));
   } else if (k == blocks.RULE) {
     buf_push(out, "<hr />\n");
-  } else if (k == blocks.QUOTE) {
+  } else {
+    return enter(out, d, r, k, s);
+  }
+  return State { ...s, open: false };
+}
+
+// Writes the start of a container.
+function enter(out: usize, d: blocks.Doc, r: i32, k: i32, s: State): State {
+  if (k == blocks.QUOTE) {
     buf_push(out, "<blockquote>\n");
     return push(s, 0, false);
-  } else if (k == blocks.LIST) {
+  }
+  if (k == blocks.LIST) {
     list_start(out, d, r);
     if (d.has_flag(r, blocks.F_TIGHT)) {
       return push(s, 1, false);
     }
     return push(s, 0, false);
-  } else if (k == blocks.ITEM) {
-    buf_push(out, "<li>");
-    return push(s, s.tight[s.depth - 1], true);
   }
-  return State { ...s, open: false };
+  buf_push(out, "<li>");
+  return push(s, s.tight[s.depth - 1], true);
 }
 
 function push(s: State, v: i32, open: boolean): State {
@@ -109,7 +116,7 @@ function cr(out: usize, open: boolean): void {
 
 // Writes the end of a container.
 function leave(out: usize, d: blocks.Doc, r: i32, s: State): State {
-  let k = d.get(r, blocks.A);
+  let k = d.value(r);
   if (k == blocks.QUOTE) {
     cr(out, s.open);
     buf_push(out, "</blockquote>\n");
@@ -126,7 +133,7 @@ function leave(out: usize, d: blocks.Doc, r: i32, s: State): State {
 }
 
 function list_start(out: usize, d: blocks.Doc, r: i32): void {
-  let start = d.get(r, blocks.SFROM);
+  let start = d.value(r);
   if (!d.has_flag(r, blocks.F_ORDERED)) {
     buf_push(out, "<ul>\n");
   } else if (start == 1) {
@@ -139,8 +146,8 @@ function list_start(out: usize, d: blocks.Doc, r: i32): void {
 // A paragraph in an item of a tight list has no `<p>` tags. The text of a
 // paragraph does not end with a line feed.
 function paragraph(out: usize, d: blocks.Doc, r: i32, s: State): State {
-  let from = d.get(r, blocks.SFROM);
-  let to = d.get(r, blocks.STO);
+  let from = d.from(r);
+  let to = d.to(r);
   if (s.tight[s.depth - 1] == 1) {
     let before = buf_len(out);
     let w = inlines.render(out, d, from, to, s.w);
@@ -166,8 +173,8 @@ function lines(out: usize, d: blocks.Doc, from: i32, to: i32): void {
 }
 
 function code(out: usize, d: blocks.Doc, r: i32, t: inlines.Tables): void {
-  let from = d.get(r, blocks.SFROM);
-  let to = d.get(r, blocks.STO);
+  let from = d.from(r);
+  let to = d.to(r);
   if (d.has_flag(r, blocks.F_FENCED)) {
     let lang = info_word(d, from, t);
     from += 1;

@@ -40,7 +40,7 @@ function shape(d: blocks.Doc, r0: i32): (string, i32) {
       r = end + 1;
     } else {
       if (k != blocks.RULE) {
-        out += (d.get(r, blocks.STO) - d.get(r, blocks.SFROM)).to_string();
+        out += (d.to(r) - d.from(r)).to_string();
       }
       r += 1;
     }

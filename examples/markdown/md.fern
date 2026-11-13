@@ -6,14 +6,26 @@ import "std/io";
 import "std/io_buffered";
 import "./markdown";
 
-function read_inputs(files: string[]): Result[u8[], string] {
-  if (files.len() == 0) {
-    return match (io.read_all_stdin_bytes()) {
-      Ok(b) => Ok(b),
-      Err(e) => Err("could not read stdin: " + e.message()),
-    };
+// The text of the files one after the other, or of stdin when there is no
+// file. The text of one file of valid UTF-8 is not copied.
+function read_text(files: string[]): Result[string, string] {
+  if (files.len() == 1) {
+    if let Ok(text) = read_file(files[0]) {
+      return Ok(text);
+    }
   }
   let all = buf_new(4096);
+  if (files.len() == 0) {
+    match (io.read_all_stdin_bytes()) {
+      Ok(b) => {
+        buf_push_bytes_range(all, b, 0, b.len());
+      },
+      Err(e) => {
+        buf_free(all);
+        return Err("could not read stdin: " + e.message());
+      }
+    }
+  }
   for f in files {
     match (read_file_bytes(f)) {
       Ok(b) => {
@@ -25,9 +37,9 @@ function read_inputs(files: string[]): Result[u8[], string] {
       }
     }
   }
-  let bytes = buf_take_bytes(all);
+  let text = buf_take(all);
   buf_free(all);
-  return Ok(bytes);
+  return Ok(text);
 }
 
 function main(): i32 {
@@ -36,20 +48,16 @@ function main(): i32 {
   for i in 1..argv.len() {
     files = files.append(argv[i]);
   }
-  let bytes: u8[] = [];
-  match (read_inputs(files)) {
-    Ok(b) => {
-      bytes = b;
+  let text = "";
+  match (read_text(files)) {
+    Ok(t) => {
+      text = t;
     },
     Err(e) => {
       eprint("md: " + e);
       return 1;
     }
   }
-  let text_buf = buf_new(bytes.len());
-  buf_push_bytes_range(text_buf, bytes, 0, bytes.len());
-  let text = buf_take(text_buf);
-  buf_free(text_buf);
   let w = io_buffered.buf_writer_new(stdout(), 65536);
   let done = match (markdown.write(w, text, 65536)) {
     Ok(rest) => rest.flush(),
