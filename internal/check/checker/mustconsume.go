@@ -17,6 +17,20 @@ func (c *checker) checkMustConsume(fn *ast.FuncDecl) {
 	c.mcWalkBlock(fn, fn.Body)
 }
 
+// A call whose result is a @must_consume value, written as a statement, drops
+// the value and its obligation.
+func (c *checker) checkDiscardedObligation(e ast.Expr, t ast.Type) {
+	call, ok := e.(*ast.Call)
+	if !ok {
+		return
+	}
+	if tn, marked := c.mustConsumeTypeName(t); marked {
+		c.errfCode(call.P, "E067",
+			"value of @must_consume type %q is the result of a call and is not used — bind it and consume it",
+			tn)
+	}
+}
+
 func (c *checker) mcWalkBlock(fn *ast.FuncDecl, b *ast.Block) {
 	if b == nil {
 		return
@@ -209,10 +223,14 @@ func (c *checker) mcExprConsumes(e ast.Expr, name, typeName string, report bool)
 			}
 		case *ast.Call:
 			for _, a := range x.Args {
-				if c.mcIsBinding(a, name) {
+				if c.mcIsBinding(a, name) || c.mcArrayHolds(a, name) {
 					consumed = true
 					return false
 				}
+			}
+			if x.IsVariantCall && c.mcMarkedVariantHolds(x.Callee, x.Args, name) {
+				consumed = true
+				return false
 			}
 		case *ast.MatchExpr:
 			if c.mcIsBinding(x.Tag, name) {
@@ -237,6 +255,10 @@ func (c *checker) mcExprConsumes(e ast.Expr, name, typeName string, report bool)
 				}
 			}
 		case *ast.EnumLit:
+			if ed, ok := c.info.Enums[x.EnumName]; ok && ed.MustConsume && mcClosureHolds(x.Args, name) {
+				consumed = true
+				return false
+			}
 			for _, a := range x.Args {
 				if c.mcIsBinding(a, name) {
 					if ed, ok := c.info.Enums[x.EnumName]; ok && ed.MustConsume {
@@ -292,6 +314,45 @@ func (c *checker) mcExprConsumes(e ast.Expr, name, typeName string, report bool)
 		return true
 	})
 	return consumed
+}
+
+// An array literal that is an argument of a call goes to the callee with the
+// obligation of each element.
+func (c *checker) mcArrayHolds(e ast.Expr, name string) bool {
+	lit, ok := e.(*ast.ArrayLit)
+	if !ok {
+		return false
+	}
+	for _, el := range lit.Elems {
+		if c.mcIsBinding(el, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// A closure that is a payload of a marked variant carries the obligation of
+// each value that it captures, as the continuation of a pending future does.
+func mcClosureHolds(args []ast.Expr, name string) bool {
+	for _, a := range args {
+		if lam, ok := a.(*ast.Lambda); ok && mcMentions(lam.Body, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *checker) mcMarkedVariantHolds(callee ast.Expr, args []ast.Expr, name string) bool {
+	id, ok := callee.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	for _, ref := range c.variantOf[id.Name] {
+		if ed, found := c.info.Enums[ref.enumName]; found && ed.MustConsume {
+			return mcClosureHolds(args, name)
+		}
+	}
+	return false
 }
 
 func mcMentions(b *ast.Block, name string) bool {

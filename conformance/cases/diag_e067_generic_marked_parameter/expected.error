@@ -1,0 +1,1 @@
+value of @must_consume type "Slot" bound to "s" may go out of scope without being consumed

@@ -86,6 +86,7 @@ import "std/time";
 ```fern
 <<3 pub enum Future[T]>>=
 // A pending future resumed with Cancelled releases what it holds.
+@must_consume
 pub enum Future[T] {
   Ready(T),
   Pending(Wait, (Wake) => Future[T]),
@@ -679,7 +680,11 @@ function __cancel_all[T](t: __Tree[T]): i32 {
     },
     Leaf(f) => {
       if let Pending(w, k) = f {
-        let gone = k(Wake.Cancelled);
+        // The future of a continuation that is resumed with Cancelled holds
+        // nothing, so it ends here.
+        match (k(Wake.Cancelled)) {
+          _ => {}
+        }
         return 1;
       }
     },
@@ -1106,7 +1111,25 @@ pub function wait[T](own f: Future[T]): Option[T] {
       }
     }
   }
-  return None;
+  // The loop does not end. This match ends the obligation of `cur`.
+  match (cur) {
+    Ready(v) => {
+      return Some(v);
+    },
+    _ => {
+      return None;
+    }
+  }
+}
+
+// Ends a future whose value the program does not take. A pending future is
+// resumed with Cancelled, which releases what it holds.
+pub function cancel[T](own f: Future[T]): void {
+  if let Pending(w, k) = f {
+    match (k(Wake.Cancelled)) {
+      _ => {}
+    }
+  }
 }
 
 // None when the calling task is cancelled, which `f` then is too.
@@ -1129,7 +1152,15 @@ pub function block_on[T](own f: Future[T]): Option[T] {
       }
     }
   }
-  return None;
+  // The loop does not end. This match ends the obligation of `cur`.
+  match (cur) {
+    Ready(v) => {
+      return Some(v);
+    },
+    _ => {
+      return None;
+    }
+  }
 }
 
 // Waits for any (fd, interest) pair of `set` to become ready (1 readable, 2

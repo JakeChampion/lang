@@ -1,0 +1,9 @@
+// A worker that ended does not change a later `exit` of the program.
+import "std/worker";
+
+function main(): i32 {
+  let w = worker.spawn((): i32 => 4);
+  print("joined " + w.join().to_string());
+  exit(5);
+  return 0;
+}

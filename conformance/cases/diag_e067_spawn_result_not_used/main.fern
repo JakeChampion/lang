@@ -1,0 +1,12 @@
+// `async.spawn` gives a future. A statement that drops it starts a task that
+// nothing waits for.
+import "std/async";
+
+function work(): i32 {
+    return 7;
+}
+
+function main(): i32 {
+    async.spawn((): i32 => work());
+    return 0;
+}

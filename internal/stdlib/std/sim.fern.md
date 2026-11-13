@@ -334,7 +334,9 @@ pub function block_on[T](drv: Sim, own f: async.Future[T]): Option[T] {
       },
       Pending(w, k) => {
         let Some(at) = w.until else {
-          let gone = k(async.Wake.Cancelled);
+          match (k(async.Wake.Cancelled)) {
+            _ => {}
+          }
           return None;
         };
         let moved = drv.advance_to(at);
@@ -342,7 +344,15 @@ pub function block_on[T](drv: Sim, own f: async.Future[T]): Option[T] {
       }
     }
   }
-  return None;
+  // The loop does not end. This match ends the obligation of `cur`.
+  match (cur) {
+    Ready(v) => {
+      return Some(v);
+    },
+    _ => {
+      return None;
+    }
+  }
 }
 ```
 

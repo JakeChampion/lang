@@ -10,6 +10,10 @@ pub function slice_range(): string {
   return "fern: slice range out of bounds";
 }
 
+pub function recursion_limit(): string {
+  return "fern: recursion limit";
+}
+
 pub function stack_overflow(): string {
   return "fern: stack overflow";
 }

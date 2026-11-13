@@ -1,0 +1,20 @@
+// One future cannot be two elements of the array that `gather` takes. An
+// array literal in a `let` cannot carry the obligation of a future.
+import "std/async";
+
+function work(): i32 {
+    return 7;
+}
+
+function main(): i32 {
+    let f = async.spawn((): i32 => work());
+    let both: async.Future[i32][] = [f, f];
+    match (async.block_on(async.gather(both))) {
+        Some(v) => {
+            return v[0];
+        },
+        None => {
+            return 0;
+        }
+    }
+}

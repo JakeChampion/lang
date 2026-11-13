@@ -248,8 +248,7 @@ function test_cancel_reaches_the_children(): test.TestOutcome {
     }
     return 0;
   });
-  let both: async.Future[i32][] = [inner, napper(10, 9, seen)];
-  match (async.block_on(async.race(both))) {
+  match (async.block_on(async.race([inner, napper(10, 9, seen)]))) {
     Some(won) => {
       if (!async.parks()) {
         return test.pass();
@@ -325,6 +324,7 @@ function test_wake_reaches_the_owner_of_its_pair(): test.TestOutcome {
   }
   let second = woken(first, 3);
   if (a.get() != 0 || b.get() != 3 || c.get() != 0) {
+    async.cancel(second);
     return test.fail("pair 3 did not wake the third pair of the second watcher");
   }
   set = waits_on(second);
@@ -333,6 +333,7 @@ function test_wake_reaches_the_owner_of_its_pair(): test.TestOutcome {
   }
   let third = woken(woken(second, 9), 2);
   if (a.get() != 0 || c.get() != 2) {
+    async.cancel(third);
     return test.fail("pair 2 did not wake the second pair of the last watcher");
   }
   if let Ready(got) = woken(third, 0) {

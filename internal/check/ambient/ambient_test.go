@@ -203,13 +203,18 @@ import "std/platform";
 import "std/fetch";
 import "std/async";
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
-    let calls: async.Future[Result[HttpResponse, fetch.FetchError]][] = [
+    let all: Option[Result[HttpResponse, fetch.FetchError][]] = async.wait(async.gather([
         async.spawn(() => plat.http(fetch.get("https://example.com/"))),
         async.spawn(() => plat.http(fetch.get("https://example.org/"))),
-    ];
-    let all: Option[Result[HttpResponse, fetch.FetchError][]] = async.wait(async.gather(calls));
-    let first: Option[(i32, Result[HttpResponse, fetch.FetchError])] = async.wait(async.race(calls));
-    let timed: Option[Option[Result[HttpResponse, fetch.FetchError]][]] = async.wait(async.with_deadline(plat.instant(), calls));` + handlerTail,
+    ]));
+    let first: Option[(i32, Result[HttpResponse, fetch.FetchError])] = async.wait(async.race([
+        async.spawn(() => plat.http(fetch.get("https://example.com/"))),
+        async.spawn(() => plat.http(fetch.get("https://example.org/"))),
+    ]));
+    let timed: Option[Option[Result[HttpResponse, fetch.FetchError]][]] = async.wait(async.with_deadline(plat.instant(), [
+        async.spawn(() => plat.http(fetch.get("https://example.com/"))),
+        async.spawn(() => plat.http(fetch.get("https://example.org/"))),
+    ]));` + handlerTail,
 			want: nil,
 		},
 		{

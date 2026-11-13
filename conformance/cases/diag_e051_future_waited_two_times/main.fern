@@ -1,0 +1,14 @@
+// `block_on` takes its future as an `own` parameter, so a future is waited
+// for one time. The first of two waits is not the last use of `f`.
+import "std/async";
+
+function work(): i32 {
+    return 7;
+}
+
+function main(): i32 {
+    let f = async.spawn((): i32 => work());
+    let a = async.block_on(f).unwrap_or(0);
+    let b = async.block_on(f).unwrap_or(0);
+    return a + b;
+}

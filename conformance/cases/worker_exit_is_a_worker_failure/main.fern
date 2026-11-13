@@ -1,0 +1,15 @@
+// `exit` in a worker body is a worker that ended with no result. The program
+// stops with status 134 on each engine, as the join of a worker process does.
+// An `exit` after the join keeps its own status.
+import "std/worker";
+
+function main(): i32 {
+  let done = worker.spawn((): i32 => 4);
+  print("joined " + done.join().to_string());
+  let w = worker.spawn((): i32 => {
+    exit(3);
+    return 1;
+  });
+  print("not reached " + w.join().to_string());
+  return 0;
+}
