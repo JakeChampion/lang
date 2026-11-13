@@ -3,6 +3,13 @@
 import "std/deflate" as deflate;
 import "std/hash/crc32";
 import "std/string";
+import "std/worker";
+
+// The input bytes that one worker compresses, as in pigz.
+const BLOCK: i32 = 131072;
+
+// The bytes before a block that its worker can match against.
+const DICTIONARY: i32 = 32768;
 
 pub struct Options {
   decompress: boolean,
@@ -11,7 +18,13 @@ pub struct Options {
   keep: boolean,
   test: boolean,
   level: i32,
+  // 0 is one process for each CPU.
+  processes: i32,
   files: string[],
+  // The next argument is the value of -p.
+  pending: boolean,
+  // A `--` came, so each argument after it is a file.
+  ended: boolean,
 }
 
 pub enum Parsed {
@@ -20,24 +33,15 @@ pub enum Parsed {
 }
 
 function defaults(): Options {
-  return Options { decompress: false, stdout: false, force: false, keep: false, test: false, level: 6, files: [] };
+  return Options { decompress: false, stdout: false, force: false, keep: false, test: false, level: 6, processes: 0, files: [], pending: false, ended: false };
 }
 
 // Options can come before and after the file names, as in pigz. `--` ends
 // the options, and `-` is the standard input.
 pub function parse(args: string[]): Parsed {
   let o = defaults();
-  let options = true;
   for arg in args {
-    if (!options || arg == "-" || !arg.starts_with("-")) {
-      o = Options { ...o, files: o.files.append(arg) };
-      continue;
-    }
-    if (arg == "--") {
-      options = false;
-      continue;
-    }
-    match (option(o, arg)) {
+    match (argument(o, arg)) {
       Run(next) => {
         o = next;
       },
@@ -46,7 +50,41 @@ pub function parse(args: string[]): Parsed {
       }
     }
   }
+  if (o.pending) {
+    return Abort("missing parameter after -p");
+  }
   return Run(o);
+}
+
+function argument(o: Options, arg: string): Parsed {
+  if (o.pending) {
+    return processes(o, arg);
+  }
+  if (o.ended || arg == "-" || !arg.starts_with("-")) {
+    return Run(Options { ...o, files: o.files.append(arg) });
+  }
+  if (arg == "--") {
+    return Run(Options { ...o, ended: true });
+  }
+  return option(o, arg);
+}
+
+// The value of -p: a count of processes from 1.
+function processes(o: Options, text: string): Parsed {
+  let bytes = text.bytes();
+  if (bytes.len() == 0 || bytes.len() > 9) {
+    return Abort("invalid numeric parameter: " + text);
+  }
+  for c in bytes {
+    if (!digit(c)) {
+      return Abort("invalid numeric parameter: " + text);
+    }
+  }
+  let n = number(bytes, 0, bytes.len());
+  if (n < 1) {
+    return Abort("invalid number of processes: " + text);
+  }
+  return Run(Options { ...o, processes: n, pending: false });
 }
 
 function option(o: Options, arg: string): Parsed {
@@ -65,6 +103,19 @@ function option(o: Options, arg: string): Parsed {
 }
 
 function long(o: Options, arg: string): Option[Options] {
+  if (arg == "--fast") {
+    return Some(Options { ...o, level: 1 });
+  }
+  if (arg == "--best") {
+    return Some(Options { ...o, level: 9 });
+  }
+  if (arg == "--processes") {
+    return Some(Options { ...o, pending: true });
+  }
+  return long_flag(o, arg);
+}
+
+function long_flag(o: Options, arg: string): Option[Options] {
   if (arg == "--stdout" || arg == "--to-stdout") {
     return Some(Options { ...o, stdout: true });
   }
@@ -80,12 +131,6 @@ function long(o: Options, arg: string): Option[Options] {
   if (arg == "--test") {
     return Some(Options { ...o, test: true });
   }
-  if (arg == "--fast") {
-    return Some(Options { ...o, level: 1 });
-  }
-  if (arg == "--best") {
-    return Some(Options { ...o, level: 9 });
-  }
   return None;
 }
 
@@ -100,13 +145,22 @@ function shorts(o: Options, arg: string): Parsed {
       while (end < bytes.len() && digit(bytes[end])) {
         end += 1;
       }
-      let level = number(bytes, i, end);
-      if (level < 1 || level > 9) {
-        return Abort("only levels 1..9 are allowed");
+      match (level(o, bytes, i, end)) {
+        Run(next) => {
+          o = next;
+        },
+        Abort(why) => {
+          return Abort(why);
+        }
       }
-      o = Options { ...o, level: level };
       i = end;
       continue;
+    }
+    if (bytes[i] == 112 as u8) {
+      if (i + 1 == bytes.len()) {
+        return Run(Options { ...o, pending: true });
+      }
+      return processes(o, arg.drop(i + 1));
     }
     let Some(next) = letter(o, bytes[i]) else {
       return Abort("invalid option: -" + arg.drop(i).take(1));
@@ -117,16 +171,24 @@ function shorts(o: Options, arg: string): Parsed {
   return Run(o);
 }
 
+// The level in bytes[from:end], a run of digits.
+function level(o: Options, bytes: u8[], from: i32, end: i32): Parsed {
+  if (end - from > 2) {
+    return Abort("only levels 1..9 are allowed");
+  }
+  let n = number(bytes, from, end);
+  if (n < 1 || n > 9) {
+    return Abort("only levels 1..9 are allowed");
+  }
+  return Run(Options { ...o, level: n });
+}
+
 function digit(c: u8): boolean {
   return c >= 48 as u8 && c <= 57 as u8;
 }
 
-// The decimal value of bytes[from:end], which hold only digits. A value past
-// 99 reads as 100, which no level is.
+// The decimal value of bytes[from:end], which hold only digits.
 function number(bytes: u8[], from: i32, end: i32): i32 {
-  if (end - from > 2) {
-    return 100;
-  }
   let n = 0;
   for i in from..end {
     n = n * 10 + (bytes[i] - 48 as u8) as i32;
@@ -186,7 +248,7 @@ function put_le32(own out: u8[], v: u32): u8[] {
 
 // One gzip member, as pigz writes it: the original name and modification time
 // when the input is a file, the level in the extra flags, and the Unix OS byte.
-pub function compress(data: [u8], level: i32, name: string, mtime: u32): u8[] {
+pub function compress(data: u8[], level: i32, name: string, mtime: u32, workers: i32): u8[] {
   let flags = 0 as u8;
   if (name.len() > 0) {
     flags = 8 as u8;
@@ -201,9 +263,57 @@ pub function compress(data: [u8], level: i32, name: string, mtime: u32): u8[] {
   if (name.len() > 0) {
     out = out.concat(name.bytes()).append(0 as u8);
   }
-  out = out.concat(deflate.deflate_level(data, level));
+  out = out.concat(encoded(data, level, workers));
   out = put_le32(out, crc32.of(data));
   return put_le32(out, data.len() as u32);
+}
+
+// The deflate data of `data` in blocks. With more than one worker, each
+// block has the 32 KiB before it as its dictionary, as in pigz, so the
+// blocks join into one stream. Each worker compresses one run of
+// consecutive blocks, and the parent compresses the last run.
+function encoded(data: u8[], level: i32, workers: i32): u8[] {
+  if (workers <= 1 || data.len() <= BLOCK) {
+    return deflate.deflate_level(data, level);
+  }
+  let count = (data.len() + BLOCK - 1) / BLOCK;
+  let per = (count + workers - 1) / workers;
+  let out: u8[] = [];
+  for part in runs(data, level, 0, count, per) {
+    out = out.concat(part);
+  }
+  return out;
+}
+
+// The blocks from `first` to the last, in runs of `per` blocks.
+function runs(data: u8[], level: i32, first: i32, count: i32, per: i32): u8[][] {
+  if (first + per >= count) {
+    return [run(data, level, first, count, count)];
+  }
+  let w = worker.spawn((): u8[] => run(data, level, first, first + per, count));
+  let rest = runs(data, level, first + per, count, per);
+  return [w.join()].concat(rest);
+}
+
+function run(data: u8[], level: i32, first: i32, end: i32, count: i32): u8[] {
+  let out: u8[] = [];
+  for i in first..end {
+    out = out.concat(block(data, level, i, count));
+  }
+  return out;
+}
+
+function block(data: u8[], level: i32, i: i32, count: i32): u8[] {
+  let from = i * BLOCK;
+  let end = from + BLOCK;
+  if (end > data.len()) {
+    end = data.len();
+  }
+  let start = from - DICTIONARY;
+  if (start < 0) {
+    start = 0;
+  }
+  return deflate.deflate_block(data[start:from], data[from:end], level, i == count - 1);
 }
 
 // The decompressed bytes of each gzip member of `data`, in order. Bytes after

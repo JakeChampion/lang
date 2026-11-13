@@ -82,7 +82,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<32 function __cl_order(): i32[]>>
 
-<<33 function __fast_tokens(input: [u8]): i32[]>>
+<<33 function __fast_tokens(input: [u8], start: i32): i32[]>>
 
 <<34 resumable output>>
 ```
@@ -1109,7 +1109,7 @@ pub function deflate(input: [u8]): u8[] {
 }
 
 pub function deflate_fast(input: [u8]): u8[] {
-  return __deflated_tokens(input, __fast_tokens(input), true);
+  return __deflated_tokens(input, __fast_tokens(input, 0), true, 0);
 }
 
 // Level 1 is deflate_fast and level 6 is deflate. A level outside 1 to 9 is
@@ -1119,7 +1119,22 @@ pub function deflate_level(input: [u8], level: i32): u8[] {
     return deflate_fast(input);
   }
   let e = __effort(level);
-  return __deflated_tokens(input, __tokens(input, 32768, e.depth, e.nice), true);
+  return __deflated_tokens(input, __tokens(input, 32768, e.depth, e.nice, 0), true, 0);
+}
+
+// One block of a stream that workers compress in parts: the deflate data of
+// `input`, whose matches can reach into the last 32 KiB of `dict`. A block
+// that is not the last ends on a byte boundary with an empty stored block,
+// so the next block can follow it directly.
+pub function deflate_block(dict: [u8], input: [u8], level: i32, last: boolean): u8[] {
+  let keep = cmp.min(dict.len(), 32768);
+  let none: u8[] = [];
+  let buf = __joined(__joined(none, dict[dict.len() - keep:dict.len()]), input);
+  if (level <= 1) {
+    return __deflated_tokens(buf, __fast_tokens(buf, keep), last, keep);
+  }
+  let e = __effort(level);
+  return __deflated_tokens(buf, __tokens(buf, 32768, e.depth, e.nice, keep), last, keep);
 }
 
 pub function gzip(input: [u8]): u8[] {
@@ -1330,14 +1345,15 @@ function __log2(x: i32): i32 {
 <<25 function __deflated(input: [u8], window_bits: i32, final: boolean): u8[]>>=
 function __deflated(input: [u8], window_bits: i32, final: boolean): u8[] {
   let e = __effort(6);
-  return __deflated_tokens(input, __tokens(input, 1 << window_bits, e.depth, e.nice), final);
+  return __deflated_tokens(input, __tokens(input, 1 << window_bits, e.depth, e.nice, 0), final, 0);
 }
 
-function __deflated_tokens(input: [u8], toks: i32[], final: boolean): u8[] {
+// The tokens of input[from:], whose matches can reach back before `from`.
+function __deflated_tokens(input: [u8], toks: i32[], final: boolean, from: i32): u8[] {
   let fixed = (__fixed_lit(), __fixed_dist());
   let empty: u8[] = [];
   let w = __Bits { out: empty, acc: 0, n: 0 };
-  let s = __Span { from: 0, len: 0, at: 0, end: 0, last: false };
+  let s = __Span { from: from, len: 0, at: 0, end: 0, last: false };
   while (s.end < toks.len() || s.at == 0 && s.end == 0) {
     let end = s.end + 16384;
     if (end > toks.len()) {
@@ -1837,7 +1853,9 @@ function __effort(level: i32): __Effort {
 // Both hashes have bounded chains. Each ring entry stores the four-byte
 // link in its low word and the three-byte link in its high word. Heads
 // refer only to positions whose ring entries have already been written.
-function __tokens(input: [u8], window: i32, depth: i32, nice: i32): i32[] {
+// Positions before `start` are a dictionary: they enter the hashes, and they
+// give no token.
+function __tokens(input: [u8], window: i32, depth: i32, nice: i32, start: i32): i32[] {
   let n = input.len();
   let head3 = __filled(32768, -1);
   let head4 = __filled(65536, -1);
@@ -1846,6 +1864,17 @@ function __tokens(input: [u8], window: i32, depth: i32, nice: i32): i32[] {
   let held = (-1, 0);
   let skip = 0;
   let pos = 0;
+  while (pos < start) {
+    if (pos + 3 < n) {
+      let w = __le32(input, pos);
+      let h3 = ((w << 8) * 506832829u32 >> 17) as i32;
+      let h4 = (w * 506832829u32 >> 16) as i32;
+      prev = prev.with(pos & window - 1, head3[h3] as i64 << 32 | (head4[h4] as u32) as i64);
+      head3 = head3.with(h3, pos);
+      head4 = head4.with(h4, pos);
+    }
+    pos += 1;
+  }
   while (pos < n) {
     let c3 = -1;
     let c4 = -1;
@@ -1885,14 +1914,20 @@ function __tokens(input: [u8], window: i32, depth: i32, nice: i32): i32[] {
 }
 ```
 
-### `33 function __fast_tokens(input: [u8]): i32[]`
+### `33 function __fast_tokens(input: [u8], start: i32): i32[]`
 
 ```fern
-<<33 function __fast_tokens(input: [u8]): i32[]>>=
-function __fast_tokens(input: [u8]): i32[] {
+<<33 function __fast_tokens(input: [u8], start: i32): i32[]>>=
+function __fast_tokens(input: [u8], start: i32): i32[] {
   let head = __filled(32768, -1);
   let out: i32[] = [];
   let pos = 0;
+  while (pos < start) {
+    if (pos + 2 < input.len()) {
+      head = head.with(__hash3(input, pos), pos);
+    }
+    pos += 1;
+  }
   while (pos < input.len()) {
     let length = 0;
     let distance = 0;
