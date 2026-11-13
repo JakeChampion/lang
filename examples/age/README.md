@@ -248,10 +248,10 @@ scalar code. Fern has no vector type with `u32` lanes, so the kernel must
 be in the compiler. Then a Poly1305 with 64-bit limbs and the `mulx`
 multiply can remove the next limit. This work is not in this slice.
 
-This slice fixed one cause in the standard library. `array.slice` on
-`u8[]` appended each byte by itself, and it used 46% of the instructions of
-a decryption. The byte-copy pass of the compiler takes only a loop that
-counts from 0, and `array.slice` now counts from 0.
+- **`array.slice`.** On `u8[]`, `array.slice` appends each byte by
+  itself, and it uses 46% of the instructions of a decryption. The
+  byte-copy pass of the compiler takes only a loop that counts from 0
+  (#15706). The table has the times with the fix of the pass. Without
+  it, decryption to a file takes 8.3 s and encryption takes 6.5 s.
 
-With the fix, decryption to a file went from 8.3 s to 4.75 s.
-Encryption went from 6.5 s to 5.17 s.
+The issue for the ChaCha20 kernel is #15708.

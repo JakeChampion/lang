@@ -499,7 +499,7 @@ function test_go_text(): test.TestOutcome {
     b64("QQ==QQ==", true),
     b64("QUJD\nRA==", true),
     b64("QUJ", true),
-    text.quote("a\"b\\c\n\t\x7fé".as_bytes()),
+    text.quote("a\"b\\c\n\t\x7fé\u{0085}".as_bytes()),
     text.quote([0xffu8, b'x']),
   ];
   return test.assert_eq_array(got, [
