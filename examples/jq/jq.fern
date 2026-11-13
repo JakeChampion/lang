@@ -79,18 +79,20 @@ function options(argv: string[]): Options {
   return o;
 }
 
+// The bytes of the inputs as a string. jq reads bytes that are not UTF-8, and
+// the reader gives U+FFFD for them in a string.
 function read_inputs(files: string[]): Result[string, string] {
   if (files.len() == 0) {
-    return match (io.read_all_stdin()) {
-      Ok(s) => Ok(s),
+    return match (io.read_all_stdin_bytes()) {
+      Ok(b) => Ok(unsafe { string_from_bytes_unchecked(b) }),
       Err(e) => Err("Could not read stdin: " + e.message()),
     };
   }
   let all = "";
   for f in files {
-    match (read_file(f)) {
-      Ok(s) => {
-        all += s + "\n";
+    match (io.read_input_bytes(f)) {
+      Ok(b) => {
+        all += unsafe { string_from_bytes_unchecked(b) } + "\n";
       },
       Err(e) => {
         return Err("Could not open " + f + ": " + e.message());
@@ -167,6 +169,10 @@ function main(): i32 {
   }
   let st = input.stream(text);
   let failed = false;
+  if (o.slurp && st.error.len() > 0) {
+    eprint("jq: parse error: " + st.error);
+    return 5;
+  }
   if (o.slurp) {
     let all: json.JsonValue[] = [];
     for t in st.texts {
@@ -184,8 +190,8 @@ function main(): i32 {
     }
   }
   if (st.error.len() > 0) {
-    eprint("jq: error (at <stdin>:0): Cannot parse input: " + st.error);
-    return 2;
+    eprint("jq: parse error: " + st.error);
+    return 5;
   }
   if (failed) {
     return 5;

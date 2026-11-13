@@ -74,6 +74,11 @@ function decimal(s: string): Decimal {
   return Decimal { negative: negative, digits: digits, exponent: exponent - fraction, ok: true };
 }
 
+// Whether `s` is a decimal literal as jq reads one: `1`, `1.`, `.5`, `+1e2`.
+pub function is_decimal(s: string): boolean {
+  return decimal(s).ok;
+}
+
 function zeros(n: i32): string {
   let out = "";
   for i in 0..n {

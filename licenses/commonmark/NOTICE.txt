@@ -1,0 +1,12 @@
+examples/markdown/tests/spec.json holds the examples of the CommonMark Spec 0.31.2.
+Reference: https://github.com/commonmark/commonmark-spec/blob/0.31.2/spec.txt
+Commit: 9103e341a973013013bb1a80e13567007c5cef6f
+
+Copyright (C) 2014-16 John MacFarlane.
+The spec has the Creative Commons CC-BY-SA 4.0 license: https://creativecommons.org/licenses/by-sa/4.0/
+spec.json is the JSON that test/spec_tests.py --dump-tests writes for spec.txt.
+spec.json has the same CC-BY-SA 4.0 license as the spec.
+The full license text of the spec repository is in LICENSE.txt.
+
+The Fern port in examples/markdown does not copy source code from cmark or from the spec repository.
+It implements the behaviour of the CommonMark Spec 0.31.2, and its output is the HTML of cmark.

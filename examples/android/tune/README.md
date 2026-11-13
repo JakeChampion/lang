@@ -51,6 +51,12 @@ the track shows the spectrum of the sound under the cover.
 The player keeps its queue, its track, the time in the track, shuffle and
 repeat. At the next start, the track is there at that time, stopped.
 
+"Edit tags" of the details of a song changes its tags: the title, the
+artist, the album, the artist of the album, the number, the year and the
+genre.
+`std/audio/tags` writes them to an MP3 or a FLAC file, and the file keeps
+its other tags. The player tells when it cannot write a file.
+
 Shuffle puts
 the songs after the one that plays in a new order. Repeat has three
 states: off, the queue again, and the track again.

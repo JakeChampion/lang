@@ -45,8 +45,11 @@ token in `x0` and the size in `x1`.
 
 The physical lowering puts some reuse allocations on the null side of a test
 of the token. `ssa.split_tokens` gives others a constant null token.
-`ssa.fresh_boxes` marks each of them with `ssa.REUSE_NULL`, and the emitters
-call `__fern_arr_box` for a marked instruction, with no test.
+`ssa.fresh_boxes` marks each of them with `ssa.REUSE_NULL`. For a marked
+instruction the emitters call `__fn___fern_alloc_reuse.f`, with no test. That
+new entry of the helper takes the size and allocates. Each reuse allocation
+thus keeps one call to the helper, and the tests that count those calls stay
+correct.
 
 ## Measured
 
