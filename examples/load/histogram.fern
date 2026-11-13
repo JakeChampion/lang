@@ -1,0 +1,99 @@
+// A histogram of latencies in nanoseconds, with the log-linear buckets of
+// HdrHistogram. Values below 2^SUB_BITS have a bucket each. Above, each power
+// of two has HALF buckets, so a bucket is at most 1/HALF of its lowest value
+// wide: three significant digits.
+import "std/i64";
+
+const SUB_BITS: i32 = 11;
+
+const SUB: i32 = 2048;
+
+const HALF: i32 = 1024;
+
+// The last power of two with buckets: 2^47 ns is 39 hours. Longer values go
+// in the last bucket.
+const TOP_BITS: i32 = 47;
+
+pub const BUCKETS: i32 = SUB + (TOP_BITS - SUB_BITS) * HALF;
+
+pub struct Histogram { counts: i64[], total: i64, min: i64, max: i64, sum: i64 }
+
+pub function new(): Histogram {
+  let counts: i64[] = [];
+  for _ in 0..BUCKETS {
+    counts = counts.append(0);
+  }
+  return Histogram { counts: counts, total: 0, min: 0, max: 0, sum: 0 };
+}
+
+pub function index_of(v: i64): i32 {
+  if (v < SUB as i64) {
+    if (v < 0) {
+      return 0;
+    }
+    return v as i32;
+  }
+  let shift = 64 - v.leading_zeros() - SUB_BITS;
+  let index = SUB + (shift - 1) * HALF + (v >> shift as i64) as i32 - HALF;
+  if (index >= BUCKETS) {
+    return BUCKETS - 1;
+  }
+  return index;
+}
+
+pub function lowest(index: i32): i64 {
+  if (index < SUB) {
+    return index as i64;
+  }
+  let shift = (index - SUB) / HALF + 1;
+  return ((index - SUB) % HALF + HALF) as i64 << shift as i64;
+}
+
+pub function highest(index: i32): i64 {
+  if (index < SUB) {
+    return index as i64;
+  }
+  let shift = (index - SUB) / HALF + 1;
+  return lowest(index) + (1 as i64 << shift as i64) - 1;
+}
+
+pub function (h: Histogram) record(v: i64): Histogram {
+  let i = index_of(v);
+  let min = if (h.total == 0 || v < h.min) { v } else { h.min };
+  let max = if (v > h.max) { v } else { h.max };
+  return Histogram { counts: h.counts.with(i, h.counts[i] + 1), total: h.total + 1, min: min, max: max, sum: h.sum + v };
+}
+
+pub function (h: Histogram) mean(): i64 {
+  if (h.total == 0) {
+    return 0;
+  }
+  return h.sum / h.total;
+}
+
+// The value at `hundredths` of a percent, 9999 for 99.99%: the highest value
+// of the bucket that holds that rank, but not past the extremes recorded.
+pub function (h: Histogram) at(hundredths: i64): i64 {
+  if (h.total == 0) {
+    return 0;
+  }
+  let rank = (h.total * hundredths + 9999) / 10000;
+  if (rank < 1) {
+    rank = 1;
+  }
+  let seen: i64 = 0;
+  for i in 0..BUCKETS {
+    seen += h.counts[i];
+    if (seen >= rank) {
+      let v = highest(i);
+      if (v > h.max) {
+        return h.max;
+      }
+      if (v < h.min) {
+        return h.min;
+      }
+      return v;
+    }
+  }
+  return h.max;
+}

@@ -1,3 +1,4 @@
+import "std/string";
 import "std/test";
 import "std/http";
 import "std/headers";
@@ -68,10 +69,40 @@ function test_response_framing_outcomes(): test.TestOutcome {
   return test.assert_eq(got, "Complete 204|Incomplete|Malformed 400");
 }
 
+function keep_alive(wire: string, method: string): string {
+  match (http.parse_response_framed(wire.bytes(), method, true, http.limits())) {
+    Complete(f) => {
+      return f.keep_alive.to_string();
+    },
+    Incomplete => {
+      return "Incomplete";
+    },
+    Malformed(status) => {
+      return "Malformed " + status.to_string();
+    }
+  }
+  return "";
+}
+
+// A body that ends at the close of the connection leaves no connection to
+// reuse. A body with a length or a chunked coding does.
+function test_response_keep_alive(): test.TestOutcome {
+  let got = [
+    keep_alive("HTTP/1.1 200 OK\r\n\r\nto the end", "GET"),
+    keep_alive("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok", "GET"),
+    keep_alive("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n", "GET"),
+    keep_alive("HTTP/1.1 200 OK\r\n\r\n", "HEAD"),
+    keep_alive("HTTP/1.1 204 No Content\r\n\r\n", "GET"),
+    keep_alive("HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 0\r\n\r\n", "GET"),
+  ];
+  return test.assert_eq(got.join("|"), "false|true|true|true|true|false");
+}
+
 function main(): i32 {
   let r = test.new("HTTP framing outcome");
   r = r.it("request framing gives Complete, Incomplete and Malformed", test_request_framing_outcomes);
   r = r.it("request head gives Complete, Incomplete and Malformed", test_request_head_outcomes);
   r = r.it("response framing gives Complete, Incomplete and Malformed", test_response_framing_outcomes);
+  r = r.it("a body that ends at the close does not keep the connection", test_response_keep_alive);
   return r.finish();
 }
