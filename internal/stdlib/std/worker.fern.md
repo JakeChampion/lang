@@ -141,11 +141,13 @@ function __spawn_process[T: Send](own body: () => T): Worker[T] {
   }
   if (pid == 0) {
     // The worker ends when its parent ends, so no worker runs detached:
-    // Linux sends the signal, and on macOS a watchdog process sends it. A parent that ended before this call sends nothing, so the
-    // worker also ends when its parent is not the process that made it.
+    // Linux sends the signal, and on macOS a watchdog process sends it. A
+    // parent that ended before this call sends nothing, so the worker also
+    // ends when the link finds no parent (-3), or when its parent is not the
+    // process that made it.
     let linked = reactor_ctl(-1, 6, 0, 0);
     let now = __stat_pid(true);
-    if (parent > 0 && now > 0 && now != parent) {
+    if (linked == -3 || parent > 0 && now > 0 && now != parent) {
       unsafe {
         __worker_exit(region, 0 as usize);
       }
