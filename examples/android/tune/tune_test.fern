@@ -11,6 +11,7 @@ import "std/android/text";
 import "std/android/ui";
 import "std/android/ui/sim";
 import "std/audio/eq";
+import "std/audio/tags";
 import "std/audio/wire";
 import "std/i32";
 import "std/i64";
@@ -175,6 +176,7 @@ function device(): player.Device {
     keep_lists: (text: string): void => {},
     keep_prefs: (text: string): void => {},
     keep_place: (text: string): void => {},
+    write_bytes: (path: string, bytes: u8[]): boolean => path.starts_with("music/") && tags.read(bytes).title == "Fern Morning",
     write_text: (path: string, text: string): boolean => path.starts_with("music/") && text.starts_with("#EXTM3U\nFern/First Light/02 Slow Water.wav\n"),
     kept: (name: string): u8[] => [],
     put: (name: string, bytes: u8[]): void => {},
@@ -893,6 +895,30 @@ function test_the_player_keeps_its_place(): test.TestOutcome {
   return test.assert_eq([stops, away, closes, same.to_string(), at, plays.to_string(), missing.to_string(), (lost.tracks[lost.current].path == track).to_string() + " " + lost.at_ms.to_string()].join(" | "), "hold,place | place | place,quit | true | true false | true | -1 | true 0");
 }
 
+// "Edit tags" of the details of a song shows its tags. Save writes them to
+// its FLAC file, and the library has them. A WAV file cannot take them, and
+// the screen tells so until the person goes back.
+function test_the_tags_of_a_song_change(): test.TestOutcome {
+  let s = sim.tap(sim.tap(sim.hold(started(), "Morning Fern"), "Details"), "Edit tags");
+  let shows = s.shell.app.model.editing >= 0 && sim.shows(s, "Album artist") && sim.shows(s, "Morning Fern");
+  s = sim.type_in(s, "tag-0", "Fern Morning");
+  s = sim.type_in(s, "tag-4", "7");
+  s = sim.tap(s, "Save");
+  let m = s.shell.app.model;
+  let saved = "none";
+  for t in m.tracks {
+    if (t.path.ends_with("Morning Fern.flac")) {
+      saved = t.title + " " + t.number.to_string() + " " + t.artist;
+    }
+  }
+  let w = sim.tap(sim.tap(sim.hold(started(), "Slow Water"), "Details"), "Edit tags");
+  w = sim.tap(sim.type_in(w, "tag-0", "Water"), "Save");
+  let refused = w.shell.app.model.editing >= 0 && sim.shows(w, "Tune cannot change the tags of 02 Slow Water.wav");
+  w = sim.back(w);
+  let closed = w.shell.app.model.editing == -1 && w.shell.app.model.tracks.filter((t: tune.Track): boolean => t.title == "Water").len() == 0;
+  return test.assert_eq([shows.to_string(), (m.editing == -1 && m.dirty).to_string(), saved, refused.to_string(), closed.to_string()].join(" | "), "true | true | Fern Morning 7 Fern | true | true");
+}
+
 function main(): i32 {
   let r = test.new("examples/android/tune");
   r = r.it("the scan reads the tags and the paths of its files", test_scan_reads_tags_and_paths);
@@ -932,5 +958,6 @@ function main(): i32 {
   r = r.it("the sound goes through the equalizer", test_the_equalizer_of_the_sound);
   r = r.it("the screen of the track shows the spectrum", test_the_spectrum);
   r = r.it("the player keeps its place for the next start", test_the_player_keeps_its_place);
+  r = r.it("the tags of a song change, and its file has them", test_the_tags_of_a_song_change);
   return r.finish();
 }

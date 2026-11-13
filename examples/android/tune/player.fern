@@ -26,7 +26,7 @@ import "./tune";
 // `keep` keeps the folder of the library for the next start. `decode` gives an
 // image from the bytes of a JPEG or a PNG file, at a size. `save` keeps
 // the text of the library for the next start, and `keep_lists` keeps the
-// text of the playlists. `keep_prefs` keeps the text of the settings, and `keep_place` keeps the text of the place of the player. `write_text` writes a text file, and tells that it
+// text of the playlists. `keep_prefs` keeps the text of the settings, and `keep_place` keeps the text of the place of the player. `write_bytes` writes a file, and tells that it did. `write_text` writes a text file, and tells that it
 // did. `kept` gives the bytes
 // that `put` kept under a name, or no bytes. `show` tells
 // Android the track that plays and its state. `wake` keeps the phone
@@ -50,6 +50,7 @@ pub struct Device {
   keep_lists: (string) => void,
   keep_prefs: (string) => void,
   keep_place: (string) => void,
+  write_bytes: (string, u8[]) => boolean,
   write_text: (string, string) => boolean,
   kept: (string) => u8[],
   put: (string, u8[]) => void,
@@ -106,6 +107,21 @@ function opened(dev: Device, m: tune.Model, i: i32): Option[Opened] {
   }
   let told = tags.read(deck.bytes);
   return Some(Opened { deck: deck, art: art, lyrics: lyrics(dev, path, told.lyrics), gain: tune.Gain { track: told.gain, album: told.album_gain } });
+}
+
+// The file of the track `i` with the tags of the draft of `m`, written. It
+// is false for a format that the player does not write, and for a file
+// that the phone does not let the app write.
+function wrote_tags(dev: Device, m: tune.Model, i: i32): boolean {
+  if (i < 0 || i >= m.tracks.len()) {
+    return false;
+  }
+  let t = tune.retitled(m.tracks[i], m.draft);
+  let path = m.tracks[i].path;
+  let Some(out) = tags.retagged(dev.read(path), tags.Tags { ...tags.none(), title: t.title, artist: t.artist, album: t.album, album_artist: t.by, track: t.number, year: t.year, genre: t.genre }) else {
+    return false;
+  };
+  return dev.write_bytes(path, out);
 }
 
 // The lyrics of the track at `path`: those of the LRC file with its name,
@@ -222,6 +238,10 @@ function done(dev: Device, own p: Player, want: tune.Want): Player {
     tune.Grant => {
       dev.grant();
       return Player { model: m, deck: deck, incoming: incoming };
+    },
+    tune.WriteTags(i) => {
+      let ok = wrote_tags(dev, m, i);
+      return Player { model: tune.update(m, tune.Retagged(i, ok)), deck: deck, incoming: incoming };
     },
     tune.KeepPlace => {
       dev.keep_place(library.place_text(tune.place(m)));

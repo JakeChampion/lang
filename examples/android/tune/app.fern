@@ -249,6 +249,7 @@ function device(ctx: usize, dir: string, roots: string[], media: Media): player.
     keep_lists: (text: string): void => { let saved = write_file(dir + "/../playlists.txt", text); },
     keep_prefs: (text: string): void => { let saved = write_file(dir + "/../settings.txt", text); },
     keep_place: (text: string): void => { let saved = write_file(dir + "/../place.txt", text); },
+    write_bytes: (path: string, bytes: u8[]): boolean => write_file_bytes(path, bytes).is_ok(),
     write_text: (path: string, text: string): boolean => write_file(path, text).is_ok(),
     kept: (name: string): u8[] => read(dir + "/../covers/" + name),
     put: (name: string, bytes: u8[]): void => { let kept = write_file_bytes(dir + "/../covers/" + name, bytes); },
