@@ -20,6 +20,9 @@ The port has these parts of the language:
 - The comparisons `== != < <= > >=`, `and`, `or`, and the unary minus.
 - The arithmetic operators `+ - * / %` on each type that jq defines them for.
 - The alternative operator `//`.
+- `if`, with `elif` and `else`.
+- The binding `e as $x | e`, with one variable.
+- `reduce` and `foreach`.
 - The functions `add`, `empty`, `from_entries`, `has`, `keys`,
   `keys_unsorted`, `length`, `map`, `not`, `select`, `to_entries`, `tojson`,
   `tostring` and `type`.
@@ -47,7 +50,8 @@ than 17 significant digits.
 
 - The assignment operators and `..`.
 - String interpolation, and formats such as `@base64`.
-- `as` bindings, `if`, `reduce`, `foreach`, `try`, `label` and `def`.
+- Destructuring patterns in a binding, and `?//`.
+- `try`, `label` and `def`.
 - Each function that is not in the list above.
 
 A program that uses one of them stops with exit 3 and a message that ends in
@@ -60,7 +64,7 @@ A program that uses one of them stops with exit 3 and a message that ends in
 - `tests/jq.test` is the test suite of jq 1.7 (see
   `licenses/jq/NOTICE.txt`). `TestSelfHostExampleJqSuite` runs each case
   whose program the port has and compares the outputs as JSON values, as
-  jq does. 107 cases pass, and each of the others is in a part of the language
+  jq does. 130 cases pass, and each of the others is in a part of the language
   that the port does not have yet.
 - `TestSelfHostExampleJqAgainstJq` runs the command line and the `jq` binary
   on the same arguments and input, and compares their stdout, stderr and exit

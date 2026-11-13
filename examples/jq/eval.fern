@@ -130,6 +130,18 @@ pub function run(f: filter.Ast, input: json.JsonValue, e: Env): Outputs {
     filter.Call(name, args) => {
       return call(name, args, input, e);
     },
+    filter.If(cond, yes, no) => {
+      return run_if(cond, yes, no, input, e);
+    },
+    filter.Bind(source, name, body) => {
+      return run_bind(source, name, body, input, e);
+    },
+    filter.Reduce(source, name, init, update) => {
+      return run_fold(false, source, name, init, [update, filter.Identity], input, e);
+    },
+    filter.Foreach(source, name, init, update, extract) => {
+      return run_fold(true, source, name, init, [update, extract], input, e);
+    },
     filter.And(a, b) => {
       return run_logic(false, a, b, input, e);
     },
@@ -1013,4 +1025,79 @@ function to_string(v: json.JsonValue): json.JsonValue {
     return v;
   }
   return json.JString(output.compact(v));
+}
+
+// ---- Control ----
+
+function run_if(cond: filter.Ast, yes: filter.Ast, no: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+  let conds = run(cond, input, e);
+  let out = ok([]);
+  for c in conds.values {
+    if (truthy(c)) {
+      out = out.then(run(yes, input, e));
+    } else {
+      out = out.then(run(no, input, e));
+    }
+    if (out.failed()) {
+      return out;
+    }
+  }
+  return Outputs { ...out, error: conds.error };
+}
+
+function run_bind(source: filter.Ast, name: string, body: filter.Ast, input: json.JsonValue, e: Env): Outputs {
+  let sources = run(source, input, e);
+  let out = ok([]);
+  for v in sources.values {
+    out = out.then(run(body, input, e.with(name, v)));
+    if (out.failed()) {
+      return out;
+    }
+  }
+  return Outputs { ...out, error: sources.error };
+}
+
+// `reduce` and `foreach`. `steps` holds the update and the extract. Each
+// initial value starts a fold of its own.
+function run_fold(each: boolean, source: filter.Ast, name: string, init: filter.Ast, steps: filter.Ast[], input: json.JsonValue, e: Env): Outputs {
+  let inits = run(init, input, e);
+  let out = ok([]);
+  for first in inits.values {
+    out = out.then(fold(each, run(source, input, e), name, first, steps, e));
+    if (out.failed()) {
+      return out;
+    }
+  }
+  return Outputs { ...out, error: inits.error };
+}
+
+// The state after an update is its last output, or null when it has none.
+// A `foreach` gives the extract of each output of the update, and a `reduce`
+// gives the last state.
+function fold(each: boolean, sources: Outputs, name: string, first: json.JsonValue, steps: filter.Ast[], e: Env): Outputs {
+  let state = first;
+  let out = ok([]);
+  for x in sources.values {
+    let scope = e.with(name, x);
+    let updates = run(steps[0], state, scope);
+    if (each) {
+      out = out.then(run_pipe(updates, steps[1], scope));
+    } else {
+      out = Outputs { ...out, error: updates.error };
+    }
+    if (out.failed()) {
+      return out;
+    }
+    state = json.JNull;
+    if (updates.values.len() > 0) {
+      state = updates.values[updates.values.len() - 1];
+    }
+  }
+  if (sources.failed()) {
+    return Outputs { ...out, error: sources.error };
+  }
+  if (each) {
+    return out;
+  }
+  return one(state);
 }
