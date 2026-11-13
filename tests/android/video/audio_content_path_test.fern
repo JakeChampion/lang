@@ -3,6 +3,7 @@ import "./audio_pcm";
 import "./audio_path";
 import "./app_audio_check";
 import "./app_window_check";
+import "./app_paused_start_check";
 import "std/android/video/source";
 import "std/io";
 import "std/video/frame";
@@ -194,6 +195,10 @@ function app_flow(src: source.Source, pause_first: boolean): i32 {
 }
 
 function check(src: source.Source): i32 {
+  let paused_start = app_paused_start_check.run(src);
+  if (paused_start != 0) {
+    return paused_start;
+  }
   let first = controls(src);
   if (first != 0) {
     return first;

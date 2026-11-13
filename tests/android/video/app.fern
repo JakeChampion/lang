@@ -94,8 +94,8 @@ function start_file(own s: App, window: android.Window, path: string): App {
   return App { ...s, playback: Some(p), fd: fd, started_ns: monotonic_ns() };
 }
 
-function start_sound(own s: App, own stream: audio_pcm.Stream, own reader: Reader, path: string): App {
-  let sound = match (audio_path.create_stream(stream, reader, path)) {
+pub function start_sound(own s: App, own stream: audio_pcm.Stream, own reader: Reader, path: string): App {
+  let sound = match (create_sound(s, stream, (offset: i64): Result[i64, IoError] => reader.seek(offset, 0), (count: i32): Result[u8[], IoError] => reader.read_chunk_bytes(count), path)) {
     Ok(value) => value,
     Err(error) => { let _ = reader.close(); return fail(s, error); },
   };
@@ -135,15 +135,22 @@ function start_content(own s: App, window: android.Window, uri: string, native_a
   return if (native_audio) { start_content_sound(opened, src, 0i64) } else { opened };
 }
 
-function start_content_sound(own s: App, src: source.Source, media_us: i64): App {
+pub function start_content_sound(own s: App, src: source.Source, media_us: i64): App {
   let (stream, io) = match (audio_content.open(src, media_us)) { Ok(value) => value, Err(error) => { return fail(s, error); } };
   let frames = stream.info().frames;
-  let sound = match (audio_path.create_with(stream, io.seek, io.read, "")) { Ok(value) => value, Err(error) => { return fail(s, error); } };
+  let sound = match (create_sound(s, stream, io.seek, io.read, "")) { Ok(value) => value, Err(error) => { return fail(s, error); } };
   if (media_us == 0i64) {
     log.warn("videotest: native AAC frames=" + frames.to_string() + " rate=48000 channels=2");
     log.warn("videotest: native AV source=content");
   }
   return App { ...s, sound: Some(sound), content_audio: Some(io) };
+}
+
+function create_sound(s: App, own stream: audio_pcm.Stream, seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError], path: string): Result[audio_path.State, frame.VideoError] {
+  if let Some(paused) = s.lifecycle_pause_ns {
+    return audio_path.create_suspended(stream, path, paused);
+  }
+  return audio_path.create_with(stream, seek, read, path);
 }
 
 function take_sound(own s: App): own (App, Option[audio_path.State]) {
@@ -418,7 +425,7 @@ function was_playing(s: App): boolean {
     return !p.paused;
   }
   if let Some(sound) = s.sound {
-    return sound.paused_ns.is_none();
+    return sound.paused_ns.is_none() || sound.started_ns == 0i64;
   }
   return false;
 }

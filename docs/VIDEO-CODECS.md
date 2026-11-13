@@ -828,6 +828,14 @@ The next window starts a new fixture round and watchdog interval.
 If the activity remains paused, the app pauses the new streams before the next tick.
 Resume excludes only the interval after the new window starts.
 
+Native AAC setup now leaves AAudio stopped during that pause.
+It retains the bounded decoder state without PCM decode or a write request.
+Resume permits the first pump to decode and submit a bounded block before the first start request.
+
+The same path serves private files and granted content sources.
+Host controls cover both paths, zero and partial writes, duplicate events, and a failed first start request.
+These controls do not execute platform window setup or establish physical-device behavior.
+
 Host controls destroy the window at each fixture stage with pending partial PCM.
 They check duplicate destruction, exact descriptor and audio cleanup, and a fresh native AAC stream from the same content asset.
 The controls call the same post-creation state handler that follows platform video setup.
