@@ -1,0 +1,31 @@
+// A local can hold a value of type void: the result of a void call, or of a
+// void if or match in value position. The call runs where the local is
+// bound. The local is the unit value `()`, so it can go where a void value
+// goes, as the payload of Ok or as the argument of a generic function.
+import "std/result";
+
+function note(tag: string): void {
+    print(tag);
+}
+
+function same[T](x: T): T {
+    return x;
+}
+
+function done(tag: string): Result[void, string] {
+    let u = note(tag);
+    return Ok(u);
+}
+
+function main(): i32 {
+    let u = note("call");
+    let c = true;
+    let b = if (c) { note("then") } else { note("else") };
+    let n = 2;
+    let m = match (n) { 1 => note("one"), _ => note("other") };
+    let g = same(note("generic"));
+    u = note("again");
+    print(done("result").is_ok());
+    print("end");
+    return 0;
+}
