@@ -7085,6 +7085,18 @@ function call_mont_mul(heap: interpheap.Heap, args: Value[]): Value {
   return v_arr_of(heap, out, "i64");
 }
 
+// A kernel over arrays of 64-bit words.
+function is_limb_kernel(name: string): boolean {
+  return name == "__mont_mul" || name == "__scrypt_block_mix";
+}
+
+function call_limb_kernel(heap: interpheap.Heap, name: string, args: Value[]): Value {
+  if (name == "__mont_mul") {
+    return call_mont_mul(heap, args);
+  }
+  return call_scrypt_block_mix(heap, args);
+}
+
 // __scrypt_block_mix keeps the 16 words of each 64-byte block in this order, two to a slot, the first in the
 // low half. Each row of 4 positions is a diagonal of the Salsa20 matrix.
 const SCRYPT_ORDER: i32[] = [0, 5, 10, 15, 4, 9, 14, 3, 8, 13, 2, 7, 12, 1, 6, 11];
@@ -7135,16 +7147,21 @@ function scrypt_block_mix(b: u64[], from: i32, mix: i32, to: i32, r: i32): u64[]
   return b;
 }
 
+// Whether the block of h slots at `at` lies in n slots.
+function scrypt_block_in(n: i64, at: i64, h: i64): boolean {
+  return at >= 0 && at + h <= n;
+}
+
+// Whether the blocks of h slots at a and b do not overlap.
+function scrypt_apart(a: i64, b: i64, h: i64): boolean {
+  return a - b >= h || b - a >= h;
+}
+
 // Whether three blocks of 16r slots lie in n slots, with the output block apart from both inputs.
 function scrypt_blocks_fit(n: i64, from: i64, mix: i64, to: i64, r: i64): boolean {
-  if (r < 1 || from < 0 || mix < 0 || to < 0) {
-    return false;
-  }
   let h = 16 * r;
-  if (from + h > n || mix + h > n || to + h > n) {
-    return false;
-  }
-  return (to - from >= h || from - to >= h) && (to - mix >= h || mix - to >= h);
+  return r >= 1 && scrypt_block_in(n, from, h) && scrypt_block_in(n, mix, h) && scrypt_block_in(n, to, h) && scrypt_apart(to, from, h)
+    && scrypt_apart(to, mix, h);
 }
 
 function call_scrypt_block_mix(heap: interpheap.Heap, args: Value[]): Value {
@@ -8477,11 +8494,8 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
   if (is_byte_into_kernel(name)) {
     return call_byte_into_kernel(heap, name, args);
   }
-  if (name == "__mont_mul") {
-    return call_mont_mul(heap, args);
-  }
-  if (name == "__scrypt_block_mix") {
-    return call_scrypt_block_mix(heap, args);
+  if (is_limb_kernel(name)) {
+    return call_limb_kernel(heap, name, args);
   }
   if (args.len() == 0 && checker.is_sha_hw_builtin(name)) {
     return v_bool(false);

@@ -284,6 +284,22 @@ function byte_kernel_arity(name: string): i32 {
   return -1;
 }
 
+// The parameters of a kernel over arrays of 64-bit words, or none.
+function limb_kernel_params(name: string): typeinfo.Type[] {
+  if (name == "__mont_mul") {
+    return [t_view(typeinfo.t_i64()), t_view(typeinfo.t_i64()), t_view(typeinfo.t_i64())];
+  }
+  if (name == "__scrypt_block_mix") {
+    return [t_array(typeinfo.t_i64()), typeinfo.t_i32(), typeinfo.t_i32(), typeinfo.t_i32(), typeinfo.t_i32()];
+  }
+  return [];
+}
+
+function is_limb_kernel_call(name: string, argc: i32): boolean {
+  let params = limb_kernel_params(name);
+  return params.len() > 0 && params.len() == argc;
+}
+
 // The parameters of a kernel that writes into the byte array it takes, or none.
 function byte_into_params(name: string): typeinfo.Type[] {
   let view = t_view(typeinfo.t_u8());
@@ -595,7 +611,7 @@ function intrinsic_result(name: string, argc: i32, t: SigTable): typeinfo.Type {
   if (argc == 1 && name == "__bytes_owned" || argc == 3 && name == "__bytes_range" || argc == 5 && name == "__bytes_into") {
     return t_array(typeinfo.t_u8());
   }
-  if (argc == 3 && name == "__mont_mul" || argc == 5 && name == "__scrypt_block_mix") {
+  if (is_limb_kernel_call(name, argc)) {
     return t_array(typeinfo.t_i64());
   }
   if (argc == byte_kernel_arity(name) || argc == byte_into_arity(name)) {
@@ -835,11 +851,9 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   if (is_sha_hw_builtin(name)) {
     return ([], true);
   }
-  if (name == "__mont_mul") {
-    return ([t_view(typeinfo.t_i64()), t_view(typeinfo.t_i64()), t_view(typeinfo.t_i64())], true);
-  }
-  if (name == "__scrypt_block_mix") {
-    return ([t_array(typeinfo.t_i64()), typeinfo.t_i32(), typeinfo.t_i32(), typeinfo.t_i32(), typeinfo.t_i32()], true);
+  let limbs = limb_kernel_params(name);
+  if (limbs.len() > 0) {
+    return (limbs, true);
   }
   let into = byte_into_params(name);
   if (into.len() > 0) {

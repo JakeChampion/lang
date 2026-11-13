@@ -350,12 +350,7 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (module_emits_op_cached(cache, "chacha20_xor_into")) {
     out = out.append("@uses_chacha20");
   }
-  if (module_emits_op_cached(cache, "mont_mul")) {
-    out = out.append("@uses_mont_mul");
-  }
-  if (module_emits_op_cached(cache, "scrypt_block_mix")) {
-    out = out.append("@uses_scrypt");
-  }
+  out = limb_kernel_needs(cache, out);
   if (module_emits_op_cached(cache, "poly1305_blocks")) {
     out = out.append("@uses_poly1305");
   }
@@ -751,9 +746,30 @@ function byte_kernel_name(tag: i32): string {
   return "$__fern_sha_hw_blocks";
 }
 
+// The needs of the kernels over arrays of 64-bit words.
+function limb_kernel_needs(cache: irtables.LowerResult[], own out: string[]): string[] {
+  if (module_emits_op_cached(cache, "mont_mul")) {
+    out = out.append("@uses_mont_mul");
+  }
+  if (module_emits_op_cached(cache, "scrypt_block_mix")) {
+    out = out.append("@uses_scrypt");
+  }
+  return out;
+}
+
+function limb_kernel_parts(needs: string[], own parts: string[]): string[] {
+  if (need(needs, "@uses_mont_mul")) {
+    parts = parts.append(wasm_mont.funcs());
+  }
+  if (need(needs, "@uses_scrypt")) {
+    parts = parts.append(wasm_scrypt.funcs());
+  }
+  return parts;
+}
+
 function crypto_helper_parts(needs: string[], own parts: string[]): string[] {
   let aead = need(needs, "@uses_chacha20poly1305");
-  if (need(needs, "@uses_aes_gcm") || need(needs, "@uses_chacha20") || need(needs, "@uses_poly1305") || aead || need(needs, "@uses_mont_mul") || need(needs, "@uses_scrypt")) {
+  if (need(needs, "@uses_aes_gcm") || need(needs, "@uses_chacha20") || need(needs, "@uses_poly1305") || aead || need(needs, "@uses_mont_mul")) {
     parts = parts.append(wasm_aes.view_funcs());
   }
   if (need(needs, "@uses_aes_gcm")) {
@@ -768,12 +784,7 @@ function crypto_helper_parts(needs: string[], own parts: string[]): string[] {
   if (aead) {
     parts = parts.append(wasm_poly.aead_funcs());
   }
-  if (need(needs, "@uses_mont_mul")) {
-    parts = parts.append(wasm_mont.funcs());
-  }
-  if (need(needs, "@uses_scrypt")) {
-    parts = parts.append(wasm_scrypt.funcs());
-  }
+  parts = limb_kernel_parts(needs, parts);
   if (need(needs, "@uses_bswap")) {
     parts = parts.append(wasm_aes.bswap_funcs());
   }

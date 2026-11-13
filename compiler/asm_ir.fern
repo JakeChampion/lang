@@ -2029,13 +2029,7 @@ function emit_rt_byte_kernels(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("poly1305")) {
     s = emit_rt_poly1305(s);
   }
-  if (s.has_need("mont_mul")) {
-    s = emit_rt_mont_mul(s);
-  }
-  if (s.has_need("scrypt")) {
-    s = s.write(x86_scrypt_block_mix());
-  }
-  return s;
+  return emit_rt_limb_kernels(s);
 }
 
 // ChaCha20 (RFC 8439) over buf[at:at + n] in place, eight blocks at a time in the 32-bit lanes of the ymm
@@ -2474,8 +2468,15 @@ function x86_salsa_step(x: i32, y: i32, z: i32, n: i32): string {
     + "    vpsrld $" + util.i32_to_string(32 - n) + ", %xmm8, %xmm8\n    vpxor %xmm9, " + zr + ", " + zr + "\n    vpxor %xmm8, " + zr + ", " + zr + "\n";
 }
 
-function emit_rt_mont_mul(s: asmcore.EmitState): asmcore.EmitState {
-  return s.write(x86_mont_mul());
+// The kernels over arrays of 64-bit words.
+function emit_rt_limb_kernels(s: asmcore.EmitState): asmcore.EmitState {
+  if (s.has_need("mont_mul")) {
+    s = s.write(x86_mont_mul());
+  }
+  if (s.has_need("scrypt")) {
+    s = s.write(x86_scrypt_block_mix());
+  }
+  return s;
 }
 
 function emit_rt_poly1305(s: asmcore.EmitState): asmcore.EmitState {

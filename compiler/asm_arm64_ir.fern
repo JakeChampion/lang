@@ -12745,6 +12745,19 @@ function a64_sha1x8_blocks(s: asmcore.EmitState): string {
     + ".Lsx8_ret:\n    ldr x0, [x29, #40]\n" + rt_unframe_of(s, 48) + "    ret\n    .size __fern_sha1x8_hw_blocks, .-__fern_sha1x8_hw_blocks\n";
 }
 
+// The kernels over arrays of 64-bit words.
+function a64_limb_kernels(s: asmcore.EmitState): asmcore.EmitState {
+  if (s.has_need("mont_mul")) {
+    let mm = a64_mont_mul(s);
+    s = s.write(mm);
+  }
+  if (s.has_need("scrypt")) {
+    let sm = a64_scrypt_block_mix(s);
+    s = s.write(sm);
+  }
+  return s;
+}
+
 function emit_rt_byte_kernels(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("chacha20")) {
     let chacha = a64_chacha20_xor_into(s);
@@ -12762,14 +12775,7 @@ function emit_rt_byte_kernels(s: asmcore.EmitState): asmcore.EmitState {
     let opener = a64_chacha20_poly1305(s, false);
     s = s.write(opener);
   }
-  if (s.has_need("mont_mul")) {
-    let mm = a64_mont_mul(s);
-    s = s.write(mm);
-  }
-  if (s.has_need("scrypt")) {
-    let sm = a64_scrypt_block_mix(s);
-    s = s.write(sm);
-  }
+  s = a64_limb_kernels(s);
   if (s.has_need("sha256") || s.has_need("sha1") || s.has_need("sha1x8")) {
     s = s.write("    .arch_extension sha2\n");
   }
