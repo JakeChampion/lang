@@ -98,8 +98,8 @@ pub function abis(c: Collection): rccertify.Abis {
   for m in c.producers {
     for k in m.contracts {
       names = names.append(k.name);
-      modes = modes.append(k.modes);
-      results = results.append(ssasem.reference(k.result));
+      modes = modes.append(counted_modes(m, k));
+      results = results.append(ssasem.counted_in(m.enums, m.finalizers, k.result));
       firsts = firsts.append(pair_first(m, k.result));
       seconds = seconds.append(pair_second(m, k.result));
       splits = splits.append([split_word(m, k.result, 0), split_word(m, k.result, 1)]);
@@ -107,6 +107,17 @@ pub function abis(c: Collection): rccertify.Abis {
     }
   }
   return rccertify.abis_of(names, modes, results, firsts, seconds, splits, words);
+}
+
+// A parameter that holds no count passes as a word, whatever its declared mode.
+function counted_modes(m: Metadata, k: ssasem.Contract): i32[] {
+  let out = k.modes;
+  for i in 0..k.modes.len() {
+    if (i < k.params.len() && ssasem.reference(k.params[i]) && !ssasem.counted_in(m.enums, m.finalizers, k.params[i])) {
+      out = out.with(i, ssasem.value_mode());
+    }
+  }
+  return out;
 }
 
 // The variants whose pair word `slot` holds a unit when the variant returns
@@ -127,9 +138,9 @@ function split_word(m: Metadata, t: typeinfo.Type, slot: i32): i32 {
     if (v.fields.len() == 1) {
       let parts = sempair.split_parts(m.records, m.finalizers, v.fields[0].ty);
       if (parts.len() == 2) {
-        held = ssasem.reference(parts[slot]);
+        held = ssasem.counted_in(m.enums, m.finalizers, parts[slot]);
       } else {
-        held = slot == 0 && ssasem.reference(v.fields[0].ty);
+        held = slot == 0 && ssasem.counted_in(m.enums, m.finalizers, v.fields[0].ty);
       }
     }
     if (held && tag >= 31) {
@@ -151,7 +162,7 @@ function pair_parts(m: Metadata, t: typeinfo.Type): typeinfo.Type[] {
 
 function pair_first(m: Metadata, t: typeinfo.Type): boolean {
   let parts = pair_parts(m, t);
-  return (parts.len() == 2 || sempair.two_reference_tail(t) || sempair.three_reference_tuple(t)) && ssasem.reference(parts[0]);
+  return (parts.len() == 2 || sempair.two_reference_tail(t) || sempair.three_reference_tuple(t)) && ssasem.counted_in(m.enums, m.finalizers, parts[0]);
 }
 
 function pair_second(m: Metadata, t: typeinfo.Type): i32 {
@@ -160,7 +171,7 @@ function pair_second(m: Metadata, t: typeinfo.Type): i32 {
   }
   let parts = pair_parts(m, t);
   if (parts.len() > 0) {
-    if ((parts.len() == 2 || sempair.two_reference_tail(t) || sempair.three_reference_tuple(t)) && ssasem.reference(parts[1])) {
+    if ((parts.len() == 2 || sempair.two_reference_tail(t) || sempair.three_reference_tuple(t)) && ssasem.counted_in(m.enums, m.finalizers, parts[1])) {
       return -1;
     }
     return 0;
@@ -175,7 +186,7 @@ function pair_second(m: Metadata, t: typeinfo.Type): i32 {
   let mask = 0;
   let tag = 0;
   for v in m.enums[at].variants {
-    if (v.fields.len() == 1 && ssasem.reference(v.fields[0].ty)) {
+    if (v.fields.len() == 1 && ssasem.counted_in(m.enums, m.finalizers, v.fields[0].ty)) {
       if (tag >= 31) {
         return -2;
       }
