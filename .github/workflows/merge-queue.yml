@@ -5,8 +5,10 @@ name: Merge queue
 # these two workflows do the same work.
 #
 # A pull request enters the queue with the `merge-queue` label. This workflow
-# makes the next batch: it merges the labelled pull requests whose own
-# `CI verdict` is green on the tip of main, pushes the result to
+# gives that label to each open pull request whose own `CI verdict` is green
+# (a draft and a pull request with `merge-queue-hold` stay out). It then makes
+# the next batch: it merges the labelled pull requests that are green on the
+# tip of main, pushes the result to
 # `merge-queue/batch`, and dispatches merge-queue-batch.yml there. That
 # workflow runs the full suite and moves main to the tested commit.
 #

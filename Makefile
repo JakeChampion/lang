@@ -145,6 +145,7 @@ ci-selftest:
 	node scripts/ci-run-affected-selftest.mjs
 	node scripts/main-red-selftest.mjs
 	node scripts/perf-gate-selftest.mjs
+	node scripts/ci-failure-report-selftest.mjs
 	node scripts/nightly-findings-selftest.mjs
 	python3 scripts/gen-large-push-wide-decoder-reference.py --check
 	python3 -m unittest discover -s scripts -p test_large_push_wide_decoder.py

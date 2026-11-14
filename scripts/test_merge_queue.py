@@ -69,12 +69,14 @@ class MergeQueueTest(unittest.TestCase):
         self.git(self.work, "commit", "-q", "-m", subject)
         return self.git(self.work, "rev-parse", "HEAD")
 
-    def pull_request(self, number, rel, text, green=True, draft=False):
+    def pull_request(self, number, rel, text, green=True, draft=False, labels=("merge-queue",)):
         self.git(self.work, "checkout", "-q", "-B", f"pr{number}", "origin/main")
         self.write(rel, text)
         sha = self.commit(f"change {number}")
-        self.git(self.work, "push", "-q", "origin", f"HEAD:refs/pull/{number}/head")
-        self.prs.append({"number": number, "headRefOid": sha, "headRefName": f"pr{number}", "isDraft": draft})
+        self.git(self.work, "push", "-q", "-f", "origin", f"HEAD:refs/pull/{number}/head")
+        self.prs = [p for p in self.prs if p["number"] != number]
+        self.prs.append({"number": number, "headRefOid": sha, "headRefName": f"pr{number}", "isDraft": draft,
+                         "labels": [{"name": name} for name in labels]})
         if green:
             self.green.append(sha)
         return sha
@@ -94,6 +96,12 @@ class MergeQueueTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         with open(self.log) as f:
             self.calls = [json.loads(line) for line in f]
+        # The labels that the script set are the labels of the next call.
+        for call in self.called("pr", "edit"):
+            pr = next(p for p in self.prs if p["number"] == int(call[2]))
+            names = {label["name"] for label in pr["labels"]}
+            names = names | {call[4]} if call[3] == "--add-label" else names - {call[4]}
+            pr["labels"] = [{"name": name} for name in sorted(names)]
         return r.stdout
 
     def land(self, result):
@@ -157,7 +165,7 @@ class MergeQueueTest(unittest.TestCase):
         self.land("success")
         self.assertEqual(self.remote_ref("main"), tip)
         self.assertEqual(self.remote_ref("merge-queue/batch"), "")
-        self.assertEqual(self.state(), {"retry": []})
+        self.assertEqual(self.state()["retry"], [])
         self.assertEqual(self.called("workflow", "run"), [["workflow", "run", "merge-queue.yml", "--ref", "main"]])
 
     def test_a_red_batch_is_split_and_the_first_half_is_tested_alone(self):
@@ -168,20 +176,25 @@ class MergeQueueTest(unittest.TestCase):
         main = self.remote_ref("main")
         self.land("failure")
         self.assertEqual(self.remote_ref("main"), main)
-        self.assertEqual(self.state(), {"retry": [[1, 2], [3]]})
+        self.assertEqual(self.state()["retry"], [[1, 2], [3]])
         self.assertEqual(self.called("pr", "edit"), [])
         self.pull_request(4, "d.txt", "d\n")
         self.queue("form")
         self.assertEqual(self.batch(), [1, 2])
-        self.assertEqual(self.state(), {"retry": [[3]]})
+        self.assertEqual(self.state()["retry"], [[3]])
 
     def test_a_red_batch_of_one_removes_that_pull_request(self):
         self.pull_request(1, "a.txt", "a\n")
         self.queue("form")
+        report = os.path.join(self.tmp, "failure.md")
+        with open(report, "w") as f:
+            f.write("### [Lint / lint](https://example.test/job)\n")
+        self.env["MERGE_QUEUE_FAILURE_REPORT"] = report
         self.land("failure")
         self.assertEqual(self.called("pr", "edit"), [["pr", "edit", "1", "--remove-label", "merge-queue"]])
         self.assertIn("the suite failed with only this pull request", self.called("pr", "comment")[0][4])
-        self.assertEqual(self.state(), {"retry": []})
+        self.assertIn("### [Lint / lint](https://example.test/job)", self.called("pr", "comment")[0][4])
+        self.assertEqual(self.state()["retry"], [])
         self.assertEqual(self.remote_ref("merge-queue/batch"), "")
 
     def test_a_cancelled_suite_puts_the_batch_back(self):
@@ -189,7 +202,7 @@ class MergeQueueTest(unittest.TestCase):
         self.pull_request(2, "b.txt", "b\n")
         self.queue("form")
         self.land("cancelled")
-        self.assertEqual(self.state(), {"retry": [[1, 2]]})
+        self.assertEqual(self.state()["retry"], [[1, 2]])
         self.assertEqual(self.called("pr", "edit"), [])
 
     def test_land_merges_pin_commits_that_main_got(self):
@@ -199,7 +212,7 @@ class MergeQueueTest(unittest.TestCase):
         self.land("success")
         self.assertEqual(self.git(self.remote, "show", "main:a.txt"), "a")
         self.assertEqual(self.git(self.remote, "show", "main:.github/perf-baseline.txt"), "x86_64/a.ir\t2")
-        self.assertEqual(self.state(), {"retry": []})
+        self.assertEqual(self.state()["retry"], [])
 
     def test_land_tests_the_batch_again_when_main_got_other_commits(self):
         self.pull_request(1, "a.txt", "a\n")
@@ -208,10 +221,43 @@ class MergeQueueTest(unittest.TestCase):
         main = self.remote_ref("main")
         self.land("success")
         self.assertEqual(self.remote_ref("main"), main)
-        self.assertEqual(self.state(), {"retry": [[1]]})
+        self.assertEqual(self.state()["retry"], [[1]])
         self.queue("form")
         self.assertEqual(self.batch(), [1])
         self.assertEqual(self.git(self.remote, "show", "merge-queue/batch:other.txt"), "other")
+
+    def test_a_green_pull_request_gets_the_label_and_joins_the_batch(self):
+        self.pull_request(1, "a.txt", "a\n", labels=())
+        self.pull_request(2, "b.txt", "b\n", labels=(), green=False)
+        self.pull_request(3, "c.txt", "c\n", labels=(), draft=True)
+        self.pull_request(4, "d.txt", "d\n", labels=("merge-queue-hold",))
+        self.queue("form")
+        self.assertEqual(self.called("pr", "edit"), [["pr", "edit", "1", "--add-label", "merge-queue"]])
+        self.assertEqual(self.batch(), [1])
+
+    def test_a_removed_pull_request_gets_the_label_again_only_with_a_new_commit(self):
+        self.pull_request(1, "a.txt", "a\n", labels=())
+        self.queue("form")
+        self.land("failure")
+        self.assertEqual(self.called("pr", "edit"), [["pr", "edit", "1", "--remove-label", "merge-queue"]])
+        self.queue("form")
+        self.assertEqual(self.called("pr", "edit"), [])
+        self.assertEqual(self.remote_ref("merge-queue/batch"), "")
+        self.pull_request(1, "a.txt", "fixed\n", labels=())
+        self.queue("form")
+        self.assertEqual(self.called("pr", "edit"), [["pr", "edit", "1", "--add-label", "merge-queue"]])
+        self.assertEqual(self.batch(), [1])
+
+    def test_a_person_can_put_a_removed_pull_request_back(self):
+        self.pull_request(1, "base.txt", "one\n")
+        self.pull_request(2, "base.txt", "two\n")
+        self.queue("form")
+        self.land("success")
+        self.assertEqual(self.state()["removed"], {"2": self.prs[1]["headRefOid"]})
+        self.prs = [p for p in self.prs if p["number"] == 2]
+        self.prs[0]["labels"] = [{"name": "merge-queue"}]
+        self.queue("form")
+        self.assertEqual(self.called("pr", "edit"), [["pr", "edit", "2", "--remove-label", "merge-queue"]])
 
 
 if __name__ == "__main__":
