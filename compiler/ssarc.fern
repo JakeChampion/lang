@@ -5908,6 +5908,15 @@ function host_builtin_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered 
   };
 }
 
+function proc_wait_op(name: string): ir.Op {
+  return match (name) {
+    "proc_waitpid_nohang" => ir.op_proc_waitpid_nohang(),
+    "proc_waitpid_status" => ir.op_proc_waitpid_status(),
+    "proc_wait_any" => ir.op_proc_wait_any(),
+    _ => ir.op_proc_waitpid(),
+  };
+}
+
 function is_worker_site(name: string): boolean {
   return name == "__worker_region" || name == "__worker_exit" || name == "__worker_reap" || name == "__worker_unmap" || ssasem.is_adopt_helper(name) || ssasem.is_root_helper(name);
 }
@@ -5980,14 +5989,8 @@ function os_query_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   if (ins.str == "umask") {
     return Lowered { found: true, r: emit(r, ir.op_umask()) };
   }
-  if (ins.str == "proc_waitpid") {
-    return Lowered { found: true, r: emit(r, ir.op_proc_waitpid()) };
-  }
-  if (ins.str == "proc_waitpid_nohang") {
-    return Lowered { found: true, r: emit(r, ir.op_proc_waitpid_nohang()) };
-  }
-  if (ins.str == "proc_waitpid_status") {
-    return Lowered { found: true, r: emit(r, ir.op_proc_waitpid_status()) };
+  if (util.has_str(["proc_waitpid", "proc_waitpid_nohang", "proc_waitpid_status", "proc_wait_any"], ins.str)) {
+    return Lowered { found: true, r: emit(r, proc_wait_op(ins.str)) };
   }
   if (is_worker_site(ins.str)) {
     return worker_site(r, ins);

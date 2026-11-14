@@ -5305,15 +5305,8 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
   } else if (o.kind_tag == ir.K_PROC_FORK) {
     s = s.need("proc_fork");
     s = s.write("    bl __fn___fern_proc_fork\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == ir.K_PROC_WAITPID) {
-    s = s.need("proc_waitpid");
-    s = s.write("    bl __fn___fern_proc_waitpid\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == ir.K_PROC_WAITPID_NOHANG) {
-    s = s.need("proc_waitpid_nohang");
-    s = s.write("    bl __fn___fern_proc_waitpid_nohang\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == ir.K_PROC_WAITPID_STATUS) {
-    s = s.need("proc_waitpid_status");
-    s = s.write("    bl __fn___fern_proc_waitpid_status\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+  } else if (ir.is_proc_wait_op(o.kind_tag)) {
+    s = emit_proc_wait(s, ir.kind_name(o.kind_tag));
   } else if (o.kind_tag == ir.K_WORKER_REGION) {
     s = s.need("worker_region");
     s = s.write("    bl __fn___fern_worker_region\n    ldr x1, [sp], #16\n");
@@ -7174,6 +7167,24 @@ function emit_arm64_quarantine_data(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
+// A wait builtin pops its pid argument after the call. proc_wait_any has none.
+function emit_proc_wait(s: asmcore.EmitState, name: string): asmcore.EmitState {
+  let pop = "    add sp, sp, #16\n";
+  if (name == "proc_wait_any") {
+    pop = "";
+  }
+  return s.need(name).write("    bl __fn___fern_" + name + "\n" + pop + "    str x0, [sp, #-16]!\n");
+}
+
+function emit_proc_wait_runtime(s: asmcore.EmitState): asmcore.EmitState {
+  for name in ir.proc_wait_names() {
+    if (s.has_need(name)) {
+      s = emit_runtime("__fern_" + name, s);
+    }
+  }
+  return s;
+}
+
 function emit_runtime(roots: string, s: asmcore.EmitState): asmcore.EmitState {
   let at = s.runtime_units.roots.find(roots);
   if (at >= 0) {
@@ -7394,7 +7405,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     "monotonic_ns", "now_unix_ms", "now_ns", "stat", "lstat", "dir_stat",
     "read_file", "read_file_bytes", "read_file_bytes_u8", "random_i32", "sleep_ms",
     "sleep_ns", "set_file_times", "writer_set_times", "statfs", "poll", "proc_waitpid",
-    "proc_waitpid_nohang", "proc_waitpid_status", "disable_core_dumps", "worker_region", "worker_exit", "worker_unmap",
+    "proc_waitpid_nohang", "proc_waitpid_status", "proc_wait_any", "disable_core_dumps", "worker_region", "worker_exit", "worker_unmap",
     "timer_fd", "tcp_listen", "tcp_local_port", "putchar",
     "udp_sendto_bytes", "udp_sendto_bytes_u8", "udp_sendmmsg", "udp_sendmmsg_u8", "udp_recvmmsg", "udp_recvmmsg_u8",
     "eprint", "tcp_listen_with", "tcp_socket_ctl", "udp_bind", "udp_bind_with", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect", "reactor_new", "reactor_ctl", "reactor_wait", "ring_new", "ring_ctl", "ring_wait", "ring_recv_u8", "ring_send_zc_u8", "tcp_recv_into", "tcp_ktls_u8", "tcp_sendfile",
@@ -11587,15 +11598,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   if (s.has_need("poll")) {
     s = emit_runtime("__fern_poll", s);
   }
-  if (s.has_need("proc_waitpid")) {
-    s = emit_runtime("__fern_proc_waitpid", s);
-  }
-  if (s.has_need("proc_waitpid_nohang")) {
-    s = emit_runtime("__fern_proc_waitpid_nohang", s);
-  }
-  if (s.has_need("proc_waitpid_status")) {
-    s = emit_runtime("__fern_proc_waitpid_status", s);
-  }
+  s = emit_proc_wait_runtime(s);
   if (s.has_need("worker_region")) {
     s = emit_runtime("__fern_worker_region", s);
   }
