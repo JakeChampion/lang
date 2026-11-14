@@ -245,3 +245,24 @@ func TestSelfHostStoredContainerViewHardenedTargets(t *testing.T) {
 		})
 	}
 }
+
+func TestSelfHostStorageAnchorsWasm(t *testing.T) {
+	cli := buildRuntimeCLI(t)
+	for _, tc := range []struct{ name, source, want string }{
+		{"view", viewAnchorSrc, viewAnchorWant},
+		{"word-load", wordLoadAnchorSrc, wordLoadAnchorWant},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, sanitize := range []bool{false, true} {
+				got, stderr := runLentView(t, cli, tc.source, "wasm32-wasi", sanitize)
+				if got != tc.want {
+					t.Fatalf("sanitize=%v: got %q, want %q", sanitize, got, tc.want)
+				}
+				if sanitize {
+					assertBalancedCensus(t, stderr)
+					t.Logf("%s", leakSummaryLine(stderr))
+				}
+			}
+		})
+	}
+}
