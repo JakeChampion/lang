@@ -528,7 +528,7 @@ function __glob_variants(tokens: GlobTok[], groups: GlobTok[][][], count: i32): 
         v = v.append(t);
       } else if (groups[t.arg].len() > 0) {
         let alts = groups[t.arg];
-        stride = stride / alts.len();
+        stride /= alts.len();
         for a in alts[i / stride % alts.len()] {
           v = v.append(a);
         }
