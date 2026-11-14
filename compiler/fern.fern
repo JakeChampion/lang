@@ -2097,8 +2097,8 @@ function harden_refused(harden: boolean, target: string): boolean {
 
 // The -harden, -pie, -heap-limit and -quarantine refusals as one answer; the
 // two size values are below zero after their own refusal.
-function switches_refused(harden: boolean, pie: boolean, target: string, shared: boolean, heap_limit: i64, quarantine: i64): boolean {
-  return harden_refused(harden, target) || pie_refused(pie, target, shared) || heap_limit < 0i64 || quarantine < 0i64;
+function switches_refused(harden: boolean, pie: boolean, target: string, shared: boolean, heap_limit: i64, quarantine: i64, cpu_limit: i64): boolean {
+  return harden_refused(harden, target) || pie_refused(pie, target, shared) || heap_limit < 0i64 || quarantine < 0i64 || cpu_limit < 0i64;
 }
 
 // An Android executable is position independent with or without the flag.
@@ -2112,6 +2112,31 @@ function pie_refused(pie: boolean, target: string, shared: boolean): boolean {
   }
   eprint("fern: -pie is only supported for -target arm64-linux, x86-64-linux, arm64-android and x86-64-android executables (got \"" + target + "\"" + with + ")");
   return true;
+}
+
+// The -cpu-limit value in seconds: zero without the flag, below zero after a
+// refusal. Only the Linux kernel of a process target takes the limit at startup.
+function cpu_limit_seconds(text: string, target: string): i64 {
+  if (text.len() == 0) {
+    return 0i64;
+  }
+  if (!util.has_str(["x86-64-linux", "arm64-linux", "x86-64-android", "arm64-android"], target)) {
+    eprint("fern: -cpu-limit is only supported for the Linux and Android targets (got \"" + target + "\")");
+    return 0i64 - 1i64;
+  }
+  let value = 0i64;
+  for b in text.bytes() {
+    if (b < b'0' || b > b'9' || value > 99999999i64) {
+      value = 0i64 - 1i64;
+      break;
+    }
+    value = value * 10i64 + (b - b'0') as i64;
+  }
+  if (value < 1i64 || value > 31536000i64) {
+    eprint("fern: -cpu-limit takes a number of seconds from 1 to 31536000 (got \"" + text + "\")");
+    return 0i64 - 1i64;
+  }
+  return value;
 }
 
 // The -heap-limit value in bytes: zero without the flag, below zero after a refusal.
@@ -2326,6 +2351,7 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-harden", "", "Linux and Android executables and shared objects: stack canaries, a check on every indirect call, a random pick among a free list's first eight blocks behind encoded links, and a guard page after every 64th large block; on arm64 also BTI landing pads and signed return addresses, on an x86-64 executable the shadow stack where the kernel offers it"),
       cli_flag("-pie", "", "x86-64-linux and arm64-linux executables: a position-independent image, loaded at a random base"),
       cli_flag("-ram", "BASE,SIZE", "arm64-kernel and x86-64-kernel: the RAM that the loader puts the image in; the image starts at BASE, and the stack top is BASE + SIZE; each number is decimal or 0x hex, with an optional K, M or G suffix"),
+      cli_flag("-cpu-limit", "SECONDS", "Linux and Android executables: the processor time of the process, 1 to 31536000 seconds; the kernel stops a process that passes it"),
       cli_flag("-heap-limit", "SIZE", "native executables: the heap arena size, 1M to 16G with a K, M or G suffix (default 16G); a full arena exits 125"),
       cli_flag("-quarantine", "SIZE", "with -sanitize: the byte budget of released blocks held before reuse, 1M to 16G with a K, M or G suffix, or 0 for no bound (default 64M)"),
       cli_flag("-profile", "NAME", "a flag set: safe (the defaults), hardened (-harden -pie), diagnostic (-sanitize -backtrace -g) or minimal (-size)"),
@@ -6702,6 +6728,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let apk_opts = ApkOpts { jni_java: "", jni_dex: "", out: "", package: "", label: "", icon: "", key: "", permissions: "", min_sdk: "", compress: false, cleartext: false, debuggable: false, home: false, assets: "", widget: "", run: false };
   let harden = false;
   let heap_limit_text = "";
+  let cpu_limit_text = "";
   let ram_text = "";
   let quarantine_text = "";
   let pie = false;
@@ -6789,6 +6816,8 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       harden = f.on;
     } else if (f.name == "-heap-limit") {
       heap_limit_text = f.value;
+    } else if (f.name == "-cpu-limit") {
+      cpu_limit_text = f.value;
     } else if (f.name == "-ram") {
       ram_text = f.value;
     } else if (f.name == "-quarantine") {
@@ -7005,7 +7034,8 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   emit_syms = rtprofile.symbols(emit_syms, profile_mode);
   let heap_limit = heap_limit_bytes(heap_limit_text, target);
   let quarantine = quarantine_bytes(quarantine_text, sanitize_flag || asmcore.sanitize_on());
-  if (switches_refused(harden, pie, target, shared, heap_limit, quarantine)) {
+  let cpu_limit = cpu_limit_seconds(cpu_limit_text, target);
+  if (switches_refused(harden, pie, target, shared, heap_limit, quarantine, cpu_limit)) {
     return 2;
   }
   let (ram_base, ram_size, ram_ok) = ram_layout(ram_text, target);
@@ -7150,7 +7180,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let typed = parser.module_with_builtins_typed(merged);
   let full = parser.erase_view_module(typed);
   let debug_lines = emit_syms && (target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-android" || target == "arm64-darwin");
-  let sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(debug_lines, size, true, array_report)), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), sandbox: asmcore.sandbox_on(), cover: cover_on, symbols: emit_syms, optimize: optimize, leak_check: asmcore.leak_check_on(), rc_free_debug: asmcore.rc_free_debug_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size, harden: harden, heap_limit: heap_limit, quarantine: quarantine, pie: pie, profile: profile_name, target: target, line_maps: b.maps, ram_base: ram_base, ram_size: ram_size, interrupts: interrupt_entries(merged), early: marked_entry(merged, "early"), secondary: marked_entry(merged, "secondary"), user_mode: calls_user_run(merged) } };
+  let sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(debug_lines, size, true, array_report)), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), sandbox: asmcore.sandbox_on(), cover: cover_on, symbols: emit_syms, optimize: optimize, leak_check: asmcore.leak_check_on(), rc_free_debug: asmcore.rc_free_debug_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size, harden: harden, heap_limit: heap_limit, quarantine: quarantine, cpu_limit: cpu_limit, pie: pie, profile: profile_name, target: target, line_maps: b.maps, ram_base: ram_base, ram_size: ram_size, interrupts: interrupt_entries(merged), early: marked_entry(merged, "early"), secondary: marked_entry(merged, "secondary"), user_mode: calls_user_run(merged) } };
   if (array_report == semarrayreport.to_stdout()) {
     return 0;
   }

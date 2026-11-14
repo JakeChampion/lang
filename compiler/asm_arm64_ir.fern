@@ -6618,8 +6618,20 @@ function emit_start_profile(s: asmcore.EmitState, darwin: boolean): asmcore.Emit
   return s;
 }
 
+// -cpu-limit: prlimit64 sets the soft and the hard limit of RLIMIT_CPU before
+// main runs. The kernel sends SIGXCPU at the limit.
+function emit_cpu_limit(s: asmcore.EmitState): asmcore.EmitState {
+  if (s.cpu_limit <= 0i64) {
+    return s;
+  }
+  s = s.write("    sub sp, sp, #16\n" + mov_imm64("x9", s.cpu_limit) + "    stp x9, x9, [sp]\n");
+  s = s.write("    mov x0, #0\n    mov x1, #0\n    mov x2, sp\n    mov x3, #0\n    mov x8, #261\n").svc(261);
+  return s.write("    add sp, sp, #16\n");
+}
+
 function emit_start_main_call(s: asmcore.EmitState): asmcore.EmitState {
   if (asmcore.declares_main(s.funcs)) {
+    s = emit_cpu_limit(s);
     s = s.write("    bl __fn_main\n");
     if (s.has_need("task")) {
       s = s.write("    str x0, [sp, #-16]!\n    bl __fern_task_close_drop\n    ldr x0, [sp], #16\n");
