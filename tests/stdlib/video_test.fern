@@ -413,6 +413,63 @@ function nal_packets(): test.TestOutcome {
   return test.assert_true(true);
 }
 
+function hevc_temporal_record(kind: i32, plus_one: i32): u8[] {
+  let record: u8[] = [
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 40, 240, 0, 252, 253, 248, 248, 0, 0, 3, 3,
+    160, 0, 1, 0, 2, 64, 1, 161, 0, 1, 0, 2, 66, 1, 162, 0, 1, 0, 2, 68, 1,
+  ];
+  if (kind >= 39) {
+    return record.with(22, 4).append(kind as u8).append(0).append(1).append(0).append(2).append((kind * 2) as u8).append(plus_one as u8);
+  }
+  return record.with(29 + (kind - 32) * 7, plus_one as u8);
+}
+
+function hevc_temporal_bytes(kind: i32, plus_one: i32): u8[] {
+  let expected: u8[] = [0, 0, 0, 1, 64, 1, 0, 0, 0, 1, 66, 1, 0, 0, 0, 1, 68, 1];
+  if (kind == 34) {
+    return expected.with(17, plus_one as u8);
+  }
+  if (kind >= 39) {
+    return expected.append(0).append(0).append(0).append(1).append((kind * 2) as u8).append(plus_one as u8);
+  }
+  return expected;
+}
+
+function hevc_temporal_valid(kind: i32, plus_one: i32): boolean {
+  return plus_one != 0 && (kind >= 34 || plus_one == 1);
+}
+
+function hevc_temporal_case(kind: i32, plus_one: i32): test.TestOutcome {
+  let valid = hevc_temporal_valid(kind, plus_one);
+  match (nal.hevc_config(hevc_temporal_record(kind, plus_one), frame.default_limits())) {
+    Ok(config) => {
+      if (!valid) {
+        return test.fail("invalid HEVC configuration temporal identifier");
+      }
+      if (config.csd0 != hevc_temporal_bytes(kind, plus_one) || config.csd1.len() != 0 || config.length_size != 4) {
+        return test.fail("HEVC configuration preserves permitted temporal headers");
+      }
+    },
+    Err(error) => {
+      if (valid || error != frame.Header) {
+        return test.fail("HEVC configuration temporal header category");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function hevc_temporal_config(): test.TestOutcome {
+  for kind in [32, 33, 34, 39, 40] {
+    for plus_one in 0..8 {
+      if let test.Fail(message) = hevc_temporal_case(kind, plus_one) {
+        return test.fail(message);
+      }
+    }
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let r = test.new("video codecs");
   r = r.it("QTRLE matches FFmpeg pixels and roundtrips delta frames", reference);
@@ -421,5 +478,6 @@ function main(): i32 {
   r = r.it("video dimensions, storage, precision, and resource limits", bounds);
   r = r.it("IVF packets, timestamps, and resource limits", ivf_packets);
   r = r.it("AVC and HEVC configuration and Annex B packets", nal_packets);
+  r = r.it("HEVC configuration temporal headers", hevc_temporal_config);
   return r.finish();
 }
