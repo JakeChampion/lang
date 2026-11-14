@@ -143,6 +143,16 @@ function test_a_space_in_a_row_adds_no_height(): test.TestOutcome {
   return test.assert_eq(boxes(lay.nodes), "0,0,6,10 194,0,6,10 0,10,20,20");
 }
 
+// A box that grows and is square takes the largest square that fits, and
+// is no wider than its exact width. In a column of 400, it is 150 by 150.
+// In a column of 100, it takes the 70 that the box of 30 leaves. In a row
+// of 50, it is 50 by 50, and the next box is right after it.
+function test_a_square_fits_its_room(): test.TestOutcome {
+  let column = (h: f64): ui.El[Msg] => ui.column([ui.box().width(150.0).tall().square().background(ui.PRIMARY), ui.box().width(20.0).height(30.0).background(ui.SURFACE)]).height(h);
+  let row = laid(ui.row([ui.box().wide().square().background(ui.PRIMARY), ui.box().width(20.0).height(10.0).background(ui.SURFACE)]).height(50.0));
+  return test.assert_eq(boxes(laid(column(400.0)).nodes) + " | " + boxes(laid(column(100.0)).nodes) + " | " + boxes(row.nodes), "0,0,150,150 0,150,20,30 | 0,0,70,70 0,70,20,30 | 0,0,50,50 50,0,20,10");
+}
+
 function test_stack(): test.TestOutcome {
   let lay = laid(ui.stack([ui.box().grow(1.0).background(ui.SURFACE), label("AA")]).centered());
   return test.assert_eq(boxes(lay.nodes), "0,0,200,400 94,195,12,10");
@@ -1064,6 +1074,7 @@ function main(): i32 {
   r = r.it("a row shares its room by the weights", test_row_shares_the_room);
   r = r.it("STRETCH gives each element the whole width", test_stretch);
   r = r.it("a space in a row adds no height to the row", test_a_space_in_a_row_adds_no_height);
+  r = r.it("a square takes the largest square that fits in its room", test_a_square_fits_its_room);
   r = r.it("a stack puts its elements one over the other", test_stack);
   r = r.it("a text wraps and clamps", test_text_wraps);
   r = r.it("a role takes its color from the theme", test_roles_take_the_theme);
