@@ -1,3 +1,5 @@
+# 2026-11-14: bigint_word_index_out_of_range, continue_in_a_value_block_steps_the_range,
+# defer_runs_for_a_return_in_a_value_branch and type_args_trailing_comma have balanced allocations on x86-64.
 # 2026-11-14: own_local_moved_into_exit has balanced allocations on x86-64.
 # 2026-11-13: inline_worker_exit_is_a_worker_failure keeps three scheduler blocks
 # in active frames at exit(134). The process does not unwind these frames.
@@ -249,6 +251,7 @@ bare_enum_map_payloads                               0
 bare_variant_beside_enum_instantiations               0
 bare_variant_resolves_against_expected_type           0
 base64_roundtrip                                     0
+bigint_word_index_out_of_range                       0
 binding_site_pattern_grammar                         0
 bitwise_not                                          0
 bitwise_precedence                                   0
@@ -301,6 +304,8 @@ checked_int_conversion                               0
 # 2026-11-11: checked_owned_nested_results has zero unpaired allocations under native RC trace.
 checked_owned_nested_results                         0
 checked_owned_results                                0
+continue_in_a_value_block_steps_the_range            0
+defer_runs_for_a_return_in_a_value_branch            0
 future_array_literal_goes_to_gather                  2
 match_arm_names_a_const                              0
 match_arm_names_a_const_of_its_module                0
@@ -1425,6 +1430,7 @@ tuple_return_union                                   0
 tuple_variant_payload_subpattern                     0
 two_i64_literals                                     0
 two_nones_share_sentinel                             0
+type_args_trailing_comma                             0
 type_param_name_collision                            0
 typed_json_protobuf_errors                           0
 u32_large_to_f64_back                                0
