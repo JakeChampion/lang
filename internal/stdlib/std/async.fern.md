@@ -140,9 +140,11 @@ pub trait Driver {
 
 ```fern
 <<4 pub function event_room(max: i32): i32[]>>=
+// Each event has 4 entries, so reactor_wait can let the kernel write its
+// events into the array. The ready pairs then fill the first entries.
 pub function event_room(max: i32): i32[] {
   let events: i32[] = [];
-  while (events.len() < max * 2) {
+  while (events.len() < max * 4) {
     events = events.append(0);
   }
   return end_pairs(events, 0);

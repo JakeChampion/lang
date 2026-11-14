@@ -1,0 +1,74 @@
+// fern-lint: allow cyclomatic-complexity
+// One kernel walks the records, scans each name and skips the dot entries, as __fern_dir_entries does.
+function __fern_dir_entries_ino(fd: i32): Result[DirEntry[], IoError] {
+  let rw = __syscall3(62, fd as i64, 0, 0) as i32;
+  if (rw < 0) {
+    return Err(__fern_io_error(-rw, ""));
+  }
+  let basep = __raw_alloc(8);
+  let names: DirEntry[] = [];
+  let bad = 0;
+  let done = 0;
+  while (done == 0) {
+    let buf = __raw_alloc(65536);
+    let n = __syscall4(61, fd as i64, buf as i64, 65536, basep as i64) as i32;
+    if (n <= 0) {
+      done = 1;
+      bad = n;
+    } else {
+      let pos = 0;
+      while (pos < n) {
+        let reclen = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256;
+        let nlen = 0;
+        let room = reclen - 19;
+        let scan = 1;
+        while (scan == 1 && nlen + 8 <= room) {
+          let w = __load_i64(buf + pos as usize + 19 + nlen as usize);
+          let z = w - 72340172838076673 as i64 & (w ^ (-1) as i64) & (-9187201950435737472) as i64;
+          if (z != 0 as i64) {
+            nlen += __ctz64(z as u64) >> 3;
+            scan = 0;
+          } else {
+            nlen += 8;
+          }
+        }
+        if (scan == 1) {
+          while (__raw_load8(buf, pos + 19 + nlen) != 0) {
+            nlen += 1;
+          }
+        }
+        if (__fern_utf8_valid(buf + pos as usize + 19, nlen) == 0) {
+          bad = -84;
+          done = 1;
+          pos = n;
+        } else {
+          let skip = 0;
+          if (nlen == 1) {
+            if (__raw_load8(buf, pos + 19) == 46) {
+              skip = 1;
+            }
+          }
+          if (nlen == 2) {
+            if (__raw_load8(buf, pos + 19) == 46) {
+              if (__raw_load8(buf, pos + 19 + 1) == 46) {
+                skip = 1;
+              }
+            }
+          }
+          if (skip == 0) {
+            let nbuf = __raw_alloc(nlen);
+            __memcpy(nbuf, buf + pos as usize + 19, nlen);
+            names = names.append(DirEntry { name: __raw_string(nbuf, nlen), ino: __load_i64(buf + pos as usize + 0), kind: __raw_load8(buf, pos + 18) as u32 << 12 });
+          }
+          pos += reclen;
+        }
+      }
+    }
+    let buf_own = __raw_string(buf, 65536);
+  }
+  let basep_own = __raw_string(basep, 8);
+  if (bad < 0) {
+    return Err(__fern_io_error(-bad, ""));
+  }
+  return Ok(names);
+}

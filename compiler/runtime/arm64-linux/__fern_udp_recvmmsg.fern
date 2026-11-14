@@ -98,9 +98,9 @@ function __fern_udp_recvmmsg(fd: i32, buf: i32[], froms: i32[], lens: i32[]): i3
       __raw_store_ptr(fp, 19 * i + 17 + 1, __raw_load8(sa, 2) as usize);
       __raw_store_ptr(fp, 19 * i + 18 + 1, __raw_load8(sa, 3) as usize);
     }
-    __raw_store_ptr(lp, 3 * i + 1, got as usize);
-    __raw_store_ptr(lp, 3 * i + 2, seg as usize);
-    __raw_store_ptr(lp, 3 * i + 3, tos as usize);
+    __store_i32(lp + (8 + 12 * i) as usize, got);
+    __store_i32(lp + (12 + 12 * i) as usize, seg);
+    __store_i32(lp + (16 + 12 * i) as usize, tos);
     i += 1;
   }
   let table: i32[] = __raw_array(p);

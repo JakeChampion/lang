@@ -20,7 +20,7 @@ function mutation(s: string, from: string, to: string, expected: boolean): void 
 }
 
 function fixture(): string {
-  return ".text\n__fern_alloc:\naddq $7, %rdi\nandq $-8, %rdi\ncmpq $2048, %rdi\nja .Lfull\nleaq __fern_freelist(%rip), %rax\naddq %rax, %rdi\nmovq (%rdi), %rax\ntestq %rax, %rax\njz .Lmiss\npushq (%rax)\npopq (%rdi)\nret\n.Lmiss:\nleaq __fern_freelist(%rip), %rax\nsubq %rax, %rdi\nmovq __fern_heap_ptr(%rip), %rax\ntestq %rax, %rax\njz .Lfull\naddq %rax, %rdi\ncmpq __fern_heap_end(%rip), %rdi\nja .Loom\nmovq %rdi, __fern_heap_ptr(%rip)\nret\n.Lfull:\nunknown_instruction\n.section .rodata\n.message:\n.ascii \"oom\"\n.text\n.Loom:\nunknown_instruction\n.bss\n.align 8\n__fern_heap_ptr: .quad 0\n.align 8\n__fern_heap_base: .quad 0\n.align 8\n__fern_heap_end: .quad 0\n.align 8\n__fern_freelist: .skip 524288\n";
+  return ".text\n__fern_alloc:\naddq $7, %rdi\nandq $-8, %rdi\ncmpq $2048, %rdi\nja .Lfull\nleaq __fern_freelist(%rip), %rax\naddq %rax, %rdi\nmovq (%rdi), %rax\ntestq %rax, %rax\njz .Lalloc_fast_miss\npushq (%rax)\npopq (%rdi)\nret\n.Lalloc_fast_miss:\nleaq __fern_freelist(%rip), %rax\nsubq %rax, %rdi\nmovq __fern_heap_ptr(%rip), %rax\ntestq %rax, %rax\njz .Lfull\naddq %rax, %rdi\ncmpq __fern_heap_end(%rip), %rdi\nja .Loom\nmovq %rdi, __fern_heap_ptr(%rip)\nret\n.Lfull:\nunknown_instruction\n.section .rodata\n.message:\n.ascii \"oom\"\n.text\n.Loom:\nunknown_instruction\n.bss\n.align 8\n__fern_heap_ptr: .quad 0\n.align 8\n__fern_heap_base: .quad 0\n.align 8\n__fern_heap_end: .quad 0\n.align 8\n__fern_freelist: .skip 524288\n";
 }
 
 function request_and_slot(s: string): void {
@@ -30,7 +30,7 @@ function request_and_slot(s: string): void {
   mutation(s, "addq $7, %rdi", "movq $40, %rdi", false);
   mutation(s, "andq $-8, %rdi", "", false);
   mutation(s, "cmpq $2048, %rdi", "cmpl $2048, %edi", true);
-  mutation(s, "cmpq $2048, %rdi", "cmpq $40, %rdi", false);
+  mutation(s, "cmpq $2048, %rdi", "cmpq $32, %rdi", false);
   mutation(s, "leaq __fern_freelist(%rip), %rax", "leaq __fern_freelist(%rip), %rcx", false);
   mutation(s, "movq (%rdi), %rax", "movl (%rdi), %eax", false);
   mutation(s, "movq (%rdi), %rax", "movq 8(%rdi), %rax", false);
@@ -105,7 +105,7 @@ function flags_and_flow(s: string): void {
   mutation(s, "ret", "unknown_instruction\nret", false);
   mutation(s, "ret", ".Lcycle:\njmp .Lcycle\nret", false);
   mutation(s, "ja .Lfull", "ja .Lmissing", true);
-  mutation(s, "jz .Lmiss", "jz .Lmissing", false);
+  mutation(s, "jz .Lalloc_fast_miss", "jz .Lmissing", false);
   mutation(s, "ret", "jmp .Lmissing\nret", false);
 }
 
@@ -122,6 +122,51 @@ function numeric_flags(s: string): void {
   }
   mutation(s, "addq $7, %rdi", "movl $-2147483648, %eax\ncmpl $1, %eax\njno .Lnumeric_outside\naddq $7, %rdi", true);
   mutation(s, "addq $7, %rdi", "movl $-2147483648, %eax\ncmpl $1, %eax\njo .Lnumeric_outside\naddq $7, %rdi", false);
+}
+
+function colour(plain: string): void {
+  let step = "cmpw %ax, %di\njb .Lalloc_colour\nret\n.Lalloc_colour:\npushq %rax\nmovq %rdi, %rax\nshrq $16, %rax\nandq $15, %rax\nshlq $6, %rax\naddq %rdi, %rax\ncmpq __fern_heap_end(%rip), %rax\nja .Lalloc_plain\nmovq %rax, __fern_heap_ptr(%rip)\n.Lalloc_plain:\npopq %rax\nret";
+  let s = change(plain, "movq %rdi, __fern_heap_ptr(%rip)\nret", "movq %rdi, __fern_heap_ptr(%rip)\n" + step);
+  require(machine.check(s), "colour step fixture");
+  for code in ["jae .Lalloc_colour", "jne .Lalloc_colour", "ja .Lalloc_colour"] {
+    mutation(s, "jb .Lalloc_colour", code, false);
+  }
+  mutation(s, "jb .Lalloc_colour", "jmp .Lalloc_colour", true);
+  for code in ["cmpq %rax, %rdi", "cmpw %ax, %di\nmovq $0, %rax", ""] {
+    mutation(s, "cmpw %ax, %di", code, false);
+  }
+  for code in ["shrq $12, %rax", "shrq $16, %rdi", "shrl $16, %eax", ""] {
+    mutation(s, "shrq $16, %rax", code, false);
+  }
+  for code in ["andq $31, %rax", "andq $-8, %rax", ""] {
+    mutation(s, "andq $15, %rax", code, false);
+  }
+  for code in ["shlq $7, %rax", "shlq $3, %rax", ""] {
+    mutation(s, "shlq $6, %rax", code, false);
+  }
+  for code in ["", "subq %rdi, %rax", "addq %rax, %rax"] {
+    mutation(s, "addq %rdi, %rax", code, false);
+  }
+  for code in ["", "jbe .Lalloc_plain", "jb .Lalloc_plain", "jmp .Lalloc_colour"] {
+    mutation(s, "ja .Lalloc_plain", code, false);
+  }
+  mutation(s, "cmpq __fern_heap_end(%rip), %rax", "cmpq __fern_heap_base(%rip), %rax", false);
+  mutation(s, "cmpq __fern_heap_end(%rip), %rax", "cmpq __fern_heap_end(%rip), %rax\nmovq %rdi, %rdi", true);
+  for code in ["movq %rdi, __fern_heap_ptr(%rip)", "movq %rax, __fern_heap_end(%rip)", "movl %eax, __fern_heap_ptr(%rip)", "movq %rax, __fern_heap_ptr(%rip)\nmovq %rax, __fern_heap_ptr(%rip)"] {
+    mutation(s, "movq %rax, __fern_heap_ptr(%rip)", code, false);
+  }
+  mutation(s, "pushq %rax", "", false);
+  mutation(s, "popq %rax", "", false);
+  mutation(s, "popq %rax", "popq %rdi", false);
+}
+
+// The label that takes the address of an empty list must be on the path that
+// takes memory from the end of the heap, where %rdi holds that address.
+function miss_entry(s: string): void {
+  let entry = ".Lalloc_fast_miss:\nleaq __fern_freelist(%rip), %rax\nsubq %rax, %rdi";
+  mutation(s, entry, "leaq __fern_freelist(%rip), %rax\nsubq %rax, %rdi\n.Lalloc_fast_miss:", false);
+  mutation(change(s, "jz .Lalloc_fast_miss", "jz .Lother"), ".Lalloc_fast_miss:", ".Lother:", false);
+  mutation(change(s, "jz .Lalloc_fast_miss", "jz .Lother"), ".Lalloc_fast_miss:", ".Lother:\n.Lalloc_fast_miss:", true);
 }
 
 function actual_mutations(output: string): void {
@@ -149,4 +194,6 @@ pub function run(output: string): void {
   identities(s);
   flags_and_flow(s);
   numeric_flags(s);
+  miss_entry(s);
+  colour(s);
 }

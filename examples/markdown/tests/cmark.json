@@ -1,0 +1,1293 @@
+{
+ "files": {
+  "a.md": "# A\n\nsome *text",
+  "b.md": " continued\n\n- x\n",
+  "bom.md": "﻿# bom\r\n\r",
+  "quote.md": "\n> q\n",
+  "bad.md": {
+   "base64": "Yf9iIOKCIPCfmCDtoIAgwK8g9JCAgCBvawriQQoqePAqCu+/vgo="
+  },
+  "nul.md": "a\u0000b\n\u0000\n"
+ },
+ "cases": [
+  {
+   "args": [
+    "--help"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "Usage:   cmark [FILE*]\nOptions:\n  --to, -t FORMAT  Specify output format (html, xml, man, commonmark, latex)\n  --width WIDTH    Specify wrap width (default 0 = nowrap)\n  --sourcepos      Include source position attribute\n  --hardbreaks     Treat newlines as hard line breaks\n  --nobreaks       Render soft line breaks as spaces\n  --safe           Omit raw HTML and dangerous URLs\n  --unsafe         Render raw HTML and dangerous URLs\n  --smart          Use smart punctuation\n  --validate-utf8  Replace invalid UTF-8 sequences with U+FFFD\n  --help, -h       Print usage information\n  --version        Print version\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-h"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "Usage:   cmark [FILE*]\nOptions:\n  --to, -t FORMAT  Specify output format (html, xml, man, commonmark, latex)\n  --width WIDTH    Specify wrap width (default 0 = nowrap)\n  --sourcepos      Include source position attribute\n  --hardbreaks     Treat newlines as hard line breaks\n  --nobreaks       Render soft line breaks as spaces\n  --safe           Omit raw HTML and dangerous URLs\n  --unsafe         Render raw HTML and dangerous URLs\n  --smart          Use smart punctuation\n  --validate-utf8  Replace invalid UTF-8 sequences with U+FFFD\n  --help, -h       Print usage information\n  --version        Print version\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--bogus"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "Usage:   cmark [FILE*]\nOptions:\n  --to, -t FORMAT  Specify output format (html, xml, man, commonmark, latex)\n  --width WIDTH    Specify wrap width (default 0 = nowrap)\n  --sourcepos      Include source position attribute\n  --hardbreaks     Treat newlines as hard line breaks\n  --nobreaks       Render soft line breaks as spaces\n  --safe           Omit raw HTML and dangerous URLs\n  --unsafe         Render raw HTML and dangerous URLs\n  --smart          Use smart punctuation\n  --validate-utf8  Replace invalid UTF-8 sequences with U+FFFD\n  --help, -h       Print usage information\n  --version        Print version\n",
+   "stderr": "",
+   "exit": 1
+  },
+  {
+   "args": [
+    "-"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "Usage:   cmark [FILE*]\nOptions:\n  --to, -t FORMAT  Specify output format (html, xml, man, commonmark, latex)\n  --width WIDTH    Specify wrap width (default 0 = nowrap)\n  --sourcepos      Include source position attribute\n  --hardbreaks     Treat newlines as hard line breaks\n  --nobreaks       Render soft line breaks as spaces\n  --safe           Omit raw HTML and dangerous URLs\n  --unsafe         Render raw HTML and dangerous URLs\n  --smart          Use smart punctuation\n  --validate-utf8  Replace invalid UTF-8 sequences with U+FFFD\n  --help, -h       Print usage information\n  --version        Print version\n",
+   "stderr": "",
+   "exit": 1
+  },
+  {
+   "args": [
+    "-x",
+    "a.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "Usage:   cmark [FILE*]\nOptions:\n  --to, -t FORMAT  Specify output format (html, xml, man, commonmark, latex)\n  --width WIDTH    Specify wrap width (default 0 = nowrap)\n  --sourcepos      Include source position attribute\n  --hardbreaks     Treat newlines as hard line breaks\n  --nobreaks       Render soft line breaks as spaces\n  --safe           Omit raw HTML and dangerous URLs\n  --unsafe         Render raw HTML and dangerous URLs\n  --smart          Use smart punctuation\n  --validate-utf8  Replace invalid UTF-8 sequences with U+FFFD\n  --help, -h       Print usage information\n  --version        Print version\n",
+   "stderr": "",
+   "exit": 1
+  },
+  {
+   "args": [
+    "--width"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "",
+   "stderr": "--width requires an argument\n",
+   "exit": 1
+  },
+  {
+   "args": [
+    "--width",
+    "abc"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "",
+   "stderr": "failed parsing width 'abc' at 'abc'\n",
+   "exit": 1
+  },
+  {
+   "args": [
+    "--width",
+    "12abc"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "",
+   "stderr": "failed parsing width '12abc' at 'abc'\n",
+   "exit": 1
+  },
+  {
+   "args": [
+    "--width",
+    ""
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<p>stdin <em>text</em>\n<!-- raw HTML omitted -->x<!-- raw HTML omitted --></p>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--width",
+    " 5",
+    "-t",
+    "commonmark",
+    "b.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "continued\n\n  - x\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--width",
+    "-3",
+    "-t",
+    "commonmark"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "stdin *text* <b>x</b>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--width",
+    "99999999999999999999",
+    "-t",
+    "commonmark"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "stdin *text* <b>x</b>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--width",
+    "+7",
+    "-t",
+    "man"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": ".PP\nstdin\n\\f[I]text\\f[]\nx\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "",
+   "stderr": "No argument provided for -t\n",
+   "exit": 1
+  },
+  {
+   "args": [
+    "--to"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "",
+   "stderr": "No argument provided for --to\n",
+   "exit": 1
+  },
+  {
+   "args": [
+    "-t",
+    "foo"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "",
+   "stderr": "Unknown format foo\n",
+   "exit": 1
+  },
+  {
+   "args": [
+    "-t",
+    "HTML"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "",
+   "stderr": "Unknown format HTML\n",
+   "exit": 1
+  },
+  {
+   "args": [
+    "--to",
+    "xml",
+    "a.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n<document xmlns=\"http://commonmark.org/xml/1.0\">\n  <heading level=\"1\">\n    <text xml:space=\"preserve\">A</text>\n  </heading>\n  <paragraph>\n    <text xml:space=\"preserve\">some *text</text>\n  </paragraph>\n</document>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--bogus",
+    "--version"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "Usage:   cmark [FILE*]\nOptions:\n  --to, -t FORMAT  Specify output format (html, xml, man, commonmark, latex)\n  --width WIDTH    Specify wrap width (default 0 = nowrap)\n  --sourcepos      Include source position attribute\n  --hardbreaks     Treat newlines as hard line breaks\n  --nobreaks       Render soft line breaks as spaces\n  --safe           Omit raw HTML and dangerous URLs\n  --unsafe         Render raw HTML and dangerous URLs\n  --smart          Use smart punctuation\n  --validate-utf8  Replace invalid UTF-8 sequences with U+FFFD\n  --help, -h       Print usage information\n  --version        Print version\n",
+   "stderr": "",
+   "exit": 1
+  },
+  {
+   "args": [
+    "-h",
+    "--bogus"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "Usage:   cmark [FILE*]\nOptions:\n  --to, -t FORMAT  Specify output format (html, xml, man, commonmark, latex)\n  --width WIDTH    Specify wrap width (default 0 = nowrap)\n  --sourcepos      Include source position attribute\n  --hardbreaks     Treat newlines as hard line breaks\n  --nobreaks       Render soft line breaks as spaces\n  --safe           Omit raw HTML and dangerous URLs\n  --unsafe         Render raw HTML and dangerous URLs\n  --smart          Use smart punctuation\n  --validate-utf8  Replace invalid UTF-8 sequences with U+FFFD\n  --help, -h       Print usage information\n  --version        Print version\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--width",
+    "5",
+    "--width"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "",
+   "stderr": "--width requires an argument\n",
+   "exit": 1
+  },
+  {
+   "args": [
+    ""
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "",
+   "stderr": "Error opening file : No such file or directory\n",
+   "exit": 1
+  },
+  {
+   "args": [
+    "missing.md",
+    "--bogus"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "Usage:   cmark [FILE*]\nOptions:\n  --to, -t FORMAT  Specify output format (html, xml, man, commonmark, latex)\n  --width WIDTH    Specify wrap width (default 0 = nowrap)\n  --sourcepos      Include source position attribute\n  --hardbreaks     Treat newlines as hard line breaks\n  --nobreaks       Render soft line breaks as spaces\n  --safe           Omit raw HTML and dangerous URLs\n  --unsafe         Render raw HTML and dangerous URLs\n  --smart          Use smart punctuation\n  --validate-utf8  Replace invalid UTF-8 sequences with U+FFFD\n  --help, -h       Print usage information\n  --version        Print version\n",
+   "stderr": "",
+   "exit": 1
+  },
+  {
+   "args": [
+    "--safe"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<p>stdin <em>text</em>\n<!-- raw HTML omitted -->x<!-- raw HTML omitted --></p>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--safe",
+    "--unsafe"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<p>stdin <em>text</em>\n<b>x</b></p>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--unsafe",
+    "--safe"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<p>stdin <em>text</em>\n<b>x</b></p>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "a.md",
+    "b.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<h1>A</h1>\n<p>some *text continued</p>\n<ul>\n<li>x</li>\n</ul>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "a.md",
+    "missing.md",
+    "b.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "",
+   "stderr": "Error opening file missing.md: No such file or directory\n",
+   "exit": 1
+  },
+  {
+   "args": [
+    "dir"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "dir",
+    "a.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<h1>A</h1>\n<p>some *text</p>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "bom.md",
+    "quote.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<h1>bom</h1>\n<blockquote>\n<p>q</p>\n</blockquote>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "quote.md",
+    "bom.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<blockquote>\n<p>q\n﻿# bom</p>\n</blockquote>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "a.md",
+    "-t",
+    "latex",
+    "b.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "\\section{A}\n\nsome *text continued\n\n\\begin{itemize}\n\\item x\n\n\\end{itemize}\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--sourcepos",
+    "bom.md",
+    "a.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<h1 data-sourcepos=\"1:1-1:5\">bom</h1>\n<h1 data-sourcepos=\"3:1-3:3\">A</h1>\n<p data-sourcepos=\"5:1-5:10\">some *text</p>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "nul.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<p>a�b\n�</p>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--sourcepos",
+    "-t",
+    "xml",
+    "nul.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n<document sourcepos=\"1:1-2:3\" xmlns=\"http://commonmark.org/xml/1.0\">\n  <paragraph sourcepos=\"1:1-2:3\">\n    <text sourcepos=\"1:1-1:5\" xml:space=\"preserve\">a�b</text>\n    <softbreak />\n    <text sourcepos=\"2:1-2:3\" xml:space=\"preserve\">�</text>\n  </paragraph>\n</document>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "html",
+    "bad.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<p>a�b � � � � � ok\n�\n*x�\n￾</p>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "xml",
+    "bad.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n<document xmlns=\"http://commonmark.org/xml/1.0\">\n  <paragraph>\n    <text xml:space=\"preserve\">a�b � � � � � ok</text>\n    <softbreak />\n    <text xml:space=\"preserve\">�</text>\n    <softbreak />\n    <text xml:space=\"preserve\">*x�</text>\n    <softbreak />\n    <text xml:space=\"preserve\">�</text>\n  </paragraph>\n</document>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "man",
+    "bad.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "LlBQCmHvv71iIO+/vSDvv70g77+9IO+/vSDvv70gb2sK77+9Cip477+9Cv4K"
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "latex",
+    "bad.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "Ye+/vWIg77+9IO+/vSDvv70g77+9IO+/vSBvawrvv70KKnjvv70K/go="
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "--validate-utf8",
+    "-t",
+    "commonmark",
+    "bad.md"
+   ],
+   "stdin": "stdin *text*\n<b>x</b>\n",
+   "stdout": {
+    "base64": "Ye+/vWIg77+9IO+/vSDvv70g77+9IO+/vSBvawrvv70KXCp477+9Cv4K"
+   },
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "html"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "<h1>Title <em>em</em></h1>\n<h2>Setext <code>code</code></h2>\n<blockquote>\n<p>quote &quot;with&quot; 'quotes'\nand a <a href=\"/u\" title=\"title\">link</a> and <a href=\"http://a.b\">http://a.b</a></p>\n</blockquote>\n<ul>\n<li>\n<p>one</p>\n</li>\n<li>\n<p>two</p>\n<p>para -- dash --- and ...</p>\n</li>\n</ul>\n<ol start=\"3\">\n<li>three</li>\n<li>four</li>\n</ol>\n<pre><code class=\"language-py\">print(1)\n</code></pre>\n<pre><code>indented\n</code></pre>\n<!-- raw HTML omitted -->\n<hr />\n<p>Hard<br />\nbreak<br />\nsoft\nbreak <img src=\"/i.png\" alt=\"img a\" title=\"t\" /> <!-- raw HTML omitted -->tag<!-- raw HTML omitted --> &amp; © <a href=\"mailto:a@b.c\">a@b.c</a></p>\n<p><a href=\"/r\" title=\"R\">ref</a> <a href=\"/r\" title=\"R\">x</a> 1. 2) + = # !</p>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "html",
+    "--unsafe"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "<h1>Title <em>em</em></h1>\n<h2>Setext <code>code</code></h2>\n<blockquote>\n<p>quote &quot;with&quot; 'quotes'\nand a <a href=\"/u\" title=\"title\">link</a> and <a href=\"http://a.b\">http://a.b</a></p>\n</blockquote>\n<ul>\n<li>\n<p>one</p>\n</li>\n<li>\n<p>two</p>\n<p>para -- dash --- and ...</p>\n</li>\n</ul>\n<ol start=\"3\">\n<li>three</li>\n<li>four</li>\n</ol>\n<pre><code class=\"language-py\">print(1)\n</code></pre>\n<pre><code>indented\n</code></pre>\n<div>\nraw\n</div>\n<hr />\n<p>Hard<br />\nbreak<br />\nsoft\nbreak <img src=\"/i.png\" alt=\"img a\" title=\"t\" /> <b>tag</b> &amp; © <a href=\"mailto:a@b.c\">a@b.c</a></p>\n<p><a href=\"/r\" title=\"R\">ref</a> <a href=\"/r\" title=\"R\">x</a> 1. 2) + = # !</p>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "html",
+    "--smart"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "<h1>Title <em>em</em></h1>\n<h2>Setext <code>code</code></h2>\n<blockquote>\n<p>quote “with” ‘quotes’\nand a <a href=\"/u\" title=\"title\">link</a> and <a href=\"http://a.b\">http://a.b</a></p>\n</blockquote>\n<ul>\n<li>\n<p>one</p>\n</li>\n<li>\n<p>two</p>\n<p>para – dash — and …</p>\n</li>\n</ul>\n<ol start=\"3\">\n<li>three</li>\n<li>four</li>\n</ol>\n<pre><code class=\"language-py\">print(1)\n</code></pre>\n<pre><code>indented\n</code></pre>\n<!-- raw HTML omitted -->\n<hr />\n<p>Hard<br />\nbreak<br />\nsoft\nbreak <img src=\"/i.png\" alt=\"img a\" title=\"t\" /> <!-- raw HTML omitted -->tag<!-- raw HTML omitted --> &amp; © <a href=\"mailto:a@b.c\">a@b.c</a></p>\n<p><a href=\"/r\" title=\"R\">ref</a> <a href=\"/r\" title=\"R\">x</a> 1. 2) + = # !</p>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "html",
+    "--hardbreaks"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "<h1>Title <em>em</em></h1>\n<h2>Setext <code>code</code></h2>\n<blockquote>\n<p>quote &quot;with&quot; 'quotes'<br />\nand a <a href=\"/u\" title=\"title\">link</a> and <a href=\"http://a.b\">http://a.b</a></p>\n</blockquote>\n<ul>\n<li>\n<p>one</p>\n</li>\n<li>\n<p>two</p>\n<p>para -- dash --- and ...</p>\n</li>\n</ul>\n<ol start=\"3\">\n<li>three</li>\n<li>four</li>\n</ol>\n<pre><code class=\"language-py\">print(1)\n</code></pre>\n<pre><code>indented\n</code></pre>\n<!-- raw HTML omitted -->\n<hr />\n<p>Hard<br />\nbreak<br />\nsoft<br />\nbreak <img src=\"/i.png\" alt=\"img a\" title=\"t\" /> <!-- raw HTML omitted -->tag<!-- raw HTML omitted --> &amp; © <a href=\"mailto:a@b.c\">a@b.c</a></p>\n<p><a href=\"/r\" title=\"R\">ref</a> <a href=\"/r\" title=\"R\">x</a> 1. 2) + = # !</p>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "html",
+    "--nobreaks"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "<h1>Title <em>em</em></h1>\n<h2>Setext <code>code</code></h2>\n<blockquote>\n<p>quote &quot;with&quot; 'quotes' and a <a href=\"/u\" title=\"title\">link</a> and <a href=\"http://a.b\">http://a.b</a></p>\n</blockquote>\n<ul>\n<li>\n<p>one</p>\n</li>\n<li>\n<p>two</p>\n<p>para -- dash --- and ...</p>\n</li>\n</ul>\n<ol start=\"3\">\n<li>three</li>\n<li>four</li>\n</ol>\n<pre><code class=\"language-py\">print(1)\n</code></pre>\n<pre><code>indented\n</code></pre>\n<!-- raw HTML omitted -->\n<hr />\n<p>Hard<br />\nbreak<br />\nsoft break <img src=\"/i.png\" alt=\"img a\" title=\"t\" /> <!-- raw HTML omitted -->tag<!-- raw HTML omitted --> &amp; © <a href=\"mailto:a@b.c\">a@b.c</a></p>\n<p><a href=\"/r\" title=\"R\">ref</a> <a href=\"/r\" title=\"R\">x</a> 1. 2) + = # !</p>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "html",
+    "--sourcepos"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "<h1 data-sourcepos=\"1:1-1:12\">Title <em>em</em></h1>\n<h2 data-sourcepos=\"3:1-5:0\">Setext <code>code</code></h2>\n<blockquote data-sourcepos=\"6:1-7:43\">\n<p data-sourcepos=\"6:3-7:43\">quote &quot;with&quot; 'quotes'\nand a <a href=\"/u\" title=\"title\">link</a> and <a href=\"http://a.b\">http://a.b</a></p>\n</blockquote>\n<ul data-sourcepos=\"9:1-13:0\">\n<li data-sourcepos=\"9:1-9:5\">\n<p data-sourcepos=\"9:3-9:5\">one</p>\n</li>\n<li data-sourcepos=\"10:1-13:0\">\n<p data-sourcepos=\"10:3-10:5\">two</p>\n<p data-sourcepos=\"12:3-12:26\">para -- dash --- and ...</p>\n</li>\n</ul>\n<ol start=\"3\" data-sourcepos=\"14:1-16:0\">\n<li data-sourcepos=\"14:1-14:8\">three</li>\n<li data-sourcepos=\"15:1-16:0\">four</li>\n</ol>\n<pre data-sourcepos=\"17:1-19:3\"><code class=\"language-py\">print(1)\n</code></pre>\n<pre data-sourcepos=\"21:5-22:0\"><code>indented\n</code></pre>\n<!-- raw HTML omitted -->\n<hr data-sourcepos=\"27:1-28:0\" />\n<p data-sourcepos=\"29:1-32:60\">Hard<br />\nbreak<br />\nsoft\nbreak <img src=\"/i.png\" alt=\"img a\" title=\"t\" /> <!-- raw HTML omitted -->tag<!-- raw HTML omitted --> &amp; © <a href=\"mailto:a@b.c\">a@b.c</a></p>\n<p data-sourcepos=\"36:1-36:28\"><a href=\"/r\" title=\"R\">ref</a> <a href=\"/r\" title=\"R\">x</a> 1. 2) + = # !</p>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "html",
+    "--sourcepos",
+    "--smart",
+    "--unsafe"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "<h1 data-sourcepos=\"1:1-1:12\">Title <em>em</em></h1>\n<h2 data-sourcepos=\"3:1-5:0\">Setext <code>code</code></h2>\n<blockquote data-sourcepos=\"6:1-7:43\">\n<p data-sourcepos=\"6:3-7:43\">quote “with” ‘quotes’\nand a <a href=\"/u\" title=\"title\">link</a> and <a href=\"http://a.b\">http://a.b</a></p>\n</blockquote>\n<ul data-sourcepos=\"9:1-13:0\">\n<li data-sourcepos=\"9:1-9:5\">\n<p data-sourcepos=\"9:3-9:5\">one</p>\n</li>\n<li data-sourcepos=\"10:1-13:0\">\n<p data-sourcepos=\"10:3-10:5\">two</p>\n<p data-sourcepos=\"12:3-12:26\">para – dash — and …</p>\n</li>\n</ul>\n<ol start=\"3\" data-sourcepos=\"14:1-16:0\">\n<li data-sourcepos=\"14:1-14:8\">three</li>\n<li data-sourcepos=\"15:1-16:0\">four</li>\n</ol>\n<pre data-sourcepos=\"17:1-19:3\"><code class=\"language-py\">print(1)\n</code></pre>\n<pre data-sourcepos=\"21:5-22:0\"><code>indented\n</code></pre>\n<div>\nraw\n</div>\n<hr data-sourcepos=\"27:1-28:0\" />\n<p data-sourcepos=\"29:1-32:60\">Hard<br />\nbreak<br />\nsoft\nbreak <img src=\"/i.png\" alt=\"img a\" title=\"t\" /> <b>tag</b> &amp; © <a href=\"mailto:a@b.c\">a@b.c</a></p>\n<p data-sourcepos=\"36:1-36:28\"><a href=\"/r\" title=\"R\">ref</a> <a href=\"/r\" title=\"R\">x</a> 1. 2) + = # !</p>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "html",
+    "--width",
+    "30"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "<h1>Title <em>em</em></h1>\n<h2>Setext <code>code</code></h2>\n<blockquote>\n<p>quote &quot;with&quot; 'quotes'\nand a <a href=\"/u\" title=\"title\">link</a> and <a href=\"http://a.b\">http://a.b</a></p>\n</blockquote>\n<ul>\n<li>\n<p>one</p>\n</li>\n<li>\n<p>two</p>\n<p>para -- dash --- and ...</p>\n</li>\n</ul>\n<ol start=\"3\">\n<li>three</li>\n<li>four</li>\n</ol>\n<pre><code class=\"language-py\">print(1)\n</code></pre>\n<pre><code>indented\n</code></pre>\n<!-- raw HTML omitted -->\n<hr />\n<p>Hard<br />\nbreak<br />\nsoft\nbreak <img src=\"/i.png\" alt=\"img a\" title=\"t\" /> <!-- raw HTML omitted -->tag<!-- raw HTML omitted --> &amp; © <a href=\"mailto:a@b.c\">a@b.c</a></p>\n<p><a href=\"/r\" title=\"R\">ref</a> <a href=\"/r\" title=\"R\">x</a> 1. 2) + = # !</p>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "html",
+    "--smart"
+   ],
+   "stdin": "\"Hello,\" she said. 'It's \"quoted\"' -- yes --- no ---- ----- ...\n'a' \"b\" (\"c\") [\"d\"] *\"e\"* 5'6\" '' \"'nested'\" \\\"escaped\\\"\n[a \"link\"](/u \"t's\") ![x's](/i) `no 'smart' -- here` <b title=\"x\">\n\"*a*\" '_b_' \"**c**\"... a.. b.... c-d e--f g---h -\n",
+   "stdout": "<p>“Hello,” she said. ‘It’s “quoted”’ – yes — no –– —– …\n‘a’ “b” (“c”) [“d”] <em>“e”</em> 5’6” ‘’ “‘nested’” &quot;escaped&quot;\n<a href=\"/u\" title=\"t's\">a “link”</a> <img src=\"/i\" alt=\"x’s\" /> <code>no 'smart' -- here</code> <!-- raw HTML omitted -->\n“<em>a</em>” ‘<em>b</em>’ “<strong>c</strong>”… a.. b…. c-d e–f g—h -</p>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "html",
+    "--smart",
+    "--width",
+    "20"
+   ],
+   "stdin": "\"Hello,\" she said. 'It's \"quoted\"' -- yes --- no ---- ----- ...\n'a' \"b\" (\"c\") [\"d\"] *\"e\"* 5'6\" '' \"'nested'\" \\\"escaped\\\"\n[a \"link\"](/u \"t's\") ![x's](/i) `no 'smart' -- here` <b title=\"x\">\n\"*a*\" '_b_' \"**c**\"... a.. b.... c-d e--f g---h -\n",
+   "stdout": "<p>“Hello,” she said. ‘It’s “quoted”’ – yes — no –– —– …\n‘a’ “b” (“c”) [“d”] <em>“e”</em> 5’6” ‘’ “‘nested’” &quot;escaped&quot;\n<a href=\"/u\" title=\"t's\">a “link”</a> <img src=\"/i\" alt=\"x’s\" /> <code>no 'smart' -- here</code> <!-- raw HTML omitted -->\n“<em>a</em>” ‘<em>b</em>’ “<strong>c</strong>”… a.. b…. c-d e–f g—h -</p>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "html",
+    "--sourcepos"
+   ],
+   "stdin": "  # h #  \n\n> - a\n>\n>   b `multi\n> line` <span\n> x=\"y\">\n\n1. x\n\n```\nc\n```\n\n    i\n\n---\n\nSetext\n===\n\n[r]: /u\nfoo *bar\\\nbaz* [l](/u\n\"t\") <http://x.y>\n\n\t\ttab\n- \tz\n\n<div>\n",
+   "stdout": "<h1 data-sourcepos=\"1:3-1:5\">h</h1>\n<blockquote data-sourcepos=\"3:1-7:8\">\n<ul data-sourcepos=\"3:3-7:8\">\n<li data-sourcepos=\"3:3-7:8\">\n<p data-sourcepos=\"3:5-3:5\">a</p>\n<p data-sourcepos=\"5:5-7:8\">b <code>multi line</code> <!-- raw HTML omitted --></p>\n</li>\n</ul>\n</blockquote>\n<ol data-sourcepos=\"9:1-10:0\">\n<li data-sourcepos=\"9:1-10:0\">x</li>\n</ol>\n<pre data-sourcepos=\"11:1-13:3\"><code>c\n</code></pre>\n<pre data-sourcepos=\"15:5-16:0\"><code>i\n</code></pre>\n<hr data-sourcepos=\"17:1-18:0\" />\n<h1 data-sourcepos=\"19:1-21:0\">Setext</h1>\n<p data-sourcepos=\"22:1-25:17\">foo <em>bar<br />\nbaz</em> <a href=\"/u\" title=\"t\">l</a> <a href=\"http://x.y\">http://x.y</a></p>\n<pre data-sourcepos=\"27:2-27:5\"><code>\ttab\n</code></pre>\n<ul data-sourcepos=\"28:1-29:0\">\n<li data-sourcepos=\"28:1-29:0\">z</li>\n</ul>\n<!-- raw HTML omitted -->\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "xml"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n<document xmlns=\"http://commonmark.org/xml/1.0\">\n  <heading level=\"1\">\n    <text xml:space=\"preserve\">Title </text>\n    <emph>\n      <text xml:space=\"preserve\">em</text>\n    </emph>\n  </heading>\n  <heading level=\"2\">\n    <text xml:space=\"preserve\">Setext </text>\n    <code xml:space=\"preserve\">code</code>\n  </heading>\n  <block_quote>\n    <paragraph>\n      <text xml:space=\"preserve\">quote &quot;with&quot; 'quotes'</text>\n      <softbreak />\n      <text xml:space=\"preserve\">and a </text>\n      <link destination=\"/u\" title=\"title\">\n        <text xml:space=\"preserve\">link</text>\n      </link>\n      <text xml:space=\"preserve\"> and </text>\n      <link destination=\"http://a.b\">\n        <text xml:space=\"preserve\">http://a.b</text>\n      </link>\n    </paragraph>\n  </block_quote>\n  <list type=\"bullet\" tight=\"false\">\n    <item>\n      <paragraph>\n        <text xml:space=\"preserve\">one</text>\n      </paragraph>\n    </item>\n    <item>\n      <paragraph>\n        <text xml:space=\"preserve\">two</text>\n      </paragraph>\n      <paragraph>\n        <text xml:space=\"preserve\">para -- dash --- and ...</text>\n      </paragraph>\n    </item>\n  </list>\n  <list type=\"ordered\" start=\"3\" delim=\"paren\" tight=\"true\">\n    <item>\n      <paragraph>\n        <text xml:space=\"preserve\">three</text>\n      </paragraph>\n    </item>\n    <item>\n      <paragraph>\n        <text xml:space=\"preserve\">four</text>\n      </paragraph>\n    </item>\n  </list>\n  <code_block info=\"py x\" xml:space=\"preserve\">print(1)\n</code_block>\n  <code_block xml:space=\"preserve\">indented\n</code_block>\n  <html_block xml:space=\"preserve\">&lt;div&gt;\nraw\n&lt;/div&gt;\n</html_block>\n  <thematic_break />\n  <paragraph>\n    <text xml:space=\"preserve\">Hard</text>\n    <linebreak />\n    <text xml:space=\"preserve\">break</text>\n    <linebreak />\n    <text xml:space=\"preserve\">soft</text>\n    <softbreak />\n    <text xml:space=\"preserve\">break </text>\n    <image destination=\"/i.png\" title=\"t\">\n      <text xml:space=\"preserve\">img </text>\n      <emph>\n        <text xml:space=\"preserve\">a</text>\n      </emph>\n    </image>\n    <text xml:space=\"preserve\"> </text>\n    <html_inline xml:space=\"preserve\">&lt;b&gt;</html_inline>\n    <text xml:space=\"preserve\">tag</text>\n    <html_inline xml:space=\"preserve\">&lt;/b&gt;</html_inline>\n    <text xml:space=\"preserve\"> &amp; © </text>\n    <link destination=\"mailto:a@b.c\">\n      <text xml:space=\"preserve\">a@b.c</text>\n    </link>\n  </paragraph>\n  <paragraph>\n    <link destination=\"/r\" title=\"R\">\n      <text xml:space=\"preserve\">ref</text>\n    </link>\n    <text xml:space=\"preserve\"> </text>\n    <link destination=\"/r\" title=\"R\">\n      <text xml:space=\"preserve\">x</text>\n    </link>\n    <text xml:space=\"preserve\"> 1. 2) + = # !</text>\n  </paragraph>\n</document>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "xml",
+    "--unsafe"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n<document xmlns=\"http://commonmark.org/xml/1.0\">\n  <heading level=\"1\">\n    <text xml:space=\"preserve\">Title </text>\n    <emph>\n      <text xml:space=\"preserve\">em</text>\n    </emph>\n  </heading>\n  <heading level=\"2\">\n    <text xml:space=\"preserve\">Setext </text>\n    <code xml:space=\"preserve\">code</code>\n  </heading>\n  <block_quote>\n    <paragraph>\n      <text xml:space=\"preserve\">quote &quot;with&quot; 'quotes'</text>\n      <softbreak />\n      <text xml:space=\"preserve\">and a </text>\n      <link destination=\"/u\" title=\"title\">\n        <text xml:space=\"preserve\">link</text>\n      </link>\n      <text xml:space=\"preserve\"> and </text>\n      <link destination=\"http://a.b\">\n        <text xml:space=\"preserve\">http://a.b</text>\n      </link>\n    </paragraph>\n  </block_quote>\n  <list type=\"bullet\" tight=\"false\">\n    <item>\n      <paragraph>\n        <text xml:space=\"preserve\">one</text>\n      </paragraph>\n    </item>\n    <item>\n      <paragraph>\n        <text xml:space=\"preserve\">two</text>\n      </paragraph>\n      <paragraph>\n        <text xml:space=\"preserve\">para -- dash --- and ...</text>\n      </paragraph>\n    </item>\n  </list>\n  <list type=\"ordered\" start=\"3\" delim=\"paren\" tight=\"true\">\n    <item>\n      <paragraph>\n        <text xml:space=\"preserve\">three</text>\n      </paragraph>\n    </item>\n    <item>\n      <paragraph>\n        <text xml:space=\"preserve\">four</text>\n      </paragraph>\n    </item>\n  </list>\n  <code_block info=\"py x\" xml:space=\"preserve\">print(1)\n</code_block>\n  <code_block xml:space=\"preserve\">indented\n</code_block>\n  <html_block xml:space=\"preserve\">&lt;div&gt;\nraw\n&lt;/div&gt;\n</html_block>\n  <thematic_break />\n  <paragraph>\n    <text xml:space=\"preserve\">Hard</text>\n    <linebreak />\n    <text xml:space=\"preserve\">break</text>\n    <linebreak />\n    <text xml:space=\"preserve\">soft</text>\n    <softbreak />\n    <text xml:space=\"preserve\">break </text>\n    <image destination=\"/i.png\" title=\"t\">\n      <text xml:space=\"preserve\">img </text>\n      <emph>\n        <text xml:space=\"preserve\">a</text>\n      </emph>\n    </image>\n    <text xml:space=\"preserve\"> </text>\n    <html_inline xml:space=\"preserve\">&lt;b&gt;</html_inline>\n    <text xml:space=\"preserve\">tag</text>\n    <html_inline xml:space=\"preserve\">&lt;/b&gt;</html_inline>\n    <text xml:space=\"preserve\"> &amp; © </text>\n    <link destination=\"mailto:a@b.c\">\n      <text xml:space=\"preserve\">a@b.c</text>\n    </link>\n  </paragraph>\n  <paragraph>\n    <link destination=\"/r\" title=\"R\">\n      <text xml:space=\"preserve\">ref</text>\n    </link>\n    <text xml:space=\"preserve\"> </text>\n    <link destination=\"/r\" title=\"R\">\n      <text xml:space=\"preserve\">x</text>\n    </link>\n    <text xml:space=\"preserve\"> 1. 2) + = # !</text>\n  </paragraph>\n</document>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "xml",
+    "--smart"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n<document xmlns=\"http://commonmark.org/xml/1.0\">\n  <heading level=\"1\">\n    <text xml:space=\"preserve\">Title </text>\n    <emph>\n      <text xml:space=\"preserve\">em</text>\n    </emph>\n  </heading>\n  <heading level=\"2\">\n    <text xml:space=\"preserve\">Setext </text>\n    <code xml:space=\"preserve\">code</code>\n  </heading>\n  <block_quote>\n    <paragraph>\n      <text xml:space=\"preserve\">quote “with” ‘quotes’</text>\n      <softbreak />\n      <text xml:space=\"preserve\">and a </text>\n      <link destination=\"/u\" title=\"title\">\n        <text xml:space=\"preserve\">link</text>\n      </link>\n      <text xml:space=\"preserve\"> and </text>\n      <link destination=\"http://a.b\">\n        <text xml:space=\"preserve\">http://a.b</text>\n      </link>\n    </paragraph>\n  </block_quote>\n  <list type=\"bullet\" tight=\"false\">\n    <item>\n      <paragraph>\n        <text xml:space=\"preserve\">one</text>\n      </paragraph>\n    </item>\n    <item>\n      <paragraph>\n        <text xml:space=\"preserve\">two</text>\n      </paragraph>\n      <paragraph>\n        <text xml:space=\"preserve\">para – dash — and …</text>\n      </paragraph>\n    </item>\n  </list>\n  <list type=\"ordered\" start=\"3\" delim=\"paren\" tight=\"true\">\n    <item>\n      <paragraph>\n        <text xml:space=\"preserve\">three</text>\n      </paragraph>\n    </item>\n    <item>\n      <paragraph>\n        <text xml:space=\"preserve\">four</text>\n      </paragraph>\n    </item>\n  </list>\n  <code_block info=\"py x\" xml:space=\"preserve\">print(1)\n</code_block>\n  <code_block xml:space=\"preserve\">indented\n</code_block>\n  <html_block xml:space=\"preserve\">&lt;div&gt;\nraw\n&lt;/div&gt;\n</html_block>\n  <thematic_break />\n  <paragraph>\n    <text xml:space=\"preserve\">Hard</text>\n    <linebreak />\n    <text xml:space=\"preserve\">break</text>\n    <linebreak />\n    <text xml:space=\"preserve\">soft</text>\n    <softbreak />\n    <text xml:space=\"preserve\">break </text>\n    <image destination=\"/i.png\" title=\"t\">\n      <text xml:space=\"preserve\">img </text>\n      <emph>\n        <text xml:space=\"preserve\">a</text>\n      </emph>\n    </image>\n    <text xml:space=\"preserve\"> </text>\n    <html_inline xml:space=\"preserve\">&lt;b&gt;</html_inline>\n    <text xml:space=\"preserve\">tag</text>\n    <html_inline xml:space=\"preserve\">&lt;/b&gt;</html_inline>\n    <text xml:space=\"preserve\"> &amp; © </text>\n    <link destination=\"mailto:a@b.c\">\n      <text xml:space=\"preserve\">a@b.c</text>\n    </link>\n  </paragraph>\n  <paragraph>\n    <link destination=\"/r\" title=\"R\">\n      <text xml:space=\"preserve\">ref</text>\n    </link>\n    <text xml:space=\"preserve\"> </text>\n    <link destination=\"/r\" title=\"R\">\n      <text xml:space=\"preserve\">x</text>\n    </link>\n    <text xml:space=\"preserve\"> 1. 2) + = # !</text>\n  </paragraph>\n</document>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "xml",
+    "--hardbreaks"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n<document xmlns=\"http://commonmark.org/xml/1.0\">\n  <heading level=\"1\">\n    <text xml:space=\"preserve\">Title </text>\n    <emph>\n      <text xml:space=\"preserve\">em</text>\n    </emph>\n  </heading>\n  <heading level=\"2\">\n    <text xml:space=\"preserve\">Setext </text>\n    <code xml:space=\"preserve\">code</code>\n  </heading>\n  <block_quote>\n    <paragraph>\n      <text xml:space=\"preserve\">quote &quot;with&quot; 'quotes'</text>\n      <softbreak />\n      <text xml:space=\"preserve\">and a </text>\n      <link destination=\"/u\" title=\"title\">\n        <text xml:space=\"preserve\">link</text>\n      </link>\n      <text xml:space=\"preserve\"> and </text>\n      <link destination=\"http://a.b\">\n        <text xml:space=\"preserve\">http://a.b</text>\n      </link>\n    </paragraph>\n  </block_quote>\n  <list type=\"bullet\" tight=\"false\">\n    <item>\n      <paragraph>\n        <text xml:space=\"preserve\">one</text>\n      </paragraph>\n    </item>\n    <item>\n      <paragraph>\n        <text xml:space=\"preserve\">two</text>\n      </paragraph>\n      <paragraph>\n        <text xml:space=\"preserve\">para -- dash --- and ...</text>\n      </paragraph>\n    </item>\n  </list>\n  <list type=\"ordered\" start=\"3\" delim=\"paren\" tight=\"true\">\n    <item>\n      <paragraph>\n        <text xml:space=\"preserve\">three</text>\n      </paragraph>\n    </item>\n    <item>\n      <paragraph>\n        <text xml:space=\"preserve\">four</text>\n      </paragraph>\n    </item>\n  </list>\n  <code_block info=\"py x\" xml:space=\"preserve\">print(1)\n</code_block>\n  <code_block xml:space=\"preserve\">indented\n</code_block>\n  <html_block xml:space=\"preserve\">&lt;div&gt;\nraw\n&lt;/div&gt;\n</html_block>\n  <thematic_break />\n  <paragraph>\n    <text xml:space=\"preserve\">Hard</text>\n    <linebreak />\n    <text xml:space=\"preserve\">break</text>\n    <linebreak />\n    <text xml:space=\"preserve\">soft</text>\n    <softbreak />\n    <text xml:space=\"preserve\">break </text>\n    <image destination=\"/i.png\" title=\"t\">\n      <text xml:space=\"preserve\">img </text>\n      <emph>\n        <text xml:space=\"preserve\">a</text>\n      </emph>\n    </image>\n    <text xml:space=\"preserve\"> </text>\n    <html_inline xml:space=\"preserve\">&lt;b&gt;</html_inline>\n    <text xml:space=\"preserve\">tag</text>\n    <html_inline xml:space=\"preserve\">&lt;/b&gt;</html_inline>\n    <text xml:space=\"preserve\"> &amp; © </text>\n    <link destination=\"mailto:a@b.c\">\n      <text xml:space=\"preserve\">a@b.c</text>\n    </link>\n  </paragraph>\n  <paragraph>\n    <link destination=\"/r\" title=\"R\">\n      <text xml:space=\"preserve\">ref</text>\n    </link>\n    <text xml:space=\"preserve\"> </text>\n    <link destination=\"/r\" title=\"R\">\n      <text xml:space=\"preserve\">x</text>\n    </link>\n    <text xml:space=\"preserve\"> 1. 2) + = # !</text>\n  </paragraph>\n</document>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "xml",
+    "--nobreaks"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n<document xmlns=\"http://commonmark.org/xml/1.0\">\n  <heading level=\"1\">\n    <text xml:space=\"preserve\">Title </text>\n    <emph>\n      <text xml:space=\"preserve\">em</text>\n    </emph>\n  </heading>\n  <heading level=\"2\">\n    <text xml:space=\"preserve\">Setext </text>\n    <code xml:space=\"preserve\">code</code>\n  </heading>\n  <block_quote>\n    <paragraph>\n      <text xml:space=\"preserve\">quote &quot;with&quot; 'quotes'</text>\n      <softbreak />\n      <text xml:space=\"preserve\">and a </text>\n      <link destination=\"/u\" title=\"title\">\n        <text xml:space=\"preserve\">link</text>\n      </link>\n      <text xml:space=\"preserve\"> and </text>\n      <link destination=\"http://a.b\">\n        <text xml:space=\"preserve\">http://a.b</text>\n      </link>\n    </paragraph>\n  </block_quote>\n  <list type=\"bullet\" tight=\"false\">\n    <item>\n      <paragraph>\n        <text xml:space=\"preserve\">one</text>\n      </paragraph>\n    </item>\n    <item>\n      <paragraph>\n        <text xml:space=\"preserve\">two</text>\n      </paragraph>\n      <paragraph>\n        <text xml:space=\"preserve\">para -- dash --- and ...</text>\n      </paragraph>\n    </item>\n  </list>\n  <list type=\"ordered\" start=\"3\" delim=\"paren\" tight=\"true\">\n    <item>\n      <paragraph>\n        <text xml:space=\"preserve\">three</text>\n      </paragraph>\n    </item>\n    <item>\n      <paragraph>\n        <text xml:space=\"preserve\">four</text>\n      </paragraph>\n    </item>\n  </list>\n  <code_block info=\"py x\" xml:space=\"preserve\">print(1)\n</code_block>\n  <code_block xml:space=\"preserve\">indented\n</code_block>\n  <html_block xml:space=\"preserve\">&lt;div&gt;\nraw\n&lt;/div&gt;\n</html_block>\n  <thematic_break />\n  <paragraph>\n    <text xml:space=\"preserve\">Hard</text>\n    <linebreak />\n    <text xml:space=\"preserve\">break</text>\n    <linebreak />\n    <text xml:space=\"preserve\">soft</text>\n    <softbreak />\n    <text xml:space=\"preserve\">break </text>\n    <image destination=\"/i.png\" title=\"t\">\n      <text xml:space=\"preserve\">img </text>\n      <emph>\n        <text xml:space=\"preserve\">a</text>\n      </emph>\n    </image>\n    <text xml:space=\"preserve\"> </text>\n    <html_inline xml:space=\"preserve\">&lt;b&gt;</html_inline>\n    <text xml:space=\"preserve\">tag</text>\n    <html_inline xml:space=\"preserve\">&lt;/b&gt;</html_inline>\n    <text xml:space=\"preserve\"> &amp; © </text>\n    <link destination=\"mailto:a@b.c\">\n      <text xml:space=\"preserve\">a@b.c</text>\n    </link>\n  </paragraph>\n  <paragraph>\n    <link destination=\"/r\" title=\"R\">\n      <text xml:space=\"preserve\">ref</text>\n    </link>\n    <text xml:space=\"preserve\"> </text>\n    <link destination=\"/r\" title=\"R\">\n      <text xml:space=\"preserve\">x</text>\n    </link>\n    <text xml:space=\"preserve\"> 1. 2) + = # !</text>\n  </paragraph>\n</document>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "xml",
+    "--sourcepos"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n<document sourcepos=\"1:1-36:28\" xmlns=\"http://commonmark.org/xml/1.0\">\n  <heading sourcepos=\"1:1-1:12\" level=\"1\">\n    <text sourcepos=\"1:3-1:8\" xml:space=\"preserve\">Title </text>\n    <emph sourcepos=\"1:9-1:12\">\n      <text sourcepos=\"1:10-1:11\" xml:space=\"preserve\">em</text>\n    </emph>\n  </heading>\n  <heading sourcepos=\"3:1-5:0\" level=\"2\">\n    <text sourcepos=\"3:1-3:7\" xml:space=\"preserve\">Setext </text>\n    <code sourcepos=\"3:9-3:12\" xml:space=\"preserve\">code</code>\n  </heading>\n  <block_quote sourcepos=\"6:1-7:43\">\n    <paragraph sourcepos=\"6:3-7:43\">\n      <text sourcepos=\"6:3-6:23\" xml:space=\"preserve\">quote &quot;with&quot; 'quotes'</text>\n      <softbreak />\n      <text sourcepos=\"7:3-7:8\" xml:space=\"preserve\">and a </text>\n      <link sourcepos=\"7:9-7:26\" destination=\"/u\" title=\"title\">\n        <text sourcepos=\"7:10-7:13\" xml:space=\"preserve\">link</text>\n      </link>\n      <text sourcepos=\"7:27-7:31\" xml:space=\"preserve\"> and </text>\n      <link sourcepos=\"7:52-7:63\" destination=\"http://a.b\">\n        <text sourcepos=\"7:33-7:42\" xml:space=\"preserve\">http://a.b</text>\n      </link>\n    </paragraph>\n  </block_quote>\n  <list sourcepos=\"9:1-13:0\" type=\"bullet\" tight=\"false\">\n    <item sourcepos=\"9:1-9:5\">\n      <paragraph sourcepos=\"9:3-9:5\">\n        <text sourcepos=\"9:3-9:5\" xml:space=\"preserve\">one</text>\n      </paragraph>\n    </item>\n    <item sourcepos=\"10:1-13:0\">\n      <paragraph sourcepos=\"10:3-10:5\">\n        <text sourcepos=\"10:3-10:5\" xml:space=\"preserve\">two</text>\n      </paragraph>\n      <paragraph sourcepos=\"12:3-12:26\">\n        <text sourcepos=\"12:3-12:26\" xml:space=\"preserve\">para -- dash --- and ...</text>\n      </paragraph>\n    </item>\n  </list>\n  <list sourcepos=\"14:1-16:0\" type=\"ordered\" start=\"3\" delim=\"paren\" tight=\"true\">\n    <item sourcepos=\"14:1-14:8\">\n      <paragraph sourcepos=\"14:4-14:8\">\n        <text sourcepos=\"14:4-14:8\" xml:space=\"preserve\">three</text>\n      </paragraph>\n    </item>\n    <item sourcepos=\"15:1-16:0\">\n      <paragraph sourcepos=\"15:4-15:7\">\n        <text sourcepos=\"15:4-15:7\" xml:space=\"preserve\">four</text>\n      </paragraph>\n    </item>\n  </list>\n  <code_block sourcepos=\"17:1-19:3\" info=\"py x\" xml:space=\"preserve\">print(1)\n</code_block>\n  <code_block sourcepos=\"21:5-22:0\" xml:space=\"preserve\">indented\n</code_block>\n  <html_block sourcepos=\"23:1-25:6\" xml:space=\"preserve\">&lt;div&gt;\nraw\n&lt;/div&gt;\n</html_block>\n  <thematic_break sourcepos=\"27:1-28:0\" />\n  <paragraph sourcepos=\"29:1-32:60\">\n    <text sourcepos=\"29:1-29:6\" xml:space=\"preserve\">Hard</text>\n    <linebreak />\n    <text sourcepos=\"30:1-30:5\" xml:space=\"preserve\">break</text>\n    <linebreak />\n    <text sourcepos=\"30:8-30:11\" xml:space=\"preserve\">soft</text>\n    <softbreak />\n    <text sourcepos=\"31:1-31:6\" xml:space=\"preserve\">break </text>\n    <image sourcepos=\"31:7-31:28\" destination=\"/i.png\" title=\"t\">\n      <text sourcepos=\"31:9-31:12\" xml:space=\"preserve\">img </text>\n      <emph sourcepos=\"31:13-31:15\">\n        <text sourcepos=\"31:14-31:14\" xml:space=\"preserve\">a</text>\n      </emph>\n    </image>\n    <text sourcepos=\"31:29-31:29\" xml:space=\"preserve\"> </text>\n    <html_inline sourcepos=\"31:30-31:32\" xml:space=\"preserve\">&lt;b&gt;</html_inline>\n    <text sourcepos=\"31:33-31:35\" xml:space=\"preserve\">tag</text>\n    <html_inline sourcepos=\"31:36-31:39\" xml:space=\"preserve\">&lt;/b&gt;</html_inline>\n    <text sourcepos=\"31:40-31:53\" xml:space=\"preserve\"> &amp; © </text>\n    <link sourcepos=\"31:73-31:79\" destination=\"mailto:a@b.c\">\n      <text sourcepos=\"31:55-31:59\" xml:space=\"preserve\">a@b.c</text>\n    </link>\n  </paragraph>\n  <paragraph sourcepos=\"36:1-36:28\">\n    <link sourcepos=\"36:1-36:5\" destination=\"/r\" title=\"R\">\n      <text sourcepos=\"36:2-36:4\" xml:space=\"preserve\">ref</text>\n    </link>\n    <text sourcepos=\"36:6-36:6\" xml:space=\"preserve\"> </text>\n    <link sourcepos=\"36:7-36:14\" destination=\"/r\" title=\"R\">\n      <text sourcepos=\"36:8-36:8\" xml:space=\"preserve\">x</text>\n    </link>\n    <text sourcepos=\"36:15-36:28\" xml:space=\"preserve\"> 1. 2) + = # !</text>\n  </paragraph>\n</document>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "xml",
+    "--sourcepos",
+    "--smart",
+    "--unsafe"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n<document sourcepos=\"1:1-36:28\" xmlns=\"http://commonmark.org/xml/1.0\">\n  <heading sourcepos=\"1:1-1:12\" level=\"1\">\n    <text sourcepos=\"1:3-1:8\" xml:space=\"preserve\">Title </text>\n    <emph sourcepos=\"1:9-1:12\">\n      <text sourcepos=\"1:10-1:11\" xml:space=\"preserve\">em</text>\n    </emph>\n  </heading>\n  <heading sourcepos=\"3:1-5:0\" level=\"2\">\n    <text sourcepos=\"3:1-3:7\" xml:space=\"preserve\">Setext </text>\n    <code sourcepos=\"3:9-3:12\" xml:space=\"preserve\">code</code>\n  </heading>\n  <block_quote sourcepos=\"6:1-7:43\">\n    <paragraph sourcepos=\"6:3-7:43\">\n      <text sourcepos=\"6:3-6:23\" xml:space=\"preserve\">quote “with” ‘quotes’</text>\n      <softbreak />\n      <text sourcepos=\"7:3-7:8\" xml:space=\"preserve\">and a </text>\n      <link sourcepos=\"7:9-7:26\" destination=\"/u\" title=\"title\">\n        <text sourcepos=\"7:10-7:13\" xml:space=\"preserve\">link</text>\n      </link>\n      <text sourcepos=\"7:27-7:31\" xml:space=\"preserve\"> and </text>\n      <link sourcepos=\"7:52-7:63\" destination=\"http://a.b\">\n        <text sourcepos=\"7:33-7:42\" xml:space=\"preserve\">http://a.b</text>\n      </link>\n    </paragraph>\n  </block_quote>\n  <list sourcepos=\"9:1-13:0\" type=\"bullet\" tight=\"false\">\n    <item sourcepos=\"9:1-9:5\">\n      <paragraph sourcepos=\"9:3-9:5\">\n        <text sourcepos=\"9:3-9:5\" xml:space=\"preserve\">one</text>\n      </paragraph>\n    </item>\n    <item sourcepos=\"10:1-13:0\">\n      <paragraph sourcepos=\"10:3-10:5\">\n        <text sourcepos=\"10:3-10:5\" xml:space=\"preserve\">two</text>\n      </paragraph>\n      <paragraph sourcepos=\"12:3-12:26\">\n        <text sourcepos=\"12:3-12:26\" xml:space=\"preserve\">para – dash — and …</text>\n      </paragraph>\n    </item>\n  </list>\n  <list sourcepos=\"14:1-16:0\" type=\"ordered\" start=\"3\" delim=\"paren\" tight=\"true\">\n    <item sourcepos=\"14:1-14:8\">\n      <paragraph sourcepos=\"14:4-14:8\">\n        <text sourcepos=\"14:4-14:8\" xml:space=\"preserve\">three</text>\n      </paragraph>\n    </item>\n    <item sourcepos=\"15:1-16:0\">\n      <paragraph sourcepos=\"15:4-15:7\">\n        <text sourcepos=\"15:4-15:7\" xml:space=\"preserve\">four</text>\n      </paragraph>\n    </item>\n  </list>\n  <code_block sourcepos=\"17:1-19:3\" info=\"py x\" xml:space=\"preserve\">print(1)\n</code_block>\n  <code_block sourcepos=\"21:5-22:0\" xml:space=\"preserve\">indented\n</code_block>\n  <html_block sourcepos=\"23:1-25:6\" xml:space=\"preserve\">&lt;div&gt;\nraw\n&lt;/div&gt;\n</html_block>\n  <thematic_break sourcepos=\"27:1-28:0\" />\n  <paragraph sourcepos=\"29:1-32:60\">\n    <text sourcepos=\"29:1-29:6\" xml:space=\"preserve\">Hard</text>\n    <linebreak />\n    <text sourcepos=\"30:1-30:5\" xml:space=\"preserve\">break</text>\n    <linebreak />\n    <text sourcepos=\"30:8-30:11\" xml:space=\"preserve\">soft</text>\n    <softbreak />\n    <text sourcepos=\"31:1-31:6\" xml:space=\"preserve\">break </text>\n    <image sourcepos=\"31:7-31:28\" destination=\"/i.png\" title=\"t\">\n      <text sourcepos=\"31:9-31:12\" xml:space=\"preserve\">img </text>\n      <emph sourcepos=\"31:13-31:15\">\n        <text sourcepos=\"31:14-31:14\" xml:space=\"preserve\">a</text>\n      </emph>\n    </image>\n    <text sourcepos=\"31:29-31:29\" xml:space=\"preserve\"> </text>\n    <html_inline sourcepos=\"31:30-31:32\" xml:space=\"preserve\">&lt;b&gt;</html_inline>\n    <text sourcepos=\"31:33-31:35\" xml:space=\"preserve\">tag</text>\n    <html_inline sourcepos=\"31:36-31:39\" xml:space=\"preserve\">&lt;/b&gt;</html_inline>\n    <text sourcepos=\"31:40-31:53\" xml:space=\"preserve\"> &amp; © </text>\n    <link sourcepos=\"31:73-31:79\" destination=\"mailto:a@b.c\">\n      <text sourcepos=\"31:55-31:59\" xml:space=\"preserve\">a@b.c</text>\n    </link>\n  </paragraph>\n  <paragraph sourcepos=\"36:1-36:28\">\n    <link sourcepos=\"36:1-36:5\" destination=\"/r\" title=\"R\">\n      <text sourcepos=\"36:2-36:4\" xml:space=\"preserve\">ref</text>\n    </link>\n    <text sourcepos=\"36:6-36:6\" xml:space=\"preserve\"> </text>\n    <link sourcepos=\"36:7-36:14\" destination=\"/r\" title=\"R\">\n      <text sourcepos=\"36:8-36:8\" xml:space=\"preserve\">x</text>\n    </link>\n    <text sourcepos=\"36:15-36:28\" xml:space=\"preserve\"> 1. 2) + = # !</text>\n  </paragraph>\n</document>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "xml",
+    "--width",
+    "30"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n<document xmlns=\"http://commonmark.org/xml/1.0\">\n  <heading level=\"1\">\n    <text xml:space=\"preserve\">Title </text>\n    <emph>\n      <text xml:space=\"preserve\">em</text>\n    </emph>\n  </heading>\n  <heading level=\"2\">\n    <text xml:space=\"preserve\">Setext </text>\n    <code xml:space=\"preserve\">code</code>\n  </heading>\n  <block_quote>\n    <paragraph>\n      <text xml:space=\"preserve\">quote &quot;with&quot; 'quotes'</text>\n      <softbreak />\n      <text xml:space=\"preserve\">and a </text>\n      <link destination=\"/u\" title=\"title\">\n        <text xml:space=\"preserve\">link</text>\n      </link>\n      <text xml:space=\"preserve\"> and </text>\n      <link destination=\"http://a.b\">\n        <text xml:space=\"preserve\">http://a.b</text>\n      </link>\n    </paragraph>\n  </block_quote>\n  <list type=\"bullet\" tight=\"false\">\n    <item>\n      <paragraph>\n        <text xml:space=\"preserve\">one</text>\n      </paragraph>\n    </item>\n    <item>\n      <paragraph>\n        <text xml:space=\"preserve\">two</text>\n      </paragraph>\n      <paragraph>\n        <text xml:space=\"preserve\">para -- dash --- and ...</text>\n      </paragraph>\n    </item>\n  </list>\n  <list type=\"ordered\" start=\"3\" delim=\"paren\" tight=\"true\">\n    <item>\n      <paragraph>\n        <text xml:space=\"preserve\">three</text>\n      </paragraph>\n    </item>\n    <item>\n      <paragraph>\n        <text xml:space=\"preserve\">four</text>\n      </paragraph>\n    </item>\n  </list>\n  <code_block info=\"py x\" xml:space=\"preserve\">print(1)\n</code_block>\n  <code_block xml:space=\"preserve\">indented\n</code_block>\n  <html_block xml:space=\"preserve\">&lt;div&gt;\nraw\n&lt;/div&gt;\n</html_block>\n  <thematic_break />\n  <paragraph>\n    <text xml:space=\"preserve\">Hard</text>\n    <linebreak />\n    <text xml:space=\"preserve\">break</text>\n    <linebreak />\n    <text xml:space=\"preserve\">soft</text>\n    <softbreak />\n    <text xml:space=\"preserve\">break </text>\n    <image destination=\"/i.png\" title=\"t\">\n      <text xml:space=\"preserve\">img </text>\n      <emph>\n        <text xml:space=\"preserve\">a</text>\n      </emph>\n    </image>\n    <text xml:space=\"preserve\"> </text>\n    <html_inline xml:space=\"preserve\">&lt;b&gt;</html_inline>\n    <text xml:space=\"preserve\">tag</text>\n    <html_inline xml:space=\"preserve\">&lt;/b&gt;</html_inline>\n    <text xml:space=\"preserve\"> &amp; © </text>\n    <link destination=\"mailto:a@b.c\">\n      <text xml:space=\"preserve\">a@b.c</text>\n    </link>\n  </paragraph>\n  <paragraph>\n    <link destination=\"/r\" title=\"R\">\n      <text xml:space=\"preserve\">ref</text>\n    </link>\n    <text xml:space=\"preserve\"> </text>\n    <link destination=\"/r\" title=\"R\">\n      <text xml:space=\"preserve\">x</text>\n    </link>\n    <text xml:space=\"preserve\"> 1. 2) + = # !</text>\n  </paragraph>\n</document>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "xml",
+    "--smart"
+   ],
+   "stdin": "\"Hello,\" she said. 'It's \"quoted\"' -- yes --- no ---- ----- ...\n'a' \"b\" (\"c\") [\"d\"] *\"e\"* 5'6\" '' \"'nested'\" \\\"escaped\\\"\n[a \"link\"](/u \"t's\") ![x's](/i) `no 'smart' -- here` <b title=\"x\">\n\"*a*\" '_b_' \"**c**\"... a.. b.... c-d e--f g---h -\n",
+   "stdout": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n<document xmlns=\"http://commonmark.org/xml/1.0\">\n  <paragraph>\n    <text xml:space=\"preserve\">“Hello,” she said. ‘It’s “quoted”’ – yes — no –– —– …</text>\n    <softbreak />\n    <text xml:space=\"preserve\">‘a’ “b” (“c”) [“d”] </text>\n    <emph>\n      <text xml:space=\"preserve\">“e”</text>\n    </emph>\n    <text xml:space=\"preserve\"> 5’6” ‘’ “‘nested’” &quot;escaped&quot;</text>\n    <softbreak />\n    <link destination=\"/u\" title=\"t's\">\n      <text xml:space=\"preserve\">a “link”</text>\n    </link>\n    <text xml:space=\"preserve\"> </text>\n    <image destination=\"/i\">\n      <text xml:space=\"preserve\">x’s</text>\n    </image>\n    <text xml:space=\"preserve\"> </text>\n    <code xml:space=\"preserve\">no 'smart' -- here</code>\n    <text xml:space=\"preserve\"> </text>\n    <html_inline xml:space=\"preserve\">&lt;b title=&quot;x&quot;&gt;</html_inline>\n    <softbreak />\n    <text xml:space=\"preserve\">“</text>\n    <emph>\n      <text xml:space=\"preserve\">a</text>\n    </emph>\n    <text xml:space=\"preserve\">” ‘</text>\n    <emph>\n      <text xml:space=\"preserve\">b</text>\n    </emph>\n    <text xml:space=\"preserve\">’ “</text>\n    <strong>\n      <text xml:space=\"preserve\">c</text>\n    </strong>\n    <text xml:space=\"preserve\">”… a.. b…. c-d e–f g—h -</text>\n  </paragraph>\n</document>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "xml",
+    "--smart",
+    "--width",
+    "20"
+   ],
+   "stdin": "\"Hello,\" she said. 'It's \"quoted\"' -- yes --- no ---- ----- ...\n'a' \"b\" (\"c\") [\"d\"] *\"e\"* 5'6\" '' \"'nested'\" \\\"escaped\\\"\n[a \"link\"](/u \"t's\") ![x's](/i) `no 'smart' -- here` <b title=\"x\">\n\"*a*\" '_b_' \"**c**\"... a.. b.... c-d e--f g---h -\n",
+   "stdout": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n<document xmlns=\"http://commonmark.org/xml/1.0\">\n  <paragraph>\n    <text xml:space=\"preserve\">“Hello,” she said. ‘It’s “quoted”’ – yes — no –– —– …</text>\n    <softbreak />\n    <text xml:space=\"preserve\">‘a’ “b” (“c”) [“d”] </text>\n    <emph>\n      <text xml:space=\"preserve\">“e”</text>\n    </emph>\n    <text xml:space=\"preserve\"> 5’6” ‘’ “‘nested’” &quot;escaped&quot;</text>\n    <softbreak />\n    <link destination=\"/u\" title=\"t's\">\n      <text xml:space=\"preserve\">a “link”</text>\n    </link>\n    <text xml:space=\"preserve\"> </text>\n    <image destination=\"/i\">\n      <text xml:space=\"preserve\">x’s</text>\n    </image>\n    <text xml:space=\"preserve\"> </text>\n    <code xml:space=\"preserve\">no 'smart' -- here</code>\n    <text xml:space=\"preserve\"> </text>\n    <html_inline xml:space=\"preserve\">&lt;b title=&quot;x&quot;&gt;</html_inline>\n    <softbreak />\n    <text xml:space=\"preserve\">“</text>\n    <emph>\n      <text xml:space=\"preserve\">a</text>\n    </emph>\n    <text xml:space=\"preserve\">” ‘</text>\n    <emph>\n      <text xml:space=\"preserve\">b</text>\n    </emph>\n    <text xml:space=\"preserve\">’ “</text>\n    <strong>\n      <text xml:space=\"preserve\">c</text>\n    </strong>\n    <text xml:space=\"preserve\">”… a.. b…. c-d e–f g—h -</text>\n  </paragraph>\n</document>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "xml",
+    "--sourcepos"
+   ],
+   "stdin": "  # h #  \n\n> - a\n>\n>   b `multi\n> line` <span\n> x=\"y\">\n\n1. x\n\n```\nc\n```\n\n    i\n\n---\n\nSetext\n===\n\n[r]: /u\nfoo *bar\\\nbaz* [l](/u\n\"t\") <http://x.y>\n\n\t\ttab\n- \tz\n\n<div>\n",
+   "stdout": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n<document sourcepos=\"1:1-30:5\" xmlns=\"http://commonmark.org/xml/1.0\">\n  <heading sourcepos=\"1:3-1:5\" level=\"1\">\n    <text sourcepos=\"1:5-1:5\" xml:space=\"preserve\">h</text>\n  </heading>\n  <block_quote sourcepos=\"3:1-7:8\">\n    <list sourcepos=\"3:3-7:8\" type=\"bullet\" tight=\"false\">\n      <item sourcepos=\"3:3-7:8\">\n        <paragraph sourcepos=\"3:5-3:5\">\n          <text sourcepos=\"3:5-3:5\" xml:space=\"preserve\">a</text>\n        </paragraph>\n        <paragraph sourcepos=\"5:5-7:8\">\n          <text sourcepos=\"5:5-5:6\" xml:space=\"preserve\">b </text>\n          <code sourcepos=\"5:8-6:4\" xml:space=\"preserve\">multi line</code>\n          <text sourcepos=\"6:10-6:10\" xml:space=\"preserve\"> </text>\n          <html_inline sourcepos=\"6:11-7:5\" xml:space=\"preserve\">&lt;span\nx=&quot;y&quot;&gt;</html_inline>\n        </paragraph>\n      </item>\n    </list>\n  </block_quote>\n  <list sourcepos=\"9:1-10:0\" type=\"ordered\" start=\"1\" delim=\"period\" tight=\"true\">\n    <item sourcepos=\"9:1-10:0\">\n      <paragraph sourcepos=\"9:4-9:4\">\n        <text sourcepos=\"9:4-9:4\" xml:space=\"preserve\">x</text>\n      </paragraph>\n    </item>\n  </list>\n  <code_block sourcepos=\"11:1-13:3\" xml:space=\"preserve\">c\n</code_block>\n  <code_block sourcepos=\"15:5-16:0\" xml:space=\"preserve\">i\n</code_block>\n  <thematic_break sourcepos=\"17:1-18:0\" />\n  <heading sourcepos=\"19:1-21:0\" level=\"1\">\n    <text sourcepos=\"19:1-19:6\" xml:space=\"preserve\">Setext</text>\n  </heading>\n  <paragraph sourcepos=\"22:1-25:17\">\n    <text sourcepos=\"22:1-22:4\" xml:space=\"preserve\">foo </text>\n    <emph sourcepos=\"22:5-22:14\">\n      <text sourcepos=\"22:6-22:8\" xml:space=\"preserve\">bar</text>\n      <linebreak />\n      <text sourcepos=\"22:11-22:13\" xml:space=\"preserve\">baz</text>\n    </emph>\n    <text sourcepos=\"22:15-22:15\" xml:space=\"preserve\"> </text>\n    <link sourcepos=\"22:16-22:26\" destination=\"/u\" title=\"t\">\n      <text sourcepos=\"22:17-22:17\" xml:space=\"preserve\">l</text>\n    </link>\n    <text sourcepos=\"22:27-22:27\" xml:space=\"preserve\"> </text>\n    <link sourcepos=\"22:28-22:39\" destination=\"http://x.y\">\n      <text sourcepos=\"22:29-22:38\" xml:space=\"preserve\">http://x.y</text>\n    </link>\n  </paragraph>\n  <code_block sourcepos=\"27:2-27:5\" xml:space=\"preserve\">\ttab\n</code_block>\n  <list sourcepos=\"28:1-29:0\" type=\"bullet\" tight=\"true\">\n    <item sourcepos=\"28:1-29:0\">\n      <paragraph sourcepos=\"28:4-28:4\">\n        <text sourcepos=\"28:4-28:4\" xml:space=\"preserve\">z</text>\n      </paragraph>\n    </item>\n  </list>\n  <html_block sourcepos=\"30:1-30:5\" xml:space=\"preserve\">&lt;div&gt;\n</html_block>\n</document>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": ".SH\nTitle \\f[I]em\\f[]\n.SS\nSetext \\f[C]code\\f[]\n.RS\n.PP\nquote \"with\" 'quotes'\nand a link (/u) and http://a.b (http://a.b)\n.RE\n.IP \\[bu] 2\none\n.IP \\[bu] 2\ntwo\n.RS\n.PP\npara \\-\\- dash \\-\\-\\- and ...\n.RE\n.IP \"3.\" 4\nthree\n.IP \"4.\" 4\nfour\n.IP\n.nf\n\\f[C]\nprint(1)\n\\f[]\n.fi\n.IP\n.nf\n\\f[C]\nindented\n\\f[]\n.fi\n.PP\n  *  *  *  *  *\n.PP\nHard.PD 0\n.P\n.PD\nbreak.PD 0\n.P\n.PD\nsoft\nbreak [IMAGE: img \\f[I]a\\f[]] tag & © a@b.c (mailto:a@b.c)\n.PP\nref (/r) x (/r) 1. 2) + = # !\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "--unsafe"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": ".SH\nTitle \\f[I]em\\f[]\n.SS\nSetext \\f[C]code\\f[]\n.RS\n.PP\nquote \"with\" 'quotes'\nand a link (/u) and http://a.b (http://a.b)\n.RE\n.IP \\[bu] 2\none\n.IP \\[bu] 2\ntwo\n.RS\n.PP\npara \\-\\- dash \\-\\-\\- and ...\n.RE\n.IP \"3.\" 4\nthree\n.IP \"4.\" 4\nfour\n.IP\n.nf\n\\f[C]\nprint(1)\n\\f[]\n.fi\n.IP\n.nf\n\\f[C]\nindented\n\\f[]\n.fi\n.PP\n  *  *  *  *  *\n.PP\nHard.PD 0\n.P\n.PD\nbreak.PD 0\n.P\n.PD\nsoft\nbreak [IMAGE: img \\f[I]a\\f[]] tag & © a@b.c (mailto:a@b.c)\n.PP\nref (/r) x (/r) 1. 2) + = # !\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "--smart"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": ".SH\nTitle \\f[I]em\\f[]\n.SS\nSetext \\f[C]code\\f[]\n.RS\n.PP\nquote \\[lq]with\\[rq] \\[oq]quotes\\[cq]\nand a link (/u) and http://a.b (http://a.b)\n.RE\n.IP \\[bu] 2\none\n.IP \\[bu] 2\ntwo\n.RS\n.PP\npara \\[en] dash \\[em] and …\n.RE\n.IP \"3.\" 4\nthree\n.IP \"4.\" 4\nfour\n.IP\n.nf\n\\f[C]\nprint(1)\n\\f[]\n.fi\n.IP\n.nf\n\\f[C]\nindented\n\\f[]\n.fi\n.PP\n  *  *  *  *  *\n.PP\nHard.PD 0\n.P\n.PD\nbreak.PD 0\n.P\n.PD\nsoft\nbreak [IMAGE: img \\f[I]a\\f[]] tag & © a@b.c (mailto:a@b.c)\n.PP\nref (/r) x (/r) 1. 2) + = # !\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "--hardbreaks"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": ".SH\nTitle \\f[I]em\\f[]\n.SS\nSetext \\f[C]code\\f[]\n.RS\n.PP\nquote \"with\" 'quotes'.PD 0\n.P\n.PD\nand a link (/u) and http://a.b (http://a.b)\n.RE\n.IP \\[bu] 2\none\n.IP \\[bu] 2\ntwo\n.RS\n.PP\npara \\-\\- dash \\-\\-\\- and ...\n.RE\n.IP \"3.\" 4\nthree\n.IP \"4.\" 4\nfour\n.IP\n.nf\n\\f[C]\nprint(1)\n\\f[]\n.fi\n.IP\n.nf\n\\f[C]\nindented\n\\f[]\n.fi\n.PP\n  *  *  *  *  *\n.PP\nHard.PD 0\n.P\n.PD\nbreak.PD 0\n.P\n.PD\nsoft.PD 0\n.P\n.PD\nbreak [IMAGE: img \\f[I]a\\f[]] tag & © a@b.c (mailto:a@b.c)\n.PP\nref (/r) x (/r) 1. 2) + = # !\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "--nobreaks"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": ".SH\nTitle \\f[I]em\\f[]\n.SS\nSetext \\f[C]code\\f[]\n.RS\n.PP\nquote \"with\" 'quotes' and a link (/u) and http://a.b (http://a.b)\n.RE\n.IP \\[bu] 2\none\n.IP \\[bu] 2\ntwo\n.RS\n.PP\npara \\-\\- dash \\-\\-\\- and ...\n.RE\n.IP \"3.\" 4\nthree\n.IP \"4.\" 4\nfour\n.IP\n.nf\n\\f[C]\nprint(1)\n\\f[]\n.fi\n.IP\n.nf\n\\f[C]\nindented\n\\f[]\n.fi\n.PP\n  *  *  *  *  *\n.PP\nHard.PD 0\n.P\n.PD\nbreak.PD 0\n.P\n.PD\nsoft break [IMAGE: img \\f[I]a\\f[]] tag & © a@b.c (mailto:a@b.c)\n.PP\nref (/r) x (/r) 1. 2) + = # !\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "--sourcepos"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": ".SH\nTitle \\f[I]em\\f[]\n.SS\nSetext \\f[C]code\\f[]\n.RS\n.PP\nquote \"with\" 'quotes'\nand a link (/u) and http://a.b (http://a.b)\n.RE\n.IP \\[bu] 2\none\n.IP \\[bu] 2\ntwo\n.RS\n.PP\npara \\-\\- dash \\-\\-\\- and ...\n.RE\n.IP \"3.\" 4\nthree\n.IP \"4.\" 4\nfour\n.IP\n.nf\n\\f[C]\nprint(1)\n\\f[]\n.fi\n.IP\n.nf\n\\f[C]\nindented\n\\f[]\n.fi\n.PP\n  *  *  *  *  *\n.PP\nHard.PD 0\n.P\n.PD\nbreak.PD 0\n.P\n.PD\nsoft\nbreak [IMAGE: img \\f[I]a\\f[]] tag & © a@b.c (mailto:a@b.c)\n.PP\nref (/r) x (/r) 1. 2) + = # !\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "--sourcepos",
+    "--smart",
+    "--unsafe"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": ".SH\nTitle \\f[I]em\\f[]\n.SS\nSetext \\f[C]code\\f[]\n.RS\n.PP\nquote \\[lq]with\\[rq] \\[oq]quotes\\[cq]\nand a link (/u) and http://a.b (http://a.b)\n.RE\n.IP \\[bu] 2\none\n.IP \\[bu] 2\ntwo\n.RS\n.PP\npara \\[en] dash \\[em] and …\n.RE\n.IP \"3.\" 4\nthree\n.IP \"4.\" 4\nfour\n.IP\n.nf\n\\f[C]\nprint(1)\n\\f[]\n.fi\n.IP\n.nf\n\\f[C]\nindented\n\\f[]\n.fi\n.PP\n  *  *  *  *  *\n.PP\nHard.PD 0\n.P\n.PD\nbreak.PD 0\n.P\n.PD\nsoft\nbreak [IMAGE: img \\f[I]a\\f[]] tag & © a@b.c (mailto:a@b.c)\n.PP\nref (/r) x (/r) 1. 2) + = # !\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "--width",
+    "30"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": ".SH\nTitle \\f[I]em\\f[]\n.SS\nSetext \\f[C]code\\f[]\n.RS\n.PP\nquote \"with\" 'quotes' and a\nlink (/u) and\nhttp://a.b (http://a.b)\n.RE\n.IP \\[bu] 2\none\n.IP \\[bu] 2\ntwo\n.RS\n.PP\npara \\-\\- dash \\-\\-\\- and ...\n.RE\n.IP \"3.\" 4\nthree\n.IP \"4.\" 4\nfour\n.IP\n.nf\n\\f[C]\nprint(1)\n\\f[]\n.fi\n.IP\n.nf\n\\f[C]\nindented\n\\f[]\n.fi\n.PP\n  *  *  *  *  *\n.PP\nHard.PD 0\n.P\n.PD\nbreak.PD 0\n.P\n.PD\nsoft break [IMAGE: img\n\\f[I]a\\f[]] tag & ©\na@b.c (mailto:a@b.c)\n.PP\nref (/r) x (/r) 1. 2) + = # !\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "--smart"
+   ],
+   "stdin": "\"Hello,\" she said. 'It's \"quoted\"' -- yes --- no ---- ----- ...\n'a' \"b\" (\"c\") [\"d\"] *\"e\"* 5'6\" '' \"'nested'\" \\\"escaped\\\"\n[a \"link\"](/u \"t's\") ![x's](/i) `no 'smart' -- here` <b title=\"x\">\n\"*a*\" '_b_' \"**c**\"... a.. b.... c-d e--f g---h -\n",
+   "stdout": ".PP\n\\[lq]Hello,\\[rq] she said. \\[oq]It\\[cq]s \\[lq]quoted\\[rq]\\[cq] \\[en] yes \\[em] no \\[en]\\[en] \\[em]\\[en] …\n\\[oq]a\\[cq] \\[lq]b\\[rq] (\\[lq]c\\[rq]) [\\[lq]d\\[rq]] \\f[I]\\[lq]e\\[rq]\\f[] 5\\[cq]6\\[rq] \\[oq]\\[cq] \\[lq]\\[oq]nested\\[cq]\\[rq] \"escaped\"\na \\[lq]link\\[rq] (/u) [IMAGE: x\\[cq]s] \\f[C]no 'smart' \\-\\- here\\f[] \n\\[lq]\\f[I]a\\f[]\\[rq] \\[oq]\\f[I]b\\f[]\\[cq] \\[lq]\\f[B]c\\f[]\\[rq]… a.. b…. c\\-d e\\[en]f g\\[em]h \\-\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "--smart",
+    "--width",
+    "20"
+   ],
+   "stdin": "\"Hello,\" she said. 'It's \"quoted\"' -- yes --- no ---- ----- ...\n'a' \"b\" (\"c\") [\"d\"] *\"e\"* 5'6\" '' \"'nested'\" \\\"escaped\\\"\n[a \"link\"](/u \"t's\") ![x's](/i) `no 'smart' -- here` <b title=\"x\">\n\"*a*\" '_b_' \"**c**\"... a.. b.... c-d e--f g---h -\n",
+   "stdout": ".PP\n\\[lq]Hello,\\[rq] she\nsaid. \\[oq]It\\[cq]s\n\\[lq]quoted\\[rq]\\[cq]\n\\[en] yes \\[em] no\n\\[en]\\[en]\n\\[em]\\[en] …\n\\[oq]a\\[cq]\n\\[lq]b\\[rq]\n(\\[lq]c\\[rq])\n[\\[lq]d\\[rq]]\n\\f[I]\\[lq]e\\[rq]\\f[] 5\\[cq]6\\[rq]\n\\[oq]\\[cq]\n\\[lq]\\[oq]nested\\[cq]\\[rq]\n\"escaped\" a\n\\[lq]link\\[rq] (/u)\n[IMAGE: x\\[cq]s]\n\\f[C]no 'smart' \\-\\-\nhere\\f[] \n\\[lq]\\f[I]a\\f[]\\[rq]\n\\[oq]\\f[I]b\\f[]\\[cq]\n\\[lq]\\f[B]c\\f[]\\[rq]…\na.. b…. c\\-d e\\[en]f\ng\\[em]h \\-\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "--sourcepos"
+   ],
+   "stdin": "  # h #  \n\n> - a\n>\n>   b `multi\n> line` <span\n> x=\"y\">\n\n1. x\n\n```\nc\n```\n\n    i\n\n---\n\nSetext\n===\n\n[r]: /u\nfoo *bar\\\nbaz* [l](/u\n\"t\") <http://x.y>\n\n\t\ttab\n- \tz\n\n<div>\n",
+   "stdout": ".SH\nh\n.RS\n.IP \\[bu] 2\na\n.RS\n.PP\nb \\f[C]multi line\\f[] \n.RE\n.RE\n.IP \"1.\" 4\nx\n.IP\n.nf\n\\f[C]\nc\n\\f[]\n.fi\n.IP\n.nf\n\\f[C]\ni\n\\f[]\n.fi\n.PP\n  *  *  *  *  *\n.SH\nSetext\n.PP\nfoo \\f[I]bar.PD 0\n.P\n.PD\nbaz\\f[] l (/u) http://x.y (http://x.y)\n.IP\n.nf\n\\f[C]\n\ttab\n\\f[]\n.fi\n.IP \\[bu] 2\nz\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "\\section{Title \\emph{em}}\n\n\\subsection{Setext \\texttt{code}}\n\n\\begin{quote}\nquote \\textquotedbl{}with\\textquotedbl{} \\textquotesingle{}quotes\\textquotesingle{}\nand a {link} and \\url{http://a.b}\n\n\\end{quote}\n\n\\begin{itemize}\n\\item one\n\n\\item two\n\npara -{}- dash -{}-{}- and ...\n\n\\end{itemize}\n\n\\begin{enumerate}\n\\setcounter{enumi}{3}\n\\item three\n\n\\item four\n\n\\end{enumerate}\n\n\\begin{verbatim}\nprint(1)\n\\end{verbatim}\n\n\\begin{verbatim}\nindented\n\\end{verbatim}\n\n\\begin{center}\\rule{0.5\\linewidth}{\\linethickness}\\end{center}\n\nHard\\\\\nbreak\\\\\nsoft\nbreak \\protect\\includegraphics{/i.png} tag \\& © \\href{mailto:a@b.c}\\nolinkurl{a@b.c}\n\n{ref} {x} 1. 2) + = \\# !\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "--unsafe"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "\\section{Title \\emph{em}}\n\n\\subsection{Setext \\texttt{code}}\n\n\\begin{quote}\nquote \\textquotedbl{}with\\textquotedbl{} \\textquotesingle{}quotes\\textquotesingle{}\nand a {link} and \\url{http://a.b}\n\n\\end{quote}\n\n\\begin{itemize}\n\\item one\n\n\\item two\n\npara -{}- dash -{}-{}- and ...\n\n\\end{itemize}\n\n\\begin{enumerate}\n\\setcounter{enumi}{3}\n\\item three\n\n\\item four\n\n\\end{enumerate}\n\n\\begin{verbatim}\nprint(1)\n\\end{verbatim}\n\n\\begin{verbatim}\nindented\n\\end{verbatim}\n\n\\begin{center}\\rule{0.5\\linewidth}{\\linethickness}\\end{center}\n\nHard\\\\\nbreak\\\\\nsoft\nbreak \\protect\\includegraphics{/i.png} tag \\& © \\href{mailto:a@b.c}\\nolinkurl{a@b.c}\n\n{ref} {x} 1. 2) + = \\# !\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "--smart"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "\\section{Title \\emph{em}}\n\n\\subsection{Setext \\texttt{code}}\n\n\\begin{quote}\nquote ``with'' `quotes'\nand a {link} and \\url{http://a.b}\n\n\\end{quote}\n\n\\begin{itemize}\n\\item one\n\n\\item two\n\npara -- dash --- and \\ldots{}\n\n\\end{itemize}\n\n\\begin{enumerate}\n\\setcounter{enumi}{3}\n\\item three\n\n\\item four\n\n\\end{enumerate}\n\n\\begin{verbatim}\nprint(1)\n\\end{verbatim}\n\n\\begin{verbatim}\nindented\n\\end{verbatim}\n\n\\begin{center}\\rule{0.5\\linewidth}{\\linethickness}\\end{center}\n\nHard\\\\\nbreak\\\\\nsoft\nbreak \\protect\\includegraphics{/i.png} tag \\& © \\href{mailto:a@b.c}\\nolinkurl{a@b.c}\n\n{ref} {x} 1. 2) + = \\# !\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "--hardbreaks"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "\\section{Title \\emph{em}}\n\n\\subsection{Setext \\texttt{code}}\n\n\\begin{quote}\nquote \\textquotedbl{}with\\textquotedbl{} \\textquotesingle{}quotes\\textquotesingle{}\\\\\nand a {link} and \\url{http://a.b}\n\n\\end{quote}\n\n\\begin{itemize}\n\\item one\n\n\\item two\n\npara -{}- dash -{}-{}- and ...\n\n\\end{itemize}\n\n\\begin{enumerate}\n\\setcounter{enumi}{3}\n\\item three\n\n\\item four\n\n\\end{enumerate}\n\n\\begin{verbatim}\nprint(1)\n\\end{verbatim}\n\n\\begin{verbatim}\nindented\n\\end{verbatim}\n\n\\begin{center}\\rule{0.5\\linewidth}{\\linethickness}\\end{center}\n\nHard\\\\\nbreak\\\\\nsoft\\\\\nbreak \\protect\\includegraphics{/i.png} tag \\& © \\href{mailto:a@b.c}\\nolinkurl{a@b.c}\n\n{ref} {x} 1. 2) + = \\# !\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "--nobreaks"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "\\section{Title \\emph{em}}\n\n\\subsection{Setext \\texttt{code}}\n\n\\begin{quote}\nquote \\textquotedbl{}with\\textquotedbl{} \\textquotesingle{}quotes\\textquotesingle{} and a {link} and \\url{http://a.b}\n\n\\end{quote}\n\n\\begin{itemize}\n\\item one\n\n\\item two\n\npara -{}- dash -{}-{}- and ...\n\n\\end{itemize}\n\n\\begin{enumerate}\n\\setcounter{enumi}{3}\n\\item three\n\n\\item four\n\n\\end{enumerate}\n\n\\begin{verbatim}\nprint(1)\n\\end{verbatim}\n\n\\begin{verbatim}\nindented\n\\end{verbatim}\n\n\\begin{center}\\rule{0.5\\linewidth}{\\linethickness}\\end{center}\n\nHard\\\\\nbreak\\\\\nsoft break \\protect\\includegraphics{/i.png} tag \\& © \\href{mailto:a@b.c}\\nolinkurl{a@b.c}\n\n{ref} {x} 1. 2) + = \\# !\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "--sourcepos"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "\\section{Title \\emph{em}}\n\n\\subsection{Setext \\texttt{code}}\n\n\\begin{quote}\nquote \\textquotedbl{}with\\textquotedbl{} \\textquotesingle{}quotes\\textquotesingle{}\nand a {link} and \\url{http://a.b}\n\n\\end{quote}\n\n\\begin{itemize}\n\\item one\n\n\\item two\n\npara -{}- dash -{}-{}- and ...\n\n\\end{itemize}\n\n\\begin{enumerate}\n\\setcounter{enumi}{3}\n\\item three\n\n\\item four\n\n\\end{enumerate}\n\n\\begin{verbatim}\nprint(1)\n\\end{verbatim}\n\n\\begin{verbatim}\nindented\n\\end{verbatim}\n\n\\begin{center}\\rule{0.5\\linewidth}{\\linethickness}\\end{center}\n\nHard\\\\\nbreak\\\\\nsoft\nbreak \\protect\\includegraphics{/i.png} tag \\& © \\href{mailto:a@b.c}\\nolinkurl{a@b.c}\n\n{ref} {x} 1. 2) + = \\# !\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "--sourcepos",
+    "--smart",
+    "--unsafe"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "\\section{Title \\emph{em}}\n\n\\subsection{Setext \\texttt{code}}\n\n\\begin{quote}\nquote ``with'' `quotes'\nand a {link} and \\url{http://a.b}\n\n\\end{quote}\n\n\\begin{itemize}\n\\item one\n\n\\item two\n\npara -- dash --- and \\ldots{}\n\n\\end{itemize}\n\n\\begin{enumerate}\n\\setcounter{enumi}{3}\n\\item three\n\n\\item four\n\n\\end{enumerate}\n\n\\begin{verbatim}\nprint(1)\n\\end{verbatim}\n\n\\begin{verbatim}\nindented\n\\end{verbatim}\n\n\\begin{center}\\rule{0.5\\linewidth}{\\linethickness}\\end{center}\n\nHard\\\\\nbreak\\\\\nsoft\nbreak \\protect\\includegraphics{/i.png} tag \\& © \\href{mailto:a@b.c}\\nolinkurl{a@b.c}\n\n{ref} {x} 1. 2) + = \\# !\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "--width",
+    "30"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "\\section{Title \\emph{em}}\n\n\\subsection{Setext\n\\texttt{code}}\n\n\\begin{quote}\nquote\n\\textquotedbl{}with\\textquotedbl{}\n\\textquotesingle{}quotes\\textquotesingle{}\nand a {link} and\n\\url{http://a.b}\n\n\\end{quote}\n\n\\begin{itemize}\n\\item one\n\n\\item two\n\npara -{}- dash -{}-{}- and ...\n\n\\end{itemize}\n\n\\begin{enumerate}\n\\setcounter{enumi}{3}\n\\item three\n\n\\item four\n\n\\end{enumerate}\n\n\\begin{verbatim}\nprint(1)\n\\end{verbatim}\n\n\\begin{verbatim}\nindented\n\\end{verbatim}\n\n\\begin{center}\\rule{0.5\\linewidth}{\\linethickness}\\end{center}\n\nHard\\\\\nbreak\\\\\nsoft break\n\\protect\\includegraphics{/i.png}\ntag \\& ©\n\\href{mailto:a@b.c}\\nolinkurl{a@b.c}\n\n{ref} {x} 1. 2) + = \\# !\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "--smart"
+   ],
+   "stdin": "\"Hello,\" she said. 'It's \"quoted\"' -- yes --- no ---- ----- ...\n'a' \"b\" (\"c\") [\"d\"] *\"e\"* 5'6\" '' \"'nested'\" \\\"escaped\\\"\n[a \"link\"](/u \"t's\") ![x's](/i) `no 'smart' -- here` <b title=\"x\">\n\"*a*\" '_b_' \"**c**\"... a.. b.... c-d e--f g---h -\n",
+   "stdout": "``Hello,'' she said. `It's ``quoted''' -- yes --- no ---- ----- \\ldots{}\n`a' ``b'' (``c'') {[}``d''{]} \\emph{``e''} 5'6'' `' ```nested''' \\textquotedbl{}escaped\\textquotedbl{}\n{a ``link''} \\protect\\includegraphics{/i} \\texttt{no \\textquotesingle{}smart\\textquotesingle{} -{}- here} \n``\\emph{a}'' `\\emph{b}' ``\\textbf{c}''\\ldots{} a.. b\\ldots{}. c-d e--f g---h -\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "--smart",
+    "--width",
+    "20"
+   ],
+   "stdin": "\"Hello,\" she said. 'It's \"quoted\"' -- yes --- no ---- ----- ...\n'a' \"b\" (\"c\") [\"d\"] *\"e\"* 5'6\" '' \"'nested'\" \\\"escaped\\\"\n[a \"link\"](/u \"t's\") ![x's](/i) `no 'smart' -- here` <b title=\"x\">\n\"*a*\" '_b_' \"**c**\"... a.. b.... c-d e--f g---h -\n",
+   "stdout": "``Hello,'' she said.\n`It's ``quoted''' --\nyes --- no ----\n----- \\ldots{} `a'\n``b'' (``c'')\n{[}``d''{]}\n\\emph{``e''} 5'6''\n`' ```nested'''\n\\textquotedbl{}escaped\\textquotedbl{}\n{a ``link''}\n\\protect\\includegraphics{/i}\n\\texttt{no \\textquotesingle{}smart\\textquotesingle{} -{}- here}\n ``\\emph{a}''\n`\\emph{b}'\n``\\textbf{c}''\\ldots{}\na.. b\\ldots{}. c-d\ne--f g---h -\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "--sourcepos"
+   ],
+   "stdin": "  # h #  \n\n> - a\n>\n>   b `multi\n> line` <span\n> x=\"y\">\n\n1. x\n\n```\nc\n```\n\n    i\n\n---\n\nSetext\n===\n\n[r]: /u\nfoo *bar\\\nbaz* [l](/u\n\"t\") <http://x.y>\n\n\t\ttab\n- \tz\n\n<div>\n",
+   "stdout": "\\section{h}\n\n\\begin{quote}\n\\begin{itemize}\n\\item a\n\nb \\texttt{multi line} \n\n\\end{itemize}\n\n\\end{quote}\n\n\\begin{enumerate}\n\\item x\n\n\\end{enumerate}\n\n\\begin{verbatim}\nc\n\\end{verbatim}\n\n\\begin{verbatim}\ni\n\\end{verbatim}\n\n\\begin{center}\\rule{0.5\\linewidth}{\\linethickness}\\end{center}\n\n\\section{Setext}\n\nfoo \\emph{bar\\\\\nbaz} {l} \\url{http://x.y}\n\n\\begin{verbatim}\n\ttab\n\\end{verbatim}\n\n\\begin{itemize}\n\\item z\n\n\\end{itemize}\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "# Title *em*\n\n## Setext `code`\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n  - one\n\n  - two\n    \n    para -- dash --- and ...\n\n<!-- end list -->\n\n3)  three\n4)  four\n\n``` py x\nprint(1)\n```\n\n``` \nindented\n```\n\n<div>\nraw\n</div>\n\n-----\n\nHard  \nbreak  \nsoft\nbreak ![img *a*](/i.png \"t\") <b>tag</b> & © <a@b.c>\n\n[ref](/r \"R\") [x](/r \"R\") 1. 2) + = \\# \\!\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "--unsafe"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "# Title *em*\n\n## Setext `code`\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n  - one\n\n  - two\n    \n    para -- dash --- and ...\n\n<!-- end list -->\n\n3)  three\n4)  four\n\n``` py x\nprint(1)\n```\n\n``` \nindented\n```\n\n<div>\nraw\n</div>\n\n-----\n\nHard  \nbreak  \nsoft\nbreak ![img *a*](/i.png \"t\") <b>tag</b> & © <a@b.c>\n\n[ref](/r \"R\") [x](/r \"R\") 1. 2) + = \\# \\!\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "--smart"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "# Title *em*\n\n## Setext `code`\n\n> quote “with” ‘quotes’\n> and a [link](/u \"title\") and <http://a.b>\n\n  - one\n\n  - two\n    \n    para – dash — and …\n\n<!-- end list -->\n\n3)  three\n4)  four\n\n``` py x\nprint(1)\n```\n\n``` \nindented\n```\n\n<div>\nraw\n</div>\n\n-----\n\nHard  \nbreak  \nsoft\nbreak ![img *a*](/i.png \"t\") <b>tag</b> & © <a@b.c>\n\n[ref](/r \"R\") [x](/r \"R\") 1. 2) + = \\# \\!\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "--hardbreaks"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "# Title *em*\n\n## Setext `code`\n\n> quote \"with\" 'quotes'  \n> and a [link](/u \"title\") and <http://a.b>\n\n  - one\n\n  - two\n    \n    para -- dash --- and ...\n\n<!-- end list -->\n\n3)  three\n4)  four\n\n``` py x\nprint(1)\n```\n\n``` \nindented\n```\n\n<div>\nraw\n</div>\n\n-----\n\nHard\nbreak\nsoft  \nbreak ![img *a*](/i.png \"t\") <b>tag</b> & © <a@b.c>\n\n[ref](/r \"R\") [x](/r \"R\") 1. 2) + = \\# \\!\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "--nobreaks"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "# Title *em*\n\n## Setext `code`\n\n> quote \"with\" 'quotes' and a [link](/u \"title\") and <http://a.b>\n\n  - one\n\n  - two\n    \n    para -- dash --- and ...\n\n<!-- end list -->\n\n3)  three\n4)  four\n\n``` py x\nprint(1)\n```\n\n``` \nindented\n```\n\n<div>\nraw\n</div>\n\n-----\n\nHard  \nbreak  \nsoft break ![img *a*](/i.png \"t\") <b>tag</b> & © <a@b.c>\n\n[ref](/r \"R\") [x](/r \"R\") 1. 2) + = \\# \\!\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "--sourcepos"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "# Title *em*\n\n## Setext `code`\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n  - one\n\n  - two\n    \n    para -- dash --- and ...\n\n<!-- end list -->\n\n3)  three\n4)  four\n\n``` py x\nprint(1)\n```\n\n``` \nindented\n```\n\n<div>\nraw\n</div>\n\n-----\n\nHard  \nbreak  \nsoft\nbreak ![img *a*](/i.png \"t\") <b>tag</b> & © <a@b.c>\n\n[ref](/r \"R\") [x](/r \"R\") 1. 2) + = \\# \\!\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "--sourcepos",
+    "--smart",
+    "--unsafe"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "# Title *em*\n\n## Setext `code`\n\n> quote “with” ‘quotes’\n> and a [link](/u \"title\") and <http://a.b>\n\n  - one\n\n  - two\n    \n    para – dash — and …\n\n<!-- end list -->\n\n3)  three\n4)  four\n\n``` py x\nprint(1)\n```\n\n``` \nindented\n```\n\n<div>\nraw\n</div>\n\n-----\n\nHard  \nbreak  \nsoft\nbreak ![img *a*](/i.png \"t\") <b>tag</b> & © <a@b.c>\n\n[ref](/r \"R\") [x](/r \"R\") 1. 2) + = \\# \\!\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "--width",
+    "30"
+   ],
+   "stdin": "# Title *em*\n\nSetext `code`\n---\n\n> quote \"with\" 'quotes'\n> and a [link](/u \"title\") and <http://a.b>\n\n- one\n- two\n\n  para -- dash --- and ...\n\n3) three\n4) four\n\n```py x\nprint(1)\n```\n\n    indented\n\n<div>\nraw\n</div>\n\n***\n\nHard  \nbreak\\\nsoft\nbreak ![img *a*](/i.png 't') <b>tag</b> &amp; &copy; <a@b.c>\n\n[ref]: /r \"R\"\n\n[ref] [x][ref] 1. 2) + = # !\n",
+   "stdout": "# Title *em*\n\n## Setext `code`\n\n> quote \"with\" 'quotes' and a\n> [link](/u \"title\") and\n> <http://a.b>\n\n  - one\n\n  - two\n    \n    para -- dash --- and ...\n\n<!-- end list -->\n\n3)  three\n4)  four\n\n``` py x\nprint(1)\n```\n\n``` \nindented\n```\n\n<div>\nraw\n</div>\n\n-----\n\nHard  \nbreak  \nsoft break ![img *a*](/i.png\n\"t\") <b>tag</b> & © <a@b.c>\n\n[ref](/r \"R\")\n[x](/r \"R\") 1. 2) + = \\# \\!\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "--smart"
+   ],
+   "stdin": "\"Hello,\" she said. 'It's \"quoted\"' -- yes --- no ---- ----- ...\n'a' \"b\" (\"c\") [\"d\"] *\"e\"* 5'6\" '' \"'nested'\" \\\"escaped\\\"\n[a \"link\"](/u \"t's\") ![x's](/i) `no 'smart' -- here` <b title=\"x\">\n\"*a*\" '_b_' \"**c**\"... a.. b.... c-d e--f g---h -\n",
+   "stdout": "“Hello,” she said. ‘It’s “quoted”’ – yes — no –– —– …\n‘a’ “b” (“c”) \\[“d”\\] *“e”* 5’6” ‘’ “‘nested’” \\\"escaped\\\"\n[a “link”](/u \"t's\") ![x’s](/i) `no 'smart' -- here` <b title=\"x\">\n“*a*” ‘*b*’ “**c**”… a\\.. b…. c-d e–f g—h -\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "--smart",
+    "--width",
+    "20"
+   ],
+   "stdin": "\"Hello,\" she said. 'It's \"quoted\"' -- yes --- no ---- ----- ...\n'a' \"b\" (\"c\") [\"d\"] *\"e\"* 5'6\" '' \"'nested'\" \\\"escaped\\\"\n[a \"link\"](/u \"t's\") ![x's](/i) `no 'smart' -- here` <b title=\"x\">\n\"*a*\" '_b_' \"**c**\"... a.. b.... c-d e--f g---h -\n",
+   "stdout": "“Hello,” she said.\n‘It’s “quoted”’ –\nyes — no –– —– … ‘a’\n“b” (“c”) \\[“d”\\]\n*“e”* 5’6” ‘’\n“‘nested’”\n\\\"escaped\\\" [a\n“link”](/u \"t's\")\n![x’s](/i) `no\n'smart' -- here`\n<b title=\"x\"> “*a*”\n‘*b*’ “**c**”…\na\\.. b…. c-d e–f g—h\n-\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "--sourcepos"
+   ],
+   "stdin": "  # h #  \n\n> - a\n>\n>   b `multi\n> line` <span\n> x=\"y\">\n\n1. x\n\n```\nc\n```\n\n    i\n\n---\n\nSetext\n===\n\n[r]: /u\nfoo *bar\\\nbaz* [l](/u\n\"t\") <http://x.y>\n\n\t\ttab\n- \tz\n\n<div>\n",
+   "stdout": "# h\n\n>   - a\n>     \n>     b `multi line` <span\n>     x=\"y\">\n\n1.  x\n\n``` \nc\n```\n\n``` \ni\n```\n\n-----\n\n# Setext\n\nfoo *bar  \nbaz* [l](/u \"t\") <http://x.y>\n\n``` \n\ttab\n```\n\n  - z\n\n<div>\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "--width",
+    "1"
+   ],
+   "stdin": "> aaa bbb ccc ddd eee fff ggg hhh 1 2 3 4\n\n- iii jjj kkk lll mmm nnn ooo ppp\n  1. nested qqq rrr sss ttt\n\nA line with `code span text` and *emphasis words* and [a link](http://example.com/long/path) that wraps.\nNumbers 10. 11) at - wrap + points = ok.\n",
+   "stdout": ".RS\n.PP\naaa\nbbb\nccc\nddd\neee\nfff\nggg\nhhh 1 2 3 4\n.RE\n.IP \\[bu] 2\niii\njjj\nkkk\nlll\nmmm\nnnn\nooo\nppp\n.RS\n.IP \"1.\" 4\nnested\nqqq\nrrr\nsss\nttt\n.RE\n.PP\nA\nline\nwith\n\\f[C]code\nspan\ntext\\f[]\nand\n\\f[I]emphasis\nwords\\f[]\nand\na\nlink (http://example.com/long/path)\nthat\nwraps.\nNumbers 10. 11)\nat\n\\-\nwrap\n+\npoints\n=\nok.\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "--width",
+    "8"
+   ],
+   "stdin": "> aaa bbb ccc ddd eee fff ggg hhh 1 2 3 4\n\n- iii jjj kkk lll mmm nnn ooo ppp\n  1. nested qqq rrr sss ttt\n\nA line with `code span text` and *emphasis words* and [a link](http://example.com/long/path) that wraps.\nNumbers 10. 11) at - wrap + points = ok.\n",
+   "stdout": ".RS\n.PP\naaa bbb\nccc ddd\neee fff\nggg\nhhh 1 2 3 4\n.RE\n.IP \\[bu] 2\niii jjj\nkkk lll\nmmm nnn\nooo ppp\n.RS\n.IP \"1.\" 4\nnested\nqqq rrr\nsss ttt\n.RE\n.PP\nA line\nwith\n\\f[C]code\nspan\ntext\\f[]\nand\n\\f[I]emphasis\nwords\\f[]\nand a\nlink (http://example.com/long/path)\nthat\nwraps.\nNumbers 10. 11)\nat \\-\nwrap +\npoints =\nok.\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "--width",
+    "20"
+   ],
+   "stdin": "> aaa bbb ccc ddd eee fff ggg hhh 1 2 3 4\n\n- iii jjj kkk lll mmm nnn ooo ppp\n  1. nested qqq rrr sss ttt\n\nA line with `code span text` and *emphasis words* and [a link](http://example.com/long/path) that wraps.\nNumbers 10. 11) at - wrap + points = ok.\n",
+   "stdout": ".RS\n.PP\naaa bbb ccc ddd eee\nfff ggg hhh 1 2 3 4\n.RE\n.IP \\[bu] 2\niii jjj kkk lll mmm\nnnn ooo ppp\n.RS\n.IP \"1.\" 4\nnested qqq rrr sss\nttt\n.RE\n.PP\nA line with\n\\f[C]code span\ntext\\f[] and\n\\f[I]emphasis\nwords\\f[] and a\nlink (http://example.com/long/path)\nthat wraps.\nNumbers 10. 11) at\n\\- wrap + points =\nok.\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "--width",
+    "40"
+   ],
+   "stdin": "> aaa bbb ccc ddd eee fff ggg hhh 1 2 3 4\n\n- iii jjj kkk lll mmm nnn ooo ppp\n  1. nested qqq rrr sss ttt\n\nA line with `code span text` and *emphasis words* and [a link](http://example.com/long/path) that wraps.\nNumbers 10. 11) at - wrap + points = ok.\n",
+   "stdout": ".RS\n.PP\naaa bbb ccc ddd eee fff ggg hhh 1 2 3 4\n.RE\n.IP \\[bu] 2\niii jjj kkk lll mmm nnn ooo ppp\n.RS\n.IP \"1.\" 4\nnested qqq rrr sss ttt\n.RE\n.PP\nA line with \\f[C]code span text\\f[] and\n\\f[I]emphasis words\\f[] and a\nlink (http://example.com/long/path) that\nwraps. Numbers 10. 11) at \\- wrap +\npoints = ok.\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "--width",
+    "20",
+    "--nobreaks"
+   ],
+   "stdin": "> aaa bbb ccc ddd eee fff ggg hhh 1 2 3 4\n\n- iii jjj kkk lll mmm nnn ooo ppp\n  1. nested qqq rrr sss ttt\n\nA line with `code span text` and *emphasis words* and [a link](http://example.com/long/path) that wraps.\nNumbers 10. 11) at - wrap + points = ok.\n",
+   "stdout": ".RS\n.PP\naaa bbb ccc ddd eee fff ggg hhh 1 2 3 4\n.RE\n.IP \\[bu] 2\niii jjj kkk lll mmm nnn ooo ppp\n.RS\n.IP \"1.\" 4\nnested qqq rrr sss ttt\n.RE\n.PP\nA line with \\f[C]code span text\\f[] and \\f[I]emphasis words\\f[] and a link (http://example.com/long/path) that wraps. Numbers 10. 11) at \\- wrap + points = ok.\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "man",
+    "--width",
+    "20",
+    "--hardbreaks"
+   ],
+   "stdin": "> aaa bbb ccc ddd eee fff ggg hhh 1 2 3 4\n\n- iii jjj kkk lll mmm nnn ooo ppp\n  1. nested qqq rrr sss ttt\n\nA line with `code span text` and *emphasis words* and [a link](http://example.com/long/path) that wraps.\nNumbers 10. 11) at - wrap + points = ok.\n",
+   "stdout": ".RS\n.PP\naaa bbb ccc ddd eee\nfff ggg hhh 1 2 3 4\n.RE\n.IP \\[bu] 2\niii jjj kkk lll mmm\nnnn ooo ppp\n.RS\n.IP \"1.\" 4\nnested qqq rrr sss\nttt\n.RE\n.PP\nA line with\n\\f[C]code span\ntext\\f[] and\n\\f[I]emphasis\nwords\\f[] and a\nlink (http://example.com/long/path)\nthat wraps..PD 0\n.P\n.PD\nNumbers 10. 11) at\n\\- wrap + points =\nok.\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "--width",
+    "1"
+   ],
+   "stdin": "> aaa bbb ccc ddd eee fff ggg hhh 1 2 3 4\n\n- iii jjj kkk lll mmm nnn ooo ppp\n  1. nested qqq rrr sss ttt\n\nA line with `code span text` and *emphasis words* and [a link](http://example.com/long/path) that wraps.\nNumbers 10. 11) at - wrap + points = ok.\n",
+   "stdout": "\\begin{quote}\naaa\nbbb\nccc\nddd\neee\nfff\nggg\nhhh 1 2 3 4\n\n\\end{quote}\n\n\\begin{itemize}\n\\item iii\njjj\nkkk\nlll\nmmm\nnnn\nooo\nppp\n\n\\begin{enumerate}\n\\item nested\nqqq\nrrr\nsss\nttt\n\n\\end{enumerate}\n\n\\end{itemize}\n\nA\nline\nwith\n\\texttt{code span text}\nand\n\\emph{emphasis\nwords}\nand\n\\href{http://example.com/long/path}{a\nlink}\nthat\nwraps.\nNumbers 10. 11)\nat\n-\nwrap\n+\npoints\n=\nok.\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "--width",
+    "8"
+   ],
+   "stdin": "> aaa bbb ccc ddd eee fff ggg hhh 1 2 3 4\n\n- iii jjj kkk lll mmm nnn ooo ppp\n  1. nested qqq rrr sss ttt\n\nA line with `code span text` and *emphasis words* and [a link](http://example.com/long/path) that wraps.\nNumbers 10. 11) at - wrap + points = ok.\n",
+   "stdout": "\\begin{quote}\naaa bbb\nccc ddd\neee fff\nggg\nhhh 1 2 3 4\n\n\\end{quote}\n\n\\begin{itemize}\n\\item iii\njjj kkk\nlll mmm\nnnn ooo\nppp\n\n\\begin{enumerate}\n\\item nested\nqqq rrr\nsss ttt\n\n\\end{enumerate}\n\n\\end{itemize}\n\nA line\nwith\n\\texttt{code span text}\nand\n\\emph{emphasis\nwords}\nand\n\\href{http://example.com/long/path}{a\nlink}\nthat\nwraps.\nNumbers 10. 11)\nat -\nwrap +\npoints =\nok.\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "--width",
+    "20"
+   ],
+   "stdin": "> aaa bbb ccc ddd eee fff ggg hhh 1 2 3 4\n\n- iii jjj kkk lll mmm nnn ooo ppp\n  1. nested qqq rrr sss ttt\n\nA line with `code span text` and *emphasis words* and [a link](http://example.com/long/path) that wraps.\nNumbers 10. 11) at - wrap + points = ok.\n",
+   "stdout": "\\begin{quote}\naaa bbb ccc ddd eee\nfff ggg hhh 1 2 3 4\n\n\\end{quote}\n\n\\begin{itemize}\n\\item iii jjj kkk\nlll mmm nnn ooo ppp\n\n\\begin{enumerate}\n\\item nested qqq rrr\nsss ttt\n\n\\end{enumerate}\n\n\\end{itemize}\n\nA line with\n\\texttt{code span text}\nand \\emph{emphasis\nwords} and\n\\href{http://example.com/long/path}{a\nlink} that wraps.\nNumbers 10. 11) at -\nwrap + points = ok.\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "--width",
+    "40"
+   ],
+   "stdin": "> aaa bbb ccc ddd eee fff ggg hhh 1 2 3 4\n\n- iii jjj kkk lll mmm nnn ooo ppp\n  1. nested qqq rrr sss ttt\n\nA line with `code span text` and *emphasis words* and [a link](http://example.com/long/path) that wraps.\nNumbers 10. 11) at - wrap + points = ok.\n",
+   "stdout": "\\begin{quote}\naaa bbb ccc ddd eee fff ggg hhh 1 2 3 4\n\n\\end{quote}\n\n\\begin{itemize}\n\\item iii jjj kkk lll mmm nnn ooo ppp\n\n\\begin{enumerate}\n\\item nested qqq rrr sss ttt\n\n\\end{enumerate}\n\n\\end{itemize}\n\nA line with \\texttt{code span text} and\n\\emph{emphasis words} and\n\\href{http://example.com/long/path}{a\nlink} that wraps. Numbers 10. 11) at -\nwrap + points = ok.\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "--width",
+    "20",
+    "--nobreaks"
+   ],
+   "stdin": "> aaa bbb ccc ddd eee fff ggg hhh 1 2 3 4\n\n- iii jjj kkk lll mmm nnn ooo ppp\n  1. nested qqq rrr sss ttt\n\nA line with `code span text` and *emphasis words* and [a link](http://example.com/long/path) that wraps.\nNumbers 10. 11) at - wrap + points = ok.\n",
+   "stdout": "\\begin{quote}\naaa bbb ccc ddd eee fff ggg hhh 1 2 3 4\n\n\\end{quote}\n\n\\begin{itemize}\n\\item iii jjj kkk lll mmm nnn ooo ppp\n\n\\begin{enumerate}\n\\item nested qqq rrr sss ttt\n\n\\end{enumerate}\n\n\\end{itemize}\n\nA line with \\texttt{code span text} and \\emph{emphasis words} and \\href{http://example.com/long/path}{a link} that wraps. Numbers 10. 11) at - wrap + points = ok.\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "latex",
+    "--width",
+    "20",
+    "--hardbreaks"
+   ],
+   "stdin": "> aaa bbb ccc ddd eee fff ggg hhh 1 2 3 4\n\n- iii jjj kkk lll mmm nnn ooo ppp\n  1. nested qqq rrr sss ttt\n\nA line with `code span text` and *emphasis words* and [a link](http://example.com/long/path) that wraps.\nNumbers 10. 11) at - wrap + points = ok.\n",
+   "stdout": "\\begin{quote}\naaa bbb ccc ddd eee\nfff ggg hhh 1 2 3 4\n\n\\end{quote}\n\n\\begin{itemize}\n\\item iii jjj kkk\nlll mmm nnn ooo ppp\n\n\\begin{enumerate}\n\\item nested qqq rrr\nsss ttt\n\n\\end{enumerate}\n\n\\end{itemize}\n\nA line with\n\\texttt{code span text}\nand \\emph{emphasis\nwords} and\n\\href{http://example.com/long/path}{a\nlink} that wraps.\\\\\nNumbers 10. 11) at -\nwrap + points = ok.\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "--width",
+    "1"
+   ],
+   "stdin": "> aaa bbb ccc ddd eee fff ggg hhh 1 2 3 4\n\n- iii jjj kkk lll mmm nnn ooo ppp\n  1. nested qqq rrr sss ttt\n\nA line with `code span text` and *emphasis words* and [a link](http://example.com/long/path) that wraps.\nNumbers 10. 11) at - wrap + points = ok.\n",
+   "stdout": "> aaa\n> bbb\n> ccc\n> ddd\n> eee\n> fff\n> ggg\n> hhh 1 2 3 4\n\n  - iii\n    jjj\n    kkk\n    lll\n    mmm\n    nnn\n    ooo\n    ppp\n    1.  nested\n        qqq\n        rrr\n        sss\n        ttt\n\nA\nline\nwith\n`code\nspan\ntext`\nand\n*emphasis\nwords*\nand\n[a\nlink](http://example.com/long/path)\nthat\nwraps.\nNumbers 10. 11)\nat\n-\nwrap\n+\npoints\n=\nok.\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "--width",
+    "8"
+   ],
+   "stdin": "> aaa bbb ccc ddd eee fff ggg hhh 1 2 3 4\n\n- iii jjj kkk lll mmm nnn ooo ppp\n  1. nested qqq rrr sss ttt\n\nA line with `code span text` and *emphasis words* and [a link](http://example.com/long/path) that wraps.\nNumbers 10. 11) at - wrap + points = ok.\n",
+   "stdout": "> aaa\n> bbb\n> ccc\n> ddd\n> eee\n> fff\n> ggg\n> hhh 1 2 3 4\n\n  - iii\n    jjj\n    kkk\n    lll\n    mmm\n    nnn\n    ooo\n    ppp\n    1.  nested\n        qqq\n        rrr\n        sss\n        ttt\n\nA line\nwith\n`code\nspan\ntext`\nand\n*emphasis\nwords*\nand [a\nlink](http://example.com/long/path)\nthat\nwraps.\nNumbers 10. 11)\nat -\nwrap +\npoints =\nok.\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "--width",
+    "20"
+   ],
+   "stdin": "> aaa bbb ccc ddd eee fff ggg hhh 1 2 3 4\n\n- iii jjj kkk lll mmm nnn ooo ppp\n  1. nested qqq rrr sss ttt\n\nA line with `code span text` and *emphasis words* and [a link](http://example.com/long/path) that wraps.\nNumbers 10. 11) at - wrap + points = ok.\n",
+   "stdout": "> aaa bbb ccc ddd\n> eee fff ggg\n> hhh 1 2 3 4\n\n  - iii jjj kkk lll\n    mmm nnn ooo ppp\n    1.  nested qqq\n        rrr sss ttt\n\nA line with `code\nspan text` and\n*emphasis words* and\n[a\nlink](http://example.com/long/path)\nthat wraps.\nNumbers 10. 11) at -\nwrap + points = ok.\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "--width",
+    "40"
+   ],
+   "stdin": "> aaa bbb ccc ddd eee fff ggg hhh 1 2 3 4\n\n- iii jjj kkk lll mmm nnn ooo ppp\n  1. nested qqq rrr sss ttt\n\nA line with `code span text` and *emphasis words* and [a link](http://example.com/long/path) that wraps.\nNumbers 10. 11) at - wrap + points = ok.\n",
+   "stdout": "> aaa bbb ccc ddd eee fff ggg\n> hhh 1 2 3 4\n\n  - iii jjj kkk lll mmm nnn ooo ppp\n    1.  nested qqq rrr sss ttt\n\nA line with `code span text` and\n*emphasis words* and [a\nlink](http://example.com/long/path) that\nwraps. Numbers 10. 11) at - wrap +\npoints = ok.\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "--width",
+    "20",
+    "--nobreaks"
+   ],
+   "stdin": "> aaa bbb ccc ddd eee fff ggg hhh 1 2 3 4\n\n- iii jjj kkk lll mmm nnn ooo ppp\n  1. nested qqq rrr sss ttt\n\nA line with `code span text` and *emphasis words* and [a link](http://example.com/long/path) that wraps.\nNumbers 10. 11) at - wrap + points = ok.\n",
+   "stdout": "> aaa bbb ccc ddd eee fff ggg hhh 1 2 3 4\n\n  - iii jjj kkk lll mmm nnn ooo ppp\n    1.  nested qqq rrr sss ttt\n\nA line with `code span text` and *emphasis words* and [a link](http://example.com/long/path) that wraps. Numbers 10. 11) at - wrap + points = ok.\n",
+   "stderr": "",
+   "exit": 0
+  },
+  {
+   "args": [
+    "-t",
+    "commonmark",
+    "--width",
+    "20",
+    "--hardbreaks"
+   ],
+   "stdin": "> aaa bbb ccc ddd eee fff ggg hhh 1 2 3 4\n\n- iii jjj kkk lll mmm nnn ooo ppp\n  1. nested qqq rrr sss ttt\n\nA line with `code span text` and *emphasis words* and [a link](http://example.com/long/path) that wraps.\nNumbers 10. 11) at - wrap + points = ok.\n",
+   "stdout": "> aaa bbb ccc ddd eee fff ggg hhh 1 2 3 4\n\n  - iii jjj kkk lll mmm nnn ooo ppp\n    1.  nested qqq rrr sss ttt\n\nA line with `code span text` and *emphasis words* and [a link](http://example.com/long/path) that wraps.  \nNumbers 10. 11) at - wrap + points = ok.\n",
+   "stderr": "",
+   "exit": 0
+  }
+ ]
+}

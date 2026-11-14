@@ -209,7 +209,7 @@ function part(path: string, at: i64, n: i32): u8[] {
 }
 
 function stream(s: tune.Sound): audio.Music {
-  return audio.Music { ptr: s.ptr, rate: s.rate, channels: s.channels };
+  return audio.Music { ptr: s.ptr, rate: s.rate, channels: s.channels, ring: s.ring };
 }
 
 function open(rate: i32, channels: i32): tune.Sound {
@@ -219,7 +219,7 @@ function open(rate: i32, channels: i32): tune.Sound {
     m.close();
     return tune.no_sound();
   }
-  return tune.Sound { ptr: m.ptr, rate: m.rate, channels: m.channels };
+  return tune.Sound { ptr: m.ptr, rate: m.rate, channels: m.channels, ring: m.ring };
 }
 
 function names(dir: string): string[] {
@@ -271,7 +271,9 @@ function device(ctx: usize, dir: string, roots: string[], media: Media): player.
     pause: (s: tune.Sound): void => stream(s).pause(),
     flush: (s: tune.Sound): void => stream(s).flush(),
     close: (s: tune.Sound): void => stream(s).close(),
-    write: (s: tune.Sound, samples: [i32]): i32 => stream(s).write(samples, 0),
+    write: (s: tune.Sound, samples: [i32]): i32 => stream(s).write(samples),
+    queued: (s: tune.Sound): i32 => stream(s).queued(),
+    recent: (s: tune.Sound, n: i32): i32[] => stream(s).recent(n),
   };
 }
 

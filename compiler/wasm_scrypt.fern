@@ -1,0 +1,99 @@
+import "./util";
+import "./wasm_aes";
+
+// Position p of a 64-byte block holds word ORDER[p], so the four rows of 4 positions are the diagonals of the
+// Salsa20 matrix.
+const ORDER: i32[] = [0, 5, 10, 15, 4, 9, 14, 3, 8, 13, 2, 7, 12, 1, 6, 11];
+
+// The quarter rounds of a Salsa20 double round, as word indexes: the four columns, then the four rows.
+const QUARTERS: i32[] = [0, 4, 8, 12, 5, 9, 13, 1, 10, 14, 2, 6, 15, 3, 7, 11, 0, 1, 2, 3, 5, 6, 7, 4, 10, 11, 8, 9, 15, 12, 13, 14];
+
+// The local that holds word w.
+function x(w: i32): string {
+  for p in 0..16 {
+    if (ORDER[p] == w) {
+      return "$x" + util.i32_to_string(p);
+    }
+  }
+  return "";
+}
+
+// Word z ^= (word a + word b) rotated left by n.
+function step(a: i32, b: i32, z: i32, n: i32): string {
+  return "        (local.set " + x(z) + " (i32.xor (local.get " + x(z) + ") (i32.rotl (i32.add (local.get " + x(a) + ") (local.get " + x(b)
+    + ")) (i32.const " + util.i32_to_string(n) + "))))\n";
+}
+
+function load(base: string, p: i32): string {
+  return "(i32.load offset=" + util.i32_to_string(4 * p) + " (local.get $" + base + "))";
+}
+
+// X ^= the next 64-byte blocks at $src and $mx, then X = Salsa20/8(X), written to $out. All three step on.
+function salsa_block(out: string): string {
+  let o = "";
+  for p in 0..16 {
+    let v = "$x" + util.i32_to_string(p);
+    o = o + "      (local.set " + v + " (i32.xor (local.get " + v + ") (i32.xor " + load("src", p) + " " + load("mx", p) + ")))\n"
+      + "      (local.set $w" + util.i32_to_string(p) + " (local.get " + v + "))\n";
+  }
+  o += "      (local.set $k (i32.const 4))\n      (loop $dr\n";
+  for q in 0..8 {
+    let a = QUARTERS[4 * q];
+    let b = QUARTERS[4 * q + 1];
+    let c = QUARTERS[4 * q + 2];
+    let d = QUARTERS[4 * q + 3];
+    o = o + step(a, d, b, 7) + step(b, a, c, 9) + step(c, b, d, 13) + step(d, c, a, 18);
+  }
+  o += "        (local.set $k (i32.sub (local.get $k) (i32.const 1)))\n        (br_if $dr (local.get $k)))\n";
+  for p in 0..16 {
+    let v = "$x" + util.i32_to_string(p);
+    o = o + "      (local.set " + v + " (i32.add (local.get " + v + ") (local.get $w" + util.i32_to_string(p) + ")))\n"
+      + "      (i32.store offset=" + util.i32_to_string(4 * p) + " (local.get $" + out + ") (local.get " + v + "))\n";
+  }
+  for base in ["src", "mx", out] {
+    o = o + "      (local.set $" + base + " (i32.add (local.get $" + base + ") (i32.const 64)))\n";
+  }
+  return o;
+}
+
+// Stops the program unless the output block starts at least h slots away from the block at `other`.
+function apart(other: string): string {
+  let d = "(i64.sub (i64.extend_i32_s (local.get $to)) (i64.extend_i32_s (local.get $" + other + ")))";
+  return wasm_aes.abort_unless("(i32.or (i64.ge_s " + d + " (local.get $h)) (i64.le_s " + d + " (i64.sub (i64.const 0) (local.get $h))))");
+}
+
+// The scrypt BlockMix (RFC 7914) of b[from:from + 16r] ^ b[mix:mix + 16r] into b[to:to + 16r]. b is an i64
+// array, and each 64-byte block holds its words in the order of ORDER. b is copied first if it has another
+// holder. The blocks must lie in b, and the output block must be apart from both inputs. Only r steers a
+// branch.
+pub function funcs(): string {
+  let o: string = "  (func $__fern_scrypt_block_mix (param $b i32) (param $from i32) (param $mix i32) (param $to i32) (param $r i32) (result i32)\n"
+    + "    (local $copy i32) (local $len i32) (local $h i64) (local $src i32) (local $mx i32) (local $even i32) (local $odd i32) (local $i i32) (local $k i32)\n   ";
+  for p in 0..16 {
+    o = o + " (local $x" + util.i32_to_string(p) + " i32) (local $w" + util.i32_to_string(p) + " i32)";
+  }
+  o = o + "\n" + wasm_aes.abort_unless("(i32.ge_s (local.get $r) (i32.const 1))")
+    + wasm_aes.abort_unless("(i32.ge_s (i32.or (i32.or (local.get $from) (local.get $mix)) (local.get $to)) (i32.const 0))")
+    + "    (local.set $len (i32.load (local.get $b)))\n    (local.set $h (i64.shl (i64.extend_i32_u (local.get $r)) (i64.const 4)))\n";
+  for v in ["from", "mix", "to"] {
+    o += wasm_aes.abort_unless("(i64.le_u (i64.add (i64.extend_i32_u (local.get $" + v + ")) (local.get $h)) (i64.extend_i32_u (local.get $len)))");
+  }
+  o = o + apart("from") + apart("mix")
+    + "    (if (i32.eqz (call $__fern_rc_is_unique (local.get $b))) (then\n"
+    + "      (local.set $copy (call $__fern_arr_elems (local.get $len) (i32.const 8)))\n"
+    + "      (i32.store (local.get $copy) (local.get $len))\n      (i32.store offset=4 (local.get $copy) (local.get $len))\n"
+    + "      (memory.copy (i32.add (local.get $copy) (i32.const 8)) (i32.add (local.get $b) (i32.const 8)) (i32.shl (local.get $len) (i32.const 3)))\n"
+    + "      (drop (call $__fern_arr_dec (local.get $b)))\n      (local.set $b (local.get $copy))))\n"
+    + "    (local.set $src (i32.add (i32.add (local.get $b) (i32.const 8)) (i32.shl (local.get $from) (i32.const 3))))\n"
+    + "    (local.set $mx (i32.add (i32.add (local.get $b) (i32.const 8)) (i32.shl (local.get $mix) (i32.const 3))))\n"
+    + "    (local.set $even (i32.add (i32.add (local.get $b) (i32.const 8)) (i32.shl (local.get $to) (i32.const 3))))\n"
+    + "    (local.set $odd (i32.add (local.get $even) (i32.shl (local.get $r) (i32.const 6))))\n"
+    + "    (local.set $k (i32.sub (i32.shl (local.get $r) (i32.const 7)) (i32.const 64)))\n";
+  for p in 0..16 {
+    let at = "(i32.add (local.get $k) (i32.const " + util.i32_to_string(4 * p) + "))";
+    o = o + "    (local.set $x" + util.i32_to_string(p) + " (i32.xor (i32.load (i32.add (local.get $src) " + at + ")) (i32.load (i32.add (local.get $mx) " + at
+      + "))))\n";
+  }
+  return o + "    (local.set $i (local.get $r))\n    (loop $blocks\n" + salsa_block("even") + salsa_block("odd")
+    + "      (local.set $i (i32.sub (local.get $i) (i32.const 1)))\n      (br_if $blocks (local.get $i)))\n    (local.get $b))\n";
+}

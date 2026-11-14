@@ -95,6 +95,30 @@ function main(): i32 {
         if (!agree(bad)) { return fail(7); }
         off = off + 1;
     }
+    let n: i32 = 1;
+    while (n < 34) {
+        let at: i32 = 0;
+        while (at < n) {
+            let good: u8[] = [];
+            let bad: u8[] = [];
+            let k: i32 = 0;
+            while (k < n) {
+                if (k == at) {
+                    bad = bad.append(128 as u8);
+                    good = good.append(195 as u8);
+                    good = good.append(169 as u8);
+                } else {
+                    bad = bad.append(97 as u8);
+                    good = good.append(97 as u8);
+                }
+                k = k + 1;
+            }
+            if (!agree(good)) { return fail(8); }
+            if (!agree(bad)) { return fail(9); }
+            at = at + 1;
+        }
+        n = n + 1;
+    }
     write("read-file-utf8-agrees\n");
     return 0;
 }

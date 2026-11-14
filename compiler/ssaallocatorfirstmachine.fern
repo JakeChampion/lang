@@ -6,7 +6,7 @@ struct Half { kind: i32, identity: i64, high: boolean }
 
 struct Word { low: Half, high: Half }
 
-struct State { regs: Word[], memory: Half[], writes: i32[], zero: i32, carry: i32, sign: i32, overflow: i32, bounded: boolean, mappings: i32, ok: boolean }
+struct State { regs: Word[], memory: Half[], writes: i32[], zero: i32, carry: i32, sign: i32, overflow: i32, bounded: boolean, mappings: i32, advised: boolean, ok: boolean }
 
 function half(kind: i32, identity: i64, high: boolean): Half {
   return Half { kind: kind, identity: identity, high: high };
@@ -73,7 +73,7 @@ function initial(request: i32): State {
     memory = memory.append(if (i % 2 == 0) { w.low } else { w.high });
     writes = writes.append(0);
   }
-  return State { regs: regs, memory: memory, writes: writes, zero: -1, carry: -1, sign: -1, overflow: -1, bounded: false, mappings: 0, ok: true };
+  return State { regs: regs, memory: memory, writes: writes, zero: -1, carry: -1, sign: -1, overflow: -1, bounded: false, mappings: 0, advised: false, ok: true };
 }
 
 function cell(base: Word, offset: i64, width: i32, request: i32): i32 {
@@ -342,7 +342,15 @@ function simple(s: State, op: isa.Op, request: i32): State {
   return State { ...s, ok: false };
 }
 
+// Whether op takes the address 4 MiB past the base of the mapped arena.
+function small_part(s: State, op: isa.Op): boolean {
+  return op.index < 0 && op.base >= 0 && op.offset == 4194304 && s.mappings == 1 && equal(s.regs[op.base], token(3, 0));
+}
+
 function lea(s: State, op: isa.Op, request: i32): State {
+  if (small_part(s, op)) {
+    return write(s, op.destination, token(15, 0));
+  }
   if (op.index < 0 && op.base >= 0 && pointer(s.regs[op.base])) {
     return shifted(s, op.destination, s.regs[op.base], op.offset as i64, request);
   }
@@ -376,13 +384,27 @@ function mapping_arguments(s: State): boolean {
   return equal(s.regs[0], number(9)) && equal(s.regs[7], number(268435456)) && equal(s.regs[6], number(17179869184)) && equal(s.regs[2], number(3)) && equal(s.regs[10], number(16418)) && equal(s.regs[8], number(-1)) && equal(s.regs[9], number(0));
 }
 
+// The request for transparent huge pages: madvise with MADV_HUGEPAGE on the
+// arena from 4 MiB past its base to its end. Token 15 is that address.
+function advice_arguments(s: State): boolean {
+  return equal(s.regs[0], number(28)) && equal(s.regs[7], token(15, 0)) && equal(s.regs[6], number(17175674880)) && equal(s.regs[2], number(14));
+}
+
+// mappings is 1 after the call that maps the arena. advised is true after the
+// one request for huge pages, which can only follow that call.
 function syscall(s: State): State {
   let sp = s.regs[4];
-  if (s.mappings != 0 || !mapping_arguments(s) || !pointer(sp) || sp.low.kind != 2 || sp.low.identity > 0) {
+  if (!pointer(sp) || sp.low.kind != 2 || sp.low.identity > 0) {
     return State { ...s, ok: false };
   }
-  let after = write(write(write(unknown(s), 0, token(3, 0)), 1, token(11, 1)), 11, token(11, 11));
-  return State { ...after, mappings: 1 };
+  let after = write(write(unknown(s), 1, token(11, 1)), 11, token(11, 11));
+  if (s.mappings == 0 && mapping_arguments(s)) {
+    return State { ...write(after, 0, token(3, 0)), mappings: 1 };
+  }
+  if (s.mappings == 1 && !s.advised && advice_arguments(s)) {
+    return State { ...write(after, 0, token(11, 0)), advised: true };
+  }
+  return State { ...s, ok: false };
 }
 
 function initialization(s: State, op: isa.Op): State {
@@ -394,6 +416,9 @@ function initialization(s: State, op: isa.Op): State {
   }
   if (op.kind == 36 && op.symbol == "17179869184") {
     return write(s, op.destination, number(17179869184));
+  }
+  if (op.kind == 36 && op.symbol == "17175674880") {
+    return write(s, op.destination, number(17175674880));
   }
   return State { ...s, ok: false };
 }
@@ -579,5 +604,5 @@ function next_pc(s: State, op: isa.Op, pc: i32): i32 {
 
 pub function check(output: string): boolean {
   let p = init.program(output);
-  return p.error == "" && text.allocator_storage(output) && path(p, 40) && path(p, 48);
+  return p.error == "" && text.allocator_storage(output) && path(p, 32) && path(p, 40);
 }

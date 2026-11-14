@@ -30,9 +30,22 @@ func TestCorpusRegistryHasNoStrays(t *testing.T) {
 	}
 	for util := range corpusRegistry {
 		if !have[util] {
-			t.Errorf("registerCorpus(%q, ...) has no coreutils/%s.fern or diffutils/%s.fern — drop the registration with the utility", util, util, util)
+			t.Errorf("registerCorpus(%q, ...) has no source in %s — drop the registration with the utility", util, packageDirs())
 		}
 	}
+}
+
+// packageDirs names the directories of the ports, as "coreutils/,
+// diffutils/ or findutils/".
+func packageDirs() string {
+	var dirs []string
+	for _, pkg := range gnuPackages {
+		dirs = append(dirs, pkg.name+"/")
+	}
+	if len(dirs) == 1 {
+		return dirs[0]
+	}
+	return strings.Join(dirs[:len(dirs)-1], ", ") + " or " + dirs[len(dirs)-1]
 }
 
 func TestCoreutilsBenchWorkloadCoverage(t *testing.T) {

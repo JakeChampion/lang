@@ -290,7 +290,7 @@ The builder retains scalar packet locations and sample positions, small metadata
 It retains no complete encoded file or PCM.
 
 The source index uses 20 logical bytes per packet and an eight-byte terminal position.
-Native scalar arrays use eight-byte slots, so their payload uses 24 bytes per packet before capacity and allocator overhead.
+An `i32[]` element uses 4 bytes, so the payload also uses 20 bytes per packet before capacity and allocator overhead.
 Each cursor reuses ALAC scratch and caller-owned PCM storage.
 Audio events preserve the byte-view `start` and `frames` trim contract and output-buffer suffixes.
 Each step performs at most one seek, one bounded read, or one packet operation.

@@ -1,26 +1,22 @@
 function __fern_arr_concat(pa: usize, src: usize, count: i32, width: i32): i32[] {
-  // A unique receiver with room takes the copy in place. An odd width marks
-  // counted elements: each element copied from src takes a count. The caller
-  // accounts for the elements a copy of pa shares with pa.
+  // A unique receiver with room takes the copy in place. An element is
+  // width / 8 bytes, and an odd width marks counted elements: each element
+  // copied from src takes a count. The caller accounts for the elements a
+  // copy of pa shares with pa.
   if (count > 0 && __fern_rc_is_unique(pa) != 0) {
     let na = __load_i32(pa);
     let capw = __load_i64(pa - 16);
-    if (width == 8) {
-      if (count as i64 <= capw * 8i64 - na as i64) {
-        __memcpy(pa + 8 + na as usize, src, count);
-        __store_i64(pa, (na + count) as i64);
-        return __raw_array(pa);
-      }
-    } else if (count as i64 <= capw - na as i64) {
-      let dst = pa + 8 + na as usize * 8;
-      if (count <= 8) {
+    let size = width >> 3;
+    if ((na as i64 + count as i64) * size as i64 <= capw * 8i64) {
+      let dst = pa + 8 + na as usize * size as usize;
+      if (size == 8 && count <= 8) {
         let k = 0;
         while (k < count) {
           __store_i64(dst + (k * 8) as usize, __load_i64(src + (k * 8) as usize));
           k += 1;
         }
       } else {
-        __fern_arr_copy_words(dst, src, count);
+        __fern_arr_copy_elems(dst, src, count, size);
       }
       __store_i64(pa, (na + count) as i64);
       if ((width & 1) != 0) {

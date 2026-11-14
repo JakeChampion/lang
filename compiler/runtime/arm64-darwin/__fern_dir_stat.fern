@@ -4,11 +4,7 @@ function __fern_dir_stat(dirfd: i32, path: string, follow: boolean): Result[File
   }
   let plen = path.len();
   let pathz = __raw_alloc(plen + 1);
-  let i = 0;
-  while (i < plen) {
-    __raw_store8(pathz, i, path[i] as i32);
-    i += 1;
-  }
+  __memcpy(pathz, __raw_data(path), plen);
   __raw_store8(pathz, plen, 0);
   let fl = 32;
   if (follow) {

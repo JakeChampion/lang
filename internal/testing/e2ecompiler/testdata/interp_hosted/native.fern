@@ -164,7 +164,7 @@ function main(): i32 {
     Err(e) => { print("pipe: " + kind(e)); }
   }
   print(f"proc_fork: {proc_fork()} exec: {proc_exec("/bin/true", [])} exec_as: {proc_exec_as("/bin/true", [], [])}");
-  print(f"waitpid: {proc_waitpid(1)} {proc_waitpid_nohang(1)} {proc_waitpid_status(1)}");
+  print(f"waitpid: {proc_waitpid(1)} {proc_waitpid_nohang(1)} {proc_waitpid_status(1)} {proc_wait_any()}");
   let t: i32 = timer_fd(5);
   print(f"timer_fd ok: {t >= 0}");
   if (t >= 0) {

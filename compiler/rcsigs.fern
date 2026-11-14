@@ -100,7 +100,7 @@ pub function table(): Table {
   rows = add(rows, ["__fern_arr_concat"], sig(3, effect_unsure(), result_marked()));
   rows = add(rows, ["__fern_oob_abort", "__fern_slice_abort", "__fern_account_entry", "__fern_vdso_clock"], inert(result_none()));
   rows = add(rows, ["__sem_view_len", "__sem_view_data"], inert(result_none()));
-  rows = add(rows, ["__sem_byte_view_slice", "__sem_view_slice", "__sem_view_slice_wide"], inert(result_fresh()));
+  rows = add(rows, ["__sem_byte_view_slice", "__sem_view_slice", "__sem_view_slice_32", "__sem_view_slice_wide"], inert(result_fresh()));
   rows = add(rows, ["map_new_impl", "__map_get_impl", "__map_get_keyed_impl", "__map_bool_column", "__map_u8_column", "__map_cell_column", "__map_string_column", "__map_box_column"], inert(result_fresh()));
   rows = add(rows, ["__map_cell", "__map_cell_free"], inert(result_none()));
   rows = add(rows, ["__map_set_impl", "__map_set_keyed_impl"], sig_also(0, effect_move(), result_fresh(), [2], [1]));
@@ -214,10 +214,12 @@ pub function op_table(): OpTable {
   rows = add(rows, ["chacha20_xor_into"], sig(2, effect_move(), result_fresh()));
   rows = add(rows, ["poly1305_blocks"], sig(0, effect_move(), result_fresh()));
   rows = add(rows, ["chacha20_poly1305_seal_into", "chacha20_poly1305_open_into"], sig(2, effect_move(), result_fresh()));
+  rows = add(rows, ["mont_mul"], inert(result_fresh()));
+  rows = add(rows, ["scrypt_block_mix"], sig(0, effect_move(), result_fresh()));
   rows = add(rows, ["ret_word"], inert(result_none()));
   rows = add(rows, ["call_word"], inert(result_unknown()));
-  rows = add(rows, ["arr_push_owned", "arr_push_owned_i64", "arr_push_owned_f64", "arr_push_owned_u8"], sig(0, effect_move(), result_fresh()));
-  rows = add(rows, ["arr_push", "arr_push_i64", "arr_push_f64", "arr_push_u8"], inert(result_unknown()));
+  rows = add(rows, ["arr_push_owned", "arr_push_owned_i64", "arr_push_owned_f64"], sig(0, effect_move(), result_fresh()));
+  rows = add(rows, ["arr_push", "arr_push_i64", "arr_push_f64"], inert(result_unknown()));
   rows = add(rows, ["arr_get_i64", "arr_get_i64_nc", "tuple_get_w", "struct_get_i64", "opt_payload_w"], inert(result_borrow()));
   rows = add(rows, ["opt_make_w", "arr_make_i64", "const_option", "const_struct", "const_closure"], inert(result_none()));
   rows = add(rows, ["args", "environ"], inert(result_unknown()));
@@ -237,6 +239,9 @@ pub function (t: OpTable) op_lookup(kind: string): Sig {
   let n = kind.len();
   if (n > 3 && kind.ends_with("_u8")) {
     return t.op_lookup(slice_unchecked(kind, 0, n - 3).to_owned());
+  }
+  if (n > 4 && kind.ends_with("_u32")) {
+    return t.op_lookup(slice_unchecked(kind, 0, n - 4).to_owned());
   }
   return unknown_sig();
 }

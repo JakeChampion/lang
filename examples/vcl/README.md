@@ -277,8 +277,9 @@ and `origin` compile and run, they do not work under `fern -interp`.
 - **No VMOD objects.** `new rr = directors.round_robin();` parses and is
   then rejected at evaluation: real VMODs are `dlopen`'d shared objects and
   a Fern binary is static. The `std.*` functions above are shims.
-- **`std/regex` is not PCRE2.** It is a Thompson NFA — no backreferences,
-  no lookaround, `(?i)` only as a leading flag. Varnish's `~` is PCRE2 and
+- **`std/regex` is not PCRE2.** It has no backreferences and no
+  lookaround. A VCL pattern matches bytes, as PCRE2 without UTF mode does,
+  so `.` can split a multi-byte character. Varnish's `~` is PCRE2 and
   real VCL uses the difference. Patterns outside the subset silently fail
   to match rather than erroring, which is the sharpest edge here.
 - **No body handling**, so `synthetic()` logs rather than setting one.

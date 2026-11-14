@@ -29,7 +29,7 @@ function emit(single: boolean, runtime: boolean): ssaprepare.Output {
   let m = parser.parse_module(lexer.tokenize(record + " function main(): i32 { return 0; }"));
   require(!asmcore.refuse_parse_errors([m]), "parsed");
   let g = semlower.program(semlower.driven(m, "x86-64-linux"));
-  let sw = asmcore.Switches { backtrace: false, sanitize: false, sandbox: false, cover: false, symbols: false, optimize: false, leak_check: false, rc_free_debug: false, var_rows: false, shared: false, size: false, harden: false, heap_limit: 0i64, quarantine: asmcore.quarantine_default(), pie: false, profile: "", target: "", line_maps: [], ram_base: 0i64, ram_size: 0i64, interrupts: [], early: "", secondary: "", user_mode: false };
+  let sw = asmcore.Switches { backtrace: false, sanitize: false, sandbox: false, cover: false, symbols: false, optimize: false, leak_check: false, rc_free_debug: false, var_rows: false, shared: false, size: false, harden: false, heap_limit: 0i64, quarantine: asmcore.quarantine_default(), cpu_limit: 0i64, pie: false, profile: "", target: "", line_maps: [], ram_base: 0i64, ram_size: 0i64, interrupts: [], early: "", secondary: "", user_mode: false };
   return asm_ir.emit_module_ir_unit_prepared(g.im, runtime, false, "", [], g.im.funcs, g.stab, 0, -1, g.cache, g.physical, semlower.runtime_module_lowering, 0 as usize, sw, true);
 }
 
@@ -137,7 +137,7 @@ function control(output: ssaprepare.Output, capacity: string): void {
   for to in ["", "call __fern_arr_box\ncall __fern_arr_box", "call __fern_alloc", "call absent"] {
     altered(output, "call __fern_arr_box", to, false);
   }
-  for n in ["0", "1", "4", "-1"] {
+  for n in ["0", "3", "4", "-1"] {
     altered(output, "movq $" + capacity + ", %rdi", "movq $" + n + ", %rdi", false);
   }
   altered(output, "movq $" + capacity + ", %rdi", "movl $" + capacity + ", %edi", true);
@@ -157,7 +157,7 @@ pub function run(): void {
     require(machine.check(output, "parent"), "actual complete constructor");
     chains.run(output);
     heaps.run(output);
-    let capacity = if (single) { "2" } else { "3" };
+    let capacity = if (single) { "1" } else { "2" };
     boundary_only(output, capacity);
     stores(output, single);
     frame(output, single);

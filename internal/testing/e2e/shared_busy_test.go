@@ -38,6 +38,15 @@ function build(n: i32): i32 {
   return out.len();
 }
 
+// It touches no heap, so its entry takes no turn: another thread can call it
+// while a thread runs Fern code.
+@norc
+function tally(p: usize, n: i64): i64 {
+  unsafe {
+    return __atomic_fetch_add(p, n);
+  }
+}
+
 function main(): i32 { return 0; }
 `
 
@@ -50,11 +59,13 @@ const sharedBusyLoader = `#include <dlfcn.h>
 static int (*spin)(int);
 static int (*build)(int);
 static int (*call_back)(long, long);
+static long (*tally)(long *, long);
 static volatile int started;
+static volatile int long_done;
 static volatile int bad;
 static int got[2];
 static int expect(int n) { int acc = 0; for (int i = 0; i < n; i++) acc = (acc + i % 7) % 1000; return acc; }
-static void *run_long(void *a) { started = 1; got[0] = spin(30000000); return 0; }
+static void *run_long(void *a) { started = 1; got[0] = spin(30000000); long_done = 1; return 0; }
 static void *run_short(void *a) { got[(long)a] = spin(1000); return 0; }
 static long reenter(long x) { return spin((int)x); }
 static volatile int stop;
@@ -86,7 +97,8 @@ int main(int c, char **v) {
   spin = (int (*)(int))dlsym(h, "spin");
   build = (int (*)(int))dlsym(h, "build");
   call_back = (int (*)(long, long))dlsym(h, "call_back");
-  if (!spin || !build || !call_back) return 101;
+  tally = (long (*)(long *, long))dlsym(h, "tally");
+  if (!spin || !build || !call_back || !tally) return 101;
   pthread_t a, b, many[6];
   if (strcmp(v[2], "overlap") == 0) {
     pthread_create(&a, 0, run_long, 0);
@@ -95,6 +107,18 @@ int main(int c, char **v) {
     got[1] = spin(1000);
     pthread_join(a, 0);
     return got[0] == expect(30000000) && got[1] == expect(1000) ? 42 : 1;
+  }
+  if (strcmp(v[2], "norc") == 0) {
+    static long counter = 5;
+    pthread_create(&a, 0, run_long, 0);
+    while (!started) {}
+    usleep(20000);
+    long first = tally(&counter, 2);
+    long second = tally(&counter, 3);
+    int early = !long_done;
+    pthread_join(a, 0);
+    fprintf(stderr, "norc: %ld %ld %ld, before the long call ended: %d\n", first, second, counter, early);
+    return first == 5 && second == 7 && counter == 10 && early && got[0] == expect(30000000) ? 42 : 6;
   }
   if (strcmp(v[2], "contend") == 0) {
     for (int i = 0; i < 6; i++) pthread_create(&many[i], 0, run_many, 0);
@@ -135,7 +159,8 @@ int main(int c, char **v) {
 // a thread waits while another one runs Fern code. A __c_call gives the turn
 // back for the call, so a C callback on the same thread still runs.
 // The turn is fair: a thread that waits gets the next turn, also when the
-// thread that had it asks for it again at once.
+// thread that had it asks for it again at once. A `@norc` export takes no
+// turn, so it returns while another thread runs Fern code.
 func TestSharedLibBusyLock(t *testing.T) {
 	type leg struct {
 		target, cc, runner string
@@ -161,7 +186,7 @@ func TestSharedLibBusyLock(t *testing.T) {
 			if strings.HasPrefix(l.target, "arm64") {
 				e2eharness.Arm64CLibc(t, l.cc)
 			}
-			so := selfHostShared(t, l.target, sharedBusySrc, "spin", "build", "call_back")
+			so := selfHostShared(t, l.target, sharedBusySrc, "spin", "build", "call_back", "tally")
 			dir := t.TempDir()
 			soPath := filepath.Join(dir, "libfern.so")
 			if err := os.WriteFile(soPath, so, 0o755); err != nil {
@@ -175,7 +200,7 @@ func TestSharedLibBusyLock(t *testing.T) {
 			if out, err := exec.Command(l.cc, cPath, "-pthread", "-ldl", "-o", ld).CombinedOutput(); err != nil {
 				t.Fatalf("%s loader: %v\n%s", l.cc, err, out)
 			}
-			for _, mode := range []string{"overlap", "contend", "serial", "reenter", "fair"} {
+			for _, mode := range []string{"overlap", "contend", "serial", "reenter", "fair", "norc"} {
 				t.Run(mode, func(t *testing.T) {
 					cmd := exec.Command(ld, soPath, mode)
 					if l.runner != "" {

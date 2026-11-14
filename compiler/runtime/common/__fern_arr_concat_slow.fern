@@ -27,18 +27,12 @@ function __fern_arr_concat_slow(pa: usize, src: usize, count: i32, width: i32): 
       want = m;
     }
   }
-  if (width == 8) {
-    let p = __raw_arr_box((want + 7) / 8);
-    __store_i64(p, m as i64);
-    __memcpy(p + 8, pa + 8, na);
-    __memcpy(p + 8 + na as usize, src, nb);
-    return __raw_array(p);
-  }
-  let q = __raw_arr_box(want);
+  let size = width >> 3;
+  let q = __raw_arr_box(((want as i64 * size as i64 + 7) / 8) as i32);
   __store_i64(q, m as i64);
-  let tail = q + 8 + na as usize * 8;
-  __fern_arr_copy_words(q + 8, pa + 8, na);
-  __fern_arr_copy_words(tail, src, nb);
+  let tail = q + 8 + na as usize * size as usize;
+  __fern_arr_copy_elems(q + 8, pa + 8, na, size);
+  __fern_arr_copy_elems(tail, src, nb, size);
   if ((width & 1) != 0) {
     __fern_arr_inc_words(tail, nb);
   }

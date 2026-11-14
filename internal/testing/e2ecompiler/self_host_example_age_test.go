@@ -53,16 +53,27 @@ func (a ageTool) run(t *testing.T, dir string, stdin []byte, args ...string) ([]
 	return stdout.Bytes(), msg, cmd.ProcessState.ExitCode()
 }
 
-// ageOracle is /usr/bin/age 1.1.1. A missing oracle fails the test.
+// ageOracleVersion is the release of age that the port follows. The
+// port-oracles action installs it from the release archive of age.
+const ageOracleVersion = "v1.3.2"
+
+// ageOracle is age and age-keygen 1.3.2 on the PATH. A missing oracle, or
+// another release, fails the test.
 func ageOracle(t *testing.T) (ageTool, string) {
 	t.Helper()
 	age, err := exec.LookPath("age")
 	if err != nil {
-		t.Fatal("age is required: it is the oracle of the age example (Debian package age 1.1.1)")
+		t.Fatalf("age is required: it is the oracle of the age example (age %s)", ageOracleVersion)
 	}
 	keygen, err := exec.LookPath("age-keygen")
 	if err != nil {
 		t.Fatal("age-keygen is required: it makes the keys of the age example tests")
+	}
+	for _, bin := range []string{age, keygen} {
+		out, err := exec.Command(bin, "--version").Output()
+		if got := strings.TrimSpace(string(out)); err != nil || got != ageOracleVersion {
+			t.Fatalf("%s --version gives %q (%v): the age example pins age %s", bin, got, err, ageOracleVersion)
+		}
 	}
 	return ageTool{name: "age", bin: age, cmd: func(args ...string) *exec.Cmd { return exec.Command(age, args...) }}, keygen
 }
@@ -124,7 +135,7 @@ func ageProgram(t *testing.T, cli *selfHostCLI, target, file string) ageTool {
 
 var ageSizes = []int{0, 1, 65535, 65536, 65537, 1<<20 + 3}
 
-// TestSelfHostExampleAgeCLI checks the port against age 1.1.1 on x86-64 and
+// TestSelfHostExampleAgeCLI checks the port against age 1.3.2 on x86-64 and
 // arm64: each tool decrypts what the other encrypts, each refuses the same
 // tampered files with the same message, and the port writes no output file
 // for a file that does not decrypt.
@@ -144,6 +155,7 @@ func TestSelfHostExampleAgeCLI(t *testing.T) {
 			t.Run("messages", func(t *testing.T) { ageMessages(t, oracle, port, dir, r1) })
 			t.Run("passphrase", func(t *testing.T) { agePassphrase(t, oracle, port, dir, keygen, r1) })
 			t.Run("ssh", func(t *testing.T) { ageSSH(t, oracle, port, dir) })
+			t.Run("hybrid", func(t *testing.T) { ageHybrid(t, oracle, port, dir, keygen, r1) })
 		})
 	}
 }
@@ -298,6 +310,11 @@ func ageMalformed(t *testing.T, oracle, port ageTool, dir, r1 string) {
 	b64 := func(b []byte) string { return base64.RawStdEncoding.EncodeToString(b) }
 	edit := func(old, new string) []byte { return []byte(strings.Replace(string(small), old, new, 1)) }
 	armorEdit := func(old, new string) []byte { return []byte(strings.Replace(string(armored), old, new, 1)) }
+	// 40 bytes of plaintext give 240 bytes of age file: five full lines.
+	full, _, _ := oracle.run(t, dir, ageRandom(t, 40), "-a", "-r", r1)
+	if fl := strings.Split(string(full), "\n"); len(fl[len(fl)-3]) != 64 {
+		t.Fatalf("the armor of 40 bytes does not end with a full line: %q", full)
+	}
 	cases := []struct {
 		name string
 		data []byte
@@ -353,6 +370,18 @@ func ageMalformed(t *testing.T, oracle, port ageTool, dir, r1 string) {
 		{"armor empty", []byte("-----BEGIN AGE ENCRYPTED FILE-----\n-----END AGE ENCRYPTED FILE-----\n")},
 		{"armor header only", []byte("-----BEGIN AGE ENCRYPTED FILE-----\n")},
 		{"armor header without newline", []byte("-----BEGIN AGE ENCRYPTED FILE-----")},
+		{"armor after white space", append([]byte("\n \t\n"), armored...)},
+		{"armor CR in a line", armorEdit(at[1], at[1][:10]+"\r"+at[1][11:])},
+		{"armor empty last line", []byte(strings.Replace(string(full), "\n-----END", "\n\n-----END", 1))},
+		{"empty file", nil},
+		{"intro without newline", []byte("age-encryption.org/v1")},
+		{"intro of a key", []byte("AGE-SECRET-KEY-1QQQ\n")},
+		{"no stanzas", edit(stanza+"\n"+body+"\n", "")},
+		{"130 stanza arguments", edit(stanza, "-> x"+strings.Repeat(" a", 129))},
+		{"empty MAC", edit(string(small[mac:end]), "--- \n")},
+		{"header of 3 MiB", append([]byte("age-encryption.org/v1\n-> x\n"), bytes.Repeat([]byte("A"), 3<<20)...)},
+		{"1025 stanzas", edit(stanza, strings.Repeat("-> x\n\n", 1024)+stanza)},
+		{"1024 stanzas", edit(stanza, strings.Repeat("-> x\n\n", 1023)+stanza)},
 	}
 	for _, tc := range cases {
 		ageWrite(t, filepath.Join(dir, "m.age"), tc.data)
@@ -362,22 +391,13 @@ func ageMalformed(t *testing.T, oracle, port ageTool, dir, r1 string) {
 			t.Errorf("%s: age exit %d %q; fern age exit %d %q", tc.name, wantCode, want, gotCode, got)
 		}
 	}
-	// The port follows the age specification where age 1.1.1 does not (the
-	// C2SP CCTV vectors armor_cr_*, armor_double_crlf, armor_empty_last_line,
-	// armor_whitespace_outside and scrypt_and_x25519).
-	// 40 bytes of plaintext give 240 bytes of age file: five full lines.
-	full, _, _ := oracle.run(t, dir, ageRandom(t, 40), "-a", "-r", r1)
-	if fl := strings.Split(string(full), "\n"); len(fl[len(fl)-3]) != 64 {
-		t.Fatalf("the armor of 40 bytes does not end with a full line: %q", full)
-	}
+	// The port follows the age specification where age 1.3.2 does not (the
+	// C2SP CCTV vector scrypt_and_x25519).
 	for _, tc := range []struct {
 		name, msg string
 		data      []byte
 		code      int
 	}{
-		{"armor after white space", "", append([]byte("\n \t\n"), armored...), 0},
-		{"armor CR in a line", "age: error: failed to read header: parsing age header: failed to read intro: invalid armor: illegal base64 data at input byte 10\n", armorEdit(at[1], at[1][:10]+"\r"+at[1][11:]), 1},
-		{"armor empty last line", "age: error: invalid armor: empty line before the closing line\n", []byte(strings.Replace(string(full), "\n-----END", "\n\n-----END", 1)), 1},
 		{"scrypt with another stanza", "age: error: an scrypt recipient must be the only one\n", edit("-> X25519", "-> scrypt c2FsdA 10\n\n-> X25519"), 1},
 	} {
 		ageWrite(t, filepath.Join(dir, "m.age"), tc.data)
@@ -418,6 +438,10 @@ func ageMessages(t *testing.T, oracle, port ageTool, dir, r1 string) {
 		"rf-bad":      "# c\n" + r1 + "\nbogus\n",
 		"rf-empty":    "# c\n",
 		"rf-long":     strings.Repeat("x", 9000) + "\n",
+		"rf-apparent": "# c\n" + key + "\n",
+		"rf-utf8":     "# c\n\xff\n",
+		"id-apparent": "# c\n" + r1 + "\n",
+		"id-utf8":     "\xff\n",
 	} {
 		ageWrite(t, filepath.Join(dir, name), []byte(content))
 	}
@@ -469,8 +493,16 @@ func ageMessages(t *testing.T, oracle, port ageTool, dir, r1 string) {
 		{"-o"},
 		{"-a=x", "-r", r1},
 		{"---x"},
+		{"-R", "rf-apparent", "p"},
+		{"-R", "rf-utf8", "p"},
+		{"-r", r1, "-r", r1, "-R", "rf-bad", "-R", "rf-bad", "-o", "dup.age", "p"},
+		{"-d", "-i", "k1", "-i", "k1", "-i", "k2", "-i", "k1", "c.age"},
+		{"-r", r1, "-o", "p", "p"},
+		{"-d", "-i", "k1", "-o", "k1", "c.age"},
+		{"-r", r1, "-R", "rf-bad", "-o", "rf-bad", "p"},
+		{"-r", "age1x\x7f1qqqqqqqqqqqqq", "p"},
 	}
-	for name := range map[string]bool{"id-empty": true, "id-comments": true, "id-lower": true, "id-mixed": true, "id-checksum": true, "id-char": true, "id-space": true, "id-trailing": true, "id-garbage": true, "id-second": true} {
+	for name := range map[string]bool{"id-apparent": true, "id-utf8": true, "id-empty": true, "id-comments": true, "id-lower": true, "id-mixed": true, "id-checksum": true, "id-char": true, "id-space": true, "id-trailing": true, "id-garbage": true, "id-second": true} {
 		cases = append(cases, []string{"-d", "-i", name, "c.age"})
 	}
 	for _, args := range cases {
@@ -570,16 +602,16 @@ func ageOutcome(code int, msg string) string {
 	if code == 0 {
 		return "success"
 	}
-	m := strings.TrimPrefix(strings.TrimSuffix(msg, "\n"), "age: error: ")
+	m, _, _ := strings.Cut(strings.TrimPrefix(msg, "age: error: "), "\n")
 	switch {
 	case strings.Contains(m, "invalid armor: "):
 		return "armor failure"
-	case m == "no identity matched any of the recipients" || m == "incorrect passphrase":
+	case m == "no identity matched any of the recipients" || m == "incorrect passphrase" || m == "the file is not passphrase-encrypted, identities are required":
 		return "no match"
 	case m == "bad header MAC":
 		return "HMAC failure"
 	}
-	for _, p := range []string{"failed to read header: ", "invalid header intro", "failed to read nonce: ", "invalid X25519 recipient", "failed to parse X25519 recipient: ", "an scrypt recipient must be the only one", "invalid scrypt recipient block", "failed to parse scrypt salt: ", "scrypt work factor ", "failed to parse scrypt work factor: "} {
+	for _, p := range []string{"failed to read header: ", "invalid header intro", "failed to read nonce: ", "invalid X25519 recipient", "failed to parse X25519 recipient: ", "an scrypt recipient must be the only one", "invalid scrypt recipient block", "failed to parse scrypt salt: ", "scrypt work factor ", "failed to parse scrypt work factor: ", "invalid mlkem768x25519 recipient", "failed to parse mlkem768x25519 recipient: ", "encrypted value has unexpected length"} {
 		if strings.HasPrefix(m, p) {
 			return "header failure"
 		}
@@ -590,32 +622,6 @@ func ageOutcome(code int, msg string) string {
 		}
 	}
 	return "other: " + m
-}
-
-// ageCCTVPending holds the vectors of the ML-KEM-768 + X25519 hybrid
-// recipient (mlkem768x25519). age 1.1.1, the version that this port follows,
-// does not have that recipient: a later release of age added it. The test
-// fails when one of them starts to give its expected result.
-var ageCCTVPending = map[string]bool{
-	"armor_hybrid":                true,
-	"hybrid":                      true,
-	"hybrid_and_x25519":           true,
-	"hybrid_bad_tag":              true,
-	"hybrid_currupted_enc_mlkem":  true,
-	"hybrid_currupted_enc_x25519": true,
-	"hybrid_extra_argument":       true,
-	"hybrid_grease":               true,
-	"hybrid_identity":             true,
-	"hybrid_long_file_key":        true,
-	"hybrid_long_share":           true,
-	"hybrid_low_order":            true,
-	"hybrid_multiple_recipients":  true,
-	"hybrid_no_match":             true,
-	"hybrid_not_canonical_body":   true,
-	"hybrid_not_canonical_enc":    true,
-	"hybrid_short_share":          true,
-	"hybrid_uppercase":            true,
-	"hybrid_x25519_arg":           true,
 }
 
 // ageCCTVNotArmored holds the armor failures that do not start with the armor
@@ -669,12 +675,6 @@ func ageCCTVOne(t *testing.T, port ageTool, dir string, v ageVector) {
 	if ageCCTVNotArmored[v.name] {
 		want = "header failure"
 	}
-	if ageCCTVPending[v.name] {
-		if got == want {
-			t.Errorf("%s: now gives %q: remove it from ageCCTVPending", v.name, got)
-		}
-		return
-	}
 	if got != want {
 		t.Errorf("%s: got %s, want %s (%q)", v.name, got, want, msg)
 		return
@@ -694,6 +694,7 @@ const (
 	ageGateKey       = "AGE-SECRET-KEY-1EGTZVFFV20835NWYV6270LXYVK2VKNX2MMDKWYKLMGR48UAWX40Q2P2LM0"
 	ageGateRecipient = "age1xmwwc06ly3ee5rytxm9mflaz2u56jjj36s0mypdrwsvlul66mv4q47ryef"
 	ageGateOtherKey  = "AGE-SECRET-KEY-1NE2ZYPW0VVQG3QYWMQ3MLNQMYQ5XXEEKLXDU32EAVYWL6A2AZ0RQHMW3MS"
+	ageGatePQKey     = "AGE-SECRET-KEY-PQ-1HZLGZUPT4ETPKDEV8HSGFDCYZ4E522W0A7PU2LHT8EH9W6YLNC3SW78XKG"
 )
 
 // ageCtGate runs the port under memcheck, which reports a branch, an index or
@@ -706,6 +707,9 @@ func ageCtGate(t *testing.T, valgrind, bin string) {
 	ageWrite(t, filepath.Join(dir, "id"), []byte("# the gate key\n"+ageGateKey+"\n"))
 	ageWrite(t, filepath.Join(dir, "other"), []byte(ageGateOtherKey+"\n"))
 	ageWrite(t, filepath.Join(dir, "broken"), []byte(ageGateKey[:len(ageGateKey)-1]+"Q\n"))
+	ageWrite(t, filepath.Join(dir, "pq"), []byte(ageGatePQKey+"\n"))
+	ageWrite(t, filepath.Join(dir, "pq-broken"), []byte(ageGatePQKey[:len(ageGatePQKey)-1]+"Q\n"))
+	ageWrite(t, filepath.Join(dir, "pq.age"), ageCCTVFile(t, "hybrid"))
 	ageWrite(t, filepath.Join(dir, "plain"), plain)
 	run := func(memcheck bool, args ...string) (int, string) {
 		cmd := exec.Command(bin, args...)
@@ -729,6 +733,12 @@ func ageCtGate(t *testing.T, valgrind, bin string) {
 		{"decrypt armored", []string{"-d", "-i", "id", "-o", "p2", "a.age"}, 0},
 		{"no identity matches", []string{"-d", "-i", "other", "c.age"}, 1},
 		{"a malformed key", []string{"-d", "-i", "broken", "c.age"}, 1},
+		{"encrypt to a hybrid identity", []string{"-e", "-i", "pq", "-o", "h.age", "plain"}, 0},
+		{"decrypt with a hybrid key", []string{"-d", "-i", "other", "-i", "pq", "-o", "p7", "h.age"}, 0},
+		{"decrypt the CCTV hybrid file", []string{"-d", "-i", "pq", "-o", "p8", "pq.age"}, 0},
+		{"a hybrid key that does not match", []string{"-d", "-i", "pq", "c.age"}, 1},
+		{"a key that does not match a hybrid file", []string{"-d", "-i", "id", "h.age"}, 1},
+		{"a malformed hybrid key", []string{"-d", "-i", "pq-broken", "h.age"}, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if code, stderr := run(false, tc.args...); code != tc.code {
@@ -740,10 +750,13 @@ func ageCtGate(t *testing.T, valgrind, bin string) {
 			}
 		})
 	}
-	for _, p := range []string{"p1", "p2"} {
+	for _, p := range []string{"p1", "p2", "p7"} {
 		if got, err := os.ReadFile(filepath.Join(dir, p)); err != nil || !bytes.Equal(got, plain) {
 			t.Errorf("%s differs from the plaintext", p)
 		}
+	}
+	if got, err := os.ReadFile(filepath.Join(dir, "p8")); err != nil || fmt.Sprintf("%x", sha256.Sum256(got)) != "013f54400c82da08037759ada907a8b864e97de81c088a182062c4b5622fd2ab" {
+		t.Errorf("the CCTV hybrid file does not decrypt to its payload")
 	}
 	ageCtGateSecrets(t, valgrind, bin, dir, plain)
 }

@@ -1,0 +1,45 @@
+function __fern_arr_slice_u32(a: i32[], start: i32, end: i32): i32[] {
+  let n = a.len();
+  let bad = 0;
+  if (end < 0) {
+    bad = 1;
+  }
+  if (end > n) {
+    bad = 1;
+  }
+  if (start < 0) {
+    bad = 1;
+  }
+  if (start > end) {
+    bad = 1;
+  }
+  if (bad == 1) {
+    __fern_slice_abort();
+  }
+  let m = end - start;
+  let p = __raw_arr_box((m + 1) / 2);
+  __store_i64(p, m as i64);
+  let dst = p + 8;
+  let src = __raw_arr_ptr(a) + 8;
+  let skip = start;
+  while (skip > 0) {
+    let cs = skip;
+    if (cs > 134217728) {
+      cs = 134217728;
+    }
+    src = src + (cs * 4) as usize;
+    skip -= cs;
+  }
+  let left = m;
+  while (left > 0) {
+    let cc = left;
+    if (cc > 134217728) {
+      cc = 134217728;
+    }
+    __memcpy(dst, src, cc * 4);
+    dst = dst + (cc * 4) as usize;
+    src = src + (cc * 4) as usize;
+    left -= cc;
+  }
+  return __raw_array(p);
+}

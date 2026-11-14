@@ -287,7 +287,7 @@ func TestSelfHostWasmLeakcheckComponent(t *testing.T) {
 	}{
 		{"returning", `function main(): i32 { unsafe { let p: usize = __alloc(24); return 0; } }`, 0, 1, 0, 24, false},
 		{"exiting", `function main(): i32 { unsafe { let p: usize = __alloc(24); exit(9); return 1; } }`, 1, 1, 0, 24, true},
-		{"printing", "import \"std/i32\";\nfunction main(): i32 { let s: string = \"a\" + 107.to_string(); print(s); return 0; }", 0, 5, 5, 0, false},
+		{"printing", "import \"std/i32\";\nfunction main(): i32 { let s: string = \"a\" + 107.to_string(); print(s); return 0; }", 0, 4, 4, 0, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()

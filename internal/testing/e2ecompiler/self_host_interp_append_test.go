@@ -176,3 +176,92 @@ function main(): i32 {
 		t.Errorf("fern-oracle -interp: exit %d, stdout %q (stderr %q); want %q", oCode, oOut, oErr, want)
 	}
 }
+
+// A value block that reads an array does not move the array into a cell, so
+// the append after it still extends the array in place (#15842).
+func TestSelfHostInterpAppendBesideValueBlockIsLinear(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	src := filepath.Join(t.TempDir(), "append_beside_block.fern")
+	prog := `function main(): i32 {
+  let xs: i32[] = [0];
+  let total = 0;
+  for i in 0..200000 {
+    let n = if (i >= 0) { xs.len() } else { -1 };
+    total = total + n % 2;
+    xs = xs.append(i);
+  }
+  print(xs.len());
+  print(total);
+  return 0;
+}
+`
+	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const budget = 2 * time.Minute
+	cmd := runX86_64Bin(cli.runner, cli.bin, "-interp", src, cli.stdlib)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	start := time.Now()
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	timer := time.AfterFunc(budget, func() { cmd.Process.Kill() })
+	err := cmd.Wait()
+	timer.Stop()
+	elapsed := time.Since(start)
+	if elapsed >= budget {
+		t.Fatalf("fern -interp took longer than %v for 200,000 appends beside a value block", budget)
+	}
+	if want := "200001\n100000\n"; err != nil || out.String() != want {
+		t.Fatalf("fern -interp: %v, output %q; want %q", err, out.String(), want)
+	}
+	t.Logf("200,000 appends beside a value block in %v", elapsed)
+}
+
+// A closure that a value block makes still reads the binding, not a copy: it
+// sees a write after the block. A value block itself reads the value of the
+// binding when it runs.
+func TestSelfHostInterpValueBlockClosureSeesLaterWrite(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	oracle := buildFernCLIBin(t)
+	src := filepath.Join(t.TempDir(), "block_closure_write.fern")
+	prog := `function main(): i32 {
+  let x = 1;
+  let f = { let g = () => x; g };
+  let h = if (x > 0) { let k = () => x + 10; k } else { () => 0 };
+  let seen = { x };
+  x = 2;
+  print(f());
+  print(h());
+  print(seen);
+  let xs: i32[] = [];
+  let lens: i32[] = [];
+  for i in 0..5 {
+    let n = if (i % 2 == 0) { xs.len() } else { -1 };
+    lens = lens.append(n);
+    xs = xs.append(i);
+  }
+  print(xs.len());
+  print(lens[0] + lens[2] + lens[4]);
+  return 0;
+}
+`
+	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	want := "2\n12\n1\n5\n6\n"
+	sOut, sErr, sCode := runInterpCLI(t, runX86_64Bin(cli.runner, cli.bin, "-interp", src, cli.stdlib), "")
+	oOut, oErr, oCode := runInterpCLI(t, exec.Command(oracle, "-interp", src), "")
+	xOut, xErr, xCode := runInterpCLI(t, runX86_64Bin(cli.runner, cli.x86Binary(t, src)), "")
+	if xOut != want || xCode != 0 {
+		t.Fatalf("x86-64: exit %d, stdout %q (stderr %q); want %q", xCode, xOut, xErr, want)
+	}
+	if sOut != want || sCode != 0 {
+		t.Errorf("fern -interp: exit %d, stdout %q (stderr %q); want %q", sCode, sOut, sErr, want)
+	}
+	if oOut != want || oCode != 0 {
+		t.Errorf("fern-oracle -interp: exit %d, stdout %q (stderr %q); want %q", oCode, oOut, oErr, want)
+	}
+}

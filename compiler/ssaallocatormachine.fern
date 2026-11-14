@@ -5,7 +5,10 @@ struct Half { kind: i32, identity: i64, high: boolean }
 
 struct Word { low: Half, high: Half }
 
-struct State { regs: Word[], memory: Half[], writes: i32[], zero: i32, carry: i32, sign: i32, overflow: i32, bounded: boolean, ok: boolean }
+// choice is 1 after the test for a block that crosses a 64 KiB line and 2
+// after the test of the coloured pointer against the end of the heap. The
+// branch on such a test can go each way, and each way must finish.
+struct State { regs: Word[], memory: Half[], writes: i32[], zero: i32, carry: i32, sign: i32, overflow: i32, bounded: boolean, choice: i32, ok: boolean }
 
 function half(kind: i32, identity: i64, high: boolean): Half {
   return Half { kind: kind, identity: identity, high: high };
@@ -41,7 +44,7 @@ function pointer(w: Word): boolean {
 }
 
 function unknown(s: State): State {
-  return State { ...s, zero: -1, carry: -1, sign: -1, overflow: -1, bounded: false };
+  return State { ...s, zero: -1, carry: -1, sign: -1, overflow: -1, bounded: false, choice: 0 };
 }
 
 function write(s: State, reg: i32, value: Word): State {
@@ -91,7 +94,7 @@ function initial(request: i32, bump: boolean): State {
     memory = memory.append(if (i % 2 == 0) { w.low } else { w.high });
     writes = writes.append(0);
   }
-  return State { regs: regs, memory: memory, writes: writes, zero: -1, carry: -1, sign: -1, overflow: -1, bounded: false, ok: true };
+  return State { regs: regs, memory: memory, writes: writes, zero: -1, carry: -1, sign: -1, overflow: -1, bounded: false, choice: 0, ok: true };
 }
 
 function cell(base: Word, offset: i64, width: i32, request: i32): i32 {
@@ -219,6 +222,9 @@ function arithmetic(s: State, op: isa.Op, request: i32): State {
 }
 
 function register_arithmetic(s: State, op: isa.Op, a: Word, b: Word, request: i32): State {
+  if (op.kind == 10 && equal(a, token(13, 960)) && equal(b, token(3, request as i64))) {
+    return write(s, op.destination, token(14, request as i64));
+  }
   if (op.kind == 10 && pointer(b) && unsigned(a)) {
     return shifted(s, op.destination, b, a.low.identity, request);
   }
@@ -240,7 +246,7 @@ function flags(s: State, a: i64, b: i64, width: i32): State {
   let bits = if (width == 32) { if (difference < 0) { difference + 4294967296 } else { difference } } else { difference };
   let sign = if (width == 32) { bits >= 2147483648 } else { difference < 0 };
   let overflow = width == 32 && a >= 2147483648 != b >= 2147483648 && sign != a >= 2147483648;
-  return State { ...s, zero: if (difference == 0) { 1 } else { 0 }, carry: if (a < b) { 1 } else { 0 }, sign: if (sign) { 1 } else { 0 }, overflow: if (overflow) { 1 } else { 0 }, bounded: false };
+  return State { ...s, zero: if (difference == 0) { 1 } else { 0 }, carry: if (a < b) { 1 } else { 0 }, sign: if (sign) { 1 } else { 0 }, overflow: if (overflow) { 1 } else { 0 }, bounded: false, choice: 0 };
 }
 
 function comparison(s: State, a: Word, b: Word, width: i32, request: i32): State {
@@ -254,6 +260,9 @@ function comparison(s: State, a: Word, b: Word, width: i32, request: i32): State
   }
   if (width == 64 && equal(left, token(3, request as i64)) && equal(right, token(5, 0))) {
     return State { ...unknown(s), bounded: true };
+  }
+  if (width == 64 && equal(left, token(14, request as i64)) && equal(right, token(5, 0))) {
+    return State { ...unknown(s), choice: 2 };
   }
   return unknown(s);
 }
@@ -276,10 +285,55 @@ function global_step(s: State, op: isa.Op, request: i32, bump: boolean): State {
   if (op.kind == 29) {
     return read(s, at, op.width, op.destination);
   }
+  if (op.kind == 34 && at == 22 && bump && op.width == 64 && equal(s.regs[op.source], token(14, request as i64))) {
+    return coloured_store(s, s.regs[op.source]);
+  }
   if (op.kind == 34) {
     return store(s, at, op.width, s.regs[op.source], bump);
   }
   return comparison(s, s.regs[op.source], load(s, at, op.width), op.width, request);
+}
+
+// The second store to the bump pointer, which the colour step makes after
+// the test that the coloured pointer is not past the end of the heap.
+function coloured_store(s: State, w: Word): State {
+  if (!s.bounded || s.writes[22] != 1 || s.writes[23] != 1) {
+    return State { ...s, ok: false };
+  }
+  return State { ...s, memory: s.memory.with(22, w.low).with(23, w.high), writes: s.writes.with(22, 2).with(23, 2) };
+}
+
+// The values of the colour step. Kind 12 is the number of a 64 KiB line.
+// Kind 13 is a number from 0 to its identity: a number of a line for 15, a
+// multiple of 64 for 960. Kind 14 is the end of the block plus such a
+// multiple of 64.
+function colour_step(s: State, op: isa.Op, request: i32, bump: boolean): State {
+  if (op.kind == 48) {
+    return line_test(s, request, bump);
+  }
+  let w = s.regs[op.destination];
+  if (shift_by(op, 21, 16) && equal(w, token(3, request as i64))) {
+    return write(unknown(s), op.destination, token(12, 0));
+  }
+  if (shift_by(op, 20, 6) && equal(w, token(13, 15))) {
+    return write(unknown(s), op.destination, token(13, 960));
+  }
+  return State { ...s, ok: false };
+}
+
+function colour_op(op: isa.Op): boolean {
+  return op.kind == 48 || op.kind == 20 || op.kind == 21;
+}
+
+function shift_by(op: isa.Op, kind: i32, count: i32): boolean {
+  return op.width == 64 && op.kind == kind && op.immediate == count;
+}
+
+// The test of the low 16 bits of the end of the block against those of its
+// start. %rax holds the start and %rdi the end.
+function line_test(s: State, request: i32, bump: boolean): State {
+  let ends = bump && equal(s.regs[0], token(3, 0)) && equal(s.regs[7], token(3, request as i64));
+  return State { ...unknown(s), choice: 1, ok: s.ok && ends };
 }
 
 function test(s: State, op: isa.Op): State {
@@ -293,6 +347,9 @@ function test(s: State, op: isa.Op): State {
 
 function mask(s: State, op: isa.Op): State {
   let w = s.regs[op.destination];
+  if (op.source < 0 && op.immediate == 15 && op.width == 64 && equal(w, token(12, 0))) {
+    return write(unknown(s), op.destination, token(13, 15));
+  }
   if (op.source >= 0 || op.immediate != -8 || !unsigned(w)) {
     return State { ...s, ok: false };
   }
@@ -339,6 +396,9 @@ function step(s: State, op: isa.Op, request: i32, bump: boolean): State {
 }
 
 function other_step(s: State, op: isa.Op, request: i32, bump: boolean): State {
+  if (colour_op(op)) {
+    return colour_step(s, op, request, bump);
+  }
   if (op.kind == 9 || op.kind == 10) {
     return arithmetic(s, op, request);
   }
@@ -435,12 +495,24 @@ function finished_memory(s: State, original: State, request: i32, bump: boolean)
   let changed = if (bump) { token(3, request as i64) } else { token(8, 0) };
   for i in 16..s.memory.len() {
     let selected = i == start || i == start + 1;
-    let expected = if (selected) { if (i % 2 == 0) { changed.low } else { changed.high } } else { original.memory[i] };
-    if (!same(s.memory[i], expected) || s.writes[i] != (if (selected) { 1 } else { 0 })) {
+    let good = if (selected) { moved(s, i, changed, request, bump) } else { same(s.memory[i], original.memory[i]) && s.writes[i] == 0 };
+    if (!good) {
       return false;
     }
   }
   return true;
+}
+
+// Whether the cell at i of the pointer that the path moves holds its new
+// value: the value changed after one store, or the coloured end of the block
+// after two stores on a path that takes memory from the end of the heap.
+function moved(s: State, i: i32, changed: Word, request: i32, bump: boolean): boolean {
+  return written(s, i, changed, 1) || bump && written(s, i, token(14, request as i64), 2);
+}
+
+// Whether the cell at i holds its half of w after that many stores.
+function written(s: State, i: i32, w: Word, stores: i32): boolean {
+  return same(s.memory[i], if (i % 2 == 0) { w.low } else { w.high }) && s.writes[i] == stores;
 }
 
 function finished(s: State, request: i32, bump: boolean): boolean {
@@ -460,33 +532,61 @@ function finished(s: State, request: i32, bump: boolean): boolean {
   return s.ok && finished_memory(s, original, request, bump);
 }
 
-function path(p: isa.Program, request: i32, bump: boolean): boolean {
-  let s = initial(request, bump);
+// miss is the position of the label that takes the address of an empty
+// list. A path that takes memory from the end of the heap goes through it.
+function path(p: isa.Program, miss: i32, request: i32, bump: boolean): boolean {
   let visited: boolean[] = [];
   for op in p.ops {
     visited = visited.append(false);
   }
-  let pc = 0;
+  return miss >= 0 && run(p, miss, 0, initial(request, bump), visited, request, bump);
+}
+
+function run(p: isa.Program, miss: i32, from: i32, state: State, seen: boolean[], request: i32, bump: boolean): boolean {
+  let s = state;
+  let visited = seen;
+  let pc = from;
   while (pc >= 0 && pc < p.ops.len()) {
-    if (visited[pc]) {
+    if (visited[pc] || !listed(s, pc, miss, request)) {
       return false;
     }
     visited = visited.with(pc, true);
     let op = p.ops[pc];
     if (op.kind == 18) {
-      return finished(s, request, bump);
+      return (!bump || visited[miss]) && finished(s, request, bump);
     }
-    if (op.kind == 17 || op.kind == 35) {
-      pc = next_pc(s, op, pc);
-    } else {
-      s = step(s, op, request, bump);
-      if (!s.ok) {
-        return false;
-      }
-      pc += 1;
+    if (open_choice(s, op)) {
+      let taken = State { ...s, choice: 0 };
+      let through = State { ...taken, bounded: s.choice == 2 };
+      return run(p, miss, op.target, taken, visited, request, bump) && run(p, miss, pc + 1, through, visited, request, bump);
     }
+    let next = advanced(s, op, pc, request, bump);
+    s = next.s;
+    pc = next.pc;
   }
   return false;
+}
+
+// Whether %rdi holds the address of the list when pc is the label that takes
+// it.
+function listed(s: State, pc: i32, miss: i32, request: i32): boolean {
+  return pc != miss || equal(s.regs[7], token(4, request as i64));
+}
+
+struct Position { s: State, pc: i32 }
+
+// The state and the position after the instruction at pc. The position is
+// -1 when the machine refuses the instruction.
+function advanced(s: State, op: isa.Op, pc: i32, request: i32, bump: boolean): Position {
+  if (op.kind == 17 || op.kind == 35) {
+    return Position { s: s, pc: next_pc(s, op, pc) };
+  }
+  let next = step(s, op, request, bump);
+  return Position { s: next, pc: if (next.ok) { pc + 1 } else { -1 } };
+}
+
+function open_choice(s: State, op: isa.Op): boolean {
+  return op.kind == 17 && (s.choice == 1 && op.condition == "jb" || s.choice == 2 && op.condition == "ja");
 }
 
 function next_pc(s: State, op: isa.Op, pc: i32): i32 {
@@ -499,5 +599,6 @@ function next_pc(s: State, op: isa.Op, pc: i32): i32 {
 
 pub function check(output: string): boolean {
   let p = isa.allocator_program(output);
-  return p.error == "" && text.allocator_storage(output) && path(p, 40, false) && path(p, 40, true) && path(p, 48, false) && path(p, 48, true);
+  let miss = isa.allocator_miss_entry(output);
+  return p.error == "" && text.allocator_storage(output) && path(p, miss, 32, false) && path(p, miss, 32, true) && path(p, miss, 40, false) && path(p, miss, 40, true);
 }

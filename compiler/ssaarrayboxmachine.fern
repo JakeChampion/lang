@@ -448,5 +448,5 @@ function path(p: isa.Program, capacity: i32, hit: boolean): boolean {
 
 pub function check(output: string): boolean {
   let p = isa.array_box_program(output);
-  return p.error == "" && path(p, 2, false) && path(p, 2, true) && path(p, 3, false) && path(p, 3, true);
+  return p.error == "" && path(p, 1, false) && path(p, 1, true) && path(p, 2, false) && path(p, 2, true);
 }

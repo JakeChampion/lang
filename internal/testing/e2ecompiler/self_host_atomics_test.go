@@ -109,8 +109,8 @@ func TestSelfHostAtomicsKeepOrder(t *testing.T) {
 	}
 }
 
-// The atomics need an unsafe block, as the other raw accesses do, and a kernel
-// target: a hosted target refuses them at the capability gate.
+// The atomics need an unsafe block, as the other raw accesses do, and a native
+// target: a WASI target refuses them at the capability gate.
 func TestSelfHostAtomicsRefusals(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()
@@ -130,9 +130,35 @@ func TestSelfHostAtomicsRefusals(t *testing.T) {
 	if err := os.WriteFile(src, []byte(atomicsSrc), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	msg, err = cli.compileCmd("arm64-linux", filepath.Join(dir, "hosted"), src).CombinedOutput()
+	msg, err = cli.compileCmd("wasm32-wasi", filepath.Join(dir, "wasi.wat"), src).CombinedOutput()
 	if err == nil || !strings.Contains(string(msg), "E066") || !strings.Contains(string(msg), "__atomic_fetch_add") {
-		t.Errorf("arm64-linux: err %v; want E066 for the atomics in:\n%s", err, msg)
+		t.Errorf("wasm32-wasi: err %v; want E066 for the atomics in:\n%s", err, msg)
+	}
+}
+
+// A hosted program shares a word with a thread of its host, such as the audio
+// thread of Android, through the atomics. The store gives 5, fetch_add gives
+// the old 5 and leaves 7, and cas gives the old 7 and leaves 9: 9 + 5 + 7.
+func TestSelfHostAtomicsHosted(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	if stderr, code := cli.exitOf(t, atomicsSrc, "x86-64-linux"); code != 21 {
+		t.Errorf("x86-64-linux: exit %d, want 21\n%s", code, stderr)
+	}
+	// The compiler assembles and links the arm64 binary itself.
+	_, qemu := arm64Tooling(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(src, []byte(atomicsSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(dir, "prog")
+	if msg, err := cli.compileCmd("arm64-linux", bin, src).CombinedOutput(); err != nil {
+		t.Fatalf("arm64-linux: %v\n%s", err, msg)
+	}
+	cmd := runArm64Bin(qemu, bin)
+	out, _ := cmd.CombinedOutput()
+	if code := cmd.ProcessState.ExitCode(); code != 21 {
+		t.Errorf("arm64-linux: exit %d, want 21\n%s", code, out)
 	}
 }
 

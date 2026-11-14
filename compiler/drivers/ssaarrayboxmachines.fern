@@ -47,10 +47,10 @@ function pops(body: string): void {
   // This fixture gives the original missing-comparison control unknown flags.
   body = change(body, "cmpq $2048, %rdi", "testq %rsi, %rsi\ncmpq $2048, %rdi");
   require(machine.check(fixture(body)), "pop controls with explicit unknown entry flags");
-  for to in ["cmpq $40, %rdi", "cmpq $32, %rdi", "cmpq $2048, %rax", ""] {
+  for to in ["cmpq $32, %rdi", "cmpq $24, %rdi", "cmpq $2048, %rax", ""] {
     altered(body, "cmpq $2048, %rdi", to, false);
   }
-  for to in ["cmpq $48, %rdi", "cmpl $2048, %edi"] {
+  for to in ["cmpq $40, %rdi", "cmpl $2048, %edi"] {
     altered(body, "cmpq $2048, %rdi", to, true);
   }
   for to in ["jb .Larrbox_alloc", "jbe .Larrbox_alloc", "jne .Larrbox_alloc", "js .Larrbox_alloc", "jmp .Larrbox_alloc"] {
@@ -162,9 +162,9 @@ function boundaries(body: string): void {
 function size_guard(body: string): void {
   let comparison = "cmpq $268435455, %rdi";
   let transfer = "ja __fern_alloc_size_abort.c";
+  altered(body, comparison, "cmpq $2, %rdi", true);
   altered(body, comparison, "cmpq $3, %rdi", true);
-  altered(body, comparison, "cmpq $4, %rdi", true);
-  for replacement in ["cmpq $2, %rdi", "cmpq $1, %rdi", "cmpq $268435455, %rsi", comparison + "\naddq $0, %rdi"] {
+  for replacement in ["cmpq $1, %rdi", "cmpq $0, %rdi", "cmpq $268435455, %rsi", comparison + "\naddq $0, %rdi"] {
     altered(body, comparison, replacement, false);
   }
   for replacement in ["jmp __fern_alloc_size_abort.c", "jbe __fern_alloc_size_abort.c", "jne __fern_alloc_size_abort.c", "ja absent", "ja __fern_alloc_size_abort"] {

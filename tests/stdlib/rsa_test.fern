@@ -206,6 +206,8 @@ const OAEP_P: string = "f8971e7f101426799d5e58e6862393527ceba7a7a868039a787c9d48
 
 const OAEP_Q: string = "e9073947614330e625ba0c7f7aba7dc257897546ca2a57e1a27c6b9d8066df669bff867b9333e3421088febd21f04f8571acce7d9777afeaf7b85f03b7eb0107";
 
+const OAEP_QINV: string = "430a5e2268f2ce9f3dd5d4ebcbf990230c4f896a6d9015e3e21f0daba885855321d4076e3f3e715e977ad8e39f49df1868dfc9766e8534973ad0baaf0e8ad31e";
+
 const OAEP_C: string = "d6bb2b1652bddb62c747eac83d143e608b753730a4936da9ffe6594ffeb3e4e6283f7ea6d7f10a1d89cc0bdf4927f7af3ee9736fa035cf91f80797cebf3c7acacff97ced06501795c07d669d0f4f995d42a55f9cc5d5d8b00a0291be75204cc074d81386dada61f40d744f5e65ea7d2ef9de3dc9e6e1d85c830991a4967ce423";
 
 const OAEP_C_SEEDED: string = "76248c977cefffd32f58f0fb7ca47c0e69e74b87d4e0033ec394872754aac9f3dcd8cd093b4766579f242f5774427529e613dbb461794cfc2ce96a12573dadb2dca2cafb2067a3c7864670de5d9a006919b792f1f1ad5a3193112a3ff5c6b69e99a7ef082fbb0fa776504f9e6293b28db76b5597fccb76a5526fc3248b0c23cd";
@@ -215,7 +217,39 @@ const OAEP_LABEL: string = "age-encryption.org/v1/ssh-rsa";
 const OAEP_MSG: string = "000102030405060708090a0b0c0d0e0f";
 
 function oaep_key(d: string, p: string, q: string): Result[rsa.PrivateKey, rsa.RsaError] {
-  return rsa.private_key(__codec_bytes(hex.decode(OAEP_N)), __codec_bytes(hex.decode("010001")), __codec_bytes(hex.decode(d)), __codec_bytes(hex.decode(p)), __codec_bytes(hex.decode(q)));
+  return oaep_key_with(d, p, q, OAEP_QINV);
+}
+
+function oaep_key_with(d: string, p: string, q: string, qinv: string): Result[rsa.PrivateKey, rsa.RsaError] {
+  return rsa.private_key(
+    __codec_bytes(hex.decode(OAEP_N)),
+    __codec_bytes(hex.decode("010001")),
+    __codec_bytes(hex.decode(d)),
+    __codec_bytes(hex.decode(p)),
+    __codec_bytes(hex.decode(q)),
+    __codec_bytes(hex.decode(qinv)),
+  );
+}
+
+// The key keeps the qinv of the key file when it is right, and computes
+// qinv when the file gives none or a wrong one, as Go does.
+function test_crt_coefficient(): test.TestOutcome {
+  let got: string[] = [];
+  for qinv in [OAEP_QINV, "", "01", OAEP_P, "00" + OAEP_QINV] {
+    let k = match (oaep_key_with(OAEP_D, OAEP_P, OAEP_Q, qinv)) {
+      Ok(k) => k,
+      Err(e) => {
+        return test.fail(e.message());
+      },
+    };
+    let m = match (k.decrypt_oaep(sha2.Hash.Sha256, __codec_bytes(hex.decode(OAEP_C)), OAEP_LABEL.as_bytes())) {
+      Ok(m) => hex.encode(m),
+      Err(e) => e.message(),
+    };
+    got = got.append(hex.encode(k.secrets()[4]) + " " + m);
+  }
+  let want = OAEP_QINV + " " + OAEP_MSG;
+  return test.assert_eq_array(got, [want, want, want, want, want]);
 }
 
 function decrypted(c: string, label: string): string {
@@ -315,6 +349,7 @@ function main(): i32 {
   r = r.it("OAEP encryption with a fixed seed", test_oaep_encrypt);
   r = r.it("OAEP refusals", test_oaep_refusals);
   r = r.it("private key refusals", test_private_key_refusals);
+  r = r.it("the CRT coefficient of a key file", test_crt_coefficient);
   return r.finish();
 }
 

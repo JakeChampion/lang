@@ -280,6 +280,14 @@ jobs:
         if: ${{ (contains(inputs.groups || '["profile","coreutils","native","fixtures","examples"]', 'coreutils') || fromJSON(inputs.selection || '{"full":true}').needsGNU) }}
         with:
           host: macos-15
+      - uses: ./.github/actions/gnu-sed
+        if: ${{ (contains(inputs.groups || '["profile","coreutils","native","fixtures","examples"]', 'coreutils') || fromJSON(inputs.selection || '{"full":true}').needsGNU) }}
+        with:
+          host: macos-15
+      - uses: ./.github/actions/gnu-findutils
+        if: ${{ (contains(inputs.groups || '["profile","coreutils","native","fixtures","examples"]', 'coreutils') || fromJSON(inputs.selection || '{"full":true}').needsGNU) }}
+        with:
+          host: macos-15
       # The WHOLE catalogue. The lane landed covering the five utilities with
       # `target_os() == "darwin"` branches — kill, env, timeout, uname, yes —
       # deliberately, so the first round read as a list of real platform

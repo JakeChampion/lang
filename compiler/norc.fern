@@ -192,6 +192,17 @@ function marks_function(fd: parser.FuncDecl, m: parser.FuncMark): boolean {
   return fd.name == m.func_name && fd.line == m.line && fd.col == m.col;
 }
 
+// `fd` has a mark of the `@norc` rule. Such a function touches no heap, so
+// another thread can call it while the lock of the heap is held.
+pub function marked(mod: parser.Module, fd: parser.FuncDecl): boolean {
+  for m in marks(mod) {
+    if (marks_function(fd, m)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function interrupt_shape(mod: parser.Module, m: parser.FuncMark, what: string, module: string): util.Diag[] {
   let out: util.Diag[] = [];
   for fd in mod.funcs {

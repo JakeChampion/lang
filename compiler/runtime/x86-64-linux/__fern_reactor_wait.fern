@@ -1,13 +1,20 @@
+// The kernel writes its 12-byte events into the array, and each one becomes
+// the (fd, ready) pair at its index. A pair is 8 bytes, so a pair never
+// overwrites an event that is not yet read.
 function __fern_reactor_wait(r_fd: i32, events: i32[], timeout_ms: i32): i32 {
-  let cap = events.len() / 2;
-  if (cap <= 0) {
+  if (events.len() / 2 <= 0) {
     return -22;
   }
   let b = __raw_arr_ptr(events);
   let buf = b + 8;
-  let n = __syscall6(281, r_fd as i64, buf as i64, cap as i64, timeout_ms as i64, 0, 8) as i32;
-  let i = n - 1;
-  while (i >= 0) {
+  let room = events.len() / 3;
+  if (room < 1) {
+    room = 1;
+    buf = __raw_scratch(16);
+  }
+  let n = __syscall6(281, r_fd as i64, buf as i64, room as i64, timeout_ms as i64, 0, 8) as i32;
+  let i = 0;
+  while (i < n) {
     let e = i * 12;
     let bits = __raw_load8(buf, e);
     let ready = 0;
@@ -27,9 +34,9 @@ function __fern_reactor_wait(r_fd: i32, events: i32[], timeout_ms: i32): i32 {
       __syscall3(0, sfd as i64, drain as i64, 128);
       ready = 1;
     }
-    __raw_store_ptr(b, i * 2 + 1, fd as usize);
-    __raw_store_ptr(b, i * 2 + 2, ready as usize);
-    i -= 1;
+    __store_i32(b + (8 + i * 8) as usize, fd);
+    __store_i32(b + (12 + i * 8) as usize, ready);
+    i += 1;
   }
   return n;
 }

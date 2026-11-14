@@ -122,7 +122,7 @@ pub function run(output: ssaprepare.Output, single: boolean): void {
   mutation(output, "cmpl $1, -8(%rax)", "cmpq $1, -8(%rax)", false, "unsupported header width");
   let corrupt = ssaprepare.Output { ...output, text: output.text.split("syscall").join("unknown_instruction") };
   require(!machine.check(corrupt, "caller", "parent", initial()), "independently corrupt allocator dependency");
-  heaps(output, if (single) { 2 } else { 3 });
+  heaps(output, if (single) { 1 } else { 2 });
   ghost(output);
   frames(output, single);
   if (single) {

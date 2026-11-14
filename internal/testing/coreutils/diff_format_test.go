@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -233,7 +234,7 @@ func diffOptionCases(t *testing.T) []invocation {
 		w("sA/"+d+".txt", "t"+d+"\n")
 		w("sB/"+d+".txt", "T"+d+"\n")
 	}
-	for _, l := range [][2]string{{"lA/l", "../a"}, {"lB/l", "../b"}, {"lA/same", "../a"}, {"lB/same", "../a"}, {"lA/dang", "nosuch"}, {"lB/dang", "nosuch2"}, {"lA/mixed", "../a"}, {"la", "a"}, {"lb", "b"}, {"la2", "a"}} {
+	for _, l := range [][2]string{{"lA/l", "../a"}, {"lB/l", "../b"}, {"lA/same", "../a"}, {"lB/same", "../a"}, {"lA/dang", "nosuch"}, {"lB/dang", "nosuch2"}, {"lA/mixed", "../a"}, {"ka", "a"}, {"kb", "b"}, {"ka2", "a"}} {
 		if err := os.Symlink(l[1], filepath.Join(dir, l[0])); err != nil {
 			t.Fatal(err)
 		}
@@ -391,12 +392,12 @@ func diffOptionCases(t *testing.T) []invocation {
 		c("from file and to file", "--from-file=a", "--to-file=b"),
 		c("no dereference", "--no-dereference", "lA", "lB"),
 		c("no dereference recursive", "-r", "--no-dereference", "lA", "lB"),
-		c("no dereference links", "--no-dereference", "la", "lb"),
-		c("no dereference same links", "--no-dereference", "la", "la2"),
-		c("no dereference brief", "--no-dereference", "-q", "la", "lb"),
-		c("no dereference link and file", "--no-dereference", "la", "b"),
-		c("no dereference file and link", "--no-dereference", "a", "lb"),
-		c("dereference links", "la", "lb"),
+		c("no dereference links", "--no-dereference", "ka", "kb"),
+		c("no dereference same links", "--no-dereference", "ka", "ka2"),
+		c("no dereference brief", "--no-dereference", "-q", "ka", "kb"),
+		c("no dereference link and file", "--no-dereference", "ka", "b"),
+		c("no dereference file and link", "--no-dereference", "a", "kb"),
+		c("dereference links", "ka", "kb"),
 		c("ignore file name case", "--ignore-file-name-case", "cA", "cB"),
 		c("ignore file name case off again", "--ignore-file-name-case", "--no-ignore-file-name-case", "cA", "cB"),
 		c("file name case", "cA", "cB"),
@@ -414,5 +415,22 @@ func diffOptionCases(t *testing.T) []invocation {
 		c("prefix of unchanged", "--unch", "a", "b"),
 		c("prefix of tabsize", "--tab=4", "-t", "a", "b"),
 		c("prefix of from file", "--from=a", "b"),
+	}
+}
+
+// The fixture names must also work on a case-insensitive filesystem.
+func TestDiffFixtureNamesArePortable(t *testing.T) {
+	cases := diffOptionCases(t)
+	entries, err := os.ReadDir(cases[0].dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := make(map[string]string)
+	for _, entry := range entries {
+		name := strings.ToLower(entry.Name())
+		if previous, ok := seen[name]; ok {
+			t.Errorf("fixture paths %q and %q collide on a case-insensitive filesystem", previous, entry.Name())
+		}
+		seen[name] = entry.Name()
 	}
 }

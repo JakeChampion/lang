@@ -76,6 +76,13 @@ function refusal_of_encaps(r: Result[mlkem768.Encapsulation, mlkem768.MlKemError
   return "";
 }
 
+function refusal_of_check(r: Result[void, mlkem768.MlKemError]): string {
+  return match (r) {
+    Ok(_) => "accepted",
+    Err(e) => e.message(),
+  };
+}
+
 function refusal_of_keygen(r: Result[mlkem768.KeyPair, mlkem768.MlKemError]): string {
   match (r) {
     Ok(k) => {
@@ -195,6 +202,15 @@ function test_modulus_check(): test.TestOutcome {
     return test.fail("4095");
   }
   let at_q = __flip(ek, 0, ek[0] ^ 0x01).with(1, ek[1] & 0xf0 | 0x0d);
+  if (refusal_of_check(mlkem768.check_encapsulation_key(at_q)) != refused) {
+    return test.fail("check at q");
+  }
+  if (refusal_of_check(mlkem768.check_encapsulation_key(ek)) != "accepted") {
+    return test.fail("check of a valid key");
+  }
+  if (refusal_of_check(mlkem768.check_encapsulation_key(ek[0:1000])) != "mlkem768: the encapsulation key is 1000 bytes, want 1184") {
+    return test.fail("check of a short key");
+  }
   return test.assert_eq(refusal_of_encaps(mlkem768.encaps_derand(at_q, __seq(64))), refused);
 }
 

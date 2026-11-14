@@ -733,6 +733,23 @@ pub(package) function __map_cell_f64_column(m: usize, kvOffset: i32): f64[] {
   }
 }
 
+pub(package) function __map_cell_f32_column(m: usize, kvOffset: i32): f32[] {
+  unsafe {
+    let buf = __load_ptr(m);
+    let cap = __load_i32(buf);
+    let len_ = __load_i32(buf + 4);
+    let entryStride = 2 * __ptr_width();
+    let entriesBase = buf + __map_hdr(buf) as usize + (cap * 4) as usize;
+    let out: f32[] = [];
+    let i = 0;
+    while (i < len_) {
+      out = out.append(f64_from_bits(__load_i64(__load_ptr(entriesBase + (i * entryStride) as usize + kvOffset as usize))) as f32);
+      i += 1;
+    }
+    return out;
+  }
+}
+
 pub(package) function __map_bool_column(m: usize, kvOffset: i32): boolean[] {
   unsafe {
     let buf = __load_ptr(m);

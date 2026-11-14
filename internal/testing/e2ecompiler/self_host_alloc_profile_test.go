@@ -60,8 +60,8 @@ func TestSelfHostAllocationProfile(t *testing.T) {
 					t.Fatalf("got %d rows, want 16: %s", len(lines)-1, stderr)
 				}
 				for _, row := range lines[1:] {
-					if !strings.Contains(row, "_start;__fn_main;__fn_allocate;") || !strings.HasSuffix(row, " 2560") {
-						t.Errorf("allocation is not attributed to its caller with 64 * 40 rounded bytes: %s", row)
+					if !strings.Contains(row, "_start;__fn_main;__fn_allocate;") || !strings.HasSuffix(row, " 2048") {
+						t.Errorf("allocation is not attributed to its caller with 64 * 32 rounded bytes: %s", row)
 					}
 				}
 			}

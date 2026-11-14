@@ -1,0 +1,23 @@
+// A local that a struct literal makes from an `own` parameter takes the
+// parameter, even when a field value borrows a part that the literal keeps.
+// The field value runs before the literal takes the parameter. The local can
+// then go to an `own` parameter at its last use.
+struct State { out: Writer, n: i32, name: string, tags: string[] }
+
+function size(s: State): i32 {
+  return s.tags.len() as i32;
+}
+
+function finish(own s: State): string {
+  return s.name + " " + s.n.to_string() + " " + (s.tags.len() as i32).to_string();
+}
+
+function step(own s0: State): string {
+  let s = State { ...s0, n: s0.name.len() as i32 + size(s0), tags: s0.tags.append(s0.name + "!") };
+  return finish(s);
+}
+
+function main(): i32 {
+  print(step(State { out: stdout(), n: 0, name: "ab", tags: ["x"] }));
+  return 0;
+}

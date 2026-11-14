@@ -4628,8 +4628,11 @@ function x86_gas_imul_family(own a: X86Asm, mnem: string, size: i32, rest: strin
     return x86_gas_bad(a, mnem + " " + rest);
   }
   let imm = x86_gas_atoi(ops[0]);
-  let rs3 = x86_gas_reg_w(ops[1], size);
   let rd3 = x86_gas_reg_w(ops[2], size);
+  if (x86_gas_has_paren(ops[1])) {
+    return x86_gas_imul_mem_imm(a, size, imm, ops[1], rd3);
+  }
+  let rs3 = x86_gas_reg_w(ops[1], size);
   if (rs3 < 0 || rd3 < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
@@ -4643,6 +4646,22 @@ function x86_gas_imul_family(own a: X86Asm, mnem: string, size: i32, rest: strin
   }
   buf_push_byte(a.code, 105);
   buf_push_byte(a.code, x86_modrm(3, rd3, rs3));
+  util.push_bytes(a.code, x86_imm_wide([], size, imm));
+  return a;
+}
+
+function x86_gas_imul_mem_imm(own a: X86Asm, size: i32, imm: i32, src: string, rd: i32): X86Asm {
+  let m = x86_gas_parse_mem(src);
+  if (rd < 0 || !x86_gas_mem_ok(m)) {
+    return x86_gas_bad(a, "imul $" + util.i32_to_string(imm) + ", " + src);
+  }
+  if (x86_imm_fits8(imm)) {
+    a = x86_gas_mem_op(a, size, false, 107, rd, m, false, 1);
+    buf_push_byte(a.code, imm & 255);
+    return a;
+  }
+  let ib = if (size == 16) { 2 } else { 4 };
+  a = x86_gas_mem_op(a, size, false, 105, rd, m, false, ib);
   util.push_bytes(a.code, x86_imm_wide([], size, imm));
   return a;
 }

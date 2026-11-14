@@ -2,6 +2,7 @@
 // HdrHistogram. Values below 2^SUB_BITS have a bucket each. Above, each power
 // of two has HALF buckets, so a bucket is at most 1/HALF of its lowest value
 // wide: three significant digits.
+import "std/f64";
 import "std/i64";
 
 const SUB_BITS: i32 = 11;
@@ -72,14 +73,15 @@ pub function (h: Histogram) mean(): i64 {
 }
 
 // The value at `hundredths` of a percent, 9999 for 99.99%: the highest value
-// of the bucket that holds that rank, but not past the extremes recorded.
+// of the bucket that holds that rank, but not past the extremes recorded. As
+// in oha, the rank of p percent of N values is floor(p / 100 * N) + 1.
 pub function (h: Histogram) at(hundredths: i64): i64 {
   if (h.total == 0) {
     return 0;
   }
-  let rank = (h.total * hundredths + 9999) / 10000;
-  if (rank < 1) {
-    rank = 1;
+  let rank = h.total * hundredths / 10000 + 1;
+  if (rank > h.total) {
+    rank = h.total;
   }
   let seen: i64 = 0;
   for i in 0..BUCKETS {
@@ -96,4 +98,57 @@ pub function (h: Histogram) at(hundredths: i64): i64 {
     }
   }
   return h.max;
+}
+
+// The histogram of the values of both `h` and `o`.
+pub function (h: Histogram) merge(o: Histogram): Histogram {
+  if (o.total == 0) {
+    return h;
+  }
+  if (h.total == 0) {
+    return o;
+  }
+  let counts = h.counts;
+  for i in 0..BUCKETS {
+    if (o.counts[i] != 0) {
+      counts = counts.with(i, counts[i] + o.counts[i]);
+    }
+  }
+  let min = if (o.min < h.min) { o.min } else { h.min };
+  let max = if (o.max > h.max) { o.max } else { h.max };
+  return Histogram { counts: counts, total: h.total + o.total, min: min, max: max, sum: h.sum + o.sum };
+}
+
+// The count of each of `bins` bins from the lowest value to the highest, as
+// the histogram of oha has them: bin k holds the values above bin k - 1 and
+// not above `min + k * (max - min) / (bins - 1)`. A bucket goes in the bin of
+// its lowest value, but not below the lowest value recorded.
+pub function (h: Histogram) bins(bins: i32): i64[] {
+  let out: i64[] = [];
+  for _ in 0..bins {
+    out = out.append(0);
+  }
+  if (h.total == 0) {
+    return out;
+  }
+  let span = (h.max - h.min) as f64;
+  for i in 0..BUCKETS {
+    let n = h.counts[i];
+    if (n == 0) {
+      continue;
+    }
+    let v = lowest(i);
+    if (v < h.min) {
+      v = h.min;
+    }
+    let k = 0;
+    if (span > 0.0) {
+      k = ((v - h.min) as f64 * ((bins - 1) as f64) / span).ceil() as i32;
+      if (k >= bins) {
+        k = bins - 1;
+      }
+    }
+    out = out.with(k, out[k] + n);
+  }
+  return out;
 }

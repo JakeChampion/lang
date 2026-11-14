@@ -15,4 +15,10 @@ The HTML Standard has the Creative Commons CC-BY 4.0 license: https://creativeco
 scripts/gen-markdown-tables.py writes the file from the table in the Python standard library (html.entities.html5).
 
 The Fern port in examples/markdown does not copy source code from cmark or from the spec repository.
-It implements the behaviour of the CommonMark Spec 0.31.2, and its output is the HTML of cmark.
+It implements the behaviour of the CommonMark Spec 0.31.2.
+Its output is the output of cmark 0.30.2 in each format of cmark.
+
+The usage text of examples/markdown/md.fern is the usage text of the cmark command line, with the name md.
+examples/markdown/tests/cmark.json holds the output of cmark 0.30.2 for the inputs of scripts/gen-markdown-cmark-cases.py.
+Reference: https://github.com/commonmark/cmark/tree/0.30.2
+Copyright (c) 2014, John MacFarlane. cmark has the BSD 2-Clause license: https://github.com/commonmark/cmark/blob/0.30.2/COPYING

@@ -4,6 +4,7 @@ import "std/array";
 import "std/crypto";
 import "std/crypto/aead";
 import "std/crypto/chacha20poly1305";
+import "std/crypto/hpke";
 import "std/option";
 import "std/result";
 import "std/crypto/scrypt";
@@ -38,22 +39,15 @@ function parse_error(m: string): string {
   return "parsing age header: " + m;
 }
 
-// age's splitArgs: the line without its "\n", split at each space.
-function split_args(line: [u8]): u8[][] {
-  let n = line.len();
-  if (n > 0 && line[n - 1] == b'\n') {
-    n -= 1;
-  }
-  let out: u8[][] = [];
-  let start = 0;
-  for i in 0..n {
-    if (line[i] == b' ') {
-      out = out.append(text.copy(line[start:i]));
-      start = i + 1;
-    }
-  }
-  return out.append(text.copy(line[start:n]));
-}
+// The limits of age's header reader: its bytes, its stanzas and the
+// arguments of one stanza.
+const MAX_HEADER: i32 = 2097152;
+
+const MAX_STANZAS: i32 = 1024;
+
+const MAX_ARGS: i32 = 128;
+
+const TOO_BIG: string = "parsing age header: header exceeds 2 MiB";
 
 // A stanza argument: one or more bytes from 33 to 126.
 function valid_arg(a: [u8]): boolean {
@@ -68,24 +62,77 @@ function valid_arg(a: [u8]): boolean {
   return true;
 }
 
+// age's splitArgs: the line without its "\n", cut at the first space, and
+// the arguments after it, split at each space. When an argument is not valid,
+// or there are too many, the prefix is the whole line with no arguments.
+function split_args(line: [u8]): (u8[], u8[][]) {
+  let n = line.len();
+  if (n > 0 && line[n - 1] == b'\n') {
+    n -= 1;
+  }
+  let Some(cut) = first_space(line, n) else {
+    return (text.copy(line[0:n]), []);
+  };
+  let args: u8[][] = [];
+  let start = cut + 1;
+  for i in cut + 1..n + 1 {
+    if (i == n || line[i] == b' ') {
+      let arg = line[start:i];
+      if (!valid_arg(arg) || args.len() > MAX_ARGS) {
+        return (text.copy(line[0:n]), []);
+      }
+      args = args.append(text.copy(arg));
+      start = i + 1;
+    }
+  }
+  return (text.copy(line[0:cut]), args);
+}
+
+function first_space(line: [u8], n: i32): Option[i32] {
+  for i in 0..n {
+    if (line[i] == b' ') {
+      return Some(i);
+    }
+  }
+  return None;
+}
+
 function body_line_error(line: [u8], why: string): string {
   return parse_error("malformed body line " + text.quote(line) + ": " + why);
 }
 
-function read_body(own s: source.Src, kind: string, args: string[]): (source.Src, Result[Stanza, string]) {
+// A header line. used is the count of header bytes before it; a line past
+// the limit of age's header reader gives TOO_BIG.
+function header_line(own s: source.Src, used: i32): (source.Src, u8[], Option[string]) {
+  let (t, line, f) = source.read_line(s, MAX_HEADER - used);
+  if (line.len() > MAX_HEADER - used) {
+    return (t, line, Some(TOO_BIG));
+  }
+  return match (f) {
+    Some(e) => (t, line, Some(e.message())),
+    None => (t, line, None),
+  };
+}
+
+// A stanza and the header bytes after it, or the message after
+// "failed to parse header: ".
+struct Parsed { stanza: Stanza, used: i32 }
+
+function read_body(own s: source.Src, used: i32, kind: string, args: string[]): (source.Src, Result[Parsed, string]) {
   let body: u8[] = [];
   loop {
-    let (t, line, f) = source.read_line(s);
+    let (t, line, f) = header_line(s, used);
     s = t;
-    if let Some(e) = f {
-      return (s, Err("failed to read line: " + e.message()));
+    if let Some(why) = f {
+      return (s, Err("failed to read line: " + why));
     }
+    used += line.len();
     let content = line[0:line.len() - 1];
     let b = match (text.decode_string(content)) {
       Ok(b) => b,
       Err(why) => {
         if (text.has_prefix(line, "---") || text.has_prefix(line, "->")) {
-          return (s, Err("malformed body line " + text.quote(line) + ": stanza ended without a short line\nNote: this might be a file encrypted with an old beta version of age or rage. Use age v1.0.0-beta6 or rage to decrypt it."));
+          return (s, Err("malformed body line " + text.quote(line) + ": stanza ended without a short line\nnote: this might be a file encrypted with an old beta version of age or rage; use age v1.0.0-beta6 or rage to decrypt it"));
         }
         return (s, Err(body_line_error(line, why)));
       },
@@ -95,46 +142,43 @@ function read_body(own s: source.Src, kind: string, args: string[]): (source.Src
     }
     body = body.concat(b);
     if (b.len() < 48) {
-      return (s, Ok(Stanza { kind: kind, args: args, body: body }));
+      return (s, Ok(Parsed { stanza: Stanza { kind: kind, args: args, body: body }, used: used }));
     }
   }
   return (s, Err(""));
 }
 
 // age's StanzaReader.ReadStanza.
-function read_stanza(own s: source.Src): (source.Src, Result[Stanza, string]) {
-  let (t, line, f) = source.read_line(s);
-  if let Some(e) = f {
-    return (t, Err("failed to read line: " + e.message()));
+function read_stanza(own s: source.Src, used: i32): (source.Src, Result[Parsed, string]) {
+  let (t, line, f) = header_line(s, used);
+  if let Some(why) = f {
+    return (t, Err("failed to read line: " + why));
   }
   if (!text.has_prefix(line, "->")) {
     return (t, Err("malformed stanza opening line: " + text.quote(line)));
   }
-  let parts = split_args(line);
-  if (!text.equals(parts[0], "->") || parts.len() < 2) {
+  let (prefix, parts) = split_args(line);
+  if (!text.equals(prefix, "->") || parts.len() < 1) {
     return (t, Err("malformed stanza: " + text.quote(line)));
   }
   let args: string[] = [];
   for i in 1..parts.len() {
-    if (!valid_arg(parts[i])) {
-      return (t, Err("malformed stanza: " + text.quote(line)));
-    }
     args = args.append(text.ascii(parts[i]));
   }
-  return read_body(t, args[0], array.slice(args, 1, args.len()));
+  return read_body(t, used + line.len(), text.ascii(parts[0]), args);
 }
 
 // The MAC line, after "---".
-function read_mac(own s: source.Src): (source.Src, Result[u8[], string]) {
-  let (t, line, f) = source.read_line(s);
-  if let Some(e) = f {
-    return (t, Err("failed to read header: " + e.message()));
+function read_mac(own s: source.Src, used: i32): (source.Src, Result[u8[], string]) {
+  let (t, line, f) = header_line(s, used);
+  if let Some(why) = f {
+    return (t, Err("failed to read header: " + why));
   }
-  let parts = split_args(line);
-  if (!text.equals(parts[0], "---") || parts.len() != 2) {
+  let (prefix, args) = split_args(line);
+  if (!text.equals(prefix, "---") || args.len() != 1) {
     return (t, Err(parse_error("malformed closing line: " + text.quote(line))));
   }
-  match (text.decode_string(parts[1])) {
+  match (text.decode_string(args[0])) {
     Ok(mac) => {
       if (mac.len() != 32) {
         return (t, Err(parse_error("malformed closing line " + text.quote(line) + ": <nil>")));
@@ -147,36 +191,86 @@ function read_mac(own s: source.Src): (source.Src, Result[u8[], string]) {
   }
 }
 
+// age's describeIntro: the start of a bad intro line, quoted, or None for a
+// line that holds a key.
+function describe_intro(line: [u8]): Option[string] {
+  if (text.has_prefix(line, "AGE-SECRET-KEY-") || text.has_prefix(line, "AGE-PLUGIN-")) {
+    return None;
+  }
+  let n = if (line.len() < INTRO.len() + 1) { line.len() } else { INTRO.len() + 1 };
+  return Some(text.quote(line[0:n]));
+}
+
+// The message for an intro line that is not age's.
+function intro_error(line: [u8], f: Option[string]): Option[string] {
+  let Some(why) = f else {
+    if (text.equals(line, INTRO + "\n")) {
+      return None;
+    }
+    return match (describe_intro(line)) {
+      Some(d) => Some(parse_error("unexpected intro: " + d)),
+      None => Some(parse_error("unexpected intro, expected " + text.quote((INTRO + "\n").as_bytes()))),
+    };
+  };
+  if (why == TOO_BIG) {
+    return Some(why);
+  }
+  if (why != "EOF") {
+    return Some(parse_error("failed to read intro: " + why));
+  }
+  if (line.len() == 0) {
+    return Some(parse_error("file is empty"));
+  }
+  return match (describe_intro(line)) {
+    Some(d) => Some(parse_error("unexpected EOF reading intro: " + d)),
+    None => Some(parse_error("unexpected EOF reading intro, expected " + text.quote((INTRO + "\n").as_bytes()))),
+  };
+}
+
+// The MAC line and the header that it ends.
+function header_end(own s: source.Src, used: i32, stanzas: Stanza[]): (source.Src, Result[Header, string]) {
+  let (v, mac) = read_mac(s, used);
+  return match (mac) {
+    Ok(m) => if (stanzas.len() == 0) {
+      (v, Err(parse_error("no recipient stanzas")))
+    } else {
+      (v, Ok(Header { stanzas: stanzas, mac: m }))
+    },
+    Err(why) => (v, Err(why)),
+  };
+}
+
 // age's format.Parse. The error is the message after "failed to read
 // header: ".
 pub function parse(own s: source.Src): (source.Src, Result[Header, string]) {
-  let (t, intro, f) = source.read_line(s);
+  let (t, intro, f) = header_line(s, 0);
   s = t;
-  if let Some(e) = f {
-    return (s, Err(parse_error("failed to read intro: " + e.message())));
+  if let Some(why) = intro_error(intro, f) {
+    return (s, Err(why));
   }
-  if (!text.equals(intro, INTRO + "\n")) {
-    return (s, Err(parse_error("unexpected intro: " + text.quote(intro))));
-  }
+  let used = intro.len();
   let stanzas: Stanza[] = [];
   loop {
+    if (used + 3 > MAX_HEADER) {
+      return (s, Err(TOO_BIG));
+    }
     let (u, g) = source.peek(s, 3);
     s = u;
     if let Some(e) = g {
       return (s, Err(parse_error("failed to read header: " + e.message())));
     }
     if (source.next_is(s, "---")) {
-      let (v, mac) = read_mac(s);
-      return match (mac) {
-        Ok(m) => (v, Ok(Header { stanzas: stanzas, mac: m })),
-        Err(why) => (v, Err(why)),
-      };
+      return header_end(s, used, stanzas);
     }
-    let (v, st) = read_stanza(s);
+    if (stanzas.len() == MAX_STANZAS) {
+      return (s, Err(parse_error(f"header contains more than {MAX_STANZAS} recipient stanzas")));
+    }
+    let (v, st) = read_stanza(s, used);
     s = v;
     match (st) {
       Ok(x) => {
-        stanzas = stanzas.append(x);
+        stanzas = stanzas.append(x.stanza);
+        used = x.used;
       },
       Err(why) => {
         return (s, Err("failed to parse header: " + why));
@@ -379,6 +473,68 @@ pub function unwrap(st: Stanza, scalar: [u8], public: [u8]): Unwrapped {
   };
   return match (k.open(ZERO_IV, st.body, [])) {
     Ok(file_key) => FileKey(file_key),
+    Err(_) => Incorrect,
+  };
+}
+
+// The HPKE info of the mlkem768x25519 stanza.
+const PQ_LABEL: string = "age-encryption.org/mlkem768x25519";
+
+// The mlkem768x25519 stanza that wraps the file key to the 1216-byte public
+// key of a hybrid recipient with HPKE. randomness is 64 fresh secret bytes.
+pub function wrap_hybrid(file_key: [u8], public: [u8], randomness: [u8]): Result[Stanza, string] {
+  let sender = match (hpke.setup_sender_derand(public, PQ_LABEL.as_bytes(), randomness)) {
+    Ok(s) => s,
+    Err(e) => {
+      return Err("failed to set up HPKE sender: " + e.message());
+    },
+  };
+  let (body, _) = sender.context.seal([], file_key);
+  __ct_public(sender.enc);
+  __ct_public(body);
+  return Ok(Stanza { kind: "mlkem768x25519", args: [text.b64_raw(sender.enc)], body: body });
+}
+
+// The encapsulated key of an mlkem768x25519 stanza, after the checks of the
+// stanza.
+function enc_of(st: Stanza): Result[u8[], string] {
+  if (st.args.len() != 1) {
+    return Err("invalid mlkem768x25519 recipient block");
+  }
+  let enc = match (text.decode_string(st.args[0].as_bytes())) {
+    Ok(b) => b,
+    Err(why) => {
+      return Err("failed to parse mlkem768x25519 recipient: " + why);
+    },
+  };
+  if (st.body.len() != 32) {
+    return Err("encrypted value has unexpected length");
+  }
+  return Ok(enc);
+}
+
+// age's HybridIdentity.unwrap.
+pub function unwrap_hybrid(st: Stanza, k: hpke.HybridKey): Unwrapped {
+  if (st.kind != "mlkem768x25519") {
+    return Incorrect;
+  }
+  let enc = match (enc_of(st)) {
+    Ok(b) => b,
+    Err(why) => {
+      return Invalid(why);
+    },
+  };
+  let c = match (hpke.setup_recipient(k, enc, PQ_LABEL.as_bytes())) {
+    Ok(c) => c,
+    Err(hpke.LowOrder) => {
+      return Invalid("invalid mlkem768x25519 recipient: crypto/ecdh: bad X25519 remote ECDH input: low order point");
+    },
+    Err(_) => {
+      return Invalid("invalid mlkem768x25519 recipient: invalid encapsulated key size");
+    },
+  };
+  return match (c.open([], st.body)) {
+    Ok((file_key, _)) => FileKey(file_key),
     Err(_) => Incorrect,
   };
 }

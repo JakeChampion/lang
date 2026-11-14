@@ -36,3 +36,28 @@ func TestOwnedValueMatchRetainsLaterReads(t *testing.T) {
 	}
 	wantE051(t, "borrowed", ownedValueMatchPrefix+`function work(state: State, tag: i32): i32 { return match (tag) { 0 => consume(state), _ => consume(state) }; }`)
 }
+
+const letArmPrefix = `struct State { out: Writer, n: i32 }
+struct Ctx { log: Writer, keep: State }
+function run(ctx: Ctx, own s0: State): State {
+  let s = State { ...s0, n: 0 };
+  let k = 0;
+  while (k < 3) {
+    let t = pick(ctx, s, k);
+    s = t;
+    k += 1;
+  }
+  return s;
+}
+`
+
+// A match arm that binds a local before its value borrows only through
+// that value, so the loop can pass the owned result on.
+func TestLetArmResultStaysOwned(t *testing.T) {
+	wantOK(t, "let arm with an owned value", letArmPrefix+`function pick(ctx: Ctx, own s: State, k: i32): State {
+  return match (k) { 0 => { let z = 1; State { ...s, n: s.n + z } }, _ => s };
+}`)
+	wantE051(t, "let arm with a borrowed value", letArmPrefix+`function pick(ctx: Ctx, own s: State, k: i32): State {
+  return match (k) { 0 => { let kept = ctx.keep; kept }, _ => s };
+}`)
+}

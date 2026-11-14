@@ -6,8 +6,11 @@ const CHARSET: string = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 
 const GEN: i32[] = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
 
-// The bytes in a key line before its data part.
+// The bytes in a key line before its data part: an X25519 key and an
+// ML-KEM-768 + X25519 key.
 pub const SECRET_PREFIX: string = "AGE-SECRET-KEY-1";
+
+pub const PQ_SECRET_PREFIX: string = "AGE-SECRET-KEY-PQ-1";
 
 function polymod_step(chk: i32, v: i32): i32 {
   let b = chk >> 25;
@@ -211,17 +214,18 @@ function within(c: i32, lo: i32, hi: i32): i32 {
   return (c - lo | hi - c) >> 31 & 1 ^ 1;
 }
 
-// Decodes the data part of a secret key line, line[16:], with no branch and
-// no index on its bytes. The line starts with SECRET_PREFIX, and the caller
-// marks line[16:] secret. The result is the 32-byte scalar, or None when the
-// line is not a valid key: then the caller gets the message from decode.
-pub function decode_secret(line: [u8]): Option[u8[]] {
-  if (line.len() != SECRET_PREFIX.len() + 58) {
+// Decodes the data part of a secret key line, the bytes after prefix, with
+// no branch and no index on its bytes. The line starts with prefix, and the
+// caller marks the data part secret. The result is the 32 bytes of the key,
+// or None when the line is not a valid key: then the caller gets the message
+// from decode.
+pub function decode_secret(line: [u8], prefix: string): Option[u8[]] {
+  if (line.len() != prefix.len() + 58) {
     return None;
   }
-  let data = line[SECRET_PREFIX.len():line.len()];
+  let data = line[prefix.len():line.len()];
   let bad = 0;
-  let chk = hrp_state("age-secret-key-".as_bytes());
+  let chk = hrp_state(lowered(prefix.as_bytes()[0:prefix.len() - 1]));
   let out = __alloc_u8(32);
   let acc = 0;
   let bits = 0;

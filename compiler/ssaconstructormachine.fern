@@ -39,7 +39,7 @@ function initial_register(capacity: i32, register_entry: boolean, i: i32): Word 
   if (register_entry && i == 0) {
     return token(9, 0);
   }
-  if (register_entry && i == 6 && capacity == 3) {
+  if (register_entry && i == 6 && capacity == 2) {
     return token(9, 1);
   }
   return if (i == 4) { token(2, 0) } else { token(1, i as i64) };
@@ -49,7 +49,7 @@ function initial_word(capacity: i32, register_entry: boolean, i: i32): Word {
   if (i == 16 || i == 17) {
     return token(4, 0);
   }
-  if (!register_entry && i >= 18 && i < 18 + (capacity - 1) * 2) {
+  if (!register_entry && i >= 18 && i < 18 + capacity * 2) {
     return token(9, ((i - 18) / 2) as i64);
   }
   return if (i < 22) { token(5, (i / 2) as i64) } else { token(6, ((i - 22) / 2) as i64) };
@@ -136,7 +136,7 @@ function cell_extent(s: State, kind: i32, at: i64, bytes: i32): i32 {
 }
 
 function writable(s: State, at: i32): boolean {
-  return at >= 0 && at < 16 || s.calls == 1 && at >= 26 && at < s.memory.len() - 2;
+  return at >= 0 && at < 16 || s.calls == 1 && at >= 26 && at < s.memory.len();
 }
 
 function store_at(s: State, at: i32, width: i32, w: Word): State {
@@ -261,7 +261,7 @@ function step(s: State, capacity: i32, symbol: string, successor: i32, pc: i32, 
 }
 
 function expected_memory(original: State, capacity: i32, i: i32): Half {
-  if (i < 22 || i >= original.memory.len() - 2) {
+  if (i < 22) {
     return original.memory[i];
   }
   let w = number(if (i < 24) { capacity as i64 } else { 1 });
@@ -299,7 +299,7 @@ function finished_memory(s: State, original: State, capacity: i32): boolean {
     if (!same(s.memory[i], expected_memory(original, capacity, i))) {
       return false;
     }
-    if (i >= 26 && i < s.memory.len() - 2 && s.writes[i] != 1) {
+    if (i >= 26 && s.writes[i] != 1) {
       return false;
     }
   }
@@ -373,5 +373,5 @@ pub function check(output: ssaprepare.Output, name: string): boolean {
   }
   let p = isa.constructor_program(output.text, "__fn_" + asmcore.sanitize_label(name));
   let successor = allocator_successor(output.text);
-  return p.error == "" && successor >= 0 && path(p, bound.words, bound.symbol, successor, false) && path(p, bound.words, bound.symbol, successor, true);
+  return p.error == "" && successor >= 0 && path(p, bound.words - 1, bound.symbol, successor, false) && path(p, bound.words - 1, bound.symbol, successor, true);
 }

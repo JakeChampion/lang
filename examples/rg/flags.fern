@@ -3,6 +3,7 @@
 // The flags, their values and their messages are those of ripgrep 14.1.0.
 import "core/cmp";
 import "std/string";
+import "./encoding";
 
 // What rg does: write the selected lines, count them, name the files with
 // or without a selected line, list the files to search, or list the types.
@@ -25,7 +26,8 @@ pub struct Options {
   mode: Mode,
   // 0 is case sensitive, 1 is -i and 2 is -S.
   case: i32,
-  line_number: boolean,
+  // -1 is the default, 0 is -N and 1 is -n.
+  line_number: i32,
   after: i32,
   before: i32,
   context: i32,
@@ -54,6 +56,17 @@ pub struct Options {
   max_filesize: i64,
   // The line between groups of context, or None for no line.
   context_separator: Option[string],
+  // The files of -f, and for each the count of -e patterns before it.
+  pattern_files: string[],
+  pattern_file_at: i32[],
+  // The template of -r, or None.
+  replace: Option[string],
+  // The encoding of -E, as encoding.label gives it, or "" for the default.
+  encoding: string,
+  // -M, or 0 for no limit.
+  max_columns: i32,
+  // The line terminator: "\n", "\r\n" for --crlf, or NUL for --null-data.
+  eol: string,
 }
 
 struct Step { o: Options, next: i32 }
@@ -102,11 +115,37 @@ pub const NO_IGNORE_MESSAGES: i32 = 19;
 
 pub const INCLUDE_ZERO: i32 = 20;
 
+pub const COLUMN: i32 = 21;
+
+pub const BYTE_OFFSET: i32 = 22;
+
+pub const VIMGREP: i32 = 23;
+
+pub const PASSTHRU: i32 = 24;
+
+pub const PREVIEW: i32 = 25;
+
+pub const TRIM: i32 = 26;
+
+pub const STOP_ON_NONMATCH: i32 = 27;
+
+pub const STATS: i32 = 28;
+
+pub const JSON: i32 = 29;
+
+pub const NO_UNICODE: i32 = 30;
+
+pub const MULTILINE: i32 = 31;
+
+pub const DOTALL: i32 = 32;
+
 const SWITCHES: string[] = [
   "invert-match", "word-regexp", "fixed-strings", "only-matching", "hidden", "follow",
   "no-ignore-dot", "no-ignore-vcs", "no-ignore-parent", "no-ignore-exclude", "no-ignore-global",
   "no-ignore-files", "no-require-git", "null", "quiet", "line-regexp", "glob-case-insensitive",
   "ignore-file-case-insensitive", "no-messages", "no-ignore-messages", "include-zero",
+  "column", "byte-offset", "vimgrep", "passthru", "max-columns-preview", "trim", "stop-on-nonmatch",
+  "stats", "json", "no-unicode", "multiline", "multiline-dotall",
 ];
 
 const SWITCHES_OFF: string[] = [
@@ -114,6 +153,8 @@ const SWITCHES_OFF: string[] = [
   "ignore-dot", "ignore-vcs", "ignore-parent", "ignore-exclude", "ignore-global",
   "ignore-files", "require-git", "", "", "", "no-glob-case-insensitive",
   "no-ignore-file-case-insensitive", "messages", "ignore-messages", "no-include-zero",
+  "no-column", "no-byte-offset", "", "", "no-max-columns-preview", "no-trim", "",
+  "no-stats", "no-json", "unicode", "no-multiline", "no-multiline-dotall",
 ];
 
 // The other switches.
@@ -122,7 +163,7 @@ const OTHER_SWITCHES: string[] = [
   "count", "count-matches", "files-with-matches", "files-without-match", "files", "type-list",
   "with-filename", "no-filename", "heading", "no-heading", "mmap", "no-mmap", "text", "no-text",
   "binary", "no-binary", "no-ignore", "ignore", "unrestricted", "sort-files", "no-sort-files",
-  "no-context-separator",
+  "no-context-separator", "crlf", "no-crlf", "null-data", "no-encoding", "pretty",
 ];
 
 // The switches that set_case_or_lines handles.
@@ -135,6 +176,7 @@ const VALUE_FLAGS: string[] = [
   "after-context", "before-context", "context", "regexp", "threads", "color", "max-count",
   "max-depth", "maxdepth", "glob", "iglob", "type", "type-not", "type-add", "type-clear",
   "ignore-file", "path-separator", "sort", "sortr", "max-filesize", "context-separator",
+  "replace", "file", "encoding", "max-columns",
 ];
 
 // The type flags, and the prefix of each in `Options.types`.
@@ -143,23 +185,24 @@ const TYPE_FLAGS: string[] = ["type", "type-not", "type-add", "type-clear"];
 const TYPE_PREFIXES: string[] = ["+", "-", "add:", "clear:"];
 
 // Each short flag and its long name.
-const SHORT_FLAGS: string = "isSvwFxnNclo0qHIABCejmdgtTaL.u";
+const SHORT_FLAGS: string = "isSvwFxnNclo0qHIABCejmdgtTaL.ubrfEMpU";
 
 const SHORT_NAMES: string[] = [
   "ignore-case", "case-sensitive", "smart-case", "invert-match", "word-regexp", "fixed-strings",
   "line-regexp", "line-number", "no-line-number", "count", "files-with-matches", "only-matching",
   "null", "quiet", "with-filename", "no-filename", "after-context", "before-context", "context",
   "regexp", "threads", "max-count", "max-depth", "glob", "type", "type-not", "text", "follow",
-  "hidden", "unrestricted",
+  "hidden", "unrestricted", "byte-offset", "replace", "file", "encoding", "max-columns", "pretty", "multiline",
 ];
 
 pub function defaults(): Options {
   return Options {
-    patterns: [], paths: [], on: 0i64, mode: Lines, case: 0, line_number: false, after: -1,
+    patterns: [], paths: [], on: 0i64, mode: Lines, case: 0, line_number: -1, after: -1,
     before: -1, context: -1, color: "auto", with_filename: -1, heading: -1, mmap: -1, binary: 0,
     threads: 0, max_count: -1, max_depth: -1, unrestricted: 0, sort: "", sort_reverse: false,
     path_separator: "", globs: [], iglobs: [], types: [], ignore_files: [], max_filesize: -1i64,
-    context_separator: Some("--"),
+    context_separator: Some("--"), pattern_files: [], pattern_file_at: [], replace: None, encoding: "",
+    max_columns: 0, eol: "\n",
   };
 }
 
@@ -207,8 +250,8 @@ function set_case_or_lines(o: Options, name: string): Options {
     "ignore-case" => Options { ...o, case: 1 },
     "case-sensitive" => Options { ...o, case: 0 },
     "smart-case" => Options { ...o, case: 2 },
-    "line-number" => Options { ...o, line_number: true },
-    "no-line-number" => Options { ...o, line_number: false },
+    "line-number" => Options { ...o, line_number: 1 },
+    "no-line-number" => Options { ...o, line_number: 0 },
     "with-filename" => Options { ...o, with_filename: 1 },
     "no-filename" => Options { ...o, with_filename: 0 },
     "heading" => Options { ...o, heading: 1 },
@@ -271,6 +314,11 @@ function set_other_switch(o: Options, name: string): Options {
   return match (name) {
     "sort-files" => Options { ...o, sort: "path", sort_reverse: false },
     "no-context-separator" => Options { ...o, context_separator: None },
+    "crlf" => Options { ...o, eol: "\r\n" },
+    "no-crlf" => Options { ...o, eol: if (o.eol == "\r\n") { "\n" } else { o.eol } },
+    "null-data" => Options { ...o, eol: "\x00" },
+    "no-encoding" => Options { ...o, encoding: "" },
+    "pretty" => Options { ...o, color: "always", heading: 1, line_number: 1 },
     _ => Options { ...o, sort: "" },
   };
 }
@@ -280,6 +328,9 @@ function is_mode(name: string): boolean {
 }
 
 function set_switch(o: Options, name: string, flag: string): Result[Options, string] {
+  if (name == "vimgrep") {
+    return Ok(with_bit(with_bit(Options { ...o, line_number: 1, with_filename: 1 }, VIMGREP, true), COLUMN, true));
+  }
   let on = index_of(SWITCHES, name);
   if (on >= 0) {
     return Ok(with_bit(o, on, true));
@@ -442,13 +493,32 @@ function set_text(o: Options, name: string, flag: string, value: string): Result
     return Ok(Options { ...o, types: o.types.append(TYPE_PREFIXES[t] + value) });
   }
   return match (name) {
-    "regexp" => Ok(Options { ...o, patterns: o.patterns.append(value) }),
     "color" => Ok(Options { ...o, color: choice(flag, value, ["never", "auto", "always", "ansi"])? }),
     "glob" => Ok(Options { ...o, globs: o.globs.append(value) }),
     "iglob" => Ok(Options { ...o, iglobs: o.iglobs.append(value) }),
     "ignore-file" => Ok(Options { ...o, ignore_files: o.ignore_files.append(value) }),
-    _ => set_path_separator(o, flag, value),
+    "path-separator" => set_path_separator(o, flag, value),
+    _ => set_search_text(o, name, flag, value),
   };
+}
+
+// The flags whose value is text for the search: -e, -f, -r and -E.
+function set_search_text(o: Options, name: string, flag: string, value: string): Result[Options, string] {
+  return match (name) {
+    "regexp" => Ok(Options { ...o, patterns: o.patterns.append(value) }),
+    "replace" => Ok(Options { ...o, replace: Some(value) }),
+    "file" => Ok(Options { ...o, pattern_files: o.pattern_files.append(value), pattern_file_at: o.pattern_file_at.append(o.patterns.len()) }),
+    _ => set_encoding(o, flag, value),
+  };
+}
+
+// -E: an encoding that encoding.label knows, or "none".
+function set_encoding(o: Options, flag: string, value: string): Result[Options, string] {
+  let name = encoding.label(value);
+  if (name == "") {
+    return Err("error parsing flag " + flag + ": grep config error: unknown encoding: " + value);
+  }
+  return Ok(Options { ...o, encoding: name });
 }
 
 function set_value(o: Options, name: string, flag: string, value: string): Result[Options, string] {
@@ -461,7 +531,7 @@ function set_value(o: Options, name: string, flag: string, value: string): Resul
   if (name == "context-separator") {
     return Ok(Options { ...o, context_separator: Some(unescape(value)) });
   }
-  if (index_of(["after-context", "before-context", "context", "threads", "max-count", "max-depth", "maxdepth"], name) < 0) {
+  if (index_of(["after-context", "before-context", "context", "threads", "max-count", "max-depth", "maxdepth", "max-columns"], name) < 0) {
     return set_text(o, name, flag, value);
   }
   let n = match (parse_count(value)) {
@@ -480,12 +550,18 @@ function set_count(o: Options, name: string, n: i32): Options {
     "context" => Options { ...o, context: n },
     "threads" => Options { ...o, threads: n },
     "max-count" => Options { ...o, max_count: n },
+    "max-columns" => Options { ...o, max_columns: n },
     _ => Options { ...o, max_depth: n },
   };
 }
 
 function missing(flag: string): string {
   return "missing value for flag " + flag + ": missing argument for option '" + flag + "'";
+}
+
+// The name of a long flag that is another name of a flag.
+function alias(name: string): string {
+  return if (name == "passthrough") { "passthru" } else { name };
 }
 
 // `--name` or `--name=value` at args[at - 1].
@@ -497,6 +573,7 @@ function long_flag(o: Options, args: string[], at: i32): Result[Step, string] {
     name = slice_unchecked(arg, 2, eq).to_owned();
   }
   let flag = "--" + name;
+  name = alias(name);
   if (!known(name)) {
     return Err("unrecognized flag " + flag);
   }
@@ -585,7 +662,7 @@ pub function (o: Options) searches(): boolean {
 
 // Without -e, the first positional argument is the pattern.
 function with_patterns(o: Options, positional: string[]): Result[Options, string] {
-  if (o.patterns.len() > 0 || !o.searches()) {
+  if (o.patterns.len() > 0 || o.pattern_files.len() > 0 || !o.searches()) {
     return Ok(Options { ...o, paths: positional });
   }
   if (positional.len() == 0) {
@@ -638,7 +715,9 @@ function ignores_case(o: Options): boolean {
   return true;
 }
 
-// One pattern for std/regex from the -e patterns and the flags.
+// One pattern for std/regex from the -e patterns and the flags. As in
+// ripgrep, each pattern is a group, so that its flags and a comment of
+// `(?x)` end with it.
 pub function pattern(o: Options): string {
   let parts: string[] = [];
   for p in o.patterns {
@@ -648,17 +727,29 @@ pub function pattern(o: Options): string {
       parts = parts.append(p);
     }
   }
-  let body = parts[0];
-  if (parts.len() > 1) {
-    body = "(?:" + parts.join(")|(?:") + ")";
-  }
+  let body = if (parts.len() == 0) { NO_MATCH } else { "(?:" + parts.join(")|(?:") + ")" };
   if (o.has(LINE)) {
     body = "^(?:" + body + ")$";
   } else if (o.has(WORD)) {
     body = "\\b{start-half}(?:" + body + ")\\b{end-half}";
   }
-  if (ignores_case(o)) {
-    body = "(?i)" + body;
-  }
-  return body;
+  return inline_flags(o) + body;
 }
+
+// The inline flags that the options put before the pattern.
+function inline_flags(o: Options): string {
+  let out = if (o.has(NO_UNICODE)) { "(?-u)" } else { "" };
+  if (o.has(MULTILINE)) {
+    out += if (o.has(DOTALL)) { "(?ms)" } else { "(?m)" };
+  }
+  if (o.eol == "\r\n") {
+    out += "(?mR)";
+  }
+  if (ignores_case(o)) {
+    out += "(?i)";
+  }
+  return out;
+}
+
+// A pattern that matches nothing, for -f with no pattern.
+const NO_MATCH: string = "[^\\x00-\\x{10FFFF}]";

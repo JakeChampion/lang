@@ -457,6 +457,9 @@ func printExpr(b *strings.Builder, e ast.Expr) {
 		}
 		b.WriteString(" }")
 	case *ast.BlockExpr:
+		if x.Unsafe {
+			b.WriteString("unsafe ")
+		}
 		b.WriteString("{ ")
 		for _, st := range x.Stmts {
 			printStmt(b, st)

@@ -314,6 +314,18 @@ function test_forged(): test.TestOutcome {
   return test.assert_eq(outcome(connect(client.config("tls.example", roots(ROOT)), [], true)), "the peer's CertificateVerify does not verify");
 }
 
+// Without verification, a chain from an unknown root and another name
+// connect. A forged CertificateVerify still fails.
+function test_without_verification(): test.TestOutcome {
+  let got = [
+    outcome(connect(client.config("other.example", roots(OTHER_ROOT)).without_verification(), [], false)),
+    outcome(connect(client.config("tls.example", verify.no_roots()).without_verification(), [], false)),
+    outcome(connect(client.config("tls.example", roots(OTHER_ROOT)).without_verification(), [], true)),
+    outcome(connect(client.config("other.example", roots(OTHER_ROOT)), [], false)),
+  ];
+  return test.assert_eq_array(got, ["connected ", "connected ", "the peer's CertificateVerify does not verify", "the peer's certificate is not trusted: tls verify: the certificate is not valid for other.example"]);
+}
+
 function test_save_restore(): test.TestOutcome {
   match (begin(client.config("tls.example", roots(ROOT)), WALL_MS)) {
     Ok(step) => {
@@ -590,6 +602,7 @@ function main(): i32 {
   r = r.it("an untrusted root", test_untrusted);
   r = r.it("the certificate validity window, at the given time", test_validity_window);
   r = r.it("a forged CertificateVerify", test_forged);
+  r = r.it("a session without verification still checks the signature", test_without_verification);
   r = r.it("save and restore", test_save_restore);
   r = r.it("close_notify", test_close);
   r = r.it("a close_notify before the handshake ends is an error", test_a_close_before_the_handshake_ends);

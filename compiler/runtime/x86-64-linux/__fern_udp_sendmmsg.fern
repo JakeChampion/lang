@@ -37,9 +37,9 @@ function __fern_udp_sendmmsg(fd: i32, addrs: i32[], data: i32[], lens: i32[]): i
   let v4 = -1;
   let i = 0;
   while (i < n) {
-    let size = __raw_load_ptr(lp, 3 * i + 1) as i32;
-    let seg = __raw_load_ptr(lp, 3 * i + 2) as i32;
-    let tos = __raw_load_ptr(lp, 3 * i + 3) as i32;
+    let size = __load_i32(lp + (8 + 12 * i) as usize);
+    let seg = __load_i32(lp + (12 + 12 * i) as usize);
+    let tos = __load_i32(lp + (16 + 12 * i) as usize);
     if (size < 0 || off + size > total) {
       let dropped: i32[] = __raw_array(p);
       return -22;

@@ -70,7 +70,8 @@ function inspect(source: string, mode: string): string {
         let bindings: ast.TypedBinding[] = [];
         if (mode == "subst") { bindings = bindings.append(ast.TypedBinding { name: "n", ty: typeinfo.TypeFloat { width: 32, polymorphic: false } }); }
         let args: ast.Expr[] = [ast.ExprIdent { name: "n", line: 0, col: 0, ty: "f32", builtin: false }];
-        result = callsubst.subst_fcall_stmts(body, "g", "hoisted", args, bindings);
+        result = [];
+        for st in body { result = result.append(callsubst.subst_fcall_one(st, "g", "hoisted", args, bindings)); }
     }
     if (report(body) != before) { return "mutated checked input"; }
     return report(result);

@@ -34,8 +34,9 @@ function main(): i32 {
     r = r + 32;
   }
 
-  // a $ before a non-digit / at the end is a literal $
-  if (require_regex_text(match ({ let __checked_regex_2: regex.Regex = match (regex.compile("b")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_2.replace_all_groups("abc", "$z$") }) { Ok(__text) => Some(__text), Err(__error) => { eprint(__error.to_string()); return 98; } }) == "a$z$c") {
+  // a $ before a byte that cannot start a group name, or at the end, is a
+  // literal $, and $z names the group z, which is missing
+  if (require_regex_text(match ({ let __checked_regex_2: regex.Regex = match (regex.compile("b")) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_2.replace_all_groups("abc", "$-$z$") }) { Ok(__text) => Some(__text), Err(__error) => { eprint(__error.to_string()); return 98; } }) == "a$-$c") {
     r = r + 64;
   }
 

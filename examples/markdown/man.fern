@@ -1,0 +1,151 @@
+// The groff man page of a node tree, as cmark writes it.
+import "std/array";
+import "./markdown";
+import "./nodes";
+import "./out";
+
+pub function render(t: nodes.Tree, o: markdown.Options): u8[] {
+  let r = out.new(out.MAN, o, o.width);
+  let s = nodes.Step { node: 0, exit: false };
+  while (s.node != nodes.NONE) {
+    r = node(r, t, s.node, !s.exit);
+    s = t.step(s);
+  }
+  return r.bytes();
+}
+
+function allow_wrap(r: out.R): boolean {
+  return r.width > 0 && !r.o.nobreaks;
+}
+
+// The second block of a list item, and each block after it, is indented
+// with `.RS`. `numbers` counts the blocks of each open item.
+function count_block(r: out.R): out.R {
+  let n = r.numbers.len();
+  if (n == 0) {
+    return r;
+  }
+  let count = r.numbers[n - 1] + 1;
+  let q = out.R { ...r, numbers: r.numbers.with(n - 1, count) };
+  if (count == 2) {
+    q = q.cr().lit(".RS").cr();
+  }
+  return q;
+}
+
+function node(r0: out.R, t: nodes.Tree, x: i32, entering: boolean): out.R {
+  let k = t.kind(x);
+  if (k > nodes.RULE) {
+    return inline(r0, t, x, k, entering);
+  }
+  let r = r0;
+  if (entering) {
+    r = count_block(r);
+  }
+  if (k == nodes.ITEM) {
+    return item(r, t, x, entering);
+  }
+  if (k == nodes.QUOTE || k == nodes.HEADING || k == nodes.PARAGRAPH) {
+    return text_block(r, t, x, k, entering);
+  }
+  if (k == nodes.CODE_BLOCK) {
+    return r.cr().lit(".IP\n.nf\n\\f[C]\n").out(t.lit(x), false, out.NORMAL).cr().lit("\\f[]\n.fi").cr();
+  }
+  if (k == nodes.RULE) {
+    return r.cr().lit(".PP\n  *  *  *  *  *").cr();
+  }
+  return r;
+}
+
+// A block quote is indented. A heading is `.SH` for level 1 and `.SS` for
+// the other levels. A paragraph starts with `.PP`, except the first block
+// of a list item.
+function text_block(r: out.R, t: nodes.Tree, x: i32, k: i32, entering: boolean): out.R {
+  if (k == nodes.QUOTE && entering) {
+    return r.cr().lit(".RS").cr();
+  }
+  if (k == nodes.QUOTE) {
+    return r.cr().lit(".RE").cr();
+  }
+  if (!entering) {
+    return r.cr();
+  }
+  if (k == nodes.HEADING && t.value(x) == 1) {
+    return r.cr().lit(".SH").cr();
+  }
+  if (k == nodes.HEADING) {
+    return r.cr().lit(".SS").cr();
+  }
+  if (t.kind(t.parent(x)) == nodes.ITEM && t.prev(x) == nodes.NONE) {
+    return r;
+  }
+  return r.cr().lit(".PP").cr();
+}
+
+// The start and the end of emphasis, of strong emphasis and of an image.
+const STARTS: string[] = ["\\f[I]", "\\f[B]", "", "[IMAGE: "];
+
+const ENDS: string[] = ["\\f[]", "\\f[]", "", "]"];
+
+function inline(r: out.R, t: nodes.Tree, x: i32, k: i32, entering: boolean): out.R {
+  if (k == nodes.TEXT) {
+    return r.out(t.lit(x), allow_wrap(r), out.NORMAL);
+  }
+  if (k == nodes.LINEBREAK || k == nodes.SOFTBREAK) {
+    return line_break(r, k == nodes.LINEBREAK);
+  }
+  if (k == nodes.CODE) {
+    let wrap = allow_wrap(r);
+    return r.lit("\\f[C]").out(t.lit(x), wrap, out.NORMAL).lit("\\f[]");
+  }
+  if (k == nodes.LINK && !entering) {
+    let wrap = allow_wrap(r);
+    return r.lit(" (").out(t.lit(x), wrap, out.URL).lit(")");
+  }
+  if (k == nodes.HTML) {
+    return r;
+  }
+  if (entering) {
+    return r.lit(STARTS[k - nodes.EMPH]);
+  }
+  return r.lit(ENDS[k - nodes.EMPH]);
+}
+
+// A hard line break ends the paragraph with no space after it, and the
+// option `hardbreaks` makes a soft line break one. A soft line break is a
+// line feed, or a space where a line can wrap.
+function line_break(r: out.R, hard: boolean): out.R {
+  if (hard || r.o.hardbreaks) {
+    return r.lit(".PD 0\n.P\n.PD").cr();
+  }
+  if (r.width == 0 && !r.o.nobreaks) {
+    return r.cr();
+  }
+  return r.out(" ", allow_wrap(r), out.LITERAL);
+}
+
+function item(r0: out.R, t: nodes.Tree, x: i32, entering: boolean): out.R {
+  let r = r0;
+  if (!entering) {
+    let n = r.numbers.len();
+    if (n > 0) {
+      if (r.numbers[n - 1] >= 2) {
+        r = r.cr().lit(".RE");
+      }
+      r = out.R { ...r, numbers: array.slice(r.numbers, 0, n - 1) };
+    }
+    return r.cr();
+  }
+  r = out.R { ...r, numbers: r.numbers.append(0) }.cr().lit(".IP ");
+  let list = t.parent(x);
+  if (!t.has(list, nodes.ORDERED)) {
+    return r.lit("\\[bu] 2").cr();
+  }
+  let n = t.value(list);
+  let p = t.prev(x);
+  while (p != nodes.NONE) {
+    n += 1;
+    p = t.prev(p);
+  }
+  return r.lit("\"" + n.to_string() + ".\" 4").cr();
+}

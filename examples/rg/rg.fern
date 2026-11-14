@@ -13,8 +13,10 @@ import "core/cmp";
 import "std/io";
 import "std/regex";
 import "std/worker";
+import "./encoding";
 import "./flags";
 import "./ignore";
+import "./jsonl";
 import "./search";
 import "./walk";
 
@@ -22,8 +24,8 @@ const FLUSH_BYTES: i32 = 65536;
 
 const NOTHING_SEARCHED: string = "No files were searched, which means ripgrep probably applied a filter you didn't expect.\nRunning with --debug will show why files are being skipped.";
 
-// What a search of files needs: the printer, the pattern, how to name and
-// read each file, and which messages to write.
+// What a search of files needs: the printer, the pattern, how to name,
+// read and decode each file, and which messages to write.
 struct Ctx {
   p: search.Printer,
   pattern: string,
@@ -34,12 +36,18 @@ struct Ctx {
   quiet: boolean,
   messages: boolean,
   ignore_messages: boolean,
+  encoding: string,
 }
 
+// What the searches of some files counted for --stats: the files searched
+// and the files with a match, the time of the searches, and for --json the
+// counts of the files that it writes.
+struct Totals { all: jsonl.Counts, json: jsonl.Counts, nanos: i64 }
+
 // The result of a search of some files: the output, the error messages,
-// whether a file matched, whether an error happened, and whether a file was
-// searched.
-struct Part { out: string, errors: string[], matched: boolean, failed: boolean, searched: boolean }
+// whether a file matched, whether an error happened, whether a file was
+// searched, and the totals.
+struct Part { out: string, errors: string[], matched: boolean, failed: boolean, searched: boolean, totals: Totals }
 
 // Writes the buffer when it is full, or when `all` is true.
 function flush(h: usize, all: boolean): boolean {
@@ -52,9 +60,36 @@ function flush(h: usize, all: boolean): boolean {
   return true;
 }
 
-function compiled(pattern: string): Option[regex.Regex] {
+const MULTILINE_HINT: string = "Consider enabling multiline mode with the --multiline flag (or -U for short).\nWhen multiline mode is enabled, new line characters can be matched.";
+
+// The bytes that a pattern cannot have as a literal without -U, as in
+// ripgrep: the line terminator, and with --crlf the carriage return.
+function banned(o: flags.Options): u8[] {
+  if (o.has(flags.MULTILINE)) {
+    return [];
+  }
+  if (o.eol == "\x00") {
+    return [0u8];
+  }
+  return if (o.eol == "\r\n") { [10u8, 13u8] } else { [10u8] };
+}
+
+function byte_name(b: u8): string {
+  if (b == 0u8) {
+    return "\\0";
+  }
+  return if (b == 13u8) { "\\r" } else { "\\n" };
+}
+
+function compiled(pattern: string, banned: u8[]): Option[regex.Regex] {
   match (regex.compile(pattern)) {
     Ok(re) => {
+      for b in banned {
+        if (re.has_literal_byte(b)) {
+          eprint("rg: the literal \"" + byte_name(b) + "\" is not allowed in a regex\n\n" + MULTILINE_HINT);
+          return None;
+        }
+      }
       return Some(re);
     },
     Err(e) => {
@@ -72,6 +107,33 @@ function read_input(path: string): Result[u8[], IoError] {
   return read_file_bytes(path);
 }
 
+function no_counts(): jsonl.Counts {
+  return jsonl.Counts { matches: 0, lines: 0, printed: 0i64, searched: 0i64, searches: 0, with_match: 0 };
+}
+
+function no_totals(): Totals {
+  return Totals { all: no_counts(), json: no_counts(), nanos: 0i64 };
+}
+
+function add(a: jsonl.Counts, b: jsonl.Counts): jsonl.Counts {
+  return jsonl.Counts {
+    matches: a.matches + b.matches, lines: a.lines + b.lines, printed: a.printed + b.printed, searched: a.searched + b.searched,
+    searches: a.searches + b.searches, with_match: a.with_match + b.with_match,
+  };
+}
+
+// The totals with the search of one more file. --json counts only the
+// files that it writes.
+function tally(ctx: Ctx, t: Totals, out: search.Outcome, nanos: i64): Totals {
+  let s = out.stats;
+  let c = jsonl.Counts {
+    matches: s.matches, lines: s.lines, printed: s.printed, searched: s.searched, searches: 1,
+    with_match: if (out.matched) { 1 } else { 0 },
+  };
+  let json = if (ctx.p.json && s.printed > 0i64) { add(t.json, c) } else { t.json };
+  return Totals { all: add(t.all, c), json: json, nanos: t.nanos + nanos };
+}
+
 // The name of a file in the output. Without a path on the command line,
 // ripgrep drops the leading "./".
 function display_name(ctx: Ctx, path: string): string {
@@ -84,12 +146,13 @@ function display_name(ctx: Ctx, path: string): string {
   return path;
 }
 
-// How ripgrep reads a file, with the line buffer of capacity `cap`. -a
-// turns off the search for binary data, and --binary searches a walked file
-// as one on the command line.
-function source(ctx: Ctx, it: walk.Item, cap: i32): search.Source {
-  let mapped = ctx.mmap && it.path != "-";
-  let detect = if (ctx.binary == 2) {
+// How ripgrep reads a file, with the line buffer of capacity `cap`. -a and
+// --null-data turn off the search for binary data, and --binary searches a
+// walked file as one on the command line. A decoded file is read in
+// buffers.
+function source(ctx: Ctx, it: walk.Item, cap: i32, decoded: boolean): search.Source {
+  let mapped = ctx.mmap && it.path != "-" && !decoded;
+  let detect = if (ctx.binary == 2 || ctx.p.term == 0) {
     search.DETECT_NONE
   } else if (it.explicit || ctx.binary == 1) {
     search.DETECT_CONVERT
@@ -102,8 +165,7 @@ function source(ctx: Ctx, it: walk.Item, cap: i32): search.Source {
 // Searches the files of `items` in order, and writes their output to `h`.
 // A message of the walk goes to the standard error at its place.
 function search_items(ctx: Ctx, re: regex.Regex, items: walk.Item[], h: usize): Part {
-  let none: string[] = [];
-  let r = Part { out: "", errors: none, matched: false, failed: false, searched: false };
+  let r = empty_part();
   let written = false;
   let cap = search.BUFFER;
   for it in items {
@@ -114,11 +176,12 @@ function search_items(ctx: Ctx, re: regex.Regex, items: walk.Item[], h: usize): 
     r = Part { ...r, searched: true };
     match (read_input(it.path)) {
       Ok(bytes) => {
-        let text = unsafe { string_from_bytes_unchecked(bytes) };
-        let out = search.search(ctx.p, re, text, display_name(ctx, it.path), source(ctx, it, cap), h, written);
+        let t0 = monotonic_ns();
+        let (text, decoded) = encoding.decode(bytes, ctx.encoding);
+        let out = search.search(ctx.p, re, text, display_name(ctx, it.path), source(ctx, it, cap, decoded), h, written);
         written = out.written;
         cap = out.cap;
-        r = Part { ...r, matched: r.matched || out.matched };
+        r = Part { ...r, matched: r.matched || out.matched, totals: tally(ctx, r.totals, out, monotonic_ns() - t0) };
         if (!flush(h, false)) {
           return Part { ...r, failed: true };
         }
@@ -134,6 +197,11 @@ function search_items(ctx: Ctx, re: regex.Regex, items: walk.Item[], h: usize): 
   return r;
 }
 
+function empty_part(): Part {
+  let none: string[] = [];
+  return Part { out: "", errors: none, matched: false, failed: false, searched: false, totals: no_totals() };
+}
+
 // Writes a message now, and records an error.
 function note(ctx: Ctx, r: Part, text: string, error: boolean): Part {
   if (ctx.messages && (error || ctx.ignore_messages)) {
@@ -146,7 +214,7 @@ function note(ctx: Ctx, r: Part, text: string, error: boolean): Part {
 // text, and the parent writes it.
 function search_part(ctx: Ctx, items: walk.Item[]): Part {
   let Ok(re) = regex.compile(ctx.pattern) else {
-    return Part { out: "", errors: [], matched: false, failed: true, searched: false };
+    return Part { ...empty_part(), failed: true };
   };
   let h = buf_new(FLUSH_BYTES);
   let r = search_buffered(ctx, re, items, h);
@@ -157,19 +225,19 @@ function search_part(ctx: Ctx, items: walk.Item[]): Part {
 
 // As search_items, but the output stays in the buffer.
 function search_buffered(ctx: Ctx, re: regex.Regex, items: walk.Item[], h: usize): Part {
-  let none: string[] = [];
-  let r = Part { out: "", errors: none, matched: false, failed: false, searched: false };
+  let r = empty_part();
   let written = false;
   let cap = search.BUFFER;
   for it in items {
     r = Part { ...r, searched: true };
     match (read_input(it.path)) {
       Ok(bytes) => {
-        let text = unsafe { string_from_bytes_unchecked(bytes) };
-        let out = search.search(ctx.p, re, text, display_name(ctx, it.path), source(ctx, it, cap), h, written);
+        let t0 = monotonic_ns();
+        let (text, decoded) = encoding.decode(bytes, ctx.encoding);
+        let out = search.search(ctx.p, re, text, display_name(ctx, it.path), source(ctx, it, cap, decoded), h, written);
         written = out.written;
         cap = out.cap;
-        r = Part { ...r, matched: r.matched || out.matched };
+        r = Part { ...r, matched: r.matched || out.matched, totals: tally(ctx, r.totals, out, monotonic_ns() - t0) };
       },
       Err(e) => {
         r = Part { ...r, errors: r.errors.append(display_name(ctx, it.path) + ": " + ignore.os_error(e)), failed: true };
@@ -212,8 +280,7 @@ function parts(ctx: Ctx, runs: walk.Item[][], k: i32): Part[] {
 // Searches the files with `threads` workers. The messages of the walk come
 // first, then the output of each worker in turn.
 function search_parallel(ctx: Ctx, items: walk.Item[], threads: i32): Part {
-  let none: string[] = [];
-  let r = Part { out: "", errors: none, matched: false, failed: false, searched: false };
+  let r = empty_part();
   let files: walk.Item[] = [];
   for it in items {
     if (it.path == "") {
@@ -247,7 +314,10 @@ function merge(ctx: Ctx, r0: Part, part: Part): Part {
     print_raw(part.out);
     r = Part { ...r, out: "x" };
   }
-  return Part { ...r, matched: r.matched || part.matched, failed: r.failed || part.failed, searched: r.searched || part.searched };
+  return Part {
+    ...r, matched: r.matched || part.matched, failed: r.failed || part.failed, searched: r.searched || part.searched,
+    totals: Totals { all: add(r.totals.all, part.totals.all), json: add(r.totals.json, part.totals.json), nanos: r.totals.nanos + part.totals.nanos },
+  };
 }
 
 function print_raw(text: string): void {
@@ -426,7 +496,7 @@ function path_order(a: string, b: string): i32 {
 // --files: each file to search, one on each line.
 function list_files(ctx: Ctx, items: walk.Item[], o: flags.Options): i32 {
   let h = buf_new(FLUSH_BYTES);
-  let r = Part { out: "", errors: [], matched: false, failed: false, searched: false };
+  let r = empty_part();
   let term = if (o.has(flags.NULL)) { "\x00" } else { "\n" };
   for it in items {
     if (it.path == "") {
@@ -500,10 +570,20 @@ function context_of(o: flags.Options, paths: string[]): Ctx {
   let threads = threads_of(o, one_file);
   let pattern = if (o.searches()) { flags.pattern(o) } else { "" };
   return Ctx {
-    p: search.printer(o, isatty(1), one_file), pattern: pattern, implicit: o.paths.len() == 0, mmap: maps(o, paths),
+    p: search.printer(o, isatty(1), term_color(), one_file), pattern: pattern, implicit: o.paths.len() == 0, mmap: maps(o, paths),
     binary: o.binary, threads: threads, quiet: o.has(flags.QUIET), messages: !o.has(flags.NO_MESSAGES),
-    ignore_messages: !o.has(flags.NO_IGNORE_MESSAGES),
+    ignore_messages: !o.has(flags.NO_IGNORE_MESSAGES), encoding: o.encoding,
   };
+}
+
+// Whether the terminal takes color, as termcolor asks for --color auto: a
+// TERM that is not "dumb", and no NO_COLOR.
+function term_color(): boolean {
+  let term = match (env("TERM")) {
+    Some(t) => t,
+    None => "",
+  };
+  return term != "" && term != "dumb" && env("NO_COLOR") == None;
 }
 
 // The files to search and the messages of the walk, in the order of
@@ -521,7 +601,7 @@ function items_of(ctx: Ctx, o: flags.Options, cfg: ignore.Config, paths: string[
   return items;
 }
 
-function run(o: flags.Options): i32 {
+function run(o: flags.Options, t0: i64): i32 {
   let paths = paths_of(o);
   let ctx = context_of(o, paths);
   let cfg = match (config(o)) {
@@ -535,14 +615,33 @@ function run(o: flags.Options): i32 {
   if (!o.searches()) {
     return list_files(ctx, items, o);
   }
-  let Some(re) = compiled(ctx.pattern) else {
+  let Some(re) = compiled(ctx.pattern, banned(o)) else {
     return 2;
   };
   let r = if (ctx.threads > 1) { search_parallel(ctx, items, ctx.threads) } else { search_serial(ctx, re, items) };
   if (ctx.implicit && !r.searched) {
     r = note(ctx, r, NOTHING_SEARCHED, true);
   }
+  print_totals(ctx, o, r.totals, monotonic_ns() - t0);
   return status(r.matched, r.failed, ctx.quiet);
+}
+
+// The last message of --json, or the lines of --stats.
+function print_totals(ctx: Ctx, o: flags.Options, t: Totals, total: i64): void {
+  if (ctx.p.json && o.mode == flags.Lines && !ctx.quiet) {
+    print_raw(jsonl.summary(t.json, t.nanos, total));
+  } else if (o.has(flags.STATS)) {
+    print_raw(stats_text(t, total));
+  }
+}
+
+// The lines of --stats, after an empty line.
+function stats_text(t: Totals, total: i64): string {
+  let c = t.all;
+  let out = "\n" + c.matches.to_string() + " matches\n" + c.lines.to_string() + " matched lines\n";
+  out += c.with_match.to_string() + " files contained matches\n" + c.searches.to_string() + " files searched\n";
+  out += c.printed.to_string() + " bytes printed\n" + c.searched.to_string() + " bytes searched\n";
+  return out + jsonl.seconds(t.nanos) + " seconds spent searching\n" + jsonl.seconds(total) + " seconds\n";
 }
 
 function search_serial(ctx: Ctx, re: regex.Regex, items: walk.Item[]): Part {
@@ -555,9 +654,62 @@ function search_serial(ctx: Ctx, re: regex.Regex, items: walk.Item[]): Part {
   return r;
 }
 
+// The options with the patterns of the -f files in their place among the
+// -e patterns. A line terminator, and a CR before it, end each pattern.
+function with_pattern_files(o: flags.Options): Result[flags.Options, string] {
+  let patterns: string[] = [];
+  let k = 0;
+  for i in 0..o.patterns.len() + 1 {
+    while (k < o.pattern_files.len() && o.pattern_file_at[k] == i) {
+      patterns = patterns.concat(read_patterns(o.pattern_files[k])?);
+      k += 1;
+    }
+    if (i < o.patterns.len()) {
+      patterns = patterns.append(o.patterns[i]);
+    }
+  }
+  return Ok(flags.Options { ...o, patterns: patterns });
+}
+
+function read_patterns(path: string): Result[string[], string] {
+  let bytes = match (read_input(path)) {
+    Ok(b) => b,
+    Err(e) => {
+      return Err(path + ": " + ignore.os_error(e));
+    },
+  };
+  let text = unsafe { string_from_bytes_unchecked(bytes) };
+  let out: string[] = [];
+  let start = 0;
+  let n = 1;
+  while (start < text.len()) {
+    let nl = __memchr(text, 10, start);
+    let end = if (nl < 0) { text.len() } else { nl };
+    let stop = if (end > start && text[end - 1] == 13u8) { end - 1 } else { end };
+    let line = slice_unchecked(text, start, stop).to_owned();
+    let bad = encoding.invalid_at(line);
+    if (bad >= 0) {
+      let hex = encoding.escaped(slice_unchecked(line, bad, bad + 1).to_owned());
+      return Err(f"{path}:{n}: found invalid UTF-8 in pattern at byte offset {bad}: {encoding.escaped(line)} (disable Unicode mode and use hex escape sequences to match arbitrary bytes in a pattern, e.g., '(?-u){hex}')");
+    }
+    out = out.append(line);
+    start = end + 1;
+    n += 1;
+  }
+  return Ok(out);
+}
+
 function main(): i32 {
+  let t0 = monotonic_ns();
   let argv = args();
-  let o = match (flags.parse(argv.drop(1))) {
+  let parsed = match (flags.parse(argv.drop(1))) {
+    Ok(v) => v,
+    Err(why) => {
+      eprint("rg: " + why);
+      return 2;
+    },
+  };
+  let o = match (with_pattern_files(parsed)) {
     Ok(v) => v,
     Err(why) => {
       eprint("rg: " + why);
@@ -570,5 +722,5 @@ function main(): i32 {
   if (o.searches() && o.max_count == 0) {
     return 1;
   }
-  return run(o);
+  return run(o, t0);
 }

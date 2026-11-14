@@ -56,6 +56,9 @@ function main(): i32 {
 		{"generic-local", `function local[T](x: T): [u8] { let s: string = "a" + args()[0]; return s.as_bytes(); } function main(): i32 { return local(1).len(); }`, "main:0\nlocal__i32:1\n"},
 		{"branch-local", `function f(p: string, flag: boolean): [u8] { let s: string = p; if (flag) { s = "a" + args()[0]; } return s.as_bytes(); }`, "f:1\n"},
 		{"reassigned-parameter", `function f(p: string): [u8] { let s: string = "a" + args()[0]; s = p; return s.as_bytes(); }`, "f:0\n"},
+		{"field-parameter-view-record", `struct T { text: string } struct Holder { text: str } function f(t: T): Holder { return Holder { text: slice_unchecked(t.text, 0, 1) }; }`, "f:0\n"},
+		{"nested-field-parameter-view-record", `struct T { text: string } struct O { t: T } struct Holder { text: str } function f(o: O): Holder { let u = o; return Holder { text: slice_unchecked(u.t.text, 0, 1) }; }`, "f:0\n"},
+		{"field-local-view-record", `struct T { text: string } struct Holder { text: str } function f(): Holder { let t = T { text: "a" + args()[0] }; return Holder { text: slice_unchecked(t.text, 0, 1) }; }`, "f:2\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, err := runX86_64Bin(runner, bin, tc.source).CombinedOutput()

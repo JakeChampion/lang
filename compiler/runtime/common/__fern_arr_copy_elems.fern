@@ -1,0 +1,18 @@
+function __fern_arr_copy_elems(dst: usize, src: usize, count: i32, size: i32): i32 {
+  // A copy of count elements of size bytes, in parts that keep each byte count in an i32.
+  let to = dst;
+  let from = src;
+  let left = count;
+  while (left > 0) {
+    let part = left;
+    if (part > 134217728) {
+      part = 134217728;
+    }
+    let bytes = part * size;
+    __memcpy(to, from, bytes);
+    to = to + bytes as usize;
+    from = from + bytes as usize;
+    left -= part;
+  }
+  return 0;
+}

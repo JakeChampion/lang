@@ -1,6 +1,6 @@
 # Workers
 
-Status: [reference] shipped: `std/worker` with `spawn`, `join` and `poll`, the
+Status: [reference] shipped: `std/worker` with `spawn`, `join`, `poll` and `parallel`, the
 `send` parameter mode and `E100`. A worker is a process on native Linux,
 Android and macOS, and `std/sim` implements the scheduler seam. Every other engine runs a worker
 inline. Real threads are not shipped.
@@ -154,7 +154,9 @@ free lists are empty.
 
 The module decides at `spawn`. A native Linux, Android or macOS program
 forks. The interpreters map no region, and wasm keeps the inline order of
-step 1.
+step 1. `worker.parallel()` makes the same test, so a program can know which
+of the two `spawn` does. `examples/load` uses it to run one reactor where the
+workers run inline.
 
 A worker ends when its parent ends, so no worker runs detached. Linux and
 Android set `PR_SET_PDEATHSIG` to SIGTERM in the child. macOS has no such

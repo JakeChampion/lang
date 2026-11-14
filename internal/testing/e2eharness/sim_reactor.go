@@ -43,9 +43,9 @@ function main(): i32 {
     events = drv.wait_into(events, None);
     if (async.ready_pairs(events) != 2 || events[0] != 7 || events[2] != 8) { return fail(20); }
     events = drv.wait_into(events, None);
-    if (events.len() != 4 || async.ready_pairs(events) != 1 || events[0] != 7) { return fail(21); }
+    if (events.len() != 8 || async.ready_pairs(events) != 1 || events[0] != 7) { return fail(21); }
     events = drv.wait_into(events, Some(time.duration_millis(10)));
-    if (events.len() != 4 || async.ready_pairs(events) != 0) { return fail(22); }
+    if (events.len() != 8 || async.ready_pairs(events) != 0) { return fail(22); }
     if (async.ready_pairs(async.end_pairs([5, 1, 6, 1], 1)) != 1) { return fail(23); }
     if (drv.close() != 0) { return fail(24); }
     print("ok");

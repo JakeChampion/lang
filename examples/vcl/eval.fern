@@ -251,7 +251,7 @@ function integer_or(text: string, args: value.Value[]): value.Value {
 }
 
 function call_regex(t: runtime.Txn, name: string, args: value.Value[]): EvalOut {
-  match (regex.compile(arg_str(args, 1))) {
+  match (compile_pattern(arg_str(args, 1))) {
     Err(e) => {
       return eerr(t, e.to_string());
     },
@@ -607,7 +607,17 @@ pub function run_sub(ctx: Ctx, t: runtime.Txn, name: string): ExecOut {
   return exec_block(ctx, t, name, body, 0);
 }
 
+// Varnish compiles PCRE2 without UTF mode, so a VCL pattern matches bytes.
+// An error offset counts from the start of the pattern, not of the flag group.
+function compile_pattern(pattern: string): Result[regex.Regex, regex.CompileError] {
+  let flags = "(?-u)";
+  return match (regex.compile(flags + pattern)) {
+    Ok(r) => Ok(r),
+    Err(e) => Err(regex.CompileError { kind: e.kind, offset: e.offset - flags.len() }),
+  };
+}
+
 // Match errors use the evaluator's existing error channel.
 pub function match_pattern(pattern: string, text: string, negate: boolean): Result[value.Value, string] {
-  return match (regex.compile(pattern)) { Ok(compiled) => Ok(VBool(compiled.is_match(text) != negate)), Err(e) => Err(e.to_string()) };
+  return match (compile_pattern(pattern)) { Ok(compiled) => Ok(VBool(compiled.is_match(text) != negate)), Err(e) => Err(e.to_string()) };
 }

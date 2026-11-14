@@ -30,7 +30,7 @@ function emit(): ssaprepare.Output {
   let m = parser.parse_module(lexer.tokenize(source));
   require(!asmcore.refuse_parse_errors([m]), "source parsed");
   let g = semlower.program(semlower.driven(m, "x86-64-linux"));
-  let sw = asmcore.Switches { backtrace: false, sanitize: false, sandbox: false, cover: false, symbols: false, optimize: false, leak_check: false, rc_free_debug: false, var_rows: false, shared: false, size: false, harden: false, heap_limit: 0i64, quarantine: asmcore.quarantine_default(), pie: false, profile: "", target: "", line_maps: [], ram_base: 0i64, ram_size: 0i64, interrupts: [], early: "", secondary: "", user_mode: false };
+  let sw = asmcore.Switches { backtrace: false, sanitize: false, sandbox: false, cover: false, symbols: false, optimize: false, leak_check: false, rc_free_debug: false, var_rows: false, shared: false, size: false, harden: false, heap_limit: 0i64, quarantine: asmcore.quarantine_default(), cpu_limit: 0i64, pie: false, profile: "", target: "", line_maps: [], ram_base: 0i64, ram_size: 0i64, interrupts: [], early: "", secondary: "", user_mode: false };
   return asm_ir.emit_module_ir_unit_prepared(g.im, false, false, "", [], g.im.funcs, g.stab, 0, -1, g.cache, g.physical, semlower.runtime_module_lowering, 0 as usize, sw, true);
 }
 
@@ -65,7 +65,7 @@ function namespace(output: ssaprepare.Output, row: ssaprepare.Emitted): void {
 }
 
 function correspondence(output: ssaprepare.Output, row: ssaprepare.Emitted): void {
-  let from = "movq $3, %rdi";
+  let from = "movq $2, %rdi";
   let to = "unknown_instruction";
   check(ssaprepare.Output { ...output, text: change(output.text, from, to) }, false, "changed final instructions");
   let changed = ssaprepare.Emitted { ...row, assembly: change(row.assembly, from, to) };

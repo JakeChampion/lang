@@ -1,0 +1,139 @@
+// The node tree of a document, and its output in the formats of cmark other
+// than HTML: `xml`, `man`, `commonmark` and `latex`.
+import "std/io_buffered";
+import "./blocks";
+import "./commonmark";
+import "./inlines";
+import "./latex";
+import "./man";
+import "./markdown";
+import "./nodes";
+import "./xml";
+
+// The document `src` in the format `format`. The output of the formats that
+// cmark writes with its text renderer can have bytes that are not UTF-8.
+pub function render(src: string, format: string, o: markdown.Options): u8[] {
+  let t = tree(src, o);
+  if (format == "xml") {
+    return xml.render(t, o);
+  }
+  if (format == "man") {
+    return man.render(t, o);
+  }
+  if (format == "latex") {
+    return latex.render(t, o);
+  }
+  return commonmark.render(t, o);
+}
+
+// Writes the document `src` in the format `format` to `w`. The XML goes to
+// the writer a part at a time, as `markdown.write` writes HTML.
+pub function write(w: io_buffered.BufWriter, src: string, format: string, o: markdown.Options, part: i32): Result[io_buffered.BufWriter, IoError] {
+  if (format == "xml") {
+    return xml.write(w, tree(src, o), o, part);
+  }
+  return w.write_bytes(render(src, format, o));
+}
+
+// The node tree of the document `src`, as cmark parses it with the options
+// `o`.
+pub function tree(src: string, o: markdown.Options): nodes.Tree {
+  let d = blocks.parse(src, o.sourcepos);
+  let t = nodes.new();
+  if (o.sourcepos) {
+    t = t.set_start(0, 1, 1).set_end(0, d.lines, d.last);
+  }
+  let w = inlines.work(markdown.inline_flags(o));
+  for r in 0..d.count() {
+    let k = d.kind(r);
+    if (k == blocks.END) {
+      t = t.leave();
+    } else {
+      let (t2, w2) = block(t, d, r, k, w, o.sourcepos);
+      t = t2;
+      w = w2;
+    }
+  }
+  return t.finish();
+}
+
+// Adds the record `r` of the kind `k`. The node of a container stays open
+// until its END record.
+function block(t0: nodes.Tree, d: blocks.Doc, r: i32, k: i32, w: inlines.Work, positions: boolean): (nodes.Tree, inlines.Work) {
+  let t = t0.enter(k);
+  let x = t.last();
+  if (positions) {
+    let (sl, sc, el, ec) = d.span_of(r);
+    t = t.set_start(x, sl, sc).set_end(x, el, ec);
+  }
+  if (k == blocks.LIST) {
+    return (t.set_value(x, d.value(r)).set_flags(x, list_flags(d, r)), w);
+  }
+  if (k == blocks.QUOTE || k == blocks.ITEM) {
+    return (t, w);
+  }
+  if (k == blocks.PARAGRAPH || k == blocks.HEADING) {
+    let line = 0;
+    let off = 0;
+    if (positions) {
+      let (tl, to) = d.text_base(r);
+      line = tl;
+      off = to;
+    }
+    let (t2, w2) = inlines.build(t.set_value(x, d.value(r)), d, d.from(r), d.to(r), w, line, off);
+    return (t2.leave(), w2);
+  }
+  if (k == blocks.CODE) {
+    return (code(t, d, r, x, w.t).leave(), w);
+  }
+  let from = t.here();
+  push_lines(t.bytes(), d, d.from(r), d.to(r));
+  return (t.set_lit(x, from, t.here()).leave(), w);
+}
+
+function list_flags(d: blocks.Doc, r: i32): i32 {
+  let f = 0;
+  if (d.has_flag(r, blocks.F_ORDERED)) {
+    f |= nodes.ORDERED;
+  }
+  if (d.has_flag(r, blocks.F_PAREN)) {
+    f |= nodes.PAREN;
+  }
+  if (d.has_flag(r, blocks.F_TIGHT)) {
+    f |= nodes.TIGHT;
+  }
+  return f;
+}
+
+// The content of a code block, and the info string of a fenced code block.
+// As in cmark, a fence with nothing after it gives no info string, and a
+// fence with only spaces after it gives an empty one.
+function code(t0: nodes.Tree, d: blocks.Doc, r: i32, x: i32, tables: inlines.Tables): nodes.Tree {
+  let t = t0;
+  let from = d.from(r);
+  if (d.has_flag(r, blocks.F_FENCED)) {
+    t = t.set_flags(x, nodes.FENCED);
+    let s = d.segs[from];
+    if (blocks.seg_end(s) > blocks.seg_start(s)) {
+      let a = t.here();
+      buf_push(t.bytes(), markdown.info_string(d, from, tables));
+      t = t.set_extra(x, a, t.here());
+    }
+    from += 1;
+  }
+  let a = t.here();
+  push_lines(t.bytes(), d, from, d.to(r));
+  return t.set_lit(x, a, t.here());
+}
+
+// The lines `from` to `to`, each with a line feed after it.
+function push_lines(out: usize, d: blocks.Doc, from: i32, to: i32): void {
+  for k in from..to {
+    let s = d.segs[k];
+    for _ in 0..blocks.seg_pad(s) {
+      buf_push_byte(out, 32);
+    }
+    buf_push_range(out, d.src, blocks.seg_start(s), blocks.seg_end(s));
+    buf_push_byte(out, 10);
+  }
+}

@@ -18,7 +18,7 @@ The sandbox is a run-time rule about a process.
 `FERN_SANDBOX=1` installs a seccomp allowlist of the system call numbers the program contains, after `no_new_privs`, and a denied call ends the process with `SIGSYS`.
 
 The filter also checks nine arguments of eight calls. An executable mapping and a socket outside `AF_UNIX`, `AF_INET` and `AF_INET6` are killed. So is a foreign `ioctl` request, `setsockopt` level or option, `prctl` option or `fcntl` command. An `openat` with `O_PATH`, `O_TMPFILE` or `O_ASYNC` is killed. A `clone` that makes a namespace is killed.
-`-heap-limit` bounds the arena, `rlimit_nofile` reads the descriptor ceiling, and `setuid`, `setgid` and `setgroups` drop privilege.
+`-heap-limit` bounds the arena, `-cpu-limit` bounds the processor time, `rlimit_nofile` reads the descriptor ceiling, and `setuid`, `setgid` and `setgroups` drop privilege.
 
 The two compose.
 A grant answers what a dependency can reach, before the program exists.
@@ -49,4 +49,4 @@ The compiler reads sources and writes an image, so a sandbox for build scripts h
 - A grant is static. A program cannot attenuate a capability at run time or hand a dependency a single file.
 - The sandbox filters by system call number and nine arguments of eight calls, on x86-64-linux and arm64-linux. A path is not checked.
 - A raw builtin of [UNSAFE-INVENTORY.md](UNSAFE-INVENTORY.md) in a function of a package needs the `privileged` grant: a raw load or store, an allocation, a reference count, a raw system call, a foreign call through `__c_call`. A call site in the standard library does not count for the caller, because the standard library uses these builtins for its strings, arrays and maps. So the grant covers the code of the package, and the standard library stays the trusted floor.
-- A resource quota exists for the arena and the descriptor count. There is no CPU time or child process quota.
+- A resource quota exists for the arena, the descriptor count and the processor time (`-cpu-limit`). There is no child process quota.

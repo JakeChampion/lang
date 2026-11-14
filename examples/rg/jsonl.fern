@@ -1,0 +1,147 @@
+// The --json output of the rg port: one JSON message on each line, with the
+// shape and the key order of ripgrep 14.1.0.
+//
+// A text that is valid UTF-8 is {"text":"..."}, and another is
+// {"bytes":"..."} in base64. The escapes are those of serde_json.
+import "std/i64";
+import "std/utf8" as utf8;
+
+const HEX: string = "0123456789abcdef";
+
+const B64: string = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+// What the messages count: the matches, the selected lines, the bytes
+// written, the bytes searched, the searches and the searches with a match.
+pub struct Counts { matches: i32, lines: i32, printed: i64, searched: i64, searches: i32, with_match: i32 }
+
+// Appends `text` from `lo` to `hi` as a JSON string.
+function push_string(h: usize, text: string, lo: i32, hi: i32): void {
+  buf_push_byte(h, 34);
+  let done = lo;
+  for i in lo..hi {
+    let b = text[i] as i32;
+    if (b >= 32 && b != 34 && b != 92) {
+      continue;
+    }
+    buf_push_range(h, text, done, i);
+    push_escape(h, b);
+    done = i + 1;
+  }
+  buf_push_range(h, text, done, hi);
+  buf_push_byte(h, 34);
+}
+
+function push_escape(h: usize, b: i32): void {
+  let at = __memchr("\"\\\x08\x0c\n\r\t", b, 0);
+  if (at >= 0) {
+    buf_push(h, ["\\\"", "\\\\", "\\b", "\\f", "\\n", "\\r", "\\t"][at]);
+    return;
+  }
+  buf_push(h, "\\u00");
+  buf_push_byte(h, HEX[b >> 4] as i32);
+  buf_push_byte(h, HEX[b & 15] as i32);
+}
+
+// Appends {"text":...} or {"bytes":...} for `text` from `lo` to `hi`.
+function push_data(h: usize, text: string, lo: i32, hi: i32): void {
+  let part = slice_unchecked(text, lo, hi);
+  if (utf8.is_valid(part.to_owned())) {
+    buf_push(h, "{\"text\":");
+    push_string(h, text, lo, hi);
+  } else {
+    buf_push(h, "{\"bytes\":\"");
+    push_base64(h, text, lo, hi);
+    buf_push(h, "\"");
+  }
+  buf_push(h, "}");
+}
+
+function push_base64(h: usize, text: string, lo: i32, hi: i32): void {
+  let i = lo;
+  while (i < hi) {
+    let n = hi - i;
+    let b0 = text[i] as i32;
+    let b1 = if (n > 1) { text[i + 1] as i32 } else { 0 };
+    let b2 = if (n > 2) { text[i + 2] as i32 } else { 0 };
+    buf_push_byte(h, B64[b0 >> 2] as i32);
+    buf_push_byte(h, B64[(b0 & 3) << 4 | b1 >> 4] as i32);
+    buf_push_byte(h, if (n > 1) { B64[(b1 & 15) << 2 | b2 >> 6] as i32 } else { 61 });
+    buf_push_byte(h, if (n > 2) { B64[b2 & 63] as i32 } else { 61 });
+    i += 3;
+  }
+}
+
+function push_path(h: usize, name: string): void {
+  buf_push(h, "\"path\":");
+  push_data(h, name, 0, name.len());
+}
+
+// The message that starts the output of a file.
+pub function begin(h: usize, name: string): void {
+  buf_push(h, "{\"type\":\"begin\",\"data\":{");
+  push_path(h, name);
+  buf_push(h, "}}\n");
+}
+
+// A "match" or a "context" message for the line from `start` to `end` of
+// `text`, with its line terminator. `spans` holds the start and the end of
+// each match in the line.
+pub function line(h: usize, kind: string, name: string, text: string, start: i32, end: i32, ln: i32, spans: i32[]): void {
+  let stop = if (end < text.len()) { end + 1 } else { end };
+  buf_push(h, "{\"type\":\"" + kind + "\",\"data\":{");
+  push_path(h, name);
+  buf_push(h, ",\"lines\":");
+  push_data(h, text, start, stop);
+  buf_push(h, ",\"line_number\":" + ln.to_string() + ",\"absolute_offset\":" + start.to_string() + ",\"submatches\":[");
+  let k = 0;
+  while (k < spans.len()) {
+    if (k > 0) {
+      buf_push(h, ",");
+    }
+    buf_push(h, "{\"match\":");
+    push_data(h, text, start + spans[k], start + spans[k + 1]);
+    buf_push(h, ",\"start\":" + spans[k].to_string() + ",\"end\":" + spans[k + 1].to_string() + "}");
+    k += 2;
+  }
+  buf_push(h, "]}}\n");
+}
+
+// A duration in seconds with six decimals, as ripgrep writes one.
+pub function seconds(nanos: i64): string {
+  let micros = nanos / 1000i64;
+  let frac = (micros % 1000000i64 + 1000000i64).to_string();
+  return (micros / 1000000i64).to_string() + "." + slice_unchecked(frac, 1, 7);
+}
+
+// {"secs":..,"nanos":..,"human":".."}, or with `sorted` the keys in order,
+// as serde_json writes a map.
+function elapsed(nanos: i64, sorted: boolean): string {
+  let secs = (nanos / 1000000000i64).to_string();
+  let rest = (nanos % 1000000000i64).to_string();
+  let human = "\"human\":\"" + seconds(nanos) + "s\"";
+  if (sorted) {
+    return "{" + human + ",\"nanos\":" + rest + ",\"secs\":" + secs + "}";
+  }
+  return "{\"secs\":" + secs + ",\"nanos\":" + rest + "," + human + "}";
+}
+
+// The message that ends the output of a file. `binary` is the offset of the
+// first NUL byte, or -1.
+pub function end(h: usize, name: string, binary: i32, c: Counts, nanos: i64): void {
+  buf_push(h, "{\"type\":\"end\",\"data\":{");
+  push_path(h, name);
+  buf_push(h, ",\"binary_offset\":" + (if (binary < 0) { "null" } else { binary.to_string() }));
+  buf_push(h, ",\"stats\":{\"elapsed\":" + elapsed(nanos, false) + ",\"searches\":" + c.searches.to_string());
+  buf_push(h, ",\"searches_with_match\":" + c.with_match.to_string() + ",\"bytes_searched\":" + c.searched.to_string());
+  buf_push(h, ",\"bytes_printed\":" + c.printed.to_string() + ",\"matched_lines\":" + c.lines.to_string());
+  buf_push(h, ",\"matches\":" + c.matches.to_string() + "}}}\n");
+}
+
+// The last message: the counts of all the files, the time of the searches
+// and the time of the whole run.
+pub function summary(c: Counts, nanos: i64, total: i64): string {
+  let out = "{\"data\":{\"elapsed_total\":" + elapsed(total, true) + ",\"stats\":{\"bytes_printed\":" + c.printed.to_string();
+  out += ",\"bytes_searched\":" + c.searched.to_string() + ",\"elapsed\":" + elapsed(nanos, true);
+  out += ",\"matched_lines\":" + c.lines.to_string() + ",\"matches\":" + c.matches.to_string();
+  return out + ",\"searches\":" + c.searches.to_string() + ",\"searches_with_match\":" + c.with_match.to_string() + "}},\"type\":\"summary\"}\n";
+}

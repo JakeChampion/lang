@@ -48,7 +48,7 @@ A child process inherits the filter across `execve`, so a program the sandboxed 
 | `TestSelfHostSandboxRefusesDarwin`, `TestSelfHostSandboxRefusesRunTimeSyscallNumber`, `TestSelfHostSandboxNoBareSyscallEmit` | an `arm64-darwin` build refuses the flag, a run-time syscall number is refused on both targets, and no backend writes a `syscall` or `svc #0` outside the recorders |
 | `TestSeccompNoNewPrivsBlocksSetuidEscalation` | a sandboxed program that dropped to user 65534 runs a setuid-root helper, and the helper reports 65534. Without the sandbox the same helper reports 0, which is the control. The child inherits the filter, so the helper can only make the calls the driver makes. The test needs root to install the helper and skips where the host refuses setuid |
 
-The runtime provides `setuid`, `setgid` and `setgroups` for a privilege drop, and `disable_core_dumps` for the core policy. `rlimit_nofile` reads the descriptor ceiling, and `-heap-limit` bounds the arena ([ERASURE-AND-QUOTAS.md](ERASURE-AND-QUOTAS.md)).
+The runtime provides `setuid`, `setgid` and `setgroups` for a privilege drop, and `disable_core_dumps` for the core policy. `rlimit_nofile` reads the descriptor ceiling, `-heap-limit` bounds the arena, and `-cpu-limit` bounds the processor time ([ERASURE-AND-QUOTAS.md](ERASURE-AND-QUOTAS.md)).
 `std/mitigations` reports the hardware mitigations the kernel enables ([MITIGATION-REPORT.md](MITIGATION-REPORT.md)).
 
 ## Remaining limits
@@ -58,4 +58,4 @@ The runtime provides `setuid`, `setgid` and `setgroups` for a privilege drop, an
 - `prctl_query` passes its caller's option to the kernel. Under the sandbox, an option other than `PR_GET_TAGGED_ADDR_CTRL` and `PR_PAC_GET_ENABLED_KEYS`, the two `std/mitigations` queries, is killed.
 - There is no namespace, chroot-by-default, or mount isolation. `chroot` exists as a builtin for a program that is already root.
 - A privilege drop is the program's own call. Nothing drops privilege at startup, and nothing verifies that a drop happened before the program reads untrusted input.
-- The resource quotas are the arena and the descriptor ceiling. There is no CPU time or child process quota.
+- The resource quotas are the arena, the descriptor ceiling and the processor time of `-cpu-limit` ([ERASURE-AND-QUOTAS.md](ERASURE-AND-QUOTAS.md)). There is no child process quota.

@@ -1,11 +1,13 @@
 // age-keygen — make an age key pair, or give the recipients of an identity
 // file.
 //
-// A port of age-keygen from age 1.1.1 (age-encryption.org).
+// A port of age-keygen from age 1.3.2 (age-encryption.org).
 //
-//   $ age-keygen -o key.txt         # write a new key pair to key.txt
+//   $ age-keygen -o key.txt         # write a new X25519 key pair to key.txt
+//   $ age-keygen -pq -o key.txt     # write a new ML-KEM-768 + X25519 key pair
 //   $ age-keygen -y key.txt         # write the recipients of key.txt
 import "std/array";
+import "std/crypto/hpke";
 import "std/rand";
 import "std/time";
 import "std/tz";
@@ -15,26 +17,25 @@ import "./text";
 
 const USAGE: string[] = [
   "Usage:",
-  "    age-keygen [-o OUTPUT]",
+  "    age-keygen [-pq] [-o OUTPUT]",
   "    age-keygen -y [-o OUTPUT] [INPUT]",
   "",
   "Options:",
+  "    -pq                       Make an ML-KEM-768 + X25519 hybrid key pair.",
   "    -o, --output OUTPUT       Write the result to the file at path OUTPUT.",
   "    -y                        Write the recipients of an identity file.",
   "",
-  "age-keygen makes a new X25519 key pair and writes it to the standard output",
-  "or to OUTPUT. With OUTPUT, it also writes the public key to the standard",
-  "error. age-keygen does not write over an OUTPUT that is there.",
+  "age-keygen makes a new X25519 key pair, or with -pq a new ML-KEM-768 +",
+  "X25519 hybrid key pair. It writes the key pair to the standard output or to",
+  "OUTPUT. When the output is not a terminal, it also writes the public key to",
+  "the standard error. age-keygen does not write over an OUTPUT that is there.",
   "",
   "With -y, age-keygen reads an identity file from INPUT or from the standard",
   "input. It writes the recipient of each key, one for each line, to OUTPUT or",
   "to the standard output.",
 ];
 
-const NAMES: goflag.Names = goflag.Names { bools: ["version", "y"], values: ["o", "output"] };
-
-// The size limit of an identity file, as in age.
-const IDENTITY_LIMIT: i32 = 16777216;
+const NAMES: goflag.Names = goflag.Names { bools: ["version", "pq", "y"], values: ["o", "output"] };
 
 function fail(msg: string): i32 {
   eprint("age-keygen: error: " + msg);
@@ -45,13 +46,19 @@ function q(s: string): string {
   return text.quote(s.as_bytes());
 }
 
-struct Opts { version: boolean, convert: boolean, output: string }
+struct Opts { version: boolean, pq: boolean, convert: boolean, output: string }
 
 function options(flags: goflag.Flag[]): Opts {
-  let o = Opts { version: false, convert: false, output: "" };
+  let o = Opts { version: false, pq: false, convert: false, output: "" };
   for f in flags {
     o = match (f) {
-      goflag.BoolFlag(name, v) => if (name == "y") { Opts { ...o, convert: v } } else { Opts { ...o, version: v } },
+      goflag.BoolFlag(name, v) => if (name == "y") {
+        Opts { ...o, convert: v }
+      } else if (name == "pq") {
+        Opts { ...o, pq: v }
+      } else {
+        Opts { ...o, version: v }
+      },
       goflag.ValueFlag(_, v) => Opts { ...o, output: v },
     };
   }
@@ -76,11 +83,13 @@ function create(path: string): Result[Writer, string] {
   return Ok(w);
 }
 
-// All of the input, up to the size limit, or the error of a read.
+// All of the input, up to one byte more than the size limit, or the error
+// of a read.
 function read_all(r: Reader, name: string): Result[u8[], string] {
+  let limit = keys.FILE_LIMIT + 1;
   let out: u8[] = [];
-  while (out.len() < IDENTITY_LIMIT) {
-    match (r.read_chunk_bytes(IDENTITY_LIMIT - out.len())) {
+  while (out.len() < limit) {
+    match (r.read_chunk_bytes(limit - out.len())) {
       Ok(b) => {
         if (b.len() == 0) {
           return Ok(out);
@@ -96,25 +105,24 @@ function read_all(r: Reader, name: string): Result[u8[], string] {
 }
 
 // age-keygen -y: the recipient of each key of the identity file.
-function convert(input: Reader, name: string, out: Writer): Option[string] {
+function convert(input: Reader, name: string): Result[string, string] {
   let content = match (read_all(input, name)) {
     Ok(b) => b,
     Err(why) => {
-      return Some("failed to parse input: failed to read secret keys file: " + why);
+      return Err("failed to parse input: failed to read identities file: " + why);
     },
   };
   let found = match (keys.parse_identities(content)) {
     Ok(ks) => ks,
     Err(why) => {
-      return Some("failed to parse input: " + why);
+      return Err("failed to parse input: " + why);
     },
   };
-  for k in found {
-    if let Err(e) = out.write(keys.recipient_text(k.public) + "\n") {
-      return Some("write: " + text.errno_text(e));
-    }
+  let out = "";
+  for id in found {
+    out += keys.identity_recipient(id) + "\n";
   }
-  return None;
+  return Ok(out);
 }
 
 // The time now in the local time zone, as Go's time.RFC3339 writes it.
@@ -123,9 +131,30 @@ function created(): string {
   return tz.local_zone().at(now).format_rfc3339();
 }
 
+// The recipient and the secret key line of a new key pair.
+function new_key(pq: boolean): Result[(string, string), string] {
+  if (pq) {
+    let seed = rand.bytes(32);
+    __ct_secret(seed);
+    return match (hpke.mlkem768x25519_key(seed)) {
+      Ok(k) => Ok((keys.hybrid_recipient_text(k.public_key), keys.hybrid_secret_text(seed))),
+      Err(e) => Err("internal error: " + e.message()),
+    };
+  }
+  return match (keys.key_of(rand.bytes(32))) {
+    Ok(k) => Ok((keys.recipient_text(k.public), keys.secret_text(k.scalar))),
+    Err(why) => Err("internal error: " + why),
+  };
+}
+
+// Go's error for a write to the output.
+function write_error(out_name: string, e: IoError): string {
+  return f"failed to write output: write {out_name}: {text.errno_text(e)}";
+}
+
 // A new key pair. The public key goes to the standard error too when out is
 // not a terminal.
-function generate(out: Writer): Option[string] {
+function generate(out: Writer, out_name: string, pq: boolean): Option[string] {
   match (out.stat()) {
     Ok(st) => {
       if (st.is_file && (st.mode & 4u32) != 0u32) {
@@ -134,19 +163,16 @@ function generate(out: Writer): Option[string] {
     },
     Err(_) => {}
   }
-  let k = match (keys.key_of(rand.bytes(32))) {
+  let (recipient, secret) = match (new_key(pq)) {
     Ok(k) => k,
-    Err(why) => {
-      return Some("internal error: " + why);
-    },
+    Err(why) => { return Some(why); },
   };
-  let recipient = keys.recipient_text(k.public);
   if (!out.isatty()) {
     eprint("Public key: " + recipient);
   }
-  let text_out = f"# created: {created()}\n# public key: {recipient}\n{keys.secret_text(k.scalar)}\n";
+  let text_out = f"# created: {created()}\n# public key: {recipient}\n{secret}\n";
   if let Err(e) = out.write(text_out) {
-    return Some("write: " + text.errno_text(e));
+    return Some(write_error(out_name, e));
   }
   return None;
 }
@@ -170,26 +196,48 @@ function output(path: string): Result[Writer, string] {
   return create(path);
 }
 
-// The input and the name that a read error shows.
-function input_of(inputs: string[]): Result[(Reader, string), string] {
+// The recipients of -y, read before the output opens, as age-keygen does.
+function converted(inputs: string[]): Result[string, string] {
   let name = if (inputs.len() > 0) { inputs[0] } else { "" };
   let shown = if (name == "" || name == "-") { "/dev/stdin" } else { name };
-  return Ok((open_input(name)?, shown));
+  return convert(open_input(name)?, shown);
 }
 
 // The work of age-keygen after the flags, or its message.
+// The text of -y, or "" for a new key pair.
+function recipients_text(o: Opts, inputs: string[]): Result[string, string] {
+  if (!o.convert) {
+    return Ok("");
+  }
+  return converted(inputs);
+}
+
+// Writes the recipients of -y, or a new key pair.
+function write_out(o: Opts, out: Writer, recipients: string): Option[string] {
+  let out_name = if (o.output == "") { "/dev/stdout" } else { o.output };
+  if (!o.convert) {
+    return generate(out, out_name, o.pq);
+  }
+  return match (out.write(recipients)) {
+    Ok(_) => None,
+    Err(e) => Some(write_error(out_name, e)),
+  };
+}
+
 function work(o: Opts, inputs: string[]): Option[string] {
+  let recipients = match (recipients_text(o, inputs)) {
+    Ok(s) => s,
+    Err(why) => {
+      return Some(why);
+    },
+  };
   let out = match (output(o.output)) {
     Ok(w) => w,
     Err(why) => {
       return Some(why);
     },
   };
-  let (input, shown) = match (input_of(inputs)) {
-    Ok(x) => x,
-    Err(why) => { return Some(why); },
-  };
-  let failed = if (o.convert) { convert(input, shown, out) } else { generate(out) };
+  let failed = write_out(o, out, recipients);
   if (failed.is_some() || o.output == "") {
     return failed;
   }
@@ -200,12 +248,15 @@ function work(o: Opts, inputs: string[]): Option[string] {
 }
 
 function run(o: Opts, inputs: string[]): i32 {
+  if (o.version) {
+    print("v1.3.2-fern");
+    return 0;
+  }
   if (inputs.len() != 0 && !o.convert || inputs.len() > 1 && o.convert) {
     return fail("too many arguments");
   }
-  if (o.version) {
-    print("v1.1.1-fern");
-    return 0;
+  if (o.pq && o.convert) {
+    return fail("-pq cannot be used with -y");
   }
   return match (work(o, inputs)) {
     Some(why) => fail(why),

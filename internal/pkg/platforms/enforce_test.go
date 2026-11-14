@@ -1,6 +1,7 @@
 package platforms_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -459,9 +460,10 @@ func TestEnforceFreestandingAllowsCore(t *testing.T) {
 	}
 }
 
-// A freestanding target grants mmio alone: a guest library inside someone
-// else's firmware drives devices, and nothing else is beneath it.
-func TestFreestandingDescriptorGrantsOnlyMMIO(t *testing.T) {
+// A freestanding target grants mmio and atomics alone: a guest library inside
+// someone else's firmware drives devices and shares words with the firmware,
+// and nothing else is beneath it.
+func TestFreestandingDescriptorGrantsOnlyMMIOAndAtomics(t *testing.T) {
 	free := []string{"arm64-freestanding", "x86-64-freestanding"}
 	for _, name := range free {
 		t.Run(name, func(t *testing.T) {
@@ -472,8 +474,8 @@ func TestFreestandingDescriptorGrantsOnlyMMIO(t *testing.T) {
 			if d.Entry != platforms.EntryExports {
 				t.Errorf("%s entry = %q, want %q: its embedder calls the -export functions", name, d.Entry, platforms.EntryExports)
 			}
-			if len(d.Capabilities) != 1 || d.Capabilities[0] != "mmio" {
-				t.Errorf("%s grants %v, want mmio alone", name, d.Capabilities)
+			if !slices.Equal(d.Capabilities, []string{"mmio", "atomics"}) {
+				t.Errorf("%s grants %v, want mmio and atomics alone", name, d.Capabilities)
 			}
 			if d.Environment != "freestanding" {
 				t.Errorf("%s environment = %q, want freestanding", name, d.Environment)
