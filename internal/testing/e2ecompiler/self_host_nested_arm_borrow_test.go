@@ -77,12 +77,73 @@ function main(): i32 {
 	}
 }
 
+const nestedArmLocalDecls = `struct State { values: i32[] }
+function make(): State { return State { values: [1] }; }
+function (own state: State) step(): (State, i32) { return (state, 1); }
+function pick(k: i32): Result[(string, i64), string] { return if (k > 0) { Ok(("a", 3)) } else { Err("no") }; }
+`
+
+// A local whose initial value is a value match with a nested pattern in an
+// arm. The local is not owned when an arm gives a borrowed value: the
+// receiver of an own method must not take it.
+func nestedArmLocalCases(t *testing.T, bin string, runner []string, dir string) {
+	t.Helper()
+	cases := []struct {
+		name, ok, err string
+		reject        bool
+	}{
+		{"fresh-arms/nested", `Ok((kind, size)) => make()`, `Err(why) => make()`, false},
+		{"fresh-arms/plain", `Ok(pair) => make()`, `Err(why) => make()`, false},
+		{"borrowed-first-arm/nested", `Ok((kind, size)) => borrowed`, `Err(why) => make()`, true},
+		{"borrowed-first-arm/plain", `Ok(pair) => borrowed`, `Err(why) => make()`, true},
+		{"borrowed-last-arm/nested", `Ok((kind, size)) => make()`, `Err(why) => borrowed`, true},
+		{"borrowed-last-arm/plain", `Ok(pair) => make()`, `Err(why) => borrowed`, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			source := nestedArmLocalDecls + `function work(borrowed: State): i32 {
+  let state = make();
+  for i in [0, 1] {
+    let next = match (pick(i)) { ` + tc.ok + `, ` + tc.err + ` };
+    let (after, n) = next.step();
+    state = after;
+  }
+  return state.values.len();
+}
+function main(): i32 { return work(make()); }
+`
+			check := func(label string, ds []driverDiag) {
+				t.Helper()
+				refused := false
+				for _, d := range ds {
+					if d.code == "E051" {
+						refused = true
+					} else {
+						t.Fatalf("%s: a diagnostic that is not E051: %v", label, ds)
+					}
+				}
+				if refused != tc.reject {
+					t.Fatalf("%s: E051 reported is %v, want %v: %v", label, refused, tc.reject, ds)
+				}
+			}
+			check("Go", goCheckerDiags(t, dir, source))
+			command := exec.Command(bin)
+			if len(runner) > 0 {
+				command = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
+			}
+			command.Stdin = strings.NewReader(source)
+			check("self-host", driverDiags(runCheckerDriver(t, command, tc.name)))
+		})
+	}
+}
+
 func TestSelfHostNestedArmBorrowX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/checker_codes_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "drivers/checker_codes_run.fern", "nested_arm_borrow_checker")
 	nestedArmBorrowCases(t, bin, runner, dir)
+	nestedArmLocalCases(t, bin, runner, dir)
 }
 
 func TestSelfHostNestedArmBorrowWasm(t *testing.T) {
@@ -90,4 +151,5 @@ func TestSelfHostNestedArmBorrowWasm(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/checker_codes_run.fern")
 	bin := buildSelfHostBinFor(t, dir, "drivers/checker_codes_run.fern", "nested_arm_borrow_checker.wasm", e2eharness.TargetWasm32Wasi)
 	nestedArmBorrowCases(t, bin, []string{e2eharness.Wasmtime(t), "run"}, dir)
+	nestedArmLocalCases(t, bin, []string{e2eharness.Wasmtime(t), "run"}, dir)
 }
