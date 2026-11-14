@@ -311,9 +311,10 @@ profile/x86-64-linux/int_loop.safe.ir	12000077
 profile/x86-64-linux/map_string.diagnostic.bytes	136296
 profile/x86-64-linux/map_string.diagnostic.emit	11199
 # 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured profile/x86-64-linux/map_string.diagnostic.ir at 58707421 (was 59644087). The tolerance is unchanged.
-profile/x86-64-linux/map_string.diagnostic.ir	57995417
-profile/x86-64-linux/map_string.hardened.bytes	43888
-profile/x86-64-linux/map_string.hardened.emit	10398
+# 2026-11-14 (#15816): perf-x86_64 job 132315121805 measured profile/x86-64-linux/map_string.diagnostic.ir at 57955711 (was 58707421). The faster ASCII check of __fern_utf8_valid on a short text moves it. The tolerance is unchanged.
+profile/x86-64-linux/map_string.diagnostic.ir	57955711
+profile/x86-64-linux/map_string.hardened.bytes	42528
+profile/x86-64-linux/map_string.hardened.emit	10130
 # 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured profile/x86-64-linux/map_string.hardened.ir at 53686363 (was 54709670). The tolerance is unchanged.
 profile/x86-64-linux/map_string.hardened.ir	53686363
 profile/x86-64-linux/map_string.minimal.bytes	37472

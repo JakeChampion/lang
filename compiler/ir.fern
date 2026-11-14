@@ -360,6 +360,11 @@ pub function bytes_payload(o: Op): Op {
   return Op { ...o, i32_imm: 1 };
 }
 
+// The variant of op_dir_entries that gives DirEntry records.
+pub function entry_payload(o: Op): Op {
+  return Op { ...o, i32_imm: 2 };
+}
+
 // The width of an array op is the width of its element: 8 for a byte, 32 for a
 // 4-byte integer, 64 for an 8-byte scalar, and width_ptr() for a pointer-width slot.
 pub function packed(o: Op): Op {

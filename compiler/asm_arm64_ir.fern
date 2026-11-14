@@ -5281,8 +5281,12 @@ pub function emit_function_via_ir_named(r: irtables.LowerResult, selected: physi
 
 function emit_dir_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   let name = ir.kind_name(o.kind_tag);
-  if (o.kind_tag == ir.K_DIR_ENTRIES && o.i32_imm != 0) {
+  if (o.kind_tag == ir.K_DIR_ENTRIES && o.i32_imm == 1) {
     name = "dir_entries_bytes";
+    s = s.need("dir_entries");
+  }
+  if (o.kind_tag == ir.K_DIR_ENTRIES && o.i32_imm == 2) {
+    name = "dir_entries_ino";
     s = s.need("dir_entries");
   }
   let n = ir.op_pops(o);

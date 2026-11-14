@@ -1,0 +1,31 @@
+// A match arm that binds a local still borrows when its value comes from a
+// borrowed parameter, so the loop cannot pass the result to `own` again.
+struct State { out: Writer, n: i32 }
+
+struct Ctx { log: Writer, keep: State }
+
+function pick(ctx: Ctx, own s: State, k: i32): State {
+  return match (k) {
+    0 => {
+      let kept = ctx.keep;
+      kept
+    },
+    _ => s,
+  };
+}
+
+function run(ctx: Ctx, own s0: State): State {
+  let s = State { ...s0, n: 0 };
+  let k = 0;
+  while (k < 3) {
+    let t = pick(ctx, s, k);
+    s = t;
+    k += 1;
+  }
+  return s;
+}
+
+function main(): i32 {
+  let s = run(Ctx { log: stderr(), keep: State { out: stdout(), n: 2 } }, State { out: stdout(), n: 1 });
+  return s.n;
+}
