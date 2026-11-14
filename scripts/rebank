@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+"""rebank FILE — set rows of a pin file to the values on standard input.
+
+Each input line is `metric value [tolerance]`, the form of the "Corrected
+baseline" block that scripts/ci-check-perf and scripts/ci-check-driver-sizes
+print in a job summary. Paste the block:
+
+    scripts/rebank .github/perf-baseline.txt <<'ROWS'
+        x86_64/array_append.ir 11205420
+        aarch64/map_string.ir 49700000 2
+    ROWS
+
+A row that the file has keeps its place, its separator and, when the input
+gives none, its tolerance. A metric that the file does not have goes at the
+end. An input line that is not a row is an error, and the file does not
+change. The reason for the move goes in the commit message, not in the file.
+"""
+import re
+import sys
+
+ROW = re.compile(r"^(\S+)(\s+)(\d+)(?:(\s+)(\S+))?\s*$")
+
+
+def main(argv):
+    if len(argv) != 2:
+        sys.stderr.write("usage: rebank FILE < rows\n")
+        return 2
+    path = argv[1]
+    wanted = {}
+    for n, raw in enumerate(sys.stdin, 1):
+        line = raw.strip()
+        if not line:
+            continue
+        m = ROW.match(line)
+        if not m:
+            sys.stderr.write(f"rebank: input line {n} is not `metric value [tolerance]`: {line}\n")
+            return 1
+        wanted[m.group(1)] = (m.group(3), m.group(5))
+    if not wanted:
+        sys.stderr.write("rebank: no rows on standard input\n")
+        return 1
+
+    with open(path) as f:
+        lines = f.read().split("\n")
+    separator = "\t" if any("\t" in l for l in lines if l and not l.startswith("#")) else " "
+    moved = same = 0
+    seen = set()
+    for i, line in enumerate(lines):
+        m = ROW.match(line)
+        if not m or line.startswith("#") or m.group(1) not in wanted:
+            continue
+        metric = m.group(1)
+        if metric in seen:
+            sys.stderr.write(f"rebank: {path} has two rows for {metric}\n")
+            return 1
+        seen.add(metric)
+        value, tolerance = wanted[metric]
+        tolerance = tolerance or m.group(5)
+        new = metric + m.group(2) + value + ((m.group(4) or " ") + tolerance if tolerance else "")
+        if new == line:
+            same += 1
+        else:
+            moved += 1
+            lines[i] = new
+    added = [k for k in wanted if k not in seen]
+    while lines and lines[-1] == "":
+        lines.pop()
+    for metric in added:
+        value, tolerance = wanted[metric]
+        lines.append(metric + separator + value + (" " + tolerance if tolerance else ""))
+    with open(path, "w") as f:
+        f.write("\n".join(lines) + "\n")
+    print(f"rebank: {path}: {moved} row(s) moved, {same} already at the value, {len(added)} added")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

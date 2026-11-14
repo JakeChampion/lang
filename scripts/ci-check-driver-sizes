@@ -168,7 +168,7 @@ routed="$(awk -v B="$BASELINE" -v tol="$TOLERANCE" -v complete="$COMPLETE" '
     for (i = 1; i <= n; i++) {
       d = order[i]
       if (!(d in paste)) continue
-      if (nsug++ == 0) printf "SUMMARY\tCorrected baseline — paste into .github/selfhost-driver-sizes.txt:\n"
+      if (nsug++ == 0) printf "SUMMARY\tCorrected baseline — give these rows to `scripts/rebank .github/selfhost-driver-sizes.txt`:\n"
       printf "SUMMARY\t    %s %d\n", d, paste[d]
     }
 

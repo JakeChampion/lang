@@ -174,7 +174,7 @@ routed="$(awk -v B="$BASELINE" -v deftol="$TOLERANCE" -v label="$LABEL" '
     for (i = 1; i <= n; i++) {
       m = order[i]
       if (!(m in paste)) continue
-      if (nsug++ == 0) printf "SUMMARY\tCorrected baseline — paste into the baseline file:\n"
+      if (nsug++ == 0) printf "SUMMARY\tCorrected baseline — give these rows to `scripts/rebank BASELINE`:\n"
       if (tol[m] != deftol && (m in base)) printf "SUMMARY\t    %s %d %s\n", m, paste[m], tol[m]
       else printf "SUMMARY\t    %s %d\n", m, paste[m]
     }
