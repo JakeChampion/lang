@@ -642,7 +642,7 @@ function put_tab(l0: Line, c: Cfg, cs: i32, span: i32, b: i32): (Line, i32) {
   return (Line { ...f, pos: target }, target);
 }
 
-function put_number(l0: Line, c: Cfg, cs: i32, n: i64): Line {
+function put_number(l0: Line, c: Cfg, cs: i32, n: i64, separator: boolean): Line {
   let l = l0;
   let d = c.num_digits;
   if (n >= 0 as i64 && d >= 1 && d <= 18) {
@@ -674,6 +674,9 @@ function put_number(l0: Line, c: Cfg, cs: i32, n: i64): Line {
     }
     l = l.to(cs + c.num_digits - s.len(), c);
     l = l.put(s, s.len(), c);
+  }
+  if (!separator) {
+    return l;
   }
   if (c.num_sep == 9) {
     let target = cs + c.num_width;
@@ -708,7 +711,7 @@ function put_column(l0: Line, c: Cfg, i: i32, txt: u8[], n: i64, numbered: boole
   }
   let text_start = origin;
   if (numbered) {
-    l = put_number(l, c, origin, n);
+    l = put_number(l, c, origin, n, true);
     text_start = l.pos;
   }
   let limit = 0;
@@ -787,7 +790,7 @@ function row_into(out: usize, c: Cfg, texts: u8[][], nums: i64[], numbered: bool
   let l = line_on(out);
   if (c.num_prefix > 0 && nums.len() > 0) {
     l = l.to(c.offset, c);
-    l = put_number(l, c, c.offset, nums[0]);
+    l = put_number(l, c, c.offset, nums[0], true);
   }
   let i = 0;
   while (i < texts.len()) {
@@ -913,27 +916,51 @@ function body_into(out: usize, c: Cfg, lines: u8[][], first_no: i64, last_termin
   return count;
 }
 
-function merge_row_into(out: usize, c: Cfg, rows: u8[][], from: i32, count: i32, number: i64): void {
+function merge_cell(l: Line, c: Cfg, col: i32, txt: u8[], number: i64, number_tab: boolean): Line {
+  if (col == 0 && !number_tab && c.num_sep == 9) {
+    return l;
+  }
+  return put_column(l, c, col, txt, number, c.numbering && c.num_prefix == 0);
+}
+
+function merge_eof_number(l: Line, c: Cfg, number: i64, count: i32): Line {
+  if (c.num_sep == 9 && c.offset > 0) {
+    return put_number(l, c, l.pos - c.num_digits, number, false);
+  }
+  return put_number(l, c, l.pos - c.offset, number, c.num_sep != 9 || count > 1);
+}
+
+function merge_row_into(out: usize, c: Cfg, rows: u8[][], from: i32, count: i32, number: i64, extra_number: boolean, number_tab: boolean): void {
   let l = line_on(out);
   if (c.num_prefix > 0 && count > 0) {
     l = l.to(c.offset, c);
-    l = put_number(l, c, c.offset, number);
+    l = put_number(l, c, c.offset, number, c.num_sep != 9 || number_tab);
   }
   for col in 0..count {
-    l = put_column(l, c, col, rows[from + col], number, c.numbering && c.num_prefix == 0);
+    l = merge_cell(l, c, col, rows[from + col], number, number_tab);
+    if (col == 0 && extra_number) {
+      l = merge_eof_number(l, c, wrap32(number + 1 as i64), count);
+    }
   }
   buf_push_byte(out, 10);
 }
 
-function merge_body_into(out: usize, c: Cfg, rows: u8[][], width: i32, row_widths: i32[], terminated: boolean[], first_no: i64): i32 {
+function merge_body_into(out: usize, c: Cfg, rows: u8[][], width: i32, row_widths: i32[], terminated: boolean[], extra_numbers: boolean[], number_tabs: boolean[], first_no: i64): i32 {
   let count = 0;
   let nrows = 0;
   if (width > 0) {
     nrows = rows.len() / width;
   }
   let r = 0;
+  let number = first_no;
   while (r < nrows) {
-    merge_row_into(out, c, rows, r * width, row_widths[r], wrap32(first_no + r as i64));
+    let extra = c.numbering && extra_numbers[r];
+    let number_tab = !c.numbering || number_tabs[r];
+    merge_row_into(out, c, rows, r * width, row_widths[r], number, extra, number_tab);
+    number = wrap32(number + 1 as i64);
+    if (extra) {
+      number = wrap32(number + 1 as i64);
+    }
     count += 1;
     if (c.double_space && (terminated[r] || !c.omit_header)) {
       buf_push_byte(out, 10);
@@ -1175,12 +1202,18 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
     let cells: u8[][] = [];
     let row_widths: i32[] = [];
     let terminated: boolean[] = [];
+    let extra_numbers: boolean[] = [];
+    let number_tabs: boolean[] = [];
+    let number_count = 0;
     let filled = 0;
     let page_ff = false;
     let r = 0;
     while (r < rows) {
       let row_width = 0;
       let row_terminated = false;
+      let extra_number = false;
+      let first_column = false;
+      let second_column = false;
       let any = false;
       let col = 0;
       while (col < width) {
@@ -1200,6 +1233,9 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
             if (got.line) {
               cell = got.text;
               row_terminated = row_terminated || !got.ff && !got.src.eof;
+              extra_number = extra_number || c.numbering && active > 1 && col == 0 && !got.ff && got.src.eof;
+              first_column = first_column || col == 0;
+              second_column = second_column || col == 1;
               any = true;
               present = true;
             }
@@ -1239,6 +1275,13 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
       if (c.double_space) {
         terminated = terminated.append(row_terminated);
       }
+      if (c.numbering) {
+        extra_numbers = extra_numbers.append(extra_number);
+        number_tabs = number_tabs.append(first_column || !second_column);
+        if (extra_number) {
+          number_count += 1;
+        }
+      }
       while (row_width < width) {
         cells = cells.append([]);
         row_width += 1;
@@ -1267,11 +1310,14 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
     if (printing) {
       let h = o.handle();
       page_head(h, c, page, "", now, 0 as i64);
-      page_tail(h, c, merge_body_into(h, c, cells, width, row_widths, terminated, line_no));
+      page_tail(h, c, merge_body_into(h, c, cells, width, row_widths, terminated, extra_numbers, number_tabs, line_no));
       o = gnu.settle(o);
       if (c.omit_header && page_ff && !c.omit_pagination) {
         o = gnu.put(o, "\x0c");
       }
+    }
+    if (printing) {
+      line_no = wrap32(line_no + number_count as i64);
     }
     line_no = wrap32(line_no + filled as i64);
     page = page + 1 as u64;
