@@ -281,6 +281,19 @@ function make(k: i32): Node {
     if (k % 3 == 1) { return Label("a" + "bc"); }
     return Empty;
 }
+struct Slot { tab: Cell[i32[]], n: i32 }
+@noinline
+function slot_push(s: Slot, k: i32): i32 {
+    let d: i32[] = s.tab.get();
+    s.tab.set(d.append(k));
+    return s.n;
+}
+@noinline
+function slot_or_new(s: Slot, k: i32): Slot {
+    if (k > 0) { return s; }
+    let none: i32[] = [];
+    return Slot { tab: cell_new(none), n: k };
+}
 function main(): i32 {
     let total: i32 = 0;
     let i: i32 = 0;
@@ -314,6 +327,11 @@ function main(): i32 {
     if (w != 6) { return 6; }
     let sl: Sealer = sealer_or_new(Sealer { key: __alloc_u8(32), n: 4 }, 1);
     if (sealed_len(sl, __alloc_u8(12)) != 32) { return 11; }
+    let one: i32[] = [1];
+    let slot: Slot = slot_or_new(Slot { tab: cell_new(one), n: 2 }, 1);
+    let m: i32 = 0;
+    while (m < 5) { m = m + slot_push(slot, m); }
+    if (m != 6 || slot.tab.get().len() != 4 || slot.tab.get()[3] != 4) { return 12; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -399,6 +417,21 @@ func assertInferredModes(t *testing.T, runner []string, fernBin, stdlibRoot stri
 	}
 	if strings.Contains(viewed, recDrop) {
 		t.Errorf("view_keep calls %s: a record lent to a user function returning a view of it was inferred COUNTED", recDrop)
+	}
+	const slotDrop = "__sem_release_Slot"
+	slotNew, ok := asmWholeFunc(string(asm), "slot_or_new")
+	if !ok {
+		t.Fatal("no __fn_slot_or_new in the emitted code")
+	}
+	if !strings.Contains(slotNew, slotDrop) {
+		t.Fatalf("slot_or_new does not call %s — the marker this reads is gone, so the cell assertion below proves nothing", slotDrop)
+	}
+	writer, ok := asmWholeFunc(string(asm), "slot_push")
+	if !ok {
+		t.Fatal("no __fn_slot_push in the emitted code")
+	}
+	if strings.Contains(writer, slotDrop) {
+		t.Errorf("slot_push calls %s: a record whose cell field the body only writes was inferred COUNTED", slotDrop)
 	}
 	const treeDrop = "__sem_release_Tree"
 	picked, ok := asmWholeFunc(string(asm), "pick")

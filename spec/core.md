@@ -585,6 +585,7 @@ is the number of slots it leaves.
 | `chacha20_poly1305_open_into` | 557 | 7 | 1 |
 | `mont_mul` | 558 | 3 | 1 |
 | `scrypt_block_mix` | 559 | 5 | 1 |
+| `proc_wait_any` | 560 | 0 | 1 |
 <!-- END ir_effects_run -->
 
 `vpermute` preserves all lane bits in two 128-bit inputs.

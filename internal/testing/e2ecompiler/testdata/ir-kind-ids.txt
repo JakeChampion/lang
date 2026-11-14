@@ -506,3 +506,4 @@ chacha20_poly1305_seal_into=556
 chacha20_poly1305_open_into=557
 mont_mul=558
 scrypt_block_mix=559
+proc_wait_any=560

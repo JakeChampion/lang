@@ -1581,6 +1581,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
+	c.info.FuncSigs["proc_wait_any"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{Width: 64, Signed: true},
+	}
 	c.info.FuncSigs["proc_exec"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}, ast.ArrayType{Elem: ast.StringType{}}},
 		Result: ast.NumberType{},
