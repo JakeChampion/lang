@@ -593,6 +593,7 @@ is the number of slots it leaves.
 | `vinarrows` | 565 | 2 | 1 |
 | `vinarrowu` | 566 | 2 | 1 |
 | `viswizzle` | 567 | 2 | 1 |
+| `vsock_connect` | 568 | 2 | 1 |
 <!-- END ir_effects_run -->
 
 `vpermute` preserves all lane bits in two 128-bit inputs.

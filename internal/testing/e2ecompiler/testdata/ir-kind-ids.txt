@@ -514,3 +514,4 @@ viwidenhiu=564
 vinarrows=565
 vinarrowu=566
 viswizzle=567
+vsock_connect=568

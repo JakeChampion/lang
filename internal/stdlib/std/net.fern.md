@@ -2004,6 +2004,15 @@ pub function connect_unix(path: string): Result[Socket, NetError] {
   return __socket_open(unix_connect(path));
 }
 
+// A stream connection to `port` of the VSOCK context `cid`: 2 is the host of a virtual machine. Only Linux and
+// Android have VSOCK, so other targets give EAFNOSUPPORT.
+pub function connect_vsock(cid: i32, port: i32): Result[Socket, NetError] {
+  if (target_os() == "linux" || target_os() == "android") {
+    return __socket_open(vsock_connect(cid, port));
+  }
+  return Err(Other(errno.EAFNOSUPPORT));
+}
+
 pub function local_addr(sock: Socket): Result[SocketAddr, NetError] {
   return __name_of(sock, false);
 }
