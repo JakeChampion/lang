@@ -25,6 +25,9 @@ function prepares(): i32;
 @import("libandroid.so", "mock_player_seek")
 function seek_time(): i64;
 
+@import("libandroid.so", "mock_player_seek_mode")
+function seek_mode(): i32;
+
 @import("libandroid.so", "mock_player_window")
 function window(): usize;
 
@@ -78,8 +81,11 @@ function operations(ctx: usize): i32 {
       return 207;
     }
   }
-  if (player.seek(ctx, p, -1i64) || player.seek(ctx, p, 2147483648i64) || !player.seek(ctx, p, 2147483647i64) || seek_time() != 2147483647i64) {
+  if (player.seek(ctx, p, -1i64, player.Exact) || player.seek(ctx, p, 2147483648i64, player.Exact) || !player.seek(ctx, p, 2147483647i64, player.Exact) || seek_time() != 2147483647i64 || seek_mode() != 3) {
     return 208;
+  }
+  if (!player.seek(ctx, p, 1000i64, player.Sync) || seek_time() != 1000i64 || seek_mode() != 2) {
+    return 228;
   }
   let before = opens();
   let prepared = prepares();

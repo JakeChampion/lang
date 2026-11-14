@@ -440,8 +440,13 @@ pub function pause(ctx: usize, p: Player): boolean {
   return call_void(e, p.obj, "pause", "()V", []);
 }
 
+// Where a seek lands. Exact decodes from the sync frame before the time up
+// to the time. Sync lands on the sync frame nearest to the time, so it is
+// fast on a long stream.
+pub enum SeekMode { Exact, Sync }
+
 // Moves to `ms` milliseconds from the start. Seeked follows.
-pub function seek(ctx: usize, p: Player, ms: i64): boolean {
+pub function seek(ctx: usize, p: Player, ms: i64, mode: SeekMode): boolean {
   let e: usize = android.env(ctx);
   if (!begin(e)) {
     return false;
@@ -450,7 +455,12 @@ pub function seek(ctx: usize, p: Player, ms: i64): boolean {
   if (ms < 0i64 || ms > 2147483647i64) {
     return false;
   }
-  return call_void(e, p.obj, "seekTo", "(JI)V", [ms as usize, 3 as usize]);
+  // MediaPlayer.SEEK_CLOSEST is 3, and SEEK_CLOSEST_SYNC is 2.
+  let code = match (mode) {
+    Exact => 3,
+    Sync => 2,
+  };
+  return call_void(e, p.obj, "seekTo", "(JI)V", [ms as usize, code as usize]);
 }
 
 pub function position_ms(ctx: usize, p: Player): i64 {

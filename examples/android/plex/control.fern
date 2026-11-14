@@ -47,6 +47,8 @@ pub struct Device {
   duration: () => i64,
   stop: () => void,
   random: () => i32,
+  // The MIME types that the decoders of the phone take.
+  decoders: string[],
 }
 
 // A request to the API that waits for its turn. `purpose` says what to do
@@ -937,7 +939,7 @@ function cycle_quality(own s: App): App {
 function start_play(own s: App, it: plex.Item, queue: plex.Item[]): App {
   let session = hex_id(s.dev);
   let q = plex.qualities()[s.quality];
-  let stream = plex.stream_for(s.client, s.base, it, q, it.offset_ms, session);
+  let stream = plex.stream_for(s.client, s.base, it, q, it.offset_ms, session, s.dev.decoders);
   let p = Play { ...no_play(), active: true, item: it, stream: stream, session: session, overlay: true, status: "Loading", queue: queue, position: it.offset_ms, duration: it.duration_ms };
   let t = App { ...push(s), screen: ui.PLAYER, play: p, dirty: true };
   log.info("plex: play " + it.key + " transcode=" + stream.transcode.to_string());
@@ -1034,7 +1036,7 @@ function seek_to(own s: App, ms: i64): App {
     let t = report(App { ...s, play: Play { ...p, prepared: false, video: false, overlay: true, status: "Loading" } }, StopTranscode(p.session));
     let q = plex.qualities()[t.quality];
     let session = hex_id(t.dev);
-    let stream = plex.stream_for(t.client, t.base, it, q, ms, session);
+    let stream = plex.stream_for(t.client, t.base, it, q, ms, session, t.dev.decoders);
     let ok = t.dev.play(stream.url);
     return App { ...t, play: Play { ...t.play, stream: stream, session: session, position: ms }, dirty: true };
   }
@@ -1093,7 +1095,7 @@ function play_failed(own s: App, what: i32, extra: i32): App {
     let q = plex.qualities()[2];
     let session = hex_id(s.dev);
     let it = plex.Item { ...p.item, offset_ms: p.position };
-    let stream = plex.stream_for(s.client, s.base, it, q, p.position, session);
+    let stream = plex.stream_for(s.client, s.base, it, q, p.position, session, s.dev.decoders);
     let ok = s.dev.play(stream.url);
     return App { ...s, play: Play { ...p, stream: stream, session: session, retried: true, prepared: false, video: false, overlay: true, status: "Transcoding" }, dirty: true };
   }

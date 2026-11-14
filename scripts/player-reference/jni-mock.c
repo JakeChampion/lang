@@ -13,6 +13,7 @@ static void **env_table = table;
 static uintptr_t context[8], activity[8], window[24];
 static int mode, locals, globals, frames, saved_locals, pending, releases, opens, prepares, starts, global_calls;
 static int64_t last_seek;
+static int last_seek_mode;
 
 enum { CONSTRUCTOR=1, GET_LOADER, LOAD_CLASS, PREPARED, COMPLETED, ERROR, INFO, SEEKED,
        SET_USAGE, SET_CONTENT, BUILD, SET_ATTRS, RESET, SOURCE, PREPARE, SET_SURFACE,
@@ -99,7 +100,7 @@ static void void_call(void *env, Object *obj, void *method, Value *args) {
     case SET_SURFACE: assert(!args[0].l || args[0].l == objects + SURFACE); break;
     case START: starts++; break;
     case PAUSE: break;
-    case SEEK: last_seek = args[0].j; assert(args[1].i == 3); break;
+    case SEEK: last_seek = args[0].j; last_seek_mode = args[1].i; assert(last_seek_mode == 2 || last_seek_mode == 3); break;
     case RELEASE: releases++; if (mode == 16) pending = 1; break;
     default: assert(0);
     }
@@ -153,6 +154,7 @@ int mock_player_releases(void) { return releases; }
 int mock_player_opens(void) { return opens; }
 int mock_player_prepares(void) { return prepares; }
 int64_t mock_player_seek(void) { return last_seek; }
+int mock_player_seek_mode(void) { return last_seek_mode; }
 void *mock_player_window(void) { return window; }
 void *ANativeWindow_toSurface(void *env, void *native_window) {
     (void)env; assert(native_window == window && !pending);

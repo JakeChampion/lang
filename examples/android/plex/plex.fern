@@ -683,26 +683,67 @@ pub function qualities(): Quality[] {
   ];
 }
 
-// The containers and codecs that Android plays with no help.
+// The containers that the media player of Android reads.
 function direct_container(c: string): boolean {
   return c == "mp4" || c == "m4v" || c == "mov" || c == "mkv" || c == "webm" || c == "mpegts" || c == "ts" || c == "mp3" || c == "m4a" || c == "aac" || c == "flac" || c == "ogg" || c == "opus" || c == "wav";
 }
 
-function direct_video(v: string): boolean {
-  return v.len() == 0 || v == "h264" || v == "hevc" || v == "vp8" || v == "vp9" || v == "av1" || v == "mpeg4";
+// The MIME type of the Android decoders of the Plex codec `codec`, or "".
+pub function codec_mime(codec: string): string {
+  let table: (string, string)[] = [
+    ("h264", "video/avc"),
+    ("hevc", "video/hevc"),
+    ("vp8", "video/x-vnd.on2.vp8"),
+    ("vp9", "video/x-vnd.on2.vp9"),
+    ("av1", "video/av01"),
+    ("mpeg4", "video/mp4v-es"),
+    ("mpeg2video", "video/mpeg2"),
+    ("aac", "audio/mp4a-latm"),
+    ("mp3", "audio/mpeg"),
+    ("ac3", "audio/ac3"),
+    ("eac3", "audio/eac3"),
+    ("dca", "audio/vnd.dts"),
+    ("truehd", "audio/true-hd"),
+    ("opus", "audio/opus"),
+    ("vorbis", "audio/vorbis"),
+    ("flac", "audio/flac"),
+    ("pcm", "audio/raw"),
+    ("alac", "audio/alac"),
+  ];
+  for row in table {
+    if (row.0 == codec) {
+      return row.1;
+    }
+  }
+  return "";
 }
 
-function direct_audio(a: string): boolean {
-  return a.len() == 0 || a == "aac" || a == "mp3" || a == "ac3" || a == "eac3" || a == "opus" || a == "vorbis" || a == "flac" || a == "pcm" || a == "alac";
+// The decoders that the compatibility definition of Android requires on
+// each device. The app uses them when it cannot read the list of the device.
+pub function baseline_decoders(): string[] {
+  return ["video/avc", "video/hevc", "video/x-vnd.on2.vp8", "video/x-vnd.on2.vp9", "audio/mp4a-latm", "audio/mpeg", "audio/opus", "audio/vorbis", "audio/flac", "audio/raw"];
 }
 
-// Whether the phone can play the first version of the item as it is.
-pub function direct_playable(it: Item): boolean {
+// Whether a decoder of `decoders` takes `codec`. No codec needs no decoder.
+function decodes(decoders: string[], codec: string): boolean {
+  if (codec.len() == 0) {
+    return true;
+  }
+  let known = decoders;
+  if (known.len() == 0) {
+    known = baseline_decoders();
+  }
+  return known.contains(codec_mime(codec));
+}
+
+// Whether the phone, with the decoder types `decoders`, can play the first
+// version of the item as it is.
+pub function direct_playable(it: Item, decoders: string[]): boolean {
   if (it.media.len() == 0 || it.media[0].parts.len() == 0) {
     return false;
   }
   let m = it.media[0];
-  return direct_container(m.container) && direct_video(m.video) && direct_audio(m.audio);
+  return direct_container(m.container) && decodes(decoders, m.video) && decodes(decoders, m.audio);
 }
 
 // The address of the file of the item, which the player reads as it is.
@@ -751,9 +792,14 @@ pub function stop_transcode(c: Client, b: Base, session: string): Request {
 // transcode that the server keeps a session for.
 pub struct Stream { url: string, transcode: boolean, offset_ms: i64 }
 
-pub function stream_for(c: Client, b: Base, it: Item, q: Quality, offset_ms: i64, session: string): Stream {
-  if (q.kbps == 0 && direct_playable(it)) {
+pub function stream_for(c: Client, b: Base, it: Item, q: Quality, offset_ms: i64, session: string, decoders: string[]): Stream {
+  if (q.kbps == 0 && direct_playable(it, decoders)) {
     return Stream { url: direct_url(b, it), transcode: false, offset_ms: offset_ms };
+  }
+  if (q.kbps == 0 && it.media.len() > 0 && decodes(decoders, it.media[0].video)) {
+    // The phone decodes the video, so the server copies it and converts
+    // only the sound.
+    return Stream { url: hls_url(c, b, it, q, offset_ms, session), transcode: true, offset_ms: 0i64 };
   }
   let chosen = q;
   if (chosen.kbps == 0) {
