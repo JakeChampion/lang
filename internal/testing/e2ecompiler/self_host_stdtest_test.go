@@ -597,6 +597,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"ci_string_and_log_kv", langSrcAbs(t, "tests/stdlib/ci_string_and_log_kv_test.fern"), ""},
 		{"env_unreachable", langSrcAbs(t, "tests/stdlib/env_unreachable_test.fern"), ""},
 		{"file_lines_and_timestamp", langSrcAbs(t, "tests/stdlib/file_lines_and_timestamp_test.fern"), ""},
+		{"f64_special", langSrcAbs(t, "tests/stdlib/f64_special_test.fern"), ""},
 		{"float", langSrcAbs(t, "tests/stdlib/float_test.fern"), ""},
 		{"helpers", langSrcAbs(t, "tests/stdlib/helpers_test.fern"), ""},
 		{"json_detail", langSrcAbs(t, "tests/stdlib/json_detail_test.fern"), ""},
