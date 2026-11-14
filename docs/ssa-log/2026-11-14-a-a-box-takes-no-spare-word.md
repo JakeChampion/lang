@@ -43,8 +43,8 @@ peak resident memory:
 | nqueens 13 | 904 | 844 | 754 | 1166 | 188 MB | 156 MB |
 
 Cachegrind at 420,000 inserts: the D1 misses of rbtree-ck go from 6,918,165
-to 6,252,933, and those of rbtree from 1,421,807 to 1,324,771. The
-instruction counts do not change.
+to 6,252,933. Those of rbtree go from 1,421,807 to 1,324,771. The instruction
+counts do not change.
 
 The compiler compiles itself with a peak of 3035 MB, down from 3152 MB. Stage
 2 and stage 3 are the same file.
