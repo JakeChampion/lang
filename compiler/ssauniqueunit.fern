@@ -14,7 +14,7 @@ function refuse(name: string): helper.Proof {
 }
 
 function empty_pools(): string {
-  return ".section .data\n.balign 8\n.Lfern_relanchor:\n.quad .Lfern_relanchor\n.section .data\n.balign 8\n.Lfern_sbox_begin:\n.Lfern_sbox_end:\n.section .data\n.balign 8\n.Lfern_cagg_begin:\n.Lfern_cagg_end:\n.balign 8\n.Lfern_cfn_begin:\n.Lfern_cfn_end:\n.balign 8\n.Lfern_cref_begin:\n.Lfern_cref_end:\n.text\n";
+  return ".section .data\n.balign 8\n.Lfern_relanchor:\n.quad .Lfern_relanchor\n.section .data\n.balign 8\n.Lfern_sbox_begin:\n.Lfern_sbox_end:\n.balign 8\n.Lfern_cfn_begin:\n.Lfern_cfn_end:\n.balign 8\n.Lfern_cref_begin:\n.Lfern_cref_end:\n.text\n";
 }
 
 function pools_match(tail: string[], architecture: string): boolean {
@@ -42,13 +42,15 @@ function text_unit(output: string, architecture: string): Unit {
       lines = lines.append(line);
     }
   }
-  if (names.index(labels).duplicate >= 0 || lines.len() < 2 || lines[0] != ".text") {
+  // An arm64 unit starts with the .arch line of the baseline.
+  let first = if (architecture == "arm64") { 1 } else { 0 };
+  if (names.index(labels).duplicate >= 0 || lines.len() < first + 2 || lines[first] != ".text" || first == 1 && lines[0] != ".arch armv8.2-a+crypto") {
     return Unit { lines: [], ok: false };
   }
   let body: string[] = [];
   let tail: string[] = [];
   let in_pools = false;
-  for i in 1..lines.len() {
+  for i in first + 1..lines.len() {
     let line = lines[i];
     if (line == ".section .data") {
       in_pools = true;
