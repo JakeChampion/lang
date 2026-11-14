@@ -1,3 +1,8 @@
+# 2026-11-14: #15900, perf-aarch64 job 132481188229 on the merge with main ea0fc2c3.
+# aarch64/deflate_decode.text grows 9.3% and aarch64/deflate_decode.ir falls 1.9%. #15900 does not
+# change std/deflate or the compiler: these follow the change of std/deflate that took the zeroed
+# tables of inflate from one allocation, whose note had the x86_64 rows only. They are values of
+# main. Both rows move to their measured values. Keep all tolerances.
 # 2026-11-14: rebank-perf-baselines. The values are from perf-x86_64 job 132455587680 and
 # perf-aarch64 job 132455587896, on the merge of #15876 with main 8385afd8. No run of main completed
 # after d7906632, where this lane was green. The .text of almost each benchmark grows 6 to 60 bytes
@@ -695,8 +700,8 @@ aarch64/closure_call.text	1226
 aarch64/closure_call.ir	46002179
 # 2026-10-26 (#13496): CI40296315314 reports seven lower ARM64 instruction counts.
 # 2026-11-01 (#13347): one-allocation table fills lower the measured ARM64 decode count.
-aarch64/deflate_decode.ir	34154939
-aarch64/deflate_decode.text	13241
+aarch64/deflate_decode.ir	33501979
+aarch64/deflate_decode.text	14479
 aarch64/deflate_encode.ir	42496722
 aarch64/deflate_encode.text	7648
 aarch64/enum_match.text	1198
