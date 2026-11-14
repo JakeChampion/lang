@@ -1,157 +1,3 @@
-# 2026-11-14: PR #15899, perf-x86_64 job 132484455355 on the merge with main. A box has a header of
-# one word, with two new runtime routines and the models of them. Each row that the job names moves
-# to its measured value. Keep all tolerances.
-# 2026-11-14: rebank-perf-baselines. The values are from perf-x86_64 job 132455587680 and
-# perf-aarch64 job 132455587896, on the merge of #15876 with main 8385afd8. The .emit rows grow
-# with the code that each program links, as the .text rows of perf-baseline.txt do. These are values
-# of main. Each row that the two jobs name moves to its measured value. Keep all tolerances.
-# 2026-11-14: perf/compact-i32-arrays (#14818), a local scripts/perf-bench-selfhost run on the branch
-# at main 8ce8fde7. An i32[] and an f32[] now hold 4-byte elements. A program that appends only to
-# an i32[] does not get the word append, so array_append, array_index, sort_ints and sort_inplace fall
-# 1% to 6%. A program that also uses a word array gets the 4-byte append and __fern_arr_slice_u32 as
-# well, so map_int, map_string, ordmap_insert, pvec_with, sort_strings and struct_drop grow 3% to 10%.
-# Main at 38768eb2 already gave the measured values of perceus_rbtree_ck and closure_call. Each row
-# that the run names moves to its measured value. Keep all tolerances.
-# 2026-11-13: CI 43517654014, job 132208527194, tested merge 4993a5d5.
-# Main 38768eb2 with HEVC input. These rows use the complete measured report.
-# Workloads, metric keys, and tolerances are unchanged.
-# 2026-11-13: PR #15784, perf-x86_64 job 132195198217 on the merge with main 38768eb2. Twenty-three
-# emit rows moved, perceus_rbtree_ck by +6.7% to +7.7% (089d854d adds length to the benchmark) and the others by 1% to 3%. Main's
-# compiler and #15784 emit the same code for each program of bench/ on x86-64 and arm64, so these are
-# values of main. Each row moves to its measured value. Keep all tolerances.
-# 2026-11-14: PR #15811, perf-x86_64 job 132328927242 on the merge with main 8ce8fde7. 25 emit rows
-# move: 18 up and 7 down. perceus_rbtree_ck grows 6.7% to 7.7% with the kept trees of 089d854d
-# (#15780). The other rows are values of main after #15769 and #15771. Each row moves to its measured
-# value. Keep all tolerances.
-# 2026-11-14: #15810 on main 38768eb2, a local perf-bench-selfhost run. Array and map parameters
-# are now inferred owned. On the three targets, this change moves only five programs:
-# deflate_decode, deflate_encode, ordmap_insert and the two utf8_ingest programs.
-# They fall 0.1% to 6.4%. The other rows here are values of main.
-# Each row moves to its measured value. Keep all tolerances.
-# 2026-11-14: PR #15790 at 2bba0641, on the merge with main 8ce8fde7: perf-x86_64 job 132329458814
-# and perf-aarch64 job 132329458736. 2 rows are off the pins that main and this PR set apart.
-# Each moves to its measured value. Keep all tolerances.
-# 2026-11-14: PR #15790 at ba957d1e, perf-x86_64 job 132249261077 and perf-aarch64 job 132249260970.
-# The colour step of the bump allocator and the request for huge pages add 20 to 60 bytes of
-# runtime text to each program and two or three instructions to each bump block. The other rows
-# are values of main: the PR does not change what the compiler emits for a function. 53 rows
-# move to their measured values. Keep all tolerances.
-# 2026-11-13: PR #15739, perf-x86_64 job 132017371022 on the merge with main 629da263. Eleven emit rows
-# of perceus_cfold, perceus_rbtree, perceus_rbtree_ck, pmap_insert and pvec_with are 1.2% to 4.8%
-# below their pins. These are values of main: #15739 changes no code that these programs reach. Each
-# row moves to its measured value. Keep all tolerances.
-# 2026-11-13: PR #15695, perf-x86_64 job 131880155145 on the merge with main 04b4f337. A cons-tail
-# loop carries the address of its hole, and the emit of perceus_rbtree and perceus_rbtree_ck falls
-# 1.6% to 2.4% on x86-64 and arm64. Each row moves to its measured value. Keep all tolerances.
-# 2026-11-13: PR #15684 jobs 131832783238 and 131832783245 tested merge df16f1f9 with main 5e4d66b7.
-# These rows use the reported measurements after the main compiler changes.
-# The media reference change does not alter the compiler or workloads. Tolerances stay unchanged.
-# 2026-11-13: PR #15649, perf-x86_64 job 131794350593 on the merge with main bece4d5b. #15647 tests a
-# reuse allocation inline, so the emit of seven programs grew 1.1% to 4.3% on x86-64 and arm64. Each
-# row moves to its measured value. Keep all tolerances.
-# 2026-11-13: PR #15643, the same jobs as perf-baseline.txt on main 312303b6. The deflate emit rows of
-# #15609 grew 1.0% to 3.2%, and the perceus_rbtree rows are 2.6% to 6.8% below their pins. Each row
-# moves to its measured value. Keep all tolerances.
-# 2026-11-12: main 6f8937ce, run 43285985869, perf-x86_64 job 131423863245.
-# The ssa changes of that day grew the emit of perceus_rbtree and perceus_rbtree_ck 5.0% to 8.1%
-# on the three targets. Each row moves to its measured value. Keep all tolerances.
-# 2026-11-10: PR #15089 retains the revised HTTP repair from #15087.
-# Bank measured HTTP code reductions after main c9547605. Keep all tolerances.
-# Evidence: docs/benchmarks/video-avc-pps-main-2026-11-10/.
-# 2026-11-10: PR #15079, a local scripts/perf-bench-selfhost run on main's tree at da3282d0. http_hello.emit grows 6.2% to 7.2% on the three targets with f79f524d of #15076, which reads a request target through a view. This PR changes no emitted code. Pinned at the measured values.
-# 2026-11-09: PR #15057 job 129506295164 on cb465ef307 measured these moved rows.
-# HTTP and video emitted sizes include changes from main. Keep all tolerances.
-# 2026-11-10: PR #15061, perf-aarch64 job 129516573802 and perf-x86_64 job 129534712785. The video_qtrle rows fall 1-9% on main's tree. This PR changes no codec source. Pinned at the measured values.
-# 2026-11-10: PR #15054, perf-x86_64 job 129513800283 on 0cfee1e8a6.
-# http.serialize_response_to and http.serialize_response_to_bytes refuse a
-# field with CR or LF since #15002, so http_hello.emit rises about 2% on the
-# three targets. Pinned at the measured values.
-# 2026-11-09: PR #15029, perf-x86_64 job 129497664914 on 67ebb177. video_qtrle.emit falls 1.4% to 8.5% on main's
-# tree. The compilers before and after this PR emit the same asm for it. Pinned at the measured values.
-# 2026-11-09: PR #15057 job 129506295164 on cb465ef307 measured these moved rows.
-# HTTP and video emitted sizes include changes from main. Keep all tolerances.
-# 2026-11-09: PR #14918 at d5878092fe. CI job 129346709783 measures
-# string_count_byte after main updates. Bank the reported size and work counts.
-# Baseline 12be8f1186 and candidate 3a296b887c emit identical code.
-# Evidence: docs/benchmarks/compiler-semantic-liveness-ci-2026-11-09/. Keep all tolerances.
-# 2026-11-09: PR #14874 at 2d7d444e94. CI job 129298782302 measures eight
-# changed emitted sizes after the merge of main d04e79179f. Bank both directions.
-# Keep all tolerances. These are not isolated liveness gains.
-# 2026-11-09: PR #14829. The counted append capacity check adds control flow. Six emitted-size rows grow 1.0% through 2.4%, measured locally on all three targets.
-# 2026-11-09: the tree-shake fix of #14766 (b1c71641). The nine emitted sizes that #14756 pinned high fall back on every target, by scripts/perf-bench-selfhost. Each is pinned at its measured value.
-# 2026-11-09: PR #14797, perf-x86_64 job 128939680803 on 801b4a44. The emitted size of the nine benchmarks that #14756 raised falls back on every target with the tree-shaker fix that merged with #14757. Pinned at the measured values.
-# 2026-11-08: PR #14761, perf-x86_64 job 128870228905 on 312ff488. The three rows moved with the drift of main since the last bank. Each is pinned at its measured value.
-# 2026-11-08: PR #14756, perf-x86_64 job 128872144989 on f0a8de2f. The emitted size of nine benchmarks rises on every target, as the .text rows do. The growth is main's at 1c692d87: its compiler and this PR's emit the same code.
-# 2026-11-08: PR #14551, perf-x86_64 job 128672519463 on cd8eee37. std/fetch speaks HTTP/3: http_hello.emit on wasm32-wasi grows 3.3% and is pinned at its measured value.
-# 2026-11-08: PR #14507, perf-x86_64 job 128621787156 on 3318c8cb merged into main fb5b6f22. The three video_qtrle rows rise with the split codec of this change. The other rows are the drift of main since the last bank. Every row is pinned at its measured value.
-# 2026-11-06: SEC-021. Matched primary compilers compare this change with main a0e50a15.
-# Each static limit adds at most the measured native increase to its previous value.
-# Preserve previous limits for unrelated growth. All tolerances and the warning policy stay fixed.
-# 2026-11-04: PR #14151, perf-x86_64 job 126702933959 on fa7a3281, after the merges of #14136, #14145 and
-# #14134 into the branch. Five wasm32-wasi .emit rows rise 1.08% to 1.77%.
-# Retain the preceding limits. The measured regressions must remain visible.
-# 2026-11-04: PR #14140, perf-x86_64 job 126464419770 on 60ccc68b. Register calls to the Fern runtime shrink
-# the http_hello and pvec_with emits 1.04% to 1.22%. Only reductions are banked, and no limit rises.
-# 2026-11-04: #14094, a local scripts/perf-bench-selfhost run. A join of constants that only returns goes back into
-# its arms: http_hello.emit -1.2% to -2.0%, and wasm sort_ints, sort_strings and string_find_byte -1.5% to -1.6%.
-# 2026-11-03: PR #14122, a local scripts/perf-bench-selfhost run on its head. Liveness decides which values cross a call,
-# and a small branch splices into its two callers. Retain the measured reductions and preserve every original higher-cost limit.
-# 2026-11-02: PR #14026 keeps kernel loops within the normal call budget.
-# Preserve the preceding limits and the measured lower ordmap instruction limits.
-# 2026-11-02: PR #14025 run 41440248030. The byte mismatch kernel gains a two-byte arm at each of its sites,
-# so http_hello.text and .emit grow 1.86% on x86_64 and aarch64 and the http_hello profile emits 1.0% to 1.1%.
-# 2026-11-02: PR #14025 run 41440248030 on the merge with main 87b88925 (#14019, #14023), whose rows moved
-# before main re-banked them: the wasm .emit rows +3% to +4%, and the diagnostic bytes of startup, call_overhead
-# and int_loop -1.2% to -1.6% on both native targets.
-# 2026-11-01: PR #14009 retains main's limits wherever the initial report grew.
-# Source corrections must pass those limits. Improved rows keep their measured lower pins.
-# 2026-11-01: PR #14009 run 41350917312, perf-x86_64. A branch on a join of constants goes to its arm,
-# and __fern_buf_push takes a direct path: enum_match.emit -9% to -15% on the three targets, http_hello.emit
-# -3.6% on wasm and +1.2% to +1.35% on the native targets, and smaller moves on four rows.
-# 2026-11-01: PR #13988 run 41287852525, perf-x86_64. A method joins the once set only when its body is
-# one block: ordmap_insert.emit -2.9% to -3.6%, pvec_with and utf8_ingest return to their values before
-# the splice, and pmap_insert.emit +1.5% to +2.4%.
-# 2026-11-01: PR #13988 run 41278840167, perf-x86_64. The once-set method splice moves 20 rows:
-# pvec_with.emit -10.7% to -12.8%, ordmap_insert.emit +3.0% to +3.7%, and smaller moves on five programs.
-# 2026-10-31: Unreferenced typed drop helpers no longer reach emission.
-# Complete 117-row measurement: docs/benchmarks/typed-helper-reach-2026-10-31/static.json. Pins only decrease.
-# 2026-10-31: PR #13910, measured by CI job 124561576376.
-# 2026-10-31: PR #13923, measured by CI job 124561596792.
-# 2026-10-31: PR #13897 at 54001e2. CI run 41153255512, perf-x86_64.
-# Record the lane's measured changes after the lifetime and shared-helper repairs.
-# 2026-10-29: #13863 (#13061) at 84b2ea38, from a local perf-bench-selfhost run. The map
-# programs grow by 34% to 85%: each map operation has a clone per key kind. closure_call shrinks.
-# 2026-10-29: Exact report from CI run 40890273181 at 0b1901adb on PR #13846.
-# semcse and the carry rule move 11 rows. All tolerances remain unchanged.
-# 2026-10-28: Exact reports from CI run 40620158743 at c63e488b4 on PR #13718.
-# Raw reports and unchanged tolerances: docs/benchmarks/pair-return-ci-repair-2026-10-28/ci-perf/.
-# 2026-10-28: scripts/perf-bench-selfhost on #13726 (the branch merged with main at 5acfabebb). Two sources move the rows. #13677 merged after the last pin and added the startup checks, the box ceiling and the verifier changes, which moved every native row and six wasm rows. The build manifest (SEC-046) then adds 11 lines to every x86-64 program and 17 to every arm64 program.
-# 2026-10-27: complete static snapshot at 45148d4a5feb8cd0a305dbec134fa50c3ea825a0.
-# Native string-byte capacity uses wide arithmetic. See docs/benchmarks/packed-string-bytes-2026-10-27/.
-# 2026-10-26: complete 117-row static snapshot at c03b8473e4a1458210d978ca2f4f581c7cba090f.
-# The Wasm runtime source port changes all 39 Wasm rows; native rows and tolerances are unchanged.
-# Evidence: docs/benchmarks/wasm-runtime-static-2026-10-26/.
-# 2026-10-26: complete static measurements from local combined source
-# e068b9ae43e0ad05bed382d818a0231e203e50a1 (guard, entropy, and runtime bundle split).
-# 2026-10-26: CI run 40382820194 at a615af0e supplies this complete snapshot.
-# SEC-015 adds the guard result check and its cold failure handler.
-# 2026-10-26 (#13495): pin only the 24 Wasm rows that omit unused type-ID globals.
-# Fixed-input source 934244ba8480, baseline source 0e2176c40, and complete reports:
-# docs/benchmarks/wasm-typeids-2026-10-26/. Native rows and tolerances stay unchanged.
-# 2026-10-26, from a local perf-bench-selfhost run on main at aa27853f plus the 32-bit index
-# arithmetic, which cuts every native row 0.1 to 0.8% and moves no wasm row. The rows past
-# tolerance moved on main, and no PR re-pinned them: deflate_decode grows about 4% on each
-# target with the resumable inflate of #13432, http_hello grows 1 to 2%, the utf8_ingest rows
-# shrink about 1.4%, and the small wasm programs grow by four to eight lines.
-# 2026-10-25 (#13302): the deflate and utf8_ingest_validated rows from a local perf-bench-selfhost run on the merge with main at 0bc58bfd.
-# 2026-10-25: every row re-pinned from Perf run 40200803636 (main at 127eb63c),
-# reproduced to the row by scripts/perf-bench-selfhost on main at 0bc58bfd. The
-# x86-64 and arm64 rows all grew by the _start prologue that installs the
-# stack-overflow handler, 145 lines on x86-64 (int_loop 33 to 178), and the
-# byte_copy_* rows of #13251's new benchmarks join the table. perceus_cfold and
-# record_update shrank 7 to 33%; the string and deflate rows grew 16 to 40%.
-# 2026-10-23: combined source 160186731f, Perf run 40026009089. The TLS HTTP row uses the combined value.
-# 2026-10-23: integrated deflate, sort, and cold-call rows from 0b03aff204, Perf run 40015080180.
 # Emitted-size baseline for the SELF-HOSTED compiler over bench,
 # checked against every run by scripts/ci-check-perf.
 #
@@ -197,131 +43,6 @@
 # ADVISORY, IN BOTH DIRECTIONS — see scripts/ci-check-perf. When a number moves
 # on purpose, update it in the same PR; the job summary prints the corrected
 # lines ready to paste. Keep the reason in the PR, not here.
-#
-# MEASURED AT a615af0e (CI run 40382820194). The file is one snapshot of one
-# commit, so regenerate it wholesale (`scripts/perf-bench-selfhost`) and move
-# this line with it — that makes a stale baseline a commit distance anyone can
-# read, rather than something to infer from the size of the drift.
-#
-# THE c06834f REFRESH FOLDED TWO INDEPENDENT MOVEMENTS. Do not read either figure as one
-# effect:
-#
-#   1. The fourteen benchmarks that import a stdlib module fell 84.7-96.9% on
-#      all three targets, when the self-host CLI started pruning unreachable
-#      functions (the note above). Over the whole corpus x86-64 goes 1,038,644
-#      emitted instructions to 93,275, which is 37% BELOW the native compiler's
-#      147,715 on the same corpus — the self-host emitter has always been the
-#      denser of the two, and the dead code was hiding it.
-#   2. The eight benchmarks with no stdlib import moved 0.0% to +4.4%, which is
-#      main drifting between c92acc7 and a595b01 and has nothing to do with the
-#      prune: their emitted text is byte-identical either side of it. wasm32-wasi
-#      shows +0.0% across that group because the drift is in the two native
-#      emitters.
-
-# 2026-09-01 (second movement) — the fourteen stdlib-importing benchmarks fell a
-# further 3.2-53.2%, x86-64 corpus 93,275 -> 82,642 (-11.4%), nothing regressed.
-# treeshake's ARITHMETIC operator roots are now qualified by receiver type: a
-# bare `add` root from any `a + b` used to keep `add` for every type in the
-# program, and `checker.annotate_module` stamps the operand type for exactly
-# those operators (for `==` it stamps `boolean`, which names no impl, so the
-# comparisons are not qualified and are not the lever — see the audit's §4f).
-# Cumulative over both movements: 1,038,644 -> 82,642, -92.0%.
-
-# 2026-09-17 — forty-seven rows fell from this change and none rose from it;
-# the rows that RISE in this diff are the absorbed drift described below, not
-# this change. `append_push` in ssarc no
-# longer un-shares a shared receiver itself: it hands the box to the
-# non-consuming `__fern_arr_push`, whose hand-asm does the same copy and counts
-# it, where the open-coded arm emitted an `__fern_rc_is_unique` gate and a
-# whole-buffer `__fern_arr_slice` around a consuming push (#9526). array_append
-# and array_index are the largest at -13.8% / -14.1% on x86-64; the other rows
-# are the same sites inside the stdlib each bench pulls in.
-#
-# This refresh also ABSORBS PRE-EXISTING DRIFT, which is not this change's: 29
-# rows already disagreed with the baseline at c06834f, nine of them benchmarks
-# with no row here at all (ordmap_insert, pmap_insert, pvec_with). map_int,
-# map_probe_chain and wasm closure_call were the ones past the comparator's 1%
-# threshold. Both lanes are advisory, which is how the file drifted this far.
-
-# 2026-10-03 — regenerated wholesale at 97e52481. Every row moved, none was
-# added or dropped, and no single change explains the file: it absorbs the
-# drift since 866088f4. Totals over the corpus: x86-64 167,252 -> 149,592
-# (-10.6%), arm64 187,568 -> 154,622 (-17.6%), wasm32-wasi 134,922 -> 161,548
-# (+19.7%). The largest movements, by cause:
-#
-#   - map_int and map_probe_chain grew 4-12x on every target when maps moved
-#     onto core/map's hash table (ec697675, fab0770e). The runtime keeps a
-#     column helper per value type behind a dispatch chosen at run time, so
-#     the prune cannot drop the ones an i32 map never uses.
-#   - utf8_ingest_* rose 71-150% and string_scan fell 72-74% across the
-#     string-library work of 2026-09-30 to 2026-10-02 (D9's ill-formed-UTF-8
-#     handling, 3f0e17d7, and the boundary-preserving string operations).
-#   - the rest moved with codegen changes on main, among them #11176, #11186
-#     and #11188.
-
-# 2026-10-07 — regenerated wholesale at f05f4118. Four rows rise from this
-# change, the carry of a dying box past a construction of another count
-# (#11761): sort_strings on all three targets (x86-64 4875 -> 4953, arm64
-# 5571 -> 5646, wasm 5436 -> 5648) and wasm ordmap_insert 4517 -> 4864: the
-# carried donor's uniqueness test at the construction it reaches and its
-# drop on each edge that leaves the way. Every other row that moved is
-# main's drift since 97e52481, the same bytes building from main at 4a53d3e5.
-
-# Re-pinned 2026-10-11 (#12117) on 45 rows after a split read's part phi is
-# shared by every read of it and a carried reuse donor's token is taken where
-# the donor dies: every x86-64 row with a carry or a split fell 1-7%, arm64
-# rows 2-16% (one phi per part rather than per read is more on arm64, whose
-# phi moves are longer), and wasm 2-7%, except wasm call_overhead (+2 lines)
-# and int_loop (+2 lines), which carry a token's null test on an exit edge.
-# Values are the selfhost-perf-x86_64 lane's measurement of the branch.
-
-# Re-pinned 2026-10-23 (#13050) on sort_inplace (x86-64 1179 -> 1343, arm64
-# 1382 -> 1565, wasm 757 -> 1088): the benchmark runs `cmp.sort_in_place`, a
-# heapsort, in place of std/sort's deleted i32 insertion sort. Values are a
-# local perf-bench-selfhost run of the branch.
-
-# 2026-10-11 — the 35 wasm32-wasi rows re-pinned where the IR optimiser began
-# removing stores to slots nothing reads (#12106): the wasm corpus falls
-# 174,255 -> 158,352 (-9.1%), every row by 1.8-15.8%, measured against main at
-# 869cc95c. The rows as previously pinned summed 175,543; the other 1,288 lines
-# were main's drift, not this change. The x86-64 and arm64 rows are untouched
-# by it; the register backends already pruned those values in SSA.
-
-# 2026-10-11 — the two re-pins above met on six wasm rows (call_overhead,
-# http_hello, int_loop, map_int, map_probe_chain, map_string), which both
-# #12106 and #12117 moved. Those six carry #12106's reading plus #12117's
-# difference; the lane's reading of the merged tree is the pin to keep.
-#
-# 2026-10-12 — 13 rows re-pinned where a nested pattern's arm builds in its
-# scrutinee and a child is re-read where its parent dies (#12183): the arms
-# that rebuild a node gain a reuse path on every target, perceus_rbtree
-# +26-27%, rbtree_ck +16-17%, cfold +5-6%, deriv +4-5%, and wasm http_hello
-# +2.3%, while rbtree retires 14% fewer instructions.
-#
-# 2026-10-13 — http_hello re-pinned on every target (#12331, +3.7% to +4.2%):
-# produced trailers, std/fetch over HTTP/2, and the shared splices the inliner
-# no longer holds to the caller's budget, as perf-baseline.txt's note says.
-# Only these three rows; the others' drift against this file is main's.
-#
-# Re-pinned 2026-10-25 (#13402) on ordmap_insert.emit: std/ordmap is a B+ tree,
-# a larger module (x86-64 5507, arm64 5868, wasm 6960), measured by the dev
-# container's perf-bench-selfhost run.
-#
-# Re-pinned 2026-11-13 (#15564) from the perf lanes of run 43328532022. #15554
-# and #15564 give each side of a uniqueness test its own code.
-# x86-64-linux/deflate_decode.emit 12766 to 12469,
-# arm64-linux/deflate_decode.emit 13560 to 13320,
-# x86-64-linux/perceus_cfold.emit 1954 to 1892, arm64-linux/perceus_cfold.emit
-# 2213 to 2150, x86-64-linux/perceus_deriv.emit 2722 to 2581,
-# arm64-linux/perceus_deriv.emit 3025 to 2878,
-# x86-64-linux/perceus_nqueens.emit 1587 to 1548,
-# arm64-linux/perceus_nqueens.emit 1842 to 1797,
-# x86-64-linux/perceus_rbtree.emit 2987 to 2861,
-# arm64-linux/perceus_rbtree.emit 3340 to 3200,
-# x86-64-linux/perceus_rbtree_ck.emit 3081 to 2943,
-# arm64-linux/perceus_rbtree_ck.emit 3402 to 3271,
-# x86-64-linux/pmap_insert.emit 2942 to 2884, arm64-linux/pmap_insert.emit
-# 3249 to 3188, arm64-linux/pvec_with.emit 3211 to 3178.
 
 selfhost/arm64-linux/array_append.emit	1427
 selfhost/arm64-linux/array_index.emit	1427
@@ -335,11 +56,6 @@ selfhost/arm64-linux/closure_call.emit	1268
 selfhost/arm64-linux/deflate_decode.emit	14509
 selfhost/arm64-linux/deflate_encode.emit	7729
 selfhost/arm64-linux/enum_match.emit	1232
-# 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-# 2026-11-10: PR #15022, CI 42754163314 records the inherited HTTP benchmark changes.
-# Main da3282d0 and candidate 597b6e78 retain identical output in each local pair.
-# Evidence: docs/benchmarks/compiler-interpreter-http-ci-2026-11-10/. Tolerances stay unchanged.
-# 2026-11-10: Current rows follow main e23f590d and its measured HTTP reductions.
 selfhost/arm64-linux/http_hello.emit	16699
 selfhost/arm64-linux/int_loop.emit	391
 selfhost/arm64-linux/map_int.emit	8813
@@ -350,7 +66,6 @@ selfhost/arm64-linux/pmap_insert.emit	3254
 selfhost/arm64-linux/pvec_with.emit	3592
 selfhost/arm64-linux/record_update.emit	1281
 selfhost/arm64-linux/sort_inplace.emit	1753
-# 2026-11-05: PR #14207, perf-x86_64 job 126960802774 on the merge with main 6dba1dcb measures lower values for the changed rows below. The rows that rise keep their limits.
 selfhost/arm64-linux/sort_ints.emit	2098
 selfhost/arm64-linux/sort_strings.emit	3775
 selfhost/arm64-linux/string_build.emit	2420
@@ -375,15 +90,10 @@ selfhost/wasm32-wasi/closure_call.emit	504
 selfhost/wasm32-wasi/deflate_decode.emit	20449
 selfhost/wasm32-wasi/deflate_encode.emit	12188
 selfhost/wasm32-wasi/enum_match.emit	545
-# 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-# 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured selfhost/wasm32-wasi/http_hello.emit at 19326 (was 19039). The tolerance is unchanged.
 selfhost/wasm32-wasi/http_hello.emit	19326
 selfhost/wasm32-wasi/int_loop.emit	74
-# 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured selfhost/wasm32-wasi/map_int.emit at 13496 (was 13304). The tolerance is unchanged.
 selfhost/wasm32-wasi/map_int.emit	13496
-# 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured selfhost/wasm32-wasi/map_probe_chain.emit at 13521 (was 13329). The tolerance is unchanged.
 selfhost/wasm32-wasi/map_probe_chain.emit	13521
-# 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured selfhost/wasm32-wasi/map_string.emit at 14287 (was 14007). The tolerance is unchanged.
 selfhost/wasm32-wasi/map_string.emit	14287
 selfhost/wasm32-wasi/ordmap_insert.emit	6518
 selfhost/wasm32-wasi/pmap_insert.emit	3296
@@ -400,9 +110,7 @@ selfhost/wasm32-wasi/string_scan.emit	1405
 selfhost/wasm32-wasi/string_slice.emit	543
 selfhost/wasm32-wasi/struct_drop.emit	1629
 selfhost/wasm32-wasi/tokenize.emit	890
-# 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured selfhost/wasm32-wasi/utf8_ingest_unchecked.emit at 9273 (was 8993). The tolerance is unchanged.
 selfhost/wasm32-wasi/utf8_ingest_unchecked.emit	9273
-# 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured selfhost/wasm32-wasi/utf8_ingest_validated.emit at 10197 (was 9917). The tolerance is unchanged.
 selfhost/wasm32-wasi/utf8_ingest_validated.emit	10197
 selfhost/x86-64-linux/array_append.emit	1181
 selfhost/x86-64-linux/array_index.emit	1185
@@ -416,11 +124,8 @@ selfhost/x86-64-linux/closure_call.emit	1019
 selfhost/x86-64-linux/deflate_decode.emit	13715
 selfhost/x86-64-linux/deflate_encode.emit	7092
 selfhost/x86-64-linux/enum_match.emit	990
-# 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
 selfhost/x86-64-linux/http_hello.emit	15877
 selfhost/x86-64-linux/int_loop.emit	298
-# 2026-11-10: PR #15106, CI job 129860813857 on b45460dd72 measured this size.
-# Bank the measured increase after main 5d6c692eb2. Keep the tolerance unchanged.
 selfhost/x86-64-linux/map_int.emit	8790
 selfhost/x86-64-linux/map_probe_chain.emit	8794
 selfhost/x86-64-linux/map_string.emit	9671
@@ -441,8 +146,6 @@ selfhost/x86-64-linux/struct_drop.emit	2638
 selfhost/x86-64-linux/tokenize.emit	1248
 selfhost/x86-64-linux/utf8_ingest_unchecked.emit	8006
 selfhost/x86-64-linux/utf8_ingest_validated.emit	8666
-
-# Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
 selfhost/x86-64-linux/perceus_cfold.emit	1993
 selfhost/arm64-linux/perceus_cfold.emit	2247
 selfhost/wasm32-wasi/perceus_cfold.emit	1766
@@ -458,16 +161,6 @@ selfhost/wasm32-wasi/perceus_rbtree.emit	3688
 selfhost/x86-64-linux/perceus_rbtree_ck.emit	3042
 selfhost/arm64-linux/perceus_rbtree_ck.emit	3330
 selfhost/wasm32-wasi/perceus_rbtree_ck.emit	4278
-# 2026-11-07: PR #14490 adds QTRLE emitted-size measurements from the local current compiler.
-# Existing limits and tolerances stay unchanged.
-# 2026-11-08: #14770. Pin the measured reduction from the corrected display roots.
-# No performance limit increases.
 selfhost/x86-64-linux/video_qtrle.emit 5297
 selfhost/arm64-linux/video_qtrle.emit 5642
 selfhost/wasm32-wasi/video_qtrle.emit 6036
-# 2026-11-09: QTRLE scalar run validation reduces emitted code on all three targets.
-# Measured with the same compiler as the parent control. Keep all tolerances.
-# 2026-11-09: PR #14917, CI job 129321185181. The byte-count kernel from
-# merged #14910 emits 1321 x86-64 lines on both parent 97af82fc and IVF head
-# cbed65e0. Pin the measured value without a tolerance change.
-# 2026-11-14 (#15822): perf-x86_64 job 132337113700 on the merge with main 8ce8fde7. Owned array parameters move these rows. Each row is pinned at its measured value.

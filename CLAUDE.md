@@ -194,8 +194,9 @@ than one each.
 **A baseline a PR moves is re-banked in that PR, without asking.** The perf,
 cliff, emitted-size and allocation lanes each pin one (`.github/*-baseline.txt`).
 When a lane reports a row moved, in either direction, pin the lane's measured
-value with a dated note in the file and push. The owner has said so. Do not
-ask again.
+value and push. The reason goes in the commit message, never in the file: a
+note per move makes each open PR conflict. The owner has said so. Do not ask
+again.
 
 **One red lane cancels the rest.** When a lane concludes `failure` the rest of
 the run is cancelled to hand the lock to the next PR — so a red PR shows one
