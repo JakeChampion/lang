@@ -244,7 +244,8 @@ func TestSelfHostExampleGitAgainstGit(t *testing.T) {
 
 // gitPackedFixture makes a repository whose objects are in one packfile,
 // with chains of deltas: each commit changes one more line of a file of
-// 400 lines. The last commit is a merge of two parents. It gives the path of the index of the packfile.
+// 400 lines. The last commit is a merge of two parents. The packfile is
+// above 1 MiB. It gives the path of the index of the packfile.
 func gitPackedFixture(t *testing.T, oracle gitTool, dir string) string {
 	t.Helper()
 	must := func(args ...string) string {
@@ -257,6 +258,20 @@ func gitPackedFixture(t *testing.T, oracle gitTool, dir string) string {
 	}
 	must("init", "-q", "-b", "main", ".")
 	id := []string{"-c", "user.name=T", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"}
+	// Bytes that zlib cannot make smaller put the packfile above 1 MiB. The
+	// port then reads one object at a time from the file, and it reads the
+	// whole file after reads for half of the objects.
+	noise := make([]byte, 3<<19)
+	state := uint32(2463534242)
+	for i := range noise {
+		state ^= state << 13
+		state ^= state >> 17
+		state ^= state << 5
+		noise[i] = byte(state)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "noise.bin"), noise, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	for i := 1; i <= 9; i++ {
 		var big strings.Builder
 		for line := 1; line <= 400; line++ {
@@ -293,6 +308,9 @@ func gitPackIndex(t *testing.T, dir string) string {
 	found, err := filepath.Glob(filepath.Join(dir, ".git", "objects", "pack", "*.idx"))
 	if err != nil || len(found) != 1 {
 		t.Fatalf("the fixture has %d packfiles, want 1", len(found))
+	}
+	if info, err := os.Stat(strings.TrimSuffix(found[0], ".idx") + ".pack"); err != nil || info.Size() <= 1<<20 {
+		t.Fatalf("the packfile of the fixture is not above 1 MiB: the port does not read it in parts")
 	}
 	return found[0]
 }

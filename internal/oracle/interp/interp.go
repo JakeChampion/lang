@@ -674,6 +674,7 @@ func New() *Interp {
 	i.Builtins["__method_Dir_open_writer_with"] = &Builtin{Fn: builtinDirOpenFile("Writer", os.O_WRONLY, true)}
 	i.Builtins["__method_Dir_entries"] = &Builtin{Fn: builtinDirEntries}
 	i.Builtins["__method_Dir_entries_bytes"] = &Builtin{Fn: builtinDirEntriesBytes}
+	i.Builtins["__method_Dir_entries_ino"] = &Builtin{Fn: builtinDirEntriesIno}
 	i.Builtins["__method_Dir_stat"] = &Builtin{Fn: builtinDirStat(true)}
 	i.Builtins["__method_Dir_lstat"] = &Builtin{Fn: builtinDirStat(false)}
 	i.Builtins["__method_Dir_access"] = &Builtin{Fn: builtinDirAccess}

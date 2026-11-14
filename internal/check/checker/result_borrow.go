@@ -241,6 +241,16 @@ func elemType(t ast.Type) ast.Type {
 	return nil
 }
 
+// letsOnly reports a block whose statements each bind one name.
+func letsOnly(stmts []ast.Stmt) bool {
+	for _, st := range stmts {
+		if _, ok := st.(*ast.Var); !ok {
+			return false
+		}
+	}
+	return len(stmts) > 0
+}
+
 func (c *checker) resultPartBorrows(e ast.Expr, b borrowScope) bool {
 	return !c.resultCopyParts[e] && c.exprBorrows(e, b)
 }
@@ -305,7 +315,9 @@ func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 	case *ast.Ident:
 		return b.borrowed[x.Name] || b.locals[x.Name]
 	case *ast.BlockExpr:
-		if x.Unsafe && len(x.Stmts) == 0 && x.Tail != nil {
+		// borrowedLocals has marked each `let` of the block whose value
+		// borrows, so a block of lets borrows only through its value.
+		if x.Tail != nil && (x.Unsafe && len(x.Stmts) == 0 || letsOnly(x.Stmts)) {
 			return c.exprBorrows(x.Tail, b)
 		}
 		return true

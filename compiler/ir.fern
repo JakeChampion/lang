@@ -360,6 +360,11 @@ pub function bytes_payload(o: Op): Op {
   return Op { ...o, i32_imm: 1 };
 }
 
+// The variant of op_dir_entries that gives DirEntry records.
+pub function entry_payload(o: Op): Op {
+  return Op { ...o, i32_imm: 2 };
+}
+
 pub function packed(o: Op): Op {
   return Op { ...o, width: 8 };
 }
