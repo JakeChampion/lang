@@ -121,7 +121,10 @@ retired the op: `.chars()` is std/string's codepoint decoder, not a builtin.
 > calls that std/array's method and function fold to, so it is what an
 > importing program reaches: one box sized for both operands and two copies,
 > where the std/array body grew its result an element at a time. Any element
-> type but a string view takes the helper. An odd width marks counted
+> type but a string view takes the helper. The width it takes is eight times
+> the size of an element in bytes. For a pointer-sized element, `ssarc`
+> computes that width from `ir.op_ptr_width`, so it is 64 on the native
+> targets and 32 on wasm. An odd width marks counted
 > elements: the helper then increments the count of each element that it
 > copies from `ys`. The caller increments the elements that a copy shares
 > with a shared `xs`, as an `append` does. The helper copies into a unique

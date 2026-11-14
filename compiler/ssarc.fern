@@ -4347,19 +4347,14 @@ function join_call(own r: irtables.LowerState, ins: ssa.SInst): irtables.LowerSt
 }
 
 // The helper takes the second operand as its length and data, so a view is
-// read where it points. Bit 0 of the width it takes marks counted elements,
-// which it retains as it copies them.
+// read where it points.
 function concat_call(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, counted: boolean): irtables.LowerState {
   let elem = typeinfo.array_elem(f.values[ins.result]);
   let width = elem_width(elem);
-  let kernel_width = width;
-  if (ssasem.counted(f, elem)) {
-    kernel_width = width + 1;
-  }
   if (ins.args.len() == 4) {
     r = concat_range_check(r, f, ins);
   }
-  r = emit(r, ir.op_const_i32(kernel_width));
+  r = concat_width(r, width, ssasem.counted(f, elem));
   if (ins.args.len() == 4) {
     r = emit(r, ir.op_load_local(ins.args[3]));
   } else {
@@ -4379,6 +4374,23 @@ function concat_call(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst,
     call = ir.counted(call);
   }
   return emit(r, call);
+}
+
+// The width the helper takes is eight times the size of an element in bytes,
+// so a pointer-sized element has the width of the target. Bit 0 marks counted
+// elements, which the helper retains as it copies them.
+function concat_width(own r: irtables.LowerState, width: i32, counted: boolean): irtables.LowerState {
+  if (width != ir.width_ptr()) {
+    return emit(r, ir.op_const_i32(width));
+  }
+  r = emit(r, ir.op_ptr_width());
+  r = emit(r, ir.op_const_i32(8));
+  r = emit(r, ir.op_bin("mul", 0, false));
+  if (!counted) {
+    return r;
+  }
+  r = emit(r, ir.op_const_i32(1));
+  return emit(r, ir.op_bin("add", 0, false));
 }
 
 function concat_source_len(own r: irtables.LowerState, f: ssasem.Func, b: i32): irtables.LowerState {

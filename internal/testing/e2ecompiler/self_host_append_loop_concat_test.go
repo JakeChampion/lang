@@ -52,6 +52,32 @@ function main(): i32 {
   if (grown.len() != 6400 || grown[6399] != 189) { return 4; }
   return 0;
 }`},
+	{"boolean", "cat_flags", `@noinline function cat_flags(own a: boolean[], b: [boolean], lo: i32, hi: i32): boolean[] {
+  for i in lo..hi { a = a.append(b[i]); }
+  return a;
+}
+function main(): i32 {
+  let src: boolean[] = [];
+  for k in 0..args().len() + 63 { src = src.append(k % 3 == 0); }
+  let out = cat_flags([false], src, 1, 40);
+  if (out.len() != 40 || out[0] || out[1] || !out[3] || !out[39]) { return 1; }
+  let grown: boolean[] = [];
+  for k in 0..50 { grown = cat_flags(grown, src, 0, 64); }
+  if (grown.len() != 3200 || grown[3198] || !grown[3199]) { return 2; }
+  return 0;
+}`},
+	{"f64", "cat_reals", `@noinline function cat_reals(own a: f64[], b: f64[], lo: i32, hi: i32): f64[] {
+  let i = lo;
+  while (i < hi) { a = a.append(b[i]); i += 1; }
+  return a;
+}
+function main(): i32 {
+  let src: f64[] = [];
+  for k in 0..args().len() + 15 { src = src.append(k as f64 * 0.5); }
+  let out = cat_reals([9.0], src, 2, 16);
+  if (out.len() != 15 || out[0] != 9.0 || out[1] != 1.0 || out[14] != 7.5) { return 1; }
+  return 0;
+}`},
 	{"string", "cat_texts", `@noinline function cat_texts(own a: string[], b: string[], lo: i32, hi: i32): (string[], i32) {
   let i = lo;
   while (i < hi) { a = a.append(b[i]); i += 1; }
