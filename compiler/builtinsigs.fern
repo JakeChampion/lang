@@ -162,6 +162,7 @@ pub function builtin_sigs(): string[] {
     "lsetxattr(string, string, string): Result[void, IoError]",
     "lsetxattr_bytes(string, string, u8[]): Result[void, IoError]",
     "lstat(string): Result[FileStat, IoError]",
+    "map_file_unchecked(string): Result[string, IoError]",
     "map_new(i32): Map",
     "mknod(string, i32, i32, i32): Result[void, IoError]",
     "monotonic_ns(): i64",
