@@ -155,7 +155,7 @@ function bit_len(m: [u8]): i32 {
   let top = mag[0] as i32;
   while (top > 0) {
     bits += 1;
-    top = top >> 1;
+    top >>= 1;
   }
   return bits;
 }

@@ -70,7 +70,7 @@ pub function modulus(hex: string, bytes: i32): Modulus {
       let top = 8;
       while (v < top) {
         bits -= 1;
-        top = top >> 1;
+        top >>= 1;
       }
     }
     d -= 1;
@@ -86,7 +86,7 @@ pub function modulus_of(b: [u8], bits: i32): Modulus {
   let x = 1 as u64;
   let i = 0;
   while (i < 6) {
-    x = x * (2 as u64 - p0 * x);
+    x *= 2 as u64 - p0 * x;
     i += 1;
   }
   let m = Modulus { p: p, n0: (0 as u64 - x) as i64, r2: [], one: [], limbs: limbs, bytes: bytes };
@@ -199,12 +199,12 @@ pub function mul(m: Modulus, a: [i64], b: [i64]): i64[] {
       let u = tj + xj;
       let hx = __mulhi_u64(ai, bj) + __carry(tj, xj, u);
       let v = u + c1;
-      hx = hx + __carry(u, c1, v);
+      hx += __carry(u, c1, v);
       let yj = q * pj;
       let w = v + yj;
       let hy = __mulhi_u64(q, pj) + __carry(v, yj, w);
       let z = w + c2;
-      hy = hy + __carry(w, c2, z);
+      hy += __carry(w, c2, z);
       t = t.with(j - 1, z as i64);
       c1 = hx;
       c2 = hy;

@@ -581,7 +581,7 @@ function __decrypt(key: PrivateKey, c: [u8]): Result[u8[], RsaError] {
   let diff_c = 0 as u8;
   let i = 0;
   while (i < c.len()) {
-    diff_c = diff_c | again[i] ^ c[i];
+    diff_c |= again[i] ^ c[i];
     i += 1;
   }
   let verdict = __alloc_u8(1).with(0, diff_c);
