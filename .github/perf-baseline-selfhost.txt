@@ -9,6 +9,10 @@
 # emit rows moved, perceus_rbtree_ck by +6.7% to +7.7% (089d854d adds length to the benchmark) and the others by 1% to 3%. Main's
 # compiler and #15784 emit the same code for each program of bench/ on x86-64 and arm64, so these are
 # values of main. Each row moves to its measured value. Keep all tolerances.
+# 2026-11-14: PR #15811, perf-x86_64 job 132328927242 on the merge with main 8ce8fde7. 25 emit rows
+# move: 18 up and 7 down. perceus_rbtree_ck grows 6.7% to 7.7% with the kept trees of 089d854d
+# (#15780). The other rows are values of main after #15769 and #15771. Each row moves to its measured
+# value. Keep all tolerances.
 # 2026-11-13: PR #15739, perf-x86_64 job 132017371022 on the merge with main 629da263. Eleven emit rows
 # of perceus_cfold, perceus_rbtree, perceus_rbtree_ck, pmap_insert and pvec_with are 1.2% to 4.8%
 # below their pins. These are values of main: #15739 changes no code that these programs reach. Each
@@ -313,7 +317,7 @@ selfhost/arm64-linux/enum_match.emit	1176
 # Main da3282d0 and candidate 597b6e78 retain identical output in each local pair.
 # Evidence: docs/benchmarks/compiler-interpreter-http-ci-2026-11-10/. Tolerances stay unchanged.
 # 2026-11-10: Current rows follow main e23f590d and its measured HTTP reductions.
-selfhost/arm64-linux/http_hello.emit	16619
+selfhost/arm64-linux/http_hello.emit	16432
 selfhost/arm64-linux/int_loop.emit	383
 selfhost/arm64-linux/map_int.emit	8813
 selfhost/arm64-linux/map_probe_chain.emit	8823
