@@ -31,16 +31,29 @@ searches the current directory, and it writes each name without the leading
 | `-x` | `--line-regexp` | Match only a whole line. |
 | `-F` | `--fixed-strings` | Each pattern is a literal. |
 | `-m N` | `--max-count N` | Stop the search of a file after N selected lines. |
+| `-f F` | `--file F` | The patterns of the lines of F, or of the standard input for `-`. |
 | `-a` | `--text` | Search binary files as text. |
 | | `--binary` | Search a binary file that the walk finds as a file on the command line. |
 | | `--mmap`, `--no-mmap` | Map the files into memory, or read them in buffers. This changes the rules for binary files. |
 | `-j N` | `--threads N` | The count of workers. |
+| `-E E` | `--encoding E`, `--no-encoding` | Decode the files from `utf-8`, `latin1` (windows-1252), `utf-16le` or `utf-16be`, or with `none` do not decode them. Each label of the Encoding Standard for these encodings is a name. By default, a file with a byte order mark of UTF-8 or UTF-16 is decoded. |
+| | `--crlf` | A line ends with CRLF: `$` matches before `\r\n`, and the output writes `\r\n`. |
+| | `--null-data` | A line ends with NUL, and the search is of text. |
+| | `--stop-on-nonmatch` | Stop the search of a file at a line that is not selected after a selected line. |
+| | `--no-unicode` | The pattern has the semantics of bytes and ASCII, as `(?-u)`. |
 
 ### The output
 
 | Option | Long form | Effect |
 | --- | --- | --- |
 | `-n`, `-N` | `--line-number`, `--no-line-number` | Line numbers on or off. |
+| | `--column`, `--no-column` | The column of the first match, from 1. With `-o`, the column of each match. |
+| `-b` | `--byte-offset` | The byte offset of each line, or with `-o` of each match. |
+| | `--vimgrep` | Each match on a line of its own, with the file name, the line number, the column and the whole line. |
+| `-r R` | `--replace R` | Write each match as R, with `$1`, `$name`, `${name}` and `$$`. |
+| | `--trim` | Write no white space at the start of a line. |
+| `-M N` | `--max-columns N`, `--max-columns-preview` | A line longer than N bytes is a note, or the first N characters and a note. |
+| | `--passthru` | Write each line: the selected lines and the others as context. |
 | `-c` | `--count` | The count of selected lines, or with `-o` of matches. |
 | | `--count-matches` | The count of matches. |
 | | `--include-zero` | With `-c`, also the files with a count of 0. |
@@ -54,7 +67,10 @@ searches the current directory, and it writes each name without the leading
 | | `--heading`, `--no-heading` | The file name on a line of its own, before the lines of the file. |
 | `-0` | `--null` | A NUL byte after each file name. |
 | | `--path-separator S` | The byte that takes the place of `/` in a file name. |
-| | `--color never\|auto\|always\|ansi` | Color, with the default colors of ripgrep. |
+| | `--color never\|auto\|always\|ansi` | Color, with the default colors of ripgrep. `auto` writes color on a terminal with a TERM that is not `dumb`, and with no NO_COLOR. |
+| `-p` | `--pretty` | Color, a heading and line numbers. |
+| | `--stats` | The counts and the times of the search, after the output. |
+| | `--json` | Each line as a JSON message of ripgrep, with a message at the start and at the end of each file, and a summary. |
 
 ### The walk
 
@@ -80,9 +96,9 @@ searches the current directory, and it writes each name without the leading
 Options and paths can come in any order. `--` ends the options. Short options
 can share one dash, and a value can follow its letter, as in `-nA1`.
 
-The output is that of ripgrep when its standard output is not a terminal:
-no heading, and no line numbers without `-n`. These rules are the same as in
-ripgrep:
+When the standard output is a terminal, the output has a heading and line
+numbers, as in ripgrep. Else it has no heading, and no line numbers without
+`-n`. These rules are the same as in ripgrep:
 
 - A file name comes before each line when the search is of more than one
   file, or with `-H`. The standard input is `<stdin>`.
@@ -93,7 +109,7 @@ ripgrep:
   `--heading`, an empty line comes between files.
 
 - A last line without a line terminator gets one. A CRLF line keeps its CR.
-  A UTF-8 byte order mark at the start of a file is not searched.
+  A byte order mark at the start of a file is not searched.
 
 - With `-o`, an empty match is an empty line. An empty match that starts where
   the last match ends does not count.
@@ -192,13 +208,16 @@ order of the walk.
   context lines. Thus, in a file with a NUL byte after the first 64 KiB,
   the buffer that holds it can start at a different offset.
 
-- **Encodings.** ripgrep reads UTF-16 when a file starts with its byte order
-  mark. The port does not.
+- **Encodings.** The port decodes UTF-8, windows-1252 and UTF-16. The
+  other encodings of `-E`, such as Shift_JIS and EUC-JP, give the error of
+  an unknown encoding.
 
-- **Not in this slice.** `--json`, `-r`, `-U`, `-f`, `--column`, `-b`,
-  `--vimgrep`, `--stats`, `--crlf`, `--null-data`, `--passthru`, `-M`,
-  `--trim`, `--stop-on-nonmatch`, `-E`, `--pre` and `--colors`. The heading and the
-  line numbers on a terminal are also not in this slice.
+- **Times.** `--stats` and `--json` write times, and the times of two runs
+  are not the same.
+
+- **Not in this slice.** `-U` and `--multiline-dotall`, `--pre` and
+  `--pre-glob`, `--colors`, `--hyperlink-format`, `-z`, `-P`,
+  `--dfa-size-limit` and `--regex-size-limit`.
 
 ## Tests
 
@@ -206,17 +225,24 @@ order of the walk.
   separators, the counts, the color and the binary files. It also tests the
   rules of an ignore file, the globs, the types and the precedence of the
   ignore files. And it tests `-m`, `--heading`, `--null` and the buffers
-  for binary files. `TestSelfHostExampleRgUnit` runs it on x86-64, arm64 and
+  for binary files. The other tests are of the columns and the offsets,
+  `-r`, `--trim`, `-M`, `--passthru`, `--stop-on-nonmatch`, the line
+  terminators, the encodings and `--json`. `TestSelfHostExampleRgUnit` runs it on x86-64, arm64 and
   wasm32-wasi with the leak census.
 
 - `TestSelfHostExampleRgAgainstRipgrep` runs the port and `/usr/bin/rg`
-  14.1.0 with 235 command lines on the same files, on x86-64 and on arm64.
+  14.1.0 with 331 command lines on the same files, on x86-64 and on arm64.
   The stdout, the stderr and the exit status must be the same. The files
   include an empty file and a file with no last line terminator. They also
-  include CRLF lines, a line of 209,008 bytes, UTF-8 text and four binary
-  files. The cases include each option, a missing file, the standard input
-  and the errors. 90 cases walk two trees with each kind of ignore file, a
-  link, hidden files and a binary file of 70 KiB.
+  include CRLF lines, NUL lines, a line of 209,008 bytes, UTF-8 text,
+  windows-1252 and UTF-16 text, pattern files and four binary files. The
+  cases include each option, a missing file, the standard input and the
+  errors. 90 cases walk two trees with each kind of ignore file, a link,
+  hidden files and a binary file of 70 KiB.
+
+  The test makes the times of `--stats` and `--json` the same before it
+  compares them. 8 cases run with the standard output on a terminal, with
+  and without a TERM.
 
   The test fails when `/usr/bin/rg` is not ripgrep 14.1.0. A case with more
   than one file gives `-j1` or `--sort`. With more threads, ripgrep writes
@@ -227,10 +253,11 @@ order of the walk.
   tests of ripgrep 14.1.1 (`testdata/ripgrep-tests.json`, from
   `tests/*.rs`) with the port and with `/usr/bin/rg`. Each case makes its
   files in a new directory, and each run gets `--path-separator / -j1`.
-  `testdata/ripgrep-pass.txt` names the 221 of 306 cases that give the
+  `testdata/ripgrep-pass.txt` names the 276 of 306 cases that give the
   output of ripgrep. The test fails when a named case fails, and when a case
   that it does not name passes. Most of the other cases use options that
-  are not in this slice. The licence is in
+  are not in this slice, and four compare the times of `--stats`. The
+  licence is in
   `licenses/ripgrep/`.
 
 ## Performance

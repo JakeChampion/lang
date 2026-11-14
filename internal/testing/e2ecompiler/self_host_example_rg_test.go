@@ -5,12 +5,16 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/tools/tty"
 )
 
 // ripgrep is the oracle of the rg example. The test fails without it.
@@ -27,13 +31,16 @@ func TestSelfHostExampleRgUnit(t *testing.T) {
 // rgCase is one command line, with its standard input, and the directory
 // below the fixtures where it runs. With noStdin, the standard input is
 // /dev/null. With anyOrder, the lines of the output can come in any order,
-// as they do from ripgrep with more than one thread.
+// as they do from ripgrep with more than one thread. With pty, the standard
+// output is a terminal, and TERM is set when term is not "".
 type rgCase struct {
 	args     []string
 	stdin    string
 	dir      string
 	noStdin  bool
 	anyOrder bool
+	pty      bool
+	term     string
 }
 
 func rgArgs(line string) []string { return strings.Fields(line) }
@@ -55,6 +62,17 @@ func rgFixtures(t *testing.T, dir string) {
 		"w.txt":     "foobar foo\nxfoo foo_x\n-foo- (foo)\nfoo\nfoofoo\n",
 		"upper.txt": "Foo\nFOO\nfoo\nfOo bar\nnone\n",
 		"crlf.txt":  "one\r\ntwo foo\r\nthree\r\n",
+		"crlf2.txt": "one\r\ntwo foo\r\nthree",
+		"nul.dat":   "one\x00two foo\x00three\x00",
+		"long.md":   "ééééé foo ééé\nab foo cd foo ef foo gh\n  gamma foo foo\n",
+		"pats.txt":  "foo\r\n\nbe+ta\n",
+		"bad.pat":   "fo\xffo\n",
+		"none.pat":  "",
+		"latin.txt": "caf\xe9 foo \x80\n",
+		"u16le.txt": "\xff\xfec\x00a\x00f\x00\xe9\x00 \x00f\x00o\x00o\x00\n\x00b\x00a\x00r\x00\n\x00",
+		"u16be.txt": "\xfe\xff\x00c\x00a\x00f\x00\xe9\x00 \x00f\x00o\x00o\x00\n",
+		"u16nb.txt": "c\x00a\x00f\x00\xe9\x00 \x00f\x00o\x00o\x00\n\x00",
+		"bom8.txt":  "\xef\xbb\xbfcaf\xe9 foo \xe2\x82\n",
 		"empty.txt": "",
 		"nonl.txt":  "foo",
 		"blank.txt": "\n\nfoo\n\n",
@@ -251,8 +269,58 @@ func rgCases(dir string) []rgCase {
 		rgCase{args: rgArgs("-o -n o+"), stdin: stdinOf("crlf.txt")},
 		rgCase{args: rgArgs("foo"), stdin: ""},
 	)
+	cases = append(cases, rgFlagCases()...)
 	return append(cases, rgWalkCases()...)
 }
+
+// rgFlagCases give the output flags, the input flags, --stats, --json and
+// the defaults on a terminal.
+func rgFlagCases() []rgCase {
+	lines := []string{
+		"--column foo a.txt", "--column -o foo w.txt", "-b -C1 foo a.txt", "-n -b --column -o foo long.md",
+		"--column -N foo a.txt", "--column -v foo a.txt", "--vimgrep foo w.txt", "--vimgrep -j1 foo a.txt w.txt",
+		"--vimgrep -A1 foo a.txt", "--vimgrep -N --no-column foo a.txt", "--no-column --column foo a.txt",
+		"-r X foo a.txt", "-o -r X foo w.txt", "-r [$0|$1|${x}|$$|$2x] f(o)(?P<x>o) a.txt", "-r X -C1 foo a.txt",
+		"-r X -v foo a.txt", "-o -b --column -r XY foo long.md", "--replace= foo a.txt", "--color always -r X foo a.txt",
+		"--trim foo long.md", "--trim -n -C1 foo long.md", "--trim --column -b foo long.md", "--trim -o \\s*foo long.md",
+		"-M 10 foo long.md", "-M 10 --max-columns-preview foo long.md", "-M 2 -o foo long.md", "-M 5 -C1 foo a.txt",
+		"-M 12 --max-columns-preview --color always foo long.md", "-M 9 -r X foo long.md", "-M 0 foo a.txt", "-M x foo a.txt",
+		"--passthru foo a.txt", "--passthru -n -o foo a.txt", "--passthrough -c foo a.txt", "--stop-on-nonmatch foo a.txt",
+		"--stop-on-nonmatch -A1 foo a.txt", "--stop-on-nonmatch -c foo a.txt", "--null-data -n foo nul.dat",
+		"--null-data -o fo nul.dat", "--null-data -c foo nul.dat", "--null-data --crlf foo nul.dat", "--crlf foo$ crlf2.txt",
+		"foo$ crlf2.txt", "--crlf -o o crlf2.txt", "--crlf -c foo crlf2.txt", "--crlf -l foo a.txt",
+		"--crlf --color always x? empty.txt crlf.txt", "-f pats.txt a.txt", "-f none.pat a.txt", "-f pats.txt -e nothing a.txt",
+		"-f nosuch.pat a.txt", "-F -f pats.txt a.txt", "-f bad.pat a.txt", "foo u16le.txt", "-b caf u16le.txt", "foo u16be.txt",
+		"foo u16nb.txt", "-E utf-16le foo u16nb.txt", "-E none foo u16le.txt", "-E latin1 foo latin.txt",
+		"-E utf-8 foo latin.txt", "-E bogus foo latin.txt", "-E UTF-16LE foo u16nb.txt", "-E latin1 caf u16le.txt",
+		"--no-encoding foo u16le.txt", "foo bom8.txt", "-E none caf bom8.txt", "-p foo a.txt", "--no-unicode \\w+ uni.txt",
+		"-c foo a.txt --stats", "foo a.txt --stats", "-j1 foo a.txt nothing.txt --stats", "--stats zzz a.txt",
+		"--stats -q foo a.txt", "--stats -l foo a.txt", "--stats -v foo a.txt", "--stats -o foo a.txt",
+		"--stats -C1 -j1 foo a.txt w.txt", "--stats --heading -j1 foo a.txt w.txt", "--json foo a.txt", "--json -C1 foo a.txt",
+		"--json -c foo a.txt", "--json zzz a.txt", "--json -v foo a.txt", "--json -n --column -b foo w.txt",
+		"--json --stats foo w.txt", "--json foo bom8.txt", "--json -j1 foo a.txt w.txt",
+	}
+	var cases []rgCase
+	for _, l := range lines {
+		cases = append(cases, rgCase{args: rgArgs(l)})
+	}
+	return append(cases,
+		rgCase{args: rgArgs("--json foo -"), stdin: "x foo\n"},
+		rgCase{args: rgArgs("-f - a.txt"), stdin: "gamma\nlast\n"},
+		rgCase{args: rgArgs("foo a.txt"), pty: true},
+		rgCase{args: rgArgs("-j1 foo a.txt w.txt"), pty: true},
+		rgCase{args: rgArgs("-j1 -N --no-heading foo a.txt w.txt"), pty: true},
+		rgCase{args: rgArgs("-c -j1 foo a.txt w.txt"), pty: true},
+		rgCase{args: rgArgs("foo a.txt"), pty: true, term: "xterm"},
+		rgCase{args: rgArgs("foo a.txt"), pty: true, term: "dumb"},
+	)
+}
+
+// rgTimes match the times of --stats and --json, which differ from run to
+// run.
+var rgTimes = regexp.MustCompile(`"elapsed(_total)?":\{[^}]*\}|(?m)^[0-9]+\.[0-9]+ seconds`)
+
+func rgMasked(text string) string { return rgTimes.ReplaceAllString(text, "TIME") }
 
 type rgResult struct {
 	stdout, stderr string
@@ -272,8 +340,14 @@ func rgRun(t *testing.T, cmd *exec.Cmd, dir string, c rgCase) rgResult {
 	t.Helper()
 	cmd.Dir = filepath.Join(dir, c.dir)
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + filepath.Join(dir, "home")}
-	if !c.noStdin {
+	if c.term != "" {
+		cmd.Env = append(cmd.Env, "TERM="+c.term)
+	}
+	if !c.noStdin && !c.pty {
 		cmd.Stdin = strings.NewReader(c.stdin)
+	}
+	if c.pty {
+		return rgRunPty(t, cmd)
 	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -281,7 +355,31 @@ func rgRun(t *testing.T, cmd *exec.Cmd, dir string, c rgCase) rgResult {
 	if cmd.ProcessState == nil {
 		t.Fatalf("%s did not start: %s", cmd.Path, &stderr)
 	}
-	return rgResult{stdout.String(), stderr.String(), cmd.ProcessState.ExitCode()}
+	return rgResult{rgMasked(stdout.String()), stderr.String(), cmd.ProcessState.ExitCode()}
+}
+
+// rgRunPty runs a case with its standard output on a terminal.
+func rgRunPty(t *testing.T, cmd *exec.Cmd) rgResult {
+	t.Helper()
+	master, slave, err := tty.OpenPTY()
+	if err != nil {
+		t.Fatalf("open a pty: %v", err)
+	}
+	defer master.Close()
+	var stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = slave, &stderr
+	if err := cmd.Start(); err != nil {
+		slave.Close()
+		t.Fatalf("%s did not start: %v", cmd.Path, err)
+	}
+	slave.Close()
+	out := make(chan []byte)
+	go func() {
+		b, _ := io.ReadAll(master)
+		out <- b
+	}()
+	_ = cmd.Wait()
+	return rgResult{string(<-out), stderr.String(), cmd.ProcessState.ExitCode()}
 }
 
 // rgTree writes the tree that the walk cases search. `tree` is a git
