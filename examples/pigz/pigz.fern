@@ -139,17 +139,34 @@ function settings(o: gz.Options): layout.Settings {
 
 // The check of the input so far: CRC-32, or Adler-32 for zlib.
 struct Check {
-  crc: crc32.Crc32,
+  crc: u32,
   adler: u32,
   zlib: boolean,
   ulen: i64,
 }
 
-function check_of(c: Check, chunk: u8[]): Check {
-  if (c.zlib) {
-    return Check { ...c, adler: gz.crc_combine(c.adler, deflate.adler32(chunk), chunk.len() as i64, true), ulen: c.ulen + chunk.len() as i64 };
+function new_check(zlib: boolean): Check {
+  return Check { crc: 0u32, adler: 1u32, zlib: zlib, ulen: 0i64 };
+}
+
+// The check of one chunk of the input alone.
+function chunk_check(zlib: boolean, chunk: u8[]): u32 {
+  if (zlib) {
+    return deflate.adler32(chunk);
   }
-  return Check { ...c, crc: c.crc.update(chunk), ulen: c.ulen + chunk.len() as i64 };
+  return crc32.new().update(chunk).finish();
+}
+
+// The check of the input so far, then `len` bytes whose own check is `value`.
+function check_add(c: Check, value: u32, len: i32): Check {
+  if (c.zlib) {
+    return Check { ...c, adler: gz.crc_combine(c.adler, value, len as i64, true), ulen: c.ulen + len as i64 };
+  }
+  return Check { ...c, crc: gz.crc_combine(c.crc, value, len as i64, false), ulen: c.ulen + len as i64 };
+}
+
+function check_of(c: Check, chunk: u8[]): Check {
+  return check_add(c, chunk_check(c.zlib, chunk), chunk.len());
 }
 
 function header(r: Run, name: Option[string], mtime: i64): (Run, u8[]) {
@@ -171,7 +188,7 @@ function trailer(r: Run, name: Option[string], mtime: i64, c: Check, clen: i64, 
   if (o.form == 1) {
     return gz.zlib_trailer(c.adler);
   }
-  let crc = c.crc.finish();
+  let crc = c.crc;
   if (o.form == 2) {
     return gz.zip_trailer(zip_name(o, name), mtime, gz.time2dos(mtime, r.now), o.comment, crc, c.ulen, clen, head);
   }
@@ -224,17 +241,25 @@ function single_to(s: layout.Settings, rd: Reader, w: Writer, path: string, outf
 struct Feed {
   next: u8[],
   dict: u8[],
-  check: Check,
   ended: boolean,
   failed: Option[Fatal],
 }
 
-// The input of one job: data[start:], with data[:start] before it.
+// The input of one job, with the 32 KiB before it.
 struct Taken {
   feed: Feed,
-  data: u8[],
-  start: i32,
+  dict: u8[],
+  cur: u8[],
   more: boolean,
+}
+
+// What a job gives back: its deflate data, and the length and the check of
+// its input, which the parent combines in order, as the write thread of pigz
+// does.
+struct JobOut {
+  bytes: u8[],
+  len: i32,
+  check: u32,
 }
 
 // The next job of the feed. A read that fails ends the feed, and the job
@@ -252,20 +277,26 @@ function take(own f: Feed, rd: Reader, size: i32, path: string): Taken {
     }
   }
   let more = next.len() > 0;
-  let data = f.dict.concat(cur);
+  let dict = if (cur.len() >= layout.DICT) { array.slice(cur, cur.len() - layout.DICT, cur.len()) } else { last_dict(f.dict.concat(cur)) };
+  let feed = Feed { next: next, dict: dict, ended: !more || failed.is_some(), failed: failed };
+  return Taken { feed: feed, dict: f.dict, cur: cur, more: more };
+}
+
+function last_dict(data: u8[]): u8[] {
   let from = if (data.len() > layout.DICT) { data.len() - layout.DICT } else { 0 };
-  let feed = Feed { next: next, dict: array.slice(data, from, data.len()), check: check_of(f.check, cur), ended: !more || failed.is_some(), failed: failed };
-  return Taken { feed: feed, data: data, start: f.dict.len(), more: more };
+  return array.slice(data, from, data.len());
 }
 
-function start_job(s: layout.Settings, t: Taken): worker.Worker[u8[]] {
-  let data = t.data;
-  let start = t.start;
+// A worker compresses the job and takes the check of its input, so the
+// parent only reads, starts, joins and writes.
+function start_job(s: layout.Settings, zlib: boolean, t: Taken): worker.Worker[JobOut] {
+  let dict = t.dict;
+  let cur = t.cur;
   let more = t.more;
-  return worker.spawn((): u8[] => layout.blocks(s, data, start, more));
+  return worker.spawn((): JobOut => JobOut { bytes: layout.blocks(s, dict.concat(cur), dict.len(), more), len: cur.len(), check: chunk_check(zlib, cur) });
 }
 
-function drain(own jobs: worker.Worker[u8[]][]): void {
+function drain(own jobs: worker.Worker[JobOut][]): void {
   for job in jobs {
     let _ = job.join();
   }
@@ -279,32 +310,34 @@ function parallel_to(s: layout.Settings, procs: i32, rd: Reader, w: Writer, path
   let size = job_size(s.block);
   let first = readn(rd, size, path)?;
   let none: Option[Fatal] = None;
-  let feed = Feed { next: first, dict: [], check: c0, ended: false, failed: none };
+  let feed = Feed { next: first, dict: [], ended: false, failed: none };
+  let check = c0;
   let clen = 0i64;
   let failed: Option[Fatal] = None;
-  let queue: worker.Worker[u8[]][] = [];
+  let queue: worker.Worker[JobOut][] = [];
   while (!feed.ended && queue.len() < procs) {
     let t = take(feed, rd, size, path);
     feed = t.feed;
     if (feed.failed.is_none()) {
-      queue = queue.append(start_job(s, t));
+      queue = queue.append(start_job(s, c0.zlib, t));
     }
   }
   loop {
-    let later: worker.Worker[u8[]][] = [];
+    let later: worker.Worker[JobOut][] = [];
     for job in queue {
-      let bytes = job.join();
+      let out = job.join();
+      check = check_add(check, out.check, out.len);
       if (failed.is_none()) {
-        if let Err(e) = put(w, bytes, outf) {
+        if let Err(e) = put(w, out.bytes, outf) {
           failed = Some(e);
         }
-        clen += bytes.len() as i64;
+        clen += out.bytes.len() as i64;
       }
       if (!feed.ended && failed.is_none()) {
         let t = take(feed, rd, size, path);
         feed = t.feed;
         if (feed.failed.is_none()) {
-          later = later.append(start_job(s, t));
+          later = later.append(start_job(s, c0.zlib, t));
         }
       }
     }
@@ -320,7 +353,7 @@ function parallel_to(s: layout.Settings, procs: i32, rd: Reader, w: Writer, path
   if let Some(e) = feed.failed {
     return Err(e);
   }
-  return Ok(Written { check: feed.check, clen: clen });
+  return Ok(Written { check: check, clen: clen });
 }
 
 // The name in the header: the name of a file without its directory, for -N
@@ -342,7 +375,7 @@ function compress_to(r0: Run, src: Source, rd: Reader, w: Writer, outf: string):
   put(w, head, outf)?;
   let s = settings(o);
   let n = procs(o);
-  let c = Check { crc: crc32.new(), adler: 1u32, zlib: o.form == 1, ulen: 0i64 };
+  let c = new_check(o.form == 1);
   let done = if (n > 1) { parallel_to(s, n, rd, w, src.path, outf, c)? } else { single_to(s, rd, w, src.path, outf, c)? };
   put(w, trailer(r, name, src.mtime, done.check, done.clen, head.len() as i64), outf)?;
   return Ok(r);
@@ -391,7 +424,7 @@ function compressed(r0: Run, data: u8[], name: Option[string], mtime: i64): (Run
   let s = settings(o);
   let n = procs(o);
   let body = if (n > 1) { layout.parallel(s, data, layout.jobs(s, data), n) } else { layout.single(s, data) };
-  let c = check_of(Check { crc: crc32.new(), adler: 1u32, zlib: o.form == 1, ulen: 0i64 }, data);
+  let c = check_of(new_check(o.form == 1), data);
   let tail = trailer(r, name, mtime, c, body.len() as i64, head.len() as i64);
   return (r, head.concat(body).concat(tail));
 }
