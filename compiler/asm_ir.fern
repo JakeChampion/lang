@@ -502,20 +502,39 @@ function freelist_key(block: string, into: string): string {
 // so the release of a block reads which of the two it has. Each routine that
 // makes an array thus writes all 64 bits of the count word.
 //
-// The routine takes the block from __fern_arr_box, which gives a block of
-// the capacity plus three words, and writes the short header one word below
-// the first word of the box. A box of one word keeps the block of an array.
-// So does each box of a build that traces, profiles, quarantines or hardens
-// each allocation.
+// A box of 2 to 255 words has a block of n + 1 words, whose free list is at
+// __fern_freelist + 8 * (n + 1). The routine takes the head of that list, or
+// moves the bump pointer when the list is empty. Only %rax changes. Another
+// box, a bump that crosses a 64 KiB line, and a heap that is not mapped take
+// the block from __fern_arr_box, which gives a block of the capacity plus
+// three words. The routine then writes the short header one word below the
+// first word of the box. A box of one word keeps the block of an array. So
+// does each box of a build that traces, profiles, quarantines, hardens or
+// counts each allocation.
 function emit_rec_box(own s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_rec_box:\n");
   if (!compact_boxes(s)) {
     return s.write("    subq $1, %rdi\n    jmp __fern_arr_box\n");
   }
+  if (direct_boxes(s)) {
+    s = s.write("    leaq -2(%rdi), %rax\n    cmpq $253, %rax\n    ja .Lrecbox_far\n    pushq %rcx\n");
+    s = s.write("    leaq __fern_freelist+8(%rip), %rcx\n    leaq (%rcx,%rdi,8), %rcx\n    movq (%rcx), %rax\n    testq %rax, %rax\n    jz .Lrecbox_bump\n");
+    s = s.write("    pushq (%rax)\n    popq (%rcx)\n.Lrecbox_hdr:\n    popq %rcx\n    movl $1, (%rax)\n    movl %edi, 4(%rax)\n    addq $8, %rax\n    ret\n");
+    // An unmapped heap has a pointer and an end of zero, so the end test sends it on.
+    s = s.write(".Lrecbox_bump:\n    movq __fern_heap_ptr(%rip), %rax\n    leaq 8(%rax,%rdi,8), %rcx\n    cmpq __fern_heap_end(%rip), %rcx\n    ja .Lrecbox_slow\n");
+    s = s.write("    cmpw %ax, %cx\n    jb .Lrecbox_slow\n    movq %rcx, __fern_heap_ptr(%rip)\n    jmp .Lrecbox_hdr\n");
+    s = s.write(".Lrecbox_slow:\n    popq %rcx\n.Lrecbox_far:\n");
+  }
   s = s.write("    cmpq $65535, %rdi\n    ja .Lrecbox_wide\n");
   s = s.write("    pushq %rdi\n    subq $2, %rdi\n    jae .Lrecbox_sized\n    xorl %edi, %edi\n.Lrecbox_sized:\n    call __fern_arr_box\n    popq %rdi\n");
   s = s.write("    subq $8, %rax\n    movl $1, -8(%rax)\n    movl %edi, -4(%rax)\n    ret\n");
   return s.write(".Lrecbox_wide:\n    subq $1, %rdi\n    jmp __fern_arr_box\n");
+}
+
+// The box routines take and give a small block themselves when the
+// allocator counts nothing.
+function direct_boxes(s: asmcore.EmitState): boolean {
+  return compact_boxes(s) && !hev_on(s) && !s.has_need("alloc_count");
 }
 
 function compact_boxes(s: asmcore.EmitState): boolean {
@@ -536,6 +555,11 @@ function emit_box_dec(own s: asmcore.EmitState): asmcore.EmitState {
     return s.write("    jmp __fn___fern_arr_dec.u\n.Lboxdec_ret:\n    ret\n");
   }
   s = s.write("    movzwl -4(%rax), %ecx\n    testl %ecx, %ecx\n    jz __fn___fern_arr_dec.u\n    cmpl $1, -8(%rax)\n    jne __fn___fern_arr_dec.u\n");
+  if (direct_boxes(s)) {
+    // A box of n words, 2 to 255, goes on the free list of a block of n + 1 words.
+    s = s.write("    leaq -2(%rcx), %rdx\n    cmpq $253, %rdx\n    ja .Lboxdec_far\n    leaq -8(%rax), %rdx\n    leaq __fern_freelist+8(%rip), %r8\n");
+    s = s.write("    movq (%r8,%rcx,8), %rdi\n    movq %rdi, (%rdx)\n    movq %rdx, (%r8,%rcx,8)\n    ret\n.Lboxdec_far:\n");
+  }
   s = s.write("    subq $2, %rcx\n    jae .Lboxdec_cap\n    xorl %ecx, %ecx\n.Lboxdec_cap:\n    movq %rcx, -8(%rax)\n    movq $1, (%rax)\n    addq $8, %rax\n");
   return s.write("    jmp __fn___fern_arr_dec.u\n.Lboxdec_ret:\n    ret\n");
 }
