@@ -241,6 +241,7 @@ function next_hit(p: Printer, re: regex.Regex, line: string, from: i32, last_end
   return None;
 }
 
+@inline
 function count_matches(re: regex.Regex, line: string): i32 {
   let count = 0;
   let at = 0;
@@ -422,6 +423,11 @@ function cr_stop(p: Printer, text: string, start: i32, end: i32): i32 {
   return if (p.eol == "\r\n" && end > start && text[end - 1] == 13u8) { end - 1 } else { end };
 }
 
+// Whether the printer writes each line as it is, after its fields.
+function as_is(p: Printer): boolean {
+  return !aware(p) && !p.trim && p.max_columns <= 0 && !p.only_matching && !p.vimgrep && !p.column;
+}
+
 // Writes a line with its fields. A selected line has `:` after its fields,
 // and a context line `-`.
 function push_line(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan, start: i32, end: i32, ln: i32, sep: string): void {
@@ -430,6 +436,12 @@ function push_line(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan,
     return;
   }
   let w = shown(p, s, start, end);
+  if (as_is(p)) {
+    push_prefix(p, h, name, ln, -1, start, sep);
+    buf_push_range(h, s.text, w.start, w.end);
+    buf_push(h, w.eol);
+    return;
+  }
   let line = slice_unchecked(s.text, w.start, w.end);
   let matching = sep == ":" && !p.invert;
   if (matching && p.only_matching) {
@@ -743,9 +755,12 @@ struct Counted { n: i32, lines: i32, binary: boolean, upto: i32, matches: i32 }
 function count(p: Printer, re: regex.Regex, s: Scan, stop_first: boolean): Counted {
   let text = s.text;
   let n = Counted { n: 0, lines: 0, binary: false, upto: text.len(), matches: 0 };
+  let (by_match, all) = count_modes(p);
+  let jumps = skips(p, 0, 0);
+  let below = jump_lines(p);
   let c = begin();
   while (c.start < s.end) {
-    if (skips(p, n.lines, 0)) {
+    if (jumps && n.lines < below) {
       c = jump(re, text, c, s.end, s.term);
       if (c.start >= s.end) {
         break;
@@ -754,7 +769,7 @@ function count(p: Printer, re: regex.Regex, s: Scan, stop_first: boolean): Count
     let end = line_end(text, c.start, s.end, s.term);
     let (yes, next) = selected(re, text, c, end, p.invert);
     if (yes) {
-      n = count_line(p, re, s, c.start, end, n);
+      n = count_line(re, s, c.start, end, n, all, by_match);
     }
     if (count_stops(p, n, yes, stop_first)) {
       return Counted { ...n, upto: end };
@@ -764,7 +779,21 @@ function count(p: Printer, re: regex.Regex, s: Scan, stop_first: boolean): Count
   return Counted { ...n, binary: s.quit && (s.known_from == 0 || s.known_at_end) };
 }
 
+// Whether the count is of the matches, and whether a line counts its
+// matches.
+function count_modes(p: Printer): (boolean, boolean) {
+  let by_match = p.mode == flags.CountMatches;
+  return (by_match, (by_match || p.counts) && !p.invert);
+}
+
+// The count skips to the next candidate while it has fewer selected lines
+// than this. --stop-on-nonmatch needs the line after a selected line.
+function jump_lines(p: Printer): i32 {
+  return if (p.stop_on_nonmatch) { 1 } else { 2147483647 };
+}
+
 // Whether the count stops after a line that is selected or not.
+@inline
 function count_stops(p: Printer, n: Counted, yes: boolean, stop_first: boolean): boolean {
   if (yes) {
     return n.binary || stop_first || n.lines == p.max_count;
@@ -774,14 +803,18 @@ function count_stops(p: Printer, n: Counted, yes: boolean, stop_first: boolean):
 
 // Counts one selected line. A mapped file in which the line holds a NUL
 // byte stops the search of a walk.
-function count_line(p: Printer, re: regex.Regex, s: Scan, start: i32, end: i32, n: Counted): Counted {
+// With `all`, the line also counts its matches. With `by_match`, the
+// count is of the matches and not of the lines.
+function count_line(re: regex.Regex, s: Scan, start: i32, end: i32, n: Counted, all: boolean, by_match: boolean): Counted {
   let line = slice_unchecked(s.text, start, end);
   if (s.check_lines && s.quit && __memchr(line, 0, 0) >= 0) {
     return Counted { ...n, n: 0, binary: true };
   }
-  let all = if ((p.mode == flags.CountMatches || p.counts) && !p.invert) { count_matches(re, line) } else { 0 };
-  let matches = if (p.mode == flags.CountMatches) { all } else { 1 };
-  return Counted { ...n, n: n.n + matches, lines: n.lines + 1, matches: n.matches + all };
+  if (!all) {
+    return Counted { ...n, n: n.n + (if (by_match) { 0 } else { 1 }), lines: n.lines + 1 };
+  }
+  let k = count_matches(re, line);
+  return Counted { ...n, n: n.n + (if (by_match) { k } else { 1 }), lines: n.lines + 1, matches: n.matches + k };
 }
 
 // The state of a search in lines. `last` is the number of the last line
@@ -938,6 +971,7 @@ function push_group(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan
 }
 
 // The matches of a selected line, when the search counts them.
+@inline
 function line_matches(p: Printer, re: regex.Regex, s: Scan, start: i32, end: i32): i32 {
   if (!p.counts || p.invert) {
     return 0;
@@ -978,6 +1012,7 @@ function push_passthru(p: Printer, re: regex.Regex, h: usize, name: string, s: S
   return Group { ...g, last: ln, wrote: true };
 }
 
+@inline
 function step_line(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan, start: i32, end: i32, ln: i32, yes: boolean, g: Group): Group {
   if (yes && g.count == p.max_count) {
     return push_over(p, re, h, name, s, start, end, ln, g);
