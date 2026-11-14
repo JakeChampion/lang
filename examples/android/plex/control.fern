@@ -306,7 +306,8 @@ enum Want {
   Leaves(string),
   Search(string),
   Scrobble(string, boolean),
-  Timeline(string, string, i64, i64),
+  Timeline(string, string, i64, i64, string),
+  PingTranscode(string),
   StopTranscode(string),
 }
 
@@ -351,8 +352,11 @@ function request_of(c: plex.Client, b: plex.Base, w: Want): plex.Request {
     Scrobble(key, seen) => {
       return plex.scrobble(c, b, key, seen);
     },
-    Timeline(key, state, at, total) => {
-      return plex.timeline(c, b, key, state, at, total);
+    Timeline(key, state, at, total, session) => {
+      return plex.timeline(c, b, key, state, at, total, session);
+    },
+    PingTranscode(session) => {
+      return plex.ping_transcode(c, b, session);
     },
     StopTranscode(session) => {
       return plex.stop_transcode(c, b, session);
@@ -968,7 +972,7 @@ function audio(p: Play): boolean {
 
 function timeline(own s: App, state: string): App {
   let p = s.play;
-  return report(s, Timeline(p.item.key, state, p.position, p.duration));
+  return report(s, Timeline(p.item.key, state, p.position, p.duration, p.session));
 }
 
 function prepared(own s: App): App {
@@ -1019,7 +1023,8 @@ function pause_play(own s: App): App {
   s.dev.immersive(false);
   let pos = s.dev.position();
   log.info("plex: paused at " + pos.to_string());
-  let t = App { ...s, play: Play { ...p, paused: true, video: false, overlay: true, position: pos }, dirty: true };
+  let at = s.dev.mono_ms();
+  let t = App { ...s, play: Play { ...p, paused: true, video: false, overlay: true, position: pos, reported_at: at }, dirty: true };
   return timeline(t, "paused");
 }
 
@@ -1034,19 +1039,9 @@ function seek_by(own s: App, delta: i64): App {
   return seek_to(s, target);
 }
 
+// A seek in a transcode stays in its stream: the server starts the segments
+// at the seek.
 function seek_to(own s: App, ms: i64): App {
-  if (s.play.stream.transcode) {
-    // A transcode starts at its offset, so a seek starts a new one there.
-    let it = plex.Item { ...s.play.item, offset_ms: ms };
-    let p = s.play;
-    s.dev.stop();
-    let t = report(App { ...s, play: Play { ...p, prepared: false, video: false, overlay: true, status: "Loading" } }, StopTranscode(p.session));
-    let q = plex.qualities()[t.quality];
-    let session = hex_id(t.dev);
-    let stream = plex.stream_for(t.client, t.base, it, q, ms, session, t.dev.decoders);
-    let ok = t.dev.play(stream.url);
-    return App { ...t, play: Play { ...t.play, stream: stream, session: session, position: ms }, dirty: true };
-  }
   s.dev.seek(ms);
   return App { ...s, play: Play { ...s.play, position: ms }, dirty: true };
 }
@@ -1142,11 +1137,22 @@ function player_event(own s: App, c: player.Change): App {
   }
 }
 
-// Keeps the position on the overlay and the server up to date.
+// Keeps the position on the overlay and the server up to date. While the
+// player is paused, the app still reports, and keeps its transcode alive.
 function play_tick(own s: App, now: i64): App {
   let p = s.play;
-  if (!p.active || !p.prepared || p.paused) {
+  if (!p.active || !p.prepared) {
     return s;
+  }
+  if (p.paused) {
+    if (now - p.reported_at < REPORT_MS) {
+      return s;
+    }
+    let t = timeline(App { ...s, play: Play { ...p, reported_at: now } }, "paused");
+    if (p.stream.transcode) {
+      t = report(t, PingTranscode(p.session));
+    }
+    return t;
   }
   let t = s;
   if (now - p.updated_at >= 500i64) {
@@ -1539,7 +1545,10 @@ pub function timeout(s: App, now: i64): i32 {
   if (is_some_call(s.api) || is_some_batch(s.img) || is_some_call(s.report) || s.asks.len() > 0 || s.reports.len() > 0) {
     return 30;
   }
-  if (s.play.active && s.play.prepared && !s.play.paused) {
+  if (s.play.active && s.play.prepared) {
+    if (s.play.paused) {
+      return clamp((s.play.reported_at + REPORT_MS - now) as i32, 1, REPORT_MS as i32);
+    }
     return 500;
   }
   if (s.search_at > 0i64) {

@@ -109,7 +109,7 @@ function reply_to(r: plex.Request): plex.Reply {
   if (u.contains("/photo/:/transcode")) {
     return ok("img");
   }
-  if (u.contains("/:/timeline") || u.contains("/:/scrobble") || u.contains("/transcode/universal/stop")) {
+  if (u.contains("/:/timeline") || u.contains("/:/scrobble") || u.contains("/transcode/universal/stop") || u.contains("/transcode/universal/ping")) {
     return ok("");
   }
   return plex.Reply { status: 404, body: [], error: "" };
@@ -125,11 +125,13 @@ function reply_all(rs: plex.Request[]): plex.Reply[] {
 
 // What the fake device saw: the requests, the calls of the player and the
 // files.
-struct Log { urls: Cell[string[]], calls: Cell[string[]], files: Cell[string[]] }
+// The requests, the calls of the player and the files of the fake device,
+// and the decoders that it has.
+struct Log { urls: Cell[string[]], calls: Cell[string[]], files: Cell[string[]], decoders: Cell[string[]] }
 
 function new_log(): Log {
   let none: string[] = [];
-  return Log { urls: cell_new(none), calls: cell_new(none), files: cell_new(none) };
+  return Log { urls: cell_new(none), calls: cell_new(none), files: cell_new(none), decoders: cell_new(["video/avc", "audio/mp4a-latm"]) };
 }
 
 function note(c: Cell[string[]], s: string): void {
@@ -200,7 +202,7 @@ function fake(log: Log, now: i64, f: draw.Frame): control.Device {
     duration: (): i64 => 8880000i64,
     stop: (): void => note(log.calls, "stop"),
     random: (): i32 => 5,
-    decoders: ["video/avc", "audio/mp4a-latm"],
+    decoders: log.decoders.get(),
   };
 }
 
@@ -357,7 +359,7 @@ function test_play_pause_and_stop(): test.TestOutcome {
   }
   save_png(f, "detail");
   let playing = tap(detail, log, 200i64, f, "play");
-  if (!has_call(log, "play https://up.example:32400/library/parts/11/file.mp4?X-Plex-Token=srv")) {
+  if (!has_call(log, "play https://up.example:32400/library/parts/11/file.mp4?X-Plex-Session-Identifier=") || !has_call(log, "&X-Plex-Token=srv")) {
     return test.fail("the file did not play as it is: " + log.calls.get().join(" | "));
   }
   let ready = settle(at(playing, log, 300i64, f, android.Posted(19, 0 as usize)), log, 300i64, f);
@@ -382,6 +384,31 @@ function test_play_pause_and_stop(): test.TestOutcome {
     return test.fail("no stop and return");
   }
   return test.assert_eq(has_url(log, "/:/scrobble").to_string(), "false");
+}
+
+// A phone with no AAC decoder gets a transcode of the whole item. The
+// resume and each seek stay in that stream, and a pause keeps it alive.
+function test_transcode_seeks_in_its_stream(): test.TestOutcome {
+  let log = new_log();
+  log.decoders.set(["video/avc"]);
+  let f = frame();
+  defer free_frame(f);
+  let home = shown(log, f, "https://up.example:32400", "srv");
+  let playing = tap(tap(home, log, 100i64, f, "hub:1:0"), log, 200i64, f, "play");
+  if (!has_call(log, "play https://up.example:32400/video/:/transcode/universal/start.m3u8?") || has_call(log, "offset=")) {
+    return test.fail("no transcode of the whole item: " + log.calls.get().join(" | "));
+  }
+  let ready = settle(at(playing, log, 300i64, f, android.Posted(19, 0 as usize)), log, 300i64, f);
+  if (!has_call(log, "seek 60000")) {
+    return test.fail("the resume did not seek in the stream: " + log.calls.get().join(" | "));
+  }
+  let paused = tap(ready, log, 400i64, f, "overlay");
+  let ahead = tap(paused, log, 500i64, f, "ffw");
+  if (!has_call(log, "seek 150000") || log.calls.get().filter((c: string): boolean => c.starts_with("play ")).len() != 1) {
+    return test.fail("a seek started a new transcode: " + log.calls.get().join(" | "));
+  }
+  let later = settle(ahead, log, 10500i64, f);
+  return test.assert_eq(has_url(log, "/video/:/transcode/universal/ping?session=").to_string(), "true");
 }
 
 function test_library_pages(): test.TestOutcome {
@@ -565,6 +592,7 @@ function main(): i32 {
   r = r.it("a sign-in with a PIN reaches the home screen", test_sign_in_reaches_home);
   r = r.it("a saved server opens the home screen", test_saved_server_opens_home);
   r = r.it("an item resumes, pauses and stops", test_play_pause_and_stop);
+  r = r.it("a transcode seeks in its stream and stays alive while paused", test_transcode_seeks_in_its_stream);
   r = r.it("a library loads its next page at its end", test_library_pages);
   r = r.it("a search waits for a pause in typing", test_search_types_and_asks);
   r = r.it("the keyboard of the system searches through the text field", test_search_from_text_field);
