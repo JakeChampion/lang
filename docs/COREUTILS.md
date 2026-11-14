@@ -801,6 +801,43 @@ arm64 leg under qemu, the GNU sed and its libraries come from the arm64
 packages of the distribution, as for coreutils. `sed/README.md` gives the
 scope of the port.
 
+## findutils
+
+The same gate holds the ports of GNU find and xargs in `findutils/`. They
+use `coreutils/lib/gnu.fern` with `in_package("findutils")`, and
+`findutils/lib/cmdline.fern` holds what the two share: the size of a
+command line, the start of a command and the prompt of `-ok` and `-p`. A
+version line is `find (Fern findutils) 0.1`, for example. `find -D` traces
+GNU's own work, and the port refuses it, as the sed port refuses `--debug`.
+
+The order of a walk is the order of readdir, so the corpus does not sort the
+output. Most cases of find read one shared tree, and both sides read the
+same directories in the same order. A case that deletes or writes files gets
+a fresh tree for each side, made by the same steps. The file system then
+gives the same order to both. Do not compare the inode numbers or the change
+times of these fresh trees. A case of `xargs -P` compares its output as a
+set of lines, because the commands run at the same time.
+
+The walk opens each directory by its name in the directory above it, as
+gnulib's fts does. It reads the type of each entry from readdir, so a test
+of the name or the type needs no stat. `Dir.entries_ino` gives those types.
+The walk sorts a directory of more than 10000 entries by inode number, as
+fts does. It does not sort on tmpfs, NFS and CIFS.
+
+The oracle is in `FERN_GNU_FINDUTILS`. Its version line must contain
+`(GNU findutils)`. The pin is 4.9.0, the release of ubuntu-24.04.
+`.github/actions/gnu-findutils` builds it on each lane, macOS included.
+
+For the arm64 leg under qemu, the GNU programs come from the arm64 packages
+of the distribution, as for coreutils. GNU find also needs `libselinux1`
+and `libpcre2-8-0`. `findutils/README.md` gives the scope of the ports.
+
+`findutils/README.md` also gives the speed against GNU find 4.9.0 on a tree
+of 501000 files. Each time is the best of 7 runs, with a warm cache and
+with a cold cache. A test of the name is 1.15 to 1.34 times as fast as
+GNU find. A test that needs a stat of each file takes the same time as GNU
+find, because the kernel does most of the work.
+
 ## One binary
 
 `coreutils/multicall/fern-coreutils.fern` is every utility in a single
