@@ -1249,8 +1249,35 @@ func freshInit(info *Info, init ast.Expr) bool {
 		return init.Tail != nil && freshScopedValue(info, init, init.Tail)
 	case *ast.TupleLit:
 		return freshScopedValue(info, nil, init)
+	case *ast.FieldAccess:
+		return tupleProjection(init) && freshInit(info, init.Target)
 	}
 	return false
+}
+
+// tupleProjection reports an element read `t.0`. A struct field cannot have
+// a numeric name.
+func tupleProjection(fa *ast.FieldAccess) bool {
+	if fa.Field == "" {
+		return false
+	}
+	for _, r := range fa.Field {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// projectionRoot is the value under a chain of element reads `v.1.0`.
+func projectionRoot(e ast.Expr) ast.Expr {
+	for {
+		fa, ok := e.(*ast.FieldAccess)
+		if !ok || !tupleProjection(fa) {
+			return e
+		}
+		e = fa.Target
+	}
 }
 
 // A compound block result can take unmodified local payloads from fresh values.
@@ -1464,9 +1491,11 @@ func moveAdmission(info *Info, body *ast.Block, isParam, ownParam map[string]boo
 	return in
 }
 
-// spreadSource is the base of a struct literal `T { ...src, f: v }` whose
-// field values do not name src. The literal takes the rest of src, as an
-// alias does.
+// spreadSource is the base of a struct literal `T { ...src, f: v }`. The
+// literal takes the rest of src, as an alias does. A field value can read a
+// field of src that the literal replaces, as `i: src.i + 1` does, because
+// the literal does not take that field. The result is the last mention of
+// src in the literal: the literal takes src there.
 func spreadSource(e ast.Expr) (*ast.Ident, bool) {
 	sl, ok := e.(*ast.StructLit)
 	if !ok {
@@ -1476,12 +1505,66 @@ func spreadSource(e ast.Expr) (*ast.Ident, bool) {
 	if !ok {
 		return nil, false
 	}
+	replaced := map[string]bool{}
 	for _, f := range sl.Fields {
-		if StmtReferencesName(f.Value, src.Name) {
+		replaced[f.Name] = true
+	}
+	last := src
+	for _, f := range sl.Fields {
+		if !StmtReferencesName(f.Value, src.Name) {
+			continue
+		}
+		mention, ok := lastReplacedRead(f.Value, src.Name, replaced)
+		if !ok {
 			return nil, false
 		}
+		if identAfter(mention, last) {
+			last = mention
+		}
 	}
-	return src, true
+	return last, true
+}
+
+// lastReplacedRead is the last mention of name in e, when each mention reads
+// one of the replaced fields of it.
+func lastReplacedRead(e ast.Expr, name string, replaced map[string]bool) (*ast.Ident, bool) {
+	var last *ast.Ident
+	ok := true
+	ast.Walk(e, func(n ast.Node) bool {
+		if !ok {
+			return false
+		}
+		switch x := n.(type) {
+		case *ast.Lambda:
+			if lambdaFreeNames(x)[name] {
+				ok = false
+			}
+			return false
+		case *ast.FieldAccess:
+			if id, isIdent := x.Target.(*ast.Ident); isIdent && id.Name == name {
+				if !replaced[x.Field] {
+					ok = false
+				} else if last == nil || identAfter(id, last) {
+					last = id
+				}
+				return false
+			}
+		case *ast.Ident:
+			if x.Name == name {
+				ok = false
+			}
+		case *ast.Assign:
+			if t, isIdent := x.Target.(*ast.Ident); isIdent && t.Name == name {
+				ok = false
+			}
+		}
+		return ok
+	})
+	return last, ok && last != nil
+}
+
+func identAfter(a, b *ast.Ident) bool {
+	return a.P.Line > b.P.Line || a.P.Line == b.P.Line && a.P.Col > b.P.Col
 }
 
 // loopedDecls names the locals that a declaration inside a loop binds.

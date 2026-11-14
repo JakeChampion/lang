@@ -387,9 +387,8 @@ the first and the last index of its group against the length, then moves
 the group in one access. For an `f64[]` that is one `movupd`, `ldr q` or
 `v128.load`. The ownership test of the `with` stays: one for each group.
 
-An `f32[]` keeps each element in an 8-byte slot as an f64, so its group is
-two f64 pairs. A read narrows each pair (`cvtpd2ps`, `fcvtn`,
-`f32x4.demote_f64x2_zero`) and joins them, and a write widens each half.
+An `f32[]` keeps each element in 4 bytes, so its group is also one access
+(`movupd`, `ldr q` or `v128.load`) at a stride of 4.
 
 The benchmark is 200 maps of a 1,000,000-element `f64[]` with a degree-4
 polynomial by `mul_add`, on x86-64. The best of five runs on one machine is

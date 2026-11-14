@@ -1,20 +1,49 @@
 # markdown
 
-A CommonMark 0.31.2 to HTML renderer in Fern (#15588). Its output is the
-output of [cmark](https://github.com/commonmark/cmark) with `--unsafe`. The
-port does not copy source code from cmark.
+A CommonMark 0.31.2 renderer in Fern (#15588), with the command line of
+[cmark](https://github.com/commonmark/cmark) 0.30.2. For the same input and
+options, its output is the output of cmark in each format of cmark: HTML,
+XML, CommonMark, groff man and LaTeX. The port does not copy source code from
+cmark.
 
 ```
 fern -target x86-64-linux -o md examples/markdown/md.fern
 printf '# Title\n\n- a\n- b\n' | ./md
+printf '# Title\n\n"Hi" -- there...\n' | ./md --to xml --sourcepos --smart
 ```
 
-`md` reads the files that it gets, or stdin when it gets none, and writes the
-HTML to stdout. A program can call `markdown.to_html(text)`, or
-`markdown.render(builder, text)` to write into a byte builder.
-`markdown.write(writer, text, part)` gives the HTML to a buffered writer each
-time that `part` bytes or more are ready. `md` uses it, so the HTML of a
-document is not in memory all at one time.
+`md` reads the files that it gets one after the other, or stdin when it gets
+none. It has the options of cmark:
+
+- `--to`, `-t FORMAT`: `html` (the default), `xml`, `man`, `commonmark` or
+  `latex`.
+- `--width N`: the width where the CommonMark, man and LaTeX renderers wrap a
+  line, or 0 for no wrap. `md` reads `N` as C `strtol` does.
+- `--sourcepos`: the source position of each block in HTML, and of each node
+  in XML.
+- `--hardbreaks` and `--nobreaks`: each soft line break is a hard line break,
+  or a space.
+- `--smart`: curly quotes, en dashes, em dashes and ellipses.
+- `--unsafe`: raw HTML, and links to `javascript:`, `vbscript:`, `file:` and
+  `data:` URLs.
+- `--validate-utf8`: invalid UTF-8 as cmark replaces it (see below).
+- `--help`, `-h` and `--version`.
+
+`--safe` is the default. Then, as in cmark 0.30, raw HTML is the comment
+`<!-- raw HTML omitted -->`, and a link to such a URL has an empty
+destination. A `data:` URL of a PNG, GIF, JPEG or WebP image is safe.
+
+An unknown option writes the usage and fails. The errors of `--width` and
+`--to`, a file that `md` cannot open, and the exit status are those of cmark.
+A directory gives no text, as it does in cmark.
+
+A program can call `markdown.to_html(text, options)`, or
+`markdown.render(builder, text, options)` to write into a byte builder.
+`markdown.write(writer, text, part, options)` gives the HTML to a buffered
+writer each time that `part` bytes or more are ready. `md` uses it, so the
+HTML of a document is not in memory all at one time. `markdown.options()`
+gives the defaults. `render.render(text, format, options)` gives the other
+formats, and `render.tree(text, options)` gives the node tree.
 
 ## How it works
 
@@ -64,6 +93,26 @@ The text of a paragraph is a part of the source when only a line feed is
 between two of its lines. Other paragraphs, such as one in a block quote,
 get one string of their lines.
 
+With `--sourcepos`, the block parser keeps the position of each block. As in
+cmark, a block ends at the end of the line before the line that closes it.
+A fenced code block and a setext heading end at the end of that line. The
+length of the line of an ATX heading does not count its closing `#` marks.
+
+The other formats need the node tree of cmark. `render.fern` builds it from
+the log of blocks. `inlines.build` adds the nodes of the inline text from
+the tokens that the HTML writer reads. `nodes.fern` keeps the tree as rows
+of i32 fields, and the text of all the nodes in one string.
+
+The tree has the text nodes of cmark. Adjacent text joins. The positions
+follow the rules of cmark, such as the column of a string of backticks that
+opens no code span.
+
+`xml.fern` writes the XML in parts, as the HTML writer does. `out.fern` is
+the writer of the text renderers of cmark. It keeps the prefix of each line
+and writes the line breaks that a renderer asks for. It escapes the text for
+CommonMark, man or LaTeX, and it wraps the lines. `commonmark.fern`,
+`man.fern` and `latex.fern` walk the tree.
+
 `refs.fern` parses the link reference definitions, normalizes link labels,
 and scans link destinations and titles. `tags.fern` has the HTML tag
 scanners and the start and end conditions of the seven kinds of HTML block.
@@ -97,10 +146,19 @@ punctuation ranges. `scripts/gen-markdown-tables.py` writes it.
 The renderer skips a byte order mark at the start of the source. It replaces
 each NUL byte with U+FFFD.
 
-`md` replaces each byte sequence that is not UTF-8 with U+FFFD. It writes one
-U+FFFD for each maximal part that is not valid, as the Unicode standard
-recommends. cmark writes such bytes as they are, and `cmark --validate-utf8`
-replaces some longer sequences with one U+FFFD.
+With `--validate-utf8`, `md` replaces invalid UTF-8 as cmark does. cmark
+reads each line without its line ending. It writes one U+FFFD for each of
+these sequences:
+
+- a lead byte and the valid continuation bytes after it,
+- all the bytes that are left on the line when the sequence is too short
+  for them,
+- the whole sequence of an overlong form, a surrogate or a code point above
+  U+10FFFF.
+
+Without `--validate-utf8`, `md` replaces each maximal part that is not valid
+with one U+FFFD, as the Unicode standard recommends. cmark writes the bytes
+as they are, but a Fern `string` is always UTF-8.
 
 ## Differences from the text of the spec
 
@@ -129,40 +187,79 @@ follow spec 0.31.2, the port follows the spec:
   keeps one bottom for all `_` closers, so `__)_>__` is text there and
   strong emphasis here.
 - A Unicode symbol, such as `£`, is punctuation next to a run of
-  delimiters.
+  delimiters, and next to a quote with `--smart`.
 - `<!-->` and `<!--->` are comments, a comment can hold `--`, and `<!` with
   a lower-case letter starts a declaration.
 - `search` is the name of an HTML block of kind 6, and `source` is not.
 - When the title of a definition is not the end of its line, the
   definition has no title. cmark keeps the title, but the line is text.
 
+These differences change the output of examples 354, 625 and 626 of the
+spec in each format. The command line has three more differences:
+
+- The usage line of `--help` names `md`, not `cmark`.
+- `--version` names `md` and the version of cmark that it follows. It does
+  not give the copyright line of cmark.
+- Without `--validate-utf8`, invalid UTF-8 becomes U+FFFD (see above).
+
 ## Tests
 
 - The unit cases in `markdown_test.fern` run on x86-64, arm64 and
   wasm32-wasi with the leak census (`TestSelfHostExampleMarkdownUnit`).
 - `TestSelfHostExampleMarkdownSpec` runs the 652 examples of the CommonMark
-  0.31.2 spec in `tests/spec.json` (see `licenses/commonmark/NOTICE.txt`).
-  It compares the HTML exactly, and fails when the set of examples that pass
-  changes. All 652 examples pass.
+  0.31.2 spec in `tests/spec.json` (see `licenses/commonmark/NOTICE.txt`)
+  with `--unsafe`, as the spec runner of cmark does. It compares the HTML
+  exactly, and fails when the set of examples that pass changes. All 652
+  examples pass.
 - `TestSelfHostExampleMarkdownAgainstCmark` compares the output of `md` and
   of the `cmark` binary on the same input. It needs `cmark` on the PATH, and
   its cases have none of the differences from cmark 0.30.2 above.
+
+Two tests compare the command line with cmark 0.30.2 in each format:
+
+- `TestSelfHostExampleMarkdownCmarkCases` runs `md` on the recorded cases
+  of `tests/cmark.json`.
+- `TestSelfHostExampleMarkdownFormats` compares `md` and `cmark` on each
+  example of the spec.
+
+The cases of `tests/cmark.json` have each option in each format, the errors
+of the command line, and invalid UTF-8. Some join files, and some name a
+missing file or a directory. `scripts/gen-markdown-cmark-cases.py` records
+the stdout, the stderr and the exit status of cmark 0.30.2 for each case.
+The test runs `md` on x86-64, arm64 and wasm32-wasi, and compares the three.
+When `cmark` is on the PATH, it also makes sure that the record is still the
+output of cmark.
+
+`TestSelfHostExampleMarkdownFormats` gives each example of the spec to `md`
+on each target and to `cmark`. It uses each format, with 11 sets of options.
+Only the output of the examples 354, 625 and 626 is different.
 
 ## Speed
 
 Measured 2026-11-13 on the 4-core x86-64 container, with other work on the
 machine: the median of 15 runs, and the peak memory. Each program reads the
-input from a file and writes to `/dev/null`. md4c 0.4.8 runs through a small
-driver of `md_html` with `MD_DIALECT_COMMONMARK`, which writes each part of
-the HTML when md4c gives it.
+input from a file and writes to `/dev/null`. Both `md` and cmark use their
+default options. md4c 0.4.8 runs through a small driver of `md_html` with
+`MD_DIALECT_COMMONMARK`, which writes each part of the HTML when md4c gives
+it.
 
-| input | `md` | cmark 0.30.2 | md4c 0.4.8 |
-|---|---:|---:|---:|
-| the Markdown of `docs/`, 23.9 MB | 0.119 s, 33 MB | 0.451 s, 220 MB | 0.136 s, 28 MB |
-| the 652 spec examples, repeated to 16.9 MB | 0.372 s, 66 MB | 1.112 s, 444 MB | 0.414 s, 44 MB |
+The first input is the Markdown files of the repository (`git ls-files
+'*.md'`) one after the other, 23.5 MB. The second input is the 652 spec
+examples, each with a blank line after it, repeated to 16.9 MB.
 
-callgrind counts 210 M instructions for `md` on the first 6 MB of the
-`docs/` input, and 305 M for md4c. The inline phase is 58% of the count of
-`md` there, and the block phase is 35%. On the first 4 MB of the spec input,
-the block phase is about half of the count. The link reference definitions
-are a sixth of the block phase there.
+| input | format | `md` | cmark 0.30.2 | md4c 0.4.8 |
+|---|---|---:|---:|---:|
+| the repository, 23.5 MB | HTML | 0.112 s, 32 MB | 0.415 s, 159 MB | 0.125 s, 29 MB |
+| the repository, 23.5 MB | `--to xml` | 0.385 s, 328 MB | 0.464 s, 182 MB | |
+| the repository, 23.5 MB | `--to commonmark` | 0.560 s, 351 MB | 0.689 s, 157 MB | |
+| the spec examples, 16.9 MB | HTML | 0.356 s, 66 MB | 1.058 s, 444 MB | 0.390 s, 44 MB |
+| the spec examples, 16.9 MB | `--to xml` | 1.035 s, 883 MB | 1.243 s, 511 MB | |
+| the spec examples, 16.9 MB | `--to commonmark` | 1.179 s, 884 MB | 1.247 s, 434 MB | |
+
+The HTML does not use the node tree. callgrind counts the instructions of
+`md` before and after it got the options of cmark. On the first 6 MB of the
+repository input, it counts 1.9% more (207 M against 203 M). On the first
+4 MB of the spec input, it counts 2.1% more (834 M against 817 M). On both
+inputs, the time of the
+HTML is in the noise of the machine. The other formats keep the node tree
+and its text, so they use more memory than cmark.

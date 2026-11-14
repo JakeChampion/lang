@@ -674,6 +674,7 @@ func New() *Interp {
 	i.Builtins["__method_Dir_open_writer_with"] = &Builtin{Fn: builtinDirOpenFile("Writer", os.O_WRONLY, true)}
 	i.Builtins["__method_Dir_entries"] = &Builtin{Fn: builtinDirEntries}
 	i.Builtins["__method_Dir_entries_bytes"] = &Builtin{Fn: builtinDirEntriesBytes}
+	i.Builtins["__method_Dir_entries_ino"] = &Builtin{Fn: builtinDirEntriesIno}
 	i.Builtins["__method_Dir_stat"] = &Builtin{Fn: builtinDirStat(true)}
 	i.Builtins["__method_Dir_lstat"] = &Builtin{Fn: builtinDirStat(false)}
 	i.Builtins["__method_Dir_access"] = &Builtin{Fn: builtinDirAccess}
@@ -813,6 +814,8 @@ func New() *Interp {
 	registerChaCha20(i)
 	registerPoly1305(i)
 	registerChaCha20Poly1305(i)
+	registerMontMul(i)
+	registerScryptBlockMix(i)
 	i.Builtins["__rc_underflow_count"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
 	registerBitCount := func(name string, width int, count func(uint64, int) int) {
 		i.Builtins[name] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {

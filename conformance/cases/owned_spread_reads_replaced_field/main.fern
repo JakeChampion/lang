@@ -1,0 +1,23 @@
+// A local that a struct literal makes from an `own` parameter takes the
+// parameter, even when a field value reads a field that the literal
+// replaces. The local can then go to an `own` parameter at its last use.
+struct State { out: Writer, n: i32, name: string }
+
+function bump(own s: State, by: i32): State {
+  return State { ...s, n: s.n + by };
+}
+
+function step(own s0: State, k: i32): State {
+  let s = State { ...s0, n: s0.n + 1, name: s0.name + "!" };
+  if (k == 1) {
+    return bump(s, 10);
+  }
+  return bump(s, 100);
+}
+
+function main(): i32 {
+  let s = step(State { out: stdout(), n: 1, name: "a" }, 1);
+  let t = step(s, 2);
+  print(t.n.to_string() + " " + t.name);
+  return 0;
+}

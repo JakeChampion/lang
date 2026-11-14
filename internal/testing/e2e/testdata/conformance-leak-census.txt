@@ -1,3 +1,6 @@
+# 2026-11-14: tuple_projection_of_a_fresh_call_is_owned has balanced allocations on x86-64.
+# 2026-11-13: owned_let_arm_result_in_loop has no allocations on x86-64.
+# 2026-11-14: owned_spread_reads_replaced_field has no allocations on x86-64.
 # 2026-11-14: task_started_two_times keeps 6 blocks at its exit(134) (was 2). A cell write
 # now borrows its cell, so more of the task is live at the abort. The same program
 # without the abort has the same count as before.
@@ -850,7 +853,9 @@ own_takes_replaced_field_of_owned_base               0
 own_transfer                                         0
 own_tree_match                                       0
 owned_field_match_data                               0
+owned_let_arm_result_in_loop                         0
 owned_match_results_rebuild_literal                 0
+owned_spread_reads_replaced_field                    0
 owned_state_restored_on_each_loop_jump               0
 package_scoped_stdlib_helpers                        0
 pad_multibyte_fill                                   0
@@ -1406,6 +1411,7 @@ tuple_nested_tuple_pattern                           0
 tuple_payload_gives_loop_local_next_value            0
 tuple_payload_pattern                                0
 tuple_payload_pattern_expr                           0
+tuple_projection_of_a_fresh_call_is_owned            0
 tuple_return_union                                   0
 tuple_variant_payload_subpattern                     0
 two_i64_literals                                     0

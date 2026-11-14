@@ -1,0 +1,478 @@
+// The writer of the text renderers of cmark: CommonMark, groff man and
+// LaTeX. It keeps the prefix of each line, such as `> ` in a block quote,
+// it writes the line breaks that the renderers ask for, and it wraps the
+// text at a width. The output is a byte array, because a wrap moves the
+// end of a line to the next line.
+import "./markdown";
+
+// The escaping of `out`.
+pub const LITERAL: i32 = 0;
+
+pub const NORMAL: i32 = 1;
+
+pub const TITLE: i32 = 2;
+
+pub const URL: i32 = 3;
+
+// The formats.
+pub const COMMONMARK: i32 = 0;
+
+pub const MAN: i32 = 1;
+
+pub const LATEX: i32 = 2;
+
+// The state of a renderer, as in cmark. `need_cr` is the number of line
+// feeds to write before the next text: 1 for a new line and 2 for a blank
+// line. `last_breakable` is the index of the last space where a wrap can
+// break the line, or 0. `begin_content` is true at the start of a line
+// until the first character that is not a digit. `numbers` is a stack, for
+// the man renderer, of the number of blocks in each open list item.
+pub struct R {
+  fmt: i32,
+  o: markdown.Options,
+  b: u8[],
+  len: i32,
+  prefix: string,
+  column: i32,
+  width: i32,
+  need_cr: i32,
+  last_breakable: i32,
+  begin_line: boolean,
+  begin_content: boolean,
+  no_linebreaks: boolean,
+  in_tight_list_item: boolean,
+  numbers: i32[],
+}
+
+pub function new(fmt: i32, o: markdown.Options, width: i32): R {
+  return R { fmt: fmt, o: o, b: __alloc_u8(4096), len: 0, prefix: "", column: 0, width: width, need_cr: 0, last_breakable: 0, begin_line: true, begin_content: true, no_linebreaks: false, in_tight_list_item: false, numbers: [] };
+}
+
+// The output, with a line feed at its end.
+pub function (r: R) bytes(): u8[] {
+  let q = r;
+  if (q.len == 0 || q.b[q.len - 1] != 10 as u8) {
+    q = put(q, 10);
+  }
+  let h = buf_new(q.len);
+  buf_push_bytes_range(h, q.b, 0, q.len);
+  let out = buf_take_bytes(h);
+  buf_free(h);
+  return out;
+}
+
+@inline
+function put(r: R, c: i32): R {
+  if (r.len < r.b.len()) {
+    return R { ...r, b: r.b.with(r.len, c as u8), len: r.len + 1 };
+  }
+  return R { ...r, b: r.b.append(c as u8), len: r.len + 1 };
+}
+
+function put_str(r: R, s: string): R {
+  let q = r;
+  for i in 0..s.len() {
+    q = put(q, s[i] as i32);
+  }
+  return q;
+}
+
+// Asks for a new line before the next text.
+pub function (r: R) cr(): R {
+  if (r.need_cr < 1) {
+    return R { ...r, need_cr: 1 };
+  }
+  return r;
+}
+
+// Asks for a blank line before the next text.
+pub function (r: R) blankline(): R {
+  if (r.need_cr < 2) {
+    return R { ...r, need_cr: 2 };
+  }
+  return r;
+}
+
+// Writes `s` with no escaping and no wrap.
+pub function (r: R) lit(s: string): R {
+  return r.out(s, false, LITERAL);
+}
+
+// Writes ASCII text that has no line feed, as cmark_render_ascii does.
+pub function (r: R) ascii(s: string): R {
+  let q = put_str(r, s);
+  return R { ...q, column: q.column + s.len() };
+}
+
+// Writes the code point `c` as UTF-8, as cmark_render_code_point does. As
+// in cmark, U+FFFE and U+FFFF are the bytes 0xFE and 0xFF, which are not
+// UTF-8.
+pub function (r: R) code_point(c: i32): R {
+  let q = r;
+  if (c < 0x80) {
+    q = put(q, c);
+  } else if (c == 0xFFFE || c == 0xFFFF) {
+    q = put(q, c & 0xFF);
+  } else if (c < 0x800) {
+    q = put(put(q, 0xC0 | c >> 6), 0x80 | c & 63);
+  } else if (c < 0x10000) {
+    q = put(put(put(q, 0xE0 | c >> 12), 0x80 | c >> 6 & 63), 0x80 | c & 63);
+  } else {
+    q = put(put(put(put(q, 0xF0 | c >> 18), 0x80 | c >> 12 & 63), 0x80 | c >> 6 & 63), 0x80 | c & 63);
+  }
+  return R { ...q, column: q.column + 1 };
+}
+
+function is_digit(c: i32): boolean {
+  return c >= 48 && c <= 57;
+}
+
+pub function is_space(c: i32): boolean {
+  return c == 32 || c >= 9 && c <= 13;
+}
+
+// The code point at `i` of `s`, which is valid UTF-8, and its length.
+function code_point_at(s: string, i: i32): (i32, i32) {
+  let c = s[i] as i32;
+  if (c < 0x80) {
+    return (c, 1);
+  }
+  if (c < 0xE0) {
+    return ((c & 31) << 6 | s[i + 1] as i32 & 63, 2);
+  }
+  if (c < 0xF0) {
+    return ((c & 15) << 12 | (s[i + 1] as i32 & 63) << 6 | s[i + 2] as i32 & 63, 3);
+  }
+  return ((c & 7) << 18 | (s[i + 1] as i32 & 63) << 12 | (s[i + 2] as i32 & 63) << 6 | s[i + 3] as i32 & 63, 4);
+}
+
+// Writes the line feeds that the renderer asks for. Line feeds at the end
+// of the output count. A blank line gets the prefix.
+function line_feeds(r: R): R {
+  let q = r;
+  if (q.in_tight_list_item && q.need_cr > 1) {
+    q = R { ...q, need_cr: 1 };
+  }
+  let k = q.len - 1;
+  while (q.need_cr > 0) {
+    if (k < 0 || q.b[k] == 10 as u8) {
+      k -= 1;
+    } else {
+      q = put(q, 10);
+      if (q.need_cr > 1) {
+        q = put_str(q, q.prefix);
+      }
+    }
+    q = R { ...q, column: 0, last_breakable: 0, begin_line: true, begin_content: true, need_cr: q.need_cr - 1 };
+  }
+  return q;
+}
+
+// Writes `s` with the escaping `escape`. With `wrap`, a space can break
+// the line when the line is wider than the width.
+pub function (r0: R) out(s: string, wrap0: boolean, escape: i32): R {
+  let wrap = wrap0 && !r0.no_linebreaks;
+  let r = line_feeds(r0);
+  let i = 0;
+  while (i < s.len()) {
+    if (r.begin_line) {
+      r = put_str(r, r.prefix);
+      r = R { ...r, column: r.prefix.len() };
+    }
+    let j = plain_end(s, i, wrap, escape);
+    if (j > i && (r.width == 0 || r.last_breakable == 0)) {
+      r = run(r, s, i, j);
+      i = j;
+    } else {
+      let (r2, next) = one_char(r, s, i, wrap, escape);
+      r = r2;
+      i = next;
+    }
+  }
+  return r;
+}
+
+// Writes the character at `i`, and wraps the line when it is too wide.
+// Gives the index after the character, and after the spaces that follow a
+// space where a line can wrap.
+function one_char(r0: R, s: string, i: i32, wrap: boolean, escape: i32): (R, i32) {
+  let (c, len) = code_point_at(s, i);
+  let r = r0;
+  let last = i;
+  if (c == 32 && wrap) {
+    let (r2, l) = space(r, s, i);
+    r = r2;
+    last = l;
+  } else {
+    r = one(r, s, i + len, c, escape);
+  }
+  if (r.width > 0 && r.column > r.width && !r.begin_line && r.last_breakable > 0) {
+    r = wrap_line(r);
+  }
+  return (r, last + len);
+}
+
+// The end of the bytes from `i` that each renderer writes as they are: in
+// literal text each byte but a line feed, and else letters and digits.
+// Spaces are such bytes too when no wrap can break a line at them, except
+// in a URL.
+function plain_end(s: string, i: i32, wrap: boolean, escape: i32): i32 {
+  if (escape == LITERAL) {
+    return literal_end(s, i, wrap);
+  }
+  let j = i;
+  let spaces = !wrap && escape != URL;
+  while (j < s.len() && (is_alnum(s[j] as i32) || s[j] == b' ' && spaces)) {
+    j += 1;
+  }
+  return j;
+}
+
+function literal_end(s: string, i: i32, wrap: boolean): i32 {
+  let j = i;
+  while (j < s.len() && s[j] != b'\n' && (s[j] != b' ' || !wrap)) {
+    j += 1;
+  }
+  return j;
+}
+
+function is_alnum(c: i32): boolean {
+  return c >= 48 && c <= 57 || c >= 65 && c <= 90 || c >= 97 && c <= 122;
+}
+
+// Writes the bytes `s[i:j]`, which have no line feed and need no escape. A
+// line cannot wrap in them. The column counts code points.
+function run(r: R, s: string, i: i32, j: i32): R {
+  let b = r.b;
+  let len = r.len;
+  let column = r.column;
+  let digits = r.begin_content;
+  for k in i..j {
+    let c = s[k];
+    if (len < b.len()) {
+      b = b.with(len, c);
+    } else {
+      b = b.append(c);
+    }
+    len += 1;
+    if ((c as i32 & 0xC0) != 0x80) {
+      column += 1;
+    }
+    digits = digits && c >= b'0' && c <= b'9';
+  }
+  return R { ...r, b: b, len: len, column: column, begin_line: false, begin_content: digits };
+}
+
+// A space where a wrap can break the line. As in cmark, the spaces after it
+// go, and a break cannot put a digit at the start of a line. A space at the
+// start of a line is not written. Gives the index of the last space.
+function space(r: R, s: string, i0: i32): (R, i32) {
+  if (r.begin_line) {
+    return (r, i0);
+  }
+  let at = r.len;
+  let q = put(r, 32);
+  q = R { ...q, column: q.column + 1, begin_line: false, begin_content: false };
+  let i = i0;
+  while (i + 1 < s.len() && s[i + 1] == b' ') {
+    i += 1;
+  }
+  if (i + 1 < s.len() && is_digit(s[i + 1] as i32)) {
+    return (q, i);
+  }
+  return (R { ...q, last_breakable: at }, i);
+}
+
+// Writes the code point `c`, which the byte at `next` of `s` follows.
+function one(r: R, s: string, next: i32, c: i32, escape: i32): R {
+  if (escape == LITERAL && c == 10) {
+    return R { ...put(r, 10), column: 0, begin_line: true, begin_content: true, last_breakable: 0 };
+  }
+  let q = r;
+  if (escape == LITERAL) {
+    q = q.code_point(c);
+  } else {
+    let nextc = 0;
+    if (next < s.len()) {
+      nextc = s[next] as i32;
+    }
+    q = outc(q, escape, c, nextc);
+  }
+  return R { ...q, begin_line: false, begin_content: q.begin_content && is_digit(c) };
+}
+
+// Moves the text after the last place to break to a new line. As in cmark,
+// the column counts the bytes of that text.
+function wrap_line(r: R): R {
+  let at = r.last_breakable;
+  let prefix = r.prefix;
+  let rest: u8[] = [];
+  for k in at + 1..r.len {
+    rest = rest.append(r.b[k]);
+  }
+  let q = put_str(put(R { ...r, len: at }, 10), prefix);
+  for k in 0..rest.len() {
+    q = put(q, rest[k] as i32);
+  }
+  return R { ...q, column: prefix.len() + rest.len(), last_breakable: 0, begin_line: false, begin_content: false };
+}
+
+function outc(r: R, escape: i32, c: i32, nextc: i32): R {
+  if (r.fmt == COMMONMARK) {
+    return commonmark_char(r, escape, c, nextc);
+  }
+  if (r.fmt == MAN) {
+    return man_char(r, escape, c);
+  }
+  return latex_char(r, escape, c, nextc);
+}
+
+// The row of `c` in `chars`, or -1.
+function row(chars: i32[], c: i32): i32 {
+  for k in 0..chars.len() {
+    if (chars[k] == c) {
+      return k;
+    }
+  }
+  return -1;
+}
+
+function is_alpha(c: i32): boolean {
+  return c >= 65 && c <= 90 || c >= 97 && c <= 122;
+}
+
+// ASCII punctuation.
+function is_punct(c: i32): boolean {
+  return c >= 33 && c <= 47 || c >= 58 && c <= 64 || c >= 91 && c <= 96 || c >= 123 && c <= 126;
+}
+
+// A byte of ASCII that is in `set`.
+function in_set(c: i32, set: string): boolean {
+  return c < 128 && __memchr(set, c, 0) >= 0;
+}
+
+function commonmark_char(r: R, escape: i32, c: i32, nextc: i32): R {
+  if (c >= 0x80 || !commonmark_escapes(r, escape, c, nextc)) {
+    return r.code_point(c);
+  }
+  if (escape == URL && is_space(c)) {
+    // C's "%2X" pads with a space.
+    let hex = "0123456789ABCDEF";
+    let high = 32;
+    if (c >= 16) {
+      high = hex[c / 16] as i32;
+    }
+    let q = put(put(put(r, 37), high), hex[c % 16] as i32);
+    return R { ...q, column: q.column + 3 };
+  }
+  if (is_punct(c)) {
+    return r.ascii("\\").code_point(c);
+  }
+  return r.ascii("&#" + c.to_string() + ";");
+}
+
+// True when the CommonMark renderer escapes the ASCII character `c` before
+// `nextc`.
+function commonmark_escapes(r: R, escape: i32, c: i32, nextc: i32): boolean {
+  if (escape == URL) {
+    return is_space(c) || in_set(c, "`<>\\()");
+  }
+  if (escape == TITLE) {
+    return in_set(c, "`<>\"\\");
+  }
+  return normal_escapes(r, c, nextc);
+}
+
+// The characters that the CommonMark renderer escapes in normal text.
+function normal_escapes(r: R, c: i32, nextc: i32): boolean {
+  if (c < 32 || in_set(c, "*_[]#<>\\`!") || c == 38 && is_alpha(nextc)) {
+    return true;
+  }
+  return r.o.smart && smart_char(c, nextc) || r.begin_content && starts_block(r, c, nextc);
+}
+
+// The characters that smart punctuation changes: two hyphens, two periods
+// and quotes.
+function smart_char(c: i32, nextc: i32): boolean {
+  return c == 45 && nextc == 45 || c == 46 && nextc == 46 || c == 34 || c == 39;
+}
+
+// True when `c` at the start of a line can start a block: a list marker,
+// or the line of a setext heading. The digits of an ordered list marker
+// come before `.` or `)`.
+function starts_block(r: R, c: i32, nextc: i32): boolean {
+  let follows_digit = r.len > 0 && is_digit(r.b[r.len - 1] as i32);
+  if (in_set(c, "-+=")) {
+    return !follows_digit;
+  }
+  return in_set(c, ".)") && follows_digit && (nextc == 0 || is_space(nextc));
+}
+
+const MAN_CHARS: i32[] = [45, 92, 8216, 8217, 8220, 8221, 8212, 8211];
+
+const MAN_TEXT: string[] = ["\\-", "\\e", "\\[oq]", "\\[cq]", "\\[lq]", "\\[rq]", "\\[em]", "\\[en]"];
+
+// groff needs `\&` before a period or an apostrophe at the start of a line.
+function man_char(r: R, escape: i32, c: i32): R {
+  if (escape == LITERAL) {
+    return r.code_point(c);
+  }
+  if (r.begin_line && (c == 46 || c == 39)) {
+    return r.ascii("\\&").code_point(c);
+  }
+  let k = row(MAN_CHARS, c);
+  if (k >= 0) {
+    return r.ascii(MAN_TEXT[k]);
+  }
+  return r.code_point(c);
+}
+
+const LATEX_CHARS: i32[] = [94, 124, 60, 62, 34, 39, 160, 8230];
+
+const LATEX_TEXT: string[] = ["\\^{}", "\\textbar{}", "\\textless{}", "\\textgreater{}", "\\textquotedbl{}", "\\textquotesingle{}", "~", "\\ldots{}"];
+
+// The characters that LaTeX gets in ASCII only in normal text.
+const LATEX_NORMAL_CHARS: i32[] = [126, 8216, 8217, 8220, 8221, 8212, 8211];
+
+const LATEX_NORMAL_TEXT: string[] = ["\\textasciitilde{}", "`", "'", "``", "''", "---", "--"];
+
+function latex_char(r: R, escape: i32, c: i32, nextc: i32): R {
+  if (escape == LITERAL) {
+    return r.code_point(c);
+  }
+  let k = row(LATEX_CHARS, c);
+  if (k >= 0) {
+    return r.ascii(LATEX_TEXT[k]);
+  }
+  if (in_set(c, "{}#%&") || escape == NORMAL && in_set(c, "$_")) {
+    return r.ascii("\\").code_point(c);
+  }
+  if (in_set(c, "-[]\\")) {
+    return latex_ascii(r, escape, c, nextc);
+  }
+  if (escape == NORMAL) {
+    k = row(LATEX_NORMAL_CHARS, c);
+    if (k >= 0) {
+      return r.ascii(LATEX_NORMAL_TEXT[k]);
+    }
+  }
+  return r.code_point(c);
+}
+
+// A hyphen before a hyphen gets `{}`, so that they make no dash. Brackets
+// are in braces. A backslash in a URL is a slash.
+function latex_ascii(r: R, escape: i32, c: i32, nextc: i32): R {
+  if (c == 45 && nextc == 45) {
+    return r.ascii("-{}");
+  }
+  if (c == 45) {
+    return r.ascii("-");
+  }
+  if (c == 92 && escape == URL) {
+    return r.ascii("/");
+  }
+  if (c == 92) {
+    return r.ascii("\\textbackslash{}");
+  }
+  return r.ascii("{").code_point(c).ascii("}");
+}

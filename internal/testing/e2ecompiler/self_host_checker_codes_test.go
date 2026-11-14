@@ -192,6 +192,45 @@ function mkp(): HPair { return HPair { h: Handle { fd: 1 }, n: 2 }; }
 function keep(p: HPair): HPair { return p; }
 `
 
+const tupleProjectionPrelude = `struct R { a: string[], n: i32, t: Option[Reader] }
+function bump(own r: R): (boolean, R) { return (true, R { ...r, n: r.n + 1 }); }
+function swap(own r: R): (R, i32) { return (R { ...r, n: r.n + 1 }, 7); }
+function nest(own r: R): (i32, (boolean, R)) { return (1, (false, r)); }
+function same[T](x: T): T { return x; }
+function eat(own r: R): i32 { return r.n; }
+function keep(own r: R): R { return r; }
+struct W { r: R, k: i32 }
+function opt(own r: R): (i32, Option[R]) { return (1, Some(r)); }
+function eatw(own w: W): i32 { return w.k; }
+`
+
+// tupleProjection puts main last, where wrapMainBodyInLambda finds it.
+func tupleProjection(body string) string {
+	return tupleProjectionPrelude + body + "\nfunction main(): i32 { return 0; }\n"
+}
+
+var tupleProjectionCases = []struct {
+	name string
+	src  string
+	want []string
+}{
+	{"tuple-projection-own-parameter-rebound", tupleProjection(`function f(own run: R): i32 { run = bump(run).1; return eat(run); }`), nil},
+	{"tuple-projection-local-rebound", tupleProjection(`function f(own run0: R): R { let run = R { ...run0, n: 2 }; run = bump(run).1; run = keep(run); return run; }`), nil},
+	{"tuple-projection-argument", tupleProjection(`function f(own run: R): i32 { return eat(bump(run).1); }`), nil},
+	{"tuple-projection-element-zero", tupleProjection(`function f(own run0: R): R { let run = R { ...run0, n: 2 }; run = swap(run).0; run = keep(run); return run; }`), nil},
+	{"tuple-projection-let", tupleProjection(`function f(own run0: R): R { let run = R { ...run0, n: 2 }; let r1 = bump(run).1; run = keep(r1); return run; }`), nil},
+	{"tuple-projection-nested", tupleProjection(`function f(own run0: R): R { let run = R { ...run0, n: 2 }; run = nest(run).1.1; run = keep(run); return run; }`), nil},
+	{"tuple-projection-loop", tupleProjection(`function f(own run0: R): i32 { let run = R { ...run0, n: 0 }; for i in [0, 1] { run = bump(run).1; } return eat(run); }`), nil},
+	{"tuple-projection-own-result", tupleProjection(`function f(own r: R): own R { return bump(r).1; }`), nil},
+	{"tuple-projection-literal-field", tupleProjection(`function f(own r: R): i32 { return eatw(W { r: bump(r).1, k: 1 }); }`), nil},
+	{"tuple-projection-match-payload", tupleProjection(`function f(own r: R): i32 { match (opt(r).1) { Some(x) => { return eat(x); }, None => { return 0; } } return 0; }`), nil},
+	{"tuple-projection-let-else-payload", tupleProjection(`function f(own r: R): i32 { let Some(x) = opt(r).1 else { return 0; }; return eat(x); }`), nil},
+	{"tuple-projection-borrowed-parameter", tupleProjection(`function f(t: (boolean, R)): i32 { return eat(t.1); }`), []string{"E051"}},
+	{"tuple-projection-lent-call-result", tupleProjection(`function f(t: (boolean, R)): i32 { return eat(same(t).1); }`), []string{"E051"}},
+	{"tuple-projection-lent-call-result-local", tupleProjection(`function f(t: (boolean, R)): i32 { let r = same(t).1; return eat(r); }`), []string{"E051"}},
+	{"tuple-projection-nested-lent-call-result", tupleProjection(`function f(t: (i32, (boolean, R))): i32 { return eat(same(t).1.1); }`), []string{"E051"}},
+}
+
 func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 	checkerBin, runner, dir := buildCheckerCodesBin(t)
 	const loopPayloadPrefix = `struct Box { data: u8[] }
@@ -1556,6 +1595,9 @@ function main(): i32 { return f([1]); }`, []string{"E050"}},
 		{"literal-suffix-i64-min-ok", "function main(): i32 { let x: i64 = -9223372036854775808i64; return 0; }\n", nil},
 		{"literal-suffix-double-neg", "function main(): i32 { let x: i64 = - -9223372036854775808i64; return 0; }\n", []string{"E047"}},
 		{"literal-suffix-double-neg-ok", "function main(): i32 { let x: i64 = - -5i64; return 0; }\n", nil},
+		{"literal-suffix-triple-neg-ok", "function main(): i32 { let x: i32 = - - -2147483648i32; return 0; }\n", nil},
+		{"literal-suffix-neg-below-a-call-ok", "function f(v: i32): i32 { return v; }\nfunction main(): i32 { let x: i32 = -f(-2147483648i32); return 0; }\n", nil},
+		{"literal-suffix-neg-below-a-call-under", "function f(v: i32): i32 { return v; }\nfunction main(): i32 { let x: i32 = -f(-2147483649i32); return 0; }\n", []string{"E047"}},
 		{"literal-suffix-hex-u32-over", "function main(): i32 { let x: u32 = 0x100000000u32; return 0; }\n", []string{"E047"}},
 		{"literal-suffix-hex-u32-max-ok", "function main(): i32 { let x: u32 = 0xFFFFFFFFu32; return 0; }\n", nil},
 		{"literal-suffix-arg", "function take(v: u8): i32 { return 0; }\nfunction main(): i32 { return take(300u8); }\n", []string{"E047"}},
@@ -2191,7 +2233,9 @@ function main(): i32 { return 0; }
 		{"owned-fresh-spread-read-later", freshSpreadOwnedPrelude + "function main(): i32 { let value = Buffer { ...fresh(), tag: 5 }; let n = value.consume(); return n + value.tag; }", []string{"E051"}},
 		{"own-arg-spread-of-borrowed-param", "struct A { sock: Option[Socket], d: string }\nfunction take(own a: A): A { return a; }\nfunction f(s: A): A {\n  let t: A = A { ...s, d: \"x\" };\n  return take(t);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
 		{"own-arg-spread-then-base-read", "struct A { sock: Option[Socket], d: string }\nfunction take(own a: A): A { return a; }\nfunction f(own s: A): A {\n  let t: A = A { ...s, d: \"x\" };\n  print(s.d);\n  return take(t);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
-		{"own-arg-spread-field-names-base", "struct A { sock: Option[Socket], d: string }\nfunction take(own a: A): A { return a; }\nfunction f(own s: A): A {\n  let t: A = A { ...s, d: s.d };\n  return take(t);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
+		{"own-arg-spread-reads-replaced-field", "struct A { sock: Option[Socket], d: string }\nfunction take(own a: A): A { return a; }\nfunction f(own s: A): A {\n  let t: A = A { ...s, d: s.d };\n  return take(t);\n}\nfunction main(): i32 { return 0; }\n", nil},
+		{"own-arg-spread-field-reads-whole-base", "struct A { sock: Option[Socket], d: string }\nfunction take(own a: A): A { return a; }\nfunction name(a: A): string { return a.d; }\nfunction f(own s: A): A {\n  let t: A = A { ...s, d: name(s) };\n  return take(t);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
+		{"own-arg-spread-reads-kept-field", "struct A { sock: Option[Socket], d: string, n: i32 }\nfunction take(own a: A): A { return a; }\nfunction f(own s: A): A {\n  let t: A = A { ...s, n: s.d.len() };\n  return take(t);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
 		{"own-method-borrowed-result", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.h; }\nfunction f(b: Box): i32 { return consume(b.get()); }" + methodBorrowEnd, []string{"E051"}},
 		{"own-method-borrowed-wrapper", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.h; }\nfunction borrow(b: Box): Handle { return b.get(); }\nfunction f(b: Box): i32 { return consume(borrow(b)); }" + methodBorrowEnd, []string{"E051"}},
 		{"own-method-borrowed-local-alias", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.h; }\nfunction borrow(b: Box): Handle { let alias = b; return alias.get(); }\nfunction f(b: Box): i32 { return consume(borrow(b)); }" + methodBorrowEnd, []string{"E051"}},
@@ -2859,6 +2903,7 @@ function main(): i32 { return 0; }
 			want []string
 		}{"generic-builtin-method-name-" + name, "function " + fn + "(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}})
 	}
+	cases = append(cases, tupleProjectionCases...)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var cmd *exec.Cmd
@@ -3237,6 +3282,14 @@ function main(): i32 { return 0; }`},
 		{"chacha20poly1305-open-arity", "function main(): i32 { let k: u8[] = __alloc_u8(32); let out: u8[] = __chacha20_poly1305_open_into(k, k, __alloc_u8(40), 0, 0, 4); return 0; }\n"},
 		{"chacha20poly1305-wrong-element", "function main(): i32 { let k: i32[] = [1, 2]; let out: u8[] = __chacha20_poly1305_seal_into(k, k, __alloc_u8(40), 0, 0, 0, 8); return 0; }\n"},
 		{"chacha20poly1305-result", "function main(): i32 { let k: u8[] = __alloc_u8(32); let r: i32 = __chacha20_poly1305_open_into(k, k[0:16], __alloc_u8(40), 0, 0, 0, 8); return r; }\n"},
+		{"mont-mul-kernel", "function main(): i32 { let m: i64[] = [1, 3, 5]; let a: [i64] = m[0:2]; let t: i64[] = __mont_mul(a, a, m); return t.len(); }\n"},
+		{"mont-mul-arity", "function main(): i32 { let m: i64[] = [1, 3]; let t: i64[] = __mont_mul(m, m); return 0; }\n"},
+		{"mont-mul-wrong-element", "function main(): i32 { let m: u8[] = __alloc_u8(16); let t: i64[] = __mont_mul(m, m, m); return 0; }\n"},
+		{"mont-mul-result", "function main(): i32 { let m: i64[] = [1, 3]; let a: i64[] = [2]; let r: i32 = __mont_mul(a, a, m); return r; }\n"},
+		{"scrypt-block-mix-kernel", "function main(): i32 { let b: i64[] = __alloc_i64(48); b = __scrypt_block_mix(b, 0, 16, 32, 1); return b.len(); }\n"},
+		{"scrypt-block-mix-arity", "function main(): i32 { let b: i64[] = __alloc_i64(48); b = __scrypt_block_mix(b, 0, 16, 32); return 0; }\n"},
+		{"scrypt-block-mix-view", "function main(): i32 { let b: i64[] = __alloc_i64(48); let v: [i64] = b[0:48]; let t: i64[] = __scrypt_block_mix(v, 0, 16, 32, 1); return 0; }\n"},
+		{"scrypt-block-mix-result", "function main(): i32 { let r: i32 = __scrypt_block_mix(__alloc_i64(48), 0, 16, 32, 1); return r; }\n"},
 		{"proc-wait-any", "function main(): i32 { let r: i64 = proc_wait_any(); return (r >> 32) as i32; }\n"},
 		{"proc-wait-any-arity", "function main(): i32 { let r: i64 = proc_wait_any(0 - 1); return 0; }\n"},
 		{"proc-wait-any-result", "function main(): i32 { let r: i32 = proc_wait_any(); return r; }\n"},
@@ -3569,6 +3622,9 @@ function main(): i32 { return 0; }`},
 		{"e051-last-use-loop-local-read-after", lastUsePrelude + "function f(): i32 { let t: i32 = 0; while (t < 3) { let b: i32[] = mk(t); t = t + keep(b, 1) + b.len(); } return t; }\n"},
 		{"e051-last-use-loop-local-inner-loop", lastUsePrelude + "function f(): i32 { let t: i32 = 0; while (t < 3) { let b: i32[] = mk(t); while (t < 2) { t = t + keep(b, 1); } t = t + 1; } return t; }\n"},
 		{"e051-last-use-loop-local-declared-twice", lastUsePrelude + "function f(): i32 { let t: i32 = 0; while (t < 3) { let b: i32[] = mk(t); t = t + keep(b, 1); } while (t < 6) { let b: i32[] = mk(t); t = t + keep(b, 1); } return t; }\n"},
+	}
+	for _, tc := range tupleProjectionCases {
+		progs = append(progs, struct{ name, src string }{tc.name, tc.src})
 	}
 
 	for _, tc := range progs {
