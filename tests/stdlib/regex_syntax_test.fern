@@ -286,6 +286,40 @@ function test_can_match_byte(): test.TestOutcome {
   return test.assert_eq(out.join(" "), "00 10 00 10 10 11 01 11 11 11 11 00 11");
 }
 
+// The spans of each match of `re` in `text`, and its count.
+function spans_of(re: regex.Regex, text: string): string {
+  let out: string[] = [];
+  for m in re.find_all(text) {
+    out = out.append(m.start.to_string() + "-" + m.end.to_string());
+  }
+  return out.join(",") + " n=" + re.count(text).to_string();
+}
+
+// A small program gets a full table. `(?:#[ab]*a[ab]{17})?` matches only
+// the empty text here, but it has too many states for a full table, so it
+// keeps the lazy DFA. Both give the same matches.
+function test_full_and_lazy_tables(): test.TestOutcome {
+  let text = "ab1 cd22 é3 x9y Ω7 zz";
+  let out: string[] = [];
+  for pat in ["[a-z]+[0-9]", "(?i)CD|X9", "[^ ]+", "[0-9z]$"] {
+    let Ok(full) = regex.compile(pat) else {
+      return test.fail("compile " + pat);
+    };
+    let Ok(lazy) = regex.compile("(?:#[ab]*a[ab]{17})?(?:" + pat + ")") else {
+      return test.fail("compile lazy " + pat);
+    };
+    if (full.full.len() == 0 || full.rfull.len() == 0 || lazy.full.len() != 0) {
+      return test.fail("tables of " + pat);
+    }
+    let a = spans_of(full, text);
+    if (a != spans_of(lazy, text) || full.is_match(text) != lazy.is_match(text)) {
+      return test.fail(pat + ": " + a + " against " + spans_of(lazy, text));
+    }
+    out = out.append(a);
+  }
+  return test.assert_eq(out.join(" | "), "0-3,4-7,13-15 n=3 | 4-6,13-15 n=2 | 0-3,4-8,9-12,13-16,17-20,21-23 n=6 | 22-23 n=1");
+}
+
 function main(): i32 {
   let r = test.new("std/regex syntax");
   r = r.it("dot is a character", test_dot_is_a_character);
@@ -316,5 +350,6 @@ function main(): i32 {
   r = r.it("templates", test_templates);
   r = r.it("captures at an offset", test_captures_at);
   r = r.it("bytes a match can hold", test_can_match_byte);
+  r = r.it("full and lazy tables", test_full_and_lazy_tables);
   return r.finish();
 }

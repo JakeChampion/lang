@@ -1649,6 +1649,8 @@ A word assertion of Unicode examines the characters on each side, and a DFA know
 
 A program over `RX_DFA_PROGRAM` instructions has no DFA, and the Pike VM does all of its searches.
 
+`compile` fills each state of a small table at once: the program has at most `RX_DFA_SMALL` instructions, and the table at most `RX_DFA_FULL` words. A search with such a table does not read a cell, and it does not check for a state that is not filled. The dead state and the quit state have the flag `RX_DFA_STOP`, so the search reads one word of flags for each byte, as it does for a match. Thus a search of a short text costs as little as it did before the DFAs were lazy.
+
 | Words | Contents |
 | --- | --- |
 | 0, 1, 2 | the count of columns, the count of contexts after an offset, and the count of byte kinds |
@@ -1695,6 +1697,9 @@ const RX_NO_TABLE: i32[] = [];
 const RX_DFA_MATCH: i32 = 1;
 
 const RX_DFA_RESTART: i32 = 2;
+
+// The flag of the dead state and the quit state: a search stops at them.
+const RX_DFA_STOP: i32 = 4;
 
 // The context bit of a byte outside ASCII before an offset, for a Unicode
 // word assertion. The DFA stops at it.
@@ -1754,7 +1759,7 @@ function __rx_dfa_init(code: i32[], masks: i32[]): i32[] {
 // Appends a state that each transition keeps, with a key of `flag` and no
 // thread. No list of threads has the key -1.
 function __rx_dfa_row(own tab: i32[], self: i32, ncols: i32, flag: i32): i32[] {
-  tab = tab.append(0);
+  tab = tab.append(RX_DFA_STOP);
   for _ in 0..ncols {
     tab = tab.append(self);
   }
@@ -2136,15 +2141,133 @@ function __rx_ctx_ok(k: i32, ctx: i32): boolean {
   return (ctx & 130) != 0 || (ctx & 32) != 0 && (ctx & 64) == 0;
 }
 
+// The limits of a table that `compile` fills completely: the instructions of
+// its program and the words of the table. A fill costs time on each
+// compile, also in the interpreter.
+const RX_DFA_SMALL: i32 = 128;
+
+const RX_DFA_FULL: i32 = 8192;
+
+// The table with each state that a search can reach, or [] when the program
+// has more than RX_DFA_SMALL instructions or the table more than RX_DFA_FULL
+// words. With such a table, a search does not check for a state that is not
+// filled. The quit state stays where a Unicode word assertion stops the DFA.
+function __rx_dfa_full(dfa: RDfa): i32[] {
+  let empty: i32[] = [];
+  if (dfa.code.len() / 3 > RX_DFA_SMALL) {
+    return empty;
+  }
+  let limit = RX_DFA_FULL;
+  let d = dfa.tab.get();
+  dfa.tab.set(RX_NO_TABLE);
+  if (d.len() == 0) {
+    return empty;
+  }
+  d = __rx_dfa_fill_starts(dfa, d);
+  let s = RX_DFA_HEAD + 2 * (d[0] + 3);
+  while (s < d.len() && d.len() <= limit) {
+    d = __rx_dfa_fill_row(dfa, d, s, limit);
+    s += d[0] + 3 + d[s + d[0] + 2];
+  }
+  let ok = d.len() <= limit;
+  dfa.tab.set(d);
+  return if (ok) { d } else { empty };
+}
+
+// Fills each first state.
+function __rx_dfa_fill_starts(dfa: RDfa, own d: i32[]): i32[] {
+  let slots = if (d[1] == 1) { d[2] + 1 } else { (d[2] + 1) * d[1] };
+  for si in 0..slots {
+    if (d[RX_DFA_START + si] == 0) {
+      d = __rx_dfa_fill_start(dfa, d, si);
+    }
+  }
+  return d;
+}
+
+// Fills each transition of the state at `s` that is not known, until the
+// table has more than `limit` words.
+function __rx_dfa_fill_row(dfa: RDfa, own d: i32[], s: i32, limit: i32): i32[] {
+  let col = 0;
+  while (col < d[0] && d.len() <= limit) {
+    if (d[s + 1 + col] == 0) {
+      d = __rx_dfa_fill(dfa, d, s, col);
+    }
+    col += 1;
+  }
+  return d;
+}
+
 // The end of the leftmost-first match that starts at or after the candidate
 // offset `c`, -1 when there is none, or -2 when the DFA stops. With
 // `exists`, the end of the first match that the DFA finds.
+//
+// A program with a full table runs __rx_full_end, which has no fill and no
+// quit state. The others run the lazy DFA.
+@inline
+function __rx_dfa_end(prog: Regex, t: string, c: i32, exists: boolean): i32 {
+  if (prog.full.len() > 0) {
+    return __rx_full_end(prog, t, c, exists);
+  }
+  return __rx_lazy_end(prog, t, c, exists);
+}
+
+// The end of a match as __rx_dfa_end finds it, with the full table.
+// fern-lint: allow cyclomatic-complexity
+function __rx_full_end(prog: Regex, t: string, c: i32, exists: boolean): i32 {
+  let d = prog.full;
+  let nctx = d[1];
+  let len = t.len();
+  let pos = c;
+  let cand = c;
+  let s = d[RX_DFA_START + __rx_dfa_first(d, t, pos, nctx)];
+  let skip = prog.first.len() > 0;
+  let end = -1;
+  while (true) {
+    let f = d[s];
+    if ((f & RX_DFA_MATCH) != 0) {
+      end = pos;
+      if (exists) {
+        break;
+      }
+    }
+    if ((f & RX_DFA_STOP) != 0) {
+      return if (s == RX_DFA_HEAD) { end } else { -2 };
+    }
+    if (pos >= len) {
+      break;
+    }
+    if ((f & RX_DFA_RESTART) != 0 && skip && pos > cand) {
+      cand = prog.next_candidate(t, pos);
+      if (cand < 0) {
+        break;
+      }
+      if (cand > pos) {
+        pos = cand;
+        s = d[RX_DFA_START + __rx_dfa_first(d, t, pos, nctx)];
+        continue;
+      }
+    }
+    let kind = 0;
+    if (nctx > 1) {
+      kind = nctx - 1;
+      if (pos + 1 < len) {
+        kind = d[RX_DFA_LA + t[pos + 1] as i32];
+      }
+    }
+    s = d[s + 1 + d[RX_DFA_COLS + t[pos] as i32] + kind];
+    pos += 1;
+  }
+  return end;
+}
+
+// The end of a match as __rx_dfa_end finds it, with the lazy DFA.
 //
 // The search takes the table out of its cell, so that a fill changes it in
 // place, and puts it back at the end. The loop calls a function for a byte
 // only to fill a transition.
 // fern-lint: allow cyclomatic-complexity
-function __rx_dfa_end(prog: Regex, t: string, c: i32, exists: boolean): i32 {
+function __rx_lazy_end(prog: Regex, t: string, c: i32, exists: boolean): i32 {
   let d = prog.fwd.tab.get();
   prog.fwd.tab.set(RX_NO_TABLE);
   if (d.len() == 0) {
@@ -2219,12 +2342,14 @@ function __rx_dfa_end(prog: Regex, t: string, c: i32, exists: boolean): i32 {
   return end;
 }
 
-// The index of the first state of a forward search at `p`.
+// The index of the first state of a forward search at `p`. A program with
+// no assertion has one context, so each first state is the same.
+@inline
 function __rx_dfa_first(d: i32[], t: string, p: i32, nctx: i32): i32 {
-  let before = if (p == 0) { d[2] } else { d[RX_DFA_LA + t[p - 1] as i32] };
   if (nctx == 1) {
-    return before;
+    return 0;
   }
+  let before = if (p == 0) { d[2] } else { d[RX_DFA_LA + t[p - 1] as i32] };
   let after = if (p >= t.len()) { nctx - 1 } else { d[RX_DFA_LA + t[p] as i32] };
   return before * nctx + after;
 }
@@ -2232,11 +2357,12 @@ function __rx_dfa_first(d: i32[], t: string, p: i32, nctx: i32): i32 {
 // The index of the first state of a reverse search at `e`. The bytes after
 // `e` come before it in the reverse text, and the end of the text is its
 // start.
+@inline
 function __rx_dfa_last(d: i32[], t: string, e: i32, nctx: i32): i32 {
-  let before = if (e == t.len()) { d[2] } else { d[RX_DFA_LA + t[e] as i32] };
   if (nctx == 1) {
-    return before;
+    return 0;
   }
+  let before = if (e == t.len()) { d[2] } else { d[RX_DFA_LA + t[e] as i32] };
   let after = if (e == 0) { nctx - 1 } else { d[RX_DFA_LA + t[e - 1] as i32] };
   return before * nctx + after;
 }
@@ -2244,8 +2370,47 @@ function __rx_dfa_last(d: i32[], t: string, e: i32, nctx: i32): i32 {
 // The leftmost start at or after `lo` of a match that ends at `e`, -1 when
 // there is none, or -2 when the DFA stops.
 // It reads the text from `e` to the left.
-// fern-lint: allow cyclomatic-complexity
+@inline
 function __rx_dfa_start(prog: Regex, t: string, e: i32, lo: i32): i32 {
+  if (prog.rfull.len() > 0) {
+    return __rx_full_start(prog.rfull, t, e, lo);
+  }
+  return __rx_lazy_start(prog, t, e, lo);
+}
+
+// The start of a match as __rx_dfa_start finds it, with the full table `d`.
+function __rx_full_start(d: i32[], t: string, e: i32, lo: i32): i32 {
+  let nctx = d[1];
+  let s = d[RX_DFA_START + __rx_dfa_last(d, t, e, nctx)];
+  let p = e;
+  let start = -1;
+  while (true) {
+    let f = d[s];
+    if ((f & RX_DFA_STOP) != 0) {
+      return if (s == RX_DFA_HEAD) { start } else { -2 };
+    }
+    if ((f & RX_DFA_MATCH) != 0) {
+      start = p;
+    }
+    if (p <= lo) {
+      break;
+    }
+    let kind = 0;
+    if (nctx > 1) {
+      kind = nctx - 1;
+      if (p > 1) {
+        kind = d[RX_DFA_LA + t[p - 2] as i32];
+      }
+    }
+    s = d[s + 1 + d[RX_DFA_COLS + t[p - 1] as i32] + kind];
+    p -= 1;
+  }
+  return start;
+}
+
+// The start of a match as __rx_dfa_start finds it, with the lazy DFA.
+// fern-lint: allow cyclomatic-complexity
+function __rx_lazy_start(prog: Regex, t: string, e: i32, lo: i32): i32 {
   let d = prog.rev.tab.get();
   prog.rev.tab.set(RX_NO_TABLE);
   if (d.len() == 0) {
@@ -2297,6 +2462,14 @@ function __rx_dfa_start(prog: Regex, t: string, e: i32, lo: i32): i32 {
 // The count of the matches from their ends alone. No match is empty, so each
 // search starts at the end of the last match.
 function __rx_dfa_count(prog: Regex, t: string): i32 {
+  if (prog.full.len() > 0) {
+    return __rx_full_count(prog, t);
+  }
+  return __rx_lazy_count(prog, t);
+}
+
+// The count of the matches as __rx_dfa_count finds it, with the full table.
+function __rx_full_count(prog: Regex, t: string): i32 {
   let count = 0;
   let pos = 0;
   while (pos <= t.len()) {
@@ -2304,7 +2477,30 @@ function __rx_dfa_count(prog: Regex, t: string): i32 {
     if (c < 0) {
       return count;
     }
-    let e = __rx_dfa_end(prog, t, c, false);
+    let e = __rx_full_end(prog, t, c, false);
+    if (e == -2) {
+      return count + __rx_count_from(prog, t, pos);
+    }
+    if (e < 0) {
+      return count;
+    }
+    count += 1;
+    pos = e;
+  }
+  return count;
+}
+
+// The count of the matches as __rx_dfa_count finds it, with the lazy DFA.
+@noinline
+function __rx_lazy_count(prog: Regex, t: string): i32 {
+  let count = 0;
+  let pos = 0;
+  while (pos <= t.len()) {
+    let c = prog.next_candidate(t, pos);
+    if (c < 0) {
+      return count;
+    }
+    let e = __rx_lazy_end(prog, t, c, false);
     if (e == -2) {
       return count + __rx_count_from(prog, t, pos);
     }
@@ -3260,22 +3456,27 @@ function __rx_ascii_pair(rs: i32[]): i32 {
 }
 
 function __rx_has_prefix(prog: Regex, text: string, at: i32): boolean {
-  if (prog.loose && at < text.len() && text[at] >= 128) {
-    return true;
+  let n = prog.prefix.len();
+  if (at + n > text.len() || n > 0 && __rx_fold(text[at] as i32, prog.ci) != prog.prefix[0] as i32) {
+    return __rx_loose_at(prog, text, at);
   }
-  if (at + prog.prefix.len() > text.len()) {
-    return false;
-  }
-  for k in 0..prog.prefix.len() {
-    let b = text[at + k] as i32;
-    if (prog.ci && b >= 65 && b <= 90) {
-      b += 32;
-    }
-    if (b != prog.prefix[k] as i32) {
+  for k in 1..n {
+    if (__rx_fold(text[at + k] as i32, prog.ci) != prog.prefix[k] as i32) {
       return false;
     }
   }
   return true;
+}
+
+// A byte outside ASCII at `at` can start a match of a loose prefix.
+function __rx_loose_at(prog: Regex, text: string, at: i32): boolean {
+  return prog.loose && at < text.len() && text[at] >= 128;
+}
+
+// The byte `b`, in lower case when `ci` and it is an ASCII capital.
+@inline
+function __rx_fold(b: i32, ci: boolean): i32 {
+  return if (ci && b >= 65 && b <= 90) { b + 32 } else { b };
 }
 
 function __rx_lead(first: u8[]): i32 {
@@ -3378,10 +3579,12 @@ pub function compile(pattern: string): Result[Regex, CompileError] {
   let empty: i32[] = [];
   let (rcode, rmasks) = if (fwd.init.len() > 0) { __rx_pack(__rx_cprog(r.node, true)) } else { (empty, empty) };
   let pre = __rx_prefix(r.node);
+  let rev = __rx_dfa_of(rcode, rmasks, false);
   return Ok(Regex {
-    ngroups: r.g - 1, names: cx.names.get(), code: code, masks: masks, fwd: fwd, rev: __rx_dfa_of(rcode, rmasks, false),
-    first: first, lead: __rx_lead(first), prefix: pre.bytes, ci: pre.folded, loose: pre.loose, leftmost_longest: false,
-    empty: __rx_nullable(r.node), uword: __rx_uword(code),
+    ngroups: r.g - 1, names: cx.names.get(), code: code, masks: masks, fwd: fwd, rev: rev, first: first,
+    lead: __rx_lead(first), prefix: pre.bytes, ci: pre.folded, loose: pre.loose, leftmost_longest: false,
+    empty: __rx_nullable(r.node), uword: __rx_uword(code), full: __rx_dfa_full(fwd),
+    rfull: __rx_dfa_full(rev),
   });
 }
 
@@ -3624,7 +3827,24 @@ function __rx_has_byte(code: i32[], masks: i32[], pc: i32, byte: i32): boolean {
   return false;
 }
 
+// The search with a full table stays in a small function, because the code
+// of the compiler saves each register at the entry of a function.
 pub function (prog: Regex) is_match(text: string): boolean {
+  if (prog.full.len() > 0) {
+    let c = prog.next_candidate(text, 0);
+    if (c < 0) {
+      return false;
+    }
+    let e = __rx_full_end(prog, text, c, true);
+    if (e != -2) {
+      return e >= 0;
+    }
+  }
+  return __rx_lazy_match(prog, text);
+}
+
+@noinline
+function __rx_lazy_match(prog: Regex, text: string): boolean {
   if (__rx_has_dfa(prog)) {
     let c = prog.next_candidate(text, 0);
     if (c < 0) {
@@ -3855,6 +4075,8 @@ pub struct Regex {
   leftmost_longest: boolean,
   empty: boolean,
   uword: i32[],
+  full: i32[],
+  rfull: i32[],
 }
 ```
 
