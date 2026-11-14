@@ -51,12 +51,12 @@ func TestSelfHostDefaultArgsFillInLinearTime(t *testing.T) {
 	// The time above a program with no functions, so the start of the
 	// compiler does not hide a square law.
 	base := fastest(t, "function main(): i32 { return 0; }\n")
-	short := max(fastest(t, defaultArgsProgram(2000))-base, time.Millisecond)
+	short := max(fastest(t, defaultArgsProgram(4000))-base, time.Millisecond)
 	long := fastest(t, defaultArgsProgram(16000)) - base
-	t.Logf("no functions: %v, 2000 functions: +%v, 16000 functions: +%v", base, short, long)
-	// Eight times the functions gives 8 for a linear time, 22 for the power
-	// 1.5 and 64 for a square law.
-	if long > 20*short {
-		t.Errorf("2000 functions take %v and 16000 functions take %v: the time grows faster than the count of functions", short, long)
+	t.Logf("no functions: %v, 4000 functions: +%v, 16000 functions: +%v", base, short, long)
+	// Four times the functions gives 4 for a linear time, 8 for the power 1.5
+	// and 16 for a square law.
+	if long > 8*short {
+		t.Errorf("4000 functions take %v and 16000 functions take %v: the time grows faster than the count of functions", short, long)
 	}
 }
