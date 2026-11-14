@@ -83,6 +83,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 2>>=
 import "core/int";
+import "std/array";
 import "std/dns";
 import "std/i32";
 import "std/net";
@@ -237,7 +238,7 @@ function __is_address(name: string): boolean {
 <<8 pub function (s: Session) read(input: [u8], now: time.Timestamp): Result[Step, tls.Failure]>>=
 pub function (s: Session) read(input: [u8], now: time.Timestamp): Result[Step, tls.Failure] {
   let buf = __copy(s.held);
-  buf = __cat(buf, input);
+  buf = buf.concat(input);
   let session = Session { ...s, held: [] };
   let output: u8[] = [];
   let data: u8[] = [];
@@ -252,8 +253,8 @@ pub function (s: Session) read(input: [u8], now: time.Timestamp): Result[Step, t
     }
     let next = __record(session, buf[at:end], now)?;
     session = next.session;
-    output = __cat(output, next.output);
-    data = __cat(data, next.data);
+    output = output.concat(next.output);
+    data = data.concat(next.data);
     closed = next.closed;
     for t in next.tickets {
       tickets = tickets.append(t);
@@ -346,7 +347,7 @@ pub function (s: Session) save(): Result[u8[], tls.TlsError] {
   let c = __handshake_ok(s.client.save())?;
   let n = c.len();
   let out = [(n >> 24 & 255) as u8, (n >> 16 & 255) as u8, (n >> 8 & 255) as u8, (n & 255) as u8];
-  return Ok(__cat(__cat(out, c), s.held));
+  return Ok(out.concat(c).concat(s.held));
 }
 
 pub function restore(saved: [u8]): Result[Session, tls.TlsError] {
@@ -428,8 +429,8 @@ function __judged(s: Session, first: handshake.ClientStep, now: time.Timestamp):
       _ => {
         let next = __answered(s, c, events[i], now)?;
         c = next.client;
-        output = __cat(output, next.output);
-        data = __cat(data, next.data);
+        output = output.concat(next.output);
+        data = data.concat(next.data);
         events = __more(events, next.events);
       }
     }
@@ -580,17 +581,9 @@ function __leaf(s: Session, v: handshake.Verification, now: time.Timestamp): Res
   return Err(verify.EmptyChain);
 }
 
-function __cat(own a: u8[], b: [u8]): u8[] {
-  let i = 0;
-  while (i < b.len()) {
-    a = a.append(b[i]);
-    i += 1;
-  }
-  return a;
-}
-
 function __copy(b: [u8]): u8[] {
-  return __cat([], b);
+  let none: u8[] = [];
+  return none.concat(b);
 }
 
 function __more(own a: handshake.Event[], b: handshake.Event[]): handshake.Event[] {
@@ -970,7 +963,7 @@ function __close_notify(c: Connection): Result[void, tls.TlsError] {
 function __send_fd(sock: Socket, data: [u8]): Result[void, tls.TlsError] {
   let at = 0;
   while (at < data.len()) {
-    let n = tcp_send_bytes(sock, __cat([], data[at:data.len()]));
+    let n = tcp_send_bytes(sock, __copy(data[at:data.len()]));
     if (n < 0) {
       return Err(tls.NetFailed(net.error_from_host(-n)));
     }
