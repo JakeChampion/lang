@@ -13,7 +13,8 @@ import (
 // landing pad, and every indirect call checks for that pad and for the
 // signature word ahead of it. The control takes the address of a closure,
 // of twice and of pair, whose signature differs from twice; thrice has the
-// same signature as twice and is only called directly.
+// same signature as twice and is only called directly. The address of flip
+// is taken too: its registers are those of twice and its type is another.
 const cfiSrc = `import "std/i32";
 
 @noinline
@@ -37,6 +38,16 @@ function twice(x: i32): i32 {
 }
 
 @noinline
+function applyu(f: (u32) => u32, x: u32): u32 {
+  return f(x);
+}
+
+@noinline
+function flip(x: u32): u32 {
+  return x ^ 1 as u32;
+}
+
+@noinline
 function thrice(x: i32): i32 {
   return x * 3;
 }
@@ -45,12 +56,12 @@ function main(): i32 {
   let k: i32 = 5;
   let add: (i32) => i32 = (x: i32): i32 => x + k;
   let xs: i32[] = [1, 2, 3].map(twice);
-  print(apply(add, 10).to_string() + " " + apply(twice, 7).to_string() + " " + xs[2].to_string() + " " + thrice(1).to_string() + " " + apply2(pair, 1, 2).to_string());
+  print(apply(add, 10).to_string() + " " + apply(twice, 7).to_string() + " " + xs[2].to_string() + " " + thrice(1).to_string() + " " + apply2(pair, 1, 2).to_string() + " " + (applyu(flip, 8 as u32) as i32).to_string());
   return 0;
 }
 `
 
-const cfiWant = "15 14 6 3 12\n"
+const cfiWant = "15 14 6 3 12 9\n"
 
 const cfiCause = "fern: indirect call to an address that is not a function\n"
 
@@ -128,8 +139,8 @@ func TestSelfHostForwardEdgeCFI(t *testing.T) {
 			if tc.target == "x86-64-linux" {
 				pads -= checks
 			}
-			if pads != 3 {
-				t.Errorf("the -harden image carries %d stubs, want one each for the closure, twice and pair", pads)
+			if pads != 4 {
+				t.Errorf("the -harden image carries %d stubs, want one each for the closure, twice, pair and flip", pads)
 			}
 			if checks == 0 {
 				t.Error("the -harden image carries no indirect-call check")
@@ -146,7 +157,7 @@ func TestSelfHostForwardEdgeCFI(t *testing.T) {
 				t.Fatalf("the emitted text holds %d references to the stub of twice, want one:\n%s", bytes.Count(asm, []byte(stub)), stub)
 			}
 			// The word ahead of each stub is the signature hash of its function.
-			for _, fn := range []string{"twice", "pair"} {
+			for _, fn := range []string{"twice", "pair", "flip"} {
 				label := "\n.Lfern_cfi___fn_" + fn + "$wrap__" + strings.TrimPrefix(tc.entry, ".") + ":\n"
 				at := bytes.Index(asm, []byte(label))
 				if at < 0 {
@@ -182,6 +193,7 @@ func TestSelfHostForwardEdgeCFI(t *testing.T) {
 				{"same-signature", "__fn_thrice" + tc.entry, cfiCause},
 				{"data", "__fern_cfi_fail_msg", cfiCause},
 				{"other-signature", ".Lfern_cfi___fn_pair$wrap__" + strings.TrimPrefix(tc.entry, "."), cfiSigCause},
+				{"same-registers", ".Lfern_cfi___fn_flip$wrap__" + strings.TrimPrefix(tc.entry, "."), cfiSigCause},
 			} {
 				patched := bytes.Replace(asm, []byte(stub), []byte(".quad "+forged.target+"\n"), 1)
 				out, errout, code := run(link(forged.name, patched))

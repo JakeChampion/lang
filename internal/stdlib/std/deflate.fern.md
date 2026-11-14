@@ -309,12 +309,13 @@ function __stored(own s: __State, data: [u8]): __State {
 
 ```fern
 <<9 struct __Huff>>=
-struct __Huff { count: i32[], symbol: i32[], left: i32 }
+// `longest` is the length of the longest code.
+struct __Huff { count: i32[], symbol: i32[], left: i32, longest: i32 }
 
 struct __Tables { state: __State, literal: __Huff, distance: __Huff }
 
 function __empty_tables(s: __State): __Tables {
-  let empty = __Huff { count: [], symbol: [], left: 0 };
+  let empty = __Huff { count: [], symbol: [], left: 0, longest: 0 };
   return __Tables { state: s, literal: empty, distance: empty };
 }
 ```
@@ -336,7 +337,7 @@ function __construct(lengths: i32[], n: i32): __Huff {
     left <<= 1;
     left -= count[len];
     if (left < 0) {
-      return __Huff { count: count, symbol: [], left: -1 };
+      return __Huff { count: count, symbol: [], left: -1, longest: 0 };
     }
     len += 1;
   }
@@ -355,7 +356,11 @@ function __construct(lengths: i32[], n: i32): __Huff {
     }
     sym += 1;
   }
-  return __Huff { count: count, symbol: symbols, left: left };
+  let longest = 15;
+  while (longest > 0 && count[longest] == 0) {
+    longest -= 1;
+  }
+  return __Huff { count: count, symbol: symbols, left: left, longest: longest };
 }
 
 function __zeros(n: i32): i32[] {
@@ -363,8 +368,8 @@ function __zeros(n: i32): i32[] {
 }
 
 // Reads one symbol of the code `h`, one bit for each step. The bits stay in
-// locals, so a symbol makes one new state.
-function __decode(own s: __State, data: [u8], h: __Huff): __State {
+// locals, so a symbol makes one new state. `table` names the code in an error.
+function __decode(own s: __State, data: [u8], h: __Huff, table: string): __State {
   if (s.failed) {
     return s;
   }
@@ -375,7 +380,7 @@ function __decode(own s: __State, data: [u8], h: __Huff): __State {
   let first = 0;
   let index = 0;
   let len = 1;
-  while (len <= 15) {
+  while (len <= h.longest) {
     if (cnt == 0) {
       if (pos >= data.len()) {
         return __fail(s, Truncated);
@@ -396,7 +401,7 @@ function __decode(own s: __State, data: [u8], h: __Huff): __State {
     code <<= 1;
     len += 1;
   }
-  return __fail(s, Malformed("a bit pattern that is no code"));
+  return __fail(s, Malformed("a bit pattern that is no " + table + " code"));
 }
 ```
 
@@ -486,7 +491,7 @@ function __walk(h: __Huff, bits: u64, avail: i32, lit: boolean): i32 {
   let first = 0;
   let index = 0;
   let len = 1;
-  while (len <= 15) {
+  while (len <= h.longest) {
     if (len > avail) {
       return 0;
     }
@@ -648,6 +653,8 @@ const F_DISTANCE_PAST: i32 = 4;
 
 const F_TOO_FAR: i32 = 5;
 
+const F_NO_DISTANCE: i32 = 6;
+
 // Decodes while eight input bytes and 258 output bytes are left, and stops
 // with F_ROOM when they are not. After a literal at least 41 bits are left,
 // so the next entry is read before the refill, and a second literal is
@@ -686,7 +693,7 @@ function __fast(own out: u8[], data: [u8], pos: i32, bitbuf: u64, bitcnt: i32, m
       continue;
     }
     if ((e & (E_END | E_NO_CODE | E_PAST)) != 0) {
-      status = __fast_status(e, F_LENGTH_PAST);
+      status = __fast_status(e, F_NO_CODE, F_LENGTH_PAST);
       break;
     }
     let lx = e >> 4 & 15;
@@ -701,7 +708,7 @@ function __fast(own out: u8[], data: [u8], pos: i32, bitbuf: u64, bitcnt: i32, m
     bitbuf >>= dused as u64;
     bitcnt -= dused;
     if ((d & (E_NO_CODE | E_PAST)) != 0) {
-      status = __fast_status(d, F_DISTANCE_PAST);
+      status = __fast_status(d, F_NO_DISTANCE, F_DISTANCE_PAST);
       break;
     }
     let dx = d >> 4 & 15;
@@ -718,19 +725,22 @@ function __fast(own out: u8[], data: [u8], pos: i32, bitbuf: u64, bitcnt: i32, m
   return __Fast { out: out, pos: pos, bitbuf: bitbuf, bitcnt: bitcnt, status: status };
 }
 
-function __fast_status(e: i32, past: i32): i32 {
+function __fast_status(e: i32, no_code: i32, past: i32): i32 {
   if ((e & E_END) != 0) {
     return F_END;
   }
   if ((e & E_NO_CODE) != 0) {
-    return F_NO_CODE;
+    return no_code;
   }
   return past;
 }
 
 function __fast_error(status: i32): Option[InflateError] {
   if (status == F_NO_CODE) {
-    return Some(Malformed("a bit pattern that is no code"));
+    return Some(Malformed("a bit pattern that is no literal/length code"));
+  }
+  if (status == F_NO_DISTANCE) {
+    return Some(Malformed("a bit pattern that is no distance code"));
   }
   if (status == F_LENGTH_PAST) {
     return Some(Malformed("a length code past 285"));
@@ -749,8 +759,11 @@ function __symbol_error(e: i32, lit: boolean): Option[InflateError] {
   if ((e & E_END) != 0) {
     return None;
   }
+  if ((e & E_NO_CODE) != 0 && lit) {
+    return Some(Malformed("a bit pattern that is no literal/length code"));
+  }
   if ((e & E_NO_CODE) != 0) {
-    return Some(Malformed("a bit pattern that is no code"));
+    return Some(Malformed("a bit pattern that is no distance code"));
   }
   if (lit) {
     return Some(Malformed("a length code past 285"));
@@ -794,8 +807,8 @@ function __fixed(own s: __State, data: [u8]): __State {
 function __fixed_tables(s: __State): __Tables {
   return __Tables {
     state: s,
-    literal: __Huff { count: FIXED_LIT_COUNT, symbol: FIXED_LIT_SYMBOL, left: 0 },
-    distance: __Huff { count: FIXED_DIST_COUNT, symbol: FIXED_DIST_SYMBOL, left: 2048 },
+    literal: __Huff { count: FIXED_LIT_COUNT, symbol: FIXED_LIT_SYMBOL, left: 0, longest: 9 },
+    distance: __Huff { count: FIXED_DIST_COUNT, symbol: FIXED_DIST_SYMBOL, left: 2048, longest: 5 },
   };
 }
 
@@ -927,7 +940,7 @@ function __code_lengths(own s: __State, data: [u8], code: __Huff, n: i32): __Sta
     let entry = table[buf & 127];
     let used = entry & 15;
     if (used == 0) {
-      error = Some(Malformed("a bit pattern that is no code"));
+      error = Some(Malformed("a bit pattern that is no code length code"));
       break;
     }
     if (used > cnt) {
@@ -2162,7 +2175,7 @@ pub function inflate_reader(input: u8[], max_out: i32): Result[InflateReader, In
     return Err(ReadRequest);
   }
   let bits = __State { pos: 0, bitbuf: 0, bitcnt: 0, out: [], max_out: max_out, last: 0, distance: 0, failed: false, error: Truncated, lengths: [] };
-  let empty = __Huff { count: [], symbol: [], left: 0 };
+  let empty = __Huff { count: [], symbol: [], left: 0, longest: 0 };
   let initial = __ReadCursor {
     state: bits, literal: empty, distance_code: empty, history: [], total: 0, phase: ReadHeader,
     final_block: false, remaining: 0, distance: 0, byte: -1, cancelled: false,
@@ -2288,7 +2301,7 @@ function __read_emit(own cursor: __ReadCursor, byte: u8): __ReadCursor {
 }
 
 function __read_code(own cursor: __ReadCursor, input: [u8]): __ReadCursor {
-  let state = __decode(__State { ...cursor.state }, input, cursor.literal);
+  let state = __decode(__State { ...cursor.state }, input, cursor.literal, "literal/length");
   cursor = __ReadCursor { ...cursor, state: state };
   if (state.failed) {
     return cursor;
@@ -2308,7 +2321,7 @@ function __read_code(own cursor: __ReadCursor, input: [u8]): __ReadCursor {
 function __read_match(own cursor: __ReadCursor, input: [u8], symbol: i32): __ReadCursor {
   let state = __bits(__State { ...cursor.state }, input, LENGTH_EXTRA[symbol]);
   let length = LENGTH_BASE[symbol] + state.last;
-  state = __decode(state, input, cursor.distance_code);
+  state = __decode(state, input, cursor.distance_code, "distance");
   if (state.failed) {
     return __ReadCursor { ...cursor, state: state };
   }
