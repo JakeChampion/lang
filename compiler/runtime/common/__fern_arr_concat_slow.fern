@@ -28,9 +28,9 @@ function __fern_arr_concat_slow(pa: usize, src: usize, count: i32, width: i32): 
     }
   }
   let size = width >> 3;
-  let q = __raw_arr_box(((want as i64 * size as i64 + 7) / 8) as i32);
+  let q = __raw_arr_box(((want as i64 * (size as i64) + 7) / 8) as i32);
   __store_i64(q, m as i64);
-  let tail = q + 8 + na as usize * size as usize;
+  let tail = q + 8 + na as usize * (size as usize);
   __fern_arr_copy_elems(q + 8, pa + 8, na, size);
   __fern_arr_copy_elems(tail, src, nb, size);
   if ((width & 1) != 0) {
