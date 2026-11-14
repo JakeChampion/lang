@@ -326,6 +326,43 @@ function main(): i32 {
 	}
 }
 
+// The free function std/array.concat takes the kernel as the method does.
+func TestSelfHostArrayConcatFunctionKernel(t *testing.T) {
+	const program = `import "std/array";
+@noinline function join_bytes(own a: u8[], b: [u8]): u8[] {
+  return array.concat(a, b);
+}
+@noinline function join_texts(a: string[], b: string[]): string[] {
+  return array.concat(a, b);
+}
+function main(): i32 {
+  let src: u8[] = [1, 2, 3];
+  let out = join_bytes([9], src);
+  if (out.len() != 4 || out[0] != 9u8 || out[3] != 3u8) { return 1; }
+  let a: string[] = ["x" + "1"];
+  let b: string[] = ["y" + "2", "z" + "3"];
+  let t = join_texts(a, b);
+  if (t.len() != 3 || t[2] != "z3" || a.len() != 1 || b[0] != "y2") { return 2; }
+  return 0;
+}`
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			stderr, code := cli.exitOf(t, program, target, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+			if code != 0 {
+				t.Fatalf("exit %d, want 0\n%s", code, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+			for _, fn := range []string{"join_bytes", "join_texts"} {
+				body := emittedFunction(t, cli, program, target, fn)
+				if !strings.Contains(body, "__fern_arr_concat") || strings.Contains(body, "array__concat") {
+					t.Errorf("%s does not fold array.concat to the kernel:\n%s", fn, body)
+				}
+			}
+		})
+	}
+}
+
 // emittedFunction is the assembly or WAT of one function of program.
 func emittedFunction(t *testing.T, cli *selfHostCLI, program, target, fn string) string {
 	t.Helper()
