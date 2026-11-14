@@ -103,11 +103,14 @@ two parts:
   pigz. Each block but the last ends on a byte boundary, with empty stored
   or static blocks as pigz writes them.
 
-The output does not depend on the count of processes above 1. Each round of
-the compression reads about 4 MiB for each process. Process k of n
-compresses the blocks k, k + n, k + 2n and so on of the round. The
-processes are `std/worker` workers and the parent. Then the parent writes
-the output of the round in order.
+The output does not depend on the count of processes above 1. As in
+pigz, the compression is a queue of jobs. A job is about 1 MiB of whole
+blocks, and a `std/worker` worker compresses it. Up to n jobs run at a
+time.
+
+The parent reads the input and writes the output of each job in
+order. After it writes the output of a job, it starts the next job. So the
+other jobs do not wait for the slowest one.
 
 `-R` reads all of its input
 first, because its blocks end where the hash of the input says. On macOS

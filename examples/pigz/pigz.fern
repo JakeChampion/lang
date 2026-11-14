@@ -17,6 +17,7 @@ import "std/array";
 import "std/errno";
 import "std/hash/crc32";
 import "std/deflate" as deflate;
+import "std/worker";
 import "./gz";
 import "./layout";
 
@@ -104,20 +105,13 @@ function procs(o: gz.Options): i32 {
   return n;
 }
 
-// The input bytes of one read of a compression: a block for one process.
-// For more, a round of parallel_compress: about 4 MiB of whole blocks for
-// each process, and no more than 64 MiB.
-function round_size(o: gz.Options, procs: i32): i32 {
-  if (procs <= 1) {
-    return o.block;
+// The input bytes of one job of parallel_compress: whole blocks, about
+// 1 MiB, so that the start of a worker is a small part of the time of a job.
+function job_size(block: i32): i32 {
+  if (block >= 1048576) {
+    return block;
   }
-  let per = if (o.block >= 4194304) { o.block as i64 } else { (4194304 / o.block * o.block) as i64 };
-  let size = per * (procs as i64);
-  let cap = if (o.block as i64 > 67108864i64) { o.block as i64 } else { 67108864i64 / (o.block as i64) * (o.block as i64) };
-  if (size > cap) {
-    size = cap;
-  }
-  return size as i32;
+  return 1048576 / block * block;
 }
 
 // readn(): up to `n` bytes, fewer only at the end of the input.
@@ -196,24 +190,137 @@ function put(w: Writer, bytes: u8[], outf: string): Result[void, Fatal] {
   return Ok(());
 }
 
-// What a compression keeps from one read of the input to the next: the
-// stream of single_compress, or the last 32 KiB for parallel_compress.
-struct Pass {
-  st: layout.Single,
-  dict: u8[],
+// What a compression has written: the check of the input and the length of
+// the deflate data.
+struct Written {
+  check: Check,
+  clen: i64,
 }
 
-// The deflate data of one read of the input: a round of parallel_compress
-// for more than one process, else a block of single_compress.
-function pass(s: layout.Settings, n: i32, own p: Pass, cur: u8[], more: boolean): (Pass, u8[]) {
-  if (n > 1) {
-    let data = p.dict.concat(cur);
-    let bytes = layout.round(s, data, p.dict.len(), more, n);
-    let from = if (data.len() > 32768) { data.len() - 32768 } else { 0 };
-    return (Pass { ...p, dict: array.slice(data, from, data.len()) }, bytes);
+// single_compress: one deflate stream, a block at a time.
+function single_to(s: layout.Settings, rd: Reader, w: Writer, path: string, outf: string, c0: Check): Result[Written, Fatal] {
+  let c = c0;
+  let clen = 0i64;
+  let st = layout.single_start(s);
+  let cur = readn(rd, s.block, path)?;
+  loop {
+    let next = readn(rd, s.block, path)?;
+    let more = next.len() > 0;
+    let (after, bytes) = layout.single_block(s, st, cur, 0, cur.len(), more);
+    st = after;
+    c = check_of(c, cur);
+    put(w, bytes, outf)?;
+    clen += bytes.len() as i64;
+    if (!more) {
+      break;
+    }
+    cur = next;
   }
-  let (st, bytes) = layout.single_block(s, p.st, cur, 0, cur.len(), more);
-  return (Pass { ...p, st: st }, bytes);
+  return Ok(Written { check: c, clen: clen });
+}
+
+// The input of parallel_compress that no job has yet: the next job, read
+// ahead to know if more input follows it, and the 32 KiB before it.
+struct Feed {
+  next: u8[],
+  dict: u8[],
+  check: Check,
+  ended: boolean,
+  failed: Option[Fatal],
+}
+
+// The input of one job: data[start:], with data[:start] before it.
+struct Taken {
+  feed: Feed,
+  data: u8[],
+  start: i32,
+  more: boolean,
+}
+
+// The next job of the feed. A read that fails ends the feed, and the job
+// before it does not start, as a read error stops a compression.
+function take(own f: Feed, rd: Reader, size: i32, path: string): Taken {
+  let cur = f.next;
+  let next: u8[] = [];
+  let failed = f.failed;
+  match (readn(rd, size, path)) {
+    Ok(bytes) => {
+      next = bytes;
+    },
+    Err(e) => {
+      failed = Some(e);
+    }
+  }
+  let more = next.len() > 0;
+  let data = f.dict.concat(cur);
+  let from = if (data.len() > layout.DICT) { data.len() - layout.DICT } else { 0 };
+  let feed = Feed { next: next, dict: array.slice(data, from, data.len()), check: check_of(f.check, cur), ended: !more || failed.is_some(), failed: failed };
+  return Taken { feed: feed, data: data, start: f.dict.len(), more: more };
+}
+
+function start_job(s: layout.Settings, t: Taken): worker.Worker[u8[]] {
+  let data = t.data;
+  let start = t.start;
+  let more = t.more;
+  return worker.spawn((): u8[] => layout.blocks(s, data, start, more));
+}
+
+function drain(own jobs: worker.Worker[u8[]][]): void {
+  for job in jobs {
+    let _ = job.join();
+  }
+}
+
+// parallel_compress: a job for each `job_size` bytes of the input, each with
+// the 32 KiB before it as its dictionary. Up to `procs` jobs run in workers
+// at a time. The parent reads the input, starts a job when one ends, and
+// writes the output of the jobs in order, as pigz does.
+function parallel_to(s: layout.Settings, procs: i32, rd: Reader, w: Writer, path: string, outf: string, c0: Check): Result[Written, Fatal] {
+  let size = job_size(s.block);
+  let first = readn(rd, size, path)?;
+  let none: Option[Fatal] = None;
+  let feed = Feed { next: first, dict: [], check: c0, ended: false, failed: none };
+  let clen = 0i64;
+  let failed: Option[Fatal] = None;
+  let queue: worker.Worker[u8[]][] = [];
+  while (!feed.ended && queue.len() < procs) {
+    let t = take(feed, rd, size, path);
+    feed = t.feed;
+    if (feed.failed.is_none()) {
+      queue = queue.append(start_job(s, t));
+    }
+  }
+  loop {
+    let later: worker.Worker[u8[]][] = [];
+    for job in queue {
+      let bytes = job.join();
+      if (failed.is_none()) {
+        if let Err(e) = put(w, bytes, outf) {
+          failed = Some(e);
+        }
+        clen += bytes.len() as i64;
+      }
+      if (!feed.ended && failed.is_none()) {
+        let t = take(feed, rd, size, path);
+        feed = t.feed;
+        if (feed.failed.is_none()) {
+          later = later.append(start_job(s, t));
+        }
+      }
+    }
+    if (later.len() == 0) {
+      drain(later);
+      break;
+    }
+    queue = later;
+  }
+  if let Some(e) = failed {
+    return Err(e);
+  }
+  if let Some(e) = feed.failed {
+    return Err(e);
+  }
+  return Ok(Written { check: feed.check, clen: clen });
 }
 
 // The name in the header: the name of a file without its directory, for -N
@@ -236,25 +343,8 @@ function compress_to(r0: Run, src: Source, rd: Reader, w: Writer, outf: string):
   let s = settings(o);
   let n = procs(o);
   let c = Check { crc: crc32.new(), adler: 1u32, zlib: o.form == 1, ulen: 0i64 };
-  let clen = 0i64;
-  let size = round_size(o, n);
-  let dict: u8[] = [];
-  let p = Pass { st: layout.single_start(s), dict: dict };
-  let cur = readn(rd, size, src.path)?;
-  loop {
-    let next = readn(rd, size, src.path)?;
-    let more = next.len() > 0;
-    let (after, bytes) = pass(s, n, p, cur, more);
-    p = after;
-    c = check_of(c, cur);
-    put(w, bytes, outf)?;
-    clen += bytes.len() as i64;
-    if (!more) {
-      break;
-    }
-    cur = next;
-  }
-  put(w, trailer(r, name, src.mtime, c, clen, head.len() as i64), outf)?;
+  let done = if (n > 1) { parallel_to(s, n, rd, w, src.path, outf, c)? } else { single_to(s, rd, w, src.path, outf, c)? };
+  put(w, trailer(r, name, src.mtime, done.check, done.clen, head.len() as i64), outf)?;
   return Ok(r);
 }
 
