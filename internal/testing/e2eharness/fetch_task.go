@@ -38,10 +38,9 @@ function main(): i32 {
   let parks: i32 = 0;
   let plain_first: boolean = false;
   let out: i32 = 0 - 1;
-  let going: boolean = true;
-  while (going) {
+  while (true) {
     match (st) {
-      Done(v) => { out = v; going = false; },
+      Done(v) => { out = v; break; },
       Suspended(w) => {
         parks = parks + 1;
         if (parks == 1) {
