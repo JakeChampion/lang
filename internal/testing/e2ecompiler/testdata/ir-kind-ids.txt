@@ -504,3 +504,4 @@ chacha20_xor_into=554
 poly1305_blocks=555
 chacha20_poly1305_seal_into=556
 chacha20_poly1305_open_into=557
+proc_wait_any=560

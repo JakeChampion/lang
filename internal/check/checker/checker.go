@@ -1577,6 +1577,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
+	c.info.FuncSigs["proc_wait_any"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{Width: 64, Signed: true},
+	}
 	c.info.FuncSigs["proc_exec"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}, ast.ArrayType{Elem: ast.StringType{}}},
 		Result: ast.NumberType{},
@@ -2100,6 +2104,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	registerStructMethod("Dir", "open_reader_with", []ast.Type{ast.StringType{}, openFlags}, readerResult)
 	registerStructMethod("Dir", "open_writer_with", []ast.Type{ast.StringType{}, openFlags}, writerResult)
 	registerStructMethod("Dir", "entries_bytes", nil, ast.EnumType{Name: "Result", Args: []ast.Type{ast.ArrayType{Elem: u8s}, ioErrType}})
+	registerStructMethod("Dir", "entries_ino", nil, ast.EnumType{Name: "Result", Args: []ast.Type{ast.ArrayType{Elem: ast.StructType{Name: "DirEntry"}}, ioErrType}})
 	registerStructMethod("Dir", "entries", nil,
 		ast.EnumType{Name: "Result", Args: []ast.Type{ast.ArrayType{Elem: ast.StringType{}}, ioErrType}})
 	registerStructMethod("Dir", "stat", []ast.Type{ast.StringType{}}, fileStatResult)

@@ -1,0 +1,20 @@
+// A field value that reads a field the literal keeps from its base reads
+// the base after the literal takes it, so the local does not own it.
+struct State { out: Writer, n: i32, name: string }
+
+function bump(own s: State, by: i32): State {
+  return State { ...s, n: s.n + by };
+}
+
+function step(own s0: State, k: i32): State {
+  let s = State { ...s0, n: s0.name.len() };
+  if (k == 1) {
+    return bump(s, 10);
+  }
+  return bump(s, 100);
+}
+
+function main(): i32 {
+  let s = step(State { out: stdout(), n: 1, name: "a" }, 1);
+  return s.n;
+}

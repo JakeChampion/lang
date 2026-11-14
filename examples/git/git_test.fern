@@ -1,9 +1,14 @@
 // The parts of the git port that do no I/O: the names of objects, the loose
-// object file, and the lines of a tree.
+// object file, the lines of a tree, the deltas, and the text of a commit.
 import "std/test";
 import "std/array";
+import "std/crypto";
+import "std/deflate";
 import "std/hex";
+import "./index";
+import "./log";
 import "./objects";
+import "./pack";
 
 function unhex(s: string): u8[] {
   let Ok(b) = hex.decode(s) else {
@@ -91,11 +96,186 @@ function test_tree_lines(): test.TestOutcome {
   return test.pass();
 }
 
+// A delta: the size of the base, the size of the result, and then copy and
+// insert instructions.
+function test_delta(): test.TestOutcome {
+  let base = "0123456789abcdef".bytes();
+  // Copy 4 bytes from 10, insert "XY", copy 3 bytes from 0.
+  let delta: u8[] = [16, 9, 145, 10, 4, 2, 88, 89, 144, 3];
+  let got = match (pack.apply_delta(base, delta)) {
+    Ok(bytes) => hex.encode(bytes),
+    Err(why) => "error: " + why,
+  };
+  if (got != hex.encode("abcdXY012".bytes())) {
+    return test.fail("the delta gave " + got);
+  }
+  // A copy with no size byte takes 65536 bytes.
+  let big = "ab".repeat(40000).bytes();
+  let whole: u8[] = [128, 241, 4, 128, 128, 4, 128];
+  if let Ok(out) = pack.apply_delta(big, whole) {
+    if (out.len() != 65536 || out[65535] != b'b') {
+      return test.fail("the copy of 65536 bytes");
+    }
+  } else {
+    return test.fail("the copy of 65536 bytes is refused");
+  }
+  let bads: u8[][] = [[15, 9, 145, 10, 4], [16, 9, 145, 14, 4], [16, 9, 0], [16, 9, 2, 88], [16, 2, 145, 10, 4]];
+  for bad in bads {
+    if let Ok(_) = pack.apply_delta(base, bad) {
+      return test.fail("a bad delta is accepted: " + hex.encode(bad));
+    }
+  }
+  return test.pass();
+}
+
+// The header of a packed object: the kind, a size in parts of 4 and 7 bits,
+// and the offset or the name of the base of a delta.
+function test_entry(): test.TestOutcome {
+  let zero = __alloc_u8(12);
+  // A blob of 5 + 16 * 3 bytes.
+  let blob = zero.append(181).append(3);
+  let e = pack.entry_at(blob, 12);
+  if (!e.ok || e.kind != 3 || e.size != 53 || e.data_at != 14) {
+    return test.fail("the header of a blob");
+  }
+  // An OFS_DELTA of 7 bytes whose base is 300 bytes before: 0x81 0x2c.
+  let ofs = __alloc_u8(400).append(103).append(129).append(44);
+  let d = pack.entry_at(ofs, 400);
+  if (!d.ok || d.kind != pack.OFS_DELTA || d.size != 7 || d.base_offset != 100 || d.data_at != 403) {
+    return test.fail("the header of an OFS_DELTA: base " + d.base_offset.to_string());
+  }
+  let ref_delta = zero.append(119).concat(unhex("ce013625030ba8dba906f756967f9e9ca394464a"));
+  let r = pack.entry_at(ref_delta, 12);
+  if (!r.ok || r.kind != pack.REF_DELTA || hex.encode(r.base_name) != "ce013625030ba8dba906f756967f9e9ca394464a" || r.data_at != 33) {
+    return test.fail("the header of a REF_DELTA");
+  }
+  if (pack.entry_at(zero.append(181), 12).ok || pack.entry_at(blob, 4).ok || pack.entry_at(zero.append(103).append(140), 12).ok) {
+    return test.fail("a short header is accepted");
+  }
+  return test.pass();
+}
+
+const COMMIT: string = "tree 4b825dc642cb6eb9a060e54bf8d69288fbee4904\nparent ce013625030ba8dba906f756967f9e9ca394464a\nparent e69de29bb2d1d6434b8b29ae775ad8c2e48c5391\nauthor A B <a@example.com> 1772581567 +0530\ncommitter C D <c@example.com> 1772629567 -0800\n\nfirst line\nsecond line\n\nbody\twith a tab\n\nlast\n";
+
+// The fields of a commit, and the date on the clock of its zone.
+function test_commit_fields(): test.TestOutcome {
+  let c = log.commit_of("abc", COMMIT.bytes());
+  if (c.tree != "4b825dc642cb6eb9a060e54bf8d69288fbee4904" || c.parents.len() != 2 || c.parents[1] != "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391") {
+    return test.fail("the tree and the parents");
+  }
+  if (c.author.name != "A B" || c.author.email != "a@example.com" || c.author.time != 1772581567 || c.author.zone != "+0530") {
+    return test.fail("the author: " + c.author.name + "|" + c.author.email + "|" + c.author.zone);
+  }
+  if (log.date_text(c.author) != "Wed Mar 4 05:16:07 2026 +0530") {
+    return test.fail("a date east of Greenwich: " + log.date_text(c.author));
+  }
+  if (log.date_text(c.committer) != "Wed Mar 4 05:06:07 2026 -0800") {
+    return test.fail("a date west of Greenwich: " + log.date_text(c.committer));
+  }
+  if (log.date_text(log.Person { name: "", email: "", time: 0, zone: "-0100" }) != "Wed Dec 31 23:00:00 1969 -0100") {
+    return test.fail("a date before 1970");
+  }
+  let odd = log.person("no address");
+  if (odd.name != "no address" || odd.email != "" || odd.time != 0) {
+    return test.fail("a line with no address");
+  }
+  return test.pass();
+}
+
+// The subject, the body, the default text and the placeholders of a format.
+function test_commit_text(): test.TestOutcome {
+  let c = log.commit_of("abc", COMMIT.bytes());
+  let s = log.Shorts { hash: "ab", tree: "4b", parents: ["ce", "e6"] };
+  if (log.subject(c.message) != "first line second line") {
+    return test.fail("the subject: " + log.subject(c.message));
+  }
+  if (log.body_of(c.message) != "body\twith a tab\n\nlast\n" || log.body_of("one\n") != "" || log.body_of("one\n\ntwo") != "two") {
+    return test.fail("the body");
+  }
+  let want = "commit abc\nMerge: ce e6\nAuthor: A B <a@example.com>\nDate:   Wed Mar 4 05:16:07 2026 +0530\n\n    first line\n    second line\n    \n    body    with a tab\n    \n    last\n";
+  if (log.medium(c, s) != want) {
+    return test.fail("the default text: " + log.medium(c, s));
+  }
+  let got = log.formatted(c, s, "%H %h %T %t|%P|%p|%an %ae %at|%cn %ce %ct|%s%n%%|%x %");
+  let wanted = "abc ab 4b825dc642cb6eb9a060e54bf8d69288fbee4904 4b|ce013625030ba8dba906f756967f9e9ca394464a e69de29bb2d1d6434b8b29ae775ad8c2e48c5391|ce e6|A B a@example.com 1772581567|C D c@example.com 1772629567|first line second line\n%|%x %";
+  if (got != wanted) {
+    return test.fail("the placeholders: " + got);
+  }
+  if (log.formatted(c, s, "%B") != c.message || log.formatted(c, s, "") != "") {
+    return test.fail("the raw message");
+  }
+  return test.pass();
+}
+
+// A packfile of one blob with the content `body`, which is shorter than
+// 16 bytes.
+function tiny_pack(body: u8[]): u8[] {
+  let sum = deflate.adler32(body);
+  let data: u8[] = [b'P', b'A', b'C', b'K', 0, 0, 0, 2, 0, 0, 0, 1, (48 + body.len()) as u8, 120, 156];
+  data = data.concat(deflate.deflate(body));
+  data = data.append((sum >> 24) as u8).append((sum >> 16 & 255) as u8).append((sum >> 8 & 255) as u8).append((sum & 255) as u8);
+  return data.concat(crypto.sha1(data));
+}
+
+// The index that the port makes for a packfile.
+function test_index(): test.TestOutcome {
+  let data = tiny_pack("hello\n".bytes());
+  let Ok(built) = index.build(data) else {
+    return test.fail("a packfile of one blob is refused");
+  };
+  let name = unhex("ce013625030ba8dba906f756967f9e9ca394464a");
+  if (!pack.index_ok(built.idx) || pack.count(built.idx) != 1 || pack.offset_of(built.idx, name) != 12) {
+    return test.fail("the index of one blob");
+  }
+  if (built.name != hex.encode(array.slice(data, data.len() - 20, data.len())) || built.rev.len() != 12 + 4 + 40) {
+    return test.fail("the checksum and the reverse index");
+  }
+  let Ok(o) = pack.object_at(data, (base: u8[]): i32 => pack.offset_of(built.idx, base), 12) else {
+    return test.fail("the object is not read with the index");
+  };
+  if (o.kind != "blob" || o.body.len() != 6) {
+    return test.fail("the object of the index");
+  }
+  // A short name finds the object, and digits that no name has find none.
+  let names = pack.with_prefix(built.idx, "ce01", 2);
+  if (names.len() != 1 || names[0] != "ce013625030ba8dba906f756967f9e9ca394464a") {
+    return test.fail("the name for the digits ce01");
+  }
+  if (pack.with_prefix(built.idx, "CE0136250", 2).len() != 1 || pack.with_prefix(built.idx, "ce02", 2).len() != 0 || pack.with_prefix(built.idx, "cd", 2).len() != 0) {
+    return test.fail("the names for other digits");
+  }
+  // A part of the packfile that starts at the object gives the same object.
+  let tail = array.slice(data, 12, data.len());
+  let (part, cache) = pack.object_cached((at: i32): pack.Window => pack.Window { bytes: tail, shift: 12 }, (base: u8[]): i32 => -1, 12, pack.cache_new());
+  let Ok(same) = part else {
+    return test.fail("the object is not read from a part of the packfile");
+  };
+  if (same.kind != "blob" || hex.encode(same.body) != hex.encode(o.body) || cache.bytes != 0) {
+    return test.fail("the object of a part of the packfile");
+  }
+  if (pack.entry_in(pack.Window { bytes: tail, shift: 12 }, 11).ok || pack.entry_in(pack.Window { bytes: tail, shift: 13 }, 12).ok) {
+    return test.fail("an offset out of the part is accepted");
+  }
+  let bad = data.with(14, data[14] ^ 1);
+  if let Ok(_) = index.build(bad) {
+    return test.fail("a packfile with a changed byte is accepted");
+  }
+  if let Ok(_) = index.build(array.slice(data, 0, 20)) {
+    return test.fail("a short packfile is accepted");
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let r = test.new("git");
   r = r.it("the names of objects", test_names);
   r = r.it("hexadecimal names, kinds and paths", test_hex_names);
   r = r.it("the loose object file", test_loose_file);
   r = r.it("the lines of a tree", test_tree_lines);
+  r = r.it("a delta", test_delta);
+  r = r.it("the header of a packed object", test_entry);
+  r = r.it("the fields of a commit", test_commit_fields);
+  r = r.it("the text of a commit", test_commit_text);
+  r = r.it("the index of a packfile", test_index);
   return r.finish();
 }

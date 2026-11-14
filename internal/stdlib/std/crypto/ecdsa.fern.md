@@ -236,6 +236,23 @@ function __inv(a: bigint.BigInt, m: bigint.BigInt): bigint.BigInt {
   return r;
 }
 
+// The `len` big-endian bytes of `x`, which is less than 2^(8 len).
+function __be(x: bigint.BigInt, len: i32): u8[] {
+  let out: u8[] = [];
+  let i = len - 1;
+  while (i >= 0) {
+    out = out.append((x.word64(i / 8) >> (8 * (i % 8)) as u64 & 255u64) as u8);
+    i -= 1;
+  }
+  return out;
+}
+
+// The uncompressed point of `key`: 4, then x and y.
+function __point_of(key: PublicKey): u8[] {
+  let c = __params(key.curve);
+  return [4 as u8].concat(__be(key.x, c.bytes)).concat(__be(key.y, c.bytes));
+}
+
 function __from_be(b: [u8], from: i32, len: i32): bigint.BigInt {
   let v = bigint.zero();
   let i = 0;
@@ -369,6 +386,12 @@ function __verify_rs(c: Params, key: PublicKey, hash: sha2.Hash, msg: [u8], r: b
   let take = d.len();
   if (take > c.bytes) {
     take = c.bytes;
+  }
+  match (key.curve) {
+    P256 => {
+      return p256.verify_rs(__point_of(key), d[0:take], __be(r, 32), __be(s, 32));
+    },
+    _ => {}
   }
   let e = __from_be(d, 0, take);
   let w = __inv(s, n);

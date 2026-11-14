@@ -1,6 +1,11 @@
 package e2ecompiler
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 const borrowedWithHelpers = `function swap(xs: i32[]): i32[] {
     let first: i32 = xs[0];
@@ -28,6 +33,10 @@ function pair(a: i32, b: i32): i32[] {
     let xs: i32[] = [];
     xs = xs.append(a);
     return xs.append(b);
+}
+@noinline
+function put3(xs: i32[], at: i32): i32[] {
+    return xs.with(at, 1).with(at + 1, 2).with(at + 2, 3);
 }
 function names(a: string, b: string): string[] {
     let xs: string[] = [];
@@ -63,6 +72,12 @@ const borrowedWithAllocsSrc = borrowedWithHelpers + `function main(): i32 {
     i = 0;
     while (i < 50) { v = twice(v); i = i + 1; }
     if (__heap_alloc_count() - c4 != 0) { return 8; }
+    let w: i32[] = pair(0, 0).append(0).append(0).append(0);
+    let held: i32[] = w;
+    let c5: i64 = __heap_alloc_count();
+    w = put3(w, 1);
+    if (__heap_alloc_count() - c5 != 1) { return 9; }
+    if (held[1] != 0 || w[1] != 1 || w[2] != 2 || w[3] != 3) { return 10; }
     return 42;
 }
 `
@@ -72,7 +87,7 @@ func TestSelfHostBorrowedWithChainAllocs(t *testing.T) {
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
 			if stderr, code := cli.exitOf(t, borrowedWithAllocsSrc, target); code != 42 {
-				t.Errorf("exited %d, want 42 (1, 4, 6 and 8 are a copy per unique update; 2 a shared one written in place)\n%s", code, stderr)
+				t.Errorf("exited %d, want 42 (1, 4, 6 and 8 are a copy per unique update; 2 a shared one written in place; 9 more than one copy for a chain on a shared array)\n%s", code, stderr)
 			}
 		})
 	}
@@ -155,6 +170,33 @@ function main(): i32 {
     return grid[0][0] * 10 + old[0][0];
 }
 `, true},
+}
+
+// After the first update of a chain copies the caller's array, the copy is
+// the frame's own, so the later updates write it with no count test and no
+// copy path. The only copies left are the ones on the caller's box (#15747).
+func TestSelfHostBorrowedWithChainCopiesOnlyTheParameter(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	src := filepath.Join(t.TempDir(), "put3.fern")
+	prog := borrowedWithHelpers + "function main(): i32 { return put3(pair(0, 0).append(0).append(0), 0)[2]; }\n"
+	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ target, call string }{{"x86-64-linux", "call __fn___fern_arr_slice"}, {"arm64-linux", "bl __fn___fern_arr_slice"}} {
+		t.Run(c.target, func(t *testing.T) {
+			data, err := os.ReadFile(cli.emit(t, src, c.target))
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := functionBody(string(data), "__fn_put3")
+			if body == "" {
+				t.Fatalf("no __fn_put3 in the %s output", c.target)
+			}
+			if n := strings.Count(body, c.call); n != 3 {
+				t.Errorf("put3 has %d copy calls on %s, want 3: one for each update on the parameter's box\n%s", n, c.target, body)
+			}
+		})
+	}
 }
 
 func TestSelfHostBorrowedWithChainX86_64(t *testing.T) {

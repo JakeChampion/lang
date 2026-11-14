@@ -1,0 +1,37 @@
+// A match arm that binds a local before its value gives an owned result
+// when the value is owned. The loop can then pass the result to an `own`
+// parameter again.
+struct State { out: Writer, n: i32 }
+
+struct Ctx { log: Writer }
+
+function step(ctx: Ctx, own s: State, k: i32): (State, i32) {
+  return match (k) {
+    0 => {
+      let bump = 10;
+      (State { ...s, n: s.n + bump }, k + 1)
+    },
+    1 => {
+      let skip = 2;
+      (s, k + skip)
+    },
+    _ => (s, k + 1),
+  };
+}
+
+function run(ctx: Ctx, own s0: State): State {
+  let s = State { ...s0, n: 0 };
+  let k = 0;
+  while (k < 5) {
+    let (next_s, next_k) = step(ctx, s, k);
+    s = next_s;
+    k = next_k;
+  }
+  return s;
+}
+
+function main(): i32 {
+  let s = run(Ctx { log: stderr() }, State { out: stdout(), n: 1 });
+  print(f"{s.n}");
+  return 0;
+}
