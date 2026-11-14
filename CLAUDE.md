@@ -442,10 +442,10 @@ it.
 - **Linter** (`fern -lint`, cyclomatic complexity, change risk from a `-cover`
   run, `[lint]` config, `// fern-lint: allow` suppression) — `docs/LINT.md`. Engine: `compiler/lint.fern`. It runs on the
   PARSE tree, so a rule needing types belongs in the checker instead. This
-  repository's own Fern sources are held to a complexity RATCHET
-  (`internal/testing/e2ecompiler/self_host_lint_ratchet_test.go`): its two numbers per tree may not move in
-  either direction, and a per-function exception is an `allow` comment on the
-  function, never a row in that table.
+  repository's own Fern sources are held to ratchets that compare a change
+  with its base commit (`scripts/check-ratchets`, in the Lint lane and the
+  pre-push hook). No count is pinned. A per-function exception is an `allow`
+  comment on the function.
 - **Bootstrap** (`make bootstrap`, `bootstrap/stage0.lock`, `make distcheck`) —
   `docs/BOOTSTRAP.md`. The pin is a release asset, refreshed by dispatching
   `bootstrap.yml` with `publish` on the branch that needs it, never by hand.
