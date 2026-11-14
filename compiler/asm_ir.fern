@@ -6740,13 +6740,13 @@ function ssa_read_fixed_mask(ins: ssa.SInst, imm: ssa.Imms): i32 {
   return 7;
 }
 
-function ssa_fixed_registers(f: ssa.SFunc, imm: ssa.Imms, no_spills: boolean, extra: boolean, cold: i32[]): ssafixed.Table {
+function ssa_fixed_registers(f: ssa.SFunc, imm: ssa.Imms, no_spills: boolean, extra: boolean, cold: i32[], words: i32[]): ssafixed.Table {
   let masks: i32[] = [];
   for b in f.blocks {
     for ins in b.insts {
       let mask = 7;
       if (extra) {
-        mask = ssa_fixed_mask(ins, imm, no_spills);
+        mask = ssa_fixed_mask(ins, imm, no_spills) | ssa_result_word_regs(words[masks.len()]);
       }
       if (masks.len() == 0) {
         mask = 7;
@@ -6756,6 +6756,11 @@ function ssa_fixed_registers(f: ssa.SFunc, imm: ssa.Imms, no_spills: boolean, ex
     masks = masks.append(7);
   }
   return ssafixed.with_clobbers(ssafixed.table(6, 3, masks), 0, ssa_nregs(), ssa_cold_clobbers(cold));
+}
+
+// Result word n is in rdx, rcx or r11: bit 1, 0 or 2 of the table from rcx.
+function ssa_result_word_regs(words: i32): i32 {
+  return (words & 1) << 1 | (words & 2) >> 1 | words & 4;
 }
 
 // The push sequence and a call's argument moves write rax, rsi, rdi, rcx and
@@ -6899,21 +6904,22 @@ function ssa_homeless(f: ssa.SFunc, imm: ssa.Imms): boolean[] {
   return out;
 }
 
-function ssa_allocate(f: ssa.SFunc, imm: ssa.Imms, s: asmcore.EmitState): ssa.Alloc {
+function ssa_allocate(f: ssa.SFunc, imm: ssa.Imms, ops: ir.Op[], s: asmcore.EmitState): ssa.Alloc {
+  let words = ssa.result_word_masks(f, ops);
   let homeless = ssa_homeless(f, imm);
   let prefs = ssa_arg_prefs(f, s);
   let floats = ssa.float_values(f, [], false);
   let cold = ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s));
   let live = ssalive.lives(f, ssa.hard_call_positions(f, cold));
-  let kept = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, true, cold), cold, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
+  let kept = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, true, cold, words), cold, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
   let audited = ssa_can_borrow_r11(f, imm, floats);
   if (audited && ssa.spill_count(kept.reg_of) == 0 && ssa_small_extra_homes(kept.reg_of)) {
-    return ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, false, cold), cold, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
+    return ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, false, cold, words), cold, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
   }
   if (!audited || !ssa_has_integer_saved(kept.reg_of) || ssa.spill_count(kept.reg_of) > 0) {
     return kept;
   }
-  let borrowed = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, true, true, cold), cold, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
+  let borrowed = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, true, true, cold, words), cold, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
   if (ssa.spill_count(borrowed.reg_of) > 0) {
     return kept;
   }
@@ -11198,7 +11204,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
     }
   }
   s = asmcore.EmitState { ...s, ssa_boxed: ssadeps.boxed_values(f) };
-  let alloc = ssa_allocate(f, imm, s);
+  let alloc = ssa_allocate(f, imm, prepared.lowered.ops, s);
   match (env("FERN_SSA_ALLOC")) {
     Some(want) => {
       if (want == label_name) {
