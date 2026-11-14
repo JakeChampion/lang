@@ -31,7 +31,8 @@
       "inputs": [
         "coreutils/**",
         "diffutils/**",
-        "sed/**"
+        "sed/**",
+        "findutils/**"
       ]
     },
     "examples": {

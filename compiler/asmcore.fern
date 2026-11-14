@@ -5944,6 +5944,9 @@ pub function runtime_dir_roots(s: EmitState): string {
   if (s.has_need("dir_entries_bytes")) {
     out = out + " " + "__fern_dir_entries_bytes";
   }
+  if (s.has_need("dir_entries_ino")) {
+    out = out + " " + "__fern_dir_entries_ino";
+  }
   if (s.has_need("dir_stat")) {
     out = out + " " + "__fern_dir_stat";
   }
