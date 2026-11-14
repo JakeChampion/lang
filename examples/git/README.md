@@ -125,8 +125,8 @@ has four threads for `index-pack`, and the port has four workers.
 | `cat-file --batch` (34,339 objects, 1.2 GB) | 5.9 s | 3.8 s |
 | `log` (978 commits) | 0.03 s | 0.03 s |
 | `ls-tree -r HEAD` | 0.02 s | 0.02 s |
-| `ls-tree -r -l HEAD` | 0.04 s | 0.10 s |
-| `cat-file --batch-check` (34,339 objects) | 0.07 s | 0.19 s |
+| `ls-tree -r -l HEAD` | 0.04 s | 0.09 s |
+| `cat-file --batch-check` (34,339 objects) | 0.07 s | 0.15 s |
 | `index-pack` (3.3 MB) | 0.14 s | 0.16 s |
 | `index-pack` (275 MB) | 3.0 s | 2.6 s |
 

@@ -215,7 +215,7 @@ The stdlib parsers ran 45 seconds each on 2026-11-08 on the same kind of host, a
 | `FuzzSelfHostStdCpio` | 17466 in 120 s (2026-11-14) | 1 | none |
 | `FuzzSelfHostStdClassFile` | 16916 in 120 s (2026-11-14) | 1 | none |
 | `FuzzSelfHostStdFdt` | 17377 in 120 s (2026-11-14) | 1 | none |
-| `FuzzSelfHostStdTrueType` | 25136 in 180 s (2026-11-14), after the repairs | 1 | four, fixed in this change |
+| `FuzzSelfHostStdTrueType` | 31047 in 150 s (2026-11-14), on the repairs of main | 1 | four, which `31960636` on main repairs |
 | `FuzzSelfHostStdTZif` | 18543 in 120 s (2026-11-14) | 1 | none |
 | `FuzzSelfHostStdCSV` | 25172 in 150 s (2026-11-14), after the repair | 1 | one, fixed in this change |
 
@@ -224,18 +224,9 @@ The run logs are in the pull request.
 
 ## Findings
 
-The TrueType target found one way that a hostile font stopped the reader with a bounds trap.
-A GPOS feature list gives a count of its records. `kern_lookups` read the tag of each record with no check that the record is inside the font.
-It now reads through the checked byte reader of the module, as each other read does. `tests/stdlib/truetype_test.fern` has a font with a count of 65535, and the input of the fuzzer is in `testdata/fuzz/FuzzSelfHostStdTrueType/`.
-
-The TrueType target also found a font that made `render` ask for 1.5 GB.
-A font gives the units of its em, and its points are up to 32767 units from the origin. With 1 unit to the em, a glyph at 12 pixels per em had a box of many thousands of pixels on each side.
-`render` now gives an empty bitmap for a box above `MAX_BITMAP_PIXELS`, a square of 4096. `tests/stdlib/truetype_test.fern` has the case.
-
-The same target found a font that made the outline reader use 1.5 GB, with two causes.
-The end points of the contours of a glyph must go up. A glyph whose end points went down and up again made each contour read up to 65536 points again. `split_contours` now gives no points to a contour that does not end after the one before it.
-A composite glyph names its parts, and a part can be a composite glyph, to a depth of 8. Many parts at each level gave an outline with no practical end. One glyph now has `MAX_GLYPH_WORK` glyphs, parts and points, and gets no more contours after that.
-The font is in `testdata/fuzz/FuzzSelfHostStdTrueType/`. It took 1491020 KB before the two changes, and it takes 13060 KB after them.
+The TrueType target found four faults of the font reader: a bounds trap in the reader of a GPOS feature list, a bitmap of 1.5 GB for a font with 1 unit to the em, contour end points that go down, and a composite glyph with many parts at each of its 8 levels.
+Commit `31960636` on main found the same four faults in a review of the module, and its repairs are the ones in the tree. `kern_lookups` reads through the checked byte reader. `render` gives an empty bitmap for a box above 16777216 pixels. `simple` gives no outline for end points that do not rise. One glyph reads 4096 glyphs at the most.
+The target confirms those repairs. Its two inputs are in `testdata/fuzz/FuzzSelfHostStdTrueType/`: the second one took 1491020 KB before the repairs, and it takes 13032 KB after them. `tests/stdlib/truetype_test.fern` has a font with a feature count of 65535 and a font with 1 unit to the em.
 
 The CSV target found one document that changes after a write and a second read: one carriage return.
 `parse` gives one record of one empty field for it. `serialize` wrote that record as an empty line, and `parse` takes an empty line at the end of a document for no record.
