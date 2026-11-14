@@ -2,8 +2,11 @@
 //
 // The flags, their values and their messages are those of ripgrep 14.1.0.
 import "core/cmp";
+import "std/result";
 import "std/string";
+import "./colors";
 import "./encoding";
+import "./hyperlink";
 
 // What rg does: write the selected lines, count them, name the files with
 // or without a selected line, list the files to search, or list the types.
@@ -16,6 +19,7 @@ pub enum Mode {
   Without,
   List,
   TypeList,
+  Generate,
 }
 
 pub struct Options {
@@ -67,6 +71,28 @@ pub struct Options {
   max_columns: i32,
   // The line terminator: "\n", "\r\n" for --crlf, or NUL for --null-data.
   eol: string,
+  colors: colors.Colors,
+  hyperlink: hyperlink.Format,
+  // The program that writes the host name, or "".
+  hostname_bin: string,
+  // The separators after the fields of a context line and a match line.
+  field_context: string,
+  field_match: string,
+  // The command of --pre, or "", and the globs of the files it reads.
+  pre: string,
+  pre_globs: string[],
+  // "default", "pcre2" or "auto".
+  engine: string,
+  // The limits of the DFA and of the compiled regex in bytes, or -1.
+  dfa_size_limit: i64,
+  regex_size_limit: i64,
+  // 0 is the default, 1 is --line-buffered and 2 is --block-buffered.
+  buffer: i32,
+  // A mode that writes text before any other check: "help", "help-long",
+  // "version", "version-long" or "pcre2-version", or "".
+  special: string,
+  // The kind of --generate for the mode Generate.
+  generate: string,
 }
 
 struct Step { o: Options, next: i32 }
@@ -139,13 +165,20 @@ pub const MULTILINE: i32 = 31;
 
 pub const DOTALL: i32 = 32;
 
+pub const ONE_FILE_SYSTEM: i32 = 33;
+
+pub const SEARCH_ZIP: i32 = 34;
+
+pub const NO_CONFIG: i32 = 35;
+
 const SWITCHES: string[] = [
   "invert-match", "word-regexp", "fixed-strings", "only-matching", "hidden", "follow",
   "no-ignore-dot", "no-ignore-vcs", "no-ignore-parent", "no-ignore-exclude", "no-ignore-global",
   "no-ignore-files", "no-require-git", "null", "quiet", "line-regexp", "glob-case-insensitive",
   "ignore-file-case-insensitive", "no-messages", "no-ignore-messages", "include-zero",
   "column", "byte-offset", "vimgrep", "passthru", "max-columns-preview", "trim", "stop-on-nonmatch",
-  "stats", "json", "no-unicode", "multiline", "multiline-dotall",
+  "stats", "json", "no-unicode", "multiline", "multiline-dotall", "one-file-system", "search-zip",
+  "no-config",
 ];
 
 const SWITCHES_OFF: string[] = [
@@ -154,7 +187,8 @@ const SWITCHES_OFF: string[] = [
   "ignore-files", "require-git", "", "", "", "no-glob-case-insensitive",
   "no-ignore-file-case-insensitive", "messages", "ignore-messages", "no-include-zero",
   "no-column", "no-byte-offset", "", "", "no-max-columns-preview", "no-trim", "",
-  "no-stats", "no-json", "unicode", "no-multiline", "no-multiline-dotall",
+  "no-stats", "no-json", "unicode", "no-multiline", "no-multiline-dotall", "no-one-file-system", "no-search-zip",
+  "",
 ];
 
 // The other switches.
@@ -164,6 +198,36 @@ const OTHER_SWITCHES: string[] = [
   "with-filename", "no-filename", "heading", "no-heading", "mmap", "no-mmap", "text", "no-text",
   "binary", "no-binary", "no-ignore", "ignore", "unrestricted", "sort-files", "no-sort-files",
   "no-context-separator", "crlf", "no-crlf", "null-data", "no-encoding", "pretty",
+  "pcre2", "no-pcre2", "auto-hybrid-regex", "no-auto-hybrid-regex", "no-pcre2-unicode", "pcre2-unicode",
+  "line-buffered", "no-line-buffered", "block-buffered", "no-block-buffered", "debug", "trace",
+  "pcre2-version", "no-pre",
+];
+
+// The long names of the flags in the order of ripgrep, for the flags that
+// ripgrep suggests for a name that it does not know: for each flag, its
+// name, the name of its negation, and its aliases.
+const ALL_NAMES: string[] = [
+  "regexp", "file", "after-context", "before-context", "binary", "no-binary", "block-buffered", "no-block-buffered",
+  "byte-offset", "no-byte-offset", "case-sensitive", "color", "colors", "column", "no-column", "context",
+  "context-separator", "no-context-separator", "count", "count-matches", "crlf", "no-crlf", "debug",
+  "dfa-size-limit", "encoding", "no-encoding", "engine", "field-context-separator", "field-match-separator",
+  "files", "files-with-matches", "files-without-match", "fixed-strings", "no-fixed-strings", "follow",
+  "no-follow", "generate", "glob", "glob-case-insensitive", "no-glob-case-insensitive", "heading", "no-heading",
+  "help", "hidden", "no-hidden", "hostname-bin", "hyperlink-format", "iglob", "ignore-case", "ignore-file",
+  "ignore-file-case-insensitive", "no-ignore-file-case-insensitive", "include-zero", "no-include-zero",
+  "invert-match", "no-invert-match", "json", "no-json", "line-buffered", "no-line-buffered", "line-number",
+  "no-line-number", "line-regexp", "max-columns", "max-columns-preview", "no-max-columns-preview", "max-count",
+  "max-depth", "maxdepth", "max-filesize", "mmap", "no-mmap", "multiline", "no-multiline", "multiline-dotall",
+  "no-multiline-dotall", "no-config", "no-ignore", "ignore", "no-ignore-dot", "ignore-dot", "no-ignore-exclude",
+  "ignore-exclude", "no-ignore-files", "ignore-files", "no-ignore-global", "ignore-global", "no-ignore-messages",
+  "ignore-messages", "no-ignore-parent", "ignore-parent", "no-ignore-vcs", "ignore-vcs", "no-messages", "messages",
+  "no-require-git", "require-git", "no-unicode", "unicode", "null", "null-data", "one-file-system",
+  "no-one-file-system", "only-matching", "path-separator", "passthru", "passthrough", "pcre2", "no-pcre2",
+  "pcre2-version", "pre", "no-pre", "pre-glob", "pretty", "quiet", "regex-size-limit", "replace", "search-zip",
+  "no-search-zip", "smart-case", "sort", "sortr", "stats", "no-stats", "stop-on-nonmatch", "text", "no-text",
+  "threads", "trace", "trim", "no-trim", "type", "type-not", "type-add", "type-clear", "type-list",
+  "unrestricted", "version", "vimgrep", "with-filename", "no-filename", "word-regexp", "auto-hybrid-regex",
+  "no-auto-hybrid-regex", "no-pcre2-unicode", "pcre2-unicode", "sort-files", "no-sort-files",
 ];
 
 // The switches that set_case_or_lines handles.
@@ -176,7 +240,8 @@ const VALUE_FLAGS: string[] = [
   "after-context", "before-context", "context", "regexp", "threads", "color", "max-count",
   "max-depth", "maxdepth", "glob", "iglob", "type", "type-not", "type-add", "type-clear",
   "ignore-file", "path-separator", "sort", "sortr", "max-filesize", "context-separator",
-  "replace", "file", "encoding", "max-columns",
+  "replace", "file", "encoding", "max-columns", "colors", "dfa-size-limit", "engine", "field-context-separator",
+  "field-match-separator", "generate", "hostname-bin", "hyperlink-format", "pre", "pre-glob", "regex-size-limit",
 ];
 
 // The type flags, and the prefix of each in `Options.types`.
@@ -185,7 +250,7 @@ const TYPE_FLAGS: string[] = ["type", "type-not", "type-add", "type-clear"];
 const TYPE_PREFIXES: string[] = ["+", "-", "add:", "clear:"];
 
 // Each short flag and its long name.
-const SHORT_FLAGS: string = "isSvwFxnNclo0qHIABCejmdgtTaL.ubrfEMpU";
+const SHORT_FLAGS: string = "isSvwFxnNclo0qHIABCejmdgtTaL.ubrfEMpUzP";
 
 const SHORT_NAMES: string[] = [
   "ignore-case", "case-sensitive", "smart-case", "invert-match", "word-regexp", "fixed-strings",
@@ -193,6 +258,7 @@ const SHORT_NAMES: string[] = [
   "null", "quiet", "with-filename", "no-filename", "after-context", "before-context", "context",
   "regexp", "threads", "max-count", "max-depth", "glob", "type", "type-not", "text", "follow",
   "hidden", "unrestricted", "byte-offset", "replace", "file", "encoding", "max-columns", "pretty", "multiline",
+  "search-zip", "pcre2",
 ];
 
 pub function defaults(): Options {
@@ -202,7 +268,9 @@ pub function defaults(): Options {
     threads: 0, max_count: -1, max_depth: -1, unrestricted: 0, sort: "", sort_reverse: false,
     path_separator: "", globs: [], iglobs: [], types: [], ignore_files: [], max_filesize: -1i64,
     context_separator: Some("--"), pattern_files: [], pattern_file_at: [], replace: None, encoding: "",
-    max_columns: 0, eol: "\n",
+    max_columns: 0, eol: "\n", colors: colors.defaults(), hyperlink: hyperlink.none(), hostname_bin: "",
+    field_context: "-", field_match: ":", pre: "", pre_globs: [], engine: "default", dfa_size_limit: -1i64,
+    regex_size_limit: -1i64, buffer: 0, special: "", generate: "",
   };
 }
 
@@ -319,7 +387,34 @@ function set_other_switch(o: Options, name: string): Options {
     "null-data" => Options { ...o, eol: "\x00" },
     "no-encoding" => Options { ...o, encoding: "" },
     "pretty" => Options { ...o, color: "always", heading: 1, line_number: 1 },
-    _ => Options { ...o, sort: "" },
+    "no-sort-files" => Options { ...o, sort: "" },
+    _ => set_late_switch(o, name),
+  };
+}
+
+// The switches of the engine, the buffers, the logs and --pcre2-version.
+// --no-pcre2-unicode turns Unicode off for each engine, as in ripgrep.
+function set_late_switch(o: Options, name: string): Options {
+  return match (name) {
+    "pcre2" => Options { ...o, engine: "pcre2" },
+    "auto-hybrid-regex" => Options { ...o, engine: "auto" },
+    "no-pcre2" | "no-auto-hybrid-regex" => Options { ...o, engine: "default" },
+    "no-pcre2-unicode" => with_bit(o, NO_UNICODE, true),
+    "pcre2-unicode" => with_bit(o, NO_UNICODE, false),
+    "pcre2-version" => Options { ...o, special: "pcre2-version" },
+    "no-pre" => Options { ...o, pre: "" },
+    _ => set_buffer_switch(o, name),
+  };
+}
+
+// The switches of the buffers of the output, and those of the logs, which
+// the port accepts and does not use.
+function set_buffer_switch(o: Options, name: string): Options {
+  return match (name) {
+    "line-buffered" => Options { ...o, buffer: 1 },
+    "block-buffered" => Options { ...o, buffer: 2 },
+    "no-line-buffered" | "no-block-buffered" => Options { ...o, buffer: 0 },
+    _ => o,
   };
 }
 
@@ -330,6 +425,9 @@ function is_mode(name: string): boolean {
 function set_switch(o: Options, name: string, flag: string): Result[Options, string] {
   if (name == "vimgrep") {
     return Ok(with_bit(with_bit(Options { ...o, line_number: 1, with_filename: 1 }, VIMGREP, true), COLUMN, true));
+  }
+  if (name == "search-zip") {
+    return Ok(Options { ...with_bit(o, SEARCH_ZIP, true), pre: "" });
   }
   let on = index_of(SWITCHES, name);
   if (on >= 0) {
@@ -498,8 +596,56 @@ function set_text(o: Options, name: string, flag: string, value: string): Result
     "iglob" => Ok(Options { ...o, iglobs: o.iglobs.append(value) }),
     "ignore-file" => Ok(Options { ...o, ignore_files: o.ignore_files.append(value) }),
     "path-separator" => set_path_separator(o, flag, value),
+    "context-separator" => Ok(Options { ...o, context_separator: Some(unescape(value)) }),
+    _ => set_style_text(o, name, flag, value),
+  };
+}
+
+// The text flags of the colors, the links and the field separators.
+function set_style_text(o: Options, name: string, flag: string, value: string): Result[Options, string] {
+  return match (name) {
+    "colors" => in_flag(flag, colors.apply(o.colors, value)).map((c: colors.Colors): Options => Options { ...o, colors: c }),
+    "hyperlink-format" => in_flag(flag + ": invalid hyperlink format", hyperlink.parse(value)).map((f: hyperlink.Format): Options => Options { ...o, hyperlink: f }),
+    "hostname-bin" => Ok(Options { ...o, hostname_bin: value }),
+    "field-context-separator" => separator(flag, value).map((v: string): Options => Options { ...o, field_context: v }),
+    "field-match-separator" => separator(flag, value).map((v: string): Options => Options { ...o, field_match: v }),
+    _ => set_late_text(o, name, flag, value),
+  };
+}
+
+function in_flag[T](flag: string, r: Result[T, string]): Result[T, string] {
+  return match (r) {
+    Ok(v) => Ok(v),
+    Err(why) => Err("error parsing flag " + flag + ": " + why),
+  };
+}
+
+// The text flags of the preprocessor, the engine and --generate.
+function set_late_text(o: Options, name: string, flag: string, value: string): Result[Options, string] {
+  return match (name) {
+    "pre" => Ok(if (value == "") { Options { ...o, pre: "" } } else { Options { ...with_bit(o, SEARCH_ZIP, false), pre: value } }),
+    "pre-glob" => Ok(Options { ...o, pre_globs: o.pre_globs.append(value) }),
+    "engine" => set_engine(o, flag, value),
+    "generate" => choice(flag, value, GENERATE).map((g: string): Options => Options { ...o, mode: Generate, generate: g }),
     _ => set_search_text(o, name, flag, value),
   };
+}
+
+const GENERATE: string[] = ["man", "complete-bash", "complete-zsh", "complete-fish", "complete-powershell"];
+
+function set_engine(o: Options, flag: string, value: string): Result[Options, string] {
+  if (value != "default" && value != "pcre2" && value != "auto") {
+    return Err("error parsing flag " + flag + ": unrecognized regex engine '" + value + "'");
+  }
+  return Ok(Options { ...o, engine: value });
+}
+
+// A field separator with its escapes made bytes.
+function separator(flag: string, value: string): Result[string, string] {
+  if (encoding.invalid_at(value) >= 0) {
+    return Err("error parsing flag " + flag + ": separator must be valid UTF-8 (use escape sequences to provide a separator that is not valid UTF-8)");
+  }
+  return Ok(unescape(value));
 }
 
 // The flags whose value is text for the search: -e, -f, -r and -E.
@@ -525,11 +671,8 @@ function set_value(o: Options, name: string, flag: string, value: string): Resul
   if (name == "sort" || name == "sortr") {
     return set_sort(o, name, flag, value);
   }
-  if (name == "max-filesize") {
-    return Ok(Options { ...o, max_filesize: parse_size(flag, value)? });
-  }
-  if (name == "context-separator") {
-    return Ok(Options { ...o, context_separator: Some(unescape(value)) });
+  if (name == "max-filesize" || name == "dfa-size-limit" || name == "regex-size-limit") {
+    return set_size(o, name, parse_size(flag, value)?);
   }
   if (index_of(["after-context", "before-context", "context", "threads", "max-count", "max-depth", "maxdepth", "max-columns"], name) < 0) {
     return set_text(o, name, flag, value);
@@ -541,6 +684,14 @@ function set_value(o: Options, name: string, flag: string, value: string): Resul
     },
   };
   return Ok(set_count(o, name, n));
+}
+
+function set_size(o: Options, name: string, n: i64): Result[Options, string] {
+  return Ok(match (name) {
+    "max-filesize" => Options { ...o, max_filesize: n },
+    "dfa-size-limit" => Options { ...o, dfa_size_limit: n },
+    _ => Options { ...o, regex_size_limit: n },
+  });
 }
 
 function set_count(o: Options, name: string, n: i32): Options {
@@ -573,15 +724,12 @@ function long_flag(o: Options, args: string[], at: i32): Result[Step, string] {
     name = slice_unchecked(arg, 2, eq).to_owned();
   }
   let flag = "--" + name;
-  name = alias(name);
-  if (!known(name)) {
-    return Err("unrecognized flag " + flag);
+  if (name == "help" || name == "version") {
+    return Ok(Step { o: Options { ...o, special: name + "-long" }, next: at });
   }
+  name = alias(name);
   if (!takes_value(name)) {
-    if (eq >= 0) {
-      return Err("invalid CLI arguments: unexpected argument for option '" + flag + "': \"" + slice_unchecked(arg, eq + 1, arg.len()) + "\"");
-    }
-    return Ok(Step { o: set_switch(o, name, flag)?, next: at });
+    return long_switch(o, arg, name, flag, eq, at);
   }
   if (eq >= 0) {
     let next = set_value(o, name, flag, slice_unchecked(arg, eq + 1, arg.len()).to_owned())?;
@@ -594,15 +742,36 @@ function long_flag(o: Options, args: string[], at: i32): Result[Step, string] {
   return Ok(Step { o: next, next: at + 1 });
 }
 
+// The switch `--name`, which cannot take a value.
+function long_switch(o: Options, arg: string, name: string, flag: string, eq: i32, at: i32): Result[Step, string] {
+  if (!known(name)) {
+    return Err(unknown_long(name));
+  }
+  if (eq >= 0) {
+    return Err("invalid CLI arguments: unexpected argument for option '" + flag + "': \"" + slice_unchecked(arg, eq + 1, arg.len()) + "\"");
+  }
+  return Ok(Step { o: set_switch(o, name, flag)?, next: at });
+}
+
+// The special mode of -h or -V, or "" for another letter.
+function short_special(c: u8): string {
+  return if (c == b'h') { "help" } else if (c == b'V') { "version" } else { "" };
+}
+
 // A cluster such as `-in` or `-nA1` at args[at - 1].
 function short_flags(o: Options, args: string[], at: i32): Result[Step, string] {
   let arg = args[at - 1];
   let opts = o;
   for j in 1..arg.len() {
+    let special = short_special(arg[j]);
+    if (special != "") {
+      opts = Options { ...opts, special: special };
+      continue;
+    }
     let name = long_name(arg[j]);
     let flag = "-" + slice_unchecked(arg, j, j + 1);
     if (name == "") {
-      return Err("unrecognized flag " + flag);
+      return Err("unrecognized flag -" + char_at(arg, j));
     }
     if (takes_value(name)) {
       if (j + 1 < arg.len()) {
@@ -620,9 +789,23 @@ function short_flags(o: Options, args: string[], at: i32): Result[Step, string] 
   return Ok(Step { o: opts, next: at });
 }
 
+// The character of UTF-8 that starts at `at`.
+function char_at(text: string, at: i32): string {
+  let c = text[at];
+  let n = if (c < 192u8) { 1 } else if (c < 224u8) { 2 } else if (c < 240u8) { 3 } else { 4 };
+  let end = if (at + n > text.len()) { text.len() } else { at + n };
+  return slice_unchecked(text, at, end).to_owned();
+}
+
 // The options of a command line without its program name. The error is the
 // message after "rg: ".
 pub function parse(args: string[]): Result[Options, string] {
+  return finish(parse_flags(args)?);
+}
+
+// The flags of a command line, with each positional argument in `paths`.
+// A special mode does not need a pattern.
+pub function parse_flags(args: string[]): Result[Options, string] {
   let o = defaults();
   let positional: string[] = [];
   let flags = true;
@@ -640,7 +823,61 @@ pub function parse(args: string[]): Result[Options, string] {
       at = step.next;
     }
   }
-  return with_patterns(normalize(o), positional);
+  return Ok(Options { ...o, paths: positional });
+}
+
+// The options of the flags of parse_flags: the pattern from the positional
+// arguments, and the modes that other flags change.
+pub function finish(o: Options): Result[Options, string] {
+  if (o.special != "") {
+    return Ok(o);
+  }
+  return with_patterns(normalize(o), o.paths);
+}
+
+// The message of a long flag that ripgrep does not know, with the names
+// that share at least 40% of their sets of three letters with it.
+function unknown_long(name: string): string {
+  let given = trigrams(name);
+  let similar: string[] = [];
+  for candidate in ALL_NAMES {
+    if (similarity(given, trigrams(candidate)) * 10 >= 4 * trigram_union(given, trigrams(candidate))) {
+      similar = similar.append("--" + candidate);
+    }
+  }
+  let msg = "unrecognized flag --" + name;
+  if (similar.len() > 0) {
+    msg += "\n\nsimilar flags that are available: " + similar.join(", ");
+  }
+  return msg;
+}
+
+// The distinct runs of three bytes of a name. A shorter name is padded
+// with `!`.
+function trigrams(name: string): string[] {
+  let padded = if (name.len() >= 3) { name } else { slice_unchecked(name + "!!!", 0, 3).to_owned() };
+  let out: string[] = [];
+  for i in 0..padded.len() - 2 {
+    let t = slice_unchecked(padded, i, i + 3).to_owned();
+    if (index_of(out, t) < 0) {
+      out = out.append(t);
+    }
+  }
+  return out;
+}
+
+function similarity(a: string[], b: string[]): i32 {
+  let n = 0;
+  for t in a {
+    if (index_of(b, t) >= 0) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
+function trigram_union(a: string[], b: string[]): i32 {
+  return a.len() + b.len() - similarity(a, b);
 }
 
 // As in ripgrep, -o turns -c into --count-matches, and -v turns
@@ -655,9 +892,10 @@ function normalize(o: Options): Options {
   return o;
 }
 
-// Whether the mode searches. --files and --type-list take no pattern.
+// Whether the mode searches. --files, --type-list and --generate take no
+// pattern.
 pub function (o: Options) searches(): boolean {
-  return o.mode != List && o.mode != TypeList;
+  return o.mode != List && o.mode != TypeList && o.mode != Generate;
 }
 
 // Without -e, the first positional argument is the pattern.

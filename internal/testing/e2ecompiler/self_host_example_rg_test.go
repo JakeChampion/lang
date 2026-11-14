@@ -32,7 +32,8 @@ func TestSelfHostExampleRgUnit(t *testing.T) {
 // below the fixtures where it runs. With noStdin, the standard input is
 // /dev/null. With anyOrder, the lines of the output can come in any order,
 // as they do from ripgrep with more than one thread. With pty, the standard
-// output is a terminal, and TERM is set when term is not "".
+// output is a terminal, and TERM is set when term is not "". Each entry of
+// env is NAME=VALUE, with DIR in VALUE for the directory of the fixtures.
 type rgCase struct {
 	args     []string
 	stdin    string
@@ -41,6 +42,7 @@ type rgCase struct {
 	anyOrder bool
 	pty      bool
 	term     string
+	env      []string
 }
 
 func rgArgs(line string) []string { return strings.Fields(line) }
@@ -86,6 +88,8 @@ func rgFixtures(t *testing.T, dir string) {
 		"bin3.dat":  "abc\x00def\n",
 		"bin4.dat":  "a\x00foo\nzz\n",
 		"ab.txt":    "bbabb\nba\nfoobar xfoo\n",
+		"rgconfig":  "# A comment\n\n  --colors=match:fg:green  \n-n\n--color=always\n",
+		"badconfig": "--bogus\n",
 	}
 	for name, text := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
@@ -272,6 +276,7 @@ func rgCases(dir string) []rgCase {
 		rgCase{args: rgArgs("foo"), stdin: ""},
 	)
 	cases = append(cases, rgFlagCases()...)
+	cases = append(cases, rgLateCases()...)
 	return append(cases, rgWalkCases()...)
 }
 
@@ -328,6 +333,74 @@ func rgFlagCases() []rgCase {
 	)
 }
 
+// rgLateCases give --colors, the links, the field separators, the special
+// modes, the config file, the flags of the engine and the flags that
+// ripgrep suggests for a name that it does not know.
+func rgLateCases() []rgCase {
+	lines := []string{
+		"--color always --colors match:fg:blue -n foo a.txt",
+		"--color always --colors match:bg:0x10 --colors match:style:underline --colors match:style:intense -n foo a.txt",
+		"--color always --colors line:fg:1,2,3 --colors column:fg:yellow --column -n foo a.txt",
+		"--color always --colors path:none -j1 -H foo a.txt w.txt",
+		"--color always --colors match:none -n -o foo a.txt",
+		"--color always --colors match:none -M 5 foo long.md",
+		"--color always --colors MATCH:STYLE:NOBOLD --colors match:fg:+5 foo a.txt",
+		"--colors match:fg:purple foo a.txt", "--colors match:fg:300 foo a.txt", "--colors match:fg:1,2 foo a.txt",
+		"--colors bogus:fg:red foo a.txt", "--colors match:xx:red foo a.txt", "--colors match:fg foo a.txt",
+		"--colors match:style:x foo a.txt",
+		"--color always --hyperlink-format default -H foo a.txt",
+		"--color always --hyperlink-format vscode -j1 -n -H foo a.txt w.txt",
+		"--color always --hyperlink-format vscode -j1 --heading -n foo a.txt w.txt",
+		"--color always --hyperlink-format file -j1 --heading -n foo a.txt w.txt",
+		"--color always --hyperlink-format kitty -j1 -c foo a.txt w.txt",
+		"--color always --hyperlink-format kitty -j1 -l foo a.txt w.txt",
+		"--color always --hyperlink-format vscode --vimgrep foo a.txt",
+		"--color always --hyperlink-format vscode -o -b -H foo a.txt",
+		"--color always --hyperlink-format vscode -A1 -n -H foo a.txt",
+		"--color always --hyperlink-format grep+ -H -U foo\\nnothing a.txt",
+		"--color always --hyperlink-format vscode -n -H --colors match:none foo a.txt",
+		"--color always --hyperlink-format x:{{path}}{path} --null -H foo a.txt",
+		"--color always --hyperlink-format kitty --hostname-bin nosuchprogram -H foo a.txt",
+		"--color always --hyperlink-format kitty -H foo bin.dat",
+		"--hyperlink-format vscode -n -H foo a.txt",
+		"--hyperlink-format foo foo a.txt", "--hyperlink-format x://{line} foo a.txt", "--hyperlink-format {path} foo a.txt",
+		"--hyperlink-format x:{path}} foo a.txt", "--hyperlink-format x:{path foo a.txt", "--hyperlink-format x:{bad} foo a.txt",
+		"--hyperlink-format x://{path}{column} foo a.txt",
+		"--vimgrep -r X foo a.txt", "--color always --vimgrep -r X foo a.txt", "--vimgrep -M 8 --max-columns-preview foo a.txt",
+		"--color always --vimgrep -M 8 --max-columns-preview foo a.txt", "-o -M 2 --max-columns-preview foo a.txt",
+		"--column -M 3 foo a.txt", "--column -M 8 --max-columns-preview foo a.txt",
+		"--field-match-separator @@ --field-context-separator ## -n -C1 -H foo a.txt",
+		"--field-match-separator @@ -c -H foo a.txt", "--field-match-separator @@ --vimgrep foo a.txt",
+		"--field-match-separator @@ --heading -n -H foo a.txt", "--color always --field-match-separator @@ -n -H --column foo a.txt",
+		"--field-match-separator \\x41\\t -n foo a.txt", "--field-context-separator \\xff -n -C1 foo a.txt",
+		"-h", "--help", "-V", "--pcre2-version", "-hV foo", "--help --bogus", "--generate man",
+		"--generate complete-bash", "--generate complete-zsh", "--generate complete-fish", "--generate complete-powershell",
+		"--generate bogus", "--generate man -c",
+		"--engine bogus foo a.txt", "--engine default foo a.txt", "--dfa-size-limit 10 foo a.txt",
+		"--dfa-size-limit 1Q foo a.txt", "--regex-size-limit 99999999999999999999 foo a.txt", "--regex-size-limit 1 foo a.txt",
+		"--line-buffered foo a.txt", "--block-buffered foo a.txt", "--no-line-buffered --no-block-buffered foo a.txt",
+		"--debug-x foo a.txt", "--hiden foo a.txt", "--colr foo a.txt", "--pcre foo a.txt", "--no-vimgrep foo a.txt",
+		"--one-file-system foo a.txt", "--no-one-file-system foo a.txt", "--no-config foo a.txt",
+		"--auto-hybrid-regex --no-auto-hybrid-regex foo a.txt", "--no-pcre2-unicode \\w+ uni.txt", "--pcre2-unicode \\w+ uni.txt",
+	}
+	var cases []rgCase
+	for _, l := range lines {
+		cases = append(cases, rgCase{args: rgArgs(l)})
+	}
+	config := func(line, file string) rgCase {
+		return rgCase{args: rgArgs(line), env: []string{"RIPGREP_CONFIG_PATH=DIR/" + file}}
+	}
+	return append(cases,
+		config("foo a.txt", "rgconfig"),
+		config("--no-config foo a.txt", "rgconfig"),
+		config("-N --colors match:fg:red foo a.txt", "rgconfig"),
+		config("foo a.txt", "badconfig"),
+		config("foo a.txt", "nosuchconfig"),
+		config("--no-messages foo a.txt", "nosuchconfig"),
+		config("-V", "badconfig"),
+	)
+}
+
 // rgTimes match the times of --stats and --json, which differ from run to
 // run.
 var rgTimes = regexp.MustCompile(`"elapsed(_total)?":\{[^}]*\}|(?m)^[0-9]+\.[0-9]+ seconds`)
@@ -354,6 +427,9 @@ func rgRun(t *testing.T, cmd *exec.Cmd, dir string, c rgCase) rgResult {
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + filepath.Join(dir, "home")}
 	if c.term != "" {
 		cmd.Env = append(cmd.Env, "TERM="+c.term)
+	}
+	for _, e := range c.env {
+		cmd.Env = append(cmd.Env, strings.ReplaceAll(e, "DIR", dir))
 	}
 	if !c.noStdin && !c.pty {
 		cmd.Stdin = strings.NewReader(c.stdin)

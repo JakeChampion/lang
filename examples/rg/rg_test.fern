@@ -1,8 +1,10 @@
 // The options, the pattern, the ignore rules and the output of the rg port.
 import "std/test";
 import "std/regex";
+import "./colors";
 import "./encoding";
 import "./flags";
+import "./hyperlink";
 import "./ignore";
 import "./search";
 
@@ -15,6 +17,7 @@ function mode_name(m: flags.Mode): string {
     flags.Without => "without",
     flags.List => "list",
     flags.TypeList => "type-list",
+    flags.Generate => "generate",
   };
 }
 
@@ -497,7 +500,154 @@ function test_new_flag_errors(): test.TestOutcome {
     "error: error parsing flag -E: grep config error: unknown encoding: bogus",
     "error: error parsing flag --encoding: grep config error: unknown encoding: x",
     "error: error parsing flag -M: value is not a valid number: invalid digit found in string",
-    "error: unrecognized flag --no-vimgrep",
+    "error: unrecognized flag --no-vimgrep\n\nsimilar flags that are available: --vimgrep",
+  ]);
+}
+
+// The escapes of the four specs after the specs of --colors, or the error.
+function colored(specs: string[]): string {
+  let c = colors.defaults();
+  for s in specs {
+    match (colors.apply(c, s)) {
+      Ok(v) => {
+        c = v;
+      },
+      Err(why) => {
+        return "error: " + why;
+      }
+    }
+  }
+  return [c.path.escape(), c.line.escape(), c.column.escape(), c.matched.escape()].join("|").replace("\x1b", "E");
+}
+
+function test_colors(): test.TestOutcome {
+  let got = [
+    colored([]),
+    colored(["match:fg:blue", "match:style:nobold", "line:none"]),
+    colored(["MATCH:BG:0x10", "match:style:underline", "match:style:intense", "path:fg:+5"]),
+    colored(["column:fg:1,2,3", "column:bg:yellow", "column:style:intense"]),
+    colored(["match:fg:purple"]),
+    colored(["match:fg:300"]),
+    colored(["match:fg:ff"]),
+    colored(["match:fg:1,2"]),
+    colored(["foo:fg:red"]),
+    colored(["match:xx:red"]),
+    colored(["match:fg"]),
+    colored(["match:style:"]),
+  ];
+  return test.assert_eq_array(got, [
+    "E[0mE[35m|E[0mE[32m|E[0m|E[0mE[1mE[31m",
+    "E[0mE[35m|E[0m|E[0m|E[0mE[34m",
+    "E[0mE[38;5;5m|E[0mE[32m|E[0m|E[0mE[1mE[4mE[38;5;9mE[48;5;16m",
+    "E[0mE[35m|E[0mE[32m|E[0mE[38;2;1;2;3mE[48;5;11m|E[0mE[1mE[31m",
+    "error: unrecognized color name 'purple'. Choose from: black, blue, green, red, cyan, magenta, yellow, white",
+    "error: unrecognized ansi256 color number, should be '[0-255]' (or a hex number), but is '300'",
+    "error: unrecognized ansi256 color number, should be '[0-255]' (or a hex number), but is 'ff'",
+    "error: unrecognized RGB color triple, should be '[0-255],[0-255],[0-255]' (or a hex triple), but is '1,2'",
+    "error: unrecognized output type 'foo'. Choose from: path, line, column, match.",
+    "error: unrecognized spec type 'xx'. Choose from: fg, bg, style, none.",
+    "error: invalid color spec format: 'match:fg'. Valid format is '(path|line|column|match):(fg|bg|style):(value)'.",
+    "error: unrecognized style attribute ''. Choose from: nobold, bold, nointense, intense, nounderline, underline.",
+  ]);
+}
+
+function link_of(format: string): string {
+  match (hyperlink.parse(format)) {
+    Ok(f) => {
+      let g = hyperlink.Format { ...f, host: "h", wsl: "w" };
+      return hyperlink.open(g, "/a%20b", 3, 0).replace("\x1b", "E");
+    },
+    Err(why) => {
+      return "error: " + why;
+    }
+  }
+  return "";
+}
+
+function test_hyperlinks(): test.TestOutcome {
+  let got = [
+    link_of("default"),
+    link_of("vscode"),
+    link_of("x:{{path}}{path}#{wslprefix}"),
+    link_of("foo"),
+    link_of("x://{line}"),
+    link_of("x://{path}{column}"),
+    link_of("{path}"),
+    link_of("x:{path}}"),
+    link_of("x:{path"),
+    link_of("x:{bad}"),
+    hyperlink.encode("/a b/é%x.txt"),
+    link_of(""),
+  ];
+  return test.assert_eq_array(got, [
+    "E]8;;file://h/a%20bE\\",
+    "E]8;;vscode://file/a%20b:3:1E\\",
+    "E]8;;x:{path}/a%20b#wE\\",
+    "error: at least a {path} variable is required in a hyperlink format, or otherwise use a valid alias: default, file, grep+, kitty, macvim, none, textmate, vscode, vscode-insiders, vscodium",
+    "error: the {path} variable is required in a hyperlink format",
+    "error: the hyperlink format contains a {column} variable, but no {line} variable is present",
+    "error: the hyperlink format must start with a valid URL scheme, i.e., [0-9A-Za-z+-.]+:",
+    "error: unopened variable: found '}' without a corresponding '{' preceding it",
+    "error: unclosed variable: found '{' without a corresponding '}' following it",
+    "error: invalid hyperlink format variable: 'bad', choose from: path, line, column, host, wslprefix",
+    "/a%20b/é%25x.txt",
+    "E]8;;E\\",
+  ]);
+}
+
+// The fields of the late flags of `args` in one line, or the error.
+function late_options(args: string[]): string {
+  match (flags.parse(args)) {
+    Ok(o) => {
+      return f"{o.special}|{o.generate}|{o.engine}|{o.pre}|{o.pre_globs.join(",")}|{o.has(flags.SEARCH_ZIP)}|{o.field_match}|{o.field_context}|{o.dfa_size_limit}|{o.regex_size_limit}|{o.buffer}|{o.has(flags.ONE_FILE_SYSTEM)}|{o.has(flags.NO_UNICODE)}";
+    },
+    Err(why) => {
+      return "error: " + why;
+    }
+  }
+  return "";
+}
+
+function test_late_flags(): test.TestOutcome {
+  let got = [
+    late_options(["-h"]),
+    late_options(["--version", "--bogus-later-is-checked"]),
+    late_options(["-nV"]),
+    late_options(["--pcre2-version"]),
+    late_options(["--generate", "man"]),
+    late_options(["--generate=x"]),
+    late_options(["-P", "x"]),
+    late_options(["-P", "--no-pcre2", "--engine", "auto", "x"]),
+    late_options(["--engine=x", "x"]),
+    late_options(["--pre", "cat", "-z", "--pre-glob", "*.gz", "x"]),
+    late_options(["-z", "--pre", "cat", "x"]),
+    late_options(["--field-match-separator", "@\\t", "--field-context-separator=\\x41", "x"]),
+    late_options(["--dfa-size-limit", "1K", "--regex-size-limit=2M", "x"]),
+    late_options(["--regex-size-limit", "1Q", "x"]),
+    late_options(["--line-buffered", "--one-file-system", "--no-pcre2-unicode", "x"]),
+    late_options(["--hiden", "x"]),
+    late_options(["--colors", "match:fg:x", "x"]),
+    late_options(["--hyperlink-format", "foo", "x"]),
+  ];
+  return test.assert_eq_array(got, [
+    "help||default|||false|:|-|-1|-1|0|false|false",
+    "error: unrecognized flag --bogus-later-is-checked",
+    "version||default|||false|:|-|-1|-1|0|false|false",
+    "pcre2-version||default|||false|:|-|-1|-1|0|false|false",
+    "|man|default|||false|:|-|-1|-1|0|false|false",
+    "error: error parsing flag --generate: choice 'x' is unrecognized",
+    "||pcre2|||false|:|-|-1|-1|0|false|false",
+    "||auto|||false|:|-|-1|-1|0|false|false",
+    "error: error parsing flag --engine: unrecognized regex engine 'x'",
+    "||default||*.gz|true|:|-|-1|-1|0|false|false",
+    "||default|cat||false|:|-|-1|-1|0|false|false",
+    "||default|||false|@\t|A|-1|-1|0|false|false",
+    "||default|||false|:|-|1024|2097152|0|false|false",
+    "error: error parsing flag --regex-size-limit: invalid size: invalid format for size '1Q', which should be a non-empty sequence of digits followed by an optional 'K', 'M' or 'G' suffix",
+    "||default|||false|:|-|-1|-1|1|true|true",
+    "error: unrecognized flag --hiden\n\nsimilar flags that are available: --hidden",
+    "error: error parsing flag --colors: unrecognized color name 'x'. Choose from: black, blue, green, red, cyan, magenta, yellow, white",
+    "error: error parsing flag --hyperlink-format: invalid hyperlink format: at least a {path} variable is required in a hyperlink format, or otherwise use a valid alias: default, file, grep+, kitty, macvim, none, textmate, vscode, vscode-insiders, vscodium",
   ]);
 }
 
@@ -919,6 +1069,9 @@ function main(): i32 {
   r = r.it("line terminators", test_line_terminators);
   r = r.it("encodings", test_encoding);
   r = r.it("errors of the new flags", test_new_flag_errors);
+  r = r.it("colors", test_colors);
+  r = r.it("hyperlinks", test_hyperlinks);
+  r = r.it("late flags", test_late_flags);
   r = r.it("json", test_json);
   r = r.it("gitignore rules", test_gitignore);
   r = r.it("globs", test_overrides);

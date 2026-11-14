@@ -15,6 +15,8 @@ import "std/regex";
 import "std/worker";
 import "./encoding";
 import "./flags";
+import "./help";
+import "./hyperlink";
 import "./ignore";
 import "./jsonl";
 import "./search";
@@ -37,6 +39,9 @@ struct Ctx {
   messages: boolean,
   ignore_messages: boolean,
   encoding: string,
+  // Write the output after each file: with --line-buffered, or by default
+  // on a terminal.
+  line_buffered: boolean,
 }
 
 // What the searches of some files counted for --stats: the files searched
@@ -178,11 +183,11 @@ function search_items(ctx: Ctx, re: regex.Regex, items: walk.Item[], h: usize): 
       Ok(bytes) => {
         let t0 = monotonic_ns();
         let (text, decoded) = encoding.decode(bytes, ctx.encoding);
-        let out = search.search(ctx.p, re, text, display_name(ctx, it.path), source(ctx, it, cap, decoded), h, written);
+        let out = search.search(linked(ctx, it.path), re, text, display_name(ctx, it.path), source(ctx, it, cap, decoded), h, written);
         written = out.written;
         cap = out.cap;
         r = Part { ...r, matched: r.matched || out.matched, totals: tally(ctx, r.totals, out, monotonic_ns() - t0) };
-        if (!flush(h, false)) {
+        if (!flush(h, ctx.line_buffered)) {
           return Part { ...r, failed: true };
         }
       },
@@ -234,7 +239,7 @@ function search_buffered(ctx: Ctx, re: regex.Regex, items: walk.Item[], h: usize
       Ok(bytes) => {
         let t0 = monotonic_ns();
         let (text, decoded) = encoding.decode(bytes, ctx.encoding);
-        let out = search.search(ctx.p, re, text, display_name(ctx, it.path), source(ctx, it, cap, decoded), h, written);
+        let out = search.search(linked(ctx, it.path), re, text, display_name(ctx, it.path), source(ctx, it, cap, decoded), h, written);
         written = out.written;
         cap = out.cap;
         r = Part { ...r, matched: r.matched || out.matched, totals: tally(ctx, r.totals, out, monotonic_ns() - t0) };
@@ -507,9 +512,9 @@ function list_files(ctx: Ctx, items: walk.Item[], o: flags.Options): i32 {
     if (ctx.quiet) {
       break;
     }
-    search.push_path(ctx.p, h, display_name(ctx, it.path));
+    search.push_path(linked(ctx, it.path), h, display_name(ctx, it.path));
     buf_push(h, term);
-    if (!flush(h, false)) {
+    if (!flush(h, ctx.line_buffered)) {
       break;
     }
   }
@@ -570,10 +575,32 @@ function context_of(o: flags.Options, paths: string[]): Ctx {
   let threads = threads_of(o, one_file);
   let pattern = if (o.searches()) { flags.pattern(o) } else { "" };
   return Ctx {
-    p: search.printer(o, isatty(1), term_color(), one_file), pattern: pattern, implicit: o.paths.len() == 0, mmap: maps(o, paths),
+    p: with_links(search.printer(o, isatty(1), term_color(), one_file), o), pattern: pattern, implicit: o.paths.len() == 0, mmap: maps(o, paths),
     binary: o.binary, threads: threads, quiet: o.has(flags.QUIET), messages: !o.has(flags.NO_MESSAGES),
     ignore_messages: !o.has(flags.NO_IGNORE_MESSAGES), encoding: o.encoding,
+    line_buffered: o.buffer == 1 || o.buffer == 0 && isatty(1),
   };
+}
+
+// The printer with the host name of its links, when the output has links.
+function with_links(p: search.Printer, o: flags.Options): search.Printer {
+  if (!p.color || p.hyperlink.is_empty()) {
+    return p;
+  }
+  return search.Printer { ...p, hyperlink: hyperlink.with_host(p.hyperlink, o.hostname_bin) };
+}
+
+// The printer for the file at `path`, with the path of its links. The
+// standard input has no link.
+function linked(ctx: Ctx, path: string): search.Printer {
+  if (!ctx.p.color || ctx.p.hyperlink.is_empty() || path == "-") {
+    return ctx.p;
+  }
+  let real = hyperlink.canonical(path);
+  if (real == "") {
+    return ctx.p;
+  }
+  return search.Printer { ...ctx.p, link: hyperlink.encode(real) };
 }
 
 // Whether the terminal takes color, as termcolor asks for --color auto: a
@@ -593,6 +620,7 @@ function items_of(ctx: Ctx, o: flags.Options, cfg: ignore.Config, paths: string[
   let w = walk.Walk {
     cfg: cfg, max_filesize: o.max_filesize, follow: o.has(flags.FOLLOW), max_depth: o.max_depth, sorted: o.sort == "path" && !o.sort_reverse,
     threads: ctx.threads, stdout_ino: if (o.searches()) { ino } else { 0i64 }, stdout_dev: dev,
+    same_fs: o.has(flags.ONE_FILE_SYSTEM), root_dev: 0i64,
   };
   let items = walk.walk(w, paths);
   if (o.sort != "" && (o.sort_reverse || o.sort != "path")) {
@@ -699,16 +727,101 @@ function read_patterns(path: string): Result[string[], string] {
   return Ok(out);
 }
 
+// The text of a special mode, which rg writes with no other check.
+function special(mode: string): i32 {
+  let text = match (mode) {
+    "help" => help.HELP_SHORT,
+    "help-long" => help.HELP_LONG,
+    "version" => "ripgrep 14.1.0\n",
+    "version-long" => version_long(),
+    _ => PCRE2_VERSION,
+  };
+  print_raw(text.trim_end() + "\n");
+  return 0;
+}
+
+const PCRE2_VERSION: string = "PCRE2 10.42 is available (JIT is available)\n";
+
+function version_long(): string {
+  let simd = if (target_arch() == "x86-64") {
+    "simd(compile):+SSE2,-SSSE3,-AVX2\nsimd(runtime):+SSE2,+SSSE3,+AVX2\n"
+  } else if (target_arch() == "arm64") {
+    "simd(compile):+NEON\nsimd(runtime):+NEON\n"
+  } else {
+    ""
+  };
+  return "ripgrep 14.1.0\n\nfeatures:-simd-accel,+pcre2\n" + simd + "\n" + PCRE2_VERSION;
+}
+
+// The output of --generate.
+function generate(kind: string): i32 {
+  print_raw(match (kind) {
+    "man" => help.MAN,
+    "complete-bash" => help.COMPLETE_BASH,
+    "complete-zsh" => help.COMPLETE_ZSH,
+    "complete-fish" => help.COMPLETE_FISH,
+    _ => help.COMPLETE_POWERSHELL,
+  });
+  return 0;
+}
+
+// The arguments of the file that RIPGREP_CONFIG_PATH names: each line that
+// is not empty and does not start with `#`, without the white space around
+// it.
+function config_args(messages: boolean): string[] {
+  let none: string[] = [];
+  let Some(path) = env("RIPGREP_CONFIG_PATH") else {
+    return none;
+  };
+  if (path == "") {
+    return none;
+  }
+  let text = match (read_file_bytes(path)) {
+    Ok(b) => unsafe { string_from_bytes_unchecked(b) },
+    Err(e) => {
+      if (messages) {
+        eprint("rg: failed to read the file specified in RIPGREP_CONFIG_PATH: " + path + ": " + ignore.os_error(e));
+      }
+      return none;
+    },
+  };
+  let out: string[] = [];
+  for raw in text.split("\n") {
+    let line = raw.trim();
+    if (line != "" && line[0] != b'#') {
+      out = out.append(line);
+    }
+  }
+  return out;
+}
+
+// The options of the command line, after the arguments of the config file
+// unless --no-config.
+function options_of(cli: string[]): Result[flags.Options, string] {
+  let low = flags.parse_flags(cli)?;
+  if (low.special != "" || low.has(flags.NO_CONFIG)) {
+    return flags.finish(low);
+  }
+  let extra = config_args(!low.has(flags.NO_MESSAGES));
+  if (extra.len() == 0) {
+    return flags.finish(low);
+  }
+  return flags.finish(flags.parse_flags(extra.concat(cli))?);
+}
+
 function main(): i32 {
   let t0 = monotonic_ns();
   let argv = args();
-  let parsed = match (flags.parse(argv.drop(1))) {
+  let parsed = match (options_of(argv.drop(1))) {
     Ok(v) => v,
     Err(why) => {
       eprint("rg: " + why);
       return 2;
     },
   };
+  if (parsed.special != "") {
+    return special(parsed.special);
+  }
   let o = match (with_pattern_files(parsed)) {
     Ok(v) => v,
     Err(why) => {
@@ -718,6 +831,9 @@ function main(): i32 {
   };
   if (o.mode == flags.TypeList) {
     return type_list(o);
+  }
+  if (o.mode == flags.Generate) {
+    return generate(o.generate);
   }
   if (o.searches() && o.max_count == 0) {
     return 1;

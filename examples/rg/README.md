@@ -69,6 +69,10 @@ searches the current directory, and it writes each name without the leading
 | `-0` | `--null` | A NUL byte after each file name. |
 | | `--path-separator S` | The byte that takes the place of `/` in a file name. |
 | | `--color never\|auto\|always\|ansi` | Color, with the default colors of ripgrep. `auto` writes color on a terminal with a TERM that is not `dumb`, and with no NO_COLOR. |
+| | `--colors SPEC` | The color of the file names, the line numbers, the columns or the matches: `TYPE:fg:COLOR`, `TYPE:bg:COLOR`, `TYPE:style:STYLE` or `TYPE:none`. A color is a name, a number from 0 to 255, or three numbers with commas. |
+| | `--hyperlink-format F`, `--hostname-bin P` | Each file name is a link of the format F, or of one of its aliases (`default`, `file`, `grep+`, `kitty`, `macvim`, `none`, `textmate`, `vscode`, `vscode-insiders`, `vscodium`). A link needs color. `{host}` is the output of P, or the host name of the system. |
+| | `--field-match-separator S`, `--field-context-separator S` | The text after each field of a selected line and of a context line, with escapes. |
+| | `--line-buffered`, `--block-buffered` | Accepted. The port writes its output in blocks of 64 KiB, and after each file on a terminal. |
 | `-p` | `--pretty` | Color, a heading and line numbers. |
 | | `--stats` | The counts and the times of the search, after the output. |
 | | `--json` | Each line as a JSON message of ripgrep, with a message at the start and at the end of each file, and a summary. |
@@ -92,7 +96,19 @@ searches the current directory, and it writes each name without the leading
 | | `--ignore-file F` | More ignore rules. |
 | | `--no-require-git` | Use `.gitignore` files also outside a git repository. |
 | `-u`, `-uu`, `-uuu` | `--unrestricted` | `--no-ignore`, then also `--hidden`, then also `--binary`. |
+| | `--one-file-system` | Do not go down into a directory on another file system than the root of the walk. |
 | | `--no-messages`, `--no-ignore-messages` | No error messages, or no messages about ignore files. |
+
+### Other modes
+
+| Option | Long form | Effect |
+| --- | --- | --- |
+| `-h` | `--help` | The short or the long help of ripgrep 14.1.0. |
+| `-V` | `--version` | The version, or with `--version` the features too. |
+| | `--pcre2-version` | The version of PCRE2 that `-P` follows. |
+| | `--generate K` | The man page, or the completions of `complete-bash`, `complete-zsh`, `complete-fish` or `complete-powershell`. |
+| | `--no-config` | Do not read the file that `RIPGREP_CONFIG_PATH` names. Else each line of that file that is not empty and does not start with `#` is an argument before those of the command line. |
+| | `--debug`, `--trace` | Accepted. The port does not write the messages of the logs. |
 
 Options and paths can come in any order. `--` ends the options. Short options
 can share one dash, and a value can follow its letter, as in `-nA1`.
@@ -129,7 +145,8 @@ numbers, as in ripgrep. Else it has no heading, and no line numbers without
 - The messages for an unknown flag, a missing value, an invalid count, an
   invalid choice, an invalid glob and an unknown type are those of ripgrep.
   When a walk with no path finds no file, the port writes the message of
-  ripgrep about filters.
+  ripgrep about filters. For a long flag that it does not know, it names the flags with
+  similar names, as ripgrep does.
 
 ### The ignore rules
 
@@ -216,9 +233,10 @@ order of the walk.
 - **Times.** `--stats` and `--json` write times, and the times of two runs
   are not the same.
 
-- **Not in this slice.** `--pre` and `--pre-glob`, `--colors`,
-  `--hyperlink-format`, `-z`, `-P`, `--dfa-size-limit` and
-  `--regex-size-limit`.
+- **Logs.** `--debug` and `--trace` write no messages.
+
+- **Not in this slice.** `--pre` and `--pre-glob`, `-z`, `-P`,
+  `--dfa-size-limit` and `--regex-size-limit`.
 
 ## Tests
 
@@ -254,7 +272,7 @@ order of the walk.
   tests of ripgrep 14.1.1 (`testdata/ripgrep-tests.json`, from
   `tests/*.rs`) with the port and with `/usr/bin/rg`. Each case makes its
   files in a new directory, and each run gets `--path-separator / -j1`.
-  `testdata/ripgrep-pass.txt` names the 292 of 306 cases that give the
+  `testdata/ripgrep-pass.txt` names the 299 of 306 cases that give the
   output of ripgrep. The test fails when a named case fails, and when a case
   that it does not name passes. Most of the other cases use options that
   are not in this slice, and four compare the times of `--stats`. The

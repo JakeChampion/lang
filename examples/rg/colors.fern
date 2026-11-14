@@ -1,0 +1,227 @@
+// The colors of the rg port: the specs of --colors, and the ANSI escapes
+// that ripgrep 14.1.0 writes for them.
+//
+// A color is -1 for no color, 0 to 7 for a name, 256 + N for the ANSI 256
+// color N, or RGB + (r << 16 | g << 8 | b) for a color of 24 bits.
+import "std/string";
+
+const RGB: i32 = 16777216;
+
+const NAMES: string[] = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"];
+
+// The style of one kind of output.
+pub struct Spec { fg: i32, bg: i32, bold: boolean, intense: boolean, underline: boolean }
+
+// The styles of the file names, the line numbers, the columns and the
+// matches.
+pub struct Colors { path: Spec, line: Spec, column: Spec, matched: Spec }
+
+function plain(): Spec {
+  return Spec { fg: -1, bg: -1, bold: false, intense: false, underline: false };
+}
+
+// The colors of ripgrep on Unix.
+pub function defaults(): Colors {
+  let none = plain();
+  return Colors {
+    path: Spec { ...none, fg: 5 }, line: Spec { ...none, fg: 2 }, column: none,
+    matched: Spec { ...none, fg: 1, bold: true },
+  };
+}
+
+// Whether the spec sets nothing. ripgrep writes a match with no escapes
+// when its spec is empty.
+pub function (s: Spec) is_none(): boolean {
+  return s.fg < 0 && s.bg < 0 && !s.bold && !s.intense && !s.underline;
+}
+
+// The escapes that start text in the style of the spec. They reset the
+// style first.
+pub function (s: Spec) escape(): string {
+  let out = "\x1b[0m";
+  if (s.bold) {
+    out += "\x1b[1m";
+  }
+  if (s.underline) {
+    out += "\x1b[4m";
+  }
+  if (s.fg >= 0) {
+    out += color_escape(s.fg, true, s.intense);
+  }
+  if (s.bg >= 0) {
+    out += color_escape(s.bg, false, s.intense);
+  }
+  return out;
+}
+
+function color_escape(c: i32, fg: boolean, intense: boolean): string {
+  let base = if (fg) { "\x1b[3" } else { "\x1b[4" };
+  if (c < 8 && !intense) {
+    return base + c.to_string() + "m";
+  }
+  let wide = if (fg) { "\x1b[38;" } else { "\x1b[48;" };
+  if (c < 8) {
+    return wide + "5;" + (c + 8).to_string() + "m";
+  }
+  if (c < RGB) {
+    return wide + "5;" + (c - 256).to_string() + "m";
+  }
+  let v = c - RGB;
+  return wide + "2;" + (v >> 16).to_string() + ";" + (v >> 8 & 255).to_string() + ";" + (v & 255).to_string() + "m";
+}
+
+// The colors with one spec of --colors applied, or the message of a spec
+// that is not valid.
+pub function apply(c: Colors, text: string): Result[Colors, string] {
+  let pieces = text.split(":");
+  if (pieces.len() <= 1 || pieces.len() > 3) {
+    return Err(bad_format(text));
+  }
+  let kind = pieces[0].to_ascii_lower();
+  if (index_of(["path", "line", "column", "match"], kind) < 0) {
+    return Err(f"unrecognized output type '{pieces[0]}'. Choose from: path, line, column, match.");
+  }
+  let what = pieces[1].to_ascii_lower();
+  if (what == "none") {
+    return Ok(with_spec(c, kind, plain()));
+  }
+  if (index_of(["fg", "bg", "style"], what) < 0) {
+    return Err(f"unrecognized spec type '{pieces[1]}'. Choose from: fg, bg, style, none.");
+  }
+  if (pieces.len() < 3) {
+    return Err(bad_format(text));
+  }
+  return Ok(with_spec(c, kind, valued(spec_of(c, kind), what, pieces[2])?));
+}
+
+function index_of(names: string[], name: string): i32 {
+  for i in 0..names.len() {
+    if (names[i] == name) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+// The spec with the value of a spec of the type fg, bg or style.
+function valued(old: Spec, what: string, value: string): Result[Spec, string] {
+  if (what == "style") {
+    return styled(old, value);
+  }
+  let color = parse_color(value)?;
+  return Ok(if (what == "fg") { Spec { ...old, fg: color } } else { Spec { ...old, bg: color } });
+}
+
+function bad_format(text: string): string {
+  return f"invalid color spec format: '{text}'. Valid format is '(path|line|column|match):(fg|bg|style):(value)'.";
+}
+
+function spec_of(c: Colors, kind: string): Spec {
+  return match (kind) {
+    "path" => c.path,
+    "line" => c.line,
+    "column" => c.column,
+    _ => c.matched,
+  };
+}
+
+function with_spec(c: Colors, kind: string, s: Spec): Colors {
+  return match (kind) {
+    "path" => Colors { ...c, path: s },
+    "line" => Colors { ...c, line: s },
+    "column" => Colors { ...c, column: s },
+    _ => Colors { ...c, matched: s },
+  };
+}
+
+function styled(s: Spec, value: string): Result[Spec, string] {
+  return match (value.to_ascii_lower()) {
+    "bold" => Ok(Spec { ...s, bold: true }),
+    "nobold" => Ok(Spec { ...s, bold: false }),
+    "intense" => Ok(Spec { ...s, intense: true }),
+    "nointense" => Ok(Spec { ...s, intense: false }),
+    "underline" => Ok(Spec { ...s, underline: true }),
+    "nounderline" => Ok(Spec { ...s, underline: false }),
+    _ => Err(f"unrecognized style attribute '{value}'. Choose from: nobold, bold, nointense, intense, nounderline, underline."),
+  };
+}
+
+// A color name, a number of the ANSI 256 colors, or three numbers with
+// commas between them. A number is decimal, or hexadecimal after `0x`.
+function parse_color(text: string): Result[i32, string] {
+  let lower = text.to_ascii_lower();
+  for i in 0..NAMES.len() {
+    if (NAMES[i] == lower) {
+      return Ok(i);
+    }
+  }
+  let codes = text.split(",");
+  let name_error = f"unrecognized color name '{text}'. Choose from: black, blue, green, red, cyan, magenta, yellow, white";
+  let rgb_error = f"unrecognized RGB color triple, should be '[0-255],[0-255],[0-255]' (or a hex triple), but is '{text}'";
+  if (codes.len() == 1) {
+    let n = color_number(text);
+    if (n >= 0) {
+      return Ok(256 + n);
+    }
+    if (all_hex(text)) {
+      return Err(f"unrecognized ansi256 color number, should be '[0-255]' (or a hex number), but is '{text}'");
+    }
+    return Err(name_error);
+  }
+  if (codes.len() != 3) {
+    return Err(if (__memchr(text, 44, 0) >= 0) { rgb_error } else { name_error });
+  }
+  let v = RGB;
+  for k in 0..3 {
+    let n = color_number(codes[k]);
+    if (n < 0) {
+      return Err(rgb_error);
+    }
+    v += n << 16 - 8 * k;
+  }
+  return Ok(v);
+}
+
+// The value of a number from 0 to 255, or -1. A `+` may come first.
+function color_number(text: string): i32 {
+  let hex = text.starts_with("0x");
+  let at = if (hex) { 2 } else { 0 };
+  if (at < text.len() && text[at] == b'+') {
+    at += 1;
+  }
+  if (at >= text.len()) {
+    return -1;
+  }
+  let v = 0;
+  for i in at..text.len() {
+    let d = digit(text[i], hex);
+    if (d < 0) {
+      return -1;
+    }
+    v = v * (if (hex) { 16 } else { 10 }) + d;
+    if (v > 255) {
+      return -1;
+    }
+  }
+  return v;
+}
+
+function digit(c: u8, hex: boolean): i32 {
+  if (c >= b'0' && c <= b'9') {
+    return c as i32 - 48;
+  }
+  let l = c | 32u8;
+  if (hex && l >= b'a' && l <= b'f') {
+    return l as i32 - 87;
+  }
+  return -1;
+}
+
+function all_hex(text: string): boolean {
+  for i in 0..text.len() {
+    if (digit(text[i], true) < 0) {
+      return false;
+    }
+  }
+  return true;
+}
