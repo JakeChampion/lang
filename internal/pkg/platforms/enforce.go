@@ -14,6 +14,7 @@ var gatedBuiltins = map[string]string{
 	"proc_waitpid":        "proc",
 	"proc_waitpid_nohang": "proc",
 	"proc_waitpid_status": "proc",
+	"proc_wait_any":       "proc",
 	"__worker_region":     "proc",
 	"__worker_exit":       "proc",
 	"__worker_reap":       "proc",
