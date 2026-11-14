@@ -3408,7 +3408,7 @@ function parse_tuple_arm_pattern_nested(p: Par): (i32[], string[], ast.Expr[], a
       lits = lits.append(e_bool(true));
       pats = pats.append(p_wildcard());
     } else if (p.peek_is_pat_literal()) {
-      let (le_expr, le_p) = parse_expr(p);
+      let (le_expr, le_p) = parse_binary(p, pattern_min_prec());
       p = le_p;
       elem_kinds = elem_kinds.append(2);
       binds = binds.append("");
@@ -3423,13 +3423,13 @@ function parse_tuple_arm_pattern_nested(p: Par): (i32[], string[], ast.Expr[], a
     }
     break;
   }
-  if (p.peek_punct() == ")") {
-    p = p.advance();
-  }
   if (elem_kinds.len() < 2) {
+    if (p.peek_punct() == ")") {
+      p = p.advance();
+    }
     return (none, [], [], no_pats, p);
   }
-  return (elem_kinds, binds, lits, pats, p);
+  return (elem_kinds, binds, lits, pats, p.expect(")"));
 }
 
 function tuple_elem_names(prefix: string, n: i32): string {
@@ -5041,6 +5041,9 @@ function parse_pattern_nested(p: Par): (ast.Pattern, Par) {
       }
       if (p.peek_punct() == ",") {
         p = p.advance();
+      } else if (p.peek_punct() != ")") {
+        p = p.expect(")");
+        break;
       }
     }
     if (p.peek_punct() == ")") {
