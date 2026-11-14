@@ -11223,7 +11223,7 @@ function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = emit_rt_subprocess(s);
         s = emit_runtime("__fern_sp_exec_path __fern_sp_exec_failed", s);
       } else {
-        s = emit_runtime("__fern_sp_drain __fern_sp_exec_at __fern_sp_exec_failed __fern_subprocess", s);
+        s = emit_runtime("__fern_sp_wait __fern_sp_feed __fern_sp_take __fern_sp_exec_at __fern_sp_exec_failed __fern_subprocess", s);
       }
     }
     s = emit_rt_net(s, darwin);
