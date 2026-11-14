@@ -1649,7 +1649,7 @@ A word assertion of Unicode examines the characters on each side, and a DFA know
 
 A program over `RX_DFA_PROGRAM` instructions has no DFA, and the Pike VM does all of its searches.
 
-`compile` fills each state of a small table at once: the program has at most `RX_DFA_SMALL` instructions, and the table at most `RX_DFA_FULL` words. A search with such a table does not read a cell, and it does not check for a state that is not filled. The dead state and the quit state have the flag `RX_DFA_STOP`, so the search reads one word of flags for each byte, as it does for a match. Thus a search of a short text costs as little as it did before the DFAs were lazy.
+`compile` fills each state of a small table at once: the count of instructions times the count of columns is at most `RX_DFA_FILLS`, and the table has at most `RX_DFA_FULL` words. A DFA has about one state for each instruction, so the product tells the work of the fill before it starts. A class of Unicode gives many columns, and its table stays lazy. A search with such a table does not read a cell, and it does not check for a state that is not filled. The dead state and the quit state have the flag `RX_DFA_STOP`, so the search reads one word of flags for each byte, as it does for a match. Thus a search of a short text costs as little as it did before the DFAs were lazy.
 
 | Words | Contents |
 | --- | --- |
@@ -2142,19 +2142,20 @@ function __rx_ctx_ok(k: i32, ctx: i32): boolean {
 }
 
 // The limits of a table that `compile` fills completely: the instructions of
-// its program and the words of the table. A fill costs time on each
-// compile, also in the interpreter.
-const RX_DFA_SMALL: i32 = 128;
+// its program times its columns, and the words of the table. A fill costs
+// time on each compile, also in the interpreter.
+const RX_DFA_FILLS: i32 = 4096;
 
 const RX_DFA_FULL: i32 = 8192;
 
-// The table with each state that a search can reach, or [] when the program
-// has more than RX_DFA_SMALL instructions or the table more than RX_DFA_FULL
-// words. With such a table, a search does not check for a state that is not
-// filled. The quit state stays where a Unicode word assertion stops the DFA.
+// The table with each state that a search can reach, or [] when the
+// instructions times the columns are more than RX_DFA_FILLS or the table has
+// more than RX_DFA_FULL words. With such a table, a search does not check for
+// a state that is not filled. The quit state stays where a Unicode word
+// assertion stops the DFA.
 function __rx_dfa_full(dfa: RDfa): i32[] {
   let empty: i32[] = [];
-  if (dfa.code.len() / 3 > RX_DFA_SMALL) {
+  if (dfa.init.len() == 0 || dfa.code.len() / 3 * dfa.init[0] > RX_DFA_FILLS) {
     return empty;
   }
   let limit = RX_DFA_FULL;

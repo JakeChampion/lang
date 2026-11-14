@@ -84,12 +84,16 @@ function actual(output: string): void {
     }
     i += 1;
   }
-  require(added == 5, "three wide sizes, self XOR and syscall retained");
+  require(added == 7, "three wide sizes, the advised length, self XOR and two syscalls retained");
 }
 
 function actual_added(op: isa.Op, line: string): i32 {
   if (line == "movabs $17179869184, %rax" || line == "movabs $17179869184, %rsi" || line == "movabs $17179869184, %rcx") {
     actual_wide(op, line);
+    return 1;
+  }
+  if (line == "movabs $17175674880, %rsi") {
+    actual_advised(op);
     return 1;
   }
   if (line == "xorl %r9d, %r9d") {
@@ -102,6 +106,10 @@ function actual_added(op: isa.Op, line: string): i32 {
   }
   require(op.kind == 0, "other unknown remains visible: " + line);
   return 0;
+}
+
+function actual_advised(op: isa.Op): void {
+  require(op.kind == 36 && op.symbol == "17175674880" && op.width == 64 && op.destination == 6, "actual advised length");
 }
 
 function actual_wide(op: isa.Op, line: string): void {

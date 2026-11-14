@@ -1,3 +1,5 @@
+# 2026-11-13: inline_worker_exit_is_a_worker_failure keeps three scheduler blocks
+# in active frames at exit(134). The process does not unwind these frames.
 # 2026-11-14: tuple_projection_of_a_fresh_call_is_owned has balanced allocations on x86-64.
 # 2026-11-13: owned_let_arm_result_in_loop has no allocations on x86-64.
 # 2026-11-14: owned_spread_reads_replaced_field has no allocations on x86-64.
@@ -607,6 +609,7 @@ init_option_control                                  0
 init_struct_update_control                           0
 init_variant_control                                 0
 inline_hints                                         0
+# 2026-11-13: inline_worker_exit_is_a_worker_failure stops through exit(134) inside a worker body, so the blocks that are live at that call stay unpaired: 3 on x86-64, in main run 43510761873 and on a local run.
 inline_worker_exit_is_a_worker_failure               3
 insert_dedup                                         0
 int_bit_accessors                                    0
@@ -652,6 +655,7 @@ lanes_f32x4_ops                                      0
 lanes_f64x2_ops                                      0
 lanes_generic_instances                              0
 lanes_map_fusion                                     0
+lanes_integer_ops                                    0
 lanes_methods                                        0
 lanes_receivers                                      0
 lanes_spill_pressure                                 0

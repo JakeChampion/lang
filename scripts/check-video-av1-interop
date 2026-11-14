@@ -92,4 +92,9 @@ with tempfile.TemporaryDirectory() as temporary:
         assert diagnostic in result.stderr and 'Failed to parse temporal unit' in result.stderr, result.stderr
     # The AV1 leb128 conformance rule requires byte-eight termination. FFmpeg 7 accepts this violation.
     run(directory, 'unterminated', base + bytes([0x7a]) + bytes([0x80] * 8), 'invalid video header or packet')
-    print('Four malformed controls fail the independent reader; the spec also requires eight-byte termination', flush=True)
+    # AV1 section 6.2.2 forbids extensions on OBUs that are not layer-specific.
+    for kind in (1, 2, 8):
+        for extra in (0, 0xf8):
+            packet = base + bytes([kind * 8 + 6, extra, 0])
+            run(directory, f'non-layer-extension-{kind}-{extra}', packet, 'invalid video header or packet')
+    print('Four malformed controls fail the independent reader; specification controls check termination and layer extensions', flush=True)

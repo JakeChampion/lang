@@ -5,6 +5,9 @@
 # well, so map_int, map_string, ordmap_insert, pvec_with, sort_strings and struct_drop grow 3% to 10%.
 # Main at 38768eb2 already gave the measured values of perceus_rbtree_ck and closure_call. Each row
 # that the run names moves to its measured value. Keep all tolerances.
+# 2026-11-13: CI 43517654014, job 132208527194, tested merge 4993a5d5.
+# Main 38768eb2 with HEVC input. These rows use the complete measured report.
+# Workloads, metric keys, and tolerances are unchanged.
 # 2026-11-13: PR #15784, perf-x86_64 job 132195198217 on the merge with main 38768eb2. Twenty-three
 # emit rows moved, perceus_rbtree_ck by +6.7% to +7.7% (089d854d adds length to the benchmark) and the others by 1% to 3%. Main's
 # compiler and #15784 emit the same code for each program of bench/ on x86-64 and arm64, so these are
@@ -18,6 +21,14 @@
 # deflate_decode, deflate_encode, ordmap_insert and the two utf8_ingest programs.
 # They fall 0.1% to 6.4%. The other rows here are values of main.
 # Each row moves to its measured value. Keep all tolerances.
+# 2026-11-14: PR #15790 at 2bba0641, on the merge with main 8ce8fde7: perf-x86_64 job 132329458814
+# and perf-aarch64 job 132329458736. 2 rows are off the pins that main and this PR set apart.
+# Each moves to its measured value. Keep all tolerances.
+# 2026-11-14: PR #15790 at ba957d1e, perf-x86_64 job 132249261077 and perf-aarch64 job 132249260970.
+# The colour step of the bump allocator and the request for huge pages add 20 to 60 bytes of
+# runtime text to each program and two or three instructions to each bump block. The other rows
+# are values of main: the PR does not change what the compiler emits for a function. 53 rows
+# move to their measured values. Keep all tolerances.
 # 2026-11-13: PR #15739, perf-x86_64 job 132017371022 on the merge with main 629da263. Eleven emit rows
 # of perceus_cfold, perceus_rbtree, perceus_rbtree_ck, pmap_insert and pvec_with are 1.2% to 4.8%
 # below their pins. These are values of main: #15739 changes no code that these programs reach. Each
@@ -401,6 +412,8 @@ selfhost/x86-64-linux/enum_match.emit	935
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
 selfhost/x86-64-linux/http_hello.emit	15877
 selfhost/x86-64-linux/int_loop.emit	292
+# 2026-11-10: PR #15106, CI job 129860813857 on b45460dd72 measured this size.
+# Bank the measured increase after main 5d6c692eb2. Keep the tolerance unchanged.
 selfhost/x86-64-linux/map_int.emit	8790
 selfhost/x86-64-linux/map_probe_chain.emit	8794
 selfhost/x86-64-linux/map_string.emit	9671
@@ -414,8 +427,6 @@ selfhost/x86-64-linux/sort_strings.emit	3316
 selfhost/x86-64-linux/string_build.emit	1986
 selfhost/x86-64-linux/string_count_byte.emit	1321
 selfhost/x86-64-linux/string_find_byte.emit	1593
-# 2026-11-10: PR #15106, CI job 129860813857 on b45460dd72 measured this size.
-# Bank the measured increase after main 5d6c692eb2. Keep the tolerance unchanged.
 selfhost/x86-64-linux/string_rfind_byte.emit	1758
 selfhost/x86-64-linux/string_scan.emit	2225
 selfhost/x86-64-linux/string_slice.emit	944
@@ -426,13 +437,13 @@ selfhost/x86-64-linux/utf8_ingest_validated.emit	8666
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
 selfhost/x86-64-linux/perceus_cfold.emit	1938
-selfhost/arm64-linux/perceus_cfold.emit	2183
+selfhost/arm64-linux/perceus_cfold.emit	2205
 selfhost/wasm32-wasi/perceus_cfold.emit	1766
 selfhost/x86-64-linux/perceus_deriv.emit	2651
 selfhost/arm64-linux/perceus_deriv.emit	2937
 selfhost/wasm32-wasi/perceus_deriv.emit	2831
-selfhost/x86-64-linux/perceus_nqueens.emit	1548
-selfhost/arm64-linux/perceus_nqueens.emit	1797
+selfhost/x86-64-linux/perceus_nqueens.emit	1566
+selfhost/arm64-linux/perceus_nqueens.emit	1821
 selfhost/wasm32-wasi/perceus_nqueens.emit	1267
 selfhost/x86-64-linux/perceus_rbtree.emit	2600
 selfhost/arm64-linux/perceus_rbtree.emit	2842

@@ -2758,7 +2758,7 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
       let is_tykw: boolean = x.name == "string" || x.name == "boolean" || x.name == "void"
         || x.name == "i32" || x.name == "i64"
         || x.name == "u8" || x.name == "u32" || x.name == "u64"
-        || x.name == "usize" || x.name == "f32" || x.name == "f64" || x.name == "f64x2" || x.name == "f32x4" || x.name == "u8x16";
+        || x.name == "usize" || x.name == "f32" || x.name == "f64" || typeinfo.lanes_width(x.name) > 0;
       if (is_tykw) {
         let kwline = p.peek_line();
         let kwcol = p.peek_col();
@@ -24380,6 +24380,10 @@ function skip_decl_modifier(p: Par, name: string, before: string): Par {
 
 pub function is_float_type_name(t: string): boolean {
   return t == "f64" || t == "f32";
+}
+
+pub function is_lanes_type_name(t: string): boolean {
+  return typeinfo.lanes_width(t) > 0;
 }
 
 // The names of the types that a 64-bit integer slot holds. A Socket is one:

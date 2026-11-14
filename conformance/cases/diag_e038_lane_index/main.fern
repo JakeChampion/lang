@@ -10,5 +10,9 @@ function main(): i32 {
   let b: f64 = __f64x2_lane(v, i);
   let c: f64 = __f64x2_lane(v, 2);
   let d: f32 = __f32x4_lane(q, 4);
+  let w: i16x8 = __i16x8_splat(1);
+  let e: i32 = __i16x8_lane(w, 7);
+  let f: i32 = __i16x8_lane(w, 8);
+  let g: u32 = __u32x4_lane(__u32x4_splat(1 as u32), i);
   return 0;
 }

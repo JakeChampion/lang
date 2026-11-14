@@ -4,12 +4,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
 // prDate is the date in the page header of pr, which is the time of the run.
-// The date in the header of pr: GNU pr writes 2026-11-14 09:26, and the pr of
-// Darwin, which diff -l runs there, writes Nov 14 09:26 2026.
+// GNU pr writes 2026-11-14 09:26; the BSD pr that diff -l runs on Darwin
+// writes Nov 14 09:26 2026.
 var prDate = regexp.MustCompile(`\d{4}-\d\d-\d\d \d\d:\d\d|[A-Z][a-z]{2} [ \d]\d \d\d:\d\d \d{4}`)
 
 func maskPrDate(s string) string {
@@ -416,5 +417,22 @@ func diffOptionCases(t *testing.T) []invocation {
 		c("prefix of unchanged", "--unch", "a", "b"),
 		c("prefix of tabsize", "--tab=4", "-t", "a", "b"),
 		c("prefix of from file", "--from=a", "b"),
+	}
+}
+
+// The fixture names must also work on a case-insensitive filesystem.
+func TestDiffFixtureNamesArePortable(t *testing.T) {
+	cases := diffOptionCases(t)
+	entries, err := os.ReadDir(cases[0].dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := make(map[string]string)
+	for _, entry := range entries {
+		name := strings.ToLower(entry.Name())
+		if previous, ok := seen[name]; ok {
+			t.Errorf("fixture paths %q and %q collide on a case-insensitive filesystem", previous, entry.Name())
+		}
+		seen[name] = entry.Name()
 	}
 }

@@ -1393,6 +1393,7 @@ pub function module_uses_u32_to_string(cache: irtables.LowerResult[]): boolean {
 function array_helper_needs(cache: irtables.LowerResult[], own out: string[]): string[] {
   if (module_calls_direct(cache, "__fern_arr_str_join")) {
     out = out.append("@uses_arr_str_join");
+    out = out.append("@abort_checks");
   }
   if (module_calls_direct(cache, "__fern_arr_concat")) {
     out = out.append("@uses_arr_concat");
@@ -5316,7 +5317,7 @@ function decl_result_wat(fd: parser.FuncDecl, structs: irtables.StructTab): stri
   if (parser.is_float_type_name(fd.ret_type)) {
     return " (result f64)\n";
   }
-  if (fd.ret_type == "f64x2" || fd.ret_type == "f32x4" || fd.ret_type == "u8x16") {
+  if (parser.is_lanes_type_name(fd.ret_type)) {
     return " (result v128)\n";
   }
   if (irtables.erased_passthrough_safe(fd)) {
@@ -7377,20 +7378,22 @@ pub function str_split_helper(): string {
 pub function str_join_helper(): string {
   let o = "";
   o += "  (func $__fern_str_join (param $a i32) (param $sep i32) (result i32)\n";
-  o += "    (local $n i32) (local $sl i32) (local $total i32) (local $i i32) (local $p i32) (local $w i32) (local $elem i32) (local $el i32) (local $j i32)\n";
+  o += "    (local $n i32) (local $sl i32) (local $total i64) (local $size i32) (local $i i32) (local $p i32) (local $w i32) (local $elem i32) (local $el i32) (local $j i32)\n";
   o += "    (local.set $n (i32.load (local.get $a)))\n";
   o += "    (local.set $sl (i32.load (local.get $sep)))\n";
-  o += "    (local.set $total (i32.const 0))\n";
+  o += "    (local.set $total (i64.const 0))\n";
   o += "    (local.set $i (i32.const 0))\n";
   o += "    (block $dt (loop $ct\n";
   o += "      (br_if $dt (i32.ge_s (local.get $i) (local.get $n)))\n";
   o += "      (local.set $elem (i32.load (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $i) (i32.const 4)))))\n";
-  o += "      (local.set $total (i32.add (local.get $total) (i32.load (local.get $elem))))\n";
+  o += "      (local.set $total (i64.add (local.get $total) (i64.extend_i32_u (i32.load (local.get $elem)))))\n";
   o += "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
   o += "      (br $ct)))\n";
-  o += "    (if (i32.gt_s (local.get $n) (i32.const 0)) (then (local.set $total (i32.add (local.get $total) (i32.mul (local.get $sl) (i32.sub (local.get $n) (i32.const 1)))))))\n";
-  o += "    (local.set $p (call $__fern_str_box (i32.add (i32.const 4) (local.get $total))))\n";
-  o += "    (i32.store (local.get $p) (local.get $total))\n";
+  o += "    (if (i32.gt_s (local.get $n) (i32.const 0)) (then (local.set $total (i64.add (local.get $total) (i64.mul (i64.extend_i32_u (local.get $sl)) (i64.extend_i32_u (i32.sub (local.get $n) (i32.const 1))))))))\n";
+  o += "    (if (i64.gt_u (local.get $total) (i64.const 2147483647)) (then (call $__fern_abort_alloc) (unreachable)))\n";
+  o += "    (local.set $size (i32.wrap_i64 (local.get $total)))\n";
+  o += "    (local.set $p (call $__fern_str_box (i32.add (i32.const 4) (local.get $size))))\n";
+  o += "    (i32.store (local.get $p) (local.get $size))\n";
   o += "    (local.set $w (i32.const 0))\n";
   o += "    (local.set $i (i32.const 0))\n";
   o += "    (block $dj (loop $cj\n";

@@ -1,5 +1,5 @@
-// The music ring of std/android/audio against a stand-in for libaaudio.so
-// (scripts/audio-reference/aaudio-music-mock.c). main gives 0, or the
+// The ring of a Buffered stream of std/android/audio against a stand-in for libaaudio.so
+// (scripts/audio-reference/aaudio-buffered-mock.c). main gives 0, or the
 // number of the first check that fails.
 import "std/android/audio";
 
@@ -37,7 +37,7 @@ function counted(n: i32, first: i32): i32[] {
 }
 
 pub function main(): i32 {
-  let m = audio.music(48000, 2);
+  let m = audio.buffered(48000, 2);
   if (m.ptr == 0 as usize || m.ring == 0 as usize || m.rate != 48000 || m.channels != 2) {
     return 1;
   }

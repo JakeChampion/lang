@@ -17,7 +17,7 @@ func simdSuiteSrc(t *testing.T) string {
 
 func wantSimdSuitePassed(t *testing.T, leg, out string) {
 	t.Helper()
-	for _, w := range []string{"1..26", "# fail 0"} {
+	for _, w := range []string{"1..28", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("%s: stdout missing %q\n%s", leg, w, out)
 		}

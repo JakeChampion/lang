@@ -26,18 +26,15 @@ pub function keeps(f: ssa.SFunc): ssa.SFunc {
     }
     let site = find_site(g);
     if (site.b < 0) {
-      return rounds_done(g, rounds);
+      return with_loads(g);
     }
     g = kept(g, site);
   }
-  return ssa.prune_dead(g);
+  return with_loads(g);
 }
 
-function rounds_done(g: ssa.SFunc, rounds: i32): ssa.SFunc {
-  if (rounds == 0) {
-    return g;
-  }
-  return ssa.prune_dead(g);
+function with_loads(g: ssa.SFunc): ssa.SFunc {
+  return ssa.prune_dead(shared_loads(g));
 }
 
 function has_reuse(f: ssa.SFunc): boolean {
@@ -77,7 +74,15 @@ function find_site(f: ssa.SFunc): Site {
 // token is a phi that takes a zero from one arm of a uniqueness test and the
 // tested box from the other arm.
 function token_site(f: ssa.SFunc, at: i32[], defs: ssa.SInst[], def_at: i32[], bi: i32, k: i32): Site {
-  let tok = f.blocks[bi].insts[k].args[0];
+  let site = token_of(f, at, defs, def_at, f.blocks[bi].insts[k].args[0]);
+  if (site.m < 0) {
+    return site;
+  }
+  return Site { ...site, b: bi, k: k };
+}
+
+// The site of the token tok with no reuse allocation: b and k are -1.
+function token_of(f: ssa.SFunc, at: i32[], defs: ssa.SInst[], def_at: i32[], tok: i32): Site {
   let phi = defs[tok];
   let m = def_at[tok];
   if (phi.kind_tag != ssa.PHI || phi.args.len() != 2 || m < 0 || f.blocks[m].preds.len() != 2) {
@@ -90,7 +95,7 @@ function token_site(f: ssa.SFunc, at: i32[], defs: ssa.SInst[], def_at: i32[], b
       let fast = ssa.position_of(at, mb.preds[1 - slot]);
       let p = test_block(f, at, defs, fast, slow, phi.args[1 - slot], mb.id);
       if (p >= 0) {
-        return Site { ...no_site(), p: p, fast: fast, slow: slow, m: m, tok: tok, box: phi.args[1 - slot], b: bi, k: k };
+        return Site { ...no_site(), p: p, fast: fast, slow: slow, m: m, tok: tok, box: phi.args[1 - slot] };
       }
     }
   }
@@ -466,4 +471,227 @@ function entered_from(b: ssa.SBlock, old: i32, now: i32): ssa.SBlock {
     preds = preds.append(if (p == old) { now } else { p });
   }
   return ssa.SBlock { ...b, preds: preds };
+}
+
+// A block above a uniqueness test loads a word of the box, and only the
+// shared side of the test reads it: the shared arm, or a side that allocates
+// for a null token, which only the shared arm leads to. shared_loads moves
+// such a load to each shared arm, so the side with the box does not run it.
+function shared_loads(f: ssa.SFunc): ssa.SFunc {
+  let g = f;
+  for rounds in 0..32 {
+    let move = find_move(g);
+    if (move.load < 0) {
+      return g;
+    }
+    g = moved(g, move);
+  }
+  return g;
+}
+
+// arms are the positions of the shared arms that get a copy of the load.
+// meets[j] is the position of the block where arm j meets the other arm when
+// a null side of the token toks[j] reads the load, and -1 when only the arm
+// reads it.
+struct Move { load: i32, arms: i32[], meets: i32[], toks: i32[] }
+
+function no_move(): Move {
+  return Move { load: -1, arms: [], meets: [], toks: [] };
+}
+
+function find_move(f: ssa.SFunc): Move {
+  let at = ssa.block_positions(f);
+  let defs = ssa.inst_defs(f);
+  let def_at = def_blocks(f);
+  let tested = unique_tested(f);
+  for bi in 0..f.blocks.len() {
+    for ins in f.blocks[bi].insts {
+      if (ins.kind_tag == ssa.LD_AT && ins.str == "" && ins.args.len() == 1 && tested[ins.args[0]]) {
+        let move = load_move(f, at, defs, def_at, ins);
+        if (movable(f, at, def_at, move, bi, ins.args[0])) {
+          return move;
+        }
+      }
+    }
+  }
+  return no_move();
+}
+
+// Whether the move has an arm, the load is not in one of its arms, and no
+// store to the box can run between the load and an arm.
+function movable(f: ssa.SFunc, at: i32[], def_at: i32[], move: Move, bi: i32, box: i32): boolean {
+  if (move.load < 0 || move.arms.len() == 0 || util.index_of_i32(move.arms, bi) >= 0) {
+    return false;
+  }
+  return !stored_before(f, at, def_at, move, box);
+}
+
+// For each value, whether a uniqueness test reads it.
+function unique_tested(f: ssa.SFunc): boolean[] {
+  let out = __alloc_bool(f.nvals);
+  for b in f.blocks {
+    for ins in b.insts {
+      if (ins.args.len() == 1 && ins.args[0] >= 0 && tests_unique(ins, ins.args[0])) {
+        out = out.with(ins.args[0], true);
+      }
+    }
+  }
+  return out;
+}
+
+// The move of the load, when each use of it is on a shared side of its box.
+// A move with load -1 when one use is not.
+function load_move(f: ssa.SFunc, at: i32[], defs: ssa.SInst[], def_at: i32[], load: ssa.SInst): Move {
+  let move = Move { ...no_move(), load: load.result };
+  for bi in 0..f.blocks.len() {
+    let b = f.blocks[bi];
+    if (term_reads(b.term, load.result)) {
+      return no_move();
+    }
+    for ins in b.insts {
+      if (util.index_of_i32(ins.args, load.result) >= 0) {
+        move = with_use(f, at, defs, def_at, move, load.args[0], bi, ins);
+        if (move.load < 0) {
+          return move;
+        }
+      }
+    }
+  }
+  return move;
+}
+
+function term_reads(t: ssa.STerm, v: i32): boolean {
+  return t.kind_tag == ssa.TERM_RET && t.value == v || t.kind_tag == ssa.TERM_BRIF && t.cond == v;
+}
+
+// The move with the use ins of the block at bi. The use is in a shared arm
+// of a test of box, or in a side that allocates for a null token of box.
+function with_use(f: ssa.SFunc, at: i32[], defs: ssa.SInst[], def_at: i32[], move: Move, box: i32, bi: i32, ins: ssa.SInst): Move {
+  if (ins.kind_tag == ssa.PHI) {
+    return no_move();
+  }
+  if (shared_arm(f, at, defs, bi, box)) {
+    return with_arm(move, bi, -1, -1);
+  }
+  for other in f.blocks[bi].insts {
+    if (ssa.fresh_alloc_call(other)) {
+      let site = token_of(f, at, defs, def_at, other.args[0]);
+      if (site.m >= 0 && site.box == box) {
+        return with_arm(move, site.slow, site.m, site.tok);
+      }
+    }
+  }
+  return no_move();
+}
+
+// Whether the block at bi is the false arm of a uniqueness test of box.
+function shared_arm(f: ssa.SFunc, at: i32[], defs: ssa.SInst[], bi: i32, box: i32): boolean {
+  let b = f.blocks[bi];
+  if (b.preds.len() != 1) {
+    return false;
+  }
+  let p = ssa.position_of(at, b.preds[0]);
+  if (p < 0) {
+    return false;
+  }
+  let term = f.blocks[p].term;
+  return term.kind_tag == ssa.TERM_BRIF && term.f == b.id && term.t != b.id && tests_unique(defs[term.cond], box);
+}
+
+function with_arm(move: Move, arm: i32, meet: i32, tok: i32): Move {
+  let j = util.index_of_i32(move.arms, arm);
+  if (j < 0) {
+    return Move { ...move, arms: move.arms.append(arm), meets: move.meets.append(meet), toks: move.toks.append(tok) };
+  }
+  if (meet < 0 || move.meets[j] >= 0) {
+    return move;
+  }
+  return Move { ...move, meets: move.meets.with(j, meet), toks: move.toks.with(j, tok) };
+}
+
+// Whether a store to the box can run before one of the arms with the same
+// box.
+function stored_before(f: ssa.SFunc, at: i32[], def_at: i32[], move: Move, box: i32): boolean {
+  let home = def_at[box];
+  for arm in move.arms {
+    let above = walked(f, at, arm, home, false);
+    for bi in 0..f.blocks.len() {
+      if ((above[bi] || bi == home) && bi != arm && stores_in(f.blocks[bi], box)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function stores_in(b: ssa.SBlock, box: i32): boolean {
+  for ins in b.insts {
+    if (ins.kind_tag == ssa.ST_AT && ins.args.len() > 0 && ins.args[0] == box) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Arm j gets a copy of the load with the value nvals + 2j. Its meet block
+// gets a phi with the value nvals + 2j + 1: the copy from the arm, and the
+// box from the other arm, where nothing reads the phi.
+function moved(f: ssa.SFunc, move: Move): ssa.SFunc {
+  let defs = ssa.inst_defs(f);
+  let load = defs[move.load];
+  let blocks: ssa.SBlock[] = [];
+  for bi in 0..f.blocks.len() {
+    let b = f.blocks[bi];
+    let insts: ssa.SInst[] = [];
+    for j in 0..move.arms.len() {
+      if (bi == move.arms[j]) {
+        insts = insts.append(ssa.SInst { ...load, result: f.nvals + 2 * j });
+      }
+      if (bi == move.meets[j]) {
+        insts = insts.append(ssa.SInst { kind_tag: ssa.PHI, result: f.nvals + 2 * j + 1, args: arm_values(b, f.blocks[move.arms[j]].id, f.nvals + 2 * j, load.args[0]), imm: 0, str: "" });
+      }
+    }
+    let now = value_in(f, move, bi);
+    for ins in b.insts {
+      if (ins.result != move.load) {
+        insts = insts.append(ssa.SInst { ...ins, args: with_value(ins.args, move.load, now) });
+      }
+    }
+    blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
+  }
+  return ssa.SFunc { ...f, nvals: f.nvals + 2 * move.arms.len(), blocks: blocks };
+}
+
+// The value that the block at bi reads in place of the load: the copy in an
+// arm, the phi in a null side of a token of the move.
+function value_in(f: ssa.SFunc, move: Move, bi: i32): i32 {
+  let j = util.index_of_i32(move.arms, bi);
+  if (j >= 0) {
+    return f.nvals + 2 * j;
+  }
+  for ins in f.blocks[bi].insts {
+    if (ssa.fresh_alloc_call(ins) && util.index_of_i32(move.toks, ins.args[0]) >= 0) {
+      return f.nvals + 2 * util.index_of_i32(move.toks, ins.args[0]) + 1;
+    }
+  }
+  return move.load;
+}
+
+function with_value(args: i32[], old: i32, now: i32): i32[] {
+  if (util.index_of_i32(args, old) < 0) {
+    return args;
+  }
+  let out: i32[] = [];
+  for a in args {
+    out = out.append(if (a == old) { now } else { a });
+  }
+  return out;
+}
+
+function arm_values(m: ssa.SBlock, slow_id: i32, copy: i32, box: i32): i32[] {
+  let out: i32[] = [];
+  for p in m.preds {
+    out = out.append(if (p == slow_id) { copy } else { box });
+  }
+  return out;
 }
