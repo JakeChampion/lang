@@ -165,7 +165,7 @@ function origin_callee(sub: ircore.Sub, name: string, c: ssasem.Contract, callee
     return signature;
   }
   let checked = check_producer(sub, callee);
-  if (!checked.proof.ok || checked.words != 3) {
+  if (!checked.proof.ok || checked.words != 2) {
     return refused(name, "origin callee proof refused: " + checked.proof.message);
   }
   return helper.Proof { ok: true, function_name: name, message: "" };
@@ -218,7 +218,7 @@ function replacement_scalar_fields(sub: ircore.Sub, c: ssasem.Contract, parent: 
       }
       if let typeinfo.TypeI32(n) = field.ty {
         if (n.width == 32 && !n.unsigned && !n.is_char && !n.polymorphic) {
-          fields = fields.append(reuse.ScalarField { root: root, offset: (index + 1) * 8 });
+          fields = fields.append(reuse.ScalarField { root: root, offset: index * 8 });
         }
       }
       index += 1;
@@ -244,7 +244,7 @@ function extraction_slots(sub: ircore.Sub, c: ssasem.Contract, p: semrecords.Rec
       if (i > 268435454) {
         return ExtractionSlots { offsets: [], index: -1, error: "unrepresentable child slot" };
       }
-      offsets = offsets.append((i + 1) * 8);
+      offsets = offsets.append(i * 8);
       if (selected < 0 || selected == i) {
         if (!semtypes.equal(field.ty, c.result)) {
           return ExtractionSlots { offsets: [], index: -1, error: "selected child type differs from result" };
@@ -513,7 +513,7 @@ function final_producer(sub: ircore.Sub, functions: ssa.SFunc[], wrapper: string
     return body;
   }
   let checked = origin.producer(body.functions[0], layout.shape, layout.references);
-  if (!checked.proof.ok || checked.words != 3) {
+  if (!checked.proof.ok || checked.words != 2) {
     return PhysicalBindings { functions: [], error: "origin callee proof refused: " + checked.proof.message };
   }
   return body;
@@ -792,7 +792,7 @@ function extraction(sub: ircore.Sub, name: string, drop_name: string, release_na
   let f = physical.functions[0];
   let d = physical.functions[1];
   let r = physical.functions[2];
-  return extract.check_selected(f, d, r, helper.FlatChildren { offsets: slots.offsets }, (slots.index + 1) * 8);
+  return extract.check_selected(f, d, r, helper.FlatChildren { offsets: slots.offsets }, slots.index * 8);
 }
 
 pub function check_replace(sub: ircore.Sub, name: string, drop_name: string, release_name: string): helper.Proof {

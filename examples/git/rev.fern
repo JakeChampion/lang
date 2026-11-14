@@ -110,7 +110,7 @@ function operated(s: store.Store, hash: string, ops: string): Rev {
 function entry_named(s: store.Store, hash: string, name: string): Rev {
   let got = store.read(s, hash);
   let entries = match (got.object) {
-    Ok(o) => if (o.kind == "tree") { objects.tree_entries(o.body) } else { Err("not a tree") },
+    Ok(o) => if (o.kind == "tree") { objects.tree_entries(o.body, s.width) } else { Err("not a tree") },
     Err(why) => Err(why),
   };
   let found = "";

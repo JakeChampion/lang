@@ -164,20 +164,20 @@ function proven(f: ssa.SFunc, at: i32[], defs: ssa.SInst[], site: Site): Site {
 function keeps_word(f: ssa.SFunc, site: Site, defs: ssa.SInst[], b: ssa.SBlock): boolean {
   let def_at = def_blocks(f);
   for k in site.k + 1..b.insts.len() {
-    if (b.insts[k].kind_tag == ssa.ST_AT && b.insts[k].imm != 0 && redundant(f, site, defs, def_at, b, k)) {
+    if (b.insts[k].kind_tag == ssa.ST_AT && b.insts[k].imm != ssa.tag_offset() && redundant(f, site, defs, def_at, b, k)) {
       return true;
     }
   }
   return false;
 }
 
-// The shape that b stores to the first word of the result of the instruction
+// The shape that b stores to the header of the result of the instruction
 // at index k, "" for none.
 function built_shape(b: ssa.SBlock, defs: ssa.SInst[], k: i32): string {
   let base = b.insts[k].result;
   for j in k + 1..b.insts.len() {
     let ins = b.insts[j];
-    if (ins.kind_tag == ssa.ST_AT && ins.args.len() == 2 && ins.args[0] == base && ins.imm == 0 && defs[ins.args[1]].kind_tag == ssa.SHAPE_ADDR) {
+    if (ins.kind_tag == ssa.ST_AT && ins.args.len() == 2 && ins.args[0] == base && ins.imm == ssa.tag_offset() && defs[ins.args[1]].kind_tag == ssa.SHAPE_ADDR) {
       return defs[ins.args[1]].str;
     }
   }
@@ -280,7 +280,7 @@ function compared_shape(defs: ssa.SInst[], c: ssa.SInst, box: i32): string {
   }
   let word = defs[c.args[0]];
   let shape = defs[c.args[1]];
-  if (word.kind_tag == ssa.LD_AT && word.args.len() == 1 && word.args[0] == box && word.imm == 0 && shape.kind_tag == ssa.SHAPE_ADDR) {
+  if (word.kind_tag == ssa.LD_AT && word.args.len() == 1 && word.args[0] == box && word.imm == ssa.tag_offset() && shape.kind_tag == ssa.SHAPE_ADDR) {
     return shape.str;
   }
   return "";
@@ -361,7 +361,7 @@ function redundant(f: ssa.SFunc, site: Site, defs: ssa.SInst[], def_at: i32[], b
     return false;
   }
   let v = defs[ins.args[1]];
-  if (ins.imm == 0 && v.kind_tag == ssa.SHAPE_ADDR && v.str == site.shape) {
+  if (ins.imm == ssa.tag_offset() && v.kind_tag == ssa.SHAPE_ADDR && v.str == site.shape) {
     return true;
   }
   return word_of_box(f, site, defs, def_at, ins, v);
@@ -414,7 +414,7 @@ function alloc_preds(site: Site, head: i32, n: Names): i32[] {
 
 function shape_test(site: Site, n: Names): ssa.SInst[] {
   return [
-    ssa.SInst { kind_tag: ssa.LD_AT, result: n.word, args: [site.tok], imm: 0, str: "" },
+    ssa.SInst { kind_tag: ssa.LD_AT, result: n.word, args: [site.tok], imm: ssa.tag_offset(), str: "u32" },
     ssa.SInst { kind_tag: ssa.SHAPE_ADDR, result: n.want, args: [], imm: 0, str: site.shape },
     ssa.SInst { kind_tag: ssa.BINARY, result: n.same, args: [n.word, n.want], imm: 64, str: "eq" },
   ];
@@ -455,7 +455,7 @@ function split_insts(f: ssa.SFunc, site: Site, n: Names): Parts {
 // The store with the fresh box as its base. The store of the shape takes the
 // shape address of the block that allocates.
 function on_fresh(st: ssa.SInst, n: Names): ssa.SInst {
-  if (st.imm == 0) {
+  if (st.imm == ssa.tag_offset()) {
     return ssa.SInst { ...st, args: [n.made, n.shape] };
   }
   return ssa.SInst { ...st, args: [n.made, st.args[1]] };

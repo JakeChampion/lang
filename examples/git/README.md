@@ -72,6 +72,12 @@ The port finds the repository as git does: `GIT_DIR`, or the `.git` of the
 current directory or of a directory above it. A `.git` file of a linked
 worktree gives the git directory.
 
+The port reads and writes repositories with SHA-1 names and with SHA-256
+names (`git init --object-format=sha256`). The key
+`extensions.objectformat` of the `config` file gives the hash. With no
+repository, `hash-object`, `index-pack` and `verify-pack` use SHA-1, as
+git does.
+
 The standard output, the messages and the exit status are those of git
 2.43.
 
@@ -100,6 +106,9 @@ The standard output, the messages and the exit status are those of git
   ranges. git prints one more line when `^` or `~` follows an object that
   is not a commit, and the port does not print it.
 
+- The message of git for a `config` file with a hash that git does not
+  have. The port gives the first line of the message only.
+
 - `ls-tree` with a path that has `..` in it, and with pathspec magic.
 
 - `hash-object -w` for a commit, a tree or a tag. git checks the form of
@@ -113,8 +122,6 @@ The standard output, the messages and the exit status are those of git
 - `index-pack` from the standard input, and the completion of a thin
   pack. For a packfile that is not sound, the exit status is that of git
   and the message is not.
-
-- Repositories with SHA-256 names.
 
 ## Speed
 
@@ -156,14 +163,15 @@ whole file after such reads for half of the objects.
 - `TestSelfHostExampleGitAgainstGit` makes a repository with git and runs
   each command with git and with the port, at the top of the worktree and
   in two directories below it. The port then writes an object, and git
-  reads it and checks the store with `fsck --strict`.
+  reads it and checks the store with `fsck --strict`. The test runs in a
+  repository with SHA-1 names and in one with SHA-256 names.
 
 - `TestSelfHostExampleGitPacked` packs a repository with chains of deltas,
   by offset and then by name. Each object and each line of `verify-pack -v`
   are those of git. The last commit of the repository is a merge, and the
   operators give each parent. The port refuses a packfile with one changed
   byte. The index and the reverse index of `index-pack` have the bytes of
-  git.
+  git. The test runs with SHA-1 names and with SHA-256 names.
 
   The packfile is above 1 MiB, so the port reads it in parts and then
   whole. The test also has a shallow clone, and a store of 16,400 objects
