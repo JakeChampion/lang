@@ -1,4 +1,4 @@
-// CI-DARK: FERN_PIGZ_UPDATE — This flag regenerates the frozen reference data.
+// CI-DARK: FERN_PIGZ_UPDATE — This flag regenerates the reference data.
 package e2ecompiler
 
 import (

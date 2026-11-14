@@ -16,10 +16,18 @@ func TestGofmtGateReadsGitsFileSetNotTheDirectory(t *testing.T) {
 	if _, err := os.Stat(gate); err != nil {
 		t.Fatalf("gate script missing: %v", err)
 	}
-	decoy := filepath.Join(t.TempDir(), "inherited.git")
-	t.Setenv("GIT_DIR", decoy)
 
 	const misformatted = "package p\n\nfunc  Bad( ) int {\nreturn 1\n}\n"
+
+	// A git hook runs this test with GIT_DIR set. Each command must use the
+	// scratch repository, so a decoy that is not a repository makes a leak fail.
+	decoy := filepath.Join(t.TempDir(), "not-a-repository")
+	if err := os.WriteFile(decoy, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_DIR", decoy)
+	t.Setenv("GIT_WORK_TREE", t.TempDir())
+	t.Setenv("GIT_INDEX_FILE", decoy)
 
 	for _, tc := range []struct {
 		name           string
@@ -87,8 +95,5 @@ func TestGofmtGateReadsGitsFileSetNotTheDirectory(t *testing.T) {
 				t.Fatalf("gate named a path it should have passed over:\n%s", out)
 			}
 		})
-	}
-	if _, err := os.Stat(decoy); !os.IsNotExist(err) {
-		t.Fatalf("fixture commands used the inherited Git directory: %v", err)
 	}
 }

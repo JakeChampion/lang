@@ -103,7 +103,61 @@ function test_property_classes(): test.TestOutcome {
 
 function test_property_names(): test.TestOutcome {
   let got = [all("\\p{Uppercase Letter}", "aB"), all("\\p{gc=lu}", "aB"), all("\\p{White_Space}", "a b"), all("\\p{sc!=Greek}", "αb"), all("\\p{NoSuchThing}", "a"), all("(?-u)\\p{L}", "a")];
-  return test.assert_eq(got.join(" / "), "B / B /   / b / error / error");
+  return test.assert_eq(got.join(" / "), "B / B /   / α / error / error");
+}
+
+// Scripts take their short names, the emoji properties are there, and a
+// name can start with "is", as in regex-syntax.
+function test_property_aliases(): test.TestOutcome {
+  let got = [
+    all("\\p{Grek}+", "aαβb"), all("\\p{sc=Cyrl}", "dд"), all("\\p{IsGreek}", "aα"), all("\\p{Emoji_Presentation}", "a😀b"),
+    all("\\p{EPres}", "😀"), all("\\p{Extended_Pictographic}", "x©"), all("\\p{wspace}", "a b"), all("\\p{Zyyy}", "1a"),
+    all("\\p{scx=Grek}", "α"),
+  ];
+  return test.assert_eq(got.join(" / "), "αβ / д / α / 😀 / 😀 / © /   / 1 / error");
+}
+
+// White space in a count, a `--` after an item of a set, `\\b{2}` and the
+// digits of `\\x{...}` under `(?x)`, as regex-syntax reads them.
+function test_spaces_and_repetitions(): test.TestOutcome {
+  let got = [all("a{ 1 , 2 }", "aaa"), all("(?x)a{ 2 }", "aaa"), all("[a--b]", "ab"), all("\\b{2}x", "x"), all("(?x)\\x{ 4 1 }", "A")];
+  return test.assert_eq(got.join(" / "), "aa|a / aa / a / x / A");
+}
+
+// The error of a pattern, as regex-syntax writes it, or "ok".
+function reported(pattern: string): string {
+  match (regex.check(pattern, true)) {
+    Some(e) => {
+      return e.report();
+    },
+    None => {
+      return "ok";
+    }
+  }
+  return "";
+}
+
+function test_syntax_errors(): test.TestOutcome {
+  let got = [
+    reported("*"), reported("a{2,1}"), reported("(?P<n>a)(?P<n>b)"), reported("(?iii)"), reported("\\p{Foo=bar}"),
+    reported("\\p{sc=Foo}"), reported("(a\nb"), reported("[a-\\w]"), reported("\\x{110000}"), reported("(?<=a)"),
+    reported("é{2,1}"), reported("\\p{Grek}"), match (regex.check("(?-u)\\pL", true)) { Some(e) => e.message, None => "ok" },
+    match (regex.check("\\pL", false)) { Some(e) => e.message, None => "ok" },
+  ];
+  return test.assert_eq_array(got, [
+    "regex parse error:\n    *\n    ^\nerror: repetition operator missing expression",
+    "regex parse error:\n    a{2,1}\n     ^^^^^\nerror: invalid repetition count range, the start must be <= the end",
+    "regex parse error:\n    (?P<n>a)(?P<n>b)\n        ^       ^\nerror: duplicate capture group name",
+    "regex parse error:\n    (?iii)\n      ^^\nerror: duplicate flag",
+    "regex parse error:\n    \\p{Foo=bar}\n    ^^^^^^^^^^^\nerror: Unicode property not found",
+    "regex parse error:\n    \\p{sc=Foo}\n    ^^^^^^^^^^\nerror: Unicode property value not found",
+    "regex parse error:\n" + "~".repeat(79) + "\n1: (a\n   ^\n2: b\n" + "~".repeat(79) + "\nerror: unclosed group",
+    "regex parse error:\n    [a-\\w]\n       ^^\nerror: invalid range boundary, must be a literal",
+    "regex parse error:\n    \\x{110000}\n       ^^^^^^\nerror: hexadecimal literal is not a Unicode scalar value",
+    "regex parse error:\n    (?<=a)\n    ^^^^\nerror: look-around, including look-ahead and look-behind, is not supported",
+    "regex parse error:\n    é{2,1}\n     ^^^^^\nerror: invalid repetition count range, the start must be <= the end",
+    "ok", "Unicode not allowed here", "Unicode not allowed here",
+  ]);
 }
 
 function test_class_operations(): test.TestOutcome {
@@ -364,5 +418,8 @@ function main(): i32 {
   r = r.it("bytes a match can hold", test_can_match_byte);
   r = r.it("full and lazy tables", test_full_and_lazy_tables);
   r = r.it("many columns stay lazy", test_many_columns_stay_lazy);
+  r = r.it("property aliases", test_property_aliases);
+  r = r.it("spaces and repetitions", test_spaces_and_repetitions);
+  r = r.it("syntax errors", test_syntax_errors);
   return r.finish();
 }
