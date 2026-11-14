@@ -54,7 +54,7 @@ pub struct Supply { value: i32, slot: i32, mode: i32 }
 
 pub struct Step { block: i32, point: i32, target: i32, supplies: Supply[], drops: i32[], hand_roots: i32[], hand_fields: i32[] }
 
-pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[], likely: boolean[], kept: boolean[], entry_kept: boolean[], frame_views: boolean[], constants: string[], text_lens: i32[], analysis: ssasem.Analysis, defs: ssa.SInst[], modes: i32[], unit_analysis: ssasem.Analysis, unique_receivers: boolean[], fresh_seeded: boolean, checked_writes: boolean[], links: i32[], reuse: Reuse, forced: boolean[] }
+pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[], likely: boolean[], kept: boolean[], entry_kept: boolean[], frame_views: boolean[], constants: string[], text_lens: i32[], analysis: ssasem.Analysis, defs: ssa.SInst[], modes: i32[], unit_analysis: ssasem.Analysis, unique_receivers: boolean[], linked_receivers: boolean[], fresh_seeded: boolean, checked_writes: boolean[], links: i32[], reuse: Reuse, forced: boolean[] }
 
 struct Ledger { ok: boolean, why: string, bits: boolean[], held: i32 }
 
@@ -360,7 +360,7 @@ function plan_callers(kix: util.NameIndex, funcs: ssasem.Func[], plans: Plan[]):
 }
 
 function bad(why: string): Plan {
-  return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], takes: [], held: [], payloads: [], likely: [], kept: [], entry_kept: [], frame_views: [], constants: [], text_lens: [], analysis: ssasem.refused_analysis(why), defs: [], modes: [], unit_analysis: ssasem.refused_analysis(why), unique_receivers: [], fresh_seeded: false, checked_writes: [], links: [], reuse: no_reuse(), forced: [] };
+  return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], takes: [], held: [], payloads: [], likely: [], kept: [], entry_kept: [], frame_views: [], constants: [], text_lens: [], analysis: ssasem.refused_analysis(why), defs: [], modes: [], unit_analysis: ssasem.refused_analysis(why), unique_receivers: [], linked_receivers: [], fresh_seeded: false, checked_writes: [], links: [], reuse: no_reuse(), forced: [] };
 }
 
 pub function refused(why: string): Plan {
@@ -3122,7 +3122,8 @@ pub function plan_held(f: ssasem.Func, modes: i32[], semantic: ssasem.Analysis, 
     return bad(why);
   }
   let consts = constants(f, defs, view);
-  return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, likely: units.likely, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: consts, text_lens: text_lens(f), analysis: semantic, defs: defs, modes: modes, unit_analysis: analysis, unique_receivers: unique_receivers(f, steps, consts, no_fresh(), lent_withs(f, defs, owned, kept)), fresh_seeded: false, checked_writes: checked_writes(f), links: [], reuse: no_reuse(), forced: forced };
+  let receivers = receivers_of(f, steps, consts, no_fresh(), defs, owned, kept);
+  return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, likely: units.likely, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: consts, text_lens: text_lens(f), analysis: semantic, defs: defs, modes: modes, unit_analysis: analysis, unique_receivers: receivers.unique, linked_receivers: receivers.linked, fresh_seeded: false, checked_writes: checked_writes(f), links: [], reuse: no_reuse(), forced: forced };
 }
 
 // A frame view is a record in the stack frame of its function. A function
@@ -3166,6 +3167,20 @@ function read_before(b: ssa.SBlock, end: i32, arr: i32, index: i32): boolean {
     }
   }
   return false;
+}
+
+// unique: the updates whose receiver no unit but the frame's holds.
+// linked: the same where a link has left the parameter's box, so a lent
+// with counts as sole there.
+struct Receivers { unique: boolean[], linked: boolean[] }
+
+function receivers_of(f: ssasem.Func, steps: Step[], consts: string[], fresh: FreshRows, defs: ssa.SInst[], owned: boolean[], kept: boolean[]): Receivers {
+  let lent = lent_withs(f, defs, owned, kept);
+  let unique = unique_receivers(f, steps, consts, fresh, lent);
+  if (!util.any_true(lent)) {
+    return Receivers { unique: unique, linked: unique };
+  }
+  return Receivers { unique: unique, linked: unique_receivers(f, steps, consts, fresh, __alloc_bool(f.graph.nvals)) };
 }
 
 function unique_receivers(f: ssasem.Func, steps: Step[], consts: string[], fresh: FreshRows, lent: boolean[]): boolean[] {
@@ -3277,7 +3292,8 @@ pub function with_fresh(p: Plan, f: ssasem.Func, fresh: FreshRows): Plan {
   if (!seeded && !p.fresh_seeded) {
     return p;
   }
-  return Plan { ...p, unique_receivers: unique_receivers(f, p.steps, p.constants, fresh, lent_withs(f, p.defs, p.owned, p.kept)), fresh_seeded: seeded };
+  let receivers = receivers_of(f, p.steps, p.constants, fresh, p.defs, p.owned, p.kept);
+  return Plan { ...p, unique_receivers: receivers.unique, linked_receivers: receivers.linked, fresh_seeded: seeded };
 }
 
 function calls_any(f: ssasem.Func, names: util.NameIndex): boolean {
