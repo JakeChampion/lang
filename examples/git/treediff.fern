@@ -1,0 +1,528 @@
+// Pathspecs and the differences of two trees (tree-diff.c of git).
+//
+// A pathspec item is a path from the top of the worktree. It names the
+// entry at that path and each entry below it. An item with `*`, `?` or `[`
+// is a pattern that the whole path matches, as `fnmatch` reads it with no
+// flags: `*` matches a `/` also.
+import "std/array";
+import "std/result";
+import "core/cmp";
+import "core/map";
+import "../../coreutils/lib/fnmatch";
+import "./objects";
+import "./store";
+
+// One difference: `status` is `A` (added), `D` (deleted), `M` (changed),
+// `T` (a change of the kind of file) or `R` (a rename from `old_path` with
+// the score `score`). A mode is "" and a hash is the zero name for a side
+// that has no entry.
+pub struct Change { status: u8, path: u8[], old_mode: string, new_mode: string, old_hash: string, new_hash: string, old_path: u8[], score: i32 }
+
+function has_wildcard(item: string): boolean {
+  for i in 0..item.len() {
+    let b = item[i];
+    if (b == b'*' || b == b'?' || b == b'[' || b == b'\\') {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The part of `item` before its first wildcard.
+function literal_part(item: string): string {
+  for i in 0..item.len() {
+    let b = item[i];
+    if (b == b'*' || b == b'?' || b == b'[' || b == b'\\') {
+      return objects.part(item, 0, i);
+    }
+  }
+  return item;
+}
+
+function starts(path: u8[], text: string): boolean {
+  if (text.len() > path.len()) {
+    return false;
+  }
+  for i in 0..text.len() {
+    if (path[i] != text[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function text_starts(text: string, path: u8[]): boolean {
+  if (path.len() > text.len()) {
+    return false;
+  }
+  for i in 0..path.len() {
+    if (path[i] != text[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// How the entry at `path` is in the pathspec `items`: 0 not in it, 1 in
+// it, and 2 when it and each entry below it are in it. No item takes in
+// every entry.
+pub function interesting(items: string[], path: u8[], is_tree: boolean): i32 {
+  if (items.len() == 0) {
+    return 2;
+  }
+  let best = 0;
+  for item in items {
+    let n = item.len();
+    let dir_item = n > 0 && item[n - 1] == b'/';
+    let bare = if (dir_item) { objects.part(item, 0, n - 1) } else { item };
+    if (!has_wildcard(item)) {
+      // The path is the item, or is below it.
+      if (starts(path, bare) && (path.len() == bare.len() && (is_tree || !dir_item) || path.len() > bare.len() && path[bare.len()] == b'/')) {
+        return 2;
+      }
+      // The path is a directory on the way to the item.
+      if (is_tree && path.len() < bare.len() && text_starts(bare, path) && bare[path.len()] == b'/') {
+        best = 1;
+      }
+    } else {
+      let text = unsafe { string_from_bytes_unchecked(path) };
+      if (fnmatch.fnmatch(item, text)) {
+        return 2;
+      }
+      let lit = literal_part(item);
+      if (is_tree) {
+        let with_slash = path.append(b'/');
+        if (starts(with_slash, lit) || text_starts(lit, with_slash)) {
+          best = 1;
+        }
+      }
+    }
+  }
+  return best;
+}
+
+// The entries of the tree `hash`, or none when there is no such tree.
+pub function entries_of(s: store.Store, hash: string): (store.Store, objects.TreeEntry[]) {
+  if (hash.len() == 0) {
+    return (s, []);
+  }
+  let got = store.read(s, hash);
+  let none: objects.TreeEntry[] = [];
+  let list = match (got.object) {
+    Ok(o) => if (o.kind == "tree") { objects.tree_entries(o.body, got.store.width).unwrap_or(none) } else { none },
+    Err(_) => none,
+  };
+  return (got.store, list);
+}
+
+function is_tree_mode(mode: string): boolean {
+  return mode == "40000";
+}
+
+// The order of two entries of trees, as git sorts them: a tree sorts as if
+// its name ends with `/`.
+function entry_cmp(a: objects.TreeEntry, b: objects.TreeEntry): i32 {
+  let n = a.name.len().min(b.name.len());
+  for i in 0..n {
+    if (a.name[i] != b.name[i]) {
+      return if (a.name[i] < b.name[i]) { -1 } else { 1 };
+    }
+  }
+  let ca: u8 = if (a.name.len() > n) { a.name[n] } else if (is_tree_mode(a.mode)) { b'/' } else { 0 };
+  let cb: u8 = if (b.name.len() > n) { b.name[n] } else if (is_tree_mode(b.mode)) { b'/' } else { 0 };
+  return if (ca < cb) { -1 } else if (ca > cb) { 1 } else { 0 };
+}
+
+// The differences so far and the store after the reads. With `quick`, the
+// walk stops at the first difference.
+pub struct Diffed { store: store.Store, changes: Change[] }
+
+function added(d: Diffed, e: objects.TreeEntry, path: u8[], zero: string, items: string[], all: boolean, quick: boolean, adding: boolean): Diffed {
+  if (is_tree_mode(e.mode)) {
+    let (s, list) = entries_of(d.store, e.hash);
+    let now = Diffed { store: s, changes: d.changes };
+    for c in list {
+      if (quick && now.changes.len() > 0) {
+        return now;
+      }
+      let p = path.append(b'/').concat(c.name);
+      let how = if (all) { 2 } else { interesting(items, p, is_tree_mode(c.mode)) };
+      if (how > 0) {
+        now = added(now, c, p, zero, items, how == 2, quick, adding);
+      }
+    }
+    return now;
+  }
+  let change = if (adding) { Change { status: b'A', path: path, old_mode: "", new_mode: e.mode, old_hash: zero, new_hash: e.hash, old_path: path, score: 0 } } else { Change { status: b'D', path: path, old_mode: e.mode, new_mode: "", old_hash: e.hash, new_hash: zero, old_path: path, score: 0 } };
+  return Diffed { store: d.store, changes: d.changes.append(change) };
+}
+
+// The differences between the trees `a` and `b` ("" for no tree) whose
+// path is `base`, for the entries in the pathspec `items`.
+pub function diff_trees(d: Diffed, a: string, b: string, base: u8[], items: string[], all: boolean, quick: boolean): Diffed {
+  let zero = "0".repeat(2 * d.store.width);
+  let (s1, left) = entries_of(d.store, a);
+  let (s2, right) = entries_of(s1, b);
+  let now = Diffed { store: s2, changes: d.changes };
+  let i = 0;
+  let j = 0;
+  while (i < left.len() || j < right.len()) {
+    if (quick && now.changes.len() > 0) {
+      return now;
+    }
+    let c = if (i >= left.len()) { 1 } else if (j >= right.len()) { -1 } else { entry_cmp(left[i], right[j]) };
+    let e = if (c <= 0) { left[i] } else { right[j] };
+    let path = base.concat(e.name);
+    if (c == 0 && left[i].hash == right[j].hash && left[i].mode == right[j].mode) {
+      i += 1;
+      j += 1;
+      continue;
+    }
+    let how = if (all) { 2 } else { interesting(items, path, is_tree_mode(e.mode) || c == 0 && is_tree_mode(right[j].mode)) };
+    if (how == 0) {
+      if (c <= 0) {
+        i += 1;
+      }
+      if (c >= 0) {
+        j += 1;
+      }
+      continue;
+    }
+    if (c < 0) {
+      now = added(now, left[i], path, zero, items, how == 2, quick, false);
+      i += 1;
+    } else if (c > 0) {
+      now = added(now, right[j], path, zero, items, how == 2, quick, true);
+      j += 1;
+    } else {
+      let l = left[i];
+      let r = right[j];
+      let lt = is_tree_mode(l.mode);
+      let rt = is_tree_mode(r.mode);
+      if (lt && rt) {
+        now = diff_trees(now, l.hash, r.hash, path.append(b'/'), items, how == 2, quick);
+      } else if (lt != rt) {
+        now = added(now, l, path, zero, items, how == 2, quick, false);
+        now = added(now, r, path, zero, items, how == 2, quick, true);
+      } else {
+        let kind = mode_kind(l.mode) != mode_kind(r.mode);
+        now = Diffed { store: now.store, changes: now.changes.append(Change { status: if (kind) { b'T' } else { b'M' }, path: path, old_mode: l.mode, new_mode: r.mode, old_hash: l.hash, new_hash: r.hash, old_path: path, score: 0 }) };
+      }
+      i += 1;
+      j += 1;
+    }
+  }
+  return now;
+}
+
+// The kind of a file of a mode: a file, a link or a commit.
+function mode_kind(mode: string): i32 {
+  if (mode == "120000") {
+    return 1;
+  }
+  if (mode == "160000") {
+    return 2;
+  }
+  return 0;
+}
+
+// The differences between the trees `a` and `b` for the pathspec `items`.
+pub function changes(s: store.Store, a: string, b: string, items: string[]): (store.Store, Change[]) {
+  let d = diff_trees(Diffed { store: s, changes: [] }, a, b, [], items, items.len() == 0, false);
+  return (d.store, d.changes);
+}
+
+// True if the trees `a` and `b` differ in the pathspec `items`.
+pub function differ(s: store.Store, a: string, b: string, items: string[]): (store.Store, boolean) {
+  if (a == b) {
+    return (s, false);
+  }
+  let d = diff_trees(Diffed { store: s, changes: [] }, a, b, [], items, items.len() == 0, true);
+  return (d.store, d.changes.len() > 0);
+}
+
+// ---- Renames (diffcore-rename.c and diffcore-delta.c of git) ----
+
+// The score of a rename: 60000 is a file with no change.
+const MAX_SCORE: i32 = 60000;
+
+const MIN_SCORE: i32 = 30000;
+
+// The most pairs that the search of renames compares: 1000 by 1000.
+const RENAME_LIMIT: i64 = 1000000;
+
+// The bytes of a blob, the counts of its spans by hash, and its size.
+struct Blob { bytes: u8[], spans: Map[i32, i64], counted: boolean, read: boolean }
+
+// The counts of the spans of `b`: each span ends at a line end or after
+// 64 bytes, and its hash is that of `hash_chars` of git. A CR before a LF
+// is not counted in a text.
+function spans_of(b: u8[]): Map[i32, i64] {
+  let text = true;
+  let n8000 = b.len().min(8000);
+  for i in 0..n8000 {
+    if (b[i] == 0) {
+      text = false;
+    }
+  }
+  let spans: Map[i32, i64] = Map { };
+  let accum1: i64 = 0;
+  let accum2: i64 = 0;
+  let n = 0;
+  let i = 0;
+  while (i < b.len()) {
+    let c = b[i] as i64;
+    i += 1;
+    if (text && c == 13 && i < b.len() && b[i] == b'\n') {
+      continue;
+    }
+    let old1 = accum1;
+    accum1 = (accum1 << 7 ^ accum2 >> 25) & 4294967295;
+    accum2 = (accum2 << 7 ^ old1 >> 25) & 4294967295;
+    accum1 = accum1 + c & 4294967295;
+    n += 1;
+    if (n < 64 && c != 10) {
+      continue;
+    }
+    let hashval = (accum1 + accum2 * 97 & 4294967295) % 107927;
+    let key = hashval as i32;
+    spans = spans.insert(key, spans.get_or(key, 0) + n as i64);
+    n = 0;
+    accum1 = 0;
+    accum2 = 0;
+  }
+  return spans;
+}
+
+// The bytes that `dst` copies from `src`: `diffcore_count_changes` of git.
+function copied(src: Map[i32, i64], dst: Map[i32, i64]): i64 {
+  let total: i64 = 0;
+  for e in src.entries() {
+    let (key, sc) = e;
+    let dc = dst.get_or(key, 0);
+    total += if (sc < dc) { sc } else { dc };
+  }
+  return total;
+}
+
+function is_regular(mode: string): boolean {
+  return mode == "100644" || mode == "100755";
+}
+
+// The blobs of the pairs, read the first time that a score needs them.
+struct Renames { store: store.Store, blobs: Map[string, Blob] }
+
+function blob_of(r: Renames, hash: string): (Renames, Blob) {
+  if let Some(b) = r.blobs.get(hash) {
+    if (b.counted) {
+      return (r, b);
+    }
+  }
+  let got = store.read(r.store, hash);
+  let bytes: u8[] = match (got.object) {
+    Ok(o) => o.body,
+    Err(_) => [],
+  };
+  let b = Blob { bytes: bytes, spans: spans_of(bytes), counted: true, read: true };
+  return (Renames { store: got.store, blobs: r.blobs.insert(hash, b) }, b);
+}
+
+function size_of(r: Renames, hash: string): (Renames, i64) {
+  let got = store.info(r.store, hash);
+  return (Renames { ...r, store: got.store }, got.size);
+}
+
+// The score of the rename of `src` to `dst`: the part of the larger blob
+// that the copied spans make, as `estimate_similarity` of git gives it.
+function similarity(r_in: Renames, src: Change, dst: Change, minimum: i32): (Renames, i32) {
+  let r = r_in;
+  if (!is_regular(src.old_mode) || !is_regular(dst.new_mode)) {
+    return (r, 0);
+  }
+  let (r1, ss) = size_of(r, src.old_hash);
+  let (r2, ds) = size_of(r1, dst.new_hash);
+  r = r2;
+  let max_size = if (ss > ds) { ss } else { ds };
+  let base_size = if (ss < ds) { ss } else { ds };
+  let delta = max_size - base_size;
+  if (max_size * ((MAX_SCORE - minimum) as i64) < delta * (MAX_SCORE as i64)) {
+    return (r, 0);
+  }
+  if (ds == 0) {
+    return (r, 0);
+  }
+  let (r3, sb) = blob_of(r, src.old_hash);
+  let (r4, db) = blob_of(r3, dst.new_hash);
+  let c = copied(sb.spans, db.spans);
+  return (r4, (c as f64 * 60000.0 / (max_size as f64)) as i32);
+}
+
+// True if the last parts of the two paths are the same.
+function basename_same(a: u8[], b: u8[]): boolean {
+  let i = a.len();
+  let j = b.len();
+  while (i > 0 && j > 0) {
+    i -= 1;
+    j -= 1;
+    if (a[i] != b[j]) {
+      return false;
+    }
+    if (a[i] == b'/') {
+      return true;
+    }
+  }
+  return (i == 0 || a[i - 1] == b'/') && (j == 0 || b[j - 1] == b'/');
+}
+
+function basename(p: u8[]): string {
+  let i = p.len();
+  while (i > 0 && p[i - 1] != b'/') {
+    i -= 1;
+  }
+  return unsafe { string_from_bytes_unchecked(array.slice(p, i, p.len())) };
+}
+
+// A candidate source for a destination.
+struct Candidate { dst: i32, src: i32, score: i32, name: i32 }
+
+// The order of two candidates: the higher score first, and the same last
+// part of the path first.
+function candidate_cmp(a: Candidate, b: Candidate): i32 {
+  if (a.dst < 0) {
+    return if (b.dst >= 0) { 1 } else { 0 };
+  }
+  if (b.dst < 0) {
+    return -1;
+  }
+  if (a.score == b.score) {
+    return b.name - a.name;
+  }
+  return b.score - a.score;
+}
+
+// The changes with each rename found: a deleted file and an added file
+// with the same or a similar content become one change `R` at the place
+// of the added file, with the score of the rename.
+pub function renames(s: store.Store, changes: Change[]): (store.Store, Change[]) {
+  let srcs: i32[] = [];
+  let dsts: i32[] = [];
+  for i in 0..changes.len() {
+    let c = changes[i];
+    if (c.status == b'D') {
+      srcs = srcs.append(i);
+    } else if (c.status == b'A') {
+      dsts = dsts.append(i);
+    }
+  }
+  if (srcs.len() == 0 || dsts.len() == 0) {
+    return (s, changes);
+  }
+  let r = Renames { store: s, blobs: Map { } };
+  let source_of = __alloc_i32(changes.len()).map((v: i32): i32 => -1);
+  let score_of = __alloc_i32(changes.len());
+  let used = __alloc_i32(changes.len());
+  // Exact renames: the same blob.
+  for d in dsts {
+    let dst = changes[d];
+    let best = -1;
+    let best_score = -1;
+    for k in srcs {
+      let src = changes[k];
+      let modes_ok = is_regular(src.old_mode) && is_regular(dst.new_mode) || src.old_mode == dst.new_mode;
+      if (src.old_hash == dst.new_hash && modes_ok && used[k] == 0) {
+        let sc = 1 + (if (basename_same(src.path, dst.path)) { 1 } else { 0 });
+        if (sc > best_score) {
+          best = k;
+          best_score = sc;
+        }
+      }
+    }
+    if (best >= 0) {
+      source_of = source_of.with(d, best);
+      score_of = score_of.with(d, MAX_SCORE);
+      used = used.with(best, 1);
+    }
+  }
+  srcs = srcs.filter((k: i32): boolean => used[k] == 0);
+  // Renames to a file with the same last part of its path.
+  let src_names: Map[string, i32] = Map { };
+  for k in srcs {
+    let base = basename(changes[k].path);
+    src_names = src_names.insert(base, if (src_names.contains(base)) { -1 } else { k });
+  }
+  let dst_names: Map[string, i32] = Map { };
+  for d in dsts {
+    if (source_of[d] < 0) {
+      let base = basename(changes[d].path);
+      dst_names = dst_names.insert(base, if (dst_names.contains(base)) { -1 } else { d });
+    }
+  }
+  let min_basename = MIN_SCORE + (0.5 * ((MAX_SCORE - MIN_SCORE) as f64)) as i32;
+  for k in srcs {
+    let base = basename(changes[k].path);
+    if (dst_names.contains(base)) {
+      let d = dst_names.get_or(base, -1);
+      if (src_names.get_or(base, -1) != -1 && d != -1 && source_of[d] < 0) {
+        let (r1, sc) = similarity(r, changes[k], changes[d], min_basename);
+        r = r1;
+        if (sc >= min_basename) {
+          source_of = source_of.with(d, k);
+          score_of = score_of.with(d, sc);
+          used = used.with(k, 1);
+        }
+      }
+    }
+  }
+  srcs = srcs.filter((k: i32): boolean => used[k] == 0);
+  let left = dsts.filter((d: i32): boolean => source_of[d] < 0);
+  if (srcs.len() > 0 && left.len() > 0 && left.len() as i64 * (srcs.len() as i64) <= RENAME_LIMIT) {
+    let all: Candidate[] = [];
+    for d in left {
+      let best: Candidate[] = [Candidate { dst: -1, src: -1, score: 0, name: 0 }, Candidate { dst: -1, src: -1, score: 0, name: 0 }, Candidate { dst: -1, src: -1, score: 0, name: 0 }, Candidate { dst: -1, src: -1, score: 0, name: 0 }];
+      for k in srcs {
+        let (r2, sc) = similarity(r, changes[k], changes[d], MIN_SCORE);
+        r = r2;
+        let c = Candidate { dst: d, src: k, score: sc, name: if (basename_same(changes[k].path, changes[d].path)) { 1 } else { 0 } };
+        let worst = 0;
+        for i in 1..4 {
+          if (candidate_cmp(best[i], best[worst]) > 0) {
+            worst = i;
+          }
+        }
+        if (candidate_cmp(best[worst], c) > 0) {
+          best = best.with(worst, c);
+        }
+      }
+      all = all.concat(best);
+    }
+    let places: i32[] = [];
+    for i in 0..all.len() {
+      places = places.append(i);
+    }
+    let order = cmp.sort_by(places, (a: i32, b: i32): i32 => if (candidate_cmp(all[a], all[b]) != 0) { candidate_cmp(all[a], all[b]) } else { a - b });
+    let stop = false;
+    for i in order {
+      let c = all[i];
+      if (!stop) {
+        if (c.dst < 0 || c.score < MIN_SCORE) {
+          stop = true;
+        } else if (source_of[c.dst] < 0 && used[c.src] == 0) {
+          source_of = source_of.with(c.dst, c.src);
+          score_of = score_of.with(c.dst, c.score);
+          used = used.with(c.src, 1);
+        }
+      }
+    }
+  }
+  let out: Change[] = [];
+  for i in 0..changes.len() {
+    let c = changes[i];
+    if (c.status == b'A' && source_of[i] >= 0) {
+      let src = changes[source_of[i]];
+      out = out.append(Change { ...c, status: b'R', old_path: src.path, old_mode: src.old_mode, old_hash: src.old_hash, score: score_of[i] });
+    } else if (!(c.status == b'D' && used[i] != 0)) {
+      out = out.append(c);
+    }
+  }
+  return (r.store, out);
+}
