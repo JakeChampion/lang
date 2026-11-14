@@ -76,8 +76,9 @@ selfhost/arm64-linux/string_scan.emit	2619
 selfhost/arm64-linux/string_slice.emit	1250
 selfhost/arm64-linux/struct_drop.emit	2899
 selfhost/arm64-linux/tokenize.emit	1490
-selfhost/arm64-linux/utf8_ingest_unchecked.emit	8472
-selfhost/arm64-linux/utf8_ingest_validated.emit	9109
+# 2026-11-14: a two-byte word is one load (#15930), which changes what the inliner splices into std/json.
+selfhost/arm64-linux/utf8_ingest_unchecked.emit	8778
+selfhost/arm64-linux/utf8_ingest_validated.emit	9414
 selfhost/wasm32-wasi/array_append.emit	471
 selfhost/wasm32-wasi/array_index.emit	476
 selfhost/wasm32-wasi/array_scale_f64.emit	531
@@ -144,8 +145,9 @@ selfhost/x86-64-linux/string_scan.emit	2280
 selfhost/x86-64-linux/string_slice.emit	997
 selfhost/x86-64-linux/struct_drop.emit	2638
 selfhost/x86-64-linux/tokenize.emit	1248
-selfhost/x86-64-linux/utf8_ingest_unchecked.emit	8006
-selfhost/x86-64-linux/utf8_ingest_validated.emit	8666
+# 2026-11-14: a two-byte word is one load (#15930), which changes what the inliner splices into std/json.
+selfhost/x86-64-linux/utf8_ingest_unchecked.emit	8335
+selfhost/x86-64-linux/utf8_ingest_validated.emit	8992
 selfhost/x86-64-linux/perceus_cfold.emit	1993
 selfhost/arm64-linux/perceus_cfold.emit	2247
 selfhost/wasm32-wasi/perceus_cfold.emit	1766
