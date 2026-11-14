@@ -28,14 +28,16 @@ Browsing:
 
 Playback:
 
-- Play resumes from the position on the server. A seek goes to the
+- Play resumes from the position on the server, and a seek goes to the
   nearest sync frame.
 - The app reports the position every 10 seconds, and marks an item watched
   at its end. The next episode of a season plays after the end of an
   episode.
-- A tap on the video pauses it and shows the controls: back 10 seconds,
-  play, forward 30 seconds, and a bar to seek. Music plays with the controls
-  on the screen.
+- A tap on the video shows the controls over it for 4 seconds while the
+  video plays on: back 10 seconds, play, forward 30 seconds, and a bar to
+  seek. A tap outside them hides them, and the play button pauses.
+
+Music plays with the controls on the screen.
 
 The app reads the list of the decoders of the phone from Android. The
 player plays the file as it is when the phone decodes its video and its
@@ -91,8 +93,11 @@ device with no OpenGL ES 2 or no external textures shows the video on the
 window, which stretches it.
 
 A window has one producer of pixels at a time. A play gives the window to
-OpenGL with `Window.release_cpu`. A pause takes the video and OpenGL off the
-window, and the app draws the controls with the CPU.
+OpenGL with `Window.release_cpu`. The controls over the video draw through
+`std/android/ui/painter` on the same canvas, after the frame. A pause takes
+the video and OpenGL off the window, and the app draws the controls with the
+CPU. A device that shows the video on the window itself has no controls over
+the video, so a tap there pauses.
 
 ## Build
 
@@ -135,7 +140,7 @@ pattern that ffmpeg writes. The check requires:
 
 - The home screen shows the posters.
 - A link plays the track to its end, reports it, and marks it watched.
-- A link shows the video on the window. A tap pauses it and draws the
-  controls. A tap on play shows the video on the window again. The back key
-  stops it.
+- A link shows the video on the window. A tap shows the controls over the
+  video with no pause, and a tap on play pauses it. A tap on play shows the
+  video on the window again. The back key stops it.
 - logcat shows no crash.

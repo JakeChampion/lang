@@ -189,8 +189,12 @@ function fake(log: Log, now: i64, f: draw.Frame): control.Device {
       note(log.calls, "show");
       return true;
     },
-    draw_video: (window: usize): boolean => {
-      note(log.calls, "draw video");
+    draw_video: (window: usize, over: scene.Node[]): boolean => {
+      if (over.len() == 0) {
+        note(log.calls, "draw video");
+      } else {
+        note(log.calls, "draw video with controls");
+      }
       return true;
     },
     hide_video: (): void => note(log.calls, "hide"),
@@ -371,16 +375,33 @@ function test_play_pause_and_stop(): test.TestOutcome {
   if (draws(log) != 1 || frames(log) != 2) {
     return test.fail("a vsync of the video did not draw it and ask for the next frame: " + log.calls.get().join(" | "));
   }
-  let paused = tap(drawn, log, 400i64, f, "overlay");
+  // A tap shows the controls over the video, which plays on.
+  let shown = tap(drawn, log, 400i64, f, "overlay");
+  if (has_call(log, "pause") || node(shown, "toggle").is_none() || node(shown, "hide").is_none()) {
+    return test.fail("a tap on the video paused it or showed no controls: " + log.calls.get().join(" | "));
+  }
+  let over = settle(at(shown, log, 420i64, f, android.Vsync(0i64)), log, 420i64, f);
+  if (count_calls(log, "draw video with controls") != 1) {
+    return test.fail("the controls did not draw over the video: " + log.calls.get().join(" | "));
+  }
+  // With no tap, the controls go after a while.
+  let gone = settle(over, log, 4500i64, f);
+  if (node(gone, "hide").is_some() || node(gone, "overlay").is_none()) {
+    return test.fail("the controls stayed over the video");
+  }
+  // The play button pauses.
+  let again = tap(gone, log, 4600i64, f, "overlay");
+  let paused = tap(again, log, 4700i64, f, "toggle");
   save_png(f, "paused");
   if (!has_call(log, "pause") || !has_call(log, "hide") || !has_url(log, "state=paused") || node(paused, "toggle").is_none()) {
-    return test.fail("no pause with the overlay");
+    return test.fail("the play button did not pause");
   }
-  let still = settle(at(paused, log, 450i64, f, android.Vsync(0i64)), log, 450i64, f);
-  if (draws(log) != 1 || frames(log) != 2) {
+  let drew = count_calls(log, "draw video") + count_calls(log, "draw video with controls");
+  let still = settle(at(paused, log, 4750i64, f, android.Vsync(0i64)), log, 4750i64, f);
+  if (count_calls(log, "draw video") + count_calls(log, "draw video with controls") != drew) {
     return test.fail("a vsync drew the video while it was paused");
   }
-  let back = tap(still, log, 500i64, f, "back");
+  let back = tap(still, log, 5000i64, f, "back");
   if (!has_call(log, "stop") || !has_url(log, "state=stopped") || node(back, "play").is_none()) {
     return test.fail("no stop and return");
   }

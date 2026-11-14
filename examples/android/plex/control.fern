@@ -40,9 +40,9 @@ pub struct Device {
   play: (string) => boolean,
   // Puts the video on the window, and false when it cannot.
   show_video: (usize) => boolean,
-  // Draws the newest frame of the video on the window, and false when the
-  // player draws on the window itself.
-  draw_video: (usize) => boolean,
+  // Draws the newest frame of the video on the window, with the nodes over
+  // it, and false when the player draws on the window itself.
+  draw_video: (usize, scene.Node[]) => boolean,
   hide_video: () => void,
   // Asks for a Vsync event at the next frame of the display.
   request_frame: () => void,
@@ -78,7 +78,9 @@ struct Page { screen: i32, title: string, scroll: i32, rows: i32[], items: plex.
 struct Press { active: boolean, x0: f32, y0: f32, x: f32, y: f32, axis: i32, group: string, scroll0: i32, row0: i32 }
 
 // The playback of an item. `video` is true while the video is on the
-// window, and then the app does not lock the window.
+// window, and then the app does not lock the window. `drawn` is true when
+// the app draws the video itself, so its controls can show over it until
+// `controls_until`.
 struct Play {
   active: boolean,
   item: plex.Item,
@@ -88,6 +90,8 @@ struct Play {
   paused: boolean,
   video: boolean,
   overlay: boolean,
+  drawn: boolean,
+  controls_until: i64,
   buffering: boolean,
   position: i64,
   duration: i64,
@@ -177,7 +181,7 @@ function no_server(): plex.Server {
 }
 
 function no_play(): Play {
-  return Play { active: false, item: plex.no_item(), stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, session: "", prepared: false, paused: false, video: false, overlay: false, buffering: false, position: 0i64, duration: 0i64, reported_at: 0i64, updated_at: 0i64, retried: false, status: "", queue: [] };
+  return Play { active: false, item: plex.no_item(), stream: plex.Stream { url: "", transcode: false, offset_ms: 0i64 }, session: "", prepared: false, paused: false, video: false, overlay: false, drawn: false, controls_until: 0i64, buffering: false, position: 0i64, duration: 0i64, reported_at: 0i64, updated_at: 0i64, retried: false, status: "", queue: [] };
 }
 
 function no_press(): Press {
@@ -1192,8 +1196,11 @@ function play_tick(own s: App, now: i64): App {
     return t;
   }
   let t = s;
+  if (p.video && p.overlay && now >= p.controls_until) {
+    t = App { ...t, play: Play { ...t.play, overlay: false }, dirty: true };
+  }
   if (now - p.updated_at >= 500i64) {
-    t = App { ...t, play: Play { ...t.play, position: t.dev.position(), updated_at: now }, dirty: t.play.overlay };
+    t = App { ...t, play: Play { ...t.play, position: t.dev.position(), updated_at: now }, dirty: t.dirty || t.play.overlay };
   }
   if (now - t.play.reported_at >= REPORT_MS) {
     t = App { ...t, play: Play { ...t.play, reported_at: now } };
@@ -1202,11 +1209,34 @@ function play_tick(own s: App, now: i64): App {
   return t;
 }
 
+// How long the controls show over the video after a tap.
+const CONTROLS_MS: i64 = 4000i64;
+
 function player_act(own s: App, act: string, n: scene.Node, x: i32): App {
   let p = s.play;
   if (act == "overlay") {
-    return pause_play(s);
+    if (!p.drawn) {
+      // The player draws on the window itself, so nothing can show over the
+      // video: the controls show with the video paused.
+      return pause_play(s);
+    }
+    log.info("plex: controls over the video");
+    let until = s.dev.mono_ms() + CONTROLS_MS;
+    return App { ...s, play: Play { ...p, overlay: true, controls_until: until }, dirty: true };
   }
+  if (act == "hide") {
+    return App { ...s, play: Play { ...p, overlay: false }, dirty: true };
+  }
+  if (p.video && p.overlay) {
+    // A control keeps the controls up for a while longer.
+    let until = s.dev.mono_ms() + CONTROLS_MS;
+    return player_control(App { ...s, play: Play { ...p, controls_until: until } }, act, n, x);
+  }
+  return player_control(s, act, n, x);
+}
+
+function player_control(own s: App, act: string, n: scene.Node, x: i32): App {
+  let p = s.play;
   if (act == "toggle") {
     if (p.paused || !p.prepared) {
       return resume(s);
@@ -1525,7 +1555,7 @@ pub function view(s: App): ui.View {
     hubs = s.results;
   }
   let p = s.play;
-  let pv = ui.PlayerView { title: p.item.title, subtitle: player_subtitle(p.item) + mode_text(p), position_ms: p.position, duration_ms: p.duration, paused: p.paused, buffering: p.buffering, overlay: p.overlay || s.screen == ui.PLAYER && !p.video, art: art_of(p.item), audio: audio(p), status: p.status };
+  let pv = ui.PlayerView { title: p.item.title, subtitle: player_subtitle(p.item) + mode_text(p), position_ms: p.position, duration_ms: p.duration, paused: p.paused, buffering: p.buffering, overlay: p.overlay || s.screen == ui.PLAYER && !p.video, over_video: p.video && p.overlay, art: art_of(p.item), audio: audio(p), status: p.status };
   return ui.View {
     ...ui.empty_view(s.w, s.h),
     top: s.top, bottom: s.bottom,
@@ -1651,10 +1681,21 @@ function event(own s: App, e: android.Event): App {
       return App { ...s, window: 0 as usize };
     },
     android.Vsync(_) => {
-      if (s.play.video && s.window != 0 as usize && s.dev.draw_video(s.window)) {
-        s.dev.request_frame();
+      if (!s.play.video || s.window == 0 as usize) {
+        return s;
       }
-      return s;
+      let over: scene.Node[] = [];
+      if (s.play.overlay) {
+        over = s.nodes;
+      }
+      if (!s.dev.draw_video(s.window, over)) {
+        return s;
+      }
+      s.dev.request_frame();
+      if (s.play.drawn) {
+        return s;
+      }
+      return App { ...s, play: Play { ...s.play, drawn: true } };
     },
     android.Touch(action, x, y) => {
       return touch(s, action, x, y);
