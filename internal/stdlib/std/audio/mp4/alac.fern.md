@@ -12,6 +12,8 @@ The ALAC packet decoder retains its declared format and predictor limits.
 A retained index applies to the same immutable input bytes used during inspection.
 
 A `Stream` decodes one packet at a time for a player, without edits.
+A player can read each packet from a source, at the place that `packet` gives.
+`std/audio/mp4/file` makes an index from the boxes of a file in a source, with no bytes of the sound.
 
 ```fern
 <<*>>=
@@ -107,7 +109,16 @@ function read_configuration(input: [u8], entry: boxes.Box, budget: boxes.Budget,
 }
 
 pub function inspect(input: [u8], limits: container.Limits): Result[Index, pcm.AudioError] {
-  let raw = container.inspect(input, limits, boxes.tag("alac"))?;
+  return configured(input, container.inspect(input, limits, boxes.tag("alac"))?, limits);
+}
+
+// The index of the movie boxes `input` of a file of `file_bytes` bytes,
+// with no bytes of the sound.
+pub(package) function inspect_movie(input: [u8], media: tables.Media[], file_bytes: i64, top_boxes: i32, limits: container.Limits): Result[Index, pcm.AudioError] {
+  return configured(input, container.inspect_movie(input, media, file_bytes, top_boxes, limits, boxes.tag("alac"))?, limits);
+}
+
+function configured(input: [u8], raw: container.Index, limits: container.Limits): Result[Index, pcm.AudioError] {
   let budget = raw.budget;
   let tracks: Track[] = [];
   for source in raw.tracks {
@@ -231,19 +242,34 @@ pub function (value: Stream) information(): Info {
   return Info { id: 0u32, enabled: true, format: info.format, channel_mask: value.configuration.mask, frame_length: info.frame_length, packets: value.packets.len() };
 }
 
+// The place of the packet `number` in the file: its offset and its bytes.
+pub function (value: Stream) packet(number: i32): Result[tables.Packet, pcm.AudioError] {
+  if (number < 0 || number >= value.packets.len()) {
+    return Err(pcm.Header);
+  }
+  let packet = value.packets[number];
+  if (packet.bytes < 1 || packet.offset < 0i64) {
+    return Err(pcm.Header);
+  }
+  return Ok(packet);
+}
+
 // The stream after the packet `number` of `input`, and the samples of that
 // packet in WAVE speaker order.
 pub function (own value: Stream) decode_packet(input: [u8], number: i32, limits: pcm.Limits): Result[(Stream, i32[]), pcm.AudioError] {
-  let Stream { decoder, configuration, packets } = value;
-  if (number < 0 || number >= packets.len()) {
-    return Err(pcm.Header);
-  }
-  let packet = packets[number];
-  if (packet.bytes < 1 || packet.offset < 0i64 || packet.bytes as i64 > input.len() as i64 - packet.offset) {
+  let packet = value.packet(number)?;
+  if (packet.bytes as i64 > input.len() as i64 - packet.offset) {
     return Err(pcm.Header);
   }
   let at = packet.offset as i32;
-  let (next, frame) = decoder.decode_packet(input[at:at + packet.bytes], limits)?;
+  return value.decode_bytes(input[at:at + packet.bytes], limits);
+}
+
+// The stream after the packet whose bytes are `bytes`, and the samples of
+// that packet in WAVE speaker order. The packets go in their order.
+pub function (own value: Stream) decode_bytes(bytes: [u8], limits: pcm.Limits): Result[(Stream, i32[]), pcm.AudioError] {
+  let Stream { decoder, configuration, packets } = value;
+  let (next, frame) = decoder.decode_packet(bytes, limits)?;
   let samples = layout.reorder(frame.samples, configuration.info.format, configuration.mask, frame.frames)?;
   return Ok((Stream { decoder: next, configuration: configuration, packets: packets }, samples));
 }

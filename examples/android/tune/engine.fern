@@ -186,10 +186,21 @@ function aac_deck(index: mp4.Index, bytes: u8[], size: i32): Option[Deck] {
   return None;
 }
 
-// An M4A file with AAC sound that `source` reads. The index comes from the
-// boxes of the file alone, and the packets come from the window as they
-// play.
+// An M4A file that `source` reads. The index comes from the boxes of the
+// file alone, and the packets come from the window as they play.
 function open_m4a_source(head: u8[], size: i32, source: (i64, i32) => u8[]): Option[Deck] {
+  let (seek, read) = reader(source);
+  if let Ok(index) = mp4_file.inspect_with(size as i64, seek, read, mp4_file.default_limits()) {
+    return aac_deck(index, head, size);
+  }
+  let Ok(index) = mp4_file.inspect_alac_with(size as i64, seek, read, mp4_file.default_limits()) else {
+    return None;
+  };
+  return alac_deck(index, head, size);
+}
+
+// The seek and the read of the file that `source` reads.
+function reader(source: (i64, i32) => u8[]): ((i64) => Result[i64, IoError], (i32) => Result[u8[], IoError]) {
   let at: Cell[i64] = cell_new(0i64);
   let seek = (offset: i64): Result[i64, IoError] => {
     at.set(offset);
@@ -200,10 +211,7 @@ function open_m4a_source(head: u8[], size: i32, source: (i64, i32) => u8[]): Opt
     at.set(at.get() + bytes.len() as i64);
     return Ok(bytes);
   };
-  let Ok(index) = mp4_file.inspect_with(size as i64, seek, read, mp4_file.default_limits()) else {
-    return None;
-  };
-  return aac_deck(index, head, size);
+  return (seek, read);
 }
 
 // An M4A file with ALAC sound: its first track that is on.
@@ -211,6 +219,12 @@ function open_alac(bytes: u8[]): Option[Deck] {
   let Ok(index) = mp4_alac.inspect(bytes, mp4_alac.default_limits()) else {
     return None;
   };
+  return alac_deck(index, bytes, bytes.len());
+}
+
+// The deck of the first ALAC track that is on in `index`, for a file of
+// `size` bytes whose start is `bytes`.
+function alac_deck(index: mp4_alac.Index, bytes: u8[], size: i32): Option[Deck] {
   for i in 0..index.track_count() {
     let Ok(info) = index.information(i) else {
       return None;
@@ -220,7 +234,7 @@ function open_alac(bytes: u8[]): Option[Deck] {
         return None;
       };
       let total = info.packets as i64 * (info.frame_length as i64);
-      return Some(Deck { ...blank(ALAC, bytes), rate: info.format.sample_rate, channels: info.format.channels, total: total, codec: Lossless(Alac { stream: stream, frames: info.frame_length, bits: info.format.bits_per_sample }) });
+      return Some(Deck { ...blank(ALAC, bytes), size: size, rate: info.format.sample_rate, channels: info.format.channels, total: total, codec: Lossless(Alac { stream: stream, frames: info.frame_length, bits: info.format.bits_per_sample }) });
     }
   }
   return None;
@@ -284,8 +298,8 @@ function is_m4a(head: [u8]): boolean {
   return head.len() >= 12 && head[4] == b'f' && head[5] == b't' && head[6] == b'y' && head[7] == b'p';
 }
 
-// An M4A or an Ogg file: the player reads it whole, except an M4A file
-// with AAC sound.
+// An M4A or an Ogg file: the player reads an Ogg file whole, and an M4A
+// file whole when its boxes alone give no index.
 function whole_file(head: [u8]): boolean {
   return is_m4a(head) || starts_with(head, "OggS");
 }
@@ -336,10 +350,9 @@ function streamed(head: u8[], n: i32, source: (i64, i32) => u8[]): Option[Deck] 
 }
 
 // A deck for a file of `size` bytes that `source` reads a part at a time,
-// at most `window` bytes at a time. A WAV, a FLAC, an MP3 file and an M4A
-// file with AAC sound play from a window of the file. An M4A file with
-// ALAC sound and an Ogg file are read whole. The bytes of the deck are the
-// start of the file when it opens.
+// at most `window` bytes at a time. A WAV, a FLAC, an MP3 and an M4A file
+// play from a window of the file. An Ogg file is read whole. The bytes of
+// the deck are the start of the file when it opens.
 pub function open_file(size: i64, source: (i64, i32) => u8[], window: i32): Option[Deck] {
   if (size <= 0i64 || size > 2147483647i64 || window < 4096) {
     return None;
@@ -541,11 +554,19 @@ function pull_alac(own d: Deck): (Deck, i32[]) {
   if (n >= stream.information().packets) {
     return ended(rest);
   }
-  let Ok((next, samples)) = stream.decode_packet(rest.bytes, n, limits()) else {
+  let Ok(row) = stream.packet(n) else {
     return ended(rest);
   };
+  let w = windowed(rest, row.offset as i32, row.bytes);
+  let from = row.offset as i32 - w.base;
+  if (from + row.bytes > w.bytes.len()) {
+    return ended(w);
+  }
+  let Ok((next, samples)) = stream.decode_bytes(w.bytes[from:from + row.bytes], limits()) else {
+    return ended(w);
+  };
   let at = (n + 1) as i64 * (frames as i64);
-  return (Deck { ...rest, at: at, codec: Lossless(Alac { stream: next, frames: frames, bits: bits }) }, sixteen(samples, bits));
+  return (Deck { ...w, at: at, codec: Lossless(Alac { stream: next, frames: frames, bits: bits }) }, sixteen(samples, bits));
 }
 
 // The deck at the packet of an ALAC file that has `part` of the file. An
