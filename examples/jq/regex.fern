@@ -1,0 +1,1378 @@
+// The regular expressions of jq 1.7: the syntax of Oniguruma for Perl
+// (ONIG_SYNTAX_PERL_NT) on UTF-8 text, and the messages of Oniguruma.
+//
+// A pattern compiles to a program that a backtracking machine runs, as
+// Oniguruma does, so the alternatives, the repetitions, the lookarounds, the
+// atomic groups and the back references give the matches of jq. A position is
+// a byte offset of the text.
+import "std/string";
+import "std/unicode";
+import "std/utf8";
+
+// The instructions of a program.
+const I_CHAR: i32 = 0;
+
+const I_ANY: i32 = 1;
+
+const I_SET: i32 = 2;
+
+const I_SPLIT: i32 = 3;
+
+const I_JMP: i32 = 4;
+
+const I_SAVE: i32 = 5;
+
+const I_ASSERT: i32 = 6;
+
+const I_BACKREF: i32 = 7;
+
+const I_LOOK: i32 = 8;
+
+const I_ATOMIC: i32 = 9;
+
+const I_MARK: i32 = 10;
+
+const I_CHECK: i32 = 11;
+
+const I_MATCH: i32 = 12;
+
+// The assertions.
+const A_BOL: i32 = 0;
+
+const A_EOL: i32 = 1;
+
+const A_BEGIN: i32 = 2;
+
+const A_END: i32 = 3;
+
+const A_END_NL: i32 = 4;
+
+const A_WORD: i32 = 5;
+
+const A_NOT_WORD: i32 = 6;
+
+const A_START: i32 = 7;
+
+const A_LINE_BOL: i32 = 8;
+
+const A_LINE_EOL: i32 = 9;
+
+// One instruction. `a`, `b` and `c` are its operands: a character, a target,
+// a slot, a set, a flag.
+struct Inst { op: i32, a: i32, b: i32, c: i32 }
+
+// A set of code points: pairs of the first and the last code point of each
+// range, and whether the set is the complement of those ranges.
+struct Set { ranges: i32[], negated: boolean, fold: boolean }
+
+// The tree of a pattern.
+enum Node {
+  NChar(i32, boolean),
+  NAny(boolean),
+  NSet(i32),
+  NSeq(Node[]),
+  NAlt(Node[]),
+  NGroup(i32, Node),
+  NRepeat(Node, i32, i32, boolean, boolean),
+  NAssert(i32),
+  NLook(boolean, boolean, Node),
+  NAtomic(Node),
+  NBackref(i32[], boolean),
+  NEmpty,
+}
+
+// A compiled pattern. `progs` holds the main program first, and then the
+// program of each lookaround and atomic group. `names` holds the name of
+// each group, or "".
+pub struct Regex { progs: Inst[][], sets: Set[], groups: i32, names: string[], marks: i32, longest: boolean, not_empty: boolean }
+
+// The flags of the parser in a group.
+struct Flags { icase: boolean, extended: boolean, dotall: boolean, lines: boolean }
+
+struct Parser { p: i32[], at: i32, flags: Flags, groups: i32, names: string[], sets: Set[], error: string, refs: string[] }
+
+// A match: the start and the end of each group, -1 for a group that did not
+// match. Group 0 is the whole match.
+pub struct Found { starts: i32[], ends: i32[] }
+
+function codepoints(s: string): i32[] {
+  let out: i32[] = [];
+  let i = 0;
+  while (i < s.len()) {
+    let (cp, size) = decode(s, i);
+    out = out.append(cp);
+    i += size;
+  }
+  return out;
+}
+
+// The code point at the byte `i` of `s`, and its size. A byte that does not
+// start a character is a character of its own.
+function decode(s: string, i: i32): (i32, i32) {
+  let b = s[i] as i32;
+  if (b < 0x80) {
+    return (b, 1);
+  }
+  if (b >= 0xc0 && b < 0xe0 && i + 1 < s.len()) {
+    return ((b & 0x1f) << 6 | s[i + 1] as i32 & 0x3f, 2);
+  }
+  if (b >= 0xe0 && b < 0xf0 && i + 2 < s.len()) {
+    return ((b & 0x0f) << 12 | (s[i + 1] as i32 & 0x3f) << 6 | s[i + 2] as i32 & 0x3f, 3);
+  }
+  if (b >= 0xf0 && i + 3 < s.len()) {
+    return ((b & 0x07) << 18 | (s[i + 1] as i32 & 0x3f) << 12 | (s[i + 2] as i32 & 0x3f) << 6 | s[i + 3] as i32 & 0x3f, 4);
+  }
+  return (b, 1);
+}
+
+// The start of the character before the byte `i`.
+function prev_start(s: string, i: i32): i32 {
+  let j = i - 1;
+  while (j > 0 && (s[j] & 0xc0 as u8) == 0x80 as u8 && i - j < 4) {
+    j -= 1;
+  }
+  return j;
+}
+
+// ---- Parser ----
+
+// The pattern `pattern` with the flags of jq: `i`, `x`, `m`, `s`, `p`, `l`
+// and `n`. The error is the message of Oniguruma.
+pub function compile(pattern: string, flags: string): Result[Regex, string] {
+  let f = Flags { icase: false, extended: false, dotall: false, lines: false };
+  let longest = false;
+  let not_empty = false;
+  for i in 0..flags.len() {
+    let c = flags[i];
+    if (c == b'i') {
+      f = Flags { ...f, icase: true };
+    } else if (c == b'x') {
+      f = Flags { ...f, extended: true };
+    } else if (c == b'm' || c == b'p') {
+      f = Flags { ...f, dotall: true };
+    } else if (c == b'l') {
+      longest = true;
+    } else if (c == b'n') {
+      not_empty = true;
+    }
+  }
+  let ps = Parser { p: codepoints(pattern), at: 0, flags: f, groups: 0, names: [""], sets: [], error: "", refs: [] };
+  let (tree, q) = parse_alt(ps);
+  if (q.error.len() == 0 && q.at < q.p.len()) {
+    q = q.failing("unmatched close parenthesis");
+  }
+  if (q.error.len() == 0) {
+    for r in q.refs {
+      if (!q.names.contains(r)) {
+        q = q.failing("undefined name <" + r + "> reference");
+      }
+    }
+  }
+  if (q.error.len() > 0) {
+    return Err(q.error);
+  }
+  let c = Compiler { progs: [[]], sets: q.sets, marks: 0, names: q.names, refs: q.refs };
+  let c2 = c.emit_node(0, tree);
+  let main = c2.progs[0].append(Inst { op: I_MATCH, a: 0, b: 0, c: 0 });
+  return Ok(Regex { progs: c2.progs.with(0, main), sets: c2.sets, groups: q.groups, names: q.names, marks: c2.marks, longest: longest, not_empty: not_empty });
+}
+
+function (ps: Parser) failing(message: string): Parser {
+  if (ps.error.len() > 0) {
+    return ps;
+  }
+  return Parser { ...ps, error: message };
+}
+
+function (ps: Parser) peek(): i32 {
+  if (ps.at >= ps.p.len()) {
+    return -1;
+  }
+  return ps.p[ps.at];
+}
+
+function (ps: Parser) skip_extended(): Parser {
+  if (!ps.flags.extended) {
+    return ps;
+  }
+  let q = ps;
+  while (q.at < q.p.len()) {
+    let c = q.p[q.at];
+    if (c == 32 || c == 9 || c == 10 || c == 13 || c == 12 || c == 11) {
+      q = Parser { ...q, at: q.at + 1 };
+    } else if (c == 35) {
+      while (q.at < q.p.len() && q.p[q.at] != 10) {
+        q = Parser { ...q, at: q.at + 1 };
+      }
+    } else {
+      return q;
+    }
+  }
+  return q;
+}
+
+function parse_alt(ps: Parser): (Node, Parser) {
+  let alts: Node[] = [];
+  let (first, q) = parse_seq(ps);
+  alts = alts.append(first);
+  while (q.error.len() == 0 && q.peek() == 124) {
+    let (next, r) = parse_seq(Parser { ...q, at: q.at + 1 });
+    alts = alts.append(next);
+    q = r;
+  }
+  if (alts.len() == 1) {
+    return (alts[0], q);
+  }
+  return (NAlt(alts), q);
+}
+
+function parse_seq(ps: Parser): (Node, Parser) {
+  let items: Node[] = [];
+  let q = ps.skip_extended();
+  while (q.error.len() == 0 && q.at < q.p.len() && q.peek() != 124 && q.peek() != 41) {
+    let c = q.peek();
+    if (c == 42 || c == 43 || c == 63) {
+      return (NEmpty, q.failing("target of repeat operator is not specified"));
+    }
+    if (c == 123 && repeat_braces(q).0 >= 0) {
+      return (NEmpty, q.failing("target of repeat operator is not specified"));
+    }
+    let (atom, r) = parse_atom(q);
+    let (rep, s) = parse_repeats(atom, r);
+    items = items.append(rep);
+    q = s.skip_extended();
+  }
+  if (items.len() == 1) {
+    return (items[0], q);
+  }
+  return (NSeq(items), q);
+}
+
+// `{n}`, `{n,}`, `{,m}` or `{n,m}` at the parser: the bounds and the offset
+// after it, or -1 when the text is not a repeat and stays a literal.
+function repeat_braces(ps: Parser): (i32, i32, i32) {
+  let i = ps.at + 1;
+  let lo = -1;
+  let hi = -1;
+  let n = 0;
+  let digits = 0;
+  while (i < ps.p.len() && ps.p[i] >= 48 && ps.p[i] <= 57) {
+    n = n * 10 + (ps.p[i] - 48);
+    if (n > 1000000) {
+      n = 1000000;
+    }
+    i += 1;
+    digits += 1;
+  }
+  if (digits > 0) {
+    lo = n;
+  }
+  if (i < ps.p.len() && ps.p[i] == 125) {
+    if (lo < 0) {
+      return (-1, 0, 0);
+    }
+    return (lo, lo, i + 1);
+  }
+  if (i >= ps.p.len() || ps.p[i] != 44) {
+    return (-1, 0, 0);
+  }
+  i += 1;
+  n = 0;
+  digits = 0;
+  while (i < ps.p.len() && ps.p[i] >= 48 && ps.p[i] <= 57) {
+    n = n * 10 + (ps.p[i] - 48);
+    if (n > 1000000) {
+      n = 1000000;
+    }
+    i += 1;
+    digits += 1;
+  }
+  if (digits > 0) {
+    hi = n;
+  }
+  if (i >= ps.p.len() || ps.p[i] != 125 || lo < 0 && hi < 0) {
+    return (-1, 0, 0);
+  }
+  if (lo < 0) {
+    lo = 0;
+  }
+  return (lo, hi, i + 1);
+}
+
+function parse_repeats(atom: Node, ps: Parser): (Node, Parser) {
+  let node = atom;
+  let q = ps.skip_extended();
+  while (q.error.len() == 0) {
+    let c = q.peek();
+    let lo = 0;
+    let hi = -1;
+    let next = q.at + 1;
+    if (c == 42) {
+      lo = 0;
+    } else if (c == 43) {
+      lo = 1;
+    } else if (c == 63) {
+      hi = 1;
+    } else if (c == 123) {
+      let (a, b, after) = repeat_braces(q);
+      if (a < 0) {
+        return (node, q);
+      }
+      if (a > 100000 || b > 100000) {
+        return (node, q.failing("too big number for repeat range"));
+      }
+      if (b >= 0 && b < a) {
+        return (node, q.failing("upper is smaller than lower in repeat range"));
+      }
+      lo = a;
+      hi = b;
+      next = after;
+    } else {
+      return (node, q);
+    }
+    let greedy = true;
+    let possessive = false;
+    if (next < q.p.len() && q.p[next] == 63) {
+      greedy = false;
+      next += 1;
+    } else if (next < q.p.len() && q.p[next] == 43 && c != 123) {
+      possessive = true;
+      next += 1;
+    }
+    node = NRepeat(node, lo, hi, greedy, possessive);
+    q = Parser { ...q, at: next }.skip_extended();
+  }
+  return (node, q);
+}
+
+function parse_atom(ps: Parser): (Node, Parser) {
+  let c = ps.peek();
+  let q = Parser { ...ps, at: ps.at + 1 };
+  if (c == 40) {
+    return parse_group(q);
+  }
+  if (c == 91) {
+    return parse_class(q);
+  }
+  if (c == 46) {
+    return (NAny(ps.flags.dotall), q);
+  }
+  if (c == 94) {
+    return (NAssert(if (ps.flags.lines) { A_LINE_BOL } else { A_BOL }), q);
+  }
+  if (c == 36) {
+    return (NAssert(if (ps.flags.lines) { A_LINE_EOL } else { A_EOL }), q);
+  }
+  if (c == 92) {
+    return parse_escape(q);
+  }
+  return (NChar(c, ps.flags.icase), q);
+}
+
+function (ps: Parser) with_set(s: Set): (i32, Parser) {
+  let id = ps.sets.len();
+  return (id, Parser { ...ps, sets: ps.sets.append(s) });
+}
+
+function set_node(ps: Parser, ranges: i32[], negated: boolean): (Node, Parser) {
+  let (id, q) = ps.with_set(Set { ranges: ranges, negated: negated, fold: ps.flags.icase });
+  return (NSet(id), q);
+}
+
+// The ranges of a class escape, or [] with `known` false.
+function class_ranges(c: i32): (i32[], boolean, boolean) {
+  return match (c) {
+    100 => (prop("Nd"), false, true),
+    68 => (prop("Nd"), true, true),
+    119 => (unicode.word_ranges(), false, true),
+    87 => (unicode.word_ranges(), true, true),
+    115 => (prop("White_Space"), false, true),
+    83 => (prop("White_Space"), true, true),
+    _ => ([], false, false),
+  };
+}
+
+function prop(name: string): i32[] {
+  return match (unicode.property_ranges(name)) {
+    Some(r) => r,
+    None => [],
+  };
+}
+
+function hex_value(c: i32): i32 {
+  if (c >= 48 && c <= 57) {
+    return c - 48;
+  }
+  if (c >= 97 && c <= 102) {
+    return c - 87;
+  }
+  if (c >= 65 && c <= 70) {
+    return c - 55;
+  }
+  return -1;
+}
+
+// A code point escape after `\x` at the parser: `\x{H...}`, or `\xHH`, which
+// is one byte of the UTF-8 text.
+function escaped_codepoint(c: i32, ps: Parser): (i32, Parser) {
+  let q = ps;
+  if (q.peek() == 123) {
+    let v = 0;
+    let i = q.at + 1;
+    while (i < q.p.len() && hex_value(q.p[i]) >= 0) {
+      v = v * 16 + hex_value(q.p[i]);
+      i += 1;
+    }
+    if (i >= q.p.len() || q.p[i] != 125 || v > 0x10ffff) {
+      return (-1, q.failing("invalid code point value"));
+    }
+    return (v, Parser { ...q, at: i + 1 });
+  }
+  let v = 0;
+  let n = 0;
+  while (n < 2 && hex_value(q.peek()) >= 0) {
+    v = v * 16 + hex_value(q.peek());
+    q = Parser { ...q, at: q.at + 1 };
+    n += 1;
+  }
+  if (v >= 0x80) {
+    return (-1, q.failing("too short multibyte code string"));
+  }
+  return (v, q);
+}
+
+// A simple escape: its code point, or -1.
+function simple_escape(c: i32): i32 {
+  return match (c) {
+    116 => 9,
+    110 => 10,
+    114 => 13,
+    102 => 12,
+    118 => 11,
+    97 => 7,
+    101 => 27,
+    _ => -1,
+  };
+}
+
+function parse_escape(ps: Parser): (Node, Parser) {
+  let c = ps.peek();
+  if (c < 0) {
+    return (NEmpty, ps.failing("end pattern at escape"));
+  }
+  let q = Parser { ...ps, at: ps.at + 1 };
+  let (ranges, negated, known) = class_ranges(c);
+  if (known) {
+    return set_node(q, ranges, negated);
+  }
+  match (c) {
+    65 => {
+      return (NAssert(A_BEGIN), q);
+    },
+    122 => {
+      return (NAssert(A_END), q);
+    },
+    90 => {
+      return (NAssert(A_END_NL), q);
+    },
+    98 => {
+      return (NAssert(A_WORD), q);
+    },
+    66 => {
+      return (NAssert(A_NOT_WORD), q);
+    },
+    71 => {
+      return (NAssert(A_START), q);
+    },
+    _ => {}
+  }
+  if (c == 112 || c == 80) {
+    return parse_property(c == 80, q);
+  }
+  if (c == 107 && q.peek() == 60) {
+    return parse_named_ref(q);
+  }
+  if (c >= 49 && c <= 57) {
+    let n = c - 48;
+    while (q.peek() >= 48 && q.peek() <= 57 && n < 1000) {
+      n = n * 10 + (q.peek() - 48);
+      q = Parser { ...q, at: q.at + 1 };
+    }
+    if (n > q.groups) {
+      return (NEmpty, q.failing("invalid backref number/name"));
+    }
+    return (NBackref([n], ps.flags.icase), q);
+  }
+  if (c == 120) {
+    let (v, r) = escaped_codepoint(c, q);
+    return (NChar(v, ps.flags.icase), r);
+  }
+  if (c == 48) {
+    let v = 0;
+    let n = 0;
+    while (n < 2 && q.peek() >= 48 && q.peek() <= 55) {
+      v = v * 8 + (q.peek() - 48);
+      q = Parser { ...q, at: q.at + 1 };
+      n += 1;
+    }
+    return (NChar(v, ps.flags.icase), q);
+  }
+  let s = simple_escape(c);
+  if (s >= 0) {
+    return (NChar(s, ps.flags.icase), q);
+  }
+  return (NChar(c, ps.flags.icase), q);
+}
+
+// `{Name}`, `{^Name}` or one letter after `\p` or `\P`.
+function parse_property(negated: boolean, ps: Parser): (Node, Parser) {
+  let name = "";
+  let q = ps;
+  let neg = negated;
+  if (q.peek() == 123) {
+    let i = q.at + 1;
+    if (i < q.p.len() && q.p[i] == 94) {
+      neg = !neg;
+      i += 1;
+    }
+    let start = i;
+    while (i < q.p.len() && q.p[i] != 125) {
+      i += 1;
+    }
+    if (i >= q.p.len()) {
+      return (NEmpty, q.failing("invalid character property name {" + text_of(q.p, start, i) + "}"));
+    }
+    name = text_of(q.p, start, i);
+    q = Parser { ...q, at: i + 1 };
+  } else if (q.peek() >= 0) {
+    name = text_of(q.p, q.at, q.at + 1);
+    q = Parser { ...q, at: q.at + 1 };
+  }
+  match (unicode.property_ranges(posix_name(name))) {
+    Some(r) => {
+      return set_node(q, r, neg);
+    },
+    None => {
+      return (NEmpty, q.failing("invalid character property name {" + name + "}"));
+    }
+  }
+}
+
+function text_of(p: i32[], from: i32, to: i32): string {
+  let out = "";
+  for i in from..to {
+    if let Some(ch) = utf8.char_from_i32(p[i]) {
+      out += utf8.encode(ch);
+    }
+  }
+  return out;
+}
+
+// The Unicode property of a POSIX class name of Oniguruma.
+function posix_name(name: string): string {
+  return match (name.to_ascii_lower()) {
+    "alpha" => "Alphabetic",
+    "upper" => "Uppercase",
+    "lower" => "Lowercase",
+    "digit" => "Nd",
+    "space" => "White_Space",
+    "punct" => "P",
+    "cntrl" => "Cc",
+    _ => name,
+  };
+}
+
+function parse_named_ref(ps: Parser): (Node, Parser) {
+  let i = ps.at + 1;
+  let start = i;
+  while (i < ps.p.len() && ps.p[i] != 62) {
+    i += 1;
+  }
+  if (i >= ps.p.len()) {
+    return (NEmpty, ps.failing("invalid backref number/name"));
+  }
+  let name = text_of(ps.p, start, i);
+  let q = Parser { ...ps, at: i + 1 };
+  let n = 0;
+  if (name.len() > 0 && name[0] >= b'0' && name[0] <= b'9') {
+    for k in 0..name.len() {
+      n = n * 10 + (name[k] - b'0') as i32;
+    }
+    if (n > q.groups || n == 0) {
+      return (NEmpty, q.failing("invalid backref number/name"));
+    }
+    return (NBackref([n], ps.flags.icase), q);
+  }
+  return (NBackref([-1 - name_ref(q.refs, name)], ps.flags.icase), Parser { ...q, refs: with_ref(q.refs, name) });
+}
+
+function with_ref(refs: string[], name: string): string[] {
+  if (refs.contains(name)) {
+    return refs;
+  }
+  return refs.append(name);
+}
+
+function name_ref(refs: string[], name: string): i32 {
+  for i in 0..refs.len() {
+    if (refs[i] == name) {
+      return i;
+    }
+  }
+  return refs.len();
+}
+
+function parse_group(ps: Parser): (Node, Parser) {
+  if (ps.peek() != 63) {
+    let index = ps.groups + 1;
+    let (inner, q) = parse_alt(Parser { ...ps, groups: index, names: ps.names.append("") });
+    return close_group(NGroup(index, inner), Parser { ...q, flags: ps.flags });
+  }
+  let q = Parser { ...ps, at: ps.at + 1 };
+  let c = q.peek();
+  let r = Parser { ...q, at: q.at + 1 };
+  if (c == 58) {
+    let (inner, s) = parse_alt(r);
+    return close_group(inner, Parser { ...s, flags: ps.flags });
+  }
+  if (c == 61 || c == 33) {
+    let (inner, s) = parse_alt(r);
+    return close_group(NLook(true, c == 33, inner), Parser { ...s, flags: ps.flags });
+  }
+  if (c == 62) {
+    let (inner, s) = parse_alt(r);
+    return close_group(NAtomic(inner), Parser { ...s, flags: ps.flags });
+  }
+  if (c == 60 && (r.peek() == 61 || r.peek() == 33)) {
+    let negated = r.peek() == 33;
+    let (inner, s) = parse_alt(Parser { ...r, at: r.at + 1 });
+    return close_group(NLook(false, negated, inner), Parser { ...s, flags: ps.flags });
+  }
+  if (c == 60 || c == 80 && r.peek() == 60) {
+    let start = if (c == 80) { r.at + 1 } else { r.at };
+    return parse_named_group(ps, start);
+  }
+  if (c == 35) {
+    let i = r.at;
+    while (i < r.p.len() && r.p[i] != 41) {
+      i += 1;
+    }
+    if (i >= r.p.len()) {
+      return (NEmpty, r.failing("end pattern in group"));
+    }
+    return (NEmpty, Parser { ...r, at: i + 1 });
+  }
+  return parse_flag_group(ps, q);
+}
+
+function close_group(n: Node, ps: Parser): (Node, Parser) {
+  if (ps.error.len() > 0) {
+    return (n, ps);
+  }
+  if (ps.peek() != 41) {
+    return (n, ps.failing("end pattern with unmatched parenthesis"));
+  }
+  return (n, Parser { ...ps, at: ps.at + 1 });
+}
+
+function is_name_char(c: i32): boolean {
+  return c >= 97 && c <= 122 || c >= 65 && c <= 90 || c >= 48 && c <= 57 || c == 95 || c >= 128;
+}
+
+function parse_named_group(ps: Parser, start: i32): (Node, Parser) {
+  let i = start;
+  while (i < ps.p.len() && ps.p[i] != 62) {
+    if (!is_name_char(ps.p[i])) {
+      return (NEmpty, ps.failing("invalid group name <" + text_of(ps.p, start, i + 1) + ">"));
+    }
+    i += 1;
+  }
+  if (i >= ps.p.len()) {
+    return (NEmpty, ps.failing("invalid group name <" + text_of(ps.p, start, i) + ">"));
+  }
+  let name = text_of(ps.p, start, i);
+  if (name.len() == 0 || name[0] >= b'0' && name[0] <= b'9') {
+    return (NEmpty, ps.failing("invalid group name <" + name + ">"));
+  }
+  let index = ps.groups + 1;
+  let (inner, q) = parse_alt(Parser { ...ps, at: i + 1, groups: index, names: ps.names.append(name) });
+  return close_group(NGroup(index, inner), Parser { ...q, flags: ps.flags });
+}
+
+// `(?imsx-imsx)` or `(?imsx-imsx:...)`.
+function parse_flag_group(outer: Parser, ps: Parser): (Node, Parser) {
+  let f = ps.flags;
+  let on = true;
+  let q = ps;
+  while (true) {
+    let c = q.peek();
+    if (c == 45) {
+      on = false;
+    } else if (c == 105) {
+      f = Flags { ...f, icase: on };
+    } else if (c == 120) {
+      f = Flags { ...f, extended: on };
+    } else if (c == 115) {
+      f = Flags { ...f, dotall: on };
+    } else if (c == 109) {
+      f = Flags { ...f, lines: on };
+    } else if (c == 41) {
+      let (rest, r) = parse_alt(Parser { ...q, at: q.at + 1, flags: f });
+      return (rest, Parser { ...r, flags: outer.flags, at: r.at });
+    } else if (c == 58) {
+      let (inner, r) = parse_alt(Parser { ...q, at: q.at + 1, flags: f });
+      return close_group(inner, Parser { ...r, flags: outer.flags });
+    } else if (c < 0) {
+      return (NEmpty, q.failing("end pattern in group"));
+    } else {
+      return (NEmpty, q.failing("undefined group option"));
+    }
+    q = Parser { ...q, at: q.at + 1 };
+  }
+  return (NEmpty, q);
+}
+
+// `[...]` after its bracket.
+function parse_class(ps: Parser): (Node, Parser) {
+  let q = ps;
+  let negated = false;
+  if (q.peek() == 94) {
+    negated = true;
+    q = Parser { ...q, at: q.at + 1 };
+  }
+  if (q.peek() == 93) {
+    return (NEmpty, q.failing("empty char-class"));
+  }
+  let (ranges, r) = class_items(q);
+  if (r.error.len() > 0) {
+    return (NEmpty, r);
+  }
+  return set_node(r, ranges, negated);
+}
+
+// The ranges of the items of a class up to its `]`, and the parser after it.
+function class_items(ps: Parser): (i32[], Parser) {
+  let ranges: i32[] = [];
+  let q = ps;
+  while (true) {
+    let c = q.peek();
+    if (c < 0) {
+      return (ranges, q.failing("premature end of char-class"));
+    }
+    if (c == 93) {
+      return (ranges, Parser { ...q, at: q.at + 1 });
+    }
+    if (c == 91 && q.at + 1 < q.p.len() && q.p[q.at + 1] == 58) {
+      let (more, r) = posix_class(q);
+      ranges = ranges.concat(more);
+      q = r;
+      continue;
+    }
+    if (c == 91) {
+      let (inner, r) = parse_class(Parser { ...q, at: q.at + 1 });
+      if (r.error.len() > 0) {
+        return (ranges, r);
+      }
+      if let NSet(id) = inner {
+        ranges = ranges.concat(complemented(r.sets[id]));
+      }
+      q = r;
+      continue;
+    }
+    let (lo, is_set, more, r) = class_atom(q);
+    if (r.error.len() > 0) {
+      return (ranges, r);
+    }
+    if (is_set) {
+      ranges = ranges.concat(more);
+      q = r;
+      continue;
+    }
+    q = r;
+    if (q.peek() == 45 && q.at + 1 < q.p.len() && q.p[q.at + 1] != 93) {
+      let (hi, hi_set, _, s) = class_atom(Parser { ...q, at: q.at + 1 });
+      if (s.error.len() > 0) {
+        return (ranges, s);
+      }
+      if (hi_set) {
+        return (ranges, s.failing("char-class value at end of range"));
+      }
+      if (hi < lo) {
+        return (ranges, s.failing("empty range in char class"));
+      }
+      ranges = ranges.append(lo).append(hi);
+      q = s;
+    } else {
+      ranges = ranges.append(lo).append(lo);
+    }
+  }
+  return (ranges, q);
+}
+
+// The ranges of a set, as plain ranges: the complement when it is negated.
+function complemented(s: Set): i32[] {
+  if (!s.negated) {
+    return s.ranges;
+  }
+  let out: i32[] = [];
+  let next = 0;
+  let sorted = sort_ranges(s.ranges);
+  let i = 0;
+  while (i + 1 < sorted.len()) {
+    if (sorted[i] > next) {
+      out = out.append(next).append(sorted[i] - 1);
+    }
+    if (sorted[i + 1] + 1 > next) {
+      next = sorted[i + 1] + 1;
+    }
+    i += 2;
+  }
+  if (next <= 0x10ffff) {
+    out = out.append(next).append(0x10ffff);
+  }
+  return out;
+}
+
+function sort_ranges(r: i32[]): i32[] {
+  let out = r;
+  let n = r.len() / 2;
+  for i in 1..n {
+    let j = i;
+    while (j > 0 && out[2 * (j - 1)] > out[2 * j]) {
+      let a = out[2 * j];
+      let b = out[2 * j + 1];
+      out = out.with(2 * j, out[2 * (j - 1)]).with(2 * j + 1, out[2 * (j - 1) + 1]).with(2 * (j - 1), a).with(2 * (j - 1) + 1, b);
+      j -= 1;
+    }
+  }
+  return out;
+}
+
+// One item of a class: a code point, or the ranges of an escape.
+function class_atom(ps: Parser): (i32, boolean, i32[], Parser) {
+  let c = ps.peek();
+  let q = Parser { ...ps, at: ps.at + 1 };
+  if (c != 92) {
+    return (c, false, [], q);
+  }
+  let e = q.peek();
+  if (e < 0) {
+    return (0, false, [], q.failing("end pattern at escape"));
+  }
+  let r = Parser { ...q, at: q.at + 1 };
+  let (ranges, negated, known) = class_ranges(e);
+  if (known) {
+    return (0, true, complemented(Set { ranges: ranges, negated: negated, fold: false }), r);
+  }
+  if (e == 112 || e == 80) {
+    let (node, s) = parse_property(e == 80, r);
+    if let NSet(id) = node {
+      return (0, true, complemented(s.sets[id]), Parser { ...s, sets: s.sets.truncate(id) });
+    }
+    return (0, true, [], s);
+  }
+  if (e == 120) {
+    let (v, s) = escaped_codepoint(e, r);
+    return (v, false, [], s);
+  }
+  if (e == 98) {
+    return (8, false, [], r);
+  }
+  let simple = simple_escape(e);
+  if (simple >= 0) {
+    return (simple, false, [], r);
+  }
+  return (e, false, [], r);
+}
+
+// `[:name:]` or `[:^name:]` in a class.
+function posix_class(ps: Parser): (i32[], Parser) {
+  let i = ps.at + 2;
+  let negated = false;
+  if (i < ps.p.len() && ps.p[i] == 94) {
+    negated = true;
+    i += 1;
+  }
+  let start = i;
+  while (i < ps.p.len() && ps.p[i] != 58) {
+    i += 1;
+  }
+  if (i + 1 >= ps.p.len() || ps.p[i + 1] != 93) {
+    return ([91, 91], Parser { ...ps, at: ps.at + 1 });
+  }
+  let name = text_of(ps.p, start, i);
+  let ranges = posix_ranges(name);
+  if (ranges.len() == 0 && name != "") {
+    return ([], ps.failing("invalid POSIX bracket type"));
+  }
+  return (complemented(Set { ranges: ranges, negated: negated, fold: false }), Parser { ...ps, at: i + 2 });
+}
+
+function posix_ranges(name: string): i32[] {
+  return match (name) {
+    "alnum" => prop("Alphabetic").concat(prop("Nd")),
+    "alpha" => prop("Alphabetic"),
+    "ascii" => [0, 127],
+    "blank" => prop("Zs").concat([9, 9]),
+    "cntrl" => prop("Cc"),
+    "digit" => prop("Nd"),
+    "lower" => prop("Lowercase"),
+    "upper" => prop("Uppercase"),
+    "punct" => prop("P"),
+    "space" => prop("White_Space"),
+    "word" => unicode.word_ranges(),
+    "xdigit" => [48, 57, 65, 70, 97, 102],
+    "graph" => complemented(Set { ranges: prop("White_Space").concat(prop("Cc")).concat(prop("Cn")), negated: true, fold: false }),
+    "print" => complemented(Set { ranges: prop("Cc").concat(prop("Cn")), negated: true, fold: false }),
+    _ => [],
+  };
+}
+
+// ---- Compiler ----
+
+// `refs` holds the names of the named back references.
+struct Compiler { progs: Inst[][], sets: Set[], marks: i32, names: string[], refs: string[] }
+
+function (c: Compiler) emit(prog: i32, i: Inst): Compiler {
+  return Compiler { ...c, progs: c.progs.with(prog, c.progs[prog].append(i)) };
+}
+
+function (c: Compiler) here(prog: i32): i32 {
+  return c.progs[prog].len();
+}
+
+function (c: Compiler) patch(prog: i32, at: i32, i: Inst): Compiler {
+  return Compiler { ...c, progs: c.progs.with(prog, c.progs[prog].with(at, i)) };
+}
+
+// A new program for the inside of a lookaround or an atomic group.
+function (c: Compiler) sub_program(n: Node): (i32, Compiler) {
+  let id = c.progs.len();
+  let d = Compiler { ...c, progs: c.progs.append([]) }.emit_node(id, n);
+  return (id, d.emit(id, Inst { op: I_MATCH, a: 0, b: 0, c: 0 }));
+}
+
+function (c: Compiler) emit_node(prog: i32, n: Node): Compiler {
+  match (n) {
+    NChar(cp, icase) => {
+      return c.emit(prog, Inst { op: I_CHAR, a: cp, b: if (icase) { 1 } else { 0 }, c: 0 });
+    },
+    NAny(dotall) => {
+      return c.emit(prog, Inst { op: I_ANY, a: if (dotall) { 1 } else { 0 }, b: 0, c: 0 });
+    },
+    NSet(id) => {
+      return c.emit(prog, Inst { op: I_SET, a: id, b: 0, c: 0 });
+    },
+    NSeq(items) => {
+      let d = c;
+      for x in items {
+        d = d.emit_node(prog, x);
+      }
+      return d;
+    },
+    NAlt(alts) => {
+      return c.emit_alt(prog, alts, 0);
+    },
+    NGroup(index, inner) => {
+      let d = c.emit(prog, Inst { op: I_SAVE, a: 2 * index, b: 0, c: 0 }).emit_node(prog, inner);
+      return d.emit(prog, Inst { op: I_SAVE, a: 2 * index + 1, b: 0, c: 0 });
+    },
+    NRepeat(inner, lo, hi, greedy, possessive) => {
+      if (possessive) {
+        let (id, d) = c.sub_program(NRepeat(inner, lo, hi, greedy, false));
+        return d.emit(prog, Inst { op: I_ATOMIC, a: id, b: 0, c: 0 });
+      }
+      return c.emit_repeat(prog, inner, lo, hi, greedy);
+    },
+    NAssert(kind) => {
+      return c.emit(prog, Inst { op: I_ASSERT, a: kind, b: 0, c: 0 });
+    },
+    NLook(ahead, negated, inner) => {
+      let (id, d) = c.sub_program(inner);
+      return d.emit(prog, Inst { op: I_LOOK, a: id, b: if (ahead) { 1 } else { 0 }, c: if (negated) { 1 } else { 0 } });
+    },
+    NAtomic(inner) => {
+      let (id, d) = c.sub_program(inner);
+      return d.emit(prog, Inst { op: I_ATOMIC, a: id, b: 0, c: 0 });
+    },
+    NBackref(refs, icase) => {
+      let index = refs[0];
+      if (index < 0) {
+        index = c.last_group_named(-1 - index);
+      }
+      return c.emit(prog, Inst { op: I_BACKREF, a: index, b: if (icase) { 1 } else { 0 }, c: 0 });
+    },
+    NEmpty => {
+      return c;
+    }
+  }
+}
+
+// The last group of the name that the named reference `ref` names.
+function (c: Compiler) last_group_named(ref: i32): i32 {
+  let g = c.names.len() - 1;
+  while (g > 0) {
+    if (c.names[g] == c.refs[ref]) {
+      return g;
+    }
+    g -= 1;
+  }
+  return 0;
+}
+
+function (c: Compiler) emit_alt(prog: i32, alts: Node[], at: i32): Compiler {
+  if (at == alts.len() - 1) {
+    return c.emit_node(prog, alts[at]);
+  }
+  let split = c.here(prog);
+  let d = c.emit(prog, Inst { op: I_SPLIT, a: split + 1, b: 0, c: 0 }).emit_node(prog, alts[at]);
+  let jmp = d.here(prog);
+  d = d.emit(prog, Inst { op: I_JMP, a: 0, b: 0, c: 0 });
+  d = d.patch(prog, split, Inst { op: I_SPLIT, a: split + 1, b: d.here(prog), c: 0 });
+  d = d.emit_alt(prog, alts, at + 1);
+  return d.patch(prog, jmp, Inst { op: I_JMP, a: d.here(prog), b: 0, c: 0 });
+}
+
+// `inner{lo,hi}`: `lo` copies, then optional copies up to `hi`, or a loop.
+// A loop body that matched no text does not loop again.
+function (c: Compiler) emit_repeat(prog: i32, inner: Node, lo: i32, hi: i32, greedy: boolean): Compiler {
+  let d = c;
+  for i in 0..lo {
+    d = d.emit_node(prog, inner);
+  }
+  if (hi < 0) {
+    let mark = d.marks;
+    d = Compiler { ...d, marks: d.marks + 1 };
+    let top = d.here(prog);
+    d = d.emit(prog, Inst { op: I_SPLIT, a: 0, b: 0, c: 0 });
+    let body = d.here(prog);
+    d = d.emit(prog, Inst { op: I_MARK, a: mark, b: 0, c: 0 }).emit_node(prog, inner);
+    d = d.emit(prog, Inst { op: I_CHECK, a: mark, b: 0, c: 0 });
+    d = d.emit(prog, Inst { op: I_JMP, a: top, b: 0, c: 0 });
+    let out = d.here(prog);
+    return d.patch(prog, top, if (greedy) { Inst { op: I_SPLIT, a: body, b: out, c: 0 } } else { Inst { op: I_SPLIT, a: out, b: body, c: 0 } });
+  }
+  let splits: i32[] = [];
+  for i in lo..hi {
+    splits = splits.append(d.here(prog));
+    d = d.emit(prog, Inst { op: I_SPLIT, a: 0, b: 0, c: 0 }).emit_node(prog, inner);
+  }
+  let out = d.here(prog);
+  for at in splits {
+    d = d.patch(prog, at, if (greedy) { Inst { op: I_SPLIT, a: at + 1, b: out, c: 0 } } else { Inst { op: I_SPLIT, a: out, b: at + 1, c: 0 } });
+  }
+  return d;
+}
+
+// ---- Machine ----
+
+// The state of one run: the slots of the groups and the marks of the loops.
+struct Run { slots: i32[], marks: i32[] }
+
+function is_word_at(s: string, i: i32): boolean {
+  if (i < 0 || i >= s.len()) {
+    return false;
+  }
+  let (cp, _) = decode(s, i);
+  return in_ranges(unicode.word_ranges(), cp);
+}
+
+function in_ranges(r: i32[], cp: i32): boolean {
+  let i = 0;
+  while (i + 1 < r.len()) {
+    if (cp >= r[i] && cp <= r[i + 1]) {
+      return true;
+    }
+    i += 2;
+  }
+  return false;
+}
+
+function fold_eq(a: i32, b: i32): boolean {
+  if (a == b) {
+    return true;
+  }
+  let c = unicode.simple_fold(a as char) as i32;
+  while (c != a) {
+    if (c == b) {
+      return true;
+    }
+    c = unicode.simple_fold(c as char) as i32;
+  }
+  return false;
+}
+
+function in_set(s: Set, cp: i32): boolean {
+  let found = in_ranges(s.ranges, cp);
+  if (!found && s.fold) {
+    let c = unicode.simple_fold(cp as char) as i32;
+    while (c != cp && !found) {
+      found = in_ranges(s.ranges, c);
+      c = unicode.simple_fold(c as char) as i32;
+    }
+  }
+  return found != s.negated;
+}
+
+function word_before(s: string, i: i32): boolean {
+  return i > 0 && is_word_at(s, prev_start(s, i));
+}
+
+function assertion(kind: i32, s: string, i: i32, start: i32): boolean {
+  let n = s.len();
+  return match (kind) {
+    0 => i == 0,
+    1 => i == n || i == n - 1 && s[i] == b'\n',
+    2 => i == 0,
+    3 => i == n,
+    4 => i == n || i == n - 1 && s[i] == b'\n',
+    5 => word_before(s, i) != is_word_at(s, i),
+    6 => word_before(s, i) == is_word_at(s, i),
+    7 => i == start,
+    8 => i == 0 || s[i - 1] == b'\n',
+    _ => i == n || s[i] == b'\n',
+  };
+}
+
+// The end of a match of the program `prog` at `i`, with the slots and the
+// marks of `r`, or -1. With `longest`, the run tries each path and gives the
+// longest end. With `not_empty`, an empty match does not count.
+function exec(re: Regex, prog: i32, s: string, i: i32, start: i32, r: Run, longest: boolean, not_empty: boolean): (i32, Run) {
+  let code = re.progs[prog];
+  // The stack holds the place, the position and the length of the undo log
+  // for each choice.
+  let stack: i32[] = [0, i, 0];
+  let undo: i32[] = [];
+  let slots = r.slots;
+  let marks = r.marks;
+  let best = -1;
+  let best_slots = slots;
+  while (stack.len() > 0) {
+    let n = stack.len();
+    let pc = stack[n - 3];
+    let sp = stack[n - 2];
+    let mark = stack[n - 1];
+    stack = stack.truncate(n - 3);
+    while (undo.len() > mark) {
+      let u = undo.len();
+      if (undo[u - 3] == 0) {
+        slots = slots.with(undo[u - 2], undo[u - 1]);
+      } else {
+        marks = marks.with(undo[u - 2], undo[u - 1]);
+      }
+      undo = undo.truncate(u - 3);
+    }
+    let failed = false;
+    while (!failed) {
+      let ins = code[pc];
+      let op = ins.op;
+      if (op == I_CHAR) {
+        if (sp >= s.len()) {
+          failed = true;
+        } else {
+          let (cp, size) = decode(s, sp);
+          if (cp == ins.a || ins.b == 1 && fold_eq(cp, ins.a)) {
+            sp += size;
+            pc += 1;
+          } else {
+            failed = true;
+          }
+        }
+      } else if (op == I_ANY) {
+        if (sp >= s.len() || ins.a == 0 && s[sp] == b'\n') {
+          failed = true;
+        } else {
+          let (_, size) = decode(s, sp);
+          sp += size;
+          pc += 1;
+        }
+      } else if (op == I_SET) {
+        if (sp >= s.len()) {
+          failed = true;
+        } else {
+          let (cp, size) = decode(s, sp);
+          if (in_set(re.sets[ins.a], cp)) {
+            sp += size;
+            pc += 1;
+          } else {
+            failed = true;
+          }
+        }
+      } else if (op == I_SPLIT) {
+        stack = stack.append(ins.b).append(sp).append(undo.len());
+        pc = ins.a;
+      } else if (op == I_JMP) {
+        pc = ins.a;
+      } else if (op == I_SAVE) {
+        undo = undo.append(0).append(ins.a).append(slots[ins.a]);
+        slots = slots.with(ins.a, sp);
+        pc += 1;
+      } else if (op == I_MARK) {
+        undo = undo.append(1).append(ins.a).append(marks[ins.a]);
+        marks = marks.with(ins.a, sp);
+        pc += 1;
+      } else if (op == I_CHECK) {
+        if (marks[ins.a] == sp) {
+          failed = true;
+        } else {
+          pc += 1;
+        }
+      } else if (op == I_ASSERT) {
+        if (assertion(ins.a, s, sp, start)) {
+          pc += 1;
+        } else {
+          failed = true;
+        }
+      } else if (op == I_BACKREF) {
+        let (end, ok) = backref(s, sp, slots, ins.a, ins.b == 1);
+        if (ok) {
+          sp = end;
+          pc += 1;
+        } else {
+          failed = true;
+        }
+      } else if (op == I_LOOK) {
+        let (ok, after) = look(re, ins.a, s, sp, start, Run { slots: slots, marks: marks }, ins.b == 1);
+        if (ok != (ins.c == 1)) {
+          if (ins.c == 0) {
+            for k in 0..slots.len() {
+              if (after.slots[k] != slots[k]) {
+                undo = undo.append(0).append(k).append(slots[k]);
+                slots = slots.with(k, after.slots[k]);
+              }
+            }
+          }
+          pc += 1;
+        } else {
+          failed = true;
+        }
+      } else if (op == I_ATOMIC) {
+        let (end, after) = exec(re, ins.a, s, sp, start, Run { slots: slots, marks: marks }, false, false);
+        if (end < 0) {
+          failed = true;
+        } else {
+          for k in 0..slots.len() {
+            if (after.slots[k] != slots[k]) {
+              undo = undo.append(0).append(k).append(slots[k]);
+              slots = slots.with(k, after.slots[k]);
+            }
+          }
+          sp = end;
+          pc += 1;
+        }
+      } else {
+        if (not_empty && sp == i) {
+          failed = true;
+        } else if (!longest) {
+          return (sp, Run { slots: slots, marks: marks });
+        } else {
+          if (sp > best) {
+            best = sp;
+            best_slots = slots;
+          }
+          failed = true;
+        }
+      }
+    }
+  }
+  return (best, Run { slots: best_slots, marks: marks });
+}
+
+// A match of the group `g` at `i`: the end after it, and whether it matched.
+function backref(s: string, i: i32, slots: i32[], g: i32, icase: boolean): (i32, boolean) {
+  let from = slots[2 * g];
+  let to = slots[2 * g + 1];
+  if (from < 0 || to < 0) {
+    return (i, false);
+  }
+  let a = from;
+  let b = i;
+  while (a < to) {
+    if (b >= s.len()) {
+      return (i, false);
+    }
+    let (x, xs) = decode(s, a);
+    let (y, ys) = decode(s, b);
+    if (x != y && !(icase && fold_eq(x, y))) {
+      return (i, false);
+    }
+    a += xs;
+    b += ys;
+  }
+  return (b, true);
+}
+
+// A lookahead matches at `i`. A lookbehind matches when a match of its
+// program that starts at or before `i` ends at `i`.
+function look(re: Regex, prog: i32, s: string, i: i32, start: i32, r: Run, ahead: boolean): (boolean, Run) {
+  if (ahead) {
+    let (end, after) = exec(re, prog, s, i, start, r, false, false);
+    return (end >= 0, after);
+  }
+  let j = i;
+  while (j >= 0) {
+    let (end, after) = exec(re, prog, s, j, start, r, false, false);
+    if (end == i) {
+      return (true, after);
+    }
+    if (j == 0) {
+      break;
+    }
+    j = prev_start(s, j);
+  }
+  return (false, r);
+}
+
+// The first match of `re` in `s` from the byte `from`, or None.
+pub function search(re: Regex, s: string, from: i32): Option[Found] {
+  let empty: i32[] = [];
+  let slots = empty;
+  for k in 0..2 * (re.groups + 1) {
+    slots = slots.append(-1);
+  }
+  let marks = empty;
+  for k in 0..re.marks {
+    marks = marks.append(-1);
+  }
+  let best = -1;
+  let best_found = Found { starts: [], ends: [] };
+  let i = from;
+  while (i <= s.len()) {
+    let (end, r) = exec(re, 0, s, i, from, Run { slots: slots, marks: marks }, re.longest, re.not_empty);
+    if (end >= 0) {
+      let found = found_of(r.slots.with(0, i).with(1, end), re.groups);
+      if (!re.longest) {
+        return Some(found);
+      }
+      if (end - i > best) {
+        best = end - i;
+        best_found = found;
+      }
+    }
+    if (i == s.len()) {
+      break;
+    }
+    i += 1;
+  }
+  if (best >= 0) {
+    return Some(best_found);
+  }
+  return None;
+}
+
+function found_of(slots: i32[], groups: i32): Found {
+  let starts: i32[] = [];
+  let ends: i32[] = [];
+  for g in 0..groups + 1 {
+    let a = slots[2 * g];
+    let b = slots[2 * g + 1];
+    if (a < 0 || b < 0) {
+      starts = starts.append(-1);
+      ends = ends.append(-1);
+    } else {
+      starts = starts.append(a);
+      ends = ends.append(b);
+    }
+  }
+  return Found { starts: starts, ends: ends };
+}

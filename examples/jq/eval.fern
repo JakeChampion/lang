@@ -17,6 +17,7 @@ import "./modules";
 import "./number";
 import "./output";
 import "./reader";
+import "./regex";
 
 // `error` is empty, or it holds the one value of the error. A function of
 // values gives this, and `give` sends it to a sink.
@@ -806,6 +807,9 @@ function call_many(name: string, args: filter.Ast[], input: json.JsonValue, e: E
     },
     "setpath" => {
       return run(args[1], input, e, (x: json.JsonValue, own s: St): own St => run(args[0], input, e, (p: json.JsonValue, own s2: St): own St => give(setpath_value(input, p, x), k, s2), s), st);
+    },
+    "_match_impl" => {
+      return run(args[2], input, e, (t: json.JsonValue, own s: St): own St => run(args[1], input, e, (m: json.JsonValue, own s2: St): own St => run(args[0], input, e, (re: json.JsonValue, own s3: St): own St => give(match_impl(input, re, m, t), k, s3), s2), s), st);
     },
     _ => {
       if (args.len() == 2) {
@@ -3867,6 +3871,129 @@ function delete_items(items: json.JsonValue[], keys: json.JsonValue[]): Outputs 
     }
   }
   return one(json.JArray(out));
+}
+
+// ---- Regular expressions ----
+
+// `_match_impl(re; flags; test)` of jq: true or false for a test, and
+// otherwise an array of the matches, with offsets and lengths in code points.
+function match_impl(input: json.JsonValue, re: json.JsonValue, flags: json.JsonValue, test: json.JsonValue): Outputs {
+  let json.JString(text) = input else {
+    return fail(type_name(input) + " (" + shown(input) + ") cannot be matched, as it is not a string");
+  };
+  let json.JString(pattern) = re else {
+    return fail(type_name(re) + " (" + shown(re) + ") is not a string");
+  };
+  let mode = "";
+  match (flags) {
+    json.JString(m) => {
+      for i in 0..m.len() {
+        if (!"gixmsplnx".contains(slice_unchecked(m, i, i + 1).to_owned())) {
+          return fail(m + " is not a valid modifier string");
+        }
+      }
+      mode = m;
+    },
+    json.JNull => {},
+    _ => {
+      return fail(type_name(flags) + " (" + shown(flags) + ") is not a string");
+    }
+  }
+  let compiled = match (regex.compile(pattern, mode)) {
+    Ok(r) => r,
+    Err(message) => {
+      return fail("Regex failure: " + message);
+    },
+  };
+  let testing = order(test, json.JBool(true)) == 0;
+  let global = mode.contains("g");
+  let found: json.JsonValue[] = [];
+  let start = 0;
+  while (start <= text.len()) {
+    let Some(m) = regex.search(compiled, text, start) else {
+      break;
+    };
+    if (testing) {
+      return one(json.JBool(true));
+    }
+    found = found.append(match_value(text, m, compiled.names));
+    if (m.ends[0] == m.starts[0]) {
+      start = m.ends[0] + 1;
+    } else {
+      start = m.ends[0];
+    }
+    if (!global) {
+      break;
+    }
+  }
+  if (testing) {
+    return one(json.JBool(false));
+  }
+  return one(json.JArray(found));
+}
+
+// The number of code points of `s` before the byte `at`, as jq counts them.
+function code_index(s: string, at: i32): i32 {
+  let n = 0;
+  let i = 0;
+  while (i < at) {
+    let b = s[i] as i32;
+    if (b < 0x80) {
+      i += 1;
+    } else if (b < 0xe0) {
+      i += 2;
+    } else if (b < 0xf0) {
+      i += 3;
+    } else {
+      i += 4;
+    }
+    n += 1;
+  }
+  return n;
+}
+
+function name_of(names: string[], g: i32): json.JsonValue {
+  if (g < names.len() && names[g].len() > 0) {
+    return json.JString(names[g]);
+  }
+  return json.JNull;
+}
+
+// One match as jq gives it. An empty match gives each group as an empty
+// string at its offset.
+function match_value(s: string, m: regex.Found, names: string[]): json.JsonValue {
+  let from = m.starts[0];
+  let to = m.ends[0];
+  let offset = whole(code_index(s, from));
+  let caps: json.JsonValue[] = [];
+  if (from == to) {
+    for g in 1..m.starts.len() {
+      let c = json.object().insert("offset", offset).insert("string", json.JString("")).insert("length", whole(0));
+      caps = caps.append(json.JObject(c.insert("name", name_of(names, g))));
+    }
+    let o = json.object().insert("offset", offset).insert("length", whole(0)).insert("string", json.JString(""));
+    return json.JObject(o.insert("captures", json.JArray(caps)));
+  }
+  for g in 1..m.starts.len() {
+    caps = caps.append(capture_value(s, m.starts[g], m.ends[g], name_of(names, g)));
+  }
+  let o = json.object().insert("offset", offset).insert("length", whole(code_index(s, to) - code_index(s, from)));
+  o = o.insert("string", json.JString(slice_unchecked(s, from, to).to_owned()));
+  return json.JObject(o.insert("captures", json.JArray(caps)));
+}
+
+function capture_value(s: string, from: i32, to: i32, name: json.JsonValue): json.JsonValue {
+  if (from < 0) {
+    let o = json.object().insert("offset", whole(-1)).insert("string", json.JNull).insert("length", whole(0));
+    return json.JObject(o.insert("name", name));
+  }
+  if (from == to) {
+    let o = json.object().insert("offset", whole(code_index(s, from))).insert("string", json.JString("")).insert("length", whole(0));
+    return json.JObject(o.insert("name", name));
+  }
+  let o = json.object().insert("offset", whole(code_index(s, from))).insert("length", whole(code_index(s, to) - code_index(s, from)));
+  o = o.insert("string", json.JString(slice_unchecked(s, from, to).to_owned()));
+  return json.JObject(o.insert("name", name));
 }
 
 // ---- Streams ----

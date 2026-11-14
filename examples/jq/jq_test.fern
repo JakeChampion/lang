@@ -1098,6 +1098,22 @@ function test_circular(): test.TestOutcome {
   ]);
 }
 
+// Regular expressions, with the syntax and the messages of Oniguruma.
+function test_regex(): test.TestOutcome {
+  return checks([
+    ("[match(\"a|ab\"; \"g\").string], [match(\"a|ab\"; \"gl\").string]", "\"abab\"", "[\"a\",\"a\"]\n[\"ab\",\"ab\"]"),
+    ("[match(\"\"; \"g\").offset]", "\"āb\"", "[0,1,1,2]"),
+    ("[match(\"(?<x>a)|b\"; \"g\") | .captures[0].offset]", "\"ab\"", "[0,-1]"),
+    ("[match(\"(?<=a)b(?=c)\").offset, match(\"(a)\\\\1\").length, (match(\"a++a\") | 1)]", "\"abcaa\"", "[1,2]"),
+    ("[test(\"^b\"), test(\"b$\"), test(\"a.b\"), test(\"a.b\"; \"m\")]", "\"a\\nb\"", "[false,true,false,true]"),
+    ("[match(\"\\\\d\"; \"g\").string], test(\"É\"; \"i\")", "\"1٣é\"", "[\"1\",\"٣\"]\ntrue"),
+    ("sub(\"(?<l>[a-z]+)\"; \"<\\(.l)>\"; \"g\"), [splits(\", *\")], [scan(\"[a-z]\")]", "\"ab, cd\"", "\"<ab>, <cd>\"\n[\"ab\",\"cd\"]\n[\"a\",\"b\",\"c\",\"d\"]"),
+    ("test(\"(\")", "\"a\"", "error: Regex failure: end pattern with unmatched parenthesis"),
+    ("test(\"a\"; \"q\")", "\"a\"", "error: q is not a valid modifier string"),
+    ("test(\"\\\\xe9\")", "\"a\"", "error: Regex failure: too short multibyte code string"),
+  ]);
+}
+
 // jq 1.7 has no `leaf_paths`, so a call of a function that jq does not
 // have is an error at compile time, as in jq.
 function test_undefined_functions(): test.TestOutcome {
@@ -1185,6 +1201,7 @@ function main(): i32 {
   r = r.it("strptime", test_strptime);
   r = r.it("the circular functions, cbrt and builtins", test_circular);
   r = r.it("functions that jq does not have", test_undefined_functions);
+  r = r.it("regular expressions", test_regex);
   r = r.it("number literals and computed numbers", test_numbers);
   r = r.it("pretty output", test_output);
   r = r.it("the input stream and its lines", test_stream);
