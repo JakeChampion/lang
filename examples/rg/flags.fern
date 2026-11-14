@@ -135,13 +135,17 @@ pub const JSON: i32 = 29;
 
 pub const NO_UNICODE: i32 = 30;
 
+pub const MULTILINE: i32 = 31;
+
+pub const DOTALL: i32 = 32;
+
 const SWITCHES: string[] = [
   "invert-match", "word-regexp", "fixed-strings", "only-matching", "hidden", "follow",
   "no-ignore-dot", "no-ignore-vcs", "no-ignore-parent", "no-ignore-exclude", "no-ignore-global",
   "no-ignore-files", "no-require-git", "null", "quiet", "line-regexp", "glob-case-insensitive",
   "ignore-file-case-insensitive", "no-messages", "no-ignore-messages", "include-zero",
   "column", "byte-offset", "vimgrep", "passthru", "max-columns-preview", "trim", "stop-on-nonmatch",
-  "stats", "json", "no-unicode",
+  "stats", "json", "no-unicode", "multiline", "multiline-dotall",
 ];
 
 const SWITCHES_OFF: string[] = [
@@ -150,7 +154,7 @@ const SWITCHES_OFF: string[] = [
   "ignore-files", "require-git", "", "", "", "no-glob-case-insensitive",
   "no-ignore-file-case-insensitive", "messages", "ignore-messages", "no-include-zero",
   "no-column", "no-byte-offset", "", "", "no-max-columns-preview", "no-trim", "",
-  "no-stats", "no-json", "unicode",
+  "no-stats", "no-json", "unicode", "no-multiline", "no-multiline-dotall",
 ];
 
 // The other switches.
@@ -181,14 +185,14 @@ const TYPE_FLAGS: string[] = ["type", "type-not", "type-add", "type-clear"];
 const TYPE_PREFIXES: string[] = ["+", "-", "add:", "clear:"];
 
 // Each short flag and its long name.
-const SHORT_FLAGS: string = "isSvwFxnNclo0qHIABCejmdgtTaL.ubrfEMp";
+const SHORT_FLAGS: string = "isSvwFxnNclo0qHIABCejmdgtTaL.ubrfEMpU";
 
 const SHORT_NAMES: string[] = [
   "ignore-case", "case-sensitive", "smart-case", "invert-match", "word-regexp", "fixed-strings",
   "line-regexp", "line-number", "no-line-number", "count", "files-with-matches", "only-matching",
   "null", "quiet", "with-filename", "no-filename", "after-context", "before-context", "context",
   "regexp", "threads", "max-count", "max-depth", "glob", "type", "type-not", "text", "follow",
-  "hidden", "unrestricted", "byte-offset", "replace", "file", "encoding", "max-columns", "pretty",
+  "hidden", "unrestricted", "byte-offset", "replace", "file", "encoding", "max-columns", "pretty", "multiline",
 ];
 
 pub function defaults(): Options {
@@ -729,16 +733,22 @@ pub function pattern(o: Options): string {
   } else if (o.has(WORD)) {
     body = "\\b{start-half}(?:" + body + ")\\b{end-half}";
   }
-  if (ignores_case(o)) {
-    body = "(?i)" + body;
+  return inline_flags(o) + body;
+}
+
+// The inline flags that the options put before the pattern.
+function inline_flags(o: Options): string {
+  let out = if (o.has(NO_UNICODE)) { "(?-u)" } else { "" };
+  if (o.has(MULTILINE)) {
+    out += if (o.has(DOTALL)) { "(?ms)" } else { "(?m)" };
   }
   if (o.eol == "\r\n") {
-    body = "(?mR)" + body;
+    out += "(?mR)";
   }
-  if (o.has(NO_UNICODE)) {
-    body = "(?-u)" + body;
+  if (ignores_case(o)) {
+    out += "(?i)";
   }
-  return body;
+  return out;
 }
 
 // A pattern that matches nothing, for -f with no pattern.

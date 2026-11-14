@@ -73,6 +73,8 @@ func rgFixtures(t *testing.T, dir string) {
 		"u16be.txt": "\xfe\xff\x00c\x00a\x00f\x00\xe9\x00 \x00f\x00o\x00o\x00\n",
 		"u16nb.txt": "c\x00a\x00f\x00\xe9\x00 \x00f\x00o\x00o\x00\n\x00",
 		"bom8.txt":  "\xef\xbb\xbfcaf\xe9 foo \xe2\x82\n",
+		"ml.txt":    "one\nabc\ndefxxxabc\ndefxxx\nlast abc\nmid\nabc\ndef\n",
+		"hw.txt":    "hello\nworld\n",
 		"empty.txt": "",
 		"nonl.txt":  "foo",
 		"blank.txt": "\n\nfoo\n\n",
@@ -299,6 +301,16 @@ func rgFlagCases() []rgCase {
 		"--stats -C1 -j1 foo a.txt w.txt", "--stats --heading -j1 foo a.txt w.txt", "--json foo a.txt", "--json -C1 foo a.txt",
 		"--json -c foo a.txt", "--json zzz a.txt", "--json -v foo a.txt", "--json -n --column -b foo w.txt",
 		"--json --stats foo w.txt", "--json foo bom8.txt", "--json -j1 foo a.txt w.txt",
+		"-U abc\\ndef ml.txt", "-Un abc\\ndef ml.txt hw.txt", "-Uc abc\\ndef ml.txt", "-U --count-matches abc\\ndef ml.txt",
+		"-Uno abc\\ndef ml.txt", "-Uno -b --column c\\nd ml.txt", "-Uno --column -r X c\\nd ml.txt",
+		"-Un --column abc\\ndef ml.txt", "-Un --vimgrep c\\nd ml.txt", "-Un -r X abc\\ndef ml.txt", "-Unv abc\\ndef ml.txt",
+		"-Uvc abc\\ndef ml.txt", "-Un -C1 abc\\ndef ml.txt", "-Un -m1 abc\\ndef ml.txt", "-U --json abc\\ndef ml.txt",
+		"-Un c$ ml.txt", "-Un --column xxx ml.txt", "-Un -r ? \\n hw.txt", "-Un --multiline-dotall one.*?xxx ml.txt",
+		"-Un one.*?xxx ml.txt", "-Un --passthru c\\nd ml.txt", "-Un --trim -M8 --max-columns-preview .*c\\nd.* ml.txt",
+		"-Uo -M3 --max-columns-preview c\\nd ml.txt", "-Un --crlf two\\r?\\nthree crlf.txt", "-U --stats c\\nd ml.txt",
+		"--multiline --no-multiline c\\nd ml.txt", "-U --color always c\\nd ml.txt", "-l -U c\\nd ml.txt hw.txt",
+		"c\\nd ml.txt", "--null-data a\\x00b ml.txt", "--null-data -c c\\nd ml.txt", "--crlf c\\rd ml.txt",
+		"-c [\\n]|abc ml.txt", "-c \\s ml.txt", "-U -c [\\n] ml.txt", "-c \\x0a ml.txt",
 	}
 	var cases []rgCase
 	for _, l := range lines {

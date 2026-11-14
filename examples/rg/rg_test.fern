@@ -403,6 +403,41 @@ function test_passthru_and_stop(): test.TestOutcome {
   ]);
 }
 
+const MULTI: string = "one\nabc\ndefxxxabc\ndefxxx\nlast abc\nmid\nabc\ndef\n";
+
+function test_multiline(): test.TestOutcome {
+  let got = [
+    run(["-U", "-n", "abc\\ndef", "a"], MULTI),
+    run(["-U", "-c", "abc\\ndef", "a"], MULTI),
+    run(["-U", "-o", "--column", "c\\nd", "a"], MULTI),
+    run(["-U", "-r", "X", "c\\nd", "a"], MULTI),
+    run(["-U", "-v", "abc\\ndef", "a"], MULTI),
+    run(["-U", "--vimgrep", "c\\nd", "a"], MULTI),
+    run(["-U", "--column", "-n", "xxx", "a"], MULTI),
+    run(["-U", "-n", "-r", "?", "\\n", "a"], "hello\nworld\n"),
+    run(["--multiline-dotall", "-U", "-n", "one.*?xxx", "a"], MULTI),
+    run(["-U", "-n", "-A1", "x\\nl", "a"], MULTI),
+    pattern_of(["-U", "a"]),
+    pattern_of(["-U", "--multiline-dotall", "a"]),
+    pattern_of(["--multiline-dotall", "a"]),
+  ];
+  return test.assert_eq_array(got, [
+    "2:abc\n3:defxxxabc\n4:defxxx\n7:abc\n8:def\n0",
+    "3\n0",
+    "2:3:c\n3:3:d\n3:13:c\n4:13:d\n7:3:c\n8:3:d\n0",
+    "abXefxxxabXefxxx\nabXef\n0",
+    "one\ndefxxx\nlast abc\nmid\n0",
+    "a:2:3:abc\na:3:9:defxxxabc\na:7:3:abc\n0",
+    "3:4:defxxxabc\n4:4:defxxx\n0",
+    "1:hello?world?\n0",
+    "1:one\n2:abc\n3:defxxxabc\n0",
+    "4:defxxx\n5:last abc\n6-mid\n0",
+    "(?m)(?:a)",
+    "(?ms)(?:a)",
+    "(?:a)",
+  ]);
+}
+
 function test_line_terminators(): test.TestOutcome {
   let got = [
     run(["foo$", "a"], "one\r\ntwo foo\r\n"),
@@ -880,6 +915,7 @@ function main(): i32 {
   r = r.it("replace", test_replace);
   r = r.it("trim and max columns", test_trim_and_max_columns);
   r = r.it("passthru and stop on nonmatch", test_passthru_and_stop);
+  r = r.it("multiline", test_multiline);
   r = r.it("line terminators", test_line_terminators);
   r = r.it("encodings", test_encoding);
   r = r.it("errors of the new flags", test_new_flag_errors);

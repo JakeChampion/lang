@@ -60,9 +60,36 @@ function flush(h: usize, all: boolean): boolean {
   return true;
 }
 
-function compiled(pattern: string): Option[regex.Regex] {
+const MULTILINE_HINT: string = "Consider enabling multiline mode with the --multiline flag (or -U for short).\nWhen multiline mode is enabled, new line characters can be matched.";
+
+// The bytes that a pattern cannot have as a literal without -U, as in
+// ripgrep: the line terminator, and with --crlf the carriage return.
+function banned(o: flags.Options): u8[] {
+  if (o.has(flags.MULTILINE)) {
+    return [];
+  }
+  if (o.eol == "\x00") {
+    return [0u8];
+  }
+  return if (o.eol == "\r\n") { [10u8, 13u8] } else { [10u8] };
+}
+
+function byte_name(b: u8): string {
+  if (b == 0u8) {
+    return "\\0";
+  }
+  return if (b == 13u8) { "\\r" } else { "\\n" };
+}
+
+function compiled(pattern: string, banned: u8[]): Option[regex.Regex] {
   match (regex.compile(pattern)) {
     Ok(re) => {
+      for b in banned {
+        if (re.has_literal_byte(b)) {
+          eprint("rg: the literal \"" + byte_name(b) + "\" is not allowed in a regex\n\n" + MULTILINE_HINT);
+          return None;
+        }
+      }
       return Some(re);
     },
     Err(e) => {
@@ -588,7 +615,7 @@ function run(o: flags.Options, t0: i64): i32 {
   if (!o.searches()) {
     return list_files(ctx, items, o);
   }
-  let Some(re) = compiled(ctx.pattern) else {
+  let Some(re) = compiled(ctx.pattern, banned(o)) else {
     return 2;
   };
   let r = if (ctx.threads > 1) { search_parallel(ctx, items, ctx.threads) } else { search_serial(ctx, re, items) };

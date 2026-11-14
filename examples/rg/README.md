@@ -41,6 +41,7 @@ searches the current directory, and it writes each name without the leading
 | | `--null-data` | A line ends with NUL, and the search is of text. |
 | | `--stop-on-nonmatch` | Stop the search of a file at a line that is not selected after a selected line. |
 | | `--no-unicode` | The pattern has the semantics of bytes and ASCII, as `(?-u)`. |
+| `-U` | `--multiline`, `--multiline-dotall` | A match can hold line terminators, and the output writes each line of a match. `^` and `$` match at each line. With `--multiline-dotall`, `.` also matches a line terminator. |
 
 ### The output
 
@@ -215,9 +216,9 @@ order of the walk.
 - **Times.** `--stats` and `--json` write times, and the times of two runs
   are not the same.
 
-- **Not in this slice.** `-U` and `--multiline-dotall`, `--pre` and
-  `--pre-glob`, `--colors`, `--hyperlink-format`, `-z`, `-P`,
-  `--dfa-size-limit` and `--regex-size-limit`.
+- **Not in this slice.** `--pre` and `--pre-glob`, `--colors`,
+  `--hyperlink-format`, `-z`, `-P`, `--dfa-size-limit` and
+  `--regex-size-limit`.
 
 ## Tests
 
@@ -226,12 +227,12 @@ order of the walk.
   rules of an ignore file, the globs, the types and the precedence of the
   ignore files. And it tests `-m`, `--heading`, `--null` and the buffers
   for binary files. The other tests are of the columns and the offsets,
-  `-r`, `--trim`, `-M`, `--passthru`, `--stop-on-nonmatch`, the line
+  `-r`, `--trim`, `-M`, `--passthru`, `--stop-on-nonmatch`, `-U`, the line
   terminators, the encodings and `--json`. `TestSelfHostExampleRgUnit` runs it on x86-64, arm64 and
   wasm32-wasi with the leak census.
 
 - `TestSelfHostExampleRgAgainstRipgrep` runs the port and `/usr/bin/rg`
-  14.1.0 with 331 command lines on the same files, on x86-64 and on arm64.
+  14.1.0 with 369 command lines on the same files, on x86-64 and on arm64.
   The stdout, the stderr and the exit status must be the same. The files
   include an empty file and a file with no last line terminator. They also
   include CRLF lines, NUL lines, a line of 209,008 bytes, UTF-8 text,
@@ -253,7 +254,7 @@ order of the walk.
   tests of ripgrep 14.1.1 (`testdata/ripgrep-tests.json`, from
   `tests/*.rs`) with the port and with `/usr/bin/rg`. Each case makes its
   files in a new directory, and each run gets `--path-separator / -j1`.
-  `testdata/ripgrep-pass.txt` names the 276 of 306 cases that give the
+  `testdata/ripgrep-pass.txt` names the 292 of 306 cases that give the
   output of ripgrep. The test fails when a named case fails, and when a case
   that it does not name passes. Most of the other cases use options that
   are not in this slice, and four compare the times of `--stats`. The
