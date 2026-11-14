@@ -158,6 +158,9 @@ const WHOLE: i32 = 2147483647;
 
 const HEAD_BYTES: i32 = 4096;
 
+// The header of a packed object is shorter than this.
+const LINK_BYTES: i32 = 64;
+
 // The bytes of the object at the offset `from` of the open packfile, `most`
 // bytes at most. They end where the next object of `order` starts, or at
 // the end of the file.
@@ -263,11 +266,12 @@ pub function info(s: Store, name: string): Info {
       // The start of an object holds its header and the start of a delta.
       let base = (name: u8[]): i32 => pack.offset_of(idx, name);
       let head = if (p.loaded) { (from: i32): pack.Window => pack.Window { bytes: data, shift: 0 } } else { (from: i32): pack.Window => part_at(file, order, from, HEAD_BYTES) };
-      if let Ok((kind, size)) = pack.info_in(head, base, offset) {
+      let link = if (p.loaded) { (from: i32): pack.Window => pack.Window { bytes: data, shift: 0 } } else { (from: i32): pack.Window => part_at(file, order, from, LINK_BYTES) };
+      if let Ok((kind, size)) = pack.info_in(head, link, base, offset) {
         return Info { store: s, kind: kind, size: size, why: "" };
       }
       let part = if (p.loaded) { (from: i32): pack.Window => pack.Window { bytes: data, shift: 0 } } else { (from: i32): pack.Window => part_at(file, order, from, WHOLE) };
-      return match (pack.info_in(part, base, offset)) {
+      return match (pack.info_in(part, link, base, offset)) {
         Ok((kind, size)) => Info { store: s, kind: kind, size: size, why: "" },
         Err(why) => Info { store: s, kind: "", size: 0, why: why },
       };

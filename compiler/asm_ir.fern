@@ -495,6 +495,50 @@ function freelist_key(block: string, into: string): string {
   return "    movq " + block + ", " + into + "\n    shrq $12, " + into + "\n    xorq __fern_canary(%rip), " + into + "\n";
 }
 
+// __fern_rec_box makes the block of a record, a variant or a tuple. %rdi
+// holds the number of words of the box. The block has a header of one word:
+// the reference count in its low half and the number of words in its high
+// half. An array keeps its header of two words, with zero in that high half,
+// so the release of a block reads which of the two it has. Each routine that
+// makes an array thus writes all 64 bits of the count word.
+//
+// The routine takes the block from __fern_arr_box, which gives a block of
+// the capacity plus three words, and writes the short header one word below
+// the first word of the box. A box of one word keeps the block of an array.
+// So does each box of a build that traces, profiles, quarantines or hardens
+// each allocation.
+function emit_rec_box(own s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("__fern_rec_box:\n");
+  if (!compact_boxes(s)) {
+    return s.write("    subq $1, %rdi\n    jmp __fern_arr_box\n");
+  }
+  s = s.write("    cmpq $2, %rdi\n    jb .Lrecbox_unit\n    pushq %rdi\n    subq $2, %rdi\n    call __fern_arr_box\n    popq %rdi\n");
+  s = s.write("    subq $8, %rax\n    movl $1, -8(%rax)\n    movl %edi, -4(%rax)\n    ret\n");
+  return s.write(".Lrecbox_unit:\n    subq $1, %rdi\n    call __fern_arr_box\n    ret\n");
+}
+
+function compact_boxes(s: asmcore.EmitState): boolean {
+  return !rc_trace_on() && !rtprofile.allocation(s.profile) && !s.harden && !s.rc_free_debug;
+}
+
+// The release of a block that can be a box with a header of one word. Such a
+// box has its number of words in the high half of the header, where an array
+// has zero. A unique box gets the header of an array of the same block: the
+// capacity in the header word and a count of 1 in its first word. The array
+// release then takes it. That release also takes each other block, and a box
+// that is shared, because it then changes only the count.
+function emit_box_dec(own s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("__fn___fern_box_dec:\n    movq 8(%rsp), %rax\n");
+  s = s.write("__fn___fern_box_dec.r:\n    cmpq $0x10000, %rax\n    jb .Lboxdec_ret\n");
+  s = s.write("__fn___fern_box_dec.u:\n");
+  if (!compact_boxes(s)) {
+    return s.write("    jmp __fn___fern_arr_dec.u\n.Lboxdec_ret:\n    ret\n");
+  }
+  s = s.write("    cmpl $0, -4(%rax)\n    je __fn___fern_arr_dec.u\n    cmpl $1, -8(%rax)\n    jne __fn___fern_arr_dec.u\n");
+  s = s.write("    movl -4(%rax), %ecx\n    subq $2, %rcx\n    movq %rcx, -8(%rax)\n    movq $1, (%rax)\n    addq $8, %rax\n");
+  return s.write("    jmp __fn___fern_arr_dec.u\n.Lboxdec_ret:\n    ret\n");
+}
+
 // %rax holds the block that the bump allocator made and %rdi its end. When
 // the block crosses a 64 KiB line, the bump pointer moves forward by 0 to 960
 // bytes, so blocks of one size do not stay a constant distance apart. Boxes
@@ -4225,6 +4269,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("str_grow") || s.has_need("buf")) {
     s = s.need("__fern_slice_abort.c");
   }
+  s = emit_rec_box(s);
   s = s.write("__fern_arr_box:\n");
   s = s.write("    cmpq $268435455, %rdi\n    ja __fern_alloc_size_abort.c\n");
   s = hev_shim_site(s, "arrbox");
@@ -4477,6 +4522,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    call __fern_large_push\n");
   }
   s = s.write("    ret\n");
+  s = emit_box_dec(s);
   s = s.write("__fn___fern_str_free:\n");
   s = s.write("    movq 8(%rsp), %rax\n");
   s = s.write("__fn___fern_str_free.r:\n");
@@ -4955,16 +5001,21 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fn___fern_alloc_reuse.r:\n");
   s = s.write("    testq %rax, %rax\n");
   s = s.write("    jz .Lsarelo_fresh\n");
+  s = s.write("    cmpl %esi, -4(%rax)\n");
+  s = s.write("    je .Lsarelo_ret\n");
+  s = s.write("    cmpl $0, -4(%rax)\n");
+  s = s.write("    jne .Lsarelo_other\n");
   s = s.write("    leaq -1(%rsi), %rdi\n");
   s = s.write("    cmpq %rdi, -16(%rax)\n");
   s = s.write("    je .Lsarelo_ret\n");
+  s = s.write(".Lsarelo_other:\n");
   s = s.write("    pushq %rsi\n");
-  s = s.write("    call __fn___fern_arr_dec.r\n");
+  s = s.write("    call __fn___fern_box_dec.r\n");
   s = s.write("    popq %rsi\n");
   s = s.write(".Lsarelo_fresh:\n");
   s = s.write("__fn___fern_alloc_reuse.f:\n");
-  s = s.write("    leaq -1(%rsi), %rdi\n");
-  s = s.write("    jmp __fern_arr_box\n");
+  s = s.write("    movq %rsi, %rdi\n");
+  s = s.write("    jmp __fern_rec_box\n");
   s = s.write(".Lsarelo_ret:\n");
   s = s.write("    ret\n");
   if (envp_wanted(s)) {
@@ -8988,12 +9039,18 @@ function ssa_rc_guard(s: asmcore.EmitState, v: i32, p: string, done: asmcore.Lab
   return s;
 }
 
+// The count decrement of a value that can be a box goes to the release that
+// reads which header the block has.
+function helper_symbol(name: string): string {
+  return if (name == "__fern_rc_dec") { "__fn___fern_box_dec" } else { ircore.ir_helper_symbol(name) };
+}
+
 function ssa_helper_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   return ssa_helper_entry(ins, reg_of, ".r", s);
 }
 
 function ssa_helper_entry(ins: ssa.SInst, reg_of: i32[], suffix: string, s: asmcore.EmitState): asmcore.EmitState {
-  s = ssa_call_sym(helper_arg_moves(ins, reg_of, s), ircore.ir_helper_symbol(ins.str) + suffix);
+  s = ssa_call_sym(helper_arg_moves(ins, reg_of, s), helper_symbol(ins.str) + suffix);
   return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
 }
 
@@ -9039,9 +9096,9 @@ function ssa_reuse_alloc(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowS
   let fresh = asmcore.lab_new(helper_arg_moves(ins, reg_of, s), lp + "raf" + id);
   let en = asmcore.lab_new(fresh.state, lp + "rae" + id);
   s = ssa_branch(en.state.write("    testq %rax, %rax\n"), J_JZ, fresh.lab);
-  s = ssa_branch(s.write("    leaq -1(%rsi), %rdi\n    cmpq %rdi, -16(%rax)\n"), J_JE, en.lab);
+  s = ssa_branch(s.write("    cmpl %esi, -4(%rax)\n"), J_JE, en.lab);
   s = ssa_branch(ssa_call_saving(s, "__fn___fern_alloc_reuse.r", saves), J_JMP, en.lab);
-  s = ssa_call_saving(s.lab_def(fresh.lab).write("    leaq -1(%rsi), %rdi\n"), "__fern_arr_box", saves);
+  s = ssa_call_saving(s.lab_def(fresh.lab).write("    movq %rsi, %rdi\n"), "__fern_rec_box", saves);
   return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s.lab_def(en.lab)));
 }
 
@@ -9132,7 +9189,7 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
     s = ssa_push_operand(reg_of, ins.args[a], s);
   }
   if (helper) {
-    s = ssa_call_sym(s, ircore.ir_helper_symbol(ins.str));
+    s = ssa_call_sym(s, helper_symbol(ins.str));
   } else {
     s = ssa_call_sym(s, "__fn_" + asmcore.sanitize_label(ins.str));
   }
@@ -9204,7 +9261,7 @@ function ssa_release_entry(entry: ssaprepare.ReleaseEntry, lp: string, s: asmcor
   s = helper_call_needs("__fern_rc_dec", bn.state);
   s = ssa_branch(ssa_alu_im(s, 7, 32, 1, "%rax", -8), J_JNE, bn.lab);
   s = ssa_call_sym(ssa_push_r(s, "%rax"), "__fn_" + asmcore.sanitize_label(drop) + ".r");
-  s = ssa_call_sym(ssa_mov_rm0(s, 64, true, "%rax", "%rsp"), ircore.ir_helper_symbol("__fern_rc_dec") + ".u");
+  s = ssa_call_sym(ssa_mov_rm0(s, 64, true, "%rax", "%rsp"), helper_symbol("__fern_rc_dec") + ".u");
   s = ssa_ret(ssa_zero(ssa_pop_r(s, "%rax"), "%rax"));
   return s.lab_def(bn.lab);
 }
@@ -10529,7 +10586,11 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState):
     label = asmcore.str_box_label(s, lo.idx);
   } else {
     s = s.need("heap");
-    s = ssa_call_sym(ssa_mov_ir(s, 64, ins.imm as i64, util.i32_to_string(ins.imm), "%rdi"), "__fern_arr_box");
+    if (ins.str == "box") {
+      s = ssa_call_sym(ssa_mov_ir(s, 64, (ins.imm + 1) as i64, util.i32_to_string(ins.imm + 1), "%rdi"), "__fern_rec_box");
+    } else {
+      s = ssa_call_sym(ssa_mov_ir(s, 64, ins.imm as i64, util.i32_to_string(ins.imm), "%rdi"), "__fern_arr_box");
+    }
     return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
   }
   let d = ssa_dst(reg_of, ins.result);
@@ -11155,7 +11216,7 @@ function ssa_reg_helper(sym: string, argc: i32): boolean {
   if (argc == 2) {
     return sym == "__fn___fern_str_eq" || sym == "__fn___fern_alloc_reuse";
   }
-  return argc == 1 && (sym == "__fn___fern_arr_dec" || sym == "__fn___fern_str_free" || sym == "__fn___fern_arr_inc_elems");
+  return argc == 1 && (sym == "__fn___fern_arr_dec" || sym == "__fn___fern_box_dec" || sym == "__fn___fern_str_free" || sym == "__fn___fern_arr_inc_elems");
 }
 
 function ssa_reg_call(ins: ssa.SInst, s: asmcore.EmitState): boolean {

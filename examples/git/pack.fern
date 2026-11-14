@@ -468,6 +468,9 @@ pub function object_cached(part: (i32) => Window, base: (u8[]) => i32, offset: i
   return (Ok(now), cache);
 }
 
+// The two numbers at the start of a delta have nine bytes each at most.
+const DELTA_HEAD: i32 = 20;
+
 // The size of the object that the delta of the entry `e` makes, or -1. It
 // is the second number of the delta, so a short start of the stream gives it.
 function delta_size(w: Window, e: Entry): i64 {
@@ -479,7 +482,7 @@ function delta_size(w: Window, e: Entry): i64 {
     return -1;
   };
   let read = reader.read;
-  let Ok(chunk) = read(32.min(e.size.max(1)), (): boolean => false) else {
+  let Ok(chunk) = read(DELTA_HEAD.min(e.size.max(1)), (): boolean => false) else {
     return -1;
   };
   let (_, a) = delta_number(chunk.bytes, 0);
@@ -487,9 +490,31 @@ function delta_size(w: Window, e: Entry): i64 {
   return size;
 }
 
+// The kind of the object that the chain of deltas from `e` starts at.
+// `link` gives the header of an object.
+function base_kind(link: (i32) => Window, base: (u8[]) => i32, e: Entry): Result[i32, string] {
+  let steps = 0;
+  while (e.kind == OFS_DELTA || e.kind == REF_DELTA) {
+    if (steps >= MAX_CHAIN) {
+      return Err("a chain of deltas is too long");
+    }
+    let at = if (e.kind == OFS_DELTA) { e.base_offset } else { base(e.base_name) };
+    if (at < 0) {
+      return Err("the base " + hex.encode(e.base_name) + " of a delta is not in the packfile");
+    }
+    e = entry_in(link(at), at);
+    if (!e.ok) {
+      return Err("a packed object has a bad header");
+    }
+    steps += 1;
+  }
+  return Ok(e.kind);
+}
+
 // The kind and the size of the object at `offset`, with no inflate of a
-// whole object.
-pub function info_in(part: (i32) => Window, base: (u8[]) => i32, offset: i32): Result[(string, i64), string] {
+// whole object. `part` gives the start of the object at the least, and
+// `link` gives the header of an object.
+pub function info_in(part: (i32) => Window, link: (i32) => Window, base: (u8[]) => i32, offset: i32): Result[(string, i64), string] {
   let w = part(offset);
   let e = entry_in(w, offset);
   if (!e.ok) {
@@ -505,9 +530,7 @@ pub function info_in(part: (i32) => Window, base: (u8[]) => i32, offset: i32): R
       let (whole, _) = delta_number(delta, a);
       size = whole;
     }
-    let chain = chain_in(part, base, offset)?;
-    let last = chain[chain.len() - 1];
-    kind = entry_in(part(last), last).kind;
+    kind = base_kind(link, base, e)?;
   }
   let name = kind_name(kind);
   if (name.len() == 0 || size < 0) {

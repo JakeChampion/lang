@@ -433,7 +433,7 @@ struct P { id: i32, m: Map[i32, i32] } function main(): i32 { let d = P { id: 1,
 			if guard != tc.heapDonor || reuse != tc.heapDonor {
 				t.Errorf("uniqueness guard=%v, reuse allocator=%v; heap donor=%v:\n%s", guard, reuse, tc.heapDonor, body)
 			}
-			for _, call := range []string{"call __fern_arr_box", "call __fn___fern_arr_dec"} {
+			for _, call := range []string{"call __fern_rec_box", "call __fn___fern_box_dec"} {
 				if !strings.Contains(body, call) {
 					t.Errorf("missing %s:\n%s", call, body)
 				}

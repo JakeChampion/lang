@@ -73,7 +73,7 @@ func TestSelfHostAllocReuseLargeDonor(t *testing.T) {
 						}
 						frame := text[at : at+end]
 						hardenedFrame = frame
-						protected := regexp.MustCompile(`(?s)paciasp\n\s+stp x29, x30, \[sp, #-16\]!\n\s+bl __fn___fern_arr_dec\.r\n\s+ldp x29, x30, \[sp\], #16\n\s+autiasp`)
+						protected := regexp.MustCompile(`(?s)paciasp\n\s+stp x29, x30, \[sp, #-16\]!\n\s+bl __fn___fern_box_dec\.r\n\s+ldp x29, x30, \[sp\], #16\n\s+autiasp`)
 						if !protected.MatchString(frame) {
 							t.Fatalf("unprotected mismatch return-address frame:\n%s", frame)
 						}
@@ -94,7 +94,7 @@ func TestSelfHostAllocReuseLargeDonor(t *testing.T) {
 					for _, stack := range entries {
 						for _, tc := range cases {
 							t.Run(fmt.Sprintf("%d-to-%d-stack-%t", tc.cap, tc.want, stack), func(t *testing.T) {
-								entry := allocReuseDonorProbe(target, tc.cap, tc.want, stack, mode == "quarantine" || mode == "sanitized")
+								entry := allocReuseDonorProbe(target, tc.cap, tc.want, stack, mode == "quarantine" || mode == "sanitized", mode == "normal")
 								dir := t.TempDir()
 								asm, bin := filepath.Join(dir, "probe.s"), filepath.Join(dir, "probe")
 								if err := os.WriteFile(asm, []byte(text[:start]+entry+text[start+section[0]:]), 0o644); err != nil {
@@ -133,7 +133,7 @@ func TestSelfHostAllocReuseLargeDonor(t *testing.T) {
 
 func checkAllocReuseDonorPAC(t *testing.T, gcc, runner, dir, assembly, frame, want string) {
 	t.Helper()
-	call := "    bl __fn___fern_arr_dec.r\n"
+	call := "    bl __fn___fern_box_dec.r\n"
 	corrupt := call + "    ldr x4, [sp, #8]\n    eor x4, x4, #0x40000000000000\n    str x4, [sp, #8]\n"
 	changed := strings.Replace(frame, call, corrupt, 1)
 	if changed == frame {
@@ -162,12 +162,17 @@ func checkAllocReuseDonorPAC(t *testing.T, gcc, runner, dir, assembly, frame, wa
 	t.Log("a corrupted saved PAC faults; stripping it restores the balanced return")
 }
 
-func allocReuseDonorProbe(target string, cap, want int, stack, quarantine bool) string {
+// The probe makes a box of cap words, gives it to the reuse entry for a box
+// of want words, and releases the result. With short, a box of two words or
+// more has a header of one word, and its number of words is at -4. Each
+// other box has the header of an array, with a capacity of one less than its
+// number of words.
+func allocReuseDonorProbe(target string, cap, want int, stack, quarantine, short bool) string {
 	mismatch := cap > 0 && cap != want
 	if target == "x86-64-linux" {
 		s := "_start:\n    pushq %rbp\n    movq %rsp, %rbp\n    xorq %r12, %r12\n"
 		if cap > 0 {
-			s += fmt.Sprintf("    movq $%d, %%rdi\n    call __fern_arr_box\n    movq %%rax, %%r12\n", cap)
+			s += fmt.Sprintf("    movq $%d, %%rdi\n    call __fern_rec_box\n    movq %%rax, %%r12\n", cap)
 		}
 		s += fmt.Sprintf("    movq %%r12, %%rax\n    movq $%d, %%rsi\n", want)
 		if stack {
@@ -175,45 +180,55 @@ func allocReuseDonorProbe(target string, cap, want int, stack, quarantine bool) 
 		} else {
 			s += "    call __fn___fern_alloc_reuse.r\n"
 		}
-		s += fmt.Sprintf("    cmpq $%d, -16(%%rax)\n    jne .Lprobe_fail\n    cmpl $1, -8(%%rax)\n    jne .Lprobe_fail\n", want)
+		if short && want >= 2 {
+			s += fmt.Sprintf("    cmpl $%d, -4(%%rax)\n    jne .Lprobe_fail\n    cmpl $1, -8(%%rax)\n    jne .Lprobe_fail\n", want)
+		} else {
+			s += fmt.Sprintf("    cmpq $%d, -16(%%rax)\n    jne .Lprobe_fail\n    cmpl $1, -8(%%rax)\n    jne .Lprobe_fail\n", want-1)
+		}
 		if cap == want {
 			s += "    cmpq %r12, %rax\n    jne .Lprobe_fail\n"
 		}
 		if mismatch && quarantine {
 			s += fmt.Sprintf("    cmpl $%d, -8(%%r12)\n    jne .Lprobe_fail\n", ast.RcPoison)
 		}
-		s += "    call __fn___fern_arr_dec.r\n"
+		s += "    call __fn___fern_box_dec.r\n"
 		if mismatch {
-			s += fmt.Sprintf("    movq $%d, %%rdi\n    call __fern_arr_box\n    cmpq %%r12, %%rax\n", cap)
+			s += fmt.Sprintf("    movq $%d, %%rdi\n    call __fern_rec_box\n    cmpq %%r12, %%rax\n", cap)
 			if quarantine {
 				s += "    je .Lprobe_fail\n"
 			} else {
 				s += "    jne .Lprobe_fail\n"
 			}
-			s += "    call __fn___fern_arr_dec.r\n"
+			s += "    call __fn___fern_box_dec.r\n"
 		}
 		return s + "    xorq %r13, %r13\n    jmp .Lprobe_report\n.Lprobe_fail:\n    movq $91, %r13\n.Lprobe_report:\n    call __fern_lc_report\n    movq %r13, %rdi\n    movq $231, %rax\n    syscall\n"
 	}
 	s := "_start:\n    mov x20, #0\n"
 	if cap > 0 {
-		s += fmt.Sprintf("    movz x0, #%d\n    movk x0, #%d, lsl #16\n    bl __fern_arr_box\n    mov x20, x0\n", cap&65535, cap>>16)
+		s += fmt.Sprintf("    movz x0, #%d\n    movk x0, #%d, lsl #16\n    bl __fern_rec_box\n    mov x20, x0\n", cap&65535, cap>>16)
 	}
-	s += fmt.Sprintf("    movz x1, #%d\n    movk x1, #%d, lsl #16\n    sub sp, sp, #32\n    str x20, [sp, #16]\n    str x1, [sp]\n    bl __fn___fern_alloc_reuse\n    add sp, sp, #32\n    ldur x2, [x0, #-16]\n    movz x3, #%d\n    movk x3, #%d, lsl #16\n    cmp x2, x3\n    b.ne .Lprobe_fail\n    ldur w2, [x0, #-8]\n    cmp w2, #1\n    b.ne .Lprobe_fail\n", want&65535, want>>16, want&65535, want>>16)
+	s += fmt.Sprintf("    movz x1, #%d\n    movk x1, #%d, lsl #16\n    sub sp, sp, #32\n    str x20, [sp, #16]\n    str x1, [sp]\n    bl __fn___fern_alloc_reuse\n    add sp, sp, #32\n", want&65535, want>>16)
+	if short && want >= 2 {
+		s += fmt.Sprintf("    ldur w2, [x0, #-4]\n    movz x3, #%d\n    movk x3, #%d, lsl #16\n    cmp x2, x3\n    b.ne .Lprobe_fail\n", want&65535, want>>16)
+	} else {
+		s += fmt.Sprintf("    ldur x2, [x0, #-16]\n    movz x3, #%d\n    movk x3, #%d, lsl #16\n    cmp x2, x3\n    b.ne .Lprobe_fail\n", (want-1)&65535, (want-1)>>16)
+	}
+	s += "    ldur w2, [x0, #-8]\n    cmp w2, #1\n    b.ne .Lprobe_fail\n"
 	if cap == want {
 		s += "    cmp x0, x20\n    b.ne .Lprobe_fail\n"
 	}
 	if mismatch && quarantine {
 		s += fmt.Sprintf("    ldur w2, [x20, #-8]\n    movz w3, #%d\n    movk w3, #%d, lsl #16\n    cmp w2, w3\n    b.ne .Lprobe_fail\n", ast.RcPoison&65535, ast.RcPoison>>16)
 	}
-	s += "    bl __fn___fern_arr_dec.r\n"
+	s += "    bl __fn___fern_box_dec.r\n"
 	if mismatch {
-		s += fmt.Sprintf("    movz x0, #%d\n    movk x0, #%d, lsl #16\n    bl __fern_arr_box\n    cmp x0, x20\n", cap&65535, cap>>16)
+		s += fmt.Sprintf("    movz x0, #%d\n    movk x0, #%d, lsl #16\n    bl __fern_rec_box\n    cmp x0, x20\n", cap&65535, cap>>16)
 		if quarantine {
 			s += "    b.eq .Lprobe_fail\n"
 		} else {
 			s += "    b.ne .Lprobe_fail\n"
 		}
-		s += "    bl __fn___fern_arr_dec.r\n"
+		s += "    bl __fn___fern_box_dec.r\n"
 	}
 	return s + "    mov x19, #0\n    b .Lprobe_report\n.Lprobe_fail:\n    mov x19, #91\n.Lprobe_report:\n    bl __fern_lc_report\n    mov x0, x19\n    mov x8, #93\n    svc #0\n"
 }

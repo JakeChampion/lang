@@ -429,7 +429,7 @@ function test_parks_agrees(): test.TestOutcome {
   match (async.task_start(t)) {
     Suspended(w) => {
       parked = true;
-      let st = async.task_resume(t, async.Wake.Cancelled);
+      async.task_cancel(t);
     },
     Done(v) => {}
   }

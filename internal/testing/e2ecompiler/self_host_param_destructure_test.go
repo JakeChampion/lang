@@ -38,7 +38,7 @@ func TestSelfHostParamDestructureX86_64(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatal("self-host compiler emitted 0 bytes")
 			}
-			if bytes.Count(asm, []byte("call __fn___fern_arr_dec")) == 0 {
+			if bytes.Count(asm, []byte("call __fn___fern_box_dec")) == 0 {
 				t.Fatalf("%s: no struct free emitted — the param-destructure IR path was NOT exercised", tc.name)
 			}
 			progBin := buildBin(t, gcc, dir, tc.name, string(asm))

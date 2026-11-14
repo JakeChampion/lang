@@ -237,13 +237,13 @@ function test_info(): test.TestOutcome {
   data = data.append((96 + delta.len()) as u8).append((second - 12) as u8).concat(zlib_of(delta));
   let whole = (at: i32): pack.Window => pack.Window { bytes: data, shift: 0 };
   let none = (name: u8[]): i32 => -1;
-  let Ok((kind, size)) = pack.info_in(whole, none, 12) else {
+  let Ok((kind, size)) = pack.info_in(whole, whole, none, 12) else {
     return test.fail("no kind and size for a blob");
   };
   if (kind != "blob" || size != 6) {
     return test.fail("the kind and the size of a blob: " + kind + " " + size.to_string());
   }
-  let Ok((dkind, dsize)) = pack.info_in(whole, none, second) else {
+  let Ok((dkind, dsize)) = pack.info_in(whole, whole, none, second) else {
     return test.fail("no kind and size for a delta");
   };
   if (dkind != "blob" || dsize != 9) {
@@ -256,7 +256,7 @@ function test_info(): test.TestOutcome {
   if (o.body.len() != 9 || o.body[6] != b'a' || o.body[0] != b'h') {
     return test.fail("the object of the delta");
   }
-  if let Ok(_) = pack.info_in(whole, none, 11) {
+  if let Ok(_) = pack.info_in(whole, whole, none, 11) {
     return test.fail("an offset in the header is accepted");
   }
   return test.pass();
