@@ -52,12 +52,13 @@ pub function label(text: string): string {
 // only a file with a byte order mark. A decode makes each malformed
 // sequence U+FFFD, but the bytes after a byte order mark of UTF-8 stay as
 // they are.
-pub function decode(bytes: u8[], name: string): (string, boolean) {
+pub function decode(own bytes: u8[], name: string): (string, boolean) {
   if (name == "none") {
     return (raw(bytes), false);
   }
   if (starts(bytes, [239u8, 187u8, 191u8])) {
-    return (slice_unchecked(raw(bytes), 3, bytes.len()).to_owned(), true);
+    let n = bytes.len();
+    return (slice_unchecked(raw(bytes), 3, n).to_owned(), true);
   }
   if (starts(bytes, [255u8, 254u8])) {
     return (utf16(bytes, 2, false), true);
@@ -80,7 +81,7 @@ function starts(bytes: u8[], mark: u8[]): boolean {
   return true;
 }
 
-function by_name(bytes: u8[], name: string): (string, boolean) {
+function by_name(own bytes: u8[], name: string): (string, boolean) {
   return match (name) {
     "utf-8" => (utf8_lossy(bytes, 0), true),
     "windows-1252" => (latin(bytes), true),
@@ -99,7 +100,7 @@ function has(names: string[], name: string): boolean {
   return false;
 }
 
-function raw(bytes: u8[]): string {
+function raw(own bytes: u8[]): string {
   return unsafe { string_from_bytes_unchecked(bytes) };
 }
 
@@ -130,23 +131,23 @@ function push_cp(h: usize, cp: i32): void {
 
 // The bytes from `from` as UTF-8, with each maximal malformed sequence
 // made U+FFFD, as the Encoding Standard decodes it.
-function utf8_lossy(bytes: u8[], from: i32): string {
+function utf8_lossy(own bytes: u8[], from: i32): string {
   let text = raw(bytes);
-  let h = buf_new(bytes.len());
+  let h = buf_new(text.len());
   let i = from;
   let done = from;
-  while (i < bytes.len()) {
-    let len = utf8_valid_len(bytes, i);
+  while (i < text.len()) {
+    let len = utf8_valid_len(text, i);
     if (len > 0) {
       i += len;
       continue;
     }
     buf_push_range(h, text, done, i);
     push_cp(h, 65533);
-    i += utf8_bad_len(bytes, i);
+    i += utf8_bad_len(text, i);
     done = i;
   }
-  buf_push_range(h, text, done, bytes.len());
+  buf_push_range(h, text, done, text.len());
   return finish(h);
 }
 
@@ -169,7 +170,7 @@ function utf8_lead(b: i32): (i32, i32, i32) {
 }
 
 // The count of the bytes of the valid character at `i`, or 0.
-function utf8_valid_len(bytes: u8[], i: i32): i32 {
+function utf8_valid_len(bytes: string, i: i32): i32 {
   let (lo, hi, n) = utf8_lead(bytes[i] as i32);
   if (n <= 1) {
     return n;
@@ -187,7 +188,7 @@ function utf8_valid_len(bytes: u8[], i: i32): i32 {
 
 // The count of the bytes of the malformed sequence at `i`: the lead byte
 // and the bytes after it that could still continue it.
-function utf8_bad_len(bytes: u8[], i: i32): i32 {
+function utf8_bad_len(bytes: string, i: i32): i32 {
   let (lo, hi, n) = utf8_lead(bytes[i] as i32);
   if (n == 0 || i + 1 >= bytes.len() || bytes[i + 1] as i32 < lo || bytes[i + 1] as i32 > hi) {
     return 1;
@@ -202,10 +203,9 @@ function utf8_bad_len(bytes: u8[], i: i32): i32 {
 // The offset of the first byte of `text` that does not start a valid UTF-8
 // character, or -1.
 pub function invalid_at(text: string): i32 {
-  let bytes = text.bytes();
   let i = 0;
-  while (i < bytes.len()) {
-    let n = utf8_valid_len(bytes, i);
+  while (i < text.len()) {
+    let n = utf8_valid_len(text, i);
     if (n == 0) {
       return i;
     }
@@ -217,18 +217,17 @@ pub function invalid_at(text: string): i32 {
 // `text` with each byte that is not part of a valid UTF-8 character written
 // as `\xHH`, as ripgrep shows a pattern.
 pub function escaped(text: string): string {
-  let bytes = text.bytes();
   let h = buf_new(text.len());
   let i = 0;
-  while (i < bytes.len()) {
-    let n = utf8_valid_len(bytes, i);
+  while (i < text.len()) {
+    let n = utf8_valid_len(text, i);
     if (n > 0) {
       buf_push_range(h, text, i, i + n);
       i += n;
     } else {
       buf_push(h, "\\x");
-      buf_push_byte(h, HEX[bytes[i] as i32 >> 4] as i32);
-      buf_push_byte(h, HEX[bytes[i] as i32 & 15] as i32);
+      buf_push_byte(h, HEX[text[i] as i32 >> 4] as i32);
+      buf_push_byte(h, HEX[text[i] as i32 & 15] as i32);
       i += 1;
     }
   }
