@@ -1,10 +1,12 @@
 // The search of one file and its output in the rg port.
 //
-// The output is that of ripgrep 14.1.0 when its standard output is not a
-// terminal: no heading, and no line numbers unless -n.
+// The output is that of ripgrep 14.1.0. On a terminal, the default is a
+// heading and line numbers. Else it is no heading, and no line numbers
+// unless -n.
 import "std/regex";
 import "std/string";
 import "./flags";
+import "./jsonl";
 
 // How one file is written. `show_name` and `color` are already resolved.
 pub struct Printer {
@@ -27,13 +29,40 @@ pub struct Printer {
   context_separator: Option[string],
   // With -c, also the files with no selected line.
   include_zero: boolean,
+  // The column of the first match, and the byte offset of each line.
+  column: boolean,
+  byte_offset: boolean,
+  // Each match on a line of its own, with the whole line.
+  vimgrep: boolean,
+  // The template of -r, or None.
+  replace: Option[string],
+  trim: boolean,
+  // A longer line is omitted, or with `preview` cut. 0 is no limit.
+  max_columns: i32,
+  preview: boolean,
+  passthru: boolean,
+  stop_on_nonmatch: boolean,
+  // The byte that ends a line of the text, and the line terminator that the
+  // printer writes after a match, a count or a last line.
+  term: i32,
+  eol: string,
+  json: boolean,
+  // Count the matches of each selected line, for --stats and --json.
+  counts: boolean,
+  // -U, and a match can hold the line terminator: the search is of the whole
+  // text, and a match can cover more than one line.
+  multiline: boolean,
 }
+
+// What the search of one file counted: the matches, the selected lines,
+// the bytes written and the bytes searched.
+pub struct Stats { matches: i32, lines: i32, printed: i64, searched: i64 }
 
 // The result of one file. `matched` says whether it has a selected line,
 // and `written` says whether the output so far holds any bytes. `upto` is
 // the offset up to which the search read the file. `cap` is the capacity of
 // the line buffer after the search.
-pub struct Outcome { matched: boolean, written: boolean, upto: i32, cap: i32 }
+pub struct Outcome { matched: boolean, written: boolean, upto: i32, cap: i32, stats: Stats }
 
 // How ripgrep reads one file and looks for binary data in it. It maps the
 // file into memory, or it reads the file through its line buffer. The next
@@ -63,19 +92,37 @@ const MATCH_COLOR: string = "\x1b[0m\x1b[1m\x1b[31m";
 const RESET: string = "\x1b[0m";
 
 // The printer of the options. `one_file` is true when rg searches one file
-// or the standard input only.
-pub function printer(o: flags.Options, tty: boolean, one_file: boolean): Printer {
-  let after = context_lines(o.after, o.context);
-  let before = context_lines(o.before, o.context);
-  let color = o.color == "always" || o.color == "ansi" || o.color == "auto" && tty;
-  let show_name = if (o.with_filename < 0) { !one_file } else { o.with_filename == 1 };
-  let heading = if (o.heading < 0) { tty } else { o.heading == 1 };
-  let terminator = if (o.has(flags.NULL)) { "\x00" } else { "" };
+// or the standard input only. `tty` says whether the standard output is a
+// terminal, and `term_color` whether its TERM lets ripgrep write color.
+pub function printer(o: flags.Options, tty: boolean, term_color: boolean, one_file: boolean): Printer {
+  let p = Printer {
+    mode: o.mode, invert: o.has(flags.INVERT), only_matching: o.has(flags.ONLY), line_number: false,
+    after: context_lines(o.after, o.context), before: context_lines(o.before, o.context), color: false, show_name: false,
+    heading: false, terminator: if (o.has(flags.NULL)) { "\x00" } else { "" }, separator: o.path_separator,
+    max_count: o.max_count, quiet: o.has(flags.QUIET), context_separator: o.context_separator,
+    include_zero: o.has(flags.INCLUDE_ZERO), column: false, byte_offset: false, vimgrep: false, replace: o.replace,
+    trim: o.has(flags.TRIM), max_columns: o.max_columns, preview: o.has(flags.PREVIEW), passthru: o.has(flags.PASSTHRU),
+    stop_on_nonmatch: o.has(flags.STOP_ON_NONMATCH), term: if (o.eol == "\x00") { 0 } else { 10 }, eol: o.eol,
+    json: o.has(flags.JSON), counts: o.has(flags.JSON) || o.has(flags.STATS), multiline: o.has(flags.MULTILINE),
+  };
+  if (p.json) {
+    return p;
+  }
+  return with_fields(p, o, tty, term_color, one_file);
+}
+
+// The fields around the text of a line, which --json does not write: the
+// file name, the heading, the line number, the column, the byte offset and
+// the color. A terminator gives line numbers and a heading.
+function with_fields(p: Printer, o: flags.Options, tty: boolean, term_color: boolean, one_file: boolean): Printer {
+  let column = o.has(flags.COLUMN);
+  let vimgrep = o.has(flags.VIMGREP);
   return Printer {
-    mode: o.mode, invert: o.has(flags.INVERT), only_matching: o.has(flags.ONLY), line_number: o.line_number,
-    after: after, before: before, color: color, show_name: show_name, heading: heading, terminator: terminator,
-    separator: o.path_separator, max_count: o.max_count, quiet: o.has(flags.QUIET),
-    context_separator: o.context_separator, include_zero: o.has(flags.INCLUDE_ZERO),
+    ...p, column: column, vimgrep: vimgrep, byte_offset: o.has(flags.BYTE_OFFSET),
+    color: o.color == "always" || o.color == "ansi" || o.color == "auto" && tty && term_color,
+    show_name: if (o.with_filename < 0) { !one_file } else { o.with_filename == 1 },
+    heading: !vimgrep && (if (o.heading < 0) { tty } else { o.heading == 1 }),
+    line_number: if (o.line_number < 0) { tty || column } else { o.line_number == 1 },
   };
 }
 
@@ -87,9 +134,10 @@ function context_lines(own_count: i32, context: i32): i32 {
   return if (context < 0) { 0 } else { context };
 }
 
-// The byte after a file name on a line of its own.
+// The byte after a file name on a line of its own: NUL with -0, else the
+// line terminator.
 function line_terminator(p: Printer): string {
-  return if (p.terminator != "") { p.terminator } else { "\n" };
+  return if (p.terminator != "") { p.terminator } else { p.eol };
 }
 
 // `name` with each `/` replaced with the path separator.
@@ -116,20 +164,33 @@ function push_name_field(p: Printer, h: usize, name: string, sep: string): void 
   buf_push(h, if (p.terminator != "") { p.terminator } else { sep });
 }
 
-function push_prefix(p: Printer, h: usize, name: string, ln: i32, sep: string): void {
+// The fields before the text of a line: the file name, the line number, the
+// column and the byte offset that the options ask for, each with `sep`
+// after it. A column of -1 has no field.
+function push_prefix(p: Printer, h: usize, name: string, ln: i32, col: i32, off: i32, sep: string): void {
   if (p.show_name && !p.heading) {
     push_name_field(p, h, name, sep);
   }
   if (p.line_number) {
-    if (p.color) {
-      buf_push(h, LINE_COLOR);
-      buf_push(h, ln.to_string());
-      buf_push(h, RESET);
-    } else {
-      buf_push(h, ln.to_string());
-    }
-    buf_push(h, sep);
+    push_field(p, h, LINE_COLOR, ln.to_string(), sep);
   }
+  if (col >= 0) {
+    push_field(p, h, RESET, col.to_string(), sep);
+  }
+  if (p.byte_offset) {
+    push_field(p, h, RESET, off.to_string(), sep);
+  }
+}
+
+function push_field(p: Printer, h: usize, color: string, text: string, sep: string): void {
+  if (p.color) {
+    buf_push(h, color);
+    buf_push(h, text);
+    buf_push(h, RESET);
+  } else {
+    buf_push(h, text);
+  }
+  buf_push(h, sep);
 }
 
 // The next match in `line` at or after `from`. As in ripgrep, an empty match
@@ -148,6 +209,39 @@ pub function next_match(re: regex.Regex, line: string, from: i32, last_end: i32)
   return None;
 }
 
+// A match and the text that the output gives it: the match, or with -r its
+// replacement.
+struct Hit { start: i32, end: i32, text: string }
+
+// The next match as next_match finds it, with the text that it writes.
+function next_hit(p: Printer, re: regex.Regex, line: string, from: i32, last_end: i32): Option[Hit] {
+  let Some(tmpl) = p.replace else {
+    let Some(m) = next_match(re, line, from, last_end) else {
+      return None;
+    };
+    return Some(Hit { start: m.start, end: m.end, text: slice_unchecked(line, m.start, m.end).to_owned() });
+  };
+  let at = from;
+  while (at <= line.len()) {
+    let Some(c) = re.captures_at(line, at) else {
+      return None;
+    };
+    let Some(lo) = c.group_start(0) else {
+      return None;
+    };
+    let hi = match (c.group_end(0)) {
+      Some(e) => e,
+      None => lo,
+    };
+    if (lo < hi || lo != last_end) {
+      return Some(Hit { start: lo, end: hi, text: unsafe { string_from_bytes_unchecked(c.expand_bytes(tmpl)) } });
+    }
+    at = lo + 1;
+  }
+  return None;
+}
+
+@inline
 function count_matches(re: regex.Regex, line: string): i32 {
   let count = 0;
   let at = 0;
@@ -163,64 +257,287 @@ function count_matches(re: regex.Regex, line: string): i32 {
   return count;
 }
 
-function push_matched(h: usize, line: string, lo: i32, hi: i32): void {
+// The column of the first match of `line`, from 1.
+function first_column(re: regex.Regex, line: string): i32 {
+  let Some(m) = next_match(re, line, 0, -1) else {
+    return 1;
+  };
+  return m.start + 1;
+}
+
+function push_matched(h: usize, text: string): void {
   buf_push(h, MATCH_COLOR);
-  buf_push_range(h, line, lo, hi);
+  buf_push(h, text);
   buf_push(h, RESET);
 }
 
-// `line` with each match in color.
-function push_colored(re: regex.Regex, h: usize, line: string): void {
+// The text that the output writes for a line, and the spans in it to show
+// in color: the line and its matches, or with -r the line with each match
+// replaced, and the replacements.
+struct Marked { text: string, spans: i32[] }
+
+// Whether the printer finds the matches of each line that it writes: for
+// color, for -r, and for a search of the whole text.
+function aware(p: Printer): boolean {
+  return p.color || p.replace != None || p.multiline;
+}
+
+function marked(p: Printer, re: regex.Regex, line: string): Marked {
+  let spans: i32[] = [];
+  if (!aware(p)) {
+    return Marked { text: line, spans: spans };
+  }
+  let h = buf_new(line.len());
   let at = 0;
   let last = -1;
   let done = 0;
   while (true) {
-    let Some(m) = next_match(re, line, at, last) else {
-      buf_push_range(h, line, done, line.len());
+    let Some(m) = next_hit(p, re, line, at, last) else {
+      break;
+    };
+    buf_push_range(h, line, done, m.start);
+    let lo = buf_len(h);
+    buf_push(h, m.text);
+    spans = spans.append(lo).append(buf_len(h));
+    done = m.end;
+    at = m.end;
+    last = m.end;
+  }
+  buf_push_range(h, line, done, line.len());
+  let text = buf_take(h);
+  buf_free(h);
+  return Marked { text: text, spans: spans };
+}
+
+// Writes `m.text` from `from` to `to`, with each span that starts before
+// `to` in color. It gives the count of the spans that start at or after
+// `to`.
+function push_marked(p: Printer, h: usize, m: Marked, from: i32, to: i32): i32 {
+  let done = from;
+  let beyond = 0;
+  let k = 0;
+  while (k < m.spans.len()) {
+    let lo = m.spans[k];
+    let hi = if (m.spans[k + 1] < to) { m.spans[k + 1] } else { to };
+    if (lo >= to) {
+      beyond += 1;
+    } else if (hi > done && hi > lo) {
+      let start = if (lo > done) { lo } else { done };
+      buf_push_range(h, m.text, done, start);
+      push_piece(p, h, slice_unchecked(m.text, start, hi).to_owned());
+      done = hi;
+    }
+    k += 2;
+  }
+  if (done < to) {
+    buf_push_range(h, m.text, done, to);
+  }
+  return beyond;
+}
+
+// A match or a replacement, in color when the output has color.
+function push_piece(p: Printer, h: usize, text: string): void {
+  if (p.color && text != "") {
+    push_matched(h, text);
+  } else {
+    buf_push(h, text);
+  }
+}
+
+// The count of the ASCII white space bytes at the start of `text`, which
+// --trim drops.
+function trim_start(text: string): i32 {
+  let i = 0;
+  while (i < text.len() && (text[i] == 32u8 || text[i] >= 9u8 && text[i] <= 13u8)) {
+    i += 1;
+  }
+  return i;
+}
+
+// The offset after `n` characters of `text` from `from`, or its end.
+function after_chars(text: string, from: i32, n: i32): i32 {
+  let i = from;
+  let k = 0;
+  while (i < text.len()) {
+    if (text[i] < 128u8 || text[i] >= 192u8) {
+      if (k == n) {
+        return i;
+      }
+      k += 1;
+    }
+    i += 1;
+  }
+  return i;
+}
+
+// Writes the text of a line after --trim. With -M, a longer line is a note,
+// or with --max-columns-preview its first characters and a note. When the
+// printer finds the matches, a note counts them.
+function push_body(p: Printer, re: regex.Regex, h: usize, line: string, selected: boolean): void {
+  push_marked_line(p, h, marked(p, re, line), selected);
+}
+
+// Writes a line with the spans to show in color, with --trim and -M.
+function push_marked_line(p: Printer, h: usize, m: Marked, selected: boolean): void {
+  let from = if (p.trim) { trim_start(m.text) } else { 0 };
+  if (p.max_columns <= 0 || m.text.len() - from <= p.max_columns) {
+    push_marked(p, h, m, from, m.text.len());
+    return;
+  }
+  if (!p.preview) {
+    buf_push(h, long_note(p, m, selected));
+    return;
+  }
+  let beyond = push_marked(p, h, m, from, after_chars(m.text, from, p.max_columns));
+  if (!aware(p)) {
+    buf_push(h, " [... omitted end of long line]");
+  } else {
+    buf_push(h, " [... " + beyond.to_string() + (if (beyond == 1) { " more match]" } else { " more matches]" }));
+  }
+}
+
+// The note that takes the place of a long line.
+function long_note(p: Printer, m: Marked, selected: boolean): string {
+  if (aware(p)) {
+    return "[Omitted long line with " + (m.spans.len() / 2).to_string() + " matches]";
+  }
+  return if (selected) { "[Omitted long matching line]" } else { "[Omitted long context line]" };
+}
+
+// A line as the output writes it: its text without the line terminator,
+// and the terminator. A line of --crlf writes its CR with the terminator.
+// When the printer finds the matches, or the line has no terminator, it
+// writes the line terminator of the options.
+struct Shown { start: i32, end: i32, eol: string }
+
+function shown(p: Printer, s: Scan, start: i32, end: i32): Shown {
+  let stop = cr_stop(p, s.text, start, end);
+  if (stop < end || end >= s.text.len() || aware(p)) {
+    return Shown { start: start, end: stop, eol: p.eol };
+  }
+  return Shown { start: start, end: end, eol: if (p.term == 0) { "\x00" } else { "\n" } };
+}
+
+// The end of the line from `start` to `end` before the CR of --crlf.
+function cr_stop(p: Printer, text: string, start: i32, end: i32): i32 {
+  return if (p.eol == "\r\n" && end > start && text[end - 1] == 13u8) { end - 1 } else { end };
+}
+
+// Whether the printer writes each line as it is, after its fields.
+function as_is(p: Printer): boolean {
+  return !aware(p) && !p.trim && p.max_columns <= 0 && !p.only_matching && !p.vimgrep && !p.column;
+}
+
+// Writes a line with its fields. A selected line has `:` after its fields,
+// and a context line `-`.
+function push_line(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan, start: i32, end: i32, ln: i32, sep: string): void {
+  if (p.json) {
+    jsonl.line(h, json_kind(sep), name, s.text, start, end, ln, json_matches(p, re, s, start, end, sep));
+    return;
+  }
+  let w = shown(p, s, start, end);
+  if (as_is(p)) {
+    push_prefix(p, h, name, ln, -1, start, sep);
+    buf_push_range(h, s.text, w.start, w.end);
+    buf_push(h, w.eol);
+    return;
+  }
+  let line = slice_unchecked(s.text, w.start, w.end);
+  let matching = sep == ":" && !p.invert;
+  if (matching && p.only_matching) {
+    push_only(p, re, h, name, start, line, ln, w.eol);
+    return;
+  }
+  if (matching && p.vimgrep) {
+    push_vimgrep(p, re, h, name, start, line, ln, w.eol);
+    return;
+  }
+  let col = if (matching && p.column) { first_column(re, line) } else { -1 };
+  push_prefix(p, h, name, ln, col, start, sep);
+  push_body(p, re, h, line, sep == ":");
+  buf_push(h, w.eol);
+}
+
+// Each match of a selected line on a line of its own, for -o. With -r, the
+// column and the byte offset count the replacements before the match, as
+// in ripgrep.
+function push_only(p: Printer, re: regex.Regex, h: usize, name: string, start: i32, line: string, ln: i32, eol: string): void {
+  let at = 0;
+  let last = -1;
+  let shift = 0;
+  while (true) {
+    let Some(m) = next_hit(p, re, line, at, last) else {
       return;
     };
-    if (m.end > m.start) {
-      buf_push_range(h, line, done, m.start);
-      push_matched(h, line, m.start, m.end);
-      done = m.end;
-    }
+    let col = if (p.column) { m.start + shift + 1 } else { -1 };
+    push_prefix(p, h, name, ln, col, start + m.start + shift, ":");
+    push_only_text(p, h, m.text);
+    buf_push(h, eol);
+    shift += m.text.len() - (m.end - m.start);
     at = m.end;
     last = m.end;
   }
 }
 
-function push_line(p: Printer, re: regex.Regex, h: usize, name: string, ln: i32, sep: string, line: string): void {
-  push_prefix(p, h, name, ln, sep);
-  if (p.color) {
-    push_colored(re, h, line);
+function push_only_text(p: Printer, h: usize, text: string): void {
+  let from = if (p.trim) { trim_start(text) } else { 0 };
+  let piece = slice_unchecked(text, from, text.len()).to_owned();
+  if (p.max_columns <= 0 || piece.len() <= p.max_columns) {
+    push_piece(p, h, piece);
+  } else if (!p.preview) {
+    buf_push(h, "[Omitted long matching line]");
   } else {
-    buf_push(h, line);
+    push_piece(p, h, slice_unchecked(piece, 0, after_chars(piece, 0, p.max_columns)).to_owned());
+    buf_push(h, if (aware(p)) { " [... 0 more matches]" } else { " [... omitted end of long line]" });
   }
-  buf_push(h, "\n");
 }
 
-// Each match of a selected line on a line of its own, for -o.
-function push_only(p: Printer, re: regex.Regex, h: usize, name: string, ln: i32, line: string): void {
+// --vimgrep: the whole line once for each match, with the column of the
+// match unless --no-column comes after it.
+function push_vimgrep(p: Printer, re: regex.Regex, h: usize, name: string, start: i32, line: string, ln: i32, eol: string): void {
   let at = 0;
   let last = -1;
   while (true) {
     let Some(m) = next_match(re, line, at, last) else {
       return;
     };
-    push_prefix(p, h, name, ln, ":");
-    if (p.color && m.end > m.start) {
-      push_matched(h, line, m.start, m.end);
-    } else {
-      buf_push_range(h, line, m.start, m.end);
-    }
-    buf_push(h, "\n");
+    push_prefix(p, h, name, ln, if (p.column) { m.start + 1 } else { -1 }, start, ":");
+    push_body(p, re, h, line, true);
+    buf_push(h, eol);
     at = m.end;
     last = m.end;
   }
 }
 
-function line_end(text: string, start: i32, end: i32): i32 {
-  let at = __memchr(text, 10, start);
+function json_kind(sep: string): string {
+  return if (sep == ":") { "match" } else { "context" };
+}
+
+// The spans of the matches of a line for --json: none for a context line
+// and for a line that -v selects.
+function json_matches(p: Printer, re: regex.Regex, s: Scan, start: i32, end: i32, sep: string): i32[] {
+  let out: i32[] = [];
+  if (sep != ":" || p.invert) {
+    return out;
+  }
+  let line = slice_unchecked(s.text, start, end);
+  let at = 0;
+  let last = -1;
+  while (true) {
+    let Some(m) = next_match(re, line, at, last) else {
+      return out;
+    };
+    out = out.append(m.start).append(m.end);
+    at = m.end;
+    last = m.end;
+  }
+  return out;
+}
+
+// The end of the line that starts at `start`, before `end`. `term` is the
+// byte that ends a line.
+function line_end(text: string, start: i32, end: i32, term: i32): i32 {
+  let at = __memchr(text, term, start);
   if (at < 0 || at > end) {
     return end;
   }
@@ -228,11 +545,11 @@ function line_end(text: string, start: i32, end: i32): i32 {
 }
 
 // The start of the line before the line that starts at `start`.
-function previous_line(text: string, start: i32): i32 {
+function previous_line(text: string, start: i32, term: i32): i32 {
   if (start < 2) {
     return 0;
   }
-  return __rmemchr(text, 10, start - 2) + 1;
+  return __rmemchr(text, term, start - 2) + 1;
 }
 
 // A line of the text: where it starts, its number, and the next offset at
@@ -257,7 +574,7 @@ function candidate(re: regex.Regex, text: string, c: Cursor): i32 {
 
 // The cursor at the line of the next candidate before `end`. The lines
 // before it hold no match.
-function jump(re: regex.Regex, text: string, c: Cursor, end: i32): Cursor {
+function jump(re: regex.Regex, text: string, c: Cursor, end: i32, term: i32): Cursor {
   let cand = candidate(re, text, c);
   if (cand >= end) {
     let last = if (end > c.start) { end } else { c.start };
@@ -265,9 +582,9 @@ function jump(re: regex.Regex, text: string, c: Cursor, end: i32): Cursor {
   }
   let start = c.start;
   if (cand > start) {
-    start = __rmemchr(text, 10, cand - 1) + 1;
+    start = __rmemchr(text, term, cand - 1) + 1;
   }
-  let skipped = __count_byte(slice_unchecked(text, c.start, start), 10);
+  let skipped = __count_byte(slice_unchecked(text, c.start, start), term);
   return Cursor { start: start, ln: c.ln + skipped, cand: cand };
 }
 
@@ -292,7 +609,7 @@ function advance(c: Cursor, end: i32): Cursor {
 // (-1 for never), or at the end of the search when `known_at_end`. With
 // `check_lines`, a written line that holds a NUL byte makes it known.
 // `offset` is the offset of the first NUL byte, and `quit` says which
-// message ripgrep writes.
+// message ripgrep writes. `term` is the byte that ends a line.
 struct Scan {
   text: string,
   end: i32,
@@ -301,10 +618,11 @@ struct Scan {
   check_lines: boolean,
   offset: i32,
   quit: boolean,
+  term: i32,
 }
 
-function plain(text: string): Scan {
-  return Scan { text: text, end: text.len(), known_from: -1, known_at_end: false, check_lines: false, offset: -1, quit: false };
+function plain(text: string, term: i32): Scan {
+  return Scan { text: text, end: text.len(), known_from: -1, known_at_end: false, check_lines: false, offset: -1, quit: false, term: term };
 }
 
 // The start of the line `count` lines before the line that ends at `end`,
@@ -390,18 +708,10 @@ function after_line(text: string, at: i32): i32 {
   return __rmemchr(text, 10, at - 1) + 1;
 }
 
-// `text` without a UTF-8 byte order mark, which ripgrep drops.
-function without_bom(text: string): string {
-  if (text.starts_with("\u{FEFF}")) {
-    return slice_unchecked(text, 3, text.len()).to_owned();
-  }
-  return text;
-}
-
 // The scan of a file read from `src`.
-function scan(text: string, src: Source, keep: i32): Scan {
+function scan(text: string, src: Source, keep: i32, term: i32): Scan {
   let nul = if (src.detect == DETECT_NONE) { -1 } else { __memchr(text, 0, 0) };
-  let s = plain(text);
+  let s = plain(text, term);
   let quit = src.detect == DETECT_QUIT;
   if (src.mapped) {
     if (nul >= 0 && nul < BUFFER) {
@@ -436,58 +746,94 @@ function binary_message(p: Printer, h: usize, name: string, s: Scan): void {
 
 // The counts of a summary: of the selected lines, or with -o of their
 // matches, and of the selected lines, and whether the searcher found that
-// the file is binary.
-struct Counted { n: i32, lines: i32, binary: boolean, upto: i32 }
+// the file is binary. `matches` counts the matches for --stats.
+struct Counted { n: i32, lines: i32, binary: boolean, upto: i32, matches: i32 }
 
-// The counts of the selected lines. The count stops at -m, or with
-// `stop_first` at the first selected line.
+// The counts of the selected lines. The count stops at -m, with
+// `stop_first` at the first selected line, and with --stop-on-nonmatch at
+// a line after a selected line that is not selected.
 function count(p: Printer, re: regex.Regex, s: Scan, stop_first: boolean): Counted {
   let text = s.text;
-  let n = Counted { n: 0, lines: 0, binary: false, upto: text.len() };
+  let n = Counted { n: 0, lines: 0, binary: false, upto: text.len(), matches: 0 };
+  let (by_match, all) = count_modes(p);
+  let jumps = skips(p, 0, 0);
+  let below = jump_lines(p);
   let c = begin();
   while (c.start < s.end) {
-    if (!p.invert) {
-      c = jump(re, text, c, s.end);
+    if (jumps && n.lines < below) {
+      c = jump(re, text, c, s.end, s.term);
       if (c.start >= s.end) {
         break;
       }
     }
-    let end = line_end(text, c.start, s.end);
+    let end = line_end(text, c.start, s.end, s.term);
     let (yes, next) = selected(re, text, c, end, p.invert);
     if (yes) {
-      n = count_line(p, re, s, c.start, end, n);
-      if (n.binary || stop_first || n.lines == p.max_count) {
-        return Counted { ...n, upto: end };
-      }
+      n = count_line(re, s, c.start, end, n, all, by_match);
+    }
+    if (count_stops(p, n, yes, stop_first)) {
+      return Counted { ...n, upto: end };
     }
     c = advance(next, end);
   }
   return Counted { ...n, binary: s.quit && (s.known_from == 0 || s.known_at_end) };
 }
 
+// Whether the count is of the matches, and whether a line counts its
+// matches.
+function count_modes(p: Printer): (boolean, boolean) {
+  let by_match = p.mode == flags.CountMatches;
+  return (by_match, (by_match || p.counts) && !p.invert);
+}
+
+// The count skips to the next candidate while it has fewer selected lines
+// than this. --stop-on-nonmatch needs the line after a selected line.
+function jump_lines(p: Printer): i32 {
+  return if (p.stop_on_nonmatch) { 1 } else { 2147483647 };
+}
+
+// Whether the count stops after a line that is selected or not.
+@inline
+function count_stops(p: Printer, n: Counted, yes: boolean, stop_first: boolean): boolean {
+  if (yes) {
+    return n.binary || stop_first || n.lines == p.max_count;
+  }
+  return p.stop_on_nonmatch && n.lines > 0;
+}
+
 // Counts one selected line. A mapped file in which the line holds a NUL
 // byte stops the search of a walk.
-function count_line(p: Printer, re: regex.Regex, s: Scan, start: i32, end: i32, n: Counted): Counted {
+// With `all`, the line also counts its matches. With `by_match`, the
+// count is of the matches and not of the lines.
+function count_line(re: regex.Regex, s: Scan, start: i32, end: i32, n: Counted, all: boolean, by_match: boolean): Counted {
   let line = slice_unchecked(s.text, start, end);
   if (s.check_lines && s.quit && __memchr(line, 0, 0) >= 0) {
     return Counted { ...n, n: 0, binary: true };
   }
-  let matches = if (p.mode == flags.CountMatches) { count_matches(re, line) } else { 1 };
-  return Counted { ...n, n: n.n + matches, lines: n.lines + 1 };
+  if (!all) {
+    return Counted { ...n, n: n.n + (if (by_match) { 0 } else { 1 }), lines: n.lines + 1 };
+  }
+  let k = count_matches(re, line);
+  return Counted { ...n, n: n.n + (if (by_match) { k } else { 1 }), lines: n.lines + 1, matches: n.matches + k };
 }
 
 // The state of a search in lines. `last` is the number of the last line
 // written, and `after_left` is the count of after-context lines still to
 // write. `wrote` says whether any output is written, and `count` is the
 // count of selected lines. `known` says whether the searcher knows that the
-// file is binary, and `stopped` says whether the search stopped.
-struct Group { last: i32, after_left: i32, wrote: boolean, count: i32, known: boolean, stopped: boolean, offset: i32 }
+// file is binary, and `stopped` says whether the search stopped. `matches`
+// counts the matches of the selected lines for --stats and --json.
+struct Group { last: i32, after_left: i32, wrote: boolean, count: i32, known: boolean, stopped: boolean, offset: i32, matches: i32 }
 
 // The start of the output of a file, before its first line: the separator
 // from the output of an earlier file, then the file name on a line of its
 // own for --heading.
 function push_first(p: Printer, h: usize, name: string, g: Group): void {
   if (g.last != 0 || g.count != 0) {
+    return;
+  }
+  if (p.json) {
+    jsonl.begin(h, name);
     return;
   }
   if (g.wrote) {
@@ -549,34 +895,26 @@ function push_separator(p: Printer, h: usize, g: Group, first: i32): void {
   }
 }
 
-function push_selected(p: Printer, re: regex.Regex, h: usize, name: string, ln: i32, line: string): void {
-  if (p.only_matching && !p.invert) {
-    push_only(p, re, h, name, ln, line);
-  } else {
-    push_line(p, re, h, name, ln, ":", line);
-  }
-}
-
 // Writes the lines before line `ln`, from line `first`, as context. The
 // search can stop at one of them.
 function push_before(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan, start: i32, ln: i32, first: i32, g0: Group): Group {
   let starts: i32[] = [];
   let at = start;
   for _ in first..ln {
-    at = previous_line(s.text, at);
+    at = previous_line(s.text, at, s.term);
     starts = starts.append(at);
   }
   let g = g0;
   let k = starts.len() - 1;
   while (k >= 0) {
     let b = starts[k];
-    let e = line_end(s.text, b, s.text.len());
+    let e = line_end(s.text, b, s.text.len(), s.term);
     g = stops(s, g, b, e);
     if (g.stopped) {
       return g;
     }
     push_first(p, h, name, g);
-    push_line(p, re, h, name, ln - 1 - k, "-", slice_unchecked(s.text, b, e));
+    push_line(p, re, h, name, s, b, e, ln - 1 - k, "-");
     g = Group { ...g, last: ln - 1 - k, wrote: true };
     k -= 1;
   }
@@ -614,7 +952,7 @@ function push_group(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan
       return g;
     }
   }
-  let end = line_end(s.text, start, s.text.len());
+  let end = line_end(s.text, start, s.text.len(), s.term);
   g = stops_match(s, g, start, end);
   if (g.stopped) {
     return g;
@@ -626,10 +964,19 @@ function push_group(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan
     return Group { ...g, count: g.count + 1, known: true, stopped: true };
   }
   push_first(p, h, name, g);
-  push_selected(p, re, h, name, ln, slice_unchecked(s.text, start, end));
+  push_line(p, re, h, name, s, start, end, ln, ":");
   let count = g.count + 1;
   let stopped = count == p.max_count && p.after == 0;
-  return Group { ...g, last: ln, after_left: p.after, wrote: true, count: count, stopped: stopped };
+  return Group { ...g, last: ln, after_left: p.after, wrote: true, count: count, stopped: stopped, matches: g.matches + line_matches(p, re, s, start, end) };
+}
+
+// The matches of a selected line, when the search counts them.
+@inline
+function line_matches(p: Printer, re: regex.Regex, s: Scan, start: i32, end: i32): i32 {
+  if (!p.counts || p.invert) {
+    return 0;
+  }
+  return count_matches(re, slice_unchecked(s.text, start, end));
 }
 
 // A selected line past -m: the sink of ripgrep writes it as a match in the
@@ -639,7 +986,7 @@ function push_over(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan,
   if (g.stopped) {
     return g;
   }
-  push_selected(p, re, h, name, ln, slice_unchecked(s.text, start, end));
+  push_line(p, re, h, name, s, start, end, ln, ":");
   let left = g.after_left - 1;
   return Group { ...g, last: ln, after_left: left, stopped: left == 0 };
 }
@@ -649,11 +996,23 @@ function push_after(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan
   if (g.stopped) {
     return g;
   }
-  push_line(p, re, h, name, ln, "-", slice_unchecked(s.text, start, end));
+  push_line(p, re, h, name, s, start, end, ln, "-");
   let left = g.after_left - 1;
   return Group { ...g, last: ln, after_left: left, stopped: left == 0 && g.count == p.max_count };
 }
 
+// A line that --passthru writes as context.
+function push_passthru(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan, start: i32, end: i32, ln: i32, g0: Group): Group {
+  let g = stops(s, g0, start, end);
+  if (g.stopped) {
+    return g;
+  }
+  push_first(p, h, name, g);
+  push_line(p, re, h, name, s, start, end, ln, "-");
+  return Group { ...g, last: ln, wrote: true };
+}
+
+@inline
 function step_line(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan, start: i32, end: i32, ln: i32, yes: boolean, g: Group): Group {
   if (yes && g.count == p.max_count) {
     return push_over(p, re, h, name, s, start, end, ln, g);
@@ -664,28 +1023,369 @@ function step_line(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan,
   if (g.after_left > 0) {
     return push_after(p, re, h, name, s, start, end, ln, g);
   }
+  if (p.passthru) {
+    return push_passthru(p, re, h, name, s, start, end, ln, g);
+  }
   return g;
 }
 
+// Whether the search can skip the lines before the next candidate: it
+// writes no line that does not match, and --stop-on-nonmatch does not need
+// the line after a selected line.
+function skips(p: Printer, selected: i32, after_left: i32): boolean {
+  return !p.invert && after_left == 0 && !p.passthru && !(p.stop_on_nonmatch && selected > 0);
+}
+
+// The lines of a file. With --stop-on-nonmatch, the search stops after a
+// line that is not selected and comes after a selected line.
 function search_lines(p: Printer, re: regex.Regex, s: Scan, name: string, h: usize, written: boolean): Outcome {
-  let g = Group { last: 0, after_left: 0, wrote: written, count: 0, known: false, stopped: false, offset: s.offset };
+  let g = Group { last: 0, after_left: 0, wrote: written, count: 0, known: false, stopped: false, offset: s.offset, matches: 0 };
   let c = begin();
   let upto = s.text.len();
   while (c.start < s.end && !g.stopped) {
-    if (!p.invert && g.after_left == 0) {
-      c = jump(re, s.text, c, s.end);
+    if (skips(p, g.count, g.after_left)) {
+      c = jump(re, s.text, c, s.end, s.term);
       if (c.start >= s.end) {
         break;
       }
     }
     let start = c.start;
-    let end = line_end(s.text, start, s.end);
+    let end = line_end(s.text, start, s.end, s.term);
     let (yes, next) = selected(re, s.text, c, end, p.invert);
     c = advance(next, end);
     g = step_line(p, re, h, name, s, start, end, c.ln, yes, g);
+    if (!yes && p.stop_on_nonmatch && g.count > 0) {
+      g = Group { ...g, stopped: true };
+    }
     upto = end;
   }
   return finish_lines(p, h, name, s, g, if (g.stopped) { upto } else { s.text.len() });
+}
+
+// The spans of the matches of the whole text, for -U.
+function text_matches(re: regex.Regex, s: Scan): i32[] {
+  let out: i32[] = [];
+  let at = 0;
+  let last = -1;
+  while (true) {
+    let Some(m) = next_match(re, s.text, at, last) else {
+      return out;
+    };
+    if (m.start >= s.end && m.start > 0) {
+      return out;
+    }
+    out = out.append(m.start).append(m.end);
+    at = m.end;
+    last = m.end;
+  }
+  return out;
+}
+
+// The start of the line that holds the offset `at`.
+function line_start(text: string, at: i32, term: i32): i32 {
+  if (at <= 0) {
+    return 0;
+  }
+  return __rmemchr(text, term, at - 1) + 1;
+}
+
+// The offset after the line that holds the offset `at`, after its line
+// terminator.
+function line_after(text: string, at: i32, term: i32): i32 {
+  let nl = __memchr(text, term, at);
+  return if (nl < 0) { text.len() } else { nl + 1 };
+}
+
+// The lines of a match of -U: from the line of its start to the line of
+// its last byte.
+function match_lines(text: string, term: i32, lo: i32, hi: i32): (i32, i32) {
+  let last = if (hi > lo) { hi - 1 } else { lo };
+  return (line_start(text, lo, term), line_after(text, last, term));
+}
+
+// The blocks of -U: the lines of each match, where the lines of matches that
+// overlap or touch are one block. Each block is its start and the offset
+// after its last line.
+function text_blocks(text: string, term: i32, ms: i32[]): i32[] {
+  let out: i32[] = [];
+  let k = 0;
+  while (k < ms.len()) {
+    let (lo, hi) = match_lines(text, term, ms[k], ms[k + 1]);
+    let n = out.len();
+    if (n > 0 && lo <= out[n - 1]) {
+      out = out.with(n - 1, if (hi > out[n - 1]) { hi } else { out[n - 1] });
+    } else {
+      out = out.append(lo).append(hi);
+    }
+    k += 2;
+  }
+  return out;
+}
+
+// The count of the lines from `lo` to `hi`.
+function lines_in(s: Scan, lo: i32, hi: i32): i32 {
+  if (hi <= lo) {
+    return 0;
+  }
+  let n = __count_byte(slice_unchecked(s.text, lo, hi), s.term);
+  return if (s.text[hi - 1] as i32 == s.term) { n } else { n + 1 };
+}
+
+// The search of -U: each block of lines that a match covers is selected.
+function search_blocks(p: Printer, re: regex.Regex, s: Scan, name: string, h: usize, written: boolean): Outcome {
+  let ms = text_matches(re, s);
+  let bs = text_blocks(s.text, s.term, ms);
+  let g = Group { last: 0, after_left: 0, wrote: written, count: 0, known: false, stopped: false, offset: s.offset, matches: 0 };
+  let pos = 0;
+  let ln = 1;
+  let selected = 0;
+  let k = 0;
+  while (k < bs.len() && !g.stopped) {
+    g = push_between(p, re, h, name, s, pos, bs[k], ln, g);
+    ln += lines_in(s, pos, bs[k]);
+    g = push_block_group(p, re, h, name, s, bs[k], bs[k + 1], ln, ms, g);
+    let n = lines_in(s, bs[k], bs[k + 1]);
+    ln += n;
+    selected += n;
+    pos = bs[k + 1];
+    k += 2;
+  }
+  g = push_between(p, re, h, name, s, pos, s.end, ln, g);
+  let out = finish_lines(p, h, name, s, g, s.text.len());
+  return Outcome { ...out, stats: Stats { ...out.stats, lines: selected } };
+}
+
+// The count of the lines of the blocks of -U.
+function block_lines(s: Scan, bs: i32[]): i32 {
+  let n = 0;
+  let k = 0;
+  while (k < bs.len()) {
+    n += lines_in(s, bs[k], bs[k + 1]);
+    k += 2;
+  }
+  return n;
+}
+
+// The lines from `lo` to `hi` that are after-context or --passthru lines.
+// `ln` is the number of the line at `lo`.
+function push_between(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan, lo: i32, hi: i32, ln: i32, g0: Group): Group {
+  let g = g0;
+  let start = lo;
+  let n = ln;
+  while (start < hi && !g.stopped && (g.after_left > 0 || p.passthru)) {
+    let end = line_end(s.text, start, hi, s.term);
+    g = step_line(p, re, h, name, s, start, end, n, false, g);
+    start = end + 1;
+    n += 1;
+  }
+  return g;
+}
+
+// Writes a block of -U with its before-context and a separator.
+function push_block_group(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan, lo: i32, hi: i32, ln: i32, ms: i32[], g0: Group): Group {
+  let first = ln - p.before;
+  if (first <= g0.last) {
+    first = g0.last + 1;
+  }
+  let g = g0;
+  push_separator(p, h, g, first);
+  if (first < ln) {
+    g = push_before(p, re, h, name, s, lo, ln, first, g);
+  }
+  push_first(p, h, name, g);
+  let found = block_matches(ms, lo, hi);
+  push_block(p, re, h, name, s, lo, hi, ln, found);
+  let count = g.count + found.len() / 2;
+  let last = ln + lines_in(s, lo, hi) - 1;
+  return Group { ...g, last: last, after_left: p.after, wrote: true, count: count, stopped: count >= p.max_count && p.max_count >= 0, matches: g.matches + found.len() / 2 };
+}
+
+// The spans of `ms` that start in the block from `lo` to `hi`.
+function block_matches(ms: i32[], lo: i32, hi: i32): i32[] {
+  let out: i32[] = [];
+  let k = 0;
+  while (k < ms.len()) {
+    if (ms[k] >= lo && (ms[k] < hi || ms[k] == lo)) {
+      out = out.append(ms[k]).append(ms[k + 1]);
+    }
+    k += 2;
+  }
+  return out;
+}
+
+// Writes the lines of a block of -U. `found` holds the spans of its
+// matches in the text.
+function push_block(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan, lo: i32, hi: i32, ln: i32, found: i32[]): void {
+  if (p.json) {
+    let end = if (hi > lo && s.text[hi - 1] as i32 == s.term) { hi - 1 } else { hi };
+    jsonl.line(h, "match", name, s.text, lo, end, ln, shifted(found, -lo));
+  } else if (p.only_matching) {
+    push_block_only(p, re, h, name, s, lo, hi, ln, found);
+  } else if (p.vimgrep) {
+    push_block_vimgrep(p, re, h, name, s, lo, ln, found);
+  } else {
+    let col = if (p.column) { found[0] - lo + 1 } else { -1 };
+    push_block_text(p, h, name, s, lo, ln, col, block_text(p, re, s, lo, hi, found));
+  }
+}
+
+// The parts of the spans from `lo` to `hi`, relative to `lo`.
+function clipped(spans: i32[], lo: i32, hi: i32): i32[] {
+  let out: i32[] = [];
+  let k = 0;
+  while (k < spans.len()) {
+    if (spans[k + 1] > lo && spans[k] < hi || spans[k] == lo) {
+      out = out.append((if (spans[k] > lo) { spans[k] } else { lo }) - lo).append((if (spans[k + 1] < hi) { spans[k + 1] } else { hi }) - lo);
+    }
+    k += 2;
+  }
+  return out;
+}
+
+function shifted(spans: i32[], by: i32): i32[] {
+  let out = spans;
+  for k in 0..spans.len() {
+    out = out.with(k, spans[k] + by);
+  }
+  return out;
+}
+
+// The text of a block as the output writes it, with the spans to show in
+// color: with -r each match replaced.
+function block_text(p: Printer, re: regex.Regex, s: Scan, lo: i32, hi: i32, found: i32[]): Marked {
+  let spans: i32[] = [];
+  if (p.replace == None) {
+    return Marked { text: slice_unchecked(s.text, lo, hi).to_owned(), spans: if (p.color) { shifted(found, -lo) } else { spans } };
+  }
+  let b = buf_new(hi - lo);
+  let at = lo;
+  let last = -1;
+  let done = lo;
+  while (true) {
+    let Some(m) = next_hit(p, re, s.text, at, last) else {
+      break;
+    };
+    if (m.start >= hi && m.start > lo) {
+      break;
+    }
+    buf_push_range(b, s.text, done, m.start);
+    spans = spans.append(buf_len(b));
+    buf_push(b, m.text);
+    spans = spans.append(buf_len(b));
+    done = m.end;
+    at = m.end;
+    last = m.end;
+  }
+  buf_push_range(b, s.text, done, hi);
+  let text = buf_take(b);
+  buf_free(b);
+  return Marked { text: text, spans: spans };
+}
+
+// Writes the text of a block line by line, with the fields of each line.
+// A line keeps its line terminator, and the last line gets one. As in
+// ripgrep, the lines find their matches only for color and for -r.
+function push_block_text(p0: Printer, h: usize, name: string, s: Scan, lo: i32, ln: i32, col: i32, m: Marked): void {
+  let p = Printer { ...p0, multiline: false };
+  let start = 0;
+  let n = ln;
+  let term = if (p.term == 0) { "\x00" } else { "\n" };
+  while (start < m.text.len() || start == 0) {
+    let nl = __memchr(m.text, p.term, start);
+    let end = if (nl < 0) { m.text.len() } else { nl };
+    let stop = cr_stop(p, m.text, start, end);
+    push_prefix(p, h, name, n, col, lo + start, ":");
+    push_marked_line(p, h, Marked { text: slice_unchecked(m.text, start, stop).to_owned(), spans: clipped(m.spans, start, stop) }, true);
+    buf_push(h, if (nl < 0 || stop < end || aware(p)) { p.eol } else { term });
+    start = end + 1;
+    n += 1;
+  }
+}
+
+// -o with -U: each match, or its replacement, with each of its lines on a
+// line of its own. As in ripgrep 14.1.0, the line, the column and the byte
+// offset come from the position of the match in the block as it is written.
+function push_block_only(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan, lo: i32, hi: i32, ln: i32, found: i32[]): void {
+  let m = if (p.replace == None) { Marked { text: slice_unchecked(s.text, lo, hi).to_owned(), spans: shifted(found, -lo) } } else { block_text(p, re, s, lo, hi, found) };
+  let k = 0;
+  while (k < m.spans.len()) {
+    let at = m.spans[k];
+    let n = ln + __count_byte(slice_unchecked(m.text, 0, at), p.term);
+    let col = if (p.column) { at + 1 } else { -1 };
+    let start = at;
+    while (start < m.spans[k + 1] || start == at) {
+      let nl = __memchr(m.text, p.term, start);
+      let end = if (nl < 0 || nl > m.spans[k + 1]) { m.spans[k + 1] } else { nl };
+      push_prefix(p, h, name, n, col, lo + at, ":");
+      push_only_text(p, h, slice_unchecked(m.text, start, end).to_owned());
+      buf_push(h, p.eol);
+      start = end + 1;
+      n += 1;
+    }
+    k += 2;
+  }
+}
+
+// --vimgrep with -U: the first line of each match, with the column of the
+// match.
+function push_block_vimgrep(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan, lo: i32, ln: i32, found: i32[]): void {
+  let k = 0;
+  while (k < found.len()) {
+    let start = line_start(s.text, found[k], s.term);
+    let end = line_end(s.text, start, s.text.len(), s.term);
+    let n = ln + lines_in(s, lo, start);
+    let w = shown(p, s, start, end);
+    push_prefix(p, h, name, n, if (p.column) { found[k] - start + 1 } else { -1 }, start, ":");
+    push_body(p, re, h, slice_unchecked(s.text, w.start, w.end), true);
+    buf_push(h, w.eol);
+    k += 2;
+  }
+}
+
+// The regions of -v with -U: the search starts again after the lines of
+// each match, so a match that starts in those lines is not found.
+function inverted_regions(re: regex.Regex, s: Scan): i32[] {
+  let out: i32[] = [];
+  let at = 0;
+  while (at <= s.end) {
+    let Some(m) = re.find_at(s.text, at) else {
+      return out;
+    };
+    let (lo, hi) = match_lines(s.text, s.term, m.start, m.end);
+    out = out.append(lo).append(hi);
+    at = if (hi > at) { hi } else { at + 1 };
+  }
+  return out;
+}
+
+// -v with -U: the lines outside the regions are selected.
+function search_inverted_blocks(p: Printer, re: regex.Regex, s: Scan, name: string, h: usize, written: boolean): Outcome {
+  let rs = inverted_regions(re, s);
+  let g = Group { last: 0, after_left: 0, wrote: written, count: 0, known: false, stopped: false, offset: s.offset, matches: 0 };
+  let c = begin();
+  let k = 0;
+  while (c.start < s.end && !g.stopped) {
+    let start = c.start;
+    let end = line_end(s.text, start, s.end, s.term);
+    while (k < rs.len() && rs[k + 1] <= start) {
+      k += 2;
+    }
+    let yes = !(k < rs.len() && rs[k] <= start);
+    c = advance(c, end);
+    g = step_line(p, re, h, name, s, start, end, c.ln, yes, g);
+  }
+  return finish_lines(p, h, name, s, g, s.text.len());
+}
+
+// The counts of -U: of the matches. With -v, ripgrep 14.1.0 counts none.
+function multi_counted(p: Printer, re: regex.Regex, s: Scan): Counted {
+  if (p.invert) {
+    return Counted { n: 0, lines: 0, binary: false, upto: s.text.len(), matches: 0 };
+  }
+  let ms = text_matches(re, s);
+  let k = ms.len() / 2;
+  let n = if (p.max_count >= 0 && k > p.max_count) { p.max_count } else { k };
+  return Counted { n: n, lines: block_lines(s, text_blocks(s.text, s.term, ms)), binary: false, upto: s.text.len(), matches: n };
 }
 
 // The end of a search in lines: the message for a binary file in which the
@@ -693,15 +1393,16 @@ function search_lines(p: Printer, re: regex.Regex, s: Scan, name: string, h: usi
 function finish_lines(p: Printer, h: usize, name: string, s: Scan, g: Group, upto: i32): Outcome {
   let early = g.stopped && !g.known;
   let known = g.known || s.known_at_end && !early;
-  if (known && g.count > 0) {
+  let stats = Stats { matches: g.matches, lines: g.count, printed: 0i64, searched: 0i64 };
+  if (known && g.count > 0 && !p.json) {
     binary_message(p, h, name, Scan { ...s, offset: g.offset });
-    return outcome(true, true, upto);
+    return Outcome { ...outcome(true, true, upto), stats: stats };
   }
-  return outcome(g.count > 0, g.wrote, upto);
+  return Outcome { ...outcome(g.count > 0, g.wrote, upto), stats: stats };
 }
 
 function outcome(matched: boolean, written: boolean, upto: i32): Outcome {
-  return Outcome { matched: matched, written: written, upto: upto, cap: 0 };
+  return Outcome { matched: matched, written: written, upto: upto, cap: 0, stats: Stats { matches: 0, lines: 0, printed: 0i64, searched: 0i64 } };
 }
 
 // The output of a summary mode: -c, --count-matches, -l and
@@ -709,18 +1410,19 @@ function outcome(matched: boolean, written: boolean, upto: i32): Outcome {
 // finds binary data has no output, and counts as a file with no match.
 function summary(p: Printer, re: regex.Regex, s: Scan, name: string, h: usize, written: boolean): Outcome {
   let first = p.mode != flags.Count && p.mode != flags.CountMatches;
-  let c = count(p, re, s, first || p.quiet);
+  let c = if (p.multiline) { multi_counted(p, re, s) } else { count(p, re, s, (first || p.quiet) && !p.counts) };
+  let stats = Stats { matches: c.matches, lines: c.lines, printed: 0i64, searched: 0i64 };
   if (c.binary) {
-    return outcome(p.mode == flags.Without && !p.quiet, written, c.upto);
+    return Outcome { ...outcome(p.mode == flags.Without && !p.quiet, written, c.upto), stats: stats };
   }
   if (p.quiet) {
-    return outcome(c.lines > 0, written, c.upto);
+    return Outcome { ...outcome(c.lines > 0, written, c.upto), stats: stats };
   }
   if (!listed(p, c)) {
-    return outcome(false, written, c.upto);
+    return Outcome { ...outcome(false, written, c.upto), stats: stats };
   }
   push_summary(p, h, name, c);
-  return outcome(c.lines > 0 || p.mode == flags.Without, true, c.upto);
+  return Outcome { ...outcome(c.lines > 0 || p.mode == flags.Without, true, c.upto), stats: stats };
 }
 
 // Whether a summary mode writes the line of a file.
@@ -741,17 +1443,51 @@ function push_summary(p: Printer, h: usize, name: string, c: Counted): void {
   if (p.show_name) {
     push_name_field(p, h, name, ":");
   }
-  buf_push(h, c.n.to_string() + "\n");
+  buf_push(h, c.n.to_string() + p.eol);
+}
+
+// The search of the lines of a file, with or without -U.
+function search_any(p: Printer, re: regex.Regex, s: Scan, name: string, h: usize, written: boolean): Outcome {
+  if (!p.multiline) {
+    return search_lines(p, re, s, name, h, written);
+  }
+  if (p.invert) {
+    return search_inverted_blocks(p, re, s, name, h, written);
+  }
+  return search_blocks(p, re, s, name, h, written);
+}
+
+// The message of --json that ends the output of a file.
+function push_json_end(h: usize, name: string, s: Scan, out: Outcome, nanos: i64): void {
+  let st = out.stats;
+  let c = jsonl.Counts {
+    matches: st.matches, lines: st.lines, printed: st.printed, searched: st.searched, searches: 1,
+    with_match: if (out.matched) { 1 } else { 0 },
+  };
+  jsonl.end(h, name, s.offset, c, nanos);
 }
 
 // Searches the text of one file and writes its output to `h`. `src` says
 // how ripgrep reads the file, and `written` says whether an earlier file
 // wrote output.
-pub function search(p: Printer, re: regex.Regex, text: string, name: string, src: Source, h: usize, written: boolean): Outcome {
-  let t = without_bom(text);
+pub function search(p0: Printer, re: regex.Regex, text: string, name: string, src: Source, h: usize, written: boolean): Outcome {
+  let t0 = monotonic_ns();
+  let p = if (p0.multiline) { Printer { ...p0, multiline: re.can_match_byte(p0.term as u8) } } else { p0 };
+  let before = buf_len(h);
   let keep = if (p.after > p.before) { p.after } else { p.before };
-  let s = scan(t, src, keep);
-  let out = if (p.mode == flags.Lines && !p.quiet) { search_lines(p, re, s, name, h, written) } else { summary(p, re, s, name, h, written) };
+  let s = scan(text, src, keep, p.term);
+  let lines = p.mode == flags.Lines && !p.quiet;
+  let out = if (lines) { search_any(p, re, s, name, h, written) } else { summary(p, re, s, name, h, written) };
+  let printed = if (lines) { (buf_len(h) - before) as i64 } else { 0i64 };
+  let done = Outcome { ...out, stats: Stats { ...out.stats, printed: printed, searched: text.len() as i64 } };
+  if (p.json && printed > 0i64) {
+    push_json_end(h, name, s, done, monotonic_ns() - t0);
+  }
+  return with_cap(done, s, src, keep);
+}
+
+// The outcome with the capacity of the line buffer after the search.
+function with_cap(out: Outcome, s: Scan, src: Source, keep: i32): Outcome {
   if (src.mapped) {
     return Outcome { ...out, cap: src.cap };
   }
@@ -759,5 +1495,5 @@ pub function search(p: Printer, re: regex.Regex, text: string, name: string, src
   if (s.quit && s.offset >= 0 && s.offset < upto) {
     upto = s.offset;
   }
-  return Outcome { ...out, cap: fill_to(t, upto, keep, src.cap).cap };
+  return Outcome { ...out, cap: fill_to(s.text, upto, keep, src.cap).cap };
 }
