@@ -842,6 +842,11 @@ The oracle is in `FERN_GNU_FINDUTILS`. Its version line must contain
 `(GNU findutils)`. The pin is 4.9.0, the release of ubuntu-24.04.
 `.github/actions/gnu-findutils` builds it on each lane, macOS included.
 
+On Linux the build links libselinux, as the find of Ubuntu and Fedora
+does. There `%Z` reads `security.selinux`, and a file with no label gives
+"No data available". A build without SELinux gives "Operation not
+supported" for each file, and the port gives that on macOS.
+
 For the arm64 leg under qemu, the GNU programs come from the arm64 packages
 of the distribution, as for coreutils. GNU find also needs `libselinux1`
 and `libpcre2-8-0`. `findutils/README.md` gives the scope of the ports.

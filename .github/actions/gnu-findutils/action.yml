@@ -6,6 +6,8 @@ description: >
 
   The pin is 4.9.0, the release that ubuntu-24.04 ships. A build from source
   keeps macOS on the same release, because macOS has the BSD find and xargs.
+  On Linux the build links libselinux, as the find of the distributions
+  does, so `%Z` reports the error that a user sees. macOS has no SELinux.
 inputs:
   host:
     description: The runner, which keys the cache.
@@ -22,7 +24,13 @@ runs:
       uses: actions/cache@v6
       with:
         path: ~/gnu-findutils
-        key: gnu-findutils-${{ inputs.version }}-${{ inputs.host }}
+        key: gnu-findutils-${{ inputs.version }}-${{ inputs.host }}-${{ runner.os == 'Linux' && 'selinux' || 'plain' }}
+    - name: Install the SELinux library for the oracle
+      if: steps.gnu-findutils.outputs.cache-hit != 'true' && runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update -q
+        sudo apt-get install -y -q libselinux1-dev
     - name: Build the GNU findutils oracle
       if: steps.gnu-findutils.outputs.cache-hit != 'true'
       shell: bash
@@ -35,7 +43,11 @@ runs:
         curl -fsSLO "https://ftp.gnu.org/gnu/findutils/findutils-$VER.tar.xz"
         tar xf "findutils-$VER.tar.xz"
         cd "findutils-$VER"
-        ./configure --quiet --disable-nls --without-selinux --prefix="$HOME/gnu-findutils"
+        selinux=--without-selinux
+        if [ "$RUNNER_OS" = Linux ]; then
+          selinux=--with-selinux
+        fi
+        ./configure --quiet --disable-nls "$selinux" --prefix="$HOME/gnu-findutils"
         make -j"$(getconf _NPROCESSORS_ONLN)"
         make install
         rm -rf "$HOME/gnu-findutils/share" "$HOME/gnu-findutils/var"
@@ -61,6 +73,10 @@ runs:
         done
         if [ -n "$missing" ]; then
           echo "::error::no GNU findutils $VER oracle in $bindir for:$missing"
+          exit 1
+        fi
+        if [ "$RUNNER_OS" = Linux ] && ! ldd "$bindir/find" | grep -q libselinux; then
+          echo "::error::the GNU find in $bindir does not link libselinux"
           exit 1
         fi
         echo "FERN_GNU_FINDUTILS=$bindir" >> "$GITHUB_ENV"
