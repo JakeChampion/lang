@@ -182,7 +182,8 @@ pub struct Playlist { name: string, paths: string[] }
 pub struct Group { name: string, by: string, songs: i32, albums: i32, year: i32 }
 
 // A stream of sound of the device. `ptr` is 0 when the player has none.
-pub struct Sound { ptr: usize, rate: i32, channels: i32 }
+// `ring` holds the samples that the device did not play yet.
+pub struct Sound { ptr: usize, rate: i32, channels: i32, ring: usize }
 
 // The picture of an album at the size of a row of a list. `key` is the
 // key of the album, and `color` is the color that the picture shows most.
@@ -196,7 +197,7 @@ pub struct Now { title: string, artist: string, album: string, length_ms: i64, a
 pub struct Awake { wake: usize, wifi: usize }
 
 pub function no_sound(): Sound {
-  return Sound { ptr: 0 as usize, rate: 0, channels: 0 };
+  return Sound { ptr: 0 as usize, rate: 0, channels: 0, ring: 0 as usize };
 }
 
 // What the device must do: load the track of a number and play it, load
