@@ -12871,43 +12871,51 @@ function dupvar_diags(stmts: ast.Stmt[]): util.Diag[] {
 
 struct LitSign { line: i32, col: i32, minuses: i32 }
 
-function lit_sign_chain(e: ast.Expr, minuses: i32, own acc: LitSign[]): LitSign[] {
-  match (e) {
-    ast.ExprUnary(u) => {
-      if (u.op == "-") {
-        return lit_sign_chain(u.operand, minuses + 1, acc);
-      }
-      if (u.op == "+") {
-        return lit_sign_chain(u.operand, minuses, acc);
-      }
-      return acc;
-    },
-    ast.ExprNumber(n) => {
-      if (minuses == 0) {
-        return acc;
-      }
-      return acc.append(LitSign { line: n.line, col: n.col, minuses: minuses });
-    },
-    _ => {
-      return acc;
+// The operand of the minus `e`.
+function minus_operand(e: ast.Expr): Option[ast.Expr] {
+  if let ast.ExprUnary(u) = e {
+    if (u.op == "-") {
+      return Some(u.operand);
     }
   }
+  return None;
+}
+
+function not_minus(e: ast.Expr): boolean {
+  return minus_operand(e).is_none();
+}
+
+// At the first minus of a chain of minuses, the number of minuses of the
+// literal at its end. The walk reads each chain one time, and goes on below
+// the end of the chain.
+function chain_signs(e: ast.Expr, own acc: LitSign[]): LitSign[] {
+  if (not_minus(e)) {
+    return acc;
+  }
+  let at = e;
+  let minuses = 0;
+  let going = true;
+  while (going) {
+    match (minus_operand(at)) {
+      Some(operand) => {
+        at = operand;
+        minuses += 1;
+      },
+      None => {
+        going = false;
+      }
+    }
+  }
+  if let ast.ExprNumber(n) = at {
+    return acc.append(LitSign { line: n.line, col: n.col, minuses: minuses });
+  }
+  return astwalk.fold_expr_pruned(at, acc, chain_signs, not_minus);
 }
 
 function lit_signs_stmts(stmts: ast.Stmt[]): LitSign[] {
-  function at_unary(n: ast.Expr, own acc: LitSign[]): LitSign[] {
-    match (n) {
-      ast.ExprUnary(_) => {
-        return lit_sign_chain(n, 0, acc);
-      },
-      _ => {
-        return acc;
-      }
-    }
-  }
   let signs: LitSign[] = [];
   for st in stmts {
-    signs = astwalk.fold_stmt(st, signs, at_unary);
+    signs = astwalk.fold_stmt_pruned(st, signs, chain_signs, not_minus);
   }
   return signs;
 }
@@ -21000,6 +21008,9 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
       if (ow_qualified_ctor(e, ctx)) {
         return true;
       }
+      if (ow_owned_projection(fa, ctx)) {
+        return true;
+      }
       let enclosing = ow_enclosing_field(fa);
       if let ast.ExprIdent(oid) = enclosing.obj {
         if (lu_has(ctx, lu_field_key(enclosing, oid)) && !util.has_str(ctx.borrowed, oid.name)) {
@@ -21409,6 +21420,14 @@ function lu_fresh_init_in(fx: LuFn, name: string, seen: string[]): boolean {
   return found && lu_only_fresh_assigns(fx, name, seen);
 }
 
+// An element read `v.1` of a fresh value no name holds, as a destructure binds it.
+function lu_fresh_projection(fx: LuFn, e: ast.Expr): boolean {
+  let ast.ExprFieldAccess(fa) = e else {
+    return false;
+  };
+  return util.is_all_digits(fa.field) && lu_fresh_value(fx, fa.obj);
+}
+
 function lu_fresh_value(fx: LuFn, e: ast.Expr): boolean {
   if let ast.ExprCall(c) = e {
     if (lu_checked_result_call(fx, c)) {
@@ -21429,6 +21448,9 @@ function lu_fresh_value(fx: LuFn, e: ast.Expr): boolean {
   if let ast.ExprTuple(_) = e {
     let empty: ast.Stmt[] = [];
     return lu_scoped_fresh(fx, empty, e);
+  }
+  if (lu_fresh_projection(fx, e)) {
+    return true;
   }
   if (lu_safe_constructor(fx, e)) {
     return true;
@@ -24017,6 +24039,36 @@ function ow_enclosing_field(fa: ast.ExprFieldAccess): ast.ExprFieldAccess {
     return ow_enclosing_field(parent);
   }
   return fa;
+}
+
+// The value under a chain of element reads `v.1.0`.
+function ow_projection_root(e: ast.Expr): ast.Expr {
+  if let ast.ExprFieldAccess(fa) = e {
+    if (util.is_all_digits(fa.field)) {
+      return ow_projection_root(fa.obj);
+    }
+  }
+  return e;
+}
+
+// An element of a value that no name holds, as `f(x).1`, is owned as that
+// value is.
+function ow_owned_projection(fa: ast.ExprFieldAccess, ctx: OwnCtx): boolean {
+  if (!util.is_all_digits(fa.field)) {
+    return false;
+  }
+  let root = ow_projection_root(fa.obj);
+  match (root) {
+    ast.ExprIdent(_) => {
+      return false;
+    },
+    ast.ExprFieldAccess(_) => {
+      return false;
+    },
+    _ => {
+      return ow_is_owned_expr(root, ctx);
+    }
+  }
 }
 
 function lu_field_key(fa: ast.ExprFieldAccess, q: ast.ExprIdent): string {
@@ -26895,6 +26947,9 @@ function ow_value_block_borrows(lm: ast.ExprLambda, ofuncs: OwnFuncs, borrowed: 
 // The parser lowers a value match to `[match]`, to `[match, return zero]`,
 // or to `[let t = scrutinee, return inner()]` around one of those.
 function ow_match_block_borrows(body: ast.Stmt[], ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: BorrowContext, handles_only: boolean): boolean {
+  if (body.len() == 3) {
+    return ow_nested_match_borrows(body, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only);
+  }
   if (body.len() == 0 || body.len() > 2) {
     return true;
   }
@@ -26927,6 +26982,27 @@ function ow_match_block_borrows(body: ast.Stmt[], ofuncs: OwnFuncs, borrowed: st
   };
 }
 
+// A match with a nested pattern lowers to `[let r = zero, match, return r]`.
+// Its arms assign to `r`, and the sugar of the match keeps them as written.
+function ow_nested_match_borrows(body: ast.Stmt[], ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: BorrowContext, handles_only: boolean): boolean {
+  let ast.StmtVar(v) = body[0] else {
+    return true;
+  };
+  let ast.StmtMatch(m) = body[1] else {
+    return true;
+  };
+  let ast.StmtReturn(r) = body[2] else {
+    return true;
+  };
+  let ast.ExprIdent(id) = r.value else {
+    return true;
+  };
+  if (id.name != v.name || m.sugar.len() == 0) {
+    return true;
+  }
+  return ow_value_match_borrows(m, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only);
+}
+
 // A match on literals lowers to an if chain that keeps its arms in the sugar.
 function ow_value_lits_borrows(sugar: ast.MatchSugar, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: BorrowContext, handles_only: boolean): boolean {
   if (sugar.origin.len() > 0 || sugar.lits.len() == 0 || sugar.tup.len() > 0 || sugar.strct.len() > 0 || sugar.arms.len() > 0) {
@@ -26947,11 +27023,10 @@ function ow_value_lits_borrows(sugar: ast.MatchSugar, ofuncs: OwnFuncs, borrowed
 
 // A value match borrows when an arm's value borrows.
 function ow_value_match_borrows(m: ast.StmtMatch, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex, lenders: BorrowContext, handles_only: boolean): boolean {
-  if (m.sugar.len() > 0) {
-    return true;
-  }
   let lends = ow_expr_borrows(m.scrutinee, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only);
-  for arm in m.arms {
+  // A nested pattern lowers its arms, and the sugar keeps them as written.
+  let arms = if (m.sugar.len() > 0) { m.sugar } else { m.arms };
+  for arm in arms {
     if (ow_value_binder_arm_borrows(arm.body, astwalk.pattern_binders(arm.pattern, []), lends, ofuncs, borrowed, locals, values, borrows, builtins, lenders, handles_only)) {
       return true;
     }

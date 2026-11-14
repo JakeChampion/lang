@@ -707,19 +707,93 @@ function emit_guard_bump(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function emit_alloc_bytes(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write(empty_array_block(s, ".Lfern_empty_bytes"));
-  s = s.write("__fern_alloc_bytes:\n");
-  s = s.write("    testl %edi, %edi\n    js __fern_alloc_size_abort.c\n    jz .Lfern_alloc_bytes_empty\n");
+  s = emit_alloc_packed(s, "bytes", 3);
+  if (s.has_need("alloc_bytes_uninit")) {
+    s = s.write("__fern_alloc_bytes_uninit:\n    testl %edi, %edi\n    js __fern_alloc_size_abort.c\n    jz .Lfern_alloc_bytes_empty\n");
+    s = s.write("    pushq %rbp\n    movq %rsp, %rbp\n    pushq %r12\n    pushq %r13\n    movq %rdi, %r12\n    leaq 7(%rdi), %rdi\n    shrq $3, %rdi\n    call __fern_arr_box\n    movq %r12, (%rax)\n    popq %r13\n    popq %r12\n    popq %rbp\n    ret\n");
+  }
+  return s;
+}
+
+// The first append to the shared empty array takes a box of 4 words, from the
+// free list of that size when it has one. Any other receiver goes to `frame`.
+// `nonempty` branches to `frame` when the receiver holds an element or room.
+function arr_push_empty(s: asmcore.EmitState, nonempty: string, frame: string, fresh: string): asmcore.EmitState {
+  if (s.rc_free_debug || hev_on(s)) {
+    return s;
+  }
+  s = s.write(nonempty);
+  if (!s.has_need("alloc_count")) {
+    s = s.write("    leaq __fern_freelist(%rip), %rcx\n");
+    if (s.harden) {
+      s = s.write("    pushq %rdi\n");
+      s = s.write("    leaq 56(%rcx), %rdi\n");
+      s = s.write("    call __fern_freelist_take\n");
+      s = s.write("    popq %rdi\n");
+      s = s.write("    testq %rax, %rax\n");
+      s = s.write("    jz " + fresh + "\n");
+    } else {
+      s = s.write("    movq 56(%rcx), %rax\n");
+      s = s.write("    testq %rax, %rax\n");
+      s = s.write("    jz " + fresh + "\n");
+      s = s.write("    movq (%rax), %rdx\n");
+      s = s.write("    movq %rdx, 56(%rcx)\n");
+    }
+    s = s.write("    movq $4, (%rax)\n");
+    s = s.write("    movq $1, 8(%rax)\n");
+    s = s.write("    movq $1, 16(%rax)\n");
+    s = s.write("    movq %rsi, 24(%rax)\n");
+    s = s.write("    addq $16, %rax\n");
+    s = s.write("    ret\n");
+    s = s.write(fresh + ":\n");
+  }
+  s = s.write("    pushq %rsi\n");
+  s = s.write("    movl $4, %edi\n");
+  s = s.write("    call __fern_arr_box\n");
+  s = s.write("    popq %rsi\n");
+  s = s.write("    movq $1, (%rax)\n");
+  s = s.write("    movq %rsi, 8(%rax)\n");
+  s = s.write("    ret\n");
+  return s;
+}
+
+// Rounds the %rdi elements of the array op `o` up to the words they take.
+function reserve_words(o: ir.Op): string {
+  let shift = asmcore.elem_shift(o);
+  if (shift == 0) {
+    return "";
+  }
+  return "    addq $" + util.i32_to_string((1 << shift) - 1) + ", %rdi\n    shrq $" + util.i32_to_string(shift) + ", %rdi\n";
+}
+
+// A zeroed array of %edi elements, 2^shift to a word, named __fern_alloc_<sfx>.
+function emit_alloc_packed(s: asmcore.EmitState, sfx: string, shift: i32): asmcore.EmitState {
+  let empty = ".Lfern_alloc_" + sfx + "_empty";
+  s = s.write(empty_array_block(s, ".Lfern_empty_" + sfx));
+  s = s.write("__fern_alloc_" + sfx + ":\n");
+  s = s.write("    testl %edi, %edi\n    js __fern_alloc_size_abort.c\n    jz " + empty + "\n");
   s = s.write("    pushq %rbp\n    movq %rsp, %rbp\n    pushq %r12\n    pushq %r13\n");
-  s = s.write("    movq %rdi, %r12\n    leaq 7(%rdi), %rdi\n    shrq $3, %rdi\n    movq %rdi, %r13\n");
+  s = s.write("    movq %rdi, %r12\n    leaq " + util.i32_to_string((1 << shift) - 1) + "(%rdi), %rdi\n    shrq $" + util.i32_to_string(shift) + ", %rdi\n    movq %rdi, %r13\n");
   s = s.write("    call __fern_arr_box\n");
   s = s.write("    movq %r12, (%rax)\n    movq %rax, %rdx\n    leaq 8(%rax), %rdi\n    movq %r13, %rcx\n");
   s = s.write("    xorl %eax, %eax\n    rep stosq\n    movq %rdx, %rax\n");
   s = s.write("    popq %r13\n    popq %r12\n    popq %rbp\n    ret\n");
-  s = s.write(".Lfern_alloc_bytes_empty:\n    leaq .Lfern_empty_bytes(%rip), %rax\n    ret\n");
-  if (s.has_need("alloc_bytes_uninit")) {
-    s = s.write("__fern_alloc_bytes_uninit:\n    testl %edi, %edi\n    js __fern_alloc_size_abort.c\n    jz .Lfern_alloc_bytes_empty\n");
-    s = s.write("    pushq %rbp\n    movq %rsp, %rbp\n    pushq %r12\n    pushq %r13\n    movq %rdi, %r12\n    leaq 7(%rdi), %rdi\n    shrq $3, %rdi\n    call __fern_arr_box\n    movq %r12, (%rax)\n    popq %r13\n    popq %r12\n    popq %rbp\n    ret\n");
+  return s.write(empty + ":\n    leaq .Lfern_empty_" + sfx + "(%rip), %rax\n    ret\n");
+}
+
+// The appends and allocations of the arrays that pack bytes or 4-byte integers.
+function emit_packed_arrays(s: asmcore.EmitState): asmcore.EmitState {
+  if (s.has_need("arr_push_u8")) {
+    s = emit_arr_push_packed(s, "u8", 3, ".Lapou");
+  }
+  if (s.has_need("arr_push_u32")) {
+    s = emit_arr_push_packed(s, "u32", 1, ".Lapow");
+  }
+  if (s.has_need("alloc_bytes") || s.has_need("alloc_bytes_uninit")) {
+    s = emit_alloc_bytes(s);
+  }
+  if (s.has_need("alloc_u32")) {
+    s = emit_alloc_packed(s, "u32", 1);
   }
   return s;
 }
@@ -764,7 +838,7 @@ function apo_grow(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    addq $16, %rax\n");
   s = s.write("    leaq 1(%r14), %rcx\n");
   s = s.write("    movq %rcx, (%rax)\n");
-  s = s.write(arr_copy_elems(".Lapo"));
+  s = s.write(arr_copy_elems(".Lapo", "    movq %r14, %rcx\n"));
   s = s.write("    movq %r13, 8(%rax,%r14,8)\n");
   s = s.write("    leaq 3(%r15), %rcx\n");
   s = s.write("    cmpq $65536, %rcx\n");
@@ -856,46 +930,54 @@ function apo_large(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
-function emit_arr_push_u8(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("__fern_arr_push_u8:\n");
-  s = s.write(arr_push_fast_u8(".Larr_push_u8_slow", s.rc_free_debug));
-  s = s.write(".Larr_push_u8_slow:\n");
+// The append of an element to an array that holds 2^shift elements to a word.
+// `own` names the labels of the entry that frees a moved-from box.
+function emit_arr_push_packed(s: asmcore.EmitState, sfx: string, shift: i32, own: string): asmcore.EmitState {
+  let l = ".Larr_push_" + sfx;
+  let sh = util.i32_to_string(shift);
+  s = s.write("__fern_arr_push_" + sfx + ":\n");
+  s = s.write(arr_push_fast_packed(l + "_slow", s.rc_free_debug, shift));
+  s = s.write(l + "_slow:\n");
+  s = arr_push_empty(s, "    orq %rdx, %rcx\n    jnz " + l + "_frame\n", l + "_frame", l + "_fresh").write(l + "_frame:\n");
   s = s.write("    pushq %rbp\n    movq %rsp, %rbp\n    pushq %r12\n    pushq %r13\n    pushq %r14\n    pushq %r15\n");
   s = s.write("    movq %rdi, %r12\n    movq %rsi, %r13\n    movq (%r12), %r14\n    movq -16(%r12), %r15\n");
   if (!s.rc_free_debug) {
-    s = s.write("    jmp .Larr_push_u8_grow\n");
+    s = s.write("    jmp " + l + "_grow\n");
   }
   s = s.write("    movl -8(%r12), %ecx\n");
   s = s.write(san_poison_check("%ecx", s.rc_free_debug));
-  s = s.write("    cmpl $1, %ecx\n    je .Larr_push_u8_rc_ok\n    testl %ecx, %ecx\n    js .Larr_push_u8_rc_ok\n    jmp .Larr_push_u8_grow\n");
-  s = s.write(".Larr_push_u8_rc_ok:\n");
-  s = s.write("    movq %r15, %rcx\n    shlq $3, %rcx\n    cmpq %rcx, %r14\n    jge .Larr_push_u8_grow\n");
-  s = s.write("    movb %r13b, 8(%r12,%r14)\n    incq %r14\n    movq %r14, (%r12)\n    movq %r12, %rax\n    jmp .Larr_push_u8_ret\n");
-  s = s.write(".Larr_push_u8_grow:\n");
-  s = s.write("    movq %r15, %rcx\n    movq %r15, %rax\n    shlq $3, %rax\n    cmpq %rax, %r14\n    jl .Larr_push_u8_cliff\n");
-  s = s.write("    testq %rcx, %rcx\n    jne .Larr_push_u8_dbl\n    movq $4, %rcx\n    jmp .Larr_push_u8_cap\n");
-  s = s.write(".Larr_push_u8_cliff:\n");
-  s = s.write("    incq __fern_arr_push_shared(%rip)\n    addq %r14, __fern_arr_push_copied(%rip)\n    jmp .Larr_push_u8_cap\n");
-  s = s.write(".Larr_push_u8_dbl:\n    shlq $1, %rcx\n");
-  s = s.write(".Larr_push_u8_cap:\n    leaq 8(%r14), %rax\n    shrq $3, %rax\n    cmpq %rax, %rcx\n    cmovbq %rax, %rcx\n    movq %rcx, %rdi\n    call __fern_arr_box\n");
+  s = s.write("    cmpl $1, %ecx\n    je " + l + "_rc_ok\n    testl %ecx, %ecx\n    js " + l + "_rc_ok\n    jmp " + l + "_grow\n");
+  s = s.write(l + "_rc_ok:\n");
+  s = s.write("    movq %r15, %rcx\n    shlq $" + sh + ", %rcx\n    cmpq %rcx, %r14\n    jge " + l + "_grow\n");
+  s = s.write(packed_store("%r13", "%r12", "%r14", shift) + "    incq %r14\n    movq %r14, (%r12)\n    movq %r12, %rax\n    jmp " + l + "_ret\n");
+  s = s.write(l + "_grow:\n");
+  s = s.write("    movq %r15, %rcx\n    movq %r15, %rax\n    shlq $" + sh + ", %rax\n    cmpq %rax, %r14\n    jl " + l + "_cliff\n");
+  s = s.write("    testq %rcx, %rcx\n    jne " + l + "_dbl\n    movq $4, %rcx\n    jmp " + l + "_cap\n");
+  s = s.write(l + "_cliff:\n");
+  s = s.write("    incq __fern_arr_push_shared(%rip)\n    leaq 0(,%r14," + util.i32_to_string(8 >> shift) + "), %rax\n    addq %rax, __fern_arr_push_copied(%rip)\n    jmp " + l + "_cap\n");
+  s = s.write(l + "_dbl:\n    shlq $1, %rcx\n");
+  s = s.write(l + "_cap:\n    leaq " + util.i32_to_string(1 << shift) + "(%r14), %rax\n    shrq $" + sh + ", %rax\n    cmpq %rax, %rcx\n    cmovbq %rax, %rcx\n    movq %rcx, %rdi\n    call __fern_arr_box\n");
   s = s.write("    leaq 1(%r14), %rcx\n    movq %rcx, (%rax)\n");
-  s = s.write("    leaq 8(%r12), %rsi\n    leaq 8(%rax), %rdi\n    movq %r14, %rcx\n    rep movsb\n");
-  s = s.write("    movb %r13b, 8(%rax,%r14)\n");
-  s = s.write(".Larr_push_u8_ret:\n    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    leave\n    ret\n");
-  s = s.write("__fern_arr_push_owned_u8:\n");
-  s = s.write(arr_push_fast_u8(".Lapou_slow", s.rc_free_debug));
-  s = s.write(".Lapou_slow:\n");
+  s = s.write(arr_copy_elems(l, "    leaq " + util.i32_to_string((1 << shift) - 1) + "(%r14), %rcx\n    shrq $" + sh + ", %rcx\n"));
+  s = s.write(packed_store("%r13", "%rax", "%r14", shift));
+  s = s.write(l + "_ret:\n    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    leave\n    ret\n");
+  s = s.write("__fern_arr_push_owned_" + sfx + ":\n");
+  s = s.write(arr_push_fast_packed(own + "_slow", s.rc_free_debug, shift));
+  s = s.write(own + "_slow:\n");
+  if (!s.rc_free_debug) {
+    s = s.write("    movl -8(%rdi), %eax\n    testl %eax, %eax\n    js " + l + "_slow\n");
+  }
   s = s.write("    pushq %rbp\n    movq %rsp, %rbp\n    pushq %r12\n    pushq %r13\n    movq %rdi, %r12\n");
   if (s.rc_free_debug) {
-    s = s.write("    call __fern_arr_push_u8\n");
+    s = s.write("    call __fern_arr_push_" + sfx + "\n");
   } else {
-    s = s.write("    call .Larr_push_u8_slow\n");
+    s = s.write("    call " + l + "_slow\n");
   }
-  s = s.write("    cmpq %rax, %r12\n    je .Lapou_ret\n    cmpq $0x10000, %r12\n    jb .Lapou_ret\n");
+  s = s.write("    cmpq %rax, %r12\n    je " + own + "_ret\n    cmpq $0x10000, %r12\n    jb " + own + "_ret\n");
   s = s.write("    movl -8(%r12), %ecx\n");
   s = s.write(san_poison_check("%ecx", s.rc_free_debug));
-  s = s.write("    testl %ecx, %ecx\n    js .Lapou_ret\n    cmpl $1, %ecx\n    jne .Lapou_ret\n");
-  s = s.write("    movl -16(%r12), %ecx\n    addq $3, %rcx\n    cmpq $65536, %rcx\n    jae .Lapou_large\n");
+  s = s.write("    testl %ecx, %ecx\n    js " + own + "_ret\n    cmpl $1, %ecx\n    jne " + own + "_ret\n");
+  s = s.write("    movl -16(%r12), %ecx\n    addq $3, %rcx\n    cmpq $65536, %rcx\n    jae " + own + "_large\n");
   s = s.write(quarantine_rc("-8(%r12)", s.rc_free_debug));
   s = s.write("    leaq -16(%r12), %rdx\n");
   s = hev_free(s, "%rdx", "%rcx");
@@ -904,34 +986,50 @@ function emit_arr_push_u8(s: asmcore.EmitState): asmcore.EmitState {
   } else {
     s = quar_push(s, "%rdx", "%rcx", 8);
   }
-  s = s.write(".Lapou_ret:\n    popq %r13\n    popq %r12\n    leave\n    ret\n");
-  s = s.write(".Lapou_large:\n");
+  s = s.write(own + "_ret:\n    popq %r13\n    popq %r12\n    leave\n    ret\n");
+  s = s.write(own + "_large:\n");
   s = s.write(quarantine_rc("-8(%r12)", s.rc_free_debug));
   if (s.rc_free_debug) {
     s = s.write("    leaq -16(%r12), %rdi\n");
     s = hev_free(s, "%rdi", "%rcx");
     s = quar_push(s, "%rdi", "%rcx", 8);
-    s = s.write("    jmp .Lapou_ret\n");
+    s = s.write("    jmp " + own + "_ret\n");
   } else {
-    s = s.write("    leaq -16(%r12), %r8\n    leaq 0(,%rcx,8), %rsi\n    pushq %rax\n    call __fern_large_push\n    popq %rax\n    jmp .Lapou_ret\n");
+    s = s.write("    leaq -16(%r12), %r8\n    leaq 0(,%rcx,8), %rsi\n    pushq %rax\n    call __fern_large_push\n    popq %rax\n    jmp " + own + "_ret\n");
   }
   return s;
 }
 
-function arr_push_fast_u8(slow: string, on: boolean): string {
+// The store of the low part of `v` to element `i` of the box at `b`.
+function packed_store(v: string, b: string, i: string, shift: i32): string {
+  if (shift == 3) {
+    return "    movb " + ssa_r8(v) + ", 8(" + b + "," + i + ")\n";
+  }
+  return "    movl " + ssa_r32(v) + ", 8(" + b + "," + i + ",4)\n";
+}
+
+// `dst` = the elements that the box at %rdi has room for. The capacity word
+// counts 8-byte words.
+function packed_room(dst: string, shift: i32): string {
+  return "    imulq $" + util.i32_to_string(1 << shift) + ", -16(%rdi), " + dst + "\n";
+}
+
+function arr_push_fast_packed(slow: string, on: boolean, shift: i32): string {
   if (on) {
     return "";
   }
   let ok = slow + "_ok";
-  return "    movq (%rdi), %rdx\n    movq -16(%rdi), %rcx\n    shlq $3, %rcx\n    cmpq %rcx, %rdx\n    jge " + slow + "\n"
-    + "    movl -8(%rdi), %ecx\n    cmpl $1, %ecx\n    je " + ok + "\n"
-    + "    testl %ecx, %ecx\n    jns " + slow + "\n"
-    + ok + ":\n    movb %sil, 8(%rdi,%rdx)\n    incq %rdx\n    movq %rdx, (%rdi)\n"
+  return "    movq (%rdi), %rdx\n" + packed_room("%rcx", shift) + "    cmpq %rcx, %rdx\n    jge " + slow + "\n"
+    + "    movl -8(%rdi), %eax\n    cmpl $1, %eax\n    je " + ok + "\n"
+    + "    testl %eax, %eax\n    jns " + slow + "\n"
+    + ok + ":\n" + packed_store("%rsi", "%rdi", "%rdx", shift) + "    incq (%rdi)\n"
     + "    movq %rdi, %rax\n    ret\n";
 }
 
-function arr_copy_elems(l: string): string {
-  return "    leaq 8(%r12), %rsi\n    leaq 8(%rax), %rdi\n    movq %r14, %rcx\n    subq $8, %rcx\n    jl " + l + "_copy_lt8\n"
+// The copy of the first `words` (set by `count` in %rcx) words of elements
+// from the box at %r12 to the box at %rax.
+function arr_copy_elems(l: string, count: string): string {
+  return "    leaq 8(%r12), %rsi\n    leaq 8(%rax), %rdi\n" + count + "    subq $8, %rcx\n    jl " + l + "_copy_lt8\n"
     + l + "_copy8:\n    vmovdqu (%rsi), %ymm0\n    vmovdqu 32(%rsi), %ymm1\n    vmovdqu %ymm0, (%rdi)\n    vmovdqu %ymm1, 32(%rdi)\n"
     + "    addq $64, %rsi\n    addq $64, %rdi\n    subq $8, %rcx\n    jge " + l + "_copy8\n    vzeroupper\n"
     + l + "_copy_lt8:\n    addq $8, %rcx\n    cmpq $4, %rcx\n    jl " + l + "_copy1\n"
@@ -5185,43 +5283,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("__fern_arr_push:\n");
     s = s.write(arr_push_fast(".Larr_push_slow", s.rc_free_debug));
     s = s.write(".Larr_push_slow:\n");
-    if (!s.rc_free_debug && !hev_on(s)) {
-      s = s.write("    cmpq $0, (%rdi)\n");
-      s = s.write("    jne .Larr_push_frame\n");
-      s = s.write("    cmpq $0, -16(%rdi)\n");
-      s = s.write("    jne .Larr_push_frame\n");
-      if (!s.has_need("alloc_count")) {
-        s = s.write("    leaq __fern_freelist(%rip), %rcx\n");
-        if (s.harden) {
-          s = s.write("    pushq %rdi\n");
-          s = s.write("    leaq 56(%rcx), %rdi\n");
-          s = s.write("    call __fern_freelist_take\n");
-          s = s.write("    popq %rdi\n");
-          s = s.write("    testq %rax, %rax\n");
-          s = s.write("    jz .Larr_push_fresh\n");
-        } else {
-          s = s.write("    movq 56(%rcx), %rax\n");
-          s = s.write("    testq %rax, %rax\n");
-          s = s.write("    jz .Larr_push_fresh\n");
-          s = s.write("    movq (%rax), %rdx\n");
-          s = s.write("    movq %rdx, 56(%rcx)\n");
-        }
-        s = s.write("    movq $4, (%rax)\n");
-        s = s.write("    movq $1, 8(%rax)\n");
-        s = s.write("    movq $1, 16(%rax)\n");
-        s = s.write("    movq %rsi, 24(%rax)\n");
-        s = s.write("    addq $16, %rax\n");
-        s = s.write("    ret\n");
-        s = s.write(".Larr_push_fresh:\n");
-      }
-      s = s.write("    pushq %rsi\n");
-      s = s.write("    movl $4, %edi\n");
-      s = s.write("    call __fern_arr_box\n");
-      s = s.write("    popq %rsi\n");
-      s = s.write("    movq $1, (%rax)\n");
-      s = s.write("    movq %rsi, 8(%rax)\n");
-      s = s.write("    ret\n");
-    }
+    s = arr_push_empty(s, "    cmpq $0, (%rdi)\n    jne .Larr_push_frame\n    cmpq $0, -16(%rdi)\n    jne .Larr_push_frame\n", ".Larr_push_frame", ".Larr_push_fresh");
     s = s.write(".Larr_push_frame:\n");
     s = s.write("    pushq %rbp\n");
     s = s.write("    movq %rsp, %rbp\n");
@@ -5277,7 +5339,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq %r14, %rcx\n");
     s = s.write("    incq %rcx\n");
     s = s.write("    movq %rcx, (%rax)\n");
-    s = s.write(arr_copy_elems(".Larr_push"));
+    s = s.write(arr_copy_elems(".Larr_push", "    movq %r14, %rcx\n"));
     s = s.write("    movq %r14, %rcx\n");
     s = s.write("    incq %rcx\n");
     s = s.write("    movq %r13, (%rax,%rcx,8)\n");
@@ -5302,12 +5364,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = apo_large(s);
   }
 
-  if (s.has_need("arr_push_u8")) {
-    s = emit_arr_push_u8(s);
-  }
-  if (s.has_need("alloc_bytes") || s.has_need("alloc_bytes_uninit")) {
-    s = emit_alloc_bytes(s);
-  }
+  s = emit_packed_arrays(s);
 
   return s;
 }
@@ -6003,10 +6060,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   }
   if (o.kind_tag == ir.K_ARR_RESERVE) {
     s = s.write("    popq %rdi\n    testl %edi, %edi\n    js __fern_oob_abort\n    movl %edi, %edi\n");
-    if (o.width == 8) {
-      s = s.write("    addq $7, %rdi\n    shrq $3, %rdi\n");
-    }
-    s = s.write("    call __fern_arr_box\n    movq $0, (%rax)\n    pushq %rax\n");
+    s = s.write(reserve_words(o) + "    call __fern_arr_box\n    movq $0, (%rax)\n    pushq %rax\n");
     return s.need("heap");
   }
   if (o.kind_tag == ir.K_INNER_MUL_ADD_F64) {
@@ -6686,13 +6740,13 @@ function ssa_read_fixed_mask(ins: ssa.SInst, imm: ssa.Imms): i32 {
   return 7;
 }
 
-function ssa_fixed_registers(f: ssa.SFunc, imm: ssa.Imms, no_spills: boolean, extra: boolean, cold: i32[]): ssafixed.Table {
+function ssa_fixed_registers(f: ssa.SFunc, imm: ssa.Imms, no_spills: boolean, extra: boolean, cold: i32[], words: i32[]): ssafixed.Table {
   let masks: i32[] = [];
   for b in f.blocks {
     for ins in b.insts {
       let mask = 7;
       if (extra) {
-        mask = ssa_fixed_mask(ins, imm, no_spills);
+        mask = ssa_fixed_mask(ins, imm, no_spills) | ssa_result_word_regs(words[masks.len()]);
       }
       if (masks.len() == 0) {
         mask = 7;
@@ -6702,6 +6756,11 @@ function ssa_fixed_registers(f: ssa.SFunc, imm: ssa.Imms, no_spills: boolean, ex
     masks = masks.append(7);
   }
   return ssafixed.with_clobbers(ssafixed.table(6, 3, masks), 0, ssa_nregs(), ssa_cold_clobbers(cold));
+}
+
+// Result word n is in rdx, rcx or r11: bit 1, 0 or 2 of the table from rcx.
+function ssa_result_word_regs(words: i32): i32 {
+  return (words & 1) << 1 | (words & 2) >> 1 | words & 4;
 }
 
 // The push sequence and a call's argument moves write rax, rsi, rdi, rcx and
@@ -6845,21 +6904,22 @@ function ssa_homeless(f: ssa.SFunc, imm: ssa.Imms): boolean[] {
   return out;
 }
 
-function ssa_allocate(f: ssa.SFunc, imm: ssa.Imms, s: asmcore.EmitState): ssa.Alloc {
+function ssa_allocate(f: ssa.SFunc, imm: ssa.Imms, ops: ir.Op[], s: asmcore.EmitState): ssa.Alloc {
+  let words = ssa.result_word_masks(f, ops);
   let homeless = ssa_homeless(f, imm);
   let prefs = ssa_arg_prefs(f, s);
   let floats = ssa.float_values(f, [], false);
   let cold = ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s));
   let live = ssalive.lives(f, ssa.hard_call_positions(f, cold));
-  let kept = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, true, cold), cold, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
+  let kept = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, true, cold, words), cold, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
   let audited = ssa_can_borrow_r11(f, imm, floats);
   if (audited && ssa.spill_count(kept.reg_of) == 0 && ssa_small_extra_homes(kept.reg_of)) {
-    return ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, false, cold), cold, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
+    return ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, false, cold, words), cold, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
   }
   if (!audited || !ssa_has_integer_saved(kept.reg_of) || ssa.spill_count(kept.reg_of) > 0) {
     return kept;
   }
-  let borrowed = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, true, true, cold), cold, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
+  let borrowed = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, true, true, cold, words), cold, live.crossing, live.lengths, ssa.SpillCosts { fold_alu_rhs: true });
   if (ssa.spill_count(borrowed.reg_of) > 0) {
     return kept;
   }
@@ -8643,21 +8703,13 @@ function ssa_vgroup(ins: ssa.SInst, reg_of: i32[], set: boolean, s: asmcore.Emit
   s = ssa_trap_jump(ssa_alu_rm0(s, 7, 64, true, b, a), "jae", "__fern_oob_abort");
   s = s.write("    leaq " + util.i32_to_string(128 / ins.imm - 1) + "(" + b + "), %rdx\n");
   s = ssa_trap_jump(ssa_alu_rm0(s, 7, 64, true, "%rdx", a), "jae", "__fern_oob_abort");
-  let lo = "8(" + a + "," + b + ",8)";
-  let hi = "24(" + a + "," + b + ",8)";
+  let lo = "8(" + a + "," + b + "," + util.i32_to_string(ins.imm / 8) + ")";
   if (set) {
     s = ssa_fread(reg_of, ins.args[2], "%xmm1", s);
-    let v = ssa_fsrc(reg_of, ins.args[2], "%xmm1");
-    if (ins.imm == 64) {
-      return s.write("    movupd " + v + ", " + lo + "\n");
-    }
-    return s.write("    cvtps2pd " + v + ", %xmm2\n    movupd %xmm2, " + lo + "\n    movhlps " + v + ", %xmm2\n    cvtps2pd %xmm2, %xmm2\n    movupd %xmm2, " + hi + "\n");
+    return s.write("    movupd " + ssa_fsrc(reg_of, ins.args[2], "%xmm1") + ", " + lo + "\n");
   }
   let d = ssa_fsrc(reg_of, ins.result, "%xmm0");
   s = s.write("    movupd " + lo + ", " + d + "\n");
-  if (ins.imm == 32) {
-    s = s.write("    cvtpd2ps " + d + ", " + d + "\n    movupd " + hi + ", %xmm1\n    cvtpd2ps %xmm1, %xmm1\n    movlhps %xmm1, " + d + "\n");
-  }
   return ssa_fput(reg_of, ins.result, d, s);
 }
 
@@ -9094,14 +9146,11 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
   }
   let b = ssa_src(reg_of, ins.args[1], "%rcx");
   s = ssa_load(reg_of, ins.args[1], b, s);
-  if (k == ssa.ST_AT && ins.str == "i32") {
+  if (k == ssa.ST_AT && ins.str == "i32" && ins.imm == 0) {
     return ssa_mov_rm0(s, 32, false, b, a);
   }
-  if (k == ssa.ST_AT && ins.str == "u8") {
-    return ssa_mov_rm(s, 8, false, b, a, ins.imm);
-  }
   if (k == ssa.ST_AT) {
-    return ssa_mov_rm(s, 64, false, b, a, ins.imm);
+    return ssa_mov_rm(s, ssa_elem_bits(ins.str), false, b, a, ins.imm);
   }
   if (k == ssa.ARR_AT) {
     s = s.need("heap");
@@ -9111,12 +9160,7 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
     if (ins.imm == 2) {
       return s;
     }
-    if (ins.str == "u8") {
-      s = ssa_movzb_mi(s, 0, d, a, b, 8);
-    } else {
-      s = ssa_mov_rmi(s, 64, true, d, a, b, 8, 8);
-    }
-    return ssa_store(reg_of, ins.result, d, s);
+    return ssa_store(reg_of, ins.result, d, ssa_elem_read(s, ins.str, d, a, b));
   }
   if (k == ssa.STR_AT) {
     s = s.need("heap");
@@ -9135,10 +9179,41 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
   if (ins.imm != 1) {
     s = ssa_trap_jump(ssa_alu_rm0(s, 7, 64, true, b, a), "jae", "__fern_oob_abort");
   }
-  if (ins.str == "u8") {
-    return ssa_mov_rmi(s, 8, false, c, a, b, 1, 8);
+  let bits = ssa_elem_bits(ins.str);
+  return ssa_mov_rmi(s, bits, false, c, a, b, bits / 8, 8);
+}
+
+// The bits of an element that an access marks "u8", "i32" or "u32"; any other
+// mark is a word.
+function ssa_elem_bits(mark: string): i32 {
+  if (mark == "u8") {
+    return 8;
   }
-  return ssa_mov_rmi(s, 64, false, c, a, b, 8, 8);
+  return if (mark == "i32" || mark == "u32") { 32 } else { 64 };
+}
+
+// A read of element `b` of the array at `a` into `d`, which "i32" extends with the sign.
+function ssa_elem_read(s: asmcore.EmitState, mark: string, d: string, a: string, b: string): asmcore.EmitState {
+  if (mark == "u8") {
+    return ssa_movzb_mi(s, 0, d, a, b, 8);
+  }
+  if (mark == "i32") {
+    return s.write("    movslq " + ssa_mem_i(a, b, 4, 8) + ", " + d + "\n");
+  }
+  let bits = ssa_elem_bits(mark);
+  return ssa_mov_rmi(s, bits, true, d, a, b, bits / 8, 8);
+}
+
+function ssa_elem_read_at(s: asmcore.EmitState, mark: string, d: string, a: string, c: i32): asmcore.EmitState {
+  let bits = ssa_elem_bits(mark);
+  let off = 8 + bits / 8 * c;
+  if (mark == "u8") {
+    return s.write("    movzbl " + util.i32_to_string(off) + "(" + a + "), " + ssa_r32(d) + "\n");
+  }
+  if (mark == "i32") {
+    return s.write("    movslq " + util.i32_to_string(off) + "(" + a + "), " + d + "\n");
+  }
+  return ssa_mov_rm(s, bits, true, d, a, off);
 }
 
 function ssa_mem_at(ins: ssa.SInst, reg_of: i32[], c: i32, a: string, d: string, s: asmcore.EmitState): asmcore.EmitState {
@@ -9162,19 +9237,12 @@ function ssa_mem_at(ins: ssa.SInst, reg_of: i32[], c: i32, a: string, d: string,
     return ssa_store(reg_of, ins.result, d, s);
   }
   if (k == ssa.ARR_AT) {
-    if (ins.str == "u8") {
-      s = s.write("    movzbl " + util.i32_to_string(8 + c) + "(" + a + "), " + ssa_r32(d) + "\n");
-    } else {
-      s = ssa_mov_rm(s, 64, true, d, a, 8 + 8 * c);
-    }
-    return ssa_store(reg_of, ins.result, d, s);
+    return ssa_store(reg_of, ins.result, d, ssa_elem_read_at(s, ins.str, d, a, c));
   }
   let v = ssa_src(reg_of, ins.args[2], "%rdx");
   s = ssa_load(reg_of, ins.args[2], v, s);
-  if (ins.str == "u8") {
-    return ssa_mov_rm(s, 8, false, v, a, 8 + c);
-  }
-  return ssa_mov_rm(s, 64, false, v, a, 8 + 8 * c);
+  let bits = ssa_elem_bits(ins.str);
+  return ssa_mov_rm(s, bits, false, v, a, 8 + bits / 8 * c);
 }
 
 // A runtime function compiled from Fern has a `.r` entry that takes its
@@ -9274,8 +9342,8 @@ function ssa_str_marks(op: string, s: asmcore.EmitState): asmcore.EmitState {
   if (op == "arr_slice") {
     return s.need("arr_slice");
   }
-  if (op == "arr_slice_u8") {
-    return s.need("arr_slice_u8");
+  if (op == "arr_slice_u8" || op == "arr_slice_u32") {
+    return s.need(op);
   }
   if (op == "str_from_bytes_u8") {
     return s.need("str_from_bytes_u8");
@@ -9819,12 +9887,12 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves
   } else if (ins.str == "alloc_uninit_u8" || ins.str == "alloc_uninit") {
     s = s.need("alloc_bytes_uninit");
     sym = "__fern_alloc_bytes_uninit";
-  } else if (ins.str == "arr_push_owned_u8") {
-    s = s.need("arr_push_u8");
-    sym = "__fern_arr_push_owned_u8";
-  } else if (ins.str == "arr_push_u8") {
-    s = s.need("arr_push_u8");
-    sym = "__fern_arr_push_u8";
+  } else if (ins.str == "alloc_u8_u32") {
+    s = s.need("alloc_u32");
+    sym = "__fern_alloc_u32";
+  } else if (asmcore.packed_shift(ins.str) > 0 && ins.str.starts_with("arr_push")) {
+    s = s.need(ins.str.replace("owned_", ""));
+    sym = "__fern_" + ins.str;
   } else if (ins.str == "raw_arr_box") {
     sym = "__fern_arr_box";
   } else if (ins.str == "args") {
@@ -9857,8 +9925,8 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves
     sym = asmcore.raw_alloc_sym(s);
     s = lc_rt_req_alloc(s);
   }
-  if (ins.str.ends_with("_u8") && ins.str.starts_with("arr_push") && ins.result >= 0 && !s.rc_free_debug) {
-    s = arr_push_inline_u8(sym, lp + "apush" + util.i32_to_string(ins.result), (ins.imm & 1) == 1, saves, s);
+  if (asmcore.packed_shift(ins.str) > 0 && ins.str.starts_with("arr_push") && ins.result >= 0 && !s.rc_free_debug) {
+    s = arr_push_inline_packed(sym, lp + "apush" + util.i32_to_string(ins.result), (ins.imm & 1) == 1, asmcore.packed_shift(ins.str), saves, s);
   } else if (ins.str.starts_with("arr_push") && ins.result >= 0 && !s.rc_free_debug) {
     s = arr_push_inline(sym, lp + "apush" + util.i32_to_string(ins.result), (ins.imm & 1) == 1, saves, s);
   } else {
@@ -9887,15 +9955,15 @@ function arr_push_inline(sym: string, l: string, unique: boolean, saves: SlowSav
   let ls = arr_push_labs(l, s);
   s = ssa_mov_rm0(ls.state, 64, true, "%rdx", "%rdi");
   s = ssa_branch(ssa_alu_rm(s, 7, 64, true, "%rdx", "%rdi", -16), J_JGE, ls.slow);
-  return arr_push_tail(sym, false, ls, unique, saves, s);
+  return arr_push_tail(sym, 0, ls, unique, saves, s);
 }
 
-function arr_push_inline_u8(sym: string, l: string, unique: boolean, saves: SlowSaves, s: asmcore.EmitState): asmcore.EmitState {
+function arr_push_inline_packed(sym: string, l: string, unique: boolean, shift: i32, saves: SlowSaves, s: asmcore.EmitState): asmcore.EmitState {
   let ls = arr_push_labs(l, s);
   s = ssa_mov_rm0(ls.state, 64, true, "%rdx", "%rdi");
-  s = ssa_mov_rm(s, 64, true, "%rcx", "%rdi", -16).write("    shlq $3, %rcx\n");
+  s = s.write(packed_room("%rcx", shift));
   s = ssa_branch(ssa_alu_rr(s, 7, 64, "%rcx", "%rdx"), J_JGE, ls.slow);
-  return arr_push_tail(sym, true, ls, unique, saves, s);
+  return arr_push_tail(sym, shift, ls, unique, saves, s);
 }
 
 struct ArrPushLabs { state: asmcore.EmitState, store: asmcore.Lab, slow: asmcore.Lab, end: asmcore.Lab }
@@ -9907,14 +9975,15 @@ function arr_push_labs(l: string, s: asmcore.EmitState): ArrPushLabs {
   return ArrPushLabs { state: en.state, store: on.lab, slow: sn.lab, end: en.lab };
 }
 
-function arr_push_tail(sym: string, packed: boolean, ls: ArrPushLabs, unique: boolean, saves: SlowSaves, s: asmcore.EmitState): asmcore.EmitState {
+// `shift` is 0 for an array of words, or the log2 of the elements a word holds.
+function arr_push_tail(sym: string, shift: i32, ls: ArrPushLabs, unique: boolean, saves: SlowSaves, s: asmcore.EmitState): asmcore.EmitState {
   s = push_count_test(unique, ls, s).lab_def(ls.store);
-  if (packed) {
-    s = ssa_mov_rmi(s, 8, false, "%rsi", "%rdi", "%rdx", 1, 8);
+  if (shift > 0) {
+    s = ssa_mov_rmi(s, 64 >> shift, false, "%rsi", "%rdi", "%rdx", 8 >> shift, 8);
   } else {
     s = ssa_mov_rmi(s, 64, false, "%rsi", "%rdi", "%rdx", 8, 8);
   }
-  s = ssa_mov_rm0(ssa_inc(s, "%rdx"), 64, false, "%rdx", "%rdi");
+  s = s.write("    incq (%rdi)\n");
   s = ssa_branch(ssa_mov_rr(s, "%rax", "%rdi"), J_JMP, ls.end);
   return ssa_call_saving(s.lab_def(ls.slow), sym, saves).lab_def(ls.end);
 }
@@ -11135,7 +11204,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
     }
   }
   s = asmcore.EmitState { ...s, ssa_boxed: ssadeps.boxed_values(f) };
-  let alloc = ssa_allocate(f, imm, s);
+  let alloc = ssa_allocate(f, imm, prepared.lowered.ops, s);
   match (env("FERN_SSA_ALLOC")) {
     Some(want) => {
       if (want == label_name) {
@@ -13603,6 +13672,9 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("str_bytes_u8")) {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_str_bytes_u8", s);
+  }
+  if (s.has_need("arr_slice_u32")) {
+    s = emit_runtime("__fern_arr_slice_u32", s);
   }
   if (s.has_need("arr_slice_u8")) {
     s = s.write("    .text\n");
