@@ -80,7 +80,7 @@ pub struct Request { class: string, members: string[] }
 
 ```fern
 <<names>>=
-const KEYWORDS: string[] = ["as", "boolean", "break", "const", "continue", "defer", "dyn", "else", "enum", "errdefer", "f32", "f32x4", "f64", "f64x2", "false", "for", "function", "i32", "i64", "if", "impl", "import", "let", "loop", "match", "pub", "return", "string", "struct", "trait", "true", "type", "u32", "u64", "u8", "u8x16", "use", "usize", "void", "when", "while"];
+const KEYWORDS: string[] = ["as", "boolean", "break", "const", "continue", "defer", "dyn", "else", "enum", "errdefer", "f32", "f32x4", "f64", "f64x2", "false", "for", "function", "i16x8", "i32", "i32x4", "i64", "i8x16", "if", "impl", "import", "let", "loop", "match", "pub", "return", "string", "struct", "trait", "true", "type", "u16x8", "u32", "u32x4", "u64", "u8", "u8x16", "use", "usize", "void", "when", "while"];
 
 function is_upper(c: u8): boolean {
   return c >= 65 as u8 && c <= 90 as u8;

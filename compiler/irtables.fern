@@ -975,20 +975,27 @@ pub function lane_builtin_op(verb: string): string {
   return "v" + verb;
 }
 
-// The IR op of a builtin of u8x16, or "" for a builtin with its own
-// lowering.
-pub function byte_lane_builtin_op(verb: string): string {
-  let verbs: string[] = ["splat", "bitmask", "min", "max", "eq", "ne", "lt", "add_sat", "sub_sat", "avg", "and", "or", "xor", "select"];
-  let ops: string[] = ["visplat", "vibitmask", "viminu", "vimaxu", "vieq", "vine", "viltu", "viaddu", "visubu", "viavg", "vand", "vor", "vxor", "vselect"];
+// The IR op of a builtin of an integer lane type, or "" for a builtin
+// with its own lowering.
+pub function integer_lane_builtin_op(verb: string, signed: boolean): string {
+  let verbs: string[] = ["splat", "bitmask", "min", "max", "eq", "ne", "lt", "add_sat", "sub_sat", "avg", "and", "or", "xor", "select", "shl", "shr", "abs"];
+  let unsigned: string[] = ["visplat", "vibitmask", "viminu", "vimaxu", "vieq", "vine", "viltu", "viaddu", "visubu", "viavg", "vand", "vor", "vxor", "vselect", "vishl", "vishru", ""];
+  let signeds: string[] = ["visplat", "vibitmask", "vimins", "vimaxs", "vieq", "vine", "vilts", "viadds", "visubs", "", "vand", "vor", "vxor", "vselect", "vishl", "vishrs", "viabs"];
   let i = util.index_of_str(verbs, verb);
   if (i < 0) {
     return "";
   }
-  return ops[i];
+  return if (signed) { signeds[i] } else { unsigned[i] };
 }
 
-// The IR op of + or - on integer lanes.
-pub function lane_int_operator(op: string): string {
+// The IR op of an operator on integer lanes.
+pub function lane_int_operator(unary: boolean, op: string): string {
+  if (unary) {
+    return "vineg";
+  }
+  if (op == "*") {
+    return "vimul";
+  }
   return if (op == "+") { "viadd" } else { "visub" };
 }
 

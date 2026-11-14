@@ -2566,50 +2566,145 @@ function lane_arith(op: string, x: f64, y: f64): f64 {
   };
 }
 
-// The lanes of 8 bits fn(a, b), with each result cut to 8 bits.
-function byte_lanes_map(a: VLanes, b: VLanes, verb: string): Value {
-  let bits: i64[] = [];
-  for i in 0..16 {
-    bits = bits.append(byte_lane_op(verb, a.bits[i], b.bits[i]) & 255i64);
+function lane_ones(width: i32): i64 {
+  return (1i64 << width as i64) - 1i64;
+}
+
+// The number in an integer lane. A signed lane has its sign.
+function lane_number(l: VLanes, i: i32): i64 {
+  let x = l.bits[i];
+  if (l.kind == typeinfo.LANE_SIGNED && x >> (l.width - 1) as i64 != 0i64) {
+    return x - (1i64 << l.width as i64);
   }
-  return VLanes { width: 8, kind: typeinfo.LANE_UNSIGNED, bits: bits };
+  return x;
 }
 
-function byte_mask(hold: boolean): i64 {
-  return if (hold) { 255i64 } else { 0i64 };
+// The lanes fn(a, b) of two integer lane values, with each result cut to
+// the width of a lane.
+function integer_lanes_map(a: VLanes, b: VLanes, verb: string): Value {
+  let bits: i64[] = [];
+  for i in 0..a.bits.len() {
+    bits = bits.append(integer_lane_op(verb, a, lane_number(a, i), lane_number(b, i)) & lane_ones(a.width));
+  }
+  return VLanes { width: a.width, kind: a.kind, bits: bits };
 }
 
-function byte_lane_op(verb: string, x: i64, y: i64): i64 {
+function lane_mask(l: VLanes, hold: boolean): i64 {
+  return if (hold) { lane_ones(l.width) } else { 0i64 };
+}
+
+// `x` held to the range of a lane of `l`.
+function lane_saturated(l: VLanes, x: i64): i64 {
+  let high = if (l.kind == typeinfo.LANE_SIGNED) { lane_ones(l.width - 1) } else { lane_ones(l.width) };
+  let low = if (l.kind == typeinfo.LANE_SIGNED) { 0i64 - high - 1i64 } else { 0i64 };
+  if (x > high) {
+    return high;
+  }
+  return if (x < low) { low } else { x };
+}
+
+function integer_lane_op(verb: string, l: VLanes, x: i64, y: i64): i64 {
   return match (verb) {
     "+" => x + y,
     "-" => x - y,
+    "*" => x * y,
     "min" => if (x < y) { x } else { y },
     "max" => if (x < y) { y } else { x },
-    "eq" => byte_mask(x == y),
-    "ne" => byte_mask(x != y),
-    "lt" => byte_mask(x < y),
-    "add_sat" => if (x + y > 255i64) { 255i64 } else { x + y },
-    "sub_sat" => if (x < y) { 0i64 } else { x - y },
+    "eq" => lane_mask(l, x == y),
+    "ne" => lane_mask(l, x != y),
+    "lt" => lane_mask(l, x < y),
+    "add_sat" => lane_saturated(l, x + y),
+    "sub_sat" => lane_saturated(l, x - y),
     "avg" => x + y + 1i64 >> 1i64,
     "and" => x & y,
     "or" => x | y,
-    "andnot" => x & (255i64 ^ y),
+    "andnot" => x & (-1i64 ^ y),
     _ => x ^ y,
   };
 }
 
-// The lanes of 8 bits of the values `xs`. One value is a splat.
-function byte_lanes_of(xs: Value[]): Value {
+// The integer lane value of the numbers `xs`. One number is a splat.
+function integer_lanes_of(width: i32, kind: i32, xs: Value[]): Value {
   let bits: i64[] = [];
-  for i in 0..16 {
-    bits = bits.append(vint_as_i64(xs[i % xs.len()]) & 255i64);
+  for i in 0..128 / width {
+    bits = bits.append(vint_as_i64(xs[i % xs.len()]) & lane_ones(width));
   }
-  return VLanes { width: 8, kind: typeinfo.LANE_UNSIGNED, bits: bits };
+  return VLanes { width: width, kind: kind, bits: bits };
 }
 
-function call_byte_lane_builtin(heap: interpheap.Heap, verb: string, args: Value[]): Value {
+// The integer lane value of the 16 bytes of `a` from index `at`.
+function integer_lanes_load(width: i32, kind: i32, a: VArr, at: i32): Value {
+  let bits: i64[] = [];
+  let size = width / 8;
+  for i in 0..128 / width {
+    let x = 0i64;
+    for k in 0..size {
+      x = x | (vint_as_i64(arr_at(a, at + i * size + k)) & 255i64) << (8 * k) as i64;
+    }
+    bits = bits.append(x);
+  }
+  return VLanes { width: width, kind: kind, bits: bits };
+}
+
+function integer_lanes_with(heap: interpheap.Heap, args: Value[]): Value {
+  let at = lane_window(8, args);
+  let ls = lane_args([args[2]]);
+  if (at < 0 || ls.len() != 1) {
+    return v_err("lane with out of bounds");
+  }
+  if let VArr(a) = args[0] {
+    let out = arr_els(a);
+    let size = ls[0].width / 8;
+    for i in 0..ls[0].bits.len() {
+      for k in 0..size {
+        out = out.with(at + i * size + k, v_byte((ls[0].bits[i] >> (8 * k) as i64) as i32));
+      }
+    }
+    if (a.view) {
+      return v_view_of(heap, out, a.elem);
+    }
+    return v_arr_of(heap, out, a.elem);
+  }
+  return v_err("lane with: expected an array");
+}
+
+// The lanes of `l` moved by `count` bits. The count is modulo the width.
+function integer_lanes_shift(l: VLanes, verb: string, count: i32): Value {
+  let by = (count & l.width - 1) as i64;
+  let bits: i64[] = [];
+  for i in 0..l.bits.len() {
+    let x = lane_number(l, i);
+    bits = bits.append((if (verb == "shl") { x << by } else { x >> by }) & lane_ones(l.width));
+  }
+  return VLanes { width: l.width, kind: l.kind, bits: bits };
+}
+
+// The lanes of `l` with the sign of each lane changed, or cleared for `abs`.
+function integer_lanes_negated(l: VLanes, magnitude: boolean): Value {
+  let bits: i64[] = [];
+  for i in 0..l.bits.len() {
+    let x = lane_number(l, i);
+    bits = bits.append((if (magnitude && x >= 0i64) { x } else { 0i64 - x }) & lane_ones(l.width));
+  }
+  return VLanes { width: l.width, kind: l.kind, bits: bits };
+}
+
+function integer_lane_value(l: VLanes, i: i32): Value {
+  if (l.kind == typeinfo.LANE_UNSIGNED && l.width == 8) {
+    return v_byte(l.bits[i] as i32);
+  }
+  if (l.kind == typeinfo.LANE_UNSIGNED && l.width == 32) {
+    return v_uint(l.bits[i] as i32);
+  }
+  return v_int(lane_number(l, i) as i32);
+}
+
+function call_integer_lane_builtin(heap: interpheap.Heap, name: string, args: Value[]): Value {
+  let width = typeinfo.lane_builtin_width(name);
+  let kind = typeinfo.lane_builtin_kind(name);
+  let verb = typeinfo.lane_builtin_verb(name);
   if (verb == "splat" || verb == "of") {
-    return byte_lanes_of(args);
+    return integer_lanes_of(width, kind, args);
   }
   if (verb == "load") {
     let at = lane_window(8, args);
@@ -2617,45 +2712,48 @@ function call_byte_lane_builtin(heap: interpheap.Heap, verb: string, args: Value
       return v_err("lane load out of bounds");
     }
     if let VArr(a) = args[0] {
-      let xs: Value[] = [];
-      while (xs.len() < 16) {
-        xs = xs.append(arr_at(a, at + xs.len()));
-      }
-      return byte_lanes_of(xs);
+      return integer_lanes_load(width, kind, a, at);
     }
     return v_err("lane load: expected an array");
   }
   if (verb == "with") {
-    return lanes_with(heap, 8, args);
+    return integer_lanes_with(heap, args);
   }
-  let ls = lane_args(if (verb == "lane") { [args[0]] } else { args });
+  let scalar_second = verb == "lane" || verb == "shl" || verb == "shr";
+  let ls = lane_args(if (scalar_second) { [args[0]] } else { args });
   if (ls.len() == 0) {
-    return v_err("__u8x16_" + verb + ": expected lane values");
+    return v_err(name + ": expected lane values");
   }
   if (verb == "lane") {
-    return v_byte(ls[0].bits[vint_bits(args[1])] as i32);
+    return integer_lane_value(ls[0], vint_bits(args[1]));
+  }
+  if (verb == "shl" || verb == "shr") {
+    return integer_lanes_shift(ls[0], verb, vint_bits(args[1]));
+  }
+  if (verb == "abs") {
+    return integer_lanes_negated(ls[0], true);
   }
   if (verb == "bitmask") {
     let mask = 0;
-    for i in 0..16 {
-      mask = mask | (ls[0].bits[i] >> 7i64) as i32 << i;
+    for i in 0..ls[0].bits.len() {
+      mask = mask | (ls[0].bits[i] >> (width - 1) as i64) as i32 << i;
     }
     return v_int(mask);
   }
   if (verb == "select") {
-    if let VLanes(kept) = byte_lanes_map(ls[0], ls[2], "and") {
-      if let VLanes(rest) = byte_lanes_map(ls[1], ls[2], "andnot") {
-        return byte_lanes_map(kept, rest, "or");
+    if let VLanes(kept) = integer_lanes_map(ls[0], ls[2], "and") {
+      if let VLanes(rest) = integer_lanes_map(ls[1], ls[2], "andnot") {
+        return integer_lanes_map(kept, rest, "or");
       }
     }
   }
-  return byte_lanes_map(ls[0], ls[1], verb);
+  return integer_lanes_map(ls[0], ls[1], verb);
 }
 
 function lanes_binary(op: string, a: VLanes, rv: Value): Value {
   if let VLanes(b) = rv {
-    if (a.kind != typeinfo.LANE_FLOAT && (op == "+" || op == "-")) {
-      return byte_lanes_map(a, b, op);
+    if (a.kind != typeinfo.LANE_FLOAT && (op == "+" || op == "-" || op == "*")) {
+      return integer_lanes_map(a, b, op);
     }
     if (util.has_str(["+", "-", "*", "/"], op)) {
       let bits: i64[] = [];
@@ -2670,7 +2768,7 @@ function lanes_binary(op: string, a: VLanes, rv: Value): Value {
 
 function lane_value(l: VLanes, i: i32): Value {
   if (l.kind != typeinfo.LANE_FLOAT) {
-    return v_byte(l.bits[i] as i32);
+    return integer_lane_value(l, i);
   }
   if (l.width == 32) {
     return v_float32(lane_at(l, i));
@@ -2835,8 +2933,8 @@ function lanes_bytes(heap: interpheap.Heap, width: i32, args: Value[], store: bo
 
 function call_lane_builtin(heap: interpheap.Heap, name: string, width: i32, args: Value[]): Value {
   let verb = typeinfo.lane_builtin_verb(name);
-  if (width == 8) {
-    return call_byte_lane_builtin(heap, verb, args);
+  if (typeinfo.lane_builtin_kind(name) != typeinfo.LANE_FLOAT) {
+    return call_integer_lane_builtin(heap, name, args);
   }
   if (verb == "lane_bits") {
     let lanes = lane_args([args[0]]);
@@ -4770,6 +4868,9 @@ function eval_unary(op: string, ov: Value): Value {
         return v_float32(-f.v);
       },
       VLanes(l) => {
+        if (l.kind != typeinfo.LANE_FLOAT) {
+          return integer_lanes_negated(l, false);
+        }
         return lanes_map_bits(l, lane_sign(l.width), 0);
       },
       _ => {
