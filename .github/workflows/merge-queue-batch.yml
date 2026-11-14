@@ -60,9 +60,16 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.AUTO_REBASE_TOKEN || secrets.GITHUB_TOKEN }}
+      # For the comment on a pull request that the queue removes.
+      - name: Read what failed
+        if: ${{ needs.validate.result == 'failure' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/ci-failure-report.mjs summary "$GITHUB_RUN_ID" > "$RUNNER_TEMP/failure.md" || true
       - name: Land the batch
         env:
           GH_TOKEN: ${{ secrets.AUTO_REBASE_TOKEN || secrets.GITHUB_TOKEN }}
+          MERGE_QUEUE_FAILURE_REPORT: ${{ runner.temp }}/failure.md
           MERGE_QUEUE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           RESULT: ${{ needs.validate.result }}
         run: scripts/merge-queue land "$RESULT"
