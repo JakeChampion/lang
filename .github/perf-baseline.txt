@@ -412,7 +412,7 @@ x86_64/struct_drop.text	2402
 x86_64/struct_drop.ir	197940612
 x86_64/tokenize.text	1193
 x86_64/tokenize.ir	32840107
-x86_64/utf8_ingest_unchecked.text	7735
+x86_64/utf8_ingest_unchecked.text	7652
 x86_64/utf8_ingest_unchecked.ir	2127252
 x86_64/utf8_ingest_validated.text	8318
 x86_64/utf8_ingest_validated.ir	5138251
@@ -769,3 +769,4 @@ aarch64/video_qtrle.ir 1559097809
 # 2026-11-14 (#15822): perf-aarch64 job 132337113736 on the merge with main 8ce8fde7. Owned array and map parameters move
 # deflate_encode.text, http_hello.text, ordmap_insert.text and .ir, and the utf8_ingest rows. The perceus_rbtree_ck, string_slice
 # and tokenize rows are values of main. Each row is pinned at its measured value.
+# 2026-11-14 (#15822): perf-x86_64 job 132337113700 on the merge with main 8ce8fde7 measured x86_64/utf8_ingest_unchecked.text, which owned array parameters move.

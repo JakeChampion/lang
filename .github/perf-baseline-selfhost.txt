@@ -307,7 +307,7 @@ selfhost/arm64-linux/enum_match.emit	1176
 # Main da3282d0 and candidate 597b6e78 retain identical output in each local pair.
 # Evidence: docs/benchmarks/compiler-interpreter-http-ci-2026-11-10/. Tolerances stay unchanged.
 # 2026-11-10: Current rows follow main e23f590d and its measured HTTP reductions.
-selfhost/arm64-linux/http_hello.emit	16619
+selfhost/arm64-linux/http_hello.emit	16432
 selfhost/arm64-linux/int_loop.emit	383
 selfhost/arm64-linux/map_int.emit	8504
 selfhost/arm64-linux/map_probe_chain.emit	8514
@@ -345,7 +345,7 @@ selfhost/wasm32-wasi/enum_match.emit	545
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
 # 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured selfhost/wasm32-wasi/http_hello.emit at 19326 (was 19039). The tolerance is unchanged.
 selfhost/wasm32-wasi/http_hello.emit	19326
-selfhost/wasm32-wasi/int_loop.emit	73
+selfhost/wasm32-wasi/int_loop.emit	74
 # 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured selfhost/wasm32-wasi/map_int.emit at 13496 (was 13304). The tolerance is unchanged.
 selfhost/wasm32-wasi/map_int.emit	13496
 # 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured selfhost/wasm32-wasi/map_probe_chain.emit at 13521 (was 13329). The tolerance is unchanged.
@@ -406,7 +406,7 @@ selfhost/x86-64-linux/string_scan.emit	2227
 selfhost/x86-64-linux/string_slice.emit	944
 selfhost/x86-64-linux/struct_drop.emit	2402
 selfhost/x86-64-linux/tokenize.emit	1193
-selfhost/x86-64-linux/utf8_ingest_unchecked.emit	7735
+selfhost/x86-64-linux/utf8_ingest_unchecked.emit	7652
 selfhost/x86-64-linux/utf8_ingest_validated.emit	8318
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
@@ -437,3 +437,4 @@ selfhost/wasm32-wasi/video_qtrle.emit 6036
 # 2026-11-09: PR #14917, CI job 129321185181. The byte-count kernel from
 # merged #14910 emits 1321 x86-64 lines on both parent 97af82fc and IVF head
 # cbed65e0. Pin the measured value without a tolerance change.
+# 2026-11-14 (#15822): perf-x86_64 job 132337113700 on the merge with main 8ce8fde7. Owned array parameters move these rows. Each row is pinned at its measured value.
