@@ -44,6 +44,16 @@ function float_near(a: f64, b: f64): boolean {
   return d < 0.0001;
 }
 
+// A scale of 10^digits that is not an f64 does not make the result Inf or
+// NaN.
+function test_large_scales(): test.TestOutcome {
+  let big: f64 = 1.0e300;
+  let one: f64 = 1.5;
+  let zero: f64 = 0.0;
+  let got = big.round_to(10).to_string() + " " + one.round_to(400).to_string() + " " + one.round_to(-400).to_string() + " " + zero.round_to(2000).to_string() + " " + one.round_to(-2147483648).to_string();
+  return test.assert_eq(got, "1e+300 1.5 0 0 0");
+}
+
 function main(): i32 {
   let r = test.new("std/f64 round_to");
   r = r.it("two places", test_two_places);
@@ -54,5 +64,6 @@ function main(): i32 {
   r = r.it("negative digits", test_negative_digits);
   r = r.it("whole number", test_whole_number);
   r = r.it("f32", test_f32);
+  r = r.it("scales that are not an f64", test_large_scales);
   return r.finish();
 }

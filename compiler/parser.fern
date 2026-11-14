@@ -2276,6 +2276,9 @@ function scan_written_type_args(p: Par): (string, i32, Par) {
     n += 1;
     if (p.peek_punct() == ",") {
       p = p.advance();
+      if (p.peek_punct() == "]") {
+        break;
+      }
       continue;
     }
     break;
@@ -17850,15 +17853,45 @@ function dl_arm_descend(e: ast.Expr): boolean {
   return true;
 }
 
+// The body of a value block. Its last statement gives the value of the
+// block, so a `return` there does not leave the function.
 function dl_expand_returns_vb(body: ast.Stmt[], actions: ast.Stmt[], flags: i32[], armed: i32): ast.Stmt[] {
   if (body.len() == 0) {
     return body;
   }
-  let lead: ast.Stmt[] = [];
+  let out: ast.Stmt[] = [];
+  let at = armed;
   for i in 0..body.len() - 1 {
-    lead = lead.append(body[i]);
+    out = util.append_all(out, dl_expand_return_stmt(body[i], actions, flags, at));
+    at = dl_armed_after(body[i], at);
   }
-  return dl_expand_returns(lead, actions, flags, armed).append(body[body.len() - 1]);
+  return out.append(dl_vb_value_stmt(body[body.len() - 1], actions, flags, at));
+}
+
+// The statement that gives the value of a value block. For an `if` or a
+// `match`, each branch is a value block in its turn.
+function dl_vb_value_stmt(st: ast.Stmt, actions: ast.Stmt[], flags: i32[], armed: i32): ast.Stmt {
+  match (st) {
+    ast.StmtReturn(r) => {
+      return ast.StmtReturn { ...r, value: dl_return_expr(r.value, actions, flags, armed) };
+    },
+    ast.StmtIf(f) => {
+      let at = dl_armed_after_expr(f.cond, armed);
+      return ast.StmtIf { ...f, cond: dl_return_expr(f.cond, actions, flags, armed), then_body: dl_expand_returns_vb(f.then_body, actions, flags, at), else_body: dl_expand_returns_vb(f.else_body, actions, flags, at) };
+    },
+    ast.StmtMatch(m) => {
+      let at = dl_armed_after_expr(m.scrutinee, armed);
+      let arms: ast.MatchArm[] = [];
+      for a in m.arms {
+        let body_at = dl_armed_after_expr(a.guard, at);
+        arms = arms.append(ast.MatchArm { ...a, body: dl_expand_returns_vb(a.body, actions, flags, body_at), guard: dl_return_expr(a.guard, actions, flags, at) });
+      }
+      return ast.StmtMatch { ...m, scrutinee: dl_return_expr(m.scrutinee, actions, flags, armed), arms: arms };
+    },
+    _ => {
+      return st;
+    }
+  }
 }
 
 function dl_return_expr(e: ast.Expr, actions: ast.Stmt[], flags: i32[], armed: i32): ast.Expr {
@@ -19378,9 +19411,11 @@ function nested_step(ctx: StepCtx, label: string): StepCtx {
   return StepCtx { ...ctx, depth: ctx.depth + 1 };
 }
 
+// A `continue` in a value block is a jump of the loop around the block. A
+// lambda that the program wrote has its own loops.
 function step_continue_expr(e: ast.Expr, ctx: StepCtx): (ast.Expr, StepCtx, boolean) {
-  if let ast.ExprLambda(_) = e {
-    return (e, ctx, true);
+  if let ast.ExprLambda(lm) = e {
+    return (e, ctx, is_written_lambda_origin(lm.origin));
   }
   return (e, ctx, false);
 }
@@ -25451,7 +25486,11 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     parsed = Module { ...parsed, funcs: settle_const_types(parsed.funcs, structs), substituted_consts: inferred };
     parsed = desugar_union_aliases(desugar_trait_params(parsed, trait_decl_names(traits), false));
   }
-  let settled = settle_module(resolve_variant_fields_module(resolve_labels_module(resolve_assoc_projections(parsed))));
+  let labelled = resolve_labels_module(resolve_assoc_projections(parsed));
+  if (!verbatim) {
+    labelled = resolve_variant_fields_module(labelled);
+  }
+  let settled = settle_module(labelled);
   if (!verbatim) {
     settled = route_inherited_defaults(resolve_dyn_traits(rename_type_vars_module(settled)));
   }

@@ -25,6 +25,30 @@ Invalid UTF-8 and NUL-byte controls also received `P001`.
 Valid Fern source passed.
 These probes establish source rejection, not ELF metadata validation.
 
+## The ELF64 reader of the standard library
+
+The compiler reads no ELF input, but a Fern program can. `std/elf` reads an ELF64 image: the header, the program headers and the bytes of each segment.
+`std/user_process` loads a static program through it, so the image is a file that the loader did not write.
+
+The reader refuses each of these with an error value that has the offset of the fault:
+
+- An image shorter than the header of 64 bytes, or one that is not a little-endian ELF64 image of version 1.
+- A program header size that is not 56, when the image has program headers.
+- A program header table that is not inside the image. The check has no sum that can wrap: it compares the size of the table with the bytes after its offset.
+- A segment whose file range is not inside the image, by the same form of check.
+- A load segment with more bytes in the file than in memory. A loader that copies them writes beyond the memory of the segment.
+
+The last rule is new. The loader of `std/user_process` checked the memory range of a segment, and then copied the file bytes.
+Such a segment made the loader map and write pages beyond the range that it checked.
+
+`FuzzSelfHostStdELF` feeds hostile bytes to the reader through `tests/fuzz/stdparse.fern elf`.
+Its check is a second reader of the same rules, written in Go. The two must give the same result for each input: the offset of the refusal, or the header fields and the length and a sum of the bytes of each segment.
+The seeds have each fault of the identification, and a count of 65535 program headers.
+They have a table offset and a segment offset of 2^31, of 2^32 and of 2^64 - 1.
+They also have sizes that wrap a sum of 64 bits.
+
+The reader does not read section headers, symbols, relocations or notes. It does not check that the entry address is in an executable segment. It does not check that two load segments are apart. A loader has those duties.
+
 ## The manifest reader
 
 `fern -manifest FILE` is the one compiler command that reads a binary file.

@@ -48,6 +48,13 @@ Nothing fed hostile bytes to the boundaries after the front end: the IR verifier
 | `FuzzSelfHostStdDNS` | the DNS message reader of `std/dns`, and an encode and a second decode of each message it reads | `tests/fuzz/stdparse.fern dns` | the same, and a second decode that gives the same message |
 | `FuzzSelfHostStdProtobuf` | the protobuf reader of `std/protobuf`, and the reader again on each length-delimited field | `tests/fuzz/stdparse.fern protobuf` | the same |
 | `FuzzSelfHostStdJPEG` | the JPEG decoder of `std/jpeg` under a limit of 1048576 pixels, compared with Go's `image/jpeg` | `tests/fuzz/stdparse.fern jpeg` | the same, and the dimensions that Go reads when both accept the file |
+| `FuzzSelfHostStdELF` | the ELF64 reader of `std/elf`: the header, the program headers and the bytes of each segment | `tests/fuzz/stdparse.fern elf` | the same, and the summary that a second reader of the format rules gives, written in Go |
+| `FuzzSelfHostStdCpio` | the cpio reader of `std/cpio`, and a read of each entry, a lookup by its name and a list of its children | `tests/fuzz/stdparse.fern cpio` | the same |
+| `FuzzSelfHostStdClassFile` | the class file reader of `std/classfile`, and the descriptor readers on each field and method | `tests/fuzz/stdparse.fern classfile` | the same |
+| `FuzzSelfHostStdFdt` | the device tree reader of `std/fdt`, and each read of each property of each node | `tests/fuzz/stdparse.fern fdt` | the same |
+| `FuzzSelfHostStdTrueType` | the font reader of `std/truetype`: the glyph of seven characters, the metrics, a bitmap of each glyph, and a variable axis | `tests/fuzz/stdparse.fern truetype` | the same |
+| `FuzzSelfHostStdTZif` | the TZif reader of `std/tz`, and the offset and the abbreviation of the zone at each transition and at times across the range of an `i64` | `tests/fuzz/stdparse.fern tzif` | the same |
+| `FuzzSelfHostStdCSV` | the CSV reader of `std/csv`, and the writer and a second read of each document that it accepts | `tests/fuzz/stdparse.fern csv` | the same, and the same rows from the second read |
 
 The verifier driver decodes the input bytes into ops.
 The first two bytes choose the parameter and local counts.
@@ -204,11 +211,30 @@ The stdlib parsers ran 45 seconds each on 2026-11-08 on the same kind of host, a
 | `FuzzSelfHostStdDNS` | 57088 | 2 | none |
 | `FuzzSelfHostStdProtobuf` | 53336 | 1 | none |
 | `FuzzSelfHostStdJPEG` | 10861 | 1 | three, fixed in this change |
+| `FuzzSelfHostStdELF` | 5382 in 180 s (2026-11-14) | 5 | none by the target. One by the review of the loader, fixed in the same change |
+| `FuzzSelfHostStdCpio` | 17466 in 120 s (2026-11-14) | 1 | none |
+| `FuzzSelfHostStdClassFile` | 16916 in 120 s (2026-11-14) | 1 | none |
+| `FuzzSelfHostStdFdt` | 17377 in 120 s (2026-11-14) | 1 | none |
+| `FuzzSelfHostStdTrueType` | 31047 in 150 s (2026-11-14), on the repairs of main | 1 | four, which `31960636` on main repairs |
+| `FuzzSelfHostStdTZif` | 18543 in 120 s (2026-11-14) | 1 | none |
+| `FuzzSelfHostStdCSV` | 25172 in 150 s (2026-11-14), after the repair | 1 | one, fixed in this change |
 
 An abort with a cause is an accepted outcome for the assemblers. They consume the compiler's own output, and a bounds abort on foreign text is the language's defined trap.
 The run logs are in the pull request.
 
 ## Findings
+
+The TrueType target found four faults of the font reader: a bounds trap in the reader of a GPOS feature list, a bitmap of 1.5 GB for a font with 1 unit to the em, contour end points that go down, and a composite glyph with many parts at each of its 8 levels.
+Commit `31960636` on main found the same four faults in a review of the module, and its repairs are the ones in the tree. `kern_lookups` reads through the checked byte reader. `render` gives an empty bitmap for a box above 16777216 pixels. `simple` gives no outline for end points that do not rise. One glyph reads 4096 glyphs at the most.
+The target confirms those repairs. Its two inputs are in `testdata/fuzz/FuzzSelfHostStdTrueType/`: the second one took 1491020 KB before the repairs, and it takes 13032 KB after them. `tests/stdlib/truetype_test.fern` has a font with a feature count of 65535 and a font with 1 unit to the em.
+
+The CSV target found one document that changes after a write and a second read: one carriage return.
+`parse` gives one record of one empty field for it. `serialize` wrote that record as an empty line, and `parse` takes an empty line at the end of a document for no record.
+So the last record of a document was lost when it had one empty field. `serialize` now writes such a record as a pair of quotes. `tests/stdlib/csv_test.fern` has the case, and the input is in `testdata/fuzz/FuzzSelfHostStdCSV/`.
+
+The review for the ELF target found one fault in `std/user_process`, the one program that loads an image through `std/elf`.
+A load segment with more bytes in the file than in memory passed the range check of the loader, which uses the memory size. The loader then mapped and wrote the pages of the file bytes beyond that range.
+`Segment.bytes` now refuses such a load segment, so the loader refuses the image. `tests/stdlib/elf_test.fern` has the case, and the target has three seeds for it.
 
 The JPEG target found three ways that a hostile file stopped the decoder with a bounds trap.
 Each is fixed in `std/jpeg`, and each has a test in `tests/stdlib/jpeg_test.fern` and a seed in `testdata/fuzz/FuzzSelfHostStdJPEG/`.
@@ -234,7 +260,7 @@ It cannot see into the Fern process that reads each input, so it mutates the rea
 It builds the program of each reader with `fern -cover`, and each run writes its counters to stderr at exit.
 The loop keeps each input that reaches a counter that no earlier input reached.
 
-The loop takes thirty-three readers: the twenty-one of `tests/fuzz/stdparse.fern`, and the readers of five drivers in `compiler/drivers/`.
+The loop takes forty readers: the twenty-eight of `tests/fuzz/stdparse.fern`, and the readers of five drivers in `compiler/drivers/`.
 The drivers read build manifests, packages, literate documents, op streams and assembly text.
 The image modes of `asm_fuzz_run.fern` write their images beside the input, so the check can read them.
 The counters of a program cover the modules that it imports.
@@ -288,11 +314,11 @@ A hang names the budget, and a budget breach names the resident size.
 
 ## In CI
 
-`fuzz-diff.yml` runs the thirty-three targets for 30 seconds each on the x86-64 runner, from the committed seeds, after the differential targets.
+`fuzz-diff.yml` runs the forty targets for 30 seconds each on the x86-64 runner, from the committed seeds, after the differential targets.
 The drivers run natively, so the arm64 runner does not run them.
-The `fuzz` job of `nightly-fuzz.yml` runs each of the thirty-three targets on the x86-64 runner for 20 minutes.
+The `fuzz` job of `nightly-fuzz.yml` runs each of the forty targets on the x86-64 runner for 20 minutes.
 Each target starts from a cached corpus that grows from night to night.
-`fuzz-diff.yml` also runs the coverage-guided loop of the thirty-three readers for 5 seconds each, after `TestSelfHostReaderCoverageBeatsBlind`.
+`fuzz-diff.yml` also runs the coverage-guided loop of the forty readers for 5 seconds each, after `TestSelfHostReaderCoverageBeatsBlind`.
 Each nightly row of a reader then runs that loop for 15 minutes from its own cached corpus.
 
 ## Limits

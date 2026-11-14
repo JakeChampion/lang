@@ -407,6 +407,12 @@ function test_decode_bytes_keeps_the_bytes(): test.TestOutcome {
   return test.assert_true(fs.len() == 2 && fs[0] as i32 == 0 && fs[1] as i32 == 32);
 }
 
+// 80000 segments and 80000 `..` resolve in linear time. Before, each `..`
+// copied the segments, and this took 14 seconds.
+function test_remove_many_dot_segments(): test.TestOutcome {
+  return test.assert_eq(url.remove_dot_segments("/a".repeat(80000) + "/..".repeat(80000) + "/b"), "/b");
+}
+
 function main(): i32 {
   let r = test.new("std/url");
   r = r.it("encode space", test_encode_space);
@@ -445,5 +451,6 @@ function main(): i32 {
   r = r.it("resolve keeps the base query and port", test_resolve_base_parts);
   r = r.it("resolve refuses a base without a scheme", test_resolve_no_scheme);
   r = r.it("remove dot segments", test_remove_dot_segments);
+  r = r.it("remove many dot segments", test_remove_many_dot_segments);
   return r.finish();
 }

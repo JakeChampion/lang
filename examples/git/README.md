@@ -14,7 +14,7 @@ git cat-file (-t | -s | -p | -e) NAME
 git cat-file (--batch | --batch-check)
 git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...
 git verify-pack [-v] FILE.idx...
-git ls-tree [-r] [-t] [-d] [-l] [--name-only] [--full-tree] TREE
+git ls-tree [-r] [-t] [-d] [-l] [--name-only] [--full-tree] TREE [PATH...]
 git log [-n N] [--oneline] [--format=FORMAT] [NAME]
 git index-pack [-o FILE.idx] FILE.pack
 ```
@@ -36,7 +36,9 @@ git index-pack [-o FILE.idx] FILE.pack
 - `ls-tree` prints the entries of a tree. `-r` goes into each tree below
   it, `-t` shows the trees also, `-d` shows the trees only, and `-l` adds
   the size of each blob. In a directory below the top of the worktree, it
-  lists the tree of that directory, as git does.
+  lists the tree of that directory, as git does. A path after the tree
+  limits the list to that entry. A path with `/` at its end, or a path into
+  a directory, lists the entries of the directory.
 
 - `log` prints the commits that a name reaches, the latest committer date
   first. `-n N`, `-N` and `--max-count=N` set the count of commits.
@@ -98,7 +100,7 @@ The standard output, the messages and the exit status are those of git
   ranges. git prints one more line when `^` or `~` follows an object that
   is not a commit, and the port does not print it.
 
-- `ls-tree` with a path after the tree.
+- `ls-tree` with a path that has `..` in it, and with pathspec magic.
 
 - `hash-object -w` for a commit, a tree or a tag. git checks the form of
   such an object before it writes one, and the port does not have that
@@ -124,9 +126,9 @@ has four threads for `index-pack`, and the port has four workers.
 |---|---|---|
 | `cat-file --batch` (34,339 objects, 1.2 GB) | 5.9 s | 3.8 s |
 | `log` (978 commits) | 0.03 s | 0.03 s |
-| `ls-tree -r HEAD` | 0.02 s | 0.05 s |
-| `ls-tree -r -l HEAD` | 0.05 s | 0.16 s |
-| `cat-file --batch-check` (34,339 objects) | 0.08 s | 0.24 s |
+| `ls-tree -r HEAD` | 0.02 s | 0.02 s |
+| `ls-tree -r -l HEAD` | 0.04 s | 0.09 s |
+| `cat-file --batch-check` (34,339 objects) | 0.07 s | 0.15 s |
 | `index-pack` (3.3 MB) | 0.14 s | 0.16 s |
 | `index-pack` (275 MB) | 3.0 s | 2.6 s |
 

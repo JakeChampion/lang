@@ -4,7 +4,7 @@ import "./ssacredittext" as retained;
 import "./ssasmallcallerflow" as flow;
 import "./ssasmallheap" as heap;
 import "./ssaallocationchain" as allocation;
-import "./ssasmallarraymachine" as release;
+import "./ssaboxroutines" as release;
 import "./ssaprepare";
 
 struct Half { kind: i32, identity: i64, high: boolean }
@@ -223,7 +223,7 @@ function construct(s: State, r: flow.Relation, e: flow.Event, register_entry: bo
     i += 1;
   }
   let next = State { ...s, heap: n.heap, objects: s.objects.append(object), memory: memory };
-  return write(write(write(next, 0, token(3, e.allocation as i64)), 6, token(7, 0)), 7, number((r.words - 1) as i64));
+  return write(write(write(next, 0, token(3, e.allocation as i64)), 6, token(7, 0)), 7, number(r.words as i64));
 }
 
 function consume(s: State, r: flow.Relation, e: flow.Event, register_entry: boolean): State {
@@ -238,7 +238,9 @@ function consume(s: State, r: flow.Relation, e: flow.Event, register_entry: bool
     return State { ...s, ok: false };
   }
   let next = State { ...s, heap: n.heap, objects: s.objects.with(i, Object { ...obj, live: false }) };
-  next = write(write(next, 0, arg), 1, number((r.words + 2) as i64));
+  // The box release gives the array release the address one word above the
+  // box, so %rax does not hold the box at the return.
+  next = write(write(next, 0, token(10, 0)), 1, number((r.words + 1) as i64));
   next = write(write(next, 2, number(obj.address)), 7, number(s.heap.head));
   return write(next, 8, token(8, 0));
 }
@@ -257,8 +259,8 @@ function call(s: State, r: flow.Relation, producer: string, pc: i32, op: isa.Op)
   if (op.symbol == producer || op.symbol == producer + ".r") {
     next = construct(entered, r, e, op.symbol == producer + ".r");
   }
-  if (op.symbol == "__fn___fern_arr_dec" || op.symbol == "__fn___fern_arr_dec.r" || op.symbol == "__fn___fern_arr_dec.u") {
-    next = consume(entered, r, e, op.symbol != "__fn___fern_arr_dec");
+  if (op.symbol == "__fn___fern_box_dec" || op.symbol == "__fn___fern_box_dec.r" || op.symbol == "__fn___fern_box_dec.u") {
+    next = consume(entered, r, e, op.symbol != "__fn___fern_box_dec");
   }
   return State { ...next, event: s.event + 1, flags: unknown_flags() };
 }
@@ -468,7 +470,7 @@ pub function check(output: ssaprepare.Output, caller: string, producer: string, 
   }
   let row = retained.resolve(output, caller);
   let p = isa.caller_program(output.text, "__fn_" + asmcore.sanitize_label(caller));
-  if (row.error != "" || p.error != "" || !allocation.record(output, producer) || !release.check_native_record(output.text)) {
+  if (row.error != "" || p.error != "" || !allocation.record(output, producer) || !release.release(output.text)) {
     return false;
   }
   let name = "__fn_" + asmcore.sanitize_label(producer);

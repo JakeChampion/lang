@@ -1,0 +1,22 @@
+// Emit native AV1 HDR fields for independent syntax comparisons.
+import "std/video/av1/metadata";
+import "std/video/frame";
+import "../../tests/stdlib/video_av1_metadata_values" as fields;
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 2) {
+    return 1;
+  }
+  let Ok(bytes) = read_file_bytes(argv[1]) else {
+    return 2;
+  };
+  let value = match (metadata.inspect(bytes, frame.default_limits())) {
+    Ok(value) => value,
+    Err(error) => { eprint(error.message()); return 3; },
+  };
+  for value in fields.values(value) {
+    print(value.to_string());
+  }
+  return 0;
+}
