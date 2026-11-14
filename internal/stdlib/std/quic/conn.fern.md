@@ -108,6 +108,7 @@ import "std/tls/identity";
 import "std/tls/message";
 import "std/tls/server" as tlsserver;
 import "std/tls/verify";
+import "std/tls/x509";
 import "std/array";
 import "std/option";
 import "std/i64";
@@ -152,6 +153,10 @@ pub struct Config {
   // early_data has a client send 0-RTT with a ticket that allows it, and a
   // server take 0-RTT and issue tickets that allow it.
   early_data: boolean,
+  // verify is false when a client does not check the chain and the name of
+  // the certificate of the server. It still checks the signature of the
+  // handshake with the key of the certificate.
+  verify: boolean,
 }
 
 // Ticket is a session ticket with the transport parameters of the server
@@ -166,7 +171,13 @@ pub struct Ticket { tls: tlsclient.Ticket, params: params.Params }
 <<4 pub function config(alpn: string[]): Config>>=
 pub function config(alpn: string[]): Config {
   let p = params.Params { ...params.defaults(), max_idle_timeout: 30000 as i64, max_udp_payload_size: 1472 as i64, disable_active_migration: true };
-  return Config { alpn: alpn, params: p, cid_len: 8, max_datagram: 1200, server_name: "", roots: verify.no_roots(), identity: None, ecn: false, ticket_key: [], ticket_lifetime: time.duration_seconds(7200 as i64), resume: None, early_data: false };
+  return Config { alpn: alpn, params: p, cid_len: 8, max_datagram: 1200, server_name: "", roots: verify.no_roots(), identity: None, ecn: false, ticket_key: [], ticket_lifetime: time.duration_seconds(7200 as i64), resume: None, early_data: false, verify: true };
+}
+
+// without_verification has a client accept any certificate chain for any
+// name, as the client of std/tls/client does.
+pub function (c: Config) without_verification(): Config {
+  return Config { ...c, verify: false };
 }
 
 // with_ecn says the transport carries ECN marks both ways: it sends each
@@ -2120,6 +2131,19 @@ function (c: Conn) __server_question(t: handshake.Server, e: handshake.Event, no
 }
 
 function __trusted(cfg: Config, v: handshake.Verification, unix_sec: i64): boolean {
+  if (!cfg.verify) {
+    if (v.chain.len() == 0) {
+      return false;
+    }
+    match (x509.parse(v.chain[0])) {
+      Ok(leaf) => {
+        return verify.signed(leaf, v.scheme, v.signed, v.signature);
+      },
+      Err(_) => {
+        return false;
+      }
+    }
+  }
   match (verify.server(v.chain, cfg.roots, cfg.server_name, time.timestamp_from_unix(unix_sec))) {
     Ok(leaf) => {
       return verify.signed(leaf, v.scheme, v.signed, v.signature);

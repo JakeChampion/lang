@@ -479,6 +479,21 @@ function test_untrusted(): test.TestOutcome {
   }
 }
 
+// Without verification, a client takes a certificate for another name and
+// with no root, and still checks the signature of the handshake.
+function test_unverified(): test.TestOutcome {
+  let cfg = conn.config(["h3"]).client_side("other.example", verify.no_roots()).without_verification();
+  match (start(cfg, server_config(["h3"]))) {
+    Ok(p0) => {
+      let p = settle(p0, 12, 10000 * MS);
+      return test.assert_eq(p.client.connected().to_string() + " " + p.log, "true client connected; server connected; ");
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+}
+
 function verdict_at(unix_ms: i64): string {
   match (start_at(client_config("tls.example", ["h3"]), server_config(["h3"]), unix_ms)) {
     Ok(p0) => {
@@ -1320,6 +1335,7 @@ function main(): i32 {
   r = r.it("a lost datagram, by time threshold", test_lost_datagram);
   r = r.it("a lost flight, by probe timeout", test_lost_flight);
   r = r.it("an untrusted certificate", test_untrusted);
+  r = r.it("a client without verification", test_unverified);
   r = r.it("the certificate validity window, at the given wall clock", test_validity_window);
   r = r.it("an expired certificate", test_expired);
   r = r.it("no protocol in common", test_no_protocol);
