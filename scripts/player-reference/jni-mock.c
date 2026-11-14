@@ -14,14 +14,14 @@ static void **env_table = table;
 static uintptr_t context[8], activity[8], window[24];
 static int mode, locals, globals, frames, saved_locals, pending, releases, opens, prepares, starts, global_calls, target_releases;
 static int64_t last_seek;
-static int last_seek_mode;
+static int last_seek_mode, audio_track;
 
 enum { CONSTRUCTOR=1, GET_LOADER, LOAD_CLASS, PREPARED, COMPLETED, ERROR, INFO, SEEKED,
        SET_USAGE, SET_CONTENT, BUILD, SET_ATTRS, RESET, SOURCE, PREPARE, SET_SURFACE,
        START, PAUSE, SEEK, POSITION, DURATION, PLAYING, WIDTH, HEIGHT, RELEASE,
-       GET_TIMESTAMP, MEDIA_TIME, SYSTEM_TIME, PARSE, TEXTURE_INIT, SURFACE_INIT, UPDATE, MATRIX, FRAME_TIME };
-static const char *names[] = {"", "<init>", "getClassLoader", "loadClass", "setOnPreparedListener", "setOnCompletionListener", "setOnErrorListener", "setOnInfoListener", "setOnSeekCompleteListener", "setUsage", "setContentType", "build", "setAudioAttributes", "reset", "setDataSource", "prepareAsync", "setSurface", "start", "pause", "seekTo", "getCurrentPosition", "getDuration", "isPlaying", "getVideoWidth", "getVideoHeight", "release", "getTimestamp", "getAnchorMediaTimeUs", "getAnchorSytemNanoTime", "parse", "<init>", "<init>", "updateTexImage", "getTransformMatrix", "getTimestamp"};
-static const char *signatures[] = {"", "()V", "()Ljava/lang/ClassLoader;", "(Ljava/lang/String;)Ljava/lang/Class;", "(Landroid/media/MediaPlayer$OnPreparedListener;)V", "(Landroid/media/MediaPlayer$OnCompletionListener;)V", "(Landroid/media/MediaPlayer$OnErrorListener;)V", "(Landroid/media/MediaPlayer$OnInfoListener;)V", "(Landroid/media/MediaPlayer$OnSeekCompleteListener;)V", "(I)Landroid/media/AudioAttributes$Builder;", "(I)Landroid/media/AudioAttributes$Builder;", "()Landroid/media/AudioAttributes;", "(Landroid/media/AudioAttributes;)V", "()V", "(Landroid/content/Context;Landroid/net/Uri;)V", "()V", "(Landroid/view/Surface;)V", "()V", "()V", "(JI)V", "()I", "()I", "()Z", "()I", "()I", "()V", "()Landroid/media/MediaTimestamp;", "()J", "()J", "(Ljava/lang/String;)Landroid/net/Uri;", "(I)V", "(Landroid/graphics/SurfaceTexture;)V", "()V", "([F)V", "()J"};
+       GET_TIMESTAMP, MEDIA_TIME, SYSTEM_TIME, PARSE, TEXTURE_INIT, SURFACE_INIT, UPDATE, MATRIX, FRAME_TIME, SELECTED_TRACK };
+static const char *names[] = {"", "<init>", "getClassLoader", "loadClass", "setOnPreparedListener", "setOnCompletionListener", "setOnErrorListener", "setOnInfoListener", "setOnSeekCompleteListener", "setUsage", "setContentType", "build", "setAudioAttributes", "reset", "setDataSource", "prepareAsync", "setSurface", "start", "pause", "seekTo", "getCurrentPosition", "getDuration", "isPlaying", "getVideoWidth", "getVideoHeight", "release", "getTimestamp", "getAnchorMediaTimeUs", "getAnchorSytemNanoTime", "parse", "<init>", "<init>", "updateTexImage", "getTransformMatrix", "getTimestamp", "getSelectedTrack"};
+static const char *signatures[] = {"", "()V", "()Ljava/lang/ClassLoader;", "(Ljava/lang/String;)Ljava/lang/Class;", "(Landroid/media/MediaPlayer$OnPreparedListener;)V", "(Landroid/media/MediaPlayer$OnCompletionListener;)V", "(Landroid/media/MediaPlayer$OnErrorListener;)V", "(Landroid/media/MediaPlayer$OnInfoListener;)V", "(Landroid/media/MediaPlayer$OnSeekCompleteListener;)V", "(I)Landroid/media/AudioAttributes$Builder;", "(I)Landroid/media/AudioAttributes$Builder;", "()Landroid/media/AudioAttributes;", "(Landroid/media/AudioAttributes;)V", "()V", "(Landroid/content/Context;Landroid/net/Uri;)V", "()V", "(Landroid/view/Surface;)V", "()V", "()V", "(JI)V", "()I", "()I", "()Z", "()I", "()I", "()V", "()Landroid/media/MediaTimestamp;", "()J", "()J", "(Ljava/lang/String;)Landroid/net/Uri;", "(I)V", "(Landroid/graphics/SurfaceTexture;)V", "()V", "([F)V", "()J", "(I)I"};
 
 static Object *local(Object *obj) { assert(obj); locals++; assert(locals < 64); return obj; }
 static Object *find_class(void *env, const char *name) {
@@ -42,7 +42,7 @@ static Object *get_class(void *env, Object *obj) {
 }
 static void *method_id(void *env, Object *cls, const char *name, const char *sig) {
     (void)env; assert(cls && !pending);
-    for (int i=1; i<=FRAME_TIME; i++) if (!strcmp(name, names[i]) && !strcmp(sig, signatures[i])) {
+    for (int i=1; i<=SELECTED_TRACK; i++) if (!strcmp(name, names[i]) && !strcmp(sig, signatures[i])) {
         if (mode == 11 && i == START) { pending = 1; return 0; }
         return (void *)(uintptr_t)i;
     }
@@ -135,6 +135,7 @@ static int32_t int_call(void *env, Object *obj, void *method, Value *args) {
     case DURATION: if (mode == 18) { pending = 1; return 0; } return 4000;
     case WIDTH: return 320;
     case HEIGHT: return 240;
+    case SELECTED_TRACK: assert(args[0].i == 2); return audio_track;
     default: assert(0); return 0;
     }
 }
@@ -185,6 +186,7 @@ int mock_player_opens(void) { return opens; }
 int mock_player_prepares(void) { return prepares; }
 int64_t mock_player_seek(void) { return last_seek; }
 int mock_player_seek_mode(void) { return last_seek_mode; }
+void mock_player_audio_track(int track) { audio_track = track; }
 int mock_player_target_releases(void) { return target_releases; }
 void *mock_player_window(void) { return window; }
 void *ANativeWindow_toSurface(void *env, void *native_window) {

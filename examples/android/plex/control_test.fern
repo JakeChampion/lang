@@ -127,11 +127,11 @@ function reply_all(rs: plex.Request[]): plex.Reply[] {
 // files.
 // The requests, the calls of the player and the files of the fake device,
 // and the decoders that it has.
-struct Log { urls: Cell[string[]], calls: Cell[string[]], files: Cell[string[]], decoders: Cell[string[]] }
+struct Log { urls: Cell[string[]], calls: Cell[string[]], files: Cell[string[]], decoders: Cell[string[]], sound: Cell[boolean] }
 
 function new_log(): Log {
   let none: string[] = [];
-  return Log { urls: cell_new(none), calls: cell_new(none), files: cell_new(none), decoders: cell_new(["video/avc", "audio/mp4a-latm"]) };
+  return Log { urls: cell_new(none), calls: cell_new(none), files: cell_new(none), decoders: cell_new(["video/avc", "audio/mp4a-latm"]), sound: cell_new(true) };
 }
 
 function note(c: Cell[string[]], s: string): void {
@@ -201,6 +201,7 @@ function fake(log: Log, now: i64, f: draw.Frame): control.Device {
     position: (): i64 => 120000i64,
     duration: (): i64 => 8880000i64,
     stop: (): void => note(log.calls, "stop"),
+    has_audio: (): boolean => log.sound.get(),
     random: (): i32 => 5,
     decoders: log.decoders.get(),
   };
@@ -411,6 +412,35 @@ function test_transcode_seeks_in_its_stream(): test.TestOutcome {
   return test.assert_eq(has_url(log, "/video/:/transcode/universal/ping?session=").to_string(), "true");
 }
 
+// A file that plays as it is with no sound plays again as a transcode
+// that converts the sound, from the same place: once when the player
+// selected no sound track, and once when the sound decoder stopped.
+function test_lost_sound_transcodes(): test.TestOutcome {
+  let log = new_log();
+  log.sound.set(false);
+  let f = frame();
+  defer free_frame(f);
+  let playing = tap(tap(shown(log, f, "https://up.example:32400", "srv"), log, 100i64, f, "hub:1:0"), log, 200i64, f, "play");
+  let retried = settle(at(playing, log, 300i64, f, android.Posted(19, 0 as usize)), log, 300i64, f);
+  if (!has_call(log, "stop") || !has_call(log, "play https://up.example:32400/video/:/transcode/universal/start.m3u8?")) {
+    return test.fail("no transcode after no sound track: " + log.calls.get().join(" | "));
+  }
+  if (!retried.play.stream.transcode || retried.play.stream.offset_ms != 60000i64) {
+    return test.fail("the transcode does not start where the file was");
+  }
+  let log2 = new_log();
+  let playing2 = tap(tap(shown(log2, f, "https://up.example:32400", "srv"), log2, 100i64, f, "hub:1:0"), log2, 200i64, f, "play");
+  let ready = settle(at(playing2, log2, 300i64, f, android.Posted(19, 0 as usize)), log2, 300i64, f);
+  if (ready.play.stream.transcode) {
+    return test.fail("a file with its sound transcoded");
+  }
+  let lost = settle(at(ready, log2, 400i64, f, android.Posted(22, 804 as usize)), log2, 400i64, f);
+  if (!lost.play.stream.transcode || lost.play.stream.offset_ms != 120000i64) {
+    return test.fail("no transcode after the sound decoder stopped: " + log2.calls.get().join(" | "));
+  }
+  return test.assert_eq(has_call(log2, "play https://up.example:32400/video/:/transcode/universal/start.m3u8?").to_string(), "true");
+}
+
 function test_library_pages(): test.TestOutcome {
   let log = new_log();
   let f = frame();
@@ -593,6 +623,7 @@ function main(): i32 {
   r = r.it("a saved server opens the home screen", test_saved_server_opens_home);
   r = r.it("an item resumes, pauses and stops", test_play_pause_and_stop);
   r = r.it("a transcode seeks in its stream and stays alive while paused", test_transcode_seeks_in_its_stream);
+  r = r.it("a file with no sound plays again as a transcode", test_lost_sound_transcodes);
   r = r.it("a library loads its next page at its end", test_library_pages);
   r = r.it("a search waits for a pause in typing", test_search_types_and_asks);
   r = r.it("the keyboard of the system searches through the text field", test_search_from_text_field);
