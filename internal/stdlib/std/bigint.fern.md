@@ -527,6 +527,9 @@ pub function (a: BigInt) low_u64(): u64 {
 }
 
 pub function (a: BigInt) word64(i: i32): u64 {
+  if (i < 0 || i >= a.mag.len()) {
+    return 0 as u64;
+  }
   let lo = 2 * i;
   let v = 0 as u64;
   if (lo < a.mag.len()) {
@@ -539,6 +542,9 @@ pub function (a: BigInt) word64(i: i32): u64 {
 }
 
 pub function (a: BigInt) has_low_bits(k: i32): boolean {
+  if (k <= 0) {
+    return false;
+  }
   let limbs = k / 32;
   let i = 0;
   while (i < limbs && i < a.mag.len()) {

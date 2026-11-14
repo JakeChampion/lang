@@ -21,7 +21,7 @@ The root chunk preserves declaration order.
 <<*>>=
 <<module introduction>>
 
-<<1 function __float_int_part(n: f64): string>>
+<<1 function __dec_times(own limbs: u64[], f: u64): u64[]>>
 
 <<2 generated Dragonbox tables>>
 
@@ -80,60 +80,63 @@ The root chunk preserves declaration order.
 <<module introduction>>=
 // Shared floating-point formatting kernels.
 import "core/int";
-
-// __float_int_part renders a non-negative, integer-valued f64 that
-// is too large for the i64 range (>= 2^63) as decimal digits,
-// working entirely in floating point so no value ever crosses the
-// trapping/non-portable `as i64` boundary. Digits are peeled off
-// least-significant-first via `floor(n / 10)`; the per-step
-// remainder is nominally 0..9 but `n / 10` and `* 10` each round,
-// so for very large magnitudes it can land just outside that range
-// — clamp before indexing the digit table. The printed digits
-// reflect the f64's stored (rounded) value — exact for round
-// magnitudes like 1e20, approximate where the double itself can't
-// represent the integer exactly, which is inherent to f64 and not
-// something this formatter can recover.
 ```
 
-### `1 function __float_int_part(n: f64): string`
+### `1 function __dec_times(own limbs: u64[], f: u64): u64[]`
 
 ```fern
-<<1 function __float_int_part(n: f64): string>>=
-function __float_int_part(n: f64): string {
-  if (n < 1.0) {
-    return "0";
+<<1 function __dec_times(own limbs: u64[], f: u64): u64[]>>=
+// A decimal number for `fixed`: limbs of nine digits, the least first.
+function __dec_times(own limbs: u64[], f: u64): u64[] {
+  let carry = 0u64;
+  for i in 0..limbs.len() {
+    let v = limbs[i] * f + carry;
+    limbs = limbs.with(i, v % 1000000000u64);
+    carry = v / 1000000000u64;
   }
-  let digits = "0123456789";
-  // Two-pass exact-size buffer (#4379). Digits peel off least-significant
-  // first, so the old `out = digits[d] + out` prepended each one — recopying
-  // the whole growing string every step, O(digits²) (up to ~309 digits for
-  // the largest f64 magnitudes). Instead: a counting pass sizes the result,
-  // then a fill pass writes each digit straight into its final slot from the
-  // right. Byte-for-byte identical output.
-  let count = 0;
-  let m = n;
-  while (m >= 1.0) {
-    m = __floor_f64(m / 10.0);
-    count += 1;
+  while (carry > 0u64) {
+    limbs = limbs.append(carry % 1000000000u64);
+    carry = carry / 1000000000u64;
   }
-  let buf = __alloc_u8(count);
-  let pos = count - 1;
-  while (n >= 1.0) {
-    let q = __floor_f64(n / 10.0);
-    let d = (n - q * 10.0) as i32;
-    if (d < 0) {
-      d = 0;
+  return limbs;
+}
+
+// `limbs` times `step` to the power `n / per`, then times `base` for each
+// of the `n % per` that remain. `step` is `base` to the power `per`.
+function __dec_scale(own limbs: u64[], base: u64, step: u64, per: i32, n: i32): u64[] {
+  for i in 0..n / per {
+    limbs = __dec_times(limbs, step);
+  }
+  for i in 0..n % per {
+    limbs = __dec_times(limbs, base);
+  }
+  return limbs;
+}
+
+// The digits of `limbs`, the first digit first, with no zero before them.
+function __dec_digits(limbs: u64[]): u8[] {
+  let top = limbs.len() - 1;
+  while (top > 0 && limbs[top] == 0u64) {
+    top -= 1;
+  }
+  let lead = 1;
+  let t = limbs[top];
+  while (t >= 10u64) {
+    t = t / 10u64;
+    lead += 1;
+  }
+  let buf = __alloc_u8(lead + 9 * top);
+  let pos = buf.len() - 1;
+  for i in 0..top + 1 {
+    let v = limbs[i];
+    let width = if (i == top) { lead } else { 9 };
+    for d in 0..width {
+      buf = buf.with(pos, 48u8 + (v % 10u64) as u8);
+      v = v / 10u64;
+      pos -= 1;
     }
-    if (d > 9) {
-      d = 9;
-    }
-    buf = buf.with(pos, digits[d] as u8);
-    pos -= 1;
-    n = q;
   }
-  unsafe {
-    return string_from_bytes_unchecked(buf);
-  }
+  return buf;
 }
 
 // Shortest round-trip float formatting via DRAGONBOX (Junekey Jeon's
@@ -1388,9 +1391,9 @@ function __db_trim(d: (i64, i32)): (i64, i32) {
 // Unlike the default shortest formatter (which emits the fewest digits
 // that round-trip), this gives the fixed-width output that table /
 // currency formatting wants: `3.14159 @ prec 2` -> "3.14", `2.5 @ prec 0` ->
-// "3", `1.0 @ prec 3` -> "1.000". The whole computation stays in the
-// float domain via __float_int_part, so no value crosses the
-// trapping/non-portable `f64 -> i64` boundary regardless of magnitude.
+// "3", `1.0 @ prec 3` -> "1.000". The digits are those of the exact value
+// of `n`, so only a value that is exactly half way rounds away from zero:
+// `1.45`, which is a little less than 1.45, gives "1.4" at prec 1.
 ```
 
 ### `26 pub(package) function fixed(n: f64, prec: i32): string`
@@ -1401,36 +1404,88 @@ pub(package) function fixed(n: f64, prec: i32): string {
   if (n != n) {
     return "NaN";
   }
-  let out = "";
+  let sign = "";
   if (n < 0.0) {
-    out = "-";
+    sign = "-";
     n = 0.0 - n;
   }
   if (n != 0.0 && n * 2.0 == n) {
-    return out + "Inf";
+    return sign + "Inf";
   }
-  // mult = 10^prec.
-  let mult: f64 = 1.0;
-  let i = 0;
-  while (i < prec) {
-    mult *= 10.0;
-    i += 1;
+  if (prec < 0) {
+    prec = 0;
   }
-  // Scale, round half away from zero, and split into integer + fraction
-  // halves — both integer-valued f64s now.
-  let scaled = __floor_f64(n * mult + 0.5);
-  let intf = __floor_f64(scaled / mult);
-  let fracf = scaled - intf * mult;
-  out += __float_int_part(intf);
-  if (prec == 0) {
-    return out;
+  // n is m * 2^e.
+  let bits = f64_bits(n) as u64;
+  let be = (bits >> 52u64 & 2047u64) as i32;
+  let m = bits & 4503599627370495u64;
+  let e = -1074;
+  if (be > 0) {
+    m = m | 4503599627370496u64;
+    e = be - 1075;
   }
-  // Zero-pad the fractional digits out to `prec` places.
-  let fracStr = __float_int_part(fracf);
-  while (fracStr.len() < prec) {
-    fracStr = "0" + fracStr;
+  while (e < 0 && m % 2u64 == 0u64) {
+    m = m / 2u64;
+    e += 1;
   }
-  return out + "." + fracStr;
+  // The digits of n * 10^k, where k is the count of fraction digits of n:
+  // m * 2^e for an integer, and m * 5^k for m / 2^k.
+  let limbs: u64[] = [m % 1000000000u64, m / 1000000000u64];
+  let k = 0;
+  if (e >= 0) {
+    limbs = __dec_scale(limbs, 2u64, 536870912u64, 29, e);
+  } else {
+    k = 0 - e;
+    limbs = __dec_scale(limbs, 5u64, 1220703125u64, 13, k);
+  }
+  let digits = __dec_digits(limbs);
+  // `kept` holds the integer digits and the first `shown` fraction digits.
+  let zeros = if (digits.len() <= k) { k + 1 - digits.len() } else { 0 };
+  let shown = if (prec < k) { prec } else { k };
+  let keep = zeros + digits.len() - k + shown;
+  let cut = keep - zeros;
+  let up = shown < k && cut >= 0 && digits[cut] >= 53u8;
+  let kept = __alloc_u8(keep);
+  for i in 0..keep {
+    kept = kept.with(i, if (i < zeros) { 48u8 } else { digits[i - zeros] });
+  }
+  let at = keep - 1;
+  while (up && at >= 0) {
+    if (kept[at] == 57u8) {
+      kept = kept.with(at, 48u8);
+      at -= 1;
+    } else {
+      kept = kept.with(at, kept[at] + 1u8);
+      up = false;
+    }
+  }
+  let whole = keep - shown;
+  let size = keep + (if (up) { 1 } else { 0 }) + (if (prec > 0) { 1 + prec - shown } else { 0 });
+  let out = __alloc_u8(size);
+  let pos = 0;
+  if (up) {
+    out = out.with(0, 49u8);
+    pos = 1;
+  }
+  for i in 0..keep {
+    if (i == whole) {
+      out = out.with(pos, 46u8);
+      pos += 1;
+    }
+    out = out.with(pos, kept[i]);
+    pos += 1;
+  }
+  if (prec > 0 && shown == 0) {
+    out = out.with(pos, 46u8);
+    pos += 1;
+  }
+  while (pos < size) {
+    out = out.with(pos, 48u8);
+    pos += 1;
+  }
+  unsafe {
+    return sign + string_from_bytes_unchecked(out);
+  }
 }
 
 // `to_string_prec(prec)` — fixed-precision rendering with exactly
