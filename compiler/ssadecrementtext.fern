@@ -72,7 +72,7 @@ function data_values(arg: string): boolean {
 }
 
 function metadata(line: string, op: string, arg: string, section: i32): boolean {
-  if (op == ".globl" && symbol(arg) || one_of(op, [".align", ".balign"]) && decimal(arg)) {
+  if (op == ".globl" && symbol(arg) || one_of(op, [".align", ".balign"]) && decimal(arg) || line == util.ARM64_ARCH) {
     return true;
   }
   if (section != 1) {

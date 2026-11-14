@@ -12029,7 +12029,7 @@ function emit_rt_signal_flags(s: asmcore.EmitState, darwin: boolean): asmcore.Em
     }
   }
   if (s.has_need("signal_taken")) {
-    s = s.write("    .arch_extension lse\n    .global __fern_signal_taken\n    .type __fern_signal_taken, %function\n__fern_signal_taken:\n");
+    s = s.write("    .global __fern_signal_taken\n    .type __fern_signal_taken, %function\n__fern_signal_taken:\n");
     s = s.write("    sub w1, w0, #1\n    cmp w1, #63\n    b.hi .Lsig_taken_none\n    adrp x1, __fern_sig_flags\n    add x1, x1, :lo12:__fern_sig_flags\n    sxtw x0, w0\n    add x1, x1, x0\n");
     s = s.write("    mov w2, #0\n    swpalb w2, w0, [x1]\n    ret\n.Lsig_taken_none:\n    mov w0, #0\n    ret\n");
   }
@@ -12455,7 +12455,7 @@ function emit_aes_gcm_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 
 function emit_rt_aes_gcm(s: asmcore.EmitState): asmcore.EmitState {
   let kernels = a64_aes_expand_key(s) + a64_aes_ctr32(s) + a64_ghash(s) + a64_aes_gcm(s, true) + a64_aes_gcm(s, false);
-  return s.write("    .arch_extension aes\n" + kernels);
+  return s.write(kernels);
 }
 
 function a64_sha256_blocks(s: asmcore.EmitState): string {
@@ -12941,9 +12941,6 @@ function emit_rt_byte_kernels(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(opener);
   }
   s = a64_limb_kernels(s);
-  if (s.has_need("sha256") || s.has_need("sha1") || s.has_need("sha1x8")) {
-    s = s.write("    .arch_extension sha2\n");
-  }
   if (s.has_need("sha1x8")) {
     let sha1x8 = a64_sha1x8_blocks(s);
     s = s.write(sha1x8);
@@ -13022,7 +13019,6 @@ function a64_sha256_rounds(): string {
 }
 
 function emit_rt_crc32_cksum(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("    .arch_extension aes\n");
   s = s.write("    .global __fern_crc32_cksum\n");
   s = s.write("    .global __fern_crc32_cksum_data\n");
   s = s.write("    .type __fern_crc32_cksum, %function\n");
@@ -13191,7 +13187,6 @@ function emit_rt_crc32_cksum(s: asmcore.EmitState): asmcore.EmitState {
 
 // The reflected IEEE CRC-32 register update: w0 is the register, x7 the data and x6 the length.
 function emit_rt_crc32_ieee(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("    .arch_extension crc\n");
   s = s.write("    .global __fern_crc32_ieee\n");
   s = s.write("    .global __fern_crc32_ieee_data\n");
   s = s.write("    .type __fern_crc32_ieee, %function\n");
@@ -13330,7 +13325,6 @@ function emit_profile_alloc_runtime(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function emit_profile_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
-  s = s.write("    .arch_extension lse\n");
   s = s.write("    .bss\n    .p2align 3\n.Lprofile_ring: .zero 4337824\n    .data\n    .p2align 3\n");
   let target = rt_key(darwin);
   if (darwin) {
@@ -13438,6 +13432,7 @@ function emit_module_ir_flat(mod: parser.Module, stab: irtables.StructTab, darwi
   }
   let s = asmcore.new_state();
   s = asmcore.with_funcs(asmcore.with_providers(asmcore.with_switches(asmcore.EmitState { ...s, runtime_target: rt_key(darwin), struct_decls: stab, rt_lower: rt, recs: recs, memo: irverifygate.open_memo("arm64") }, sw), mod), mod.funcs);
+  s = s.write("    " + util.ARM64_ARCH + "\n");
   s = emit_body(mod, s, darwin, cache, physical);
   s = emit_ir_runtime_settled(s, darwin);
   if (s.sandbox) {
@@ -13490,6 +13485,7 @@ pub function emit_module_ir_unit_arm64_prepared(mod: parser.Module, is_entry: bo
     exit(1);
     return ssaprepare.Output { text: "", bodies: [] };
   }
+  s = s.write("    " + util.ARM64_ARCH + "\n");
   if (is_entry) {
     s = s.write("    .globl _start\n");
   }
