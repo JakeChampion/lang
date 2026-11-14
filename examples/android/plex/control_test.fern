@@ -503,6 +503,28 @@ function layout_fault(w: i32, h: i32, one_row: boolean): string {
   return "";
 }
 
+// The tabs end above the navigation bar, and the title starts below the
+// status bar.
+function test_system_bars_leave_the_content_free(): test.TestOutcome {
+  let log = new_log();
+  note(log.files, "/data/settings=id=abc\ntoken=tok-1\nserver_name=Den\nserver_uri=https://up.example:32400\nserver_token=srv\n");
+  let f = frame();
+  defer free_frame(f);
+  let s = settle(at(shown(log, f, "", ""), log, 0i64, f, android.ContentRect(0, 80, W, H - 100)), log, 0i64, f);
+  let low = 0;
+  for n in s.nodes {
+    if (n.tap.name.starts_with("tab:")) {
+      low = low.max(n.y + n.h);
+    }
+  }
+  save_png(f, "insets");
+  let title = s.nodes.filter((n: scene.Node): boolean => n.say == "Den");
+  if (title.len() != 1) {
+    return test.fail("no title");
+  }
+  return test.assert_eq((low == H - 100).to_string() + " " + (title[0].y >= 80).to_string(), "true true");
+}
+
 function test_layout_fits_the_window(): test.TestOutcome {
   return test.assert_eq(layout_fault(W, H, false) + "|" + layout_fault(1080, 2400, true), "|");
 }
@@ -523,6 +545,7 @@ function main(): i32 {
   r = r.it("a sign-out goes back to the sign-in", test_back_and_sign_out);
   r = r.it("a link plays an item at once", test_link_plays_an_item);
   r = r.it("the buttons and the tabs fit a narrow and a wide window", test_layout_fits_the_window);
+  r = r.it("the system bars leave the tabs and the title free", test_system_bars_leave_the_content_free);
   r = r.it("the dot font draws the signs of the player", test_dot_font_has_the_signs);
   return r.finish();
 }

@@ -94,6 +94,9 @@ pub struct App {
   window: usize,
   w: i32,
   h: i32,
+  // The pixels that the status bar and the navigation bar cover.
+  top: i32,
+  bottom: i32,
   shown: boolean,
   client: plex.Client,
   server: plex.Server,
@@ -246,7 +249,7 @@ function first_screen(dev: Device, dir: string, server: string, token: string): 
   }
   let none: plex.Hub[] = [];
   let s = App {
-    dev: dev, dir: dir, window: 0 as usize, w: 0, h: 0, shown: false,
+    dev: dev, dir: dir, window: 0 as usize, w: 0, h: 0, top: 0, bottom: 0, shown: false,
     client: plex.Client { id: id, device: "Android", token: setting(text, "token") },
     server: no_server(), base: plex.Base { uri: setting(text, "server_uri"), token: setting(text, "server_token") },
     servers: [], states: [], conn: 0, pin: plex.Pin { id: 0i64, code: "", token: "" }, pin_at: 0i64,
@@ -1243,7 +1246,7 @@ function row_items(s: App, i: i32): i32 {
 }
 
 function touch(own s: App, action: i32, x: f32, y: f32): App {
-  let m = ui.metrics(s.w, s.h);
+  let m = ui.metrics(s.w, s.h, s.top, s.bottom);
   let slop = (8 * m.u) as f32;
   let p = s.press;
   if (action == 0) {
@@ -1473,6 +1476,7 @@ pub function view(s: App): ui.View {
   let pv = ui.PlayerView { title: p.item.title, subtitle: player_subtitle(p.item), position_ms: p.position, duration_ms: p.duration, paused: p.paused, buffering: p.buffering, overlay: p.overlay || s.screen == ui.PLAYER && !p.video, art: art_of(p.item), audio: audio(p), status: p.status };
   return ui.View {
     ...ui.empty_view(s.w, s.h),
+    top: s.top, bottom: s.bottom,
     screen: s.screen, tab: s.tab, title: s.title, scroll: s.scroll, rows: s.rows, hubs: hubs,
     sections: s.sections, items: s.items, total: s.total, item: s.item, children: s.children,
     pin_code: s.pin.code, error: s.error, servers: s.servers, server_states: s.states,
@@ -1565,6 +1569,13 @@ function event(own s: App, e: android.Event): App {
     },
     android.WindowRedraw(w) => {
       return App { ...s, window: w.ptr, dirty: true };
+    },
+    android.ContentRect(_, top, _, bottom) => {
+      let b = s.h - bottom;
+      if (b < 0 || s.h == 0) {
+        b = 0;
+      }
+      return App { ...s, top: top, bottom: b, dirty: true };
     },
     android.WindowDestroyed(_) => {
       if (s.play.video) {
