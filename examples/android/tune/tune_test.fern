@@ -509,7 +509,11 @@ function test_the_player_gives_the_device_back(): test.TestOutcome {
   let w = sim.after(sim.tap(started(), "Slow Water"), 100i64);
   let ended = player.closed(device(), tune.Model { ...w.shell.app.model });
   let freed = (ended.sound.ptr == 0 as usize && ended.awake.wake == 0 as usize).to_string();
-  return test.assert_eq([before, on, after, freed].join(" | "), "true true true | true true true 2 true | false false false | true");
+  // A player that played no track gives back what it holds of Android too,
+  // one time.
+  let fresh = player.closed(device(), tune.start(paths()));
+  let again = player.closed(device(), tune.Model { ...fresh });
+  return test.assert_eq([before, on, after, freed, fresh.gone.to_string() + " " + again.gone.to_string()].join(" | "), "true true true | true true true 2 true | false false false | true | true true");
 }
 
 // The player starts with the library that it saved. A track whose file is
