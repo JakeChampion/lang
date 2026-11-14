@@ -119,3 +119,45 @@ func TestIntegerLaneBuiltins(t *testing.T) {
 		t.Error("a lane value of u16x8 is not an argument of a builtin of i16x8")
 	}
 }
+
+// A narrow holds each lane to the limits of the narrow lane, and a swizzle
+// gives zero for an index above 15.
+func TestIntegerLaneShapes(t *testing.T) {
+	i := &Interp{Builtins: map[string]*Builtin{}}
+	i.registerLaneBuiltins()
+	call := func(name string, args ...Value) string {
+		got, err := i.Builtins[name].Fn(i, args)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		return got.(Lanes).String()
+	}
+	a := intLanes(16, true, -300, -1, 127, 128, 255, 300, 0, 1)
+	if got, want := call("__i16x8_narrow", a, a), intLanes(8, true, -128, -1, 127, 127, 127, 127, 0, 1).String(); got != want {
+		t.Errorf("narrow = %v, want %v", got, want)
+	}
+	if got, want := call("__i16x8_narrow_u", a, a), intLanes(8, false, 0, 0, 127, 128, 255, 255, 0, 1).String(); got != want {
+		t.Errorf("narrow_u = %v, want %v", got, want)
+	}
+	u := intLanes(16, false, 0, 255, 256, 40000)
+	if got, want := call("__u16x8_narrow", u, u), intLanes(8, false, 0, 255, 255, 255).String(); got != want {
+		t.Errorf("unsigned narrow = %v, want %v", got, want)
+	}
+	s := intLanes(8, true, -1, 2, -3, 4, 5, 6, 7, 8, -9, 10, 11, 12, 13, 14, 15, -16)
+	if got, want := call("__i8x16_widen_lo", s), intLanes(16, true, -1, 2, -3, 4, 5, 6, 7, 8).String(); got != want {
+		t.Errorf("widen_lo = %v, want %v", got, want)
+	}
+	if got, want := call("__i8x16_widen_hi", s), intLanes(16, true, -9, 10, 11, 12, 13, 14, 15, -16).String(); got != want {
+		t.Errorf("widen_hi = %v, want %v", got, want)
+	}
+	b := intLanes(8, false, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25)
+	idx := intLanes(8, false, 15, 0, 16, 255, 1, 1, 128, 14, 2, 3, 4, 5, 6, 7, 8, 9)
+	if got, want := call("__u8x16_swizzle", b, idx), intLanes(8, false, 25, 10, 0, 0, 11, 11, 0, 24, 12, 13, 14, 15, 16, 17, 18, 19).String(); got != want {
+		t.Errorf("swizzle = %v, want %v", got, want)
+	}
+	for _, name := range []string{"__i32x4_widen_lo", "__u8x16_narrow", "__u16x8_narrow_u", "__i8x16_swizzle"} {
+		if _, ok := i.Builtins[name]; ok {
+			t.Errorf("%s is not a builtin", name)
+		}
+	}
+}

@@ -4220,11 +4220,11 @@ function instruction_body(own r: irtables.LowerState, f: ssasem.Func, p: ssaunit
     r = array_unique(r, f, p, ins);
     return emit(r, ir.op_store_local(ins.result));
   }
-  if (ssaunits.string_append(f, ins) && !defer0 && !p.literal[ins.args[0]]) {
+  if (ssasem.string_append(f, ins) && !defer0 && !p.literal[ins.args[0]]) {
     r = grow_or_concat(r, f, ins);
     return emit(r, ir.op_store_local(ins.result));
   }
-  if (ssaunits.string_append(f, ins) && defer0 && p.grows[ins.result] >= 0) {
+  if (ssasem.string_append(f, ins) && defer0 && p.grows[ins.result] >= 0) {
     r = grow_field_or_concat(r, f, p, ins);
     return emit(r, ir.op_store_local(ins.result));
   }
@@ -6358,6 +6358,21 @@ function lane_f32_argument(f: ssasem.Func, value: i32): i32 {
   return value;
 }
 
+// An unsigned lane has no narrow op. Each lane is held to the largest
+// number of the narrow lane, and that number has no sign bit.
+function unsigned_narrow_site(own r: irtables.LowerState, ins: ssa.SInst, w: i32): irtables.LowerState {
+  for a in ins.args {
+    r = emit(r, ir.op_drop());
+  }
+  for a in ins.args {
+    r = emit(r, ir.op_load_local(a));
+    r = emit(r, ir.op_const_i32((1 << w / 2) - 1));
+    r = emit(r, ir.op_lane("visplat", w));
+    r = emit(r, ir.op_lane("viminu", w));
+  }
+  return emit(r, ir.op_lane("vinarrowu", w));
+}
+
 // A builtin of an integer lane type. Its arguments are on the stack.
 function integer_lane_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, verb: string): irtables.LowerState {
   let w = typeinfo.lane_builtin_width(ins.str);
@@ -6377,6 +6392,13 @@ function integer_lane_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.
       r = emit(r, ir.op_lane_at("vireplace", w, k));
     }
     return r;
+  }
+  if (verb == "narrow" && !signed) {
+    return unsigned_narrow_site(r, ins, w);
+  }
+  let shape = irtables.lane_shape_builtin_op(verb, signed);
+  if (shape != "") {
+    return emit(r, ir.op_lane(shape, w));
   }
   return emit(r, ir.op_lane(irtables.integer_lane_builtin_op(verb, signed), w));
 }

@@ -1,3 +1,6 @@
+# 2026-11-14: rebank-perf-baselines. The values are from perf-x86_64 job 132455587680, on the
+# merge of #15876 with main 8385afd8. The compiler measures 46539689 checker allocations and frees
+# against 45969719 (+1.24%). This is a value of main. Re-bank both x86 rows. Keep the 1% tolerance.
 # 2026-11-14: perf/compact-i32-arrays (#14818), a local scripts/selfhost-alloc-bench run on the branch
 # at main 8ce8fde7. The compiler keeps 4-byte elements in its i32[] arrays. It measures 45969719
 # checker allocations and frees against 47257115 (-2.72%). Re-bank both x86 rows. Keep the 1%
@@ -149,12 +152,13 @@
 # The cost that remains is the first analysis of each factory, in the two passes of the checker.
 # 2026-11-12 (#15471): the callback factory summaries now resolve a union through its members.
 # With the worklist above, `scripts/selfhost-alloc-bench` measured 46,095,444 allocations and frees (was 53,974,294). The 1% tolerance is unchanged.
-x86_64/checker.allocs	45969719
-x86_64/checker.frees	45969719
+x86_64/checker.allocs	46539689
+x86_64/checker.frees	46539689
 # 2026-11-12: main at 74fc6d81, with the worklist and the merges of that day, measures 54,483,586 on the dev container.
-x86_64/checker.allocs	45969719
-x86_64/checker.frees	45969719
-x86_64/checker.allocs	45969719
-x86_64/checker.frees	45969719
-x86_64/checker.allocs	45969719
-x86_64/checker.frees	45969719
+x86_64/checker.allocs	46539689
+x86_64/checker.frees	46539689
+# 2026-11-14 (#15821): a string parameter that a concatenation grows is owned.
+# scripts/selfhost-alloc-bench measures 46,268,626 on the dev container. Main at ecafc311 measures 46,252,652 (+0.035%).
+# The compiler makes more grow sites for the counted strings of checker.fern. The 1% tolerance is unchanged.
+x86_64/checker.allocs	46539689
+x86_64/checker.frees	46539689

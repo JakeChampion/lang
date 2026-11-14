@@ -54,6 +54,13 @@ func TestLanesRejected(t *testing.T) {
 		"word load type":     {`function f(xs: i32[]): i16x8 { return __i16x8_load(xs, 0); }`, "E038", "expected u8[], got i32[]"},
 		"shift count type":   {`function f(v: u16x8): u16x8 { return __u16x8_shl(v, v); }`, "E038", "expected i32, got u16x8"},
 		"word field":         {`struct H { v: i16x8 } function f(): i32 { return 0; }`, "E085", "a field or payload of type i16x8"},
+		"widen result":       {`function f(v: u8x16): u8x16 { return __u8x16_widen_lo(v); }`, "E002", "u16x8"},
+		"widen sign":         {`function f(v: i8x16): u16x8 { return __i8x16_widen_hi(v); }`, "E002", "i16x8"},
+		"quad widen":         {`function f(v: i32x4): i32x4 { return __i32x4_widen_lo(v); }`, "E001", "cannot find \"__i32x4_widen_lo\""},
+		"byte narrow":        {`function f(v: u8x16): u8x16 { return __u8x16_narrow(v, v); }`, "E001", "cannot find \"__u8x16_narrow\""},
+		"unsigned narrow_u":  {`function f(v: u16x8): u8x16 { return __u16x8_narrow_u(v, v); }`, "E001", "cannot find \"__u16x8_narrow_u\""},
+		"narrow result":      {`function f(v: i16x8): u8x16 { return __i16x8_narrow(v, v); }`, "E002", "i8x16"},
+		"signed swizzle":     {`function f(v: i8x16): i8x16 { return __i8x16_swizzle(v, v); }`, "E001", "cannot find \"__i8x16_swizzle\""},
 	} {
 		err := checkSource(t, tc.src)
 		if err == nil || !hasCode(err, tc.code) {
@@ -90,6 +97,7 @@ func TestLanesAccepted(t *testing.T) {
 		"signed bytes":    `function f(a: i8x16): i32 { return __i8x16_lane(__i8x16_abs(-a) + __i8x16_add_sat(a, __i8x16_splat(-3)), 15); }`,
 		"words":           `function f(a: u16x8, b: i16x8): i32 { let m: u16x8 = __u16x8_avg(a * a, __u16x8_sub_sat(a, __u16x8_splat(9))); return __u16x8_lane(m, 7) + __i16x8_bitmask(__i16x8_lt(-b * b, __i16x8_abs(b))); }`,
 		"quads":           `function f(a: u32x4, b: i32x4): u32 { let m: i32x4 = __i32x4_select(b * b, -b, __i32x4_eq(b, __i32x4_of(1, 2, 3, 4))); return __u32x4_lane(__u32x4_shr(a * a + __u32x4_splat(7 as u32), 2), 3) + (__i32x4_lane(__i32x4_shl(m, 1), 0) as u32); }`,
+		"shapes":          `function f(a: u8x16, b: i16x8, c: u32x4): u16x8 { let w: u16x8 = __u8x16_widen_lo(__u8x16_swizzle(a, a)) + __u8x16_widen_hi(a); let n: i8x16 = __i16x8_narrow(b, b); let m: u8x16 = __i16x8_narrow_u(b, __i8x16_widen_lo(n)); let q: i32x4 = __i16x8_widen_hi(b); return __u32x4_narrow(c, c) + __u8x16_widen_lo(__u16x8_narrow(w, w) + m) + __i32x4_narrow_u(q, q); }`,
 		"word array":      `function f(xs: u8[]): u8[] { return __i32x4_with(__u16x8_with(xs, 0, __u16x8_load(xs, 1)), 2, __i32x4_load(xs, 3)); }`,
 	} {
 		if err := checkSource(t, src); err != nil {
