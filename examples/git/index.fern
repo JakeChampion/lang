@@ -1,49 +1,225 @@
 // The index of a packfile, made from the packfile.
 import "std/array";
+import "std/deflate";
 import "std/hex";
 import "std/hash/crc32";
+import "std/i64";
 import "core/cmp";
 import "core/map";
 import "./objects";
 import "./pack";
 
-// The index (version 2) and the reverse index of one packfile, and the
-// checksum of the packfile.
-pub struct Built { idx: u8[], rev: u8[], name: string }
+// The index (version 1 or 2) and the reverse index of one packfile, the
+// checksum of the packfile, and the packfile with the objects that a thin
+// pack did not have.
+pub struct Built { idx: u8[], rev: u8[], name: string, data: u8[] }
+
+// How to write the index: the version, and the largest offset that the
+// table of 4-byte offsets of version 2 holds. `algo` is the hash of the
+// names.
+pub struct Options { width: i32, version: i32, limit: i64 }
+
+pub function options(a: i32): Options {
+  return Options { width: a, version: 2, limit: 2147483647 };
+}
 
 function be32(out: u8[], n: i64): u8[] {
   return out.append((n >> 24 & 255) as u8).append((n >> 16 & 255) as u8).append((n >> 8 & 255) as u8).append((n & 255) as u8);
 }
 
-// The offset of each object of the packfile, and the place after the last.
-function offsets_of(w: pack.Window, count: i32): Result[i32[], string] {
-  let offsets: i32[] = [];
-  let last = w.bytes.len() - w.width;
-  let at = 12;
-  for i in 0..count {
-    let end = pack.end_of(w, at);
-    if (end <= at || end > last) {
-      return Err("pack has bad object at offset " + at.to_string());
-    }
-    offsets = offsets.append(at);
-    at = end;
+// The messages of a packfile that is not sound are the text of git on the
+// standard error output, with a line "fatal: ..." at the end.
+function bad_object(at: i64, why: string): string {
+  return "fatal: pack has bad object at offset " + at.to_string() + ": " + why;
+}
+
+// The message of zlib for a stream that is not sound.
+function zlib_message(what: string): string {
+  return match (what) {
+    "a bit pattern that is no code length code" => "invalid code lengths set",
+    "a bit pattern that is no distance code" => "invalid distance code",
+    "a bit pattern that is no literal/length code" => "invalid literal/length code",
+    "a distance before the available history" => "invalid distance too far back",
+    "a distance before the start of the output" => "invalid distance too far back",
+    "a distance code past 29" => "invalid distance code",
+    "a length code past 285" => "invalid literal/length code",
+    "a repeat with no length before it" => "invalid bit length repeat",
+    "more code lengths than codes" => "invalid bit length repeat",
+    "a reserved block type" => "invalid block type",
+    "a stored block's length and its complement disagree" => "invalid stored block lengths",
+    "an incomplete or over-subscribed code length code" => "invalid code lengths set",
+    "an incomplete or over-subscribed distance code" => "invalid distances set",
+    "an incomplete or over-subscribed literal/length code" => "invalid literal/lengths set",
+    "no end-of-block code" => "invalid code -- missing end-of-block",
+    "too many length or distance codes" => "too many length or distance symbols",
+    _ => what,
+  };
+}
+
+// The messages of git for a zlib stream at `at` that zlib refuses with
+// `message`.
+function data_error(at: i64, message: string): string {
+  return "error: inflate: data stream error (" + message + ")\n" + bad_object(at, "inflate returned -3");
+}
+
+// The messages of git for an inflate that fails with `e`: Z_DATA_ERROR,
+// or Z_BUF_ERROR when the stream makes more bytes than the header tells.
+function inflate_error(at: i64, e: deflate.InflateError): string {
+  return match (e) {
+    OutputLimit => bad_object(at, "inflate returned -5"),
+    Malformed(what) => data_error(at, zlib_message(what)),
+    BadChecksum => data_error(at, "incorrect data check"),
+    BadHeader(_) => data_error(at, "incorrect header check"),
+    _ => data_error(at, e.message()),
+  };
+}
+
+// The place after the zlib stream at `at` of `data`, which makes `size`
+// bytes, or the message of git. The header and the checksum of the stream
+// are checked, as zlib checks them.
+function stream_end(data: u8[], at: i64, size: i32, start: i64): Result[i64, string] {
+  let from = at as i32;
+  if (from + 2 > data.len()) {
+    return Err("fatal: early EOF");
   }
-  if (at != last) {
-    return Err("pack has junk at the end");
+  let cmf = data[from] as i32;
+  let flg = data[from + 1] as i32;
+  if ((cmf * 256 + flg) % 31 != 0) {
+    return Err(data_error(start, "incorrect header check"));
+  }
+  if ((cmf & 15) != 8) {
+    return Err(data_error(start, "unknown compression method"));
+  }
+  if (cmf >> 4 > 7) {
+    return Err(data_error(start, "invalid window size"));
+  }
+  if ((flg & 32) != 0) {
+    return Err(bad_object(start, "inflate returned 2"));
+  }
+  let got = match (deflate.inflate_from(data, from + 2, size)) {
+    Ok(g) => g,
+    Err(e) => {
+      return Err(match (e) {
+        Truncated => "fatal: early EOF",
+        _ => inflate_error(start, e),
+      });
+    },
+  };
+  let end = from + 2 + got.consumed;
+  if (end + 4 > data.len()) {
+    return Err("fatal: early EOF");
+  }
+  let sum = deflate.adler32(got.out) as i64;
+  let have = data[end] as i64 << 24 | data[end + 1] as i64 << 16 | data[end + 2] as i64 << 8 | data[end + 3] as i64;
+  if (have != sum) {
+    return Err(data_error(start, "incorrect data check"));
+  }
+  if (got.out.len() != size) {
+    return Err(bad_object(start, "inflate returned 1"));
+  }
+  return Ok((end + 4) as i64);
+}
+
+// The place after the object at `at`, or the message of git for an object
+// that is not sound.
+function object_end(data: u8[], at: i64, raw: i32): Result[i64, string] {
+  let i = at as i32;
+  if (i >= data.len()) {
+    return Err("fatal: early EOF");
+  }
+  let c = data[i] as i32;
+  i += 1;
+  let kind = c >> 4 & 7;
+  let size = (c & 15) as i64;
+  let shift: i64 = 4;
+  while ((c & 128) != 0) {
+    if (i >= data.len()) {
+      return Err("fatal: early EOF");
+    }
+    c = data[i] as i32;
+    i += 1;
+    if (shift < 40) {
+      size += (c & 127) as i64 << shift;
+    }
+    shift += 7;
+  }
+  if (kind == pack.REF_DELTA) {
+    i += raw;
+  } else if (kind == pack.OFS_DELTA) {
+    if (i >= data.len()) {
+      return Err("fatal: early EOF");
+    }
+    c = data[i] as i32;
+    i += 1;
+    let back = (c & 127) as i64;
+    while ((c & 128) != 0) {
+      back += 1;
+      if (back >= 144115188075855872) {
+        return Err(bad_object(at, "offset value overflow for delta base object"));
+      }
+      if (i >= data.len()) {
+        return Err("fatal: early EOF");
+      }
+      c = data[i] as i32;
+      i += 1;
+      back = (back << 7) + (c & 127) as i64;
+    }
+    if (back >= at || back <= 0) {
+      return Err(bad_object(at, "delta base offset is out of bound"));
+    }
+  } else if (kind < 1 || kind > 4) {
+    return Err(bad_object(at, "unknown object type " + kind.to_string()));
+  }
+  if (size > 1073741824) {
+    return Err(bad_object(at, "inflate returned -5"));
+  }
+  return stream_end(data, i as i64, size as i32, at);
+}
+
+// The offset of each object of the packfile, and the place after the last.
+function offsets_of(data: u8[], count: i32, raw: i32): Result[i64[], string] {
+  let offsets: i64[] = [];
+  let at: i64 = 12;
+  for i in 0..count {
+    offsets = offsets.append(at);
+    at = object_end(data, at, raw)?;
   }
   return Ok(offsets.append(at));
 }
 
+// True if an object of the packfile starts at `at`.
+function starts(offsets: i64[], at: i64): boolean {
+  let lo = 0;
+  let hi = offsets.len() - 1;
+  while (lo < hi) {
+    let mid = lo + (hi - lo) / 2;
+    if (offsets[mid] < at) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo < offsets.len() - 1 && offsets[lo] == at;
+}
+
+// The source of the objects of the packfile: a delta by offset reads its
+// base only at the start of an object.
+function source(data: u8[], offsets: i64[], base: (u8[]) => i64, raw: i32): pack.Source {
+  return pack.Source { part: (at: i64, most: i32): pack.Window => if (starts(offsets, at)) { pack.whole(data, raw) } else { pack.Window { bytes: [], shift: at, width: raw } }, base: base };
+}
+
 // The names of the objects from `first` to `end`, in order. An object whose
 // chain has a delta by name has the name "": it waits for the names.
-pub function names_part(w: pack.Window, offsets: i32[], first: i32, end: i32): string[] {
+pub function names_part(data: u8[], offsets: i64[], first: i32, end: i32, raw: i32): string[] {
+  let a = raw;
   let names: string[] = [];
   let cache = pack.cache_new();
+  let src = source(data, offsets, (base: u8[]): i64 => -1, raw);
   for i in first..end {
-    let (found, kept) = pack.object_cached((at: i32): pack.Window => w, (base: u8[]): i32 => -1, offsets[i], cache);
+    let (found, kept) = pack.object_cached(src, offsets[i], cache);
     cache = kept;
     names = names.append(match (found) {
-      Ok(o) => objects.hash_of(w.width, o.kind, o.body),
+      Ok(o) => objects.hash_of(a, o.kind, o.body),
       Err(_) => "",
     });
   }
@@ -52,54 +228,51 @@ pub function names_part(w: pack.Window, offsets: i32[], first: i32, end: i32): s
 
 // The first object of each part, and the count of objects at the end. Each
 // part has about the same count of bytes of the packfile.
-pub function parts_of(offsets: i32[], parts: i32): i32[] {
+pub function parts_of(offsets: i64[], parts: i32): i32[] {
   let count = offsets.len() - 1;
-  let bytes = (offsets[count] - offsets[0]) as i64;
+  let bytes = offsets[count] - offsets[0];
   let cuts: i32[] = [0];
   for i in 1..count {
     let want = bytes * (cuts.len() as i64) / (parts as i64);
-    if (cuts.len() < parts && (offsets[i] - offsets[0]) as i64 >= want) {
+    if (cuts.len() < parts && offsets[i] - offsets[0] >= want) {
       cuts = cuts.append(i);
     }
   }
   return cuts.append(count);
 }
 
-// The name of each object in the order of the packfile. `first` gives the
-// names in parts, as `names_part` makes them. A delta by name can come
-// before its base, so the names that are left come in rounds.
-function names_of(w: pack.Window, offsets: i32[], first: (pack.Window, i32[]) => string[][]): Result[string[], string] {
+// The names of the objects that wait for the name of a base, in rounds.
+// The count of the objects that stay without a name is `left`.
+struct Named { names: string[], left: i32 }
+
+function resolved(data: u8[], offsets: i64[], own names: string[], raw: i32): Named {
+  let a = raw;
   let count = offsets.len() - 1;
-  let names: string[] = [];
-  for part in first(w, offsets) {
-    names = names.concat(part);
-  }
-  if (names.len() != count) {
-    return Err("the names of the parts do not cover the packfile");
-  }
-  let known: Map[string, i32] = Map { };
   let left = 0;
   for i in 0..count {
     if (names[i].len() == 0) {
       left += 1;
     }
   }
-  if (left > 0) {
-    for i in 0..count {
-      if (names[i].len() > 0) {
-        known = known.insert(names[i], offsets[i]);
-      }
+  if (left == 0) {
+    return Named { names: names, left: 0 };
+  }
+  let known: Map[string, i64] = Map { };
+  for i in 0..count {
+    if (names[i].len() > 0) {
+      known = known.insert(names[i], offsets[i]);
     }
   }
   let cache = pack.cache_new();
   while (left > 0) {
     let before = left;
+    let src = source(data, offsets, (base: u8[]): i64 => known.get_or(hex.encode(base), -1), raw);
     for i in 0..count {
       if (names[i].len() == 0) {
-        let (found, kept) = pack.object_cached((at: i32): pack.Window => w, (base: u8[]): i32 => known.get_or(hex.encode(base), -1), offsets[i], cache);
+        let (found, kept) = pack.object_cached(src, offsets[i], cache);
         cache = kept;
         if let Ok(o) = found {
-          let name = objects.hash_of(w.width, o.kind, o.body);
+          let name = objects.hash_of(a, o.kind, o.body);
           names = names.with(i, name);
           known = known.insert(name, offsets[i]);
           left -= 1;
@@ -107,72 +280,198 @@ function names_of(w: pack.Window, offsets: i32[], first: (pack.Window, i32[]) =>
       }
     }
     if (left == before) {
-      return Err("pack has " + left.to_string() + " unresolved deltas");
+      return Named { names: names, left: left };
     }
   }
-  return Ok(names);
+  return Named { names: names, left: 0 };
 }
 
-// The index of the packfile `w`, with each name from this process.
-pub function build(w: pack.Window): Result[Built, string] {
-  return build_with(w, (d: pack.Window, offsets: i32[]): string[][] => [names_part(d, offsets, 0, offsets.len() - 1)]);
+// The bytes of an object of the packfile with its header: the kind, the
+// size, and the zlib stream of the body.
+function packed_object(o: objects.Object, kind: i32): u8[] {
+  let size = o.body.len() as i64;
+  let c = kind << 4 | (size & 15) as i32;
+  size >>= 4;
+  let out: u8[] = [];
+  while (size > 0) {
+    out = out.append((c | 128) as u8);
+    c = (size & 127) as i32;
+    size >>= 7;
+  }
+  out = out.append(c as u8).append(120).append(156).concat(deflate.deflate(o.body));
+  let sum = deflate.adler32(o.body) as i64;
+  return be32(out, sum);
 }
 
-// The index of the packfile `w`. `first` gives the names of the objects
+function kind_number(kind: string): i32 {
+  return match (kind) {
+    "commit" => 1,
+    "tree" => 2,
+    "blob" => 3,
+    _ => 4,
+  };
+}
+
+// The packfile with each base that a delta by name needs and that it does
+// not have, from `local`, at its end. The bases come in the order of the
+// deltas in the packfile.
+function completed(data: u8[], offsets: i64[], names: string[], a: i32, local: (string) => Option[objects.Object]): (u8[], i64[]) {
+  let count = offsets.len() - 1;
+  let body = array.slice(data, 0, offsets[count] as i32);
+  let ends = offsets;
+  let added: string[] = [];
+  for i in 0..count {
+    if (names[i].len() == 0) {
+      let e = pack.entry_in(pack.whole(data, a), offsets[i]);
+      let base = hex.encode(e.base_name);
+      if (e.kind == pack.REF_DELTA && !names.contains(base) && !added.contains(base)) {
+        if let Some(o) = local(base) {
+          body = body.concat(packed_object(o, kind_number(o.kind)));
+          added = added.append(base);
+          ends = ends.append(body.len() as i64);
+        }
+      }
+    }
+  }
+  let n = (ends.len() - 1) as i64;
+  body = body.with(8, (n >> 24 & 255) as u8).with(9, (n >> 16 & 255) as u8).with(10, (n >> 8 & 255) as u8).with(11, (n & 255) as u8);
+  return (body.concat(objects.digest(a, body)), ends);
+}
+
+// The index of the packfile `data`. `first` gives the names of the objects
 // in parts that are in order and that cover the packfile: a caller with
-// workers gives each part to one worker.
-pub function build_with(w: pack.Window, first: (pack.Window, i32[]) => string[][]): Result[Built, string] {
-  let data = w.bytes;
-  let width = w.width;
+// workers gives each part to one worker. `local` gives an object of the
+// repository for a thin pack, or None.
+pub function build_with(data: u8[], o: Options, first: (u8[], i64[]) => string[][], local: (string) => Option[objects.Object]): Result[Built, string] {
+  let raw = o.width;
   let n = data.len();
-  if (n < 32 || data[0] != b'P' || data[1] != b'A' || data[2] != b'C' || data[3] != b'K') {
-    return Err("pack signature mismatch");
+  if (n < 12) {
+    return Err("fatal: early EOF");
   }
-  if (data[4] != 0 || data[5] != 0 || data[6] != 0 || data[7] != 2) {
-    return Err("pack version " + data[7].to_string() + " unsupported");
+  if (data[0] != b'P' || data[1] != b'A' || data[2] != b'C' || data[3] != b'K') {
+    return Err("fatal: pack signature mismatch");
   }
-  let sum = array.slice(data, n - width, n);
-  if (hex.encode(objects.digest(width, array.slice(data, 0, n - width))) != hex.encode(sum)) {
-    return Err("pack is corrupted (SHA1 mismatch)");
+  if (data[4] != 0 || data[5] != 0 || data[6] != 0 || data[7] != 2 && data[7] != 3) {
+    let v = data[4] as i64 << 24 | data[5] as i64 << 16 | data[6] as i64 << 8 | data[7] as i64;
+    return Err("fatal: pack version " + v.to_string() + " unsupported");
   }
   let count = data[8] as i32 << 24 | data[9] as i32 << 16 | data[10] as i32 << 8 | data[11] as i32;
-  let offsets = offsets_of(w, count)?;
-  let names = names_of(w, offsets, first)?;
+  let offsets = offsets_of(data, count, raw)?;
+  let end = offsets[count] as i32;
+  if (end + raw > n) {
+    return Err("fatal: early EOF");
+  }
+  if (hex.encode(objects.digest(o.width, array.slice(data, 0, end))) != hex.encode(array.slice(data, end, end + raw))) {
+    return Err("fatal: pack is corrupted (SHA1 mismatch)");
+  }
+  if (end + raw != n) {
+    return Err("fatal: pack has junk at the end");
+  }
+  let parts: string[] = [];
+  for part in first(data, offsets) {
+    parts = parts.concat(part);
+  }
+  if (parts.len() != count) {
+    return Err("fatal: the names of the parts do not cover the packfile");
+  }
+  let named = resolved(data, offsets, parts, raw);
+  let whole = data;
+  let ends = offsets;
+  if (named.left > 0) {
+    let (fixed, more) = completed(data, offsets, named.names, o.width, local);
+    if (more.len() > offsets.len()) {
+      whole = fixed;
+      ends = more;
+      let names = named.names;
+      for i in offsets.len() - 1..more.len() - 1 {
+        names = names.concat(names_part(whole, more, i, i + 1, raw));
+      }
+      named = resolved(whole, more, names, raw);
+    }
+  }
+  if (named.left > 0) {
+    return Err("fatal: pack has " + named.left.to_string() + " unresolved delta" + (if (named.left == 1) { "" } else { "s" }));
+  }
+  let sum = array.slice(whole, whole.len() - raw, whole.len());
+  return Ok(Built { idx: idx_bytes(whole, ends, named.names, sum, o), rev: rev_bytes(ends, named.names, sum, o.width), name: hex.encode(sum), data: whole });
+}
+
+// The places of the objects in the order of their names.
+function by_name(names: string[]): i32[] {
   let order: i32[] = [];
-  for i in 0..count {
+  for i in 0..names.len() {
     order = order.append(i);
   }
-  let sorted = cmp.sort_by(order, (a: i32, b: i32): i32 => names[a].cmp(names[b]));
+  return cmp.sort_by(order, (a: i32, b: i32): i32 => names[a].cmp(names[b]));
+}
+
+// The bytes of the index of the objects that start at `ends`.
+function idx_bytes(data: u8[], ends: i64[], names: string[], sum: u8[], o: Options): u8[] {
+  let count = names.len();
+  let sorted = by_name(names);
+  let last: i64 = 0;
+  for i in 0..count {
+    last = last.max(ends[i]);
+  }
+  let large = (offset: i64): boolean => offset >= 2147483648 || offset > o.limit;
+  let version = if (large(last)) { 2 } else { o.version };
   let fanout = __alloc_i32(256);
-  let place = __alloc_i32(count);
   let table: u8[] = [];
   let crcs: u8[] = [];
   let at: u8[] = [];
+  let wide: u8[] = [];
+  let wides = 0;
   for k in 0..count {
     let i = sorted[k];
     let Ok(raw) = hex.decode(names[i]) else {
-      return Err("a bad name");
+      return [];
     };
     fanout = fanout.with(raw[0] as i32, fanout[raw[0] as i32] + 1);
-    place = place.with(i, k);
+    if (version < 2) {
+      table = be32(table, ends[i]);
+    }
     table = table.concat(raw);
-    crcs = be32(crcs, crc32.of(array.slice(data, offsets[i], offsets[i + 1])) as i64);
-    at = be32(at, offsets[i] as i64);
+    crcs = be32(crcs, crc32.of(array.slice(data, ends[i] as i32, ends[i + 1] as i32)) as i64);
+    if (large(ends[i])) {
+      at = be32(at, 2147483648 | wides as i64);
+      wide = be32(be32(wide, ends[i] >> 32), ends[i] & 4294967295);
+      wides += 1;
+    } else {
+      at = be32(at, ends[i]);
+    }
   }
-  let idx: u8[] = [255, b't', b'O', b'c', 0, 0, 0, 2];
+  let idx: u8[] = if (version >= 2) { [255, b't', b'O', b'c', 0, 0, 0, 2] } else { [] };
   let total = 0;
   for b in 0..256 {
     total += fanout[b];
     idx = be32(idx, total as i64);
   }
-  idx = idx.concat(table).concat(crcs).concat(at).concat(sum);
-  idx = idx.concat(objects.digest(width, idx));
-  // The last number is the hash: 1 for SHA-1, and 2 for SHA-256.
-  let rev: u8[] = [b'R', b'I', b'D', b'X', 0, 0, 0, 1, 0, 0, 0, if (width == objects.SHA256) { 2 } else { 1 }];
+  idx = idx.concat(table);
+  if (version >= 2) {
+    idx = idx.concat(crcs).concat(at).concat(wide);
+  }
+  idx = idx.concat(sum);
+  return idx.concat(objects.digest(o.width, idx));
+}
+
+// The bytes of the reverse index: the place in the index of each object, in
+// the order of the packfile.
+function rev_bytes(ends: i64[], names: string[], sum: u8[], a: i32): u8[] {
+  let count = names.len();
+  let sorted = by_name(names);
+  let place = __alloc_i32(count);
+  for k in 0..count {
+    place = place.with(sorted[k], k);
+  }
+  let rev: u8[] = [b'R', b'I', b'D', b'X', 0, 0, 0, 1, 0, 0, 0, if (a == 32) { 2 } else { 1 }];
   for i in 0..count {
     rev = be32(rev, place[i] as i64);
   }
   rev = rev.concat(sum);
-  rev = rev.concat(objects.digest(width, rev));
-  return Ok(Built { idx: idx, rev: rev, name: hex.encode(sum) });
+  return rev.concat(objects.digest(a, rev));
+}
+
+// The index of the packfile `data`, with each name from this process.
+pub function build(data: u8[], o: Options): Result[Built, string] {
+  return build_with(data, o, (d: u8[], offsets: i64[]): string[][] => [names_part(d, offsets, 0, offsets.len() - 1, o.width)], (name: string): Option[objects.Object] => None);
 }

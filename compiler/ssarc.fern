@@ -6678,6 +6678,9 @@ function raw_memory_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
     r = emit(r, ir.op_const_i32(0));
     return Lowered { found: true, r: emit(r, ir.op_raw_load8()) };
   }
+  if (ins.str == "__load_u16") {
+    return Lowered { found: true, r: emit(r, ir.op_load_u16()) };
+  }
   if (ins.str == "__load_i32") {
     return Lowered { found: true, r: emit(r, ir.op_load_i32()) };
   }

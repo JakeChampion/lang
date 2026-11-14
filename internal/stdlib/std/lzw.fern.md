@@ -38,6 +38,9 @@ function main(): i32 {
 
 ```fern
 <<errors>>=
+import "core/cmp";
+import "core/error";
+
 // The errors of a `.Z` file: not a file of compress, a width that is not
 // valid, a code that is not in the table, or a file that ends early.
 pub enum LzwError { NotLzw, BadWidth, BadCode, Truncated }
@@ -49,6 +52,14 @@ pub function (e: LzwError) message(): string {
     BadCode => "corrupt input",
     Truncated => "unexpected end of file",
   };
+}
+
+impl error.Error for LzwError {}
+
+impl cmp.Display for LzwError {}
+
+pub function (e: LzwError) to_string(): string {
+  return e.message();
 }
 
 // The bytes before an error, and the error.

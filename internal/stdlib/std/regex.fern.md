@@ -5319,6 +5319,18 @@ function __sx_lines(p: string): string[] {
   return out;
 }
 
+impl error.Error for SyntaxError {}
+
+impl cmp.Display for SyntaxError {}
+
+pub function (e: SyntaxError) message(): string {
+  return e.report();
+}
+
+pub function (e: SyntaxError) to_string(): string {
+  return e.report();
+}
+
 // report gives the text of the error as the regex crate writes it: the
 // pattern with a line of `^` under each span, and the message.
 pub function (e: SyntaxError) report(): string {

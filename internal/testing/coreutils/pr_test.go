@@ -59,6 +59,7 @@ func prCases(t *testing.T) []invocation {
 	eofFirst := prFile(t, dir, "eof-first", "a", mt)
 	eofLate := prFile(t, dir, "eof-late", "a\nb\nc", mt)
 	eofLong := prFile(t, dir, "eof-long", strings.Repeat("a", 65537), mt)
+	skipFF := prFile(t, dir, "skip-ff", "a\fb\nc", mt)
 	spanRows := prFile(t, dir, "span-rows", strings.Repeat("a\n", 32768)+"b\n", mt)
 	spanFF := prFile(t, dir, "span-ff", strings.Repeat("a\n", 32767)+"b\f\nc\n", mt)
 	spanControls := prFile(t, dir, "span-controls", "prefix\n\bA\n \bB\n\tC\nx\ry\n\x00\xff\n", mt)
@@ -223,6 +224,18 @@ func prCases(t *testing.T) []invocation {
 		{name: "merge omits the number tab before column two", args: []string{"-m", "-t", "-n\t3", "-s:", empty, f}},
 		{name: "merge keeps the number tab before column three", args: []string{"-m", "-t", "-n\t3", "-s:", empty, empty, f}},
 		{name: "merge numbers an EOF past a read block", args: []string{"-m", "-t", "-n:3", "-s:", eofLong, f}},
+		{name: "merge counts a form feed before skipped pages", args: []string{"-m", "-t", "-n:3", "-s:", "-l2", "+2", skipFF, s10}},
+		{name: "merge counts a form feed before headed pages", args: []string{"-m", "-n:3", "-s:", "-l12", "-D", "X", "+2:3", skipFF, s10}},
+		{name: "merge counts a form feed with number tabs", args: []string{"-m", "-t", "-n\t3", "-s:", "-l2", "+2", skipFF, s10}},
+		{name: "merge skips with an empty first operand", args: []string{"-m", "-t", "-n:3", "-s:", "-l2", "+2", empty, s10}},
+		{name: "merge skips past the first EOF", args: []string{"-m", "-t", "-n:3", "-s:", "-l2", "+3", eofFirst, s10}},
+		{name: "merge skips after a later first-column EOF", args: []string{"-m", "-t", "-n:3", "-s:", "-l2", "+3", eofLate, s10}},
+		{name: "merge skips an initial form feed", args: []string{"-m", "-t", "-n:3", "-s:", "-l2", "+2", ff1, s10}},
+		{name: "merge skips with an empty first column and form feeds", args: []string{"-m", "-t", "-n:3", "-s:", "-l3", "+2", empty, skipFF, s10}},
+		{name: "merge resets numbers after skipped form feeds", args: []string{"-m", "-t", "-n:3", "-s:", "-l2", "-N8", "+2", skipFF, s10}},
+		{name: "merge skips form feeds from repeated stdin", args: []string{"-m", "-t", "-n:3", "-s:", "-l2", "+2", "-", "-"}, stdin: "a\fb\nc\nd\ne\nf\ng\nh\n"},
+		{name: "merge skips a terminated first operand", args: []string{"-m", "-t", "-n:3", "-s:", "-l2", "+3", s3, s10}},
+		{name: "merge skips form feeds without numbers", args: []string{"-m", "-t", "-s:", "-l2", "+2", skipFF, s10}},
 		{name: "page records across a read block", args: []string{"-t", spanRows}},
 		{name: "columns across a read block", args: []string{"-t", "-4", spanRows}},
 		{name: "merge records across a read block", args: []string{"-m", "-t", spanRows, spanRows, other}},

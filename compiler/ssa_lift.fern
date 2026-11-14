@@ -197,7 +197,7 @@ function kind_facts(): KindFacts {
   let host: string[] = [
     "syscall3", "syscall4", "syscall5", "syscall6", "exit", "raw_string",
     "raw_scratch", "raw_environ", "raw_splice_pipe", "raw_cover", "line", "raw_task_state", "raw_vdso", "raw_addr", "monotonic_ns", "now_unix_ms",
-    "load_i32", "load_i64", "load_ptr", "store_i32", "store_i64", "store_ptr", "raw_arr_box",
+    "load", "load_i32", "load_i64", "load_ptr", "store_i32", "store_i64", "store_ptr", "raw_arr_box",
     "map_new", "args", "map_hash_seed", "arr_push_shared_bytes", "arr_push_shared_count",
     "clz", "ctz", "popcount", "bswap", "mmio_load", "mmio_store", "fence", "wfi", "hvc", "smc", "boot_info", "sysreg_read", "sysreg_write", "cache_clean", "cache_flush", "tlb_flush", "tlb_flush_all", "breakpoint", "irq_mask", "irq_unmask", "irq_wait", "irq_pending", "user_run", "cache_sync_code", "atomic_load_acquire", "atomic_store_release", "atomic_fetch_add", "atomic_cas", "secondary_entry", "port_in", "port_out",
   ];
@@ -362,8 +362,9 @@ function lift_prod_host(k: string, op: ir.Op, lv: LiftVals): LiftVals {
   if (k == "load_i64" || k == "load_ptr") {
     return lift_pop_push(lv, 1, 40, 0, "");
   }
-  if (k == "load_i32") {
-    return lift_pop_push(lv, 1, 10, 0, k);
+  let unary_load = unary_load_name(k, op);
+  if (unary_load != "") {
+    return lift_pop_push(lv, 1, 10, 0, unary_load);
   }
   if (k == "store_i64" || k == "store_ptr" || k == "store_i32") {
     let stored = lift_store(lv, 41, 0);
@@ -422,6 +423,14 @@ function lift_prod_host(k: string, op: ir.Op, lv: LiftVals): LiftVals {
     return lift_pop_push(lv, 2, 9, 64, "add");
   }
   return lift_pop_push(lv, 0, 49, counted_bit(op), k);
+}
+
+// The unary of a load that the lift makes one: load_i32, and the 16-bit load as load_u16.
+function unary_load_name(k: string, op: ir.Op): string {
+  if (k == "load" && op.width == 16) {
+    return "load_u16";
+  }
+  return if (k == "load_i32") { k } else { "" };
 }
 
 function counted_bit(op: ir.Op): i32 {

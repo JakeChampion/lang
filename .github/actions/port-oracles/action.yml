@@ -2,7 +2,8 @@ name: port-oracles
 description: >
   Install the reference programs for the port differential tests.
   Ubuntu 24.04 supplies ripgrep 14.1.0 and cmark 0.30.2.
-  Source archives supply pigz 2.8 with zlib 1.3.
+  Source archives supply pigz 2.8 with zlib 1.3. A cache keeps the built pigz
+  for each runner OS and architecture.
   The age 1.3.2 release archive supplies age, age-keygen, age-inspect, and four plugins.
   The step checks each version and the SHA-256 of each archive.
 runs:
@@ -32,7 +33,16 @@ runs:
         }
         check 'ripgrep 14.1.0' rg --version
         check 'cmark 0.30.2 ' cmark --version
+    # zlib.net sometimes gives a wrong body to parallel downloads, so each
+    # runner downloads the archives only when the cache has no binary.
+    - name: Cache pigz 2.8 with zlib 1.3
+      id: pigz-oracle
+      uses: actions/cache@v6
+      with:
+        path: ~/pigz-oracle
+        key: pigz-2.8-zlib-1.3-${{ runner.os }}-${{ runner.arch }}
     - name: Build pigz 2.8 with zlib 1.3
+      if: steps.pigz-oracle.outputs.cache-hit != 'true'
       shell: bash
       run: |
         set -euo pipefail
@@ -45,7 +55,14 @@ runs:
         tar -xzf "$work/zlib.tar.gz" -C "$work"
         (cd "$work/zlib-1.3" && ./configure --static && make -j2)
         make -C "$work/pigz-2.8" -j2 CFLAGS="-O3 -I$work/zlib-1.3" LDFLAGS="-L$work/zlib-1.3"
-        oracle="$work/pigz-2.8/pigz"
+        mkdir -p "$HOME/pigz-oracle"
+        install -m 0755 "$work/pigz-2.8/pigz" "$HOME/pigz-oracle/pigz"
+        rm -rf "$work"
+    - name: Check pigz 2.8 with zlib 1.3
+      shell: bash
+      run: |
+        set -euo pipefail
+        oracle="$HOME/pigz-oracle/pigz"
         got="$("$oracle" -vV 2>&1)"
         echo "$got"
         if [ "$got" != $'pigz 2.8\nzlib 1.3' ]; then

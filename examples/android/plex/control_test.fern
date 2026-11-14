@@ -10,6 +10,7 @@ import "std/android/ui/scene";
 import "std/png";
 import "std/test";
 import "std/worker";
+import "../matrix";
 import "./control";
 import "./plex";
 import "./ui";
@@ -108,7 +109,7 @@ function reply_to(r: plex.Request): plex.Reply {
   if (u.contains("/photo/:/transcode")) {
     return ok("img");
   }
-  if (u.contains("/:/timeline") || u.contains("/:/scrobble") || u.contains("/transcode/universal/stop")) {
+  if (u.contains("/:/timeline") || u.contains("/:/scrobble") || u.contains("/transcode/universal/stop") || u.contains("/transcode/universal/ping")) {
     return ok("");
   }
   return plex.Reply { status: 404, body: [], error: "" };
@@ -124,11 +125,13 @@ function reply_all(rs: plex.Request[]): plex.Reply[] {
 
 // What the fake device saw: the requests, the calls of the player and the
 // files.
-struct Log { urls: Cell[string[]], calls: Cell[string[]], files: Cell[string[]] }
+// The requests, the calls of the player and the files of the fake device,
+// and the decoders that it has.
+struct Log { urls: Cell[string[]], calls: Cell[string[]], files: Cell[string[]], decoders: Cell[string[]] }
 
 function new_log(): Log {
   let none: string[] = [];
-  return Log { urls: cell_new(none), calls: cell_new(none), files: cell_new(none) };
+  return Log { urls: cell_new(none), calls: cell_new(none), files: cell_new(none), decoders: cell_new(["video/avc", "audio/mp4a-latm"]) };
 }
 
 function note(c: Cell[string[]], s: string): void {
@@ -186,7 +189,12 @@ function fake(log: Log, now: i64, f: draw.Frame): control.Device {
       note(log.calls, "show");
       return true;
     },
+    draw_video: (window: usize): boolean => {
+      note(log.calls, "draw video");
+      return true;
+    },
     hide_video: (): void => note(log.calls, "hide"),
+    request_frame: (): void => note(log.calls, "frame"),
     start: (): void => note(log.calls, "start"),
     pause: (): void => note(log.calls, "pause"),
     seek: (ms: i64): void => note(log.calls, "seek " + ms.to_string()),
@@ -194,6 +202,7 @@ function fake(log: Log, now: i64, f: draw.Frame): control.Device {
     duration: (): i64 => 8880000i64,
     stop: (): void => note(log.calls, "stop"),
     random: (): i32 => 5,
+    decoders: log.decoders.get(),
   };
 }
 
@@ -327,6 +336,18 @@ function test_saved_server_opens_home(): test.TestOutcome {
   return test.assert_eq((node(s, "hub:0:0").is_some() && node(s, "tab:3").is_some()).to_string(), "true");
 }
 
+function count_calls(log: Log, call: string): i32 {
+  return log.calls.get().filter((c: string): boolean => c == call).len();
+}
+
+function draws(log: Log): i32 {
+  return count_calls(log, "draw video");
+}
+
+function frames(log: Log): i32 {
+  return count_calls(log, "frame");
+}
+
 function test_play_pause_and_stop(): test.TestOutcome {
   let log = new_log();
   let f = frame();
@@ -338,23 +359,56 @@ function test_play_pause_and_stop(): test.TestOutcome {
   }
   save_png(f, "detail");
   let playing = tap(detail, log, 200i64, f, "play");
-  if (!has_call(log, "play https://up.example:32400/library/parts/11/file.mp4?X-Plex-Token=srv")) {
+  if (!has_call(log, "play https://up.example:32400/library/parts/11/file.mp4?X-Plex-Session-Identifier=") || !has_call(log, "&X-Plex-Token=srv")) {
     return test.fail("the file did not play as it is: " + log.calls.get().join(" | "));
   }
   let ready = settle(at(playing, log, 300i64, f, android.Posted(19, 0 as usize)), log, 300i64, f);
   if (!has_call(log, "seek 60000") || !has_call(log, "show") || !has_call(log, "start") || !has_url(log, "state=playing")) {
     return test.fail("no resume at the offset: " + log.calls.get().join(" | "));
   }
-  let paused = tap(ready, log, 400i64, f, "overlay");
+  let drawn = settle(at(ready, log, 350i64, f, android.Vsync(0i64)), log, 350i64, f);
+  if (draws(log) != 1 || frames(log) != 2) {
+    return test.fail("a vsync of the video did not draw it and ask for the next frame: " + log.calls.get().join(" | "));
+  }
+  let paused = tap(drawn, log, 400i64, f, "overlay");
   save_png(f, "paused");
   if (!has_call(log, "pause") || !has_call(log, "hide") || !has_url(log, "state=paused") || node(paused, "toggle").is_none()) {
     return test.fail("no pause with the overlay");
   }
-  let back = tap(paused, log, 500i64, f, "back");
+  let still = settle(at(paused, log, 450i64, f, android.Vsync(0i64)), log, 450i64, f);
+  if (draws(log) != 1 || frames(log) != 2) {
+    return test.fail("a vsync drew the video while it was paused");
+  }
+  let back = tap(still, log, 500i64, f, "back");
   if (!has_call(log, "stop") || !has_url(log, "state=stopped") || node(back, "play").is_none()) {
     return test.fail("no stop and return");
   }
   return test.assert_eq(has_url(log, "/:/scrobble").to_string(), "false");
+}
+
+// A phone with no AAC decoder gets a transcode of the whole item. The
+// resume and each seek stay in that stream, and a pause keeps it alive.
+function test_transcode_seeks_in_its_stream(): test.TestOutcome {
+  let log = new_log();
+  log.decoders.set(["video/avc"]);
+  let f = frame();
+  defer free_frame(f);
+  let home = shown(log, f, "https://up.example:32400", "srv");
+  let playing = tap(tap(home, log, 100i64, f, "hub:1:0"), log, 200i64, f, "play");
+  if (!has_call(log, "play https://up.example:32400/video/:/transcode/universal/start.m3u8?") || has_call(log, "offset=")) {
+    return test.fail("no transcode of the whole item: " + log.calls.get().join(" | "));
+  }
+  let ready = settle(at(playing, log, 300i64, f, android.Posted(19, 0 as usize)), log, 300i64, f);
+  if (!has_call(log, "seek 60000")) {
+    return test.fail("the resume did not seek in the stream: " + log.calls.get().join(" | "));
+  }
+  let paused = tap(ready, log, 400i64, f, "overlay");
+  let ahead = tap(paused, log, 500i64, f, "ffw");
+  if (!has_call(log, "seek 150000") || log.calls.get().filter((c: string): boolean => c.starts_with("play ")).len() != 1) {
+    return test.fail("a seek started a new transcode: " + log.calls.get().join(" | "));
+  }
+  let later = settle(ahead, log, 10500i64, f);
+  return test.assert_eq(has_url(log, "/video/:/transcode/universal/ping?session=").to_string(), "true");
 }
 
 function test_library_pages(): test.TestOutcome {
@@ -455,15 +509,97 @@ function test_link_plays_an_item(): test.TestOutcome {
   return test.assert_eq(node(back, "play").is_some().to_string(), "true");
 }
 
+function find(ns: scene.Node[], act: string): Option[scene.Node] {
+  for n in ns {
+    if (n.tap.name == act) {
+      return Some(n);
+    }
+  }
+  return None;
+}
+
+function inside(n: scene.Node, box: scene.Node): boolean {
+  return n.x >= box.x && n.y >= box.y && n.x + n.w <= box.x + box.w && n.y + n.h <= box.y + box.h;
+}
+
+// The buttons of the detail screen and the words of the tabs on a window
+// `w` wide. Returns "" when each is in the window, or what is not.
+function layout_fault(w: i32, h: i32, one_row: boolean): string {
+  let it = plex.Item { ...plex.no_item(), key: "/library/metadata/1", kind: "movie", title: "Long", duration_ms: 7200000i64, offset_ms: 3723000i64 };
+  let ns = ui.nodes(ui.View { ...ui.empty_view(w, h), screen: ui.DETAIL, item: it });
+  let window = scene.node(0, 0, w, h, scene.Blank);
+  let Some(play) = find(ns, "play") else {
+    return "no play button";
+  };
+  let Some(mark) = find(ns, "watched") else {
+    return "no watched button";
+  };
+  if (!inside(play, window) || !inside(mark, window)) {
+    return "a button is outside the window";
+  }
+  if (play.y == mark.y != one_row) {
+    return "the buttons are on the wrong rows";
+  }
+  if (play.y == mark.y && play.x + play.w > mark.x) {
+    return "the buttons overlap";
+  }
+  let names = ui.tab_names();
+  for i in 0..names.len() {
+    let Some(tab) = find(ns, "tab:" + i.to_string()) else {
+      return "no tab " + names[i];
+    };
+    let words = ns.filter((n: scene.Node): boolean => n.say == names[i] && inside(n, tab));
+    if (words.len() != 1) {
+      return "the words of the tab " + names[i] + " are not in it";
+    }
+  }
+  return "";
+}
+
+// The tabs end above the navigation bar, and the title starts below the
+// status bar.
+function test_system_bars_leave_the_content_free(): test.TestOutcome {
+  let log = new_log();
+  note(log.files, "/data/settings=id=abc\ntoken=tok-1\nserver_name=Den\nserver_uri=https://up.example:32400\nserver_token=srv\n");
+  let f = frame();
+  defer free_frame(f);
+  let s = settle(at(shown(log, f, "", ""), log, 0i64, f, android.ContentRect(0, 80, W, H - 100)), log, 0i64, f);
+  let low = 0;
+  for n in s.nodes {
+    if (n.tap.name.starts_with("tab:")) {
+      low = low.max(n.y + n.h);
+    }
+  }
+  save_png(f, "insets");
+  let title = s.nodes.filter((n: scene.Node): boolean => n.say == "Den");
+  if (title.len() != 1) {
+    return test.fail("no title");
+  }
+  return test.assert_eq((low == H - 100).to_string() + " " + (title[0].y >= 80).to_string(), "true true");
+}
+
+function test_layout_fits_the_window(): test.TestOutcome {
+  return test.assert_eq(layout_fault(W, H, false) + "|" + layout_fault(1080, 2400, true), "|");
+}
+
+function test_dot_font_has_the_signs(): test.TestOutcome {
+  let got = [matrix.covers("+30 -10 < > | & # %"), matrix.covers("Amélie"), matrix.lit(43u8, 2, 3), matrix.lit(43u8, 0, 0)];
+  return test.assert_eq(got.map((b: boolean): string => b.to_string()).join(" "), "true false true false");
+}
+
 function main(): i32 {
   let r = test.new("plex control");
   r = r.it("a sign-in with a PIN reaches the home screen", test_sign_in_reaches_home);
   r = r.it("a saved server opens the home screen", test_saved_server_opens_home);
   r = r.it("an item resumes, pauses and stops", test_play_pause_and_stop);
+  r = r.it("a transcode seeks in its stream and stays alive while paused", test_transcode_seeks_in_its_stream);
   r = r.it("a library loads its next page at its end", test_library_pages);
   r = r.it("a search waits for a pause in typing", test_search_types_and_asks);
   r = r.it("the keyboard of the system searches through the text field", test_search_from_text_field);
   r = r.it("a sign-out goes back to the sign-in", test_back_and_sign_out);
   r = r.it("a link plays an item at once", test_link_plays_an_item);
+  r = r.it("the buttons and the tabs fit a narrow and a wide window", test_layout_fits_the_window);
+  r = r.it("the system bars leave the tabs and the title free", test_system_bars_leave_the_content_free);
+  r = r.it("the dot font draws the signs of the player", test_dot_font_has_the_signs);
   return r.finish();
 }

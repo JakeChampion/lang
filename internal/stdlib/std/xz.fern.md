@@ -30,6 +30,8 @@ function main(): i32 {
 <<*>>=
 // This module decompresses the files of `xz`, and the `.lzma` files of LZMA
 // Utils.
+import "core/cmp";
+import "core/error";
 import "std/crypto";
 import "std/hash/crc32";
 
@@ -57,6 +59,14 @@ pub function (e: XzError) message(): string {
     Corrupt => "Compressed data is corrupt",
     Truncated => "Unexpected end of input",
   };
+}
+
+impl error.Error for XzError {}
+
+impl cmp.Display for XzError {}
+
+pub function (e: XzError) to_string(): string {
+  return e.message();
 }
 
 // The bytes before an error, and the error.

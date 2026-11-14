@@ -2272,7 +2272,7 @@ function ssa_adrp_add(s: asmcore.EmitState, d: string, label: string): asmcore.E
 }
 
 function ssa_unary_known(what: string): boolean {
-  if (what == "!" || what == "int_extend" || what == "int_wrap" || what == "u32_wrap" || what == "load_i32") {
+  if (what == "!" || what == "int_extend" || what == "int_wrap" || what == "u32_wrap" || ssa.is_unary_load(what)) {
     return true;
   }
   if (what == "int_cast:u8" || what == "int_cast:u32" || what == "int_cast:i32") {
@@ -2328,6 +2328,9 @@ function ssa_unary_asm(what: string, unsigned: boolean, d: string): string {
   if (what == "load_i32") {
     return "    ldrsw " + d + ", [" + d + "]\n";
   }
+  if (what == "load_u16") {
+    return "    ldrh " + w + ", [" + d + "]\n";
+  }
   if (what == "!") {
     return "    cmp " + d + ", #0\n    cset " + d + ", eq\n";
   }
@@ -2361,6 +2364,9 @@ function ssa_unary_from(what: string, unsigned: boolean, src: string, d: string)
   let ws = ssa_wreg(src);
   if (what == "load_i32") {
     return "    ldrsw " + d + ", [" + src + "]\n";
+  }
+  if (what == "load_u16") {
+    return "    ldrh " + w + ", [" + src + "]\n";
   }
   if (what == "!") {
     return "    cmp " + src + ", #0\n    cset " + d + ", eq\n";
@@ -11223,7 +11229,7 @@ function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = emit_rt_subprocess(s);
         s = emit_runtime("__fern_sp_exec_path __fern_sp_exec_failed", s);
       } else {
-        s = emit_runtime("__fern_sp_drain __fern_sp_exec_at __fern_sp_exec_failed __fern_subprocess", s);
+        s = emit_runtime("__fern_sp_wait __fern_sp_feed __fern_sp_take __fern_sp_exec_at __fern_sp_exec_failed __fern_subprocess", s);
       }
     }
     s = emit_rt_net(s, darwin);
