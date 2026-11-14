@@ -42,6 +42,9 @@ function main(): i32 {
 
 ```fern
 <<errors>>=
+import "core/cmp";
+import "core/error";
+
 // The errors of LZ4 data: an unknown magic number, a descriptor that is not
 // valid, a block that is not valid, or data that ends early.
 pub enum Lz4Error { NotLz4, BadFrame, BadBlock, Truncated }
@@ -53,6 +56,14 @@ pub function (e: Lz4Error) message(): string {
     BadBlock => "corrupted block detected",
     Truncated => "unexpected end of input",
   };
+}
+
+impl error.Error for Lz4Error {}
+
+impl cmp.Display for Lz4Error {}
+
+pub function (e: Lz4Error) to_string(): string {
+  return e.message();
 }
 
 // The bytes before an error, and the error.

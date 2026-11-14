@@ -20,7 +20,7 @@ An empty selection skips the suite. `CI verdict` accepts that skip.
 `Preflight` remains available through a manual workflow dispatch for diagnosis;
 it does not replace the full suite on pull requests.
 
-Main and merge queue batches use the same full suite. Main can reuse successful
+Main and merge queue batches (below) use the same full suite. Main can reuse successful
 lanes proven on an identical merged PR tree, and `main-red.yml` opens an issue
 per red lane. The `ci-full` label still disables cancellation of sibling lanes
 after a failure when the complete failure list is needed.
@@ -114,17 +114,53 @@ Release and bootstrap verification disable this cache and build fresh binaries.
 `go test ./internal/ciplan ./internal/testing/sourcelint` checks the graph and workflow contracts.
 `make ci-selftest actionlint testnames` checks selector failures, main reuse, consumer execution, and workflow syntax.
 
+## The report on a pull request
+
+When a CI run of a pull request ends, `pr-ci-report.yml` puts the result in one
+comment on the pull request (`scripts/ci-failure-report.mjs`). For a run that
+failed, the comment names each failed job, its failed step and its failed
+tests. Each test has the lines of its output, and a failure that is not a Go
+test has the lines before the first error. A later run changes the same
+comment, and a run that passes says so there. The merge queue puts the same
+report in its comment on a pull request that it removes.
+
 ## The merge queue
 
-`ci.yml` also triggers on `merge_group`: a run on the batch GitHub is about
-to merge, with every lane on, through the suite. `CI verdict` is the one
-check a ruleset requires. It passes only when Lint and the full suite pass.
+GitHub has merge queues only for a repository of an organization, so this
+repository has its own: `scripts/merge-queue`, `merge-queue.yml` and
+`merge-queue-batch.yml`.
 
-Enabling the queue is a repository setting, in the ruleset for `main`. Turn
-on "Require merge queue" and set the required check to `CI verdict`. Keep
-the merge method the repository uses for pull requests. Set the maximum
-batch size to about ten, with a short minimum wait. The queue then runs one
-suite per batch, and a red batch leaves main green.
+A pull request enters the queue with the `merge-queue` label. The queue gives
+that label to each open pull request whose own `CI verdict` is green. A draft
+does not get it, and neither does a pull request with the `merge-queue-hold`
+label. A person can also add the label before CI is green. The queue takes
+the labelled pull requests that are green, oldest number first. It merges up to ten of them on the tip of main and pushes the result to
+the branch `merge-queue/batch`. `merge-queue-batch.yml` runs the full suite on
+that branch. When the suite passes, main moves to that same commit, and GitHub
+shows each pull request of the batch as merged. Main thus gets only a tree
+that the suite passed, and two pull requests that pass alone and fail together
+do not reach it.
+
+- **One batch at a time.** The branch is the lock.
+- **A red batch is split.** Its two halves go to the retry list, and the queue
+  tests them before it takes new pull requests. A batch of one that fails
+  loses the label and gets a comment with the run.
+- **A conflict.** A pull request that does not merge cleanly loses the label
+  and gets a comment.
+- **Main moved.** When main got only pin-file commits of `rebank-main`, the
+  queue merges them in. For any other commit it tests the batch again.
+- **Perf.** The strict perf gate is advisory on a batch. Each pull request
+  passed it alone, and `rebank-main` sets the rows that they move together.
+- **Removed.** A pull request that lost the label does not get it again at
+  the same head. A new commit, or a person who adds the label, puts it back.
+- **State.** The retry list and the removed heads are one JSON blob at
+  `refs/merge-queue/state`.
+
+The queue protects main only if nothing else merges. That part is a repository
+setting: a ruleset on `main` that requires the `CI verdict` check, with
+"Require branches to be up to date". The commit that the queue pushes has
+that check from its batch run. The token of the queue (`AUTO_REBASE_TOKEN`)
+needs the `workflow` scope, because a batch can change a workflow file.
 
 Two meta-gates keep the lane set honest, and they are inverses. `make testnames`
 (`scripts/testname_gate.sh`) fails when a lane's `-run` names a test that does not
@@ -1110,6 +1146,7 @@ rather than the IR path.
 | `scripts/selfhost_driver_check.sh` (rides `make check-sources`) | That every one of the 46 drivers (`compiler/playground_run.fern` and `compiler/drivers/*_run.fern`) type-checks, not just the compiler whose modules they import. They are outside `fern.fern`'s import tree, so a deleted or renamed function one of them still calls is clean under `-check compiler/fern.fern` and red only where a test builds that driver — #9969 deleted `semsource.modes_differ` with `semsource_census_run` still calling it, and four `internal/testing/e2ecompiler` tests failed for it forty minutes into a CI round. Whole-program per driver, seconds in total. `playground_run` and `semsource_census_run` get `-embed internal/stdlib` because they call `__fern_assets()`, which is otherwise an error for a reason that is not a type error — a gate that cries wolf gets switched off. The driver COUNT is asserted, not printed: a glob that matched nothing would otherwise report success | Whether a driver RUNS or measures the right thing, which is its own test's. And the same class of gap outside this glob: a `.fern` file that is neither in `fern.fern`'s tree nor named `*_run.fern` is still invisible here |
 | `internal/testing/e2e` fixtures (`TestFernFixtures`) | The interpreter gives each case its expected answer, the checker rejects each `expected.error` case and lowering each `expected.lowering-error` one | Any compiled target: the `TestFernFixturesSelfHost*` legs run the corpus through the self-host compiler. Anything about *how much* a program allocated |
 | `TestFernFixturesSelfHost{X86_64,Arm64,Arm64Android,Arm64Darwin,Wasm,WasmComponent,WasiHttp}` (`FERN_SELFHOST_FIXTURES=1`, in the `fixtures-selfhost-*` jobs of `test-e2e-selfhost.yml` and, for darwin, in `macos.yml`) | The self-host compiler gives each case the fixture's expected exit and output, once per shipped target. Each leg has its own `backends` name (`conformance/README.md`). The `Wasm` leg runs the preview-1 core module, and `WasmComponent` the default wasi:cli/run component, which reports any nonzero exit as 1. `wasm32-wasi-http` accepts only a handler program, so `WasiHttp` serves each case that carries `expected.http` and compares `GET /` with it. The Linux legs produce the finished binary by themselves (emit + assemble + link in-process), so they are also the gates on `arm64_native.fern` and `x86_native.fern`. NOTE what that does NOT gate: an assembler that DROPS an instruction still emits a plausible binary, so a green leg is not evidence the assembler is complete — `rep stosq` was silently ignored at 63,637 sites and this leg stayed green on the programs that did not depend on zeroed memory. The gate for THAT is a decoded-instruction differential against the same program built via `-target x86-64-linux -emit asm` and linked by gcc | Values >= 126 on the core wasm leg, which WASI cannot express, and every nonzero value on the component leg — the native legs check those. On `wasm32-wasi-http`, each case without `expected.http`: its handler reaches a capability the proxy world does not provide, or the case has no handler. Each leg's `testdata/selfhost-<target>-known-divergences.txt` rows, which are listed rather than fixed |
+| The `-harden` runs (`internal/testing/e2e` `TestFernFixturesSelfHostX86_64Harden`, in the `fixtures-selfhost-x86-64-quarantine-harden` job; `internal/testing/e2ecompiler` `TestSelfHostStdTestHarden`, in the `x86-64-harden` legs of the stdlib suites job) | That each corpus case and each std/test program gives the same result when it is built with `-harden` for x86-64-linux. Under `-harden` a released block is zero, so a read of released storage gives a wrong value, a failed assertion or a hang. The release build reads the old bytes and shows nothing. #15942 and #15952 are the two defects that these runs found | A read of released storage whose result the program does not use, and one where zero is also the correct value. The arm64 and wasm outputs. A case that is marked reclaim-observable is held to its exit code only |
 | `internal/testing/e2ecompiler` | The self-host compiler is right on programs outside its own sources | Whole-program self-compilation; memory |
 | `fern -lsp` (`internal/testing/e2ecompiler/self_host_lsp_test.go`, `self_host_lsp_workspace_test.go`, `self_host_lsp_hover_test.go`, `self_host_lsp_complete_test.go`, `self_host_lsp_refs_test.go`; the playground's `-lsp` mode in `self_host_playground_overlay_test.go`, the shim suite and the playground Playwright suite) | That the language server publishes exactly `-check`'s findings for a document — every one in the document, at its position in UTF-16 units, with its code, severity and message, and nothing else — over every `expected.error` conformance case (`TestSelfHostLSPPublishesCheckFindingsX86_64`, one long-running server for the whole corpus). That on a curated corpus it places diagnostics, follows an editing session (publishing only on change, clearing on close) and answers formatting exactly as written out as data. That in workspace mode an open document stands in for its file wherever an import reaches it (a sibling, a manifest dependency), and a check publishes what it found in every open module it loaded, at that module's positions, leaving an open document outside its imports alone. That hover and definition answer their hover, definition and workspace cases — written out as data, in UTF-16 units, through a literate document's line map, into another module's file, and never out of a sibling module at the same position. That completion, signature help, document symbols and inlay hints answer their cases, written out as data, plus members after a `.`, a call that does not parse, a literate document and an import. That references, rename, semantic tokens and code actions answer their cases — a variant's references staying in its enum and semantic tokens covering only the requested file among them — written out as data, across modules, inside nested patterns, in a literate document and in UTF-16 units, and that each fix the checker attaches is published and applied. That its lifecycle, error answers, exit codes and framing are the spec's. And that the playground driver's `-lsp` serves the same sessions from its embedded stdlib, byte for byte the same hosted in wasm with no preopens as natively, and that the page shows its diagnostics, hover and completion in Chromium. Mutating the UTF-16 conversion or the per-file attribution fails the subtests that should catch them | Whether the findings are RIGHT: they are the self-host checker's, so its gaps reach the server unchanged, and the checker differentials own them. Anything an editor sends that the tests do not: incremental sync (the server advertises full). An open module whose own imports changed is refreshed only by the next check that loads both, not when the import changes. Hover on a shape the cases leave out (a trait method, a type reached through a `pub use` re-export). Which completion bindings are in scope at the cursor: every binding of the enclosing function is offered |
 | `TestSharedVariantNameEmitIsDeterministic`, `TestCrossModuleVariantOrdinalEmitIsDeterministic` (`internal/testing/e2e`) | That a variant name two enums or two modules share resolves the same way on every compile: the self-host's assembly for each program is byte-identical across 32 compiler processes. An arm resolves against its scrutinee and a constructor within its own module, never by a program-wide scan whose order can vary; the Go compiler's map-ordered scan answered 79 or 69 between compiles of identical source (#6944), and a single compile-and-run agrees with the oracle often enough to look green | Whether the resolution is RIGHT, which the answer tests beside them check. Order dependence in any other shape |
