@@ -1301,7 +1301,7 @@ function is_value_block_or_not_lambda(e: ast.Expr): boolean {
   return true;
 }
 
-pub function body_assign_names(stmts: ast.Stmt[], own acc: string[]): string[] {
+function body_assign_names(stmts: ast.Stmt[], own acc: string[]): string[] {
   return lam_assign_targets(stmts, acc);
 }
 
@@ -1316,12 +1316,15 @@ function assign_target_of(st: ast.Stmt, own acc: string[]): string[] {
   }
 }
 
-pub function cellify_captures(own env: Env, st: ast.Stmt, reassigned: string[]): Env {
+// Makes a cell of each binding that a closure of `st` writes, and of each
+// that it reads and `body`, the block of `st`, assigns.
+pub function cellify_captures(own env: Env, st: ast.Stmt, body: ast.Stmt[]): Env {
   let out = cellify_env(env, stmt_lambda_writes(st));
-  if (reassigned.len() == 0) {
+  let reads = lam_read_names(st);
+  if (reads.len() == 0) {
     return out;
   }
-  let reads = lam_read_names(st);
+  let reassigned = body_assign_names(body, []);
   let hit: string[] = [];
   for i in 0..reads.len() {
     if (util.index_of_str(reassigned, reads[i]) >= 0) {
@@ -9135,9 +9138,8 @@ function eval_value_body(body: ast.Stmt[], own env: Env, expect: string): StepRe
     return step_stop(env, v_err("value expression has no terminal value"));
   }
   let cur = env;
-  let assigned = body_assign_names(body, []);
   for i in 0..body.len() - 1 {
-    cur = cellify_captures(cur, body[i], assigned);
+    cur = cellify_captures(cur, body[i], body);
     let step = eval_stmt(body[i], unsafe { share_unchecked(cur) });
     if (step.sig != 0) {
       return step;
@@ -9376,13 +9378,12 @@ function eval_match_stmt_mode(m: ast.StmtMatch, own env: Env, value_form: boolea
       for bk in 0..bind_names.len() {
         bodyEnv = bodyEnv.bind_decl(bind_names[bk], bind_values[bk], bind_types[bk]);
       }
-      let reassigned = body_assign_names(arm.body, []);
       for st in arm.body {
-        bodyEnv = cellify_captures(bodyEnv, st, reassigned);
+        bodyEnv = cellify_captures(bodyEnv, st, arm.body);
       }
       if (arm.has_guard) {
         let guard_stmt: ast.Stmt = ast.StmtExpr { value: arm.guard, line: arm.line, op: "" };
-        bodyEnv = cellify_captures(bodyEnv, guard_stmt, reassigned);
+        bodyEnv = cellify_captures(bodyEnv, guard_stmt, arm.body);
       }
       let pass = true;
       if (arm.has_guard) {
@@ -9780,9 +9781,8 @@ function flattened_env(e: Env): Env {
 
 function eval_block(body: ast.Stmt[], own env: Env): StepResult {
   let cur = env;
-  let reassigned = body_assign_names(body, []);
   for i in 0..body.len() {
-    cur = cellify_captures(cur, body[i], reassigned);
+    cur = cellify_captures(cur, body[i], body);
     let r = eval_stmt(body[i], cur);
     cur = r.env;
     if (r.sig != 0) {
@@ -9832,9 +9832,8 @@ pub function eval_module_argv(raw_mod: parser.Module, argv: string[]): Value {
     return call_func(heap, "main", empty_args, funcs, all_aliases, all_variants);
   }
   let env = new_module_env(heap, funcs, all_aliases, all_variants);
-  let mreassigned = body_assign_names(mod.top_stmts, []);
   for j in 0..mod.top_stmts.len() {
-    env = cellify_captures(env, mod.top_stmts[j], mreassigned);
+    env = cellify_captures(env, mod.top_stmts[j], mod.top_stmts);
     let r = eval_stmt(mod.top_stmts[j], unsafe { share_unchecked(env) });
     env = r.env;
     if (r.sig != 0) {
