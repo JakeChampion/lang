@@ -3576,6 +3576,54 @@ pub function (prog: Regex) longest(): Regex {
   return Regex { ...prog, leftmost_longest: true };
 }
 
+// Whether a match can hold the byte `b`. A line anchor of `(?m)` also holds
+// the line feed, and a line anchor of `(?mR)` also holds the carriage return.
+pub function (prog: Regex) can_match_byte(b: u8): boolean {
+  for pc in 0..prog.code.len() / 3 {
+    if (__rx_has_byte(prog.code, prog.masks, pc, b as i32)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Whether the pattern has the ASCII byte `b` as a literal: a character, or a
+// class that holds only that character.
+pub function (prog: Regex) has_literal_byte(b: u8): boolean {
+  for pc in 0..prog.code.len() / 3 {
+    let at = 3 * pc;
+    if (prog.code[at] == RX_CHAR && prog.code[at + 1] == b as i32 && prog.code[at + 2] == b as i32) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function __rx_has_byte(code: i32[], masks: i32[], pc: i32, byte: i32): boolean {
+  let op = code[3 * pc];
+  let a = code[3 * pc + 1];
+  if (op == RX_CHAR) {
+    return byte == a || byte == code[3 * pc + 2];
+  }
+  if (op == RX_CLASS) {
+    return __rx_mask_bit(masks, a, byte) == 1;
+  }
+  if (op == RX_ASSERT) {
+    return a >= RX_A_LINE && byte == 10 || a >= RX_A_CRLF && byte == 13;
+  }
+  if (op != RX_SPARSE) {
+    return false;
+  }
+  let e = a + 1;
+  while (e < a + 1 + 3 * masks[a]) {
+    if (byte >= masks[e] && byte <= masks[e + 1]) {
+      return true;
+    }
+    e += 3;
+  }
+  return false;
+}
+
 pub function (prog: Regex) is_match(text: string): boolean {
   if (__rx_has_dfa(prog)) {
     let c = prog.next_candidate(text, 0);

@@ -270,6 +270,22 @@ function test_captures_at(): test.TestOutcome {
   return test.assert_eq(parts.join(",") + " " + none, "o,t none");
 }
 
+// Each pattern, with 1 when a match can hold a line feed, else 0, and the same
+// for a carriage return.
+function test_can_match_byte(): test.TestOutcome {
+  let cases = ["xxx", "c\\nd", "c$", "(?m)c$", "(?m)^c", "(?mR)c$", ".", "(?s).", "[^a]", "\\s", "\\W", "\\pL", "(?-u)[\\x00-\\xff]"];
+  let out: string[] = [];
+  for pat in cases {
+    let Ok(re) = regex.compile(pat) else {
+      return test.fail("compile " + pat);
+    };
+    let lf = if (re.can_match_byte(10u8)) { "1" } else { "0" };
+    let cr = if (re.can_match_byte(13u8)) { "1" } else { "0" };
+    out = out.append(lf + cr);
+  }
+  return test.assert_eq(out.join(" "), "00 10 00 10 10 11 01 11 11 11 11 00 11");
+}
+
 function main(): i32 {
   let r = test.new("std/regex syntax");
   r = r.it("dot is a character", test_dot_is_a_character);
@@ -299,5 +315,6 @@ function main(): i32 {
   r = r.it("DFA table limit", test_dfa_table_limit);
   r = r.it("templates", test_templates);
   r = r.it("captures at an offset", test_captures_at);
+  r = r.it("bytes a match can hold", test_can_match_byte);
   return r.finish();
 }
