@@ -559,7 +559,7 @@ function main(): i32 {
     let src: string = ".text\n_start:\n\tleaq ro16(%rip), %rax\n\tleaq bs16(%rip), %rcx\n\torq %rcx, %rax\n\tandq $15, %rax\n\tmovq %rax, %rdi\n\taddq $42, %rdi\n\tmovq $60, %rax\n\tsyscall\n.section .rodata\n\t.byte 1\n\t.align 16\nro16:\n\t.quad 7\n.bss\n\t.byte 0\n\t.align 16\nbs16:\n\t.quad 0\n";
     let a: X86Asm = x86_gas_assemble(src);
     if (a.unknown.len() > 0 || x86_code_len(a) != 37) { return 2; }
-    if (x86_gas_assemble(".section .rodata\n\t.align 32\n").unknown.len() != 1) { return 3; }
+    if (x86_gas_assemble(".section .rodata\n\t.align 128\n").unknown.len() != 1) { return 3; }
     write(unsafe { string_from_bytes_unchecked(elf_program_x86(a.text, [], [], a.rodata, a.bss_size, 0)) });
     return 0;
 }

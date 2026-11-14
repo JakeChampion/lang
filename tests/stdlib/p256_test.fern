@@ -80,8 +80,37 @@ function test_scalar_reduce(): test.TestOutcome {
   return test.assert_eq(reduced("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"), "00000000ffffffff00000000000000004319055258e8617b0c46353d039cdaae");
 }
 
+function bytes(h: string): u8[] {
+  return __codec_bytes(hex.decode(h));
+}
+
+// A signature of `sign_rs` verifies. A changed digest, a changed r, a changed
+// s, r and s in the other order, and the key of another scalar do not.
+function test_verify_rs(): test.TestOutcome {
+  let d = bytes(MIXED);
+  let e = bytes("44acf6b7e36c1342c2c5897204fe09504e1e2efb1a900377dbc4e7a6a133ec56");
+  let rs = p256.sign_rs(d, e, bytes(one_hot(31, 7 as u8)));
+  let q = p256.base_point(d);
+  let other = p256.base_point(bytes(one_hot(31, 2 as u8)));
+  let bent = e.with(31, e[31] ^ 1 as u8);
+  let got = [
+    p256.verify_rs(q, e, rs.0, rs.1),
+    p256.verify_rs(q, bent, rs.0, rs.1),
+    p256.verify_rs(q, e, rs.0.with(0, rs.0[0] ^ 128 as u8), rs.1),
+    p256.verify_rs(q, e, rs.0, rs.1.with(31, rs.1[31] ^ 1 as u8)),
+    p256.verify_rs(q, e, rs.1, rs.0),
+    p256.verify_rs(other, e, rs.0, rs.1),
+  ];
+  let shown: string[] = [];
+  for g in got {
+    shown = shown.append(g.to_string());
+  }
+  return test.assert_eq_array(shown, ["true", "false", "false", "false", "false", "false"]);
+}
+
 function main(): i32 {
   let r = test.new("std/crypto/p256");
+  r = r.it("verify_rs accepts only the signature of the key", test_verify_rs);
   r = r.it("[k]G", test_base_point);
   r = r.it("[k]Q", test_scalar_mul);
   r = r.it("scalar range", test_scalar_range);
