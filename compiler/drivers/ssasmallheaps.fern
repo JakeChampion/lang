@@ -28,7 +28,7 @@ function block(address: i64, header: i64, live: boolean): heap.Block {
 function bounds(c: i32): void {
   let h = empty();
   require(heap.valid(c, h) && heap.trace(c, h, []), "empty initialized mapping");
-  for invalid in [0, 1, 4, -1, 2147483647] {
+  for invalid in [0, 3, 4, -1, 2147483647] {
     require(!heap.valid(invalid, h), "unsupported capacity");
   }
   for b in [0 as i64, 65528 as i64, 65537 as i64, -(1 as i64), 9223372036854775807 as i64] {
@@ -122,7 +122,7 @@ function native_release(s: string): void {
 }
 
 pub function run(output: ssaprepare.Output): void {
-  let c = boundary.resolve(output, "parent").words;
+  let c = boundary.resolve(output, "parent").words - 1;
   bounds(c);
   sequences(c);
   lists(c);

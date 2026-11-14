@@ -403,7 +403,7 @@ function __bytes(path: string): u8[] {
 
 ```fern
 <<13 pub struct Build>>=
-pub struct Build { target: string, profile: string, harden: boolean, pie: boolean, sanitize: boolean, backtrace: boolean, size: boolean, shared: boolean, heap_limit: i64, quarantine: i64 }
+pub struct Build { target: string, profile: string, harden: boolean, pie: boolean, sanitize: boolean, backtrace: boolean, size: boolean, shared: boolean, heap_limit: i64, quarantine: i64, cpu_limit: i64 }
 ```
 
 ### `14 pub function build_line(image: [u8]): Option[string]`
@@ -482,7 +482,7 @@ pub function parse_build(line: string): Result[Build, BuildLineError] {
 }
 
 function __parse_build(line: string): Option[Build] {
-  let b = Build { target: "", profile: "", harden: false, pie: false, sanitize: false, backtrace: false, size: false, shared: false, heap_limit: 0i64, quarantine: 0i64 };
+  let b = Build { target: "", profile: "", harden: false, pie: false, sanitize: false, backtrace: false, size: false, shared: false, heap_limit: 0i64, quarantine: 0i64, cpu_limit: 0i64 };
   let seen = false;
   for field in line.trim().split(" ") {
     let eq = __memchr(field, 61, 0);
@@ -517,6 +517,8 @@ function __parse_build(line: string): Option[Build] {
       b = Build { ...b, heap_limit: __digits(value) };
     } else if (key == "quarantine") {
       b = Build { ...b, quarantine: __digits(value) };
+    } else if (key == "cpu_limit") {
+      b = Build { ...b, cpu_limit: __digits(value) };
     }
   }
   if (!seen) {

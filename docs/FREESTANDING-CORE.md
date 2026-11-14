@@ -85,7 +85,8 @@ costs a silent failure on the first target that lacks it.
 | `subprocess` | `subprocess` | spawning a child and collecting its output; the hosted natives only |
 | `arena` | `__heap_mark`, `__heap_release_to`, `__heap_adopt` | native-only cursor rewind and region adoption. The `kernel` profile grants it too, so a kernel can put the heap on frames of its own (`std/frames`) |
 | `syscall` | `__syscall3` … `__syscall6` | a kernel to trap into |
-| `privileged` | `__wfi`, `__hvc`, `__smc`, `__boot_info`, `__sysreg_read`, `__sysreg_write`, `__cache_clean`, `__cache_flush`, `__cache_sync_code`, `__atomic_load_acquire`, `__atomic_store_release`, `__atomic_fetch_add`, `__atomic_cas`, `__tlb_flush`, `__tlb_flush_all`, `__breakpoint`, `__irq_mask`, `__irq_unmask`, `__irq_wait`, `__irq_pending`, `__user_run`, `__port_in8` … `__port_out32`, `__mem_load8` … `__mem_store64` | the processor at the kernel's privilege level, with firmware or I/O ports beneath it. Granted by the `kernel` profile alone |
+| `privileged` | `__wfi`, `__hvc`, `__smc`, `__boot_info`, `__sysreg_read`, `__sysreg_write`, `__cache_clean`, `__cache_flush`, `__cache_sync_code`, `__tlb_flush`, `__tlb_flush_all`, `__breakpoint`, `__irq_mask`, `__irq_unmask`, `__irq_wait`, `__irq_pending`, `__user_run`, `__port_in8` … `__port_out32`, `__mem_load8` … `__mem_store64` | the processor at the kernel's privilege level, with firmware or I/O ports beneath it. Granted by the `kernel` profile alone |
+| `atomics` | `__atomic_load_acquire`, `__atomic_store_release`, `__atomic_fetch_add`, `__atomic_cas` | a word of memory that two threads or two cores share, with acquire and release order: `ldar`, `stlr` and the LSE atomics on arm64, plain moves and locked instructions on x86-64. Granted by every native profile: the hosted ones, `kernel` and `none`. A WASI target has one thread and no shared memory |
 | `mmio` | `__mmio_load8` … `__mmio_load64`, `__mmio_store8` … `__mmio_store64` | device registers: a load or store that no pass removes, merges or moves. Granted by the `kernel` profile and by the freestanding `none` profile, since a guest library inside someone else's firmware drives devices too |
 | `rawmem` | `__raw_alloc`, `__raw_string`, `__raw_arr_box`, `__raw_scratch`, `__raw_environ`, `__raw_splice_pipe`, `__raw_cover`, `__raw_task_state`, `__raw_vdso`, `__raw_vg_request` | the native runtime's allocator block layout and static slots, which the register backends' runtime helpers are written on; wasm serves those helpers with hand-written WAT |
 
@@ -526,7 +527,7 @@ than an `unknown callee` out of the emitter:
 The three are enumerated in both hosted profiles and granted by neither wasi
 profile nor by `none`. A freestanding target could in principle honour `cabi` — a
 calling convention is an ISA property, and nothing about a kernel forbids one — but
-`none` grants `mmio` alone, for the device registers a guest library drives. Revisit
+`none` grants `mmio` and `atomics` alone, for the device registers a guest library drives and the words that it shares with its firmware. Revisit
 it when a freestanding embedder needs a C call.
 
 **A handle method reports only what its target can measure, and `flags()` is

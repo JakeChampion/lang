@@ -233,9 +233,8 @@ pub function (t: Tree) has(x: i32, flag: i32): boolean {
 
 // The text of a leaf, the content of a code block, or the destination of a
 // link.
-// `text` is `t.text`, which a view needs as a parameter.
-pub function (t: Tree) lit(text: string, x: i32): str {
-  return slice_unchecked(text, get(t, x, F_LIT), get(t, x, F_LIT_END));
+pub function (t: Tree) lit(x: i32): str {
+  return slice_unchecked(t.text, get(t, x, F_LIT), get(t, x, F_LIT_END));
 }
 
 // True when a link has a title or a code block has an info string.
@@ -244,12 +243,12 @@ pub function (t: Tree) has_extra(x: i32): boolean {
 }
 
 // The title of a link or the info string of a code block, or "".
-pub function (t: Tree) extra(text: string, x: i32): str {
+pub function (t: Tree) extra(x: i32): str {
   let a = get(t, x, F_EXTRA);
   if (a == NONE) {
-    return slice_unchecked(text, 0, 0);
+    return slice_unchecked(t.text, 0, 0);
   }
-  return slice_unchecked(text, a, get(t, x, F_EXTRA_END));
+  return slice_unchecked(t.text, a, get(t, x, F_EXTRA_END));
 }
 
 // The source position: the start line, the start column, the end line and

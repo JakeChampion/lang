@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -414,5 +415,22 @@ func diffOptionCases(t *testing.T) []invocation {
 		c("prefix of unchanged", "--unch", "a", "b"),
 		c("prefix of tabsize", "--tab=4", "-t", "a", "b"),
 		c("prefix of from file", "--from=a", "b"),
+	}
+}
+
+// The fixture names must also work on a case-insensitive filesystem.
+func TestDiffFixtureNamesArePortable(t *testing.T) {
+	cases := diffOptionCases(t)
+	entries, err := os.ReadDir(cases[0].dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := make(map[string]string)
+	for _, entry := range entries {
+		name := strings.ToLower(entry.Name())
+		if previous, ok := seen[name]; ok {
+			t.Errorf("fixture paths %q and %q collide on a case-insensitive filesystem", previous, entry.Name())
+		}
+		seen[name] = entry.Name()
 	}
 }

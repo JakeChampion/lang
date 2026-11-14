@@ -34,6 +34,21 @@ function arguments(s: string): void {
   mutation(s, "syscall", "unknown_instruction", false);
 }
 
+// The request for huge pages is not necessary. When the text makes it, each
+// argument must be the one that keeps the request in the arena.
+function huge_pages(s: string): void {
+  mutation(s, "movl $28, %eax\nsyscall", "", true);
+  for line in ["leaq 4194304(%rax), %rdi", "movabs $17175674880, %rsi", "movl $14, %edx", "movl $28, %eax"] {
+    mutation(s, line, "", false);
+  }
+  mutation(s, "leaq 4194304(%rax), %rdi", "leaq 4096(%rax), %rdi", false);
+  mutation(s, "leaq 4194304(%rax), %rdi", "leaq 4194304(%rcx), %rdi", false);
+  mutation(s, "movabs $17175674880, %rsi", "movabs $17179869184, %rsi", false);
+  mutation(s, "movl $14, %edx", "movl $4, %edx", false);
+  mutation(s, "movl $28, %eax", "movl $11, %eax", false);
+  mutation(s, "movl $28, %eax\nsyscall", "movl $28, %eax\nsyscall\nmovl $28, %eax\nsyscall", false);
+}
+
 function wide_values(s: string): void {
   for literal in ["0", "4294967296", "17179869183", "17179869185", "9223372036854775807", "-9223372036854775808", "9223372036854775808", "-9223372036854775809"] {
     mutation(s, "17179869184", literal, false);
@@ -58,8 +73,10 @@ function globals(s: string): void {
   mutation(s, "movq %rdi, __fern_heap_ptr(%rip)", "", false);
   mutation(s, "movq __fern_heap_ptr(%rip), %rax", "movl __fern_heap_ptr(%rip), %eax", false);
   mutation(s, "movq __fern_heap_ptr(%rip), %rax", "movq __fern_heap_base(%rip), %rax", true);
-  mutation(s, "movq %rcx, __fern_heap_end(%rip)", "movq %rcx, __fern_heap_end(%rip)\nmovq __fern_heap_end(%rip), %rax\nsubq %rcx, %rax\ncmpq $0, %rax\njne .Lbad_current", true);
-  mutation(s, "movq %rcx, __fern_heap_end(%rip)", "movq %rcx, __fern_heap_end(%rip)\nmovq __fern_heap_end(%rip), %rax\ncmpq $0, %rax\njne .Lbad_current", false);
+  // %rax holds the base of the arena for the request for huge pages, so the
+  // control reads the end back into %rdx.
+  mutation(s, "movq %rcx, __fern_heap_end(%rip)", "movq %rcx, __fern_heap_end(%rip)\nmovq __fern_heap_end(%rip), %rdx\nsubq %rcx, %rdx\ncmpq $0, %rdx\njne .Lbad_current", true);
+  mutation(s, "movq %rcx, __fern_heap_end(%rip)", "movq %rcx, __fern_heap_end(%rip)\nmovq __fern_heap_end(%rip), %rdx\ncmpq $0, %rdx\njne .Lbad_current", false);
 }
 
 function stack_and_registers(s: string): void {
@@ -126,6 +143,7 @@ pub function run(output: string): void {
   mutation(s, "__fern_freelist: .skip 524288", "__fern_freelist: .skip 8", false);
   mutation(s, "__fern_alloc:", "other_allocator:", false);
   arguments(s);
+  huge_pages(s);
   wide_values(s);
   globals(s);
   stack_and_registers(s);

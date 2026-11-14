@@ -7,6 +7,10 @@
 # slice beside the word ones. Main at 38768eb2 already gave the perceus_rbtree_ck rows. The aarch64
 # rows are not measured here. Each x86_64 row that the run names moves to its measured value. Keep
 # all tolerances.
+# 2026-11-13: CI 43517654014 tested merge 4993a5d5.
+# Jobs 132208527194 and 132208528766 supplied the native reports.
+# Main 38768eb2 with HEVC input. These rows use the complete measured report.
+# Workloads, metric keys, and tolerances are unchanged.
 # 2026-11-14: PR #15784, perf-aarch64 job 132329298773 on the merge with main 8ce8fde7.
 # aarch64/http_hello.text is 1.13% below its pin. Main's compiler and #15784 emit the same 16432
 # instructions for it, so it is a value of main. The row moves to its measured value. Keep all tolerances.
@@ -29,6 +33,14 @@
 # deflate_encode text -1.40%, ordmap_insert text -6.11%, utf8_ingest_unchecked ir -0.67%
 # and utf8_ingest_validated ir -0.28%. The other rows here are values of main.
 # Each row moves to its measured value. Keep all tolerances.
+# 2026-11-14: PR #15790 at 2bba0641, on the merge with main 8ce8fde7: perf-x86_64 job 132329458814
+# and perf-aarch64 job 132329458736. 1 rows are off the pins that main and this PR set apart.
+# Each moves to its measured value. Keep all tolerances.
+# 2026-11-14: PR #15790 at ba957d1e, perf-x86_64 job 132249261077 and perf-aarch64 job 132249260970.
+# The colour step of the bump allocator and the request for huge pages add 20 to 60 bytes of
+# runtime text to each program and two or three instructions to each bump block. The other rows
+# are values of main: the PR does not change what the compiler emits for a function. 47 rows
+# move to their measured values. Keep all tolerances.
 # 2026-11-13: PR #15739, perf-x86_64 job 132017371022 and perf-aarch64 job 132017370985 on the merge
 # with main 629da263. Twelve rows of perceus_cfold, perceus_deriv, perceus_rbtree, perceus_rbtree_ck,
 # pmap_insert and pvec_with are 1.0% to 4.8% below their pins. #15739 removes a conformance case and
@@ -363,24 +375,24 @@
 # 54238264, perceus_rbtree.text 2900 to 2861, perceus_rbtree_ck.text 2996 to
 # 2943, perceus_rbtree_ck.ir 42546197 to 41602517.
 
+# 2026-11-01 (#13981): CI41256013281 reports array_with.ir and record_update.ir 4.34% lower.
 x86_64/array_append.text	1126
 x86_64/array_append.ir	11205420
 x86_64/array_index.text	1130
 x86_64/array_index.ir	14281065
 x86_64/array_scale_f64.text	1313
 x86_64/array_scale_f64.ir	21309613
-# 2026-11-01 (#13981): CI41256013281 reports array_with.ir and record_update.ir 4.34% lower.
 x86_64/array_with.ir	34412384
 x86_64/array_with.text	981
 x86_64/ascii_scan.text	1396
 x86_64/ascii_scan.ir	37315742
-x86_64/byte_copy_append.text	1287
+x86_64/byte_copy_append.text	1301
 x86_64/byte_copy_append.ir	13442091
-x86_64/byte_copy_with.text	1244
+x86_64/byte_copy_with.text	1261
 x86_64/byte_copy_with.ir	12841267
 x86_64/call_overhead.text	347
 x86_64/call_overhead.ir	8250814
-x86_64/closure_call.text	963
+x86_64/closure_call.text	982
 x86_64/closure_call.ir	41178167
 # 2026-11-01 (#13347): CI41317429107 measures both lower x86 DEFLATE counts.
 x86_64/deflate_decode.ir	32267962
@@ -424,19 +436,19 @@ x86_64/sort_strings.text	3316
 x86_64/sort_strings.ir	95020165
 x86_64/string_build.text	1987
 x86_64/string_build.ir	38746123
-x86_64/string_count_byte.text	1321
+x86_64/string_count_byte.text	1339
 x86_64/string_count_byte.ir	41173368
-x86_64/string_find_byte.text	1593
+x86_64/string_find_byte.text	1612
 x86_64/string_find_byte.ir	43687425
-x86_64/string_rfind_byte.text	1741
+x86_64/string_rfind_byte.text	1775
 x86_64/string_rfind_byte.ir	43695768
 x86_64/string_scan.text	2227
 x86_64/string_scan.ir	52670002
-x86_64/string_slice.text	944
+x86_64/string_slice.text	960
 x86_64/string_slice.ir	23340107
 x86_64/struct_drop.text	2583
 x86_64/struct_drop.ir	197940612
-x86_64/tokenize.text	1193
+x86_64/tokenize.text	1211
 x86_64/tokenize.ir	32840107
 x86_64/utf8_ingest_unchecked.text	8006
 x86_64/utf8_ingest_unchecked.ir	2133852
@@ -657,23 +669,23 @@ x86_64/utf8_ingest_validated.ir	5144851
 # branch merged with main: from 71 fewer to 54 more instructions. The
 # utf8_ingest_validated row was 7828 where main itself measures 7751.
 #
-aarch64/array_append.text	1405
+aarch64/array_append.text	1430
 aarch64/array_append.ir	15205840
-aarch64/array_index.text	1403
+aarch64/array_index.text	1429
 aarch64/array_index.ir	18388238
-aarch64/array_scale_f64.text	1500
+aarch64/array_scale_f64.text	1526
 aarch64/array_scale_f64.ir	25340945
-aarch64/array_with.text	1216
+aarch64/array_with.text	1240
 aarch64/array_with.ir	34494442
-aarch64/ascii_scan.text	1702
+aarch64/ascii_scan.text	1727
 aarch64/ascii_scan.ir	68639570
-aarch64/byte_copy_append.text	1520
+aarch64/byte_copy_append.text	1541
 aarch64/byte_copy_append.ir	31926661
-aarch64/byte_copy_with.text	1471
+aarch64/byte_copy_with.text	1494
 aarch64/byte_copy_with.ir	31274981
 aarch64/call_overhead.text	441
 aarch64/call_overhead.ir	11250826
-aarch64/closure_call.text	1201
+aarch64/closure_call.text	1226
 aarch64/closure_call.ir	46002179
 # 2026-10-26 (#13496): CI40296315314 reports seven lower ARM64 instruction counts.
 # 2026-11-01 (#13347): one-allocation table fills lower the measured ARM64 decode count.
@@ -707,27 +719,27 @@ aarch64/pmap_insert.text	3214
 aarch64/pmap_insert.ir	58518189
 aarch64/pvec_with.text	3243
 aarch64/pvec_with.ir	54871287
-aarch64/record_update.text	1216
+aarch64/record_update.text	1240
 aarch64/record_update.ir	34494442
-aarch64/sort_inplace.text	1727
+aarch64/sort_inplace.text	1750
 # 2026-10-29: main 0c591828 (Perf, perf-aarch64 and perf-x86_64) reports sort_inplace.ir 4.9% and 7.3% lower.
 aarch64/sort_inplace.ir	43684079
 # 2026-11-05: PR #14207, perf-aarch64 job 126960803294 reports sort_ints.text 7.5% and sort_ints.ir 18.0% lower.
-aarch64/sort_ints.text	2063
+aarch64/sort_ints.text	2091
 aarch64/sort_ints.ir	24753301
 aarch64/sort_strings.text	3536
 aarch64/sort_strings.ir	99216935
 aarch64/string_build.text	2357
 aarch64/string_build.ir	42360567
-aarch64/string_count_byte.text	1495
+aarch64/string_count_byte.text	1520
 aarch64/string_count_byte.ir	295207223
-aarch64/string_find_byte.text	1906
+aarch64/string_find_byte.text	1931
 aarch64/string_find_byte.ir	55921279
-aarch64/string_rfind_byte.text	2013
+aarch64/string_rfind_byte.text	2038
 aarch64/string_rfind_byte.ir	55941911
 aarch64/string_scan.text	2556
 aarch64/string_scan.ir	59787692
-aarch64/string_slice.text	1188
+aarch64/string_slice.text	1208
 aarch64/string_slice.ir	25140119
 aarch64/struct_drop.text	2663
 aarch64/struct_drop.ir	218300904
@@ -743,7 +755,7 @@ x86_64/perceus_cfold.text	1938
 x86_64/perceus_cfold.ir	47742110
 x86_64/perceus_deriv.text	2651
 x86_64/perceus_deriv.ir	64168424
-x86_64/perceus_nqueens.text	1548
+x86_64/perceus_nqueens.text	1566
 x86_64/perceus_nqueens.ir	81923493
 x86_64/perceus_rbtree.text	2600
 x86_64/perceus_rbtree.ir	31429877
@@ -756,7 +768,7 @@ x86_64/perceus_rbtree_ck.ir	42059720
 # perceus_deriv.ir -1.25%, perceus_nqueens.ir -1.85%, perceus_rbtree.text
 # -1.40%, perceus_rbtree.ir -10.29%, perceus_rbtree_ck.ir -9.17%,
 # pmap_insert.ir -2.07%, pvec_with.ir -2.85%. The tolerances are unchanged.
-aarch64/perceus_cfold.text	2183
+aarch64/perceus_cfold.text	2205
 aarch64/perceus_cfold.ir	54945203
 aarch64/perceus_deriv.text	2927
 aarch64/perceus_deriv.ir	77209395
