@@ -111,6 +111,18 @@ the interpreter a fake arena to measure would make it report numbers
 that describe nothing. A conformance case for an allocation claim
 therefore restricts `backends` to the three codegen targets.
 
+## Checked allocation lengths
+
+`__alloc_len(n: i64): i32` accepts values from zero to 2147483647 inclusive.
+It returns the same value with type `i32`.
+Any other input stops through the allocation-size abort path.
+The cause is `fern: allocation size out of range`.
+
+The check does not allocate or require the `log` or `exit` capability.
+It does not reserve memory or promise that the configured heap can hold a later allocation.
+Calculate a byte count in `i64` before this check.
+Do not narrow a wrapped product before the check.
+
 ## The claims
 
 All are stated over the *shape*, and all are pinned — see

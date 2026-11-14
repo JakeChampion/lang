@@ -131,6 +131,34 @@ func TestCheckedAllocationLengthNoHeap(t *testing.T) {
 	}
 }
 
+func TestCheckedAllocationLengthDiscarded(t *testing.T) {
+	const src = `@noinline
+function checked(n: i64): void { __alloc_len(n); }
+function main(): i32 { checked(4294967296i64); return 0; }
+`
+	if out, code := runInterpExitCode(t, src); code != 134 || !strings.Contains(out, "allocation size out of range") {
+		t.Fatalf("oracle removed the check: exit %d, %s", code, out)
+	}
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			var out string
+			var code int
+			switch target {
+			case "x86-64-linux":
+				out, code = compileAndRunX86_64(t, src)
+			case "arm64-linux":
+				out, code = compileAndRunArm64(t, src)
+			default:
+				stdout, stderr, exit := runWasmArtifact(t, buildCLIComponent(t, src), runOpts{})
+				out, code = stdout+stderr, exit
+			}
+			if code == 0 || !strings.Contains(out, "allocation size out of range") {
+				t.Fatalf("discarded result removed the check: exit %d, %s", code, out)
+			}
+		})
+	}
+}
+
 func checkedAllocLengthEntry(t *testing.T, src string) string {
 	t.Helper()
 	entry := filepath.Join(t.TempDir(), "main.fern")
