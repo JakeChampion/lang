@@ -64,7 +64,7 @@ function view_abi(name: string): Abi {
   if (name == "__sem_view_len" || name == "__sem_view_data") {
     return abi([borrow_mode()], false);
   }
-  if (name == "__sem_byte_view_slice" || name == "__sem_view_slice" || name == "__sem_view_slice_wide") {
+  if (name == "__sem_byte_view_slice" || name == "__sem_view_slice" || name == "__sem_view_slice_32" || name == "__sem_view_slice_wide") {
     return abi([borrow_mode(), value_mode(), value_mode()], true);
   }
   if (name == "__sem_view_release") {

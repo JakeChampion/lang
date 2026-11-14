@@ -57,6 +57,12 @@ func TestSelfHostChainChecksInLinearTime(t *testing.T) {
 		{"negations", 1000, func(n int) string {
 			return inMain("let x: i32 = " + strings.Repeat("-", n) + "1;")
 		}},
+		{"negations of a name", 1000, func(n int) string {
+			return inMain("let x: i32 = " + strings.Repeat("-", n) + "y;")
+		}},
+		{"parentheses", 600, func(n int) string {
+			return inMain("let x: i32 = " + strings.Repeat("(", n) + "y" + strings.Repeat(")", n) + ";")
+		}},
 		{"casts", 1000, func(n int) string {
 			return inMain("let x: i32 = y" + strings.Repeat(" as i32", n) + ";")
 		}},
@@ -65,10 +71,15 @@ func TestSelfHostChainChecksInLinearTime(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			short := fastest(t, tc.chain(tc.links))
-			long := fastest(t, tc.chain(4*tc.links))
-			t.Logf("%d links: %v, %d links: %v", tc.links, short, 4*tc.links, long)
-			if long > 10*short {
+			// The time above a program with no chain, so the start of the
+			// compiler does not hide a square law.
+			base := fastest(t, tc.chain(0))
+			short := max(fastest(t, tc.chain(tc.links))-base, time.Millisecond)
+			long := fastest(t, tc.chain(4*tc.links)) - base
+			t.Logf("no links: %v, %d links: +%v, %d links: +%v", base, tc.links, short, 4*tc.links, long)
+			// Four times the length gives 4 for a linear time, 8 for the
+			// power 1.5 and 16 for a square law.
+			if long > 8*short {
 				t.Errorf("%d links take %v and %d links take %v: the time grows faster than the length", tc.links, short, 4*tc.links, long)
 			}
 		})

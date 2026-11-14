@@ -1,4 +1,11 @@
 function __fern_arr_concat(pa: usize, src: usize, nb: i32, width: i32): i32[] {
+  let size = 8;
+  if (width == 8) {
+    size = 1;
+  } else if (width == 32) {
+    size = 4;
+  }
+  let per = 8 / size;
   let na = __load_i32(pa);
   let m = na + nb;
   let want = m;
@@ -7,27 +14,28 @@ function __fern_arr_concat(pa: usize, src: usize, nb: i32, width: i32): i32[] {
       return __raw_array(pa);
     }
     let capw = __load_i32(pa - 16);
-    let need = m;
-    if (width == 8) {
-      need = (m + 7) / 8;
-    }
-    if (need <= capw) {
-      if (width == 8) {
-        __memcpy(pa + 8 + na as usize, src, nb);
-      } else {
-        let dst = pa + 8 + (na * 8) as usize;
-        let from = src;
-        let left = nb;
-        while (left > 0) {
-          let cc = left;
-          if (cc > 134217728) {
-            cc = 134217728;
-          }
-          __memcpy(dst, from, cc * 8);
-          dst = dst + (cc * 8) as usize;
-          from = from + (cc * 8) as usize;
-          left -= cc;
+    if ((m + per - 1) / per <= capw) {
+      let dst = pa + 8;
+      let skip = na;
+      while (skip > 0) {
+        let cs = skip;
+        if (cs > 134217728) {
+          cs = 134217728;
         }
+        dst = dst + (cs * size) as usize;
+        skip -= cs;
+      }
+      let from = src;
+      let left = nb;
+      while (left > 0) {
+        let cc = left;
+        if (cc > 134217728) {
+          cc = 134217728;
+        }
+        __memcpy(dst, from, cc * size);
+        dst = dst + (cc * size) as usize;
+        from = from + (cc * size) as usize;
+        left -= cc;
       }
       __store_i64(pa, m as i64);
       return __raw_array(pa);
@@ -36,14 +44,7 @@ function __fern_arr_concat(pa: usize, src: usize, nb: i32, width: i32): i32[] {
       want = na * 2;
     }
   }
-  if (width == 8) {
-    let p = __raw_arr_box((want + 7) / 8);
-    __store_i64(p, m as i64);
-    __memcpy(p + 8, pa + 8, na);
-    __memcpy(p + 8 + na as usize, src, nb);
-    return __raw_array(p);
-  }
-  let q = __raw_arr_box(want);
+  let q = __raw_arr_box((want + per - 1) / per);
   __store_i64(q, m as i64);
   let dst2 = q + 8;
   let src2 = pa + 8;
@@ -55,9 +56,9 @@ function __fern_arr_concat(pa: usize, src: usize, nb: i32, width: i32): i32[] {
       if (cc2 > 134217728) {
         cc2 = 134217728;
       }
-      __memcpy(dst2, src2, cc2 * 8);
-      dst2 = dst2 + (cc2 * 8) as usize;
-      src2 = src2 + (cc2 * 8) as usize;
+      __memcpy(dst2, src2, cc2 * size);
+      dst2 = dst2 + (cc2 * size) as usize;
+      src2 = src2 + (cc2 * size) as usize;
       left2 -= cc2;
     }
     src2 = src;
