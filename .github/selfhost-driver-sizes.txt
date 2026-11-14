@@ -652,16 +652,16 @@
 # tolerance is unchanged.
 # 2026-11-13: runtime_run measured 17506224 bytes (+5.0%) by driver-sizes-x86_64
 # job 132133327747 on main 88a72e60. The 5% tolerance is unchanged.
-# 2026-11-13: two rows measured by driver-sizes-x86_64 job 132213603632 on #15783, merged with
-# main 38768eb2. #15783 changes one name in compiler/semsource.fern and no code. Main grew the rows
-# past the 5% tolerance with the ChaCha20-Poly1305 kernel of #15767: asm_ir_run +5.3% and
-# fern.fern/stage2 +5.2%. The 5% tolerance is unchanged.
+# 2026-11-13: asm_ir_run measured 11612368 bytes (+5.3%) and fern.fern/stage2
+# 17583184 bytes (+5.2%) by driver-sizes-x86_64 job 132181685324 on ea8b1577,
+# main 38768eb2 with #15781. #15767 adds the fused ChaCha20-Poly1305 kernel to
+# each backend. The 5% tolerance is unchanged.
 fern.fern/stage2 17583184
 fern.fern 17504544
 drivers/runtime_run.fern 17506224
 drivers/asm_load_run.fern 13460128
 drivers/asm_modload_run.fern 11961344
-drivers/asm_ir_run.fern 11612384
+drivers/asm_ir_run.fern 11612368
 drivers/asm_run.fern 10091776
 drivers/wasm_ir_run.fern 9677328
 drivers/wasm_run.fern 9688304
