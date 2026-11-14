@@ -7,6 +7,7 @@ import "std/string";
 import "./colors";
 import "./encoding";
 import "./hyperlink";
+import "std/pcre";
 
 // What rg does: write the selected lines, count them, name the files with
 // or without a selected line, list the files to search, or list the types.
@@ -997,6 +998,79 @@ function inline_flags(o: Options): string {
     out += "(?i)";
   }
   return out;
+}
+
+// The pattern of PCRE2 from the -e patterns, as grep-pcre2 builds it: each
+// pattern in a group, with -F its marks escaped, and the groups as one
+// alternation. -x and -w add assertions around it.
+pub function pcre_pattern(o: Options): string {
+  let body = pcre_joined(o);
+  if (o.has(LINE)) {
+    return "(?m:^)(?:" + body + ")(?m:$)";
+  }
+  if (o.has(WORD)) {
+    return "(?<!\\w)(?:" + body + ")(?!\\w)";
+  }
+  return body;
+}
+
+function pcre_joined(o: Options): string {
+  if (o.patterns.len() == 0) {
+    return "(?!)";
+  }
+  let parts: string[] = [];
+  for p in o.patterns {
+    parts = parts.append("(?:" + (if (o.has(FIXED)) { pcre_escape(p) } else { p }) + ")");
+  }
+  return parts.join("|");
+}
+
+// `p` with a backslash before each mark that PCRE2 reads, as the pcre2
+// crate escapes a literal.
+function pcre_escape(p: string): string {
+  let out = "";
+  for k in 0..p.len() {
+    if (__memchr("\\.+*?()|[]{}^$#-", p[k] as i32, 0) >= 0) {
+      out += "\\";
+    }
+    out = out + slice_unchecked(p, k, k + 1);
+  }
+  return out;
+}
+
+// The options of PCRE2 that ripgrep sets: multi-line always, the case,
+// UTF with the Unicode classes unless --no-unicode, dotall with -U and
+// --multiline-dotall, and CRLF with --crlf. With --smart-case, the pattern
+// ignores the case when it has no capital letter outside an escape.
+pub function pcre_options(o: Options): pcre.Options {
+  let caseless = if (o.case != 2) { o.case == 1 } else { !pcre_upper(pcre_joined(o)) };
+  return pcre.Options {
+    ...pcre.options(), caseless: caseless, multiline: true, dotall: o.has(MULTILINE) && o.has(DOTALL), extended: false,
+    utf: !o.has(NO_UNICODE), crlf: o.eol == "\r\n",
+  };
+}
+
+// Whether a character after no backslash is a capital letter.
+function pcre_upper(p: string): boolean {
+  let i = 0;
+  while (i < p.len()) {
+    if (p[i] == 92u8) {
+      i += 2;
+      while (i < p.len() && (p[i] as i32 & 192) == 128) {
+        i += 1;
+      }
+      continue;
+    }
+    let start = i;
+    i += 1;
+    while (i < p.len() && (p[i] as i32 & 192) == 128) {
+      i += 1;
+    }
+    if (has_upper(slice_unchecked(p, start, i) + "")) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // A pattern that matches nothing, for -f with no pattern.

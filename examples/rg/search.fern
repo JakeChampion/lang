@@ -9,6 +9,7 @@ import "./colors";
 import "./flags";
 import "./hyperlink";
 import "./jsonl";
+import "./matcher";
 
 // How one file is written. `show_name` and `color` are already resolved.
 pub struct Printer {
@@ -260,7 +261,7 @@ function push_field(p: Printer, h: usize, before: string, color: string, text: s
 
 // The next match in `line` at or after `from`. As in ripgrep, an empty match
 // that starts where the last match ended does not count.
-pub function next_match(re: regex.Regex, line: string, from: i32, last_end: i32): Option[regex.Match] {
+pub function next_match(re: matcher.Matcher, line: string, from: i32, last_end: i32): Option[regex.Match] {
   let at = from;
   while (at <= line.len()) {
     let Some(m) = re.find_at(line, at) else {
@@ -279,7 +280,7 @@ pub function next_match(re: regex.Regex, line: string, from: i32, last_end: i32)
 struct Hit { start: i32, end: i32, text: string }
 
 // The next match as next_match finds it, with the text that it writes.
-function next_hit(p: Printer, re: regex.Regex, line: string, from: i32, last_end: i32): Option[Hit] {
+function next_hit(p: Printer, re: matcher.Matcher, line: string, from: i32, last_end: i32): Option[Hit] {
   let Some(tmpl) = p.replace else {
     let Some(m) = next_match(re, line, from, last_end) else {
       return None;
@@ -307,7 +308,7 @@ function next_hit(p: Printer, re: regex.Regex, line: string, from: i32, last_end
 }
 
 @inline
-function count_matches(re: regex.Regex, line: string): i32 {
+function count_matches(re: matcher.Matcher, line: string): i32 {
   let count = 0;
   let at = 0;
   let last = -1;
@@ -323,7 +324,7 @@ function count_matches(re: regex.Regex, line: string): i32 {
 }
 
 // The column of the first match of `line`, from 1.
-function first_column(re: regex.Regex, line: string): i32 {
+function first_column(re: matcher.Matcher, line: string): i32 {
   let Some(m) = next_match(re, line, 0, -1) else {
     return 1;
   };
@@ -365,7 +366,7 @@ function finds(p: Printer): boolean {
   return aware(p) || granular(p);
 }
 
-function marked(p: Printer, re: regex.Regex, line: string): Marked {
+function marked(p: Printer, re: matcher.Matcher, line: string): Marked {
   if (!finds(p)) {
     let spans: i32[] = [];
     return Marked { text: line, spans: spans };
@@ -375,7 +376,7 @@ function marked(p: Printer, re: regex.Regex, line: string): Marked {
 
 // The text of a line and the spans of its matches, or with -r of their
 // replacements.
-function marked_spans(p: Printer, re: regex.Regex, line: string): Marked {
+function marked_spans(p: Printer, re: matcher.Matcher, line: string): Marked {
   let spans: i32[] = [];
   let h = buf_new(line.len());
   let at = 0;
@@ -483,7 +484,7 @@ function after_chars(text: string, from: i32, n: i32): i32 {
 // Writes the text of a line after --trim. With -M, a longer line is a note,
 // or with --max-columns-preview its first characters and a note. When the
 // printer finds the matches, a note counts them.
-function push_body(p: Printer, re: regex.Regex, h: usize, line: string, selected: boolean): void {
+function push_body(p: Printer, re: matcher.Matcher, h: usize, line: string, selected: boolean): void {
   push_marked_line(p, h, marked(p, re, line), selected, finds(p));
 }
 
@@ -540,7 +541,7 @@ function as_is(p: Printer): boolean {
 
 // Writes a line with its fields. A selected line has `:` after its fields,
 // and a context line `-`.
-function push_line(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan, start: i32, end: i32, ln: i32, sep: string): void {
+function push_line(p: Printer, re: matcher.Matcher, h: usize, name: string, s: Scan, start: i32, end: i32, ln: i32, sep: string): void {
   if (p.json) {
     jsonl.line(h, json_kind(sep), name, s.text, start, end, ln, json_matches(p, re, s, start, end, sep));
     return;
@@ -571,7 +572,7 @@ function push_line(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan,
 // Each match of a selected line on a line of its own, for -o. With -r, the
 // column and the byte offset count the replacements before the match, as
 // in ripgrep.
-function push_only(p: Printer, re: regex.Regex, h: usize, name: string, start: i32, line: string, ln: i32, eol: string): void {
+function push_only(p: Printer, re: matcher.Matcher, h: usize, name: string, start: i32, line: string, ln: i32, eol: string): void {
   let at = 0;
   let last = -1;
   let shift = 0;
@@ -606,7 +607,7 @@ function push_only_text(p: Printer, h: usize, text: string): void {
 // match unless --no-column comes after it.
 // With -r, the line has each match replaced, and the column is that of the
 // replacement. Only the match of the row has color.
-function push_vimgrep(p: Printer, re: regex.Regex, h: usize, name: string, start: i32, line: string, ln: i32, eol: string): void {
+function push_vimgrep(p: Printer, re: matcher.Matcher, h: usize, name: string, start: i32, line: string, ln: i32, eol: string): void {
   let m = marked_spans(p, re, line);
   let k = 0;
   while (k < m.spans.len()) {
@@ -626,7 +627,7 @@ function json_kind(sep: string): string {
 
 // The spans of the matches of a line for --json: none for a context line
 // and for a line that -v selects.
-function json_matches(p: Printer, re: regex.Regex, s: Scan, start: i32, end: i32, sep: string): i32[] {
+function json_matches(p: Printer, re: matcher.Matcher, s: Scan, start: i32, end: i32, sep: string): i32[] {
   let out: i32[] = [];
   if (sep != ":" || p.invert) {
     return out;
@@ -672,7 +673,7 @@ function begin(): Cursor {
   return Cursor { start: 0, ln: 0, cand: -1 };
 }
 
-function candidate(re: regex.Regex, text: string, c: Cursor, term: i32): i32 {
+function candidate(re: matcher.Matcher, text: string, c: Cursor, term: i32): i32 {
   if (c.cand >= c.start) {
     return c.cand;
   }
@@ -687,7 +688,7 @@ function candidate(re: regex.Regex, text: string, c: Cursor, term: i32): i32 {
 // The start of the next line at or after `from` that holds the bytes that
 // each match holds, or -1. A match is in one line, so the lines before it
 // hold no match.
-function inner_line(re: regex.Regex, text: string, from: i32, term: i32): i32 {
+function inner_line(re: matcher.Matcher, text: string, from: i32, term: i32): i32 {
   let at = re.next_inner(text, from);
   if (at <= from) {
     return at;
@@ -699,7 +700,7 @@ function inner_line(re: regex.Regex, text: string, from: i32, term: i32): i32 {
 // The cursor at the line of the next candidate before `end`. The lines
 // before it hold no match. Without `numbered`, the line number of the cursor
 // does not count the lines that it skips.
-function jump(re: regex.Regex, text: string, c: Cursor, end: i32, term: i32, numbered: boolean): Cursor {
+function jump(re: matcher.Matcher, text: string, c: Cursor, end: i32, term: i32, numbered: boolean): Cursor {
   let cand = candidate(re, text, c, term);
   if (cand >= end) {
     let last = if (end > c.start) { end } else { c.start };
@@ -718,7 +719,7 @@ function jump(re: regex.Regex, text: string, c: Cursor, end: i32, term: i32, num
 
 // Whether the line from `c.start` to `end` is selected. The cursor keeps the
 // candidate that it found.
-function selected(re: regex.Regex, text: string, c: Cursor, end: i32, term: i32, invert: boolean): (boolean, Cursor) {
+function selected(re: matcher.Matcher, text: string, c: Cursor, end: i32, term: i32, invert: boolean): (boolean, Cursor) {
   let cand = candidate(re, text, c, term);
   let next = Cursor { ...c, cand: cand };
   if (cand > end) {
@@ -889,7 +890,7 @@ struct Counted { n: i32, lines: i32, binary: boolean, upto: i32, matches: i32 }
 // The counts of the selected lines. The count stops at -m, with
 // `stop_first` at the first selected line, and with --stop-on-nonmatch at
 // a line after a selected line that is not selected.
-function count(p: Printer, re: regex.Regex, s: Scan, stop_first: boolean): Counted {
+function count(p: Printer, re: matcher.Matcher, s: Scan, stop_first: boolean): Counted {
   let text = s.text;
   let n = Counted { n: 0, lines: 0, binary: false, upto: text.len(), matches: 0 };
   let (by_match, all) = count_modes(p);
@@ -905,6 +906,9 @@ function count(p: Printer, re: regex.Regex, s: Scan, stop_first: boolean): Count
     }
     let end = line_end(text, c.start, s.end, s.term);
     let (yes, next) = selected(re, text, c, end, s.term, p.invert);
+    if (re.failed()) {
+      break;
+    }
     if (yes) {
       n = count_line(re, s, c.start, end, n, all, by_match);
     }
@@ -942,7 +946,7 @@ function count_stops(p: Printer, n: Counted, yes: boolean, stop_first: boolean):
 // byte stops the search of a walk.
 // With `all`, the line also counts its matches. With `by_match`, the
 // count is of the matches and not of the lines.
-function count_line(re: regex.Regex, s: Scan, start: i32, end: i32, n: Counted, all: boolean, by_match: boolean): Counted {
+function count_line(re: matcher.Matcher, s: Scan, start: i32, end: i32, n: Counted, all: boolean, by_match: boolean): Counted {
   let line = slice_unchecked(s.text, start, end);
   if (s.check_lines && s.quit && __memchr(line, 0, 0) >= 0) {
     return Counted { ...n, n: 0, binary: true };
@@ -1034,7 +1038,7 @@ function push_separator(p: Printer, h: usize, g: Group, first: i32): void {
 
 // Writes the lines before line `ln`, from line `first`, as context. The
 // search can stop at one of them.
-function push_before(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan, start: i32, ln: i32, first: i32, g0: Group): Group {
+function push_before(p: Printer, re: matcher.Matcher, h: usize, name: string, s: Scan, start: i32, ln: i32, first: i32, g0: Group): Group {
   let starts: i32[] = [];
   let at = start;
   for _ in first..ln {
@@ -1076,7 +1080,7 @@ function stops_match(s: Scan, g: Group, start: i32, end: i32): Group {
 // line starts a new group. Once the searcher knows that the file is
 // binary, the sink stops at the next line, and a selected line still
 // counts.
-function push_group(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan, start: i32, ln: i32, g0: Group): Group {
+function push_group(p: Printer, re: matcher.Matcher, h: usize, name: string, s: Scan, start: i32, ln: i32, g0: Group): Group {
   let first = ln - p.before;
   if (first <= g0.last) {
     first = g0.last + 1;
@@ -1109,7 +1113,7 @@ function push_group(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan
 
 // The matches of a selected line, when the search counts them.
 @inline
-function line_matches(p: Printer, re: regex.Regex, s: Scan, start: i32, end: i32): i32 {
+function line_matches(p: Printer, re: matcher.Matcher, s: Scan, start: i32, end: i32): i32 {
   if (!p.counts || p.invert) {
     return 0;
   }
@@ -1118,7 +1122,7 @@ function line_matches(p: Printer, re: regex.Regex, s: Scan, start: i32, end: i32
 
 // A selected line past -m: the sink of ripgrep writes it as a match in the
 // after-context, and it uses one line of that context.
-function push_over(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan, start: i32, end: i32, ln: i32, g0: Group): Group {
+function push_over(p: Printer, re: matcher.Matcher, h: usize, name: string, s: Scan, start: i32, end: i32, ln: i32, g0: Group): Group {
   let g = stops(s, g0, start, end);
   if (g.stopped) {
     return g;
@@ -1128,7 +1132,7 @@ function push_over(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan,
   return Group { ...g, last: ln, after_left: left, stopped: left == 0 };
 }
 
-function push_after(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan, start: i32, end: i32, ln: i32, g0: Group): Group {
+function push_after(p: Printer, re: matcher.Matcher, h: usize, name: string, s: Scan, start: i32, end: i32, ln: i32, g0: Group): Group {
   let g = stops(s, g0, start, end);
   if (g.stopped) {
     return g;
@@ -1139,7 +1143,7 @@ function push_after(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan
 }
 
 // A line that --passthru writes as context.
-function push_passthru(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan, start: i32, end: i32, ln: i32, g0: Group): Group {
+function push_passthru(p: Printer, re: matcher.Matcher, h: usize, name: string, s: Scan, start: i32, end: i32, ln: i32, g0: Group): Group {
   let g = stops(s, g0, start, end);
   if (g.stopped) {
     return g;
@@ -1150,7 +1154,7 @@ function push_passthru(p: Printer, re: regex.Regex, h: usize, name: string, s: S
 }
 
 @inline
-function step_line(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan, start: i32, end: i32, ln: i32, yes: boolean, g: Group): Group {
+function step_line(p: Printer, re: matcher.Matcher, h: usize, name: string, s: Scan, start: i32, end: i32, ln: i32, yes: boolean, g: Group): Group {
   if (yes && g.count == p.max_count) {
     return push_over(p, re, h, name, s, start, end, ln, g);
   }
@@ -1181,7 +1185,7 @@ function skips(p: Printer, selected: i32, after_left: i32): boolean {
 
 // The lines of a file. With --stop-on-nonmatch, the search stops after a
 // line that is not selected and comes after a selected line.
-function search_lines(p: Printer, re: regex.Regex, s: Scan, name: string, h: usize, written: boolean): Outcome {
+function search_lines(p: Printer, re: matcher.Matcher, s: Scan, name: string, h: usize, written: boolean): Outcome {
   let g = Group { last: 0, after_left: 0, wrote: written, count: 0, known: false, stopped: false, offset: s.offset, matches: 0 };
   let c = begin();
   let upto = s.text.len();
@@ -1195,6 +1199,9 @@ function search_lines(p: Printer, re: regex.Regex, s: Scan, name: string, h: usi
     let start = c.start;
     let end = line_end(s.text, start, s.end, s.term);
     let (yes, next) = selected(re, s.text, c, end, s.term, p.invert);
+    if (re.failed()) {
+      break;
+    }
     c = advance(next, end);
     g = step_line(p, re, h, name, s, start, end, c.ln, yes, g);
     if (!yes && p.stop_on_nonmatch && g.count > 0) {
@@ -1206,7 +1213,7 @@ function search_lines(p: Printer, re: regex.Regex, s: Scan, name: string, h: usi
 }
 
 // The spans of the matches of the whole text, for -U.
-function text_matches(re: regex.Regex, s: Scan): i32[] {
+function text_matches(re: matcher.Matcher, s: Scan): i32[] {
   let out: i32[] = [];
   let at = 0;
   let last = -1;
@@ -1275,7 +1282,7 @@ function lines_in(s: Scan, lo: i32, hi: i32): i32 {
 }
 
 // The search of -U: each block of lines that a match covers is selected.
-function search_blocks(p: Printer, re: regex.Regex, s: Scan, name: string, h: usize, written: boolean): Outcome {
+function search_blocks(p: Printer, re: matcher.Matcher, s: Scan, name: string, h: usize, written: boolean): Outcome {
   let ms = text_matches(re, s);
   let bs = text_blocks(s.text, s.term, ms);
   let g = Group { last: 0, after_left: 0, wrote: written, count: 0, known: false, stopped: false, offset: s.offset, matches: 0 };
@@ -1311,7 +1318,7 @@ function block_lines(s: Scan, bs: i32[]): i32 {
 
 // The lines from `lo` to `hi` that are after-context or --passthru lines.
 // `ln` is the number of the line at `lo`.
-function push_between(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan, lo: i32, hi: i32, ln: i32, g0: Group): Group {
+function push_between(p: Printer, re: matcher.Matcher, h: usize, name: string, s: Scan, lo: i32, hi: i32, ln: i32, g0: Group): Group {
   let g = g0;
   let start = lo;
   let n = ln;
@@ -1325,7 +1332,7 @@ function push_between(p: Printer, re: regex.Regex, h: usize, name: string, s: Sc
 }
 
 // Writes a block of -U with its before-context and a separator.
-function push_block_group(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan, lo: i32, hi: i32, ln: i32, ms: i32[], g0: Group): Group {
+function push_block_group(p: Printer, re: matcher.Matcher, h: usize, name: string, s: Scan, lo: i32, hi: i32, ln: i32, ms: i32[], g0: Group): Group {
   let first = ln - p.before;
   if (first <= g0.last) {
     first = g0.last + 1;
@@ -1358,7 +1365,7 @@ function block_matches(ms: i32[], lo: i32, hi: i32): i32[] {
 
 // Writes the lines of a block of -U. `found` holds the spans of its
 // matches in the text.
-function push_block(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan, lo: i32, hi: i32, ln: i32, found: i32[]): void {
+function push_block(p: Printer, re: matcher.Matcher, h: usize, name: string, s: Scan, lo: i32, hi: i32, ln: i32, found: i32[]): void {
   if (p.json) {
     let end = if (hi > lo && s.text[hi - 1] as i32 == s.term) { hi - 1 } else { hi };
     jsonl.line(h, "match", name, s.text, lo, end, ln, shifted(found, -lo));
@@ -1395,7 +1402,7 @@ function shifted(spans: i32[], by: i32): i32[] {
 
 // The text of a block as the output writes it, with the spans to show in
 // color: with -r each match replaced.
-function block_text(p: Printer, re: regex.Regex, s: Scan, lo: i32, hi: i32, found: i32[]): Marked {
+function block_text(p: Printer, re: matcher.Matcher, s: Scan, lo: i32, hi: i32, found: i32[]): Marked {
   let spans: i32[] = [];
   if (p.replace == None) {
     return Marked { text: slice_unchecked(s.text, lo, hi).to_owned(), spans: if (p.match_colored) { shifted(found, -lo) } else { spans } };
@@ -1448,7 +1455,7 @@ function push_block_text(p0: Printer, h: usize, name: string, s: Scan, lo: i32, 
 // -o with -U: each match, or its replacement, with each of its lines on a
 // line of its own. As in ripgrep 14.1.0, the line, the column and the byte
 // offset come from the position of the match in the block as it is written.
-function push_block_only(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan, lo: i32, hi: i32, ln: i32, found: i32[]): void {
+function push_block_only(p: Printer, re: matcher.Matcher, h: usize, name: string, s: Scan, lo: i32, hi: i32, ln: i32, found: i32[]): void {
   let m = if (p.replace == None) { Marked { text: slice_unchecked(s.text, lo, hi).to_owned(), spans: shifted(found, -lo) } } else { block_text(p, re, s, lo, hi, found) };
   let k = 0;
   while (k < m.spans.len()) {
@@ -1471,7 +1478,7 @@ function push_block_only(p: Printer, re: regex.Regex, h: usize, name: string, s:
 
 // --vimgrep with -U: the first line of each match, with the column of the
 // match.
-function push_block_vimgrep(p: Printer, re: regex.Regex, h: usize, name: string, s: Scan, lo: i32, ln: i32, found: i32[]): void {
+function push_block_vimgrep(p: Printer, re: matcher.Matcher, h: usize, name: string, s: Scan, lo: i32, ln: i32, found: i32[]): void {
   let k = 0;
   while (k < found.len()) {
     let start = line_start(s.text, found[k], s.term);
@@ -1487,7 +1494,7 @@ function push_block_vimgrep(p: Printer, re: regex.Regex, h: usize, name: string,
 
 // The regions of -v with -U: the search starts again after the lines of
 // each match, so a match that starts in those lines is not found.
-function inverted_regions(re: regex.Regex, s: Scan): i32[] {
+function inverted_regions(re: matcher.Matcher, s: Scan): i32[] {
   let out: i32[] = [];
   let at = 0;
   while (at <= s.end) {
@@ -1502,7 +1509,7 @@ function inverted_regions(re: regex.Regex, s: Scan): i32[] {
 }
 
 // -v with -U: the lines outside the regions are selected.
-function search_inverted_blocks(p: Printer, re: regex.Regex, s: Scan, name: string, h: usize, written: boolean): Outcome {
+function search_inverted_blocks(p: Printer, re: matcher.Matcher, s: Scan, name: string, h: usize, written: boolean): Outcome {
   let rs = inverted_regions(re, s);
   let g = Group { last: 0, after_left: 0, wrote: written, count: 0, known: false, stopped: false, offset: s.offset, matches: 0 };
   let c = begin();
@@ -1521,7 +1528,7 @@ function search_inverted_blocks(p: Printer, re: regex.Regex, s: Scan, name: stri
 }
 
 // The counts of -U: of the matches. With -v, ripgrep 14.1.0 counts none.
-function multi_counted(p: Printer, re: regex.Regex, s: Scan): Counted {
+function multi_counted(p: Printer, re: matcher.Matcher, s: Scan): Counted {
   if (p.invert) {
     return Counted { n: 0, lines: 0, binary: false, upto: s.text.len(), matches: 0 };
   }
@@ -1551,7 +1558,7 @@ function outcome(matched: boolean, written: boolean, upto: i32): Outcome {
 // The output of a summary mode: -c, --count-matches, -l and
 // --files-without-match. As in ripgrep, a walked file in which the search
 // finds binary data has no output, and counts as a file with no match.
-function summary(p: Printer, re: regex.Regex, s: Scan, name: string, h: usize, written: boolean): Outcome {
+function summary(p: Printer, re: matcher.Matcher, s: Scan, name: string, h: usize, written: boolean): Outcome {
   let first = p.mode != flags.Count && p.mode != flags.CountMatches;
   let c = if (p.multiline) { multi_counted(p, re, s) } else { count(p, re, s, (first || p.quiet) && !p.counts) };
   let stats = Stats { matches: c.matches, lines: c.lines, printed: 0i64, searched: 0i64 };
@@ -1590,7 +1597,7 @@ function push_summary(p: Printer, h: usize, name: string, c: Counted): void {
 }
 
 // The search of the lines of a file, with or without -U.
-function search_any(p: Printer, re: regex.Regex, s: Scan, name: string, h: usize, written: boolean): Outcome {
+function search_any(p: Printer, re: matcher.Matcher, s: Scan, name: string, h: usize, written: boolean): Outcome {
   if (!p.multiline) {
     return search_lines(p, re, s, name, h, written);
   }
@@ -1613,7 +1620,7 @@ function push_json_end(h: usize, name: string, s: Scan, out: Outcome, nanos: i64
 // Searches the text of one file and writes its output to `h`. `src` says
 // how ripgrep reads the file, and `written` says whether an earlier file
 // wrote output.
-pub function search(p0: Printer, re: regex.Regex, text: string, name: string, src: Source, h: usize, written: boolean): Outcome {
+pub function search(p0: Printer, re: matcher.Matcher, text: string, name: string, src: Source, h: usize, written: boolean): Outcome {
   let t0 = monotonic_ns();
   let p = if (p0.multiline) { Printer { ...p0, multiline: re.can_match_byte(p0.term as u8) } } else { p0 };
   let before = buf_len(h);
