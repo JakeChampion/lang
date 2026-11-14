@@ -335,14 +335,14 @@ function release(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, f: ssa
   }
   if (ssasem.is_map(t) && ssasem.keyed_map_key(ssasem.map_key(t))) {
     r = emit(r, ir.op_load_local(slot));
-    r = emit(r, ir.op_const_closure(env_release_name(ssasem.map_key(t)), word_signature(2)));
-    r = emit(r, ir.op_const_closure(value_env_release(ssasem.map_value(t)), word_signature(2)));
+    r = emit(r, ir.op_const_closure(env_release_name(ssasem.map_key(t)), release_signature()));
+    r = emit(r, ir.op_const_closure(value_env_release(ssasem.map_value(t)), release_signature()));
     r = emit(r, ir.op_call_direct(release_name(t, f), 3));
     return emit(r, ir.op_drop());
   }
   if (ssasem.is_map(t) && routed_box(ssasem.map_value(t))) {
     r = emit(r, ir.op_load_local(slot));
-    r = emit(r, ir.op_const_closure(env_release_name(ssasem.map_value(t)), word_signature(2)));
+    r = emit(r, ir.op_const_closure(env_release_name(ssasem.map_value(t)), release_signature()));
     r = emit(r, ir.op_call_direct(release_name(t, f), 2));
     return emit(r, ir.op_drop());
   }
@@ -703,7 +703,7 @@ function drop_captures(own r: irtables.LowerState, slot: i32, fn_ty: typeinfo.Ty
   for rec in env_records(f, fn_ty) {
     r = else_if_open(r, open);
     r = body_address(r, slot);
-    r = emit(r, ir.op_const_func(ir.cfi_sig_hash(full_signature_tag(fn_ty)), semtypes.env_body(rec.ty)));
+    r = emit(r, ir.op_const_func(signature_word(fn_ty), semtypes.env_body(rec.ty)));
     r = emit(r, ir.op_bin("eq", 0, false));
     r = emit(r, ir.op_if(0));
     r = helper(r, slot, drop_helper_name(rec.ty));
@@ -3867,8 +3867,8 @@ function map_entry(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, p
   if (!ssasem.keyed_map_key(k)) {
     return emit(r, ir.op_call_direct(plain, argc));
   }
-  r = emit(r, ir.op_const_closure(key_closure_name(k, "hash"), word_signature(2)));
-  r = emit(r, ir.op_const_closure(key_closure_name(k, "eq"), word_signature(3)));
+  r = emit(r, ir.op_const_closure(key_closure_name(k, "hash"), key_hash_signature()));
+  r = emit(r, ir.op_const_closure(key_closure_name(k, "eq"), key_eq_signature()));
   return emit(r, ir.op_call_direct(keyed, argc + 2));
 }
 
@@ -5334,7 +5334,7 @@ function cell_write(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst):
 
 function function_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irtables.LowerState {
   if (ins.kind_tag == ssasem.closure_new()) {
-    let cfi = ir.cfi_sig_hash(full_signature_tag(f.values[ins.result]));
+    let cfi = signature_word(f.values[ins.result]);
     if (ins.args.len() == 0) {
       return emit(r, ir.op_const_closure(ins.str, cfi));
     }
@@ -5358,7 +5358,7 @@ function function_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SIns
 // A call through a function value of type `sig`: the wasm type tag and the
 // signature word a hardened native call checks against the callee's stub.
 function call_value_op(argc: i32, sig: typeinfo.Type): ir.Op {
-  return ir.op_call_indirect_sig(argc, signature_tag(sig), ir.cfi_sig_hash(full_signature_tag(sig)));
+  return ir.op_call_indirect_sig(argc, signature_tag(sig), signature_word(sig));
 }
 
 function body_address(own r: irtables.LowerState, slot: i32): irtables.LowerState {
@@ -5367,15 +5367,24 @@ function body_address(own r: irtables.LowerState, slot: i32): irtables.LowerStat
   return emit(r, ir.op_arr_get_nc(ir.width_ptr()));
 }
 
-// The signature word of a runtime helper closure whose `nparams` parameters,
-// the environment first, and result are all words, as the map runtime
-// declares its hash, equality and release parameters.
-function word_signature(nparams: i32): i32 {
-  let tag = "";
-  for _ in 0..nparams {
-    tag += "w";
-  }
-  return ir.cfi_sig_hash(tag + "_w");
+// The signature word of a function type: the hash of its parameter and
+// result types, which a hardened call compares with the callee's stub.
+function signature_word(sig: typeinfo.Type): i32 {
+  return ir.cfi_sig_hash(ssasem.type_key(sig));
+}
+
+// The signature words of the helper closures, for the function types the map
+// runtime declares its release, hash and equality parameters with.
+function release_signature(): i32 {
+  return ir.cfi_sig_hash("$fn$usize$usize");
+}
+
+function key_hash_signature(): i32 {
+  return ir.cfi_sig_hash("$fn$usize$i32");
+}
+
+function key_eq_signature(): i32 {
+  return ir.cfi_sig_hash("$fn$usize$usize$bool");
 }
 
 function full_signature_tag(sig: typeinfo.Type): string {
