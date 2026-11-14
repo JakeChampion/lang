@@ -360,12 +360,22 @@ pub function bytes_payload(o: Op): Op {
   return Op { ...o, i32_imm: 1 };
 }
 
+// The width of an array op is the width of its element: 8 for a byte, 32 for a
+// 4-byte integer, 64 for an 8-byte scalar, and width_ptr() for a pointer-width slot.
 pub function packed(o: Op): Op {
   return Op { ...o, width: 8 };
 }
 
 pub function is_packed(o: Op): boolean {
   return o.width == 8;
+}
+
+pub function compact(o: Op): Op {
+  return Op { ...o, width: 32 };
+}
+
+pub function is_compact(o: Op): boolean {
+  return o.width == 32;
 }
 
 pub function op_str_from_bytes(): Op {
@@ -2056,7 +2066,11 @@ pub function const_struct_is_bytes(packed: string): boolean {
 }
 
 pub function const_struct_is_array(packed: string): boolean {
-  return const_struct_type(packed) == "&arr" || const_struct_is_wide_array(packed) || const_struct_is_bytes(packed);
+  return const_struct_type(packed) == "&arr" || const_struct_is_wide_array(packed) || const_struct_is_bytes(packed) || const_struct_is_compact_array(packed);
+}
+
+pub function const_struct_is_compact_array(packed: string): boolean {
+  return const_struct_type(packed) == "&arr32";
 }
 
 pub function const_struct_is_wide_array(packed: string): boolean {

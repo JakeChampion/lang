@@ -49,7 +49,18 @@ function elem_width(t: typeinfo.Type): i32 {
   if (ssasem.is_u8(t)) {
     return 8;
   }
+  if (int32_elem(t)) {
+    return 32;
+  }
   return ir.width_ptr();
+}
+
+// An i32, a u32 or a char, which an array holds in 4 bytes.
+function int32_elem(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeI32(i) = t {
+    return i.width == 32;
+  }
+  return false;
 }
 
 // A view's elements belong to its source, but an untagged view is a box it
@@ -114,6 +125,9 @@ function arr_get_op(elem: typeinfo.Type, unchecked: boolean, f: ssasem.Func): ir
   if (unchecked) {
     op = ir.op_arr_get_nc(elem_width(elem));
   }
+  if (ssasem.is_u32(elem)) {
+    op = ir.Op { ...op, unsigned: true };
+  }
   if (ssasem.counted(f, elem)) {
     return ir.counted(op);
   }
@@ -137,6 +151,9 @@ function arr_push_op(elem: typeinfo.Type): ir.Op {
   if (ssasem.is_u8(elem)) {
     return ir.packed(ir.op_arr_push_owned());
   }
+  if (int32_elem(elem)) {
+    return ir.compact(ir.op_arr_push_owned());
+  }
   return ir.op_arr_push_owned();
 }
 
@@ -149,6 +166,9 @@ function arr_push_borrowed_op(elem: typeinfo.Type): ir.Op {
   }
   if (ssasem.is_u8(elem)) {
     return ir.packed(ir.op_arr_push());
+  }
+  if (int32_elem(elem)) {
+    return ir.compact(ir.op_arr_push());
   }
   return ir.op_arr_push();
 }
@@ -4041,6 +4061,9 @@ function array_shape(elem: typeinfo.Type): string {
   if (wide_or_float(elem)) {
     return "&arr64";
   }
+  if (int32_elem(elem)) {
+    return "&arr32";
+  }
   return "&arr";
 }
 
@@ -6520,7 +6543,7 @@ function raw_memory_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
     return Lowered { found: true, r: emit(r, ir.op_alloc_uninit()) };
   }
   if (ins.str == "__alloc_i32") {
-    return Lowered { found: true, r: emit(r, ir.op_alloc_slots(ir.width_ptr())) };
+    return Lowered { found: true, r: emit(r, ir.op_alloc_slots(32)) };
   }
   if (ins.str == "__alloc_i64" || ins.str == "__alloc_f64") {
     return Lowered { found: true, r: emit(r, ir.op_alloc_slots(64)) };

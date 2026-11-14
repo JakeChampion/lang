@@ -1389,7 +1389,7 @@ function float_def(ins: SInst): boolean {
 }
 
 function float_load(ins: SInst): boolean {
-  return ins.kind_tag == LD_AT || ins.kind_tag == ARR_AT && ins.str != "u8";
+  return ins.kind_tag == LD_AT || ins.kind_tag == ARR_AT && ins.str != "u8" && ins.str != "i32" && ins.str != "u32";
 }
 
 function float_use(ins: SInst): boolean {
@@ -5661,8 +5661,9 @@ function ext_transfer(f: SFunc, def_b: i32[], def_k: i32[], facts: i32[], ins: S
   if (k == SELECT) {
     return shared_facts(facts, ins.args, 1);
   }
-  if (byte_source(f, def_b, def_k, ins)) {
-    return EXT_BYTE;
+  let loaded = source_facts(f, def_b, def_k, ins);
+  if (loaded != 0) {
+    return loaded;
   }
   if (k == BINARY) {
     return binary_facts(f, def_b, def_k, facts, ins);
@@ -5800,17 +5801,28 @@ function unary_facts(ins: SInst, held: i32): i32 {
   return 0;
 }
 
-function byte_source(f: SFunc, def_b: i32[], def_k: i32[], ins: SInst): boolean {
+// What a load or a byte mask leaves in its register, or 0.
+function source_facts(f: SFunc, def_b: i32[], def_k: i32[], ins: SInst): i32 {
   if (ins.kind_tag == LD_BYTE) {
-    return true;
+    return EXT_BYTE;
   }
   if (ins.kind_tag == ARR_AT || ins.kind_tag == STR_AT) {
-    return ins.imm != 2 && (ins.kind_tag == STR_AT || ins.str == "u8");
+    return if (ins.imm == 2) { 0 } else { elem_facts(ins) };
   }
-  if (ins.kind_tag == BINARY && ins.str == "and" && ins.args.len() == 2) {
-    return const_in(f, def_b, def_k, ins.args[0], 0i64, 255i64) || const_in(f, def_b, def_k, ins.args[1], 0i64, 255i64);
+  if (ins.kind_tag == BINARY && ins.str == "and" && ins.args.len() == 2 && (const_in(f, def_b, def_k, ins.args[0], 0i64, 255i64) || const_in(f, def_b, def_k, ins.args[1], 0i64, 255i64))) {
+    return EXT_BYTE;
   }
-  return false;
+  return 0;
+}
+
+function elem_facts(ins: SInst): i32 {
+  if (ins.kind_tag == STR_AT || ins.str == "u8") {
+    return EXT_BYTE;
+  }
+  if (ins.str == "i32") {
+    return EXT_I32;
+  }
+  return if (ins.str == "u32") { EXT_U32 } else { 0 };
 }
 
 function const_zero(f: SFunc, def_b: i32[], def_k: i32[], v: i32): boolean {

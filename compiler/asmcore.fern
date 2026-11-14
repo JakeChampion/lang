@@ -1840,6 +1840,26 @@ pub function packed_suffix(packed: boolean): string {
   return "";
 }
 
+// The log2 of the elements that one word holds for the array op `o`.
+pub function elem_shift(o: ir.Op): i32 {
+  if (ir.is_packed(o)) {
+    return 3;
+  }
+  return if (ir.is_compact(o)) { 1 } else { 0 };
+}
+
+// The log2 of the elements that one word of an array holds, from the suffix
+// of a runtime call's name: 3 for bytes, 1 for 4-byte integers, 0 for words.
+pub function packed_shift(name: string): i32 {
+  if (name.ends_with("_u8")) {
+    return 3;
+  }
+  if (name.ends_with("_u32")) {
+    return 1;
+  }
+  return 0;
+}
+
 pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
   match (scrut) {
     ast.ExprIdent(id) => {
@@ -3807,6 +3827,9 @@ pub function const_agg_pack(own s: EmitState, packed: string, entry: string): Co
   if (ir.const_struct_is_bytes(packed)) {
     return ConstAggPack { state: s, text: "8|" + ir.const_struct_payload(packed) };
   }
+  if (ir.const_struct_is_compact_array(packed)) {
+    return ConstAggPack { state: s, text: "4|" + ir.const_struct_payload(packed) };
+  }
   let body = ir.const_struct_fn_body(packed);
   if (body.len() > 0) {
     let target = "__fn_" + sanitize_label(body) + entry;
@@ -3942,7 +3965,7 @@ function direct_need_deps(name: string): string[] {
     || name == "random_bytes" || name == "write_file_bytes" || name == "write_file_bytes_u8"
     || name == "str_from_bytes" || name == "alloc_u8"
     || name == "read_file_bytes_u8" || name == "random_bytes_u8"
-    || name == "str_bytes_u8" || name == "str_from_bytes_u8" || name == "str_from_bytes_range_u8" || name == "arr_slice_u8" || name == "alloc_bytes"
+    || name == "str_bytes_u8" || name == "str_from_bytes_u8" || name == "str_from_bytes_range_u8" || name == "arr_slice_u8" || name == "arr_slice_u32" || name == "alloc_bytes" || name == "alloc_u32"
     || name == "arr_push" || name == "arr_slice" || name == "str_own" || name == "str_borrow" || name == "str_grow"
     || name == "str_case" || name == "str_repeat"
     || name == "str_replace"
@@ -3953,7 +3976,7 @@ function direct_need_deps(name: string): string[] {
     let dtrim: string[] = ["heap", "str_concat"];
     return dtrim;
   }
-  if (name == "arr_push_u8") {
+  if (name == "arr_push_u8" || name == "arr_push_u32") {
     let du8: string[] = ["arr_push", "heap"];
     return du8;
   }
@@ -5540,7 +5563,7 @@ pub function emit_str_box_data_from(s: EmitState, first: i32): EmitState {
 }
 
 pub function const_agg_kind(packed: string): i32 {
-  if (packed.len() >= 2 && (packed[0] == b'8' || packed[0] == b'o') && packed[1] == b'|') {
+  if (packed.len() >= 2 && (packed[0] == b'8' || packed[0] == b'4' || packed[0] == b'o') && packed[1] == b'|') {
     return 1;
   }
   if (packed.len() >= 2 && packed[0] == b'0' && packed[1] == b'|') {
@@ -5598,6 +5621,9 @@ function emit_const_agg_block(st: EmitState, i: i32, e: string, array: boolean):
     return emit_const_bytes_block(st, i, ir.const_struct_payload(e));
   }
   let vals = ir.const_struct_values(e);
+  if (shp == "4") {
+    return emit_const_compact_block(st, i, vals);
+  }
   if (shp == "o") {
     return st.write("    .quad 2\n    .quad -1\n" + const_agg_label(st, i) + ":\n    .quad " + vals[0] + "\n    .quad 0\n");
   }
@@ -5646,6 +5672,15 @@ pub function emit_const_agg_refs(s: EmitState): EmitState {
     i += 1;
   }
   return s;
+}
+
+// A constant has no spare capacity, so an append copies it.
+function emit_const_compact_block(st: EmitState, i: i32, vals: string[]): EmitState {
+  st = st.write("    .quad 0\n    .quad -1\n" + const_agg_label(st, i) + ":\n    .quad " + util.i32_to_string(vals.len()) + "\n");
+  for v in vals {
+    st = st.write("    .long " + v + "\n");
+  }
+  return st.write("    .balign 8\n");
 }
 
 function emit_const_bytes_block(st: EmitState, i: i32, words: string): EmitState {
@@ -5716,6 +5751,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fern_alloc_size_abort",
     "__fern_arr_push_owned",
     "__fern_alloc_bytes", "__fern_arr_push_u8", "__fern_arr_push_owned_u8",
+    "__fern_alloc_u32", "__fern_arr_push_u32", "__fern_arr_push_owned_u32",
     "__fn___fern_str_view_free", "__fern_raw_free", "__fern_map_hash_seed",
     "__fern_buf_new", "__fern_buf_push", "__fern_buf_push_range", "__fern_buf_push_mapped", "__fern_buf_push_bytes_mapped", "__fern_buf_push_bytes_filtered", "__fern_buf_push_filtered", "__fern_buf_push_expanded", "__fern_buf_push_bytes_expanded",
     "__fern_buf_push_byte", "__fern_buf_push_u64", "__fern_buf_push_decimal", "__fern_buf_push_base64", "__fern_buf_push_base32", "__fern_buf_decode_base32", "__fern_buf_len", "__fern_buf_clear", "__fern_buf_take",

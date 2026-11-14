@@ -164,11 +164,15 @@ pub function lower_state_reads(own r: irtables.LowerState): irtables.LowerState 
   return irtables.LowerState { ...r, ops: ops, n_locals: next + 1 };
 }
 
-// `width` is the element width the array lowering uses: 8 for bytes, 64 for
-// eight-byte slots, and ir.width_ptr() for pointer-width slots.
+// `width` is the element width the array lowering uses: 8 for bytes, 32 for
+// 4-byte integers, 64 for eight-byte slots, and ir.width_ptr() for
+// pointer-width slots.
 pub function slice_name(width: i32): string {
   if (width == 8) {
     return "__sem_byte_view_slice";
+  }
+  if (width == 32) {
+    return "__sem_view_slice_32";
   }
   if (width == 64) {
     return "__sem_view_slice_wide";
@@ -181,6 +185,9 @@ function scaled(width: i32): ir.Op[] {
     return [];
   }
   let stride: ir.Op[] = [ir.op_ptr_width(), ir.op_int_extend(true)];
+  if (width == 32) {
+    stride = [ir.op_const_i64(4i64)];
+  }
   if (width == 64) {
     stride = [ir.op_const_i64(8i64)];
   }
@@ -375,7 +382,7 @@ pub function served_builtin(helper: string): string {
 }
 
 pub function state_helpers(): irtables.LowerState[] {
-  return [length(), data(), slice(8), slice(ir.width_ptr()), slice(64), release(), crc32(), crc32_ieee(), mismatch(), sum(), bsd()];
+  return [length(), data(), slice(8), slice(32), slice(ir.width_ptr()), slice(64), release(), crc32(), crc32_ieee(), mismatch(), sum(), bsd()];
 }
 
 pub function helpers(): Result[irtables.Lowered, irtables.LowerState][] {
