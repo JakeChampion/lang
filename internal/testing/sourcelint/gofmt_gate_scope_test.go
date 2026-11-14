@@ -16,6 +16,8 @@ func TestGofmtGateReadsGitsFileSetNotTheDirectory(t *testing.T) {
 	if _, err := os.Stat(gate); err != nil {
 		t.Fatalf("gate script missing: %v", err)
 	}
+	decoy := filepath.Join(t.TempDir(), "inherited.git")
+	t.Setenv("GIT_DIR", decoy)
 
 	const misformatted = "package p\n\nfunc  Bad( ) int {\nreturn 1\n}\n"
 
@@ -37,6 +39,7 @@ func TestGofmtGateReadsGitsFileSetNotTheDirectory(t *testing.T) {
 				t.Helper()
 				cmd := exec.Command(name, arg...)
 				cmd.Dir = dir
+				cmd.Env = gitEnv()
 				if out, err := cmd.CombinedOutput(); err != nil {
 					t.Fatalf("%s %v: %v\n%s", name, arg, err, out)
 				}
@@ -70,6 +73,7 @@ func TestGofmtGateReadsGitsFileSetNotTheDirectory(t *testing.T) {
 
 			cmd := exec.Command("bash", gate)
 			cmd.Dir = dir
+			cmd.Env = gitEnv()
 			out, err := cmd.CombinedOutput()
 			failed := err != nil
 
@@ -83,5 +87,8 @@ func TestGofmtGateReadsGitsFileSetNotTheDirectory(t *testing.T) {
 				t.Fatalf("gate named a path it should have passed over:\n%s", out)
 			}
 		})
+	}
+	if _, err := os.Stat(decoy); !os.IsNotExist(err) {
+		t.Fatalf("fixture commands used the inherited Git directory: %v", err)
 	}
 }
