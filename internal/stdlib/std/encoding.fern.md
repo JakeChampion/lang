@@ -30,6 +30,9 @@ function main(): i32 {
 
 ```fern
 <<*>>=
+// This module decodes text from the legacy encodings of the WHATWG Encoding
+// Standard to UTF-8.
+
 <<dependencies>>
 
 <<labels>>

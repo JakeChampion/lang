@@ -27,6 +27,8 @@ function main(): i32 {
 
 ```fern
 <<*>>=
+// This module runs a program as a child process, and collects all of its
+// standard output and its standard error.
 import "std/string";
 
 <<the search of the program>>

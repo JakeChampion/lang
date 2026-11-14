@@ -29,6 +29,8 @@ function main(): i32 {
 
 ```fern
 <<*>>=
+// This module decompresses the frames of LZ4, as the `lz4` tool writes them.
+
 <<errors>>
 
 <<frames>>

@@ -28,6 +28,8 @@ function main(): i32 {
 
 ```fern
 <<*>>=
+// This module decompresses the files of `xz`, and the `.lzma` files of LZMA
+// Utils.
 import "std/crypto";
 import "std/hash/crc32";
 

@@ -26,6 +26,8 @@ function main(): i32 {
 
 ```fern
 <<*>>=
+// This module decompresses the streams of bzip2.
+
 <<errors>>
 
 <<bits>>

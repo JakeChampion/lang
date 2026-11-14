@@ -27,6 +27,8 @@ function main(): i32 {
 
 ```fern
 <<*>>=
+// This module decompresses the `.Z` files of Unix `compress`.
+
 <<errors>>
 
 <<decode>>
