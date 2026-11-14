@@ -494,6 +494,7 @@ function __turned(t: async.Task[usize], st: async.TaskStatus[usize]): WorkerSlot
     Suspended(w) => {
       unsafe {
         let root: usize = __send_root(async.task_entry(t));
+        async.task_detach(t);
         return WorkerSlot { id: async.task_id(t), root: root as i64, set: w.set, until: w.until, done: false };
       }
     }

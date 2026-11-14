@@ -834,6 +834,12 @@ pub function stream_for(c: Client, b: Base, it: Item, q: Quality, offset_ms: i64
   if (q.kbps == 0 && direct_playable(it, decoders)) {
     return Stream { url: direct_url(b, it, session), transcode: false, offset_ms: offset_ms };
   }
+  return transcode_for(c, b, it, q, offset_ms, session, decoders);
+}
+
+// A transcode of the item at quality `q`. At Original quality the server
+// copies H.264 video that the phone decodes, and converts the rest.
+pub function transcode_for(c: Client, b: Base, it: Item, q: Quality, offset_ms: i64, session: string, decoders: string[]): Stream {
   let chosen = q;
   if (chosen.kbps == 0 && !(it.media.len() > 0 && it.media[0].video == "h264" && decodes(decoders, "h264"))) {
     // The stream copies only H.264. Other video is encoded.

@@ -40,69 +40,57 @@ The port has these parts of the language:
 - `label $name | body`, and `break $name`, which stops the body
 - `$__loc__`, which gives the file and the line of the program
 
-The port has these functions:
+The port has each function of jq 1.7, with the definition of jq or with
+the same behaviour:
 
-- The generators `empty`, `error`, `first`, `last`, `limit`, `nth`, `range`,
-  `recurse`, `until` and `while`.
-- The array and object functions `add`, `all`, `any`, `flatten`,
-  `from_entries`, `has`, `in`, `join`, `keys`, `keys_unsorted`, `length`,
-  `map`, `max`, `min`, `reverse`, `sort`, `to_entries`, `unique` and
-  `with_entries`.
-- The functions with a key `group_by`, `max_by`, `min_by`, `sort_by` and
-  `unique_by`.
-- The string functions `ascii_downcase`, `ascii_upcase`, `endswith`,
-  `explode`, `fromjson`, `implode`, `ltrimstr`, `rtrimstr`, `split` with one argument,
-  `startswith`, `tonumber` and `utf8bytelength`.
-- The search functions `contains`, `index`, `indices`, `inside` and `rindex`.
-- The functions `IN`, `INDEX`, `JOIN`, `abs`, `bsearch`, `pick` and
-  `transpose`, with the definitions of jq
-- `debug`, which writes its input or its messages to the standard error
-  output
+- The regular expressions: `test`, `match`, `capture`, `scan`, `splits`,
+  `split/2`, `sub` and `gsub`, with the syntax of Oniguruma (see
+  "Regular expressions").
+- Each math function of jq, on the functions of `std/f64` (see "Numbers").
+- `input`, `inputs`, `input_line_number`, `input_filename`, `$__loc__`,
+  `halt`, `halt_error`, `stderr`, `debug`, `env`, `$ENV`, `$ARGS` and
+  `builtins`.
+- The stream functions `tostream`, `fromstream` and `truncate_stream`.
+- `limit`, `first`, `until`, `while`, `repeat`, `range` and `recurse`, which
+  stop at the first output that the caller does not need.
 
-The port has these functions for paths, types and numbers:
+The modules of jq 1.7: `import`, `include`, data imports, `modulemeta`,
+`get_search_list`, the `-L` directories and the include of `~/.jq`. A path
+is clean, and absolute from `$PWD`, but the port does not follow a symbolic
+link in it.
 
-- The path functions `del`, `delpaths`, `getpath`, `map_values`, `path`,
-  `paths`, `setpath` and `walk`.
-- The selectors `arrays`, `booleans`, `iterables`, `nulls`, `numbers`,
-  `objects`, `scalars`, `select`, `strings` and `values`.
-- The number functions `ceil`, `exp10`, `exp2`, `fabs`, `floor`, `infinite`,
-  `isinfinite`, `isnan`, `isnormal`, `log`, `log10`, `log2`, `nan`, `pow`,
-  `round`, `sqrt` and `trunc`.
-- The functions `acos`, `asin`, `atan`, `atan2`, `cbrt`, `cos`, `cosh`,
-  `expm1`, `log1p`, `sin`, `sinh`, `tan` and `tanh`.
-- The date functions `fromdate`, `fromdateiso8601`, `gmtime`, `localtime`,
-  `mktime`, `now`, `strflocaltime`, `strftime`, `strptime`, `todate` and
-  `todateiso8601`.
-- `builtins`, which gives the name and the number of arguments of each
-  function.
-- The functions `isempty`, `not`, `tojson`, `tostring` and `type`.
-
-The command line has these parts:
-
-- The command line flags `-c`, `-r`, `-n`, `-s`, `--arg NAME VALUE` and `--`.
-
-The order of the outputs, the error messages, the line in `(at <stdin>:N)`
-and the exit status are those of jq 1.7.
+The command line has each option of jq 1.7 except `--run-tests` and the
+debug options, with the messages and the exit codes of jq.
 
 ## Generators
 
-The evaluator collects each output of a filter before it uses the outputs.
-jq makes the outputs one at a time. The outputs and their order are the
-same, and `first`, `limit`, `any` and `all` stop at the same output. But a
-generator that has no end, such as `recurse(. + 1)` in a `limit`, does not
-stop in the port.
+A filter gives each output to a callback. The callback takes the state of
+the run and gives it back, so the state changes in place. A generator stops
+at the first signal: an error, a `break` or a halt. Thus a generator
+with no end stops in `first`, `limit`, `label` and `isempty`, as in jq.
 
-A `break` stops the body of its `label` after the body made each output. So
-a `label` does not stop a generator that has no end.
+A filter is single when each run of it gives one output at most and does
+nothing after that output. The port finds the single filters, with each
+function of a `def`. It takes the value of a single filter first in these
+places: the right side of an operator, the value of an object entry, a
+condition, the source of `as`, and a `$` argument. Then the frames of that
+filter are gone while the rest runs. The order of the outputs, the errors and
+the effects stays that of jq, because a single filter does nothing after its
+output.
+
+`try` catches a `break` of its body as the error `{"__jq": N}`. The label
+numbers are those of jq, because the functions of the port that jq defines
+with a label take a number as jq does.
 
 jq gives an error for a path step after a destructuring pattern in `path`.
 The port gives the path.
 
 ## Input
 
-`reader.fern` is the JSON reader of jq 1.7: its grammar, its messages, and
-the line and the column in each message. `fromjson` and `tonumber` use it
-also.
+The input is a source that reads one value at a time. When the result is
+sure to be that of jq, it reads a value with `std/json.parse_at`. Otherwise
+it reads with `reader.fern`, the reader of jq 1.7. The source reads a file
+when the program gets to it, so `jq -n` does not read stdin.
 
 - jq reads more than JSON. A number can be `nan`, `infinity`, `1.`, `.5` or
   `+1`, and the values of a stream need no separator between them.
@@ -112,11 +100,32 @@ also.
 - A parse error stops the command line with `jq: parse error:`, the message,
   and exit 5.
 
+The files and the places of the input:
+
+- jq reads its files as one text. A value or a raw line can go on in the
+  next file. The line of a parse error counts from the start of the first
+  file. A byte order mark counts only before the first byte of the input,
+  and raw input keeps it.
+- After the end of the input, the place of an error is the last file and
+  its last line until the next read, when the last read of jq gave no value.
+  Then it is `<unknown>`.
+
+`--seq` reads as jq 1.7.1 does. It drops the text before the first record
+separator, and it gives an error for a number or a value that a separator
+cuts. After an error, it reads on at the next byte, although the message
+says "need RS to resync". It prints each parse error with
+`jq: ignoring parse error:`.
+
 ## Recursion
 
-jq makes a tail call with no new stack frame. The port does not, so the depth
-of a function that calls itself has the limit of the stack. A depth of 3000 is
-good on x86-64 and arm64. On wasm32-wasi the limit of wasmtime is lower.
+jq makes a tail call with no new stack frame. The port uses a stack frame for
+each call of a function of a `def`. Thus the stack sets the limit of the
+depth of a function that calls itself. A depth of 1000000 is good on x86-64.
+
+On wasm32-wasi, wasmtime gives 512 KiB of stack, and a depth of 100 is good.
+The compiler makes different frames for different programs, so the limit is
+between 150 and 500. The option `-W max-wasm-stack` of wasmtime makes the
+stack larger.
 
 ## Numbers
 
@@ -140,6 +149,16 @@ A math function with no exact result can differ from jq in its last digit.
 jq takes these results from the C library, and they differ from one C library
 to the next. The exact results are the same: `exp10` of 2 is 100.
 
+`std/f64` has the math functions of C that jq uses: `erf`, `lgamma`,
+`tgamma`, the Bessel functions and the others. jq takes each result from
+glibc. A function with no exact result can differ from glibc in its last
+digit. Near a zero, `j0` and `lgamma` can differ by up to 8 units in the
+last place.
+
+The functions with exact results, such as `frexp`, `fmod` and `nextafter`,
+give the results of glibc. The jq 1.7 binary of Ubuntu has no `pow10`,
+because glibc 2.39 has none, and the port gives its error.
+
 ## Dates
 
 `dates.fern` has the calendar, `strftime` and `strptime`. The results are
@@ -153,23 +172,51 @@ those of jq 1.7 with glibc and the time zone UTC.
   when the text has no date, as jq does with glibc.
 - `mktime` gives an error for the results -1 and -2, as jq does.
 
-## What it does not have yet
+## Regular expressions
 
-- Modules: `import`, `include` and `modulemeta`.
-- Each function that is not in the lists above. `exp` waits for #15661.
+`regex.fern` is an engine for the syntax of Oniguruma for Perl, which jq
+1.7 uses. A pattern compiles to a program that a backtracking machine
+runs, so the matches and the captures are those of jq. The engine has the
+classes of Unicode, the POSIX brackets, `\p`, lookahead, lookbehind, atomic
+groups, possessive repeats and back references. An error has the message of
+Oniguruma after "Regex failure:".
 
-A program that uses one of them stops with exit 3 and a message that ends in
-"is not in this port yet". The next slices of #15585 add them.
+`i` uses the simple case folding of Unicode. Oniguruma also folds one
+character to two, as `ß` to `ss`. The port does not.
+
+## Compile errors
+
+A compile error names its line, and the line and the spaces up to the error
+follow, as in jq. The port reports each undefined function and variable.
+A syntax error has the names of the tokens of bison, as jq does. The parser
+of jq is a parser of bison. The port names the expected tokens only in the
+places where jq names them most often. In other places, the text after
+"expecting" can differ.
 
 ## Tests
 
 - `jq_test.fern` holds the unit cases. It runs on x86-64, arm64
   and wasm32-wasi with the leak census (`TestSelfHostExampleJqUnit`).
-- `tests/jq.test` is the test suite of jq 1.7 (see
-  `licenses/jq/NOTICE.txt`). `TestSelfHostExampleJqSuite` runs each case
-  whose program the port has and compares the outputs as JSON values, as
-  jq does. 415 cases pass, and each of the others is in a part of the language
-  that the port does not have yet.
+- `tests/jq.test`, `tests/onig.test`, `tests/manonig.test` and
+  `tests/man.test` are the test suites of jq 1.7 (see
+  `licenses/jq/NOTICE.txt`), and `tests/modules` holds the modules that
+  jq.test imports. `TestSelfHostExampleJqSuite` runs each case and compares
+  the outputs as JSON values, as jq does. Each of the 709 cases passes.
 - `TestSelfHostExampleJqAgainstJq` runs the command line and the `jq` binary
   on the same arguments and input, and compares their stdout, stderr and exit
   status.
+
+## Speed
+
+The port is faster than jq 1.7 on each filter of #15585. These are the best
+of three runs on a host with 4 cores, in seconds of wall time:
+
+| Filter | jq, 100 MB | port, 100 MB | jq, 100,000 documents | port, 100,000 documents |
+| --- | --- | --- | --- | --- |
+| `.` | 5.02 | 2.73 | 0.38 | 0.23 |
+| `.[] \| .name` | 3.74 | 1.80 | 0.24 | 0.11 |
+| `map(select(.x > 1))` | 5.43 | 2.85 | 0.38 | 0.19 |
+| `group_by(.k)` | 9.13 | 5.60 | | |
+| `[paths]` | 17.74 | 5.27 | 1.63 | 0.25 |
+
+On the documents, the filters are `.name` and `select(.x > 1)`.
