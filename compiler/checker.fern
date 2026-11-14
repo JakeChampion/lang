@@ -21000,6 +21000,9 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
       if (ow_qualified_ctor(e, ctx)) {
         return true;
       }
+      if (ow_owned_projection(fa, ctx)) {
+        return true;
+      }
       let enclosing = ow_enclosing_field(fa);
       if let ast.ExprIdent(oid) = enclosing.obj {
         if (lu_has(ctx, lu_field_key(enclosing, oid)) && !util.has_str(ctx.borrowed, oid.name)) {
@@ -21409,6 +21412,14 @@ function lu_fresh_init_in(fx: LuFn, name: string, seen: string[]): boolean {
   return found && lu_only_fresh_assigns(fx, name, seen);
 }
 
+// An element read `v.1` of a fresh value no name holds, as a destructure binds it.
+function lu_fresh_projection(fx: LuFn, e: ast.Expr): boolean {
+  let ast.ExprFieldAccess(fa) = e else {
+    return false;
+  };
+  return util.is_all_digits(fa.field) && lu_fresh_value(fx, fa.obj);
+}
+
 function lu_fresh_value(fx: LuFn, e: ast.Expr): boolean {
   if let ast.ExprCall(c) = e {
     if (lu_checked_result_call(fx, c)) {
@@ -21429,6 +21440,9 @@ function lu_fresh_value(fx: LuFn, e: ast.Expr): boolean {
   if let ast.ExprTuple(_) = e {
     let empty: ast.Stmt[] = [];
     return lu_scoped_fresh(fx, empty, e);
+  }
+  if (lu_fresh_projection(fx, e)) {
+    return true;
   }
   if (lu_safe_constructor(fx, e)) {
     return true;
@@ -24017,6 +24031,36 @@ function ow_enclosing_field(fa: ast.ExprFieldAccess): ast.ExprFieldAccess {
     return ow_enclosing_field(parent);
   }
   return fa;
+}
+
+// The value under a chain of element reads `v.1.0`.
+function ow_projection_root(e: ast.Expr): ast.Expr {
+  if let ast.ExprFieldAccess(fa) = e {
+    if (util.is_all_digits(fa.field)) {
+      return ow_projection_root(fa.obj);
+    }
+  }
+  return e;
+}
+
+// An element of a value that no name holds, as `f(x).1`, is owned as that
+// value is.
+function ow_owned_projection(fa: ast.ExprFieldAccess, ctx: OwnCtx): boolean {
+  if (!util.is_all_digits(fa.field)) {
+    return false;
+  }
+  let root = ow_projection_root(fa.obj);
+  match (root) {
+    ast.ExprIdent(_) => {
+      return false;
+    },
+    ast.ExprFieldAccess(_) => {
+      return false;
+    },
+    _ => {
+      return ow_is_owned_expr(root, ctx);
+    }
+  }
 }
 
 function lu_field_key(fa: ast.ExprFieldAccess, q: ast.ExprIdent): string {
