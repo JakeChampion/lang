@@ -41,6 +41,7 @@ function main(): i32 {
 
 ```fern
 <<errors>>=
+import "core/error";
 import "core/cmp";
 
 // The errors of bzip2 data: not a stream of bzip2, data that ends early, or
@@ -54,6 +55,14 @@ pub function (e: Bzip2Error) message(): string {
     Truncated => "compressed file ends unexpectedly",
     Corrupt => "data integrity error when decompressing",
   };
+}
+
+impl error.Error for Bzip2Error {}
+
+impl cmp.Display for Bzip2Error {}
+
+pub function (e: Bzip2Error) to_string(): string {
+  return e.message();
 }
 
 // The bytes before an error, and the error.
