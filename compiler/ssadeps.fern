@@ -379,7 +379,7 @@ function counts_box(ins: ssa.SInst): boolean {
 }
 
 function loads_from(ins: ssa.SInst, v: i32): boolean {
-  return ins.kind_tag == ssa.LD_AT && ins.args.len() == 1 && ins.args[0] == v && ins.imm >= 0;
+  return ins.kind_tag == ssa.LD_AT && ins.args.len() == 1 && ins.args[0] == v && ins.imm >= ssa.tag_offset();
 }
 
 // The loads from counted values: values[k] is loaded from in the block at position blocks[k].
@@ -390,7 +390,7 @@ function load_blocks(f: ssa.SFunc, counted: boolean[]): LoadSites {
   let blocks: i32[] = [];
   for bi in 0..f.blocks.len() {
     for ins in f.blocks[bi].insts {
-      if (ins.kind_tag == ssa.LD_AT && ins.args.len() == 1 && ins.imm >= 0 && ins.args[0] >= 0 && counted[ins.args[0]]) {
+      if (ins.kind_tag == ssa.LD_AT && ins.args.len() == 1 && ins.imm >= ssa.tag_offset() && ins.args[0] >= 0 && counted[ins.args[0]]) {
         values = values.append(ins.args[0]);
         blocks = blocks.append(bi);
       }

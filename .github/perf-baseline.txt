@@ -186,9 +186,9 @@ aarch64/utf8_ingest_unchecked.ir	2657918
 aarch64/utf8_ingest_validated.text	9074
 aarch64/utf8_ingest_validated.ir	6116553
 x86_64/perceus_cfold.text	1993
-x86_64/perceus_cfold.ir	53089623
+x86_64/perceus_cfold.ir	53817623
 x86_64/perceus_deriv.text	2710
-x86_64/perceus_deriv.ir	69596431
+x86_64/perceus_deriv.ir	70460419
 x86_64/perceus_nqueens.text	1603
 x86_64/perceus_nqueens.ir	90433899
 x86_64/perceus_rbtree.text	2647

@@ -7,26 +7,29 @@ import "./ssasmallarraymachine" as arrays;
 // the lines that this file names, and when the machine of the array routine
 // that it calls takes that routine.
 
-// __fern_rec_box, with the number of words n of the box in %rdi. For n of
-// two or more it asks __fern_arr_box for a capacity of n - 2. That gives a
-// block of n + 1 words and the address of its third word. The routine
-// returns the address of the second word, and writes a count of 1 and n in
-// the two halves of the first word. So the box has n words. %rdi holds n
-// again at the return.
+// __fern_rec_box, with the number of words n of the box in %rdi. It asks
+// __fern_arr_box for a capacity of n - 2, or of 0 for a box of one word.
+// That gives a block of at least n + 1 words and the address of its third
+// word. The routine returns the address of the second word, and writes a
+// count of 1 and n in the two halves of the first word. %rdi holds n again
+// at the return. A box of more than 65,535 words does not fit the 16 bits
+// of a tag, so it keeps the block and the header of an array. The caller then stores the tag of a shape over n. The low
+// 16 bits of that tag are n.
 pub function allocation(output: string): boolean {
-  let lines = ["cmpq $2, %rdi", "jb .Lrecbox_unit", "pushq %rdi", "subq $2, %rdi", "call __fern_arr_box", "popq %rdi", "subq $8, %rax", "movl $1, -8(%rax)", "movl %edi, -4(%rax)", "ret", ".Lrecbox_unit:", "subq $1, %rdi", "call __fern_arr_box", "ret"];
+  let lines = ["cmpq $65535, %rdi", "ja .Lrecbox_wide", "pushq %rdi", "subq $2, %rdi", "jae .Lrecbox_sized", "xorl %edi, %edi", ".Lrecbox_sized:", "call __fern_arr_box", "popq %rdi", "subq $8, %rax", "movl $1, -8(%rax)", "movl %edi, -4(%rax)", "ret", ".Lrecbox_wide:", "subq $1, %rdi", "jmp __fern_arr_box"];
   return exact(output, "__fern_rec_box", lines) && box.check(output);
 }
 
-// __fn___fern_box_dec, with the box in %rax at its .r and .u entries. A
-// block with zero in the high half of its header is an array, and a box with
-// a count other than 1 only changes its count: the array release takes both.
-// For a unique box of n words the routine writes the capacity n - 2 in the
-// header word and a count of 1 in the first word of the box. Those two words
+// __fn___fern_box_dec, with the box in %rax at its .r and .u entries. The
+// low 16 bits of the high half of the header are the number of words n of a
+// box, and zero for an array. An array, and a box with a count other than 1,
+// go to the array release unchanged. For a unique box the routine writes
+// the capacity of its block in the header word: n - 2, or 0 for a box of one
+// word. It writes a count of 1 in the first word of the box. Those two words
 // are then the header of an array whose block is the block of the box. The
 // array release takes that array.
 pub function release(output: string): boolean {
-  let unique = ["cmpl $0, -4(%rax)", "je __fn___fern_arr_dec.u", "cmpl $1, -8(%rax)", "jne __fn___fern_arr_dec.u", "movl -4(%rax), %ecx", "subq $2, %rcx", "movq %rcx, -8(%rax)", "movq $1, (%rax)", "addq $8, %rax", "jmp __fn___fern_arr_dec.u", ".Lboxdec_ret:", "ret"];
+  let unique = ["movzwl -4(%rax), %ecx", "testl %ecx, %ecx", "jz __fn___fern_arr_dec.u", "cmpl $1, -8(%rax)", "jne __fn___fern_arr_dec.u", "subq $2, %rcx", "jae .Lboxdec_cap", "xorl %ecx, %ecx", ".Lboxdec_cap:", "movq %rcx, -8(%rax)", "movq $1, (%rax)", "addq $8, %rax", "jmp __fn___fern_arr_dec.u", ".Lboxdec_ret:", "ret"];
   if (!exact(output, "__fn___fern_box_dec", ["movq 8(%rsp), %rax"]) || !exact(output, "__fn___fern_box_dec.r", ["cmpq $0x10000, %rax", "jb .Lboxdec_ret"])) {
     return false;
   }

@@ -23,6 +23,7 @@ import "./fixture";
 import "./library";
 import "./player";
 import "./tune";
+import "../look";
 
 function font_dir(): string {
   if let Ok(_) = read_file_bytes("examples/android/paper/testfonts/Roboto-Regular.ttf") {
@@ -683,11 +684,11 @@ function test_the_lyrics_of_a_track(): test.TestOutcome {
 function test_the_settings(): test.TestOutcome {
   let s = sim.tap(started(), "Settings");
   saved(s, "tune-settings");
-  let light = s.shell.host.screen.theme.background == ui.theme(false).background;
+  let light = s.shell.host.screen.theme.background == tune.plain_theme(false).background;
   s = sim.tap(sim.tap(s, "System"), "Light");
   let dark = s.shell.app.model.look == tune.LOOK_DARK && sim.shows(s, "Dark");
   let fr = sim.picture(s);
-  let painted = fr.pixel(1070, 2390) == ui.theme(true).background;
+  let painted = fr.pixel(1070, 2390) == tune.plain_theme(true).background;
   draw.release(fr);
   s = sim.tap(sim.tap(sim.tap(s, "Genres on"), "Albums on"), "Up");
   let tabs = [sim.shows(s, "Songs"), sim.shows(s, "Albums"), sim.shows(s, "Artists"), sim.shows(s, "Genres"), sim.shows(s, "Folders")];
@@ -816,8 +817,9 @@ function test_rows_move_and_swipe(): test.TestOutcome {
   return test.assert_eq(before + " | " + moved + " | " + swiped + " | " + paths, "0,1,3,2@1 | 1,3,0,2@0 Morning Fern | 1,3,0@0 | music/loose/x1.wav,music/Fern/First Light/02 Slow Water.wav,music/Fern/missing.mp3");
 }
 
-// With album colors on, the theme takes the key color of the cover of the
-// track that plays. With them off, or with no cover, it is the plain theme.
+// Album colors are off at first, and the theme is the plain one. With
+// them on, the theme takes the key color of the cover of the track that
+// plays. With no cover, it is the plain theme.
 function test_the_theme_takes_the_color_of_the_cover(): test.TestOutcome {
   let m = started().shell.app.model;
   let at = 0;
@@ -827,12 +829,44 @@ function test_the_theme_takes_the_color_of_the_cover(): test.TestOutcome {
     px = px.append(30u8).append(160u8).append(70u8).append(255u8);
   }
   let covered = tune.with_cover(tune.Model { ...m, current: at }, tune.album_key(t.by, t.album), Some(draw.Image { width: 8, height: 8, pixels: px }));
-  let tinted = tune.theme(covered, false);
-  let off = tune.theme(tune.update(covered, tune.Tint), false);
+  let off = tune.theme(covered, false);
+  let tinted = tune.theme(tune.update(covered, tune.Tint), false);
   let bare = tune.theme(tune.Model { ...m, current: at }, true);
   let hue = draw.lch_of(draw.rgb(30, 160, 70)).h;
-  let got = ((draw.lch_of(tinted.primary).h - hue).abs() < 0.1).to_string() + " " + (off.primary == ui.theme(false).primary).to_string() + " " + (bare.primary == ui.theme(true).primary).to_string();
+  let got = ((draw.lch_of(tinted.primary).h - hue).abs() < 0.1).to_string() + " " + (off.primary == tune.plain_theme(false).primary).to_string() + " " + (bare.primary == tune.plain_theme(true).primary).to_string();
   return test.assert_eq(got, "true true true");
+}
+
+// The plain theme is that of a dot-matrix display: black or light grey,
+// with buttons in the color of the text. The screen of a track with no
+// cover is grey with a few red dots: the dot of now on the dial and the
+// tops of the spectrum.
+function test_the_look_is_that_of_a_dot_matrix_display(): test.TestOutcome {
+  let dark = tune.plain_theme(true);
+  let light = tune.plain_theme(false);
+  let s = sim.tap(sim.tap(started(), "Slow Water"), "Now playing, Slow Water");
+  s = sim.after(s, 300i64);
+  let fr = sim.picture(s);
+  let back = 0;
+  let red = 0;
+  let others = 0;
+  let paper = light.background & 16777215;
+  for y in 0..fr.height {
+    for x in 0..fr.width {
+      let c = fr.pixel(x, y) & 16777215;
+      if (c == paper) {
+        back += 1;
+      } else if (c == (look.red() & 16777215)) {
+        red += 1;
+      } else if ((c & 255) != (c >> 8 & 255) || (c >> 8 & 255) != (c >> 16 & 255)) {
+        others += 1;
+      }
+    }
+  }
+  let size = fr.width * fr.height;
+  draw.release(fr);
+  let flags = [dark.background == draw.rgb(0, 0, 0), dark.primary == dark.ink, light.primary == light.ink, tune.no_prefs().tint == false, back * 2 > size, red > 0, others * 100 < size];
+  return test.assert_eq(flags.map((b: boolean): string => b.to_string()).join(","), "true,true,true,true,true,true,true");
 }
 
 // The mix of a crossfade keeps the end of a track at the start of the
@@ -1072,6 +1106,7 @@ function main(): i32 {
   r = r.it("the menu of a song puts it in the queue", test_the_queue);
   r = r.it("a long press moves a row and a swipe takes it out", test_rows_move_and_swipe);
   r = r.it("the theme takes the color of the cover", test_the_theme_takes_the_color_of_the_cover);
+  r = r.it("the look is that of a dot-matrix display", test_the_look_is_that_of_a_dot_matrix_display);
   r = r.it("the list that shows is the queue", test_a_list_is_the_queue);
   r = r.it("an album has its picture from a tag or from an image file", test_the_picture_of_an_album);
   r = r.it("a track plays on after the activity, and the player gives the device back when it stops", test_the_player_gives_the_device_back);
