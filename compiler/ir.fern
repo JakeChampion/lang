@@ -420,6 +420,11 @@ pub function op_free(): Op {
   return op0(K_FREE);
 }
 
+// A two-byte load, zero-extended.
+pub function op_load_u16(): Op {
+  return op_load(16);
+}
+
 pub function op_load_i32(): Op {
   return op0(K_LOAD_I32);
 }
@@ -3879,7 +3884,7 @@ function pops1_conv(t: i32): boolean {
 }
 
 function pops1_mem(t: i32): boolean {
-  return t == 69 || t == 70 || t == 71
+  return t == 67 || t == 69 || t == 70 || t == 71
     || t == 76 || t == 77
     || t == 81 || t == 205 || t == 224 || t == 383
     || t == 90 || t == 91
