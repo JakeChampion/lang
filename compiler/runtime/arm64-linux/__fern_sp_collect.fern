@@ -1,0 +1,151 @@
+// __fern_sp_collect writes `input` to the child `pid` on `in_w`. It reads the
+// output of the child on `out_r` and `err_r` until both close. One ppoll waits
+// on the three pipes, so the parent and the child cannot wait on each other.
+// When the child refuses the input, the input stops without SIGPIPE.
+//
+// The block `st` holds the three pollfds at 0, the wait status at 24 and the
+// EPIPE flag at 28. The SIGPIPE set is at 32, the old mask at 40 and a zero
+// timespec at 48. Each output buffer doubles when it is full.
+function __fern_sp_collect(pid: i32, in_w: i32, out_r: i32, err_r: i32, input: string): ProcessResult {
+  let st = __raw_alloc(64);
+  __fern_sp_begin(st, in_w, out_r, err_r, input.len());
+  let ocap = 65536;
+  let olen = 0;
+  let obuf = __raw_alloc(ocap);
+  let ecap = 65536;
+  let elen = 0;
+  let ebuf = __raw_alloc(ecap);
+  let ipos: i32 = 0;
+  while (__load_i32(st) >= 0 || __load_i32(st + 8) >= 0 || __load_i32(st + 16) >= 0) {
+    let rc = __syscall5(73, st as i64, 3, 0, 0, 0) as i32;
+    if (rc >= 0) {
+      ipos = __fern_sp_feed(st, input, ipos);
+      if (olen == ocap) {
+        let wider = __fern_sp_widen(obuf, olen, ocap);
+        let old_own = __raw_string(obuf, ocap);
+        obuf = wider;
+        ocap = ocap * 2;
+      }
+      olen += __fern_sp_fill(st, 1, obuf + olen as usize, ocap - olen);
+      if (elen == ecap) {
+        let wider = __fern_sp_widen(ebuf, elen, ecap);
+        let old_own = __raw_string(ebuf, ecap);
+        ebuf = wider;
+        ecap = ecap * 2;
+      }
+      elen += __fern_sp_fill(st, 2, ebuf + elen as usize, ecap - elen);
+    } else if (rc != -4) {
+      __fern_sp_shut(st, 0);
+      __fern_sp_shut(st, 1);
+      __fern_sp_shut(st, 2);
+    }
+  }
+  __fern_sp_end(st, input.len());
+  let code = __fern_sp_wait(st, pid);
+  let st_own = __raw_string(st, 64);
+  let sout = __fern_sp_copy(obuf, olen);
+  let obuf_own = __raw_string(obuf, ocap);
+  let serr = __fern_sp_copy(ebuf, elen);
+  let ebuf_own = __raw_string(ebuf, ecap);
+  return ProcessResult { stdout: sout, stderr: serr, exit_code: code };
+}
+
+// Fills the block `st`. With input, the write end does not block and SIGPIPE
+// is blocked. Without input, the write end is closed.
+function __fern_sp_begin(st: usize, in_w: i32, out_r: i32, err_r: i32, ilen: i32): void {
+  __store_i32(st + 24, 0);
+  __store_i32(st + 28, 0);
+  __raw_store_ptr(st, 6, 0 as usize);
+  __raw_store_ptr(st, 7, 0 as usize);
+  let fd = in_w;
+  if (ilen == 0) {
+    __syscall3(57, fd as i64, 0, 0);
+    fd = -1;
+  } else {
+    __syscall3(25, fd as i64, 4, 2048);
+    __raw_store_ptr(st, 4, 4096 as usize);
+    __syscall4(135, 0, (st + 32) as i64, (st + 40) as i64, 8);
+  }
+  __store_i32(st, fd);
+  __store_i32(st + 4, 4);
+  __store_i32(st + 8, out_r);
+  __store_i32(st + 12, 1);
+  __store_i32(st + 16, err_r);
+  __store_i32(st + 20, 1);
+}
+
+// Sets the old signal mask again. A SIGPIPE that an EPIPE write caused is
+// removed first, unless SIGPIPE was blocked before the call.
+function __fern_sp_end(st: usize, ilen: i32): void {
+  if (ilen == 0) {
+    return;
+  }
+  if (__load_i32(st + 28) != 0 && (__raw_load_ptr(st, 5) as i64 & 4096) == 0) {
+    __syscall4(137, (st + 32) as i64, 0, (st + 48) as i64, 8);
+  }
+  __syscall4(135, 2, (st + 40) as i64, 0, 8);
+}
+
+// Writes the input from `ipos` when pollfd 0 is ready, and gives the new
+// position. The write end closes after the last byte or a refused write.
+function __fern_sp_feed(st: usize, input: string, ipos: i32): i32 {
+  let fd = __load_i32(st);
+  if (fd < 0 || __load_i32(st + 4) >> 16 == 0) {
+    return ipos;
+  }
+  let ilen = input.len();
+  let n = __syscall3(64, fd as i64, (__raw_data(input) + ipos as usize) as i64, (ilen - ipos) as i64) as i32;
+  let at = ipos;
+  if (n > 0) {
+    at += n;
+  } else if (n != -11 && n != -4) {
+    if (n == -32) {
+      __store_i32(st + 28, 1);
+    }
+    at = ilen;
+  }
+  if (at >= ilen) {
+    __fern_sp_shut(st, 0);
+  }
+  return at;
+}
+
+// Reads at most `room` bytes to `dst` when pollfd `k` is ready, and gives the
+// count. The pipe closes at its end.
+function __fern_sp_fill(st: usize, k: i32, dst: usize, room: i32): i32 {
+  let fd = __load_i32(st + (k * 8) as usize);
+  if (fd < 0 || __load_i32(st + (k * 8 + 4) as usize) >> 16 == 0) {
+    return 0;
+  }
+  let n = __syscall3(63, fd as i64, dst as i64, room as i64) as i32;
+  if (n > 0) {
+    return n;
+  }
+  if (n != -4) {
+    __fern_sp_shut(st, k);
+  }
+  return 0;
+}
+
+// Closes the pipe of pollfd `k`, and makes ppoll skip it.
+function __fern_sp_shut(st: usize, k: i32): void {
+  let fd = __load_i32(st + (k * 8) as usize);
+  if (fd >= 0) {
+    __syscall3(57, fd as i64, 0, 0);
+    __store_i32(st + (k * 8) as usize, -1);
+  }
+}
+
+// Waits for the child `pid`, and gives its exit code, or 128 and the signal
+// that stopped it.
+function __fern_sp_wait(st: usize, pid: i32): i32 {
+  let waited = -4;
+  while (waited == -4) {
+    waited = __syscall4(260, pid as i64, (st + 24) as i64, 0, 0) as i32;
+  }
+  let w = __load_i32(st + 24);
+  if ((w & 127) != 0) {
+    return (w & 127) + 128;
+  }
+  return w >> 8 & 255;
+}

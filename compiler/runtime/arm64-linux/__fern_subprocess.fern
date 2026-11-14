@@ -37,7 +37,7 @@ function __fern_subprocess(cmd: string, args: string[], input: string): ProcessR
     k += 1;
   }
   __raw_store_ptr(argv, n + 1, 0);
-  let fds = __raw_alloc(32);
+  let fds = __raw_alloc(24);
   __syscall3(59, fds as i64, 0, 0);
   __syscall3(59, (fds + 8) as i64, 0, 0);
   __syscall3(59, (fds + 16) as i64, 0, 0);
@@ -68,37 +68,9 @@ function __fern_subprocess(cmd: string, args: string[], input: string): ProcessR
   __syscall3(57, in_r as i64, 0, 0);
   __syscall3(57, out_w as i64, 0, 0);
   __syscall3(57, err_w as i64, 0, 0);
-  if (input.len() > 0) {
-    __syscall3(64, in_w as i64, __raw_data(input) as i64, input.len() as i64);
-  }
-  __syscall3(57, in_w as i64, 0, 0);
-  let obuf = __raw_alloc(65536);
-  let olen = __fern_sp_drain(out_r, obuf);
-  let ebuf = __raw_alloc(65536);
-  let elen = __fern_sp_drain(err_r, ebuf);
-  __syscall4(260, pid as i64, (fds + 24) as i64, 0, 0);
-  let w = __load_i32(fds + 24);
-  let code = w >> 8 & 255;
-  if ((w & 127) != 0) {
-    code = (w & 127) + 128;
-  }
-  let fds_own = __raw_string(fds, 32);
+  let fds_own = __raw_string(fds, 24);
   let cmdz_own = __raw_string(cmdz, clen + 1);
   let ab_own = __raw_string(ab, total);
   let argv_own = __raw_string(argv, (n + 2) * 8);
-  let sout = "";
-  if (olen > 0) {
-    let so = __raw_alloc(olen);
-    __memcpy(so, obuf, olen);
-    sout = __raw_string(so, olen);
-  }
-  let serr = "";
-  if (elen > 0) {
-    let se = __raw_alloc(elen);
-    __memcpy(se, ebuf, elen);
-    serr = __raw_string(se, elen);
-  }
-  let obuf_own = __raw_string(obuf, 65536);
-  let ebuf_own = __raw_string(ebuf, 65536);
-  return ProcessResult { stdout: sout, stderr: serr, exit_code: code };
+  return __fern_sp_collect(pid, in_w, out_r, err_r, input);
 }

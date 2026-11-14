@@ -1,0 +1,7 @@
+// A new `subprocess` output buffer of two times `cap` bytes that holds the
+// `len` bytes of `buf`. The caller releases `buf`.
+function __fern_sp_widen(buf: usize, len: i32, cap: i32): usize {
+  let wider = __raw_alloc(cap * 2);
+  __memcpy(wider, buf, len);
+  return wider;
+}
