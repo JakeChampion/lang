@@ -1,4 +1,4 @@
-// A stand-in for libaaudio.so for the music ring of std/android/audio. It
+// A stand-in for libaaudio.so for the Buffered stream of std/android/audio. It
 // keeps the settings of a builder and its data callback. mock_pull calls the
 // callback on a thread of its own, as the audio thread of a device does, and
 // keeps the samples that it gave.
