@@ -47,6 +47,8 @@ A template of `replace_groups`, its peers and `expand_bytes` reads `$n`, `$name`
 
 `next_candidate` gives the first offset at or after a byte offset where a match can start, or -1. A caller can skip the text before that offset.
 
+`inner` gives the literal bytes that each match holds, when the prefix of the pattern does not hold as many. `next_inner` finds the next copy of those bytes. A caller that searches line by line can skip each line that does not hold them.
+
 `find_at` starts a search at a byte offset. Its assertions examine the full text, so `^` matches only at offset 0. `\b{start}` and `\b{end}` match at the start and at the end of a word. `\b{start-half}` matches where no word character comes before, and `\b{end-half}` matches where no word character comes after.
 
 A search for a span uses a lazy DFA, and a word assertion of Unicode examines a whole character on each side. A DFA does not do that. When a byte outside ASCII is next to such an assertion, the DFA stops, and the Pike VM does the search.
@@ -3679,12 +3681,15 @@ pub function compile(pattern: string): Result[Regex, CompileError] {
   let empty: i32[] = [];
   let (rcode, rmasks) = if (fwd.init.len() > 0) { __rx_pack(__rx_cprog(r.node, true)) } else { (empty, empty) };
   let pre = __rx_prefix(r.node);
+  let req = __rx_required(r.node).best;
+  let inner = if (!pre.folded && !pre.loose && pre.bytes.len() >= req.len()) { [] } else { req };
   let rev = __rx_dfa_of(rcode, rmasks, false);
   return Ok(Regex {
     ngroups: r.g - 1, names: cx.names.get(), code: code, masks: masks, fwd: fwd, rev: rev, first: first,
     lead: __rx_lead(first), prefix: pre.bytes, ci: pre.folded, loose: pre.loose, leftmost_longest: false,
     empty: __rx_nullable(r.node), uword: __rx_uword(code), full: __rx_dfa_full(fwd),
-    rfull: __rx_dfa_full(rev),
+    rfull: __rx_dfa_full(rev), rare: if (pre.folded || pre.loose) { -1 } else { __rx_rare(pre.bytes) },
+    inner: inner, inner_rare: __rx_rarest(inner),
   });
 }
 
@@ -3738,6 +3743,9 @@ pub function (prog: Regex) next_candidate(text: string, from: i32): i32 {
   if (prog.first.len() == 0) {
     return from;
   }
+  if (prog.rare > 0) {
+    return __rx_rare_candidate(prog, text, from);
+  }
   let ti = from;
   while (true) {
     if (prog.lead >= 0) {
@@ -3757,6 +3765,147 @@ pub function (prog: Regex) next_candidate(text: string, from: i32): i32 {
     ti += 1;
   }
   return -1;
+}
+
+// The next start at or after `from` where the prefix is, from each place
+// of its rarest byte.
+function __rx_rare_candidate(prog: Regex, text: string, from: i32): i32 {
+  let r = prog.rare;
+  let b = prog.prefix[r] as i32;
+  let ti = from;
+  while (ti + r < text.len()) {
+    let at = __memchr(text, b, ti + r);
+    if (at < 0) {
+      return -1;
+    }
+    if (__rx_has_prefix(prog, text, at - r)) {
+      return at - r;
+    }
+    ti = at - r + 1;
+  }
+  return -1;
+}
+
+// The offset of the byte of `prefix` that is least frequent in text, or -1
+// when the first byte is that byte or the prefix is shorter than two bytes.
+// The rank of a byte is lower for a byte that text holds more often.
+function __rx_rare(prefix: u8[]): i32 {
+  if (prefix.len() < 2) {
+    return -1;
+  }
+  let best = __rx_rarest(prefix);
+  return if (best == 0) { -1 } else { best };
+}
+
+// The offset of the byte of `bytes` that is least frequent in text, or 0.
+function __rx_rarest(bytes: u8[]): i32 {
+  let best = 0;
+  for k in 1..bytes.len() {
+    if (__rx_byte_rank(bytes[k] as i32) < __rx_byte_rank(bytes[best] as i32)) {
+      best = k;
+    }
+  }
+  return best;
+}
+
+// The bytes that each match of the pattern holds, from the longest run of
+// literal bytes that each match goes through. They are empty when the
+// prefix of the pattern holds as many bytes.
+pub function (prog: Regex) inner(): u8[] {
+  return prog.inner;
+}
+
+// The offset of the next copy of the bytes of `inner` at or after `from`,
+// or -1. With no such bytes, the offset is `from`.
+pub function (prog: Regex) next_inner(text: string, from: i32): i32 {
+  let lit = prog.inner;
+  let n = lit.len();
+  if (n == 0) {
+    return from;
+  }
+  let r = prog.inner_rare;
+  let b = lit[r] as i32;
+  let ti = from;
+  while (ti + n <= text.len()) {
+    let at = __memchr(text, b, ti + r);
+    if (at < 0 || at - r + n > text.len()) {
+      return -1;
+    }
+    if (__rx_bytes_at(text, at - r, lit)) {
+      return at - r;
+    }
+    ti = at - r + 1;
+  }
+  return -1;
+}
+
+function __rx_bytes_at(text: string, at: i32, lit: u8[]): boolean {
+  for k in 0..lit.len() {
+    if (text[at + k] != lit[k]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The literal bytes that each match of a node holds: `whole` when each
+// match is exactly those bytes, and the longest run in `best`.
+struct RReq { exact: boolean, whole: u8[], best: u8[] }
+
+function __rx_required(x: RNode): RReq {
+  let none: u8[] = [];
+  return match (x) {
+    RChar(b) => RReq { exact: true, whole: [b as u8], best: [b as u8] },
+    RBound(_) => RReq { exact: true, whole: none, best: none },
+    RSeq(items) => __rx_required_seq(items),
+    RPlus(y) => RReq { exact: false, whole: none, best: __rx_required(y).best },
+    RLazy(y) => __rx_required(y),
+    RGroup(g) => __rx_required(g.node),
+    _ => RReq { exact: false, whole: none, best: none },
+  };
+}
+
+function __rx_required_seq(items: RNode[]): RReq {
+  let run: u8[] = [];
+  let best: u8[] = [];
+  let exact = true;
+  for x in items {
+    let r = __rx_required(x);
+    if (r.exact) {
+      run = run.concat(r.whole);
+    } else {
+      exact = false;
+      best = __rx_longer(__rx_longer(best, run), r.best);
+      run = [];
+    }
+  }
+  return RReq { exact: exact, whole: if (exact) { run } else { [] }, best: __rx_longer(best, run) };
+}
+
+function __rx_longer(a: u8[], b: u8[]): u8[] {
+  return if (b.len() > a.len()) { b } else { a };
+}
+
+// How often text holds a byte, from 0 for rare to 255 for frequent: white
+// space, then the lower case letters in the order of English, the marks of
+// punctuation and the digits, then the capital letters.
+function __rx_byte_rank(b: i32): i32 {
+  if (b == 32 || b == 10) {
+    return 255;
+  }
+  let lower = __memchr("etaoinshrdlcumwfgypbvkjxqz", b, 0);
+  if (lower >= 0) {
+    return 250 - lower;
+  }
+  let upper = __memchr("ETAOINSHRDLCUMWFGYPBVKJXQZ", b, 0);
+  if (upper >= 0) {
+    return 180 - upper;
+  }
+  let mark = __memchr(",.()_;:\"'-=/0123456789{}[]<>*&!#+", b, 0);
+  if (mark >= 0) {
+    return 220 - mark;
+  }
+  return if (b >= 128) { 160 } else { 100 };
 }
 
 pub function (prog: Regex) find_all(text: string): Match[] {
@@ -4159,7 +4308,10 @@ pub struct Match { start: i32, end: i32 }
 // that starts with a byte outside ASCII can skip the prefix. `leftmost_longest`
 // selects the longest match at the leftmost start in place of the first.
 // `empty` says that a match can be empty. `uword` holds the word characters
-// of Unicode when an assertion needs them.
+// of Unicode when an assertion needs them. `rare` is the offset in `prefix`
+// of the byte that is least frequent in text, or -1 when the search looks
+// for the first byte. Each match holds the bytes of `inner`, and `inner_rare`
+// is the offset of their rarest byte.
 pub struct Regex {
   ngroups: i32,
   names: string[],
@@ -4177,6 +4329,9 @@ pub struct Regex {
   uword: i32[],
   full: i32[],
   rfull: i32[],
+  rare: i32,
+  inner: u8[],
+  inner_rare: i32,
 }
 ```
 
@@ -4412,6 +4567,13 @@ function __sx_group(cx: SxCtx, open: i32, ws: boolean, u: boolean, depth: i32): 
   if (!__sx_at(p, j, "?")) {
     return (__sx_body(cx, open, j, ws, u, depth), ws, u, false);
   }
+  return __sx_flag_group(cx, open, j, ws, u, depth);
+}
+
+// The group at `open` with flags from `j`: a group that sets flags for its
+// body, or a group that only sets flags.
+function __sx_flag_group(cx: SxCtx, open: i32, j: i32, ws: boolean, u: boolean, depth: i32): (i32, boolean, boolean, boolean) {
+  let p = cx.p;
   if (j + 1 >= p.len()) {
     return (__sx_fail(cx, "unclosed group", open, open + 1), ws, u, false);
   }

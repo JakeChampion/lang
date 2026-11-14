@@ -483,6 +483,38 @@ candidate to the line of the next with `next_candidate`, and counts the
 lines that it skips with `__count_byte`. The lines without a candidate cost
 nothing more.
 
+### Literals inside a pattern
+
+A pattern such as `\w+ing` has no literal prefix, and each word byte can
+start a match. Thus each line was a candidate, and the port ran the DFA on
+each line. Now `std/regex` finds the longest run of literal bytes that each
+match holds, and `Regex.next_inner` finds the next copy of it. The line
+loop goes to the line of that copy, and skips the lines before it. The
+search for a literal prefix now starts from its least frequent byte, from
+a table of the frequency of each byte in text.
+
+The text is `corpus 50`: 52,428,815 bytes. Each command gets `-j1`. The
+time is the best of 5 runs, in milliseconds, with the output to a pipe.
+"Before" is the port without the two changes. The output of each command
+is the same in the three programs.
+
+| Command | ripgrep | Before | Port | Ratio |
+| --- | ---: | ---: | ---: | ---: |
+| `rg 'Sherlock Holmes'` | 24 | 32 | 32 | 1.3 |
+| `rg -c 'Sherlock Holmes'` | 14 | 41 | 38 | 2.6 |
+| `rg -i 'sherlock holmes'` | 26 | 110 | 120 | 4.6 |
+| `rg 'Sherlock Holmes\|...'` (five names) | 28 | 64 | 62 | 2.2 |
+| `rg -c '\w+'` | 140 | 107 | 109 | 0.8 |
+| `rg -c '\w+ing'` | 23 | 586 | 43 | 1.9 |
+| `rg -c '[a-z]+ Holmes'` | 20 | 265 | 42 | 2.1 |
+| `rg -cw Holmes` | 14 | 29 | 28 | 2.1 |
+| `rg -c xyzzy` | 12 | 35 | 35 | 3.0 |
+
+`rg -c xyzzy` finds no line, and its time is the read of the file and one
+scan. The causes above stay: the read copies the file, and the scans for
+a set of bytes and for a pair of bytes do not use SIMD kernels. A literal
+under `-i` is not an inner literal.
+
 ### A tree of files
 
 Each command searches a checkout of this repository with its ignore rules:

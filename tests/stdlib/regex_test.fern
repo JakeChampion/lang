@@ -274,6 +274,36 @@ function test_next_candidate(): test.TestOutcome {
   return test.assert_eq_array(got, [6, -1, -1, 2, 2, 2, 3, -1, -1, 1]);
 }
 
+// The search for a prefix from its rarest byte finds the first start.
+function test_rare_prefix(): test.TestOutcome {
+  let got = [
+    candidate("theq", "the thex theq", 0), candidate("xyzzy", "xyzz xyzzy", 0), candidate("xyzzy", "xyzzy", 1),
+    candidate("abz", "ab", 0), candidate("abz", "abzabz", 4),
+  ];
+  return test.assert_eq_array(got, [9, 5, -1, -1, -1]);
+}
+
+function inner_of(pattern: string, text: string, from: i32): string {
+  let Ok(compiled) = regex.compile(pattern) else {
+    return "error";
+  };
+  let lit = unsafe { string_from_bytes_unchecked(compiled.inner()) };
+  return lit + "@" + compiled.next_inner(text, from).to_string();
+}
+
+// The literal bytes that each match holds, after the prefix, and the next
+// copy of them.
+function test_inner_literal(): test.TestOutcome {
+  let got = [
+    inner_of("\\w+ing", "sing a song of thing", 0), inner_of("\\w+ing", "sing a song of thing", 2),
+    inner_of("[a-z]+(foo|bar)baz\\d", "xbarbaz1", 0), inner_of("a+bcd", "bc abcd", 0),
+    inner_of("\\bab\\b", "x ab", 0), inner_of("water", "water", 0), inner_of("(?i)x+abc", "ABC", 0),
+    inner_of("x*yz", "yz", 0), inner_of("cat|dog", "dog", 0), inner_of("\\d+ing", "ing", 4),
+  ];
+  let want = ["ing@1", "ing@17", "baz@4", "bcd@4", "ab@2", "@0", "@0", "yz@0", "@0", "ing@-1"];
+  return test.assert_eq_array(got, want);
+}
+
 // A match must start with the literal prefix, folded under (?i).
 function test_literal_prefix(): test.TestOutcome {
   let got = [
@@ -534,6 +564,8 @@ function main(): i32 {
   r = r.it("assertion contexts", test_assertion_contexts);
   r = r.it("next_candidate", test_next_candidate);
   r = r.it("literal prefix", test_literal_prefix);
+  r = r.it("rare byte of a prefix", test_rare_prefix);
+  r = r.it("inner literal", test_inner_literal);
   r = r.it("find_at", test_find_at);
   r = r.it("word boundaries", test_word_boundaries);
   r = r.it("word boundaries in captures", test_word_boundary_captures);

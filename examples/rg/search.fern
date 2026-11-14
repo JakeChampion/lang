@@ -672,21 +672,34 @@ function begin(): Cursor {
   return Cursor { start: 0, ln: 0, cand: -1 };
 }
 
-function candidate(re: regex.Regex, text: string, c: Cursor): i32 {
+function candidate(re: regex.Regex, text: string, c: Cursor, term: i32): i32 {
   if (c.cand >= c.start) {
     return c.cand;
   }
-  let at = re.next_candidate(text, c.start);
+  let from = inner_line(re, text, c.start, term);
+  let at = if (from < 0) { -1 } else { re.next_candidate(text, from) };
   if (at < 0) {
     return text.len() + 1;
   }
   return at;
 }
 
+// The start of the next line at or after `from` that holds the bytes that
+// each match holds, or -1. A match is in one line, so the lines before it
+// hold no match.
+function inner_line(re: regex.Regex, text: string, from: i32, term: i32): i32 {
+  let at = re.next_inner(text, from);
+  if (at <= from) {
+    return at;
+  }
+  let start = __rmemchr(text, term, at - 1) + 1;
+  return if (start > from) { start } else { from };
+}
+
 // The cursor at the line of the next candidate before `end`. The lines
 // before it hold no match.
 function jump(re: regex.Regex, text: string, c: Cursor, end: i32, term: i32): Cursor {
-  let cand = candidate(re, text, c);
+  let cand = candidate(re, text, c, term);
   if (cand >= end) {
     let last = if (end > c.start) { end } else { c.start };
     return Cursor { start: last, ln: c.ln, cand: cand };
@@ -701,8 +714,8 @@ function jump(re: regex.Regex, text: string, c: Cursor, end: i32, term: i32): Cu
 
 // Whether the line from `c.start` to `end` is selected. The cursor keeps the
 // candidate that it found.
-function selected(re: regex.Regex, text: string, c: Cursor, end: i32, invert: boolean): (boolean, Cursor) {
-  let cand = candidate(re, text, c);
+function selected(re: regex.Regex, text: string, c: Cursor, end: i32, term: i32, invert: boolean): (boolean, Cursor) {
+  let cand = candidate(re, text, c, term);
   let next = Cursor { ...c, cand: cand };
   if (cand > end) {
     return (invert, next);
@@ -878,7 +891,7 @@ function count(p: Printer, re: regex.Regex, s: Scan, stop_first: boolean): Count
       }
     }
     let end = line_end(text, c.start, s.end, s.term);
-    let (yes, next) = selected(re, text, c, end, p.invert);
+    let (yes, next) = selected(re, text, c, end, s.term, p.invert);
     if (yes) {
       n = count_line(re, s, c.start, end, n, all, by_match);
     }
@@ -1162,7 +1175,7 @@ function search_lines(p: Printer, re: regex.Regex, s: Scan, name: string, h: usi
     }
     let start = c.start;
     let end = line_end(s.text, start, s.end, s.term);
-    let (yes, next) = selected(re, s.text, c, end, p.invert);
+    let (yes, next) = selected(re, s.text, c, end, s.term, p.invert);
     c = advance(next, end);
     g = step_line(p, re, h, name, s, start, end, c.ln, yes, g);
     if (!yes && p.stop_on_nonmatch && g.count > 0) {
