@@ -177,13 +177,27 @@ mode each parameter ends with (`mode_bits`), not the raw escape, so a caller
 handing a field to a parameter its callee can never count keeps its own
 parameter borrowed.
 
-The inference counts a record, a variant, an owned array or a map
+The inference counts a record, a variant, an owned array, a map or a string
 (`owned_shape`). When a callee gives such a parameter to a sink that consumes
 it, the caller hands over its last unit. The sink then updates or adopts the
 box and does not copy it. The callee releases the parameter on each other
-path. A string, a view, a cell, a handle and a closure environment stay
-borrowed. A concatenation lends its operands, so a counted string only adds a
-retain and a release.
+path. A view, a cell, a handle and a closure environment stay borrowed.
+
+A string box changes in place only where it grows. A concatenation consumes
+its left operand at the last use of that operand, and the lowering then grows
+the buffer in place (`ssarc.grow_or_concat`). Thus the inference counts a
+string only where its unit reaches a growth: a concatenation at its last use,
+a counted slot of a callee, or a phi that one of these consumes.
+
+A return, a container or a store that keeps a string does not consume it. It
+also does not mark a string that the kept value depends on
+(`ownership.carry`). Otherwise, each call that does not return the string
+pays a release for no gain.
+
+A call to the name of a builtin runs the kernel of the builtin, unless the
+module shadows the name (`ssarc.string_method_site`). The kernel borrows its
+operands, whatever the body with that name does. Thus such a name keeps its
+declared modes (`semsource.kernel_named`).
 
 `semsource.with_inferred_modes` rewrites the modes of every produced body and
 every callee contract it carries from the same rows, so definition and call

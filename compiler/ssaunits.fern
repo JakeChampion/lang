@@ -790,7 +790,7 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     counted = [true, false, ssasem.counted(f, f.values[ins.args[2]])];
   } else if (ins.kind_tag == ssasem.hole_fill()) {
     counted = [true, false, true];
-  } else if (string_append(f, ins)) {
+  } else if (ssasem.string_append(f, ins)) {
     counted = [true, false];
   } else if (construction(ins.kind_tag)) {
     for arg in ins.args {
@@ -825,13 +825,6 @@ function supply_table(f: ssasem.Func): SupplyTable {
 
 function (t: SupplyTable) at(bi: i32, pos: i32): Supply[] {
   return t.rows[t.from[bi] + pos];
-}
-
-pub function string_append(f: ssasem.Func, ins: ssa.SInst): boolean {
-  if (ins.kind_tag == ssasem.append_range()) {
-    return true;
-  }
-  return ins.kind_tag == ssa.BINARY && ins.str == "+" && ssasem.is_string(f.values[ins.args[0]]);
 }
 
 function lent_operands(ins: ssa.SInst, counted: Supply[]): i32[] {
@@ -1735,20 +1728,6 @@ function reads(a: ssasem.Analysis, arg: i32, w: i32): boolean {
   return false;
 }
 
-function used_after(a: ssasem.Analysis, bi: i32, pos: i32, w: i32): boolean {
-  if (ssalive.live_out_has(a.flow, bi, w) || ssasem.read_after(a.uses, bi, pos, w)) {
-    return true;
-  }
-  let k = a.anchored.start[w];
-  while (k < a.anchored.start[w + 1]) {
-    if (ssasem.read_after(a.uses, bi, pos, a.anchored.at[k])) {
-      return true;
-    }
-    k += 1;
-  }
-  return false;
-}
-
 function read_after_direct(a: ssasem.Analysis, direct: ssalive.Flow, bi: i32, pos: i32, v: i32): boolean {
   if (ssalive.live_out_has(direct, bi, v) || ssasem.read_after(a.uses, bi, pos, v)) {
     return true;
@@ -2107,11 +2086,11 @@ function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], owned:
     if (w != s && !held[w] && !owned[w] && retainable_read(f, defs, w)) {
       let live = false;
       if (flows.firm.len() > 0) {
-        live = in_hand(a, flows, w, bi, pos, si) || si < 0 && (util.has_i32(args, w) || lends_view_of(f, a, args, w)) && !used_after(a, bi, pos, s);
+        live = in_hand(a, flows, w, bi, pos, si) || si < 0 && (util.has_i32(args, w) || lends_view_of(f, a, args, w)) && !ssasem.used_after(a, bi, pos, s);
       } else if (si >= 0) {
         live = ssalive.live_in_has(a.flow, si, w);
       } else {
-        live = used_after(a, bi, pos, w) || (util.has_i32(args, w) || lends_view_of(f, a, args, w)) && !used_after(a, bi, pos, s);
+        live = ssasem.used_after(a, bi, pos, w) || (util.has_i32(args, w) || lends_view_of(f, a, args, w)) && !ssasem.used_after(a, bi, pos, s);
       }
       if (live) {
         out = out.append(w);
@@ -2439,7 +2418,7 @@ function needed_past_slot(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[],
   let k = a.anchored.start[root];
   while (k < a.anchored.start[root + 1]) {
     let w = a.anchored.at[k];
-    if (reaches_root(a, defs, take, root, through_take, w) && used_after(a, bi, pos, w) && reaches_past_kept(a, w, root, kept, __alloc_bool(a.parents.len()))) {
+    if (reaches_root(a, defs, take, root, through_take, w) && ssasem.used_after(a, bi, pos, w) && reaches_past_kept(a, w, root, kept, __alloc_bool(a.parents.len()))) {
       return true;
     }
     k += 1;
@@ -2808,11 +2787,11 @@ function likely_unique(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
 
 function field_grow_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], bi: i32, pos: i32): i32 {
   let ins = f.graph.blocks[bi].insts[pos];
-  if (!string_append(f, ins) && !box_update(ins)) {
+  if (!ssasem.string_append(f, ins) && !box_update(ins)) {
     return -1;
   }
   let root = projection_root(f, a, owned, defs, bi, pos, ins.args[0]);
-  if (root < 0 || string_append(f, ins) && !owned[root] || spent_in_another_block(f, a, root, bi)) {
+  if (root < 0 || ssasem.string_append(f, ins) && !owned[root] || spent_in_another_block(f, a, root, bi)) {
     return -1;
   }
   return root;
@@ -2875,7 +2854,7 @@ function hands(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.S
   for v in ins.args {
     let root: i32 = -1;
     let field: i32 = -1;
-    let lent_param = defs[v].kind_tag == ssa.PARAM && !owned[v] && occurrences(ins.args, v) == 1 && !used_after(a, bi, pos, v);
+    let lent_param = defs[v].kind_tag == ssa.PARAM && !owned[v] && occurrences(ins.args, v) == 1 && !ssasem.used_after(a, bi, pos, v);
     if (typeinfo.is_array(f.values[v]) && !ssasem.is_text(f.values[v]) && occurrences(ins.args, v) == 1) {
       if (lent_param) {
         root = v;
@@ -4099,7 +4078,7 @@ pub function payload_taken(f: ssasem.Func, p: Plan, ins: ssa.SInst): boolean {
 }
 
 pub function deferred_retain(f: ssasem.Func, p: Plan, step: Step, ins: ssa.SInst): boolean {
-  if (string_append(f, ins)) {
+  if (ssasem.string_append(f, ins)) {
     return receiver_retained(step);
   }
   if (!box_update(ins)) {

@@ -4220,11 +4220,11 @@ function instruction_body(own r: irtables.LowerState, f: ssasem.Func, p: ssaunit
     r = array_unique(r, f, p, ins);
     return emit(r, ir.op_store_local(ins.result));
   }
-  if (ssaunits.string_append(f, ins) && !defer0 && !p.literal[ins.args[0]]) {
+  if (ssasem.string_append(f, ins) && !defer0 && !p.literal[ins.args[0]]) {
     r = grow_or_concat(r, f, ins);
     return emit(r, ir.op_store_local(ins.result));
   }
-  if (ssaunits.string_append(f, ins) && defer0 && p.grows[ins.result] >= 0) {
+  if (ssasem.string_append(f, ins) && defer0 && p.grows[ins.result] >= 0) {
     r = grow_field_or_concat(r, f, p, ins);
     return emit(r, ir.op_store_local(ins.result));
   }

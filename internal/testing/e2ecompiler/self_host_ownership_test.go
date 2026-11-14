@@ -278,6 +278,130 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 4},
+	{"string-parameter-extended-by-each-call-grows-in-place", `@noinline
+function extend(s: string, k: i32): string {
+    return s + "ab";
+}
+function main(): i32 {
+    let s: string = "";
+    let i: i32 = 0;
+    while (i < 200) {
+        s = extend(s, i);
+        i = i + 1;
+    }
+    if (s.len() != 400) { return 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 5},
+	{"string-parameter-grown-in-a-loop-a-recursion-and-a-branch", `@noinline
+function pad(s: string, n: i32): string {
+    let i: i32 = 0;
+    while (i < n) {
+        s = s + " ";
+        i = i + 1;
+    }
+    return s;
+}
+@noinline
+function grow(s: string, n: i32): string {
+    if (n == 0) {
+        return s;
+    }
+    return grow(s + "ab", n - 1);
+}
+@noinline
+function line(s: string, k: i32): string {
+    if (k % 2 == 0) {
+        return s + "e";
+    }
+    return s + "o";
+}
+function main(): i32 {
+    let a: string = "x" + "";
+    let i: i32 = 0;
+    while (i < 100) {
+        a = pad(a, 2);
+        i = i + 1;
+    }
+    let b: string = grow("" + "", 100);
+    let c: string = "";
+    let k: i32 = 0;
+    while (k < 100) {
+        c = line(c, k);
+        k = k + 1;
+    }
+    if (a.len() != 201 || b.len() != 200 || c.len() != 100) { return 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 11},
+	{"string-parameter-the-caller-reads-after-the-call", `@noinline
+function extend(s: string): string {
+    return s + "!";
+}
+function main(): i32 {
+    let base: string = "hello" + "";
+    base = base + " world";
+    let grown: string = extend(base);
+    if (base != "hello world") { return 1; }
+    if (grown != "hello world!") { return 2; }
+    let twice: string = extend(base);
+    if (base.len() != 11 || twice != "hello world!") { return 3; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 3},
+	{"shared-literal-sliced-and-field-strings-are-copied", `struct Named { name: string, n: i32 }
+@noinline
+function extend(s: string): string {
+    return s + "!";
+}
+@noinline
+function slice_of(s: string): string {
+    return extend(slice_unchecked(s, 0, 3));
+}
+function main(): i32 {
+    let a: string = "ab" + "cd";
+    let b: string = a;
+    let c: string = extend(a);
+    if (a != "abcd" || b != "abcd" || c != "abcd!") { return 1; }
+    let lit: string = extend("xyz");
+    if (lit != "xyz!") { return 2; }
+    let r: Named = Named { name: "na" + "me", n: 1 };
+    let d: string = extend(r.name);
+    if (r.name != "name" || d != "name!") { return 3; }
+    let e: string = slice_of("hello" + "");
+    if (e != "hel!") { return 4; }
+    let parts: string[] = ["p" + "q", "r" + "s"];
+    let f: string = extend(parts[0]);
+    if (parts[0] != "pq" || f != "pq!") { return 5; }
+    let g: string = "loop" + "";
+    let h: string = g;
+    let i: i32 = 0;
+    while (i < 10) {
+        h = extend(h);
+        i = i + 1;
+    }
+    if (g != "loop" || h.len() != 14) { return 6; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 7},
+	{"string-method-lowered-to-a-kernel-keeps-its-modes", `import "std/string";
+@noinline
+function tidy(a: string, b: string): string {
+    return (a + b).replace("\t", " ");
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let i: i32 = 0;
+    while (i < 20) {
+        total = total + tidy("a\tb" + "", "\tc").len();
+        i = i + 1;
+    }
+    let kept: string = "x\ty" + "";
+    let same: string = kept.replace("q", "r");
+    if (total != 20 * 5 || kept != "x\ty" || same != "x\ty") { return 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 41},
 }
 
 func TestSelfHostOwnershipInference(t *testing.T) {
@@ -309,11 +433,12 @@ func TestSelfHostOwnershipInference(t *testing.T) {
 		if exit != 0 {
 			t.Fatalf("exit = %d, want 0\n%s", exit, stderr)
 		}
-		censusWithin(t, "modes-program", stderr, 23)
+		censusWithin(t, "modes-program", stderr, 26)
 	})
 }
 
 const inferredModesProgram = `import "std/crypto/chacha20poly1305";
+import "std/string";
 enum Node { Leaf(i32), Label(string), Empty }
 enum Tree { Tip(i32), Fork(Tree, Tree) }
 struct Rec { text: string, n: i32 }
@@ -405,6 +530,25 @@ function byte_total(bytes: u8[]): i32 {
     for b in bytes { t = t + (b as i32); }
     return t;
 }
+@noinline
+function exclaim(s: string): string { return s + "!"; }
+@noinline
+function exclaim_len(s: string): i32 {
+    let t: string = s + "!";
+    return t.len() + s.len();
+}
+@noinline
+function rec_exclaim(r: Rec): string { return r.text + "!"; }
+@noinline
+function text_or(s: string, k: i32): string {
+    if (k > 0) { return s; }
+    return "z";
+}
+@noinline
+function trimmed_keep(r: Rec, k: i32): Rec {
+    if (r.text.trim().len() > k) { return r; }
+    return Rec { text: "w" + "", n: k };
+}
 struct Slot { tab: Cell[i32[]], n: i32 }
 @noinline
 function slot_push(s: Slot, k: i32): i32 {
@@ -459,6 +603,12 @@ function main(): i32 {
     let m: i32 = 0;
     while (m < 5) { m = m + slot_push(slot, m); }
     if (m != 6 || slot.tab.get().len() != 4 || slot.tab.get()[3] != 4) { return 13; }
+    let e: string = exclaim("hi" + "");
+    if (e != "hi!" || exclaim_len(e) != 7 || rec_exclaim(q) != "y!" || q.text != "y") { return 14; }
+    if (text_or(e, 1) != "hi!" || text_or(e, 0) != "z" || e != "hi!") { return 15; }
+    q = trimmed_keep(q, 0);
+    q = trimmed_keep(q, 3);
+    if (q.text != "w" || q.n != 3) { return 16; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -633,5 +783,45 @@ func assertInferredModes(t *testing.T, runner []string, fernBin, stdlibRoot stri
 	}
 	if strings.Contains(look, cursorDrop) {
 		t.Errorf("Cursor.peek calls %s: a receiver whose projection is returned was inferred COUNTED, so every call retains and releases the whole cursor", cursorDrop)
+	}
+	const grow = "__fern_str_grow"
+	grown, ok := asmWholeFunc(string(asm), "exclaim")
+	if !ok {
+		t.Fatal("no __fn_exclaim in the emitted code")
+	}
+	if !strings.Contains(grown, grow) {
+		t.Errorf("exclaim does not call %s: a string parameter whose last use is the left operand of a concatenation was inferred BORROWED, so the concatenation copies it", grow)
+	}
+	both, ok := asmWholeFunc(string(asm), "exclaim_len")
+	if !ok {
+		t.Fatal("no __fn_exclaim_len in the emitted code")
+	}
+	if strings.Contains(both, grow) {
+		t.Errorf("exclaim_len calls %s: a string parameter read after its concatenation was inferred COUNTED", grow)
+	}
+	field, ok := asmWholeFunc(string(asm), "rec_exclaim")
+	if !ok {
+		t.Fatal("no __fn_rec_exclaim in the emitted code")
+	}
+	if strings.Contains(field, recDrop) {
+		t.Errorf("rec_exclaim calls %s: a record whose string field is only concatenated was inferred COUNTED", recDrop)
+	}
+	const strDrop = "__fern_str_free"
+	if !strings.Contains(grown, strDrop) {
+		t.Fatalf("exclaim does not call %s — the marker this reads is gone, so the kept-string assertion below proves nothing", strDrop)
+	}
+	kept, ok := asmWholeFunc(string(asm), "text_or")
+	if !ok {
+		t.Fatal("no __fn_text_or in the emitted code")
+	}
+	if strings.Contains(kept, strDrop) {
+		t.Errorf("text_or calls %s: a string parameter that is only returned was inferred COUNTED, so each call that does not return it pays a release", strDrop)
+	}
+	trimmed, ok := asmWholeFunc(string(asm), "trimmed_keep")
+	if !ok {
+		t.Fatal("no __fn_trimmed_keep in the emitted code")
+	}
+	if !strings.Contains(trimmed, recDrop) {
+		t.Errorf("trimmed_keep does not call %s: a record whose string field reaches a string method that the lowering replaces with a kernel was inferred BORROWED", recDrop)
 	}
 }
