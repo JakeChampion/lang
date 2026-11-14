@@ -76,6 +76,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
+import "core/mem";
 import "std/i32";
 import "std/string";
 import "std/time";
@@ -811,15 +812,16 @@ releases its runtime record, so the scheduler only drops its handle.
 
 ```fern
 <<18 pub enum TaskStatus[T]>>=
-// A status that a program drops leaves a parked task with no scheduler: it
-// never runs again, and its `defer` blocks never run.
+// A program that drops a status still holds the handle of the parked task.
+// The task is cancelled when its last handle goes away.
 @must_consume
 pub enum TaskStatus[T] { Done(T), Suspended(Wait) }
 
 // Each copy of a task's handle shares one TaskShared, so a copy that is used
 // after the task moved on reads the task's state, not a freed record.
 // `step` counts the parks, and `wait` is what the task waits for now.
-struct TaskShared { phase: i32, step: i32, wait: Wait }
+// `detached` says that another scheduler keeps the task by its id.
+struct TaskShared { phase: i32, step: i32, wait: Wait, detached: boolean }
 
 const TASK_NEW: i32 = 0;
 
@@ -834,6 +836,32 @@ const TASK_CANCELLED: i32 = 4;
 // Only this module builds a handle or reads its fields, so a program cannot
 // pair an id with another function or with another state.
 pub opaque struct Task[T] { id: i32, entry: () => T, shared: Cell[TaskShared] }
+
+// A task whose last handle goes away is cancelled, so its `defer` blocks run
+// and its record is released. A task that was not started has only a record.
+impl[T] mem.Drop for Task[T] {
+  function drop(self: Task[T]): void {
+    __task_dropped(self.id, self.entry, self.shared.get());
+  }
+}
+
+function __task_dropped[T](id: i32, entry: () => T, state: TaskShared): void {
+  if (state.detached) {
+    return;
+  }
+  unsafe {
+    if (state.phase == TASK_NEW) {
+      __task_free(id);
+    }
+    if (state.phase == TASK_PARKED) {
+      __task_set_cancelled(id);
+      __task_enter(id, 2);
+      let v = entry();
+      __task_leave();
+      __task_free(id);
+    }
+  }
+}
 ```
 
 ### `19 pub function task_new[T](entry: () => T): Task[T]`
@@ -848,8 +876,15 @@ pub function task_new[T](entry: () => T): Task[T] {
 
 // The handle of a task that another scheduler parked under `id`. The caller
 // proves that `id` is the id of that task and that `entry` is its entry.
+// The scheduler keeps the task, so the handle does not cancel it.
 pub unsafe function task_adopted[T](id: i32, entry: () => T): Task[T] {
-  return Task { id: id, entry: entry, shared: cell_new(__task_shared(TASK_PARKED)) };
+  return Task { id: id, entry: entry, shared: cell_new(TaskShared { ...__task_shared(TASK_PARKED), detached: true }) };
+}
+
+// Gives the task to a scheduler that keeps it by its id and its entry, and
+// that brings it back with task_adopted. The handle does not cancel the task.
+pub unsafe function task_detach[T](t: Task[T]): void {
+  t.shared.set(TaskShared { ...t.shared.get(), detached: true });
 }
 
 // The id of the runtime record of the task.
@@ -863,7 +898,7 @@ pub function task_entry[T](t: Task[T]): () => T {
 }
 
 function __task_shared(phase: i32): TaskShared {
-  return TaskShared { phase: phase, step: 0, wait: Wait { set: [], until: None } };
+  return TaskShared { phase: phase, step: 0, wait: Wait { set: [], until: None }, detached: false };
 }
 
 pub function task_start[T](t: Task[T]): TaskStatus[T] {
