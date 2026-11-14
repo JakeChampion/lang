@@ -84,8 +84,16 @@ peak resident memory:
 | rbtree 4,200,000 | 859 | 824 | 680 | 1857 | 260 MB | 226 MB |
 | rbtree-ck 4,200,000 | 2577 | 2557 | 1680 | 3283 | 1840 MB | 1608 MB |
 | deriv 10 | 1310 | 1176 | 868 | 1076 | 712 MB | 566 MB |
-| cfold 20 | 214 | 164 | 93 | 230 | 198 MB | 184 MB |
+| cfold 20 | 214 | 164 | 222 | 230 | 198 MB | 184 MB |
 | nqueens 13 | 810 | 766 | 825 | 1229 | 156 MB | 126 MB |
+
+The Koka time of cfold is with no stack limit. At the default limit of 8 MB
+the Koka program stops with a segmentation fault after 83 to 93 ms. An
+earlier version of this table gave that time.
+
+With no stack limit for each program, the best CPU times of seven runs are:
+rbtree 765 against 676 for Koka, rbtree-ck 2452 against 1902, deriv 1310
+against 915, cfold 186 against 222, and nqueens 887 against 818.
 
 Cachegrind, with the small inputs:
 
@@ -105,6 +113,13 @@ The compiler compiles itself with a peak of 2533 MB, down from 3035 MB. Stage
 2 and stage 3 are the same file.
 
 ## Traps
+
+- Give each program the same stack limit before a comparison, and read its
+  exit status. `bench/perceus/COMPARISON.md` has the policy.
+- On deriv 10, Fern runs 6.6 billion instructions and Koka runs 7.5 billion.
+  Fern takes 33.0 million last-level cache misses and Koka takes 26.5
+  million. An `Add` node has 32 bytes in Fern and 24 in Koka, because the
+  shape has its own word. That word is the next gap.
 
 - The two new routines are wrappers. An allocation path and a release path
   that write the short header directly can remove the added instructions.
