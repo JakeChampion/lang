@@ -2740,14 +2740,32 @@ function eval_xtype(p: Prog, n: Node, own r: Run): Run {
   return set_ok(r2, type_in(n.num, S_IFLNK));
 }
 
-function is_empty_dir(path: string): boolean {
-  match (read_dir_bytes(path)) {
-    Ok(names) => {
-      return names.len() == 0;
+// Whether the directory of the entry has no entries. As in GNU find, the
+// test opens the directory, and a failure is an error of the run.
+function empty_dir(own r: Run): (boolean, Run) {
+  match (dir_size(r)) {
+    Ok(n) => {
+      return (n == 0, r);
     },
-    Err(_) => {}
+    Err(e) => {
+      let msg = q(r.e.path) + ": " + why(e);
+      return (false, report(r, msg));
+    }
   }
-  return false;
+  return (false, r);
+}
+
+function dir_size(r: Run): Result[i32, IoError] {
+  if (target_os() == "wasi") {
+    let names = read_dir_bytes(r.e.path)?;
+    return Ok(names.len());
+  } else {
+    let d = open_entry(r, r.e)?;
+    let names = d.entries_bytes();
+    d.close();
+    let list = names?;
+    return Ok(list.len());
+  }
 }
 
 function time_after(sec: i64, nsec: i64, rs: i64, rn: i64): boolean {
@@ -2844,8 +2862,8 @@ function eval_stat_test(p: Prog, n: Node, own r0: Run): Run {
   if (k == P_EMPTY) {
     let kind = st.mode & S_IFMT;
     if (kind == S_IFDIR) {
-      let empty = is_empty_dir(r.e.path);
-      return set_ok(r, empty);
+      let (empty, r2) = empty_dir(r);
+      return set_ok(r2, empty);
     }
     return set_ok(r, kind == S_IFREG && st.size == 0i64);
   }
