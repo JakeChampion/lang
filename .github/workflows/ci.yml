@@ -1,20 +1,15 @@
 name: CI
 
 # Every pull request runs Lint, lane selection and the full suite through
-# ci-suite.yml's FIFO. Main and merge queue batches use the same suite.
+# ci-suite.yml's FIFO. Main and merge queue batches use the same suite:
+# ci-main.yml and merge-queue-batch.yml call this workflow.
 # Existing path filters decide which lanes apply to the change.
 # The verdict requires lane selection and lint to pass. A skipped suite is
 # valid only when no lane is selected.
-#
-# MERGE QUEUE. A merge_group run is a full suite on the batch that GitHub is
-# about to merge. One suite covers every pull request in the batch, and main
-# stays green. The ruleset change is a repository setting, not a workflow
-# one: docs/TEST-GATES.md, "The merge queue", has the steps.
 
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-  merge_group:
   workflow_dispatch:
   workflow_call:
 

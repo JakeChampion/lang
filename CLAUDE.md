@@ -156,11 +156,19 @@ This includes small follow-ups, doc-only fixes, and comment corrections. Opening
 it IS the expected action. The loop is:
 
 > branch → commit → push → PR → subscribe → watch CI **and mergeability** →
-> merge when green → next task
+> the queue merges it → next task
+
+**Never merge a PR yourself, and never push to main.** The merge queue
+(`scripts/merge-queue`, `docs/TEST-GATES.md`) gives the `merge-queue` label to
+a PR when its `CI verdict` is green, tests it in a batch on the tip of main,
+and moves main to the tested commit. A merge outside the queue puts an
+untested tree on main. If the queue removes the label, its comment says why:
+push the fix, and the queue takes the PR again. Open a PR that must not merge
+yet as a draft, or give it the `merge-queue-hold` label.
 
 Do not stop at "pushed to the branch", do not wait after opening the PR, and do
-not ask whether to merge. If CI fails, diagnose and push fixes on the same branch
-until green, then merge. Subscribe to PR activity (`subscribe_pr_activity`)
+not ask whether to queue it. If CI fails, diagnose and push fixes on the same
+branch until green. Subscribe to PR activity (`subscribe_pr_activity`)
 without being asked — the user prefers that to manual CI polling. Pause only for
 a genuine fork (an ambiguous review comment, an architectural decision).
 
@@ -203,7 +211,9 @@ in and do not pin it.
 **One red lane cancels the rest.** When a lane concludes `failure` the rest of
 the run is cancelled to hand the lock to the next PR — so a red PR shows one
 `failure` among a wall of `cancelled`, and a `cancelled` check is not a second
-bug to chase. Push the fix and the next round starts clean. Label the PR
+bug to chase. One comment on the PR (`pr-ci-report.yml`) names each failed
+job and test, with the lines of the log that show it: read it first. Push the
+fix and the next round starts clean. Label the PR
 `ci-full` when you need every failure of one round at once.
 
 **Check mergeability on every wake-up, not just CI.** A PR can be green and
@@ -220,16 +230,9 @@ same way you would a red build: without being asked.
 - `unstable` = mergeable, checks still running or non-required ones failing.
   Keep waiting.
 
-**PRs here are usually REBASE-merged**, which publishes each commit message
-individually — so write them to be read, rather than leaning on a merge-time
-title and body that may not survive. Merge commits and squashes are equally
-acceptable; pick whichever suits the branch.
-
-Rebasing still rewrites SHAs, so content that landed via your branch reaches main
-under a *different* commit than the one your branch holds. Building further on
-the pre-merge commit therefore still makes git see two independent creations of
-the same file — an add/add conflict, though nothing really diverged. After any
-PR merges, start follow-up work from a fresh base:
+**The queue merges each PR with a merge commit**, so each commit message of
+the branch reaches main as it is — write them to be read. After any PR merges,
+start follow-up work from a fresh base:
 
 ```
 git fetch origin main && git checkout -B <branch> origin/main
@@ -241,11 +244,6 @@ opposite responses. GitHub deleting the head branch on merge leaves a stale
 your branch gives the identical message, and there the lease is doing its job:
 fetch and read what landed before deciding.** Refreshing the ref and retrying
 overwrites their commit sight-unseen.
-
-If you only notice after committing, reset onto main and replay the new commits
-(`git checkout -B <branch> origin/main && git cherry-pick <sha>`) rather than
-hand-resolving conflict markers between a file and its own already-merged copy —
-then force-with-lease push.
 
 **GitHub can silently delete a span from a PR body or comment.** Anything that
 reads as an HTML tag is stripped along with everything up to the next `>`,

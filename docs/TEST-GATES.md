@@ -20,7 +20,7 @@ An empty selection skips the suite. `CI verdict` accepts that skip.
 `Preflight` remains available through a manual workflow dispatch for diagnosis;
 it does not replace the full suite on pull requests.
 
-Main and merge queue batches use the same full suite. Main can reuse successful
+Main and merge queue batches (below) use the same full suite. Main can reuse successful
 lanes proven on an identical merged PR tree, and `main-red.yml` opens an issue
 per red lane. The `ci-full` label still disables cancellation of sibling lanes
 after a failure when the complete failure list is needed.
@@ -114,17 +114,53 @@ Release and bootstrap verification disable this cache and build fresh binaries.
 `go test ./internal/ciplan ./internal/testing/sourcelint` checks the graph and workflow contracts.
 `make ci-selftest actionlint testnames` checks selector failures, main reuse, consumer execution, and workflow syntax.
 
+## The report on a pull request
+
+When a CI run of a pull request ends, `pr-ci-report.yml` puts the result in one
+comment on the pull request (`scripts/ci-failure-report.mjs`). For a run that
+failed, the comment names each failed job, its failed step and its failed
+tests. Each test has the lines of its output, and a failure that is not a Go
+test has the lines before the first error. A later run changes the same
+comment, and a run that passes says so there. The merge queue puts the same
+report in its comment on a pull request that it removes.
+
 ## The merge queue
 
-`ci.yml` also triggers on `merge_group`: a run on the batch GitHub is about
-to merge, with every lane on, through the suite. `CI verdict` is the one
-check a ruleset requires. It passes only when Lint and the full suite pass.
+GitHub has merge queues only for a repository of an organization, so this
+repository has its own: `scripts/merge-queue`, `merge-queue.yml` and
+`merge-queue-batch.yml`.
 
-Enabling the queue is a repository setting, in the ruleset for `main`. Turn
-on "Require merge queue" and set the required check to `CI verdict`. Keep
-the merge method the repository uses for pull requests. Set the maximum
-batch size to about ten, with a short minimum wait. The queue then runs one
-suite per batch, and a red batch leaves main green.
+A pull request enters the queue with the `merge-queue` label. The queue gives
+that label to each open pull request whose own `CI verdict` is green. A draft
+does not get it, and neither does a pull request with the `merge-queue-hold`
+label. A person can also add the label before CI is green. The queue takes
+the labelled pull requests that are green, oldest number first. It merges up to ten of them on the tip of main and pushes the result to
+the branch `merge-queue/batch`. `merge-queue-batch.yml` runs the full suite on
+that branch. When the suite passes, main moves to that same commit, and GitHub
+shows each pull request of the batch as merged. Main thus gets only a tree
+that the suite passed, and two pull requests that pass alone and fail together
+do not reach it.
+
+- **One batch at a time.** The branch is the lock.
+- **A red batch is split.** Its two halves go to the retry list, and the queue
+  tests them before it takes new pull requests. A batch of one that fails
+  loses the label and gets a comment with the run.
+- **A conflict.** A pull request that does not merge cleanly loses the label
+  and gets a comment.
+- **Main moved.** When main got only pin-file commits of `rebank-main`, the
+  queue merges them in. For any other commit it tests the batch again.
+- **Perf.** The strict perf gate is advisory on a batch. Each pull request
+  passed it alone, and `rebank-main` sets the rows that they move together.
+- **Removed.** A pull request that lost the label does not get it again at
+  the same head. A new commit, or a person who adds the label, puts it back.
+- **State.** The retry list and the removed heads are one JSON blob at
+  `refs/merge-queue/state`.
+
+The queue protects main only if nothing else merges. That part is a repository
+setting: a ruleset on `main` that requires the `CI verdict` check, with
+"Require branches to be up to date". The commit that the queue pushes has
+that check from its batch run. The token of the queue (`AUTO_REBASE_TOKEN`)
+needs the `workflow` scope, because a batch can change a workflow file.
 
 Two meta-gates keep the lane set honest, and they are inverses. `make testnames`
 (`scripts/testname_gate.sh`) fails when a lane's `-run` names a test that does not
