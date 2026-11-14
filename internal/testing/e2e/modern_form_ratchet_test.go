@@ -18,7 +18,7 @@ var modernFormCeilings = []struct {
 }{
 	{"coreutils", 233},
 	{"examples", 51},
-	{"internal/stdlib", 353},
+	{"internal/stdlib", 352},
 }
 
 func TestModernFormRatchet(t *testing.T) {

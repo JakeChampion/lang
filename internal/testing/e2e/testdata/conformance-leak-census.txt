@@ -91,37 +91,27 @@
 # FERN_LEAK_CENSUS_DUMP=1. Negative fixtures (an expected*error file) are
 # not listed — they are not supposed to compile.
 #
-# A non-zero row is a leak the compiler has today, unless its note says the
+# A non-zero row is a leak the compiler has today, unless the note above it says the
 # block is structural. The pin exists so a fixture cannot start leaking, or
 # leak more, without the change that did it being visible; a row going DOWN
 # also fails, so the improvement gets recorded rather than absorbed.
-#
-# oob_index_write's block is the copy `.with` makes before its bounds check
-# aborts the program. An abort does not unwind, so the copy is still live.
-#
-# tasks_agree_without_a_scheduler's blocks are the task runtime's pool
-# (asmcore.rt_src_task): the task table, one record per task id in use at
-# once and each record's save area, which a freed id hands to the next task
-# rather than returning to the heap. Three tasks run at once there.
-# Measured 2026-10-31 on PR #13966: ten pool blocks, including one timer
-# record per task. RC traces and debug symbols identify all ten blocks.
-#
-# Measured 2026-10-04: 569 fixtures, 567 clean.
-# 2026-11-09: tls_closed_connection_rejects_operations has zero unpaired allocations under RC trace.
+
 a_binding_arm_can_follow_a_literal_arm               0
 a_branch_that_returns_gives_its_if_expression_no_type 0
 a_builtin_method_does_not_see_the_programs_variants  0
 a_const_in_a_tuple_or_payload_pattern_matches_its_value 0
-a_float_literal_array_takes_the_width_of_its_first_use 0
 a_float_array_or_a_tuple_element_takes_the_type_of_its_first_use 0
+a_float_literal_array_takes_the_width_of_its_first_use 0
+a_function_named_like_a_safe_intrinsic_shadows_it    0
 a_function_named_like_an_intrinsic_is_a_plain_call   0
 a_function_type_argument_binds_through_its_array     0
 a_generic_call_takes_its_type_arguments_from_its_first_use 0
 a_generic_enum_kept_generic_recurses_through_its_own_method 0
 a_generic_enum_payload_keeps_template_closures       0
+# The blocks are the pool of the task runtime (asmcore.rt_src_task).
 a_handler_fans_out_on_its_scheduler                  2
 a_literal_handed_to_reactor_wait_is_fresh            0
-a_literal_local_takes_the_type_of_an_index_read 0
+a_literal_local_takes_the_type_of_an_index_read      0
 a_local_holds_a_void_value                           0
 a_map_holds_named_functions                          0
 a_map_key_eq_may_take_its_keys_owned                 0
@@ -138,6 +128,7 @@ a_two_parameter_enum_takes_generic_instances_as_arguments 0
 a_value_if_of_literals_takes_the_type_of_its_first_use 0
 a_variant_may_share_its_name_with_a_struct_of_its_module 0
 a_variant_pattern_names_the_scrutinees_enum          0
+# The blocks are the pool of the task runtime (asmcore.rt_src_task).
 a_view_survives_a_park_when_the_task_frame_moves     4
 ackermann                                            0
 add_sub_pair                                         0
@@ -249,14 +240,14 @@ audit_std_uuid                                       0
 audit_strings_arrays_maps                            0
 audit_types_match                                    0
 bare_enum_map_payloads                               0
-bare_variant_beside_enum_instantiations               0
-bare_variant_resolves_against_expected_type           0
+bare_variant_beside_enum_instantiations              0
+bare_variant_resolves_against_expected_type          0
 base64_roundtrip                                     0
 bigint_word_index_out_of_range                       0
 binding_site_pattern_grammar                         0
 bitwise_not                                          0
 bitwise_precedence                                   0
-block_expression_function_assignments               0
+block_expression_function_assignments                0
 bool_in_tuple_with_i64                               0
 bool_match_true_false_closes                         0
 bool_to_string                                       0
@@ -268,10 +259,10 @@ bound_generic_parameter_takes_a_string_literal       0
 bounded_array_method_extra_type_param                0
 break_continue                                       0
 byte_slice_after_set_len_regrows                     0
-byte_stream_and_async_channel                       0
+byte_stream_and_async_channel                        0
 byte_view_of_a_field_after_a_failed_try              0
-byte_views_in_binary_codecs                         0
-byte_views_in_codecs                                0
+byte_views_in_binary_codecs                          0
+byte_views_in_codecs                                 0
 bytes_of_a_parameter_string_return                   0
 bytes_writer                                         0
 c2_consuming_reuse                                   0
@@ -279,8 +270,10 @@ call_of_a_call_through_a_function_value              0
 call_result_arg_temp                                 0
 call_result_payload_is_a_fresh_local                 0
 call_type_args_user_type                             0
-callback_aggregate_environment_loans                0
-callback_capture_lifetimes                            0
+callback_aggregate_environment_loans                 0
+callback_capture_lifetimes                           0
+callback_fresh_local_last_use                        0
+callback_shadowed_bindings                           0
 captured_map_keeps_raw_byte_keys                     0
 cast_generic_float_width                             0
 cast_in_tuple                                        0
@@ -302,17 +295,8 @@ char_cast_receiver                                   0
 char_eq_ord_hash                                     0
 char_ordering                                        0
 checked_int_conversion                               0
-# 2026-11-11: checked_owned_nested_results has zero unpaired allocations under native RC trace.
 checked_owned_nested_results                         0
 checked_owned_results                                0
-continue_in_a_value_block_steps_the_range            0
-defer_runs_for_a_return_in_a_value_branch            0
-future_array_literal_goes_to_gather                  2
-match_arm_names_a_const                              0
-match_arm_names_a_const_of_its_module                0
-match_on_a_const_scrutinee                           0
-owned_callback_result_composition                    0
-copied_call_results                                  0
 closing_a_socket_two_reactors_watch                  0
 closing_a_watched_socket                             0
 closure_adder                                        0
@@ -326,8 +310,8 @@ closure_field_rebind                                 0
 closure_returns_composite                            0
 cmp_float_traits                                     0
 codec_errors                                         0
-collection_edge_policies                            0
-comparison_float_laws                               0
+collection_edge_policies                             0
+comparison_float_laws                                0
 compound_assign_wider                                0
 concat_of_empties                                    0
 concrete_view_methods                                0
@@ -357,6 +341,7 @@ const_without_a_type                                 0
 consuming_method                                     0
 consuming_trait_method                               0
 contains_demo                                        0
+continue_in_a_value_block_steps_the_range            0
 control_value_array                                  0
 control_value_basic                                  0
 control_value_diverge                                0
@@ -367,6 +352,7 @@ control_value_literal_once                           0
 control_value_nested                                 0
 control_value_statement_arms                         0
 control_value_string                                 0
+copied_call_results                                  0
 copied_string_field                                  0
 core_int_parse                                       0
 core_int_radix                                       0
@@ -390,13 +376,14 @@ defer_binding_value_block                            0
 defer_block_form                                     0
 defer_control_flow                                   0
 defer_in_loop                                        0
+defer_runs_for_a_return_in_a_value_branch            0
 derive_debug                                         0
 derive_default                                       0
 derive_default_generic_enum                          0
 derive_default_generic_primitive                     0
 derive_from_json                                     0
 derive_from_json_i64                                 0
-derive_from_json_import_alias                      0
+derive_from_json_import_alias                        0
 derive_from_json_shapes                              0
 derive_json                                          0
 derive_multi_payload                                 0
@@ -405,14 +392,14 @@ destructure_repeated_discards_in_param               0
 destructure_tuple_and_struct_forms                   0
 destructured_binding_match_on_its_method             0
 digit_separators_and_usize_suffix                    0
-display_user_type_print                             0
+display_user_type_print                              0
 div_modulo                                           0
 divmod_inline                                        0
 dyn_bound_satisfied                                  0
 dyn_conditional_impl_bound_met                       0
 dyn_dispatch_tells_a_struct_from_its_namesake_variant 0
 dyn_downcast_of_a_scalar_is_none                     0
-dyn_local_trait_shadows_imported                    0
+dyn_local_trait_shadows_imported                     0
 dyn_no_implementer                                   0
 dyn_trait_dispatch                                   0
 dyn_two_word_dispatch                                0
@@ -433,7 +420,7 @@ eq_struct_enum                                       0
 erased_typevar_ret                                   0
 escape_sequences                                     0
 eval_order_aggregate_literal                         0
-evaluation_order_effects                            0
+evaluation_order_effects                             0
 exit                                                 0
 exit_42                                              0
 exit_after_a_worker_keeps_its_status                 0
@@ -452,7 +439,7 @@ f64_sqrt                                             0
 f64_tryop_widen                                      0
 factorial_print                                      0
 fib_recursion                                        0
-field_holder_shadows_callee 0
+field_holder_shadows_callee                          0
 field_read_off_a_call_through_a_function_field       0
 fip_range_for_and_value_blocks                       0
 fizzbuzz                                             0
@@ -486,14 +473,15 @@ fstring_reassign_releases_old                        0
 function_array_element_returned                      0
 function_reassignment_across_value_blocks            0
 functional_base_unchanged                            0
+# The blocks are the pool of the task runtime (asmcore.rt_src_task).
+future_array_literal_goes_to_gather                  2
 gcd_euclid                                           0
 general_reuse_crossblock                             0
 general_reuse_crosstype                              0
 general_reuse_struct                                 0
 general_reuse_tuple                                  0
 generic_arms_agree_in_type_argument                  0
-generic_array_callbacks_keep_their_types              0
-generic_nominal_callback_signatures                   0
+generic_array_callbacks_keep_their_types             0
 generic_array_method_chain                           0
 generic_array_methods                                0
 generic_array_statistics                             0
@@ -503,17 +491,17 @@ generic_associated_fn                                0
 generic_box                                          0
 generic_call_binds_through_closure_array_param       0
 generic_call_gives_its_expected_type_to_an_array_argument 0
-generic_call_in_a_value_block_takes_its_destination 0
+generic_call_in_a_value_block_takes_its_destination  0
 generic_call_in_struct_field                         0
 generic_call_infers_from_variant_argument            0
+generic_call_takes_its_type_from_an_append_receiver  0
 generic_call_takes_its_type_from_its_destination_inside_a_value 0
-generic_call_takes_its_type_from_an_append_receiver 0
 generic_call_through_fn_value                        0
 generic_call_typed_by_its_destination                0
 generic_call_written_type_variable_empty_array       0
 generic_callback_copies_and_shared_results           0
-generic_closure_dispatch_instances                   0
 generic_char_ordering                                0
+generic_closure_dispatch_instances                   0
 generic_enum_bound_dispatch                          0
 generic_enum_method_at_two_instantiations            0
 generic_enum_method_builds_a_variant                 0
@@ -528,8 +516,10 @@ generic_fn_value_array_methods                       0
 generic_fnarg_typevar                                0
 generic_fold_accumulator_reclaim                     0
 generic_id                                           0
-generic_method_binds_enum_argument_for_free_generic 0
+generic_match_owned_payloads                         0
+generic_method_binds_enum_argument_for_free_generic  0
 generic_method_typeparams                            0
+generic_nominal_callback_signatures                  0
 generic_option_static_trait_helper                   0
 generic_pair                                         0
 generic_promotion_ignores_shadowed_names             0
@@ -540,7 +530,7 @@ generic_result_owned_and_handle_free                 0
 generic_results_and_declared_raw_names               0
 generic_return_pin_in_assoc_fn                       0
 generic_struct_argument_from_a_some_literal          0
-generic_struct_infers_concrete_local                0
+generic_struct_infers_concrete_local                 0
 generic_struct_literal_in_append                     0
 generic_struct_literal_with_a_function_field_is_an_argument 0
 generic_struct_method_at_tuple_type                  0
@@ -554,7 +544,7 @@ handle_defer_closes_at_exit                          0
 handle_elements_close_in_for_each                    0
 handle_field_closes_beside_other_field_reads         0
 handle_field_closes_from_local                       0
-handle_nested_fields_close_from_owned_root          0
+handle_nested_fields_close_from_owned_root           0
 handle_payload_closes_from_local_match               0
 handle_payload_closes_in_loop_from_unpack            0
 handle_payload_field_closes                          0
@@ -567,11 +557,13 @@ hex_literal                                          0
 hex_literal_width                                    0
 hex_roundtrip                                        0
 higher_order                                         0
+# The program stops through exit(134), which does not unwind. One buffer is live.
 hkdf_length_past_the_limit_stops                     1
+# The program stops through exit(134), which does not unwind. One buffer is live.
 hotp_digits_out_of_range_stops                       1
 http_content_type                                    0
 http_cookies                                         0
-hyperbolic_boundaries                                 0
+hyperbolic_boundaries                                0
 i32_methods                                          0
 i32_payload_rebind                                   0
 i32_to_i64_roundtrip                                 0
@@ -604,19 +596,19 @@ if_let_struct_rename                                 0
 if_let_tuple_elems                                   0
 if_let_tuple_literal_elem_else                       0
 if_let_variant_pattern_rename_rest                   0
-imported_enum_qualifies_its_variants                  0
+imported_enum_qualifies_its_variants                 0
 inclusive_range                                      0
 inclusive_range_type_max                             0
 index_takes_any_integer_type                         0
 index_wrapped_product_rejected                       0
 indirect_call_owned_param                            0
-indirect_owned_arguments_follow_their_contract        0
+indirect_owned_arguments_follow_their_contract       0
 init_branch_control                                  0
 init_option_control                                  0
 init_struct_update_control                           0
 init_variant_control                                 0
 inline_hints                                         0
-# 2026-11-13: inline_worker_exit_is_a_worker_failure stops through exit(134) inside a worker body, so the blocks that are live at that call stay unpaired: 3 on x86-64, in main run 43510761873 and on a local run.
+# The program stops through exit(134), which does not unwind. Three scheduler blocks are in active frames.
 inline_worker_exit_is_a_worker_failure               3
 insert_dedup                                         0
 int_bit_accessors                                    0
@@ -661,9 +653,9 @@ lanes_calls                                          0
 lanes_f32x4_ops                                      0
 lanes_f64x2_ops                                      0
 lanes_generic_instances                              0
-lanes_map_fusion                                     0
 lanes_integer_ops                                    0
 lanes_integer_shapes                                 0
+lanes_map_fusion                                     0
 lanes_methods                                        0
 lanes_receivers                                      0
 lanes_spill_pressure                                 0
@@ -685,7 +677,7 @@ let_else_qualified_variant                           0
 let_else_tuple_of_patterns                           0
 let_else_variant_binding_outlives_stmt               0
 literal_composite_takes_the_type_of_a_nested_part    0
-literal_local_read_at_two_widths                    0
+literal_local_read_at_two_widths                     0
 literal_local_settles_from_every_use                 0
 literal_local_takes_its_use_width                    0
 literal_local_typed_by_its_uses                      0
@@ -693,7 +685,7 @@ literal_match_alternatives_share_one_body            0
 literal_payload_pattern                              0
 literal_tree_takes_its_destination_width             0
 literal_trees_take_the_type_of_their_use             0
-local_array_views_keep_their_storage                  0
+local_array_views_keep_their_storage                 0
 local_from_handle_free_call_is_fresh                 0
 local_read_from_borrowed_struct_moves_at_last_use    0
 log_leveled                                          0
@@ -735,6 +727,8 @@ map_struct_value_field                               0
 map_u8_column                                        0
 map_values_str                                       0
 map_wide_int_keys                                    0
+match_arm_names_a_const                              0
+match_arm_names_a_const_of_its_module                0
 match_arm_tuple                                      0
 match_expr_arm_width                                 0
 match_expr_array                                     0
@@ -743,7 +737,9 @@ match_expr_lambda_arm                                0
 match_expr_u32_payload_capturing_arm                 0
 match_multi_arm                                      0
 match_none                                           0
+match_on_a_const_scrutinee                           0
 match_payload_binding_width                          0
+match_payload_self_update                            0
 match_returning_cast                                 0
 match_some                                           0
 match_struct_pattern                                 0
@@ -753,7 +749,7 @@ method_from_nearest_module                           0
 method_type_arg_names_the_method                     0
 method_written_type_arg_result                       0
 methods_follow_pub_and_package_scope                 0
-minimum_i32_crc_seed                                0
+minimum_i32_crc_seed                                 0
 mock_platform_log                                    0
 module_scoped_variant                                0
 multi_file                                           0
@@ -777,6 +773,9 @@ nested_array_literals_take_the_wider_element_type    0
 nested_call_temp                                     0
 nested_loops                                         0
 nested_option                                        0
+nested_owned_field_transfer                          0
+nested_owned_field_tuple                             0
+nested_owned_field_variant                           0
 nested_pattern_double_nest                           0
 nested_pattern_expr_form                             0
 nested_pattern_flat_sibling                          0
@@ -795,13 +794,13 @@ nested_pattern_tuple_in_payload_irrefutable_with_fallthrough 0
 nested_pattern_wildcard_fallthrough                  0
 nested_payloadless_constructor                       0
 nested_value_expr_width                              0
-nested_workers_keep_private_heaps                   0
+nested_workers_keep_private_heaps                    0
 none_branch                                          0
 none_equal_none                                      0
 nul_byte_in_a_path_is_refused                        0
 nul_byte_in_a_program_or_argument_is_refused         0
-number_parsing                                     0
-numeric_lossless_widening 0
+number_parsing                                       0
+numeric_lossless_widening                            0
 numeric_module_limits                                0
 oob_index_below_guard                                0
 oob_index_negative                                   0
@@ -809,17 +808,19 @@ oob_index_read                                       0
 oob_index_wide_integer                               0
 oob_index_wrapped                                    0
 oob_index_wrapped_guard                              0
+# The program stops through exit(134), which does not unwind. The copy that `.with` makes before its bounds check is live.
 oob_index_write                                      1
 oob_loop_guard_past_length                           0
 oob_slice_negative_start                             0
 oob_slice_range                                      0
 oob_slice_wrapped_end                                0
 oob_view_index_past_view                             0
+# The program stops through exit(134), which does not unwind. The copy that `.with` makes before its bounds check is live.
 oob_write_wrapped_index                              1
 op_overload_nested                                   0
 op_trait_generic                                     0
 open_slice_evaluates_base_once                       0
-ops_rem_and_bit_traits                              0
+ops_rem_and_bit_traits                               0
 opt_arr_alias_match_reclaim                          0
 opt_array_struct_field                               0
 opt_f32_payload                                      0
@@ -867,9 +868,11 @@ own_struct_update_reuse                              0
 own_takes_replaced_field_of_owned_base               0
 own_transfer                                         0
 own_tree_match                                       0
+owned_array_exchange_inputs                          0
+owned_callback_result_composition                    0
 owned_field_match_data                               0
 owned_let_arm_result_in_loop                         0
-owned_match_results_rebuild_literal                 0
+owned_match_results_rebuild_literal                  0
 owned_spread_borrows_its_source                      0
 owned_spread_reads_replaced_field                    0
 owned_state_restored_on_each_loop_jump               0
@@ -891,6 +894,7 @@ param_strarr_elem_shared                             0
 path_join                                            0
 payload_binding_is_a_local                           0
 payload_struct_patterns                              0
+# The program stops through exit(134), which does not unwind. One buffer is live.
 pbkdf2_without_an_iteration_stops                    1
 pipe_hole_named_argument                             0
 prim_recv_array_method                               0
@@ -921,7 +925,7 @@ range_for_nested                                     0
 range_ignores_names_in_the_users_scope               0
 range_value                                          0
 raw_array_keeps_its_capacity                         0
-raw_storage_paths_keep_literals_fresh                 0
+raw_storage_paths_keep_literals_fresh                0
 rc_borrowed_box_field                                0
 rc_borrowed_payload_array                            0
 rc_corpus_accumulator_seeded_from_array_element      0
@@ -1271,8 +1275,8 @@ regex_ops                                            0
 regex_replace_edge                                   0
 regex_replace_groups                                 0
 regex_wordbound                                      0
-repeatable_closure_owned_inputs                       0
-result_combinators_accept_unit_payloads               0
+repeatable_closure_owned_inputs                      0
+result_combinators_accept_unit_payloads              0
 result_err_path                                      0
 result_match                                         0
 result_of_a_call_through_a_function_field_is_released 0
@@ -1390,11 +1394,17 @@ target_os_android                                    0
 target_os_linux                                      0
 target_os_named                                      0
 target_os_wasi                                       0
+# The blocks are the pool of the task runtime (asmcore.rt_src_task).
 task_deadline_builtins_answer_at_once_in_the_interpreter 4
+# The program stops through exit(134), which does not unwind. The task is live.
 task_handle_with_a_made_up_id                        5
+# The program stops through exit(134), which does not unwind. The task handle and its strings are live.
 task_resumed_after_it_ended                          6
+# The program stops through exit(134), which does not unwind. The task is live.
 task_resumed_with_another_function                   10
+# The program stops through exit(134), which does not unwind. The task handle and its strings are live.
 task_started_two_times                               6
+# The blocks are the pool of the task runtime (asmcore.rt_src_task).
 tasks_agree_without_a_scheduler                      10
 tco_sum                                              0
 tcp_recv_waits_for_data                              0
@@ -1406,6 +1416,7 @@ tls_closed_connection_rejects_operations             0
 to_lower_empty_string                                0
 to_string_round_trip                                 0
 todo_reached_with_shadowing_exit                     0
+# The program stops through exit(134), which does not unwind. One buffer is live.
 totp_period_below_one_stops                          1
 trailing_commas                                      0
 trait_method_bound_wins                              0
@@ -1475,6 +1486,7 @@ value_block_branch_tail                              0
 value_block_generic_call_arm                         0
 value_block_shadows_module_fn                        0
 value_block_width_call_arm                           0
+value_cleanup_keeps_cow_aliases                      0
 value_if_arm_fn_call_arg                             0
 var_inference                                        0
 variant_named_like_an_ioerror_variant                0
@@ -1500,40 +1512,10 @@ wide_shift_by_variable                               0
 wider_use_settles_a_nested_payload_literal           0
 worker_exit_is_a_worker_failure                      0
 worker_runs_in_its_own_process                       0
+# The blocks are the pool of the task runtime (asmcore.rt_src_task).
 worker_runs_on_the_simulation                        4
 worker_send_bound                                    0
 worker_spawn_in_a_loop                               0
 worker_spawn_join                                    0
 wrap_drops_high_half                                 0
 zero_width_slice                                     0
-
-# VT-01: checked value cleanup retains COW aliases.
-value_cleanup_keeps_cow_aliases                    0
-
-# 2026-11-11: a_function_named_like_a_safe_intrinsic_shadows_it is clean under RC trace.
-# 2026-11-11: an_impl_for_one_instance_of_a_generic_struct is clean under RC trace.
-a_function_named_like_a_safe_intrinsic_shadows_it    0
-
-# 2026-11-11: Main 38399ecf removed the raw-builtin shadow fixture.
-# Its zero row and original measurement remain in commit 102403811dcc.
-
-# 2026-11-12: callback_shadowed_bindings has balanced allocations and zero live bytes on all three main targets.
-callback_shadowed_bindings                         0
-
-# 2026-11-12: callback_fresh_local_last_use has balanced allocations and zero live bytes on all three main targets.
-callback_fresh_local_last_use                       0
-
-# 2026-11-12: owned_array_exchange_inputs has balanced allocations and zero live bytes on all three main targets.
-owned_array_exchange_inputs                        0
-# 2026-11-12: nested_owned_field_transfer has balanced allocations and zero live bytes on all three main targets.
-nested_owned_field_transfer                        0
-# 2026-11-12: generic_match_owned_payloads has balanced allocations and zero live bytes on all three main targets.
-generic_match_owned_payloads                      0
-# 2026-11-12: nested_owned_field_tuple has balanced allocations and zero live bytes on all three main targets.
-nested_owned_field_tuple                           0
-
-# 2026-11-12: match_payload_self_update has balanced allocations and zero live bytes on all three main targets.
-match_payload_self_update                         0
-
-# 2026-11-12: nested_owned_field_variant has balanced allocations and zero live bytes on all three main targets.
-nested_owned_field_variant                         0

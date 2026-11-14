@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Check native Annex B ranges and conversions against independent codec streams."""
+"""Check native NAL ranges, configurations, and conversions against independent streams."""
+import importlib.util
 import os
 from pathlib import Path
 import re
@@ -64,6 +65,83 @@ def check(path, directory, pixel_format, frames):
     print(f"{path.name}: {len(units)} complete/streamed native/WASI ranges match; FFmpeg planes match", flush=True)
 
 
+def configuration_units(record):
+    at, values = 23, []
+    for _ in range(record[22]):
+        kind, count = record[at] & 63, int.from_bytes(record[at + 1:at + 3], "big")
+        at += 3
+        for _ in range(count):
+            size = int.from_bytes(record[at:at + 2], "big")
+            at += 2
+            assert size >= 2 and at + size <= len(record)
+            values.append((kind, at, record[at:at + size]))
+            at += size
+    assert at == len(record)
+    return values
+
+
+def configuration_run(record, directory, valid):
+    path = directory / "temporal-config.bin"
+    path.write_bytes(record)
+    native = subprocess.run([str(binary), "--hevc-config", str(path)], capture_output=True, text=True)
+    wasi = subprocess.run(["wasmtime", "run", "--dir", ".", str(wasm), "--hevc-config", path.name],
+                          cwd=directory, capture_output=True, text=True)
+    assert native.returncode == (0 if valid else 6), native
+    assert wasi.returncode == (0 if valid else 1), wasi
+    assert native.stdout == wasi.stdout
+    assert re.search(r"leakcheck: allocs=(\d+) frees=\1 live_bytes=0", native.stderr), native.stderr
+    assert "fern-sanitizer:" not in native.stderr
+    if valid:
+        values = configuration_units(record)
+        order = [unit for kind in (32, 33, 34) for actual, _, unit in values if actual == kind]
+        order += [unit for kind, _, unit in values if kind in (39, 40)]
+        expected = b"".join(b"\0\0\0\1" + unit for unit in order)
+        assert native.stdout.strip() == "C 4 " + expected.hex()
+        return bytes.fromhex(native.stdout.split()[2])
+    else:
+        assert "invalid video header or packet" in native.stderr and "invalid video header or packet" in wasi.stderr
+
+
+def configuration_temporals(path, directory, pixel_format):
+    mp4 = directory / "temporal-config.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(path), "-c", "copy", "-tag:v", "hvc1", str(mp4)], check=True)
+    data = mp4.read_bytes()
+    tag = data.index(b"hvcC")
+    size = int.from_bytes(data[tag - 4:tag], "big")
+    record = data[tag + 4:tag - 4 + size]
+    values = configuration_units(record)
+    assert {32, 33, 34}.issubset({kind for kind, _, _ in values})
+    csd = configuration_run(record, directory, True)
+    restored = directory / "configuration-prefix.hevc"
+    restored.write_bytes(csd + path.read_bytes())
+    assert decode(restored, pixel_format) == decode(path, pixel_format)
+    spec = importlib.util.spec_from_file_location("configuration_hevc", ROOT / "scripts/gen-video-hevc-fixtures.py")
+    fixtures = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fixtures)
+    trace = fixtures.syntax.build_trace("HEVC", "hevc-config-temporal-trace")
+    syntax_accepted = syntax_refused = 0
+    for kind in (32, 33, 34):
+        offset = next(at for actual, at, _ in values if actual == kind)
+        for plus_one in range(8):
+            modified = bytearray(record)
+            modified[offset + 1] = (modified[offset + 1] & 0xf8) | plus_one
+            configuration_run(modified, directory, plus_one != 0 and (kind == 34 or plus_one == 1))
+            context = directory / "temporal-parameters.bin"
+            context.write_bytes(b"".join(b"\0\0\0\1" + unit for _, _, unit in configuration_units(modified)))
+            oracle = subprocess.run([str(trace), str(context)], capture_output=True, text=True)
+            if plus_one:
+                headers = re.findall(r"nal_unit_type\s+[01]+\s+=\s+(\d+).*?"
+                                     r"nuh_temporal_id_plus1\s+[01]+\s+=\s+(\d+)", oracle.stderr, re.S)
+                identifiers = [int(value) for actual, value in headers if int(actual) == kind]
+                assert identifiers and identifiers[0] == plus_one, oracle.stderr
+            if oracle.returncode == 0 and "Failed to read unit" not in oracle.stderr and "out of range" not in oracle.stderr:
+                syntax_accepted += 1
+            else:
+                syntax_refused += 1
+    print(f"{path.name}: 24 native/WASI configuration header controls match H.265 7.4.2.2; "
+          f"CBS syntax accepted {syntax_accepted}, refused {syntax_refused}; decoded configuration-prefix planes match", flush=True)
+
+
 with tempfile.TemporaryDirectory() as temporary:
     directory = Path(temporary)
     cases = [
@@ -86,3 +164,5 @@ with tempfile.TemporaryDirectory() as temporary:
         if name == "avc-long":
             assert path.stat().st_size > 4104 * 4
         check(path, directory, pixels, frames)
+        if codec == "hevc":
+            configuration_temporals(path, directory, pixels)

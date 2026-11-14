@@ -1435,7 +1435,7 @@ pub(package) function fixed(n: f64, prec: i32): string {
   if (e >= 0) {
     limbs = __dec_scale(limbs, 2u64, 536870912u64, 29, e);
   } else {
-    k = 0 - e;
+    k = -e;
     limbs = __dec_scale(limbs, 5u64, 1220703125u64, 13, k);
   }
   let digits = __dec_digits(limbs);
