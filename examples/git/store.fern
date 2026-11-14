@@ -3,6 +3,7 @@ import "std/array";
 import "core/cmp";
 import "std/i64";
 import "std/hex";
+import "./midx";
 import "./objects";
 import "./pack";
 
@@ -22,14 +23,17 @@ const LARGE_PACK: i64 = 1073741824;
 // parents a shallow clone does not have. With `listed`, `loose` holds the
 // name of each loose object in order. `hot` is the packfile that had the
 // last object, which is where the next search starts.
-pub struct Store { objects: string, width: i32, packs: Packed[], shallow: string[], loose: string[], listed: boolean, hot: i32 }
+// `multi` holds the multi-pack index when the store has one, and `multi_packs`
+// gives the place in `packs` of each packfile that it names, or -1.
+pub struct Store { objects: string, width: i32, packs: Packed[], shallow: string[], loose: string[], listed: boolean, hot: i32, multi: midx.Midx[], multi_packs: i32[] }
 
 // The result of a read: the object, and the store with the packfile that
 // the read loaded.
 pub struct Found { store: Store, object: Result[objects.Object, string] }
 
-// The store of the directory `objects`, with the index of each packfile.
-pub function open(dir: string, a: i32): Store {
+// The store of the directory `objects`, with the index of each packfile,
+// and the multi-pack index when `multi` is true.
+pub function open(dir: string, a: i32, multi: boolean): Store {
   let shallow: string[] = [];
   if let Ok(text) = read_file(dir + "/../shallow") {
     shallow = text.split("\n").filter((line: string): boolean => line.len() == 2 * a);
@@ -38,7 +42,7 @@ pub function open(dir: string, a: i32): Store {
   let names = match (read_dir(dir + "/pack")) {
     Ok(ns) => ns,
     Err(_) => {
-      return Store { objects: dir, width: a, packs: packs, shallow: shallow, loose: [], listed: false, hot: 0 };
+      return Store { objects: dir, width: a, packs: packs, shallow: shallow, loose: [], listed: false, hot: 0, multi: [], multi_packs: [] };
     },
   };
   for n in names {
@@ -51,7 +55,28 @@ pub function open(dir: string, a: i32): Store {
       }
     }
   }
-  return Store { objects: dir, width: a, packs: packs, shallow: shallow, loose: [], listed: false, hot: 0 };
+  let s = Store { objects: dir, width: a, packs: packs, shallow: shallow, loose: [], listed: false, hot: 0, multi: [], multi_packs: [] };
+  if (!multi) {
+    return s;
+  }
+  let Ok(bytes) = read_file_bytes(dir + "/pack/multi-pack-index") else {
+    return s;
+  };
+  let Some(m) = midx.parse(bytes, a) else {
+    return s;
+  };
+  let places: i32[] = [];
+  for name in m.packs {
+    let path = dir + "/pack/" + objects.part(name, 0, name.len() - 4) + ".pack";
+    let place = -1;
+    for i in 0..packs.len() {
+      if (packs[i].path == path) {
+        place = i;
+      }
+    }
+    places = places.append(place);
+  }
+  return Store { ...s, multi: [m], multi_packs: places };
 }
 
 // The least length of a short name, as git sets it: half of the bits of
@@ -213,8 +238,14 @@ function part_at(file: Reader[], order: i64[], from: i64, most: i32, raw: i32): 
 }
 
 // The packfile that has the name `raw` and the offset of the object in it,
-// or -1 for each.
+// or -1 for each. The multi-pack index comes first, as in git.
 function located(s: Store, raw: u8[]): (i32, i64) {
+  for m in s.multi {
+    let (id, offset) = midx.locate(m, raw);
+    if (id >= 0 && s.multi_packs[id] >= 0) {
+      return (s.multi_packs[id], offset);
+    }
+  }
   if (s.hot < s.packs.len()) {
     let at = pack.find(s.packs[s.hot].ix, raw);
     if (at >= 0) {

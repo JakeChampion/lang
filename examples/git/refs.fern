@@ -22,7 +22,7 @@ pub function (r: Repo) objects(): string {
 
 // The object store of the repository.
 pub function (r: Repo) store(): store.Store {
-  return store.open(r.objects(), r.width);
+  return store.open(r.objects(), r.width, r.config.flag("core.multipackindex", true));
 }
 
 function is_dir(path: string): boolean {
