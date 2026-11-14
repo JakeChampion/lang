@@ -828,7 +828,7 @@ function lifted_fn(lam: ast.ExprLambda, fd: parser.FuncDecl, lname: string): Opt
 // captures. A binding statement of the name or of a capture ends the calls
 // that change, and only the statements that read the name change.
 function lift_binding_at(own lb: LiftBody, idx: i32, fname: string, lam: ast.ExprLambda, fd: parser.FuncDecl, prefix: string, own acc: LiftAcc): LiftStep {
-  lb = settled(ready_body(lb));
+  lb = ready_body(settled(lb));
   let k = lb.keys.find(fname);
   if (lb.assigns.has(fname) || lb.bound[k] != 1) {
     return LiftStep { lb: lb, acc: acc, name: "", changed: false };
