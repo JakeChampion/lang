@@ -7,6 +7,19 @@
 # slice beside the word ones. Main at 38768eb2 already gave the perceus_rbtree_ck rows. The aarch64
 # rows are not measured here. Each x86_64 row that the run names moves to its measured value. Keep
 # all tolerances.
+# 2026-11-14: PR #15784, perf-aarch64 job 132329298773 on the merge with main 8ce8fde7.
+# aarch64/http_hello.text is 1.13% below its pin. Main's compiler and #15784 emit the same 16432
+# instructions for it, so it is a value of main. The row moves to its measured value. Keep all tolerances.
+# 2026-11-13: PR #15784, perf-x86_64 job 132195198217 on the merge with main 38768eb2.
+# perceus_rbtree_ck .text +7.7% and .ir +29.1% (089d854d keeps the trees of the benchmark); string_slice, tokenize and the two
+# utf8_ingest rows down. Main's compiler and #15784 emit the same code for each program of bench/ on
+# x86-64 and arm64, so these are values of main. Each row moves to its measured value. Keep all
+# tolerances.
+# 2026-11-13: PR #15784, perf-aarch64 job 132189918558 on the merge with main 38768eb2.
+# perceus_rbtree_ck .text +7.7% and .ir +31.5%; string_slice.ir -42.4%, tokenize.ir -12.7%,
+# utf8_ingest_unchecked.ir -2.4% and utf8_ingest_validated.ir -1.5%. The code that main and
+# #15784 emit for rbtree_ck, string_slice and tokenize is the same byte for byte on arm64,
+# so these are values of main. Each row moves to its measured value. Keep all tolerances.
 # 2026-11-13: PR #15739, perf-x86_64 job 132017371022 and perf-aarch64 job 132017370985 on the merge
 # with main 629da263. Twelve rows of perceus_cfold, perceus_deriv, perceus_rbtree, perceus_rbtree_ck,
 # pmap_insert and pvec_with are 1.0% to 4.8% below their pins. #15739 removes a conformance case and
@@ -662,7 +675,7 @@ aarch64/deflate_encode.text	7735
 aarch64/enum_match.text	1165
 aarch64/enum_match.ir	24975095
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-aarch64/http_hello.text	16619
+aarch64/http_hello.text	16432
 # 2026-10-30 (#13900): CI41026748018 measures aarch64/http_hello.ir 4.98% lower on main 33b21667. #13900 does not change the serve path.
 aarch64/http_hello.ir	23892626
 aarch64/int_loop.text	383
@@ -706,15 +719,15 @@ aarch64/string_rfind_byte.ir	55941911
 aarch64/string_scan.text	2556
 aarch64/string_scan.ir	59787692
 aarch64/string_slice.text	1188
-aarch64/string_slice.ir	43620107
+aarch64/string_slice.ir	25140119
 aarch64/struct_drop.text	2663
 aarch64/struct_drop.ir	218300904
-aarch64/tokenize.text	1444
-aarch64/tokenize.ir	38350109
+aarch64/tokenize.text	1426
+aarch64/tokenize.ir	33490121
 aarch64/utf8_ingest_unchecked.text	8188
-aarch64/utf8_ingest_unchecked.ir	2689511
+aarch64/utf8_ingest_unchecked.ir	2624121
 aarch64/utf8_ingest_validated.text	8735
-aarch64/utf8_ingest_validated.ir	6229114
+aarch64/utf8_ingest_validated.ir	6137721
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
 x86_64/perceus_cfold.text	1938
@@ -742,8 +755,8 @@ aarch64/perceus_nqueens.text	1812
 aarch64/perceus_nqueens.ir	90387246
 aarch64/perceus_rbtree.text	2842
 aarch64/perceus_rbtree.ir	35415487
-aarch64/perceus_rbtree_ck.text	3039
-aarch64/perceus_rbtree_ck.ir	36653727
+aarch64/perceus_rbtree_ck.text	3274
+aarch64/perceus_rbtree_ck.ir	48193420
 # 2026-11-01: #13988 keeps the original main pvec instruction gates.
 # Fresh measurements remain within their unchanged 1% tolerance.
 # 2026-11-07: PR #14490 adds the fixed QTRLE workload. Existing limits stay unchanged.
@@ -765,6 +778,11 @@ aarch64/video_qtrle.ir 1559097809
 # from #14910 changes the string-count rows. Parent 97af82fc and IVF head
 # cbed65e0 produce identical assembly, binaries, and Callgrind counts.
 # Pin both measured rows. Keep the 1% tolerance.
+# 2026-11-13: PR #15783, for the Perf lane of main (#15788). #15769 reads the arguments and the
+# frames through views: string_slice.ir falls 39% to 42%, tokenize.ir 13%, tokenize.text 1.2% to
+# 4.3%, and the two utf8_ingest rows 1.0% to 3.0%. x86-64: a local perf-bench run on a merge with
+# main 38768eb2. aarch64: perf-aarch64 job 132155696051 of main run 43503448872 on 5cf07b37.
+# Tolerances are unchanged.
 # 2026-11-13: main f29fcfdf. #15752 adds the adopt path to __fern_string_from_bytes_u8:
 # 63 more aarch64 lines in map_string, sort_strings, string_build, string_scan and
 # struct_drop. The string .ir rows fall, string_build up to 9.7%. aarch64: perf-aarch64

@@ -3,6 +3,15 @@
 # 1% to 3%. The arm64 call_overhead, closure_call and enum_match rows grow 48 to 248 bytes with the
 # 4-byte append beside the word one. Each row that the run names moves to its measured value. Keep
 # all tolerances.
+# 2026-11-13: PR #15783, a local scripts/profile-costs run on a merge with main 38768eb2 (main run
+# 43503448872 reports the same rows on 5cf07b37). 66 rows move: 54 up and 12 down. 30 of them grow 48
+# or 96 bytes: #15771 aligns the text of each image to 64 bytes. The map_string rows grow 1.1% to 1.4%
+# and the deflate_decode rows fall 1.1% to 1.9% with the string and view changes of #15769. Each row
+# moves to its measured value. Keep all tolerances.
+# 2026-11-13: PR #15784, perf-x86_64 job 132195198217 on the merge with main 38768eb2. Seventy
+# profile rows moved by 1% to 2.7%. Main's compiler and #15784 emit the same code for each program of
+# bench/ on x86-64 and arm64, so these are values of main. Each row moves to its measured value. Keep
+# all tolerances.
 # 2026-11-13: PR #15684 jobs 131832783238 and 131832783245 tested merge df16f1f9 with main 5e4d66b7.
 # These rows use the reported measurements after the main compiler changes.
 # The media reference change does not alter the compiler or workloads. Tolerances stay unchanged.
@@ -161,7 +170,7 @@ profile/arm64-linux/deflate_decode.diagnostic.emit	13784
 profile/arm64-linux/deflate_decode.hardened.bytes	63256
 profile/arm64-linux/deflate_decode.hardened.emit	14820
 profile/arm64-linux/deflate_decode.minimal.bytes	52312
-profile/arm64-linux/deflate_decode.minimal.emit	12103
+profile/arm64-linux/deflate_decode.minimal.emit	11928
 profile/arm64-linux/deflate_decode.safe.bytes	56984
 profile/arm64-linux/deflate_decode.safe.emit	13234
 profile/arm64-linux/enum_match.diagnostic.bytes	13664
@@ -181,7 +190,7 @@ profile/arm64-linux/enum_match.safe.emit	1176
 profile/arm64-linux/http_hello.diagnostic.bytes	129376
 profile/arm64-linux/http_hello.diagnostic.emit	16745
 profile/arm64-linux/http_hello.hardened.bytes	81480
-profile/arm64-linux/http_hello.hardened.emit	18195
+profile/arm64-linux/http_hello.hardened.emit	18009
 profile/arm64-linux/http_hello.minimal.bytes	64472
 profile/arm64-linux/http_hello.minimal.emit	13923
 profile/arm64-linux/http_hello.safe.bytes	75240
@@ -254,7 +263,7 @@ profile/x86-64-linux/deflate_decode.hardened.bytes	54928
 profile/x86-64-linux/deflate_decode.hardened.emit	13112
 profile/x86-64-linux/deflate_decode.hardened.ir	33100152
 profile/x86-64-linux/deflate_decode.minimal.bytes	45920
-profile/x86-64-linux/deflate_decode.minimal.emit	11402
+profile/x86-64-linux/deflate_decode.minimal.emit	11231
 profile/x86-64-linux/deflate_decode.minimal.ir	38769785
 profile/x86-64-linux/deflate_decode.safe.bytes	50448
 profile/x86-64-linux/deflate_decode.safe.emit	12488

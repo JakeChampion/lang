@@ -4812,7 +4812,7 @@ function with_update(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Pla
 function update_base(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, defer0: boolean, link: Link, keep: i32): irtables.LowerState {
   let scratch_start = r.scratch_start;
   if (link.root >= 0) {
-    return linked_base(r, f, ins, link, keep);
+    return linked_base(r, f, p, ins, link, keep);
   }
   if (defer0 && p.grows[ins.result] >= 0) {
     return field_base(r, f, p, ins, keep);
@@ -4829,7 +4829,10 @@ function update_base(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Pla
   return sole_owned_base(r, f, ins.args[0], scratch, keep);
 }
 
-function linked_base(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, link: Link, keep: i32): irtables.LowerState {
+// Once the receiver is not the parameter's box, it is a box of the frame's
+// own. When the plan proves that no other unit holds it, the update writes
+// it with no test.
+function linked_base(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, link: Link, keep: i32): irtables.LowerState {
   let scratch_start = r.scratch_start;
   let scratch = scratch_start;
   r = reserve(r, scratch + 1);
@@ -4839,7 +4842,12 @@ function linked_base(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst,
   r = emit(r, ir.op_if(0));
   r = borrowed_with_base(r, f, ins, scratch, link.out, keep);
   r = emit(r, ir.op_else());
-  r = sole_owned_base(r, f, ins.args[0], scratch, keep);
+  if (p.linked_receivers[ins.result]) {
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_store_local(scratch));
+  } else {
+    r = sole_owned_base(r, f, ins.args[0], scratch, keep);
+  }
   return emit(r, ir.op_end());
 }
 
@@ -5962,6 +5970,15 @@ function host_builtin_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered 
   };
 }
 
+function proc_wait_op(name: string): ir.Op {
+  return match (name) {
+    "proc_waitpid_nohang" => ir.op_proc_waitpid_nohang(),
+    "proc_waitpid_status" => ir.op_proc_waitpid_status(),
+    "proc_wait_any" => ir.op_proc_wait_any(),
+    _ => ir.op_proc_waitpid(),
+  };
+}
+
 function is_worker_site(name: string): boolean {
   return name == "__worker_region" || name == "__worker_exit" || name == "__worker_reap" || name == "__worker_unmap" || ssasem.is_adopt_helper(name) || ssasem.is_root_helper(name);
 }
@@ -6034,14 +6051,8 @@ function os_query_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   if (ins.str == "umask") {
     return Lowered { found: true, r: emit(r, ir.op_umask()) };
   }
-  if (ins.str == "proc_waitpid") {
-    return Lowered { found: true, r: emit(r, ir.op_proc_waitpid()) };
-  }
-  if (ins.str == "proc_waitpid_nohang") {
-    return Lowered { found: true, r: emit(r, ir.op_proc_waitpid_nohang()) };
-  }
-  if (ins.str == "proc_waitpid_status") {
-    return Lowered { found: true, r: emit(r, ir.op_proc_waitpid_status()) };
+  if (util.has_str(["proc_waitpid", "proc_waitpid_nohang", "proc_waitpid_status", "proc_wait_any"], ins.str)) {
+    return Lowered { found: true, r: emit(r, proc_wait_op(ins.str)) };
   }
   if (is_worker_site(ins.str)) {
     return worker_site(r, ins);
