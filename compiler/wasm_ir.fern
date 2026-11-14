@@ -5505,6 +5505,50 @@ function branch_only_if(ops: ir.Op[], i: i32): string {
   return prefix + "    br_if " + util.i32_to_string(branch.i32_imm - 1) + "\n";
 }
 
+// Whether the op after the call at `i` only gives its result to a return:
+// the return itself, or a local that block ends and a return read next.
+function only_returned(ops: ir.Op[], i: i32): boolean {
+  if (i + 1 >= ops.len()) {
+    return false;
+  }
+  if (ops[i + 1].kind_tag == ir.K_RETURN) {
+    return true;
+  }
+  if (ops[i + 1].kind_tag != ir.K_STORE_LOCAL) {
+    return false;
+  }
+  let j = past_ends(ops, i + 2);
+  return j + 1 < ops.len() && ops[j].kind_tag == ir.K_LOAD_LOCAL && ops[j].i32_imm == ops[i + 1].i32_imm && ops[j + 1].kind_tag == ir.K_RETURN;
+}
+
+// The offset of the first op from `from` that is not the end of a block.
+function past_ends(ops: ir.Op[], from: i32): i32 {
+  for j in from..ops.len() {
+    if (ops[j].kind_tag != ir.K_END) {
+      return j;
+    }
+  }
+  return ops.len();
+}
+
+// The tail call for the call at `i` when only a return of its result
+// follows it, or "". A function with a shadow frame pops it before the
+// return, and its callee can get a window of that frame, so it makes no tail
+// call. After a local, the ends and the return stay for the other paths.
+function tail_call_wat(ops: ir.Op[], i: i32, windows: i32): string {
+  if (windows > 0 || !only_returned(ops, i)) {
+    return "";
+  }
+  let o = ops[i];
+  if (o.kind_tag == ir.K_CALL_INDIRECT) {
+    return "    return_call_indirect (type " + fn_type_name(o) + ")\n";
+  }
+  if (o.kind_tag == ir.K_CALL_DIRECT && o.str != "__fern_arr_share_inc" && o.str != "__fern_arr_share_dec" && !ircore.is_fern_helper(o.str)) {
+    return "    return_call $" + o.str + "\n";
+  }
+  return "";
+}
+
 // fern-lint: allow cyclomatic-complexity
 function emit_function_ir_named(ns: string, r: irtables.Lowered, fn_name: string, result_wat: string, strs: Placed, caggs: Placed, structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vgate: irverifygate.Gate): string {
   irverifygate.verify_or_refuse(fn_name, r.ops, r.n_params, r.n_locals, vgate);
@@ -5563,6 +5607,12 @@ function emit_function_ir_named(ns: string, r: irtables.Lowered, fn_name: string
     if (folded.len() > 0) {
       parts = parts.append(folded);
       i += 4;
+      continue;
+    }
+    let tail = tail_call_wat(f.ops, i, windows);
+    if (tail.len() > 0) {
+      parts = parts.append(tail);
+      i += 2;
       continue;
     }
     let o = f.ops[i];
