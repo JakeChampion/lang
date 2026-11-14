@@ -978,9 +978,11 @@ element-slot scans.
 `__scan_set_bytes(bytes, from, set)` returns the first index at or after
 `from` whose byte has a nonzero entry in `set`, or the input length.
 Negative starts clamp to zero; bytes beyond the table are not members.
-The shared scalar kernel reads one table entry per input byte. A constant
-byte table resides in static data under the self-hosted compiler; the Go
-bootstrap compiler builds it at each use.
+On x86-64 and arm64 the scan sorts 32 or 16 bytes at a time with two nibble
+tables. A constant set gets its tables at compile time, in static data. Any
+other set calls `__fern_scan_set`. That routine reads the first 16 bytes one at
+a time, then it builds the tables from the set. The wasm32 kernel reads one
+table entry for each input byte.
 `__count_runs_bytes(bytes, inside, set)` counts transitions into membership.
 Both borrow their byte arrays without constructing text.
 Target, ownership, size and native measurement evidence is recorded in
