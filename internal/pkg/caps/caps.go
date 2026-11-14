@@ -64,6 +64,9 @@ var BuiltinCaps = map[string]string{
 	"clone_file":       "fs",
 	"create_symlink":   "fs",
 	"read_link":        "fs",
+
+	"map_file_unchecked": "fs",
+
 	"read_link_bytes":  "fs",
 	"getxattr":         "fs",
 	"getxattr_bytes":   "fs",

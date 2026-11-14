@@ -1169,6 +1169,13 @@ function run_serial(c: Cfg, name: string, o0: io_buffered.BufWriter, ok0: boolea
   return Job { o: o, ok: ok && !fatal, fatal: fatal };
 }
 
+function skipped_number(printing: boolean, col: i32, line: boolean, ff: boolean): i32 {
+  if (!printing && col == 0 && (line || !ff)) {
+    return 1;
+  }
+  return 0;
+}
+
 function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: boolean): Job {
   let o = o0;
   let ok = ok0;
@@ -1214,6 +1221,7 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
   let now = now_seconds();
   let alive = true;
   while (page <= c.last_page && alive) {
+    let printing = page >= c.first_page;
     let held: boolean[] = [];
     let active = 0;
     i = 0;
@@ -1230,6 +1238,7 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
     let extra_numbers: boolean[] = [];
     let number_tabs: boolean[] = [];
     let number_count = 0;
+    let skipped_numbers = 0;
     let filled = 0;
     let page_ff = false;
     let r = 0;
@@ -1255,6 +1264,7 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
           if (got.src.fatal) {
             fatal = true;
           } else {
+            skipped_numbers += skipped_number(printing, col, got.line, got.ff);
             if (got.line) {
               cell = got.text;
               row_terminated = row_terminated || !got.ff && !got.src.eof;
@@ -1325,7 +1335,6 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
       }
     }
     pages = pages + 1 as u64;
-    let printing = page >= c.first_page;
     if (printing && !rebased) {
       rebased = true;
       if (c.has_first_line) {
@@ -1341,10 +1350,11 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
         o = gnu.put(o, "\x0c");
       }
     }
+    let counted = skipped_numbers;
     if (printing) {
-      line_no = wrap32(line_no + number_count as i64);
+      counted = filled + number_count;
     }
-    line_no = wrap32(line_no + filled as i64);
+    line_no = wrap32(line_no + counted as i64);
     page = page + 1 as u64;
   }
   for s in srcs {

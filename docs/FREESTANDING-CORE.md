@@ -213,6 +213,10 @@ for a filesystem that cannot clone, which every caller already has to handle
 by copying the bytes. Refusing it with E066 instead would make `cp` unbuildable
 for wasm over an option it can honour by falling back.
 
+**`map_file_unchecked` is plain `fs`, and WASI reads the file.** Neither
+preview can map a file. The map only changes how the bytes arrive, so the
+read gives the same string, and the gate does not refuse the builtin.
+
 **`read_dir_all` is plain `fs` beside `read_dir`, and preview 2 answers it
 with less than it was asked for.** Every kernel and preview 1 report `.` and
 `..` from a directory read, so dropping them is the filter `read_dir` applies

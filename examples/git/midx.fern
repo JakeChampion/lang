@@ -1,0 +1,101 @@
+// The multi-pack index of git (`objects/pack/multi-pack-index`): one index
+// of the objects of several packfiles.
+//
+// The file is `MIDX`, a version, the hash, the count of chunks, the count of
+// packfiles, and a table of the chunks. PNAM holds the names of the indexes
+// of the packfiles, OIDF and OIDL are a fan-out table and the sorted names,
+// and OOFF gives the packfile and the offset of each object. LOFF holds the
+// 8-byte offsets.
+import "./objects";
+import "./pack";
+
+// The index of the names, the names of the packfiles, and the places of
+// the offsets and of the large offsets (-1 when the file has none).
+pub struct Midx { ix: pack.Index, packs: string[], offsets: i32, large: i32, large_end: i32 }
+
+function be32(b: u8[], at: i32): i64 {
+  return b[at] as i64 << 24 | b[at + 1] as i64 << 16 | b[at + 2] as i64 << 8 | b[at + 3] as i64;
+}
+
+// The chunk `id` of the table of chunks: its start and its end, or -1.
+function chunk(b: u8[], chunks: i32, id: string): (i32, i32) {
+  for k in 0..chunks {
+    let at = 12 + 12 * k;
+    if (b[at] == id[0] && b[at + 1] == id[1] && b[at + 2] == id[2] && b[at + 3] == id[3]) {
+      let start = be32(b, at + 8);
+      let end = be32(b, at + 20);
+      if (be32(b, at + 4) != 0 || be32(b, at + 16) != 0 || start > end || end > b.len() as i64) {
+        return (-1, -1);
+      }
+      return (start as i32, end as i32);
+    }
+  }
+  return (-1, -1);
+}
+
+// The multi-pack index in `bytes` for names of the algorithm `a`, or None
+// for a file that git does not take.
+pub function parse(b: u8[], a: i32): Option[Midx] {
+  if (b.len() < 12 + a || b[0] != b'M' || b[1] != b'I' || b[2] != b'D' || b[3] != b'X' || b[4] != 1) {
+    return None;
+  }
+  let hash_version = if (a == 20) { 1 } else { 2 };
+  if (b[5] as i32 != hash_version) {
+    return None;
+  }
+  let chunks = b[6] as i32;
+  if (12 + 12 * (chunks + 1) > b.len()) {
+    return None;
+  }
+  let (names, names_end) = chunk(b, chunks, "PNAM");
+  let (fanout, fanout_end) = chunk(b, chunks, "OIDF");
+  let (lookup, lookup_end) = chunk(b, chunks, "OIDL");
+  let (offsets, offsets_end) = chunk(b, chunks, "OOFF");
+  let (large, large_end) = chunk(b, chunks, "LOFF");
+  if (names < 0 || fanout < 0 || lookup < 0 || offsets < 0 || fanout_end - fanout != 1024) {
+    return None;
+  }
+  let count = be32(b, fanout + 1020);
+  if (count * (a as i64) > (lookup_end - lookup) as i64 || count * 8 > (offsets_end - offsets) as i64) {
+    return None;
+  }
+  let packs: string[] = [];
+  let at = names;
+  while (packs.len() < be32(b, 8) as i32 && at < names_end) {
+    let end = at;
+    while (end < names_end && b[end] != 0) {
+      end += 1;
+    }
+    packs = packs.append(objects.part_bytes(b, at, end));
+    at = end + 1;
+  }
+  if (packs.len() != be32(b, 8) as i32) {
+    return None;
+  }
+  let ix = pack.Index { bytes: b, version: 2, width: a, count: count as i32, fanout: fanout, names: lookup, stride: a, offsets: offsets, large: large };
+  return Some(Midx { ix: ix, packs: packs, offsets: offsets, large: large, large_end: large_end });
+}
+
+// The packfile and the offset of the object with the name `raw`, or
+// (-1, -1) when the multi-pack index does not hold it.
+pub function locate(m: Midx, raw: u8[]): (i32, i64) {
+  let i = pack.find(m.ix, raw);
+  if (i < 0) {
+    return (-1, -1);
+  }
+  let b = m.ix.bytes;
+  let at = m.offsets + 8 * i;
+  let id = be32(b, at) as i32;
+  let offset = be32(b, at + 4);
+  if (offset >= 2147483648 && m.large >= 0) {
+    let k = m.large + ((offset & 2147483647) * 8) as i32;
+    if (k + 8 > m.large_end) {
+      return (-1, -1);
+    }
+    offset = be32(b, k) << 32 | be32(b, k + 4);
+  }
+  if (id < 0 || id >= m.packs.len()) {
+    return (-1, -1);
+  }
+  return (id, offset);
+}

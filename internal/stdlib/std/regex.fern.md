@@ -47,7 +47,9 @@ A template of `replace_groups`, its peers and `expand_bytes` reads `$n`, `$name`
 
 `next_candidate` gives the first offset at or after a byte offset where a match can start, or -1. A caller can skip the text before that offset.
 
-`inner` gives the literal bytes that each match holds, when the prefix of the pattern does not hold as many. `next_inner` finds the next copy of those bytes. A caller that searches line by line can skip each line that does not hold them.
+`inner` gives the literal bytes that each match holds, when the prefix of the pattern does not hold as many. A letter under `(?i)` is in lower case, and it matches in either case. `next_inner` finds the next copy of those bytes. A caller that searches line by line can skip each line that does not hold them.
+
+`next_candidate` and `next_inner` find a literal from its rarest byte with `__memchr`, when text holds that byte seldom. Else `__scan_masks` probes two of its bytes at once. A pattern that starts with alternatives of literals probes the first two bytes of each, as the Teddy search of the `aho-corasick` crate does.
 
 `find_at` starts a search at a byte offset. Its assertions examine the full text, so `^` matches only at offset 0. `\b{start}` and `\b{end}` match at the start and at the end of a word. `\b{start-half}` matches where no word character comes before, and `\b{end-half}` matches where no word character comes after.
 
@@ -3694,14 +3696,19 @@ pub function compile(pattern: string): Result[Regex, CompileError] {
   let (rcode, rmasks) = if (fwd.init.len() > 0) { __rx_pack(__rx_cprog(r.node, true)) } else { (empty, empty) };
   let pre = __rx_prefix(r.node);
   let req = __rx_required(r.node).best;
-  let inner = if (!pre.folded && !pre.loose && pre.bytes.len() >= req.len()) { [] } else { req };
+  let inner = if (!pre.loose && pre.bytes.len() >= req.len()) { [] } else { req };
+  let starts = __rx_starts(r.node, pre);
+  let start_rare = if (starts.len() == 1) { __rx_rare_at(starts[0]) } else { -1 };
+  let inner_rare = __rx_rare_at(inner);
+  let none_masks: u8[] = [];
   let rev = __rx_dfa_of(rcode, rmasks, false);
   return Ok(Regex {
     ngroups: r.g - 1, names: cx.names.get(), code: code, masks: masks, fwd: fwd, rev: rev, first: first,
     lead: __rx_lead(first), prefix: pre.bytes, ci: pre.folded, loose: pre.loose, leftmost_longest: false,
     empty: __rx_nullable(r.node), uword: __rx_uword(code), full: __rx_dfa_full(fwd),
-    rfull: __rx_dfa_full(rev), rare: if (pre.folded || pre.loose) { -1 } else { __rx_rare(pre.bytes) },
-    inner: inner, inner_rare: __rx_rarest(inner),
+    rfull: __rx_dfa_full(rev), starts: starts, start_rare: start_rare,
+    start_probes: if (start_rare >= 0) { none_masks } else { __rx_start_probes(starts) },
+    inner: inner, inner_rare: inner_rare, inner_probes: if (inner_rare >= 0) { none_masks } else { __rx_probe_masks(inner, __rx_probes(inner, 2)) },
   });
 }
 
@@ -3755,8 +3762,11 @@ pub function (prog: Regex) next_candidate(text: string, from: i32): i32 {
   if (prog.first.len() == 0) {
     return from;
   }
-  if (prog.rare > 0) {
+  if (prog.start_rare >= 0) {
     return __rx_rare_candidate(prog, text, from);
+  }
+  if (prog.start_probes.len() > 0) {
+    return __rx_probed_candidate(prog, text, from);
   }
   let ti = from;
   while (true) {
@@ -3779,11 +3789,28 @@ pub function (prog: Regex) next_candidate(text: string, from: i32): i32 {
   return -1;
 }
 
-// The next start at or after `from` where the prefix is, from each place
-// of its rarest byte.
+// The next start at or after `from` where a literal of the starts can be,
+// from the probes of their bytes.
+function __rx_probed_candidate(prog: Regex, text: string, from: i32): i32 {
+  let ti = from;
+  while (true) {
+    let at = __scan_masks(text, ti, prog.start_probes);
+    if (at < 0) {
+      return -1;
+    }
+    if (__rx_starts_at(prog, text, at)) {
+      return at;
+    }
+    ti = at + 1;
+  }
+  return -1;
+}
+
+// The next start at or after `from` where the prefix is, from each place of
+// its rarest byte.
 function __rx_rare_candidate(prog: Regex, text: string, from: i32): i32 {
-  let r = prog.rare;
-  let b = prog.prefix[r] as i32;
+  let r = prog.start_rare;
+  let b = prog.starts[0][r];
   let ti = from;
   while (ti + r < text.len()) {
     let at = __memchr(text, b, ti + r);
@@ -3798,52 +3825,280 @@ function __rx_rare_candidate(prog: Regex, text: string, from: i32): i32 {
   return -1;
 }
 
-// The offset of the byte of `prefix` that is least frequent in text, or -1
-// when the first byte is that byte or the prefix is shorter than two bytes.
-// The rank of a byte is lower for a byte that text holds more often.
-function __rx_rare(prefix: u8[]): i32 {
-  if (prefix.len() < 2) {
+// The offset of the byte of `lit` that a scan for one byte finds best, or
+// -1 when probes of two bytes are better. A literal of two bytes or more
+// with no folded letter has such a byte when text holds its rarest byte
+// seldom: a byte that is not a mark, a space or a common lower case letter.
+function __rx_rare_at(lit: i32[]): i32 {
+  let none: i32[] = [];
+  if (lit.len() < 2) {
     return -1;
   }
-  let best = __rx_rarest(prefix);
-  return if (best == 0) { -1 } else { best };
+  for c in lit {
+    if (c >= 256) {
+      return -1;
+    }
+  }
+  let best = __rx_rarest_free(lit, none, 1, true);
+  let rank = __rx_lit_rank(lit[best]);
+  return if (rank < 185 || rank >= 225 && rank <= 229) { best } else { -1 };
 }
 
-// The offset of the byte of `bytes` that is least frequent in text, or 0.
-function __rx_rarest(bytes: u8[]): i32 {
-  let best = 0;
-  for k in 1..bytes.len() {
-    if (__rx_byte_rank(bytes[k] as i32) < __rx_byte_rank(bytes[best] as i32)) {
-      best = k;
+// Whether a literal of the starts can be at `at`. Of more than one literal,
+// the first four bytes count: the probes have tested two, and a match runs
+// the DFA from there.
+function __rx_starts_at(prog: Regex, text: string, at: i32): boolean {
+  if (prog.starts.len() == 1) {
+    return __rx_has_prefix(prog, text, at);
+  }
+  for lit in prog.starts {
+    if (__rx_lit_at_n(text, at, lit, 4)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The literals that each match starts with, one of them, or [] when the
+// probes of their bytes would not find the starts. A literal holds a byte as
+// it is, or an ASCII letter in either case as its lower case byte plus 256.
+// The prefix gives one literal. A pattern that starts with alternatives,
+// after assertions, gives the prefix of each alternative.
+function __rx_starts(root: RNode, pre: RPrefix): i32[][] {
+  let none: i32[][] = [];
+  if (pre.loose) {
+    return none;
+  }
+  if (pre.bytes.len() >= 2) {
+    return [__rx_prefix_lit(pre)];
+  }
+  let alts = __rx_lead_alts(root);
+  if (alts.len() < 2 || alts.len() > 64) {
+    return none;
+  }
+  let out: i32[][] = [];
+  for a in alts {
+    let p = __rx_prefix(a);
+    if (p.loose || p.bytes.len() == 0) {
+      return none;
+    }
+    out = out.append(__rx_prefix_lit(p));
+  }
+  return out;
+}
+
+function __rx_prefix_lit(p: RPrefix): i32[] {
+  let out: i32[] = [];
+  for b in p.bytes {
+    out = out.append(if (p.folded && __rx_is_letter(b as i32)) { b as i32 + 256 } else { b as i32 });
+  }
+  return out;
+}
+
+// The alternatives that start each match, after the assertions at the start
+// of the pattern, or [].
+function __rx_lead_alts(x: RNode): RNode[] {
+  let none: RNode[] = [];
+  return match (x) {
+    RAlt(items) => items,
+    RGroup(g) => __rx_lead_alts(g.node),
+    RSeq(items) => __rx_lead_alts_seq(items),
+    _ => none,
+  };
+}
+
+function __rx_lead_alts_seq(items: RNode[]): RNode[] {
+  let none: RNode[] = [];
+  for x in items {
+    if let RBound(_) = x {
+      continue;
+    }
+    return __rx_lead_alts(x);
+  }
+  return none;
+}
+
+// The probes for the starts: two probes of the prefix, or the first two
+// bytes of each alternative, as Teddy in the `aho-corasick` crate. Each
+// alternative gets one of the eight bits, in turn.
+function __rx_start_probes(starts: i32[][]): u8[] {
+  if (starts.len() == 1) {
+    return __rx_probe_masks(starts[0], __rx_probes(starts[0], 2));
+  }
+  let none: u8[] = [];
+  if (starts.len() == 0) {
+    return none;
+  }
+  let k = 2;
+  for lit in starts {
+    k = if (lit.len() < k) { lit.len() } else { k };
+  }
+  let m = __rx_masks_head(k, [0, 1, 2]);
+  for i in 0..starts.len() {
+    for j in 0..k {
+      m = __rx_mask_lit(m, j, starts[i][j], 1 << i % 8);
+    }
+  }
+  return m;
+}
+
+// The masks of `__scan_masks` that probe the bytes of `lit` at the offsets
+// `at`, or [] when `at` is empty.
+function __rx_probe_masks(lit: i32[], at: i32[]): u8[] {
+  let none: u8[] = [];
+  if (at.len() == 0) {
+    return none;
+  }
+  let m = __rx_masks_head(at.len(), at);
+  for j in 0..at.len() {
+    m = __rx_mask_lit(m, j, lit[at[j]], 1);
+  }
+  return m;
+}
+
+function __rx_masks_head(k: i32, at: i32[]): u8[] {
+  let m: u8[] = [k as u8];
+  for j in 0..3 {
+    m = m.append(if (j < at.len()) { at[j] as u8 } else { 0u8 });
+  }
+  for i in 0..32 * k {
+    m = m.append(0u8);
+  }
+  return m;
+}
+
+// `m` with the bit `bit` set for the byte of `c` at probe `j`, and for its
+// other case when `c` is a folded letter.
+function __rx_mask_lit(m: u8[], j: i32, c: i32, bit: i32): u8[] {
+  let b = c & 255;
+  let out = __rx_mask_byte(m, j, b, bit);
+  if (c >= 256) {
+    out = __rx_mask_byte(out, j, b ^ 32, bit);
+  }
+  return out;
+}
+
+function __rx_mask_byte(m: u8[], j: i32, b: i32, bit: i32): u8[] {
+  let lo = 4 + 32 * j + (b & 15);
+  let hi = 20 + 32 * j + (b >> 4);
+  let out = m.with(lo, (m[lo] as i32 | bit) as u8);
+  return out.with(hi, (out[hi] as i32 | bit) as u8);
+}
+
+// The offsets of the `n` bytes of `lit` that are least frequent in text, in
+// the first 256 bytes. A byte comes twice only when the literal has too
+// few other bytes. One byte gives no offset: a scan of the byte finds it.
+function __rx_probes(lit: i32[], n: i32): i32[] {
+  let none: i32[] = [];
+  if (lit.len() < 2) {
+    return none;
+  }
+  let out: i32[] = [];
+  for pass in 0..2 {
+    for round in 0..n {
+      let best = __rx_rarest_free(lit, out, n, pass == 1);
+      if (best >= 0) {
+        out = out.append(best);
+      }
+    }
+  }
+  return out;
+}
+
+// The offset of the rarest byte of `lit` that `out` does not hold, or -1.
+// Without `again`, a byte that `out` holds at another offset does not count.
+function __rx_rarest_free(lit: i32[], out: i32[], n: i32, again: boolean): i32 {
+  let best = -1;
+  if (out.len() >= n) {
+    return best;
+  }
+  let top = if (lit.len() < 256) { lit.len() } else { 256 };
+  for k in 0..top {
+    if (!__rx_has_i32(out, k) && (again || !__rx_same_byte(lit, out, k))) {
+      if (best < 0 || __rx_lit_rank(lit[k]) < __rx_lit_rank(lit[best])) {
+        best = k;
+      }
     }
   }
   return best;
 }
 
+function __rx_has_i32(xs: i32[], x: i32): boolean {
+  for y in xs {
+    if (y == x) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function __rx_same_byte(lit: i32[], at: i32[], k: i32): boolean {
+  for a in at {
+    if (lit[a] == lit[k]) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The rank of a byte of a literal: a folded letter counts as its two cases.
+function __rx_lit_rank(c: i32): i32 {
+  if (c < 256) {
+    return __rx_byte_rank(c);
+  }
+  return __rx_byte_rank(c - 256) + 5;
+}
+
 // The bytes that each match of the pattern holds, from the longest run of
-// literal bytes that each match goes through. They are empty when the
-// prefix of the pattern holds as many bytes.
+// literal bytes that each match goes through, as lower case bytes. They are
+// empty when the prefix of the pattern holds as many bytes.
 pub function (prog: Regex) inner(): u8[] {
-  return prog.inner;
+  let out: u8[] = [];
+  for c in prog.inner {
+    out = out.append((c & 255) as u8);
+  }
+  return out;
 }
 
 // The offset of the next copy of the bytes of `inner` at or after `from`,
-// or -1. With no such bytes, the offset is `from`.
+// or -1. With no such bytes, the offset is `from`. A letter that the pattern
+// folds matches in either case.
 pub function (prog: Regex) next_inner(text: string, from: i32): i32 {
   let lit = prog.inner;
-  let n = lit.len();
-  if (n == 0) {
+  if (lit.len() == 0) {
     return from;
   }
-  let r = prog.inner_rare;
-  let b = lit[r] as i32;
+  if (lit.len() == 1) {
+    return __rx_next_lit_byte(text, from, lit[0]);
+  }
+  if (prog.inner_rare >= 0) {
+    return __rx_next_rare_inner(prog, text, from);
+  }
   let ti = from;
-  while (ti + n <= text.len()) {
-    let at = __memchr(text, b, ti + r);
-    if (at < 0 || at - r + n > text.len()) {
+  while (true) {
+    let at = __scan_masks(text, ti, prog.inner_probes);
+    if (at < 0 || at + lit.len() > text.len()) {
       return -1;
     }
-    if (__rx_bytes_at(text, at - r, lit)) {
+    if (__rx_lit_at(text, at, lit)) {
+      return at;
+    }
+    ti = at + 1;
+  }
+  return -1;
+}
+
+// The next copy of the bytes of `inner`, from each place of their rarest byte.
+function __rx_next_rare_inner(prog: Regex, text: string, from: i32): i32 {
+  let lit = prog.inner;
+  let r = prog.inner_rare;
+  let ti = from;
+  while (ti + lit.len() <= text.len()) {
+    let at = __memchr(text, lit[r], ti + r);
+    if (at < 0) {
+      return -1;
+    }
+    if (__rx_lit_at(text, at - r, lit)) {
       return at - r;
     }
     ti = at - r + 1;
@@ -3851,9 +4106,31 @@ pub function (prog: Regex) next_inner(text: string, from: i32): i32 {
   return -1;
 }
 
-function __rx_bytes_at(text: string, at: i32, lit: u8[]): boolean {
-  for k in 0..lit.len() {
-    if (text[at + k] != lit[k]) {
+// The next offset of the byte of `c`, in either case for a folded letter.
+function __rx_next_lit_byte(text: string, from: i32, c: i32): i32 {
+  if (c < 256) {
+    return __memchr(text, c, from);
+  }
+  let a = __memchr(text, c - 256, from);
+  let b = __memchr(text, c - 256 - 32, from);
+  return if (a < 0 || b >= 0 && b < a) { b } else { a };
+}
+
+// Whether `lit` is at `at`. A folded letter has bit 8 set, and bit 5 of its
+// mask makes the case of the byte of the text not count.
+function __rx_lit_at(text: string, at: i32, lit: i32[]): boolean {
+  return __rx_lit_at_n(text, at, lit, lit.len());
+}
+
+// Whether the first `n` bytes of `lit`, or all of them, are at `at`.
+function __rx_lit_at_n(text: string, at: i32, lit: i32[], n: i32): boolean {
+  let top = if (lit.len() < n) { lit.len() } else { n };
+  if (at < 0 || at + top > text.len()) {
+    return false;
+  }
+  for k in 0..top {
+    let c = lit[k];
+    if ((text[at + k] as i32 | c >> 3 & 32) != (c & 255)) {
       return false;
     }
   }
@@ -3861,13 +4138,15 @@ function __rx_bytes_at(text: string, at: i32, lit: u8[]): boolean {
 }
 
 // The literal bytes that each match of a node holds: `whole` when each
-// match is exactly those bytes, and the longest run in `best`.
-struct RReq { exact: boolean, whole: u8[], best: u8[] }
+// match is exactly those bytes, and the longest run in `best`. A folded
+// letter is its lower case byte plus 256.
+struct RReq { exact: boolean, whole: i32[], best: i32[] }
 
 function __rx_required(x: RNode): RReq {
-  let none: u8[] = [];
+  let none: i32[] = [];
   return match (x) {
-    RChar(b) => RReq { exact: true, whole: [b as u8], best: [b as u8] },
+    RChar(b) => RReq { exact: true, whole: [b], best: [b] },
+    RFold(b) => RReq { exact: true, whole: [b + 256], best: [b + 256] },
     RBound(_) => RReq { exact: true, whole: none, best: none },
     RSeq(items) => __rx_required_seq(items),
     RPlus(y) => RReq { exact: false, whole: none, best: __rx_required(y).best },
@@ -3878,8 +4157,8 @@ function __rx_required(x: RNode): RReq {
 }
 
 function __rx_required_seq(items: RNode[]): RReq {
-  let run: u8[] = [];
-  let best: u8[] = [];
+  let run: i32[] = [];
+  let best: i32[] = [];
   let exact = true;
   for x in items {
     let r = __rx_required(x);
@@ -3894,7 +4173,7 @@ function __rx_required_seq(items: RNode[]): RReq {
   return RReq { exact: exact, whole: if (exact) { run } else { [] }, best: __rx_longer(best, run) };
 }
 
-function __rx_longer(a: u8[], b: u8[]): u8[] {
+function __rx_longer(a: i32[], b: i32[]): i32[] {
   return if (b.len() > a.len()) { b } else { a };
 }
 
@@ -4323,10 +4602,12 @@ pub struct Match { start: i32, end: i32 }
 // that starts with a byte outside ASCII can skip the prefix. `leftmost_longest`
 // selects the longest match at the leftmost start in place of the first.
 // `empty` says that a match can be empty. `uword` holds the word characters
-// of Unicode when an assertion needs them. `rare` is the offset in `prefix`
-// of the byte that is least frequent in text, or -1 when the search looks
-// for the first byte. Each match holds the bytes of `inner`, and `inner_rare`
-// is the offset of their rarest byte.
+// of Unicode when an assertion needs them. Each match starts with one
+// literal of `starts`. A scan for the byte at `start_rare` finds the places
+// where one can start, or when it is -1 the masks of `__scan_masks` in
+// `start_probes`. Each match holds the bytes of `inner`, and `inner_rare`
+// and `inner_probes` find their places in the same way. A literal holds a
+// folded letter as its lower case byte plus 256.
 pub struct Regex {
   ngroups: i32,
   names: string[],
@@ -4344,9 +4625,12 @@ pub struct Regex {
   uword: i32[],
   full: i32[],
   rfull: i32[],
-  rare: i32,
-  inner: u8[],
+  starts: i32[][],
+  start_rare: i32,
+  start_probes: u8[],
+  inner: i32[],
   inner_rare: i32,
+  inner_probes: u8[],
 }
 ```
 
@@ -5332,6 +5616,18 @@ function __sx_lines(p: string): string[] {
     at = end + 1;
   }
   return out;
+}
+
+impl error.Error for SyntaxError {}
+
+impl cmp.Display for SyntaxError {}
+
+pub function (e: SyntaxError) message(): string {
+  return e.report();
+}
+
+pub function (e: SyntaxError) to_string(): string {
+  return e.report();
 }
 
 // report gives the text of the error as the regex crate writes it: the

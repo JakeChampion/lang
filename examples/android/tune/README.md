@@ -5,11 +5,14 @@ The standard library of Fern decodes each file, and AAudio plays the
 samples. The app has a library with a search field. The track that plays has a
 screen of its own, with a bar that goes to a time.
 
-The look is the dot-matrix style of the [stopwatch](../stopwatch/README.md),
-in the font of `../matrix.fern`. The background is black or a light grey,
-the text and the buttons are white or black, and the rest is grey. Only the
-dots of what is live are red. A track with no picture shows a dial of 60
-round dots with its time in dots, and the spectrum is columns of round dots.
+The background is a light grey or black. The lists, the bar of the track
+that plays and the tabs are on white or dark grey cards with round
+corners. Red marks what is on: the tab that shows, the bar of the time,
+and a button that is on. The albums are a grid of two columns.
+
+The screen of the track shows its cover as the label of a record. Its buttons are
+icons that `icons.fern` draws, and a bar of tools holds the sleep timer,
+the lyrics, the queue, and more: the speed and the pitch.
 
 The player reads WAV, FLAC, MP3, M4A (AAC or ALAC), Ogg Vorbis and Opus files in
 mono or in stereo. It looks
@@ -22,8 +25,8 @@ An album has its picture from the tag of one of its files, or from an
 image file of its directory, such as `cover.jpg`. `std/audio/tags` gives the
 bytes of the picture, and `std/android/image` decodes them. A list shows the
 picture at a small size, and the screen of the track shows it at a large
-size. An album with no picture shows a ring of dots with the first letter of its
-name. The media
+size. An album with no picture shows a grey tile with the first letter of
+its name in dots. The media
 session gets the picture also, so Android shows it with the media controls
 and on the lock screen.
 
@@ -52,8 +55,8 @@ gain of its file. So the tracks have the same loudness. At
 steps of loudness. "Crossfade" fades the end of a track into the next one.
 
 "Equalizer" of the settings has a slider for each of five bands, from
--12 to 12 dB, and the presets Flat, Bass, Vocal and Treble. The screen of
-the track shows the spectrum of the sound under the cover.
+-12 to 12 dB, and the presets Flat, Bass, Vocal and Treble. Its screen
+shows the spectrum of the sound as columns of round dots.
 
 The player keeps its queue, its track, the time in the track, shuffle and
 repeat. At the next start, the track is there at that time, stopped.
@@ -61,8 +64,8 @@ repeat. At the next start, the track is there at that time, stopped.
 "Edit tags" of the details of a song changes its tags: the title, the
 artist, the album, the artist of the album, the number, the year and the
 genre.
-`std/audio/tags` writes them to an MP3 or a FLAC file, and the file keeps
-its other tags. For a file of another app, Android asks the person to
+`std/audio/tags` writes them to an MP3, a FLAC, an Ogg Vorbis or an Opus
+file, and the file keeps its other tags. For a file of another app, Android asks the person to
 let Tune change it, with `std/android/media`. The player writes the file
 again when the app comes back. It tells when it cannot write a file.
 
@@ -74,8 +77,12 @@ The player has a media session of `std/android/session`. So Android shows
 its track with the media controls of the notification panel and of the
 lock screen. The buttons there play, stop, go to the next track and go to
 a time. The player asks for the audio focus of `std/android/focus`: a
-different app that plays stops, and the player stops for a call. A foreground service of `std/android/service` and a wake lock keep
-the sound on while the window of the app is away.
+different app that plays stops, and the player stops for a call.
+
+The player also stops when the headphones come out, so the sound does not
+come from the speaker: `std/android/noisy` tells it so. A foreground service of
+`std/android/service` and a wake lock keep the sound on while the window of
+the app is away.
 
 The "Settings" button shows the settings of the player. "Theme" chooses
 the light colors, the dark colors, or those of the system, with

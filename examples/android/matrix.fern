@@ -8,7 +8,7 @@ pub const COLS: i32 = 5;
 pub const ROWS: i32 = 7;
 
 // The characters of GLYPHS, in order.
-const CHARS: string = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-.:?!/',()";
+const CHARS: string = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-.:?!/',()+<>|&#%";
 
 // Seven rows for each character of CHARS. Bit 4 of a row is its left column.
 const GLYPHS: i32[] = [
@@ -58,6 +58,13 @@ const GLYPHS: i32[] = [
   0, 0, 0, 0, 12, 4, 8,
   2, 4, 8, 8, 8, 4, 2,
   8, 4, 2, 2, 2, 4, 8,
+  0, 4, 4, 31, 4, 4, 0,
+  2, 4, 8, 16, 8, 4, 2,
+  8, 4, 2, 1, 2, 4, 8,
+  4, 4, 4, 4, 4, 4, 4,
+  12, 18, 20, 8, 21, 18, 13,
+  10, 10, 31, 10, 31, 10, 10,
+  24, 25, 2, 4, 8, 19, 3,
 ];
 
 // The position of `c` in CHARS, or -1.
@@ -73,6 +80,17 @@ function glyph_index(c: u8): i32 {
     }
   }
   return -1;
+}
+
+// True when the font draws each character of `s`. A space is a blank cell.
+pub function covers(s: string): boolean {
+  let bytes: [u8] = s.as_bytes();
+  for k in 0..bytes.len() {
+    if (bytes[k] != 32u8 && glyph_index(bytes[k]) < 0) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // True when the dot at `col` and `row` of `c` is on.

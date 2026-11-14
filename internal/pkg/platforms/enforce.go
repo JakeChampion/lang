@@ -146,6 +146,8 @@ var gatedBuiltins = map[string]string{
 	"temp_dir":         "fs",
 	"truncate":         "fs",
 
+	"map_file_unchecked": "fs",
+
 	"mknod": "fsnode",
 
 	"sync":             "fssync",
@@ -212,7 +214,7 @@ var gatedBuiltins = map[string]string{
 	"__c_call6": "cabi", "__c_call6_f32": "cabi", "__c_call6_f64": "cabi",
 	"__c_callv":  "cabi",
 	"__syscall3": "syscall", "__syscall4": "syscall", "__syscall5": "syscall", "__syscall6": "syscall",
-	"__raw_alloc": "rawmem", "__raw_string": "rawmem", "__raw_arr_box": "rawmem",
+	"__raw_alloc": "rawmem", "__raw_string": "rawmem", "__raw_mapped_string": "rawmem", "__raw_arr_box": "rawmem",
 	"__raw_scratch": "rawmem", "__raw_environ": "rawmem", "__raw_splice_pipe": "rawmem",
 	"__raw_cover": "rawmem", "__raw_task_state": "rawmem", "__raw_vdso": "rawmem",
 	"__raw_vg_request": "rawmem",

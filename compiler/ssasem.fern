@@ -3837,14 +3837,40 @@ function view_roots(f: Func, parents: i32[][]): i32[][] {
   return out;
 }
 
+// The value that holds the storage a raw address points into: the argument
+// of the call that hands out the address, or the address an offset is added
+// to. -1 when ins computes no such address.
+function address_base(ins: ssa.SInst, addresses: boolean[]): i32 {
+  if (ins.result < 0) {
+    return -1;
+  }
+  if (ins.kind_tag == call() && ins.args.len() == 1 && (ins.str == "__raw_arr_ptr" || ins.str == "__raw_data")) {
+    return ins.args[0];
+  }
+  if (ins.kind_tag == ssa.BINARY && ins.str == "+") {
+    for a in ins.args {
+      if (a >= 0 && addresses[a]) {
+        return a;
+      }
+    }
+  }
+  return -1;
+}
+
 function borrow_parents(f: Func): i32[][] {
   let parents: i32[][] = [];
   for i in 0..f.graph.nvals {
     parents = parents.append([]);
   }
   let cells = cell_borrows(f);
+  let addresses = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
+      let base = address_base(ins, addresses);
+      if (base >= 0) {
+        addresses = addresses.with(ins.result, true);
+        parents = parents.with(ins.result, [base]);
+      }
       let anchors = projects(ins.kind_tag) && semtypes.needs_anchor(f.values[ins.result]);
       if (anchors || borrows_storage(ins, f) || ins.kind_tag == cell_get() && cell_borrowed(cells, ins.result)) {
         parents = parents.with(ins.result, [ins.args[0]]);
@@ -5353,6 +5379,36 @@ pub function mapped_list(map: i32[], vs: i32[]): i32[] {
     out = out.append(mapped(map, v));
   }
   return out;
+}
+
+// `g` with each record update that read a value of `repl` reading what
+// `repl` names. The pruning of a trivial phi rewrites the arguments only,
+// and a record update names its donor in its immediate.
+pub function rebased(g: ssa.SFunc, repl: i32[]): ssa.SFunc {
+  if (repl.len() == 0) {
+    return g;
+  }
+  let blocks: ssa.SBlock[] = [];
+  for b in g.blocks {
+    let insts: ssa.SInst[] = [];
+    for ins in b.insts {
+      let base = update_base(ins);
+      if (base >= 0) {
+        insts = insts.append(ssa.SInst { ...ins, imm: mapped(repl, base) + 1 });
+      } else {
+        insts = insts.append(ins);
+      }
+    }
+    blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
+  }
+  return ssa.SFunc { ...g, blocks: blocks };
+}
+
+// `g` with no trivial phi, and each record update that read one reading the
+// value that replaces it.
+pub function pruned_phis(g: ssa.SFunc): ssa.Formed {
+  let pruned = ssa.prune_trivial_phis(g);
+  return ssa.Formed { f: rebased(pruned.f, pruned.repl), repl: pruned.repl };
 }
 
 pub function mapped_inst(map: i32[], ins: ssa.SInst): ssa.SInst {

@@ -968,6 +968,9 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (o.kind_tag == ir.K_SCAN_SET || o.kind_tag == ir.K_SCAN_SET_BYTES) {
     return emit_scan_set(o, s);
   }
+  if (o.kind_tag == ir.K_SCAN_MASKS) {
+    return s.write(scan_set_operands(o) + "    bl __fern_scan_masks\n    str x1, [sp, #-16]!\n").need("scan_masks");
+  }
   if (o.kind_tag == ir.K_STR_FROM_BYTES_RANGE && !ir.is_packed(o)) {
     let loop_label = asmcore.fresh_label(s);
     let done_label = asmcore.fresh_label(loop_label.state);
@@ -2272,7 +2275,7 @@ function ssa_adrp_add(s: asmcore.EmitState, d: string, label: string): asmcore.E
 }
 
 function ssa_unary_known(what: string): boolean {
-  if (what == "!" || what == "int_extend" || what == "int_wrap" || what == "u32_wrap" || what == "load_i32") {
+  if (what == "!" || what == "int_extend" || what == "int_wrap" || what == "u32_wrap" || ssa.is_unary_load(what)) {
     return true;
   }
   if (what == "int_cast:u8" || what == "int_cast:u32" || what == "int_cast:i32") {
@@ -2328,6 +2331,9 @@ function ssa_unary_asm(what: string, unsigned: boolean, d: string): string {
   if (what == "load_i32") {
     return "    ldrsw " + d + ", [" + d + "]\n";
   }
+  if (what == "load_u16") {
+    return "    ldrh " + w + ", [" + d + "]\n";
+  }
   if (what == "!") {
     return "    cmp " + d + ", #0\n    cset " + d + ", eq\n";
   }
@@ -2361,6 +2367,9 @@ function ssa_unary_from(what: string, unsigned: boolean, src: string, d: string)
   let ws = ssa_wreg(src);
   if (what == "load_i32") {
     return "    ldrsw " + d + ", [" + src + "]\n";
+  }
+  if (what == "load_u16") {
+    return "    ldrh " + w + ", [" + src + "]\n";
   }
   if (what == "!") {
     return "    cmp " + src + ", #0\n    cset " + d + ", eq\n";
@@ -3914,7 +3923,8 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
   }
   s = s.need("heap");
   s = ssa_load_abi_args(reg_of, ins.args, 2, s);
-  s = s.write("    bl __fern_str_box_hdr\n");
+  let box = if (ins.str == "raw_mapped_string") { "__fern_str_box_mapped" } else { "__fern_str_box_hdr" };
+  s = s.write("    bl " + box + "\n");
   return ssa_store(reg_of, ins.result, "x0", asmcore.ssa_x0_forget(s));
 }
 
@@ -5754,6 +5764,10 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
       s = s.need("read_link_bytes");
     }
     s = s.write("    bl __fn___fern_" + helper + "\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+  } else if (o.kind_tag == ir.K_MAP_FILE) {
+    s = s.need("heap");
+    s = s.need("map_file");
+    s = s.write("    bl __fn___fern_map_file\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == ir.K_CHMOD) {
     s = s.need("heap");
     s = s.need("chmod");
@@ -9354,6 +9368,11 @@ function mov_borrowed_marker(s: asmcore.EmitState, reg: string): asmcore.EmitSta
   return s.write("    movk " + reg + ", #0x424F, lsl #16\n");
 }
 
+function mov_mapped_marker(s: asmcore.EmitState, reg: string): asmcore.EmitState {
+  s = s.write("    mov " + reg + ", #0x5044\n");
+  return s.write("    movk " + reg + ", #0x4D41, lsl #16\n");
+}
+
 function mov_grown_marker(s: asmcore.EmitState, reg: string): asmcore.EmitState {
   s = s.write("    mov " + reg + ", #0x4F57\n");
   return s.write("    movk " + reg + ", #0x4752, lsl #16\n");
@@ -9793,6 +9812,11 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    add x0, x0, #8\n");
   s = s.write(rt_unframe(s));
   s = s.write("    ret\n");
+  if (s.has_need("map_file")) {
+    s = s.write("__fern_str_box_mapped:\n" + rt_frame(s) + "    mov x29, sp\n    bl __fern_str_box\n");
+    s = mov_mapped_marker(s, "w3");
+    s = s.write("    stur w3, [x0, #-4]\n" + rt_unframe(s) + "    ret\n");
+  }
   s = s.write("__fern_str_box_hdr:\n");
   s = s.write("    sub x2, x0, #24\n");
   s = s.write("    mov w3, #1\n");
@@ -10763,6 +10787,10 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    beq .Lstrfree_grown\n");
   s = mov_borrowed_marker(s, "w3");
   s = s.write("    cmp w2, w3\n    beq .Lstrfree_box\n");
+  if (s.has_need("map_file")) {
+    s = mov_mapped_marker(s, "w3");
+    s = s.write("    cmp w2, w3\n    beq .Lstrfree_mapped\n");
+  }
   s = s.write("    ldr x1, [x0]\n");
   s = s.write("    ldr x2, [x0, #8]\n");
   s = s.write("    cmp x1, x9\n");
@@ -10799,6 +10827,15 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
     s = quar_push(s, "x1", "#3", 0);
   }
   s = s.write("    b .Lstrfree_ret\n");
+  if (s.has_need("map_file")) {
+    s = s.write(".Lstrfree_mapped:\n    stp x0, x1, [sp, #-48]!\n    stp x9, x16, [sp, #16]\n    str x8, [sp, #32]\n    ldr x1, [x0, #8]\n    ldr x0, [x0]\n");
+    if (s.runtime_target == "arm64-darwin") {
+      s = s.write("    mov x16, #73\n    svc #0x80\n");
+    } else {
+      s = s.write("    mov x8, #215\n").svc(215);
+    }
+    s = s.write("    ldr x8, [sp, #32]\n    ldp x9, x16, [sp, #16]\n    ldp x0, x1, [sp], #48\n    b .Lstrfree_box\n");
+  }
   s = s.write(".Lstrfree_grown:\n");
   s = s.write("    ldur x2, [x0, #-16]\n");
   s = s.write(quarantine_rc("[x0, #-8]", "w10", s.rc_free_debug));
@@ -11223,7 +11260,7 @@ function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
         s = emit_rt_subprocess(s);
         s = emit_runtime("__fern_sp_exec_path __fern_sp_exec_failed", s);
       } else {
-        s = emit_runtime("__fern_sp_drain __fern_sp_exec_at __fern_sp_exec_failed __fern_subprocess", s);
+        s = emit_runtime("__fern_sp_wait __fern_sp_feed __fern_sp_take __fern_sp_exec_at __fern_sp_exec_failed __fern_subprocess", s);
       }
     }
     s = emit_rt_net(s, darwin);
@@ -11675,6 +11712,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("read_link_bytes")) {
       fs_roots = fs_roots + " " + "__fern_read_link_bytes";
     }
+    if (s.has_need("map_file")) {
+      fs_roots = fs_roots + " " + "__fern_map_file";
+    }
     if (s.has_need("umask")) {
       fs_roots = fs_roots + " " + "__fern_umask";
     }
@@ -12081,7 +12121,62 @@ function emit_rt_scans(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("scan_set")) {
     s = s.write(a64_scan_set());
   }
+  if (s.has_need("scan_masks")) {
+    s = s.write(a64_scan_masks());
+  }
   return s;
+}
+
+// __fern_scan_masks runs the probes of a masks array, as the x86-64 kernel does:
+// x0 holds the bytes, x1 the start, x3 the length and x2 the masks. Each loop
+// tests 16 starts with Advanced SIMD. The index goes in x1, or -1.
+function a64_scan_masks(): string {
+  let r = "    .text\n    .global __fern_scan_masks\n    .type __fern_scan_masks, %function\n__fern_scan_masks:\n";
+  r += "    cmp x1, #0\n    b.ge .Lsm_from\n    mov x1, #0\n.Lsm_from:\n    ldr x4, [x2]\n    cmp x4, #4\n    b.lt .Lsm_none\n";
+  r += "    ldrb w5, [x2, #8]\n    sub w6, w5, #1\n    cmp w6, #2\n    b.hi .Lsm_none\n";
+  r += "    lsl x6, x5, #5\n    add x6, x6, #4\n    cmp x4, x6\n    b.lt .Lsm_none\n";
+  r += "    ldrb w9, [x2, #9]\n    ldrb w10, [x2, #10]\n    ldrb w11, [x2, #11]\n    add x12, x2, #12\n    movi v27.16b, #15\n";
+  r += "    cmp w5, #1\n    b.eq .Lsm_k1\n    cmp w5, #2\n    b.eq .Lsm_k2\n    b .Lsm_k3\n";
+  for k in 1..4 {
+    r += a64_scan_masks_probes(k);
+  }
+  return r + ".Lsm_none:\n    mov x1, #-1\n    ret\n    .size __fern_scan_masks, .-__fern_scan_masks\n";
+}
+
+// The loops for `k` probes. x9, x10 and x11 hold the offsets, x12 the tables,
+// x5 the next start, x6 the end of the starts and x8 the last start of a block
+// of 16.
+function a64_scan_masks_probes(k: i32): string {
+  let id = util.i32_to_string(k);
+  let offs = ["x9", "x10", "x11"];
+  let r = ".Lsm_k" + id + ":\n    mov x7, x9\n";
+  for j in 1..k {
+    r = r + "    cmp " + offs[j] + ", x7\n    csel x7, " + offs[j] + ", x7, hi\n";
+  }
+  r += "    add x5, x0, x1\n    add x6, x0, x3\n    sub x6, x6, x7\n    sub x8, x6, #16\n";
+  for j in 0..k {
+    r = r + "    ldp q" + util.i32_to_string(20 + 2 * j) + ", q" + util.i32_to_string(21 + 2 * j) + ", [x12, #" + util.i32_to_string(32 * j) + "]\n";
+  }
+  r = r + ".Lsm_v" + id + ":\n    cmp x5, x8\n    b.gt .Lsm_t" + id + "\n";
+  for j in 0..k {
+    let acc = if (j == 0) { "v16" } else { "v17" };
+    r = r + "    add x13, x5, " + offs[j] + "\n    ldr q0, [x13]\n    ushr v1.16b, v0.16b, #4\n    and v0.16b, v0.16b, v27.16b\n";
+    r = r + "    tbl v0.16b, {v" + util.i32_to_string(20 + 2 * j) + ".16b}, v0.16b\n    tbl v1.16b, {v" + util.i32_to_string(21 + 2 * j) + ".16b}, v1.16b\n";
+    r = r + "    and " + acc + ".16b, v0.16b, v1.16b\n";
+    if (j > 0) {
+      r += "    and v16.16b, v16.16b, v17.16b\n";
+    }
+  }
+  r += "    cmtst v16.16b, v16.16b, v16.16b\n    shrn v1.8b, v16.8h, #4\n    fmov x7, d1\n";
+  r = r + "    cbnz x7, .Lsm_h" + id + "\n    add x5, x5, #16\n    b .Lsm_v" + id + "\n";
+  r = r + ".Lsm_h" + id + ":\n    rbit x7, x7\n    clz x7, x7\n    lsr x7, x7, #2\n    sub x1, x5, x0\n    add x1, x1, x7\n    ret\n";
+  r = r + ".Lsm_t" + id + ":\n    cmp x5, x6\n    b.hs .Lsm_none\n    mov w7, #255\n";
+  for j in 0..k {
+    r = r + "    ldrb w13, [x5, " + offs[j] + "]\n    and w14, w13, #15\n    lsr w13, w13, #4\n    add x15, x12, #" + util.i32_to_string(32 * j) + "\n";
+    r = r + "    ldrb w14, [x15, x14]\n    add x15, x15, #16\n    ldrb w13, [x15, x13]\n    and w14, w14, w13\n    and w7, w7, w14\n";
+  }
+  r = r + "    cbnz w7, .Lsm_f" + id + "\n    add x5, x5, #1\n    b .Lsm_t" + id + "\n";
+  return r + ".Lsm_f" + id + ":\n    sub x1, x5, x0\n    ret\n";
 }
 
 // __fern_scan_set scans with a set that is not a constant: x0 holds the bytes,
@@ -13270,7 +13365,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
     "read_file", "read_file_bytes", "read_file_bytes_u8", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec",
     "remove_file", "create_dir_all", "create_dir", "remove_dir",
     "create_link", "clone_file", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at", "truncate",
-    "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_extproc", "pipe", "set_file_times", "writer_set_times", "read_link",
+    "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_extproc", "pipe", "set_file_times", "writer_set_times", "read_link", "map_file",
     "getcwd", "chdir", "chroot", "setuid", "setgid", "setgroups", "umask", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "sync",
     "temp_dir", "stat", "lstat", "statfs", "mounts", "sysctl", "access", "read_dir", "read_dir_bytes", "read_dir_all", "read_dir_ino", "read_dir_ino_all",
     "remove_dir_all", "open_file", "open_with", "writer_write", "write_some", "splice_forever",

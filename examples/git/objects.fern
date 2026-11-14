@@ -68,6 +68,16 @@ pub function width_of(format: string): i32 {
   };
 }
 
+// The name of the hash of names of `width` bytes, as `--object-format` has it.
+pub function format_name(width: i32): string {
+  return if (width == SHA256) { "sha256" } else { "sha1" };
+}
+
+// True if `s` is a full name of `width` bytes in hexadecimal.
+pub function is_name(width: i32, s: string): boolean {
+  return s.len() == 2 * width && is_hex(s, 2 * width);
+}
+
 // The largest body that the port reads.
 const MAX_BODY: i32 = 1073741824;
 
@@ -90,6 +100,11 @@ pub function is_hex(s: string, least: i32): boolean {
 
 pub function part(s: string, from: i32, to: i32): string {
   return slice_unchecked(s, from, to).to_owned();
+}
+
+// The text of the bytes of `b` from `from` to `to`.
+pub function part_bytes(b: u8[], from: i32, to: i32): string {
+  return unsafe { string_from_bytes_unchecked(array.slice(b, from, to)) };
 }
 
 pub function header(kind: string, size: i32): u8[] {

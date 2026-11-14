@@ -84,6 +84,7 @@ var stdModuleReach = map[string]string{
 	"std/number_parse":  "",
 	"std/f32":           "",
 	"std/path":          "",
+	"std/pcre":          "",
 	"std/peg":           "",
 	"std/platform":      "config,env,fs,host,ktls,log,mmio,mmsg,now,pollable,privileged,random,reactor,tcp,unix,uring,vsock",
 	"std/pmap":          "",

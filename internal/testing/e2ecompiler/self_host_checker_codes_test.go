@@ -4002,6 +4002,7 @@ func TestSelfHostCheckerVariantScopeDifferentialX86_64(t *testing.T) {
 		{"function-shadows-imported-variants", "import \"./a\";\nimport \"./b\";\nfunction Hit(x: i32): i32 { return x; }\nfunction main(): i32 { return Hit(2); }\n", nil},
 		{"local-shadows-imported-variants", "import \"./a\";\nimport \"./b\";\nfunction main(): i32 { let Hit: i32 = 1; return Hit; }\n", nil},
 		{"pattern-settled-by-scrutinee", "import \"./a\";\nimport \"./b\";\nfunction pick(): b.B { return b.Stay; }\nfunction main(): i32 { match (pick()) { Hit => { return 1; }, Stay => { return 0; } } }\n", nil},
+		{"return-in-a-match-arm-expects-the-function-type", "import \"./a\";\nenum Mine { Hit, Q }\nfunction f(n: i32): Result[i32, i32] { return Ok(n); }\nfunction g(n: i32): Result[i32, Mine] { let v = match (f(n)) { Ok(x) => x, Err(e) => { return Err(Hit); } }; return Ok(v); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"modules-that-do-not-see-each-other", "import \"./indep_a\";\nimport \"./indep_b\";\nfunction main(): i32 { return indep_a.f() + indep_b.g(); }\n", nil},
 		// IoError also has Interrupted, so a lookup by the bare name finds the
 		// other enum.

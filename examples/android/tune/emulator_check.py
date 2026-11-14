@@ -91,9 +91,10 @@ def main(apk, out):
     adb("shell", "input", "keyevent", "111")
     time.sleep(2)
     width, height, _ = screen(out, "library")
-    # The first row of the list is below the title, the search field and
-    # the tabs. The queue is then the three tunes, which play for 18 seconds.
-    adb("shell", "input", "tap", str(width // 2), str(height * 38 // 100))
+    # The first row of the list is below the title and the search field,
+    # at 29% of the height of the screen. The queue is then the three
+    # tunes, which play for 21 seconds.
+    adb("shell", "input", "tap", str(width // 2), str(height * 29 // 100))
     time.sleep(4)
     screen(out, "playing")
 
@@ -127,7 +128,7 @@ def main(apk, out):
         fail(f"the screen is blank after the app comes back: {same} of {total} pixels have one colour")
 
     # The media key for the track before starts a track at its start, so
-    # the time of the track is 2 seconds or more at the back key.
+    # the queue does not end while the app is away.
     adb("shell", "input", "keyevent", "88")
     time.sleep(2.5)
 
@@ -146,8 +147,27 @@ def main(apk, out):
         if session_state() != state:
             fail(f"the widget button {action} did not reach the player with no window: " + session_text()[:400])
 
+    # The headphones come out: Android sends AUDIO_BECOMING_NOISY, and the
+    # track stops. Only root can send that broadcast. The widget button
+    # then starts the track again.
+    rooted = adb("root", check=False)
+    if "cannot run as root" in rooted:
+        fail("adb root failed, so the check cannot send AUDIO_BECOMING_NOISY: " + rooted.strip())
+    else:
+        adb("wait-for-device")
+        adb("shell", "am", "broadcast", "-a", "android.media.AUDIO_BECOMING_NOISY")
+        time.sleep(2)
+        if session_state() != 2:
+            fail("the track did not stop when the headphones came out: " + session_text()[:400])
+        adb("shell", "am", "broadcast", "-a", "dev.fern.tune.widget.PLAY", "-n", PACKAGE + "/.Widget")
+        time.sleep(2)
+
     # The back key closes the app when no track plays. The app tells where
-    # the player was.
+    # the player was. The media key for the track before starts a track at
+    # its start, and the stop comes 3 seconds later. The shortest tune
+    # plays for 6 seconds, so the track does not end before the stop.
+    adb("shell", "input", "keyevent", "88")
+    time.sleep(3)
     adb("shell", "input", "keyevent", "127")
     time.sleep(2)
     adb("shell", "am", "start", "-W", "-n", ACTIVITY)

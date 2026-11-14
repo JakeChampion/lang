@@ -3,6 +3,7 @@ package e2ecompiler
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,12 +15,17 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// jqSuiteFloor is the number of cases of jq.test that the port passes. A case
-// in a part of the language the port does not have yet is skipped, and every
-// other case must pass.
-const jqSuiteFloor = 415
-
-const jqNotYet = "is not in this port yet"
+// jqSuites holds each suite of jq 1.7 in examples/jq/tests, and its number
+// of cases that are not `%%FAIL` cases. Each case must pass.
+var jqSuites = []struct {
+	file  string
+	cases int
+}{
+	{"jq.test", 428},
+	{"onig.test", 40},
+	{"manonig.test", 17},
+	{"man.test", 224},
+}
 
 func TestSelfHostExampleJqUnit(t *testing.T) {
 	path, err := filepath.Abs("../../../examples/jq/jq_test.fern")
@@ -125,14 +131,15 @@ func jqNumbers(v any) any {
 // look at an error after them, so a case can end in an error. With a jq
 // binary, the status and the stderr must be those of jq. With no jq binary,
 // a status of 5, the status of a filter error, is right after the outputs.
-func jqSuiteExitOK(c jqCase, code int, stderr, ref string) bool {
+func jqSuiteExitOK(c jqCase, code int, stderr, ref, modules string) bool {
 	if code == 0 {
 		return true
 	}
 	if ref == "" {
 		return code == 5
 	}
-	cmd := exec.Command(ref, "-c", "--", c.program)
+	cmd := exec.Command(ref, "-L", modules, "-c", "--", c.program)
+	cmd.Env = jqSuiteEnv()
 	cmd.Stdin = strings.NewReader(c.input)
 	var refErr bytes.Buffer
 	cmd.Stderr = &refErr
@@ -140,48 +147,70 @@ func jqSuiteExitOK(c jqCase, code int, stderr, ref string) bool {
 	return cmd.ProcessState.ExitCode() == code && refErr.String() == stderr
 }
 
+// jqSuiteEnv is the environment of the harness of jq: man.test reads PAGER.
+func jqSuiteEnv() []string {
+	return append(os.Environ(), "PAGER=less")
+}
+
+// TestSelfHostExampleJqSuite runs each case of the suites of jq 1.7 as the
+// harness of jq does, with the modules of jq.test on the search path.
 func TestSelfHostExampleJqSuite(t *testing.T) {
 	bin := buildJq(t)
 	ref, _ := exec.LookPath("jq")
-	passed, skipped := 0, 0
-	for _, c := range jqCases(t, "../../../examples/jq/tests/jq.test") {
-		cmd := exec.Command(bin, "-c", "--", c.program)
-		cmd.Stdin = strings.NewReader(c.input)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout, cmd.Stderr = &stdout, &stderr
-		_ = cmd.Run()
-		if strings.Contains(stderr.String(), jqNotYet) {
-			skipped++
+	modules, err := filepath.Abs("../../../examples/jq/tests/modules")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, suite := range jqSuites {
+		t.Run(suite.file, func(t *testing.T) {
+			passed, total := 0, 0
+			for _, c := range jqCases(t, "../../../examples/jq/tests/"+suite.file) {
+				total++
+				if jqSuiteCase(t, bin, ref, modules, c) {
+					passed++
+				}
+			}
+			t.Logf("%s: %d of %d cases pass", suite.file, passed, total)
+			if total != suite.cases {
+				t.Errorf("%s has %d cases, not the %d of jqSuites", suite.file, total, suite.cases)
+			}
+		})
+	}
+}
+
+// jqSuiteCase runs one case, and gives whether it passes.
+func jqSuiteCase(t *testing.T, bin, ref, modules string, c jqCase) bool {
+	t.Helper()
+	cmd := exec.Command(bin, "-L", modules, "-c", "--", c.program)
+	cmd.Env = jqSuiteEnv()
+	cmd.Stdin = strings.NewReader(c.input)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	_ = cmd.Run()
+	var got, want []any
+	for _, l := range strings.Split(stdout.String(), "\n") {
+		if l == "" {
 			continue
 		}
-		var got, want []any
-		for _, l := range strings.Split(stdout.String(), "\n") {
-			if l == "" {
-				continue
-			}
-			v, err := jqValue(l)
-			if err != nil {
-				t.Fatalf("line %d: %q gives the output %q, which is not JSON", c.line, c.program, l)
-			}
-			got = append(got, v)
+		v, err := jqValue(l)
+		if err != nil {
+			t.Errorf("line %d: %q gives the output %q, which is not JSON", c.line, c.program, l)
+			return false
 		}
-		for _, l := range c.expected {
-			v, err := jqValue(l)
-			if err != nil {
-				t.Fatalf("line %d: the expected output %q is not JSON", c.line, l)
-			}
-			want = append(want, v)
-		}
-		if !jqSuiteExitOK(c, cmd.ProcessState.ExitCode(), stderr.String(), ref) || !reflect.DeepEqual(got, want) {
-			t.Errorf("line %d: %q on %s: exit %d, got %s, want %v\n%s", c.line, c.program, c.input, cmd.ProcessState.ExitCode(), stdout.String(), c.expected, stderr.String())
-			continue
-		}
-		passed++
+		got = append(got, v)
 	}
-	t.Logf("jq.test: %d cases pass, %d are in parts of the language that the port does not have yet", passed, skipped)
-	if passed < jqSuiteFloor {
-		t.Errorf("%d cases of jq.test pass, fewer than the %d of jqSuiteFloor", passed, jqSuiteFloor)
+	for _, l := range c.expected {
+		v, err := jqValue(l)
+		if err != nil {
+			t.Fatalf("line %d: the expected output %q is not JSON", c.line, l)
+		}
+		want = append(want, v)
 	}
+	if !jqSuiteExitOK(c, cmd.ProcessState.ExitCode(), stderr.String(), ref, modules) || !reflect.DeepEqual(got, want) {
+		t.Errorf("line %d: %q on %s: exit %d, got %s, want %v\n%s", c.line, c.program, c.input, cmd.ProcessState.ExitCode(), stdout.String(), c.expected, stderr.String())
+		return false
+	}
+	return true
 }
 
 // The command line gives the stdout, the stderr and the exit status of jq 1.7.
@@ -247,20 +276,115 @@ func TestSelfHostExampleJqAgainstJq(t *testing.T) {
 		{[]string{"-c", "with_entries(select(.value | contains([1])))"}, "{\"a\":[1,2],\"b\":[3]}\n"},
 		{[]string{"-c", "[nan, infinite, (. - .), (.[0]? // nan)] | sort, map(isnan), (.[0] < .[1])"}, "1e1000\n"},
 		{[]string{"-c", "map(floor, ceil, round, sqrt, fabs), [pow(.[0]; .[1])], .[nan]"}, "[2.5,-1.5]\n"},
+		{[]string{"-R", "-c", "[., input_line_number]"}, "a\nb\nc"},
+		{[]string{"-R", "-s", "."}, "a\nb\n"},
+		{[]string{"-sn", "-c", "[inputs]"}, "1 2"},
+		{[]string{"-n", "-c", "[inputs]"}, "1 2 3"},
+		{[]string{"-c", "[., input]"}, "1 2 3"},
+		{[]string{"-n", "input"}, ""},
+		{[]string{"-j", ".[]"}, "[\"a\", 1, \"b\"]"},
+		{[]string{"-a", "-c", "."}, "\"é€😀\""},
+		{[]string{"-S", "-c", "."}, "{\"b\":{\"z\":1,\"a\":2},\"a\":[{\"y\":1,\"x\":2}]}"},
+		{[]string{"-C", "."}, "{\"a\":[1,\"x\",null,true]}"},
+		{[]string{"--tab", "."}, "{\"a\":[1]}"},
+		{[]string{"--indent", "1", "."}, "{\"a\":[1,{\"b\":2}]}"},
+		{[]string{"--seq", "-c", "."}, "\u001e1\n\u001e[2]\n"},
+		{[]string{"--stream", "-c", "."}, "{\"a\":[1,{\"b\":null}],\"c\":\"x\"}"},
+		{[]string{"--raw-output0", "."}, "[\"a\",\"b\"]"},
+		{[]string{"-c", "--arg", "x", "1", "--argjson", "y", "{\"a\":2}", "[$x, $y, $ARGS.named]"}, "null"},
+		{[]string{"-n", "-c", "--args", "$ARGS", "a", "b"}, ""},
+		{[]string{"-n", "-c", "--jsonargs", "$ARGS.positional", "1", "{\"a\":2}"}, ""},
+		{[]string{"-n", "{\"a\":1} | halt_error(3)"}, ""},
+		{[]string{"-n", "\"bye\\n\" | halt_error(1)"}, ""},
+		{[]string{"-n", "-c", "1, halt, 2"}, ""},
+		{[]string{"-n", "\"err\" | stderr"}, ""},
+		{[]string{"-e", "."}, "null"},
+		{[]string{"-e", "empty"}, "1"},
+		{[]string{"-n", "-c", "[limit(3; repeat(1))], first(range(10; infinite)), [limit(-1; 1, 2)]"}, ""},
+		{[]string{"-n", "-c", "label $x | try (break $x) catch ."}, ""},
+		{[]string{"-n", "-c", "[first(1)] | label $x | try (break $x) catch ."}, ""},
+		{[]string{"-n", "1 +"}, ""},
+		{[]string{"-n", "[1, 2) | (3"}, ""},
+		{[]string{"-n", "{a: 1, b: }"}, ""},
+		{[]string{"-n", "trim, ltrim, $nosuch"}, ""},
+		{[]string{"-c", "[splits(\"a+\"; \"g\")], test(\"B\"; \"i\"), [match(\"(?<x>a)|b\"; \"g\") | .captures]"}, "\"xaaBab\""},
+		{[]string{"-c", "gsub(\"(?<l>[a-z])\"; \"\\(.l|ascii_upcase)\"), [scan(\"(a)(b)\")], capture(\"(?<n>\\\\d+)\")"}, "\"ab 12 ab\""},
+		{[]string{"-c", "test(\"(\")"}, "\"a\""},
+		{[]string{"-c", "map(frexp), map(modf), [ldexp(3; 2), scalb(3; 2.5), drem(10; 3), copysign(3; -0)]"}, "[5.5, -3.25]"},
+		{[]string{"-c", "map(erf, acosh, nearbyint, logb), (3 | pow10)?"}, "[1, 2.5]"},
+		{[]string{"-c", "tostream, ([tostream] | fromstream(.[])), [1 | truncate_stream([[0],1],[[1,0],2],[[1,0]],[[1]])]"}, "{\"a\":[1,2]}"},
+		{[]string{"-c", "[combinations], getpath([\"a\"])?, input_filename, $__loc__"}, "[[1,2],[3]]"},
+		{[]string{"-c", "[try (1 + (1, error(\"x\")))], [limit(3; 0 + range(1; infinite))], (def f: if . < 2 then . else (. - 1 | f) + (. - 2 | f) end; 15 | f)"}, "null"},
+		{[]string{"-c", "input + (1, input)"}, "1 2 3 4"},
+		{[]string{"-c", "def r: if . > 0 then . - 1 | r else \"done\" end; 100000 | r"}, "null"},
+		{[]string{"--seq", "-c", "."}, ""},
+		{[]string{"--seq", "-c", "."}, "1\n\u001e2\n"},
+		{[]string{"--seq", "-c", "."}, "\u001e1\u001e2\n\u001e[1,\u001e3\n"},
+		{[]string{"--seq", "-c", "."}, "\u001e}\n3\u001e4\n\u001e\"a\u001eb\"\n"},
+		{[]string{"--seq", "-c", "."}, "\u001enul\n[1]x 5"},
+		{[]string{"--seq", "-c", "-n", "[try input catch ., try input catch .]"}, "\u001e\u001e1"},
+	}
+	modules, err := filepath.Abs("../../../examples/jq/tests/modules")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, program := range []string{"import \"c\" as c; [c::c, c::a]", "import \"data\" as $d; $d, $d::d", "\"c\" | modulemeta", "get_search_list", "import \"nosuch\" as x; 1"} {
+		cases = append(cases, struct {
+			args  []string
+			input string
+		}{[]string{"-n", "-c", "-L", modules, program}, ""})
+	}
+	run := func(path, dir string, args []string, input string) (string, string, int) {
+		cmd := exec.Command(path, args...)
+		cmd.Dir = dir
+		cmd.Stdin = strings.NewReader(input)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		_ = cmd.Run()
+		return stdout.String(), stderr.String(), cmd.ProcessState.ExitCode()
+	}
+	compare := func(args []string, input, dir string) {
+		wantOut, wantErr, wantCode := run(ref, dir, args, input)
+		gotOut, gotErr, gotCode := run(bin, dir, args, input)
+		if gotOut != wantOut || gotErr != wantErr || gotCode != wantCode {
+			t.Errorf("jq %q on %q:\ngot  exit %d, stdout %q, stderr %q\nwant exit %d, stdout %q, stderr %q", args, input, gotCode, gotOut, gotErr, wantCode, wantOut, wantErr)
+		}
 	}
 	for _, c := range cases {
-		run := func(path string) (string, string, int) {
-			cmd := exec.Command(path, c.args...)
-			cmd.Stdin = strings.NewReader(c.input)
-			var stdout, stderr bytes.Buffer
-			cmd.Stdout, cmd.Stderr = &stdout, &stderr
-			_ = cmd.Run()
-			return stdout.String(), stderr.String(), cmd.ProcessState.ExitCode()
+		compare(c.args, c.input, "")
+	}
+	// jq reads its files as one text: a value or a raw line can go on in the
+	// next file, a byte order mark counts only before the first byte, and a
+	// line of an error counts from the start of the first file.
+	fileCases := []struct {
+		args  []string
+		files []string
+	}{
+		{[]string{"-c", "[., input_filename, input_line_number]"}, []string{"1", "2\n"}},
+		{[]string{"-c", "[., input_filename, input_line_number]"}, []string{"[1,\n2", "", ",\n3]\n"}},
+		{[]string{"-c", "."}, []string{"\"ab", "c\"\n", "tr", "ue 5"}},
+		{[]string{"-c", "."}, []string{"1\n2\n3\n", "4\n}\n"}},
+		{[]string{"-c", "."}, []string{"", "\xef\xbb\xbf2\n"}},
+		{[]string{"-c", "."}, []string{"1\n", "\xef\xbb\xbf2\n"}},
+		{[]string{"-R", "-c", "[., input_filename, input_line_number]"}, []string{"ab", "cd\nef", ""}},
+		{[]string{"-R", "-c", "."}, []string{"\"\xc3", "\xa9\"\n", "\xef\xbb\xbfx\n"}},
+		{[]string{"-n", "[inputs] | error(\"x\")"}, []string{"1\n2\n"}},
+		{[]string{"-n", "[inputs] | error(\"x\")"}, []string{"1\n2"}},
+		{[]string{"-n", "[inputs], (try input catch .), error(\"y\")"}, []string{"1\n", ""}},
+		{[]string{"-n", "[inputs]"}, []string{"1", "4\n}\n"}},
+		{[]string{"-c", "error(\"e\")"}, []string{"1\n2\n3\n4", ""}},
+		{[]string{"--seq", "-c", "."}, []string{"\x1e1", "2\n\x1e3\n"}},
+	}
+	for _, c := range fileCases {
+		dir := t.TempDir()
+		args := append([]string{}, c.args...)
+		for i, text := range c.files {
+			name := fmt.Sprintf("f%d", i+1)
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			args = append(args, name)
 		}
-		wantOut, wantErr, wantCode := run(ref)
-		gotOut, gotErr, gotCode := run(bin)
-		if gotOut != wantOut || gotErr != wantErr || gotCode != wantCode {
-			t.Errorf("jq %q on %q:\ngot  exit %d, stdout %q, stderr %q\nwant exit %d, stdout %q, stderr %q", c.args, c.input, gotCode, gotOut, gotErr, wantCode, wantOut, wantErr)
-		}
+		compare(args, "", dir)
 	}
 }
