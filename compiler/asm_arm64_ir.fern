@@ -2929,23 +2929,13 @@ function ssa_vgroup(ins: ssa.SInst, reg_of: i32[], set: boolean, s: asmcore.Emit
   s = s.write("    add x16, " + b + ", #" + util.i32_to_string(128 / ins.imm - 1) + "\n");
   s = ssa_cmp_rr(s, "x16", "x6");
   s = ssa_trap_guard(s, CC_LO, "__fern_oob_abort");
-  s = s.write("    add x17, " + a + ", " + b + ", lsl #3\n");
+  s = s.write("    add x17, " + a + ", " + b + ", lsl #" + util.i32_to_string(if (ins.imm == 64) { 3 } else { 2 }) + "\n");
   if (set) {
     s = ssa_fread(reg_of, ins.args[2], "d1", s);
-    let v = ssa_fsrc(reg_of, ins.args[2], "d1");
-    if (ins.imm == 64) {
-      return s.write("    str " + ssa_vq(v) + ", [x17, #8]\n");
-    }
-    let n = slice_unchecked(v, 1, v.len());
-    return s.write("    fcvtl v2.2d, v" + n + ".2s\n    str q2, [x17, #8]\n    fcvtl2 v2.2d, v" + n + ".4s\n    str q2, [x17, #24]\n");
+    return s.write("    str " + ssa_vq(ssa_fsrc(reg_of, ins.args[2], "d1")) + ", [x17, #8]\n");
   }
   let d = ssa_fdst(reg_of, ins.result);
-  if (ins.imm == 64) {
-    s = s.write("    ldr " + ssa_vq(d) + ", [x17, #8]\n");
-  } else {
-    let n = slice_unchecked(d, 1, d.len());
-    s = s.write("    ldr q1, [x17, #8]\n    fcvtn v" + n + ".2s, v1.2d\n    ldr q1, [x17, #24]\n    fcvtn2 v" + n + ".4s, v1.2d\n");
-  }
+  s = s.write("    ldr " + ssa_vq(d) + ", [x17, #8]\n");
   return ssa_fput(reg_of, ins.result, d, s);
 }
 

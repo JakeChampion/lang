@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// An i32, a u32 or a char array element takes 4 bytes on every target. Each
+// An i32, a u32, a char or an f32 array element takes 4 bytes on every target. Each
 // program runs on x86-64, arm64 and wasm32 under the sanitizer and the leak
 // census, and its output is what the Go interpreter prints for it.
 
@@ -237,6 +237,159 @@ const compactElemsStrideWant = "alloc true\n" +
 	"concat true\n" +
 	"lens 5242880"
 
+const compactElemsF32Src = `import "std/i32";
+import "std/i64";
+import "std/f32";
+import "std/f64";
+import "std/array";
+import "core/cmp";
+import "core/map";
+
+struct Rec { tag: i32, data: f32[] }
+
+function total(xs: [f32]): f64 {
+    let t: f64 = 0.0;
+    for x in xs { t = t * 1.5 + (x as f64); }
+    return t;
+}
+
+function bits(x: f32): string {
+    return f32_bits(x).to_string();
+}
+
+function mk(): f32[] { return [1.5, -2.25, 3.0e38]; }
+
+function last[T](xs: T[]): T {
+    return xs[xs.len() - 1];
+}
+
+function main(): i32 {
+    let lit: f32[] = [0.1, -0.0, 1.0e-45, 3.4028235e38];
+    print("lit " + lit.len().to_string() + " " + total(lit).to_string() + " " + bits(lit[0]) + " " + bits(lit[1]) + " " + bits(lit[2]) + " " + bits(lit[3]));
+    let nan: f32 = f32_from_bits(2143289345);
+    let inf: f32 = f32_from_bits(2139095040);
+    let odd: f32[] = [nan, inf, -inf];
+    print("nan " + bits(odd[0]) + " " + bits(odd[1]) + " " + bits(odd[2]) + " " + (odd[0] == odd[0]).to_string());
+    let grown: f32[] = [];
+    let i: i32 = 0;
+    while (i < 1000) { grown = grown.append((i as f32) * 0.25 - 100.0); i = i + 1; }
+    print("grown " + grown.len().to_string() + " " + total(grown).to_string() + " " + grown[999].to_string() + " " + grown[0].to_string());
+    let shared: f32[] = grown;
+    grown = grown.with(3, -7.5);
+    let w: f32[] = grown.with(4, 8.125);
+    print("with " + grown[3].to_string() + " " + w[4].to_string() + " " + grown[4].to_string() + " " + shared[3].to_string());
+    let sl: [f32] = grown[10:20];
+    let inner: [f32] = sl[2:5];
+    print("view " + sl.len().to_string() + " " + total(sl).to_string() + " " + inner[0].to_string());
+    let cp: f32[] = array.slice(grown, 5, 9);
+    print("slice " + cp.len().to_string() + " " + total(cp).to_string());
+    let cat: f32[] = lit.concat(mk());
+    print("concat " + cat.len().to_string() + " " + bits(cat[6]) + " " + bits(cat[1]));
+    print("eq " + (mk() == [1.5, -2.25, 3.0e38]).to_string() + " " + (mk() == [1.5, -2.25, 3.0]).to_string());
+    let unsorted: f32[] = [5.5, -3.25, 9.0, 0.0, -1.0e30];
+    let s: f32[] = cmp.sort(unsorted);
+    print("sort " + s[0].to_string() + " " + s[1].to_string() + " " + s[4].to_string());
+    let r: f32[] = array.reverse(lit);
+    print("rev " + bits(r[0]) + " " + bits(r[3]));
+    let sq: f32[] = [];
+    for k in 0..100000 { sq = sq.append((k as f32) * 0.5); }
+    print("for " + total(sq).to_string() + " " + sq[99999].to_string());
+    let c: Rec = Rec { tag: 9, data: [4.0, 5.0] };
+    c = Rec { ...c, data: c.data.append(-6.5) };
+    print("rec " + c.tag.to_string() + " " + total(c.data).to_string() + " " + last(c.data).to_string());
+    let m: Map[string, f32] = Map {};
+    m = m.insert("a", 2.5);
+    m = m.insert("b", -0.125);
+    let vs: f32[] = m.values();
+    print("values " + vs.len().to_string() + " " + ((vs[0] as f64) + (vs[1] as f64)).to_string());
+    let acc: f32 = 0.0;
+    let add = (x: f32) => { acc = acc + x; };
+    for x in mk() { add(x); }
+    print("cell " + acc.to_string());
+    let z: f32[] = __alloc_f32_like(3);
+    print("zero " + z.len().to_string() + " " + bits(z[2]));
+    return 0;
+}
+
+function __alloc_f32_like(n: i32): f32[] {
+    let out: f32[] = [];
+    for k in 0..n { out = out.append(0.0); }
+    return out;
+}
+`
+
+const compactElemsF32Want = "lit 4 3.4028234663852886e+38 1036831949 -2147483648 1 2139095039\n" +
+	"nan 2143289345 2139095040 -8388608 false\n" +
+	"grown 1000 -2.4553427878432828e+178 149.75 -100\n" +
+	"with -7.5 8.125 -99 -99.25\n" +
+	"view 10 -10998.017578125 -97\n" +
+	"slice 4 -800.28125\n" +
+	"concat 7 2137108966 -2147483648\n" +
+	"eq true false\n" +
+	"sort -1e+30 -3.25 9\n" +
+	"rev 2139095039 1036831949\n" +
+	"for Inf 49999.5\n" +
+	"rec 9 10 -6.5\n" +
+	"values 2 2.375\n" +
+	"cell 3e+38\n" +
+	"zero 3 0"
+
+const compactElemsF32LanesSrc = `import "std/i32";
+import "std/f32";
+import "std/f64";
+
+function show(v: f32x4): string {
+    return __f32x4_lane(v, 0).to_string() + "," + __f32x4_lane(v, 1).to_string() + "," + __f32x4_lane(v, 2).to_string() + "," + __f32x4_lane(v, 3).to_string();
+}
+
+function main(): i32 {
+    let xs: f32[] = [];
+    for k in 0..12 { xs = xs.append((k as f32) * 1.5 - 4.0); }
+    let a = __f32x4_load(xs, 0);
+    let b = __f32x4_load(xs, 5);
+    print("load " + show(a) + " " + show(b));
+    let ys: f32[] = __f32x4_with(xs, 8, __f32x4_splat(-0.5));
+    print("with " + ys[7].to_string() + " " + ys[8].to_string() + " " + ys[11].to_string() + " " + xs[8].to_string());
+    let d: f64[] = [1.0, 2.0, 3.0];
+    let e = __f64x2_load(d, 1);
+    print("f64 " + __f64x2_lane(e, 0).to_string() + " " + __f64x2_lane(e, 1).to_string());
+    let snan: f32 = f32_from_bits(2139095041);
+    let ns: f32[] = [snan];
+    print("snan " + f32_bits(ns[0]).to_string());
+    return 0;
+}
+`
+
+const compactElemsF32LanesWant = "load -4,-2.5,-1,0.5 3.5,5,6.5,8\n" +
+	"with 6.5 -0.5 -0.5 8\n" +
+	"f64 2 3\n" +
+	"snan 2143289345"
+
+// With 8-byte elements each cost below is about twice its bound.
+const compactElemsF32StrideSrc = `import "std/i32";
+import "std/i64";
+
+function main(): i32 {
+    let before: i64 = __heap_bump_bytes();
+    let xs: f32[] = [];
+    let i = 0;
+    while (i < 1048576) { xs = xs.append(i as f32); i += 1; }
+    let push_cost: i64 = __heap_bump_bytes() - before;
+    before = __heap_bump_bytes();
+    let ys: f32[] = [];
+    for k in 0..1048576 { ys = ys.append(0.5); }
+    let for_cost: i64 = __heap_bump_bytes() - before;
+    print("push " + (push_cost < (12000000 as i64)).to_string());
+    print("for " + (for_cost < (6000000 as i64)).to_string());
+    print("lens " + (xs.len() + ys.len()).to_string() + " " + xs[1048575].to_string());
+    return 0;
+}
+`
+
+const compactElemsF32StrideWant = "push true\n" +
+	"for true\n" +
+	"lens 2097152 1048575"
+
 func TestSelfHostCompactElements(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -255,6 +408,9 @@ func TestSelfHostCompactElements(t *testing.T) {
 		{"u32-char", compactElemsU32CharSrc, compactElemsU32CharWant},
 		{"containers", compactElemsContainersSrc, compactElemsContainersWant},
 		{"stride", compactElemsStrideSrc, compactElemsStrideWant},
+		{"f32", compactElemsF32Src, compactElemsF32Want},
+		{"f32-lanes", compactElemsF32LanesSrc, compactElemsF32LanesWant},
+		{"f32-stride", compactElemsF32StrideSrc, compactElemsF32StrideWant},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

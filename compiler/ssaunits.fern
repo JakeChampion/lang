@@ -1070,6 +1070,9 @@ function box_words(f: ssasem.Func, defs: ssa.SInst[], raw: boolean[], out: strin
     if (w == "") {
       w = wide_word(f, defs, ins.args[j], fields[j].ty);
     }
+    if (w != "" && ins.kind_tag == ssasem.array_new() && ssasem.is_f32(fields[j].ty)) {
+      w = util.i32_to_string(f32_bits(f64_from_bits(util.lit_to_i64(w)) as f32));
+    }
     if (w == "") {
       w = literal_word(defs, ins.args[j]);
     }

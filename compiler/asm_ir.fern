@@ -8560,21 +8560,13 @@ function ssa_vgroup(ins: ssa.SInst, reg_of: i32[], set: boolean, s: asmcore.Emit
   s = ssa_trap_jump(ssa_alu_rm0(s, 7, 64, true, b, a), "jae", "__fern_oob_abort");
   s = s.write("    leaq " + util.i32_to_string(128 / ins.imm - 1) + "(" + b + "), %rdx\n");
   s = ssa_trap_jump(ssa_alu_rm0(s, 7, 64, true, "%rdx", a), "jae", "__fern_oob_abort");
-  let lo = "8(" + a + "," + b + ",8)";
-  let hi = "24(" + a + "," + b + ",8)";
+  let lo = "8(" + a + "," + b + "," + util.i32_to_string(ins.imm / 8) + ")";
   if (set) {
     s = ssa_fread(reg_of, ins.args[2], "%xmm1", s);
-    let v = ssa_fsrc(reg_of, ins.args[2], "%xmm1");
-    if (ins.imm == 64) {
-      return s.write("    movupd " + v + ", " + lo + "\n");
-    }
-    return s.write("    cvtps2pd " + v + ", %xmm2\n    movupd %xmm2, " + lo + "\n    movhlps " + v + ", %xmm2\n    cvtps2pd %xmm2, %xmm2\n    movupd %xmm2, " + hi + "\n");
+    return s.write("    movupd " + ssa_fsrc(reg_of, ins.args[2], "%xmm1") + ", " + lo + "\n");
   }
   let d = ssa_fsrc(reg_of, ins.result, "%xmm0");
   s = s.write("    movupd " + lo + ", " + d + "\n");
-  if (ins.imm == 32) {
-    s = s.write("    cvtpd2ps " + d + ", " + d + "\n    movupd " + hi + ", %xmm1\n    cvtpd2ps %xmm1, %xmm1\n    movlhps %xmm1, " + d + "\n");
-  }
   return ssa_fput(reg_of, ins.result, d, s);
 }
 
