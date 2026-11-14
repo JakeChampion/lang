@@ -362,20 +362,34 @@ function __zeros(n: i32): i32[] {
   return __alloc_i32(n);
 }
 
+// Reads one symbol of the code `h`, one bit for each step. The bits stay in
+// locals, so a symbol makes one new state.
 function __decode(own s: __State, data: [u8], h: __Huff): __State {
+  if (s.failed) {
+    return s;
+  }
+  let buf = s.bitbuf;
+  let cnt = s.bitcnt;
+  let pos = s.pos;
   let code = 0;
   let first = 0;
   let index = 0;
   let len = 1;
   while (len <= 15) {
-    s = __bits(s, data, 1);
-    if (s.failed) {
-      return s;
+    if (cnt == 0) {
+      if (pos >= data.len()) {
+        return __fail(s, Truncated);
+      }
+      buf = data[pos] as i32;
+      pos += 1;
+      cnt = 8;
     }
-    code |= s.last;
+    code |= buf & 1;
+    buf >>= 1;
+    cnt -= 1;
     let count = h.count[len];
     if (code - count < first) {
-      return __State { ...s, last: h.symbol[index + (code - first)] };
+      return __State { ...s, pos: pos, bitbuf: buf, bitcnt: cnt, last: h.symbol[index + (code - first)] };
     }
     index += count;
     first = first + count << 1;
