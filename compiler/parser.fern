@@ -2276,6 +2276,9 @@ function scan_written_type_args(p: Par): (string, i32, Par) {
     n += 1;
     if (p.peek_punct() == ",") {
       p = p.advance();
+      if (p.peek_punct() == "]") {
+        break;
+      }
       continue;
     }
     break;
@@ -25451,7 +25454,11 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     parsed = Module { ...parsed, funcs: settle_const_types(parsed.funcs, structs), substituted_consts: inferred };
     parsed = desugar_union_aliases(desugar_trait_params(parsed, trait_decl_names(traits), false));
   }
-  let settled = settle_module(resolve_variant_fields_module(resolve_labels_module(resolve_assoc_projections(parsed))));
+  let labelled = resolve_labels_module(resolve_assoc_projections(parsed));
+  if (!verbatim) {
+    labelled = resolve_variant_fields_module(labelled);
+  }
+  let settled = settle_module(labelled);
   if (!verbatim) {
     settled = route_inherited_defaults(resolve_dyn_traits(rename_type_vars_module(settled)));
   }

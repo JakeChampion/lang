@@ -456,6 +456,7 @@ jobs:
           - { runner: ubuntu-24.04,     host: x86_64,  slug: dns,    pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdDNS,        wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: protobuf, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdProtobuf,   wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: jpeg,   pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdJPEG,       wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: elf,    pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdELF,        wasmtime: "false" }
     name: nightly-fuzz-${{ matrix.slug }}-${{ matrix.host }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 65

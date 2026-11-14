@@ -1,6 +1,7 @@
 import "std/brotli";
 import "std/deflate";
 import "std/dns";
+import "std/elf";
 import "std/hash/crc32";
 import "std/hex";
 import "std/http";
@@ -30,8 +31,8 @@ import "std/zstd";
 // and server connection, the HPACK or QPACK decoder, the QUIC packet or frame
 // reader, the TLS record and handshake readers, the X.509 reader, the
 // DEFLATE, gzip, zlib, zstd and Brotli decoders, the DNS message reader, the
-// protobuf reader, the JPEG decoder, the JSON parser, or the URL and query
-// parsers. Each refuses malformed bytes with an
+// protobuf reader, the JPEG decoder, the ELF64 reader, the JSON parser, or
+// the URL and query parsers. Each refuses malformed bytes with an
 // error value, so the accepted outcome is exit 0 with a summary on stdout.
 // Exit 2 is a usage or read error.
 
@@ -746,6 +747,36 @@ function jpeg_summary(raw: u8[]): string {
   }
 }
 
+// The offset of the refusal, or the header fields and then, for each
+// program header, its kind with the length and a sum of the bytes of its
+// segment, or `cut` for a segment that the reader refuses.
+function elf_summary(raw: u8[]): string {
+  let image = raw[0:raw.len()];
+  match (elf.parse(image)) {
+    Err(e) => {
+      return "elf refused " + e.offset.to_string();
+    },
+    Ok(img) => {
+      let out = "elf ok " + img.kind.to_string() + " " + img.machine.to_string() + " " + img.entry.to_string() + " " + img.segments.len().to_string();
+      for s in img.segments {
+        match (s.bytes(image)) {
+          Ok(bytes) => {
+            let sum: u32 = 0 as u32;
+            for b in bytes {
+              sum = sum * (31 as u32) + b as u32;
+            }
+            out = out + " " + s.kind.to_string() + ":" + bytes.len().to_string() + ":" + sum.to_string();
+          },
+          Err(_) => {
+            out = out + " " + s.kind.to_string() + ":cut";
+          }
+        }
+      }
+      return out + " loads " + img.loads().len().to_string();
+    }
+  }
+}
+
 function json_summary(src: string): string {
   match (json.parse(src)) {
     Ok(_) => {
@@ -790,7 +821,7 @@ function utf8_summary(raw: u8[]): string {
 function main(): i32 {
   let av = args();
   if (av.len() < 3) {
-    eprint("usage: stdparse http|h2|hpack|qpack|quic|frames|tls|tls-server|tls-client|tls-hello|x509|inflate|gunzip|zlib|zstd|brotli|dns|protobuf|jpeg|json|url|utf8 FILE");
+    eprint("usage: stdparse http|h2|hpack|qpack|quic|frames|tls|tls-server|tls-client|tls-hello|x509|inflate|gunzip|zlib|zstd|brotli|dns|protobuf|jpeg|elf|json|url|utf8 FILE");
     return 2;
   }
   let raw: u8[] = [];
@@ -877,6 +908,10 @@ function main(): i32 {
   }
   if (av[1] == "jpeg") {
     print(jpeg_summary(raw));
+    return 0;
+  }
+  if (av[1] == "elf") {
+    print(elf_summary(raw));
     return 0;
   }
   if (av[1] == "json") {
