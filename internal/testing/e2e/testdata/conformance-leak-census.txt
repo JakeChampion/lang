@@ -1,3 +1,4 @@
+# 2026-11-14: type_args_trailing_comma has no allocations on x86-64.
 # 2026-11-14: type_args_trailing_comma frees all four traced allocations on x86-64.
 # 2026-11-14: bigint_word_index_out_of_range, continue_in_a_value_block_steps_the_range,
 # defer_runs_for_a_return_in_a_value_branch and type_args_trailing_comma have balanced allocations on x86-64.
