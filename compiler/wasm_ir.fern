@@ -4671,18 +4671,11 @@ function emit_wasm_lane_group(width: i32, base: i32, set: boolean, packed: boole
     return out + "    v128.load\n";
   }
   out = out + "    local.get " + arr + "\n    i32.load\n" + at + "    i32.const " + util.i32_to_string(128 / width - 1) + "\n    i32.add\n    i32.le_u\n    if\n      call $__fern_abort_arr\n      unreachable\n    end\n";
-  out = out + "    local.get " + arr + "\n" + at + "    i32.const 8\n    i32.mul\n    i32.add\n    i32.const 8\n    i32.add\n    local.set " + util.i32_to_string(base + 4) + "\n";
-  let hi = at + "    i32.const 16\n    i32.add\n";
-  if (set && width == 64) {
+  out = out + "    local.get " + arr + "\n" + at + "    i32.const " + util.i32_to_string(width / 8) + "\n    i32.mul\n    i32.add\n    i32.const 8\n    i32.add\n    local.set " + util.i32_to_string(base + 4) + "\n";
+  if (set) {
     return out + at + v + "    v128.store\n";
   }
-  if (set) {
-    return out + at + v + "    f64x2.promote_low_f32x4\n    v128.store\n" + hi + v + "    f64x2.extract_lane 1\n    f64x2.splat\n    f64x2.promote_low_f32x4\n    v128.store\n";
-  }
-  if (width == 64) {
-    return out + at + "    v128.load\n";
-  }
-  return out + at + "    v128.load\n    f32x4.demote_f64x2_zero\n" + hi + "    v128.load\n    f32x4.demote_f64x2_zero\n    f64x2.extract_lane 0\n    f64x2.replace_lane 1\n";
+  return out + at + "    v128.load\n";
 }
 
 function wasm_lane_verb(k: string, sh: string): string {
@@ -9385,7 +9378,9 @@ pub function arr_concat_helper(): string {
   let o = "";
   o += "  (func $__fern_arr_concat (param $width i32) (param $nb i32) (param $src i32) (param $a i32) (result i32)\n";
   o += "    (local $na i32) (local $n i32) (local $stride i32) (local $cap i32) (local $rc i32) (local $ncap i32) (local $r i32) (local $sole i32)\n";
-  o += "    (local.set $stride (i32.shr_u (local.get $width) (i32.const 3)))\n";
+  o += "    (local.set $stride (i32.const 4))\n";
+  o += "    (if (i32.eq (local.get $width) (i32.const 8)) (then (local.set $stride (i32.const 1))))\n";
+  o += "    (if (i32.eq (local.get $width) (i32.const 64)) (then (local.set $stride (i32.const 8))))\n";
   o += "    (local.set $na (i32.load (local.get $a)))\n";
   o += "    (local.set $n (i32.add (local.get $na) (local.get $nb)))\n";
   o += "    (local.set $cap (i32.load (i32.add (local.get $a) (i32.const 4))))\n";
@@ -11801,7 +11796,7 @@ pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: s
     } else if (extern_array_param_supported(params[j].type_name)) {
       let akind = slice_unchecked(params[j].type_name, 0, params[j].type_name.len() - 2);
       let assz = util.i32_to_string(elem_slot_size(akind));
-      let acsz = util.i32_to_string(extern_list_elem_size(akind));
+      let acsz = util.i32_to_string(elem_slot_size(akind));
       let ablkS = util.i32_to_string(blk);
       let aiS = util.i32_to_string(i_local);
       let alenS = util.i32_to_string(wp + 1);
@@ -11813,7 +11808,7 @@ pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: s
       body = body + "    (local.set " + aiS + " (i32.const 0))\n";
       body = body + "    (block $pda" + ajS + " (loop $pca" + ajS + "\n";
       body = body + "      (br_if $pda" + ajS + " (i32.ge_u (local.get " + aiS + ") (local.get " + alenS + ")))\n";
-      body = body + "      " + extern_elem_from_canon(akind, "(i32.add (i32.add (local.get " + ablkS + ") (i32.const 8)) (i32.mul (local.get " + aiS + ") (i32.const " + assz + ")))", "(i32.add (local.get " + aptrS + ") (i32.mul (local.get " + aiS + ") (i32.const " + acsz + ")))") + "\n";
+      body = body + "      " + elem_copy(akind, "(i32.add (i32.add (local.get " + ablkS + ") (i32.const 8)) (i32.mul (local.get " + aiS + ") (i32.const " + assz + ")))", "(i32.add (local.get " + aptrS + ") (i32.mul (local.get " + aiS + ") (i32.const " + acsz + ")))") + "\n";
       body = body + "      (local.set " + aiS + " (i32.add (local.get " + aiS + ") (i32.const 1)))\n";
       body = body + "      (br $pca" + ajS + ")))\n";
       callargs = callargs + " (local.get " + ablkS + ")";
@@ -11844,7 +11839,7 @@ pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: s
   } else if (arr_result) {
     let rk = slice_unchecked(ret, 0, ret.len() - 2);
     let ss = util.i32_to_string(elem_slot_size(rk));
-    let cs = util.i32_to_string(extern_list_elem_size(rk));
+    let cs = util.i32_to_string(elem_slot_size(rk));
     let aS = util.i32_to_string(arr_arr);
     let lnS = util.i32_to_string(arr_alen);
     let bfS = util.i32_to_string(arr_buf);
@@ -11856,7 +11851,7 @@ pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: s
     body = body + "    (local.set " + iS2 + " (i32.const 0))\n";
     body += "    (block $da (loop $ca\n";
     body = body + "      (br_if $da (i32.ge_u (local.get " + iS2 + ") (local.get " + lnS + ")))\n";
-    body = body + "      " + extern_elem_to_canon(rk, "(i32.add (local.get " + bfS + ") (i32.mul (local.get " + iS2 + ") (i32.const " + cs + ")))", "(i32.add (i32.add (local.get " + aS + ") (i32.const 8)) (i32.mul (local.get " + iS2 + ") (i32.const " + ss + ")))") + "\n";
+    body = body + "      " + elem_copy(rk, "(i32.add (local.get " + bfS + ") (i32.mul (local.get " + iS2 + ") (i32.const " + cs + ")))", "(i32.add (i32.add (local.get " + aS + ") (i32.const 8)) (i32.mul (local.get " + iS2 + ") (i32.const " + ss + ")))") + "\n";
     body = body + "      (local.set " + iS2 + " (i32.add (local.get " + iS2 + ") (i32.const 1)))\n";
     body += "      (br $ca)))\n";
     body = body + "    (local.set " + raS2 + " (i32.and (i32.add (call $__fern_alloc (i32.const 12)) (i32.const 3)) (i32.const -4)))\n";
@@ -12364,7 +12359,7 @@ function extern_composite_host_bytes(ret: string): string {
     return "(local.get $ln)";
   }
   let rk = slice_unchecked(ret, 0, ret.len() - 2);
-  return "(i32.mul (local.get $ln) (i32.const " + util.i32_to_string(extern_list_elem_size(rk)) + "))";
+  return "(i32.mul (local.get $ln) (i32.const " + util.i32_to_string(elem_slot_size(rk)) + "))";
 }
 
 function extern_sum_result_tail(fname: string, ret: string, callargs: string): string {
@@ -12473,7 +12468,7 @@ function extern_param_prologue(f: parser.FuncDecl): string {
       let tn = f.params[ci].type_name;
       let k = slice_unchecked(tn, 0, tn.len() - 2);
       let ss = util.i32_to_string(elem_slot_size(k));
-      let cs = util.i32_to_string(extern_list_elem_size(k));
+      let cs = util.i32_to_string(elem_slot_size(k));
       let lbl = util.i32_to_string(ci);
       let src = "(i32.add (i32.add (local.get " + cppn + ") (i32.const 8)) (i32.mul (local.get $ai) (i32.const " + ss + ")))";
       let dst = "(i32.add (local.get " + bn + ") (i32.mul (local.get $ai) (i32.const " + cs + ")))";
@@ -12482,7 +12477,7 @@ function extern_param_prologue(f: parser.FuncDecl): string {
       parts = parts.append("    (local.set $ai (i32.const 0))\n");
       parts = parts.append("    (block $d" + lbl + " (loop $c" + lbl + "\n");
       parts = parts.append("      (br_if $d" + lbl + " (i32.ge_u (local.get $ai) (local.get $an)))\n");
-      parts = parts.append("      " + extern_elem_to_canon(k, dst, src) + "\n");
+      parts = parts.append("      " + elem_copy(k, dst, src) + "\n");
       parts = parts.append("      (local.set $ai (i32.add (local.get $ai) (i32.const 1)))\n");
       parts = parts.append("      (br $c" + lbl + ")))\n");
     } else if (extern_param_repacks(f.params[ci].type_name)) {
@@ -12565,14 +12560,14 @@ function extern_composite_lift(ret: string): string {
   } else if (extern_array_param_supported(ret)) {
     let rk = slice_unchecked(ret, 0, ret.len() - 2);
     let rss = util.i32_to_string(elem_slot_size(rk));
-    let rcs = util.i32_to_string(extern_list_elem_size(rk));
+    let rcs = util.i32_to_string(elem_slot_size(rk));
     parts = parts.append("    (local.set $s (call $__fern_arr_elems (local.get $ln) (i32.const " + rss + ")))\n");
     parts = parts.append("    (i32.store (local.get $s) (local.get $ln))\n");
     parts = parts.append("    (i32.store offset=4 (local.get $s) (local.get $ln))\n");
     parts = parts.append("    (local.set $i (i32.const 0))\n");
     parts = parts.append("    (block $d (loop $c\n");
     parts = parts.append("      (br_if $d (i32.ge_u (local.get $i) (local.get $ln)))\n");
-    parts = parts.append("      " + extern_elem_from_canon(rk, "(i32.add (i32.add (local.get $s) (i32.const 8)) (i32.mul (local.get $i) (i32.const " + rss + ")))", "(i32.add (local.get $dp) (i32.mul (local.get $i) (i32.const " + rcs + ")))") + "\n");
+    parts = parts.append("      " + elem_copy(rk, "(i32.add (i32.add (local.get $s) (i32.const 8)) (i32.mul (local.get $i) (i32.const " + rss + ")))", "(i32.add (local.get $dp) (i32.mul (local.get $i) (i32.const " + rcs + ")))") + "\n");
     parts = parts.append("      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n");
     parts = parts.append("      (br $c)))\n");
   } else {
@@ -12886,28 +12881,16 @@ pub function nth_tuple_type_elem(spelling: string, idx: i32): string {
   return parser.render_type_ref(r.args[idx]);
 }
 
-function extern_list_elem_size(kind: string): i32 {
+// A copy of one element between an array and a canonical list, which share its layout.
+function elem_copy(kind: string, dst: string, src: string): string {
+  return "(" + elem_store_op(kind) + " " + dst + " (" + elem_load_op(kind) + " " + src + "))";
+}
+
+// An f32 element holds the 4 bytes of the value, as a list<f32> does.
+pub function elem_slot_size(kind: string): i32 {
   if (kind == "f32") {
     return 4;
   }
-  return elem_slot_size(kind);
-}
-
-function extern_elem_to_canon(kind: string, dst: string, src: string): string {
-  if (kind == "f32") {
-    return "(f32.store " + dst + " (f32.demote_f64 (f64.load " + src + ")))";
-  }
-  return "(" + elem_store_op(kind) + " " + dst + " (" + elem_load_op(kind) + " " + src + "))";
-}
-
-function extern_elem_from_canon(kind: string, dst: string, src: string): string {
-  if (kind == "f32") {
-    return "(f64.store " + dst + " (f64.promote_f32 (f32.load " + src + ")))";
-  }
-  return "(" + elem_store_op(kind) + " " + dst + " (" + elem_load_op(kind) + " " + src + "))";
-}
-
-pub function elem_slot_size(kind: string): i32 {
   if (elem_is_i64slot(kind) || parser.is_float_type_name(kind)) {
     return 8;
   }
@@ -12917,6 +12900,9 @@ pub function elem_slot_size(kind: string): i32 {
 pub function elem_store_op(kind: string): string {
   if (elem_is_i64slot(kind)) {
     return "i64.store";
+  }
+  if (kind == "f32") {
+    return "f32.store";
   }
   if (parser.is_float_type_name(kind)) {
     return "f64.store";
@@ -12931,6 +12917,9 @@ function elem_is_i64slot(kind: string): boolean {
 pub function elem_load_op(kind: string): string {
   if (elem_is_i64slot(kind)) {
     return "i64.load";
+  }
+  if (kind == "f32") {
+    return "f32.load";
   }
   if (parser.is_float_type_name(kind)) {
     return "f64.load";

@@ -1389,7 +1389,7 @@ function float_def(ins: SInst): boolean {
 }
 
 function float_load(ins: SInst): boolean {
-  return ins.kind_tag == LD_AT || ins.kind_tag == ARR_AT && ins.str != "u8";
+  return ins.kind_tag == LD_AT || ins.kind_tag == ARR_AT && ins.str != "u8" && ins.str != "i32" && ins.str != "u32";
 }
 
 function float_use(ins: SInst): boolean {
@@ -5661,8 +5661,9 @@ function ext_transfer(f: SFunc, def_b: i32[], def_k: i32[], facts: i32[], ins: S
   if (k == SELECT) {
     return shared_facts(facts, ins.args, 1);
   }
-  if (byte_source(f, def_b, def_k, ins)) {
-    return EXT_BYTE;
+  let loaded = source_facts(f, def_b, def_k, ins);
+  if (loaded != 0) {
+    return loaded;
   }
   if (k == BINARY) {
     return binary_facts(f, def_b, def_k, facts, ins);
@@ -5800,17 +5801,28 @@ function unary_facts(ins: SInst, held: i32): i32 {
   return 0;
 }
 
-function byte_source(f: SFunc, def_b: i32[], def_k: i32[], ins: SInst): boolean {
+// What a load or a byte mask leaves in its register, or 0.
+function source_facts(f: SFunc, def_b: i32[], def_k: i32[], ins: SInst): i32 {
   if (ins.kind_tag == LD_BYTE) {
-    return true;
+    return EXT_BYTE;
   }
   if (ins.kind_tag == ARR_AT || ins.kind_tag == STR_AT) {
-    return ins.imm != 2 && (ins.kind_tag == STR_AT || ins.str == "u8");
+    return if (ins.imm == 2) { 0 } else { elem_facts(ins) };
   }
-  if (ins.kind_tag == BINARY && ins.str == "and" && ins.args.len() == 2) {
-    return const_in(f, def_b, def_k, ins.args[0], 0i64, 255i64) || const_in(f, def_b, def_k, ins.args[1], 0i64, 255i64);
+  if (ins.kind_tag == BINARY && ins.str == "and" && ins.args.len() == 2 && (const_in(f, def_b, def_k, ins.args[0], 0i64, 255i64) || const_in(f, def_b, def_k, ins.args[1], 0i64, 255i64))) {
+    return EXT_BYTE;
   }
-  return false;
+  return 0;
+}
+
+function elem_facts(ins: SInst): i32 {
+  if (ins.kind_tag == STR_AT || ins.str == "u8") {
+    return EXT_BYTE;
+  }
+  if (ins.str == "i32") {
+    return EXT_I32;
+  }
+  return if (ins.str == "u32") { EXT_U32 } else { 0 };
 }
 
 function const_zero(f: SFunc, def_b: i32[], def_k: i32[], v: i32): boolean {
@@ -6150,17 +6162,28 @@ function constant_bits(ins: SInst): i32 {
   return 64;
 }
 
+// The low bits of operand `k` that a store of a byte or a 4-byte element
+// writes, or 0. An append takes its element as operand 1.
+function stored_bits(ins: SInst, k: i32): i32 {
+  let mark = ins.str;
+  if (ins.kind_tag == RT_CALL && k == 1 && ins.str.starts_with("arr_push")) {
+    mark = if (ins.str.ends_with("_u8")) { "u8" } else if (ins.str.ends_with("_u32")) { "i32" } else { "" };
+  } else if (!(ins.kind_tag == ST_AT && k == 1 || ins.kind_tag == ARR_ST && k == 2)) {
+    return 0;
+  }
+  if (mark == "u8") {
+    return 8;
+  }
+  return if (mark == "i32" || mark == "u32") { 32 } else { 0 };
+}
+
 // The low result bits of arithmetic and logic depend only on the same
 // low operand bits. A constant right shift can bring higher bits down;
 // variable right shifts conservatively observe the whole source.
 function operand_bits(ins: SInst, k: i32, result: i32, f: SFunc, def_b: i32[], def_k: i32[]): i32 {
-  if (ins.kind_tag == ST_AT && k == 1) {
-    if (ins.str == "u8") {
-      return 8;
-    }
-    if (ins.str == "i32") {
-      return 32;
-    }
+  let stored = stored_bits(ins, k);
+  if (stored > 0) {
+    return stored;
   }
   if (ins.kind_tag == COPY || ins.kind_tag == PHI) {
     return result;
