@@ -87,6 +87,35 @@ func runSelfHostStdTestX86(t *testing.T, tls bool) {
 	})
 }
 
+// Each std/test program, built with -harden, must give the verdict it gives
+// in the release build: every test passes and the exit code is 0. Under
+// -harden a released block is zero, so a read of released storage that the
+// release build does not show gives a failed assertion or a hang here.
+func TestSelfHostStdTestHarden(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	cases := selfHostStdTestShard(t, append(selfHostStdTestCases(t, false), selfHostStdTestCases(t, true)...))
+	t.Run("cases", func(t *testing.T) {
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				bin := filepath.Join(t.TempDir(), tc.name)
+				build := runX86_64Bin(cli.runner, cli.bin, "-harden", "-target", "x86-64-linux", "-o", bin, tc.src, cli.stdlib)
+				build.Env = childEnv()
+				var log []byte
+				if err := e2eharness.WithBuildMemoryMB(1024, func() (err error) { log, err = build.CombinedOutput(); return }); err != nil {
+					t.Fatalf("self-host compile failed: %v\n%s", err, log)
+				}
+				run := runX86_64Bin(cli.runner, bin)
+				out, _ := stdTestOutput(run)
+				exit := run.ProcessState.ExitCode()
+				if wantFail := tc.name == "synthetic_fail"; (exit != 0) != wantFail {
+					t.Errorf("exit code %d under -harden\n%s", exit, out)
+				}
+			})
+		}
+	})
+}
+
 // The suites that take more than a minute under the self-host interpreter. The
 // interp leg leaves them out so that it fits one job.
 var interpSlowStdTests = map[string]bool{
