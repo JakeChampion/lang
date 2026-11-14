@@ -905,6 +905,7 @@ function private_error(pem: string): string {
     ssh.Key(_) => "key",
     ssh.NeedsPassphrase(_) => "passphrase",
     ssh.Bad(why) => why,
+    ssh.Unsupported(t) => "unsupported SSH identity type: " + t,
   };
 }
 
