@@ -155,8 +155,69 @@ function check_fast_paths(): i32 {
   return 0;
 }
 
+// groups_of gives the match of `pat` in `subj` with its groups, in the
+// default syntax or in the syntax of GNU sed.
+function groups_of(pat: string, subj: u8[], sed: boolean, ext: boolean): string {
+  let re = if (sed) { bre.bre_compile_syntax(pat, bre.sed_syntax(ext, false, false, false)) } else { bre.bre_compile(pat) };
+  let m = re.search_groups_bytes(subj, 0, subj.len());
+  if (!m.matched) {
+    return "none";
+  }
+  let out = "";
+  for g in 0..m.starts.len() {
+    out = out + f"{m.starts[g]},{m.ends[g]};";
+  }
+  return out;
+}
+
+struct NulCase { pat: string, subj: u8[], sed: boolean, ext: boolean, want: string }
+
+// In the default syntax . does not match a NUL byte, as RE_DOT_NOT_NULL
+// gives. In the syntax of GNU sed it does. [^a] matches it in both. The
+// patterns take each path: the DFA, the sparse scan, the search for a back
+// reference, and the walk for a few groups.
+function check_nul(): i32 {
+  let z: u8[] = [0, 0];
+  let azb: u8[] = [97, 0, 98];
+  let xz: u8[] = [120, 0, 120, 49];
+  let xzzy: u8[] = [120, 0, 0, 121];
+  let cases: NulCase[] = [
+    NulCase { pat: "..", subj: z, sed: false, ext: false, want: "none" },
+    NulCase { pat: "a.b", subj: azb, sed: false, ext: false, want: "none" },
+    NulCase { pat: "[^a]", subj: z, sed: false, ext: false, want: "0,1;" },
+    NulCase { pat: "\\(.\\)\\1", subj: z, sed: false, ext: false, want: "none" },
+    NulCase { pat: "\\(.\\)", subj: z, sed: false, ext: false, want: "none" },
+    NulCase { pat: "x.", subj: xz, sed: false, ext: false, want: "2,4;" },
+    NulCase { pat: "x.\\{1,2\\}y", subj: xzzy, sed: false, ext: false, want: "none" },
+    NulCase { pat: ".*", subj: z, sed: false, ext: false, want: "0,0;" },
+    NulCase { pat: "\\([^a]\\)\\1", subj: z, sed: false, ext: false, want: "0,2;0,1;" },
+    NulCase { pat: "..", subj: z, sed: true, ext: false, want: "0,2;" },
+    NulCase { pat: "a.b", subj: azb, sed: true, ext: false, want: "0,3;" },
+    NulCase { pat: "[^a]", subj: z, sed: true, ext: false, want: "0,1;" },
+    NulCase { pat: "\\(.\\)\\1", subj: z, sed: true, ext: false, want: "0,2;0,1;" },
+    NulCase { pat: "(.)\\1", subj: z, sed: true, ext: true, want: "0,2;0,1;" },
+    NulCase { pat: "x.", subj: xz, sed: true, ext: false, want: "0,2;" },
+    NulCase { pat: "x.\\{1,2\\}y", subj: xzzy, sed: true, ext: false, want: "0,4;" },
+    NulCase { pat: ".*", subj: z, sed: true, ext: false, want: "0,2;" },
+  ];
+  for k in 0..cases.len() {
+    let c = cases[k];
+    if (groups_of(c.pat, c.subj, c.sed, c.ext) != c.want) {
+      return 61 + k;
+    }
+  }
+  if (bre.bre_compile("..").search_bytes(z) || bre.bre_compile("a.b").search_range_bytes(azb, 0, 3)) {
+    return 79;
+  }
+  return 0;
+}
+
 function main(): i32 {
-  let r = check_fast_paths();
+  let r = check_nul();
+  if (r != 0) {
+    return r;
+  }
+  r = check_fast_paths();
   if (r != 0) {
     return r;
   }

@@ -230,21 +230,22 @@ pub struct Bre { insts: Inst[], classes: u8[], ngroups: i32, nmarks: i32, backre
 // and \'. `invalid_dup` makes a leading interval an error, and also a `*` or
 // an interval after another repetition. `multiline` makes ^ and $ match at a
 // newline, and stops . and [^...] from matching a newline. `no_empty_ranges`
-// makes a range whose end comes before its start an error.
-pub struct Syntax { emacs: boolean, newline_anchor: boolean, extended: boolean, icase: boolean, gnu_ops: boolean, invalid_dup: boolean, multiline: boolean, no_empty_ranges: boolean }
+// makes a range whose end comes before its start an error. `dot_not_null`
+// stops . from matching a NUL byte, as RE_DOT_NOT_NULL does in GNU regex.
+pub struct Syntax { emacs: boolean, newline_anchor: boolean, extended: boolean, icase: boolean, gnu_ops: boolean, invalid_dup: boolean, multiline: boolean, no_empty_ranges: boolean, dot_not_null: boolean }
 
 pub function posix_basic(): Syntax {
-  return Syntax { emacs: false, newline_anchor: false, extended: false, icase: false, gnu_ops: true, invalid_dup: false, multiline: false, no_empty_ranges: false };
+  return Syntax { emacs: false, newline_anchor: false, extended: false, icase: false, gnu_ops: true, invalid_dup: false, multiline: false, no_empty_ranges: false, dot_not_null: true };
 }
 
 pub function emacs_syntax(): Syntax {
-  return Syntax { emacs: true, newline_anchor: true, extended: false, icase: false, gnu_ops: true, invalid_dup: false, multiline: false, no_empty_ranges: false };
+  return Syntax { emacs: true, newline_anchor: true, extended: false, icase: false, gnu_ops: true, invalid_dup: false, multiline: false, no_empty_ranges: false, dot_not_null: false };
 }
 
 // The syntax of GNU sed: BRE or ERE, with the I and M flags. `posix` is
 // --posix, which removes the GNU operators.
 pub function sed_syntax(extended: boolean, icase: boolean, multiline: boolean, posix: boolean): Syntax {
-  return Syntax { emacs: false, newline_anchor: multiline, extended: extended, icase: icase, gnu_ops: !posix, invalid_dup: !extended, multiline: multiline, no_empty_ranges: true };
+  return Syntax { emacs: false, newline_anchor: multiline, extended: extended, icase: icase, gnu_ops: !posix, invalid_dup: !extended, multiline: multiline, no_empty_ranges: true, dot_not_null: false };
 }
 
 pub struct BreMatch { matched: boolean, end: i32, starts: i32[], ends: i32[] }
@@ -355,7 +356,7 @@ function nd_assert(): i32 {
   return 10;
 }
 
-struct P { pat: Input, i: i32, nodes: Node[], classes: u8[], ngroups: i32, done: i32, err: string, emacs: boolean, ext: boolean, icase: boolean, gnu: boolean, inv_dup: boolean, multiline: boolean, no_empty: boolean }
+struct P { pat: Input, i: i32, nodes: Node[], classes: u8[], ngroups: i32, done: i32, err: string, emacs: boolean, ext: boolean, icase: boolean, gnu: boolean, inv_dup: boolean, multiline: boolean, no_empty: boolean, dot_not_null: boolean }
 
 function group_bit(n: i32): i32 {
   return 1 << n - 1;
@@ -715,6 +716,9 @@ function any_table(p0: P): (P, i32) {
   let t = all_bytes();
   if (p0.emacs || p0.multiline) {
     t = t.with(10, 0 as u8);
+  }
+  if (p0.dot_not_null) {
+    t = t.with(0, 0 as u8);
   }
   return add_table(p0, t);
 }
@@ -1329,7 +1333,7 @@ function compile_input(pat: Input, syntax: Syntax): Bre {
   let nodes: Node[] = [Node { kind: nd_empty(), a: 0, b: 0, c: 0 }];
   let cls: u8[] = [];
   let no_alts: u8[][] = [];
-  let p = P { pat: pat, i: 0, nodes: nodes, classes: cls, ngroups: 0, done: 0, err: "", emacs: syntax.emacs, ext: syntax.extended, icase: syntax.icase, gnu: syntax.gnu_ops, inv_dup: syntax.invalid_dup, multiline: syntax.multiline, no_empty: syntax.no_empty_ranges };
+  let p = P { pat: pat, i: 0, nodes: nodes, classes: cls, ngroups: 0, done: 0, err: "", emacs: syntax.emacs, ext: syntax.extended, icase: syntax.icase, gnu: syntax.gnu_ops, inv_dup: syntax.invalid_dup, multiline: syntax.multiline, no_empty: syntax.no_empty_ranges, dot_not_null: syntax.dot_not_null };
   let r: (P, i32) = parse_alt(p);
   p = r.0;
   if (p.err.len() == 0 && !at_end(p)) {
