@@ -38,6 +38,7 @@ pub function builtin_sigs(): string[] {
     "__method_Dir_close_unchecked(Dir): Result[void, IoError]",
     "__method_Dir_entries(Dir): Result[string[], IoError]",
     "__method_Dir_entries_bytes(Dir): Result[u8[][], IoError]",
+    "__method_Dir_entries_ino(Dir): Result[DirEntry[], IoError]",
     "__method_Dir_lstat(Dir, string): Result[FileStat, IoError]",
     "__method_Dir_open_dir(Dir, string): Result[Dir, IoError]",
     "__method_Dir_open_reader(Dir, string): Result[Reader, IoError]",

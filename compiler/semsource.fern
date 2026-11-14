@@ -7648,6 +7648,7 @@ function dir_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "Dir.open_writer_with", params: [dir, typeinfo.t_string(), typeinfo.t_i32()], modes: [v, b, v], result: t_io_result(t_handle("Writer")) },
     ssasem.Contract { name: "Dir.entries", params: [dir], modes: [v], result: t_io_result(typeinfo.TypeArray { elem: typeinfo.t_string(), view: false }) },
     ssasem.Contract { name: "Dir.entries_bytes", params: [dir], modes: [v], result: t_io_result(typeinfo.TypeArray { elem: typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }, view: false }) },
+    ssasem.Contract { name: "Dir.entries_ino", params: [dir], modes: [v], result: t_io_result(typeinfo.TypeArray { elem: typeinfo.TypeStruct { name: "DirEntry", args: [] }, view: false }) },
     ssasem.Contract { name: "Dir.stat", params: [dir, typeinfo.t_string()], modes: [v, b], result: stat },
     ssasem.Contract { name: "Dir.lstat", params: [dir, typeinfo.t_string()], modes: [v, b], result: stat },
     ssasem.Contract { name: "Dir.access", params: [dir, typeinfo.t_string(), typeinfo.t_i32()], modes: [v, b, v], result: done },
