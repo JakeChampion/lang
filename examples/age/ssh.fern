@@ -1,6 +1,6 @@
 // SSH keys for age: the SSH wire format, authorized_keys lines, OpenSSH
 // private key files, and the ssh-ed25519 and ssh-rsa stanzas of age's
-// agessh package. The messages are those of age 1.1.1 and of
+// agessh package. The messages are those of age 1.3.2 and of
 // golang.org/x/crypto/ssh.
 import "std/array";
 import "std/crypto";
@@ -122,38 +122,176 @@ function small(b: [u8]): i64 {
   return v;
 }
 
-// ssh's check of an RSA exponent: at most 24 bits, odd and at least 3.
-function exponent(raw: [u8]): Result[u8[], string] {
-  let Some(e) = positive(raw) else {
-    return Err("ssh: incorrect exponent");
+// The magnitude of an SSH mpint, big-endian with no leading zeros, and
+// whether the mpint is negative. Go's parseInt reads a two's complement.
+function magnitude(m: [u8]): (u8[], boolean) {
+  if (m.len() == 0 || m[0] < 128) {
+    let at = 0;
+    while (at < m.len() && m[at] == 0) {
+      at += 1;
+    }
+    return (text.copy(m[at:m.len()]), false);
+  }
+  let out = __alloc_u8(m.len());
+  let carry = 1;
+  let i = m.len() - 1;
+  while (i >= 0) {
+    let v = (m[i] ^ 255u8) as i32 + carry;
+    out = out.with(i, (v & 255) as u8);
+    carry = v >> 8;
+    i -= 1;
+  }
+  let (mag, _) = magnitude(out);
+  return (mag, true);
+}
+
+// Go's big.Int.BitLen of an SSH mpint.
+function bit_len(m: [u8]): i32 {
+  let (mag, _) = magnitude(m);
+  if (mag.len() == 0) {
+    return 0;
+  }
+  let bits = 8 * (mag.len() - 1);
+  let top = mag[0] as i32;
+  while (top > 0) {
+    bits += 1;
+    top >>= 1;
+  }
+  return bits;
+}
+
+// -1, 0 or 1 as the mpint a is less than, equal to or more than b.
+function cmp_mpint(a: [u8], b: [u8]): i32 {
+  let (ma, na) = magnitude(a);
+  let (mb, nb) = magnitude(b);
+  let sa = if (ma.len() == 0) { 0 } else if (na) { -1 } else { 1 };
+  let sb = if (mb.len() == 0) { 0 } else if (nb) { -1 } else { 1 };
+  if (sa != sb) {
+    return if (sa < sb) { -1 } else { 1 };
+  }
+  let c = if (ma.len() != mb.len()) {
+    if (ma.len() < mb.len()) { -1 } else { 1 }
+  } else {
+    cmp_bytes(ma, mb)
   };
-  if (e.len() > 3) {
+  return c * (if (sa < 0) { -1 } else { 1 });
+}
+
+function cmp_bytes(a: [u8], b: [u8]): i32 {
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return if (a[i] < b[i]) { -1 } else { 1 };
+    }
+  }
+  return 0;
+}
+
+// The sign of an mpint: -1, 0 or 1.
+function sign(m: [u8]): i32 {
+  return cmp_mpint(m, []);
+}
+
+// Go's ssh.Unmarshal of a struct of n strings or mpints and the rest: the
+// fields and the bytes after them.
+function fields(w: Wire, n: i32): Result[(u8[][], u8[]), string] {
+  if (w.at == w.b.len()) {
+    return Err("ssh: parse error in message type 0");
+  }
+  let out: u8[][] = [];
+  let at = w;
+  for _ in 0..n {
+    let Some((v, s)) = read_string(at) else {
+      return Err("ssh: short read");
+    };
+    out = out.append(s);
+    at = v;
+  }
+  return Ok((out, rest_of(at)));
+}
+
+const TRAILING_JUNK: string = "ssh: trailing junk in public key";
+
+// ssh's checks of the modulus and the exponent of an RSA key. The result is
+// the exponent with no leading zeros.
+function rsa_sizes(e_raw: [u8], n_raw: [u8]): Result[u8[], string] {
+  if (bit_len(n_raw) > 16384) {
+    return Err("ssh: rsa modulus too large");
+  }
+  if (bit_len(e_raw) > 24) {
     return Err("ssh: exponent too large");
   }
+  let (e, negative) = magnitude(e_raw);
   let v = small(e);
-  if (v < 3 || v % 2 == 0) {
+  if (negative || v < 3 || v % 2 == 0) {
     return Err("ssh: incorrect exponent");
   }
   return Ok(e);
 }
 
+// ssh's parseRSA: e, n and the checks of each.
 function parse_rsa(w: Wire): Result[Public, string] {
-  let Some((w1, e_raw)) = read_string(w) else {
-    return Err("ssh: short read");
-  };
-  let Some((w2, n_raw)) = read_string(w1) else {
-    return Err("ssh: short read");
-  };
-  if (w2.at != w2.b.len()) {
-    return Err("ssh: trailing junk in public key");
+  let (f, rest) = fields(w, 2)?;
+  let n_raw = f[1];
+  let e = rsa_sizes(f[0], n_raw)?;
+  if (rest.len() != 0) {
+    return Err(TRAILING_JUNK);
   }
-  let e = exponent(e_raw)?;
   let Some(n) = positive(n_raw) else {
     return Err("ssh: the modulus is negative");
   };
   return match (rsa.public_key(n, e)) {
     Ok(k) => Ok(RsaPublic(rsa_wire(n, e), k)),
     Err(why) => Err(why.message()),
+  };
+}
+
+// ssh's parseED25519.
+function parse_ed25519(w: Wire): Result[Public, string] {
+  let (f, rest) = fields(w, 1)?;
+  let key = f[0];
+  if (key.len() != 32) {
+    return Err(f"invalid size {key.len()} for Ed25519 public key");
+  }
+  if (rest.len() != 0) {
+    return Err(TRAILING_JUNK);
+  }
+  return Ok(Ed25519Public(ed25519_wire(key), key));
+}
+
+// ssh's parseDSA: p, q, g and y, with the checks of checkDSAParams.
+function parse_dss(w: Wire): Result[Public, string] {
+  let (f, rest) = fields(w, 4)?;
+  let p = f[0];
+  let g = f[2];
+  let y = f[3];
+  if (bit_len(p) != 1024) {
+    return Err(f"ssh: unsupported DSA key size {bit_len(p)}");
+  }
+  if (bit_len(f[1]) != 160) {
+    return Err(f"ssh: unsupported DSA sub-prime size {bit_len(f[1])}");
+  }
+  if (cmp_mpint(g, p) >= 0) {
+    return Err("ssh: DSA generator larger than modulus");
+  }
+  if (sign(g) <= 0) {
+    return Err("ssh: DSA generator must be positive");
+  }
+  if (sign(y) <= 0 || cmp_mpint(y, p) >= 0) {
+    return Err("ssh: DSA public value Y out of range");
+  }
+  if (rest.len() != 0) {
+    return Err(TRAILING_JUNK);
+  }
+  return Ok(OtherPublic("ssh-dss"));
+}
+
+// ssh's keyFormatForAlgorithm for a signature algorithm that is not a key
+// type.
+function key_format(t: string): Option[string] {
+  return match (t) {
+    "rsa-sha2-256" | "rsa-sha2-512" => Some("ssh-rsa"),
+    "rsa-sha2-256-cert-v01@openssh.com" | "rsa-sha2-512-cert-v01@openssh.com" => Some("ssh-rsa-cert-v01@openssh.com"),
+    _ => None,
   };
 }
 
@@ -167,16 +305,7 @@ pub function parse_public(b: [u8]): Result[Public, string] {
     return parse_rsa(w);
   }
   if (t == "ssh-ed25519") {
-    let Some((w1, key)) = read_string(w) else {
-      return Err("ssh: short read");
-    };
-    if (key.len() != 32) {
-      return Err(f"ssh: invalid size {key.len()} for Ed25519 public key");
-    }
-    if (w1.at != w1.b.len()) {
-      return Err("ssh: trailing junk in public key");
-    }
-    return Ok(Ed25519Public(ed25519_wire(key), key));
+    return parse_ed25519(w);
   }
   if (t == "ssh-dss") {
     return parse_dss(w);
@@ -184,36 +313,15 @@ pub function parse_public(b: [u8]): Result[Public, string] {
   if (OTHER_KEYS.index_of(" " + t + " ").is_some()) {
     return Ok(OtherPublic(t));
   }
+  if let Some(format) = key_format(t) {
+    return Err(f"ssh: signature algorithm {text.quote(kind)} isn't a key format; key is malformed and should be re-encoded with type {text.quote(format.as_bytes())}");
+  }
   return Err(f"ssh: unknown key algorithm: {t}");
 }
 
 // The other key types that x/crypto/ssh parses. The port does not check
 // their bodies.
 const OTHER_KEYS: string = " ecdsa-sha2-nistp256 ecdsa-sha2-nistp384 ecdsa-sha2-nistp521 sk-ecdsa-sha2-nistp256@openssh.com sk-ssh-ed25519@openssh.com ssh-rsa-cert-v01@openssh.com ssh-dss-cert-v01@openssh.com ssh-ed25519-cert-v01@openssh.com ecdsa-sha2-nistp256-cert-v01@openssh.com ecdsa-sha2-nistp384-cert-v01@openssh.com ecdsa-sha2-nistp521-cert-v01@openssh.com sk-ecdsa-sha2-nistp256-cert-v01@openssh.com sk-ssh-ed25519-cert-v01@openssh.com ";
-
-// ssh's parseDSA: p, q, g and y, and p has 1024 bits.
-function parse_dss(w: Wire): Result[Public, string] {
-  let Some((w1, p)) = read_string(w) else {
-    return Err("ssh: short read");
-  };
-  let w2 = w1;
-  for _ in 0..3 {
-    let Some((v, _)) = read_string(w2) else {
-      return Err("ssh: short read");
-    };
-    w2 = v;
-  }
-  if (w2.at != w2.b.len()) {
-    return Err("ssh: trailing junk in public key");
-  }
-  let Some(pv) = positive(p) else {
-    return Err("ssh: unsupported DSA key size");
-  };
-  if (pv.len() != 128 || pv[0] < 128) {
-    return Err("ssh: unsupported DSA key size");
-  }
-  return Ok(OtherPublic("ssh-dss"));
-}
 
 function blank(c: u8): boolean {
   return c == b' ' || c == b'\t';
@@ -242,15 +350,27 @@ function trim(b: [u8]): u8[] {
 }
 
 // ssh's parseAuthorizedKey: the base64 key, then an optional comment.
-function key_field(b: [u8]): Option[Public] {
+function key_field(b: [u8]): Result[Public, string] {
   let s = trim(b);
   let i = space_at(s);
   let end = if (i < 0) { s.len() } else { i };
-  let blob = text.b64_lax(s[0:end])?;
-  return match (parse_public(blob)) {
-    Ok(k) => Some(k),
-    Err(_) => None,
+  let blob = match (text.b64_lax(s[0:end])) {
+    Ok(blob) => blob,
+    Err(at) => {
+      return Err(f"illegal base64 data at input byte {at}");
+    },
   };
+  return parse_public(blob);
+}
+
+// The key of the fields after the type field, which must name the type of
+// the key.
+function typed_key(kind: [u8], rest: [u8]): Result[Public, string] {
+  let k = key_field(rest)?;
+  if (!text.equals(kind, k.kind())) {
+    return Err(f"ssh: authorized keys key type mismatch: human-readable type {text.quote(kind)}, encoded type {text.quote(k.kind().as_bytes())}");
+  }
+  return Ok(k);
 }
 
 // The index after the options field of an authorized_keys line, or -1.
@@ -277,33 +397,41 @@ function after_options(s: [u8]): i32 {
 }
 
 // One line of ssh.ParseAuthorizedKey: a key type, the key and a comment,
-// maybe after an options field.
-function authorized_line(line: [u8]): Option[Public] {
+// maybe after an options field. The result is the key, or the last parse
+// error after the line.
+function authorized_line(line: [u8], last: Option[string]): Result[Public, Option[string]] {
   let s = trim(line);
   if (s.len() == 0 || s[0] == b'#') {
-    return None;
+    return Err(last);
   }
   let i = space_at(s);
   if (i < 0) {
-    return None;
+    return Err(last);
   }
-  if let Some(k) = key_field(s[i:s.len()]) {
-    return Some(k);
-  }
+  let first = match (typed_key(s[0:i], s[i:s.len()])) {
+    Ok(k) => {
+      return Ok(k);
+    },
+    Err(why) => why,
+  };
   let at = after_options(s);
   if (at < 0) {
-    return None;
+    return Err(Some(first));
   }
   let t = array.slice(s, at, s.len());
   let j = space_at(t);
   if (j < 0) {
-    return None;
+    return Err(Some(first));
   }
-  return key_field(t[j:t.len()]);
+  return match (typed_key(t[0:j], t[j:t.len()])) {
+    Ok(k) => Ok(k),
+    Err(why) => Err(Some(why)),
+  };
 }
 
 // Go's ssh.ParseAuthorizedKey: the first key in the text.
 pub function parse_authorized(b: [u8]): Result[Public, string] {
+  let last: Option[string] = None;
   let start = 0;
   while (start < b.len()) {
     let end = start;
@@ -315,27 +443,46 @@ pub function parse_authorized(b: [u8]): Result[Public, string] {
     while (cut < line.len() && line[cut] != b'\r') {
       cut += 1;
     }
-    if let Some(k) = authorized_line(line[0:cut]) {
-      return Ok(k);
+    match (authorized_line(line[0:cut], last)) {
+      Ok(k) => {
+        return Ok(k);
+      },
+      Err(e) => {
+        last = e;
+      }
     }
     start = end + 1;
   }
-  return Err(NO_KEY);
+  return match (last) {
+    Some(why) => Err(NO_KEY + "; last parsing error for ignored line: " + why),
+    None => Err(NO_KEY),
+  };
 }
 
-// age's sshKeyType: the type of an SSH key line that age does not use.
-pub function key_type(line: [u8]): Option[string] {
+// age's unsupportedSSHKey: the type of an SSH key line that age skips in a
+// recipients file. That is a key of a type that age does not use, or an RSA
+// key of less than 2048 bits.
+pub function unsupported_key(line: [u8]): Option[string] {
   let s = text.ascii(line);
   let fields = s.split(" ");
   if (fields.len() < 2) {
     return None;
   }
-  let blob = text.b64_lax(fields[1].as_bytes())?;
+  let blob = text.b64_lax(fields[1].as_bytes()).ok()?;
   let (_, kind) = read_string(wire_of(blob))?;
-  if (text.ascii(kind) == fields[0]) {
+  if (text.ascii(kind) != fields[0]) {
+    return None;
+  }
+  if (fields[0] == "ssh-ed25519") {
+    return None;
+  }
+  if (fields[0] != "ssh-rsa") {
     return Some(fields[0]);
   }
-  return None;
+  return match (parse_authorized(line)) {
+    Ok(RsaPublic(_, k)) => if (k.bits < 2048) { Some(fields[0]) } else { None },
+    _ => None,
+  };
 }
 
 // The Curve25519 public key of an Ed25519 key.
@@ -359,7 +506,7 @@ pub function recipient_of(k: Public): Result[Recipient, string] {
       return Ok(Ed25519To(wire, montgomery_of(key)?));
     },
     RsaPublic(wire, key) => {
-      if (key.bytes < 256) {
+      if (key.bits < 2048) {
         return Err("RSA key size is too small");
       }
       return Ok(RsaTo(wire, key));
@@ -562,7 +709,7 @@ function unwrap_ed25519(st: format.Stanza, wire: [u8], scalar: [u8], ours: [u8])
   };
   return match (key.open(format.ZERO_IV, st.body, [])) {
     Ok(file_key) => format.FileKey(file_key),
-    Err(_) => format.Invalid("failed to decrypt file key: chacha20poly1305: message authentication failed"),
+    Err(_) => format.Incorrect,
   };
 }
 
@@ -578,7 +725,7 @@ function unwrap_rsa(st: format.Stanza, wire: [u8], key: rsa.PrivateKey): format.
   }
   return match (key.decrypt_oaep(sha2.Hash.Sha256, st.body, RSA_LABEL.as_bytes())) {
     Ok(file_key) => format.FileKey(file_key),
-    Err(_) => format.Invalid("failed to decrypt file key: crypto/rsa: decryption error"),
+    Err(_) => format.Incorrect,
   };
 }
 
@@ -680,7 +827,7 @@ function pem_decode(b: [u8]): Option[Pem] {
     return None;
   }
   let (encrypted, body) = pem_body(b, body_start, end);
-  let bytes = text.b64_lax(body)?;
+  let bytes = text.b64_lax(body).ok()?;
   return Some(Pem { kind: kind, encrypted: encrypted, bytes: bytes });
 }
 
@@ -755,9 +902,9 @@ function openssh_rsa(rest: Wire): Parsed {
   if (!padding_ok(rest_of(w1))) {
     return Bad("ssh: padding not as expected");
   }
-  return match (rsa.private_key(f[0], f[1], f[2], f[4], f[5])) {
+  return match (rsa.private_key(f[0], f[1], f[2], f[4], f[5], f[3])) {
     Ok(key) => {
-      __ct_secret(key.d);
+      mark_rsa(key);
       Key(RsaPrivate(RsaPublic(rsa_wire(f[0], f[1]), key.public_key()), key))
     },
     Err(e) => Bad(e.message()),
@@ -976,6 +1123,14 @@ function der_integers(b: [u8]): Option[u8[][]] {
   return Some(out);
 }
 
+// The secret values of an RSA key become secret after the checks of the
+// key, which are not constant-time, as in Go.
+function mark_rsa(k: rsa.PrivateKey): void {
+  for s in k.secrets() {
+    __ct_secret(s);
+  }
+}
+
 // Go's x509.ParsePKCS1PrivateKey: version, n, e, d, p, q and the CRT values.
 function pkcs1(b: [u8]): Parsed {
   let Some(f) = der_integers(b) else {
@@ -984,9 +1139,9 @@ function pkcs1(b: [u8]): Parsed {
   if (f.len() < 9 || f[0].len() != 0) {
     return Bad("x509: unsupported private key version");
   }
-  return match (rsa.private_key(f[1], f[2], f[3], f[4], f[5])) {
+  return match (rsa.private_key(f[1], f[2], f[3], f[4], f[5], f[8])) {
     Ok(key) => {
-      __ct_secret(key.d);
+      mark_rsa(key);
       Key(RsaPrivate(RsaPublic(rsa_wire(f[1], f[2]), key.public_key()), key))
     },
     Err(e) => Bad(e.message()),

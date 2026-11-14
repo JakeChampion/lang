@@ -1,5 +1,5 @@
 // The command line of age: Go's flag package rules, and the checks that age
-// 1.1.1 makes before it reads any input.
+// 1.3.2 makes before it reads any input.
 import "std/array";
 import "std/option";
 import "./goflag";
@@ -156,7 +156,7 @@ function decrypt_conflict(o: Opts): Option[Fatal] {
     return Some(fatal("-e/--encrypt can't be used with -d/--decrypt"));
   }
   if (o.armor) {
-    return hinted("-a/--armor can't be used with -d/--decrypt", ["note that armored files are detected automatically"]);
+    return hinted("-a/--armor can't be used with -d/--decrypt", ["note that armored files are detected automatically, try again without -a/--armor"]);
   }
   if (o.passphrase) {
     return hinted("-p/--passphrase can't be used with -d/--decrypt", ["note that password protected files are detected automatically"]);

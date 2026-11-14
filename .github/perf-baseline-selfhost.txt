@@ -2,6 +2,10 @@
 # emit rows moved, perceus_rbtree_ck by +6.7% to +7.7% (089d854d adds length to the benchmark) and the others by 1% to 3%. Main's
 # compiler and #15784 emit the same code for each program of bench/ on x86-64 and arm64, so these are
 # values of main. Each row moves to its measured value. Keep all tolerances.
+# 2026-11-14: PR #15811, perf-x86_64 job 132328927242 on the merge with main 8ce8fde7. 25 emit rows
+# move: 18 up and 7 down. perceus_rbtree_ck grows 6.7% to 7.7% with the kept trees of 089d854d
+# (#15780). The other rows are values of main after #15769 and #15771. Each row moves to its measured
+# value. Keep all tolerances.
 # 2026-11-14: #15810 on main 38768eb2, a local perf-bench-selfhost run. Array and map parameters
 # are now inferred owned. On the three targets, this change moves only five programs:
 # deflate_decode, deflate_encode, ordmap_insert and the two utf8_ingest programs.

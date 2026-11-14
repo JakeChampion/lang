@@ -409,6 +409,68 @@ func chachaFormCases() []string {
 	}
 }
 
+// montFormCases are the forms of the Montgomery product kernel, __fern_mont_mul.
+func montFormCases() []string {
+	return []string{
+		"mulxq (%rsi), %rax, %rbx",
+		"mulxq (%r10), %r8, %r9",
+		"mulxq (%rsi,%r13,8), %rax, %r8",
+		"mulxq (%r10,%r13,8), %r8, %rdx",
+		"addq (%r11,%r13,8), %rax",
+		"addq (%r11), %rax",
+		"adcq $0, %rbx",
+		"adcq $0, %r9",
+		"imulq -64(%rbp), %rdx",
+		"movq %rax, -8(%r11,%r13,8)",
+		"movq %rax, -8(%r11,%rcx,8)",
+		"movq (%rdi,%r12,8), %r14",
+		"movq %rax, (%r11,%r13,8)",
+		"sbbq (%r10,%r13,8), %rax",
+		"sbbq %rax, %rax",
+		"sbbq %rdx, %rbx",
+		"sbbq %r8, %r8",
+		"leaq 1(%r13), %r13",
+		"decq %r12",
+		"notq %rax",
+		"orq -56(%rbp), %rax",
+		"addq $-1, %r8",
+		"negq %r8",
+		"movq $0, -56(%rbp)",
+	}
+}
+
+// scryptFormCases are the forms of the scrypt BlockMix kernel, __fern_scrypt_block_mix.
+func scryptFormCases() []string {
+	return []string{
+		"vmovdqu 32(%r10), %xmm2",
+		"vpxor 48(%r11), %xmm3, %xmm3",
+		"vpxor 16(%rsi), %xmm1, %xmm1",
+		"vpxor (%rdx), %xmm0, %xmm0",
+		"vmovdqu %xmm0, %xmm4",
+		"vmovdqu %xmm3, %xmm7",
+		"vmovdqu %xmm3, 48(%r9)",
+		"vmovdqu %xmm0, (%rdi)",
+		"vpaddd %xmm3, %xmm0, %xmm8",
+		"vpaddd %xmm7, %xmm3, %xmm3",
+		"vpslld $7, %xmm8, %xmm9",
+		"vpsrld $25, %xmm8, %xmm8",
+		"vpxor %xmm9, %xmm1, %xmm1",
+		"vpxor %xmm8, %xmm0, %xmm0",
+		"pshufd $147, %xmm1, %xmm1",
+		"pshufd $78, %xmm2, %xmm2",
+		"pshufd $57, %xmm3, %xmm3",
+		"leaq -64(%rsi,%rcx,2), %r10",
+		"leaq -64(%rdx,%rcx,2), %r11",
+		"leaq (%rax,%rsi,8), %rsi",
+		"leaq (%rdi,%rcx), %r9",
+		"leaq (%rcx,%r9), %rax",
+		"cmpl $1, -8(%rdi)",
+		"pushq -40(%rbp)",
+		"movslq %r8d, %r8",
+		"shlq $6, %rcx",
+	}
+}
+
 // polyFormCases are the forms of the Poly1305 kernel, __fern_poly1305_blocks.
 func polyFormCases() []string {
 	return []string{
@@ -502,6 +564,8 @@ func TestSelfHostX86FormsMatchGas(t *testing.T) {
 	cases = append(cases, chachaFormCases()...)
 	cases = append(cases, polyFormCases()...)
 	cases = append(cases, chachaPolyFormCases()...)
+	cases = append(cases, montFormCases()...)
+	cases = append(cases, scryptFormCases()...)
 
 	if len(cases) < 300 {
 		t.Fatalf("the matrix produced only %d cases; it is meant to be a product of mnemonics, forms and widths", len(cases))
