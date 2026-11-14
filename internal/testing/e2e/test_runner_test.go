@@ -146,7 +146,7 @@ func TestRunnerTimeRelativeExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/time relative_to", "# pass 4", "# fail 0", "1..4"} {
+	for _, w := range []string{"# Suite: std/time relative_to", "# pass 5", "# fail 0", "1..5"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
