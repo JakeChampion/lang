@@ -16,7 +16,9 @@ The app draws the pixels itself: `lock` gives the frame of the window, `std/andr
 
 Other modules send their own events to the loop thread with `tell`, and the loop gives them to `step` as `Posted` events. `tell` sends to the live loop of the process, which `live_loop` names. `std/android/service` runs a foreground service, `std/android/p2p` uses Wi-Fi Direct, and `std/android/focus` asks for the audio focus. Each one decodes its `Posted` events. An app that uses none of them does not carry their code.
 
-`keep_alive` keeps the loop running after the Destroy of its activity. A music player keeps its loop alive while a track plays: then the loop gives the events of its media session and of its service to `step` with no window. A new activity of the app takes that loop over, and `start` starts no second loop. When the loop has no activity and the app does not keep it alive, `run` returns. While the loop has no activity, `activity_object` gives the Application Context, and `detached` is true.
+`keep_alive` keeps the loop running after the Destroy of its activity. A music player keeps its loop alive while a track plays: then the loop gives the events of its media session and of its service to `step` with no window. A new activity of the app takes that loop over, and `start` starts no second loop.
+
+When the loop has no activity and the app does not keep it alive, `step` gets a last Destroy event, and `run` returns. Thus Destroy is always the last event of a loop. While the loop has no activity, `activity_object` gives the Application Context, and `detached` is true.
 
 A lock of the process guards the live loop. `start`, `tell` and the end of a loop with no activity take it, so a new activity does not take over a loop that ends.
 
@@ -950,7 +952,10 @@ pub function run[S](ctx: usize, own state: S, step: (own S, Event) => S, timeout
       lp = ended_alone(lp);
     }
   }
+  // A loop that ends with no activity gives the app its last Destroy event
+  // while the context is valid.
   if (lp.alone) {
+    state = step(state, Destroy);
     free_alone(ctx);
   }
   detach(vm);

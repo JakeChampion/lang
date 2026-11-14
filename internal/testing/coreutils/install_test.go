@@ -185,6 +185,7 @@ func installCases(t *testing.T) []invocation {
 	}{
 		{"strip-noop-program", []string{"-v", "-s", "--strip-program=/bin/true", "src", "out"}},
 		{"strip-noop-quiet", []string{"-s", "--strip-program=/bin/true", "src", "out"}},
+		{"strip-program-arguments", []string{"-s", "--strip-program=/bin/echo", "src", "out"}},
 		{"strip-missing-program", []string{"-v", "-s", "--strip-program=/nosuch/prog", "src", "out"}},
 		{"strip-missing-program-quiet", []string{"-s", "--strip-program=/nosuch/prog", "src", "out"}},
 		{"strip-missing-program-into-dir", []string{"-v", "-s", "--strip-program=/nosuch/prog", "src", "dir"}},
