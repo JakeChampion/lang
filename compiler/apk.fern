@@ -263,10 +263,10 @@ function receiver_element(out: u8[], line: i32, pool: string[], w: Widget): u8[]
 }
 
 // The attributes of the activity of a home screen, after its name and before
-// its configChanges: one task, which Android does not keep in the recents
-// and starts again with no saved state.
+// its launchMode: one task, which Android does not keep in the recents and
+// starts again with no saved state.
 function home_activity_attrs(pool: string[]): Attr[] {
-  return [attr_str(S_TASK_AFFINITY, at(pool, "")), attr_int(S_CLEAR_TASK, 18, -1), attr_int(S_STATE_NOT_NEEDED, 18, -1), attr_int(S_EXCLUDE_RECENTS, 18, -1), attr_int(S_LAUNCH_MODE, 16, 2)];
+  return [attr_str(S_TASK_AFFINITY, at(pool, "")), attr_int(S_CLEAR_TASK, 18, -1), attr_int(S_STATE_NOT_NEEDED, 18, -1), attr_int(S_EXCLUDE_RECENTS, 18, -1)];
 }
 
 function category(out: u8[], line: i32, pool: string[], name: string): u8[] {
@@ -432,9 +432,11 @@ pub function manifest(app: App): u8[] {
       activity_attrs = activity_attrs.append(a);
     }
   }
+  // singleTask, so a start of the app that runs gives its intent to the
+  // activity, and the process has one activity and one loop.
   // SOFT_INPUT_ADJUST_RESIZE, so the content rectangle leaves out the
   // keyboard.
-  activity_attrs = activity_attrs.append(attr_int(S_CONFIG_CHANGES, 17, 1184)).append(attr_int(S_SOFT_INPUT, 17, 16));
+  activity_attrs = activity_attrs.append(attr_int(S_LAUNCH_MODE, 16, 2)).append(attr_int(S_CONFIG_CHANGES, 17, 1184)).append(attr_int(S_SOFT_INPUT, 17, 16));
   if (app.home) {
     // resumeWhilePausing, so home shows at once.
     activity_attrs = activity_attrs.append(attr_int(S_RESUME_WHILE_PAUSING, 18, -1));

@@ -20,9 +20,10 @@ track was open, and its time went on. Then the check starts the app a
 second time. So the decoder gave its samples to the sound of the device
 in time.
 
-With the setting that destroys each activity that goes away, the track
-plays on after the Destroy. A new start takes the loop over, and a stop
-with no window ends the loop.
+The check removes the task of the app, as a swipe in the recent apps
+does. Android destroys the activity, and the track plays on. A new start
+takes the loop over, and a tap on a shortcut while the app runs does not
+start a second activity. A stop with no window ends the loop.
 
 It fails on a crash in logcat. OUT_DIR gets the frames and logcat.
 """
@@ -37,12 +38,31 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tests" / "android"
 from emulator import adb, count, crashes, fail, failures, finish, logcat, screen, wait_for  # noqa: E402
 
 PACKAGE = "dev.fern.tune"
+ACTIVITY = PACKAGE + "/.Main"
 
 
 def has_widget_provider(dump):
     """Whether Android lists the exact widget component in full or short form."""
     package = re.escape(PACKAGE)
     return re.search(r"(?<![\w.$])" + package + r"/(?:" + package + r")?\.Widget(?![\w.$])", dump) is not None
+
+
+def task_of(stacks):
+    """The id of the task of the app in the output of `am stack list`, or
+    None."""
+    m = re.search(r"taskId=(\d+): " + re.escape(PACKAGE) + "/", stacks)
+    return m.group(1) if m else None
+
+
+def remove_task(out, name):
+    """Removes the task of the app, so Android destroys its activity."""
+    stacks = adb("shell", "am", "stack", "list")
+    task = task_of(stacks)
+    if task is None:
+        Path(out, name + "-stacks.txt").write_text(stacks)
+        fail("am stack list has no task of the app")
+        return
+    adb("shell", "am", "stack", "remove", task)
 
 
 def session_text():
@@ -63,7 +83,7 @@ def main(apk, out):
     subprocess.run(["mkdir", "-p", out], check=True)
     adb("install", "-r", apk)
     adb("logcat", "-c")
-    adb("shell", "am", "start", "-W", "-n", PACKAGE + "/android.app.NativeActivity")
+    adb("shell", "am", "start", "-W", "-n", ACTIVITY)
 
     # The app makes its tunes and reads them, and Android can ask for the
     # permission to read the music of the phone.
@@ -98,7 +118,7 @@ def main(apk, out):
     time.sleep(5)
     if session_state() != 3:
         fail("the track does not play while the app is away: " + session_text()[:400])
-    adb("shell", "am", "start", "-W", "-n", PACKAGE + "/android.app.NativeActivity")
+    adb("shell", "am", "start", "-W", "-n", ACTIVITY)
     time.sleep(4)
     width, height, pixels = screen(out, "returned")
     same = count(pixels, (pixels[0], pixels[1], pixels[2]), step=7)
@@ -130,7 +150,7 @@ def main(apk, out):
     # the player was.
     adb("shell", "input", "keyevent", "127")
     time.sleep(2)
-    adb("shell", "am", "start", "-W", "-n", PACKAGE + "/android.app.NativeActivity")
+    adb("shell", "am", "start", "-W", "-n", ACTIVITY)
     time.sleep(4)
     adb("shell", "input", "keyevent", "4")
     m = wait_for(r"tune: closed with (\d+) tracks at track (-?\d+), (\d+):(\d\d) of (\d+):(\d\d), playing (\w+)", timeout=10)
@@ -151,7 +171,7 @@ def main(apk, out):
     # takes the back key again.
     first = logcat()
     adb("logcat", "-c")
-    adb("shell", "am", "start", "-W", "-n", PACKAGE + "/android.app.NativeActivity")
+    adb("shell", "am", "start", "-W", "-n", ACTIVITY)
     time.sleep(8)
     width, height, pixels = screen(out, "again")
     same = count(pixels, (pixels[0], pixels[1], pixels[2]), step=7)
@@ -170,44 +190,47 @@ def main(apk, out):
             fail(f"the launcher does not have the shortcut {action}")
     second = logcat()
     adb("logcat", "-c")
-    adb("shell", "am", "start", "-W", "-n", PACKAGE + "/android.app.NativeActivity", "-a", "dev.fern.tune.SHUFFLE")
+    adb("shell", "am", "start", "-W", "-n", ACTIVITY, "-a", "dev.fern.tune.SHUFFLE")
     time.sleep(8)
     screen(out, "shortcut")
     if session_state() != 3:
         fail(f"the shortcut did not play the library: the state of the session is {session_state()}")
 
-    # Android destroys each activity that goes away. The loop of the app
-    # lives on while a track plays, and a new start takes that loop over:
-    # the app does not start a second time. A stop with no window ends the
-    # loop, and the app tells where the player was.
-    adb("shell", "settings", "put", "global", "always_finish_activities", "1")
-    try:
-        adb("shell", "input", "keyevent", "3")
-        time.sleep(5)
-        if session_state() != 3:
-            fail("the track does not play after Android destroyed the activity: " + session_text()[:400])
-        if re.search(r"tune: closed with", logcat()):
-            fail("the loop of the app ended with the activity while a track played")
-        adb("shell", "am", "start", "-W", "-n", PACKAGE + "/android.app.NativeActivity")
-        time.sleep(4)
-        width, height, pixels = screen(out, "taken-over")
-        same = count(pixels, (pixels[0], pixels[1], pixels[2]), step=7)
-        total = len(pixels) // 4 // 7
-        if same * 100 > total * 99:
-            fail(f"the screen is blank after a new activity took the loop over: {same} of {total} pixels have one colour")
-        starts = len(re.findall(r"tune: starts", logcat()))
-        if starts != 1:
-            fail(f"the app started {starts} times: a new activity must take the loop over")
-        adb("shell", "input", "keyevent", "3")
-        time.sleep(3)
-        adb("shell", "input", "keyevent", "127")
-        m = wait_for(r"tune: closed with (\d+) tracks at track (-?\d+), (\d+):(\d\d) of (\d+):(\d\d), playing (\w+)", timeout=10)
-        if not m:
-            fail("the stop with no window did not end the loop of the app")
-        elif m.group(7) != "false":
-            fail(f"the loop ended while a track played: {m.group(0)!r}")
-    finally:
-        adb("shell", "settings", "put", "global", "always_finish_activities", "0")
+    # The person removes the task of the app from the recent apps while a
+    # track plays. Android destroys the activity, and the foreground service
+    # keeps the process. The loop of the app lives on, and a new start takes
+    # that loop over: the app does not start a second time. A tap on a
+    # shortcut while the app runs gives its intent to the same activity. A
+    # stop with no window ends the loop, and the app tells where the player
+    # was.
+    remove_task(out, "removed")
+    time.sleep(5)
+    if session_state() != 3:
+        fail("the track does not play after Android destroyed the activity: " + session_text()[:400])
+    if re.search(r"tune: closed with", logcat()):
+        fail("the loop of the app ended with the activity while a track played")
+    adb("shell", "am", "start", "-W", "-n", ACTIVITY)
+    time.sleep(4)
+    width, height, pixels = screen(out, "taken-over")
+    same = count(pixels, (pixels[0], pixels[1], pixels[2]), step=7)
+    total = len(pixels) // 4 // 7
+    if same * 100 > total * 99:
+        fail(f"the screen is blank after a new activity took the loop over: {same} of {total} pixels have one colour")
+    adb("shell", "am", "start", "-W", "-n", ACTIVITY, "-a", "dev.fern.tune.SHUFFLE")
+    time.sleep(3)
+    if session_state() != 3:
+        fail(f"the shortcut did not play the library in the app that runs: the state of the session is {session_state()}")
+    starts = len(re.findall(r"tune: starts", logcat()))
+    if starts != 1:
+        fail(f"the app started {starts} times: a new activity must take the loop over, and a shortcut must reach the activity that runs")
+    remove_task(out, "removed-again")
+    time.sleep(3)
+    adb("shell", "input", "keyevent", "127")
+    m = wait_for(r"tune: closed with (\d+) tracks at track (-?\d+), (\d+):(\d\d) of (\d+):(\d\d), playing (\w+)", timeout=10)
+    if not m:
+        fail("the stop with no window did not end the loop of the app")
+    elif m.group(7) != "false":
+        fail(f"the loop ended while a track played: {m.group(0)!r}")
 
     # Android knows the widget of the app, which tells that it read the
     # provider file and the layout of the APK. The update broadcast starts
@@ -227,6 +250,9 @@ def main(apk, out):
     for line in crashes(log):
         fail("logcat: " + line)
 
+    # A player that a failure left running must not show its notification
+    # to the next check.
+    adb("shell", "am", "force-stop", PACKAGE, check=False)
     if failures:
         print(f"{len(failures)} failures", flush=True)
     finish()

@@ -4123,6 +4123,41 @@ pub function utf8_tables(label: string): string {
   return o;
 }
 
+// The 64 bytes after the two nibble tables of a byte set: the bit of each high
+// nibble, then 16 bytes each of 0x8f, 0x80 and 0x0f.
+pub function scan_set_masks(): u8[] {
+  let out: u8[] = [];
+  for k in 0..16 {
+    out = out.append((1 << (k & 7)) as u8);
+  }
+  for m in [143, 128, 15] {
+    for k in 0..16 {
+      out = out.append(m as u8);
+    }
+  }
+  return out;
+}
+
+// The bytes that a scan with a set that is not a constant reads one at a time
+// before it builds the registers of the set.
+pub const SCAN_SET_HEAD: i32 = 16;
+
+pub function byte_rows(bytes: u8[]): string {
+  let r = "";
+  for i in 0..bytes.len() {
+    if (i % 16 == 0) {
+      r += "    .byte ";
+    } else {
+      r += ", ";
+    }
+    r += util.i32_to_string(bytes[i] as i32);
+    if (i % 16 == 15 || i == bytes.len() - 1) {
+      r += "\n";
+    }
+  }
+  return r;
+}
+
 pub function scan_set_tables(members: string): string {
   let out: u8[] = [];
   for half in 0..2 {
@@ -4136,18 +4171,7 @@ pub function scan_set_tables(members: string): string {
       out = out.append(bits as u8);
     }
   }
-  let k = 0;
-  while (k < 16) {
-    out = out.append((1 << (k & 7)) as u8);
-    k += 1;
-  }
-  for m in [143, 128, 15] {
-    k = 0;
-    while (k < 16) {
-      out = out.append(m as u8);
-      k += 1;
-    }
-  }
+  out = out.concat(scan_set_masks());
   for k in 0..256 {
     if (members[k] == b'1') {
       out = out.append(1 as u8);

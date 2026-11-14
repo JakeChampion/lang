@@ -143,6 +143,7 @@ var BuiltinCaps = map[string]string{
 }
 
 var Ungated = map[string]bool{
+	"__alloc_len":                 true,
 	"__outer_mul_f64":             true,
 	"__inner_mul_add_f64":         true,
 	"putchar":                     true,

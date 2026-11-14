@@ -997,6 +997,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{},
 		Result: ast.NumberType{Width: 64, Signed: true},
 	}
+	c.info.FuncSigs["__alloc_len"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
+		Result: ast.NumberType{},
+	}
 	c.info.FuncSigs["__heap_alloc_count"] = &ast.FuncType{
 		Params: []ast.Type{},
 		Result: ast.NumberType{Width: 64, Signed: true},

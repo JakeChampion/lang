@@ -18,8 +18,10 @@ func TestWasmSmoke(t *testing.T) {
 	}
 	fern := e2eharness.BuildLangBinForInterp(t)
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "in.txt"), []byte("x\ny\n"), 0o644); err != nil {
-		t.Fatal(err)
+	for name, content := range map[string]string{"in.txt": "x\ny\n", "in2.txt": "x\nz\n", "in3.txt": "w\ny\n"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	wasmDir := t.TempDir()
 	built := map[string]string{}
@@ -38,11 +40,14 @@ func TestWasmSmoke(t *testing.T) {
 		return bin
 	}
 
+	// A case with `wasm` set needs a process, which WASI does not give. On
+	// wasm it must fail with that diagnostic and write nothing.
 	cases := []struct {
 		util    string
 		args    []string
 		stdin   string
 		preopen bool
+		wasm    string
 	}{
 		{util: "true", args: []string{"--version"}},
 		{util: "true", args: []string{"--", "--version"}},
@@ -69,6 +74,19 @@ func TestWasmSmoke(t *testing.T) {
 		{util: "find", args: []string{".", "-type", "f", "-size", "-1k", "-o", "-type", "d", "-print"}, preopen: true},
 		{util: "find", args: []string{"in.txt", "nosuch", "-print0"}, preopen: true},
 		{util: "find", args: []string{".", "-name"}},
+		{util: "diff", args: []string{"in.txt", "in2.txt"}, preopen: true},
+		{util: "diff", args: []string{"-u", "--label", "a", "--label", "b", "in.txt", "in2.txt"}, preopen: true},
+		{util: "diff", args: []string{"-y", "-W", "20", "in.txt", "in2.txt"}, preopen: true},
+		{util: "diff", args: []string{"-DX", "in.txt", "-"}, stdin: "x\nq\n", preopen: true},
+		{util: "diff", args: []string{"-l", "in.txt", "in2.txt"}, preopen: true, wasm: "diff: subsidiary program '/usr/bin/pr' could not be invoked\n"},
+		{util: "cmp", args: []string{"in.txt", "in2.txt"}, preopen: true},
+		{util: "diff3", args: []string{"in.txt", "in2.txt", "in3.txt"}, preopen: true},
+		{util: "diff3", args: []string{"-m", "in.txt", "in2.txt", "in3.txt"}, preopen: true},
+		{util: "diff3", args: []string{"--diff-program=diff", "in.txt", "in2.txt", "in3.txt"}, preopen: true, wasm: "diff3: subsidiary program 'diff' could not be invoked\n"},
+		{util: "diff3", args: []string{"in.txt", "in2.txt", "nosuch"}, preopen: true},
+		{util: "sdiff", args: []string{"-w", "20", "in.txt", "in2.txt"}, preopen: true},
+		{util: "sdiff", args: []string{"-w", "20", "-o", "merged", "in.txt", "in2.txt"}, stdin: "r\n", preopen: true},
+		{util: "sdiff", args: []string{"-o", "merged", "-I", "[", "in.txt", "in2.txt"}, preopen: true, wasm: "diff: [: Invalid regular expression\n"},
 	}
 	for _, c := range cases {
 		name := c.util + " " + strings.Join(c.args, " ")
@@ -94,6 +112,12 @@ func TestWasmSmoke(t *testing.T) {
 				exit = ee.ExitCode()
 			} else if err != nil {
 				t.Fatalf("wasmtime: %v", err)
+			}
+			if c.wasm != "" {
+				if exit == 0 || stdout.Len() != 0 || stderr.String() != c.wasm {
+					t.Errorf("%s %s on wasm: exit %d, stdout %q, stderr %q; want a failure with %q", c.util, quoteArgs(c.args), exit, stdout.String(), stderr.String(), c.wasm)
+				}
+				return
 			}
 			if !bytes.Equal(want.stdout, stdout.Bytes()) {
 				t.Errorf("stdout differs for %s %s%s", c.util, quoteArgs(c.args), diffBody("native", "wasm", want.stdout, stdout.Bytes()))
