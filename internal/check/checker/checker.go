@@ -18821,6 +18821,18 @@ func integerLaneVerbs(lt ast.LanesType) []string {
 	if lt.Kind == ast.LaneSigned {
 		verbs = append(verbs, "abs")
 	}
+	if lt.Width <= 16 {
+		verbs = append(verbs, "widen_lo", "widen_hi")
+	}
+	if lt.Width == 8 && lt.Kind == ast.LaneUnsigned {
+		verbs = append(verbs, "swizzle")
+	}
+	if lt.Width >= 16 {
+		verbs = append(verbs, "narrow")
+		if lt.Kind == ast.LaneSigned {
+			verbs = append(verbs, "narrow_u")
+		}
+	}
 	return verbs
 }
 
@@ -18845,6 +18857,11 @@ func (c *checker) registerIntegerLaneBuiltins() {
 			"shr":     {Params: []ast.Type{lt, i32}, Result: lt},
 			"abs":     {Params: []ast.Type{lt}, Result: lt},
 		}
+		wide := ast.LanesType{Width: lt.Width * 2, Kind: lt.Kind}
+		sigs["widen_lo"] = &ast.FuncType{Params: []ast.Type{lt}, Result: wide}
+		sigs["widen_hi"] = &ast.FuncType{Params: []ast.Type{lt}, Result: wide}
+		sigs["narrow"] = &ast.FuncType{Params: []ast.Type{lt, lt}, Result: ast.LanesType{Width: lt.Width / 2, Kind: lt.Kind}}
+		sigs["narrow_u"] = &ast.FuncType{Params: []ast.Type{lt, lt}, Result: ast.LanesType{Width: lt.Width / 2, Kind: ast.LaneUnsigned}}
 		for _, v := range integerLaneVerbs(lt) {
 			sig, ok := sigs[v]
 			if !ok {

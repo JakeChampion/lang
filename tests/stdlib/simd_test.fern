@@ -1038,6 +1038,86 @@ function test_integer_lane_masks(): test.TestOutcome {
   return test.assert_eq(got, "65535 65535 3 | 255 255 3 | 255 255 3 | 15 15 3 | 15 15 3");
 }
 
+// The 16 bytes of the lanes of `xs` from `at` after `verb`, from one scalar
+// form. `count` is the number of lanes that a widen takes, and the number
+// that each value of a narrow gives.
+function scalar_shape(verb: string, xs: u8[], ys: u8[], at: i32, width: i32, signed: boolean): u8[] {
+  let out = zeros16();
+  let count = 128 / width;
+  if (verb == "widen_lo" || verb == "widen_hi") {
+    let first = if (verb == "widen_hi") { count / 2 } else { 0 };
+    for k in 0..count / 2 {
+      let x = lane_number(xs, at, first + k, width, signed);
+      for b in 0..width / 4 {
+        out = out.with(k * (width / 4) + b, (x >> (8 * b) as i64 & 255i64) as u8);
+      }
+    }
+    return out;
+  }
+  let to_signed = signed && verb == "narrow";
+  for k in 0..count * 2 {
+    let x = limited(if (k < count) { lane_number(xs, at, k, width, signed) } else { lane_number(ys, at, k - count, width, signed) }, width / 2, to_signed);
+    for b in 0..width / 16 {
+      out = out.with(k * (width / 16) + b, (x >> (8 * b) as i64 & 255i64) as u8);
+    }
+  }
+  return out;
+}
+
+function same_bytes(name: string, got: u8[], want: u8[]): string[] {
+  for k in 0..16 {
+    if (got[k] != want[k]) {
+      return [name + " at " + k.to_string()];
+    }
+  }
+  return [];
+}
+
+// Each widen and each narrow agrees with its scalar form on each lane.
+function test_lane_shapes_against_the_scalar(): test.TestOutcome {
+  let inputs = lane_inputs();
+  let xs = inputs[0];
+  let ys = inputs[1];
+  let bad: string[] = [];
+  for at in [0, 16, 32, 48] {
+    bad = all_of(bad, same_bytes("u8 widen_lo", simd.with_u16x8(zeros16(), 0, simd.widen_lo_u8x16(simd.load_u8x16(xs, at))), scalar_shape("widen_lo", xs, ys, at, 8, false)));
+    bad = all_of(bad, same_bytes("u8 widen_hi", simd.with_u16x8(zeros16(), 0, simd.widen_hi_u8x16(simd.load_u8x16(xs, at))), scalar_shape("widen_hi", xs, ys, at, 8, false)));
+    bad = all_of(bad, same_bytes("i8 widen_lo", simd.with_i16x8(zeros16(), 0, simd.widen_lo_i8x16(simd.load_i8x16(xs, at))), scalar_shape("widen_lo", xs, ys, at, 8, true)));
+    bad = all_of(bad, same_bytes("i8 widen_hi", simd.with_i16x8(zeros16(), 0, simd.widen_hi_i8x16(simd.load_i8x16(xs, at))), scalar_shape("widen_hi", xs, ys, at, 8, true)));
+    bad = all_of(bad, same_bytes("u16 widen_lo", simd.with_u32x4(zeros16(), 0, simd.widen_lo_u16x8(simd.load_u16x8(xs, at))), scalar_shape("widen_lo", xs, ys, at, 16, false)));
+    bad = all_of(bad, same_bytes("u16 widen_hi", simd.with_u32x4(zeros16(), 0, simd.widen_hi_u16x8(simd.load_u16x8(xs, at))), scalar_shape("widen_hi", xs, ys, at, 16, false)));
+    bad = all_of(bad, same_bytes("i16 widen_lo", simd.with_i32x4(zeros16(), 0, simd.widen_lo_i16x8(simd.load_i16x8(xs, at))), scalar_shape("widen_lo", xs, ys, at, 16, true)));
+    bad = all_of(bad, same_bytes("i16 widen_hi", simd.with_i32x4(zeros16(), 0, simd.widen_hi_i16x8(simd.load_i16x8(xs, at))), scalar_shape("widen_hi", xs, ys, at, 16, true)));
+    bad = all_of(bad, same_bytes("u16 narrow", simd.with_u8x16(zeros16(), 0, simd.narrow_u16x8(simd.load_u16x8(xs, at), simd.load_u16x8(ys, at))), scalar_shape("narrow", xs, ys, at, 16, false)));
+    bad = all_of(bad, same_bytes("i16 narrow", simd.with_i8x16(zeros16(), 0, simd.narrow_i16x8(simd.load_i16x8(xs, at), simd.load_i16x8(ys, at))), scalar_shape("narrow", xs, ys, at, 16, true)));
+    bad = all_of(bad, same_bytes("i16 narrow_u", simd.with_u8x16(zeros16(), 0, simd.narrow_u_i16x8(simd.load_i16x8(xs, at), simd.load_i16x8(ys, at))), scalar_shape("narrow_u", xs, ys, at, 16, true)));
+    bad = all_of(bad, same_bytes("u32 narrow", simd.with_u16x8(zeros16(), 0, simd.narrow_u32x4(simd.load_u32x4(xs, at), simd.load_u32x4(ys, at))), scalar_shape("narrow", xs, ys, at, 32, false)));
+    bad = all_of(bad, same_bytes("i32 narrow", simd.with_i16x8(zeros16(), 0, simd.narrow_i32x4(simd.load_i32x4(xs, at), simd.load_i32x4(ys, at))), scalar_shape("narrow", xs, ys, at, 32, true)));
+    bad = all_of(bad, same_bytes("i32 narrow_u", simd.with_u16x8(zeros16(), 0, simd.narrow_u_i32x4(simd.load_i32x4(xs, at), simd.load_i32x4(ys, at))), scalar_shape("narrow_u", xs, ys, at, 32, true)));
+  }
+  return test.assert_eq(bad.join(", "), "");
+}
+
+// A swizzle reads each byte at its index, and gives 0 for an index above 15.
+function test_lane_swizzle(): test.TestOutcome {
+  let xs = ramp(16);
+  let indexes: u8[] = [];
+  for i in 0..16 {
+    indexes = indexes.append((i * 7 + 3) as u8);
+  }
+  indexes = indexes.with(5, 255 as u8).with(9, 16 as u8).with(11, 128 as u8);
+  let got = simd.with_u8x16(zeros16(), 0, simd.swizzle_u8x16(simd.load_u8x16(xs, 0), simd.load_u8x16(indexes, 0)));
+  let bad: string[] = [];
+  for k in 0..16 {
+    let at = indexes[k] as i32;
+    let want = if (at < 16) { xs[at] as i32 } else { 0 };
+    if (got[k] as i32 != want) {
+      bad = bad.append("lane " + k.to_string());
+    }
+  }
+  return test.assert_eq(bad.join(", "), "");
+}
+
 function main(): i32 {
   let r = test.new("simd");
   r = r.it("kernel on f64", test_kernel_on_f64);
@@ -1068,5 +1148,7 @@ function main(): i32 {
   r = r.it("byte lane memory", test_byte_lane_memory);
   r = r.it("integer lanes against the scalar", test_integer_lanes_against_the_scalar);
   r = r.it("integer lane masks", test_integer_lane_masks);
+  r = r.it("lane shapes against the scalar", test_lane_shapes_against_the_scalar);
+  r = r.it("lane swizzle", test_lane_swizzle);
   return r.finish();
 }

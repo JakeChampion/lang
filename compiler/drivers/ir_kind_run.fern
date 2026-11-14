@@ -74,6 +74,7 @@ function main(): i32 {
     "vineg", "viabs", "visplat", "viextracts", "viextractu", "vibitmask", "vireplace",
     "vimul", "vishl", "vishrs", "vishru", "sha1x8_hw", "sha1x8_hw_blocks", "chacha20_xor_into", "poly1305_blocks", "chacha20_poly1305_seal_into", "chacha20_poly1305_open_into", "mont_mul", "scrypt_block_mix",
     "proc_wait_any",
+    "viwidenlos", "viwidenlou", "viwidenhis", "viwidenhiu", "vinarrows", "vinarrowu", "viswizzle",
   ];
   if (!ir.kind_retired(198) || ir.kind_name(198) != "invalid") {
     failures += 1;
@@ -233,6 +234,7 @@ function main(): i32 {
     "viadd", "visub", "viadds", "viaddu", "visubs", "visubu", "vimins", "viminu", "vimaxs", "vimaxu", "viavg", "vieq", "vine", "vilts", "viltu",
     "vineg", "viabs", "visplat", "viextracts", "viextractu", "vibitmask", "vireplace",
     "vimul", "vishl", "vishrs", "vishru", "sha1x8_hw", "sha1x8_hw_blocks", "chacha20_xor_into", "poly1305_blocks", "chacha20_poly1305_seal_into", "chacha20_poly1305_open_into", "mont_mul", "scrypt_block_mix",
+    "viwidenlos", "viwidenlou", "viwidenhis", "viwidenhiu", "vinarrows", "vinarrowu", "viswizzle",
   ];
   let tag_ok = 0;
   let tag_bad = 0;

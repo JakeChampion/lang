@@ -155,7 +155,62 @@ function wide_checks(own m: ir.Op[]): ir.Op[] {
   m = icheck(m, wshift("vishru", 32, 15, 4, 0), 187500000, 59);
   m = icheck(m, wshift("vishl", 16, 13, 20, 5), 144, 59);
   m = icheck(m, wshift("vishru", 32, 15, 36, 0), 187500000, 59);
-  return icheck(m, wshift("vishrs", 32, 15, 4, 0), 0 - 80935456, 59);
+  m = icheck(m, wshift("vishrs", 32, 15, 4, 0), 0 - 80935456, 59);
+  return shape_checks(m);
+}
+// widen is k(x) at the source width w, with a lane of the wide result read
+// by the op named read.
+function widen(k: string, w: i32, x: i32, read: string, lane: i32): ir.Op[] {
+  return [ir.op_load_local(x), wi(k, w), ir.op_lane_at(read, w * 2, lane)];
+}
+// narrow is k(x, y) at the source width w, with a lane of the narrow result
+// read by the op named read.
+function narrow(k: string, w: i32, x: i32, y: i32, read: string, lane: i32): ir.Op[] {
+  return [ir.op_load_local(x), ir.op_load_local(y), wi(k, w), ir.op_lane_at(read, w / 2, lane)];
+}
+// swizzle is p with the indexes 3, 0, 16, 3, 255, 3, ... read at lane.
+function swizzle(lane: i32): ir.Op[] {
+  return [ir.op_load_local(10), ir.op_const_i32(3), vi("visplat"), ir.op_const_i32(0), ir.op_lane_at("vireplace", 8, 1), ir.op_const_i32(16), ir.op_lane_at("vireplace", 8, 2),
+    ir.op_const_i32(255), ir.op_lane_at("vireplace", 8, 4), vi("viswizzle"), ir.op_lane_at("viextractu", 8, lane)];
+}
+function shape_checks(own m: ir.Op[]): ir.Op[] {
+  // 60..61: a lane of 8 bits to a lane of 16 bits. p is 200, which is -56
+  // with a sign, and 7 in lane 3.
+  m = icheck(m, widen("viwidenlou", 8, 10, "viextracts", 0), 200, 60);
+  m = icheck(m, widen("viwidenlou", 8, 10, "viextracts", 3), 7, 60);
+  m = icheck(m, widen("viwidenlos", 8, 10, "viextracts", 0), 0 - 56, 60);
+  m = icheck(m, widen("viwidenlos", 8, 10, "viextracts", 3), 7, 60);
+  m = icheck(m, widen("viwidenhiu", 8, 10, "viextracts", 7), 200, 61);
+  m = icheck(m, widen("viwidenhis", 8, 10, "viextracts", 0), 0 - 56, 61);
+  // 62..63: a lane of 16 bits to a lane of 32 bits. h is 40000, which is
+  // -25536 with a sign, and 9 in lane 5.
+  m = icheck(m, widen("viwidenlou", 16, 13, "viextracts", 0), 40000, 62);
+  m = icheck(m, widen("viwidenlos", 16, 13, "viextracts", 3), 0 - 25536, 62);
+  m = icheck(m, widen("viwidenhiu", 16, 13, "viextracts", 1), 9, 63);
+  m = icheck(m, widen("viwidenhis", 16, 13, "viextracts", 0), 0 - 25536, 63);
+  m = icheck(m, widen("viwidenhiu", 16, 13, "viextracts", 3), 40000, 63);
+  // 64: two values of 16 bits to one of 8 bits. h has its sign, so it is
+  // below each limit, and k is 30000.
+  m = icheck(m, narrow("vinarrows", 16, 13, 14, "viextracts", 0), 0 - 128, 64);
+  m = icheck(m, narrow("vinarrows", 16, 13, 14, "viextracts", 5), 9, 64);
+  m = icheck(m, narrow("vinarrows", 16, 13, 14, "viextracts", 8), 127, 64);
+  m = icheck(m, narrow("vinarrowu", 16, 13, 14, "viextractu", 0), 0, 64);
+  m = icheck(m, narrow("vinarrowu", 16, 13, 14, "viextractu", 5), 9, 64);
+  m = icheck(m, narrow("vinarrowu", 16, 13, 14, "viextractu", 15), 255, 64);
+  // 65: two values of 32 bits to one of 16 bits. The result of k(u, t) has
+  // the lanes of u first.
+  m = icheck(m, narrow("vinarrows", 32, 15, 16, "viextracts", 0), 0 - 32768, 65);
+  m = icheck(m, narrow("vinarrows", 32, 15, 16, "viextracts", 2), 5, 65);
+  m = icheck(m, narrow("vinarrows", 32, 15, 16, "viextracts", 4), 32767, 65);
+  m = icheck(m, narrow("vinarrowu", 32, 15, 16, "viextractu", 1), 0, 65);
+  m = icheck(m, narrow("vinarrowu", 32, 16, 15, "viextractu", 0), 65535, 65);
+  m = icheck(m, narrow("vinarrowu", 32, 16, 15, "viextractu", 6), 5, 65);
+  // 66: an index above 15 gives zero.
+  m = icheck(m, swizzle(0), 7, 66);
+  m = icheck(m, swizzle(1), 200, 66);
+  m = icheck(m, swizzle(2), 0, 66);
+  m = icheck(m, swizzle(4), 0, 66);
+  return icheck(m, swizzle(15), 7, 66);
 }
 function int_checks(own m: ir.Op[]): ir.Op[] {
   m = m.append(ir.op_const_i32(200)).append(vi("visplat")).append(ir.op_const_i32(7)).append(ir.op_lane_at("vireplace", 8, 3)).append(ir.op_store_local(10));

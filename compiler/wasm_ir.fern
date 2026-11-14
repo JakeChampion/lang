@@ -4578,9 +4578,35 @@ function emit_wasm_lane_int(o: ir.Op): string {
   return "    " + shape + "." + verb + "\n";
 }
 
+// An op that changes the shape of integer lanes. The width of the op is
+// the width of a lane of its first value.
+function emit_wasm_lane_shape(o: ir.Op): string {
+  let k = ir.kind_name(o.kind_tag);
+  let w = o.width;
+  if (k == "viswizzle" && w == 8) {
+    return "    i8x16.swizzle\n";
+  }
+  let sign = if (k.ends_with("s")) { "_s" } else { "_u" };
+  if (o.kind_tag < ir.K_VINARROWS && (w == 8 || w == 16)) {
+    return "    " + wasm_lane_widen(k.starts_with("viwidenlo"), w) + sign + "\n";
+  }
+  if (o.kind_tag >= ir.K_VINARROWS && k != "viswizzle" && (w == 16 || w == 32)) {
+    return "    " + (if (w == 16) { "i8x16.narrow_i16x8" } else { "i16x8.narrow_i32x4" }) + sign + "\n";
+  }
+  return ircore.unsupported_op_refuse(o.kind_tag, "wasm");
+}
+
+function wasm_lane_widen(low: boolean, w: i32): string {
+  let half = if (low) { "extend_low_" } else { "extend_high_" };
+  return if (w == 8) { "i16x8." + half + "i8x16" } else { "i32x4." + half + "i16x8" };
+}
+
 function emit_wasm_lane(o: ir.Op, cx: WasmOpCtx): string {
   if (ir.is_lane_int_kind(o.kind_tag)) {
     return emit_wasm_lane_int(o);
+  }
+  if (ir.is_lane_shape_kind(o.kind_tag)) {
+    return emit_wasm_lane_shape(o);
   }
   let k = ir.kind_name(o.kind_tag);
   if (k == "vextract_bits") {

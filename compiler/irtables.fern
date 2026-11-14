@@ -988,6 +988,24 @@ pub function integer_lane_builtin_op(verb: string, signed: boolean): string {
   return if (signed) { signeds[i] } else { unsigned[i] };
 }
 
+// The IR op of a builtin that changes the shape of integer lanes, or ""
+// for each other builtin.
+pub function lane_shape_builtin_op(verb: string, signed: boolean): string {
+  if (verb == "widen_lo") {
+    return if (signed) { "viwidenlos" } else { "viwidenlou" };
+  }
+  if (verb == "widen_hi") {
+    return if (signed) { "viwidenhis" } else { "viwidenhiu" };
+  }
+  if (verb == "narrow" && signed) {
+    return "vinarrows";
+  }
+  if (verb == "narrow_u") {
+    return "vinarrowu";
+  }
+  return if (verb == "swizzle") { "viswizzle" } else { "" };
+}
+
 // The IR op of an operator on integer lanes.
 pub function lane_int_operator(unary: boolean, op: string): string {
   if (unary) {

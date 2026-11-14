@@ -2620,10 +2620,62 @@ function ssa_vint_shift(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.Emi
   return ssa_fput(reg_of, ins.result, d, s);
 }
 
+// A widen is a shift to the left by zero bits into lanes of two times the
+// width. The form with `2` reads the last half of the lanes.
+function arm64_lane_widen(b: string, w: i32, a: string, d: string): string {
+  let low = b == "viwidenlos" || b == "viwidenlou";
+  let mnem = (if (b == "viwidenlos" || b == "viwidenhis") { "sshll" } else { "ushll" }) + (if (low) { " " } else { "2 " });
+  let from = if (low) { ssa_vi_half(a, w) } else { ssa_viarr(a, w) };
+  return "    " + mnem + ssa_viarr(d, w * 2) + ", " + from + ", #0\n";
+}
+
+// The ops that change the shape of integer lanes. `ins.imm` is the width
+// of a lane of the first value. v0 is the scratch register.
+function ssa_vint_shape(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let id = ir.kind_id(b);
+  let w = ins.imm;
+  s = ssa_fread(reg_of, ins.args[0], "d1", s);
+  let a = ssa_fsrc(reg_of, ins.args[0], "d1");
+  let d = ssa_fdst(reg_of, ins.result);
+  if (id < ir.K_VINARROWS) {
+    if (w != 8 && w != 16) {
+      ircore.unsupported_op_refuse(id, "arm64");
+    }
+    return ssa_fput(reg_of, ins.result, d, s.write(arm64_lane_widen(b, w, a, d)));
+  }
+  s = ssa_fread(reg_of, ins.args[1], "d2", s);
+  let y = ssa_fsrc(reg_of, ins.args[1], "d2");
+  if (b == "viswizzle") {
+    if (w != 8) {
+      ircore.unsupported_op_refuse(id, "arm64");
+    }
+    // tbl gives zero for an index above 15.
+    return ssa_fput(reg_of, ins.result, d, s.write("    tbl " + ssa_vbytes(d) + ", {" + ssa_vbytes(a) + "}, " + ssa_vbytes(y) + "\n"));
+  }
+  if (w != 16 && w != 32) {
+    ircore.unsupported_op_refuse(id, "arm64");
+  }
+  // The result can share a register with the second value, so the two
+  // halves go to the scratch register first.
+  let mnem = if (b == "vinarrows") { "sqxtn" } else { "sqxtun" };
+  s = s.write("    " + mnem + " " + ssa_vi_half("d0", w / 2) + ", " + ssa_viarr(a, w) + "\n    " + mnem + "2 " + ssa_viarr("d0", w / 2) + ", " + ssa_viarr(y, w) + "\n");
+  return ssa_fput(reg_of, ins.result, d, s.write("    mov " + ssa_vbytes(d) + ", v0.16b\n"));
+}
+
+// The arrangement of the low half of integer lanes of `w` bits in the
+// register `d`.
+function ssa_vi_half(d: string, w: i32): string {
+  let arr = if (w == 8) { ".8b" } else if (w == 16) { ".4h" } else { ".2s" };
+  return "v" + slice_unchecked(d, 1, d.len()) + arr;
+}
+
 function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   let b = ssa.lane_base(ins.str);
   if (ir.is_lane_int_kind(ir.kind_id(b))) {
     return ssa_vint(ins, b, reg_of, s);
+  }
+  if (ir.is_lane_shape_kind(ir.kind_id(b))) {
+    return ssa_vint_shape(ins, b, reg_of, s);
   }
   if (b == "vpermute") {
     return ssa_vpermute(ins, reg_of, s);
