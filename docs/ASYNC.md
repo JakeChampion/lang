@@ -261,10 +261,20 @@ park, or `Parked(call, w)`, which the scheduler resumes with
 
 **A status is used.** `TaskStatus` and `CallStatus` are `@must_consume`. A
 program that drops the status of `task_start`, `task_resume`, `call_start`
-or `call_resume` gets E067. A parked task with no scheduler never runs
-again, and its `defer`s never run. A scheduler matches each status, as the
+or `call_resume` gets E067. A scheduler matches each status, as the
 loop above does: a `loop`, or a `while` with the condition `true`, runs its
 body once or more, so the match in it consumes the status.
+
+**A task with no handle is cancelled.** `Task` has a finalizer. When the
+last copy of the handle of a parked task goes away, the task runs to its
+end with each wait answering `Cancelled`. Its `defer`s run and its record
+is released. A task that was not started only releases its record.
+
+A compiled program drops a value after its last use. A handle that nothing
+reads after `task_start` cancels the task at once, so keep the handle where
+the scheduler keeps the wait. An interpreter does not park a task, so it
+has nothing to cancel. A parked `Call` has no finalizer: `call_cancel`
+ends it.
 
 **A handle that names no task.** `Task` is an opaque struct, so only
 `std/async` builds a handle or reads its fields. A program that writes one
@@ -273,6 +283,10 @@ gets E021. `task_id` and `task_entry` read the id and the entry.
 is an unsafe function, because its caller proves that the id and the entry
 belong to one parked task. `std/sim` uses it for a worker that waits in a
 slot of plain words.
+
+`task_detach(t)` is the other half. It gives the task to a scheduler that
+keeps it by its id, so the handle does not cancel it. A handle from
+`task_adopted` does not cancel its task.
 
 The runtime also checks each use. A handle whose id names no live task
 record stops the program with status 134. So does a resume whose entry is

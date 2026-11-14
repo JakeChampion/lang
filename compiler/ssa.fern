@@ -5834,9 +5834,14 @@ function shifted_facts(f: SFunc, def_b: i32[], def_k: i32[], count: i32): i32 {
   return 0;
 }
 
+// A unary that loads from its operand's address: a sign-extended i32, or a 16-bit word.
+pub function is_unary_load(what: string): boolean {
+  return what == "load_i32" || what == "load_u16";
+}
+
 function unary_facts(ins: SInst, held: i32): i32 {
-  if (ins.str == "load_i32") {
-    return EXT_I32;
+  if (is_unary_load(ins.str)) {
+    return if (ins.str == "load_u16") { EXT_I32 | EXT_U32 } else { EXT_I32 };
   }
   if (signed_extension(ins)) {
     if ((held & EXT_I32) != 0) {

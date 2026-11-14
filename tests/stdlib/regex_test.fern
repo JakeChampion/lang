@@ -300,8 +300,32 @@ function test_inner_literal(): test.TestOutcome {
     inner_of("\\bab\\b", "x ab", 0), inner_of("water", "water", 0), inner_of("(?i)x+abc", "ABC", 0),
     inner_of("x*yz", "yz", 0), inner_of("cat|dog", "dog", 0), inner_of("\\d+ing", "ing", 4),
   ];
-  let want = ["ing@1", "ing@17", "baz@4", "bcd@4", "ab@2", "@0", "@0", "yz@0", "@0", "ing@-1"];
+  let want = ["ing@1", "ing@17", "baz@4", "bcd@4", "ab@2", "@0", "abc@0", "yz@0", "@0", "ing@-1"];
   return test.assert_eq_array(got, want);
+}
+
+// A literal under (?i) is an inner literal, and its letters match in either
+// case. Under Unicode, `k` and `s` also match a character outside ASCII, so
+// they end the run of bytes.
+function test_folded_inner(): test.TestOutcome {
+  let got = [
+    inner_of("(?i)x+holmes", "a HoLmEs", 0), inner_of("(?i)sherlock holmes", "SHERLOCK HOLMES", 0),
+    inner_of("(?i)sherlock holmes", "sherlok herloc", 0), inner_of("(?i)\\d+moriarty", "1 MORIARTy", 0),
+    inner_of("(?i)\\d+moriarty", "1 MORIART", 0), inner_of("\\d+(?i:ab)C", "1 AbC 1 abc", 0),
+  ];
+  return test.assert_eq_array(got, ["holme@2", "herloc@1", "herloc@8", "moriarty@2", "moriarty@-1", "abC@2"]);
+}
+
+// The places where one of the alternatives can start, from probes of their
+// first bytes, and of the bytes of a prefix.
+function test_probed_starts(): test.TestOutcome {
+  let got = [
+    candidate("Sherlock Holmes|John Watson", "x John W Sher", 0), candidate("Sherlock Holmes|John Watson", "x John W Sher", 3),
+    candidate("Sherlock Holmes|John Watson", "x Jo Sh", 0), candidate("(?i)abc|xyz", "..XyZ", 0), candidate("abc|xyz|j", "..j", 0),
+    candidate("the water", "a th water the water", 0), candidate("the water", "the wate", 0), candidate("(?i)the water", "THE WATER", 0),
+    candidate("\\bfoo|bar", "a bar foo", 0),
+  ];
+  return test.assert_eq_array(got, [2, 9, -1, 2, 2, 11, -1, 0, 2]);
 }
 
 // A match must start with the literal prefix, folded under (?i).
@@ -563,6 +587,8 @@ function main(): i32 {
   r = r.it("over the DFA limit", test_dfa_limit);
   r = r.it("assertion contexts", test_assertion_contexts);
   r = r.it("next_candidate", test_next_candidate);
+  r = r.it("folded inner literal", test_folded_inner);
+  r = r.it("probed starts", test_probed_starts);
   r = r.it("literal prefix", test_literal_prefix);
   r = r.it("rare byte of a prefix", test_rare_prefix);
   r = r.it("inner literal", test_inner_literal);

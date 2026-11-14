@@ -524,6 +524,25 @@ pub function int_array_region(env: usize, array: usize, start: i32, n: i32): i32
   }
 }
 
+// A new float[] of `n` zeros.
+pub function new_float_array(env: usize, n: i32): usize {
+  return call1(env, 181, n as usize);
+}
+
+// The `n` floats of `array` from the index `start`.
+pub function float_array_region(env: usize, array: usize, start: i32, n: i32): f32[] {
+  unsafe {
+    let buf: usize = alloc_buffer(4 * n + 4);
+    let done: usize = call4(env, 205, array, start as usize, n as usize, buf);
+    let out: f32[] = [];
+    for k in 0..n {
+      out = out.append(f32_from_bits(__load_i32(buf + (4 * k) as usize)));
+    }
+    free_buffer(buf);
+    return out;
+  }
+}
+
 // Puts the ints `values` in `array` from the index `start`.
 pub function set_int_array_region(env: usize, array: usize, start: i32, values: [i32]): void {
   unsafe {

@@ -37,6 +37,18 @@ function info_events(): test.TestOutcome {
       return test.fail("buffering start");
     }
   }
+  match (player.event(android.Posted(22, 804 as usize))) {
+    Some(player.AudioNotPlaying) => {},
+    _ => {
+      return test.fail("audio not playing");
+    }
+  }
+  match (player.event(android.Posted(22, 805 as usize))) {
+    Some(player.VideoNotPlaying) => {},
+    _ => {
+      return test.fail("video not playing");
+    }
+  }
   match (player.event(android.Posted(22, 702 as usize))) {
     Some(player.Buffering(false)) => {},
     _ => {

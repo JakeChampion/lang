@@ -341,16 +341,24 @@ pub function scrobble(c: Client, b: Base, key: string, watched: boolean): Reques
 
 // Reports the state of playback: "playing", "paused" or "stopped", at
 // `time_ms` of `duration_ms`. The server keeps it as the resume point.
-pub function timeline(c: Client, b: Base, key: string, state: string, time_ms: i64, duration_ms: i64): Request {
+// `session` is the X-Plex-Session-Identifier of the stream, so the server
+// joins the report to the stream that it serves.
+pub function timeline(c: Client, b: Base, key: string, state: string, time_ms: i64, duration_ms: i64, session: string): Request {
   let q = url.query_encode([("ratingKey", key), ("key", "/library/metadata/" + key), ("state", state), ("time", time_ms.to_string()), ("duration", duration_ms.to_string()), ("hasMDE", "1")]);
-  return get(c.with_token(b.token), b.uri + "/:/timeline?" + q);
+  let r = get(c.with_token(b.token), b.uri + "/:/timeline?" + q);
+  return Request { ...r, headers: r.headers.append(("X-Plex-Session-Identifier", session)) };
+}
+
+// Keeps the transcode `session` alive while the player is paused.
+pub function ping_transcode(c: Client, b: Base, session: string): Request {
+  return get(c.with_token(b.token), b.uri + "/video/:/transcode/universal/ping?" + url.query_encode([("session", session)]));
 }
 
 // The address of image `path` of the server, scaled to w by h. A path of
 // plex.tv or of a web host is passed through the transcoder of the server
 // as well.
 pub function image_url(b: Base, path: string, w: i32, h: i32): string {
-  let q = url.query_encode([("width", w.to_string()), ("height", h.to_string()), ("minSize", "1"), ("upscale", "1"), ("url", path), ("X-Plex-Token", b.token)]);
+  let q = url.query_encode([("width", w.to_string()), ("height", h.to_string()), ("minSize", "1"), ("upscale", "0"), ("url", path), ("X-Plex-Token", b.token)]);
   return b.uri + "/photo/:/transcode?" + q;
 }
 
@@ -670,75 +678,145 @@ pub function resolution_badge(r: string): string {
 // --- playback
 
 // A quality of playback. `kbps` 0 plays the file as it is.
-pub struct Quality { name: string, kbps: i32, resolution: string }
+// A quality of a transcode: the cap of the video bitrate, the largest
+// resolution, and the videoQuality of the encoder from 0 to 100.
+pub struct Quality { name: string, kbps: i32, resolution: string, video_quality: i32 }
 
 pub function qualities(): Quality[] {
   return [
-    Quality { name: "Original", kbps: 0, resolution: "" },
-    Quality { name: "1080p 20 Mbps", kbps: 20000, resolution: "1920x1080" },
-    Quality { name: "1080p 8 Mbps", kbps: 8000, resolution: "1920x1080" },
-    Quality { name: "720p 4 Mbps", kbps: 4000, resolution: "1280x720" },
-    Quality { name: "480p 1.5 Mbps", kbps: 1500, resolution: "720x480" },
-    Quality { name: "240p 320 kbps", kbps: 320, resolution: "320x240" },
+    Quality { name: "Original", kbps: 0, resolution: "", video_quality: 100 },
+    Quality { name: "1080p 20 Mbps", kbps: 20000, resolution: "1920x1080", video_quality: 100 },
+    Quality { name: "1080p 8 Mbps", kbps: 8000, resolution: "1920x1080", video_quality: 60 },
+    Quality { name: "720p 4 Mbps", kbps: 4000, resolution: "1280x720", video_quality: 100 },
+    Quality { name: "480p 1.5 Mbps", kbps: 1500, resolution: "720x480", video_quality: 60 },
+    Quality { name: "240p 320 kbps", kbps: 320, resolution: "420x240", video_quality: 30 },
   ];
 }
 
-// The containers and codecs that Android plays with no help.
+// The containers that the media player of Android reads.
 function direct_container(c: string): boolean {
   return c == "mp4" || c == "m4v" || c == "mov" || c == "mkv" || c == "webm" || c == "mpegts" || c == "ts" || c == "mp3" || c == "m4a" || c == "aac" || c == "flac" || c == "ogg" || c == "opus" || c == "wav";
 }
 
-function direct_video(v: string): boolean {
-  return v.len() == 0 || v == "h264" || v == "hevc" || v == "vp8" || v == "vp9" || v == "av1" || v == "mpeg4";
+// The MIME type of the Android decoders of the Plex codec `codec`, or "".
+pub function codec_mime(codec: string): string {
+  let table: (string, string)[] = [
+    ("h264", "video/avc"),
+    ("hevc", "video/hevc"),
+    ("vp8", "video/x-vnd.on2.vp8"),
+    ("vp9", "video/x-vnd.on2.vp9"),
+    ("av1", "video/av01"),
+    ("mpeg4", "video/mp4v-es"),
+    ("mpeg2video", "video/mpeg2"),
+    ("aac", "audio/mp4a-latm"),
+    ("mp3", "audio/mpeg"),
+    ("ac3", "audio/ac3"),
+    ("eac3", "audio/eac3"),
+    ("dca", "audio/vnd.dts"),
+    ("truehd", "audio/true-hd"),
+    ("opus", "audio/opus"),
+    ("vorbis", "audio/vorbis"),
+    ("flac", "audio/flac"),
+    ("pcm", "audio/raw"),
+    ("alac", "audio/alac"),
+  ];
+  for row in table {
+    if (row.0 == codec) {
+      return row.1;
+    }
+  }
+  return "";
 }
 
-function direct_audio(a: string): boolean {
-  return a.len() == 0 || a == "aac" || a == "mp3" || a == "ac3" || a == "eac3" || a == "opus" || a == "vorbis" || a == "flac" || a == "pcm" || a == "alac";
+// The decoders that the compatibility definition of Android requires on
+// each device. The app uses them when it cannot read the list of the device.
+pub function baseline_decoders(): string[] {
+  return ["video/avc", "video/hevc", "video/x-vnd.on2.vp8", "video/x-vnd.on2.vp9", "audio/mp4a-latm", "audio/mpeg", "audio/opus", "audio/vorbis", "audio/flac", "audio/raw"];
 }
 
-// Whether the phone can play the first version of the item as it is.
-pub function direct_playable(it: Item): boolean {
+// Whether a decoder of `decoders` takes `codec`. No codec needs no decoder.
+function decodes(decoders: string[], codec: string): boolean {
+  if (codec.len() == 0) {
+    return true;
+  }
+  let known = decoders;
+  if (known.len() == 0) {
+    known = baseline_decoders();
+  }
+  return known.contains(codec_mime(codec));
+}
+
+// Whether the phone, with the decoder types `decoders`, can play the first
+// version of the item as it is.
+pub function direct_playable(it: Item, decoders: string[]): boolean {
   if (it.media.len() == 0 || it.media[0].parts.len() == 0) {
     return false;
   }
   let m = it.media[0];
-  return direct_container(m.container) && direct_video(m.video) && direct_audio(m.audio);
+  return direct_container(m.container) && decodes(decoders, m.video) && decodes(decoders, m.audio);
 }
 
 // The address of the file of the item, which the player reads as it is.
-pub function direct_url(b: Base, it: Item): string {
-  return b.uri + it.media[0].parts[0].key + "?" + url.query_encode([("X-Plex-Token", b.token)]);
+// `session` joins the stream to the reports of the timeline.
+pub function direct_url(b: Base, it: Item, session: string): string {
+  return b.uri + it.media[0].parts[0].key + "?" + url.query_encode([("X-Plex-Session-Identifier", session), ("X-Plex-Token", b.token)]);
 }
 
-// The address of an HLS stream that the server makes from the item at
-// quality `q`, from `offset_ms`. `session` names the transcode, so that
-// stop_transcode can end it.
-pub function hls_url(c: Client, b: Base, it: Item, q: Quality, offset_ms: i64, session: string): string {
+// What the client asks the transcoder to make: HLS in MPEG-TS with H.264
+// video and AAC sound, which the media player of each Android device plays.
+// HEVC never goes in MPEG-TS: a hardware HEVC encode into TS can change its
+// picture parameters between slices. A quality with a bitrate adds an upper
+// bound of the video bitrate. The server reads this value as a query of its
+// own, so the parameter escapes its characters once more.
+pub function profile_extra(q: Quality): string {
+  let parts = ["add-settings(DirectPlayStreamSelection=true)"];
+  if (q.kbps > 0) {
+    parts = parts.append("add-limitation(scope=videoCodec&scopeName=*&type=upperBound&name=video.bitrate&value=" + q.kbps.to_string() + "&replace=true)");
+  }
+  parts = parts.append("add-transcode-target(type=videoProfile&context=streaming&protocol=hls&container=mpegts&videoCodec=h264&audioCodec=aac)");
+  return parts.join("+");
+}
+
+// The address of an HLS stream that the server makes from the whole item at
+// quality `q`. The player seeks in the stream, and fastSeek starts the
+// segments at the seek: an offset at the start can leave the first segment
+// open with no data. `session` names the transcode. The client is Generic,
+// the one platform that the transcoder takes with no targets of its own.
+pub function hls_url(c: Client, b: Base, it: Item, q: Quality, session: string): string {
+  let copy = "0";
+  if (q.kbps == 0) {
+    copy = "1";
+  }
   let pairs: (string, string)[] = [
+    ("hasMDE", "1"),
     ("path", "/library/metadata/" + it.key),
     ("mediaIndex", "0"),
     ("partIndex", "0"),
     ("protocol", "hls"),
     ("fastSeek", "1"),
     ("directPlay", "0"),
-    ("directStream", "1"),
+    ("directStream", copy),
     ("directStreamAudio", "1"),
     ("subtitleSize", "100"),
     ("audioBoost", "100"),
     ("location", "lan"),
-    ("offset", (offset_ms / 1000i64).to_string()),
+    ("autoAdjustQuality", "0"),
+    ("mediaBufferSize", "102400"),
     ("session", session),
     ("X-Plex-Session-Identifier", session),
+    ("X-Plex-Client-Profile-Name", "Generic"),
+    ("X-Plex-Client-Profile-Extra", profile_extra(q)),
+    ("X-Plex-Incomplete-Segments", "1"),
     ("X-Plex-Client-Identifier", c.id),
     ("X-Plex-Product", PRODUCT),
-    ("X-Plex-Platform", "Android"),
+    ("X-Plex-Version", VERSION),
+    ("X-Plex-Platform", "Generic"),
     ("X-Plex-Device", c.device),
     ("X-Plex-Token", b.token),
   ];
   if (q.kbps > 0) {
-    pairs = pairs.append(("maxVideoBitrate", q.kbps.to_string()));
     pairs = pairs.append(("videoResolution", q.resolution));
-    pairs = pairs.append(("videoQuality", "100"));
+    pairs = pairs.append(("videoQuality", q.video_quality.to_string()));
   }
   return b.uri + "/video/:/transcode/universal/start.m3u8?" + url.query_encode(pairs);
 }
@@ -747,20 +825,27 @@ pub function stop_transcode(c: Client, b: Base, session: string): Request {
   return get(c.with_token(b.token), b.uri + "/video/:/transcode/universal/stop?" + url.query_encode([("session", session)]));
 }
 
-// The address that the player opens for the item, and whether it is a
-// transcode that the server keeps a session for.
+// The address that the player opens for the item, whether it is a
+// transcode that the server keeps a session for, and where the player seeks
+// to when it is ready.
 pub struct Stream { url: string, transcode: boolean, offset_ms: i64 }
 
-pub function stream_for(c: Client, b: Base, it: Item, q: Quality, offset_ms: i64, session: string): Stream {
-  if (q.kbps == 0 && direct_playable(it)) {
-    return Stream { url: direct_url(b, it), transcode: false, offset_ms: offset_ms };
+pub function stream_for(c: Client, b: Base, it: Item, q: Quality, offset_ms: i64, session: string, decoders: string[]): Stream {
+  if (q.kbps == 0 && direct_playable(it, decoders)) {
+    return Stream { url: direct_url(b, it, session), transcode: false, offset_ms: offset_ms };
   }
+  return transcode_for(c, b, it, q, offset_ms, session, decoders);
+}
+
+// A transcode of the item at quality `q`. At Original quality the server
+// copies H.264 video that the phone decodes, and converts the rest.
+pub function transcode_for(c: Client, b: Base, it: Item, q: Quality, offset_ms: i64, session: string, decoders: string[]): Stream {
   let chosen = q;
-  if (chosen.kbps == 0) {
+  if (chosen.kbps == 0 && !(it.media.len() > 0 && it.media[0].video == "h264" && decodes(decoders, "h264"))) {
+    // The stream copies only H.264. Other video is encoded.
     chosen = qualities()[2];
   }
-  // The transcode starts at the offset, so the player starts at 0.
-  return Stream { url: hls_url(c, b, it, chosen, offset_ms, session), transcode: true, offset_ms: 0i64 };
+  return Stream { url: hls_url(c, b, it, chosen, session), transcode: true, offset_ms: offset_ms };
 }
 
 // The next episode after `key` in `episodes`, or None at the end.

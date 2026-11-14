@@ -1,0 +1,39 @@
+// A call that passes a named function to a callback parameter goes to a
+// clone of the callee without that parameter. The clone renumbers the values
+// after the parameter, and a record update keeps the value it updates.
+struct St { n: i32, items: string[] }
+
+enum Tree {
+  Leaf(string),
+  Node(Tree[]),
+}
+
+function append_item(v: string, own s: St): own St {
+  return St { ...s, items: s.items.append(v) };
+}
+
+function walk(t: Tree, k: (string, own St) => own St, own st: St): own St {
+  match (t) {
+    Node(kids) => {
+      let saved = st.items;
+      let s = St { ...st, items: [] };
+      for x in kids {
+        s = walk(x, append_item, s);
+        if (s.n != 0) {
+          return St { ...s, items: saved };
+        }
+      }
+      let out = s.items;
+      return k(out.len().to_string(), St { ...s, items: saved });
+    },
+    Leaf(v) => {
+      return k(v, st);
+    }
+  }
+}
+
+function main(): i32 {
+  let s = walk(Node([Leaf("a"), Node([Leaf("b"), Leaf("c")])]), append_item, St { n: 0, items: [] });
+  print(s.items.len().to_string());
+  return 0;
+}

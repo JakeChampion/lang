@@ -3,157 +3,197 @@
 A subset of the plumbing commands of git, in Fern (#15591). The port reads
 and writes the object store of a real repository.
 
-This is slices 1 to 4: loose objects, packfiles with their deltas, the
-refs, the operators of a revision, and seven commands.
+It has the loose objects, the packfiles with their deltas, the refs, the
+revisions, and seven commands.
 
 ## Commands
 
 ```
-git hash-object [-w] [-t KIND] [--stdin] [FILE...]
+git hash-object [-w] [-t KIND] [--literally] [--stdin] [FILE...]
 git cat-file (-t | -s | -p | -e) NAME
 git cat-file (--batch | --batch-check)
-git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...
+git rev-parse [--verify] [-q] [--short[=N]] [--git-dir] [--not] ARG...
 git verify-pack [-v] FILE.idx...
-git ls-tree [-r] [-t] [-d] [-l] [--name-only] [--full-tree] TREE [PATH...]
-git log [-n N] [--oneline] [--format=FORMAT] [NAME]
-git index-pack [-o FILE.idx] FILE.pack
+git ls-tree [-r] [-t] [-d] [-l] [-z] [--name-only] [--object-only]
+            [--full-name] [--full-tree] [--abbrev[=N]] TREE [PATH...]
+git log [OPTION...] [REVISION...] [-- PATH...]
+git index-pack [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
+               [--index-version=N[,OFFSET]] [--[no-]rev-index] [FILE.pack]
 ```
 
 - `hash-object` prints the name of the object for each file, and for the
-  standard input with `--stdin`. With `-w` it writes the object to the store.
+  standard input with `--stdin`. With `-w` it writes the object to the
+  store. A commit, a tree and a tag get the checks of `git fsck`, with the
+  messages of git, before the port prints or writes them. `--literally`
+  takes an object of any form and any kind.
 
-- `cat-file` prints the kind, the size or the content of an object. `-p`
-  prints a tree as git does: the mode, the kind, the name and the path, and
-  a path in quotes when git puts it in quotes. `--batch` and `--batch-check`
-  take one name for each line of the standard input.
+- `cat-file` prints the kind, the size or the content of an object.
+  `--batch` and `--batch-check` take one name for each line of the
+  standard input.
 
-- `rev-parse` prints the full name of each object.
+- `rev-parse` prints the full name of each revision. A range gives the
+  names of its two ends, `A...B` adds the merge bases, and `A^@`, `A^!`
+  and `A^-N` give the parents. A name that is not a revision is a path, as
+  git reads it.
 
 - `verify-pack` checks a packfile and its index: the two checksums, and the
   name of each object after its deltas. `-v` adds a line for each object
   and the lengths of the delta chains.
 
-- `ls-tree` prints the entries of a tree. `-r` goes into each tree below
-  it, `-t` shows the trees also, `-d` shows the trees only, and `-l` adds
-  the size of each blob. In a directory below the top of the worktree, it
-  lists the tree of that directory, as git does. A path after the tree
-  limits the list to that entry. A path with `/` at its end, or a path into
-  a directory, lists the entries of the directory.
+- `ls-tree` prints the entries of a tree, for each path when the command
+  has paths. In a directory below the top of the worktree, the paths and
+  the names are relative to that directory, as git gives them.
 
-- `log` prints the commits that a name reaches, the latest committer date
-  first. `-n N`, `-N` and `--max-count=N` set the count of commits.
-  `--oneline` prints the short name and the subject.
+- `log` walks the commits as `git log` does. It has the ranges and the
+  revisions of `rev-parse`, `--all`, `--branches`, `--tags`, `--remotes`
+  and `--not`. It limits the walk with `-n`, `--skip`, `--since`,
+  `--until`, `--author`, `--committer`, `--grep` (with `-i`, `-E`, `-F`,
+  `--all-match` and `--invert-grep`), `--merges`, `--min-parents`,
+  `--max-parents` and `--first-parent`. Paths after the revisions select
+  the commits that change them, with the history simplification of git,
+  and `--full-history` keeps each side of a merge. The order is that of
+  the dates, or that of `--topo-order`, `--date-order`,
+  `--author-date-order` and `--reverse`. `--graph` draws the graph of git
+  without colors.
 
-  `--format=FORMAT` prints a line for each commit. `--pretty=format:FORMAT`
-  puts a line end between two commits and not after each one. The
-  placeholders are `%H`, `%h`, `%T`, `%t`, `%P`, `%p`, `%s`, `%b`, `%B`,
-  `%n` and `%%`. For the author they are `%an`, `%ae`, `%ad` and `%at`,
-  and `%cn`, `%ce`, `%cd` and `%ct` for the committer.
+  The formats are `--oneline`, `--pretty=` with each named format and
+  `format:`, and `--format=`, with the placeholders of git. `--date=` has
+  each date format of git. `--parents`, `--decorate`, `--abbrev-commit`,
+  `--name-only` and `--name-status` add to the text. The changes of
+  `--name-status` find renames as git does. A tab and a wide character in
+  a message take the columns that git gives them.
 
-- `index-pack` makes the index of a packfile and its reverse index, and
-  prints the checksum of the packfile. The two files have the bytes that
-  git writes.
-
-A name is a full hash, a short hash of four digits or more, `HEAD`, or a
-ref. The port looks for a ref as git does: the name, then the name below
-`refs/`, `refs/tags/`, `refs/heads/` and `refs/remotes/`. It reads loose
-refs and the file `packed-refs`.
-
-A name can have operators after it. `^N` is parent `N` of a commit, and
-`~N` is the first parent `N` times. `^{KIND}` follows tags and commits to
-an object of that kind, and `^{}` follows tags only. `:PATH` is the entry
-at a path below the tree.
-
-A short name has the length that git gives it: 7 digits, or more for a
-store with many packed objects. In a shallow clone, a commit at the edge
-has no parent.
-
-The port finds the repository as git does: `GIT_DIR`, or the `.git` of the
-current directory or of a directory above it. A `.git` file of a linked
-worktree gives the git directory.
+- `index-pack` makes the index of a packfile (version 1 or 2) and its
+  reverse index, and prints the checksum of the packfile. It reads the
+  packfile from a file or from the standard input. `--fix-thin` adds the
+  bases of a thin pack from the store. For a packfile that is not sound,
+  the message and the exit status are those of git.
 
 The port reads and writes repositories with SHA-1 names and with SHA-256
 names (`git init --object-format=sha256`). The key
 `extensions.objectformat` of the `config` file gives the hash. With no
 repository, `hash-object`, `index-pack` and `verify-pack` use SHA-1, as
 git does.
+A packfile can be larger than 4 GiB. The port finds an object through the
+multi-pack index first, as git does. The port reads a packfile of more
+than 1 GiB in parts and never as a whole.
+
+A name is a full hash, a short hash of four digits or more, `HEAD`, a ref,
+or the output of `git describe`. The port looks for a ref as git does. It
+reads loose refs, the file `packed-refs`, the reflogs, and the upstream of
+a branch in the configuration.
+
+A name can have operators after it: `^N`, `~N`, `^{KIND}`, `^{}`,
+`^{/TEXT}`, `@{N}`, `@{DATE}`, `@{-N}`, and `@{upstream}` or `@{u}`. `:PATH`
+is the entry at a path below a tree, and `:N:PATH` is an entry of the
+index. `:/TEXT` is the latest commit whose message matches TEXT.
+
+A short name has the length that git gives it. In a shallow clone, a
+commit at the edge has no parent.
+
+The port finds the repository as git does: `GIT_DIR`, or the `.git` of the
+current directory or of a directory above it. A `.git` file of a linked
+worktree gives the git directory.
 
 The standard output, the messages and the exit status are those of git
 2.43.
 
 ## Files
 
-- `objects.fern`: the name of an object, the loose object file, and the
-  lines of a tree.
-- `pack.fern`: the index of a packfile (version 2), the header of a packed
-  object, and the deltas by offset and by name.
+- `objects.fern`: the hash algorithms, the name of an object, the loose
+  object file, and the lines of a tree.
+- `pack.fern`: the index of a packfile (version 1 and 2), the header of a
+  packed object, and the deltas by offset and by name.
 - `store.fern`: the loose objects and the packfiles of one repository.
-- `refs.fern`: the repository of the current directory, and the names.
-- `rev.fern`: the operators of a revision.
-- `log.fern`: the fields of a commit and the text that `log` prints.
+- `midx.fern`: the multi-pack index.
 - `index.fern`: the index of a packfile, made from the packfile.
+- `config.fern`: the configuration files.
+- `fsck.fern`: the checks of a commit, a tree and a tag.
+- `refs.fern`: the repository, the refs and the reflogs.
+- `dircache.fern`: the index of the worktree (versions 2 to 4).
+- `rev.fern`: the revisions and their operators.
+- `walk.fern`: the graph of the commits and the merge bases.
+- `revwalk.fern`: the walk of `log`, with its limits and its orders.
+- `treediff.fern`: the changes between two trees, and the renames.
+- `graph.fern`: the graph of `--graph`.
+- `log.fern`: the fields of a commit and the text that `log` prints.
+- `date.fern`: the dates that `log` prints and reads.
+- `width.fern`: the column width of a character (from `unicode-width.h`).
 - `git.fern`: the command line.
 
 ## What it does not have yet
 
-- A packfile larger than 2 GiB, and the index of version 1.
+- The commit graph (`objects/info/commit-graph` and the chain in
+  `commit-graphs/`) and its changed-path filters. The port reads each
+  commit from the store. git walks with the generation numbers of a
+  commit graph, and the port does not.
 
-- The multi-pack index and the commit graph. The port reads each index of
-  `objects/pack`.
+- The diff of `log`: `-p`, `--stat` and the other forms of a patch. A
+  patch must have the bytes of the diff of git. The engine of
+  `diffutils/` does not give the hunks of the xdiff of git yet.
 
+- These options of `log`: `--follow`, `-S` and `-G`, `--cherry-pick`,
+  `--left-right`, `--boundary`, `--ancestry-path`,
+  `--simplify-by-decoration`, `--walk-reflogs`, `--notes`, the signatures,
+  the mailmap (`%aN`) and colors.
 
-- The other forms of a revision: `@{N}`, `^{/TEXT}`, `:/TEXT` and the
-  ranges. git prints one more line when `^` or `~` follows an object that
-  is not a commit, and the port does not print it.
+- `@{push}`.
 
-- The message of git for a `config` file with a hash that git does not
-  have. The port gives the first line of the message only.
+- `rev-parse --short=N` with N above 40 in a repository with SHA-256
+  names. The port gives the full name, and git 2.43 stops at 40 digits.
 
-- `ls-tree` with a path that has `..` in it, and with pathspec magic.
+- `--fix-thin` with a thin pack. The port adds the bases with the deflate
+  of `std/deflate`, so the packfile, its name and its index do not have
+  the bytes that git writes.
 
-- `hash-object -w` for a commit, a tree or a tag. git checks the form of
-  such an object before it writes one, and the port does not have that
-  check. The port prints the name of such an object without `-w`.
-
-- `log` with a range, a path, a graph, a diff, or a date format. The
-  default text gives a tab the width of 8 columns, and a wide character
-  has one column.
-
-- `index-pack` from the standard input, and the completion of a thin
-  pack. For a packfile that is not sound, the exit status is that of git
-  and the message is not.
+- `index-pack` and `verify-pack` hold the whole packfile in memory. The
+  other commands read a packfile larger than 1 GiB in parts.
 
 ## Speed
 
-The times are for one run on x86-64, on the repository of Fern: 34,339
-objects, 978 commits in a shallow clone, and a packfile of 275 MB. git 2.43
-has four threads for `index-pack`, and the port has four workers.
+The times are the CPU time (user and system) of the best of three runs on
+x86-64, on a clone of the repository of Fern: 112,789 objects, 7,343
+commits, and a packfile of 300 MB. The port is built with `-O`. git 2.43
+has its threads for `index-pack`, and the port has a worker for each CPU.
 
 | Command | git | The port |
 |---|---|---|
-| `cat-file --batch` (34,339 objects, 1.2 GB) | 5.9 s | 3.8 s |
-| `log` (978 commits) | 0.03 s | 0.03 s |
-| `ls-tree -r HEAD` | 0.02 s | 0.02 s |
-| `ls-tree -r -l HEAD` | 0.04 s | 0.09 s |
-| `cat-file --batch-check` (34,339 objects) | 0.07 s | 0.15 s |
-| `index-pack` (3.3 MB) | 0.14 s | 0.16 s |
-| `index-pack` (275 MB) | 3.0 s | 2.6 s |
+| `cat-file --batch` (all objects) | 22.7 s | 29.4 s |
+| `cat-file --batch-check` (all objects) | 0.30 s | 0.93 s |
+| `log` | 0.12 s | 0.16 s |
+| `log --oneline` | 0.11 s | 0.14 s |
+| `log --oneline -- examples/pigz` | 0.04 s | 0.12 s |
+| `log --graph --oneline` | 0.12 s | 0.16 s |
+| `log --name-status -200` | 0.03 s | 0.08 s |
+| `log --oneline --author=Claude --grep=fix` | 0.11 s | 0.23 s |
+| `log --oneline HEAD~500..HEAD` | 0.03 s | 0.04 s |
+| `log --oneline --topo-order` | 0.11 s | 0.15 s |
+| `rev-parse HEAD~100 HEAD^{tree} HEAD:README.md` | 0.003 s | 0.005 s |
+| `ls-tree -r HEAD` | 0.02 s | 0.03 s |
+| `ls-tree -r -l HEAD` | 0.06 s | 0.12 s |
+| `index-pack` (3.3 MB) | 0.014 s | 0.016 s |
+| `index-pack` (300 MB) | 19.9 s | 17.4 s |
 
-The port does not inflate a packed object for its kind and its size. They
-come from the header of the object and from the start of its delta. The
-port reads 4 KiB of a packed object and 512 bytes of a loose object.
+The port is not yet faster than git, except for `index-pack` of a large
+packfile. The inflate of `std/deflate` is most of the gap. For
+`log --oneline`, it is two thirds of the 960 million instructions of the port, and git runs
+500 million instructions in all. For each small stream, the decoder
+fills a table of 1,024 entries for the literals and 256 for the
+distances. zlib fills fewer entries.
 
-`index-pack` gives each CPU one part of the packfile, with about the same
-count of bytes. A worker of `std/worker` makes the names of its part.
-
-`log` runs 205 million instructions for the 978 commits, and git runs 100
-million. The inflate of the commits is half of them.
+The port inflates each commit one time: the graph of the walk keeps the
+commit for the text of `log`. It does not inflate a packed object for its
+kind and its size. They come from the header of the object and from the
+start of its delta.
 
 The port keeps the bases of the deltas in a cache of 96 MB. For a packfile
 above 1 MiB, it reads the bytes of one object from the file. The reverse
 index of git (`.rev`) gives the end of each object. Without that file, the
-port sorts the offsets of the index. It reads the
-whole file after such reads for half of the objects.
+port sorts the offsets of the index. It reads the whole file after such
+reads for half of the objects, when the file is 1 GiB or smaller.
+
+`index-pack` gives each CPU one part of the packfile, with about the same
+count of bytes. A worker of `std/worker` makes the names of its part.
 
 ## Tests
 
@@ -163,16 +203,34 @@ whole file after such reads for half of the objects.
 - `TestSelfHostExampleGitAgainstGit` makes a repository with git and runs
   each command with git and with the port, at the top of the worktree and
   in two directories below it. The port then writes an object, and git
-  reads it and checks the store with `fsck --strict`. The test runs in a
-  repository with SHA-1 names and in one with SHA-256 names.
+  reads it and checks the store with `fsck --strict`.
 
 - `TestSelfHostExampleGitPacked` packs a repository with chains of deltas,
   by offset and then by name. Each object and each line of `verify-pack -v`
   are those of git. The last commit of the repository is a merge, and the
   operators give each parent. The port refuses a packfile with one changed
   byte. The index and the reverse index of `index-pack` have the bytes of
-  git. The test runs with SHA-1 names and with SHA-256 names.
+  git.
 
   The packfile is above 1 MiB, so the port reads it in parts and then
   whole. The test also has a shallow clone, and a store of 16,400 objects
   where a short name has 8 digits.
+
+- Each of these tests runs on x86-64 and on arm64, in a repository with
+  SHA-1 names and in one with SHA-256 names.
+
+- `TestSelfHostExampleGitHashObject` gives `hash-object` sound and unsound
+  commits, trees and tags. `TestSelfHostExampleGitLargePack` reads a
+  sparse packfile of more than 4 GiB, made at test time.
+  `gitIndexPackCases` runs `index-pack` on each form of its input, and on
+  packfiles with a changed byte at each place of their first objects.
+
+- `TestSelfHostExampleGitRevisions` runs `rev-parse` on each form of a
+  revision, with the reflogs, an upstream and an index with conflicts.
+
+- `TestSelfHostExampleGitLog` runs 121 forms of `log`, and
+  `TestSelfHostExampleGitLogRandom` runs them on a random history with
+  merges and renames.
+
+- `TestSelfHostExampleGitMultiPackIndex` changes the multi-pack index, and
+  the port must read the objects through it as git does.

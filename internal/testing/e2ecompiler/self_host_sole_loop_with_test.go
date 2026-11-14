@@ -267,7 +267,9 @@ function alias(n: i32): i32 {
 function main(): i32 {
     return alias(5);
 }`},
-	{"lent-to-call", "lent", false, `@noinline
+	// total returns a scalar, so it keeps no reference to the array it
+	// borrows (#15929). keep returns the array, so its caller can hold it.
+	{"lent-to-call", "lent", true, `@noinline
 function total(xs: i32[]): i32 {
     let t: i32 = 0;
     for x in xs { t = t + x; }
@@ -281,6 +283,27 @@ function lent(n: i32): i32 {
     while (i < n) {
         out = out.with(i, i);
         t = t + total(out);
+        i = i + 1;
+    }
+    return t % 101;
+}
+function main(): i32 {
+    return lent(12);
+}`},
+	{"lent-to-keeper", "lent", false, `@noinline
+function keep(xs: i32[]): i32[] {
+    return xs;
+}
+@noinline
+function lent(n: i32): i32 {
+    let out: i32[] = __alloc_i32(n);
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) {
+        out = out.with(i, i);
+        let kept: i32[] = keep(out);
+        out = out.with(i, i + 1);
+        t = t + kept[i];
         i = i + 1;
     }
     return t % 101;

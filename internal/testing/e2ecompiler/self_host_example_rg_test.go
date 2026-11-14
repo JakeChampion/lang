@@ -82,6 +82,7 @@ func rgFixtures(t *testing.T, dir string) {
 		"blank.txt":   "\n\nfoo\n\n",
 		"uni.txt":     "café au lait\nnaïve foo\nψυχή καὶ σῶμα\nplain\n",
 		"many.txt":    many.String(),
+		"limit.txt":   strings.Repeat("a", 40) + "c\nok\n",
 		"long.txt":    long,
 		"bin.dat":     "abc\x00def foo\nmore foo\n",
 		"bin2.dat":    "foo 1\nbar\nabc\x00def\nfoo 2\n",
@@ -307,6 +308,7 @@ func rgCases(dir string) []rgCase {
 	)
 	cases = append(cases, rgFlagCases()...)
 	cases = append(cases, rgLateCases()...)
+	cases = append(cases, rgPcreCases()...)
 	return append(cases, rgWalkCases()...)
 }
 
@@ -449,6 +451,36 @@ func rgLateCases() []rgCase {
 		config("--no-messages foo a.txt", "nosuchconfig"),
 		config("-V", "badconfig"),
 	)
+}
+
+// rgPcreCases give the engine of PCRE2: -P, --engine pcre2 and --engine
+// auto, the syntax that only PCRE2 has, the errors of PCRE2, and a search
+// that goes above the match limit. The hint about PCRE2 comes after an error
+// of the default engine about a back reference or a look-around.
+func rgPcreCases() []rgCase {
+	lines := []string{
+		"-P foo a.txt", "-P -n (?<=f)oo a.txt", "-P -o (\\w)\\1 w.txt", "-P -c foo(?!bar) w.txt", "-P -o \\bfoo\\b w.txt",
+		"-P -w foo w.txt", "-P -x foo w.txt", "-P -i FOO upper.txt", "-P -S Foo upper.txt", "-P -S foo upper.txt",
+		"-P -F (foo) w.txt", "-P -e foo -e bar -n a.txt", "-P -v foo a.txt", "-P -o (?>fo+)o w.txt", "-P -o fo++ w.txt",
+		"-P -o foo\\Kbar a.txt", "-P -r <$1> (o+) a.txt", "-P -r <${n}> (?<n>o+) a.txt", "-P -o (?i)FOO\\b a.txt",
+		"-P --column -n o(?=o) a.txt", "-P -c \\p{L}+ uni.txt", "-P -o \\p{Greek}+ uni.txt", "-P -o [[:alpha:]]+ uni.txt",
+		"-P -o \\w+ uni.txt", "--no-pcre2-unicode -P -o \\w+ uni.txt", "-P --no-unicode -c . uni.txt", "-P -o caf. uni.txt",
+		"-P -o (?|(a)|(b))\\1 a.txt", "-P -o (a|b)(?(1)c|d) a.txt", "-P -o \\((?:[^()]|(?R))*\\) w.txt",
+		"-P -U (?s)foo.bar a.txt", "-P -U -c foo\\nbar a.txt", "-P --crlf foo$ crlf.txt", "-P -o two\\s crlf.txt",
+		"-P -j1 -l foo a.txt w.txt", "-P --json foo a.txt", "-P --vimgrep o a.txt", "-P -c ^$ empty.txt", "-P -o ^\\w+$ hw.txt",
+		"-P -m1 foo a.txt", "-P -A1 gamma a.txt", "-P foo bin.dat", "-P -a -c foo bin.dat", "-P -j1 --sort path foo tree",
+		"--engine pcre2 -c foo a.txt", "--engine auto -c (?<=f)oo a.txt", "--engine auto -c foo a.txt", "--auto-hybrid-regex -o \\1 a.txt",
+		"--engine auto -P -c foo a.txt", "-P --engine default foo a.txt", "--pcre2 --no-pcre2 (?<=f)oo a.txt",
+		"-P ( a.txt", "-P a) a.txt", "-P [z-a] a.txt", "-P (?<=a+)b a.txt", "-P \\k<x> a.txt", "-P \\2(a) a.txt",
+		"-P * a.txt", "-P a{2,1} a.txt", "-P \\p{Foo} a.txt", "-P [[:foo:]] a.txt", "-P -w ( a.txt", "-P -x ( a.txt",
+		"-P -e a -e ( a.txt", "--engine auto ( a.txt", "--engine auto a(?=b)( a.txt", "-P \\ a.txt", "-P (?P<n>a)(?P<n>b) a.txt",
+		"-P (a+)+$ limit.txt", "-P -j1 -c (a|aa)+$ limit.txt a.txt", "-P -c (x+x+)+y long.md", "\\1 a.txt", "(?=a) a.txt", "(?<!a)b a.txt",
+	}
+	var cases []rgCase
+	for _, l := range lines {
+		cases = append(cases, rgCase{args: rgArgs(l)})
+	}
+	return cases
 }
 
 // rgTimes match the times of --stats and --json, which differ from run to
@@ -750,37 +782,23 @@ func TestSelfHostExampleRgAgainstRipgrep(t *testing.T) {
 	}
 }
 
-// TestSelfHostExampleRgWithoutPcre2 checks that the port behaves as
-// ripgrep 14.1.0 built without PCRE2. The oracle has PCRE2, so the test
-// compares the port with the text of that build.
-func TestSelfHostExampleRgWithoutPcre2(t *testing.T) {
+// TestSelfHostExampleRgPcre2Version checks the two outputs where the port
+// is not the same as the oracle: std/pcre follows PCRE2 10.42 and has no
+// JIT, so --pcre2-version and --version say that the JIT is unavailable.
+func TestSelfHostExampleRgPcre2Version(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()
 	rgFixtures(t, dir)
-	const noPcre2 = "PCRE2 is not available in this build of ripgrep."
-	divider := strings.Repeat("~", 79)
-	cases := []struct {
-		args string
-		want rgResult
-	}{
-		{"-P foo a.txt", rgResult{"", "rg: " + noPcre2 + "\n", 2}},
-		{"--engine pcre2 foo a.txt", rgResult{"", "rg: " + noPcre2 + "\n", 2}},
-		{"--pcre2-version", rgResult{noPcre2 + "\n", "", 1}},
-		{"--engine auto -c foo a.txt", rgResult{"3\n", "", 0}},
-		{"--engine auto a{2,1} a.txt", rgResult{"", "rg: regex could not be compiled with either the default regex engine or with PCRE2.\n\n" +
-			"default regex engine error:\n" + divider + "\nregex parse error:\n    (?:a{2,1})\n        ^^^^^\n" +
-			"error: invalid repetition count range, the start must be <= the end\n" + divider + "\n\nPCRE2 regex engine error:\n" + noPcre2 + "\n", 2}},
-		{"\\1 a.txt", rgResult{"", "rg: regex parse error:\n    (?:\\1)\n       ^^\nerror: backreferences are not supported\n", 2}},
-	}
+	const version = "PCRE2 10.42 is available (JIT is unavailable)\n"
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
 			port := rgPort(t, cli, target)
-			for _, c := range cases {
-				got := rgRun(t, port(rgArgs(c.args)...), dir, rgCase{args: rgArgs(c.args)})
-				if got != c.want {
-					t.Errorf("rg %s:\ngot  exit %d, stdout %q, stderr %q\nwant exit %d, stdout %q, stderr %q",
-						c.args, got.code, got.stdout, got.stderr, c.want.code, c.want.stdout, c.want.stderr)
-				}
+			if got := rgRun(t, port("--pcre2-version"), dir, rgCase{args: []string{"--pcre2-version"}}); got != (rgResult{version, "", 0}) {
+				t.Errorf("rg --pcre2-version: got exit %d, stdout %q, stderr %q", got.code, got.stdout, got.stderr)
+			}
+			got := rgRun(t, port("--version", "--version"), dir, rgCase{args: []string{"--version", "--version"}})
+			if !strings.Contains(got.stdout, "features:-simd-accel,+pcre2\n") || !strings.HasSuffix(got.stdout, "\n"+version) || got.code != 0 {
+				t.Errorf("rg --version --version: got exit %d, stdout %q", got.code, got.stdout)
 			}
 		})
 	}
