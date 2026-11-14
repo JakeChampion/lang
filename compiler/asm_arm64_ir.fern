@@ -3185,7 +3185,7 @@ function ssa_reuse_alloc(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowS
   let fresh = asmcore.lab_new(s, lp + "raf" + id);
   let en = asmcore.lab_new(fresh.state, lp + "rae" + id);
   s = ssa_cbz(en.state, false, "x0", fresh.lab);
-  s = ssa_bcond(s.write("    ldur w30, [x0, #-4]\n    cmp w30, w1\n"), CC_EQ, en.lab);
+  s = ssa_bcond(s.write("    ldurh w30, [x0, #-4]\n    cmp w30, w1\n"), CC_EQ, en.lab);
   s = ssa_b(ssa_bl_saving(s, "__fn___fern_alloc_reuse.r", saves), en.lab);
   s = ssa_bl_saving(s.lab_def(fresh.lab).write("    mov x0, x1\n"), "__fern_rec_box", saves);
   return ssa_store(reg_of, ins.result, "x0", asmcore.ssa_x0_forget(s.lab_def(en.lab)));
@@ -3417,7 +3417,7 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
     d = ssa_fhome(reg_of, ins.result);
   }
   if (k == ssa.LD_AT) {
-    s = ssa_ldst(s, true, d, a, ins.imm);
+    s = ssa_ldst(s, true, if (ins.str == "u32") { ssa_wreg(d) } else { d }, a, ins.imm);
     return ssa_store(reg_of, ins.result, d, s);
   }
   if (k >= ssa.ARR_AT && imm.is_imm[ins.args[1]]) {
@@ -3428,7 +3428,7 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
   if (k == ssa.ST_AT && ins.str == "i32" && ins.imm == 0) {
     return ssa_ldst0(s, false, ssa_wreg(b), a);
   }
-  if (k == ssa.ST_AT && ins.str == "i32") {
+  if (k == ssa.ST_AT && (ins.str == "i32" || ins.str == "u32")) {
     return ssa_ldst(s, false, ssa_wreg(b), a, ins.imm);
   }
   if (k == ssa.ST_AT && ins.str == "u8") {
@@ -4472,9 +4472,8 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState):
       label = asmcore.cfi_stub_label(s, label);
     }
   } else if (k == ssa.SHAPE_ADDR) {
-    let sh = asmcore.shape_ref(s, ins.str);
-    s = sh.state;
-    label = sh.label;
+    let d = ssa_dst(reg_of, ins.result);
+    return ssa_store(reg_of, ins.result, d, s.write(mov_tag(ssa_wreg(d), asmcore.shape_tag(s, ins.str))));
   } else if (k == ssa.STR_LIT) {
     s = s.need("heap");
     let lo = asmcore.add_string_lit(s, ins.str);
@@ -6361,7 +6360,7 @@ function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], own s: as
   let key = tag.name;
   let dargc = args.len();
   s = dyn_arg_load(s, "x0", args[0]);
-  s = s.write("    ldr x1, [x0]\n");
+  s = s.write("    ldur w1, [x0, #-4]\n");
   let dend = key + "dynend";
   let dfi = 0;
   let darmn = 0;
@@ -6372,17 +6371,14 @@ function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], own s: as
     if (irtables.dyn_arm_matches(dfd, arms) && dfd.receiver_type.len() > 0
       && (asmcore.is_struct_decl_name(ddbn, s) || dprim)) {
       let dbn = ddbn;
-      let dlit = asmcore.shape_ref(s, dbn);
-      s = dlit.state;
       let dnext = key + "dynnext" + util.i32_to_string(darmn);
-      s = s.write("    adrp x2, " + dlit.label + "\n");
-      s = s.write("    add x2, x2, :lo12:" + dlit.label + "\n");
-      s = s.write("    cmp x1, x2\n    b.ne " + dnext + "\n");
+      s = s.write(mov_tag("w2", asmcore.shape_tag(s, dbn)));
+      s = s.write("    cmp w1, w2\n    b.ne " + dnext + "\n");
       let dk = dargc - 1;
       while (dk >= 0) {
         if (dk == 0 && dprim) {
           s = dyn_arg_load(s, "x0", args[0]);
-          s = s.write("    ldr x0, [x0, #8]\n");
+          s = s.write("    ldr x0, [x0]\n");
           s = s.write("    str x0, [sp, #-16]!\n");
         } else {
           s = dyn_arg_load(s, "x0", args[dk]);
@@ -6405,11 +6401,8 @@ function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], own s: as
       while (dvi < s.struct_decls.decls.len()) {
         if (s.struct_decls.decls[dvi].enum_owner == ddbn) {
           let vlit_name = irtables.decl_shape(s.struct_decls.decls[dvi]);
-          let vlit = asmcore.shape_ref(s, vlit_name);
-          s = vlit.state;
-          s = s.write("    adrp x2, " + vlit.label + "\n");
-          s = s.write("    add x2, x2, :lo12:" + vlit.label + "\n");
-          s = s.write("    cmp x1, x2\n    b.eq " + dehit + "\n");
+          s = s.write(mov_tag("w2", asmcore.shape_tag(s, vlit_name)));
+          s = s.write("    cmp w1, w2\n    b.eq " + dehit + "\n");
         }
         dvi += 1;
       }
@@ -6440,14 +6433,10 @@ function emit_dyn_dispatch_chain(arms: string, args: asmcore.DynArg[], own s: as
 }
 
 function emit_arm64_op_dyn_box(o: ir.Op, own s: asmcore.EmitState): asmcore.EmitState {
-  let dbl = asmcore.shape_ref(s, o.str);
-  s = dbl.state;
   s = s.need("heap");
-  s = s.write("    mov x0, #2\n    bl __fern_arr_box\n");
-  s = s.write("    adrp x2, " + dbl.label + "\n");
-  s = s.write("    add x2, x2, :lo12:" + dbl.label + "\n");
-  s = s.write("    str x2, [x0]\n");
-  s = s.write("    ldr x1, [sp], #16\n    str x1, [x0, #8]\n");
+  s = s.write("    mov x0, #1\n    bl __fern_rec_box\n");
+  s = s.write(mov_tag("w2", asmcore.shape_tag(s, o.str)) + "    stur w2, [x0, #-4]\n");
+  s = s.write("    ldr x1, [sp], #16\n    str x1, [x0]\n");
   s = s.write("    str x0, [sp, #-16]!\n");
 
   return s;
@@ -7525,7 +7514,6 @@ pub function emit_rodata_pools_arm64(s: asmcore.EmitState, darwin: boolean): asm
   } else {
     s = asmcore.emit_const_agg_data(s);
   }
-  s = asmcore.emit_shape_lits_from(s, 0);
   s = asmcore.emit_shuffle_masks(s);
   s = s.write("    .text\n");
   return s;
@@ -10575,7 +10563,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    ldr x1, [sp]\n");
   s = s.write("__fn___fern_alloc_reuse.r:\n");
   s = s.write("    cbz x0, .Lsarelo_fresh\n");
-  s = s.write("    ldur w2, [x0, #-4]\n");
+  s = s.write("    ldurh w2, [x0, #-4]\n");
   s = s.write("    cmp w2, w1\n");
   s = s.write("    beq .Lsarelo_ret\n");
   s = s.write("    cbnz w2, .Lsarelo_other\n");
@@ -10950,8 +10938,6 @@ function emit_rt_fs(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
 }
 
 function emit_rt_subprocess(own s: asmcore.EmitState): asmcore.EmitState {
-  let prLitA = asmcore.shape_ref(s, "ProcessResult");
-  s = prLitA.state;
   s = s.write(".globl __fn___fern_subprocess\n");
   s = s.write(".type __fn___fern_subprocess, %function\n");
   s = s.write("__fn___fern_subprocess:\n" + rt_pac(s, "paciasp"));
@@ -11173,14 +11159,12 @@ function emit_rt_subprocess(own s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    mov x1, x28\n");
   s = s.write("    bl __fern_str_box\n");
   s = s.write("    mov x27, x0\n");
-  s = s.write("    mov x0, #4\n");
-  s = s.write("    bl __fern_arr_box\n");
-  s = s.write("    adrp x9, " + prLitA.label + "\n");
-  s = s.write("    add x9, x9, :lo12:" + prLitA.label + "\n");
-  s = s.write("    str x9, [x0]\n");
-  s = s.write("    str x25, [x0, #8]\n");
-  s = s.write("    str x27, [x0, #16]\n");
-  s = s.write("    str x22, [x0, #24]\n");
+  s = s.write("    mov x0, #3\n");
+  s = s.write("    bl __fern_rec_box\n");
+  s = s.write(mov_tag("w9", asmcore.shape_tag(s, "ProcessResult")) + "    stur w9, [x0, #-4]\n");
+  s = s.write("    str x25, [x0]\n");
+  s = s.write("    str x27, [x0, #8]\n");
+  s = s.write("    str x22, [x0, #16]\n");
   s = s.write("    ldp x27, x28, [sp, #80]\n");
   s = s.write("    ldp x25, x26, [sp, #64]\n");
   s = s.write("    ldp x23, x24, [sp, #48]\n");
@@ -13393,20 +13377,26 @@ function compact_boxes(s: asmcore.EmitState): boolean {
 // word and a count of 1 in its first word. The array release then takes it.
 // That release also takes each other block, and a box that is shared,
 // because it then changes only the count.
+// The text that puts the tag of a shape in the 32-bit register `reg`.
+function mov_tag(reg: string, tag: i64): string {
+  return "    movz " + reg + ", #" + util.i64_to_string(tag % 65536i64) + "\n    movk " + reg + ", #" + util.i64_to_string(tag / 65536i64) + ", lsl #16\n";
+}
+
 function emit_box_routines(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_rec_box:\n");
   if (compact_boxes(s)) {
-    s = s.write("    cmp x0, #2\n    b.lo .Lrecbox_unit\n" + rt_frame_of(s, 32) + "    str x0, [sp, #16]\n    sub x0, x0, #2\n    bl __fern_arr_box\n");
+    s = s.write("    cmp x0, #16, lsl #12\n    b.hs .Lrecbox_wide\n");
+    s = s.write(rt_frame_of(s, 32) + "    str x0, [sp, #16]\n    subs x0, x0, #2\n    csel x0, x0, xzr, hs\n    bl __fern_arr_box\n");
     s = s.write("    ldr x1, [sp, #16]\n" + rt_unframe_of(s, 32) + "    sub x0, x0, #8\n    mov w2, #1\n    stur w2, [x0, #-8]\n    stur w1, [x0, #-4]\n    ret\n");
-    s = s.write(".Lrecbox_unit:\n");
+    s = s.write(".Lrecbox_wide:\n");
   }
   s = s.write("    sub x0, x0, #1\n    b __fern_arr_box\n");
   s = s.write("__fn___fern_box_dec:\n    ldr x0, [sp]\n");
   s = s.write("__fn___fern_box_dec.r:\n    cmp x0, #16, lsl #12\n    blo .Lboxdec_ret\n");
   s = s.write("__fn___fern_box_dec.u:\n");
   if (compact_boxes(s)) {
-    s = s.write("    ldur w1, [x0, #-4]\n    cbz w1, .Lboxdec_array\n    ldur w2, [x0, #-8]\n    cmp w2, #1\n    b.ne .Lboxdec_array\n");
-    s = s.write("    sub x1, x1, #2\n    stur x1, [x0, #-8]\n    mov x2, #1\n    str x2, [x0]\n    add x0, x0, #8\n");
+    s = s.write("    ldurh w1, [x0, #-4]\n    cbz w1, .Lboxdec_array\n    ldur w2, [x0, #-8]\n    cmp w2, #1\n    b.ne .Lboxdec_array\n");
+    s = s.write("    subs x1, x1, #2\n    csel x1, x1, xzr, hs\n    stur x1, [x0, #-8]\n    mov x2, #1\n    str x2, [x0]\n    add x0, x0, #8\n");
   }
   return s.write(".Lboxdec_array:\n    b __fn___fern_arr_dec.u\n.Lboxdec_ret:\n    ret\n");
 }

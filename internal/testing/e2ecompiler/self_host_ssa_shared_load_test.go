@@ -42,7 +42,7 @@ func TestSelfHostSSASharedArmLoadsTheKeptWord(t *testing.T) {
 	if tests[node] < 3 {
 		t.Fatalf("ins has no node with three uniqueness tests:\n%s", form)
 	}
-	load := "= ld_at 32 " + node + "\n"
+	load := "= ld_at 24 " + node + "\n"
 	loads := 0
 	for _, block := range ssaFormBlock.Split(form, -1) {
 		n := strings.Count(block, load)
