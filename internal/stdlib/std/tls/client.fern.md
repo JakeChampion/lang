@@ -14,6 +14,8 @@ A session draws no randomness of its own: `start` takes exactly `entropy(config)
 
 A session step returns state, output, application data, and ticket updates. The caller must preserve the returned state and apply the configured verification policy.
 
+`without_verification` makes a configuration that accepts any certificate chain for any name, as `curl --insecure` does. The session still checks that the server signed the handshake with the key of its leaf certificate. Use it only to test against a server whose certificate the client cannot verify.
+
 ## Module assembly
 
 The root chunk preserves the declaration order. The chunks below contain the complete implementation.
@@ -102,7 +104,8 @@ import "std/result";
 
 ```fern
 <<3 pub struct Config>>=
-pub struct Config { server_name: string, alpn: string[], roots: verify.Roots, resume: Option[Ticket], identity: Option[identity.Identity] }
+// verify is false when the session accepts any certificate chain.
+pub struct Config { server_name: string, alpn: string[], roots: verify.Roots, resume: Option[Ticket], identity: Option[identity.Identity], verify: boolean }
 
 // max_early is the most early data the ticket allows, 0 when it allows none.
 pub struct Ticket { identity: u8[], psk: u8[], suite: i32, lifetime: Duration, age_add: u32, received: time.Timestamp, server_name: string, max_early: u32 }
@@ -113,7 +116,11 @@ pub struct Ticket { identity: u8[], psk: u8[], suite: i32, lifetime: Duration, a
 ```fern
 <<4 pub function config(server_name: string, roots: verify.Roots): Config>>=
 pub function config(server_name: string, roots: verify.Roots): Config {
-  return Config { server_name: server_name, alpn: [], roots: roots, resume: None, identity: None };
+  return Config { server_name: server_name, alpn: [], roots: roots, resume: None, identity: None, verify: true };
+}
+
+pub function (c: Config) without_verification(): Config {
+  return Config { ...c, verify: false };
 }
 
 pub function (c: Config) with_alpn(protocols: string[]): Config {
@@ -133,7 +140,7 @@ pub function (c: Config) with_identity(id: identity.Identity): Config {
 
 ```fern
 <<5 pub struct Session>>=
-pub struct Session { client: handshake.Client, name: string, roots: verify.Roots, identity: Option[identity.Identity], held: u8[] }
+pub struct Session { client: handshake.Client, name: string, roots: verify.Roots, identity: Option[identity.Identity], held: u8[], verify: boolean }
 
 pub struct Step { session: Session, output: u8[], data: u8[], closed: boolean, tickets: Ticket[], rekeyed: handshake.KernelKeys }
 ```
@@ -146,7 +153,7 @@ pub function start(config: Config, entropy: [u8], now: time.Timestamp): Result[S
   let hc = handshake.ClientConfig { ...__hello(config), resume: __offer(config, now) };
   match (handshake.client_start(hc, entropy)) {
     Ok(step) => {
-      let s = Session { client: step.client, name: config.server_name, roots: config.roots, identity: config.identity, held: [] };
+      let s = Session { client: step.client, name: config.server_name, roots: config.roots, identity: config.identity, held: [], verify: config.verify };
       return Ok(Step { session: s, output: step.output, data: [], closed: false, tickets: [], rekeyed: __no_keys() });
     },
     Err(e) => {
@@ -352,7 +359,7 @@ pub function restore(saved: [u8]): Result[Session, tls.TlsError] {
   }
   match (handshake.client_restore(saved[4:4 + n])) {
     Ok(c) => {
-      return Ok(Session { client: c, name: "", roots: verify.no_roots(), identity: None, held: __copy(saved[4 + n:saved.len()]) });
+      return Ok(Session { client: c, name: "", roots: verify.no_roots(), identity: None, held: __copy(saved[4 + n:saved.len()]), verify: true });
     },
     Err(e) => {
       return Err(tls.HandshakeFailed(e));
@@ -535,7 +542,7 @@ function __signature(s: Session, c: handshake.Client, sg: handshake.Signing): Re
 ```fern
 <<14 function __trusted(s: Session, v: handshake.Verification, now: time.Timestamp): Result[void, tls.TlsError]>>=
 function __trusted(s: Session, v: handshake.Verification, now: time.Timestamp): Result[void, tls.TlsError] {
-  match (verify.server(v.chain, s.roots, s.name, now)) {
+  match (__leaf(s, v, now)) {
     Ok(leaf) => {
       let ok = verify.signed(leaf, v.scheme, v.signed, v.signature);
       if (v.tls12) {
@@ -551,6 +558,26 @@ function __trusted(s: Session, v: handshake.Verification, now: time.Timestamp): 
     }
   }
   return Err(tls.SignatureInvalid);
+}
+
+// The leaf certificate of the chain. A session without verification parses
+// it and does not check the chain or the name.
+function __leaf(s: Session, v: handshake.Verification, now: time.Timestamp): Result[x509.Certificate, verify.VerifyError] {
+  if (s.verify) {
+    return verify.server(v.chain, s.roots, s.name, now);
+  }
+  if (v.chain.len() == 0) {
+    return Err(verify.EmptyChain);
+  }
+  match (x509.parse(v.chain[0])) {
+    Ok(leaf) => {
+      return Ok(leaf);
+    },
+    Err(e) => {
+      return Err(verify.Parse(0, e));
+    }
+  }
+  return Err(verify.EmptyChain);
 }
 
 function __cat(own a: u8[], b: [u8]): u8[] {
