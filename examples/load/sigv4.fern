@@ -1,0 +1,114 @@
+// The AWS Signature Version 4 of a request, as --aws-sigv4 of oha makes it
+// with the aws-sign-v4 crate. Each request is signed at the time that it is
+// made.
+import "core/cmp";
+import "std/array";
+import "std/crypto";
+import "std/hex";
+import "std/i32";
+import "std/string";
+import "std/time";
+import "std/url";
+import "std/utf8";
+import "./fields";
+import "./options";
+
+// The fields that oha does not sign. They go back after the signature.
+const UNSIGNED: string[] = ["accept", "accept-encoding", "user-agent", "expect", "range", "connection", "presigned-expires", "x-amzn-trace-id"];
+
+// The fields `base` of a request to `at` with `body`, signed at `now`: oha
+// adds Host (the host of the URL without its port) when -H and --host do not
+// set it, X-Amz-Date, X-Amz-Security-Token for --aws-session, and
+// Content-Length, and signs them with the other fields.
+pub function sign(a: options.Aws, method: string, base: fields.Field[], at: options.Origin, body: u8[], now: time.Timestamp): fields.Field[] {
+  let dt = now.to_datetime();
+  let date = pad(dt.date.year, 4) + pad(dt.date.month, 2) + pad(dt.date.day, 2);
+  let stamp = date + "T" + pad(dt.time.hour, 2) + pad(dt.time.minute, 2) + pad(dt.time.second, 2) + "Z";
+  let host = if (at.host.index_of(":").is_some()) { f"[{at.host}]" } else { at.host };
+  let f = fields.or_insert(base, "host", host);
+  f = fields.insert(f, "x-amz-date", stamp);
+  if let Some(token) = a.session {
+    f = fields.insert(f, "x-amz-security-token", token);
+  }
+  f = fields.remove(f, "authorization").0;
+  let kept: fields.Field[] = [];
+  for name in UNSIGNED {
+    let (rest, value) = fields.remove(f, name);
+    f = rest;
+    if let Some(v) = value {
+      kept = kept.append(fields.Field { name: name, value: v });
+    }
+  }
+  f = fields.insert(f, "content-length", body.len().to_string());
+  let scope = f"{date}/{a.region}/{a.service}/aws4_request";
+  let request = canonical(method, f, at, body);
+  let to_sign = "AWS4-HMAC-SHA256\n" + stamp + "\n" + scope + "\n" + hex.encode(crypto.sha256(request.bytes()));
+  let key = crypto.hmac_sha256(("AWS4" + a.secret).bytes(), date.bytes());
+  for part in [a.region, a.service, "aws4_request"] {
+    key = crypto.hmac_sha256(key, part.bytes());
+  }
+  let signature = hex.encode(crypto.hmac_sha256(key, to_sign.bytes()));
+  let signed = names(f);
+  for k in kept {
+    f = fields.insert(f, k.name, k.value);
+  }
+  return fields.insert(f, "authorization", f"AWS4-HMAC-SHA256 Credential={a.access}/{scope},SignedHeaders={signed},Signature={signature}");
+}
+
+function pad(n: i32, width: i32): string {
+  return n.to_string().pad_start(width, '0');
+}
+
+// The names of `f`, sorted and joined with `;`.
+function names(f: fields.Field[]): string {
+  let out: string[] = [];
+  for x in f {
+    out = out.append(x.name);
+  }
+  return cmp.sort_by(out, (a: string, b: string): i32 => a.cmp(b)).join(";");
+}
+
+// The canonical request of the crate: the method, the path, the query, the
+// fields as `name:value` lines in sorted order, the signed names, and the
+// SHA-256 of the body.
+pub function canonical(method: string, f: fields.Field[], at: options.Origin, body: u8[]): string {
+  let lines: string[] = [];
+  for x in f {
+    lines = lines.append(x.name + ":" + x.value.trim());
+  }
+  lines = cmp.sort_by(lines, (a: string, b: string): i32 => a.cmp(b));
+  let q = at.target.index_of("?");
+  let path = at.target.take(q.unwrap_or(at.target.len()));
+  let query = if let Some(i) = q { at.target.drop(i + 1) } else { "" };
+  return method + "\n" + path + "\n" + canonical_query(query) + "\n" + lines.join("\n") + "\n\n" + names(f) + "\n" + hex.encode(crypto.sha256(body));
+}
+
+// The pairs of the query, decoded as a form decodes them and encoded again
+// with escapes for all but the unreserved marks, in sorted order.
+pub function canonical_query(query: string): string {
+  let pairs: string[] = [];
+  for part in query.split("&") {
+    if (part.len() == 0) {
+      continue;
+    }
+    let eq = part.index_of("=");
+    let key = part.take(eq.unwrap_or(part.len()));
+    let value = if let Some(e) = eq { part.drop(e + 1) } else { "" };
+    pairs = pairs.append(encoded(url.form_decode_bytes(key)) + "=" + encoded(url.form_decode_bytes(value)));
+  }
+  return cmp.sort_by(pairs, (a: string, b: string): i32 => a.cmp(b)).join("&");
+}
+
+function encoded(bytes: u8[]): string {
+  let out = "";
+  for c in bytes {
+    let unreserved = c >= 97 as u8 && c <= 122 as u8 || c >= 65 as u8 && c <= 90 as u8 || c >= 48 as u8 && c <= 57 as u8 || c == 95 as u8 || c == 45 as u8 || c == 126 as u8 || c == 46 as u8;
+    if (unreserved) {
+      let one: u8[] = [c];
+      out += utf8.from_bytes_lossy(one);
+    } else {
+      out += "%" + (c as i32).to_hex().to_ascii_upper().pad_start(2, '0');
+    }
+  }
+  return out;
+}

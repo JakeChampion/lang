@@ -1,0 +1,67 @@
+// The header fields of a request, with the rules of the header map of the
+// Rust `http` crate that oha uses. A name is in lower case. `insert`
+// replaces the value of a field in its place, or adds the field at the end.
+// `remove` moves the last field into the place of the removed one.
+
+pub struct Field { name: string, value: string }
+
+pub function at(fields: Field[], name: string): i32 {
+  for i in 0..fields.len() {
+    if (fields[i].name == name) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+pub function has(fields: Field[], name: string): boolean {
+  return at(fields, name) >= 0;
+}
+
+pub function get(fields: Field[], name: string): Option[string] {
+  let i = at(fields, name);
+  if (i < 0) {
+    return None;
+  }
+  return Some(fields[i].value);
+}
+
+pub function insert(fields: Field[], name: string, value: string): Field[] {
+  let i = at(fields, name);
+  if (i < 0) {
+    return fields.append(Field { name: name, value: value });
+  }
+  return fields.with(i, Field { name: name, value: value });
+}
+
+// `insert` only when no field has the name.
+pub function or_insert(fields: Field[], name: string, value: string): Field[] {
+  if (has(fields, name)) {
+    return fields;
+  }
+  return fields.append(Field { name: name, value: value });
+}
+
+// The fields without `name`, and its value when it was there.
+pub function remove(fields: Field[], name: string): (Field[], Option[string]) {
+  let i = at(fields, name);
+  if (i < 0) {
+    return (fields, None);
+  }
+  let value = fields[i].value;
+  let last = fields.len() - 1;
+  let out: Field[] = [];
+  for k in 0..last {
+    out = out.append(if (k == i) { fields[last] } else { fields[k] });
+  }
+  return (out, Some(value));
+}
+
+// The head lines of the fields, each `name: value` and CRLF.
+pub function lines(fields: Field[]): string {
+  let out = "";
+  for f in fields {
+    out += f"{f.name}: {f.value}\r\n";
+  }
+  return out;
+}
