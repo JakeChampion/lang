@@ -1,3 +1,6 @@
+# 2026-11-14: PR #15790 at 2bba0641, on the merge with main 8ce8fde7: perf-x86_64 job 132329458814
+# and perf-aarch64 job 132329458736. 1 rows are off the pins that main and this PR set apart.
+# Each moves to its measured value. Keep all tolerances.
 # 2026-11-14: PR #15790 at ba957d1e, perf-x86_64 job 132249261077 and perf-aarch64 job 132249260970.
 # The colour step of the bump allocator and the request for huge pages add 20 to 60 bytes of
 # runtime text to each program and two or three instructions to each bump block. The other rows
@@ -658,7 +661,7 @@ aarch64/deflate_encode.text	7735
 aarch64/enum_match.text	1190
 aarch64/enum_match.ir	24975095
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-aarch64/http_hello.text	16619
+aarch64/http_hello.text	16446
 # 2026-10-30 (#13900): CI41026748018 measures aarch64/http_hello.ir 4.98% lower on main 33b21667. #13900 does not change the serve path.
 aarch64/http_hello.ir	23892626
 aarch64/int_loop.text	383
