@@ -44,7 +44,7 @@ function bindings(caller: string, producers: ssa.SFunc[], consumers: ssa.SFunc[]
     }
     names = names.append(p.name);
     let checked = origin.producer(p, shape, [true, true]);
-    if (!checked.proof.ok || checked.words != 3) {
+    if (!checked.proof.ok || checked.words != 2) {
       return "unproved incoming allocation producer";
     }
   }
@@ -74,13 +74,13 @@ function producer_call(s: State, op: ssa.SInst): State {
   if (s.credits[root] != 0) {
     return State { ...s, error: "duplicate incoming allocation credit" };
   }
-  return State { ...s, values: s.values.with(slot, Value { kind: 1, identity: root, words: 3 }), credits: s.credits.with(root, 1) };
+  return State { ...s, values: s.values.with(slot, Value { kind: 1, identity: root, words: 2 }), credits: s.credits.with(root, 1) };
 }
 
 function consumer_call(s: State, op: ssa.SInst, block: i32, input: i32): State {
   let parent = s.values[util.index_of_i32(s.ids, op.args[0])];
   let child = s.values[util.index_of_i32(s.ids, op.args[1])];
-  if (parent.kind != 1 || parent.identity < 3 || parent.words != 3 || s.credits[parent.identity] != 1) {
+  if (parent.kind != 1 || parent.identity < 3 || parent.words != 2 || s.credits[parent.identity] != 1) {
     return State { ...s, error: "owned matching-capacity consumer argument required" };
   }
   if (child.kind != 1 || child.identity != 2 || child.words != 0 || s.credits[2] != 1) {
@@ -93,7 +93,7 @@ function consumer_call(s: State, op: ssa.SInst, block: i32, input: i32): State {
     }
     index += 1;
   }
-  let site = Site { input: input, block: block, call: op.result, consumer: op.str, parameter: 0, argument: op.args[0], incoming: op.args[1], words: 3 };
+  let site = Site { input: input, block: block, call: op.result, consumer: op.str, parameter: 0, argument: op.args[0], incoming: op.args[1], words: 2 };
   return State { ...s, sites: [site] };
 }
 

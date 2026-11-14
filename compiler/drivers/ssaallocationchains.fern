@@ -63,11 +63,11 @@ function caller_dependencies(output: ssaprepare.Output): void {
   let bad_box = change(output.text, "leaq 24(,%rdi,8), %rdi", "leaq 16(,%rdi,8), %rdi");
   require(chain.allocator(bad_box) && !chain.array_box(bad_box), "allocator cannot certify helper request");
   require(!chain.record(ssaprepare.Output { ...output, text: bad_box }, "parent"), "constructor binds helper");
-  let bad_store = coherent(output, "movq %rsi, 0(%rax)", "");
+  let bad_store = coherent(output, "movq %rbx, 0(%rax)", "");
   require(chain.array_box(bad_store.text) && !chain.record(bad_store, "parent"), "helper cannot certify constructor store");
   require(!chain.record(ssaprepare.Output { ...output, bodies: [] }, "parent"), "same retained graph required");
-  let bad_shape = change(output.text, ".ascii \"Parent\"", ".ascii \"Other\"");
-  require(chain.array_box(bad_shape) && !chain.record(ssaprepare.Output { ...output, text: bad_shape }, "parent"), "same selected shape required");
+  let bad_shape = coherent(output, "movl %esi, -4(%rax)", "movl %esi, -4(%rax)\nmovl $2, -4(%rax)");
+  require(chain.array_box(bad_shape.text) && !chain.record(bad_shape, "parent"), "same selected shape required");
   require(!chain.allocator(output.text + "\n.text\n__fern_alloc:\nret\n"), "unique dependency namespace");
 }
 

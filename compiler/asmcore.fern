@@ -64,7 +64,6 @@ pub struct EmitState {
   funcs: parser.FuncDecl[],
   local_types: Ty[],
   str_ns: string,
-  shape_lits: string[],
   sym_addrs: string[],
   cfi_stubs: string[],
   cfi_sigs: i32[],
@@ -619,7 +618,6 @@ pub function new_state(): EmitState {
     funcs: fns,
     local_types: lts,
     str_ns: "",
-    shape_lits: [],
     sym_addrs: [],
     cfi_stubs: [],
     cfi_sigs: [],
@@ -801,30 +799,6 @@ pub function with_funcs(s: EmitState, funcs: parser.FuncDecl[]): EmitState {
   return EmitState { ...s, funcs: funcs, funcs_ix: util.name_index(names) };
 }
 
-pub function add_shape_lit(s: EmitState, name: string): EmitState {
-  for i in 0..s.shape_lits.len() {
-    if (s.shape_lits[i] == name) {
-      return s;
-    }
-  }
-  return EmitState { ...s, shape_lits: s.shape_lits.append(name) };
-}
-
-pub function emit_shape_lits_from(s: EmitState, from: i32): EmitState {
-  if (s.shape_lits.len() <= from) {
-    return s;
-  }
-  s = s.write("    .section .rodata\n");
-  let i = from;
-  while (i < s.shape_lits.len()) {
-    let sym = shape_sym(s.shape_lits[i]);
-    s = s.write(".weak " + sym + "\n");
-    s = s.write(sym + ": .ascii \"" + escape_for_ascii(s.shape_lits[i]) + "\"\n");
-    i += 1;
-  }
-  return s;
-}
-
 pub function dedupe_weak_into(asm_text: string, seen_in: string[], h: usize): string[] {
   let seen = seen_in;
   let i = 0;
@@ -978,10 +952,6 @@ pub function buf_arity(kind: i32): i32 {
     }
   }
   return 0;
-}
-
-pub function shape_sym(name: string): string {
-  return "__fern_shp_" + sanitize_label(name);
 }
 
 pub function (s: EmitState) write(text: string): EmitState {
@@ -3880,7 +3850,8 @@ function const_agg_shape(own s: EmitState, packed: string): ShapeRefOut {
     return ShapeRefOut { state: s, label: "o" };
   }
   if (!ir.const_struct_is_array(packed)) {
-    return shape_ref(s, ir.const_struct_type(packed));
+    let tag = "t" + util.i64_to_string(shape_tag(s, ir.const_struct_type(packed)));
+    return ShapeRefOut { state: s, label: tag };
   }
   return ShapeRefOut { state: s, label: "0" };
 }
@@ -5630,6 +5601,9 @@ function emit_const_agg_block(st: EmitState, i: i32, e: string, array: boolean):
   if (shp == "o") {
     return st.write("    .quad 2\n    .quad -1\n" + const_agg_label(st, i) + ":\n    .quad " + vals[0] + "\n    .quad 0\n");
   }
+  if (!array && shp.starts_with("t")) {
+    return emit_const_record_block(st, i, slice_unchecked(shp, 1, shp.len()).to_owned(), vals);
+  }
   let cap = vals.len() + 1;
   if (array) {
     cap = vals.len();
@@ -5643,6 +5617,17 @@ function emit_const_agg_block(st: EmitState, i: i32, e: string, array: boolean):
     st = emit_const_agg_field(st, i, vi, vals[vi]);
   }
   return st;
+}
+
+// A constant record: the count of an immortal box and the tag of its shape
+// in the header word, then its fields. A record with no field has one word,
+// which holds the tag again: the debug information of an enum reads it.
+function emit_const_record_block(st: EmitState, i: i32, tag: string, vals: string[]): EmitState {
+  st = st.write("    .quad 0\n    .long -1\n    .long " + tag + "\n" + const_agg_label(st, i) + ":\n");
+  for vi in 0..vals.len() {
+    st = emit_const_agg_field(st, i, vi, vals[vi]);
+  }
+  return if (vals.len() == 0) { st.write("    .quad " + tag + "\n") } else { st };
 }
 
 function emit_const_agg_field(st: EmitState, idx: i32, vi: i32, word: string): EmitState {
@@ -5702,23 +5687,24 @@ pub struct ShapeRefOut { state: EmitState, label: string }
 
 pub struct DynArg { reg: string, off: i32 }
 
-pub function shape_ref(own s: EmitState, name: string): ShapeRefOut {
-  if (s.str_ns.len() == 0) {
-    let lo = add_string_lit(s, name);
-    return ShapeRefOut { state: lo.state, label: str_lit_label(lo.state, lo.idx) };
+// The tag of a box with the shape `name`: the high half of its header word.
+// The low 16 bits are the number of words of the box. The bits above them
+// are one more than the index of the shape in the declarations of the
+// program, or of a primitive type that a dyn box holds. A tuple has only its
+// number of words, and an array has zero.
+pub function shape_tag(s: EmitState, name: string): i64 {
+  let at = irtables.shape_index(s.struct_decls, name);
+  let words = 1;
+  if (at >= 0) {
+    words = s.struct_decls.decls[at].fields.len();
+  } else {
+    at = irtables.prim_type_id(s.struct_decls, name);
   }
-  return ShapeRefOut { state: add_shape_lit(s, name), label: shape_sym(name) };
-}
-
-pub function intern_shape(own s: EmitState, name: string): EmitState {
-  return shape_ref(s, name).state;
-}
-
-pub function shape_label(s: EmitState, name: string): string {
-  if (s.str_ns.len() == 0) {
-    return str_lit_label(s, string_lit_index(s, name));
+  if (at < 0 || at >= 32767 || words > 65535) {
+    eprint("fern: no header tag for the shape " + name);
+    exit(1);
   }
-  return shape_sym(name);
+  return (at + 1) as i64 * 65536i64 + (if (words > 0) { words } else { 1 }) as i64;
 }
 
 // A runtime routine and a free program function with one name would be two
@@ -5821,32 +5807,17 @@ function dbg_enum_members(s: EmitState, t: string, i: i32, end: i32): string {
       j = end;
     }
     let shape = slice_unchecked(t, i, j).to_owned();
-    let label = dbg_shape_label(s, shape);
-    if (label != "") {
-      if (out != "") {
-        out += ",";
-      }
-      let k = shape.len();
-      while (k > 0 && shape[k - 1] != b'$') {
-        k -= 1;
-      }
-      out = out + slice_unchecked(shape, k, shape.len()) + "=" + label;
+    if (out != "") {
+      out += ",";
     }
+    let k = shape.len();
+    while (k > 0 && shape[k - 1] != b'$') {
+      k -= 1;
+    }
+    out = out + slice_unchecked(shape, k, shape.len()) + "=" + util.i64_to_string(shape_tag(s, shape));
     i = j + 1;
   }
   return out;
-}
-
-function dbg_shape_label(s: EmitState, name: string): string {
-  if (s.str_ns == "") {
-    let at = string_lit_index(s, name);
-    if (at >= 0) {
-      return str_lit_label(s, at);
-    }
-  } else if (util.index_of_str(s.shape_lits, name) >= 0) {
-    return shape_sym(name);
-  }
-  return "";
 }
 
 function dbg_var(d: DbgVars, fn_label: string, a: ssa.Alloc, r: irtables.Lowered, i: i32, repl: i32[], seen_vals: i32[], seen_slots: i32[], locs: string[], npos: i32): DbgVars {

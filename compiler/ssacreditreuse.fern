@@ -334,7 +334,7 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
     }
     out = equal(out, out.state.path, covered, 1, "missing scalar child field layout");
     kind = 3;
-  } else if (op.kind_tag == ssa.LD_AT && op.args.len() == 1 && (op.imm == 8 || op.imm == 16) && ssa.plain_str(op) == "") {
+  } else if (op.kind_tag == ssa.LD_AT && op.args.len() == 1 && (op.imm == 0 || op.imm == 8) && ssa.plain_str(op) == "") {
     let base = out.values[op.args[0]];
     out = parent(out, base);
     kind = 1;
@@ -342,28 +342,28 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
     while (p < 2 && out.error == "") {
       out = mask(out, base.identity, p + 1);
       let path = out.temp;
-      let slot = p * 2 + op.imm / 8 - 1;
+      let slot = p * 2 + op.imm / 8;
       out = equal(out, path, out.state.credits[slot], 1, "load from stale or uninitialized slot");
       out = calc(out, 4, path, out.state.contents[slot]);
       out = calc(out, 0, identity, out.temp);
       identity = out.temp;
       p += 1;
     }
-  } else if (op.kind_tag == ssa.ST_AT && op.args.len() == 2 && op.str == "") {
+  } else if (op.kind_tag == ssa.ST_AT && op.args.len() == 2 && (op.str == "" && op.imm >= 0 || op.str == "u32" && op.imm == ssa.tag_offset())) {
     let base = out.values[op.args[0]];
     let source = out.values[op.args[1]];
     out = parent(out, base);
-    if (op.imm == 0 && source.kind == 2) {
+    if (op.imm == ssa.tag_offset() && source.kind == 2) {
       out = literal(out, 2);
       out = equal(out, out.state.path, base.identity, out.temp, "only fresh shape initialization admitted");
       out = equal(out, out.state.path, out.state.shapes[1], 0, "duplicate shape initialization");
       out = calc(out, 0, out.state.shapes[1], out.state.path);
       out = Context { ...out, state: State { ...out.state, shapes: out.state.shapes.with(1, out.temp) } };
-    } else if ((op.imm == 8 || op.imm == 16) && source.kind == 0) {
+    } else if ((op.imm == 0 || op.imm == 8) && source.kind == 0) {
       out = equal(out, out.state.path, source.identity, 0, "only null slot clearing admitted");
       out = equal(out, out.state.path, base.identity, 1, "only old-parent clearing admitted");
       out = equal(out, out.state.path, out.unique, 1, "clearing shared parent slot");
-      let slot = op.imm / 8 - 1;
+      let slot = op.imm / 8;
       out = equal(out, out.state.path, out.state.credits[slot], 1, "clearing slot without contained credit");
       let transferred = 0;
       let root = 3;
@@ -383,13 +383,13 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
       }
       out = calc(out, 1, out.state.credits[slot], out.state.path);
       out = Context { ...out, state: State { ...out.state, credits: out.state.credits.with(slot, out.temp) } };
-    } else if ((op.imm == 8 || op.imm == 16) && source.kind == 1) {
+    } else if ((op.imm == 0 || op.imm == 8) && source.kind == 1) {
       out = child(out, source);
       let p = 0;
       while (p < 2 && out.error == "") {
         out = mask(out, base.identity, p + 1);
         let path = out.temp;
-        let slot = p * 2 + op.imm / 8 - 1;
+        let slot = p * 2 + op.imm / 8;
         if (p == 0) {
           out = equal(out, path, out.unique, 1, "overwriting shared parent");
         }
@@ -425,7 +425,7 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
       return failed(out, "invalid reuse allocation operands");
     }
     out = reuse_donor(out, donor, composed);
-    out = literal(out, 3);
+    out = literal(out, 2);
     out = equal(out, out.state.path, words.identity, out.temp, "parent allocation size mismatch");
     out = equal(out, out.state.path, out.state.allocated, 0, "extra parent allocation");
     out = calc(out, 0, out.state.allocated, out.state.path);
@@ -709,7 +709,7 @@ function check_body(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: st
   }
   let seen: ScalarField[] = [];
   for field in fields {
-    if (field.root < 3 || field.root > 5 || field.offset < 8 || field.offset % 8 != 0) {
+    if (field.root < 3 || field.root > 5 || field.offset < 0 || field.offset % 8 != 0) {
       return helper.Proof { ok: false, function_name: f.name, message: "invalid scalar child field layout" };
     }
     for old in seen {
@@ -722,7 +722,7 @@ function check_body(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: st
   if (shape == "" || f.name == "" || f.name.starts_with("__fern_") || f.name == drop.name || f.name == release.name) {
     return helper.Proof { ok: false, function_name: f.name, message: "invalid reuse identity" };
   }
-  let summary = helper.release_body_many(release, drop, helper.FlatChildren { offsets: [8, 16] });
+  let summary = helper.release_body_many(release, drop, helper.FlatChildren { offsets: [0, 8] });
   if (!summary.ok) {
     return summary;
   }

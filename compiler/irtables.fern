@@ -114,6 +114,29 @@ pub function decl_shape(d: parser.StructDecl): string {
   return variant_shape(d.enum_owner, d.name);
 }
 
+// The index of the first declaration with the shape `shape`, or -1. Each
+// unit of a program has the same table, so the index is the same in each.
+pub function shape_index(structs: StructTab, shape: string): i32 {
+  let i = stab_first(structs, shape);
+  while (i >= 0) {
+    if (decl_shape(structs.decls[i]) == shape) {
+      return i;
+    }
+    i = stab_next(structs, i, shape);
+  }
+  let at = util.index_of_sub(shape, "$");
+  while (at >= 0) {
+    let rest = slice_unchecked(shape, at + 1, shape.len()).to_owned();
+    let found = variant_decl_index(structs, rest, slice_unchecked(shape, 0, at).to_owned());
+    if (found >= 0) {
+      return found;
+    }
+    let more = util.index_of_sub(rest, "$");
+    at = if (more >= 0) { at + 1 + more } else { -1 };
+  }
+  return -1;
+}
+
 pub function variant_decl_index(structs: StructTab, name: string, owner: string): i32 {
   let vi = stab_first(structs, name);
   while (vi >= 0) {

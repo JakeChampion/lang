@@ -38,7 +38,7 @@ function producer(rows: ssaprepare.Emitted[], name: string, architecture: string
     return Functions { bodies: [], error: name + ": incompatible retained producer metadata" };
   }
   let proof = abi.check_emitted_producer(rows, name, architecture);
-  if (!proof.proof.ok || proof.words != 3) {
+  if (!proof.proof.ok || proof.words != 2) {
     return Functions { bodies: [], error: name + ": retained producer refused: " + proof.proof.message };
   }
   return Functions { bodies: [row.body.formed.f], error: "" };
