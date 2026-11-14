@@ -2278,7 +2278,7 @@ pub function op_call_indirect_sig(argc: i32, sig: string, cfi: i32): Op {
   return Op { source: 0, decl: -1, kind_tag: K_CALL_INDIRECT, i32_imm: argc, i64_imm: cfi as i64, f64_imm: 0.0, width: 0, unsigned: false, str: sig };
 }
 
-// The 32-bit FNV-1a hash of a function's full width tag, the word a hardened
+// The 32-bit FNV-1a hash of the key of a function's type, the word a hardened
 // stub carries ahead of its landing pad. It is never 0, which marks a raw
 // call, and never a landing pad or the compare the BTI control patches.
 pub function cfi_sig_hash(tag: string): i32 {
