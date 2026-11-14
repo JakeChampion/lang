@@ -142,11 +142,67 @@ pub const RSYNCMASK: i32 = 4095;
 
 pub const RSYNCHIT: i32 = 2047;
 
-// single_compress: one deflate stream over all of `data`, in the blocks of
-// pigz with one process.
+// The stream of single_compress between two blocks, and the input bytes
+// since its last reset for -i.
+pub struct Single {
+  z: zd.Z,
+  have: i32,
+}
+
+pub function single_start(s: Settings): Single {
+  return Single { z: zd.start(zd.new(), s.level, s.strategy), have: 0 };
+}
+
+// One block of single_compress without -R: the deflate data of
+// data[from:from + len], where `more` is true when more input follows.
+pub function single_block(s: Settings, own st: Single, data: u8[], from: i32, len: i32, more: boolean): (Single, u8[]) {
+  let z = st.z;
+  let have = st.have;
+  if (!s.setdict) {
+    have += len;
+    if (have > s.block) {
+      have = len;
+      z = zd.start(z, s.level, s.strategy);
+    }
+  }
+  z = zd.input(z, data, from, len);
+  if (more) {
+    let (b, _) = boundary(z, s.block, s.setdict, true);
+    z = b;
+  } else {
+    z = written(z, s.block, zd.FINISH);
+  }
+  let (next, bytes) = zd.take(z);
+  return (Single { z: next, have: have }, bytes);
+}
+
+// single_compress over all of `data`, in the blocks of pigz with one
+// process.
+pub function single(s: Settings, data: u8[]): u8[] {
+  if (s.rsync) {
+    return single_rsync(s, data);
+  }
+  let st = single_start(s);
+  let out: u8[] = [];
+  let from = 0;
+  loop {
+    let len = if (data.len() - from < s.block) { data.len() - from } else { s.block };
+    let more = from + len < data.len();
+    let (next, bytes) = single_block(s, st, data, from, len, more);
+    st = next;
+    out = out.concat(bytes);
+    from += len;
+    if (!more) {
+      break;
+    }
+  }
+  return out;
+}
+
+// single_compress with -R: a block ends after the last hash hit in it.
 // It keeps the branches of single_compress() of pigz in their order, to check against it.
 // fern-lint: allow cyclomatic-complexity
-pub function single(s: Settings, data: u8[]): u8[] {
+function single_rsync(s: Settings, data: u8[]): u8[] {
   let z = zd.start(zd.new(), s.level, s.strategy);
   let total = data.len();
   let block = s.block;
@@ -338,6 +394,55 @@ function rsync_jobs(s: Settings, data: u8[]): Job[] {
     }
   }
   return out;
+}
+
+// The deflate data of the jobs in data[from:end] of parallel_compress, in
+// whole blocks from `from`, each with the 32 KiB before it as its
+// dictionary. `more` is true when more input follows data.
+function blocks_of(s: Settings, data: u8[], from: i32, end: i32, more: boolean): u8[] {
+  let z = zd.new();
+  let none: i32[] = [];
+  let out: u8[] = [];
+  let at = from;
+  loop {
+    let len = if (end - at < s.block) { end - at } else { s.block };
+    let last = at + len >= data.len();
+    let (next, bytes) = job(z, s, data, at, len, none, more || !last);
+    z = next;
+    out = out.concat(bytes);
+    at += len;
+    if (at >= end) {
+      break;
+    }
+  }
+  return out;
+}
+
+// One round of parallel_compress: the deflate data of data[start:] in
+// whole blocks. data[:start] is the input before the round, and `more` is
+// true when more input follows it. Each of `procs` processes compresses a
+// run of consecutive blocks, so the output does not depend on `procs`.
+pub function round(s: Settings, data: u8[], start: i32, more: boolean, procs: i32): u8[] {
+  let count = (data.len() - start + s.block - 1) / s.block;
+  if (count < 1) {
+    count = 1;
+  }
+  let workers = if (procs < count) { procs } else { count };
+  let per = (count + workers - 1) / workers;
+  let out: u8[] = [];
+  for part in round_runs(s, data, start, more, start, per * s.block) {
+    out = out.concat(part);
+  }
+  return out;
+}
+
+function round_runs(s: Settings, data: u8[], start: i32, more: boolean, from: i32, size: i32): u8[][] {
+  if (from + size >= data.len()) {
+    return [blocks_of(s, data, from, data.len(), more)];
+  }
+  let w = worker.spawn((): u8[] => blocks_of(s, data, from, from + size, more));
+  let rest = round_runs(s, data, start, more, from + size, size);
+  return [w.join()].concat(rest);
 }
 
 // parallel_compress: the deflate data of the jobs, each compressed with the

@@ -1136,7 +1136,7 @@ pub function infchk(data: u8[], first: Header, path: string, o: Options, now: i6
     pos = t.pos;
     more = t.more;
     comment = t.comment;
-    out = out.concat(piece);
+    out = if (out.len() == 0) { piece } else { out.concat(piece) };
     members = members.append(Member { form: form, check: check, clen: clen, ulen: ulen });
     if (form != 0) {
       break;

@@ -104,35 +104,205 @@ function procs(o: gz.Options): i32 {
   return n;
 }
 
-// The compressed form of `data`: the header, the deflate data in the block
-// layout of pigz, and the trailer.
-function compressed(r: Run, data: u8[], name: Option[string], mtime: i64): (Run, u8[]) {
+// The input bytes of one read of a compression: a block for one process.
+// For more, a round of parallel_compress: about 1 MiB of whole blocks for
+// each process, and no more than 64 MiB.
+function round_size(o: gz.Options, procs: i32): i32 {
+  if (procs <= 1) {
+    return o.block;
+  }
+  let per = if (o.block >= 1048576) { o.block as i64 } else { (1048576 / o.block * o.block) as i64 };
+  let size = per * (procs as i64);
+  let cap = if (o.block as i64 > 67108864i64) { o.block as i64 } else { 67108864i64 / (o.block as i64) * (o.block as i64) };
+  if (size > cap) {
+    size = cap;
+  }
+  return size as i32;
+}
+
+// readn(): up to `n` bytes, fewer only at the end of the input.
+function readn(rd: Reader, n: i32, path: string): Result[u8[], Fatal] {
+  let out: u8[] = [];
+  while (out.len() < n) {
+    match (rd.read_chunk_bytes(n - out.len())) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          return Ok(out);
+        }
+        out = out.concat(chunk);
+      },
+      Err(e) => {
+        return Err(fatal("read", path, e));
+      }
+    }
+  }
+  return Ok(out);
+}
+
+function settings(o: gz.Options): layout.Settings {
+  return layout.Settings { level: o.level, strategy: o.strategy, block: o.block, rsync: o.rsync, setdict: o.setdict };
+}
+
+// The check of the input so far: CRC-32, or Adler-32 for zlib.
+struct Check {
+  crc: crc32.Crc32,
+  adler: u32,
+  zlib: boolean,
+  ulen: i64,
+}
+
+function check_of(c: Check, chunk: u8[]): Check {
+  if (c.zlib) {
+    return Check { ...c, adler: gz.crc_combine(c.adler, deflate.adler32(chunk), chunk.len() as i64, true), ulen: c.ulen + chunk.len() as i64 };
+  }
+  return Check { ...c, crc: c.crc.update(chunk), ulen: c.ulen + chunk.len() as i64 };
+}
+
+function header(r: Run, name: Option[string], mtime: i64): (Run, u8[]) {
   let o = r.o;
-  let s = layout.Settings { level: o.level, strategy: o.strategy, block: o.block, rsync: o.rsync, setdict: o.setdict };
-  let head: u8[] = [];
   if (o.form == 1) {
     if (o.comment.is_some()) {
-      r = complain(r, "can't store comment in zlib format -- ignoring");
+      return (complain(r, "can't store comment in zlib format -- ignoring"), gz.zlib_header(o.level));
     }
-    head = gz.zlib_header(o.level);
-  } else if (o.form == 2) {
-    head = gz.zip_header(zip_name(o, name), mtime, gz.time2dos(mtime, r.now));
-  } else {
-    head = gz.gzip_header(name, mtime, o.level, o.comment);
+    return (r, gz.zlib_header(o.level));
   }
+  if (o.form == 2) {
+    return (r, gz.zip_header(zip_name(o, name), mtime, gz.time2dos(mtime, r.now)));
+  }
+  return (r, gz.gzip_header(name, mtime, o.level, o.comment));
+}
+
+function trailer(r: Run, name: Option[string], mtime: i64, c: Check, clen: i64, head: i64): u8[] {
+  let o = r.o;
+  if (o.form == 1) {
+    return gz.zlib_trailer(c.adler);
+  }
+  let crc = c.crc.finish();
+  if (o.form == 2) {
+    return gz.zip_trailer(zip_name(o, name), mtime, gz.time2dos(mtime, r.now), o.comment, crc, c.ulen, clen, head);
+  }
+  return gz.gzip_trailer(crc, c.ulen);
+}
+
+function put(w: Writer, bytes: u8[], outf: string): Result[void, Fatal] {
+  match (w.write_bytes(bytes)) {
+    Ok(_) => {
+      return Ok(());
+    },
+    Err(e) => {
+      return Err(fatal("write", outf, e));
+    }
+  }
+  return Ok(());
+}
+
+// What a compression keeps from one read of the input to the next: the
+// stream of single_compress, or the last 32 KiB for parallel_compress.
+struct Pass {
+  st: layout.Single,
+  dict: u8[],
+}
+
+// The deflate data of one read of the input: a round of parallel_compress
+// for more than one process, else a block of single_compress.
+function pass(s: layout.Settings, n: i32, own p: Pass, cur: u8[], more: boolean): (Pass, u8[]) {
+  if (n > 1) {
+    let data = p.dict.concat(cur);
+    let bytes = layout.round(s, data, p.dict.len(), more, n);
+    let from = if (data.len() > 32768) { data.len() - 32768 } else { 0 };
+    return (Pass { ...p, dict: array.slice(data, from, data.len()) }, bytes);
+  }
+  let (st, bytes) = layout.single_block(s, p.st, cur, 0, cur.len(), more);
+  return (Pass { ...p, st: st }, bytes);
+}
+
+// The name in the header: the name of a file without its directory, for -N
+// and by default.
+function header_name(o: gz.Options, src: Source): Option[string] {
+  if ((o.headis & 1) != 0 && src.st.is_some()) {
+    return Some(gz.justname(src.path));
+  }
+  return None;
+}
+
+// The compression of the input that `rd` streams: the header, the deflate
+// data in the block layout of pigz, and the trailer, each written to `w`
+// as it is ready.
+function compress_to(r0: Run, src: Source, rd: Reader, w: Writer, outf: string): Result[Run, Fatal] {
+  let o = r0.o;
+  let name = header_name(o, src);
+  let (r, head) = header(r0, name, src.mtime);
+  put(w, head, outf)?;
+  let s = settings(o);
+  let n = procs(o);
+  let c = Check { crc: crc32.new(), adler: 1u32, zlib: o.form == 1, ulen: 0i64 };
+  let clen = 0i64;
+  let size = round_size(o, n);
+  let dict: u8[] = [];
+  let p = Pass { st: layout.single_start(s), dict: dict };
+  let cur = readn(rd, size, src.path)?;
+  loop {
+    let next = readn(rd, size, src.path)?;
+    let more = next.len() > 0;
+    let (after, bytes) = pass(s, n, p, cur, more);
+    p = after;
+    c = check_of(c, cur);
+    put(w, bytes, outf)?;
+    clen += bytes.len() as i64;
+    if (!more) {
+      break;
+    }
+    cur = next;
+  }
+  put(w, trailer(r, name, src.mtime, c, clen, head.len() as i64), outf)?;
+  return Ok(r);
+}
+
+// A streamed compression to the standard output or to `outf`. A file that
+// a fatal error leaves is removed.
+function streamed(r: Run, src: Source, own rd: Reader, to_stdout: boolean, outf: string): Result[Run, Fatal] {
+  if (to_stdout) {
+    let done = compress_to(r, src, rd, stdout(), outf);
+    if (src.st.is_some()) {
+      let _ = rd.close();
+    }
+    return done;
+  }
+  match (open_writer(outf)) {
+    Ok(w) => {
+      let done = compress_to(r, src, rd, w, outf);
+      let _ = rd.close();
+      if (done.is_ok() && r.o.sync) {
+        if let Err(e) = w.fsync() {
+          w.close();
+          let _ = remove_file(outf);
+          return Err(Fatal { why: "sync error on " + outf + " (" + error_text(e) + ")", code: errno.of(e) });
+        }
+      }
+      w.close();
+      if (done.is_err()) {
+        let _ = remove_file(outf);
+      }
+      return done;
+    },
+    Err(e) => {
+      let _ = rd.close();
+      return Err(fatal("write", outf, e));
+    }
+  }
+  return Ok(r);
+}
+
+// The compressed form of all of `data`, for -R: the header, the deflate
+// data in the block layout of pigz, and the trailer.
+function compressed(r0: Run, data: u8[], name: Option[string], mtime: i64): (Run, u8[]) {
+  let o = r0.o;
+  let (r, head) = header(r0, name, mtime);
+  let s = settings(o);
   let n = procs(o);
   let body = if (n > 1) { layout.parallel(s, data, layout.jobs(s, data), n) } else { layout.single(s, data) };
-  let ulen = data.len() as i64;
-  let clen = body.len() as i64;
-  let tail: u8[] = [];
-  if (o.form == 1) {
-    tail = gz.zlib_trailer(deflate.adler32(data));
-  } else if (o.form == 2) {
-    let zname = zip_name(o, name);
-    tail = gz.zip_trailer(zname, mtime, gz.time2dos(mtime, r.now), o.comment, crc32.of(data), ulen, clen, head.len() as i64);
-  } else {
-    tail = gz.gzip_trailer(crc32.of(data), ulen);
-  }
+  let c = check_of(Check { crc: crc32.new(), adler: 1u32, zlib: o.form == 1, ulen: 0i64 }, data);
+  let tail = trailer(r, name, mtime, c, body.len() as i64, head.len() as i64);
   return (r, head.concat(body).concat(tail));
 }
 
@@ -151,7 +321,9 @@ function zip_name(o: gz.Options, name: Option[string]): string {
 // The input and its name in the messages.
 struct Source {
   path: string,
+  // The whole input, or nothing when `reader` streams it.
   data: u8[],
+  reader: Option[Reader],
   // The status from lstat(), or None for the standard input.
   st: Option[FileStat],
   // The time to keep in the header, from the status before the read.
@@ -262,11 +434,21 @@ function open_stdin(r: Run): Result[Opened, Fatal] {
       }
     }
   }
+  let none: Option[FileStat] = None;
+  let empty: u8[] = [];
+  if (streams(r.o)) {
+    return Ok(File(r, Source { path: "<stdin>", data: empty, reader: Some(stdin()), st: none, mtime: mtime }));
+  }
   let Ok(data) = io.read_all_stdin_bytes() else {
     return Err(Fatal { why: "read error on <stdin>", code: 5 });
   };
-  let none: Option[FileStat] = None;
-  return Ok(File(r, Source { path: "<stdin>", data: data, st: none, mtime: mtime }));
+  return Ok(File(r, Source { path: "<stdin>", data: data, reader: None, st: none, mtime: mtime }));
+}
+
+// Whether a compression reads its input as it goes. -R reads all of it,
+// because its blocks end where the hash of the input says.
+function streams(o: gz.Options): boolean {
+  return o.decode == 0 && !o.list && !o.rsync;
 }
 
 // The name of the input and its lstat(). A decompression of a name that
@@ -328,10 +510,21 @@ function open_source(r: Run, path: string): Result[Opened, Fatal] {
   if (o.decode == 1 && !o.pipeout && !o.list && gz.compressed_suffix(inf) == 0) {
     return Ok(Skip(complain(r, "skipping: " + inf + " does not have compressed suffix")));
   }
+  let mtime = if ((o.headis & 2) != 0) { st.mtime } else { 0i64 };
+  if (streams(o)) {
+    match (open_reader(inf)) {
+      Ok(rd) => {
+        let empty: u8[] = [];
+        return Ok(File(r, Source { path: inf, data: empty, reader: Some(rd), st: Some(st), mtime: mtime }));
+      },
+      Err(e) => {
+        return Err(fatal("read", inf, e));
+      }
+    }
+  }
   match (read_file_bytes(inf)) {
     Ok(data) => {
-      let mtime = if ((o.headis & 2) != 0) { st.mtime } else { 0i64 };
-      return Ok(File(r, Source { path: inf, data: data, st: Some(st), mtime: mtime }));
+      return Ok(File(r, Source { path: inf, data: data, reader: None, st: Some(st), mtime: mtime }));
     },
     Err(e) => {
       return Err(fatal("read", inf, e));
@@ -354,7 +547,8 @@ function is_missing(looked: Result[FileStat, IoError]): boolean {
 
 // process(): one file, or the standard input for "".
 function process(r0: Run, path: string): Result[Run, Fatal] {
-  match (open_source(r0, path)?) {
+  let opened = open_source(r0, path)?;
+  match (opened) {
     Skip(next) => {
       return Ok(next);
     },
@@ -371,7 +565,7 @@ function process(r0: Run, path: string): Result[Run, Fatal] {
 // The input of process(): a listing, a test, or an output.
 // It keeps the branches of process() of pigz in their order, to check against it.
 // fern-lint: allow cyclomatic-complexity
-function convert(r: Run, src: Source): Result[Run, Fatal] {
+function convert(r: Run, own src: Source): Result[Run, Fatal] {
   let o = r.o;
   if (o.list && o.decode != 2) {
     return list_info(r, src);
@@ -460,7 +654,9 @@ function converted(r: Run, src: Source, h: gz.Header): Converted {
 // file, then keep the time and the mode, and remove the input.
 // It keeps the branches of process() of pigz in their order, to check against it.
 // fern-lint: allow cyclomatic-complexity
-function output(r0: Run, src: Source, h: gz.Header): Result[Run, Fatal] {
+function output(r0: Run, own input: Source, h: gz.Header): Result[Run, Fatal] {
+  let Source { path, data, reader, st, mtime } = input;
+  let src = Source { path: path, data: data, reader: None, st: st, mtime: mtime };
   if (r0.o.decode == 0 && r0.o.level == 11) {
     return Err(Fatal { why: "level 11 (zopfli) is not available in this port", code: 22 });
   }
@@ -475,6 +671,17 @@ function output(r0: Run, src: Source, h: gz.Header): Result[Run, Fatal] {
   let verbose = r0.o.verbosity > 1;
   if (verbose) {
     let _ = stderr().write(src.path + " to " + outf + " ");
+  }
+  if let Some(rd) = reader {
+    let to_stdout = src.st.is_none() || r0.o.pipeout;
+    let r = streamed(r0, src, rd, to_stdout, outf)?;
+    if (verbose) {
+      let _ = stderr().write("\n");
+    }
+    if (to_stdout) {
+      return Ok(r);
+    }
+    return finish(r, src, h, outf);
   }
   let c = converted(r0, src, h);
   let r = c.r;
