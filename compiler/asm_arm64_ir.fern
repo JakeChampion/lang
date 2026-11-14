@@ -370,7 +370,7 @@ function set_entry_load(o: ir.Op, set: string, idx: string): string {
 
 function emit_scan_set_blocks(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   let names: string[] = [];
-  while (names.len() < 8) {
+  while (names.len() < 7) {
     let lo = asmcore.fresh_label(s);
     names = names.append(lo.name);
     s = lo.state;
@@ -378,39 +378,39 @@ function emit_scan_set_blocks(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState
   let lit = asmcore.add_string_lit(asmcore.EmitState { ...s }, asmcore.scan_set_tables(o.str));
   s = lit.state;
   let tables = asmcore.str_lit_label(s, lit.idx);
-  let l_from_ok = names[0];
-  let l_loop = names[1];
-  let l_hit16 = names[2];
-  let l_tail = names[3];
-  let l_hit = names[4];
-  let l_end = names[5];
-  let l_done = names[6];
-  let l_byte = names[7];
-  s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-  if (o.kind_tag == ir.K_SCAN_SET_BYTES) {
-    s = s.write("    ldr x3, [x0]\n    add x0, x0, #8\n");
-  } else {
-    s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
-  }
-  s = s.write("    cmp x1, #0\n    b.ge " + l_from_ok + "\n    mov x1, #0\n");
-  s = s.write(l_from_ok + ":\n    adrp x9, " + tables + "\n    add x9, x9, :lo12:" + tables + "\n");
-  s = s.write("    add x5, x0, x1\n    add x6, x0, x3\n    sub x8, x6, #16\n");
-  s = s.write("    cmp x5, x8\n    b.hi " + l_tail + "\n");
+  s = s.write(scan_set_operands(o) + "    cmp x1, #0\n    b.ge " + names[6] + "\n    mov x1, #0\n");
+  s = s.write(names[6] + ":\n    adrp x9, " + tables + "\n    add x9, x9, :lo12:" + tables + "\n");
   let shape = asmcore.scan_set_shape(o.str);
-  s = s.write(scan_set_setup(shape));
-  s = s.write(l_loop + ":\n    ldr q0, [x5]\n" + scan_set_classify(shape));
-  s = s.write("    shrn v1.8b, v1.8h, #4\n    fmov x7, d1\n    cbnz x7, " + l_hit16 + "\n");
-  s = s.write("    add x5, x5, #16\n    cmp x5, x8\n    b.ls " + l_loop + "\n");
-  s = s.write("    sub x1, x5, x0\n    b " + l_tail + "\n");
-  s = s.write(l_hit16 + ":\n    rbit x7, x7\n    clz x7, x7\n    lsr x7, x7, #2\n");
-  s = s.write("    sub x1, x5, x0\n    add x1, x1, x7\n    b " + l_hit + "\n");
-  s = s.write(l_tail + ":\n    add x10, x9, #96\n");
-  s = s.write(l_byte + ":\n    cmp x1, x3\n    b.ge " + l_end + "\n");
-  s = s.write("    ldrb w6, [x0, x1]\n    ldrb w7, [x10, x6]\n    cbnz w7, " + l_hit + "\n");
-  s = s.write("    add x1, x1, #1\n    b " + l_byte + "\n");
-  s = s.write(l_hit + ":\n    str x1, [sp, #-16]!\n    b " + l_done + "\n");
-  s = s.write(l_end + ":\n    str x3, [sp, #-16]!\n");
-  return s.write(l_done + ":\n");
+  return s.write(scan_set_loop(names, shape, scan_set_setup(shape)) + "    str x1, [sp, #-16]!\n");
+}
+
+function scan_set_operands(o: ir.Op): string {
+  let r = "    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n";
+  if (o.kind_tag == ir.K_SCAN_SET_BYTES) {
+    return r + "    ldr x3, [x0]\n    add x0, x0, #8\n";
+  }
+  return r + "    ldr x3, [x0, #8]\n    ldr x0, [x0]\n";
+}
+
+// The block scan of a byte set. x0 holds the bytes, x1 the start, x3 the length
+// and x9 a table of asmcore.scan_set_tables. `setup` loads the vector registers
+// of `shape`. The index goes in x1.
+function scan_set_loop(names: string[], shape: asmcore.ScanShape, setup: string): string {
+  let l_loop = names[0];
+  let l_hit16 = names[1];
+  let l_tail = names[2];
+  let l_end = names[3];
+  let l_done = names[4];
+  let l_byte = names[5];
+  let r = "    add x5, x0, x1\n    add x6, x0, x3\n    sub x8, x6, #16\n    cmp x5, x8\n    b.hi " + l_tail + "\n" + setup;
+  r = r + l_loop + ":\n    ldr q0, [x5]\n" + scan_set_classify(shape);
+  r = r + "    shrn v1.8b, v1.8h, #4\n    fmov x7, d1\n    cbnz x7, " + l_hit16 + "\n";
+  r = r + "    add x5, x5, #16\n    cmp x5, x8\n    b.ls " + l_loop + "\n    sub x1, x5, x0\n";
+  r = r + l_tail + ":\n    add x10, x9, #96\n";
+  r = r + l_byte + ":\n    cmp x1, x3\n    b.ge " + l_end + "\n";
+  r = r + "    ldrb w6, [x0, x1]\n    ldrb w7, [x10, x6]\n    cbnz w7, " + l_done + "\n    add x1, x1, #1\n    b " + l_byte + "\n";
+  r = r + l_hit16 + ":\n    rbit x7, x7\n    clz x7, x7\n    lsr x7, x7, #2\n    sub x1, x5, x0\n    add x1, x1, x7\n    b " + l_done + "\n";
+  return r + l_end + ":\n    mov x1, x3\n" + l_done + ":\n";
 }
 
 function scan_set_setup(shape: asmcore.ScanShape): string {
@@ -447,13 +447,6 @@ function scan_set_classify(shape: asmcore.ScanShape): string {
     r += "    mvn v1.16b, v1.16b\n";
   }
   return r;
-}
-
-function set_entry_indexed(o: ir.Op): string {
-  if (ir.is_packed(o)) {
-    return "ldrb w7, [x10, x6]";
-  }
-  return "ldr x7, [x10, x6, lsl #3]";
 }
 
 function emit_mismatch_arm64(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
@@ -1124,74 +1117,13 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
+// A set that is not a constant goes to __fern_scan_set, which builds the two
+// nibble tables of the set at run time.
 function emit_scan_set(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (ir.is_block_scan_set(o)) {
     return emit_scan_set_blocks(o, s);
   }
-  let slo = asmcore.fresh_label(s);
-  let s_loop = slo.name;
-  let slo2 = asmcore.fresh_label(slo.state);
-  let s_short = slo2.name;
-  let slo3 = asmcore.fresh_label(slo2.state);
-  let s_short_next = slo3.name;
-  let slo4 = asmcore.fresh_label(slo3.state);
-  let s_hit = slo4.name;
-  let slo5 = asmcore.fresh_label(slo4.state);
-  let s_end = slo5.name;
-  let slo6 = asmcore.fresh_label(slo5.state);
-  let s_done = slo6.name;
-  let slo7 = asmcore.fresh_label(slo6.state);
-  let s_from_ok = slo7.name;
-  let slo8 = asmcore.fresh_label(slo7.state);
-  let s_one = slo8.name;
-  let hits: string[] = [];
-  s = slo8.state;
-  while (hits.len() < 4) {
-    let hl = asmcore.fresh_label(s);
-    hits = hits.append(hl.name);
-    s = hl.state;
-  }
-  s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-  if (o.kind_tag == ir.K_SCAN_SET_BYTES) {
-    s = s.write("    ldr x3, [x0]\n    add x0, x0, #8\n");
-  } else {
-    s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
-  }
-  s = s.write("    cmp x1, #0\n    b.ge " + s_from_ok + "\n    mov x1, #0\n");
-  s = s.write(s_from_ok + ":\n    ldr x4, [x2]\n");
-  if (o.kind_tag != ir.K_SCAN_SET_BYTES || ir.is_packed(o)) {
-    s = s.write("    cmp x4, #256\n    b.lo " + s_short + "\n");
-    s = s.write("    cmp x1, x3\n    b.ge " + s_end + "\n");
-    s = s.write("    add x5, x0, x1\n    add x8, x0, x3\n    sub x9, x8, #4\n    add x10, x2, #8\n");
-    s = s.write(s_loop + ":\n    cmp x5, x9\n    b.hi " + s_one + "\n");
-    for k in 0..4 {
-      s = s.write("    ldrb w6, [x5, #" + util.i32_to_string(k) + "]\n    " + set_entry_indexed(o) + "\n");
-      s = s.write("    cbnz x7, " + hits[k] + "\n");
-    }
-    s = s.write("    add x5, x5, #4\n    b " + s_loop + "\n");
-    s = s.write(s_one + ":\n    cmp x5, x8\n    b.hs " + s_end + "\n");
-    s = s.write("    ldrb w6, [x5]\n    " + set_entry_indexed(o) + "\n    cbnz x7, " + hits[0] + "\n");
-    s = s.write("    add x5, x5, #1\n    b " + s_one + "\n");
-    s = s.write(hits[3] + ":\n    add x5, x5, #1\n");
-    s = s.write(hits[2] + ":\n    add x5, x5, #1\n");
-    s = s.write(hits[1] + ":\n    add x5, x5, #1\n");
-    s = s.write(hits[0] + ":\n    sub x1, x5, x0\n    b " + s_hit + "\n");
-  }
-  s = s.write(s_short + ":\n");
-  s = s.write("    cmp x1, x3\n    b.ge " + s_end + "\n");
-  if (o.kind_tag == ir.K_SCAN_SET_BYTES && !ir.is_packed(o)) {
-    s = s.write("    add x5, x0, x1, lsl #3\n    ldrb w6, [x5]\n");
-  } else {
-    s = s.write("    add x5, x0, x1\n    ldrb w6, [x5]\n");
-  }
-  s = s.write("    cmp x6, x4\n    b.hs " + s_short_next + "\n");
-  s = s.write(set_entry_load(o, "x2", "x6"));
-  s = s.write("    cmp x7, #0\n    b.ne " + s_hit + "\n");
-  s = s.write(s_short_next + ":\n    add x1, x1, #1\n    b " + s_short + "\n");
-  s = s.write(s_hit + ":\n    str x1, [sp, #-16]!\n    b " + s_done + "\n");
-  s = s.write(s_end + ":\n    str x3, [sp, #-16]!\n");
-  s = s.write(s_done + ":\n");
-  return s;
+  return s.write(scan_set_operands(o) + "    bl __fern_scan_set\n    str x1, [sp, #-16]!\n").need("scan_set");
 }
 
 function movz_text_ok(text: string): boolean {
@@ -6277,7 +6209,7 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   if (name == "__fern_u64_to_string") {
     s = s.need("u64_to_string");
   }
-  if (name == "__fern_slice_abort") {
+  if (name == "__fern_slice_abort" || name == "__fern_alloc_size_abort") {
     s = s.need("heap");
   }
   s = s.need_array_helper(name);
@@ -7667,6 +7599,11 @@ function emit_lc_report(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    mov x2, #1\n");
   s = s.write("    bl .Llc_write\n");
   if (s.sanitize) {
+    // The frames above an exit() call are never unwound, so what they hold is no leak.
+    s = s.write("    adrp x9, __fern_lc_exited\n");
+    s = s.write("    add x9, x9, :lo12:__fern_lc_exited\n");
+    s = s.write("    ldr x9, [x9]\n");
+    s = s.write("    cbnz x9, .Lsan_leak_done\n");
     s = s.write("    adrp x9, __fern_lc_alloc_bytes\n");
     s = s.write("    add x9, x9, :lo12:__fern_lc_alloc_bytes\n");
     s = s.write("    ldr x10, [x9]\n");
@@ -9489,6 +9426,11 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = alloc_take(s, "x3");
   s = s.write(rt_unframe(s));
   s = s.write("    ret\n");
+  // __fern_arr_box calls this entry when the list of its size class is
+  // empty. x0 holds the size in bytes, which is a multiple of 8.
+  s = s.write("__fern_alloc_bump:\n");
+  s = s.write(rt_frame(s));
+  s = s.write("    mov x29, sp\n");
   s = s.write(".Lalloc_nofl:\n");
   s = s.write("    adrp x1, __fern_heap_ptr\n");
   s = s.write("    add x1, x1, :lo12:__fern_heap_ptr\n");
@@ -9565,6 +9507,12 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write(".Larrbox_miss:\n");
     s = s.write("    add x1, x0, #3\n");
     s = s.write("    lsl x1, x1, #3\n");
+    s = s.write(rt_frame(s));
+    s = s.write("    mov x29, sp\n");
+    s = s.write("    str x0, [sp, #-16]!\n");
+    s = s.write("    mov x0, x1\n");
+    s = s.write("    bl __fern_alloc_bump\n");
+    s = s.write("    b .Larrbox_made\n");
     s = s.write(".Larrbox_alloc:\n");
     s = s.write(rt_frame(s));
     s = s.write("    mov x29, sp\n");
@@ -9578,6 +9526,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    lsl x0, x0, #3\n");
   }
   s = s.write("    bl __fern_alloc\n");
+  s = s.write(".Larrbox_made:\n");
   s = s.write("    ldr x1, [sp]\n");
   s = s.write("    str x1, [x0]\n");
   s = s.write("    mov w2, #1\n");
@@ -11072,9 +11021,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   if (s.has_need("sum_bytes")) {
     s = emit_rt_sum_bytes(s);
   }
-  if (s.has_need("utf8_blocks")) {
-    s = emit_rt_utf8_blocks(s);
-  }
+  s = emit_rt_scans(s);
 
   if (s.has_need("args")) {
     s = s.write("    .section .bss\n");
@@ -11926,6 +11873,78 @@ function emit_rt_signal_flags(s: asmcore.EmitState, darwin: boolean): asmcore.Em
   return s;
 }
 
+function emit_rt_scans(s: asmcore.EmitState): asmcore.EmitState {
+  if (s.has_need("utf8_blocks")) {
+    s = emit_rt_utf8_blocks(s);
+  }
+  if (s.has_need("scan_set")) {
+    s = s.write(a64_scan_set());
+  }
+  return s;
+}
+
+// __fern_scan_set scans with a set that is not a constant: x0 holds the bytes,
+// x1 the start, x3 the length and x2 the set. It reads the first bytes one at a
+// time. If 16 bytes or more are left after them, it builds the registers of a
+// nibble set and does the block scan of a constant set. The index goes in x1.
+function a64_scan_set(): string {
+  let head = asmcore.SCAN_SET_HEAD;
+  let r = "    .section .rodata\n    .balign 16\n__fern_scan_set_masks:\n" + asmcore.byte_rows(asmcore.scan_set_masks());
+  r = r + "    .text\n    .global __fern_scan_set\n    .type __fern_scan_set, %function\n__fern_scan_set:\n";
+  r = r + "    cmp x1, #0\n    b.ge .Lscan_set_from\n    mov x1, #0\n.Lscan_set_from:\n    ldr x4, [x2]\n";
+  r = r + "    add x10, x1, #" + util.i32_to_string(head) + "\n    add x6, x1, #" + util.i32_to_string(head + 16) + "\n";
+  r += "    cmp x6, x3\n    csel x10, x10, x3, le\n    add x8, x2, #8\n";
+  r = r + a64_scan_set_head() + ".Lscan_set_build:\n    cmp x1, x3\n    b.ge .Lscan_set_end\n    mov x11, sp\n";
+  r = r + a64_scan_set_members() + a64_scan_set_tables();
+  let names = [".Lscan_set_loop", ".Lscan_set_hit16", ".Lscan_set_tail", ".Lscan_set_last", ".Lscan_set_done", ".Lscan_set_byte"];
+  r += scan_set_loop(names, asmcore.ScanShape { nibble: true, invert: false, range: false, bytes: [] }, "");
+  r += "    mov sp, x11\n    ret\n.Lscan_set_end:\n    mov x1, x3\n.Lscan_set_ret:\n    ret\n";
+  return r + "    .size __fern_scan_set, .-__fern_scan_set\n";
+}
+
+// Reads the bytes from x1 to x10, four at a time while it can.
+function a64_scan_set_head(): string {
+  let r = ".Lscan_set_head:\n    add x6, x1, #4\n    cmp x6, x10\n    b.gt .Lscan_set_one\n    add x5, x0, x1\n";
+  for k in 0..4 {
+    let skip = ".Lscan_set_skip" + util.i32_to_string(k);
+    r = r + "    ldrb w6, [x5, #" + util.i32_to_string(k) + "]\n    cmp x6, x4\n    b.hs " + skip + "\n";
+    r = r + "    ldrb w7, [x8, x6]\n    cbnz w7, .Lscan_set_hit" + util.i32_to_string(k) + "\n" + skip + ":\n";
+  }
+  r += "    add x1, x1, #4\n    b .Lscan_set_head\n";
+  for k in 0..3 {
+    r = r + ".Lscan_set_hit" + util.i32_to_string(3 - k) + ":\n    add x1, x1, #1\n";
+  }
+  r += ".Lscan_set_hit0:\n    ret\n.Lscan_set_one:\n    cmp x1, x10\n    b.ge .Lscan_set_build\n    ldrb w6, [x0, x1]\n";
+  r += "    cmp x6, x4\n    b.hs .Lscan_set_next\n    ldrb w7, [x8, x6]\n    cbnz w7, .Lscan_set_ret\n";
+  return r + ".Lscan_set_next:\n    add x1, x1, #1\n    b .Lscan_set_one\n";
+}
+
+// [x9, #96] gets the 256 entries of the set: the set itself, or a copy below sp
+// with zeros after a shorter set.
+function a64_scan_set_members(): string {
+  let zero = "";
+  for j in 0..8 {
+    zero = zero + "    stp q0, q0, [x9, #" + util.i32_to_string(96 + 32 * j) + "]\n";
+  }
+  let r = "    sub x9, x2, #88\n    cmp x4, #256\n    b.hs .Lscan_set_tables\n";
+  r = r + "    sub sp, sp, #352\n    mov x9, sp\n    movi v0.16b, #0\n" + zero + "    mov x10, #0\n";
+  r = r + ".Lscan_set_copy:\n    cmp x10, x4\n    b.hs .Lscan_set_tables\n    add x7, x2, x10\n    ldrb w7, [x7, #8]\n";
+  return r + "    add x6, x9, x10\n    strb w7, [x6, #96]\n    add x10, x10, #1\n    b .Lscan_set_copy\n";
+}
+
+// Row h of the entries sets bit h & 7 of the bytes of v20 (rows 0 to 7) or v21
+// (rows 8 to 15) where an entry is not zero.
+function a64_scan_set_tables(): string {
+  let r = ".Lscan_set_tables:\n    adrp x10, __fern_scan_set_masks\n    add x10, x10, :lo12:__fern_scan_set_masks\n";
+  r += "    ldr q22, [x10]\n    movi v26.16b, #128\n    movi v27.16b, #143\n    movi v20.16b, #0\n    movi v21.16b, #0\n";
+  for h in 0..8 {
+    r = r + "    ldr q0, [x9, #" + util.i32_to_string(96 + 16 * h) + "]\n    ldr q1, [x9, #" + util.i32_to_string(224 + 16 * h) + "]\n";
+    r = r + "    movi v5.16b, #" + util.i32_to_string(1 << h) + "\n    cmtst v0.16b, v0.16b, v0.16b\n    cmtst v1.16b, v1.16b, v1.16b\n";
+    r += "    and v0.16b, v0.16b, v5.16b\n    and v1.16b, v1.16b, v5.16b\n    orr v20.16b, v20.16b, v0.16b\n    orr v21.16b, v21.16b, v1.16b\n";
+  }
+  return r;
+}
+
 function emit_rt_utf8_blocks(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(asmcore.utf8_tables("__fern_utf8_tables"));
   s = s.write("    .text\n    .global __fern_utf8_blocks\n    .type __fern_utf8_blocks, %function\n__fern_utf8_blocks:\n");
@@ -12384,6 +12403,111 @@ function a64_poly_mul(): string {
     + "    and x8, x14, #0xfffffffffffffffc\n    and x14, x14, #3\n    add x8, x8, x8, lsr #2\n    adds x12, x12, x8\n    adcs x13, x13, xzr\n    adc x14, x14, xzr\n";
 }
 
+// Adds the 16 bytes at x0 to h as a block, multiplies h by r, and moves x0 past the bytes.
+function a64_cp_block(): string {
+  return "    ldp x4, x5, [x0]\n    add x0, x0, #16\n    adds x12, x12, x4\n    adcs x13, x13, x5\n    adc x14, x14, xzr\n    add x14, x14, #1\n" + a64_poly_mul();
+}
+
+// Absorbs x3 bytes at x0, with zeros after a short last block, as the AEAD pads its additional data and its
+// ciphertext. x0 moves past the bytes.
+function a64_cp_hash(p: string): string {
+  return p + "_h:\n    cmp x3, #16\n    b.lo " + p + "_hp\n" + a64_cp_block() + "    sub x3, x3, #16\n    b " + p + "_h\n"
+    + p + "_hp:\n    cbz x3, " + p + "_hd\n    stp xzr, xzr, [x29, #64]\n    mov x4, #0\n    add x5, x29, #64\n"
+    + p + "_hc:\n    ldrb w6, [x0, x4]\n    strb w6, [x5, x4]\n    add x4, x4, #1\n    cmp x4, x3\n    b.lo " + p + "_hc\n"
+    + "    add x0, x0, x3\n    ldp x4, x5, [x29, #64]\n    adds x12, x12, x4\n    adcs x13, x13, x5\n    adc x14, x14, xzr\n    add x14, x14, #1\n"
+    + a64_poly_mul() + p + "_hd:\n";
+}
+
+// XORs the key stream at x29 + ks over the x2 bytes at x1.
+function a64_cp_xor(p: string, ks: i32): string {
+  return "    mov x6, #0\n    add x5, x29, #" + util.i32_to_string(ks) + "\n"
+    + p + "_xq:\n    add x7, x6, #8\n    cmp x7, x2\n    b.hi " + p + "_xb\n    ldr x7, [x1, x6]\n    ldr x8, [x5, x6]\n    eor x7, x7, x8\n    str x7, [x1, x6]\n"
+    + "    add x6, x6, #8\n    b " + p + "_xq\n"
+    + p + "_xb:\n    cmp x6, x2\n    b.hs " + p + "_xd\n    ldrb w7, [x1, x6]\n    ldrb w8, [x5, x6]\n    eor w7, w7, w8\n    strb w7, [x1, x6]\n"
+    + "    add x6, x6, #1\n    b " + p + "_xb\n" + p + "_xd:\n";
+}
+
+// Four blocks of key stream into v0 to v15. With `hash`, the 256 bytes at x0 go into h among the rounds. Each
+// of the first eight double rounds takes two blocks. x0 moves past the 256 bytes, and w3 counts the rounds.
+function a64_cp_group(p: string, hash: boolean): string {
+  let cols = a64_chacha_qr4([[0, 4, 8, 12], [1, 5, 9, 13], [2, 6, 10, 14], [3, 7, 11, 15]]);
+  let diags = a64_chacha_qr4([[0, 5, 10, 15], [1, 6, 11, 12], [2, 7, 8, 13], [3, 4, 9, 14]]);
+  let o = a64_chacha_load();
+  if (hash) {
+    o = o + "    mov w3, #8\n" + p + "_rh:\n" + cols + a64_cp_block() + diags + a64_cp_block() + "    subs w3, w3, #1\n    b.ne " + p + "_rh\n"
+      + "    mov w3, #2\n";
+  } else {
+    o += "    mov w3, #10\n";
+  }
+  return o + p + "_r:\n" + cols + diags + "    subs w3, w3, #1\n    b.ne " + p + "_r\n" + a64_chacha_finish();
+}
+
+// ChaCha20-Poly1305 seals or opens buf[at:at + n] in place in one pass, as on x86-64. x0 is the 32-byte key,
+// and x1 is the block counter and the nonce (16 bytes, views). x2 is the buffer, w3 aad_at, w4 aad_n, w5 at
+// and w6 n. x0 returns the buffer, copied first if it has another holder.
+//
+// The first group of four blocks gives the one-time key and the first 192 bytes of text. Poly1305 takes those
+// bytes one block at a time. In each later group, Poly1305 takes 256 bytes of ciphertext among the rounds
+// of ChaCha20: a seal takes the group before, and an open takes its own group before the XOR. The rest is one
+// block at a time. x9 is r0, x10 r1, x11 5 r1 / 4, and x12 to x14 hold h. x0 points at the next ciphertext for
+// Poly1305, x1 at the text of the group, and x2 counts the bytes from there. s is at x29 + 48, a padded block at
+// x29 + 64 and a short last group of blocks at x29 + 224. The code zeroes them before it returns.
+function a64_chacha20_poly1305(s: asmcore.EmitState, seal: boolean): string {
+  let name: string = if (seal) { "__fern_chacha20_poly1305_seal_into" } else { "__fern_chacha20_poly1305_open_into" };
+  let p: string = if (seal) { ".Lacs" } else { ".Laco" };
+  let o: string = "    .global " + name + "\n    .type " + name + ", %function\n" + name + ":\n" + rt_frame_of(s, 480) + "    mov x29, sp\n"
+    + "    str x2, [x29, #96]\n    sxtw x3, w3\n    str x3, [x29, #80]\n    sxtw x4, w4\n    str x4, [x29, #88]\n"
+    + "    sxtw x5, w5\n    str x5, [x29, #32]\n    sxtw x6, w6\n    str x6, [x29, #40]\n"
+    + a64_aes_view("x1", "x9", "x10", p + "_c") + "    cmp x10, #16\n    b.ne " + p + "_bad\n    str x9, [x29, #24]\n"
+    + a64_aes_view("x0", "x9", "x10", p + "_k") + "    cmp x10, #32\n    b.ne " + p + "_bad\n    str x9, [x29, #16]\n"
+    + "    ldr x9, [x29, #80]\n    ldr x10, [x29, #88]\n    ldr x11, [x29, #32]\n    ldr x12, [x29, #40]\n"
+    + "    orr x13, x9, x10\n    orr x13, x13, x11\n    orr x13, x13, x12\n    tbnz x13, #63, " + p + "_bad\n"
+    + "    ldr x14, [x29, #96]\n    ldr x15, [x14]\n    add x13, x11, x12\n    add x13, x13, #16\n    cmp x13, x15\n    b.hi " + p + "_bad\n"
+    + "    add x13, x9, x10\n    cmp x13, x15\n    b.hi " + p + "_bad\n" + a64_aes_gcm_own(p)
+    + "    ldr x9, [x29, #96]\n    add x9, x9, #8\n    ldr x10, [x29, #32]\n    add x10, x9, x10\n    str x10, [x29, #32]\n"
+    + "    ldr x10, [x29, #80]\n    add x10, x9, x10\n    str x10, [x29, #80]\n"
+    + a64_chacha_pairs("stp") + a64_chacha_consts() + a64_cp_group(p + "_k0", false) + a64_chacha_out(false)
+    + "    ldp x9, x10, [x29, #224]\n"
+    + "    movz x4, #0xffff\n    movk x4, #0x0fff, lsl #16\n    movk x4, #0xfffc, lsl #32\n    movk x4, #0x0fff, lsl #48\n    and x9, x9, x4\n"
+    + "    movz x4, #0xfffc\n    movk x4, #0x0fff, lsl #16\n    movk x4, #0xfffc, lsl #32\n    movk x4, #0x0fff, lsl #48\n    and x10, x10, x4\n"
+    + "    add x11, x10, x10, lsr #2\n    ldp x4, x5, [x29, #240]\n    stp x4, x5, [x29, #48]\n    mov x12, #0\n    mov x13, #0\n    mov x14, #0\n"
+    + "    ldr x0, [x29, #80]\n    ldr x3, [x29, #88]\n" + a64_cp_hash(p + "_a")
+    + "    ldr x1, [x29, #32]\n    ldr x2, [x29, #40]\n    cmp x2, #192\n    b.ls " + p + "_hn\n    mov x2, #192\n" + p + "_hn:\n    mov x0, x1\n    mov x3, x2\n";
+  if (seal) {
+    o = o + a64_cp_xor(p + "_x0", 288) + a64_cp_hash(p + "_t0");
+  } else {
+    o = o + a64_cp_hash(p + "_t0") + a64_cp_xor(p + "_x0", 288);
+  }
+  o = o + "    ldr x2, [x29, #40]\n    subs x2, x2, #192\n    b.ls " + p + "_lens\n    add x1, x1, #192\n";
+  if (seal) {
+    o = o + a64_cp_group(p + "_g0", false) + "    cmp x2, #256\n    b.lo " + p + "_tail\n" + a64_chacha_out(true)
+      + "    add x1, x1, #256\n    subs x2, x2, #256\n    b.eq " + p + "_rest\n"
+      + p + "_loop:\n" + a64_cp_group(p + "_g1", true) + "    cmp x2, #256\n    b.lo " + p + "_tail\n" + a64_chacha_out(true)
+      + "    add x1, x1, #256\n    subs x2, x2, #256\n    b.ne " + p + "_loop\n    b " + p + "_rest\n"
+      + p + "_tail:\n" + a64_chacha_out(false) + a64_cp_xor(p + "_x1", 224)
+      + p + "_rest:\n    ldr x3, [x29, #32]\n    ldr x4, [x29, #40]\n    add x3, x3, x4\n    sub x3, x3, x0\n" + a64_cp_hash(p + "_t1");
+  } else {
+    o = o + p + "_loop:\n    cmp x2, #256\n    b.lo " + p + "_tail\n" + a64_cp_group(p + "_g1", true) + a64_chacha_out(true)
+      + "    add x1, x1, #256\n    subs x2, x2, #256\n    b.ne " + p + "_loop\n    b " + p + "_lens\n"
+      + p + "_tail:\n    mov x3, x2\n" + a64_cp_hash(p + "_t1") + a64_cp_group(p + "_g0", false) + a64_chacha_out(false) + a64_cp_xor(p + "_x1", 224);
+  }
+  o = o + p + "_lens:\n    ldr x4, [x29, #88]\n    ldr x5, [x29, #40]\n    adds x12, x12, x4\n    adcs x13, x13, x5\n    adc x14, x14, xzr\n    add x14, x14, #1\n"
+    + a64_poly_mul() + "    adds x4, x12, #5\n    adcs x5, x13, xzr\n    adc x6, x14, xzr\n    lsr x7, x6, #2\n    cmp x7, #0\n"
+    + "    csel x12, x4, x12, ne\n    csel x13, x5, x13, ne\n    ldp x4, x5, [x29, #48]\n    adds x12, x12, x4\n    adc x13, x13, x5\n"
+    + "    ldr x3, [x29, #32]\n    ldr x4, [x29, #40]\n    add x3, x3, x4\n";
+  if (seal) {
+    o += "    stp x12, x13, [x3]\n";
+  } else {
+    o += "    ldp x4, x5, [x3]\n    eor x4, x4, x12\n    eor x5, x5, x13\n    orr x4, x4, x5\n    cmp x4, #0\n    cset w4, ne\n    strb w4, [x3]\n";
+  }
+  o += "    movi v23.16b, #0\n    str q23, [x29, #48]\n    str q23, [x29, #64]\n";
+  for j in 0..16 {
+    o = o + "    str q23, [x29, #" + util.i32_to_string(224 + 16 * j) + "]\n";
+  }
+  return o + a64_chacha_pairs("ldp") + "    ldr x0, [x29, #96]\n" + rt_unframe_of(s, 480) + "    ret\n" + p + "_bad:\n    b __fern_slice_abort\n"
+    + "    .size " + name + ", .-" + name + "\n";
+}
+
 // Saves or restores d8 to d15, which the kernel uses and a call keeps.
 function a64_chacha_pairs(op: string): string {
   let out = "";
@@ -12531,6 +12655,14 @@ function emit_rt_byte_kernels(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("poly1305")) {
     let poly = a64_poly1305_blocks(s);
     s = s.write(poly);
+  }
+  if (s.has_need("chacha20poly1305_seal")) {
+    let sealer = a64_chacha20_poly1305(s, true);
+    s = s.write(sealer);
+  }
+  if (s.has_need("chacha20poly1305_open")) {
+    let opener = a64_chacha20_poly1305(s, false);
+    s = s.write(opener);
   }
   if (s.has_need("sha256") || s.has_need("sha1") || s.has_need("sha1x8")) {
     s = s.write("    .arch_extension sha2\n");

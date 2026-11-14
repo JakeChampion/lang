@@ -1,9 +1,12 @@
 // age — encrypt and decrypt files in the age v1 format.
 //
-// A port of age 1.1.1 (age-encryption.org) for X25519 recipients.
+// A port of age 1.1.1 (age-encryption.org): X25519 recipients, passphrases
+// and SSH keys.
 //
 //   $ age -r age1... -o file.age file          # encrypt to a recipient
 //   $ age -a -r age1... file > file.age        # encrypt to the ASCII armor
+//   $ age -p -o file.age file                  # encrypt with a passphrase
+//   $ age -R ~/.ssh/id_ed25519.pub file        # encrypt to an SSH key
 //   $ age -d -i key.txt -o file file.age       # decrypt
 //
 // With no INPUT, age reads the standard input. With no -o, it writes the
@@ -19,8 +22,11 @@ import "std/rand";
 import "./cli";
 import "./format";
 import "./keys";
+import "./ssh";
 import "./source";
 import "./text";
+import "./tty";
+import "./wordlist";
 
 const MANGLED_CRLF: string = "age-encryption.org/v1\r";
 
@@ -77,24 +83,122 @@ function read_named(name: string, stdin_used: boolean, limit: i32, open_failed: 
   return Ok(Read(b));
 }
 
+// The age file in an identity file that age encrypts with a passphrase,
+// with no armor.
+function encrypted_identity(name: string, b: u8[]): Result[keys.Identity[], string] {
+  if (b.len() == IDENTITY_LIMIT) {
+    return Err(f"failed to read {q(name)}: file too long");
+  }
+  if (!text.has_prefix(b, "-----BEGIN AGE")) {
+    return Ok([keys.Encrypted(name, b)]);
+  }
+  let (_, all, f) = source.read_full(source.armored(source.raw_bytes(b)), IDENTITY_LIMIT);
+  if let Some(e) = f {
+    if (!e.is_end()) {
+      return Err(f"failed to read {q(name)}: {e.message()}");
+    }
+  }
+  if (all.len() == IDENTITY_LIMIT) {
+    return Err(f"failed to read {q(name)}: file too long");
+  }
+  return Ok([keys.Encrypted(name, all)]);
+}
+
+// The identities of a file that holds age secret keys.
+function key_identities(name: string, b: [u8]): Result[keys.Identity[], string] {
+  let out: keys.Identity[] = [];
+  match (keys.identities(b)) {
+    Ok(ks) => {
+      for k in ks {
+        out = out.append(keys.X25519Id(k));
+      }
+      return Ok(out);
+    },
+    Err(why) => {
+      return Err(f"failed to read {q(name)}: {why}");
+    }
+  }
+}
+
+const IDENTITY_LIMIT: i32 = 16777216;
+
+// The size limit of a PEM file, as in age.
+const SSH_KEY_LIMIT: i32 = 16384;
+
+const RFC4716: string = "convert the private key to a modern format with \"ssh-keygen -p -m RFC4716\"";
+
+// age's readPubFile: the public key of an SSH key file in the old PEM
+// format, from the file beside it.
+function pub_file(name: string): Result[ssh.Public, string] {
+  if (name == "-") {
+    return Err("failed to obtain public key for \"-\" SSH key\n\nUse a file for which the corresponding \".pub\" file exists, or " + RFC4716);
+  }
+  let path = name + ".pub";
+  let r = match (open_reader(path)) {
+    Ok(r) => r,
+    Err(e) => {
+      return Err(f"failed to obtain public key for {q(name)} SSH key: open {path}: {text.errno_text(e)}\n\nEnsure {q(path)} exists, or convert the private key {q(name)} to a modern format with \"ssh-keygen -p -m RFC4716\"");
+    },
+  };
+  let (t, b) = source.raw_peek(source.open_raw(r, path), IDENTITY_LIMIT);
+  if let Some(f) = t.fail {
+    if (!f.is_eof()) {
+      return Err(f"failed to read {q(path)}: {f.message()}");
+    }
+  }
+  return match (ssh.parse_authorized(b)) {
+    Ok(k) => Ok(k),
+    Err(why) => Err(f"failed to parse {q(path)}: {why}"),
+  };
+}
+
+// age's parseSSHIdentity.
+function ssh_identity(name: string, b: u8[]): Result[keys.Identity[], string] {
+  match (ssh.parse_private(b)) {
+    ssh.Key(k) => {
+      return match (ssh.identity_of(k)) {
+        Ok(id) => Ok([keys.SshId(id)]),
+        Err(why) => Err(f"malformed SSH identity in {q(name)}: {why}"),
+      };
+    },
+    ssh.Bad(why) => {
+      return Err(f"malformed SSH identity in {q(name)}: {why}");
+    },
+    ssh.NeedsPassphrase(embedded) => {
+      return encrypted_ssh_identity(name, b, embedded);
+    }
+  }
+  return Err("");
+}
+
+// age's NewEncryptedSSHIdentity. The public key is in the file, or in the
+// .pub file beside it.
+function encrypted_ssh_identity(name: string, b: u8[], embedded: Option[ssh.Public]): Result[keys.Identity[], string] {
+  let public = match (embedded) {
+    Some(k) => k,
+    None => pub_file(name)?,
+  };
+  if let ssh.OtherPublic(t) = public {
+    return Err(f"unsupported SSH key type: {t}");
+  }
+  ssh.recipient_of(public)?;
+  return Ok([keys.EncryptedSsh(name, b, public)]);
+}
+
 function identity_file(name: string, stdin_used: boolean): Result[keys.Identity[], string] {
-  let content = read_named(name, stdin_used, 16777216, "failed to open file")?;
+  let content = read_named(name, stdin_used, IDENTITY_LIMIT, "failed to open file")?;
   match (content) {
     Read(b) => {
       if (text.has_prefix(b, "age-encryption") || text.has_prefix(b, "-----BEGIN AGE")) {
-        return Err("passphrase-protected identity files are not supported by this port yet");
+        return encrypted_identity(name, b);
       }
       if (text.has_prefix(b, "-----BEGIN")) {
-        return Err(f"SSH identity in {q(name)}: SSH keys are not supported by this port");
-      }
-      match (keys.identities(b)) {
-        Ok(ids) => {
-          return Ok(ids);
-        },
-        Err(why) => {
-          return Err(f"failed to read {q(name)}: {why}");
+        if (b.len() >= SSH_KEY_LIMIT) {
+          return Err(f"failed to read {q(name)}: file too long");
         }
+        return ssh_identity(name, b);
       }
+      return key_identities(name, b);
     },
     ReadFailed(why) => {
       return Err(f"failed to read {q(name)}: failed to read secret keys file: {why}");
@@ -121,7 +225,7 @@ function identities(o: cli.Opts, stdin_used: boolean): Result[keys.Identity[], c
   return Ok(out);
 }
 
-function recipient_file(name: string, stdin_used: boolean): Result[u8[][], string] {
+function recipient_file(name: string, stdin_used: boolean): Result[keys.Recipient[], string] {
   return match (read_named(name, stdin_used, 16777216, "failed to open recipient file")) {
     Ok(Read(b)) => keys.recipients_file(b, name),
     Ok(ReadFailed(why)) => Err(f"{q(name)}: failed to read recipients file: {why}"),
@@ -129,8 +233,120 @@ function recipient_file(name: string, stdin_used: boolean): Result[u8[][], strin
   };
 }
 
-function recipients(o: cli.Opts, stdin_used: boolean): Result[u8[][], cli.Fatal] {
-  let out: u8[][] = [];
+// The recipients of the identities of an identity file.
+function recipients_of(id: keys.Identity): Result[keys.Recipient[], string] {
+  return match (id) {
+    keys.X25519Id(k) => Ok([keys.X25519To(k.public)]),
+    keys.SshId(s) => Ok([keys.SshTo(ssh.recipient_of_identity(s))]),
+    keys.EncryptedSsh(_, _, public) => match (ssh.recipient_of(public)) {
+      Ok(r) => Ok([keys.SshTo(r)]),
+      Err(why) => Err(why),
+    },
+    keys.Encrypted(name, b) => {
+      let out: keys.Recipient[] = [];
+      for inner in open_encrypted(name, b)? {
+        out = out.concat(recipients_of(inner)?);
+      }
+      Ok(out)
+    },
+  };
+}
+
+// The number of words in a passphrase that age makes.
+const PASSPHRASE_WORDS: i32 = 10;
+
+// A passphrase from the terminal. It is secret.
+function secret(prompt: string): Result[u8[], string] {
+  let p = tty.read_secret(prompt)?;
+  __ct_secret(p);
+  return Ok(p);
+}
+
+// Two secrets are equal. Only the verdict is public.
+function same_secret(a: [u8], b: [u8]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  let diff = 0u8;
+  for i in 0..a.len() {
+    diff |= a[i] ^ b[i];
+  }
+  let verdict = __alloc_u8(1).with(0, diff);
+  __ct_public(verdict);
+  return verdict[0] == 0;
+}
+
+// age's passphrasePromptForEncryption. For an empty passphrase, age makes
+// one of 10 random words from the BIP 39 list and shows it on the terminal.
+function encryption_passphrase(): Result[u8[], cli.Fatal] {
+  let pass = match (secret("Enter passphrase (leave empty to autogenerate a secure one):")) {
+    Ok(p) => p,
+    Err(why) => {
+      return Err(cli.fatal("could not read passphrase: " + why));
+    },
+  };
+  if (pass.len() == 0) {
+    let words: string[] = [];
+    for _ in 0..PASSPHRASE_WORDS {
+      let r = rand.bytes(2);
+      words = words.append(wordlist.word((r[0] as i32 << 8 | r[1] as i32) % 2048));
+    }
+    let made = words.join("-");
+    if let Some(why) = tty.tell("using autogenerated passphrase " + q(made)) {
+      return Err(cli.fatal("could not print passphrase: " + why));
+    }
+    return Ok(made.bytes());
+  }
+  let confirm = match (secret("Confirm passphrase:")) {
+    Ok(p) => p,
+    Err(why) => {
+      return Err(cli.fatal("could not read passphrase: " + why));
+    },
+  };
+  if (!same_secret(confirm, pass)) {
+    return Err(cli.fatal("passphrases didn't match"));
+  }
+  return Ok(pass);
+}
+
+// The recipients of the identity files, for -e -i.
+function identity_recipients(o: cli.Opts, stdin_used: boolean): Result[keys.Recipient[], cli.Fatal] {
+  let out: keys.Recipient[] = [];
+  for name in o.identities {
+    let ids = match (identity_file(name, stdin_used)) {
+      Ok(ids) => ids,
+      Err(why) => {
+        return Err(cli.fatal(f"reading {q(name)}: {why}"));
+      },
+    };
+    for id in ids {
+      match (recipients_of(id)) {
+        Ok(rs) => {
+          out = out.concat(rs);
+        },
+        Err(why) => {
+          return Err(cli.fatal(f"internal error processing {q(name)}: {why}"));
+        }
+      }
+    }
+  }
+  return Ok(out);
+}
+
+function recipients(o: cli.Opts, stdin_used: boolean): Result[keys.Recipient[], cli.Fatal] {
+  if (o.passphrase) {
+    return Ok([keys.ScryptTo(encryption_passphrase()?)]);
+  }
+  let named = named_recipients(o, stdin_used)?;
+  if (o.plugins.len() > 0) {
+    return Err(cli.fatal("-j: plugins are not supported by this port"));
+  }
+  return Ok(named.concat(identity_recipients(o, stdin_used)?));
+}
+
+// The recipients of -r and -R.
+function named_recipients(o: cli.Opts, stdin_used: boolean): Result[keys.Recipient[], cli.Fatal] {
+  let out: keys.Recipient[] = [];
   for arg in o.recipients {
     match (keys.parse_recipient(arg)) {
       Ok(k) => {
@@ -150,9 +366,6 @@ function recipients(o: cli.Opts, stdin_used: boolean): Result[u8[][], cli.Fatal]
         return Err(cli.fatal(f"failed to parse recipient file {q(name)}: {why}"));
       }
     }
-  }
-  for id in identities(o, stdin_used)? {
-    out = out.append(id.public);
   }
   return Ok(out);
 }
@@ -404,60 +617,52 @@ function decrypt_stream(own s: source.Src, own out: Sink, key: chacha20poly1305.
   return (out, None);
 }
 
-function scrypt_refusal(h: format.Header): Option[string] {
+// The specification's rule: an scrypt stanza is the only stanza.
+function scrypt_not_alone(h: format.Header): boolean {
   for st in h.stanzas {
     if (st.kind == "scrypt" && h.stanzas.len() != 1) {
-      return Some("an scrypt recipient must be the only one");
+      return true;
     }
   }
-  if (h.stanzas.len() == 1 && h.stanzas[0].kind == "scrypt") {
-    return Some("passphrase-encrypted files are not supported by this port yet");
-  }
-  return None;
+  return false;
 }
 
-// The file key from the first identity that unwraps a stanza, in age's order.
-function file_key_of(h: format.Header, ids: keys.Identity[]): Result[u8[], string] {
-  if let Some(why) = scrypt_refusal(h) {
-    return Err(why);
-  }
-  for id in ids {
-    for st in h.stanzas {
-      match (format.unwrap(st, id.scalar, id.public)) {
-        format.FileKey(k) => {
-          return Ok(k);
-        },
-        format.Invalid(why) => {
-          return Err(why);
-        },
-        format.Incorrect => {}
-      }
-    }
-  }
-  return Err("no identity matched any of the recipients");
+function scrypt_file(h: format.Header): boolean {
+  return h.stanzas.len() == 1 && h.stanzas[0].kind == "scrypt";
 }
 
-// The header and the input after it, or age's message.
-function read_header(own input: source.Raw): (source.Src, Result[format.Header, cli.Fatal]) {
-  let (raw, head) = source.raw_peek(input, MANGLED_CRLF.len());
-  if (text.equals(head, MANGLED_CRLF) || head == MANGLED_UTF16) {
-    return (source.plain(raw), Err(cli.Fatal { msg: "invalid header intro", hints: ["it looks like this file was corrupted by PowerShell redirection", "consider using -o or -a to encrypt files in PowerShell"] }));
+const SCRYPT_ALONE: string = "an scrypt recipient must be the only one";
+
+const NO_MATCH: string = "no identity matched any of the recipients";
+
+// age's LazyScryptIdentity: it asks for a passphrase only for a file with
+// one scrypt stanza.
+function lazy_scrypt(h: format.Header, prompt: string): format.Unwrapped {
+  if (scrypt_not_alone(h)) {
+    return format.Invalid(SCRYPT_ALONE);
   }
-  let (t, parsed) = format.parse(source.start(raw));
-  return match (parsed) {
-    Ok(h) => (t, Ok(h)),
-    Err(why) => (t, Err(cli.fatal("failed to read header: " + why))),
+  if (!scrypt_file(h)) {
+    return format.Incorrect;
+  }
+  let pass = match (secret(prompt)) {
+    Ok(p) => p,
+    Err(why) => {
+      return format.Invalid("could not read passphrase: could not read passphrase: " + why);
+    },
+  };
+  if (pass.len() == 0) {
+    return format.Invalid("passphrase can't be empty");
+  }
+  let got = format.unwrap_scrypt(h.stanzas[0], pass);
+  crypto.erase(pass);
+  return match (got) {
+    format.Incorrect => format.Invalid("incorrect passphrase"),
+    _ => got,
   };
 }
 
 // The key of the payload, after the header MAC verifies.
-function payload_key_of(own s: source.Src, h: format.Header, ids: keys.Identity[]): (source.Src, Result[chacha20poly1305.Key, string]) {
-  let file_key = match (file_key_of(h, ids)) {
-    Ok(k) => k,
-    Err(why) => {
-      return (s, Err(why));
-    },
-  };
+function payload_key_of(own s: source.Src, h: format.Header, own file_key: u8[]): (source.Src, Result[chacha20poly1305.Key, string]) {
   if (!format.mac_ok(file_key, h)) {
     return (s, Err("bad header MAC"));
   }
@@ -470,6 +675,232 @@ function payload_key_of(own s: source.Src, h: format.Header, ids: keys.Identity[
   return match (key) {
     Ok(k) => (t, Ok(k)),
     Err(e) => (t, Err(e.message())),
+  };
+}
+
+// The whole payload in memory, or the message of the first failure.
+function decrypt_all(own s: source.Src, key: chacha20poly1305.Key): Result[u8[], string] {
+  let out: u8[] = [];
+  let index = 0i64;
+  loop {
+    let (t, next) = next_sealed(s, index);
+    s = t;
+    let (sealed, by_length) = match (next) {
+      Chunk(b, l) => (b, l),
+      Cut(why) => { return Err(why); },
+    };
+    let n = sealed.len() - 16;
+    let Some((plain, last)) = open_sealed(key, index, sealed, by_length) else {
+      return Err("failed to decrypt and authenticate payload chunk");
+    };
+    out = out.concat(plain[0:n]);
+    index += 1;
+    if (last) {
+      if let Some(why) = after_last(s) {
+        return Err(why);
+      }
+      return Ok(out);
+    }
+  }
+  return Ok(out);
+}
+
+// The plaintext of an identity file that age encrypts with a passphrase.
+// age's EncryptedIdentity.decrypt.
+function decrypt_identity_file(name: string, b: u8[]): Result[u8[], string] {
+  let (s, parsed) = format.parse(source.plain(source.raw_bytes(b)));
+  let h = match (parsed) {
+    Ok(h) => h,
+    Err(why) => {
+      return Err("failed to decrypt identity file: failed to read header: " + why);
+    },
+  };
+  let file_key = match (lazy_scrypt(h, f"Enter passphrase for identity file {q(name)}:")) {
+    format.FileKey(k) => k,
+    format.Incorrect => {
+      return Err("identity file is encrypted with age but not with a passphrase");
+    },
+    format.Invalid(why) => {
+      return Err("failed to decrypt identity file: " + why);
+    },
+  };
+  let (t, keyed) = payload_key_of(s, h, file_key);
+  let key = match (keyed) {
+    Ok(k) => k,
+    Err(why) => {
+      return Err("failed to decrypt identity file: " + why);
+    },
+  };
+  return match (decrypt_all(t, key)) {
+    Ok(plain) => Ok(plain),
+    Err(why) => Err("failed to read secret keys file: " + why),
+  };
+}
+
+// The identities in an identity file that age encrypts with a passphrase.
+function open_encrypted(name: string, b: u8[]): Result[keys.Identity[], string] {
+  let plain = decrypt_identity_file(name, b)?;
+  __ct_secret(plain);
+  let found = keys.identities(plain);
+  crypto.erase(plain);
+  let out: keys.Identity[] = [];
+  for k in found? {
+    out = out.append(keys.X25519Id(k));
+  }
+  return Ok(out);
+}
+
+// age's ErrIncorrectIdentity: the identity is not for this stanza.
+function incorrect(u: format.Unwrapped): boolean {
+  return match (u) {
+    format.Incorrect => true,
+    _ => false,
+  };
+}
+
+// One stanza with an identity that has its key in memory.
+function unwrap_stanza(id: keys.Identity, st: format.Stanza): format.Unwrapped {
+  return match (id) {
+    keys.X25519Id(k) => format.unwrap(st, k.scalar, k.public),
+    keys.SshId(s) => ssh.unwrap(st, s),
+    _ => format.Incorrect,
+  };
+}
+
+// The identities of an identity file that a passphrase encrypts, on the
+// stanzas. age's EncryptedIdentity.Unwrap.
+function unwrap_encrypted(name: string, b: u8[], h: format.Header): format.Unwrapped {
+  let ids = match (open_encrypted(name, b)) {
+    Ok(ids) => ids,
+    Err(why) => {
+      return format.Invalid(why);
+    },
+  };
+  for inner in ids {
+    let got = unwrap_with(inner, h);
+    if (!incorrect(got)) {
+      return got;
+    }
+  }
+  eprint(f"age: warning: encrypted identity file {q(name)} didn't match file's recipients");
+  return format.Incorrect;
+}
+
+// age's multiUnwrap: the first stanza that the identity unwraps, or the
+// first stanza that is not valid for it.
+function unwrap_with(id: keys.Identity, h: format.Header): format.Unwrapped {
+  match (id) {
+    keys.Encrypted(name, b) => {
+      return unwrap_encrypted(name, b, h);
+    },
+    keys.EncryptedSsh(name, b, public) => {
+      return unwrap_encrypted_ssh(name, b, public, h);
+    },
+    _ => {}
+  }
+  for st in h.stanzas {
+    let got = unwrap_stanza(id, st);
+    if (!incorrect(got)) {
+      return got;
+    }
+  }
+  return format.Incorrect;
+}
+
+// age's EncryptedSSHIdentity.Unwrap: a passphrase only when a stanza is for
+// this key.
+function unwrap_encrypted_ssh(name: string, b: u8[], public: ssh.Public, h: format.Header): format.Unwrapped {
+  match (ssh.encrypted_match(h.stanzas, public)) {
+    Ok(true) => {},
+    Ok(false) => {
+      return format.Incorrect;
+    },
+    Err(why) => {
+      return format.Invalid(why);
+    }
+  }
+  return match (decrypted_ssh(name, b, public)) {
+    Ok(id) => unwrap_with(keys.SshId(id), h),
+    Err(why) => format.Invalid(why),
+  };
+}
+
+// The identity of an SSH key file after its passphrase decrypts it.
+function decrypted_ssh(name: string, b: u8[], public: ssh.Public): Result[ssh.Identity, string] {
+  let pass = match (secret(f"Enter passphrase for {q(name)}:")) {
+    Ok(p) => p,
+    Err(why) => {
+      return Err(f"failed to obtain passphrase: could not read passphrase for {q(name)}: {why}");
+    },
+  };
+  let key = match (ssh.decrypt_private(b, pass)) {
+    ssh.Key(k) => k,
+    ssh.Bad(why) => {
+      return Err("failed to decrypt SSH key file: " + why);
+    },
+    ssh.NeedsPassphrase(_) => {
+      return Err("failed to decrypt SSH key file: ssh: this private key is passphrase protected");
+    },
+  };
+  if (!ssh.same_public(key, public)) {
+    return Err("mismatched private and public SSH key");
+  }
+  return match (ssh.identity_of(key)) {
+    Ok(id) => Ok(id),
+    Err(why) => Err("invalid SSH key: " + why),
+  };
+}
+
+const PASSPHRASE_AND_IDENTITIES: string = "file is passphrase-encrypted but identities were specified with -i/--identity or -j";
+
+// The file key of an unwrap, or age's message.
+function key_or_fatal(u: format.Unwrapped): Result[u8[], cli.Fatal] {
+  return match (u) {
+    format.FileKey(k) => Ok(k),
+    format.Incorrect => Err(cli.fatal(NO_MATCH)),
+    format.Invalid(why) => Err(cli.fatal(why)),
+  };
+}
+
+// The refusals of a file with an scrypt stanza when -i names identities.
+function passphrase_refusal(h: format.Header): Option[cli.Fatal] {
+  if (scrypt_not_alone(h)) {
+    return Some(cli.fatal(SCRYPT_ALONE));
+  }
+  if (scrypt_file(h)) {
+    return Some(cli.Fatal { msg: PASSPHRASE_AND_IDENTITIES, hints: ["remove all -i/--identity/-j flags to decrypt passphrase-encrypted files"] });
+  }
+  return None;
+}
+
+// The file key from the first identity that unwraps a stanza, in age's order.
+// With no -i, age asks for a passphrase.
+function file_key_of(h: format.Header, ids: keys.Identity[], flagged: boolean): Result[u8[], cli.Fatal] {
+  if (!flagged) {
+    return key_or_fatal(lazy_scrypt(h, "Enter passphrase:"));
+  }
+  if let Some(f) = passphrase_refusal(h) {
+    return Err(f);
+  }
+  for id in ids {
+    let got = unwrap_with(id, h);
+    if (!incorrect(got)) {
+      return key_or_fatal(got);
+    }
+  }
+  return Err(cli.fatal(NO_MATCH));
+}
+
+// The header and the input after it, or age's message.
+function read_header(own input: source.Raw): (source.Src, Result[format.Header, cli.Fatal]) {
+  let (raw, head) = source.raw_peek(input, MANGLED_CRLF.len());
+  if (text.equals(head, MANGLED_CRLF) || head == MANGLED_UTF16) {
+    return (source.plain(raw), Err(cli.Fatal { msg: "invalid header intro", hints: ["it looks like this file was corrupted by PowerShell redirection", "consider using -o or -a to encrypt files in PowerShell"] }));
+  }
+  let (t, parsed) = format.parse(source.start(raw));
+  return match (parsed) {
+    Ok(h) => (t, Ok(h)),
+    Err(why) => (t, Err(cli.fatal("failed to read header: " + why))),
   };
 }
 
@@ -487,7 +918,13 @@ function decrypt(o: cli.Opts, own input: source.Raw, stdin_used: boolean): Optio
       return Some(f);
     },
   };
-  let (t, keyed) = payload_key_of(s, h, ids);
+  let file_key = match (file_key_of(h, ids, o.identities.len() + o.plugins.len() > 0)) {
+    Ok(k) => k,
+    Err(f) => {
+      return Some(f);
+    },
+  };
+  let (t, keyed) = payload_key_of(s, h, file_key);
   let key = match (keyed) {
     Ok(k) => k,
     Err(why) => {
@@ -556,18 +993,34 @@ function encrypt_stream(own s: source.Src, own out: Sink, key: chacha20poly1305.
   return (out, None);
 }
 
+// The stanza that wraps the file key to one recipient.
+function wrap_to(file_key: [u8], r: keys.Recipient): Result[format.Stanza, string] {
+  match (r) {
+    keys.X25519To(public) => {
+      let ephemeral = rand.bytes(32);
+      __ct_secret(ephemeral);
+      let st = format.wrap(file_key, public, ephemeral);
+      crypto.erase(ephemeral);
+      return st;
+    },
+    keys.SshTo(r) => {
+      return ssh.wrap(file_key, r, rand.bytes(32));
+    },
+    keys.ScryptTo(pass) => {
+      return format.wrap_scrypt(file_key, pass, rand.bytes(16), format.SCRYPT_WORK_FACTOR);
+    }
+  }
+  return Err("");
+}
+
 // The header for a fresh file key and the payload key. Only the file key's
 // stanzas and the MAC leave this function.
-function seal_header(rs: u8[][], nonce: [u8]): Result[(format.Header, chacha20poly1305.Key), string] {
+function seal_header(rs: keys.Recipient[], nonce: [u8]): Result[(format.Header, chacha20poly1305.Key), string] {
   let file_key = rand.bytes(16);
   __ct_secret(file_key);
   let stanzas: format.Stanza[] = [];
   for r in rs {
-    let ephemeral = rand.bytes(32);
-    __ct_secret(ephemeral);
-    let st = format.wrap(file_key, r, ephemeral);
-    crypto.erase(ephemeral);
-    stanzas = stanzas.append(st?);
+    stanzas = stanzas.append(wrap_to(file_key, r)?);
   }
   let unsigned = format.Header { stanzas: stanzas, mac: [] };
   let mac = format.header_mac(file_key, unsigned);

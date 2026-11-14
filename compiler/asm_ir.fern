@@ -1199,6 +1199,9 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq $1, %rdx\n");
     s = s.write("    call .Lhev_w\n");
     if (s.sanitize) {
+      // The frames above an exit() call are never unwound, so what they hold is no leak.
+      s = s.write("    cmpq $0, __fern_lc_exited(%rip)\n");
+      s = s.write("    jne .Lsan_leak_done\n");
       s = s.write("    movq __fern_lc_alloc_bytes(%rip), %rax\n");
       s = s.write("    subq __fern_lc_free_bytes(%rip), %rax\n");
       s = s.write("    testq %rax, %rax\n");
@@ -1455,6 +1458,92 @@ function emit_rt_signal_flags(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movslq %edi, %rdi\n    leaq __fern_sig_flags(%rip), %rcx\n    xchgb %al, (%rcx,%rdi)\n.Lsig_taken_none:\n    ret\n");
   }
   return s;
+}
+
+function emit_rt_scans(s: asmcore.EmitState): asmcore.EmitState {
+  if (s.has_need("utf8_blocks")) {
+    s = emit_rt_utf8_blocks(s);
+  }
+  if (s.has_need("scan_set")) {
+    s = s.write(x86_scan_set());
+  }
+  return s;
+}
+
+// __fern_scan_set scans with a set that is not a constant: rax holds the bytes,
+// rcx the start, r8 the length and rdx the set. It reads the first bytes one at a
+// time. If 16 bytes or more are left after them, it builds the registers of a
+// nibble set and does the block scan of a constant set. The index goes in rcx.
+function x86_scan_set(): string {
+  let head = asmcore.SCAN_SET_HEAD;
+  let bits: u8[] = [];
+  for k in 0..32 {
+    bits = bits.append((1 + k / 16) as u8);
+  }
+  let r = "    .section .rodata\n    .balign 32\n__fern_scan_set_masks:\n" + asmcore.byte_rows(asmcore.scan_set_masks().concat(bits));
+  r = r + "    .section .text\n    .globl __fern_scan_set\n    .type __fern_scan_set, @function\n__fern_scan_set:\n";
+  r = r + "    testq %rcx, %rcx\n    jns .Lscan_set_from\n    xorq %rcx, %rcx\n.Lscan_set_from:\n    movq (%rdx), %rsi\n";
+  r = r + "    leaq " + util.i32_to_string(head) + "(%rcx), %r10\n    leaq " + util.i32_to_string(head + 16) + "(%rcx), %r9\n";
+  r = r + "    cmpq %r8, %r9\n    cmovgq %r8, %r10\n";
+  r += x86_scan_set_head() + ".Lscan_set_build:\n    cmpq %r8, %rcx\n    jge .Lscan_set_end\n";
+  r = r + "    movq %rsp, %rdi\n" + x86_scan_set_members() + x86_scan_set_tables();
+  let names = [".Lscan_set_loop", ".Lscan_set_hit16", ".Lscan_set_tail", ".Lscan_set_last", ".Lscan_set_done", ".Lscan_set_half", ".Lscan_set_rest"];
+  r += scan_set_loop(names, asmcore.ScanShape { nibble: true, invert: false, range: false, bytes: [] }, "");
+  r += "    movq %rdi, %rsp\n    ret\n.Lscan_set_end:\n    movq %r8, %rcx\n.Lscan_set_ret:\n    ret\n";
+  return r + "    .size __fern_scan_set, .-__fern_scan_set\n";
+}
+
+// Reads the bytes from rcx to r10, four at a time while it can.
+function x86_scan_set_head(): string {
+  let r = ".Lscan_set_head:\n    leaq 4(%rcx), %r9\n    cmpq %r10, %r9\n    jg .Lscan_set_one\n";
+  for k in 0..4 {
+    let skip = ".Lscan_set_skip" + util.i32_to_string(k);
+    r = r + "    movzbq " + util.i32_to_string(k) + "(%rax,%rcx), %r9\n    cmpq %rsi, %r9\n    jae " + skip + "\n";
+    r = r + "    cmpb $0, 8(%rdx,%r9)\n    jne .Lscan_set_hit" + util.i32_to_string(k) + "\n" + skip + ":\n";
+  }
+  r += "    addq $4, %rcx\n    jmp .Lscan_set_head\n";
+  for k in 0..3 {
+    r = r + ".Lscan_set_hit" + util.i32_to_string(3 - k) + ":\n    addq $1, %rcx\n";
+  }
+  r += ".Lscan_set_hit0:\n    ret\n.Lscan_set_one:\n    cmpq %r10, %rcx\n    jge .Lscan_set_build\n    movzbq (%rax,%rcx), %r9\n";
+  r += "    cmpq %rsi, %r9\n    jae .Lscan_set_next\n    cmpb $0, 8(%rdx,%r9)\n    jne .Lscan_set_ret\n";
+  return r + ".Lscan_set_next:\n    addq $1, %rcx\n    jmp .Lscan_set_one\n";
+}
+
+// 96(%r11) gets the 256 entries of the set: the set itself, or a copy below rsp
+// with zeros after a shorter set.
+function x86_scan_set_members(): string {
+  let zero = "";
+  for j in 0..8 {
+    zero = zero + "    vmovdqu %ymm0, " + util.i32_to_string(96 + 32 * j) + "(%r11)\n";
+  }
+  let r = "    leaq -88(%rdx), %r11\n    cmpq $256, %rsi\n    jae .Lscan_set_tables\n";
+  r = r + "    subq $352, %rsp\n    movq %rsp, %r11\n    vpxor %ymm0, %ymm0, %ymm0\n" + zero + "    xorq %r10, %r10\n";
+  r = r + ".Lscan_set_copy:\n    cmpq %rsi, %r10\n    jae .Lscan_set_tables\n    movzbq 8(%rdx,%r10), %r9\n";
+  return r + "    movb %r9b, 96(%r11,%r10)\n    addq $1, %r10\n    jmp .Lscan_set_copy\n";
+}
+
+// Row pair p of the entries sets bit 2p of a byte in the low lane of ymm2 (rows
+// 0 to 7) or ymm3 (rows 8 to 15), and bit 2p + 1 in the high lane, where the
+// entry is zero. Each register then gets its two lanes merged and inverted.
+function x86_scan_set_tables(): string {
+  let r = ".Lscan_set_tables:\n    leaq __fern_scan_set_masks(%rip), %r9\n";
+  r = r + "    vmovdqu 64(%r9), %ymm8\n    vpxor %ymm9, %ymm9, %ymm9\n    vpxor %ymm2, %ymm2, %ymm2\n    vpxor %ymm3, %ymm3, %ymm3\n";
+  for p in 0..4 {
+    for half in 0..2 {
+      let acc = "%ymm" + util.i32_to_string(2 + half);
+      r = r + "    vmovdqu " + util.i32_to_string(96 + 128 * half + 32 * p) + "(%r11), %ymm0\n    vpcmpeqb %ymm9, %ymm0, %ymm0\n";
+      r = r + "    vpand %ymm8, %ymm0, %ymm0\n    vpor %ymm0, " + acc + ", " + acc + "\n";
+    }
+    r += "    vpslld $2, %ymm8, %ymm8\n";
+  }
+  r = r + "    vperm2i128 $1, %ymm2, %ymm2, %ymm0\n    vpor %ymm0, %ymm2, %ymm2\n";
+  r = r + "    vperm2i128 $1, %ymm3, %ymm3, %ymm0\n    vpor %ymm0, %ymm3, %ymm3\n";
+  r = r + "    vpcmpeqb %ymm9, %ymm9, %ymm9\n    vpxor %ymm9, %ymm2, %ymm2\n    vpxor %ymm9, %ymm3, %ymm3\n";
+  for k in 0..4 {
+    r = r + "    vbroadcasti128 " + util.i32_to_string(16 * k) + "(%r9), %ymm" + util.i32_to_string(4 + k) + "\n";
+  }
+  return r;
 }
 
 function emit_rt_utf8_blocks(s: asmcore.EmitState): asmcore.EmitState {
@@ -2011,8 +2100,17 @@ function emit_rt_byte_kernels(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("sha1x8")) {
     s = emit_rt_sha1x8(s);
   }
+  if (s.has_need("chacha20") || s.has_need("chacha20poly1305_seal") || s.has_need("chacha20poly1305_open")) {
+    s = emit_rt_chacha_consts(s);
+  }
   if (s.has_need("chacha20")) {
-    s = emit_rt_chacha20(s);
+    s = s.write(x86_chacha20_xor_into());
+  }
+  if (s.has_need("chacha20poly1305_seal")) {
+    s = s.write(x86_chacha20_poly1305(true));
+  }
+  if (s.has_need("chacha20poly1305_open")) {
+    s = s.write(x86_chacha20_poly1305(false));
   }
   if (s.has_need("poly1305")) {
     s = emit_rt_poly1305(s);
@@ -2195,9 +2293,14 @@ function x86_poly1305_blocks(): string {
 // h = h r, with h2 at most 7 on entry. The result has h2 at most 4, so h is below 2p. rax, rcx, rdx and r9 to
 // r11 change.
 function x86_poly_mul(): string {
-  return "    movq %r14, %rdx\n    mulxq %rbx, %r9, %r10\n    mulxq %r12, %r11, %rcx\n    movq %r15, %rdx\n    mulxq %r13, %rax, %rdx\n"
-    + "    addq %rax, %r9\n    adcq %rdx, %r10\n    movq %r15, %rdx\n    mulxq %rbx, %rax, %rdx\n    addq %rax, %r11\n    adcq %rdx, %rcx\n"
-    + "    movq %r8, %rax\n    imulq %r13, %rax\n    addq %rax, %r11\n    adcq $0, %rcx\n    imulq %rbx, %r8\n    addq %r10, %r11\n    adcq %rcx, %r8\n"
+  return x86_poly_mul_with("%rbx", "%r12", "%r13", "%r10");
+}
+
+// h = h r, with r0, r1 and 5 r1 / 4 in the operands r0, r1 and s1. rax, rcx, rdx, r9, r11 and t change.
+function x86_poly_mul_with(r0: string, r1: string, s1: string, t: string): string {
+  return "    movq %r14, %rdx\n    mulxq " + r0 + ", %r9, " + t + "\n    mulxq " + r1 + ", %r11, %rcx\n    movq %r15, %rdx\n    mulxq " + s1 + ", %rax, %rdx\n"
+    + "    addq %rax, %r9\n    adcq %rdx, " + t + "\n    movq %r15, %rdx\n    mulxq " + r0 + ", %rax, %rdx\n    addq %rax, %r11\n    adcq %rdx, %rcx\n"
+    + "    movq %r8, %rax\n    imulq " + s1 + ", %rax\n    addq %rax, %r11\n    adcq $0, %rcx\n    imulq " + r0 + ", %r8\n    addq " + t + ", %r11\n    adcq %rcx, %r8\n"
     + "    movq %r9, %r14\n    movq %r11, %r15\n    movq %r8, %rax\n    andq $-4, %rax\n    andq $3, %r8\n    movq %rax, %rcx\n    shrq $2, %rcx\n"
     + "    addq %rcx, %rax\n    addq %rax, %r14\n    adcq $0, %r15\n    adcq $0, %r8\n";
 }
@@ -2348,13 +2451,141 @@ function emit_rt_poly1305(s: asmcore.EmitState): asmcore.EmitState {
     + "    .quad 1152921487695413247,1152921487695413244\n    .section .text\n" + x86_poly1305_blocks());
 }
 
-function emit_rt_chacha20(s: asmcore.EmitState): asmcore.EmitState {
+// The constants of the ChaCha20 kernels: the byte orders of rotations by 16 and 8, and the lane offsets of the
+// block counters and their step. The four words of "expand 32-byte k" follow, and then the masks that clamp r
+// of Poly1305.
+function emit_rt_chacha_consts(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .section .rodata\n    .align 32\n.Lcc_consts:\n    .byte 2,3,0,1,6,7,4,5,10,11,8,9,14,15,12,13,2,3,0,1,6,7,4,5,10,11,8,9,14,15,12,13\n"
     + "    .byte 3,0,1,2,7,4,5,6,11,8,9,10,15,12,13,14,3,0,1,2,7,4,5,6,11,8,9,10,15,12,13,14\n    .long 0,1,2,3,4,5,6,7\n    .long 8,8,8,8,8,8,8,8\n");
   for k in ["1634760805", "857760878", "2036477234", "1797285236"] {
     s = s.write("    .long " + k + "," + k + "," + k + "," + k + "," + k + "," + k + "," + k + "," + k + "\n");
   }
-  return s.write("    .section .text\n" + x86_chacha20_xor_into());
+  return s.write("    .quad 1152921487695413247,1152921487695413244\n    .section .text\n");
+}
+
+// Below the aligned rsp, the fused kernels keep r0, r1 and 5 r1 / 4 at 1600. s is at 1624 and a padded block
+// at 1640. rbx is the scratch register of the multiplication, because r10 points at the constants.
+function x86_cp_mul(): string {
+  return x86_poly_mul_with("1600(%rsp)", "1608(%rsp)", "1616(%rsp)", "%rbx");
+}
+
+// Adds the 16 bytes at rdi + at to h as a block, and multiplies h by r.
+function x86_cp_block(at: i32): string {
+  return "    addq " + util.i32_to_string(at) + "(%rdi), %r14\n    adcq " + util.i32_to_string(at + 8) + "(%rdi), %r15\n    adcq $1, %r8\n" + x86_cp_mul();
+}
+
+// Absorbs r12 bytes at rdi, with zeros after a short last block, as the AEAD pads its additional data and its
+// ciphertext. rdi moves past the bytes.
+function x86_cp_hash(p: string): string {
+  return p + "_h:\n    cmpq $16, %r12\n    jb " + p + "_hp\n" + x86_cp_block(0) + "    addq $16, %rdi\n    subq $16, %r12\n    jmp " + p + "_h\n"
+    + p + "_hp:\n    testq %r12, %r12\n    jz " + p + "_hd\n    movq $0, 1640(%rsp)\n    movq $0, 1648(%rsp)\n    xorl %ecx, %ecx\n"
+    + p + "_hc:\n    movzbl (%rdi,%rcx), %eax\n    movb %al, 1640(%rsp,%rcx)\n    addq $1, %rcx\n    cmpq %r12, %rcx\n    jb " + p + "_hc\n"
+    + "    addq %r12, %rdi\n    addq 1640(%rsp), %r14\n    adcq 1648(%rsp), %r15\n    adcq $1, %r8\n" + x86_cp_mul() + p + "_hd:\n";
+}
+
+// XORs the key stream at ks below rsp over the r13 bytes at rsi.
+function x86_cp_xor(p: string, ks: i32): string {
+  let k = util.i32_to_string(ks);
+  return "    xorl %ecx, %ecx\n" + p + "_xq:\n    leaq 8(%rcx), %rax\n    cmpq %r13, %rax\n    ja " + p + "_xb\n"
+    + "    movq (%rsi,%rcx), %rax\n    xorq " + k + "(%rsp,%rcx), %rax\n    movq %rax, (%rsi,%rcx)\n    addq $8, %rcx\n    jmp " + p + "_xq\n"
+    + p + "_xb:\n    cmpq %r13, %rcx\n    jae " + p + "_xd\n    movzbl (%rsi,%rcx), %eax\n    movzbl " + k + "(%rsp,%rcx), %r9d\n    xorl %r9d, %eax\n"
+    + "    movb %al, (%rsi,%rcx)\n    addq $1, %rcx\n    jmp " + p + "_xb\n" + p + "_xd:\n";
+}
+
+// Eight blocks of key stream into the key stream rows. With `hash`, the 512 bytes at rdi go into h among the
+// rounds. Each double round takes three blocks, and two blocks follow the rounds. rdi moves past the 512
+// bytes, and r12 counts the rounds.
+function x86_cp_group(p: string, hash: boolean): string {
+  let o = x86_chacha_load() + "    movq $10, %r12\n" + p + "_round:\n" + x86_chacha_qr2([0, 4, 12], [1, 5, 13]);
+  if (hash) {
+    o += x86_cp_block(0);
+  }
+  o = o + x86_chacha_swap_c(768, 832) + x86_chacha_qr2([2, 6, 14], [3, 7, 15]);
+  if (hash) {
+    o += x86_cp_block(16);
+  }
+  o += x86_chacha_qr2([0, 5, 15], [1, 6, 12]);
+  if (hash) {
+    o += x86_cp_block(32);
+  }
+  o = o + x86_chacha_swap_c(832, 768) + x86_chacha_qr2([2, 7, 13], [3, 4, 14]);
+  if (hash) {
+    o += "    addq $48, %rdi\n";
+  }
+  o = o + "    subq $1, %r12\n    jnz " + p + "_round\n";
+  if (hash) {
+    o = o + x86_cp_block(0) + x86_cp_block(16) + "    addq $32, %rdi\n";
+  }
+  return o + x86_chacha_finish();
+}
+
+// ChaCha20-Poly1305 (RFC 8439) seals or opens buf[at:at + n] in place in one pass. It authenticates
+// buf[aad_at:aad_at + aad_n], and the tag is at buf[at + n:at + n + 16]. An open writes its verdict to
+// buf[at + n]: 0 when the tag verifies and 1 when it does not. The key stream of block ctr is the one-time
+// Poly1305 key, and the text starts at block ctr + 1. rdi is the 32-byte key, and rsi is the block counter and
+// the nonce (16 bytes, views). rdx is the buffer, ecx aad_at, r8d aad_n, r9d at and eax n. rax returns the
+// buffer, copied first if it has another holder.
+//
+// The first group of eight blocks gives the one-time key and the first 448 bytes of text. Poly1305 takes those
+// bytes one block at a time. In each later group, Poly1305 takes 512 bytes of ciphertext among the rounds
+// of ChaCha20: a seal takes the group before, and an open takes its own group before the XOR. The rest is one
+// block at a time. h is in r14, r15 and r8, and rdi points at the next ciphertext for Poly1305. rsi points at
+// the text of the group, and r13 counts the bytes from there. Below the aligned rsp, the area is the one of
+// __fern_chacha20_xor_into and the Poly1305 values above it. The code zeroes the area before it returns.
+function x86_chacha20_poly1305(seal: boolean): string {
+  let name: string = if (seal) { "__fern_chacha20_poly1305_seal_into" } else { "__fern_chacha20_poly1305_open_into" };
+  let p: string = if (seal) { ".Lxcs" } else { ".Lxco" };
+  let o: string = "    .globl " + name + "\n    .type " + name + ", @function\n" + name + ":\n"
+    + "    pushq %rbp\n    movq %rsp, %rbp\n    subq $256, %rsp\n    movq %rdx, -48(%rbp)\n"
+    + "    movslq %ecx, %rcx\n    movq %rcx, -40(%rbp)\n    movslq %r8d, %r8\n    movq %r8, -112(%rbp)\n"
+    + "    movslq %r9d, %r9\n    movq %r9, -24(%rbp)\n    cltq\n    movq %rax, -32(%rbp)\n"
+    + x86_aes_view("%rsi", "%r10", "%r11", p + "_c") + "    cmpq $16, %r11\n    jne __fern_slice_abort\n    movq %r10, -16(%rbp)\n"
+    + x86_aes_view("%rdi", "%r10", "%r11", p + "_k") + "    cmpq $32, %r11\n    jne __fern_slice_abort\n    movq %r10, -8(%rbp)\n"
+    + "    movq -40(%rbp), %rax\n    orq -112(%rbp), %rax\n    orq -24(%rbp), %rax\n    orq -32(%rbp), %rax\n    js __fern_slice_abort\n"
+    + "    movq -48(%rbp), %r8\n    movq (%r8), %r9\n    movq -24(%rbp), %rax\n    addq -32(%rbp), %rax\n    addq $16, %rax\n    cmpq %r9, %rax\n    ja __fern_slice_abort\n"
+    + "    movq -40(%rbp), %rax\n    addq -112(%rbp), %rax\n    cmpq %r9, %rax\n    ja __fern_slice_abort\n" + x86_aes_gcm_own(p)
+    + "    movq %rbx, -56(%rbp)\n    movq %r12, -64(%rbp)\n    movq %r13, -72(%rbp)\n    movq %r14, -80(%rbp)\n    movq %r15, -88(%rbp)\n"
+    + "    movq -48(%rbp), %rax\n    addq $8, %rax\n    addq %rax, -24(%rbp)\n    addq %rax, -40(%rbp)\n"
+    + "    subq $1664, %rsp\n    andq $-32, %rsp\n    leaq .Lcc_consts(%rip), %r10\n" + x86_chacha_start() + x86_cp_group(p + "_k0", false)
+    + x86_chacha_out(0, false) + x86_chacha_out(1, false)
+    + "    movq 1024(%rsp), %rax\n    andq 256(%r10), %rax\n    movq %rax, 1600(%rsp)\n    movq 1032(%rsp), %rax\n    andq 264(%r10), %rax\n    movq %rax, 1608(%rsp)\n"
+    + "    movq %rax, %rcx\n    shrq $2, %rcx\n    addq %rcx, %rax\n    movq %rax, 1616(%rsp)\n"
+    + "    movq 1040(%rsp), %rax\n    movq %rax, 1624(%rsp)\n    movq 1048(%rsp), %rax\n    movq %rax, 1632(%rsp)\n"
+    + "    xorq %r14, %r14\n    xorq %r15, %r15\n    xorq %r8, %r8\n    movq -40(%rbp), %rdi\n    movq -112(%rbp), %r12\n" + x86_cp_hash(p + "_a")
+    + "    movq -24(%rbp), %rsi\n    movq -32(%rbp), %r13\n    cmpq $448, %r13\n    jbe " + p + "_hn\n    movq $448, %r13\n" + p + "_hn:\n"
+    + "    movq %rsi, %rdi\n    movq %r13, %r12\n";
+  if (seal) {
+    o = o + x86_cp_xor(p + "_x0", 1088) + x86_cp_hash(p + "_t0");
+  } else {
+    o = o + x86_cp_hash(p + "_t0") + x86_cp_xor(p + "_x0", 1088);
+  }
+  o = o + "    movq -32(%rbp), %r13\n    subq $448, %r13\n    jbe " + p + "_lens\n    addq $448, %rsi\n";
+  if (seal) {
+    o = o + x86_cp_group(p + "_g0", false) + "    cmpq $512, %r13\n    jb " + p + "_tail\n" + x86_chacha_out(0, true) + x86_chacha_out(1, true)
+      + "    addq $512, %rsi\n    subq $512, %r13\n    jz " + p + "_rest\n"
+      + p + "_loop:\n" + x86_cp_group(p + "_g1", true) + "    cmpq $512, %r13\n    jb " + p + "_tail\n" + x86_chacha_out(0, true) + x86_chacha_out(1, true)
+      + "    addq $512, %rsi\n    subq $512, %r13\n    jnz " + p + "_loop\n    jmp " + p + "_rest\n"
+      + p + "_tail:\n" + x86_chacha_out(0, false) + x86_chacha_out(1, false) + x86_cp_xor(p + "_x1", 1024)
+      + p + "_rest:\n    movq -24(%rbp), %r12\n    addq -32(%rbp), %r12\n    subq %rdi, %r12\n" + x86_cp_hash(p + "_t1");
+  } else {
+    o = o + p + "_loop:\n    cmpq $512, %r13\n    jb " + p + "_tail\n" + x86_cp_group(p + "_g1", true) + x86_chacha_out(0, true) + x86_chacha_out(1, true)
+      + "    addq $512, %rsi\n    subq $512, %r13\n    jnz " + p + "_loop\n    jmp " + p + "_lens\n"
+      + p + "_tail:\n    movq %r13, %r12\n" + x86_cp_hash(p + "_t1") + x86_cp_group(p + "_g0", false) + x86_chacha_out(0, false) + x86_chacha_out(1, false)
+      + x86_cp_xor(p + "_x1", 1024);
+  }
+  o = o + p + "_lens:\n    addq -112(%rbp), %r14\n    adcq -32(%rbp), %r15\n    adcq $1, %r8\n" + x86_cp_mul() + x86_poly_reduce()
+    + "    addq 1624(%rsp), %r14\n    adcq 1632(%rsp), %r15\n    movq -24(%rbp), %rax\n    addq -32(%rbp), %rax\n";
+  if (seal) {
+    o += "    movq %r14, (%rax)\n    movq %r15, 8(%rax)\n";
+  } else {
+    o += "    xorq (%rax), %r14\n    xorq 8(%rax), %r15\n    xorl %ecx, %ecx\n    orq %r15, %r14\n    setnz %cl\n    movb %cl, (%rax)\n";
+  }
+  o += "    vpxor %ymm0, %ymm0, %ymm0\n";
+  for j in 0..52 {
+    o = o + "    vmovdqu %ymm0, " + util.i32_to_string(32 * j) + "(%rsp)\n";
+  }
+  return o + "    vzeroupper\n    movq -56(%rbp), %rbx\n    movq -64(%rbp), %r12\n    movq -72(%rbp), %r13\n    movq -80(%rbp), %r14\n    movq -88(%rbp), %r15\n"
+    + x86_aes_epilogue() + "    .size " + name + ", .-" + name + "\n";
 }
 
 function emit_rt_sha1x8(s: asmcore.EmitState): asmcore.EmitState {
@@ -3772,8 +4003,15 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    ret\n");
   if (!hev_on(s) && !s.has_need("alloc_count")) {
     s = s.write(".Larrbox_miss:\n");
-    s = s.write("    leaq __fern_freelist(%rip), %rax\n");
-    s = s.write("    subq %rax, %rdi\n");
+    if (s.harden) {
+      s = s.write("    leaq __fern_freelist(%rip), %rax\n");
+      s = s.write("    subq %rax, %rdi\n");
+    } else {
+      // The allocator takes the address of the empty list at this label, so
+      // it does not round the size and read the list again.
+      s = s.write("    call .Lalloc_fast_miss\n");
+      s = s.write("    jmp .Larrbox_hdr\n");
+    }
     s = s.write(".Larrbox_alloc:\n");
     s = s.write("    call __fern_alloc\n");
     s = s.write("    jmp .Larrbox_hdr\n");
@@ -5382,57 +5620,56 @@ function ir_f2u_sat_rax(width: i32, lb: string, d: string): string {
 
 function emit_scan_set_blocks(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   let names: string[] = [];
-  while (names.len() < 9) {
+  while (names.len() < 8) {
     let lo = asmcore.fresh_label(s);
     names = names.append(lo.name);
     s = lo.state;
   }
   let lit = asmcore.add_string_lit(asmcore.EmitState { ...s }, asmcore.scan_set_tables(o.str));
   s = lit.state;
-  let tables = asmcore.str_lit_label(s, lit.idx);
-  let l_from_ok = names[0];
-  let l_loop = names[1];
-  let l_hit16 = names[2];
-  let l_tail = names[3];
-  let l_hit = names[4];
-  let l_end = names[5];
-  let l_done = names[6];
-  let l_half = names[7];
-  let l_rest = names[8];
-  s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n");
-  if (o.kind_tag == ir.K_SCAN_SET_BYTES) {
-    s = s.write("    movq (%rax), %r8\n    addq $8, %rax\n");
-  } else {
-    s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
-  }
-  s = s.write("    testq %rcx, %rcx\n    jns " + l_from_ok + "\n    xorq %rcx, %rcx\n");
-  s = s.write(l_from_ok + ":\n    leaq " + tables + "(%rip), %r11\n");
-  s = s.write("    leaq (%rax,%rcx), %r9\n    leaq -16(%rax,%r8), %r10\n");
-  s = s.write("    cmpq %r10, %r9\n    jg " + l_tail + "\n");
+  s = s.write(scan_set_operands(o) + "    testq %rcx, %rcx\n    jns " + names[7] + "\n    xorq %rcx, %rcx\n");
+  s = s.write(names[7] + ":\n    leaq " + asmcore.str_lit_label(s, lit.idx) + "(%rip), %r11\n");
   let shape = asmcore.scan_set_shape(o.str);
-  s = s.write(scan_set_setup(shape));
-  s = s.write(l_loop + ":\n    leaq 16(%r9), %rdx\n    cmpq %r10, %rdx\n    jg " + l_half + "\n");
-  s = s.write("    vmovdqu (%r9), %ymm0\n" + scan_set_classify(shape, "ymm") + "    vpmovmskb %ymm1, %edx\n");
-  if (shape.invert) {
-    s = s.write("    notl %edx\n");
+  return s.write(scan_set_loop(names, shape, scan_set_setup(shape)) + "    pushq %rcx\n");
+}
+
+function scan_set_operands(o: ir.Op): string {
+  let r = "    popq %rdx\n    popq %rcx\n    popq %rax\n";
+  if (o.kind_tag == ir.K_SCAN_SET_BYTES) {
+    return r + "    movq (%rax), %r8\n    addq $8, %rax\n";
   }
-  s = s.write("    testl %edx, %edx\n    jnz " + l_hit16 + "\n");
-  s = s.write("    addq $32, %r9\n    jmp " + l_loop + "\n");
-  s = s.write(l_half + ":\n    cmpq %r10, %r9\n    jg " + l_rest + "\n");
-  s = s.write("    vmovdqu (%r9), %xmm0\n" + scan_set_classify(shape, "xmm") + "    vpmovmskb %xmm1, %edx\n");
+  return r + "    movq 8(%rax), %r8\n    movq (%rax), %rax\n";
+}
+
+// The block scan of a byte set. rax holds the bytes, rcx the start, r8 the
+// length and r11 a table of asmcore.scan_set_tables. `setup` loads the vector
+// registers of `shape`. The index goes in rcx.
+function scan_set_loop(names: string[], shape: asmcore.ScanShape, setup: string): string {
+  let l_loop = names[0];
+  let l_hit16 = names[1];
+  let l_tail = names[2];
+  let l_end = names[3];
+  let l_done = names[4];
+  let l_half = names[5];
+  let l_rest = names[6];
+  let r = "    leaq (%rax,%rcx), %r9\n    leaq -16(%rax,%r8), %r10\n    cmpq %r10, %r9\n    jg " + l_tail + "\n" + setup;
+  r = r + l_loop + ":\n    leaq 16(%r9), %rdx\n    cmpq %r10, %rdx\n    jg " + l_half + "\n";
+  r = r + "    vmovdqu (%r9), %ymm0\n" + scan_set_classify(shape, "ymm") + "    vpmovmskb %ymm1, %edx\n";
   if (shape.invert) {
-    s = s.write("    xorl $65535, %edx\n");
+    r += "    notl %edx\n";
   }
-  s = s.write("    testl %edx, %edx\n    jnz " + l_hit16 + "\n    addq $16, %r9\n");
-  s = s.write(l_rest + ":\n    vzeroupper\n    movq %r9, %rcx\n    subq %rax, %rcx\n    jmp " + l_tail + "\n");
-  s = s.write(l_hit16 + ":\n    vzeroupper\n    bsfl %edx, %edx\n    subq %rax, %r9\n    addq %rdx, %r9\n");
-  s = s.write("    pushq %r9\n    jmp " + l_done + "\n");
-  s = s.write(l_tail + ":\n    cmpq %r8, %rcx\n    jge " + l_end + "\n");
-  s = s.write("    movzbq (%rax,%rcx), %r9\n    cmpb $0, 96(%r11,%r9)\n    jne " + l_hit + "\n");
-  s = s.write("    addq $1, %rcx\n    jmp " + l_tail + "\n");
-  s = s.write(l_hit + ":\n    pushq %rcx\n    jmp " + l_done + "\n");
-  s = s.write(l_end + ":\n    pushq %r8\n");
-  return s.write(l_done + ":\n");
+  r = r + "    testl %edx, %edx\n    jnz " + l_hit16 + "\n    addq $32, %r9\n    jmp " + l_loop + "\n";
+  r = r + l_half + ":\n    cmpq %r10, %r9\n    jg " + l_rest + "\n";
+  r = r + "    vmovdqu (%r9), %xmm0\n" + scan_set_classify(shape, "xmm") + "    vpmovmskb %xmm1, %edx\n";
+  if (shape.invert) {
+    r += "    xorl $65535, %edx\n";
+  }
+  r = r + "    testl %edx, %edx\n    jnz " + l_hit16 + "\n    addq $16, %r9\n";
+  r = r + l_rest + ":\n    vzeroupper\n    movq %r9, %rcx\n    subq %rax, %rcx\n";
+  r = r + l_tail + ":\n    cmpq %r8, %rcx\n    jge " + l_end + "\n";
+  r = r + "    movzbq (%rax,%rcx), %r9\n    cmpb $0, 96(%r11,%r9)\n    jne " + l_done + "\n    addq $1, %rcx\n    jmp " + l_tail + "\n";
+  r = r + l_hit16 + ":\n    vzeroupper\n    bsfl %edx, %edx\n    subq %rax, %r9\n    leaq (%r9,%rdx), %rcx\n    jmp " + l_done + "\n";
+  return r + l_end + ":\n    movq %r8, %rcx\n" + l_done + ":\n";
 }
 
 function scan_set_setup(shape: asmcore.ScanShape): string {
@@ -5654,7 +5891,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   let kernel = ir.kernel_need(o.kind_tag);
   if (kernel != "") {
     s = s.need(kernel).need("heap");
-    let regs: string[] = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8"];
+    let regs: string[] = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8", "%r9", "%rax"];
     let pops = "";
     for k in 0..ir.kernel_arity(o.kind_tag) {
       pops = "    popq " + regs[k] + "\n" + pops;
@@ -6198,74 +6435,13 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
+// A set that is not a constant goes to __fern_scan_set, which builds the two
+// nibble tables of the set at run time.
 function emit_scan_set(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (ir.is_block_scan_set(o)) {
     return emit_scan_set_blocks(o, s);
   }
-  let slo = asmcore.fresh_label(s);
-  let s_loop = slo.name;
-  let slo2 = asmcore.fresh_label(slo.state);
-  let s_short = slo2.name;
-  let slo3 = asmcore.fresh_label(slo2.state);
-  let s_short_next = slo3.name;
-  let slo4 = asmcore.fresh_label(slo3.state);
-  let s_hit = slo4.name;
-  let slo5 = asmcore.fresh_label(slo4.state);
-  let s_end = slo5.name;
-  let slo6 = asmcore.fresh_label(slo5.state);
-  let s_done = slo6.name;
-  let slo7 = asmcore.fresh_label(slo6.state);
-  let s_from_ok = slo7.name;
-  let slo8 = asmcore.fresh_label(slo7.state);
-  let s_one = slo8.name;
-  let hits: string[] = [];
-  s = slo8.state;
-  while (hits.len() < 4) {
-    let hl = asmcore.fresh_label(s);
-    hits = hits.append(hl.name);
-    s = hl.state;
-  }
-  s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n");
-  if (o.kind_tag == ir.K_SCAN_SET_BYTES) {
-    s = s.write("    movq (%rax), %r8\n    addq $8, %rax\n");
-  } else {
-    s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
-  }
-  s = s.write("    testq %rcx, %rcx\n    jns " + s_from_ok + "\n    xorq %rcx, %rcx\n");
-  s = s.write(s_from_ok + ":\n    movq (%rdx), %r9\n");
-  if (o.kind_tag != ir.K_SCAN_SET_BYTES || ir.is_packed(o)) {
-    s = s.write("    cmpq $256, %r9\n    jb " + s_short + "\n");
-    s = s.write("    cmpq %r8, %rcx\n    jge " + s_end + "\n");
-    s = s.write("    leaq (%rax,%rcx), %r10\n    leaq (%rax,%r8), %r11\n    leaq -4(%r11), %rcx\n");
-    s = s.write(s_loop + ":\n    cmpq %rcx, %r10\n    ja " + s_one + "\n");
-    for k in 0..4 {
-      s = s.write("    movzbq " + util.i32_to_string(k) + "(%r10), %r9\n");
-      s = s.write("    " + set_entry_test(o, "%r9") + "\n    jne " + hits[k] + "\n");
-    }
-    s = s.write("    addq $4, %r10\n    jmp " + s_loop + "\n");
-    s = s.write(s_one + ":\n    cmpq %r11, %r10\n    jae " + s_end + "\n");
-    s = s.write("    movzbq (%r10), %r9\n");
-    s = s.write("    " + set_entry_test(o, "%r9") + "\n    jne " + hits[0] + "\n");
-    s = s.write("    addq $1, %r10\n    jmp " + s_one + "\n");
-    s = s.write(hits[3] + ":\n    addq $1, %r10\n");
-    s = s.write(hits[2] + ":\n    addq $1, %r10\n");
-    s = s.write(hits[1] + ":\n    addq $1, %r10\n");
-    s = s.write(hits[0] + ":\n    subq %rax, %r10\n    pushq %r10\n    jmp " + s_done + "\n");
-  }
-  s = s.write(s_short + ":\n");
-  s = s.write("    cmpq %r8, %rcx\n    jge " + s_end + "\n");
-  if (o.kind_tag == ir.K_SCAN_SET_BYTES && !ir.is_packed(o)) {
-    s = s.write("    movzbq (%rax,%rcx,8), %r10\n");
-  } else {
-    s = s.write("    movzbq (%rax,%rcx), %r10\n");
-  }
-  s = s.write("    cmpq %r9, %r10\n    jae " + s_short_next + "\n");
-  s = s.write("    " + set_entry_test(o, "%r10") + "\n    jne " + s_hit + "\n");
-  s = s.write(s_short_next + ":\n    addq $1, %rcx\n    jmp " + s_short + "\n");
-  s = s.write(s_hit + ":\n    pushq %rcx\n    jmp " + s_done + "\n");
-  s = s.write(s_end + ":\n    pushq %r8\n");
-  s = s.write(s_done + ":\n");
-  return s;
+  return s.write(scan_set_operands(o) + "    call __fern_scan_set\n    pushq %rcx\n").need("scan_set");
 }
 
 function ssa_reg(k: i32): string {
@@ -6934,6 +7110,18 @@ function ssa_mov_rm0(s: asmcore.EmitState, size: i32, load: boolean, reg: string
 }
 
 function ssa_mov_rm_at(s: asmcore.EmitState, size: i32, load: boolean, reg: string, base: string, disp: i32, bare: boolean): asmcore.EmitState {
+  let slot = size == 64 && base == "%rbp" && !bare;
+  if (slot && !load && s.slot_load_at >= 0 && s.slot_load_at == s.out_pos() && s.slot_load_reg == reg && s.slot_load_disp == disp) {
+    return s;
+  }
+  s = ssa_mov_rm_emit(s, size, load, reg, base, disp, bare);
+  if (slot && load) {
+    return asmcore.EmitState { ...s, slot_load_at: s.out_pos(), slot_load_reg: reg, slot_load_disp: disp };
+  }
+  return s;
+}
+
+function ssa_mov_rm_emit(s: asmcore.EmitState, size: i32, load: boolean, reg: string, base: string, disp: i32, bare: boolean): asmcore.EmitState {
   if (s.records()) {
     let r = ssa_xreg(reg);
     let b = ssa_xreg(base);
@@ -10885,7 +11073,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   } else {
     s = ssa_frame(s, saved, frame, canary);
   }
-  s = asmcore.EmitState { ...s, ssa_save: save, ssa_lane_slots: asmcore.ssa_lane_slot_table(reg_of, lanes) };
+  s = asmcore.EmitState { ...s, ssa_save: save, ssa_lane_slots: asmcore.ssa_lane_slot_table(reg_of, lanes), slot_load_at: -1 };
   s = ssa_load_params(f, reg_of, s);
   let pos = 0;
   for bi in 0..f.blocks.len() {
@@ -12018,7 +12206,7 @@ function emit_ir_op_heap_release_to(o: ir.Op, s: asmcore.EmitState): asmcore.Emi
 }
 
 function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitState {
-  if (name == "__fern_oob_abort" || name == "__fern_slice_abort") {
+  if (name == "__fern_oob_abort" || name == "__fern_slice_abort" || name == "__fern_alloc_size_abort") {
     s = s.need("heap");
   }
   if (name == "__fern_i32_to_string") {
@@ -13169,10 +13357,7 @@ function emit_entry_core_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("sum_bytes")) {
     s = emit_rt_sum_bytes(s);
   }
-  if (s.has_need("utf8_blocks")) {
-    s = emit_rt_utf8_blocks(s);
-  }
-  return s;
+  return emit_rt_scans(s);
 }
 
 function emit_entry_environment(s: asmcore.EmitState): asmcore.EmitState {

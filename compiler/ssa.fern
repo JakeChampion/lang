@@ -4934,6 +4934,11 @@ function compose_repl(a: i32[], b: i32[]): i32[] {
 }
 
 pub function register_form(f: SFunc): Formed {
+  return form(f, false);
+}
+
+// owned_frame_views: a view in the frame holds a unit, so its release stays.
+pub function form(f: SFunc, owned_frame_views: boolean): Formed {
   let folded = prune_trivial_phis(slot_calls(without_lines(f)));
   let merged = merge_duplicates(folded.f);
   let plain = fold_identities(merged.f);
@@ -4958,16 +4963,16 @@ pub function register_form(f: SFunc): Formed {
     g = pruned.f;
     trimmed = pruned.repl;
   }
-  g = combine_byte_stores(zero_extended_indices(drop_inert_counts(g)));
+  g = combine_byte_stores(zero_extended_indices(drop_inert_counts(g, owned_frame_views)));
   return Formed { f: g, repl: compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(folded.repl, merged.repl), plain.repl), shared.repl), unwrapped.repl), extended.repl), bytes.repl), trimmed) };
 }
 
 // A count taken or given back on a constant null does nothing: the runtime
 // entries return at the floor test. Nor does the release of a view the
-// function builds in its own frame, since its count is immortal. The
+// function builds in its own frame, where its count is immortal. The
 // instruction goes.
-pub function drop_inert_counts(f: SFunc): SFunc {
-  if (!has_inert_counts(f)) {
+function drop_inert_counts(f: SFunc, owned_frame_views: boolean): SFunc {
+  if (!has_inert_counts(f, owned_frame_views)) {
     return f;
   }
   let defs = inst_defs(f);
@@ -4975,7 +4980,7 @@ pub function drop_inert_counts(f: SFunc): SFunc {
   let nblocks: SBlock[] = [];
   let changed = false;
   for blk in f.blocks {
-    let kept = without_inert_counts(blk, defs, uses);
+    let kept = without_inert_counts(blk, defs, uses, owned_frame_views);
     changed = changed || kept.insts.len() != blk.insts.len();
     nblocks = nblocks.append(kept);
   }
@@ -4988,7 +4993,7 @@ pub function drop_inert_counts(f: SFunc): SFunc {
 // Whether the function holds a zero constant and a count call, or a frame
 // view and a view release, so the common function pays one scan and no
 // allocation.
-function has_inert_counts(f: SFunc): boolean {
+function has_inert_counts(f: SFunc, owned_frame_views: boolean): boolean {
   let zero = false;
   let counts = false;
   let frame = false;
@@ -5001,7 +5006,7 @@ function has_inert_counts(f: SFunc): boolean {
       views = views || view_release(ins);
     }
   }
-  return zero && counts || frame && views;
+  return zero && counts || !owned_frame_views && frame && views;
 }
 
 function zero_constant(ins: SInst): boolean {
@@ -5014,10 +5019,10 @@ function zero_constant(ins: SInst): boolean {
   return ins.kind_tag == CONST_I64 && ins.str.len() > 0 && util.lit_to_i64(ins.str) == 0i64;
 }
 
-function without_inert_counts(blk: SBlock, defs: SInst[], uses: i32[]): SBlock {
+function without_inert_counts(blk: SBlock, defs: SInst[], uses: i32[], owned_frame_views: boolean): SBlock {
   let ninsts: SInst[] = [];
   for ins in blk.insts {
-    if (!inert_count(ins, defs, uses)) {
+    if (!inert_count(ins, defs, uses, owned_frame_views)) {
       ninsts = ninsts.append(ins);
     }
   }
@@ -5105,14 +5110,14 @@ function reads_frame_view(defs: SInst[], ins: SInst): boolean {
   return false;
 }
 
-function inert_count(ins: SInst, defs: SInst[], uses: i32[]): boolean {
+function inert_count(ins: SInst, defs: SInst[], uses: i32[], owned_frame_views: boolean): boolean {
   if (ins.result >= 0 && ins.result < uses.len() && uses[ins.result] > 0) {
     return false;
   }
   if (count_call(ins)) {
     return const_is(defs, ins.args[0], 0i64);
   }
-  if (!view_release(ins)) {
+  if (owned_frame_views || !view_release(ins)) {
     return false;
   }
   if (tagged_view_release(ins.str)) {

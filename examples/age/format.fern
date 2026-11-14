@@ -6,6 +6,7 @@ import "std/crypto/aead";
 import "std/crypto/chacha20poly1305";
 import "std/option";
 import "std/result";
+import "std/crypto/scrypt";
 import "std/crypto/x25519";
 import "./source";
 import "./text";
@@ -19,6 +20,14 @@ pub const CHUNK: i32 = 65536;
 pub const SEALED: i32 = 65552;
 
 const X25519_LABEL: string = "age-encryption.org/v1/X25519";
+
+const SCRYPT_LABEL: string = "age-encryption.org/v1/scrypt";
+
+// The scrypt work factor of age's ScryptRecipient, and the largest that its
+// ScryptIdentity accepts.
+pub const SCRYPT_WORK_FACTOR: i32 = 18;
+
+pub const SCRYPT_MAX_WORK_FACTOR: i32 = 22;
 
 pub struct Stanza { kind: string, args: string[], body: u8[] }
 
@@ -369,6 +378,106 @@ pub function unwrap(st: Stanza, scalar: [u8], public: [u8]): Unwrapped {
     return Incorrect;
   };
   return match (k.open(ZERO_IV, st.body, [])) {
+    Ok(file_key) => FileKey(file_key),
+    Err(_) => Incorrect,
+  };
+}
+
+// The wrapping key of an scrypt stanza: scrypt with N = 2^log_n, r = 8 and
+// p = 1, and the label before the salt.
+function scrypt_key(passphrase: [u8], salt: [u8], log_n: i32): Result[chacha20poly1305.Key, string] {
+  let k = match (scrypt.key(passphrase, SCRYPT_LABEL.bytes().concat(salt), 1 << log_n, 8, 1, 32)) {
+    Ok(k) => k,
+    Err(e) => {
+      return Err("failed to generate scrypt hash: " + e.message());
+    },
+  };
+  let key = chacha20poly1305.key(k);
+  crypto.erase(k);
+  return match (key) {
+    Ok(key) => Ok(key),
+    Err(e) => Err(e.message()),
+  };
+}
+
+// The scrypt stanza that wraps the file key with a passphrase. salt is 16
+// fresh bytes.
+pub function wrap_scrypt(file_key: [u8], passphrase: [u8], salt: [u8], log_n: i32): Result[Stanza, string] {
+  let key = scrypt_key(passphrase, salt, log_n)?;
+  let body = match (key.seal(ZERO_IV, file_key, [])) {
+    Ok(b) => b,
+    Err(e) => {
+      return Err(e.message());
+    },
+  };
+  __ct_public(body);
+  return Ok(Stanza { kind: "scrypt", args: [text.b64_raw(salt), log_n.to_string()], body: body });
+}
+
+// age's check of the work factor: decimal digits that do not start with 0,
+// then Go's strconv.Atoi, then the limit of age.
+function work_factor(w: string): Result[i32, string] {
+  let encoding = f"scrypt work factor encoding invalid: {text.quote(w.as_bytes())}";
+  if (w.len() == 0 || w[0] == b'0') {
+    return Err(encoding);
+  }
+  let v = 0i64;
+  let overflow = false;
+  for c in w.bytes() {
+    if (c < b'0' || c > b'9') {
+      return Err(encoding);
+    }
+    let d = (c - b'0') as i64;
+    if (v > (9223372036854775807i64 - d) / 10i64) {
+      overflow = true;
+    }
+    v = v * 10i64 + d;
+  }
+  if (overflow) {
+    return Err(f"failed to parse scrypt work factor: strconv.Atoi: parsing {text.quote(w.as_bytes())}: value out of range");
+  }
+  if (v > SCRYPT_MAX_WORK_FACTOR as i64) {
+    return Err(f"scrypt work factor too large: {v}");
+  }
+  return Ok(v as i32);
+}
+
+// age's ScryptIdentity.unwrap for one stanza.
+// The salt and the work factor of an scrypt stanza.
+function scrypt_args(st: Stanza): Result[(u8[], i32), string] {
+  if (st.args.len() != 2) {
+    return Err("invalid scrypt recipient block");
+  }
+  let salt = match (text.decode_string(st.args[0].as_bytes())) {
+    Ok(b) => b,
+    Err(why) => {
+      return Err("failed to parse scrypt salt: " + why);
+    },
+  };
+  if (salt.len() != 16) {
+    return Err("invalid scrypt recipient block");
+  }
+  return Ok((salt, work_factor(st.args[1])?));
+}
+
+pub function unwrap_scrypt(st: Stanza, passphrase: [u8]): Unwrapped {
+  if (st.kind != "scrypt") {
+    return Incorrect;
+  }
+  let (salt, log_n) = match (scrypt_args(st)) {
+    Ok(a) => a,
+    Err(why) => { return Invalid(why); },
+  };
+  let key = match (scrypt_key(passphrase, salt, log_n)) {
+    Ok(k) => k,
+    Err(why) => {
+      return Invalid(why);
+    },
+  };
+  if (st.body.len() != 32) {
+    return Invalid("invalid scrypt recipient block: incorrect file key size");
+  }
+  return match (key.open(ZERO_IV, st.body, [])) {
     Ok(file_key) => FileKey(file_key),
     Err(_) => Incorrect,
   };

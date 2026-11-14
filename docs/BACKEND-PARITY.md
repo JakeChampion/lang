@@ -438,6 +438,22 @@ block at a time in `i64` locals, in limbs of 26 bits
 The Poly1305 kernels have no table and no branch on the key or the message.
 The length of the message alone selects the path.
 
+The AEAD of RFC 8439 runs in two kernels on each backend
+(`__chacha20_poly1305_seal_into` and `__chacha20_poly1305_open_into`). Each
+kernel seals or opens a range of a byte array in place in one pass.
+
+On x86-64 the kernel computes Poly1305 on `mulx` in the general registers,
+among the AVX2 rounds of ChaCha20. A group of eight blocks gives 512 bytes of
+key stream. Poly1305 takes 512 bytes of ciphertext in the same group. On arm64 the kernel
+computes Poly1305 on `mul` and `umulh` among the NEON rounds, with groups of
+256 bytes. Thus the vector units and the multipliers work at the same time. On
+wasm the kernel calls the ChaCha20 and Poly1305 code above in turn
+(`compiler/wasm_poly.fern`).
+
+On one core of the dev container (Xeon, AVX-512 present but not used), the
+x86-64 kernel seals 2.9 GB/s over 64 KiB. The two kernels in turn do
+2.3 GB/s.
+
 Anything above this level (AVX-512, …) needs runtime dispatch first, and none
 of it is used. AVX-512 is deliberately not taken: Intel removed it from
 consumer parts at Alder Lake, so a v4 baseline would drop hardware a v3 one

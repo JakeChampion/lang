@@ -701,6 +701,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"wycheproof_x25519", langSrcAbs(t, "tests/stdlib/wycheproof_x25519_test.fern"), ""},
 		{"wycheproof_ed25519", langSrcAbs(t, "tests/stdlib/wycheproof_ed25519_test.fern"), ""},
 		{"rsa", langSrcAbs(t, "tests/stdlib/rsa_test.fern"), ""},
+		{"scrypt", langSrcAbs(t, "tests/stdlib/scrypt_test.fern"), ""},
 		{"tls_client", langSrcAbs(t, "tests/stdlib/tls_client_test.fern"), ""},
 		{"tls_der", langSrcAbs(t, "tests/stdlib/tls_der_test.fern"), ""},
 		{"tls_handshake", langSrcAbs(t, "tests/stdlib/tls_handshake_test.fern"), ""},

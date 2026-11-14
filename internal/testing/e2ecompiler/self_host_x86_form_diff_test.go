@@ -351,6 +351,35 @@ func vexFormCases() []string {
 	}
 }
 
+// scanSetFormCases are the forms of __fern_scan_set, the scan with a set that
+// is not a constant.
+func scanSetFormCases() []string {
+	return []string{
+		"cmovgq %r8, %r10",
+		"cmpq %rsi, %r9",
+		"cmpb $0, 8(%rdx,%r9)",
+		"movzbq 3(%rax,%rcx), %r9",
+		"movzbq 8(%rdx,%r10), %r9",
+		"leaq -88(%rdx), %r11",
+		"leaq (%r9,%rdx), %rcx",
+		"movq %rsp, %rdi",
+		"movq %rdi, %rsp",
+		"subq $352, %rsp",
+		"movb %r9b, 96(%r11,%r10)",
+		"vmovdqu %ymm0, 320(%r11)",
+		"vmovdqu 224(%r11), %ymm0",
+		"vmovdqu 64(%r9), %ymm8",
+		"vbroadcasti128 48(%r9), %ymm7",
+		"vpcmpeqb %ymm9, %ymm0, %ymm0",
+		"vpcmpeqb %ymm9, %ymm9, %ymm9",
+		"vpand %ymm8, %ymm1, %ymm1",
+		"vpor %ymm0, %ymm3, %ymm3",
+		"vpslld $2, %ymm8, %ymm8",
+		"vperm2i128 $1, %ymm3, %ymm3, %ymm0",
+		"vpxor %ymm9, %ymm3, %ymm3",
+	}
+}
+
 // chachaFormCases are the forms of the ChaCha20 kernel, __fern_chacha20_xor_into.
 func chachaFormCases() []string {
 	return []string{
@@ -418,6 +447,50 @@ func polyFormCases() []string {
 	}
 }
 
+// chachaPolyFormCases are the forms of the fused kernels,
+// __fern_chacha20_poly1305_seal_into and __fern_chacha20_poly1305_open_into.
+func chachaPolyFormCases() []string {
+	return []string{
+		"mulxq 1600(%rsp), %r9, %rbx",
+		"mulxq 1608(%rsp), %r11, %rcx",
+		"mulxq 1616(%rsp), %rax, %rdx",
+		"imulq 1616(%rsp), %rax",
+		"imulq 1600(%rsp), %r8",
+		"adcq %rdx, %rbx",
+		"addq %rbx, %r11",
+		"addq 32(%rdi), %r14",
+		"adcq 40(%rdi), %r15",
+		"adcq 1648(%rsp), %r15",
+		"addq -112(%rbp), %r14",
+		"adcq -32(%rbp), %r15",
+		"addq %rax, -24(%rbp)",
+		"orq -112(%rbp), %rax",
+		"andq 264(%r10), %rax",
+		"movq $10, %r12",
+		"subq $1, %r12",
+		"addq $48, %rdi",
+		"subq %rdi, %r12",
+		"addq %r12, %rdi",
+		"cmpq %r12, %rcx",
+		"cmpq %r13, %rax",
+		"movslq %r9d, %r9",
+		"cltq",
+		"movzbl (%rdi,%rcx), %eax",
+		"movb %al, 1640(%rsp,%rcx)",
+		"movq $0, 1648(%rsp)",
+		"xorq 1088(%rsp,%rcx), %rax",
+		"movzbl 1088(%rsp,%rcx), %r9d",
+		"subq $1664, %rsp",
+		"vmovdqu %ymm0, 1632(%rsp)",
+		"xorq %r14, %r14",
+		"xorq 8(%rax), %r15",
+		"orq %r15, %r14",
+		"setnz %cl",
+		"movq %r15, 8(%rax)",
+		"movq -88(%rbp), %r15",
+	}
+}
+
 func TestSelfHostX86FormsMatchGas(t *testing.T) {
 	var cases []string
 	cases = append(cases, aluFormCases()...)
@@ -425,8 +498,10 @@ func TestSelfHostX86FormsMatchGas(t *testing.T) {
 	cases = append(cases, extendLeaFormCases()...)
 	cases = append(cases, miscFormCases()...)
 	cases = append(cases, vexFormCases()...)
+	cases = append(cases, scanSetFormCases()...)
 	cases = append(cases, chachaFormCases()...)
 	cases = append(cases, polyFormCases()...)
+	cases = append(cases, chachaPolyFormCases()...)
 
 	if len(cases) < 300 {
 		t.Fatalf("the matrix produced only %d cases; it is meant to be a product of mnemonics, forms and widths", len(cases))

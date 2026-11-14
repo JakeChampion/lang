@@ -36,6 +36,14 @@ pub function (f: Fail) is_eof(): boolean {
   };
 }
 
+// The input ends, after all of its bytes or in the middle of a read.
+pub function (f: Fail) is_end(): boolean {
+  return match (f) {
+    Eof | Short => true,
+    _ => false,
+  };
+}
+
 // The bytes of a file. With no reader, the bytes in buf are all there is.
 pub struct Raw { r: Option[Reader], name: string, buf: u8[], pos: i32, fail: Option[Fail] }
 

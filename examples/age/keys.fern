@@ -2,9 +2,30 @@
 // the messages of age 1.1.1 for each malformed one.
 import "std/crypto/x25519";
 import "./bech32";
+import "./ssh";
 import "./text";
 
-pub struct Identity { scalar: u8[], public: u8[] }
+// An age secret key: the secret scalar and its public key.
+pub struct X25519Key { scalar: u8[], public: u8[] }
+
+// A key that can unwrap a file key.
+pub enum Identity {
+  X25519Id(X25519Key),
+  // An identity file that age encrypts with a passphrase: its name and the
+  // age file, with no armor.
+  Encrypted(string, u8[]),
+  SshId(ssh.Identity),
+  // An SSH key that needs a passphrase: the name and the bytes of its file,
+  // and its public key.
+  EncryptedSsh(string, u8[], ssh.Public),
+}
+
+// A key that a file key is wrapped to.
+pub enum Recipient {
+  X25519To(u8[]),
+  ScryptTo(u8[]),
+  SshTo(ssh.Recipient),
+}
 
 // The lines of a file as Go's bufio.ScanLines splits them: at each "\n",
 // with one "\r" before it dropped. Each line is a range of the file.
@@ -40,7 +61,24 @@ function count_ones(s: string): i32 {
 }
 
 // The public key that a recipient string names, or age's message.
-pub function parse_recipient(arg: string): Result[u8[], string] {
+// age's ParseX25519Recipient.
+function x25519_recipient(arg: string): Result[Recipient, string] {
+  let d = match (bech32.decode(arg.as_bytes())) {
+    Ok(d) => d,
+    Err(why) => {
+      return Err(f"malformed recipient {q(arg)}: {why}");
+    },
+  };
+  if (d.hrp != "age") {
+    return Err(f"malformed recipient {q(arg)}: invalid type {q(d.hrp)}");
+  }
+  if (d.data.len() != 32) {
+    return Err(f"malformed recipient {q(arg)}: invalid X25519 public key");
+  }
+  return Ok(X25519To(d.data));
+}
+
+pub function parse_recipient(arg: string): Result[Recipient, string] {
   if (arg.starts_with("age1") && count_ones(arg) > 1) {
     if let Err(why) = bech32.decode(arg.as_bytes()) {
       return Err(f"invalid recipient encoding {q(arg)}: {why}");
@@ -48,30 +86,21 @@ pub function parse_recipient(arg: string): Result[u8[], string] {
     return Err(f"plugin recipient {q(arg)}: plugins are not supported by this port");
   }
   if (arg.starts_with("age1")) {
-    let d = match (bech32.decode(arg.as_bytes())) {
-      Ok(d) => d,
-      Err(why) => {
-        return Err(f"malformed recipient {q(arg)}: {why}");
-      },
-    };
-    if (d.hrp != "age") {
-      return Err(f"malformed recipient {q(arg)}: invalid type {q(d.hrp)}");
-    }
-    if (d.data.len() != 32) {
-      return Err(f"malformed recipient {q(arg)}: invalid X25519 public key");
-    }
-    return Ok(d.data);
+    return x25519_recipient(arg);
   }
   if (arg.starts_with("ssh-")) {
-    return Err(f"SSH recipient {q(arg)}: SSH recipients are not supported by this port");
+    return match (ssh.parse_recipient(arg)) {
+      Ok(r) => Ok(SshTo(r)),
+      Err(why) => Err(why),
+    };
   }
   return Err(f"unknown recipient type: {q(arg)}");
 }
 
 // The recipients of a recipients file, or the message after
 // "failed to parse recipient file NAME: ".
-pub function recipients_file(content: [u8], name: string): Result[u8[][], string] {
-  let out: u8[][] = [];
+pub function recipients_file(content: [u8], name: string): Result[Recipient[], string] {
+  let out: Recipient[] = [];
   let lines = scan_lines(content);
   for n in 0..lines.len() {
     let (from, to) = lines[n];
@@ -87,6 +116,10 @@ pub function recipients_file(content: [u8], name: string): Result[u8[][], string
         out = out.append(k);
       },
       Err(_) => {
+        if let Some(t) = ssh.key_type(line) {
+          eprint(f"age: warning: recipients file {q(name)}: ignoring unsupported SSH key of type {q(t)} at line {n + 1}");
+          continue;
+        }
         return Err(f"{q(name)}: malformed recipient at line {n + 1}");
       }
     }
@@ -112,7 +145,7 @@ pub function secret_key_error(line: [u8]): string {
 
 // One key line of an identity file. The line starts with
 // bech32.SECRET_PREFIX. Its data part is marked secret here.
-function key_line(line: [u8]): Result[Identity, string] {
+function key_line(line: [u8]): Result[X25519Key, string] {
   __ct_secret(line[bech32.SECRET_PREFIX.len():line.len()]);
   let Some(scalar) = bech32.decode_secret(line) else {
     __ct_public(line);
@@ -121,7 +154,7 @@ function key_line(line: [u8]): Result[Identity, string] {
   match (x25519.public_key(scalar)) {
     Ok(public) => {
       __ct_public(public);
-      return Ok(Identity { scalar: scalar, public: public });
+      return Ok(X25519Key { scalar: scalar, public: public });
     },
     Err(e) => {
       return Err(e.message());
@@ -129,10 +162,24 @@ function key_line(line: [u8]): Result[Identity, string] {
   }
 }
 
-// The identities of an identity file that holds age secret keys, or the
-// message after "failed to read NAME: ".
-pub function identities(content: [u8]): Result[Identity[], string] {
-  let ids: Identity[] = [];
+// The key of one line of an identity file. age's CLI (cmd) knows the type of
+// a line by its prefix. age's library parses each line as a secret key.
+function identity_line(line: [u8], cmd: boolean): Result[X25519Key, string] {
+  if (cmd && text.has_prefix(line, "AGE-PLUGIN-")) {
+    return Err("plugin identities are not supported by this port");
+  }
+  if (text.has_prefix(line, bech32.SECRET_PREFIX)) {
+    return key_line(line);
+  }
+  if (cmd) {
+    return Err("unknown identity type");
+  }
+  __ct_public(line);
+  return Err("malformed secret key: " + secret_key_error(line));
+}
+
+function identity_lines(content: [u8], cmd: boolean): Result[X25519Key[], string] {
+  let ids: X25519Key[] = [];
   let lines = scan_lines(content);
   for n in 0..lines.len() {
     let (from, to) = lines[n];
@@ -140,13 +187,7 @@ pub function identities(content: [u8]): Result[Identity[], string] {
     if (line.len() == 0 || line[0] == b'#') {
       continue;
     }
-    if (text.has_prefix(line, "AGE-PLUGIN-")) {
-      return Err(f"error at line {n + 1}: plugin identities are not supported by this port");
-    }
-    if (!text.has_prefix(line, bech32.SECRET_PREFIX)) {
-      return Err(f"error at line {n + 1}: unknown identity type");
-    }
-    match (key_line(line)) {
+    match (identity_line(line, cmd)) {
       Ok(id) => {
         ids = ids.append(id);
       },
@@ -159,4 +200,34 @@ pub function identities(content: [u8]): Result[Identity[], string] {
     return Err("no secret keys found");
   }
   return Ok(ids);
+}
+
+// The keys of an identity file as age's CLI reads it, or the message after
+// "failed to read NAME: ".
+pub function identities(content: [u8]): Result[X25519Key[], string] {
+  return identity_lines(content, true);
+}
+
+// The keys of an identity file as age's library (age.ParseIdentities) reads
+// it, for age-keygen -y.
+pub function parse_identities(content: [u8]): Result[X25519Key[], string] {
+  return identity_lines(content, false);
+}
+
+// The key pair of a secret scalar.
+pub function key_of(scalar: u8[]): Result[X25519Key, string] {
+  return match (x25519.public_key(scalar)) {
+    Ok(public) => Ok(X25519Key { scalar: scalar, public: public }),
+    Err(e) => Err(e.message()),
+  };
+}
+
+// The age1... text of a public key.
+pub function recipient_text(public: [u8]): string {
+  return bech32.encode("age", public);
+}
+
+// The AGE-SECRET-KEY-1... text of a secret key.
+pub function secret_text(scalar: [u8]): string {
+  return bech32.encode("AGE-SECRET-KEY-", scalar).to_ascii_upper();
 }

@@ -143,6 +143,7 @@ var BuiltinCaps = map[string]string{
 }
 
 var Ungated = map[string]bool{
+	"__alloc_len":                 true,
 	"__outer_mul_f64":             true,
 	"__inner_mul_add_f64":         true,
 	"putchar":                     true,
@@ -246,6 +247,9 @@ var Ungated = map[string]bool{
 	"string_from_bytes_unchecked": true,
 	"slice_unchecked":             true,
 	"int_to_string":               true,
+
+	"__chacha20_poly1305_seal_into": true,
+	"__chacha20_poly1305_open_into": true,
 
 	"string_from_bytes_range_unchecked": true,
 	"share_unchecked":                   true,

@@ -194,6 +194,25 @@ func arm64FormCases() []string {
 	} {
 		add("%s", f)
 	}
+	// The forms of the fused kernels, __fern_chacha20_poly1305_seal_into and __fern_chacha20_poly1305_open_into.
+	for _, f := range []string{
+		"ldp x4, x5, [x0]", "add x0, x0, #16", "ldr x7, [x1, x6]", "ldr x8, [x5, x6]", "str x7, [x1, x6]", "add x7, x6, #8",
+		"cmp x7, x2", "subs x2, x2, #192", "subs x2, x2, #256", "sub x3, x3, x0", "add x0, x0, x3",
+		"stp xzr, xzr, [x29, #64]", "ldp x4, x5, [x29, #240]", "stp x4, x5, [x29, #48]", "str q23, [x29, #464]",
+		"sxtw x6, w6", "mov w3, #8", "subs w3, w3, #1", "eor x4, x4, x12", "orr x4, x4, x5", "cset w4, ne", "strb w4, [x3]",
+		"stp x12, x13, [x3]",
+	} {
+		add("%s", f)
+	}
+	// The forms of __fern_scan_set, the scan with a set that is not a constant.
+	for _, f := range []string{
+		"csel x10, x10, x3, le", "add x8, x2, #8", "ldrb w6, [x5, #3]", "ldrb w7, [x8, x6]", "ldrb w7, [x7, #8]",
+		"sub x9, x2, #88", "mov x11, sp", "mov sp, x11", "sub sp, sp, #352", "stp q0, q0, [x9, #320]",
+		"add x6, x9, x10", "strb w7, [x6, #96]", "ldr q22, [x10]", "ldr q1, [x9, #336]", "movi v5.16b, #64",
+		"movi v5.16b, #128", "cmtst v1.16b, v1.16b, v1.16b", "and v1.16b, v1.16b, v5.16b", "orr v21.16b, v21.16b, v1.16b",
+	} {
+		add("%s", f)
+	}
 	return out
 }
 

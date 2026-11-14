@@ -3,6 +3,7 @@ package e2e
 import (
 	"encoding/json"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -40,6 +41,30 @@ func recordFinding(t *testing.T, f selfHostFinding) {
 	if err != nil {
 		t.Errorf("FERN_FINDINGS: %v", err)
 	}
+}
+
+// oracleRefused fails a test whose program the interpreter oracle cannot
+// take. A seed of a differential leg also records the refusal as a finding.
+func oracleRefused(t *testing.T, stage string, err error, src string) {
+	t.Helper()
+	if f, ok := oracleFinding(t.Name(), stage); ok {
+		recordFinding(t, f)
+	}
+	t.Fatalf("%s: %v\nsrc:\n%s", stage, err, src)
+}
+
+func oracleFinding(name, stage string) (selfHostFinding, bool) {
+	leg, rest, _ := strings.Cut(name, "/")
+	v, ok := strings.CutPrefix(rest, "seed=")
+	if !ok {
+		return selfHostFinding{}, false
+	}
+	v, _, _ = strings.Cut(v, "/")
+	seed, err := strconv.ParseUint(v, 10, 64)
+	if err != nil {
+		return selfHostFinding{}, false
+	}
+	return selfHostFinding{Test: leg, Seed: seed, Class: "the oracle refused: " + stage}, true
 }
 
 func failureClass(format string) string {
@@ -100,6 +125,22 @@ func TestFailureClass(t *testing.T) {
 	}
 	if compilerRefused("exit status 3\nFERN_STRICT_IR: main: an op the subset does not lower") {
 		t.Error("a coverage gap read as a compiler refusal")
+	}
+}
+
+func TestOracleFindingNamesTheSeed(t *testing.T) {
+	f, ok := oracleFinding("TestDifferential_SelfHostX86_64/seed=164889", "check")
+	if !ok || f.Test != "TestDifferential_SelfHostX86_64" || f.Seed != 164889 || f.Class != "the oracle refused: check" {
+		t.Errorf("got %+v, %v", f, ok)
+	}
+	f, ok = oracleFinding("TestDifferential_SelfHostEMIX86_64/seed=7/strconcat", "load")
+	if !ok || f.Seed != 7 || f.Test != "TestDifferential_SelfHostEMIX86_64" {
+		t.Errorf("a seed with a case name: got %+v, %v", f, ok)
+	}
+	for _, name := range []string{"TestInterpOracleRunsGenericBodies/Eq-bounded_body", "TestX", "TestX/seed=x"} {
+		if f, ok := oracleFinding(name, "check"); ok {
+			t.Errorf("%s is no seed, got %+v", name, f)
+		}
 	}
 }
 

@@ -236,6 +236,7 @@ var coreBuiltins = map[string]bool{
 	"target_os":           true,
 	"target_arch":         true,
 	"__account_entry":     true,
+	"__alloc_len":         true,
 	"__ct_secret":         true,
 	"__ct_public":         true,
 	"__bytes_owned":       true,
@@ -290,6 +291,9 @@ var coreBuiltins = map[string]bool{
 	"f32_from_bits": true,
 	"f64_bits":      true,
 	"f64_from_bits": true,
+
+	"__chacha20_poly1305_seal_into": true,
+	"__chacha20_poly1305_open_into": true,
 
 	"string_from_bytes_range_unchecked": true,
 	"share_unchecked":                   true,

@@ -195,6 +195,108 @@ function test_bad_keys(): test.TestOutcome {
   return test.assert_eq(key_refusal(huge + "01", "010001"), "rsa: the modulus is 16408 bits, want at most 16384");
 }
 
+// A 1024-bit key from Python's cryptography package, and two ciphertexts of
+// the bytes 0 to 15 under the age ssh-rsa label: one from the package, and
+// one with a seed of 32 bytes of 0xa5.
+const OAEP_N: string = "e2488e82714208faa22e7ea0aa5820729683d776f05a7cb49467212db0c884b5825f36d9e059e817e069f5a3f91d06616d9b7c822ded1f082127fc65df3e0b0919e86e65f9a51a5ba4308de9dca40fcc020662e03318f07da851cc6c46883a2a12213b94d2985e7c2afd0a2f4cd278ccfc193f61edc4154e49bc8e7e6383af95";
+
+const OAEP_D: string = "5a8d528a1caca24f39eb853ce22e15fe0501898dcd2d48ce32bcfa6800609dcaccfb31460b23af5f2eacf861bfe4bf92e97bd95d76e7770d97c71a97e1b8404d89570caa96af17a21837c4aecf99f20e77abb4e3c37997d3612eee3fac3b5cf5ef96aa6d342b5479eb98303d7f3d0ce0b18e6ea97be06e997f4df94d8ac21b59";
+
+const OAEP_P: string = "f8971e7f101426799d5e58e6862393527ceba7a7a868039a787c9d486a262f3c25166257f2ccd2cb0edb162fbcb645f5ee9547b835f3454b21fef28dc8474f83";
+
+const OAEP_Q: string = "e9073947614330e625ba0c7f7aba7dc257897546ca2a57e1a27c6b9d8066df669bff867b9333e3421088febd21f04f8571acce7d9777afeaf7b85f03b7eb0107";
+
+const OAEP_C: string = "d6bb2b1652bddb62c747eac83d143e608b753730a4936da9ffe6594ffeb3e4e6283f7ea6d7f10a1d89cc0bdf4927f7af3ee9736fa035cf91f80797cebf3c7acacff97ced06501795c07d669d0f4f995d42a55f9cc5d5d8b00a0291be75204cc074d81386dada61f40d744f5e65ea7d2ef9de3dc9e6e1d85c830991a4967ce423";
+
+const OAEP_C_SEEDED: string = "76248c977cefffd32f58f0fb7ca47c0e69e74b87d4e0033ec394872754aac9f3dcd8cd093b4766579f242f5774427529e613dbb461794cfc2ce96a12573dadb2dca2cafb2067a3c7864670de5d9a006919b792f1f1ad5a3193112a3ff5c6b69e99a7ef082fbb0fa776504f9e6293b28db76b5597fccb76a5526fc3248b0c23cd";
+
+const OAEP_LABEL: string = "age-encryption.org/v1/ssh-rsa";
+
+const OAEP_MSG: string = "000102030405060708090a0b0c0d0e0f";
+
+function oaep_key(d: string, p: string, q: string): Result[rsa.PrivateKey, rsa.RsaError] {
+  return rsa.private_key(__codec_bytes(hex.decode(OAEP_N)), __codec_bytes(hex.decode("010001")), __codec_bytes(hex.decode(d)), __codec_bytes(hex.decode(p)), __codec_bytes(hex.decode(q)));
+}
+
+function decrypted(c: string, label: string): string {
+  let k = match (oaep_key(OAEP_D, OAEP_P, OAEP_Q)) {
+    Ok(k) => k,
+    Err(e) => {
+      return e.message();
+    },
+  };
+  return match (k.decrypt_oaep(sha2.Hash.Sha256, __codec_bytes(hex.decode(c)), label.as_bytes())) {
+    Ok(m) => hex.encode(m),
+    Err(e) => e.message(),
+  };
+}
+
+function test_oaep_decrypt(): test.TestOutcome {
+  if (decrypted(OAEP_C, OAEP_LABEL) != OAEP_MSG) {
+    return test.fail("the ciphertext of the cryptography package");
+  }
+  return test.assert_eq(decrypted(OAEP_C_SEEDED, OAEP_LABEL), OAEP_MSG);
+}
+
+function seeded(msg: [u8]): string {
+  let k = match (oaep_key(OAEP_D, OAEP_P, OAEP_Q)) {
+    Ok(k) => k,
+    Err(e) => {
+      return e.message();
+    },
+  };
+  let seed = __alloc_u8(32);
+  let i = 0;
+  while (i < 32) {
+    seed = seed.with(i, 0xa5 as u8);
+    i += 1;
+  }
+  return match (k.public_key().encrypt_oaep(sha2.Hash.Sha256, seed, msg, OAEP_LABEL.as_bytes())) {
+    Ok(c) => hex.encode(c),
+    Err(e) => e.message(),
+  };
+}
+
+function test_oaep_encrypt(): test.TestOutcome {
+  if (seeded(__codec_bytes(hex.decode(OAEP_MSG))) != OAEP_C_SEEDED) {
+    return test.fail("the seeded ciphertext");
+  }
+  return test.assert_eq(seeded(__alloc_u8(63)), "rsa: the message is too long for the key");
+}
+
+function flipped(c: string, at: i32): string {
+  let b = __codec_bytes(hex.decode(c));
+  return hex.encode(b.with(at, b[at] ^ 1 as u8));
+}
+
+function test_oaep_refusals(): test.TestOutcome {
+  let refused = "rsa: decryption error";
+  let got = [
+    decrypted(OAEP_C, "another label"),
+    decrypted(flipped(OAEP_C, 0), OAEP_LABEL),
+    decrypted(flipped(OAEP_C, 127), OAEP_LABEL),
+    decrypted(OAEP_C + "00", OAEP_LABEL),
+    decrypted(OAEP_N, OAEP_LABEL),
+  ];
+  return test.assert_eq_array(got, [refused, refused, refused, refused, refused]);
+}
+
+function key_error(d: string, p: string, q: string): string {
+  return match (oaep_key(d, p, q)) {
+    Ok(_) => "ok",
+    Err(e) => e.message(),
+  };
+}
+
+function test_private_key_refusals(): test.TestOutcome {
+  let got = [key_error(OAEP_D, "01", OAEP_Q), key_error(OAEP_D, OAEP_Q, OAEP_Q), key_error(OAEP_P, OAEP_P, OAEP_Q)];
+  return test.assert_eq_array(got, [
+    "rsa: a prime of the private key is 1 or less",
+    "rsa: the product of the primes is not the modulus",
+    "rsa: d * e is not 1 modulo p - 1 and q - 1",
+  ]);
+}
+
 function main(): i32 {
   let r = test.new("std/crypto/rsa");
   r = r.it("pkcs1 2048-bit sha256", test_pkcs1_2048_sha256);
@@ -209,6 +311,10 @@ function main(): i32 {
   r = r.it("pss 2049-bit sha512", test_pss_2049_sha512);
   r = r.it("refusals", test_refusals);
   r = r.it("malformed keys", test_bad_keys);
+  r = r.it("OAEP decryption", test_oaep_decrypt);
+  r = r.it("OAEP encryption with a fixed seed", test_oaep_encrypt);
+  r = r.it("OAEP refusals", test_oaep_refusals);
+  r = r.it("private key refusals", test_private_key_refusals);
   return r.finish();
 }
 

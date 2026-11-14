@@ -103,8 +103,13 @@ func ageExists(path string) bool {
 
 // agePort builds the port for target and gives a tool that runs it.
 func agePort(t *testing.T, cli *selfHostCLI, target string) ageTool {
+	return ageProgram(t, cli, target, "age.fern")
+}
+
+// ageProgram builds a program of examples/age, such as keygen.fern, for target.
+func ageProgram(t *testing.T, cli *selfHostCLI, target, file string) ageTool {
 	t.Helper()
-	src, err := filepath.Abs("../../../examples/age/age.fern")
+	src, err := filepath.Abs("../../../examples/age/" + file)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,6 +142,8 @@ func TestSelfHostExampleAgeCLI(t *testing.T) {
 			t.Run("tampered", func(t *testing.T) { ageTampered(t, oracle, port, dir, r1) })
 			t.Run("malformed", func(t *testing.T) { ageMalformed(t, oracle, port, dir, r1) })
 			t.Run("messages", func(t *testing.T) { ageMessages(t, oracle, port, dir, r1) })
+			t.Run("passphrase", func(t *testing.T) { agePassphrase(t, oracle, port, dir, keygen, r1) })
+			t.Run("ssh", func(t *testing.T) { ageSSH(t, oracle, port, dir) })
 		})
 	}
 }
@@ -496,9 +503,9 @@ func ageMessages(t *testing.T, oracle, port ageTool, dir, r1 string) {
 
 // ageVector is one file of the C2SP CCTV age suite (examples/age/testdata/cctv).
 type ageVector struct {
-	name, expect, payload string
-	identities            []string
-	file                  []byte
+	name, expect, payload   string
+	identities, passphrases []string
+	file                    []byte
 }
 
 func ageVectors(t *testing.T) []ageVector {
@@ -533,6 +540,8 @@ func ageVectors(t *testing.T) []ageVector {
 				v.expect = value
 			case "payload":
 				v.payload = value
+			case "passphrase":
+				v.passphrases = append(v.passphrases, value)
 			case "identity":
 				v.identities = append(v.identities, value)
 			case "compressed":
@@ -565,12 +574,12 @@ func ageOutcome(code int, msg string) string {
 	switch {
 	case strings.Contains(m, "invalid armor: "):
 		return "armor failure"
-	case m == "no identity matched any of the recipients":
+	case m == "no identity matched any of the recipients" || m == "incorrect passphrase":
 		return "no match"
 	case m == "bad header MAC":
 		return "HMAC failure"
 	}
-	for _, p := range []string{"failed to read header: ", "invalid header intro", "failed to read nonce: ", "invalid X25519 recipient", "failed to parse X25519 recipient: ", "an scrypt recipient must be the only one"} {
+	for _, p := range []string{"failed to read header: ", "invalid header intro", "failed to read nonce: ", "invalid X25519 recipient", "failed to parse X25519 recipient: ", "an scrypt recipient must be the only one", "invalid scrypt recipient block", "failed to parse scrypt salt: ", "scrypt work factor ", "failed to parse scrypt work factor: "} {
 		if strings.HasPrefix(m, p) {
 			return "header failure"
 		}
@@ -583,51 +592,30 @@ func ageOutcome(code int, msg string) string {
 	return "other: " + m
 }
 
-// ageCCTVPending holds the vectors that need a recipient type after slice 1
-// of #15587: scrypt (a passphrase) and the ML-KEM hybrid. The test fails when
-// one of them starts to give its expected result.
+// ageCCTVPending holds the vectors of the ML-KEM-768 + X25519 hybrid
+// recipient (mlkem768x25519). age 1.1.1, the version that this port follows,
+// does not have that recipient: a later release of age added it. The test
+// fails when one of them starts to give its expected result.
 var ageCCTVPending = map[string]bool{
-	"armor_hybrid":                            true,
-	"armor_scrypt":                            true,
-	"hybrid":                                  true,
-	"hybrid_and_x25519":                       true,
-	"hybrid_bad_tag":                          true,
-	"hybrid_currupted_enc_mlkem":              true,
-	"hybrid_currupted_enc_x25519":             true,
-	"hybrid_extra_argument":                   true,
-	"hybrid_grease":                           true,
-	"hybrid_identity":                         true,
-	"hybrid_long_file_key":                    true,
-	"hybrid_long_share":                       true,
-	"hybrid_low_order":                        true,
-	"hybrid_multiple_recipients":              true,
-	"hybrid_no_match":                         true,
-	"hybrid_not_canonical_body":               true,
-	"hybrid_not_canonical_enc":                true,
-	"hybrid_short_share":                      true,
-	"hybrid_uppercase":                        true,
-	"hybrid_x25519_arg":                       true,
-	"scrypt":                                  true,
-	"scrypt_bad_tag":                          true,
-	"scrypt_extra_argument":                   true,
-	"scrypt_long_file_key":                    true,
-	"scrypt_no_match":                         true,
-	"scrypt_not_canonical_salt":               true,
-	"scrypt_salt_long":                        true,
-	"scrypt_salt_missing":                     true,
-	"scrypt_salt_short":                       true,
-	"scrypt_work_factor_23":                   true,
-	"scrypt_work_factor_hex":                  true,
-	"scrypt_work_factor_leading_garbage":      true,
-	"scrypt_work_factor_leading_plus":         true,
-	"scrypt_work_factor_leading_zero_decimal": true,
-	"scrypt_work_factor_leading_zero_octal":   true,
-	"scrypt_work_factor_missing":              true,
-	"scrypt_work_factor_negative":             true,
-	"scrypt_work_factor_overflow":             true,
-	"scrypt_work_factor_trailing_garbage":     true,
-	"scrypt_work_factor_wrong":                true,
-	"scrypt_work_factor_zero":                 true,
+	"armor_hybrid":                true,
+	"hybrid":                      true,
+	"hybrid_and_x25519":           true,
+	"hybrid_bad_tag":              true,
+	"hybrid_currupted_enc_mlkem":  true,
+	"hybrid_currupted_enc_x25519": true,
+	"hybrid_extra_argument":       true,
+	"hybrid_grease":               true,
+	"hybrid_identity":             true,
+	"hybrid_long_file_key":        true,
+	"hybrid_long_share":           true,
+	"hybrid_low_order":            true,
+	"hybrid_multiple_recipients":  true,
+	"hybrid_no_match":             true,
+	"hybrid_not_canonical_body":   true,
+	"hybrid_not_canonical_enc":    true,
+	"hybrid_short_share":          true,
+	"hybrid_uppercase":            true,
+	"hybrid_x25519_arg":           true,
 }
 
 // ageCCTVNotArmored holds the armor failures that do not start with the armor
@@ -668,7 +656,14 @@ func ageCCTVOne(t *testing.T, port ageTool, dir string, v ageVector) {
 	if len(v.identities) > 0 {
 		args = append(args, "-i", "id")
 	}
-	out, msg, code := port.run(t, dir, nil, append(args, "v.age")...)
+	run := func(args ...string) ([]byte, string, int) {
+		if len(v.passphrases) == 0 {
+			return port.run(t, dir, nil, args...)
+		}
+		out, msg, _, code := port.runTTY(t, dir, nil, v.passphrases[:1], args...)
+		return out, msg, code
+	}
+	out, msg, code := run(append(args, "v.age")...)
 	got := ageOutcome(code, msg)
 	want := v.expect
 	if ageCCTVNotArmored[v.name] {
@@ -688,7 +683,7 @@ func ageCCTVOne(t *testing.T, port ageTool, dir string, v ageVector) {
 		t.Errorf("%s: the %d bytes of plaintext do not have the payload hash", v.name, len(out))
 	}
 	os.Remove(filepath.Join(dir, "out"))
-	_, _, code = port.run(t, dir, nil, append(args, "-o", "out", "v.age")...)
+	_, _, code = run(append(args, "-o", "out", "v.age")...)
 	if written := ageExists(filepath.Join(dir, "out")); written != (code == 0) {
 		t.Errorf("%s: exit %d, and an output file is there: %v", v.name, code, written)
 	}
@@ -746,6 +741,45 @@ func ageCtGate(t *testing.T, valgrind, bin string) {
 		})
 	}
 	for _, p := range []string{"p1", "p2"} {
+		if got, err := os.ReadFile(filepath.Join(dir, p)); err != nil || !bytes.Equal(got, plain) {
+			t.Errorf("%s differs from the plaintext", p)
+		}
+	}
+	ageCtGateSecrets(t, valgrind, bin, dir, plain)
+}
+
+// ageCtGateSecrets runs the passphrase and SSH key paths under memcheck: the
+// passphrase, the scrypt output, the Ed25519 seed and the RSA private
+// exponent are secret.
+func ageCtGateSecrets(t *testing.T, valgrind, bin, dir string, plain []byte) {
+	ageSSHKeys(t, dir)
+	ageWrite(t, filepath.Join(dir, "s.age"), ageCCTVFile(t, "scrypt"))
+	gate := ageTool{name: "memcheck", cmd: func(args ...string) *exec.Cmd {
+		return exec.Command(valgrind, append([]string{"--error-exitcode=3", "-q", bin}, args...)...)
+	}}
+	for _, tc := range []struct {
+		name  string
+		lines []string
+		args  []string
+		code  int
+	}{
+		{"encrypt to SSH keys", nil, []string{"-R", "ed25519.pub", "-R", "rsa2048.pub", "-o", "ssh.age", "plain"}, 0},
+		{"encrypt to an SSH identity", nil, []string{"-e", "-i", "ed25519", "-o", "ssh2.age", "plain"}, 0},
+		{"decrypt with an Ed25519 key", nil, []string{"-d", "-i", "ed25519", "-o", "p3", "ssh.age"}, 0},
+		{"decrypt with an RSA key", nil, []string{"-d", "-i", "rsa2048", "-o", "p4", "ssh.age"}, 0},
+		{"decrypt with a PKCS#8 Ed25519 key", nil, []string{"-d", "-i", "ed25519_pkcs8", "-o", "p5", "ssh2.age"}, 0},
+		{"an SSH key that does not match", nil, []string{"-d", "-i", "ed25519_other", "ssh.age"}, 1},
+		{"a passphrase", []string{"password"}, []string{"-d", "-o", "p6", "s.age"}, 0},
+		{"a wrong passphrase", []string{"wrong"}, []string{"-d", "s.age"}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, stderr, _, code := gate.runTTY(t, dir, nil, tc.lines, tc.args...)
+			if code != tc.code || strings.Contains(stderr, "==") {
+				t.Fatalf("memcheck exited %d, want %d with no report\n%s", code, tc.code, stderr)
+			}
+		})
+	}
+	for _, p := range []string{"p3", "p4", "p5"} {
 		if got, err := os.ReadFile(filepath.Join(dir, p)); err != nil || !bytes.Equal(got, plain) {
 			t.Errorf("%s differs from the plaintext", p)
 		}

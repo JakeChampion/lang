@@ -88,6 +88,11 @@ func TestApkWriter(t *testing.T) {
 	if v, ok := applicationAttr(t, man, extractNativeLibsID); !ok || v != 0 {
 		t.Errorf("android:extractNativeLibs = %#x (set %v), want false for stored libraries", v, ok)
 	}
+	// singleTask: a second start gives its intent to the activity that runs,
+	// and does not put a second activity, with a second loop, on top of it.
+	if v, ok := activityAttr(t, man, launchModeID); !ok || v != 2 {
+		t.Errorf("android:launchMode = %#x (set %v), want 2 (singleTask)", v, ok)
+	}
 	verifyApkV2(t, raw)
 	if apksigner, err := exec.LookPath("apksigner"); err == nil {
 		if o, err := exec.Command(apksigner, "verify", "--min-sdk-version", "24", path).CombinedOutput(); err != nil {
@@ -153,6 +158,8 @@ func TestApkCompress(t *testing.T) {
 }
 
 const extractNativeLibsID = 0x010104ea
+
+const launchModeID = 0x0101001d
 
 const usesCleartextTrafficID = 0x010104ec
 
@@ -223,6 +230,20 @@ func zipOf(t *testing.T, raw []byte) *zip.Reader {
 // with android:hasCode.
 func applicationAttr(t *testing.T, man []byte, id uint32) (uint32, bool) {
 	t.Helper()
+	return elementAttr(t, man, 0x0101000c, id)
+}
+
+// activityAttr is the attribute id of the activity, the element with
+// android:configChanges.
+func activityAttr(t *testing.T, man []byte, id uint32) (uint32, bool) {
+	t.Helper()
+	return elementAttr(t, man, 0x0101001f, id)
+}
+
+// elementAttr is the attribute id of the first element of the binary
+// manifest man that has the attribute marker.
+func elementAttr(t *testing.T, man []byte, marker uint32, id uint32) (uint32, bool) {
+	t.Helper()
 	le := binary.LittleEndian
 	var resmap []uint32
 	for off := 8; off+8 <= len(man); {
@@ -244,14 +265,14 @@ func applicationAttr(t *testing.T, man []byte, id uint32) (uint32, bool) {
 					attrs[resmap[name]] = le.Uint32(man[a+16:])
 				}
 			}
-			if _, ok := attrs[0x0101000c]; ok {
+			if _, ok := attrs[marker]; ok {
 				v, ok := attrs[id]
 				return v, ok
 			}
 		}
 		off += size
 	}
-	t.Fatal("the manifest has no application element")
+	t.Fatalf("the manifest has no element with the attribute %#x", marker)
 	return 0, false
 }
 

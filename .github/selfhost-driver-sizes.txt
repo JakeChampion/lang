@@ -18,6 +18,9 @@
 # The PR changes one test and one document. The drift of main grew checker_codes_run 5.1%,
 # checker_modload_run 6.0%, asm_run 5.4% and asm_ir_run 5.5%. Each moves to its measured value.
 # The 5% tolerance is unchanged.
+# 2026-11-13: the fused ChaCha20-Poly1305 kernels, a local stock build with stage0 629da26.
+# Main at f29fcfdf measures 13397216 and this branch 13460128: the kernels add 62912.
+# Pin asm_load_run to 13460128 bytes. The 5% tolerance is unchanged.
 # 2026-11-13: PR #15756 at 908d1798bb, driver-sizes-x86_64 job 132068231621.
 # Pin asm_load_run to 13366720 bytes (+5.1%). Main at 629da263 measures
 # 13308880; the Poly1305 kernels of #15756 add 57840. The 5% tolerance is unchanged.
@@ -652,10 +655,14 @@
 # tolerance is unchanged.
 # 2026-11-13: runtime_run measured 17506224 bytes (+5.0%) by driver-sizes-x86_64
 # job 132133327747 on main 88a72e60. The 5% tolerance is unchanged.
+# 2026-11-13: asm_ir_run measured 11612368 bytes (+5.3%) and fern.fern/stage2
+# 17583184 bytes (+5.2%) by driver-sizes-x86_64 job 132181685324 on ea8b1577,
+# main 38768eb2 with #15781. #15767 adds the fused ChaCha20-Poly1305 kernel to
+# each backend. The 5% tolerance is unchanged.
 fern.fern/stage2 17583184
 fern.fern 17504544
 drivers/runtime_run.fern 17506224
-drivers/asm_load_run.fern 13366720
+drivers/asm_load_run.fern 13460128
 drivers/asm_modload_run.fern 11961344
 drivers/asm_ir_run.fern 11612368
 drivers/asm_run.fern 10091776

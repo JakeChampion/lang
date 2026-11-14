@@ -7063,6 +7063,98 @@ function call_poly1305_blocks(heap: interpheap.Heap, args: Value[]): Value {
   return written_bytes(heap, args[0], poly1305_absorb(bs[0], bs[1], at as i32, n as i32));
 }
 
+// Absorbs b with zeros after a short last block, as the AEAD of RFC 8439 pads its parts.
+function poly1305_padded(st: u8[], b: u8[]): u8[] {
+  let full = b.len() - b.len() % 16;
+  let out = poly1305_absorb(st, b, 0, full);
+  if (full == b.len()) {
+    return out;
+  }
+  let last = __alloc_u8(16);
+  for i in full..b.len() {
+    last = last.with(i - full, b[i]);
+  }
+  return poly1305_absorb(out, last, 0, 16);
+}
+
+// The tag of RFC 8439's AEAD over aad and ct under the one-time key otk.
+function chacha20_poly1305_tag(otk: u8[], aad: u8[], ct: u8[]): u8[] {
+  let st = __alloc_u8(40);
+  for i in 0..16 {
+    st = st.with(24 + i, otk[i]);
+  }
+  st = poly1305_padded(poly1305_padded(st, aad), ct);
+  st = poly1305_absorb(st, put_le64_at(put_le64_at(__alloc_u8(16), 0, aad.len() as u64), 8, ct.len() as u64), 0, 16);
+  let (t0, c) = add_carry(le64_at(st, 0), le64_at(otk, 16), 0);
+  let (t1, _) = add_carry(le64_at(st, 8), le64_at(otk, 24), c);
+  return put_le64_at(put_le64_at(__alloc_u8(16), 0, t0), 8, t1);
+}
+
+// The in-place pair of ChaCha20-Poly1305 over a copy of the buffer argument, as the compiled kernels leave it. The
+// key stream of block ctr is the one-time key, and the text starts at block ctr + 1.
+function call_chacha20_poly1305_into(heap: interpheap.Heap, name: string, args: Value[]): Value {
+  if (args.len() != 7) {
+    return v_err(name + ": expected key, ctr, buf, aad_at, aad_n, at and n");
+  }
+  let bs = byte_args([args[0], args[1], args[2]]);
+  let aad_at = vint_as_i64(args[3]);
+  let aad_n = vint_as_i64(args[4]);
+  let at = vint_as_i64(args[5]);
+  let n = vint_as_i64(args[6]);
+  if (bs.len() != 3 || bs[0].len() != 32 || bs[1].len() != 16 || aad_at < 0 || aad_n < 0 || at < 0 || n < 0) {
+    return v_err(name + ": range out of bounds");
+  }
+  let size = bs[2].len() as i64;
+  if (at + n + 16 > size || aad_at + aad_n > size) {
+    return v_err(name + ": range out of bounds");
+  }
+  let otk = chacha20_xor(bs[0], bs[1], __alloc_u8(32), 0, 32);
+  let c = le32_at(bs[1], 0) + 1;
+  let next = bs[1];
+  for i in 0..4 {
+    next = next.with(i, (c >> (8 * i) as u32 & 255) as u8);
+  }
+  let d = at as i32;
+  let m = n as i32;
+  let buf = bs[2];
+  let aad = sub_bytes(buf, aad_at as i32, aad_n as i32);
+  if (name == "__chacha20_poly1305_seal_into") {
+    buf = chacha20_xor(bs[0], next, buf, d, m);
+    let tag = chacha20_poly1305_tag(otk, aad, sub_bytes(buf, d, m));
+    for i in 0..16 {
+      buf = buf.with(d + m + i, tag[i]);
+    }
+    return written_bytes(heap, args[2], buf);
+  }
+  let want = chacha20_poly1305_tag(otk, aad, sub_bytes(buf, d, m));
+  let diff: u8 = 0;
+  for i in 0..16 {
+    diff = diff | want[i] ^ buf[d + m + i];
+  }
+  buf = chacha20_xor(bs[0], next, buf, d, m);
+  let verdict: u8 = if (diff == 0) { 0 } else { 1 };
+  return written_bytes(heap, args[2], buf.with(d + m, verdict));
+}
+
+// A kernel that writes into a byte array it takes. The interpreter runs it over a copy of the array.
+function is_byte_into_kernel(name: string): boolean {
+  return name == "__aes_gcm_seal_into" || name == "__aes_gcm_open_into" || name == "__chacha20_xor_into" || name == "__poly1305_blocks"
+    || name == "__chacha20_poly1305_seal_into" || name == "__chacha20_poly1305_open_into";
+}
+
+function call_byte_into_kernel(heap: interpheap.Heap, name: string, args: Value[]): Value {
+  if (name == "__chacha20_xor_into") {
+    return call_chacha20_xor_into(heap, args);
+  }
+  if (name == "__poly1305_blocks") {
+    return call_poly1305_blocks(heap, args);
+  }
+  if (name == "__chacha20_poly1305_seal_into" || name == "__chacha20_poly1305_open_into") {
+    return call_chacha20_poly1305_into(heap, name, args);
+  }
+  return call_aes_gcm_into(heap, name, args);
+}
+
 function call_aes_gcm(heap: interpheap.Heap, name: string, args: Value[]): Value {
   let want = aes_gcm_arity(name);
   let bs = byte_args(args);
@@ -7957,6 +8049,17 @@ function call_func(heap: interpheap.Heap, name: string, args: Value[], funcs: Fu
   return call_func_targs(heap, name, args, [], "", funcs, aliases, type_decls);
 }
 
+function checked_alloc_length(args: Value[]): Value {
+  if (args.len() != 1 || !is_int_like(args[0])) {
+    return v_err("__alloc_len: expected 1 integer argument");
+  }
+  let n = vint_as_i64(args[0]);
+  if (n < 0i64 || n > 2147483647i64) {
+    return v_abort(aborts.alloc_size(), "length " + util.i64_to_string(n));
+  }
+  return v_int(n as i32);
+}
+
 function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], type_args: string[], expect: string, funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   if (name == "print" || name == "write" || name == "eprint") {
     if (args.len() != 1) {
@@ -8011,6 +8114,9 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
   }
   if (name == "map_new" || name == "__map_new_i32") {
     return v_map_new();
+  }
+  if (name == "__alloc_len") {
+    return checked_alloc_length(args);
   }
   if (name == "__alloc_u8" || name == "__alloc_u8_uninit" || name == "__alloc_i32" || name == "__alloc_i64" || name == "__alloc_f64" || name == "__alloc_bool") {
     if (args.len() != 1) {
@@ -8209,14 +8315,8 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
   if (aes_gcm_arity(name) > 0) {
     return call_aes_gcm(heap, name, args);
   }
-  if (name == "__aes_gcm_seal_into" || name == "__aes_gcm_open_into") {
-    return call_aes_gcm_into(heap, name, args);
-  }
-  if (name == "__chacha20_xor_into") {
-    return call_chacha20_xor_into(heap, args);
-  }
-  if (name == "__poly1305_blocks") {
-    return call_poly1305_blocks(heap, args);
+  if (is_byte_into_kernel(name)) {
+    return call_byte_into_kernel(heap, name, args);
   }
   if (args.len() == 0 && checker.is_sha_hw_builtin(name)) {
     return v_bool(false);

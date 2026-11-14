@@ -1,5 +1,6 @@
 # 2026-11-13: inline_worker_exit_is_a_worker_failure keeps three scheduler blocks
 # in active frames at exit(134). The process does not unwind these frames.
+# 2026-11-13: inline_worker_exit_is_a_worker_failure stops through the worker failure (status 134) in the body of its second inline worker, so the three blocks of that worker are live at the exit.
 # 2026-11-13: a_branch_that_returns_gives_its_if_expression_no_type has balanced allocations on x86-64.
 # 2026-11-13: a_match_arm_that_is_a_void_if_falls_through has balanced allocations on x86-64.
 # 2026-11-13: generic_nominal_callback_signatures has balanced allocations and zero live bytes on all three targets.

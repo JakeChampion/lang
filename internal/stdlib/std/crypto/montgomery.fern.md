@@ -1,10 +1,10 @@
 # Montgomery modular arithmetic
 
-This module provides constant-time Montgomery arithmetic for odd moduli of up to 390 bits.
+This module provides constant-time Montgomery arithmetic for odd moduli of up to 26,598 bits.
 
 ## Model
 
-`Modulus` stores the odd modulus and its Montgomery conversion constants. Limb arrays represent values under that modulus.
+`Modulus` stores the odd modulus and its Montgomery conversion constants. Limb arrays represent values under that modulus. A limb holds 26 bits. A product adds up to 2^53 to each limb of the accumulator for each limb of the modulus, with no carry until the end, so an `i64` accumulator holds 1023 limbs.
 
 ## Contracts
 
@@ -45,7 +45,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<module introduction>>=
-// This module provides constant-time Montgomery arithmetic for odd moduli of up to 390 bits.
+// This module provides constant-time Montgomery arithmetic for odd moduli of up to 26,598 bits.
 ```
 
 ### `dependencies 2`

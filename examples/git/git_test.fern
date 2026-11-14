@@ -1,0 +1,101 @@
+// The parts of the git port that do no I/O: the names of objects, the loose
+// object file, and the lines of a tree.
+import "std/test";
+import "std/array";
+import "std/hex";
+import "./objects";
+
+function unhex(s: string): u8[] {
+  let Ok(b) = hex.decode(s) else {
+    return [];
+  };
+  return b;
+}
+
+function test_names(): test.TestOutcome {
+  if (objects.hash_of("blob", "".bytes()) != "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391") {
+    return test.fail("the empty blob");
+  }
+  if (objects.hash_of("blob", "hello\n".bytes()) != "ce013625030ba8dba906f756967f9e9ca394464a") {
+    return test.fail("the blob of hello");
+  }
+  if (objects.hash_of("tree", "".bytes()) != "4b825dc642cb6eb9a060e54bf8d69288fbee4904") {
+    return test.fail("the empty tree");
+  }
+  return test.assert_eq(hex.encode(objects.header("blob", 1234)), "626c6f62203132333400");
+}
+
+function test_hex_names(): test.TestOutcome {
+  if (!objects.is_hex("0123abCDef", 4) || objects.is_hex("abc", 4) || objects.is_hex("abcg", 4) || objects.is_hex("", 0) != true) {
+    return test.fail("is_hex");
+  }
+  if (!objects.is_kind("blob") || !objects.is_kind("tag") || objects.is_kind("bogus")) {
+    return test.fail("is_kind");
+  }
+  return test.assert_eq(objects.loose_path("/r/objects", "ce013625030ba8dba906f756967f9e9ca394464a"), "/r/objects/ce/013625030ba8dba906f756967f9e9ca394464a");
+}
+
+// A file that `encode` makes gives the same object back. A file with a wrong
+// size, a file with no header and a file that is not zlib are refused.
+function test_loose_file(): test.TestOutcome {
+  let body = "tree and blob\n".repeat(300).bytes();
+  let o = match (objects.decode(objects.encode("blob", body), "x")) {
+    Ok(found) => found,
+    Err(why) => {
+      return test.fail("decode: " + why);
+    },
+  };
+  if (o.kind != "blob" || hex.encode(o.body) != hex.encode(body)) {
+    return test.fail("the object changed");
+  }
+  // git wrote this file for the blob "hello\n".
+  let real = unhex("78014bcac94f523063c848cdc9c9e702001dc50414");
+  if let Ok(h) = objects.decode(real, "x") {
+    if (h.kind != "blob" || hex.encode(h.body) != "68656c6c6f0a") {
+      return test.fail("the file of git: " + h.kind + " " + hex.encode(h.body));
+    }
+  } else {
+    return test.fail("the file of git is refused");
+  }
+  if let Ok(_) = objects.decode([1, 2, 3], "x") {
+    return test.fail("bytes that are not zlib are accepted");
+  }
+  if let Ok(_) = objects.decode(objects.encode("blob 99", "abc".bytes()), "x") {
+    return test.fail("a wrong size is accepted");
+  }
+  return test.pass();
+}
+
+function entry(mode: string, name: u8[], id: string): u8[] {
+  return mode.bytes().append(32).concat(name).append(0).concat(unhex(id));
+}
+
+function test_tree_lines(): test.TestOutcome {
+  let a = "ce013625030ba8dba906f756967f9e9ca394464a";
+  let d = "cc36104798061e54645ea3917607255a93ffe4cf";
+  let body = entry("100644", "a.txt".bytes(), a).concat(entry("40000", "d".bytes(), d)).concat(entry("160000", "sub".bytes(), a));
+  body = body.concat(entry("100755", [116, 9, 98], a)).concat(entry("120000", [195, 169, 34, 92], a));
+  let want = "100644 blob " + a + "\ta.txt\n040000 tree " + d + "\td\n160000 commit " + a + "\tsub\n100755 blob " + a + "\t\"t\\tb\"\n120000 blob " + a + "\t\"\\303\\251\\\"\\\\\"\n";
+  let got = match (objects.tree_text(body)) {
+    Ok(text) => text,
+    Err(why) => {
+      return test.fail("tree_text: " + why);
+    },
+  };
+  if (hex.encode(got) != hex.encode(want.bytes())) {
+    return test.fail("the lines differ: " + hex.encode(got));
+  }
+  if let Ok(_) = objects.tree_text(array.slice(body, 0, body.len() - 1)) {
+    return test.fail("a short tree is accepted");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let r = test.new("git");
+  r = r.it("the names of objects", test_names);
+  r = r.it("hexadecimal names, kinds and paths", test_hex_names);
+  r = r.it("the loose object file", test_loose_file);
+  r = r.it("the lines of a tree", test_tree_lines);
+  return r.finish();
+}

@@ -7891,6 +7891,7 @@ function memory_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__free", params: [typeinfo.t_usize(), typeinfo.t_i32()], modes: [v, v], result: typeinfo.t_void() },
     ssasem.Contract { name: "__ptr_width", params: [], modes: [], result: typeinfo.t_i32() },
     ssasem.Contract { name: "__heap_bump_bytes", params: [], modes: [], result: typeinfo.t_i64() },
+    ssasem.Contract { name: "__alloc_len", params: [typeinfo.t_i64()], modes: [v], result: typeinfo.t_i32() },
     ssasem.Contract { name: "__heap_alloc_count", params: [], modes: [], result: typeinfo.t_i64() },
     ssasem.Contract { name: "__heap_mark", params: [], modes: [], result: typeinfo.t_i64() },
     ssasem.Contract { name: "__heap_release_to", params: [typeinfo.t_i64()], modes: [v], result: typeinfo.t_void() },
@@ -8019,6 +8020,8 @@ function aes_gcm_contracts(): ssasem.Contract[] {
       name: "__poly1305_blocks", params: [bytes, view, typeinfo.t_i32(), typeinfo.t_i32()],
       modes: [ssaunits.counted_mode(), b, ssaunits.value_mode(), ssaunits.value_mode()], result: bytes,
     },
+    ssasem.Contract { name: "__chacha20_poly1305_seal_into", params: chacha20_poly1305_params(), modes: chacha20_poly1305_modes(), result: bytes },
+    ssasem.Contract { name: "__chacha20_poly1305_open_into", params: chacha20_poly1305_params(), modes: chacha20_poly1305_modes(), result: bytes },
   ];
 }
 
@@ -8031,6 +8034,17 @@ function aes_gcm_into_modes(): i32[] {
   let b = ssaunits.borrow_mode();
   let v = ssaunits.value_mode();
   return [b, b, b, v, ssaunits.counted_mode(), v, v, v, v];
+}
+
+function chacha20_poly1305_params(): typeinfo.Type[] {
+  let view: typeinfo.Type = typeinfo.TypeArray { elem: typeinfo.t_u8(), view: true };
+  return [view, view, typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }, typeinfo.t_i32(), typeinfo.t_i32(), typeinfo.t_i32(), typeinfo.t_i32()];
+}
+
+function chacha20_poly1305_modes(): i32[] {
+  let b = ssaunits.borrow_mode();
+  let v = ssaunits.value_mode();
+  return [b, b, ssaunits.counted_mode(), v, v, v, v];
 }
 
 function byte_scan_contracts(): ssasem.Contract[] {
