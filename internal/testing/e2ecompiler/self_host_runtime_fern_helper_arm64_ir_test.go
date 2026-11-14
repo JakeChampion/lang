@@ -33,6 +33,9 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"    if (xs[0:1].len() != 1) { return 7; }\n" +
 		"    let ys: i32[] = xs.with(0, 9);\n" +
 		"    if (xs[0] + ys[0] != 10) { return 27; }\n" +
+		"    let ws: i64[] = [1, 2];\n" +
+		"    let vs: i64[] = ws.with(0, 9);\n" +
+		"    if (ws[0] + vs[0] != 10) { return 28; }\n" +
 		"    if (now_unix_ms() < (1577836800000 as i64)) { return 8; }\n" +
 		"    if (now_ns() < (0 as i64)) { return 9; }\n" +
 		"    match (read_dir(\"/tmp\")) { Ok(_) => {}, Err(_) => { return 10; } }\n" +
@@ -73,7 +76,7 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 	asm := string(out)
 
 	for _, leaf := range []string{"random_bytes_u8", "read_file", "write_file", "remove_file", "temp_dir", "env", "stat",
-		"arr_slice",
+		"arr_slice", "arr_slice_u32",
 		"now_unix_ms", "now_ns",
 		"read_dir", "remove_dir_all",
 		"random_i32", "open_res",
@@ -172,6 +175,9 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		"    if (xs[0:1].len() != 1) { return 6; }\n" +
 		"    let ys: i32[] = xs.with(0, 9);\n" +
 		"    if (xs[0] + ys[0] != 10) { return 27; }\n" +
+		"    let ws: i64[] = [1, 2];\n" +
+		"    let vs: i64[] = ws.with(0, 9);\n" +
+		"    if (ws[0] + vs[0] != 10) { return 28; }\n" +
 		"    if (now_unix_ms() < (1577836800000 as i64)) { return 7; }\n" +
 		"    if (monotonic_ns() < (0 as i64)) { return 8; }\n" +
 		"    if (now_ns() < (0 as i64)) { return 9; }\n" +
@@ -315,11 +321,13 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 	if strings.Contains(asm, "mov x8, #94") {
 		t.Error("an exit kept Linux's number register in Mach-O output")
 	}
-	if !strings.Contains(asm, "__fn___fern_arr_slice:") {
-		t.Error("__fn___fern_arr_slice not defined — the Fern helper did not lower for Darwin")
-	}
-	if strings.Contains(asm, "\n__fern_arr_slice:") {
-		t.Error("the register-ABI hand-asm __fern_arr_slice is back")
+	for _, sym := range []string{"__fern_arr_slice", "__fern_arr_slice_u32"} {
+		if !strings.Contains(asm, "__fn_"+sym+":") {
+			t.Errorf("__fn_%s not defined — the Fern helper did not lower for Darwin", sym)
+		}
+		if strings.Contains(asm, "\n"+sym+":") {
+			t.Errorf("the register-ABI hand-asm %s is back", sym)
+		}
 	}
 	for _, leaf := range []string{"now_unix_ms", "now_ns"} {
 		if !strings.Contains(asm, "__fn___fern_"+leaf+":") {
