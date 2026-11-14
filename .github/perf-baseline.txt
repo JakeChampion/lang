@@ -1,3 +1,7 @@
+# 2026-11-14: PR #15899, perf-x86_64 job 132484455355 on the merge with main. The same change as the
+# aarch64 note below: the .ir of the perceus rows grows 2.7% to 11.2% and struct_drop.ir grows 4.4%,
+# and the .text of each program grows with the two box routines. Each x86_64 row that the job names
+# moves to its measured value. Keep all tolerances.
 # 2026-11-14: PR #15899, perf-aarch64 job 132484455409 on the merge with main. A box has a header
 # of one word. Each allocation and each release of a box goes through one more routine, so the .ir of
 # the perceus rows and of struct_drop grows 2.4% to 12.3%. The .text of each program grows 30 to 51
@@ -387,31 +391,31 @@
 # 2943, perceus_rbtree_ck.ir 42546197 to 41602517.
 
 # 2026-11-01 (#13981): CI41256013281 reports array_with.ir and record_update.ir 4.34% lower.
-x86_64/array_append.text	1150
+x86_64/array_append.text	1181
 x86_64/array_append.ir	11205420
-x86_64/array_index.text	1154
+x86_64/array_index.text	1185
 x86_64/array_index.ir	14281065
-x86_64/array_scale_f64.text	1338
+x86_64/array_scale_f64.text	1369
 x86_64/array_scale_f64.ir	21309613
 x86_64/array_with.ir	34412384
-x86_64/array_with.text	1004
-x86_64/ascii_scan.text	1421
+x86_64/array_with.text	1035
+x86_64/ascii_scan.text	1452
 x86_64/ascii_scan.ir	37315742
-x86_64/byte_copy_append.text	1301
+x86_64/byte_copy_append.text	1336
 x86_64/byte_copy_append.ir	13442091
-x86_64/byte_copy_with.text	1261
+x86_64/byte_copy_with.text	1296
 x86_64/byte_copy_with.ir	12841267
 x86_64/call_overhead.text	353
 x86_64/call_overhead.ir	8250814
-x86_64/closure_call.text	982
+x86_64/closure_call.text	1019
 x86_64/closure_call.ir	41178167
 # 2026-11-01 (#13347): CI41317429107 measures both lower x86 DEFLATE counts.
 x86_64/deflate_decode.ir	31550893
 x86_64/deflate_decode.text	13688
 x86_64/deflate_encode.ir	41579468
 # 2026-11-05: PR #14207, perf-x86_64 job 126960802774 on the merge with main 6dba1dcb measures lower values for the changed rows below. The rows that rise keep their limits.
-x86_64/deflate_encode.text	7045
-x86_64/enum_match.text	959
+x86_64/deflate_encode.text	7121
+x86_64/enum_match.text	990
 x86_64/enum_match.ir	29250077
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
 # 2026-11-10: PR #15022, CI 42754163314 records the inherited HTTP benchmark changes.
@@ -433,36 +437,36 @@ x86_64/map_string.text	9671
 x86_64/map_string.ir	51764454	2
 x86_64/ordmap_insert.text	5401
 x86_64/ordmap_insert.ir	72741595
-x86_64/pmap_insert.text	2933
+x86_64/pmap_insert.text	2971
 x86_64/pmap_insert.ir	48527043
-x86_64/pvec_with.text	3277
+x86_64/pvec_with.text	3332
 x86_64/pvec_with.ir	50694324
 x86_64/record_update.ir	34412384
-x86_64/record_update.text	1004
-x86_64/sort_inplace.text	1509
+x86_64/record_update.text	1035
+x86_64/sort_inplace.text	1540
 x86_64/sort_inplace.ir	36583718
-x86_64/sort_ints.text	1750
+x86_64/sort_ints.text	1781
 x86_64/sort_ints.ir	22856351
-x86_64/sort_strings.text	3316
+x86_64/sort_strings.text	3371
 x86_64/sort_strings.ir	95020165
-x86_64/string_build.text	2010
+x86_64/string_build.text	2041
 x86_64/string_build.ir	38746123
-x86_64/string_count_byte.text	1339
+x86_64/string_count_byte.text	1376
 x86_64/string_count_byte.ir	41173368
-x86_64/string_find_byte.text	1612
+x86_64/string_find_byte.text	1643
 x86_64/string_find_byte.ir	43687425
-x86_64/string_rfind_byte.text	1775
+x86_64/string_rfind_byte.text	1803
 x86_64/string_rfind_byte.ir	43695768
-x86_64/string_scan.text	2227
+x86_64/string_scan.text	2280
 x86_64/string_scan.ir	52670002
-x86_64/string_slice.text	960
+x86_64/string_slice.text	997
 x86_64/string_slice.ir	23340107
-x86_64/struct_drop.text	2583
-x86_64/struct_drop.ir	197940612
-x86_64/tokenize.text	1211
+x86_64/struct_drop.text	2638
+x86_64/struct_drop.ir	206580528
+x86_64/tokenize.text	1248
 x86_64/tokenize.ir	32840107
 x86_64/utf8_ingest_unchecked.text	8006
-x86_64/utf8_ingest_unchecked.ir	2133852
+x86_64/utf8_ingest_unchecked.ir	2165344
 x86_64/utf8_ingest_validated.text	8666
 x86_64/utf8_ingest_validated.ir	5144851
 
@@ -762,16 +766,16 @@ aarch64/utf8_ingest_validated.text	9074
 aarch64/utf8_ingest_validated.ir	6116553
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
-x86_64/perceus_cfold.text	1965
-x86_64/perceus_cfold.ir	47742110
-x86_64/perceus_deriv.text	2683
-x86_64/perceus_deriv.ir	64168424
-x86_64/perceus_nqueens.text	1566
-x86_64/perceus_nqueens.ir	81923493
-x86_64/perceus_rbtree.text	2600
-x86_64/perceus_rbtree.ir	30704372
+x86_64/perceus_cfold.text	1993
+x86_64/perceus_cfold.ir	53089623
+x86_64/perceus_deriv.text	2710
+x86_64/perceus_deriv.ir	69596431
+x86_64/perceus_nqueens.text	1603
+x86_64/perceus_nqueens.ir	90433899
+x86_64/perceus_rbtree.text	2647
+x86_64/perceus_rbtree.ir	31526772
 x86_64/perceus_rbtree_ck.text	3042
-x86_64/perceus_rbtree_ck.ir	42059720
+x86_64/perceus_rbtree_ck.ir	44531672
 # 2026-11-12 (#15554): PR #15558 job 131516922622 on main 1bbf2294 measures
 # 13 aarch64 rows below their pins: deflate_decode.text -1.76%,
 # deflate_encode.text -1.06%, ordmap_insert.ir -3.63%, perceus_cfold.text
