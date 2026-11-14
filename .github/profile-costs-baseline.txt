@@ -1,3 +1,7 @@
+# 2026-11-14: PR #15811, perf-x86_64 job 132328927242 on the merge with main 8ce8fde7. Seven rows
+# move: four diagnostic byte counts grow 1.0% to 1.2%, and arm64 http_hello.safe.emit and the two
+# x86-64 map_string .ir rows fall 1.1% to 1.7%. These are values of main. Each row moves to its
+# measured value. Keep all tolerances.
 # 2026-11-13: PR #15783, a local scripts/profile-costs run on a merge with main 38768eb2 (main run
 # 43503448872 reports the same rows on 5cf07b37). 66 rows move: 54 up and 12 down. 30 of them grow 48
 # or 96 bytes: #15771 aligns the text of each image to 64 bytes. The map_string rows grow 1.1% to 1.4%
@@ -131,7 +135,7 @@
 # x86-64-linux/deflate_decode.minimal.bytes 46688 to 46112,
 # x86-64-linux/deflate_decode.safe.bytes 51376 to 50624,
 # x86-64-linux/deflate_decode.safe.emit 12766 to 12469.
-profile/arm64-linux/array_append.diagnostic.bytes	14248
+profile/arm64-linux/array_append.diagnostic.bytes	14392
 profile/arm64-linux/array_append.diagnostic.emit	1857
 profile/arm64-linux/array_append.hardened.bytes	8808
 profile/arm64-linux/array_append.hardened.emit	1896
@@ -164,7 +168,7 @@ profile/arm64-linux/deflate_decode.minimal.bytes	52456
 profile/arm64-linux/deflate_decode.minimal.emit	11928
 profile/arm64-linux/deflate_decode.safe.bytes	57592
 profile/arm64-linux/deflate_decode.safe.emit	13245
-profile/arm64-linux/enum_match.diagnostic.bytes	13416
+profile/arm64-linux/enum_match.diagnostic.bytes	13568
 profile/arm64-linux/enum_match.diagnostic.emit	1700
 profile/arm64-linux/enum_match.hardened.bytes	7704
 profile/arm64-linux/enum_match.hardened.emit	1618
@@ -185,8 +189,8 @@ profile/arm64-linux/http_hello.hardened.emit	18009
 profile/arm64-linux/http_hello.minimal.bytes	63816
 profile/arm64-linux/http_hello.minimal.emit	13723
 profile/arm64-linux/http_hello.safe.bytes	75240
-profile/arm64-linux/http_hello.safe.emit	16619
-profile/arm64-linux/int_loop.diagnostic.bytes	5376
+profile/arm64-linux/http_hello.safe.emit	16432
+profile/arm64-linux/int_loop.diagnostic.bytes	5440
 profile/arm64-linux/int_loop.diagnostic.emit	565
 profile/arm64-linux/int_loop.hardened.bytes	2856
 profile/arm64-linux/int_loop.hardened.emit	460
@@ -287,7 +291,7 @@ profile/x86-64-linux/http_hello.minimal.ir	23776415
 profile/x86-64-linux/http_hello.safe.bytes	66528
 profile/x86-64-linux/http_hello.safe.emit	15691
 profile/x86-64-linux/http_hello.safe.ir	21868422
-profile/x86-64-linux/int_loop.diagnostic.bytes	5544
+profile/x86-64-linux/int_loop.diagnostic.bytes	5608
 profile/x86-64-linux/int_loop.diagnostic.emit	523
 profile/x86-64-linux/int_loop.diagnostic.ir	12000209
 profile/x86-64-linux/int_loop.hardened.bytes	2624
@@ -302,11 +306,11 @@ profile/x86-64-linux/int_loop.safe.ir	12000077
 profile/x86-64-linux/map_string.diagnostic.bytes	133784
 profile/x86-64-linux/map_string.diagnostic.emit	10982
 # 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured profile/x86-64-linux/map_string.diagnostic.ir at 58707421 (was 59644087). The tolerance is unchanged.
-profile/x86-64-linux/map_string.diagnostic.ir	58707421
+profile/x86-64-linux/map_string.diagnostic.ir	57740621
 profile/x86-64-linux/map_string.hardened.bytes	42528
 profile/x86-64-linux/map_string.hardened.emit	10130
 # 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured profile/x86-64-linux/map_string.hardened.ir at 53686363 (was 54709670). The tolerance is unchanged.
-profile/x86-64-linux/map_string.hardened.ir	53686363
+profile/x86-64-linux/map_string.hardened.ir	53073958
 profile/x86-64-linux/map_string.minimal.bytes	36560
 profile/x86-64-linux/map_string.minimal.emit	9111
 # 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured profile/x86-64-linux/map_string.minimal.ir at 53726174 (was 54757303). The tolerance is unchanged.

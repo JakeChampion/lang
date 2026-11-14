@@ -1,3 +1,8 @@
+# 2026-11-14: PR #15811, perf-x86_64 job 132328927242 and perf-aarch64 job 132328927290 on the merge
+# with main 8ce8fde7. perceus_rbtree_ck grows on both hosts (.ir +29.1% x86_64 and +31.5% aarch64,
+# .text +7.7%): 089d854d (#15780) makes the benchmark keep each checkpoint tree, so the workload now
+# copies a path after each kept tree. aarch64/http_hello.text falls 1.1%. These are values of main.
+# Each row moves to its measured value. Keep all tolerances.
 # 2026-11-13: PR #15739, perf-x86_64 job 132017371022 and perf-aarch64 job 132017370985 on the merge
 # with main 629da263. Twelve rows of perceus_cfold, perceus_deriv, perceus_rbtree, perceus_rbtree_ck,
 # pmap_insert and pvec_with are 1.0% to 4.8% below their pins. #15739 removes a conformance case and
@@ -653,7 +658,7 @@ aarch64/deflate_encode.text	7735
 aarch64/enum_match.text	1165
 aarch64/enum_match.ir	24975095
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-aarch64/http_hello.text	16619
+aarch64/http_hello.text	16432
 # 2026-10-30 (#13900): CI41026748018 measures aarch64/http_hello.ir 4.98% lower on main 33b21667. #13900 does not change the serve path.
 aarch64/http_hello.ir	23892626
 aarch64/int_loop.text	383
@@ -716,8 +721,8 @@ x86_64/perceus_nqueens.text	1548
 x86_64/perceus_nqueens.ir	81923493
 x86_64/perceus_rbtree.text	2600
 x86_64/perceus_rbtree.ir	31429877
-x86_64/perceus_rbtree_ck.text	2795
-x86_64/perceus_rbtree_ck.ir	32576757
+x86_64/perceus_rbtree_ck.text	3009
+x86_64/perceus_rbtree_ck.ir	42059720
 # 2026-11-12 (#15554): PR #15558 job 131516922622 on main 1bbf2294 measures
 # 13 aarch64 rows below their pins: deflate_decode.text -1.76%,
 # deflate_encode.text -1.06%, ordmap_insert.ir -3.63%, perceus_cfold.text
@@ -733,8 +738,8 @@ aarch64/perceus_nqueens.text	1812
 aarch64/perceus_nqueens.ir	90387246
 aarch64/perceus_rbtree.text	2842
 aarch64/perceus_rbtree.ir	35415487
-aarch64/perceus_rbtree_ck.text	3039
-aarch64/perceus_rbtree_ck.ir	36653727
+aarch64/perceus_rbtree_ck.text	3274
+aarch64/perceus_rbtree_ck.ir	48193420
 # 2026-11-01: #13988 keeps the original main pvec instruction gates.
 # Fresh measurements remain within their unchanged 1% tolerance.
 # 2026-11-07: PR #14490 adds the fixed QTRLE workload. Existing limits stay unchanged.
