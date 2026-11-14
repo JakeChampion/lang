@@ -34,17 +34,64 @@ function offsets_of(data: u8[], count: i32): Result[i32[], string] {
   return Ok(offsets.append(at));
 }
 
-// The name of each object in the order of the packfile. A delta by name
-// can come before its base, so the names come in rounds.
-function names_of(data: u8[], offsets: i32[]): Result[string[], string] {
+// The names of the objects from `first` to `end`, in order. An object whose
+// chain has a delta by name has the name "": it waits for the names.
+pub function names_part(data: u8[], offsets: i32[], first: i32, end: i32): string[] {
+  let names: string[] = [];
+  let cache = pack.cache_new();
+  for i in first..end {
+    let (found, kept) = pack.object_cached((at: i32): pack.Window => pack.Window { bytes: data, shift: 0 }, (base: u8[]): i32 => -1, offsets[i], cache);
+    cache = kept;
+    names = names.append(match (found) {
+      Ok(o) => objects.hash_of(o.kind, o.body),
+      Err(_) => "",
+    });
+  }
+  return names;
+}
+
+// The first object of each part, and the count of objects at the end. Each
+// part has about the same count of bytes of the packfile.
+pub function parts_of(offsets: i32[], parts: i32): i32[] {
+  let count = offsets.len() - 1;
+  let bytes = (offsets[count] - offsets[0]) as i64;
+  let cuts: i32[] = [0];
+  for i in 1..count {
+    let want = bytes * (cuts.len() as i64) / (parts as i64);
+    if (cuts.len() < parts && (offsets[i] - offsets[0]) as i64 >= want) {
+      cuts = cuts.append(i);
+    }
+  }
+  return cuts.append(count);
+}
+
+// The name of each object in the order of the packfile. `first` gives the
+// names in parts, as `names_part` makes them. A delta by name can come
+// before its base, so the names that are left come in rounds.
+function names_of(data: u8[], offsets: i32[], first: (u8[], i32[]) => string[][]): Result[string[], string] {
   let count = offsets.len() - 1;
   let names: string[] = [];
-  for i in 0..count {
-    names = names.append("");
+  for part in first(data, offsets) {
+    names = names.concat(part);
+  }
+  if (names.len() != count) {
+    return Err("the names of the parts do not cover the packfile");
   }
   let known: Map[string, i32] = Map { };
+  let left = 0;
+  for i in 0..count {
+    if (names[i].len() == 0) {
+      left += 1;
+    }
+  }
+  if (left > 0) {
+    for i in 0..count {
+      if (names[i].len() > 0) {
+        known = known.insert(names[i], offsets[i]);
+      }
+    }
+  }
   let cache = pack.cache_new();
-  let left = count;
   while (left > 0) {
     let before = left;
     for i in 0..count {
@@ -66,8 +113,15 @@ function names_of(data: u8[], offsets: i32[]): Result[string[], string] {
   return Ok(names);
 }
 
-// The index of the packfile `data`.
+// The index of the packfile `data`, with each name from this process.
 pub function build(data: u8[]): Result[Built, string] {
+  return build_with(data, (d: u8[], offsets: i32[]): string[][] => [names_part(d, offsets, 0, offsets.len() - 1)]);
+}
+
+// The index of the packfile `data`. `first` gives the names of the objects
+// in parts that are in order and that cover the packfile: a caller with
+// workers gives each part to one worker.
+pub function build_with(data: u8[], first: (u8[], i32[]) => string[][]): Result[Built, string] {
   let n = data.len();
   if (n < 32 || data[0] != b'P' || data[1] != b'A' || data[2] != b'C' || data[3] != b'K') {
     return Err("pack signature mismatch");
@@ -81,7 +135,7 @@ pub function build(data: u8[]): Result[Built, string] {
   }
   let count = data[8] as i32 << 24 | data[9] as i32 << 16 | data[10] as i32 << 8 | data[11] as i32;
   let offsets = offsets_of(data, count)?;
-  let names = names_of(data, offsets)?;
+  let names = names_of(data, offsets, first)?;
   let order: i32[] = [];
   for i in 0..count {
     order = order.append(i);
