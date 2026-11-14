@@ -1,0 +1,68 @@
+import "std/test";
+import "std/encoding";
+
+// The text of `bytes` in the encoding of the label `l`.
+function text(l: string, bytes: u8[]): string {
+  return encoding.decoder(encoding.label(l)).decode(bytes);
+}
+
+function test_labels(): test.TestOutcome {
+  let got = [
+    encoding.label("latin1"), encoding.label(" SJIS\t"), encoding.label("ms_kanji"), encoding.label("x-gbk"),
+    encoding.label("big5-hkscs"), encoding.label("csiso2022kr"), encoding.label("bogus"), encoding.label("utf-16"),
+    encoding.label("cseucpkdfmtjapanese"), encoding.label("iso-ir-58"), encoding.label("x-user-defined"),
+  ];
+  return test.assert_eq_array(got, [
+    "windows-1252", "Shift_JIS", "Shift_JIS", "GBK", "Big5", "", "", "UTF-16LE", "EUC-JP", "GBK", "x-user-defined",
+  ]);
+}
+
+function test_single_byte(): test.TestOutcome {
+  let got = [
+    text("cp1251", [207u8, 240u8, 232u8]), text("koi8-r", [240u8, 210u8]), text("iso-8859-7", [195u8, 161u8]),
+    text("windows-874", [161u8, 219u8]), text("ibm866", [128u8]), text("macintosh", [128u8, 255u8]),
+    text("x-user-defined", [97u8, 128u8]), text("iso-8859-8-i", [224u8]),
+  ];
+  return test.assert_eq_array(got, ["При", "Пр", "Γ‘", "ก�", "А", "Äˇ", "a", "א"]);
+}
+
+// Each multi-byte decoder, with a sequence that is cut or not valid. A trail
+// byte in ASCII is read again.
+function test_multi_byte(): test.TestOutcome {
+  let got = [
+    text("sjis", [130u8, 160u8, 177u8, 128u8, 129u8, 65u8, 240u8, 64u8, 129u8]),
+    text("euc-jp", [164u8, 162u8, 142u8, 177u8, 143u8, 176u8, 161u8, 161u8, 65u8, 143u8]),
+    text("euc-kr", [176u8, 161u8, 129u8, 65u8, 200u8, 10u8]),
+    text("gbk", [214u8, 208u8, 128u8, 129u8, 48u8, 129u8, 48u8, 132u8, 49u8, 164u8, 57u8, 255u8]),
+    text("gb18030", [129u8, 48u8, 129u8, 65u8, 254u8]),
+    text("big5", [164u8, 64u8, 136u8, 98u8, 136u8, 100u8, 161u8, 10u8]),
+    text("iso-2022-jp", [27u8, 36u8, 66u8, 36u8, 34u8, 27u8, 40u8, 74u8, 92u8, 27u8, 40u8, 73u8, 49u8, 27u8, 40u8, 66u8, 27u8, 40u8, 66u8, 97u8, 27u8, 81u8]),
+  ];
+  return test.assert_eq_array(got, [
+    "あｱ\u{0080}、�",
+    "あｱ丂�A�",
+    "가갂�\n",
+    "中€\u{0080}￿�",
+    "�0丄�",
+    "一Ê̄Ê̌�\n",
+    "あ¥ｱ�a�Q",
+  ]);
+}
+
+function test_utf(): test.TestOutcome {
+  let got = [
+    text("utf-16le", [99u8, 0u8, 61u8, 216u8, 0u8, 222u8, 0u8, 216u8, 97u8]),
+    text("utf-16be", [0u8, 99u8, 216u8, 61u8]),
+    text("utf8", [99u8, 233u8, 32u8, 226u8, 130u8, 237u8, 160u8, 128u8, 240u8, 159u8, 152u8, 128u8]),
+  ];
+  return test.assert_eq_array(got, ["c😀��", "c�", "c� ����😀"]);
+}
+
+function main(): i32 {
+  let r = test.new("encoding");
+  r = r.it("labels", test_labels);
+  r = r.it("single-byte encodings", test_single_byte);
+  r = r.it("multi-byte encodings", test_multi_byte);
+  r = r.it("UTF-8 and UTF-16", test_utf);
+  return r.finish();
+}

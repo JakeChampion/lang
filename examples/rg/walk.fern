@@ -20,6 +20,9 @@ pub struct Walk {
   threads: i32,
   stdout_ino: i64,
   stdout_dev: i64,
+  // --one-file-system, and the device of the root of the walk.
+  same_fs: boolean,
+  root_dev: i64,
 }
 
 // The kinds of DirEntry.kind: the file type bits of st_mode, or 0 when
@@ -140,12 +143,28 @@ function entry(w: Walk, dir: string, e: DirEntry, stack: ignore.Stack, depth: i3
     return items;
   }
   if (is_dir) {
-    return directory(w, path, stack, depth + 1, items);
+    return descend(w, path, stack, depth + 1, items);
   }
   if (kind == DT_REG && !is_stdout(w, path, e.ino) && !too_big(w, path)) {
     return items.append(file(path, false));
   }
   return items;
+}
+
+// Adds the items of a directory below the root, which --one-file-system
+// skips on another device.
+function descend(w: Walk, dir: string, parent: ignore.Stack, depth: i32, own items: Item[]): Item[] {
+  if (w.same_fs && !on_device(dir, w.root_dev)) {
+    return items;
+  }
+  return directory(w, dir, parent, depth, items);
+}
+
+function on_device(path: string, dev: i64): boolean {
+  let Ok(st) = stat(path) else {
+    return true;
+  };
+  return st.dev == dev;
 }
 
 // Adds the items of the directory `dir`, whose entries are at `depth`.
@@ -187,7 +206,7 @@ pub function walk(w: Walk, roots: string[]): Item[] {
         if (why != "") {
           items = items.append(message(why, true));
         }
-        items = directory(w, root, stack, 1, items);
+        items = directory(Walk { ...w, root_dev: st.dev }, root, stack, 1, items);
       },
       Err(e) => {
         items = items.append(message(io_message(w, root, e), true));

@@ -28,6 +28,73 @@ var gcNames = map[string][]string{
 	"Zp": {"Paragraph_Separator"}, "Zs": {"Space_Separator"},
 }
 
+// scriptAliases are the other names of each script, as regex-syntax 0.8.2
+// knows them, with the scripts of Unicode 16.0 and 17.0.
+var scriptAliases = map[string][]string{
+	"Adlam": {"adlm"}, "Anatolian_Hieroglyphs": {"hluw"}, "Arabic": {"arab"}, "Armenian": {"armn"},
+	"Avestan": {"avst"}, "Balinese": {"bali"}, "Bamum": {"bamu"}, "Bassa_Vah": {"bass"}, "Batak": {"batk"},
+	"Bengali": {"beng"}, "Beria_Erfe": {"berf"}, "Bhaiksuki": {"bhks"}, "Bopomofo": {"bopo"},
+	"Brahmi": {"brah"}, "Braille": {"brai"}, "Buginese": {"bugi"}, "Buhid": {"buhd"},
+	"Canadian_Aboriginal": {"cans"}, "Carian": {"cari"}, "Caucasian_Albanian": {"aghb"}, "Chakma": {"cakm"},
+	"Cherokee": {"cher"}, "Chorasmian": {"chrs"}, "Common": {"zyyy"}, "Coptic": {"copt", "qaac"},
+	"Cuneiform": {"xsux"}, "Cypriot": {"cprt"}, "Cypro_Minoan": {"cpmn"}, "Cyrillic": {"cyrl"},
+	"Deseret": {"dsrt"}, "Devanagari": {"deva"}, "Dives_Akuru": {"diak"}, "Dogra": {"dogr"},
+	"Duployan": {"dupl"}, "Egyptian_Hieroglyphs": {"egyp"}, "Elbasan": {"elba"}, "Elymaic": {"elym"},
+	"Ethiopic": {"ethi"}, "Garay": {"gara"}, "Georgian": {"geor"}, "Glagolitic": {"glag"}, "Gothic": {"goth"},
+	"Grantha": {"gran"}, "Greek": {"grek"}, "Gujarati": {"gujr"}, "Gunjala_Gondi": {"gong"},
+	"Gurmukhi": {"guru"}, "Gurung_Khema": {"gukh"}, "Han": {"hani"}, "Hangul": {"hang"},
+	"Hanifi_Rohingya": {"rohg"}, "Hanunoo": {"hano"}, "Hatran": {"hatr"}, "Hebrew": {"hebr"},
+	"Hiragana": {"hira"}, "Imperial_Aramaic": {"armi"}, "Inherited": {"qaai", "zinh"},
+	"Inscriptional_Pahlavi": {"phli"}, "Inscriptional_Parthian": {"prti"}, "Javanese": {"java"},
+	"Kaithi": {"kthi"}, "Kannada": {"knda"}, "Katakana": {"kana"}, "Katakana_Or_Hiragana": {"hrkt"},
+	"Kayah_Li": {"kali"}, "Kharoshthi": {"khar"}, "Khitan_Small_Script": {"kits"}, "Khmer": {"khmr"},
+	"Khojki": {"khoj"}, "Khudawadi": {"sind"}, "Kirat_Rai": {"krai"}, "Lao": {"laoo"}, "Latin": {"latn"},
+	"Lepcha": {"lepc"}, "Limbu": {"limb"}, "Linear_A": {"lina"}, "Linear_B": {"linb"}, "Lycian": {"lyci"},
+	"Lydian": {"lydi"}, "Mahajani": {"mahj"}, "Makasar": {"maka"}, "Malayalam": {"mlym"}, "Mandaic": {"mand"},
+	"Manichaean": {"mani"}, "Marchen": {"marc"}, "Masaram_Gondi": {"gonm"}, "Medefaidrin": {"medf"},
+	"Meetei_Mayek": {"mtei"}, "Mende_Kikakui": {"mend"}, "Meroitic_Cursive": {"merc"},
+	"Meroitic_Hieroglyphs": {"mero"}, "Miao": {"plrd"}, "Mongolian": {"mong"}, "Mro": {"mroo"},
+	"Multani": {"mult"}, "Myanmar": {"mymr"}, "Nabataean": {"nbat"}, "Nag_Mundari": {"nagm"},
+	"Nandinagari": {"nand"}, "New_Tai_Lue": {"talu"}, "Nko": {"nkoo"}, "Nushu": {"nshu"},
+	"Nyiakeng_Puachue_Hmong": {"hmnp"}, "Ogham": {"ogam"}, "Ol_Chiki": {"olck"}, "Ol_Onal": {"onao"},
+	"Old_Hungarian": {"hung"}, "Old_Italic": {"ital"}, "Old_North_Arabian": {"narb"}, "Old_Permic": {"perm"},
+	"Old_Persian": {"xpeo"}, "Old_Sogdian": {"sogo"}, "Old_South_Arabian": {"sarb"}, "Old_Turkic": {"orkh"},
+	"Old_Uyghur": {"ougr"}, "Oriya": {"orya"}, "Osage": {"osge"}, "Osmanya": {"osma"}, "Pahawh_Hmong": {"hmng"},
+	"Palmyrene": {"palm"}, "Pau_Cin_Hau": {"pauc"}, "Phags_Pa": {"phag"}, "Phoenician": {"phnx"},
+	"Psalter_Pahlavi": {"phlp"}, "Rejang": {"rjng"}, "Runic": {"runr"}, "Samaritan": {"samr"},
+	"Saurashtra": {"saur"}, "Sharada": {"shrd"}, "Shavian": {"shaw"}, "Siddham": {"sidd"}, "Sidetic": {"sidt"},
+	"SignWriting": {"sgnw"}, "Sinhala": {"sinh"}, "Sogdian": {"sogd"}, "Sora_Sompeng": {"sora"},
+	"Soyombo": {"soyo"}, "Sundanese": {"sund"}, "Sunuwar": {"sunu"}, "Syloti_Nagri": {"sylo"},
+	"Syriac": {"syrc"}, "Tagalog": {"tglg"}, "Tagbanwa": {"tagb"}, "Tai_Le": {"tale"}, "Tai_Tham": {"lana"},
+	"Tai_Viet": {"tavt"}, "Tai_Yo": {"tayo"}, "Takri": {"takr"}, "Tamil": {"taml"}, "Tangsa": {"tnsa"},
+	"Tangut": {"tang"}, "Telugu": {"telu"}, "Thaana": {"thaa"}, "Tibetan": {"tibt"}, "Tifinagh": {"tfng"},
+	"Tirhuta": {"tirh"}, "Todhri": {"todr"}, "Tolong_Siki": {"tols"}, "Tulu_Tigalari": {"tutg"},
+	"Ugaritic": {"ugar"}, "Unknown": {"zzzz"}, "Vai": {"vaii"}, "Vithkuqi": {"vith"}, "Wancho": {"wcho"},
+	"Warang_Citi": {"wara"}, "Yezidi": {"yezi"}, "Yi": {"yiii"}, "Zanabazar_Square": {"zanb"},
+}
+
+// binaryAliases are the short names of the binary properties.
+var binaryAliases = map[string][]string{
+	"ASCII_Hex_Digit": {"ahex"}, "Alphabetic": {"alpha"}, "Bidi_Control": {"bidic"}, "Bidi_Mirrored": {"bidim"},
+	"Case_Ignorable": {"ci"}, "Changes_When_Casefolded": {"cwcf"}, "Changes_When_Casemapped": {"cwcm"},
+	"Changes_When_Lowercased": {"cwl"}, "Changes_When_Titlecased": {"cwt"}, "Changes_When_Uppercased": {"cwu"},
+	"Default_Ignorable_Code_Point": {"di"}, "Deprecated": {"dep"}, "Diacritic": {"dia"},
+	"Emoji_Component": {"ecomp"}, "Emoji_Modifier": {"emod"}, "Emoji_Modifier_Base": {"ebase"},
+	"Emoji_Presentation": {"epres"}, "Extended_Pictographic": {"extpict"}, "Extender": {"ext"},
+	"Grapheme_Base": {"grbase"}, "Grapheme_Extend": {"grext"}, "Grapheme_Link": {"grlink"},
+	"Hex_Digit": {"hex"}, "IDS_Binary_Operator": {"idsb"}, "IDS_Trinary_Operator": {"idst"},
+	"ID_Continue": {"idc"}, "ID_Start": {"ids"}, "Ideographic": {"ideo"}, "Join_Control": {"joinc"},
+	"Logical_Order_Exception": {"loe"}, "Lowercase": {"lower"}, "Noncharacter_Code_Point": {"nchar"},
+	"Other_Alphabetic": {"oalpha"}, "Other_Default_Ignorable_Code_Point": {"odi"},
+	"Other_Grapheme_Extend": {"ogrext"}, "Other_ID_Continue": {"oidc"}, "Other_ID_Start": {"oids"},
+	"Other_Lowercase": {"olower"}, "Other_Math": {"omath"}, "Other_Uppercase": {"oupper"},
+	"Pattern_Syntax": {"patsyn"}, "Pattern_White_Space": {"patws"}, "Prepended_Concatenation_Mark": {"pcm"},
+	"Quotation_Mark": {"qmark"}, "Regional_Indicator": {"ri"}, "Sentence_Terminal": {"sterm"},
+	"Soft_Dotted": {"sd"}, "Terminal_Punctuation": {"term"}, "Unified_Ideograph": {"uideo"},
+	"Uppercase": {"upper"}, "Variation_Selector": {"vs"}, "White_Space": {"space", "wspace"},
+	"XID_Continue": {"xidc"}, "XID_Start": {"xids"},
+}
+
 // gcGroups are the categories of one letter and LC, as unions of the
 // categories of two letters.
 var gcGroups = map[string]string{
@@ -106,13 +173,38 @@ func binaryProps() map[string]func(rune) bool {
 		"Assigned":   isAssigned,
 	}
 	for name, t := range unicode.Properties {
-		if strings.HasPrefix(name, "Other_") || name == "STerm" {
+		if name == "STerm" {
 			continue
 		}
 		t := t
 		props[name] = func(r rune) bool { return unicode.Is(t, r) }
 	}
+	props["Cased"] = isCased
+	props["Case_Ignorable"] = isCaseIgnorable
+	for name, rs := range emojiProps() {
+		rs := rs
+		props[name] = func(r rune) bool { return inRuneRanges(rs, r) }
+	}
 	return props
+}
+
+// emojiProps gives the ranges of each property of emoji-data.txt that
+// gcbdata.txt holds.
+func emojiProps() map[string][][2]rune {
+	out := map[string][][2]rune{}
+	_, out["Extended_Pictographic"], _ = parseGCBData()
+	for _, line := range strings.Split(gcbData, "\n") {
+		f := strings.Split(line, ";")
+		if f[0] == "M" {
+			out[f[3]] = append(out[f[3]], [2]rune{rune(mustHex(f[1])), rune(mustHex(f[2]))})
+		}
+	}
+	return out
+}
+
+func inRuneRanges(rs [][2]rune, r rune) bool {
+	i := sort.Search(len(rs), func(i int) bool { return rs[i][1] >= r })
+	return i < len(rs) && rs[i][0] <= r
 }
 
 type propTable struct {
@@ -152,7 +244,7 @@ func propTables() []propTable {
 	sort.Strings(scripts)
 	for _, name := range scripts {
 		t := unicode.Scripts[name]
-		add("sc", name, nil, func(r rune) bool { return unicode.Is(t, r) })
+		add("sc", name, scriptAliases[name], func(r rune) bool { return unicode.Is(t, r) })
 	}
 	props := binaryProps()
 	var names []string
@@ -161,7 +253,7 @@ func propTables() []propTable {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		add("bp", name, nil, props[name])
+		add("bp", name, binaryAliases[name], props[name])
 	}
 	add("pw", "word", nil, isPerlWord)
 	return out
@@ -304,18 +396,24 @@ func regexData(b *strings.Builder) int {
 	return len(propT) + len(foldT) + len(namesT)
 }
 
-const regexFunctions = `function _prop_kept(c: i32): boolean {
-    return c != 32 && c != 95 && c != 45;
+const regexFunctions = `// _prop_kept says whether a byte of a name counts: not a space, an
+// underscore, a hyphen or a byte outside ASCII.
+function _prop_kept(c: i32): boolean {
+    return c != 32 && c != 95 && c != 45 && c < 128;
 }
 
+// _prop_key gives the loose form of a name, as regex-syntax makes it: no
+// "is" at the start, no case, and only the bytes that _prop_kept keeps.
+// "isc" stays, as an alias of the category Other.
 function _prop_key(name: string): string {
+    let from = _prop_is(name);
     let n = 0;
-    for i in 0..name.len() {
+    for i in from..name.len() {
         if (_prop_kept(name[i] as i32)) { n += 1; }
     }
     let out = __alloc_u8(n);
     n = 0;
-    for i in 0..name.len() {
+    for i in from..name.len() {
         let c = name[i] as i32;
         if (_prop_kept(c)) {
             if (c >= 65 && c <= 90) { c += 32; }
@@ -323,9 +421,13 @@ function _prop_key(name: string): string {
             n += 1;
         }
     }
-    unsafe {
-        return string_from_bytes_unchecked(out);
-    }
+    let key = unsafe { string_from_bytes_unchecked(out) };
+    return if (from == 2 && key == "c") { "isc" } else { key };
+}
+
+// _prop_is gives 2 for a name that starts with "is" in any case, else 0.
+function _prop_is(name: string): i32 {
+    return if (name.len() >= 2 && (name[0] | 32u8) == 105u8 && (name[1] | 32u8) == 115u8) { 2 } else { 0 };
 }
 
 // _prop_index gives the offset and the count of the ranges of a key, or -1
@@ -362,27 +464,44 @@ function _prop_decode(span: (i32, i32)): Option[i32[]] {
 
 // property_ranges gives the code points of a general category, a script or a
 // binary property, as pairs of the first and the last code point of each
-// range in order. The name is that of ` + "`\\p{...}`" + ` in a regular expression: case,
-// spaces, underscores and hyphens do not count. ` + "`gc=`" + `, ` + "`sc=`" + `,
-// ` + "`General_Category=`" + ` and ` + "`Script=`" + ` select the kind of property. Without a
-// kind, a general category comes first, then a script, then a binary
-// property. An unknown name gives None.
+// range in order. The name is that of ` + "`\\p{...}`" + ` in a regular expression, as
+// regex-syntax reads it: case, spaces, underscores, hyphens and an "is" at
+// the start do not count. ` + "`gc=`" + `, ` + "`sc=`" + `, ` + "`General_Category=`" + ` and ` + "`Script=`" + `, or the
+// same names with ` + "`:`" + ` or ` + "`!=`" + `, select the kind of property. Without a kind, a
+// binary property comes first, then a general category, then a script.
+// An unknown name gives None.
 pub function property_ranges(name: string): Option[i32[]] {
+    let (op, width) = _prop_op(name);
+    if (op >= 0) {
+        let kind = _prop_key(slice_unchecked(name, 0, op) + "");
+        return _prop_decode(_prop_valued(kind, _prop_key(slice_unchecked(name, op + width, name.len()) + "")));
+    }
     let key = _prop_key(name);
-    let eq = __memchr(key, 61, 0);
-    if (eq < 0) { eq = __memchr(key, 58, 0); }
-    if (eq >= 0) {
-        let kind = slice_unchecked(key, 0, eq) + "";
-        let value = slice_unchecked(key, eq + 1, key.len()) + "";
-        if (kind == "gc" || kind == "generalcategory") { return _prop_decode(_prop_index("gc:" + value)); }
-        if (kind == "sc" || kind == "script") { return _prop_decode(_prop_index("sc:" + value)); }
-        return None;
+    let span = if (key != "cf" && key != "sc" && key != "lc") { _prop_index("bp:" + key) } else { (-1, 0) };
+    if (span.0 < 0) { span = _prop_index("gc:" + key); }
+    if (span.0 < 0) { span = _prop_index("sc:" + key); }
+    return _prop_decode(span);
+}
+
+// _prop_valued gives the span of the ranges of a value of the property
+// kind: a general category, Any, Assigned and ASCII for gc, or a script.
+function _prop_valued(kind: string, value: string): (i32, i32) {
+    if (kind == "sc" || kind == "script") { return _prop_index("sc:" + value); }
+    if (kind != "gc" && kind != "generalcategory") { return (-1, 0); }
+    let span = _prop_index("gc:" + value);
+    if (span.0 < 0 && (value == "any" || value == "assigned" || value == "ascii")) { return _prop_index("bp:" + value); }
+    return span;
+}
+
+// _prop_op gives the offset and the width of the operator of a name with a
+// kind: the first "!=", else the first ":", else the first "=", or -1.
+function _prop_op(name: string): (i32, i32) {
+    for i in 0..name.len() {
+        if (name[i] == 33u8 && i + 1 < name.len() && name[i + 1] == 61u8) { return (i, 2); }
     }
-    for kind in ["gc:", "sc:", "bp:"] {
-        let span = _prop_index(kind + key);
-        if (span.0 >= 0) { return _prop_decode(span); }
-    }
-    return None;
+    let colon = __memchr(name, 58, 0);
+    if (colon >= 0) { return (colon, 1); }
+    return (__memchr(name, 61, 0), 1);
 }
 
 // word_ranges gives the word characters of UTS #18, which ` + "`\\w`" + ` matches:
