@@ -156,6 +156,7 @@ ci-selftest:
 	python3 -m unittest discover -s scripts -p test_gen_mp3_tables.py
 	python3 -m unittest discover -s scripts -p test_gen_silk_tables.py
 	python3 -m unittest discover -s scripts -p test_rebank.py
+	python3 -m unittest discover -s scripts -p test_rebank_main.py
 
 # Report the live state of the native-convergence freeze preconditions,
 # derived from the tree. Fails only on a
