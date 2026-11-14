@@ -523,6 +523,112 @@ print("ok")
 	})
 }
 
+// loadH3Server is a std/serve server of HTTP/3: PORT CERT KEY.
+const loadH3Server = `import "std/http";
+import "std/i32";
+import "std/platform";
+import "std/rand";
+import "std/result";
+import "std/serve";
+import "std/time";
+import "std/tls/identity";
+import "std/tls/server";
+
+function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
+  if (req.path == "/slow") {
+    plat.sleep(time.duration_millis(20 as i64));
+  }
+  if (req.path == "/missing") {
+    return http.text(404, "missing\n");
+  }
+  return http.ok("hello\n");
+}
+
+function main(): i32 {
+  let argv = args();
+  let port = i32.parse_i32(argv[1]).unwrap_or(0);
+  let Ok(cert) = read_file(argv[2]) else {
+    return 2;
+  };
+  let Ok(key) = read_file(argv[3]) else {
+    return 3;
+  };
+  let Ok(id) = identity.from_pem(cert, key) else {
+    return 4;
+  };
+  return serve.exit_code(serve.run(port, serve.config().with_tls(server.config(id, rand.bytes(32))).with_h3(), handle));
+}
+`
+
+// startH3Server starts the server of HTTP/3 at bin, with a certificate for
+// 127.0.0.1, and gives its URL and the PEM file of the certificate.
+func startH3Server(t *testing.T, bin string) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(3), Subject: pkix.Name{CommonName: "127.0.0.1"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IPAddresses: []net.IP{net.ParseIP("127.0.0.1")}, KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, IsCA: true, BasicConstraintsValid: true}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pk, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, keyFile := filepath.Join(dir, "cert.pem"), filepath.Join(dir, "key.pem")
+	_ = os.WriteFile(cert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o644)
+	_ = os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: pk}), 0o600)
+	l, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := l.LocalAddr().(*net.UDPAddr).Port
+	_ = l.Close()
+	cmd := exec.Command(bin, fmt.Sprint(port), cert, keyFile)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if c, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port)); err == nil {
+			_ = c.Close()
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return fmt.Sprintf("https://127.0.0.1:%d", port), cert
+}
+
+// loadH3Tests runs the tool with --http-version 3 against a std/serve
+// server of HTTP/3.
+func loadH3Tests(t *testing.T, run loadRun, server string) {
+	url, cert := startH3Server(t, server)
+	j := summaryOf(t, run, "-n", "200", "-c", "2", "-p", "4", "--http-version", "3", "--insecure", url+"/")
+	if j.responses() != 200 || j.StatusCodeDistribution["200"] != 200 || len(j.ErrorDistribution) != 0 || j.Details.DNSDialup.Average == nil {
+		t.Errorf("--http-version 3: %d responses, %v, errors %v", j.responses(), j.StatusCodeDistribution, j.ErrorDistribution)
+	}
+	verified := summaryOf(t, run, "-n", "10", "-c", "1", "--http-version", "3", "--cacert", cert, url+"/missing")
+	if verified.StatusCodeDistribution["404"] != 10 {
+		t.Errorf("--http-version 3 --cacert: %v, errors %v", verified.StatusCodeDistribution, verified.ErrorDistribution)
+	}
+	untrusted := summaryOf(t, run, "-n", "2", "-c", "1", "--http-version", "3", url+"/")
+	if untrusted.responses() != 0 || len(untrusted.ErrorDistribution) == 0 {
+		t.Errorf("HTTP/3 with an untrusted certificate: %d responses", untrusted.responses())
+	}
+	timed := summaryOf(t, run, "-z", "300ms", "-c", "2", "-p", "3", "--http-version", "3", "--insecure", url+"/slow")
+	if timed.responses() == 0 || len(timed.ErrorDistribution) != 0 {
+		t.Errorf("-z with HTTP/3: %d responses, errors %v", timed.responses(), timed.ErrorDistribution)
+	}
+	out, _, code := run(t, "--debug", "--http-version", "3", "--insecure", url+"/")
+	if code != 0 || !strings.Contains(out, "\nResponse {\n    status: 200,\n    version: HTTP/3.0,\n") {
+		t.Errorf("--debug with HTTP/3: exit %d\n%s", code, out)
+	}
+}
+
 // ptyScript runs a command in a pseudo-terminal of 30 rows and 100 columns
 // and writes what the command wrote. With a first argument other than "-",
 // it types that key after half a second.

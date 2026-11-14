@@ -327,6 +327,12 @@ func TestSelfHostExampleLoadHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	h3dir := t.TempDir()
+	h3src := filepath.Join(h3dir, "h3_server.fern")
+	if err := os.WriteFile(h3src, []byte(loadH3Server), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h3server := cli.x86Binary(t, h3src)
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
 			var load func(args ...string) *exec.Cmd
@@ -359,6 +365,7 @@ func TestSelfHostExampleLoadHTTP(t *testing.T) {
 			}
 
 			t.Run("features", func(t *testing.T) { loadFeatureTests(t, run) })
+			t.Run("http3", func(t *testing.T) { loadH3Tests(t, run, h3server) })
 			t.Run("terminal", func(t *testing.T) { loadTerminalTests(t, load().Args) })
 			if target == "x86-64-linux" {
 				t.Run("oha", func(t *testing.T) { loadOhaTests(t, run) })

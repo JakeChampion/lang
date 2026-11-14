@@ -521,6 +521,9 @@ function checked(o: Options): Result[Options, string] {
   if (proxy_http == HTTP_3) {
     return Err("a proxy speaks HTTP/1.0, HTTP/1.1 or HTTP/2");
   }
+  if (http == HTTP_3 && o.proxy.is_some()) {
+    return Err("HTTP/3 does not go through a proxy");
+  }
   if (o.auth.len() > 0 && o.auth.index_of(":").is_none()) {
     return Err(f"-a {o.auth} is not USER:PASSWORD");
   }
