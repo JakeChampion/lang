@@ -618,9 +618,12 @@ function next_item(o: Opts, own inp: Input): (Item, Input) {
 struct Child { pid: i32, slot: i32 }
 
 // The state of a run. `args` waits for the next command; `size` counts the
-// bytes of that command. `status` is the exit status so far.
+// bytes of that command. `status` is the exit status so far. `env` is the
+// environment of each command, without the variable of
+// --process-slot-var.
 struct Run {
   cmd: string[],
+  env: string[],
   base: i64,
   args: string[],
   size: i64,
@@ -653,12 +656,13 @@ function shown(argv: string[]): string {
   return s;
 }
 
-// The argv of a command of -I: each initial argument with the line in
-// place of the replace string.
+// The argv of a command of -I: each initial argument after the command name
+// with the line in place of the replace string. GNU xargs does not replace
+// in the command name.
 function replaced(cmd: string[], r: string, line: string): string[] {
-  let out: string[] = [];
-  for a in cmd {
-    out = out.append(replace_all(a, r, line));
+  let out = [cmd[0]];
+  for i in 1..cmd.len() {
+    out = out.append(replace_all(cmd[i], r, line));
   }
   return out;
 }
@@ -707,7 +711,7 @@ function confirm(own run: Run, argv: string[]): (boolean, Run) {
           tty = Some(t);
         },
         Err(e) => {
-          fail("failed to open /dev/tty for reading: " + gnu.io_error_text(e), 1);
+          stop(run, "failed to open /dev/tty for reading: " + gnu.io_error_text(e), 1);
         }
       }
     }
@@ -748,29 +752,18 @@ function read_tty_line(t: Reader): Option[string] {
   return Some(s);
 }
 
-// What a command that ended means for the run. A status of 255 or a
-// signal ends xargs.
-function settle(o: Opts, own run: Run, res: cmdline.Outcome): Run {
-  if (res.signal != 0 || res.code == 255) {
-    report_end(run.cmd[0], res);
-    let st = if (res.signal != 0) { EXIT_CHILD_SIGNAL } else if (run.status == EXIT_CHILD_FAILED) { EXIT_CHILD_FAILED } else { EXIT_CHILD_255 };
-    let r2 = wait_all(o, run);
-    exit(st);
-    return r2;
-  }
-  if (res.code != 0) {
-    return Run { ...run, status: EXIT_CHILD_FAILED };
-  }
-  return run;
-}
-
-// The message of a command that ends xargs.
-function report_end(name: string, res: cmdline.Outcome): void {
+// The status that ends xargs when a command ends with a signal or with
+// 255, after its message. It is 0 when the command ended in another way.
+function abort_status(name: string, res: cmdline.Outcome): i32 {
   if (res.signal != 0) {
     gnu.error(name + ": terminated by signal " + res.signal.to_string());
-  } else if (res.code == 255) {
-    gnu.error(name + ": exited with status 255; aborting");
+    return EXIT_CHILD_SIGNAL;
   }
+  if (res.code == 255) {
+    gnu.error(name + ": exited with status 255; aborting");
+    return EXIT_CHILD_255;
+  }
+  return 0;
 }
 
 // SIGUSR1 and SIGUSR2 add a command to -P and take one away, as in GNU
@@ -793,21 +786,28 @@ function take_usr_signals(own run: Run): (boolean, Run) {
   return (more, Run { ...run, procs: procs });
 }
 
-// The status of the next command that ends, or -1 when no command runs. A
-// signal does not end the wait. When `early` is set, SIGUSR1 ends it with
-// -2, because -P then has room for one more command.
-function wait_status(own run0: Run, early: boolean): (i32, Run) {
+// Waits for the next command to end, and frees its slot. The result is the
+// status of the command, or -1 when no command runs. A child that xargs did
+// not start does not end the wait, as in GNU xargs. A signal does not end
+// the wait. When `early` is set, SIGUSR1 ends it with -2, because -P then
+// has room for one more command.
+function wait_child(own run0: Run, early: boolean): (i32, Run) {
   let run = run0;
   loop {
-    let st = proc_waitpid_status(-1);
-    if (st >= 0) {
-      return (st, run);
+    let r = proc_wait_any();
+    if (r >= 0) {
+      let kept = without(run.children, (r >> 32) as i32);
+      if (kept.len() < run.children.len()) {
+        return ((r & 65535) as i32, Run { ...run, children: kept });
+      }
+      continue;
     }
-    if (st == -errno.ECHILD) {
-      return (-1, run);
+    let err = -(r as i32);
+    if (err == errno.ECHILD) {
+      return (-1, Run { ...run, children: [] });
     }
-    if (st != -errno.EINTR) {
-      fail("error waiting for child process: " + gnu.exec_errno_text(-st), 1);
+    if (err != errno.EINTR) {
+      fail("error waiting for child process: " + gnu.exec_errno_text(err), 1);
     }
     let (more, r2) = take_usr_signals(run);
     run = r2;
@@ -818,43 +818,63 @@ function wait_status(own run0: Run, early: boolean): (i32, Run) {
   return (-1, run);
 }
 
-// Waits for one command, and frees its slot. SIGUSR1 ends the wait early.
-function wait_one(o: Opts, own run0: Run): Run {
-  let (st, run) = wait_status(run0, true);
-  if (st == -2) {
-    return run;
-  }
-  if (st < 0) {
-    return Run { ...run, children: [] };
-  }
+function without(children: Child[], pid: i32): Child[] {
   let kept: Child[] = [];
-  let found = false;
-  for c in run.children {
-    if (!found && !process_alive(c.pid)) {
-      found = true;
-      continue;
+  for c in children {
+    if (c.pid != pid) {
+      kept = kept.append(c);
     }
-    kept = kept.append(c);
   }
-  if (!found && kept.len() > 0) {
-    kept = kept.drop(1);
-  }
-  return settle(o, Run { ...run, children: kept }, cmdline.outcome_of(st));
+  return kept;
 }
 
-// Waits for the commands that still run when xargs stops. Each one that
-// ends with 255 or a signal is reported too.
-function wait_all(o: Opts, own run: Run): Run {
-  while (run.children.len() > 0) {
-    let (st, r2) = wait_status(run, false);
-    run = r2;
-    if (st < 0) {
-      return Run { ...run, children: [] };
-    }
-    report_end(run.cmd[0], cmdline.outcome_of(st));
-    run = Run { ...run, children: run.children.drop(1) };
+// Waits for one command. SIGUSR1 ends the wait early.
+function wait_one(own run0: Run): Run {
+  let (st, run) = wait_child(run0, true);
+  if (st < 0) {
+    return run;
+  }
+  let res = cmdline.outcome_of(st);
+  let abort = abort_status(run.cmd[0], res);
+  if (abort != 0) {
+    exit(finish(run, abort));
+  }
+  if (res.code != 0) {
+    return Run { ...run, status: EXIT_CHILD_FAILED };
   }
   return run;
+}
+
+// The exit status of xargs, after the commands that still run end. This is
+// what GNU xargs does at exit. A command that ends with a signal or with
+// 255 ends xargs at once. Otherwise the status is 123 when a command
+// failed, or `code`.
+function finish(own run0: Run, code: i32): i32 {
+  let run = run0;
+  while (run.children.len() > 0) {
+    let (st, r2) = wait_child(run, false);
+    run = r2;
+    if (st >= 0) {
+      let res = cmdline.outcome_of(st);
+      let abort = abort_status(run.cmd[0], res);
+      if (abort != 0) {
+        exit(abort);
+      }
+      if (res.code != 0) {
+        run = Run { ...run, status: EXIT_CHILD_FAILED };
+      }
+    }
+  }
+  if (run.status != 0) {
+    return run.status;
+  }
+  return code;
+}
+
+// Reports an error and ends xargs after the commands that still run end.
+function stop(own run: Run, msg: string, code: i32): void {
+  gnu.error(msg);
+  exit(finish(run, code));
 }
 
 function free_slot(run: Run): i32 {
@@ -893,34 +913,27 @@ function execute(o: Opts, own run0: Run, argv: string[]): Run {
     if (!yes) {
       return run;
     }
-  } else if (o.verbose) {
-    let w = stderr();
-    w.write(shown(argv) + "\n");
   }
   let (_, r1) = take_usr_signals(run);
   run = r1;
-  if (run.procs != 1i64) {
-    while (run.procs > 0i64 && run.children.len() as i64 >= run.procs) {
-      run = wait_one(o, run);
-    }
+  while (run.procs > 0i64 && run.children.len() as i64 >= run.procs) {
+    run = wait_one(run);
+  }
+  if (o.verbose && !o.interactive) {
+    let w = stderr();
+    w.write(shown(argv) + "\n");
   }
   let slot = free_slot(run);
-  let var = "";
+  let envp = run.env;
   if (o.has_slot_var) {
-    var = o.slot_var + "=" + slot.to_string();
+    envp = envp.append(o.slot_var + "=" + slot.to_string());
   }
-  let (pid, err) = cmdline.start(argv, "", stdin_mode(o), var);
+  let (pid, err) = cmdline.start(argv, "", stdin_mode(o), envp);
   if (err != 0) {
-    let r3 = wait_all(o, run);
     let code = if (err == errno.ENOENT) { EXIT_NOT_FOUND } else { EXIT_CANNOT_RUN };
-    fail(argv[0] + ": " + gnu.exec_errno_text(err), code);
-    return r3;
+    stop(run, argv[0] + ": " + gnu.exec_errno_text(err), code);
   }
-  run = Run { ...run, children: run.children.append(Child { pid: pid, slot: slot }) };
-  if (run.procs == 1i64) {
-    run = wait_one(o, run);
-  }
-  return run;
+  return Run { ...run, children: run.children.append(Child { pid: pid, slot: slot }) };
 }
 
 function flush_args(o: Opts, own run: Run): Run {
@@ -942,14 +955,10 @@ function add_item(o: Opts, own run0: Run, it: Item): Run {
   let need = cmdline.arg_size(it.text);
   if (run.size + need > run.limit) {
     if (run.args.len() == 0) {
-      let r3 = wait_all(o, run);
-      fail("argument line too long", 1);
-      return r3;
+      stop(run, "argument line too long", 1);
     }
     if (o.exit_size && (o.max_args > 0i64 || o.max_lines > 0i64)) {
-      let r4 = wait_all(o, run);
-      fail("argument list too long", 1);
-      return r4;
+      stop(run, "argument list too long", 1);
     }
     run = flush_args(o, run);
   }
@@ -977,9 +986,7 @@ function run_replace(o: Opts, own run: Run, line: string): Run {
     size += cmdline.arg_size(a);
   }
   if (size > run.limit) {
-    let r2 = wait_all(o, run);
-    fail("argument list too long", 1);
-    return r2;
+    stop(run, "argument list too long", 1);
   }
   return execute(o, run, argv);
 }
@@ -1072,7 +1079,11 @@ function run_xargs(): i32 {
   }
   catch_usr_signals();
   let inp = Input { r: open_input(o), buf: [], pos: 0, eof: false, nul_warned: false };
-  let run = Run { cmd: cmd, base: base, args: [], size: base, lines: 0i64, limit: o.max_chars, status: 0, children: [], ran: false, tty: None, procs: o.procs };
+  let env = environ();
+  if (o.has_slot_var) {
+    env = cmdline.without_var(env, o.slot_var);
+  }
+  let run = Run { cmd: cmd, env: env, base: base, args: [], size: base, lines: 0i64, limit: o.max_chars, status: 0, children: [], ran: false, tty: None, procs: o.procs };
   let error = "";
   loop {
     let (it, i2) = next_item(o, inp);
@@ -1093,12 +1104,8 @@ function run_xargs(): i32 {
     }
   }
   if (error.len() > 0) {
-    gnu.error(error);
-    run = wait_all_settled(o, flush_args(o, run));
-    if (run.status == EXIT_CHILD_FAILED) {
-      exit(EXIT_CHILD_FAILED);
-    }
-    exit(1);
+    let r2 = flush_args(o, run);
+    stop(r2, error, 1);
   }
   if (!o.has_replace && (run.args.len() > 0 || !run.ran && !o.no_empty)) {
     let argv2 = run.cmd;
@@ -1107,14 +1114,6 @@ function run_xargs(): i32 {
     }
     run = execute(o, run, argv2);
   }
-  run = wait_all_settled(o, run);
-  return run.status;
-}
-
-// Waits for every command that still runs, and judges each one.
-function wait_all_settled(o: Opts, own run: Run): Run {
-  while (run.children.len() > 0) {
-    run = wait_one(o, run);
-  }
-  return run;
+  let code = run.status;
+  return finish(run, code);
 }

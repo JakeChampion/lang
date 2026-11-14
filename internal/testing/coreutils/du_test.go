@@ -303,6 +303,11 @@ func duCases(t *testing.T) []invocation {
 	add("single-link-inodes-twice", "--inodes", "-a", "a/f2", "a/f2")
 	add("single-link-repeated-deref", "-La", "a/f2", "a/f2")
 	add("single-link-size-twice", "--apparent-size", "-a", "a/f2", "a/f2")
+	add("single-root-trailing-slashes", "-a", "a///")
+	add("single-root-dot-prefix", "-a", "./a")
+	add("single-root-inodes-deref-args", "--inodes", "-H", "-a", "slink")
+	add("single-root-inodes-deref-all", "--inodes", "-L", "-a", "a")
+	add("single-root-physical-count-links", "--inodes", "-P", "-l", "-a", "a")
 
 	add("hardlink-across-operands", "-s", "a/f1", "b/hardlink")
 	add("hardlink-across-operands-reversed", "-s", "b/hardlink", "a/f1")
