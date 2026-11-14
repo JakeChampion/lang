@@ -1,3 +1,5 @@
+// The map, then the read loop of __fern_read_file for a file that the runtime cannot map.
+// fern-lint: allow cyclomatic-complexity
 function __fern_map_file(path: string): Result[string, IoError] {
   if (__count_byte(path, 0) > 0) {
     return Err(__fern_io_error(22, __fern_path_copy(path, path.len())));

@@ -1,3 +1,5 @@
+// The checks of the masks, and the loop of the kernel.
+// fern-lint: allow cyclomatic-complexity
 function __fern_scan_masks(s: usize, from: i32, m: usize): i32 {
   let len = __load_i32(s);
   let n = __load_i32(m);

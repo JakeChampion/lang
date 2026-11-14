@@ -7620,6 +7620,8 @@ function call_crc32_array(name: string, args: Value[]): Value {
 
 // __scan_masks: the first offset at or after `from` where each probe of the
 // masks accepts its byte, or -1. Masks that are too short find nothing.
+// The checks of the arguments, and the loop of the kernel.
+// fern-lint: allow cyclomatic-complexity
 function call_scan_masks(args: Value[]): Value {
   if (args.len() != 3 || !is_string_arg(args[0]) || !is_i32_arg(args[1])) {
     return v_err("__scan_masks: expected 3 args (s, from, masks)");
