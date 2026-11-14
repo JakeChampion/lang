@@ -811,6 +811,9 @@ releases its runtime record, so the scheduler only drops its handle.
 
 ```fern
 <<18 pub enum TaskStatus[T]>>=
+// A status that a program drops leaves a parked task with no scheduler: it
+// never runs again, and its `defer` blocks never run.
+@must_consume
 pub enum TaskStatus[T] { Done(T), Suspended(Wait) }
 
 // Each copy of a task's handle shares one TaskShared, so a copy that is used
@@ -874,6 +877,15 @@ pub function task_resume[T](t: Task[T], wake: Wake): TaskStatus[T] {
   __task_expect(t.shared.get().phase, TASK_PARKED);
   __task_wake(t.id, wake);
   return __task_ran(t, 2);
+}
+
+// Resumes a parked task with Cancelled and takes its status. The task runs
+// to its end, so its `defer` blocks run and its record is released.
+pub function task_cancel[T](t: Task[T]): void {
+  match (task_resume(t, Wake.Cancelled)) {
+    Done(_) => {},
+    Suspended(_) => {}
+  }
 }
 
 // Stops the program when a handle is used on a task in another phase: a
@@ -1034,6 +1046,7 @@ wait costs no closure and no handle.
 <<21 pub struct Call[A, B, T]>>=
 pub struct Call[A, B, T] { id: i32, f: (A, B) => T, a: A, b: B }
 
+@must_consume
 pub enum CallStatus[A, B, T] { Returned(T), Parked(Call[A, B, T], Wait) }
 ```
 
@@ -1060,6 +1073,15 @@ pub function call_start[A, B, T](f: (A, B) => T, a: A, b: B): CallStatus[A, B, T
 pub function call_resume[A, B, T](c: Call[A, B, T], wake: Wake): TaskStatus[T] {
   __task_wake(c.id, wake);
   return __settled(c.id, run_task_call(c.id, c.f, c.a, c.b, 2));
+}
+
+// Resumes a parked call with Cancelled and takes its status, as task_cancel
+// does for a task.
+pub function call_cancel[A, B, T](c: Call[A, B, T]): void {
+  match (call_resume(c, Wake.Cancelled)) {
+    Done(_) => {},
+    Suspended(_) => {}
+  }
 }
 ```
 
