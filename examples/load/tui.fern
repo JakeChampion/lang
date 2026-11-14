@@ -225,7 +225,7 @@ function humantime(ns: i64): string {
   for u in units {
     if (rest >= u.0) {
       let n = rest / u.0;
-      rest = rest % u.0;
+      rest %= u.0;
       let unit = if (u.1 == "day" && n > 1) { "days" } else { u.1 };
       parts = parts.append(f"{n}{unit}");
     }

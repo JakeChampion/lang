@@ -271,7 +271,7 @@ pub function varint(v: i64): u8[] {
   let x = v;
   while (x > 0) {
     groups = groups.append((x & 127) as u8);
-    x = x >> 7;
+    x >>= 7;
   }
   let out: u8[] = [];
   for k in 0..groups.len() {
