@@ -37,13 +37,17 @@ function valid_extension(kind: i32, extension: boolean): boolean {
   return !extension || kind != 1 && kind != 2 && kind != 8;
 }
 
-function header(input: [u8], at: i32): Result[Header, frame.VideoError] {
+function supported_header(kind: i32, sized: boolean, unsized: boolean): boolean {
+  return (kind >= 1 && kind <= 8 || kind == 15) && (sized || unsized);
+}
+
+function header(input: [u8], at: i32, unsized: boolean): Result[Header, frame.VideoError] {
   let byte = input[at];
   if ((byte & 129u8) != 0u8) {
     return Err(frame.Header);
   }
   let kind = (byte >> 3 & 15u8) as i32;
-  if (kind == 0 || kind > 8 && kind != 15 || (byte & 2u8) == 0u8) {
+  if (!supported_header(kind, (byte & 2u8) != 0u8, unsized)) {
     return Err(frame.Unsupported);
   }
   let extension = (byte & 4u8) != 0u8;
@@ -89,12 +93,29 @@ pub function next_obu(input: [u8], offset: i32, limits: frame.Limits): Result[Op
   if (offset == input.len()) {
     return Ok(None);
   }
-  let value = header(input, offset)?;
+  let value = header(input, offset, false)?;
   let (payload, size) = leb128(input, value.next)?;
   if (size > (input.len() - payload) as u64) {
     return Err(frame.Truncated);
   }
   let end = payload + size as i32;
   return Ok(Some(Unit { kind: value.kind, extension: value.extension, temporal_id: value.temporal_id, spatial_id: value.spatial_id, offset: payload, size: size as i32, next_offset: end }));
+}
+
+// The enclosing Annex B length supplies an absent OBU size.
+pub(package) function delimited(input: [u8]): Result[Unit, frame.VideoError] {
+  if (input.len() == 0) {
+    return Err(frame.Truncated);
+  }
+  let value = header(input, 0, true)?;
+  let payload = value.next;
+  if ((input[0] & 2u8) != 0u8) {
+    let (at, size) = leb128(input, payload)?;
+    if (size != (input.len() - at) as u64) {
+      return Err(frame.Header);
+    }
+    payload = at;
+  }
+  return Ok(Unit { kind: value.kind, extension: value.extension, temporal_id: value.temporal_id, spatial_id: value.spatial_id, offset: payload, size: input.len() - payload, next_offset: input.len() });
 }
 ```

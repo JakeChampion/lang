@@ -8647,7 +8647,52 @@ function builtin_row(c: ssasem.Contract): ownership.Escapes {
   for m in c.modes {
     bits = bits.append(m == ssaunits.counted_mode());
   }
-  return ownership.Escapes { name: c.name, bits: bits, lends: reference(c.result) && !ssasem.fresh_result_builtin(c.name) && !rtbytecopy.is_helper(c.name), cycle: -1, quiet: [] };
+  return ownership.Escapes { name: c.name, bits: bits, lends: may_hold_view(c.result) && !ssasem.fresh_result_builtin(c.name) && !rtbytecopy.is_helper(c.name), cycle: -1, quiet: [] };
+}
+
+// The types of builtins.fern that hold no view and no function.
+const VIEWLESS_BUILTIN_TYPES: string[] = ["IoError", "FileStat", "DirEntry", "ProcessResult", "HeaderMap"];
+
+// A builtin's result borrows its arguments only through a view, since each
+// other reference in it is counted. A function, a type the contract does not
+// spell out, and a named record or enum that is not in VIEWLESS_BUILTIN_TYPES
+// may hold a view.
+function may_hold_view(t: typeinfo.Type): boolean {
+  if (!reference(t)) {
+    return false;
+  }
+  if let typeinfo.TypeStruct(st) = t {
+    return !util.has_str(VIEWLESS_BUILTIN_TYPES, st.name);
+  }
+  if let typeinfo.TypeString(st) = t {
+    return st.tag == 1;
+  }
+  if let typeinfo.TypeArray(a) = t {
+    return a.view || may_hold_view(a.elem);
+  }
+  if let typeinfo.TypeTuple(tup) = t {
+    for e in tup.elements {
+      if (may_hold_view(e)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  if let typeinfo.TypeMap(m) = t {
+    return may_hold_view(m.key) || may_hold_view(m.value);
+  }
+  if let typeinfo.TypeUnion(u) = t {
+    if (u.name != "Option" && u.name != "Result") {
+      return !util.has_str(VIEWLESS_BUILTIN_TYPES, u.name);
+    }
+    for a in u.args {
+      if (may_hold_view(a)) {
+        return true;
+      }
+    }
+    return false;
+  }
+  return true;
 }
 
 pub function with_analyses(b: Built): Built {

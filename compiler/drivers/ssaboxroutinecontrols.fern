@@ -15,8 +15,8 @@ function change(s: string, from: string, to: string): string {
 }
 
 function allocation(text: string): void {
-  let froms = ["cmpq $2, %rdi\n    jb .Lrecbox_unit", "jb .Lrecbox_unit", "pushq %rdi\n    subq $2, %rdi", "popq %rdi\n    subq $8, %rax", "movl $1, -8(%rax)\n    movl %edi, -4(%rax)", "movl $1, -8(%rax)\n    movl %edi, -4(%rax)", "movl $1, -8(%rax)\n    movl %edi, -4(%rax)", ".Lrecbox_unit:\n    subq $1, %rdi"];
-  let tos = ["cmpq $1, %rdi\n    jb .Lrecbox_unit", "jbe .Lrecbox_unit", "pushq %rdi\n    subq $1, %rdi", "popq %rdi\n    subq $16, %rax", "movl $2, -8(%rax)\n    movl %edi, -4(%rax)", "movl $1, -8(%rax)\n    movl %edi, -8(%rax)", "movl %edi, -4(%rax)", ".Lrecbox_unit:\n    subq $2, %rdi"];
+  let froms = ["cmpq $65535, %rdi", "ja .Lrecbox_wide", ".Lrecbox_wide:\n    subq $1, %rdi", "pushq %rdi\n    subq $2, %rdi", "jae .Lrecbox_sized", "xorl %edi, %edi\n.Lrecbox_sized:", "popq %rdi\n    subq $8, %rax", "movl $1, -8(%rax)\n    movl %edi, -4(%rax)", "movl $1, -8(%rax)\n    movl %edi, -4(%rax)", "movl $1, -8(%rax)\n    movl %edi, -4(%rax)"];
+  let tos = ["cmpq $65536, %rdi", "jae .Lrecbox_wide", ".Lrecbox_wide:\n    subq $2, %rdi", "pushq %rdi\n    subq $1, %rdi", "jbe .Lrecbox_sized", "movl $1, %edi\n.Lrecbox_sized:", "popq %rdi\n    subq $16, %rax", "movl $2, -8(%rax)\n    movl %edi, -4(%rax)", "movl $1, -8(%rax)\n    movl %edi, -8(%rax)", "movl %edi, -4(%rax)"];
   let i = 0;
   for from in froms {
     require(!routines.allocation(change(text, from, tos[i])), from + " -> " + tos[i]);
@@ -25,8 +25,8 @@ function allocation(text: string): void {
 }
 
 function release(text: string): void {
-  let froms = ["cmpl $0, -4(%rax)\n    je __fn___fern_arr_dec.u", "cmpl $1, -8(%rax)\n    jne __fn___fern_arr_dec.u", "cmpl $1, -8(%rax)\n    jne __fn___fern_arr_dec.u", "movl -4(%rax), %ecx\n    subq $2, %rcx", "movq %rcx, -8(%rax)\n    movq $1, (%rax)", "movq %rcx, -8(%rax)\n    movq $1, (%rax)", "movq $1, (%rax)\n    addq $8, %rax", "jb .Lboxdec_ret", "addq $8, %rax\n    jmp __fn___fern_arr_dec.u"];
-  let tos = ["cmpl $1, -4(%rax)\n    je __fn___fern_arr_dec.u", "cmpl $2, -8(%rax)\n    jne __fn___fern_arr_dec.u", "cmpl $1, -8(%rax)\n    je __fn___fern_arr_dec.u", "movl -4(%rax), %ecx\n    subq $1, %rcx", "movq %rcx, -8(%rax)\n    movq $2, (%rax)", "movl %ecx, -8(%rax)\n    movq $1, (%rax)", "movq $1, (%rax)\n    addq $16, %rax", "jb __fn___fern_arr_dec.u", "addq $8, %rax\n    jmp __fn___fern_arr_dec.r"];
+  let froms = ["movzwl -4(%rax), %ecx", "testl %ecx, %ecx\n    jz __fn___fern_arr_dec.u", "cmpl $1, -8(%rax)\n    jne __fn___fern_arr_dec.u", "cmpl $1, -8(%rax)\n    jne __fn___fern_arr_dec.u", "subq $2, %rcx\n    jae .Lboxdec_cap", "subq $2, %rcx\n    jae .Lboxdec_cap", "movq %rcx, -8(%rax)\n    movq $1, (%rax)", "movq %rcx, -8(%rax)\n    movq $1, (%rax)", "movq $1, (%rax)\n    addq $8, %rax", "jb .Lboxdec_ret", "addq $8, %rax\n    jmp __fn___fern_arr_dec.u"];
+  let tos = ["movl -4(%rax), %ecx", "testl %ecx, %ecx\n    jnz __fn___fern_arr_dec.u", "cmpl $2, -8(%rax)\n    jne __fn___fern_arr_dec.u", "cmpl $1, -8(%rax)\n    je __fn___fern_arr_dec.u", "subq $1, %rcx\n    jae .Lboxdec_cap", "subq $2, %rcx\n    jb .Lboxdec_cap", "movq %rcx, -8(%rax)\n    movq $2, (%rax)", "movl %ecx, -8(%rax)\n    movq $1, (%rax)", "movq $1, (%rax)\n    addq $16, %rax", "jb __fn___fern_arr_dec.u", "addq $8, %rax\n    jmp __fn___fern_arr_dec.r"];
   let i = 0;
   for from in froms {
     require(!routines.release(change(text, from, tos[i])), from + " -> " + tos[i]);

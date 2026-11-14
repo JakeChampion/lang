@@ -106,18 +106,18 @@ function round(i: i32): i32 {
 			want: 34, allocs: 300, frees: 300,
 		},
 		{
+			// The elements are 8 bytes, so each emit grows the buffer.
 			name: "builder_nodeep",
-			src: `struct B { ops: i32[] }
-function (b: B) emit(x: i32): B { return B { ops: b.ops.append(x) }; }
-@noinline function id(xs: i32[]): i32[] { return xs; }
+			src: `struct B { ops: i64[] }
+function (b: B) emit(x: i32): B { return B { ops: b.ops.append(x as i64) }; }
+@noinline function id(xs: i64[]): i64[] { return xs; }
 function round(i: i32): i32 {
     let s: B = B { ops: id([1]) };
     s = s.emit(i);
     s = s.emit(i + 1);
     return s.ops.len();
 }` + structKeyMain,
-			// id takes its array as owned (#15822), so it returns the array with no copy.
-			want: 51, allocs: 400, frees: 400,
+			want: 51, allocs: 500, frees: 500,
 		},
 	}
 }

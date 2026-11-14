@@ -198,6 +198,14 @@ function prec_primary(): i32 {
   return 16;
 }
 
+const BINARY_PREC_SET: string[] = ["<", "<=", ">", ">="];
+
+const BINARY_PREC_SET2: string[] = ["<<", ">>", "<<|", "<<?", ">>?"];
+
+const BINARY_PREC_SET3: string[] = ["+", "-", "+|", "-|", "+?", "-?"];
+
+const BINARY_PREC_SET4: string[] = ["*", "/", "%", "*|", "*?", "/?", "%?"];
+
 function binary_prec(op: string): i32 {
   if (op == "|>") {
     return 2;
@@ -211,7 +219,7 @@ function binary_prec(op: string): i32 {
   if (op == "==" || op == "!=") {
     return 6;
   }
-  if (op == "<" || op == "<=" || op == ">" || op == ">=") {
+  if (util.has_str(BINARY_PREC_SET, op)) {
     return 7;
   }
   if (op == "|") {
@@ -223,13 +231,13 @@ function binary_prec(op: string): i32 {
   if (op == "&") {
     return 10;
   }
-  if (op == "<<" || op == ">>" || op == "<<|" || op == "<<?" || op == ">>?") {
+  if (util.has_str(BINARY_PREC_SET2, op)) {
     return 11;
   }
-  if (op == "+" || op == "-" || op == "+|" || op == "-|" || op == "+?" || op == "-?") {
+  if (util.has_str(BINARY_PREC_SET3, op)) {
     return 12;
   }
-  if (op == "*" || op == "/" || op == "%" || op == "*|" || op == "*?" || op == "/?" || op == "%?") {
+  if (util.has_str(BINARY_PREC_SET4, op)) {
     return 13;
   }
   return prec_lowest();
@@ -239,8 +247,10 @@ function is_bitwise_op(op: string): boolean {
   return op == "&" || op == "|" || op == "^";
 }
 
+const IS_COMPARISON_OP_SET: string[] = ["==", "!=", "<", "<=", ">", ">="];
+
 function is_comparison_op(op: string): boolean {
-  return op == "==" || op == "!=" || op == "<" || op == "<=" || op == ">" || op == ">=";
+  return util.has_str(IS_COMPARISON_OP_SET, op);
 }
 
 // The precedence to print `operand` of the binary `op` at. Where a bitwise

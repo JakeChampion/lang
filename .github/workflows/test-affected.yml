@@ -56,6 +56,9 @@ jobs:
         if: fromJSON(inputs.selection).needsGNU
         with:
           host: ${{ matrix.host }}
+      # The port differential tests in e2ecompiler need their pinned reference programs.
+      - uses: ./.github/actions/port-oracles
+        if: fromJSON(inputs.selection).tests['internal/testing/e2ecompiler'][0] != null
       - name: Run the affected tests
         run: node scripts/ci-run-affected.mjs
       - name: name the failed tests as annotations

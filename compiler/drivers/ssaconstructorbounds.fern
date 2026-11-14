@@ -9,6 +9,7 @@ import "../semrecords";
 import "../ssasem";
 import "../ssa";
 import "../typeinfo";
+import "../util";
 import "../ssaconstructorbound" as boundary;
 import "../ssacreditselected" as selected;
 import "../ssacredittext" as retained;
@@ -25,7 +26,7 @@ function check(output: ssaprepare.Output, ok: boolean, group: string): boundary.
   let b = boundary.resolve(output, "parent");
   require(b.error == "" == ok, group + ": " + b.error);
   if (!ok) {
-    require(b.shape == "" && b.symbol == "" && b.fields.len() == 0 && b.words == 0, "refused data empty");
+    require(b.shape == "" && b.tag == 0i64 && b.fields.len() == 0 && b.words == 0, "refused data empty");
   }
   return b;
 }
@@ -43,21 +44,21 @@ function coherent(output: ssaprepare.Output, row: ssaprepare.Emitted, from: stri
 }
 
 function declarations(output: ssaprepare.Output, row: ssaprepare.Emitted): void {
-  for literal in ["Other", "Paren", "Parents", "parent", "", "Paren\\000"] {
-    check(ssaprepare.Output { ...output, text: output.text.split(".ascii \"Parent\"").join(".ascii \"" + literal + "\"") }, false, "selected shape bytes " + literal);
-  }
-  check(ssaprepare.Output { ...output, text: output.text.split(".ascii \"Parent\"").join(".ascii \"\\120arent\"") }, true, "decoded byte equivalence");
-  let renamed = coherent(output, row, ".S0", ".chosen_shape");
-  require(check(renamed, true, "actual symbol rather than guessed pool index").symbol == ".chosen_shape", "derived symbol");
-  let lea = "leaq .S0(%rip), %rsi";
-  check(coherent(output, row, lea, ""), false, "missing symbol");
-  check(coherent(output, row, lea, lea + "\n" + lea), false, "ambiguous symbol use");
-  check(coherent(output, row, lea, "leaq absent(%rip), %rsi"), false, "missing declaration");
-  check(coherent(output, row, lea, "leaq .SB0(%rip), %rsi"), false, "descriptor is not shape bytes");
-  check(coherent(output, row, lea, "leaq .S0(%rip), %rcx"), true, "unused address remains boundary data");
-  check(coherent(output, row, "movq $3, %rdi", "unknown_instruction"), true, "not a machine certificate");
-  check(coherent(output, row, "movq %rsi, 0(%rax)", ""), true, "missing emitted store still requires machine proof");
-  check(ssaprepare.Output { ...output, text: output.text.split(lea).join("") }, false, "capture mismatch");
+  let tag = check(output, true, "actual tag").tag;
+  require(tag >= 65536i64 && tag % 65536i64 == 2i64, "tag has the number of words");
+  let mov = "movl $" + util.i64_to_string(tag) + ", %esi";
+  let store = "movl %esi, -4(%rax)";
+  let other = coherent(output, row, mov, "movl $" + util.i64_to_string(tag + 65536i64) + ", %esi");
+  require(check(other, true, "the tag of the text").tag == tag + 65536i64, "derived tag");
+  check(coherent(output, row, mov, ""), false, "missing tag");
+  check(coherent(output, row, mov, "movl $" + util.i64_to_string(tag + 1i64) + ", %esi"), false, "tag of another number of words");
+  check(coherent(output, row, mov, "movl $2, %esi"), false, "tag with no shape");
+  check(coherent(output, row, mov, "movq $" + util.i64_to_string(tag) + ", %rsi"), false, "tag is not a 32-bit constant");
+  check(coherent(output, row, store, ""), false, "missing tag store");
+  check(coherent(output, row, store, store + "\n" + store), false, "ambiguous tag store");
+  check(coherent(output, row, store, "movl %esi, -8(%rax)"), false, "tag store at the count");
+  check(coherent(output, row, "movq $2, %rdi", "unknown_instruction"), true, "not a machine certificate");
+  check(ssaprepare.Output { ...output, text: output.text.split(mov).join("") }, false, "capture mismatch");
 }
 
 function schemas(output: ssaprepare.Output, row: ssaprepare.Emitted): void {
@@ -127,12 +128,12 @@ function single(): void {
   let sw = asmcore.Switches { backtrace: false, sanitize: false, sandbox: false, cover: false, symbols: false, optimize: false, leak_check: false, rc_free_debug: false, var_rows: false, shared: false, size: false, harden: false, heap_limit: 0i64, quarantine: asmcore.quarantine_default(), cpu_limit: 0i64, pie: false, profile: "", target: "", line_maps: [], ram_base: 0i64, ram_size: 0i64, interrupts: [], early: "", secondary: "", user_mode: false };
   let output = asm_ir.emit_module_ir_unit_prepared(g.im, false, false, "", [], g.im.funcs, g.stab, 0, -1, g.cache, g.physical, semlower.runtime_module_lowering, 0 as usize, sw, true);
   let bound = check(output, true, "actual one-field constructor");
-  require(bound.words == 2 && bound.fields.len() == 1 && bound.fields[0] == "only", "single-field extent");
+  require(bound.words == 1 && bound.fields.len() == 1 && bound.fields[0] == "only", "single-field extent");
 }
 
 pub function run(output: ssaprepare.Output): void {
   let bound = check(output, true, "actual two-field constructor");
-  require(bound.shape == "Parent" && bound.words == 3 && bound.fields.len() == 2 && bound.fields[0] == "left" && bound.fields[1] == "right", "selected extent and order");
+  require(bound.shape == "Parent" && bound.words == 2 && bound.fields.len() == 2 && bound.fields[0] == "left" && bound.fields[1] == "right", "selected extent and order");
   require(!output.text.contains("\n__fern_rec_box:\n"), "allocator intentionally absent");
   let row = retained.resolve(output, "parent").rows[0];
   declarations(output, row);

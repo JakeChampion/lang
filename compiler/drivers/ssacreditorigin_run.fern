@@ -24,6 +24,12 @@ function changed(f: ssa.SFunc, mode: i32): ssa.SFunc {
   let insts: ssa.SInst[] = [];
   let term = b.term;
   let used = false;
+  let box = b.insts[0];
+  for original in b.insts {
+    if (original.kind_tag == ssa.ARR_BOX) {
+      box = original;
+    }
+  }
   for original in b.insts {
     let op = original;
     if (op.kind_tag == 48) {
@@ -87,8 +93,8 @@ function changed(f: ssa.SFunc, mode: i32): ssa.SFunc {
     if (op.kind_tag == 41 && op.imm == 0 && mode == 15) {
       op = ssa.SInst { ...op, kind_tag: 1, args: [], imm: 0 };
     }
-    if (op.kind_tag == 1 && !used && mode == 16) {
-      op = ssa.SInst { ...op, kind_tag: 48, imm: f.nparams + 1 };
+    if (op.kind_tag == ssa.CONST_INT && !used && mode == 16) {
+      op = ssa.SInst { ...box, result: op.result };
       used = true;
     }
     insts = insts.append(op);

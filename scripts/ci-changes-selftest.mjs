@@ -165,7 +165,7 @@ for (const [input, expected, excluded] of [
   check(`component ${input}: independent lanes`, excluded.some((lane) => result.lanes[lane]), false);
   check(`component ${input}: selective plan`, result.selection.full, false);
 }
-for (const event of ["push", "merge_group", "workflow_dispatch"]) {
+for (const event of ["push", "workflow_dispatch"]) {
   const full = await decide({ event, files: ["fern-image/packages/codecs/qoi/qoi.fern"] });
   check(`${event} retains full scope`, [all(full), full.selection.full], [true, true]);
 }

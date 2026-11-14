@@ -842,9 +842,11 @@ pub function unprefixed(name: string, prefix: string): string {
   return name;
 }
 
+const TYPE_CANDIDATES_SET: string[] = ["struct", "enum", "type", "trait", "function", "resource"];
+
 pub function type_candidates(q: Query): string[] {
   let p = q.site.prev;
-  if (p == "struct" || p == "enum" || p == "type" || p == "trait" || p == "function" || p == "resource") {
+  if (util.has_str(TYPE_CANDIDATES_SET, p)) {
     return [];
   }
   if (q.site.qual.len() > 0) {

@@ -7,6 +7,7 @@ import "std/android";
 import "std/android/audio";
 import "std/android/draw";
 import "std/android/focus";
+import "std/android/noisy";
 import "std/android/image";
 import "std/android/media" as store;
 import "std/android/service";
@@ -62,6 +63,12 @@ pub function controls_seek(env: usize, thiz: usize, ms: i64): void {
 @jni("dev.fern.tune.Focus implements android.media.AudioManager$OnAudioFocusChangeListener", "void onAudioFocusChange(int)")
 pub function focus_change(env: usize, thiz: usize, change: i32): void {
   focus.changed(env, thiz, change);
+}
+
+// The receiver of the broadcast that the headphones came out.
+@jni("dev.fern.tune.Noisy extends android.content.BroadcastReceiver", "void onReceive(android.content.Context, android.content.Intent)")
+pub function noisy_receive(env: usize, thiz: usize, context: usize, intent: usize): void {
+  noisy.received(env, thiz, intent);
 }
 
 // The foreground service that keeps the player at work while its window
@@ -126,8 +133,9 @@ pub function widget_receive(env: usize, thiz: usize, context: usize, intent: usi
 }
 
 // The session of the player and its token, or 0 when Android gave none.
-// `focus` is the request for the sound of the phone.
-struct Media { session: Option[session.Session], token: usize, focus: Option[focus.Focus] }
+// `focus` is the request for the sound of the phone, and `noisy` tells
+// when the headphones come out.
+struct Media { session: Option[session.Session], token: usize, focus: Option[focus.Focus], noisy: Option[noisy.Noisy] }
 
 // Tells Android the track and the state of the player. A track that plays
 // starts the foreground service with the media controls, and keeps the loop
@@ -150,18 +158,25 @@ function show(ctx: usize, media: Media, now: tune.Now): void {
   }
 }
 
-// Stops the foreground service, ends the media session and the focus
-// request, and gives the widget the look that starts the app with the
-// last track `title`. The activity is valid until its Destroy event ends,
-// so the player calls this for that event.
-function quit(ctx: usize, media: Media, title: string): void {
+// Stops the foreground service, and gives the widget the look that starts
+// the app with the last track `title`. The activity is valid until its
+// Destroy event ends, so the player calls this for that event.
+function quit(ctx: usize, title: string): void {
   service.stop(ctx, SERVICE);
   let shown = widget.show(android.env(ctx), android.activity_object(ctx), WIDGET, closed_look(title));
+}
+
+// Ends the media session, the focus request and the receiver. The app
+// calls this once, after its loop ends, also when no track played.
+function released(ctx: usize, media: Media): void {
   if let Some(s) = media.session {
     session.close(ctx, s);
   }
   if let Some(f) = media.focus {
     focus.close(ctx, f);
+  }
+  if let Some(n) = media.noisy {
+    noisy.stop(ctx, n);
   }
 }
 
@@ -260,7 +275,7 @@ function device(ctx: usize, dir: string, roots: string[], media: Media): player.
     kept: (name: string): u8[] => read(dir + "/../covers/" + name),
     put: (name: string, bytes: u8[]): void => { let kept = write_file_bytes(dir + "/../covers/" + name, bytes); },
     show: (now: tune.Now): void => show(ctx, media, now),
-    quit: (title: string): void => quit(ctx, media, title),
+    quit: (title: string): void => quit(ctx, title),
     wake: (): tune.Awake => wake(ctx),
     sleep: (a: tune.Awake): void => service.release_awake(ctx, service.Awake { wake: a.wake, wifi: a.wifi }),
     size: (path: string): i64 => size(path),
@@ -342,6 +357,9 @@ function system(e: android.Event): Option[tune.Msg] {
   if let Some(command) = session.event(e) {
     return Some(of_command(command));
   }
+  if (noisy.event(e)) {
+    return Some(tune.Play(false));
+  }
   if let Some(change) = focus.event(e) {
     match (change) {
       focus.Gain => {
@@ -407,9 +425,9 @@ function app_main(ctx: usize): usize {
   let made = create_dir_all(own_music);
   let covers = create_dir_all(android.data_dir(ctx) + "/covers");
   let roots = [own_music, "/sdcard/Music", "/sdcard/Download"];
-  let media = Media { session: session.new(ctx, "dev.fern.tune.Controls", "Fern Tune"), token: 0 as usize, focus: focus.music(ctx, "dev.fern.tune.Focus") };
+  let media = Media { session: session.new(ctx, "dev.fern.tune.Controls", "Fern Tune"), token: 0 as usize, focus: focus.music(ctx, "dev.fern.tune.Focus"), noisy: noisy.start(ctx, "dev.fern.tune.Noisy") };
   if let Some(s) = media.session {
-    media = Media { session: media.session, token: session.token(ctx, s), focus: media.focus };
+    media = Media { ...media, token: session.token(ctx, s) };
   } else {
     log.info("tune: Android gave no media session");
   }
@@ -428,6 +446,7 @@ function app_main(ctx: usize): usize {
   }
   let ran = app.run(ctx, player.wrap(first), player.program(dev).with_system(system));
   let last = player.closed(dev, ran.model);
+  released(ctx, media);
   log.info("tune: closed with " + last.tracks.len().to_string() + " tracks at track " + last.current.to_string() + ", " + tune.clock(last.at_ms) + " of " + tune.clock(last.length_ms) + ", playing " + last.playing.to_string());
   return 0 as usize;
 }

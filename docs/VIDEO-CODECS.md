@@ -480,6 +480,15 @@ It checks header bits, extension identifiers, eight-byte size fields, and unsign
 An absent size field or reserved OBU type returns `Unsupported`.
 Annex B framing, payload syntax, temporal-unit ordering, complete frame boundaries, and pixel decode remain outside this API.
 
+`std/video/av1/annex_b.next_temporal_unit` reads native Annex B temporal, frame, and OBU ranges.
+Nested lengths must fit their parent ranges. Explicit OBU sizes must agree with the enclosing OBU length.
+The first OBU must be a temporal delimiter in the first frame unit. Other delimiter positions return `Header`.
+The parser reuses the OBU header checks and accepts both size-field forms.
+
+The packet budget applies before access. Separate limits bound frame and OBU records per temporal unit.
+Returned ranges retain no input bytes or payload copies. The caller preserves the immutable source.
+Payload syntax, complete frame coverage, timestamps, and pixel decode remain outside this reader.
+
 `std/video/av1/sequence.inspect` reads one complete sequence-header OBU through the same framing reader.
 It reports maximum frame dimensions, precision, color fields, and sequence tool flags without a payload copy.
 The pixel budget applies to the maximum frame area. A separate 512-byte payload ceiling bounds header work.

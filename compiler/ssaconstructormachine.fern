@@ -39,7 +39,7 @@ function initial_register(words: i32, register_entry: boolean, i: i32): Word {
   if (register_entry && i == 0) {
     return token(9, 0);
   }
-  if (register_entry && i == 6 && words == 3) {
+  if (register_entry && i == 6 && words == 2) {
     return token(9, 1);
   }
   return if (i == 4) { token(2, 0) } else { token(1, i as i64) };
@@ -49,7 +49,7 @@ function initial_word(words: i32, register_entry: boolean, i: i32): Word {
   if (i == 16 || i == 17) {
     return token(4, 0);
   }
-  if (!register_entry && i >= 18 && i < 18 + (words - 1) * 2) {
+  if (!register_entry && i >= 18 && i < 18 + words * 2) {
     return token(9, ((i - 18) / 2) as i64);
   }
   return if (i < 22) { token(5, (i / 2) as i64) } else { token(6, ((i - 22) / 2) as i64) };
@@ -136,7 +136,7 @@ function cell_extent(s: State, kind: i32, at: i64, bytes: i32): i32 {
 }
 
 function writable(s: State, at: i32): boolean {
-  return at >= 0 && at < 16 || s.calls == 1 && at >= 24 && at < s.memory.len();
+  return at >= 0 && at < 16 || s.calls == 1 && at >= 23 && at < s.memory.len();
 }
 
 function store_at(s: State, at: i32, width: i32, w: Word): State {
@@ -149,7 +149,7 @@ function store_at(s: State, at: i32, width: i32, w: Word): State {
   let writes = s.writes;
   while (i < count) {
     let pos = at + i;
-    if (!writable(s, pos) || pos >= 26 && writes[pos] != 0) {
+    if (!writable(s, pos) || pos >= 23 && writes[pos] != 0) {
       return State { ...s, ok: false };
     }
     memory = memory.with(pos, if (i == 0) { w.low } else { w.high });
@@ -194,6 +194,7 @@ function stack_step(s: State, op: isa.Op): State {
 
 // The call gives a box of `words` words with a header of one word below it:
 // a count of 1 in the low half and the number of words in the high half. The
+// body then stores the tag of the shape over that high half. The
 // helper leaves the return address and its saved %rdi below the stack
 // pointer. The words below those two are not known.
 function allocation(s: State, words: i32, pc: i32, op: isa.Op): State {
@@ -243,7 +244,7 @@ function simple(s: State, op: isa.Op): State {
   return State { ...s, ok: false };
 }
 
-function step(s: State, words: i32, symbol: string, pc: i32, op: isa.Op): State {
+function step(s: State, words: i32, pc: i32, op: isa.Op): State {
   if (op.kind == 3 || op.kind == 4 || op.kind == 22) {
     return memory_step(s, op);
   }
@@ -253,24 +254,21 @@ function step(s: State, words: i32, symbol: string, pc: i32, op: isa.Op): State 
   if (op.kind == 15) {
     return lea(s, op);
   }
-  if (op.kind == 19) {
-    return if (op.symbol == symbol) { write(s, op.destination, token(7, 0)) } else { State { ...s, ok: false } };
-  }
   return if (op.kind == 25) { allocation(s, words, pc, op) } else { simple(s, op) };
 }
 
-function expected_memory(original: State, words: i32, i: i32): Half {
+function expected_memory(original: State, tag: i64, i: i32): Half {
   if (i < 22) {
     return original.memory[i];
   }
   if (i < 24) {
-    return if (i == 22) { number(1).low } else { number(words as i64).low };
+    return if (i == 22) { number(1).low } else { number(tag).low };
   }
-  let w = if (i < 26) { token(7, 0) } else { token(9, ((i - 26) / 2) as i64) };
+  let w = token(9, ((i - 24) / 2) as i64);
   return if (i % 2 == 0) { w.low } else { w.high };
 }
 
-function finished(s: State, words: i32, register_entry: boolean): boolean {
+function finished(s: State, words: i32, tag: i64, register_entry: boolean): boolean {
   if (s.calls != 1 || !s.ok) {
     return false;
   }
@@ -281,7 +279,7 @@ function finished(s: State, words: i32, register_entry: boolean): boolean {
       expected = token(3, 8);
     }
     if (i == 6) {
-      expected = token(7, 0);
+      expected = number(tag);
     }
     if (i == 7) {
       expected = number(words as i64);
@@ -290,22 +288,22 @@ function finished(s: State, words: i32, register_entry: boolean): boolean {
       return false;
     }
   }
-  return finished_memory(s, original, words);
+  return finished_memory(s, original, tag);
 }
 
-function finished_memory(s: State, original: State, words: i32): boolean {
+function finished_memory(s: State, original: State, tag: i64): boolean {
   for i in 16..s.memory.len() {
-    if (!same(s.memory[i], expected_memory(original, words, i))) {
+    if (!same(s.memory[i], expected_memory(original, tag, i))) {
       return false;
     }
-    if (i >= 24 && s.writes[i] != 1) {
+    if (i >= 23 && s.writes[i] != 1) {
       return false;
     }
   }
   return true;
 }
 
-function path(p: isa.ArrayProgram, words: i32, symbol: string, register_entry: boolean): boolean {
+function path(p: isa.ArrayProgram, words: i32, tag: i64, register_entry: boolean): boolean {
   let s = initial(words, register_entry);
   let visited: boolean[] = [];
   for op in p.ops {
@@ -319,7 +317,7 @@ function path(p: isa.ArrayProgram, words: i32, symbol: string, register_entry: b
     visited = visited.with(pc, true);
     let op = p.ops[pc];
     if (op.kind == 18) {
-      return finished(s, words, register_entry);
+      return finished(s, words, tag, register_entry);
     }
     if (op.kind == 17) {
       if (op.condition != "jmp") {
@@ -327,7 +325,7 @@ function path(p: isa.ArrayProgram, words: i32, symbol: string, register_entry: b
       }
       pc = op.target;
     } else {
-      s = step(s, words, symbol, pc, op);
+      s = step(s, words, pc, op);
       if (!s.ok) {
         return false;
       }
@@ -343,5 +341,5 @@ pub function check(output: ssaprepare.Output, name: string): boolean {
     return false;
   }
   let p = isa.constructor_program(output.text, "__fn_" + asmcore.sanitize_label(name));
-  return p.error == "" && path(p, bound.words, bound.symbol, false) && path(p, bound.words, bound.symbol, true);
+  return p.error == "" && path(p, bound.words, bound.tag, false) && path(p, bound.words, bound.tag, true);
 }

@@ -6,11 +6,11 @@ import unittest
 REBANK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rebank")
 
 
-def run(text, rows):
+def run(text, rows, *flags):
     with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
         f.write(text)
     try:
-        r = subprocess.run([REBANK, f.name], input=rows, capture_output=True, text=True)
+        r = subprocess.run([REBANK, *flags, f.name], input=rows, capture_output=True, text=True)
         with open(f.name) as g:
             return r, g.read()
     finally:
@@ -44,6 +44,13 @@ class RebankTest(unittest.TestCase):
     def test_a_comment_that_looks_like_a_row_stays(self):
         _, out = run("# a/x.ir 1\na/x.ir\t100\n", "a/x.ir 110\n")
         self.assertEqual(out, "# a/x.ir 1\na/x.ir\t110\n")
+
+    def test_max_drift_holds_a_large_move_and_makes_a_small_one(self):
+        r, out = run("a/x.ir\t1000\na/y.ir\t1000\na/z.ir\t1000\n", "a/x.ir 1050\na/y.ir 1051\na/z.ir 900\n", "--max-drift", "5")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(out, "a/x.ir\t1050\na/y.ir\t1000\na/z.ir\t1000\n")
+        self.assertIn("held a/y.ir 1000 -> 1051", r.stdout)
+        self.assertIn("held a/z.ir 1000 -> 900", r.stdout)
 
 
 if __name__ == "__main__":

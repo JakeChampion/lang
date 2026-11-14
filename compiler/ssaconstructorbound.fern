@@ -12,10 +12,12 @@ import "./ssasem";
 import "./typeinfo";
 import "std/string";
 
-pub struct Boundary { shape: string, symbol: string, fields: string[], words: i32, error: string }
+// tag is the constant in the header of the box: the number of words in its
+// low 16 bits and the number of the shape above them.
+pub struct Boundary { shape: string, tag: i64, fields: string[], words: i32, error: string }
 
 function failure(message: string): Boundary {
-  return Boundary { shape: "", symbol: "", fields: [], words: 0, error: message };
+  return Boundary { shape: "", tag: 0i64, fields: [], words: 0, error: message };
 }
 
 function schema(m: physicalbody.Metadata, c: ssasem.Contract): semrecords.Record[] {
@@ -56,36 +58,37 @@ function fields(record: semrecords.Record, c: ssasem.Contract): string[] {
   return names;
 }
 
-function shape_symbol(output: string, name: string): string {
+// The tag that the body stores in the header of its box: the constant that
+// the one 32-bit store at offset -4 of the result takes. 0 for none.
+function shape_tag(output: string, name: string): i64 {
   let p = isa.constructor_program(output, "__fn_" + asmcore.sanitize_label(name));
   if (p.error != "") {
-    return "";
+    return 0i64;
   }
-  let found = "";
-  for op in p.ops {
-    if (op.kind == 19) {
-      if (found != "") {
-        return "";
+  let found = 0i64;
+  for i in 0..p.ops.len() {
+    let op = p.ops[i];
+    if (op.kind == 4 && op.width == 32 && op.base == 0 && op.index == -1 && op.offset == -4) {
+      if (found != 0i64) {
+        return 0i64;
       }
-      found = op.symbol;
+      found = constant_before(p, i, op.source);
     }
   }
   return found;
 }
 
-function shape_bytes(output: string, symbol: string, shape: string): boolean {
-  let literal = text.readonly_ascii(output, symbol);
-  if (literal.error != "" || literal.bytes.len() != shape.len()) {
-    return false;
-  }
-  let i = 0;
-  for c in shape {
-    if (literal.bytes[i] != c) {
-      return false;
+// The constant that the last 32-bit move to `reg` above index `at` gives.
+function constant_before(p: isa.ArrayProgram, at: i32, reg: i32): i64 {
+  let i = at - 1;
+  while (i >= 0) {
+    let op = p.ops[i];
+    if (op.kind == 5 && op.destination == reg) {
+      return if (op.width == 32 && op.immediate > 0) { op.immediate as i64 } else { 0i64 };
     }
-    i += 1;
+    i -= 1;
   }
-  return true;
+  return 0i64;
 }
 
 pub function resolve(output: ssaprepare.Output, name: string): Boundary {
@@ -119,12 +122,12 @@ function bind_fields(output: ssaprepare.Output, name: string, row: ssaprepare.Em
     refs = refs.append(false);
   }
   let proof = origin.producer(row.body.formed.f, shape, refs);
-  if (!proof.proof.ok || proof.words != names.len() + 1) {
+  if (!proof.proof.ok || proof.words != names.len()) {
     return failure("unproved same-graph constructor origin");
   }
-  let symbol = shape_symbol(output.text, name);
-  if (symbol == "" || !shape_bytes(output.text, symbol, shape)) {
-    return failure("constructor shape declaration differs from selected schema");
+  let tag = shape_tag(output.text, name);
+  if (tag < 65536i64 || tag % 65536i64 != proof.words as i64) {
+    return failure("constructor shape tag differs from selected schema");
   }
-  return Boundary { shape: shape, symbol: symbol, fields: names, words: proof.words, error: "" };
+  return Boundary { shape: shape, tag: tag, fields: names, words: proof.words, error: "" };
 }

@@ -31,6 +31,15 @@ func TestSelfHostInterpImplementsHostedBuiltins(t *testing.T) {
 			dispatched[n] = true
 		}
 	}
+	for _, m := range regexp.MustCompile(`has_str\((\w+),\s*name\)`).FindAllStringSubmatch(src, -1) {
+		set := regexp.MustCompile(`(?m)^const ` + m[1] + `: string\[\] = \[([^\]]*)\];`).FindStringSubmatch(src)
+		if set == nil {
+			t.Fatalf("%s tests name against %s, which is not a string list constant of the module", path, m[1])
+		}
+		for _, n := range fernStringList(set[1]) {
+			dispatched[n] = true
+		}
+	}
 	// A shared name predicate of checker.fern dispatches the names it tests.
 	for _, m := range regexp.MustCompile(`checker\.(\w+)\(name\)`).FindAllStringSubmatch(src, -1) {
 		for _, n := range predicateNames(t, "../../../compiler/checker.fern", m[1]) {

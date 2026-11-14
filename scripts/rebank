@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""rebank FILE — set rows of a pin file to the values on standard input.
+"""rebank [--max-drift PERCENT] FILE — set rows of a pin file to the values on
+standard input.
 
 Each input line is `metric value [tolerance]`, the form of the "Corrected
 baseline" block that scripts/ci-check-perf and scripts/ci-check-driver-sizes
@@ -14,6 +15,11 @@ A row that the file has keeps its place, its separator and, when the input
 gives none, its tolerance. A metric that the file does not have goes at the
 end. An input line that is not a row is an error, and the file does not
 change. The reason for the move goes in the commit message, not in the file.
+
+With --max-drift, a row that would move more than PERCENT from its value in
+the file does not move. Each such row is named in a `held` line on standard
+output. scripts/rebank-main uses this, so that a large move on main stays for
+a person to examine.
 """
 import re
 import sys
@@ -22,8 +28,12 @@ ROW = re.compile(r"^(\S+)(\s+)(\d+)(?:(\s+)(\S+))?\s*$")
 
 
 def main(argv):
+    max_drift = None
+    if len(argv) == 4 and argv[1] == "--max-drift":
+        max_drift = float(argv[2])
+        argv = [argv[0], argv[3]]
     if len(argv) != 2:
-        sys.stderr.write("usage: rebank FILE < rows\n")
+        sys.stderr.write("usage: rebank [--max-drift PERCENT] FILE < rows\n")
         return 2
     path = argv[1]
     wanted = {}
@@ -45,6 +55,7 @@ def main(argv):
     separator = "\t" if any("\t" in l for l in lines if l and not l.startswith("#")) else " "
     moved = same = 0
     seen = set()
+    held = []
     for i, line in enumerate(lines):
         m = ROW.match(line)
         if not m or line.startswith("#") or m.group(1) not in wanted:
@@ -55,6 +66,10 @@ def main(argv):
             return 1
         seen.add(metric)
         value, tolerance = wanted[metric]
+        old = int(m.group(3))
+        if max_drift is not None and abs(int(value) - old) * 100 > max_drift * old:
+            held.append(f"held {metric} {old} -> {value}")
+            continue
         tolerance = tolerance or m.group(5)
         new = metric + m.group(2) + value + ((m.group(4) or " ") + tolerance if tolerance else "")
         if new == line:
@@ -70,7 +85,9 @@ def main(argv):
         lines.append(metric + separator + value + (" " + tolerance if tolerance else ""))
     with open(path, "w") as f:
         f.write("\n".join(lines) + "\n")
-    print(f"rebank: {path}: {moved} row(s) moved, {same} already at the value, {len(added)} added")
+    for line in held:
+        print(line)
+    print(f"rebank: {path}: {moved} row(s) moved, {same} already at the value, {len(added)} added, {len(held)} held")
     return 0
 
 

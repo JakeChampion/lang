@@ -184,11 +184,12 @@ The messages and the exit codes are those of pigz 2.8. Some examples:
   `TestSelfHostExamplePigzUnit` runs it on x86-64, arm64 and wasm32-wasi
   with the leak census.
 
-- `TestSelfHostExamplePigzCLI` runs 128 cases of the CLI on x86-64 and
+- `TestSelfHostExamplePigzCLI` runs 125 cases of the CLI on x86-64 and
   arm64. Each case runs in a new directory. The test compares what each
   run gives with `testdata/pigz-2.8.json`, which holds what pigz 2.8 gave:
   the exit code, the messages, the standard output and each file.
 
-- With `FERN_PIGZ_ORACLE=/usr/bin/pigz`, the test also runs pigz and
-  compares with it. With `FERN_PIGZ_UPDATE=1` as well, it writes the file
-  again.
+- CI builds pigz 2.8 with zlib 1.3 from verified source archives.
+  It sets `FERN_PIGZ_ORACLE` for the live comparison.
+  Local runs can select that same reference through `FERN_PIGZ_ORACLE`.
+  `FERN_PIGZ_UPDATE=1` also regenerates the frozen reference file.

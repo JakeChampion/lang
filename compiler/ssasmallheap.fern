@@ -13,6 +13,13 @@ struct Next { heap: Heap, ok: boolean }
 
 pub struct Transition { heap: Heap, address: i64, generation: i32, ok: boolean }
 
+// The capacity of the block of a box of `words` words. The block has the
+// capacity and two more words, and a box of one word has the block of a box
+// of two.
+pub function capacity_of(words: i32): i32 {
+  return if (words < 2) { 1 } else { words - 1 };
+}
+
 pub function construct(capacity: i32, h: Heap): Transition {
   let bad = Transition { heap: h, address: 0, generation: 0, ok: false };
   if (!valid(capacity, h)) {
@@ -182,5 +189,5 @@ pub function trace(capacity: i32, initial: Heap, actions: Action[]): boolean {
 
 pub function check(output: ssaprepare.Output, name: string, initial: Heap, actions: Action[]): boolean {
   let bound = constructor.resolve(output, name);
-  return bound.error == "" && allocation.record(output, name) && routines.release(output.text) && trace(bound.words - 1, initial, actions);
+  return bound.error == "" && allocation.record(output, name) && routines.release(output.text) && trace(capacity_of(bound.words), initial, actions);
 }

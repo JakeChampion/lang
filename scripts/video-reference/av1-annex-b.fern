@@ -1,0 +1,36 @@
+// Emit AV1 Annex B ranges and payloads for independent checks.
+import "std/video/av1/annex_b";
+import "std/hex";
+
+function emit(bytes: [u8], unit: annex_b.TemporalUnit): void {
+  print("T " + unit.offset.to_string() + " " + unit.size.to_string() + " " + unit.next_offset.to_string());
+  for frame in unit.frames {
+    print("F " + frame.offset.to_string() + " " + frame.size.to_string());
+    for obu in frame.units {
+      print("U " + obu.kind.to_string() + " " + obu.offset.to_string() + " " + obu.size.to_string() + " " + obu.temporal_id.to_string() + " " + obu.spatial_id.to_string() + " " + (if (obu.extension) { "1" } else { "0" }));
+      print(hex.encode(bytes[obu.offset:obu.next_offset]));
+    }
+  }
+}
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 2) {
+    return 1;
+  }
+  let Ok(bytes) = read_file_bytes(argv[1]) else {
+    return 2;
+  };
+  let at = 0;
+  loop {
+    let result = match (annex_b.next_temporal_unit(bytes, at, annex_b.default_limits())) {
+      Ok(value) => value,
+      Err(error) => { eprint(error.message()); return 3; },
+    };
+    let Some(unit) = result else {
+      return 0;
+    };
+    emit(bytes, unit);
+    at = unit.next_offset;
+  }
+}

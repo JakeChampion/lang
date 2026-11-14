@@ -1,8 +1,11 @@
 // The object store of a git repository: the loose objects.
 //
 // A loose object is the file `objects/XX/YYYY...`, where `XXYYYY...` is the
-// SHA-1 of its content in hexadecimal. The file is a zlib stream of
+// hash of its content in hexadecimal. The file is a zlib stream of
 // `KIND SIZE\0` and the body.
+//
+// A repository has one hash: SHA-1 or SHA-256. A `width` is the count of
+// bytes of a name with that hash.
 import "std/array";
 import "std/crypto";
 import "std/deflate";
@@ -10,6 +13,60 @@ import "std/hex";
 import "std/string";
 
 pub struct Object { kind: string, body: u8[] }
+
+pub const SHA1: i32 = 20;
+
+pub const SHA256: i32 = 32;
+
+// The hash of `data` for a repository whose names have `width` bytes.
+pub function digest(width: i32, data: [u8]): u8[] {
+  if (width == SHA256) {
+    return crypto.sha256(data);
+  }
+  return crypto.sha1(data);
+}
+
+function trimmed(line: string): string {
+  let from = 0;
+  let to = line.len();
+  while (from < to && (line[from] == b' ' || line[from] == b'\t')) {
+    from += 1;
+  }
+  while (to > from && (line[to - 1] == b' ' || line[to - 1] == b'\t' || line[to - 1] == b'\r')) {
+    to -= 1;
+  }
+  return part(line, from, to);
+}
+
+// The value of `extensions.objectformat` in the text of a `config` file, or
+// "" when the file does not set it.
+pub function object_format(config: string): string {
+  let found = "";
+  let inside = false;
+  for raw in config.split("\n") {
+    let line = trimmed(raw);
+    if (line.starts_with("[")) {
+      inside = line.to_ascii_lower() == "[extensions]";
+    } else if (inside && line.to_ascii_lower().starts_with("objectformat")) {
+      let rest = trimmed(part(line, 12, line.len()));
+      if (rest.starts_with("=")) {
+        found = trimmed(part(rest, 1, rest.len()));
+      }
+    }
+  }
+  return found;
+}
+
+// The width of the names for a value of `extensions.objectformat`, or 0 for
+// a hash that the port does not have.
+pub function width_of(format: string): i32 {
+  return match (format) {
+    "" => SHA1,
+    "sha1" => SHA1,
+    "sha256" => SHA256,
+    _ => 0,
+  };
+}
 
 // The largest body that the port reads.
 const MAX_BODY: i32 = 1073741824;
@@ -39,8 +96,12 @@ pub function header(kind: string, size: i32): u8[] {
   return (kind + " " + size.to_string()).bytes().append(0);
 }
 
-// The name of the object of `kind` with `body`.
-pub function hash_of(kind: string, body: [u8]): string {
+// The name of the object of `kind` with `body`, as `width` bytes in
+// hexadecimal.
+pub function hash_of(width: i32, kind: string, body: [u8]): string {
+  if (width == SHA256) {
+    return hex.encode(crypto.sha256_new().update(header(kind, body.len())).update(body).finish());
+  }
   return hex.encode(crypto.sha1_new().update(header(kind, body.len())).update(body).finish());
 }
 
@@ -146,8 +207,8 @@ function zlib(data: [u8]): u8[] {
 
 // Writes the object to the store when the store does not have it, and gives
 // its name.
-pub function write_loose(objects: string, kind: string, body: [u8]): Result[string, string] {
-  let name = hash_of(kind, body);
+pub function write_loose(objects: string, width: i32, kind: string, body: [u8]): Result[string, string] {
+  let name = hash_of(width, kind, body);
   let path = loose_path(objects, name);
   if let Ok(_) = stat(path) {
     return Ok(name);
@@ -231,8 +292,9 @@ function mode_at(body: u8[], from: i32, to: i32): string {
   return unsafe { string_from_bytes_unchecked(array.slice(body, from, to)) };
 }
 
-// The entries of the body of a tree.
-pub function tree_entries(body: u8[]): Result[TreeEntry[], string] {
+// The entries of the body of a tree whose names have `width` bytes.
+pub function tree_entries(body: u8[], width: i32): Result[TreeEntry[], string] {
+  let step = width + 1;
   let out: TreeEntry[] = [];
   let i = 0;
   while (i < body.len()) {
@@ -244,11 +306,11 @@ pub function tree_entries(body: u8[]): Result[TreeEntry[], string] {
     while (end < body.len() && body[end] != 0) {
       end += 1;
     }
-    if (space == i || end + 21 > body.len()) {
+    if (space == i || end + step > body.len()) {
       return Err("too-short tree object");
     }
-    out = out.append(TreeEntry { mode: mode_at(body, i, space), name: array.slice(body, space + 1, end), hash: hex.encode(array.slice(body, end + 1, end + 21)) });
-    i = end + 21;
+    out = out.append(TreeEntry { mode: mode_at(body, i, space), name: array.slice(body, space + 1, end), hash: hex.encode(array.slice(body, end + 1, end + step)) });
+    i = end + step;
   }
   return Ok(out);
 }
@@ -267,9 +329,9 @@ pub function entry_head(e: TreeEntry): string {
 
 // The lines of `cat-file -p` for the body of a tree: the mode with six
 // digits, the kind, the name of the object, a tab, and the path.
-pub function tree_text(body: u8[]): Result[u8[], string] {
+pub function tree_text(body: u8[], width: i32): Result[u8[], string] {
   let out: u8[] = [];
-  for e in tree_entries(body)? {
+  for e in tree_entries(body, width)? {
     out = out.concat((entry_head(e) + "\t").bytes()).concat(quoted(e.name)).append(b'\n');
   }
   return Ok(out);

@@ -1,0 +1,44 @@
+name: PR CI report
+
+# When a CI run of a pull request ends, say on the pull request what failed
+# (scripts/ci-failure-report.mjs). The comment names each failed job, its
+# failed step and its failed tests, with the lines of the log that show the
+# failure. A red pull request otherwise shows one `failure` among many
+# `cancelled` checks, and the reason is some hundred lines into a log.
+#
+# One comment for each pull request. A later run changes that comment, and a
+# run that passes says so there, so a report of an old failure does not stay.
+# A run that was cancelled, or whose head is not the head of the pull request
+# now, changes nothing.
+#
+# `workflow_run` runs the script of main with a token of its own, so the test
+# jobs keep a read-only token and a pull request from a fork gets a report
+# too. The job checks out main and never the head of the pull request.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: write
+
+jobs:
+  report:
+    name: Report the result on the pull request
+    if: >-
+      ${{ github.event.workflow_run.event == 'pull_request'
+          && (github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.conclusion == 'success') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          sparse-checkout: scripts
+      - name: Write the comment
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: node scripts/ci-failure-report.mjs comment "$RUN_ID"
