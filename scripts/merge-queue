@@ -7,10 +7,12 @@ and two workflows do the same work with a label, a branch and Actions.
     merge-queue form          make the next batch and start its suite
     merge-queue land RESULT   end the batch whose suite concluded RESULT
 
-HOW A PULL REQUEST MERGES. It gets the `merge-queue` label. `form` takes the
-labelled pull requests whose own `CI verdict` is green, oldest number first,
-and merges up to MERGE_QUEUE_BATCH (10) of them, in that order, on the tip of
-main. It pushes the result to the branch `merge-queue/batch` and dispatches
+HOW A PULL REQUEST MERGES. `form` gives the `merge-queue` label to each open
+pull request whose own `CI verdict` is green. A draft does not get it, and
+neither does a pull request with the `merge-queue-hold` label. A person can
+also add the label before CI is green. `form` takes the labelled pull requests
+that are green, oldest number first, and merges up to MERGE_QUEUE_BATCH (10)
+of them, in that order, on the tip of main. It pushes the result to the branch `merge-queue/batch` and dispatches
 merge-queue-batch.yml there, which runs the full suite. `land success` moves
 main to that same commit, so main only gets a tree that the suite passed.
 GitHub then shows each pull request of the batch as merged.
@@ -23,6 +25,9 @@ before it takes new pull requests. A batch of one that fails is that pull
 request's failure: it loses the label and gets a comment with the run.
 
 A PULL REQUEST THAT DOES NOT MERGE CLEANLY loses the label and gets a comment.
+
+A PULL REQUEST THAT LOST THE LABEL does not get it again at the same head. A
+new commit, or a person who adds the label, puts it back in the queue.
 One that gets new commits while its batch is in flight stays open after the
 batch lands, with the new commits as its diff.
 
@@ -30,7 +35,8 @@ MAIN CAN MOVE UNDER A BATCH. When main got only pin-file commits (the
 rebank-main job), `land` merges them in and pushes. For any other commit it
 puts the batch back at the front of the retry list.
 
-STATE is one JSON blob at refs/merge-queue/state: {"retry": [[numbers], ...]}.
+STATE is one JSON blob at refs/merge-queue/state:
+{"retry": [[numbers], ...], "removed": {"number": "head sha"}}.
 
 The script talks to GitHub through the `gh` command (MERGE_QUEUE_GH names a
 replacement, which the tests use) and to the repository through git.
@@ -41,6 +47,7 @@ import subprocess
 import sys
 
 LABEL = "merge-queue"
+HOLD = "merge-queue-hold"
 BATCH = "merge-queue/batch"
 STATE_REF = "refs/merge-queue/state"
 WORKFLOW_BATCH = "merge-queue-batch.yml"
@@ -74,9 +81,12 @@ def note(text):
 
 
 def load_state():
-    if git("fetch", "-q", REMOTE, STATE_REF, check=False).returncode != 0:
-        return {"retry": []}
-    return json.loads(git("cat-file", "-p", "FETCH_HEAD").stdout)
+    state = {}
+    if git("fetch", "-q", REMOTE, STATE_REF, check=False).returncode == 0:
+        state = json.loads(git("cat-file", "-p", "FETCH_HEAD").stdout)
+    state.setdefault("retry", [])
+    state.setdefault("removed", {})
+    return state
 
 
 def save_state(state):
@@ -89,9 +99,12 @@ def batch_exists():
 
 
 def open_prs():
-    out = gh("pr", "list", "--state", "open", "--label", LABEL, "--limit", "200",
-             "--json", "number,headRefOid,headRefName,isDraft").stdout
-    return sorted(json.loads(out), key=lambda p: p["number"])
+    out = gh("pr", "list", "--state", "open", "--limit", "200",
+             "--json", "number,headRefOid,headRefName,isDraft,labels").stdout
+    prs = sorted(json.loads(out), key=lambda p: p["number"])
+    for pr in prs:
+        pr["labels"] = [label["name"] for label in pr["labels"]]
+    return prs
 
 
 def verdict_is_green(sha):
@@ -103,12 +116,23 @@ def verdict_is_green(sha):
     return any(r.get("conclusion") == "success" for r in runs)
 
 
-def eject(number, reason):
+def failure_report():
+    """The report of scripts/ci-failure-report.mjs for the run of the batch."""
+    path = os.environ.get("MERGE_QUEUE_FAILURE_REPORT", "")
+    if not path or not os.path.isfile(path):
+        return ""
+    with open(path) as f:
+        return f.read().strip()
+
+
+def eject(state, number, sha, reason, details=""):
     note(f"#{number} leaves the queue: {reason}")
+    state["removed"][str(number)] = sha
     gh("pr", "edit", str(number), "--remove-label", LABEL, check=False)
     gh("pr", "comment", str(number), "--body",
        f"The merge queue removed this pull request: {reason}\n\n"
-       f"Fix it, then add the `{LABEL}` label again." + SIGNATURE, check=False)
+       f"Fix it, then add the `{LABEL}` label again." + (f"\n\n{details}" if details else "") + SIGNATURE,
+       check=False)
 
 
 def identity():
@@ -122,26 +146,42 @@ def form():
     identity()
     gh("label", "create", LABEL, "--description", "Merge this pull request through the merge queue",
        "--color", "0E8A16", check=False)
+    gh("label", "create", HOLD, "--description", "Keep this pull request out of the merge queue",
+       "--color", "FBCA04", check=False)
     if batch_exists():
         note("a batch is in flight")
         return 0
     state = load_state()
-    labelled = {p["number"]: p for p in open_prs()}
+    prs = open_prs()
+    numbers = {str(p["number"]) for p in prs}
+    state["removed"] = {n: sha for n, sha in state["removed"].items() if n in numbers}
+
+    # The pull requests that are ready, and the label for each one that is
+    # ready without it.
+    ready = []
+    for pr in prs:
+        number, sha, labelled = pr["number"], pr["headRefOid"], LABEL in pr["labels"]
+        if pr["isDraft"]:
+            continue
+        if not labelled and (HOLD in pr["labels"] or state["removed"].get(str(number)) == sha):
+            continue
+        if not verdict_is_green(sha):
+            if labelled:
+                note(f"#{number} waits for a green CI verdict on {sha[:8]}")
+            continue
+        if not labelled:
+            note(f"#{number} is green: it gets the label")
+            gh("pr", "edit", str(number), "--add-label", LABEL, check=False)
+        state["removed"].pop(str(number), None)
+        ready.append(pr)
+
     if state["retry"]:
         group = state["retry"].pop(0)
+        labelled = {p["number"]: p for p in prs if LABEL in p["labels"]}
         chosen = [labelled[n] for n in group if n in labelled]
         note(f"retry group {group}: {len(chosen)} still in the queue")
     else:
-        chosen = []
-        for pr in labelled.values():
-            if len(chosen) == MAX:
-                break
-            if pr["isDraft"]:
-                continue
-            if not verdict_is_green(pr["headRefOid"]):
-                note(f"#{pr['number']} waits for a green CI verdict on {pr['headRefOid'][:8]}")
-                continue
-            chosen.append(pr)
+        chosen = ready[:MAX]
 
     git("fetch", "-q", REMOTE, "main")
     git("checkout", "-q", "--detach", "FETCH_HEAD")
@@ -155,7 +195,7 @@ def form():
         r = git("merge", "-q", "--no-ff", "-m", f"Merge pull request #{number} from {pr['headRefName']}", sha, check=False)
         if r.returncode != 0:
             git("merge", "--abort", check=False)
-            eject(number, "it does not merge cleanly on main and the pull requests before it in the batch.")
+            eject(state, number, sha, "it does not merge cleanly on main and the pull requests before it in the batch.")
             continue
         merged.append(number)
 
@@ -174,13 +214,15 @@ def form():
     return 0
 
 
-def batch_numbers():
-    out = git("log", "--first-parent", "--merges", "--reverse", "--format=%s", "FETCH_HEAD..HEAD").stdout
-    numbers = []
+def batch_heads():
+    """The pull requests of the batch, in order: {number: head sha}."""
+    out = git("log", "--first-parent", "--merges", "--reverse", "--format=%P %s", "FETCH_HEAD..HEAD").stdout
+    heads = {}
     for line in out.splitlines():
-        if line.startswith("Merge pull request #"):
-            numbers.append(int(line.split("#", 1)[1].split()[0]))
-    return numbers
+        _, head, subject = line.split(" ", 2)
+        if subject.startswith("Merge pull request #"):
+            heads[int(subject.split("#", 1)[1].split()[0])] = head
+    return heads
 
 
 def only_pins_moved():
@@ -205,7 +247,8 @@ def push_to_main():
 def land(result):
     identity()
     git("fetch", "-q", REMOTE, "main")
-    numbers = batch_numbers()
+    heads = batch_heads()
+    numbers = list(heads)
     state = load_state()
     run_url = os.environ.get("MERGE_QUEUE_RUN_URL", "the run of its batch")
     if not numbers:
@@ -217,7 +260,7 @@ def land(result):
             note(f"main moved under batch {numbers}: test it again")
             state["retry"].insert(0, numbers)
     elif result == "failure" and len(numbers) == 1:
-        eject(numbers[0], f"the suite failed with only this pull request in the batch ({run_url}).")
+        eject(state, numbers[0], heads[numbers[0]], f"the suite failed with only this pull request in the batch ({run_url}).", failure_report())
     elif result == "failure":
         half = (len(numbers) + 1) // 2
         note(f"batch {numbers} failed: split it")
