@@ -194,7 +194,7 @@ than one each.
 **A baseline a PR moves is re-banked in that PR, without asking.** The perf,
 cliff, emitted-size and allocation lanes each pin one (`.github/*-baseline.txt`).
 When a lane reports a row moved, in either direction, pin the lane's measured
-value and push. The reason goes in the commit message, never in the file: a
+value (`scripts/rebank FILE` takes the rows of the job summary) and push. The reason goes in the commit message, never in the file: a
 note per move makes each open PR conflict. The owner has said so. Do not ask
 again.
 
