@@ -108,6 +108,49 @@ function test_verify_rs(): test.TestOutcome {
   return test.assert_eq_array(shown, ["true", "false", "false", "false", "false", "false"]);
 }
 
+// The two points with x = 0: the even y and the odd y.
+const ZERO_X_EVEN: string = "04000000000000000000000000000000000000000000000000000000000000000066485c780e2f83d72433bd5d84a06bb6541c2af31dae871728bf856a174f93f4";
+
+const ZERO_X_ODD: string = "04000000000000000000000000000000000000000000000000000000000000000099b7a386f1d07c29dbcc42a27b5f9449abe3d50de25178e8d7407a95e8b06c0b";
+
+const P: string = "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff";
+
+function on_curve(h: string): string {
+  return p256.on_curve(bytes(h)).to_string();
+}
+
+function test_on_curve(): test.TestOutcome {
+  let bad_y = G[0:128].unwrap_or("") + "f6";
+  let x_is_p = "04" + P + G[66:130].unwrap_or("");
+  let got = [on_curve(G), on_curve(ZERO_X_EVEN), on_curve(ZERO_X_ODD), on_curve(bad_y), on_curve(x_is_p), on_curve("02" + G[2:66].unwrap_or("")), on_curve(G[0:128].unwrap_or(""))];
+  return test.assert_eq_array(got, ["true", "true", "true", "false", "false", "false", "false"]);
+}
+
+function decompressed(h: string): string {
+  return match (p256.decompress(bytes(h))) {
+    Some(point) => hex.encode(point),
+    None => "none",
+  };
+}
+
+function test_decompress(): test.TestOutcome {
+  let got = [
+    decompressed(hex.encode(p256.compress(bytes(G)))),
+    decompressed("02" + "00".repeat(32)),
+    decompressed("03" + "00".repeat(32)),
+    decompressed("02" + "00".repeat(31) + "01"),
+    decompressed("02" + P),
+    decompressed("04" + "00".repeat(32)),
+    decompressed("02" + "00".repeat(31)),
+  ];
+  return test.assert_eq_array(got, [G, ZERO_X_EVEN, ZERO_X_ODD, "none", "none", "none", "none"]);
+}
+
+function test_compress(): test.TestOutcome {
+  let got = [hex.encode(p256.compress(bytes(G))), hex.encode(p256.compress(bytes(ZERO_X_ODD)))];
+  return test.assert_eq_array(got, ["03" + G[2:66].unwrap_or(""), "03" + "00".repeat(32)]);
+}
+
 function main(): i32 {
   let r = test.new("std/crypto/p256");
   r = r.it("verify_rs accepts only the signature of the key", test_verify_rs);
@@ -115,6 +158,9 @@ function main(): i32 {
   r = r.it("[k]Q", test_scalar_mul);
   r = r.it("scalar range", test_scalar_range);
   r = r.it("scalar reduction", test_scalar_reduce);
+  r = r.it("on_curve checks an uncompressed point", test_on_curve);
+  r = r.it("decompress finds y with the parity of the prefix", test_decompress);
+  r = r.it("compress keeps the parity of y", test_compress);
   return r.finish();
 }
 
