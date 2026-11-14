@@ -196,7 +196,9 @@ cliff, emitted-size and allocation lanes each pin one (`.github/*-baseline.txt`)
 When a lane reports a row moved, in either direction, pin the lane's measured
 value (`scripts/rebank FILE` takes the rows of the job summary) and push. The reason goes in the commit message, never in the file: a
 note per move makes each open PR conflict. The owner has said so. Do not ask
-again.
+again. A row that your change does not move belongs to main: the `rebank-main`
+job of the Perf lane sets it after the merge (5% a row at most), so bring main
+in and do not pin it.
 
 **One red lane cancels the rest.** When a lane concludes `failure` the rest of
 the run is cancelled to hand the lock to the next PR — so a red PR shows one
