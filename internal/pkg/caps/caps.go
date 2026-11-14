@@ -105,6 +105,7 @@ var BuiltinCaps = map[string]string{
 	"proc_waitpid":        "subprocess",
 	"proc_waitpid_nohang": "subprocess",
 	"proc_waitpid_status": "subprocess",
+	"proc_wait_any":       "subprocess",
 	"__worker_region":     "subprocess",
 	"__worker_exit":       "subprocess",
 	"__worker_reap":       "subprocess",

@@ -73,3 +73,44 @@ func TestUnsafeSyntaxComments(t *testing.T) {
 		t.Fatalf("comment round trip changed:\n%s\n%s", out, Format(back))
 	}
 }
+
+// An unsafe block that is the value of a branch, of a match arm or of a
+// defer keeps its `unsafe`.
+func TestUnsafeBlockValueRoundTrip(t *testing.T) {
+	for _, body := range []string{
+		`let s = if (ok) { unsafe { raw(b) } } else { ""; }; return s;`,
+		`let s = if (ok) { "" } else { unsafe { raw(b) } }; return s;`,
+		`return match (find(b)) { Some(x) => unsafe { raw(x) }, None => "" };`,
+		`return match (find(b)) { Some(x) => { unsafe { raw(x) } }, None => "" };`,
+		`if let Some(x) = find(b) { unsafe { raw(x) } } else { "" }`,
+		`defer unsafe { release(b); }; return "";`,
+		`return unsafe { let x = raw(b); x };`,
+	} {
+		source := "function f(b: u8[], ok: boolean): string { " + body + " }"
+		prog, err := parser.Parse(source)
+		if err != nil {
+			t.Fatalf("%v\n%s", err, source)
+		}
+		for name, print := range map[string]func(*ast.Program) string{"format": Format, "print": Print} {
+			out := print(prog)
+			back, err := parser.Parse(out)
+			if err != nil {
+				t.Fatalf("%s: %v\n%s", name, err, out)
+			}
+			// Print does not write each statement kind. Where it writes the
+			// block, it keeps the marker.
+			if name == "print" && !strings.Contains(out, "(b)") && !strings.Contains(out, "(x)") {
+				continue
+			}
+			if !strings.Contains(out, "unsafe {") {
+				t.Errorf("%s lost the unsafe marker of %q:\n%s", name, body, out)
+			}
+			if name == "format" && ASTShape(prog) != ASTShape(back) {
+				t.Errorf("format changed the syntax of %q: %s\n%s", body, FirstShapeDiff(ASTShape(prog), ASTShape(back)), out)
+			}
+			if name == "format" && Format(back) != out {
+				t.Errorf("the formatter is not idempotent for %q:\n%s", body, out)
+			}
+		}
+	}
+}

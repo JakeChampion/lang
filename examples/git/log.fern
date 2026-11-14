@@ -1,0 +1,221 @@
+// The fields of a commit and the text that `git log` prints for one.
+import "std/array";
+import "std/string";
+import "std/time";
+import "./objects";
+
+// A name, an address, the seconds since 1970 and the zone, as `+0100`.
+pub struct Person { name: string, email: string, time: i64, zone: string }
+
+pub struct Commit { hash: string, tree: string, parents: string[], author: Person, committer: Person, message: string }
+
+// The short names that a format can ask for.
+pub struct Shorts { hash: string, tree: string, parents: string[] }
+
+function digits(text: string, from: i32, to: i32): i64 {
+  let n: i64 = 0;
+  for i in from..to {
+    if (text[i] >= b'0' && text[i] <= b'9') {
+      n = n * 10 + (text[i] - b'0') as i64;
+    }
+  }
+  return n;
+}
+
+// The person of a header line: `NAME <EMAIL> SECONDS ZONE`.
+pub function person(line: string): Person {
+  let open = line.len();
+  let close = line.len();
+  for i in 0..line.len() {
+    if (line[i] == b'<' && open == line.len()) {
+      open = i;
+    }
+    if (line[i] == b'>') {
+      close = i;
+    }
+  }
+  if (open >= close) {
+    return Person { name: line, email: "", time: 0, zone: "+0000" };
+  }
+  let rest = objects.part(line, close + 1, line.len()).trim();
+  let space = match (rest.index_of(" ")) {
+    Some(i) => i,
+    None => rest.len(),
+  };
+  let zone = if (space < rest.len()) { objects.part(rest, space + 1, rest.len()) } else { "+0000" };
+  return Person { name: objects.part(line, 0, open).trim(), email: objects.part(line, open + 1, close), time: digits(rest, 0, space), zone: zone };
+}
+
+// The fields of the commit `hash` with the content `body`.
+pub function commit_of(hash: string, body: u8[]): Commit {
+  let trees = objects.header_values(body, "tree");
+  let authors = objects.header_values(body, "author");
+  let committers = objects.header_values(body, "committer");
+  let at = 0;
+  while (at + 1 < body.len() && !(body[at] == b'\n' && body[at + 1] == b'\n')) {
+    at += 1;
+  }
+  let message = if (at + 2 <= body.len()) { unsafe { string_from_bytes_unchecked(array.slice(body, at + 2, body.len())) } } else { "" };
+  return Commit {
+    hash: hash,
+    tree: if (trees.len() > 0) { trees[0] } else { "" },
+    parents: objects.header_values(body, "parent"),
+    author: person(if (authors.len() > 0) { authors[0] } else { "" }),
+    committer: person(if (committers.len() > 0) { committers[0] } else { "" }),
+    message: message,
+  };
+}
+
+const DAYS: string = "ThuFriSatSunMonTueWed";
+
+const MONTHS: string = "JanFebMarAprMayJunJulAugSepOctNovDec";
+
+function two(n: i64): string {
+  return n.to_string().pad_start_str(2, "0");
+}
+
+// The date as git prints it: `Fri Nov 13 21:05:41 2026 +0000`, on the clock
+// of the zone.
+pub function date_text(p: Person): string {
+  let z = digits(p.zone, 0, p.zone.len());
+  let shift = (z / 100 * 60 + z % 100) * 60;
+  let local = if (p.zone.starts_with("-")) { p.time - shift } else { p.time + shift };
+  let days = local / 86400;
+  let secs = local % 86400;
+  if (secs < 0) {
+    days -= 1;
+    secs += 86400;
+  }
+  let (year, month, day) = time.civil_from_days(days);
+  let weekday = ((days % 7 + 7) % 7) as i32;
+  return objects.part(DAYS, weekday * 3, weekday * 3 + 3) + " " + objects.part(MONTHS, (month - 1) * 3, month * 3) + " " + day.to_string() + " " + two(secs / 3600) + ":" + two(secs / 60 % 60) + ":" + two(secs % 60) + " " + year.to_string() + " " + p.zone;
+}
+
+// The lines of the message with no empty line at its end.
+function trimmed(message: string): string {
+  let end = message.len();
+  while (end > 0 && message[end - 1] == b'\n') {
+    end -= 1;
+  }
+  return objects.part(message, 0, end);
+}
+
+// The place where the first paragraph of `message` ends.
+function subject_end(message: string): i32 {
+  let m = trimmed(message);
+  return match (m.index_of("\n\n")) {
+    Some(i) => i,
+    None => m.len(),
+  };
+}
+
+// The first paragraph of the message as one line.
+pub function subject(message: string): string {
+  return objects.part(message, 0, subject_end(message)).replace("\n", " ");
+}
+
+// The message after its first paragraph and the empty lines that follow it.
+pub function body_of(message: string): string {
+  let at = subject_end(message);
+  while (at < message.len() && message[at] == b'\n') {
+    at += 1;
+  }
+  return objects.part(message, at, message.len());
+}
+
+// The line with each tab as spaces up to the next column that 8 divides.
+// A byte that continues a UTF-8 character has no column.
+function tabs_expanded(line: string): string {
+  if (!line.contains("\t")) {
+    return line;
+  }
+  let out = "";
+  let column = 0;
+  let from = 0;
+  for i in 0..line.len() {
+    if (line[i] == b'\t') {
+      let pad = 8 - column % 8;
+      out += objects.part(line, from, i) + " ".repeat(pad);
+      column += pad;
+      from = i + 1;
+    } else if ((line[i] & 192) != 128) {
+      column += 1;
+    }
+  }
+  return out + objects.part(line, from, line.len());
+}
+
+// The text of the commit in the default form of `git log`.
+pub function medium(c: Commit, s: Shorts): string {
+  let out = "commit " + c.hash + "\n";
+  if (c.parents.len() > 1) {
+    out += "Merge: " + s.parents.join(" ") + "\n";
+  }
+  out += "Author: " + c.author.name + " <" + c.author.email + ">\n";
+  out += "Date:   " + date_text(c.author) + "\n\n";
+  for line in trimmed(c.message).split("\n") {
+    out += "    " + tabs_expanded(line) + "\n";
+  }
+  return out;
+}
+
+// The text for the two letters after `%a` or `%c`, or None.
+function person_field(p: Person, letter: u8): Option[string] {
+  return match (letter) {
+    b'n' => Some(p.name),
+    b'e' => Some(p.email),
+    b'd' => Some(date_text(p)),
+    b't' => Some(p.time.to_string()),
+    _ => None,
+  };
+}
+
+// The text for the placeholder at `at`, which is after a `%`, and the
+// count of bytes that it takes. A count of 0 is not a placeholder.
+function placeholder(c: Commit, s: Shorts, format: string, at: i32): (string, i32) {
+  let letter = format[at];
+  if ((letter == b'a' || letter == b'c') && at + 1 < format.len()) {
+    let p = if (letter == b'a') { c.author } else { c.committer };
+    return match (person_field(p, format[at + 1])) {
+      Some(text) => (text, 2),
+      None => ("", 0),
+    };
+  }
+  return match (letter) {
+    b'H' => (c.hash, 1),
+    b'h' => (s.hash, 1),
+    b'T' => (c.tree, 1),
+    b't' => (s.tree, 1),
+    b'P' => (c.parents.join(" "), 1),
+    b'p' => (s.parents.join(" "), 1),
+    b's' => (subject(c.message), 1),
+    b'b' => (body_of(c.message), 1),
+    b'B' => (c.message, 1),
+    b'n' => ("\n", 1),
+    b'%' => ("%", 1),
+    _ => ("", 0),
+  };
+}
+
+// The text of the commit in the form `format`, with the placeholders of
+// `git log --format`. An unknown placeholder stays as it is.
+pub function formatted(c: Commit, s: Shorts, format: string): string {
+  let out = "";
+  let i = 0;
+  let plain = 0;
+  while (i < format.len()) {
+    if (format[i] == b'%' && i + 1 < format.len()) {
+      let (text, taken) = placeholder(c, s, format, i + 1);
+      if (taken > 0) {
+        out += objects.part(format, plain, i) + text;
+        i += taken + 1;
+        plain = i;
+      } else {
+        i += 1;
+      }
+    } else {
+      i += 1;
+    }
+  }
+  return out + objects.part(format, plain, format.len());
+}
