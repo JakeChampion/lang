@@ -1,6 +1,7 @@
 # 2026-11-14: task_started_two_times keeps 6 blocks at its exit(134) (was 2). A cell write
 # now borrows its cell, so more of the task is live at the abort. The same program
 # without the abort has the same count as before.
+# 2026-11-13: inline_worker_exit_is_a_worker_failure stops through the worker failure (status 134) in the body of its second inline worker, so the three blocks of that worker are live at the exit.
 # 2026-11-13: a_branch_that_returns_gives_its_if_expression_no_type has balanced allocations on x86-64.
 # 2026-11-13: a_match_arm_that_is_a_void_if_falls_through has balanced allocations on x86-64.
 # 2026-11-13: generic_nominal_callback_signatures has balanced allocations and zero live bytes on all three targets.
@@ -602,7 +603,7 @@ init_option_control                                  0
 init_struct_update_control                           0
 init_variant_control                                 0
 inline_hints                                         0
-inline_worker_exit_is_a_worker_failure               0
+inline_worker_exit_is_a_worker_failure               3
 insert_dedup                                         0
 int_bit_accessors                                    0
 int_byte_swap                                        0

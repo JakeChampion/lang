@@ -52,5 +52,15 @@ function main(): i32 {
   if (short_a || !short_b || !short_c || !short_d || branch != 60 || selected != 62 || index != 7 || slice.len() != 2) { return 4; }
   let f = first();
   if (f({ f = second(); 0 }) != 1) { return 5; }
+  print("range exclusive");
+  for i in mark(64)..mark(66) { print(i.to_string()); }
+  print("range inclusive");
+  for i in mark(67)..=mark(68) { print(i.to_string()); }
+  print("range empty");
+  for i in mark(70)..mark(69) { return 6; }
+  print("range shadow");
+  let upper = 2;
+  for upper in mark(0)..upper { print(upper.to_string()); }
+  if (upper != 2) { return 7; }
   return 0;
 }

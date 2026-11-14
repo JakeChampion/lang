@@ -4,6 +4,9 @@ import "../ssadecrementtext" as text;
 import "../ssainlineuniqueisa" as registers;
 import "std/string";
 
+// The call of the miss path of a small box.
+const MISS: string = "call .Lalloc_fast_miss";
+
 function require(ok: boolean, group: string): void {
   if (!ok) {
     print("array-box machine controls failed: " + group);
@@ -66,8 +69,14 @@ function pops(body: string): void {
   altered(body, "testq %rax, %rax", "cmpq $0, %rax", true);
   altered(body, "addq %rax, %rdi", "addq %rdi, %rax\nmovq %rax, %rdi", false);
   altered(body, "addq %rax, %rdi", "leaq (%rax,%rdi), %rdi", false);
-  altered(body, "subq %rax, %rdi", "", false);
-  altered(body, "subq %rax, %rdi", "subq %rdi, %rax", false);
+  // The miss path gives the allocator the address of the empty list, or
+  // the size after the list address comes off.
+  let list = "leaq __fern_freelist(%rip), %rax\n";
+  altered(body, MISS, list + "subq %rax, %rdi\n" + MISS, false);
+  altered(body, MISS, list + "subq %rax, %rdi\ncall __fern_alloc", true);
+  altered(body, MISS, list + "subq %rdi, %rax\ncall __fern_alloc", false);
+  altered(body, MISS, "subq %rax, %rdi\ncall __fern_alloc", false);
+  altered(body, MISS, "call __fern_alloc", false);
   for to in ["", "pushq (%rax)", "popq (%rdi)", "pushq (%rax)\npopq (%rax)", "pushq (%rdi)\npopq (%rdi)", "pushq 8(%rax)\npopq (%rdi)", "pushq (%rax)\npopq 8(%rdi)", "pushq (%rax)\npopq (%rdi)\npushq (%rax)\npopq (%rdi)", "movq (%rax), %rcx\nmovq %rcx, (%rdi)", "movq (%rax), %rdi"] {
     altered(body, "pushq (%rax)\npopq (%rdi)", to, false);
   }
@@ -96,12 +105,12 @@ function memory(body: string): void {
 }
 
 function calls_and_stack(body: string): void {
-  for to in ["", "call __fern_capw", "call __fern_alloc.r", "call *__fern_alloc", "call __fern_alloc+1", "call __fern_alloc\ncall __fern_alloc"] {
-    altered(body, "call __fern_alloc", to, false);
+  for to in ["", "call __fern_capw", "call .Lalloc_fast_miss.r", "call *.Lalloc_fast_miss", "call .Lalloc_fast_miss+1", MISS + "\n" + MISS] {
+    altered(body, MISS, to, false);
   }
-  altered(body, "call __fern_alloc", "call\t__fern_alloc", true);
-  altered(body, "call __fern_alloc", "movq %rdi, (%rsp)\ncall __fern_alloc", false);
-  altered(body, "call __fern_alloc", "movq (%rsp), %rdi\ncall __fern_alloc", false);
+  altered(body, MISS, "call\t.Lalloc_fast_miss", true);
+  altered(body, MISS, "movq %rdi, (%rsp)\n" + MISS, false);
+  altered(body, MISS, "movq (%rsp), %rdi\n" + MISS, false);
   for to in ["", "pushq %rax", "pushq %rsp"] {
     altered(body, "pushq %rdi", to, false);
   }
