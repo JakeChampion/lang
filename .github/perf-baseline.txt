@@ -395,8 +395,8 @@ x86_64/call_overhead.ir	8250814
 x86_64/closure_call.text	982
 x86_64/closure_call.ir	41178167
 # 2026-11-01 (#13347): CI41317429107 measures both lower x86 DEFLATE counts.
-x86_64/deflate_decode.ir	32267962
-x86_64/deflate_decode.text	12480
+x86_64/deflate_decode.ir	31550893
+x86_64/deflate_decode.text	13688
 x86_64/deflate_encode.ir	41579468
 # 2026-11-05: PR #14207, perf-x86_64 job 126960802774 on the merge with main 6dba1dcb measures lower values for the changed rows below. The rows that rise keep their limits.
 x86_64/deflate_encode.text	7045
@@ -813,3 +813,5 @@ aarch64/video_qtrle.ir 1559097809
 # deflate_encode.text, http_hello.text, ordmap_insert.text and .ir, and the utf8_ingest rows. The perceus_rbtree_ck, string_slice
 # and tokenize rows are values of main. Each row is pinned at its measured value.
 # 2026-11-14 (#15822): perf-x86_64 job 132337113700 on the merge with main 8ce8fde7 measured x86_64/utf8_ingest_unchecked.text, which owned array parameters move.
+# 2026-11-14: constant tables for the fixed codes and a table for the code lengths in std/deflate. A local perf-bench run on
+# main 4e120f86 measured x86_64/deflate_decode.ir at 31550893 (-2.22%) and x86_64/deflate_decode.text at 13688 (+9.68%).
