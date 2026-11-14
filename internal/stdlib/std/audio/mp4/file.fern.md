@@ -1,6 +1,7 @@
-# Bounded AAC MP4 file indexing
+# Bounded AAC and ALAC MP4 file indexing
 
 This module indexes self-contained AAC tracks from a borrowed seekable MP4 source.
+`inspect_alac_with` indexes ALAC tracks from the same source in the same way.
 It shares the bounded movie scanner with the native video file index.
 The scanner reads top-level headers and one movie box. It skips encoded media payloads.
 Track configuration, packet tables, clocks, edits, and byte ranges reuse the complete-view audio readers.
@@ -23,6 +24,7 @@ The calls are synchronous and belong outside a latency-sensitive Android callbac
 <<*>>=
 // Index bounded AAC movie metadata without a complete encoded-file copy.
 import "std/audio/mp4";
+import "std/audio/mp4/alac";
 import "std/audio/mp4/index" as container;
 import "std/audio/mp4/source" as metadata;
 import "std/audio/source";
@@ -38,7 +40,7 @@ function source_limits(limits: Limits): metadata.Limits {
   return metadata.Limits { input: limits.input, max_file_bytes: limits.max_file_bytes, max_metadata_bytes: limits.max_metadata_bytes, max_input_bytes: limits.index.audio.max_input_bytes, max_boxes: limits.index.max_boxes, max_operations: limits.max_operations };
 }
 
-pub function inspect_with(bytes: i64, seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError], limits: Limits): Result[mp4.Index, source.ReadError] {
+function movie_with(bytes: i64, seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError], limits: Limits): Result[metadata.Metadata, source.ReadError] {
   let configured = source_limits(limits);
   metadata.validate(bytes, configured)?;
   if let Err(error) = container.validate_limits([], limits.index) {
@@ -48,7 +50,19 @@ pub function inspect_with(bytes: i64, seek: (i64) => Result[i64, IoError], read:
   if (!movie.file_type) {
     return Err(source.ReadAudio(pcm.Header));
   }
+  return Ok(movie);
+}
+
+pub function inspect_with(bytes: i64, seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError], limits: Limits): Result[mp4.Index, source.ReadError] {
+  let movie = movie_with(bytes, seek, read, limits)?;
   return match (mp4.inspect_movie(movie.bytes, movie.media, movie.file_bytes, movie.top_boxes, limits.index)) { Ok(value) => Ok(value), Err(error) => Err(source.ReadAudio(error)) };
+}
+
+// The index of the ALAC tracks of a file of `bytes` bytes that `seek` and
+// `read` give.
+pub function inspect_alac_with(bytes: i64, seek: (i64) => Result[i64, IoError], read: (i32) => Result[u8[], IoError], limits: Limits): Result[alac.Index, source.ReadError] {
+  let movie = movie_with(bytes, seek, read, limits)?;
+  return match (alac.inspect_movie(movie.bytes, movie.media, movie.file_bytes, movie.top_boxes, limits.index)) { Ok(value) => Ok(value), Err(error) => Err(source.ReadAudio(error)) };
 }
 
 pub function inspect(reader: Reader, limits: Limits): Result[mp4.Index, source.ReadError] {
