@@ -4,13 +4,14 @@ function __fern_arr_str_join(xs: string[], sep: string): string {
     return "";
   }
   let ls = sep.len();
-  let total = ls * (n - 1);
+  let total = ls as i64 * ((n - 1) as i64);
   let i: i32 = 0;
   while (i < n) {
-    total += xs[i].len();
+    total += xs[i].len() as i64;
     i += 1;
   }
-  let p = __raw_alloc(total);
+  let size = __alloc_len(total);
+  let p = __raw_alloc(size);
   let off: i32 = 0;
   let j: i32 = 0;
   while (j < n) {
@@ -24,5 +25,5 @@ function __fern_arr_str_join(xs: string[], sep: string): string {
     off += le;
     j += 1;
   }
-  return __raw_string(p, total);
+  return __raw_string(p, size);
 }
