@@ -49,6 +49,14 @@ void AAudioStreamBuilder_setFormat(void *b, int32_t n) { assert(b == (void *)(ui
 void AAudioStreamBuilder_setPerformanceMode(void *b, int32_t n) { assert(b == (void *)(uintptr_t)123 && n == 10); }
 void AAudioStreamBuilder_setUsage(void *b, int32_t n) { assert(b == (void *)(uintptr_t)123 && n == 1); }
 void AAudioStreamBuilder_setContentType(void *b, int32_t n) { assert(b == (void *)(uintptr_t)123 && n == 2); }
+// The shared builder imports this symbol. Music must not call it.
+void AAudioStreamBuilder_setDataCallback(void *b,
+        int32_t (*callback)(void *, void *, void *, int32_t), void *user) {
+    assert(b == (void *)(uintptr_t)123);
+    (void)callback;
+    (void)user;
+    abort();
+}
 void AAudioStreamBuilder_setInputPreset(void) { abort(); }
 void AAudioStream_getTimestamp(void) { abort(); }
 void AAudioStreamBuilder_setBufferCapacityInFrames(void *b, int32_t n) { assert(b == (void *)(uintptr_t)123 && n == 12000); }
