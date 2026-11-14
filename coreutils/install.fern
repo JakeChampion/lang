@@ -600,7 +600,7 @@ function executable(path: string): Option[IoError] {
   }
 }
 
-struct FileOut { status: i32, out: io_buffered.BufWriter }
+struct FileOut { status: i32, out: io_buffered.BufWriter, unclonable: i64[] }
 
 function engine_cfg(s: Scan): copy.Cfg {
   let attrs = copy.attrs_none();
@@ -610,37 +610,41 @@ function engine_cfg(s: Scan): copy.Cfg {
   return copy.Cfg { ...copy.cfg_new(), attrs: attrs, recursive: false, deref: copy.deref_always(), forced_mode: 384, backups: s.backups, control: s.control, suffix: s.suffix, verbose: s.verbose, debug: s.debug, remove_destination: true };
 }
 
-function install_file(s: Scan, src: string, dest: string, want: i32, ids: Ids, own o: io_buffered.BufWriter): FileOut {
+function install_file(s: Scan, src: string, dest: string, want: i32, ids: Ids, own o: io_buffered.BufWriter, unclonable: i64[]): FileOut {
   let w = o;
-  match (lstat(src)) {
+  match (stat(src)) {
     Ok(info) => {
       if (info.is_dir) {
         w = gnu.error_out(w, "omitting directory " + gnu.quotea(src));
-        return FileOut { status: 1, out: w };
+        return FileOut { status: 1, out: w, unclonable: unclonable };
       }
     },
     Err(e) => {
       w = gnu.error_out(w, "cannot stat " + gnu.quotea(src) + ": " + gnu.io_error_text(e));
-      return FileOut { status: 1, out: w };
+      return FileOut { status: 1, out: w, unclonable: unclonable };
     }
   }
   if (s.compare && same_already(src, dest, want, ids)) {
-    return FileOut { status: 0, out: w };
+    return FileOut { status: 0, out: w, unclonable: unclonable };
   }
-  let cst = copy.copy_one(engine_cfg(s), copy.state_new(w), src, dest, true);
+  let prior = copy.state_new(w);
+  if (!s.debug) {
+    prior = copy.State { ...prior, unclonable: unclonable };
+  }
+  let cst = copy.copy_one(engine_cfg(s), prior, src, dest, true);
   w = cst.out;
   if (cst.status != 0) {
-    return FileOut { status: cst.status, out: w };
+    return FileOut { status: cst.status, out: w, unclonable: cst.unclonable };
   }
   if (s.strip) {
     let rs = run_strip(s, dest, w);
     w = rs.out;
     if (rs.status != 0) {
-      return FileOut { status: rs.status, out: w };
+      return FileOut { status: rs.status, out: w, unclonable: cst.unclonable };
     }
   }
   let changed = apply_attributes(dest, want, ids, false, w);
-  return FileOut { status: changed.status, out: changed.out };
+  return FileOut { status: changed.status, out: changed.out, unclonable: cst.unclonable };
 }
 
 function from_environment(s0: Scan): Scan {
@@ -754,6 +758,7 @@ pub function main(): i32 {
 
   let out = gnu.out_new();
   let status = 0;
+  let unclonable: i64[] = [];
 
   if (s.have_target_dir) {
     if (s.create_leading) {
@@ -778,8 +783,9 @@ pub function main(): i32 {
     let j = 0;
     while (j < operands.len()) {
       let into = gnu.join_path(s.target_dir, gnu.base_name(operands[j]));
-      let fr = install_file(s, operands[j], into, file_mode, ids, out);
+      let fr = install_file(s, operands[j], into, file_mode, ids, out, unclonable);
       out = fr.out;
+      unclonable = fr.unclonable;
       if (fr.status != 0) {
         status = 1;
       }
@@ -802,7 +808,7 @@ pub function main(): i32 {
         return finish(1, out);
       }
     }
-    let one = install_file(s, operands[0], operands[1], file_mode, ids, out);
+    let one = install_file(s, operands[0], operands[1], file_mode, ids, out, unclonable);
     return finish(one.status, one.out);
   }
 
@@ -816,7 +822,7 @@ pub function main(): i32 {
         return finish(1, out);
       }
     }
-    let two = install_file(s, operands[0], last, file_mode, ids, out);
+    let two = install_file(s, operands[0], last, file_mode, ids, out, unclonable);
     return finish(two.status, two.out);
   }
   if (!into_dir) {
@@ -826,8 +832,9 @@ pub function main(): i32 {
   let k = 0;
   while (k < operands.len() - 1) {
     let dst = gnu.join_path(last, gnu.base_name(operands[k]));
-    let fr2 = install_file(s, operands[k], dst, file_mode, ids, out);
+    let fr2 = install_file(s, operands[k], dst, file_mode, ids, out, unclonable);
     out = fr2.out;
+    unclonable = fr2.unclonable;
     if (fr2.status != 0) {
       status = 1;
     }

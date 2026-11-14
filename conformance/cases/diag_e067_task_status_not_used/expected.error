@@ -1,0 +1,2 @@
+value of @must_consume type "async.TaskStatus" is the result of a call and is not used
+value of @must_consume type "async.TaskStatus" bound to "st" may go out of scope without being consumed

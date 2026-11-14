@@ -153,6 +153,13 @@ function test_undefined_table(): test.TestOutcome {
   return test.assert_eq(decoded, true);
 }
 
+// A file with a frame and no scan has no image. Before, it decoded to grey
+// pixels of the size that its 17 bytes declare.
+function test_no_scan(): test.TestOutcome {
+  let data: u8[] = [255u8, 216u8, 255u8, 192u8, 0u8, 11u8, 8u8, 15u8, 160u8, 15u8, 160u8, 1u8, 1u8, 17u8, 0u8, 255u8, 217u8];
+  return test.assert_eq(message(data), "jpeg: corrupt data: no scan");
+}
+
 function main(): i32 {
   let r = test.new("std/jpeg");
   r = r.it("baseline 4:4:4", test_baseline_444);
@@ -166,5 +173,6 @@ function main(): i32 {
   r = r.it("huge frame", test_huge_frame);
   r = r.it("segment bounds", test_segment_bounds);
   r = r.it("undefined table", test_undefined_table);
+  r = r.it("no scan", test_no_scan);
   return r.finish();
 }

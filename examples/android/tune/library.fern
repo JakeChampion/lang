@@ -791,7 +791,7 @@ function with_pref(p: tune.Prefs, line: string): tune.Prefs {
     return tune.Prefs { ...p, tone: line.drop(5).split(" ").map((t: string): i32 => signed_of(t.trim().to_owned())) };
   }
   if (line.starts_with("tint ")) {
-    return tune.Prefs { ...p, tint: line != "tint false" };
+    return tune.Prefs { ...p, tint: line == "tint true" };
   }
   if (line.starts_with("off ")) {
     return tune.Prefs { ...p, off: p.off.append(number_of(line.drop(4).to_owned()) as i32) };

@@ -235,6 +235,7 @@ changed scalar with the frame still shares it (`TestSelfHostTaskFrame`).
 The scheduler side of `std/async`:
 
 ```fern
+@must_consume
 pub enum TaskStatus[T] { Done(T), Suspended(Wait) }
 
 let t: async.Task[i32] = async.task_new(() => handler());
@@ -258,6 +259,13 @@ function: it answers `Returned(v)` with no task record when `f` does not
 park, or `Parked(call, w)`, which the scheduler resumes with
 `call_resume`. `std/serve` holds a parked handler this way.
 
+**A status is used.** `TaskStatus` and `CallStatus` are `@must_consume`. A
+program that drops the status of `task_start`, `task_resume`, `call_start`
+or `call_resume` gets E067. A parked task with no scheduler never runs
+again, and its `defer`s never run. A scheduler matches each status, as the
+loop above does: a `loop`, or a `while` with the condition `true`, runs its
+body once or more, so the match in it consumes the status.
+
 **A handle that names no task.** `Task` is an opaque struct, so only
 `std/async` builds a handle or reads its fields. A program that writes one
 gets E021. `task_id` and `task_entry` read the id and the entry.
@@ -276,7 +284,8 @@ hand out.
 every wait answering `Cancelled`, and no wait parks again. So a
 cancelled task leaves through its own control flow, its `defer`s run,
 and the scheduler always gets `Done`. A disconnected client's handler
-winds down this way. `async.task_cancelled()` tells code in a task that
+winds down this way. `async.task_cancel(t)` and `async.call_cancel(c)` do
+the resume and take the status. `async.task_cancelled()` tells code in a task that
 the task is cancelled.
 
 **The interpreter** has no tasks. No task is ever current, so

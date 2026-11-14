@@ -213,6 +213,28 @@ pub function read_after(u: Uses, bi: i32, pos: i32, v: i32): boolean {
   return false;
 }
 
+pub function string_append(f: Func, ins: ssa.SInst): boolean {
+  if (ins.kind_tag == append_range()) {
+    return true;
+  }
+  return ins.kind_tag == ssa.BINARY && ins.str == "+" && is_string(f.values[ins.args[0]]);
+}
+
+// w, or a value anchored to it, is read after position pos of block bi.
+pub function used_after(a: Analysis, bi: i32, pos: i32, w: i32): boolean {
+  if (ssalive.live_out_has(a.flow, bi, w) || read_after(a.uses, bi, pos, w)) {
+    return true;
+  }
+  let k = a.anchored.start[w];
+  while (k < a.anchored.start[w + 1]) {
+    if (read_after(a.uses, bi, pos, a.anchored.at[k])) {
+      return true;
+    }
+    k += 1;
+  }
+  return false;
+}
+
 pub function first_use_in(u: Uses, v: i32, bi: i32): i32 {
   let lo = u.start[v];
   let hi = u.start[v + 1];
@@ -787,10 +809,9 @@ pub function is_scalar(t: typeinfo.Type): boolean {
 
 // owned_shape says ownership inference can count a parameter of type t: a
 // record, a variant, an owned array or a map, which a callee that keeps one
-// consumes. A string stays borrowed. A concatenation lends its operands, so
-// a counted string parameter only adds a retain and a release.
+// consumes, or a string, which a callee that grows one consumes.
 pub function owned_shape(t: typeinfo.Type): boolean {
-  return typeinfo.is_owned_array(t) || is_map(t) || box_shape(t);
+  return typeinfo.is_owned_array(t) || is_map(t) || is_string(t) || box_shape(t);
 }
 
 // box_shape says t is a record or a variant that a frame can hold whole: not

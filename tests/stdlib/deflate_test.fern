@@ -202,6 +202,35 @@ function test_hand_rolled_refusals(): test.TestOutcome {
   return test.assert_eq(text(deflate.inflate(__codec_bytes(hex.decode("0303")), 1024)), "error: malformed compressed data: a distance before the start of the output");
 }
 
+function refusal(stream: string): string {
+  return text(deflate.inflate(__codec_bytes(hex.decode(stream)), 1024));
+}
+
+// Each stream is one block. The first four stop in the code lengths of a
+// dynamic block. The last two are fixed blocks with a code that RFC 1951
+// does not use.
+function test_code_refusals(): test.TestOutcome {
+  let got = [
+    refusal("0500022400000000"),
+    refusal("050080e4ff1f00000000"),
+    refusal("05008004"),
+    refusal("05008024"),
+    refusal("4b043e00000000"),
+    refusal("4b1c0300000000"),
+  ].join("|");
+  let malformed = "error: malformed compressed data: ";
+  let early = "error: the compressed data ends early";
+  let want = [
+    malformed + "a repeat with no length before it",
+    malformed + "more code lengths than codes",
+    early,
+    early,
+    malformed + "a bit pattern that is no code",
+    malformed + "a length code past 285",
+  ].join("|");
+  return test.assert_eq(got, want);
+}
+
 function lcg_bytes(n: i32): u8[] {
   let out: u8[] = [];
   let x = 7;
@@ -437,6 +466,7 @@ function main(): i32 {
   r = r.it("bad checksums", test_bad_checksums);
   r = r.it("bad headers", test_bad_headers);
   r = r.it("hand-rolled refusals", test_hand_rolled_refusals);
+  r = r.it("refusals in the code lengths and the fixed codes", test_code_refusals);
   r = r.it("the encoder's streams read back", test_deflate_round_trip);
   r = r.it("a flushed stream ends open", test_deflate_flushed);
   r = r.it("a stream goes on from earlier output", test_inflate_after);

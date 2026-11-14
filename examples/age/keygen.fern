@@ -65,48 +65,9 @@ function options(flags: goflag.Flag[]): Opts {
   return o;
 }
 
-// The output file, made with mode 0600 as os.OpenFile makes it. It must not
-// be there.
-function create(path: string): Result[Writer, string] {
-  let w = match (open_exclusive(path)) {
-    Ok(w) => w,
-    Err(e) => {
-      return Err(f"failed to open output file {q(path)}: open {path}: {text.errno_text(e)}");
-    },
-  };
-  let mask = umask(63);
-  umask(mask);
-  if let Err(e) = chmod(path, 384 & ~mask) {
-    w.close();
-    return Err(f"failed to open output file {q(path)}: chmod {path}: {text.errno_text(e)}");
-  }
-  return Ok(w);
-}
-
-// All of the input, up to one byte more than the size limit, or the error
-// of a read.
-function read_all(r: Reader, name: string): Result[u8[], string] {
-  let limit = keys.FILE_LIMIT + 1;
-  let out: u8[] = [];
-  while (out.len() < limit) {
-    match (r.read_chunk_bytes(limit - out.len())) {
-      Ok(b) => {
-        if (b.len() == 0) {
-          return Ok(out);
-        }
-        out = out.concat(b);
-      },
-      Err(e) => {
-        return Err(f"read {name}: {text.errno_text(e)}");
-      }
-    }
-  }
-  return Ok(out);
-}
-
 // age-keygen -y: the recipient of each key of the identity file.
 function convert(input: Reader, name: string): Result[string, string] {
-  let content = match (read_all(input, name)) {
+  let content = match (keys.read_all(input, name)) {
     Ok(b) => b,
     Err(why) => {
       return Err("failed to parse input: failed to read identities file: " + why);
@@ -193,7 +154,7 @@ function output(path: string): Result[Writer, string] {
   if (path == "") {
     return Ok(stdout());
   }
-  return create(path);
+  return keys.create(path);
 }
 
 // The recipients of -y, read before the output opens, as age-keygen does.

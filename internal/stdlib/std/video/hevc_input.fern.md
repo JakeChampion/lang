@@ -21,6 +21,10 @@ Before a slice uses a stale PPS, the reader validates it against the current SPS
 Unused records do not reject unrelated pictures. A new PPS can replace its old record before use.
 The separate SPS and PPS ceilings permit at most 4,325,376 bytes of parameter payloads.
 
+PPS temporal identifiers range from zero through six.
+A picture cannot activate a PPS with a higher temporal identifier.
+Cached revalidation preserves that identifier. VPS and SPS still require temporal identifier zero.
+
 Separate limits bound encoded packet bytes, units per packet, packet count, input windows, NAL bytes, and source operations.
 At most one pending NAL remains outside the current packet.
 Slice inspection copies at most eight unescaped bytes.
@@ -82,7 +86,7 @@ function supported(kind: i32): boolean {
 }
 
 function temporal_zero(kind: i32): boolean {
-  return irap(kind) || kind >= 32 && kind <= 34 || kind == 36 || kind == 37;
+  return irap(kind) || kind >= 32 && kind <= 33 || kind == 36 || kind == 37;
 }
 
 function nal_header(input: [u8]): Result[Header, frame.VideoError] {
@@ -179,17 +183,18 @@ function parameters(own stream: Stream, input: u8[], kind: i32): Result[Stream, 
   return match (kind) { 33 => store_sequence(stream, input), 34 => store_picture(stream, input), _ => Ok(stream) };
 }
 
-function current_picture(own stream: Stream, id: i32): Result[(Stream, pps.PictureParameters, hevc.Sequence), frame.VideoError] {
+function current_picture(own stream: Stream, id: i32): Result[(Stream, pps.PictureParameters, hevc.Sequence, i32), frame.VideoError] {
   for i in 0..stream.pictures.len() {
     let slot = stream.pictures[i];
     if (slot.value.picture_id == id) {
       let context = sequence(stream, slot.value.sequence_id)?;
+      let temporal = (slot.encoded[1] & 7u8) as i32 - 1;
       if (slot.generation == context.generation) {
-        return Ok((stream, slot.value, context.value));
+        return Ok((stream, slot.value, context.value, temporal));
       }
       let value = pps.inspect(slot.encoded, context.encoded, stream.limits.video)?;
       let updated = PictureSlot { value: value, encoded: slot.encoded, generation: context.generation };
-      return Ok((Stream { ...stream, pictures: stream.pictures.with(i, updated) }, value, context.value));
+      return Ok((Stream { ...stream, pictures: stream.pictures.with(i, updated) }, value, context.value, temporal));
     }
   }
   return Err(frame.State);
@@ -204,8 +209,8 @@ function slice_identity(own stream: Stream, input: [u8], header: Header): Result
     next = after;
   }
   let (_, id) = bits.bounded_ue(bytes, next, 63u32)?;
-  let (updated, picture, context) = current_picture(stream, id as i32)?;
-  if (header.temporal >= context.max_sub_layers) {
+  let (updated, picture, context, parameter_temporal) = current_picture(stream, id as i32)?;
+  if (header.temporal < parameter_temporal || header.temporal >= context.max_sub_layers) {
     return Err(frame.Header);
   }
   return Ok((updated, Identity { parameter_id: picture.picture_id, kind: header.kind, temporal: header.temporal, first: first != 0u32 }));

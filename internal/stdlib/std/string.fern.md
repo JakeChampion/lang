@@ -607,7 +607,9 @@ pub function (s: string) escape_c(): string {
   let i = 0;
   while (i < n) {
     let b = s[i] as i32;
-    if (b == 92 || b == 34 || b == 10 || b == 9 || b == 13 || b == 0) {
+    if (b == 0) {
+      total += 4;
+    } else if (b == 92 || b == 34 || b == 10 || b == 9 || b == 13) {
       total += 2;
     } else {
       total += 1;
@@ -635,8 +637,9 @@ pub function (s: string) escape_c(): string {
       buf = put_bytes(buf, pos, "\\r");
       pos += 2;
     } else if (b == 0) {
-      buf = put_bytes(buf, pos, "\\0");
-      pos += 2;
+      // Three digits, so that a digit after the NUL is not a part of it.
+      buf = put_bytes(buf, pos, "\\000");
+      pos += 4;
     } else {
       buf = buf.with(pos, s[i] as u8);
       pos += 1;

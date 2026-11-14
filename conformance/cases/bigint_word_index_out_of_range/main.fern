@@ -1,0 +1,17 @@
+// word64 and has_low_bits take an index from the caller. An index below zero
+// or past the number reads as zero bits. It does not stop the program.
+import "std/bigint";
+
+function main(): i32 {
+  let five = bigint.from_i64(5);
+  print(five.word64(0).to_string());
+  print(five.word64(-1).to_string());
+  print(five.word64(2147483647).to_string());
+  print(five.word64(1073741824).to_string());
+  print(five.has_low_bits(-33).to_string());
+  print(five.has_low_bits(-1).to_string());
+  print(five.has_low_bits(0).to_string());
+  print(five.has_low_bits(1).to_string());
+  print(five.has_low_bits(2147483647).to_string());
+  return 0;
+}

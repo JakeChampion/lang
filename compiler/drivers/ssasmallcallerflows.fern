@@ -71,7 +71,7 @@ function mutations(output: ssaprepare.Output, f: ssa.SFunc): void {
   checked(output, with_ops(f, ops.with(release, ssa.SInst { ...ops[release], kind_tag: 1, args: [], imm: 0, str: "" })), false, "leak");
   checked(output, with_ops(f, ops.with(second, ssa.SInst { ...ops[second], args: ops[release].args })), false, "double release");
   checked(output, with_ops(f, ops.with(call, ssa.SInst { ...ops[call], args: [ops[call].result] })), false, "self use");
-  for offset in [-2147483647 - 1, -8, 0, 4, 24, 2147483647] {
+  for offset in [-2147483647 - 1, -8, -4, 4, 16, 2147483647] {
     checked(output, with_ops(f, ops.with(load, ssa.SInst { ...ops[load], imm: offset })), false, "field bounds");
   }
   checked(output, with_ops(f, ops.with(load, ssa.SInst { ...ops[load], args: [ops[0].result] })), false, "scalar pointer");
@@ -149,7 +149,7 @@ function relations(output: ssaprepare.Output, f: ssa.SFunc, single: boolean): vo
   require(relation.error == "" && relation.result.kind == 0 && relation.result.identity == -2147483647 - 1, "literal result");
   if (!single) {
     let load = position(ops, 40, "", 1);
-    relation = flow.derive(replaced(output, with_ops(f, ops.with(load, ssa.SInst { ...ops[load], imm: 8 }))), "caller", "parent");
+    relation = flow.derive(replaced(output, with_ops(f, ops.with(load, ssa.SInst { ...ops[load], imm: 0 }))), "caller", "parent");
     require(relation.error == "" && relation.result.kind == 1 && relation.result.identity == 1, "other selected field identity");
   }
 }
@@ -190,7 +190,7 @@ pub function run(): void {
     machines.run(output, single);
     let relation = flow.derive(output, "caller", "parent");
     require(relation.error == "", "actual caller " + relation.error);
-    require(relation.words == (if (single) { 2 } else { 3 }) && relation.events.len() == 4, "actual shape and events");
+    require(relation.words == (if (single) { 1 } else { 2 }) && relation.events.len() == 4, "actual shape and events");
     require(relation.result.kind == 1 && relation.result.identity == 0, "actual scalar return identity");
     let i = 0;
     for event in relation.events {

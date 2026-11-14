@@ -10,11 +10,16 @@
 //   $ rg -t rust -g '!target' --files
 //   $ cmd | rg -o PATTERN       # each match of the standard input
 import "core/cmp";
+import "std/encoding" as whatwg;
 import "std/io";
+import "std/process";
 import "std/regex";
 import "std/worker";
+import "./decompress";
 import "./encoding";
 import "./flags";
+import "./help";
+import "./hyperlink";
 import "./ignore";
 import "./jsonl";
 import "./search";
@@ -37,6 +42,15 @@ struct Ctx {
   messages: boolean,
   ignore_messages: boolean,
   encoding: string,
+  decoder: whatwg.Decoder,
+  // The command of --pre, or "", and the globs of --pre-glob.
+  pre: string,
+  pre_globs: ignore.Matcher,
+  // -z: decompress the files with the extensions of compressed data.
+  search_zip: boolean,
+  // Write the output after each file: with --line-buffered, or by default
+  // on a terminal.
+  line_buffered: boolean,
 }
 
 // What the searches of some files counted for --stats: the files searched
@@ -81,7 +95,28 @@ function byte_name(b: u8): string {
   return if (b == 13u8) { "\\r" } else { "\\n" };
 }
 
-function compiled(pattern: string, banned: u8[]): Option[regex.Regex] {
+// The port behaves as ripgrep built without PCRE2.
+const NO_PCRE2: string = "PCRE2 is not available in this build of ripgrep.";
+
+// The message of an error of the default engine. With --engine auto,
+// ripgrep then tries PCRE2, and names both errors.
+function engine_error(o: flags.Options, text: string): string {
+  if (o.engine != "auto") {
+    return text;
+  }
+  let line = "~".repeat(79);
+  return "regex could not be compiled with either the default regex engine or with PCRE2.\n\ndefault regex engine error:\n" + line + "\n" + text + "\n" + line + "\n\nPCRE2 regex engine error:\n" + NO_PCRE2;
+}
+
+function compiled(o: flags.Options, pattern: string, banned: u8[]): Option[regex.Regex] {
+  if (o.engine == "pcre2") {
+    eprint("rg: " + NO_PCRE2);
+    return None;
+  }
+  if let Some(e) = regex.check(flags.joined(o), !o.has(flags.NO_UNICODE)) {
+    eprint("rg: " + engine_error(o, e.report()));
+    return None;
+  }
   match (regex.compile(pattern)) {
     Ok(re) => {
       for b in banned {
@@ -93,7 +128,7 @@ function compiled(pattern: string, banned: u8[]): Option[regex.Regex] {
       return Some(re);
     },
     Err(e) => {
-      eprint("rg: regex parse error: " + e.to_string());
+      eprint("rg: " + engine_error(o, "regex parse error: " + e.to_string()));
       return None;
     }
   }
@@ -148,10 +183,10 @@ function display_name(ctx: Ctx, path: string): string {
 
 // How ripgrep reads a file, with the line buffer of capacity `cap`. -a and
 // --null-data turn off the search for binary data, and --binary searches a
-// walked file as one on the command line. A decoded file is read in
-// buffers.
-function source(ctx: Ctx, it: walk.Item, cap: i32, decoded: boolean): search.Source {
-  let mapped = ctx.mmap && it.path != "-" && !decoded;
+// walked file as one on the command line. A decoded file, and the output
+// of a program, are read in buffers.
+function source(ctx: Ctx, it: walk.Item, cap: i32, buffered: boolean): search.Source {
+  let mapped = ctx.mmap && it.path != "-" && !buffered;
   let detect = if (ctx.binary == 2 || ctx.p.term == 0) {
     search.DETECT_NONE
   } else if (it.explicit || ctx.binary == 1) {
@@ -174,27 +209,119 @@ function search_items(ctx: Ctx, re: regex.Regex, items: walk.Item[], h: usize): 
       continue;
     }
     r = Part { ...r, searched: true };
-    match (read_input(it.path)) {
-      Ok(bytes) => {
-        let t0 = monotonic_ns();
-        let (text, decoded) = encoding.decode(bytes, ctx.encoding);
-        let out = search.search(ctx.p, re, text, display_name(ctx, it.path), source(ctx, it, cap, decoded), h, written);
-        written = out.written;
-        cap = out.cap;
-        r = Part { ...r, matched: r.matched || out.matched, totals: tally(ctx, r.totals, out, monotonic_ns() - t0) };
-        if (!flush(h, false)) {
-          return Part { ...r, failed: true };
-        }
-      },
-      Err(e) => {
-        r = note(ctx, r, display_name(ctx, it.path) + ": " + ignore.os_error(e), true);
-      }
+    let f = search_file(ctx, re, it, cap, h, written);
+    for e in f.errors {
+      r = note(ctx, r, e, true);
+    }
+    if let Some(out) = f.out {
+      written = out.written;
+      cap = out.cap;
+      r = Part { ...r, matched: r.matched || out.matched, totals: tally(ctx, r.totals, out, f.nanos) };
+    }
+    if (!flush(h, ctx.line_buffered)) {
+      return Part { ...r, failed: true };
     }
     if (r.matched && ctx.quiet) {
       break;
     }
   }
   return r;
+}
+
+// The search of one file: its outcome, or None when it was not searched,
+// the time of the search, and the messages of its errors.
+struct Searched { out: Option[search.Outcome], nanos: i64, errors: string[] }
+
+// The bytes that the search of a file reads: the file, the output of the
+// preprocessor of --pre, or the file that -z decompresses. `prefix` and
+// `late` are the message of a program that failed after its output.
+// `piped` says that ripgrep reads the bytes from a program, not from a
+// map of the file.
+struct Haystack { bytes: u8[], prefix: string, late: string, piped: boolean }
+
+// Searches the file of `it`, and writes its output to `h`.
+function search_file(ctx: Ctx, re: regex.Regex, it: walk.Item, cap: i32, h: usize, written: boolean): Searched {
+  let name = display_name(ctx, it.path);
+  let none: string[] = [];
+  let hay = match (haystack(ctx, it.path, name)) {
+    Ok(v) => v,
+    Err(why) => {
+      return Searched { out: None, nanos: 0i64, errors: [name + ": " + why] };
+    },
+  };
+  let p = ctx.p;
+  if (hay.late != "" && counted(p.mode)) {
+    return Searched { out: None, nanos: 0i64, errors: [name + ": " + hay.prefix + hay.late] };
+  }
+  let t0 = monotonic_ns();
+  let (text, decoded) = encoding.decode(hay.bytes, ctx.encoding, ctx.decoder);
+  let out = search.search(linked(ctx, it.path), re, text, name, source(ctx, it, cap, decoded || hay.piped), h, written);
+  let prefix = if (p.mode == flags.Files && out.matched) { "" } else { hay.prefix };
+  let errors = if (hay.late == "") { none } else { [name + ": " + prefix + hay.late] };
+  return Searched { out: Some(out), nanos: monotonic_ns() - t0, errors: errors };
+}
+
+// Whether the output is a count for each file, which ripgrep does not
+// write when the program of the file fails.
+function counted(mode: flags.Mode): boolean {
+  return mode == flags.Count || mode == flags.CountMatches || mode == flags.Without;
+}
+
+// The bytes to search for `path`, or the message of an error.
+function haystack(ctx: Ctx, path: string, name: string): Result[Haystack, string] {
+  if (path != "-" && ctx.pre != "" && preprocessed(ctx, name)) {
+    return preprocess(ctx, path, name);
+  }
+  let bytes = match (read_input(path)) {
+    Ok(b) => b,
+    Err(e) => {
+      return Err(ignore.os_error(e));
+    },
+  };
+  let prog = if (ctx.search_zip && path != "-") { decompress.program(path) } else { "" };
+  if (prog == "") {
+    return Ok(Haystack { bytes: bytes, prefix: "", late: "", piped: false });
+  }
+  let (out, why) = decompress.decompressed(prog, name, bytes);
+  return Ok(Haystack { bytes: out, prefix: "", late: if (why == "") { "" } else { stderr_text(why) }, piped: true });
+}
+
+// Whether --pre runs for the file: with no --pre-glob, or when the globs
+// of --pre-glob do not ignore it.
+function preprocessed(ctx: Ctx, name: string): boolean {
+  return ctx.pre_globs.rules.len() == 0 || ctx.pre_globs.override(name, false) != ignore.IGNORE;
+}
+
+// The output of the preprocessor of --pre for the file. The preprocessor
+// reads the file on its standard input and gets its path as an argument.
+function preprocess(ctx: Ctx, path: string, name: string): Result[Haystack, string] {
+  if let Err(e) = open_reader(path) {
+    return Err(ignore.os_error(e));
+  }
+  let cmd = debug_arg(ctx.pre) + " " + debug_arg(name);
+  let out = match (process.run(ctx.pre, [name], path)) {
+    Ok(v) => v,
+    Err(e) => {
+      return Err("preprocessor command could not start: '" + cmd + "': " + ignore.os_error(e));
+    },
+  };
+  let late = if (out.status == 0) { "" } else { stderr_text(unsafe { string_from_bytes_unchecked(out.stderr) }) };
+  return Ok(Haystack { bytes: out.stdout, prefix: "preprocessor command failed: '" + cmd + "': ", late: late, piped: true });
+}
+
+// An argument in quotes, as Rust writes it for debug.
+function debug_arg(text: string): string {
+  return "\"" + text.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\t", "\\t").replace("\r", "\\r") + "\"";
+}
+
+// The standard error of a command that failed, as ripgrep writes it.
+function stderr_text(err: string): string {
+  let msg = err.trim();
+  if (msg == "") {
+    return "<stderr is empty>";
+  }
+  let line = "-".repeat(79);
+  return "\n" + line + "\n" + msg + "\n" + line;
 }
 
 function empty_part(): Part {
@@ -230,18 +357,14 @@ function search_buffered(ctx: Ctx, re: regex.Regex, items: walk.Item[], h: usize
   let cap = search.BUFFER;
   for it in items {
     r = Part { ...r, searched: true };
-    match (read_input(it.path)) {
-      Ok(bytes) => {
-        let t0 = monotonic_ns();
-        let (text, decoded) = encoding.decode(bytes, ctx.encoding);
-        let out = search.search(ctx.p, re, text, display_name(ctx, it.path), source(ctx, it, cap, decoded), h, written);
-        written = out.written;
-        cap = out.cap;
-        r = Part { ...r, matched: r.matched || out.matched, totals: tally(ctx, r.totals, out, monotonic_ns() - t0) };
-      },
-      Err(e) => {
-        r = Part { ...r, errors: r.errors.append(display_name(ctx, it.path) + ": " + ignore.os_error(e)), failed: true };
-      }
+    let f = search_file(ctx, re, it, cap, h, written);
+    if (f.errors.len() > 0) {
+      r = Part { ...r, errors: r.errors.concat(f.errors), failed: true };
+    }
+    if let Some(out) = f.out {
+      written = out.written;
+      cap = out.cap;
+      r = Part { ...r, matched: r.matched || out.matched, totals: tally(ctx, r.totals, out, f.nanos) };
     }
     if (r.matched && ctx.quiet) {
       break;
@@ -507,9 +630,9 @@ function list_files(ctx: Ctx, items: walk.Item[], o: flags.Options): i32 {
     if (ctx.quiet) {
       break;
     }
-    search.push_path(ctx.p, h, display_name(ctx, it.path));
+    search.push_path(linked(ctx, it.path), h, display_name(ctx, it.path));
     buf_push(h, term);
-    if (!flush(h, false)) {
+    if (!flush(h, ctx.line_buffered)) {
       break;
     }
   }
@@ -570,9 +693,44 @@ function context_of(o: flags.Options, paths: string[]): Ctx {
   let threads = threads_of(o, one_file);
   let pattern = if (o.searches()) { flags.pattern(o) } else { "" };
   return Ctx {
-    p: search.printer(o, isatty(1), term_color(), one_file), pattern: pattern, implicit: o.paths.len() == 0, mmap: maps(o, paths),
+    p: with_links(search.printer(o, isatty(1), term_color(), one_file), o), pattern: pattern, implicit: o.paths.len() == 0, mmap: maps(o, paths),
     binary: o.binary, threads: threads, quiet: o.has(flags.QUIET), messages: !o.has(flags.NO_MESSAGES),
-    ignore_messages: !o.has(flags.NO_IGNORE_MESSAGES), encoding: o.encoding,
+    ignore_messages: !o.has(flags.NO_IGNORE_MESSAGES), encoding: o.encoding, decoder: encoding.decoder(o.encoding),
+    pre: o.pre, pre_globs: pre_globs(o), search_zip: o.has(flags.SEARCH_ZIP),
+    line_buffered: o.buffer == 1 || o.buffer == 0 && isatty(1),
+  };
+}
+
+// The printer with the host name of its links, when the output has links.
+function with_links(p: search.Printer, o: flags.Options): search.Printer {
+  if (!p.color || p.hyperlink.is_empty()) {
+    return p;
+  }
+  return search.Printer { ...p, hyperlink: hyperlink.with_host(p.hyperlink, o.hostname_bin) };
+}
+
+// The printer for the file at `path`, with the path of its links. The
+// standard input has no link.
+function linked(ctx: Ctx, path: string): search.Printer {
+  if (!ctx.p.color || ctx.p.hyperlink.is_empty() || path == "-") {
+    return ctx.p;
+  }
+  let real = hyperlink.canonical(path);
+  if (real == "") {
+    return ctx.p;
+  }
+  return search.Printer { ...ctx.p, link: hyperlink.encode(real) };
+}
+
+// The globs of --pre-glob, as globs of -g.
+function pre_globs(o: flags.Options): ignore.Matcher {
+  let cwd = match (getcwd()) {
+    Ok(d) => d,
+    Err(_) => "",
+  };
+  return match (ignore.overrides(cwd, o.pre_globs, [], false)) {
+    Ok(m) => m,
+    Err(_) => ignore.empty(""),
   };
 }
 
@@ -593,6 +751,7 @@ function items_of(ctx: Ctx, o: flags.Options, cfg: ignore.Config, paths: string[
   let w = walk.Walk {
     cfg: cfg, max_filesize: o.max_filesize, follow: o.has(flags.FOLLOW), max_depth: o.max_depth, sorted: o.sort == "path" && !o.sort_reverse,
     threads: ctx.threads, stdout_ino: if (o.searches()) { ino } else { 0i64 }, stdout_dev: dev,
+    same_fs: o.has(flags.ONE_FILE_SYSTEM), root_dev: 0i64,
   };
   let items = walk.walk(w, paths);
   if (o.sort != "" && (o.sort_reverse || o.sort != "path")) {
@@ -615,7 +774,7 @@ function run(o: flags.Options, t0: i64): i32 {
   if (!o.searches()) {
     return list_files(ctx, items, o);
   }
-  let Some(re) = compiled(ctx.pattern, banned(o)) else {
+  let Some(re) = compiled(o, ctx.pattern, banned(o)) else {
     return 2;
   };
   let r = if (ctx.threads > 1) { search_parallel(ctx, items, ctx.threads) } else { search_serial(ctx, re, items) };
@@ -699,16 +858,99 @@ function read_patterns(path: string): Result[string[], string] {
   return Ok(out);
 }
 
+// The text of a special mode, which rg writes with no other check.
+function special(mode: string): i32 {
+  let text = match (mode) {
+    "help" => help.HELP_SHORT,
+    "help-long" => help.HELP_LONG,
+    "version" => "ripgrep 14.1.0\n",
+    "version-long" => version_long(),
+    _ => NO_PCRE2,
+  };
+  print_raw(text.trim_end() + "\n");
+  return if (mode == "pcre2-version") { 1 } else { 0 };
+}
+
+function version_long(): string {
+  let simd = if (target_arch() == "x86-64") {
+    "simd(compile):+SSE2,-SSSE3,-AVX2\nsimd(runtime):+SSE2,+SSSE3,+AVX2\n"
+  } else if (target_arch() == "arm64") {
+    "simd(compile):+NEON\nsimd(runtime):+NEON\n"
+  } else {
+    ""
+  };
+  return "ripgrep 14.1.0\n\nfeatures:-simd-accel,-pcre2\n" + simd + "\n" + NO_PCRE2 + "\n";
+}
+
+// The output of --generate.
+function generate(kind: string): i32 {
+  print_raw(match (kind) {
+    "man" => help.MAN,
+    "complete-bash" => help.COMPLETE_BASH,
+    "complete-zsh" => help.COMPLETE_ZSH,
+    "complete-fish" => help.COMPLETE_FISH,
+    _ => help.COMPLETE_POWERSHELL,
+  });
+  return 0;
+}
+
+// The arguments of the file that RIPGREP_CONFIG_PATH names: each line that
+// is not empty and does not start with `#`, without the white space around
+// it.
+function config_args(messages: boolean): string[] {
+  let none: string[] = [];
+  let Some(path) = env("RIPGREP_CONFIG_PATH") else {
+    return none;
+  };
+  if (path == "") {
+    return none;
+  }
+  let text = match (read_file_bytes(path)) {
+    Ok(b) => unsafe { string_from_bytes_unchecked(b) },
+    Err(e) => {
+      if (messages) {
+        eprint("rg: failed to read the file specified in RIPGREP_CONFIG_PATH: " + path + ": " + ignore.os_error(e));
+      }
+      return none;
+    },
+  };
+  let out: string[] = [];
+  for raw in text.split("\n") {
+    let line = raw.trim();
+    if (line != "" && line[0] != b'#') {
+      out = out.append(line);
+    }
+  }
+  return out;
+}
+
+// The options of the command line, after the arguments of the config file
+// unless --no-config.
+function options_of(cli: string[]): Result[flags.Options, string] {
+  let low = flags.parse_flags(cli)?;
+  if (low.special != "" || low.has(flags.NO_CONFIG)) {
+    return flags.finish(low);
+  }
+  let extra = config_args(!low.has(flags.NO_MESSAGES));
+  if (extra.len() == 0) {
+    return flags.finish(low);
+  }
+  return flags.finish(flags.parse_flags(extra.concat(cli))?);
+}
+
 function main(): i32 {
   let t0 = monotonic_ns();
   let argv = args();
-  let parsed = match (flags.parse(argv.drop(1))) {
+  let parsed = match (options_of(argv.drop(1))) {
     Ok(v) => v,
     Err(why) => {
       eprint("rg: " + why);
       return 2;
     },
   };
+  if (parsed.special != "") {
+    return special(parsed.special);
+  }
   let o = match (with_pattern_files(parsed)) {
     Ok(v) => v,
     Err(why) => {
@@ -718,6 +960,9 @@ function main(): i32 {
   };
   if (o.mode == flags.TypeList) {
     return type_list(o);
+  }
+  if (o.mode == flags.Generate) {
+    return generate(o.generate);
   }
   if (o.searches() && o.max_count == 0) {
     return 1;

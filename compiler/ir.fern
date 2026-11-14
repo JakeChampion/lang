@@ -2202,8 +2202,16 @@ pub function op_struct_set_i64(field_index: i32): Op {
   return Op { source: 0, decl: -1, kind_tag: K_STRUCT_SET, i32_imm: field_index, i64_imm: 0, f64_imm: 0.0, width: 64, unsigned: true, str: "" };
 }
 
-pub function op_struct_set_shape(type_name: string): Op {
-  return Op { source: 0, decl: -1, kind_tag: K_STRUCT_SET_SHAPE, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
+// `fields` is the number of fields of the record or the variant.
+pub function op_struct_set_shape(type_name: string, fields: i32): Op {
+  return Op { source: 0, decl: -1, kind_tag: K_STRUCT_SET_SHAPE, i32_imm: fields, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: type_name };
+}
+
+// The number of slots of a record of `fields` fields, for a reuse allocation.
+// A target that keeps the shape in a slot of the box takes the constant. A
+// native target keeps the shape in the header, and its lift takes one less.
+pub function op_record_slots(fields: i32): Op {
+  return Op { ...op_const_i32(fields + 1), str: "slots" };
 }
 
 pub function op_tuple_make(n: i32): Op {

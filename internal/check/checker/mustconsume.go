@@ -130,6 +130,17 @@ func (c *checker) mcSeq(stmts []ast.Stmt, name, typeName string) (bool, bool) {
 			if tc && x.Else != nil && ec {
 				return true, false
 			}
+		case *ast.Loop:
+			if con, div := c.mcArm(x.Body, name, typeName); con || div {
+				return con, div
+			}
+		case *ast.While:
+			// A loop with the condition `true` runs its body once or more.
+			if lit, ok := x.Cond.(*ast.BoolLit); ok && lit.Value {
+				if con, div := c.mcArm(x.Body, name, typeName); con || div {
+					return con, div
+				}
+			}
 		case *ast.Match:
 			if c.mcIsBinding(x.Tag, name) {
 				return true, false

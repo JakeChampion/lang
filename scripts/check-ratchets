@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# check-ratchets BASE — fails when the working tree has a lint finding that
+# the tree at BASE does not have. A ratchet that compares a tree with a pinned
+# count goes red on main when two pull requests each add one finding and each
+# pin the same new count: each passes alone, and git merges the equal edits
+# without a conflict. This comparison has no pinned count. Each change answers
+# only for the findings that it adds.
+#
+# Three ratchets:
+#
+#   modern-form   No new finding in coreutils, examples or internal/stdlib.
+#   complexity    TestSelfHostRepoComplexityDelta: the total over the limit and
+#                 the worst function of compiler and internal/stdlib/std.
+#   census        TestSelfHostFeatureCensusDelta: the wildcard match arms and
+#                 the increments by one of the compiler.
+#
+# FERN is the compiler to lint with (default bin/fern). One compiler reads
+# both trees, so a change to a lint rule does not look like new findings.
+set -uo pipefail
+
+base=${1:?usage: check-ratchets BASE}
+cd "$(git rev-parse --show-toplevel)" || exit 1
+fern=${FERN:-bin/fern}
+[ -x "$fern" ] || { echo "check-ratchets: $fern is not built; run make build" >&2; exit 1; }
+fern=$(cd "$(dirname "$fern")" && pwd)/$(basename "$fern")
+
+# A shallow clone, as in CI, can lack BASE.
+if ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+  git fetch -q --depth=1 origin "$base" || { echo "check-ratchets: cannot fetch $base" >&2; exit 1; }
+fi
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+# FERN_RATCHET_BASE_TREE is where the tree of BASE goes. The tests below read it.
+export FERN_RATCHET_BASE_TREE=${FERN_RATCHET_BASE_TREE:-$tmp/base}
+rm -rf "$FERN_RATCHET_BASE_TREE"
+mkdir -p "$FERN_RATCHET_BASE_TREE"
+if ! git archive "$base" -- compiler coreutils examples internal/stdlib | tar -x -C "$FERN_RATCHET_BASE_TREE"; then
+  echo "check-ratchets: cannot read the tree at $base" >&2
+  exit 1
+fi
+
+# findings ROOT — one line per modern-form finding: the file and the message.
+# The position is left out, because an edit above a finding moves it.
+findings() {
+  (cd "$1" && "$fern" -lint -lint-set modern-form=warn -lint-set cyclomatic-complexity=allow \
+    -lint-set change-risk=allow coreutils examples internal/stdlib) 2>&1 |
+    sed -n 's/^\([^ :]*\):[0-9]*:[0-9]*: warning\[modern-form\]: \(.*\)$/\1: \2/p' | sort
+}
+
+status=0
+findings "$FERN_RATCHET_BASE_TREE" > "$tmp/before"
+findings . > "$tmp/after"
+if [ ! -s "$tmp/after" ]; then
+  echo "check-ratchets: modern-form found nothing; the gate would pass with no measurement" >&2
+  status=1
+fi
+comm -13 "$tmp/before" "$tmp/after" > "$tmp/new"
+if [ -s "$tmp/new" ]; then
+  echo "check-ratchets: this change adds $(wc -l < "$tmp/new" | tr -d ' ') modern-form finding(s):" >&2
+  sed 's/^/  /' "$tmp/new" >&2
+  echo "Write the new code in the modern form. \`fern -lint -lint-set modern-form=warn FILE\` shows each finding." >&2
+  status=1
+fi
+
+tests='TestSelfHostFeatureCensusDelta$|TestSelfHostRepoComplexityDelta$'
+echo "check-ratchets ==> $tests"
+if ! go test ./internal/testing/e2ecompiler/ -run "$tests" -count=1; then
+  status=1
+fi
+
+exit $status

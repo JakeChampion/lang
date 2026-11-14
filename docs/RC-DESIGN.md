@@ -177,13 +177,27 @@ mode each parameter ends with (`mode_bits`), not the raw escape, so a caller
 handing a field to a parameter its callee can never count keeps its own
 parameter borrowed.
 
-The inference counts a record, a variant, an owned array or a map
+The inference counts a record, a variant, an owned array, a map or a string
 (`owned_shape`). When a callee gives such a parameter to a sink that consumes
 it, the caller hands over its last unit. The sink then updates or adopts the
 box and does not copy it. The callee releases the parameter on each other
-path. A string, a view, a cell, a handle and a closure environment stay
-borrowed. A concatenation lends its operands, so a counted string only adds a
-retain and a release.
+path. A view, a cell, a handle and a closure environment stay borrowed.
+
+A string box changes in place only where it grows. A concatenation consumes
+its left operand at the last use of that operand, and the lowering then grows
+the buffer in place (`ssarc.grow_or_concat`). Thus the inference counts a
+string only where its unit reaches a growth: a concatenation at its last use,
+a counted slot of a callee, or a phi that one of these consumes.
+
+A return, a container or a store that keeps a string does not consume it. It
+also does not mark a string that the kept value depends on
+(`ownership.carry`). Otherwise, each call that does not return the string
+pays a release for no gain.
+
+A call to the name of a builtin runs the kernel of the builtin, unless the
+module shadows the name (`ssarc.string_method_site`). The kernel borrows its
+operands, whatever the body with that name does. Thus such a name keeps its
+declared modes (`semsource.kernel_named`).
 
 `semsource.with_inferred_modes` rewrites the modes of every produced body and
 every callee contract it carries from the same rows, so definition and call
@@ -511,10 +525,21 @@ pointer that flows through the program points past the header.
 
 - An **array** box has its capacity at `data-16`, its count at `data-8`, its
   length at `data+0` and element `i` at `data+(i+1)*8`
-  (`__fern_arr_box`). A **record** is an array-shaped box whose first word is
-  its `shape_addr` and the rest one word per field; a **tuple** has one word
-  per element and no shape word; a declared **enum variant** is laid out as a
-  record, its shape word naming the variant. A **string** box is a data
+  (`__fern_arr_box`).
+- On the native targets a **record**, a declared **enum variant** and a
+  **tuple** have a header of one word at `data-8` (`__fern_rec_box`): the
+  count in the low half and a tag in the high half. Field `i` is at
+  `data+i*8`. The low 16 bits of the tag are the number of words of the box.
+  The bits above them are zero for a tuple. For a record or a variant they
+  are one more than the index of its shape in the declarations of the
+  program (`asmcore.shape_tag`), so a `match` compares the tag with a
+  constant. An array has zero in that half, and `__fn___fern_box_dec` reads
+  it to tell a box from an array. A build with the sanitizer, the
+  quarantine, `-harden` or an allocation profile gives each box the header
+  of an array and keeps the tag in the same half. A program can have 32,766
+  shapes, and a record can have 65,535 fields. On wasm32 a record keeps its
+  shape in its first slot.
+- A **string** box is a data
   pointer and a length, released through `__fern_str_free`; a fused string
   carries its bytes behind the same block, and a grown one (the
   self-append's fallback, `__fern_str_grow_fresh`) records the block's

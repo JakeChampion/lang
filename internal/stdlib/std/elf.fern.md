@@ -115,10 +115,15 @@ pub function (s: Segment) executable(): boolean {
 }
 
 // The bytes of the segment in the file. The loader clears the rest of the
-// memory of the segment, up to memory_size.
+// memory of the segment, up to memory_size. A load segment with more bytes
+// in the file than in memory is refused: a loader that copies them writes
+// beyond the memory of the segment.
 pub function (s: Segment) bytes(image: [u8]): Result[u8[], ElfError] {
   if (s.offset > image.len() as u64 || s.file_size > image.len() as u64 - s.offset) {
     return Err(ElfError { offset: s.offset as i32, reason: "a segment ends beyond the image" });
+  }
+  if (s.is_load() && s.file_size > s.memory_size) {
+    return Err(ElfError { offset: s.offset as i32, reason: "a load segment has more bytes in the file than in memory" });
   }
   let out: u8[] = [];
   let i = s.offset as i32;

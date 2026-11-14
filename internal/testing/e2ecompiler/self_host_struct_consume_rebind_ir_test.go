@@ -32,8 +32,8 @@ function main(): i32 {
 	if len(asm) == 0 {
 		t.Fatal("self-host compiler emitted 0 bytes for the churn program")
 	}
-	if frees := bytes.Count(asm, []byte("call __fn___fern_arr_dec")); frees < 1 {
-		t.Errorf("found %d __fern_arr_dec calls, want >= 1 — consume-rebind struct box not reclaimed (module bailed or reclaim gate too strict)", frees)
+	if frees := bytes.Count(asm, []byte("call __fn___fern_box_dec")); frees < 1 {
+		t.Errorf("found %d __fern_box_dec calls, want >= 1 — consume-rebind struct box not reclaimed (module bailed or reclaim gate too strict)", frees)
 	}
 	churnBin := buildBin(t, gcc, dir, "struct_cr_churn", string(asm))
 	var ccmd *exec.Cmd

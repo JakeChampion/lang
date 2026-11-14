@@ -1,0 +1,123 @@
+// age-plugin-tagtest: the identity plugin of age's tag tests. It holds the
+// P-256 and the MLKEM768-P256 keys that DeriveKeyPair makes from the bytes
+// "age-plugin-tagtest", and unwraps the p256tag and mlkem768p256tag
+// stanzas to their recipients. A port of age's
+// tag/internal/age-plugin-tagtest, for the tests of the port.
+//
+//   age1tag1qwe0kafsjrar4txm6heqnhpfuggzr0gvznz7fvygxrlq90u5mq2pysxtw6h
+//   $ age -d -j tagtest file.age
+import "std/array";
+import "std/crypto/hpke";
+import "../../format";
+import "../../goflag";
+import "../../pluginserver";
+import "../../tag";
+import "../../text";
+
+const SEED: string = "age-plugin-tagtest";
+
+struct Keys { classic: hpke.P256Key, hybrid: hpke.HybridP256Key }
+
+function keys_of(data: u8[]): Result[Keys, string] {
+  if (data.len() != 0) {
+    return Err("unexpected identity data");
+  }
+  let Ok(c) = hpke.p256_derive_key_pair(SEED.as_bytes()) else {
+    return Err("failed to generate key");
+  };
+  let Ok(h) = hpke.mlkem768p256_derive_key_pair(SEED.as_bytes()) else {
+    return Err("failed to generate key");
+  };
+  return Ok(Keys { classic: c, hybrid: h });
+}
+
+// The tag and the encapsulated key of a stanza of the kind, after the checks
+// of age's tagtest identities.
+struct Parts { tag: u8[], enc: u8[] }
+
+function parts(st: format.Stanza, enc_size: i32): Result[Parts, string] {
+  if (st.args.len() != 2) {
+    return Err("malformed stanza");
+  }
+  let t = match (text.decode_string(st.args[0].as_bytes())) {
+    Ok(b) => b,
+    Err(why) => {
+      return Err("malformed tag: " + why);
+    },
+  };
+  if (t.len() != 4) {
+    return Err(f"invalid tag length: {t.len()}");
+  }
+  let enc = match (text.decode_string(st.args[1].as_bytes())) {
+    Ok(b) => b,
+    Err(why) => {
+      return Err("malformed encapsulated key: " + why);
+    },
+  };
+  if (enc.len() != enc_size) {
+    return Err(f"invalid encapsulated key length: {enc.len()}");
+  }
+  if (st.body.len() != 32) {
+    return Err(f"invalid encrypted file key length: {st.body.len()}");
+  }
+  return Ok(Parts { tag: t, enc: enc });
+}
+
+// One identity of tagtest on the stanzas.
+function unwrap_one(k: Keys, hybrid: boolean, stanzas: format.Stanza[]): format.Unwrapped {
+  let kind = if (hybrid) { "mlkem768p256tag" } else { "p256tag" };
+  let label = if (hybrid) { "age-encryption.org/mlkem768p256tag" } else { "age-encryption.org/p256tag" };
+  let recipient = tag.TagKey { hybrid: hybrid, public: if (hybrid) { k.hybrid.public_key } else { k.classic.public_key } };
+  for st in stanzas {
+    if (st.kind != kind) {
+      continue;
+    }
+    let p = match (parts(st, if (hybrid) { hpke.MLKEM768_P256_ENC_SIZE } else { hpke.P256_ENC_SIZE })) {
+      Ok(p) => p,
+      Err(why) => {
+        return format.Invalid(why);
+      },
+    };
+    if (tag.tag_of(recipient, p.enc) != p.tag) {
+      continue;
+    }
+    let ss = if (hybrid) { hpke.mlkem768p256_decap(k.hybrid, p.enc) } else { hpke.p256_decap(k.classic, p.enc) };
+    let shared = match (ss) {
+      Ok(s) => s,
+      Err(_) => {
+        return format.Invalid("failed to unwrap file key: crypto/ecdh: invalid public key");
+      },
+    };
+    let kem = if (hybrid) { hpke.KEM_MLKEM768_P256 } else { hpke.KEM_P256 };
+    let c = hpke.key_schedule(kem, shared, label.as_bytes());
+    if let Ok((file_key, _)) = c.open([], st.body) {
+      return format.FileKey(file_key);
+    }
+  }
+  return format.Incorrect;
+}
+
+function wrap(own s: pluginserver.Session, k: Keys, file_key: u8[]): (pluginserver.Session, Result[pluginserver.Wrapped, string]) {
+  return (s, Err("recipient-v1 not supported"));
+}
+
+function unwrap(own s: pluginserver.Session, k: Keys, stanzas: format.Stanza[]): (pluginserver.Session, format.Unwrapped) {
+  let classic = unwrap_one(k, false, stanzas);
+  return match (classic) {
+    format.Incorrect => (s, unwrap_one(k, true, stanzas)),
+    _ => (s, classic),
+  };
+}
+
+function main(): i32 {
+  let argv = args();
+  let flags = match (pluginserver.flags(goflag.Names { bools: [], values: [] }, "age-plugin-tagtest", array.slice(argv, 1, argv.len()))) {
+    Ok(f) => f,
+    Err(code) => {
+      return code;
+    },
+  };
+  let (machine, _) = pluginserver.machine_of(flags);
+  let h = pluginserver.Handlers { name: "tagtest", recipient: None, identity_as_recipient: None, identity: Some(keys_of), wrap: wrap, unwrap: unwrap };
+  return pluginserver.serve(h, machine);
+}

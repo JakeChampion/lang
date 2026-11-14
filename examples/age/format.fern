@@ -116,7 +116,7 @@ function header_line(own s: source.Src, used: i32): (source.Src, u8[], Option[st
 
 // A stanza and the header bytes after it, or the message after
 // "failed to parse header: ".
-struct Parsed { stanza: Stanza, used: i32 }
+pub struct Parsed { stanza: Stanza, used: i32 }
 
 function read_body(own s: source.Src, used: i32, kind: string, args: string[]): (source.Src, Result[Parsed, string]) {
   let body: u8[] = [];
@@ -149,7 +149,7 @@ function read_body(own s: source.Src, used: i32, kind: string, args: string[]): 
 }
 
 // age's StanzaReader.ReadStanza.
-function read_stanza(own s: source.Src, used: i32): (source.Src, Result[Parsed, string]) {
+pub function read_stanza(own s: source.Src, used: i32): (source.Src, Result[Parsed, string]) {
   let (t, line, f) = header_line(s, used);
   if let Some(why) = f {
     return (t, Err("failed to read line: " + why));
@@ -427,6 +427,9 @@ pub enum Unwrapped {
   // Not this identity's stanza: age's ErrIncorrectIdentity.
   Incorrect,
   Invalid(string),
+  // A plugin that is not on the PATH: the message and the name of the
+  // plugin, for age's hints.
+  Missing(string, string),
 }
 
 // age's X25519Identity.unwrap. scalar is secret; public is its public key.
@@ -572,7 +575,7 @@ pub function wrap_scrypt(file_key: [u8], passphrase: [u8], salt: [u8], log_n: i3
 
 // age's check of the work factor: decimal digits that do not start with 0,
 // then Go's strconv.Atoi, then the limit of age.
-function work_factor(w: string): Result[i32, string] {
+function work_factor(w: string, max: i32): Result[i32, string] {
   let encoding = f"scrypt work factor encoding invalid: {text.quote(w.as_bytes())}";
   if (w.len() == 0 || w[0] == b'0') {
     return Err(encoding);
@@ -592,7 +595,7 @@ function work_factor(w: string): Result[i32, string] {
   if (overflow) {
     return Err(f"failed to parse scrypt work factor: strconv.Atoi: parsing {text.quote(w.as_bytes())}: value out of range");
   }
-  if (v > SCRYPT_MAX_WORK_FACTOR as i64) {
+  if (v > max as i64) {
     return Err(f"scrypt work factor too large: {v}");
   }
   return Ok(v as i32);
@@ -600,7 +603,7 @@ function work_factor(w: string): Result[i32, string] {
 
 // age's ScryptIdentity.unwrap for one stanza.
 // The salt and the work factor of an scrypt stanza.
-function scrypt_args(st: Stanza): Result[(u8[], i32), string] {
+function scrypt_args(st: Stanza, max: i32): Result[(u8[], i32), string] {
   if (st.args.len() != 2) {
     return Err("invalid scrypt recipient block");
   }
@@ -613,14 +616,19 @@ function scrypt_args(st: Stanza): Result[(u8[], i32), string] {
   if (salt.len() != 16) {
     return Err("invalid scrypt recipient block");
   }
-  return Ok((salt, work_factor(st.args[1])?));
+  return Ok((salt, work_factor(st.args[1], max)?));
 }
 
 pub function unwrap_scrypt(st: Stanza, passphrase: [u8]): Unwrapped {
+  return unwrap_scrypt_max(st, passphrase, SCRYPT_MAX_WORK_FACTOR);
+}
+
+// age's ScryptIdentity.unwrap with the largest work factor that it accepts.
+pub function unwrap_scrypt_max(st: Stanza, passphrase: [u8], max: i32): Unwrapped {
   if (st.kind != "scrypt") {
     return Incorrect;
   }
-  let (salt, log_n) = match (scrypt_args(st)) {
+  let (salt, log_n) = match (scrypt_args(st, max)) {
     Ok(a) => a,
     Err(why) => { return Invalid(why); },
   };

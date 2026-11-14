@@ -158,6 +158,7 @@ function test_compile_errors(): test.TestOutcome {
       matches("{a", o, []),
       matches("{a,{b}}", o, []),
       matches("a\\", o, []),
+      matches("a}b", o, []),
     ],
     [
       "error parsing glob 'a[': unclosed character class; missing ']'",
@@ -165,6 +166,7 @@ function test_compile_errors(): test.TestOutcome {
       "error parsing glob '{a': unclosed alternate group; missing '}' (maybe escape '{' with '[{]'?)",
       "error parsing glob '{a,{b}}': nested alternate groups are not allowed",
       "error parsing glob 'a\\': dangling '\\'",
+      "error parsing glob 'a}b': unopened alternate group; use '[}]' to match an unopened alternate group",
     ],
   );
 }
@@ -187,6 +189,29 @@ function test_compile_many_stars(): test.TestOutcome {
   );
 }
 
+// The groups of a glob multiply. 12 groups of two give 4096 variants, which
+// is the limit, and 13 groups are refused. Before, 24 groups took 9 GB.
+function test_group_product_limit(): test.TestOutcome {
+  let o = git_options(false);
+  let at_limit = "{a,b}".repeat(12);
+  let over = "{a,b}".repeat(24);
+  return test.assert_eq_array(
+    [
+      matches(at_limit, o, ["abababababab", "bbbbbbbbbbbb", "abc"]),
+      matches(over, o, []),
+      matches("{a,b}{c,d}{e,f}", o, ["ace", "bdf", "adf", "eca"]),
+    ],
+    ["110", "error parsing glob '" + over + "': more than 4096 alternates", "1110"],
+  );
+}
+
+// A pattern of 40000 literal bytes compiles in linear time.
+function test_long_literal(): test.TestOutcome {
+  let o = git_options(false);
+  let long = "ab".repeat(20000);
+  return test.assert_eq(matches(long, o, [long, long + "a"]), "10");
+}
+
 function main(): i32 {
   let r = test.new("std/glob");
   r = r.it("compile: recursive", test_compile_recursive);
@@ -202,5 +227,7 @@ function main(): i32 {
   r = r.it("negated class", test_negated_class);
   r = r.it("edges", test_edges);
   r = r.it("many stars finish", test_many_stars_finish);
+  r = r.it("group product limit", test_group_product_limit);
+  r = r.it("a long literal", test_long_literal);
   return r.finish();
 }

@@ -83,6 +83,28 @@ function test_to_string_paths(): test.TestOutcome {
   return test.assert_eq(1.5e30.to_string(), "1.5e+30");
 }
 
+// to_string_prec gives the digits of the exact value. Only a value that is
+// exactly half way rounds away from zero.
+function test_to_string_prec_exact(): test.TestOutcome {
+  let got = [1.45.to_string_prec(1), 0.49999999999999994.to_string_prec(0), 0.1.to_string_prec(20), 1.0e21.to_string_prec(2), 2.5.to_string_prec(0), 0.125.to_string_prec(2), 9.995.to_string_prec(2), 99.5.to_string_prec(0), 1.0e-7.to_string_prec(3), (0.0 - 0.001).to_string_prec(2)];
+  let want = ["1.4", "0", "0.10000000000000000555", "1000000000000000000000.00", "3", "0.13", "9.99", "100", "0.000", "-0.00"];
+  for i in 0..want.len() {
+    if (got[i] != want[i]) {
+      return test.fail("case " + i.to_string() + ": got " + got[i] + ", want " + want[i]);
+    }
+  }
+  return test.pass();
+}
+
+// The largest and the smallest f64 have 309 and 1074 digits. Before, the
+// first did not return.
+function test_to_string_prec_extremes(): test.TestOutcome {
+  let big = 1.0e308.to_string_prec(1);
+  let small = 5.0e-324.to_string_prec(1074);
+  let got = big.len().to_string() + " " + big.starts_with("10000000000000000109790636294404554174049230967731184633681068").to_string() + " " + small.len().to_string() + " " + small.ends_with("38682506419718265533447265625").to_string();
+  return test.assert_eq(got, "311 true 1076 true");
+}
+
 function main(): i32 {
   let r = test.new("floats");
   r = r.it("f64 addition", test_f64_addition);
@@ -97,5 +119,7 @@ function main(): i32 {
   r = r.it("negative zero", test_negative_zero);
   r = r.it("Inf vs Inf", test_inf_handling);
   r = r.it("to_string digit paths", test_to_string_paths);
+  r = r.it("to_string_prec exact digits", test_to_string_prec_exact);
+  r = r.it("to_string_prec extremes", test_to_string_prec_extremes);
   return r.finish();
 }

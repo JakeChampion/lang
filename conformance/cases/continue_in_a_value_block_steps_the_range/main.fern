@@ -1,0 +1,35 @@
+// A `continue` in a value block, a value `match` or a value `if` goes to the
+// next number of the range. Before, it did not step the counter, and the
+// loop did not end.
+function g(n: i32): i32 {
+  let acc = 0;
+  for i in 0..4 {
+    let v: i32 = {
+      if (i == 2) {
+        continue;
+      }
+      i
+    };
+    let u: i32 = match (i) { 1 => { continue; }, _ => i };
+    let t: i32 = if (i == n) { continue; } else { 1 };
+    acc = acc + v + u + t;
+  }
+  outer: for i in 0..3 {
+    for j in 0..3 {
+      let q: i32 = {
+        if (j == 1) {
+          continue outer;
+        }
+        j
+      };
+      acc = acc + 100 + q;
+    }
+  }
+  return acc;
+}
+
+function main(): i32 {
+  print(g(9).to_string());
+  print(g(0).to_string());
+  return 0;
+}

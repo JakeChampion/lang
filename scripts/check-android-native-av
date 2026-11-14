@@ -3,6 +3,7 @@
 import importlib.util
 import os
 import re
+import signal
 from pathlib import Path
 import struct
 import subprocess
@@ -79,7 +80,8 @@ with tempfile.TemporaryDirectory() as temporary:
     print('Explicit rate, layout, encoded-input, and decoded-sample refusals passed')
 
 entries = [('', 'audio_path_test.fern'), ('cursor-', 'audio_cursor_path_test.fern'),
-           ('content-', 'audio_content_path_test.fern')]
+           ('content-', 'audio_content_path_test.fern'),
+           ('callback-guard-', 'audio_path_callback_guard.fern')]
 for prefix, source in entries:
     for name, flags in [('normal', []), ('sanitize', ['-sanitize'])]:
         subprocess.run([compiler, '-stdlib', str(ROOT / 'internal/stdlib'), '-target', android,
@@ -113,6 +115,12 @@ for variant, flags in [('normal', []), ('ubsan', ['-fsanitize=undefined', '-fno-
     unused_video_libraries(directory, flags)
     env = dict(os.environ, LD_LIBRARY_PATH=str(directory) + ':' + os.environ.get('LD_LIBRARY_PATH', ''))
     for name in ('normal', 'sanitize'):
+        refused = subprocess.run(['python3', '-c',
+                                  'import ctypes,sys; ctypes.CDLL(sys.argv[1]).main()',
+                                  str(build / ('callback-guard-' + name + '.so'))],
+                                 env=env, capture_output=True, text=True)
+        assert refused.returncode == -signal.SIGABRT, refused
+        print('AAudio synchronous callback refusal:', variant, name)
         subprocess.run(['python3', '-c',
                         'import ctypes,sys; result=ctypes.CDLL(sys.argv[1]).main(); assert result==0,result',
                         str(build / (name + '.so'))], env=env, check=True)
@@ -141,4 +149,4 @@ for prefix, source in entries:
     subprocess.run([compiler, '-stdlib', str(ROOT / 'internal/stdlib'), '-target', 'arm64-android',
                     '-shared', '-export', 'main', '-o', str(build / (prefix + 'arm64-transport.so')),
                     'tests/android/video/' + source], check=True)
-print('All three ARM64 transport shared compilations passed; no ARM execution claim')
+print('All four ARM64 shared compilations passed; no ARM execution claim')

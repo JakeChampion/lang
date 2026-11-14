@@ -33,7 +33,7 @@ function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 4) { let s: 
 		`@noinline function mk(a: string, b: string): i32 { let s: string = a + b; let t: string = s; return s.len() + t.len(); } function main(): i32 { return mk("ab", "c"); }`,
 		6, true, "mk"},
 	{"returned-not-reclaimed",
-		`@noinline function h(x: string, y: string): string { let s: string = x + y; return s; } function main(): i32 { return h("xy", "z").len(); }`,
+		`@noinline function h(x: string): string { let s: string = "x" + x; return s; } function main(): i32 { return h("yz").len(); }`,
 		3, false, "h"},
 	{"loop-i32-to-string",
 		`import "std/i32";

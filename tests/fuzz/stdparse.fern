@@ -1,6 +1,11 @@
 import "std/brotli";
+import "std/classfile";
+import "std/cpio";
+import "std/csv";
 import "std/deflate";
 import "std/dns";
+import "std/elf";
+import "std/fdt";
 import "std/hash/crc32";
 import "std/hex";
 import "std/http";
@@ -15,6 +20,8 @@ import "std/quic/frames";
 import "std/quic/packet";
 import "std/result";
 import "std/time";
+import "std/truetype";
+import "std/tz";
 import "std/tls/handshake";
 import "std/tls/message";
 import "std/tls/pem";
@@ -30,8 +37,9 @@ import "std/zstd";
 // and server connection, the HPACK or QPACK decoder, the QUIC packet or frame
 // reader, the TLS record and handshake readers, the X.509 reader, the
 // DEFLATE, gzip, zlib, zstd and Brotli decoders, the DNS message reader, the
-// protobuf reader, the JPEG decoder, the JSON parser, or the URL and query
-// parsers. Each refuses malformed bytes with an
+// protobuf reader, the JPEG decoder, the ELF64 reader, the cpio, class file,
+// device tree, TrueType, TZif and CSV readers, the JSON parser, or the URL
+// and query parsers. Each refuses malformed bytes with an
 // error value, so the accepted outcome is exit 0 with a summary on stdout.
 // Exit 2 is a usage or read error.
 
@@ -746,6 +754,208 @@ function jpeg_summary(raw: u8[]): string {
   }
 }
 
+// The offset of the refusal, or the header fields and then, for each
+// program header, its kind with the length and a sum of the bytes of its
+// segment, or `cut` for a segment that the reader refuses.
+function elf_summary(raw: u8[]): string {
+  let image = raw[0:raw.len()];
+  match (elf.parse(image)) {
+    Err(e) => {
+      return "elf refused " + e.offset.to_string();
+    },
+    Ok(img) => {
+      let out = "elf ok " + img.kind.to_string() + " " + img.machine.to_string() + " " + img.entry.to_string() + " " + img.segments.len().to_string();
+      for s in img.segments {
+        match (s.bytes(image)) {
+          Ok(bytes) => {
+            let sum: u32 = 0 as u32;
+            for b in bytes {
+              sum = sum * (31 as u32) + b as u32;
+            }
+            out = out + " " + s.kind.to_string() + ":" + bytes.len().to_string() + ":" + sum.to_string();
+          },
+          Err(_) => {
+            out = out + " " + s.kind.to_string() + ":cut";
+          }
+        }
+      }
+      return out + " loads " + img.loads().len().to_string();
+    }
+  }
+}
+
+// The entries of the archive, the bytes of each one, and the count of the
+// children that a lookup by its name finds.
+function cpio_summary(raw: u8[]): string {
+  match (cpio.parse(raw)) {
+    Err(e) => {
+      return "cpio refused " + e.offset.to_string();
+    },
+    Ok(a) => {
+      let total = 0;
+      let found = 0;
+      let kids = 0;
+      for e in a.entries {
+        total += a.read(e).len();
+        if (a.find(e.name).is_some()) {
+          found += 1;
+        }
+        kids += a.children(e.name).len();
+      }
+      return "cpio ok " + a.entries.len().to_string() + " " + total.to_string() + " " + found.to_string() + " " + kids.to_string();
+    }
+  }
+}
+
+// The members of the class, and the count of the descriptors that the
+// descriptor readers take.
+function classfile_summary(raw: u8[]): string {
+  match (classfile.parse(raw[0:raw.len()])) {
+    Err(e) => {
+      return "classfile refused " + e.offset.to_string();
+    },
+    Ok(c) => {
+      let typed = 0;
+      for f in c.fields {
+        if (classfile.field_type(f.descriptor).is_some()) {
+          typed += 1;
+        }
+      }
+      for m in c.methods {
+        if (classfile.signature(m.descriptor).is_some()) {
+          typed += 1;
+        }
+      }
+      return "classfile ok " + c.version.to_string() + " " + c.interfaces.len().to_string() + " " + c.fields.len().to_string() + " " + c.methods.len().to_string() + " " + typed.to_string();
+    }
+  }
+}
+
+// The nodes of the tree, and each read of each property of each node.
+function fdt_summary(raw: u8[]): string {
+  match (fdt.parse(raw)) {
+    Err(e) => {
+      return "fdt refused " + e.offset.to_string();
+    },
+    Ok(t) => {
+      let props = 0;
+      let reads = 0;
+      for i in 0..t.nodes.len() {
+        if (t.find_name(t.nodes[i].name).is_some()) {
+          reads += 1;
+        }
+        for k in 0..4 {
+          if (t.reg(i, k).is_some()) {
+            reads += 1;
+          }
+        }
+        for p in t.nodes[i].properties {
+          props += 1;
+          reads += t.property_strings(i, p.name).len();
+          if (t.property(i, p.name).is_some() && t.property_string(i, p.name).is_some()) {
+            reads += 1;
+          }
+          if (t.property_u32(i, p.name).is_some() || t.property_cells(i, p.name).is_some()) {
+            reads += 1;
+          }
+        }
+      }
+      if (t.find_compatible("arm,pl011").is_some()) {
+        reads += 1;
+      }
+      return "fdt ok " + t.nodes.len().to_string() + " " + props.to_string() + " " + reads.to_string();
+    }
+  }
+}
+
+// The glyphs of some characters, their metrics, and a bitmap of each one.
+function truetype_summary(raw: u8[]): string {
+  let Some(f) = truetype.parse(raw[0:raw.len()]) else {
+    return "truetype refused";
+  };
+  let advance = 0;
+  let pixels = 0;
+  let last = 0;
+  for cp in [32, 65, 97, 233, 0x4e2d, 0x1f600, 0x10ffff] {
+    let g = f.glyph(cp);
+    advance += f.advance(g) + f.kerning(last, g);
+    let b = f.render(g, 12.0, 0.25);
+    pixels += b.coverage.len();
+    last = g;
+  }
+  // The glyph indexes at the two ends of the font, and one beyond it.
+  for g in [0, 1, f.glyphs - 1, f.glyphs] {
+    advance += f.advance(g);
+    pixels += f.render(g, 9.0, 0.0).coverage.len();
+  }
+  let heavy = if (f.has_axis("wght")) { f.at_axis("wght", 700.0) } else { f };
+  pixels += heavy.render(heavy.glyph(65), 12.0, 0.0).coverage.len();
+  return "truetype ok " + f.glyphs.to_string() + " " + advance.to_string() + " " + pixels.to_string();
+}
+
+// The offset and the abbreviation of the zone at times across its range.
+function tzif_summary(raw: u8[]): string {
+  match (tz.parse_tzif(raw[0:raw.len()])) {
+    Err(e) => {
+      return "tzif refused " + e.message().len().to_string();
+    },
+    Ok(z) => {
+      let sum = 0i64;
+      let names = 0;
+      for sec in [-9223372036854775807i64, -2208988800i64, -1i64, 0i64, 1i64, 1700000000i64, 4102444800i64, 9223372036854775807i64] {
+        let t = time.timestamp_from_unix(sec);
+        sum += z.offset_at(t) as i64;
+        names += z.abbrev_at(t).len();
+        if (z.is_dst_at(t)) {
+          names += 1;
+        }
+      }
+      for at in z.times {
+        sum += z.offset_at(time.timestamp_from_unix(at)) as i64;
+      }
+      return "tzif ok " + z.times.len().to_string() + " " + sum.to_string() + " " + names.to_string();
+    }
+  }
+}
+
+// A document that parses is written and read again, and the two reads must
+// give the same rows.
+function csv_summary(src: string): string {
+  match (csv.parse(src)) {
+    Err(e) => {
+      return "csv refused " + e.offset.to_string();
+    },
+    Ok(rows) => {
+      let cells = 0;
+      for r in rows {
+        cells += r.len();
+      }
+      let same = match (csv.parse(csv.serialize(rows))) {
+        Ok(again) => same_rows(rows, again),
+        Err(_) => false,
+      };
+      return "csv ok " + rows.len().to_string() + " " + cells.to_string() + " " + (if (same) { "same" } else { "different" });
+    }
+  }
+}
+
+function same_rows(a: string[][], b: string[][]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i].len() != b[i].len()) {
+      return false;
+    }
+    for k in 0..a[i].len() {
+      if (a[i][k] != b[i][k]) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 function json_summary(src: string): string {
   match (json.parse(src)) {
     Ok(_) => {
@@ -790,7 +1000,7 @@ function utf8_summary(raw: u8[]): string {
 function main(): i32 {
   let av = args();
   if (av.len() < 3) {
-    eprint("usage: stdparse http|h2|hpack|qpack|quic|frames|tls|tls-server|tls-client|tls-hello|x509|inflate|gunzip|zlib|zstd|brotli|dns|protobuf|jpeg|json|url|utf8 FILE");
+    eprint("usage: stdparse http|h2|hpack|qpack|quic|frames|tls|tls-server|tls-client|tls-hello|x509|inflate|gunzip|zlib|zstd|brotli|dns|protobuf|jpeg|elf|cpio|classfile|fdt|truetype|tzif|csv|json|url|utf8 FILE");
     return 2;
   }
   let raw: u8[] = [];
@@ -877,6 +1087,34 @@ function main(): i32 {
   }
   if (av[1] == "jpeg") {
     print(jpeg_summary(raw));
+    return 0;
+  }
+  if (av[1] == "elf") {
+    print(elf_summary(raw));
+    return 0;
+  }
+  if (av[1] == "cpio") {
+    print(cpio_summary(raw));
+    return 0;
+  }
+  if (av[1] == "classfile") {
+    print(classfile_summary(raw));
+    return 0;
+  }
+  if (av[1] == "fdt") {
+    print(fdt_summary(raw));
+    return 0;
+  }
+  if (av[1] == "truetype") {
+    print(truetype_summary(raw));
+    return 0;
+  }
+  if (av[1] == "tzif") {
+    print(tzif_summary(raw));
+    return 0;
+  }
+  if (av[1] == "csv") {
+    print(csv_summary(text_of(raw)));
     return 0;
   }
   if (av[1] == "json") {

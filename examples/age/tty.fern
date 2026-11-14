@@ -95,14 +95,132 @@ function read_password(r: Reader): Result[u8[], string] {
 // age's clearLine: a new line, then an escape sequence that erases it.
 const CLEAR_LINE: string = "\r\n\x1b[F\x1b[K";
 
+// age's printPrompt: a control character in the prompt shows as U+FFFD.
+function prompt_text(prompt: string): string {
+  return text.without_controls(prompt.as_bytes()) + " ";
+}
+
 // age's readSecret: the prompt, then a line with no echo.
 pub function read_secret(prompt: string): Result[u8[], string] {
   let t = terminal()?;
-  t.output.write(prompt + " ");
+  t.output.write(prompt_text(prompt));
   let s = read_password(t.input);
   t.output.write(CLEAR_LINE);
   close(t);
   return s;
+}
+
+// The Linux termios flags that x/term's MakeRaw clears and sets.
+const RAW_IFLAG: i64 = 1 | 2 | 8 | 0x20 | 0x40 | 0x80 | 0x100 | 0x400;
+
+const OPOST: i64 = 1;
+
+const RAW_LFLAG: i64 = 1 | 2 | 8 | 0x40 | 0x8000;
+
+const CSIZE_PARENB: i64 = 0x30 | 0x100;
+
+const CS8: i64 = 0x30;
+
+// The indexes of VTIME and VMIN in the termios array of Linux.
+const VTIME_AT: i32 = 10;
+
+const VMIN_AT: i32 = 11;
+
+// x/term's MakeRaw: no echo, no line discipline, no signals and 8-bit
+// bytes, one byte at a time.
+function make_raw(r: Reader): Result[i64[], string] {
+  let saved = match (r.termios_get()) {
+    Ok(t) => t,
+    Err(e) => {
+      return Err(text.errno_text(e));
+    },
+  };
+  let raw = saved.with(0, saved[0] & ~RAW_IFLAG).with(1, saved[1] & ~OPOST).with(3, saved[3] & ~RAW_LFLAG);
+  raw = raw.with(2, raw[2] & ~CSIZE_PARENB | CS8).with(VMIN_AT, 1i64).with(VTIME_AT, 0i64);
+  if let Err(e) = r.termios_set(0, raw) {
+    return Err(text.errno_text(e));
+  }
+  return Ok(saved);
+}
+
+// One byte from the terminal. read(2) on a terminal in raw mode waits for a
+// byte.
+function read_byte(r: Reader): Result[u8, string] {
+  loop {
+    let b = match (r.read_chunk_bytes(1)) {
+      Ok(b) => b,
+      Err(e) => {
+        return Err(text.errno_text(e));
+      },
+    };
+    if (b.len() == 1) {
+      return Ok(b[0]);
+    }
+    return Err("EOF");
+  }
+  return Err("EOF");
+}
+
+// The line editor of x/term's Terminal.ReadLine for the keys of a simple
+// line: each printable byte shows as the user types it, Backspace erases
+// the last byte, and Enter ends the line. Ctrl-C, and Ctrl-D on an empty
+// line, end the input.
+function edit_line(r: Reader, w: Writer): Result[u8[], string] {
+  let line: u8[] = [];
+  loop {
+    let c = read_byte(r)?;
+    if (c == b'\r' || c == b'\n') {
+      w.write("\r\n");
+      return Ok(line);
+    }
+    if (c == 3u8 || c == 4u8 && line.len() == 0) {
+      return Err("EOF");
+    }
+    if (c == 127u8 || c == 8u8) {
+      if (line.len() > 0) {
+        line = array.slice(line, 0, line.len() - 1);
+        w.write("\x1b[D \x1b[D");
+      }
+    } else if (c >= 32u8) {
+      line = line.append(c);
+      w.write_bytes([c]);
+    }
+  }
+  return Ok(line);
+}
+
+// age's term.ReadPublic: the prompt, then a line that the terminal shows.
+pub function read_public(prompt: string): Result[u8[], string] {
+  let t = terminal()?;
+  t.output.write(prompt_text(prompt));
+  let line = match (make_raw(t.input)) {
+    Ok(saved) => {
+      let l = edit_line(t.input, t.output);
+      t.input.termios_set(0, saved);
+      l
+    },
+    Err(why) => Err(why),
+  };
+  t.output.write(CLEAR_LINE);
+  close(t);
+  return line;
+}
+
+// age's term.ReadCharacter: the prompt, then one byte in raw mode.
+pub function read_character(prompt: string): Result[u8, string] {
+  let t = terminal()?;
+  t.output.write(prompt_text(prompt));
+  let c = match (make_raw(t.input)) {
+    Ok(saved) => {
+      let b = read_byte(t.input);
+      t.input.termios_set(0, saved);
+      b
+    },
+    Err(why) => Err(why),
+  };
+  t.output.write(CLEAR_LINE);
+  close(t);
+  return c;
 }
 
 // age's printfToTerminal.

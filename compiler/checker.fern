@@ -3467,6 +3467,8 @@ function (s: Scope) variant_ambiguous(name: string): boolean {
   if (parser.builtin_enum_of(bare).len() > 0) {
     n = 1;
   }
+  let own = false;
+  let owns_two = false;
   let last: i32 = -1;
   let e = s.unions.bhead[util.hash_bucket(bare, 4093)];
   while (e >= 0) {
@@ -3474,9 +3476,18 @@ function (s: Scope) variant_ambiguous(name: string): boolean {
     let u = s.unions.unions[o];
     if (s.unions.bnames[e] == bare && u.is_enum && o != last && enum_visible_from(u, s.fn_module)) {
       n += 1;
+      if (u.module == s.fn_module) {
+        owns_two = own;
+        own = true;
+      }
       last = o;
     }
     e = s.unions.bnext[e];
+  }
+  // The flattener gives a variant of an enum of this module the prefix of
+  // the module, so only the enums of this module can make it ambiguous.
+  if (bare != name && own) {
+    return owns_two;
   }
   return n >= 2;
 }
@@ -9835,6 +9846,13 @@ function mc_if_is_block(f: ast.StmtIf): boolean {
   return false;
 }
 
+function mc_always_runs(w: ast.StmtWhile): boolean {
+  if let ast.ExprBool(b) = w.cond {
+    return b.value;
+  }
+  return false;
+}
+
 function mc_seq(stmts: ast.Stmt[], from: i32, name: string, tname: string, structs: parser.StructDecl[], enums: parser.EnumDecl[]): (boolean, boolean, util.Diag[]) {
   let out: util.Diag[] = [];
   for i in from..stmts.len() {
@@ -9870,6 +9888,17 @@ function mc_seq(stmts: ast.Stmt[], from: i32, name: string, tname: string, struc
         }
         if (tc && (f.else_body.len() > 0 && ec || mc_if_is_block(f))) {
           return (true, false, out);
+        }
+      },
+      ast.StmtWhile(w) => {
+        // `loop` and a loop with the condition `true` run the body once or
+        // more.
+        if (mc_always_runs(w)) {
+          let (wc, wv, wd) = mc_seq(w.body, 0, name, tname, structs, enums);
+          out = util.append_diags(out, wd);
+          if (wc || wv) {
+            return (wc, wv, out);
+          }
         }
       },
       ast.StmtMatch(m) => {

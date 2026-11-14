@@ -1,0 +1,151 @@
+// The tag recipients of age 1.3: age1tag1... for a P-256 key and
+// age1tagpq1... for an ML-KEM-768 + P-256 key, with the p256tag and
+// mlkem768p256tag stanzas. A port of age's tag package. A plugin on a
+// hardware token holds the identity; unwrap is the identity of
+// age-plugin-tagtest, for the tests.
+import "std/crypto";
+import "std/crypto/hpke";
+import "std/crypto/p256";
+import "std/rand";
+import "./format";
+import "./plugin";
+import "./text";
+
+// The public key of a tag recipient: the uncompressed P-256 point, or the
+// MLKEM768-P256 public key.
+pub struct TagKey { hybrid: boolean, public: u8[] }
+
+const CLASSIC_LABEL: string = "age-encryption.org/p256tag";
+
+const HYBRID_LABEL: string = "age-encryption.org/mlkem768p256tag";
+
+function q(s: string): string {
+  return text.quote(s.as_bytes());
+}
+
+// age's NewClassicRecipient: a compressed P-256 point.
+pub function classic(data: [u8]): Result[TagKey, string] {
+  if (data.len() != 33) {
+    return Err(f"invalid tag recipient public key size {data.len()}");
+  }
+  if (data[0] != 2u8 && data[0] != 3u8) {
+    return Err("invalid tag recipient public key: invalid P256 point encoding");
+  }
+  if (!below_p(data)) {
+    return Err("invalid tag recipient public key: invalid P256 element encoding");
+  }
+  return match (p256.decompress(data)) {
+    Some(point) => Ok(TagKey { hybrid: false, public: point }),
+    None => Err("invalid tag recipient public key: invalid P256 compressed point encoding"),
+  };
+}
+
+const P_BYTES: string = "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff";
+
+// The x coordinate of a compressed point is below p.
+function below_p(data: [u8]): boolean {
+  for i in 0..32 {
+    let hi = P_BYTES[2 * i];
+    let lo = P_BYTES[2 * i + 1];
+    let p = (if (hi >= b'a') { hi - b'a' + 10u8 } else { hi - b'0' }) * 16u8 + (if (lo >= b'a') { lo - b'a' + 10u8 } else { lo - b'0' });
+    if (data[1 + i] != p) {
+      return data[1 + i] < p;
+    }
+  }
+  return false;
+}
+
+// age's NewHybridRecipient: an ML-KEM-768 encapsulation key and an
+// uncompressed P-256 point.
+pub function hybrid(data: [u8]): Result[TagKey, string] {
+  if (data.len() != hpke.MLKEM768_P256_PUBLIC_KEY_SIZE) {
+    return Err("invalid tagpq recipient public key: invalid public key size");
+  }
+  return match (hpke.mlkem768p256_check_public_key(data)) {
+    Ok(_) => Ok(TagKey { hybrid: true, public: text.copy(data) }),
+    Err(hpke.PublicKey) => Err("invalid tagpq recipient public key: mlkem: invalid polynomial encoding"),
+    Err(_) => Err("invalid tagpq recipient public key: crypto/ecdh: invalid public key"),
+  };
+}
+
+// age's tag.ParseRecipient.
+pub function parse_recipient(arg: string): Result[TagKey, string] {
+  let d = match (plugin.parse_recipient(arg)) {
+    Ok(d) => d,
+    Err(why) => {
+      return Err(f"malformed recipient {q(arg)}: {why}");
+    },
+  };
+  let k = match (d.name) {
+    "tag" => classic(d.data),
+    "tagpq" => hybrid(d.data),
+    _ => Err(f"invalid type {q(d.name)}"),
+  };
+  return match (k) {
+    Ok(k) => Ok(k),
+    Err(why) => Err(f"malformed recipient {q(arg)}: {why}"),
+  };
+}
+
+// The bytes of the recipient string: the compressed point, or the whole
+// hybrid key.
+pub function recipient_bytes(k: TagKey): u8[] {
+  return if (k.hybrid) { k.public } else { p256.compress(k.public) };
+}
+
+pub function recipient_text(k: TagKey): string {
+  return plugin.encode_recipient(if (k.hybrid) { "tagpq" } else { "tag" }, recipient_bytes(k));
+}
+
+// age's Recipient.Tag: the first 4 bytes of HKDF-Extract with the label as
+// salt, over enc and the first 4 bytes of SHA-256 of the P-256 part of the
+// recipient.
+pub function tag_of(k: TagKey, enc: [u8]): u8[] {
+  let label = if (k.hybrid) { HYBRID_LABEL } else { CLASSIC_LABEL };
+  let part = if (k.hybrid) { __bytes_into(__alloc_u8(65), 0, k.public, 1184, 65) } else { p256.compress(k.public) };
+  let rh = crypto.sha256(part);
+  let ikm = __bytes_into(__bytes_into(__alloc_u8(enc.len() + 4), 0, enc, 0, enc.len()), enc.len(), rh, 0, 4);
+  let prk = crypto.hkdf_sha256_extract(label.as_bytes(), ikm);
+  return __bytes_into(__alloc_u8(4), 0, prk, 0, 4);
+}
+
+// The stanza that wraps the file key to a tag recipient. randomness holds
+// the ML-KEM-768 message in its first 32 bytes, for a hybrid key, and a
+// candidate for the ephemeral P-256 scalar in its last 32 bytes.
+pub function wrap(file_key: [u8], k: TagKey, randomness: [u8]): Result[format.Stanza, string] {
+  let label = if (k.hybrid) { HYBRID_LABEL } else { CLASSIC_LABEL };
+  let e = if (k.hybrid) { hpke.mlkem768p256_encap_derand(k.public, randomness) } else { hpke.p256_encap_derand(k.public, randomness[32:64]) };
+  let kem = if (k.hybrid) { hpke.KEM_MLKEM768_P256 } else { hpke.KEM_P256 };
+  let sender = match (e) {
+    Ok(e) => hpke.sender_of(kem, e, label.as_bytes()),
+    Err(err) => {
+      return Err("failed to set up HPKE sender: " + err.message());
+    },
+  };
+  let (body, _) = sender.context.seal([], file_key);
+  __ct_public(sender.enc);
+  __ct_public(body);
+  let kind = if (k.hybrid) { "mlkem768p256tag" } else { "p256tag" };
+  return Ok(format.Stanza { kind: kind, args: [text.b64_raw(tag_of(k, sender.enc)), text.b64_raw(sender.enc)], body: body });
+}
+
+// The stanza for fresh randomness. A candidate scalar that is not in the
+// range of P-256 makes the randomness new.
+pub function wrap_random(file_key: [u8], k: TagKey): Result[format.Stanza, string] {
+  loop {
+    let r = rand.bytes(64);
+    __ct_secret(r);
+    if (hpke.p256_scalar_ok(r[32:64])) {
+      let st = wrap(file_key, k, r);
+      crypto.erase(r);
+      return st;
+    }
+    crypto.erase(r);
+  }
+  return Err("");
+}
+
+// age's labels of a tag recipient: "postquantum" for a hybrid key.
+pub function labels(k: TagKey): string[] {
+  return if (k.hybrid) { ["postquantum"] } else { [] };
+}

@@ -24,8 +24,12 @@ x86-64, this container:
 
 | cfold 20 | before | after | Lean | Koka |
 | --- | ---: | ---: | ---: | ---: |
-| best CPU time of seven runs, ms | 247 | 180 | 297 | 83 |
+| best CPU time of seven runs, ms | 247 | 180 | 297 | 222 |
 | page faults | 33,835 | 2,153 | | |
+
+The Koka time of cfold is with no stack limit. At the default limit of 8 MB
+the Koka program stops with a segmentation fault after 83 to 93 ms. An
+earlier version of this table gave that time.
 
 A program that prints one line takes 9 page faults before and after, and
 2,000 runs of it take the same time.

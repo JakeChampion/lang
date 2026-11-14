@@ -1,0 +1,623 @@
+// The plugin side of age's plugin protocol: Go's plugin.Plugin, for the
+// plugins of age in Fern. A plugin gives its handlers and calls run. K is the
+// key that a handler makes from the data of a recipient or an identity.
+import "std/array";
+import "./format";
+import "./goflag";
+import "./plugin";
+import "./text";
+
+// The stanzas and the labels of one recipient.
+pub struct Wrapped { stanzas: format.Stanza[], labels: string[] }
+
+// The conversation with the client. A plugin uses it to show a message, to
+// ask for a value and to ask for a confirmation. broken is true after a
+// failure of the conversation itself.
+pub struct Session { conn: plugin.Conn, broken: boolean }
+
+pub struct Handlers[K] {
+  name: string,
+  recipient: Option[(u8[]) => Result[K, string]],
+  identity_as_recipient: Option[(u8[]) => Result[K, string]],
+  identity: Option[(u8[]) => Result[K, string]],
+  wrap: (own Session, K, u8[]) => (Session, Result[Wrapped, string]),
+  unwrap: (own Session, K, format.Stanza[]) => (Session, format.Unwrapped),
+}
+
+function q(s: string): string {
+  return text.quote(s.as_bytes());
+}
+
+// Go's %q of a []string.
+pub function quoted_list(items: string[]): string {
+  let shown: string[] = [];
+  for i in items {
+    shown = shown.append(q(i));
+  }
+  return "[" + shown.join(" ") + "]";
+}
+
+// age's fatalf: the message with no newline, and exit 1.
+function fatal(msg: string): i32 {
+  stderr().write(msg);
+  return 1;
+}
+
+function no_body(st: format.Stanza, want: i32): Option[string] {
+  if (st.args.len() != want) {
+    return Some(f"{st.kind} stanza has {st.args.len()} arguments, want {want}");
+  }
+  if (st.body.len() != 0) {
+    return Some(f"{st.kind} stanza has {st.body.len()} bytes of body, want 0");
+  }
+  return None;
+}
+
+function with_body(st: format.Stanza, want: i32): Option[string] {
+  if (st.args.len() != want) {
+    return Some(f"{st.kind} stanza has {st.args.len()} arguments, want {want}");
+  }
+  if (st.body.len() == 0) {
+    return Some(f"{st.kind} stanza has 0 bytes of body, want >0");
+  }
+  return None;
+}
+
+// age's expectOk.
+function expect_ok(own s: Session): (Session, Option[string]) {
+  let (c, got) = plugin.receive(s.conn);
+  let s2 = Session { ...s, conn: c };
+  return match (got) {
+    Err(why) => (s2, Some("failed to read OK stanza: " + why)),
+    Ok(st) => if (st.kind != "ok") {
+      (s2, Some(f"expected OK stanza, got {q(st.kind)}"))
+    } else {
+      (s2, no_body(st, 0))
+    },
+  };
+}
+
+// age's expectUnsupported.
+function expect_unsupported(own s: Session): (Session, Option[string]) {
+  let (c, got) = plugin.receive(s.conn);
+  let s2 = Session { ...s, conn: c };
+  return match (got) {
+    Err(why) => (s2, Some("failed to read unsupported stanza: " + why)),
+    Ok(st) => if (st.kind != "unsupported") {
+      (s2, Some(f"expected unsupported stanza, got {q(st.kind)}"))
+    } else {
+      (s2, no_body(st, 0))
+    },
+  };
+}
+
+// A stanza, then the answer that it needs.
+function send_expecting_ok(own s: Session, st: format.Stanza, what: string): (Session, Option[string]) {
+  if let Some(why) = plugin.send(s.conn, st) {
+    return (s, Some(f"failed to write {what}: {why}"));
+  }
+  return expect_ok(s);
+}
+
+// age's writeGrease, then the unsupported answer of the client.
+function send_grease(own s: Session): (Session, Option[string]) {
+  let Some(g) = plugin.grease() else {
+    return (s, None);
+  };
+  if let Some(why) = plugin.send(s.conn, g) {
+    return (s, Some("failed to write grease: " + why));
+  }
+  return expect_unsupported(s);
+}
+
+// age's writeError: an error stanza, then the answer of the client.
+function send_error(own s: Session, args: string[], msg: string): (Session, Option[string]) {
+  if let Some(why) = plugin.send(s.conn, format.Stanza { kind: "error", args: args, body: msg.bytes() }) {
+    return (s, Some("failed to write error stanza: " + why));
+  }
+  return expect_ok(s);
+}
+
+// age's recipientError and identityError: exit 3 after the error stanza.
+function key_error(own s: Session, kind: string, index: i32, msg: string): i32 {
+  let (_, failed) = send_error(s, [kind, index.to_string()], msg);
+  return match (failed) {
+    Some(why) => fatal(why),
+    None => 3,
+  };
+}
+
+// age's readOkOrFail.
+function ok_or_fail(own s: Session): (Session, Result[format.Stanza, string]) {
+  let (c, got) = plugin.receive(s.conn);
+  let s2 = Session { ...s, conn: c };
+  let st = match (got) {
+    Ok(st) => st,
+    Err(why) => {
+      return (s2, Err("failed to read response stanza: " + why));
+    },
+  };
+  if (st.kind == "fail") {
+    return match (no_body(st, 0)) {
+      Some(why) => (s2, Err(why)),
+      None => (s2, Ok(st)),
+    };
+  }
+  if (st.kind == "ok") {
+    return (s2, Ok(st));
+  }
+  return (s2, Err(f"expected ok or fail stanza, got {q(st.kind)}"));
+}
+
+// age's fatalInteractf: the conversation is broken.
+function broken(own s: Session, msg: string): Session {
+  stderr().write(msg);
+  return Session { ...s, broken: true };
+}
+
+// One request of the plugin and the answer of the client: the ok stanza, a
+// fail that the plugin can handle, or a broken conversation.
+function ask(own s: Session, st: format.Stanza, what: string): (Session, Result[format.Stanza, string]) {
+  if let Some(why) = plugin.send(s.conn, st) {
+    let msg = f"failed to write {what}: {why}";
+    return (broken(s, msg), Err(msg));
+  }
+  let (s2, got) = ok_or_fail(s);
+  return match (got) {
+    Err(why) => (broken(s2, why), Err(why)),
+    Ok(answer) => (s2, Ok(answer)),
+  };
+}
+
+// age's Plugin.DisplayMessage.
+pub function display_message(own s: Session, message: string): (Session, Option[string]) {
+  let (s2, got) = ask(s, format.Stanza { kind: "msg", args: [], body: message.bytes() }, "msg stanza");
+  let answer = match (got) {
+    Ok(a) => a,
+    Err(why) => {
+      return (s2, Some(why));
+    },
+  };
+  if (answer.kind == "fail") {
+    return (s2, Some("client failed to display message"));
+  }
+  return match (no_body(answer, 0)) {
+    Some(why) => (broken(s2, why), Some(why)),
+    None => (s2, None),
+  };
+}
+
+// age's Plugin.RequestValue.
+pub function request_value(own s: Session, prompt: string, secret: boolean): (Session, Result[u8[], string]) {
+  let kind = if (secret) { "request-secret" } else { "request-public" };
+  let (s2, got) = ask(s, format.Stanza { kind: kind, args: [], body: prompt.bytes() }, "stanza");
+  let answer = match (got) {
+    Ok(a) => a,
+    Err(why) => {
+      return (s2, Err(why));
+    },
+  };
+  if (answer.kind == "fail") {
+    return (s2, Err("client failed to request value"));
+  }
+  if (answer.args.len() != 0) {
+    let why = f"{answer.kind} stanza has {answer.args.len()} arguments, want 0";
+    return (broken(s2, why), Err(why));
+  }
+  return (s2, Ok(answer.body));
+}
+
+// age's Plugin.Confirm.
+pub function confirm(own s: Session, prompt: string, yes: string, no: string): (Session, Result[boolean, string]) {
+  let args = [text.b64_raw(yes.as_bytes())];
+  if (no.len() > 0) {
+    args = args.append(text.b64_raw(no.as_bytes()));
+  }
+  let (s2, got) = ask(s, format.Stanza { kind: "confirm", args: args, body: prompt.bytes() }, "confirm stanza");
+  let answer = match (got) {
+    Ok(a) => a,
+    Err(why) => {
+      return (s2, Err(why));
+    },
+  };
+  if (answer.kind == "fail") {
+    return (s2, Err("client failed to request confirmation"));
+  }
+  return match (no_body(answer, 1)) {
+    Some(why) => (broken(s2, why), Err(why)),
+    None => (s2, Ok(answer.args[0] == "yes")),
+  };
+}
+
+// The stanzas of the client up to done in recipient-v1.
+struct Request { recipients: string[], identities: string[], file_keys: u8[][], labels: boolean }
+
+function read_request(own c: plugin.Conn): (plugin.Conn, Result[Request, string]) {
+  let r = Request { recipients: [], identities: [], file_keys: [], labels: false };
+  loop {
+    let (c2, got) = plugin.receive(c);
+    c = c2;
+    let st = match (got) {
+      Ok(st) => st,
+      Err(why) => {
+        return (c, Err("failed to read stanza: " + why));
+      },
+    };
+    let check = match (st.kind) {
+      "add-recipient" | "add-identity" => no_body(st, 1),
+      "extension-labels" | "done" => no_body(st, 0),
+      "wrap-file-key" => with_body(st, 0),
+      _ => None,
+    };
+    if let Some(why) = check {
+      return (c, Err(why));
+    }
+    r = match (st.kind) {
+      "add-recipient" => Request { ...r, recipients: r.recipients.append(st.args[0]) },
+      "add-identity" => Request { ...r, identities: r.identities.append(st.args[0]) },
+      "extension-labels" => Request { ...r, labels: true },
+      "wrap-file-key" => Request { ...r, file_keys: r.file_keys.append(st.body) },
+      _ => r,
+    };
+    if (st.kind == "done") {
+      return (c, Ok(r));
+    }
+  }
+  return (c, Ok(r));
+}
+
+// A key from an encoding, or the message for the client.
+function key_of[K](name: string, parsed: Result[plugin.Decoded, string], handler: Option[(u8[]) => Result[K, string]], unsupported: string): Result[K, string] {
+  let d = parsed?;
+  if (d.name != name) {
+    return Err(f"unsupported plugin name: {q(d.name)}");
+  }
+  let Some(f) = handler else {
+    return Err(unsupported);
+  };
+  return f(d.data);
+}
+
+// The keys of the recipients or the identities, or the index and the
+// message of the first one that fails.
+function keys_of[K](h: Handlers[K], encodings: string[], identities: boolean): Result[K[], (i32, string)] {
+  let out: K[] = [];
+  for i in 0..encodings.len() {
+    let k = if (identities) {
+      key_of(h.name, plugin.parse_identity(encodings[i]), h.identity_as_recipient, "identity encodings not supported")
+    } else {
+      key_of(h.name, plugin.parse_recipient(encodings[i]), h.recipient, "recipient encodings not supported")
+    };
+    match (k) {
+      Ok(key) => {
+        out = out.append(key);
+      },
+      Err(why) => {
+        return Err((i, why));
+      }
+    }
+  }
+  return Ok(out);
+}
+
+function same_labels(a: string[], b: string[]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The wraps of the file keys so far: the stanzas of the file key, the
+// labels, and the failure that stops the machine: a broken conversation, or
+// the kind and the index of a key with its message.
+struct Wraps { stanzas: format.Stanza[], labels: string[], first: boolean, broken: boolean, fail: Option[(string, i32, string)] }
+
+function wrap_all[K](h: Handlers[K], own s: Session, keys: K[], kind: string, file_key: u8[], own w: Wraps): (Session, Wraps) {
+  for j in 0..keys.len() {
+    let (s2, got) = h.wrap(s, keys[j], file_key);
+    s = s2;
+    if (s.broken) {
+      return (s, Wraps { ...w, broken: true });
+    }
+    let r = match (got) {
+      Ok(r) => r,
+      Err(why) => {
+        return (s, Wraps { ...w, fail: Some((kind, j, why)) });
+      },
+    };
+    if (w.first) {
+      w = Wraps { ...w, labels: r.labels, first: false };
+    } else if (!same_labels(r.labels, w.labels)) {
+      return (s, Wraps { ...w, fail: Some((kind, j, f"labels {quoted_list(r.labels)} do not match previous recipients {quoted_list(w.labels)}")) });
+    }
+    w = Wraps { ...w, stanzas: w.stanzas.concat(r.stanzas) };
+  }
+  return (s, w);
+}
+
+function stopped(w: Wraps): boolean {
+  return w.broken || w.fail.is_some();
+}
+
+// age's Plugin.RecipientV1.
+function recipient_v1[K](h: Handlers[K], own s: Session): i32 {
+  if (h.recipient.is_none() && h.identity_as_recipient.is_none()) {
+    return fatal("recipient-v1 not supported");
+  }
+  let (c, got) = read_request(s.conn);
+  s = Session { conn: c, broken: false };
+  let r = match (got) {
+    Ok(r) => r,
+    Err(why) => {
+      return fatal(why);
+    },
+  };
+  if (r.recipients.len() + r.identities.len() == 0) {
+    return fatal("no recipients or identities provided");
+  }
+  if (r.file_keys.len() == 0) {
+    return fatal("no file keys provided");
+  }
+  let recipients = match (keys_of(h, r.recipients, false)) {
+    Ok(k) => k,
+    Err((i, why)) => {
+      return key_error(s, "recipient", i, why);
+    },
+  };
+  let identities = match (keys_of(h, r.identities, true)) {
+    Ok(k) => k,
+    Err((i, why)) => {
+      return key_error(s, "identity", i, why);
+    },
+  };
+  let files: format.Stanza[][] = [];
+  let labels: string[] = [];
+  for i in 0..r.file_keys.len() {
+    let w = Wraps { stanzas: [], labels: labels, first: i == 0, broken: false, fail: None };
+    let (s3, w2) = wrap_all(h, s, recipients, "recipient", r.file_keys[i], w);
+    s = s3;
+    if (!stopped(w2)) {
+      let (s4, w3) = wrap_all(h, s, identities, "identity", r.file_keys[i], Wraps { ...w2, first: i == 0 && recipients.len() == 0 });
+      s = s4;
+      w2 = w3;
+    }
+    if (w2.broken) {
+      return 2;
+    }
+    if let Some((kind, j, why)) = w2.fail {
+      return key_error(s, kind, j, why);
+    }
+    labels = w2.labels;
+    files = files.append(w2.stanzas);
+  }
+  return send_result(s, files, labels, r.labels);
+}
+
+// The second half of recipient-v1: grease, the labels and the stanzas.
+function send_result(own s: Session, files: format.Stanza[][], labels: string[], with_labels: boolean): i32 {
+  let (s2, g) = send_grease(s);
+  s = s2;
+  if let Some(why) = g {
+    return fatal(why);
+  }
+  if (with_labels) {
+    let (s3, failed) = send_expecting_ok(s, format.Stanza { kind: "labels", args: labels, body: [] }, "labels stanza");
+    s = s3;
+    if let Some(why) = failed {
+      return fatal(why);
+    }
+  }
+  for i in 0..files.len() {
+    for st in files[i] {
+      let (s3, failed) = send_expecting_ok(s, format.Stanza { kind: "recipient-stanza", args: [i.to_string(), st.kind].concat(st.args), body: st.body }, "recipient-stanza");
+      s = s3;
+      if let Some(why) = failed {
+        return fatal(why);
+      }
+    }
+    let (s3, g2) = send_grease(s);
+    s = s3;
+    if let Some(why) = g2 {
+      return fatal(why);
+    }
+  }
+  if let Some(why) = plugin.send_plain(s.conn, "done", []) {
+    return fatal("failed to write done stanza: " + why);
+  }
+  return 0;
+}
+
+// The stanzas of the client up to done in identity-v1.
+struct Files { identities: string[], files: format.Stanza[][] }
+
+function file_index(arg: string, count: i32): Result[i32, string] {
+  let n = match (plugin.go_atoi(arg)) {
+    Some(n) => n,
+    None => {
+      return Err(f"failed to parse recipient-stanza stanza argument: strconv.Atoi: parsing {q(arg)}: invalid syntax");
+    },
+  };
+  if (n < 0i64 || n != count as i64 && n != (count - 1) as i64) {
+    return Err(f"unexpected file index {n}, previous was {count - 1}");
+  }
+  return Ok(n as i32);
+}
+
+function add_stanza(f: Files, st: format.Stanza): Result[Files, string] {
+  if (st.args.len() < 2) {
+    return Err(f"recipient-stanza stanza has {st.args.len()} arguments, want >=2");
+  }
+  let i = file_index(st.args[0], f.files.len())?;
+  let ss = format.Stanza { kind: st.args[1], args: array.slice(st.args, 2, st.args.len()), body: st.body };
+  if (i == f.files.len()) {
+    return Ok(Files { ...f, files: f.files.append([ss]) });
+  }
+  return Ok(Files { ...f, files: f.files.with(i, f.files[i].append(ss)) });
+}
+
+function read_files(own c: plugin.Conn): (plugin.Conn, Result[Files, string]) {
+  let f = Files { identities: [], files: [] };
+  loop {
+    let (c2, got) = plugin.receive(c);
+    c = c2;
+    let st = match (got) {
+      Ok(st) => st,
+      Err(why) => {
+        return (c, Err("failed to read stanza: " + why));
+      },
+    };
+    if (st.kind == "add-identity" || st.kind == "done") {
+      if let Some(why) = no_body(st, if (st.kind == "done") { 0 } else { 1 }) {
+        return (c, Err(why));
+      }
+    }
+    if (st.kind == "done") {
+      return (c, Ok(f));
+    }
+    if (st.kind == "add-identity") {
+      f = Files { ...f, identities: f.identities.append(st.args[0]) };
+    }
+    if (st.kind == "recipient-stanza") {
+      f = match (add_stanza(f, st)) {
+        Ok(next) => next,
+        Err(why) => {
+          return (c, Err(why));
+        },
+      };
+    }
+  }
+  return (c, Ok(f));
+}
+
+// The identities on the stanzas of one file: the first file key, the first
+// failure as an error stanza, or nothing. An exit code stops the machine.
+function unwrap_file[K](h: Handlers[K], own s: Session, ids: K[], i: i32, stanzas: format.Stanza[]): (Session, i32) {
+  for id in ids {
+    let (s2, got) = h.unwrap(s, id, stanzas);
+    s = s2;
+    if (s.broken) {
+      return (s, 2);
+    }
+    match (got) {
+      format.FileKey(k) => {
+        let (s3, failed) = send_expecting_ok(s, format.Stanza { kind: "file-key", args: [i.to_string()], body: k }, "file-key");
+        return (s3, if (failed.is_some()) { fatal(failed.unwrap_or("")) } else { 0 });
+      },
+      format.Invalid(why) | format.Missing(why, _) => {
+        let (s3, failed) = send_error(s, ["stanza", i.to_string(), "0"], why);
+        return (s3, if (failed.is_some()) { fatal(failed.unwrap_or("")) } else { 0 });
+      },
+      format.Incorrect => {}
+    }
+  }
+  return (s, 0);
+}
+
+// age's Plugin.IdentityV1.
+function identity_v1[K](h: Handlers[K], own s: Session): i32 {
+  let Some(make) = h.identity else {
+    return fatal("identity-v1 not supported");
+  };
+  let (c, got) = read_files(s.conn);
+  s = Session { conn: c, broken: false };
+  let f = match (got) {
+    Ok(f) => f,
+    Err(why) => {
+      return fatal(why);
+    },
+  };
+  if (f.identities.len() == 0) {
+    return fatal("no identities provided");
+  }
+  if (f.files.len() == 0) {
+    return fatal("no stanzas provided");
+  }
+  let ids: K[] = [];
+  for i in 0..f.identities.len() {
+    match (key_of(h.name, plugin.parse_identity(f.identities[i]), Some(make), "identity encodings not supported")) {
+      Ok(k) => {
+        ids = ids.append(k);
+      },
+      Err(why) => {
+        return key_error(s, "identity", i, why);
+      }
+    }
+  }
+  for i in 0..f.files.len() {
+    let (s3, g) = send_grease(s);
+    s = s3;
+    if let Some(why) = g {
+      return fatal(why);
+    }
+    let (s4, code) = unwrap_file(h, s, ids, i, f.files[i]);
+    s = s4;
+    if (code != 0) {
+      return code;
+    }
+  }
+  if let Some(why) = plugin.send_plain(s.conn, "done", []) {
+    return fatal("failed to write done stanza: " + why);
+  }
+  return 0;
+}
+
+// age's Plugin.Main for the state machine of --age-plugin.
+pub function serve[K](h: Handlers[K], machine: string): i32 {
+  let s = Session { conn: plugin.conn_of(stdin(), stdout(), h.name), broken: false };
+  if (machine == "recipient-v1") {
+    return recipient_v1(h, s);
+  }
+  if (machine == "identity-v1") {
+    return identity_v1(h, s);
+  }
+  stderr().write("unknown state machine " + q(machine));
+  return 4;
+}
+
+// The version that each command of the port prints.
+pub const VERSION: string = "v1.3.2-fern";
+
+// The flags of a plugin with the flags of age's plugin package: the state
+// machine and -version. The result is the flags of the command line, or the
+// exit code after the usage or a bad flag.
+pub function flags(names: goflag.Names, usage: string, args: string[]): Result[goflag.Flag[], i32] {
+  let all = goflag.Names { bools: names.bools.append("version"), values: names.values.append("age-plugin") };
+  return match (goflag.parse(all, args)) {
+    goflag.Help => {
+      eprint(usage);
+      Err(0)
+    },
+    goflag.Bad(why) => {
+      eprint(why);
+      eprint(usage);
+      Err(2)
+    },
+    goflag.Run(f, _) => Ok(f),
+  };
+}
+
+// The value of --age-plugin, and true for -version.
+pub function machine_of(flags: goflag.Flag[]): (string, boolean) {
+  let machine = "";
+  let version = false;
+  for f in flags {
+    match (f) {
+      goflag.ValueFlag(name, v) => {
+        if (name == "age-plugin") {
+          machine = v;
+        }
+      },
+      goflag.BoolFlag(name, v) => {
+        if (name == "version") {
+          version = v;
+        }
+      }
+    }
+  }
+  return (machine, version);
+}

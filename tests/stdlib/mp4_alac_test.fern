@@ -1,4 +1,5 @@
 import "std/audio/mp4/alac";
+import "std/audio/mp4/file";
 import "std/test";
 import "aac_kernel_check" as ref;
 import "mp4_alac_vectors";
@@ -72,9 +73,91 @@ function streams(): test.TestOutcome {
   return test.assert_eq(whole.to_string(), "43");
 }
 
+// The seek and the read of a source over `bytes`. The read gives at most
+// 7 bytes at a time, so the index needs many short reads.
+function reader(bytes: u8[]): ((i64) => Result[i64, IoError], (i32) => Result[u8[], IoError]) {
+  let at: Cell[i64] = cell_new(0i64);
+  let seek = (offset: i64): Result[i64, IoError] => {
+    at.set(offset);
+    return Ok(offset);
+  };
+  let read = (count: i32): Result[u8[], IoError] => {
+    let from = at.get() as i32;
+    let end = (from + count.min(7)).min(bytes.len());
+    let out: u8[] = [];
+    for i in from..end {
+      out = out.append(bytes[i]);
+    }
+    at.set(end as i64);
+    return Ok(out);
+  };
+  return (seek, read);
+}
+
+// An index from a source has the tracks of an index from the whole file,
+// and each packet decodes from its own bytes to the same samples.
+// fern-lint: allow cyclomatic-complexity
+function sources(): test.TestOutcome {
+  let count = 0;
+  for vector in mp4_alac_vectors.all() {
+    let Ok(encoded) = ref.unpack(vector.encoded) else {
+      return test.fail("encoded reference");
+    };
+    let (seek, read) = reader(encoded);
+    let index = match (file.inspect_alac_with(encoded.len() as i64, seek, read, file.default_limits())) { Ok(value) => value, Err(e) => { return test.fail(vector.name + ": inspect: " + e.message()); } };
+    let whole = match (alac.inspect(encoded, alac.default_limits())) { Ok(value) => value, Err(e) => { return test.fail(vector.name + ": inspect whole: " + e.message()); } };
+    let (Ok(a), Ok(b)) = (index.information(0), whole.information(0)) else {
+      return test.fail(vector.name + ": track information");
+    };
+    if (index.track_count() != whole.track_count() || a.packets != b.packets || a.format.channels != b.format.channels || a.format.bits_per_sample != b.format.bits_per_sample || a.channel_mask != b.channel_mask) {
+      return test.fail(vector.name + ": metadata");
+    }
+    let limits = alac.default_limits().audio;
+    let (Ok(s), Ok(t)) = (index.stream(0, limits), whole.stream(0, limits)) else {
+      return test.fail(vector.name + ": stream");
+    };
+    for n in 0..a.packets {
+      let packet = match (s.packet(n)) { Ok(value) => value, Err(e) => { return test.fail(vector.name + ": place " + n.to_string() + ": " + e.message()); } };
+      let at = packet.offset as i32;
+      let own_bytes: u8[] = [];
+      for i in at..at + packet.bytes {
+        own_bytes = own_bytes.append(encoded[i]);
+      }
+      let (next, samples) = match (s.decode_bytes(own_bytes, limits)) { Ok(value) => value, Err(e) => { return test.fail(vector.name + ": packet " + n.to_string() + ": " + e.message()); } };
+      let (after, expected) = match (t.decode_packet(encoded, n, limits)) { Ok(value) => value, Err(e) => { return test.fail(vector.name + ": whole packet " + n.to_string() + ": " + e.message()); } };
+      if (samples != expected) {
+        return test.fail(vector.name + ": samples of packet " + n.to_string());
+      }
+      s = next;
+      t = after;
+    }
+    count += 1;
+  }
+  if (!other_places_refused()) {
+    return test.fail("a packet number out of range has a place");
+  }
+  return test.assert_eq(count.to_string(), "44");
+}
+
+// A packet number out of range has no place.
+function other_places_refused(): boolean {
+  let vector = mp4_alac_vectors.all()[0];
+  let Ok(encoded) = ref.unpack(vector.encoded) else {
+    return false;
+  };
+  let Ok(index) = alac.inspect(encoded, alac.default_limits()) else {
+    return false;
+  };
+  let Ok(s) = index.stream(0, alac.default_limits().audio) else {
+    return false;
+  };
+  return s.packet(-1).is_err() && s.packet(s.information().packets).is_err() && s.packet(0).is_ok();
+}
+
 function main(): i32 {
   let runner = test.new("Independent integer M4A ALAC playback");
   runner = runner.it("44 independent container and packet references, depths, layouts, clocks, and final short packets", references);
   runner = runner.it("a stream decodes one packet at a time", streams);
+  runner = runner.it("an index from a source decodes each packet from its own bytes", sources);
   return runner.finish();
 }

@@ -59,15 +59,15 @@ function physical_mutation(f: ssa.SFunc, mode: i32): ssa.SFunc {
   let hits = 0;
   for op in f.blocks[0].insts {
     let changed = op;
-    if (mode == 0 && op.kind_tag == 48) {
-      changed = ssa.SInst { ...op, imm: 1 };
+    if (mode == 0 && op.kind_tag == ssa.ARR_BOX) {
+      changed = ssa.SInst { ...op, imm: op.imm + 1 };
       hits += 1;
-    } else if (mode == 1 && op.kind_tag == 46) {
+    } else if (mode == 1 && op.kind_tag == ssa.SHAPE_ADDR) {
       changed = ssa.SInst { ...op, str: "Other" };
       hits += 1;
-    } else if (mode >= 2 && op.kind_tag == 41 && op.imm == 8) {
+    } else if (mode >= 2 && op.kind_tag == ssa.ST_AT && op.imm == 8) {
       if (mode == 2) {
-        changed = ssa.SInst { ...op, kind_tag: 1, args: [], imm: 0 };
+        changed = ssa.SInst { ...op, kind_tag: ssa.CONST_INT, args: [], imm: 0 };
       } else if (mode == 3) {
         changed = ssa.SInst { ...op, imm: 16 };
       } else if (mode == 4) {
@@ -77,7 +77,7 @@ function physical_mutation(f: ssa.SFunc, mode: i32): ssa.SFunc {
         changed = ssa.SInst { ...op, result: f.nvals };
       } else {
         ops = ops.append(op);
-        changed = ssa.SInst { kind_tag: 7, result: f.nvals, args: [op.result], imm: 0, str: "" };
+        changed = ssa.SInst { kind_tag: ssa.COPY, result: f.nvals, args: [op.result], imm: 0, str: "" };
       }
       hits += 1;
     }

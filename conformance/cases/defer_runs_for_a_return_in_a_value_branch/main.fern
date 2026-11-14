@@ -1,0 +1,57 @@
+// A `return` in a branch of a value `match`, a value `if` or a value block
+// leaves the function, so each `defer` of the function runs first.
+function a(n: i32): i32 {
+  defer print("a-defer");
+  let w: i32 = match (n) { 2 => { return 200; }, _ => 1 };
+  return w;
+}
+
+function b(n: i32): i32 {
+  defer print("b-defer");
+  let w: i32 = if (n == 2) { return 200; } else { 1 };
+  return w;
+}
+
+function c(n: i32): i32 {
+  defer print("c-defer");
+  let w: i32 = {
+    if (n == 2) {
+      return 200;
+    }
+    1
+  };
+  return w;
+}
+
+function d(n: i32): i32 {
+  defer print("d-defer");
+  return match (n) { 2 => { return 200; }, _ => 1 };
+}
+
+function e(o: Option[i32]): i32 {
+  defer print("e-defer");
+  let v = match (o) { Some(x) => x, None => { return -1; } };
+  return v + 1;
+}
+
+function f(n: i32): i32 {
+  defer print("f-defer");
+  let w: i32 = { let k = n; if (k == 2) { match (k) { 2 => { return 7; }, _ => 0 } } else if (k == 3) { return 8; } else { 1 } };
+  return w;
+}
+
+function main(): i32 {
+  print(a(2).to_string());
+  print(a(1).to_string());
+  print(b(2).to_string());
+  print(b(1).to_string());
+  print(c(2).to_string());
+  print(d(2).to_string());
+  print(d(1).to_string());
+  print(e(None).to_string());
+  print(e(Some(4)).to_string());
+  print(f(2).to_string());
+  print(f(3).to_string());
+  print(f(1).to_string());
+  return 0;
+}

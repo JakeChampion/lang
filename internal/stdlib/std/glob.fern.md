@@ -23,7 +23,7 @@ A compiled glob tests a literal pattern, a base name, or the suffix of a base na
 
 A match tests the pattern against the complete input. Callers that require filesystem expansion must enumerate paths separately.
 
-`compile` returns a `GlobError` for a class or a group that is not closed, and for nested groups. It also returns one for a range whose end is before its start, and for a `\` at the end. Its `message` is that of ripgrep.
+`compile` returns a `GlobError` for a class or a group that is not closed, for a `}` with no group open, and for nested groups. The groups of one glob can give 4096 combinations at most, and `compile` returns a `GlobError` for more. It also returns one for a range whose end is before its start, and for a `\` at the end. Its `message` is that of ripgrep.
 
 ## Executable example
 
@@ -442,7 +442,10 @@ function __glob_class_at(p: GlobParse, pattern: string): Result[GlobParse, GlobE
 }
 
 // A `}`: the open alternatives become one group.
-function __glob_close_group(p: GlobParse): GlobParse {
+function __glob_close_group(p: GlobParse, pattern: string): Result[GlobParse, GlobError] {
+  if (p.stack.len() <= 1) {
+    return Err(__glob_err(pattern, "unopened alternate group; use '[}]' to match an unopened alternate group"));
+  }
   let alts: GlobTok[][] = [];
   for k in 1..p.stack.len() {
     if (p.stack[k].len() > 0) {
@@ -450,7 +453,7 @@ function __glob_close_group(p: GlobParse): GlobParse {
     }
   }
   let q = GlobParse { ...p, stack: [p.stack[0]], groups: p.groups.append(alts), at: p.at + 1 };
-  return __glob_push(q, GLOB_GROUP, p.groups.len());
+  return Ok(__glob_push(q, GLOB_GROUP, p.groups.len()));
 }
 
 function __glob_escape_at(p: GlobParse, pattern: string, opts: GlobOptions): Result[GlobParse, GlobError] {
@@ -487,33 +490,51 @@ function __glob_step(p: GlobParse, pattern: string, opts: GlobOptions): Result[G
     b'*' => Ok(__glob_star_at(p, pattern)),
     b'[' => __glob_class_at(p, pattern),
     b'{' => __glob_open(p, pattern),
-    b'}' => Ok(__glob_close_group(p)),
+    b'}' => __glob_close_group(p, pattern),
     b',' => Ok(__glob_comma(p)),
     b'\\' => __glob_escape_at(p, pattern, opts),
     _ => Ok(GlobParse { ...__glob_push(p, GLOB_LIT, c as i32), at: p.at + 1 }),
   };
 }
 
-// The token lists of each variant: one choice for each group.
-function __glob_variants(tokens: GlobTok[], groups: GlobTok[][][]): GlobTok[][] {
-  let empty: GlobTok[] = [];
-  let out: GlobTok[][] = [empty];
+// The most variants of one glob. Each group multiplies the count, so a
+// pattern of 24 groups of two would have 16777216.
+const GLOB_MAX_VARIANTS: i32 = 4096;
+
+// The count of the variants of `tokens`, or None for more than
+// GLOB_MAX_VARIANTS.
+function __glob_variant_count(tokens: GlobTok[], groups: GlobTok[][][]): Option[i32] {
+  let n = 1;
   for t in tokens {
-    if (t.kind != GLOB_GROUP) {
-      let next: GlobTok[][] = [];
-      for v in out {
-        next = next.append(v.append(t));
+    if (t.kind == GLOB_GROUP && groups[t.arg].len() > 0) {
+      n *= groups[t.arg].len();
+      if (n > GLOB_MAX_VARIANTS) {
+        return None;
       }
-      out = next;
-    } else if (groups[t.arg].len() > 0) {
-      let next: GlobTok[][] = [];
-      for v in out {
-        for alt in groups[t.arg] {
-          next = next.append(array.concat(v, alt));
+    }
+  }
+  return Some(n);
+}
+
+// The token lists of the `count` variants: one choice for each group, with
+// the choices of the first group in order.
+function __glob_variants(tokens: GlobTok[], groups: GlobTok[][][], count: i32): GlobTok[][] {
+  let out: GlobTok[][] = [];
+  for i in 0..count {
+    let v: GlobTok[] = [];
+    let stride = count;
+    for t in tokens {
+      if (t.kind != GLOB_GROUP) {
+        v = v.append(t);
+      } else if (groups[t.arg].len() > 0) {
+        let alts = groups[t.arg];
+        stride /= alts.len();
+        for a in alts[i / stride % alts.len()] {
+          v = v.append(a);
         }
       }
-      out = next;
     }
+    out = out.append(v);
   }
   return out;
 }
@@ -611,8 +632,11 @@ pub function compile(pattern: string, opts: GlobOptions): Result[Glob, GlobError
   if (p.stack.len() > 1) {
     return Err(__glob_err(pattern, "unclosed alternate group; missing '}' (maybe escape '{' with '[{]'?)"));
   }
+  let Some(count) = __glob_variant_count(p.stack[0], p.groups) else {
+    return Err(__glob_err(pattern, f"more than {GLOB_MAX_VARIANTS} alternates"));
+  };
   let variants: GlobVariant[] = [];
-  for v in __glob_variants(p.stack[0], p.groups) {
+  for v in __glob_variants(p.stack[0], p.groups, count) {
     variants = variants.append(__glob_variant(v, opts.literal_separator));
   }
   return Ok(Glob { variants: variants, classes: p.classes, fold: opts.case_insensitive, sep: opts.literal_separator });

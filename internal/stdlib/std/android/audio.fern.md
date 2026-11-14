@@ -20,6 +20,8 @@ The module needs API level 28, for the usage, the content type and the input pre
 
 `buffered` gives a `Buffered` stream: a music stream that does not take its samples from the thread of the app. It has a ring of one second of sound in memory. `write` puts samples in the ring and does not wait. The audio thread of the device takes them from the ring through the data callback of AAudio, `music_data`. So a frame of the app that takes half a second does not stop the sound.
 
+The device keeps only a twentieth of a second of the sound in its own buffer. So the sound stops at once on `pause`, and `queued` is near the frames of the ring.
+
 A `Music` stream suits a player that keeps its sound in time with a picture, because its buffer is short. A `Buffered` stream suits a music player.
 
 The callback is a `@norc` function: it touches no heap and takes no lock, so it runs while the thread of the app runs Fern code. It shares the ring with that thread through the atomics. Only the app moves the write position, and only the callback moves the read position. `flush` sets a mark that the callback moves the read position to, so the callback skips the samples that the ring holds.
@@ -222,7 +224,9 @@ function open_stream(input: boolean, rate: i32, usage: i32, channels: i32, conte
     if (opened != 0) {
       return 0 as usize;
     }
-    let sized: i32 = c_set_buffer_size(stream, c_buffer_capacity(stream));
+    // A stream with a ring keeps a short buffer: the ring holds the sound.
+    let size = if (ring == 0 as usize) { c_buffer_capacity(stream) } else { c_sample_rate(stream) / RING_LATENCY };
+    let sized: i32 = c_set_buffer_size(stream, size);
     return stream;
   }
 }
@@ -444,6 +448,10 @@ const DATA_AT: i32 = 48;
 // The frames of the samples that the device played, which the ring keeps
 // for `recent`.
 pub const HISTORY: i32 = 2048;
+
+// A stream with a ring keeps a buffer of a part of a second in the device:
+// a twentieth.
+const RING_LATENCY: i32 = 20;
 
 @callback("music_data")
 function music_data_entry(): usize;

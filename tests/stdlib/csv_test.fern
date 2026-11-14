@@ -124,6 +124,19 @@ function test_doc_empty_and_trailing_field(): test.TestOutcome {
   return test.assert_eq_array(__csv_rows("a,")[0], ["a", ""]);
 }
 
+// A record of one empty field is not an empty line, which a reader takes
+// for no record at the end of a document.
+function test_serialize_keeps_an_empty_record(): test.TestOutcome {
+  let alone: string[][] = [[""]];
+  let last: string[][] = [["a"], [""]];
+  let first: string[][] = [[""], ["a"]];
+  let got = __csv_rows(csv.serialize(alone)).len().to_string() + " " + __csv_rows(csv.serialize(last)).len().to_string() + " " + __csv_rows(csv.serialize(first)).len().to_string();
+  if (got != "1 2 2") {
+    return test.fail("the row counts are " + got);
+  }
+  return test.assert_eq_array(__csv_rows(csv.serialize(last))[1], [""]);
+}
+
 function test_doc_serialize_roundtrip(): test.TestOutcome {
   let rows: string[][] = [["x", "y,z"], ["1", "two\nlines"]];
   let back = __csv_rows(csv.serialize(rows));
@@ -238,6 +251,7 @@ function main(): i32 {
   r = r.it("doc CRLF + trailing", test_doc_crlf_and_trailing);
   r = r.it("doc empty + trailing fld", test_doc_empty_and_trailing_field);
   r = r.it("doc serialize roundtrip", test_doc_serialize_roundtrip);
+  r = r.it("serialize keeps a record of one empty field", test_serialize_keeps_an_empty_record);
   r = r.it("malformed fields", test_malformed_fields);
   r = r.it("single record boundary", test_single_record_boundary);
   r = r.it("document error offset", test_document_error_offset);

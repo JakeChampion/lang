@@ -1,0 +1,49 @@
+// The status of a task says that the task is done or parked. A program that
+// drops the status of a parked task leaves the task with no scheduler, so
+// its `defer` blocks never run. A `while` with a condition can run no times,
+// so a status that only its body takes is not consumed.
+
+import "std/async";
+
+function work(): i32 {
+  return 7;
+}
+
+function dropped(): i32 {
+  let t = async.task_new(work);
+  async.task_start(t);
+  return 0;
+}
+
+function held(n: i32): i32 {
+  let t = async.task_new(work);
+  let st = async.task_start(t);
+  while (n > 0) {
+    match (st) {
+      Done(v) => {
+        return v;
+      },
+      Suspended(_) => {
+        return 0;
+      }
+    }
+  }
+  return 1;
+}
+
+function cancelled(): i32 {
+  let t = async.task_new(work);
+  match (async.task_start(t)) {
+    Done(v) => {
+      return v;
+    },
+    Suspended(_) => {
+      async.task_cancel(t);
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  return dropped() + held(1) + cancelled();
+}

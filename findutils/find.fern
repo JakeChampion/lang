@@ -1119,6 +1119,12 @@ function time_of(st: FileStat, which: i32): (i64, i64) {
   return (st.mtime, st.mtime_nsec);
 }
 
+// Only Darwin gives a birth time, and there a time of 0 or a nanosecond count
+// out of range means that the file system keeps none.
+function birth_known(st: FileStat): boolean {
+  return target_os() == "darwin" && st.btime != 0 as i64 && st.btime_nsec >= 0 as i64 && st.btime_nsec < 1000000000 as i64;
+}
+
 // The stat of a reference file of -newer, -samefile and the others.
 function ref_stat(ps: Parser, f: string): FileStat {
   match (stat_entry(ps.o.follow != FOLLOW_NEVER, f)) {
@@ -1142,8 +1148,9 @@ function newer_xy(own ps0: Parser, name: string): Parser {
   let x = time_letter(name[6] as i32);
   let y = time_letter(name[7] as i32);
   let literal = name[7] == b't';
-  if (x < 0 || y < 0 && !literal || x == TIME_B || y == TIME_B) {
-    if (x == TIME_B || y == TIME_B) {
+  let no_birth = target_os() != "darwin" && (x == TIME_B || y == TIME_B);
+  if (x < 0 || y < 0 && !literal || no_birth) {
+    if (no_birth) {
       gnu.error("This system does not provide a way to find the birth time of a file.");
     }
     fail("invalid predicate " + "`" + name + "'");
@@ -1160,6 +1167,9 @@ function newer_xy(own ps0: Parser, name: string): Parser {
     return add_node(ps, Node { ...node(P_NEWER), a: x, num: r.sec, num2: r.nsec }, name);
   }
   let st = ref_stat(ps, f);
+  if (y == TIME_B && !birth_known(st)) {
+    fail("Cannot obtain birth time of file " + q(f));
+  }
   let (sec, nsec) = time_of(st, y);
   return add_node(ps, Node { ...node(P_NEWER), a: x, num: sec, num2: nsec }, name);
 }
@@ -2330,7 +2340,10 @@ function stat_dir(p: Prog, own r0: Run, d: Piece): (string, Run) {
     return (pad_text(d, ctime_text(p, sec, nsec)), r);
   }
   if (c == 66) {
-    return (pad_text(d, ""), r);
+    if (!birth_known(st)) {
+      return (pad_text(d, ""), r);
+    }
+    return (pad_text(d, time_text(p, st.btime, st.btime_nsec, d.sub)), r);
   }
   if (c == 65 || c == 67 || c == 84) {
     let which2 = if (c == 65) { TIME_A } else if (c == 67) { TIME_C } else { TIME_M };
@@ -2848,6 +2861,10 @@ function eval_stat_test(p: Prog, n: Node, own r0: Run): Run {
     return set_ok(r, eval_perm(n, st.mode));
   }
   if (k == P_NEWER) {
+    if (n.a == TIME_B && !birth_known(st)) {
+      gnu.error("WARNING: cannot determine birth time of file " + q(r.e.path));
+      return set_ok(r, false);
+    }
     let (sec, nsec) = time_of(st, n.a);
     return set_ok(r, time_after(sec, nsec, n.num, n.num2));
   }

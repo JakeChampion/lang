@@ -1,0 +1,48 @@
+// A `loop`, and a `while` with the condition `true`, run the body once or
+// more. A @must_consume value that the body consumes on each path is
+// consumed. The body can then assign a new value to the same local.
+
+@must_consume
+enum Step { More(i32), Last(i32) }
+
+function step(n: i32): Step {
+  if (n >= 3) {
+    return Last(n * 10);
+  }
+  return More(n + 1);
+}
+
+function with_while(): i32 {
+  let s = step(0);
+  while (true) {
+    match (s) {
+      Last(v) => {
+        return v;
+      },
+      More(n) => {
+        s = step(n);
+      }
+    }
+  }
+  return 0 - 1;
+}
+
+function with_loop(): i32 {
+  let s = step(1);
+  loop {
+    match (s) {
+      Last(v) => {
+        return v + 1;
+      },
+      More(n) => {
+        s = step(n);
+      }
+    }
+  }
+}
+
+function main(): i32 {
+  print(with_while());
+  print(with_loop());
+  return 0;
+}

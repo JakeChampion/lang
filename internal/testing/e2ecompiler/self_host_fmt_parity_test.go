@@ -2169,6 +2169,80 @@ function w(k: i32): i32 {
 
 function main(): i32 { return 0; }
 `},
+	{"enum-with-a-variant-declared-twice", `enum Status {
+  Ok,
+  Err(string),
+  Ok(i32),
+  Ok,
+}
+
+function main(): i32 { return 0; }
+`},
+	{"enum-declared-twice", `@derive(Eq)
+enum E { A }
+
+struct P { x: i32 }
+
+enum E { B(i32), A { n: i32, s: string } }
+
+function main(): i32 { return 0; }
+`},
+	{"value-block-with-no-tail", `function main(): i32 {
+  let x: i32 = {
+    let a: i32 = 1;
+    a + 1;
+  };
+  let y: i32 = { print("a"); };
+  return x + y;
+}
+`},
+	{"defer-block-with-a-compound-statement", `function main(): i32 {
+  let n = 0;
+  defer { for k in 0..3 { n = n + 1; } }
+  defer { print("x"); print("y"); }
+  errdefer {
+    if (n > 0) { print("z"); }
+    while (n < 3) { n = n + 1; }
+  }
+  if (n == 0) {
+    defer { if (n > 0) { print("w"); } }
+  }
+  return n;
+}
+`},
+	{"record-patterns-stay-as-written", `enum Shape { Circle { r: i32 }, Rect { w: i32, h: i32 }, Tagged { tag: Option[i32], depth: i32 } }
+
+function area(s: Shape): i32 {
+  if let Rect { w: ww, .. } = s {
+    return ww;
+  }
+  match (s) {
+    Circle { r } => { return r; },
+    Rect { h, .. } => { return h; },
+    Tagged { tag: Some(t), depth: d } => { return t + d; },
+    Tagged { .. } => { return 0; },
+  }
+}
+
+function first(o: Option[Shape]): i32 {
+  return match (o) {
+    Some(Rect { w: ww, .. }) => ww,
+    Some(Circle { r: radius }) => radius,
+    _ => 0,
+  };
+}
+
+function main(): i32 { return area(Circle(2)) + first(None); }
+`},
+	{"type-arguments-with-a-trailing-comma", `function id[T](x: T): T { return x; }
+function first[A, B](a: A, b: B): A { return a; }
+
+function main(): i32 {
+  let one = id[i64,](1);
+  let two = first[i64, string,](2, "s",);
+  return (one + two) as i32;
+}
+`},
 }
 
 func typeChecks(src string) error {

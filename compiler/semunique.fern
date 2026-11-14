@@ -88,9 +88,11 @@ function wanted(f: ssasem.Func, phi: ssa.SInst, e: i32, hi: i32): boolean {
 // need a retain first, so the check would copy it although a push on a sole
 // borrowed array works in place. A push, a with or a concat on a borrowed
 // array, or a call lent one, may return that same buffer written in place, so
-// the walk follows them to their roots, visiting each value once. Only an
-// owned parameter, a field of one, or an array the function made from owned
-// arrays is checked.
+// the walk follows them to their roots, visiting each value once. It also
+// follows each input of a phi: a value that an outer loop carries is owned
+// when each input is owned. An inlined callee leaves its owned parameter as
+// such a phi. Only an owned parameter, a field of one, or an array the
+// function made from owned arrays is checked.
 function owned_entry(f: ssasem.Func, modes: i32[], e: i32): boolean {
   let seen = __alloc_bool(f.values.len());
   let frontier: i32[] = [e];
@@ -104,6 +106,10 @@ function owned_entry(f: ssasem.Func, modes: i32[], e: i32): boolean {
       let d = def_of(f, v);
       if ((d.kind_tag == ssasem.record_get() || keeps_receiver(d)) && d.args.len() > 0) {
         next = next.append(d.args[0]);
+        continue;
+      }
+      if (d.kind_tag == ssa.PHI) {
+        next = util.append_all(next, d.args);
         continue;
       }
       if (d.kind_tag == ssasem.param()) {

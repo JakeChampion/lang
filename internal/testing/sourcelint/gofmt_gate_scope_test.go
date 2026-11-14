@@ -19,6 +19,16 @@ func TestGofmtGateReadsGitsFileSetNotTheDirectory(t *testing.T) {
 
 	const misformatted = "package p\n\nfunc  Bad( ) int {\nreturn 1\n}\n"
 
+	// A git hook runs this test with GIT_DIR set. Each command must use the
+	// scratch repository, so a decoy that is not a repository makes a leak fail.
+	decoy := filepath.Join(t.TempDir(), "not-a-repository")
+	if err := os.WriteFile(decoy, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_DIR", decoy)
+	t.Setenv("GIT_WORK_TREE", t.TempDir())
+	t.Setenv("GIT_INDEX_FILE", decoy)
+
 	for _, tc := range []struct {
 		name           string
 		rel            string
@@ -37,6 +47,7 @@ func TestGofmtGateReadsGitsFileSetNotTheDirectory(t *testing.T) {
 				t.Helper()
 				cmd := exec.Command(name, arg...)
 				cmd.Dir = dir
+				cmd.Env = gitEnv()
 				if out, err := cmd.CombinedOutput(); err != nil {
 					t.Fatalf("%s %v: %v\n%s", name, arg, err, out)
 				}
@@ -70,6 +81,7 @@ func TestGofmtGateReadsGitsFileSetNotTheDirectory(t *testing.T) {
 
 			cmd := exec.Command("bash", gate)
 			cmd.Dir = dir
+			cmd.Env = gitEnv()
 			out, err := cmd.CombinedOutput()
 			failed := err != nil
 

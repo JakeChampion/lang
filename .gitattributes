@@ -2,9 +2,9 @@
 
 # Merge behaviour for the append-only REGISTRIES.
 #
-# A registry here is one line per subject, sorted, with no prose between the
-# rows: the conformance leak census (598 rows) and the self-host rejection
-# gaps. Over the last 40 commits the census took 297 insertions to 144
+# A registry here is one line per subject, sorted: the conformance leak census
+# and the self-host rejection gaps. The only prose between the rows of the
+# census is the reason above a row that is not zero. Over the last 40 commits the census took 297 insertions to 144
 # deletions — it is overwhelmingly APPENDED to, by every PR that adds a
 # conformance fixture, and it is touched by roughly a quarter of all commits.
 #
@@ -25,8 +25,6 @@
 # and is not. Its 15 rows change by RE-MEASUREMENT, not by appending, so
 # both-sides-differ is the COMMON case there rather than the rare one — and the
 # right resolution is neither side but a fresh measurement of the merged tree.
-# Its 300 comment lines are the narrative attributing each figure to the commit
-# that moved it, which union would interleave into two PRs' notes at once.
 #
 # No test enforces that exclusion, and a shape check cannot: this file and the
 # leak census are both a comment header followed by data rows, so nothing
