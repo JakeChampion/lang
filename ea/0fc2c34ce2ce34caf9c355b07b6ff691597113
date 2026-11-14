@@ -391,3 +391,14 @@ profile/x86-64-linux/startup.minimal.ir	79
 profile/x86-64-linux/startup.safe.bytes	2096
 profile/x86-64-linux/startup.safe.emit	277
 profile/x86-64-linux/startup.safe.ir	79
+
+# lane: bootstrap-arm64-darwin
+bootstrap/arm64-darwin/stage1.wall_s	101
+bootstrap/arm64-darwin/stage1.peak_rss_mb	2843
+bootstrap/arm64-darwin/stage1.size_bytes	19288753
+bootstrap/arm64-darwin/stage2.wall_s	74
+bootstrap/arm64-darwin/stage2.peak_rss_mb	2651
+bootstrap/arm64-darwin/stage2.size_bytes	19338289
+bootstrap/arm64-darwin/stage3.wall_s	80
+bootstrap/arm64-darwin/stage3.peak_rss_mb	2425
+bootstrap/arm64-darwin/stage3.size_bytes	19338289
