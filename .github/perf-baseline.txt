@@ -11,6 +11,11 @@
 # utf8_ingest_unchecked.ir -2.4% and utf8_ingest_validated.ir -1.5%. The code that main and
 # #15784 emit for rbtree_ck, string_slice and tokenize is the same byte for byte on arm64,
 # so these are values of main. Each row moves to its measured value. Keep all tolerances.
+# 2026-11-14: PR #15811, perf-x86_64 job 132328927242 and perf-aarch64 job 132328927290 on the merge
+# with main 8ce8fde7. perceus_rbtree_ck grows on both hosts (.ir +29.1% x86_64 and +31.5% aarch64,
+# .text +7.7%): 089d854d (#15780) makes the benchmark keep each checkpoint tree, so the workload now
+# copies a path after each kept tree. aarch64/http_hello.text falls 1.1%. These are values of main.
+# Each row moves to its measured value. Keep all tolerances.
 # 2026-11-14: PR #15790 at 2bba0641, on the merge with main 8ce8fde7: perf-x86_64 job 132329458814
 # and perf-aarch64 job 132329458736. 1 rows are off the pins that main and this PR set apart.
 # Each moves to its measured value. Keep all tolerances.

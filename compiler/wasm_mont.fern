@@ -1,0 +1,85 @@
+import "./wasm_aes";
+
+function g(name: string): string {
+  return "(local.get $" + name + ")";
+}
+
+function set(name: string, v: string): string {
+  return "      (local.set $" + name + " " + v + ")\n";
+}
+
+// The 64-bit word of index i of the limbs at base.
+function word(base: string, i: string): string {
+  return "(i64.load (i32.add " + g(base) + " (i32.shl " + i + " (i32.const 3))))";
+}
+
+// 1 when a < b, unsigned, as an i64.
+function below(a: string, b: string): string {
+  return "(i64.extend_i32_u (i64.lt_u " + a + " " + b + "))";
+}
+
+// The borrow of T - (p & mask) for each limb in turn into $borrow, and with `write` the difference into T.
+function sub_wat(write: boolean): string {
+  let o = set("borrow", "(i64.const 0)") + set("j", "(i32.const 0)")
+    + "    (block $sd (loop $sl\n      (br_if $sd (i32.ge_u " + g("j") + " " + g("n") + "))\n"
+    + set("x", word("tp", g("j"))) + set("h", "(i64.and " + word("pp", g("j")) + " " + g("mask") + ")")
+    + set("s", "(i64.sub " + g("x") + " " + g("h") + ")")
+    + set("u", "(i64.sub " + g("s") + " " + g("borrow") + ")")
+    + set("borrow", "(i64.or " + below(g("x"), g("h")) + " " + below(g("s"), g("borrow")) + ")");
+  if (write) {
+    o += "      (i64.store (i32.add " + g("tp") + " (i32.shl " + g("j") + " (i32.const 3))) " + g("u") + ")\n";
+  }
+  return o + set("j", "(i32.add " + g("j") + " (i32.const 1))") + "      (br $sl)))\n";
+}
+
+// One Montgomery product (CIOS) of a and b under the modulus in m: m[0] is n0 = -p^-1 mod 2^64 and m[1:] the n
+// limbs of p. a and b have n limbs each. The result is a new array of n limbs: the CIOS sum a b R^-1 mod p,
+// less p when that is not negative. The carries come from compares, so no branch depends on a limb.
+pub function funcs(): string {
+  let o: string = "  (func $__fern_mont_hi (param $a i64) (param $b i64) (result i64) (local $mid i64)\n"
+    + "    (local.set $mid (i64.add (i64.mul (i64.shr_u (local.get $a) (i64.const 32)) (i64.and (local.get $b) (i64.const 4294967295)))\n"
+    + "      (i64.shr_u (i64.mul (i64.and (local.get $a) (i64.const 4294967295)) (i64.and (local.get $b) (i64.const 4294967295))) (i64.const 32))))\n"
+    + "    (i64.add (i64.add (i64.mul (i64.shr_u (local.get $a) (i64.const 32)) (i64.shr_u (local.get $b) (i64.const 32))) (i64.shr_u (local.get $mid) (i64.const 32)))\n"
+    + "      (i64.shr_u (i64.add (i64.and (local.get $mid) (i64.const 4294967295)) (i64.mul (i64.and (local.get $a) (i64.const 4294967295)) (i64.shr_u (local.get $b) (i64.const 32)))) (i64.const 32))))\n"
+    + "  (func $__fern_mont_mul (param $a i32) (param $b i32) (param $m i32) (result i32)\n"
+    + "    (local $n i32) (local $ap i32) (local $bp i32) (local $pp i32) (local $tp i32) (local $out i32) (local $i i32) (local $j i32)\n"
+    + "    (local $n0 i64) (local $ai i64) (local $q i64) (local $c1 i64) (local $c2 i64) (local $top i64)\n"
+    + "    (local $x i64) (local $h i64) (local $s i64) (local $u i64) (local $mask i64) (local $borrow i64)\n"
+    + "    (local.set $n (i32.sub (call $__fern_aes_view_len (local.get $m)) (i32.const 1)))\n"
+    + wasm_aes.abort_unless("(i32.gt_s (local.get $n) (i32.const 0))")
+    + wasm_aes.abort_unless("(i32.eq (call $__fern_aes_view_len (local.get $a)) (local.get $n))")
+    + wasm_aes.abort_unless("(i32.eq (call $__fern_aes_view_len (local.get $b)) (local.get $n))")
+    + "    (local.set $ap (call $__fern_aes_view_data (local.get $a)))\n    (local.set $bp (call $__fern_aes_view_data (local.get $b)))\n"
+    + "    (local.set $pp (call $__fern_aes_view_data (local.get $m)))\n    (local.set $n0 (i64.load (local.get $pp)))\n"
+    + "    (local.set $pp (i32.add (local.get $pp) (i32.const 8)))\n"
+    + "    (local.set $out (call $__fern_arr_elems (local.get $n) (i32.const 8)))\n"
+    + "    (i32.store (local.get $out) (local.get $n))\n    (i32.store offset=4 (local.get $out) (local.get $n))\n"
+    + "    (local.set $tp (i32.add (local.get $out) (i32.const 8)))\n"
+    + "    (memory.fill (local.get $tp) (i32.const 0) (i32.shl (local.get $n) (i32.const 3)))\n"
+    + "    (local.set $top (i64.const 0))\n    (local.set $i (i32.const 0))\n"
+    + "    (block $od (loop $ol\n      (br_if $od (i32.ge_u " + g("i") + " " + g("n") + "))\n"
+    + set("ai", word("ap", g("i"))) + set("u", word("bp", "(i32.const 0)"))
+    + set("x", "(i64.mul " + g("ai") + " " + g("u") + ")") + set("h", "(call $__fern_mont_hi " + g("ai") + " " + g("u") + ")")
+    + set("s", "(i64.add " + word("tp", "(i32.const 0)") + " " + g("x") + ")") + set("c1", "(i64.add " + g("h") + " " + below(g("s"), g("x")) + ")")
+    + set("q", "(i64.mul " + g("s") + " " + g("n0") + ")") + set("u", word("pp", "(i32.const 0)"))
+    + set("x", "(i64.mul " + g("q") + " " + g("u") + ")") + set("h", "(call $__fern_mont_hi " + g("q") + " " + g("u") + ")")
+    + set("u", "(i64.add " + g("s") + " " + g("x") + ")") + set("c2", "(i64.add " + g("h") + " " + below(g("u"), g("x")) + ")")
+    + set("j", "(i32.const 1)")
+    + "      (block $id (loop $il\n        (br_if $id (i32.ge_u " + g("j") + " " + g("n") + "))\n"
+    + set("u", word("bp", g("j"))) + set("x", "(i64.mul " + g("ai") + " " + g("u") + ")") + set("h", "(call $__fern_mont_hi " + g("ai") + " " + g("u") + ")")
+    + set("s", "(i64.add " + word("tp", g("j")) + " " + g("x") + ")") + set("h", "(i64.add " + g("h") + " " + below(g("s"), g("x")) + ")")
+    + set("s", "(i64.add " + g("s") + " " + g("c1") + ")") + set("c1", "(i64.add " + g("h") + " " + below(g("s"), g("c1")) + ")")
+    + set("u", word("pp", g("j"))) + set("x", "(i64.mul " + g("q") + " " + g("u") + ")") + set("h", "(call $__fern_mont_hi " + g("q") + " " + g("u") + ")")
+    + set("s", "(i64.add " + g("s") + " " + g("x") + ")") + set("h", "(i64.add " + g("h") + " " + below(g("s"), g("x")) + ")")
+    + set("s", "(i64.add " + g("s") + " " + g("c2") + ")") + set("c2", "(i64.add " + g("h") + " " + below(g("s"), g("c2")) + ")")
+    + "        (i64.store (i32.add " + g("tp") + " (i32.shl (i32.sub " + g("j") + " (i32.const 1)) (i32.const 3))) " + g("s") + ")\n"
+    + set("j", "(i32.add " + g("j") + " (i32.const 1))") + "        (br $il)))\n"
+    + set("s", "(i64.add " + g("top") + " " + g("c1") + ")") + set("h", below(g("s"), g("c1")))
+    + set("s", "(i64.add " + g("s") + " " + g("c2") + ")") + set("top", "(i64.add " + g("h") + " " + below(g("s"), g("c2")) + ")")
+    + "      (i64.store (i32.add " + g("tp") + " (i32.shl (i32.sub " + g("n") + " (i32.const 1)) (i32.const 3))) " + g("s") + ")\n"
+    + set("i", "(i32.add " + g("i") + " (i32.const 1))") + "      (br $ol)))\n"
+    + set("mask", "(i64.const -1)") + sub_wat(false)
+    + set("mask", "(i64.sub (i64.const 0) (i64.or (i64.xor " + g("borrow") + " (i64.const 1)) " + g("top") + "))") + sub_wat(true)
+    + "    (local.get $out))\n";
+  return o;
+}
