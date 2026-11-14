@@ -370,7 +370,7 @@ function set_entry_load(o: ir.Op, set: string, idx: string): string {
 
 function emit_scan_set_blocks(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   let names: string[] = [];
-  while (names.len() < 8) {
+  while (names.len() < 7) {
     let lo = asmcore.fresh_label(s);
     names = names.append(lo.name);
     s = lo.state;
@@ -378,39 +378,39 @@ function emit_scan_set_blocks(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState
   let lit = asmcore.add_string_lit(asmcore.EmitState { ...s }, asmcore.scan_set_tables(o.str));
   s = lit.state;
   let tables = asmcore.str_lit_label(s, lit.idx);
-  let l_from_ok = names[0];
-  let l_loop = names[1];
-  let l_hit16 = names[2];
-  let l_tail = names[3];
-  let l_hit = names[4];
-  let l_end = names[5];
-  let l_done = names[6];
-  let l_byte = names[7];
-  s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-  if (o.kind_tag == ir.K_SCAN_SET_BYTES) {
-    s = s.write("    ldr x3, [x0]\n    add x0, x0, #8\n");
-  } else {
-    s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
-  }
-  s = s.write("    cmp x1, #0\n    b.ge " + l_from_ok + "\n    mov x1, #0\n");
-  s = s.write(l_from_ok + ":\n    adrp x9, " + tables + "\n    add x9, x9, :lo12:" + tables + "\n");
-  s = s.write("    add x5, x0, x1\n    add x6, x0, x3\n    sub x8, x6, #16\n");
-  s = s.write("    cmp x5, x8\n    b.hi " + l_tail + "\n");
+  s = s.write(scan_set_operands(o) + "    cmp x1, #0\n    b.ge " + names[6] + "\n    mov x1, #0\n");
+  s = s.write(names[6] + ":\n    adrp x9, " + tables + "\n    add x9, x9, :lo12:" + tables + "\n");
   let shape = asmcore.scan_set_shape(o.str);
-  s = s.write(scan_set_setup(shape));
-  s = s.write(l_loop + ":\n    ldr q0, [x5]\n" + scan_set_classify(shape));
-  s = s.write("    shrn v1.8b, v1.8h, #4\n    fmov x7, d1\n    cbnz x7, " + l_hit16 + "\n");
-  s = s.write("    add x5, x5, #16\n    cmp x5, x8\n    b.ls " + l_loop + "\n");
-  s = s.write("    sub x1, x5, x0\n    b " + l_tail + "\n");
-  s = s.write(l_hit16 + ":\n    rbit x7, x7\n    clz x7, x7\n    lsr x7, x7, #2\n");
-  s = s.write("    sub x1, x5, x0\n    add x1, x1, x7\n    b " + l_hit + "\n");
-  s = s.write(l_tail + ":\n    add x10, x9, #96\n");
-  s = s.write(l_byte + ":\n    cmp x1, x3\n    b.ge " + l_end + "\n");
-  s = s.write("    ldrb w6, [x0, x1]\n    ldrb w7, [x10, x6]\n    cbnz w7, " + l_hit + "\n");
-  s = s.write("    add x1, x1, #1\n    b " + l_byte + "\n");
-  s = s.write(l_hit + ":\n    str x1, [sp, #-16]!\n    b " + l_done + "\n");
-  s = s.write(l_end + ":\n    str x3, [sp, #-16]!\n");
-  return s.write(l_done + ":\n");
+  return s.write(scan_set_loop(names, shape, scan_set_setup(shape)) + "    str x1, [sp, #-16]!\n");
+}
+
+function scan_set_operands(o: ir.Op): string {
+  let r = "    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n";
+  if (o.kind_tag == ir.K_SCAN_SET_BYTES) {
+    return r + "    ldr x3, [x0]\n    add x0, x0, #8\n";
+  }
+  return r + "    ldr x3, [x0, #8]\n    ldr x0, [x0]\n";
+}
+
+// The block scan of a byte set. x0 holds the bytes, x1 the start, x3 the length
+// and x9 a table of asmcore.scan_set_tables. `setup` loads the vector registers
+// of `shape`. The index goes in x1.
+function scan_set_loop(names: string[], shape: asmcore.ScanShape, setup: string): string {
+  let l_loop = names[0];
+  let l_hit16 = names[1];
+  let l_tail = names[2];
+  let l_end = names[3];
+  let l_done = names[4];
+  let l_byte = names[5];
+  let r = "    add x5, x0, x1\n    add x6, x0, x3\n    sub x8, x6, #16\n    cmp x5, x8\n    b.hi " + l_tail + "\n" + setup;
+  r = r + l_loop + ":\n    ldr q0, [x5]\n" + scan_set_classify(shape);
+  r = r + "    shrn v1.8b, v1.8h, #4\n    fmov x7, d1\n    cbnz x7, " + l_hit16 + "\n";
+  r = r + "    add x5, x5, #16\n    cmp x5, x8\n    b.ls " + l_loop + "\n    sub x1, x5, x0\n";
+  r = r + l_tail + ":\n    add x10, x9, #96\n";
+  r = r + l_byte + ":\n    cmp x1, x3\n    b.ge " + l_end + "\n";
+  r = r + "    ldrb w6, [x0, x1]\n    ldrb w7, [x10, x6]\n    cbnz w7, " + l_done + "\n    add x1, x1, #1\n    b " + l_byte + "\n";
+  r = r + l_hit16 + ":\n    rbit x7, x7\n    clz x7, x7\n    lsr x7, x7, #2\n    sub x1, x5, x0\n    add x1, x1, x7\n    b " + l_done + "\n";
+  return r + l_end + ":\n    mov x1, x3\n" + l_done + ":\n";
 }
 
 function scan_set_setup(shape: asmcore.ScanShape): string {
@@ -447,13 +447,6 @@ function scan_set_classify(shape: asmcore.ScanShape): string {
     r += "    mvn v1.16b, v1.16b\n";
   }
   return r;
-}
-
-function set_entry_indexed(o: ir.Op): string {
-  if (ir.is_packed(o)) {
-    return "ldrb w7, [x10, x6]";
-  }
-  return "ldr x7, [x10, x6, lsl #3]";
 }
 
 function emit_mismatch_arm64(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
@@ -1124,74 +1117,13 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
+// A set that is not a constant goes to __fern_scan_set, which builds the two
+// nibble tables of the set at run time.
 function emit_scan_set(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (ir.is_block_scan_set(o)) {
     return emit_scan_set_blocks(o, s);
   }
-  let slo = asmcore.fresh_label(s);
-  let s_loop = slo.name;
-  let slo2 = asmcore.fresh_label(slo.state);
-  let s_short = slo2.name;
-  let slo3 = asmcore.fresh_label(slo2.state);
-  let s_short_next = slo3.name;
-  let slo4 = asmcore.fresh_label(slo3.state);
-  let s_hit = slo4.name;
-  let slo5 = asmcore.fresh_label(slo4.state);
-  let s_end = slo5.name;
-  let slo6 = asmcore.fresh_label(slo5.state);
-  let s_done = slo6.name;
-  let slo7 = asmcore.fresh_label(slo6.state);
-  let s_from_ok = slo7.name;
-  let slo8 = asmcore.fresh_label(slo7.state);
-  let s_one = slo8.name;
-  let hits: string[] = [];
-  s = slo8.state;
-  while (hits.len() < 4) {
-    let hl = asmcore.fresh_label(s);
-    hits = hits.append(hl.name);
-    s = hl.state;
-  }
-  s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-  if (o.kind_tag == ir.K_SCAN_SET_BYTES) {
-    s = s.write("    ldr x3, [x0]\n    add x0, x0, #8\n");
-  } else {
-    s = s.write("    ldr x3, [x0, #8]\n    ldr x0, [x0]\n");
-  }
-  s = s.write("    cmp x1, #0\n    b.ge " + s_from_ok + "\n    mov x1, #0\n");
-  s = s.write(s_from_ok + ":\n    ldr x4, [x2]\n");
-  if (o.kind_tag != ir.K_SCAN_SET_BYTES || ir.is_packed(o)) {
-    s = s.write("    cmp x4, #256\n    b.lo " + s_short + "\n");
-    s = s.write("    cmp x1, x3\n    b.ge " + s_end + "\n");
-    s = s.write("    add x5, x0, x1\n    add x8, x0, x3\n    sub x9, x8, #4\n    add x10, x2, #8\n");
-    s = s.write(s_loop + ":\n    cmp x5, x9\n    b.hi " + s_one + "\n");
-    for k in 0..4 {
-      s = s.write("    ldrb w6, [x5, #" + util.i32_to_string(k) + "]\n    " + set_entry_indexed(o) + "\n");
-      s = s.write("    cbnz x7, " + hits[k] + "\n");
-    }
-    s = s.write("    add x5, x5, #4\n    b " + s_loop + "\n");
-    s = s.write(s_one + ":\n    cmp x5, x8\n    b.hs " + s_end + "\n");
-    s = s.write("    ldrb w6, [x5]\n    " + set_entry_indexed(o) + "\n    cbnz x7, " + hits[0] + "\n");
-    s = s.write("    add x5, x5, #1\n    b " + s_one + "\n");
-    s = s.write(hits[3] + ":\n    add x5, x5, #1\n");
-    s = s.write(hits[2] + ":\n    add x5, x5, #1\n");
-    s = s.write(hits[1] + ":\n    add x5, x5, #1\n");
-    s = s.write(hits[0] + ":\n    sub x1, x5, x0\n    b " + s_hit + "\n");
-  }
-  s = s.write(s_short + ":\n");
-  s = s.write("    cmp x1, x3\n    b.ge " + s_end + "\n");
-  if (o.kind_tag == ir.K_SCAN_SET_BYTES && !ir.is_packed(o)) {
-    s = s.write("    add x5, x0, x1, lsl #3\n    ldrb w6, [x5]\n");
-  } else {
-    s = s.write("    add x5, x0, x1\n    ldrb w6, [x5]\n");
-  }
-  s = s.write("    cmp x6, x4\n    b.hs " + s_short_next + "\n");
-  s = s.write(set_entry_load(o, "x2", "x6"));
-  s = s.write("    cmp x7, #0\n    b.ne " + s_hit + "\n");
-  s = s.write(s_short_next + ":\n    add x1, x1, #1\n    b " + s_short + "\n");
-  s = s.write(s_hit + ":\n    str x1, [sp, #-16]!\n    b " + s_done + "\n");
-  s = s.write(s_end + ":\n    str x3, [sp, #-16]!\n");
-  s = s.write(s_done + ":\n");
-  return s;
+  return s.write(scan_set_operands(o) + "    bl __fern_scan_set\n    str x1, [sp, #-16]!\n").need("scan_set");
 }
 
 function movz_text_ok(text: string): boolean {
@@ -6277,7 +6209,7 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   if (name == "__fern_u64_to_string") {
     s = s.need("u64_to_string");
   }
-  if (name == "__fern_slice_abort") {
+  if (name == "__fern_slice_abort" || name == "__fern_alloc_size_abort") {
     s = s.need("heap");
   }
   s = s.need_array_helper(name);
@@ -11089,9 +11021,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   if (s.has_need("sum_bytes")) {
     s = emit_rt_sum_bytes(s);
   }
-  if (s.has_need("utf8_blocks")) {
-    s = emit_rt_utf8_blocks(s);
-  }
+  s = emit_rt_scans(s);
 
   if (s.has_need("args")) {
     s = s.write("    .section .bss\n");
@@ -11941,6 +11871,78 @@ function emit_rt_signal_flags(s: asmcore.EmitState, darwin: boolean): asmcore.Em
     s = s.write("    mov w2, #0\n    swpalb w2, w0, [x1]\n    ret\n.Lsig_taken_none:\n    mov w0, #0\n    ret\n");
   }
   return s;
+}
+
+function emit_rt_scans(s: asmcore.EmitState): asmcore.EmitState {
+  if (s.has_need("utf8_blocks")) {
+    s = emit_rt_utf8_blocks(s);
+  }
+  if (s.has_need("scan_set")) {
+    s = s.write(a64_scan_set());
+  }
+  return s;
+}
+
+// __fern_scan_set scans with a set that is not a constant: x0 holds the bytes,
+// x1 the start, x3 the length and x2 the set. It reads the first bytes one at a
+// time. If 16 bytes or more are left after them, it builds the registers of a
+// nibble set and does the block scan of a constant set. The index goes in x1.
+function a64_scan_set(): string {
+  let head = asmcore.SCAN_SET_HEAD;
+  let r = "    .section .rodata\n    .balign 16\n__fern_scan_set_masks:\n" + asmcore.byte_rows(asmcore.scan_set_masks());
+  r = r + "    .text\n    .global __fern_scan_set\n    .type __fern_scan_set, %function\n__fern_scan_set:\n";
+  r = r + "    cmp x1, #0\n    b.ge .Lscan_set_from\n    mov x1, #0\n.Lscan_set_from:\n    ldr x4, [x2]\n";
+  r = r + "    add x10, x1, #" + util.i32_to_string(head) + "\n    add x6, x1, #" + util.i32_to_string(head + 16) + "\n";
+  r += "    cmp x6, x3\n    csel x10, x10, x3, le\n    add x8, x2, #8\n";
+  r = r + a64_scan_set_head() + ".Lscan_set_build:\n    cmp x1, x3\n    b.ge .Lscan_set_end\n    mov x11, sp\n";
+  r = r + a64_scan_set_members() + a64_scan_set_tables();
+  let names = [".Lscan_set_loop", ".Lscan_set_hit16", ".Lscan_set_tail", ".Lscan_set_last", ".Lscan_set_done", ".Lscan_set_byte"];
+  r += scan_set_loop(names, asmcore.ScanShape { nibble: true, invert: false, range: false, bytes: [] }, "");
+  r += "    mov sp, x11\n    ret\n.Lscan_set_end:\n    mov x1, x3\n.Lscan_set_ret:\n    ret\n";
+  return r + "    .size __fern_scan_set, .-__fern_scan_set\n";
+}
+
+// Reads the bytes from x1 to x10, four at a time while it can.
+function a64_scan_set_head(): string {
+  let r = ".Lscan_set_head:\n    add x6, x1, #4\n    cmp x6, x10\n    b.gt .Lscan_set_one\n    add x5, x0, x1\n";
+  for k in 0..4 {
+    let skip = ".Lscan_set_skip" + util.i32_to_string(k);
+    r = r + "    ldrb w6, [x5, #" + util.i32_to_string(k) + "]\n    cmp x6, x4\n    b.hs " + skip + "\n";
+    r = r + "    ldrb w7, [x8, x6]\n    cbnz w7, .Lscan_set_hit" + util.i32_to_string(k) + "\n" + skip + ":\n";
+  }
+  r += "    add x1, x1, #4\n    b .Lscan_set_head\n";
+  for k in 0..3 {
+    r = r + ".Lscan_set_hit" + util.i32_to_string(3 - k) + ":\n    add x1, x1, #1\n";
+  }
+  r += ".Lscan_set_hit0:\n    ret\n.Lscan_set_one:\n    cmp x1, x10\n    b.ge .Lscan_set_build\n    ldrb w6, [x0, x1]\n";
+  r += "    cmp x6, x4\n    b.hs .Lscan_set_next\n    ldrb w7, [x8, x6]\n    cbnz w7, .Lscan_set_ret\n";
+  return r + ".Lscan_set_next:\n    add x1, x1, #1\n    b .Lscan_set_one\n";
+}
+
+// [x9, #96] gets the 256 entries of the set: the set itself, or a copy below sp
+// with zeros after a shorter set.
+function a64_scan_set_members(): string {
+  let zero = "";
+  for j in 0..8 {
+    zero = zero + "    stp q0, q0, [x9, #" + util.i32_to_string(96 + 32 * j) + "]\n";
+  }
+  let r = "    sub x9, x2, #88\n    cmp x4, #256\n    b.hs .Lscan_set_tables\n";
+  r = r + "    sub sp, sp, #352\n    mov x9, sp\n    movi v0.16b, #0\n" + zero + "    mov x10, #0\n";
+  r = r + ".Lscan_set_copy:\n    cmp x10, x4\n    b.hs .Lscan_set_tables\n    add x7, x2, x10\n    ldrb w7, [x7, #8]\n";
+  return r + "    add x6, x9, x10\n    strb w7, [x6, #96]\n    add x10, x10, #1\n    b .Lscan_set_copy\n";
+}
+
+// Row h of the entries sets bit h & 7 of the bytes of v20 (rows 0 to 7) or v21
+// (rows 8 to 15) where an entry is not zero.
+function a64_scan_set_tables(): string {
+  let r = ".Lscan_set_tables:\n    adrp x10, __fern_scan_set_masks\n    add x10, x10, :lo12:__fern_scan_set_masks\n";
+  r += "    ldr q22, [x10]\n    movi v26.16b, #128\n    movi v27.16b, #143\n    movi v20.16b, #0\n    movi v21.16b, #0\n";
+  for h in 0..8 {
+    r = r + "    ldr q0, [x9, #" + util.i32_to_string(96 + 16 * h) + "]\n    ldr q1, [x9, #" + util.i32_to_string(224 + 16 * h) + "]\n";
+    r = r + "    movi v5.16b, #" + util.i32_to_string(1 << h) + "\n    cmtst v0.16b, v0.16b, v0.16b\n    cmtst v1.16b, v1.16b, v1.16b\n";
+    r += "    and v0.16b, v0.16b, v5.16b\n    and v1.16b, v1.16b, v5.16b\n    orr v20.16b, v20.16b, v0.16b\n    orr v21.16b, v21.16b, v1.16b\n";
+  }
+  return r;
 }
 
 function emit_rt_utf8_blocks(s: asmcore.EmitState): asmcore.EmitState {

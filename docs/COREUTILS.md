@@ -774,10 +774,19 @@ This changes two lines of output. The version line is
 `PROGRAM (Fern diffutils) 0.1`, for example `diff (Fern diffutils) 0.1`.
 The usage hint starts with the program name, as GNU diffutils writes it.
 
-`diff` gives the normal, context and unified formats. An option out of its
-scope stops it with exit status 2. For standard input, GNU diff writes the
-current time in the header of `-u` and `-c`. Thus a corpus case that reads
-standard input in these formats gives `--label` for it.
+`diff`, `diff3` and `sdiff` give each option of GNU diffutils 3.10. For
+standard input, GNU diff writes the current time in the header of `-u`
+and `-c`. Thus a corpus case that reads standard input in these formats
+gives `--label` for it. The header of `pr` under `diff -l` has the time of
+the run, and a mask removes it from the output of both programs.
+
+diff3 and sdiff run diff in the same process, through `diff.capture_diff`
+and `diff.run_diff`. The interactive merge of `sdiff -o` runs it in a
+child process, as GNU sdiff does. GNU diff3 and GNU sdiff run the diff of
+`PATH`, so their corpus cases put the GNU diff of the oracle first in
+`PATH`. On macOS, `/usr/bin/diff` is not GNU diff. The cases of
+`sdiff -o` give their commands on standard input, set `EDITOR` and
+`TMPDIR`, and compare the merged file.
 
 The harness gets the package of a program from the directory of its source.
 The oracle of a diffutils program is in `FERN_GNU_DIFFUTILS`. Its version

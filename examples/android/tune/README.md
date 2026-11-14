@@ -112,7 +112,10 @@ from its path: `Artist/Album/03 Title.flac`.
 
 A long press on the icon of the app in the launcher shows two shortcuts,
 from `std/android/shortcuts`. "Shuffle all" plays each track of the
-library in a new order, and "Favorites" plays that playlist.
+library in a new order, and "Favorites" plays that playlist. A shortcut
+also works while the app runs: the activity, `dev.fern.tune.Main`, keeps
+the intent in `onNewIntent`, and the player does its action at the next
+Resume.
 
 The app has a widget for the home screen: the track that plays, with the
 buttons "Prev", "Play" or "Pause", and "Next". `fern -apk` makes its
@@ -125,6 +128,11 @@ The back key does not stop a track that plays. At the top screen, it puts
 the app behind the other apps, and the track plays on. Then the buttons of
 the widget, of the notification and of a headset work with no window. When
 no track plays, the back key closes the app.
+
+A swipe of the app out of the recent apps destroys its activity. While a
+track plays, the loop of the app lives on with no window, and the next
+start of the app takes that loop over. A stop with no window ends the
+loop.
 
 When the player finds no file, it makes three tunes in its own directory:
 it makes the samples of a melody, and writes one FLAC file and two WAV

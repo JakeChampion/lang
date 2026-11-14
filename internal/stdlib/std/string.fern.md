@@ -149,7 +149,7 @@ pub function (s: string) repeat(n: i32): string {
   if (sl == 0) {
     return "";
   }
-  let total = sl as i64 * (n as i64);
+  let total = __alloc_len(sl as i64 * (n as i64)) as i64;
   let out = s;
   while (out.len() as i64 * (2 as i64) <= total) {
     out += out;
@@ -2049,7 +2049,7 @@ function __fill_bytes(ch: string, count: i32): u8[] {
   if (clen > ch.len()) {
     clen = ch.len();
   }
-  let total = count * clen;
+  let total = __alloc_len(count as i64 * (clen as i64));
   let buf = __alloc_u8(total);
   let i = 0;
   while (i < total) {
@@ -2580,7 +2580,7 @@ pub function (s: string) repeat_with_sep(n: i32, sep: string): string {
   }
   let sl = s.len();
   let pl = sep.len();
-  let total = sl * n + pl * (n - 1);
+  let total = __alloc_len(sl as i64 * (n as i64) + pl as i64 * ((n - 1) as i64));
   if (total == 0) {
     return "";
   }

@@ -255,6 +255,7 @@ function device(ctx: usize, dir: string, roots: string[], media: Media): player.
     write_bytes: (path: string, bytes: u8[]): boolean => write_file_bytes(path, bytes).is_ok() || store.write(android.env(ctx), android.activity_object(ctx), path, bytes),
     ask_write: (path: string): boolean => store.ask_write(ctx, path),
     to_back: (): void => android.to_background(ctx),
+    asked: (): tune.Msg[] => of_action(shortcuts.action(ctx), monotonic_ns()),
     write_text: (path: string, text: string): boolean => write_file(path, text).is_ok(),
     kept: (name: string): u8[] => read(dir + "/../covers/" + name),
     put: (name: string, bytes: u8[]): void => { let kept = write_file_bytes(dir + "/../covers/" + name, bytes); },
@@ -368,10 +369,36 @@ function system(e: android.Event): Option[tune.Msg] {
   }
 }
 
+// The activity of the app. A start of the app while it runs, such as a tap
+// on a shortcut, gives the activity its intent, and the player does its
+// action at the next Resume.
+@jni("dev.fern.tune.Main extends android.app.NativeActivity", "void onNewIntent(android.content.Intent)")
+pub function main_new_intent(env: usize, thiz: usize, intent: usize): void {
+  shortcuts.keep_intent(env, thiz, intent);
+}
+
 // The actions of the shortcuts of the launcher.
 const SHUFFLE: string = "dev.fern.tune.SHUFFLE";
 
 const FAVORITES: string = "dev.fern.tune.FAVORITES";
+
+// The messages of the action of the intent that started the activity:
+// a shortcut, or a button of the widget while the app did not run. `now`
+// is the time in ns, which gives the order of a shuffle.
+function of_action(action: string, now: i64): tune.Msg[] {
+  if (action == SHUFFLE) {
+    return [tune.ShuffleAll((now / 1000000i64 % 60000i64) as i32)];
+  } else if (action == FAVORITES) {
+    return [tune.PlayList(tune.FAVORITES)];
+  } else if (action == WIDGET_PLAY) {
+    return [tune.Play(true)];
+  } else if (action == WIDGET_NEXT) {
+    return [tune.Next];
+  } else if (action == WIDGET_PREVIOUS) {
+    return [tune.Previous, tune.Play(true)];
+  }
+  return [];
+}
 
 function app_main(ctx: usize): usize {
   let own_music = android.data_dir(ctx) + "/music";
@@ -394,17 +421,8 @@ function app_main(ctx: usize): usize {
     log.info("tune: the launcher took no shortcuts");
   }
   first = tune.update(first, tune.Restore(library.place_from(read_file(android.data_dir(ctx) + "/place.txt").unwrap_or(""))));
-  let action = shortcuts.action(ctx);
-  if (action == SHUFFLE) {
-    first = tune.update(first, tune.ShuffleAll((dev.now() / 1000000i64 % 60000i64) as i32));
-  } else if (action == FAVORITES) {
-    first = tune.update(first, tune.PlayList(tune.FAVORITES));
-  } else if (action == WIDGET_PLAY) {
-    first = tune.update(first, tune.Play(true));
-  } else if (action == WIDGET_NEXT) {
-    first = tune.update(first, tune.Next);
-  } else if (action == WIDGET_PREVIOUS) {
-    first = tune.update(tune.update(first, tune.Previous), tune.Play(true));
+  for msg in of_action(shortcuts.action(ctx), dev.now()) {
+    first = tune.update(first, msg);
   }
   let ran = app.run(ctx, player.wrap(first), player.program(dev).with_system(system));
   let last = player.closed(dev, ran.model);
