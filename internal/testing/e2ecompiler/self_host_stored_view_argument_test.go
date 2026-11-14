@@ -163,3 +163,57 @@ func TestSelfHostStoredViewLifetimeTargets(t *testing.T) {
 		})
 	}
 }
+
+const storedContainerViewProgram = `import "core/map";
+import "std/string";
+struct Sink { save: (string) => i32 }
+@noinline function fresh(unit: string): string { return unit.repeat(12); }
+@noinline function dispatch(sink: Sink, s: string): i32 { return sink.save(s); }
+@noinline function fill(sink: Sink, unit: string): i32 {
+  let src = fresh(unit);
+  return dispatch(sink, slice_unchecked(src, 2, 10));
+}
+@noinline function churn(): i32 {
+  let n = 0;
+  for i in 0..256 { let junk = fresh("zq"); n += junk.len(); }
+  return n;
+}
+function main(): i32 {
+  let m: Map[i32, string] = map_new(2);
+  let maps = cell_new(m);
+  let map_sink = Sink { save: (s: string): i32 => {
+    maps.set(maps.get().insert(7, s)); return 0;
+  } };
+  if (fill(map_sink, "ab") != 0 || churn() != 6144) { return 20; }
+  if (maps.get().get_or(7, "") != "abababab") { return 31; }
+  let values: string[] = [];
+  let arrays = cell_new(values);
+  let array_sink = Sink { save: (s: string): i32 => {
+    arrays.set([s, s]); return 0;
+  } };
+  if (fill(array_sink, "cd") != 0 || churn() != 6144) { return 20; }
+  let saved = arrays.get();
+  if (saved.len() != 2 || saved[0] != "cdcdcdcd" || saved[1] != "cdcdcdcd") { return 32; }
+  if (__rc_underflow_count() != 0) { return 33; }
+  print("container views survive");
+  return 0;
+}
+`
+
+func TestSelfHostStoredContainerViewTargets(t *testing.T) {
+	cli := buildRuntimeCLI(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			for _, sanitize := range []bool{false, true} {
+				got, stderr := runLentView(t, cli, storedContainerViewProgram, target, sanitize)
+				if got != "container views survive\n" {
+					t.Fatalf("sanitize=%v: got %q", sanitize, got)
+				}
+				if sanitize {
+					assertBalancedCensus(t, stderr)
+					t.Logf("%s", leakSummaryLine(stderr))
+				}
+			}
+		})
+	}
+}
