@@ -18688,6 +18688,24 @@ function lower_defers_body(body0: ast.Stmt[], params: string[], ret: string, fn_
   return body;
 }
 
+// The statements that lower_defers_body puts after a body for a `?` that
+// leaves it: the actions of the deferred statements, each behind its flag.
+pub function try_cleanup(body: ast.Stmt[]): ast.Stmt[] {
+  let out: ast.Stmt[] = [];
+  for st in body {
+    if let ast.StmtIf(f) = st {
+      if let ast.ExprIdent(id) = f.cond {
+        if (id.name == DFA_TRYALL || id.name == DFA_TRYERR) {
+          for c in f.then_body {
+            out = out.append(c);
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
 function dl_lower_lambda_bodies(stmts: ast.Stmt[]): ast.Stmt[] {
   let out: ast.Stmt[] = [];
   for i in 0..stmts.len() {
