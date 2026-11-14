@@ -652,6 +652,10 @@
 # tolerance is unchanged.
 # 2026-11-13: runtime_run measured 17506224 bytes (+5.0%) by driver-sizes-x86_64
 # job 132133327747 on main 88a72e60. The 5% tolerance is unchanged.
+# 2026-11-13: asm_ir_run measured 11612368 bytes (+5.3%) and fern.fern/stage2
+# 17583184 bytes (+5.2%) by driver-sizes-x86_64 job 132181685324 on ea8b1577,
+# main 38768eb2 with #15781. #15767 adds the fused ChaCha20-Poly1305 kernel to
+# each backend. The 5% tolerance is unchanged.
 # 2026-11-14: two rows measured by driver-sizes-x86_64 job 132251484229 on a
 # merge with main 38768eb2. Main alone measures asm_ir_run 11612368 and
 # fern.fern/stage2 17583184. The E065 rule for a field of a parameter adds

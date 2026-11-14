@@ -517,8 +517,7 @@ function run_strip(s: Scan, dest: string, o: io_buffered.BufWriter): StripOut {
   }
   let pid = proc_fork();
   if (pid == 0) {
-    let argv: string[] = [s.strip_program, dest];
-    proc_exec(s.strip_program, argv);
+    proc_exec(s.strip_program, [dest]);
     exit(127);
   }
   if (pid < 0) {
