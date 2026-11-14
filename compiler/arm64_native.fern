@@ -9099,6 +9099,10 @@ function arm64_gas_program_pass(src: string, words: u8[], origin: i32, relax: bo
             p = Arm64GasProg { ...p, unknown: p.unknown.append(cfi.bad[cfi.bad.len() - 1]) };
           }
         }
+      } else if (line.starts_with(".arch")) {
+        if (line != util.ARM64_ARCH) {
+          p = Arm64GasProg { ...p, unknown: p.unknown.append(line + ": the arm64 targets assemble " + util.ARM64_ARCH + " alone") };
+        }
       } else if (line == ".ltorg") {
         if (arm64_lit_pool_far(p, buf_len(a.code)) > arm64_lit_reach()) {
           p = Arm64GasProg { ...p, unknown: p.unknown.append("ltorg:range") };

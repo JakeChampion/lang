@@ -101,12 +101,26 @@ Wasm grows linear memory instead, and its trap is unchanged.
 The quota bounds the arena alone.
 The 1 GiB stack reservation, the signal stack, the kernel's own buffers, and memory that a foreign library maps are outside it.
 
+## Processor time quota
+
+`-cpu-limit SECONDS` sets the processor time of a Linux or Android executable, from 1 second to 31536000 seconds.
+The startup code calls `prlimit64` for `RLIMIT_CPU` before `main` runs, with the same value for the soft and the hard limit.
+The kernel kills a process that passes the limit, so the status is that of `SIGKILL`.
+A program cannot raise a hard limit that it does not own, so code that runs later in the process cannot remove the quota.
+
+The quota counts the processor time of the process, not the time of day. A process that waits does not use it.
+A worker process is a child, and a child gets the limit of its parent and its own count.
+
+The flag is refused for `arm64-darwin`, for the wasm targets and for a kernel image. A value outside the range or with other text is refused. Each refusal prints its reason and exits 2.
+The build manifest has the value as `cpu_limit`, and 0 means no limit.
+
 ## Verification
 
 - `TestSelfHostHardenScrubsReleasedBlocks` compiles one program for x86-64-linux and arm64-linux, in the release build and under `-harden`. It releases a 48-byte secret and a 600000-byte secret and reads each one back through raw allocations of its size. It reads the first word of a block that it frees and takes back.
 It reads a block that the bump hands out again after `__heap_release_to`. The release build must read each secret, the link and the rewound bytes back, and the hardened build must read zero in each case. On the compiler before the change, every hardened case read the bytes back.
 - `TestSelfHostEraseZeroesStorage` compiles one program for x86-64-linux and arm64-linux. It releases a 48-byte `u8[]` secret and a six-word `u64[]` secret. Each control run must read at least 48 secret bytes back, and each erase run must read 0. Both targets pass, the arm64 one under QEMU.
 - `TestSelfHostHeapLimit` keeps 256 one-megabyte arrays live. Under `-heap-limit 64M` the program must exit 125 with the cause after its 32nd array and before its 64th, on both targets. Without the flag every array fits. Seven refusals cover `0`, `512K`, `32G`, a 20-digit size, `64MB`, a bare `M`, and `wasm32-wasi`. Five accepted sizes cover both ends of the range in bytes and with suffixes.
+- `TestSelfHostCPULimit` compiles a program that prints one line and then spins, for x86-64-linux and arm64-linux, with `-cpu-limit 1`. The kernel must kill it with `SIGKILL` after the line. A control program with the same flag must end with its own status 7, and `fern -manifest` must print `cpu_limit: 1`. Six refusals cover `0`, `2s`, a value above the range, a 20-digit value, `wasm32-wasi` and `arm64-darwin`.
 - The `std/crypto` suite calls `erase` on a digest, on an empty array, on a literal, and on `u32[]`, `i64[]`, `u64[]` and `f64[]` arrays. It passes natively on x86-64, on arm64 under QEMU, on wasm32-wasi, under the self-host interpreter, and under the Go oracle.
 
 ```sh
@@ -116,6 +130,7 @@ go test ./internal/testing/e2ecompiler -run 'TestSelfHostEraseZeroesStorage|Test
 ## Remaining limits
 
 - `erase` takes an array of an element type with a zero. A secret held in a string or in an array of records has no erasure call. A struct that holds a secret array offers one only where its module wrote it: `aes_gcm.Key`, `ed25519.PrivateKey` and `ecdsa.PrivateKey` have `erase()`, and a struct dropped without it keeps its bytes.
-- A quota per allocation site, per package, or per request is not defined. The arena quota is one number per executable.
+- A quota per allocation site, per package, or per request is not defined. The arena quota and the processor time quota are one number each per executable.
+- There is no quota for child processes. `RLIMIT_NPROC` counts the processes of a user, not of a program, and the kernel does not apply it to root.
 - The sanitizer's quarantine keeps a released block until its byte budget evicts it, so under `-sanitize` an erased block stays mapped for a time. That is SEC-024 ([QUARANTINE.md](QUARANTINE.md)).
 - The Go oracle and the self-host interpreter run `erase` on their own heaps and ignore `-heap-limit`, which is a compile flag of the native backends.

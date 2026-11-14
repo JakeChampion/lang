@@ -35,7 +35,7 @@ function node(r: out.R, t: nodes.Tree, x: i32, entering: boolean): (out.R, boole
     return (list(r, t, x, entering), false);
   }
   if (k == nodes.CODE_BLOCK) {
-    return (r.cr().lit("\\begin{verbatim}").cr().out(t.lit(t.text, x), false, out.LITERAL).cr().lit("\\end{verbatim}").blankline(), false);
+    return (r.cr().lit("\\begin{verbatim}").cr().out(t.lit(x), false, out.LITERAL).cr().lit("\\end{verbatim}").blankline(), false);
   }
   if (k == nodes.RULE) {
     return (r.blankline().lit("\\begin{center}\\rule{0.5\\linewidth}{\\linethickness}\\end{center}").blankline(), false);
@@ -112,16 +112,16 @@ function list(r0: out.R, t: nodes.Tree, x: i32, entering: boolean): out.R {
 
 function inline(r: out.R, t: nodes.Tree, x: i32, k: i32, entering: boolean): (out.R, boolean) {
   if (k == nodes.TEXT) {
-    return (r.out(t.lit(t.text, x), allow_wrap(r), out.NORMAL), false);
+    return (r.out(t.lit(x), allow_wrap(r), out.NORMAL), false);
   }
   if (k == nodes.LINEBREAK || k == nodes.SOFTBREAK) {
     return (line_break(r, k == nodes.LINEBREAK), false);
   }
   if (k == nodes.CODE) {
-    return (r.lit("\\texttt{").out(t.lit(t.text, x), false, out.NORMAL).lit("}"), false);
+    return (r.lit("\\texttt{").out(t.lit(x), false, out.NORMAL).lit("}"), false);
   }
   if (k == nodes.IMAGE) {
-    return (r.lit("\\protect\\includegraphics{").out(t.lit(t.text, x), false, out.URL).lit("}"), true);
+    return (r.lit("\\protect\\includegraphics{").out(t.lit(x), false, out.URL).lit("}"), true);
   }
   return span(r, t, x, k, entering);
 }
@@ -166,7 +166,7 @@ const NORMAL_LINK: i32 = 3;
 const INTERNAL_LINK: i32 = 4;
 
 function link(r: out.R, t: nodes.Tree, x: i32): (out.R, boolean) {
-  let url = t.lit(t.text, x);
+  let url = t.lit(x);
   let kind = link_kind(t, x);
   if (kind == URL_AUTOLINK) {
     return (r.lit("\\url{").out(url, false, out.URL).lit("}"), true);
@@ -187,14 +187,14 @@ function link(r: out.R, t: nodes.Tree, x: i32): (out.R, boolean) {
 // text of its first child is its destination without `mailto:`. A node
 // that is not text, code or raw HTML has an empty text.
 function link_kind(t: nodes.Tree, x: i32): i32 {
-  let url = t.lit(t.text, x);
+  let url = t.lit(x);
   if (url.len() > 0 && url[0] == b'#') {
     return INTERNAL_LINK;
   }
   if (url.len() == 0 || commonmark.scheme_length(url) == 0) {
     return NO_LINK;
   }
-  if (t.extra(t.text, x).len() > 0) {
+  if (t.extra(x).len() > 0) {
     return NORMAL_LINK;
   }
   let first = t.first(x);
@@ -210,7 +210,7 @@ function autolink_kind(t: nodes.Tree, url: string, first: i32): i32 {
   let fk = t.kind(first);
   let text = slice_unchecked(t.text, 0, 0);
   if (fk == nodes.TEXT || fk == nodes.CODE || fk == nodes.HTML) {
-    text = t.lit(t.text, first);
+    text = t.lit(first);
   }
   let email = url.starts_with("mailto:");
   let real = slice_unchecked(url, 0, url.len());

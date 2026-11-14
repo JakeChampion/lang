@@ -1,0 +1,84 @@
+// The ring of a Buffered stream of std/android/audio against a stand-in for libaaudio.so
+// (scripts/audio-reference/aaudio-buffered-mock.c). main gives 0, or the
+// number of the first check that fails.
+import "std/android/audio";
+
+@import("libaaudio.so", "mock_pull")
+function pull(frames: i32): i32;
+
+@import("libaaudio.so", "mock_sample")
+function sample(i: i32): i32;
+
+@import("libaaudio.so", "mock_flushes")
+function flushes(): i32;
+
+@import("libaaudio.so", "mock_closed")
+function closed(): i32;
+
+// The first `n` samples that the last pull gave.
+function pulled(n: i32): string {
+  let out: string[] = [];
+  for i in 0..n {
+    out = out.append(sample(i).to_string());
+  }
+  return out.join(",");
+}
+
+function joined(xs: i32[]): string {
+  return xs.map((x: i32): string => x.to_string()).join(",");
+}
+
+function counted(n: i32, first: i32): i32[] {
+  let out: i32[] = [];
+  for i in 0..n {
+    out = out.append(first + i);
+  }
+  return out;
+}
+
+pub function main(): i32 {
+  let m = audio.buffered(48000, 2);
+  if (m.ptr == 0 as usize || m.ring == 0 as usize || m.rate != 48000 || m.channels != 2) {
+    return 1;
+  }
+  // The device takes the samples on its own thread, in order.
+  if (m.write([1, 2, 3, 4, 5, 6, 7, 8]) != 8 || m.queued() != 4 + 96) {
+    return 2;
+  }
+  if (pull(2) != 0 || pulled(4) != "1,2,3,4") {
+    return 3;
+  }
+  // The ring holds too few: silence follows the last samples.
+  if (pull(4) != 0 || pulled(8) != "5,6,7,8,0,0,0,0" || m.queued() != 96) {
+    return 4;
+  }
+  if (joined(m.recent(4)) != "5,6,7,8" || joined(m.recent(100)) != "1,2,3,4,5,6,7,8") {
+    return 5;
+  }
+  // A flush drops what the ring holds, and the samples after it play.
+  if (m.write([9, 10, 11, 12]) != 4) {
+    return 6;
+  }
+  m.pause();
+  m.flush();
+  if (flushes() != 1 || m.write([13, 14]) != 2 || !m.start() || pull(1) != 0 || pulled(2) != "13,14") {
+    return 7;
+  }
+  // A sample out of range is clipped, and an odd sample waits for its frame.
+  if (m.write([40000, -40000, 7]) != 2 || pull(1) != 0 || pulled(2) != "32767,-32768") {
+    return 8;
+  }
+  // The ring takes a second of sound and keeps the history: the rest waits.
+  let room = (48000 + audio.HISTORY) * 2 - audio.HISTORY * 2;
+  if (m.write(counted(room + 10, 100)) != room || m.write([1, 2]) != 0) {
+    return 9;
+  }
+  if (pull(3) != 0 || pulled(6) != "100,101,102,103,104,105" || m.write([1, 2, 3, 4, 5, 6, 7, 8]) != 6) {
+    return 10;
+  }
+  m.close();
+  if (closed() != 1) {
+    return 11;
+  }
+  return 0;
+}

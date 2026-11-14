@@ -14,13 +14,13 @@ pub struct Descriptor {
 
 function capability_profile(profile: string): string[] {
   if (profile == "hosted-android") {
-    return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "rawmem", "subprocess", "unix", "reactor", "mmsg", "ktls"];
+    return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "rawmem", "subprocess", "unix", "reactor", "mmsg", "ktls", "atomics"];
   }
   if (profile == "hosted-linux") {
-    return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "rawmem", "subprocess", "unix", "reactor", "uring", "mmsg", "ktls"];
+    return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "rawmem", "subprocess", "unix", "reactor", "uring", "mmsg", "ktls", "atomics"];
   }
   if (profile == "hosted-darwin") {
-    return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "rawmem", "subprocess", "unix", "reactor", "sysctl"];
+    return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "rawmem", "subprocess", "unix", "reactor", "sysctl", "atomics"];
   }
   if (profile == "wasi-cli") {
     return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "tcp", "host", "signal", "reactor", "pollable"];
@@ -29,10 +29,10 @@ function capability_profile(profile: string): string[] {
     return ["log", "now", "config", "random", "fetch", "pollable"];
   }
   if (profile == "kernel") {
-    return ["privileged", "arena", "mmio"];
+    return ["privileged", "arena", "mmio", "atomics"];
   }
   if (profile == "none") {
-    return ["mmio"];
+    return ["mmio", "atomics"];
   }
   let empty: string[] = [];
   return empty;
@@ -401,10 +401,10 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "__irq_wait", capability: "privileged" },
     Gate { builtin: "__user_run", capability: "privileged" },
     Gate { builtin: "__cache_sync_code", capability: "privileged" },
-    Gate { builtin: "__atomic_load_acquire", capability: "privileged" },
-    Gate { builtin: "__atomic_store_release", capability: "privileged" },
-    Gate { builtin: "__atomic_fetch_add", capability: "privileged" },
-    Gate { builtin: "__atomic_cas", capability: "privileged" },
+    Gate { builtin: "__atomic_load_acquire", capability: "atomics" },
+    Gate { builtin: "__atomic_store_release", capability: "atomics" },
+    Gate { builtin: "__atomic_fetch_add", capability: "atomics" },
+    Gate { builtin: "__atomic_cas", capability: "atomics" },
     Gate { builtin: "__secondary_entry", capability: "privileged" },
     Gate { builtin: "__irq_pending", capability: "privileged" },
     Gate { builtin: "__port_in8", capability: "privileged" },

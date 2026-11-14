@@ -436,8 +436,8 @@ ran on the host at the same time.
 | Decrypt with a hybrid (ML-KEM-768 + X25519) key | 2.1 ms | 0.5 ms | 0.24 |
 | Encrypt to a hybrid recipient | 2.0 ms | 0.6 ms | 0.30 |
 | Decrypt with an Ed25519 SSH key | 1.7 ms | 0.4 ms | 0.24 |
-| Decrypt with an RSA-2048 SSH key | 3.4 ms | 3.4 ms | 1.0 |
-| Decrypt with an RSA-3072 SSH key | 7.1 ms | 7.4 ms | 1.04 |
+| Decrypt with an RSA-2048 SSH key | 3.4 ms | 1.4 ms | 0.41 |
+| Decrypt with an RSA-3072 SSH key | 7.1 ms | 3.6 ms | 0.51 |
 | Decrypt with an Ed25519 SSH key with a passphrase (16 bcrypt rounds) | 0.108 s | 0.129 s | 1.19 |
 
 `std/crypto/scrypt` runs BlockMix in the compiler kernel
@@ -448,6 +448,6 @@ takes 76% of that time, and page faults take most of the rest. The memory
 is 256 MiB, as in age.
 
 The RSA decryption uses the CRT with 64-bit limbs, and the port takes the
-CRT coefficient from the key file. Each Montgomery product is a loop of Fern
-code. The bcrypt KDF of an OpenSSH key with a passphrase is Fern code with
+CRT coefficient from the key file. Each Montgomery product runs in the
+compiler kernel `__mont_mul`. The bcrypt KDF of an OpenSSH key with a passphrase is Fern code with
 no kernel, so it is slower than Go's.

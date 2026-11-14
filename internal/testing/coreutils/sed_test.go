@@ -99,6 +99,9 @@ func sedBigTree(t *testing.T, dir string) {
 
 // GNU sed writes its whole usage after a bad option. The usage is the text
 // of each program, as --help is, so the comparison stops at it.
+// darwinSedGetopt is why the Darwin reference is wrong for an option error.
+const darwinSedGetopt = "the Darwin build of GNU sed words its getopt errors in an older form, with a backtick and no quotes round an option letter"
+
 func sedUsageMask(s string) string {
 	if i := strings.Index(s, "Usage:"); i >= 0 {
 		return s[:i] + "<usage>"
@@ -646,19 +649,19 @@ func sedOptionCases() []invocation {
 		{name: "sed --posix -e $!N", args: []string{"--posix", "-e", "$!N"}, stdin: "aa\n"},
 		{name: "sed -u p", args: []string{"-u", "p"}, stdin: "aa\nbb\n"},
 		{name: "sed --unbuffered --null-data --zero-terminated --separate --silent --quiet --regexp-extended --expression=p", args: []string{"--unbuffered", "--null-data", "--zero-terminated", "--separate", "--silent", "--quiet", "--regexp-extended", "--expression=p"}, stdin: "aa\n"},
-		{name: "sed --s p", args: []string{"--s", "p"}, stdin: "aa\n", stderrMask: sedUsageMask},
-		{name: "sed --f p", args: []string{"--f", "p"}, stdin: "aa\n", stderrMask: sedUsageMask},
+		{name: "sed --s p", args: []string{"--s", "p"}, stdin: "aa\n", stderrMask: sedUsageMask, darwinLibcDefect: darwinSedGetopt},
+		{name: "sed --f p", args: []string{"--f", "p"}, stdin: "aa\n", stderrMask: sedUsageMask, darwinLibcDefect: darwinSedGetopt},
 		{name: "sed --e=p", args: []string{"--e=p"}, stdin: "aa\n"},
-		{name: "sed -e", args: []string{"-e"}, stdin: "aa\n", stderrMask: sedUsageMask},
-		{name: "sed -f", args: []string{"-f"}, stdin: "aa\n", stderrMask: sedUsageMask},
-		{name: "sed -l", args: []string{"-l"}, stdin: "aa\n", stderrMask: sedUsageMask},
+		{name: "sed -e", args: []string{"-e"}, stdin: "aa\n", stderrMask: sedUsageMask, darwinLibcDefect: darwinSedGetopt},
+		{name: "sed -f", args: []string{"-f"}, stdin: "aa\n", stderrMask: sedUsageMask, darwinLibcDefect: darwinSedGetopt},
+		{name: "sed -l", args: []string{"-l"}, stdin: "aa\n", stderrMask: sedUsageMask, darwinLibcDefect: darwinSedGetopt},
 		{name: "sed -s", args: []string{"-s"}, stdin: "aa\n", stderrMask: sedUsageMask},
 		{name: "sed ", args: []string{}, stdin: "aa\n", stderrMask: sedUsageMask},
-		{name: "sed -k", args: []string{"-k"}, stdin: "aa\n", stderrMask: sedUsageMask},
-		{name: "sed -h", args: []string{"-h"}, stdin: "aa\n", stderrMask: sedUsageMask},
-		{name: "sed --foo", args: []string{"--foo"}, stdin: "aa\n", stderrMask: sedUsageMask},
-		{name: "sed --help=x", args: []string{"--help=x"}, stdin: "aa\n", stderrMask: sedUsageMask},
-		{name: "sed --quiet=x p", args: []string{"--quiet=x", "p"}, stdin: "aa\n", stderrMask: sedUsageMask},
+		{name: "sed -k", args: []string{"-k"}, stdin: "aa\n", stderrMask: sedUsageMask, darwinLibcDefect: darwinSedGetopt},
+		{name: "sed -h", args: []string{"-h"}, stdin: "aa\n", stderrMask: sedUsageMask, darwinLibcDefect: darwinSedGetopt},
+		{name: "sed --foo", args: []string{"--foo"}, stdin: "aa\n", stderrMask: sedUsageMask, darwinLibcDefect: darwinSedGetopt},
+		{name: "sed --help=x", args: []string{"--help=x"}, stdin: "aa\n", stderrMask: sedUsageMask, darwinLibcDefect: darwinSedGetopt},
+		{name: "sed --quiet=x p", args: []string{"--quiet=x", "p"}, stdin: "aa\n", stderrMask: sedUsageMask, darwinLibcDefect: darwinSedGetopt},
 		{name: "sed -V x p", args: []string{"-V", "x", "p"}, stdin: "aa\n", stderrMask: sedUsageMask},
 		{name: "sed -E", args: []string{"-E"}, stdin: "aa\n", stderrMask: sedUsageMask},
 		{name: "sed --binary p", args: []string{"--binary", "p"}, stdin: "aa\n"},

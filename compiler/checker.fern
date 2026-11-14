@@ -530,7 +530,12 @@ function is_lane_builtin(name: string): boolean {
     "__f32x4_swap_halves", "__f32x4_reverse", "__f32x4_zip_lo", "__f32x4_zip_hi", "__f32x4_splat", "__f32x4_of", "__f32x4_lane_bits", "__f32x4_lane", "__f32x4_bitmask", "__f32x4_mul_add", "__f32x4_sqrt",
     "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max",
     "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with", "__f32x4_load_bytes", "__f32x4_with_bytes", "__f32x4_store", "__f32x4_load_ptr", "__f32x4_pack",
-    "__u8x16_splat", "__u8x16_of", "__u8x16_lane", "__u8x16_bitmask", "__u8x16_min", "__u8x16_max", "__u8x16_eq", "__u8x16_ne", "__u8x16_lt", "__u8x16_add_sat", "__u8x16_sub_sat", "__u8x16_avg", "__u8x16_and", "__u8x16_or", "__u8x16_xor", "__u8x16_select", "__u8x16_load", "__u8x16_with",
+    "__u8x16_splat", "__u8x16_of", "__u8x16_lane", "__u8x16_bitmask", "__u8x16_min", "__u8x16_max", "__u8x16_eq", "__u8x16_ne", "__u8x16_lt", "__u8x16_and", "__u8x16_or", "__u8x16_xor", "__u8x16_select", "__u8x16_load", "__u8x16_with", "__u8x16_shl", "__u8x16_shr", "__u8x16_add_sat", "__u8x16_sub_sat", "__u8x16_avg",
+    "__i8x16_splat", "__i8x16_of", "__i8x16_lane", "__i8x16_bitmask", "__i8x16_min", "__i8x16_max", "__i8x16_eq", "__i8x16_ne", "__i8x16_lt", "__i8x16_and", "__i8x16_or", "__i8x16_xor", "__i8x16_select", "__i8x16_load", "__i8x16_with", "__i8x16_shl", "__i8x16_shr", "__i8x16_add_sat", "__i8x16_sub_sat", "__i8x16_abs",
+    "__u16x8_splat", "__u16x8_of", "__u16x8_lane", "__u16x8_bitmask", "__u16x8_min", "__u16x8_max", "__u16x8_eq", "__u16x8_ne", "__u16x8_lt", "__u16x8_and", "__u16x8_or", "__u16x8_xor", "__u16x8_select", "__u16x8_load", "__u16x8_with", "__u16x8_shl", "__u16x8_shr", "__u16x8_add_sat", "__u16x8_sub_sat", "__u16x8_avg",
+    "__i16x8_splat", "__i16x8_of", "__i16x8_lane", "__i16x8_bitmask", "__i16x8_min", "__i16x8_max", "__i16x8_eq", "__i16x8_ne", "__i16x8_lt", "__i16x8_and", "__i16x8_or", "__i16x8_xor", "__i16x8_select", "__i16x8_load", "__i16x8_with", "__i16x8_shl", "__i16x8_shr", "__i16x8_add_sat", "__i16x8_sub_sat", "__i16x8_abs",
+    "__u32x4_splat", "__u32x4_of", "__u32x4_lane", "__u32x4_bitmask", "__u32x4_min", "__u32x4_max", "__u32x4_eq", "__u32x4_ne", "__u32x4_lt", "__u32x4_and", "__u32x4_or", "__u32x4_xor", "__u32x4_select", "__u32x4_load", "__u32x4_with", "__u32x4_shl", "__u32x4_shr",
+    "__i32x4_splat", "__i32x4_of", "__i32x4_lane", "__i32x4_bitmask", "__i32x4_min", "__i32x4_max", "__i32x4_eq", "__i32x4_ne", "__i32x4_lt", "__i32x4_and", "__i32x4_or", "__i32x4_xor", "__i32x4_select", "__i32x4_load", "__i32x4_with", "__i32x4_shl", "__i32x4_shr", "__i32x4_abs",
   ];
   return typeinfo.lane_builtin_width(name) > 0 && util.has_str(names, name);
 }
@@ -15155,6 +15160,13 @@ function integer_lanes(t: typeinfo.Type): boolean {
   return false;
 }
 
+function byte_lanes(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeLanes(l) = t {
+    return l.kind != typeinfo.LANE_FLOAT && l.width == 8;
+  }
+  return false;
+}
+
 function unsigned_lanes(t: typeinfo.Type): boolean {
   if let typeinfo.TypeLanes(l) = t {
     return l.kind == typeinfo.LANE_UNSIGNED;
@@ -15171,8 +15183,11 @@ function lanes_operator_diags(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo
     return [dg_at("E041", "cannot compare values of type " + lanes + " with \"" + b.op + "\": a lane value compares lane by lane, through __" + lanes + "_lt and __" + lanes + "_ne", b.line, b.col)];
   }
   if (util.has_str(["+", "-", "*", "/"], b.op) && type_eq(lt, rt)) {
-    if (integer_lanes(lt) && (b.op == "*" || b.op == "/")) {
-      return [dg_at("E009", "operator \"" + b.op + "\" is not available for " + type_label(lt) + ": integer lanes have + and -", b.line, b.col)];
+    if (integer_lanes(lt) && b.op == "/") {
+      return [dg_at("E009", "operator \"/\" is not available for " + type_label(lt) + ": integer lanes have no divide", b.line, b.col)];
+    }
+    if (byte_lanes(lt) && b.op == "*") {
+      return [dg_at("E009", "operator \"*\" is not available for " + type_label(lt) + ": lanes of 8 bits have no multiply", b.line, b.col)];
     }
     return [];
   }
@@ -18785,7 +18800,12 @@ const REGISTERED_INTRINSICS: string[] = [
   "__fd_close", "__tcp_close_unchecked", "__socket_from_fd",
   "__f64x2_swap_halves", "__f64x2_reverse", "__f64x2_zip_lo", "__f64x2_zip_hi", "__f64x2_splat", "__f64x2_of", "__f64x2_lane_bits", "__f64x2_lane", "__f64x2_bitmask", "__f64x2_mul_add", "__f64x2_sqrt", "__f64x2_abs", "__f64x2_floor", "__f64x2_round", "__f64x2_min", "__f64x2_max", "__f64x2_lt", "__f64x2_ne", "__f64x2_select", "__f64x2_load", "__f64x2_with", "__f64x2_load_bytes", "__f64x2_with_bytes", "__f64x2_store", "__f64x2_load_ptr", "__f64x2_load_f32_ptr",
   "__f32x4_swap_halves", "__f32x4_reverse", "__f32x4_zip_lo", "__f32x4_zip_hi", "__f32x4_splat", "__f32x4_of", "__f32x4_lane_bits", "__f32x4_lane", "__f32x4_bitmask", "__f32x4_mul_add", "__f32x4_sqrt", "__f32x4_abs", "__f32x4_floor", "__f32x4_round", "__f32x4_min", "__f32x4_max", "__f32x4_lt", "__f32x4_ne", "__f32x4_select", "__f32x4_load", "__f32x4_with", "__f32x4_load_bytes", "__f32x4_with_bytes", "__f32x4_store", "__f32x4_load_ptr", "__f32x4_pack",
-  "__u8x16_splat", "__u8x16_of", "__u8x16_lane", "__u8x16_bitmask", "__u8x16_min", "__u8x16_max", "__u8x16_eq", "__u8x16_ne", "__u8x16_lt", "__u8x16_add_sat", "__u8x16_sub_sat", "__u8x16_avg", "__u8x16_and", "__u8x16_or", "__u8x16_xor", "__u8x16_select", "__u8x16_load", "__u8x16_with",
+  "__u8x16_splat", "__u8x16_of", "__u8x16_lane", "__u8x16_bitmask", "__u8x16_min", "__u8x16_max", "__u8x16_eq", "__u8x16_ne", "__u8x16_lt", "__u8x16_and", "__u8x16_or", "__u8x16_xor", "__u8x16_select", "__u8x16_load", "__u8x16_with", "__u8x16_shl", "__u8x16_shr", "__u8x16_add_sat", "__u8x16_sub_sat", "__u8x16_avg",
+  "__i8x16_splat", "__i8x16_of", "__i8x16_lane", "__i8x16_bitmask", "__i8x16_min", "__i8x16_max", "__i8x16_eq", "__i8x16_ne", "__i8x16_lt", "__i8x16_and", "__i8x16_or", "__i8x16_xor", "__i8x16_select", "__i8x16_load", "__i8x16_with", "__i8x16_shl", "__i8x16_shr", "__i8x16_add_sat", "__i8x16_sub_sat", "__i8x16_abs",
+  "__u16x8_splat", "__u16x8_of", "__u16x8_lane", "__u16x8_bitmask", "__u16x8_min", "__u16x8_max", "__u16x8_eq", "__u16x8_ne", "__u16x8_lt", "__u16x8_and", "__u16x8_or", "__u16x8_xor", "__u16x8_select", "__u16x8_load", "__u16x8_with", "__u16x8_shl", "__u16x8_shr", "__u16x8_add_sat", "__u16x8_sub_sat", "__u16x8_avg",
+  "__i16x8_splat", "__i16x8_of", "__i16x8_lane", "__i16x8_bitmask", "__i16x8_min", "__i16x8_max", "__i16x8_eq", "__i16x8_ne", "__i16x8_lt", "__i16x8_and", "__i16x8_or", "__i16x8_xor", "__i16x8_select", "__i16x8_load", "__i16x8_with", "__i16x8_shl", "__i16x8_shr", "__i16x8_add_sat", "__i16x8_sub_sat", "__i16x8_abs",
+  "__u32x4_splat", "__u32x4_of", "__u32x4_lane", "__u32x4_bitmask", "__u32x4_min", "__u32x4_max", "__u32x4_eq", "__u32x4_ne", "__u32x4_lt", "__u32x4_and", "__u32x4_or", "__u32x4_xor", "__u32x4_select", "__u32x4_load", "__u32x4_with", "__u32x4_shl", "__u32x4_shr",
+  "__i32x4_splat", "__i32x4_of", "__i32x4_lane", "__i32x4_bitmask", "__i32x4_min", "__i32x4_max", "__i32x4_eq", "__i32x4_ne", "__i32x4_lt", "__i32x4_and", "__i32x4_or", "__i32x4_xor", "__i32x4_select", "__i32x4_load", "__i32x4_with", "__i32x4_shl", "__i32x4_shr", "__i32x4_abs",
 ];
 
 function qualified_trait(module: string, name: string): string {
@@ -21319,8 +21339,7 @@ function lu_fact_expr(e: ast.Expr, own f: LuFacts): LuFacts {
 }
 
 function lu_copy_selection(fa: ast.ExprFieldAccess, own f: LuFacts): LuFacts {
-  let ty = fa.ty;
-  if (!lu_primitive_array_copy(ty) && (ty == "string" || ty == "str" || !typeinfo.is_primitive_type_name(ty))) {
+  if (!lu_copy_type(fa.ty)) {
     return f;
   }
   let enclosing = ow_enclosing_field(fa);
@@ -21328,6 +21347,11 @@ function lu_copy_selection(fa: ast.ExprFieldAccess, own f: LuFacts): LuFacts {
     return LuFacts { ...f, copy_sels: f.copy_sels.append(lu_key(id.line, id.col)) };
   }
   return f;
+}
+
+// A field of this type is a copy: it cannot hold a handle.
+function lu_copy_type(ty: string): boolean {
+  return lu_primitive_array_copy(ty) || ty != "string" && ty != "str" && typeinfo.is_primitive_type_name(ty);
 }
 
 function lu_primitive_array_copy(ty: string): boolean {
@@ -22124,7 +22148,7 @@ function lu_owned_alias_in(fx: LuFn, name: string, seen: string[]): boolean {
   if let ast.ExprIdent(src) = init {
     return lu_own_param(fx, src.name) && lu_is_last(fx, src);
   }
-  if let Some(src) = lu_spread_source(init) {
+  if let Some(src) = lu_spread_source(fx, init) {
     return lu_unpack_source_owned(fx, src.name) && lu_is_last(fx, src);
   }
   return false;
@@ -22474,18 +22498,18 @@ function lu_alias_admitted(fx: LuFn, name: string, seen: string[]): boolean {
   if let ast.ExprIdent(src) = init {
     return lu_is_last(fx, src) && lu_owned_name(fx, src.name, seen);
   }
-  if let Some(src) = lu_spread_source(init) {
+  if let Some(src) = lu_spread_source(fx, init) {
     return lu_is_last(fx, src) && lu_owned_name(fx, src.name, seen);
   }
   return false;
 }
 
 // The base of a struct literal `T { ...src, f: v }`. The literal takes the
-// rest of `src`, as an alias does. A field value can read a field of `src`
-// that the literal replaces, as `i: src.i + 1` does, because the literal
-// does not take that field. The result is the last mention of `src` in the
-// literal: the literal takes `src` there.
-function lu_spread_source(e: ast.Expr): Option[ast.ExprIdent] {
+// rest of `src`, as an alias does. A field value runs before the literal
+// takes `src`, so it can read `src`: it can use a field that the literal
+// replaces, and it can borrow or copy each other part of `src`. The result
+// is the last mention of `src` in the literal: the literal takes `src` there.
+function lu_spread_source(fx: LuFn, e: ast.Expr): Option[ast.ExprIdent] {
   let ast.ExprStructLit(sl) = e else {
     return None;
   };
@@ -22500,7 +22524,7 @@ function lu_spread_source(e: ast.Expr): Option[ast.ExprIdent] {
     let names = astwalk.fold_expr_nodes(v, [], lu_name_stmt, lu_name_expr, astwalk.descend_all);
     let mentions = util.count_str(names, src.name);
     if (mentions > 0) {
-      if (lu_replaced_reads(v, src.name, sl.field_names) != mentions) {
+      if (lu_source_reads(fx, v, src.name, sl.field_names) != mentions) {
         return None;
       }
       last = lu_later_mention(v, last);
@@ -22509,13 +22533,104 @@ function lu_spread_source(e: ast.Expr): Option[ast.ExprIdent] {
   return Some(last);
 }
 
-// The reads in `v` of the fields of `name` that are in `fields`.
-function lu_replaced_reads(v: ast.Expr, name: string, fields: string[]): i32 {
+// The mentions of `name` in `v` that read it before the literal takes it: a
+// read of a field in `fields`, a copy of a scalar field, or a part that goes
+// to a borrow position. A written lambda can run later, so a mention in one
+// is not such a read.
+function lu_source_reads(fx: LuFn, v: ast.Expr, name: string, fields: string[]): i32 {
+  return astwalk.fold_expr_pruned(v, LuSourceReads { fx: fx, name: name, fields: fields, reads: 0 }, lu_source_read_at, lu_runs_in_place).reads;
+}
+
+struct LuSourceReads { fx: LuFn, name: string, fields: string[], reads: i32 }
+
+function lu_source_read_at(n: ast.Expr, own r: LuSourceReads): LuSourceReads {
+  if let ast.ExprFieldAccess(fa) = n {
+    if (ow_ident_name(fa.obj) == r.name && (util.has_str(r.fields, fa.field) || lu_copy_type(fa.ty))) {
+      return LuSourceReads { ...r, reads: r.reads + 1 };
+    }
+  }
+  return LuSourceReads { ...r, reads: r.reads + lu_lent_reads(r.fx, n, r.name, r.fields) };
+}
+
+function lu_runs_in_place(e: ast.Expr): boolean {
+  return astwalk.not_lambda(e) || desugared_lambda(e);
+}
+
+// The parts of `name` that `e` lends: the arguments of a call that do not go
+// to own parameters, the operands of an operator, and the array of an index
+// read that is a copy.
+function lu_lent_reads(fx: LuFn, e: ast.Expr, name: string, fields: string[]): i32 {
+  match (e) {
+    ast.ExprCall(c) => {
+      return lu_lent_call_reads(fx, c, name, fields);
+    },
+    ast.ExprBinary(b) => {
+      return lu_lent_read(b.left, name, fields) + lu_lent_read(b.right, name, fields);
+    },
+    ast.ExprUnary(u) => {
+      if (util.has_str(["-", "!", "~"], u.op)) {
+        return lu_lent_read(u.operand, name, fields);
+      }
+    },
+    ast.ExprIndex(x) => {
+      if (lu_copy_type(x.ty)) {
+        return lu_lent_read(x.array, name, fields);
+      }
+    },
+    _ => {}
+  }
+  return 0;
+}
+
+// A method that a declaration with an own parameter names can take each
+// part. A callee value can take each argument. A call whose result can
+// borrow from an argument lends none of them.
+function lu_lent_call_reads(fx: LuFn, c: ast.ExprCall, name: string, fields: string[]): i32 {
+  if (lu_call_site_borrows(fx, c)) {
+    return 0;
+  }
+  if let ast.ExprFieldAccess(fa) = c.callee {
+    if (fx.ofuncs.methods.has(fa.field)) {
+      return 0;
+    }
+    return lu_lent_read(fa.obj, name, fields) + lu_lent_args(c.args, [], name, fields);
+  }
+  let cname = ow_ident_name(c.callee);
+  if (cname.len() == 0 || util.has_str(fx.params, cname) || lu_decl_count(fx, cname) > 0) {
+    return 0;
+  }
+  return lu_lent_args(c.args, ow_func_flags(fx.ofuncs, cname), name, fields);
+}
+
+function lu_lent_args(args: ast.Expr[], flags: boolean[], name: string, fields: string[]): i32 {
   let reads = 0;
-  for f in fields {
-    reads += ow_count_field_reads(v, name, f);
+  for i in 0..args.len() {
+    if (i >= flags.len() || !flags[i]) {
+      reads += lu_lent_read(args[i], name, fields);
+    }
   }
   return reads;
+}
+
+// One when `e` is `name`, or a path into a field of `name` that is not in
+// `fields` and is not a copy. The tally counts the other paths. An index read
+// that is a copy counts for itself.
+function lu_lent_read(e: ast.Expr, name: string, fields: string[]): i32 {
+  if let ast.ExprIndex(x) = e {
+    if (!lu_copy_type(x.ty)) {
+      return lu_lent_read(x.array, name, fields);
+    }
+  }
+  if let ast.ExprFieldAccess(fa) = e {
+    let root = ow_enclosing_field(fa);
+    if (ow_ident_name(root.obj) == name && !util.has_str(fields, root.field) && !lu_copy_type(root.ty)) {
+      return 1;
+    }
+  }
+  if (ow_ident_name(e) == name) {
+    return 1;
+  }
+  return 0;
 }
 
 // The mention of `first.name` in `v` that comes last, or `first`.
@@ -23408,10 +23523,11 @@ function lu_if_always_runs(f: ast.StmtIf): boolean {
   return f.origin == "block" || f.origin == "unsafe";
 }
 
-// A statement that calls a function which never returns.
+// A statement that calls exit or a function which never returns. The
+// function is resolved, so no local binds `exit`.
 function lu_never_returns(noret: util.NameIndex, st: ast.Stmt): boolean {
   if let ast.StmtExpr(x) = st {
-    return lu_call_never_returns(x.value, noret, true);
+    return lu_call_never_returns(x.value, noret, false);
   }
   return false;
 }

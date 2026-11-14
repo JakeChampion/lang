@@ -72,6 +72,8 @@ type Info struct {
 	// CallBorrowsBeside reports a plain call whose result can borrow from
 	// an argument other than the plain name given.
 	CallBorrowsBeside func(*ast.Call, string) bool
+	// CallOwnFlags reports which arguments of a call go to own parameters.
+	CallOwnFlags func(*ast.Call) []bool
 	// NoReturn names the functions whose body never returns.
 	NoReturn        map[string]bool
 	Structs         map[string]*ast.StructDecl
@@ -3121,6 +3123,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.TypeHoldsNoHandle = c.holdsNoHandle
 	c.info.CallScopedFresh = c.scopedCallFresh
 	c.info.CallBorrowsBeside = c.callSiteBorrowsBeside
+	c.info.CallOwnFlags = c.ownFlagsOf
 	c.info.NoReturn = NoReturnFuncs(prog)
 
 	c.rewriteAssocConstReads(prog)
@@ -18799,40 +18802,56 @@ func (c *checker) registerLaneBuiltins() {
 			c.info.FuncSigs[p+v] = sigs[v]
 		}
 	}
-	c.registerByteLaneBuiltins()
+	c.registerIntegerLaneBuiltins()
 	wide := ast.LanesType{Width: 64}
 	c.info.FuncSigs["__f64x2_load_f32_ptr"] = &ast.FuncType{Params: []ast.Type{ast.NumberType{Width: ast.WidthPtr, Signed: false}}, Result: wide}
 	c.info.FuncSigs["__f32x4_pack"] = &ast.FuncType{Params: []ast.Type{wide, wide}, Result: ast.LanesType{Width: 32}}
 }
 
-// byteLaneBuiltinVerbs are the verbs of the builtins of u8x16, in the order
-// of the self-hosted checker.
-var byteLaneBuiltinVerbs = []string{"splat", "of", "lane", "bitmask", "min", "max", "eq", "ne", "lt", "add_sat", "sub_sat", "avg", "and", "or", "xor", "select", "load", "with"}
-
-func (c *checker) registerByteLaneBuiltins() {
-	lt := ast.LanesType{Width: 8, Kind: ast.LaneUnsigned}
-	e := lt.Elem()
-	arr := ast.ArrayType{Elem: e}
-	i32 := ast.NumberType{}
-	of := make([]ast.Type, lt.Lanes())
-	for i := range of {
-		of[i] = e
-	}
-	sigs := map[string]*ast.FuncType{
-		"splat":   {Params: []ast.Type{e}, Result: lt},
-		"of":      {Params: of, Result: lt},
-		"lane":    {Params: []ast.Type{lt, i32}, Result: e},
-		"bitmask": {Params: []ast.Type{lt}, Result: i32},
-		"select":  {Params: []ast.Type{lt, lt, lt}, Result: lt},
-		"load":    {Params: []ast.Type{arr, i32}, Result: lt},
-		"with":    {Params: []ast.Type{arr, i32, lt}, Result: arr},
-	}
-	for _, v := range byteLaneBuiltinVerbs {
-		sig, ok := sigs[v]
-		if !ok {
-			sig = &ast.FuncType{Params: []ast.Type{lt, lt}, Result: lt}
+// integerLaneVerbs are the verbs of the builtins of an integer lane type,
+// in the order of the self-hosted checker.
+func integerLaneVerbs(lt ast.LanesType) []string {
+	verbs := []string{"splat", "of", "lane", "bitmask", "min", "max", "eq", "ne", "lt", "and", "or", "xor", "select", "load", "with", "shl", "shr"}
+	if lt.Width <= 16 {
+		verbs = append(verbs, "add_sat", "sub_sat")
+		if lt.Kind == ast.LaneUnsigned {
+			verbs = append(verbs, "avg")
 		}
-		c.info.FuncSigs["__u8x16_"+v] = sig
+	}
+	if lt.Kind == ast.LaneSigned {
+		verbs = append(verbs, "abs")
+	}
+	return verbs
+}
+
+func (c *checker) registerIntegerLaneBuiltins() {
+	i32 := ast.NumberType{}
+	bytes := ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}
+	for _, lt := range ast.IntegerLanes {
+		e := lt.Elem()
+		of := make([]ast.Type, lt.Lanes())
+		for i := range of {
+			of[i] = e
+		}
+		sigs := map[string]*ast.FuncType{
+			"splat":   {Params: []ast.Type{e}, Result: lt},
+			"of":      {Params: of, Result: lt},
+			"lane":    {Params: []ast.Type{lt, i32}, Result: e},
+			"bitmask": {Params: []ast.Type{lt}, Result: i32},
+			"select":  {Params: []ast.Type{lt, lt, lt}, Result: lt},
+			"load":    {Params: []ast.Type{bytes, i32}, Result: lt},
+			"with":    {Params: []ast.Type{bytes, i32, lt}, Result: bytes},
+			"shl":     {Params: []ast.Type{lt, i32}, Result: lt},
+			"shr":     {Params: []ast.Type{lt, i32}, Result: lt},
+			"abs":     {Params: []ast.Type{lt}, Result: lt},
+		}
+		for _, v := range integerLaneVerbs(lt) {
+			sig, ok := sigs[v]
+			if !ok {
+				sig = &ast.FuncType{Params: []ast.Type{lt, lt}, Result: lt}
+			}
+			c.info.FuncSigs["__"+lt.String()+"_"+v] = sig
+		}
 	}
 }
 
@@ -18855,17 +18874,21 @@ func (c *checker) laneIndexArg(n *ast.Call) {
 	if !ok || len(n.Args) != 2 {
 		return
 	}
-	lanes := int64(0)
-	switch id.Name {
-	case "__f64x2_lane", "__f64x2_lane_bits":
-		lanes = 2
-	case "__f32x4_lane", "__f32x4_lane_bits":
-		lanes = 4
-	case "__u8x16_lane":
-		lanes = 16
-	default:
+	if !strings.HasSuffix(id.Name, "_lane") && !strings.HasSuffix(id.Name, "_lane_bits") {
 		return
 	}
+	sig := c.info.FuncSigs[id.Name]
+	if sig == nil || len(sig.Params) != 2 {
+		return
+	}
+	lt, ok := sig.Params[0].(ast.LanesType)
+	if !ok {
+		return
+	}
+	if p := "__" + lt.String() + "_"; id.Name != p+"lane" && id.Name != p+"lane_bits" {
+		return
+	}
+	lanes := int64(lt.Lanes())
 	if lit, ok := n.Args[1].(*ast.NumberLit); ok && !lit.IsFloat && lit.Value >= 0 && lit.Value < lanes {
 		return
 	}
@@ -18917,9 +18940,15 @@ func isLanes(t ast.Type) bool {
 
 func (c *checker) lanesArith(n *ast.Binary, lt, rt ast.Type) ast.Type {
 	if ast.Equal(lt, rt) {
-		if l, ok := lt.(ast.LanesType); ok && l.Kind != ast.LaneFloat && (n.Op == "*" || n.Op == "/") {
-			c.errfCode(n.P, "E009", "operator %q is not available for %s: integer lanes have + and -", n.Op, lt)
-			return lt
+		if l, ok := lt.(ast.LanesType); ok && l.Kind != ast.LaneFloat {
+			if n.Op == "/" {
+				c.errfCode(n.P, "E009", "operator \"/\" is not available for %s: integer lanes have no divide", lt)
+				return lt
+			}
+			if n.Op == "*" && l.Width == 8 {
+				c.errfCode(n.P, "E009", "operator \"*\" is not available for %s: lanes of 8 bits have no multiply", lt)
+				return lt
+			}
 		}
 		n.IsLanes = true
 		return lt

@@ -484,7 +484,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 			aliasInitLocal[name] = true
 		}
 	}
-	for name := range ownedAliases(info, body, ownParam, declCount, order, freshInitLocal, staleAssign, payloadOwned) {
+	for name := range ownedAliases(info, scalar, body, ownParam, declCount, order, freshInitLocal, staleAssign, payloadOwned) {
 		aliasInitLocal[name] = true
 	}
 	fieldOwner := func(name string) bool {
@@ -962,7 +962,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 		return true
 	})
 	unadmitted := map[string]bool{}
-	moveAdmitted := moveAdmission(info, body, isParam, ownParam, declCount, occurrences, order, admitted, unpack, payloadOwned)
+	moveAdmitted := moveAdmission(info, scalar, body, isParam, ownParam, declCount, occurrences, order, admitted, unpack, payloadOwned)
 	for _, dies := range out {
 		for name := range dies {
 			if !isParam[name] && !moveAdmitted[name] {
@@ -1429,7 +1429,7 @@ func freshLocalReplacement(info *Info, bf *bodyFrames, holder ast.Node, value as
 // that takes an owned b at its last use and is given only owned values after
 // that. An owned value is a fresh value, an unpack, an owned name, or a
 // self-update `T { ...a, f: v }`.
-func moveAdmission(info *Info, body *ast.Block, isParam, ownParam map[string]bool, declCount, occurrences map[string]int, order IdentOrder, admitted func(string) bool, unpack func(ast.Expr) bool, payloadOwned func(string) bool) map[string]bool {
+func moveAdmission(info *Info, scalar map[ast.Expr]bool, body *ast.Block, isParam, ownParam map[string]bool, declCount, occurrences map[string]int, order IdentOrder, admitted func(string) bool, unpack func(ast.Expr) bool, payloadOwned func(string) bool) map[string]bool {
 	looped := loopedDecls(body)
 	aliasOf := map[string]*ast.Ident{}
 	assigns := map[string][]ast.Expr{}
@@ -1438,7 +1438,7 @@ func moveAdmission(info *Info, body *ast.Block, isParam, ownParam map[string]boo
 		case *ast.Var:
 			src, ok := x.Init.(*ast.Ident)
 			if !ok {
-				src, ok = spreadSource(x.Init)
+				src, ok = spreadSource(info, scalar, x.Init)
 			}
 			if ok && declCount[x.Name] == 1 && !looped[x.Name] && order.IsLast(src) {
 				aliasOf[x.Name] = src
@@ -1492,11 +1492,12 @@ func moveAdmission(info *Info, body *ast.Block, isParam, ownParam map[string]boo
 }
 
 // spreadSource is the base of a struct literal `T { ...src, f: v }`. The
-// literal takes the rest of src, as an alias does. A field value can read a
-// field of src that the literal replaces, as `i: src.i + 1` does, because
-// the literal does not take that field. The result is the last mention of
-// src in the literal: the literal takes src there.
-func spreadSource(e ast.Expr) (*ast.Ident, bool) {
+// literal takes the rest of src, as an alias does. A field value runs before
+// the literal takes src, so it can read src: it can use a field that the
+// literal replaces, and it can borrow or copy each other part of src. The
+// result is the last mention of src in the literal: the literal takes src
+// there.
+func spreadSource(info *Info, scalar map[ast.Expr]bool, e ast.Expr) (*ast.Ident, bool) {
 	sl, ok := e.(*ast.StructLit)
 	if !ok {
 		return nil, false
@@ -1511,47 +1512,59 @@ func spreadSource(e ast.Expr) (*ast.Ident, bool) {
 	}
 	last := src
 	for _, f := range sl.Fields {
-		if !StmtReferencesName(f.Value, src.Name) {
-			continue
-		}
-		mention, ok := lastReplacedRead(f.Value, src.Name, replaced)
+		mention, ok := lastSourceRead(info, scalar, f.Value, src.Name, replaced)
 		if !ok {
 			return nil, false
 		}
-		if identAfter(mention, last) {
+		if mention != nil && identAfter(mention, last) {
 			last = mention
 		}
 	}
 	return last, true
 }
 
-// lastReplacedRead is the last mention of name in e, when each mention reads
-// one of the replaced fields of it.
-func lastReplacedRead(e ast.Expr, name string, replaced map[string]bool) (*ast.Ident, bool) {
+// lastSourceRead is the last mention of name in e, or nil. Each mention must
+// read a replaced field of name, copy a scalar field of it, or lend a part of
+// it to a borrow position: a parameter or a method receiver that is not own,
+// or an operand. An index read lends its array when the index read is lent or
+// is a scalar copy.
+func lastSourceRead(info *Info, scalar map[ast.Expr]bool, e ast.Expr, name string, replaced map[string]bool) (*ast.Ident, bool) {
+	lent := map[ast.Expr]bool{}
 	var last *ast.Ident
 	ok := true
+	read := func(id *ast.Ident, allowed bool) {
+		ok = ok && allowed
+		if last == nil || identAfter(id, last) {
+			last = id
+		}
+	}
 	ast.Walk(e, func(n ast.Node) bool {
 		if !ok {
 			return false
 		}
 		switch x := n.(type) {
 		case *ast.Lambda:
-			if lambdaFreeNames(x)[name] {
-				ok = false
-			}
+			ok = !lambdaFreeNames(x)[name]
 			return false
+		case *ast.Call:
+			lendArgs(info, x, lent)
+		case *ast.Binary:
+			lent[x.Left], lent[x.Right] = true, true
+		case *ast.Unary:
+			lent[x.Operand] = true
+		case *ast.Index:
+			lent[x.Array] = lent[x] || scalar[x]
+		case *ast.SliceExpr:
+			lent[x.Source] = x.Lent && lent[x]
 		case *ast.FieldAccess:
-			if id, isIdent := x.Target.(*ast.Ident); isIdent && id.Name == name {
-				if !replaced[x.Field] {
-					ok = false
-				} else if last == nil || identAfter(id, last) {
-					last = id
-				}
+			root := enclosingField(x)
+			if id, isIdent := root.Target.(*ast.Ident); isIdent && id.Name == name {
+				read(id, replaced[root.Field] || lent[x] || scalar[root] || info != nil && info.ArrayFieldCopies[root])
 				return false
 			}
 		case *ast.Ident:
 			if x.Name == name {
-				ok = false
+				read(x, lent[x])
 			}
 		case *ast.Assign:
 			if t, isIdent := x.Target.(*ast.Ident); isIdent && t.Name == name {
@@ -1560,7 +1573,22 @@ func lastReplacedRead(e ast.Expr, name string, replaced map[string]bool) (*ast.I
 		}
 		return ok
 	})
-	return last, ok && last != nil
+	return last, ok
+}
+
+// lendArgs marks the arguments of c that go to parameters that are not own.
+// A call whose result can borrow from an argument lends none of them.
+func lendArgs(info *Info, c *ast.Call, lent map[ast.Expr]bool) {
+	if info == nil || info.CallBorrows == nil || info.CallBorrows(c) {
+		return
+	}
+	var flags []bool
+	if info.CallOwnFlags != nil {
+		flags = info.CallOwnFlags(c)
+	}
+	for i, a := range c.Args {
+		lent[a] = i >= len(flags) || !flags[i]
+	}
 }
 
 func identAfter(a, b *ast.Ident) bool {
@@ -1677,7 +1705,7 @@ func copiedArgs(scope ast.Node, name string, scalar map[ast.Expr]bool) map[ast.E
 // ownedAliases names the locals declared once, outside a loop, from an own
 // parameter or a payload that a match took, at its last use, and given only
 // owned values after that (stale names the locals given another value).
-func ownedAliases(info *Info, body *ast.Block, ownParam map[string]bool, declCount map[string]int, order IdentOrder, freshLocal map[string]bool, stale map[string]bool, payloadOwned func(string) bool) map[string]bool {
+func ownedAliases(info *Info, scalar map[ast.Expr]bool, body *ast.Block, ownParam map[string]bool, declCount map[string]int, order IdentOrder, freshLocal map[string]bool, stale map[string]bool, payloadOwned func(string) bool) map[string]bool {
 	looped := loopedDecls(body)
 	sole := func(name string) bool {
 		return declCount[name] == 1 && !looped[name] && !stale[name]
@@ -1698,7 +1726,7 @@ func ownedAliases(info *Info, body *ast.Block, ownParam map[string]bool, declCou
 		switch x := n.(type) {
 		case *ast.Var:
 			source := x.Init
-			if base, ok := spreadSource(source); ok {
+			if base, ok := spreadSource(info, scalar, source); ok {
 				source = base
 			}
 			if !sole(x.Name) {
@@ -2243,11 +2271,17 @@ func jumpsOf(info *Info, st ast.Stmt) stmtJumps {
 	return out
 }
 
-// neverReturns reports a statement that calls a function which never
-// returns.
+// neverReturns reports a statement that calls exit or a function which
+// never returns.
 func neverReturns(info *Info, st ast.Stmt) bool {
 	es, ok := st.(*ast.ExprStmt)
-	return ok && info != nil && callNeverReturns(es.Expr, info.NoReturn, true)
+	if !ok || info == nil {
+		return false
+	}
+	if call, ok := es.Expr.(*ast.Call); ok && info.IntrinsicCalls[call].Kind == IntrinsicExit {
+		return true
+	}
+	return callNeverReturns(es.Expr, info.NoReturn, true)
 }
 
 // NoReturnFuncs names the plain functions whose body never returns: on every

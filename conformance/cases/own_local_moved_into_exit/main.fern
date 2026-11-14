@@ -1,0 +1,30 @@
+// A local moves into an own parameter in a branch that ends with a call to
+// exit. No path reads the local after that call, so the move is its last use.
+struct W { d: i32[], n: i32 }
+
+@noinline
+function eat(own w: W): i32 {
+  return w.n + w.d.len();
+}
+
+@noinline
+function mkw(n: i32): W {
+  return W { d: [n], n: n };
+}
+
+@noinline
+function count_or_stop(n: i32): i32 {
+  let w: W = mkw(n);
+  if (n > 5) {
+    exit(eat(w));
+  }
+  return w.n + w.d.len();
+}
+
+function main(): i32 {
+  let total: i32 = count_or_stop(1) + count_or_stop(2);
+  if (total != 5) {
+    return 1;
+  }
+  return count_or_stop(40);
+}

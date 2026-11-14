@@ -1274,6 +1274,9 @@ pub function is_ident(s: string): boolean {
 // The prefix of an entry-module function that shadows a builtin.
 pub const ENTRY_SHADOW_PREFIX: string = "__entry__";
 
+// The first line of each arm64 assembly file: the baseline of the arm64 targets.
+pub const ARM64_ARCH: string = ".arch armv8.2-a+crypto";
+
 pub function demangle(name: string): string {
   if (name.starts_with(ENTRY_SHADOW_PREFIX)) {
     return slice_unchecked(name, ENTRY_SHADOW_PREFIX.len(), name.len()).to_owned();

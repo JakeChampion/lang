@@ -2758,7 +2758,7 @@ function parse_primary_nested(p: Par): (ast.Expr, Par) {
       let is_tykw: boolean = x.name == "string" || x.name == "boolean" || x.name == "void"
         || x.name == "i32" || x.name == "i64"
         || x.name == "u8" || x.name == "u32" || x.name == "u64"
-        || x.name == "usize" || x.name == "f32" || x.name == "f64" || x.name == "f64x2" || x.name == "f32x4" || x.name == "u8x16";
+        || x.name == "usize" || x.name == "f32" || x.name == "f64" || typeinfo.lanes_width(x.name) > 0;
       if (is_tykw) {
         let kwline = p.peek_line();
         let kwcol = p.peek_col();
@@ -11003,11 +11003,16 @@ function resolve_residual_ret(fd: FuncDecl, args: ast.Expr[], env: MEnv, funcs: 
   return subst_ty(rt0, rvars, rcts);
 }
 
-function assoc_ret_of(funcs: FuncDecl[], tyname: string, method: string): string {
-  for i in 0..funcs.len() {
-    if (funcs[i].name == method && funcs[i].receiver_type == tyname) {
-      return funcs[i].ret_type;
+// The result type of the first function named method with the receiver type
+// tyname, which is never empty here.
+function assoc_ret_of(funcs: MFns, tyname: string, method: string): string {
+  let i = funcs.rix.chain(method);
+  while (i >= 0) {
+    let fd = funcs.decls[funcs.rat[i]];
+    if (funcs.rix.names[i] == method && fd.receiver_type == tyname) {
+      return fd.ret_type;
     }
+    i = funcs.rix.next[i];
   }
   return "";
 }
@@ -11047,7 +11052,7 @@ function recv_method_ret_of(cfa: ast.ExprFieldAccess, args: ast.Expr[], env: MEn
     }
     return decl_call_ret_type(funcs, funcs.decls[concrete], call_args, env);
   }
-  let mrt = assoc_ret_of(funcs.decls, rvt, cfa.field);
+  let mrt = assoc_ret_of(funcs, rvt, cfa.field);
   if (mrt.len() == 0) {
     mrt = generic_recv_ret_of(funcs.decls, rvt, cfa.field);
   }
@@ -11437,7 +11442,7 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
               if (qrt.len() > 0) {
                 return qrt;
               }
-              let art = assoc_ret_of(funcs.decls, oid.name, cfa.field);
+              let art = assoc_ret_of(funcs, oid.name, cfa.field);
               if (art.len() > 0) {
                 return art;
               }
@@ -19779,6 +19784,7 @@ pub function desugar_prepass_module(raw: Module): Module {
   let mod = retag_type_arg_indexes(raw);
   let need_fda = module_has_default_params(mod) || module_has_named_args(mod);
   let none: string[] = [];
+  let free = free_funcs(mod.funcs);
   let funcs: FuncDecl[] = [];
   for i in 0..mod.funcs.len() {
     let fd = mod.funcs[i];
@@ -19787,7 +19793,7 @@ pub function desugar_prepass_module(raw: Module): Module {
       body = resolve_labels_block(body, none);
     }
     if (need_fda) {
-      let (filled, diags) = fda_stmts(body, fd.params, mod.funcs);
+      let (filled, diags) = fda_stmts(body, fd.params, free);
       body = filled;
     }
     body = desugar_ranges_body(body);
@@ -19796,7 +19802,7 @@ pub function desugar_prepass_module(raw: Module): Module {
   let tops = resolve_labels_block(mod.top_stmts, none);
   if (need_fda) {
     let no_params: ast.ParamDecl[] = [];
-    let (filled, diags) = fda_stmts(tops, no_params, mod.funcs);
+    let (filled, diags) = fda_stmts(tops, no_params, free);
     tops = filled;
   }
   tops = desugar_ranges_block(tops);
@@ -19815,14 +19821,29 @@ function module_has_default_params(mod: Module): boolean {
   return false;
 }
 
-function fda_lookup_params(name: string, funcs: FuncDecl[]): ast.ParamDecl[] {
+// The functions with no receiver, by name. The first function of a name is
+// the one that a call of the name means.
+struct FreeFuncs { funcs: FuncDecl[], names: util.NameIndex, at: i32[] }
+
+function free_funcs(funcs: FuncDecl[]): FreeFuncs {
+  let names: string[] = [];
+  let at: i32[] = [];
   for i in 0..funcs.len() {
-    if (funcs[i].receiver_type.len() == 0 && funcs[i].name == name) {
-      return funcs[i].params;
+    if (funcs[i].receiver_type.len() == 0) {
+      names = names.append(funcs[i].name);
+      at = at.append(i);
     }
   }
-  let none: ast.ParamDecl[] = [];
-  return none;
+  return FreeFuncs { funcs: funcs, names: util.name_index(names), at: at };
+}
+
+function (ff: FreeFuncs) params_of(name: string): ast.ParamDecl[] {
+  let k = ff.names.find(name);
+  if (k < 0) {
+    let none: ast.ParamDecl[] = [];
+    return none;
+  }
+  return ff.funcs[ff.at[k]].params;
 }
 
 function fda_is_named_marker(e: ast.Expr): boolean {
@@ -19938,11 +19959,11 @@ function module_has_named_args(mod: Module): boolean {
   return stmts_have_named(mod.top_stmts);
 }
 
-function fda_call_of(c: ast.ExprCall, funcs: FuncDecl[]): ast.Expr {
+function fda_call_of(c: ast.ExprCall, funcs: FreeFuncs): ast.Expr {
   let new_args = c.args;
   match (c.callee) {
     ast.ExprIdent(id) => {
-      let params = fda_lookup_params(id.name, funcs);
+      let params = funcs.params_of(id.name);
       if (fda_args_have_named(new_args)) {
         new_args = fda_resolve_named(params, new_args);
       } else if (params.len() > new_args.len()) {
@@ -19964,7 +19985,7 @@ function fda_call_of(c: ast.ExprCall, funcs: FuncDecl[]): ast.Expr {
   return ast.ExprCall { ...c, args: new_args };
 }
 
-struct FdaWalk { funcs: FuncDecl[], local: string[], diags: util.Diag[] }
+struct FdaWalk { funcs: FreeFuncs, local: string[], diags: util.Diag[] }
 
 function fda_bind(w: FdaWalk, packed: string): FdaWalk {
   let local = w.local;
@@ -20092,7 +20113,7 @@ function fda_stmt_at(st: ast.Stmt, w: FdaWalk): (ast.Stmt, FdaWalk, boolean) {
   }
 }
 
-function fda_stmts(stmts: ast.Stmt[], params: ast.ParamDecl[], funcs: FuncDecl[]): (ast.Stmt[], util.Diag[]) {
+function fda_stmts(stmts: ast.Stmt[], params: ast.ParamDecl[], funcs: FreeFuncs): (ast.Stmt[], util.Diag[]) {
   let none: util.Diag[] = [];
   let scope: string[] = [];
   let w = fda_bind_params(FdaWalk { funcs: funcs, local: scope, diags: none }, params);
@@ -20264,7 +20285,7 @@ function fda_param_index(params: ast.ParamDecl[], name: string): Option[i32] {
   return None;
 }
 
-function fda_call_error(c: ast.ExprCall, funcs: FuncDecl[], local: string[]): (string, string) {
+function fda_call_error(c: ast.ExprCall, funcs: FreeFuncs, local: string[]): (string, string) {
   let callee = "";
   match (c.callee) {
     ast.ExprIdent(id) => {
@@ -20274,10 +20295,10 @@ function fda_call_error(c: ast.ExprCall, funcs: FuncDecl[], local: string[]): (s
       return ("E077", "named arguments are only supported on direct calls to named functions");
     }
   }
-  if (util.has_str(local, callee) || !fda_known_func(callee, funcs)) {
+  if (util.has_str(local, callee) || !funcs.names.has(callee)) {
     return ("E077", "named arguments are not supported for call to \"" + callee + "\"");
   }
-  let params = fda_lookup_params(callee, funcs);
+  let params = funcs.params_of(callee);
   let filled: boolean[] = [];
   for k in 0..params.len() {
     filled = filled.append(false);
@@ -20560,15 +20581,16 @@ function rta_callee_name(callee: ast.Expr, shadow: string[]): string {
 }
 
 function fda_fill(mod: Module): (Module, util.Diag[]) {
+  let free = free_funcs(mod.funcs);
   let funcs: FuncDecl[] = [];
   let diags: util.Diag[] = [];
   for fd in mod.funcs {
-    let (body, fdiags) = fda_stmts(fd.body, fd.params, mod.funcs);
+    let (body, fdiags) = fda_stmts(fd.body, fd.params, free);
     funcs = funcs.append(FuncDecl { ...fd, body: body });
     diags = util.append_diags(diags, fdiags);
   }
   let no_params: ast.ParamDecl[] = [];
-  let (tops, tdiags) = fda_stmts(mod.top_stmts, no_params, mod.funcs);
+  let (tops, tdiags) = fda_stmts(mod.top_stmts, no_params, free);
   return (Module { ...mod, funcs: funcs, top_stmts: tops }, util.append_diags(diags, tdiags));
 }
 
@@ -24365,6 +24387,10 @@ pub function is_float_type_name(t: string): boolean {
   return t == "f64" || t == "f32";
 }
 
+pub function is_lanes_type_name(t: string): boolean {
+  return typeinfo.lanes_width(t) > 0;
+}
+
 // The names of the types that a 64-bit integer slot holds. A Socket is one:
 // its descriptor number, and above it the close count of that number.
 pub function is_wide_int_type_name(t: string): boolean {
@@ -24947,12 +24973,13 @@ pub function substitute_const_refs(mod: Module, t: ConstTable): Module {
   }
   let named = util.name_index(t.names);
   let funcs: FuncDecl[] = [];
-  let earlier: string[] = [];
+  let none: string[] = [];
+  let earlier = util.name_index(none);
   for fd in mod.funcs {
     if (fd.is_const) {
       let seen = const_table_within(t, earlier);
       funcs = funcs.append(FuncDecl { ...fd, body: astwalk.substitute_consts(fd.body, [], seen.names, seen.values) });
-      earlier = earlier.append(fd.name);
+      earlier = earlier.added(fd.name);
       continue;
     }
     let bound: string[] = [];
@@ -25017,11 +25044,11 @@ pub function rewrite_assoc_const_reads(mod: Module): Module {
   return Module { ...mod, funcs: funcs, top_stmts: astwalk.rewrite_assoc_const_reads(mod.top_stmts, [], astwalk.TypeNames { index: index, params: [] }, enums, enum_assoc) };
 }
 
-function const_table_within(t: ConstTable, names: string[]): ConstTable {
+function const_table_within(t: ConstTable, names: util.NameIndex): ConstTable {
   let out = ConstTable { names: [], values: [] };
   let i = 0;
   for n in t.names {
-    if (util.has_str(names, n)) {
+    if (names.has(n)) {
       out = ConstTable { names: out.names.append(n), values: out.values.append(t.values[i]) };
     }
     i += 1;

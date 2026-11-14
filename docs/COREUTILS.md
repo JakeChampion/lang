@@ -825,7 +825,9 @@ same directories in the same order. A case that deletes or writes files gets
 a fresh tree for each side, made by the same steps. The file system then
 gives the same order to both. Do not compare the inode numbers or the change
 times of these fresh trees. A case of `xargs -P` compares its output as a
-set of lines, because the commands run at the same time.
+set of lines, because the commands run at the same time. A case with a slow
+first command compares the lines in order, because the commands then end
+in a known order.
 
 Each case of find sets `unprivileged`. When the test runs as root, the
 harness gives the tree to the user nobody and runs both sides as nobody.

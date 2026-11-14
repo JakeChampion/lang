@@ -1,6 +1,10 @@
+# 2026-11-14: own_local_moved_into_exit has balanced allocations on x86-64.
+# 2026-11-13: inline_worker_exit_is_a_worker_failure keeps three scheduler blocks
+# in active frames at exit(134). The process does not unwind these frames.
 # 2026-11-14: tuple_projection_of_a_fresh_call_is_owned has balanced allocations on x86-64.
 # 2026-11-13: owned_let_arm_result_in_loop has no allocations on x86-64.
 # 2026-11-14: owned_spread_reads_replaced_field has no allocations on x86-64.
+# 2026-11-14: owned_spread_borrows_its_source has balanced allocations on x86-64.
 # 2026-11-14: task_started_two_times keeps 6 blocks at its exit(134) (was 2). A cell write
 # now borrows its cell, so more of the task is live at the abort. The same program
 # without the abort has the same count as before.
@@ -606,6 +610,7 @@ init_option_control                                  0
 init_struct_update_control                           0
 init_variant_control                                 0
 inline_hints                                         0
+# 2026-11-13: inline_worker_exit_is_a_worker_failure stops through exit(134) inside a worker body, so the blocks that are live at that call stay unpaired: 3 on x86-64, in main run 43510761873 and on a local run.
 inline_worker_exit_is_a_worker_failure               3
 insert_dedup                                         0
 int_bit_accessors                                    0
@@ -651,6 +656,7 @@ lanes_f32x4_ops                                      0
 lanes_f64x2_ops                                      0
 lanes_generic_instances                              0
 lanes_map_fusion                                     0
+lanes_integer_ops                                    0
 lanes_methods                                        0
 lanes_receivers                                      0
 lanes_spill_pressure                                 0
@@ -830,6 +836,7 @@ own_fresh_result_from_a_borrowing_callee             0
 own_func_name_shadowed_by_param                      0
 own_inplace_sort                                     0
 own_local_destructured_at_last_use                   0
+own_local_moved_into_exit                            0
 own_local_rebound_on_every_branch                    0
 own_loop_takes_and_rebinds_each_round                0
 own_param_alias_after_self_update                    0
@@ -855,6 +862,7 @@ own_tree_match                                       0
 owned_field_match_data                               0
 owned_let_arm_result_in_loop                         0
 owned_match_results_rebuild_literal                 0
+owned_spread_borrows_its_source                      0
 owned_spread_reads_replaced_field                    0
 owned_state_restored_on_each_loop_jump               0
 package_scoped_stdlib_helpers                        0

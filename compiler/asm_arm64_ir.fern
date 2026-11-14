@@ -3127,9 +3127,9 @@ function ssa_reuse_alloc(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowS
   let fresh = asmcore.lab_new(s, lp + "raf" + id);
   let en = asmcore.lab_new(fresh.state, lp + "rae" + id);
   s = ssa_cbz(en.state, false, "x0", fresh.lab);
-  s = ssa_bcond(ssa_cmp_rr(ssa_unscaled(s, true, "x30", "x0", -16), "x30", "x1"), CC_EQ, en.lab);
+  s = ssa_bcond(ssa_cmp_rr(ssa_unscaled(s, true, "x30", "x0", -16).write("    add x30, x30, #1\n"), "x30", "x1"), CC_EQ, en.lab);
   s = ssa_b(ssa_bl_saving(s, "__fn___fern_alloc_reuse.r", saves), en.lab);
-  s = ssa_bl_saving(ssa_mov_rr(s.lab_def(fresh.lab), "x0", "x1"), "__fern_arr_box", saves);
+  s = ssa_bl_saving(s.lab_def(fresh.lab).write("    sub x0, x1, #1\n"), "__fern_arr_box", saves);
   return ssa_store(reg_of, ins.result, "x0", asmcore.ssa_x0_forget(s.lab_def(en.lab)));
 }
 
@@ -6618,8 +6618,20 @@ function emit_start_profile(s: asmcore.EmitState, darwin: boolean): asmcore.Emit
   return s;
 }
 
+// -cpu-limit: prlimit64 sets the soft and the hard limit of RLIMIT_CPU before
+// main runs. The kernel sends SIGXCPU at the limit.
+function emit_cpu_limit(s: asmcore.EmitState): asmcore.EmitState {
+  if (s.cpu_limit <= 0i64) {
+    return s;
+  }
+  s = s.write("    sub sp, sp, #16\n" + mov_imm64("x9", s.cpu_limit) + "    stp x9, x9, [sp]\n");
+  s = s.write("    mov x0, #0\n    mov x1, #0\n    mov x2, sp\n    mov x3, #0\n    mov x8, #261\n").svc(261);
+  return s.write("    add sp, sp, #16\n");
+}
+
 function emit_start_main_call(s: asmcore.EmitState): asmcore.EmitState {
   if (asmcore.declares_main(s.funcs)) {
+    s = emit_cpu_limit(s);
     s = s.write("    bl __fn_main\n");
     if (s.has_need("task")) {
       s = s.write("    str x0, [sp, #-16]!\n    bl __fern_task_close_drop\n    ldr x0, [sp], #16\n");
@@ -6641,10 +6653,23 @@ function emit_start_main_call(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
+// x19 holds the base of the stack mapping. The stack below its top 4 MiB
+// asks for transparent huge pages, so a deep recursion takes one page fault
+// for each 2 MiB. A program that stays in the top 4 MiB keeps small pages.
+function stack_huge_pages(s: asmcore.EmitState): asmcore.EmitState {
+  let deep = (asmcore.stack_size() - asmcore.stack_guard() - 4194304) as i64;
+  s = s.write("    add x0, x19, #0x100, lsl #12\n");
+  s = s.write(mov_imm64("x1", deep));
+  return s.write("    mov x2, #14\n    mov x8, #233\n").svc(233);
+}
+
 function emit_stack_switch(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   s = emit_stack_map(s, "    mov x1, #1\n    lsl x1, x1, #30\n", darwin);
   s = s.write("    tbnz x0, #63, .Lfern_stack_map_failed\n    mov x19, x0\n    mov x1, #1\n    lsl x1, x1, #20\n    mov x2, #0\n    mov x8, #226\n").svc(226).write("    cbnz x0, .Lfern_stack_guard_failed\n");
   s = s.write("    mov x9, #1\n    lsl x9, x9, #30\n    add x9, x19, x9\n    sub sp, x9, #16\n    mov x10, sp\n    adrp x11, __fern_stack_top\n    add x11, x11, :lo12:__fern_stack_top\n    str x10, [x11]\n");
+  if (!darwin) {
+    s = stack_huge_pages(s);
+  }
   s = emit_stack_map(s, "    mov x1, #1\n    lsl x1, x1, #16\n", darwin);
   if (darwin) {
     s = s.write("    tbnz x0, #63, .Lfern_segv_skip\n");
@@ -9424,6 +9449,21 @@ function emit_map_fail_trap(s: asmcore.EmitState): asmcore.EmitState {
   return s.write("    b __fern_report\n");
 }
 
+// x0 holds the base of the arena. The arena past its first 4 MiB asks for
+// transparent huge pages, so a large heap takes one page fault for each 2 MiB.
+// A small program stays in the first 4 MiB and keeps small pages. A kernel
+// with no huge pages refuses the call, and the arena works as before.
+function arena_huge_pages(s: asmcore.EmitState): asmcore.EmitState {
+  let small: i64 = 4194304;
+  if (s.heap_limit <= small) {
+    return s;
+  }
+  s = s.write("    add x0, x0, #0x400, lsl #12\n");
+  s = s.write(mov_imm64("x1", s.heap_limit - small));
+  s = s.write("    mov x2, #14\n    mov x8, #233\n");
+  return s.svc(233);
+}
+
 // The first allocation maps the arena, and leaves x1 at __fern_heap_ptr.
 function emit_arena_map(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   s = s.write("    stp x4, x5, [sp, #-16]!\n");
@@ -9460,6 +9500,9 @@ function emit_arena_map(s: asmcore.EmitState, darwin: boolean): asmcore.EmitStat
   s = s.write("    adrp x3, __fern_heap_end\n");
   s = s.write("    add x3, x3, :lo12:__fern_heap_end\n");
   s = s.write("    str x2, [x3]\n");
+  if (!darwin) {
+    s = arena_huge_pages(s);
+  }
   s = s.write("    mov x0, x9\n");
   s = s.write("    ldp x8, x9, [sp], #16\n");
   s = s.write("    ldp x4, x5, [sp], #16\n");
@@ -9616,6 +9659,12 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    cmp x3, x4\n");
   s = s.write("    ldr x4, [sp], #16\n");
   s = s.write("    b.hi .Lalloc_oom\n");
+  // A block that crosses a 64 KiB line moves the bump pointer forward by 0 to
+  // 960 bytes, so blocks of one size do not stay a constant distance apart
+  // and the boxes of a tree spine do not all use one cache set.
+  s = s.write("    eor x0, x3, x2\n    lsr x0, x0, #16\n    cbz x0, .Lalloc_plain\n");
+  s = s.write("    lsr x0, x3, #16\n    and x0, x0, #15\n    lsl x0, x0, #6\n    add x3, x3, x0\n");
+  s = s.write(".Lalloc_plain:\n");
   s = s.write("    str x3, [x1]\n");
   s = s.write("    mov x0, x2\n");
   s = s.write(rt_unframe(s));
@@ -10456,12 +10505,16 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write(".Laoe_ret:\n");
     s = s.write("    ret\n");
   }
+  // x1 holds the number of words of the box. __fern_arr_box takes one less:
+  // its block has the word of an array length, which the box uses as its
+  // first word.
   s = s.write("__fn___fern_alloc_reuse:\n");
   s = s.write("    ldr x0, [sp, #16]\n");
   s = s.write("    ldr x1, [sp]\n");
   s = s.write("__fn___fern_alloc_reuse.r:\n");
   s = s.write("    cbz x0, .Lsarelo_fresh\n");
   s = s.write("    ldur x2, [x0, #-16]\n");
+  s = s.write("    add x2, x2, #1\n");
   s = s.write("    cmp x2, x1\n");
   s = s.write("    beq .Lsarelo_ret\n");
   s = s.write("    str x1, [sp, #-16]!\n");
@@ -10471,7 +10524,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    ldr x1, [sp], #16\n");
   s = s.write(".Lsarelo_fresh:\n");
   s = s.write("__fn___fern_alloc_reuse.f:\n");
-  s = s.write("    mov x0, x1\n");
+  s = s.write("    sub x0, x1, #1\n");
   s = s.write("    b __fern_arr_box\n");
   s = s.write(".Lsarelo_ret:\n");
   s = s.write("    ret\n");
@@ -11976,7 +12029,7 @@ function emit_rt_signal_flags(s: asmcore.EmitState, darwin: boolean): asmcore.Em
     }
   }
   if (s.has_need("signal_taken")) {
-    s = s.write("    .arch_extension lse\n    .global __fern_signal_taken\n    .type __fern_signal_taken, %function\n__fern_signal_taken:\n");
+    s = s.write("    .global __fern_signal_taken\n    .type __fern_signal_taken, %function\n__fern_signal_taken:\n");
     s = s.write("    sub w1, w0, #1\n    cmp w1, #63\n    b.hi .Lsig_taken_none\n    adrp x1, __fern_sig_flags\n    add x1, x1, :lo12:__fern_sig_flags\n    sxtw x0, w0\n    add x1, x1, x0\n");
     s = s.write("    mov w2, #0\n    swpalb w2, w0, [x1]\n    ret\n.Lsig_taken_none:\n    mov w0, #0\n    ret\n");
   }
@@ -12402,7 +12455,7 @@ function emit_aes_gcm_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 
 function emit_rt_aes_gcm(s: asmcore.EmitState): asmcore.EmitState {
   let kernels = a64_aes_expand_key(s) + a64_aes_ctr32(s) + a64_ghash(s) + a64_aes_gcm(s, true) + a64_aes_gcm(s, false);
-  return s.write("    .arch_extension aes\n" + kernels);
+  return s.write(kernels);
 }
 
 function a64_sha256_blocks(s: asmcore.EmitState): string {
@@ -12888,9 +12941,6 @@ function emit_rt_byte_kernels(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(opener);
   }
   s = a64_limb_kernels(s);
-  if (s.has_need("sha256") || s.has_need("sha1") || s.has_need("sha1x8")) {
-    s = s.write("    .arch_extension sha2\n");
-  }
   if (s.has_need("sha1x8")) {
     let sha1x8 = a64_sha1x8_blocks(s);
     s = s.write(sha1x8);
@@ -12969,7 +13019,6 @@ function a64_sha256_rounds(): string {
 }
 
 function emit_rt_crc32_cksum(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("    .arch_extension aes\n");
   s = s.write("    .global __fern_crc32_cksum\n");
   s = s.write("    .global __fern_crc32_cksum_data\n");
   s = s.write("    .type __fern_crc32_cksum, %function\n");
@@ -13138,7 +13187,6 @@ function emit_rt_crc32_cksum(s: asmcore.EmitState): asmcore.EmitState {
 
 // The reflected IEEE CRC-32 register update: w0 is the register, x7 the data and x6 the length.
 function emit_rt_crc32_ieee(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("    .arch_extension crc\n");
   s = s.write("    .global __fern_crc32_ieee\n");
   s = s.write("    .global __fern_crc32_ieee_data\n");
   s = s.write("    .type __fern_crc32_ieee, %function\n");
@@ -13277,7 +13325,6 @@ function emit_profile_alloc_runtime(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function emit_profile_runtime(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
-  s = s.write("    .arch_extension lse\n");
   s = s.write("    .bss\n    .p2align 3\n.Lprofile_ring: .zero 4337824\n    .data\n    .p2align 3\n");
   let target = rt_key(darwin);
   if (darwin) {
@@ -13385,6 +13432,7 @@ function emit_module_ir_flat(mod: parser.Module, stab: irtables.StructTab, darwi
   }
   let s = asmcore.new_state();
   s = asmcore.with_funcs(asmcore.with_providers(asmcore.with_switches(asmcore.EmitState { ...s, runtime_target: rt_key(darwin), struct_decls: stab, rt_lower: rt, recs: recs, memo: irverifygate.open_memo("arm64") }, sw), mod), mod.funcs);
+  s = s.write("    " + util.ARM64_ARCH + "\n");
   s = emit_body(mod, s, darwin, cache, physical);
   s = emit_ir_runtime_settled(s, darwin);
   if (s.sandbox) {
@@ -13437,6 +13485,7 @@ pub function emit_module_ir_unit_arm64_prepared(mod: parser.Module, is_entry: bo
     exit(1);
     return ssaprepare.Output { text: "", bodies: [] };
   }
+  s = s.write("    " + util.ARM64_ARCH + "\n");
   if (is_entry) {
     s = s.write("    .globl _start\n");
   }

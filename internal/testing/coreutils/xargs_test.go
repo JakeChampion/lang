@@ -2,6 +2,8 @@ package coreutils
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -21,6 +23,7 @@ func xargsCases(t *testing.T) []invocation {
 	cases = append(cases, xargsExitCases()...)
 	cases = append(cases, xargsSizeCases()...)
 	cases = append(cases, xargsParallelCases()...)
+	cases = append(cases, xargsOutOfOrderCases()...)
 	cases = append(cases, xargsFileCases()...)
 	return cases
 }
@@ -28,6 +31,18 @@ func xargsCases(t *testing.T) []invocation {
 func xc(stdin, line string) invocation {
 	return invocation{name: fmt.Sprintf("xargs %s <<< %q", line, stdin), args: shellWords(line), stdin: stdin}
 }
+
+// xcDarwin is xc for a case whose Darwin reference is wrong, for the reason
+// given.
+func xcDarwin(stdin, line, reason string) invocation {
+	inv := xc(stdin, line)
+	inv.darwinLibcDefect = reason
+	return inv
+}
+
+// appleAssertForm is why the Darwin reference is wrong when GNU xargs fails
+// an assertion.
+const appleAssertForm = "Apple's assert words a failed assertion in its own form, not in the form of glibc"
 
 // xargsInputCases: how the input splits into arguments.
 func xargsInputCases() []invocation {
@@ -54,6 +69,8 @@ func xargsInputCases() []invocation {
 		xc("\"a b\"  c\n", `-I X echo [X]`),
 		xc("a\n\nb\n", `-I X echo [X]`),
 		xc("a\n", `-I X echo X X XX`),
+		xc("/bin/echo\n", `-I X X hi X`),
+		xc("a\n", `-I X sh -c 'echo $0' X`),
 		xc("a b", `-0 echo`),
 		xc("a\x00b c\x00", `-0 echo`),
 		xc("a\x00b c\x00", `-0 -n 1 echo`),
@@ -189,8 +206,8 @@ func xargsOptionCases() []invocation {
 		xc("a\n", `-p true`),
 		xc("a\n", `--interactive echo`),
 		xc("a\n", `-p -t echo`),
-		xc("a b\n", `-o echo`),
-		xc("a b\n", `--open-tty echo`),
+		xcDarwin("a b\n", `-o echo`, appleAssertForm),
+		xcDarwin("a b\n", `--open-tty echo`, appleAssertForm),
 		xc("a\n", `--show-limits -r true`),
 		xc("a\n", `--show-limits echo`),
 		xc("a\n", `-s 2000 --show-limits true`),
@@ -223,6 +240,11 @@ func xargsExitCases() []invocation {
 		xc("a b", `-n 1 sh -c 'exit 3'`),
 		xc("a b\n", `-n 1 sh -c 'exit $1' sh`),
 		xc("1 255 2\n", `-n 1 sh -c 'exit $0'`),
+		xc("1 255\n", `-n 1 sh -c 'exit $0'`),
+		xc("1 0 255\n", `-n 1 sh -c 'exit $0'`),
+		xc("a 'b", `-n 1 sh -c 'exit 255'`),
+		xc("a\nb 'c", `-n 1 sh -c 'exit 3'`),
+		xc("a 'b", `nosuchcmd`),
 		xc("255 1\n", `-n 1 sh -c 'exit $0'`),
 		xc("0 255 3\n", `-n 1 sh -c 'exit $0'`),
 		xc("1 0\n", `-n 1 sh -c 'exit $0'`),
@@ -280,6 +302,37 @@ func xargsParallelCases() []invocation {
 		xc("a b c\n", `-n 1 -P 2 sh -c 'exit 255'`),
 		xc("a b c\n", `-n 1 -P 2 nosuchcmd`),
 		unordered(xc("x\n", `-P 2 --process-slot-var=SLOT sh -c 'echo $SLOT $0'`)),
+	}
+}
+
+// xargsOutOfOrderCases: with -P 2 the first command is slow and the later
+// ones are fast, so the commands end in a different order than they start.
+// Each later command starts when the one before it ends, so the output has
+// one order. The slot of each command and the exit status rules must hold.
+func xargsOutOfOrderCases() []invocation {
+	slow := `if [ $0 = a ]; then sleep 1; `
+	seed := func(code, body string) func(t *testing.T, dir string) {
+		return func(t *testing.T, dir string) {
+			t.Helper()
+			script := "#!/bin/sh\nif [ \"$1\" = a ]; then sleep 1; echo a; exit " + code + "; else " + body + "; fi\n"
+			if err := os.WriteFile(filepath.Join(dir, "cmd"), []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	return []invocation{
+		xc("a b c d\n", `-n 1 -P 2 --process-slot-var=S sh -c '`+slow+`fi; echo $0 $S'`),
+		xc("a b c\n", `-n 1 -P 2 sh -c '`+slow+`exit 3; fi; echo $0'`),
+		xc("a b c\n", `-n 1 -P 2 sh -c '`+slow+`echo $0; exit 0; fi; exit 255'`),
+		xc("a b c\n", `-n 1 -P 2 sh -c '`+slow+`exit 255; fi; echo $0; exit 1'`),
+		xc("a b c\n", `-n 1 -P 2 sh -c '`+slow+`kill -9 $$; fi; echo $0'`),
+		xc("a b c\n", `-n 1 -P 2 sh -c '`+slow+`echo $0; exit 0; fi; kill -15 $$'`),
+		xc("a b c\n", `-n 1 -P 2 sh -c '`+slow+`exit 126; fi; exit 127'`),
+		{name: "xargs -P 2 cannot find the command while a command runs", args: []string{"-n", "1", "-P", "2", "./cmd"}, stdin: "a b c\n", seedTree: seed("0", `rm -f "$0"`)},
+		{name: "xargs -P 2 cannot run the command while a command runs", args: []string{"-n", "1", "-P", "2", "./cmd"}, stdin: "a b c\n", seedTree: seed("0", `chmod a-x "$0"`)},
+		{name: "xargs -P 2 cannot find the command while a command fails", args: []string{"-n", "1", "-P", "2", "./cmd"}, stdin: "a b c\n", seedTree: seed("1", `rm -f "$0"`)},
+		{name: "xargs -P 2 cannot run the command while a command ends with 255", args: []string{"-n", "1", "-P", "2", "./cmd"}, stdin: "a b c\n", seedTree: seed("255", `chmod a-x "$0"`)},
+		{name: "xargs -t -P 2 shows a command when it starts", args: []string{"-t", "-n", "1", "-P", "2", "sh", "-c", slow + "fi; echo $0"}, stdin: "a b c\n", merged: true},
 	}
 }
 

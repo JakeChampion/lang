@@ -1,0 +1,45 @@
+// Emit native HEVC access units for independent packet and pixel comparisons.
+import "std/video/hevc_input";
+import "std/video/nal/input" as nals;
+import "std/audio/source";
+import "std/video/frame";
+import "std/hex";
+
+function write_packet(packet: hevc_input.Packet): void {
+  print("H " + packet.offset.to_string() + " " + (if (packet.irap) { "1" } else { "0" }) + " " + (if (packet.idr) { "1" } else { "0" }) + " " + hex.encode(packet.bytes));
+}
+
+function emit(reader: Reader): Result[void, string] {
+  let defaults = hevc_input.default_limits();
+  let limits = hevc_input.Limits { ...defaults, video: frame.Limits { ...defaults.video, max_packet_bytes: 1048576 }, input: nals.Limits { ...defaults.input, input: source.Limits { chunk_size: 3, max_buffer_bytes: 1048576 }, max_unit_bytes: 1048568 } };
+  let stream = match (hevc_input.create(limits)) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+  loop {
+    let step = match (stream.step(reader)) { Ok(value) => value, Err(error) => { return Err(error.message()); } };
+    stream = step.stream;
+    match (step.event) {
+      hevc_input.Waiting => {},
+      hevc_input.End => {
+        return Ok(());
+      },
+      hevc_input.PacketReady(packet) => {
+        write_packet(packet);
+      }
+    }
+  }
+}
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 2) {
+    return 2;
+  }
+  let Ok(reader) = open_reader(argv[1]) else {
+    return 3;
+  };
+  let result = emit(reader);
+  let closed = reader.close();
+  return match (result) {
+    Ok(_) => match (closed) { Ok(_) => 0, Err(error) => { eprint(error.message()); return 1; } },
+    Err(message) => { eprint(message); return 1; },
+  };
+}

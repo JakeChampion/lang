@@ -721,17 +721,48 @@ function __rx_utf8_split(s: i32, e: i32): i32 {
 }
 
 function __rx_utf8_seq(own out: i32[], s: i32, e: i32): i32[] {
-  let a = utf8.encode(s as char);
-  let b = utf8.encode(e as char);
-  out = out.append(a.len());
+  let n = __rx_utf8_len(s);
+  out = out.append(n);
   for k in 0..4 {
-    if (k < a.len()) {
-      out = out.append(a[k] as i32).append(b[k] as i32);
+    if (k < n) {
+      out = out.append(__rx_utf8_byte(s, n, k)).append(__rx_utf8_byte(e, n, k));
     } else {
       out = out.append(0).append(0);
     }
   }
   return out;
+}
+
+// The count of bytes of the UTF-8 form of the code point `c`.
+function __rx_utf8_len(c: i32): i32 {
+  if (c < 128) {
+    return 1;
+  }
+  if (c < 2048) {
+    return 2;
+  }
+  if (c < 65536) {
+    return 3;
+  }
+  return 4;
+}
+
+// The byte `k` of the UTF-8 form of the code point `c`, which has `n` bytes.
+function __rx_utf8_byte(c: i32, n: i32, k: i32): i32 {
+  let rest = c >> 6 * (n - 1 - k);
+  if (k > 0) {
+    return 128 | rest & 63;
+  }
+  if (n == 2) {
+    return 192 | rest;
+  }
+  if (n == 3) {
+    return 224 | rest;
+  }
+  if (n == 4) {
+    return 240 | rest;
+  }
+  return c;
 }
 
 // The trie of the sequences of `seqs`, which are in order. A sequence shares
@@ -768,18 +799,24 @@ function __rx_trie(seqs: i32[]): i32[][] {
 // The nodes of `trie` with each subtree that repeats made one node. A child
 // comes after its parent, and the start stays node 0.
 function __rx_minimize(trie: i32[][]): i32[][] {
-  let ids: Map[string, i32] = map_new(64);
+  let heads: Map[i64, i32] = map_new(64);
+  let chain: i32[] = [];
   let canon = __alloc_i32(trie.len());
   let out: i32[][] = [];
   let k = trie.len() - 1;
   while (k >= 0) {
     let es = __rx_merge_edges(trie[k], canon);
-    let key = __rx_edges_key(es);
-    let id = ids.get_or(key, -1);
+    let h = __rx_edges_hash(es);
+    let head = heads.get_or(h, -1);
+    let id = head;
+    while (id >= 0 && !__rx_same_edges(out[id], es)) {
+      id = chain[id];
+    }
     if (id < 0) {
       id = out.len();
       out = out.append(es);
-      ids = ids.insert(key, id);
+      chain = chain.append(head);
+      heads = heads.insert(h, id);
     }
     canon = canon.with(k, id);
     k -= 1;
@@ -820,12 +857,26 @@ function __rx_merge_edges(es: i32[], canon: i32[]): i32[] {
   return out;
 }
 
-function __rx_edges_key(es: i32[]): string {
-  let parts: string[] = [];
+// A hash of the edges `es`. Two nodes with one hash are compared word by
+// word.
+function __rx_edges_hash(es: i32[]): i64 {
+  let h = 1469598103934665603i64;
   for x in es {
-    parts = parts.append(x.to_string());
+    h = (h ^ x as i64) * 1099511628211i64;
   }
-  return parts.join(",");
+  return h;
+}
+
+function __rx_same_edges(a: i32[], b: i32[]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
 }
 ```
 
@@ -1649,7 +1700,7 @@ A word assertion of Unicode examines the characters on each side, and a DFA know
 
 A program over `RX_DFA_PROGRAM` instructions has no DFA, and the Pike VM does all of its searches.
 
-`compile` fills each state of a small table at once: the program has at most `RX_DFA_SMALL` instructions, and the table at most `RX_DFA_FULL` words. A search with such a table does not read a cell, and it does not check for a state that is not filled. The dead state and the quit state have the flag `RX_DFA_STOP`, so the search reads one word of flags for each byte, as it does for a match. Thus a search of a short text costs as little as it did before the DFAs were lazy.
+`compile` fills each state of a small table at once: the count of instructions times the count of columns is at most `RX_DFA_FILLS`, and the table has at most `RX_DFA_FULL` words. A DFA has about one state for each instruction, so the product tells the work of the fill before it starts. A class of Unicode gives many columns, and its table stays lazy. A search with such a table does not read a cell, and it does not check for a state that is not filled. The dead state and the quit state have the flag `RX_DFA_STOP`, so the search reads one word of flags for each byte, as it does for a match. Thus a search of a short text costs as little as it did before the DFAs were lazy.
 
 | Words | Contents |
 | --- | --- |
@@ -2142,19 +2193,20 @@ function __rx_ctx_ok(k: i32, ctx: i32): boolean {
 }
 
 // The limits of a table that `compile` fills completely: the instructions of
-// its program and the words of the table. A fill costs time on each
-// compile, also in the interpreter.
-const RX_DFA_SMALL: i32 = 128;
+// its program times its columns, and the words of the table. A fill costs
+// time on each compile, also in the interpreter.
+const RX_DFA_FILLS: i32 = 4096;
 
 const RX_DFA_FULL: i32 = 8192;
 
-// The table with each state that a search can reach, or [] when the program
-// has more than RX_DFA_SMALL instructions or the table more than RX_DFA_FULL
-// words. With such a table, a search does not check for a state that is not
-// filled. The quit state stays where a Unicode word assertion stops the DFA.
+// The table with each state that a search can reach, or [] when the
+// instructions times the columns are more than RX_DFA_FILLS or the table has
+// more than RX_DFA_FULL words. With such a table, a search does not check for
+// a state that is not filled. The quit state stays where a Unicode word
+// assertion stops the DFA.
 function __rx_dfa_full(dfa: RDfa): i32[] {
   let empty: i32[] = [];
-  if (dfa.code.len() / 3 > RX_DFA_SMALL) {
+  if (dfa.init.len() == 0 || dfa.code.len() / 3 * dfa.init[0] > RX_DFA_FILLS) {
     return empty;
   }
   let limit = RX_DFA_FULL;

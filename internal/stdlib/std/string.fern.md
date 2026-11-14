@@ -1391,7 +1391,8 @@ pub function (s: string) indent(prefix: string): string {
     }
     i += 1;
   }
-  let buf = __alloc_u8(pl * (1 + nl) + n);
+  let total = __alloc_len(pl as i64 * (1i64 + nl as i64) + n as i64);
+  let buf = __alloc_u8(total);
   let pos = 0;
   buf = put_bytes(buf, pos, prefix);
   pos += pl;
