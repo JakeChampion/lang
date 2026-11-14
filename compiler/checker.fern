@@ -23363,10 +23363,11 @@ function lu_if_always_runs(f: ast.StmtIf): boolean {
   return f.origin == "block" || f.origin == "unsafe";
 }
 
-// A statement that calls a function which never returns.
+// A statement that calls exit or a function which never returns. The
+// function is resolved, so no local binds `exit`.
 function lu_never_returns(noret: util.NameIndex, st: ast.Stmt): boolean {
   if let ast.StmtExpr(x) = st {
-    return lu_call_never_returns(x.value, noret, true);
+    return lu_call_never_returns(x.value, noret, false);
   }
   return false;
 }
