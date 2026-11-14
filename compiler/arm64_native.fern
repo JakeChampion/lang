@@ -5944,8 +5944,8 @@ function arm64_gas_family_len6_s(mnem: string): i32 {
   if (c == b'm') {
     return arm64_gas_family_len6_s_sm(mnem);
   }
-  if (c == b'q' && (mnem == "sqxtn2" || mnem == "sqxtun")) {
-    return arm64_fam_narrow();
+  if (c == b'q') {
+    return arm64_gas_family_len6_s_sq(mnem);
   }
   if (c == b's' && mnem == "sshll2") {
     return arm64_fam_shll();
@@ -5965,6 +5965,16 @@ function arm64_gas_family_len6_s_sm(mnem: string): i32 {
   }
   if (mnem == "smsubl") {
     return arm64_fam_mulwide();
+  }
+  return -1;
+}
+
+function arm64_gas_family_len6_s_sq(mnem: string): i32 {
+  if (mnem == "sqxtn2") {
+    return arm64_fam_narrow();
+  }
+  if (mnem == "sqxtun") {
+    return arm64_fam_narrow();
   }
   return -1;
 }

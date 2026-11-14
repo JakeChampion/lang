@@ -290,7 +290,7 @@ function kern_lookups(b: [u8], features: i32): i32[] {
   let out: i32[] = [];
   for i in 0..u16_at(b, features) {
     let r = features + 2 + 6 * i;
-    if (b[r] != 107u8 || b[r + 1] != 101u8 || b[r + 2] != 114u8 || b[r + 3] != 110u8) {
+    if (u8_at(b, r) != 107 || u8_at(b, r + 1) != 101 || u8_at(b, r + 2) != 114 || u8_at(b, r + 3) != 110) {
       continue;
     }
     let ft = features + u16_at(b, r + 4);
@@ -971,16 +971,26 @@ function glyph_at(f: Font, g: i32): i32 {
   return f.glyf + start;
 }
 
-// The contours of glyph `g`, each a list of points. `depth` stops composite
-// glyphs that refer to themselves.
-function contours(f: Font, g: i32, depth: i32): Point[][] {
+// The most glyphs that the outline of one glyph can read. A composite glyph
+// of a hostile font can name the same part many times at each depth.
+const MAX_GLYPH_READS: i32 = 4096;
+
+// The contours of glyph `g`, each a list of points.
+function contours(f: Font, g: i32): Point[][] {
+  let (cs, _) = contours_within(f, g, 0, MAX_GLYPH_READS);
+  return cs;
+}
+
+// The contours of glyph `g` and the glyph reads that remain of `reads`.
+// `depth` stops composite glyphs that refer to themselves.
+function contours_within(f: Font, g: i32, depth: i32, reads: i32): (Point[][], i32) {
   let at = glyph_at(f, g);
-  if (at < 0 || depth > 8) {
-    return [];
+  if (at < 0 || depth > 8 || reads <= 0) {
+    return ([], reads);
   }
   let n = i16_at(f.data, at);
   if (n < 0) {
-    return composite(f, g, at + 10, depth);
+    return composite(f, g, at + 10, depth, reads - 1);
   }
   let o = simple(f.data, at, n);
   let (dx, dy) = glyph_deltas(f, g, o);
@@ -988,7 +998,7 @@ function contours(f: Font, g: i32, depth: i32): Point[][] {
   for i in 0..o.xs.len() {
     pts = pts.append(Point { x: o.xs[i] as f64 + dx[i], y: o.ys[i] as f64 + dy[i], on: (o.flags[i] & 1) != 0 });
   }
-  return split_contours(pts, o.ends);
+  return (split_contours(pts, o.ends), reads - 1);
 }
 
 function simple(b: [u8], at: i32, n: i32): Outline {
@@ -996,8 +1006,8 @@ function simple(b: [u8], at: i32, n: i32): Outline {
   for i in 0..n {
     ends = ends.append(u16_at(b, at + 10 + 2 * i));
   }
-  if (n == 0) {
-    return Outline { xs: [], ys: [], flags: [], ends: ends };
+  if (n == 0 || !rising(ends)) {
+    return Outline { xs: [], ys: [], flags: [], ends: [] };
   }
   let count = ends[n - 1] + 1;
   let p = at + 10 + 2 * n;
@@ -1006,6 +1016,17 @@ function simple(b: [u8], at: i32, n: i32): Outline {
   let (xs, p2) = read_coords(b, p1, flags, 2, 16);
   let (ys, _) = read_coords(b, p2, flags, 4, 32);
   return Outline { xs: xs, ys: ys, flags: flags, ends: ends };
+}
+
+// Whether each number of `xs` is more than the one before it. The last point
+// of a contour comes after the last point of the contour before it.
+function rising(xs: i32[]): boolean {
+  for i in 1..xs.len() {
+    if (xs[i] <= xs[i - 1]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // The flags of `count` points from `p`, with their repeats, and the offset
@@ -1138,16 +1159,23 @@ function part_outline(ps: Part[]): Outline {
   return o;
 }
 
-// A composite glyph: the contours of its parts, each moved and scaled.
-function composite(f: Font, g: i32, at: i32, depth: i32): Point[][] {
+// A composite glyph: the contours of its parts, each moved and scaled, and
+// the glyph reads that remain of `reads`.
+function composite(f: Font, g: i32, at: i32, depth: i32, reads: i32): (Point[][], i32) {
   let out: Point[][] = [];
   let ps = parts(f.data, at);
   let (ddx, ddy) = glyph_deltas(f, g, part_outline(ps));
+  let left = reads;
   for i in 0..ps.len() {
+    if (left <= 0) {
+      break;
+    }
     let q = ps[i];
     let dx = q.dx as f64 + ddx[i];
     let dy = q.dy as f64 + ddy[i];
-    for part in contours(f, q.glyph, depth + 1) {
+    let (inner, after) = contours_within(f, q.glyph, depth + 1, left);
+    left = after;
+    for part in inner {
       let moved: Point[] = [];
       for p in part {
         moved = moved.append(Point { x: q.a * p.x + q.c * p.y + dx, y: q.b * p.x + q.d * p.y + dy, on: p.on });
@@ -1155,7 +1183,7 @@ function composite(f: Font, g: i32, at: i32, depth: i32): Point[][] {
       out = out.append(moved);
     }
   }
-  return out;
+  return (out, left);
 }
 
 function f2dot14(b: [u8], at: i32): f64 {
@@ -1291,19 +1319,26 @@ function curve(r: Raster, x0: f64, y0: f64, cx: f64, cy: f64, x1: f64, y1: f64):
   return out;
 }
 
+// The most pixels of one bitmap. The coordinates of a glyph and the size are
+// input, so their product does not set the allocation.
+const MAX_BITMAP_PIXELS: f64 = 16777216.0;
+
 // The coverage of glyph `g` at `px` pixels per em, with the pen `dx` of a
-// pixel to the right of a pixel edge.
+// pixel to the right of a pixel edge. A glyph whose box holds more than
+// 16777216 pixels gives an empty bitmap.
 pub function (f: Font) render(g: i32, px: f64, dx: f64): Bitmap {
-  let cs = contours(f, g, 0);
+  let cs = contours(f, g);
   let scale = px / (f.units_per_em as f64);
   let (minx, miny, maxx, maxy) = bounds(cs, scale, dx);
-  if (maxx <= minx || maxy <= miny) {
+  let wide = maxx.ceil() - minx.floor() + 1.0;
+  let high = maxy.ceil() - miny.floor() + 1.0;
+  if (maxx <= minx || maxy <= miny || !(wide * high <= MAX_BITMAP_PIXELS)) {
     return Bitmap { width: 0, height: 0, left: 0, top: 0, coverage: [] };
   }
   let left = minx.floor() as i32;
   let top = miny.floor() as i32;
-  let w = maxx.ceil() as i32 - left + 1;
-  let h = maxy.ceil() as i32 - top + 1;
+  let w = wide as i32;
+  let h = high as i32;
   let acc: f64[] = [];
   for i in 0..w * h + 4 {
     acc = acc.append(0.0);

@@ -1,4 +1,6 @@
 # 2026-11-14: type_args_trailing_comma frees all four traced allocations on x86-64.
+# 2026-11-14: bigint_word_index_out_of_range, continue_in_a_value_block_steps_the_range,
+# defer_runs_for_a_return_in_a_value_branch and type_args_trailing_comma have balanced allocations on x86-64.
 # 2026-11-14: own_local_moved_into_exit has balanced allocations on x86-64.
 # 2026-11-13: inline_worker_exit_is_a_worker_failure keeps three scheduler blocks
 # in active frames at exit(134). The process does not unwind these frames.
@@ -250,6 +252,7 @@ bare_enum_map_payloads                               0
 bare_variant_beside_enum_instantiations               0
 bare_variant_resolves_against_expected_type           0
 base64_roundtrip                                     0
+bigint_word_index_out_of_range                       0
 binding_site_pattern_grammar                         0
 bitwise_not                                          0
 bitwise_precedence                                   0
@@ -302,6 +305,8 @@ checked_int_conversion                               0
 # 2026-11-11: checked_owned_nested_results has zero unpaired allocations under native RC trace.
 checked_owned_nested_results                         0
 checked_owned_results                                0
+continue_in_a_value_block_steps_the_range            0
+defer_runs_for_a_return_in_a_value_branch            0
 future_array_literal_goes_to_gather                  2
 match_arm_names_a_const                              0
 match_arm_names_a_const_of_its_module                0
@@ -756,6 +761,7 @@ multi_hop_alias                                      0
 multiline_stdin                                      0
 must_consume_destructure_in_one_arm_moves            0
 must_consume_destructure_of_a_moved_payload          0
+must_consume_in_a_loop_that_always_runs              0
 must_consume_in_if_condition                         0
 must_consume_in_match_tag                            0
 must_consume_method_receiver                         0

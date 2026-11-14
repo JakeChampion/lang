@@ -692,10 +692,11 @@ function __iso_date(s: string): Option[Date] {
   let y = __parse_digits(s, 0, 4);
   let m = __parse_digits(s, 5, 7);
   let d = __parse_digits(s, 8, 10);
-  if (y < 0 || m < 0 || d < 0) {
+  let date = Date { year: y, month: m, day: d };
+  if (y < 0 || m < 0 || d < 0 || !date.is_valid()) {
     return None;
   }
-  return Some(Date { year: y, month: m, day: d });
+  return Some(date);
 }
 
 pub function (t: Timestamp) format_rfc3339(): string {
@@ -1281,9 +1282,8 @@ function __rel_phrase(secs: i64): string {
   if (days < 30 as i64) {
     return __rel_unit(days, "day");
   }
-  let months = days / (30 as i64);
-  if (months < 12 as i64) {
-    return __rel_unit(months, "month");
+  if (days < 365 as i64) {
+    return __rel_unit(days / (30 as i64), "month");
   }
   let years = days / (365 as i64);
   return __rel_unit(years, "year");

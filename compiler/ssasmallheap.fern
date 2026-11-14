@@ -1,7 +1,7 @@
 import "./ssaallocationchain" as allocation;
 import "./ssaconstructorbound" as constructor;
 import "./ssaprepare";
-import "./ssasmallarraymachine" as release;
+import "./ssaboxroutines" as routines;
 
 pub struct Block { address: i64, header: i64, rc: i32, generation: i32, live: boolean }
 
@@ -59,7 +59,7 @@ function bounds(capacity: i32, h: Heap): boolean {
 }
 
 function block_valid(b: Block, capacity: i32, h: Heap): boolean {
-  let size = 8 as i64 * ((capacity + 3) as i64);
+  let size = 8 as i64 * ((capacity + 2) as i64);
   if (b.address < h.base || b.address > h.cursor - size || b.address % 8 != 0 || b.generation <= 0) {
     return false;
   }
@@ -67,7 +67,7 @@ function block_valid(b: Block, capacity: i32, h: Heap): boolean {
 }
 
 function separated(capacity: i32, h: Heap): boolean {
-  let size = 8 as i64 * ((capacity + 3) as i64);
+  let size = 8 as i64 * ((capacity + 2) as i64);
   for i in 0..h.blocks.len() {
     let b = h.blocks[i];
     if (!block_valid(b, capacity, h)) {
@@ -123,7 +123,7 @@ function pop(capacity: i32, h: Heap, a: Action): Next {
 }
 
 function bump(capacity: i32, h: Heap, a: Action): Next {
-  let size = 8 as i64 * ((capacity + 3) as i64);
+  let size = 8 as i64 * ((capacity + 2) as i64);
   if (a.address != h.cursor || a.generation != 1 || h.cursor > h.end - size) {
     return Next { heap: h, ok: false };
   }
@@ -182,5 +182,5 @@ pub function trace(capacity: i32, initial: Heap, actions: Action[]): boolean {
 
 pub function check(output: ssaprepare.Output, name: string, initial: Heap, actions: Action[]): boolean {
   let bound = constructor.resolve(output, name);
-  return bound.error == "" && allocation.record(output, name) && release.check_native_record(output.text) && trace(bound.words - 1, initial, actions);
+  return bound.error == "" && allocation.record(output, name) && routines.release(output.text) && trace(bound.words - 1, initial, actions);
 }

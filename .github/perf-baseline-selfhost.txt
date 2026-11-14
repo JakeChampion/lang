@@ -1,3 +1,6 @@
+# 2026-11-14: PR #15899, perf-x86_64 job 132484455355 on the merge with main. A box has a header of
+# one word, with two new runtime routines and the models of them. Each row that the job names moves
+# to its measured value. Keep all tolerances.
 # 2026-11-14: rebank-perf-baselines. The values are from perf-x86_64 job 132455587680 and
 # perf-aarch64 job 132455587896, on the merge of #15876 with main 8385afd8. The .emit rows grow
 # with the code that each program links, as the .text rows of perf-baseline.txt do. These are values
@@ -320,18 +323,18 @@
 # x86-64-linux/pmap_insert.emit 2942 to 2884, arm64-linux/pmap_insert.emit
 # 3249 to 3188, arm64-linux/pvec_with.emit 3211 to 3178.
 
-selfhost/arm64-linux/array_append.emit	1393
-selfhost/arm64-linux/array_index.emit	1393
-selfhost/arm64-linux/array_scale_f64.emit	1534
-selfhost/arm64-linux/array_with.emit	1247
-selfhost/arm64-linux/ascii_scan.emit	1735
-selfhost/arm64-linux/byte_copy_append.emit	1548
-selfhost/arm64-linux/byte_copy_with.emit	1501
+selfhost/arm64-linux/array_append.emit	1427
+selfhost/arm64-linux/array_index.emit	1427
+selfhost/arm64-linux/array_scale_f64.emit	1568
+selfhost/arm64-linux/array_with.emit	1281
+selfhost/arm64-linux/ascii_scan.emit	1769
+selfhost/arm64-linux/byte_copy_append.emit	1582
+selfhost/arm64-linux/byte_copy_with.emit	1535
 selfhost/arm64-linux/call_overhead.emit	449
-selfhost/arm64-linux/closure_call.emit	1234
-selfhost/arm64-linux/deflate_decode.emit	13234
+selfhost/arm64-linux/closure_call.emit	1268
+selfhost/arm64-linux/deflate_decode.emit	14509
 selfhost/arm64-linux/deflate_encode.emit	7729
-selfhost/arm64-linux/enum_match.emit	1198
+selfhost/arm64-linux/enum_match.emit	1232
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
 # 2026-11-10: PR #15022, CI 42754163314 records the inherited HTTP benchmark changes.
 # Main da3282d0 and candidate 597b6e78 retain identical output in each local pair.
@@ -344,20 +347,20 @@ selfhost/arm64-linux/map_probe_chain.emit	8823
 selfhost/arm64-linux/map_string.emit	9849
 selfhost/arm64-linux/ordmap_insert.emit	5790
 selfhost/arm64-linux/pmap_insert.emit	3254
-selfhost/arm64-linux/pvec_with.emit	3536
-selfhost/arm64-linux/record_update.emit	1247
-selfhost/arm64-linux/sort_inplace.emit	1719
+selfhost/arm64-linux/pvec_with.emit	3592
+selfhost/arm64-linux/record_update.emit	1281
+selfhost/arm64-linux/sort_inplace.emit	1753
 # 2026-11-05: PR #14207, perf-x86_64 job 126960802774 on the merge with main 6dba1dcb measures lower values for the changed rows below. The rows that rise keep their limits.
-selfhost/arm64-linux/sort_ints.emit	2061
-selfhost/arm64-linux/sort_strings.emit	3719
-selfhost/arm64-linux/string_build.emit	2364
-selfhost/arm64-linux/string_count_byte.emit	1528
-selfhost/arm64-linux/string_find_byte.emit	1917
-selfhost/arm64-linux/string_rfind_byte.emit	2041
-selfhost/arm64-linux/string_scan.emit	2563
-selfhost/arm64-linux/string_slice.emit	1216
-selfhost/arm64-linux/struct_drop.emit	2843
-selfhost/arm64-linux/tokenize.emit	1456
+selfhost/arm64-linux/sort_ints.emit	2098
+selfhost/arm64-linux/sort_strings.emit	3775
+selfhost/arm64-linux/string_build.emit	2420
+selfhost/arm64-linux/string_count_byte.emit	1562
+selfhost/arm64-linux/string_find_byte.emit	1968
+selfhost/arm64-linux/string_rfind_byte.emit	2075
+selfhost/arm64-linux/string_scan.emit	2619
+selfhost/arm64-linux/string_slice.emit	1250
+selfhost/arm64-linux/struct_drop.emit	2899
+selfhost/arm64-linux/tokenize.emit	1490
 selfhost/arm64-linux/utf8_ingest_unchecked.emit	8472
 selfhost/arm64-linux/utf8_ingest_validated.emit	9109
 selfhost/wasm32-wasi/array_append.emit	471
@@ -401,18 +404,18 @@ selfhost/wasm32-wasi/tokenize.emit	890
 selfhost/wasm32-wasi/utf8_ingest_unchecked.emit	9273
 # 2026-11-11 (#15258): perf-x86_64 job 130456686195 measured selfhost/wasm32-wasi/utf8_ingest_validated.emit at 10197 (was 9917). The tolerance is unchanged.
 selfhost/wasm32-wasi/utf8_ingest_validated.emit	10197
-selfhost/x86-64-linux/array_append.emit	1150
-selfhost/x86-64-linux/array_index.emit	1154
-selfhost/x86-64-linux/array_scale_f64.emit	1338
-selfhost/x86-64-linux/array_with.emit	1004
-selfhost/x86-64-linux/ascii_scan.emit	1421
-selfhost/x86-64-linux/byte_copy_append.emit	1305
-selfhost/x86-64-linux/byte_copy_with.emit	1265
+selfhost/x86-64-linux/array_append.emit	1181
+selfhost/x86-64-linux/array_index.emit	1185
+selfhost/x86-64-linux/array_scale_f64.emit	1369
+selfhost/x86-64-linux/array_with.emit	1035
+selfhost/x86-64-linux/ascii_scan.emit	1452
+selfhost/x86-64-linux/byte_copy_append.emit	1336
+selfhost/x86-64-linux/byte_copy_with.emit	1296
 selfhost/x86-64-linux/call_overhead.emit	353
-selfhost/x86-64-linux/closure_call.emit	988
-selfhost/x86-64-linux/deflate_decode.emit	12488
+selfhost/x86-64-linux/closure_call.emit	1019
+selfhost/x86-64-linux/deflate_decode.emit	13715
 selfhost/x86-64-linux/deflate_encode.emit	7092
-selfhost/x86-64-linux/enum_match.emit	959
+selfhost/x86-64-linux/enum_match.emit	990
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
 selfhost/x86-64-linux/http_hello.emit	15877
 selfhost/x86-64-linux/int_loop.emit	298
@@ -422,38 +425,38 @@ selfhost/x86-64-linux/map_int.emit	8790
 selfhost/x86-64-linux/map_probe_chain.emit	8794
 selfhost/x86-64-linux/map_string.emit	9671
 selfhost/x86-64-linux/ordmap_insert.emit	5401
-selfhost/x86-64-linux/pmap_insert.emit	2933
-selfhost/x86-64-linux/pvec_with.emit	3277
-selfhost/x86-64-linux/record_update.emit	1004
-selfhost/x86-64-linux/sort_inplace.emit	1509
-selfhost/x86-64-linux/sort_ints.emit	1750
-selfhost/x86-64-linux/sort_strings.emit	3316
-selfhost/x86-64-linux/string_build.emit	2010
-selfhost/x86-64-linux/string_count_byte.emit	1345
-selfhost/x86-64-linux/string_find_byte.emit	1612
-selfhost/x86-64-linux/string_rfind_byte.emit	1758
-selfhost/x86-64-linux/string_scan.emit	2249
-selfhost/x86-64-linux/string_slice.emit	966
-selfhost/x86-64-linux/struct_drop.emit	2583
-selfhost/x86-64-linux/tokenize.emit	1217
+selfhost/x86-64-linux/pmap_insert.emit	2971
+selfhost/x86-64-linux/pvec_with.emit	3332
+selfhost/x86-64-linux/record_update.emit	1035
+selfhost/x86-64-linux/sort_inplace.emit	1540
+selfhost/x86-64-linux/sort_ints.emit	1781
+selfhost/x86-64-linux/sort_strings.emit	3371
+selfhost/x86-64-linux/string_build.emit	2041
+selfhost/x86-64-linux/string_count_byte.emit	1376
+selfhost/x86-64-linux/string_find_byte.emit	1643
+selfhost/x86-64-linux/string_rfind_byte.emit	1803
+selfhost/x86-64-linux/string_scan.emit	2280
+selfhost/x86-64-linux/string_slice.emit	997
+selfhost/x86-64-linux/struct_drop.emit	2638
+selfhost/x86-64-linux/tokenize.emit	1248
 selfhost/x86-64-linux/utf8_ingest_unchecked.emit	8006
 selfhost/x86-64-linux/utf8_ingest_validated.emit	8666
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
-selfhost/x86-64-linux/perceus_cfold.emit	1965
-selfhost/arm64-linux/perceus_cfold.emit	2205
+selfhost/x86-64-linux/perceus_cfold.emit	1993
+selfhost/arm64-linux/perceus_cfold.emit	2247
 selfhost/wasm32-wasi/perceus_cfold.emit	1766
-selfhost/x86-64-linux/perceus_deriv.emit	2683
-selfhost/arm64-linux/perceus_deriv.emit	2937
+selfhost/x86-64-linux/perceus_deriv.emit	2710
+selfhost/arm64-linux/perceus_deriv.emit	2991
 selfhost/wasm32-wasi/perceus_deriv.emit	2831
-selfhost/x86-64-linux/perceus_nqueens.emit	1566
-selfhost/arm64-linux/perceus_nqueens.emit	1821
+selfhost/x86-64-linux/perceus_nqueens.emit	1603
+selfhost/arm64-linux/perceus_nqueens.emit	1863
 selfhost/wasm32-wasi/perceus_nqueens.emit	1267
-selfhost/x86-64-linux/perceus_rbtree.emit	2600
-selfhost/arm64-linux/perceus_rbtree.emit	2874
+selfhost/x86-64-linux/perceus_rbtree.emit	2647
+selfhost/arm64-linux/perceus_rbtree.emit	2908
 selfhost/wasm32-wasi/perceus_rbtree.emit	3688
 selfhost/x86-64-linux/perceus_rbtree_ck.emit	3042
-selfhost/arm64-linux/perceus_rbtree_ck.emit	3274
+selfhost/arm64-linux/perceus_rbtree_ck.emit	3330
 selfhost/wasm32-wasi/perceus_rbtree_ck.emit	4278
 # 2026-11-07: PR #14490 adds QTRLE emitted-size measurements from the local current compiler.
 # Existing limits and tolerances stay unchanged.

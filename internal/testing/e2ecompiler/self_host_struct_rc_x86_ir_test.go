@@ -57,17 +57,17 @@ func TestSelfHostStructRCIRX86_64(t *testing.T) {
 			checked := asm
 			if tc.body != "" {
 				checked = []byte(selfHostFnBody(t, asm, tc.body))
-				if bytes.Contains(checked, []byte("call __fern_arr_box")) != (tc.freeAssert > 0) {
+				if bytes.Contains(checked, []byte("call __fern_rec_box")) != (tc.freeAssert > 0) {
 					t.Errorf("%s: allocation disagrees with static/runtime struct:\n%s", tc.name, checked)
 				}
 				if tc.freeAssert < 0 && !bytes.Contains(checked, []byte(".K0(%rip)")) {
 					t.Errorf("%s: missing static struct load:\n%s", tc.name, checked)
 				}
 			}
-			frees := bytes.Count(checked, []byte("call __fn___fern_arr_dec"))
+			frees := bytes.Count(checked, []byte("call __fn___fern_box_dec"))
 			switch {
 			case tc.freeAssert > 0 && frees == 0:
-				t.Errorf("%s: expected a struct free (call __fn___fern_arr_dec), found none — regressed to leak-only", tc.name)
+				t.Errorf("%s: expected a struct free (call __fn___fern_box_dec), found none — regressed to leak-only", tc.name)
 			case tc.freeAssert < 0 && frees != 0:
 				t.Errorf("%s: expected no static struct free, found %d", tc.name, frees)
 			}

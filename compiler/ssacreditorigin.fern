@@ -60,7 +60,7 @@ pub function producer(f: ssa.SFunc, shape: string, references: boolean[]): Origi
       kind = 0;
     } else if (op.kind_tag == ssa.COPY && op.args.len() == 1 && op.imm == 0 && op.str == "") {
       kind = values[op.args[0]];
-    } else if (op.kind_tag == ssa.ARR_BOX && op.args.len() == 0 && op.str == "") {
+    } else if (op.kind_tag == ssa.ARR_BOX && op.args.len() == 0 && op.str == "box") {
       if (allocated || op.imm != words - 1) {
         return refused(f, "invalid allocation producer capacity or multiplicity");
       }
