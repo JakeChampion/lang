@@ -181,10 +181,10 @@ sound. The ring holds a second of sound: a frame that takes longer than that
 makes a gap. The time and the bars of the spectrum are those of the sound
 that plays, not of the samples that the decoder gave last.
 
-The player reads a WAV, a FLAC, an MP3 file and an M4A file with AAC sound
-a window of 512 KB at a time. So a long file starts at once. The index of
-an M4A file comes from its boxes alone. An M4A track with ALAC sound and an
-Ogg track stay in memory whole, because their indexes need the whole file.
+The player reads a WAV, a FLAC, an MP3 and an M4A file a window of 512 KB
+at a time. So a long file starts at once. The index of an M4A file comes
+from its boxes alone. An Ogg track stays in memory whole, because its index
+needs the whole file.
 
 For the library, the player reads one directory or the first 128 KB of one file at a
 time, for 8 ms of each tick. A file gives its tags and its length. It reads

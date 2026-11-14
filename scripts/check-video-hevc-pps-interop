@@ -64,6 +64,14 @@ with tempfile.TemporaryDirectory(prefix='fern-hevc-pps-interop-') as tmp:
         assert decoded == source, name
         print(name + ': 44 native/real-WASI PPS values match CBS; three lossless source frames agree', flush=True)
         count += 1
+        if count == 1:
+            for plus_one in range(1, 8):
+                layered = pps[:1] + bytes([(pps[1] & 0xf8) | plus_one]) + pps[2:]
+                label = f"pps-temporal-{plus_one - 1}"
+                assert fixtures.reference(trace, directory, label, layered, sps,
+                                          b'\0\0\0\1' + vps, plus_one) == expected
+                assert run(directory, label, layered, sps) == expected
+                print(label + ': native/WASI metadata and independent CBS header agree', flush=True)
     for name, pps, sps in fixtures.controls():
         assert run(directory, name, pps, sps) == fixtures.reference(trace, directory, name, pps, sps), name
         count += 1

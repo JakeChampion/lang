@@ -17,6 +17,7 @@ func installBasic(t *testing.T, dir string) {
 	seedMkdir(t, dir, "dir")
 	seedWrite(t, dir, "tgt", "OLD\n")
 	seedSymlink(t, dir, "src", "sl")
+	seedSymlink(t, dir, "dir", "dirlink")
 	seedMkdir(t, dir, "have/x")
 	seedMkdir(t, dir, "empty")
 }
@@ -58,17 +59,22 @@ func installCases(t *testing.T) []invocation {
 		{"over-existing", []string{"-v", "src", "tgt"}},
 		{"into-directory", []string{"-v", "src", "dir"}},
 		{"two-into-directory", []string{"-v", "src", "other", "dir"}},
+		{"three-into-directory-with-symlink", []string{"-v", "src", "other", "sl", "dir"}},
+		{"middle-source-missing", []string{"-v", "src", "nosuch", "other", "dir"}},
 		{"target-not-a-directory", []string{"-v", "src", "other", "tgt"}},
 		{"no-target-directory", []string{"-v", "-T", "src", "out"}},
 		{"no-target-directory-onto-dir", []string{"-v", "-T", "src", "dir"}},
 		{"no-target-extra-operand", []string{"-T", "src", "out", "extra"}},
 		{"target-directory", []string{"-v", "-t", "dir", "src"}},
 		{"target-directory-two", []string{"-v", "-t", "dir", "src", "other"}},
+		{"target-directory-middle-missing", []string{"-v", "-t", "dir", "src", "nosuch", "other"}},
 		{"target-directory-missing-source", []string{"-v", "-t", "dir"}},
 		{"target-directory-not-a-directory", []string{"-t", "src", "other"}},
 		{"source-missing", []string{"nosuch", "out"}},
 		{"source-is-a-directory", []string{"-v", "dir", "out"}},
 		{"source-is-a-symlink", []string{"-v", "sl", "out"}},
+		{"source-is-a-directory-symlink", []string{"-v", "dirlink", "out"}},
+		{"directory-symlink-before-file", []string{"-v", "dirlink", "other", "dir"}},
 		{"dash-is-not-stdin", []string{"-v", "-", "out"}},
 		{"destination-parent-missing", []string{"src", "nosuchdir/out"}},
 	} {

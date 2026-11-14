@@ -147,7 +147,7 @@ def invalid_controls():
     yield 'overlong-ue', hevc.finish(w, 34), hevc.make(**base), 'Limit'
 
 
-def reference(binary, directory, name, pps, sps, context=None):
+def reference(binary, directory, name, pps, sps, context=None, temporal_id_plus1=None):
     if context is None:
         context = hevc.vps((sps[2] >> 4) & 15, (sps[2] >> 1) & 7)
     path = directory / (name + '.context')
@@ -157,6 +157,9 @@ def reference(binary, directory, name, pps, sps, context=None):
     assert result.returncode == 0 and 'Failed to read unit' not in log and 'out of range' not in log, (name, log)
     assert 'Picture Parameter Set' in log, (name, log)
     section = log.split('Picture Parameter Set', 1)[1]
+    if temporal_id_plus1 is not None:
+        header = re.findall(r'nuh_temporal_id_plus1\s+[01]+\s+=\s+(\d+)', section)
+        assert list(map(int, header)) == [temporal_id_plus1], (name, section)
     fields = {}
     for key, value in re.findall(r'\[trace_headers[^\]]*\]\s+\d+\s+(\S+)\s+[01]+\s+=\s+(-?\d+)', section):
         fields.setdefault(key, int(value))
