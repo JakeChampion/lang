@@ -236,6 +236,26 @@ function test_index(): test.TestOutcome {
   if (o.kind != "blob" || o.body.len() != 6) {
     return test.fail("the object of the index");
   }
+  // A short name finds the object, and digits that no name has find none.
+  let names = pack.with_prefix(built.idx, "ce01", 2);
+  if (names.len() != 1 || names[0] != "ce013625030ba8dba906f756967f9e9ca394464a") {
+    return test.fail("the name for the digits ce01");
+  }
+  if (pack.with_prefix(built.idx, "CE0136250", 2).len() != 1 || pack.with_prefix(built.idx, "ce02", 2).len() != 0 || pack.with_prefix(built.idx, "cd", 2).len() != 0) {
+    return test.fail("the names for other digits");
+  }
+  // A part of the packfile that starts at the object gives the same object.
+  let tail = array.slice(data, 12, data.len());
+  let (part, cache) = pack.object_cached((at: i32): pack.Window => pack.Window { bytes: tail, shift: 12 }, (base: u8[]): i32 => -1, 12, pack.cache_new());
+  let Ok(same) = part else {
+    return test.fail("the object is not read from a part of the packfile");
+  };
+  if (same.kind != "blob" || hex.encode(same.body) != hex.encode(o.body) || cache.bytes != 0) {
+    return test.fail("the object of a part of the packfile");
+  }
+  if (pack.entry_in(pack.Window { bytes: tail, shift: 12 }, 11).ok || pack.entry_in(pack.Window { bytes: tail, shift: 13 }, 12).ok) {
+    return test.fail("an offset out of the part is accepted");
+  }
   let bad = data.with(14, data[14] ^ 1);
   if let Ok(_) = index.build(bad) {
     return test.fail("a packfile with a changed byte is accepted");

@@ -91,8 +91,9 @@ The standard output, the messages and the exit status are those of git
 - A packfile larger than 2 GiB, and the index of version 1.
 
 - The multi-pack index and the commit graph. The port reads each index of
-  `objects/pack`, and it reads a whole packfile when it needs one object
-  of it.
+  `objects/pack`.
+
+- `index-pack` on more than one CPU.
 
 - The other forms of a revision: `@{N}`, `^{/TEXT}`, `:/TEXT` and the
   ranges. git prints one more line when `^` or `~` follows an object that
@@ -116,19 +117,21 @@ The standard output, the messages and the exit status are those of git
 
 ## Speed
 
-The times are for one run on x86-64, on the repository of Fern: 978
-commits in a shallow clone, and a packfile of 275 MB with 33,899 objects.
-git 2.43 has four threads for `index-pack`, and the port has one.
+The times are for one run on x86-64, on the repository of Fern: 34,339
+objects, 978 commits in a shallow clone, and a packfile of 275 MB. git 2.43
+has four threads for `index-pack`, and the port has one.
 
 | Command | git | The port |
 |---|---|---|
-| `log` (978 commits) | 0.02 s | 0.25 s |
-| `index-pack` (3.3 MB) | 0.14 s | 0.25 s |
-| `index-pack` (275 MB) | 3.0 s | 10.9 s |
+| `cat-file --batch` (34,339 objects, 1.2 GB) | 5.9 s | 3.8 s |
+| `log` (978 commits) | 0.02 s | 0.04 s |
+| `ls-tree -r HEAD` | 0.02 s | 0.05 s |
+| `index-pack` (3.3 MB) | 0.14 s | 0.16 s |
+| `index-pack` (275 MB) | 3.0 s | 7.9 s |
 
-For `log`, the port reads the whole packfile of 275 MB to get its
-commits. For `index-pack`, the port inflates an object again for each
-delta that has it as a base. git keeps a cache of bases.
+The port keeps the bases of the deltas in a cache of 96 MB. For a packfile
+above 1 MiB, it reads the bytes of one object from the file. It reads the
+whole file after such reads for half of the objects.
 
 ## Tests
 
@@ -144,6 +147,7 @@ delta that has it as a base. git keeps a cache of bases.
   by offset and then by name. Each object and each line of `verify-pack -v`
   are those of git. The last commit of the repository is a merge, and the
   operators give each parent. The port refuses a packfile with one changed
-  byte. The index and the reverse index of `index-pack` have the bytes of
+  byte. The packfile is above 1 MiB, so the port reads it in parts and
+  then whole. The index and the reverse index of `index-pack` have the bytes of
   git. The test also has a shallow clone, and a store of 16,400 objects
   where a short name has 8 digits.
