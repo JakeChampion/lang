@@ -95,11 +95,34 @@ func rgFixtures(t *testing.T, dir string) {
 		"big5.txt":    "\xa4\xa4\xa4\xe5 foo\x88\x62\x0a",
 		"koi8.txt":    "\xf0\xd2\xc9\xd7\xc5\xd4 foo\x0a",
 		"iso2022.txt": "\x1b$BF|K\x5c\x1b(B foo\x1b(J\x5c\x0a",
+		"z/t.gz":      "\x1f\x8b\x08\x08\x59\x78\xf8\x6a\x00\x03\x66\x2e\x74\x78\x74\x00\x4b\xcb\xcf\x57\x48\x4a\x2c\xe2\x4a\x4a\xac\xe2\x4a\x03\xb2\x13\xd3\x13\x33\xf3\xb8\x00\x62\xef\x63\xd7\x16\x00\x00\x00",
+		"z/t.bz2":     "\x42\x5a\x68\x39\x31\x41\x59\x26\x53\x59\x1a\xa7\xf9\x1c\x00\x00\x06\x51\x80\x00\x10\x40\x00\x31\xa1\x90\x10\x20\x00\x21\x28\x4c\x8d\x94\x20\x1a\x69\xa1\x34\xcc\x5a\x57\xa3\x47\xd1\x9c\x3e\x2e\xe4\x8a\x70\xa1\x20\x35\x4f\xf2\x38",
+		"z/t.xz":      "\xfd\x37\x7a\x58\x5a\x00\x00\x04\xe6\xd6\xb4\x46\x02\x00\x21\x01\x16\x00\x00\x00\x74\x2f\xe5\xa3\x01\x00\x15\x66\x6f\x6f\x20\x62\x61\x72\x0a\x62\x61\x7a\x0a\x66\x6f\x6f\x20\x61\x67\x61\x69\x6e\x0a\x00\x00\x00\x5e\x1b\xb1\xee\xdd\xd5\x4e\xd5\x00\x01\x2e\x16\x56\x09\x55\xdf\x1f\xb6\xf3\x7d\x01\x00\x00\x00\x00\x04\x59\x5a",
+		"z/t.lzma":    "\x5d\x00\x00\x80\x00\xff\xff\xff\xff\xff\xff\xff\xff\x00\x33\x1b\xec\x40\x62\x31\x1f\xff\x69\xb1\xfe\x32\xd8\x28\xd6\x38\xaa\xb7\x76\xf4\x9a\x27\x05\xff\xfe\x12\x5c\x00",
+		"z/t.Z":       "\x1f\x9d\x90\x66\xde\xbc\x01\x21\x26\x8c\x1c\x05\x05\xf5\x28\x08\x38\x30\xcc\x99\x30\x69\xdc\x28\x00",
+		"z/trunc.xz":  "\xfd\x37\x7a\x58\x5a\x00\x00\x04\xe6\xd6\xb4\x46\x02\x00\x21\x01\x16\x00\x00\x00\x74\x2f\xe5\xa3\x01\x00\x15\x66\x6f\x6f",
+		"z/bad.gz":    "garbage",
+		"z/bad.bz2":   "garbage",
+		"z/bad.xz":    "garbage",
+		"z/plain.txt": "foo plain\n",
 		"rgconfig":    "# A comment\n\n  --colors=match:fg:green  \n-n\n--color=always\n",
 		"badconfig":   "--bogus\n",
 	}
+	if err := os.MkdirAll(filepath.Join(dir, "z"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	for name, text := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	scripts := map[string]string{
+		"pre.sh":   "#!/bin/sh\necho \"pre: $1\"\ncat\n",
+		"fail.sh":  "#!/bin/sh\necho foo one\necho oops >&2\nexit 1\n",
+		"quiet.sh": "#!/bin/sh\nexit 3\n",
+	}
+	for name, text := range scripts {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -380,10 +403,10 @@ func rgLateCases() []rgCase {
 		"--field-match-separator @@ -c -H foo a.txt", "--field-match-separator @@ --vimgrep foo a.txt",
 		"--field-match-separator @@ --heading -n -H foo a.txt", "--color always --field-match-separator @@ -n -H --column foo a.txt",
 		"--field-match-separator \\x41\\t -n foo a.txt", "--field-context-separator \\xff -n -C1 foo a.txt",
-		"-h", "--help", "-V", "--pcre2-version", "-hV foo", "--help --bogus", "--generate man",
+		"-h", "--help", "-V", "-hV foo", "--help --bogus", "--generate man",
 		"--generate complete-bash", "--generate complete-zsh", "--generate complete-fish", "--generate complete-powershell",
 		"--generate bogus", "--generate man -c",
-		"--engine bogus foo a.txt", "--engine default foo a.txt", "--dfa-size-limit 10 foo a.txt",
+		"--engine bogus foo a.txt", "--engine default foo a.txt", "--engine auto foo a.txt", "--dfa-size-limit 10 foo a.txt",
 		"--dfa-size-limit 1Q foo a.txt", "--regex-size-limit 99999999999999999999 foo a.txt", "--regex-size-limit 1 foo a.txt",
 		"--line-buffered foo a.txt", "--block-buffered foo a.txt", "--no-line-buffered --no-block-buffered foo a.txt",
 		"--debug-x foo a.txt", "--hiden foo a.txt", "--colr foo a.txt", "--pcre foo a.txt", "--no-vimgrep foo a.txt",
@@ -392,8 +415,8 @@ func rgLateCases() []rgCase {
 		// The errors of a pattern, as regex-syntax writes them, and the names
 		// of the Unicode properties.
 		"* a.txt", "a{2,1} a.txt", "(?P<n>a)(?P<n>b) a.txt", "(?iii) a.txt", "\\p{Foo=bar} a.txt", "\\p{sc=Foo} a.txt",
-		"-w [z-a] a.txt", "--no-unicode \\p{L} a.txt", "-e a -e (?<=x) a.txt", "( a.txt", "-i -e foo -e \\x{110000} a.txt",
-		"[a-\\w] a.txt", "\\1 a.txt", "a{1 a.txt", "\\b{foo} a.txt", "(?x)a{ 1 } a.txt", "[o--f] a.txt", "\\p{Grek}+ uni.txt",
+		"-w [z-a] a.txt", "--no-unicode \\p{L} a.txt", "( a.txt", "-i -e foo -e \\x{110000} a.txt",
+		"[a-\\w] a.txt", "a{1 a.txt", "\\b{foo} a.txt", "(?x)a{ 1 } a.txt", "[o--f] a.txt", "\\p{Grek}+ uni.txt",
 		"\\p{IsGreek}+ uni.txt", "\\p{sc!=Greek}+ uni.txt", "\\P{sc!=Greek}+ uni.txt", "\\p{Emoji} uni.txt", "\\p{wspace} uni.txt",
 		// The encodings of the Encoding Standard.
 		"-E sjis foo sjis.txt", "-E Shift_JIS -o \\p{Hiragana}+ sjis.txt", "-E windows-31j --passthru x sjis.txt",
@@ -401,6 +424,14 @@ func rgLateCases() []rgCase {
 		"-E gb18030 --passthru x gbk.txt", "-E big5 --passthru x big5.txt", "-E koi8-r -o \\w+ koi8.txt",
 		"-E iso-2022-jp --passthru x iso2022.txt", "-E csiso2022kr foo a.txt", "-E auto foo a.txt", "-E NONE foo a.txt",
 		"-E x-user-defined --passthru x latin.txt", "-E windows-1251 --passthru x latin.txt", "-E iso-8859-8-i --passthru x latin.txt",
+		// The preprocessor of --pre, and -z.
+		"--pre ./pre.sh foo a.txt", "--pre ./pre.sh -j1 pre a.txt w.txt", "--pre ./fail.sh foo a.txt", "--pre ./fail.sh -c foo a.txt",
+		"--pre ./fail.sh -l foo a.txt", "--pre ./fail.sh -l zzz a.txt", "--pre ./quiet.sh foo a.txt", "--pre nosuchprogram foo a.txt",
+		"--pre ./pre.sh --pre-glob *.md -j1 foo a.txt long.md", "--pre ./pre.sh --pre-glob !*.md -j1 pre a.txt long.md",
+		"--pre ./pre.sh foo nosuch.txt", "--pre ./pre.sh --no-pre pre a.txt", "--pre= pre a.txt", "--pre ./pre.sh -z pre a.txt",
+		"-z foo z/t.gz", "-z -c foo z/t.bz2", "-z -n foo z/t.xz", "-z foo z/t.lzma", "-z foo z/t.Z", "-z foo z/trunc.xz",
+		"-z foo z/bad.gz", "-z foo z/bad.bz2", "-z foo z/bad.xz", "-z -j1 --sort path foo z", "--search-zip -l foo z/t.gz",
+		"-z --no-search-zip foo z/t.xz", "-z foo a.txt",
 	}
 	var cases []rgCase
 	for _, l := range lines {
@@ -715,6 +746,42 @@ func TestSelfHostExampleRgAgainstRipgrep(t *testing.T) {
 				}
 			}
 			t.Logf("%d command lines give the output of ripgrep", len(cases))
+		})
+	}
+}
+
+// TestSelfHostExampleRgWithoutPcre2 checks that the port behaves as
+// ripgrep 14.1.0 built without PCRE2. The oracle has PCRE2, so the test
+// compares the port with the text of that build.
+func TestSelfHostExampleRgWithoutPcre2(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	dir := t.TempDir()
+	rgFixtures(t, dir)
+	const noPcre2 = "PCRE2 is not available in this build of ripgrep."
+	divider := strings.Repeat("~", 79)
+	cases := []struct {
+		args string
+		want rgResult
+	}{
+		{"-P foo a.txt", rgResult{"", "rg: " + noPcre2 + "\n", 2}},
+		{"--engine pcre2 foo a.txt", rgResult{"", "rg: " + noPcre2 + "\n", 2}},
+		{"--pcre2-version", rgResult{noPcre2 + "\n", "", 1}},
+		{"--engine auto -c foo a.txt", rgResult{"3\n", "", 0}},
+		{"--engine auto a{2,1} a.txt", rgResult{"", "rg: regex could not be compiled with either the default regex engine or with PCRE2.\n\n" +
+			"default regex engine error:\n" + divider + "\nregex parse error:\n    (?:a{2,1})\n        ^^^^^\n" +
+			"error: invalid repetition count range, the start must be <= the end\n" + divider + "\n\nPCRE2 regex engine error:\n" + noPcre2 + "\n", 2}},
+		{"\\1 a.txt", rgResult{"", "rg: regex parse error:\n    (?:\\1)\n       ^^\nerror: backreferences are not supported\n", 2}},
+	}
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			port := rgPort(t, cli, target)
+			for _, c := range cases {
+				got := rgRun(t, port(rgArgs(c.args)...), dir, rgCase{args: rgArgs(c.args)})
+				if got != c.want {
+					t.Errorf("rg %s:\ngot  exit %d, stdout %q, stderr %q\nwant exit %d, stdout %q, stderr %q",
+						c.args, got.code, got.stdout, got.stderr, c.want.code, c.want.stdout, c.want.stderr)
+				}
+			}
 		})
 	}
 }

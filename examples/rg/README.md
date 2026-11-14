@@ -32,6 +32,9 @@ searches the current directory, and it writes each name without the leading
 | `-F` | `--fixed-strings` | Each pattern is a literal. |
 | `-m N` | `--max-count N` | Stop the search of a file after N selected lines. |
 | `-f F` | `--file F` | The patterns of the lines of F, or of the standard input for `-`. |
+| | `--pre P`, `--no-pre` | Search the output of the program P for each file. P gets the path of the file as its argument, and the file on its standard input. `std/process` runs it. |
+| | `--pre-glob G` | Run the program of `--pre` only for the files that the globs keep, as with `-g`. |
+| `-z` | `--search-zip` | Decompress each file with the extension of gzip, bzip2, xz, lzma, lz4, brotli, zstd or compress, and search the result. |
 | `-a` | `--text` | Search binary files as text. |
 | | `--binary` | Search a binary file that the walk finds as a file on the command line. |
 | | `--mmap`, `--no-mmap` | Map the files into memory, or read them in buffers. This changes the rules for binary files. |
@@ -238,22 +241,39 @@ order of the walk.
 
 - **Logs.** `--debug` and `--trace` write no messages.
 
-- **Not in this slice.** `--pre` and `--pre-glob`, `-z`, `-P`,
-  `--dfa-size-limit` and `--regex-size-limit`.
+- **Decompression.** ripgrep 14.1.0 runs the programs `gzip`, `bzip2`,
+  `xz`, `lz4`, `brotli`, `zstd` and `uncompress` for `-z`, and the port
+  decompresses with `std/deflate`, `std/bzip2`, `std/xz`, `std/lz4`,
+  `std/brotli`, `std/zstd` and `std/lzw`. When a program is not on the
+  host, ripgrep searches the compressed file, but the port decompresses
+  it. For data that is not valid, the port writes the messages of the
+  programs. For data that ends early, the count of the bytes before the
+  error can differ from that of the program.
+
+- **PCRE2.** The port does not have PCRE2. It behaves as ripgrep 14.1.0
+  that was built without the feature `pcre2`. `-P` and `--engine pcre2`
+  give the message `PCRE2 is not available in this build of ripgrep.`
+  `--engine auto` uses PCRE2 only after the default engine fails. And
+  `--version` and `--pcre2-version` say that PCRE2 is not there. Thus the
+  hint about PCRE2 after an error of backreferences or of look-around is
+  not there.
+
+- **Size limits.** `--dfa-size-limit` does not change the output of
+  ripgrep, and the port accepts it. `--regex-size-limit` is not a limit of
+  `std/regex`, and a pattern that ripgrep finds too large can compile.
 
 ## Tests
 
-- `rg_test.fern`: the options, the errors, the pattern, the context, the
-  separators, the counts, the color and the binary files. It also tests the
-  rules of an ignore file, the globs, the types and the precedence of the
-  ignore files. And it tests `-m`, `--heading`, `--null` and the buffers
-  for binary files. The other tests are of the columns and the offsets,
-  `-r`, `--trim`, `-M`, `--passthru`, `--stop-on-nonmatch`, `-U`, the line
-  terminators, the encodings and `--json`. `TestSelfHostExampleRgUnit` runs it on x86-64, arm64 and
-  wasm32-wasi with the leak census.
+- `rg_test.fern` tests the options, the errors, the pattern, the context,
+  the separators, the counts, the colors, the links and the binary files.
+  It tests the ignore rules, the globs and the types. It tests `-m`,
+  `--heading`, `--null`, `-r`, `--trim`, `-M`, `--passthru`, `-U`, the
+  line terminators, the encodings and `--json`.
+  `TestSelfHostExampleRgUnit` runs it on x86-64, arm64 and wasm32-wasi
+  with the leak census.
 
 - `TestSelfHostExampleRgAgainstRipgrep` runs the port and `/usr/bin/rg`
-  14.1.0 with 369 command lines on the same files, on x86-64 and on arm64.
+  14.1.0 with 521 command lines on the same files, on x86-64 and on arm64.
   The stdout, the stderr and the exit status must be the same. The files
   include an empty file and a file with no last line terminator. They also
   include CRLF lines, NUL lines, a line of 209,008 bytes, UTF-8 text,
@@ -261,6 +281,16 @@ order of the walk.
   cases include each option, a missing file, the standard input and the
   errors. 90 cases walk two trees with each kind of ignore file, a link,
   hidden files and a binary file of 70 KiB.
+
+  The cases of `-z` search files
+  of gzip, bzip2, xz, lzma and compress, and files that are not valid. The
+  cases of `--pre` run scripts that pass, that fail and that write no
+  error.
+
+- `TestSelfHostExampleRgWithoutPcre2` compares the port with the output of
+  ripgrep 14.1.0 that was built without PCRE2: `-P`, `--engine pcre2`,
+  `--engine auto`, `--pcre2-version` and `--version`. `/usr/bin/rg` has
+  PCRE2, so the test holds the expected output.
 
   The test makes the times of `--stats` and `--json` the same before it
   compares them. 8 cases run with the standard output on a terminal, with
@@ -275,11 +305,10 @@ order of the walk.
   tests of ripgrep 14.1.1 (`testdata/ripgrep-tests.json`, from
   `tests/*.rs`) with the port and with `/usr/bin/rg`. Each case makes its
   files in a new directory, and each run gets `--path-separator / -j1`.
-  `testdata/ripgrep-pass.txt` names the 299 of 306 cases that give the
+  `testdata/ripgrep-pass.txt` names the 302 of 306 cases that give the
   output of ripgrep. The test fails when a named case fails, and when a case
-  that it does not name passes. Most of the other cases use options that
-  are not in this slice, and four compare the times of `--stats`. The
-  licence is in
+  that it does not name passes. The four other cases compare the times of
+  `--stats`. The licence is in
   `licenses/ripgrep/`.
 
 ## Performance
