@@ -1,0 +1,244 @@
+#!/usr/bin/env python3
+"""merge-queue — a merge queue for a repository that GitHub gives none.
+
+GitHub has merge queues only for a repository of an organization. This script
+and two workflows do the same work with a label, a branch and Actions.
+
+    merge-queue form          make the next batch and start its suite
+    merge-queue land RESULT   end the batch whose suite concluded RESULT
+
+HOW A PULL REQUEST MERGES. It gets the `merge-queue` label. `form` takes the
+labelled pull requests whose own `CI verdict` is green, oldest number first,
+and merges up to MERGE_QUEUE_BATCH (10) of them, in that order, on the tip of
+main. It pushes the result to the branch `merge-queue/batch` and dispatches
+merge-queue-batch.yml there, which runs the full suite. `land success` moves
+main to that same commit, so main only gets a tree that the suite passed.
+GitHub then shows each pull request of the batch as merged.
+
+One batch is in flight at a time: the branch is the lock.
+
+A RED BATCH IS SPLIT. `land failure` on a batch of more than one pull request
+puts its two halves in the retry list, and `form` tests a group of that list
+before it takes new pull requests. A batch of one that fails is that pull
+request's failure: it loses the label and gets a comment with the run.
+
+A PULL REQUEST THAT DOES NOT MERGE CLEANLY loses the label and gets a comment.
+One that gets new commits while its batch is in flight stays open after the
+batch lands, with the new commits as its diff.
+
+MAIN CAN MOVE UNDER A BATCH. When main got only pin-file commits (the
+rebank-main job), `land` merges them in and pushes. For any other commit it
+puts the batch back at the front of the retry list.
+
+STATE is one JSON blob at refs/merge-queue/state: {"retry": [[numbers], ...]}.
+
+The script talks to GitHub through the `gh` command (MERGE_QUEUE_GH names a
+replacement, which the tests use) and to the repository through git.
+"""
+import json
+import os
+import subprocess
+import sys
+
+LABEL = "merge-queue"
+BATCH = "merge-queue/batch"
+STATE_REF = "refs/merge-queue/state"
+WORKFLOW_BATCH = "merge-queue-batch.yml"
+WORKFLOW_FORM = "merge-queue.yml"
+PIN_PREFIXES = (".github/alloc-baseline.txt", ".github/cliff-baseline.txt", ".github/perf-baseline",
+                ".github/profile-costs-baseline.txt")
+REMOTE = os.environ.get("MERGE_QUEUE_REMOTE", "origin")
+GH = os.environ.get("MERGE_QUEUE_GH", "gh")
+MAX = int(os.environ.get("MERGE_QUEUE_BATCH", "10"))
+SIGNATURE = "\n\n---\n_Posted by the merge queue (`scripts/merge-queue`)._"
+
+
+def run(*args, check=True, stdin=None):
+    r = subprocess.run(args, input=stdin, capture_output=True, text=True)
+    if check and r.returncode != 0:
+        sys.stderr.write(f"merge-queue: {' '.join(args)}\n{r.stdout}{r.stderr}")
+        raise SystemExit(1)
+    return r
+
+
+def git(*args, check=True, stdin=None):
+    return run("git", *args, check=check, stdin=stdin)
+
+
+def gh(*args, check=True):
+    return run(GH, *args, check=check)
+
+
+def note(text):
+    print(f"merge-queue: {text}", flush=True)
+
+
+def load_state():
+    if git("fetch", "-q", REMOTE, STATE_REF, check=False).returncode != 0:
+        return {"retry": []}
+    return json.loads(git("cat-file", "-p", "FETCH_HEAD").stdout)
+
+
+def save_state(state):
+    blob = git("hash-object", "-w", "--stdin", stdin=json.dumps(state) + "\n").stdout.strip()
+    git("push", "-q", "-f", REMOTE, f"{blob}:{STATE_REF}")
+
+
+def batch_exists():
+    return git("ls-remote", "--exit-code", "--heads", REMOTE, BATCH, check=False).returncode == 0
+
+
+def open_prs():
+    out = gh("pr", "list", "--state", "open", "--label", LABEL, "--limit", "200",
+             "--json", "number,headRefOid,headRefName,isDraft").stdout
+    return sorted(json.loads(out), key=lambda p: p["number"])
+
+
+def verdict_is_green(sha):
+    out = gh("api", f"repos/{{owner}}/{{repo}}/commits/{sha}/check-runs?check_name=CI%20verdict&filter=latest",
+             check=False)
+    if out.returncode != 0:
+        return False
+    runs = json.loads(out.stdout).get("check_runs", [])
+    return any(r.get("conclusion") == "success" for r in runs)
+
+
+def eject(number, reason):
+    note(f"#{number} leaves the queue: {reason}")
+    gh("pr", "edit", str(number), "--remove-label", LABEL, check=False)
+    gh("pr", "comment", str(number), "--body",
+       f"The merge queue removed this pull request: {reason}\n\n"
+       f"Fix it, then add the `{LABEL}` label again." + SIGNATURE, check=False)
+
+
+def identity():
+    if git("config", "user.email", check=False).returncode != 0:
+        for who in ("AUTHOR", "COMMITTER"):
+            os.environ[f"GIT_{who}_NAME"] = "merge-queue"
+            os.environ[f"GIT_{who}_EMAIL"] = "merge-queue@fern.invalid"
+
+
+def form():
+    identity()
+    gh("label", "create", LABEL, "--description", "Merge this pull request through the merge queue",
+       "--color", "0E8A16", check=False)
+    if batch_exists():
+        note("a batch is in flight")
+        return 0
+    state = load_state()
+    labelled = {p["number"]: p for p in open_prs()}
+    if state["retry"]:
+        group = state["retry"].pop(0)
+        chosen = [labelled[n] for n in group if n in labelled]
+        note(f"retry group {group}: {len(chosen)} still in the queue")
+    else:
+        chosen = []
+        for pr in labelled.values():
+            if len(chosen) == MAX:
+                break
+            if pr["isDraft"]:
+                continue
+            if not verdict_is_green(pr["headRefOid"]):
+                note(f"#{pr['number']} waits for a green CI verdict on {pr['headRefOid'][:8]}")
+                continue
+            chosen.append(pr)
+
+    git("fetch", "-q", REMOTE, "main")
+    git("checkout", "-q", "--detach", "FETCH_HEAD")
+    merged = []
+    for pr in chosen:
+        number, sha = pr["number"], pr["headRefOid"]
+        if git("fetch", "-q", REMOTE, f"pull/{number}/head", check=False).returncode != 0 or \
+                git("cat-file", "-e", f"{sha}^{{commit}}", check=False).returncode != 0:
+            note(f"#{number}: cannot fetch {sha[:8]}, it stays in the queue")
+            continue
+        r = git("merge", "-q", "--no-ff", "-m", f"Merge pull request #{number} from {pr['headRefName']}", sha, check=False)
+        if r.returncode != 0:
+            git("merge", "--abort", check=False)
+            eject(number, "it does not merge cleanly on main and the pull requests before it in the batch.")
+            continue
+        merged.append(number)
+
+    if not merged:
+        save_state(state)
+        note("no pull request is ready")
+        if state["retry"]:
+            return form()
+        return 0
+    if git("push", "-q", REMOTE, f"HEAD:refs/heads/{BATCH}", check=False).returncode != 0:
+        note("the push of the batch was refused. A change to a workflow file needs a token with the workflow scope.")
+        return 1
+    save_state(state)
+    gh("workflow", "run", WORKFLOW_BATCH, "--ref", BATCH)
+    note(f"batch {merged} is in flight")
+    return 0
+
+
+def batch_numbers():
+    out = git("log", "--first-parent", "--merges", "--reverse", "--format=%s", "FETCH_HEAD..HEAD").stdout
+    numbers = []
+    for line in out.splitlines():
+        if line.startswith("Merge pull request #"):
+            numbers.append(int(line.split("#", 1)[1].split()[0]))
+    return numbers
+
+
+def only_pins_moved():
+    names = git("diff", "--name-only", "HEAD...FETCH_HEAD").stdout.split()
+    return bool(names) and all(n.startswith(PIN_PREFIXES) for n in names)
+
+
+def push_to_main():
+    if git("push", "-q", REMOTE, "HEAD:refs/heads/main", check=False).returncode == 0:
+        return True
+    git("fetch", "-q", REMOTE, "main")
+    if not only_pins_moved():
+        return False
+    note("main got only pin-file commits: merge them in")
+    if git("merge", "-q", "--no-ff", "-m", "Merge main into the batch of the merge queue", "FETCH_HEAD",
+           check=False).returncode != 0:
+        git("merge", "--abort", check=False)
+        return False
+    return git("push", "-q", REMOTE, "HEAD:refs/heads/main", check=False).returncode == 0
+
+
+def land(result):
+    identity()
+    git("fetch", "-q", REMOTE, "main")
+    numbers = batch_numbers()
+    state = load_state()
+    run_url = os.environ.get("MERGE_QUEUE_RUN_URL", "the run of its batch")
+    if not numbers:
+        note("the batch has no pull request")
+    elif result == "success":
+        if push_to_main():
+            note(f"main has batch {numbers}")
+        else:
+            note(f"main moved under batch {numbers}: test it again")
+            state["retry"].insert(0, numbers)
+    elif result == "failure" and len(numbers) == 1:
+        eject(numbers[0], f"the suite failed with only this pull request in the batch ({run_url}).")
+    elif result == "failure":
+        half = (len(numbers) + 1) // 2
+        note(f"batch {numbers} failed: split it")
+        state["retry"][:0] = [numbers[:half], numbers[half:]]
+    else:
+        note(f"the suite of batch {numbers} concluded {result}: test it again")
+        state["retry"].insert(0, numbers)
+    save_state(state)
+    git("push", "-q", REMOTE, f":refs/heads/{BATCH}", check=False)
+    gh("workflow", "run", WORKFLOW_FORM, "--ref", "main", check=False)
+    return 0
+
+
+def main(argv):
+    if argv[1:] == ["form"]:
+        return form()
+    if len(argv) == 3 and argv[1] == "land":
+        return land(argv[2])
+    sys.stderr.write("usage: merge-queue form | merge-queue land RESULT\n")
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

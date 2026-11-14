@@ -56,9 +56,9 @@ jobs:
       # main. Its first parent is the main that the merge has, which can be
       # newer than the base that the event names.
       - name: Ratchets against the base commit
-        if: ${{ !cancelled() && (github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before) && (fromJSON(inputs.selection || '{"full":true}').full || fromJSON(inputs.selection).lint.fern || fromJSON(inputs.selection).lint.compiler) }}
+        if: ${{ !cancelled() && (github.event.pull_request.base.sha || github.event.before) && (fromJSON(inputs.selection || '{"full":true}').full || fromJSON(inputs.selection).lint.fern || fromJSON(inputs.selection).lint.compiler) }}
         env:
-          EVENT_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          EVENT_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           FERN_RATCHET_BASE_TREE: ${{ runner.temp }}/ratchet-base
         run: |
           base=$EVENT_BASE

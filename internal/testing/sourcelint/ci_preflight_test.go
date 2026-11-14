@@ -45,8 +45,13 @@ func TestCILintRunsOutsideTheFullSuiteQueue(t *testing.T) {
 	if verdict.keys["name"] != "CI verdict" || verdict.keys["needs"] != "[changes, lint, suite]" || verdict.keys["if"] != "${{ !cancelled() }}" {
 		t.Errorf("verdict must be named `CI verdict`, follow changes, lint and suite, and run unless cancelled: %+v", verdict.keys)
 	}
-	if on, _ := onBlock(workflowSource(t, ciFile)); !strings.Contains(on, "merge_group:") {
-		t.Errorf("%s does not trigger on merge_group, so a merge queue batch gets no suite and no verdict", ciFile)
+	// A batch of the merge queue gets its suite through the same call that
+	// main makes, and its own `CI verdict` for the ruleset.
+	batch := workflowSource(t, "merge-queue-batch.yml")
+	for _, want := range []string{"uses: ./.github/workflows/ci.yml", "name: CI verdict", "scripts/merge-queue land"} {
+		if !strings.Contains(batch, want) {
+			t.Errorf("merge-queue-batch.yml has no %q, so a merge queue batch gets no suite, no verdict or no landing", want)
+		}
 	}
 	if suite.usesFile() != ciSuiteFile || suite.keys["name"] != "Full suite" ||
 		suite.keys["needs"] != "[changes]" || suite.keys["secrets"] != "inherit" ||
