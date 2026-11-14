@@ -495,6 +495,19 @@ function freelist_key(block: string, into: string): string {
   return "    movq " + block + ", " + into + "\n    shrq $12, " + into + "\n    xorq __fern_canary(%rip), " + into + "\n";
 }
 
+// %rax holds the block that the bump allocator made and %rdi its end. When
+// the block crosses a 64 KiB line, the bump pointer moves forward by 0 to 960
+// bytes, so blocks of one size do not stay a constant distance apart. Boxes
+// that a program makes at a constant distance, such as the spine of a tree,
+// then do not all use one cache set. The pointer does not pass the end of the
+// heap.
+function bump_colour(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    cmpw %ax, %di\n    jb .Lalloc_colour\n    ret\n");
+  s = s.write(".Lalloc_colour:\n    pushq %rax\n    movq %rdi, %rax\n    shrq $16, %rax\n    andq $15, %rax\n    shlq $6, %rax\n    addq %rdi, %rax\n");
+  s = s.write("    cmpq __fern_heap_end(%rip), %rax\n    ja .Lalloc_plain\n    movq %rax, __fern_heap_ptr(%rip)\n");
+  return s.write(".Lalloc_plain:\n    popq %rax\n    ret\n");
+}
+
 // Takes the head of the free list whose slot address is in %rdi into %rax,
 // or the random one of its first eight under -harden; zero when empty.
 function freelist_take_head(s: asmcore.EmitState, miss: string): asmcore.EmitState {
@@ -3875,6 +3888,21 @@ function abort_trap(s: asmcore.EmitState, label: string, msg: string, text: stri
   return s;
 }
 
+// %rax holds the base of the arena. The arena past its first 4 MiB asks for
+// transparent huge pages, so a large heap takes one page fault for each 2 MiB.
+// A small program stays in the first 4 MiB and keeps 4 KiB pages. A kernel
+// with no huge pages refuses the call, and the arena works as before.
+function arena_huge_pages(s: asmcore.EmitState): asmcore.EmitState {
+  let small: i64 = 4194304;
+  if (s.heap_limit <= small) {
+    return s;
+  }
+  s = s.write("    leaq " + small.to_string() + "(%rax), %rdi\n");
+  s = s.write("    movabs $" + (s.heap_limit - small).to_string() + ", %rsi\n");
+  s = s.write("    movl $14, %edx\n    movl $28, %eax\n");
+  return s.syscall(28);
+}
+
 // The first allocation maps the arena.
 function emit_arena_map(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    pushq %rdi\n");
@@ -3900,6 +3928,7 @@ function emit_arena_map(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movabs $" + s.heap_limit.to_string() + ", %rcx\n");
   s = s.write("    addq %rax, %rcx\n");
   s = s.write("    movq %rcx, __fern_heap_end(%rip)\n");
+  s = arena_huge_pages(s);
   s = s.write("    popq %r11\n");
   s = s.write("    popq %r10\n");
   s = s.write("    popq %r9\n");
@@ -4099,7 +4128,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    cmpq __fern_heap_end(%rip), %rdi\n");
   s = s.write("    ja .Lalloc_oom\n");
   s = s.write("    movq %rdi, __fern_heap_ptr(%rip)\n");
-  s = s.write("    ret\n");
+  s = bump_colour(s);
   s = s.write(".Lalloc_full:\n");
   s = s.write("    pushq %rbp\n");
   s = s.write("    movq %rsp, %rbp\n");
@@ -4917,20 +4946,24 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".Laoe_ret:\n");
     s = s.write("    ret\n");
   }
+  // %rsi holds the number of words of the box. __fern_arr_box takes one
+  // less: its block has the word of an array length, which the box uses as
+  // its first word.
   s = s.write("__fn___fern_alloc_reuse:\n");
   s = s.write("    movq 16(%rsp), %rax\n");
   s = s.write("    movq 8(%rsp), %rsi\n");
   s = s.write("__fn___fern_alloc_reuse.r:\n");
   s = s.write("    testq %rax, %rax\n");
   s = s.write("    jz .Lsarelo_fresh\n");
-  s = s.write("    cmpq %rsi, -16(%rax)\n");
+  s = s.write("    leaq -1(%rsi), %rdi\n");
+  s = s.write("    cmpq %rdi, -16(%rax)\n");
   s = s.write("    je .Lsarelo_ret\n");
   s = s.write("    pushq %rsi\n");
   s = s.write("    call __fn___fern_arr_dec.r\n");
   s = s.write("    popq %rsi\n");
   s = s.write(".Lsarelo_fresh:\n");
   s = s.write("__fn___fern_alloc_reuse.f:\n");
-  s = s.write("    movq %rsi, %rdi\n");
+  s = s.write("    leaq -1(%rsi), %rdi\n");
   s = s.write("    jmp __fern_arr_box\n");
   s = s.write(".Lsarelo_ret:\n");
   s = s.write("    ret\n");
@@ -8962,9 +8995,9 @@ function ssa_reuse_alloc(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowS
   let fresh = asmcore.lab_new(helper_arg_moves(ins, reg_of, s), lp + "raf" + id);
   let en = asmcore.lab_new(fresh.state, lp + "rae" + id);
   s = ssa_branch(en.state.write("    testq %rax, %rax\n"), J_JZ, fresh.lab);
-  s = ssa_branch(s.write("    cmpq %rsi, -16(%rax)\n"), J_JE, en.lab);
+  s = ssa_branch(s.write("    leaq -1(%rsi), %rdi\n    cmpq %rdi, -16(%rax)\n"), J_JE, en.lab);
   s = ssa_branch(ssa_call_saving(s, "__fn___fern_alloc_reuse.r", saves), J_JMP, en.lab);
-  s = ssa_call_saving(s.lab_def(fresh.lab).write("    movq %rsi, %rdi\n"), "__fern_arr_box", saves);
+  s = ssa_call_saving(s.lab_def(fresh.lab).write("    leaq -1(%rsi), %rdi\n"), "__fern_arr_box", saves);
   return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s.lab_def(en.lab)));
 }
 

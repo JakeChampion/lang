@@ -65,7 +65,7 @@ function namespace(output: ssaprepare.Output, row: ssaprepare.Emitted): void {
 }
 
 function correspondence(output: ssaprepare.Output, row: ssaprepare.Emitted): void {
-  let from = "movq $3, %rdi";
+  let from = "movq $2, %rdi";
   let to = "unknown_instruction";
   check(ssaprepare.Output { ...output, text: change(output.text, from, to) }, false, "changed final instructions");
   let changed = ssaprepare.Emitted { ...row, assembly: change(row.assembly, from, to) };

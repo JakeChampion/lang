@@ -81,7 +81,7 @@ function actual_operations(p: isa.Program, body: text.Body): void {
     }
     i += 1;
   }
-  require(full && special == 3, "entry fragment retained, syscall unproved");
+  require(full && special == 4, "entry fragment retained, both syscalls unproved");
 }
 
 function actual_special(op: isa.Op, line: string): i32 {
