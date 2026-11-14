@@ -654,11 +654,11 @@ aarch64/closure_call.ir	46002179
 aarch64/deflate_decode.ir	34895281
 aarch64/deflate_decode.text	13241
 aarch64/deflate_encode.ir	43566583
-aarch64/deflate_encode.text	7735
+aarch64/deflate_encode.text	7648
 aarch64/enum_match.text	1165
 aarch64/enum_match.ir	24975095
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-aarch64/http_hello.text	16619
+aarch64/http_hello.text	16432
 # 2026-10-30 (#13900): CI41026748018 measures aarch64/http_hello.ir 4.98% lower on main 33b21667. #13900 does not change the serve path.
 aarch64/http_hello.ir	23892626
 aarch64/int_loop.text	383
@@ -675,8 +675,8 @@ aarch64/map_string.text	9588
 # 2026-10-26 (#13496): CI40297899459 reports the current map instruction count.
 # 2026-11-11 (#15258): perf-aarch64 job 130456686122 measured aarch64/map_string.ir at 49757676 (was 53247468). The tolerance is unchanged.
 aarch64/map_string.ir	49757676	2
-aarch64/ordmap_insert.text	5868
-aarch64/ordmap_insert.ir	88147332
+aarch64/ordmap_insert.text	5466
+aarch64/ordmap_insert.ir	87214511
 aarch64/pmap_insert.text	3214
 aarch64/pmap_insert.ir	58518189
 aarch64/pvec_with.text	3243
@@ -702,15 +702,15 @@ aarch64/string_rfind_byte.ir	55941911
 aarch64/string_scan.text	2556
 aarch64/string_scan.ir	59787692
 aarch64/string_slice.text	1188
-aarch64/string_slice.ir	43620107
+aarch64/string_slice.ir	25140119
 aarch64/struct_drop.text	2663
 aarch64/struct_drop.ir	218300904
 aarch64/tokenize.text	1444
-aarch64/tokenize.ir	38350109
+aarch64/tokenize.ir	33490121
 aarch64/utf8_ingest_unchecked.text	8188
-aarch64/utf8_ingest_unchecked.ir	2689511
+aarch64/utf8_ingest_unchecked.ir	2602953
 aarch64/utf8_ingest_validated.text	8735
-aarch64/utf8_ingest_validated.ir	6229114
+aarch64/utf8_ingest_validated.ir	6116553
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
 x86_64/perceus_cfold.text	1938
@@ -738,8 +738,8 @@ aarch64/perceus_nqueens.text	1812
 aarch64/perceus_nqueens.ir	90387246
 aarch64/perceus_rbtree.text	2842
 aarch64/perceus_rbtree.ir	35415487
-aarch64/perceus_rbtree_ck.text	3039
-aarch64/perceus_rbtree_ck.ir	36653727
+aarch64/perceus_rbtree_ck.text	3274
+aarch64/perceus_rbtree_ck.ir	48193420
 # 2026-11-01: #13988 keeps the original main pvec instruction gates.
 # Fresh measurements remain within their unchanged 1% tolerance.
 # 2026-11-07: PR #14490 adds the fixed QTRLE workload. Existing limits stay unchanged.
@@ -766,3 +766,6 @@ aarch64/video_qtrle.ir 1559097809
 # struct_drop. The string .ir rows fall, string_build up to 9.7%. aarch64: perf-aarch64
 # job 132091435610 on #15742 merged with f29fcfdf. x86-64: local perf-bench and
 # callgrind on f29fcfdf. Tolerances are unchanged.
+# 2026-11-14 (#15822): perf-aarch64 job 132337113736 on the merge with main 8ce8fde7. Owned array and map parameters move
+# deflate_encode.text, http_hello.text, ordmap_insert.text and .ir, and the utf8_ingest rows. The perceus_rbtree_ck, string_slice
+# and tokenize rows are values of main. Each row is pinned at its measured value.
