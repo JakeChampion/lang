@@ -5,6 +5,13 @@ A Plex client for Android, written in Fern. Its shape follows
 has no Java code of its own. It is a NativeActivity app, and `fern -apk`
 writes its APK with no Android SDK.
 
+The look is the dot-matrix style of the [stopwatch](../stopwatch/README.md):
+a black screen, grey cards with round corners, and white and grey text.
+The titles, the tabs, the buttons and the headings of the rows are in the
+dot font of `../matrix.fern`. The text from the server is in the text font.
+Red shows only what is live: the current tab, the progress of an item, a
+request in flight, the play button and the position on the seek bar.
+
 Browsing:
 
 - Sign in with a PIN: the app shows a code, and you type it at
