@@ -16541,6 +16541,8 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				c.settleNumeric(n.Right, common)
 				lt = c.postSettleType(n.Left, lt)
 				rt = c.postSettleType(n.Right, rt)
+			} else {
+				lt, rt = c.settleComparedArrayLiteral(n, lt, rt)
 			}
 			if lt != nil && rt != nil && !ast.Equal(lt, rt) && !(isStringLike(lt) && isStringLike(rt)) {
 				c.errfCode(n.P, "E041", "cannot compare %s with %s: both sides of %q must have the same type", lt, rt, n.Op)
