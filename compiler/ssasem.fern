@@ -359,7 +359,7 @@ pub function fresh_result_builtin(name: string): boolean {
 const FRESH_RESULT_BUILTINS: string[] = [
   "__bytes_owned", "__bytes_range", "__bytes_into", "__aes_expand_key", "__aes_ctr32", "__ghash",
   "__aes_gcm_seal_into", "__aes_gcm_open_into", "__sha256_hw_blocks", "__sha1_hw_blocks", "__sha1x8_hw_blocks",
-  "__chacha20_xor_into", "__poly1305_blocks", "__chacha20_poly1305_seal_into", "__chacha20_poly1305_open_into",
+  "__chacha20_xor_into", "__poly1305_blocks", "__chacha20_poly1305_seal_into", "__chacha20_poly1305_open_into", "__mont_mul", "__scrypt_block_mix",
 ];
 
 // A builtin that reads or writes its borrowed arguments in place and keeps no

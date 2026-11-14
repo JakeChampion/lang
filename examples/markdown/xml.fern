@@ -1,0 +1,195 @@
+// The XML of a node tree, in the CommonMark DTD, as cmark writes it.
+import "std/io_buffered";
+import "./markdown";
+import "./nodes";
+
+const NAMES: string[] = ["document", "block_quote", "list", "item", "code_block", "html_block", "paragraph", "heading", "thematic_break", "text", "softbreak", "linebreak", "code", "html_inline", "emph", "strong", "link", "image"];
+
+// The records of the escapes of XML text: `"`, `&`, `<` and `>`, and U+FFFD
+// for each control character that XML does not allow. The bytes of U+FFFE
+// and U+FFFF need a look at the bytes before them, so they are not here.
+function escapes(): u8[] {
+  let t = __alloc_u8(256 * 8);
+  for c in 0..256 {
+    t = t.with(c * 8, 1 as u8).with(c * 8 + 1, c as u8);
+  }
+  for c in 0..32 {
+    if (c != 9 && c != 10 && c != 13) {
+      t = record(t, c, "�");
+    }
+  }
+  return record(record(record(record(t, 34, "&quot;"), 38, "&amp;"), 60, "&lt;"), 62, "&gt;");
+}
+
+function record(t: u8[], c: i32, s: string): u8[] {
+  let r = t.with(c * 8, s.len() as u8);
+  for i in 0..s.len() {
+    r = r.with(c * 8 + 1 + i, s[i]);
+  }
+  return r;
+}
+
+// Writes `s` as XML text. U+FFFE and U+FFFF become U+FFFD.
+function escape(out: usize, s: string, table: u8[]): void {
+  let i = 0;
+  let from = 0;
+  loop {
+    let j = __memchr(s, 0xEF, i);
+    if (j < 0 || j + 2 >= s.len()) {
+      break;
+    }
+    if (s[j + 1] == 0xBF as u8 && (s[j + 2] == 0xBE as u8 || s[j + 2] == 0xBF as u8)) {
+      buf_push_expanded(out, slice_unchecked(s, from, j), table);
+      buf_push(out, "�");
+      from = j + 3;
+    }
+    i = j + 1;
+  }
+  buf_push_expanded(out, slice_unchecked(s, from, s.len()), table);
+}
+
+const HEAD: string = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE document SYSTEM \"CommonMark.dtd\">\n";
+
+pub function render(t: nodes.Tree, o: markdown.Options): u8[] {
+  let out = buf_new(t.text.len() * 2 + 256);
+  let table = escapes();
+  buf_push(out, HEAD);
+  let x = Walk { s: nodes.Step { node: 0, exit: false }, indent: 0 };
+  while (x.s.node != nodes.NONE) {
+    x = step(out, t, x, o.sourcepos, table);
+  }
+  let bytes = buf_take_bytes(out);
+  buf_free(out);
+  return bytes;
+}
+
+// Writes the XML of the tree `t` to `w`. The writer gets the XML of a part
+// of the tree each time its buffer holds `part` bytes or more.
+pub function write(w: io_buffered.BufWriter, t: nodes.Tree, o: markdown.Options, part: i32): Result[io_buffered.BufWriter, IoError] {
+  let out = w.handle();
+  let table = escapes();
+  buf_push(out, HEAD);
+  let q = w;
+  let x = Walk { s: nodes.Step { node: 0, exit: false }, indent: 0 };
+  while (x.s.node != nodes.NONE) {
+    x = step(out, t, x, o.sourcepos, table);
+    if (buf_len(out) >= part) {
+      let Ok(next) = q.flush() else {
+        return q.flush();
+      };
+      q = next;
+    }
+  }
+  return Ok(q);
+}
+
+// The walk of the tree, and the indent of the next line.
+struct Walk { s: nodes.Step, indent: i32 }
+
+// Writes the start or the end of a node, and gives the next step.
+function step(out: usize, t: nodes.Tree, x: Walk, sourcepos: boolean, table: u8[]): Walk {
+  let n = x.s.node;
+  let indent = x.indent;
+  if (!x.s.exit) {
+    indent = enter(out, t, n, indent, sourcepos, table);
+  } else if (t.first(n) != nodes.NONE) {
+    indent -= 2;
+    spaces(out, indent);
+    buf_push(out, "</");
+    buf_push(out, NAMES[t.kind(n)]);
+    buf_push(out, ">\n");
+  }
+  return Walk { s: t.step(x.s), indent: indent };
+}
+
+// As in cmark, the indent has at most 40 spaces.
+const SPACES: string = "                                        ";
+
+function spaces(out: usize, n: i32): void {
+  if (n > 40) {
+    buf_push(out, SPACES);
+  } else if (n > 0) {
+    buf_push_range(out, SPACES, 0, n);
+  }
+}
+
+// Writes the start of the node `x`, and gives the indent of its children.
+function enter(out: usize, t: nodes.Tree, x: i32, indent: i32, sourcepos: boolean, table: u8[]): i32 {
+  let k = t.kind(x);
+  spaces(out, indent);
+  buf_push_byte(out, 60);
+  buf_push(out, NAMES[k]);
+  let (sl, sc, el, ec) = t.pos(x);
+  if (sourcepos && sl != 0) {
+    buf_push(out, " sourcepos=\"" + sl.to_string() + ":" + sc.to_string() + "-" + el.to_string() + ":" + ec.to_string() + "\"");
+  }
+  let literal = attributes(out, t, x, k, table);
+  if (t.first(x) != nodes.NONE) {
+    buf_push(out, ">\n");
+    return indent + 2;
+  }
+  if (!literal) {
+    buf_push(out, " /");
+  }
+  buf_push(out, ">\n");
+  return indent;
+}
+
+// Writes the attributes of the node `x` of the kind `k`, and the text of a
+// leaf. Gives true for a leaf with text.
+function attributes(out: usize, t: nodes.Tree, x: i32, k: i32, table: u8[]): boolean {
+  if (k == nodes.DOCUMENT) {
+    buf_push(out, " xmlns=\"http://commonmark.org/xml/1.0\"");
+  } else if (k == nodes.LIST) {
+    list(out, t, x);
+  } else if (k == nodes.HEADING) {
+    buf_push(out, " level=\"" + t.value(x).to_string() + "\"");
+  } else if (k == nodes.CODE_BLOCK) {
+    extra(out, t, x, " info=\"", table);
+  } else if (k == nodes.LINK || k == nodes.IMAGE) {
+    buf_push(out, " destination=\"");
+    escape(out, t.lit(t.text, x), table);
+    buf_push(out, "\"");
+    extra(out, t, x, " title=\"", table);
+  }
+  if (nodes.has_text(k)) {
+    literal(out, t, x, k, table);
+    return true;
+  }
+  return false;
+}
+
+// Writes the attribute `name` with the info string or the title of `x`,
+// when it has one.
+function extra(out: usize, t: nodes.Tree, x: i32, name: string, table: u8[]): void {
+  if (t.has_extra(x)) {
+    buf_push(out, name);
+    escape(out, t.extra(t.text, x), table);
+    buf_push(out, "\"");
+  }
+}
+
+function literal(out: usize, t: nodes.Tree, x: i32, k: i32, table: u8[]): void {
+  buf_push(out, " xml:space=\"preserve\">");
+  escape(out, t.lit(t.text, x), table);
+  buf_push(out, "</");
+  buf_push(out, NAMES[k]);
+}
+
+function list(out: usize, t: nodes.Tree, x: i32): void {
+  if (t.has(x, nodes.ORDERED)) {
+    buf_push(out, " type=\"ordered\" start=\"" + t.value(x).to_string() + "\"");
+    if (t.has(x, nodes.PAREN)) {
+      buf_push(out, " delim=\"paren\"");
+    } else {
+      buf_push(out, " delim=\"period\"");
+    }
+  } else {
+    buf_push(out, " type=\"bullet\"");
+  }
+  if (t.has(x, nodes.TIGHT)) {
+    buf_push(out, " tight=\"true\"");
+  } else {
+    buf_push(out, " tight=\"false\"");
+  }
+}
