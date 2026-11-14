@@ -217,3 +217,31 @@ func TestSelfHostStoredContainerViewTargets(t *testing.T) {
 		})
 	}
 }
+
+func TestSelfHostStoredContainerViewHardenedTargets(t *testing.T) {
+	cli := buildRuntimeCLI(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			for _, sanitize := range []bool{false, true} {
+				flags := []string{"-harden"}
+				if sanitize {
+					flags = append(flags, "-sanitize")
+				}
+				bin := compileCPUProfile(t, cli, storedContainerViewProgram, target, "", flags...)
+				cmd := runX86_64Bin(cli.runner, bin)
+				if target == "arm64-linux" {
+					_, qemu := arm64Tooling(t)
+					cmd = runArm64Bin(qemu, bin)
+				}
+				got, stderr := runCPUProfile(t, cmd, 0)
+				if got != "container views survive\n" {
+					t.Fatalf("sanitize=%v: got %q", sanitize, got)
+				}
+				if sanitize {
+					assertBalancedCensus(t, stderr)
+					t.Logf("%s", leakSummaryLine(stderr))
+				}
+			}
+		})
+	}
+}
