@@ -1098,6 +1098,18 @@ function test_circular(): test.TestOutcome {
   ]);
 }
 
+// The functions of libm that jq has. Each value is the output of jq 1.7.
+function test_libm(): test.TestOutcome {
+  return checks([
+    ("map(frexp), map(modf), (.[0] | lgamma_r)", "[5.5, -3.25]", "[[0.6875,3],[-0.8125,2]]\n[[0.5,5],[-0.25,-3]]\n[3.9578139676187165,1]"),
+    ("[ldexp(3; 2.7), scalb(3; 2), scalb(3; 2.5), scalbln(3; -1), jn(1; 2), yn(2; 3)]", "null", "[12,12,null,1.5,0.5767248077568733,-0.1604003934849238]"),
+    ("[fma(0.1; 10; -1), drem(10; 3), fmod(-10; 3), nexttoward(1; 2) - 1, copysign(3; -0), fmax(-0; 0)]", "null", "[5.551115123125783e-17,1,-1,2.220446049250313e-16,-3,-0]"),
+    ("map(nearbyint, logb, significand, erf, tgamma, acosh)", "[2.5]", "[2,1,1.25,0.999593047982555,1.329340388179137,1.566799236972411]"),
+    ("pow10", "3", "error: Error: pow10/0 not found at build time"),
+    ("frexp", "\"a\"", "error: string (\"a\") number required"),
+  ]);
+}
+
 // Regular expressions, with the syntax and the messages of Oniguruma.
 function test_regex(): test.TestOutcome {
   return checks([
@@ -1202,6 +1214,7 @@ function main(): i32 {
   r = r.it("the circular functions, cbrt and builtins", test_circular);
   r = r.it("functions that jq does not have", test_undefined_functions);
   r = r.it("regular expressions", test_regex);
+  r = r.it("the functions of libm", test_libm);
   r = r.it("number literals and computed numbers", test_numbers);
   r = r.it("pretty output", test_output);
   r = r.it("the input stream and its lines", test_stream);

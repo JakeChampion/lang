@@ -1351,6 +1351,9 @@ function value0_number(name: string, v: json.JsonValue): Outputs {
     let x = number.value(t);
     return one(json.JBool(x == x && x.abs() <= 1.7976931348623157e308));
   }
+  if (name == "pow10") {
+    return fail("Error: pow10/0 not found at build time");
+  }
   let (x, bad) = number_of(v);
   if (bad.failed()) {
     return bad;
@@ -1358,6 +1361,7 @@ function value0_number(name: string, v: json.JsonValue): Outputs {
   if (name == "frexp" || name == "modf" || name == "lgamma_r") {
     return split_number(name, x);
   }
+
   return one(computed(math1(name, x)));
 }
 
@@ -1415,7 +1419,7 @@ function value3(name: string, v: json.JsonValue, a: json.JsonValue, b: json.Json
   if (bad_c.failed()) {
     return bad_c;
   }
-  return one(computed(x * y + z));
+  return one(computed(x.fma(y, z)));
 }
 
 // The environment of the process as an object.
@@ -2076,7 +2080,10 @@ function math1(name: string, x: f64): f64 {
     "log10" => x.log10(),
     "exp2" => x.exp2(),
     "exp10" => x.exp10(),
-    "pow10" => x.exp10(),
+    "nearbyint" => x.rint(),
+    "rint" => x.rint(),
+    "logb" => x.logb(),
+    "significand" => x.significand(),
     _ => circular(name, x),
   };
 }
@@ -2092,10 +2099,36 @@ function circular(name: string, x: f64): f64 {
     "sinh" => x.sinh(),
     "cosh" => x.cosh(),
     "tanh" => x.tanh(),
+    "asinh" => x.asinh(),
+    "acosh" => x.acosh(),
+    "atanh" => x.atanh(),
     "cbrt" => x.cbrt(),
     "log1p" => x.log1p(),
-    _ => x.expm1(),
+    "expm1" => x.expm1(),
+    _ => special(name, x),
   };
+}
+
+function special(name: string, x: f64): f64 {
+  return match (name) {
+    "erf" => x.erf(),
+    "erfc" => x.erfc(),
+    "gamma" => x.lgamma(),
+    "lgamma" => x.lgamma(),
+    "tgamma" => x.tgamma(),
+    "j0" => x.j0(),
+    "j1" => x.j1(),
+    "y0" => x.y0(),
+    _ => x.y1(),
+  };
+}
+
+// The int of C for a double: the whole part, held to the range of an i32.
+function c_int(x: f64): i32 {
+  if (x != x || x >= 2147483648.0 || x < -2147483648.0) {
+    return -2147483647 - 1;
+  }
+  return x as i32;
 }
 
 // A math function of two numbers.
@@ -2103,13 +2136,36 @@ function math2(name: string, x: f64, y: f64): f64 {
   return match (name) {
     "pow" => x.pow(y),
     "atan2" => x.atan2(y),
-    _ => 0.0 / 0.0,
+    "fmod" => x.fmod(y),
+    "remainder" => x.remainder(y),
+    "drem" => x.remainder(y),
+    "fdim" => x.fdim(y),
+    "fmax" => x.fmax(y),
+    "fmin" => x.fmin(y),
+    "copysign" => x.copysign(y),
+    "nextafter" => x.nextafter(y),
+    "nexttoward" => x.nextafter(y),
+    "hypot" => x.hypot(y),
+    "ldexp" => x.scalbn(c_int(y)),
+    "scalbln" => x.scalbn(c_int(y)),
+    "scalb" => if (y == y.trunc() || y != y) { x.scalbn(c_int(y)) } else { 0.0 / 0.0 },
+    "jn" => y.jn(c_int(x)),
+    _ => y.yn(c_int(x)),
   };
 }
 
 // `frexp`, `modf` and `lgamma_r`, which give two numbers.
 function split_number(name: string, x: f64): Outputs {
-  return fail(name + " is not in this port yet");
+  if (name == "frexp") {
+    let (f, e) = x.frexp();
+    return one(json.JArray([computed(f), whole(e)]));
+  }
+  if (name == "modf") {
+    let (f, w) = x.modf();
+    return one(json.JArray([computed(f), computed(w)]));
+  }
+  let (v, sign) = x.lgamma_r();
+  return one(json.JArray([computed(v), whole(sign)]));
 }
 
 // ---- Programs and modules ----
