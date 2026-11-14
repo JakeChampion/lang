@@ -52,6 +52,10 @@ pub function no_player(): PlayerView {
 pub struct View {
   w: i32,
   h: i32,
+  // The heights of the status bar at the top and of the navigation bar at
+  // the bottom, which cover the window.
+  top: i32,
+  bottom: i32,
   screen: i32,
   tab: i32,
   title: string,
@@ -81,16 +85,17 @@ pub struct View {
 }
 
 pub function empty_view(w: i32, h: i32): View {
-  return View { w: w, h: h, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, item: plex.no_item(), children: [], pin_code: "", status: "", error: "", servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16) };
+  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, item: plex.no_item(), children: [], pin_code: "", status: "", error: "", servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16) };
 }
 
 // --- metrics
 
 // `u` is the size of a density-independent pixel, and `ts` the scale of the
-// text, for a window of w by h.
-pub struct Metrics { w: i32, h: i32, u: i32, ts: i32, cw: i32, th: i32 }
+// text, for a window of w by h. The system bars cover `top` pixels at the
+// top of the window and `bottom` pixels at its bottom.
+pub struct Metrics { w: i32, h: i32, top: i32, bottom: i32, u: i32, ts: i32, cw: i32, th: i32 }
 
-pub function metrics(w: i32, h: i32): Metrics {
+pub function metrics(w: i32, h: i32, top: i32, bottom: i32): Metrics {
   let short = w;
   if (h < short) {
     short = h;
@@ -103,7 +108,7 @@ pub function metrics(w: i32, h: i32): Metrics {
   if (ts < 1) {
     ts = 1;
   }
-  return Metrics { w: w, h: h, u: u, ts: ts, cw: draw.text_width("x", ts), th: draw.text_height(ts) };
+  return Metrics { w: w, h: h, top: top, bottom: bottom, u: u, ts: ts, cw: draw.text_width("x", ts), th: draw.text_height(ts) };
 }
 
 // The pixels from dot to dot of the small dot-matrix words, such as the
@@ -117,11 +122,11 @@ pub function title_pitch(m: Metrics): i32 {
 }
 
 pub function top_height(m: Metrics): i32 {
-  return 56 * m.u;
+  return m.top + 56 * m.u;
 }
 
 pub function bottom_height(m: Metrics): i32 {
-  return 64 * m.u;
+  return 64 * m.u + m.bottom;
 }
 
 pub function has_tabs(screen: i32): boolean {
@@ -295,7 +300,7 @@ function card(m: Metrics, v: View, x: i32, y: i32, w: i32, it: plex.Item, act: s
 function top_bar(m: Metrics, v: View, back: boolean): scene.Node[] {
   let h = top_height(m);
   let p = title_pitch(m);
-  let ty = (h - matrix.height(p)) / 2;
+  let ty = m.top + (h - m.top - matrix.height(p)) / 2;
   let out: scene.Node[] = [fill(0, 0, m.w, h, look.bg(), 0)];
   let x = 16 * m.u;
   if (back) {
@@ -305,7 +310,7 @@ function top_bar(m: Metrics, v: View, back: boolean): scene.Node[] {
   }
   out = out.append(heading(m, x, ty, m.w - x - 40 * m.u, v.title, p, look.ink()));
   if (v.loading) {
-    out = out.append(live_dot(m, m.w - 20 * m.u, h / 2));
+    out = out.append(live_dot(m, m.w - 20 * m.u, (m.top + h) / 2));
   }
   return out;
 }
@@ -324,9 +329,9 @@ function bottom_bar(m: Metrics, v: View): scene.Node[] {
   for name in names {
     p = matrix.fit_pitch(name, cell - 8 * m.u, p);
   }
-  let ty = y + (h - matrix.height(p)) / 2 + 6 * m.u;
+  let ty = y + (h - m.bottom - matrix.height(p)) / 2 + 6 * m.u;
   for i in 0..names.len() {
-    out = out.append(tap(fill(i * cell, y, cell, h, look.bg(), 0), "tab:" + i.to_string()));
+    out = out.append(tap(fill(i * cell, y, cell, h - m.bottom, look.bg(), 0), "tab:" + i.to_string()));
     let color = look.muted();
     if (i == v.tab) {
       color = look.ink();
@@ -346,7 +351,7 @@ pub function content_bottom(m: Metrics, screen: i32): i32 {
   if (has_tabs(screen)) {
     return m.h - bottom_height(m);
   }
-  return m.h;
+  return m.h - m.bottom;
 }
 
 // --- the screens
@@ -378,7 +383,7 @@ function login(m: Metrics, v: View): scene.Node[] {
     out = util_append(out, button(m, (m.w - button_width(m, "Cancel")) / 2, wy + matrix.height(sp) + 28 * m.u, "Cancel", false, "cancel"));
   }
   if (v.error.len() > 0) {
-    out = util_append(out, wrapped(m, 24 * m.u, m.h - 120 * m.u, m.w - 48 * m.u, v.error, look.red()));
+    out = util_append(out, wrapped(m, 24 * m.u, m.h - m.bottom - 120 * m.u, m.w - 48 * m.u, v.error, look.red()));
   }
   return out;
 }
@@ -854,7 +859,7 @@ function settings(m: Metrics, v: View): scene.Node[] {
 
 // The progress bar of the player, as a node whose tap seeks.
 pub function seek_bar(m: Metrics): scene.Node {
-  return mk(24 * m.u, m.h - 72 * m.u, m.w - 48 * m.u, 24 * m.u, scene.Blank, "seek", "");
+  return mk(24 * m.u, m.h - m.bottom - 72 * m.u, m.w - 48 * m.u, 24 * m.u, scene.Blank, "seek", "");
 }
 
 function player(m: Metrics, v: View): scene.Node[] {
@@ -869,12 +874,13 @@ function player(m: Metrics, v: View): scene.Node[] {
   }
   out = out.append(mk(0, 0, m.w, m.h, scene.Blank, "toggle", ""));
   let tp = title_pitch(m);
-  out = out.append(tap(fill(0, 0, 64 * m.u, 56 * m.u, draw.rgba(0, 0, 0, 0), 0), "back"));
-  out = out.append(dots(16 * m.u, 16 * m.u + (m.th - matrix.height(tp)) / 2, "<", tp, look.ink()));
+  let top = m.top + 16 * m.u;
+  out = out.append(tap(fill(0, 0, 64 * m.u, m.top + 56 * m.u, draw.rgba(0, 0, 0, 0), 0), "back"));
+  out = out.append(dots(16 * m.u, top + (m.th - matrix.height(tp)) / 2, "<", tp, look.ink()));
   let cells = (m.w - 64 * m.u) / m.cw;
-  out = out.append(label(m, 48 * m.u, 16 * m.u, fit(p.title, cells), m.ts, look.ink()));
+  out = out.append(label(m, 48 * m.u, top, fit(p.title, cells), m.ts, look.ink()));
   if (p.subtitle.len() > 0) {
-    out = out.append(label(m, 48 * m.u, 20 * m.u + m.th, fit(p.subtitle, cells), m.ts, look.muted()));
+    out = out.append(label(m, 48 * m.u, top + 4 * m.u + m.th, fit(p.subtitle, cells), m.ts, look.muted()));
   }
   let cy = m.h / 2;
   let r = 36 * m.u;
@@ -959,7 +965,7 @@ function seek_dots(f: draw.Frame, r: look.Rect, permille: i32, dot: i32): void {
 
 // The nodes of the screen of `v`, in the order to draw them.
 pub function nodes(v: View): scene.Node[] {
-  let m = metrics(v.w, v.h);
+  let m = metrics(v.w, v.h, v.top, v.bottom);
   if (v.screen == LOGIN) {
     return login(m, v);
   }
