@@ -26,6 +26,7 @@ Default arguments cannot introduce callback effects between explicit arguments.
 ## Operands and aggregates
 
 - A binary operator evaluates its left operand before its right operand, except for the short-circuit rules below.
+- A range evaluates its lower bound before its upper bound. Both bounds run once before a range loop binds its index.
 - An index evaluates its source before its index. A slice evaluates its source, start, and end in that order.
 - An array or tuple literal evaluates its elements from left to right.
 - A variant constructor evaluates its payload arguments from left to right.

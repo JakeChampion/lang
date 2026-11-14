@@ -48,3 +48,20 @@ source
 source
 0
 2
+range exclusive
+64
+66
+64
+65
+range inclusive
+67
+68
+67
+68
+range empty
+70
+69
+range shadow
+0
+0
+1
