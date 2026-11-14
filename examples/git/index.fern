@@ -43,12 +43,14 @@ function names_of(data: u8[], offsets: i32[]): Result[string[], string] {
     names = names.append("");
   }
   let known: Map[string, i32] = Map { };
+  let cache = pack.cache_new();
   let left = count;
   while (left > 0) {
     let before = left;
     for i in 0..count {
       if (names[i].len() == 0) {
-        let found = pack.object_at(data, (base: u8[]): i32 => known.get_or(hex.encode(base), -1), offsets[i]);
+        let (found, kept) = pack.object_cached((at: i32): pack.Window => pack.Window { bytes: data, shift: 0 }, (base: u8[]): i32 => known.get_or(hex.encode(base), -1), offsets[i], cache);
+        cache = kept;
         if let Ok(o) = found {
           let name = objects.hash_of(o.kind, o.body);
           names = names.with(i, name);
