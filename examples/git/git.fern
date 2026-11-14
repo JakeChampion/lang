@@ -555,7 +555,11 @@ struct Waiting { commits: log.Commit[], store: store.Store }
 function log_push(w: Waiting, hash: string): Waiting {
   let got = store.read(w.store, hash);
   return match (got.object) {
-    Ok(o) => Waiting { commits: w.commits.append(log.Commit { ...log.commit_of(hash, o.body), parents: store.parents(got.store, hash, o.body) }), store: got.store },
+    Ok(o) => {
+      let c = log.commit_of(hash, o.body);
+      let kept = if (store.at_edge(got.store, hash)) { log.Commit { ...c, parents: [] } } else { c };
+      Waiting { commits: w.commits.append(kept), store: got.store }
+    },
     Err(_) => Waiting { commits: w.commits, store: got.store },
   };
 }
