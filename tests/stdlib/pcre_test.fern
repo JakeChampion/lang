@@ -96,8 +96,9 @@ function test_assertions(): test.TestOutcome {
 
 function test_options(): test.TestOutcome {
   let o = utf();
+  // The last K of "k K K" and the K of "kKx" are U+212A KELVIN SIGN.
   let got = [
-    all("(?i)straße", "STRASSE straße", o), all("(?i)k", "k K \u{212a}", o), all("(?i)[^k]", "k\u{212a}x", o),
+    all("(?i)straße", "STRASSE straße", o), all("(?i)k", "k K K", o), all("(?i)[^k]", "kKx", o),
     all("(?x) a b # c", "ab", o), all("(?s).+", "a\nb", o), all(".+", "a\nb", o), all("(?-m)$", "a\nb\n", o),
     all("^b$", "a\r\nb\r\nc", pcre.Options { ...o, crlf: true }), all("\\w+", "é a", pcre.options()),
     all("[\\x80-\\xff]+", "é", pcre.options()), all("(?i:a(?-i)b)c", "AbC aBc", o),

@@ -1886,9 +1886,15 @@ function __pc_check(cx: PCtx, x: PNode, in_look: boolean): void {
         __pc_check(cx, y, in_look);
       }
     },
-    NGroup(g) => __pc_check(cx, g.node, in_look),
-    NRep(r) => __pc_check(cx, r.node, in_look),
-    NAtomic(a) => __pc_check(cx, a.node, in_look),
+    NGroup(g) => {
+      __pc_check(cx, g.node, in_look);
+    },
+    NRep(r) => {
+      __pc_check(cx, r.node, in_look);
+    },
+    NAtomic(a) => {
+      __pc_check(cx, a.node, in_look);
+    },
     NLook(l) => {
       __pc_check(cx, l.node, true);
       if (l.kind == LOOK_BEHIND || l.kind == LOOK_NOT_BEHIND) {
@@ -1920,7 +1926,7 @@ function __pc_check(cx: PCtx, x: PNode, in_look: boolean): void {
         __pc_fail(cx, c.at, 115);
       }
     },
-    _ => {},
+    _ => {}
   }
 }
 
@@ -2992,7 +2998,7 @@ function __pc_assert(r: PRun, kind: i32, pos: i32): boolean {
   let before = __pc_is_word(r.re, __pc_char_before(r.re, text, pos));
   let (c, w) = __pc_char_at(r.re, text, pos);
   let after = __pc_is_word(r.re, c);
-  return (before != after) == (kind == A_WORD);
+  return before != after == (kind == A_WORD);
 }
 
 // The offset after a reference to `group` at `pos`, or -1.

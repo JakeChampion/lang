@@ -3924,7 +3924,7 @@ function __rx_start_probes(starts: i32[][]): u8[] {
   let m = __rx_masks_head(k, [0, 1, 2]);
   for i in 0..starts.len() {
     for j in 0..k {
-      m = __rx_mask_lit(m, j, starts[i][j], 1 << (i % 8));
+      m = __rx_mask_lit(m, j, starts[i][j], 1 << i % 8);
     }
   }
   return m;

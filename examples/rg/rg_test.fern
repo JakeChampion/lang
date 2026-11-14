@@ -348,7 +348,7 @@ function test_pcre(): test.TestOutcome {
     run_pcre(["-P", "-F", "a.(", "a"], "a.(\naa(\n"), run_pcre(["-P", "-c", "(\\w)\\1", "a"], "aa\nab\nbb\n"),
     run_pcre(["-P", "-o", "-r", "<$n>", "(?<n>o+)", "a"], "foo\n"), run_pcre(["-P", "a(", "a"], "a\n"),
     run_pcre(["-P", "-w", "a(", "a"], "a\n"), run_pcre(["-P", "(a+)+$", "a"], "ok\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac\nok\n"),
-    run_pcre(["-P", "--no-pcre2-unicode", "-c", "^.$", "a"], "\u{e9}\n"), run_pcre(["-P", "-c", "^.$", "a"], "\u{e9}\n"),
+    run_pcre(["-P", "--no-pcre2-unicode", "-c", "^.$", "a"], "é\n"), run_pcre(["-P", "-c", "^.$", "a"], "é\n"),
   ];
   return test.assert_eq_array(got, [
     "foo\n0", "foo\n0", "a\nb\n0", "Foo\n0", "a.(\n0", "2\n0", "<oo>\n0",

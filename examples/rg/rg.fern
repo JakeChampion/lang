@@ -147,7 +147,7 @@ function compiled(ctx: Ctx, o: flags.Options, banned: u8[]): Option[(Ctx, matche
       Err(e) => {
         eprint("rg: " + engine_error(o, why, e));
         return None;
-      },
+      }
     }
   }
   eprint("rg: " + engine_error(o, why, ""));
