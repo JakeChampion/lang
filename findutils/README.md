@@ -59,7 +59,10 @@ readdir. A test of the name or of the type thus needs no stat.
 The options are `-0`, `-a`, `-d`, `-E`, `-e`, `-I`, `-i`, `-L`, `-l`,
 `-n`, `-s`, `-x`, `-P`, `-p`, `-r`, `-t`, `-o`, `--show-limits` and
 `--process-slot-var`. SIGUSR1 adds one command to `-P`, and SIGUSR2 takes
-one away, as in GNU xargs. The exit status is one of these:
+one away, as in GNU xargs. With `-P`, xargs waits for the first command
+that ends, and then it starts the next command. `-I` replaces the string
+in each initial argument after the command name. The exit status is one of
+these:
 
 - 0 when each command exits with 0.
 - 123 when a command exits with a status from 1 to 125.
@@ -68,6 +71,14 @@ one away, as in GNU xargs. The exit status is one of these:
 - 126 when a command cannot run.
 - 127 when there is no command of that name.
 - 1 for an error in the options or the input.
+
+A command that exits with 255, a command that a signal stops, a command
+that cannot run and an error each stop xargs. xargs then waits for the
+commands that still run, as GNU xargs does at exit. If one of them exits
+with 255 or a signal stops it, xargs stops at once with 124 or 125.
+Otherwise, when a command exited with a status from 1 to 125, the status
+is 123. At the end of the input xargs waits in the same way. Thus a command
+that exits with 255 there gives 124, also after a command that failed.
 
 ## What is not in the ports
 
