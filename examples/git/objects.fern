@@ -88,6 +88,35 @@ pub function read_loose(objects: string, name: string): Result[Object, string] {
   };
 }
 
+// The kind and the size of the loose object `name`, from the start of its
+// file: the header is at the start of the zlib stream. The error is
+// "missing" when the store has no such file.
+pub function loose_info(objects: string, name: string): Result[(string, i64), string] {
+  let Ok(r) = open_reader(loose_path(objects, name)) else {
+    return Err("missing");
+  };
+  let start = r.read_chunk_bytes(512);
+  r.close();
+  let Ok(file) = start else {
+    return Err("missing");
+  };
+  if (file.len() < 3) {
+    return Err("object file " + name + " is corrupt");
+  }
+  let Ok(reader) = deflate.inflate_reader(array.slice(file, 2, file.len()), 32768) else {
+    return Err("object file " + name + " is corrupt");
+  };
+  let read = reader.read;
+  let Ok(chunk) = read(64, (): boolean => false) else {
+    return Err("object file " + name + " is corrupt");
+  };
+  let h = parse_header(chunk.bytes);
+  if (!h.ok) {
+    return Err("object file " + name + " is corrupt");
+  }
+  return Ok((h.kind, h.size as i64));
+}
+
 // The object in the bytes of a loose object file.
 pub function decode(file: u8[], name: string): Result[Object, string] {
   let data = match (deflate.zlib_decode(file, MAX_BODY)) {

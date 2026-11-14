@@ -125,13 +125,14 @@ has four threads for `index-pack`, and the port has four workers.
 | `cat-file --batch` (34,339 objects, 1.2 GB) | 5.9 s | 3.8 s |
 | `log` (978 commits) | 0.03 s | 0.03 s |
 | `ls-tree -r HEAD` | 0.02 s | 0.05 s |
-| `ls-tree -r -l HEAD` | 0.05 s | 0.26 s |
-| `cat-file --batch-check` (34,339 objects) | 0.07 s | 0.45 s |
+| `ls-tree -r -l HEAD` | 0.05 s | 0.16 s |
+| `cat-file --batch-check` (34,339 objects) | 0.08 s | 0.24 s |
 | `index-pack` (3.3 MB) | 0.14 s | 0.16 s |
 | `index-pack` (275 MB) | 3.0 s | 2.6 s |
 
 The port does not inflate a packed object for its kind and its size. They
-come from the header of the object and from the start of its delta.
+come from the header of the object and from the start of its delta. The
+port reads 4 KiB of a packed object and 512 bytes of a loose object.
 
 `index-pack` gives each CPU one part of the packfile, with about the same
 count of bytes. A worker of `std/worker` makes the names of its part.
