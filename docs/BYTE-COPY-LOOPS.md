@@ -1,6 +1,7 @@
 # Bulk byte-copy loops
 
-Status: [reference] the `compiler/sembytecopy.fern` pass as shipped.
+Status: [reference] the `compiler/sembytecopy.fern` pass as shipped, with its
+fill and move loops.
 
 The typed semantic pass in `compiler/sembytecopy.fern` recognizes byte walks
 before ownership planning:
@@ -60,6 +61,37 @@ the corresponding linear-memory headers and `memory.copy`.
 The back-reference helper aborts when `dist` is less than 1 or more than the
 receiver's length. It copies in chunks that double in size. Each chunk reads
 only bytes that already hold their final values.
+
+## Fill and move loops (#15974)
+
+The pass also recognizes two shapes on owned arrays of `u8`, of 4-byte
+elements (`i32`, `u32`, `char`, `f32`) and of 8-byte elements (`i64`, `u64`,
+`f64`):
+
+```fern
+for i in at..at + n { a = a.with(i, v); }
+
+let i = 0;
+while (i < n) { a = a.with(at + i, a[from + i]); i = i + 1; }
+```
+
+The first shape is a fill. The value `v` is a value from before the loop or a
+constant, and the element is an integer or a `char`. The second shape is a
+move inside one array. Each read sees the writes before it, as in the loop.
+The offsets of both shapes are values from before the loop or constants. The
+pass computes a constant of the body before the call.
+
+Each shape becomes a call to `__fern_arr_fill_u8`, `_u32` or `_u64`, or to
+`__fern_arr_move_u8`, `_u32` or `_u64`, by the size of the element. The kernel
+checks the complete range once. When the receiver is not unique, the kernel
+copies it first.
+
+A fill of zero, or a fill of bytes, uses `memset`. A move
+copies in parts that are not longer than the distance between the two
+ranges. Thus each part reads only elements that hold their final values.
+Arrays of two element types of one size share a kernel, so a function that
+fills both keeps the loop of the second type. WASM uses `memory.fill` and
+`memory.copy`.
 
 `ssarc` pushes the private runtime calls in reverse parameter order. Their
 physical ownership signatures consume the receiver at push slot 2, 3 or 4.

@@ -1410,6 +1410,11 @@ function array_helper_needs(cache: irtables.LowerResult[], own out: string[]): s
   if (module_calls_direct(cache, "__fern_bytes_append_back")) {
     out = out.append("@uses_byte_back");
   }
+  for name in rtbytecopy.kernel_names() {
+    if (module_calls_direct(cache, name)) {
+      out = out.append("@uses" + name);
+    }
+  }
   if (module_calls_direct(cache, "__fern_bytes_range")) {
     out = out.append("@uses_bytes_range");
   }
@@ -1445,8 +1450,14 @@ function array_helper_parts(needs: string[], mod: parser.Module, own parts: stri
   let append = byte_copy_need(needs, "@uses_byte_append", "__fern_bytes_append_range", mod);
   let write = byte_copy_need(needs, "@uses_byte_write", "__fern_bytes_write_range", mod);
   let back = byte_copy_need(needs, "@uses_byte_back", "__fern_bytes_append_back", mod);
-  if (append || write || back) {
-    parts = parts.append(rtbytecopy.wasm_source(append, write, back));
+  let kernels: string[] = [];
+  for name in rtbytecopy.kernel_names() {
+    if (byte_copy_need(needs, "@uses" + name, name, mod)) {
+      kernels = kernels.append(name);
+    }
+  }
+  if (append || write || back || kernels.len() > 0) {
+    parts = parts.append(rtbytecopy.wasm_source(append, write, back, kernels));
   }
   if (need(needs, "@uses_bytes_range")) {
     parts = parts.append(bytes_range_helper(empty));

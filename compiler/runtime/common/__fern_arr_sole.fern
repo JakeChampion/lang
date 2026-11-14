@@ -1,0 +1,18 @@
+// The array itself when only the caller holds it, else a copy. An element has
+// 2^shift bytes. A constant array has no capacity, so the copy takes room for
+// its length.
+function __fern_arr_sole(own a: i32[], shift: i32): i32[] {
+  if (__FERN_RUNTIME_REUSE && __load_i32(__raw_arr_ptr(a) - 8) == 1) {
+    return a;
+  }
+  let bytes = a.len() as usize << shift as usize;
+  let words = __load_i64(__raw_arr_ptr(a) - 16);
+  let need = (bytes as i64 + 7i64) / 8i64;
+  if (words < need) {
+    words = need;
+  }
+  let p = __raw_arr_box(words as i32);
+  __fern_arr_copy_bytes(p + 8, __raw_arr_ptr(a) + 8, bytes);
+  __store_i64(p, a.len() as i64);
+  return __raw_array(p);
+}
