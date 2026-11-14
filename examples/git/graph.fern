@@ -1,0 +1,505 @@
+// The graph of `git log --graph`: the lines that go before the text of
+// each commit (graph.c of git, without colors).
+//
+// Each column of the graph holds the commit that a line of the history
+// waits for. A commit takes its column, and its parents take new columns.
+// The states are the lines that one commit needs: a padding line, a line
+// of "...", the lines that make room for an octopus merge, the line of the
+// commit, the line after a merge, and the lines that move the columns
+// together again.
+import "std/array";
+
+const PADDING: i32 = 0;
+
+const SKIP: i32 = 1;
+
+const PRE_COMMIT: i32 = 2;
+
+const COMMIT: i32 = 3;
+
+const POST_MERGE: i32 = 4;
+
+const COLLAPSING: i32 = 5;
+
+// The state of the graph. `parents` holds the parents of the commit that
+// the graph shows. `mapping` holds, for each place of a line, the column
+// that goes through it, or -1.
+pub struct Graph { commit: string, parents: string[], width: i32, expansion_row: i32, state: i32, prev_state: i32, commit_index: i32, prev_commit_index: i32, merge_layout: i32, edges_added: i32, prev_edges_added: i32, columns: string[], new_columns: string[], mapping: i32[], old_mapping: i32[], mapping_size: i32, mark: string }
+
+pub function graph_new(): Graph {
+  return Graph { commit: "", parents: [], width: 0, expansion_row: 0, state: PADDING, prev_state: PADDING, commit_index: 0, prev_commit_index: 0, merge_layout: 0, edges_added: 0, prev_edges_added: 0, columns: [], new_columns: [], mapping: [], old_mapping: [], mapping_size: 0, mark: "*" };
+}
+
+function update_state(g: Graph, s: i32): Graph {
+  return Graph { ...g, prev_state: g.state, state: s };
+}
+
+function num_parents(g: Graph): i32 {
+  return g.parents.len();
+}
+
+function find_new_column(g: Graph, commit: string): i32 {
+  for i in 0..g.new_columns.len() {
+    if (g.new_columns[i] == commit) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function set_mapping(m: i32[], at: i32, v: i32): i32[] {
+  let out = m;
+  while (out.len() <= at) {
+    out = out.append(-1);
+  }
+  return out.with(at, v);
+}
+
+function mapping_at(m: i32[], at: i32): i32 {
+  return if (at >= 0 && at < m.len()) { m[at] } else { -1 };
+}
+
+function insert_into_new_columns(g_in: Graph, commit: string, idx: i32): Graph {
+  let g = g_in;
+  let i = find_new_column(g, commit);
+  if (i < 0) {
+    i = g.new_columns.len();
+    g = Graph { ...g, new_columns: g.new_columns.append(commit) };
+  }
+  let mapping_idx = 0;
+  if (num_parents(g) > 1 && idx > -1 && g.merge_layout == -1) {
+    let dist = idx - i;
+    let shift = if (dist > 1) { 2 * dist - 3 } else { 1 };
+    let layout = if (dist > 0) { 0 } else { 1 };
+    g = Graph { ...g, merge_layout: layout, edges_added: num_parents(g) + layout - 2 };
+    mapping_idx = g.width + (layout - 1) * shift;
+    g = Graph { ...g, width: g.width + 2 * layout };
+  } else if (g.edges_added > 0 && i == mapping_at(g.mapping, g.width - 2)) {
+    mapping_idx = g.width - 2;
+    g = Graph { ...g, edges_added: -1 };
+  } else {
+    mapping_idx = g.width;
+    g = Graph { ...g, width: g.width + 2 };
+  }
+  return Graph { ...g, mapping: set_mapping(g.mapping, mapping_idx, i) };
+}
+
+function update_columns(g_in: Graph): Graph {
+  let g = Graph { ...g_in, columns: g_in.new_columns, new_columns: [] };
+  let max_new = g.columns.len() + num_parents(g);
+  let size = 2 * max_new;
+  g = Graph { ...g, mapping_size: size, mapping: __alloc_i32(size).map((v: i32): i32 => -1), width: 0, prev_edges_added: g.edges_added, edges_added: 0 };
+  let seen_this = false;
+  let n = g.columns.len();
+  let i = 0;
+  while (i <= n) {
+    let col = "";
+    if (i == n) {
+      if (seen_this) {
+        break;
+      }
+      col = g.commit;
+    } else {
+      col = g.columns[i];
+    }
+    if (col == g.commit) {
+      seen_this = true;
+      g = Graph { ...g, commit_index: i, merge_layout: -1 };
+      for p in g.parents {
+        g = insert_into_new_columns(g, p, i);
+      }
+      if (num_parents(g) == 0) {
+        g = Graph { ...g, width: g.width + 2 };
+      }
+    } else {
+      g = insert_into_new_columns(g, col, -1);
+    }
+    i += 1;
+  }
+  let m = g.mapping_size;
+  while (m > 1 && mapping_at(g.mapping, m - 1) < 0) {
+    m -= 1;
+  }
+  return Graph { ...g, mapping_size: m };
+}
+
+function dashed_parents(g: Graph): i32 {
+  return num_parents(g) + g.merge_layout - 3;
+}
+
+function expansion_rows(g: Graph): i32 {
+  return dashed_parents(g) * 2;
+}
+
+function needs_pre_commit_line(g: Graph): boolean {
+  return num_parents(g) >= 3 && g.commit_index < g.columns.len() - 1 && g.expansion_row < expansion_rows(g);
+}
+
+// The graph for the next commit `commit`, whose parents in the graph are
+// `parents`: `graph_update` of git.
+pub function update(g_in: Graph, commit: string, parents: string[]): Graph {
+  let g = Graph { ...g_in, commit: commit, parents: parents, prev_commit_index: g_in.commit_index };
+  g = update_columns(g);
+  g = Graph { ...g, expansion_row: 0 };
+  let s = if (g.state != PADDING) { SKIP } else if (needs_pre_commit_line(g)) { PRE_COMMIT } else { COMMIT };
+  return Graph { ...g, state: s };
+}
+
+function mapping_correct(g: Graph): boolean {
+  for i in 0..g.mapping_size {
+    let target = mapping_at(g.mapping, i);
+    if (target >= 0 && target != i / 2) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function pad(g: Graph, line: string): string {
+  return if (line.len() < g.width) { line + " ".repeat(g.width - line.len()) } else { line };
+}
+
+function padding_columns(g: Graph): string {
+  let out = "";
+  for c in g.new_columns {
+    out += "| ";
+  }
+  return out;
+}
+
+function pre_commit_line(g_in: Graph): (Graph, string) {
+  let g = g_in;
+  let out = "";
+  let seen_this = false;
+  for i in 0..g.columns.len() {
+    let col = g.columns[i];
+    if (col == g.commit) {
+      seen_this = true;
+      out += "|" + " ".repeat(g.expansion_row);
+    } else if (seen_this && g.expansion_row == 0) {
+      out += if (g.prev_state == POST_MERGE && g.prev_commit_index < i) { "\\" } else { "|" };
+    } else if (seen_this && g.expansion_row > 0) {
+      out += "\\";
+    } else {
+      out += "|";
+    }
+    out += " ";
+  }
+  g = Graph { ...g, expansion_row: g.expansion_row + 1 };
+  if (!needs_pre_commit_line(g)) {
+    g = update_state(g, COMMIT);
+  }
+  return (g, out);
+}
+
+function octopus(g: Graph): string {
+  let out = "";
+  let dashed = dashed_parents(g);
+  for i in 0..dashed {
+    out += "-" + (if (i == dashed - 1) { "." } else { "-" });
+  }
+  return out;
+}
+
+function commit_line(g_in: Graph): (Graph, string) {
+  let g = g_in;
+  let out = "";
+  let seen_this = false;
+  let n = g.columns.len();
+  let i = 0;
+  while (i <= n) {
+    let col = "";
+    if (i == n) {
+      if (seen_this) {
+        break;
+      }
+      col = g.commit;
+    } else {
+      col = g.columns[i];
+    }
+    if (col == g.commit) {
+      seen_this = true;
+      out += g.mark;
+      if (num_parents(g) > 2) {
+        out += octopus(g);
+      }
+    } else if (seen_this && g.edges_added > 1) {
+      out += "\\";
+    } else if (seen_this && g.edges_added == 1) {
+      out += if (g.prev_state == POST_MERGE && g.prev_edges_added > 0 && g.prev_commit_index < i) { "\\" } else { "|" };
+    } else if (g.prev_state == COLLAPSING && mapping_at(g.old_mapping, 2 * i + 1) == i && mapping_at(g.mapping, 2 * i) < i) {
+      out += "/";
+    } else {
+      out += "|";
+    }
+    out += " ";
+    i += 1;
+  }
+  if (num_parents(g) > 1) {
+    g = update_state(g, POST_MERGE);
+  } else if (mapping_correct(g)) {
+    g = update_state(g, PADDING);
+  } else {
+    g = update_state(g, COLLAPSING);
+  }
+  return (g, out);
+}
+
+function post_merge_line(g_in: Graph): (Graph, string) {
+  let g = g_in;
+  let merge_chars = ["/", "|", "\\"];
+  let out = "";
+  let seen_this = false;
+  let parent_col = false;
+  let first_parent = if (g.parents.len() > 0) { g.parents[0] } else { "" };
+  let n = g.columns.len();
+  let i = 0;
+  while (i <= n) {
+    let col = "";
+    if (i == n) {
+      if (seen_this) {
+        break;
+      }
+      col = g.commit;
+    } else {
+      col = g.columns[i];
+    }
+    if (col == g.commit) {
+      let idx = g.merge_layout;
+      seen_this = true;
+      for j in 0..num_parents(g) {
+        out += merge_chars[idx];
+        if (idx == 2) {
+          if (g.edges_added > 0 || j < num_parents(g) - 1) {
+            out += " ";
+          }
+        } else {
+          idx += 1;
+        }
+      }
+      if (g.edges_added == 0) {
+        out += " ";
+      }
+    } else if (seen_this) {
+      out += if (g.edges_added > 0) { "\\" } else { "|" };
+      out += " ";
+    } else {
+      out += "|";
+      if (g.merge_layout != 0 || i != g.commit_index - 1) {
+        out += if (parent_col) { "_" } else { " " };
+      }
+    }
+    if (col == first_parent) {
+      parent_col = true;
+    }
+    i += 1;
+  }
+  g = if (mapping_correct(g)) { update_state(g, PADDING) } else { update_state(g, COLLAPSING) };
+  return (g, out);
+}
+
+function collapsing_line(g_in: Graph): (Graph, string) {
+  let g = g_in;
+  let size = g.mapping_size;
+  let old = g.mapping;
+  let m = __alloc_i32(size.max(old.len())).map((v: i32): i32 => -1);
+  let horizontal_edge = -1;
+  let horizontal_edge_target = -1;
+  for i in 0..size {
+    let target = mapping_at(old, i);
+    if (target >= 0) {
+      if (target * 2 == i) {
+        m = m.with(i, target);
+      } else if (mapping_at(m, i - 1) < 0) {
+        m = m.with(i - 1, target);
+        if (horizontal_edge == -1) {
+          horizontal_edge = i;
+          horizontal_edge_target = target;
+          let j = target * 2 + 3;
+          while (j < i - 2) {
+            m = m.with(j, target);
+            j += 2;
+          }
+        }
+      } else if (mapping_at(m, i - 1) == target) {} else {
+        m = m.with(i - 2, target);
+        if (horizontal_edge == -1) {
+          horizontal_edge_target = target;
+          horizontal_edge = i - 1;
+          let j = target * 2 + 3;
+          while (j < i - 2) {
+            m = m.with(j, target);
+            j += 2;
+          }
+        }
+      }
+    }
+  }
+  let new_old = m;
+  if (mapping_at(m, size - 1) < 0) {
+    size -= 1;
+  }
+  let used_horizontal = false;
+  let out = "";
+  for i in 0..size {
+    let target = mapping_at(m, i);
+    if (target < 0) {
+      out += " ";
+    } else if (target * 2 == i) {
+      out += "|";
+    } else if (target == horizontal_edge_target && i != horizontal_edge - 1) {
+      if (i != target * 2 + 3) {
+        m = m.with(i, -1);
+      }
+      used_horizontal = true;
+      out += "_";
+    } else {
+      if (used_horizontal && i < horizontal_edge) {
+        m = m.with(i, -1);
+      }
+      out += "/";
+    }
+  }
+  g = Graph { ...g, mapping: m, old_mapping: new_old, mapping_size: size };
+  if (mapping_correct(g)) {
+    g = update_state(g, PADDING);
+  }
+  return (g, out);
+}
+
+// The next line of the graph, and true when it is the line of the commit:
+// `graph_next_line` of git.
+pub function next_line(g_in: Graph): (Graph, string, boolean) {
+  let g = g_in;
+  if (g.commit.len() == 0) {
+    return (g, "", false);
+  }
+  let shown = false;
+  let line = "";
+  if (g.state == PADDING) {
+    line = padding_columns(g);
+  } else if (g.state == SKIP) {
+    line = "...";
+    g = update_state(g, if (needs_pre_commit_line(g)) { PRE_COMMIT } else { COMMIT });
+  } else if (g.state == PRE_COMMIT) {
+    let (g1, l) = pre_commit_line(g);
+    g = g1;
+    line = l;
+  } else if (g.state == COMMIT) {
+    let (g1, l) = commit_line(g);
+    g = g1;
+    line = l;
+    shown = true;
+  } else if (g.state == POST_MERGE) {
+    let (g1, l) = post_merge_line(g);
+    g = g1;
+    line = l;
+  } else {
+    let (g1, l) = collapsing_line(g);
+    g = g1;
+    line = l;
+  }
+  return (g, pad(g, line), shown);
+}
+
+// The padding line before a text: `graph_padding_line` of git.
+pub function padding_line(g: Graph): (Graph, string) {
+  if (g.state != COMMIT) {
+    let (g1, line, _) = next_line(g);
+    return (g1, line);
+  }
+  let out = "";
+  for c in g.columns {
+    out += "|";
+    if (c == g.commit && num_parents(g) > 2) {
+      out += " ".repeat((num_parents(g) - 2) * 2);
+    } else {
+      out += " ";
+    }
+  }
+  return (Graph { ...g, prev_state: PADDING }, pad(g, out));
+}
+
+pub function finished(g: Graph): boolean {
+  return g.state == PADDING;
+}
+
+// The lines of the graph to the line of the commit, which has no line end
+// after it: `graph_show_commit` of git.
+pub function show_commit(g_in: Graph): (Graph, string) {
+  let g = g_in;
+  if (finished(g)) {
+    return padding_line(g);
+  }
+  let out = "";
+  let shown = false;
+  while (!shown && !finished(g)) {
+    let (g1, line, s) = next_line(g);
+    g = g1;
+    shown = s;
+    out += line;
+    if (!shown) {
+      out += "\n";
+    }
+  }
+  return (g, out);
+}
+
+// The lines of the graph after the commit, to its end, with a line end
+// between two: `graph_show_remainder` of git.
+pub function show_remainder(g_in: Graph): (Graph, string) {
+  let g = g_in;
+  if (finished(g)) {
+    return (g, "");
+  }
+  let out = "";
+  while (true) {
+    let (g1, line, _) = next_line(g);
+    g = g1;
+    out += line;
+    if (finished(g)) {
+      break;
+    }
+    out += "\n";
+  }
+  return (g, out);
+}
+
+// The text `msg` with the graph before each of its lines but the first,
+// and the rest of the graph: `graph_show_commit_msg` of git.
+pub function show_msg(g_in: Graph, msg: string): (Graph, string) {
+  let g = g_in;
+  let out = "";
+  let at = 0;
+  while (at < msg.len()) {
+    let end = at;
+    while (end < msg.len() && msg[end] != b'\n') {
+      end += 1;
+    }
+    let next = if (end < msg.len()) { end + 1 } else { end };
+    out += objects_part(msg, at, next);
+    if (next < msg.len() && end < msg.len()) {
+      let (g1, line, _) = next_line(g);
+      g = g1;
+      out += line;
+    }
+    at = next;
+  }
+  let terminated = msg.len() > 0 && msg[msg.len() - 1] == b'\n';
+  if (!finished(g)) {
+    if (!terminated) {
+      out += "\n";
+    }
+    let (g2, rest) = show_remainder(g);
+    g = g2;
+    out += rest;
+    if (terminated) {
+      out += "\n";
+    }
+  }
+  return (g, out);
+}
+
+function objects_part(s: string, from: i32, to: i32): string {
+  return slice_unchecked(s, from, to).to_owned();
+}

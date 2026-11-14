@@ -1,12 +1,17 @@
-// The look of Fern for Plex. `nodes` lays out a screen as a list of nodes
-// of std/android/ui/scene: a rectangle, what it shows, and the action that
-// a tap on it starts. The drawing and the touches use that one layout.
+// The look of Fern for Plex, in the dot-matrix style of ../look.fern: a
+// black screen, white and grey dots, and red only for what is live. The
+// labels of the app are in the dot font of ../matrix.fern, and the text of
+// the server is in the text font. `nodes` lays out a screen as a list of
+// nodes of std/android/ui/scene: a rectangle, what it shows, and the action
+// that a tap on it starts. The drawing and the touches use that one layout.
 // Every function is pure: a paint writes only into the frame that it gets.
 import "core/map";
 import "std/android/draw";
 import "std/android/ui/scene";
 import "std/string";
 import "std/textwrap";
+import "../look";
+import "../matrix";
 import "./plex";
 
 pub const LOGIN: i32 = 0;
@@ -36,36 +41,6 @@ pub function tab_screens(): i32[] {
   return [HOME, SECTIONS, SEARCH, SETTINGS];
 }
 
-// --- colors
-
-pub function bg(): i32 {
-  return draw.rgb(14, 14, 17);
-}
-
-pub function surface(): i32 {
-  return draw.rgb(30, 30, 36);
-}
-
-pub function raised(): i32 {
-  return draw.rgb(44, 44, 52);
-}
-
-pub function accent(): i32 {
-  return draw.rgb(229, 160, 13);
-}
-
-pub function text_color(): i32 {
-  return draw.rgb(240, 240, 242);
-}
-
-pub function muted(): i32 {
-  return draw.rgb(150, 150, 160);
-}
-
-pub function danger(): i32 {
-  return draw.rgb(232, 86, 72);
-}
-
 // --- what a screen shows
 
 pub struct PlayerView { title: string, subtitle: string, position_ms: i64, duration_ms: i64, paused: boolean, buffering: boolean, overlay: boolean, art: string, audio: boolean, status: string }
@@ -77,6 +52,10 @@ pub function no_player(): PlayerView {
 pub struct View {
   w: i32,
   h: i32,
+  // The heights of the status bar at the top and of the navigation bar at
+  // the bottom, which cover the window.
+  top: i32,
+  bottom: i32,
   screen: i32,
   tab: i32,
   title: string,
@@ -106,16 +85,17 @@ pub struct View {
 }
 
 pub function empty_view(w: i32, h: i32): View {
-  return View { w: w, h: h, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, item: plex.no_item(), children: [], pin_code: "", status: "", error: "", servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16) };
+  return View { w: w, h: h, top: 0, bottom: 0, screen: LOGIN, tab: 0, title: "", scroll: 0, rows: [], hubs: [], sections: [], items: [], total: 0, item: plex.no_item(), children: [], pin_code: "", status: "", error: "", servers: [], server_states: [], query: "", typing: false, account: "", server_name: "", quality: "", player: no_player(), base: plex.Base { uri: "", token: "" }, loading: false, cache: map_new(16) };
 }
 
 // --- metrics
 
 // `u` is the size of a density-independent pixel, and `ts` the scale of the
-// text, for a window of w by h.
-pub struct Metrics { w: i32, h: i32, u: i32, ts: i32, cw: i32, th: i32 }
+// text, for a window of w by h. The system bars cover `top` pixels at the
+// top of the window and `bottom` pixels at its bottom.
+pub struct Metrics { w: i32, h: i32, top: i32, bottom: i32, u: i32, ts: i32, cw: i32, th: i32 }
 
-pub function metrics(w: i32, h: i32): Metrics {
+pub function metrics(w: i32, h: i32, top: i32, bottom: i32): Metrics {
   let short = w;
   if (h < short) {
     short = h;
@@ -128,15 +108,25 @@ pub function metrics(w: i32, h: i32): Metrics {
   if (ts < 1) {
     ts = 1;
   }
-  return Metrics { w: w, h: h, u: u, ts: ts, cw: draw.text_width("x", ts), th: draw.text_height(ts) };
+  return Metrics { w: w, h: h, top: top, bottom: bottom, u: u, ts: ts, cw: draw.text_width("x", ts), th: draw.text_height(ts) };
+}
+
+// The pixels from dot to dot of the small dot-matrix words, such as the
+// tabs and the headings of the rows, and of the title of a screen.
+pub function small_pitch(m: Metrics): i32 {
+  return m.u * 3 / 2;
+}
+
+pub function title_pitch(m: Metrics): i32 {
+  return 2 * m.u;
 }
 
 pub function top_height(m: Metrics): i32 {
-  return 56 * m.u;
+  return m.top + 56 * m.u;
 }
 
 pub function bottom_height(m: Metrics): i32 {
-  return 64 * m.u;
+  return 64 * m.u + m.bottom;
 }
 
 pub function has_tabs(screen: i32): boolean {
@@ -178,13 +168,51 @@ function tap(n: scene.Node, act: string): scene.Node {
   return scene.Node { ...n, tap: scene.Action { name: act, arg: 0 } };
 }
 
+// Words in the dot-matrix font, `pitch` pixels from dot to dot.
+function dots(x: i32, y: i32, s: string, pitch: i32, color: i32): scene.Node {
+  let key = "dots|" + pitch.to_string() + "|" + color.to_string() + "|" + s;
+  let n = scene.node(x, y, matrix.width(s, pitch), matrix.height(pitch), scene.Custom(key, 0, (f: draw.Frame, bx: i32, by: i32, bw: i32, bh: i32): void => matrix.text(f, bx, by, s, pitch, color)));
+  return scene.Node { ...n, say: s };
+}
+
+// `s` cut to `w` pixels of dots at `pitch`, with "..." when it is longer.
+pub function fit_dots(s: string, w: i32, pitch: i32): string {
+  if (matrix.width(s, pitch) <= w) {
+    return s;
+  }
+  let cells = (w / pitch + 1) / (matrix.COLS + 1) - 3;
+  if (cells <= 0) {
+    return "";
+  }
+  return s.take(cells).trim() + "...";
+}
+
+// A heading of at most `w` pixels: dot-matrix words when the dot font has
+// each character of `s`, else the text font.
+function heading(m: Metrics, x: i32, y: i32, w: i32, s: string, pitch: i32, color: i32): scene.Node {
+  if (matrix.covers(s)) {
+    return scene.Node { ...dots(x, y, fit_dots(s, w, pitch), pitch, color), say: s };
+  }
+  return label(m, x, y + (matrix.height(pitch) - m.th) / 2, fit(s, w / m.cw), m.ts, color);
+}
+
+// A rounded card of the surface colour.
+function panel(m: Metrics, x: i32, y: i32, w: i32, h: i32): scene.Node {
+  return fill(x, y, w, h, look.surface(), 14 * m.u);
+}
+
+// A red dot with its centre at x and y: the sign of what is live.
+function live_dot(m: Metrics, x: i32, y: i32): scene.Node {
+  return fill(x - 3 * m.u, y - 3 * m.u, 6 * m.u, 6 * m.u, look.red(), 3 * m.u);
+}
+
 // The image with `key` and round corners of `r`. Until the app has the
 // image, the node shows the surface colour.
 function img(v: View, x: i32, y: i32, w: i32, h: i32, key: string, r: i32, act: string, group: string): scene.Node {
   if let Some(image) = v.cache.get(key) {
     return mk(x, y, w, h, scene.Picture(key, image, r), act, group);
   }
-  return mk(x, y, w, h, scene.Custom(WANTED + key, 0, (f: draw.Frame, bx: i32, by: i32, bw: i32, bh: i32): void => f.round_rect(bx, by, bw, bh, r, surface())), act, group);
+  return mk(x, y, w, h, scene.Custom(WANTED + key, 0, (f: draw.Frame, bx: i32, by: i32, bw: i32, bh: i32): void => f.round_rect(bx, by, bw, bh, r, look.surface())), act, group);
 }
 
 // A bar of the colour `back`, with its first `permille` thousandths in
@@ -213,15 +241,34 @@ pub function fit(s: string, cells: i32): string {
   return out.trim() + "…";
 }
 
-// A button: a pill with its label in the middle.
-function button(m: Metrics, x: i32, y: i32, text: string, color: i32, fg: i32, act: string): scene.Node[] {
-  let w = draw.text_width(text, m.ts) + 32 * m.u;
-  let h = 44 * m.u;
-  return [tap(fill(x, y, w, h, color, h / 2), act), label(m, x + 16 * m.u, y + (h - m.th) / 2, text, m.ts, fg)];
+pub function button_height(m: Metrics): i32 {
+  return 44 * m.u;
+}
+
+// A button: a pill with dot-matrix words. The primary button is white with
+// black dots, and the others are a white outline.
+function button(m: Metrics, x: i32, y: i32, text: string, primary: boolean, act: string): scene.Node[] {
+  let p = small_pitch(m);
+  let key = "button|" + p.to_string() + "|" + primary.to_string() + "|" + text;
+  let n = scene.node(x, y, button_width(m, text), button_height(m), scene.Custom(key, 0, (f: draw.Frame, bx: i32, by: i32, bw: i32, bh: i32): void => paint_button(f, look.Rect { x: bx, y: by, w: bw, h: bh }, text, p, primary)));
+  return [scene.Node { ...tap(n, act), say: text }];
+}
+
+function paint_button(f: draw.Frame, r: look.Rect, text: string, pitch: i32, primary: boolean): void {
+  let color = look.ink();
+  if (primary) {
+    f.round_rect(r.x, r.y, r.w, r.h, r.h / 2, look.ink());
+    color = look.bg();
+  } else {
+    let t = r.h / 24 + 1;
+    f.round_rect(r.x, r.y, r.w, r.h, r.h / 2, look.ink());
+    f.round_rect(r.x + t, r.y + t, r.w - 2 * t, r.h - 2 * t, r.h / 2 - t, look.bg());
+  }
+  matrix.text(f, look.center_x(r, matrix.width(text, pitch)), r.y + (r.h - matrix.height(pitch)) / 2, text, pitch, color);
 }
 
 function button_width(m: Metrics, text: string): i32 {
-  return draw.text_width(text, m.ts) + 32 * m.u;
+  return matrix.width(text, small_pitch(m)) + 32 * m.u;
 }
 
 // The size in pixels at which a card asks the server for its image.
@@ -236,33 +283,34 @@ pub function image_key(base: plex.Base, path: string, w: i32, h: i32): string {
 // lines of text.
 function card(m: Metrics, v: View, x: i32, y: i32, w: i32, it: plex.Item, act: string, group: string): scene.Node[] {
   let ih = w * 3 / 2;
-  let r = 6 * m.u;
+  let r = 10 * m.u;
   let out: scene.Node[] = [img(v, x, y, w, ih, image_key(v.base, plex.poster(it), w, ih), r, act, group)];
   let p = plex.progress(it);
   if (p > 0) {
-    out = util_append(out, progress_bar(x + 6 * m.u, y + ih - 10 * m.u, w - 12 * m.u, 4 * m.u, p, accent(), draw.rgba(0, 0, 0, 170)));
+    out = util_append(out, progress_bar(x + 8 * m.u, y + ih - 10 * m.u, w - 16 * m.u, 3 * m.u, p, look.red(), draw.rgba(0, 0, 0, 170)));
   } else if (plex.watched(it)) {
-    out = out.append(fill(x + w - 22 * m.u, y + 6 * m.u, 16 * m.u, 16 * m.u, accent(), 8 * m.u));
+    out = out.append(fill(x + w - 18 * m.u, y + 8 * m.u, 10 * m.u, 10 * m.u, look.ink(), 5 * m.u));
   }
   let cells = w / m.cw;
-  out = out.append(label(m, x, y + ih + 6 * m.u, fit(plex.card_title(it), cells), m.ts, text_color()));
-  out = out.append(label(m, x, y + ih + 6 * m.u + m.th, fit(plex.card_subtitle(it), cells), m.ts, muted()));
+  out = out.append(label(m, x, y + ih + 6 * m.u, fit(plex.card_title(it), cells), m.ts, look.ink()));
+  out = out.append(label(m, x, y + ih + 6 * m.u + m.th, fit(plex.card_subtitle(it), cells), m.ts, look.muted()));
   return out;
 }
 
 function top_bar(m: Metrics, v: View, back: boolean): scene.Node[] {
   let h = top_height(m);
-  let out: scene.Node[] = [fill(0, 0, m.w, h, bg(), 0)];
+  let p = title_pitch(m);
+  let ty = m.top + (h - m.top - matrix.height(p)) / 2;
+  let out: scene.Node[] = [fill(0, 0, m.w, h, look.bg(), 0)];
   let x = 16 * m.u;
   if (back) {
-    out = out.append(tap(fill(0, 0, 48 * m.u, h, bg(), 0), "back"));
-    out = out.append(label(m, 16 * m.u, (h - m.th) / 2, "<", m.ts, text_color()));
+    out = out.append(tap(fill(0, 0, 48 * m.u, h, look.bg(), 0), "back"));
+    out = out.append(dots(16 * m.u, ty, "<", p, look.ink()));
     x = 48 * m.u;
   }
-  let cells = (m.w - x - 16 * m.u) / m.cw;
-  out = out.append(label(m, x, (h - m.th) / 2, fit(v.title, cells), m.ts, text_color()));
+  out = out.append(heading(m, x, ty, m.w - x - 40 * m.u, v.title, p, look.ink()));
   if (v.loading) {
-    out = out.append(fill(m.w - 24 * m.u, h / 2 - 4 * m.u, 8 * m.u, 8 * m.u, accent(), 4 * m.u));
+    out = out.append(live_dot(m, m.w - 20 * m.u, (m.top + h) / 2));
   }
   return out;
 }
@@ -270,18 +318,26 @@ function top_bar(m: Metrics, v: View, back: boolean): scene.Node[] {
 function bottom_bar(m: Metrics, v: View): scene.Node[] {
   let h = bottom_height(m);
   let y = m.h - h;
-  let out: scene.Node[] = [fill(0, y, m.w, h, surface(), 0)];
+  let line = m.u / 2;
+  if (line < 1) {
+    line = 1;
+  }
+  let out: scene.Node[] = [fill(0, y, m.w, h, look.bg(), 0), fill(0, y, m.w, line, look.outline(), 0)];
   let names = tab_names();
   let cell = m.w / names.len();
+  let p = small_pitch(m);
+  for name in names {
+    p = matrix.fit_pitch(name, cell - 8 * m.u, p);
+  }
+  let ty = y + (h - m.bottom - matrix.height(p)) / 2 + 6 * m.u;
   for i in 0..names.len() {
-    let color = muted();
+    out = out.append(tap(fill(i * cell, y, cell, h - m.bottom, look.bg(), 0), "tab:" + i.to_string()));
+    let color = look.muted();
     if (i == v.tab) {
-      color = accent();
-      out = out.append(fill(i * cell + cell / 2 - 16 * m.u, y + 10 * m.u, 32 * m.u, 4 * m.u, accent(), 2 * m.u));
+      color = look.ink();
+      out = out.append(live_dot(m, i * cell + cell / 2, ty - 10 * m.u));
     }
-    out = out.append(tap(fill(i * cell, y, cell, h, surface(), 0), "tab:" + i.to_string()));
-    let tw = draw.text_width(names[i], m.ts);
-    out = out.append(label(m, i * cell + (cell - tw) / 2, y + (h - m.th) / 2 + 4 * m.u, names[i], m.ts, color));
+    out = out.append(dots(i * cell + (cell - matrix.width(names[i], p)) / 2, ty, names[i], p, color));
   }
   return out;
 }
@@ -295,36 +351,39 @@ pub function content_bottom(m: Metrics, screen: i32): i32 {
   if (has_tabs(screen)) {
     return m.h - bottom_height(m);
   }
-  return m.h;
+  return m.h - m.bottom;
 }
 
 // --- the screens
 
 function login(m: Metrics, v: View): scene.Node[] {
-  let out: scene.Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
-  let big = m.ts * 2;
+  let out: scene.Node[] = [fill(0, 0, m.w, m.h, look.bg(), 0)];
+  let title = "FERN FOR PLEX";
+  let big = matrix.fit_pitch(title, m.w - 48 * m.u, 4 * m.u);
   let cy = m.h / 3;
-  let title = "Fern for Plex";
-  out = out.append(label(m, (m.w - draw.text_width(title, big)) / 2, cy, title, big, text_color()));
+  out = out.append(dots((m.w - matrix.width(title, big)) / 2, cy, title, big, look.ink()));
   let sub = "Your Plex libraries, in Fern";
-  out = out.append(label(m, (m.w - draw.text_width(sub, m.ts)) / 2, cy + draw.text_height(big) + 8 * m.u, sub, m.ts, muted()));
-  let y = cy + draw.text_height(big) + m.th + 48 * m.u;
+  out = out.append(label(m, (m.w - draw.text_width(sub, m.ts)) / 2, cy + matrix.height(big) + 12 * m.u, sub, m.ts, look.muted()));
+  let y = cy + matrix.height(big) + m.th + 48 * m.u;
   if (v.pin_code.len() == 0) {
     let text = "Sign in with Plex";
-    out = util_append(out, button(m, (m.w - button_width(m, text)) / 2, y, text, accent(), bg(), "signin"));
+    out = util_append(out, button(m, (m.w - button_width(m, text)) / 2, y, text, true, "signin"));
   } else {
     let hint = "Go to " + plex.LINK_PAGE + " and enter";
-    out = out.append(label(m, (m.w - draw.text_width(hint, m.ts)) / 2, y, hint, m.ts, text_color()));
-    let code_scale = m.ts * 4;
+    out = out.append(label(m, (m.w - draw.text_width(hint, m.ts)) / 2, y, hint, m.ts, look.ink()));
     let code = spaced(v.pin_code);
-    out = out.append(label(m, (m.w - draw.text_width(code, code_scale)) / 2, y + m.th + 16 * m.u, code, code_scale, accent()));
-    let wait = "Waiting for plex.tv";
-    let wy = y + m.th + 32 * m.u + draw.text_height(code_scale);
-    out = out.append(label(m, (m.w - draw.text_width(wait, m.ts)) / 2, wy, wait, m.ts, muted()));
-    out = util_append(out, button(m, (m.w - button_width(m, "Cancel")) / 2, wy + m.th + 24 * m.u, "Cancel", raised(), text_color(), "cancel"));
+    let cp = matrix.fit_pitch(code, m.w - 48 * m.u, 8 * m.u);
+    out = out.append(dots((m.w - matrix.width(code, cp)) / 2, y + m.th + 20 * m.u, code, cp, look.ink()));
+    let wait = "WAITING FOR PLEX.TV";
+    let sp = small_pitch(m);
+    let ww = matrix.width(wait, sp);
+    let wy = y + m.th + 40 * m.u + matrix.height(cp);
+    out = out.append(live_dot(m, (m.w - ww) / 2 - 10 * m.u, wy + matrix.height(sp) / 2));
+    out = out.append(dots((m.w - ww) / 2, wy, wait, sp, look.muted()));
+    out = util_append(out, button(m, (m.w - button_width(m, "Cancel")) / 2, wy + matrix.height(sp) + 28 * m.u, "Cancel", false, "cancel"));
   }
   if (v.error.len() > 0) {
-    out = util_append(out, wrapped(m, 24 * m.u, m.h - 120 * m.u, m.w - 48 * m.u, v.error, danger()));
+    out = util_append(out, wrapped(m, 24 * m.u, m.h - m.bottom - 120 * m.u, m.w - 48 * m.u, v.error, look.red()));
   }
   return out;
 }
@@ -364,15 +423,20 @@ pub function wrapped_height(m: Metrics, w: i32, text: string): i32 {
   return textwrap.word_wrap(text, w / m.cw).split("\n").len() * (m.th + 2 * m.u);
 }
 
+// A short message of the app in small grey dots, such as "Loading".
+function note(m: Metrics, y: i32, s: string): scene.Node {
+  return heading(m, 16 * m.u, y, m.w - 32 * m.u, s, small_pitch(m), look.muted());
+}
+
 function servers(m: Metrics, v: View): scene.Node[] {
-  let out: scene.Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
+  let out: scene.Node[] = [fill(0, 0, m.w, m.h, look.bg(), 0)];
   let y = top_height(m) + 8 * m.u - v.scroll;
   let row = 72 * m.u;
   let i = 0;
   while (i < v.servers.len()) {
     let s = v.servers[i];
-    out = out.append(tap(fill(16 * m.u, y, m.w - 32 * m.u, row - 8 * m.u, surface(), 8 * m.u), "server:" + i.to_string()));
-    out = out.append(label(m, 32 * m.u, y + 12 * m.u, fit(s.name, (m.w - 64 * m.u) / m.cw), m.ts, text_color()));
+    out = out.append(tap(panel(m, 16 * m.u, y, m.w - 32 * m.u, row - 8 * m.u), "server:" + i.to_string()));
+    out = out.append(label(m, 32 * m.u, y + 12 * m.u, fit(s.name, (m.w - 64 * m.u) / m.cw), m.ts, look.ink()));
     let state = "";
     if (i < v.server_states.len()) {
       state = v.server_states[i];
@@ -380,24 +444,24 @@ function servers(m: Metrics, v: View): scene.Node[] {
     if (!s.owned) {
       state = "shared · " + state;
     }
-    out = out.append(label(m, 32 * m.u, y + 16 * m.u + m.th, state, m.ts, muted()));
+    out = out.append(label(m, 32 * m.u, y + 16 * m.u + m.th, state, m.ts, look.muted()));
     y += row;
     i += 1;
   }
   if (v.servers.len() == 0 && !v.loading) {
-    out = out.append(label(m, 16 * m.u, y, "No servers on this account", m.ts, muted()));
+    out = out.append(note(m, y, "No servers on this account"));
     y += m.th + 16 * m.u;
   }
-  out = util_append(out, button(m, 16 * m.u, y + 8 * m.u, "Refresh", raised(), text_color(), "refresh"));
+  out = util_append(out, button(m, 16 * m.u, y + 8 * m.u, "Refresh", false, "refresh"));
   if (v.error.len() > 0) {
-    out = util_append(out, wrapped(m, 16 * m.u, y + 64 * m.u, m.w - 32 * m.u, v.error, danger()));
+    out = util_append(out, wrapped(m, 16 * m.u, y + 64 * m.u, m.w - 32 * m.u, v.error, look.red()));
   }
   return util_append(out, top_bar(m, View { ...v, title: "Choose a server" }, false));
 }
 
 // The height of one row of hub cards, with its title.
 pub function hub_row_height(m: Metrics): i32 {
-  return m.th + 12 * m.u + card_height(m, card_width(m)) + 16 * m.u;
+  return matrix.height(small_pitch(m)) + 12 * m.u + card_height(m, card_width(m)) + 16 * m.u;
 }
 
 // The width of all the cards of a hub, for the limit of its scroll.
@@ -415,13 +479,13 @@ function hubs(m: Metrics, v: View, top: i32): scene.Node[] {
     let y0 = top + i * row_h - v.scroll;
     if (y0 + row_h >= content_top(m) && y0 < bottom) {
       let hub = v.hubs[i];
-      out = out.append(label(m, 16 * m.u, y0, fit(hub.title, (m.w - 32 * m.u) / m.cw), m.ts, text_color()));
+      out = out.append(heading(m, 16 * m.u, y0, m.w - 32 * m.u, hub.title, small_pitch(m), look.muted()));
       let dx = 0;
       if (i < v.rows.len()) {
         dx = v.rows[i];
       }
       let group = "row:" + i.to_string();
-      let cy = y0 + m.th + 12 * m.u;
+      let cy = y0 + matrix.height(small_pitch(m)) + 12 * m.u;
       out = out.append(mk(0, cy, m.w, card_height(m, cw), scene.Blank, "", group));
       let j = 0;
       while (j < hub.items.len()) {
@@ -442,31 +506,35 @@ pub function home_height(m: Metrics, v: View): i32 {
 }
 
 function home(m: Metrics, v: View): scene.Node[] {
-  let out: scene.Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
+  let out: scene.Node[] = [fill(0, 0, m.w, m.h, look.bg(), 0)];
   out = util_append(out, hubs(m, v, top_height(m) + 12 * m.u));
   if (v.hubs.len() == 0) {
     let msg = "Nothing here yet";
     if (v.loading) {
       msg = "Loading";
     }
-    out = out.append(label(m, 16 * m.u, top_height(m) + 24 * m.u, msg, m.ts, muted()));
+    out = out.append(note(m, top_height(m) + 24 * m.u, msg));
   }
   if (v.error.len() > 0) {
-    out = util_append(out, wrapped(m, 16 * m.u, content_bottom(m, v.screen) - 80 * m.u, m.w - 32 * m.u, v.error, danger()));
+    out = util_append(out, wrapped(m, 16 * m.u, content_bottom(m, v.screen) - 80 * m.u, m.w - 32 * m.u, v.error, look.red()));
   }
   return out;
 }
 
 function sections(m: Metrics, v: View): scene.Node[] {
-  let out: scene.Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
+  let out: scene.Node[] = [fill(0, 0, m.w, m.h, look.bg(), 0)];
   let y = top_height(m) + 8 * m.u - v.scroll;
   let row = 64 * m.u;
+  let sp = small_pitch(m);
   let i = 0;
   while (i < v.sections.len()) {
     let s = v.sections[i];
-    out = out.append(tap(fill(16 * m.u, y, m.w - 32 * m.u, row - 8 * m.u, surface(), 8 * m.u), "section:" + i.to_string()));
-    out = out.append(fill(28 * m.u, y + (row - 8 * m.u) / 2 - 6 * m.u, 12 * m.u, 12 * m.u, kind_color(s.kind), 6 * m.u));
-    out = out.append(label(m, 52 * m.u, y + (row - 8 * m.u - m.th) / 2, fit(s.title, (m.w - 80 * m.u) / m.cw), m.ts, text_color()));
+    let mid = y + (row - 8 * m.u) / 2;
+    out = out.append(tap(panel(m, 16 * m.u, y, m.w - 32 * m.u, row - 8 * m.u), "section:" + i.to_string()));
+    let kind = kind_word(s.kind);
+    let kw = matrix.width(kind, sp);
+    out = out.append(dots(m.w - 32 * m.u - kw, mid - matrix.height(sp) / 2, kind, sp, look.muted()));
+    out = out.append(label(m, 32 * m.u, mid - m.th / 2, fit(s.title, (m.w - 80 * m.u - kw) / m.cw), m.ts, look.ink()));
     y += row;
     i += 1;
   }
@@ -475,19 +543,26 @@ function sections(m: Metrics, v: View): scene.Node[] {
     if (v.loading) {
       msg = "Loading";
     }
-    out = out.append(label(m, 16 * m.u, y, msg, m.ts, muted()));
+    out = out.append(note(m, y, msg));
   }
   return out;
 }
 
-function kind_color(kind: string): i32 {
+// The kind of a library, in the words of its card.
+function kind_word(kind: string): string {
   if (kind == "movie") {
-    return accent();
+    return "MOVIES";
   }
   if (kind == "show") {
-    return draw.rgb(90, 160, 230);
+    return "SHOWS";
   }
-  return draw.rgb(120, 200, 120);
+  if (kind == "artist") {
+    return "MUSIC";
+  }
+  if (kind == "photo") {
+    return "PHOTOS";
+  }
+  return "";
 }
 
 // The columns of a grid of cards, and the width of each card.
@@ -524,14 +599,14 @@ function grid_nodes(m: Metrics, v: View, items: plex.Item[], top: i32, prefix: s
 }
 
 function library(m: Metrics, v: View): scene.Node[] {
-  let out: scene.Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
+  let out: scene.Node[] = [fill(0, 0, m.w, m.h, look.bg(), 0)];
   out = util_append(out, grid_nodes(m, v, v.items, top_height(m) + 12 * m.u, "grid:"));
   if (v.items.len() == 0) {
     let msg = "This library is empty";
     if (v.loading) {
       msg = "Loading";
     }
-    out = out.append(label(m, 16 * m.u, top_height(m) + 24 * m.u, msg, m.ts, muted()));
+    out = out.append(note(m, top_height(m) + 24 * m.u, msg));
   }
   return out;
 }
@@ -555,7 +630,7 @@ pub function play_label(it: plex.Item): string {
 
 function detail(m: Metrics, v: View): scene.Node[] {
   let it = v.item;
-  let out: scene.Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
+  let out: scene.Node[] = [fill(0, 0, m.w, m.h, look.bg(), 0)];
   let s = v.scroll;
   let bh = backdrop_height(m);
   let art = it.art;
@@ -563,58 +638,73 @@ function detail(m: Metrics, v: View): scene.Node[] {
     art = plex.poster(it);
   }
   out = out.append(img(v, 0, top_height(m) - s, m.w, bh, image_key(v.base, art, m.w, bh), 0, "", ""));
-  out = out.append(fill(0, top_height(m) - s + bh / 2, m.w, bh / 2, draw.rgba(14, 14, 17, 150), 0));
+  out = out.append(fill(0, top_height(m) - s + bh / 2, m.w, bh / 2, draw.rgba(0, 0, 0, 150), 0));
   let pw = 100 * m.u;
   let ph = pw * 3 / 2;
   let py = top_height(m) - s + bh - ph / 2;
-  out = out.append(img(v, 16 * m.u, py, pw, ph, image_key(v.base, plex.poster(it), pw, ph), 6 * m.u, "", ""));
+  out = out.append(img(v, 16 * m.u, py, pw, ph, image_key(v.base, plex.poster(it), pw, ph), 10 * m.u, "", ""));
   let tx = 16 * m.u + pw + 16 * m.u;
   let tcells = (m.w - tx - 16 * m.u) / m.cw;
   let ty = top_height(m) - s + bh + 8 * m.u;
   let title = it.title;
   if (it.kind == "episode" && it.grandparent.len() > 0) {
-    out = out.append(label(m, tx, ty, fit(it.grandparent, tcells), m.ts, muted()));
+    out = out.append(label(m, tx, ty, fit(it.grandparent, tcells), m.ts, look.muted()));
     ty += m.th + 2 * m.u;
   }
   let big = m.ts * 2;
   if (draw.text_width(title, big) > m.w - tx - 16 * m.u) {
     big = m.ts;
   }
-  out = out.append(label(m, tx, ty, fit(title, (m.w - tx - 16 * m.u) / draw.text_width("x", big)), big, text_color()));
+  out = out.append(label(m, tx, ty, fit(title, (m.w - tx - 16 * m.u) / draw.text_width("x", big)), big, look.ink()));
   ty += draw.text_height(big) + 4 * m.u;
-  out = out.append(label(m, tx, ty, fit(plex.facts(it), tcells), m.ts, muted()));
+  out = out.append(label(m, tx, ty, fit(plex.facts(it), tcells), m.ts, look.muted()));
   ty += m.th + 2 * m.u;
   if (it.genres.len() > 0) {
-    out = out.append(label(m, tx, ty, fit(it.genres.join(", "), tcells), m.ts, muted()));
+    out = out.append(label(m, tx, ty, fit(it.genres.join(", "), tcells), m.ts, look.muted()));
   }
   let y = top_height(m) - s + bh + ph / 2 + 20 * m.u;
   let play = play_label(it);
   if (plex.playable_kind(it.kind) || v.children.len() > 0) {
-    out = util_append(out, button(m, 16 * m.u, y, play, accent(), bg(), "play"));
+    out = util_append(out, button(m, 16 * m.u, y, play, true, "play"));
   }
-  let mark = "Mark watched";
-  if (plex.watched(it)) {
-    mark = "Mark unwatched";
+  let mark = mark_label(it);
+  if (buttons_stack(m, it)) {
+    y += button_height(m) + 12 * m.u;
+    out = util_append(out, button(m, 16 * m.u, y, mark, false, "watched"));
+  } else {
+    out = util_append(out, button(m, 16 * m.u + button_width(m, play) + 12 * m.u, y, mark, false, "watched"));
   }
-  out = util_append(out, button(m, 16 * m.u + button_width(m, play) + 12 * m.u, y, mark, raised(), text_color(), "watched"));
   y += 64 * m.u;
   if (it.summary.len() > 0) {
-    out = util_append(out, wrapped(m, 16 * m.u, y, m.w - 32 * m.u, it.summary, text_color()));
+    out = util_append(out, wrapped(m, 16 * m.u, y, m.w - 32 * m.u, it.summary, look.ink()));
     y += wrapped_height(m, m.w - 32 * m.u, it.summary) + 16 * m.u;
   }
   if (v.children.len() > 0) {
     if (it.kind == "show" || it.kind == "artist") {
-      let heading = "Seasons";
+      let heading = "SEASONS";
       if (it.kind == "artist") {
-        heading = "Albums";
+        heading = "ALBUMS";
       }
-      out = out.append(label(m, 16 * m.u, y, heading, m.ts, text_color()));
-      out = util_append(out, grid_nodes(m, View { ...v, scroll: 0 }, v.children, y + m.th + 12 * m.u, "child:"));
+      out = out.append(dots(16 * m.u, y, heading, small_pitch(m), look.muted()));
+      out = util_append(out, grid_nodes(m, View { ...v, scroll: 0 }, v.children, y + matrix.height(small_pitch(m)) + 12 * m.u, "child:"));
     } else {
       out = util_append(out, episode_rows(m, v, y));
     }
   }
   return out;
+}
+
+pub function mark_label(it: plex.Item): string {
+  if (plex.watched(it)) {
+    return "Mark unwatched";
+  }
+  return "Mark watched";
+}
+
+// True when the two buttons of the detail screen do not fit on one row, so
+// the second goes below the first.
+pub function buttons_stack(m: Metrics, it: plex.Item): boolean {
+  return button_width(m, play_label(it)) + 12 * m.u + button_width(m, mark_label(it)) > m.w - 32 * m.u;
 }
 
 // The height of the content of the detail screen, for the limit of its
@@ -623,8 +713,11 @@ pub function detail_height(m: Metrics, v: View): i32 {
   let bh = backdrop_height(m);
   let ph = 150 * m.u;
   let h = bh + ph / 2 + 84 * m.u + wrapped_height(m, m.w - 32 * m.u, v.item.summary) + 16 * m.u;
+  if (buttons_stack(m, v.item)) {
+    h += button_height(m) + 12 * m.u;
+  }
   if (v.item.kind == "show" || v.item.kind == "artist") {
-    return h + m.th + 12 * m.u + grid_height(m, v.children.len());
+    return h + matrix.height(small_pitch(m)) + 12 * m.u + grid_height(m, v.children.len());
   }
   return h + v.children.len() * episode_row_height(m) + 16 * m.u;
 }
@@ -643,13 +736,13 @@ function episode_rows(m: Metrics, v: View, top: i32): scene.Node[] {
     let e = v.children[i];
     let y = top + i * rh;
     if (y + rh >= 0 && y < m.h) {
-      out = out.append(tap(fill(16 * m.u, y, m.w - 32 * m.u, rh - 8 * m.u, surface(), 6 * m.u), "child:" + i.to_string()));
+      out = out.append(tap(panel(m, 16 * m.u, y, m.w - 32 * m.u, rh - 8 * m.u), "child:" + i.to_string()));
       let thumb = e.thumb;
       if (e.kind == "track") {
         thumb = "";
       }
       if (thumb.len() > 0) {
-        out = out.append(img(v, 16 * m.u, y, tw, th, image_key(v.base, thumb, tw, th), 6 * m.u, "", ""));
+        out = out.append(img(v, 16 * m.u, y, tw, th, image_key(v.base, thumb, tw, th), 14 * m.u, "", ""));
       }
       let x = 16 * m.u + 12 * m.u;
       if (thumb.len() > 0) {
@@ -662,15 +755,15 @@ function episode_rows(m: Metrics, v: View, top: i32): scene.Node[] {
       } else if (e.kind == "track" && e.index > 0) {
         name = e.index.to_string() + ". " + e.title;
       }
-      out = out.append(label(m, x, y + 10 * m.u, fit(name, cells), m.ts, text_color()));
+      out = out.append(label(m, x, y + 10 * m.u, fit(name, cells), m.ts, look.ink()));
       let line = plex.duration_text(e.duration_ms);
       if (plex.watched(e)) {
         line += " · watched";
       }
-      out = out.append(label(m, x, y + 14 * m.u + m.th, fit(line, cells), m.ts, muted()));
+      out = out.append(label(m, x, y + 14 * m.u + m.th, fit(line, cells), m.ts, look.muted()));
       let p = plex.progress(e);
       if (p > 0) {
-        out = util_append(out, progress_bar(x, y + rh - 18 * m.u, m.w - x - 32 * m.u, 4 * m.u, p, accent(), raised()));
+        out = util_append(out, progress_bar(x, y + rh - 18 * m.u, m.w - x - 32 * m.u, 3 * m.u, p, look.red(), look.outline()));
       }
     }
     i += 1;
@@ -679,18 +772,22 @@ function episode_rows(m: Metrics, v: View, top: i32): scene.Node[] {
 }
 
 function search(m: Metrics, v: View): scene.Node[] {
-  let out: scene.Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
+  let out: scene.Node[] = [fill(0, 0, m.w, m.h, look.bg(), 0)];
   let fy = top_height(m) + 8 * m.u;
   let fh = 48 * m.u;
-  let border = surface();
+  let border = look.outline();
   if (v.typing) {
-    border = accent();
+    border = look.ink();
   }
-  out = out.append(tap(fill(16 * m.u, fy, m.w - 32 * m.u, fh, border, 8 * m.u), "type"));
-  out = out.append(fill(18 * m.u, fy + 2 * m.u, m.w - 36 * m.u, fh - 4 * m.u, surface(), 7 * m.u));
+  let line = m.u / 2;
+  if (line < 1) {
+    line = 1;
+  }
+  out = out.append(tap(scene.node(16 * m.u, fy, m.w - 32 * m.u, fh, scene.Outline(border, fh / 2, line)), "type"));
   let cells = (m.w - 64 * m.u) / m.cw;
   if (v.query.len() == 0) {
-    out = out.append(label(m, 32 * m.u, fy + (fh - m.th) / 2, "Search movies, shows and music", m.ts, muted()));
+    let sp = small_pitch(m);
+    out = out.append(heading(m, 32 * m.u, fy + (fh - matrix.height(sp)) / 2, m.w - 64 * m.u, "Search movies, shows and music", sp, look.muted()));
   } else {
     let shown = v.query;
     if (draw.text_cells(shown) > cells - 1) {
@@ -699,11 +796,11 @@ function search(m: Metrics, v: View): scene.Node[] {
     if (v.typing) {
       shown += "|";
     }
-    out = out.append(label(m, 32 * m.u, fy + (fh - m.th) / 2, shown, m.ts, text_color()));
+    out = out.append(label(m, 32 * m.u, fy + (fh - m.th) / 2, shown, m.ts, look.ink()));
   }
   out = util_append(out, hubs(m, v, fy + fh + 16 * m.u));
   if (v.hubs.len() == 0 && v.query.len() > 0 && !v.loading && !v.typing) {
-    out = out.append(label(m, 16 * m.u, fy + fh + 24 * m.u, "No results", m.ts, muted()));
+    out = out.append(note(m, fy + fh + 24 * m.u, "No results"));
   }
   return out;
 }
@@ -725,8 +822,9 @@ function tail(s: string, cells: i32): string {
 }
 
 function settings(m: Metrics, v: View): scene.Node[] {
-  let out: scene.Node[] = [fill(0, 0, m.w, m.h, bg(), 0)];
+  let out: scene.Node[] = [fill(0, 0, m.w, m.h, look.bg(), 0)];
   let y = top_height(m) + 8 * m.u - v.scroll;
+  let p = title_pitch(m);
   let rows: (string, string, string)[] = [
     ("Account", v.account, ""),
     ("Server", v.server_name, "servers"),
@@ -735,33 +833,33 @@ function settings(m: Metrics, v: View): scene.Node[] {
   ];
   let row = 72 * m.u;
   for r in rows {
-    let n = fill(16 * m.u, y, m.w - 32 * m.u, row - 8 * m.u, surface(), 8 * m.u);
+    let n = panel(m, 16 * m.u, y, m.w - 32 * m.u, row - 8 * m.u);
     if (r.2.len() > 0) {
       n = tap(n, r.2);
     }
     out = out.append(n);
-    let color = text_color();
+    let color = look.ink();
     if (r.2 == "signout") {
-      color = danger();
+      color = look.red();
     }
     let ty = y + 12 * m.u;
     if (r.1.len() == 0) {
-      ty = y + (row - 8 * m.u - m.th) / 2;
+      ty = y + (row - 8 * m.u - matrix.height(p)) / 2;
     }
-    out = out.append(label(m, 32 * m.u, ty, r.0, m.ts, color));
+    out = out.append(dots(32 * m.u, ty, r.0, p, color));
     if (r.1.len() > 0) {
-      out = out.append(label(m, 32 * m.u, y + 16 * m.u + m.th, fit(r.1, (m.w - 64 * m.u) / m.cw), m.ts, muted()));
+      out = out.append(label(m, 32 * m.u, ty + matrix.height(p) + 8 * m.u, fit(r.1, (m.w - 64 * m.u) / m.cw), m.ts, look.muted()));
     }
     y += row;
   }
   let about = plex.PRODUCT + " " + plex.VERSION + ". A Plex client written in Fern, with no Java code: the screens, the network, TLS and JSON are Fern, and the video plays through the media player of Android.";
-  out = util_append(out, wrapped(m, 16 * m.u, y + 16 * m.u, m.w - 32 * m.u, about, muted()));
+  out = util_append(out, wrapped(m, 16 * m.u, y + 16 * m.u, m.w - 32 * m.u, about, look.muted()));
   return out;
 }
 
 // The progress bar of the player, as a node whose tap seeks.
 pub function seek_bar(m: Metrics): scene.Node {
-  return mk(24 * m.u, m.h - 72 * m.u, m.w - 48 * m.u, 24 * m.u, scene.Blank, "seek", "");
+  return mk(24 * m.u, m.h - m.bottom - 72 * m.u, m.w - 48 * m.u, 24 * m.u, scene.Blank, "seek", "");
 }
 
 function player(m: Metrics, v: View): scene.Node[] {
@@ -769,36 +867,40 @@ function player(m: Metrics, v: View): scene.Node[] {
   if (!p.overlay) {
     return [mk(0, 0, m.w, m.h, scene.Blank, "overlay", "")];
   }
-  let out: scene.Node[] = [fill(0, 0, m.w, m.h, draw.rgb(0, 0, 0), 0)];
+  let out: scene.Node[] = [fill(0, 0, m.w, m.h, look.bg(), 0)];
   if (p.art.len() > 0) {
     out = out.append(img(v, 0, 0, m.w, m.h, image_key(v.base, p.art, m.w, m.h), 0, "", ""));
-    out = out.append(fill(0, 0, m.w, m.h, draw.rgba(0, 0, 0, 150), 0));
+    out = out.append(fill(0, 0, m.w, m.h, draw.rgba(0, 0, 0, 170), 0));
   }
   out = out.append(mk(0, 0, m.w, m.h, scene.Blank, "toggle", ""));
-  out = out.append(tap(fill(0, 0, 64 * m.u, 56 * m.u, draw.rgba(0, 0, 0, 0), 0), "back"));
-  out = out.append(label(m, 16 * m.u, 16 * m.u, "<", m.ts, text_color()));
+  let tp = title_pitch(m);
+  let top = m.top + 16 * m.u;
+  out = out.append(tap(fill(0, 0, 64 * m.u, m.top + 56 * m.u, draw.rgba(0, 0, 0, 0), 0), "back"));
+  out = out.append(dots(16 * m.u, top + (m.th - matrix.height(tp)) / 2, "<", tp, look.ink()));
   let cells = (m.w - 64 * m.u) / m.cw;
-  out = out.append(label(m, 48 * m.u, 16 * m.u, fit(p.title, cells), m.ts, text_color()));
+  out = out.append(label(m, 48 * m.u, top, fit(p.title, cells), m.ts, look.ink()));
   if (p.subtitle.len() > 0) {
-    out = out.append(label(m, 48 * m.u, 20 * m.u + m.th, fit(p.subtitle, cells), m.ts, muted()));
+    out = out.append(label(m, 48 * m.u, top + 4 * m.u + m.th, fit(p.subtitle, cells), m.ts, look.muted()));
   }
   let cy = m.h / 2;
   let r = 36 * m.u;
   let small = 26 * m.u;
   let gap = 96 * m.u;
-  out = out.append(tap(fill(m.w / 2 - gap - small, cy - small, 2 * small, 2 * small, draw.rgba(255, 255, 255, 40), small), "rew"));
-  out = out.append(label(m, m.w / 2 - gap - draw.text_width("-10", m.ts) / 2, cy - m.th / 2, "-10", m.ts, text_color()));
-  out = out.append(tap(fill(m.w / 2 - r, cy - r, 2 * r, 2 * r, accent(), r), "toggle"));
-  let icon = "||";
-  if (p.paused) {
-    icon = ">";
+  let sp = small_pitch(m);
+  let line = m.u / 2;
+  if (line < 1) {
+    line = 1;
   }
-  let big = m.ts * 2;
-  out = out.append(label(m, m.w / 2 - draw.text_width(icon, big) / 2, cy - draw.text_height(big) / 2, icon, big, bg()));
-  out = out.append(tap(fill(m.w / 2 + gap - small, cy - small, 2 * small, 2 * small, draw.rgba(255, 255, 255, 40), small), "ffw"));
-  out = out.append(label(m, m.w / 2 + gap - draw.text_width("+30", m.ts) / 2, cy - m.th / 2, "+30", m.ts, text_color()));
+  out = out.append(tap(scene.node(m.w / 2 - gap - small, cy - small, 2 * small, 2 * small, scene.Outline(look.outline(), small, line)), "rew"));
+  out = out.append(dots(m.w / 2 - gap - matrix.width("-10", sp) / 2, cy - matrix.height(sp) / 2, "-10", sp, look.ink()));
+  out = out.append(tap(fill(m.w / 2 - r, cy - r, 2 * r, 2 * r, look.red(), r), "toggle"));
+  let gp = 3 * m.u;
+  let key = "glyph|" + gp.to_string() + "|" + p.paused.to_string();
+  out = out.append(scene.node(m.w / 2 - 4 * gp, cy - 4 * gp, 8 * gp, 8 * gp, scene.Custom(key, 0, (f: draw.Frame, bx: i32, by: i32, bw: i32, bh: i32): void => play_glyph(f, bx + bw / 2, by + bh / 2, gp, p.paused))));
+  out = out.append(tap(scene.node(m.w / 2 + gap - small, cy - small, 2 * small, 2 * small, scene.Outline(look.outline(), small, line)), "ffw"));
+  out = out.append(dots(m.w / 2 + gap - matrix.width("+30", sp) / 2, cy - matrix.height(sp) / 2, "+30", sp, look.ink()));
   if (p.status.len() > 0) {
-    out = out.append(label(m, (m.w - draw.text_width(p.status, m.ts)) / 2, cy + r + 16 * m.u, fit(p.status, m.w / m.cw), m.ts, muted()));
+    out = out.append(label(m, (m.w - draw.text_width(p.status, m.ts)) / 2, cy + r + 16 * m.u, fit(p.status, m.w / m.cw), m.ts, look.muted()));
   }
   let bar = seek_bar(m);
   let permille = 0;
@@ -806,16 +908,64 @@ function player(m: Metrics, v: View): scene.Node[] {
     permille = (p.position_ms * 1000i64 / p.duration_ms) as i32;
   }
   out = out.append(bar);
-  out = util_append(out, progress_bar(bar.x, bar.y + bar.h / 2 - 2 * m.u, bar.w, 4 * m.u, permille, accent(), draw.rgba(255, 255, 255, 70)));
-  out = out.append(label(m, bar.x, bar.y + bar.h + 4 * m.u, plex.clock_text(p.position_ms), m.ts, text_color()));
+  let dot = m.u;
+  let bkey = "seek|" + dot.to_string() + "|" + permille.to_string();
+  out = out.append(scene.node(bar.x, bar.y, bar.w, bar.h, scene.Custom(bkey, 0, (f: draw.Frame, bx: i32, by: i32, bw: i32, bh: i32): void => seek_dots(f, look.Rect { x: bx, y: by, w: bw, h: bh }, permille, dot))));
+  let at = plex.clock_text(p.position_ms);
+  out = out.append(dots(bar.x, bar.y + bar.h + 6 * m.u, at, sp, look.ink()));
   let total = plex.clock_text(p.duration_ms);
-  out = out.append(label(m, bar.x + bar.w - draw.text_width(total, m.ts), bar.y + bar.h + 4 * m.u, total, m.ts, text_color()));
+  out = out.append(dots(bar.x + bar.w - matrix.width(total, sp), bar.y + bar.h + 6 * m.u, total, sp, look.muted()));
   return out;
+}
+
+// The play or pause sign in white dots, `pitch` pixels from dot to dot,
+// with its centre at cx and cy. Play is a triangle of four columns, and
+// pause is two columns.
+function play_glyph(f: draw.Frame, cx: i32, cy: i32, pitch: i32, paused: boolean): void {
+  let d = pitch * 45 / 100;
+  if (d < 1) {
+    d = 1;
+  }
+  if (paused) {
+    for c in 0..4 {
+      for row in c..7 - c {
+        f.disc(cx + (c - 1) * pitch, cy + (row - 3) * pitch, d, look.ink());
+      }
+    }
+    return;
+  }
+  for c in [-1, 1] {
+    for row in 0..7 {
+      f.disc(cx + c * pitch, cy + (row - 3) * pitch, d, look.ink());
+    }
+  }
+}
+
+// The seek bar as a row of dots: white up to the position, a red dot at
+// it, and grey after it.
+function seek_dots(f: draw.Frame, r: look.Rect, permille: i32, dot: i32): void {
+  let step = 4 * dot;
+  let n = r.w / step + 1;
+  if (n < 2) {
+    n = 2;
+  }
+  let at = permille * (n - 1) / 1000;
+  let cy = r.y + r.h / 2;
+  for i in 0..n {
+    let x = r.x + i * (r.w - 1) / (n - 1);
+    if (i == at) {
+      f.disc(x, cy, 2 * dot, look.red());
+    } else if (i < at) {
+      f.disc(x, cy, dot, look.ink());
+    } else {
+      f.disc(x, cy, dot, look.outline());
+    }
+  }
 }
 
 // The nodes of the screen of `v`, in the order to draw them.
 pub function nodes(v: View): scene.Node[] {
-  let m = metrics(v.w, v.h);
+  let m = metrics(v.w, v.h, v.top, v.bottom);
   if (v.screen == LOGIN) {
     return login(m, v);
   }

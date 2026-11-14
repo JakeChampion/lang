@@ -145,7 +145,7 @@ func (c *checker) mcSeq(stmts []ast.Stmt, name, typeName string) (bool, bool) {
 			if c.mcIsBinding(x.Tag, name) {
 				return true, false
 			}
-			if x.Origin != "" {
+			if x.Origin != "" && x.Origin != ast.OriginIfLet {
 				break
 			}
 			all := len(x.Arms) > 0

@@ -19,6 +19,10 @@ var wordLoadOptionCases = []struct{ name, expression string }{
 	{"short", "bs[o] as u32 | bs[o+1] as u32 << 8 | bs[o+2] as u32 << 16"},
 	{"negative-offset", "bs[o+-1] as u32 | bs[o] as u32 << 8 | bs[o+1] as u32 << 16 | bs[o+2] as u32 << 24"},
 	{"scrambled", "bs[o+2] as u32 << 16 | bs[o] as u32 | bs[o+3] as u32 << 24 | bs[o+1] as u32 << 8"},
+	{"two", "bs[o] as u32 | bs[o+1] as u32 << 8"},
+	{"two-big", "bs[o] as u32 << 8 | bs[o+1] as u32"},
+	{"two-gap", "bs[o] as u32 | bs[o+2] as u32 << 8"},
+	{"two-shift", "bs[o] as u32 | bs[o+1] as u32 << 9"},
 }
 
 func TestSelfHostWordLoadOptions(t *testing.T) {

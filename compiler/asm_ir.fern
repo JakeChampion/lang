@@ -7997,7 +7997,7 @@ function ssa_const_reg(text: string, wide64: boolean, d: string, s: asmcore.Emit
 }
 
 function ssa_unary_known(what: string): boolean {
-  if (what == "!" || what == "int_extend" || what == "int_wrap" || what == "u32_wrap" || what == "load_i32") {
+  if (what == "!" || what == "int_extend" || what == "int_wrap" || what == "u32_wrap" || ssa.is_unary_load(what)) {
     return true;
   }
   if (what == "int_cast:u8" || what == "int_cast:u32" || what == "int_cast:i32") {
@@ -8055,6 +8055,9 @@ function ssa_unary_asm(what: string, unsigned: boolean, lb: string, d: string): 
   if (what == "load_i32") {
     return "    movslq (" + d + "), " + d + "\n";
   }
+  if (what == "load_u16") {
+    return "    movzwl (" + d + "), " + ssa_r32(d) + "\n";
+  }
   if (what == "!") {
     return "    testq " + d + ", " + d + "\n    setz " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n";
   }
@@ -8096,6 +8099,9 @@ function ssa_unary_from(what: string, unsigned: boolean, src: string, d: string)
   }
   if (what == "load_i32") {
     return "    movslq (" + src + "), " + d + "\n";
+  }
+  if (what == "load_u16") {
+    return "    movzwl (" + src + "), " + ssa_r32(d) + "\n";
   }
   if (what == "int_cast:i32" || (what == "int_extend" || what == "int_wrap") && !unsigned) {
     return "    movslq " + ssa_r32(src) + ", " + d + "\n";
