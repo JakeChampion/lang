@@ -25,12 +25,122 @@ pub function sink(f: ssasem.Func): Sunk {
 // borrowed that a callee consumes is counted by then. facts describe the
 // graph of f when they are checked.
 pub function sink_past_lent(f: ssasem.Func, facts: ssadeps.Facts): Sunk {
-  let sk = sink_rereads(f, None, true, facts);
+  let moved = moves_past_lent(f);
+  if (moved.reread > 0) {
+    facts = ssadeps.unchecked();
+  }
+  let sk = sink_rereads(moved.f, None, true, facts);
   if (sk.reread > 0) {
     facts = ssadeps.unchecked();
   }
   let late = semlatehold.reread_before_spends(sk.f, facts);
-  return Sunk { f: late.f, reread: sk.reread + late.reread };
+  return Sunk { f: late.f, reread: moved.reread + sk.reread + late.reread };
+}
+
+// moves_past_lent moves a record or tuple field read down to its first use
+// in its block, when a call between them lends the parent and no other
+// instruction there spends it. The plan can then take the field where it
+// is used, instead of holding a count of it across the call. The walk goes
+// up the block, so a parent's read follows its field's read down.
+function moves_past_lent(f: ssasem.Func): Sunk {
+  let g = f.graph;
+  let blocks = g.blocks;
+  let n = 0;
+  for bi in 0..g.blocks.len() {
+    let b = g.blocks[bi];
+    let insts = b.insts;
+    let moved: i32[] = [];
+    for k in 0..insts.len() {
+      let i = insts.len() - 1 - k;
+      let to = lent_target(f, insts, i);
+      if (to > i) {
+        insts = moved_down(insts, i, to);
+        moved = moved.append(i);
+      }
+    }
+    n += moved.len();
+    if (moved.len() > 0) {
+      blocks = blocks.with(bi, ssa.SBlock { ...b, insts: insts });
+    }
+  }
+  if (n == 0) {
+    return Sunk { f: f, reread: 0 };
+  }
+  return Sunk { f: ssasem.Func { ...f, graph: ssa.SFunc { ...g, blocks: blocks } }, reread: n };
+}
+
+// lent_target is the index of the first use of the field read at i, when
+// the read may move down to it, or -1.
+function lent_target(f: ssasem.Func, insts: ssa.SInst[], i: i32): i32 {
+  let ins = insts[i];
+  if (ins.kind_tag != ssasem.record_get() && ins.kind_tag != ssasem.tuple_get() || !counted_projection(ins, f.values)) {
+    return -1;
+  }
+  let up = parents_of(insts, i);
+  let lent = false;
+  for j in i + 1..insts.len() {
+    let at = insts[j];
+    if (util.index_of_i32(at.args, ins.result) >= 0) {
+      if (lent) {
+        return j;
+      }
+      return -1;
+    }
+    if (at.kind_tag == ssasem.call() && lends_only(f, at, up)) {
+      lent = lent || touches(at.args, up);
+    } else if (touches(at.args, up) && spends(at.kind_tag)) {
+      return -1;
+    }
+  }
+  return -1;
+}
+
+// parents_of is the parent of the field read at i, and the parents of that
+// parent that are field reads in the same block.
+function parents_of(insts: ssa.SInst[], i: i32): i32[] {
+  let up = [insts[i].args[0]];
+  let k = i - 1;
+  while (k >= 0 && up.len() <= 8) {
+    let ins = insts[k];
+    if (ins.result == up[up.len() - 1] && projection(ins.kind_tag) && ins.args.len() > 0) {
+      up = up.append(ins.args[0]);
+    }
+    k -= 1;
+  }
+  return up;
+}
+
+function touches(args: i32[], up: i32[]): boolean {
+  for a in args {
+    if (util.index_of_i32(up, a) >= 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// lends_only says the call borrows each of its arguments that is in up.
+function lends_only(f: ssasem.Func, call: ssa.SInst, up: i32[]): boolean {
+  let modes = ssasem.callee_modes(f, call);
+  for k in 0..call.args.len() {
+    if (util.index_of_i32(up, call.args[k]) >= 0 && !lent_to(f, modes, call.args, k)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function moved_down(insts: ssa.SInst[], i: i32, to: i32): ssa.SInst[] {
+  let out: ssa.SInst[] = [];
+  for k in 0..insts.len() {
+    if (k == to) {
+      out = out.append(insts[i]);
+    }
+    if (k != i) {
+      out = out.append(insts[k]);
+    }
+  }
+  return out;
 }
 
 struct Reused { s: Sunk, reads: Option[Reads] }
