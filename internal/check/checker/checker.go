@@ -10320,6 +10320,59 @@ func (c *checker) holdsViewAggregate(t ast.Type) bool {
 	return !isViewReturn(t) && (c.typeHoldsView(t, map[string]bool{}) || mentionsTypeParam(t))
 }
 
+// fitsOpen reports whether `open` has a type parameter that nothing in
+// scope declares, and has the shape of `known` with each such parameter
+// in the place of any part. A call gives such a type when nothing infers
+// its type parameter yet, as for `row([text("a")])`.
+func fitsOpen(open, known ast.Type, inScope map[string]bool) bool {
+	if _, escaped := paramTypeNotIn(open, inScope); !escaped {
+		return false
+	}
+	return fitsShape(open, known, inScope)
+}
+
+func fitsShape(open, known ast.Type, inScope map[string]bool) bool {
+	switch o := open.(type) {
+	case ast.ParamType:
+		if !inScope[o.Name] {
+			return true
+		}
+	case ast.ArrayType:
+		if k, ok := known.(ast.ArrayType); ok {
+			return fitsShape(o.Elem, k.Elem, inScope)
+		}
+	case ast.SliceType:
+		if k, ok := known.(ast.SliceType); ok {
+			return fitsShape(o.Elem, k.Elem, inScope)
+		}
+	case ast.TupleType:
+		if k, ok := known.(ast.TupleType); ok {
+			return fitsAll(o.Elems, k.Elems, inScope)
+		}
+	case ast.StructType:
+		if k, ok := known.(ast.StructType); ok && k.Name == o.Name {
+			return fitsAll(o.Args, k.Args, inScope)
+		}
+	case ast.EnumType:
+		if k, ok := known.(ast.EnumType); ok && k.Name == o.Name {
+			return fitsAll(o.Args, k.Args, inScope)
+		}
+	}
+	return ast.Equal(open, known)
+}
+
+func fitsAll(open, known []ast.Type, inScope map[string]bool) bool {
+	if len(open) != len(known) {
+		return false
+	}
+	for i := range open {
+		if !fitsShape(open[i], known[i], inScope) {
+			return false
+		}
+	}
+	return true
+}
+
 func mentionsTypeParam(t ast.Type) bool {
 	switch v := t.(type) {
 	case ast.ParamType:
@@ -15384,6 +15437,14 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			}
 			if unified := unifyIfArms(elemT, t); unified != nil {
 				elemT = unified
+				continue
+			}
+			inScope := c.typeParamsInScope()
+			if fitsOpen(t, elemT, inScope) {
+				continue
+			}
+			if fitsOpen(elemT, t, inScope) {
+				elemT = t
 				continue
 			}
 			c.errfCode(el.Pos(), "E034", "array element: expected %s, got %s", elemT, t)

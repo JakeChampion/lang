@@ -235,6 +235,11 @@ function saved(s: sim.Sim[player.Player, tune.Msg], name: string): void {
   }
 }
 
+// The screen shows `label`, or has an icon that says it.
+function says(s: sim.Sim[player.Player, tune.Msg], label: string): boolean {
+  return sim.place_of(s, label, 0).is_some();
+}
+
 function near(got: i64, want: i64, by: i64): boolean {
   return got >= want - by && got <= want + by;
 }
@@ -294,7 +299,7 @@ function test_a_tap_plays_a_track(): test.TestOutcome {
   s = sim.after(s, 1000i64);
   saved(s, "tune-library");
   let at = s.shell.app.model.at_ms;
-  return test.assert_eq(first + " " + near(at, 1000i64, 250i64).to_string() + " " + sim.shows(s, "Pause").to_string(), "3 true 44100 2 true true true");
+  return test.assert_eq(first + " " + near(at, 1000i64, 250i64).to_string() + " " + says(s, "Pause").to_string(), "3 true 44100 2 true true true");
 }
 
 function test_pause_and_seek(): test.TestOutcome {
@@ -310,7 +315,7 @@ function test_pause_and_seek(): test.TestOutcome {
   let sought = near(s.shell.app.model.at_ms, length / 2i64, 300i64);
   s = sim.after(sim.tap(s, "Play"), 400i64);
   let after = near(s.shell.app.model.at_ms, length / 2i64 + 400i64, 300i64);
-  return test.assert_eq(still.to_string() + " " + sim.shows(s, "Fern · First Light").to_string() + " " + sought.to_string() + " " + after.to_string(), "true true true true");
+  return test.assert_eq(still.to_string() + " " + sim.shows(s, "First Light").to_string() + " " + sought.to_string() + " " + after.to_string(), "true true true true");
 }
 
 function test_the_next_track_plays_at_the_end(): test.TestOutcome {
@@ -504,7 +509,11 @@ function test_the_player_gives_the_device_back(): test.TestOutcome {
   let w = sim.after(sim.tap(started(), "Slow Water"), 100i64);
   let ended = player.closed(device(), tune.Model { ...w.shell.app.model });
   let freed = (ended.sound.ptr == 0 as usize && ended.awake.wake == 0 as usize).to_string();
-  return test.assert_eq([before, on, after, freed].join(" | "), "true true true | true true true 2 true | false false false | true");
+  // A player that played no track gives back what it holds of Android too,
+  // one time.
+  let fresh = player.closed(device(), tune.start(paths()));
+  let again = player.closed(device(), tune.Model { ...fresh });
+  return test.assert_eq([before, on, after, freed, fresh.gone.to_string() + " " + again.gone.to_string()].join(" | "), "true true true | true true true 2 true | false false false | true | true true");
 }
 
 // The player starts with the library that it saved. A track whose file is
@@ -539,7 +548,7 @@ function test_playlists(): test.TestOutcome {
   s = sim.tap(sim.send(s, tune.Named(" Road ")), "Create");
   let made = lists(s.shell.app.model);
   s = sim.tap(sim.tap(sim.tap(s, "Quick Light"), "Now playing, Quick Light"), "Favorite off");
-  let liked = lists(s.shell.app.model) + " " + sim.shows(s, "Favorite on").to_string();
+  let liked = lists(s.shell.app.model) + " " + says(s, "Favorite on").to_string();
   s = sim.tap(sim.tap(sim.tap(s, "Queue"), "Save"), "Road");
   let kept = lists(s.shell.app.model);
   s = sim.tap(sim.tap(sim.tap(s, "Library"), "Lists"), "mix");
@@ -630,11 +639,11 @@ function test_the_menu_of_more_than_one_song(): test.TestOutcome {
 }
 
 // At the speed 2 the track goes two times as fast, and the pitch buttons
-// go through their values.
+// go through their values. The button with three dots shows them.
 function test_the_speed_and_the_pitch(): test.TestOutcome {
   let s = sim.tap(sim.tap(started(), "Quick Light"), "Now playing, Quick Light");
   let plain = sim.after(s, 1000i64).shell.app.model.at_ms;
-  s = sim.tap(sim.tap(sim.tap(sim.tap(sim.tap(started(), "Quick Light"), "Now playing, Quick Light"), "Speed 1.00"), "Speed 1.25"), "Speed 1.50");
+  s = sim.tap(sim.tap(sim.tap(sim.tap(sim.tap(sim.tap(started(), "Quick Light"), "Now playing, Quick Light"), "More"), "Speed 1.00"), "Speed 1.25"), "Speed 1.50");
   saved(s, "tune-speed");
   let label = sim.shows(s, "Speed 2.00");
   s = sim.after(s, 1000i64);
@@ -653,28 +662,28 @@ function test_the_speed_and_the_pitch(): test.TestOutcome {
 // its end.
 function test_the_sleep_timer(): test.TestOutcome {
   let s = sim.tap(sim.tap(sim.tap(started(), "Quick Light"), "Now playing, Quick Light"), "Sleep off");
-  let set = sim.shows(s, "Sleep 15 min");
+  let set = says(s, "Sleep 15 min");
   s = sim.after(s, 2000i64);
   let left = near(s.shell.app.model.sleep_us / 1000i64, 898000i64, 400i64);
-  let shown = sim.shows(s, "Sleep 15 min") && s.shell.app.model.playing;
+  let shown = says(s, "Sleep 15 min") && s.shell.app.model.playing;
   s = sim.send(s, tune.Slept(897000000i64));
-  let last = sim.shows(s, "Sleep 1 min");
+  let last = says(s, "Sleep 1 min");
   s = sim.after(s, 1500i64);
   let m = s.shell.app.model;
-  return test.assert_eq([set, left, shown, last, m.playing, m.sleep_min == 0 && m.sleep_us == 0i64, sim.shows(s, "Sleep off")].map((b: boolean): string => b.to_string()).join(" "), "true true true true false true true");
+  return test.assert_eq([set, left, shown, last, m.playing, m.sleep_min == 0 && m.sleep_us == 0i64, says(s, "Sleep off")].map((b: boolean): string => b.to_string()).join(" "), "true true true true false true true");
 }
 
 // A track with an LRC file shows its lyrics, and the line that the track
 // is at changes with the time. A track with no lyrics has no button.
 function test_the_lyrics_of_a_track(): test.TestOutcome {
   let s = sim.tap(sim.tap(started(), "Quick Light"), "Now playing, Quick Light");
-  let none = sim.shows(s, "Lyrics off");
+  let none = says(s, "Lyrics off");
   s = sim.tap(sim.tap(sim.tap(sim.tap(s, "Library"), "Slow Water"), "Now playing, Slow Water"), "Lyrics off");
   let first = tune.line_at(s.shell.app.model.lyrics, s.shell.app.model.at_ms);
   s = sim.after(s, 1500i64);
   saved(s, "tune-lyrics");
   let m = s.shell.app.model;
-  let shown = sim.shows(s, "Under the fern") && sim.shows(s, "Into the light") && sim.shows(s, "Lyrics on");
+  let shown = sim.shows(s, "Under the fern") && sim.shows(s, "Into the light") && says(s, "Lyrics on");
   return test.assert_eq([none.to_string(), m.lyrics.len().to_string(), first.to_string(), tune.line_at(m.lyrics, m.at_ms).to_string(), shown.to_string()].join(" "), "false 3 0 1 true");
 }
 
@@ -809,7 +818,7 @@ function test_rows_move_and_swipe(): test.TestOutcome {
   let swiped = order(s.shell.app.model);
   let l = sim.tap(sim.tap(sim.tap(started(), "Library"), "Lists"), "mix");
   let (lx, ly0) = middle_of(l, "Slow Water");
-  l = sim.hold_drag(l, lx, ly0, lx, ly0 + 176, 320i64, 0i64);
+  l = sim.hold_drag(l, lx, ly0, lx, ly0 + 198, 320i64, 0i64);
   let paths = "";
   if let Some(p) = tune.playlist(l.shell.app.model, "mix") {
     paths = p.paths.join(",");
@@ -837,11 +846,10 @@ function test_the_theme_takes_the_color_of_the_cover(): test.TestOutcome {
   return test.assert_eq(got, "true true true");
 }
 
-// The plain theme is that of a dot-matrix display: black or light grey,
-// with buttons in the color of the text. The screen of a track with no
-// cover is grey with a few red dots: the dot of now on the dial and the
-// tops of the spectrum.
-function test_the_look_is_that_of_a_dot_matrix_display(): test.TestOutcome {
+// The plain theme is a light grey or a black background, with red for
+// what is on. The screen of a track with no cover is mostly the
+// background and grey, with red in the artist and in the bar of the time.
+function test_the_look_of_the_player(): test.TestOutcome {
   let dark = tune.plain_theme(true);
   let light = tune.plain_theme(false);
   let s = sim.tap(sim.tap(started(), "Slow Water"), "Now playing, Slow Water");
@@ -865,7 +873,7 @@ function test_the_look_is_that_of_a_dot_matrix_display(): test.TestOutcome {
   }
   let size = fr.width * fr.height;
   draw.release(fr);
-  let flags = [dark.background == draw.rgb(0, 0, 0), dark.primary == dark.ink, light.primary == light.ink, tune.no_prefs().tint == false, back * 2 > size, red > 0, others * 100 < size];
+  let flags = [dark.background == draw.rgb(0, 0, 0), dark.primary == look.red(), light.primary == look.red(), tune.no_prefs().tint == false, back * 2 > size, red > 0, others * 100 < size];
   return test.assert_eq(flags.map((b: boolean): string => b.to_string()).join(","), "true,true,true,true,true,true,true");
 }
 
@@ -951,14 +959,14 @@ function test_the_equalizer_of_the_sound(): test.TestOutcome {
   return test.assert_eq(made + " " + head.to_string() + " " + again.flat().to_string() + " " + player.tuned(again, tune.Sound { ...sound, rate: 48000 }, [0, 0, 0, 12, 0]).rate().to_string(), "44100x2 true true false 48000");
 }
 
-// The screen of the track shows the spectrum of the sound that plays.
+// The screen of the equalizer shows the spectrum of the sound that plays.
 function test_the_spectrum(): test.TestOutcome {
-  let s = sim.tap(sim.tap(started(), "Slow Water"), "Now playing, Slow Water");
+  let s = sim.send(sim.tap(sim.tap(started(), "Slow Water"), "Settings"), tune.Tuning(true));
   s = sim.after(s, 300i64);
   let bars = s.shell.app.model.bars;
   let loud = bars.filter((b: f64): boolean => b > 0.1).len();
   let falls = tune.fallen([1.0, 0.5, 0.0], [0.0, 0.9, 0.3]).map((b: f64): string => ((b * 100.0).round() as i32).to_string()).join(",");
-  return test.assert_eq(bars.len().to_string() + " " + (loud > 0).to_string() + " " + falls, "24 true 92,90,30");
+  return test.assert_eq(bars.len().to_string() + " " + (loud > 0).to_string() + " " + bottom_of(s, "bars").is_some().to_string() + " " + falls, "24 true true 92,90,30");
 }
 
 function wants_of(m: tune.Model): string {
@@ -1051,40 +1059,49 @@ function test_the_person_lets_the_app_write_a_file(): test.TestOutcome {
   return test.assert_eq([yes, no, none].join(" | "), "true 2 1 Fern Morning false true | true 2 1 Morning Fern true true | false 1 1 Morning Fern true true");
 }
 
-// The top of the title of the track and the bottom of the spectrum on the
-// screen of the track, in pixels, or -1.
-function title_and_bars(s: sim.Sim[player.Player, tune.Msg]): (i32, i32) {
-  let title = -1;
-  let bars = -1;
+// The top of the label `t` on the screen, in pixels, or -1.
+function top_of(s: sim.Sim[player.Player, tune.Msg], t: string): i32 {
   for n in s.shell.host.lay.nodes {
     match (n.paint) {
-      scene.Label(t, _, _, _, _) => {
-        if (t == "Slow Water" && title < 0) {
-          title = n.y;
-        }
-      },
-      scene.Custom(key, _, _) => {
-        if (key.starts_with("bars")) {
-          bars = n.y + n.h;
+      scene.Label(text, _, _, _, _) => {
+        if (text == t) {
+          return n.y;
         }
       },
       _ => {}
     }
   }
-  return (title, bars);
+  return -1;
 }
 
-// On a short screen, the cover and the lyrics shrink to the room that the
-// rest of the screen leaves: the spectrum under them stays above the
-// title. The button of the lyrics is at the top, so no row wraps it.
+// The bottom of the canvas whose key starts with `key`, in pixels.
+function bottom_of(s: sim.Sim[player.Player, tune.Msg], key: string): Option[i32] {
+  for n in s.shell.host.lay.nodes {
+    match (n.paint) {
+      scene.Custom(k, _, _) => {
+        if (k.starts_with(key)) {
+          return Some(n.y + n.h);
+        }
+      },
+      _ => {}
+    }
+  }
+  return None;
+}
+
+// On a short screen, the record and the lyrics shrink to the room that
+// the rest of the screen leaves: they stay above the title, and the bar of
+// the tools stays on the screen.
 function test_the_track_screen_fits_a_short_screen(): test.TestOutcome {
   let s = sim.after(sim.start(player.wrap(tune.start(paths())), player.program(device()), test_fonts(), 1080, 1700, 2.75), 50i64);
   s = sim.tap(sim.tap(s, "Slow Water"), "Now playing, Slow Water");
-  let (t0, b0) = title_and_bars(s);
-  let top = match (sim.place_of(s, "Lyrics off", 0)) { Some((_, y)) => y < t0, None => false };
+  let t0 = top_of(s, "Slow Water");
+  let record = bottom_of(s, "record").unwrap_or(-1);
+  let tools = match (sim.place_of(s, "Lyrics off", 0)) { Some((_, y)) => y > t0 && y < 1700, None => false };
   s = sim.tap(s, "Lyrics off");
-  let (t1, b1) = title_and_bars(s);
-  let got = [t0 > 0 && b0 > 0 && b0 <= t0, top, sim.shows(s, "Under the fern"), t1 > 0 && b1 > 0 && b1 <= t1];
+  let t1 = top_of(s, "Slow Water");
+  let words = top_of(s, "Under the fern");
+  let got = [t0 > 0 && record > 0 && record <= t0, tools, words > 0, t1 > 0 && words < t1];
   return test.assert_eq(got.map((b: boolean): string => b.to_string()).join(" "), "true true true true");
 }
 
@@ -1106,7 +1123,7 @@ function main(): i32 {
   r = r.it("the menu of a song puts it in the queue", test_the_queue);
   r = r.it("a long press moves a row and a swipe takes it out", test_rows_move_and_swipe);
   r = r.it("the theme takes the color of the cover", test_the_theme_takes_the_color_of_the_cover);
-  r = r.it("the look is that of a dot-matrix display", test_the_look_is_that_of_a_dot_matrix_display);
+  r = r.it("the look has a grey or black background and red for what is on", test_the_look_of_the_player);
   r = r.it("the list that shows is the queue", test_a_list_is_the_queue);
   r = r.it("an album has its picture from a tag or from an image file", test_the_picture_of_an_album);
   r = r.it("a track plays on after the activity, and the player gives the device back when it stops", test_the_player_gives_the_device_back);
@@ -1127,7 +1144,7 @@ function main(): i32 {
   r = r.it("the settings give the same loudness to each track or each album", test_the_same_loudness);
   r = r.it("the equalizer has a slider for each band and presets", test_the_equalizer);
   r = r.it("the sound goes through the equalizer", test_the_equalizer_of_the_sound);
-  r = r.it("the screen of the track shows the spectrum", test_the_spectrum);
+  r = r.it("the screen of the equalizer shows the spectrum", test_the_spectrum);
   r = r.it("the player keeps its place for the next start", test_the_player_keeps_its_place);
   r = r.it("the screen of the track fits a short screen", test_the_track_screen_fits_a_short_screen);
   r = r.it("the tags of a song change, and its file has them", test_the_tags_of_a_song_change);
