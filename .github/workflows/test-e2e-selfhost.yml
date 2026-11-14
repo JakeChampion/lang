@@ -1048,7 +1048,7 @@ jobs:
       - uses: ./.github/actions/gnu-coreutils
         with:
           host: ${{ matrix.host }}
-      # The differential tests of examples/rg, examples/markdown and examples/age need their references.
+      # The port differential tests need their pinned reference programs.
       - uses: ./.github/actions/port-oracles
       - name: run self-host shard ${{ matrix.shard }}/${{ matrix.nshard }} (prebuilt binaries, four workers)
         id: run
