@@ -1698,15 +1698,9 @@ pub function (s: string) split(sep: string): string[] {
   return out.append(slice_unchecked(s, start, n) + "");
 }
 
+// Choose separator matches from right to left without overlap.
 pub function (s: string) rsplit(sep: string): string[] {
-  let fwd = s.split(sep);
-  let out: string[] = [];
-  let i = fwd.len() - 1;
-  while (i >= 0) {
-    out = out.append(fwd[i]);
-    i -= 1;
-  }
-  return out;
+  return s.rsplitn(sep, 2147483647);
 }
 
 pub function (s: string) splitn(sep: string, n: i32): string[] {
@@ -1742,6 +1736,19 @@ pub function (s: string) rsplitn(sep: string, n: i32): string[] {
   let out: string[] = [];
   if (n <= 0) {
     return out;
+  }
+  let sepLen = sep.len();
+  if (sepLen > 0) {
+    let end = s.len();
+    while (out.len() < n - 1) {
+      let hit = __str_rfind_from(s, end, sep, sepLen);
+      if (hit < 0) {
+        break;
+      }
+      out = out.append(slice_unchecked(s, hit + sepLen, end) + "");
+      end = hit;
+    }
+    return out.append(slice_unchecked(s, 0, end) + "");
   }
   let fwd = s.split(sep);
   let k = fwd.len();
