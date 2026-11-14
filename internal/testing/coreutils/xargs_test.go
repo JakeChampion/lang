@@ -29,6 +29,17 @@ func xc(stdin, line string) invocation {
 	return invocation{name: fmt.Sprintf("xargs %s <<< %q", line, stdin), args: shellWords(line), stdin: stdin}
 }
 
+// GNU xargs fails an assertion when -o has no terminal, and Apple's assert
+// prints the message in another form than glibc's.
+const appleAssert = "Apple's assert words the message of a failed assertion in another way"
+
+// xcDarwin is xc for a case whose reference is wrong on Darwin.
+func xcDarwin(stdin, line, defect string) invocation {
+	inv := xc(stdin, line)
+	inv.darwinLibcDefect = defect
+	return inv
+}
+
 // xargsInputCases: how the input splits into arguments.
 func xargsInputCases() []invocation {
 	return []invocation{
@@ -189,8 +200,8 @@ func xargsOptionCases() []invocation {
 		xc("a\n", `-p true`),
 		xc("a\n", `--interactive echo`),
 		xc("a\n", `-p -t echo`),
-		xc("a b\n", `-o echo`),
-		xc("a b\n", `--open-tty echo`),
+		xcDarwin("a b\n", `-o echo`, appleAssert),
+		xcDarwin("a b\n", `--open-tty echo`, appleAssert),
 		xc("a\n", `--show-limits -r true`),
 		xc("a\n", `--show-limits echo`),
 		xc("a\n", `-s 2000 --show-limits true`),

@@ -2,6 +2,7 @@ package coreutils
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -170,7 +171,28 @@ func findBasicTree(t *testing.T, dir string) {
 	if err := syscall.Mkfifo(filepath.Join(dir, "fifo"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := syscall.Mknod(filepath.Join(dir, "sock"), syscall.S_IFSOCK|0o644, 0); err != nil {
+	unixSocket(t, filepath.Join(dir, "sock"))
+}
+
+// unixSocket leaves a socket file at path. Darwin refuses mknod of a socket,
+// so the socket is bound, at a path short enough for sun_path, and renamed.
+func unixSocket(t *testing.T, path string) {
+	t.Helper()
+	short, err := os.MkdirTemp("/tmp", "sock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(short)
+	at := filepath.Join(short, "s")
+	l, err := net.ListenUnix("unix", &net.UnixAddr{Name: at, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.SetUnlinkOnClose(false)
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(at, path); err != nil {
 		t.Fatal(err)
 	}
 }
