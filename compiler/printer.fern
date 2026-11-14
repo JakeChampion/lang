@@ -420,6 +420,9 @@ function print_block_expr(c: ast.ExprCall, parent_prec: i32, depth: i32, f: Fmt)
         return ("unsafe " + text, nf);
       }
       let last = lm.body[lm.body.len() - 1];
+      if (is_missing_tail(last)) {
+        return print_value_block(lm.body, parser.e_unknown("block tail"), false, depth, f);
+      }
       if (print_return_only([last], depth).len() == 0) {
         return ("", f);
       }
@@ -446,6 +449,15 @@ function unsafe_value_body(body: ast.Stmt[]): Option[ast.Stmt[]] {
     }
   }
   return None;
+}
+
+// Whether st is the statement that the parser puts where a value block has no
+// trailing expression.
+function is_missing_tail(st: ast.Stmt): boolean {
+  if let ast.StmtUnknown(u) = st {
+    return u.kind == "value branch has no trailing expression";
+  }
+  return false;
 }
 
 function tail_expr(st: ast.Stmt): ast.Expr {
@@ -2842,14 +2854,22 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
     ast.StmtDefer(d) => {
       if (is_block_stmt(d.action)) {
         let blk = block_stmts(d.action);
+        let head = if (d.on_error != 0) { "errdefer " } else { "defer " };
         let inl = "{ ";
         for bi in 0..blk.len() {
           inl = inl + print_stmt_inline(blk[bi], 0) + " ";
         }
-        if (d.on_error != 0) {
-          return ("errdefer " + inl + "}", f);
+        if (!util.contains(inl, "\n")) {
+          return (head + inl + "}", f);
         }
-        return ("defer " + inl + "}", f);
+        let out = "{\n";
+        let g = f;
+        for bi in 0..blk.len() {
+          let (text, g1) = print_stmt(blk[bi], depth + 1, g);
+          out += text;
+          g = g1;
+        }
+        return (head + out + indent_str(depth) + "}", g);
       }
       let (act, dg) = print_stmt_body(d.action, depth, f);
       if (d.on_error != 0) {
@@ -3235,21 +3255,30 @@ pub function enum_index(enums: parser.EnumDecl[], name: string): i32 {
   return -1;
 }
 
-pub function variant_decl_index(structs: parser.StructDecl[], owner: string, name: string): i32 {
-  for i in 0..structs.len() {
-    if (structs[i].enum_owner == owner && structs[i].name == name) {
-      return i;
+// enum_variant_starts gives, for each enum, the index in structs of its first
+// variant, or -1 for an enum with no variant. The parser appends the variants
+// of an enum in order and together, so a name that the source declares twice
+// still gets its own variants.
+function enum_variant_starts(enums: parser.EnumDecl[], structs: parser.StructDecl[]): i32[] {
+  let out: i32[] = [];
+  let si = 0;
+  for ed in enums {
+    if (ed.variant_names.len() == 0) {
+      out = out.append(-1);
+      continue;
     }
+    while (si < structs.len() && (structs[si].enum_owner != ed.name || structs[si].name != ed.variant_names[0])) {
+      si += 1;
+    }
+    out = out.append(si);
+    si += ed.variant_names.len();
   }
-  return -1;
+  return out;
 }
 
-function print_enum_decl(ed: parser.EnumDecl, structs: parser.StructDecl[], flines: parser.FieldLines[], f: Fmt): (string, Fmt) {
+// d0 is the index in structs of the first variant of ed.
+function print_enum_decl(ed: parser.EnumDecl, structs: parser.StructDecl[], d0: i32, flines: parser.FieldLines[], f: Fmt): (string, Fmt) {
   let out = "";
-  let d0: i32 = -1;
-  if (ed.variant_names.len() > 0) {
-    d0 = variant_decl_index(structs, ed.name, ed.variant_names[0]);
-  }
   if (d0 >= 0 && structs[d0].derives.len() > 0) {
     out += "@derive(";
     let di = 0;
@@ -3279,7 +3308,7 @@ function print_enum_decl(ed: parser.EnumDecl, structs: parser.StructDecl[], flin
       let (lead, f1) = drain_leading(f, lns[mvi], 1);
       out += lead;
       f = f1;
-      out = out + indent_str(1) + print_enum_variant(ed, structs, mvi) + ",";
+      out = out + indent_str(1) + print_enum_variant(structs[d0 + mvi]) + ",";
       let (tr, f2) = emit_trailing(f, lns[mvi]);
       out = out + tr + "\n";
       f = f2;
@@ -3291,34 +3320,33 @@ function print_enum_decl(ed: parser.EnumDecl, structs: parser.StructDecl[], flin
     if (vi > 0) {
       out += ", ";
     }
-    out += print_enum_variant(ed, structs, vi);
+    out += print_enum_variant(structs[d0 + vi]);
   }
   return (out + " }\n", f);
 }
 
-function print_enum_variant(ed: parser.EnumDecl, structs: parser.StructDecl[], vi: i32): string {
-  let out = ed.variant_names[vi];
-  let si = variant_decl_index(structs, ed.name, ed.variant_names[vi]);
-  if (si >= 0 && structs[si].variant_field_names.len() > 0) {
+function print_enum_variant(sd: parser.StructDecl): string {
+  let out = sd.name;
+  if (sd.variant_field_names.len() > 0) {
     out += " {";
     let ri = 0;
-    while (ri < structs[si].fields.len()) {
+    while (ri < sd.fields.len()) {
       if (ri > 0) {
         out += ",";
       }
-      out = out + " " + structs[si].variant_field_names[ri] + ": " + structs[si].fields[ri].type_name;
+      out = out + " " + sd.variant_field_names[ri] + ": " + sd.fields[ri].type_name;
       ri += 1;
     }
     return out + " }";
   }
-  if (si >= 0 && structs[si].fields.len() > 0) {
+  if (sd.fields.len() > 0) {
     out += "(";
     let fi = 0;
-    while (fi < structs[si].fields.len()) {
+    while (fi < sd.fields.len()) {
       if (fi > 0) {
         out += ", ";
       }
-      out += structs[si].fields[fi].type_name;
+      out += sd.fields[fi].type_name;
       fi += 1;
     }
     return out + ")";
@@ -3606,26 +3634,17 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
   }
   for i in 0..mod.structs.len() {
     let owner = mod.structs[i].enum_owner;
-    let ei: i32 = -1;
-    if (owner.len() > 0) {
-      ei = enum_index(mod.enums, owner);
-    }
-    if (ei < 0) {
+    if (owner.len() == 0 || enum_index(mod.enums, owner) < 0) {
       kinds = kinds.append(0);
       idxs = idxs.append(i);
       lines = lines.append(mod.structs[i].line);
-    } else if (mod.enums[ei].variant_names[0] == mod.structs[i].name) {
-      kinds = kinds.append(1);
-      idxs = idxs.append(ei);
-      lines = lines.append(mod.enums[ei].line);
     }
   }
+  let variant_starts = enum_variant_starts(mod.enums, mod.structs);
   for vi in 0..mod.enums.len() {
-    if (mod.enums[vi].variant_names.len() == 0) {
-      kinds = kinds.append(1);
-      idxs = idxs.append(vi);
-      lines = lines.append(mod.enums[vi].line);
-    }
+    kinds = kinds.append(1);
+    idxs = idxs.append(vi);
+    lines = lines.append(mod.enums[vi].line);
   }
   for ai in 0..mod.aliases.len() {
     kinds = kinds.append(2);
@@ -3692,7 +3711,7 @@ function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[
       wrote = true;
       f = sf2;
     } else if (kinds[di] == 1) {
-      let (etext, ef) = print_enum_decl(mod.enums[idxs[di]], mod.structs, flines, f);
+      let (etext, ef) = print_enum_decl(mod.enums[idxs[di]], mod.structs, variant_starts[idxs[di]], flines, f);
       chunks = chunks.append(etext);
       wrote = true;
       f = ef;
