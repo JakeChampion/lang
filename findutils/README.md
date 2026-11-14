@@ -59,7 +59,10 @@ readdir. A test of the name or of the type thus needs no stat.
 The options are `-0`, `-a`, `-d`, `-E`, `-e`, `-I`, `-i`, `-L`, `-l`,
 `-n`, `-s`, `-x`, `-P`, `-p`, `-r`, `-t`, `-o`, `--show-limits` and
 `--process-slot-var`. SIGUSR1 adds one command to `-P`, and SIGUSR2 takes
-one away, as in GNU xargs. The exit status is one of these:
+one away, as in GNU xargs. With `-P`, xargs waits for the first command
+that ends, and then it starts the next command. `-I` replaces the string
+in each initial argument after the command name. The exit status is one of
+these:
 
 - 0 when each command exits with 0.
 - 123 when a command exits with a status from 1 to 125.
@@ -68,6 +71,14 @@ one away, as in GNU xargs. The exit status is one of these:
 - 126 when a command cannot run.
 - 127 when there is no command of that name.
 - 1 for an error in the options or the input.
+
+A command that exits with 255, a command that a signal stops, a command
+that cannot run and an error each stop xargs. xargs then waits for the
+commands that still run, as GNU xargs does at exit. If one of them exits
+with 255 or a signal stops it, xargs stops at once with 124 or 125.
+Otherwise, when a command exited with a status from 1 to 125, the status
+is 123. At the end of the input xargs waits in the same way. Thus a command
+that exits with 255 there gives 124, also after a command that failed.
 
 ## What is not in the ports
 
@@ -103,3 +114,20 @@ same system calls, so the time is the same. The port uses more user time
 than GNU find: 0.12 s to 0.15 s against 0.09 s to 0.11 s. Most of it is
 the copy of the entry of the walk for each file. The pipeline with xargs
 spends its time in the 5000 runs of `true`.
+
+The table below compares xargs `-P` with GNU xargs 4.9.0 on the same
+machine. Each value is the median of 11 runs. The total CPU time includes
+the commands. The xargs CPU time is the time of xargs alone. Other programs
+used the machine during the runs, so the wall times change by 10% or more
+from run to run.
+
+| Workload | GNU wall | Fern wall | GNU CPU | Fern CPU | GNU xargs CPU | Fern xargs CPU |
+|---|---|---|---|---|---|---|
+| `seq 2000 \| xargs -P 4 -n 1 true` | 3.42 s | 3.01 s | 2.25 s | 2.14 s | 157 ms | 144 ms |
+| 400 commands that sleep 0 to 40 ms, `-P 4` | 2.34 s | 2.25 s | 0.56 s | 0.54 s | 51 ms | 50 ms |
+| one command that sleeps 1 s, then 150 of 10 ms, `-P 2` | 1.53 s | 1.54 s | 0.21 s | 0.20 s | 21 ms | 19 ms |
+| `seq 2000 \| xargs -n 1 true` | 3.24 s | 3.60 s | 2.21 s | 2.17 s | 163 ms | 167 ms |
+
+xargs waits for the first command that ends, so a slow command does not
+stop the start of the next ones. xargs reads the environment one time and
+not again for each command.

@@ -273,6 +273,7 @@ struct Prog {
   fmts: Fmt[],
   outs: OutSpec[],
   execs: cmdline.Spec[],
+  env: string[],
   zone: tz.Zone,
   needs_names: boolean,
 }
@@ -3044,7 +3045,7 @@ function eval_exec_here(p: Prog, x: i32, own r0: Run): Run {
     arg = a;
   }
   if (spec.plus) {
-    let r1 = add_to_batch(r0, x, spec, dir, arg);
+    let r1 = add_to_batch(p, r0, x, dir, arg);
     return set_ok(r1, true);
   }
   let argv = cmdline.substitute(spec.words, arg);
@@ -3054,16 +3055,16 @@ function eval_exec_here(p: Prog, x: i32, own r0: Run): Run {
       return set_ok(r, false);
     }
   }
-  let res = cmdline.run(argv, dir, spec.ask);
+  let res = cmdline.run(argv, dir, spec.ask, p.env);
   let r2 = exec_outcome(r, spec, res);
   return set_ok(r2, res.errno == 0 && res.signal == 0 && res.code == 0);
 }
 
-function add_to_batch(own r0: Run, x: i32, spec: cmdline.Spec, dir: string, arg: string): Run {
+function add_to_batch(p: Prog, own r0: Run, x: i32, dir: string, arg: string): Run {
   let r = r0;
   let b = r.batches[x];
   if (b.args.len() > 0 && (b.dir != dir || !cmdline.fits(b, arg))) {
-    r = run_batch(r, x, spec);
+    r = run_batch(p, r, x);
     b = r.batches[x];
   }
   let nb = cmdline.batch_add(b, arg, dir);
@@ -3071,14 +3072,15 @@ function add_to_batch(own r0: Run, x: i32, spec: cmdline.Spec, dir: string, arg:
   return Run { ...r, batches: kept };
 }
 
-function run_batch(own r0: Run, x: i32, spec: cmdline.Spec): Run {
+function run_batch(p: Prog, own r0: Run, x: i32): Run {
   let b = r0.batches[x];
   if (b.args.len() == 0) {
     return r0;
   }
+  let spec = p.execs[x];
   let r = flush_out(r0);
   let argv = cmdline.batch_argv(spec, b);
-  let res = cmdline.run(argv, b.dir, false);
+  let res = cmdline.run(argv, b.dir, false, p.env);
   let r2 = exec_outcome(r, spec, res);
   let (_, kept) = r2.batches.swap_at(x, cmdline.batch_new(spec));
   return Run { ...r2, batches: kept };
@@ -3097,7 +3099,7 @@ function run_batches_here(p: Prog, own r0: Run): Run {
   let x = 0;
   while (x < p.execs.len()) {
     if (p.execs[x].plus) {
-      r = run_batch(r, x, p.execs[x]);
+      r = run_batch(p, r, x);
     }
     x += 1;
   }
@@ -3581,7 +3583,11 @@ function main(): i32 {
   } else if (paths.len() == 0) {
     paths = ["."];
   }
-  let p = Prog { o: opts, nodes: nodes, root: root, globs: globs, rxs: rxs, fmts: fmts, outs: outs, execs: execs, zone: tz.local_zone(), needs_names: needs_names };
+  let env: string[] = [];
+  if (execs.len() > 0) {
+    env = environ();
+  }
+  let p = Prog { o: opts, nodes: nodes, root: root, globs: globs, rxs: rxs, fmts: fmts, outs: outs, execs: execs, env: env, zone: tz.local_zone(), needs_names: needs_names };
   let batches: cmdline.Batch[] = [];
   for s in execs {
     batches = batches.append(cmdline.batch_new(s));
