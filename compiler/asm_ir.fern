@@ -4721,20 +4721,24 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".Laoe_ret:\n");
     s = s.write("    ret\n");
   }
+  // %rsi holds the number of words of the box. __fern_arr_box takes one
+  // less: its block has the word of an array length, which the box uses as
+  // its first word.
   s = s.write("__fn___fern_alloc_reuse:\n");
   s = s.write("    movq 16(%rsp), %rax\n");
   s = s.write("    movq 8(%rsp), %rsi\n");
   s = s.write("__fn___fern_alloc_reuse.r:\n");
   s = s.write("    testq %rax, %rax\n");
   s = s.write("    jz .Lsarelo_fresh\n");
-  s = s.write("    cmpq %rsi, -16(%rax)\n");
+  s = s.write("    leaq -1(%rsi), %rdi\n");
+  s = s.write("    cmpq %rdi, -16(%rax)\n");
   s = s.write("    je .Lsarelo_ret\n");
   s = s.write("    pushq %rsi\n");
   s = s.write("    call __fn___fern_arr_dec.r\n");
   s = s.write("    popq %rsi\n");
   s = s.write(".Lsarelo_fresh:\n");
   s = s.write("__fn___fern_alloc_reuse.f:\n");
-  s = s.write("    movq %rsi, %rdi\n");
+  s = s.write("    leaq -1(%rsi), %rdi\n");
   s = s.write("    jmp __fern_arr_box\n");
   s = s.write(".Lsarelo_ret:\n");
   s = s.write("    ret\n");
@@ -8812,9 +8816,9 @@ function ssa_reuse_alloc(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowS
   let fresh = asmcore.lab_new(helper_arg_moves(ins, reg_of, s), lp + "raf" + id);
   let en = asmcore.lab_new(fresh.state, lp + "rae" + id);
   s = ssa_branch(en.state.write("    testq %rax, %rax\n"), J_JZ, fresh.lab);
-  s = ssa_branch(s.write("    cmpq %rsi, -16(%rax)\n"), J_JE, en.lab);
+  s = ssa_branch(s.write("    leaq -1(%rsi), %rdi\n    cmpq %rdi, -16(%rax)\n"), J_JE, en.lab);
   s = ssa_branch(ssa_call_saving(s, "__fn___fern_alloc_reuse.r", saves), J_JMP, en.lab);
-  s = ssa_call_saving(s.lab_def(fresh.lab).write("    movq %rsi, %rdi\n"), "__fern_arr_box", saves);
+  s = ssa_call_saving(s.lab_def(fresh.lab).write("    leaq -1(%rsi), %rdi\n"), "__fern_arr_box", saves);
   return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s.lab_def(en.lab)));
 }
 

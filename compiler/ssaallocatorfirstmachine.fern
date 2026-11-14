@@ -604,5 +604,5 @@ function next_pc(s: State, op: isa.Op, pc: i32): i32 {
 
 pub function check(output: string): boolean {
   let p = init.program(output);
-  return p.error == "" && text.allocator_storage(output) && path(p, 40) && path(p, 48);
+  return p.error == "" && text.allocator_storage(output) && path(p, 32) && path(p, 40);
 }

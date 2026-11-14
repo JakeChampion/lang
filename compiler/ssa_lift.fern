@@ -554,9 +554,12 @@ function lift_prod_store(k: string, op: ir.Op, lv: LiftVals): LiftVals {
   };
 }
 
+// A record and a tuple use the first word of the block, which is the length
+// of an array, for their own first word. So the capacity that they ask for
+// is one less than their number of words.
 function lift_prod_make(k: string, op: ir.Op, lv: LiftVals): Option[LiftVals] {
   if (k == "struct_make") {
-    return Some(lift_box_make(op.i32_imm + 1, op.i32_imm, 8, op.str, lv));
+    return Some(lift_box_make(op.i32_imm, op.i32_imm, 8, op.str, lv));
   }
   if (k == "arr_make" && op.i32_imm == 0) {
     return Some(lift_empty_arr(lv));
@@ -568,7 +571,7 @@ function lift_prod_make(k: string, op: ir.Op, lv: LiftVals): Option[LiftVals] {
     return Some(lift_box_make(op.i32_imm, op.i32_imm, 8, "", lv));
   }
   if (k == "tuple_make") {
-    return Some(lift_box_make(op.i32_imm, op.i32_imm, 0, "", lv));
+    return Some(lift_box_make(if (op.i32_imm > 0) { op.i32_imm - 1 } else { 0 }, op.i32_imm, 0, "", lv));
   }
   if (k == "opt_make") {
     return Some(lift_opt_make_prod(op.i32_imm, lv));

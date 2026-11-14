@@ -600,5 +600,5 @@ function next_pc(s: State, op: isa.Op, pc: i32): i32 {
 pub function check(output: string): boolean {
   let p = isa.allocator_program(output);
   let miss = isa.allocator_miss_entry(output);
-  return p.error == "" && text.allocator_storage(output) && path(p, miss, 40, false) && path(p, miss, 40, true) && path(p, miss, 48, false) && path(p, miss, 48, true);
+  return p.error == "" && text.allocator_storage(output) && path(p, miss, 32, false) && path(p, miss, 32, true) && path(p, miss, 40, false) && path(p, miss, 40, true);
 }

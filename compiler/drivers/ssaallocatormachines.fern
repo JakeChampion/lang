@@ -30,7 +30,7 @@ function request_and_slot(s: string): void {
   mutation(s, "addq $7, %rdi", "movq $40, %rdi", false);
   mutation(s, "andq $-8, %rdi", "", false);
   mutation(s, "cmpq $2048, %rdi", "cmpl $2048, %edi", true);
-  mutation(s, "cmpq $2048, %rdi", "cmpq $40, %rdi", false);
+  mutation(s, "cmpq $2048, %rdi", "cmpq $32, %rdi", false);
   mutation(s, "leaq __fern_freelist(%rip), %rax", "leaq __fern_freelist(%rip), %rcx", false);
   mutation(s, "movq (%rdi), %rax", "movl (%rdi), %eax", false);
   mutation(s, "movq (%rdi), %rax", "movq 8(%rdi), %rax", false);

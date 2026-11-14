@@ -49,7 +49,7 @@ function find(blocks: Block[], address: i64): i32 {
 }
 
 function bounds(capacity: i32, h: Heap): boolean {
-  if (capacity != 2 && capacity != 3 || h.base < 65536 || h.base % 8 != 0) {
+  if (capacity != 1 && capacity != 2 || h.base < 65536 || h.base % 8 != 0) {
     return false;
   }
   if (h.end <= h.base || h.end >= 140737488355328 as i64) {
@@ -182,5 +182,5 @@ pub function trace(capacity: i32, initial: Heap, actions: Action[]): boolean {
 
 pub function check(output: ssaprepare.Output, name: string, initial: Heap, actions: Action[]): boolean {
   let bound = constructor.resolve(output, name);
-  return bound.error == "" && allocation.record(output, name) && release.check_native_record(output.text) && trace(bound.words, initial, actions);
+  return bound.error == "" && allocation.record(output, name) && release.check_native_record(output.text) && trace(bound.words - 1, initial, actions);
 }
