@@ -1,3 +1,6 @@
+# 2026-11-14: PR #15784, perf-aarch64 job 132329298773 on the merge with main 8ce8fde7.
+# aarch64/http_hello.text is 1.13% below its pin. Main's compiler and #15784 emit the same 16432
+# instructions for it, so it is a value of main. The row moves to its measured value. Keep all tolerances.
 # 2026-11-13: PR #15784, perf-x86_64 job 132195198217 on the merge with main 38768eb2.
 # perceus_rbtree_ck .text +7.7% and .ir +29.1% (089d854d keeps the trees of the benchmark); string_slice, tokenize and the two
 # utf8_ingest rows down. Main's compiler and #15784 emit the same code for each program of bench/ on
@@ -663,7 +666,7 @@ aarch64/deflate_encode.text	7735
 aarch64/enum_match.text	1165
 aarch64/enum_match.ir	24975095
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-aarch64/http_hello.text	16619
+aarch64/http_hello.text	16432
 # 2026-10-30 (#13900): CI41026748018 measures aarch64/http_hello.ir 4.98% lower on main 33b21667. #13900 does not change the serve path.
 aarch64/http_hello.ir	23892626
 aarch64/int_loop.text	383
