@@ -1,6 +1,10 @@
 # 2026-11-13: CI 43517654014, job 132208527194, tested merge 4993a5d5.
 # Main 38768eb2 with HEVC input. These rows use the complete measured report.
 # Workloads, metric keys, and tolerances are unchanged.
+# 2026-11-13: PR #15784, perf-x86_64 job 132195198217 on the merge with main 38768eb2. Twenty-three
+# emit rows moved, perceus_rbtree_ck by +6.7% to +7.7% (089d854d adds length to the benchmark) and the others by 1% to 3%. Main's
+# compiler and #15784 emit the same code for each program of bench/ on x86-64 and arm64, so these are
+# values of main. Each row moves to its measured value. Keep all tolerances.
 # 2026-11-13: PR #15739, perf-x86_64 job 132017371022 on the merge with main 629da263. Eleven emit rows
 # of perceus_cfold, perceus_rbtree, perceus_rbtree_ck, pmap_insert and pvec_with are 1.2% to 4.8%
 # below their pins. These are values of main: #15739 changes no code that these programs reach. Each
