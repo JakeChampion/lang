@@ -1,0 +1,145 @@
+// age-plugin-test: the test plugin of age's plugin tests. A recipient
+// age1test1... wraps the file key in a "test" stanza, and an identity
+// AGE-PLUGIN-TEST-1... unwraps a file with one "test" stanza. The variable
+// AGE_TEST_PLUGIN selects a behavior, for the tests of the client:
+//
+//   msg, secret, public, confirm, enter   ask the client through its terminal
+//   error                                 refuse the key
+//   labels, two                           send labels, or two stanzas
+//   slow                                  wait 6 seconds before the answer
+//   zero, index, short, dupkey, badconfirm, crash
+//                                         break the protocol
+import "std/array";
+import "../../format";
+import "../../goflag";
+import "../../plugin";
+import "../../pluginserver";
+import "../../text";
+
+function mode(): string {
+  return env("AGE_TEST_PLUGIN").unwrap_or("");
+}
+
+// The questions to the client before a wrap or an unwrap.
+function ask(own s: pluginserver.Session): (pluginserver.Session, Option[string]) {
+  let m = mode();
+  if (m == "msg") {
+    let (s2, failed) = pluginserver.display_message(s, "hello from the test plugin");
+    return (s2, failed);
+  }
+  if (m == "secret" || m == "public") {
+    let (s2, got) = pluginserver.request_value(s, f"the {m} value:", m == "secret");
+    return match (got) {
+      Ok(v) => (s2, if (text.ascii(v) == "sesame") { None } else { Some("wrong value " + text.quote(v)) }),
+      Err(why) => (s2, Some(why)),
+    };
+  }
+  if (m == "confirm" || m == "enter") {
+    let no = if (m == "confirm") { "no" } else { "" };
+    let (s2, got) = pluginserver.confirm(s, "go on?", "yes", no);
+    return match (got) {
+      Ok(true) => (s2, None),
+      Ok(false) => (s2, Some("the user said no")),
+      Err(why) => (s2, Some(why)),
+    };
+  }
+  if (m == "error") {
+    return (s, Some("the test plugin refuses"));
+  }
+  if (m == "slow") {
+    sleep_ms(6000);
+  }
+  return (s, None);
+}
+
+function wrap(own s: pluginserver.Session, k: u8[], file_key: u8[]): (pluginserver.Session, Result[pluginserver.Wrapped, string]) {
+  let (s2, failed) = ask(s);
+  if let Some(why) = failed {
+    return (s2, Err(why));
+  }
+  let st = format.Stanza { kind: "test", args: [], body: file_key };
+  let stanzas = if (mode() == "two") { [st, format.Stanza { kind: "test", args: ["second"], body: file_key }] } else { [st] };
+  let labels = if (mode() == "labels") { ["b", "a"] } else { [] };
+  return (s2, Ok(pluginserver.Wrapped { stanzas: stanzas, labels: labels }));
+}
+
+function unwrap(own s: pluginserver.Session, k: u8[], stanzas: format.Stanza[]): (pluginserver.Session, format.Unwrapped) {
+  let (s2, failed) = ask(s);
+  if let Some(why) = failed {
+    return (s2, format.Invalid(why));
+  }
+  if (stanzas.len() == 1 && stanzas[0].kind == "test") {
+    return (s2, format.FileKey(stanzas[0].body));
+  }
+  return (s2, format.Incorrect);
+}
+
+function key(data: u8[]): Result[u8[], string] {
+  return Ok(data);
+}
+
+// The stanzas of the client up to done, for the modes that break the
+// protocol.
+function read_all(own c: plugin.Conn): plugin.Conn {
+  loop {
+    let (c2, got) = plugin.receive(c);
+    c = c2;
+    match (got) {
+      Ok(st) => {
+        if (st.kind == "done") {
+          return c;
+        }
+      },
+      Err(_) => {
+        return c;
+      }
+    }
+  }
+  return c;
+}
+
+// The answer of a mode that breaks the protocol, or None.
+function broken_answer(machine: string): Option[string] {
+  let m = mode();
+  let wrapping = machine == "recipient-v1";
+  return match (m) {
+    "zero" => Some("-> done\n\n"),
+    "index" => Some(if (wrapping) { "-> recipient-stanza 1 test\n\n-> done\n\n" } else { "-> file-key 1\n\n-> done\n\n" }),
+    "short" => Some(if (wrapping) { "-> recipient-stanza 0\n\n-> done\n\n" } else { "-> file-key\n\n-> done\n\n" }),
+    "dupkey" => Some("-> file-key 0\nAAAAAAAAAAAAAAAAAAAAAA\n-> file-key 0\nAAAAAAAAAAAAAAAAAAAAAA\n-> done\n\n"),
+    "badconfirm" => Some("-> confirm eWVz bm8 bWF5YmU\ngo on?\n"),
+    "crash" => Some(""),
+    _ => None,
+  };
+}
+
+function main(): i32 {
+  let argv = args();
+  let flags = match (pluginserver.flags(goflag.Names { bools: [], values: [] }, "age-plugin-test", array.slice(argv, 1, argv.len()))) {
+    Ok(f) => f,
+    Err(code) => {
+      return code;
+    },
+  };
+  let (machine, _) = pluginserver.machine_of(flags);
+  if let Some(answer) = broken_answer(machine) {
+    read_all(plugin.conn_of(stdin(), stdout(), "test"));
+    stdout().write(answer);
+    if (mode() == "crash") {
+      return 1;
+    }
+    // The client closes the pipe after the answer, so its writes of ok do
+    // not race the end of the plugin.
+    loop {
+      let Ok(b) = stdin().read_chunk_bytes(4096) else {
+        break;
+      };
+      if (b.len() == 0) {
+        break;
+      }
+    }
+    return 0;
+  }
+  let h = pluginserver.Handlers { name: "test", recipient: Some(key), identity_as_recipient: Some(key), identity: Some(key), wrap: wrap, unwrap: unwrap };
+  return pluginserver.serve(h, machine);
+}
