@@ -1,8 +1,13 @@
-examples/jq/tests/jq.test is the test suite of jq 1.7.
-Reference: https://github.com/jqlang/jq/blob/jq-1.7/tests/jq.test
+examples/jq/tests/jq.test is the test suite of jq 1.7, and
+examples/jq/tests/modules holds the modules that the suite imports.
+Reference: https://github.com/jqlang/jq/tree/jq-1.7/tests
+
+The PRELUDE of examples/jq/filter.fern holds the jq definitions of some
+builtins from src/builtin.jq of jq 1.7.
 
 Copyright (C) 2012 Stephen Dolan.
-The suite has the MIT license of jq. The full license text of jq is in COPYING.txt.
+These files have the MIT license of jq. The full license text of jq is in
+COPYING.txt.
 
-The Fern port in examples/jq does not copy source code from jq.
+The rest of the Fern port in examples/jq does not copy source code from jq.
 It implements the behaviour of the jq 1.7 manual.

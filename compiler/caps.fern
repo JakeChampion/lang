@@ -70,6 +70,7 @@ pub function builtin_caps(): BuiltinCap[] {
     BuiltinCap { builtin: "clone_file", capability: "fs" },
     BuiltinCap { builtin: "create_symlink", capability: "fs" },
     BuiltinCap { builtin: "read_link", capability: "fs" },
+    BuiltinCap { builtin: "map_file_unchecked", capability: "fs" },
     BuiltinCap { builtin: "read_link_bytes", capability: "fs" },
     BuiltinCap { builtin: "getxattr", capability: "fs" },
     BuiltinCap { builtin: "getxattr_bytes", capability: "fs" },

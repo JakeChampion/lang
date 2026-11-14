@@ -45,6 +45,12 @@ the quality of the settings. A transcode is of the whole item, and the
 player seeks in it, as Plezy does. While the player is paused, the app pings
 the transcode so that the server keeps it.
 
+A phone can list a decoder that the media player does not use. Thus a file
+that plays as it is can have no sound. Then the app plays it again
+from the same place as a transcode that converts the sound. It does this
+when the player selects no sound track, or when it reports that the sound
+stopped. The player shows "Direct play" or "Transcode" after the title.
+
 Search and settings:
 
 - Search starts when you stop typing, and shows the hubs of the results.

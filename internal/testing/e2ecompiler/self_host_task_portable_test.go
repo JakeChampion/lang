@@ -20,6 +20,104 @@ func TestSelfHostTaskDeadline(t *testing.T) {
 	checkTaskProgramOnTargets(t, e2eharness.TaskDeadlineProgram, e2eharness.TaskDeadlineWant)
 }
 
+// A parked task whose last handle goes away is cancelled: its wait answers
+// Cancelled and its defer runs. A task that was not started prints nothing.
+// A task whose handle lives is not cancelled.
+const taskDroppedProgram = `import "std/async";
+
+function body(name: string): i32 {
+    defer print("defer " + name);
+    let held = "live " + name;
+    print("start " + name);
+    match (async.wait_any([], None)) {
+        Woke(_) => { print("woke " + name + " " + held); },
+        TimedOut => { print("timed out " + name + " " + held); },
+        Cancelled => { print("cancelled " + name + " " + held); }
+    }
+    return 1;
+}
+
+@noinline
+function started(): void {
+    let t = async.task_new((): i32 => body("started"));
+    match (async.task_start(t)) {
+        Done(_) => { print("done"); },
+        Suspended(_) => { print("suspended"); }
+    }
+}
+
+@noinline
+function made(): void {
+    let t = async.task_new((): i32 => body("made"));
+    print("made");
+}
+
+@noinline
+function spawned(): void {
+    match (async.spawn((): i32 => body("spawned"))) {
+        Ready(_) => { print("ready"); },
+        Pending(_, _) => { print("pending"); },
+        Cancelled => { print("cancelled"); }
+    }
+}
+
+@noinline
+function park(t: async.Task[i32]): void {
+    match (async.task_start(t)) {
+        Done(_) => { print("done"); },
+        Suspended(_) => { print("suspended"); }
+    }
+}
+
+@noinline
+function kept(): void {
+    let t = async.task_new((): i32 => body("kept"));
+    park(t);
+    print("the handle lives");
+    match (async.task_resume(t, async.Wake.TimedOut)) {
+        Done(v) => { print("done " + v.to_string()); },
+        Suspended(_) => { print("suspended"); }
+    }
+}
+
+function main(): i32 {
+    started();
+    print("--");
+    made();
+    print("--");
+    spawned();
+    print("--");
+    kept();
+    print("end of main");
+    return 0;
+}
+`
+
+const taskDroppedWant = `start started
+cancelled started live started
+defer started
+suspended
+--
+made
+--
+start spawned
+cancelled spawned live spawned
+defer spawned
+pending
+--
+start kept
+suspended
+the handle lives
+timed out kept live kept
+defer kept
+done 1
+end of main
+`
+
+func TestSelfHostTaskDroppedWhileParkedIsCancelled(t *testing.T) {
+	checkTaskProgramOnTargets(t, taskDroppedProgram, taskDroppedWant)
+}
+
 // checkTaskProgramOnTargets runs program on x86-64-linux, arm64-linux and
 // wasm32-wasi (composed against cmd/fern/wit) and compares its stdout with want.
 func checkTaskProgramOnTargets(t *testing.T, program, want string) {
