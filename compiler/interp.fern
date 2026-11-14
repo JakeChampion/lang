@@ -1036,14 +1036,17 @@ pub struct Env { outer: Option[Env], depth: i32, names: string[], values: Value[
 
 // The program's functions in declaration order, indexed by the name a call
 // uses: the declared name, except that a Map `__iterator` is `iter`.
-pub struct Funcs { decls: parser.FuncDecl[], runtime_names: util.NameIndex }
+// `receivers` holds the runtime_receiver_name of each declaration.
+pub struct Funcs { decls: parser.FuncDecl[], runtime_names: util.NameIndex, receivers: string[] }
 
 function funcs_of(decls: parser.FuncDecl[]): Funcs {
   let names: string[] = [];
+  let receivers: string[] = [];
   for fd in decls {
     names = names.append(runtime_method_name(fd));
+    receivers = receivers.append(runtime_receiver_name(fd.receiver_type));
   }
-  return Funcs { decls: decls, runtime_names: util.name_index(names) };
+  return Funcs { decls: decls, runtime_names: util.name_index(names), receivers: receivers };
 }
 
 // The positions of the functions that a call of `name` can reach, in
@@ -5522,7 +5525,7 @@ function method_target_index(name: string, recv: Value, env: Env): i32 {
   let rt = value_type_name(recv);
   for at in env.funcs.named(name) {
     let fd = env.funcs.decls[at];
-    if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && runtime_receiver_name(fd.receiver_type) == rt) {
+    if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && env.funcs.receivers[at] == rt) {
       return at;
     }
   }
@@ -6275,7 +6278,7 @@ function runtime_method_name(fd: parser.FuncDecl): string {
 function has_receiver_method(funcs: Funcs, recv_type: string, name: string): boolean {
   for at in funcs.named(name) {
     let fd = funcs.decls[at];
-    if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && runtime_receiver_name(fd.receiver_type) == recv_type) {
+    if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && funcs.receivers[at] == recv_type) {
       return true;
     }
   }
@@ -6626,7 +6629,7 @@ function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: s
   let own_method = has_receiver_method(funcs, recv_type, name);
   for at in funcs.named(name) {
     let fd = funcs.decls[at];
-    let receiver_base = runtime_receiver_name(fd.receiver_type);
+    let receiver_base = funcs.receivers[at];
     let rt_match = receiver_base == recv_type;
     if (!rt_match && !own_method && variant_of_enum(recv, receiver_base, aliases)) {
       rt_match = true;
@@ -9667,7 +9670,7 @@ function receiver_has_method(funcs: Funcs, recv: Value, name: string): boolean {
   let rt = value_type_name(recv);
   for at in funcs.named(name) {
     let fd = funcs.decls[at];
-    if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && runtime_receiver_name(fd.receiver_type) == rt) {
+    if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && funcs.receivers[at] == rt) {
       return true;
     }
   }
