@@ -105,13 +105,13 @@ function procs(o: gz.Options): i32 {
 }
 
 // The input bytes of one read of a compression: a block for one process.
-// For more, a round of parallel_compress: about 1 MiB of whole blocks for
+// For more, a round of parallel_compress: about 4 MiB of whole blocks for
 // each process, and no more than 64 MiB.
 function round_size(o: gz.Options, procs: i32): i32 {
   if (procs <= 1) {
     return o.block;
   }
-  let per = if (o.block >= 1048576) { o.block as i64 } else { (1048576 / o.block * o.block) as i64 };
+  let per = if (o.block >= 4194304) { o.block as i64 } else { (4194304 / o.block * o.block) as i64 };
   let size = per * (procs as i64);
   let cap = if (o.block as i64 > 67108864i64) { o.block as i64 } else { 67108864i64 / (o.block as i64) * (o.block as i64) };
   if (size > cap) {
