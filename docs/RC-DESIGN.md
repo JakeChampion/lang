@@ -556,6 +556,7 @@ where a second context exists holds it in its own way:
 | tasks, `Future` combinators, `std/sim` | values in the one heap | one thread; a task parks only at `__task_park` |
 | wasm `async function` exports and imports | canonical-ABI copies | the export signature admits scalars only |
 | `-shared` exports | C arguments | `__fern_busy`, a futex lock: each export entry takes it and waits while another thread holds it; a `__c_call` gives it back for the call, so a C callback entering an export on the same thread still runs, and another thread can run while this one is in C; a give that wakes a waiter keeps the turn for it, so a thread that asks again at once waits for up to 1 ms and does not take the turn back |
+| `-shared` exports of a `@norc` function, such as the AAudio data callback of `std/android/audio` | scalars and raw memory | the `@norc` rule (E102): the function has only scalars, and calls only `@norc` functions and the raw memory intrinsics, so it touches no box and no allocator. Its entry takes no turn on `__fern_busy` and does not write `__fern_stack_top`, so it runs while another thread runs Fern code. It shares memory with that thread through the atomics; `TestSharedLibBusyLock`'s `norc` mode calls one while another thread holds the turn |
 
 `TestX86_64SignalPreemption` and its arm64 sibling hold the signal row under
 real preemption. They interrupt heavy count traffic with signals sent from
