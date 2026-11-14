@@ -73,6 +73,15 @@ seconds and fails CI most often — `go build`, `go vet`, `gofmt-check`,
 `freeze` stay in CI's lint lane. `git push --no-verify` skips it; it is a
 convenience, not a gate.
 
+The hook also runs `go test ./internal/testing/sourcelint/` (about 40 s). That
+package holds the tables that need a row for each new fixture, document or
+stdlib module, and a missing row was a frequent cause of a red main.
+`scripts/check-ratchets` (about 35 s) compares the lint ratchets with the
+commit that the push starts from: the modern-form findings, the complexity of
+the Fern sources and two counts of the feature census. No count is pinned.
+Each change answers only for what it adds, so two pull requests cannot pass
+alone and fail together.
+
 Two more checks run in the hook. `make fmt-check` rebuilds `bin/fern`, and
 when `compiler/` or the stdlib changed, that compiles the compiler with the
 stage0 pin. So a construct that stage0 cannot compile fails at the push.

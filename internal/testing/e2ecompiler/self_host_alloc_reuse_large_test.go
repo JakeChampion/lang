@@ -163,10 +163,10 @@ func checkAllocReuseDonorPAC(t *testing.T, gcc, runner, dir, assembly, frame, wa
 }
 
 // The probe makes a box of cap words, gives it to the reuse entry for a box
-// of want words, and releases the result. With short, a box of two words or
-// more has a header of one word, and its number of words is at -4. Each
-// other box has the header of an array, with a capacity of one less than its
-// number of words.
+// of want words, and releases the result. With short, a box of at most
+// 65,535 words has a header of one word, and its number of words is at -4.
+// Each other box has the header of an array, with a capacity of one less
+// than its number of words.
 func allocReuseDonorProbe(target string, cap, want int, stack, quarantine, short bool) string {
 	mismatch := cap > 0 && cap != want
 	if target == "x86-64-linux" {
@@ -180,7 +180,7 @@ func allocReuseDonorProbe(target string, cap, want int, stack, quarantine, short
 		} else {
 			s += "    call __fn___fern_alloc_reuse.r\n"
 		}
-		if short && want >= 2 {
+		if short && want <= 65535 {
 			s += fmt.Sprintf("    cmpl $%d, -4(%%rax)\n    jne .Lprobe_fail\n    cmpl $1, -8(%%rax)\n    jne .Lprobe_fail\n", want)
 		} else {
 			s += fmt.Sprintf("    cmpq $%d, -16(%%rax)\n    jne .Lprobe_fail\n    cmpl $1, -8(%%rax)\n    jne .Lprobe_fail\n", want-1)
@@ -208,7 +208,7 @@ func allocReuseDonorProbe(target string, cap, want int, stack, quarantine, short
 		s += fmt.Sprintf("    movz x0, #%d\n    movk x0, #%d, lsl #16\n    bl __fern_rec_box\n    mov x20, x0\n", cap&65535, cap>>16)
 	}
 	s += fmt.Sprintf("    movz x1, #%d\n    movk x1, #%d, lsl #16\n    sub sp, sp, #32\n    str x20, [sp, #16]\n    str x1, [sp]\n    bl __fn___fern_alloc_reuse\n    add sp, sp, #32\n", want&65535, want>>16)
-	if short && want >= 2 {
+	if short && want <= 65535 {
 		s += fmt.Sprintf("    ldur w2, [x0, #-4]\n    movz x3, #%d\n    movk x3, #%d, lsl #16\n    cmp x2, x3\n    b.ne .Lprobe_fail\n", want&65535, want>>16)
 	} else {
 		s += fmt.Sprintf("    ldur x2, [x0, #-16]\n    movz x3, #%d\n    movk x3, #%d, lsl #16\n    cmp x2, x3\n    b.ne .Lprobe_fail\n", (want-1)&65535, (want-1)>>16)

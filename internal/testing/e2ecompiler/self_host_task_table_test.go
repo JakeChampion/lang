@@ -17,7 +17,10 @@ function work(n: i32): i32 {
 function churn(rounds: i32): i64 {
   let start: i64 = monotonic_ns();
   for i in 0..rounds {
-    let st: async.TaskStatus[i32] = async.task_start(async.task_new(() => work(i)));
+    match (async.task_start(async.task_new(() => work(i)))) {
+      Done(_) => {},
+      Suspended(_) => {}
+    }
   }
   return monotonic_ns() - start;
 }
@@ -30,7 +33,10 @@ function main(): i32 {
   }
   let busy: i64 = churn(20000);
   for t in live {
-    let st: async.TaskStatus[i32] = async.task_start(t);
+    match (async.task_start(t)) {
+      Done(_) => {},
+      Suspended(_) => {}
+    }
   }
   let ratio: i64 = busy / (idle + 1);
   eprint("idle " + idle.to_string() + " ns, busy " + busy.to_string() + " ns");

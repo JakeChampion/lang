@@ -4,7 +4,9 @@
 // golang.org/x/crypto/ssh.
 import "std/array";
 import "std/crypto";
+import "std/crypto/aes";
 import "std/crypto/chacha20poly1305";
+import "std/crypto/des";
 import "std/crypto/ed25519";
 import "std/crypto/rsa";
 import "std/crypto/sha2";
@@ -760,9 +762,9 @@ pub function encrypted_match(stanzas: format.Stanza[], k: Public): Result[boolea
   return Ok(false);
 }
 
-// A PEM block: its type, whether its headers mark it encrypted, and its
-// bytes.
-struct Pem { kind: string, encrypted: boolean, bytes: u8[] }
+// A PEM block: its type, whether its headers mark it encrypted, its
+// DEK-Info header, and its bytes.
+struct Pem { kind: string, encrypted: boolean, dek: Option[string], bytes: u8[] }
 
 function index_from(b: [u8], s: string, from: i32): i32 {
   let n = s.len();
@@ -786,9 +788,11 @@ function line_end(b: [u8], at: i32): i32 {
 }
 
 // The body of a PEM block, with its header lines. A line with a ":" is a
-// header, before the first line that has none.
-function pem_body(b: [u8], from: i32, to: i32): (boolean, u8[]) {
+// header, before the first line that has none. The result holds whether the
+// Proc-Type header says ENCRYPTED, the DEK-Info header, and the body.
+function pem_body(b: [u8], from: i32, to: i32): (boolean, Option[string], u8[]) {
   let encrypted = false;
+  let dek: Option[string] = None;
   let body: u8[] = [];
   let headers = true;
   let at = from;
@@ -796,9 +800,15 @@ function pem_body(b: [u8], from: i32, to: i32): (boolean, u8[]) {
     let end = line_end(b, at);
     let stop = if (end < to) { end } else { to };
     let line = trim(b[at:stop]);
-    if (headers && index_from(line, ":", 0) >= 0) {
-      if (text.has_prefix(line, "Proc-Type:") && index_from(line, "ENCRYPTED", 0) >= 0) {
-        encrypted = true;
+    let colon = index_from(line, ":", 0);
+    if (headers && colon >= 0) {
+      let key = text.ascii(trim(line[0:colon]));
+      let value = text.ascii(trim(line[colon + 1:line.len()]));
+      if (key == "Proc-Type") {
+        encrypted = value.index_of("ENCRYPTED").is_some();
+      }
+      if (key == "DEK-Info") {
+        dek = Some(value);
       }
     } else {
       headers = headers && line.len() == 0;
@@ -806,7 +816,155 @@ function pem_body(b: [u8], from: i32, to: i32): (boolean, u8[]) {
     }
     at = end + 1;
   }
-  return (encrypted, body);
+  return (encrypted, dek, body);
+}
+
+// The ciphers of x509's DecryptPEMBlock: the key size and the block size.
+function pem_cipher(mode: string): Option[(i32, i32)] {
+  return match (mode) {
+    "DES-CBC" => Some((8, 8)),
+    "DES-EDE3-CBC" => Some((24, 8)),
+    "AES-128-CBC" => Some((16, 16)),
+    "AES-192-CBC" => Some((24, 16)),
+    "AES-256-CBC" => Some((32, 16)),
+    _ => None,
+  };
+}
+
+// Go's hex.DecodeString, with its messages.
+function go_hex(s: string): Result[u8[], string] {
+  let out: u8[] = [];
+  let i = 0;
+  while (i + 1 < s.len()) {
+    let hi = hex_value(s[i]);
+    let lo = hex_value(s[i + 1]);
+    if (hi < 0) {
+      return Err(f"encoding/hex: invalid byte: {text.go_rune(s[i] as i32)}");
+    }
+    if (lo < 0) {
+      return Err(f"encoding/hex: invalid byte: {text.go_rune(s[i + 1] as i32)}");
+    }
+    out = out.append((hi * 16 + lo) as u8);
+    i += 2;
+  }
+  if (s.len() % 2 == 1) {
+    if (hex_value(s[s.len() - 1]) < 0) {
+      return Err(f"encoding/hex: invalid byte: {text.go_rune(s[s.len() - 1] as i32)}");
+    }
+    return Err("encoding/hex: odd length hex string");
+  }
+  return Ok(out);
+}
+
+function hex_value(c: u8): i32 {
+  if (c >= b'0' && c <= b'9') {
+    return (c - b'0') as i32;
+  }
+  if (c >= b'a' && c <= b'f') {
+    return (c - b'a') as i32 + 10;
+  }
+  if (c >= b'A' && c <= b'F') {
+    return (c - b'A') as i32 + 10;
+  }
+  return -1;
+}
+
+// OpenSSL's EVP_BytesToKey with MD5 and one round, as x509's deriveKey
+// stretches the passphrase.
+function pem_key(passphrase: [u8], salt: [u8], size: i32): u8[] {
+  let out: u8[] = [];
+  let digest: u8[] = [];
+  while (out.len() < size) {
+    digest = crypto.md5(digest.concat(passphrase).concat(salt));
+    out = out.concat(digest);
+  }
+  let key = __bytes_into(__alloc_u8(size), 0, out, 0, size);
+  crypto.erase(out);
+  return key;
+}
+
+// x509's DecryptPEMBlock. None is IncorrectPasswordError.
+function pem_decrypt(block: Pem, dek: string, passphrase: [u8]): Result[Option[u8[]], string] {
+  let Some(comma) = dek.index_of(",") else {
+    return Err("x509: malformed DEK-Info header");
+  };
+  let mode = dek[0:comma].unwrap_or("").to_owned();
+  let Some((key_size, block_size)) = pem_cipher(mode) else {
+    return Err("x509: unknown encryption mode");
+  };
+  let iv = go_hex(dek[comma + 1:dek.len()].unwrap_or("").to_owned())?;
+  if (iv.len() != block_size) {
+    return Err("x509: incorrect IV size");
+  }
+  if (block.bytes.len() % block_size != 0) {
+    return Err("x509: encrypted PEM data is not a multiple of the block size");
+  }
+  let key = pem_key(passphrase, iv[0:8], key_size);
+  let decrypted = if (block_size == 8) {
+    match (des.cbc_decrypt(key, iv, block.bytes)) {
+      Ok(d) => d,
+      Err(e) => {
+        return Err(e.message());
+      },
+    }
+  } else {
+    match (aes.cbc_decrypt(key, iv, block.bytes)) {
+      Ok(d) => d,
+      Err(e) => {
+        return Err(e.message());
+      },
+    }
+  };
+  let data = decrypted;
+  crypto.erase(key);
+  __ct_public(data);
+  if (data.len() == 0) {
+    return Err("x509: invalid padding");
+  }
+  let last = data[data.len() - 1] as i32;
+  if (last == 0 || last > block_size || data.len() < last) {
+    return Ok(None);
+  }
+  for i in data.len() - last..data.len() {
+    if (data[i] as i32 != last) {
+      return Ok(None);
+    }
+  }
+  return Ok(Some(array.slice(data, 0, data.len() - last)));
+}
+
+const WRONG_PASSWORD: string = "x509: decryption password incorrect";
+
+// ssh's ParseRawPrivateKeyWithPassphrase for a PEM key in the old format.
+// The key becomes secret after its checks, as an unencrypted key does.
+function decrypt_pem(block: Pem, passphrase: [u8]): Parsed {
+  let dek = block.dek.unwrap_or("");
+  if (!block.encrypted || block.dek.is_none()) {
+    return Bad("ssh: not an encrypted key");
+  }
+  let der = match (pem_decrypt(block, dek, passphrase)) {
+    Ok(Some(d)) => d,
+    Ok(None()) => {
+      return Bad(WRONG_PASSWORD);
+    },
+    Err(why) => {
+      return Bad("ssh: cannot decode encrypted private keys: " + why);
+    },
+  };
+  if (block.kind == "RSA PRIVATE KEY") {
+    let p = pkcs1(der);
+    return match (p) {
+      Bad(_) => Bad(WRONG_PASSWORD),
+      _ => p,
+    };
+  }
+  if (block.kind == "EC PRIVATE KEY") {
+    return ec_private(der);
+  }
+  if (block.kind == "DSA PRIVATE KEY") {
+    return dsa_private(der);
+  }
+  return Bad(f"ssh: unsupported key type {text.quote(block.kind.as_bytes())}");
 }
 
 // Go's pem.Decode, for the first block.
@@ -826,9 +984,9 @@ function pem_decode(b: [u8]): Option[Pem] {
   if (end < 0 || body_start > end) {
     return None;
   }
-  let (encrypted, body) = pem_body(b, body_start, end);
+  let (encrypted, dek, body) = pem_body(b, body_start, end);
   let bytes = text.b64_lax(body).ok()?;
-  return Some(Pem { kind: kind, encrypted: encrypted, bytes: bytes });
+  return Some(Pem { kind: kind, encrypted: encrypted, dek: dek, bytes: bytes });
 }
 
 // A private key file that ParseRawPrivateKey reads: a key, a key that
@@ -838,6 +996,8 @@ pub enum Parsed {
   Key(Private),
   NeedsPassphrase(Option[Public]),
   Bad(string),
+  // A key of a type that age does not use, by its Go type.
+  Unsupported(string),
 }
 
 const OPENSSH_MAGIC: string = "openssh-key-v1\x00";
@@ -1030,13 +1190,13 @@ function wire_of_public(k: Public): u8[] {
   };
 }
 
-// ssh's ParseRawPrivateKeyWithPassphrase for an OpenSSH key file.
+// ssh's ParseRawPrivateKeyWithPassphrase for a private key file.
 pub function decrypt_private(b: [u8], passphrase: [u8]): Parsed {
   let Some(block) = pem_decode(b) else {
     return Bad(NO_KEY);
   };
   if (block.kind != "OPENSSH PRIVATE KEY") {
-    return Bad(f"ssh: the encrypted {block.kind} format is not supported by this port");
+    return decrypt_pem(block, passphrase);
   }
   return openssh_with(block.bytes, Some(text.copy(passphrase)));
 }
@@ -1059,10 +1219,10 @@ pub function parse_private(b: [u8]): Parsed {
     return pkcs8(block.bytes);
   }
   if (block.kind == "EC PRIVATE KEY") {
-    return Bad("unsupported SSH identity type: *ecdsa.PrivateKey");
+    return ec_private(block.bytes);
   }
   if (block.kind == "DSA PRIVATE KEY") {
-    return Bad("unsupported SSH identity type: *dsa.PrivateKey");
+    return dsa_private(block.bytes);
   }
   return Bad(f"ssh: unsupported key type {text.quote(block.kind.as_bytes())}");
 }
@@ -1151,6 +1311,101 @@ function pkcs1(b: [u8]): Parsed {
 const OID_RSA: string = "2a864886f70d010101";
 
 const OID_ED25519: string = "2b6570";
+
+// The NIST curves of x509's namedCurveFromOID, by the hex of the OID, with
+// the hex of the order of each one.
+const EC_CURVES: string[] = [
+  "2b81040021", "ffffffffffffffffffffffffffff16a2e0b8f03e13dd29455c5c2a3d",
+  "2a8648ce3d030107", "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551",
+  "2b81040022", "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973",
+  "2b81040023", "01ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffbfa51868783bf2f966b7fcc0148f709a5d03bb5c9b8899c47aebb6fb71e91386409",
+];
+
+// x509's message for a DER key in a format that the parser does not take.
+function other_format(der: [u8], what: string): string {
+  if let Some(f) = der_integers(der) {
+    if (f.len() >= 9) {
+      return "x509: failed to parse private key (use ParsePKCS1PrivateKey instead for this key format)";
+    }
+  }
+  if let Some((_, body)) = der_of(wire_of(der), DER_SEQUENCE) {
+    if let Some((w1, _)) = der_of(wire_of(body), DER_INTEGER) {
+      if (der_of(w1, DER_SEQUENCE).is_some()) {
+        return "x509: failed to parse private key (use ParsePKCS8PrivateKey instead for this key format)";
+      }
+    }
+  }
+  return what + ": asn1: structure error";
+}
+
+// Go's x509.ParseECPrivateKey: version 1, a private key below the order of
+// a named curve. A valid key is a type that age does not use.
+function ec_private(der: [u8]): Parsed {
+  let bad = Bad(other_format(der, "x509: failed to parse EC private key"));
+  let Some((_, body)) = der_of(wire_of(der), DER_SEQUENCE) else {
+    return bad;
+  };
+  let Some((w1, version)) = der_of(wire_of(body), DER_INTEGER) else {
+    return bad;
+  };
+  let Some((w2, key)) = der_of(w1, DER_OCTETS) else {
+    return bad;
+  };
+  if (version.len() != 1 || version[0] != 1u8) {
+    return Bad(f"x509: unknown EC private key version {small(version)}");
+  }
+  let order = match (der_of(w2, 0xa0u8)) {
+    Some((_, explicit)) => match (der_of(wire_of(explicit), DER_OID)) {
+      Some((_, oid)) => curve_order(hex.encode(oid)),
+      None => "",
+    },
+    None => "",
+  };
+  if (order.len() == 0) {
+    return Bad("x509: unknown elliptic curve");
+  }
+  let n = match (hex.decode(order)) {
+    Ok(b) => b,
+    Err(_) => [],
+  };
+  let at = 0;
+  while (at < key.len() && key[at] == 0u8) {
+    at += 1;
+  }
+  let k = key[at:key.len()];
+  if (k.len() > n.len() || k.len() == n.len() && cmp_bytes(k, n) >= 0) {
+    return Bad("x509: invalid elliptic curve private key value");
+  }
+  return Unsupported("*ecdsa.PrivateKey");
+}
+
+function curve_order(oid: string): string {
+  let i = 0;
+  while (i + 1 < EC_CURVES.len()) {
+    if (EC_CURVES[i] == oid) {
+      return EC_CURVES[i + 1];
+    }
+    i += 2;
+  }
+  return "";
+}
+
+// x/crypto's ParseDSAPrivateKey: a SEQUENCE of six integers.
+function dsa_private(der: [u8]): Parsed {
+  let Some((rest, _)) = der_of(wire_of(der), DER_SEQUENCE) else {
+    return Bad("ssh: failed to parse DSA key: asn1: structure error");
+  };
+  let Some(f) = der_integers(der) else {
+    return Bad("ssh: failed to parse DSA key: asn1: structure error");
+  };
+  if (f.len() < 6) {
+    return Bad("ssh: failed to parse DSA key: asn1: structure error");
+  }
+  if (rest.at != der.len()) {
+    return Bad("ssh: garbage after DSA key");
+  }
+  return Unsupported("*dsa.PrivateKey");
+}
 
 // Go's x509.ParsePKCS8PrivateKey for RSA and Ed25519 keys.
 function pkcs8(b: [u8]): Parsed {

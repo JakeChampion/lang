@@ -2983,6 +2983,8 @@ function lanes_bytes(heap: interpheap.Heap, width: i32, args: Value[], store: bo
   return v_err("packed lane access requires bytes");
 }
 
+const CALL_LANE_BUILTIN_SET: string[] = ["reverse", "swap_halves", "zip_lo", "zip_hi"];
+
 function call_lane_builtin(heap: interpheap.Heap, name: string, width: i32, args: Value[]): Value {
   let verb = typeinfo.lane_builtin_verb(name);
   if (typeinfo.lane_builtin_kind(name) != typeinfo.LANE_FLOAT) {
@@ -2996,7 +2998,7 @@ function call_lane_builtin(heap: interpheap.Heap, name: string, width: i32, args
     }
     return if (width == 32) { v_uint(lanes[0].bits[at] as i32) } else { v_uint64(lanes[0].bits[at]) };
   }
-  if (verb == "reverse" || verb == "swap_halves" || verb == "zip_lo" || verb == "zip_hi") {
+  if (util.has_str(CALL_LANE_BUILTIN_SET, verb)) {
     let lanes = lane_args(args);
     let count = 128 / width;
     let bits: i64[] = [];
@@ -4706,8 +4708,14 @@ function eval_binary(op: string, lv: Value, rv: Value): Value {
   return eval_binary_arith(op, lv, rv);
 }
 
+const EVAL_BINARY_ARITH_SET: string[] = ["-", "*", "/", "%"];
+
+const EVAL_BINARY_ARITH_SET2: string[] = ["<", "<=", ">", ">="];
+
+const EVAL_BINARY_ARITH_SET3: string[] = ["&", "|", "^", "<<", ">>"];
+
 function eval_binary_arith(op: string, lv: Value, rv: Value): Value {
-  if (op == "-" || op == "*" || op == "/" || op == "%") {
+  if (util.has_str(EVAL_BINARY_ARITH_SET, op)) {
     match (lv) {
       VInt(li) => {
         match (rv) {
@@ -4754,7 +4762,7 @@ function eval_binary_arith(op: string, lv: Value, rv: Value): Value {
       }
     }
   }
-  if (op == "<" || op == "<=" || op == ">" || op == ">=") {
+  if (util.has_str(EVAL_BINARY_ARITH_SET2, op)) {
     match (lv) {
       VInt(li) => {
         match (rv) {
@@ -4824,7 +4832,7 @@ function eval_binary_arith(op: string, lv: Value, rv: Value): Value {
       }
     }
   }
-  if (op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>") {
+  if (util.has_str(EVAL_BINARY_ARITH_SET3, op)) {
     match (lv) {
       VInt(li) => {
         match (rv) {
@@ -7509,10 +7517,11 @@ function call_chacha20_poly1305_into(heap: interpheap.Heap, name: string, args: 
   return written_bytes(heap, args[2], buf.with(d + m, verdict));
 }
 
+const IS_BYTE_INTO_KERNEL_SET: string[] = ["__aes_gcm_seal_into", "__aes_gcm_open_into", "__chacha20_xor_into", "__poly1305_blocks", "__chacha20_poly1305_seal_into", "__chacha20_poly1305_open_into"];
+
 // A kernel that writes into a byte array it takes. The interpreter runs it over a copy of the array.
 function is_byte_into_kernel(name: string): boolean {
-  return name == "__aes_gcm_seal_into" || name == "__aes_gcm_open_into" || name == "__chacha20_xor_into" || name == "__poly1305_blocks"
-    || name == "__chacha20_poly1305_seal_into" || name == "__chacha20_poly1305_open_into";
+  return util.has_str(IS_BYTE_INTO_KERNEL_SET, name);
 }
 
 function call_byte_into_kernel(heap: interpheap.Heap, name: string, args: Value[]): Value {
@@ -8213,14 +8222,20 @@ function call_buf_take_bytes(heap: interpheap.Heap, h: usize): Value {
   return byte_array_value(heap, buf_take_bytes(h));
 }
 
+const IS_RAW_MEM_BUILTIN_SET: string[] = ["__alloc", "__free", "__memcpy", "__memset", "__ptr_width"];
+
+const IS_RAW_MEM_BUILTIN_SET2: string[] = ["__load_u8", "__load_i32", "__load_i64", "__load_ptr"];
+
+const IS_RAW_MEM_BUILTIN_SET3: string[] = ["__store_u8", "__store_i32", "__store_i64", "__store_ptr"];
+
 function is_raw_mem_builtin(name: string): boolean {
-  if (name == "__alloc" || name == "__free" || name == "__memcpy" || name == "__memset" || name == "__ptr_width") {
+  if (util.has_str(IS_RAW_MEM_BUILTIN_SET, name)) {
     return true;
   }
-  if (name == "__load_u8" || name == "__load_i32" || name == "__load_i64" || name == "__load_ptr" || builtinsigs.device_intrinsic(name)) {
+  if (builtinsigs.device_intrinsic(name) || util.has_str(IS_RAW_MEM_BUILTIN_SET2, name)) {
     return true;
   }
-  return name == "__store_u8" || name == "__store_i32" || name == "__store_i64" || name == "__store_ptr";
+  return util.has_str(IS_RAW_MEM_BUILTIN_SET3, name);
 }
 
 // The interpreter is a compiled program, so the raw builtins act on its own
@@ -8400,6 +8415,10 @@ function raw_mem_effect(heap: interpheap.Heap, name: string, w: i64[]): Value {
   return v_void();
 }
 
+const CALL_BUF_BUILTIN_SET: string[] = ["buf_push_bytes_mapped", "buf_push_bytes_filtered", "buf_push_bytes_expanded", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded"];
+
+const CALL_BUF_BUILTIN_SET2: string[] = ["buf_push", "buf_push_byte", "buf_push_u64", "buf_push_decimal"];
+
 function call_buf_builtin(heap: interpheap.Heap, name: string, args: Value[]): Value {
   if (name == "buf_new") {
     return call_buf_new(args);
@@ -8423,10 +8442,10 @@ function call_buf_builtin(heap: interpheap.Heap, name: string, args: Value[]): V
   if (name == "buf_decode_base32") {
     return call_buf_decode_base32(h, args);
   }
-  if (name == "buf_push_bytes_mapped" || name == "buf_push_bytes_filtered" || name == "buf_push_bytes_expanded" || name == "buf_push_mapped" || name == "buf_push_filtered" || name == "buf_push_expanded") {
+  if (util.has_str(CALL_BUF_BUILTIN_SET, name)) {
     return call_buf_push_table(name, h, args);
   }
-  if (name == "buf_push" || name == "buf_push_byte" || name == "buf_push_u64" || name == "buf_push_decimal") {
+  if (util.has_str(CALL_BUF_BUILTIN_SET2, name)) {
     return call_buf_append(name, h, args);
   }
   return call_buf_read(heap, name, h, args);
@@ -8468,6 +8487,12 @@ function checked_alloc_length(args: Value[]): Value {
   }
   return v_int(n as i32);
 }
+
+const CALL_FUNC_TARGS_SET: string[] = ["__alloc_u8", "__alloc_u8_uninit", "__alloc_i32", "__alloc_i64", "__alloc_f64", "__alloc_bool"];
+
+const CALL_FUNC_TARGS_SET2: string[] = ["__clz32", "__ctz32", "__popcount32", "__clz64", "__ctz64", "__popcount64"];
+
+const CALL_FUNC_TARGS_SET3: string[] = ["getxattr", "lgetxattr", "setxattr", "lsetxattr", "getxattr_bytes", "lgetxattr_bytes", "setxattr_bytes", "lsetxattr_bytes"];
 
 function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], type_args: string[], expect: string, funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   if (name == "print" || name == "write" || name == "eprint") {
@@ -8527,7 +8552,7 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
   if (name == "__alloc_len") {
     return checked_alloc_length(args);
   }
-  if (name == "__alloc_u8" || name == "__alloc_u8_uninit" || name == "__alloc_i32" || name == "__alloc_i64" || name == "__alloc_f64" || name == "__alloc_bool") {
+  if (util.has_str(CALL_FUNC_TARGS_SET, name)) {
     if (args.len() != 1) {
       return v_err(name + ": expected 1 arg (n)");
     }
@@ -8647,7 +8672,7 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
     }
     return v_uint64(interp_mulhi(vint_as_i64(args[0]) as u64, vint_as_i64(args[1]) as u64) as i64);
   }
-  if (name == "__clz32" || name == "__ctz32" || name == "__popcount32" || name == "__clz64" || name == "__ctz64" || name == "__popcount64") {
+  if (util.has_str(CALL_FUNC_TARGS_SET2, name)) {
     if (args.len() != 1) {
       return v_err(name + ": expected 1 arg");
     }
@@ -8664,8 +8689,7 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
       _ => v_int(__popcount64(bits)),
     };
   }
-  if (name == "getxattr" || name == "lgetxattr" || name == "setxattr" || name == "lsetxattr"
-    || name == "getxattr_bytes" || name == "lgetxattr_bytes" || name == "setxattr_bytes" || name == "lsetxattr_bytes") {
+  if (util.has_str(CALL_FUNC_TARGS_SET3, name)) {
     if (target_arch() == "wasm32") {
       return v_variant("Err", [io_error_value(Unsupported)]);
     } else {

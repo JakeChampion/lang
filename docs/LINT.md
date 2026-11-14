@@ -146,33 +146,24 @@ examples and the stdlib (#14288). It finds three things:
 - `x = x op e`, for `x op= e`, when the target is a name.
 - `0 - e`, for `-e`. `0 - 1` stays: in an unsigned type, `-1` does not fit.
 
-`TestModernFormRatchet` holds each of the three trees to a ceiling: the count
-of findings must not grow, and a change that removes findings lowers it.
+`scripts/check-ratchets` holds the three trees: a change must not add a
+finding that the tree of its base commit does not have. The Lint lane and the
+pre-push hook run it. No count is pinned, so a change that removes findings
+edits nothing.
 
-### Why a tolerance, and why the asymmetry
+### Why the gate compares with the base commit
 
-The first draft was exact in both directions. Measuring it against real main
-traffic killed that: in one two-hour window main landed rc commits that moved
-the ceiling 468 → 477 (+1.9%) and the excess 19847 → 19869 → 19878 (+0.11%,
-then +0.05%), while a full CI run on a PR takes about three and a half hours.
-An exact gate is therefore stale before it can land, and once landed would
-red-light main for whoever pushed the next rc commit. A gate nobody can keep
-fails the same way a limit nobody can meet does.
+The first gate compared each tree with two pinned numbers. Main moved those
+numbers many times a day. Two pull requests that each added complexity and
+each pinned the same new number passed alone, and git merged the equal edits
+with no conflict. Main then failed for the next person.
 
-Five per cent absorbs that churn and still bites — a ceiling past 500 fails,
-and enough new complexity to move a 20,000-point excess by 5% is a thousand
-forks. The shape (checked-in baseline, tolerance, growth fatal, both
-directions reported) is the one `scripts/ci-check-perf` and
-`scripts/ci-check-driver-sizes` already use in this repo for the same reason.
-
-A shrink never fails, because making an unrelated PR red for simplifying
-something is how a gate gets deleted. A stale-low baseline only makes the
-gate stricter, so it rots in the safe direction. Measured 2026-08-27:
-
-| Tree | Ceiling | Total excess |
-|---|---|---|
-| `compiler` | 477 (`lower_call_named`) | 19878 across 1035 functions |
-| `internal/stdlib/std` | 68 (`_wb_break`) | 780 across 93 functions |
+`TestSelfHostRepoComplexityDelta` has no pinned number. `scripts/check-ratchets`
+gives it the tree of the base commit, and it measures that tree and the
+working tree with one build of the linter. One change can raise the total
+excess of a tree by 1% of the excess of the base, and not less than 10. The
+worst function of a tree can be 5% above the worst function of the base. A
+decrease passes and needs no edit.
 
 ### Why summed distance, and not a count
 
@@ -191,8 +182,8 @@ The ceiling covers what summed distance is weak at — it stops one new
 monster — so the pair between them resists both failure modes.
 
 Per-function exceptions go on the function, as an `allow` comment with a
-line saying why. They do not go in that table: an exception is reviewable
-where it applies and invisible in a list.
+line saying why. An exception is reviewable where it applies and invisible in
+a list.
 
 The two numbers treat an `allow` differently, on purpose. It removes a
 function from the EXCESS — that is what the annotation asks for — but not
@@ -200,8 +191,9 @@ from the CEILING, because "this one may exceed the limit" is not "this one
 may be worse than anything here has ever been". So a new 500-fork function
 fails the gate however it is annotated.
 
-The gate is `TestSelfHostRepoComplexityRatchet`, which runs
-`compiler/drivers/lint_ratchet_run.fern` over each tree. Its excess comes from
+The gate is `TestSelfHostRepoComplexityDelta`, which runs
+`compiler/drivers/lint_ratchet_run.fern` over each tree of the base commit and
+of the change. Its excess comes from
 `lint.lint_file` rather than from `lint.score` directly, so an `allow` comment
 in a Fern source exempts a function from the gate exactly as it does from the
 command line — one suppression mechanism, not a second one only the gate

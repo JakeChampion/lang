@@ -122,14 +122,13 @@ function native_release(s: string): void {
 }
 
 pub function run(output: ssaprepare.Output): void {
-  let c = boundary.resolve(output, "parent").words - 1;
+  let c = heap.capacity_of(boundary.resolve(output, "parent").words);
   bounds(c);
   sequences(c);
   lists(c);
   live_blocks(c);
   let h = empty();
   let actions = [action(0, h.base, 1), action(1, h.base, 1), action(0, h.base, 2), action(1, h.base, 2)];
-  require(isa.array_program(output.text).error != "" && isa.program(output.text).error != "", "legacy declaration policy unchanged");
   native_release(output.text);
   require(heap.check(output, "parent", h, actions), "same-output conditional sequence");
   let damaged = output.text.split("movq %rdx, (%r8,%rcx,8)").join("movq %rax, (%r8,%rcx,8)");

@@ -5,6 +5,12 @@ The standard library of Fern decodes each file, and AAudio plays the
 samples. The app has a library with a search field. The track that plays has a
 screen of its own, with a bar that goes to a time.
 
+The look is the dot-matrix style of the [stopwatch](../stopwatch/README.md),
+in the font of `../matrix.fern`. The background is black or a light grey,
+the text and the buttons are white or black, and the rest is grey. Only the
+dots of what is live are red. A track with no picture shows a dial of 60
+round dots with its time in dots, and the spectrum is columns of round dots.
+
 The player reads WAV, FLAC, MP3, M4A (AAC or ALAC), Ogg Vorbis and Opus files in
 mono or in stereo. It looks
 for them in the `music` directory of the private files of the app. It also
@@ -16,7 +22,8 @@ An album has its picture from the tag of one of its files, or from an
 image file of its directory, such as `cover.jpg`. `std/audio/tags` gives the
 bytes of the picture, and `std/android/image` decodes them. A list shows the
 picture at a small size, and the screen of the track shows it at a large
-size. An album with no picture shows rings in the colors of its name. The media
+size. An album with no picture shows a ring of dots with the first letter of its
+name. The media
 session gets the picture also, so Android shows it with the media controls
 and on the lock screen.
 
@@ -72,7 +79,10 @@ the sound on while the window of the app is away.
 
 The "Settings" button shows the settings of the player. "Theme" chooses
 the light colors, the dark colors, or those of the system, with
-`with_theme_of` of `std/android/ui`. "Scan" reads the directories again.
+`with_theme_of` of `std/android/ui`. "Album colors" gives the player the
+colors of the cover of the track that plays. It is off at first.
+
+"Scan" reads the directories again.
 Each list but the songs has a button that takes its tab away. The player
 keeps the settings for its next start.
 
@@ -181,11 +191,10 @@ sound. The ring holds a second of sound: a frame that takes longer than that
 makes a gap. The time and the bars of the spectrum are those of the sound
 that plays, not of the samples that the decoder gave last.
 
-The player reads a WAV, a FLAC, an MP3, an M4A and an Ogg Vorbis file a
-window of 512 KB at a time. So a long file starts at once. The index of an
-M4A file comes from its boxes alone. The index of an Ogg Vorbis file needs
-one read through the file, but it does not keep the file. An Opus track
-stays in memory whole, because its index needs the whole file.
+The player reads each file a window of 512 KB at a time. So a long file
+starts at once, and no track stays in memory whole. The index of an M4A
+file comes from its boxes alone. The index of an Ogg file needs one read
+through the file, but it does not keep the file.
 
 For the library, the player reads one directory or the first 128 KB of one file at a
 time, for 8 ms of each tick. A file gives its tags and its length. It reads

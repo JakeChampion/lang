@@ -491,7 +491,7 @@ function prod_call_kind(k: string): i32 {
 
 function ld_off(k: string, op: ir.Op): i32 {
   if (k == "struct_get") {
-    return (op.i32_imm + 1) * 8;
+    return op.i32_imm * 8;
   }
   if (k == "arr_len" || k == "str_data" || k == "opt_tag") {
     return 0;
@@ -557,7 +557,7 @@ function lift_call_indirect_prod(op: ir.Op, lv: LiftVals): LiftVals {
 
 function lift_prod_store(k: string, op: ir.Op, lv: LiftVals): LiftVals {
   return match (k) {
-    "struct_set" => lift_store(lv, 41, (op.i32_imm + 1) * 8),
+    "struct_set" => lift_store(lv, 41, op.i32_imm * 8),
     "tuple_set" => lift_store(lv, 41, op.i32_imm * 8),
     "opt_set_payload" => lift_store(lv, 41, 8),
     "arr_set" => mark_packed(lift_store(lv, 43, op.i32_imm), op),
@@ -568,10 +568,11 @@ function lift_prod_store(k: string, op: ir.Op, lv: LiftVals): LiftVals {
 
 // A record and a tuple use the first word of the block, which is the length
 // of an array, for their own first word. So the capacity that they ask for
-// is one less than their number of words.
+// is one less than their number of words. A record with no field has one
+// word, which holds its tag again for the debug information of an enum.
 function lift_prod_make(k: string, op: ir.Op, lv: LiftVals): Option[LiftVals] {
   if (k == "struct_make") {
-    return Some(lift_block_make(op.i32_imm, op.i32_imm, 8, op.str, "box", lv));
+    return Some(lift_block_make(box_words(op.i32_imm) - 1, op.i32_imm, 0, op.str, "box", lv));
   }
   if (k == "arr_make" && op.i32_imm == 0) {
     return Some(lift_empty_arr(lv));
@@ -664,6 +665,11 @@ function lift_store(lv: LiftVals, kind: i32, imm: i32): LiftVals {
   return LiftVals { ...pushed, stack: util.drop_last_i32(pushed.stack) };
 }
 
+// The number of words of a record of `fields` fields.
+function box_words(fields: i32): i32 {
+  return if (fields > 0) { fields } else { 1 };
+}
+
 function lift_struct_set_shape_prod(op: ir.Op, lv: LiftVals): LiftVals {
   if (lv.stack.len() < 1) {
     return LiftVals { ...lv, ok: false };
@@ -673,15 +679,18 @@ function lift_struct_set_shape_prod(op: ir.Op, lv: LiftVals): LiftVals {
   if (!shape.ok) {
     return shape;
   }
-  let stored = lift_store(shape, 41, 0);
-  if (!stored.ok) {
-    return stored;
+  let v = shape.nvals;
+  let tag = shape.stack[shape.stack.len() - 1];
+  let insts = shape.insts.append(ssa.SInst { kind_tag: ssa.ST_AT, result: v, args: [box, tag], imm: ssa.tag_offset(), str: "u32" });
+  if (op.i32_imm == 0) {
+    insts = insts.append(ssa.SInst { kind_tag: ssa.ST_AT, result: v + 1, args: [box, tag], imm: 0, str: "" });
+    return LiftVals { nvals: v + 2, stack: util.drop_last_i32(shape.stack), insts: insts, ok: true };
   }
-  return LiftVals { ...stored, stack: stored.stack.append(box) };
+  return LiftVals { nvals: v + 1, stack: util.drop_last_i32(shape.stack), insts: insts, ok: true };
 }
 
 function lift_variant_is_prod(op: ir.Op, lv: LiftVals): LiftVals {
-  let tag = lift_pop_push(lv, 1, 40, 0, "");
+  let tag = lift_pop_push(lv, 1, 40, ssa.tag_offset(), "u32");
   if (!tag.ok) {
     return tag;
   }
@@ -717,8 +726,12 @@ function lift_block_make(cap: i32, n: i32, first: i32, shape: string, kind: stri
     let sh = nvals;
     nvals += 1;
     insts = insts.append(ssa.SInst { kind_tag: ssa.SHAPE_ADDR, result: sh, args: [], imm: 0, str: shape });
-    insts = insts.append(ssa.SInst { kind_tag: ssa.ST_AT, result: nvals, args: [box, sh], imm: 0, str: "" });
+    insts = insts.append(ssa.SInst { kind_tag: ssa.ST_AT, result: nvals, args: [box, sh], imm: ssa.tag_offset(), str: "u32" });
     nvals += 1;
+    if (n == 0) {
+      insts = insts.append(ssa.SInst { kind_tag: ssa.ST_AT, result: nvals, args: [box, sh], imm: 0, str: "" });
+      nvals += 1;
+    }
   }
   for i in 0..n {
     insts = insts.append(ssa.SInst { kind_tag: ssa.ST_AT, result: nvals, args: [box, elems[i]], imm: first + i * 8, str: "" });
@@ -1001,7 +1014,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
     } else if (tag == t_const_i32) {
       let v = nvals;
       nvals += 1;
-      cur_insts = cur_insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: v, args: [], imm: op.i32_imm, str: "" });
+      cur_insts = cur_insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: v, args: [], imm: if (op.str.len() > 0) { box_words(op.i32_imm - 1) } else { op.i32_imm }, str: "" });
       stack = stack.append(v);
     } else if (tag == t_const_f64) {
       let fcv = nvals;

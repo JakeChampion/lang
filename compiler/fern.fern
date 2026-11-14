@@ -743,7 +743,7 @@ function darwin_dwarf(p: arm64_native.Arm64GasProg, tv: i64, dv: i64, cu_name: s
     elf.elf_func_sym_sizes(names, a.lab_offs, nosec, -1, end),
     cu_name, dir,
     a.files, a.loc_offs, a.loc_files, a.loc_lines, a.loc_cols, a.loc_flags,
-    elfimage.arm64_var_ranges(p, tv, dv),
+    elfimage.arm64_var_ranges(p),
   );
   return [dw.abbrev, dw.info, dw.line, dw.loc];
 }

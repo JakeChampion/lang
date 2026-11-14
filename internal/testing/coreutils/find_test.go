@@ -103,9 +103,32 @@ func shellWords(s string) []string {
 func findLines(dir string, lines []string) []invocation {
 	var cases []invocation
 	for _, line := range lines {
-		cases = append(cases, invocation{name: "find " + line, args: shellWords(line), dir: dir})
+		cases = append(cases, invocation{name: "find " + line, args: shellWords(line), dir: dir, darwinLibcDefect: findDarwinDefects[line]})
 	}
 	return cases
+}
+
+// findDarwinDefects are the lines whose Darwin reference is wrong. GNU find
+// gives these directives to the printf and the strftime of the libc.
+var findDarwinDefects = map[string]string{
+	`-printf '%5m|%-5s|%05s|%+d|%#m|%.2f|%10p|%-10f|\n'`:                                                     "Apple's printf pads a string with zeros under the 0 flag, where glibc pads it with spaces",
+	`-printf '%Aq|%AE|%AO|%AC|%Ae|%AF|%Ag|%AG|%Ah|%An|%AP|%AR|%As|%At|%Au|%AV|%Az|%A%|%A1|%AN\n' -name frac`: "Apple's strftime writes an unknown conversion as its letter alone, and it has no %P",
+}
+
+// Each line of findDarwinDefects must be a line of the corpus, or its reason
+// marks nothing.
+func TestFindDarwinDefectsNameCorpusLines(t *testing.T) {
+	all := map[string]bool{}
+	for _, lines := range [][]string{findTestLines, findPrintfLines, findTimeLines, findSymlinkLines, findExecLines, findSyntaxLines, findStartLines, findManyLines} {
+		for _, line := range lines {
+			all[line] = true
+		}
+	}
+	for line := range findDarwinDefects {
+		if !all[line] {
+			t.Errorf("findDarwinDefects names %q, which is not a line of the find corpus", line)
+		}
+	}
 }
 
 func mkdirAll(t *testing.T, dir string, names ...string) {

@@ -86,7 +86,7 @@ function arm64_with_debug(bin: u8[], p: arm64_native.Arm64GasProg, tv: i64, dv: 
     cu_name, dir,
     pa2.files, pa2.loc_offs, pa2.loc_files, pa2.loc_lines, pa2.loc_cols, pa2.loc_flags,
     arm64_native.arm64_debug_frame(p, tv),
-    arm64_var_ranges(p, tv, dv),
+    arm64_var_ranges(p),
   );
   return util.to_u8(wide);
 }
@@ -231,7 +231,7 @@ pub function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_nam
     cu_name, dir,
     a.files, a.loc_offs, a.loc_files, a.loc_lines, a.loc_cols, a.loc_flags,
     x86_native.x86_debug_frame(a, tv),
-    x86_var_ranges(a, tv as i32),
+    x86_var_ranges(a),
   );
   return util.to_u8(wide);
 }
@@ -269,72 +269,22 @@ function x86_self_relocation(own a: x86_native.X86Asm, tv: i32, dv: i32, reloc_a
   return x86_native.X86Asm { ...a, rodata: data };
 }
 
-function x86_var_ranges(a: x86_native.X86Asm, tv: i32): elf.VarRanges {
+function x86_var_ranges(a: x86_native.X86Asm): elf.VarRanges {
   let out = elf.no_var_ranges();
   for row in a.dvars {
     let f = row.split("|");
-    let addrs: i64[] = [];
-    for l in shape_labels(f[2]) {
-      addrs = addrs.append(x86_native.x86_symbol_addr(a, l, tv) as i64);
-    }
-    out = var_range(out, f.with(2, with_shape_addrs(f[2], addrs)), x86_native.x86_label_off(a, f[4]), x86_native.x86_label_off(a, f[5]));
+    out = var_range(out, f, x86_native.x86_label_off(a, f[4]), x86_native.x86_label_off(a, f[5]));
   }
   return out;
 }
 
-pub function arm64_var_ranges(p: arm64_native.Arm64GasProg, tv: i64, dv: i64): elf.VarRanges {
+pub function arm64_var_ranges(p: arm64_native.Arm64GasProg): elf.VarRanges {
   let out = elf.no_var_ranges();
   for row in p.asm.dvars {
     let f = row.split("|");
-    let addrs: i64[] = [];
-    for l in shape_labels(f[2]) {
-      addrs = addrs.append(arm64_native.arm64_symbol_addr(p, l, tv, dv));
-    }
-    out = var_range(out, f.with(2, with_shape_addrs(f[2], addrs)), arm64_native.arm64_asm_label_off(p.asm, f[4]), arm64_native.arm64_asm_label_off(p.asm, f[5]));
+    out = var_range(out, f, arm64_native.arm64_asm_label_off(p.asm, f[4]), arm64_native.arm64_asm_label_off(p.asm, f[5]));
   }
   return out;
-}
-
-function shape_labels(t: string): string[] {
-  let out: string[] = [];
-  let i = 0;
-  while (i < t.len()) {
-    if (t[i] == b'=') {
-      let j = i + 1;
-      while (j < t.len() && t[j] != b',' && t[j] != b'}') {
-        j += 1;
-      }
-      out = out.append(slice_unchecked(t, i + 1, j).to_owned());
-      i = j;
-    } else {
-      i += 1;
-    }
-  }
-  return out;
-}
-
-function with_shape_addrs(t: string, addrs: i64[]): string {
-  let out = "";
-  let run = 0;
-  let k = 0;
-  let i = 0;
-  while (i < t.len()) {
-    if (t[i] != b'=') {
-      i += 1;
-      continue;
-    }
-    if (addrs[k] < 0 as i64) {
-      return "";
-    }
-    out = out + slice_unchecked(t, run, i) + "=" + util.i64_to_string(addrs[k]);
-    k += 1;
-    i += 1;
-    while (i < t.len() && t[i] != b',' && t[i] != b'}') {
-      i += 1;
-    }
-    run = i;
-  }
-  return out + slice_unchecked(t, run, t.len());
 }
 
 function var_range(r: elf.VarRanges, f: string[], lo: i32, hi: i32): elf.VarRanges {

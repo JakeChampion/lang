@@ -1,0 +1,108 @@
+import "std/test";
+import "std/hex";
+import "std/codec";
+import "std/crypto/aes";
+
+// FIPS 197 appendix C: the plaintext of each example, and the key and the
+// ciphertext for each key size.
+const FIPS_PLAINTEXT: string = "00112233445566778899aabbccddeeff";
+
+const FIPS_KEYS: string[] = [
+  "000102030405060708090a0b0c0d0e0f",
+  "000102030405060708090a0b0c0d0e0f1011121314151617",
+  "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+];
+
+const FIPS_CIPHERTEXTS: string[] = ["69c4e0d86a7b0430d8cdb78070b4c55a", "dda97ca4864cdfe06eaf70a0ec0d7191", "8ea2b7ca516745bfeafc49904b496089"];
+
+// NIST SP 800-38A appendix F.2: CBC with each key size.
+const CBC_IV: string = "000102030405060708090a0b0c0d0e0f";
+
+const CBC_PLAINTEXT: string = "6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e5130c81c46a35ce411e5fbc1191a0a52eff69f2445df4f9b17ad2b417be66c3710";
+
+const CBC_KEYS: string[] = [
+  "2b7e151628aed2a6abf7158809cf4f3c",
+  "8e73b0f7da0e6452c810f32b809079e562f8ead2522c6b7b",
+  "603deb1015ca71be2b73aef0857d77811f352c073b6108d72d9810a30914dff4",
+];
+
+const CBC_CIPHERTEXTS: string[] = [
+  "7649abac8119b246cee98e9b12e9197d5086cb9b507219ee95db113a917678b273bed6b8e3c1743b7116e69e222295163ff1caa1681fac09120eca307586e1a7",
+  "4f021db243bc633d7178183a9fa071e8b4d9ada9ad7dedf4e5e738763f69145a571b242012fb7ae07fa9baac3df102e008b0e27988598881d920a9e64f5615cd",
+  "f58c4c04d6e5f1ba779eabfb5f7bfbd69cfc4e967edb808d679f777bc6702c7d39f23369a9d9bacfa530e26304231461b2eb05e2c39be9fcda6c19078c6a9d1b",
+];
+
+function b(s: string): u8[] {
+  return __codec_bytes(hex.decode(s));
+}
+
+function test_fips_blocks(): test.TestOutcome {
+  let got: string[] = [];
+  let want: string[] = [];
+  for i in 0..3 {
+    let Ok(c) = aes.cipher(b(FIPS_KEYS[i])) else {
+      return test.fail("key " + i.to_string());
+    };
+    let ct = c.encrypt_block(b(FIPS_PLAINTEXT));
+    got = got.append(hex.encode(ct)).append(hex.encode(c.decrypt_block(ct)));
+    want = want.append(FIPS_CIPHERTEXTS[i]).append(FIPS_PLAINTEXT);
+  }
+  return test.assert_eq_array(got, want);
+}
+
+function cbc_text(r: Result[u8[], aes.AesError]): string {
+  return match (r) {
+    Ok(x) => hex.encode(x),
+    Err(e) => e.message(),
+  };
+}
+
+function test_cbc(): test.TestOutcome {
+  let got: string[] = [];
+  let want: string[] = [];
+  for i in 0..3 {
+    got = got.append(cbc_text(aes.cbc_encrypt(b(CBC_KEYS[i]), b(CBC_IV), b(CBC_PLAINTEXT))));
+    got = got.append(cbc_text(aes.cbc_decrypt(b(CBC_KEYS[i]), b(CBC_IV), b(CBC_CIPHERTEXTS[i]))));
+    want = want.append(CBC_CIPHERTEXTS[i]).append(CBC_PLAINTEXT);
+  }
+  return test.assert_eq_array(got, want);
+}
+
+function test_refusals(): test.TestOutcome {
+  let key = b(CBC_KEYS[0]);
+  let iv = b(CBC_IV);
+  let got = [
+    cbc_text(aes.cbc_decrypt(key[0:15], iv, b(CBC_CIPHERTEXTS[0]))),
+    cbc_text(aes.cbc_decrypt(key, iv[0:8], b(CBC_CIPHERTEXTS[0]))),
+    cbc_text(aes.cbc_decrypt(key, iv, b(CBC_CIPHERTEXTS[0])[0:17])),
+    cbc_text(aes.cbc_decrypt(key, iv, [])),
+  ];
+  return test.assert_eq_array(got, [
+    "aes: the key is 15 bytes, want 16, 24 or 32",
+    "aes: the initialization vector is 8 bytes, want 16",
+    "aes: the data is 17 bytes, not a multiple of 16",
+    "",
+  ]);
+}
+
+function main(): i32 {
+  let r = test.new("std/crypto/aes");
+  r = r.it("FIPS 197 appendix C, each key size", test_fips_blocks);
+  r = r.it("SP 800-38A CBC, each key size", test_cbc);
+  r = r.it("lengths", test_refusals);
+  return r.finish();
+}
+
+function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
+  match (value) {
+    Ok(bytes) => {
+      return bytes;
+    },
+    Err(problem) => {
+      eprint(problem.message());
+      exit(98);
+      return [];
+    }
+  }
+  return [];
+}

@@ -1016,6 +1016,14 @@ function __joined(own out: u8[], more: [u8]): u8[] {
   return out;
 }
 
+// The deflate data of the gzip member at `from`, with no check of its
+// trailer. `consumed` counts the bytes of the member with its trailer.
+pub function gzip_member_data(input: [u8], from: i32, max_out: i32): Result[Inflated, InflateError] {
+  let body = __gzip_header(input, from)?;
+  let inflated = inflate_from(input, body, max_out)?;
+  return Ok(Inflated { out: inflated.out, consumed: body + inflated.consumed + 8 - from });
+}
+
 // One gzip member at `from`: its header, its deflate data and its trailer.
 // `consumed` counts the bytes of the member.
 pub function gzip_member(input: [u8], from: i32, max_out: i32): Result[Inflated, InflateError] {

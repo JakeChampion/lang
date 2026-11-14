@@ -7,8 +7,14 @@ import "./store";
 // `dir` is the git directory. `common` holds the objects and the refs: it is
 // `dir`, or the directory that a linked worktree names. `prefix` is the path
 // from the top of the worktree to the current directory, with a `/` at its
-// end, or "".
-pub struct Repo { dir: string, common: string, prefix: string, shown: string }
+// end, or "". `width` is the count of bytes of a name: 20 with SHA-1, and
+// 32 with SHA-256.
+pub struct Repo { dir: string, common: string, prefix: string, shown: string, width: i32 }
+
+// The store of the objects of the repository.
+pub function (r: Repo) store(): store.Store {
+  return store.open(r.objects(), r.width);
+}
 
 pub function (r: Repo) objects(): string {
   return r.common + "/objects";
@@ -77,6 +83,21 @@ function git_dir_of(top: string): string {
   return "";
 }
 
+// The repository of the git directory `dir`. Its `config` file gives the
+// hash of the names.
+function repo_of(dir: string, prefix: string, shown: string): Result[Repo, string] {
+  let common = common_of(dir);
+  let format = match (read_file(common + "/config")) {
+    Ok(text) => objects.object_format(text),
+    Err(_) => "",
+  };
+  let width = objects.width_of(format);
+  if (width == 0) {
+    return Err("error: invalid value for 'extensions.objectformat': '" + format + "'");
+  }
+  return Ok(Repo { dir: dir, common: common, prefix: prefix, shown: shown, width: width });
+}
+
 const NOT_A_REPOSITORY: string = "fatal: not a git repository (or any of the parent directories): .git";
 
 // The repository of the current directory: `GIT_DIR`, or the `.git` of the
@@ -86,7 +107,7 @@ pub function find(): Result[Repo, string] {
     if (!is_dir(dir)) {
       return Err("fatal: not a git repository: '" + dir + "'");
     }
-    return Ok(Repo { dir: dir, common: common_of(dir), prefix: "", shown: dir });
+    return repo_of(dir, "", dir);
   }
   let cwd = match (getcwd()) {
     Ok(path) => path,
@@ -100,7 +121,7 @@ pub function find(): Result[Repo, string] {
     if (dir.len() > 0) {
       let prefix = if (top == cwd) { "" } else { objects.part(cwd, top.len() + 1, cwd.len()) + "/" };
       let shown = if (top == cwd && dir == top + "/.git") { ".git" } else { dir };
-      return Ok(Repo { dir: dir, common: common_of(dir), prefix: prefix, shown: shown });
+      return repo_of(dir, prefix, shown);
     }
     if (top == "/") {
       return Err(NOT_A_REPOSITORY);
@@ -118,9 +139,10 @@ function packed_ref(r: Repo, name: string): string {
       return "";
     },
   };
+  let full = 2 * r.width;
   for line in text.split("\n") {
-    if (line.len() > 41 && line[0] != b'#' && line[0] != b'^' && objects.part(line, 41, line.len()) == name) {
-      return objects.part(line, 0, 40);
+    if (line.len() > full + 1 && line[0] != b'#' && line[0] != b'^' && objects.part(line, full + 1, line.len()) == name) {
+      return objects.part(line, 0, full);
     }
   }
   return "";
@@ -141,7 +163,7 @@ function ref_hash(r: Repo, name: string, depth: i32): string {
   if (text.starts_with("ref: ")) {
     return ref_hash(r, objects.part(text, 5, text.len()), depth + 1);
   }
-  if (text.len() == 40 && objects.is_hex(text, 40)) {
+  if (text.len() == 2 * r.width && objects.is_hex(text, 2 * r.width)) {
     return text;
   }
   return "";
@@ -182,14 +204,15 @@ function named_ref(r: Repo, name: string): string {
 // The full hash that `name` means, or "": a full hash, a ref, or a short
 // hash of four digits or more that one object has.
 pub function resolve(r: Repo, s: store.Store, name: string): string {
-  if (name.len() == 40 && objects.is_hex(name, 40)) {
+  let full = 2 * r.width;
+  if (name.len() == full && objects.is_hex(name, full)) {
     return name.to_ascii_lower();
   }
   let h = named_ref(r, name);
   if (h.len() > 0) {
     return h;
   }
-  if (name.len() >= 4 && name.len() < 40 && objects.is_hex(name, 4)) {
+  if (name.len() >= 4 && name.len() < full && objects.is_hex(name, 4)) {
     let found = store.with_prefix(s, name.to_ascii_lower());
     if (found.len() == 1) {
       return found[0];
@@ -202,7 +225,7 @@ pub function resolve(r: Repo, s: store.Store, name: string): string {
 // object has.
 pub function short_of(s: store.Store, hash: string, least: i32): string {
   let n = least;
-  while (n < 40 && store.with_prefix(s, objects.part(hash, 0, n)).len() > 1) {
+  while (n < 2 * s.width && store.with_prefix(s, objects.part(hash, 0, n)).len() > 1) {
     n += 1;
   }
   return objects.part(hash, 0, n);

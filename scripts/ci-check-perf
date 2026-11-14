@@ -7,6 +7,10 @@
 #   BASELINE  .github/perf-baseline.txt — `metric value [tolerance%]` per line.
 #   REPORT    written by scripts/perf-bench.
 #
+# FERN_PERF_CORRECTED_OUT=FILE writes the rows of the corrected baseline to
+# FILE, in the form that scripts/rebank reads. The Perf lane sets it on main,
+# and scripts/rebank-main applies the rows.
+#
 # WHY THIS EXISTS. Nothing in the repo measured how fast the language is. The
 # self-hosted compiler compiling itself is the project's own largest Fern
 # program and its slowest gate, and every claim about why was an estimate,
@@ -174,9 +178,9 @@ routed="$(awk -v B="$BASELINE" -v deftol="$TOLERANCE" -v label="$LABEL" '
     for (i = 1; i <= n; i++) {
       m = order[i]
       if (!(m in paste)) continue
-      if (nsug++ == 0) printf "SUMMARY\tCorrected baseline — paste into the baseline file:\n"
-      if (tol[m] != deftol && (m in base)) printf "SUMMARY\t    %s %d %s\n", m, paste[m], tol[m]
-      else printf "SUMMARY\t    %s %d\n", m, paste[m]
+      if (nsug++ == 0) printf "SUMMARY\tCorrected baseline — give these rows to `scripts/rebank BASELINE`:\n"
+      if (tol[m] != deftol && (m in base)) { printf "SUMMARY\t    %s %d %s\n", m, paste[m], tol[m]; printf "CORRECT\t%s %d %s\n", m, paste[m], tol[m] }
+      else { printf "SUMMARY\t    %s %d\n", m, paste[m]; printf "CORRECT\t%s %d\n", m, paste[m] }
     }
 
     if (nfind == 0 && nunbased == 0 && nmissing == 0)
@@ -204,6 +208,14 @@ while IFS=$'\t' read -r tag rest; do
     nmissing="$rest"
   fi
 done < <(printf '%s\n' "$routed")
+
+# The rows of the corrected baseline, for scripts/rebank-main. The file is
+# written when it has no rows too, so that an empty file means "measured, and
+# nothing moved".
+if [ -n "${FERN_PERF_CORRECTED_OUT:-}" ]; then
+  mkdir -p "$(dirname "$FERN_PERF_CORRECTED_OUT")"
+  printf '%s\n' "$routed" | sed -n 's/^CORRECT\t//p' >"$FERN_PERF_CORRECTED_OUT"
+fi
 
 while IFS=$'\t' read -r tag title msg; do
   [ "$tag" = ANNOTATE ] || continue

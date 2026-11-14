@@ -298,6 +298,7 @@ They do not identify access units or supply timestamps. A muxer still needs pack
 
 It reads version-one AVC and HEVC configuration records for Android codec configuration data.
 AVC includes SPS, PPS, and optional SPS extensions.
+Their reference indicator must be nonzero under ITU-T H.264 (August 2024), clause 7.4.1.
 
 HEVC includes VPS, SPS, PPS, and prefix or suffix SEI arrays.
 The conversion preserves NAL payload bytes. It does not validate their coded syntax.
@@ -479,6 +480,15 @@ It checks header bits, extension identifiers, eight-byte size fields, and unsign
 An absent size field or reserved OBU type returns `Unsupported`.
 Annex B framing, payload syntax, temporal-unit ordering, complete frame boundaries, and pixel decode remain outside this API.
 
+`std/video/av1/annex_b.next_temporal_unit` reads native Annex B temporal, frame, and OBU ranges.
+Nested lengths must fit their parent ranges. Explicit OBU sizes must agree with the enclosing OBU length.
+The first OBU must be a temporal delimiter in the first frame unit. Other delimiter positions return `Header`.
+The parser reuses the OBU header checks and accepts both size-field forms.
+
+The packet budget applies before access. Separate limits bound frame and OBU records per temporal unit.
+Returned ranges retain no input bytes or payload copies. The caller preserves the immutable source.
+Payload syntax, complete frame coverage, timestamps, and pixel decode remain outside this reader.
+
 `std/video/av1/sequence.inspect` reads one complete sequence-header OBU through the same framing reader.
 It reports maximum frame dimensions, precision, color fields, and sequence tool flags without a payload copy.
 The pixel budget applies to the maximum frame area. A separate 512-byte payload ceiling bounds header work.
@@ -592,6 +602,10 @@ Native and WASI ranges match an independent parser. Converted streams retain ide
 It also extracts fresh HEVC Main and Main 10 configuration records from FFmpeg MP4 output.
 Forty-eight native and WASI controls check their VPS, SPS, and PPS temporal headers against clause 7.4.2.2.
 CBS traces those headers separately from specification-based refusal decisions. Reconstructed configuration prefixes preserve every decoded plane.
+
+Four AVC configuration records add 32 native and WASI reference-header controls.
+SPS and PPS header fields match independent CBS traces. Native configuration prefixes retain all decoded planes.
+Synthetic unit controls also cover SPS extension headers and forbidden bits.
 
 `scripts/check-video-qtrle-mov-interop` compares five fresh MOV files with FFprobe and FFmpeg.
 Native and real WASI input preserve every packet field and decoded ARGB sample.

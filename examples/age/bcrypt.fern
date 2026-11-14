@@ -1,9 +1,10 @@
 // The passphrase of an OpenSSH private key file: bcrypt_pbkdf (OpenBSD's
-// bcrypt_pbkdf.c, which golang.org/x/crypto/ssh ports) and AES-256-CTR.
+// bcrypt_pbkdf.c, which golang.org/x/crypto/ssh ports), AES-256-CTR and AES-256-CBC.
 // Blowfish reads its S-boxes at indexes that depend on the passphrase, as
 // OpenSSH's Blowfish does, so this code is not constant-time.
 import "std/array";
 import "std/crypto";
+import "std/crypto/aes";
 import "./text";
 
 // The initial Blowfish state: the 18 P-array words, then the 4 S-boxes of
@@ -368,7 +369,10 @@ pub function decrypt_block(cipher: string, kdf: string, opts: [u8], block: [u8],
     return Ok(aes256_ctr(k[0:32], k[32:48], block));
   }
   if (cipher == "aes256-cbc") {
-    return Err("ssh: the aes256-cbc cipher is not supported by this port");
+    return match (aes.cbc_decrypt(k[0:32], k[32:48], block)) {
+      Ok(b) => Ok(b),
+      Err(_) => Err("ssh: invalid encrypted private key length, not a multiple of the block size"),
+    };
   }
   return Err(f"ssh: unknown cipher {text.quote(cipher.as_bytes())}, only supports \"aes256-ctr\" or \"aes256-cbc\"");
 }

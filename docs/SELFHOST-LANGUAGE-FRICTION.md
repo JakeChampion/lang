@@ -55,7 +55,7 @@ column says what `TestSelfHostFeatureCensus` holds the row to.
 |---|---|---|---|
 | Generic functions | ✅ monomorphised, with trait bounds | **17** — `astwalk`'s 9 fold spine and 6 accumulator map spine (the sixth maps a literal pattern, #15603), `util.append_all`, and `util.sorted_by` for diagnostics (#12993) | pinned |
 | Generic structs | ✅ | **0** — load-bearing: a generic struct in a signature promotes its type param to the monomorphiser, which the per-module emit path does not run (the accumulator spine returns bare tuples for exactly that reason) | pinned |
-| Closures / lambdas | Capturing and escaping lambdas and nested named functions | **113**: 89 nested named functions across 8 modules, plus 24 arrow lambdas across 6 modules. Four new visitors retain selected callback environment loans (#15328). Visitors capture queried names, function-signature registries, declared types and instrumentation context. The diagnostics sort captures line maps (#12993), and the modern-form lint walk captures its configuration (#14288). Sharing the E032 call-diagnostic walk removes two nested visitors. Struct-literal diagnostics add a shared-fold visitor. The replaced-read scan of the own check adds two (#13929). The callback aggregate proof adds one visitor (#15060). The owned-return cleanup proof adds one visitor (#15144). The check that a borrowed read keeps the data payload of its owner adds two arrow lambdas (#15275). The task and worker checks use capture-free visitors at module scope. Primitive display dependency discovery uses capture-free visitors at module scope (#12704). The walk of the minus signs of literals uses capture-free visitors at module scope (#15806). | pinned |
+| Closures / lambdas | Capturing and escaping lambdas and nested named functions | **113**: 89 nested named functions across 8 modules, plus 24 arrow lambdas across 6 modules. Four new visitors retain selected callback environment loans (#15328). Visitors capture queried names, function-signature registries, declared types and instrumentation context. The diagnostics sort captures line maps (#12993), and the modern-form lint walk captures its configuration (#14288). Sharing the E032 call-diagnostic walk removes two nested visitors. Struct-literal diagnostics add a shared-fold visitor. The replaced-read scan of the own check adds two (#13929). The callback aggregate proof adds one visitor (#15060). The owned-return cleanup proof adds one visitor (#15144). The check that a borrowed read keeps the data payload of its owner adds two arrow lambdas (#15275). The task and worker checks use capture-free visitors at module scope. Primitive display dependency discovery uses capture-free visitors at module scope (#12704). The walk of the minus signs of literals uses capture-free visitors at module scope (#15806). | logged |
 | `for x in xs` | ✅ arrays, strings, `Iterator[T]` | **8,651** in 351 modules — includes the bounded SIMD byte-origin scans (#15085) | floor |
 | `?` error propagation | ✅ incl. `From`-converting widening | **0** | pinned |
 | Hash map (`Map[K, V]`) | ✅ i32/string/`@derive(Eq, Hash)` keys | **14** spellings in 7 modules (`wasm_ir`'s call-name accumulator, `printer`'s line-id table for the linear-space diff (#8611), `modloader`'s fact-hash set, `ircore`'s unit-owner tables, `fern_toml`'s lock-entry positions, `mvs`'s registry-entry positions and `interp`'s index of the shared values of one store or one send copy (#15436)) | pinned |
@@ -63,13 +63,13 @@ column says what `TestSelfHostFeatureCensus` holds the row to.
 | `enum` with payloads | ✅ multi-payload, named fields | **2 declarations** | — |
 | `Option[T]` / `Result[T, E]` in return position | ✅ | **20** of 4,676 functions (0.4%) | — |
 | stdlib (`std/*`, `core/*`) | 61 modules | **`std/io` only** (19 imports) | — |
-| `while` + manual index | — | **2,076** loops, **2,293** `x = x + 1` — includes the bounded, variable-step store-group search (#15085), the worklist cursor of the immutable-data proof (#15162) and the two chain-link counters of the parser (#14977) | ceiling on the increments |
+| `while` + manual index | — | **2,076** loops, **2,293** `x = x + 1` — includes the bounded, variable-step store-group search (#15085), the worklist cursor of the immutable-data proof (#15162) and the two chain-link counters of the parser (#14977) | no growth of the increments |
 | `-1` as "absent" | — | **247** `return 0 - 1` | logged |
 | String-tagged side tables (`"SFRRECV:"`, `"BORROW:"`, …) | — | **65** distinct tag namespaces | — |
 | Magic ASCII byte constants (`== 91`, `== 44`) | — | **342** | — |
 | Explicit `as` casts | — | **715** | logged |
 | Hand-written AST walkers | — | **~130** over `Expr`, **~247** over `Stmt` | — |
-| Wildcard `_ =>` match arms | — | **1,616** of **8,995** arrow tokens (18.0%), measured on 2026-11-12 | ceiling: 1,619 |
+| Wildcard `_ =>` match arms | — | **1,616** of **8,995** arrow tokens (18.0%), measured on 2026-11-12 | no growth |
 | Locals with a written type annotation | inference exists | **17,168** of 17,175 (99.9%) | logged |
 | Methods (`function (r: T) name(…)`) | ✅ | **289** in 9 modules | logged |
 
@@ -99,7 +99,9 @@ go test ./internal/testing/e2ecompiler/ -run TestSelfHostFeatureCensus -v
 
 prints the whole table. `pinned` rows fail on any move in either direction —
 they are small, and a move means this table needs editing; `floor` fails only on
-a fall; `ceiling` allows ~10% of headroom over the measurement before failing;
+a fall; a `no growth` row fails when a change raises the count above the count
+of its base commit (`TestSelfHostFeatureCensusDelta`, run by
+`scripts/check-ratchets`), so its number here is a measurement of one day;
 `logged` rows are printed by the same run but not asserted. A row marked `—` is
 hand-counted and not covered by the test.
 
