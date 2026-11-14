@@ -111,15 +111,10 @@ produce timings.
 is not filed as infrastructure flake, and vice versa.
 
 **Native merge queue is not being adopted.** GitHub gates it on organization
-ownership, and this repo is personal. The gates would not survive a transfer to
-an org either:
-`merge_group` supports no `paths` / `paths-ignore` filter, and a required check
-that path-filters itself out never reports, so the queue waits on it forever
-(community discussion 45899, open since 2023). Every heavy lane here is
-path-filtered by design, pinned by `TestPRLanesShareOneDocOnlyFilter`. The
-coupling a queue would catch — two individually-green PRs that conflict only in
-combination — is already caught by the `push: [main]` half of every gate lane
-(`TestGateLanesRunOnMain`), one merge later rather than one merge earlier.
+ownership, and this repo is personal. The repository has its own queue
+(`scripts/merge-queue`, "The merge queue" in `docs/TEST-GATES.md`). It runs
+the full suite on each batch, so the lack of a path filter on `merge_group`
+does not apply to it.
 
 ## Compiler architecture
 

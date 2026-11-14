@@ -155,12 +155,19 @@ compaction summaries), and the two places this repo overrides that guidance.
 This includes small follow-ups, doc-only fixes, and comment corrections. Opening
 it IS the expected action. The loop is:
 
-> branch → commit → push → PR → subscribe → watch CI **and mergeability** →
-> merge when green → next task
+> branch → commit → push → PR → label `merge-queue` → subscribe → watch CI
+> **and mergeability** → the queue merges it → next task
+
+**Never merge a PR yourself, and never push to main.** The merge queue
+(`scripts/merge-queue`, `docs/TEST-GATES.md`) takes a labelled PR when its
+`CI verdict` is green, tests it in a batch on the tip of main, and moves main
+to the tested commit. A merge outside the queue puts an untested tree on main.
+If the queue removes the label, its comment says why: fix that and add the
+label again.
 
 Do not stop at "pushed to the branch", do not wait after opening the PR, and do
-not ask whether to merge. If CI fails, diagnose and push fixes on the same branch
-until green, then merge. Subscribe to PR activity (`subscribe_pr_activity`)
+not ask whether to queue it. If CI fails, diagnose and push fixes on the same
+branch until green. Subscribe to PR activity (`subscribe_pr_activity`)
 without being asked — the user prefers that to manual CI polling. Pause only for
 a genuine fork (an ambiguous review comment, an architectural decision).
 
@@ -220,16 +227,9 @@ same way you would a red build: without being asked.
 - `unstable` = mergeable, checks still running or non-required ones failing.
   Keep waiting.
 
-**PRs here are usually REBASE-merged**, which publishes each commit message
-individually — so write them to be read, rather than leaning on a merge-time
-title and body that may not survive. Merge commits and squashes are equally
-acceptable; pick whichever suits the branch.
-
-Rebasing still rewrites SHAs, so content that landed via your branch reaches main
-under a *different* commit than the one your branch holds. Building further on
-the pre-merge commit therefore still makes git see two independent creations of
-the same file — an add/add conflict, though nothing really diverged. After any
-PR merges, start follow-up work from a fresh base:
+**The queue merges each PR with a merge commit**, so each commit message of
+the branch reaches main as it is — write them to be read. After any PR merges,
+start follow-up work from a fresh base:
 
 ```
 git fetch origin main && git checkout -B <branch> origin/main
@@ -241,11 +241,6 @@ opposite responses. GitHub deleting the head branch on merge leaves a stale
 your branch gives the identical message, and there the lease is doing its job:
 fetch and read what landed before deciding.** Refreshing the ref and retrying
 overwrites their commit sight-unseen.
-
-If you only notice after committing, reset onto main and replay the new commits
-(`git checkout -B <branch> origin/main && git cherry-pick <sha>`) rather than
-hand-resolving conflict markers between a file and its own already-merged copy —
-then force-with-lease push.
 
 **GitHub can silently delete a span from a PR body or comment.** Anything that
 reads as an HTML tag is stripped along with everything up to the next `>`,
