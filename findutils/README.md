@@ -58,7 +58,8 @@ readdir. A test of the name or of the type thus needs no stat.
 
 The options are `-0`, `-a`, `-d`, `-E`, `-e`, `-I`, `-i`, `-L`, `-l`,
 `-n`, `-s`, `-x`, `-P`, `-p`, `-r`, `-t`, `-o`, `--show-limits` and
-`--process-slot-var`. The exit status is one of these:
+`--process-slot-var`. SIGUSR1 adds one command to `-P`, and SIGUSR2 takes
+one away, as in GNU xargs. The exit status is one of these:
 
 - 0 when each command exits with 0.
 - 123 when a command exits with a status from 1 to 125.
@@ -74,8 +75,6 @@ The options are `-0`, `-a`, `-d`, `-E`, `-e`, `-I`, `-i`, `-L`, `-l`,
 - `find -O` does not change the order of the tests. GNU find can test a
   name before a size at `-O1` and up. The output is the same. But when a
   stat of a file fails, one program can report it and the other not.
-- GNU xargs changes the number of commands of `-P` on SIGUSR1 and SIGUSR2.
-  The port does not.
 - On wasm32-wasi there are no processes. `-exec` and its kin stop find with
   an error, and xargs stops at once. `-fstype` names each file system
   `unknown`, `-readable` and its kin are false, and `%Z` has no context.

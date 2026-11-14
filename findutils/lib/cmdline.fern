@@ -377,8 +377,10 @@ function read_errno(r: Reader): i32 {
         }
         text = text + s;
       },
-      Err(_) => {
-        break;
+      Err(e) => {
+        if (errno.of(e) != errno.EINTR) {
+          break;
+        }
       }
     }
   }

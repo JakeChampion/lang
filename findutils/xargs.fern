@@ -1,6 +1,7 @@
 import "std/string";
 import "std/errno";
 import "../coreutils/lib/gnu";
+import "../coreutils/lib/signals";
 import "./lib/cmdline";
 
 const EXIT_USAGE: i32 = 1;
@@ -15,6 +16,8 @@ const EXIT_CHILD_SIGNAL: i32 = 125;
 const EXIT_CANNOT_RUN: i32 = 126;
 
 const EXIT_NOT_FOUND: i32 = 127;
+
+const MAX_PROCS: i64 = 2147483647i64;
 
 const OPT_NULL: i32 = 1;
 
@@ -627,6 +630,7 @@ struct Run {
   children: Child[],
   ran: boolean,
   tty: Option[Reader],
+  procs: i64,
 }
 
 function quote_arg(a: string): string {
@@ -769,9 +773,57 @@ function report_end(name: string, res: cmdline.Outcome): void {
   }
 }
 
-// Waits for one command, and frees its slot.
-function wait_one(o: Opts, own run: Run): Run {
-  let st = proc_waitpid_status(-1);
+// SIGUSR1 and SIGUSR2 add a command to -P and take one away, as in GNU
+// xargs. The handlers do not restart a wait, so a wait can see them.
+function catch_usr_signals(): void {
+  signal_catch_interrupting(signals.number("USR1"));
+  signal_catch_interrupting(signals.number("USR2"));
+}
+
+// Applies the SIGUSR1 and SIGUSR2 that came, and tells whether SIGUSR1 came.
+function take_usr_signals(own run: Run): (boolean, Run) {
+  let more = signal_taken(signals.number("USR1"));
+  let procs = run.procs;
+  if (more && procs < MAX_PROCS) {
+    procs += 1i64;
+  }
+  if (signal_taken(signals.number("USR2")) && procs > 1i64) {
+    procs -= 1i64;
+  }
+  return (more, Run { ...run, procs: procs });
+}
+
+// The status of the next command that ends, or -1 when no command runs. A
+// signal does not end the wait. When `early` is set, SIGUSR1 ends it with
+// -2, because -P then has room for one more command.
+function wait_status(own run0: Run, early: boolean): (i32, Run) {
+  let run = run0;
+  loop {
+    let st = proc_waitpid_status(-1);
+    if (st >= 0) {
+      return (st, run);
+    }
+    if (st == -errno.ECHILD) {
+      return (-1, run);
+    }
+    if (st != -errno.EINTR) {
+      fail("error waiting for child process: " + gnu.exec_errno_text(-st), 1);
+    }
+    let (more, r2) = take_usr_signals(run);
+    run = r2;
+    if (more && early) {
+      return (-2, run);
+    }
+  }
+  return (-1, run);
+}
+
+// Waits for one command, and frees its slot. SIGUSR1 ends the wait early.
+function wait_one(o: Opts, own run0: Run): Run {
+  let (st, run) = wait_status(run0, true);
+  if (st == -2) {
+    return run;
+  }
   if (st < 0) {
     return Run { ...run, children: [] };
   }
@@ -794,7 +846,8 @@ function wait_one(o: Opts, own run: Run): Run {
 // ends with 255 or a signal is reported too.
 function wait_all(o: Opts, own run: Run): Run {
   while (run.children.len() > 0) {
-    let st = proc_waitpid_status(-1);
+    let (st, r2) = wait_status(run, false);
+    run = r2;
     if (st < 0) {
       return Run { ...run, children: [] };
     }
@@ -844,8 +897,10 @@ function execute(o: Opts, own run0: Run, argv: string[]): Run {
     let w = stderr();
     w.write(shown(argv) + "\n");
   }
-  if (o.procs != 1i64) {
-    while (o.procs > 0i64 && run.children.len() as i64 >= o.procs) {
+  let (_, r1) = take_usr_signals(run);
+  run = r1;
+  if (run.procs != 1i64) {
+    while (run.procs > 0i64 && run.children.len() as i64 >= run.procs) {
       run = wait_one(o, run);
     }
   }
@@ -862,7 +917,7 @@ function execute(o: Opts, own run0: Run, argv: string[]): Run {
     return r3;
   }
   run = Run { ...run, children: run.children.append(Child { pid: pid, slot: slot }) };
-  if (o.procs == 1i64) {
+  if (run.procs == 1i64) {
     run = wait_one(o, run);
   }
   return run;
@@ -1015,8 +1070,9 @@ function run_xargs(): i32 {
   if (base > o.max_chars) {
     fail("cannot fit single argument within argument list size limit", 1);
   }
+  catch_usr_signals();
   let inp = Input { r: open_input(o), buf: [], pos: 0, eof: false, nul_warned: false };
-  let run = Run { cmd: cmd, base: base, args: [], size: base, lines: 0i64, limit: o.max_chars, status: 0, children: [], ran: false, tty: None };
+  let run = Run { cmd: cmd, base: base, args: [], size: base, lines: 0i64, limit: o.max_chars, status: 0, children: [], ran: false, tty: None, procs: o.procs };
   let error = "";
   loop {
     let (it, i2) = next_item(o, inp);
