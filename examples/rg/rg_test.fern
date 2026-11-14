@@ -466,26 +466,34 @@ function test_line_terminators(): test.TestOutcome {
 
 // The decode of `bytes` with an encoding, shown as text and as a flag.
 function decoded(own bytes: u8[], name: string): string {
-  let (text, yes) = encoding.decode(bytes, name);
+  let (text, yes) = encoding.decode(bytes, name, encoding.decoder(name));
   return text + (if (yes) { "|d" } else { "|r" });
 }
 
 function test_encoding(): test.TestOutcome {
   let got = [
     encoding.label(" Latin1 "), encoding.label("UTF8"), encoding.label("utf-16"), encoding.label("UTF-16BE"),
-    encoding.label("none"), encoding.label("bogus"),
+    encoding.label("none"), encoding.label("bogus"), encoding.label("sjis"), encoding.label("csiso2022kr"),
     decoded([255u8, 254u8, 99u8, 0u8, 233u8, 0u8], ""),
     decoded([254u8, 255u8, 0u8, 99u8, 216u8, 61u8, 222u8, 0u8], ""),
-    decoded([99u8, 0u8, 0u8, 216u8, 97u8], "utf-16le"),
+    decoded([99u8, 0u8, 0u8, 216u8, 97u8], "UTF-16LE"),
     decoded([99u8, 233u8, 128u8], "windows-1252"),
-    decoded([99u8, 233u8, 32u8, 226u8, 130u8], "utf-8"),
+    decoded([99u8, 233u8, 32u8, 226u8, 130u8], "UTF-8"),
+    decoded([130u8, 160u8, 65u8], "Shift_JIS"),
+    decoded([164u8, 162u8], "EUC-JP"),
+    decoded([176u8, 161u8], "EUC-KR"),
+    decoded([129u8, 48u8, 129u8, 48u8, 164u8], "gb18030"),
+    decoded([164u8, 64u8], "Big5"),
+    decoded([27u8, 36u8, 66u8, 36u8, 34u8, 27u8, 40u8, 66u8, 97u8], "ISO-2022-JP"),
+    decoded([207u8], "windows-1251"),
     decoded([239u8, 187u8, 191u8, 99u8], ""),
     decoded([239u8, 187u8, 191u8, 99u8], "none"),
     decoded([99u8, 0u8], ""),
   ];
   return test.assert_eq_array(got, [
-    "windows-1252", "utf-8", "utf-16le", "utf-16be", "none", "",
-    "cé|d", "c😀|d", "c��|d", "cé€|d", "c� �|d", "c|d", "\u{FEFF}c|r", "c\x00|r",
+    "windows-1252", "UTF-8", "UTF-16LE", "UTF-16BE", "none", "", "Shift_JIS", "",
+    "cé|d", "c😀|d", "c��|d", "cé€|d", "c� �|d", "あA|d", "あ|d", "가|d", "\u{0080}�|d", "一|d", "あa|d", "П|d",
+    "c|d", "\u{FEFF}c|r", "c\x00|r",
   ]);
 }
 

@@ -36,7 +36,7 @@ searches the current directory, and it writes each name without the leading
 | | `--binary` | Search a binary file that the walk finds as a file on the command line. |
 | | `--mmap`, `--no-mmap` | Map the files into memory, or read them in buffers. This changes the rules for binary files. |
 | `-j N` | `--threads N` | The count of workers. |
-| `-E E` | `--encoding E`, `--no-encoding` | Decode the files from `utf-8`, `latin1` (windows-1252), `utf-16le` or `utf-16be`, or with `none` do not decode them. Each label of the Encoding Standard for these encodings is a name. By default, a file with a byte order mark of UTF-8 or UTF-16 is decoded. |
+| `-E E` | `--encoding E`, `--no-encoding` | Decode the files from an encoding of the Encoding Standard, with `std/encoding`: each label of the standard, such as `latin1`, `sjis`, `euc-jp`, `gbk` or `koi8-r`, names one. `none` does not decode, and `auto` is the default: a file with a byte order mark of UTF-8 or UTF-16 is decoded. |
 | | `--crlf` | A line ends with CRLF: `$` matches before `\r\n`, and the output writes `\r\n`. |
 | | `--null-data` | A line ends with NUL, and the search is of text. |
 | | `--stop-on-nonmatch` | Stop the search of a file at a line that is not selected after a selected line. |
@@ -211,24 +211,27 @@ order of the walk.
 ## Differences from ripgrep
 
 - **Unicode tables.** `std/regex` uses the tables of Unicode 17.0.0 from
-  Go's `unicode` package, and ripgrep 14.1.0 uses Unicode 15.1. A script
-  takes its long name, as `\p{Greek}`, and not its short name, as
-  `\p{Grek}`. The properties of emoji are not in `std/regex`.
-  `\p{sc!=Greek}` is the complement of `\p{Greek}`, but ripgrep 14.1.0 reads
-  it as `\p{Greek}`.
+  Go's `unicode` package, and ripgrep 14.1.0 uses Unicode 15.0 through
+  regex-syntax 0.8.2. A script takes its long name or its short name, as
+  `\p{Greek}` and `\p{Grek}`, and the properties of emoji are there. As in
+  ripgrep, `\p{sc!=Greek}` is `\p{Greek}`. Some properties are not in
+  `std/regex`, and a pattern with one of them gives an error of
+  `std/regex`. They are Script_Extensions, Age, Grapheme_Cluster_Break,
+  Word_Break and Sentence_Break. The binary properties that are not in Go's
+  tables are also not there, such as ID_Start, XID_Start and Bidi_Mirrored.
 
-- **Pattern errors.** A pattern that does not compile gives exit status 2, as
-  in ripgrep, but the message is that of `std/regex`.
+- **Pattern errors.** `regex.check` reports each error of regex-syntax
+  0.8.2 with its text and its span, and ripgrep's hint about PCRE2. A
+  pattern that regex-syntax accepts can go above a limit of `std/regex`:
+  a count of a repetition above 1000, groups nested more than 128 deep, or
+  a program of more than 100,000 instructions. Then the message is that of
+  `std/regex`.
 
 - **Context and the buffers.** With context lines, ripgrep keeps the lines
   of the context in its buffer when it reads more. The count of these lines
   also depends on the last line that it wrote. The port keeps only the
   context lines. Thus, in a file with a NUL byte after the first 64 KiB,
   the buffer that holds it can start at a different offset.
-
-- **Encodings.** The port decodes UTF-8, windows-1252 and UTF-16. The
-  other encodings of `-E`, such as Shift_JIS and EUC-JP, give the error of
-  an unknown encoding.
 
 - **Times.** `--stats` and `--json` write times, and the times of two runs
   are not the same.

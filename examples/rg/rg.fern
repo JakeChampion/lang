@@ -10,6 +10,7 @@
 //   $ rg -t rust -g '!target' --files
 //   $ cmd | rg -o PATTERN       # each match of the standard input
 import "core/cmp";
+import "std/encoding" as whatwg;
 import "std/io";
 import "std/regex";
 import "std/worker";
@@ -39,6 +40,7 @@ struct Ctx {
   messages: boolean,
   ignore_messages: boolean,
   encoding: string,
+  decoder: whatwg.Decoder,
   // Write the output after each file: with --line-buffered, or by default
   // on a terminal.
   line_buffered: boolean,
@@ -86,7 +88,26 @@ function byte_name(b: u8): string {
   return if (b == 13u8) { "\\r" } else { "\\n" };
 }
 
-function compiled(pattern: string, banned: u8[]): Option[regex.Regex] {
+const PCRE2_HINT: string = "\n\nConsider enabling PCRE2 with the --pcre2 flag, which can handle backreferences\nand look-around.";
+
+// The error of the patterns as regex-syntax reports it, with the hint of
+// ripgrep about PCRE2 for backreferences and look-around.
+function syntax_error(o: flags.Options): Option[string] {
+  let Some(e) = regex.check(flags.joined(o), !o.has(flags.NO_UNICODE)) else {
+    return None;
+  };
+  let text = e.report();
+  if (text.contains("backreferences") || text.contains("look-around")) {
+    text += PCRE2_HINT;
+  }
+  return Some(text);
+}
+
+function compiled(o: flags.Options, pattern: string, banned: u8[]): Option[regex.Regex] {
+  if let Some(text) = syntax_error(o) {
+    eprint("rg: " + text);
+    return None;
+  }
   match (regex.compile(pattern)) {
     Ok(re) => {
       for b in banned {
@@ -182,7 +203,7 @@ function search_items(ctx: Ctx, re: regex.Regex, items: walk.Item[], h: usize): 
     match (read_input(it.path)) {
       Ok(bytes) => {
         let t0 = monotonic_ns();
-        let (text, decoded) = encoding.decode(bytes, ctx.encoding);
+        let (text, decoded) = encoding.decode(bytes, ctx.encoding, ctx.decoder);
         let out = search.search(linked(ctx, it.path), re, text, display_name(ctx, it.path), source(ctx, it, cap, decoded), h, written);
         written = out.written;
         cap = out.cap;
@@ -238,7 +259,7 @@ function search_buffered(ctx: Ctx, re: regex.Regex, items: walk.Item[], h: usize
     match (read_input(it.path)) {
       Ok(bytes) => {
         let t0 = monotonic_ns();
-        let (text, decoded) = encoding.decode(bytes, ctx.encoding);
+        let (text, decoded) = encoding.decode(bytes, ctx.encoding, ctx.decoder);
         let out = search.search(linked(ctx, it.path), re, text, display_name(ctx, it.path), source(ctx, it, cap, decoded), h, written);
         written = out.written;
         cap = out.cap;
@@ -577,7 +598,7 @@ function context_of(o: flags.Options, paths: string[]): Ctx {
   return Ctx {
     p: with_links(search.printer(o, isatty(1), term_color(), one_file), o), pattern: pattern, implicit: o.paths.len() == 0, mmap: maps(o, paths),
     binary: o.binary, threads: threads, quiet: o.has(flags.QUIET), messages: !o.has(flags.NO_MESSAGES),
-    ignore_messages: !o.has(flags.NO_IGNORE_MESSAGES), encoding: o.encoding,
+    ignore_messages: !o.has(flags.NO_IGNORE_MESSAGES), encoding: o.encoding, decoder: encoding.decoder(o.encoding),
     line_buffered: o.buffer == 1 || o.buffer == 0 && isatty(1),
   };
 }
@@ -643,7 +664,7 @@ function run(o: flags.Options, t0: i64): i32 {
   if (!o.searches()) {
     return list_files(ctx, items, o);
   }
-  let Some(re) = compiled(ctx.pattern, banned(o)) else {
+  let Some(re) = compiled(o, ctx.pattern, banned(o)) else {
     return 2;
   };
   let r = if (ctx.threads > 1) { search_parallel(ctx, items, ctx.threads) } else { search_serial(ctx, re, items) };

@@ -73,6 +73,7 @@ misc/binary_search_mmap
 misc/binary_search_no_mmap
 misc/files
 misc/type_list
+feature/f1_sjis
 misc/byte_offset_only_matching
 misc/columns
 misc/replace
@@ -108,6 +109,7 @@ feature/f362_dfa_size_limit
 feature/f419_zero_as_shortcut_for_null
 feature/f948_exit_code_match
 feature/f948_exit_code_no_match
+feature/f948_exit_code_error
 feature/f1138_no_ignore_dot/1
 feature/f1138_no_ignore_dot/2
 feature/f1138_no_ignore_dot/3
@@ -144,6 +146,7 @@ feature/f1_replacement_encoding
 feature/f1_unknown_encoding
 feature/f1_utf16_auto
 feature/f1_utf16_explicit
+feature/f1_eucjp
 feature/f243_column_line
 feature/f34_only_matching_line_column
 feature/f416_crlf

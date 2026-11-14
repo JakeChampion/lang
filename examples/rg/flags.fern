@@ -658,8 +658,12 @@ function set_search_text(o: Options, name: string, flag: string, value: string):
   };
 }
 
-// -E: an encoding that encoding.label knows, or "none".
+// -E: an encoding that encoding.label knows, "none", or "auto" for the
+// default.
 function set_encoding(o: Options, flag: string, value: string): Result[Options, string] {
+  if (value == "auto") {
+    return Ok(Options { ...o, encoding: "" });
+  }
   let name = encoding.label(value);
   if (name == "") {
     return Err("error parsing flag " + flag + ": grep config error: unknown encoding: " + value);
@@ -957,6 +961,18 @@ function ignores_case(o: Options): boolean {
 // ripgrep, each pattern is a group, so that its flags and a comment of
 // `(?x)` end with it.
 pub function pattern(o: Options): string {
+  let body = joined(o);
+  if (o.has(LINE)) {
+    body = "^(?:" + body + ")$";
+  } else if (o.has(WORD)) {
+    body = "\\b{start-half}(?:" + body + ")\\b{end-half}";
+  }
+  return inline_flags(o) + body;
+}
+
+// The -e patterns as one alternation, each in a group, as ripgrep joins
+// them. Its errors name offsets in this text.
+pub function joined(o: Options): string {
   let parts: string[] = [];
   for p in o.patterns {
     if (o.has(FIXED)) {
@@ -965,13 +981,7 @@ pub function pattern(o: Options): string {
       parts = parts.append(p);
     }
   }
-  let body = if (parts.len() == 0) { NO_MATCH } else { "(?:" + parts.join(")|(?:") + ")" };
-  if (o.has(LINE)) {
-    body = "^(?:" + body + ")$";
-  } else if (o.has(WORD)) {
-    body = "\\b{start-half}(?:" + body + ")\\b{end-half}";
-  }
-  return inline_flags(o) + body;
+  return if (parts.len() == 0) { NO_MATCH } else { "(?:" + parts.join(")|(?:") + ")" };
 }
 
 // The inline flags that the options put before the pattern.
