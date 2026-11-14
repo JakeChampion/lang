@@ -4,6 +4,8 @@ import "std/errno";
 import "../coreutils/lib/gnu";
 import "../coreutils/lib/timefmt";
 import "../coreutils/lib/filetype";
+import "../coreutils/lib/bre";
+import "../coreutils/lib/fnmatch";
 
 const EXIT_DIFFER: i32 = 1;
 
@@ -28,6 +30,10 @@ const STYLE_IFDEF: i32 = 7;
 const STYLE_SDIFF: i32 = 8;
 
 const WS_NONE: i32 = 0;
+
+const WS_TAB: i32 = 1;
+
+const WS_TRAILING: i32 = 2;
 
 const WS_CHANGE: i32 = 4;
 
@@ -73,9 +79,104 @@ const OPT_SPEED: i32 = 19;
 
 const OPT_NO_EFFECT: i32 = 20;
 
+const OPT_ED: i32 = 30;
+
+const OPT_FORWARD_ED: i32 = 31;
+
+const OPT_RCS: i32 = 32;
+
+const OPT_SIDE_BY_SIDE: i32 = 33;
+
+const OPT_WIDTH: i32 = 34;
+
+const OPT_LEFT_COLUMN: i32 = 35;
+
+const OPT_SUPPRESS_COMMON: i32 = 36;
+
+const OPT_IFDEF: i32 = 37;
+
+// The group formats are OPT_GROUP_FORMAT + a group kind, and the line formats
+// OPT_LINE_FORMAT + a line kind. OPT_LINE_FORMAT + 3 sets all three.
+const OPT_GROUP_FORMAT: i32 = 40;
+
+const OPT_LINE_FORMAT: i32 = 44;
+
+const OPT_SHOW_C_FUNCTION: i32 = 48;
+
+const OPT_SHOW_FUNCTION: i32 = 49;
+
+const OPT_EXPAND_TABS: i32 = 50;
+
+const OPT_INITIAL_TAB: i32 = 51;
+
+const OPT_TABSIZE: i32 = 52;
+
+const OPT_SUPPRESS_BLANK: i32 = 53;
+
+const OPT_PAGINATE: i32 = 54;
+
+const OPT_COLOR: i32 = 55;
+
+const OPT_PALETTE: i32 = 56;
+
+const OPT_EXCLUDE: i32 = 57;
+
+const OPT_EXCLUDE_FROM: i32 = 58;
+
+const OPT_STARTING_FILE: i32 = 59;
+
+const OPT_FROM_FILE: i32 = 60;
+
+const OPT_TO_FILE: i32 = 61;
+
+const OPT_NO_DEREFERENCE: i32 = 62;
+
+const OPT_NAME_CASE: i32 = 63;
+
+const OPT_NO_NAME_CASE: i32 = 64;
+
+const OPT_TAB_EXPANSION: i32 = 65;
+
+const OPT_TRAILING_SPACE: i32 = 66;
+
+const OPT_IGNORE_MATCHING: i32 = 67;
+
+const OPT_STRIP_CR: i32 = 68;
+
+const OPT_INHIBIT_MERGE: i32 = 69;
+
+const OPT_MERGE_ASSIST: i32 = 70;
+
+const OPT_NO_DIRECTORY: i32 = 71;
+
 const OPT_DIGIT: i32 = 100;
 
-const OPT_UNSUPPORTED: i32 = 200;
+// The kinds of a group: the bits of a change, as GNU diff numbers them.
+const G_UNCHANGED: i32 = 0;
+
+const G_OLD: i32 = 1;
+
+const G_NEW: i32 = 2;
+
+const G_CHANGED: i32 = 3;
+
+const COLOR_NEVER: i32 = 0;
+
+const COLOR_AUTO: i32 = 1;
+
+const COLOR_ALWAYS: i32 = 2;
+
+// The color contexts, and the palette indexes of their codes after the
+// three of the escape: lc, rc and ec.
+const C_RESET: i32 = 3;
+
+const C_HEADER: i32 = 4;
+
+const C_ADD: i32 = 5;
+
+const C_DELETE: i32 = 6;
+
+const C_LINE: i32 = 7;
 
 const LIN_MAX: i64 = 9223372036854775807;
 
@@ -215,46 +316,58 @@ struct Cfg {
   speed: boolean,
   labels: string[],
   switches: string,
-  unsupported: string,
-}
-
-// The options that this port does not give, in the order of their ids from
-// OPT_UNSUPPORTED up. Each has its own id, as getopt treats two options with
-// one id as the same option.
-function unsupported_names(): string[] {
-  return [
-    "--changed-group-format", "--color", "--ed", "--exclude", "--exclude-from", "--expand-tabs", "--forward-ed", "--from-file", "--ifdef", "--ignore-file-name-case",
-    "--ignore-matching-lines", "--ignore-tab-expansion", "--ignore-trailing-space", "--inhibit-hunk-merge", "--initial-tab", "--left-column", "--line-format", "--new-group-format",
-    "--new-line-format", "--no-dereference", "--old-group-format", "--old-line-format", "--paginate", "--rcs", "--sdiff-merge-assist", "--show-c-function", "--show-function-line",
-    "--side-by-side", "--starting-file", "--strip-trailing-cr", "--suppress-blank-empty", "--suppress-common-lines", "--tabsize", "--to-file", "--unchanged-group-format",
-    "--unchanged-line-format", "--width",
-  ];
-}
-
-function un(k: i32): i32 {
-  return OPT_UNSUPPORTED + k;
+  width: i64,
+  left_column: boolean,
+  suppress_common: boolean,
+  // The group formats by group kind and the line formats by line kind, with
+  // a flag for each that an option set it.
+  groups: string[],
+  groups_set: boolean[],
+  lines: string[],
+  lines_set: boolean[],
+  show_c_function: boolean,
+  function_res: bre.Bre[],
+  ignore_res: bre.Bre[],
+  expand_tabs: boolean,
+  initial_tab: boolean,
+  tabsize: i64,
+  suppress_blank: boolean,
+  paginate: boolean,
+  color: i32,
+  palette: string,
+  excludes: string[],
+  starting_file: string[],
+  from_file: string[],
+  to_file: string[],
+  no_dereference: boolean,
+  name_case: boolean,
+  strip_cr: boolean,
+  inhibit_merge: boolean,
+  merge_assist: boolean,
+  no_directory: boolean,
 }
 
 // The options of GNU diff in the order of its table, which is the order of
 // the names in an ambiguity message.
 function options(): gnu.Opt[] {
   let opts: gnu.Opt[] = [
-    gnu.flag("", "binary", OPT_NO_EFFECT), gnu.flag("q", "brief", OPT_BRIEF), gnu.valued("", "changed-group-format", un(0)), gnu.optional_long("", "color", un(1)),
-    gnu.valued_optional_long("C", "context", OPT_CONTEXT), gnu.flag("e", "ed", un(2)), gnu.valued("x", "exclude", un(3)), gnu.valued("X", "exclude-from", un(4)),
-    gnu.flag("t", "expand-tabs", un(5)), gnu.flag("f", "forward-ed", un(6)), gnu.valued("", "from-file", un(7)), gnu.flag("", "help", gnu.help_id()),
-    gnu.valued("", "horizon-lines", OPT_HORIZON), gnu.valued("D", "ifdef", un(8)), gnu.flag("w", "ignore-all-space", OPT_ALL_SPACE), gnu.flag("B", "ignore-blank-lines", OPT_BLANK_LINES),
-    gnu.flag("i", "ignore-case", OPT_IGNORE_CASE), gnu.flag("", "ignore-file-name-case", un(9)), gnu.valued("I", "ignore-matching-lines", un(10)),
-    gnu.flag("b", "ignore-space-change", OPT_SPACE_CHANGE), gnu.flag("E", "ignore-tab-expansion", un(11)), gnu.flag("Z", "ignore-trailing-space", un(12)),
-    gnu.flag("", "inhibit-hunk-merge", un(13)), gnu.flag("T", "initial-tab", un(14)), gnu.valued("L", "label", OPT_LABEL), gnu.flag("", "left-column", un(15)),
-    gnu.valued("", "line-format", un(16)), gnu.flag("d", "minimal", OPT_MINIMAL), gnu.flag("N", "new-file", OPT_NEW_FILE), gnu.valued("", "new-group-format", un(17)),
-    gnu.valued("", "new-line-format", un(18)), gnu.flag("", "no-dereference", un(19)), gnu.flag("", "no-ignore-file-name-case", OPT_NO_EFFECT + 1), gnu.flag("", "normal", OPT_NORMAL),
-    gnu.valued("", "old-group-format", un(20)), gnu.valued("", "old-line-format", un(21)), gnu.flag("l", "paginate", un(22)), gnu.valued("", "palette", OPT_NO_EFFECT + 2),
-    gnu.flag("n", "rcs", un(23)), gnu.flag("r", "recursive", OPT_RECURSIVE), gnu.flag("s", "report-identical-files", OPT_IDENTICAL), gnu.flag("", "sdiff-merge-assist", un(24)),
-    gnu.flag("p", "show-c-function", un(25)), gnu.valued("F", "show-function-line", un(26)), gnu.flag("y", "side-by-side", un(27)), gnu.flag("H", "speed-large-files", OPT_SPEED),
-    gnu.valued("S", "starting-file", un(28)), gnu.flag("", "strip-trailing-cr", un(29)), gnu.flag("", "suppress-blank-empty", un(30)), gnu.flag("", "suppress-common-lines", un(31)),
-    gnu.valued("", "tabsize", un(32)), gnu.flag("a", "text", OPT_TEXT), gnu.valued("", "to-file", un(33)), gnu.valued("", "unchanged-group-format", un(34)),
-    gnu.valued("", "unchanged-line-format", un(35)), gnu.flag("P", "unidirectional-new-file", OPT_UNIDIRECTIONAL), gnu.valued_optional_long("U", "unified", OPT_UNIFIED),
-    gnu.flag("v", "version", gnu.version_id()), gnu.valued("W", "width", un(36)), gnu.flag("c", "", OPT_C), gnu.flag("u", "", OPT_U), gnu.flag("h", "", OPT_NO_EFFECT + 3),
+    gnu.flag("", "binary", OPT_NO_EFFECT), gnu.flag("q", "brief", OPT_BRIEF), gnu.valued("", "changed-group-format", OPT_GROUP_FORMAT + G_CHANGED), gnu.optional_long("", "color", OPT_COLOR),
+    gnu.valued_optional_long("C", "context", OPT_CONTEXT), gnu.flag("e", "ed", OPT_ED), gnu.valued("x", "exclude", OPT_EXCLUDE), gnu.valued("X", "exclude-from", OPT_EXCLUDE_FROM),
+    gnu.flag("t", "expand-tabs", OPT_EXPAND_TABS), gnu.flag("f", "forward-ed", OPT_FORWARD_ED), gnu.valued("", "from-file", OPT_FROM_FILE), gnu.flag("", "help", gnu.help_id()),
+    gnu.valued("", "horizon-lines", OPT_HORIZON), gnu.valued("D", "ifdef", OPT_IFDEF), gnu.flag("w", "ignore-all-space", OPT_ALL_SPACE), gnu.flag("B", "ignore-blank-lines", OPT_BLANK_LINES),
+    gnu.flag("i", "ignore-case", OPT_IGNORE_CASE), gnu.flag("", "ignore-file-name-case", OPT_NAME_CASE), gnu.valued("I", "ignore-matching-lines", OPT_IGNORE_MATCHING),
+    gnu.flag("b", "ignore-space-change", OPT_SPACE_CHANGE), gnu.flag("E", "ignore-tab-expansion", OPT_TAB_EXPANSION), gnu.flag("Z", "ignore-trailing-space", OPT_TRAILING_SPACE),
+    gnu.flag("", "inhibit-hunk-merge", OPT_INHIBIT_MERGE), gnu.flag("T", "initial-tab", OPT_INITIAL_TAB), gnu.valued("L", "label", OPT_LABEL), gnu.flag("", "left-column", OPT_LEFT_COLUMN),
+    gnu.valued("", "line-format", OPT_LINE_FORMAT + 3), gnu.flag("d", "minimal", OPT_MINIMAL), gnu.flag("N", "new-file", OPT_NEW_FILE), gnu.valued("", "new-group-format", OPT_GROUP_FORMAT + G_NEW),
+    gnu.valued("", "new-line-format", OPT_LINE_FORMAT + G_NEW), gnu.flag("", "no-dereference", OPT_NO_DEREFERENCE), gnu.flag("", "no-ignore-file-name-case", OPT_NO_NAME_CASE), gnu.flag("", "normal", OPT_NORMAL),
+    gnu.valued("", "old-group-format", OPT_GROUP_FORMAT + G_OLD), gnu.valued("", "old-line-format", OPT_LINE_FORMAT + G_OLD), gnu.flag("l", "paginate", OPT_PAGINATE), gnu.valued("", "palette", OPT_PALETTE),
+    gnu.flag("n", "rcs", OPT_RCS), gnu.flag("r", "recursive", OPT_RECURSIVE), gnu.flag("s", "report-identical-files", OPT_IDENTICAL), gnu.flag("", "sdiff-merge-assist", OPT_MERGE_ASSIST),
+    gnu.flag("p", "show-c-function", OPT_SHOW_C_FUNCTION), gnu.valued("F", "show-function-line", OPT_SHOW_FUNCTION), gnu.flag("y", "side-by-side", OPT_SIDE_BY_SIDE), gnu.flag("H", "speed-large-files", OPT_SPEED),
+    gnu.valued("S", "starting-file", OPT_STARTING_FILE), gnu.flag("", "strip-trailing-cr", OPT_STRIP_CR), gnu.flag("", "suppress-blank-empty", OPT_SUPPRESS_BLANK), gnu.flag("", "suppress-common-lines", OPT_SUPPRESS_COMMON),
+    gnu.valued("", "tabsize", OPT_TABSIZE), gnu.flag("a", "text", OPT_TEXT), gnu.valued("", "to-file", OPT_TO_FILE), gnu.valued("", "unchanged-group-format", OPT_GROUP_FORMAT + G_UNCHANGED),
+    gnu.valued("", "unchanged-line-format", OPT_LINE_FORMAT + G_UNCHANGED), gnu.flag("P", "unidirectional-new-file", OPT_UNIDIRECTIONAL), gnu.valued_optional_long("U", "unified", OPT_UNIFIED),
+    gnu.flag("v", "version", gnu.version_id()), gnu.valued("W", "width", OPT_WIDTH), gnu.flag("", "-no-directory", OPT_NO_DIRECTORY), gnu.flag("c", "", OPT_C), gnu.flag("u", "", OPT_U),
+    gnu.flag("h", "", OPT_NO_EFFECT + 1),
   ];
   for d in 0..10 {
     opts = opts.append(gnu.flag(digit_text(d), "", OPT_DIGIT + d));
@@ -364,37 +477,140 @@ function label_option(cfg: Cfg, v: string): Cfg {
   return Cfg { ...cfg, labels: cfg.labels.append(v) };
 }
 
-// The output style that GNU diff selects for an option that this port does
-// not have. A conflict with that style gives the error of GNU diff.
-function unsupported_style(id: i32): i32 {
-  return match (id - OPT_UNSUPPORTED) {
-    0 | 8 | 16 | 17 | 18 | 20 | 21 | 34 | 35 => STYLE_IFDEF,
-    2 => STYLE_ED,
-    6 => STYLE_FORWARD_ED,
-    23 => STYLE_RCS,
-    27 => STYLE_SDIFF,
-    _ => STYLE_NONE,
-  };
+// specify_value: an option that sets a value twice must give the same value.
+function same_value(set: boolean, old: string, v: string, option: string): void {
+  if (set && old != v) {
+    usage_error("conflicting " + option + " option value '" + v + "'");
+  }
 }
 
-function unsupported_option(cfg: Cfg, id: i32): Cfg {
-  let c = cfg;
-  let style = unsupported_style(id);
-  if (style != STYLE_NONE) {
-    c = specify_style(c, style);
+function group_format(cfg: Cfg, kind: i32, v: string, option: string): Cfg {
+  same_value(cfg.groups_set[kind], cfg.groups[kind], v, option);
+  return Cfg { ...cfg, groups: cfg.groups.with(kind, v), groups_set: cfg.groups_set.with(kind, true) };
+}
+
+function line_format(cfg: Cfg, kind: i32, v: string, option: string): Cfg {
+  same_value(cfg.lines_set[kind], cfg.lines[kind], v, option);
+  return Cfg { ...cfg, lines: cfg.lines.with(kind, v), lines_set: cfg.lines_set.with(kind, true) };
+}
+
+function format_option(cfg: Cfg, id: i32, v: string, long: boolean): Cfg {
+  let c = specify_style(cfg, STYLE_IFDEF);
+  if (id < OPT_LINE_FORMAT) {
+    return group_format(c, id - OPT_GROUP_FORMAT, v, "--" + group_name(id - OPT_GROUP_FORMAT) + "-group-format");
   }
-  if (c.unsupported.len() == 0) {
-    c = Cfg { ...c, unsupported: unsupported_names()[id - OPT_UNSUPPORTED] };
+  if (id < OPT_LINE_FORMAT + 3) {
+    return line_format(c, id - OPT_LINE_FORMAT, v, "--" + group_name(id - OPT_LINE_FORMAT) + "-line-format");
+  }
+  for k in 0..3 {
+    c = line_format(c, k, v, "--line-format");
   }
   return c;
 }
 
-function apply(cfg: Cfg, m: gnu.OptMatch): Cfg {
-  if (m.id >= OPT_UNSUPPORTED) {
-    return unsupported_option(cfg, m.id);
+function group_name(kind: i32): string {
+  return ["unchanged", "old", "new", "changed"][kind];
+}
+
+// -D NAME: the group formats of a C preprocessor merge.
+function ifdef_option(cfg: Cfg, name: string): Cfg {
+  let c = specify_style(cfg, STYLE_IFDEF);
+  let formats: string[] = [
+    "%=",
+    "#ifndef " + name + "\n%<#endif /* ! " + name + " */\n",
+    "#ifdef " + name + "\n%>#endif /* " + name + " */\n",
+    "#ifndef " + name + "\n%<#else /* " + name + " */\n%>#endif /* " + name + " */\n",
+  ];
+  for k in 0..4 {
+    c = group_format(c, k, formats[k], "-D");
   }
+  return c;
+}
+
+// A positive number for -W or --tabsize, which an option can give twice only
+// with the same value.
+function size_option(old: i64, v: string, what: string): i64 {
+  let r = strtoimax(v);
+  if (r.1 != v.len() || r.0 <= 0i64) {
+    usage_error("invalid " + what + " '" + v + "'");
+  }
+  if (old != 0i64 && old != r.0) {
+    gnu.error("conflicting " + what + " options");
+    exit(EXIT_TROUBLE);
+  }
+  return r.0;
+}
+
+function color_option(cfg: Cfg, m: gnu.OptMatch): Cfg {
+  if (!m.has_value || m.value == "auto") {
+    return Cfg { ...cfg, color: COLOR_AUTO };
+  }
+  if (m.value == "always") {
+    return Cfg { ...cfg, color: COLOR_ALWAYS };
+  }
+  if (m.value == "never") {
+    return Cfg { ...cfg, color: COLOR_NEVER };
+  }
+  usage_error("invalid color '" + m.value + "'");
+  return cfg;
+}
+
+function compile_re(pat: string): bre.Bre {
+  let re = bre.bre_compile_syntax(pat, diff_syntax());
+  if (re.err.len() > 0) {
+    gnu.error(pat + ": " + re.err);
+    exit(EXIT_TROUBLE);
+  }
+  return re;
+}
+
+function diff_syntax(): bre.Syntax {
+  return bre.posix_basic();
+}
+
+// -X FILE: each line of FILE is a pattern.
+function exclude_from(cfg: Cfg, name: string): Cfg {
+  let bytes = match (read_file_bytes(name)) {
+    Ok(b) => b,
+    Err(e) => {
+      gnu.error(name + ": " + gnu.io_error_text(e));
+      exit(EXIT_TROUBLE);
+    },
+  };
+  let text = unsafe { string_from_bytes_unchecked(bytes) };
+  let c = cfg;
+  let at = 0;
+  while (at < text.len()) {
+    let end = __memchr_bytes(bytes, 10, at);
+    if (end < 0) {
+      end = text.len();
+    }
+    let last = end;
+    while (last > at && is_space(text[last - 1] as i32)) {
+      last -= 1;
+    }
+    if (last > at) {
+      c = Cfg { ...c, excludes: c.excludes.append(slice_unchecked(text, at, last) + "") };
+    }
+    at = end + 1;
+  }
+  return c;
+}
+
+// -S, --from-file and --to-file: none or one name.
+function file_option(old: string[], v: string, option: string): string[] {
+  if (old.len() > 0) {
+    same_value(true, old[0], v, option);
+  }
+  return [v];
+}
+
+function apply(cfg: Cfg, m: gnu.OptMatch): Cfg {
   if (m.id >= OPT_DIGIT) {
     return digit_option(cfg, m.id - OPT_DIGIT);
+  }
+  if (m.id >= OPT_GROUP_FORMAT && m.id < OPT_LINE_FORMAT + 4) {
+    return format_option(cfg, m.id, m.value, m.long_form);
   }
   return match (m.id) {
     OPT_NORMAL => specify_style(cfg, STYLE_NORMAL),
@@ -416,6 +632,38 @@ function apply(cfg: Cfg, m: gnu.OptMatch): Cfg {
     OPT_MINIMAL => Cfg { ...cfg, minimal: true },
     OPT_HORIZON => horizon_option(cfg, m.value),
     OPT_SPEED => Cfg { ...cfg, speed: true },
+    OPT_ED => specify_style(cfg, STYLE_ED),
+    OPT_FORWARD_ED => specify_style(cfg, STYLE_FORWARD_ED),
+    OPT_RCS => specify_style(cfg, STYLE_RCS),
+    OPT_SIDE_BY_SIDE => specify_style(cfg, STYLE_SDIFF),
+    OPT_MERGE_ASSIST => Cfg { ...specify_style(cfg, STYLE_SDIFF), merge_assist: true },
+    OPT_WIDTH => Cfg { ...cfg, width: size_option(cfg.width, m.value, "width") },
+    OPT_LEFT_COLUMN => Cfg { ...cfg, left_column: true },
+    OPT_SUPPRESS_COMMON => Cfg { ...cfg, suppress_common: true },
+    OPT_IFDEF => ifdef_option(cfg, m.value),
+    OPT_SHOW_C_FUNCTION => Cfg { ...cfg, show_c_function: true, function_res: cfg.function_res.append(compile_re("^[[:alpha:]$_]")) },
+    OPT_SHOW_FUNCTION => Cfg { ...cfg, function_res: cfg.function_res.append(compile_re(m.value)) },
+    OPT_IGNORE_MATCHING => Cfg { ...cfg, ignore_res: cfg.ignore_res.append(compile_re(m.value)) },
+    OPT_EXPAND_TABS => Cfg { ...cfg, expand_tabs: true },
+    OPT_INITIAL_TAB => Cfg { ...cfg, initial_tab: true },
+    OPT_TABSIZE => Cfg { ...cfg, tabsize: size_option(cfg.tabsize, m.value, "tabsize") },
+    OPT_SUPPRESS_BLANK => Cfg { ...cfg, suppress_blank: true },
+    OPT_PAGINATE => Cfg { ...cfg, paginate: true },
+    OPT_COLOR => color_option(cfg, m),
+    OPT_PALETTE => Cfg { ...cfg, palette: m.value },
+    OPT_EXCLUDE => Cfg { ...cfg, excludes: cfg.excludes.append(m.value) },
+    OPT_EXCLUDE_FROM => exclude_from(cfg, m.value),
+    OPT_STARTING_FILE => Cfg { ...cfg, starting_file: file_option(cfg.starting_file, m.value, "-S") },
+    OPT_FROM_FILE => Cfg { ...cfg, from_file: file_option(cfg.from_file, m.value, "--from-file") },
+    OPT_TO_FILE => Cfg { ...cfg, to_file: file_option(cfg.to_file, m.value, "--to-file") },
+    OPT_NO_DEREFERENCE => Cfg { ...cfg, no_dereference: true },
+    OPT_NAME_CASE => Cfg { ...cfg, name_case: true },
+    OPT_NO_NAME_CASE => Cfg { ...cfg, name_case: false },
+    OPT_TAB_EXPANSION => Cfg { ...cfg, white: if (cfg.white < WS_CHANGE) { cfg.white | WS_TAB } else { cfg.white } },
+    OPT_TRAILING_SPACE => Cfg { ...cfg, white: if (cfg.white < WS_CHANGE) { cfg.white | WS_TRAILING } else { cfg.white } },
+    OPT_STRIP_CR => Cfg { ...cfg, strip_cr: true },
+    OPT_INHIBIT_MERGE => Cfg { ...cfg, inhibit_merge: true },
+    OPT_NO_DIRECTORY => Cfg { ...cfg, no_directory: true },
     _ => cfg,
   };
 }
@@ -452,7 +700,7 @@ function mark_taken(own taken: boolean[], from: i32, to: i32, operands: i32): bo
 
 function parse(argv: string[]): (Cfg, string[]) {
   let empty: string[] = [];
-  let cfg = Cfg { style: STYLE_NONE, context: 0i64, explicit_context: false, ocontext: -1i64, prev: -1, horizon: 0i64, brief: false, identical: false, ignore_case: false, white: WS_NONE, blank: false, text: false, new_file: false, unidirectional: false, recursive: false, minimal: false, speed: false, labels: empty, switches: "", unsupported: "" };
+  let cfg = Cfg { style: STYLE_NONE, context: 0i64, explicit_context: false, ocontext: -1i64, prev: -1, horizon: 0i64, brief: false, identical: false, ignore_case: false, white: WS_NONE, blank: false, text: false, new_file: false, unidirectional: false, recursive: false, minimal: false, speed: false, labels: empty, switches: "", width: 0i64, left_column: false, suppress_common: false, groups: ["", "", "", ""], groups_set: [false, false, false, false], lines: ["", "", ""], lines_set: [false, false, false], show_c_function: false, function_res: [], ignore_res: [], expand_tabs: false, initial_tab: false, tabsize: 0i64, suppress_blank: false, paginate: false, color: COLOR_NEVER, palette: "", excludes: empty, starting_file: empty, from_file: empty, to_file: empty, no_dereference: false, name_case: false, strip_cr: false, inhibit_merge: false, merge_assist: false, no_directory: false };
   let g = gnu.getopt_new(argv, options(), "diff", help_text(), EXIT_TROUBLE).in_package("diffutils");
   let taken: boolean[] = [];
   for _ in 0..argv.len() {
@@ -489,8 +737,29 @@ function mark_dashdash(own taken: boolean[], argv: string[], from: i32, to: i32)
 
 function finish_options(cfg: Cfg): Cfg {
   let c = cfg;
+  if (c.style == STYLE_NONE && c.show_c_function) {
+    c = context_flag(c, STYLE_CONTEXT);
+  }
   if (c.style == STYLE_NONE) {
     c = Cfg { ...c, style: STYLE_NORMAL };
+  }
+  if (c.width == 0i64) {
+    c = Cfg { ...c, width: 130i64 };
+  }
+  if (c.tabsize == 0i64) {
+    c = Cfg { ...c, tabsize: 8i64 };
+  }
+  let defaults: string[] = ["%=", "%<", "%>"];
+  for k in 0..3 {
+    if (!c.groups_set[k]) {
+      c = Cfg { ...c, groups: c.groups.with(k, if (k != G_UNCHANGED && c.groups_set[G_CHANGED]) { c.groups[G_CHANGED] } else { defaults[k] }) };
+    }
+    if (!c.lines_set[k]) {
+      c = Cfg { ...c, lines: c.lines.with(k, "%l\n") };
+    }
+  }
+  if (!c.groups_set[G_CHANGED]) {
+    c = Cfg { ...c, groups: c.groups.with(G_CHANGED, c.groups[G_OLD] + c.groups[G_NEW]) };
   }
   let styled = c.style == STYLE_CONTEXT || c.style == STYLE_UNIFIED;
   if (c.ocontext >= 0i64 && styled && (c.context < c.ocontext || c.ocontext < c.context && !c.explicit_context)) {
@@ -502,11 +771,14 @@ function finish_options(cfg: Cfg): Cfg {
   return c;
 }
 
-// The state of one run: the options, the output buffer and the time zone.
-struct Run { cfg: Cfg, out: usize, zone: tz.Zone }
+// The state of one run: the options, the output buffer, the time zone and the
+// palette when the output has colors. `context` is the color context of the
+// output. Under -l, `pager` holds the header of the comparison whose output
+// waits for 'pr', and `queue` the messages that wait for the end.
+struct Run { cfg: Cfg, out: usize, zone: tz.Zone, colors: boolean, palette: string[], context: Cell[i32], pager: Cell[string], paging: Cell[boolean], queue: usize }
 
 function flush_out(run: Run): void {
-  if (buf_len(run.out) == 0) {
+  if (buf_len(run.out) == 0 || run.paging.get()) {
     return;
   }
   let bytes = buf_take_bytes(run.out);
@@ -535,6 +807,28 @@ function fail(run: Run, msg: string): void {
 function fatal(run: Run, msg: string): void {
   fail(run, msg);
   exit(EXIT_TROUBLE);
+}
+
+// A message about a comparison, not a line of a diff. Under -l it waits for
+// the end of the run, and the merge assist of sdiff marks it with a space.
+function message(run: Run, s: string): void {
+  if (run.cfg.paginate) {
+    buf_push(run.queue, s);
+    return;
+  }
+  if (run.cfg.merge_assist) {
+    put(run, " ");
+  }
+  put(run, s);
+}
+
+function set_color(run: Run, ctx: i32): void {
+  if (run.colors && run.context.get() != ctx) {
+    buf_push(run.out, run.palette[0]);
+    buf_push(run.out, run.palette[ctx]);
+    buf_push(run.out, run.palette[1]);
+    run.context.set(ctx);
+  }
 }
 
 // One operand of a comparison: its name, how it was found and its status.
@@ -585,11 +879,11 @@ function stdin_side(name: string): Side {
   }
 }
 
-function stat_side(name: string): Side {
+function stat_side(name: string, follow: boolean): Side {
   if (name == "-") {
     return stdin_side(name);
   }
-  return match (stat(name)) {
+  return match (if (follow) { stat(name) } else { lstat(name) }) {
     Ok(st) => Side { name: name, kind: K_UNOPENED, st: st, err: 0, err_text: "" },
     Err(e) => error_side(name, e),
   };
@@ -659,7 +953,7 @@ function stat_both(run: Run, parent: Option[Parent], names: string[], present: b
       if (f == 1 && present[0] && names[1] == names[0]) {
         s = Side { ...sides[0], name: names[1] };
       } else {
-        s = stat_side(names[f]);
+        s = stat_side(names[f], !run.cfg.no_dereference);
       }
     }
     sides = sides.append(s);
@@ -713,7 +1007,7 @@ function compare_files(run: Run, parent: Option[Parent], name0: Option[string], 
     dirs = p.names;
     top = false;
     if (!(has0 && has1 || run.cfg.unidirectional && has1 || run.cfg.new_file)) {
-      put(run, "Only in " + dirs[if (has0) { 0 } else { 1 }] + ": " + base0 + "\n");
+      message(run, "Only in " + dirs[if (has0) { 0 } else { 1 }] + ": " + base0 + "\n");
       return EXIT_DIFFER;
     }
   }
@@ -729,7 +1023,7 @@ function compare_files(run: Run, parent: Option[Parent], name0: Option[string], 
       status = EXIT_TROUBLE;
     }
   }
-  if (status == 0 && top && is_dir(sides[0]) != is_dir(sides[1])) {
+  if (status == 0 && top && !run.cfg.no_directory && is_dir(sides[0]) != is_dir(sides[1])) {
     let r = dir_and_file(run, sides);
     sides = r.0;
     status = r.1;
@@ -739,7 +1033,7 @@ function compare_files(run: Run, parent: Option[Parent], name0: Option[string], 
   }
   if (status == 0) {
     if (run.cfg.identical && !is_dir(sides[0])) {
-      put(run, "Files " + label_or(run, 0, sides[0].name) + " and " + label_or(run, 1, sides[1].name) + " are identical\n");
+      message(run, "Files " + label_or(run, 0, sides[0].name) + " and " + label_or(run, 1, sides[1].name) + " are identical\n");
     }
   } else {
     flush_out(run);
@@ -770,7 +1064,7 @@ function regular_or_link(s: Side): boolean {
 }
 
 function pretend_binary(cfg: Cfg): boolean {
-  return cfg.brief && !cfg.blank && !cfg.ignore_case && cfg.white == WS_NONE;
+  return cfg.brief && !cfg.blank && !cfg.ignore_case && cfg.white == WS_NONE && !cfg.strip_cr && cfg.ignore_res.len() == 0;
 }
 
 function compare_sides(run: Run, parent: Option[Parent], sides: Side[], base0: string): i32 {
@@ -780,7 +1074,7 @@ function compare_sides(run: Run, parent: Option[Parent], sides: Side[], base0: s
   if (a.kind == K_NONEXISTENT && b.kind == K_NONEXISTENT) {
     return 0;
   }
-  if (!missing && same_file(a.st, b.st) && same_attributes(a.st, b.st)) {
+  if (!missing && same_file(a.st, b.st) && same_attributes(a.st, b.st) && silent_when_same(run.cfg)) {
     return 0;
   }
   let has_parent = match (parent) {
@@ -788,14 +1082,20 @@ function compare_sides(run: Run, parent: Option[Parent], sides: Side[], base0: s
     None => false,
   };
   if (is_dir(a) && is_dir(b)) {
+    if (run.cfg.style == STYLE_IFDEF) {
+      fatal(run, "-D option not supported with directories");
+    }
     if (has_parent && !run.cfg.recursive) {
-      put(run, "Common subdirectories: " + a.name + " and " + b.name + "\n");
+      message(run, "Common subdirectories: " + a.name + " and " + b.name + "\n");
       return 0;
     }
     return diff_dirs(run, parent, sides);
   }
   if (is_dir(a) || is_dir(b) || has_parent && !(regular_or_link(a) && regular_or_link(b))) {
     return different_kinds(run, parent, sides, base0);
+  }
+  if (run.cfg.no_dereference && (is_link(a) || is_link(b))) {
+    return compare_links(run, sides);
   }
   if (pretend_binary(run.cfg) && is_reg(a) && is_reg(b) && a.st.size != b.st.size && a.st.size > 0i64 && b.st.size > 0i64) {
     report_differ(run, sides, "Files ");
@@ -816,10 +1116,48 @@ function different_kinds(run: Run, parent: Option[Parent], sides: Side[], base0:
     let Some(p) = parent else {
       return EXIT_TROUBLE;
     };
-    put(run, "Only in " + p.names[if (a.kind == K_NONEXISTENT) { 1 } else { 0 }] + ": " + base0 + "\n");
+    message(run, "Only in " + p.names[if (a.kind == K_NONEXISTENT) { 1 } else { 0 }] + ": " + base0 + "\n");
     return EXIT_DIFFER;
   }
-  put(run, "File " + label_or(run, 0, a.name) + " is a " + filetype.type_name(a.st.mode, a.st.size) + " while file " + label_or(run, 1, b.name) + " is a " + filetype.type_name(b.st.mode, b.st.size) + "\n");
+  return kinds_differ(run, sides);
+}
+
+function kinds_differ(run: Run, sides: Side[]): i32 {
+  let a = sides[0];
+  let b = sides[1];
+  message(run, "File " + label_or(run, 0, a.name) + " is a " + filetype.type_name(a.st.mode, a.st.size) + " while file " + label_or(run, 1, b.name) + " is a " + filetype.type_name(b.st.mode, b.st.size) + "\n");
+  return EXIT_DIFFER;
+}
+
+function is_link(s: Side): boolean {
+  return filetype.is_link(s.st.mode);
+}
+
+// Under --no-dereference: two symbolic links are the same when their
+// contents are.
+function compare_links(run: Run, sides: Side[]): i32 {
+  let a = sides[0];
+  let b = sides[1];
+  if (!is_link(a) || !is_link(b)) {
+    return kinds_differ(run, sides);
+  }
+  let targets: u8[][] = [];
+  for f in 0..2 {
+    match (read_link_bytes(sides[f].name)) {
+      Ok(t) => {
+        targets = targets.append(t);
+      },
+      Err(e) => {
+        fail(run, sides[f].name + ": " + gnu.io_error_text(e));
+        return EXIT_TROUBLE;
+      }
+    }
+  }
+  let n = targets[0].len();
+  if (n == targets[1].len() && __mismatch_bytes(targets[0], 0, targets[1], 0, n) >= n) {
+    return 0;
+  }
+  message(run, "Symbolic links " + label_or(run, 0, a.name) + " and " + label_or(run, 1, b.name) + " differ\n");
   return EXIT_DIFFER;
 }
 
@@ -934,7 +1272,7 @@ function diff_dirs(run: Run, parent: Option[Parent], sides: Side[]): i32 {
     if (sides[f].kind != K_NONEXISTENT) {
       match (read_dir(sides[f].name)) {
         Ok(ns) => {
-          names = cmp.sort(ns);
+          names = dir_names(run.cfg, ns, parent);
         },
         Err(e) => {
           fail(run, sides[f].name + ": " + gnu.io_error_text(e));
@@ -954,7 +1292,7 @@ function diff_dirs(run: Run, parent: Option[Parent], sides: Side[]): i32 {
   let j = 0;
   let val = 0;
   while (i < a.len() || j < b.len()) {
-    let order = if (i >= a.len()) { 1 } else if (j >= b.len()) { -1 } else if (a[i] < b[j]) { -1 } else if (a[i] > b[j]) { 1 } else { 0 };
+    let order = if (i >= a.len()) { 1 } else if (j >= b.len()) { -1 } else { compare_names(run.cfg, a[i], b[j]) };
     let n0: Option[string] = None;
     let n1: Option[string] = None;
     if (order <= 0) {
@@ -971,6 +1309,63 @@ function diff_dirs(run: Run, parent: Option[Parent], sides: Side[]): i32 {
     }
   }
   return val;
+}
+
+// The entries of a directory to compare, in order: not those that -x or -X
+// exclude, and at the top not those before the name that -S gives.
+function dir_names(cfg: Cfg, ns: string[], parent: Option[Parent]): string[] {
+  let top = match (parent) {
+    Some(_) => false,
+    None => true,
+  };
+  let kept: string[] = [];
+  for n in ns {
+    if (excluded(cfg, n) || top && cfg.starting_file.len() > 0 && compare_names(cfg, n, cfg.starting_file[0]) < 0) {
+      continue;
+    }
+    kept = kept.append(n);
+  }
+  if (!cfg.name_case) {
+    return cmp.sort(kept);
+  }
+  return cmp.sort_by(kept, (x: string, y: string) => {
+    let c = compare_names(cfg, x, y);
+    if (c != 0) {
+      return c;
+    }
+    return if (x < y) { -1 } else if (x > y) { 1 } else { 0 };
+  });
+}
+
+function lower(s: string): string {
+  let h = buf_new(s.len());
+  for i in 0..s.len() {
+    let c = s[i] as i32;
+    buf_push_byte(h, if (c >= 65 && c <= 90) { c + 32 } else { c });
+  }
+  let out = buf_take(h);
+  buf_free(h);
+  return out;
+}
+
+// The order of two names, without case under --ignore-file-name-case.
+function compare_names(cfg: Cfg, a: string, b: string): i32 {
+  let x = a;
+  let y = b;
+  if (cfg.name_case) {
+    x = lower(a);
+    y = lower(b);
+  }
+  return if (x < y) { -1 } else if (x > y) { 1 } else { 0 };
+}
+
+function excluded(cfg: Cfg, name: string): boolean {
+  for pat in cfg.excludes {
+    if (cfg.name_case && fnmatch.fnmatch(lower(pat), lower(name)) || !cfg.name_case && fnmatch.fnmatch(pat, name)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function in_chain(chain: FileStat[], st: FileStat): boolean {
@@ -1036,9 +1431,9 @@ function c_escape(s: string): string {
 // each line and, last, the length of `buf`.
 struct Text { buf: u8[], missing: boolean, starts: i32[] }
 
-function prepare(bytes: u8[]): Text {
-  let missing = bytes.len() > 0 && bytes[bytes.len() - 1] != b'\n';
-  let buf = bytes;
+function prepare(cfg: Cfg, bytes: u8[]): Text {
+  let buf = if (cfg.strip_cr) { strip_cr(bytes) } else { bytes };
+  let missing = buf.len() > 0 && buf[buf.len() - 1] != b'\n';
   if (missing) {
     buf = buf.append(b'\n');
   }
@@ -1052,6 +1447,27 @@ function prepare(bytes: u8[]): Text {
   }
   starts = starts.with(k, buf.len());
   return Text { buf: buf, missing: missing, starts: starts };
+}
+
+// --strip-trailing-cr: each carriage return before a newline goes.
+function strip_cr(bytes: u8[]): u8[] {
+  let at = __memchr_bytes(bytes, 13, 0);
+  if (at < 0) {
+    return bytes;
+  }
+  let h = buf_new(bytes.len());
+  let from = 0;
+  while (at >= 0) {
+    if (at + 1 < bytes.len() && bytes[at + 1] == b'\n') {
+      buf_push_bytes_range(h, bytes, from, at);
+      from = at + 1;
+    }
+    at = __memchr_bytes(bytes, 13, at + 1);
+  }
+  buf_push_bytes_range(h, bytes, from, bytes.len());
+  let out = buf_take_bytes(h);
+  buf_free(h);
+  return out;
 }
 
 function line_count(t: Text): i32 {
@@ -1166,8 +1582,66 @@ function hash_plain(buf: u8[], lo: i32, hi: i32): u64 {
   return h;
 }
 
-function hash_canon(buf: u8[], lo: i32, hi: i32, white: i32, fold: boolean): u64 {
+// -Z: the end of a line without its trailing white space.
+function trim_end(buf: u8[], lo: i32, hi: i32, white: i32): i32 {
+  if ((white & WS_TRAILING) == 0 || white >= WS_CHANGE) {
+    return hi;
+  }
+  let e = hi;
+  while (e > lo && is_space(buf[e - 1] as i32)) {
+    e -= 1;
+  }
+  return e;
+}
+
+// Under -E alone a tab is the spaces to the next tab stop. With -Z, GNU diff
+// compares the lines without the expansion. The state is the index,
+// the column and the spaces of a tab still to give. The byte is -1 at the
+// end of the line.
+struct TabState { c: i32, i: i32, col: i64, spaces: i64 }
+
+function tab_next(buf: u8[], st: TabState, hi: i32, ts: i64, fold: boolean): TabState {
+  if (st.spaces > 0i64) {
+    return TabState { ...st, c: 32, spaces: st.spaces - 1i64 };
+  }
+  if (st.i >= hi) {
+    return TabState { ...st, c: -1 };
+  }
+  let c = buf[st.i] as i32;
+  let i = st.i + 1;
+  if (c == 9) {
+    let n = ts - st.col % ts;
+    return TabState { c: 32, i: i, col: st.col + n, spaces: n - 1i64 };
+  }
+  if (c == 8) {
+    return TabState { c: c, i: i, col: if (st.col > 0i64) { st.col - 1i64 } else { 0i64 }, spaces: 0i64 };
+  }
+  if (c == 13) {
+    return TabState { c: c, i: i, col: 0i64, spaces: 0i64 };
+  }
+  if (fold && c >= 65 && c <= 90) {
+    c += 32;
+  }
+  return TabState { c: c, i: i, col: st.col + 1i64, spaces: 0i64 };
+}
+
+function tab_start(lo: i32): TabState {
+  return TabState { c: 0, i: lo, col: 0i64, spaces: 0i64 };
+}
+
+function hash_canon(cfg: Cfg, buf: u8[], lo: i32, hi0: i32): u64 {
+  let white = cfg.white;
+  let fold = cfg.ignore_case;
+  let hi = trim_end(buf, lo, hi0, white);
   let h = 0 as u64;
+  if (white == WS_TAB) {
+    let st = tab_next(buf, tab_start(lo), hi, cfg.tabsize, fold);
+    while (st.c >= 0) {
+      h = (h << 7 as u64 | h >> 57 as u64) + st.c as u64;
+      st = tab_next(buf, st, hi, cfg.tabsize, fold);
+    }
+    return h;
+  }
   let i = lo;
   while (true) {
     let r = canon_next(buf, i, hi, white, fold);
@@ -1180,8 +1654,22 @@ function hash_canon(buf: u8[], lo: i32, hi: i32, white: i32, fold: boolean): u64
   return h;
 }
 
-function lines_equal(cfg: Cfg, a: u8[], alo: i32, ahi: i32, b: u8[], blo: i32, bhi: i32): boolean {
-  if (cfg.white == WS_NONE) {
+function lines_equal(cfg: Cfg, a: u8[], alo: i32, ahi0: i32, b: u8[], blo: i32, bhi0: i32): boolean {
+  let ahi = trim_end(a, alo, ahi0, cfg.white);
+  let bhi = trim_end(b, blo, bhi0, cfg.white);
+  if (cfg.white == WS_TAB) {
+    let x = tab_next(a, tab_start(alo), ahi, cfg.tabsize, cfg.ignore_case);
+    let y = tab_next(b, tab_start(blo), bhi, cfg.tabsize, cfg.ignore_case);
+    while (x.c == y.c) {
+      if (x.c < 0) {
+        return true;
+      }
+      x = tab_next(a, x, ahi, cfg.tabsize, cfg.ignore_case);
+      y = tab_next(b, y, bhi, cfg.tabsize, cfg.ignore_case);
+    }
+    return false;
+  }
+  if (cfg.white < WS_CHANGE) {
     if (ahi - alo != bhi - blo) {
       return false;
     }
@@ -1257,7 +1745,7 @@ function classes(cfg: Cfg, texts: Text[], first: i32, lens: i32[]): Classes {
     for k in 0..lens[f] {
       let lo = starts[first + k];
       let hi = starts[first + k + 1] - 1;
-      let h = if (plain) { hash_plain(buf, lo, hi) } else { hash_canon(buf, lo, hi, cfg.white, cfg.ignore_case) };
+      let h = if (plain) { hash_plain(buf, lo, hi) } else { hash_canon(cfg, buf, lo, hi) };
       let folded = (h ^ h >> 31 as u64) as i32 & 2147483647;
       if (f == 0) {
         eq0 = eq0.with(k, folded);
@@ -1343,7 +1831,7 @@ function same_line(cfg: Cfg, tx: Sources, key: i64, f: i32, i: i32): boolean {
 // The line of a file that is in a class of its own because it has no
 // newline, or -1.
 function partial_line(cfg: Cfg, t: Text): i32 {
-  if (t.missing && cfg.white < WS_CHANGE) {
+  if (t.missing && cfg.white < WS_TRAILING) {
     return line_count(t) - 1;
   }
   return -1;
@@ -1955,31 +2443,48 @@ function diff_texts(cfg: Cfg, a: Text, b: Text): (Script, i32) {
 }
 
 // Two files to report on: the prepared texts, the first line of the middle
-// part, the names for the header and the status of each file.
-struct Pair { a: Text, b: Text, first: i32, names: string[], labels: string[], stats: FileStat[], nested: boolean }
+// part, the names for the header and the status of each file. `searched`
+// is the line where the last search for a function line of -F started, and
+// `found` the line that it found, or -1.
+struct Pair { a: Text, b: Text, first: i32, names: string[], labels: string[], stats: FileStat[], nested: boolean, searched: Cell[i32], found: Cell[i32] }
 
 // A hunk: the kinds of change in it (1 deletes, 2 inserts, 3 both, 0 when
-// each line is one that -B ignores) and its bounds in each file, counted
-// from the start of the middle part.
+// each line is one that -B or -I ignores) and its bounds in each file,
+// counted from the start of the middle part.
 struct Hunk { kind: i32, first0: i32, last0: i32, first1: i32, last1: i32 }
 
-function blank_line(cfg: Cfg, t: Text, i: i32): boolean {
-  let lo = t.starts[i];
-  let hi = t.starts[i + 1] - 1;
-  if (cfg.white >= WS_CHANGE) {
-    for k in lo..hi {
-      if (!is_space(t.buf[k] as i32)) {
-        return false;
-      }
-    }
-    return true;
-  }
-  return hi == lo;
+function ignoring(cfg: Cfg): boolean {
+  return cfg.blank || cfg.ignore_res.len() > 0;
 }
 
-function all_blank(cfg: Cfg, t: Text, from: i32, n: i32): boolean {
+// A line that -B or -I ignores: an empty line, a line of white space when
+// the comparison ignores trailing white space, or a line that an -I
+// expression matches.
+function trivial_line(cfg: Cfg, t: Text, i: i32): boolean {
+  let lo = t.starts[i];
+  let hi = t.starts[i + 1] - 1;
+  if (cfg.blank) {
+    let k = lo;
+    if (cfg.white >= WS_TRAILING) {
+      while (k < hi && is_space(t.buf[k] as i32)) {
+        k += 1;
+      }
+    }
+    if (k == hi) {
+      return true;
+    }
+  }
+  for re in cfg.ignore_res {
+    if (re.search_range_bytes(t.buf, lo, hi)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function all_trivial(cfg: Cfg, t: Text, from: i32, n: i32): boolean {
   for i in from..from + n {
-    if (!blank_line(cfg, t, i)) {
+    if (!trivial_line(cfg, t, i)) {
       return false;
     }
   }
@@ -1988,14 +2493,14 @@ function all_blank(cfg: Cfg, t: Text, from: i32, n: i32): boolean {
 
 // analyze_hunk for the changes lo..=hi of the script.
 function analyze(cfg: Cfg, p: Pair, s: Script, lo: i32, hi: i32): Hunk {
-  let trivial = cfg.blank;
+  let trivial = ignoring(cfg);
   let from = 0;
   let to = 0;
   for k in lo..hi + 1 {
     from += s.del[k];
     to += s.ins[k];
     if (trivial) {
-      trivial = all_blank(cfg, p.a, p.first + s.line0[k], s.del[k]) && all_blank(cfg, p.b, p.first + s.line1[k], s.ins[k]);
+      trivial = all_trivial(cfg, p.a, p.first + s.line0[k], s.del[k]) && all_trivial(cfg, p.b, p.first + s.line1[k], s.ins[k]);
     }
   }
   let kind = 0;
@@ -2006,7 +2511,7 @@ function analyze(cfg: Cfg, p: Pair, s: Script, lo: i32, hi: i32): Hunk {
 }
 
 function any_change(cfg: Cfg, p: Pair, s: Script): boolean {
-  if (!cfg.blank) {
+  if (!ignoring(cfg)) {
     return s.line0.len() > 0;
   }
   for k in 0..s.line0.len() {
@@ -2017,18 +2522,123 @@ function any_change(cfg: Cfg, p: Pair, s: Script): boolean {
   return false;
 }
 
-// One line of a file with the mark before it. A line without a newline gets
-// one, then GNU's note.
-function put_line(run: Run, t: Text, i: i32, mark: string): void {
-  buf_push(run.out, mark);
-  let lo = t.starts[i];
-  let hi = t.starts[i + 1];
-  if (t.missing && i == line_count(t) - 1) {
-    buf_push_bytes_range(run.out, t.buf, lo, hi - 1);
-    buf_push(run.out, "\n\\ No newline at end of file\n");
-  } else {
-    buf_push_bytes_range(run.out, t.buf, lo, hi);
+// Whether a comparison that finds no change writes nothing. The side by side
+// format and most group formats write the common lines.
+function silent_when_same(cfg: Cfg): boolean {
+  if (cfg.style == STYLE_IFDEF) {
+    return cfg.groups[G_UNCHANGED] == "" || cfg.groups[G_UNCHANGED] == "%=" && cfg.lines[G_UNCHANGED] == "";
   }
+  return cfg.style != STYLE_SDIFF || cfg.suppress_common;
+}
+
+function has_newline(t: Text, i: i32): boolean {
+  return !t.missing || i != line_count(t) - 1;
+}
+
+// The end of a line: the line has no newline only at the end of a file,
+// and there GNU diff writes its note.
+function line_end(t: Text, i: i32): i32 {
+  if (has_newline(t, i)) {
+    return t.starts[i + 1];
+  }
+  return t.starts[i + 1] - 1;
+}
+
+function isprint(c: i32): boolean {
+  return c >= 32 && c < 127;
+}
+
+// output_1_line: the bytes lo..hi of a line. Under -t the tabs become
+// spaces, and a carriage return that does not end the line repeats `flag`.
+function put_text(run: Run, buf: u8[], lo: i32, hi: i32, flag: string): void {
+  if (!run.cfg.expand_tabs) {
+    buf_push_bytes_range(run.out, buf, lo, hi);
+    return;
+  }
+  let col = 0i64;
+  for k in lo..hi {
+    let c = buf[k] as i32;
+    if (c == 9) {
+      let n = run.cfg.tabsize - col % run.cfg.tabsize;
+      col += n;
+      while (n > 0i64) {
+        buf_push_byte(run.out, 32);
+        maybe_flush(run);
+        n -= 1i64;
+      }
+    } else if (c == 13) {
+      buf_push_byte(run.out, c);
+      if (flag.len() > 0 && k + 1 < hi && buf[k + 1] != b'\n') {
+        buf_push(run.out, flag);
+      }
+      col = 0i64;
+    } else if (c == 8) {
+      if (col > 0i64) {
+        col -= 1i64;
+        buf_push_byte(run.out, c);
+      }
+    } else {
+      if (isprint(c)) {
+        col += 1i64;
+      }
+      buf_push_byte(run.out, c);
+    }
+  }
+}
+
+// After the text of a line: GNU's note when the line has no newline, or the
+// newline.
+function end_line(run: Run, t: Text, i: i32): void {
+  set_color(run, C_RESET);
+  if (has_newline(t, i)) {
+    buf_push_byte(run.out, 10);
+  } else {
+    buf_push(run.out, "\n\\ No newline at end of file\n");
+  }
+  maybe_flush(run);
+}
+
+// A line of the normal or context format: the flag, then a space or under
+// -T a tab, then the text.
+function flagged_line(run: Run, t: Text, i: i32, flag: string, color: i32): void {
+  set_color(run, color);
+  let lo = t.starts[i];
+  let hi = t.starts[i + 1] - 1;
+  let flag_sep = flag + (if (run.cfg.initial_tab) { "\t" } else { " " });
+  if (run.cfg.suppress_blank && hi == lo) {
+    if (flag != " ") {
+      buf_push(run.out, flag);
+    }
+  } else {
+    buf_push(run.out, flag_sep);
+  }
+  put_text(run, t.buf, lo, hi, flag_sep);
+  end_line(run, t, i);
+}
+
+// A line of the unified format. `mark` is 0 for a common line.
+function unified_line(run: Run, t: Text, i: i32, mark: i32, color: i32): void {
+  let lo = t.starts[i];
+  let hi = t.starts[i + 1] - 1;
+  let empty = run.cfg.suppress_blank && hi == lo;
+  if (mark == 0) {
+    if (!empty) {
+      buf_push_byte(run.out, if (run.cfg.initial_tab) { 9 } else { 32 });
+    }
+  } else {
+    set_color(run, color);
+    buf_push_byte(run.out, mark);
+    if (run.cfg.initial_tab && !empty) {
+      buf_push_byte(run.out, 9);
+    }
+  }
+  put_text(run, t.buf, lo, hi, "");
+  end_line(run, t, i);
+}
+
+// A line as it is in its file, as the ed scripts give it.
+function raw_line(run: Run, t: Text, i: i32): void {
+  put_text(run, t.buf, t.starts[i], line_end(t, i), "");
   maybe_flush(run);
 }
 
@@ -2037,23 +2647,90 @@ function time_text(run: Run, st: FileStat): string {
   return timefmt.strftime(fmt, run.zone, st.mtime, st.mtime_nsec);
 }
 
-function header_line(run: Run, p: Pair, f: i32, mark: string): string {
+function header_line(run: Run, p: Pair, f: i32, mark: string): void {
+  set_color(run, C_HEADER);
   if (p.labels[f].len() > 0) {
-    return mark + " " + p.labels[f] + "\n";
+    buf_push(run.out, mark + " " + p.labels[f]);
+  } else {
+    buf_push(run.out, mark + " " + p.names[f] + "\t" + time_text(run, p.stats[f]));
   }
-  return mark + " " + p.names[f] + "\t" + time_text(run, p.stats[f]) + "\n";
+  set_color(run, C_RESET);
+  put(run, "\n");
 }
 
 // begin_output: the lines that come before the first hunk of a comparison.
+// Under -l the output of the comparison waits for 'pr', with the line that
+// names the comparison as the page header.
 function begin_output(run: Run, p: Pair): void {
-  if (p.nested) {
-    put(run, "diff" + run.cfg.switches + " " + p.names[0] + " " + p.names[1] + "\n");
+  let name = "diff" + run.cfg.switches + " " + p.names[0] + " " + p.names[1];
+  if (run.cfg.paginate) {
+    flush_out(run);
+    run.pager.set(name);
+    run.paging.set(true);
+  } else if (p.nested) {
+    put(run, name + "\n");
   }
   if (run.cfg.style == STYLE_UNIFIED) {
-    put(run, header_line(run, p, 0, "---") + header_line(run, p, 1, "+++"));
+    header_line(run, p, 0, "---");
+    header_line(run, p, 1, "+++");
   } else if (run.cfg.style == STYLE_CONTEXT) {
-    put(run, header_line(run, p, 0, "***") + header_line(run, p, 1, "---"));
+    header_line(run, p, 0, "***");
+    header_line(run, p, 1, "---");
   }
+}
+
+// finish_output: under -l, give the output of the comparison to 'pr'.
+function finish_output(run: Run): void {
+  if (!run.paging.get()) {
+    return;
+  }
+  run.paging.set(false);
+  let bytes = buf_take_bytes(run.out);
+  if (target_os() == "wasi") {
+    fatal(run, "subsidiary program '" + PR_PROGRAM + "' could not be invoked");
+  } else {
+    paginate(run, bytes);
+  }
+}
+
+const PR_PROGRAM: string = "/usr/bin/pr";
+
+function paginate(run: Run, bytes: u8[]): void {
+  let p = match (pipe()) {
+    Ok(p) => p,
+    Err(e) => {
+      fatal(run, "pipe: " + gnu.io_error_text(e));
+      return;
+    },
+  };
+  let pid = proc_fork();
+  if (pid == 0) {
+    p.r.dup_onto(0);
+    let rc = proc_exec_as(PR_PROGRAM, [PR_PROGRAM, "-h", run.pager.get()], environ());
+    exit(if (rc == -errno.ENOENT) { 127 } else { 126 });
+  }
+  if (pid < 0) {
+    fatal(run, "fork: " + gnu.exec_errno_text(-pid));
+  }
+  p.r.close();
+  p.w.write_bytes(bytes);
+  p.w.close();
+  let st = proc_waitpid_status(pid);
+  let code = st >> 8 & 255;
+  if ((st & 127) == 0 && code == 0) {
+    return;
+  }
+  let what = "subsidiary program '" + PR_PROGRAM + "' ";
+  if ((st & 127) != 0) {
+    fatal(run, what + "failed");
+  }
+  if (code == 126) {
+    fatal(run, what + "could not be invoked");
+  }
+  if (code == 127) {
+    fatal(run, what + "not found");
+  }
+  fatal(run, what + "failed (exit status " + code.to_string() + ")");
 }
 
 function range_text(p: Pair, a: i32, b: i32, sep: string): string {
@@ -2077,6 +2754,14 @@ function unified_range(p: Pair, a: i32, b: i32): string {
   return f"{ta}," + f"{tb - ta + 1}";
 }
 
+function change_letter(kind: i32): string {
+  return match (kind) {
+    1 => "d",
+    2 => "a",
+    _ => "c",
+  };
+}
+
 function print_normal(run: Run, p: Pair, s: Script): void {
   let begun = false;
   for k in 0..s.line0.len() {
@@ -2088,15 +2773,13 @@ function print_normal(run: Run, p: Pair, s: Script): void {
       begin_output(run, p);
       begun = true;
     }
-    let letter = match (h.kind) {
-      1 => "d",
-      2 => "a",
-      _ => "c",
-    };
-    put(run, range_text(p, h.first0, h.last0, ",") + letter + range_text(p, h.first1, h.last1, ",") + "\n");
+    set_color(run, C_LINE);
+    buf_push(run.out, range_text(p, h.first0, h.last0, ",") + change_letter(h.kind) + range_text(p, h.first1, h.last1, ","));
+    set_color(run, C_RESET);
+    put(run, "\n");
     if ((h.kind & 1) != 0) {
       for i in h.first0..h.last0 + 1 {
-        put_line(run, p.a, p.first + i, "< ");
+        flagged_line(run, p.a, p.first + i, "<", C_DELETE);
       }
     }
     if (h.kind == 3) {
@@ -2104,7 +2787,96 @@ function print_normal(run: Run, p: Pair, s: Script): void {
     }
     if ((h.kind & 2) != 0) {
       for i in h.first1..h.last1 + 1 {
-        put_line(run, p.b, p.first + i, "> ");
+        flagged_line(run, p.b, p.first + i, ">", C_ADD);
+      }
+    }
+  }
+}
+
+// The ed script: the hunks from the last to the first. A line that is only
+// a dot ends the text of a command, so the script writes two dots, ends the
+// text, removes one dot and goes on with an 'a' command.
+function print_ed(run: Run, p: Pair, s: Script): void {
+  let begun = false;
+  let k = s.line0.len();
+  while (k > 0) {
+    k -= 1;
+    let h = analyze(run.cfg, p, s, k, k);
+    if (h.kind == 0) {
+      continue;
+    }
+    if (!begun) {
+      begin_output(run, p);
+      begun = true;
+    }
+    put(run, range_text(p, h.first0, h.last0, ",") + change_letter(h.kind) + "\n");
+    if (h.kind == 1) {
+      continue;
+    }
+    let inserting = true;
+    for i in h.first1..h.last1 + 1 {
+      if (!inserting) {
+        put(run, "a\n");
+        inserting = true;
+      }
+      let at = p.b.starts[p.first + i];
+      if (p.b.starts[p.first + i + 1] == at + 2 && p.b.buf[at] == b'.') {
+        put(run, "..\n.\ns/.//\n");
+        inserting = false;
+      } else {
+        raw_line(run, p.b, p.first + i);
+      }
+    }
+    if (inserting) {
+      put(run, ".\n");
+    }
+  }
+}
+
+function print_forward_ed(run: Run, p: Pair, s: Script): void {
+  let begun = false;
+  for k in 0..s.line0.len() {
+    let h = analyze(run.cfg, p, s, k, k);
+    if (h.kind == 0) {
+      continue;
+    }
+    if (!begun) {
+      begin_output(run, p);
+      begun = true;
+    }
+    put(run, change_letter(h.kind) + range_text(p, h.first0, h.last0, " ") + "\n");
+    if (h.kind == 1) {
+      continue;
+    }
+    for i in h.first1..h.last1 + 1 {
+      raw_line(run, p.b, p.first + i);
+    }
+    put(run, ".\n");
+  }
+}
+
+// The RCS format: a change is a 'd' command for the old lines, then an 'a'
+// command for the new lines, with a line count in place of the last line.
+function print_rcs(run: Run, p: Pair, s: Script): void {
+  let begun = false;
+  for k in 0..s.line0.len() {
+    let h = analyze(run.cfg, p, s, k, k);
+    if (h.kind == 0) {
+      continue;
+    }
+    if (!begun) {
+      begin_output(run, p);
+      begun = true;
+    }
+    let f0 = h.first0 + p.first + 1;
+    let l0 = h.last0 + p.first + 1;
+    if ((h.kind & 1) != 0) {
+      put(run, "d" + f0.to_string() + " " + (if (f0 <= l0) { l0 - f0 + 1 } else { 1 }).to_string() + "\n");
+    }
+    if ((h.kind & 2) != 0) {
+      put(run, "a" + l0.to_string() + " " + (h.last1 - h.first1 + 1).to_string() + "\n");
+      for i in h.first1..h.last1 + 1 {
+        raw_line(run, p.b, p.first + i);
       }
     }
   }
@@ -2140,11 +2912,55 @@ function widen(run: Run, p: Pair, h: Hunk): Hunk {
   return Hunk { ...h, first0: (if (f0 < lo) { lo } else { f0 }) as i32, first1: (if (f1 < lo) { lo } else { f1 }) as i32, last0: l0 as i32, last1: l1 as i32 };
 }
 
+// find_function: the last line before line `at` of the first file that an
+// expression of -F matches. The search goes back to where the search before
+// it started, and gives the line that search found when it finds none.
+function find_function(run: Run, p: Pair, at: i32): i32 {
+  let last = p.searched.get();
+  p.searched.set(at);
+  let i = at - 1;
+  while (i >= last) {
+    let lo = p.a.starts[i];
+    let hi = p.a.starts[i + 1] - 1;
+    for re in run.cfg.function_res {
+      if (re.search_range_bytes(p.a.buf, lo, hi)) {
+        p.found.set(i);
+        return i;
+      }
+    }
+    i -= 1;
+  }
+  return p.found.get();
+}
+
+// The function line after a hunk header: a space, then at most 40 bytes of
+// the line without its white space at each end.
+function put_function(run: Run, p: Pair, at: i32): void {
+  if (run.cfg.function_res.len() == 0) {
+    return;
+  }
+  let f = find_function(run, p, at);
+  if (f < 0) {
+    return;
+  }
+  let lo = p.a.starts[f];
+  let hi = p.a.starts[f + 1] - 1;
+  while (lo < hi && is_space(p.a.buf[lo] as i32)) {
+    lo += 1;
+  }
+  let end = if (hi - lo > 40) { lo + 40 } else { hi };
+  while (end > lo && is_space(p.a.buf[end - 1] as i32)) {
+    end -= 1;
+  }
+  buf_push_byte(run.out, 32);
+  buf_push_bytes_range(run.out, p.a.buf, lo, end);
+}
+
 function print_context(run: Run, p: Pair, s: Script): void {
   let n = s.line0.len();
   let ignore: boolean[] = [];
   for k in 0..n {
-    ignore = ignore.append(run.cfg.blank && analyze(run.cfg, p, s, k, k).kind == 0);
+    ignore = ignore.append(ignoring(run.cfg) && analyze(run.cfg, p, s, k, k).kind == 0);
   }
   let begun = false;
   let k = 0;
@@ -2168,53 +2984,66 @@ function print_context(run: Run, p: Pair, s: Script): void {
 }
 
 function context_hunk(run: Run, p: Pair, s: Script, k: i32, e: i32, w: Hunk): void {
-  put(run, "***************\n*** " + range_text(p, w.first0, w.last0, ",") + " ****\n");
+  buf_push(run.out, "***************");
+  put_function(run, p, p.first + w.first0);
+  buf_push_byte(run.out, 10);
+  set_color(run, C_LINE);
+  buf_push(run.out, "*** " + range_text(p, w.first0, w.last0, ",") + " ****");
+  set_color(run, C_RESET);
+  put(run, "\n");
   if ((w.kind & 1) != 0) {
     let c = k;
     for i in w.first0..w.last0 + 1 {
       while (c <= e && s.line0[c] + s.del[c] <= i) {
         c += 1;
       }
-      let mark = "  ";
+      let mark = " ";
       if (c <= e && s.line0[c] <= i) {
-        mark = if (s.ins[c] > 0) { "! " } else { "- " };
+        mark = if (s.ins[c] > 0) { "!" } else { "-" };
       }
-      put_line(run, p.a, p.first + i, mark);
+      flagged_line(run, p.a, p.first + i, mark, C_DELETE);
     }
   }
-  put(run, "--- " + range_text(p, w.first1, w.last1, ",") + " ----\n");
+  set_color(run, C_LINE);
+  buf_push(run.out, "--- " + range_text(p, w.first1, w.last1, ",") + " ----");
+  set_color(run, C_RESET);
+  put(run, "\n");
   if ((w.kind & 2) != 0) {
     let c = k;
     for i in w.first1..w.last1 + 1 {
       while (c <= e && s.line1[c] + s.ins[c] <= i) {
         c += 1;
       }
-      let mark = "  ";
+      let mark = " ";
       if (c <= e && s.line1[c] <= i) {
-        mark = if (s.del[c] > 0) { "! " } else { "+ " };
+        mark = if (s.del[c] > 0) { "!" } else { "+" };
       }
-      put_line(run, p.b, p.first + i, mark);
+      flagged_line(run, p.b, p.first + i, mark, C_ADD);
     }
   }
 }
 
 function unified_hunk(run: Run, p: Pair, s: Script, k: i32, w: Hunk): void {
-  put(run, "@@ -" + unified_range(p, w.first0, w.last0) + " +" + unified_range(p, w.first1, w.last1) + " @@\n");
+  set_color(run, C_LINE);
+  buf_push(run.out, "@@ -" + unified_range(p, w.first0, w.last0) + " +" + unified_range(p, w.first1, w.last1) + " @@");
+  set_color(run, C_RESET);
+  put_function(run, p, p.first + w.first0);
+  put(run, "\n");
   let i = w.first0;
   let j = w.first1;
   let c = k;
   while (i <= w.last0 || j <= w.last1) {
     if (c >= s.line0.len() || i < s.line0[c]) {
-      put_line(run, p.a, p.first + i, " ");
+      unified_line(run, p.a, p.first + i, 0, C_RESET);
       i += 1;
       j += 1;
     } else {
       for _ in 0..s.del[c] {
-        put_line(run, p.a, p.first + i, "-");
+        unified_line(run, p.a, p.first + i, 45, C_DELETE);
         i += 1;
       }
       for _ in 0..s.ins[c] {
-        put_line(run, p.b, p.first + j, "+");
+        unified_line(run, p.b, p.first + j, 43, C_ADD);
         j += 1;
       }
       c += 1;
@@ -2222,8 +3051,564 @@ function unified_hunk(run: Run, p: Pair, s: Script, k: i32, w: Hunk): void {
   }
 }
 
+// The groups of a format: the lines from0..to0 of the first file and
+// from1..to1 of the second, counted from 0.
+struct Groups { from0: i32, to0: i32, from1: i32, to1: i32 }
+
+// The byte at `i` of a format, or 0 past its end.
+function fmt_at(f: string, i: i32): i32 {
+  if (i < f.len()) {
+    return f[i] as i32;
+  }
+  return 0;
+}
+
+function is_digit(c: i32): boolean {
+  return c >= 48 && c <= 57;
+}
+
+// The value of a letter of a group format: F, L, N, E and M of the second
+// file in upper case and of the first file in lower case, or -1.
+function letter_value(g: Groups, c: i32): i64 {
+  let from = g.from0;
+  let to = g.to0;
+  let l = c;
+  if (c >= 65 && c <= 90) {
+    from = g.from1;
+    to = g.to1;
+    l = c + 32;
+  }
+  return match (l) {
+    101 => from as i64,
+    102 => from as i64 + 1i64,
+    108 => to as i64,
+    109 => to as i64 + 1i64,
+    110 => (to - from) as i64,
+    _ => -1i64,
+  };
+}
+
+// A character literal of %c: 'C' or '\OOO' with one to three octal digits.
+// It gives the byte and the index after the closing quote, or -1.
+function char_literal(f: string, at: i32): (i32, i32) {
+  let c = fmt_at(f, at);
+  if (c == 0 || c == 39) {
+    return (0, -1);
+  }
+  if (c != 92) {
+    if (fmt_at(f, at + 1) != 39) {
+      return (0, -1);
+    }
+    return (c, at + 2);
+  }
+  let v = 0;
+  let i = at + 1;
+  while (fmt_at(f, i) != 39) {
+    let d = fmt_at(f, i) - 48;
+    if (d < 0 || d >= 8) {
+      return (0, -1);
+    }
+    v = v * 8 + d;
+    i += 1;
+  }
+  let digits = i - at - 1;
+  if (digits < 1 || digits > 3) {
+    return (0, -1);
+  }
+  return (v & 255, i + 1);
+}
+
+// A number as printf writes it for the conversion `conv` of d, o, x and X,
+// with the flags, width and precision of `spec`.
+function printf_number(spec: string, conv: i32, v: i64): string {
+  let left = false;
+  let zero = false;
+  let i = 0;
+  while (i < spec.len() && (spec[i] == b'-' || spec[i] == b'\'' || spec[i] == b'0')) {
+    left = left || spec[i] == b'-';
+    zero = zero || spec[i] == b'0';
+    i += 1;
+  }
+  let width = 0i64;
+  while (i < spec.len() && is_digit(spec[i] as i32)) {
+    width = width * 10i64 + (spec[i] - b'0') as i64;
+    i += 1;
+  }
+  let prec = -1i64;
+  if (i < spec.len() && spec[i] == b'.') {
+    prec = 0i64;
+    i += 1;
+    while (i < spec.len() && is_digit(spec[i] as i32)) {
+      prec = prec * 10i64 + (spec[i] - b'0') as i64;
+      i += 1;
+    }
+  }
+  let base = match (conv) {
+    111 => 8i64,
+    120 | 88 => 16i64,
+    _ => 10i64,
+  };
+  let digits = "";
+  let n = v;
+  while (n > 0i64) {
+    let d = (n % base) as i32;
+    let ch = if (d < 10) { 48 + d } else if (conv == 88) { 55 + d } else { 87 + d };
+    digits = digit_text(ch - 48) + digits;
+    n = n / base;
+  }
+  if (v == 0i64 && prec != 0i64) {
+    digits = "0";
+  }
+  while (digits.len() as i64 < prec) {
+    digits = "0" + digits;
+  }
+  let pad = if (zero && !left && prec < 0i64) { "0" } else { " " };
+  while (digits.len() as i64 < width) {
+    digits = if (left) { digits + " " } else { pad + digits };
+  }
+  return digits;
+}
+
+// do_printf_spec: a printf spec of a group format (`line` < 0) or a line
+// format, at index `at` of the '%'. It gives the index after it, or -1.
+function printf_spec(run: Run, f: string, at: i32, out: boolean, g: Groups, line: i32): i32 {
+  let i = at + 1;
+  let c = fmt_at(f, i);
+  i += 1;
+  while (c == 45 || c == 39 || c == 48) {
+    c = fmt_at(f, i);
+    i += 1;
+  }
+  while (is_digit(c)) {
+    c = fmt_at(f, i);
+    i += 1;
+  }
+  if (c == 46) {
+    c = fmt_at(f, i);
+    i += 1;
+    while (is_digit(c)) {
+      c = fmt_at(f, i);
+      i += 1;
+    }
+  }
+  let c1 = fmt_at(f, i);
+  i += 1;
+  if (c == 99) {
+    if (c1 != 39) {
+      return -1;
+    }
+    let r = char_literal(f, i);
+    if (r.1 >= 0 && out) {
+      buf_push_byte(run.out, r.0);
+    }
+    return r.1;
+  }
+  if (c != 100 && c != 111 && c != 120 && c != 88) {
+    return -1;
+  }
+  let v = 0i64;
+  if (line >= 0) {
+    if (c1 != 110) {
+      return -1;
+    }
+    v = line as i64 + 1i64;
+  } else {
+    v = letter_value(g, c1);
+    if (v < 0i64) {
+      return -1;
+    }
+  }
+  if (out) {
+    buf_push(run.out, printf_number(slice_unchecked(f, at + 1, i - 2) + "", c, v));
+  }
+  return i;
+}
+
+// The lines from..to of a file, each in the line format `f`.
+function format_lines(run: Run, f: string, t: Text, from: i32, to: i32): void {
+  let none = Groups { from0: 0, to0: 0, from1: 0, to1: 0 };
+  for line in from..to {
+    let i = 0;
+    while (i < f.len()) {
+      let c = f[i] as i32;
+      let f1 = i + 1;
+      i += 1;
+      if (c == 37) {
+        let c2 = fmt_at(f, i);
+        i += 1;
+        if (c2 == 108) {
+          put_text(run, t.buf, t.starts[line], t.starts[line + 1] - 1, "");
+          continue;
+        }
+        if (c2 == 76) {
+          put_text(run, t.buf, t.starts[line], line_end(t, line), "");
+          continue;
+        }
+        if (c2 != 37) {
+          let r = printf_spec(run, f, i - 2, true, none, line);
+          if (r >= 0) {
+            i = r;
+            continue;
+          }
+          i = f1;
+        }
+      }
+      buf_push_byte(run.out, c);
+    }
+    maybe_flush(run);
+  }
+}
+
+// format_group: the format `f` from index `at` up to the byte `endc` or its
+// end, written when `out` is set. It gives the index where it stopped.
+function format_group(run: Run, p: Pair, f: string, at: i32, endc: i32, out: boolean, g: Groups): i32 {
+  let i = at;
+  while (i < f.len() && f[i] as i32 != endc) {
+    let c = f[i] as i32;
+    let f1 = i + 1;
+    i += 1;
+    if (c == 37) {
+      let c2 = fmt_at(f, i);
+      i += 1;
+      if (c2 == 37) {
+        if (out) {
+          buf_push_byte(run.out, c);
+        }
+        continue;
+      }
+      if (c2 == 40) {
+        let r = format_condition(run, p, f, i, out, g);
+        if (r >= 0) {
+          i = r;
+          continue;
+        }
+      } else if (c2 == 60 || c2 == 61 || c2 == 62) {
+        if (out) {
+          let kind = if (c2 == 60) { G_OLD } else if (c2 == 61) { G_UNCHANGED } else { G_NEW };
+          if (c2 == 62) {
+            format_lines(run, run.cfg.lines[kind], p.b, g.from1, g.to1);
+          } else {
+            format_lines(run, run.cfg.lines[kind], p.a, g.from0, g.to0);
+          }
+        }
+        continue;
+      } else {
+        let r = printf_spec(run, f, i - 2, out, g, -1);
+        if (r >= 0) {
+          i = r;
+          continue;
+        }
+      }
+      i = f1;
+    }
+    if (out) {
+      buf_push_byte(run.out, c);
+    }
+  }
+  return i;
+}
+
+// %(A=B?T:E): T when A equals B, else E. A and B are numbers or letters. It
+// gives the index after the closing parenthesis, or -1 when the condition is
+// not valid.
+function format_condition(run: Run, p: Pair, f: string, at: i32, out: boolean, g: Groups): i32 {
+  let i = at;
+  let values: i64[] = [0i64, 0i64];
+  for k in 0..2 {
+    if (is_digit(fmt_at(f, i))) {
+      let v = 0i64;
+      while (is_digit(fmt_at(f, i))) {
+        let d = (fmt_at(f, i) - 48) as i64;
+        if (v > (LIN_MAX - d) / 10i64) {
+          return -1;
+        }
+        v = v * 10i64 + d;
+        i += 1;
+      }
+      values = values.with(k, v);
+    } else {
+      let v = letter_value(g, fmt_at(f, i));
+      if (v < 0i64) {
+        return -1;
+      }
+      values = values.with(k, v);
+      i += 1;
+    }
+    let sep = if (k == 0) { 61 } else { 63 };
+    if (fmt_at(f, i) != sep) {
+      return -1;
+    }
+    i += 1;
+  }
+  let same = values[0] == values[1];
+  i = format_group(run, p, f, i, 58, out && same, g);
+  if (i < f.len()) {
+    i = format_group(run, p, f, i + 1, 41, out && !same, g);
+    if (i < f.len()) {
+      i += 1;
+    }
+  }
+  return i;
+}
+
+function format_ifdef(run: Run, p: Pair, kind: i32, g: Groups): void {
+  let f = run.cfg.groups[kind];
+  format_group(run, p, f, 0, 0, true, g);
+  maybe_flush(run);
+}
+
+// The group formats: each change in the format of its kind, and the lines
+// between the changes in the format of the unchanged lines.
+function print_ifdef(run: Run, p: Pair, s: Script): void {
+  begin_output(run, p);
+  let next0 = 0;
+  let next1 = 0;
+  for k in 0..s.line0.len() {
+    let h = analyze(run.cfg, p, s, k, k);
+    if (h.kind == 0) {
+      continue;
+    }
+    let f0 = p.first + h.first0;
+    let f1 = p.first + h.first1;
+    if (next0 < f0 || next1 < f1) {
+      format_ifdef(run, p, G_UNCHANGED, Groups { from0: next0, to0: f0, from1: next1, to1: f1 });
+    }
+    next0 = p.first + h.last0 + 1;
+    next1 = p.first + h.last1 + 1;
+    format_ifdef(run, p, h.kind, Groups { from0: f0, to0: next0, from1: f1, to1: next1 });
+  }
+  let n0 = line_count(p.a);
+  let n1 = line_count(p.b);
+  if (next0 < n0 || next1 < n1) {
+    format_ifdef(run, p, G_UNCHANGED, Groups { from0: next0, to0: n0, from1: next1, to1: n1 });
+  }
+}
+
+// The width of each column of the side by side format, and the column where
+// the second one starts.
+function sdiff_columns(cfg: Cfg): (i64, i64) {
+  let t = if (cfg.expand_tabs) { 1i64 } else { cfg.tabsize };
+  let w = cfg.width;
+  let off = (w + t + 3i64) / (2i64 * t) * t;
+  let hw = off - 3i64;
+  if (w - off < hw) {
+    hw = w - off;
+  }
+  if (hw < 0i64) {
+    hw = 0i64;
+  }
+  return (hw, if (hw != 0i64) { off } else { w });
+}
+
+// tab_from_to: blanks from column `from` to column `to`, as tabs where a tab
+// stop allows unless -t is given.
+function tab_from_to(run: Run, from: i64, to: i64): i64 {
+  let col = from;
+  if (!run.cfg.expand_tabs) {
+    let ts = run.cfg.tabsize;
+    let tab = col + ts - col % ts;
+    while (tab <= to) {
+      buf_push_byte(run.out, 9);
+      maybe_flush(run);
+      col = tab;
+      tab += ts;
+    }
+  }
+  while (col < to) {
+    buf_push_byte(run.out, 32);
+    maybe_flush(run);
+    col += 1i64;
+  }
+  return to;
+}
+
+// print_half_line: one line in a column of `bound` print columns that
+// starts at column `indent`. It gives the column where the text ends.
+function half_line(run: Run, t: Text, i: i32, indent: i64, bound: i64): i64 {
+  let ts = run.cfg.tabsize;
+  let in_pos = 0i64;
+  let out_pos = 0i64;
+  let lo = t.starts[i];
+  let hi = t.starts[i + 1] - 1;
+  for k in lo..hi {
+    let c = buf_byte(t, k);
+    if (c == 9) {
+      let spaces = ts - in_pos % ts;
+      if (in_pos == out_pos) {
+        let stop = out_pos + spaces;
+        if (run.cfg.expand_tabs) {
+          if (bound < stop) {
+            stop = bound;
+          }
+          while (out_pos < stop) {
+            buf_push_byte(run.out, 32);
+            out_pos += 1i64;
+          }
+        } else if (stop < bound) {
+          out_pos = stop;
+          buf_push_byte(run.out, c);
+        }
+      }
+      in_pos += spaces;
+    } else if (c == 13) {
+      buf_push_byte(run.out, c);
+      tab_from_to(run, 0i64, indent);
+      in_pos = 0i64;
+      out_pos = 0i64;
+    } else if (c == 8) {
+      if (in_pos != 0i64) {
+        in_pos -= 1i64;
+        if (in_pos < bound) {
+          if (out_pos <= in_pos) {
+            while (out_pos < in_pos) {
+              buf_push_byte(run.out, 32);
+              out_pos += 1i64;
+            }
+          } else {
+            out_pos = in_pos;
+            buf_push_byte(run.out, c);
+          }
+        }
+      }
+    } else if (isprint(c)) {
+      if (in_pos < bound) {
+        out_pos = in_pos + 1i64;
+        buf_push_byte(run.out, c);
+      }
+      in_pos += 1i64;
+    } else if (c == 12 || c == 11) {
+      if (in_pos < bound) {
+        buf_push_byte(run.out, c);
+      }
+    } else if (in_pos <= bound) {
+      out_pos = in_pos;
+      buf_push_byte(run.out, c);
+    }
+  }
+  return out_pos;
+}
+
+function buf_byte(t: Text, k: i32): i32 {
+  return t.buf[k] as i32;
+}
+
+// print_1sdiff_line: a line of the side by side format. `left` and `right`
+// are lines of each file, or -1.
+function sdiff_line(run: Run, p: Pair, left: i32, sep: i32, right: i32): void {
+  let cols = sdiff_columns(run.cfg);
+  let hw = cols.0;
+  let c2o = cols.1;
+  let mark = sep;
+  if (sep == 60) {
+    set_color(run, C_DELETE);
+  } else if (sep == 62) {
+    set_color(run, C_ADD);
+  }
+  let col = 0i64;
+  let newline = false;
+  if (left >= 0) {
+    newline = has_newline(p.a, left);
+    col = half_line(run, p.a, left, 0i64, hw);
+  }
+  if (mark != 32) {
+    col = tab_from_to(run, col, (hw + c2o - 1i64) / 2i64) + 1i64;
+    if (mark == 124 && newline != has_newline(p.b, right)) {
+      mark = if (newline) { 47 } else { 92 };
+    }
+    buf_push_byte(run.out, mark);
+  }
+  if (right >= 0) {
+    newline = newline || has_newline(p.b, right);
+    if (p.b.starts[right + 1] - p.b.starts[right] > 1 || !has_newline(p.b, right)) {
+      col = tab_from_to(run, col, c2o);
+      half_line(run, p.b, right, col, hw);
+    }
+  }
+  if (newline) {
+    buf_push_byte(run.out, 10);
+  }
+  if (sep == 60 || sep == 62) {
+    set_color(run, C_RESET);
+  }
+  maybe_flush(run);
+}
+
+// print_sdiff_common_lines: the lines up to limit0 and limit1, which the
+// comparison finds in common or ignores.
+function sdiff_common(run: Run, p: Pair, next: i32[], limit0: i32, limit1: i32): i32[] {
+  let i0 = next[0];
+  let i1 = next[1];
+  if (!run.cfg.suppress_common && (i0 != limit0 || i1 != limit1)) {
+    if (run.cfg.merge_assist) {
+      put(run, "i" + (limit0 - i0).to_string() + "," + (limit1 - i1).to_string() + "\n");
+    }
+    if (!run.cfg.left_column) {
+      while (i0 != limit0 && i1 != limit1) {
+        sdiff_line(run, p, i0, 32, i1);
+        i0 += 1;
+        i1 += 1;
+      }
+      while (i1 != limit1) {
+        sdiff_line(run, p, -1, 41, i1);
+        i1 += 1;
+      }
+    }
+    while (i0 != limit0) {
+      sdiff_line(run, p, i0, 40, -1);
+      i0 += 1;
+    }
+  }
+  return [limit0, limit1];
+}
+
+function print_sdiff(run: Run, p: Pair, s: Script): void {
+  begin_output(run, p);
+  let next: i32[] = [0, 0];
+  for k in 0..s.line0.len() {
+    let h = analyze(run.cfg, p, s, k, k);
+    if (h.kind == 0) {
+      continue;
+    }
+    let f0 = p.first + h.first0;
+    let l0 = p.first + h.last0;
+    let f1 = p.first + h.first1;
+    let l1 = p.first + h.last1;
+    next = sdiff_common(run, p, next, f0, f1);
+    if (run.cfg.merge_assist) {
+      put(run, "c" + (l0 - f0 + 1).to_string() + "," + (l1 - f1 + 1).to_string() + "\n");
+    }
+    let kind = h.kind;
+    if (kind == 3) {
+      let i = f0;
+      let j = f1;
+      while (i <= l0 && j <= l1) {
+        sdiff_line(run, p, i, 124, j);
+        i += 1;
+        j += 1;
+      }
+      kind = (if (i <= l0) { 1 } else { 0 }) + (if (j <= l1) { 2 } else { 0 });
+      f0 = i;
+      f1 = j;
+      next = [i, j];
+    }
+    if ((kind & 2) != 0) {
+      for j in f1..l1 + 1 {
+        sdiff_line(run, p, -1, 62, j);
+      }
+      next = next.with(1, l1 + 1);
+    }
+    if ((kind & 1) != 0) {
+      for i in f0..l0 + 1 {
+        sdiff_line(run, p, i, 60, -1);
+      }
+      next = next.with(0, l0 + 1);
+    }
+  }
+  sdiff_common(run, p, next, line_count(p.a), line_count(p.b));
+}
+
 function report_differ(run: Run, sides: Side[], what: string): void {
-  put(run, what + label_or(run, 0, sides[0].name) + " and " + label_or(run, 1, sides[1].name) + " differ\n");
+  message(run, what + label_or(run, 0, sides[0].name) + " and " + label_or(run, 1, sides[1].name) + " differ\n");
 }
 
 function binary_differ(sides: Side[], c0: Contents, c1: Contents): boolean {
@@ -2247,44 +3632,272 @@ function diff_2_files(run: Run, nested: boolean, sides: Side[], c0: Contents, c1
     report_differ(run, sides, if (cfg.brief) { "Files " } else { "Binary files " });
     return EXIT_DIFFER;
   }
-  let a = prepare(c0.bytes);
-  let b = prepare(c1.bytes);
+  let a = prepare(cfg, c0.bytes);
+  let b = prepare(cfg, c1.bytes);
+  let status = 0;
+  if (cfg.style == STYLE_ED || cfg.style == STYLE_FORWARD_ED) {
+    for f in 0..2 {
+      if ((if (f == 0) { a } else { b }).missing) {
+        fail(run, label_or(run, f, sides[f].name) + ": No newline at end of file\n");
+        status = EXIT_TROUBLE;
+      }
+    }
+    a = Text { ...a, missing: false };
+    b = Text { ...b, missing: false };
+  }
   let r = diff_texts(cfg, a, b);
   let s = r.0;
   let labels: string[] = [if (cfg.labels.len() > 0) { cfg.labels[0] } else { "" }, if (cfg.labels.len() > 1) { cfg.labels[1] } else { "" }];
   let names: string[] = [c_escape(label_or(run, 0, sides[0].name)), c_escape(label_or(run, 1, sides[1].name))];
-  let p = Pair { a: a, b: b, first: r.1, names: names, labels: labels, stats: [sides[0].st, sides[1].st], nested: nested };
-  if (!any_change(cfg, p, s)) {
-    return 0;
-  }
+  let p = Pair { a: a, b: b, first: r.1, names: names, labels: labels, stats: [sides[0].st, sides[1].st], nested: nested, searched: cell_new(0), found: cell_new(-1) };
+  let changed = any_change(cfg, p, s);
   if (cfg.brief) {
-    report_differ(run, sides, "Files ");
-  } else if (cfg.style == STYLE_NORMAL) {
+    if (changed) {
+      report_differ(run, sides, "Files ");
+    }
+  } else if (changed || !silent_when_same(cfg)) {
+    print_script(run, p, s);
+    finish_output(run);
+  }
+  if (changed && status == 0) {
+    status = EXIT_DIFFER;
+  }
+  return status;
+}
+
+function print_script(run: Run, p: Pair, s: Script): void {
+  let style = run.cfg.style;
+  if (style == STYLE_NORMAL) {
     print_normal(run, p, s);
+  } else if (style == STYLE_ED) {
+    print_ed(run, p, s);
+  } else if (style == STYLE_FORWARD_ED) {
+    print_forward_ed(run, p, s);
+  } else if (style == STYLE_RCS) {
+    print_rcs(run, p, s);
+  } else if (style == STYLE_IFDEF) {
+    print_ifdef(run, p, s);
+  } else if (style == STYLE_SDIFF) {
+    print_sdiff(run, p, s);
   } else {
     print_context(run, p, s);
   }
-  return EXIT_DIFFER;
 }
 
-function main(): i32 {
-  let argv = args();
+// should_colorize: --color=auto colors a terminal that is not dumb.
+function colors_on(cfg: Cfg): boolean {
+  if (cfg.color == COLOR_ALWAYS) {
+    return true;
+  }
+  if (cfg.color != COLOR_AUTO || !isatty(1)) {
+    return false;
+  }
+  return match (env("TERM")) {
+    Some(t) => t != "dumb",
+    None => false,
+  };
+}
+
+// The palette: the start and end of an escape, an unused code, and the
+// codes of the reset, the header, added lines, deleted lines and line
+// numbers. --palette changes them as dircolors does for ls.
+function palette_names(): string[] {
+  return ["lc", "rc", "ec", "rs", "hd", "ad", "de", "ln"];
+}
+
+// The palette of --palette, or an empty list when it does not parse.
+function parse_palette(spec: string): string[] {
+  let pal: string[] = ["\x1b[", "m", "", "0", "1", "32", "31", "36"];
+  let i = 0;
+  while (i < spec.len()) {
+    let c = spec[i] as i32;
+    if (c == 58) {
+      i += 1;
+      continue;
+    }
+    if (c == 42) {
+      let ext = funky_string(spec, i + 1, true);
+      if (ext.1 < 0 || fmt_at(spec, ext.1) != 61) {
+        return palette_failed();
+      }
+      let seq = funky_string(spec, ext.1 + 1, false);
+      if (seq.1 < 0) {
+        return palette_failed();
+      }
+      i = seq.1;
+      continue;
+    }
+    if (i + 1 >= spec.len()) {
+      return palette_failed();
+    }
+    let label = slice_unchecked(spec, i, i + 2) + "";
+    if (fmt_at(spec, i + 2) != 61) {
+      return palette_failed();
+    }
+    let found = -1;
+    let names = palette_names();
+    for k in 0..names.len() {
+      if (names[k] == label) {
+        found = k;
+        break;
+      }
+    }
+    let v = funky_string(spec, i + 3, false);
+    if (found < 0 || v.1 < 0) {
+      gnu.error("unrecognized prefix: " + label);
+      return palette_failed();
+    }
+    pal = pal.with(found, v.0);
+    i = v.1;
+  }
+  return pal;
+}
+
+function palette_failed(): string[] {
+  gnu.error("unparsable value for --palette");
+  let none: string[] = [];
+  return none;
+}
+
+// get_funky_string: a value of the palette from index `at` to a colon or the
+// end, or an equals sign when `equals_end` is set, with its backslash and
+// caret escapes. It gives the bytes and the index where it stops, or -1.
+function funky_string(spec: string, at: i32, equals_end: boolean): (string, i32) {
+  let h = buf_new(16);
+  let i = at;
+  let ok = true;
+  while (ok) {
+    let c = fmt_at(spec, i);
+    if (c == 0 || c == 58 || c == 61 && equals_end) {
+      break;
+    }
+    i += 1;
+    if (c == 92) {
+      let e = fmt_at(spec, i);
+      i += 1;
+      if (e == 0) {
+        ok = false;
+      } else if (e >= 48 && e <= 55) {
+        let num = e - 48;
+        while (fmt_at(spec, i) >= 48 && fmt_at(spec, i) <= 55) {
+          num = (num << 3) + fmt_at(spec, i) - 48;
+          i += 1;
+        }
+        buf_push_byte(h, num & 255);
+      } else if (e == 120 || e == 88) {
+        let num = 0;
+        while (true) {
+          let d = hex_digit(fmt_at(spec, i));
+          if (d < 0) {
+            break;
+          }
+          num = (num << 4) + d;
+          i += 1;
+        }
+        buf_push_byte(h, num & 255);
+      } else {
+        buf_push_byte(h, escape_byte(e));
+      }
+    } else if (c == 94) {
+      let e = fmt_at(spec, i);
+      i += 1;
+      if (e >= 64 && e <= 126) {
+        buf_push_byte(h, e & 31);
+      } else if (e == 63) {
+        // GNU leaves the '?' of ^? to be read again as a byte of its own.
+        buf_push_byte(h, 127);
+        i -= 1;
+      } else {
+        ok = false;
+      }
+    } else {
+      buf_push_byte(h, c);
+    }
+  }
+  let out = buf_take(h);
+  buf_free(h);
+  return (out, if (ok) { i } else { -1 });
+}
+
+function hex_digit(c: i32): i32 {
+  if (c >= 48 && c <= 57) {
+    return c - 48;
+  }
+  if (c >= 97 && c <= 102) {
+    return c - 87;
+  }
+  if (c >= 65 && c <= 70) {
+    return c - 55;
+  }
+  return -1;
+}
+
+function escape_byte(e: i32): i32 {
+  return match (e) {
+    97 => 7,
+    98 => 8,
+    101 => 27,
+    102 => 12,
+    110 => 10,
+    114 => 13,
+    116 => 9,
+    118 => 11,
+    95 => 32,
+    _ => e,
+  };
+}
+
+// The comparisons of the operands: the two operands, or under --from-file
+// and --to-file each operand with that file.
+function compare_operands(run: Run, ops: string[]): i32 {
+  let cfg = run.cfg;
+  if (cfg.from_file.len() > 0 || cfg.to_file.len() > 0) {
+    let status = 0;
+    for op in ops {
+      let v = if (cfg.from_file.len() > 0) { compare_files(run, None, Some(cfg.from_file[0]), Some(op)) } else { compare_files(run, None, Some(op), Some(cfg.to_file[0])) };
+      if (v > status) {
+        status = v;
+      }
+    }
+    return status;
+  }
+  return compare_files(run, None, Some(ops[0]), Some(ops[1]));
+}
+
+// The diff program: the options, then each comparison. sdiff runs it with
+// arguments of its own.
+pub function run_diff(argv: string[]): i32 {
   let parsed = parse(argv);
   let cfg = parsed.0;
   let ops = parsed.1;
-  if (cfg.unsupported.len() > 0) {
-    gnu.error("this port does not have the option '" + cfg.unsupported + "'");
-    return EXIT_TROUBLE;
+  if (cfg.from_file.len() > 0 && cfg.to_file.len() > 0) {
+    gnu.error("--from-file and --to-file both specified");
+    exit(EXIT_TROUBLE);
   }
-  if (ops.len() < 2) {
-    usage_error("missing operand after '" + argv[argv.len() - 1] + "'");
+  if (cfg.from_file.len() == 0 && cfg.to_file.len() == 0) {
+    if (ops.len() < 2) {
+      usage_error("missing operand after '" + argv[argv.len() - 1] + "'");
+    }
+    if (ops.len() > 2) {
+      usage_error("extra operand '" + ops[2] + "'");
+    }
   }
-  if (ops.len() > 2) {
-    usage_error("extra operand '" + ops[2] + "'");
+  let colors = colors_on(cfg);
+  let palette: string[] = [];
+  if (colors) {
+    palette = parse_palette(cfg.palette);
+    colors = palette.len() > 0;
   }
-  let run = Run { cfg: cfg, out: buf_new(2 * OUT_CHUNK), zone: tz.local_zone() };
-  let status = compare_files(run, None, Some(ops[0]), Some(ops[1]));
+  let run = Run { cfg: cfg, out: buf_new(2 * OUT_CHUNK), zone: tz.local_zone(), colors: colors, palette: palette, context: cell_new(C_RESET), pager: cell_new(""), paging: cell_new(false), queue: buf_new(256) };
+  let status = compare_operands(run, ops);
+  let queued = buf_take_bytes(run.queue);
+  buf_push_bytes_range(run.out, queued, 0, queued.len());
   flush_out(run);
   buf_free(run.out);
+  buf_free(run.queue);
   return status;
+}
+
+function main(): i32 {
+  return run_diff(args());
 }
