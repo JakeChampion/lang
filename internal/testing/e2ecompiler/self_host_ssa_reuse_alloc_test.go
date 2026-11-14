@@ -23,7 +23,7 @@ func TestSelfHostSSAReuseAllocIsInline(t *testing.T) {
 	if err := os.WriteFile(fresh, []byte(ssaBoxedCountProg), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	size := map[string]string{"x86-64-linux": "cmpq %rsi, -16(%rax)", "arm64-linux": "ldur x30, [x0, #-16]"}
+	size := map[string]string{"x86-64-linux": "cmpq %rdi, -16(%rax)", "arm64-linux": "ldur x30, [x0, #-16]"}
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
 			asm, err := os.ReadFile(cli.emit(t, inline, target))
