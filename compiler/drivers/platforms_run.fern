@@ -55,7 +55,7 @@ function main(): i32 {
     return 6;
   }
   let bare = platforms.for_target("arm64-freestanding").capabilities;
-  if (bare.len() != 1 || bare[0] != "mmio") {
+  if (bare.len() != 2 || bare[0] != "mmio" || bare[1] != "atomics") {
     return 7;
   }
   if (platforms.entry_shape("arm64-freestanding") != "exports") {
