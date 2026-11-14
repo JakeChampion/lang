@@ -1,0 +1,197 @@
+import "std/video/hevc_input" as input;
+import "std/video/nal/input" as nals;
+import "std/video/frame";
+import "std/audio/source";
+import "std/hex";
+import "std/test";
+import "./video_hevc_input_vectors" as vectors;
+
+struct Summary { offsets: i64[], irap: boolean[], idr: boolean[], packets: string[] }
+
+function limits(chunk: i32): input.Limits {
+  let base = input.default_limits();
+  return input.Limits { ...base, video: frame.Limits { ...base.video, max_packet_bytes: 16384 }, input: nals.Limits { ...base.input, max_unit_bytes: 8192, input: source.Limits { chunk_size: chunk, max_buffer_bytes: 16384 } } };
+}
+
+function no_read(_: i32): Result[u8[], IoError] {
+  return Err(IoError.Interrupted);
+}
+
+function end_stable(own stream: input.Stream): boolean {
+  return match (stream.step_with(no_read)) {
+    Ok(step) => match (step.event) { input.End => true, _ => false },
+    Err(_) => false,
+  };
+}
+
+function piece(bytes: [u8], at: i32, count: i32): u8[] {
+  let out: u8[] = [];
+  for byte in bytes[at:at + count] {
+    out = out.append(byte);
+  }
+  return out;
+}
+
+function source_stream(configured: input.Limits): Result[input.Stream, string] {
+  return match (input.create(configured)) { Ok(value) => Ok(value), Err(error) => Err(error.message()) };
+}
+
+function source_step(own stream: input.Stream, read: (i32) => Result[u8[], IoError]): Result[input.Step, string] {
+  return match (stream.step_with(read)) { Ok(value) => Ok(value), Err(error) => Err(error.message()) };
+}
+
+function collect(own bytes: u8[], configured: input.Limits): Result[Summary, string] {
+  let maximum = bytes.len() * 4 + 1000;
+  let cursor = cell_new(0);
+  let reads = cell_new(0);
+  let read = (count: i32): Result[u8[], IoError] => {
+    reads.set(reads.get() + 1);
+    let at = cursor.get();
+    let left = bytes.len() - at;
+    let take = if (count < left) { count } else { left };
+    cursor.set(at + take);
+    return Ok(piece(bytes, at, take));
+  };
+  let stream = source_stream(configured)?;
+  let summary = Summary { offsets: [], irap: [], idr: [], packets: [] };
+  for _ in 0..maximum {
+    let before = reads.get();
+    let step = source_step(stream, read)?;
+    stream = step.stream;
+    if (reads.get() > before + 1) {
+      return Err("more than one source read in one step");
+    }
+    match (step.event) {
+      input.Waiting => {},
+      input.End => {
+        return if (end_stable(stream)) { Ok(summary) } else { Err("end state reads the source") };
+      },
+      input.PacketReady(packet) => {
+        summary = Summary { offsets: summary.offsets.append(packet.offset), irap: summary.irap.append(packet.irap), idr: summary.idr.append(packet.idr), packets: summary.packets.append(hex.encode(packet.bytes)) };
+      }
+    }
+  }
+  return Err("access-unit step bound exceeded");
+}
+
+function same(summary: Summary, vector: vectors.Vector): boolean {
+  return summary.offsets == vector.offsets && summary.irap == vector.irap && summary.idr == vector.idr && summary.packets == vector.packets;
+}
+
+function identities(): test.TestOutcome {
+  for vector in vectors.vectors() {
+    for chunk in [1, 3, 31] {
+      let bytes = match (hex.decode(vector.bytes)) { Ok(value) => value, Err(_) => { return test.fail("fixture hex"); } };
+      let got = match (collect(bytes, limits(chunk))) { Ok(value) => value, Err(error) => { return test.fail(vector.name + ": " + error); } };
+      if (!same(got, vector)) {
+        return test.fail(vector.name + ": packet identity or bytes");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function malformed(): test.TestOutcome {
+  for vector in vectors.invalid() {
+    for chunk in [1, 3, 31] {
+      let bytes = match (hex.decode(vector.bytes)) { Ok(value) => value, Err(_) => { return test.fail("fixture hex"); } };
+      match (collect(bytes, limits(chunk))) {
+        Err(error) => {
+          if (error != vector.error.message()) {
+            return test.fail(vector.name + ": " + error);
+          }
+        },
+        Ok(_) => {
+          return test.fail(vector.name + ": accepted invalid input");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function empty(): test.TestOutcome {
+  let got = match (collect([], limits(1))) { Ok(value) => value, Err(error) => { return test.fail(error); } };
+  return test.assert_true(got.packets.len() == 0 && got.offsets.len() == 0 && got.irap.len() == 0 && got.idr.len() == 0);
+}
+
+function constructor_limits(): test.TestOutcome {
+  let base = limits(1);
+  for invalid in [input.Limits { ...base, max_packets: -1 }, input.Limits { ...base, max_units_per_packet: 0 }, input.Limits { ...base, video: frame.Limits { ...base.video, max_packet_bytes: 6 } }, input.Limits { ...base, video: frame.Limits { ...base.video, max_pixels: -1 } }] {
+    if let Err(nals.ReadVideo(Limit())) = input.create(invalid) {} else {
+      return test.fail("invalid access-unit limit");
+    }
+  }
+  return test.pass();
+}
+
+function input_limits(): test.TestOutcome {
+  let base = limits(1);
+  let vector = vectors.vectors()[0];
+  for bound in [input.Limits { ...base, max_packets: 0 }, input.Limits { ...base, max_packets: 1 }, input.Limits { ...base, max_units_per_packet: 1 }, input.Limits { ...base, video: frame.Limits { ...base.video, max_packet_bytes: 24 } }, input.Limits { ...base, input: nals.Limits { ...base.input, max_operations: 1 } }] {
+    let bytes = match (hex.decode(vector.bytes)) { Ok(value) => value, Err(_) => { return test.fail("fixture hex"); } };
+    if let Err(error) = collect(bytes, bound) {
+      if (error != frame.Limit.message()) {
+        return test.fail("input limit: " + error);
+      }
+    } else {
+      return test.fail("input limit accepted");
+    }
+  }
+  return test.pass();
+}
+
+function large_parameter(kind: u8, count: i32): u8[] {
+  let bytes: u8[] = [0u8, 0u8, 0u8, 1u8, kind, 1u8];
+  for _ in 0..count - 2 {
+    bytes = bytes.append(85u8);
+  }
+  return bytes;
+}
+
+function parameter_limits(): test.TestOutcome {
+  let base = limits(4096);
+  let configured = input.Limits { ...base, video: frame.Limits { ...base.video, max_packet_bytes: 131072 }, input: nals.Limits { ...base.input, max_unit_bytes: 131072, input: source.Limits { chunk_size: 4096, max_buffer_bytes: 131080 } } };
+  for bound in [(66u8, 8193), (68u8, 65537)] {
+    let (kind, count) = bound;
+    let bytes = match (hex.decode(vectors.vectors()[0].bytes)) { Ok(decoded) => decoded, Err(_) => { return test.fail("fixture hex"); } };
+    for byte in large_parameter(kind, count) {
+      bytes = bytes.append(byte);
+    }
+    match (collect(bytes, configured)) {
+      Err(error) => {
+        if (error != frame.Limit.message()) {
+          return test.fail("parameter ceiling: " + error);
+        }
+      },
+      Ok(_) => {
+        return test.fail("parameter ceiling accepted oversized input");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function source_errors(): test.TestOutcome {
+  let stream = match (input.create(limits(1))) { Ok(value) => value, Err(_) => { return test.fail("create"); } };
+  if let Err(nals.ReadIo(Interrupted())) = stream.step_with(no_read) {} else {
+    return test.fail("I/O error category");
+  }
+  let oversized = match (input.create(limits(1))) { Ok(value) => value, Err(_) => { return test.fail("create"); } };
+  if let Err(nals.ReadVideo(Limit())) = oversized.step_with((_: i32): Result[u8[], IoError] => Ok([0u8, 0u8])) {} else {
+    return test.fail("oversized source response");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("Bounded HEVC access units");
+  runner = runner.it("picture identity and prefix assignment across short reads", identities);
+  runner = runner.it("malformed and unsupported inputs retain error categories", malformed);
+  runner = runner.it("empty input and permanent end state", empty);
+  runner = runner.it("constructor limits", constructor_limits);
+  runner = runner.it("packet, byte, unit, and operation limits", input_limits);
+  runner = runner.it("parameter ceilings below the outer NAL budget", parameter_limits);
+  runner = runner.it("source errors and oversized callback output", source_errors);
+  return runner.finish();
+}

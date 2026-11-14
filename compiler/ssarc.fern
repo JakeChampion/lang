@@ -43,13 +43,42 @@ function narrow_slot(t: typeinfo.Type): boolean {
 }
 
 function elem_width(t: typeinfo.Type): i32 {
+  if (compact_elem(t)) {
+    return 32;
+  }
   if (ssasem.is_wide(t) || ssasem.is_float(t)) {
     return 64;
   }
   if (ssasem.is_u8(t)) {
     return 8;
   }
-  return 32;
+  return ir.width_ptr();
+}
+
+// An i32, a u32, a char or an f32, which an array holds in 4 bytes. An f32
+// element holds the bits of the value.
+function compact_elem(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeI32(i) = t {
+    return i.width == 32;
+  }
+  return ssasem.is_f32(t);
+}
+
+// The write of the `elem` value on the stack with `op`.
+function put_elem(own r: irtables.LowerState, op: ir.Op, elem: typeinfo.Type): irtables.LowerState {
+  if (ssasem.is_f32(elem)) {
+    r = emit(r, ir.op_f32_bits());
+  }
+  return emit(r, op);
+}
+
+// The read of an `elem` value with `op`.
+function got_elem(own r: irtables.LowerState, op: ir.Op, elem: typeinfo.Type): irtables.LowerState {
+  r = emit(r, op);
+  if (ssasem.is_f32(elem)) {
+    return emit(r, ir.op_f32_from_bits());
+  }
+  return r;
 }
 
 // A view's elements belong to its source, but an untagged view is a box it
@@ -94,6 +123,9 @@ function contains_view(t: typeinfo.Type): boolean {
 }
 
 function arr_make_op(elem: typeinfo.Type, n: i32): ir.Op {
+  if (compact_elem(elem)) {
+    return ir.op_arr_make(n, 32);
+  }
   if (ssasem.is_wide(elem)) {
     return ir.op_arr_make_i64(n);
   }
@@ -114,6 +146,9 @@ function arr_get_op(elem: typeinfo.Type, unchecked: boolean, f: ssasem.Func): ir
   if (unchecked) {
     op = ir.op_arr_get_nc(elem_width(elem));
   }
+  if (ssasem.is_u32(elem) || ssasem.is_f32(elem)) {
+    op = ir.Op { ...op, unsigned: true };
+  }
   if (ssasem.counted(f, elem)) {
     return ir.counted(op);
   }
@@ -128,6 +163,9 @@ function arr_set_op(elem: typeinfo.Type): ir.Op {
 }
 
 function arr_push_op(elem: typeinfo.Type): ir.Op {
+  if (compact_elem(elem)) {
+    return ir.compact(ir.op_arr_push_owned());
+  }
   if (ssasem.is_wide(elem)) {
     return ir.op_arr_push_owned_i64();
   }
@@ -141,6 +179,9 @@ function arr_push_op(elem: typeinfo.Type): ir.Op {
 }
 
 function arr_push_borrowed_op(elem: typeinfo.Type): ir.Op {
+  if (compact_elem(elem)) {
+    return ir.compact(ir.op_arr_push());
+  }
   if (ssasem.is_wide(elem)) {
     return ir.op_arr_push_i64();
   }
@@ -943,7 +984,7 @@ function drop_tail_array(own r: irtables.LowerState, elem: typeinfo.Type, array:
   r = emit(r, ir.op_brif(1));
   r = emit(r, ir.op_load_local(4));
   r = emit(r, ir.op_load_local(5));
-  r = emit(r, ir.counted(ir.op_arr_get_nc(32)));
+  r = emit(r, ir.counted(ir.op_arr_get_nc(ir.width_ptr())));
   r = emit(r, ir.op_store_local(7));
   r = drop_value(r, 7, elem, 8, f);
   r = emit(r, ir.op_load_local(5));
@@ -955,7 +996,7 @@ function drop_tail_array(own r: irtables.LowerState, elem: typeinfo.Type, array:
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_load_local(4));
   r = emit(r, ir.op_load_local(5));
-  r = emit(r, ir.counted(ir.op_arr_get_nc(32)));
+  r = emit(r, ir.counted(ir.op_arr_get_nc(ir.width_ptr())));
   r = emit(r, ir.op_store_local(3));
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_end());
@@ -977,7 +1018,7 @@ function drop_elements(own r: irtables.LowerState, slot: i32, elem: typeinfo.Typ
   r = emit(r, ir.op_brif(1));
   r = emit(r, ir.op_load_local(slot));
   r = emit(r, ir.op_load_local(index));
-  r = emit(r, ir.counted(ir.op_arr_get_nc(32)));
+  r = emit(r, ir.counted(ir.op_arr_get_nc(ir.width_ptr())));
   r = emit(r, ir.op_store_local(child));
   r = drop_value(r, child, elem, child + 1, f);
   r = emit(r, ir.op_load_local(index));
@@ -1011,7 +1052,7 @@ function drop_record_fields(own r: irtables.LowerState, slot: i32, fields: semre
       r = emit(r, ir.op_load_local(slot));
       if (env) {
         r = emit(r, ir.op_const_i32(i));
-        r = emit(r, ir.counted(ir.op_arr_get(32)));
+        r = emit(r, ir.counted(ir.op_arr_get(ir.width_ptr())));
       } else {
         r = emit(r, ir.counted(ir.op_struct_get(i, 0)));
       }
@@ -2483,9 +2524,9 @@ function send_array(own r: irtables.LowerState, elem: typeinfo.Type, f: ssasem.F
   r = emit(r, ir.op_load_local(out));
   r = emit(r, ir.op_load_local(0));
   r = emit(r, ir.op_load_local(index));
-  r = emit(r, arr_get_op(elem, true, f));
+  r = got_elem(r, arr_get_op(elem, true, f), elem);
   r = send_part(r, elem, f);
-  r = emit(r, arr_push_op(elem));
+  r = put_elem(r, arr_push_op(elem), elem);
   r = emit(r, ir.op_store_local(out));
   r = emit(r, ir.op_load_local(index));
   r = emit(r, ir.op_const_i32(1));
@@ -2543,12 +2584,12 @@ function send_map(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func):
   r = emit(r, ir.op_brif(1));
   r = emit(r, ir.op_load_local(keys));
   r = emit(r, ir.op_load_local(index));
-  r = emit(r, arr_get_op(kt, true, f));
+  r = got_elem(r, arr_get_op(kt, true, f), kt);
   r = send_part(r, kt, f);
   r = emit(r, ir.op_store_local(key));
   r = emit(r, ir.op_load_local(vals));
   r = emit(r, ir.op_load_local(index));
-  r = emit(r, arr_get_op(vt, true, f));
+  r = got_elem(r, arr_get_op(vt, true, f), vt);
   r = send_part(r, vt, f);
   r = emit(r, ir.op_store_local(val));
   r = routed_insert(r, fh, put);
@@ -3251,7 +3292,7 @@ function scalar(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irt
   }
   if let typeinfo.TypeLanes(l) = f.values[ins.args[0]] {
     if (l.kind != typeinfo.LANE_FLOAT) {
-      return emit(r, ir.op_lane(irtables.lane_int_operator(ins.str), l.width));
+      return emit(r, ir.op_lane(irtables.lane_int_operator(ins.kind_tag == ssa.UNARY, ins.str), l.width));
     }
     return emit(r, ir.op_lane(irtables.lane_operator(ins.kind_tag, ins.str), l.width));
   }
@@ -3492,12 +3533,12 @@ function container(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, s
       return emit(r, ssabytes.read(ins.args[0], true, ins.imm == 1));
     }
     if (typeinfo.is_array_view(f.values[ins.args[0]])) {
-      return emit(r, ssabytes.element(ins.args[0], arr_get_op(f.values[ins.result], ins.imm == 1, f)));
+      return got_elem(r, ssabytes.element(ins.args[0], arr_get_op(f.values[ins.result], ins.imm == 1, f)), f.values[ins.result]);
     }
     if (ins.imm == ssasem.check_only()) {
       return emit(r, ir.check_only(arr_get_op(f.values[ins.result], false, f)));
     }
-    return emit(r, arr_get_op(f.values[ins.result], ins.imm == 1, f));
+    return got_elem(r, arr_get_op(f.values[ins.result], ins.imm == 1, f), f.values[ins.result]);
   }
   if (ins.kind_tag == ssasem.tuple_get()) {
     let t = f.values[ins.result];
@@ -3688,6 +3729,9 @@ function routed_column_read(own r: irtables.LowerState, elem: typeinfo.Type, off
   if (ssasem.is_u8(elem)) {
     return emit(r, ir.op_call_direct("__map_u8_column", 2));
   }
+  if (cell_column(elem) && ssasem.is_f32(elem)) {
+    return emit(r, ir.op_call_direct("__map_cell_f32_column", 2));
+  }
   if (cell_column(elem) && ssasem.is_float(elem)) {
     return emit(r, ir.op_call_direct("__map_cell_f64_column", 2));
   }
@@ -3863,7 +3907,7 @@ function field_get(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): 
   let t = f.values[ins.result];
   if (semtypes.is_env(f.values[ins.args[0]])) {
     r = emit(r, ir.op_const_i32(ins.imm));
-    return emit(r, marked_load(ir.op_arr_get(32), t, f));
+    return emit(r, marked_load(ir.op_arr_get(ir.width_ptr()), t, f));
   }
   if (ssasem.is_wide(t)) {
     return emit(r, ir.op_struct_get_i64(ins.imm));
@@ -4038,6 +4082,9 @@ function array_shape(elem: typeinfo.Type): string {
   if (ssasem.is_u8(elem)) {
     return "&bytes";
   }
+  if (compact_elem(elem)) {
+    return "&arr32";
+  }
   if (wide_or_float(elem)) {
     return "&arr64";
   }
@@ -4080,6 +4127,18 @@ function static_values(f: ssasem.Func, p: ssaunits.Plan, words: string): string 
     }
   }
   return out;
+}
+
+// The operands of `ins`. An array literal of f32 takes the bits of each one.
+function load_operands(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irtables.LowerState {
+  let bits = ins.kind_tag == ssasem.array_new() && ssasem.is_f32(typeinfo.array_elem(f.values[ins.result]));
+  for arg in ins.args {
+    r = emit(r, ir.op_load_local(arg));
+    if (bits) {
+      r = emit(r, ir.op_f32_bits());
+    }
+  }
+  return r;
 }
 
 function constant_op(k: i32): boolean {
@@ -4195,9 +4254,7 @@ function instruction_body(own r: irtables.LowerState, f: ssasem.Func, p: ssaunit
     r = emit(r, ir.op_str_data());
     r = emit(r, ir.op_load_local(ins.args[1]));
   } else if (!frame_view_slice(f, p, ins)) {
-    for arg in ins.args {
-      r = emit(r, ir.op_load_local(arg));
-    }
+    r = load_operands(r, f, ins);
   }
   if (constant_op(ins.kind_tag)) {
     r = constant(r, f, ins);
@@ -4489,7 +4546,7 @@ function drop_tail(own r: irtables.LowerState, slot: i32, from: i32, elem: typei
   r = emit(r, ir.op_brif(1));
   r = emit(r, ir.op_load_local(slot));
   r = emit(r, ir.op_load_local(index));
-  r = emit(r, ir.counted(ir.op_arr_get_nc(32)));
+  r = emit(r, ir.counted(ir.op_arr_get_nc(ir.width_ptr())));
   r = emit(r, ir.op_store_local(child));
   r = drop_value(r, child, elem, child + 1, f);
   r = emit(r, ir.op_load_local(index));
@@ -4516,7 +4573,7 @@ function append_push(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Pla
   if (p.unique_receivers[ins.result]) {
     r = emit(r, ir.op_load_local(ins.args[0]));
     r = emit(r, ir.op_load_local(ins.args[1]));
-    return emit(r, ir.Op { ...arr_push_op(elem), i32_imm: 1 });
+    return put_elem(r, ir.Op { ...arr_push_op(elem), i32_imm: 1 }, elem);
   }
   let res = scratch_start;
   r = reserve(r, res + 1);
@@ -4525,12 +4582,12 @@ function append_push(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Pla
   r = emit(r, ir.op_if(0));
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_load_local(ins.args[1]));
-  r = emit(r, ir.Op { ...arr_push_op(elem), i32_imm: 1 });
+  r = put_elem(r, ir.Op { ...arr_push_op(elem), i32_imm: 1 }, elem);
   r = emit(r, ir.op_store_local(res));
   r = emit(r, ir.op_else());
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_load_local(ins.args[1]));
-  r = emit(r, arr_push_borrowed_op(elem));
+  r = put_elem(r, arr_push_borrowed_op(elem), elem);
   r = emit(r, ir.op_store_local(res));
   if (ssasem.counted(f, elem)) {
     r = own_copied(r, elem, res, ins.args[0]);
@@ -4579,7 +4636,7 @@ function borrowed_push(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SIns
   let elem = typeinfo.array_elem(f.values[ins.args[0]]);
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_load_local(ins.args[1]));
-  r = emit(r, arr_push_borrowed_op(elem));
+  r = put_elem(r, arr_push_borrowed_op(elem), elem);
   r = emit(r, ir.op_store_local(scratch));
   let aliased = ssasem.counted(f, elem);
   if (out && !aliased) {
@@ -4618,7 +4675,7 @@ function append_linked(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SIns
   r = emit(r, ir.op_else());
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_load_local(ins.args[1]));
-  r = emit(r, arr_push_op(elem));
+  r = put_elem(r, arr_push_op(elem), elem);
   r = emit(r, ir.op_store_local(scratch));
   r = emit(r, ir.op_end());
   return emit(r, ir.op_load_local(scratch));
@@ -4707,7 +4764,7 @@ function append_field(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Pl
   r = unless_unique(r, unique, ins.args[0], "__fern_arr_share_inc");
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_load_local(ins.args[1]));
-  r = emit(r, arr_push_borrowed_op(elem));
+  r = put_elem(r, arr_push_borrowed_op(elem), elem);
   r = emit(r, ir.op_store_local(res));
   r = unless_unique(r, unique, ins.args[0], "__fern_arr_share_dec");
   r = emit(r, ir.op_load_local(res));
@@ -4739,7 +4796,7 @@ function drop_replaced(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SIns
   r = reserve(r, old + 1);
   r = emit(r, ir.op_load_local(scratch));
   r = emit(r, ir.op_load_local(ins.args[1]));
-  r = emit(r, arr_get_op(elem, false, f));
+  r = got_elem(r, arr_get_op(elem, false, f), elem);
   r = emit(r, ir.op_store_local(old));
   return drop_value(r, old, elem, old + 1, f);
 }
@@ -4846,7 +4903,7 @@ function with_write(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan
   r = emit(r, ir.op_load_local(scratch));
   r = emit(r, ir.op_load_local(ins.args[1]));
   r = emit(r, ir.op_load_local(ins.args[2]));
-  r = emit(r, with_set_op(f, p, ins, elem));
+  r = put_elem(r, with_set_op(f, p, ins, elem), f.values[ins.args[2]]);
   return emit(r, ir.op_load_local(scratch));
 }
 
@@ -5160,10 +5217,10 @@ function map_in_place(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst
   r = emit(r, ir.op_load_local(fn));
   r = emit(r, ir.op_load_local(buf));
   r = emit(r, ir.op_load_local(index));
-  r = emit(r, arr_get_op(elem, true, f));
+  r = got_elem(r, arr_get_op(elem, true, f), elem);
   r = body_address(r, fn);
   r = emit(r, call_value_op(2, f.values[fn]));
-  r = emit(r, arr_set_op(elem));
+  r = put_elem(r, arr_set_op(elem), elem);
   r = emit(r, ir.op_load_local(index));
   r = emit(r, ir.op_const_i32(1));
   r = emit(r, ir.op_bin("add", 0, false));
@@ -5201,7 +5258,7 @@ function cell_site(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan,
     return cell_write(r, f, ins);
   }
   r = emit(r, ir.op_load_local(ins.args[0]));
-  r = emit(r, arr_make_op(semtypes.cell_elem(f.values[ins.result]), 1));
+  r = put_elem(r, arr_make_op(semtypes.cell_elem(f.values[ins.result]), 1), semtypes.cell_elem(f.values[ins.result]));
   return emit(r, ir.op_store_local(ins.result));
 }
 
@@ -5247,7 +5304,7 @@ function cell_read(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan,
   let elem = f.values[ins.result];
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_const_i32(0));
-  r = emit(r, arr_get_op(elem, true, f));
+  r = got_elem(r, arr_get_op(elem, true, f), elem);
   r = emit(r, ir.op_store_local(ins.result));
   if (ssasem.counted(f, elem) && (ins.result >= p.owned.len() || p.owned[ins.result])) {
     r = helper(r, ins.result, "__fern_rc_inc");
@@ -5263,14 +5320,14 @@ function cell_write(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst):
     r = reserve(r, old + 1);
     r = emit(r, ir.op_load_local(ins.args[0]));
     r = emit(r, ir.op_const_i32(0));
-    r = emit(r, arr_get_op(elem, true, f));
+    r = got_elem(r, arr_get_op(elem, true, f), elem);
     r = emit(r, ir.op_store_local(old));
     r = drop_value(r, old, elem, old + 1, f);
   }
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_load_local(ins.args[1]));
-  r = emit(r, arr_set_op(elem));
+  r = put_elem(r, arr_set_op(elem), elem);
   r = emit(r, ir.op_const_i32(0));
   return emit(r, ir.op_store_local(ins.result));
 }
@@ -5285,7 +5342,7 @@ function function_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SIns
     for capture in ins.args {
       r = emit(r, ir.op_load_local(capture));
     }
-    return emit(r, ir.op_arr_make(ins.args.len() + 1, 32));
+    return emit(r, ir.op_arr_make(ins.args.len() + 1, ir.width_ptr()));
   }
   for operand in ins.args {
     r = emit(r, ir.op_load_local(operand));
@@ -5307,7 +5364,7 @@ function call_value_op(argc: i32, sig: typeinfo.Type): ir.Op {
 function body_address(own r: irtables.LowerState, slot: i32): irtables.LowerState {
   r = emit(r, ir.op_load_local(slot));
   r = emit(r, ir.op_const_i32(0));
-  return emit(r, ir.op_arr_get_nc(32));
+  return emit(r, ir.op_arr_get_nc(ir.width_ptr()));
 }
 
 // The signature word of a runtime helper closure whose `nparams` parameters,
@@ -6301,32 +6358,34 @@ function lane_f32_argument(f: ssasem.Func, value: i32): i32 {
   return value;
 }
 
-// A builtin of u8x16. Its arguments are on the stack.
-function byte_lane_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, verb: string): irtables.LowerState {
+// A builtin of an integer lane type. Its arguments are on the stack.
+function integer_lane_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, verb: string): irtables.LowerState {
+  let w = typeinfo.lane_builtin_width(ins.str);
+  let signed = typeinfo.lane_builtin_kind(ins.str) == typeinfo.LANE_SIGNED;
   if (verb == "lane") {
     r = emit(r, ir.op_drop());
-    return emit(r, ir.op_lane_at("viextractu", 8, defining(f, ins.args[1]).imm));
+    return emit(r, ir.op_lane_at(if (signed) { "viextracts" } else { "viextractu" }, w, defining(f, ins.args[1]).imm));
   }
   if (verb == "of") {
     for a in ins.args {
       r = emit(r, ir.op_drop());
     }
     r = emit(r, ir.op_load_local(ins.args[0]));
-    r = emit(r, ir.op_lane("visplat", 8));
+    r = emit(r, ir.op_lane("visplat", w));
     for k in 1..ins.args.len() {
       r = emit(r, ir.op_load_local(ins.args[k]));
-      r = emit(r, ir.op_lane_at("vireplace", 8, k));
+      r = emit(r, ir.op_lane_at("vireplace", w, k));
     }
     return r;
   }
-  return emit(r, ir.op_lane(irtables.byte_lane_builtin_op(verb), 8));
+  return emit(r, ir.op_lane(irtables.integer_lane_builtin_op(verb, signed), w));
 }
 
 function lane_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irtables.LowerState {
   let w = typeinfo.lane_builtin_width(ins.str);
   let verb = typeinfo.lane_builtin_verb(ins.str);
-  if (w == 8) {
-    return byte_lane_site(r, f, ins, verb);
+  if (typeinfo.lane_builtin_kind(ins.str) != typeinfo.LANE_FLOAT) {
+    return integer_lane_site(r, f, ins, verb);
   }
   if (verb == "load_f32_ptr") {
     return emit(r, ir.op_lane("vload_f32", 64));
@@ -6709,20 +6768,8 @@ function byte_scan_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   if (ins.str == "__outer_mul_f64") {
     return Lowered { found: true, r: emit(r, ir.op_outer_mul_f64()) };
   }
-  if (ins.str == "__aes_expand_key") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_aes_expand_key())) };
-  }
-  if (ins.str == "__aes_ctr32") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_aes_ctr32())) };
-  }
-  if (ins.str == "__ghash") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_ghash())) };
-  }
-  if (ins.str == "__aes_gcm_seal_into") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_aes_gcm_seal_into())) };
-  }
-  if (ins.str == "__aes_gcm_open_into") {
-    return Lowered { found: true, r: emit(r, ir.packed(ir.op_aes_gcm_open_into())) };
+  if let Some(op) = ir.kernel_builtin_op(ins.str) {
+    return Lowered { found: true, r: emit(r, op) };
   }
   let sha = ir.sha_builtin_tag(ins.str);
   if (sha != 0) {
@@ -6735,10 +6782,6 @@ function byte_scan_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
     "__crc32_cksum_array" => Lowered { found: true, r: emit(r, ir.op_call_direct(ssabytes.crc32_name(), 2)) },
     "__crc32_ieee_array" => Lowered { found: true, r: emit(r, ir.op_call_direct(ssabytes.crc32_ieee_name(), 2)) },
     "__ascii_run" => Lowered { found: true, r: emit(r, ir.op_ascii_run()) },
-    "__chacha20_xor_into" => Lowered { found: true, r: emit(r, ir.packed(ir.op_chacha20_xor_into())) },
-    "__poly1305_blocks" => Lowered { found: true, r: emit(r, ir.packed(ir.op_poly1305_blocks())) },
-    "__chacha20_poly1305_seal_into" => Lowered { found: true, r: emit(r, ir.packed(ir.op_chacha20_poly1305_seal_into())) },
-    "__chacha20_poly1305_open_into" => Lowered { found: true, r: emit(r, ir.packed(ir.op_chacha20_poly1305_open_into())) },
     "__scan_set" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_set())) },
     "__scan_set_bytes" => Lowered { found: true, r: emit(r, ir.packed(ir.op_scan_set_bytes())) },
     "__count_runs" => Lowered { found: true, r: emit(r, ir.packed(ir.op_count_runs())) },

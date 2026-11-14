@@ -387,9 +387,8 @@ the first and the last index of its group against the length, then moves
 the group in one access. For an `f64[]` that is one `movupd`, `ldr q` or
 `v128.load`. The ownership test of the `with` stays: one for each group.
 
-An `f32[]` keeps each element in an 8-byte slot as an f64, so its group is
-two f64 pairs. A read narrows each pair (`cvtpd2ps`, `fcvtn`,
-`f32x4.demote_f64x2_zero`) and joins them, and a write widens each half.
+An `f32[]` keeps each element in 4 bytes, so its group is also one access
+(`movupd`, `ldr q` or `v128.load`) at a stride of 4.
 
 The benchmark is 200 maps of a 1,000,000-element `f64[]` with a degree-4
 polynomial by `mul_add`, on x86-64. The best of five runs on one machine is
@@ -424,8 +423,9 @@ whole group are the next steps.
 | 7c | Integer lanes: the element kind of a lane type, and `u8x16` in both front ends, the builtins and both interpreters | done (#14731) |
 | 7d | Integer lanes: `std/simd` functions for `u8x16` | done (#14731) |
 | 7e | Integer lanes: the shifts, the multiply, and code for lanes of 16 and 32 bits on each backend | done (#14731) |
-| 7g | Integer lanes: the types `i8x16`, `u16x8`, `i16x8`, `u32x4` and `i32x4` in both front ends, and the shifts of lanes of 8 bits | next (#14731) |
-| 7f | Integer lanes: the byte kernels of the stdlib and of `std/android/draw` on `u8x16`, each with a measured comparison | after 7e (#14731) |
+| 7g | Integer lanes: the types `i8x16`, `u16x8`, `i16x8`, `u32x4` and `i32x4` in both front ends, the shifts, the multiply and the signed operations | done (#14731) |
+| 7h | Integer lanes: `std/simd` functions for the types of slice 7g | done (#14731) |
+| 7f | Integer lanes: the byte kernels of the stdlib and of `std/android/draw` on `u8x16`, each with a measured comparison | after 7h (#14731) |
 | — | Splice record-returning leaves so `Dual` / `DoubleDouble` stop allocating per operation (#12931) | follow-on, `seminline` |
 
 ## 8. Integer lanes
@@ -528,3 +528,50 @@ Slice 7g gives lanes of 8 bits their shifts. x86-64 has no shift
 instruction for bytes. Its code is the shift of the lanes of 16 bits and
 a mask, and the signed shift then gives each byte its sign. A shift count
 is modulo the lane width on each backend.
+
+Slice 7g also adds the other five types. Each one is a keyword.
+
+| Type | Lanes | Element of `splat`, `of` and `lane` |
+| --- | --- | --- |
+| `u8x16` | 16 | `u8` |
+| `i8x16` | 16 | `i32` |
+| `u16x8` | 8 | `i32` |
+| `i16x8` | 8 | `i32` |
+| `u32x4` | 4 | `u32` |
+| `i32x4` | 4 | `i32` |
+
+Fern has no scalar type of 8 bits with a sign, and none of 16 bits. The
+element of those lane types is `i32`. `splat` and `of` keep the low bits of
+each number. `lane` gives the number of a signed lane with its sign. It
+gives the number of an unsigned lane with no sign.
+
+The builtins of a type `T` have the names `__T_verb`. This table gives the
+forms that slice 7g adds to the table of slice 7c. It also gives the types
+that have each form.
+
+| Form | Types | Meaning |
+| --- | --- | --- |
+| `a * b` | lanes of 16 and 32 bits | the multiply, which wraps |
+| `-a`, `__T_abs(a)` | the signed types | the negative and the absolute value, which wrap |
+| `__T_shl(a, n)`, `__T_shr(a, n)` | each type | a shift of each lane by `n` bits, where `n` is an `i32` modulo the lane width. `shr` of a signed type keeps the sign |
+| `__T_add_sat`, `__T_sub_sat` | lanes of 8 and 16 bits | add and subtract, which stop at the limits of the lane |
+| `__T_avg` | `u8x16` and `u16x8` | the average rounded up |
+| `__T_min`, `__T_max`, `__T_lt` | each type | these compare a signed type with its sign |
+| `__T_load(xs, i)`, `__T_with(xs, i, v)` | each type | 16 bytes of a `u8[]` from index `i`, with the low byte of a lane first |
+
+The operator `/` is E009 for each integer lane type. The operator `*` is
+E009 for lanes of 8 bits, and the unary `-` is E009 for an unsigned type.
+A builtin that a type does not have, such as `__i32x4_add_sat`, is E001.
+
+The operations of #14731 that widen, narrow and shuffle are not in this
+slice. The IR has no op for them yet.
+
+The gates are the conformance cases `lanes_integer_ops`,
+`diag_e009_lane_integer` and `diag_e038_lane_index`.
+
+Slice 7h gives `std/simd` a function for each builtin of the five types,
+such as `simd.add_sat_i16x8` and `simd.shr_u32x4`. `u8x16` gets
+`simd.shl_u8x16` and `simd.shr_u8x16`. The stdlib test has one scalar form
+of each operation, on numbers of 64 bits. It compares each lane of each
+type with that form. Its inputs have equal lanes, the largest number and
+the smallest number of each lane width.

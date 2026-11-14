@@ -291,10 +291,7 @@ func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 			if c.exprBorrows(x.Callee, b) {
 				return true
 			}
-			flags := c.callOwnFlags[x]
-			if id, ok := x.Callee.(*ast.Ident); ok && flags == nil {
-				flags = c.ownFuncs[id.Name]
-			}
+			flags := c.ownFlagsOf(x)
 			for i, arg := range x.Args {
 				if (i >= len(flags) || !flags[i] || c.resultCallbackParts[arg]) && c.resultPartBorrows(arg, b) {
 					return true
@@ -400,6 +397,15 @@ func (c *checker) calleeResultBorrows(x *ast.Call) bool {
 		}
 	}
 	return c.signatureResultBorrows(id.Name)
+}
+
+// ownFlagsOf reports which arguments of x go to own parameters.
+func (c *checker) ownFlagsOf(x *ast.Call) []bool {
+	flags := c.callOwnFlags[x]
+	if id, ok := x.Callee.(*ast.Ident); ok && flags == nil {
+		flags = c.ownFuncs[id.Name]
+	}
+	return flags
 }
 
 // callSiteBorrows reports a plain call whose result can borrow: the callee's
@@ -617,7 +623,7 @@ var freshResultBuiltins = map[string]bool{
 	"share_unchecked": true,
 	"__bytes_owned":   true, "__bytes_range": true, "__bytes_into": true, "__aes_expand_key": true, "__aes_ctr32": true,
 	"__ghash": true, "__aes_gcm_seal_into": true, "__aes_gcm_open_into": true, "__sha256_hw_blocks": true, "__sha1_hw_blocks": true, "__sha1x8_hw_blocks": true, "__chacha20_xor_into": true, "__poly1305_blocks": true,
-	"__chacha20_poly1305_seal_into": true, "__chacha20_poly1305_open_into": true,
+	"__chacha20_poly1305_seal_into": true, "__chacha20_poly1305_open_into": true, "__mont_mul": true, "__scrypt_block_mix": true,
 	"open_reader": true, "open_writer": true, "open_appender": true, "open_exclusive": true,
 	"open_reader_with": true, "open_writer_with": true, "open_dir": true,
 	"__socket_from_fd": true, "tcp_accept": true, "tcp_accept_with": true, "tcp_connect_with": true, "tcp_listen": true, "tcp_listen_with": true,

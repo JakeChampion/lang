@@ -3419,6 +3419,10 @@ function main(): i32 { return 0; }`)
 	wantOK(t, "replaced-field-read", spreadSrc+`
 function f(own s: A): A { let t: A = A { ...s, d: s.d + "x" }; return take(t); }
 function main(): i32 { return 0; }`)
+	wantOK(t, "field-borrows-whole-base", spreadSrc+`
+function name(a: A): string { return a.d; }
+function f(own s: A): A { let t: A = A { ...s, d: name(s) }; return take(t); }
+function main(): i32 { return 0; }`)
 	wantOK(t, "fresh-local", spreadSrc+`
 function f(): A { let s: A = A { sock: None, d: "" }; let t: A = A { ...s, d: "x" }; return take(t); }
 function main(): i32 { return 0; }`)
@@ -3431,8 +3435,8 @@ function main(): i32 { return 0; }`)
 	wantE051(t, "base-read-later", spreadSrc+`
 function f(own s: A): A { let t: A = A { ...s, d: "x" }; print(s.d); return take(t); }
 function main(): i32 { return 0; }`)
-	wantE051(t, "field-reads-whole-base", spreadSrc+`
-function name(a: A): string { return a.d; }
+	wantE051(t, "field-moves-whole-base", spreadSrc+`
+function name(own a: A): string { return a.d; }
 function f(own s: A): A { let t: A = A { ...s, d: name(s) }; return take(t); }
 function main(): i32 { return 0; }`)
 }

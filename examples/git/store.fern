@@ -67,10 +67,15 @@ pub function short_length(s: Store): i32 {
 // The parents of the commit `hash` with the content `body`. A commit at the
 // edge of a shallow clone has none.
 pub function parents(s: Store, hash: string, body: u8[]): string[] {
-  if (s.shallow.contains(hash)) {
+  if (at_edge(s, hash)) {
     return [];
   }
   return objects.header_values(body, "parent");
+}
+
+// True if the commit `hash` is at the edge of a shallow clone.
+pub function at_edge(s: Store, hash: string): boolean {
+  return s.shallow.contains(hash);
 }
 
 // The packfile `i` with its data.
@@ -85,6 +90,37 @@ function loaded(s: Store, i: i32): Store {
   return Store { ...s, packs: s.packs.with(i, Packed { ...s.packs[i], data: data, loaded: true }) };
 }
 
+// The offsets of the objects of the packfile in their order. The reverse
+// index of git (`.rev`, version 1) has that order. Without it, the offsets
+// of the index are sorted.
+function offsets_in_order(p: Packed): i32[] {
+  let n = pack.count(p.idx);
+  let offsets: i32[] = [];
+  let rev_path = objects.part(p.path, 0, p.path.len() - 5) + ".rev";
+  if let Ok(rev) = read_file_bytes(rev_path) {
+    if (rev.len() == 12 + 4 * n + 40 && rev[0] == b'R' && rev[1] == b'I' && rev[2] == b'D' && rev[3] == b'X' && rev[7] == 1) {
+      let last = -1;
+      let ok = true;
+      for k in 0..n {
+        let at = 12 + 4 * k;
+        let i = rev[at] as i32 << 24 | rev[at + 1] as i32 << 16 | rev[at + 2] as i32 << 8 | rev[at + 3] as i32;
+        let offset = if (i >= 0 && i < n) { pack.offset_at(p.idx, i) } else { -1 };
+        ok = ok && offset > last;
+        last = offset;
+        offsets = offsets.append(offset);
+      }
+      if (ok) {
+        return offsets;
+      }
+    }
+  }
+  offsets = [];
+  for k in 0..n {
+    offsets = offsets.append(pack.offset_at(p.idx, k));
+  }
+  return cmp.sort(offsets);
+}
+
 // The packfile `i` ready for a read: with its data, or with the order of
 // its offsets for a read of one object.
 function ready(s: Store, i: i32): Store {
@@ -97,10 +133,7 @@ function ready(s: Store, i: i32): Store {
     // is less work than more reads.
     return if (p.reads * 2 >= p.order.len()) { loaded(s, i) } else { s };
   }
-  let offsets: i32[] = [];
-  for k in 0..pack.count(p.idx) {
-    offsets = offsets.append(pack.offset_at(p.idx, k));
-  }
+  let offsets = offsets_in_order(p);
   let file: Reader[] = [];
   let size: i64 = 0;
   if let Ok(r) = open_reader(p.path) {
@@ -115,7 +148,7 @@ function ready(s: Store, i: i32): Store {
     }
     return loaded(s, i);
   }
-  return Store { ...s, packs: s.packs.with(i, Packed { ...p, order: cmp.sort(offsets), file: file }) };
+  return Store { ...s, packs: s.packs.with(i, Packed { ...p, order: offsets, file: file }) };
 }
 
 // The bytes of the object at the offset `from` of the open packfile. They
@@ -179,6 +212,41 @@ pub function read(s: Store, name: string): Found {
     }
   }
   return Found { store: s, object: objects.read_loose(s.objects, name) };
+}
+
+// The kind and the size of an object, and the store after the read. `why`
+// is the error, and it is empty for an object that the store has.
+pub struct Info { store: Store, kind: string, size: i64, why: string }
+
+// The kind and the size of the object `name`. A packed object is not
+// inflated for them.
+pub function info(s: Store, name: string): Info {
+  if let Ok(raw) = hex.decode(name) {
+    for i in 0..s.packs.len() {
+      let at = pack.find(s.packs[i].idx, raw);
+      if (at >= 0) {
+        s = ready(s, i);
+        let p = s.packs[i];
+        let offset = pack.offset_at(p.idx, at);
+        if (offset < 0) {
+          return Info { store: s, kind: "", size: 0, why: "the packfile of " + name + " is larger than this port reads" };
+        }
+        let idx = p.idx;
+        let data = p.data;
+        let file = p.file;
+        let order = p.order;
+        let part = if (p.loaded) { (from: i32): pack.Window => pack.Window { bytes: data, shift: 0 } } else { (from: i32): pack.Window => part_at(file, order, from) };
+        return match (pack.info_in(part, (base: u8[]): i32 => pack.offset_of(idx, base), offset)) {
+          Ok((kind, size)) => Info { store: s, kind: kind, size: size, why: "" },
+          Err(why) => Info { store: s, kind: "", size: 0, why: why },
+        };
+      }
+    }
+  }
+  return match (objects.read_loose(s.objects, name)) {
+    Ok(o) => Info { store: s, kind: o.kind, size: o.body.len() as i64, why: "" },
+    Err(why) => Info { store: s, kind: "", size: 0, why: why },
+  };
 }
 
 // The loose objects whose name starts with `short`.

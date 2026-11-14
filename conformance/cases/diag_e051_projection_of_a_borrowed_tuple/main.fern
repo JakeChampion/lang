@@ -1,0 +1,30 @@
+// An element read of a borrowed tuple is borrowed. A call that returns its
+// parameter lends that parameter to its result, so an element read of the
+// result is borrowed too. Neither can go to an `own` parameter.
+
+struct Run { args: string[], n: i32, tty: Option[Reader] }
+
+function same[T](x: T): T {
+  return x;
+}
+
+function eat(own r: Run): i32 {
+  return r.n;
+}
+
+function from_param(t: (boolean, Run)): i32 {
+  return eat(t.1);
+}
+
+function from_lent_result(t: (boolean, Run)): i32 {
+  return eat(same(t).1);
+}
+
+function from_lent_local(t: (boolean, Run)): i32 {
+  let r = same(t).1;
+  return eat(r);
+}
+
+function main(): i32 {
+  return 0;
+}

@@ -70,12 +70,34 @@ type LanesType struct {
 	Spelling string
 }
 
-// Elem is the type of one element.
+// Elem is the type of one element. An integer lane with no scalar type of
+// its width and sign has the element i32.
 func (l LanesType) Elem() Type {
 	if l.Kind == LaneFloat {
 		return FloatType{Width: l.Width}
 	}
-	return NumberType{Width: l.Width, Signed: l.Kind == LaneSigned}
+	if l.Kind == LaneUnsigned && l.Width != 16 {
+		return NumberType{Width: l.Width, Signed: false}
+	}
+	return NumberType{}
+}
+
+// IntegerLanes are the integer lane types of the portable tier.
+var IntegerLanes = []LanesType{
+	{Width: 8, Kind: LaneUnsigned}, {Width: 8, Kind: LaneSigned},
+	{Width: 16, Kind: LaneUnsigned}, {Width: 16, Kind: LaneSigned},
+	{Width: 32, Kind: LaneUnsigned}, {Width: 32, Kind: LaneSigned},
+}
+
+// IntegerLanesNamed is the integer lane type with the name `text`.
+func IntegerLanesNamed(text string) (LanesType, bool) {
+	for _, l := range IntegerLanes {
+		if l.String() == text {
+			l.Spelling = text
+			return l, true
+		}
+	}
+	return LanesType{}, false
 }
 
 func (l LanesType) Lanes() int { return 128 / l.Width }

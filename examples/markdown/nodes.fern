@@ -1,0 +1,295 @@
+// The node tree of cmark, for the renderers other than HTML. The kinds of
+// block have the numbers of `blocks`. Each node is a row of NF i32 fields.
+// The text of the nodes is in one byte builder while the tree grows, and
+// in one string after `finish`.
+
+pub const DOCUMENT: i32 = 0;
+
+pub const QUOTE: i32 = 1;
+
+pub const LIST: i32 = 2;
+
+pub const ITEM: i32 = 3;
+
+pub const CODE_BLOCK: i32 = 4;
+
+pub const HTML_BLOCK: i32 = 5;
+
+pub const PARAGRAPH: i32 = 6;
+
+pub const HEADING: i32 = 7;
+
+pub const RULE: i32 = 8;
+
+pub const TEXT: i32 = 9;
+
+pub const SOFTBREAK: i32 = 10;
+
+pub const LINEBREAK: i32 = 11;
+
+pub const CODE: i32 = 12;
+
+pub const HTML: i32 = 13;
+
+pub const EMPH: i32 = 14;
+
+pub const STRONG: i32 = 15;
+
+pub const LINK: i32 = 16;
+
+pub const IMAGE: i32 = 17;
+
+// The flags of a node.
+pub const ORDERED: i32 = 1;
+
+pub const PAREN: i32 = 2;
+
+pub const TIGHT: i32 = 4;
+
+pub const FENCED: i32 = 8;
+
+// The fields of a node. LIT and LIT_END are the range of its text: the text
+// of a leaf, the content of a code block, or the destination of a link.
+// EXTRA is the range of the title of a link or the info string of a code
+// block, and -1 when it has none. VALUE is the level of a heading or the
+// start number of a list. The last four are the source position.
+const F_KIND: i32 = 0;
+
+const F_PARENT: i32 = 1;
+
+const F_FIRST: i32 = 2;
+
+const F_LAST: i32 = 3;
+
+const F_NEXT: i32 = 4;
+
+const F_PREV: i32 = 5;
+
+const F_LIT: i32 = 6;
+
+const F_LIT_END: i32 = 7;
+
+const F_EXTRA: i32 = 8;
+
+const F_EXTRA_END: i32 = 9;
+
+const F_VALUE: i32 = 10;
+
+const F_FLAGS: i32 = 11;
+
+const F_SL: i32 = 12;
+
+const F_SC: i32 = 13;
+
+const F_EL: i32 = 14;
+
+const F_EC: i32 = 15;
+
+const NF: i32 = 16;
+
+pub const NONE: i32 = -1;
+
+// `open` is the node that gets the next child. `b` holds the text while the
+// tree grows, and `text` holds it after `finish`.
+pub struct Tree { n: i32[], count: i32, open: i32, b: usize, text: string }
+
+// A tree with only the document node, which is open.
+pub function new(): Tree {
+  let n: i32[] = [DOCUMENT, NONE, NONE, NONE, NONE, NONE, 0, 0, NONE, NONE, 0, 0, 0, 0, 0, 0];
+  return Tree { n: n, count: 1, open: 0, b: buf_new(4096), text: "" };
+}
+
+// The tree with its text in `text`.
+pub function (t: Tree) finish(): Tree {
+  let text = buf_take(t.b);
+  buf_free(t.b);
+  return Tree { ...t, b: 0 as usize, text: text };
+}
+
+@inline
+function get(t: Tree, x: i32, f: i32): i32 {
+  return t.n[x * NF + f];
+}
+
+@inline
+function set(t: Tree, x: i32, f: i32, v: i32): Tree {
+  return Tree { ...t, n: t.n.with(x * NF + f, v) };
+}
+
+// Adds a node of `kind` as the last child of the open node, with the text
+// from `a` to `b` and a source position. Its number is `t.count - 1` after
+// the call.
+function append(t: Tree, kind: i32, a: i32, b: i32, line: i32, sc: i32, ec: i32): Tree {
+  let x = t.count;
+  let p = t.open;
+  let last = get(t, p, F_LAST);
+  let n = t.n.append(kind).append(p).append(NONE).append(NONE).append(NONE).append(last).append(a).append(b);
+  n = n.append(NONE).append(NONE).append(0).append(0).append(line).append(sc).append(line).append(ec);
+  if (last == NONE) {
+    n = n.with(p * NF + F_FIRST, x);
+  } else {
+    n = n.with(last * NF + F_NEXT, x);
+  }
+  return Tree { ...t, n: n.with(p * NF + F_LAST, x), count: x + 1 };
+}
+
+// Adds a node of `kind` as the last child of the open node. Its number is
+// `t.count - 1` after the call.
+pub function (t: Tree) add(kind: i32): Tree {
+  return append(t, kind, 0, 0, 0, 0, 0);
+}
+
+// Adds a node of `kind` and makes it the open node.
+pub function (t: Tree) enter(kind: i32): Tree {
+  let q = t.add(kind);
+  return Tree { ...q, open: q.count - 1 };
+}
+
+// Makes the parent of the open node the open node.
+pub function (t: Tree) leave(): Tree {
+  return Tree { ...t, open: get(t, t.open, F_PARENT) };
+}
+
+// The number of the last node.
+pub function (t: Tree) last(): i32 {
+  return t.count - 1;
+}
+
+pub function (t: Tree) set_value(x: i32, v: i32): Tree {
+  return set(t, x, F_VALUE, v);
+}
+
+pub function (t: Tree) set_flags(x: i32, v: i32): Tree {
+  return set(t, x, F_FLAGS, v);
+}
+
+pub function (t: Tree) set_start(x: i32, line: i32, col: i32): Tree {
+  return set(set(t, x, F_SL, line), x, F_SC, col);
+}
+
+pub function (t: Tree) set_end(x: i32, line: i32, col: i32): Tree {
+  return set(set(t, x, F_EL, line), x, F_EC, col);
+}
+
+// The length of the text so far. A caller writes the text of a node with
+// `bytes`, and then gives its range to `set_lit` or `set_extra`.
+pub function (t: Tree) here(): i32 {
+  return buf_len(t.b);
+}
+
+// The byte builder that holds the text while the tree grows.
+pub function (t: Tree) bytes(): usize {
+  return t.b;
+}
+
+pub function (t: Tree) set_lit(x: i32, a: i32, b: i32): Tree {
+  return set(set(t, x, F_LIT, a), x, F_LIT_END, b);
+}
+
+pub function (t: Tree) set_extra(x: i32, a: i32, b: i32): Tree {
+  return set(set(t, x, F_EXTRA, a), x, F_EXTRA_END, b);
+}
+
+// Adds the text from `a` to the end of the text so far, from the column
+// `sc` to the column `ec` of the line `line`. As in cmark, it joins the
+// text node before it, if the open node has one at its end. The joined
+// node keeps its start and its line.
+pub function (t: Tree) add_text(a: i32, line: i32, sc: i32, ec: i32): Tree {
+  let end = buf_len(t.b);
+  let last = get(t, t.open, F_LAST);
+  if (last != NONE && get(t, last, F_KIND) == TEXT) {
+    return set(set(t, last, F_LIT_END, end), last, F_EC, ec);
+  }
+  return append(t, TEXT, a, end, line, sc, ec);
+}
+
+pub function (t: Tree) kind(x: i32): i32 {
+  return get(t, x, F_KIND);
+}
+
+pub function (t: Tree) parent(x: i32): i32 {
+  return get(t, x, F_PARENT);
+}
+
+pub function (t: Tree) first(x: i32): i32 {
+  return get(t, x, F_FIRST);
+}
+
+pub function (t: Tree) next(x: i32): i32 {
+  return get(t, x, F_NEXT);
+}
+
+pub function (t: Tree) prev(x: i32): i32 {
+  return get(t, x, F_PREV);
+}
+
+pub function (t: Tree) value(x: i32): i32 {
+  return get(t, x, F_VALUE);
+}
+
+pub function (t: Tree) has(x: i32, flag: i32): boolean {
+  return (get(t, x, F_FLAGS) & flag) != 0;
+}
+
+// The text of a leaf, the content of a code block, or the destination of a
+// link.
+pub function (t: Tree) lit(x: i32): str {
+  return slice_unchecked(t.text, get(t, x, F_LIT), get(t, x, F_LIT_END));
+}
+
+// True when a link has a title or a code block has an info string.
+pub function (t: Tree) has_extra(x: i32): boolean {
+  return get(t, x, F_EXTRA) != NONE;
+}
+
+// The title of a link or the info string of a code block, or "".
+pub function (t: Tree) extra(x: i32): str {
+  let a = get(t, x, F_EXTRA);
+  if (a == NONE) {
+    return slice_unchecked(t.text, 0, 0);
+  }
+  return slice_unchecked(t.text, a, get(t, x, F_EXTRA_END));
+}
+
+// The source position: the start line, the start column, the end line and
+// the end column. A start line of 0 is no position.
+pub function (t: Tree) pos(x: i32): (i32, i32, i32, i32) {
+  let i = x * NF;
+  return (t.n[i + F_SL], t.n[i + F_SC], t.n[i + F_EL], t.n[i + F_EC]);
+}
+
+// True for the nodes whose text is their content: text, code, raw HTML and
+// code blocks.
+pub function has_text(kind: i32): boolean {
+  return kind == TEXT || kind == CODE || kind == HTML || kind == HTML_BLOCK || kind == CODE_BLOCK;
+}
+
+// True for the nodes that hold no other nodes.
+pub function is_leaf(kind: i32): boolean {
+  return kind == CODE_BLOCK || kind == HTML_BLOCK || kind == RULE || kind == TEXT || kind == SOFTBREAK || kind == LINEBREAK || kind == CODE || kind == HTML;
+}
+
+// The walk of cmark's iterator: each node is entered, and each node that
+// is not a leaf is left after its children. `exit` is true for a leave.
+pub struct Step { node: i32, exit: boolean }
+
+// The step after `s` in a walk of the whole tree, or a step with node NONE
+// at the end.
+pub function (t: Tree) step(s: Step): Step {
+  let x = s.node;
+  if (!s.exit && !is_leaf(t.kind(x))) {
+    let f = t.first(x);
+    if (f == NONE) {
+      return Step { node: x, exit: true };
+    }
+    return Step { node: f, exit: false };
+  }
+  if (x == 0) {
+    return Step { node: NONE, exit: true };
+  }
+  let n = t.next(x);
+  if (n != NONE) {
+    return Step { node: n, exit: false };
+  }
+  return Step { node: t.parent(x), exit: true };
+}

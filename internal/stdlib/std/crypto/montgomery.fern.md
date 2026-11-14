@@ -1,14 +1,14 @@
 # Montgomery modular arithmetic
 
-This module provides constant-time Montgomery arithmetic for odd moduli of up to 26,598 bits.
+This module provides constant-time Montgomery arithmetic for odd moduli.
 
 ## Model
 
-`Modulus` stores the odd modulus and its Montgomery conversion constants. Limb arrays represent values under that modulus. A limb holds 26 bits. A product adds up to 2^53 to each limb of the accumulator for each limb of the modulus, with no carry until the end, so an `i64` accumulator holds 1023 limbs.
+`Modulus` stores the odd modulus and its Montgomery conversion constants. Limb arrays represent values under that modulus. A limb holds 64 bits, as the bits of an `i64`. `__mulhi_u64` gives the high half of each 64-bit product, so a product of two values of n limbs takes 2n² multiplications.
 
 ## Contracts
 
-Byte conversion separates the external integer representation from the internal Montgomery representation. Range checks and conditional selection support the signature algorithms.
+Byte conversion separates the external integer representation from the internal Montgomery representation. `from_bytes` accepts a big-endian value of any length and reduces it. Range checks and conditional selection support the signature algorithms. No branch and no memory index depends on the value of a limb. `inv` branches on the bits of the modulus, which is public in each caller.
 
 ## Module assembly
 
@@ -18,269 +18,121 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<*>>=
 <<module introduction>>
 
-<<dependencies 2>>
-
-<<3 const BITS: i64>>
+<<3 pub struct Modulus>>
 
 <<4 pub function modulus(hex: string, bytes: i32): Modulus>>
 
-<<5 function __hex_int(s: string): bigint.BigInt>>
+<<5 zeros>>
 
-<<6 pub function zero(m: Modulus): i64[]>>
+<<6 carries and borrows>>
 
-<<7 function __zeros(n: i32): i64[]>>
+<<7 pub function mul(m: Modulus, a: [i64], b: [i64]): i64[]>>
 
-<<8 pub function mul(m: Modulus, a: [i64], b: [i64]): i64[]>>
+<<8 pub function select(a: [i64], b: [i64], flag: i64): i64[]>>
 
-<<9 function __normal(own t: i64[]): i64[]>>
-
-<<10 pub function select(a: [i64], b: [i64], flag: i64): i64[]>>
-
-<<11 function __plain(m: Modulus, b: [u8]): i64[]>>
-
-<<12 pub function to_bytes(m: Modulus, a: [i64]): u8[]>>
+<<9 bytes>>
 ```
 
 ### `module introduction`
 
 ```fern
 <<module introduction>>=
-// This module provides constant-time Montgomery arithmetic for odd moduli of up to 26,598 bits.
+// This module provides constant-time Montgomery arithmetic for odd moduli.
 ```
 
-### `dependencies 2`
+### `3 pub struct Modulus`
+
+`limbs` is the number of 64-bit limbs, and R is 2^(64 limbs). `kernel` is n0 = -p^-1 mod 2^64 and then the limbs of p, as `__mont_mul` takes them. `r2` is R² mod p, and `one` is R mod p, the Montgomery form of 1.
 
 ```fern
-<<dependencies 2>>=
-import "std/bigint";
-import "std/string";
-```
-
-### `3 const BITS: i64`
-
-```fern
-<<3 const BITS: i64>>=
-const BITS: i64 = 26;
-
-const MASK: i64 = 67108863;
-
-pub struct Modulus { p: i64[], n0: i64, r2: i64[], one: i64[], limbs: i32, bytes: i32 }
+<<3 pub struct Modulus>>=
+pub struct Modulus { p: i64[], kernel: i64[], r2: i64[], one: i64[], limbs: i32, bytes: i32 }
 ```
 
 ### `4 pub function modulus(hex: string, bytes: i32): Modulus`
 
+`modulus` takes a public modulus in hex. `modulus_of` takes a modulus in big-endian bytes and its bit length. It has no branch and no index on the bytes, so the modulus can be secret, as an RSA prime is.
+
+Newton's iteration doubles the correct low bits of p^-1 at each step. Six steps from 1 give 64 bits, because p is odd. R mod p comes from 2^(bits - 1), which is below p, by one doubling for each bit from there to R. R² mod p is the Montgomery form of 2^(64 limbs): the Montgomery form of 2 to the power 64 limbs, by square-and-multiply on that public exponent.
+
 ```fern
 <<4 pub function modulus(hex: string, bytes: i32): Modulus>>=
 pub function modulus(hex: string, bytes: i32): Modulus {
-  let limbs = (8 * bytes + 26) / 26;
-  let p = __hex_int(hex);
-  let r = bigint.from_u64(1 as u64).shl(26 * limbs);
-  let pl = __limbs_of(p, limbs);
-  let x = 1 as i64;
-  let i = 0;
-  while (i < 5) {
-    x = x * (2 as i64 - pl[0] * x) & MASK;
-    i += 1;
-  }
-  return Modulus { p: pl, n0: 0 as i64 - x & MASK, r2: __limbs_of(r.mul(r).divmod(p).1, limbs), one: __limbs_of(r.divmod(p).1, limbs), limbs: limbs, bytes: bytes };
-}
-```
-
-### `5 function __hex_int(s: string): bigint.BigInt`
-
-```fern
-<<5 function __hex_int(s: string): bigint.BigInt>>=
-function __hex_int(s: string): bigint.BigInt {
-  let v = bigint.zero();
-  for c in s.bytes() {
-    let d = c as i32 - 48;
-    if (c as i32 >= 97) {
-      d = c as i32 - 87;
+  let b = __alloc_u8(bytes);
+  let bits = 0;
+  let d = hex.len() - 1;
+  while (d >= 0) {
+    let v = __nibble(hex[d]);
+    let at = bytes - 1 - (hex.len() - 1 - d) / 2;
+    if (v != 0 && at >= 0) {
+      b = b.with(at, b[at] | (v << 4 * ((hex.len() - 1 - d) % 2)) as u8);
+      bits = 4 * (hex.len() - d);
+      let top = 8;
+      while (v < top) {
+        bits -= 1;
+        top >>= 1;
+      }
     }
-    v = v.shl(4).add(bigint.from_u64(d as u64));
+    d -= 1;
   }
-  return v;
+  return modulus_of(b, bits);
 }
 
-function __limbs_of(v: bigint.BigInt, limbs: i32): i64[] {
-  let out: i64[] = [];
-  let rest = v;
+pub function modulus_of(b: [u8], bits: i32): Modulus {
+  let bytes = b.len();
+  let limbs = (bytes + 7) / 8;
+  let p = __limbs(b, limbs);
+  let p0 = p[0] as u64;
+  let x = 1 as u64;
   let i = 0;
-  while (i < limbs) {
-    out = out.append(rest.low_u64() as i64 & MASK);
-    rest = rest.shr(26);
+  while (i < 6) {
+    x *= 2 as u64 - p0 * x;
     i += 1;
   }
-  return out;
-}
-```
-
-### `6 pub function zero(m: Modulus): i64[]`
-
-```fern
-<<6 pub function zero(m: Modulus): i64[]>>=
-pub function zero(m: Modulus): i64[] {
-  return __zeros(m.limbs);
-}
-```
-
-### `7 function __zeros(n: i32): i64[]`
-
-```fern
-<<7 function __zeros(n: i32): i64[]>>=
-function __zeros(n: i32): i64[] {
-  let out: i64[] = [];
-  let i = 0;
-  while (i < n) {
-    out = out.append(0 as i64);
-    i += 1;
-  }
-  return out;
-}
-```
-
-### `8 pub function mul(m: Modulus, a: [i64], b: [i64]): i64[]`
-
-```fern
-<<8 pub function mul(m: Modulus, a: [i64], b: [i64]): i64[]>>=
-pub function mul(m: Modulus, a: [i64], b: [i64]): i64[] {
-  let n = m.limbs;
-  let t = __zeros(n);
-  let i = 0;
-  while (i < n) {
-    let ai = a[i];
-    let t0 = t[0] + ai * b[0];
-    let q = (t0 & MASK) * m.n0 & MASK;
-    let carry = t0 + q * m.p[0] >> BITS;
-    let j = 1;
-    while (j < n) {
-      t = t.with(j - 1, t[j] + ai * b[j] + q * m.p[j] + carry);
-      carry = 0 as i64;
-      j += 1;
-    }
-    t = t.with(n - 1, carry);
-    i += 1;
-  }
-  return __reduced(m, __normal(t));
-}
-```
-
-### `9 function __normal(own t: i64[]): i64[]`
-
-```fern
-<<9 function __normal(own t: i64[]): i64[]>>=
-function __normal(own t: i64[]): i64[] {
-  let carry = 0 as i64;
-  let i = 0;
-  while (i < t.len()) {
-    let v = t[i] + carry;
-    t = t.with(i, v & MASK);
-    carry = v >> BITS;
-    i += 1;
-  }
-  return t;
-}
-
-function __reduced(m: Modulus, t: [i64]): i64[] {
-  let d: i64[] = [];
-  let borrow = 0 as i64;
-  let i = 0;
-  while (i < m.limbs) {
-    let v = t[i] - m.p[i] + borrow;
-    d = d.append(v & MASK);
-    borrow = v >> BITS;
-    i += 1;
-  }
-  return select(t, d, borrow + 1 as i64);
-}
-```
-
-### `10 pub function select(a: [i64], b: [i64], flag: i64): i64[]`
-
-```fern
-<<10 pub function select(a: [i64], b: [i64], flag: i64): i64[]>>=
-pub function select(a: [i64], b: [i64], flag: i64): i64[] {
-  let mask = 0 as i64 - flag;
-  let out: i64[] = [];
-  let i = 0;
-  while (i < a.len()) {
-    out = out.append(a[i] ^ (a[i] ^ b[i]) & mask);
-    i += 1;
-  }
-  return out;
-}
-
-pub function add(m: Modulus, a: [i64], b: [i64]): i64[] {
-  let s: i64[] = [];
-  let i = 0;
-  while (i < m.limbs) {
-    s = s.append(a[i] + b[i]);
-    i += 1;
-  }
-  return __reduced(m, __normal(s));
-}
-
-pub function sub(m: Modulus, a: [i64], b: [i64]): i64[] {
-  let d: i64[] = [];
-  let borrow = 0 as i64;
-  let i = 0;
-  while (i < m.limbs) {
-    let v = a[i] - b[i] + borrow;
-    d = d.append(v & MASK);
-    borrow = v >> BITS;
-    i += 1;
-  }
-  let mask = borrow;
-  let s: i64[] = [];
+  let n0 = (0 as u64 - x) as i64;
+  let kernel = __alloc_i64(limbs + 1).with(0, n0);
   i = 0;
-  while (i < m.limbs) {
-    s = s.append(d[i] + (m.p[i] & mask));
+  while (i < limbs) {
+    kernel = kernel.with(i + 1, p[i]);
     i += 1;
   }
-  return __normal(s);
-}
-
-pub function is_zero(a: [i64]): i64 {
-  let acc = 0 as i64;
-  for v in a {
-    acc = acc | v;
-  }
-  return acc - 1 as i64 >> 63 & 1 as i64;
-}
-
-// `b` is no longer than the modulus. A longer input stops the program at an index.
-pub function in_range(m: Modulus, b: [u8]): i64 {
-  let v = __plain(m, b);
-  let borrow = 0 as i64;
-  let i = 0;
-  while (i < m.limbs) {
-    borrow = v[i] - m.p[i] + borrow >> BITS;
+  let m = Modulus { p: p, kernel: kernel, r2: [], one: [], limbs: limbs, bytes: bytes };
+  let r = __zeros(limbs).with((bits - 1) / 64, (1 as u64 << ((bits - 1) % 64) as u64) as i64);
+  i = bits - 1;
+  while (i < 64 * limbs) {
+    r = add(m, r, r);
     i += 1;
   }
-  return 0 as i64 - borrow & 1 as i64 - is_zero(v);
+  let two = add(m, r, r);
+  let rr = r;
+  let e = 64 * limbs;
+  let k = 31;
+  while (k >= 0) {
+    rr = mul(m, rr, rr);
+    if ((e >> k & 1) == 1) {
+      rr = mul(m, rr, two);
+    }
+    k -= 1;
+  }
+  return Modulus { ...m, r2: rr, one: r };
 }
 
-// `b` is no longer than the modulus. A longer input stops the program at an index.
-pub function from_bytes(m: Modulus, b: [u8]): i64[] {
-  return mul(m, __plain(m, b), m.r2);
+function __nibble(c: u8): i32 {
+  if (c >= b'a') {
+    return c as i32 - 87;
+  }
+  return c as i32 - 48;
 }
-```
 
-### `11 function __plain(m: Modulus, b: [u8]): i64[]`
-
-```fern
-<<11 function __plain(m: Modulus, b: [u8]): i64[]>>=
-function __plain(m: Modulus, b: [u8]): i64[] {
-  let out = __zeros(m.limbs);
+// The limbs of a big-endian value of at most 8 limbs bytes, with no
+// conversion.
+function __limbs(b: [u8], limbs: i32): i64[] {
+  let out = __zeros(limbs);
   let bit = 0;
   let i = b.len() - 1;
   while (i >= 0) {
-    let limb = bit / 26;
-    let shift = bit % 26;
-    out = out.with(limb, out[limb] | b[i] as i64 << shift as i64 & MASK);
-    if (shift > 18 && limb + 1 < m.limbs) {
-      out = out.with(limb + 1, out[limb + 1] | b[i] as i64 >> (26 - shift) as i64);
-    }
+    let limb = bit / 64;
+    out = out.with(limb, (out[limb] as u64 | b[i] as u64 << (bit % 64) as u64) as i64);
     bit += 8;
     i -= 1;
   }
@@ -288,36 +140,221 @@ function __plain(m: Modulus, b: [u8]): i64[] {
 }
 ```
 
-### `12 pub function to_bytes(m: Modulus, a: [i64]): u8[]`
+### `5 zeros`
 
 ```fern
-<<12 pub function to_bytes(m: Modulus, a: [i64]): u8[]>>=
-pub function to_bytes(m: Modulus, a: [i64]): u8[] {
-  let one = __zeros(m.limbs).with(0, 1 as i64);
-  let v = mul(m, a, one);
-  let out: u8[] = [];
-  let i = m.bytes - 1;
-  while (i >= 0) {
-    let bit = 8 * i;
-    let limb = bit / 26;
-    let shift = bit % 26;
-    let byte = v[limb] >> shift as i64;
-    if (shift > 18 && limb + 1 < m.limbs) {
-      byte |= v[limb + 1] << (26 - shift) as i64;
-    }
-    out = out.append((byte & 255 as i64) as u8);
-    i -= 1;
+<<5 zeros>>=
+pub function zero(m: Modulus): i64[] {
+  return __zeros(m.limbs);
+}
+
+function __zeros(n: i32): i64[] {
+  let out = __alloc_i64(n);
+  let i = 0;
+  while (i < n) {
+    out = out.with(i, 0 as i64);
+    i += 1;
+  }
+  return out;
+}
+```
+
+### `6 carries and borrows`
+
+The carry of a sum s = a + b comes from the top bits of a, b and s, with no compare. The borrow of a difference d = a - b comes from the top bits of a, b and d.
+
+```fern
+<<6 carries and borrows>>=
+function __carry(a: u64, b: u64, s: u64): u64 {
+  return (a & b | (a | b) & ~s) >> 63;
+}
+
+function __borrow(a: u64, b: u64, d: u64): u64 {
+  return (~a & b | ~(a ^ b) & d) >> 63;
+}
+```
+
+### `7 pub function mul(m: Modulus, a: [i64], b: [i64]): i64[]`
+
+`mul` gives a b R^-1 mod p. The compiler kernel `__mont_mul` computes it by coarsely integrated operand scanning (CIOS) in the general registers of each target, with no branch on a limb. For values below p, the result is below p.
+
+```fern
+<<7 pub function mul(m: Modulus, a: [i64], b: [i64]): i64[]>>=
+pub function mul(m: Modulus, a: [i64], b: [i64]): i64[] {
+  return __mont_mul(a, b, m.kernel);
+}
+
+// t + top 2^(64 n) less p when that is not negative, else t.
+function __reduced(m: Modulus, own t: i64[], top: u64): i64[] {
+  let d = __zeros(m.limbs);
+  let borrow = 0 as u64;
+  let i = 0;
+  while (i < m.limbs) {
+    let a = t[i] as u64;
+    let b = m.p[i] as u64;
+    let x = a - b;
+    let y = x - borrow;
+    d = d.with(i, y as i64);
+    borrow = __borrow(a, b, x) | __borrow(x, borrow, y);
+    i += 1;
+  }
+  return select(t, d, (top | borrow ^ 1 as u64) as i64 & 1 as i64);
+}
+```
+
+### `8 pub function select(a: [i64], b: [i64], flag: i64): i64[]`
+
+`select` gives b when flag is 1 and a when flag is 0. `is_zero` gives 1 for a value of all zero limbs.
+
+```fern
+<<8 pub function select(a: [i64], b: [i64], flag: i64): i64[]>>=
+pub function select(a: [i64], b: [i64], flag: i64): i64[] {
+  let mask = 0 as i64 - flag;
+  let out = __alloc_i64(a.len());
+  let i = 0;
+  while (i < a.len()) {
+    out = out.with(i, a[i] ^ (a[i] ^ b[i]) & mask);
+    i += 1;
   }
   return out;
 }
 
+pub function add(m: Modulus, a: [i64], b: [i64]): i64[] {
+  let s = __zeros(m.limbs);
+  let carry = 0 as u64;
+  let i = 0;
+  while (i < m.limbs) {
+    let x = a[i] as u64;
+    let y = b[i] as u64;
+    let u = x + y;
+    let v = u + carry;
+    s = s.with(i, v as i64);
+    carry = __carry(x, y, u) | __carry(u, carry, v);
+    i += 1;
+  }
+  return __reduced(m, s, carry);
+}
+
+pub function sub(m: Modulus, a: [i64], b: [i64]): i64[] {
+  let d = __zeros(m.limbs);
+  let borrow = 0 as u64;
+  let i = 0;
+  while (i < m.limbs) {
+    let x = a[i] as u64;
+    let y = b[i] as u64;
+    let u = x - y;
+    let v = u - borrow;
+    d = d.with(i, v as i64);
+    borrow = __borrow(x, y, u) | __borrow(u, borrow, v);
+    i += 1;
+  }
+  let mask = 0 as u64 - borrow;
+  let carry = 0 as u64;
+  i = 0;
+  while (i < m.limbs) {
+    let x = d[i] as u64;
+    let y = m.p[i] as u64 & mask;
+    let u = x + y;
+    let v = u + carry;
+    d = d.with(i, v as i64);
+    carry = __carry(x, y, u) | __carry(u, carry, v);
+    i += 1;
+  }
+  return d;
+}
+
+pub function is_zero(a: [i64]): i64 {
+  let acc = 0 as u64;
+  for v in a {
+    acc = acc | v as u64;
+  }
+  return ((acc | 0 as u64 - acc) >> 63 ^ 1 as u64) as i64;
+}
+
+// 1 when b is in 1 to p - 1, else 0. `b` is no longer than the modulus. A
+// longer input stops the program at an index.
+pub function in_range(m: Modulus, b: [u8]): i64 {
+  let v = __plain(m, b);
+  let borrow = 0 as u64;
+  let i = 0;
+  while (i < m.limbs) {
+    let x = v[i] as u64;
+    let y = m.p[i] as u64;
+    let u = x - y;
+    borrow = __borrow(x, y, u) | __borrow(u, borrow, u - borrow);
+    i += 1;
+  }
+  return borrow as i64 & 1 as i64 - is_zero(v);
+}
+```
+
+### `9 bytes`
+
+`from_bytes` reads a big-endian value of any length. It takes the bytes in groups of R from the top: each step multiplies the result by R and adds the next group. The count of steps depends only on the length.
+
+```fern
+<<9 bytes>>=
+pub function from_bytes(m: Modulus, b: [u8]): i64[] {
+  let w = 8 * m.limbs;
+  if (b.len() <= w) {
+    return mul(m, __plain(m, b), m.r2);
+  }
+  let first = b.len() % w;
+  if (first == 0) {
+    first = w;
+  }
+  let acc = mul(m, __plain(m, b[0:first]), m.r2);
+  let at = first;
+  while (at < b.len()) {
+    acc = add(m, mul(m, acc, m.r2), mul(m, __plain(m, b[at:at + w]), m.r2));
+    at += w;
+  }
+  return acc;
+}
+
+// The limbs of a big-endian value of at most 8 limbs bytes, with no
+// conversion.
+pub function plain(m: Modulus, b: [u8]): i64[] {
+  return __plain(m, b);
+}
+
+function __plain(m: Modulus, b: [u8]): i64[] {
+  return __limbs(b, m.limbs);
+}
+
+pub function to_bytes(m: Modulus, a: [i64]): u8[] {
+  return plain_bytes(m, mul(m, a, __zeros(m.limbs).with(0, 1 as i64)));
+}
+
+// The big-endian bytes of the limbs of v, with no conversion.
+pub function plain_bytes(m: Modulus, v: [i64]): u8[] {
+  let out = __alloc_u8(m.bytes);
+  let i = 0;
+  while (i < m.bytes) {
+    let bit = 8 * (m.bytes - 1 - i);
+    out = out.with(i, (v[bit / 64] as u64 >> (bit % 64) as u64 & 255 as u64) as u8);
+    i += 1;
+  }
+  return out;
+}
+
+// a^(p - 2), the inverse of a for a prime p. The exponent is public.
 pub function inv(m: Modulus, a: [i64]): i64[] {
-  let e = sub(m, zero(m), __zeros(m.limbs).with(0, 2 as i64));
+  let e = __zeros(m.limbs);
+  let borrow = 2 as u64;
+  let k = 0;
+  while (k < m.limbs) {
+    let x = m.p[k] as u64;
+    let d = x - borrow;
+    e = e.with(k, d as i64);
+    borrow = __borrow(x, borrow, d);
+    k += 1;
+  }
   let r = m.one;
-  let i = 26 * m.limbs - 1;
+  let i = 64 * m.limbs - 1;
   while (i >= 0) {
     r = mul(m, r, r);
-    if ((e[i / 26] >> (i % 26) as i64 & 1 as i64) == 1 as i64) {
+    if ((e[i / 64] as u64 >> (i % 64) as u64 & 1 as u64) == 1 as u64) {
       r = mul(m, r, a);
     }
     i -= 1;

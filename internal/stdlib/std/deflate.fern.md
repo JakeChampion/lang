@@ -359,13 +359,7 @@ function __construct(lengths: i32[], n: i32): __Huff {
 }
 
 function __zeros(n: i32): i32[] {
-  let out: i32[] = [];
-  let i = 0;
-  while (i < n) {
-    out = out.append(0);
-    i += 1;
-  }
-  return out;
+  return __alloc_i32(n);
 }
 
 function __decode(own s: __State, data: [u8], h: __Huff): __State {

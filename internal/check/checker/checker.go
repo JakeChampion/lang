@@ -72,6 +72,8 @@ type Info struct {
 	// CallBorrowsBeside reports a plain call whose result can borrow from
 	// an argument other than the plain name given.
 	CallBorrowsBeside func(*ast.Call, string) bool
+	// CallOwnFlags reports which arguments of a call go to own parameters.
+	CallOwnFlags func(*ast.Call) []bool
 	// NoReturn names the functions whose body never returns.
 	NoReturn        map[string]bool
 	Structs         map[string]*ast.StructDecl
@@ -1029,6 +1031,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	for _, n := range []string{"__chacha20_poly1305_seal_into", "__chacha20_poly1305_open_into"} {
 		c.info.FuncSigs[n] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8Arr, rangeBound, rangeBound, rangeBound, rangeBound}, Result: u8Arr}
 	}
+	limbView := ast.SliceType{Elem: ast.NumberType{Width: 64, Signed: true}}
+	limbArr := ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}}
+	c.info.FuncSigs["__mont_mul"] = &ast.FuncType{Params: []ast.Type{limbView, limbView, limbView}, Result: limbArr}
+	c.info.FuncSigs["__scrypt_block_mix"] = &ast.FuncType{Params: []ast.Type{limbArr, rangeBound, rangeBound, rangeBound, rangeBound}, Result: limbArr}
 	c.info.FuncSigs["__sha256_hw"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.BoolType{}}
 	c.info.FuncSigs["__sha256_hw_blocks"] = &ast.FuncType{Params: []ast.Type{u8View, u8View}, Result: u8Arr}
 	c.info.FuncSigs["__sha1_hw"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.BoolType{}}
@@ -3117,6 +3123,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.TypeHoldsNoHandle = c.holdsNoHandle
 	c.info.CallScopedFresh = c.scopedCallFresh
 	c.info.CallBorrowsBeside = c.callSiteBorrowsBeside
+	c.info.CallOwnFlags = c.ownFlagsOf
 	c.info.NoReturn = NoReturnFuncs(prog)
 
 	c.rewriteAssocConstReads(prog)
@@ -9919,6 +9926,9 @@ type escapeEnv struct {
 	// outlives names the locals that a store check leaves out of locals:
 	// their storage lives as long as the target of the store.
 	outlives map[string]bool
+	// places holds the initialiser of each local that is declared once and
+	// never assigned, so that paramPlace can follow it to a parameter.
+	places map[string]ast.Expr
 }
 
 func (c *checker) escapeEnv(fn *ast.FuncDecl) *escapeEnv {
@@ -9956,7 +9966,38 @@ func (c *checker) escapeEnv(fn *ast.FuncDecl) *escapeEnv {
 		}
 		return true
 	})
+	env.places = map[string]ast.Expr{}
+	decls := map[string]int{}
+	for _, v := range c.info.Locals[fn] {
+		decls[v.Name]++
+	}
+	for _, v := range c.info.Locals[fn] {
+		if decls[v.Name] == 1 && v.Init != nil && !env.reassigned[v.Name] {
+			env.places[v.Name] = v.Init
+		}
+	}
 	return env
+}
+
+// paramPlace is the parameter that e names: the parameter itself, a field of
+// it at any depth, or a local of env.places bound to such a place.
+func paramPlace(e ast.Expr, env *escapeEnv) (int, bool) {
+	switch x := e.(type) {
+	case *ast.FieldAccess:
+		return paramPlace(x.Target, env)
+	case *ast.Ident:
+		if i, ok := env.params[x.Name]; ok {
+			return i, true
+		}
+		init, ok := env.places[x.Name]
+		if !ok || env.visiting[x.Name] {
+			return 0, false
+		}
+		env.visiting[x.Name] = true
+		defer delete(env.visiting, x.Name)
+		return paramPlace(init, env)
+	}
+	return 0, false
 }
 
 func (c *checker) escapeEnvs(prog *ast.Program, wants func(ast.Type) bool) (map[*ast.FuncDecl]*escapeEnv, []*ast.FuncDecl) {
@@ -10060,27 +10101,28 @@ func isViewReturn(t ast.Type) bool {
 
 // viewLeaf is one kind of view (`[T]` or `str`) the escape analysis follows
 // into an aggregate: the roots of an expression in a slot of that type, and of
-// an argument the callee's returned value may view.
+// argument i of a callee whose returned value may view it.
 type viewLeaf struct {
 	is   func(ast.Type) bool
 	slot func(ast.Expr) viewRoots
-	arg  func(ast.Expr) viewRoots
+	arg  func(callee string, i int, e ast.Expr) viewRoots
 }
 
 func (c *checker) sliceLeaf(env *escapeEnv, sums map[string]viewSummary) viewLeaf {
 	return viewLeaf{
 		is:   func(t ast.Type) bool { _, ok := t.(ast.SliceType); return ok },
 		slot: func(e ast.Expr) viewRoots { return c.sliceViewRoots(e, env, sums) },
-		arg:  func(e ast.Expr) viewRoots { return c.sliceSourceRoots(e, env, sums) },
+		arg:  func(_ string, _ int, e ast.Expr) viewRoots { return c.sliceSourceRoots(e, env, sums) },
 	}
 }
 
 func (c *checker) strLeaf(env *escapeEnv, sums map[string]viewSummary) viewLeaf {
-	roots := func(e ast.Expr) viewRoots { return c.strViewRoots(e, env, sums) }
 	return viewLeaf{
 		is:   func(t ast.Type) bool { _, ok := t.(ast.StrType); return ok },
-		slot: roots,
-		arg:  roots,
+		slot: func(e ast.Expr) viewRoots { return c.strViewRoots(e, env, sums) },
+		arg: func(callee string, i int, e ast.Expr) viewRoots {
+			return c.strArgRoots(callee, i, e, env, sums)
+		},
 	}
 }
 
@@ -10241,7 +10283,7 @@ func (c *checker) aggregateCallRoots(e *ast.Call, env *escapeEnv, sums map[strin
 	sum := sums[id.Name]
 	for i := range sum.params {
 		if i < len(e.Args) {
-			out.merge(leaf.arg(e.Args[i]))
+			out.merge(leaf.arg(id.Name, i, e.Args[i]))
 		}
 	}
 	sig := c.info.FuncSigs[id.Name]
@@ -10581,13 +10623,19 @@ func (c *checker) stringSourceRoots(expr ast.Expr, env *escapeEnv, sums map[stri
 	switch e := expr.(type) {
 	case *ast.StringLit:
 		return out
+	case *ast.FieldAccess:
+		if i, ok := paramPlace(e, env); ok {
+			out.params[i] = true
+			return out
+		}
 	case *ast.Ident:
-		if i, ok := env.params[e.Name]; ok {
+		if i, ok := paramPlace(e, env); ok {
 			out.params[i] = true
 			return out
 		}
 		if v, ok := env.locals[e.Name]; ok {
-			if _, isString := v.Type.(ast.StringType); isString {
+			switch v.Type.(type) {
+			case ast.StringType, ast.StructType:
 				out.local = true
 				return out
 			}
@@ -10617,6 +10665,17 @@ func (c *checker) stringSourceRoots(expr ast.Expr, env *escapeEnv, sums map[stri
 	return out
 }
 
+// strArgRoots is the storage that argument i of callee lends to a `str` that
+// the callee returns. A record lends the storage of its fields.
+func (c *checker) strArgRoots(callee string, i int, arg ast.Expr, env *escapeEnv, sums map[string]viewSummary) viewRoots {
+	if sig := c.info.FuncSigs[callee]; sig != nil && i < len(sig.Params) {
+		if _, isRecord := sig.Params[i].(ast.StructType); isRecord {
+			return c.stringSourceRoots(arg, env, sums)
+		}
+	}
+	return c.strViewRoots(arg, env, sums)
+}
+
 func (c *checker) strViewRoots(expr ast.Expr, env *escapeEnv, sums map[string]viewSummary) viewRoots {
 	out := viewRoots{params: map[int]bool{}}
 	switch e := expr.(type) {
@@ -10632,7 +10691,7 @@ func (c *checker) strViewRoots(expr ast.Expr, env *escapeEnv, sums map[string]vi
 			}
 			for i := range sums[id.Name].params {
 				if i < len(e.Args) {
-					out.merge(c.strViewRoots(e.Args[i], env, sums))
+					out.merge(c.strArgRoots(id.Name, i, e.Args[i], env, sums))
 				}
 			}
 		}
@@ -10643,7 +10702,7 @@ func (c *checker) strViewRoots(expr ast.Expr, env *escapeEnv, sums map[string]vi
 			defer delete(env.visiting, e.Name)
 			return c.strViewRoots(src, env, sums)
 		}
-		if i, ok := env.params[e.Name]; ok {
+		if i, ok := paramPlace(e, env); ok {
 			out.params[i] = true
 			return out
 		}
@@ -11048,6 +11107,14 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		case *ast.FieldAccess:
 			if _, isVariant := c.info.EnumConstructions[x]; isVariant {
 				return true
+			}
+			// An element of a value that no name holds is owned as that value is.
+			switch root := projectionRoot(x).(type) {
+			case *ast.Ident, *ast.FieldAccess:
+			default:
+				if isOwnedExpr(root) {
+					return true
+				}
 			}
 			if id, ok := enclosingField(x).Target.(*ast.Ident); ok && !borrowedParam[id.Name] && atLastUse(e) {
 				return true
@@ -16546,6 +16613,8 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				c.settleNumeric(n.Right, common)
 				lt = c.postSettleType(n.Left, lt)
 				rt = c.postSettleType(n.Right, rt)
+			} else {
+				lt, rt = c.settleComparedArrayLiteral(n, lt, rt)
 			}
 			if lt != nil && rt != nil && !ast.Equal(lt, rt) && !(isStringLike(lt) && isStringLike(rt)) {
 				c.errfCode(n.P, "E041", "cannot compare %s with %s: both sides of %q must have the same type", lt, rt, n.Op)
@@ -18733,40 +18802,56 @@ func (c *checker) registerLaneBuiltins() {
 			c.info.FuncSigs[p+v] = sigs[v]
 		}
 	}
-	c.registerByteLaneBuiltins()
+	c.registerIntegerLaneBuiltins()
 	wide := ast.LanesType{Width: 64}
 	c.info.FuncSigs["__f64x2_load_f32_ptr"] = &ast.FuncType{Params: []ast.Type{ast.NumberType{Width: ast.WidthPtr, Signed: false}}, Result: wide}
 	c.info.FuncSigs["__f32x4_pack"] = &ast.FuncType{Params: []ast.Type{wide, wide}, Result: ast.LanesType{Width: 32}}
 }
 
-// byteLaneBuiltinVerbs are the verbs of the builtins of u8x16, in the order
-// of the self-hosted checker.
-var byteLaneBuiltinVerbs = []string{"splat", "of", "lane", "bitmask", "min", "max", "eq", "ne", "lt", "add_sat", "sub_sat", "avg", "and", "or", "xor", "select", "load", "with"}
-
-func (c *checker) registerByteLaneBuiltins() {
-	lt := ast.LanesType{Width: 8, Kind: ast.LaneUnsigned}
-	e := lt.Elem()
-	arr := ast.ArrayType{Elem: e}
-	i32 := ast.NumberType{}
-	of := make([]ast.Type, lt.Lanes())
-	for i := range of {
-		of[i] = e
-	}
-	sigs := map[string]*ast.FuncType{
-		"splat":   {Params: []ast.Type{e}, Result: lt},
-		"of":      {Params: of, Result: lt},
-		"lane":    {Params: []ast.Type{lt, i32}, Result: e},
-		"bitmask": {Params: []ast.Type{lt}, Result: i32},
-		"select":  {Params: []ast.Type{lt, lt, lt}, Result: lt},
-		"load":    {Params: []ast.Type{arr, i32}, Result: lt},
-		"with":    {Params: []ast.Type{arr, i32, lt}, Result: arr},
-	}
-	for _, v := range byteLaneBuiltinVerbs {
-		sig, ok := sigs[v]
-		if !ok {
-			sig = &ast.FuncType{Params: []ast.Type{lt, lt}, Result: lt}
+// integerLaneVerbs are the verbs of the builtins of an integer lane type,
+// in the order of the self-hosted checker.
+func integerLaneVerbs(lt ast.LanesType) []string {
+	verbs := []string{"splat", "of", "lane", "bitmask", "min", "max", "eq", "ne", "lt", "and", "or", "xor", "select", "load", "with", "shl", "shr"}
+	if lt.Width <= 16 {
+		verbs = append(verbs, "add_sat", "sub_sat")
+		if lt.Kind == ast.LaneUnsigned {
+			verbs = append(verbs, "avg")
 		}
-		c.info.FuncSigs["__u8x16_"+v] = sig
+	}
+	if lt.Kind == ast.LaneSigned {
+		verbs = append(verbs, "abs")
+	}
+	return verbs
+}
+
+func (c *checker) registerIntegerLaneBuiltins() {
+	i32 := ast.NumberType{}
+	bytes := ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}
+	for _, lt := range ast.IntegerLanes {
+		e := lt.Elem()
+		of := make([]ast.Type, lt.Lanes())
+		for i := range of {
+			of[i] = e
+		}
+		sigs := map[string]*ast.FuncType{
+			"splat":   {Params: []ast.Type{e}, Result: lt},
+			"of":      {Params: of, Result: lt},
+			"lane":    {Params: []ast.Type{lt, i32}, Result: e},
+			"bitmask": {Params: []ast.Type{lt}, Result: i32},
+			"select":  {Params: []ast.Type{lt, lt, lt}, Result: lt},
+			"load":    {Params: []ast.Type{bytes, i32}, Result: lt},
+			"with":    {Params: []ast.Type{bytes, i32, lt}, Result: bytes},
+			"shl":     {Params: []ast.Type{lt, i32}, Result: lt},
+			"shr":     {Params: []ast.Type{lt, i32}, Result: lt},
+			"abs":     {Params: []ast.Type{lt}, Result: lt},
+		}
+		for _, v := range integerLaneVerbs(lt) {
+			sig, ok := sigs[v]
+			if !ok {
+				sig = &ast.FuncType{Params: []ast.Type{lt, lt}, Result: lt}
+			}
+			c.info.FuncSigs["__"+lt.String()+"_"+v] = sig
+		}
 	}
 }
 
@@ -18789,17 +18874,21 @@ func (c *checker) laneIndexArg(n *ast.Call) {
 	if !ok || len(n.Args) != 2 {
 		return
 	}
-	lanes := int64(0)
-	switch id.Name {
-	case "__f64x2_lane", "__f64x2_lane_bits":
-		lanes = 2
-	case "__f32x4_lane", "__f32x4_lane_bits":
-		lanes = 4
-	case "__u8x16_lane":
-		lanes = 16
-	default:
+	if !strings.HasSuffix(id.Name, "_lane") && !strings.HasSuffix(id.Name, "_lane_bits") {
 		return
 	}
+	sig := c.info.FuncSigs[id.Name]
+	if sig == nil || len(sig.Params) != 2 {
+		return
+	}
+	lt, ok := sig.Params[0].(ast.LanesType)
+	if !ok {
+		return
+	}
+	if p := "__" + lt.String() + "_"; id.Name != p+"lane" && id.Name != p+"lane_bits" {
+		return
+	}
+	lanes := int64(lt.Lanes())
 	if lit, ok := n.Args[1].(*ast.NumberLit); ok && !lit.IsFloat && lit.Value >= 0 && lit.Value < lanes {
 		return
 	}
@@ -18851,9 +18940,15 @@ func isLanes(t ast.Type) bool {
 
 func (c *checker) lanesArith(n *ast.Binary, lt, rt ast.Type) ast.Type {
 	if ast.Equal(lt, rt) {
-		if l, ok := lt.(ast.LanesType); ok && l.Kind != ast.LaneFloat && (n.Op == "*" || n.Op == "/") {
-			c.errfCode(n.P, "E009", "operator %q is not available for %s: integer lanes have + and -", n.Op, lt)
-			return lt
+		if l, ok := lt.(ast.LanesType); ok && l.Kind != ast.LaneFloat {
+			if n.Op == "/" {
+				c.errfCode(n.P, "E009", "operator \"/\" is not available for %s: integer lanes have no divide", lt)
+				return lt
+			}
+			if n.Op == "*" && l.Width == 8 {
+				c.errfCode(n.P, "E009", "operator \"*\" is not available for %s: lanes of 8 bits have no multiply", lt)
+				return lt
+			}
 		}
 		n.IsLanes = true
 		return lt

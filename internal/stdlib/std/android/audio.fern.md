@@ -18,6 +18,14 @@ The module needs API level 28, for the usage, the content type and the input pre
 
 `music` gives a `Music` stream: a playback stream with the music content type and one or two channels. The samples of a stereo frame are one after the other, left then right. `pause` stops the sound and keeps the samples that the stream holds. `flush` drops them, so a player that moves to another time in a track does not play the old samples.
 
+`buffered` gives a `Buffered` stream: a music stream that does not take its samples from the thread of the app. It has a ring of one second of sound in memory. `write` puts samples in the ring and does not wait. The audio thread of the device takes them from the ring through the data callback of AAudio, `music_data`. So a frame of the app that takes half a second does not stop the sound.
+
+A `Music` stream suits a player that keeps its sound in time with a picture, because its buffer is short. A `Buffered` stream suits a music player.
+
+The callback is a `@norc` function: it touches no heap and takes no lock, so it runs while the thread of the app runs Fern code. It shares the ring with that thread through the atomics. Only the app moves the write position, and only the callback moves the read position. `flush` sets a mark that the callback moves the read position to, so the callback skips the samples that the ring holds.
+
+The ring keeps the last samples that the device played: `recent` gives them, for a picture of the sound that plays now. `queued` gives the frames that the device did not play yet. Thus a player can show the time of the sound that plays now.
+
 ## Contracts
 
 A stream with `ptr` 0 did not open. Close each other stream once.
@@ -25,7 +33,7 @@ A stream with `ptr` 0 did not open. Close each other stream once.
 `timestamp` returns a frame position and its `CLOCK_MONOTONIC` time in nanoseconds.
 Frame zero is the first frame played or captured by the stream.
 The stream's actual sample rate supplies the units for later frame-to-media-time conversion.
-Both `Stream` and `Music` supply `timestamp`. Its position counts frames, without a multiplier for the channel count.
+`Stream`, `Music` and `Buffered` supply `timestamp`. Its position counts frames, without a multiplier for the channel count.
 The query does not start, stop, read, or write the stream.
 
 The platform supplies timestamps only while the stream is started, after an initial delay.
@@ -46,6 +54,8 @@ The timestamp query does not assign media timestamps or measure acoustic lip-syn
 <<C functions>>
 
 <<streams>>
+
+<<buffered>>
 ```
 
 ### `module introduction`
@@ -55,6 +65,7 @@ The timestamp query does not assign media timestamps or measure acoustic lip-syn
 // This module captures and plays 16-bit audio through AAudio.
 import "std/ffi";
 import "std/i32";
+import "std/i64";
 ```
 
 ### `C functions`
@@ -132,6 +143,12 @@ function c_set_buffer_size(stream: usize, frames: i32): i32;
 
 @import("libaaudio.so", "AAudioStream_getTimestamp")
 function c_timestamp(stream: usize, clock: i32, position: usize, time_ns: usize): i32;
+
+@import("libaaudio.so", "AAudioStreamBuilder_setDataCallback")
+function c_set_data_callback(builder: usize, callback: usize, user: usize): void;
+
+@import("libaaudio.so", "AAudioStream_getBufferSizeInFrames")
+function c_buffer_size(stream: usize): i32;
 ```
 
 ### `streams`
@@ -156,7 +173,7 @@ function open(input: boolean, rate: i32, usage: i32): Stream {
   if (usage == USAGE_MEDIA) {
     content = 1;
   }
-  let ptr = open_stream(input, rate, usage, 1, content, 0);
+  let ptr = open_stream(input, rate, usage, 1, content, 0, 0 as usize);
   if (ptr == 0 as usize) {
     return Stream { ptr: ptr, rate: 0 };
   }
@@ -165,8 +182,9 @@ function open(input: boolean, rate: i32, usage: i32): Stream {
 
 // A stream of `channels` channels with the content type `content`, or 0
 // when the device opens none. Its buffer holds `capacity` frames or more,
-// or the frames that the device chooses for 0.
-function open_stream(input: boolean, rate: i32, usage: i32, channels: i32, content: i32, capacity: i32): usize {
+// or the frames that the device chooses for 0. With a `ring`, the data
+// callback `music_data` takes the samples from that ring.
+function open_stream(input: boolean, rate: i32, usage: i32, channels: i32, content: i32, capacity: i32, ring: usize): usize {
   unsafe {
     let slot: usize = __alloc(8);
     __store_ptr(slot, 0 as usize);
@@ -188,6 +206,9 @@ function open_stream(input: boolean, rate: i32, usage: i32, channels: i32, conte
       c_set_buffer_capacity(builder, capacity);
     }
     c_set_content_type(builder, content);
+    if (ring != 0 as usize) {
+      c_set_data_callback(builder, music_data_entry(), ring);
+    }
     if (input) {
       c_set_input_preset(builder, 7);
     } else {
@@ -331,7 +352,7 @@ pub function (m: Music) timestamp(): Option[Timestamp] {
 // quarter of a second, so the sound goes on while the app is late.
 pub function music(rate: i32, channels: i32): Music {
   let count = channels.max(1).min(2);
-  let ptr = open_stream(false, rate, USAGE_MEDIA, count, 2, rate / 4);
+  let ptr = open_stream(false, rate, USAGE_MEDIA, count, 2, rate / 4, 0 as usize);
   if (ptr == 0 as usize) {
     return Music { ptr: ptr, rate: 0, channels: count };
   }
@@ -386,5 +407,223 @@ pub function (m: Music) close(): void {
 // range is clipped.
 pub function (m: Music) write(samples: [i32], timeout_ms: i32): i32 {
   return write_frames(m.ptr, samples, samples.len() / m.channels, timeout_ms) * m.channels;
+}
+```
+
+### `buffered`
+
+A `Buffered` stream has the fields of a `Music` stream and the address of its ring. The ring has six words, then the samples. The two positions count samples from the start of the stream, so they only grow. The place of a sample in the ring is its position modulo the capacity.
+
+```fern
+<<buffered>>=
+// A music stream that the audio thread of the device takes its samples for
+// from `ring`. `channels` is 1 or 2, and the samples of a frame are one
+// after the other.
+pub struct Buffered { ptr: usize, rate: i32, channels: i32, ring: usize }
+
+// The position counts frames, each of which contains all channel samples.
+pub function (m: Buffered) timestamp(): Option[Timestamp] {
+  return read_timestamp(m.ptr);
+}
+
+// The ring: six words, then the samples as 16-bit values. WRITE_AT and
+// READ_AT count samples from the start of the stream. Only the app writes
+// WRITE_AT and FLUSH_AT, and only the callback writes READ_AT.
+const WRITE_AT: i32 = 0;
+
+const READ_AT: i32 = 8;
+
+const FLUSH_AT: i32 = 16;
+
+const CAPACITY_AT: i32 = 24;
+
+const CHANNELS_AT: i32 = 32;
+
+const DATA_AT: i32 = 48;
+
+// The frames of the samples that the device played, which the ring keeps
+// for `recent`.
+pub const HISTORY: i32 = 2048;
+
+@callback("music_data")
+function music_data_entry(): usize;
+
+// The AAudio data callback of a music stream. It runs on the audio thread
+// of the device, so it touches no heap and takes no lock. It gives the
+// device `frames` frames at `data` from the ring, and silence for the
+// frames that the ring does not hold.
+@norc
+function music_data(stream: usize, ring: usize, data: usize, frames: i32): i32 {
+  unsafe {
+    let channels: i64 = __load_i64(ring + CHANNELS_AT as usize);
+    let capacity: i64 = __load_i64(ring + CAPACITY_AT as usize);
+    let read: i64 = __load_i64(ring + READ_AT as usize);
+    let mark: i64 = __atomic_load_acquire(ring + FLUSH_AT as usize);
+    if (mark > read) {
+      read = mark;
+    }
+    let want: i64 = frames as i64 * channels;
+    let n: i64 = __atomic_load_acquire(ring + WRITE_AT as usize) - read;
+    if (n > want) {
+      n = want;
+    }
+    if (n < 0i64) {
+      n = 0i64;
+    }
+    let k: i64 = 0i64;
+    while (k < n) {
+      let from: usize = ring + DATA_AT as usize + ((read + k) % capacity * 2i64) as usize;
+      let to: usize = data + (k * 2i64) as usize;
+      __store_u8(to, __load_u8(from));
+      __store_u8(to + 1 as usize, __load_u8(from + 1 as usize));
+      k += 1i64;
+    }
+    while (k < want) {
+      __store_u8(data + (k * 2i64) as usize, 0);
+      __store_u8(data + (k * 2i64 + 1i64) as usize, 0);
+      k += 1i64;
+    }
+    __atomic_store_release(ring + READ_AT as usize, read + n);
+    return 0;
+  }
+}
+
+// A ring of `samples` samples for `channels` channels, with each position
+// at 0.
+function new_ring(samples: i32, channels: i32): usize {
+  unsafe {
+    let ring: usize = __alloc(DATA_AT + 2 * samples);
+    for at in [WRITE_AT, READ_AT, FLUSH_AT] {
+      __store_i64(ring + at as usize, 0i64);
+    }
+    __store_i64(ring + CAPACITY_AT as usize, samples as i64);
+    __store_i64(ring + CHANNELS_AT as usize, channels as i64);
+    return ring;
+  }
+}
+
+function free_ring(ring: usize): void {
+  unsafe {
+    __free(ring, DATA_AT + 2 * (__load_i64(ring + CAPACITY_AT as usize) as i32));
+  }
+}
+
+// The read position, after the flush mark: the next sample that the device
+// plays.
+function ring_next(ring: usize): i64 {
+  unsafe {
+    return __atomic_load_acquire(ring + READ_AT as usize).max(__load_i64(ring + FLUSH_AT as usize));
+  }
+}
+
+// A playback stream of music at `rate` frames a second with `channels`
+// channels: 1 or 2. The device can choose another rate, which `rate` of the
+// stream gives. A stream with `ptr` 0 did not open.
+pub function buffered(rate: i32, channels: i32): Buffered {
+  let count = channels.max(1).min(2);
+  let ring = new_ring((rate.max(8000) + HISTORY) * count, count);
+  let ptr = open_stream(false, rate, USAGE_MEDIA, count, 2, 0, ring);
+  if (ptr == 0 as usize) {
+    free_ring(ring);
+    return Buffered { ptr: ptr, rate: 0, channels: count, ring: 0 as usize };
+  }
+  return Buffered { ptr: ptr, rate: c_sample_rate(ptr), channels: count, ring: ring };
+}
+
+pub function (m: Buffered) start(): boolean {
+  return m.ptr != 0 as usize && c_request_start(m.ptr) == 0;
+}
+
+// Stops the sound. The stream keeps the samples that it holds, and `start`
+// plays them.
+pub function (m: Buffered) pause(): void {
+  if (m.ptr != 0 as usize) {
+    let paused: i32 = c_request_pause(m.ptr);
+  }
+}
+
+// Drops the samples that the stream holds. Call it after `pause`. A stream
+// drops its samples only after it stopped, so `flush` waits for that, and
+// then for the samples to go.
+pub function (m: Buffered) flush(): void {
+  if (m.ptr == 0 as usize) {
+    return;
+  }
+  if (m.ring != 0 as usize) {
+    unsafe {
+      __atomic_store_release(m.ring + FLUSH_AT as usize, __load_i64(m.ring + WRITE_AT as usize));
+    }
+  }
+  settled(m.ptr, PAUSING);
+  let flushed: i32 = c_request_flush(m.ptr);
+  settled(m.ptr, FLUSHING);
+}
+
+// Closes the stream. The device calls the callback no more after that, so
+// the ring goes too.
+pub function (m: Buffered) close(): void {
+  if (m.ptr != 0 as usize) {
+    let closed: i32 = c_close(m.ptr);
+  }
+  if (m.ring != 0 as usize) {
+    free_ring(m.ring);
+  }
+}
+
+// Puts the first samples of `samples` in the ring, as many as it takes now,
+// and gives that number: a whole number of frames. It does not wait. A
+// sample out of range is clipped.
+pub function (m: Buffered) write(samples: [i32]): i32 {
+  if (m.ring == 0 as usize) {
+    return 0;
+  }
+  unsafe {
+    let capacity = __load_i64(m.ring + CAPACITY_AT as usize);
+    let at = __load_i64(m.ring + WRITE_AT as usize);
+    let room = capacity - (HISTORY * m.channels) as i64 - (at - ring_next(m.ring));
+    let n = (samples.len() as i64).min(room).max(0i64) as i32 / m.channels * m.channels;
+    for k in 0..n {
+      let v = samples[k].max(-32768).min(32767);
+      let to = m.ring + DATA_AT as usize + ((at + k as i64) % capacity * 2i64) as usize;
+      __store_u8(to, v & 255);
+      __store_u8(to + 1 as usize, v >> 8 & 255);
+    }
+    __atomic_store_release(m.ring + WRITE_AT as usize, at + n as i64);
+    return n;
+  }
+}
+
+// The frames that the stream holds and the device did not play yet: those
+// of the ring and those of the buffer of the device.
+pub function (m: Buffered) queued(): i32 {
+  if (m.ring == 0 as usize) {
+    return 0;
+  }
+  unsafe {
+    let held = (__load_i64(m.ring + WRITE_AT as usize) - ring_next(m.ring)).max(0i64) as i32 / m.channels;
+    return held + c_buffer_size(m.ptr).max(0);
+  }
+}
+
+// The last `n` samples that the device took from the ring, oldest first: at
+// most HISTORY frames, and fewer at the start of the stream.
+pub function (m: Buffered) recent(n: i32): i32[] {
+  let out: i32[] = [];
+  if (m.ring == 0 as usize) {
+    return out;
+  }
+  unsafe {
+    let capacity = __load_i64(m.ring + CAPACITY_AT as usize);
+    let read = __atomic_load_acquire(m.ring + READ_AT as usize);
+    let count = (n as i64).min((HISTORY * m.channels) as i64).min(read).max(0i64);
+    let k = read - count;
+    while (k < read) {
+      let from = m.ring + DATA_AT as usize + (k % capacity * 2i64) as usize;
+      let v = __load_u8(from) as i32 | __load_u8(from + 1 as usize) as i32 << 8;
+      out = out.append(if (v >= 32768) { v - 65536 } else { v });
+      k += 1i64;
+    }
+  }
+  return out;
 }
 ```

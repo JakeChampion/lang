@@ -1,5 +1,6 @@
-// Integer lanes have the operators + and -. A lane type with no sign has no
-// negative.
+// Integer lanes have the operators + and -. Lanes of 16 and 32 bits have
+// the operator *. No integer lane type has the operator /. A lane type with
+// no sign has no negative.
 
 function main(): i32 {
   let p: u8x16 = __u8x16_splat(2 as u8);
@@ -7,5 +8,13 @@ function main(): i32 {
   let product = p * p;
   let quotient = p / p;
   let negative = -p;
+  let w: i16x8 = __i16x8_splat(2);
+  let fine: i16x8 = -(w * w + w - w);
+  let part = w / w;
+  let s: i8x16 = __i8x16_splat(2);
+  let square = s * s;
+  let u: u32x4 = __u32x4_splat(2 as u32);
+  let scaled: u32x4 = u * u;
+  let down = -u;
   return 0;
 }

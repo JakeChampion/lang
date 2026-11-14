@@ -105,10 +105,41 @@ function test_select(): test.TestOutcome {
   return test.assert_eq(pick[0].to_string() + pick[1].to_string() + keep[0].to_string() + keep[1].to_string(), "3412");
 }
 
+// modulus_of gives the constants of modulus, from bytes and a bit length.
+// The prime 2^89 - 1, with a short top limb, and a 1024-bit modulus check the doublings
+// to R mod p and the square-and-multiply to R² mod p.
+function test_modulus_of(): test.TestOutcome {
+  let p1024 = "e" + "5".repeat(254) + "7";
+  for case in [(P256, 32, 256), (N384, 48, 384), ("1ffffffffffffffffffffff", 12, 89), (p1024, 128, 1024)] {
+    let (hex_p, bytes, bits) = case;
+    let a = mont.modulus(hex_p, bytes);
+    let b = mont.modulus_of(__codec_bytes(hex.decode(hex_p.pad_start(2 * bytes, '0'))), bits);
+    let same = a.kernel[0] == b.kernel[0] && a.limbs == b.limbs && a.bytes == b.bytes;
+    for i in 0..a.limbs {
+      same = same && a.p[i] == b.p[i] && a.r2[i] == b.r2[i] && a.one[i] == b.one[i];
+    }
+    if (!same) {
+      return test.fail("modulus_of of " + hex_p);
+    }
+  }
+  return test.assert_eq(mismatch("1ffffffffffffffffffffff", 12), "");
+}
+
+// from_bytes reduces a value longer than the modulus.
+function test_wide_from_bytes(): test.TestOutcome {
+  let m = mont.modulus(P256, 32);
+  let p = big(P256);
+  let wide = "ff" + "0123456789abcdef".repeat(8) + "77";
+  let got = hex.encode(mont.to_bytes(m, mont.from_bytes(m, __codec_bytes(hex.decode(wide)))));
+  return test.assert_eq(got, hex_of(reduced(big(wide), p), 32));
+}
+
 function main(): i32 {
   let r = test.new("std/crypto/montgomery");
   r = r.it("P-256's field", test_p256_field);
   r = r.it("P-384's order", test_p384_order);
+  r = r.it("modulus_of gives the constants of modulus", test_modulus_of);
+  r = r.it("from_bytes reduces a long value", test_wide_from_bytes);
   r = r.it("in_range", test_in_range);
   r = r.it("select", test_select);
   return r.finish();

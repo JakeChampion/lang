@@ -129,6 +129,7 @@ pub struct EmitState {
   harden: boolean,
   pie: boolean,
   heap_limit: i64,
+  cpu_limit: i64,
   quarantine: i64,
   dw_first: boolean,
   dw_pos: i64,
@@ -676,6 +677,7 @@ pub function new_state(): EmitState {
     harden: false,
     pie: false,
     heap_limit: 17179869184i64,
+    cpu_limit: 0i64,
     quarantine: 0i64,
     var_rows: false,
     dw_first: false,
@@ -724,7 +726,7 @@ pub function leak_check_on(): boolean {
   return envflag.on("FERN_LEAKCHECK");
 }
 
-pub struct Switches { backtrace: boolean, sanitize: boolean, sandbox: boolean, cover: boolean, symbols: boolean, optimize: boolean, leak_check: boolean, rc_free_debug: boolean, var_rows: boolean, shared: boolean, size: boolean, harden: boolean, heap_limit: i64, quarantine: i64, pie: boolean, profile: string, target: string, line_maps: util.LineMap[], ram_base: i64, ram_size: i64, interrupts: string[], early: string, secondary: string, user_mode: boolean }
+pub struct Switches { backtrace: boolean, sanitize: boolean, sandbox: boolean, cover: boolean, symbols: boolean, optimize: boolean, leak_check: boolean, rc_free_debug: boolean, var_rows: boolean, shared: boolean, size: boolean, harden: boolean, heap_limit: i64, quarantine: i64, cpu_limit: i64, pie: boolean, profile: string, target: string, line_maps: util.LineMap[], ram_base: i64, ram_size: i64, interrupts: string[], early: string, secondary: string, user_mode: boolean }
 
 // The -sanitize quarantine budget in bytes when no -quarantine was given: 64 MiB.
 pub function quarantine_default(): i64 {
@@ -740,11 +742,11 @@ pub function arena_bytes(limit: i64): i64 {
 }
 
 pub function env_switches(): Switches {
-  return Switches { backtrace: backtrace_on(), sanitize: sanitize_on(), sandbox: sandbox_on(), cover: false, symbols: false, optimize: false, leak_check: leak_check_on(), rc_free_debug: rc_free_debug_on(), var_rows: false, shared: false, size: size_on(), harden: false, heap_limit: 0i64, quarantine: quarantine_default(), pie: false, profile: "", target: "", line_maps: [], ram_base: 0i64, ram_size: 0i64, interrupts: [], early: "", secondary: "", user_mode: false };
+  return Switches { backtrace: backtrace_on(), sanitize: sanitize_on(), sandbox: sandbox_on(), cover: false, symbols: false, optimize: false, leak_check: leak_check_on(), rc_free_debug: rc_free_debug_on(), var_rows: false, shared: false, size: size_on(), harden: false, heap_limit: 0i64, quarantine: quarantine_default(), cpu_limit: 0i64, pie: false, profile: "", target: "", line_maps: [], ram_base: 0i64, ram_size: 0i64, interrupts: [], early: "", secondary: "", user_mode: false };
 }
 
 pub function with_switches(s: EmitState, sw: Switches): EmitState {
-  return EmitState { ...s, backtrace: sw.backtrace, var_rows: sw.var_rows, shared: sw.shared, size: sw.size, harden: sw.harden, pie: sw.pie, heap_limit: arena_bytes(sw.heap_limit), quarantine: sw.quarantine, build_profile: sw.profile, build_target: sw.target, ram_base: sw.ram_base, ram_size: sw.ram_size, interrupts: sw.interrupts, early: sw.early, secondary: sw.secondary, user_mode: sw.user_mode, line_maps: sw.line_maps, sanitize: sw.sanitize, sandbox: sw.sandbox, cover: sw.cover, symbols: sw.symbols, optimize: sw.optimize, leak_check: sw.sanitize || sw.leak_check, rc_free_debug: sw.sanitize || sw.rc_free_debug };
+  return EmitState { ...s, backtrace: sw.backtrace, var_rows: sw.var_rows, shared: sw.shared, size: sw.size, harden: sw.harden, pie: sw.pie, heap_limit: arena_bytes(sw.heap_limit), cpu_limit: sw.cpu_limit, quarantine: sw.quarantine, build_profile: sw.profile, build_target: sw.target, ram_base: sw.ram_base, ram_size: sw.ram_size, interrupts: sw.interrupts, early: sw.early, secondary: sw.secondary, user_mode: sw.user_mode, line_maps: sw.line_maps, sanitize: sw.sanitize, sandbox: sw.sandbox, cover: sw.cover, symbols: sw.symbols, optimize: sw.optimize, leak_check: sw.sanitize || sw.leak_check, rc_free_debug: sw.sanitize || sw.rc_free_debug };
 }
 
 // A `.loc` row names the document line of a literate module, not its tangled line.
@@ -763,24 +765,24 @@ function flag01(on: boolean): string {
 // The build manifest stamped into every native executable and shared
 // object, which `fern -manifest` and std/mitigations read back.
 pub function build_manifest(s: EmitState): string {
-  return manifest_line(s.build_target, s.build_profile, [s.harden, s.pie, s.sanitize, s.backtrace, s.size, s.shared, s.sandbox, s.cover, s.symbols, s.optimize], s.heap_limit, s.quarantine, s.profile);
+  return manifest_line(s.build_target, s.build_profile, [s.harden, s.pie, s.sanitize, s.backtrace, s.size, s.shared, s.sandbox, s.cover, s.symbols, s.optimize], s.heap_limit, s.quarantine, s.cpu_limit, s.profile);
 }
 
 // The manifest of a wasm module, from the switches its build took. A wasm
 // module has no arena, so its heap_limit is 0.
 pub function switches_manifest(sw: Switches): string {
-  return manifest_line(sw.target, sw.profile, [sw.harden, sw.pie, sw.sanitize, sw.backtrace, sw.size, sw.shared, sw.sandbox, sw.cover, sw.symbols, sw.optimize], 0i64, sw.quarantine, rtprofile.mode());
+  return manifest_line(sw.target, sw.profile, [sw.harden, sw.pie, sw.sanitize, sw.backtrace, sw.size, sw.shared, sw.sandbox, sw.cover, sw.symbols, sw.optimize], 0i64, sw.quarantine, sw.cpu_limit, rtprofile.mode());
 }
 
 // flags: harden, pie, sanitize, backtrace, size, shared, sandbox, cover,
 // symbols, optimize, in that order. profiling is the FERN_PROFILE mode.
-function manifest_line(target: string, profile: string, flags: boolean[], heap_limit: i64, quarantine: i64, profiling: i32): string {
+function manifest_line(target: string, profile: string, flags: boolean[], heap_limit: i64, quarantine: i64, cpu_limit: i64, profiling: i32): string {
   let names = ["harden", "pie", "sanitize", "backtrace", "size", "shared", "sandbox", "cover", "symbols", "optimize"];
   let out = "FERNBUILD1 target=" + target + " profile=" + profile;
   for i in 0..names.len() {
     out = out + " " + names[i] + "=" + flag01(flags[i]);
   }
-  return out + " heap_limit=" + util.i64_to_string(heap_limit) + " quarantine=" + util.i64_to_string(quarantine) + " profiling=" + rtprofile.name(profiling);
+  return out + " heap_limit=" + util.i64_to_string(heap_limit) + " quarantine=" + util.i64_to_string(quarantine) + " cpu_limit=" + util.i64_to_string(cpu_limit) + " profiling=" + rtprofile.name(profiling);
 }
 
 pub function emit_build_manifest(s: EmitState): EmitState {
@@ -1838,6 +1840,26 @@ pub function packed_suffix(packed: boolean): string {
     return "_u8";
   }
   return "";
+}
+
+// The log2 of the elements that one word holds for the array op `o`.
+pub function elem_shift(o: ir.Op): i32 {
+  if (ir.is_packed(o)) {
+    return 3;
+  }
+  return if (ir.is_compact(o)) { 1 } else { 0 };
+}
+
+// The log2 of the elements that one word of an array holds, from the suffix
+// of a runtime call's name: 3 for bytes, 1 for 4-byte integers, 0 for words.
+pub function packed_shift(name: string): i32 {
+  if (name.ends_with("_u8")) {
+    return 3;
+  }
+  if (name.ends_with("_u32")) {
+    return 1;
+  }
+  return 0;
 }
 
 pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
@@ -3808,6 +3830,9 @@ pub function const_agg_pack(own s: EmitState, packed: string, entry: string): Co
   if (ir.const_struct_is_bytes(packed)) {
     return ConstAggPack { state: s, text: "8|" + ir.const_struct_payload(packed) };
   }
+  if (ir.const_struct_is_compact_array(packed)) {
+    return ConstAggPack { state: s, text: "4|" + ir.const_struct_payload(packed) };
+  }
   let body = ir.const_struct_fn_body(packed);
   if (body.len() > 0) {
     let target = "__fn_" + sanitize_label(body) + entry;
@@ -3943,7 +3968,7 @@ function direct_need_deps(name: string): string[] {
     || name == "random_bytes" || name == "write_file_bytes" || name == "write_file_bytes_u8"
     || name == "str_from_bytes" || name == "alloc_u8"
     || name == "read_file_bytes_u8" || name == "random_bytes_u8"
-    || name == "str_bytes_u8" || name == "str_from_bytes_u8" || name == "str_from_bytes_range_u8" || name == "arr_slice_u8" || name == "alloc_bytes"
+    || name == "str_bytes_u8" || name == "str_from_bytes_u8" || name == "str_from_bytes_range_u8" || name == "arr_slice_u8" || name == "arr_slice_u32" || name == "alloc_bytes" || name == "alloc_u32"
     || name == "arr_push" || name == "arr_slice" || name == "str_own" || name == "str_borrow" || name == "str_grow"
     || name == "str_case" || name == "str_repeat"
     || name == "str_replace"
@@ -3954,8 +3979,8 @@ function direct_need_deps(name: string): string[] {
     let dtrim: string[] = ["heap", "str_concat"];
     return dtrim;
   }
-  if (name == "arr_push_u8") {
-    let du8: string[] = ["arr_push", "heap"];
+  if (name == "arr_push_u8" || name == "arr_push_u32") {
+    let du8: string[] = ["heap"];
     return du8;
   }
   if (name == "buf") {
@@ -5541,7 +5566,7 @@ pub function emit_str_box_data_from(s: EmitState, first: i32): EmitState {
 }
 
 pub function const_agg_kind(packed: string): i32 {
-  if (packed.len() >= 2 && (packed[0] == b'8' || packed[0] == b'o') && packed[1] == b'|') {
+  if (packed.len() >= 2 && (packed[0] == b'8' || packed[0] == b'4' || packed[0] == b'o') && packed[1] == b'|') {
     return 1;
   }
   if (packed.len() >= 2 && packed[0] == b'0' && packed[1] == b'|') {
@@ -5599,6 +5624,9 @@ function emit_const_agg_block(st: EmitState, i: i32, e: string, array: boolean):
     return emit_const_bytes_block(st, i, ir.const_struct_payload(e));
   }
   let vals = ir.const_struct_values(e);
+  if (shp == "4") {
+    return emit_const_compact_block(st, i, vals);
+  }
   if (shp == "o") {
     return st.write("    .quad 2\n    .quad -1\n" + const_agg_label(st, i) + ":\n    .quad " + vals[0] + "\n    .quad 0\n");
   }
@@ -5647,6 +5675,15 @@ pub function emit_const_agg_refs(s: EmitState): EmitState {
     i += 1;
   }
   return s;
+}
+
+// A constant has no spare capacity, so an append copies it.
+function emit_const_compact_block(st: EmitState, i: i32, vals: string[]): EmitState {
+  st = st.write("    .quad 0\n    .quad -1\n" + const_agg_label(st, i) + ":\n    .quad " + util.i32_to_string(vals.len()) + "\n");
+  for v in vals {
+    st = st.write("    .long " + v + "\n");
+  }
+  return st.write("    .balign 8\n");
 }
 
 function emit_const_bytes_block(st: EmitState, i: i32, words: string): EmitState {
@@ -5717,6 +5754,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fern_alloc_size_abort",
     "__fern_arr_push_owned",
     "__fern_alloc_bytes", "__fern_arr_push_u8", "__fern_arr_push_owned_u8",
+    "__fern_alloc_u32", "__fern_arr_push_u32", "__fern_arr_push_owned_u32",
     "__fn___fern_str_view_free", "__fern_raw_free", "__fern_map_hash_seed",
     "__fern_buf_new", "__fern_buf_push", "__fern_buf_push_range", "__fern_buf_push_mapped", "__fern_buf_push_bytes_mapped", "__fern_buf_push_bytes_filtered", "__fern_buf_push_filtered", "__fern_buf_push_expanded", "__fern_buf_push_bytes_expanded",
     "__fern_buf_push_byte", "__fern_buf_push_u64", "__fern_buf_push_decimal", "__fern_buf_push_base64", "__fern_buf_push_base32", "__fern_buf_decode_base32", "__fern_buf_len", "__fern_buf_clear", "__fern_buf_take",

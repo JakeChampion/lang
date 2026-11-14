@@ -13,6 +13,7 @@ import "std/array";
 import "std/errno";
 import "std/io";
 import "std/string";
+import "std/worker";
 import "core/cmp";
 import "core/map";
 import "std/crypto";
@@ -231,30 +232,42 @@ function cat_batch(r: refs.Repo, contents: boolean): i32 {
   let lines = input.split("\n");
   let count = if (input.ends_with("\n") || input.len() == 0) { lines.len() - 1 } else { lines.len() };
   let s = store.open(r.objects());
+  let buf: u8[] = [];
   for i in 0..count {
     let name = lines[i];
     let named = rev.parse(r, s, name);
     s = named.store;
     let hash = named.hash;
-    let found: Result[objects.Object, string] = Err("missing");
-    if (hash.len() > 0) {
+    let line = name + " missing";
+    let body: u8[] = [];
+    let has = false;
+    if (hash.len() > 0 && contents) {
       let got = store.read(s, hash);
       s = got.store;
-      found = got.object;
-    }
-    match (found) {
-      Ok(o) => {
-        put_line(hash + " " + o.kind + " " + o.body.len().to_string());
-        if (contents) {
-          put(o.body);
-          put("\n".bytes());
-        }
-      },
-      Err(_) => {
-        put_line(name + " missing");
+      if let Ok(o) = got.object {
+        line = hash + " " + o.kind + " " + o.body.len().to_string();
+        body = o.body;
+        has = true;
+      }
+    } else if (hash.len() > 0) {
+      // The kind and the size need no content.
+      let got = store.info(s, hash);
+      s = got.store;
+      if (got.why.len() == 0) {
+        line = hash + " " + got.kind + " " + got.size.to_string();
       }
     }
+    buf = buf.concat(line.bytes()).append(b'\n');
+    if (has) {
+      put(buf);
+      put(body);
+      buf = [b'\n'];
+    } else if (buf.len() > 65536) {
+      put(buf);
+      buf = [];
+    }
   }
+  put(buf);
   return 0;
 }
 
@@ -350,11 +363,8 @@ function size_column(l: Listing, e: objects.TreeEntry): (store.Store, string) {
   if (objects.entry_kind(e.mode) != "blob") {
     return (l.store, "       -");
   }
-  let got = store.read(l.store, e.hash);
-  let size = match (got.object) {
-    Ok(o) => o.body.len().to_string(),
-    Err(_) => "-",
-  };
+  let got = store.info(l.store, e.hash);
+  let size = if (got.why.len() == 0) { got.size.to_string() } else { "-" };
   return (got.store, " " + size.pad_start_str(7, " "));
 }
 
@@ -545,7 +555,11 @@ struct Waiting { commits: log.Commit[], store: store.Store }
 function log_push(w: Waiting, hash: string): Waiting {
   let got = store.read(w.store, hash);
   return match (got.object) {
-    Ok(o) => Waiting { commits: w.commits.append(log.Commit { ...log.commit_of(hash, o.body), parents: store.parents(got.store, hash, o.body) }), store: got.store },
+    Ok(o) => {
+      let c = log.commit_of(hash, o.body);
+      let kept = if (store.at_edge(got.store, hash)) { log.Commit { ...c, parents: [] } } else { c };
+      Waiting { commits: w.commits.append(kept), store: got.store }
+    },
     Err(_) => Waiting { commits: w.commits, store: got.store },
   };
 }
@@ -643,6 +657,29 @@ function log_command(argv: string[]): i32 {
 
 // ---- index-pack ----
 
+// A packfile with fewer objects has its names from this process only.
+const MIN_PARALLEL: i32 = 32;
+
+// The names of the parts from `part`, in order. A worker makes the names
+// of each part but the last, which this process makes.
+function index_parts(data: u8[], offsets: i32[], cuts: i32[], part: i32): string[][] {
+  let first = cuts[part];
+  let end = cuts[part + 1];
+  if (part + 2 >= cuts.len()) {
+    return [index.names_part(data, offsets, first, end)];
+  }
+  let w = worker.spawn((): string[] => index.names_part(data, offsets, first, end));
+  let rest = index_parts(data, offsets, cuts, part + 1);
+  return [w.join()].concat(rest);
+}
+
+// The names of the objects of a packfile: one part for each CPU.
+function index_names(data: u8[], offsets: i32[]): string[][] {
+  let count = offsets.len() - 1;
+  let parts = if (worker.parallel() && count >= MIN_PARALLEL) { (cpu_count() as i32).max(1).min(16) } else { 1 };
+  return index_parts(data, offsets, index.parts_of(offsets, parts), 0);
+}
+
 function index_pack(argv: string[]): i32 {
   let out = "";
   let file = "";
@@ -674,7 +711,7 @@ function index_pack(argv: string[]): i32 {
     return fatal("packfile name '" + out + "' does not end with '.idx'");
   }
   let stem = if (out.len() > 0) { objects.part(out, 0, out.len() - 4) } else { objects.part(file, 0, file.len() - 5) };
-  let built = match (index.build(data)) {
+  let built = match (index.build_with(data, index_names)) {
     Ok(b) => b,
     Err(message) => {
       return fatal(message);

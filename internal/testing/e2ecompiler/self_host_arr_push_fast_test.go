@@ -9,21 +9,22 @@ import (
 	"testing"
 )
 
+// A usize is a word, so its array uses the word append. An i32[] packs.
 const arrPushFastProg = `function main(): i32 {
-    let a: i32[] = [];
+    let a: usize[] = [];
     let i: i32 = 0;
-    while (i < 100) { a = a.append(i); i = i + 1; }
-    let b: i32[] = a;
-    b = b.append(1000);
+    while (i < 100) { a = a.append(i as usize); i = i + 1; }
+    let b: usize[] = a;
+    b = b.append(1000 as usize);
     if (a.len() != 100) { return 1; }
     if (b.len() != 101) { return 2; }
-    if (b[100] != 1000) { return 3; }
+    if (b[100] != 1000 as usize) { return 3; }
     let s: i32 = 0;
-    for x in a { s = s + x; }
+    for x in a { s = s + x as i32; }
     if (s != 4950) { return 4; }
-    let c: i32[] = [7, 8, 9];
-    c = c.append(10);
-    if (c.len() != 4 || c[0] != 7 || c[3] != 10) { return 5; }
+    let c: usize[] = [7 as usize, 8 as usize, 9 as usize];
+    c = c.append(10 as usize);
+    if (c.len() != 4 || c[0] != 7 as usize || c[3] != 10 as usize) { return 5; }
     return 42;
 }
 `

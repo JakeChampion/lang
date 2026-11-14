@@ -454,6 +454,24 @@ On one core of the dev container (Xeon, AVX-512 present but not used), the
 x86-64 kernel seals 2.9 GB/s over 64 KiB. The two kernels in turn do
 2.3 GB/s.
 
+One Montgomery product runs in one kernel on each backend (`__mont_mul`). It
+takes two values and a modulus as arrays of 64-bit limbs, and gives a new
+array. The x86-64 kernel uses `mulx` (BMI2) and `adc`. The arm64 kernel uses
+`mul`, `umulh`, `adds` and `adc`. The wasm kernel takes each high half from
+four products of 32-bit halves (`compiler/wasm_mont.fern`).
+
+Only the limb count steers a branch in the Montgomery kernels, so they do not
+leak a limb. `std/crypto/montgomery` uses the kernel for RSA, ECDSA and the
+TLS key share.
+
+The scrypt BlockMix runs in one kernel on each backend
+(`__scrypt_block_mix`). The kernel keeps the 16 words of each 64-byte block
+in diagonal order, so each 16-byte row is a diagonal of the Salsa20 matrix.
+The x86-64 kernel keeps the four rows in `xmm0` to `xmm3` and rotates with
+`vpslld` and `vpsrld`. The arm64 kernel uses `shl` and `sri`, and `ext`
+turns the rows between the column and the row rounds. The wasm kernel holds
+the 16 words in locals. Only the block size r steers a branch.
+
 Anything above this level (AVX-512, …) needs runtime dispatch first, and none
 of it is used. AVX-512 is deliberately not taken: Intel removed it from
 consumer parts at Alder Lake, so a v4 baseline would drop hardware a v3 one

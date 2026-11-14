@@ -93,7 +93,6 @@ The standard output, the messages and the exit status are those of git
 - The multi-pack index and the commit graph. The port reads each index of
   `objects/pack`.
 
-- `index-pack` on more than one CPU.
 
 - The other forms of a revision: `@{N}`, `^{/TEXT}`, `:/TEXT` and the
   ranges. git prints one more line when `^` or `~` follows an object that
@@ -119,18 +118,31 @@ The standard output, the messages and the exit status are those of git
 
 The times are for one run on x86-64, on the repository of Fern: 34,339
 objects, 978 commits in a shallow clone, and a packfile of 275 MB. git 2.43
-has four threads for `index-pack`, and the port has one.
+has four threads for `index-pack`, and the port has four workers.
 
 | Command | git | The port |
 |---|---|---|
 | `cat-file --batch` (34,339 objects, 1.2 GB) | 5.9 s | 3.8 s |
-| `log` (978 commits) | 0.02 s | 0.04 s |
+| `log` (978 commits) | 0.03 s | 0.03 s |
 | `ls-tree -r HEAD` | 0.02 s | 0.05 s |
+| `ls-tree -r -l HEAD` | 0.05 s | 0.26 s |
+| `cat-file --batch-check` (34,339 objects) | 0.07 s | 0.45 s |
 | `index-pack` (3.3 MB) | 0.14 s | 0.16 s |
-| `index-pack` (275 MB) | 3.0 s | 7.9 s |
+| `index-pack` (275 MB) | 3.0 s | 2.6 s |
+
+The port does not inflate a packed object for its kind and its size. They
+come from the header of the object and from the start of its delta.
+
+`index-pack` gives each CPU one part of the packfile, with about the same
+count of bytes. A worker of `std/worker` makes the names of its part.
+
+`log` runs 205 million instructions for the 978 commits, and git runs 100
+million. The inflate of the commits is half of them.
 
 The port keeps the bases of the deltas in a cache of 96 MB. For a packfile
-above 1 MiB, it reads the bytes of one object from the file. It reads the
+above 1 MiB, it reads the bytes of one object from the file. The reverse
+index of git (`.rev`) gives the end of each object. Without that file, the
+port sorts the offsets of the index. It reads the
 whole file after such reads for half of the objects.
 
 ## Tests

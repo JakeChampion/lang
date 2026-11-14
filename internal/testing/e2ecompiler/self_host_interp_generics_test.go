@@ -114,7 +114,7 @@ func TestSelfHostInterpSimdSuite(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := runSelfHostInterp(t, "simd_test.fern", string(src))
-	for _, w := range []string{"1..26", "# fail 0"} {
+	for _, w := range []string{"1..28", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\n%s", w, out)
 		}

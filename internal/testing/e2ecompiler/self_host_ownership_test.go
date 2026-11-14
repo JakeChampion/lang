@@ -165,6 +165,119 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 6},
+	{"array-parameter-given-to-a-sink-is-not-copied", `@noinline
+function decode(bytes: u8[]): string {
+    return unsafe { string_from_bytes_unchecked(bytes) };
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let i: i32 = 0;
+    while (i < 50) {
+        let b: u8[] = __alloc_u8(4096);
+        b = b.with(0, 65);
+        let s: string = decode(b);
+        total = total + s.len();
+        i = i + 1;
+    }
+    if (total != 50 * 4096) { return 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 50},
+	{"array-parameter-the-caller-reads-after-a-sink", `@noinline
+function decode(bytes: u8[]): string {
+    return unsafe { string_from_bytes_unchecked(bytes) };
+}
+function main(): i32 {
+    let b: u8[] = __alloc_u8(16);
+    b = b.with(0, 66);
+    let s: string = decode(b);
+    b = b.with(1, 67);
+    let t: string = decode(b);
+    if (s.len() != 16 || s.as_bytes()[0] != 66 || s.as_bytes()[1] != 0) { return 1; }
+    if (b[0] != 66 || b[1] != 67 || t.as_bytes()[1] != 67) { return 2; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 3},
+	{"array-parameter-sunk-on-one-branch", `@noinline
+function decode_even(bytes: u8[], k: i32): string {
+    if (k % 2 == 0) {
+        return unsafe { string_from_bytes_unchecked(bytes) };
+    }
+    return "odd";
+}
+function main(): i32 {
+    let total: i32 = 0;
+    let i: i32 = 0;
+    while (i < 20) {
+        let c: u8[] = __alloc_u8(32);
+        c = c.with(0, 65);
+        total = total + decode_even(c, i).len();
+        i = i + 1;
+    }
+    if (total != 10 * 32 + 10 * 3) { return 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 20},
+	{"counted-arrays-of-strings-and-records-released-on-each-path", `struct P { name: string, n: i32 }
+struct Holder { names: string[], k: i32 }
+@noinline
+function hold(names: string[], k: i32): Holder {
+    if (k > 0) { return Holder { names: names, k: k }; }
+    return Holder { names: [], k: k };
+}
+@noinline
+function keep_points(ps: P[], k: i32): P[] {
+    if (k % 3 == 0) { return ps; }
+    if (k % 3 == 1) { return ps.append(P { name: "x" + "", n: k }); }
+    return [];
+}
+function main(): i32 {
+    let held: i32 = 0;
+    let i: i32 = 0;
+    while (i < 6) {
+        let names: string[] = ["a" + "b", "c" + "d"];
+        held = held + hold(names, i % 2).names.len();
+        i = i + 1;
+    }
+    if (held != 6) { return 1; }
+    let names: string[] = ["e" + "f"];
+    let h1: Holder = hold(names, 1);
+    let h0: Holder = hold(names, 0);
+    if (h1.names.len() != 1 || h0.names.len() != 0 || names[0] != "ef") { return 2; }
+    let count: i32 = 0;
+    let j: i32 = 0;
+    while (j < 9) {
+        let ps: P[] = [P { name: "p" + "q", n: j }, P { name: "r" + "s", n: j + 1 }];
+        count = count + keep_points(ps, j).len();
+        j = j + 1;
+    }
+    if (count != 3 * 2 + 3 * 3) { return 3; }
+    let shared: P[] = [P { name: "m" + "n", n: 1 }];
+    let grown: P[] = keep_points(shared, 1);
+    if (shared.len() != 1 || grown.len() != 2 || shared[0].name != "mn" || grown[1].name != "x") { return 4; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 35},
+	{"map-parameter-inserted-and-returned-is-not-copied", `import "core/map";
+@noinline
+function add(m: Map[string, i32], k: string, v: i32): Map[string, i32] {
+    return m.insert(k, v);
+}
+function main(): i32 {
+    let m: Map[string, i32] = Map { };
+    let i: i32 = 0;
+    while (i < 200) {
+        m = add(m, "k", i);
+        m = add(m, "j", i);
+        i = i + 1;
+    }
+    if (m.get_or("k", 0) != 199 || m.get_or("j", 0) != 199) { return 1; }
+    let kept: Map[string, i32] = m;
+    let more: Map[string, i32] = add(kept, "z", 5);
+    if (kept.get_or("z", 0) != 0 || more.get_or("z", 0) != 5 || more.get_or("k", 0) != 199) { return 2; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 4},
 }
 
 func TestSelfHostOwnershipInference(t *testing.T) {
@@ -281,6 +394,17 @@ function make(k: i32): Node {
     if (k % 3 == 1) { return Label("a" + "bc"); }
     return Empty;
 }
+@noinline
+function decode_even(bytes: u8[], k: i32): string {
+    if (k % 2 == 0) { return unsafe { string_from_bytes_unchecked(bytes) }; }
+    return "odd";
+}
+@noinline
+function byte_total(bytes: u8[]): i32 {
+    let t: i32 = 0;
+    for b in bytes { t = t + (b as i32); }
+    return t;
+}
 struct Slot { tab: Cell[i32[]], n: i32 }
 @noinline
 function slot_push(s: Slot, k: i32): i32 {
@@ -298,6 +422,9 @@ function main(): i32 {
     let total: i32 = 0;
     let i: i32 = 0;
     while (i < 6) { total = total + reads_only(make(i)); i = i + 1; }
+    let bytes: u8[] = __alloc_u8(4);
+    bytes = bytes.with(0, 7);
+    if (byte_total(bytes) != 7 || decode_even(bytes, 1) != "odd" || decode_even(bytes, 0).len() != 4) { return 12; }
     let n: Node = hands_back(make(1), 5);
     if (total != 12) { return 1; }
     if (reads_only(n) != 3) { return 2; }
@@ -331,7 +458,7 @@ function main(): i32 {
     let slot: Slot = slot_or_new(Slot { tab: cell_new(one), n: 2 }, 1);
     let m: i32 = 0;
     while (m < 5) { m = m + slot_push(slot, m); }
-    if (m != 6 || slot.tab.get().len() != 4 || slot.tab.get()[3] != 4) { return 12; }
+    if (m != 6 || slot.tab.get().len() != 4 || slot.tab.get()[3] != 4) { return 13; }
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }
@@ -476,6 +603,21 @@ func assertInferredModes(t *testing.T, runner []string, fernBin, stdlibRoot stri
 	}
 	if strings.Contains(sealing, sealerDrop) {
 		t.Errorf("sealed_len calls %s: a record whose field only reaches a callee's view parameter, which the callee never counts, was inferred COUNTED", sealerDrop)
+	}
+	const arrDrop = "__fern_arr_dec"
+	sink, ok := asmWholeFunc(string(asm), "decode_even")
+	if !ok {
+		t.Fatal("no __fn_decode_even in the emitted code")
+	}
+	if !strings.Contains(sink, arrDrop) {
+		t.Errorf("decode_even does not call %s: an array parameter given to a consuming sink on one branch was inferred BORROWED, so the sink copies it", arrDrop)
+	}
+	scan, ok := asmWholeFunc(string(asm), "byte_total")
+	if !ok {
+		t.Fatal("no __fn_byte_total in the emitted code")
+	}
+	if strings.Contains(scan, arrDrop) {
+		t.Errorf("byte_total calls %s: an array parameter the body only reads was inferred COUNTED", arrDrop)
 	}
 	const cursorDrop = "__sem_release_Cursor"
 	step, ok := asmWholeFunc(string(asm), "Cursor__advance")

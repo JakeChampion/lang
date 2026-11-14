@@ -170,9 +170,7 @@ func findBasicTree(t *testing.T, dir string) {
 	if err := syscall.Mkfifo(filepath.Join(dir, "fifo"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := syscall.Mknod(filepath.Join(dir, "sock"), syscall.S_IFSOCK|0o644, 0); err != nil {
-		t.Fatal(err)
-	}
+	seedSocket(t, filepath.Join(dir, "sock"))
 }
 
 // findSharedTree makes the tree that the cases which change nothing read.

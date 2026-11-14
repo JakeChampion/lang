@@ -192,6 +192,45 @@ function mkp(): HPair { return HPair { h: Handle { fd: 1 }, n: 2 }; }
 function keep(p: HPair): HPair { return p; }
 `
 
+const tupleProjectionPrelude = `struct R { a: string[], n: i32, t: Option[Reader] }
+function bump(own r: R): (boolean, R) { return (true, R { ...r, n: r.n + 1 }); }
+function swap(own r: R): (R, i32) { return (R { ...r, n: r.n + 1 }, 7); }
+function nest(own r: R): (i32, (boolean, R)) { return (1, (false, r)); }
+function same[T](x: T): T { return x; }
+function eat(own r: R): i32 { return r.n; }
+function keep(own r: R): R { return r; }
+struct W { r: R, k: i32 }
+function opt(own r: R): (i32, Option[R]) { return (1, Some(r)); }
+function eatw(own w: W): i32 { return w.k; }
+`
+
+// tupleProjection puts main last, where wrapMainBodyInLambda finds it.
+func tupleProjection(body string) string {
+	return tupleProjectionPrelude + body + "\nfunction main(): i32 { return 0; }\n"
+}
+
+var tupleProjectionCases = []struct {
+	name string
+	src  string
+	want []string
+}{
+	{"tuple-projection-own-parameter-rebound", tupleProjection(`function f(own run: R): i32 { run = bump(run).1; return eat(run); }`), nil},
+	{"tuple-projection-local-rebound", tupleProjection(`function f(own run0: R): R { let run = R { ...run0, n: 2 }; run = bump(run).1; run = keep(run); return run; }`), nil},
+	{"tuple-projection-argument", tupleProjection(`function f(own run: R): i32 { return eat(bump(run).1); }`), nil},
+	{"tuple-projection-element-zero", tupleProjection(`function f(own run0: R): R { let run = R { ...run0, n: 2 }; run = swap(run).0; run = keep(run); return run; }`), nil},
+	{"tuple-projection-let", tupleProjection(`function f(own run0: R): R { let run = R { ...run0, n: 2 }; let r1 = bump(run).1; run = keep(r1); return run; }`), nil},
+	{"tuple-projection-nested", tupleProjection(`function f(own run0: R): R { let run = R { ...run0, n: 2 }; run = nest(run).1.1; run = keep(run); return run; }`), nil},
+	{"tuple-projection-loop", tupleProjection(`function f(own run0: R): i32 { let run = R { ...run0, n: 0 }; for i in [0, 1] { run = bump(run).1; } return eat(run); }`), nil},
+	{"tuple-projection-own-result", tupleProjection(`function f(own r: R): own R { return bump(r).1; }`), nil},
+	{"tuple-projection-literal-field", tupleProjection(`function f(own r: R): i32 { return eatw(W { r: bump(r).1, k: 1 }); }`), nil},
+	{"tuple-projection-match-payload", tupleProjection(`function f(own r: R): i32 { match (opt(r).1) { Some(x) => { return eat(x); }, None => { return 0; } } return 0; }`), nil},
+	{"tuple-projection-let-else-payload", tupleProjection(`function f(own r: R): i32 { let Some(x) = opt(r).1 else { return 0; }; return eat(x); }`), nil},
+	{"tuple-projection-borrowed-parameter", tupleProjection(`function f(t: (boolean, R)): i32 { return eat(t.1); }`), []string{"E051"}},
+	{"tuple-projection-lent-call-result", tupleProjection(`function f(t: (boolean, R)): i32 { return eat(same(t).1); }`), []string{"E051"}},
+	{"tuple-projection-lent-call-result-local", tupleProjection(`function f(t: (boolean, R)): i32 { let r = same(t).1; return eat(r); }`), []string{"E051"}},
+	{"tuple-projection-nested-lent-call-result", tupleProjection(`function f(t: (i32, (boolean, R))): i32 { return eat(same(t).1.1); }`), []string{"E051"}},
+}
+
 func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 	checkerBin, runner, dir := buildCheckerCodesBin(t)
 	const loopPayloadPrefix = `struct Box { data: u8[] }
@@ -1556,6 +1595,9 @@ function main(): i32 { return f([1]); }`, []string{"E050"}},
 		{"literal-suffix-i64-min-ok", "function main(): i32 { let x: i64 = -9223372036854775808i64; return 0; }\n", nil},
 		{"literal-suffix-double-neg", "function main(): i32 { let x: i64 = - -9223372036854775808i64; return 0; }\n", []string{"E047"}},
 		{"literal-suffix-double-neg-ok", "function main(): i32 { let x: i64 = - -5i64; return 0; }\n", nil},
+		{"literal-suffix-triple-neg-ok", "function main(): i32 { let x: i32 = - - -2147483648i32; return 0; }\n", nil},
+		{"literal-suffix-neg-below-a-call-ok", "function f(v: i32): i32 { return v; }\nfunction main(): i32 { let x: i32 = -f(-2147483648i32); return 0; }\n", nil},
+		{"literal-suffix-neg-below-a-call-under", "function f(v: i32): i32 { return v; }\nfunction main(): i32 { let x: i32 = -f(-2147483649i32); return 0; }\n", []string{"E047"}},
 		{"literal-suffix-hex-u32-over", "function main(): i32 { let x: u32 = 0x100000000u32; return 0; }\n", []string{"E047"}},
 		{"literal-suffix-hex-u32-max-ok", "function main(): i32 { let x: u32 = 0xFFFFFFFFu32; return 0; }\n", nil},
 		{"literal-suffix-arg", "function take(v: u8): i32 { return 0; }\nfunction main(): i32 { return take(300u8); }\n", []string{"E047"}},
@@ -2192,8 +2234,26 @@ function main(): i32 { return 0; }
 		{"own-arg-spread-of-borrowed-param", "struct A { sock: Option[Socket], d: string }\nfunction take(own a: A): A { return a; }\nfunction f(s: A): A {\n  let t: A = A { ...s, d: \"x\" };\n  return take(t);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
 		{"own-arg-spread-then-base-read", "struct A { sock: Option[Socket], d: string }\nfunction take(own a: A): A { return a; }\nfunction f(own s: A): A {\n  let t: A = A { ...s, d: \"x\" };\n  print(s.d);\n  return take(t);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
 		{"own-arg-spread-reads-replaced-field", "struct A { sock: Option[Socket], d: string }\nfunction take(own a: A): A { return a; }\nfunction f(own s: A): A {\n  let t: A = A { ...s, d: s.d };\n  return take(t);\n}\nfunction main(): i32 { return 0; }\n", nil},
-		{"own-arg-spread-field-reads-whole-base", "struct A { sock: Option[Socket], d: string }\nfunction take(own a: A): A { return a; }\nfunction name(a: A): string { return a.d; }\nfunction f(own s: A): A {\n  let t: A = A { ...s, d: name(s) };\n  return take(t);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
-		{"own-arg-spread-reads-kept-field", "struct A { sock: Option[Socket], d: string, n: i32 }\nfunction take(own a: A): A { return a; }\nfunction f(own s: A): A {\n  let t: A = A { ...s, n: s.d.len() };\n  return take(t);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
+		{"own-arg-spread-field-borrows-whole-base", "struct A { sock: Option[Socket], d: string }\nfunction take(own a: A): A { return a; }\nfunction name(a: A): string { return a.d; }\nfunction f(own s: A): A {\n  let t: A = A { ...s, d: name(s) };\n  return take(t);\n}\nfunction main(): i32 { return 0; }\n", nil},
+		{"own-arg-spread-reads-kept-field", "struct A { sock: Option[Socket], d: string, n: i32 }\nfunction take(own a: A): A { return a; }\nfunction f(own s: A): A {\n  let t: A = A { ...s, n: s.d.len() };\n  return take(t);\n}\nfunction main(): i32 { return 0; }\n", nil},
+		{"own-arg-spread-kept-field-method", spreadSourceRead("n: u.got.len() as i32"), nil},
+		{"own-arg-spread-kept-field-borrow-arg", spreadSourceRead("n: count(u.got)"), nil},
+		{"own-arg-spread-kept-field-view-arg", spreadSourceRead("n: view(u.got)"), nil},
+		{"own-arg-spread-kept-scalar-copy", spreadSourceRead("m: u.n"), nil},
+		{"own-arg-spread-kept-string-operand", spreadSourceRead("label: u.tag + \"!\""), nil},
+		{"own-arg-spread-kept-element-operand", spreadSourceRead("n: if (u.got[0] == \"a\") { 1 } else { 2 }"), nil},
+		{"own-arg-spread-kept-element-receiver", spreadSourceRead("n: u.got[0].len() as i32"), nil},
+		{"own-arg-spread-kept-byte-copy", spreadSourceRead("n: u.tag[0] as i32"), nil},
+		{"own-arg-spread-kept-element-stored", spreadSourceRead("label: u.got[0]"), []string{"E051"}},
+		{"own-arg-spread-borrowing-call-stored", spreadSourceRead("r: lend(u)"), []string{"E051"}},
+		{"own-arg-spread-kept-handle-arg", spreadSourceRead("n: has(u.r)"), nil},
+		{"own-arg-spread-whole-borrow", spreadSourceRead("n: size(u)"), nil},
+		{"own-arg-spread-kept-field-own-arg", spreadSourceRead("n: eat_strs(u.got)"), []string{"E051"}},
+		{"own-arg-spread-kept-field-stored", spreadSourceRead("other: u.got"), []string{"E051"}},
+		{"own-arg-spread-kept-handle-own-arg", spreadSourceRead("n: close_it(u.r)"), []string{"E051"}},
+		{"own-arg-spread-whole-own-arg", spreadSourceRead("n: eat_s(u)"), []string{"E051"}},
+		{"own-arg-spread-whole-in-array", spreadSourceRead("n: [u].len() as i32"), []string{"E051"}},
+		{"own-arg-spread-source-in-lambda", spreadSourceRead("n: (() => u.n)()"), []string{"E051"}},
 		{"own-method-borrowed-result", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.h; }\nfunction f(b: Box): i32 { return consume(b.get()); }" + methodBorrowEnd, []string{"E051"}},
 		{"own-method-borrowed-wrapper", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.h; }\nfunction borrow(b: Box): Handle { return b.get(); }\nfunction f(b: Box): i32 { return consume(borrow(b)); }" + methodBorrowEnd, []string{"E051"}},
 		{"own-method-borrowed-local-alias", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.h; }\nfunction borrow(b: Box): Handle { let alias = b; return alias.get(); }\nfunction f(b: Box): i32 { return consume(borrow(b)); }" + methodBorrowEnd, []string{"E051"}},
@@ -2659,6 +2719,27 @@ function main(): i32 { return 0; }
 		{"e065-literal-ok", "function f(): str {\n    return \"hi\";\n}\nfunction main(): i32 { return 0; }\n", nil},
 		{"e065-param-slice-ok", "function f(p: string): str {\n    return slice_unchecked(p, 0, 2);\n}\nfunction main(): i32 { return 0; }\n", nil},
 		{"e065-str-of-param-ok", "function f(p: str): str {\n    let t: str = p;\n    return t;\n}\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-field-of-param", strFieldPrelude + "function f(t: T, k: i32): str { return slice_unchecked(t.text, 0, k); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-nested-field-of-param", strFieldPrelude + "function f(o: Outer, k: i32): str { return slice_unchecked(o.inner.text, 0, k); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-field-of-receiver", strFieldPrelude + "function (t: T) f(k: i32): str { return slice_unchecked(t.text, 0, k); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-field-of-local-copy", strFieldPrelude + "function f(t: T, k: i32): str { let u = t; return slice_unchecked(u.text, 0, k); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-field-of-copy-of-copy", strFieldPrelude + "function f(t: T, k: i32): str { let u = t; let w = u; return slice_unchecked(w.text, 0, k); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-local-copy-of-field", strFieldPrelude + "function f(t: T, k: i32): str { let s = t.text; return slice_unchecked(s, 0, k); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-local-copy-of-string-param", strFieldPrelude + "function f(s: string, k: i32): str { let u = s; return slice_unchecked(u, 0, k); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-returned-copy-of-string-param", strFieldPrelude + "function f(s: string): str { let u = s; return u; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-option-of-field-of-param", strFieldPrelude + "function f(t: T, k: i32): Option[str] { return Some(slice_unchecked(t.text, 0, k)); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-caller-lends-field-of-param", strFieldPrelude + "function f(o: Outer, k: i32): str { return head(o.inner, k); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e065-field-of-local-struct", strFieldPrelude + "function f(k: i32): str { let t = T { text: \"a\" + \"b\", n: 1 }; return slice_unchecked(t.text, 0, k); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-copy-of-field-of-local", strFieldPrelude + "function f(k: i32): str { let u = mk(); let s = u.text; return slice_unchecked(s, 0, k); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-field-of-call-result", strFieldPrelude + "function f(k: i32): str { return slice_unchecked(mk().text, 0, k); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-field-of-reassigned-copy", strFieldPrelude + "function f(t: T, k: i32): str { let u = t; u = mk(); return slice_unchecked(u.text, 0, k); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-reassigned-copy-of-string-param", strFieldPrelude + "function f(s: string, k: i32): str { let u = s; u = \"a\" + \"b\"; return slice_unchecked(u, 0, k); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-field-of-redeclared-copy", strFieldPrelude + "function f(t: T, k: i32, c: boolean): str { if (c) { let u = t; return slice_unchecked(u.text, 0, k); } let u = mk(); return slice_unchecked(u.text, 0, k); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-option-of-field-of-local", strFieldPrelude + "function f(k: i32): Option[str] { let t = mk(); return Some(slice_unchecked(t.text, 0, k)); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-caller-lends-local-struct", strFieldPrelude + "function f(k: i32): str { let t = mk(); return head(t, k); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-caller-lends-local-receiver", strFieldPrelude + "function (t: T) tail(k: i32): str { return slice_unchecked(t.text, k, t.text.len()); }\nfunction f(k: i32): str { let t = mk(); return t.tail(k); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-caller-lends-call-result", strFieldPrelude + "function f(k: i32): str { return head(mk(), k); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
+		{"e065-string-of-field-of-local", strFieldPrelude + "function text_of(t: T): string { return t.text; }\nfunction f(k: i32): str { let t = mk(); return slice_unchecked(text_of(t), 0, k); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
 		{"e032-use-nosig", "function main(): i32 {\n    use n <- q(1);\n    return n;\n}\n", []string{"E001", "E032"}},
 		{"e032-use-lastparam-not-fn", "function add(x: i32, y: i32): i32 { return x + y; }\nfunction main(): i32 {\n    use n <- add(1);\n    return n;\n}\n", []string{"E032", "E038"}},
 		{"e032-use-ok", "function apply(x: i32, cb: (i32) => i32): i32 { return cb(x); }\nfunction main(): i32 {\n    use n <- apply(41);\n    return n + 1;\n}\n", nil},
@@ -2861,6 +2942,7 @@ function main(): i32 { return 0; }
 			want []string
 		}{"generic-builtin-method-name-" + name, "function " + fn + "(): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E006"}})
 	}
+	cases = append(cases, tupleProjectionCases...)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var cmd *exec.Cmd
@@ -2985,6 +3067,12 @@ const handleLocalPrelude = "struct Handle { fd: i32 }\nstruct HPair { h: Handle,
 	"function mkp(): HPair { return HPair { h: Handle { fd: 1 }, n: 2 }; }\n" +
 	"function mks(): Slot { return Full(Handle { fd: 1 }); }\n" +
 	"function main(): i32 { return 0; }\n"
+
+// strFieldPrelude declares a record with a `string` field, a record that
+// holds it, and a view of the field that a caller lends its record to (#15796).
+const strFieldPrelude = "struct T { text: string, n: i32 }\nstruct Outer { inner: T, n: i32 }\n" +
+	"function mk(): T { return T { text: \"a\" + \"b\", n: 0 }; }\n" +
+	"function head(t: T, k: i32): str { return slice_unchecked(t.text, 0, k); }\n"
 
 func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 	checkerBin, runner, dir := buildCheckerCodesBin(t)
@@ -3239,6 +3327,14 @@ function main(): i32 { return 0; }`},
 		{"chacha20poly1305-open-arity", "function main(): i32 { let k: u8[] = __alloc_u8(32); let out: u8[] = __chacha20_poly1305_open_into(k, k, __alloc_u8(40), 0, 0, 4); return 0; }\n"},
 		{"chacha20poly1305-wrong-element", "function main(): i32 { let k: i32[] = [1, 2]; let out: u8[] = __chacha20_poly1305_seal_into(k, k, __alloc_u8(40), 0, 0, 0, 8); return 0; }\n"},
 		{"chacha20poly1305-result", "function main(): i32 { let k: u8[] = __alloc_u8(32); let r: i32 = __chacha20_poly1305_open_into(k, k[0:16], __alloc_u8(40), 0, 0, 0, 8); return r; }\n"},
+		{"mont-mul-kernel", "function main(): i32 { let m: i64[] = [1, 3, 5]; let a: [i64] = m[0:2]; let t: i64[] = __mont_mul(a, a, m); return t.len(); }\n"},
+		{"mont-mul-arity", "function main(): i32 { let m: i64[] = [1, 3]; let t: i64[] = __mont_mul(m, m); return 0; }\n"},
+		{"mont-mul-wrong-element", "function main(): i32 { let m: u8[] = __alloc_u8(16); let t: i64[] = __mont_mul(m, m, m); return 0; }\n"},
+		{"mont-mul-result", "function main(): i32 { let m: i64[] = [1, 3]; let a: i64[] = [2]; let r: i32 = __mont_mul(a, a, m); return r; }\n"},
+		{"scrypt-block-mix-kernel", "function main(): i32 { let b: i64[] = __alloc_i64(48); b = __scrypt_block_mix(b, 0, 16, 32, 1); return b.len(); }\n"},
+		{"scrypt-block-mix-arity", "function main(): i32 { let b: i64[] = __alloc_i64(48); b = __scrypt_block_mix(b, 0, 16, 32); return 0; }\n"},
+		{"scrypt-block-mix-view", "function main(): i32 { let b: i64[] = __alloc_i64(48); let v: [i64] = b[0:48]; let t: i64[] = __scrypt_block_mix(v, 0, 16, 32, 1); return 0; }\n"},
+		{"scrypt-block-mix-result", "function main(): i32 { let r: i32 = __scrypt_block_mix(__alloc_i64(48), 0, 16, 32, 1); return r; }\n"},
 		{"proc-wait-any", "function main(): i32 { let r: i64 = proc_wait_any(); return (r >> 32) as i32; }\n"},
 		{"proc-wait-any-arity", "function main(): i32 { let r: i64 = proc_wait_any(0 - 1); return 0; }\n"},
 		{"proc-wait-any-result", "function main(): i32 { let r: i32 = proc_wait_any(); return r; }\n"},
@@ -3518,6 +3614,19 @@ function main(): i32 { return 0; }`},
 		{"e051-last-use-mid-struct-lit", lastUsePrelude + "function f(): i32 { let w: W = W { d: [1], n: 2 }; let r: i32 = eat(w); return r; }\n"},
 		{"e051-last-use-mid-string-lit", lastUsePrelude + "function takes(own s: string): i32 { return s.len(); }\nfunction f(): i32 { let s: string = \"ab\"; s = s + \"c\"; let r: i32 = takes(s); return r; }\n"},
 		{"e051-last-use-spread-lit", lastUsePrelude + "function f(): i32 { let v: W = mkw(1); let w: W = W { ...v, n: 2 }; let r: i32 = eat(w); return r + v.n; }\n"},
+		{"spread-source-kept-field-method", spreadSourceRead("n: u.got.len() as i32")},
+		{"spread-source-kept-field-view-arg", spreadSourceRead("n: view(u.got)")},
+		{"spread-source-kept-scalar-copy", spreadSourceRead("m: u.n")},
+		{"spread-source-kept-element-operand", spreadSourceRead("n: if (u.got[0] == \"a\") { 1 } else { 2 }")},
+		{"spread-source-kept-element-stored", spreadSourceRead("label: u.got[0]")},
+		{"spread-source-borrowing-call-stored", spreadSourceRead("r: lend(u)")},
+		{"spread-source-kept-handle-arg", spreadSourceRead("n: has(u.r)")},
+		{"spread-source-whole-borrow", spreadSourceRead("n: size(u)")},
+		{"spread-source-kept-field-own-arg", spreadSourceRead("n: eat_strs(u.got)")},
+		{"spread-source-kept-field-stored", spreadSourceRead("other: u.got")},
+		{"spread-source-kept-handle-own-arg", spreadSourceRead("n: close_it(u.r)")},
+		{"spread-source-whole-own-arg", spreadSourceRead("n: eat_s(u)")},
+		{"spread-source-in-lambda", spreadSourceRead("n: (() => u.n)()")},
 		{"e051-last-use-read-again", lastUsePrelude + "function f(): i32 { let a: i32[] = mk(1); let r: i32 = keep(a, 1); return r + a[0]; }\n"},
 		{"e051-last-use-loop", lastUsePrelude + "function f(): i32 { let a: i32[] = mk(1); let t: i32 = 0; while (t < 3) { t = t + keep(a, 1); } return t; }\n"},
 		{"e051-last-use-loop-nested-reassign", lastUsePrelude + "function f(): i32 { let a: i32[] = mk(1); let t: i32 = 0; while (t < 3) { a = grow(grow(a, t), 1); t = t + 1; } return a.len(); }\n"},
@@ -3571,6 +3680,30 @@ function main(): i32 { return 0; }`},
 		{"e051-last-use-loop-local-read-after", lastUsePrelude + "function f(): i32 { let t: i32 = 0; while (t < 3) { let b: i32[] = mk(t); t = t + keep(b, 1) + b.len(); } return t; }\n"},
 		{"e051-last-use-loop-local-inner-loop", lastUsePrelude + "function f(): i32 { let t: i32 = 0; while (t < 3) { let b: i32[] = mk(t); while (t < 2) { t = t + keep(b, 1); } t = t + 1; } return t; }\n"},
 		{"e051-last-use-loop-local-declared-twice", lastUsePrelude + "function f(): i32 { let t: i32 = 0; while (t < 3) { let b: i32[] = mk(t); t = t + keep(b, 1); } while (t < 6) { let b: i32[] = mk(t); t = t + keep(b, 1); } return t; }\n"},
+		{"e065-field-of-param", strFieldPrelude + "function f(t: T, k: i32): str { return slice_unchecked(t.text, 0, k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-nested-field-of-param", strFieldPrelude + "function f(o: Outer, k: i32): str { return slice_unchecked(o.inner.text, 0, k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-field-of-receiver", strFieldPrelude + "function (t: T) f(k: i32): str { return slice_unchecked(t.text, 0, k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-field-of-local-copy", strFieldPrelude + "function f(t: T, k: i32): str { let u = t; return slice_unchecked(u.text, 0, k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-field-of-copy-of-copy", strFieldPrelude + "function f(t: T, k: i32): str { let u = t; let w = u; return slice_unchecked(w.text, 0, k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-local-copy-of-field", strFieldPrelude + "function f(t: T, k: i32): str { let s = t.text; return slice_unchecked(s, 0, k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-local-copy-of-string-param", strFieldPrelude + "function f(s: string, k: i32): str { let u = s; return slice_unchecked(u, 0, k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-returned-copy-of-string-param", strFieldPrelude + "function f(s: string): str { let u = s; return u; }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-option-of-field-of-param", strFieldPrelude + "function f(t: T, k: i32): Option[str] { return Some(slice_unchecked(t.text, 0, k)); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-caller-lends-field-of-param", strFieldPrelude + "function f(o: Outer, k: i32): str { return head(o.inner, k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-field-of-local-struct", strFieldPrelude + "function f(k: i32): str { let t = T { text: \"a\" + \"b\", n: 1 }; return slice_unchecked(t.text, 0, k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-copy-of-field-of-local", strFieldPrelude + "function f(k: i32): str { let u = mk(); let s = u.text; return slice_unchecked(s, 0, k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-field-of-call-result", strFieldPrelude + "function f(k: i32): str { return slice_unchecked(mk().text, 0, k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-field-of-reassigned-copy", strFieldPrelude + "function f(t: T, k: i32): str { let u = t; u = mk(); return slice_unchecked(u.text, 0, k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-reassigned-copy-of-string-param", strFieldPrelude + "function f(s: string, k: i32): str { let u = s; u = \"a\" + \"b\"; return slice_unchecked(u, 0, k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-field-of-redeclared-copy", strFieldPrelude + "function f(t: T, k: i32, c: boolean): str { if (c) { let u = t; return slice_unchecked(u.text, 0, k); } let u = mk(); return slice_unchecked(u.text, 0, k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-option-of-field-of-local", strFieldPrelude + "function f(k: i32): Option[str] { let t = mk(); return Some(slice_unchecked(t.text, 0, k)); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-caller-lends-local-struct", strFieldPrelude + "function f(k: i32): str { let t = mk(); return head(t, k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-caller-lends-local-receiver", strFieldPrelude + "function (t: T) tail(k: i32): str { return slice_unchecked(t.text, k, t.text.len()); }\nfunction f(k: i32): str { let t = mk(); return t.tail(k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-caller-lends-call-result", strFieldPrelude + "function f(k: i32): str { return head(mk(), k); }\nfunction main(): i32 { return 0; }\n"},
+		{"e065-string-of-field-of-local", strFieldPrelude + "function text_of(t: T): string { return t.text; }\nfunction f(k: i32): str { let t = mk(); return slice_unchecked(text_of(t), 0, k); }\nfunction main(): i32 { return 0; }\n"},
+	}
+	for _, tc := range tupleProjectionCases {
+		progs = append(progs, struct{ name, src string }{tc.name, tc.src})
 	}
 
 	for _, tc := range progs {
@@ -3896,4 +4029,25 @@ func TestSelfHostCheckerVariantScopeDifferentialX86_64(t *testing.T) {
 			}
 		})
 	}
+}
+
+// spreadSourceRead is a program that passes `S { ...u, value }` to an own
+// parameter, where u is an own parameter.
+func spreadSourceRead(value string) string {
+	return `struct S { got: string[], label: string, tag: string, n: i32, m: i32, other: string[], r: Option[Reader] }
+function take(own s: S): i32 { return s.n + s.m; }
+function size(s: S): i32 { return s.n; }
+function count(xs: string[]): i32 { return xs.len() as i32; }
+function view(xs: [string]): i32 { return xs.len() as i32; }
+function has(r: Option[Reader]): i32 { return 1; }
+function lend(s: S): Option[Reader] { return s.r; }
+function eat_strs(own xs: string[]): i32 { return xs.len() as i32; }
+function eat_s(own s: S): i32 { return s.n; }
+function close_it(own r: Option[Reader]): i32 { return 0; }
+function f(own u: S): i32 {
+  let v = S { ...u, ` + value + ` };
+  return take(v);
+}
+function main(): i32 { return f(S { got: ["a"], label: "b", tag: "c", n: 1, m: 2, other: [], r: None }); }
+`
 }
