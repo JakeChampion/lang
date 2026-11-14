@@ -489,6 +489,14 @@ The packet budget applies before access. Separate limits bound frame and OBU rec
 Returned ranges retain no input bytes or payload copies. The caller preserves the immutable source.
 Payload syntax, complete frame coverage, timestamps, and pixel decode remain outside this reader.
 
+`std/video/av1/annex_b/input` reads the same temporal units from a sequential source through short reads.
+Each cooperative step performs at most one source read and emits at most one packet event.
+Separate limits bound the byte window, encoded packets, nested records, temporal-unit count, and source-read operations.
+
+Each packet owns its original bytes and their scalar ranges. Its signed 64-bit offset identifies the original temporal-unit length field.
+EOF between temporal units ends the stream. EOF inside a length or body returns `Truncated`.
+The caller owns and closes the source. Blocking reads belong outside the Android loop callback.
+
 `std/video/av1/sequence.inspect` reads one complete sequence-header OBU through the same framing reader.
 It reports maximum frame dimensions, precision, color fields, and sequence tool flags without a payload copy.
 The pixel budget applies to the maximum frame area. A separate 512-byte payload ceiling bounds header work.
