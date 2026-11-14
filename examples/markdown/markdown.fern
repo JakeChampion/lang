@@ -1,23 +1,145 @@
 // CommonMark 0.31.2 to HTML. The output is the output of cmark for the same
-// input, with raw HTML allowed.
+// input and options.
 import "std/i32";
 import "std/io_buffered";
 import "./blocks";
 import "./inlines";
 
+// The options of cmark. `sourcepos` gives each block the attribute
+// `data-sourcepos`. `hardbreaks` makes each soft line break a hard line
+// break, and `nobreaks` makes it a space. `smart` gives curly quotes,
+// dashes and ellipses. Without `unsafe_html`, raw HTML is a comment, and a
+// link to a `javascript:`, `vbscript:`, `file:` or `data:` URL has an empty
+// destination. `width` is the width of a line for the renderers that wrap
+// text, or 0 for no wrap.
+pub struct Options { sourcepos: boolean, hardbreaks: boolean, nobreaks: boolean, smart: boolean, unsafe_html: boolean, width: i32 }
+
+// The defaults of cmark: no option is set.
+pub function options(): Options {
+  return Options { sourcepos: false, hardbreaks: false, nobreaks: false, smart: false, unsafe_html: false, width: 0 };
+}
+
+// The bytes `b` as text. Each byte sequence that is not UTF-8 becomes
+// U+FFFD. With `cmark_rule`, the sequences are those of `cmark
+// --validate-utf8`: a lead byte and the continuation bytes after it that
+// are valid, or the bytes that are left when the sequence is too long for
+// the code point, a surrogate or above U+10FFFF. Else they are the maximal
+// parts that the Unicode standard recommends.
+pub function text_of(b: u8[], cmark_rule: boolean): string {
+  let out = buf_new(b.len() + 16);
+  if (cmark_rule) {
+    push_valid(out, b);
+  } else {
+    buf_push_bytes_range(out, b, 0, b.len());
+  }
+  let text = buf_take(out);
+  buf_free(out);
+  return text;
+}
+
+// cmark checks each line on its own, without its line ending.
+function push_valid(out: usize, b: u8[]): void {
+  let n = b.len();
+  let i = 0;
+  let from = 0;
+  let le = -1;
+  while (i < n) {
+    let c = b[i] as i32;
+    if (c < 0x80) {
+      i += 1;
+      continue;
+    }
+    if (le < i) {
+      le = i;
+      while (le < n && b[le] != 10 as u8 && b[le] != 13 as u8) {
+        le += 1;
+      }
+    }
+    let len = utf8_length(b, i, le);
+    if (len > 0) {
+      i += len;
+      continue;
+    }
+    buf_push_bytes_range(out, b, from, i);
+    buf_push(out, "�");
+    i -= len;
+    from = i;
+  }
+  buf_push_bytes_range(out, b, from, n);
+}
+
+// The length of the UTF-8 sequence at `i`, or minus the number of bytes
+// that one U+FFFD replaces, as cmark finds them.
+function utf8_length(b: u8[], i: i32, n: i32): i32 {
+  let c = b[i] as i32;
+  let len = 0;
+  if (c >= 0xC0 && c < 0xF8) {
+    len = UTF8_LENGTHS[c >> 3 & 7];
+  }
+  if (len == 0) {
+    return -1;
+  }
+  if (len > n - i) {
+    return i - n;
+  }
+  for k in 1..len {
+    if ((b[i + k] as i32 & 0xC0) != 0x80) {
+      return -k;
+    }
+  }
+  if (out_of_range(c, b[i + 1] as i32)) {
+    return -len;
+  }
+  return len;
+}
+
+// The length of a UTF-8 sequence for the bits 3 to 5 of a lead byte from
+// 0xC0 to 0xF7.
+const UTF8_LENGTHS: i32[] = [2, 2, 2, 2, 3, 3, 4, 0];
+
+// True for the lead byte `c` and the byte `c1` after it of an overlong
+// form, a surrogate, or a code point above U+10FFFF.
+function out_of_range(c: i32, c1: i32): boolean {
+  if (c < 0xE0) {
+    return c < 0xC2;
+  }
+  if (c < 0xF0) {
+    return c == 0xE0 && c1 < 0xA0 || c == 0xED && c1 >= 0xA0;
+  }
+  return c == 0xF0 && c1 < 0x90 || c > 0xF4 || c == 0xF4 && c1 >= 0x90;
+}
+
+// The options of the inline phase, as the flags of `inlines`.
+pub function inline_flags(o: Options): i32 {
+  let f = 0;
+  if (o.smart) {
+    f |= inlines.O_SMART;
+  }
+  if (o.unsafe_html) {
+    f |= inlines.O_UNSAFE;
+  }
+  if (o.hardbreaks) {
+    f |= inlines.O_HARDBREAKS;
+  }
+  if (o.nobreaks) {
+    f |= inlines.O_NOBREAKS;
+  }
+  return f;
+}
+
 // The HTML of the CommonMark document `src`.
-pub function to_html(src: string): string {
+pub function to_html(src: string, o: Options): string {
   let b = buf_new(src.len() + src.len() / 4 + 64);
-  render(b, src);
+  render(b, src, o);
   let out = buf_take(b);
   buf_free(b);
   return out;
 }
 
 // Writes the HTML of the CommonMark document `src` to the byte builder `out`.
-pub function render(out: usize, src: string): void {
-  let d = blocks.parse(src);
-  let s = start();
+pub function render(out: usize, src: string, o: Options): void {
+  let d = blocks.parse(src, o.sourcepos);
+  let s = start(o);
   for r in 0..d.count() {
     s = step(out, d, r, s);
   }
@@ -26,10 +148,10 @@ pub function render(out: usize, src: string): void {
 // Writes the HTML of the CommonMark document `src` to `w`. The writer gets
 // the HTML of a part of the document each time its buffer holds `part`
 // bytes or more.
-pub function write(w: io_buffered.BufWriter, src: string, part: i32): Result[io_buffered.BufWriter, IoError] {
-  let d = blocks.parse(src);
+pub function write(w: io_buffered.BufWriter, src: string, part: i32, o: Options): Result[io_buffered.BufWriter, IoError] {
+  let d = blocks.parse(src, o.sourcepos);
   let out = w.handle();
-  let s = start();
+  let s = start(o);
   let q = w;
   for r in 0..d.count() {
     s = step(out, d, r, s);
@@ -48,10 +170,25 @@ pub function write(w: io_buffered.BufWriter, src: string, part: i32): Result[io_
 // feed. `tight` has an entry for each open container. The entry is 1 when
 // the paragraphs directly in the container have no `<p>` tags, as in an
 // item of a tight list.
-struct State { w: inlines.Work, open: boolean, tight: i32[], depth: i32 }
+struct State { w: inlines.Work, open: boolean, tight: i32[], depth: i32, o: Options }
 
-function start(): State {
-  return State { w: inlines.work(), open: false, tight: [0], depth: 1 };
+function start(o: Options): State {
+  return State { w: inlines.work(inline_flags(o)), open: false, tight: [0], depth: 1, o: o };
+}
+
+// Writes the attribute `data-sourcepos` of the record `r` when the option
+// `sourcepos` is set, in the start tag `text` of the record `r`. The
+// attribute goes before the byte `at` of the tag.
+@inline
+function tag(out: usize, d: blocks.Doc, r: i32, s: State, text: string, at: i32): void {
+  if (!s.o.sourcepos) {
+    buf_push(out, text);
+    return;
+  }
+  let (sl, sc, el, ec) = d.span_of(r);
+  buf_push_range(out, text, 0, at);
+  buf_push(out, " data-sourcepos=\"" + sl.to_string() + ":" + sc.to_string() + "-" + el.to_string() + ":" + ec.to_string() + "\"");
+  buf_push_range(out, text, at, text.len());
 }
 
 // Writes the record `r`.
@@ -68,7 +205,7 @@ function step(out: usize, d: blocks.Doc, r: i32, s: State): State {
     let digit = 48 + d.value(r);
     buf_push(out, "<h");
     buf_push_byte(out, digit);
-    buf_push_byte(out, 62);
+    tag(out, d, r, s, ">", 0);
     let w = inlines.render(out, d, d.from(r), d.to(r), s.w);
     buf_push(out, "</h");
     buf_push_byte(out, digit);
@@ -76,11 +213,14 @@ function step(out: usize, d: blocks.Doc, r: i32, s: State): State {
     return State { ...s, w: w, open: false };
   }
   if (k == blocks.CODE) {
-    code(out, d, r, s.w.t);
-  } else if (k == blocks.HTML) {
+    code(out, d, r, s);
+  } else if (k == blocks.HTML && s.o.unsafe_html) {
     lines(out, d, d.from(r), d.to(r));
+  } else if (k == blocks.HTML) {
+    buf_push(out, inlines.OMITTED);
+    buf_push_byte(out, 10);
   } else if (k == blocks.RULE) {
-    buf_push(out, "<hr />\n");
+    tag(out, d, r, s, "<hr />\n", 3);
   } else {
     return enter(out, d, r, k, s);
   }
@@ -90,17 +230,17 @@ function step(out: usize, d: blocks.Doc, r: i32, s: State): State {
 // Writes the start of a container.
 function enter(out: usize, d: blocks.Doc, r: i32, k: i32, s: State): State {
   if (k == blocks.QUOTE) {
-    buf_push(out, "<blockquote>\n");
+    tag(out, d, r, s, "<blockquote>\n", 11);
     return push(s, 0, false);
   }
   if (k == blocks.LIST) {
-    list_start(out, d, r);
+    list_start(out, d, r, s);
     if (d.has_flag(r, blocks.F_TIGHT)) {
       return push(s, 1, false);
     }
     return push(s, 0, false);
   }
-  buf_push(out, "<li>");
+  tag(out, d, r, s, "<li>", 3);
   return push(s, s.tight[s.depth - 1], true);
 }
 
@@ -136,14 +276,15 @@ function leave(out: usize, d: blocks.Doc, r: i32, s: State): State {
   return State { ...s, open: false, depth: s.depth - 1 };
 }
 
-function list_start(out: usize, d: blocks.Doc, r: i32): void {
+function list_start(out: usize, d: blocks.Doc, r: i32, s: State): void {
   let start = d.value(r);
   if (!d.has_flag(r, blocks.F_ORDERED)) {
-    buf_push(out, "<ul>\n");
+    tag(out, d, r, s, "<ul>\n", 3);
   } else if (start == 1) {
-    buf_push(out, "<ol>\n");
+    tag(out, d, r, s, "<ol>\n", 3);
   } else {
-    buf_push(out, "<ol start=\"" + start.to_string() + "\">\n");
+    let text = "<ol start=\"" + start.to_string() + "\">\n";
+    tag(out, d, r, s, text, text.len() - 2);
   }
 }
 
@@ -158,7 +299,7 @@ function paragraph(out: usize, d: blocks.Doc, r: i32, s: State): State {
     return State { ...s, w: w, open: s.open || buf_len(out) > before };
   }
   cr(out, s.open);
-  buf_push(out, "<p>");
+  tag(out, d, r, s, "<p>", 2);
   let w = inlines.render(out, d, from, to, s.w);
   buf_push(out, "</p>\n");
   return State { ...s, w: w, open: false };
@@ -176,21 +317,21 @@ function lines(out: usize, d: blocks.Doc, from: i32, to: i32): void {
   }
 }
 
-function code(out: usize, d: blocks.Doc, r: i32, t: inlines.Tables): void {
+function code(out: usize, d: blocks.Doc, r: i32, st: State): void {
+  let t = st.w.t;
   let from = d.from(r);
   let to = d.to(r);
+  let lang = "";
   if (d.has_flag(r, blocks.F_FENCED)) {
-    let lang = info_word(d, from, t);
+    lang = info_word(d, from, t);
     from += 1;
-    if (lang.len() > 0) {
-      buf_push(out, "<pre><code class=\"language-");
-      inlines.escape(out, lang, 0, lang.len(), t);
-      buf_push(out, "\">");
-    } else {
-      buf_push(out, "<pre><code>");
-    }
+  }
+  if (lang.len() > 0) {
+    tag(out, d, r, st, "<pre><code class=\"language-", 4);
+    inlines.escape(out, lang, 0, lang.len(), t);
+    buf_push(out, "\">");
   } else {
-    buf_push(out, "<pre><code>");
+    tag(out, d, r, st, "<pre><code>", 4);
   }
   for k in from..to {
     let s = d.segs[k];
@@ -204,9 +345,21 @@ function code(out: usize, d: blocks.Doc, r: i32, t: inlines.Tables): void {
 }
 
 // The first word of the info string of a fenced code block, which is on the
-// line `k`. As in cmark, the entity references go before the whitespace at
-// each end, and the backslash escapes after it.
+// line `k`.
 function info_word(d: blocks.Doc, k: i32, t: inlines.Tables): string {
+  let info = info_string(d, k, t);
+  let e = 0;
+  while (e < info.len() && !is_space(info[e] as i32)) {
+    e += 1;
+  }
+  return slice_unchecked(info, 0, e).to_owned();
+}
+
+// The info string of a fenced code block, which is on the line `k`. As in
+// cmark, the entity references go before the whitespace at each end, and
+// the backslash escapes after it.
+@inline
+pub function info_string(d: blocks.Doc, k: i32, t: inlines.Tables): string {
   let raw = inlines.decode(d.src, blocks.seg_start(d.segs[k]), blocks.seg_end(d.segs[k]), t);
   let a = 0;
   let b = raw.len();
@@ -216,12 +369,7 @@ function info_word(d: blocks.Doc, k: i32, t: inlines.Tables): string {
   while (b > a && is_space(raw[b - 1] as i32)) {
     b -= 1;
   }
-  let info = inlines.unescape(slice_unchecked(raw, a, b));
-  let e = 0;
-  while (e < info.len() && !is_space(info[e] as i32)) {
-    e += 1;
-  }
-  return slice_unchecked(info, 0, e).to_owned();
+  return inlines.unescape(slice_unchecked(raw, a, b));
 }
 
 function is_space(c: i32): boolean {

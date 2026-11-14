@@ -44,6 +44,9 @@ pub const F_FENCED: i32 = 32;
 
 pub const F_ORDERED: i32 = 64;
 
+// An ordered list whose markers end with `)`.
+pub const F_PAREN: i32 = 1024;
+
 // The flags of an open block. F_BLANK is true when the block ends with a
 // blank line. F_PARA is true for a block that starts as a paragraph.
 const F_BLANK: i32 = 128;
@@ -57,6 +60,7 @@ const F_PARA: i32 = 512;
 // the level of a heading too. S_B is the start number of a list or the
 // length of a code fence. S_C is the column of a list marker or the indent
 // of a code fence. S_D is the width of a list marker and the spaces after it.
+// S_COL is the byte where the block starts.
 const S_KIND: i32 = 0;
 
 const S_FLAGS: i32 = 1;
@@ -81,6 +85,8 @@ const S_LOG: i32 = 8;
 // child, its last block gives the answer, and L_DEEP_BLANK holds it.
 const S_LAST: i32 = 9;
 
+const S_COL: i32 = 10;
+
 const SS: i32 = 16;
 
 const L_BLANK: i32 = 1;
@@ -96,7 +102,15 @@ const L_DEEP_BLANK: i32 = 4;
 // the first segment of a leaf block, and from bit 32 the segment after its
 // last one. A segment is the start and the end of a line in `src`. It holds
 // the spaces that a partly used tab gives at the start of the line too.
-pub struct Doc { src: string, log: i64[], segs: i64[], refs: Map[string, refs.Ref] }
+//
+// `pos` is empty unless the parse keeps source positions. Then it has
+// POS_FIELDS entries for each record: the line and the column where the
+// block starts, the line and the column where it ends, and the column
+// before the first byte of its inline text. `lines` is the number of lines,
+// and `last` is the length of the last line.
+pub struct Doc { src: string, log: i64[], segs: i64[], refs: Map[string, refs.Ref], pos: i32[], lines: i32, last: i32 }
+
+pub const POS_FIELDS: i32 = 5;
 
 // The number of records.
 pub function (d: Doc) count(): i32 {
@@ -156,7 +170,15 @@ function span(from: i32, to: i32): i64 {
   return from as i64 | to as i64 << 32i64;
 }
 
-struct P { log: i64[], segs: i64[], nseg: i32, st: i32[], depth: i32, refs: Map[string, refs.Ref] }
+// What the parse keeps that most lines do not change: the link reference
+// definitions, and whether it keeps positions. `line` is the number of the
+// line that the parser reads, and `ls` is where it starts in the source.
+// `cur` is its length, and `prev` is the length of the line before it. `end`
+// is true after the last line.
+struct Kept { refs: Map[string, refs.Ref], on: boolean, line: i32, ls: i32, cur: i32, prev: i32, end: boolean }
+
+// `pos` holds the positions of the records, as Doc does.
+struct P { log: i64[], segs: i64[], nseg: i32, st: i32[], depth: i32, pos: i32[], kept: Kept }
 
 @inline
 function sget(p: P, d: i32, field: i32): i32 {
@@ -357,8 +379,85 @@ function close_top(p0: P, src: string): P {
   if (has_flag(p, d, F_PARA)) {
     p = check_loose(p, d - 1, sget(p, d - 1, S_LAST));
   }
+  if (p.kept.on) {
+    p = place(p, src, d, k);
+  }
   p = write_record(p, src, d, k);
   return sset(p, d - 1, S_LAST, last_info(p, d, k));
+}
+
+// Keeps the positions of the block at `d`, which closes. As in cmark, the
+// block ends at the end of the line before the line that closes it. A
+// fenced code block and a setext heading end at the end of that line, and
+// each block ends at the end of the last line when the source ends.
+function place(p: P, src: string, d: i32, k: i32): P {
+  let line = p.kept.line;
+  let el = line - 1;
+  let ec = p.kept.prev;
+  if (p.kept.end) {
+    el = line;
+  } else if (has_flag(p, d, F_FENCED) || k == HEADING && atx_width(src, sget(p, d, S_COL)) == 0) {
+    el = line;
+    ec = p.kept.cur;
+  }
+  let r = p.log.len() / 2;
+  if (k == QUOTE || k == LIST || k == ITEM) {
+    r = sget(p, d, S_LOG) / 2;
+  }
+  let sc = column(src, sget(p, d, S_COL));
+  let off = sc - 1;
+  if (k == HEADING) {
+    off += atx_width(src, sget(p, d, S_COL));
+  }
+  let sl = sget(p, d, S_LINE);
+  return P { ...p, pos: record(p.pos, r, sl, sc, el, ec, off) };
+}
+
+// The positions with the row `r` set to the start line `sl`, the start
+// column `sc`, the end line `el`, the end column `ec` and the column `off`
+// before the inline text.
+function record(rec0: i32[], r: i32, sl: i32, sc: i32, el: i32, ec: i32, off: i32): i32[] {
+  let rec = rec0;
+  while (rec.len() < (r + 1) * POS_FIELDS) {
+    rec = rec.append(0);
+  }
+  let i = r * POS_FIELDS;
+  return rec.with(i, sl).with(i + 1, sc).with(i + 2, el).with(i + 3, ec).with(i + 4, off);
+}
+
+// The column of the byte `i`: 1 for the first byte of its line. As in
+// cmark, the first line starts after a byte order mark.
+function column(src: string, i: i32): i32 {
+  let j = i;
+  while (j > 0 && src[j - 1] != b'\n' && src[j - 1] != b'\r') {
+    j -= 1;
+  }
+  if (j == 0) {
+    j = bom_length(src);
+  }
+  return i - j + 1;
+}
+
+// The width of the `#` marks of an ATX heading at `i` and of the spaces
+// after them, or 0 for a setext heading. The first line of a setext heading
+// cannot start an ATX heading.
+function atx_width(src: string, i: i32): i32 {
+  let le = i;
+  while (le < src.len() && src[le] != b'\n' && src[le] != b'\r') {
+    le += 1;
+  }
+  if (le == i || src[i] != b'#') {
+    return 0;
+  }
+  return atx_start(src, le, i);
+}
+
+// Starts to keep the positions of the line `line`, which is `src[ls:le]`.
+// The line before it keeps its length in `prev`. The positions are not in
+// the loop over the lines, so that the parser of a line is in the loop.
+@noinline
+function next_line(p: P, line: i32, ls: i32, le: i32): P {
+  return P { ...p, kept: Kept { ...p.kept, prev: p.kept.cur, line: line, ls: ls, cur: le - ls } };
 }
 
 // Writes the record of the block at `d`, which closes.
@@ -396,6 +495,9 @@ function write_code(p: P, src: string, d: i32, from: i32, end: i32): P {
 // where it starts, and an END record.
 function write_list(p: P, d: i32): P {
   let flags = sget(p, d, S_FLAGS) & F_ORDERED;
+  if (sget(p, d, S_A) == 41) {
+    flags |= F_PAREN;
+  }
   let kind = flags | LIST;
   if (!has_flag(p, d, F_LOOSE)) {
     kind |= F_TIGHT;
@@ -406,8 +508,9 @@ function write_list(p: P, d: i32): P {
 
 // Adds a new block of `k` as the last child of the open block at `depth`, or
 // of the nearest open block above it that can hold it. Each open block below
-// the parent closes. The new block is the deepest open block.
-function add_child(p0: P, src: string, depth: i32, k: i32, line: i32): P {
+// the parent closes. The new block is the deepest open block. It starts at
+// the byte `start` of the line.
+function add_child(p0: P, src: string, depth: i32, k: i32, line: i32, start: i32): P {
   let p = close_below(p0, src, depth);
   while (!can_contain(skind(p, p.depth - 1), k)) {
     p = close_top(p, src);
@@ -429,7 +532,8 @@ function add_child(p0: P, src: string, depth: i32, k: i32, line: i32): P {
     p = P { ...p, log: p.log.append(head(k, 0)).append(0i64) };
   }
   let from = p.nseg;
-  return P { ...p, st: p.st.with(at + S_KIND, k).with(at + S_FLAGS, flags).with(at + S_LINE, line).with(at + S_FROM, from).with(at + S_LOG, r).with(at + S_LAST, NONE), depth: d + 1 };
+  let st = p.st.with(at + S_KIND, k).with(at + S_FLAGS, flags).with(at + S_LINE, line).with(at + S_FROM, from).with(at + S_LOG, r).with(at + S_LAST, NONE);
+  return P { ...p, st: st.with(at + S_COL, start), depth: d + 1 };
 }
 
 // The stack with room for one more open block.
@@ -494,7 +598,7 @@ function take_defs(p: P, src: string, d: i32): (P, boolean) {
   if (seg_pad(first) > 0 || src[seg_start(first)] != b'[') {
     return (p, true);
   }
-  let (end, found) = read_defs(src, p.segs, from, to, p.refs);
+  let (end, found) = read_defs(src, p.segs, from, to, p.kept.refs);
   let k = from;
   let pos = 0;
   while (pos < end) {
@@ -502,7 +606,7 @@ function take_defs(p: P, src: string, d: i32): (P, boolean) {
     pos += seg_pad(s) + seg_end(s) - seg_start(s) + 1;
     k += 1;
   }
-  let q = sset(P { ...p, refs: found }, d, S_FROM, k);
+  let q = sset(P { ...p, kept: Kept { ...p.kept, refs: found } }, d, S_FROM, k);
   return (q, k < to);
 }
 
@@ -558,6 +662,7 @@ function opening_fence(src: string, le: i32, i: i32): i32 {
 
 // The length of the start of an ATX heading at `i`: one to six `#`, then
 // spaces and tabs or the end of the line. Gives 0 when there is none.
+@inline
 function atx_start(src: string, le: i32, i: i32): i32 {
   let j = i;
   while (at(src, le, j) == 35 && j - i < 7) {
@@ -623,11 +728,7 @@ function is_rule(src: string, le: i32, i: i32): boolean {
 // The end of the text of an ATX heading: the line without a closing
 // sequence of `#` and without the spaces at its end.
 function atx_text_end(src: string, start: i32, le: i32): i32 {
-  let e = rtrim(src, start, le);
-  let k = e - 1;
-  while (k >= start && src[k] == b'#') {
-    k -= 1;
-  }
+  let (e, k) = trailing_hashes(src, start, le);
   if (k != e - 1 && k >= start && is_space_or_tab(src[k] as i32)) {
     return rtrim(src, start, k);
   }
@@ -635,6 +736,30 @@ function atx_text_end(src: string, start: i32, le: i32): i32 {
     return start;
   }
   return e;
+}
+
+// The end of the line `src[ls:le]` of an ATX heading without the spaces at
+// its end, and without a closing sequence of `#` after a space or a tab.
+// cmark takes the length of the line from this end. Unlike the text of the
+// heading, a line of only `#` keeps them.
+function chopped_end(src: string, ls: i32, le: i32): i32 {
+  let (e, k) = trailing_hashes(src, ls, le);
+  if (k != e - 1 && k >= ls && is_space_or_tab(src[k] as i32)) {
+    return rtrim(src, ls, k);
+  }
+  return e;
+}
+
+// The end of `src[start:end]` without the spaces at its end, and the index
+// before the `#` marks at the end of that text.
+@inline
+function trailing_hashes(src: string, start: i32, end: i32): (i32, i32) {
+  let e = rtrim(src, start, end);
+  let k = e - 1;
+  while (k >= start && src[k] == b'#') {
+    k -= 1;
+  }
+  return (e, k);
 }
 
 function rtrim(src: string, start: i32, end: i32): i32 {
@@ -645,7 +770,9 @@ function rtrim(src: string, start: i32, end: i32): i32 {
   return e;
 }
 
-pub function parse(source: string): Doc {
+// The document `source`, with the source positions of its blocks when
+// `positions` is true.
+pub function parse(source: string, positions: boolean): Doc {
   let src = without_nul(source);
   let n = src.len();
   let ends = __alloc_u8(14).with(10, 1 as u8).with(13, 1 as u8);
@@ -656,22 +783,40 @@ pub function parse(source: string): Doc {
     lines += __count_byte(src, 13);
   }
   let st: i32[] = __alloc_i32(SS * 8).with(S_LAST, NONE);
-  let p = P { log: [], segs: __alloc_i64(lines), nseg: 0, st: st, depth: 1, refs: Map { } };
+  let kept = Kept { refs: Map { }, on: positions, line: 0, ls: 0, cur: 0, prev: 0, end: false };
+  let p = P { log: [], segs: __alloc_i64(lines), nseg: 0, st: st, depth: 1, pos: [], kept: kept };
   let pos = bom_length(src);
   let line = 0;
   while (pos < n) {
     let le = line_end(src, pos, ends);
     line += 1;
+    if (positions) {
+      p = next_line(p, line, pos, le);
+    }
     p = process_line(p, src, pos, le, line);
     pos = le + 1;
     if (le + 1 < n && src[le] == b'\r' && src[le + 1] == b'\n') {
       pos += 1;
     }
   }
+  p = P { ...p, kept: Kept { ...p.kept, prev: p.kept.cur, end: true } };
   while (p.depth > 1) {
     p = close_top(p, src);
   }
-  return Doc { src: src, log: p.log, segs: p.segs, refs: p.refs };
+  return Doc { src: src, log: p.log, segs: p.segs, refs: p.kept.refs, pos: p.pos, lines: line, last: p.kept.prev };
+}
+
+// The line and the column where the record `r` starts, and where it ends.
+pub function (d: Doc) span_of(r: i32): (i32, i32, i32, i32) {
+  let i = r * POS_FIELDS;
+  return (d.pos[i], d.pos[i + 1], d.pos[i + 2], d.pos[i + 3]);
+}
+
+// The line where the inline text of the record `r` starts, and the column
+// before its first byte.
+pub function (d: Doc) text_base(r: i32): (i32, i32) {
+  let i = r * POS_FIELDS;
+  return (d.pos[i], d.pos[i + 4]);
 }
 
 // 3 when the source starts with a UTF-8 byte order mark, and 0 otherwise.
@@ -892,13 +1037,13 @@ function open_block(p: P, src: string, le: i32, line: i32, cd: i32, all: boolean
   let indent = fnscol - col;
   if (indent >= 4) {
     let (o, c, t) = advance(src, le, off, col, partial, 4, true);
-    return (add_child(p, src, cd, CODE, line), true, o, c, t);
+    return (add_child(p, src, cd, CODE, line, o), true, o, c, t);
   }
   let c = at(src, le, fns);
   if (c == 62) {
     let (o, c1, t) = advance(src, le, off, col, partial, fns + 1 - off, false);
     let (o2, c2, t2) = after_quote_marker(src, le, o, c1, t);
-    return (add_child(p, src, cd, QUOTE, line), true, o2, c2, t2);
+    return (add_child(p, src, cd, QUOTE, line, fns), true, o2, c2, t2);
   }
   let ck = skind(p, cd);
   if (c == 35 || c == 96 || c == 126 || c == 60) {
@@ -923,7 +1068,7 @@ function open_line_block(p: P, src: string, le: i32, line: i32, cd: i32, all: bo
   }
   if (!(ck == PARAGRAPH && !all) && is_rule(src, le, fns)) {
     let (o, c1, t) = advance(src, le, off, col, partial, le - off, false);
-    return (add_child(p, src, cd, RULE, line), true, o, c1, t);
+    return (add_child(p, src, cd, RULE, line, fns), true, o, c1, t);
   }
   return open_item(p, src, le, line, cd, c, ck, fns, indent, off, col, partial);
 }
@@ -938,7 +1083,7 @@ function open_leaf(p: P, src: string, le: i32, line: i32, cd: i32, c: i32, fns: 
       while (at(src, le, fns + level) == 35) {
         level += 1;
       }
-      let q = add_child(p, src, cd, HEADING, line);
+      let q = add_child(p, src, cd, HEADING, line, fns);
       let (o, c1, t) = advance(src, le, off, col, partial, fns + len - off, false);
       return (sset(q, q.depth - 1, S_A, level), true, o, c1, t);
     }
@@ -946,7 +1091,7 @@ function open_leaf(p: P, src: string, le: i32, line: i32, cd: i32, c: i32, fns: 
   if (c == 96 || c == 126) {
     let len = opening_fence(src, le, fns);
     if (len > 0) {
-      let q = add_child(p, src, cd, CODE, line);
+      let q = add_child(p, src, cd, CODE, line, fns);
       let d = q.depth - 1;
       q = set_flag(sset(sset(sset(q, d, S_A, c), d, S_B, len), d, S_C, fns - off), d, F_FENCED, true);
       let (o, c1, t) = advance(src, le, off, col, partial, fns + len - off, false);
@@ -956,7 +1101,7 @@ function open_leaf(p: P, src: string, le: i32, line: i32, cd: i32, c: i32, fns: 
   if (c == 60) {
     let hk = tags.block_start(src, fns, le, in_paragraph);
     if (hk > 0) {
-      let q = add_child(p, src, cd, HTML, line);
+      let q = add_child(p, src, cd, HTML, line, fns);
       return (sset(q, q.depth - 1, S_A, hk), true, off, col, partial);
     }
   }
@@ -989,11 +1134,11 @@ function open_item(p: P, src: string, le: i32, line: i32, cd: i32, c: i32, ck: i
   let depth = cd;
   let same = skind(q, cd) == LIST && has_flag(q, cd, F_ORDERED) == ordered && sget(q, cd, S_A) == mark;
   if (!same) {
-    q = add_child(q, src, cd, LIST, line);
+    q = add_child(q, src, cd, LIST, line, fns);
     depth = q.depth - 1;
     q = set_flag(sset(sset(q, depth, S_A, mark), depth, S_B, start), depth, F_ORDERED, ordered);
   }
-  q = add_child(q, src, depth, ITEM, line);
+  q = add_child(q, src, depth, ITEM, line, fns);
   let item = q.depth - 1;
   return (sset(sset(q, item, S_C, indent), item, S_D, width), true, o, c1, t);
 }
@@ -1080,9 +1225,12 @@ function add_text(p0: P, src: string, le: i32, line: i32, cd: i32, matched: i32,
     return add_line(p, fns, fnscol, t, le);
   }
   if (ck == HEADING) {
+    if (p.kept.on) {
+      p = P { ...p, kept: Kept { ...p.kept, cur: chopped_end(src, p.kept.ls, le) - p.kept.ls } };
+    }
     return add_line(p, fns, fnscol, t, atx_text_end(src, fns, le));
   }
-  return add_line(add_child(p, src, cd, PARAGRAPH, line), fns, fnscol, t, le);
+  return add_line(add_child(p, src, cd, PARAGRAPH, line, fns), fns, fnscol, t, le);
 }
 
 // True for a lazy continuation line: a line of text that does not continue
