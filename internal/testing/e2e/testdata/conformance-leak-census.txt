@@ -1,3 +1,5 @@
+# 2026-11-14: type_args_trailing_comma has no allocations on x86-64.
+# 2026-11-14: type_args_trailing_comma frees all four traced allocations on x86-64.
 # 2026-11-14: bigint_word_index_out_of_range, continue_in_a_value_block_steps_the_range,
 # defer_runs_for_a_return_in_a_value_branch and type_args_trailing_comma have balanced allocations on x86-64.
 # 2026-11-14: own_local_moved_into_exit has balanced allocations on x86-64.
@@ -760,6 +762,7 @@ multi_hop_alias                                      0
 multiline_stdin                                      0
 must_consume_destructure_in_one_arm_moves            0
 must_consume_destructure_of_a_moved_payload          0
+must_consume_in_a_loop_that_always_runs              0
 must_consume_in_if_condition                         0
 must_consume_in_match_tag                            0
 must_consume_method_receiver                         0

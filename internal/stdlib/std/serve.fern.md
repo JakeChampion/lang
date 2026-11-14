@@ -2821,7 +2821,7 @@ function __h2_producer_wake[D: async.Driver](drv: D, c: __Conns, fls: __Flights,
   let at = __conns_index(c, fl.fd);
   let pi = __producer_at(c, fl.fd, fl.stream);
   if (at < 0 || pi < 0) {
-    let gone = async.task_resume(t, async.Wake.Cancelled);
+    async.task_cancel(t);
     return (c, fls);
   }
   match (c.framing[at]) {
@@ -2843,7 +2843,7 @@ function __h2_producer_wake[D: async.Driver](drv: D, c: __Conns, fls: __Flights,
     },
     _ => {}
   }
-  let dropped = async.task_resume(t, async.Wake.Cancelled);
+  async.task_cancel(t);
   return (c, fls);
 }
 
@@ -4310,7 +4310,7 @@ function __flight_wake[D: async.Driver](drv: D, own c: __Conns, own fls: __Fligh
         return __h2_producer_wake(drv, c, fls, fl, t, wake, opts);
       }
       if (__conns_index(c, fl.fd) < 0) {
-        let gone = async.task_resume(t, async.Wake.Cancelled);
+        async.task_cancel(t);
         return (c, fls);
       }
       match (async.task_resume(t, wake)) {
@@ -4480,13 +4480,13 @@ function __flight_cancel[D: async.Driver](drv: D, fl: __Flight): void {
   __flight_unwatch(drv, fl, -1);
   match (fl.job) {
     Handler(call) => {
-      let st = async.call_resume(call, async.Wake.Cancelled);
+      async.call_cancel(call);
     },
     Producer(t) => {
-      let st = async.task_resume(t, async.Wake.Cancelled);
+      async.task_cancel(t);
     },
     Background(t) => {
-      let st = async.task_resume(t, async.Wake.Cancelled);
+      async.task_cancel(t);
     }
   }
 }
@@ -6615,7 +6615,7 @@ function __h3_more[D: async.Driver](drv: D, c: __Conns, fls: __Flights, serial: 
 function __h3_producer_wake[D: async.Driver](drv: D, own c: __Conns, fls: __Flights, fl: __Flight, t: async.Task[Option[u8[]]], wake: async.Wake): (__Conns, __Flights) {
   let k: i32 = __h3_producer_at(c.quic, fl.quic, fl.stream as i64);
   if (k < 0) {
-    let gone: async.TaskStatus[Option[u8[]]] = async.task_resume(t, async.Wake.Cancelled);
+    async.task_cancel(t);
     return (c, fls);
   }
   match (async.task_resume(t, wake)) {

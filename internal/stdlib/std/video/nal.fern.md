@@ -15,6 +15,9 @@ It preserves prefix and suffix SEI arrays after the parameter sets.
 Other HEVC configuration array types return `Unsupported`.
 
 The functions validate framing and parameter-set NAL types.
+HEVC VPS and SPS headers require temporal identifier zero. PPS and SEI headers retain temporal identifiers zero through six.
+These header rules follow ITU-T H.265 (July 2024), clause 7.4.2.2.
+
 They do not validate the coded parameter-set syntax or establish decoder support.
 Length sizes one, two, and four are supported. Three is reserved.
 Limits apply to the complete input record and the combined output buffers.
@@ -181,7 +184,11 @@ function unit_kind_ok(input: [u8], pos: i32, nal_type: i32, hevc: boolean): bool
   if (kind != nal_type) {
     return false;
   }
-  return !hevc || (input[pos + 1] & 7u8) != 0u8;
+  if (!hevc) {
+    return true;
+  }
+  let temporal = input[pos + 1] & 7u8;
+  return temporal != 0u8 && (nal_type >= 34 || temporal == 1u8);
 }
 
 function read_units(input: [u8], at: i32, count: i32, nal_type: i32, hevc: boolean, own output: u8[], budget: i32): Result[Units, frame.VideoError] {

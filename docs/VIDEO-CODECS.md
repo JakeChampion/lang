@@ -303,6 +303,9 @@ HEVC includes VPS, SPS, PPS, and prefix or suffix SEI arrays.
 The conversion preserves NAL payload bytes. It does not validate their coded syntax.
 Other HEVC configuration array types return `Unsupported`.
 
+VPS and SPS configuration headers require temporal identifier zero. PPS and SEI retain temporal identifiers zero through six.
+This header check follows ITU-T H.265 (July 2024), clause 7.4.2.2.
+
 ```fern
 import "std/video/frame";
 import "std/video/nal";
@@ -583,8 +586,12 @@ Fern decodes each packet to the expected ARGB CRC.
 FFmpeg also decodes twenty-four Fern packets with exact equality to the original ARGB bytes.
 AVC and HEVC configuration and packet conversions preserve FFmpeg decoded pixels in two additional streams.
 
-`scripts/check-video-annex-b-interop` creates five fresh AVC and HEVC streams, including 10-bit profiles.
+`scripts/check-video-annex-b-interop` creates six fresh AVC and HEVC streams, including 10-bit profiles and a long AVC stream.
 Native and WASI ranges match an independent parser. Converted streams retain identical decoded 8-bit or 10-bit YUV planes in FFmpeg.
+
+It also extracts fresh HEVC Main and Main 10 configuration records from FFmpeg MP4 output.
+Forty-eight native and WASI controls check their VPS, SPS, and PPS temporal headers against clause 7.4.2.2.
+CBS traces those headers separately from specification-based refusal decisions. Reconstructed configuration prefixes preserve every decoded plane.
 
 `scripts/check-video-qtrle-mov-interop` compares five fresh MOV files with FFprobe and FFmpeg.
 Native and real WASI input preserve every packet field and decoded ARGB sample.
