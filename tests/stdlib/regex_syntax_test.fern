@@ -320,6 +320,18 @@ function test_full_and_lazy_tables(): test.TestOutcome {
   return test.assert_eq(out.join(" | "), "0-3,4-7,13-15 n=3 | 4-6,13-15 n=2 | 0-3,4-8,9-12,13-16,17-20,21-23 n=6 | 22-23 n=1");
 }
 
+// `\d` of Unicode gives many columns. The instructions times the columns are
+// more than a fill can cost on each compile, so the tables stay lazy.
+function test_many_columns_stay_lazy(): test.TestOutcome {
+  let Ok(re) = regex.compile("x(\\d{2,3})y") else {
+    return test.fail("compile");
+  };
+  if (re.full.len() != 0 || re.rfull.len() != 0) {
+    return test.fail("a full table for many columns");
+  }
+  return test.assert_eq(spans_of(re, "x123y x45y x6y x١٢y"), "0-5,6-10,15-21 n=3");
+}
+
 function main(): i32 {
   let r = test.new("std/regex syntax");
   r = r.it("dot is a character", test_dot_is_a_character);
@@ -351,5 +363,6 @@ function main(): i32 {
   r = r.it("captures at an offset", test_captures_at);
   r = r.it("bytes a match can hold", test_can_match_byte);
   r = r.it("full and lazy tables", test_full_and_lazy_tables);
+  r = r.it("many columns stay lazy", test_many_columns_stay_lazy);
   return r.finish();
 }
