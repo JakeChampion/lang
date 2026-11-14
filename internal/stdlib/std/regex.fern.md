@@ -43,6 +43,8 @@ Unicode is on at the start. `\w`, `\d`, `\s`, `\b` and the classes then match ch
 
 Search and complete-match operations have different purposes. Compilation returns a typed error for invalid patterns. Text output methods report invalid UTF-8 through a typed error. Byte output methods preserve raw bytes.
 
+A template of `replace_groups`, its peers and `expand_bytes` reads `$n`, `$name`, `${n}`, `${name}` and `$$` as the `regex` crate does. A name is the longest run of letters, digits and `_`, so `$1a` is the group `1a`. A group that did not match gives no text.
+
 `next_candidate` gives the first offset at or after a byte offset where a match can start, or -1. A caller can skip the text before that offset.
 
 `find_at` starts a search at a byte offset. Its assertions examine the full text, so `^` matches only at offset 0. `\b{start}` and `\b{end}` match at the start and at the end of a word. `\b{start-half}` matches where no word character comes before, and `\b{end-half}` matches where no word character comes after.
@@ -2385,27 +2387,46 @@ function __rx_caps_wrap(caps: i32[], text: string, ngroups: i32, names: string[]
 
 ```fern
 <<32 function __rx_template_ref(tmpl: string, i: i32, c: RCaps): (i32, i32)>>=
+// The group of the reference at the `$` at `i` of a template, and the
+// offset after the reference, as the `regex` crate reads it: `$$`, `${name}`,
+// or `$` and the longest run of letters, digits and `_`. A name of digits
+// is a number. The group is -2 for `$$`, and -1 for a group that the
+// expression does not have. A `$` before anything else is no reference,
+// and the offset stays `i`.
 function __rx_template_ref(tmpl: string, i: i32, c: Captures): (i32, i32) {
-  if (i + 1 >= tmpl.len()) {
-    return (-1, i);
-  }
-  let d = tmpl[i + 1] as i32;
-  if (d == 36) {
+  if (i + 1 < tmpl.len() && tmpl[i + 1] == 36) {
     return (-2, i + 2);
   }
-  if (d >= 48 && d <= 57) {
-    return (d - 48, i + 2);
-  }
-  if (d == 123) {
-    let ne = i + 2;
-    while (ne < tmpl.len() && tmpl[ne] != 125) {
-      ne += 1;
+  let lo = i + 1;
+  let hi = lo;
+  let end = lo;
+  if (lo < tmpl.len() && tmpl[lo] == 123) {
+    lo += 1;
+    hi = __memchr(tmpl, 125, lo);
+    end = hi + 1;
+  } else {
+    while (hi < tmpl.len() && (__rx_is_word(tmpl[hi] as i32))) {
+      hi += 1;
     }
-    if (ne < tmpl.len()) {
-      return (__rx_named_index(c, slice_unchecked(tmpl, i + 2, ne) + ""), ne + 1);
-    }
+    end = hi;
   }
-  return (-1, i);
+  if (hi <= lo) {
+    return (-1, i);
+  }
+  return (__rx_group_ref(c, slice_unchecked(tmpl, lo, hi) + ""), end);
+}
+
+// The group of a name in a template: a number, or the name of a group.
+function __rx_group_ref(c: Captures, name: string): i32 {
+  let n = 0;
+  for k in 0..name.len() {
+    let d = name[k] as i32 - 48;
+    if (d < 0 || d > 9 || n > c.starts.len()) {
+      return __rx_named_index(c, name);
+    }
+    n = n * 10 + d;
+  }
+  return n;
 }
 
 function __rx_expand_into(h: usize, tmpl: string, c: Captures): void {
@@ -3297,6 +3318,24 @@ function __rx_text(bytes: u8[]): Result[string, TextError] {
 pub function (prog: Regex) captures(text: string): Option[Captures] {
   let caps = __rx_csearch_from(prog, text, 0);
   return __rx_caps_wrap(caps, text, prog.ngroups, prog.names);
+}
+
+// The captures of the first match that starts at or after `start`. The
+// assertions see the whole text, as for `find_at`.
+pub function (prog: Regex) captures_at(text: string, start: i32): Option[Captures] {
+  if (start > text.len()) {
+    return None;
+  }
+  let caps = __rx_csearch_from(prog, text, if (start < 0) { 0 } else { start });
+  return __rx_caps_wrap(caps, text, prog.ngroups, prog.names);
+}
+
+// `tmpl` with each reference to a group made the text of that group, as
+// `replace_groups` expands it. A group that did not match is empty.
+pub function (c: Captures) expand_bytes(tmpl: string): u8[] {
+  let h = buf_new(tmpl.len());
+  __rx_expand_into(h, tmpl, c);
+  return __rx_finish(h);
 }
 
 pub function (prog: Regex) captures_all(text: string): Captures[] {

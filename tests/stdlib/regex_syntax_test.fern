@@ -224,6 +224,52 @@ function test_dfa_table_limit(): test.TestOutcome {
   return test.assert_eq(m.start.to_string() + "-" + m.end.to_string() + " " + same.to_string(), "0-" + (last + 18).to_string() + " true");
 }
 
+// The expansion of `tmpl` with the captures of `pattern` on `text`.
+function expanded(pattern: string, text: string, tmpl: string): string {
+  let Ok(re) = regex.compile(pattern) else {
+    return "error";
+  };
+  let Some(c) = re.captures(text) else {
+    return "none";
+  };
+  return unsafe { string_from_bytes_unchecked(c.expand_bytes(tmpl)) };
+}
+
+function test_templates(): test.TestOutcome {
+  let p = "(?P<w>\\w+)-(\\d+)";
+  let got = [
+    expanded(p, "ab-12", "$1|$2|${w}|${2}|$$|$"), expanded(p, "ab-12", "$1a|$w0|${nope}|$9|$-"),
+    expanded(p, "ab-12", "${w"), expanded("(a)?b", "b", "[$1]"),
+  ];
+  return test.assert_eq(got.join(" / "), "ab|12|ab|12|$|$ / ||||$- / ${w / []");
+}
+
+function test_captures_at(): test.TestOutcome {
+  let Ok(re) = regex.compile("\\b(\\w)(\\w*)") else {
+    return test.fail("compile");
+  };
+  let parts: string[] = [];
+  let at = 0;
+  while (true) {
+    let Some(c) = re.captures_at("one two", at) else {
+      break;
+    };
+    let Ok(Some(first)) = c.group(1) else {
+      return test.fail("no group");
+    };
+    parts = parts.append(first);
+    at = match (c.group_end(0)) {
+      Some(e) => e,
+      None => 7,
+    };
+  }
+  let none = match (re.captures_at("one", 9)) {
+    Some(_) => "some",
+    None => "none",
+  };
+  return test.assert_eq(parts.join(",") + " " + none, "o,t none");
+}
+
 function main(): i32 {
   let r = test.new("std/regex syntax");
   r = r.it("dot is a character", test_dot_is_a_character);
@@ -251,5 +297,7 @@ function main(): i32 {
   r = r.it("bytes flag scope", test_bytes_flag_scope);
   r = r.it("Unicode captures", test_unicode_captures);
   r = r.it("DFA table limit", test_dfa_table_limit);
+  r = r.it("templates", test_templates);
+  r = r.it("captures at an offset", test_captures_at);
   return r.finish();
 }
