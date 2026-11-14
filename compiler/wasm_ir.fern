@@ -140,7 +140,7 @@ pub function need_ops(): string[] {
     "arr_push_owned_f64", "env", "environ", "eprint_str", "exit", "monotonic_ns", "now_ns", "now_unix_ms", "clock_resolution", "clock_set", "clone_file", "poll", "print_str", "putchar",
     "random_bytes", "read_chunk", "read_chunk_bytes", "fd_stat", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache",
     "fd_dup_onto", "reader_seek", "reader_splice", "reader_copy_range", "writer_splice_forever", "fd_flags", "writer_truncate", "writer_nonblocking", "writer_set_times", "read_dir", "read_dir_bytes",
-    "read_dir_all", "read_dir_ino", "read_dir_ino_all", "read_file", "read_file_bytes",
+    "read_dir_all", "read_dir_ino", "read_dir_ino_all", "read_file", "read_file_bytes", "map_file",
     "reader_close", "remove_dir_all", "remove_file", "create_dir_all", "create_dir",
     "remove_dir", "create_link", "create_symlink", "rename", "read_link", "read_link_bytes", "set_file_times",
     "truncate", "sleep_ms", "sleep_ns", "stat", "lstat", "str_bytes", "str_from_bytes", "str_from_bytes_range",
@@ -314,6 +314,9 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   }
   if (module_uses_scan_set(cache)) {
     out = out.append("@uses_scan_set");
+  }
+  if (any_op(cache, is_scan_masks)) {
+    out = out.append("@uses_scan_masks");
   }
   if (module_uses_count_runs(cache)) {
     out = out.append("@uses_count_runs");
@@ -667,6 +670,10 @@ pub function module_uses_count_byte(cache: irtables.LowerResult[]): boolean {
     return o.kind_tag == ir.K_COUNT_BYTE;
   }
   return any_op(cache, is_count_byte);
+}
+
+function is_scan_masks(o: ir.Op): boolean {
+  return o.kind_tag == ir.K_SCAN_MASKS;
 }
 
 pub function module_uses_scan_set(cache: irtables.LowerResult[]): boolean {
@@ -1612,7 +1619,7 @@ pub function component_refused_need(needs: string[], io: boolean, proxy: boolean
       i += 1;
       continue;
     }
-    if (io && (n == "read_file" || n == "read_file_bytes" || n == "write_file" || n == "write_file_bytes")) {
+    if (io && (n == "read_file" || n == "read_file_bytes" || n == "map_file" || n == "write_file" || n == "write_file_bytes")) {
       i += 1;
       continue;
     }
@@ -1971,7 +1978,7 @@ function need_stdin_p2(needs: string[]): boolean {
 }
 
 function need_read_file(needs: string[]): boolean {
-  return need(needs, "read_file") || need(needs, "read_file_bytes");
+  return need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "map_file");
 }
 
 function need_write_file(needs: string[]): boolean {
@@ -2650,8 +2657,14 @@ function no_preopen_p2(): string {
 }
 
 pub function readfile_func_p2(): string {
+  return readfile_named_p2("$__fern_read_file", true);
+}
+
+// The read of a file into a string. Without `checked` it does not check UTF-8,
+// as map_file_unchecked reads a file on wasm.
+function readfile_named_p2(name: string, checked: boolean): string {
   let o = "";
-  o += "  (func $__fern_read_file (param $np i32) (result i32)\n";
+  o += "  (func " + name + " (param $np i32) (result i32)\n";
   o += "    (local $ra i32) (local $fd i32) (local $strm i32) (local $buf i32) (local $off i32) (local $cp i32) (local $cl i32) (local $tmp i32) (local $cap i32) (local $grown i32) (local $failed i32)\n";
   o += "    (local.set $fd (call $__fern_preopen_p2))\n";
   o += no_preopen_p2();
@@ -2692,12 +2705,14 @@ pub function readfile_func_p2(): string {
   o += "    (call $__fern_raw_free (local.get $ra) (i32.const 32))\n";
   o += read_failed("(local.get $failed)", "$buf", "(i32.const 29)");
   o += "    (i32.store (local.get $buf) (local.get $off))\n";
-  o += "    (if (i32.eqz (call $__fern_utf8_valid (i32.add (local.get $buf) (i32.const 4)) (local.get $off))) (then\n";
-  o += "      (drop (call $__fern_arr_dec (local.get $buf)))\n";
-  o += "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
-  o += "      (i32.store (local.get $tmp) (i32.const 1))\n";
-  o += "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (i32.const 25) (call $__fern_rc_inc (local.get $np))))\n";
-  o += "      (return (local.get $tmp))))\n";
+  if (checked) {
+    o += "    (if (i32.eqz (call $__fern_utf8_valid (i32.add (local.get $buf) (i32.const 4)) (local.get $off))) (then\n";
+    o += "      (drop (call $__fern_arr_dec (local.get $buf)))\n";
+    o += "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
+    o += "      (i32.store (local.get $tmp) (i32.const 1))\n";
+    o += "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (i32.const 25) (call $__fern_rc_inc (local.get $np))))\n";
+    o += "      (return (local.get $tmp))))\n";
+  }
   o += "    (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
   o += "    (i32.store (local.get $tmp) (i32.const 0))\n";
   o += "    (i32.store (i32.add (local.get $tmp) (i32.const 4)) (local.get $buf))\n";
@@ -3023,6 +3038,9 @@ pub function component_io_shims(needs: string[], stderr: boolean, proxy: boolean
   }
   if (need(needs, "read_file")) {
     o += readfile_func_p2();
+  }
+  if (need(needs, "map_file")) {
+    o += readfile_named_p2("$__fern_map_file", false);
   }
   if (need(needs, "read_file_bytes")) {
     o += readfile_bytes_func_p2();
@@ -4322,7 +4340,7 @@ function is_host_op_kind(tag: i32): boolean {
     || tag == ir.K_OPEN_FILE || tag == ir.K_OPEN_READER_WITH || tag == ir.K_OPEN_WRITER_WITH || tag == ir.K_WRITER_WRITE || tag == ir.K_WRITE_SOME || tag == ir.K_ENV || tag == ir.K_STAT || tag == ir.K_LSTAT || tag == ir.K_REMOVE_FILE || tag == ir.K_CREATE_DIR_ALL
     || tag == ir.K_READ_DIR || tag == ir.K_READ_DIR_ALL || tag == ir.K_READ_DIR_INO || tag == ir.K_READ_DIR_INO_ALL || tag == ir.K_REMOVE_DIR_ALL || tag == ir.K_ARGS || tag == ir.K_ENVIRON || tag == ir.K_EXIT
     || tag == ir.K_CREATE_DIR || tag == ir.K_REMOVE_DIR || tag == ir.K_CREATE_LINK || tag == ir.K_CREATE_SYMLINK || tag == ir.K_READ_LINK
-    || tag == ir.K_RENAME || tag == ir.K_SET_FILE_TIMES || tag == ir.K_WRITER_SET_TIMES || tag == ir.K_TRUNCATE || tag == ir.K_CLONE_FILE;
+    || tag == ir.K_RENAME || tag == ir.K_SET_FILE_TIMES || tag == ir.K_WRITER_SET_TIMES || tag == ir.K_TRUNCATE || tag == ir.K_CLONE_FILE || tag == ir.K_MAP_FILE;
 }
 
 function emit_host_op_wat(o: ir.Op): string {
@@ -4352,6 +4370,9 @@ function emit_host_op_wat(o: ir.Op): string {
   }
   if (o.kind_tag == ir.K_READ_FILE) {
     return "    call $__fern_read_file\n";
+  }
+  if (o.kind_tag == ir.K_MAP_FILE) {
+    return "    call $__fern_map_file\n";
   }
   if (o.kind_tag == ir.K_READ_FILE_BYTES) {
     return "    call $__fern_read_file_bytes\n";
@@ -5259,6 +5280,9 @@ function emit_str_op_wat(o: ir.Op): string {
   if (o.kind_tag == ir.K_SCAN_SET) {
     return "    call $__fern_scan_set\n";
   }
+  if (o.kind_tag == ir.K_SCAN_MASKS) {
+    return "    call $__fern_scan_masks\n";
+  }
   if (o.kind_tag == ir.K_COUNT_RUNS) {
     return "    call $__fern_count_runs\n";
   }
@@ -5637,7 +5661,7 @@ function needs_path_change_error(needs: string[]): boolean {
 }
 
 function needs_file_data_error(needs: string[]): boolean {
-  return need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "write_file")
+  return need(needs, "read_file") || need(needs, "read_file_bytes") || need(needs, "map_file") || need(needs, "write_file")
     || need(needs, "write_file_bytes") || need(needs, "writer_write") || need(needs, "write_some")
     || need(needs, "write_bytes") || need(needs, "write_some_bytes") || need(needs, "read_chunk")
     || need(needs, "read_chunk_bytes");
@@ -8385,8 +8409,12 @@ pub function utf8_valid_func(): string {
 }
 
 pub function readfile_func(): string {
+  return readfile_named("$__fern_read_file", true);
+}
+
+function readfile_named(name: string, checked: boolean): string {
   let o = "";
-  o += "  (func $__fern_read_file (param $np i32) (result i32)\n";
+  o += "  (func " + name + " (param $np i32) (result i32)\n";
   o += "    (local $err i32) (local $fd i32) (local $blk i32) (local $off i32) (local $n i32) (local $tmp i32) (local $cap i32) (local $grown i32)\n";
   o += "    (local.set $err (call $__fern_path_open (i32.const 3) (i32.const 1) (i32.add (local.get $np) (i32.const 4)) (i32.load (local.get $np)) (i32.const 0) (i64.const 6) (i64.const 0) (i32.const 0) (i32.const 16)))\n";
   o += "    (if (i32.ne (local.get $err) (i32.const 0)) (then\n";
@@ -8411,12 +8439,14 @@ pub function readfile_func(): string {
   o += "    (drop (call $__fern_fd_close (local.get $fd)))\n";
   o += read_failed("(local.get $err)", "$blk", "(local.get $err)");
   o += "    (i32.store (local.get $blk) (local.get $off))\n";
-  o += "    (if (i32.eqz (call $__fern_utf8_valid (i32.add (local.get $blk) (i32.const 4)) (local.get $off))) (then\n";
-  o += "      (drop (call $__fern_arr_dec (local.get $blk)))\n";
-  o += "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
-  o += "      (i32.store (local.get $tmp) (i32.const 1))\n";
-  o += "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (i32.const 25) (call $__fern_rc_inc (local.get $np))))\n";
-  o += "      (return (local.get $tmp))))\n";
+  if (checked) {
+    o += "    (if (i32.eqz (call $__fern_utf8_valid (i32.add (local.get $blk) (i32.const 4)) (local.get $off))) (then\n";
+    o += "      (drop (call $__fern_arr_dec (local.get $blk)))\n";
+    o += "      (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
+    o += "      (i32.store (local.get $tmp) (i32.const 1))\n";
+    o += "      (i32.store (i32.add (local.get $tmp) (i32.const 4)) (call $__fern_build_io_error (i32.const 25) (call $__fern_rc_inc (local.get $np))))\n";
+    o += "      (return (local.get $tmp))))\n";
+  }
   o += "    (local.set $tmp (call $__fern_str_box (i32.const 8)))\n";
   o += "    (i32.store (local.get $tmp) (i32.const 0))\n";
   o += "    (i32.store (i32.add (local.get $tmp) (i32.const 4)) (local.get $blk))\n";
@@ -9659,7 +9689,7 @@ pub function arr_push_strided(suffix: string, vty: string, sop: string, stride: 
 }
 
 function p1_file_io(needs: string[]): boolean {
-  return need_any(needs, ["read_file", "read_file_bytes", "write_file", "write_file_bytes", "truncate"]) || need_dir_list(needs) || need_open_file(needs);
+  return need_any(needs, ["read_file", "read_file_bytes", "map_file", "write_file", "write_file_bytes", "truncate"]) || need_dir_list(needs) || need_open_file(needs);
 }
 
 function p1_fd_read(needs: string[]): boolean {
@@ -9895,6 +9925,9 @@ pub function with_runtime_units(units: WasmUnit[], needs: string[], rt_lower: (p
   }
   if (need(needs, "@uses_scan_set")) {
     roots += " __fern_scan_set";
+  }
+  if (need(needs, "@uses_scan_masks")) {
+    roots += " __fern_scan_masks";
   }
   if (need(needs, "@uses_scan_set_bytes")) {
     roots += " __fern_scan_set_bytes";
@@ -10375,6 +10408,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   }
   if (mode != 2 && need(needs, "read_file")) {
     parts = parts.append(readfile_func());
+  }
+  if (mode != 2 && need(needs, "map_file")) {
+    parts = parts.append(readfile_named("$__fern_map_file", false));
   }
   if (mode != 2 && need(needs, "read_file_bytes")) {
     parts = parts.append(readfile_bytes_func());
@@ -13024,7 +13060,7 @@ function host_needs(mod: parser.Module, census: boolean): HostNeeds {
   let calls = called_names(mod);
   return HostNeeds {
     io: calls.has("print") || calls.has("write") || calls.has("putchar") || calls.has("stdout"),
-    rd: calls.has("read_file") || calls.has("read_file_bytes"),
+    rd: calls.has("read_file") || calls.has("read_file_bytes") || calls.has("map_file_unchecked"),
     wr: calls.has("write_file") || calls.has("write_file_bytes"),
     env: calls.has("env") || calls.has("environ") || calls.has("config_get"),
     args: calls.has("args"),
