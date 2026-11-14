@@ -494,6 +494,12 @@ pub function allocator(text: string): Body {
   return native_dependency(text, "__fern_alloc");
 }
 
+// The lines of a routine of the box runtime, from its label to the next
+// definition.
+pub function box_routine(text: string, entry: string): Body {
+  return native_dependency(text, entry);
+}
+
 pub function native_array_release(text: string): Body {
   let s = scan_mode(text, true);
   if (s.error != "") {

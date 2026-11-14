@@ -571,7 +571,7 @@ function lift_prod_store(k: string, op: ir.Op, lv: LiftVals): LiftVals {
 // is one less than their number of words.
 function lift_prod_make(k: string, op: ir.Op, lv: LiftVals): Option[LiftVals] {
   if (k == "struct_make") {
-    return Some(lift_box_make(op.i32_imm, op.i32_imm, 8, op.str, lv));
+    return Some(lift_block_make(op.i32_imm, op.i32_imm, 8, op.str, "box", lv));
   }
   if (k == "arr_make" && op.i32_imm == 0) {
     return Some(lift_empty_arr(lv));
@@ -583,7 +583,7 @@ function lift_prod_make(k: string, op: ir.Op, lv: LiftVals): Option[LiftVals] {
     return Some(lift_box_make(op.i32_imm, op.i32_imm, 8, "", lv));
   }
   if (k == "tuple_make") {
-    return Some(lift_box_make(if (op.i32_imm > 0) { op.i32_imm - 1 } else { 0 }, op.i32_imm, 0, "", lv));
+    return Some(lift_block_make(if (op.i32_imm > 0) { op.i32_imm - 1 } else { 0 }, op.i32_imm, 0, "", "box", lv));
   }
   if (k == "opt_make") {
     return Some(lift_opt_make_prod(op.i32_imm, lv));
@@ -690,6 +690,12 @@ function lift_variant_is_prod(op: ir.Op, lv: LiftVals): LiftVals {
 }
 
 function lift_box_make(cap: i32, n: i32, first: i32, shape: string, lv: LiftVals): LiftVals {
+  return lift_block_make(cap, n, first, shape, "", lv);
+}
+
+// kind is "box" for a record or a tuple, which keeps no array capacity, and
+// empty for an array.
+function lift_block_make(cap: i32, n: i32, first: i32, shape: string, kind: string, lv: LiftVals): LiftVals {
   if (lv.stack.len() < n) {
     return LiftVals { ...lv, ok: false };
   }
@@ -706,7 +712,7 @@ function lift_box_make(cap: i32, n: i32, first: i32, shape: string, lv: LiftVals
   let nvals = lv.nvals;
   let box = nvals;
   nvals += 1;
-  let insts = lv.insts.append(ssa.SInst { kind_tag: ssa.ARR_BOX, result: box, args: [], imm: cap, str: "" });
+  let insts = lv.insts.append(ssa.SInst { kind_tag: ssa.ARR_BOX, result: box, args: [], imm: cap, str: kind });
   if (shape.len() > 0) {
     let sh = nvals;
     nvals += 1;
