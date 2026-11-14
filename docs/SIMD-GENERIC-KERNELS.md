@@ -424,7 +424,7 @@ whole group are the next steps.
 | 7d | Integer lanes: `std/simd` functions for `u8x16` | done (#14731) |
 | 7e | Integer lanes: the shifts, the multiply, and code for lanes of 16 and 32 bits on each backend | done (#14731) |
 | 7g | Integer lanes: the types `i8x16`, `u16x8`, `i16x8`, `u32x4` and `i32x4` in both front ends, the shifts, the multiply and the signed operations | done (#14731) |
-| 7h | Integer lanes: `std/simd` functions for the types of slice 7g | next (#14731) |
+| 7h | Integer lanes: `std/simd` functions for the types of slice 7g | done (#14731) |
 | 7f | Integer lanes: the byte kernels of the stdlib and of `std/android/draw` on `u8x16`, each with a measured comparison | after 7h (#14731) |
 | — | Splice record-returning leaves so `Dual` / `DoubleDouble` stop allocating per operation (#12931) | follow-on, `seminline` |
 
@@ -568,3 +568,10 @@ slice. The IR has no op for them yet.
 
 The gates are the conformance cases `lanes_integer_ops`,
 `diag_e009_lane_integer` and `diag_e038_lane_index`.
+
+Slice 7h gives `std/simd` a function for each builtin of the five types,
+such as `simd.add_sat_i16x8` and `simd.shr_u32x4`. `u8x16` gets
+`simd.shl_u8x16` and `simd.shr_u8x16`. The stdlib test has one scalar form
+of each operation, on numbers of 64 bits. It compares each lane of each
+type with that form. Its inputs have equal lanes, the largest number and
+the smallest number of each lane width.
