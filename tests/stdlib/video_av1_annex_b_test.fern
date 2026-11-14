@@ -1,0 +1,237 @@
+import "std/video/av1/annex_b";
+import "std/video/frame";
+import "std/hex";
+import "std/test";
+
+function parse(text: string, limits: annex_b.Limits): Result[Option[annex_b.TemporalUnit], frame.VideoError] {
+  let Ok(bytes) = hex.decode(text) else {
+    return Err(frame.State);
+  };
+  return annex_b.next_temporal_unit(bytes, 0, limits);
+}
+
+function temporal_range(tu: annex_b.TemporalUnit, count: i32): boolean {
+  return tu.offset == 1 && tu.size == count - 1 && tu.next_offset == count && tu.frames.len() == 1;
+}
+
+function frame_range(fu: annex_b.FrameUnit, count: i32): boolean {
+  return fu.offset == 2 && fu.size == count - 2 && fu.units.len() == 2;
+}
+
+function payload_ranges(fu: annex_b.FrameUnit, bytes: [u8]): boolean {
+  let first = fu.units[0];
+  let last = fu.units[1];
+  return first.kind == 2 && first.size == 0 && first.offset == first.next_offset && last.kind == 15 && last.size == 1 && last.next_offset == bytes.len() && bytes[last.offset] == 85u8;
+}
+
+function ranges(): test.TestOutcome {
+  for text in ["06050110027855", "0807021200037a0155"] {
+    let Ok(bytes) = hex.decode(text) else {
+      return test.fail("hex");
+    };
+    let Ok(Some(tu)) = annex_b.next_temporal_unit(bytes, 0, annex_b.default_limits()) else {
+      return test.fail("size forms");
+    };
+    if (!temporal_range(tu, bytes.len())) {
+      return test.fail("temporal range");
+    }
+    let fu = tu.frames[0];
+    if (!frame_range(fu, bytes.len())) {
+      return test.fail("frame range");
+    }
+    if (!payload_ranges(fu, bytes)) {
+      return test.fail("independent payload ranges");
+    }
+  }
+  return test.pass();
+}
+
+function frames(): test.TestOutcome {
+  let Ok(Some(tu)) = parse("0a05011002785503027866", annex_b.default_limits()) else {
+    return test.fail("two frames");
+  };
+  if (tu.frames.len() != 2 || tu.frames[0].offset != 2 || tu.frames[0].size != 5 || tu.frames[1].offset != 8 || tu.frames[1].size != 3) {
+    return test.fail("independent frame boundaries");
+  }
+  let unit = tu.frames[1].units[0];
+  return test.assert_true(tu.frames[1].units.len() == 1 && unit.offset == 10 && unit.size == 1 && unit.next_offset == 11);
+}
+
+function cursors(): test.TestOutcome {
+  let Ok(bytes) = hex.decode("0605011002785506050110027866") else {
+    return test.fail("hex");
+  };
+  for at in [0, 7] {
+    let Ok(Some(tu)) = annex_b.next_temporal_unit(bytes, at, annex_b.default_limits()) else {
+      return test.fail("temporal cursor");
+    };
+    if (tu.offset != at + 1 || tu.next_offset != at + 7 || tu.frames[0].units[1].offset != at + 6) {
+      return test.fail("absolute offsets");
+    }
+  }
+  for at in [-1, 15] {
+    if let Err(frame.Header) = annex_b.next_temporal_unit(bytes, at, annex_b.default_limits()) {} else {
+      return test.fail("bad cursor");
+    }
+  }
+  return test.pass();
+}
+
+function ends(): test.TestOutcome {
+  if let Ok(None()) = annex_b.next_temporal_unit([0u8], 1, annex_b.default_limits()) {} else {
+    return test.fail("end cursor");
+  }
+  if let Ok(None()) = annex_b.next_temporal_unit([], 0, annex_b.default_limits()) {} else {
+    return test.fail("empty source");
+  }
+  return test.pass();
+}
+
+function prefixes(): test.TestOutcome {
+  for text in ["06050110027855", "0807021200037a0155", "0a05011002785503027866"] {
+    let Ok(bytes) = hex.decode(text) else {
+      return test.fail("hex");
+    };
+    for cut in 1..bytes.len() {
+      if let Err(frame.Truncated) = annex_b.next_temporal_unit(bytes[:cut], 0, annex_b.default_limits()) {} else {
+        return test.fail("every temporal prefix");
+      }
+    }
+  }
+  for text in ["0101", "020102", "03020112", "0403011200"] {
+    if let Err(frame.Truncated) = parse(text, annex_b.default_limits()) {} else {
+      return test.fail("child extent");
+    }
+  }
+  return test.pass();
+}
+
+function malformed(): test.TestOutcome {
+  for text in ["00", "0100", "03020178", "050402120100", "0706011003120055", "06050110021010"] {
+    if let Err(frame.Header) = parse(text, annex_b.default_limits()) {} else {
+      return test.fail("Annex B structure " + text);
+    }
+  }
+  for text in ["0403011000", "0403011090", "0403011009"] {
+    if let Err(frame.Truncated) = parse(text, annex_b.default_limits()) {} else {
+      return test.fail("inner length " + text);
+    }
+  }
+  if let Err(frame.Unsupported) = parse("050401100100", annex_b.default_limits()) {} else {
+    return test.fail("reserved OBU kind");
+  }
+  if let Err(frame.Header) = parse("050401100190", annex_b.default_limits()) {} else {
+    return test.fail("forbidden OBU bit");
+  }
+  return test.pass();
+}
+
+function leb(value: i32, width: i32): u8[] {
+  let bytes: u8[] = [];
+  let remaining = value;
+  for i in 0..width {
+    bytes = bytes.append((remaining & 127 | (if (i + 1 < width) { 128 } else { 0 })) as u8);
+    remaining >>= 7;
+  }
+  return bytes;
+}
+
+function append(own bytes: u8[], more: [u8]): u8[] {
+  for byte in more {
+    bytes = bytes.append(byte);
+  }
+  return bytes;
+}
+
+function widths(): test.TestOutcome {
+  for width in 1..9 {
+    let body = append(leb(1, width), [16u8]);
+    body = append(body, append(leb(2, width), [120u8, 85u8]));
+    let fu = append(leb(body.len(), width), body);
+    let bytes = append(leb(fu.len(), width), fu);
+    let Ok(Some(tu)) = annex_b.next_temporal_unit(bytes, 0, annex_b.default_limits()) else {
+      return test.fail("all LEB128 widths");
+    };
+    if (tu.offset != width || tu.frames[0].offset != width * 2 || tu.frames[0].units[1].offset != width * 4 + 2 || tu.next_offset != bytes.len()) {
+      return test.fail("nonminimal length offsets");
+    }
+  }
+  for text in ["8080808080808080", "8080808010", "808080808080808000"] {
+    if let Err(frame.Header) = parse(text, annex_b.default_limits()) {} else {
+      return test.fail("LEB128 overflow or termination");
+    }
+  }
+  return test.pass();
+}
+
+function limits(): test.TestOutcome {
+  let base = annex_b.default_limits();
+  for configured in [annex_b.Limits { ...base, max_frame_units: 0 }, annex_b.Limits { ...base, max_obus: 1 }, annex_b.Limits { ...base, max_frame_units: -1 }, annex_b.Limits { ...base, max_obus: -1 }, annex_b.Limits { ...base, video: frame.Limits { ...base.video, max_packet_bytes: 6 } }] {
+    if let Err(frame.Limit) = parse("06050110027855", configured) {} else {
+      return test.fail("configured bounds");
+    }
+  }
+  for configured in [annex_b.Limits { ...base, max_frame_units: 1 }, annex_b.Limits { ...base, max_obus: 2 }] {
+    if let Err(frame.Limit) = parse("0a05011002785503027866", configured) {} else {
+      return test.fail("aggregate table bounds");
+    }
+  }
+  let tight = annex_b.Limits { ...base, max_frame_units: 1, max_obus: 2, video: frame.Limits { ...base.video, max_packet_bytes: 7 } };
+  if let Ok(Some(_)) = parse("06050110027855", tight) {} else {
+    return test.fail("inclusive table and packet limits");
+  }
+  let zero = annex_b.Limits { ...base, video: frame.Limits { ...base.video, max_packet_bytes: 0 } };
+  if let Err(frame.Limit) = parse("ff", zero) {} else {
+    return test.fail("packet budget before header access");
+  }
+  return test.pass();
+}
+
+function extension_case(kind: i32, sized: boolean, extra: i32): boolean {
+  let count = if (sized) { 3 } else { 2 };
+  let byte = kind * 8 + 4 + (if (sized) { 2 } else { 0 });
+  let bytes: u8[] = [(count + 4) as u8, (count + 3) as u8, 1, 16, count as u8, byte as u8, (extra * 8) as u8];
+  if (sized) {
+    bytes = bytes.append(0u8);
+  }
+  let result = annex_b.next_temporal_unit(bytes, 0, annex_b.default_limits());
+  if (kind == 1 || kind == 2 || kind == 8) {
+    return match (result) { Err(frame.Header) => true, _ => false };
+  }
+  let Ok(Some(tu)) = result else {
+    return false;
+  };
+  return layer_fields(tu.frames[0], kind, extra);
+}
+
+function layer_fields(fu: annex_b.FrameUnit, kind: i32, extra: i32): boolean {
+  let obu = fu.units[1];
+  return obu.extension && obu.kind == kind && obu.temporal_id == extra / 4 && obu.spatial_id == extra % 4 && obu.size == 0;
+}
+
+function extensions(): test.TestOutcome {
+  for sized in [false, true] {
+    for kind in [1, 2, 3, 4, 5, 6, 7, 8, 15] {
+      for extra in 0..32 {
+        if (!extension_case(kind, sized, extra)) {
+          return test.fail("all layer identifiers in both size forms");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let r = test.new("AV1 Annex B ranges");
+  r = r.it("explicit and inferred OBU sizes", ranges);
+  r = r.it("independent frame boundaries", frames);
+  r = r.it("temporal cursors", cursors);
+  r = r.it("empty source and end cursor", ends);
+  r = r.it("all prefixes and nested extent bounds", prefixes);
+  r = r.it("delimiter placement and inconsistent headers", malformed);
+  r = r.it("all LEB128 widths and overflow", widths);
+  r = r.it("packet and aggregate record limits", limits);
+  r = r.it("layer identifiers in both size forms", extensions);
+  return r.finish();
+}

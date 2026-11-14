@@ -28,6 +28,12 @@ for output, architecture, flags in ((metadata_binary, target, ['-sanitize']), (m
     subprocess.run([compiler, '-stdlib', str(ROOT / 'internal/stdlib'), '-target', architecture, *flags,
                     '-o', str(output), 'scripts/video-reference/av1-metadata.fern'], check=True)
 
+annex_binary = ROOT / 'build/video/av1-annex-b-reference'
+annex_wasm = annex_binary.with_suffix('.wasm')
+for output, architecture, flags in ((annex_binary, target, ['-sanitize']), (annex_wasm, 'wasm32-wasi', [])):
+    subprocess.run([compiler, '-stdlib', str(ROOT / 'internal/stdlib'), '-target', architecture, *flags,
+                    '-o', str(output), 'scripts/video-reference/av1-annex-b.fern'], check=True)
+
 
 def run(directory, name, packet, error=None):
     path = directory / (name + '.obu')
@@ -134,6 +140,60 @@ def check_metadata(directory, stream):
         read_metadata(directory, f'hdr-extension-{kind}', metadata_obu(kind, values, extension=True), error=True)
 
 
+def length(value, width):
+    return leb(value, max(width, max(1, (value.bit_length() + 6) // 7)))
+
+
+def annex_packet(packet, layout, sized, width, position):
+    body = bytearray()
+    expected = []
+    start = 0
+    for kind, offset, size, temporal, spatial, extension in layout:
+        header = bytes([(packet[start] | 2) if sized else (packet[start] & ~2)])
+        header += packet[start + 1:start + 1 + extension]
+        encoded_size = length(size, width) if sized else b''
+        obu = header + encoded_size + packet[offset:offset + size]
+        prefix = length(len(obu), width)
+        expected.append((kind, len(body) + len(prefix) + len(header) + len(encoded_size),
+                         size, temporal, spatial, extension, packet[offset:offset + size].hex()))
+        body += prefix + obu
+        start = offset + size
+    assert start == len(packet)
+    frame_prefix = length(len(body), width)
+    temporal_prefix = length(len(frame_prefix) + len(body), width)
+    frame_start = position + len(temporal_prefix) + len(frame_prefix)
+    lines = [f'T {position + len(temporal_prefix)} {len(frame_prefix) + len(body)} {frame_start + len(body)}',
+             f'F {frame_start} {len(body)}']
+    for kind, offset, size, temporal, spatial, extension, payload in expected:
+        lines += [f'U {kind} {frame_start + offset} {size} {temporal} {spatial} {extension}', payload]
+    return temporal_prefix + frame_prefix + body, lines
+
+
+def check_annex(directory, stream):
+    original, pixel_format, packets, layouts = stream
+    reference = decode(original, 'libaom-av1', pixel_format)
+    for sized, width in ((False, 1), (True, 1), (True, 8)):
+        data = bytearray()
+        expected = []
+        for (_, packet), layout in zip(packets, layouts, strict=True):
+            encoded, lines = annex_packet(packet, layout, sized, width, len(data))
+            data += encoded
+            expected += lines
+        path = directory / f'{pixel_format}-{sized}-{width}.annexb'
+        path.write_bytes(data)
+        native = subprocess.run([str(annex_binary), str(path)], capture_output=True, text=True)
+        wasi = subprocess.run(['wasmtime', 'run', '--dir', '.', str(annex_wasm), path.name],
+                              cwd=directory, capture_output=True, text=True)
+        assert native.returncode == wasi.returncode == 0, (native, wasi)
+        assert re.search(r'leakcheck: allocs=(\d+) frees=\1 live_bytes=0', native.stderr), native.stderr
+        assert native.stdout.splitlines() == wasi.stdout.splitlines() == expected
+        for decoder in ('libaom-av1', 'libdav1d'):
+            planes = subprocess.check_output(['ffmpeg', '-v', 'error', '-xerror', '-f', 'av1', '-c:v', decoder,
+                                              '-i', str(path), '-pix_fmt', pixel_format, '-f', 'rawvideo', '-'])
+            assert planes == reference, (path.name, decoder)
+        print(f'{path.name}: all Annex B ranges and payloads match CBS source; both independent decoders preserve all planes', flush=True)
+
+
 with tempfile.TemporaryDirectory() as temporary:
     directory = Path(temporary)
     vectors, streams = fixtures.generate(directory)
@@ -141,6 +201,7 @@ with tempfile.TemporaryDirectory() as temporary:
     for name, packet, units in vectors:
         actual[name] = compare(directory, name, packet, units)
     for original, pixel_format, values, layouts in streams:
+        check_annex(directory, (original, pixel_format, values, layouts))
         stripped = []
         for index, (timestamp, packet) in enumerate(values):
             units = actual[pixel_format + '-' + str(index)]
