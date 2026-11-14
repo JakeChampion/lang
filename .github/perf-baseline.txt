@@ -7,6 +7,10 @@
 # slice beside the word ones. Main at 38768eb2 already gave the perceus_rbtree_ck rows. The aarch64
 # rows are not measured here. Each x86_64 row that the run names moves to its measured value. Keep
 # all tolerances.
+# 2026-11-13: CI 43517654014 tested merge 4993a5d5.
+# Jobs 132208527194 and 132208528766 supplied the native reports.
+# Main 38768eb2 with HEVC input. These rows use the complete measured report.
+# Workloads, metric keys, and tolerances are unchanged.
 # 2026-11-14: PR #15784, perf-aarch64 job 132329298773 on the merge with main 8ce8fde7.
 # aarch64/http_hello.text is 1.13% below its pin. Main's compiler and #15784 emit the same 16432
 # instructions for it, so it is a value of main. The row moves to its measured value. Keep all tolerances.

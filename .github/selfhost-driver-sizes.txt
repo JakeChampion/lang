@@ -1,3 +1,6 @@
+# 2026-11-13: CI 43517654014, job 132208525510, tested merge 4993a5d5.
+# Main 38768eb2 with HEVC input. These rows use the complete measured report.
+# Workloads, metric keys, and tolerances are unchanged.
 # 2026-11-12: after PR #15527, on main 6f8937ce with the self-rebind exception of the checker.
 # driver-sizes-x86_64 job 131410502724 reported checker_modload_run at 4.4 MB, over the tolerance.
 # A local run of TestSelfHostWarmStockDriver measured 4356448 bytes, 5.05% above its prior bank.
