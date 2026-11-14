@@ -142,6 +142,33 @@ pub function written(t: string): string {
   return t;
 }
 
+// Whether the literal `t` is its own decNumber form: it has no exponent, and
+// not six zeros after a leading `0.`.
+pub function in_canonical_form(t: string): boolean {
+  let zeros = -1;
+  let start = 0;
+  if (t.len() > 0 && t[0] == b'-') {
+    start = 1;
+  }
+  if (t.len() > start + 1 && t[start] == b'0' && t[start + 1] == b'.') {
+    zeros = 0;
+    let i = start + 2;
+    while (i < t.len() && t[i] == b'0') {
+      zeros += 1;
+      i += 1;
+    }
+  }
+  if (zeros >= 6) {
+    return false;
+  }
+  for i in 0..t.len() {
+    if (t[i] == b'e' || t[i] == b'E') {
+      return false;
+    }
+  }
+  return true;
+}
+
 // The f64 of a number text, as jq compares numbers. An out-of-range literal
 // is an infinity.
 pub function value(s: string): f64 {
@@ -250,6 +277,10 @@ pub function compare(a: string, b: string): i32 {
   if (b == NAN) {
     return 1;
   }
+  let fast = plain_compare(a, b);
+  if (fast != 2) {
+    return fast;
+  }
   let x = decimal(a);
   let y = decimal(b);
   if (!x.ok || !y.ok) {
@@ -287,6 +318,90 @@ pub function compare(a: string, b: string): i32 {
     return 1;
   }
   return sx * magnitude(x, y);
+}
+
+// The parts of a plain decimal: an optional minus, digits, and an optional
+// fraction, with no exponent. It gives whether it is negative, and the start
+// and the end of the whole part with no leading zero. The end is -1 when the
+// text is not plain.
+function plain_parts(s: string): (boolean, i32, i32) {
+  let i = 0;
+  let negative = false;
+  if (s.len() > 0 && s[0] == b'-') {
+    negative = true;
+    i = 1;
+  }
+  let start = i;
+  while (i < s.len() && is_digit(s[i])) {
+    i += 1;
+  }
+  let end = i;
+  if (end == start) {
+    return (false, 0, -1);
+  }
+  if (i < s.len()) {
+    if (s[i] != b'.') {
+      return (false, 0, -1);
+    }
+    i += 1;
+    while (i < s.len() && is_digit(s[i])) {
+      i += 1;
+    }
+    if (i < s.len()) {
+      return (false, 0, -1);
+    }
+  }
+  while (start < end && s[start] == b'0') {
+    start += 1;
+  }
+  return (negative, start, end);
+}
+
+// The order of the absolute values of two plain decimals, from their whole
+// parts and then their fractions.
+function plain_magnitude(a: string, sa: i32, ea: i32, b: string, sb: i32, eb: i32): i32 {
+  if (ea - sa != eb - sb) {
+    return if (ea - sa < eb - sb) { -1 } else { 1 };
+  }
+  for k in 0..ea - sa {
+    if (a[sa + k] != b[sb + k]) {
+      return if (a[sa + k] < b[sb + k]) { -1 } else { 1 };
+    }
+  }
+  let i = ea + 1;
+  let j = eb + 1;
+  while (i < a.len() || j < b.len()) {
+    let da = if (i < a.len()) { a[i] } else { b'0' };
+    let db = if (j < b.len()) { b[j] } else { b'0' };
+    if (da != db) {
+      return if (da < db) { -1 } else { 1 };
+    }
+    i += 1;
+    j += 1;
+  }
+  return 0;
+}
+
+// The order of two plain decimals with no exponent, or 2 when a text is not
+// plain. It allocates nothing, and most literals are plain.
+function plain_compare(a: string, b: string): i32 {
+  let (na, sa, ea) = plain_parts(a);
+  if (ea < 0) {
+    return 2;
+  }
+  let (nb, sb, eb) = plain_parts(b);
+  if (eb < 0) {
+    return 2;
+  }
+  let m = plain_magnitude(a, sa, ea, b, sb, eb);
+  if (na == nb) {
+    return if (na) { -m } else { m };
+  }
+  let zero = plain_magnitude(a, sa, ea, "0", 1, 1) == 0 && plain_magnitude(b, sb, eb, "0", 1, 1) == 0;
+  if (zero) {
+    return 0;
+  }
+  return if (na) { -1 } else { 1 };
 }
 
 // The order of the absolute values of two nonzero decimals.

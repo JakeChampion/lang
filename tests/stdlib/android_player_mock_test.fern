@@ -28,6 +28,9 @@ function seek_time(): i64;
 @import("libandroid.so", "mock_player_seek_mode")
 function seek_mode(): i32;
 
+@import("libandroid.so", "mock_player_audio_track")
+function audio_track(track: i32): void;
+
 @import("libandroid.so", "mock_player_target_releases")
 function target_releases(): i32;
 
@@ -89,6 +92,12 @@ function operations(ctx: usize): i32 {
   }
   if (!player.seek(ctx, p, 1000i64, player.Sync) || seek_time() != 1000i64 || seek_mode() != 2) {
     return 228;
+  }
+  audio_track(1);
+  let sound = player.has_audio(ctx, p);
+  audio_track(-1);
+  if (!sound || player.has_audio(ctx, p)) {
+    return 229;
   }
   let before = opens();
   let prepared = prepares();
