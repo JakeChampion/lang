@@ -290,7 +290,7 @@ function kern_lookups(b: [u8], features: i32): i32[] {
   let out: i32[] = [];
   for i in 0..u16_at(b, features) {
     let r = features + 2 + 6 * i;
-    if (b[r] != 107u8 || b[r + 1] != 101u8 || b[r + 2] != 114u8 || b[r + 3] != 110u8) {
+    if (u8_at(b, r) != 107 || u8_at(b, r + 1) != 101 || u8_at(b, r + 2) != 114 || u8_at(b, r + 3) != 110) {
       continue;
     }
     let ft = features + u16_at(b, r + 4);
@@ -971,18 +971,27 @@ function glyph_at(f: Font, g: i32): i32 {
   return f.glyf + start;
 }
 
+// The most points and parts that the outline of one glyph can take. A
+// composite glyph can name many parts at each of its levels, so a font of a
+// few bytes can ask for an outline with no practical end.
+pub const MAX_GLYPH_WORK: i32 = 262144;
+
 // The contours of glyph `g`, each a list of points. `depth` stops composite
-// glyphs that refer to themselves.
-function contours(f: Font, g: i32, depth: i32): Point[][] {
+// glyphs that refer to themselves. `work` is what stays of MAX_GLYPH_WORK:
+// each glyph, part and point takes one, and a glyph gets no contours after
+// it is zero.
+function contours(f: Font, g: i32, depth: i32, work: Cell[i32]): Point[][] {
   let at = glyph_at(f, g);
-  if (at < 0 || depth > 8) {
+  if (at < 0 || depth > 8 || work.get() <= 0) {
     return [];
   }
   let n = i16_at(f.data, at);
   if (n < 0) {
-    return composite(f, g, at + 10, depth);
+    work.set(work.get() - 1);
+    return composite(f, g, at + 10, depth, work);
   }
   let o = simple(f.data, at, n);
+  work.set(work.get() - 1 - n - o.xs.len());
   let (dx, dy) = glyph_deltas(f, g, o);
   let pts: Point[] = [];
   for i in 0..o.xs.len() {
@@ -1053,11 +1062,16 @@ function read_coords(b: [u8], at: i32, flags: i32[], short: i32, same: i32): (i3
   return (out, p);
 }
 
-// The points split into contours at the last point of each.
+// The points split into contours at the last point of each. A contour that
+// does not end after the one before it has no points, so each point is in
+// one contour.
 function split_contours(pts: Point[], ends: i32[]): Point[][] {
   let out: Point[][] = [];
   let first = 0;
   for e in ends {
+    if (e < first) {
+      continue;
+    }
     let c: Point[] = [];
     for i in first..e + 1 {
       if (i < pts.len()) {
@@ -1139,15 +1153,19 @@ function part_outline(ps: Part[]): Outline {
 }
 
 // A composite glyph: the contours of its parts, each moved and scaled.
-function composite(f: Font, g: i32, at: i32, depth: i32): Point[][] {
+function composite(f: Font, g: i32, at: i32, depth: i32, work: Cell[i32]): Point[][] {
   let out: Point[][] = [];
   let ps = parts(f.data, at);
+  work.set(work.get() - ps.len());
   let (ddx, ddy) = glyph_deltas(f, g, part_outline(ps));
   for i in 0..ps.len() {
+    if (work.get() <= 0) {
+      break;
+    }
     let q = ps[i];
     let dx = q.dx as f64 + ddx[i];
     let dy = q.dy as f64 + ddy[i];
-    for part in contours(f, q.glyph, depth + 1) {
+    for part in contours(f, q.glyph, depth + 1, work) {
       let moved: Point[] = [];
       for p in part {
         moved = moved.append(Point { x: q.a * p.x + q.c * p.y + dx, y: q.b * p.x + q.d * p.y + dy, on: p.on });
@@ -1291,13 +1309,18 @@ function curve(r: Raster, x0: f64, y0: f64, cx: f64, cy: f64, x1: f64, y1: f64):
   return out;
 }
 
+// The most pixels of one bitmap: a square of 4096.
+pub const MAX_BITMAP_PIXELS: i32 = 16777216;
+
 // The coverage of glyph `g` at `px` pixels per em, with the pen `dx` of a
-// pixel to the right of a pixel edge.
+// pixel to the right of a pixel edge. A glyph with no area, or with a box
+// of more than MAX_BITMAP_PIXELS pixels, gives an empty bitmap: a font can
+// give 1 unit to the em and points 32767 units from the origin.
 pub function (f: Font) render(g: i32, px: f64, dx: f64): Bitmap {
-  let cs = contours(f, g, 0);
+  let cs = contours(f, g, 0, cell_new(MAX_GLYPH_WORK));
   let scale = px / (f.units_per_em as f64);
   let (minx, miny, maxx, maxy) = bounds(cs, scale, dx);
-  if (maxx <= minx || maxy <= miny) {
+  if (maxx <= minx || maxy <= miny || (maxx - minx + 2.0) * (maxy - miny + 2.0) > MAX_BITMAP_PIXELS as f64) {
     return Bitmap { width: 0, height: 0, left: 0, top: 0, coverage: [] };
   }
   let left = minx.floor() as i32;
