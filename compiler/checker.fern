@@ -12871,43 +12871,51 @@ function dupvar_diags(stmts: ast.Stmt[]): util.Diag[] {
 
 struct LitSign { line: i32, col: i32, minuses: i32 }
 
-function lit_sign_chain(e: ast.Expr, minuses: i32, own acc: LitSign[]): LitSign[] {
-  match (e) {
-    ast.ExprUnary(u) => {
-      if (u.op == "-") {
-        return lit_sign_chain(u.operand, minuses + 1, acc);
-      }
-      if (u.op == "+") {
-        return lit_sign_chain(u.operand, minuses, acc);
-      }
-      return acc;
-    },
-    ast.ExprNumber(n) => {
-      if (minuses == 0) {
-        return acc;
-      }
-      return acc.append(LitSign { line: n.line, col: n.col, minuses: minuses });
-    },
-    _ => {
-      return acc;
+// The operand of the minus `e`.
+function minus_operand(e: ast.Expr): Option[ast.Expr] {
+  if let ast.ExprUnary(u) = e {
+    if (u.op == "-") {
+      return Some(u.operand);
     }
   }
+  return None;
+}
+
+function not_minus(e: ast.Expr): boolean {
+  return minus_operand(e).is_none();
+}
+
+// At the first minus of a chain of minuses, the number of minuses of the
+// literal at its end. The walk reads each chain one time, and goes on below
+// the end of the chain.
+function chain_signs(e: ast.Expr, own acc: LitSign[]): LitSign[] {
+  if (not_minus(e)) {
+    return acc;
+  }
+  let at = e;
+  let minuses = 0;
+  let going = true;
+  while (going) {
+    match (minus_operand(at)) {
+      Some(operand) => {
+        at = operand;
+        minuses += 1;
+      },
+      None => {
+        going = false;
+      }
+    }
+  }
+  if let ast.ExprNumber(n) = at {
+    return acc.append(LitSign { line: n.line, col: n.col, minuses: minuses });
+  }
+  return astwalk.fold_expr_pruned(at, acc, chain_signs, not_minus);
 }
 
 function lit_signs_stmts(stmts: ast.Stmt[]): LitSign[] {
-  function at_unary(n: ast.Expr, own acc: LitSign[]): LitSign[] {
-    match (n) {
-      ast.ExprUnary(_) => {
-        return lit_sign_chain(n, 0, acc);
-      },
-      _ => {
-        return acc;
-      }
-    }
-  }
   let signs: LitSign[] = [];
   for st in stmts {
-    signs = astwalk.fold_stmt(st, signs, at_unary);
+    signs = astwalk.fold_stmt_pruned(st, signs, chain_signs, not_minus);
   }
   return signs;
 }

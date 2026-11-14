@@ -1275,7 +1275,9 @@ function labeled_jump_at(st: ast.Stmt, own acc: boolean): boolean {
   return acc;
 }
 
-struct Par { toks: lexer.Token[], pos: i32, no_struct: boolean, map_kind: i32, structnames: string[], constnames: string[], verbatim: boolean, depth: i32, type_errs: ast.Stmt[], todos: TodoSite[], tail_at: i32[], tail_is: boolean[], strict_semi: boolean }
+// `closers` has, for each open bracket of `toks`, the index of the token
+// that closes it, or -1.
+struct Par { toks: lexer.Token[], pos: i32, no_struct: boolean, map_kind: i32, structnames: string[], constnames: string[], verbatim: boolean, depth: i32, type_errs: ast.Stmt[], todos: TodoSite[], tail_at: i32[], tail_is: boolean[], strict_semi: boolean, closers: i32[] }
 
 function scan_struct_names(toks: lexer.Token[]): string[] {
   let out: string[] = [];
@@ -1415,7 +1417,7 @@ function (p: Par) peek_col(): i32 {
 }
 
 function (p: Par) advance(): Par {
-  return Par { toks: p.toks, pos: p.pos + 1, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, constnames: p.constnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is, strict_semi: p.strict_semi };
+  return Par { toks: p.toks, pos: p.pos + 1, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, constnames: p.constnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is, strict_semi: p.strict_semi, closers: p.closers };
 }
 
 function (p: Par) expected_type(): Par {
@@ -1580,11 +1582,11 @@ function (p: Par) end_of(e: ast.Expr): Par {
 }
 
 function (p: Par) with_no_struct(v: boolean): Par {
-  return Par { toks: p.toks, pos: p.pos, no_struct: v, map_kind: p.map_kind, structnames: p.structnames, constnames: p.constnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is, strict_semi: p.strict_semi };
+  return Par { toks: p.toks, pos: p.pos, no_struct: v, map_kind: p.map_kind, structnames: p.structnames, constnames: p.constnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is, strict_semi: p.strict_semi, closers: p.closers };
 }
 
 function (p: Par) with_map_kind(v: i32): Par {
-  return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: v, structnames: p.structnames, constnames: p.constnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is, strict_semi: p.strict_semi };
+  return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: v, structnames: p.structnames, constnames: p.constnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is, strict_semi: p.strict_semi, closers: p.closers };
 }
 
 pub const MAX_NEST_DEPTH: i32 = 5000;
@@ -1594,7 +1596,7 @@ pub const BLOCK_VALUE_REQUIRED_MESSAGE: string = "block-expression has no traili
 const BLOCK_NEST_UNITS: i32 = 8;
 
 function (p: Par) with_depth(v: i32): Par {
-  return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, constnames: p.constnames, verbatim: p.verbatim, depth: v, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is, strict_semi: p.strict_semi };
+  return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, constnames: p.constnames, verbatim: p.verbatim, depth: v, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is, strict_semi: p.strict_semi, closers: p.closers };
 }
 
 function (p: Par) too_deep(): boolean {
@@ -1610,7 +1612,7 @@ function (p: Par) bail(): Par {
   if (last < p.pos) {
     last = p.pos;
   }
-  return Par { toks: p.toks, pos: last, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, constnames: p.constnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is, strict_semi: p.strict_semi };
+  return Par { toks: p.toks, pos: last, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, constnames: p.constnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is, strict_semi: p.strict_semi, closers: p.closers };
 }
 
 function (p: Par) peek_punct(): string {
@@ -1927,24 +1929,48 @@ function (p: Par) if_stmt_has_else(): boolean {
   return p.keyword_at(i) == "else";
 }
 
+// The bracket `open` at `idx` has a close, and the token after that close
+// is `want_a` or `want_b`.
 function (p: Par) closer_followed_by(idx: i32, open: string, close: string, want_a: string, want_b: string): boolean {
-  let depth = 0;
-  for j in idx..p.toks.len() {
-    let t = p.punct_at(j);
-    if (t == open) {
-      depth += 1;
-    } else if (t == close) {
-      depth -= 1;
-      if (depth == 0) {
-        let aft = p.punct_at(j + 1);
-        if (aft.len() == 0) {
-          return false;
-        }
-        return aft == want_a || want_b.len() > 0 && aft == want_b;
-      }
+  if (p.punct_at(idx) != open || p.closers[idx] < 0) {
+    return false;
+  }
+  let aft = p.punct_at(p.closers[idx] + 1);
+  if (aft.len() == 0) {
+    return false;
+  }
+  return aft == want_a || want_b.len() > 0 && aft == want_b;
+}
+
+// The index of the close of each open bracket of `toks`, or -1. Each kind
+// of bracket has its own stack, so a bracket of another kind does not end
+// a nest.
+function closers(toks: lexer.Token[]): i32[] {
+  let out: i32[] = [];
+  for _ in 0..toks.len() {
+    out = out.append(-1);
+  }
+  out = matched(toks, out, "(", ")");
+  out = matched(toks, out, "[", "]");
+  return matched(toks, out, "{", "}");
+}
+
+// `out` with the close of each bracket `open` of `toks`.
+function matched(toks: lexer.Token[], own out: i32[], open: string, close: string): i32[] {
+  let stack: i32[] = [];
+  for i in 0..toks.len() {
+    let text = match (toks[i]) {
+      lexer.TokPunct(x) => x.text,
+      _ => "",
+    };
+    if (text == open) {
+      stack = stack.append(i);
+    } else if (text == close && stack.len() > 0) {
+      out = out.with(stack[stack.len() - 1], i);
+      stack = stack.truncate(stack.len() - 1);
     }
   }
-  return false;
+  return out;
 }
 
 function (p: Par) first_param_looks_typed(idx0: i32): boolean {
@@ -2629,7 +2655,7 @@ function parse_expr_from_text(p: Par, text: string, base_line: i32, base_col: i3
   if let Some(le) = stream_lex_error(toks) {
     return (e_unknown_at(lex_error_kind(le), le.line, le.col), p, true);
   }
-  let sub = Par { toks: toks, pos: 0, no_struct: false, map_kind: -1, structnames: scan_struct_names(toks), constnames: p.constnames, verbatim: p.verbatim, depth: 0, type_errs: p.type_errs, todos: p.todos, tail_at: [], tail_is: [], strict_semi: false };
+  let sub = Par { toks: toks, pos: 0, no_struct: false, map_kind: -1, structnames: scan_struct_names(toks), constnames: p.constnames, verbatim: p.verbatim, depth: 0, type_errs: p.type_errs, todos: p.todos, tail_at: [], tail_is: [], strict_semi: false, closers: closers(toks) };
   let (r_expr, r_p) = parse_expr(sub);
   let outer = Par { ...p, type_errs: r_p.type_errs, todos: r_p.todos };
   if (!r_p.at_end()) {
@@ -6774,7 +6800,7 @@ pub function parse_program(toks: lexer.Token[]): ast.Stmt[] {
   if let Some(le) = stream_lex_error(toks) {
     return [s_unknown_at(lex_error_kind(le), le.line, le.col)];
   }
-  let p = Par { toks: toks, pos: 0, no_struct: false, map_kind: -1, structnames: scan_struct_names(toks), constnames: scan_const_names(toks), verbatim: false, depth: 0, type_errs: [], todos: [], tail_at: [], tail_is: [], strict_semi: false };
+  let p = Par { toks: toks, pos: 0, no_struct: false, map_kind: -1, structnames: scan_struct_names(toks), constnames: scan_const_names(toks), verbatim: false, depth: 0, type_errs: [], todos: [], tail_at: [], tail_is: [], strict_semi: false, closers: closers(toks) };
   let out: ast.Stmt[] = [];
   while (!p.at_end()) {
     let (r_stmt, r_p) = parse_stmt(p);
@@ -25095,7 +25121,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
   if let Some(le) = stream_lex_error(toks) {
     return lex_error_module(le);
   }
-  let p = Par { toks: toks, pos: 0, no_struct: false, map_kind: -1, structnames: scan_struct_names(toks), constnames: scan_const_names(toks), verbatim: verbatim, depth: 0, type_errs: [], todos: [], tail_at: [], tail_is: [], strict_semi: false };
+  let p = Par { toks: toks, pos: 0, no_struct: false, map_kind: -1, structnames: scan_struct_names(toks), constnames: scan_const_names(toks), verbatim: verbatim, depth: 0, type_errs: [], todos: [], tail_at: [], tail_is: [], strict_semi: false, closers: closers(toks) };
   let funcs: FuncDecl[] = [];
   let trait_defaults: TraitDefault[] = [];
   let trait_reqs: TraitReq[] = [];
