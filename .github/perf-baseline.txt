@@ -102,7 +102,6 @@ x86_64/struct_drop.text	2638
 x86_64/struct_drop.ir	206580528
 x86_64/tokenize.text	1248
 x86_64/tokenize.ir	32840107
-# 2026-11-14: a two-byte word is one load (#15930), which changes what the inliner splices into std/json.
 x86_64/utf8_ingest_unchecked.text	8335
 x86_64/utf8_ingest_unchecked.ir	2187144
 x86_64/utf8_ingest_validated.text	8992
@@ -182,7 +181,6 @@ aarch64/struct_drop.text	2899
 aarch64/struct_drop.ir	227660844
 aarch64/tokenize.text	1490
 aarch64/tokenize.ir	33490121
-# 2026-11-14: a two-byte word is one load (#15930), which changes what the inliner splices into std/json. The .ir rows need the perf-aarch64 job.
 aarch64/utf8_ingest_unchecked.text	8778
 aarch64/utf8_ingest_unchecked.ir	2657918
 aarch64/utf8_ingest_validated.text	9414
