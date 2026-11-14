@@ -748,9 +748,8 @@ func TestSelfHostDWARFEnumVars(t *testing.T) {
 				if v.Name != names[i] {
 					t.Errorf("enumerator %d is %s, want %s", i, v.Name, names[i])
 				}
-				shape := et.EnumName + "$" + v.Name
-				if got := imageBytes(f, uint64(v.Val), len(shape)); string(got) != shape {
-					t.Errorf("%s = %#x, where the image holds %q, not its shape %q", v.Name, v.Val, got, shape)
+				if want := int64((i+1)<<16 | 1); v.Val != want {
+					t.Errorf("%s has tag %#x, want %#x", v.Name, v.Val, want)
 				}
 			}
 			heading, ok := dwarfVarType(t, d, "pace", "h").(*dwarf.PtrType)
@@ -758,8 +757,8 @@ func TestSelfHostDWARFEnumVars(t *testing.T) {
 				t.Fatalf("pace.h is not a pointer to its box")
 			}
 			st, ok := heading.Type.(*dwarf.StructType)
-			if !ok || len(st.Field) != 2 || st.Field[0].Name != "dir" || st.Field[0].ByteOffset != 8 {
-				t.Fatalf("pace.h = %v, want a Heading whose dir is at 8", heading.Type)
+			if !ok || len(st.Field) != 2 || st.Field[0].Name != "dir" || st.Field[0].ByteOffset != 0 {
+				t.Fatalf("pace.h = %v, want a Heading whose dir is at 0", heading.Type)
 			}
 			if p, ok := st.Field[0].Type.(*dwarf.PtrType); !ok || p.Type != dwarf.Type(et) {
 				t.Errorf("Heading.dir is a %v, want a pointer to the same Direction", st.Field[0].Type)
@@ -780,19 +779,6 @@ func TestSelfHostDWARFEnumVars(t *testing.T) {
 			t.Errorf("gdb did not read %q\n%s", want, o)
 		}
 	}
-}
-
-func imageBytes(f *goelf.File, vaddr uint64, n int) []byte {
-	for _, p := range f.Progs {
-		if p.Type == goelf.PT_LOAD && vaddr >= p.Vaddr && vaddr+uint64(n) <= p.Vaddr+p.Filesz {
-			b := make([]byte, n)
-			if _, err := p.ReadAt(b, int64(vaddr-p.Vaddr)); err != nil {
-				return nil
-			}
-			return b
-		}
-	}
-	return nil
 }
 
 // A literate module's line rows name document lines, not the tangled ones.

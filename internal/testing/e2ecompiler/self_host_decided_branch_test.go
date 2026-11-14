@@ -2,6 +2,7 @@ package e2ecompiler
 
 import (
 	"regexp"
+	"strconv"
 	"testing"
 )
 
@@ -55,17 +56,27 @@ function main(): i32 {
   return bad;
 }`
 
-var shapeLabelRe = regexp.MustCompile(`(?m)^(\.S\d+): \.ascii "([^"]*)"`)
-var shapeTestRe = regexp.MustCompile(`cmpq \$(\.S\d+), `)
+var shapeTestRe = regexp.MustCompile(`cmpq \$(\d+), `)
 
-func variantTests(asm, body string) map[string]int {
-	names := map[string]string{}
-	for _, m := range shapeLabelRe.FindAllStringSubmatch(asm, -1) {
-		names[m[1]] = m[2]
+func variantTests(body string) map[string]int {
+	// Shapes follow the declarations in decidedBranchShapeSrc.
+	shapes := []struct {
+		name  string
+		words int
+	}{
+		{"Color$Red", 1}, {"Color$Black", 1},
+		{"Shade$Light", 1}, {"Shade$Mid", 1}, {"Shade$Dark", 1},
+		{"Tree$Node", 4}, {"Tree$Leaf", 1},
+		{"Swatch$Patch", 2}, {"Swatch$Blank", 1},
+	}
+	names := map[int]string{}
+	for i, shape := range shapes {
+		names[(i+1)<<16|shape.words] = shape.name
 	}
 	out := map[string]int{}
 	for _, m := range shapeTestRe.FindAllStringSubmatch(body, -1) {
-		out[names[m[1]]]++
+		tag, _ := strconv.Atoi(m[1])
+		out[names[tag]]++
 	}
 	return out
 }
@@ -78,7 +89,7 @@ func TestSelfHostDecidedBranchShapeX86_64(t *testing.T) {
 		"weight": {"Swatch$Patch": 1, "Shade$Light": 1, "Shade$Mid": 1},
 	}
 	for fn, w := range want {
-		got := variantTests(asm, fnText(t, asm, fn))
+		got := variantTests(fnText(t, asm, fn))
 		for name, n := range w {
 			if got[name] != n {
 				t.Errorf("%s tests %s %d times, want %d: %v", fn, name, got[name], n, got)
