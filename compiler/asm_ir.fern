@@ -3038,7 +3038,15 @@ function emit_buf_take_bytes(s: asmcore.EmitState, packed: boolean): asmcore.Emi
   return s;
 }
 
+// The shortest input that the AVX2 loop maps. A shorter one costs more in
+// the setup of the sixteen table lookups than the scalar loop does.
+function mapped_avx2_min(): i32 {
+  return 256;
+}
+
 function emit_buf_mapped_avx2(s: asmcore.EmitState, lm: string): asmcore.EmitState {
+  s = s.write("    cmpq $" + util.i32_to_string(mapped_avx2_min()) + ", %r13\n");
+  s = s.write("    jb " + lm + "_full\n");
   s = s.write("    leaq -32(%r13), %r8\n");
   s = s.write("    cmpq %r8, %rcx\n");
   s = s.write("    jg " + lm + "_full\n");
@@ -11472,8 +11480,12 @@ function emit_function_via_ir_named(r: irtables.LowerResult, selected: physicalb
 
 function emit_dir_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   let name = ir.kind_name(o.kind_tag);
-  if (o.kind_tag == ir.K_DIR_ENTRIES && o.i32_imm != 0) {
+  if (o.kind_tag == ir.K_DIR_ENTRIES && o.i32_imm == 1) {
     name = "dir_entries_bytes";
+    s = s.need("dir_entries");
+  }
+  if (o.kind_tag == ir.K_DIR_ENTRIES && o.i32_imm == 2) {
+    name = "dir_entries_ino";
     s = s.need("dir_entries");
   }
   let regs: string[] = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8"];

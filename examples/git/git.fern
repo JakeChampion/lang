@@ -358,10 +358,21 @@ function size_column(l: Listing, e: objects.TreeEntry): (store.Store, string) {
   return (got.store, " " + size.pad_start_str(7, " "));
 }
 
+// The lines that wait, with `line` added. A long text goes to the standard
+// output, so each addition copies a short text only.
+function ls_out(out: u8[], line: u8[]): u8[] {
+  let all = out.concat(line).append(b'\n');
+  if (all.len() < 4096) {
+    return all;
+  }
+  put(all);
+  return [];
+}
+
 // Adds the line of the entry `e`, whose path from the start is `path`.
 function ls_line(l: Listing, e: objects.TreeEntry, path: u8[], o: LsOpts): Listing {
   if (o.names) {
-    return Listing { ...l, out: l.out.concat(objects.quoted(path)).append(b'\n') };
+    return Listing { ...l, out: ls_out(l.out, objects.quoted(path)) };
   }
   let head = objects.entry_head(e);
   let st = l.store;
@@ -370,7 +381,7 @@ function ls_line(l: Listing, e: objects.TreeEntry, path: u8[], o: LsOpts): Listi
     st = after;
     head += column;
   }
-  return Listing { store: st, out: l.out.concat((head + "\t").bytes()).concat(objects.quoted(path)).append(b'\n'), ok: l.ok };
+  return Listing { store: st, out: ls_out(l.out, (head + "\t").bytes().concat(objects.quoted(path))), ok: l.ok };
 }
 
 // Adds the lines of the tree `hash`, whose path from the start is `prefix`.
@@ -528,17 +539,14 @@ function log_args(argv: string[]): LogOpts {
 
 // The commits that wait for their turn. git shows the commit with the
 // latest committer date first, and the first found of two equal dates.
-struct Waiting { commits: log.Commit[], store: store.Store, seen: Map[string, boolean] }
+struct Waiting { commits: log.Commit[], store: store.Store }
 
+// Adds the commit `hash`, which the caller has not seen before.
 function log_push(w: Waiting, hash: string): Waiting {
-  if (w.seen.contains(hash)) {
-    return w;
-  }
   let got = store.read(w.store, hash);
-  let seen = w.seen.insert(hash, true);
   return match (got.object) {
-    Ok(o) => Waiting { commits: w.commits.append(log.Commit { ...log.commit_of(hash, o.body), parents: store.parents(got.store, hash, o.body) }), store: got.store, seen: seen },
-    Err(_) => Waiting { commits: w.commits, store: got.store, seen: seen },
+    Ok(o) => Waiting { commits: w.commits.append(log.Commit { ...log.commit_of(hash, o.body), parents: store.parents(got.store, hash, o.body) }), store: got.store },
+    Err(_) => Waiting { commits: w.commits, store: got.store },
   };
 }
 
@@ -553,11 +561,22 @@ function log_next(commits: log.Commit[]): i32 {
   return best;
 }
 
+// True if the form of the options prints a short name.
+function log_shorts(o: LogOpts): boolean {
+  if (o.has_format) {
+    return o.format.contains("%h") || o.format.contains("%t") || o.format.contains("%p");
+  }
+  return true;
+}
+
 function log_text(w: Waiting, c: log.Commit, o: LogOpts): string {
-  let least = store.short_length(w.store);
-  let shorts = log.Shorts { hash: refs.short_of(w.store, c.hash, least), tree: refs.short_of(w.store, c.tree, least), parents: [] };
-  for p in c.parents {
-    shorts = log.Shorts { ...shorts, parents: shorts.parents.append(refs.short_of(w.store, p, least)) };
+  let shorts = log.Shorts { hash: "", tree: "", parents: [] };
+  if (log_shorts(o)) {
+    let least = store.short_length(w.store);
+    shorts = log.Shorts { hash: refs.short_of(w.store, c.hash, least), tree: refs.short_of(w.store, c.tree, least), parents: [] };
+    for p in c.parents {
+      shorts = log.Shorts { ...shorts, parents: shorts.parents.append(refs.short_of(w.store, p, least)) };
+    }
   }
   if (o.has_format) {
     return log.formatted(c, shorts, o.format);
@@ -587,7 +606,11 @@ function log_command(argv: string[]): i32 {
   if (start.hash.len() == 0) {
     return 0;
   }
-  let w = log_push(Waiting { commits: [], store: start.store, seen: Map { } }, start.hash);
+  let first = if (log_shorts(o)) { store.listed(start.store) } else { start.store };
+  let w = log_push(Waiting { commits: [], store: first }, start.hash);
+  let seen: Map[string, boolean] = Map { };
+  seen = seen.insert(start.hash, true);
+  let buf: u8[] = [];
   let shown = 0;
   let plain = !o.has_format && !o.oneline;
   while (w.commits.len() > 0 && shown != o.limit) {
@@ -596,17 +619,25 @@ function log_command(argv: string[]): i32 {
     w = Waiting { ...w, commits: array.concat(array.slice(w.commits, 0, at), array.slice(w.commits, at + 1, w.commits.len())) };
     let text = log_text(w, c, o);
     if (shown > 0 && (plain || o.separated)) {
-      put("\n".bytes());
+      buf = buf.append(b'\n');
     }
-    put(text.bytes());
+    buf = buf.concat(text.bytes());
     if (!plain && !o.separated && !(o.has_format && o.format.len() == 0)) {
-      put("\n".bytes());
+      buf = buf.append(b'\n');
+    }
+    if (buf.len() > 65536) {
+      put(buf);
+      buf = [];
     }
     shown += 1;
     for p in c.parents {
-      w = log_push(w, p);
+      if (!seen.contains(p)) {
+        seen = seen.insert(p, true);
+        w = log_push(w, p);
+      }
     }
   }
+  put(buf);
   return 0;
 }
 

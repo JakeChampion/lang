@@ -232,6 +232,16 @@ pub function tree_text(body: u8[]): Result[u8[], string] {
 
 // ---- Commits and tags ----
 
+// True if the bytes of `body` at `at` are the text `key`.
+function starts_at(body: u8[], at: i32, key: string): boolean {
+  for k in 0..key.len() {
+    if (body[at + k] != key[k]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // The values of the header lines `key` of a commit or a tag: the lines
 // before the first empty line.
 pub function header_values(body: u8[], key: string): string[] {
@@ -242,11 +252,8 @@ pub function header_values(body: u8[], key: string): string[] {
     while (end < body.len() && body[end] != b'\n') {
       end += 1;
     }
-    if (end - i > key.len() && body[i + key.len()] == b' ') {
-      let line = unsafe { string_from_bytes_unchecked(array.slice(body, i, end)) };
-      if (line.starts_with(key)) {
-        found = found.append(part(line, key.len() + 1, line.len()));
-      }
+    if (end - i > key.len() && body[i + key.len()] == b' ' && starts_at(body, i, key)) {
+      found = found.append(unsafe { string_from_bytes_unchecked(array.slice(body, i + key.len() + 1, end)) });
     }
     i = end + 1;
   }
