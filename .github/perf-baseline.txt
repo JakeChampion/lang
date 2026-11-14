@@ -412,10 +412,10 @@ x86_64/struct_drop.text	2402
 x86_64/struct_drop.ir	197940612
 x86_64/tokenize.text	1193
 x86_64/tokenize.ir	32840107
-x86_64/utf8_ingest_unchecked.text	7735
-x86_64/utf8_ingest_unchecked.ir	2141652
+x86_64/utf8_ingest_unchecked.text	7652
+x86_64/utf8_ingest_unchecked.ir	2127252
 x86_64/utf8_ingest_validated.text	8318
-x86_64/utf8_ingest_validated.ir	5152651
+x86_64/utf8_ingest_validated.ir	5138251
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
@@ -705,12 +705,12 @@ aarch64/string_slice.text	1188
 aarch64/string_slice.ir	25140119
 aarch64/struct_drop.text	2663
 aarch64/struct_drop.ir	218300904
-aarch64/tokenize.text	1426
+aarch64/tokenize.text	1444
 aarch64/tokenize.ir	33490121
 aarch64/utf8_ingest_unchecked.text	8188
-aarch64/utf8_ingest_unchecked.ir	2624121
+aarch64/utf8_ingest_unchecked.ir	2602953
 aarch64/utf8_ingest_validated.text	8735
-aarch64/utf8_ingest_validated.ir	6137721
+aarch64/utf8_ingest_validated.ir	6116553
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
 x86_64/perceus_cfold.text	1938
