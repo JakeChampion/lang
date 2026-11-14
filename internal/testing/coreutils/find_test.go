@@ -170,7 +170,33 @@ func findBasicTree(t *testing.T, dir string) {
 	if err := syscall.Mkfifo(filepath.Join(dir, "fifo"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := syscall.Mknod(filepath.Join(dir, "sock"), syscall.S_IFSOCK|0o644, 0); err != nil {
+	socketNode(t, filepath.Join(dir, "sock"))
+}
+
+// socketNode makes a socket file at path. Darwin refuses mknod of a socket
+// to a user that is not root, so a socket is bound in a short directory,
+// which keeps the address in the limit of sun_path, and moved to path.
+func socketNode(t *testing.T, path string) {
+	t.Helper()
+	short, err := os.MkdirTemp("/tmp", "sock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(short)
+	fd, err := syscall.Socket(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound := filepath.Join(short, "s")
+	err = syscall.Bind(fd, &syscall.SockaddrUnix{Name: bound})
+	syscall.Close(fd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(bound, path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

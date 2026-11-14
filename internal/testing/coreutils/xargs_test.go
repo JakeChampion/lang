@@ -25,6 +25,13 @@ func xargsCases(t *testing.T) []invocation {
 	return cases
 }
 
+// appleAssert marks a case whose child fails an assert: Apple's libc prints
+// the assert message in another form than glibc.
+func appleAssert(inv invocation) invocation {
+	inv.darwinLibcDefect = "Apple's assert prints its message in another form than glibc's"
+	return inv
+}
+
 func xc(stdin, line string) invocation {
 	return invocation{name: fmt.Sprintf("xargs %s <<< %q", line, stdin), args: shellWords(line), stdin: stdin}
 }
@@ -189,8 +196,8 @@ func xargsOptionCases() []invocation {
 		xc("a\n", `-p true`),
 		xc("a\n", `--interactive echo`),
 		xc("a\n", `-p -t echo`),
-		xc("a b\n", `-o echo`),
-		xc("a b\n", `--open-tty echo`),
+		appleAssert(xc("a b\n", `-o echo`)),
+		appleAssert(xc("a b\n", `--open-tty echo`)),
 		xc("a\n", `--show-limits -r true`),
 		xc("a\n", `--show-limits echo`),
 		xc("a\n", `-s 2000 --show-limits true`),
