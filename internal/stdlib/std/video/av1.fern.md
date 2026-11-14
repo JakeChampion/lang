@@ -8,6 +8,9 @@ The caller supplies an immutable packet and preserves its boundaries.
 The packet budget applies before any header access.
 Each call examines at most two header bytes and eight size bytes.
 Header and extension reserved bits must be zero.
+Sequence headers, temporal delimiters, and tile lists must not have extension headers.
+These OBU types are not layer-specific under AV1 section 6.2.2.
+
 An absent size field or a reserved OBU type returns `Unsupported`.
 Annex B temporal-unit and frame-unit lengths are outside this API.
 
@@ -30,6 +33,10 @@ pub struct Unit { kind: i32, extension: boolean, temporal_id: i32, spatial_id: i
 
 struct Header { kind: i32, extension: boolean, temporal_id: i32, spatial_id: i32, next: i32 }
 
+function valid_extension(kind: i32, extension: boolean): boolean {
+  return !extension || kind != 1 && kind != 2 && kind != 8;
+}
+
 function header(input: [u8], at: i32): Result[Header, frame.VideoError] {
   let byte = input[at];
   if ((byte & 129u8) != 0u8) {
@@ -40,6 +47,9 @@ function header(input: [u8], at: i32): Result[Header, frame.VideoError] {
     return Err(frame.Unsupported);
   }
   let extension = (byte & 4u8) != 0u8;
+  if (!valid_extension(kind, extension)) {
+    return Err(frame.Header);
+  }
   if (!extension) {
     return Ok(Header { kind: kind, extension: false, temporal_id: 0, spatial_id: 0, next: at + 1 });
   }
