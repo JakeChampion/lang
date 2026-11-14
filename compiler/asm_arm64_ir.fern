@@ -3127,9 +3127,9 @@ function ssa_reuse_alloc(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowS
   let fresh = asmcore.lab_new(s, lp + "raf" + id);
   let en = asmcore.lab_new(fresh.state, lp + "rae" + id);
   s = ssa_cbz(en.state, false, "x0", fresh.lab);
-  s = ssa_bcond(ssa_cmp_rr(ssa_unscaled(s, true, "x30", "x0", -16), "x30", "x1"), CC_EQ, en.lab);
+  s = ssa_bcond(ssa_cmp_rr(ssa_unscaled(s, true, "x30", "x0", -16).write("    add x30, x30, #1\n"), "x30", "x1"), CC_EQ, en.lab);
   s = ssa_b(ssa_bl_saving(s, "__fn___fern_alloc_reuse.r", saves), en.lab);
-  s = ssa_bl_saving(ssa_mov_rr(s.lab_def(fresh.lab), "x0", "x1"), "__fern_arr_box", saves);
+  s = ssa_bl_saving(s.lab_def(fresh.lab).write("    sub x0, x1, #1\n"), "__fern_arr_box", saves);
   return ssa_store(reg_of, ins.result, "x0", asmcore.ssa_x0_forget(s.lab_def(en.lab)));
 }
 
@@ -6618,8 +6618,20 @@ function emit_start_profile(s: asmcore.EmitState, darwin: boolean): asmcore.Emit
   return s;
 }
 
+// -cpu-limit: prlimit64 sets the soft and the hard limit of RLIMIT_CPU before
+// main runs. The kernel sends SIGXCPU at the limit.
+function emit_cpu_limit(s: asmcore.EmitState): asmcore.EmitState {
+  if (s.cpu_limit <= 0i64) {
+    return s;
+  }
+  s = s.write("    sub sp, sp, #16\n" + mov_imm64("x9", s.cpu_limit) + "    stp x9, x9, [sp]\n");
+  s = s.write("    mov x0, #0\n    mov x1, #0\n    mov x2, sp\n    mov x3, #0\n    mov x8, #261\n").svc(261);
+  return s.write("    add sp, sp, #16\n");
+}
+
 function emit_start_main_call(s: asmcore.EmitState): asmcore.EmitState {
   if (asmcore.declares_main(s.funcs)) {
+    s = emit_cpu_limit(s);
     s = s.write("    bl __fn_main\n");
     if (s.has_need("task")) {
       s = s.write("    str x0, [sp, #-16]!\n    bl __fern_task_close_drop\n    ldr x0, [sp], #16\n");
@@ -9424,6 +9436,21 @@ function emit_map_fail_trap(s: asmcore.EmitState): asmcore.EmitState {
   return s.write("    b __fern_report\n");
 }
 
+// x0 holds the base of the arena. The arena past its first 4 MiB asks for
+// transparent huge pages, so a large heap takes one page fault for each 2 MiB.
+// A small program stays in the first 4 MiB and keeps small pages. A kernel
+// with no huge pages refuses the call, and the arena works as before.
+function arena_huge_pages(s: asmcore.EmitState): asmcore.EmitState {
+  let small: i64 = 4194304;
+  if (s.heap_limit <= small) {
+    return s;
+  }
+  s = s.write("    add x0, x0, #0x400, lsl #12\n");
+  s = s.write(mov_imm64("x1", s.heap_limit - small));
+  s = s.write("    mov x2, #14\n    mov x8, #233\n");
+  return s.svc(233);
+}
+
 // The first allocation maps the arena, and leaves x1 at __fern_heap_ptr.
 function emit_arena_map(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   s = s.write("    stp x4, x5, [sp, #-16]!\n");
@@ -9460,6 +9487,9 @@ function emit_arena_map(s: asmcore.EmitState, darwin: boolean): asmcore.EmitStat
   s = s.write("    adrp x3, __fern_heap_end\n");
   s = s.write("    add x3, x3, :lo12:__fern_heap_end\n");
   s = s.write("    str x2, [x3]\n");
+  if (!darwin) {
+    s = arena_huge_pages(s);
+  }
   s = s.write("    mov x0, x9\n");
   s = s.write("    ldp x8, x9, [sp], #16\n");
   s = s.write("    ldp x4, x5, [sp], #16\n");
@@ -9616,6 +9646,12 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    cmp x3, x4\n");
   s = s.write("    ldr x4, [sp], #16\n");
   s = s.write("    b.hi .Lalloc_oom\n");
+  // A block that crosses a 64 KiB line moves the bump pointer forward by 0 to
+  // 960 bytes, so blocks of one size do not stay a constant distance apart
+  // and the boxes of a tree spine do not all use one cache set.
+  s = s.write("    eor x0, x3, x2\n    lsr x0, x0, #16\n    cbz x0, .Lalloc_plain\n");
+  s = s.write("    lsr x0, x3, #16\n    and x0, x0, #15\n    lsl x0, x0, #6\n    add x3, x3, x0\n");
+  s = s.write(".Lalloc_plain:\n");
   s = s.write("    str x3, [x1]\n");
   s = s.write("    mov x0, x2\n");
   s = s.write(rt_unframe(s));
@@ -10456,12 +10492,16 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write(".Laoe_ret:\n");
     s = s.write("    ret\n");
   }
+  // x1 holds the number of words of the box. __fern_arr_box takes one less:
+  // its block has the word of an array length, which the box uses as its
+  // first word.
   s = s.write("__fn___fern_alloc_reuse:\n");
   s = s.write("    ldr x0, [sp, #16]\n");
   s = s.write("    ldr x1, [sp]\n");
   s = s.write("__fn___fern_alloc_reuse.r:\n");
   s = s.write("    cbz x0, .Lsarelo_fresh\n");
   s = s.write("    ldur x2, [x0, #-16]\n");
+  s = s.write("    add x2, x2, #1\n");
   s = s.write("    cmp x2, x1\n");
   s = s.write("    beq .Lsarelo_ret\n");
   s = s.write("    str x1, [sp, #-16]!\n");
@@ -10471,7 +10511,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    ldr x1, [sp], #16\n");
   s = s.write(".Lsarelo_fresh:\n");
   s = s.write("__fn___fern_alloc_reuse.f:\n");
-  s = s.write("    mov x0, x1\n");
+  s = s.write("    sub x0, x1, #1\n");
   s = s.write("    b __fern_arr_box\n");
   s = s.write(".Lsarelo_ret:\n");
   s = s.write("    ret\n");

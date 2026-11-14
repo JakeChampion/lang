@@ -2234,8 +2234,26 @@ function main(): i32 { return 0; }
 		{"own-arg-spread-of-borrowed-param", "struct A { sock: Option[Socket], d: string }\nfunction take(own a: A): A { return a; }\nfunction f(s: A): A {\n  let t: A = A { ...s, d: \"x\" };\n  return take(t);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
 		{"own-arg-spread-then-base-read", "struct A { sock: Option[Socket], d: string }\nfunction take(own a: A): A { return a; }\nfunction f(own s: A): A {\n  let t: A = A { ...s, d: \"x\" };\n  print(s.d);\n  return take(t);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
 		{"own-arg-spread-reads-replaced-field", "struct A { sock: Option[Socket], d: string }\nfunction take(own a: A): A { return a; }\nfunction f(own s: A): A {\n  let t: A = A { ...s, d: s.d };\n  return take(t);\n}\nfunction main(): i32 { return 0; }\n", nil},
-		{"own-arg-spread-field-reads-whole-base", "struct A { sock: Option[Socket], d: string }\nfunction take(own a: A): A { return a; }\nfunction name(a: A): string { return a.d; }\nfunction f(own s: A): A {\n  let t: A = A { ...s, d: name(s) };\n  return take(t);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
-		{"own-arg-spread-reads-kept-field", "struct A { sock: Option[Socket], d: string, n: i32 }\nfunction take(own a: A): A { return a; }\nfunction f(own s: A): A {\n  let t: A = A { ...s, n: s.d.len() };\n  return take(t);\n}\nfunction main(): i32 { return 0; }\n", []string{"E051"}},
+		{"own-arg-spread-field-borrows-whole-base", "struct A { sock: Option[Socket], d: string }\nfunction take(own a: A): A { return a; }\nfunction name(a: A): string { return a.d; }\nfunction f(own s: A): A {\n  let t: A = A { ...s, d: name(s) };\n  return take(t);\n}\nfunction main(): i32 { return 0; }\n", nil},
+		{"own-arg-spread-reads-kept-field", "struct A { sock: Option[Socket], d: string, n: i32 }\nfunction take(own a: A): A { return a; }\nfunction f(own s: A): A {\n  let t: A = A { ...s, n: s.d.len() };\n  return take(t);\n}\nfunction main(): i32 { return 0; }\n", nil},
+		{"own-arg-spread-kept-field-method", spreadSourceRead("n: u.got.len() as i32"), nil},
+		{"own-arg-spread-kept-field-borrow-arg", spreadSourceRead("n: count(u.got)"), nil},
+		{"own-arg-spread-kept-field-view-arg", spreadSourceRead("n: view(u.got)"), nil},
+		{"own-arg-spread-kept-scalar-copy", spreadSourceRead("m: u.n"), nil},
+		{"own-arg-spread-kept-string-operand", spreadSourceRead("label: u.tag + \"!\""), nil},
+		{"own-arg-spread-kept-element-operand", spreadSourceRead("n: if (u.got[0] == \"a\") { 1 } else { 2 }"), nil},
+		{"own-arg-spread-kept-element-receiver", spreadSourceRead("n: u.got[0].len() as i32"), nil},
+		{"own-arg-spread-kept-byte-copy", spreadSourceRead("n: u.tag[0] as i32"), nil},
+		{"own-arg-spread-kept-element-stored", spreadSourceRead("label: u.got[0]"), []string{"E051"}},
+		{"own-arg-spread-borrowing-call-stored", spreadSourceRead("r: lend(u)"), []string{"E051"}},
+		{"own-arg-spread-kept-handle-arg", spreadSourceRead("n: has(u.r)"), nil},
+		{"own-arg-spread-whole-borrow", spreadSourceRead("n: size(u)"), nil},
+		{"own-arg-spread-kept-field-own-arg", spreadSourceRead("n: eat_strs(u.got)"), []string{"E051"}},
+		{"own-arg-spread-kept-field-stored", spreadSourceRead("other: u.got"), []string{"E051"}},
+		{"own-arg-spread-kept-handle-own-arg", spreadSourceRead("n: close_it(u.r)"), []string{"E051"}},
+		{"own-arg-spread-whole-own-arg", spreadSourceRead("n: eat_s(u)"), []string{"E051"}},
+		{"own-arg-spread-whole-in-array", spreadSourceRead("n: [u].len() as i32"), []string{"E051"}},
+		{"own-arg-spread-source-in-lambda", spreadSourceRead("n: (() => u.n)()"), []string{"E051"}},
 		{"own-method-borrowed-result", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.h; }\nfunction f(b: Box): i32 { return consume(b.get()); }" + methodBorrowEnd, []string{"E051"}},
 		{"own-method-borrowed-wrapper", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.h; }\nfunction borrow(b: Box): Handle { return b.get(); }\nfunction f(b: Box): i32 { return consume(borrow(b)); }" + methodBorrowEnd, []string{"E051"}},
 		{"own-method-borrowed-local-alias", methodBorrowPrelude + "function (b: Box) get(): Handle { return b.h; }\nfunction borrow(b: Box): Handle { let alias = b; return alias.get(); }\nfunction f(b: Box): i32 { return consume(borrow(b)); }" + methodBorrowEnd, []string{"E051"}},
@@ -3596,6 +3614,19 @@ function main(): i32 { return 0; }`},
 		{"e051-last-use-mid-struct-lit", lastUsePrelude + "function f(): i32 { let w: W = W { d: [1], n: 2 }; let r: i32 = eat(w); return r; }\n"},
 		{"e051-last-use-mid-string-lit", lastUsePrelude + "function takes(own s: string): i32 { return s.len(); }\nfunction f(): i32 { let s: string = \"ab\"; s = s + \"c\"; let r: i32 = takes(s); return r; }\n"},
 		{"e051-last-use-spread-lit", lastUsePrelude + "function f(): i32 { let v: W = mkw(1); let w: W = W { ...v, n: 2 }; let r: i32 = eat(w); return r + v.n; }\n"},
+		{"spread-source-kept-field-method", spreadSourceRead("n: u.got.len() as i32")},
+		{"spread-source-kept-field-view-arg", spreadSourceRead("n: view(u.got)")},
+		{"spread-source-kept-scalar-copy", spreadSourceRead("m: u.n")},
+		{"spread-source-kept-element-operand", spreadSourceRead("n: if (u.got[0] == \"a\") { 1 } else { 2 }")},
+		{"spread-source-kept-element-stored", spreadSourceRead("label: u.got[0]")},
+		{"spread-source-borrowing-call-stored", spreadSourceRead("r: lend(u)")},
+		{"spread-source-kept-handle-arg", spreadSourceRead("n: has(u.r)")},
+		{"spread-source-whole-borrow", spreadSourceRead("n: size(u)")},
+		{"spread-source-kept-field-own-arg", spreadSourceRead("n: eat_strs(u.got)")},
+		{"spread-source-kept-field-stored", spreadSourceRead("other: u.got")},
+		{"spread-source-kept-handle-own-arg", spreadSourceRead("n: close_it(u.r)")},
+		{"spread-source-whole-own-arg", spreadSourceRead("n: eat_s(u)")},
+		{"spread-source-in-lambda", spreadSourceRead("n: (() => u.n)()")},
 		{"e051-last-use-read-again", lastUsePrelude + "function f(): i32 { let a: i32[] = mk(1); let r: i32 = keep(a, 1); return r + a[0]; }\n"},
 		{"e051-last-use-loop", lastUsePrelude + "function f(): i32 { let a: i32[] = mk(1); let t: i32 = 0; while (t < 3) { t = t + keep(a, 1); } return t; }\n"},
 		{"e051-last-use-loop-nested-reassign", lastUsePrelude + "function f(): i32 { let a: i32[] = mk(1); let t: i32 = 0; while (t < 3) { a = grow(grow(a, t), 1); t = t + 1; } return a.len(); }\n"},
@@ -3998,4 +4029,25 @@ func TestSelfHostCheckerVariantScopeDifferentialX86_64(t *testing.T) {
 			}
 		})
 	}
+}
+
+// spreadSourceRead is a program that passes `S { ...u, value }` to an own
+// parameter, where u is an own parameter.
+func spreadSourceRead(value string) string {
+	return `struct S { got: string[], label: string, tag: string, n: i32, m: i32, other: string[], r: Option[Reader] }
+function take(own s: S): i32 { return s.n + s.m; }
+function size(s: S): i32 { return s.n; }
+function count(xs: string[]): i32 { return xs.len() as i32; }
+function view(xs: [string]): i32 { return xs.len() as i32; }
+function has(r: Option[Reader]): i32 { return 1; }
+function lend(s: S): Option[Reader] { return s.r; }
+function eat_strs(own xs: string[]): i32 { return xs.len() as i32; }
+function eat_s(own s: S): i32 { return s.n; }
+function close_it(own r: Option[Reader]): i32 { return 0; }
+function f(own u: S): i32 {
+  let v = S { ...u, ` + value + ` };
+  return take(v);
+}
+function main(): i32 { return f(S { got: ["a"], label: "b", tag: "c", n: 1, m: 2, other: [], r: None }); }
+`
 }

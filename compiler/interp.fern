@@ -1036,14 +1036,17 @@ pub struct Env { outer: Option[Env], depth: i32, names: string[], values: Value[
 
 // The program's functions in declaration order, indexed by the name a call
 // uses: the declared name, except that a Map `__iterator` is `iter`.
-pub struct Funcs { decls: parser.FuncDecl[], runtime_names: util.NameIndex }
+// `receivers` holds the runtime_receiver_name of each declaration.
+pub struct Funcs { decls: parser.FuncDecl[], runtime_names: util.NameIndex, receivers: string[] }
 
 function funcs_of(decls: parser.FuncDecl[]): Funcs {
   let names: string[] = [];
+  let receivers: string[] = [];
   for fd in decls {
     names = names.append(runtime_method_name(fd));
+    receivers = receivers.append(runtime_receiver_name(fd.receiver_type));
   }
-  return Funcs { decls: decls, runtime_names: util.name_index(names) };
+  return Funcs { decls: decls, runtime_names: util.name_index(names), receivers: receivers };
 }
 
 // The positions of the functions that a call of `name` can reach, in
@@ -1281,8 +1284,21 @@ function ib_idents_stmts(stmts: ast.Stmt[], own acc: string[]): string[] {
   return a;
 }
 
+// The names that a closure of `st` reads. A value block runs where it is
+// made, so only the closures inside it can read a binding after a later write.
 function lam_read_names(st: ast.Stmt): string[] {
-  return astwalk.fold_stmt_own_pruned(st, no_names(), lam_read_of, astwalk.not_lambda);
+  return astwalk.fold_stmt_own_pruned(st, no_names(), lam_read_of, is_value_block_or_not_lambda);
+}
+
+function is_value_block_lambda(lm: ast.ExprLambda): boolean {
+  return lm.params.len() == 0 && parser.is_value_block_origin(lm.origin);
+}
+
+function is_value_block_or_not_lambda(e: ast.Expr): boolean {
+  if let ast.ExprLambda(lm) = e {
+    return is_value_block_lambda(lm);
+  }
+  return true;
 }
 
 pub function body_assign_names(stmts: ast.Stmt[], own acc: string[]): string[] {
@@ -1340,6 +1356,9 @@ function lam_target_of(e: ast.Expr, own acc: string[]): string[] {
 function lam_read_of(e: ast.Expr, own acc: string[]): string[] {
   match (e) {
     ast.ExprLambda(lm) => {
+      if (is_value_block_lambda(lm)) {
+        return acc;
+      }
       return ib_idents_stmts(lm.body, acc);
     },
     _ => {
@@ -5506,7 +5525,7 @@ function method_target_index(name: string, recv: Value, env: Env): i32 {
   let rt = value_type_name(recv);
   for at in env.funcs.named(name) {
     let fd = env.funcs.decls[at];
-    if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && runtime_receiver_name(fd.receiver_type) == rt) {
+    if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && env.funcs.receivers[at] == rt) {
       return at;
     }
   }
@@ -6259,7 +6278,7 @@ function runtime_method_name(fd: parser.FuncDecl): string {
 function has_receiver_method(funcs: Funcs, recv_type: string, name: string): boolean {
   for at in funcs.named(name) {
     let fd = funcs.decls[at];
-    if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && runtime_receiver_name(fd.receiver_type) == recv_type) {
+    if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && funcs.receivers[at] == recv_type) {
       return true;
     }
   }
@@ -6610,7 +6629,7 @@ function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: s
   let own_method = has_receiver_method(funcs, recv_type, name);
   for at in funcs.named(name) {
     let fd = funcs.decls[at];
-    let receiver_base = runtime_receiver_name(fd.receiver_type);
+    let receiver_base = funcs.receivers[at];
     let rt_match = receiver_base == recv_type;
     if (!rt_match && !own_method && variant_of_enum(recv, receiver_base, aliases)) {
       rt_match = true;
@@ -8089,9 +8108,45 @@ function call_raw_mem_builtin(heap: interpheap.Heap, name: string, args: Value[]
   return raw_mem_effect(heap, name, w);
 }
 
+// The interpreter runs one thread, so an atomic access is an ordinary one.
+function call_atomic_builtin(name: string, args: Value[]): Value {
+  let want = match (name) {
+    "__atomic_load_acquire" => 1,
+    "__atomic_cas" => 3,
+    _ => 2,
+  };
+  if (args.len() != want) {
+    return v_err(name + ": expected " + util.i32_to_string(want) + " args");
+  }
+  let w: i64[] = [];
+  for a in args {
+    if (!is_int_like(a)) {
+      return v_err(name + ": args must be integers");
+    }
+    w = w.append(vint_as_i64(a));
+  }
+  unsafe {
+    let p = w[0] as usize;
+    let old = __load_i64(p);
+    if (name == "__atomic_store_release") {
+      __store_i64(p, w[1]);
+      return v_void();
+    }
+    if (name == "__atomic_fetch_add") {
+      __store_i64(p, old + w[1]);
+    } else if (name == "__atomic_cas" && old == w[1]) {
+      __store_i64(p, w[2]);
+    }
+    return v_int64(old);
+  }
+}
+
 function call_mmio_builtin(name: string, args: Value[]): Value {
   if (name == "__fence") {
     return v_void();
+  }
+  if (name.starts_with("__atomic_")) {
+    return call_atomic_builtin(name, args);
   }
   if (builtinsigs.privileged_intrinsic(name) || builtinsigs.port_intrinsic(name)) {
     return v_err(name + ": needs a kernel target");
@@ -9651,7 +9706,7 @@ function receiver_has_method(funcs: Funcs, recv: Value, name: string): boolean {
   let rt = value_type_name(recv);
   for at in funcs.named(name) {
     let fd = funcs.decls[at];
-    if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && runtime_receiver_name(fd.receiver_type) == rt) {
+    if ((fd.name == name || runtime_method_name(fd) == name) && fd.receiver_name.len() > 0 && funcs.receivers[at] == rt) {
       return true;
     }
   }
