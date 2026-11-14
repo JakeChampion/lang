@@ -1,24 +1,27 @@
 // The objects of a repository: the loose objects and the packfiles.
 import "std/array";
 import "core/cmp";
+import "std/i64";
 import "std/hex";
 import "./objects";
 import "./pack";
 
-// One packfile. `idx` is its index. `data` is the packfile, which the store
+// One packfile and its index `ix`. `data` is the packfile, which the store
 // reads when it needs an object of it. Until `loaded`, a read takes only
 // the bytes of one object from the file: `order` holds the offsets of the
 // objects in their order, and `reads` counts those reads.
-pub struct Packed { path: string, idx: pack.Index, data: u8[], loaded: boolean, cache: pack.Cache, order: i32[], reads: i32, file: Reader[] }
+pub struct Packed { path: string, ix: pack.Index, data: u8[], loaded: boolean, cache: pack.Cache, order: i64[], reads: i32, file: Reader[], size: i64 }
 
 // A packfile of this size or less is read whole.
 const SMALL_PACK: i64 = 1048576;
 
-// `width` is the count of bytes of a name: 20 with SHA-1, and 32 with SHA-256.
-// `shallow` holds the commits whose parents a shallow clone does not have.
-// With `listed`, `loose` holds the name of each loose object in order.
-// `hot` is the packfile that had the last object, which is where the next
-// search starts.
+// A packfile larger than this is never read whole.
+const LARGE_PACK: i64 = 1073741824;
+
+// `algo` is the hash of the names. `shallow` holds the commits whose
+// parents a shallow clone does not have. With `listed`, `loose` holds the
+// name of each loose object in order. `hot` is the packfile that had the
+// last object, which is where the next search starts.
 pub struct Store { objects: string, width: i32, packs: Packed[], shallow: string[], loose: string[], listed: boolean, hot: i32 }
 
 // The result of a read: the object, and the store with the packfile that
@@ -26,31 +29,29 @@ pub struct Store { objects: string, width: i32, packs: Packed[], shallow: string
 pub struct Found { store: Store, object: Result[objects.Object, string] }
 
 // The store of the directory `objects`, with the index of each packfile.
-// The names of the store have `width` bytes.
-pub function open(dir: string, width: i32): Store {
+pub function open(dir: string, a: i32): Store {
   let shallow: string[] = [];
   if let Ok(text) = read_file(dir + "/../shallow") {
-    shallow = text.split("\n").filter((line: string): boolean => line.len() == 2 * width);
+    shallow = text.split("\n").filter((line: string): boolean => line.len() == 2 * a);
   }
   let packs: Packed[] = [];
   let names = match (read_dir(dir + "/pack")) {
     Ok(ns) => ns,
     Err(_) => {
-      return Store { objects: dir, width: width, packs: packs, shallow: shallow, loose: [], listed: false, hot: 0 };
+      return Store { objects: dir, width: a, packs: packs, shallow: shallow, loose: [], listed: false, hot: 0 };
     },
   };
   for n in names {
     if (n.ends_with(".idx")) {
       let path = dir + "/pack/" + objects.part(n, 0, n.len() - 4) + ".pack";
       if let Ok(bytes) = read_file_bytes(dir + "/pack/" + n) {
-        let idx = pack.Index { bytes: bytes, width: width };
-        if (pack.index_ok(idx)) {
-          packs = packs.append(Packed { path: path, idx: idx, data: [], loaded: false, cache: pack.cache_new(), order: [], reads: 0, file: [] });
+        if let Ok(ix) = pack.index_of(bytes, a, path) {
+          packs = packs.append(Packed { path: path, ix: ix, data: [], loaded: false, cache: pack.cache_new(), order: [], reads: 0, file: [], size: 0 });
         }
       }
     }
   }
-  return Store { objects: dir, width: width, packs: packs, shallow: shallow, loose: [], listed: false, hot: 0 };
+  return Store { objects: dir, width: a, packs: packs, shallow: shallow, loose: [], listed: false, hot: 0 };
 }
 
 // The least length of a short name, as git sets it: half of the bits of
@@ -58,7 +59,7 @@ pub function open(dir: string, width: i32): Store {
 pub function short_length(s: Store): i32 {
   let count = 0;
   for p in s.packs {
-    count += pack.count(p.idx);
+    count += p.ix.count;
   }
   let bits = 0;
   while (count > 0) {
@@ -97,18 +98,18 @@ function loaded(s: Store, i: i32): Store {
 // The offsets of the objects of the packfile in their order. The reverse
 // index of git (`.rev`, version 1) has that order. Without it, the offsets
 // of the index are sorted.
-function offsets_in_order(p: Packed): i32[] {
-  let n = pack.count(p.idx);
-  let offsets: i32[] = [];
+function offsets_in_order(p: Packed): i64[] {
+  let n = p.ix.count;
+  let offsets: i64[] = [];
   let rev_path = objects.part(p.path, 0, p.path.len() - 5) + ".rev";
   if let Ok(rev) = read_file_bytes(rev_path) {
-    if (rev.len() == 12 + 4 * n + 2 * p.idx.width && rev[0] == b'R' && rev[1] == b'I' && rev[2] == b'D' && rev[3] == b'X' && rev[7] == 1) {
-      let last = -1;
+    if (rev.len() == 12 + 4 * n + 2 * p.ix.width && rev[0] == b'R' && rev[1] == b'I' && rev[2] == b'D' && rev[3] == b'X' && rev[7] == 1) {
+      let last: i64 = -1;
       let ok = true;
       for k in 0..n {
         let at = 12 + 4 * k;
         let i = rev[at] as i32 << 24 | rev[at + 1] as i32 << 16 | rev[at + 2] as i32 << 8 | rev[at + 3] as i32;
-        let offset = if (i >= 0 && i < n) { pack.offset_at(p.idx, i) } else { -1 };
+        let offset = if (i >= 0 && i < n) { pack.offset_at(p.ix, i) } else { -1 };
         ok = ok && offset > last;
         last = offset;
         offsets = offsets.append(offset);
@@ -120,7 +121,7 @@ function offsets_in_order(p: Packed): i32[] {
   }
   offsets = [];
   for k in 0..n {
-    offsets = offsets.append(pack.offset_at(p.idx, k));
+    offsets = offsets.append(pack.offset_at(p.ix, k));
   }
   return cmp.sort(offsets);
 }
@@ -135,7 +136,7 @@ function ready(s: Store, i: i32): Store {
   if (p.order.len() > 0) {
     // After reads of one object for half of its objects, the whole file
     // is less work than more reads.
-    return if (p.reads * 2 >= p.order.len()) { loaded(s, i) } else { s };
+    return if (p.reads * 2 >= p.order.len() && p.size <= LARGE_PACK) { loaded(s, i) } else { s };
   }
   let offsets = offsets_in_order(p);
   let file: Reader[] = [];
@@ -152,38 +153,20 @@ function ready(s: Store, i: i32): Store {
     }
     return loaded(s, i);
   }
-  return Store { ...s, packs: s.packs.with(i, Packed { ...p, order: offsets, file: file }) };
+  return Store { ...s, packs: s.packs.with(i, Packed { ...p, order: offsets, file: file, size: size }) };
 }
-
-// A read of a whole object, and a read of the start of one.
-const WHOLE: i32 = 2147483647;
-
-const HEAD_BYTES: i32 = 4096;
-
-// The header of a packed object is shorter than this.
-const LINK_BYTES: i32 = 64;
 
 // The bytes of the object at the offset `from` of the open packfile, `most`
 // bytes at most. They end where the next object of `order` starts, or at
 // the end of the file.
-function part_at(file: Reader[], order: i32[], from: i32, most: i32, width: i32): pack.Window {
-  let lo = 0;
-  let hi = order.len();
-  while (lo < hi) {
-    let mid = lo + (hi - lo) / 2;
-    if (order[mid] <= from) {
-      lo = mid + 1;
-    } else {
-      hi = mid;
-    }
-  }
-  let want = (if (lo < order.len()) { order[lo] - from } else { 2147483647 - from }).min(most);
+// The bytes of the open packfile from `from`, `want` bytes at most.
+function read_at(file: Reader[], from: i64, want: i32, width: i32): pack.Window {
   let bytes: u8[] = [];
   if (file.len() == 0) {
     return pack.Window { bytes: bytes, shift: from, width: width };
   }
   let r = file[0];
-  if let Ok(_) = r.seek(from as i64, 0) {
+  if let Ok(_) = r.seek(from, 0) {
     let more = true;
     while (more && bytes.len() < want) {
       let n = (want - bytes.len()).min(1048576);
@@ -201,49 +184,93 @@ function part_at(file: Reader[], order: i32[], from: i32, most: i32, width: i32)
   return pack.Window { bytes: bytes, shift: from, width: width };
 }
 
-// The packfile that has the name `raw` and the place of the name in its
-// index, or -1 for each.
-function located(s: Store, raw: u8[]): (i32, i32) {
+// The bytes of the object at the offset `from` of the open packfile, `most`
+// bytes at most. They end where the next object of `order` starts, or at
+// the end of the file. A read of a whole object takes no more than its
+// header and the largest zlib stream of its size, so a gap in a sparse
+// packfile is not read.
+function part_at(file: Reader[], order: i64[], from: i64, most: i32, raw: i32): pack.Window {
+  let lo = 0;
+  let hi = order.len();
+  while (lo < hi) {
+    let mid = lo + (hi - lo) / 2;
+    if (order[mid] <= from) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  let limit = (if (lo < order.len()) { order[lo] - from } else { 2147483647 }).min(most as i64);
+  if (most == pack.WHOLE && limit > pack.HEAD_BYTES as i64) {
+    let head = read_at(file, from, pack.LINK_BYTES, raw);
+    let e = pack.entry_in(head, from);
+    if (e.ok) {
+      let n = e.size as i64;
+      limit = limit.min(e.data_at - from + n + (n >> 12) + (n >> 14) + (n >> 25) + 13);
+    }
+  }
+  return read_at(file, from, limit as i32, raw);
+}
+
+// The packfile that has the name `raw` and the offset of the object in it,
+// or -1 for each.
+function located(s: Store, raw: u8[]): (i32, i64) {
   if (s.hot < s.packs.len()) {
-    let at = pack.find(s.packs[s.hot].idx, raw);
+    let at = pack.find(s.packs[s.hot].ix, raw);
     if (at >= 0) {
-      return (s.hot, at);
+      return (s.hot, pack.offset_at(s.packs[s.hot].ix, at));
     }
   }
   for i in 0..s.packs.len() {
     if (i != s.hot) {
-      let at = pack.find(s.packs[i].idx, raw);
+      let at = pack.find(s.packs[i].ix, raw);
       if (at >= 0) {
-        return (i, at);
+        return (i, pack.offset_at(s.packs[i].ix, at));
       }
     }
   }
   return (-1, -1);
 }
 
+// The source of the objects of the packfile `p`.
+function source_of(p: Packed): pack.Source {
+  let ix = p.ix;
+  let data = p.data;
+  let file = p.file;
+  let order = p.order;
+  let base = (name: u8[]): i64 => pack.offset_of(ix, name);
+  if (p.loaded) {
+    return pack.memory(data, base, ix.width);
+  }
+  return pack.Source { part: (from: i64, most: i32): pack.Window => part_at(file, order, from, most, ix.width), base: base };
+}
+
+// The packfile that has the object `name` ready for a read, its place in
+// the store, and the offset of the object, or -1 for each.
+function packed_at(s: Store, name: string): (Store, i32, i64) {
+  let Ok(raw) = hex.decode(name) else {
+    return (s, -1, -1);
+  };
+  let (i, offset) = located(s, raw);
+  if (i < 0) {
+    return (s, -1, -1);
+  }
+  return (Store { ...ready(s, i), hot: i }, i, offset);
+}
+
 // The object `name`: the object of a packfile that has the name, or
 // the loose object. The error is "missing" when no place has it.
 pub function read(s: Store, name: string): Found {
-  if let Ok(raw) = hex.decode(name) {
-    let (i, at) = located(s, raw);
-    if (i >= 0) {
-      s = Store { ...ready(s, i), hot: i };
-      let p = s.packs[i];
-      let offset = pack.offset_at(p.idx, at);
-      if (offset < 0) {
-        return Found { store: s, object: Err("the packfile of " + name + " is larger than this port reads") };
-      }
-      let idx = p.idx;
-      let data = p.data;
-      let file = p.file;
-      let order = p.order;
-      let width = s.width;
-      let part = if (p.loaded) { (from: i32): pack.Window => pack.whole(data, width) } else { (from: i32): pack.Window => part_at(file, order, from, WHOLE, width) };
-      let (object, cache) = pack.object_cached(part, (base: u8[]): i32 => pack.offset_of(idx, base), offset, p.cache);
-      return Found { store: Store { ...s, packs: s.packs.with(i, Packed { ...p, cache: cache, reads: p.reads + 1 }) }, object: object };
-    }
+  let (now, i, offset) = packed_at(s, name);
+  if (i < 0) {
+    return Found { store: now, object: objects.read_loose(now.objects, name) };
   }
-  return Found { store: s, object: objects.read_loose(s.objects, name) };
+  let p = now.packs[i];
+  if (offset < 0) {
+    return Found { store: now, object: Err("the index of the packfile of " + name + " has a bad offset") };
+  }
+  let (object, cache) = pack.object_cached(source_of(p), offset, p.cache);
+  return Found { store: Store { ...now, packs: now.packs.with(i, Packed { ...p, cache: cache, reads: p.reads + 1 }) }, object: object };
 }
 
 // The kind and the size of an object, and the store after the read. `why`
@@ -253,42 +280,24 @@ pub struct Info { store: Store, kind: string, size: i64, why: string }
 // The kind and the size of the object `name`. A packed object is not
 // inflated for them.
 pub function info(s: Store, name: string): Info {
-  if let Ok(raw) = hex.decode(name) {
-    let (i, at) = located(s, raw);
-    if (i >= 0) {
-      s = Store { ...ready(s, i), hot: i };
-      let p = s.packs[i];
-      let offset = pack.offset_at(p.idx, at);
-      if (offset < 0) {
-        return Info { store: s, kind: "", size: 0, why: "the packfile of " + name + " is larger than this port reads" };
-      }
-      let idx = p.idx;
-      let data = p.data;
-      let file = p.file;
-      let order = p.order;
-      let width = s.width;
-      // The start of an object holds its header and the start of a delta.
-      let base = (name: u8[]): i32 => pack.offset_of(idx, name);
-      let head = if (p.loaded) { (from: i32): pack.Window => pack.whole(data, width) } else { (from: i32): pack.Window => part_at(file, order, from, HEAD_BYTES, width) };
-      let link = if (p.loaded) { (from: i32): pack.Window => pack.whole(data, width) } else { (from: i32): pack.Window => part_at(file, order, from, LINK_BYTES, width) };
-      if let Ok((kind, size)) = pack.info_in(head, link, base, offset) {
-        return Info { store: s, kind: kind, size: size, why: "" };
-      }
-      let part = if (p.loaded) { (from: i32): pack.Window => pack.whole(data, width) } else { (from: i32): pack.Window => part_at(file, order, from, WHOLE, width) };
-      return match (pack.info_in(part, link, base, offset)) {
-        Ok((kind, size)) => Info { store: s, kind: kind, size: size, why: "" },
-        Err(why) => Info { store: s, kind: "", size: 0, why: why },
-      };
-    }
+  let (now, i, offset) = packed_at(s, name);
+  if (i < 0) {
+    return match (objects.loose_info(now.objects, name)) {
+      Ok((kind, size)) => Info { store: now, kind: kind, size: size, why: "" },
+      Err(why) => Info { store: now, kind: "", size: 0, why: why },
+    };
   }
-  return match (objects.loose_info(s.objects, name)) {
-    Ok((kind, size)) => Info { store: s, kind: kind, size: size, why: "" },
-    Err(why) => Info { store: s, kind: "", size: 0, why: why },
+  if (offset < 0) {
+    return Info { store: now, kind: "", size: 0, why: "the index of the packfile of " + name + " has a bad offset" };
+  }
+  return match (pack.info_in(source_of(now.packs[i]), offset)) {
+    Ok((kind, size)) => Info { store: now, kind: kind, size: size, why: "" },
+    Err(why) => Info { store: now, kind: "", size: 0, why: why },
   };
 }
 
 // The loose objects whose name starts with `short`.
-function loose_with_prefix(s: Store, short: string): string[] {
+function loose_with_prefix(s: Store, short: string, limit: i32): string[] {
   let found: string[] = [];
   if (s.listed) {
     let lo = 0;
@@ -301,7 +310,7 @@ function loose_with_prefix(s: Store, short: string): string[] {
         hi = mid;
       }
     }
-    while (lo < s.loose.len() && found.len() < 2 && s.loose[lo].starts_with(short)) {
+    while (lo < s.loose.len() && found.len() < limit && s.loose[lo].starts_with(short)) {
       found = found.append(s.loose[lo]);
       lo += 1;
     }
@@ -342,16 +351,27 @@ pub function listed(s: Store): Store {
   return Store { ...s, loose: cmp.sort(names), listed: true };
 }
 
-// The names that start with the hexadecimal digits `short`, one time each.
-// The search stops after two names: the caller needs to know one from many.
-pub function with_prefix(s: Store, short: string): string[] {
-  let found = loose_with_prefix(s, short);
+// The names that start with the hexadecimal digits `short`, one time each,
+// `limit` names at most.
+function names_with_prefix(s: Store, short: string, limit: i32): string[] {
+  let found = loose_with_prefix(s, short, limit);
   for p in s.packs {
-    for name in pack.with_prefix(p.idx, short, 2) {
+    for name in pack.with_prefix(p.ix, short, limit) {
       if (!found.contains(name)) {
         found = found.append(name);
       }
     }
   }
   return found;
+}
+
+// The names that start with the hexadecimal digits `short`. The search
+// stops after two names: the caller needs to know one from many.
+pub function with_prefix(s: Store, short: string): string[] {
+  return names_with_prefix(s, short, 2);
+}
+
+// Each name that starts with the hexadecimal digits `short`.
+pub function all_with_prefix(s: Store, short: string): string[] {
+  return names_with_prefix(s, short, 2147483647);
 }

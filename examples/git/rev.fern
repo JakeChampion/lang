@@ -1,133 +1,823 @@
-// A revision: a name, then the operators `^{KIND}`, `^N` and `~N`, and then
-// `:PATH`.
+// A revision: the name of an object as git reads it (object-name.c of
+// git). A revision is read from its end: `A~2^{tree}` is the tree of the
+// result of `A~2`, which is the first parent of the first parent of `A`.
+//
+//   NAME        a full or short hash, a ref, `@`, or `REF@{N}`, `REF@{DATE}`,
+//               `@{-N}` and `REF@{upstream}`
+//   REV^N REV~N a parent, the first parent N times
+//   REV^{KIND}  the object of KIND that the tags and commits lead to
+//   REV^{/TEXT} the latest commit that REV reaches with TEXT in its message
+//   REV:PATH    the entry at a path below the tree
+//   :/TEXT      the latest commit with TEXT in its message, from each ref
+//   :N:PATH     the entry of the index file at the stage N
+import "std/array";
+import "std/option";
 import "std/string";
+import "core/cmp";
+import "core/map";
+import "../../coreutils/lib/bre";
+import "./date";
+import "./dircache";
+import "./log";
 import "./objects";
 import "./refs";
 import "./store";
 
-// The result of a revision. `hash` is "" when the revision names no object.
-// `message` is the message of git for that, when git has a special one.
-pub struct Rev { store: store.Store, hash: string, message: string }
+// The result of a revision. `hash` is "" when the revision names no
+// object. `errors` holds the lines "error: ..." that git prints while it
+// reads the revision. `died` is the message of git when it stops in the
+// read, and `message` is the message of git that tells why a name with a
+// path names no object.
+pub struct Rev { store: store.Store, hash: string, message: string, errors: string[], died: string }
 
-function none(s: store.Store): Rev {
-  return Rev { store: s, hash: "", message: "" };
+// What an ambiguous short hash prefers: any object, a commit or a tag of
+// one, or an object that gives a tree.
+pub const ANY: i32 = 0;
+
+pub const COMMITTISH: i32 = 1;
+
+pub const TREEISH: i32 = 2;
+
+function fail(st: Rev): Rev {
+  return Rev { ...st, hash: "" };
 }
 
-// The object `hash` after tags, as an object of `kind`: a tag gives its
-// object, and a commit gives its tree. "" for `kind` stops at the first
-// object that is not a tag.
-function peeled(s: store.Store, hash: string, kind: string): Rev {
+function found(st: Rev, hash: string): Rev {
+  return Rev { ...st, hash: hash };
+}
+
+function error(st: Rev, line: string): Rev {
+  return Rev { ...st, hash: "", errors: st.errors.append("error: " + line) };
+}
+
+function die(st: Rev, message: string): Rev {
+  return Rev { ...st, hash: "", died: message };
+}
+
+// The object `hash`, and the state after the read.
+function object_of(st: Rev, hash: string): (Rev, Option[objects.Object]) {
+  let got = store.read(st.store, hash);
+  let now = Rev { ...st, store: got.store };
+  return match (got.object) {
+    Ok(o) => (now, Some(o)),
+    Err(_) => (now, None),
+  };
+}
+
+// The object after the tags that `hash` leads to, and its kind, or "".
+function deref_tag(st: Rev, hash: string): (Rev, string, string) {
   let at = hash;
+  let s = st;
   for step in 0..64 {
-    let got = store.read(s, at);
-    s = got.store;
-    let Ok(o) = got.object else {
-      return none(s);
+    let (now, read) = object_of(s, at);
+    s = now;
+    let Some(o) = read else {
+      return (s, "", "");
     };
-    if (o.kind == kind || kind == "" && o.kind != "tag") {
-      return Rev { store: s, hash: at, message: "" };
+    if (o.kind != "tag") {
+      return (s, at, o.kind);
     }
-    let next = if (o.kind == "tag") { objects.header_values(o.body, "object") } else if (o.kind == "commit" && kind == "tree") { objects.header_values(o.body, "tree") } else { [] };
+    let next = objects.header_values(o.body, "object");
     if (next.len() == 0) {
-      return none(s);
+      return (s, "", "");
     }
     at = next[0];
   }
-  return none(s);
+  return (s, "", "");
 }
 
-// The parent `n` of the commit that `hash` peels to. Parent 0 is the commit.
-function parent(s: store.Store, hash: string, n: i32): Rev {
-  let c = peeled(s, hash, "commit");
+// The commit that `hash` names after its tags, or "" with the error of git
+// for an object that is not a commit.
+function commit_reference(st: Rev, hash: string): Rev {
+  let (s, at, kind) = deref_tag(st, hash);
+  if (at.len() == 0) {
+    return fail(s);
+  }
+  if (kind != "commit") {
+    return error(s, "object " + at + " is a " + kind + ", not a commit");
+  }
+  return found(s, at);
+}
+
+// The parents of the commit `hash`. A commit at the edge of a shallow
+// clone has none. The third value is false when the store has no commit.
+pub function parents_of(st: Rev, hash: string): (Rev, string[], boolean) {
+  let (s, read) = object_of(st, hash);
+  let Some(o) = read else {
+    return (s, [], false);
+  };
+  return (s, store.parents(s.store, hash, o.body), true);
+}
+
+// ---- The suffixes ----
+
+// The parent `n` of the commit that `st` names. Parent 0 is the commit.
+function parent(st: Rev, n: i32): Rev {
+  let c = commit_reference(st, st.hash);
   if (c.hash.len() == 0 || n == 0) {
     return c;
   }
-  let got = store.read(c.store, c.hash);
-  let Ok(o) = got.object else {
-    return none(got.store);
-  };
-  let parents = store.parents(got.store, c.hash, o.body);
-  if (n > parents.len()) {
-    return none(got.store);
+  let (s, parents, ok) = parents_of(c, c.hash);
+  if (!ok || n > parents.len()) {
+    return fail(s);
   }
-  return Rev { store: got.store, hash: parents[n - 1], message: "" };
+  return found(s, parents[n - 1]);
 }
 
-// The digits at `at`, or `otherwise` when there are none, and the place
-// after them.
-function number_at(text: string, at: i32, otherwise: i32): (i32, i32) {
-  let i = at;
-  let n = 0;
-  while (i < text.len() && text[i] >= b'0' && text[i] <= b'9' && n < 100000) {
-    n = n * 10 + (text[i] - b'0') as i32;
-    i += 1;
+// The commit `n` first parents before the commit that `st` names.
+function ancestor(st: Rev, n: i32): Rev {
+  let c = commit_reference(st, st.hash);
+  if (c.hash.len() == 0) {
+    return c;
   }
-  if (i == at) {
-    return (otherwise, at);
+  let s = c;
+  for step in 0..n {
+    let (now, parents, ok) = parents_of(s, s.hash);
+    if (!ok || parents.len() == 0) {
+      return fail(now);
+    }
+    s = found(now, parents[0]);
   }
-  return (n, i);
+  return s;
 }
 
-// Applies the operators of `ops` to `hash`.
-function operated(s: store.Store, hash: string, ops: string): Rev {
-  let r = Rev { store: s, hash: hash, message: "" };
-  let i = 0;
-  while (i < ops.len() && r.hash.len() > 0) {
-    if (ops[i] == b'^' && i + 1 < ops.len() && ops[i + 1] == b'{') {
-      let close = i + 2;
-      while (close < ops.len() && ops[close] != b'}') {
-        close += 1;
+// The object of `kind` that the tags and the commits from `hash` lead to,
+// or "" with the error of git. `name` is the revision in the error.
+function peel_to(st: Rev, name: string, hash: string, kind: string): Rev {
+  let s = st;
+  let at = hash;
+  for step in 0..64 {
+    let (now, read) = object_of(s, at);
+    s = now;
+    let Some(o) = read else {
+      return fail(s);
+    };
+    if (kind == "object" || o.kind == kind) {
+      return found(s, at);
+    }
+    let next = if (o.kind == "tag") { objects.header_values(o.body, "object") } else if (o.kind == "commit") { objects.header_values(o.body, "tree") } else { [] };
+    if (next.len() == 0) {
+      if (o.kind != "tag" && o.kind != "commit" && name.len() > 0) {
+        return error(s, name + ": expected " + kind + " type, but the object dereferences to " + o.kind + " type");
       }
-      let kind = objects.part(ops, i + 2, close);
-      if (close == ops.len() || kind != "" && !objects.is_kind(kind)) {
-        return none(r.store);
+      return fail(s);
+    }
+    at = next[0];
+  }
+  return fail(s);
+}
+
+// `NAME^{KIND}`, `NAME^{}` and `NAME^{/TEXT}`, or None when `name` has none
+// of them at its end.
+function peel_onion(repo: refs.Repo, st: Rev, name: string): Option[Rev] {
+  if (name.len() < 4 || name[name.len() - 1] != b'}') {
+    return None;
+  }
+  let sp = name.len() - 1;
+  while (sp > 0 && !(name[sp] == b'{' && name[sp - 1] == b'^')) {
+    sp -= 1;
+  }
+  if (sp <= 0) {
+    return None;
+  }
+  let inner = objects.part(name, sp + 1, name.len() - 1);
+  let kind = if (inner.starts_with("/")) { "/" } else { inner };
+  if (kind != "commit" && kind != "tag" && kind != "tree" && kind != "blob" && kind != "object" && kind != "" && kind != "/") {
+    return None;
+  }
+  let sub = if (kind == "commit" || kind == "/") { COMMITTISH } else if (kind == "tree") { TREEISH } else { ANY };
+  let outer = get_oid_1(repo, st, objects.part(name, 0, sp - 1), sub);
+  if (outer.hash.len() == 0) {
+    return Some(outer);
+  }
+  let (s, read) = object_of(outer, outer.hash);
+  if (read.is_none()) {
+    return Some(fail(s));
+  }
+  if (kind == "") {
+    let (t, at, _) = deref_tag(s, outer.hash);
+    return Some(if (at.len() == 0) { fail(t) } else { found(t, at) });
+  }
+  let c = peel_to(s, name, outer.hash, if (kind == "/") { "commit" } else { kind });
+  if (kind != "/" || c.hash.len() == 0 || inner == "/") {
+    return Some(c);
+  }
+  return Some(oneline(c, objects.part(inner, 1, inner.len()), [c.hash]));
+}
+
+// The place of the trailing `~N` or `^N` of `name`, or -1.
+function suffix_at(name: string): i32 {
+  let i = name.len() - 1;
+  while (i >= 0 && name[i] >= b'0' && name[i] <= b'9') {
+    i -= 1;
+  }
+  if (i >= 0 && (name[i] == b'~' || name[i] == b'^')) {
+    return i;
+  }
+  return -1;
+}
+
+// The object of a name with no path, as `get_oid_1` of git reads it.
+function get_oid_1(repo: refs.Repo, st: Rev, name: string, flags: i32): Rev {
+  let cut = suffix_at(name);
+  if (cut >= 0) {
+    let num: i64 = 0;
+    for i in cut + 1..name.len() {
+      num = num * 10 + (name[i] - b'0') as i64;
+      if (num > 2147483647) {
+        return fail(st);
       }
-      r = peeled(r.store, r.hash, kind);
-      i = close + 1;
-    } else if (ops[i] == b'^') {
-      let (n, next) = number_at(ops, i + 1, 1);
-      r = parent(r.store, r.hash, n);
-      i = next;
-    } else if (ops[i] == b'~') {
-      let (n, next) = number_at(ops, i + 1, 1);
-      for step in 0..n {
-        if (r.hash.len() > 0) {
-          r = parent(r.store, r.hash, 1);
-        }
+    }
+    if (cut == name.len() - 1) {
+      num = 1;
+    }
+    let base = get_oid_1(repo, st, objects.part(name, 0, cut), COMMITTISH);
+    if (base.hash.len() == 0) {
+      return base;
+    }
+    return if (name[cut] == b'^') { parent(base, num as i32) } else { ancestor(base, num as i32) };
+  }
+  if let Some(peeled) = peel_onion(repo, st, name) {
+    return peeled;
+  }
+  let basic = get_oid_basic(repo, st, name);
+  if (basic.hash.len() > 0 || basic.died.len() > 0) {
+    return basic;
+  }
+  let described = describe_name(repo, basic, name);
+  if (described.hash.len() > 0) {
+    return described;
+  }
+  return short_oid(repo, described, name, flags, false);
+}
+
+// The hash of "SOMETHING-gHEX", the output of `git describe`.
+function describe_name(repo: refs.Repo, st: Rev, name: string): Rev {
+  let i = name.len() - 1;
+  while (i >= 2) {
+    if (!objects.is_hex(objects.part(name, i, i + 1), 1)) {
+      if (name[i] == b'g' && name[i - 1] == b'-') {
+        return short_oid(repo, st, objects.part(name, i + 1, name.len()), COMMITTISH, true);
       }
-      if (n == 0) {
-        r = parent(r.store, r.hash, 0);
+    }
+    i -= 1;
+  }
+  return fail(st);
+}
+
+// True when the object `hash` after its tags is of a kind that `flags`
+// prefers for an ambiguous short hash.
+function prefers(st: Rev, hash: string, flags: i32): (Rev, boolean) {
+  let (s, at, kind) = deref_tag(st, hash);
+  if (flags == COMMITTISH) {
+    return (s, kind == "commit");
+  }
+  return (s, kind == "commit" || kind == "tree");
+}
+
+// The object of a short hash of four digits or more.
+function short_oid(repo: refs.Repo, st: Rev, name: string, flags: i32, quiet: boolean): Rev {
+  if (name.len() < 4 || name.len() > 2 * repo.width || !objects.is_hex(name, 4)) {
+    return fail(st);
+  }
+  let low = name.to_ascii_lower();
+  let all = store.all_with_prefix(st.store, low);
+  if (all.len() == 1) {
+    return found(st, all[0]);
+  }
+  if (all.len() == 0) {
+    return fail(st);
+  }
+  let s = st;
+  if (flags != ANY) {
+    let kept: string[] = [];
+    for h in all {
+      let (now, ok) = prefers(s, h, flags);
+      s = now;
+      if (ok) {
+        kept = kept.append(h);
       }
-      i = next;
-    } else {
-      return none(r.store);
+    }
+    if (kept.len() == 1) {
+      return found(s, kept[0]);
     }
   }
-  return r;
+  if (quiet) {
+    return fail(s);
+  }
+  return ambiguous(s, low, all);
 }
+
+function kind_rank(kind: string): i32 {
+  return match (kind) {
+    "tag" => 0,
+    "commit" => 1,
+    "tree" => 2,
+    "blob" => 3,
+    _ => 4,
+  };
+}
+
+// The error and the hints of git for a short hash that many objects have.
+function ambiguous(st: Rev, short: string, names: string[]): Rev {
+  let s = error(st, "short object ID " + short + " is ambiguous");
+  let least = store.short_length(s.store);
+  let kinds: string[] = [];
+  for h in names {
+    let got = store.info(s.store, h);
+    s = Rev { ...s, store: got.store };
+    kinds = kinds.append(got.kind);
+  }
+  let places: i32[] = [];
+  for i in 0..names.len() {
+    places = places.append(i);
+  }
+  let sorted = cmp.sort_by(places, (a: i32, b: i32): i32 => if (kind_rank(kinds[a]) != kind_rank(kinds[b])) { kind_rank(kinds[a]) - kind_rank(kinds[b]) } else { names[a].cmp(names[b]) });
+  let hints: string[] = ["hint: The candidates are:"];
+  for i in sorted {
+    let h = names[i];
+    let line = "hint:   " + refs.short_of(s.store, h, least) + " " + kinds[i];
+    if (kinds[i] == "commit" || kinds[i] == "tag") {
+      let (now, read) = object_of(s, h);
+      s = now;
+      if let Some(o) = read {
+        line += if (kinds[i] == "commit") { commit_hint(h, o.body) } else { tag_hint(o.body) };
+      }
+    }
+    hints = hints.append(line);
+  }
+  return Rev { ...s, errors: s.errors.concat(hints) };
+}
+
+function commit_hint(hash: string, body: u8[]): string {
+  let c = log.commit_of(hash, body);
+  return " " + date.show(c.committer.time, date.zone_number(c.committer.zone), date.Mode { kind: date.SHORT, local: false, format: "" }) + " - " + log.subject(c.message);
+}
+
+function tag_hint(body: u8[]): string {
+  let tags = objects.header_values(body, "tag");
+  return " " + (if (tags.len() > 0) { tags[0] } else { "" });
+}
+
+// ---- Names and refs ----
+
+// The length of `@{upstream}` or `@{u}` at the start of `text`, with no
+// case, or 0.
+function upstream_mark(text: string): i32 {
+  let low = text.to_ascii_lower();
+  if (low.starts_with("@{upstream}")) {
+    return 11;
+  }
+  if (low.starts_with("@{u}")) {
+    return 4;
+  }
+  return 0;
+}
+
+function push_mark(text: string): i32 {
+  return if (text.to_ascii_lower().starts_with("@{push}")) { 7 } else { 0 };
+}
+
+// True when a ref cannot have the name: a name of dots only, with `//`, or
+// with a `/` at its start or at its end, as `ambiguous_path` of git tells.
+function ambiguous_path(name: string): boolean {
+  let slash = true;
+  for i in 0..name.len() {
+    let b = name[i];
+    if (b == b'/') {
+      if (slash) {
+        return true;
+      }
+      slash = true;
+    } else if (b != b'.') {
+      slash = false;
+    }
+  }
+  return slash;
+}
+
+// The branch of the checkout `n` before the last one, from the reflog of
+// HEAD, or "".
+function prior_checkout(repo: refs.Repo, n: i32): string {
+  let entries = refs.reflog(repo, "HEAD");
+  let left = n;
+  let i = entries.len() - 1;
+  while (i >= 0) {
+    let m = entries[i].message;
+    if (m.starts_with("checkout: moving from ")) {
+      let rest = objects.part(m, 22, m.len());
+      if let Some(to) = rest.index_of(" to ") {
+        left -= 1;
+        if (left == 0) {
+          return objects.part(rest, 0, to);
+        }
+      }
+    }
+    i -= 1;
+  }
+  return "";
+}
+
+// The number N of `@{-N}` at the start of `name`, and the place after the
+// `}`, or (0, -1).
+function nth_prior(name: string): (i32, i32) {
+  if (name.len() < 4 || !name.starts_with("@{-")) {
+    return (0, -1);
+  }
+  let close = name.index_of("}").unwrap_or(-1);
+  if (close < 4) {
+    return (0, -1);
+  }
+  let n: i64 = 0;
+  for i in 3..close {
+    if (name[i] < b'0' || name[i] > b'9') {
+      return (0, -1);
+    }
+    n = n * 10 + (name[i] - b'0') as i64;
+  }
+  return if (n <= 0 || n > 100000) { (0, -1) } else { (n as i32, close + 1) };
+}
+
+// The full name of the ref that `BRANCH@{upstream}` names ("" for HEAD), or
+// the message of git.
+function upstream_of(repo: refs.Repo, branch_in: string): Result[string, string] {
+  let branch = branch_in;
+  if (branch.len() == 0) {
+    let head = refs.head_branch(repo);
+    if (!head.starts_with("refs/heads/")) {
+      return Err("HEAD does not point to a branch");
+    }
+    branch = objects.part(head, 11, head.len());
+  }
+  let remote = repo.config.get("branch." + branch + ".remote");
+  let merge = repo.config.get("branch." + branch + ".merge");
+  if (remote.is_none() || merge.is_none()) {
+    if (refs.resolve_ref(repo, "refs/heads/" + branch).hash.len() == 0) {
+      return Err("no such branch: '" + branch + "'");
+    }
+    return Err("no upstream configured for branch '" + branch + "'");
+  }
+  let r = remote.unwrap_or("");
+  let m = merge.unwrap_or("");
+  if (r == ".") {
+    return Ok(m);
+  }
+  for e in repo.config.entries {
+    if (e.name == "remote." + r + ".fetch") {
+      if let Some(dst) = refspec_dst(e.value, m) {
+        return Ok(dst);
+      }
+    }
+  }
+  return Err("upstream branch '" + m + "' not stored as a remote-tracking branch");
+}
+
+// The destination of the ref `src` for the refspec `spec` of a fetch, as
+// `+refs/heads/*:refs/remotes/origin/*`, or None.
+function refspec_dst(spec_in: string, src: string): Option[string] {
+  let spec = if (spec_in.starts_with("+")) { objects.part(spec_in, 1, spec_in.len()) } else { spec_in };
+  let Some(colon) = spec.index_of(":") else {
+    return None;
+  };
+  let from = objects.part(spec, 0, colon);
+  let to = objects.part(spec, colon + 1, spec.len());
+  let Some(star) = from.index_of("*") else {
+    return if (from == src) { Some(to) } else { None };
+  };
+  let head = objects.part(from, 0, star);
+  let tail = objects.part(from, star + 1, from.len());
+  if (!src.starts_with(head) || !src.ends_with(tail) || src.len() < head.len() + tail.len()) {
+    return None;
+  }
+  let middle = objects.part(src, head.len(), src.len() - tail.len());
+  return Some(to.replace("*", middle));
+}
+
+// The short name with `@{-N}`, `@` and `BRANCH@{upstream}` in place, as
+// `interpret_branch_name` of git gives it. The second value is the message
+// of git when it stops.
+function branch_name(repo: refs.Repo, name: string): (string, string) {
+  let (n, after) = nth_prior(name);
+  if (after > 0) {
+    let branch = prior_checkout(repo, n);
+    if (branch.len() == 0) {
+      return ("", "");
+    }
+    if (after == name.len()) {
+      return (branch, "");
+    }
+    return branch_name(repo, branch + objects.part(name, after, name.len()));
+  }
+  if (name == "@") {
+    return ("HEAD", "");
+  }
+  for i in 0..name.len() {
+    if (name[i] == b'@') {
+      let rest = objects.part(name, i, name.len());
+      let up = upstream_mark(rest);
+      if (up > 0 && !objects.part(name, 0, i).contains(":")) {
+        return match (upstream_of(repo, objects.part(name, 0, i))) {
+          Ok(full) => (full + objects.part(rest, up, rest.len()), ""),
+          Err(message) => ("", message),
+        };
+      }
+    }
+  }
+  return (name, "");
+}
+
+// The refs that `name` means, after `branch_name`, and the message of git
+// when it stops.
+function dwim(repo: refs.Repo, name: string): (refs.Dwim, string) {
+  let none = refs.Dwim { hash: "", name: "", count: 0 };
+  let (expanded, message) = branch_name(repo, name);
+  if (message.len() > 0 || expanded.len() == 0) {
+    return (none, message);
+  }
+  if (expanded.starts_with("refs/") && expanded != name) {
+    let got = refs.resolve_ref(repo, expanded);
+    return (refs.Dwim { hash: got.hash, name: got.name, count: if (got.hash.len() > 0) { 1 } else { 0 } }, "");
+  }
+  return (refs.dwim_ref(repo, expanded), "");
+}
+
+// The object of a full hash or a ref, with `@{...}` of the reflog, as
+// `get_oid_basic` of git reads it.
+function get_oid_basic(repo: refs.Repo, st: Rev, name_in: string): Rev {
+  if (objects.is_name(repo.width, name_in)) {
+    return found(st, name_in.to_ascii_lower());
+  }
+  let name = name_in;
+  let spec = "";
+  let prior = false;
+  if (name.len() > 0 && name[name.len() - 1] == b'}') {
+    let at = name.len() - 4;
+    while (at >= 0) {
+      if (name[at] == b'@' && name[at + 1] == b'{') {
+        if (name[at + 2] == b'-') {
+          if (at != 0) {
+            return fail(st);
+          }
+          prior = true;
+          at -= 1;
+          continue;
+        }
+        let rest = objects.part(name, at, name.len());
+        if (upstream_mark(rest) == 0 && push_mark(rest) == 0) {
+          spec = objects.part(name, at + 2, name.len() - 1);
+          name = objects.part(name, 0, at);
+        }
+        break;
+      }
+      at -= 1;
+    }
+  }
+  if (name.len() > 0 && ambiguous_path(name)) {
+    return fail(st);
+  }
+  if (prior) {
+    let (n, after) = nth_prior(name);
+    if (after > 0 && after == name.len()) {
+      let branch = prior_checkout(repo, n);
+      if (objects.is_name(repo.width, branch)) {
+        return found(st, branch);
+      }
+    }
+  }
+  let is_log = name_in.len() != name.len();
+  let (refs_found, message) = if (name.len() == 0 && is_log) { dwim(repo, "HEAD") } else if (is_log) { (refs.dwim_log(repo, name), "") } else { dwim(repo, name) };
+  if (message.len() > 0) {
+    return die(st, message);
+  }
+  if (refs_found.count == 0) {
+    return fail(st);
+  }
+  let s = st;
+  if (refs_found.count > 1 || short_oid(repo, st, name, ANY, true).hash.len() > 0) {
+    s = Rev { ...s, errors: s.errors.append("warning: refname '" + name + "' is ambiguous.") };
+  }
+  if (!is_log) {
+    return found(s, refs_found.hash);
+  }
+  return reflog_at(repo, s, name, refs_found.name, spec);
+}
+
+function rfc(): date.Mode {
+  return date.Mode { kind: date.RFC, local: false, format: "" };
+}
+
+// The value of the ref `real` at the entry or at the date `spec` of its
+// reflog, as `read_ref_at` of git gives it.
+function reflog_at(repo: refs.Repo, st: Rev, name: string, real: string, spec: string): Rev {
+  let nth: i64 = 0;
+  for i in 0..spec.len() {
+    if (nth >= 0 && spec[i] >= b'0' && spec[i] <= b'9') {
+      nth = nth * 10 + (spec[i] - b'0') as i64;
+    } else {
+      nth = -1;
+    }
+  }
+  let at_time: i64 = 0;
+  if (nth >= 100000000) {
+    at_time = nth;
+    nth = -1;
+  } else if (nth < 0) {
+    let (t, bad) = date.approxidate(spec);
+    if (bad) {
+      return fail(st);
+    }
+    at_time = t;
+  }
+  let entries = refs.reflog(repo, real);
+  let shown = if (name.len() > 0) { name } else if (real.starts_with("refs/heads/")) { objects.part(real, 11, real.len()) } else { "HEAD" };
+  if (nth == 0) {
+    return if (entries.len() == 0) { fail(st) } else { found(st, entries[entries.len() - 1].new) };
+  }
+  if (entries.len() == 0) {
+    return die(st, "log for " + real + " is empty");
+  }
+  let zero = "0".repeat(2 * repo.width);
+  let cnt = nth;
+  let newer_old = "";
+  let newer_time: i64 = 0;
+  let newer_zone = 0;
+  let i = entries.len() - 1;
+  while (i >= 0) {
+    let e = entries[i];
+    if (cnt > 0) {
+      cnt -= 1;
+    }
+    let reached = cnt == 0 && e.old != zero;
+    if (e.time <= at_time || reached) {
+      let s = st;
+      if (newer_old.len() > 0 && newer_old != zero && newer_old != e.new) {
+        s = Rev { ...s, errors: s.errors.append("warning: log for ref " + real + " has gap after " + date.show(newer_time, newer_zone, rfc())) };
+      }
+      if (reached) {
+        return found(s, e.old);
+      }
+      return found(s, e.new);
+    }
+    newer_old = e.old;
+    newer_time = e.time;
+    newer_zone = e.zone;
+    i -= 1;
+  }
+  let oldest = entries[0];
+  let result = if (oldest.old != zero) { oldest.old } else { oldest.new };
+  if (at_time > 0) {
+    return Rev { ...found(st, result), errors: st.errors.append("warning: log for '" + shown + "' only goes back to " + date.show(oldest.time, oldest.zone, rfc())) };
+  }
+  return die(st, "log for '" + shown + "' only has " + entries.len().to_string() + " entries");
+}
+
+// ---- Searches of messages ----
+
+// A commit and its time, for the walk of a search.
+struct Walked { hash: string, time: i64 }
+
+// The latest commit from `starts` whose message has a match for the
+// extended regular expression `pattern`, as `get_oid_oneline` of git
+// finds it. "!-" before the pattern looks for a message with no match.
+function oneline(st: Rev, pattern_in: string, starts: string[]): Rev {
+  let pattern = pattern_in;
+  let negative = false;
+  if (pattern.starts_with("!")) {
+    if (pattern.starts_with("!-")) {
+      negative = true;
+      pattern = objects.part(pattern, 2, pattern.len());
+    } else if (pattern.starts_with("!!")) {
+      pattern = objects.part(pattern, 1, pattern.len());
+    } else {
+      return fail(st);
+    }
+  }
+  let re = bre.bre_compile_syntax(pattern, bre.Syntax { emacs: false, newline_anchor: false, extended: true, icase: false, gnu_ops: true, invalid_dup: false, multiline: false, no_empty_ranges: true, dot_not_null: true });
+  if (re.err.len() > 0) {
+    return fail(st);
+  }
+  let s = st;
+  let list: Walked[] = [];
+  let seen: Map[string, boolean] = Map { };
+  for h in starts {
+    let (now, read) = object_of(s, h);
+    s = now;
+    if let Some(o) = read {
+      list = list.append(Walked { hash: h, time: log.commit_of(h, o.body).committer.time });
+      seen = seen.insert(h, true);
+    }
+  }
+  while (list.len() > 0) {
+    let c = list[0];
+    list = array.slice(list, 1, list.len());
+    let (now, read) = object_of(s, c.hash);
+    s = now;
+    let Some(o) = read else {
+      continue;
+    };
+    for p in store.parents(s.store, c.hash, o.body) {
+      if (!seen.contains(p)) {
+        seen = seen.insert(p, true);
+        let (after, pread) = object_of(s, p);
+        s = after;
+        if let Some(po) = pread {
+          list = by_date(list, Walked { hash: p, time: log.commit_of(p, po.body).committer.time });
+        }
+      }
+    }
+    if (message_matches(re, o.body) != negative) {
+      return found(s, c.hash);
+    }
+  }
+  return fail(s);
+}
+
+// True when the message of the commit `body`, after its first empty line
+// and to its first NUL, has a match for `re`.
+function message_matches(re: bre.Bre, body: u8[]): boolean {
+  let at = -1;
+  let i = 0;
+  while (at < 0 && i + 1 < body.len()) {
+    if (body[i] == b'\n' && body[i + 1] == b'\n') {
+      at = i + 2;
+    }
+    i += 1;
+  }
+  if (at < 0) {
+    return false;
+  }
+  let end = at;
+  while (end < body.len() && body[end] != 0) {
+    end += 1;
+  }
+  return re.search_range_bytes(body, at, end);
+}
+
+// The list with `c` after each commit of its time or later.
+function by_date(list: Walked[], c: Walked): Walked[] {
+  let i = 0;
+  while (i < list.len() && list[i].time >= c.time) {
+    i += 1;
+  }
+  return array.slice(list, 0, i).append(c).concat(array.slice(list, i, list.len()));
+}
+
+// The commits that HEAD and each ref name after their tags, the latest
+// first, for `:/TEXT`.
+function ref_commits(repo: refs.Repo, st: Rev): (Rev, string[]) {
+  let s = st;
+  let names: string[] = [];
+  for r in refs.all_refs(repo) {
+    names = [r.hash].concat(names);
+  }
+  let head = refs.resolve_ref(repo, "HEAD");
+  if (head.hash.len() > 0) {
+    names = [head.hash].concat(names);
+  }
+  let list: Walked[] = [];
+  for h in names {
+    let (now, at, kind) = deref_tag(s, h);
+    s = now;
+    if (kind == "commit") {
+      let (after, read) = object_of(s, at);
+      s = after;
+      if let Some(o) = read {
+        list = list.append(Walked { hash: at, time: log.commit_of(at, o.body).committer.time });
+      }
+    }
+  }
+  let sorted = cmp.sort_by(list, (a: Walked, b: Walked): i32 => if (a.time > b.time) { -1 } else if (a.time < b.time) { 1 } else { 0 });
+  let tips: string[] = [];
+  for w in sorted {
+    tips = tips.append(w.hash);
+  }
+  return (s, tips);
+}
+
+// ---- Paths ----
 
 // The hash of the entry `name` of the tree `hash`, or an empty hash.
 function entry_named(s: store.Store, hash: string, name: string): Rev {
   let got = store.read(s, hash);
   let entries = match (got.object) {
-    Ok(o) => if (o.kind == "tree") { objects.tree_entries(o.body, s.width) } else { Err("not a tree") },
+    Ok(o) => if (o.kind == "tree") { objects.tree_entries(o.body, got.store.width) } else { Err("not a tree") },
     Err(why) => Err(why),
   };
-  let found = "";
+  let at = "";
   if let Ok(list) = entries {
     for e in list {
       if (e.name.len() == name.len() && same_bytes(e.name, name)) {
-        found = e.hash;
+        at = e.hash;
       }
     }
   }
-  return Rev { store: got.store, hash: found, message: "" };
+  return Rev { store: got.store, hash: at, message: "", errors: [], died: "" };
 }
 
 // The entry `path` below the tree that `hash` peels to. An empty path is
 // the tree.
 pub function at_path(s: store.Store, hash: string, path: string): Rev {
-  let r = peeled(s, hash, "tree");
+  let r = peel_to(Rev { store: s, hash: hash, message: "", errors: [], died: "" }, "", hash, "tree");
   for part in path.split("/") {
     if (part.len() > 0 && r.hash.len() > 0) {
       r = entry_named(r.store, r.hash, part);
@@ -145,42 +835,183 @@ function same_bytes(name: u8[], text: string): boolean {
   return true;
 }
 
-// The place of the first `^` or `~` of `text`, or its length.
-function first_operator(text: string): i32 {
-  for i in 0..text.len() {
-    if (text[i] == b'^' || text[i] == b'~') {
-      return i;
+// The path from the top of the worktree for a path that starts with `./`
+// or `../`, from the current directory, or None for any other path. A path
+// above the top is the message of git.
+function relative_path(repo: refs.Repo, path: string): Option[Result[string, string]] {
+  if (!path.starts_with("./") && !path.starts_with("../")) {
+    return None;
+  }
+  if (repo.top.len() == 0) {
+    return Some(Err("relative path syntax can't be used outside working tree"));
+  }
+  let parts: string[] = [];
+  for p in (repo.prefix + path).split("/") {
+    if (p == "..") {
+      if (parts.len() == 0) {
+        return Some(Err("'" + path + "' is outside repository at '" + repo.top + "'"));
+      }
+      parts = array.slice(parts, 0, parts.len() - 1);
+    } else if (p.len() > 0 && p != ".") {
+      parts = parts.append(p);
     }
   }
-  return text.len();
+  return Some(Ok(parts.join("/")));
 }
 
-function first_colon(text: string): i32 {
+// True if `path` exists from the top of the worktree, where git reads it.
+function exists(repo: refs.Repo, path: string): boolean {
+  return match (stat(if (repo.top.len() > 0) { repo.top + "/" + path } else { path })) {
+    Ok(_) => true,
+    Err(_) => false,
+  };
+}
+
+// The message of git for a path that the tree of `rev` does not have.
+function missing_path(repo: refs.Repo, s: store.Store, tree: string, path: string, rev: string): string {
+  if (exists(repo, path)) {
+    return "path '" + path + "' exists on disk, but not in '" + rev + "'";
+  }
+  let full = repo.prefix + path;
+  if (repo.prefix.len() > 0 && at_path(s, tree, full).hash.len() > 0) {
+    return "path '" + full + "' exists, but not '" + path + "'\nhint: Did you mean '" + rev + ":" + full + "' aka '" + rev + ":./" + path + "'?";
+  }
+  return "path '" + path + "' does not exist in '" + rev + "'";
+}
+
+// The message of git for a path that the index does not have at `stage`.
+function missing_index_path(repo: refs.Repo, ix: dircache.Index, stage: i32, path: string): string {
+  let first = dircache.first_of(ix, path.bytes());
+  if (dircache.has_path(ix, first, path.bytes())) {
+    let e = ix.entries[first];
+    return "path '" + path + "' is in the index, but not at stage " + stage.to_string() + "\nhint: Did you mean ':" + e.stage.to_string() + ":" + path + "'?";
+  }
+  let full = repo.prefix + path;
+  let at = dircache.first_of(ix, full.bytes());
+  if (dircache.has_path(ix, at, full.bytes())) {
+    let e = ix.entries[at];
+    return "path '" + full + "' is in the index, but not '" + path + "'\nhint: Did you mean ':" + e.stage.to_string() + ":" + full + "' aka ':" + e.stage.to_string() + ":./" + path + "'?";
+  }
+  if (exists(repo, path)) {
+    return "path '" + path + "' exists on disk, but not in the index";
+  }
+  return "path '" + path + "' does not exist (neither on disk nor in the index)";
+}
+
+// The index file of the repository.
+pub function index_of(repo: refs.Repo): dircache.Index {
+  let path = match (env("GIT_INDEX_FILE")) {
+    Some(p) => p,
+    None => repo.dir + "/index",
+  };
+  return dircache.read(path, repo.width);
+}
+
+// The object of `:PATH`, `:N:PATH` or `:/TEXT`.
+function in_index(repo: refs.Repo, first: Rev, text: string): Rev {
+  if (text.len() > 2 && text[1] == b'/') {
+    let (now, tips) = ref_commits(repo, first);
+    return oneline(now, objects.part(text, 2, text.len()), tips);
+  }
+  let stage = 0;
+  let path = objects.part(text, 1, text.len());
+  if (text.len() >= 3 && text[2] == b':' && text[1] >= b'0' && text[1] <= b'3') {
+    stage = (text[1] - b'0') as i32;
+    path = objects.part(text, 3, text.len());
+  }
+  if let Some(resolved) = relative_path(repo, path) {
+    match (resolved) {
+      Ok(p) => {
+        path = p;
+      },
+      Err(message) => {
+        return die(first, message);
+      }
+    }
+  }
+  let ix = index_of(repo);
+  if let Some(e) = dircache.find(ix, path.bytes(), stage) {
+    return found(first, e.hash);
+  }
+  return Rev { ...fail(first), message: if (text.len() > 1 && text[1] != b'/') { missing_index_path(repo, ix, stage, path) } else { "" } };
+}
+
+// The place of the first `:` of `text` that is not in braces, or -1.
+function path_colon(text: string): i32 {
+  let depth = 0;
   for i in 0..text.len() {
-    if (text[i] == b':') {
+    if (text[i] == b'{') {
+      depth += 1;
+    } else if (depth > 0 && text[i] == b'}') {
+      depth -= 1;
+    } else if (depth == 0 && text[i] == b':') {
       return i;
     }
   }
   return -1;
 }
 
-// The object that the revision `text` names.
-pub function parse(repo: refs.Repo, own s: store.Store, text: string): Rev {
-  let colon = first_colon(text);
-  let base = if (colon > 0) { objects.part(text, 0, colon) } else { text };
-  let cut = first_operator(base);
-  let hash = refs.resolve(repo, s, objects.part(base, 0, cut));
-  if (hash.len() == 0) {
-    return none(s);
+// The object that the revision `text` names, as `get_oid_with_context` of
+// git reads it. `flags` tells what an ambiguous short hash prefers.
+pub function parse_with(repo: refs.Repo, s: store.Store, text: string, flags: i32): Rev {
+  return read_name(repo, s, text, flags, false);
+}
+
+// The object that the revision `text` names, with no search of `:/TEXT`,
+// as git reads a revision that names one object or stops.
+pub function parse_to_die(repo: refs.Repo, s: store.Store, text: string): Rev {
+  return read_name(repo, s, text, ANY, true);
+}
+
+function read_name(repo: refs.Repo, s: store.Store, text: string, flags: i32, to_die: boolean): Rev {
+  let st = Rev { store: s, hash: "", message: "", errors: [], died: "" };
+  let first = get_oid_1(repo, st, text, flags);
+  if (first.hash.len() > 0 || first.died.len() > 0) {
+    return first;
   }
-  let r = operated(s, hash, objects.part(base, cut, base.len()));
-  if (colon <= 0 || r.hash.len() == 0) {
-    return r;
+  if (text.starts_with(":")) {
+    if (to_die && text.len() > 1 && text[1] == b'/') {
+      return first;
+    }
+    return in_index(repo, first, text);
+  }
+  let colon = path_colon(text);
+  if (colon < 0) {
+    return first;
+  }
+  let rev = objects.part(text, 0, colon);
+  let tree = get_oid_1(repo, Rev { ...first, errors: [] }, rev, TREEISH);
+  let errors = first.errors.concat(tree.errors);
+  if (tree.died.len() > 0) {
+    return Rev { ...tree, errors: errors };
+  }
+  if (tree.hash.len() == 0) {
+    return Rev { ...tree, errors: errors, message: "invalid object name '" + rev + "'." };
   }
   let path = objects.part(text, colon + 1, text.len());
-  let found = at_path(r.store, r.hash, path);
-  if (found.hash.len() == 0) {
-    return Rev { ...found, message: "path '" + path + "' does not exist in '" + base + "'" };
+  if let Some(resolved) = relative_path(repo, path) {
+    match (resolved) {
+      Ok(p) => {
+        path = p;
+      },
+      Err(message) => {
+        return die(tree, message);
+      }
+    }
   }
-  return found;
+  let entry = at_path(tree.store, tree.hash, path);
+  if (entry.hash.len() == 0) {
+    return Rev { ...tree, hash: "", store: entry.store, errors: errors, message: missing_path(repo, entry.store, tree.hash, path, rev) };
+  }
+  return Rev { ...tree, hash: entry.hash, store: entry.store, errors: errors };
+}
+
+// The object that the revision `text` names.
+pub function parse(repo: refs.Repo, s: store.Store, text: string): Rev {
+  return parse_with(repo, s, text, ANY);
+}
+
+// The commit of `hash` after its tags, or "" with the error of git.
+pub function commit_of(s: store.Store, hash: string): Rev {
+  return commit_reference(Rev { store: s, hash: "", message: "", errors: [], died: "" }, hash);
 }

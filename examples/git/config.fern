@@ -1,0 +1,185 @@
+// The file `config` of a repository: sections, keys and values.
+//
+//   [core]
+//       bare = false
+//   [branch "main"]
+//       remote = origin
+//
+// A name is `section.key`, or `section.subsection.key`. The section and the
+// key have no capital letters in a name. The subsection keeps its case.
+import "std/array";
+import "std/string";
+
+pub struct Entry { name: string, value: string }
+
+pub struct Config { entries: Entry[] }
+
+pub function empty(): Config {
+  return Config { entries: [] };
+}
+
+// The configuration in the file `path`. A file that does not open gives
+// no entries.
+pub function read(path: string): Config {
+  return match (read_file(path)) {
+    Ok(text) => parse(text),
+    Err(_) => empty(),
+  };
+}
+
+// The last value of the name `name`, or None.
+pub function (c: Config) get(name: string): Option[string] {
+  let found: Option[string] = None;
+  for e in c.entries {
+    if (e.name == name) {
+      found = Some(e.value);
+    }
+  }
+  return found;
+}
+
+// The value of `name` as a boolean, or `otherwise` when it is not set.
+pub function (c: Config) flag(name: string, otherwise: boolean): boolean {
+  let Some(v) = c.get(name) else {
+    return otherwise;
+  };
+  let low = v.to_ascii_lower();
+  if (low == "false" || low == "no" || low == "off" || low == "0") {
+    return false;
+  }
+  return true;
+}
+
+function is_space(b: u8): boolean {
+  return b == b' ' || b == b'\t' || b == b'\r';
+}
+
+function is_key_byte(b: u8): boolean {
+  return b >= b'a' && b <= b'z' || b >= b'A' && b <= b'Z' || b >= b'0' && b <= b'9' || b == b'-';
+}
+
+// The value from `at` to the end of its line, without its comment, with the
+// quotes and the escapes of git, and the place after the line.
+function value_at(text: string, at: i32): (string, i32) {
+  let out: u8[] = [];
+  let i = at;
+  let quoted = false;
+  let kept = 0;
+  while (i < text.len() && is_space(text[i])) {
+    i += 1;
+  }
+  while (i < text.len()) {
+    let b = text[i];
+    if (b == b'\n' && !quoted) {
+      break;
+    }
+    if (!quoted && (b == b'#' || b == b';')) {
+      while (i < text.len() && text[i] != b'\n') {
+        i += 1;
+      }
+      break;
+    }
+    if (b == b'"') {
+      quoted = !quoted;
+      kept = out.len();
+      i += 1;
+      continue;
+    }
+    if (b == b'\\' && i + 1 < text.len()) {
+      let next = text[i + 1];
+      if (next == b'\n') {
+        i += 2;
+        continue;
+      }
+      out = out.append(match (next) {
+        b'n' => b'\n',
+        b't' => b'\t',
+        b'b' => 8,
+        _ => next,
+      });
+      kept = out.len();
+      i += 2;
+      continue;
+    }
+    out = out.append(b);
+    if (quoted || !is_space(b)) {
+      kept = out.len();
+    }
+    i += 1;
+  }
+  return (unsafe { string_from_bytes_unchecked(array.slice(out, 0, kept)) }, i + 1);
+}
+
+// The section of the header `[...]` at `at`, and the place after the `]`.
+function section_at(text: string, at: i32): (string, i32) {
+  let i = at + 1;
+  let name = "";
+  while (i < text.len() && text[i] != b']' && text[i] != b'"' && !is_space(text[i])) {
+    i += 1;
+  }
+  name = slice_unchecked(text, at + 1, i).to_owned().to_ascii_lower();
+  while (i < text.len() && is_space(text[i])) {
+    i += 1;
+  }
+  if (i < text.len() && text[i] == b'"') {
+    let sub: u8[] = [];
+    i += 1;
+    while (i < text.len() && text[i] != b'"' && text[i] != b'\n') {
+      if (text[i] == b'\\' && i + 1 < text.len()) {
+        i += 1;
+      }
+      sub = sub.append(text[i]);
+      i += 1;
+    }
+    name = name + "." + unsafe { string_from_bytes_unchecked(sub) };
+    while (i < text.len() && text[i] != b']' && text[i] != b'\n') {
+      i += 1;
+    }
+  }
+  return (name, i + 1);
+}
+
+// The entries of the text of a configuration file.
+pub function parse(text: string): Config {
+  let entries: Entry[] = [];
+  let section = "";
+  let i = 0;
+  while (i < text.len()) {
+    let b = text[i];
+    if (is_space(b) || b == b'\n') {
+      i += 1;
+    } else if (b == b'#' || b == b';') {
+      while (i < text.len() && text[i] != b'\n') {
+        i += 1;
+      }
+    } else if (b == b'[') {
+      let (name, next) = section_at(text, i);
+      section = name;
+      i = next;
+    } else if (is_key_byte(b)) {
+      let start = i;
+      while (i < text.len() && is_key_byte(text[i])) {
+        i += 1;
+      }
+      let key = slice_unchecked(text, start, i).to_owned().to_ascii_lower();
+      while (i < text.len() && is_space(text[i])) {
+        i += 1;
+      }
+      if (i < text.len() && text[i] == b'=') {
+        let (value, next) = value_at(text, i + 1);
+        entries = entries.append(Entry { name: section + "." + key, value: value });
+        i = next;
+      } else {
+        entries = entries.append(Entry { name: section + "." + key, value: "true" });
+        while (i < text.len() && text[i] != b'\n') {
+          i += 1;
+        }
+      }
+    } else {
+      while (i < text.len() && text[i] != b'\n') {
+        i += 1;
+      }
+    }
+  }
+  return Config { entries: entries };
+}

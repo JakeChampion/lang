@@ -1,0 +1,676 @@
+// The checks of the form of an object that `hash-object` makes before it
+// gives a name to a commit, a tree or a tag, as `git fsck --strict` makes
+// them. Each finding is a line of git: "error: object fails fsck: ID: TEXT".
+import "std/array";
+import "std/string";
+import "./objects";
+
+function fails(id: string, text: string): string {
+  return "error: object fails fsck: " + id + ": " + text;
+}
+
+// The lines of git for the object of `kind` with `body`. No line means
+// that the object is sound.
+pub function check(a: i32, kind: string, body: u8[]): string[] {
+  if (kind == "tree") {
+    return check_tree(a, body);
+  }
+  if (kind == "commit") {
+    return check_commit(a, body);
+  }
+  if (kind == "tag") {
+    return check_tag(a, body);
+  }
+  return [];
+}
+
+// ---- Headers and people ----
+
+// The finding for the header lines of a commit or a tag, or "".
+function check_headers(body: u8[]): string {
+  for i in 0..body.len() {
+    if (body[i] == 0) {
+      return fails("nulInHeader", "unterminated header: NUL at offset " + i.to_string());
+    }
+    if (body[i] == b'\n' && i + 1 < body.len() && body[i + 1] == b'\n') {
+      return "";
+    }
+  }
+  if (body.len() > 0 && body[body.len() - 1] == b'\n') {
+    return "";
+  }
+  return fails("unterminatedHeader", "unterminated header");
+}
+
+function is_digit(b: u8): boolean {
+  return b >= b'0' && b <= b'9';
+}
+
+// The byte at `at`, or 0 past the end, as a C string reads.
+function at_or_nul(body: u8[], at: i32): u8 {
+  return if (at < body.len()) { body[at] } else { 0 };
+}
+
+// The place of the first `<`, `>` or line end from `at`, or of the end.
+function span_to(body: u8[], at: i32): i32 {
+  let i = at;
+  while (i < body.len() && body[i] != 0 && body[i] != b'<' && body[i] != b'>' && body[i] != b'\n') {
+    i += 1;
+  }
+  return i;
+}
+
+// The finding for the person line at `at`, which is after `author `,
+// `committer ` or `tagger `, or "". The place after the line is the second
+// value.
+function check_ident(body: u8[], at: i32): (string, i32) {
+  let line_end = at;
+  while (line_end < body.len() && body[line_end] != b'\n' && body[line_end] != 0) {
+    line_end += 1;
+  }
+  let next = if (line_end < body.len() && body[line_end] == b'\n') { line_end + 1 } else { line_end };
+  let p = at;
+  if (at_or_nul(body, p) == b'<') {
+    return (fails("missingNameBeforeEmail", "invalid author/committer line - missing space before email"), next);
+  }
+  p = span_to(body, p);
+  if (at_or_nul(body, p) == b'>') {
+    return (fails("badName", "invalid author/committer line - bad name"), next);
+  }
+  if (at_or_nul(body, p) != b'<') {
+    return (fails("missingEmail", "invalid author/committer line - missing email"), next);
+  }
+  if (p == 0 || body[p - 1] != b' ') {
+    return (fails("missingSpaceBeforeEmail", "invalid author/committer line - missing space before email"), next);
+  }
+  p = span_to(body, p + 1);
+  if (at_or_nul(body, p) != b'>') {
+    return (fails("badEmail", "invalid author/committer line - bad email"), next);
+  }
+  p += 1;
+  if (at_or_nul(body, p) != b' ') {
+    return (fails("missingSpaceBeforeDate", "invalid author/committer line - missing space before date"), next);
+  }
+  p += 1;
+  while (at_or_nul(body, p) == b' ' || at_or_nul(body, p) == b'\t') {
+    p += 1;
+  }
+  if (!is_digit(at_or_nul(body, p))) {
+    return (fails("badDate", "invalid author/committer line - bad date"), next);
+  }
+  if (at_or_nul(body, p) == b'0' && at_or_nul(body, p + 1) != b' ') {
+    return (fails("zeroPaddedDate", "invalid author/committer line - zero-padded date"), next);
+  }
+  let end = p;
+  let big = false;
+  let value: i64 = 0;
+  while (is_digit(at_or_nul(body, end))) {
+    let d = (body[end] - b'0') as i64;
+    if (value > (9223372036854775807 - d) / 10) {
+      big = true;
+    } else {
+      value = value * 10 + d;
+    }
+    end += 1;
+  }
+  if (big || value == 9223372036854775807) {
+    return (fails("badDateOverflow", "invalid author/committer line - date causes integer overflow"), next);
+  }
+  if (at_or_nul(body, end) != b' ') {
+    return (fails("badDate", "invalid author/committer line - bad date"), next);
+  }
+  p = end + 1;
+  let z = at_or_nul(body, p);
+  if (z != b'+' && z != b'-' || !is_digit(at_or_nul(body, p + 1)) || !is_digit(at_or_nul(body, p + 2)) || !is_digit(at_or_nul(body, p + 3)) || !is_digit(at_or_nul(body, p + 4)) || at_or_nul(body, p + 5) != b'\n') {
+    return (fails("badTimezone", "invalid author/committer line - bad time zone"), next);
+  }
+  return ("", p + 6);
+}
+
+// True if `body` has `key` at `at`, and the place after it.
+function skip(body: u8[], at: i32, key: string): (boolean, i32) {
+  if (at + key.len() > body.len()) {
+    return (false, at);
+  }
+  for k in 0..key.len() {
+    if (body[at + k] != key[k]) {
+      return (false, at);
+    }
+  }
+  return (true, at + key.len());
+}
+
+// True if a full name in hexadecimal is at `at`, with a line end after it.
+function name_line(a: i32, body: u8[], at: i32): boolean {
+  let n = 2 * a;
+  if (at + n >= body.len()) {
+    return false;
+  }
+  for k in 0..n {
+    let b = body[at + k];
+    if (!(is_digit(b) || b >= b'a' && b <= b'f' || b >= b'A' && b <= b'F')) {
+      return false;
+    }
+  }
+  return body[at + n] == b'\n';
+}
+
+// The place after the line at `at`.
+function after_line(body: u8[], at: i32): i32 {
+  let i = at;
+  while (i < body.len() && body[i] != b'\n') {
+    i += 1;
+  }
+  return i + 1;
+}
+
+function check_commit(a: i32, body: u8[]): string[] {
+  let head = check_headers(body);
+  if (head.len() > 0) {
+    return [head];
+  }
+  let (has_tree, at) = skip(body, 0, "tree ");
+  if (!has_tree) {
+    return [fails("missingTree", "invalid format - expected 'tree' line")];
+  }
+  if (!name_line(a, body, at)) {
+    return [fails("badTreeSha1", "invalid 'tree' line format - bad sha1")];
+  }
+  at += 2 * a + 1;
+  while (true) {
+    let (has, from) = skip(body, at, "parent ");
+    if (!has) {
+      break;
+    }
+    if (!name_line(a, body, from)) {
+      return [fails("badParentSha1", "invalid 'parent' line format - bad sha1")];
+    }
+    at = from + 2 * a + 1;
+  }
+  let authors = 0;
+  while (true) {
+    let (has, from) = skip(body, at, "author ");
+    if (!has) {
+      break;
+    }
+    authors += 1;
+    let (finding, next) = check_ident(body, from);
+    if (finding.len() > 0) {
+      return [finding];
+    }
+    at = next;
+  }
+  if (authors < 1) {
+    return [fails("missingAuthor", "invalid format - expected 'author' line")];
+  }
+  if (authors > 1) {
+    return [fails("multipleAuthors", "invalid format - multiple 'author' lines")];
+  }
+  let (has_committer, from) = skip(body, at, "committer ");
+  if (!has_committer) {
+    return [fails("missingCommitter", "invalid format - expected 'committer' line")];
+  }
+  let (finding, _) = check_ident(body, from);
+  if (finding.len() > 0) {
+    return [finding];
+  }
+  if (body.contains(0)) {
+    return [fails("nulInCommit", "NUL byte in the commit object body")];
+  }
+  return [];
+}
+
+// ---- Tags ----
+
+// The disposition of a byte in a ref name, as refs.c of git gives it: 1
+// ends a component, 2 is a dot, 3 is a brace, 4 is refused, 5 is `*`.
+function disposition(b: u8): i32 {
+  if (b == 0 || b == b'/') {
+    return 1;
+  }
+  if (b == b'.') {
+    return 2;
+  }
+  if (b == b'{') {
+    return 3;
+  }
+  if (b == b'*') {
+    return 5;
+  }
+  if (b < 32 || b == 127 || b == b' ' || b == b':' || b == b'?' || b == b'[' || b == b'\\' || b == b'^' || b == b'~') {
+    return 4;
+  }
+  return 0;
+}
+
+// True if `name` is a sound name of a ref with two components or more.
+pub function ref_name_ok(name: u8[]): boolean {
+  if (name.len() == 1 && name[0] == b'@') {
+    return false;
+  }
+  let at = 0;
+  let components = 0;
+  let last_end = 0;
+  while (true) {
+    let i = at;
+    let last: u8 = 0;
+    while (i < name.len() && disposition(name[i]) != 1) {
+      let d = disposition(name[i]);
+      if (d == 2 && last == b'.' || d == 3 && last == b'@' || d == 4 || d == 5) {
+        return false;
+      }
+      last = name[i];
+      i += 1;
+    }
+    if (i == at || name[at] == b'.') {
+      return false;
+    }
+    if (i - at >= 5 && name[i - 5] == b'.' && name[i - 4] == b'l' && name[i - 3] == b'o' && name[i - 2] == b'c' && name[i - 1] == b'k') {
+      return false;
+    }
+    components += 1;
+    last_end = i;
+    if (i >= name.len()) {
+      break;
+    }
+    at = i + 1;
+  }
+  return name[last_end - 1] != b'.' && components >= 2;
+}
+
+function check_tag(a: i32, body: u8[]): string[] {
+  let head = check_headers(body);
+  if (head.len() > 0) {
+    return [head];
+  }
+  let (has_object, at) = skip(body, 0, "object ");
+  if (!has_object) {
+    return [fails("missingObject", "invalid format - expected 'object' line")];
+  }
+  if (!name_line(a, body, at)) {
+    return [fails("badObjectSha1", "invalid 'object' line format - bad sha1")];
+  }
+  at += 2 * a + 1;
+  let (has_type, type_at) = skip(body, at, "type ");
+  if (!has_type) {
+    return [fails("missingTypeEntry", "invalid format - expected 'type' line")];
+  }
+  let type_end = after_line(body, type_at) - 1;
+  if (type_end >= body.len()) {
+    return [fails("missingType", "invalid format - unexpected end after 'type' line")];
+  }
+  if (!objects.is_kind(objects.part_bytes(body, type_at, type_end))) {
+    return [fails("badType", "invalid 'type' value")];
+  }
+  let (has_tag, tag_at) = skip(body, type_end + 1, "tag ");
+  if (!has_tag) {
+    return [fails("missingTagEntry", "invalid format - expected 'tag' line")];
+  }
+  let tag_end = after_line(body, tag_at) - 1;
+  if (tag_end >= body.len()) {
+    return [fails("missingTag", "invalid format - unexpected end after 'type' line")];
+  }
+  let name = array.slice(body, tag_at, tag_end);
+  if (!ref_name_ok("refs/tags/".bytes().concat(name))) {
+    return [fails("badTagName", "invalid 'tag' name: " + objects.part_bytes(body, tag_at, tag_end))];
+  }
+  let (has_tagger, tagger_at) = skip(body, tag_end + 1, "tagger ");
+  if (!has_tagger) {
+    return [fails("missingTaggerEntry", "invalid format - expected 'tagger' line")];
+  }
+  let (finding, _) = check_ident(body, tagger_at);
+  if (finding.len() > 0) {
+    return [finding];
+  }
+  return [];
+}
+
+// ---- Trees ----
+
+// The next character of `name` from `at` for HFS+, which ignores some code
+// points, and the place after it. -1 is a byte that is not UTF-8.
+function hfs_char(name: u8[], at: i32): (i32, i32) {
+  let i = at;
+  while (true) {
+    if (i >= name.len()) {
+      return (0, i);
+    }
+    let b = name[i] as i32;
+    let (c, n) = if (b < 128) { (b, 1) } else if ((b & 224) == 192 && i + 1 < name.len()) { ((b & 31) << 6 | name[i + 1] as i32 & 63, 2) } else if ((b & 240) == 224 && i + 2 < name.len()) { ((b & 15) << 12 | (name[i + 1] as i32 & 63) << 6 | name[i + 2] as i32 & 63, 3) } else if ((b & 248) == 240 && i + 3 < name.len()) { ((b & 7) << 18 | (name[i + 1] as i32 & 63) << 12 | (name[i + 2] as i32 & 63) << 6 | name[i + 3] as i32 & 63, 4) } else { (-1, 1) };
+    if (c < 0) {
+      return (-1, i + n);
+    }
+    i += n;
+    let ignored = c >= 8204 && c <= 8207 || c >= 8234 && c <= 8238 || c >= 8298 && c <= 8303 || c == 65279;
+    if (!ignored) {
+      return (c, i);
+    }
+  }
+  return (0, i);
+}
+
+function lower(c: i32): i32 {
+  return if (c >= 65 && c <= 90) { c + 32 } else { c };
+}
+
+// True if HFS+ reads `name` as `.` and `needle`.
+function is_hfs_dot(name: u8[], needle: string): boolean {
+  let (first, at) = hfs_char(name, 0);
+  if (first != b'.' as i32) {
+    return false;
+  }
+  let i = at;
+  for k in 0..needle.len() {
+    let (c, next) = hfs_char(name, i);
+    if (c < 0 || c > 127 || lower(c) != needle[k] as i32) {
+      return false;
+    }
+    i = next;
+  }
+  let (c, _) = hfs_char(name, i);
+  return c == 0 || c == b'/' as i32;
+}
+
+function byte_at(name: u8[], i: i32): u8 {
+  return if (i < name.len()) { name[i] } else { 0 };
+}
+
+function lower_byte(b: u8): u8 {
+  return if (b >= b'A' && b <= b'Z') { b + 32 } else { b };
+}
+
+// True if the bytes from `i` are spaces and dots only, to the end or a `:`.
+function spaces_and_dots(name: u8[], from: i32): boolean {
+  let i = from;
+  while (true) {
+    let c = byte_at(name, i);
+    if (c == 0 || c == b':') {
+      return true;
+    }
+    if (c != b' ' && c != b'.') {
+      return false;
+    }
+    i += 1;
+  }
+  return false;
+}
+
+function is_ntfs_dotgit(name: u8[]): boolean {
+  let i = 0;
+  if (byte_at(name, 0) == b'.') {
+    if (lower_byte(byte_at(name, 1)) != b'g' || lower_byte(byte_at(name, 2)) != b'i' || lower_byte(byte_at(name, 3)) != b't') {
+      return false;
+    }
+    i = 4;
+  } else if (lower_byte(byte_at(name, 0)) == b'g') {
+    if (lower_byte(byte_at(name, 1)) != b'i' || lower_byte(byte_at(name, 2)) != b't' || byte_at(name, 3) != b'~' || byte_at(name, 4) != b'1') {
+      return false;
+    }
+    i = 5;
+  } else {
+    return false;
+  }
+  while (true) {
+    let c = byte_at(name, i);
+    if (c == 0 || c == b'/' || c == b'\\' || c == b':') {
+      return true;
+    }
+    if (c != b'.' && c != b' ') {
+      return false;
+    }
+    i += 1;
+  }
+  return false;
+}
+
+// True if NTFS reads `name` as `.` and `needle`, or as its short name.
+function is_ntfs_dot(name: u8[], needle: string, short: string): boolean {
+  let n = needle.len();
+  if (byte_at(name, 0) == b'.') {
+    let same = true;
+    for k in 0..n {
+      if (lower_byte(byte_at(name, k + 1)) != needle[k]) {
+        same = false;
+      }
+    }
+    if (same) {
+      return spaces_and_dots(name, n + 1);
+    }
+  }
+  let six = true;
+  for k in 0..6 {
+    if (lower_byte(byte_at(name, k)) != needle[k]) {
+      six = false;
+    }
+  }
+  if (six && byte_at(name, 6) == b'~' && byte_at(name, 7) >= b'1' && byte_at(name, 7) <= b'4') {
+    return spaces_and_dots(name, 8);
+  }
+  let tilde = false;
+  let i = 0;
+  while (i < 8) {
+    let c = byte_at(name, i);
+    if (c == 0) {
+      return false;
+    }
+    if (tilde) {
+      if (!is_digit(c)) {
+        return false;
+      }
+    } else if (c == b'~') {
+      i += 1;
+      let d = byte_at(name, i);
+      if (d < b'1' || d > b'9') {
+        return false;
+      }
+      tilde = true;
+    } else if (i >= 6 || c >= 128 || lower_byte(c) != short[i]) {
+      return false;
+    }
+    i += 1;
+  }
+  return spaces_and_dots(name, 8);
+}
+
+// The order of two entries of a tree: 0 in order, 1 out of order, 2 for
+// the same name twice. `waiting` holds the names of the entries that are
+// not trees and that a later tree can have.
+struct Order { verdict: i32, waiting: u8[][] }
+
+function less_than_slash(c: u8): boolean {
+  return c != 0 && c < b'/';
+}
+
+function has_prefix(name: u8[], prefix: u8[]): boolean {
+  if (prefix.len() > name.len()) {
+    return false;
+  }
+  for i in 0..prefix.len() {
+    if (name[i] != prefix[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function ordered(mode1: i32, name1: u8[], mode2: i32, name2: u8[], own waiting: u8[][]): Order {
+  let len = name1.len().min(name2.len());
+  for i in 0..len {
+    if (name1[i] != name2[i]) {
+      return Order { verdict: if (name1[i] < name2[i]) { 0 } else { 1 }, waiting: waiting };
+    }
+  }
+  let c1 = byte_at(name1, len);
+  let c2 = byte_at(name2, len);
+  if (c1 == 0 && c2 == 0) {
+    return Order { verdict: 2, waiting: waiting };
+  }
+  if (c1 == 0 && (mode1 & 61440) == 16384) {
+    c1 = b'/';
+  }
+  if (c2 == 0 && (mode2 & 61440) == 16384) {
+    c2 = b'/';
+  }
+  if (c1 == 0 && less_than_slash(c2)) {
+    waiting = waiting.append(name1);
+  } else if (c2 == b'/' && less_than_slash(c1)) {
+    while (waiting.len() > 0) {
+      let f = waiting[waiting.len() - 1];
+      waiting = array.slice(waiting, 0, waiting.len() - 1);
+      if (has_prefix(name2, f)) {
+        if (f.len() == name2.len()) {
+          return Order { verdict: 2, waiting: waiting };
+        }
+        if (less_than_slash(name2[f.len()])) {
+          waiting = waiting.append(f);
+          break;
+        }
+      }
+    }
+  }
+  return Order { verdict: if (c1 < c2) { 0 } else { 1 }, waiting: waiting };
+}
+
+// The mode at `at` in octal, and the place after its space, or -1 for a
+// mode that is not octal.
+function mode_at(body: u8[], at: i32): (i32, i32) {
+  if (at >= body.len() || body[at] == b' ') {
+    return (0, -1);
+  }
+  let mode = 0;
+  let i = at;
+  while (i < body.len() && body[i] != b' ') {
+    if (body[i] < b'0' || body[i] > b'7') {
+      return (0, -1);
+    }
+    mode = mode * 8 + (body[i] - b'0') as i32;
+    i += 1;
+  }
+  return if (i < body.len()) { (mode, i + 1) } else { (0, -1) };
+}
+
+// The error of git for the entry at `at`, or "".
+function entry_error(raw: i32, body: u8[], at: i32): string {
+  let size = body.len() - at;
+  if (size < raw + 3 || body[body.len() - (raw + 1)] != 0) {
+    return "too-short tree object";
+  }
+  let (_, path) = mode_at(body, at);
+  if (path < 0) {
+    return "malformed mode in tree entry";
+  }
+  if (body[path] == 0) {
+    return "empty filename in tree entry";
+  }
+  return "";
+}
+
+function check_tree(a: i32, body: u8[]): string[] {
+  let raw = a;
+  let out: string[] = [];
+  let first = if (body.len() > 0) { entry_error(raw, body, 0) } else { "" };
+  if (first.len() > 0) {
+    return ["error: " + first, fails("badTree", "cannot be parsed as a tree")];
+  }
+  let null_name = false;
+  let full = false;
+  let dot = false;
+  let dotdot = false;
+  let dotgit = false;
+  let zero_pad = false;
+  let bad_modes = false;
+  let dups = false;
+  let unsorted = false;
+  let large = false;
+  let last_mode = -1;
+  let last_name: u8[] = [];
+  let waiting: u8[][] = [];
+  let at = 0;
+  while (at < body.len()) {
+    let (mode, path) = mode_at(body, at);
+    let end = path;
+    while (body[end] != 0) {
+      end += 1;
+    }
+    let name = array.slice(body, path, end);
+    let entry = array.slice(body, end + 1, end + 1 + raw);
+    null_name = null_name || entry.all((b: u8): boolean => b == 0);
+    full = full || name.contains(b'/');
+    dot = dot || name.len() == 1 && name[0] == b'.';
+    dotdot = dotdot || name.len() == 2 && name[0] == b'.' && name[1] == b'.';
+    dotgit = dotgit || is_hfs_dot(name, "git") || is_ntfs_dotgit(name);
+    zero_pad = zero_pad || body[at] == b'0';
+    large = large || name.len() > 4096;
+    let link = (mode & 61440) == 40960;
+    if ((is_hfs_dot(name, "gitmodules") || is_ntfs_dot(name, "gitmodules", "gi7eba")) && link) {
+      out = out.append(fails("gitmodulesSymlink", ".gitmodules is a symbolic link"));
+    }
+    if ((is_hfs_dot(name, "gitattributes") || is_ntfs_dot(name, "gitattributes", "gi7d29")) && link) {
+      out = out.append(fails("gitattributesSymlink", ".gitattributes is a symlink"));
+    }
+    if (link && (is_hfs_dot(name, "gitignore") || is_ntfs_dot(name, "gitignore", "gi250a"))) {
+      out = out.append(fails("gitignoreSymlink", ".gitignore is a symlink"));
+    }
+    if (link && (is_hfs_dot(name, "mailmap") || is_ntfs_dot(name, "mailmap", "maba30"))) {
+      out = out.append(fails("mailmapSymlink", ".mailmap is a symlink"));
+    }
+    for i in 0..name.len() {
+      if (name[i] == b'\\') {
+        let rest = array.slice(name, i + 1, name.len());
+        dotgit = dotgit || is_ntfs_dotgit(rest);
+        if (link && is_ntfs_dot(rest, "gitmodules", "gi7eba")) {
+          out = out.append(fails("gitmodulesSymlink", ".gitmodules is a symbolic link"));
+        }
+      }
+    }
+    let next = end + 1 + raw;
+    let broken = if (next < body.len()) { entry_error(raw, body, next) } else { "" };
+    if (broken.len() > 0) {
+      out = out.append("error: " + broken).append(fails("badTree", "cannot be parsed as a tree"));
+      next = body.len();
+    } else {
+      let standard = mode == 33261 || mode == 33188 || mode == 40960 || mode == 16384 || mode == 57344;
+      bad_modes = bad_modes || !standard;
+      if (last_mode >= 0) {
+        let o = ordered(last_mode, last_name, mode, name, waiting);
+        waiting = o.waiting;
+        unsorted = unsorted || o.verdict == 1;
+        dups = dups || o.verdict == 2;
+      }
+      last_mode = mode;
+      last_name = name;
+    }
+    at = next;
+  }
+  if (null_name) {
+    out = out.append(fails("nullSha1", "contains entries pointing to null sha1"));
+  }
+  if (full) {
+    out = out.append(fails("fullPathname", "contains full pathnames"));
+  }
+  if (dot) {
+    out = out.append(fails("hasDot", "contains '.'"));
+  }
+  if (dotdot) {
+    out = out.append(fails("hasDotdot", "contains '..'"));
+  }
+  if (dotgit) {
+    out = out.append(fails("hasDotgit", "contains '.git'"));
+  }
+  if (zero_pad) {
+    out = out.append(fails("zeroPaddedFilemode", "contains zero-padded file modes"));
+  }
+  if (bad_modes) {
+    out = out.append(fails("badFilemode", "contains bad file modes"));
+  }
+  if (dups) {
+    out = out.append(fails("duplicateEntries", "contains duplicate file entries"));
+  }
+  if (unsorted) {
+    out = out.append(fails("treeNotSorted", "not properly sorted"));
+  }
+  if (large) {
+    out = out.append(fails("largePathname", "contains excessively large pathname"));
+  }
+  return out;
+}
