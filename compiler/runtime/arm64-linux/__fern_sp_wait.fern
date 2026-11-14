@@ -1,0 +1,29 @@
+function __fern_sp_wait(pfd: usize, in_w: i32, out_r: i32, err_r: i32): i32 {
+  __store_i32(pfd, in_w);
+  __store_i32(pfd + 4, 4);
+  __store_i32(pfd + 8, out_r);
+  __store_i32(pfd + 12, 1);
+  __store_i32(pfd + 16, err_r);
+  __store_i32(pfd + 20, 1);
+  let ready = __syscall5(73, pfd as i64, 3, 0, 0, 0) as i32;
+  if (ready == -4) {
+    return 0;
+  }
+  if (ready < 0) {
+    return -1;
+  }
+  let got = 0;
+  let in_got = __load_i32(pfd + 4) >> 16;
+  if ((in_got & 56) != 0) {
+    got |= 2;
+  } else if (in_got != 0) {
+    got |= 1;
+  }
+  if (__load_i32(pfd + 12) >> 16 != 0) {
+    got |= 4;
+  }
+  if (__load_i32(pfd + 20) >> 16 != 0) {
+    got |= 8;
+  }
+  return got;
+}

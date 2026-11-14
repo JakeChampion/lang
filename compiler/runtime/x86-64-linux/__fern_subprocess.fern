@@ -68,14 +68,86 @@ function __fern_subprocess(cmd: string, args: string[], input: string): ProcessR
   __syscall3(3, in_r as i64, 0, 0);
   __syscall3(3, out_w as i64, 0, 0);
   __syscall3(3, err_w as i64, 0, 0);
-  if (input.len() > 0) {
-    __syscall3(1, in_w as i64, __raw_data(input) as i64, input.len() as i64);
+  let st = __raw_alloc(88);
+  let act = st + 24;
+  let old = st + 56;
+  __store_i64(act, 1 as i64);
+  __store_i64(act + 8, 0 as i64);
+  __store_i64(act + 16, 0 as i64);
+  __store_i64(act + 24, 0 as i64);
+  __syscall4(13, 13, act as i64, old as i64, 8);
+  let ilen = input.len();
+  let sent: i32 = 0;
+  if (ilen == 0) {
+    __syscall3(3, in_w as i64, 0, 0);
+    in_w = -1;
   }
-  __syscall3(3, in_w as i64, 0, 0);
   let obuf = __raw_alloc(65536);
-  let olen = __fern_sp_drain(out_r, obuf);
+  let ocap: i32 = 65536;
+  let olen: i32 = 0;
   let ebuf = __raw_alloc(65536);
-  let elen = __fern_sp_drain(err_r, ebuf);
+  let ecap: i32 = 65536;
+  let elen: i32 = 0;
+  while (in_w >= 0 || out_r >= 0 || err_r >= 0) {
+    let got = __fern_sp_wait(st, in_w, out_r, err_r);
+    if (got < 0) {
+      break;
+    }
+    if (in_w >= 0 && (got & 3) != 0) {
+      let n = if ((got & 1) != 0) { __fern_sp_feed(in_w, __raw_data(input) + sent as usize, ilen - sent) } else { -1 };
+      if (n > 0) {
+        sent += n;
+      }
+      if (n < 0 || sent == ilen) {
+        __syscall3(3, in_w as i64, 0, 0);
+        in_w = -1;
+      }
+    }
+    if (out_r >= 0 && (got & 4) != 0) {
+      if (olen == ocap && ocap < 1073741824) {
+        let wide = __raw_alloc(ocap * 2);
+        __memcpy(wide, obuf, olen);
+        let full = __raw_string(obuf, ocap);
+        obuf = wide;
+        ocap *= 2;
+      }
+      let n = if (olen < ocap) { __fern_sp_take(out_r, obuf + olen as usize, ocap - olen) } else { -1 };
+      if (n > 0) {
+        olen += n;
+      }
+      if (n < 0) {
+        __syscall3(3, out_r as i64, 0, 0);
+        out_r = -1;
+      }
+    }
+    if (err_r >= 0 && (got & 8) != 0) {
+      if (elen == ecap && ecap < 1073741824) {
+        let wide = __raw_alloc(ecap * 2);
+        __memcpy(wide, ebuf, elen);
+        let full = __raw_string(ebuf, ecap);
+        ebuf = wide;
+        ecap *= 2;
+      }
+      let n = if (elen < ecap) { __fern_sp_take(err_r, ebuf + elen as usize, ecap - elen) } else { -1 };
+      if (n > 0) {
+        elen += n;
+      }
+      if (n < 0) {
+        __syscall3(3, err_r as i64, 0, 0);
+        err_r = -1;
+      }
+    }
+  }
+  if (in_w >= 0) {
+    __syscall3(3, in_w as i64, 0, 0);
+  }
+  if (out_r >= 0) {
+    __syscall3(3, out_r as i64, 0, 0);
+  }
+  if (err_r >= 0) {
+    __syscall3(3, err_r as i64, 0, 0);
+  }
+  __syscall4(13, 13, old as i64, 0, 8);
   __syscall4(61, pid as i64, (fds + 24) as i64, 0, 0);
   let w = __load_i32(fds + 24);
   let code = w >> 8 & 255;
@@ -98,7 +170,8 @@ function __fern_subprocess(cmd: string, args: string[], input: string): ProcessR
     __memcpy(se, ebuf, elen);
     serr = __raw_string(se, elen);
   }
-  let obuf_own = __raw_string(obuf, 65536);
-  let ebuf_own = __raw_string(ebuf, 65536);
+  let obuf_own = __raw_string(obuf, ocap);
+  let ebuf_own = __raw_string(ebuf, ecap);
+  let st_own = __raw_string(st, 88);
   return ProcessResult { stdout: sout, stderr: serr, exit_code: code };
 }
