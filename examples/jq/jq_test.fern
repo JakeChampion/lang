@@ -20,7 +20,7 @@ function outputs(program: string, doc: string): string {
     return "bad input";
   }
   let env = eval.env().with("x", json.JString("1"));
-  let out = eval.run(parsed.ast, st.texts[0].value, env);
+  let out = eval.outputs(parsed.ast, st.texts[0].value, env);
   let lines: string[] = [];
   for v in out.values {
     lines = lines.append(output.compact(v));
@@ -896,7 +896,7 @@ function test_definitions(): test.TestOutcome {
     ("def f(x): x; f", "null", "compile: f/0 is not defined"),
     ("def f: 1; f(2)", "null", "compile: f/1 is not defined"),
     ("def f(g): g(1); f(2)", "null", "compile: g/1 is not defined"),
-    ("(def f: 1; f) | f", "null", "compile: the function f/0 " + filter.NOT_YET),
+    ("(def f: 1; f) | f", "null", "compile: f/0 is not defined"),
     ("def f($a): $b; f(1)", "null", "error: $b is not defined"),
   ]);
 }
@@ -1098,12 +1098,14 @@ function test_circular(): test.TestOutcome {
   ]);
 }
 
-function test_not_yet(): test.TestOutcome {
+// jq 1.7 has no `leaf_paths`, so a call of a function that jq does not
+// have is an error at compile time, as in jq.
+function test_undefined_functions(): test.TestOutcome {
   return checks([
     (".a = .b = 1", "null", "compile: syntax error, unexpected '='"),
-    ("test(\"a\")", "null", "compile: the function test/1 " + filter.NOT_YET),
-    ("exp", "null", "compile: the function exp/0 " + filter.NOT_YET),
-    ("leaf_paths", "null", "compile: the function leaf_paths/0 " + filter.NOT_YET),
+    ("leaf_paths", "null", "compile: leaf_paths/0 is not defined"),
+    ("map", "null", "compile: map/0 is not defined"),
+    ("x::y", "null", "compile: x::y/0 is not defined"),
   ]);
 }
 
@@ -1182,7 +1184,7 @@ function main(): i32 {
   r = r.it("strftime", test_strftime);
   r = r.it("strptime", test_strptime);
   r = r.it("the circular functions, cbrt and builtins", test_circular);
-  r = r.it("the parts that the port leaves out", test_not_yet);
+  r = r.it("functions that jq does not have", test_undefined_functions);
   r = r.it("number literals and computed numbers", test_numbers);
   r = r.it("pretty output", test_output);
   r = r.it("the input stream and its lines", test_stream);

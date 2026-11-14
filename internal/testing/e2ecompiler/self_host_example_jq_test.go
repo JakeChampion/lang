@@ -14,12 +14,9 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// jqSuiteFloor is the number of cases of jq.test that the port passes. A case
-// in a part of the language the port does not have yet is skipped, and every
-// other case must pass.
-const jqSuiteFloor = 415
-
-const jqNotYet = "is not in this port yet"
+// jqSuiteCases is the number of cases of jq.test that are not `%%FAIL`
+// cases. Each of them must pass.
+const jqSuiteCases = 428
 
 func TestSelfHostExampleJqUnit(t *testing.T) {
 	path, err := filepath.Abs("../../../examples/jq/jq_test.fern")
@@ -125,14 +122,14 @@ func jqNumbers(v any) any {
 // look at an error after them, so a case can end in an error. With a jq
 // binary, the status and the stderr must be those of jq. With no jq binary,
 // a status of 5, the status of a filter error, is right after the outputs.
-func jqSuiteExitOK(c jqCase, code int, stderr, ref string) bool {
+func jqSuiteExitOK(c jqCase, code int, stderr, ref, modules string) bool {
 	if code == 0 {
 		return true
 	}
 	if ref == "" {
 		return code == 5
 	}
-	cmd := exec.Command(ref, "-c", "--", c.program)
+	cmd := exec.Command(ref, "-L", modules, "-c", "--", c.program)
 	cmd.Stdin = strings.NewReader(c.input)
 	var refErr bytes.Buffer
 	cmd.Stderr = &refErr
@@ -140,20 +137,23 @@ func jqSuiteExitOK(c jqCase, code int, stderr, ref string) bool {
 	return cmd.ProcessState.ExitCode() == code && refErr.String() == stderr
 }
 
+// TestSelfHostExampleJqSuite runs each case of jq.test as the harness of jq
+// does, with the modules of jq.test on the search path.
 func TestSelfHostExampleJqSuite(t *testing.T) {
 	bin := buildJq(t)
 	ref, _ := exec.LookPath("jq")
-	passed, skipped := 0, 0
+	modules, err := filepath.Abs("../../../examples/jq/tests/modules")
+	if err != nil {
+		t.Fatal(err)
+	}
+	passed, total := 0, 0
 	for _, c := range jqCases(t, "../../../examples/jq/tests/jq.test") {
-		cmd := exec.Command(bin, "-c", "--", c.program)
+		total++
+		cmd := exec.Command(bin, "-L", modules, "-c", "--", c.program)
 		cmd.Stdin = strings.NewReader(c.input)
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &stdout, &stderr
 		_ = cmd.Run()
-		if strings.Contains(stderr.String(), jqNotYet) {
-			skipped++
-			continue
-		}
 		var got, want []any
 		for _, l := range strings.Split(stdout.String(), "\n") {
 			if l == "" {
@@ -172,15 +172,15 @@ func TestSelfHostExampleJqSuite(t *testing.T) {
 			}
 			want = append(want, v)
 		}
-		if !jqSuiteExitOK(c, cmd.ProcessState.ExitCode(), stderr.String(), ref) || !reflect.DeepEqual(got, want) {
+		if !jqSuiteExitOK(c, cmd.ProcessState.ExitCode(), stderr.String(), ref, modules) || !reflect.DeepEqual(got, want) {
 			t.Errorf("line %d: %q on %s: exit %d, got %s, want %v\n%s", c.line, c.program, c.input, cmd.ProcessState.ExitCode(), stdout.String(), c.expected, stderr.String())
 			continue
 		}
 		passed++
 	}
-	t.Logf("jq.test: %d cases pass, %d are in parts of the language that the port does not have yet", passed, skipped)
-	if passed < jqSuiteFloor {
-		t.Errorf("%d cases of jq.test pass, fewer than the %d of jqSuiteFloor", passed, jqSuiteFloor)
+	t.Logf("jq.test: %d of %d cases pass", passed, total)
+	if total != jqSuiteCases {
+		t.Errorf("jq.test has %d cases, not the %d of jqSuiteCases", total, jqSuiteCases)
 	}
 }
 

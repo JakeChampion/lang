@@ -46,7 +46,13 @@ function (st: State) place(at_end: boolean): string {
 
 // The values of `s`, which has no byte order mark.
 pub function read(s: string): Read {
-  let st = State { stack: [], next: [], out: [], line: 1, column: 0 };
+  return read_at(s, 1, 0);
+}
+
+// The values of `s`, which starts at the line `line` and the column
+// `column` of its input.
+pub function read_at(s: string, line: i32, column: i32): Read {
+  let st = State { stack: [], next: [], out: [], line: line, column: column };
   let token = -1;
   let i = 0;
   while (i < s.len()) {

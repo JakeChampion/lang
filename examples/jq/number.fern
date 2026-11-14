@@ -142,6 +142,33 @@ pub function written(t: string): string {
   return t;
 }
 
+// Whether the literal `t` is its own decNumber form: it has no exponent, and
+// not six zeros after a leading `0.`.
+pub function in_canonical_form(t: string): boolean {
+  let zeros = -1;
+  let start = 0;
+  if (t.len() > 0 && t[0] == b'-') {
+    start = 1;
+  }
+  if (t.len() > start + 1 && t[start] == b'0' && t[start + 1] == b'.') {
+    zeros = 0;
+    let i = start + 2;
+    while (i < t.len() && t[i] == b'0') {
+      zeros += 1;
+      i += 1;
+    }
+  }
+  if (zeros >= 6) {
+    return false;
+  }
+  for i in 0..t.len() {
+    if (t[i] == b'e' || t[i] == b'E') {
+      return false;
+    }
+  }
+  return true;
+}
+
 // The f64 of a number text, as jq compares numbers. An out-of-range literal
 // is an infinity.
 pub function value(s: string): f64 {
