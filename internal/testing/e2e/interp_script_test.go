@@ -1046,13 +1046,13 @@ function main(): i32 {
     show("");
     show("2026/05/19");        // wrong separator
     show("2026-05-19T00");     // too long
-    show("2026-13-01");        // checker doesn't validate range
+    show("2026-13-01");        // month out of range
     show("abcd-05-19");        // non-digits
     show("2026-05-XX");
     show("2026-5-19");         // single-digit month
     return 0;
 }`,
-			wantStdout: "rejected \nrejected 2026/05/19\nrejected 2026-05-19T00\nACCEPTED 2026-13-01\nrejected abcd-05-19\nrejected 2026-05-XX\nrejected 2026-5-19\n",
+			wantStdout: "rejected \nrejected 2026/05/19\nrejected 2026-05-19T00\nrejected 2026-13-01\nrejected abcd-05-19\nrejected 2026-05-XX\nrejected 2026-5-19\n",
 		},
 		{
 			name: "Timestamp.format_rfc3339 emits canonical Z form",
