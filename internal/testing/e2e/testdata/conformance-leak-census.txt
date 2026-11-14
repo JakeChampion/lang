@@ -1,3 +1,4 @@
+# 2026-11-14: type_args_trailing_comma frees all four traced allocations on x86-64.
 # 2026-11-14: own_local_moved_into_exit has balanced allocations on x86-64.
 # 2026-11-13: inline_worker_exit_is_a_worker_failure keeps three scheduler blocks
 # in active frames at exit(134). The process does not unwind these frames.
@@ -1425,6 +1426,7 @@ tuple_return_union                                   0
 tuple_variant_payload_subpattern                     0
 two_i64_literals                                     0
 two_nones_share_sentinel                             0
+type_args_trailing_comma                             0
 type_param_name_collision                            0
 typed_json_protobuf_errors                           0
 u32_large_to_f64_back                                0
