@@ -28,6 +28,8 @@ A `Worker` is `@must_consume`: a program joins every worker it spawns (E067).
 A worker that exits with a signal or without a result stops the program with exit 134. A call of `exit` in a worker body is such a worker. A body on the `Inline` scheduler runs in the process of the program, and the program stops the same way: `exit_status` gives each `exit` the status 134 while such a body runs. A native program takes that path when the kernel refuses the fork.
 A process worker ends when its parent ends: it gets SIGTERM. On Linux and Android the kernel sends it. macOS has no such signal, so a watchdog process sends it. The watchdog waits for the exit of the parent or of the worker, with kqueue.
 
+`parallel` says whether `spawn` runs a worker beside its caller. When it is false, `spawn` runs the body before it returns. A program that divides timed work between workers can then run that work in one worker. A fork that the kernel refuses still runs the body inline.
+
 ## Executable example
 
 ```fern test name=std-worker-example
@@ -54,6 +56,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<12 pub trait Send>>
 
 <<3 pub function spawn[T: Send](send body: () => T): Worker[T]>>
+
+<<15 pub function parallel(): boolean>>
 
 <<4 function __spawn_process[T: Send](own body: () => T): Worker[T]>>
 
@@ -113,6 +117,30 @@ pub function spawn[T: Send](send body: () => T): Worker[T] {
     return __spawn_process(body);
   }
   return __spawn_on(inline(), body);
+}
+```
+
+### `15 pub function parallel(): boolean`
+
+A worker runs beside its caller on the engines that `spawn` gives a process. The interpreters map no region, so the test maps a small region and removes it again.
+
+```fern
+<<15 pub function parallel(): boolean>>=
+/// Whether `spawn` runs a worker beside its caller. When it is false, `spawn` runs the body before it returns.
+pub function parallel(): boolean {
+  if (target_os() != "linux" && target_os() != "android" && target_os() != "darwin") {
+    return false;
+  }
+  let size = 65536i64;
+  let region = 0i64;
+  unsafe {
+    region = __worker_region(size);
+  }
+  if (region <= 0i64) {
+    return false;
+  }
+  __unmap_region(region, size, false);
+  return true;
 }
 ```
 

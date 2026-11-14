@@ -8787,6 +8787,7 @@ pub function builtin_function_names(): string[] {
     "exit", "args", "set_args", "env", "config_get", "subprocess",
     "proc_fork", "proc_waitpid", "proc_waitpid_nohang", "proc_exec",
     "proc_waitpid_status",
+    "proc_wait_any",
     "proc_exec_as",
     "pipe",
     "chdir", "signal_mask", "signal_disposition",
@@ -19313,7 +19314,7 @@ function lambda_found(e: ast.Expr, own found: boolean): boolean {
   return found;
 }
 
-function inclusive_range_loop(fr: ast.StmtFor, dbody: ast.Stmt[], ivar: ast.Stmt, hivar: ast.Stmt, hi_name: string): ast.Stmt[] {
+function inclusive_range_loop(fr: ast.StmtFor, dbody: ast.Stmt[], lovar: ast.Stmt, ivar: ast.Stmt, hivar: ast.Stmt, hi_name: string): ast.Stmt[] {
   let v = fr.var_name;
   let go_name = "$go_" + v;
   let one = e_number("1", "", false);
@@ -19325,7 +19326,7 @@ function inclusive_range_loop(fr: ast.StmtFor, dbody: ast.Stmt[], ivar: ast.Stmt
   for st in dbody {
     wbody = wbody.append(st);
   }
-  return [ivar, hivar, govar, back, with_loop_label(s_while(e_ident(go_name), wbody), fr.label)];
+  return [lovar, hivar, ivar, govar, back, with_loop_label(s_while(e_ident(go_name), wbody), fr.label)];
 }
 
 // A counted loop steps at its latch, as a `while` written by hand does, so a
@@ -19422,24 +19423,26 @@ function range_loop(written: ast.StmtFor, body: ast.Stmt[], rargs: ast.Expr[]): 
     dbody = turn;
     fr = ast.StmtFor { ...fr, var_name: counter };
   }
+  let lo_name = "$lo_" + fr.var_name;
+  let lovar = s_var(lo_name, rty, rargs[0]);
   let hi_name = "$hi_" + fr.var_name;
   let hivar = s_var(hi_name, rty, rargs[1]);
   if (range_call_name(fr.iter) == "__range_incl") {
-    return inclusive_range_loop(fr, dbody, s_var(fr.var_name, rty, rargs[0]), hivar, hi_name);
+    return [s_block(inclusive_range_loop(fr, dbody, lovar, s_var(fr.var_name, rty, e_ident(lo_name)), hivar, hi_name))];
   }
   let incr = s_assign(fr.var_name, e_binary("+", e_ident(fr.var_name), e_number("1", "", false)));
   let (stepped, plain) = step_continues(dbody, StepCtx { step: incr, var_name: fr.var_name, label: fr.label, depth: 0, shadowed: false });
   if (!plain.shadowed) {
     let cond = e_binary("<", e_ident(fr.var_name), e_ident(hi_name));
-    return [s_var(fr.var_name, rty, rargs[0]), hivar, with_loop_label(s_while(cond, stepped.append(incr)), fr.label)];
+    return [s_block([lovar, hivar, s_var(fr.var_name, rty, e_ident(lo_name)), with_loop_label(s_while(cond, stepped.append(incr)), fr.label)])];
   }
-  let ivar = s_var(fr.var_name, rty, e_binary("-", rargs[0], e_number("1", "", false)));
+  let ivar = s_var(fr.var_name, rty, e_binary("-", e_ident(lo_name), e_number("1", "", false)));
   let brk = s_if(e_binary(">=", e_ident(fr.var_name), e_ident(hi_name)), [s_break()], []);
   let wbody: ast.Stmt[] = [incr, brk];
   for k in 0..dbody.len() {
     wbody = wbody.append(dbody[k]);
   }
-  return [ivar, hivar, with_loop_label(s_while(e_bool(true), wbody), fr.label)];
+  return [s_block([lovar, hivar, ivar, with_loop_label(s_while(e_bool(true), wbody), fr.label)])];
 }
 
 function desugar_ranges_one(st: ast.Stmt): ast.Stmt[] {

@@ -5,17 +5,27 @@
 //   $ git cat-file (-t | -s | -p | -e) NAME
 //   $ git cat-file (--batch | --batch-check)       # names on the standard input
 //   $ git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...
+//   $ git verify-pack [-v] FILE.idx...
+//   $ git ls-tree [-r] [-t] [-d] [-l] [--name-only] [--full-tree] TREE
 //
-// This slice reads and writes loose objects. An object in a packfile is not
-// found yet.
+// The port reads loose objects and packfiles, and writes loose objects.
 import "std/array";
 import "std/errno";
 import "std/io";
 import "std/string";
+import "core/cmp";
+import "core/map";
+import "std/crypto";
+import "std/hex";
+import "./index";
+import "./log";
 import "./objects";
+import "./pack";
 import "./refs";
+import "./rev";
+import "./store";
 
-const USAGE: string = "usage: git hash-object [-w] [-t KIND] [--stdin] [FILE...]\n   or: git cat-file (-t | -s | -p | -e) NAME\n   or: git cat-file (--batch | --batch-check)\n   or: git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...";
+const USAGE: string = "usage: git hash-object [-w] [-t KIND] [--stdin] [FILE...]\n   or: git cat-file (-t | -s | -p | -e) NAME\n   or: git cat-file (--batch | --batch-check)\n   or: git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...\n   or: git verify-pack [-v] FILE.idx...\n   or: git ls-tree [-r] [-t] [-d] [-l] [--name-only] [--full-tree] TREE\n   or: git log [-n N] [--oneline] [--format=FORMAT] [NAME]\n   or: git index-pack [-o FILE.idx] FILE.pack";
 
 function fatal(message: string): i32 {
   eprint("fatal: " + message);
@@ -92,6 +102,14 @@ function hash_args(argv: string[]): HashArgs {
 
 // Prints the name of the object with `body`, and writes it when `-w` is set.
 function hash_one(a: HashArgs, body: u8[]): i32 {
+  if (!objects.is_kind(a.kind)) {
+    return fatal("invalid object type \"" + a.kind + "\"");
+  }
+  // git checks the form of a commit, a tree and a tag before it writes one.
+  // The port does not have that check, so it writes blobs only.
+  if (a.write && a.kind != "blob") {
+    return fatal("this port writes blobs only: it does not check the form of a " + a.kind);
+  }
   if (!a.write) {
     put_line(objects.hash_of(a.kind, body));
     return 0;
@@ -113,14 +131,6 @@ function hash_object(argv: string[]): i32 {
   let a = hash_args(argv);
   if (a.bad.len() > 0) {
     return usage();
-  }
-  if (!objects.is_kind(a.kind)) {
-    return fatal("invalid object type \"" + a.kind + "\"");
-  }
-  // git checks the form of a commit, a tree and a tag before it writes one.
-  // The port does not have that check, so it writes blobs only.
-  if (a.write && a.kind != "blob") {
-    return fatal("this port writes blobs only: it does not check the form of a " + a.kind);
   }
   if (a.stdin) {
     let body = match (io.read_all_stdin_bytes()) {
@@ -172,11 +182,12 @@ function pretty(o: objects.Object): Result[u8[], string] {
 }
 
 function cat_one(r: refs.Repo, mode: string, name: string): i32 {
-  let hash = refs.resolve(r, name);
+  let found = rev.parse(r, store.open(r.objects()), name);
+  let hash = found.hash;
   if (hash.len() == 0) {
-    return fatal("Not a valid object name " + name);
+    return fatal(if (found.message.len() > 0) { found.message } else { "Not a valid object name " + name });
   }
-  let o = match (objects.read_loose(r.objects(), hash)) {
+  let o = match (store.read(found.store, hash).object) {
     Ok(found) => found,
     Err(message) => {
       if (mode == "-e") {
@@ -219,10 +230,18 @@ function cat_batch(r: refs.Repo, contents: boolean): i32 {
   };
   let lines = input.split("\n");
   let count = if (input.ends_with("\n") || input.len() == 0) { lines.len() - 1 } else { lines.len() };
+  let s = store.open(r.objects());
   for i in 0..count {
     let name = lines[i];
-    let hash = refs.resolve(r, name);
-    let found = if (hash.len() == 0) { Err("missing") } else { objects.read_loose(r.objects(), hash) };
+    let named = rev.parse(r, s, name);
+    s = named.store;
+    let hash = named.hash;
+    let found: Result[objects.Object, string] = Err("missing");
+    if (hash.len() > 0) {
+      let got = store.read(s, hash);
+      s = got.store;
+      found = got.object;
+    }
     match (found) {
       Ok(o) => {
         put_line(hash + " " + o.kind + " " + o.body.len().to_string());
@@ -263,15 +282,16 @@ function cat_file(argv: string[]): i32 {
 
 const AMBIGUOUS: string = "': unknown revision or path not in the working tree.\nUse '--' to separate paths from revisions, like this:\n'git <command> [<revision>...] -- [<file>...]'";
 
-// The digits after `--short=`, or 7. A number below 4 is 4, as in git.
-function short_length(flag: string): i32 {
+// The digits after `--short=`, or the length that git gives to a short
+// name in this store. A number below 4 is 4, as in git.
+function short_length(s: store.Store, flag: string): i32 {
   if (!flag.starts_with("--short=")) {
-    return 7;
+    return store.short_length(s);
   }
   let n = 0;
   for i in 8..flag.len() {
     if (flag[i] < b'0' || flag[i] > b'9') {
-      return 7;
+      return store.short_length(s);
     }
     n = n * 10 + (flag[i] - b'0') as i32;
   }
@@ -290,28 +310,531 @@ function rev_parse(argv: string[]): i32 {
     return status;
   }
   let r = repo[0];
+  let s = store.open(r.objects());
   let verify = false;
   let short = 0;
   for x in argv {
     if (x == "--verify") {
       verify = true;
     } else if (x == "--short" || x.starts_with("--short=")) {
-      short = short_length(x);
+      short = short_length(s, x);
     } else if (x == "--git-dir") {
       put_line(r.shown);
     } else {
-      let hash = refs.resolve(r, x);
+      let named = rev.parse(r, s, x);
+      s = named.store;
+      let hash = named.hash;
       if (hash.len() == 0 && verify) {
         return fatal("Needed a single revision");
       }
       if (hash.len() == 0) {
         put_line(x);
-        return fatal("ambiguous argument '" + x + AMBIGUOUS);
+        return fatal(if (named.message.len() > 0) { named.message } else { "ambiguous argument '" + x + AMBIGUOUS });
       }
-      put_line(if (short > 0) { refs.short_of(r, hash, short) } else { hash });
+      put_line(if (short > 0) { refs.short_of(s, hash, short) } else { hash });
     }
   }
   return 0;
+}
+
+// ---- ls-tree ----
+
+struct LsOpts { recurse: boolean, trees: boolean, only_trees: boolean, long: boolean, names: boolean, full: boolean }
+
+// The lines of a tree so far, and the store after the reads.
+struct Listing { store: store.Store, out: u8[], ok: boolean }
+
+// The size column of `ls-tree -l`: seven places, or `-` for an entry that
+// is not a blob.
+function size_column(l: Listing, e: objects.TreeEntry): (store.Store, string) {
+  if (objects.entry_kind(e.mode) != "blob") {
+    return (l.store, "       -");
+  }
+  let got = store.read(l.store, e.hash);
+  let size = match (got.object) {
+    Ok(o) => o.body.len().to_string(),
+    Err(_) => "-",
+  };
+  return (got.store, " " + size.pad_start_str(7, " "));
+}
+
+// The lines that wait, with `line` added. A long text goes to the standard
+// output, so each addition copies a short text only.
+function ls_out(out: u8[], line: u8[]): u8[] {
+  let all = out.concat(line).append(b'\n');
+  if (all.len() < 4096) {
+    return all;
+  }
+  put(all);
+  return [];
+}
+
+// Adds the line of the entry `e`, whose path from the start is `path`.
+function ls_line(l: Listing, e: objects.TreeEntry, path: u8[], o: LsOpts): Listing {
+  if (o.names) {
+    return Listing { ...l, out: ls_out(l.out, objects.quoted(path)) };
+  }
+  let head = objects.entry_head(e);
+  let st = l.store;
+  if (o.long) {
+    let (after, column) = size_column(l, e);
+    st = after;
+    head += column;
+  }
+  return Listing { store: st, out: ls_out(l.out, (head + "\t").bytes().concat(objects.quoted(path))), ok: l.ok };
+}
+
+// Adds the lines of the tree `hash`, whose path from the start is `prefix`.
+function ls_walk(l: Listing, hash: string, prefix: u8[], o: LsOpts): Listing {
+  let got = store.read(l.store, hash);
+  let entries = match (got.object) {
+    Ok(t) => if (t.kind == "tree") { objects.tree_entries(t.body) } else { Err("not a tree") },
+    Err(why) => Err(why),
+  };
+  let Ok(list) = entries else {
+    return Listing { store: got.store, out: l.out, ok: false };
+  };
+  let now = Listing { store: got.store, out: l.out, ok: l.ok };
+  for e in list {
+    let path = prefix.concat(e.name);
+    let is_tree = e.mode == "40000";
+    if (is_tree && (!o.recurse || o.trees || o.only_trees) || !is_tree && !o.only_trees) {
+      now = ls_line(now, e, path, o);
+    }
+    if (is_tree && o.recurse) {
+      now = ls_walk(now, e.hash, path.append(b'/'), o);
+    }
+  }
+  return now;
+}
+
+function ls_tree(argv: string[]): i32 {
+  let o = LsOpts { recurse: false, trees: false, only_trees: false, long: false, names: false, full: false };
+  let names: string[] = [];
+  for x in argv {
+    if (x == "-r") {
+      o = LsOpts { ...o, recurse: true };
+    } else if (x == "-t") {
+      o = LsOpts { ...o, trees: true };
+    } else if (x == "-d") {
+      o = LsOpts { ...o, only_trees: true };
+    } else if (x == "-l" || x == "--long") {
+      o = LsOpts { ...o, long: true };
+    } else if (x == "--name-only" || x == "--name-status") {
+      o = LsOpts { ...o, names: true };
+    } else if (x == "--full-tree") {
+      o = LsOpts { ...o, full: true };
+    } else if (x.starts_with("-")) {
+      return usage();
+    } else {
+      names = names.append(x);
+    }
+  }
+  if (names.len() == 0) {
+    return usage();
+  }
+  if (names.len() > 1) {
+    return fatal("this port lists a whole tree: a path after the tree is not in it yet");
+  }
+  let (repo, status) = repo_or_fail();
+  if (status != 0) {
+    return status;
+  }
+  let r = repo[0];
+  let named = rev.parse(r, store.open(r.objects()), names[0]);
+  if (named.hash.len() == 0) {
+    return fatal("Not a valid object name " + names[0]);
+  }
+  let top = rev.at_path(named.store, named.hash, "");
+  if (top.hash.len() == 0) {
+    return fatal("not a tree object");
+  }
+  // Below the top of the worktree, git lists the tree of the current
+  // directory. With the trees shown, each directory on the way has a line.
+  let from = Listing { store: top.store, out: [], ok: true };
+  let hash = top.hash;
+  if (!o.full) {
+    let parts = r.prefix.split("/").filter((p: string): boolean => p.len() > 0);
+    for i in 0..parts.len() {
+      let next = rev.at_path(from.store, hash, parts[i]);
+      if (next.hash.len() == 0) {
+        return 0;
+      }
+      hash = next.hash;
+      from = Listing { ...from, store: next.store };
+      if (o.trees || o.only_trees && o.recurse) {
+        let up = parts.len() - 1 - i;
+        let name = if (up == 0) { "./" } else { "../".repeat(up) };
+        from = ls_line(from, objects.TreeEntry { mode: "40000", name: [], hash: hash }, name.bytes(), o);
+      }
+    }
+  }
+  let listed = ls_walk(from, hash, [], o);
+  put(listed.out);
+  if (!listed.ok) {
+    return fatal("unable to read a tree of " + names[0]);
+  }
+  return 0;
+}
+
+// ---- log ----
+
+// The form of each commit: the default form, one line, or a format. With
+// `separated`, a line end is between two commits and not after each one.
+struct LogOpts { limit: i32, oneline: boolean, format: string, has_format: boolean, separated: boolean, name: string, bad: string }
+
+// The count in `text`, or -1 when it is not a count.
+function log_number(text: string): i32 {
+  let n = 0;
+  for i in 0..text.len() {
+    if (text[i] < b'0' || text[i] > b'9' || n > 100000000) {
+      return -1;
+    }
+    n = n * 10 + (text[i] - b'0') as i32;
+  }
+  return if (text.len() == 0) { -1 } else { n };
+}
+
+// git 2.43 reads a limit that is not a count as 0.
+function log_limit(text: string): i32 {
+  return log_number(text).max(0);
+}
+
+function log_format(o: LogOpts, x: string): LogOpts {
+  if (x.starts_with("--format=")) {
+    return LogOpts { ...o, format: objects.part(x, 9, x.len()), has_format: true };
+  }
+  if (x.starts_with("--pretty=tformat:")) {
+    return LogOpts { ...o, format: objects.part(x, 17, x.len()), has_format: true };
+  }
+  if (x.starts_with("--pretty=format:")) {
+    return LogOpts { ...o, format: objects.part(x, 16, x.len()), has_format: true, separated: true };
+  }
+  return LogOpts { ...o, bad: x };
+}
+
+function log_args(argv: string[]): LogOpts {
+  let o = LogOpts { limit: -1, oneline: false, format: "", has_format: false, separated: false, name: "HEAD", bad: "" };
+  let i = 0;
+  while (i < argv.len()) {
+    let x = argv[i];
+    if (x == "--oneline") {
+      o = LogOpts { ...o, oneline: true };
+    } else if (x == "-n" && i + 1 < argv.len()) {
+      i += 1;
+      o = LogOpts { ...o, limit: log_limit(argv[i]) };
+    } else if (x.starts_with("--max-count=")) {
+      o = LogOpts { ...o, limit: log_limit(objects.part(x, 12, x.len())) };
+    } else if (x.starts_with("-") && log_number(objects.part(x, 1, x.len())) >= 0) {
+      o = LogOpts { ...o, limit: log_number(objects.part(x, 1, x.len())) };
+    } else if (x.starts_with("-")) {
+      o = log_format(o, x);
+    } else {
+      o = LogOpts { ...o, name: x };
+    }
+    i += 1;
+  }
+  return o;
+}
+
+// The commits that wait for their turn. git shows the commit with the
+// latest committer date first, and the first found of two equal dates.
+struct Waiting { commits: log.Commit[], store: store.Store }
+
+// Adds the commit `hash`, which the caller has not seen before.
+function log_push(w: Waiting, hash: string): Waiting {
+  let got = store.read(w.store, hash);
+  return match (got.object) {
+    Ok(o) => Waiting { commits: w.commits.append(log.Commit { ...log.commit_of(hash, o.body), parents: store.parents(got.store, hash, o.body) }), store: got.store },
+    Err(_) => Waiting { commits: w.commits, store: got.store },
+  };
+}
+
+// The place of the commit to show next.
+function log_next(commits: log.Commit[]): i32 {
+  let best = 0;
+  for i in 1..commits.len() {
+    if (commits[i].committer.time > commits[best].committer.time) {
+      best = i;
+    }
+  }
+  return best;
+}
+
+// True if the form of the options prints a short name.
+function log_shorts(o: LogOpts): boolean {
+  if (o.has_format) {
+    return o.format.contains("%h") || o.format.contains("%t") || o.format.contains("%p");
+  }
+  return true;
+}
+
+function log_text(w: Waiting, c: log.Commit, o: LogOpts): string {
+  let shorts = log.Shorts { hash: "", tree: "", parents: [] };
+  if (log_shorts(o)) {
+    let least = store.short_length(w.store);
+    shorts = log.Shorts { hash: refs.short_of(w.store, c.hash, least), tree: refs.short_of(w.store, c.tree, least), parents: [] };
+    for p in c.parents {
+      shorts = log.Shorts { ...shorts, parents: shorts.parents.append(refs.short_of(w.store, p, least)) };
+    }
+  }
+  if (o.has_format) {
+    return log.formatted(c, shorts, o.format);
+  }
+  if (o.oneline) {
+    return shorts.hash + " " + log.subject(c.message);
+  }
+  return log.medium(c, shorts);
+}
+
+function log_command(argv: string[]): i32 {
+  let o = log_args(argv);
+  let (repo, status) = repo_or_fail();
+  if (status != 0) {
+    return status;
+  }
+  if (o.bad.len() > 0) {
+    return fatal("unrecognized argument: " + o.bad);
+  }
+  let r = repo[0];
+  let named = rev.parse(r, store.open(r.objects()), o.name);
+  if (named.hash.len() == 0) {
+    return fatal(if (named.message.len() > 0) { named.message } else { "ambiguous argument '" + o.name + AMBIGUOUS });
+  }
+  // git shows no commit for a tree or a blob.
+  let start = rev.parse(r, store.open(r.objects()), o.name + "^{commit}");
+  if (start.hash.len() == 0) {
+    return 0;
+  }
+  let first = if (log_shorts(o)) { store.listed(start.store) } else { start.store };
+  let w = log_push(Waiting { commits: [], store: first }, start.hash);
+  let seen: Map[string, boolean] = Map { };
+  seen = seen.insert(start.hash, true);
+  let buf: u8[] = [];
+  let shown = 0;
+  let plain = !o.has_format && !o.oneline;
+  while (w.commits.len() > 0 && shown != o.limit) {
+    let at = log_next(w.commits);
+    let c = w.commits[at];
+    w = Waiting { ...w, commits: array.concat(array.slice(w.commits, 0, at), array.slice(w.commits, at + 1, w.commits.len())) };
+    let text = log_text(w, c, o);
+    if (shown > 0 && (plain || o.separated)) {
+      buf = buf.append(b'\n');
+    }
+    buf = buf.concat(text.bytes());
+    if (!plain && !o.separated && !(o.has_format && o.format.len() == 0)) {
+      buf = buf.append(b'\n');
+    }
+    if (buf.len() > 65536) {
+      put(buf);
+      buf = [];
+    }
+    shown += 1;
+    for p in c.parents {
+      if (!seen.contains(p)) {
+        seen = seen.insert(p, true);
+        w = log_push(w, p);
+      }
+    }
+  }
+  put(buf);
+  return 0;
+}
+
+// ---- index-pack ----
+
+function index_pack(argv: string[]): i32 {
+  let out = "";
+  let file = "";
+  let i = 0;
+  while (i < argv.len()) {
+    if (argv[i] == "-o" && i + 1 < argv.len()) {
+      i += 1;
+      out = argv[i];
+    } else if (argv[i].starts_with("-") || file.len() > 0) {
+      return usage();
+    } else {
+      file = argv[i];
+    }
+    i += 1;
+  }
+  if (file.len() == 0) {
+    return usage();
+  }
+  let data = match (read_file_bytes(file)) {
+    Ok(bytes) => bytes,
+    Err(e) => {
+      return fatal("could not open '" + file + "' for reading: " + why(e));
+    },
+  };
+  if (out.len() == 0 && !file.ends_with(".pack")) {
+    return fatal("packfile name '" + file + "' does not end with '.pack'");
+  }
+  if (out.len() > 0 && !out.ends_with(".idx")) {
+    return fatal("packfile name '" + out + "' does not end with '.idx'");
+  }
+  let stem = if (out.len() > 0) { objects.part(out, 0, out.len() - 4) } else { objects.part(file, 0, file.len() - 5) };
+  let built = match (index.build(data)) {
+    Ok(b) => b,
+    Err(message) => {
+      return fatal(message);
+    },
+  };
+  if let Err(e) = write_file_bytes(stem + ".idx", built.idx) {
+    return fatal("unable to create '" + stem + ".idx': " + why(e));
+  }
+  if let Err(e) = write_file_bytes(stem + ".rev", built.rev) {
+    return fatal("unable to create '" + stem + ".rev': " + why(e));
+  }
+  put_line(built.name);
+  return 0;
+}
+
+// ---- verify-pack ----
+
+function plural(n: i32): string {
+  return if (n == 1) { " object" } else { " objects" };
+}
+
+// The path of the packfile for the path of a packfile or of its index.
+function pack_path(file: string): string {
+  if (file.ends_with(".idx")) {
+    return objects.part(file, 0, file.len() - 4) + ".pack";
+  }
+  return file;
+}
+
+// The places of the index in the order of the offsets in the packfile.
+function by_offset(idx: u8[]): i32[] {
+  let keys: i64[] = [];
+  for i in 0..pack.count(idx) {
+    keys = keys.append(pack.offset_at(idx, i) as i64 << 32 | i as i64);
+  }
+  let sorted = cmp.sort_by(keys, (a: i64, b: i64): i32 => if (a < b) { -1 } else if (a > b) { 1 } else { 0 });
+  let order: i32[] = [];
+  for k in sorted {
+    order = order.append((k & 4294967295) as i32);
+  }
+  return order;
+}
+
+// The place in `order` of the object at `offset`, or -1.
+function at_offset(idx: u8[], order: i32[], offset: i32): i32 {
+  let lo = 0;
+  let hi = order.len();
+  while (lo < hi) {
+    let mid = lo + (hi - lo) / 2;
+    let o = pack.offset_at(idx, order[mid]);
+    if (o == offset) {
+      return order[mid];
+    }
+    if (o < offset) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return -1;
+}
+
+// True if the two checksums of the files hold: the SHA-1 of the packfile at
+// its end and in the index, and the SHA-1 of the index at its end.
+function checksums_ok(data: u8[], idx: u8[]): boolean {
+  let n = data.len();
+  let m = idx.len();
+  if (n < 32 || data[0] != b'P' || data[1] != b'A' || data[2] != b'C' || data[3] != b'K') {
+    return false;
+  }
+  let sum = hex.encode(crypto.sha1(array.slice(data, 0, n - 20)));
+  if (sum != hex.encode(array.slice(data, n - 20, n)) || sum != hex.encode(array.slice(idx, m - 40, m - 20))) {
+    return false;
+  }
+  return hex.encode(crypto.sha1(array.slice(idx, 0, m - 20))) == hex.encode(array.slice(idx, m - 20, m));
+}
+
+// Checks each object of one packfile: its chain of deltas gives an object
+// with the name that the index has. With `verbose`, it prints a line for
+// each object in the order of the packfile, and the lengths of the chains.
+function verify_one(file: string, verbose: boolean): boolean {
+  let path = pack_path(file);
+  let Ok(data) = read_file_bytes(path) else {
+    eprint("fatal: Cannot open existing pack file '" + file + "'");
+    return false;
+  };
+  let Ok(idx) = read_file_bytes(objects.part(path, 0, path.len() - 5) + ".idx") else {
+    eprint("fatal: Cannot open existing pack file '" + file + "'");
+    return false;
+  };
+  if (!pack.index_ok(idx) || !checksums_ok(data, idx)) {
+    return false;
+  }
+  let order = by_offset(idx);
+  let chains: i32[] = [];
+  let out: u8[] = [];
+  for k in 0..order.len() {
+    let name = pack.hex_name_at(idx, order[k]);
+    let offset = pack.offset_at(idx, order[k]);
+    let Ok(chain) = pack.chain_of(data, (name: u8[]): i32 => pack.offset_of(idx, name), offset) else {
+      return false;
+    };
+    let Ok(o) = pack.object_at(data, (name: u8[]): i32 => pack.offset_of(idx, name), offset) else {
+      return false;
+    };
+    if (objects.hash_of(o.kind, o.body) != name) {
+      return false;
+    }
+    let depth = chain.len() - 1;
+    while (chains.len() <= depth) {
+      chains = chains.append(0);
+    }
+    chains = chains.with(depth, chains[depth] + 1);
+    let end = if (k + 1 < order.len()) { pack.offset_at(idx, order[k + 1]) } else { data.len() - 20 };
+    let line = name + " " + (o.kind + "      ").take(6) + " " + pack.entry_at(data, offset).size.to_string() + " " + (end - offset).to_string() + " " + offset.to_string();
+    if (depth > 0) {
+      let base = at_offset(idx, order, chain[1]);
+      line = line + " " + depth.to_string() + " " + pack.hex_name_at(idx, base);
+    }
+    out = out.concat((line + "\n").bytes());
+  }
+  if (!verbose) {
+    return true;
+  }
+  put(out);
+  put_line("non delta: " + chains[0].to_string() + plural(chains[0]));
+  for d in 1..chains.len() {
+    if (chains[d] > 0) {
+      put_line("chain length = " + d.to_string() + ": " + chains[d].to_string() + plural(chains[d]));
+    }
+  }
+  put_line(path + ": ok");
+  return true;
+}
+
+function verify_pack(argv: string[]): i32 {
+  let verbose = false;
+  let files: string[] = [];
+  for x in argv {
+    if (x == "-v" || x == "--verbose") {
+      verbose = true;
+    } else if (x.starts_with("-") && x != "--") {
+      return usage();
+    } else if (x != "--") {
+      files = files.append(x);
+    }
+  }
+  if (files.len() == 0) {
+    return usage();
+  }
+  let status = 0;
+  for file in files {
+    if (!verify_one(file, verbose)) {
+      if (verbose) {
+        put_line(pack_path(file) + ": bad");
+      }
+      status = 1;
+    }
+  }
+  return status;
 }
 
 function main(): i32 {
@@ -324,6 +847,10 @@ function main(): i32 {
     "hash-object" => hash_object(rest),
     "cat-file" => cat_file(rest),
     "rev-parse" => rev_parse(rest),
+    "verify-pack" => verify_pack(rest),
+    "ls-tree" => ls_tree(rest),
+    "log" => log_command(rest),
+    "index-pack" => index_pack(rest),
     _ => {
       eprint("git: '" + argv[1] + "' is not a command of this port.");
       1

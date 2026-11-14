@@ -1,3 +1,8 @@
+# 2026-11-13: owned_let_arm_result_in_loop has no allocations on x86-64.
+# 2026-11-14: owned_spread_reads_replaced_field has no allocations on x86-64.
+# 2026-11-14: task_started_two_times keeps 6 blocks at its exit(134) (was 2). A cell write
+# now borrows its cell, so more of the task is live at the abort. The same program
+# without the abort has the same count as before.
 # 2026-11-13: inline_worker_exit_is_a_worker_failure stops through the worker failure (status 134) in the body of its second inline worker, so the three blocks of that worker are live at the exit.
 # 2026-11-13: a_branch_that_returns_gives_its_if_expression_no_type has balanced allocations on x86-64.
 # 2026-11-13: a_match_arm_that_is_a_void_if_falls_through has balanced allocations on x86-64.
@@ -847,7 +852,9 @@ own_takes_replaced_field_of_owned_base               0
 own_transfer                                         0
 own_tree_match                                       0
 owned_field_match_data                               0
+owned_let_arm_result_in_loop                         0
 owned_match_results_rebuild_literal                 0
+owned_spread_reads_replaced_field                    0
 owned_state_restored_on_each_loop_jump               0
 package_scoped_stdlib_helpers                        0
 pad_multibyte_fill                                   0
@@ -1370,7 +1377,7 @@ task_deadline_builtins_answer_at_once_in_the_interpreter 4
 task_handle_with_a_made_up_id                        5
 task_resumed_after_it_ended                          6
 task_resumed_with_another_function                   10
-task_started_two_times                               2
+task_started_two_times                               6
 tasks_agree_without_a_scheduler                      10
 tco_sum                                              0
 tcp_recv_waits_for_data                              0

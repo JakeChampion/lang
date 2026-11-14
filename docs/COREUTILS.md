@@ -774,16 +774,88 @@ This changes two lines of output. The version line is
 `PROGRAM (Fern diffutils) 0.1`, for example `diff (Fern diffutils) 0.1`.
 The usage hint starts with the program name, as GNU diffutils writes it.
 
-`diff` gives the normal, context and unified formats. An option out of its
-scope stops it with exit status 2. For standard input, GNU diff writes the
-current time in the header of `-u` and `-c`. Thus a corpus case that reads
-standard input in these formats gives `--label` for it.
+`diff`, `diff3` and `sdiff` give each option of GNU diffutils 3.10. For
+standard input, GNU diff writes the current time in the header of `-u`
+and `-c`. Thus a corpus case that reads standard input in these formats
+gives `--label` for it. The header of `pr` under `diff -l` has the time of
+the run, and a mask removes it from the output of both programs.
+
+diff3 and sdiff run diff in the same process, through `diff.capture_diff`
+and `diff.run_diff`. The interactive merge of `sdiff -o` runs it in a
+child process, as GNU sdiff does. GNU diff3 and GNU sdiff run the diff of
+`PATH`, so their corpus cases put the GNU diff of the oracle first in
+`PATH`. On macOS, `/usr/bin/diff` is not GNU diff. The cases of
+`sdiff -o` give their commands on standard input, set `EDITOR` and
+`TMPDIR`, and compare the merged file.
 
 The harness gets the package of a program from the directory of its source.
 The oracle of a diffutils program is in `FERN_GNU_DIFFUTILS`. Its version
 line must contain `(GNU diffutils)`. The pin is 3.10, the release of
 ubuntu-24.04. `.github/actions/gnu-diffutils` builds it on each lane, macOS
 included. `diffutils/README.md` lists the programs and the scope of each.
+
+## sed
+
+The same gate holds the port of GNU sed in `sed/`. It uses
+`coreutils/lib/gnu.fern` with `in_package("sed")`, and the regular
+expressions of `coreutils/lib/bre.fern` with `bre.sed_syntax`. The version
+line is `sed (Fern sed) 0.1`. After a bad option, GNU sed writes its whole
+usage to standard error, so the port writes its own usage there. The corpus
+cases of a bad option compare standard error up to the word `Usage:`.
+
+The oracle is in `FERN_GNU_SED`. Its version line must contain
+`(GNU sed)`. The pin is 4.9, the release of ubuntu-24.04.
+`.github/actions/gnu-sed` builds it on each lane, macOS included. For the
+arm64 leg under qemu, the GNU sed and its libraries come from the arm64
+packages of the distribution, as for coreutils. `sed/README.md` gives the
+scope of the port.
+
+## findutils
+
+The same gate holds the ports of GNU find and xargs in `findutils/`. They
+use `coreutils/lib/gnu.fern` with `in_package("findutils")`, and
+`findutils/lib/cmdline.fern` holds what the two share: the size of a
+command line, the start of a command and the prompt of `-ok` and `-p`. A
+version line is `find (Fern findutils) 0.1`, for example. `find -D` traces
+GNU's own work, and the port refuses it, as the sed port refuses `--debug`.
+
+The order of a walk is the order of readdir, so the corpus does not sort the
+output. Most cases of find read one shared tree, and both sides read the
+same directories in the same order. A case that deletes or writes files gets
+a fresh tree for each side, made by the same steps. The file system then
+gives the same order to both. Do not compare the inode numbers or the change
+times of these fresh trees. A case of `xargs -P` compares its output as a
+set of lines, because the commands run at the same time.
+
+Each case of find sets `unprivileged`. When the test runs as root, the
+harness gives the tree to the user nobody and runs both sides as nobody.
+Root can read a directory of mode 000. Without this rule, a root host does not
+see the errors that a normal user and CI see.
+
+The walk opens each directory by its name in the directory above it, as
+gnulib's fts does. It reads the type of each entry from readdir, so a test
+of the name or the type needs no stat. `Dir.entries_ino` gives those types.
+The walk sorts a directory of more than 10000 entries by inode number, as
+fts does. It does not sort on tmpfs, NFS and CIFS.
+
+The oracle is in `FERN_GNU_FINDUTILS`. Its version line must contain
+`(GNU findutils)`. The pin is 4.9.0, the release of ubuntu-24.04.
+`.github/actions/gnu-findutils` builds it on each lane, macOS included.
+
+On Linux the build links libselinux, as the find of Ubuntu and Fedora
+does. There `%Z` reads `security.selinux`, and a file with no label gives
+"No data available". A build without SELinux gives "Operation not
+supported" for each file, and the port gives that on macOS.
+
+For the arm64 leg under qemu, the GNU programs come from the arm64 packages
+of the distribution, as for coreutils. GNU find also needs `libselinux1`
+and `libpcre2-8-0`. `findutils/README.md` gives the scope of the ports.
+
+`findutils/README.md` also gives the speed against GNU find 4.9.0 on a tree
+of 501000 files. Each time is the best of 7 runs, with a warm cache and
+with a cold cache. A test of the name is 1.15 to 1.34 times as fast as
+GNU find. A test that needs a stat of each file takes the same time as GNU
+find, because the kernel does most of the work.
 
 ## One binary
 
@@ -4075,12 +4147,13 @@ SIGCONT after. The first signal sent, forwarded or timed, starts `-k`'s grace
 period. SIGALRM from outside is the deadline passing. When the command then
 dies of a forwarded signal, timeout dies of it too. `timeout.fern` catches the
 same set with `signal_catch_interrupting` before it forks, so an arrival ends
-its one blocking `proc_waitpid_status` with EINTR and is passed on at once,
+its one blocking `proc_wait_any` with EINTR and is passed on at once,
 and dies through `signal_raise`. `TestTimeoutForwardsSignals` signals both
 mid-run.
 
 The wait reads the raw status, so timeout asks WTERMSIG and WCOREDUMP as GNU
-does (#11765). A command that was not timed out and dies of a signal, whoever
+does (#11765). The wait also gives the pid, so timeout knows when the timer
+child ended without a second wait. A command that was not timed out and dies of a signal, whoever
 sent it, takes timeout with it; a command that dumped core is reported as
 "the monitored command dumped core". Before re-raising, timeout calls
 `disable_core_dumps` — `prctl(PR_SET_DUMPABLE, 0)` on Linux, a zero

@@ -1254,8 +1254,9 @@ pub function getopt_new(argv: string[], opts: Opt[], name: string, help_text: st
   return Getopt { argv: argv, opts: all, name: name, help: help_text, status: status, fail: status, in_order: in_order, report_operands: false, i: 1, cluster: "", operands: empty, past_dashdash: false, hint: "", package: "coreutils" };
 }
 
-// The GNU package of the program: "coreutils" or "diffutils". It names the
-// package in the --version line and gives the form of the --help hint.
+// The GNU package of the program: "coreutils", "diffutils" or "sed". It
+// names the package in the --version line and gives the form of the --help
+// hint.
 pub function (g: Getopt) in_package(name: string): Getopt {
   return Getopt { ...g, package: name };
 }
@@ -1268,10 +1269,15 @@ pub function (g: Getopt) fault_hint(line: string): Getopt {
   return Getopt { ...g, hint: line };
 }
 
+// GNU sed writes its whole usage after a bad option, not the hint.
 function die_fault(g: Getopt, msg: string): void {
   error(msg);
   if (g.hint.len() > 0) {
     eprint(g.hint);
+  }
+  if (g.package == "sed") {
+    stderr().write(g.help);
+    exit(g.status);
   }
   try_help_in(g.package, g.status);
 }

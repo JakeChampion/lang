@@ -3264,15 +3264,17 @@ func (p *parser) parseForEach(kw lexer.Token, label string) (ast.Stmt, error) {
 			return nil, err
 		}
 		rid := p.nextForeachID()
+		loName := fmt.Sprintf("__range_lo_%d", rid)
 		hiName := fmt.Sprintf("__range_hi_%d", rid)
 		mkI := func(name string) *ast.Ident { return &ast.Ident{P: kw.Pos, Name: name} }
+		declLo := &ast.Var{P: kw.Pos, Name: loName, Init: expr}
 		declHi := &ast.Var{P: kw.Pos, Name: hiName, Init: high}
-		declI := &ast.Var{P: nameTok.Pos, Name: nameTok.Text, Init: expr}
+		declI := &ast.Var{P: nameTok.Pos, Name: nameTok.Text, Init: mkI(loName)}
 		step := ast.Stmt(&ast.ExprStmt{P: kw.Pos, Expr: &ast.Assign{P: kw.Pos, Target: mkI(nameTok.Text),
 			Value: &ast.Binary{P: kw.Pos, Op: "+", Left: mkI(nameTok.Text), Right: &ast.NumberLit{P: kw.Pos, Value: 1}}}})
 		loop := &ast.For{P: kw.Pos, Init: declI, Cond: &ast.Binary{P: kw.Pos, Op: "<", Left: mkI(nameTok.Text), Right: mkI(hiName)},
 			Step: step, Body: body, Label: label, RangeIndex: nameTok.Text}
-		stmts := []ast.Stmt{declHi, loop}
+		stmts := []ast.Stmt{declLo, declHi, loop}
 		if inclusive {
 			goName := fmt.Sprintf("__range_go_%d", rid)
 			declGo := &ast.Var{P: kw.Pos, Name: goName,
@@ -3282,7 +3284,7 @@ func (p *parser) parseForEach(kw lexer.Token, label string) (ast.Stmt, error) {
 			loop.Init = nil
 			loop.Cond = mkI(goName)
 			loop.Step = &ast.Block{P: kw.Pos, Stmts: []ast.Stmt{clearGo, step}}
-			stmts = []ast.Stmt{declHi, declI, declGo, loop}
+			stmts = []ast.Stmt{declLo, declHi, declI, declGo, loop}
 		}
 		sugar := &ast.ForEach{P: kw.Pos, ID: rid, Var: nameTok.Text, VarPos: nameTok.Pos,
 			Iter: expr, RangeHigh: high, RangeIncl: inclusive, Body: body, Label: label}
