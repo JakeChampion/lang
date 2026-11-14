@@ -1,0 +1,8 @@
+function __fern_proc_wait_any(): i64 {
+  let st = __raw_scratch(16);
+  let rc = __syscall4(61, -1, st as i64, 0, 0);
+  if (rc < 0) {
+    return rc;
+  }
+  return rc << 32 | __load_i32(st) as i64 & 4294967295;
+}
