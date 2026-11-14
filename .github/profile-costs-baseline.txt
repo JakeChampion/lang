@@ -189,14 +189,14 @@ profile/arm64-linux/closure_call.minimal.emit	1144
 profile/arm64-linux/closure_call.safe.bytes	5864
 profile/arm64-linux/closure_call.safe.emit	1226
 # 2026-11-05: PR #14207, perf-x86_64 job 126960802774 on the merge with main 6dba1dcb measures lower values for the changed rows below. The rows that rise keep their limits.
-profile/arm64-linux/deflate_decode.diagnostic.bytes	118208
-profile/arm64-linux/deflate_decode.diagnostic.emit	13784
-profile/arm64-linux/deflate_decode.hardened.bytes	63256
-profile/arm64-linux/deflate_decode.hardened.emit	14820
-profile/arm64-linux/deflate_decode.minimal.bytes	52312
-profile/arm64-linux/deflate_decode.minimal.emit	11928
-profile/arm64-linux/deflate_decode.safe.bytes	56792
-profile/arm64-linux/deflate_decode.safe.emit	13245
+profile/arm64-linux/deflate_decode.diagnostic.bytes	123848
+profile/arm64-linux/deflate_decode.diagnostic.emit	14960
+profile/arm64-linux/deflate_decode.hardened.bytes	68168
+profile/arm64-linux/deflate_decode.hardened.emit	16005
+profile/arm64-linux/deflate_decode.minimal.bytes	57544
+profile/arm64-linux/deflate_decode.minimal.emit	13288
+profile/arm64-linux/deflate_decode.safe.bytes	62120
+profile/arm64-linux/deflate_decode.safe.emit	14479
 profile/arm64-linux/enum_match.diagnostic.bytes	13568
 profile/arm64-linux/enum_match.diagnostic.emit	1700
 profile/arm64-linux/enum_match.hardened.bytes	7768
@@ -279,19 +279,19 @@ profile/x86-64-linux/closure_call.minimal.ir	41148167
 profile/x86-64-linux/closure_call.safe.bytes	4848
 profile/x86-64-linux/closure_call.safe.emit	982
 profile/x86-64-linux/closure_call.safe.ir	41178167
-profile/x86-64-linux/deflate_decode.diagnostic.bytes	109880
+profile/x86-64-linux/deflate_decode.diagnostic.bytes	116368
 # 2026-11-05: main 01a92579b (#14222), perf-x86_64 job 127187970930 measures lower values for the row below. The rows that rise keep their limits.
-profile/x86-64-linux/deflate_decode.diagnostic.emit	12887
-profile/x86-64-linux/deflate_decode.diagnostic.ir	41625866
-profile/x86-64-linux/deflate_decode.hardened.bytes	54928
-profile/x86-64-linux/deflate_decode.hardened.emit	13112
-profile/x86-64-linux/deflate_decode.hardened.ir	33100152
-profile/x86-64-linux/deflate_decode.minimal.bytes	45456
-profile/x86-64-linux/deflate_decode.minimal.emit	11231
-profile/x86-64-linux/deflate_decode.minimal.ir	38769785
-profile/x86-64-linux/deflate_decode.safe.bytes	50448
-profile/x86-64-linux/deflate_decode.safe.emit	12488
-profile/x86-64-linux/deflate_decode.safe.ir	32267962
+profile/x86-64-linux/deflate_decode.diagnostic.emit	14075
+profile/x86-64-linux/deflate_decode.diagnostic.ir	40831183
+profile/x86-64-linux/deflate_decode.hardened.bytes	60064
+profile/x86-64-linux/deflate_decode.hardened.emit	14285
+profile/x86-64-linux/deflate_decode.hardened.ir	32338631
+profile/x86-64-linux/deflate_decode.minimal.bytes	51360
+profile/x86-64-linux/deflate_decode.minimal.emit	12572
+profile/x86-64-linux/deflate_decode.minimal.ir	38025951
+profile/x86-64-linux/deflate_decode.safe.bytes	55696
+profile/x86-64-linux/deflate_decode.safe.emit	13688
+profile/x86-64-linux/deflate_decode.safe.ir	31550893
 profile/x86-64-linux/enum_match.diagnostic.bytes	11144
 profile/x86-64-linux/enum_match.diagnostic.emit	1369
 profile/x86-64-linux/enum_match.diagnostic.ir	29250209
@@ -362,3 +362,4 @@ profile/x86-64-linux/startup.safe.bytes	2096
 profile/x86-64-linux/startup.safe.emit	277
 profile/x86-64-linux/startup.safe.ir	79
 # 2026-11-14 (#15822): perf-x86_64 job 132337113700 on the merge with main 8ce8fde7 measured 74 rows. Owned array parameters move the deflate_decode, http_hello and map_string.hardened.ir rows. The other rows are values of main, which #15788 records. Each row is pinned at its measured value.
+# 2026-11-14 (#15902, main-red #15888): perf-x86_64 job 132481077154 on the merge ref 8e8414a1. The std/deflate changes of 9835b4f3 and b6ef2efa move the deflate_decode rows of both hosts. Each row is pinned at its measured value.

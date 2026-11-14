@@ -695,8 +695,8 @@ aarch64/closure_call.text	1226
 aarch64/closure_call.ir	46002179
 # 2026-10-26 (#13496): CI40296315314 reports seven lower ARM64 instruction counts.
 # 2026-11-01 (#13347): one-allocation table fills lower the measured ARM64 decode count.
-aarch64/deflate_decode.ir	34154939
-aarch64/deflate_decode.text	13241
+aarch64/deflate_decode.ir	33501979
+aarch64/deflate_decode.text	14479
 aarch64/deflate_encode.ir	42496722
 aarch64/deflate_encode.text	7648
 aarch64/enum_match.text	1198
@@ -821,3 +821,5 @@ aarch64/video_qtrle.ir 1559097809
 # 2026-11-14 (#15822): perf-x86_64 job 132337113700 on the merge with main 8ce8fde7 measured x86_64/utf8_ingest_unchecked.text, which owned array parameters move.
 # 2026-11-14: constant tables for the fixed codes and a table for the code lengths in std/deflate. A local perf-bench run on
 # main 4e120f86 measured x86_64/deflate_decode.ir at 31550893 (-2.22%) and x86_64/deflate_decode.text at 13688 (+9.68%).
+# 2026-11-14 (#15902, main-red #15888): perf-aarch64 job 132481077618 on the merge ref 8e8414a1. b6ef2efa, the symbol reader
+# of std/deflate, moves aarch64/deflate_decode.text +9.35% and .ir -1.91%. Each row is pinned at its measured value.

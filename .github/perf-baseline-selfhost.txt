@@ -329,7 +329,7 @@ selfhost/arm64-linux/byte_copy_append.emit	1548
 selfhost/arm64-linux/byte_copy_with.emit	1501
 selfhost/arm64-linux/call_overhead.emit	449
 selfhost/arm64-linux/closure_call.emit	1234
-selfhost/arm64-linux/deflate_decode.emit	13234
+selfhost/arm64-linux/deflate_decode.emit	14479
 selfhost/arm64-linux/deflate_encode.emit	7729
 selfhost/arm64-linux/enum_match.emit	1198
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
@@ -410,7 +410,7 @@ selfhost/x86-64-linux/byte_copy_append.emit	1305
 selfhost/x86-64-linux/byte_copy_with.emit	1265
 selfhost/x86-64-linux/call_overhead.emit	353
 selfhost/x86-64-linux/closure_call.emit	988
-selfhost/x86-64-linux/deflate_decode.emit	12488
+selfhost/x86-64-linux/deflate_decode.emit	13688
 selfhost/x86-64-linux/deflate_encode.emit	7092
 selfhost/x86-64-linux/enum_match.emit	959
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
@@ -468,3 +468,5 @@ selfhost/wasm32-wasi/video_qtrle.emit 6036
 # merged #14910 emits 1321 x86-64 lines on both parent 97af82fc and IVF head
 # cbed65e0. Pin the measured value without a tolerance change.
 # 2026-11-14 (#15822): perf-x86_64 job 132337113700 on the merge with main 8ce8fde7. Owned array parameters move these rows. Each row is pinned at its measured value.
+# 2026-11-14 (#15902, main-red #15888): perf-x86_64 job 132481077154 on the merge ref 8e8414a1. The std/deflate changes of
+# 9835b4f3 and b6ef2efa move the two deflate_decode.emit rows. Each row is pinned at its measured value.
