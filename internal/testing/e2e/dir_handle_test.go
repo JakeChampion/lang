@@ -123,6 +123,17 @@ function main(): i32 {
         Err(e) => { match (e) { NotFound(p) => { if (p != "nope") { return 21; } }, _ => { return 22; } } }
     }
     let Ok(sub) = top.open_dir("sub") else { return 23; };
+    match (top.entries_ino()) {
+        Ok(es) => {
+            if (es.len() < 3) { return 93; }
+            for e in es {
+                let Ok(st) = top.lstat(e.name) else { return 94; };
+                if (e.ino != st.ino) { return 95; }
+                if (e.kind != (st.mode & 61440u32)) { return 96; }
+            }
+        },
+        Err(_) => { return 97; }
+    }
     match (sub.entries()) {
         Ok(names) => { if (names.len() != 1) { return 24; } if (names[0] != "g") { return 25; } },
         Err(_) => { return 26; }

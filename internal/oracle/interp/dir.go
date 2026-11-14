@@ -137,6 +137,22 @@ func builtinDirEntriesBytes(i *Interp, args []Value) (Value, error) {
 	return dirEntriesValue(i, args, true)
 }
 
+// builtinDirEntriesIno is Dir.entries_ino: the entries of the directory, as
+// read_dir_ino gives them for a path.
+func builtinDirEntriesIno(i *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("Dir.entries_ino: expected 1 arg, got %d", len(args))
+	}
+	f, err := dirFile(i, args[0])
+	if err != nil {
+		return nil, err
+	}
+	if f == nil {
+		return closedDir(), nil
+	}
+	return readDirInoLike("Dir.entries_ino", true, []Value{String(f.Name())})
+}
+
 func dirEntriesValue(i *Interp, args []Value, raw bool) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("Dir.entries: expected 1 arg, got %d", len(args))

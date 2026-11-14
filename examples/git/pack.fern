@@ -10,6 +10,7 @@
 import "std/array";
 import "std/deflate";
 import "std/hex";
+import "core/map";
 import "./objects";
 
 pub const OFS_DELTA: i32 = 6;
@@ -93,21 +94,53 @@ pub function find(idx: u8[], name: u8[]): i32 {
   return -1;
 }
 
+// The value of the hexadecimal digit `c`, or 0.
+function digit(c: u8): i32 {
+  if (c >= b'a') {
+    return (c - b'a') as i32 + 10;
+  }
+  if (c >= b'A') {
+    return (c - b'A') as i32 + 10;
+  }
+  return (c - b'0') as i32;
+}
+
+// The order of the name `i` of the index against the digits `short`: 0 if
+// the name starts with them.
+function compare_digits(idx: u8[], i: i32, short: string): i32 {
+  let at = 1032 + i * 20;
+  for k in 0..short.len() {
+    let byte = idx[at + k / 2] as i32;
+    let have = if (k % 2 == 0) { byte >> 4 } else { byte & 15 };
+    let want = digit(short[k]);
+    if (have != want) {
+      return if (have < want) { -1 } else { 1 };
+    }
+  }
+  return 0;
+}
+
 // The names in the index that start with the hexadecimal digits `short`, of
 // two digits or more: `limit` names at most.
 pub function with_prefix(idx: u8[], short: string, limit: i32): string[] {
   let found: string[] = [];
-  let Ok(first) = hex.decode(objects.part(short, 0, 2)) else {
+  if (short.len() < 2 || short.len() > 40) {
     return found;
-  };
-  let (lo, hi) = bucket(idx, first[0] as i32);
-  let i = lo;
-  while (i < hi && found.len() < limit) {
-    let name = hex_name_at(idx, i);
-    if (name.starts_with(short)) {
-      found = found.append(name);
+  }
+  let (first, end) = bucket(idx, digit(short[0]) * 16 + digit(short[1]));
+  let lo = first;
+  let hi = end;
+  while (lo < hi) {
+    let mid = lo + (hi - lo) / 2;
+    if (compare_digits(idx, mid, short) < 0) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
     }
-    i += 1;
+  }
+  while (lo < end && found.len() < limit && compare_digits(idx, lo, short) == 0) {
+    found = found.append(hex_name_at(idx, lo));
+    lo += 1;
   }
   return found;
 }
@@ -123,12 +156,22 @@ function no_entry(): Entry {
   return Entry { kind: 0, size: 0, data_at: 0, base_offset: -1, base_name: [], ok: false };
 }
 
+// A part of a packfile: `bytes` starts at the offset `shift` of the file.
+pub struct Window { bytes: u8[], shift: i32 }
+
 // The header of the object at `offset`.
 pub function entry_at(data: u8[], offset: i32): Entry {
-  if (offset < 12 || offset >= data.len()) {
+  return entry_in(Window { bytes: data, shift: 0 }, offset);
+}
+
+// The header of the object at the offset `offset` of the file. `data_at`
+// and `base_offset` are offsets of the file also.
+pub function entry_in(w: Window, offset: i32): Entry {
+  let data = w.bytes;
+  if (offset < 12 || offset < w.shift || offset - w.shift >= data.len()) {
     return no_entry();
   }
-  let at = offset;
+  let at = offset - w.shift;
   let c = data[at] as i32;
   at += 1;
   let kind = c >> 4 & 7;
@@ -146,12 +189,12 @@ pub function entry_at(data: u8[], offset: i32): Entry {
   if (size > 1073741824) {
     return no_entry();
   }
-  let e = Entry { kind: kind, size: size as i32, data_at: at, base_offset: -1, base_name: [], ok: true };
+  let e = Entry { kind: kind, size: size as i32, data_at: at + w.shift, base_offset: -1, base_name: [], ok: true };
   if (kind == REF_DELTA) {
     if (at + 20 > data.len()) {
       return no_entry();
     }
-    return Entry { ...e, data_at: at + 20, base_name: array.slice(data, at, at + 20) };
+    return Entry { ...e, data_at: at + 20 + w.shift, base_name: array.slice(data, at, at + 20) };
   }
   if (kind != OFS_DELTA) {
     return e;
@@ -173,16 +216,20 @@ pub function entry_at(data: u8[], offset: i32): Entry {
   if (back <= 0 || back >= offset as i64) {
     return no_entry();
   }
-  return Entry { ...e, data_at: at, base_offset: offset - back as i32 };
+  return Entry { ...e, data_at: at + w.shift, base_offset: offset - back as i32 };
 }
 
 // The data of the entry: the inflated bytes of its zlib stream. The second
 // number is the place after the stream.
 function inflated(data: u8[], e: Entry): Result[(u8[], i32), string] {
-  if (e.data_at + 2 > data.len()) {
+  return inflated_in(Window { bytes: data, shift: 0 }, e);
+}
+
+function inflated_in(w: Window, e: Entry): Result[(u8[], i32), string] {
+  if (e.data_at - w.shift + 2 > w.bytes.len()) {
     return Err("a packed object has no data");
   }
-  return match (deflate.inflate_from(data, e.data_at + 2, e.size)) {
+  return match (deflate.inflate_from(w.bytes, e.data_at - w.shift + 2, e.size)) {
     Ok(got) => {
       if (got.out.len() != e.size) {
         return Err("a packed object has a wrong size");
@@ -243,8 +290,7 @@ pub function apply_delta(base: u8[], delta: u8[]): Result[u8[], string] {
   if (base_size != base.len() as i64 || size < 0 || size > 1073741824) {
     return Err("a delta does not fit its base");
   }
-  let out = __alloc_u8(size as i32);
-  let made = 0;
+  let out: u8[] = [];
   let at = b;
   while (at < delta.len()) {
     let cmd = delta[at] as i32;
@@ -253,14 +299,13 @@ pub function apply_delta(base: u8[], delta: u8[]): Result[u8[], string] {
       return Err("a delta has a reserved instruction");
     }
     if ((cmd & 128) == 0) {
-      if (at + cmd > delta.len() || made + cmd > out.len()) {
+      if (at + cmd > delta.len() || out.len() as i64 + cmd as i64 > size) {
         return Err("a delta inserts past its end");
       }
-      for k in 0..cmd {
-        out = out.with(made + k, delta[at + k]);
+      for k in at..at + cmd {
+        out = out.append(delta[k]);
       }
       at += cmd;
-      made += cmd;
       continue;
     }
     let from: i64 = 0;
@@ -286,15 +331,15 @@ pub function apply_delta(base: u8[], delta: u8[]): Result[u8[], string] {
     if (count == 0) {
       count = 65536;
     }
-    if (from + count > base.len() as i64 || made as i64 + count > out.len() as i64) {
+    if (from + count > base.len() as i64 || out.len() as i64 + count > size) {
       return Err("a delta copies past its base");
     }
-    for k in 0..count as i32 {
-      out = out.with(made + k, base[from as i32 + k]);
+    let first = from as i32;
+    for k in first..first + count as i32 {
+      out = out.append(base[k]);
     }
-    made += count as i32;
   }
-  if (made != out.len()) {
+  if (out.len() as i64 != size) {
     return Err("a delta makes a wrong size");
   }
   return Ok(out);
@@ -310,10 +355,16 @@ pub function offset_of(idx: u8[], name: u8[]): i32 {
 // base, to the object that is not a delta. `base` gives the offset of the
 // base of a REF_DELTA from its name, or -1.
 pub function chain_of(data: u8[], base: (u8[]) => i32, offset: i32): Result[i32[], string] {
+  return chain_in((at: i32): Window => Window { bytes: data, shift: 0 }, base, offset);
+}
+
+// The chain, as `chain_of` gives it. `part` gives a part of the packfile
+// that holds the whole object at an offset.
+pub function chain_in(part: (i32) => Window, base: (u8[]) => i32, offset: i32): Result[i32[], string] {
   let chain: i32[] = [offset];
   let at = offset;
   while (chain.len() <= MAX_CHAIN) {
-    let e = entry_at(data, at);
+    let e = entry_in(part(at), at);
     if (!e.ok) {
       return Err("a packed object has a bad header");
     }
@@ -330,6 +381,91 @@ pub function chain_of(data: u8[], base: (u8[]) => i32, offset: i32): Result[i32[
     chain = chain.append(at);
   }
   return Err("a chain of deltas is too long");
+}
+
+// The objects that were the base of a delta, by offset. A chain of deltas
+// starts from the nearest base that the cache holds.
+pub struct Cache { at: Map[i32, objects.Object], bytes: i64 }
+
+// The most bytes of bases that a cache holds before it starts again.
+const CACHE_BYTES: i64 = 100663296;
+
+pub function cache_new(): Cache {
+  return Cache { at: Map { }, bytes: 0 };
+}
+
+function cached(c: Cache, offset: i32, o: objects.Object): Cache {
+  if (c.at.contains(offset)) {
+    return c;
+  }
+  if (c.bytes + o.body.len() as i64 > CACHE_BYTES) {
+    let empty: Map[i32, objects.Object] = Map { };
+    return Cache { at: empty.insert(offset, o), bytes: o.body.len() as i64 };
+  }
+  return Cache { at: c.at.insert(offset, o), bytes: c.bytes + o.body.len() as i64 };
+}
+
+// The object at `offset`, as `object_at` gives it, and the cache with the
+// bases of its chain. `part` gives a part of the packfile that holds the
+// whole object at an offset.
+pub function object_cached(part: (i32) => Window, base: (u8[]) => i32, offset: i32, c: Cache): (Result[objects.Object, string], Cache) {
+  let chain = match (chain_in(part, base, offset)) {
+    Ok(offsets) => offsets,
+    Err(why) => {
+      return (Err(why), c);
+    },
+  };
+  // The nearest object of the chain that the cache holds, or the last one.
+  let from = chain.len() - 1;
+  let start: Option[objects.Object] = None;
+  let found = false;
+  for i in 0..chain.len() {
+    if (!found) {
+      if let Some(o) = c.at.get(chain[i]) {
+        start = Some(o);
+        from = i;
+        found = true;
+      }
+    }
+  }
+  let now = match (start) {
+    Some(o) => o,
+    None => {
+      let w = part(chain[from]);
+      let first = entry_in(w, chain[from]);
+      let name = kind_name(first.kind);
+      if (name.len() == 0) {
+        return (Err("a packed object has an unknown kind"), c);
+      }
+      match (inflated_in(w, first)) {
+        Ok((body, _)) => objects.Object { kind: name, body: body },
+        Err(why) => {
+          return (Err(why), c);
+        },
+      }
+    },
+  };
+  let cache = c;
+  let i = from - 1;
+  while (i >= 0) {
+    cache = cached(cache, chain[i + 1], now);
+    let w = part(chain[i]);
+    let delta = match (inflated_in(w, entry_in(w, chain[i]))) {
+      Ok((bytes, _)) => bytes,
+      Err(why) => {
+        return (Err(why), cache);
+      },
+    };
+    let body = match (apply_delta(now.body, delta)) {
+      Ok(bytes) => bytes,
+      Err(why) => {
+        return (Err(why), cache);
+      },
+    };
+    now = objects.Object { kind: now.kind, body: body };
+    i -= 1;
+  }
+  return (Ok(now), cache);
 }
 
 // The object at `offset` of the packfile `data`, with each delta applied.
