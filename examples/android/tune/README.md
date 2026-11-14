@@ -174,9 +174,12 @@ fern -run examples/android/tune/tune_test.fern
 
 ## Limits
 
-The player decodes on the loop thread of the app, between two frames. A
-frame that takes longer than the sound that the stream holds makes a gap in
-the sound. The stream holds a quarter of a second.
+The player decodes on the loop thread of the app, between two frames, into
+the ring of the stream of `std/android/audio`. The audio thread of the
+device takes the samples from the ring, so a slow frame does not stop the
+sound. The ring holds a second of sound: a frame that takes longer than that
+makes a gap. The time and the bars of the spectrum are those of the sound
+that plays, not of the samples that the decoder gave last.
 
 The player reads a WAV, a FLAC or an MP3 file a window of 512 KB at a
 time. So a long file starts at once. The player keeps the whole file of an

@@ -60,35 +60,24 @@ function main(): i32 {
     Ok(_) => {}
   }
 
-  let ps: string[] = patterns();
+  // One compiled pattern serves each text, so the searches also reuse the
+  // tables that the earlier searches filled.
   let ts: string[] = texts();
   let spans_agree: boolean = true;
-  let i: i32 = 0;
-  while (i < ps.len()) {
-    let j: i32 = 0;
-    while (j < ts.len()) {
-      if (!same_span({ let __checked_regex_3: regex.Regex = match (regex.compile(ps[i])) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_3.captures(ts[j]) }, { let __checked_regex_2: regex.Regex = match (regex.compile(ps[i])) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_2.find(ts[j]) })) {
+  let counts_agree: boolean = true;
+  for p in patterns() {
+    let re: regex.Regex = match (regex.compile(p)) { Ok(compiled) => compiled, Err(error) => { eprint(error.to_string()); return 98; } };
+    for t in ts {
+      if (!same_span(re.captures(t), re.find(t))) {
         spans_agree = false;
       }
-      j = j + 1;
+      if (re.captures_all(t).len() != re.find_all(t).len()) {
+        counts_agree = false;
+      }
     }
-    i = i + 1;
   }
   if (spans_agree) {
     r = r + 64;
-  }
-
-  let counts_agree: boolean = true;
-  i = 0;
-  while (i < ps.len()) {
-    let j2: i32 = 0;
-    while (j2 < ts.len()) {
-      if ({ let __checked_regex_1: regex.Regex = match (regex.compile(ps[i])) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_1.captures_all(ts[j2]) }.len() != { let __checked_regex_0: regex.Regex = match (regex.compile(ps[i])) { Ok(__compiled) => __compiled, Err(__error) => { eprint(__error.to_string()); return 98; } }; __checked_regex_0.find_all(ts[j2]) }.len()) {
-        counts_agree = false;
-      }
-      j2 = j2 + 1;
-    }
-    i = i + 1;
   }
   if (counts_agree) {
     r = r + 128;

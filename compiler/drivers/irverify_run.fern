@@ -342,7 +342,7 @@ function provided_checks(): i32 {
   if (pv_count([ir.op_call_direct("helper", 1)], decl) != 0) {
     return 73;
   }
-  if (pv_count([ir.op_call_direct("__fern_rc_dec", 1)], none) != 0) {
+  if (pv_count([ir.op_call_direct("__fern_rc_dec", 1), ir.op_call_direct("__fern_alloc_size_abort", 0)], none) != 0) {
     return 74;
   }
   if (pv_count([ir.op_call_direct("__fern_arr_str_join", 2)], none) != 0) {
@@ -376,7 +376,7 @@ function provided_checks(): i32 {
   if (pv_count([ir.op_call_direct("__sem_drop_", 1)], none) != 1) {
     return 82;
   }
-  if (pv_count([ir.op_call_direct("__fern_rc_de", 1)], none) != 1) {
+  if (pv_count([ir.op_call_direct("__fern_rc_de", 1), ir.op_call_direct("__fern_alloc_size_abort_typo", 0)], none) != 2) {
     return 83;
   }
 

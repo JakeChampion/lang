@@ -128,6 +128,7 @@ jobs:
           FERN="$PWD/bin/fern-selfhost" scripts/check-video-avc-input-interop
           FERN="$PWD/bin/fern-selfhost" scripts/check-video-hevc-interop
           FERN="$PWD/bin/fern-selfhost" scripts/check-video-hevc-pps-interop
+          FERN="$PWD/bin/fern-selfhost" scripts/check-video-hevc-input-interop
           FERN="$PWD/bin/fern-selfhost" scripts/check-video-audio-clock-interop
           FERN="$PWD/bin/fern-selfhost" scripts/check-video-avc-pps-interop
           FERN="$PWD/bin/fern-selfhost" scripts/check-video-qtrle-mov-interop

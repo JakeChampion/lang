@@ -148,7 +148,7 @@ function attributes(out: usize, t: nodes.Tree, x: i32, k: i32, table: u8[]): boo
     extra(out, t, x, " info=\"", table);
   } else if (k == nodes.LINK || k == nodes.IMAGE) {
     buf_push(out, " destination=\"");
-    escape(out, t.lit(t.text, x), table);
+    escape(out, t.lit(x), table);
     buf_push(out, "\"");
     extra(out, t, x, " title=\"", table);
   }
@@ -164,14 +164,14 @@ function attributes(out: usize, t: nodes.Tree, x: i32, k: i32, table: u8[]): boo
 function extra(out: usize, t: nodes.Tree, x: i32, name: string, table: u8[]): void {
   if (t.has_extra(x)) {
     buf_push(out, name);
-    escape(out, t.extra(t.text, x), table);
+    escape(out, t.extra(x), table);
     buf_push(out, "\"");
   }
 }
 
 function literal(out: usize, t: nodes.Tree, x: i32, k: i32, table: u8[]): void {
   buf_push(out, " xml:space=\"preserve\">");
-  escape(out, t.lit(t.text, x), table);
+  escape(out, t.lit(x), table);
   buf_push(out, "</");
   buf_push(out, NAMES[k]);
 }

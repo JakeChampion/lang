@@ -100,7 +100,7 @@ function leaf_block(r: out.R, t: nodes.Tree, x: i32, k: i32, entering: boolean):
     return code_block(r, t, x);
   }
   if (k == nodes.HTML_BLOCK) {
-    return r.blankline().out(t.lit(t.text, x), false, out.LITERAL).blankline();
+    return r.blankline().out(t.lit(x), false, out.LITERAL).blankline();
   }
   if (k == nodes.RULE) {
     return r.blankline().lit("-----").blankline();
@@ -137,15 +137,15 @@ function inline(r: out.R, t: nodes.Tree, x: i32, k: i32, entering: boolean): (ou
 // Text, a line break, a code span or raw HTML.
 function leaf_inline(r: out.R, t: nodes.Tree, x: i32, k: i32): out.R {
   if (k == nodes.TEXT) {
-    return r.out(t.lit(t.text, x), allow_wrap(r), out.NORMAL);
+    return r.out(t.lit(x), allow_wrap(r), out.NORMAL);
   }
   if (k == nodes.LINEBREAK || k == nodes.SOFTBREAK) {
     return line_break(r, k == nodes.LINEBREAK);
   }
   if (k == nodes.CODE) {
-    return code(r, t.lit(t.text, x));
+    return code(r, t.lit(x));
   }
-  return r.out(t.lit(t.text, x), false, out.LITERAL);
+  return r.out(t.lit(x), false, out.LITERAL);
 }
 
 // A hard line break is two spaces and a line feed, and the option
@@ -169,7 +169,7 @@ function link(r: out.R, t: nodes.Tree, x: i32, k: i32, entering: boolean): (out.
     if (!entering) {
       return (r, false);
     }
-    let url = t.lit(t.text, x);
+    let url = t.lit(x);
     if (url.starts_with("mailto:")) {
       url = slice_unchecked(url, 7, url.len());
     }
@@ -185,8 +185,8 @@ function link(r: out.R, t: nodes.Tree, x: i32, k: i32, entering: boolean): (out.
 }
 
 function link_end(r0: out.R, t: nodes.Tree, x: i32, k: i32): out.R {
-  let r = r0.lit("](").out(t.lit(t.text, x), false, out.URL);
-  let title = t.extra(t.text, x);
+  let r = r0.lit("](").out(t.lit(x), false, out.URL);
+  let title = t.extra(x);
   if (title.len() > 0) {
     if (k == nodes.IMAGE) {
       r = r.out(" \"", allow_wrap(r), out.LITERAL);
@@ -202,8 +202,8 @@ function link_end(r0: out.R, t: nodes.Tree, x: i32, k: i32): out.R {
 // title, and the text of its first child is the destination without
 // `mailto:`.
 function is_autolink(t: nodes.Tree, x: i32): boolean {
-  let url = t.lit(t.text, x);
-  if (scheme_length(url) == 0 || t.extra(t.text, x).len() > 0) {
+  let url = t.lit(x);
+  if (scheme_length(url) == 0 || t.extra(x).len() > 0) {
     return false;
   }
   let first = t.first(x);
@@ -218,7 +218,7 @@ function is_autolink(t: nodes.Tree, x: i32): boolean {
   if (url.starts_with("mailto:")) {
     bare = slice_unchecked(url, 7, url.len());
   }
-  return bare == t.lit(t.text, first);
+  return bare == t.lit(first);
 }
 
 // The length of a scheme and its `:` at the start of `s`, or 0: a letter,
@@ -289,12 +289,12 @@ function code_block(r0: out.R, t: nodes.Tree, x: i32): out.R {
   if (!(t.prev(x) == nodes.NONE && p != nodes.NONE && t.kind(p) == nodes.ITEM)) {
     r = r.blankline();
   }
-  let info = t.extra(t.text, x);
+  let info = t.extra(x);
   let fence = "`";
   if (__memchr(info, 96, 0) >= 0) {
     fence = "~";
   }
-  let text = t.lit(t.text, x);
+  let text = t.lit(x);
   let n = longest_ticks(text) + 1;
   if (n < 3) {
     n = 3;
