@@ -123,6 +123,11 @@ It does not reserve memory or promise that the configured heap can hold a later 
 Calculate a byte count in `i64` before this check.
 Do not narrow a wrapped product before the check.
 
+The `repeat`, `repeat_with_sep`, and `__fill_bytes` functions compute their byte products in `i64`.
+The `repeat_with_sep` function also computes the complete separator sum in `i64`.
+Each function calls `__alloc_len` before it allocates or copies that payload.
+The early returns for nonpositive counts and empty results stay unchanged.
+
 ## The claims
 
 All are stated over the *shape*, and all are pinned — see
