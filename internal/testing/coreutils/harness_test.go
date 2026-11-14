@@ -56,6 +56,8 @@ type invocation struct {
 	crossDev              func(t *testing.T, dir string)
 	rawByteName           bool
 	darwinLibcDefect      string
+	// unprivileged runs the case as nobody when the test runs as root.
+	unprivileged bool
 }
 
 type treeEntry struct {
@@ -189,6 +191,9 @@ func (inv invocation) own(t *testing.T) invocation {
 	if inv.dir == "" && inv.seedTree == nil {
 		defer holdMask(nil)()
 		inv.dir = t.TempDir()
+		if inv.unprivileged {
+			handOver(t, inv.dir)
+		}
 	}
 	return inv
 }
@@ -648,6 +653,12 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		}
 	} else {
 		cmd.Dir = inv.dir
+	}
+	if inv.unprivileged {
+		if inv.seedTree != nil {
+			handOver(t, workDir)
+		}
+		asNobody(t, cmd, bin)
 	}
 	defer applyMask(inv.umask)()
 	cmd.Stdin = strings.NewReader(inv.stdin)

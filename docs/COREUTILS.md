@@ -827,6 +827,11 @@ gives the same order to both. Do not compare the inode numbers or the change
 times of these fresh trees. A case of `xargs -P` compares its output as a
 set of lines, because the commands run at the same time.
 
+Each case of find sets `unprivileged`. When the test runs as root, the
+harness gives the tree to the user nobody and runs both sides as nobody.
+Root can read a directory of mode 000. Without this rule, a root host does not
+see the errors that a normal user and CI see.
+
 The walk opens each directory by its name in the directory above it, as
 gnulib's fts does. It reads the type of each entry from readdir, so a test
 of the name or the type needs no stat. `Dir.entries_ino` gives those types.

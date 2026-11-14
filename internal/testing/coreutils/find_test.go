@@ -44,6 +44,11 @@ func findCases(t *testing.T) []invocation {
 	cases = append(cases, findChangeCases()...)
 	cases = append(cases, findOutputCases(shared)...)
 	cases = append(cases, findLines(many, findManyLines)...)
+	handOver(t, shared)
+	handOver(t, many)
+	for i := range cases {
+		cases[i].unprivileged = true
+	}
 	return cases
 }
 
