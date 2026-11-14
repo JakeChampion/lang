@@ -48,8 +48,14 @@ function actual(): void {
   require(!output.text.contains("\n__fern_rec_box:\n"), "dependency remains unproved");
 }
 
+// The first store is the tag of the shape in the header. Each next store is
+// a field.
 function actual_store(op: isa.Op, stores: i32): void {
-  require(op.width == 64 && op.base == 0 && op.index == -1 && op.offset == stores * 8, "actual record stores");
+  if (stores == 0) {
+    require(op.width == 32 && op.base == 0 && op.index == -1 && op.offset == -4, "actual tag store");
+  } else {
+    require(op.width == 64 && op.base == 0 && op.index == -1 && op.offset == (stores - 1) * 8, "actual record stores");
+  }
 }
 
 function actual_operations(p: isa.ArrayProgram, body: text.Body): void {
@@ -67,8 +73,8 @@ function actual_operations(p: isa.ArrayProgram, body: text.Body): void {
       actual_store(op, stores);
       stores += 1;
     }
-    if (op.kind == 19) {
-      require(op.width == 64 && op.destination == 6 && op.symbol == ".S0", "actual shape address");
+    if (op.kind == 5 && op.width == 32) {
+      require(op.destination == 6 && op.immediate >= 65536 && op.immediate % 65536 == 2, "actual shape tag");
       shapes += 1;
     }
     if (op.kind == 31) {

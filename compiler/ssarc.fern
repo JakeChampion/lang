@@ -1304,11 +1304,11 @@ function reuse_construct(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SI
     r = emit(r, ir.op_if(0));
   }
   r = emit(r, ir.op_load_local(token));
-  r = emit(r, ir.op_const_i32(fields.len() + 1));
+  r = emit(r, ir.op_record_slots(fields.len()));
   r = emit(r, ir.op_call_direct("__fern_alloc_reuse", 2));
   r = emit(r, ir.op_store_local(ins.result));
   r = emit(r, ir.op_load_local(ins.result));
-  r = emit(r, ir.op_struct_set_shape(shape));
+  r = emit(r, ir.op_struct_set_shape(shape, fields.len()));
   r = emit(r, ir.op_drop());
   let kept: boolean[] = [];
   if (at >= 0) {
@@ -2633,11 +2633,11 @@ function send_tuple(own r: irtables.LowerState, t: typeinfo.Type, tup: typeinfo.
 // stored in local `out`.
 function send_record(own r: irtables.LowerState, fields: semrecords.Field[], shape: string, out: i32, f: ssasem.Func): irtables.LowerState {
   r = emit(r, ir.op_const_i32(0));
-  r = emit(r, ir.op_const_i32(fields.len() + 1));
+  r = emit(r, ir.op_record_slots(fields.len()));
   r = emit(r, ir.op_call_direct("__fern_alloc_reuse", 2));
   r = emit(r, ir.op_store_local(out));
   r = emit(r, ir.op_load_local(out));
-  r = emit(r, ir.op_struct_set_shape(shape));
+  r = emit(r, ir.op_struct_set_shape(shape, fields.len()));
   r = emit(r, ir.op_drop());
   for i in 0..fields.len() {
     let part = fields[i].ty;
@@ -2943,7 +2943,7 @@ function dbg_type(f: ssasem.Func, t: typeinfo.Type, open: string[]): string {
       return "*" + name;
     }
     let rec = f.records.list[at];
-    return "*" + name + "@" + util.i32_to_string((rec.fields.len() + 1) * 8) + "{" + dbg_record_members(f, rec, open.append(name)) + "}";
+    return "*" + name + "@" + util.i32_to_string((if (rec.fields.len() > 0) { rec.fields.len() } else { 1 }) * 8) + "{" + dbg_record_members(f, rec, open.append(name)) + "}";
   }
   if let typeinfo.TypeUnion(_) = t {
     return dbg_enum(f, t, s);
@@ -2971,7 +2971,7 @@ function dbg_enum(f: ssasem.Func, t: typeinfo.Type, s: string): string {
 
 function dbg_record_members(f: ssasem.Func, rec: semrecords.Record, open: string[]): string {
   if (rec.declared.len() == 0) {
-    return dbg_members(f, rec.fields, open, 1);
+    return dbg_members(f, rec.fields, open, 0);
   }
   // A field laid out in parts reads as its declared record, held in place over its parts' slots.
   let out = "";
@@ -2988,7 +2988,7 @@ function dbg_record_members(f: ssasem.Func, rec: semrecords.Record, open: string
       }
       ft = dbg_in_place(f, fl.ty, open, at - slot);
     }
-    out = dbg_member(out, fl.name, ft, slot + 1);
+    out = dbg_member(out, fl.name, ft, slot);
   }
   return out;
 }

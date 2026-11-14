@@ -3,6 +3,7 @@ package e2ecompiler
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -44,10 +45,18 @@ function main(): i32 {
 }
 `
 
-// A box has a header of one word. A box of two fields has three words with
-// its shape, and asks __fern_rec_box for three. A box of one field asks for
-// two. __fern_rec_box asks __fern_arr_box for two words less, so the block
-// of two fields has 32 bytes.
+// A box has a header of one word, which holds its count and the tag of its
+// shape. A box of two fields has two words, and asks __fern_rec_box for two.
+// A box of one field asks for one. __fern_rec_box asks __fern_arr_box for
+// two words less, and for no word for a box of one. So the block of two
+// fields has 24 bytes. Each constructor stores a tag in the high half of
+// the header, and the low 16 bits of the tag are the number of words.
+// A 32-bit store to the high half of the header word of a box.
+var tagStore = map[string]*regexp.Regexp{
+	"x86-64-linux": regexp.MustCompile(`movl %e\w+, -4\(%r\w+\)`),
+	"arm64-linux":  regexp.MustCompile(`stu?r w\d+, \[x\d+, #-4\]`),
+}
+
 func TestSelfHostBoxHasAHeaderOfOneWord(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
@@ -55,12 +64,12 @@ func TestSelfHostBoxHasAHeaderOfOneWord(t *testing.T) {
 		t.Fatal(err)
 	}
 	asked := map[string][2]string{
-		"x86-64-linux": {"movq $3, %rdi\n    call __fern_rec_box", "movq $2, %rdi\n    call __fern_rec_box"},
-		"arm64-linux":  {"mov x0, #3\n    bl __fern_rec_box", "mov x0, #2\n    bl __fern_rec_box"},
+		"x86-64-linux": {"movq $2, %rdi\n    call __fern_rec_box", "movq $1, %rdi\n    call __fern_rec_box"},
+		"arm64-linux":  {"mov x0, #2\n    bl __fern_rec_box", "mov x0, #1\n    bl __fern_rec_box"},
 	}
 	routine := map[string]string{
-		"x86-64-linux": "__fern_rec_box:\n    cmpq $2, %rdi\n    jb .Lrecbox_unit\n    pushq %rdi\n    subq $2, %rdi\n    call __fern_arr_box\n",
-		"arm64-linux":  "    sub x0, x0, #2\n    bl __fern_arr_box\n",
+		"x86-64-linux": "    pushq %rdi\n    subq $2, %rdi\n    jae .Lrecbox_sized\n    xorl %edi, %edi\n.Lrecbox_sized:\n    call __fern_arr_box\n",
+		"arm64-linux":  "    subs x0, x0, #2\n    csel x0, x0, xzr, hs\n    bl __fern_arr_box\n",
 	}
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
@@ -82,6 +91,9 @@ func TestSelfHostBoxHasAHeaderOfOneWord(t *testing.T) {
 			}
 			if body := tailCallBody(t, text, "val"); !strings.Contains(body, asked[target][1]) {
 				t.Fatalf("val has no %q:\n%s", asked[target][1], body)
+			}
+			if body := tailCallBody(t, text, "add"); !tagStore[target].MatchString(body) {
+				t.Fatalf("add stores no tag in the header of its box:\n%s", body)
 			}
 			for _, env := range []string{"", "FERN_LEAKCHECK=1", "FERN_SANITIZE=1"} {
 				if stderr, code := cli.exitOf(t, boxWordsProg, target, env); code != 0 {

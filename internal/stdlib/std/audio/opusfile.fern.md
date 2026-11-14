@@ -30,6 +30,13 @@ The default index limits allow 16 MiB of encoded input and 1,048,576 packets.
 The existing container, comment, codec, output, and link limits also apply.
 The input bytes must remain unchanged throughout the lifetime of the index and cursor.
 
+`inspect_seek_with` builds the same index from a source that reads a part of the file at a time.
+It reads the whole file once, but it keeps only the index.
+The index also keeps the end of the last page of each packet, in 4 more bytes for each packet.
+`SeekCursor.want` gives the bytes of the file that the next step reads.
+`SeekCursor.step_view` takes those bytes as a view that starts at the byte `base` of the file.
+So a player can keep only a window of a long file.
+
 `seek(link, position)` resets codec state and selects a playable frame within that logical link.
 The default preroll is 3,840 frames, or 80 ms at 48 kHz.
 `SeekLimits.preroll` accepts 3,840 through 480,000 frames.
@@ -61,7 +68,9 @@ An error consumes the cursor. Create a new cursor after an error.
 
 import "std/audio/ogg";
 import "std/audio/pcm";
+import "std/audio/source";
 import "std/audio/wire";
+import "std/array";
 import "std/audio/opusfile/headers";
 import "std/audio/opusfile/timing";
 import "std/audio/opusfile/packets";
@@ -321,7 +330,7 @@ pub struct SeekLimits { file: Limits, max_input_bytes: i32, max_packets: i32, pr
 
 pub struct SeekTrack { info: Info, first: i32, packets: i32, frames: i64, initial_granule: i64 }
 
-pub struct SeekIndex { tracks: SeekTrack[], locations: i32[], positions: i64[], durations: i32[], input_bytes: i32, limits: SeekLimits }
+pub struct SeekIndex { tracks: SeekTrack[], locations: i32[], positions: i64[], durations: i32[], ends: i32[], input_bytes: i32, limits: SeekLimits }
 
 pub struct SeekCursor { index: SeekIndex, codec: Option[multistream.Decoder], link: i32, packet: i32, target: i64, scale: f32 }
 
@@ -393,7 +402,9 @@ function index_step(own d: Decoder, input: [u8]): Result[(Decoder, i32, IndexEve
   return Ok((next, used, index_event(event)?));
 }
 
-function append_index(own index: SeekIndex, own event: IndexEvent): Result[SeekIndex, pcm.AudioError] {
+// The index after one event. `end` is the end of the scanned bytes, which
+// is the end of the page that completes the packet of the event.
+function append_index(own index: SeekIndex, own event: IndexEvent, end: i32): Result[SeekIndex, pcm.AudioError] {
   match (event) {
     IndexBegin(info) => {
       let track = SeekTrack { info: info, first: index.positions.len(), packets: 0, frames: -1i64, initial_granule: 0i64 };
@@ -404,7 +415,10 @@ function append_index(own index: SeekIndex, own event: IndexEvent): Result[SeekI
         return Err(pcm.Limit);
       }
       let at = value.location;
-      return Ok(SeekIndex { ...index, locations: index.locations.append(at.offset).append(at.page_offset).append(at.bytes), positions: index.positions.append(value.position), durations: index.durations.append(value.frames) });
+      if (end < at.offset + at.bytes) {
+        return Err(pcm.Header);
+      }
+      return Ok(SeekIndex { ...index, locations: index.locations.append(at.offset).append(at.page_offset).append(at.bytes), positions: index.positions.append(value.position), durations: index.durations.append(value.frames), ends: index.ends.append(end) });
     },
     IndexEnd(summary) => {
       let at = index.tracks.len() - 1;
@@ -418,8 +432,8 @@ function append_index(own index: SeekIndex, own event: IndexEvent): Result[SeekI
   }
 }
 
-function valid_seek_limits(input: [u8], limits: SeekLimits): boolean {
-  return limits.max_input_bytes >= 0 && input.len() <= limits.max_input_bytes
+function valid_seek_limits(size: i32, limits: SeekLimits): boolean {
+  return limits.max_input_bytes >= 0 && size <= limits.max_input_bytes
     && limits.max_packets > 0 && limits.max_packets <= 715827882
     && limits.preroll >= 3840 && limits.preroll <= 480000;
 }
@@ -428,25 +442,113 @@ function index_finished(event: IndexEvent, used: i32, at: i32, total: i32): bool
   return used == 0 && at == total && match (event) { IndexWait => true, _ => false };
 }
 
+function seek_index(size: i32, limits: SeekLimits): SeekIndex {
+  return SeekIndex { tracks: [], locations: [], positions: [], durations: [], ends: [], input_bytes: size, limits: limits };
+}
+
 pub function inspect_seek(input: [u8], limits: SeekLimits): Result[SeekIndex, pcm.AudioError] {
-  if (!valid_seek_limits(input, limits)) {
+  if (!valid_seek_limits(input.len(), limits)) {
     return Err(pcm.Limit);
   }
   let state = decoder(limits.file)?;
-  let index = SeekIndex { tracks: [], locations: [], positions: [], durations: [], input_bytes: input.len(), limits: limits };
+  let index = seek_index(input.len(), limits);
   let at = 0;
   while (true) {
     let (next, used, event) = index_step(state, input[at:])?;
     state = next;
     at += used;
     let finished = index_finished(event, used, at, input.len());
-    index = append_index(index, event)?;
+    index = append_index(index, event, at)?;
     if (finished) {
       break;
     }
   }
   state.finish()?;
   return Ok(index);
+}
+
+// The index of a file of `size` bytes that `read` gives a part at a time:
+// `read(offset, count)` gives at most `count` bytes from `offset`, and at
+// least one before the end of the file. The read goes once through the
+// file.
+pub function inspect_seek_with(size: i64, read: (i64, i32) => Result[u8[], IoError], limits: SeekLimits): Result[SeekIndex, source.ReadError] {
+  if (size < 0i64 || size > limits.max_input_bytes as i64 || !valid_seek_limits(size as i32, limits)) {
+    return Err(source.ReadAudio(pcm.Limit));
+  }
+  let n = size as i32;
+  let scan = Scan { state: audio_result(decoder(limits.file))?, index: seek_index(n, limits), chunk: Chunk { bytes: [], base: 0, at: 0 }, done: false };
+  while (!scan.done) {
+    scan = scan_step(scan, read, n)?;
+  }
+  let Scan { state, index, chunk, done } = scan;
+  audio_result(state.finish())?;
+  return Ok(index);
+}
+
+// The state of `inspect_seek_with`: the decoder, the index so far, and the
+// bytes of the file that the decoder did not take yet.
+struct Scan { state: Decoder, index: SeekIndex, chunk: Chunk, done: boolean }
+
+// The scan after one step of the decoder on the bytes of the file.
+function scan_step(own s: Scan, read: (i64, i32) => Result[u8[], IoError], n: i32): Result[Scan, source.ReadError] {
+  let Scan { state, index, chunk, done } = s;
+  let c = refilled(chunk, read, n)?;
+  let reads = match (state.queue) { None => true, _ => false };
+  let (next, used, event) = audio_result(index_step(state, c.bytes[c.at:]))?;
+  let at = c.base + c.at + used;
+  let finished = index_finished(event, used, at, n);
+  let waiting = wants_bytes(reads, used, event);
+  let grown = audio_result(append_index(index, event, at))?;
+  let moved = Chunk { ...c, at: c.at + used };
+  if (waiting && !finished) {
+    moved = extended(moved, read, n)?;
+  }
+  return Ok(Scan { state: next, index: grown, chunk: moved, done: finished });
+}
+
+// Whether a step that read a page took no bytes and gave no event: the
+// page goes on past the bytes that the step had.
+function wants_bytes(reads: boolean, used: i32, event: IndexEvent): boolean {
+  return reads && used == 0 && match (event) { IndexWait => true, _ => false };
+}
+
+// The bytes of a file from the byte `base`, with the first `at` of them
+// taken.
+struct Chunk { bytes: u8[], base: i32, at: i32 }
+
+// The next bytes of the file when `c` has no more, and `c` itself when it
+// has some or the file ends.
+function refilled(own c: Chunk, read: (i64, i32) => Result[u8[], IoError], n: i32): Result[Chunk, source.ReadError] {
+  if (c.at < c.bytes.len() || c.base + c.at >= n) {
+    return Ok(c);
+  }
+  let base = c.base + c.at;
+  return Ok(Chunk { bytes: read_more(read, base, n)?, base: base, at: 0 });
+}
+
+// The bytes that `c` did not take, and the next bytes of the file after
+// them: a page goes on past the bytes of `c`.
+function extended(own c: Chunk, read: (i64, i32) => Result[u8[], IoError], n: i32): Result[Chunk, source.ReadError] {
+  let rest = array.slice(c.bytes, c.at, c.bytes.len());
+  let base = c.base + c.at;
+  let more = read_more(read, base + rest.len(), n)?;
+  return Ok(Chunk { bytes: rest.concat(more), base: base, at: 0 });
+}
+
+// At most SEEK_CHUNK bytes of the file from `at`, and at least one.
+function read_more(read: (i64, i32) => Result[u8[], IoError], at: i32, n: i32): Result[u8[], source.ReadError] {
+  let bytes = match (read(at as i64, SEEK_CHUNK.min(n - at))) { Ok(value) => value, Err(error) => { return Err(source.ReadIo(error)); } };
+  if (bytes.len() == 0) {
+    return Err(source.ReadAudio(pcm.Header));
+  }
+  return Ok(bytes);
+}
+
+// The bytes that `inspect_seek_with` asks for at a time.
+const SEEK_CHUNK: i32 = 65536;
+
+function audio_result[T](own value: Result[T, pcm.AudioError]): Result[T, source.ReadError] {
+  return match (value) { Ok(v) => Ok(v), Err(error) => Err(source.ReadAudio(error)) };
 }
 
 pub function seek_reader(own index: SeekIndex): SeekCursor {
@@ -502,7 +604,8 @@ function seek_codec(own value: Option[multistream.Decoder], header: headers.Head
   }
 }
 
-function seek_packet(own codec: multistream.Decoder, input: [u8], location: packets.Location, track: SeekTrack, limits: Limits): Result[(multistream.Decoder, multistream.Audio), pcm.AudioError] {
+function seek_packet(own codec: multistream.Decoder, input: [u8], base: i32, place: packets.Location, track: SeekTrack, limits: Limits): Result[(multistream.Decoder, multistream.Audio), pcm.AudioError] {
+  let location = packets.Location { offset: place.offset - base, page_offset: place.page_offset - base, bytes: place.bytes };
   if (packets.contiguous(input, location)?) {
     return codec.decode(input[location.offset:location.offset + location.bytes]);
   }
@@ -533,11 +636,11 @@ function seek_audio(own audio: multistream.Audio, track: SeekTrack, location: pa
   return Ok(Audio { info: track.info, samples: samples, frames: range.end - range.start, position: position, granule: granule, packet_offset: location.offset as i64, page_offset: location.page_offset as i64 });
 }
 
-function seek_step(own cursor: SeekCursor, input: [u8], track: SeekTrack): Result[(SeekCursor, Option[Audio]), pcm.AudioError] {
+function seek_step(own cursor: SeekCursor, input: [u8], base: i32, track: SeekTrack): Result[(SeekCursor, Option[Audio]), pcm.AudioError] {
   let SeekCursor { index, codec, link, packet: at, target, scale } = cursor;
   let location = seek_location(index, at);
   let state = seek_codec(codec, track.info.header, index.limits.file)?;
-  let (next, audio) = seek_packet(state, input, location, track, index.limits.file)?;
+  let (next, audio) = seek_packet(state, input, base, location, track, index.limits.file)?;
   if (audio.frames != index.durations[at]) {
     return Err(pcm.Header);
   }
@@ -558,8 +661,32 @@ function seek_link_ended(cursor: SeekCursor, track: SeekTrack): boolean {
   return cursor.packet >= track.first + track.packets || cursor.target >= limit || cursor.index.positions[cursor.packet] >= limit;
 }
 
+// The bytes of the file that the next step reads, as an offset and a
+// count. A count of 0 means that the step reads no bytes.
+pub function (cursor: SeekCursor) want(): (i64, i32) {
+  if (cursor.link >= cursor.index.tracks.len()) {
+    return (0i64, 0);
+  }
+  let track = cursor.index.tracks[cursor.link];
+  if (seek_link_ended(cursor, track)) {
+    return (0i64, 0);
+  }
+  let from = seek_location(cursor.index, cursor.packet).page_offset;
+  return (from as i64, cursor.index.ends[cursor.packet] - from);
+}
+
 pub function (own cursor: SeekCursor) step(input: [u8]): Result[(SeekCursor, SeekEvent), pcm.AudioError] {
   if (input.len() != cursor.index.input_bytes) {
+    return Err(pcm.Header);
+  }
+  return cursor.step_view(input, 0i64);
+}
+
+// A step on the view `input` of the file from the byte `base`. The view
+// holds the bytes that `want` gives.
+pub function (own cursor: SeekCursor) step_view(input: [u8], base: i64): Result[(SeekCursor, SeekEvent), pcm.AudioError] {
+  let (from, count) = cursor.want();
+  if (base < 0i64 || count > 0 && (base > from || from + count as i64 > base + input.len() as i64)) {
     return Err(pcm.Header);
   }
   if (cursor.link >= cursor.index.tracks.len()) {
@@ -569,7 +696,7 @@ pub function (own cursor: SeekCursor) step(input: [u8]): Result[(SeekCursor, See
   if (seek_link_ended(cursor, track)) {
     return Ok((seek_next_link(cursor), SeekPending));
   }
-  let (next, audio) = seek_step(cursor, input, track)?;
+  let (next, audio) = seek_step(cursor, input, base as i32, track)?;
   return Ok((next, match (audio) { Some(value) => SeekSamples(value), None => SeekPending }));
 }
 
