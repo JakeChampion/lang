@@ -7,14 +7,10 @@ function __fern_arr_concat(pa: usize, src: usize, count: i32, width: i32): i32[]
     let na = __load_i32(pa);
     let capw = __load_i64(pa - 16);
     let size = width >> 3;
-    if ((na as i64 + count as i64) * size as i64 <= capw * 8i64) {
-      let dst = pa + 8 + na as usize * size as usize;
-      if (size == 8 && count <= 8) {
-        let k = 0;
-        while (k < count) {
-          __store_i64(dst + (k * 8) as usize, __load_i64(src + (k * 8) as usize));
-          k += 1;
-        }
+    if ((na as i64 + count as i64) * (size as i64) <= capw * 8i64) {
+      let dst = pa + 8 + na as usize * (size as usize);
+      if (count <= 134217728) {
+        __memcpy(dst, src, count * size);
       } else {
         __fern_arr_copy_elems(dst, src, count, size);
       }
