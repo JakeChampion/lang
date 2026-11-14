@@ -245,6 +245,7 @@ function device(ctx: usize, p: player.Player, gpu: Cell[Option[Gpu]]): control.D
     position: (): i64 => position(ctx, p, has),
     duration: (): i64 => duration(ctx, p, has),
     stop: (): void => stop(ctx, p, has),
+    has_audio: (): boolean => has && player.has_audio(ctx, p),
     random: (): i32 => rand.next_i32() & 2147483647,
     decoders: decoders(ctx),
   };

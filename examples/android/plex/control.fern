@@ -52,6 +52,8 @@ pub struct Device {
   position: () => i64,
   duration: () => i64,
   stop: () => void,
+  // True when the prepared player selected a sound track.
+  has_audio: () => boolean,
   random: () => i32,
   // The MIME types that the decoders of the phone take.
   decoders: string[],
@@ -982,11 +984,39 @@ function prepared(own s: App): App {
   if (d > 0i64) {
     p = Play { ...p, duration: d };
   }
-  if (p.stream.offset_ms > 0i64) {
+  let silent = !p.stream.transcode && !audio(p) && has_sound(p.item) && !s.dev.has_audio();
+  if (!silent && p.stream.offset_ms > 0i64) {
     s.dev.seek(p.stream.offset_ms);
   }
   let t = App { ...s, play: p, dirty: true };
-  return resume(t);
+  if (silent) {
+    return transcode_sound(t, "the player selected no sound track", p.stream.offset_ms);
+  } else {
+    return resume(t);
+  }
+}
+
+// True when the first version of the item has a sound track.
+function has_sound(it: plex.Item): boolean {
+  return it.media.len() > 0 && it.media[0].audio.len() > 0;
+}
+
+// Plays the item again from `pos`, as a transcode in which the server
+// converts the sound: the file played as it is, with no sound.
+function transcode_sound(own s: App, why: string, pos: i64): App {
+  let p = s.play;
+  if (p.stream.transcode || p.retried) {
+    return s;
+  }
+  log.warn("plex: no sound in direct play, " + why + ", so the server converts it");
+  s.dev.stop();
+  if (p.video) {
+    s.dev.hide_video();
+  }
+  let session = hex_id(s.dev);
+  let stream = plex.transcode_for(s.client, s.base, p.item, plex.qualities()[s.quality], pos, session, s.dev.decoders);
+  let ok = s.dev.play(stream.url);
+  return App { ...s, play: Play { ...p, stream: stream, session: session, retried: true, prepared: false, video: false, overlay: true, position: pos, status: "Converting the sound" }, dirty: true };
 }
 
 // Shows the video on the window and plays.
@@ -1120,6 +1150,13 @@ function player_event(own s: App, c: player.Change): App {
     },
     player.Failed(what, extra) => {
       return play_failed(s, what, extra);
+    },
+    player.AudioNotPlaying => {
+      let pos = s.dev.position();
+      return transcode_sound(s, "the sound decoder stopped", pos);
+    },
+    player.VideoNotPlaying => {
+      return play_failed(s, 805, 0);
     },
     player.Buffering(on) => {
       let status = "";
@@ -1488,7 +1525,7 @@ pub function view(s: App): ui.View {
     hubs = s.results;
   }
   let p = s.play;
-  let pv = ui.PlayerView { title: p.item.title, subtitle: player_subtitle(p.item), position_ms: p.position, duration_ms: p.duration, paused: p.paused, buffering: p.buffering, overlay: p.overlay || s.screen == ui.PLAYER && !p.video, art: art_of(p.item), audio: audio(p), status: p.status };
+  let pv = ui.PlayerView { title: p.item.title, subtitle: player_subtitle(p.item) + mode_text(p), position_ms: p.position, duration_ms: p.duration, paused: p.paused, buffering: p.buffering, overlay: p.overlay || s.screen == ui.PLAYER && !p.video, art: art_of(p.item), audio: audio(p), status: p.status };
   return ui.View {
     ...ui.empty_view(s.w, s.h),
     top: s.top, bottom: s.bottom,
@@ -1499,6 +1536,17 @@ pub function view(s: App): ui.View {
     quality: plex.qualities()[s.quality].name, player: pv, base: s.base,
     loading: busy(s), cache: s.cache,
   };
+}
+
+// How the stream reaches the player, after the subtitle.
+function mode_text(p: Play): string {
+  if (!p.active || p.stream.url.len() == 0) {
+    return "";
+  }
+  if (p.stream.transcode) {
+    return " · Transcode";
+  }
+  return " · Direct play";
 }
 
 function player_subtitle(it: plex.Item): string {
