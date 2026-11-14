@@ -46,24 +46,37 @@ pub function person(line: string): Person {
   return Person { name: objects.part(line, 0, open).trim(), email: objects.part(line, open + 1, close), time: digits(rest, 0, space), zone: zone };
 }
 
-// The fields of the commit `hash` with the content `body`.
+// The text of `body` from `from` to `to`.
+function text_of(body: u8[], from: i32, to: i32): string {
+  return unsafe { string_from_bytes_unchecked(array.slice(body, from, to)) };
+}
+
+// The fields of the commit `hash` with the content `body`. One pass reads
+// the header lines, to the first empty line.
 pub function commit_of(hash: string, body: u8[]): Commit {
-  let trees = objects.header_values(body, "tree");
-  let authors = objects.header_values(body, "author");
-  let committers = objects.header_values(body, "committer");
-  let at = 0;
-  while (at + 1 < body.len() && !(body[at] == b'\n' && body[at + 1] == b'\n')) {
-    at += 1;
+  let tree = "";
+  let author = "";
+  let committer = "";
+  let parents: string[] = [];
+  let i = 0;
+  while (i < body.len() && body[i] != b'\n') {
+    let end = i;
+    while (end < body.len() && body[end] != b'\n') {
+      end += 1;
+    }
+    if (end - i > 7 && objects.starts_at(body, i, "parent ")) {
+      parents = parents.append(text_of(body, i + 7, end));
+    } else if (end - i > 5 && tree.len() == 0 && objects.starts_at(body, i, "tree ")) {
+      tree = text_of(body, i + 5, end);
+    } else if (end - i > 7 && author.len() == 0 && objects.starts_at(body, i, "author ")) {
+      author = text_of(body, i + 7, end);
+    } else if (end - i > 10 && committer.len() == 0 && objects.starts_at(body, i, "committer ")) {
+      committer = text_of(body, i + 10, end);
+    }
+    i = end + 1;
   }
-  let message = if (at + 2 <= body.len()) { unsafe { string_from_bytes_unchecked(array.slice(body, at + 2, body.len())) } } else { "" };
-  return Commit {
-    hash: hash,
-    tree: if (trees.len() > 0) { trees[0] } else { "" },
-    parents: objects.header_values(body, "parent"),
-    author: person(if (authors.len() > 0) { authors[0] } else { "" }),
-    committer: person(if (committers.len() > 0) { committers[0] } else { "" }),
-    message: message,
-  };
+  let message = if (i + 1 <= body.len()) { text_of(body, i + 1, body.len()) } else { "" };
+  return Commit { hash: hash, tree: tree, parents: parents, author: person(author), committer: person(committer), message: message };
 }
 
 const DAYS: string = "ThuFriSatSunMonTueWed";

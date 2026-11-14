@@ -55,3 +55,67 @@ func TestByteLaneBuiltins(t *testing.T) {
 		t.Error("a float lane value is not an argument of a builtin of u8x16")
 	}
 }
+
+func intLanes(width int, signed bool, xs ...int64) Lanes {
+	out := Lanes{Width: width, Int: true, Signed: signed, Bits: make([]uint64, 128/width)}
+	for k := range out.Bits {
+		out.Bits[k] = uint64(xs[k%len(xs)]) & out.ones()
+	}
+	return out
+}
+
+// A signed lane compares and saturates with its sign, and each result is
+// cut to the width of a lane.
+func TestIntegerLaneBuiltins(t *testing.T) {
+	i := &Interp{Builtins: map[string]*Builtin{}}
+	i.registerLaneBuiltins()
+	a, b := intLanes(16, true, 30000, -30000, -1, 7), intLanes(16, true, 10000, -10000, 1, -7)
+	for verb, want := range map[string]Lanes{
+		"min":     intLanes(16, true, 10000, -30000, -1, -7),
+		"max":     intLanes(16, true, 30000, -10000, 1, 7),
+		"lt":      intLanes(16, true, 0, -1, -1, 0),
+		"add_sat": intLanes(16, true, 32767, -32768, 0, 0),
+		"sub_sat": intLanes(16, true, 20000, -20000, -2, 14),
+	} {
+		got, err := i.Builtins["__i16x8_"+verb].Fn(i, []Value{a, b})
+		if err != nil || got.(Lanes).String() != want.String() {
+			t.Errorf("%s = %v, %v, want %v", verb, got, err, want)
+		}
+	}
+	for op, want := range map[string]Lanes{"+": intLanes(16, true, -25536, 25536, 0, 0), "*": intLanes(16, true, -23808, -23808, -1, -49)} {
+		got, err := lanesBinary(op, a, b)
+		if err != nil || got.(Lanes).String() != want.String() {
+			t.Errorf("%s = %v, %v, want %v", op, got, err, want)
+		}
+	}
+	if got := lanesNeg(a).String(); got != intLanes(16, true, -30000, 30000, 1, -7).String() {
+		t.Errorf("neg = %v", got)
+	}
+	for verb, want := range map[string]Lanes{
+		"shl": intLanes(32, false, 0xfffffff0, 0x10),
+		"shr": intLanes(32, false, 0x0fffffff, 0),
+	} {
+		// A count of 36 is a count of 4.
+		got, err := i.Builtins["__u32x4_"+verb].Fn(i, []Value{intLanes(32, false, 0xffffffff, 1), Number(36)})
+		if err != nil || got.(Lanes).String() != want.String() {
+			t.Errorf("%s = %v, %v, want %v", verb, got, err, want)
+		}
+	}
+	shifted, err := i.Builtins["__i8x16_shr"].Fn(i, []Value{intLanes(8, true, -128, 64), Number(3)})
+	if want := intLanes(8, true, -16, 8); err != nil || shifted.(Lanes).String() != want.String() {
+		t.Errorf("signed shr = %v, %v, want %v", shifted, err, want)
+	}
+	mask, err := i.Builtins["__i32x4_bitmask"].Fn(i, []Value{intLanes(32, true, -1, 1, -5, 0)})
+	if err != nil || mask != Number(5) {
+		t.Errorf("bitmask = %v, %v, want 5", mask, err)
+	}
+	if _, ok := i.Builtins["__i32x4_add_sat"]; ok {
+		t.Error("lanes of 32 bits have no arithmetic that saturates")
+	}
+	if _, ok := i.Builtins["__i16x8_avg"]; ok {
+		t.Error("a signed lane type has no average")
+	}
+	if _, err := i.Builtins["__i16x8_min"].Fn(i, []Value{a, intLanes(16, false, 1)}); err == nil {
+		t.Error("a lane value of u16x8 is not an argument of a builtin of i16x8")
+	}
+}

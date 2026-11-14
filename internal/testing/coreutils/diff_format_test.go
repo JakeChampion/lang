@@ -9,7 +9,9 @@ import (
 )
 
 // prDate is the date in the page header of pr, which is the time of the run.
-var prDate = regexp.MustCompile(`\d{4}-\d\d-\d\d \d\d:\d\d`)
+// GNU pr writes 2026-11-14 09:26; the BSD pr that diff -l runs on Darwin
+// writes Nov 14 09:26 2026.
+var prDate = regexp.MustCompile(`\d{4}-\d\d-\d\d \d\d:\d\d|[A-Z][a-z]{2} [ \d]\d \d\d:\d\d \d{4}`)
 
 func maskPrDate(s string) string {
 	return prDate.ReplaceAllString(s, "DATE")

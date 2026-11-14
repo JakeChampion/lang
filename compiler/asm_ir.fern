@@ -8319,7 +8319,7 @@ function ssa_vint_shift(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.Emi
   s = ssa_load(reg_of, ins.args[1], "%rcx", s);
   let a = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
   let d = ssa_fsrc(reg_of, ins.result, "%xmm0");
-  s = s.write("    and $" + util.i32_to_string(ins.imm - 1) + ", %ecx\n    movd %ecx, %xmm2\n");
+  s = s.write("    andl $" + util.i32_to_string(ins.imm - 1) + ", %ecx\n    movd %ecx, %xmm2\n");
   if (ins.imm == 8) {
     return ssa_fput(reg_of, ins.result, d, s.write(x86_byte_lane_shift(b, a, d)));
   }
@@ -13011,11 +13011,21 @@ function emit_relro_protect(own s: asmcore.EmitState): asmcore.EmitState {
   return s.write(".Lfern_relro_done:\n");
 }
 
+// %rbx holds the base of the stack mapping. The stack below its top 4 MiB
+// asks for transparent huge pages, so a deep recursion takes one page fault
+// for each 2 MiB. A program that stays in the top 4 MiB keeps small pages.
+function stack_huge_pages(own s: asmcore.EmitState): asmcore.EmitState {
+  let deep = asmcore.stack_size() - asmcore.stack_guard() - 4194304;
+  s = s.write("    leaq " + util.i32_to_string(asmcore.stack_guard()) + "(%rbx), %rdi\n    movq $" + util.i32_to_string(deep) + ", %rsi\n    movl $14, %edx\n    movl $28, %eax\n");
+  return s.syscall(28);
+}
+
 function emit_stack_switch(own s: asmcore.EmitState): asmcore.EmitState {
   s = emit_stack_map(s, asmcore.stack_size());
   s = s.write("    cmpq $-4096, %rax\n    ja .Lfern_stack_map_failed\n    movq %rax, %rbx\n    movq %rax, %rdi\n    movq $" + util.i32_to_string(asmcore.stack_guard()) + ", %rsi\n    xorl %edx, %edx\n    movl $10, %eax\n");
   s = s.syscall(10);
   s = s.write("    testq %rax, %rax\n    jnz .Lfern_stack_guard_failed\n    leaq " + util.i32_to_string(asmcore.stack_size() - 16) + "(%rbx), %rsp\n    movq %rsp, __fern_stack_top(%rip)\n");
+  s = stack_huge_pages(s);
   s = emit_stack_map(s, 65536);
   s = s.write("    cmpq $-4096, %rax\n    ja .Lfern_signal_stack_map_failed\n    subq $32, %rsp\n    movq %rax, (%rsp)\n    movq $0, 8(%rsp)\n    movq $65536, 16(%rsp)\n    movq %rsp, %rdi\n    xorl %esi, %esi\n    movl $131, %eax\n");
   s = s.syscall(131);

@@ -466,6 +466,7 @@ The same ranges can select individual keyframes for header inspection without a 
 
 AV1 temporal units can require further packet handling for a particular platform decoder.
 `std/video/av1.next_obu` reads self-delimited low-overhead OBU ranges without a payload copy.
+It rejects extension headers on sequence headers, temporal delimiters, and tile lists under AV1 section 6.2.2.
 It checks header bits, extension identifiers, eight-byte size fields, and unsigned payload bounds within the packet budget.
 An absent size field or reserved OBU type returns `Unsupported`.
 Annex B framing, payload syntax, temporal-unit ordering, complete frame boundaries, and pixel decode remain outside this API.

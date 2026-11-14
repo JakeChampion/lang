@@ -3292,7 +3292,7 @@ function scalar(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irt
   }
   if let typeinfo.TypeLanes(l) = f.values[ins.args[0]] {
     if (l.kind != typeinfo.LANE_FLOAT) {
-      return emit(r, ir.op_lane(irtables.lane_int_operator(ins.str), l.width));
+      return emit(r, ir.op_lane(irtables.lane_int_operator(ins.kind_tag == ssa.UNARY, ins.str), l.width));
     }
     return emit(r, ir.op_lane(irtables.lane_operator(ins.kind_tag, ins.str), l.width));
   }
@@ -6358,32 +6358,34 @@ function lane_f32_argument(f: ssasem.Func, value: i32): i32 {
   return value;
 }
 
-// A builtin of u8x16. Its arguments are on the stack.
-function byte_lane_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, verb: string): irtables.LowerState {
+// A builtin of an integer lane type. Its arguments are on the stack.
+function integer_lane_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, verb: string): irtables.LowerState {
+  let w = typeinfo.lane_builtin_width(ins.str);
+  let signed = typeinfo.lane_builtin_kind(ins.str) == typeinfo.LANE_SIGNED;
   if (verb == "lane") {
     r = emit(r, ir.op_drop());
-    return emit(r, ir.op_lane_at("viextractu", 8, defining(f, ins.args[1]).imm));
+    return emit(r, ir.op_lane_at(if (signed) { "viextracts" } else { "viextractu" }, w, defining(f, ins.args[1]).imm));
   }
   if (verb == "of") {
     for a in ins.args {
       r = emit(r, ir.op_drop());
     }
     r = emit(r, ir.op_load_local(ins.args[0]));
-    r = emit(r, ir.op_lane("visplat", 8));
+    r = emit(r, ir.op_lane("visplat", w));
     for k in 1..ins.args.len() {
       r = emit(r, ir.op_load_local(ins.args[k]));
-      r = emit(r, ir.op_lane_at("vireplace", 8, k));
+      r = emit(r, ir.op_lane_at("vireplace", w, k));
     }
     return r;
   }
-  return emit(r, ir.op_lane(irtables.byte_lane_builtin_op(verb), 8));
+  return emit(r, ir.op_lane(irtables.integer_lane_builtin_op(verb, signed), w));
 }
 
 function lane_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irtables.LowerState {
   let w = typeinfo.lane_builtin_width(ins.str);
   let verb = typeinfo.lane_builtin_verb(ins.str);
-  if (w == 8) {
-    return byte_lane_site(r, f, ins, verb);
+  if (typeinfo.lane_builtin_kind(ins.str) != typeinfo.LANE_FLOAT) {
+    return integer_lane_site(r, f, ins, verb);
   }
   if (verb == "load_f32_ptr") {
     return emit(r, ir.op_lane("vload_f32", 64));

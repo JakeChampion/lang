@@ -13,6 +13,7 @@ import "std/array";
 import "std/errno";
 import "std/io";
 import "std/string";
+import "std/worker";
 import "core/cmp";
 import "core/map";
 import "std/crypto";
@@ -554,7 +555,11 @@ struct Waiting { commits: log.Commit[], store: store.Store }
 function log_push(w: Waiting, hash: string): Waiting {
   let got = store.read(w.store, hash);
   return match (got.object) {
-    Ok(o) => Waiting { commits: w.commits.append(log.Commit { ...log.commit_of(hash, o.body), parents: store.parents(got.store, hash, o.body) }), store: got.store },
+    Ok(o) => {
+      let c = log.commit_of(hash, o.body);
+      let kept = if (store.at_edge(got.store, hash)) { log.Commit { ...c, parents: [] } } else { c };
+      Waiting { commits: w.commits.append(kept), store: got.store }
+    },
     Err(_) => Waiting { commits: w.commits, store: got.store },
   };
 }
@@ -652,6 +657,29 @@ function log_command(argv: string[]): i32 {
 
 // ---- index-pack ----
 
+// A packfile with fewer objects has its names from this process only.
+const MIN_PARALLEL: i32 = 32;
+
+// The names of the parts from `part`, in order. A worker makes the names
+// of each part but the last, which this process makes.
+function index_parts(data: u8[], offsets: i32[], cuts: i32[], part: i32): string[][] {
+  let first = cuts[part];
+  let end = cuts[part + 1];
+  if (part + 2 >= cuts.len()) {
+    return [index.names_part(data, offsets, first, end)];
+  }
+  let w = worker.spawn((): string[] => index.names_part(data, offsets, first, end));
+  let rest = index_parts(data, offsets, cuts, part + 1);
+  return [w.join()].concat(rest);
+}
+
+// The names of the objects of a packfile: one part for each CPU.
+function index_names(data: u8[], offsets: i32[]): string[][] {
+  let count = offsets.len() - 1;
+  let parts = if (worker.parallel() && count >= MIN_PARALLEL) { (cpu_count() as i32).max(1).min(16) } else { 1 };
+  return index_parts(data, offsets, index.parts_of(offsets, parts), 0);
+}
+
 function index_pack(argv: string[]): i32 {
   let out = "";
   let file = "";
@@ -683,7 +711,7 @@ function index_pack(argv: string[]): i32 {
     return fatal("packfile name '" + out + "' does not end with '.idx'");
   }
   let stem = if (out.len() > 0) { objects.part(out, 0, out.len() - 4) } else { objects.part(file, 0, file.len() - 5) };
-  let built = match (index.build(data)) {
+  let built = match (index.build_with(data, index_names)) {
     Ok(b) => b,
     Err(message) => {
       return fatal(message);

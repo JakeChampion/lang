@@ -303,6 +303,16 @@ func gitPackedFixture(t *testing.T, oracle gitTool, dir string) string {
 	return gitPackIndex(t, dir)
 }
 
+// gitPackOf gives the path of the one packfile of the repository in dir.
+func gitPackOf(t *testing.T, dir string) string {
+	t.Helper()
+	found, err := filepath.Glob(filepath.Join(dir, ".git", "objects", "pack", "*.pack"))
+	if err != nil || len(found) != 1 {
+		t.Fatalf("the repository has %d packfiles, want 1", len(found))
+	}
+	return found[0]
+}
+
 func gitPackIndex(t *testing.T, dir string) string {
 	t.Helper()
 	found, err := filepath.Glob(filepath.Join(dir, ".git", "objects", "pack", "*.idx"))
@@ -416,6 +426,18 @@ func TestSelfHostExampleGitPacked(t *testing.T) {
 			check(idx)
 			compare("", "verify-pack", "-v", "nosuch.idx")
 
+			// Without the reverse index of git, the port sorts the offsets of the index.
+			revs, err := filepath.Glob(filepath.Join(top, ".git", "objects", "pack", "*.rev"))
+			if err != nil || len(revs) != 1 {
+				t.Fatalf("the fixture has %d reverse indexes, want 1", len(revs))
+			}
+			if err := os.Remove(revs[0]); err != nil {
+				t.Fatal(err)
+			}
+			compare("", "log", "--format=%h %p %s")
+			compare("", "ls-tree", "-r", "-l", "HEAD")
+			compare("", "cat-file", "-p", "HEAD~3:big.txt")
+
 			// With 16,384 packed objects or more, git gives 8 digits to a short name.
 			many := filepath.Join(t.TempDir(), "many")
 			if err := os.Mkdir(many, 0o755); err != nil {
@@ -437,6 +459,27 @@ func TestSelfHostExampleGitPacked(t *testing.T) {
 			}
 			if out, _, _ := oracle.run(t, many, "", "rev-parse", "--short", "HEAD"); len(strings.TrimSpace(out)) != 8 {
 				t.Fatalf("git gives %q as the short name: the fixture does not have 8 digits", out)
+			}
+
+			// index-pack of 16,402 objects: each CPU makes the names of one part.
+			if out, stderr, code := oracle.run(t, many, "", "index-pack", "-o", "by-git.idx", gitPackOf(t, many)); code != 0 {
+				t.Fatalf("git index-pack: exit %d\n%s%s", code, out, stderr)
+			}
+			if out, stderr, code := port.run(t, many, "", "index-pack", "-o", "by-fern.idx", gitPackOf(t, many)); code != 0 {
+				t.Fatalf("fern git index-pack: exit %d\n%s%s", code, out, stderr)
+			}
+			for _, ext := range []string{".idx", ".rev"} {
+				want, err := os.ReadFile(filepath.Join(many, "by-git"+ext))
+				if err != nil {
+					t.Fatal(err)
+				}
+				got, err := os.ReadFile(filepath.Join(many, "by-fern"+ext))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !bytes.Equal(got, want) {
+					t.Errorf("index-pack of the store of many objects: %s differs from that of git (%d and %d bytes)", ext, len(got), len(want))
+				}
 			}
 
 			// A shallow clone: a commit at its edge has no parent.

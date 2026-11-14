@@ -61,20 +61,20 @@ PYTHON
 fi
 python3 -m unittest discover -s tests/android/audio -p test_emulator_check.py
 
-# The music ring: the audio thread takes the samples through a @norc data callback.
-"$fern_video_compiler" -target arm64-android -shared -export main -o build/video/audio-music-api.so tests/stdlib/android_audio_music_mock_test.fern internal/stdlib
+# The ring of a Buffered stream: the audio thread takes the samples through a @norc data callback.
+"$fern_video_compiler" -target arm64-android -shared -export main -o build/video/audio-buffered-api.so tests/stdlib/android_audio_buffered_mock_test.fern internal/stdlib
 if [ -n "$android_target" ]; then
-  mkdir -p build/video/music
-  cc -shared -fPIC -Wall -Wextra -Werror -pthread -o build/video/music/libaaudio.so scripts/audio-reference/aaudio-music-mock.c
-  "$fern_video_compiler" -target "$android_target" -shared -export main -o build/video/music/normal.so tests/stdlib/android_audio_music_mock_test.fern internal/stdlib
-  "$fern_video_compiler" -target "$android_target" -shared -sanitize -export main -o build/video/music/sanitize.so tests/stdlib/android_audio_music_mock_test.fern internal/stdlib
-  LD_LIBRARY_PATH="$PWD/build/video/music${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" python3 - <<'PYTHON'
+  mkdir -p build/video/buffered
+  cc -shared -fPIC -Wall -Wextra -Werror -pthread -o build/video/buffered/libaaudio.so scripts/audio-reference/aaudio-buffered-mock.c
+  "$fern_video_compiler" -target "$android_target" -shared -export main -o build/video/buffered/normal.so tests/stdlib/android_audio_buffered_mock_test.fern internal/stdlib
+  "$fern_video_compiler" -target "$android_target" -shared -sanitize -export main -o build/video/buffered/sanitize.so tests/stdlib/android_audio_buffered_mock_test.fern internal/stdlib
+  LD_LIBRARY_PATH="$PWD/build/video/buffered${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" python3 - <<'PYTHON'
 import ctypes
 for variant in ('normal', 'sanitize'):
-    result = ctypes.CDLL(f'./build/video/music/{variant}.so').main()
+    result = ctypes.CDLL(f'./build/video/buffered/{variant}.so').main()
     if result != 0:
-        raise SystemExit(f'Android music ring test failed at check {result}')
-print('Android music ring, audio-thread callback, flush, history and clipping checks passed')
+        raise SystemExit(f'Android buffered stream test failed at check {result}')
+print('Android buffered stream, audio-thread callback, flush, history and clipping checks passed')
 PYTHON
 fi
 

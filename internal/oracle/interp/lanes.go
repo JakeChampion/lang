@@ -7,11 +7,13 @@ import (
 )
 
 // Lanes is a lane value. Int is true for integer lanes, whose Bits hold
-// each lane as an unsigned number.
+// each lane as an unsigned number. Signed is true for integer lanes with a
+// sign.
 type Lanes struct {
-	Width int
-	Int   bool
-	Bits  []uint64
+	Width  int
+	Int    bool
+	Signed bool
+	Bits   []uint64
 }
 
 func (l Lanes) String() string {
@@ -22,7 +24,7 @@ func (l Lanes) String() string {
 			b.WriteString(", ")
 		}
 		if l.Int {
-			fmt.Fprintf(&b, "%d", l.Bits[i])
+			fmt.Fprintf(&b, "%d", l.number(i))
 		} else {
 			b.WriteString(l.lane(i).String())
 		}
@@ -87,15 +89,10 @@ func signBit(width int) uint64 {
 func lanesBinary(op string, a, b Lanes) (Value, error) {
 	w := a.Width
 	if a.Int {
-		if op != "+" && op != "-" {
-			return nil, fmt.Errorf("interp: operator %q on integer lanes", op)
+		if op != "+" && op != "-" && (op != "*" || w == 8) {
+			return nil, fmt.Errorf("interp: operator %q on integer lanes of %d bits", op, w)
 		}
-		return mapByteLanes(a, b, func(x, y uint64) uint64 {
-			if op == "+" {
-				return x + y
-			}
-			return x - y
-		}), nil
+		return mapIntLanes(a, b, intLaneBinary[op]), nil
 	}
 	var fn func(x, y float64) float64
 	switch op {
@@ -119,6 +116,9 @@ func lanesBinary(op string, a, b Lanes) (Value, error) {
 }
 
 func lanesNeg(a Lanes) Lanes {
+	if a.Int {
+		return mapIntLanes(a, a, func(_ Lanes, x, _ int64) int64 { return -x })
+	}
 	out := Lanes{Width: a.Width, Bits: make([]uint64, len(a.Bits))}
 	for i, b := range a.Bits {
 		out.Bits[i] = b ^ signBit(a.Width)
@@ -158,7 +158,7 @@ func laneWindow(name string, arr Value, idx Value, lanes int) (Array, int, error
 }
 
 func (i *Interp) registerLaneBuiltins() {
-	i.registerByteLaneBuiltins()
+	i.registerIntegerLaneBuiltins()
 	for _, w := range []int{64, 32} {
 		p := fmt.Sprintf("__f%dx%d_", w, 128/w)
 		lanes := 128 / w
@@ -462,116 +462,196 @@ func (i *Interp) registerLaneBuiltins() {
 	}}
 }
 
-// mapByteLanes is fn on each pair of lanes of 8 bits, with the result cut
-// to 8 bits.
-func mapByteLanes(a, b Lanes, fn func(x, y uint64) uint64) Lanes {
-	out := Lanes{Width: 8, Int: true, Bits: make([]uint64, 16)}
+// number is the number in lane k of an integer lane value. A signed lane
+// has its sign.
+func (l Lanes) number(k int) int64 {
+	if l.Signed && l.Bits[k]>>(l.Width-1) != 0 {
+		return int64(l.Bits[k]) - 1<<l.Width
+	}
+	return int64(l.Bits[k])
+}
+
+func (l Lanes) ones() uint64 { return 1<<l.Width - 1 }
+
+// like is an integer lane value of the type of l, with each lane zero.
+func (l Lanes) like() Lanes {
+	return Lanes{Width: l.Width, Int: true, Signed: l.Signed, Bits: make([]uint64, 128/l.Width)}
+}
+
+// saturated is x held to the range of a lane of l.
+func (l Lanes) saturated(x int64) int64 {
+	high, low := int64(l.ones()), int64(0)
+	if l.Signed {
+		high >>= 1
+		low = -high - 1
+	}
+	return min(max(x, low), high)
+}
+
+// mapIntLanes is fn on each pair of lanes of two integer lane values, with
+// the result cut to the width of a lane.
+func mapIntLanes(a, b Lanes, fn func(l Lanes, x, y int64) int64) Lanes {
+	out := a.like()
 	for k := range out.Bits {
-		out.Bits[k] = fn(a.Bits[k], b.Bits[k]) & 0xff
+		out.Bits[k] = uint64(fn(a, a.number(k), b.number(k))) & a.ones()
 	}
 	return out
 }
 
-func byteMask(hold bool) uint64 {
+func laneMask(hold bool) int64 {
 	if hold {
-		return 0xff
+		return -1
 	}
 	return 0
 }
 
-// byteLaneBinary has the builtins of u8x16 that take two lane values.
-var byteLaneBinary = map[string]func(x, y uint64) uint64{
-	"min":     func(x, y uint64) uint64 { return min(x, y) },
-	"max":     func(x, y uint64) uint64 { return max(x, y) },
-	"eq":      func(x, y uint64) uint64 { return byteMask(x == y) },
-	"ne":      func(x, y uint64) uint64 { return byteMask(x != y) },
-	"lt":      func(x, y uint64) uint64 { return byteMask(x < y) },
-	"add_sat": func(x, y uint64) uint64 { return min(x+y, 255) },
-	"sub_sat": func(x, y uint64) uint64 { return x - min(x, y) },
-	"avg":     func(x, y uint64) uint64 { return (x + y + 1) >> 1 },
-	"and":     func(x, y uint64) uint64 { return x & y },
-	"or":      func(x, y uint64) uint64 { return x | y },
-	"xor":     func(x, y uint64) uint64 { return x ^ y },
+// intLaneBinary has the operators and the builtins of the integer lane
+// types that take two lane values.
+var intLaneBinary = map[string]func(l Lanes, x, y int64) int64{
+	"+":       func(_ Lanes, x, y int64) int64 { return x + y },
+	"-":       func(_ Lanes, x, y int64) int64 { return x - y },
+	"*":       func(_ Lanes, x, y int64) int64 { return x * y },
+	"min":     func(_ Lanes, x, y int64) int64 { return min(x, y) },
+	"max":     func(_ Lanes, x, y int64) int64 { return max(x, y) },
+	"eq":      func(_ Lanes, x, y int64) int64 { return laneMask(x == y) },
+	"ne":      func(_ Lanes, x, y int64) int64 { return laneMask(x != y) },
+	"lt":      func(_ Lanes, x, y int64) int64 { return laneMask(x < y) },
+	"add_sat": func(l Lanes, x, y int64) int64 { return l.saturated(x + y) },
+	"sub_sat": func(l Lanes, x, y int64) int64 { return l.saturated(x - y) },
+	"avg":     func(_ Lanes, x, y int64) int64 { return (x + y + 1) >> 1 },
+	"and":     func(_ Lanes, x, y int64) int64 { return x & y },
+	"or":      func(_ Lanes, x, y int64) int64 { return x | y },
+	"xor":     func(_ Lanes, x, y int64) int64 { return x ^ y },
 }
 
-func byteLaneArgs(name string, args []Value, n int) ([]Lanes, error) {
+// intLaneVerbs are the verbs of the builtins of the integer lane type of
+// `like`.
+func intLaneVerbs(like Lanes) []string {
+	verbs := []string{"splat", "of", "lane", "bitmask", "min", "max", "eq", "ne", "lt", "and", "or", "xor", "select", "load", "with", "shl", "shr"}
+	if like.Width <= 16 {
+		verbs = append(verbs, "add_sat", "sub_sat")
+		if !like.Signed {
+			verbs = append(verbs, "avg")
+		}
+	}
+	if like.Signed {
+		verbs = append(verbs, "abs")
+	}
+	return verbs
+}
+
+func intLaneArgs(name string, like Lanes, args []Value, n int) ([]Lanes, error) {
 	ls, err := laneArgs(name, args, n)
 	if err != nil {
 		return nil, err
 	}
 	for _, l := range ls {
-		if !l.Int || l.Width != 8 {
-			return nil, fmt.Errorf("%s: expected u8x16 args", name)
+		if !l.Int || l.Width != like.Width || l.Signed != like.Signed {
+			return nil, fmt.Errorf("%s: expected lane values of its type", name)
 		}
 	}
 	return ls, nil
 }
 
-func byteLanesOf(name string, args []Value) (Value, error) {
-	out := Lanes{Width: 8, Int: true, Bits: make([]uint64, 16)}
+func intLanesOf(name string, like Lanes, args []Value) (Value, error) {
+	out := like.like()
 	for k := range out.Bits {
 		// splat has one argument for each lane.
 		n, ok := args[k%len(args)].(Number)
 		if !ok {
-			return nil, fmt.Errorf("%s: expected bytes, got %T", name, args[k%len(args)])
+			return nil, fmt.Errorf("%s: expected integers, got %T", name, args[k%len(args)])
 		}
-		out.Bits[k] = uint64(uint8(n))
+		out.Bits[k] = uint64(n) & out.ones()
 	}
 	return out, nil
 }
 
-func (i *Interp) registerByteLaneBuiltins() {
-	const p = "__u8x16_"
-	for verb, fn := range byteLaneBinary {
-		name, fn := p+verb, fn
-		i.Builtins[name] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
-			ls, err := byteLaneArgs(name, args, 2)
-			if err != nil {
-				return nil, err
-			}
-			return mapByteLanes(ls[0], ls[1], fn), nil
-		}}
+func (i *Interp) registerIntegerLaneBuiltins() {
+	for _, width := range []int{8, 16, 32} {
+		for _, signed := range []bool{false, true} {
+			i.registerIntegerLanes(Lanes{Width: width, Int: true, Signed: signed})
+		}
 	}
-	i.Builtins[p+"splat"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+}
+
+func (i *Interp) registerIntegerLanes(like Lanes) {
+	sign := "u"
+	if like.Signed {
+		sign = "i"
+	}
+	p := fmt.Sprintf("__%s%dx%d_", sign, like.Width, 128/like.Width)
+	count, size := 128/like.Width, like.Width/8
+	builtins := map[string]func(args []Value) (Value, error){}
+	builtins["splat"] = func(args []Value) (Value, error) {
 		if len(args) != 1 {
-			return nil, fmt.Errorf("%ssplat: expected one byte", p)
+			return nil, fmt.Errorf("%ssplat: expected one integer", p)
 		}
-		return byteLanesOf(p+"splat", args)
-	}}
-	i.Builtins[p+"of"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
-		if len(args) != 16 {
-			return nil, fmt.Errorf("%sof: expected 16 bytes, got %d", p, len(args))
+		return intLanesOf(p+"splat", like, args)
+	}
+	builtins["of"] = func(args []Value) (Value, error) {
+		if len(args) != count {
+			return nil, fmt.Errorf("%sof: expected %d integers, got %d", p, count, len(args))
 		}
-		return byteLanesOf(p+"of", args)
-	}}
-	i.Builtins[p+"lane"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
-		ls, err := byteLaneArgs(p+"lane", args[:1], 1)
+		return intLanesOf(p+"of", like, args)
+	}
+	builtins["lane"] = func(args []Value) (Value, error) {
+		ls, err := intLaneArgs(p+"lane", like, args[:1], 1)
 		n, ok := args[1].(Number)
-		if err != nil || !ok || n < 0 || n >= 16 {
-			return nil, fmt.Errorf("%slane: expected a lane value and an index below 16", p)
+		if err != nil || !ok || n < 0 || int(n) >= count {
+			return nil, fmt.Errorf("%slane: expected a lane value and an index below %d", p, count)
 		}
-		return Number(ls[0].Bits[n]), nil
-	}}
-	i.Builtins[p+"bitmask"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
-		ls, err := byteLaneArgs(p+"bitmask", args, 1)
+		return Number(ls[0].number(int(n))), nil
+	}
+	builtins["bitmask"] = func(args []Value) (Value, error) {
+		ls, err := intLaneArgs(p+"bitmask", like, args, 1)
 		if err != nil {
 			return nil, err
 		}
 		var mask Number
 		for k, bits := range ls[0].Bits {
-			mask |= Number(bits>>7) << k
+			mask |= Number(bits>>(like.Width-1)) << k
 		}
 		return mask, nil
-	}}
-	i.Builtins[p+"select"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
-		ls, err := byteLaneArgs(p+"select", args, 3)
+	}
+	builtins["select"] = func(args []Value) (Value, error) {
+		ls, err := intLaneArgs(p+"select", like, args, 3)
 		if err != nil {
 			return nil, err
 		}
 		m := ls[2]
-		return mapByteLanes(mapByteLanes(ls[0], m, func(x, y uint64) uint64 { return x & y }), mapByteLanes(ls[1], m, func(x, y uint64) uint64 { return x &^ y }), func(x, y uint64) uint64 { return x | y }), nil
-	}}
-	i.Builtins[p+"load"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		kept := mapIntLanes(ls[0], m, func(_ Lanes, x, y int64) int64 { return x & y })
+		rest := mapIntLanes(ls[1], m, func(_ Lanes, x, y int64) int64 { return x &^ y })
+		return mapIntLanes(kept, rest, func(_ Lanes, x, y int64) int64 { return x | y }), nil
+	}
+	builtins["abs"] = func(args []Value) (Value, error) {
+		ls, err := intLaneArgs(p+"abs", like, args, 1)
+		if err != nil {
+			return nil, err
+		}
+		return mapIntLanes(ls[0], ls[0], func(_ Lanes, x, _ int64) int64 { return max(x, -x) }), nil
+	}
+	for _, verb := range []string{"shl", "shr"} {
+		name, left := p+verb, verb == "shl"
+		builtins[verb] = func(args []Value) (Value, error) {
+			if len(args) != 2 {
+				return nil, fmt.Errorf("%s: expected 2 args, got %d", name, len(args))
+			}
+			ls, err := intLaneArgs(name, like, args[:1], 1)
+			n, ok := args[1].(Number)
+			if err != nil || !ok {
+				return nil, fmt.Errorf("%s: expected a lane value and a count", name)
+			}
+			// The count is modulo the width of a lane.
+			by := uint(n) & uint(like.Width-1)
+			return mapIntLanes(ls[0], ls[0], func(_ Lanes, x, _ int64) int64 {
+				if left {
+					return x << by
+				}
+				return x >> by
+			}), nil
+		}
+	}
+	builtins["load"] = func(args []Value) (Value, error) {
 		if len(args) != 2 {
 			return nil, fmt.Errorf("%sload: expected 2 args, got %d", p, len(args))
 		}
@@ -579,9 +659,17 @@ func (i *Interp) registerByteLaneBuiltins() {
 		if err != nil {
 			return nil, err
 		}
-		return byteLanesOf(p+"load", a.Elems()[at:at+16])
-	}}
-	i.Builtins[p+"with"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		out := like.like()
+		for k, b := range a.Elems()[at : at+16] {
+			n, ok := b.(Number)
+			if !ok {
+				return nil, fmt.Errorf("%sload: expected bytes, got %T", p, b)
+			}
+			out.Bits[k/size] |= uint64(uint8(n)) << (8 * (k % size))
+		}
+		return out, nil
+	}
+	builtins["with"] = func(args []Value) (Value, error) {
 		if len(args) != 3 {
 			return nil, fmt.Errorf("%swith: expected 3 args, got %d", p, len(args))
 		}
@@ -589,16 +677,31 @@ func (i *Interp) registerByteLaneBuiltins() {
 		if err != nil {
 			return nil, err
 		}
-		ls, err := byteLaneArgs(p+"with", args[2:], 1)
+		ls, err := intLaneArgs(p+"with", like, args[2:], 1)
 		if err != nil {
 			return nil, err
 		}
 		e := append([]Value(nil), a.Elems()...)
-		for k, b := range ls[0].Bits {
-			e[at+k] = Number(b)
+		for k := range 16 {
+			e[at+k] = Number(uint8(ls[0].Bits[k/size] >> (8 * (k % size))))
 		}
 		return arrayOf(e...), nil
-	}}
+	}
+	for _, verb := range intLaneVerbs(like) {
+		name := p + verb
+		fn := builtins[verb]
+		if fn == nil {
+			binary := intLaneBinary[verb]
+			fn = func(args []Value) (Value, error) {
+				ls, err := intLaneArgs(name, like, args, 2)
+				if err != nil {
+					return nil, err
+				}
+				return mapIntLanes(ls[0], ls[1], binary), nil
+			}
+		}
+		i.Builtins[name] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) { return fn(args) }}
+	}
 }
 
 func pickLanes(a, b Lanes, takeB func(a, b float64) bool) Lanes {
