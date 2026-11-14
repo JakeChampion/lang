@@ -1,0 +1,381 @@
+// The block layout of pigz 2.8 over zdeflate: single_compress for one
+// process, and the jobs of parallel_compress for more. With one process,
+// pigz writes one deflate stream. With more, each job starts a new stream
+// with the 32 KiB before it as its dictionary. So the two give different
+// bytes, and each gives the bytes of pigz.
+import "std/array";
+import "std/worker";
+import "./zdeflate" as zd;
+
+pub const DICT: i32 = 32768;
+
+pub struct Settings {
+  level: i32,
+  strategy: i32,
+  // The input bytes of one job: -b in KiB.
+  block: i32,
+  rsync: boolean,
+  // False for -i: each block is independent.
+  setdict: boolean,
+}
+
+// OUTPOOL: the first size of the output buffer of a job.
+function outpool(block: i32): i32 {
+  return block + (block >> 4) + DICT;
+}
+
+// grow: the next size of an output buffer.
+function grow(size: i32): i32 {
+  let was = size;
+  let next = size + (size >> 2);
+  let top = next;
+  let shift = 0;
+  while (top > 7) {
+    top >>= 1;
+    shift += 1;
+  }
+  if (top == 7) {
+    next = 1 << shift + 3;
+  }
+  if (next < 16) {
+    next = 16;
+  }
+  if (next <= was) {
+    return 2147483647;
+  }
+  return next;
+}
+
+// deflate_engine: deflate until the output fits, with an output buffer of
+// `size` bytes that grows as pigz grows it. The job output starts at the
+// start of the stream.
+function engine(own z: zd.Z, size: i32, flush: i32): (zd.Z, i32) {
+  let room = size;
+  loop {
+    if (room - z.delivered == 0) {
+      room = grow(room);
+    }
+    z = zd.deflate(zd.Z { ...z, avail: room - z.delivered }, flush);
+    if (z.avail != 0) {
+      break;
+    }
+  }
+  return (z, room);
+}
+
+// Deflate with the output buffer of a job (`single` false) or of
+// single_compress, which writes `size` bytes at a time.
+function run(own z: zd.Z, size: i32, flush: i32, single: boolean): (zd.Z, i32) {
+  if (single) {
+    return (written(z, size, flush), size);
+  }
+  return engine(z, size, flush);
+}
+
+// The end of a run of input that more input follows: a byte boundary, with
+// empty static blocks when that is shorter, and a full flush for -i.
+function boundary(own z: zd.Z, size: i32, setdict: boolean, single: boolean): (zd.Z, i32) {
+  let (a, s1) = run(z, size, zd.BLOCK, single);
+  z = a;
+  let room = s1;
+  let bits = zd.pending_bits(z);
+  if ((bits & 1) != 0 || !setdict) {
+    let (b, s2) = run(z, room, zd.SYNC_FLUSH, single);
+    z = b;
+    room = s2;
+  } else if ((bits & 7) != 0) {
+    while ((bits & 7) != 0) {
+      z = zd.prime(z, 10, 2);
+      bits = zd.pending_bits(z);
+    }
+    let (b, s2) = run(z, room, if (single) { zd.NO_FLUSH } else { zd.BLOCK }, single);
+    z = b;
+    room = s2;
+  }
+  if (!setdict) {
+    let (c, s3) = run(z, room, zd.FULL_FLUSH, single);
+    z = c;
+    room = s3;
+  }
+  return (z, room);
+}
+
+// One job of parallel_compress: the deflate data of data[from:from + len],
+// with the 32 KiB before `from` as its dictionary unless -i. `lens` are the
+// lengths of the rsyncable parts of the job, or empty for one part. `more`
+// is true when another job follows.
+pub function job(own z: zd.Z, s: Settings, data: u8[], from: i32, len: i32, lens: i32[], more: boolean): (zd.Z, u8[]) {
+  z = zd.start(z, s.level, s.strategy);
+  if (s.setdict && from > 0) {
+    let dict = if (from < DICT) { from } else { DICT };
+    z = zd.set_dictionary(z, data, from - dict, dict);
+  }
+  let size = outpool(s.block);
+  let left = len;
+  let pos = from;
+  let part = 0;
+  loop {
+    let n = if (part < lens.len()) { lens[part] } else { left };
+    part += 1;
+    left -= n;
+    z = zd.input(z, data, pos, n);
+    pos += n;
+    if (left > 0 || more) {
+      let (b, room) = boundary(z, size, s.setdict, false);
+      z = b;
+      size = room;
+    } else {
+      let (b, room) = engine(z, size, zd.FINISH);
+      z = b;
+      size = room;
+    }
+    if (left == 0) {
+      break;
+    }
+  }
+  return zd.take(z);
+}
+
+// The rsyncable hash: a hit is where the 12-bit hash of the bytes so far is
+// RSYNCHIT.
+pub const RSYNCMASK: i32 = 4095;
+
+pub const RSYNCHIT: i32 = 2047;
+
+// single_compress: one deflate stream over all of `data`, in the blocks of
+// pigz with one process.
+// It keeps the branches of single_compress() of pigz in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+pub function single(s: Settings, data: u8[]): u8[] {
+  let z = zd.start(zd.new(), s.level, s.strategy);
+  let total = data.len();
+  let block = s.block;
+  let out: u8[] = [];
+  let pos = 0;
+  let got = 0;
+  let more = if (total < block) { total } else { block };
+  let read = more;
+  let have = 0;
+  let hash = RSYNCHIT;
+  loop {
+    if (got == 0) {
+      got = more;
+      more = if (total - read < block) { total - read } else { block };
+      read += more;
+    }
+    let left = 0;
+    if (s.rsync && got > 0) {
+      let scan = pos;
+      left = got;
+      loop {
+        if (left == 0) {
+          if (more == 0 || got == block) {
+            break;
+          }
+          left = if (more > block - got) { block - got } else { more };
+          got += left;
+          more -= left;
+          if (more == 0) {
+            more = if (total - read < block) { total - read } else { block };
+            read += more;
+          }
+        }
+        left -= 1;
+        hash = (hash << 1 ^ data[scan] as i32) & RSYNCMASK;
+        scan += 1;
+        if (hash == RSYNCHIT) {
+          break;
+        }
+      }
+      got -= left;
+    }
+    let fresh = false;
+    if (!s.setdict) {
+      have += got;
+      if (have > block) {
+        fresh = true;
+        have = got;
+      }
+    }
+    if (fresh) {
+      z = zd.start(z, s.level, s.strategy);
+    }
+    z = zd.input(z, data, pos, got);
+    pos += got;
+    if (more > 0 || left > 0) {
+      let (b, _) = boundary(z, block, s.setdict, true);
+      z = b;
+    } else {
+      z = written(z, block, zd.FINISH);
+    }
+    let (r, bytes) = zd.take(z);
+    z = r;
+    out = out.concat(bytes);
+    got = left;
+    if (more == 0 && got == 0) {
+      break;
+    }
+  }
+  return out;
+}
+
+// DEFLATE_WRITE: deflate with a fresh output buffer of `size` bytes until
+// the output fits.
+function written(own z: zd.Z, size: i32, flush: i32): zd.Z {
+  loop {
+    z = zd.deflate(zd.Z { ...z, avail: size }, flush);
+    if (z.avail != 0) {
+      break;
+    }
+  }
+  return z;
+}
+
+// The input of one job of parallel_compress: data[from:from + len], in
+// parts of `lens` bytes for -R, and a last part with the rest.
+pub struct Job {
+  from: i32,
+  len: i32,
+  lens: i32[],
+}
+
+// The jobs of parallel_compress over `data`: blocks of `block` bytes, or
+// for -R, blocks that end after the last hash hit in them, with a part for
+// each hit.
+pub function jobs(s: Settings, data: u8[]): Job[] {
+  let total = data.len();
+  let out: Job[] = [];
+  let none: i32[] = [];
+  if (!s.rsync) {
+    let from = 0;
+    loop {
+      let len = if (total - from < s.block) { total - from } else { s.block };
+      out = out.append(Job { from: from, len: len, lens: none });
+      from += len;
+      if (from >= total) {
+        break;
+      }
+    }
+    return out;
+  }
+  return rsync_jobs(s, data);
+}
+
+// The jobs of -R: each job ends after the last hash hit in the next block.
+// It keeps the branches of parallel_compress() of pigz in their order, to check against it.
+// fern-lint: allow cyclomatic-complexity
+function rsync_jobs(s: Settings, data: u8[]): Job[] {
+  let total = data.len();
+  let out: Job[] = [];
+  let frontier = if (total < s.block) { total } else { s.block };
+  let ns = 0;
+  let ne = frontier;
+  let hs = -1;
+  let he = -1;
+  let scan = 0;
+  let hash = RSYNCHIT;
+  let left = 0;
+  loop {
+    let cs = ns;
+    let ce = ne;
+    if (hs >= 0) {
+      ns = hs;
+      ne = he;
+      hs = -1;
+    } else {
+      ns = frontier;
+      ne = if (total - frontier < s.block) { total } else { frontier + s.block };
+      frontier = ne;
+    }
+    let lens: i32[] = [];
+    if (ce > cs) {
+      if (left == 0) {
+        let last = cs;
+        while (scan < ce) {
+          hash = (hash << 1 ^ data[scan] as i32) & RSYNCMASK;
+          scan += 1;
+          if (hash == RSYNCHIT) {
+            lens = lens.append(scan - last);
+            last = scan;
+          }
+        }
+        left = scan - last;
+        scan = ns;
+      }
+      let last = ns;
+      let room = s.block - (ce - cs);
+      if (room > ne - ns) {
+        room = ne - ns;
+      }
+      let end = ns + room;
+      while (scan < end) {
+        hash = (hash << 1 ^ data[scan] as i32) & RSYNCMASK;
+        scan += 1;
+        if (hash == RSYNCHIT) {
+          lens = lens.append(scan - last + left);
+          left = 0;
+          last = scan;
+        }
+      }
+      let n = (if (lens.len() == 0) { scan } else { last }) - ns;
+      if (n > 0) {
+        ce += n;
+        ns += n;
+        left = 0;
+      } else if (lens.len() > 0 && left > 0 && ne > ns) {
+        hs = ns;
+        he = ne;
+        ns = ce - left;
+        ne = ce;
+        ce -= left;
+      } else {
+        left = 0;
+      }
+    }
+    out = out.append(Job { from: cs, len: ce - cs, lens: lens });
+    if (ne <= ns) {
+      break;
+    }
+  }
+  return out;
+}
+
+// parallel_compress: the deflate data of the jobs, each compressed with the
+// 32 KiB before it as its dictionary. Each worker compresses a run of
+// consecutive jobs, and the parent compresses the last run. The output does
+// not depend on the count of workers.
+pub function parallel(s: Settings, data: u8[], all: Job[], procs: i32): u8[] {
+  let count = all.len();
+  let workers = if (procs < count) { procs } else { count };
+  if (workers < 1) {
+    workers = 1;
+  }
+  let per = (count + workers - 1) / workers;
+  let out: u8[] = [];
+  for part in runs(s, data, all, 0, per) {
+    out = out.concat(part);
+  }
+  return out;
+}
+
+function runs(s: Settings, data: u8[], all: Job[], first: i32, per: i32): u8[][] {
+  let count = all.len();
+  if (first + per >= count) {
+    return [run_jobs(s, data, all, first, count)];
+  }
+  let w = worker.spawn((): u8[] => run_jobs(s, data, all, first, first + per));
+  let rest = runs(s, data, all, first + per, per);
+  return [w.join()].concat(rest);
+}
+
+function run_jobs(s: Settings, data: u8[], all: Job[], first: i32, end: i32): u8[] {
+  let z = zd.new();
+  let out: u8[] = [];
+  for i in first..end {
+    let j = all[i];
+    let (next, bytes) = job(z, s, data, j.from, j.len, j.lens, i < all.len() - 1);
+    z = next;
+    out = out.concat(bytes);
+  }
+  return out;
+}
