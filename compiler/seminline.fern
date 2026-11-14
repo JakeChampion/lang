@@ -2505,7 +2505,7 @@ function split_constructions(f0: ssasem.Func, modes: i32[]): Rewrite {
     util.report_unsettled("seminline.split_constructions", round, f.graph.name);
   }
   if (rewritten) {
-    f = ssasem.Func { ...f, graph: ssa.prune_trivial_phis(f.graph).f };
+    f = ssasem.Func { ...f, graph: ssasem.pruned_phis(f.graph).f };
   }
   return Rewrite { f: f, changed: rewritten };
 }
