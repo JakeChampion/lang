@@ -19,8 +19,8 @@ Every `call_indirect` the backend emits loads the target, reads its first word, 
 A mismatch branches to `__fern_cfi_fail`, which prints `fern: indirect call to an address that is not a function` and exits with status 134.
 The check runs before the call, so a forged pointer never executes.
 
-The word ahead of the pad is the signature hash of the function: the 32-bit FNV-1a hash of its width tag (`ir.cfi_sig_hash`).
-The tag has one letter per parameter, with the closure environment first, and one for the result: `w` for a word, `l` for a 64-bit integer and `d` for a float.
+The word ahead of the pad is the signature hash of the function: the 32-bit FNV-1a hash of the key of its function type (`ir.cfi_sig_hash` of `ssasem.type_key`).
+The key names the type of each parameter and of the result. It gives one name, `i32`, to `i8`, `i16`, `u16` and `i32`.
 
 A call through a typed function value carries the hash of the value's type and compares it with the word ahead of the target.
 A mismatch branches to `__fern_cfi_sig_fail`, which prints `fern: indirect call to a function of another signature` and exits with status 134.
@@ -57,7 +57,7 @@ go test ./internal/testing/e2ecompiler -run 'TestSelfHostForwardEdgeCFI|TestSelf
 
 ## Remaining limits
 
-- The signature is the width tag, not the source type. Two functions whose parameters and results have the same count and register classes share a hash, so a forged pointer between them passes the check. A raw call checks the pad alone.
+- The signature word has 32 bits, and `i8`, `i16`, `u16` and `i32` share a name in it. Two functions whose types have the same key share a hash, so a forged pointer between them passes the check. A raw call checks the pad alone.
 - The backward edge is the stack canary and, on arm64, the signed return address. The x86-64 shadow stack is SEC-030.
 - The runtime's own indirect branches, the signal trampolines and the C shim, do not check their targets. Their targets are stubs or C code.
 - The x86-64 image carries no IBT property note, and Linux enforces no user-space IBT ([SHADOW-STACK.md](SHADOW-STACK.md)).

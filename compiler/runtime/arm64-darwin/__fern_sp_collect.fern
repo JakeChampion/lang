@@ -18,7 +18,7 @@ function __fern_sp_collect(pid: i32, in_w: i32, out_r: i32, err_r: i32, input: s
   while (__load_i32(st) >= 0 || __load_i32(st + 8) >= 0 || __load_i32(st + 16) >= 0) {
     let rc = __syscall3(230, st as i64, 3, -(1 as i64)) as i32;
     if (rc >= 0) {
-      ipos = __fern_sp_feed(st, input, ipos);
+      ipos = __fern_sp_send(st, input, ipos);
       if (olen == ocap) {
         let wider = __fern_sp_widen(obuf, olen, ocap);
         let old_own = __raw_string(obuf, ocap);
@@ -39,7 +39,7 @@ function __fern_sp_collect(pid: i32, in_w: i32, out_r: i32, err_r: i32, input: s
       __fern_sp_shut(st, 2);
     }
   }
-  let code = __fern_sp_wait(st, pid);
+  let code = __fern_sp_reap(st, pid);
   let st_own = __raw_string(st, 32);
   let sout = __fern_sp_copy(obuf, olen);
   let obuf_own = __raw_string(obuf, ocap);
@@ -70,7 +70,7 @@ function __fern_sp_begin(st: usize, in_w: i32, out_r: i32, err_r: i32, ilen: i32
 
 // Writes the input from `ipos` when pollfd 0 is ready, and gives the new
 // position. The write end closes after the last byte or a refused write.
-function __fern_sp_feed(st: usize, input: string, ipos: i32): i32 {
+function __fern_sp_send(st: usize, input: string, ipos: i32): i32 {
   let fd = __load_i32(st);
   if (fd < 0 || __load_i32(st + 4) >> 16 == 0) {
     return ipos;
@@ -117,7 +117,7 @@ function __fern_sp_shut(st: usize, k: i32): void {
 
 // Waits for the child `pid`, and gives its exit code, or 128 and the signal
 // that stopped it.
-function __fern_sp_wait(st: usize, pid: i32): i32 {
+function __fern_sp_reap(st: usize, pid: i32): i32 {
   let waited = -4;
   while (waited == -4) {
     waited = __syscall4(7, pid as i64, (st + 24) as i64, 0, 0) as i32;
@@ -127,4 +127,22 @@ function __fern_sp_wait(st: usize, pid: i32): i32 {
     return (w & 127) + 128;
   }
   return w >> 8 & 255;
+}
+
+// A new `subprocess` output buffer of two times `cap` bytes that holds the
+// `len` bytes of `buf`. The caller releases `buf`.
+function __fern_sp_widen(buf: usize, len: i32, cap: i32): usize {
+  let wider = __raw_alloc(cap * 2);
+  __memcpy(wider, buf, len);
+  return wider;
+}
+
+// A string of the `len` bytes of a `subprocess` output buffer.
+function __fern_sp_copy(buf: usize, len: i32): string {
+  if (len == 0) {
+    return "";
+  }
+  let b = __raw_alloc(len);
+  __memcpy(b, buf, len);
+  return __raw_string(b, len);
 }

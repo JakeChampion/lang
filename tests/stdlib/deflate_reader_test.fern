@@ -205,10 +205,14 @@ function errors_and_limits(): test.TestOutcome {
   let reserved = deflate.Malformed("a reserved block type").message();
   let length = deflate.Malformed("a stored block's length and its complement disagree").message();
   let symbols = deflate.Malformed("too many length or distance codes").message();
+  let no_literal = deflate.Malformed("a bit pattern that is no literal/length code").message();
+  let no_distance = deflate.Malformed("a bit pattern that is no distance code").message();
   let good = rejected([], 3, truncated) && rejected([7], 3, reserved)
     && rejected([1, 1, 0, 0, 0, 42], 3, length) && rejected([1, 2, 0, 253, 255, 42], 3, truncated)
     && rejected(input, 2, limit) && rejected(__codec_bytes(hex.decode("cb48cdc9c957c8402701")), 4, limit)
-    && rejected([253, 0, 0], 3, symbols) && rejected([5, 31, 0], 3, symbols);
+    && rejected([253, 0, 0], 3, symbols) && rejected([5, 31, 0], 3, symbols)
+    && rejected(__codec_bytes(hex.decode("05c0010900000080a0ffaf35")), 3, no_literal)
+    && rejected(__codec_bytes(hex.decode("0dc0010900000080a0adfe3f513a")), 3, no_distance);
   return test.assert_true(good && bad_request && large_request && negative && after);
 }
 
