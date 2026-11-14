@@ -114,3 +114,20 @@ same system calls, so the time is the same. The port uses more user time
 than GNU find: 0.12 s to 0.15 s against 0.09 s to 0.11 s. Most of it is
 the copy of the entry of the walk for each file. The pipeline with xargs
 spends its time in the 5000 runs of `true`.
+
+The table below compares xargs `-P` with GNU xargs 4.9.0 on the same
+machine. Each value is the median of 11 runs. The total CPU time includes
+the commands. The xargs CPU time is the time of xargs alone. Other programs
+used the machine during the runs, so the wall times change by 10% or more
+from run to run.
+
+| Workload | GNU wall | Fern wall | GNU CPU | Fern CPU | GNU xargs CPU | Fern xargs CPU |
+|---|---|---|---|---|---|---|
+| `seq 2000 \| xargs -P 4 -n 1 true` | 3.42 s | 3.01 s | 2.25 s | 2.14 s | 157 ms | 144 ms |
+| 400 commands that sleep 0 to 40 ms, `-P 4` | 2.34 s | 2.25 s | 0.56 s | 0.54 s | 51 ms | 50 ms |
+| one command that sleeps 1 s, then 150 of 10 ms, `-P 2` | 1.53 s | 1.54 s | 0.21 s | 0.20 s | 21 ms | 19 ms |
+| `seq 2000 \| xargs -n 1 true` | 3.24 s | 3.60 s | 2.21 s | 2.17 s | 163 ms | 167 ms |
+
+xargs waits for the first command that ends, so a slow command does not
+stop the start of the next ones. xargs reads the environment one time and
+not again for each command.

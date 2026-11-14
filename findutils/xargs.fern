@@ -618,9 +618,12 @@ function next_item(o: Opts, own inp: Input): (Item, Input) {
 struct Child { pid: i32, slot: i32 }
 
 // The state of a run. `args` waits for the next command; `size` counts the
-// bytes of that command. `status` is the exit status so far.
+// bytes of that command. `status` is the exit status so far. `env` is the
+// environment of each command, without the variable of
+// --process-slot-var.
 struct Run {
   cmd: string[],
+  env: string[],
   base: i64,
   args: string[],
   size: i64,
@@ -921,11 +924,11 @@ function execute(o: Opts, own run0: Run, argv: string[]): Run {
     w.write(shown(argv) + "\n");
   }
   let slot = free_slot(run);
-  let var = "";
+  let envp = run.env;
   if (o.has_slot_var) {
-    var = o.slot_var + "=" + slot.to_string();
+    envp = envp.append(o.slot_var + "=" + slot.to_string());
   }
-  let (pid, err) = cmdline.start(argv, "", stdin_mode(o), var);
+  let (pid, err) = cmdline.start(argv, "", stdin_mode(o), envp);
   if (err != 0) {
     let code = if (err == errno.ENOENT) { EXIT_NOT_FOUND } else { EXIT_CANNOT_RUN };
     stop(run, argv[0] + ": " + gnu.exec_errno_text(err), code);
@@ -1076,7 +1079,11 @@ function run_xargs(): i32 {
   }
   catch_usr_signals();
   let inp = Input { r: open_input(o), buf: [], pos: 0, eof: false, nul_warned: false };
-  let run = Run { cmd: cmd, base: base, args: [], size: base, lines: 0i64, limit: o.max_chars, status: 0, children: [], ran: false, tty: None, procs: o.procs };
+  let env = environ();
+  if (o.has_slot_var) {
+    env = cmdline.without_var(env, o.slot_var);
+  }
+  let run = Run { cmd: cmd, env: env, base: base, args: [], size: base, lines: 0i64, limit: o.max_chars, status: 0, children: [], ran: false, tty: None, procs: o.procs };
   let error = "";
   loop {
     let (it, i2) = next_item(o, inp);
