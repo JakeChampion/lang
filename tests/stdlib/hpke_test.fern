@@ -207,6 +207,233 @@ function test_lengths(): test.TestOutcome {
   return test.assert_eq(refusal(hpke.mlkem768x25519_encap_derand(zero, b(IKM_E))), "hpke: the X25519 shared secret is all zeros");
 }
 
+// RFC 9180 appendix A.5.1: DHKEM(P-256, HKDF-SHA256), HKDF-SHA256 and
+// ChaCha20Poly1305 in the base mode.
+const A51_INFO: string = "4f6465206f6e2061204772656369616e2055726e";
+
+const A51_IKM_E: string = "f1f1a3bc95416871539ecb51c3a8f0cf608afb40fbbe305c0a72819d35c33f1f";
+
+const A51_IKM_R: string = "61092f3f56994dd424405899154a9918353e3e008171517ad576b900ddb275e7";
+
+const A51_SK_E: string = "7550253e1147aae48839c1f8af80d2770fb7a4c763afe7d0afa7e0f42a5b3689";
+
+const A51_SK_R: string = "a4d1c55836aa30f9b3fbb6ac98d338c877c2867dd3a77396d13f68d3ab150d3b";
+
+const A51_PK_R: string = "04a697bffde9405c992883c5c439d6cc358170b51af72812333b015621dc0f40bad9bb726f68a5c013806a790ec716ab8669f84f6b694596c2987cf35baba2a006";
+
+const A51_ENC: string = "04c07836a0206e04e31d8ae99bfd549380b072a1b1b82e563c935c095827824fc1559eac6fb9e3c70cd3193968994e7fe9781aa103f5b50e934b5b2f387e381291";
+
+const A51_SHARED_SECRET: string = "806520f82ef0b03c823b7fc524b6b55a088f566b9751b89551c170f4113bd850";
+
+const A51_PT: string = "4265617574792069732074727574682c20747275746820626561757479";
+
+const A51_CT: string[] = [
+  "6469c41c5c81d3aa85432531ecf6460ec945bde1eb428cb2fedf7a29f5a685b4ccb0d057f03ea2952a27bb458b",
+  "f1564199f7e0e110ec9c1bcdde332177fc35c1adf6e57f8d1df24022227ffa8716862dbda2b1dc546c9d114374",
+  "39de89728bcb774269f882af8dc5369e4f3d6322d986e872b3a8d074c7c18e8549ff3f85b6d6592ff87c3f310c",
+];
+
+// The MLKEM768-P256 vector of draft-ietf-hpke-pq (HKDF-SHA256, AES-128-GCM),
+// as filippo.io/hpke v0.4.0 holds it. The KEM does not depend on the AEAD, so
+// the test checks the public key and the shared secret.
+const PQ256_SEED: string = "dfa3a04d54a0ec2f7edec57185e3df94063855fc7af64f25b815417a2c6eb0e4";
+
+const PQ256_PUBLIC_KEY_HASH: string = "feb2745b77c8b625cb0b1e4e84a427728783830eeadf0948a8f35862a9b7a073";
+
+const PQ256_SHARED_SECRET: string = "3688931682c215e9e06ad620eba7faa70dd0d38081b4ea3d5b636ee062578991";
+
+const PQ256_ENC: string = "ed5b96e04d48095bed5a54589775ee4979362198c7727fdcd62fbd6d0d4552aa5ae2a30283049bcbde84dd6e4c8a330bdf9ccf04190fbde2c63c0c9026740d5d00750e4c6244ac0e7b6a6edb8782f0ac040b4161d3a9f6500ffd1cfe6e93298ccaae1dc04a6519f52d96e43c4e7477cbdefdd17b65e002e2b04d1f3d5715dfa3a0014faba0eee73a2f30d9a71dfa4ef9a0a37ee45a7f67c9209efff17badd21d452bbae583b046a602614ffe168bdd8ec27048dc5d95f58f8b70134c161282816dffbf9f88db63f28b39ed958cae9b5ea26f0ee54927d1483b644f338be3cb6b20157fd4b91b4fa7266b32bacbd73e12afe877181d0123f02212902b1eb436c0970c395355ce6d92568014da811cd369ac68cb3d4be48318a2072965358bf0799f1320ee1a98268d8a5796c965bbc19d8b5ec7322e5390bd93aa85103e4dfbe35f16331afa21a128c62a0f9bdd04e321d266187413263fdc40522ca665df0272ac2a0418b692148fc3c2aa9273aaf424f9ddff17fb714e40be0595e6f3cc2d4e82732622ef545218ddbde8b902ff2df9150dd4a3d6af2300f57e9b72b6eccf95bfe26ced55081e01d4723a81abd0f00d44a40020d85d9c7c73ad4b129f7ebbba4d6c57e6251c58e824b47624e2e2a78c734cf21e76f0d7faaceba8b7b1ad1d663d8edc09b20d475fe79c6947f6a56fa371bb0c80625ba85fe475812137e216709fe99bb1a8d63ea38b34c89c1bde2b8685b146bf185537e53df86bae6dad3950fc946fd47893f48fdd1066a5fef1aeeb75144f0966717e12b092fd96a30503d7ffb84d1125bfb6422f296c1ef82701e5cca93a79a440a4b29a9de5961b582237fb7d71e5380df2bb8861c5dc2c6bead3ba60a35f6104bb50481e1436cac2828798011b9ba20a39017576be7a49559a3eb9b1212bfede28f72beffe5b40254df490ce0cbcc9110159d24cbe6b48227c5d0bc91c70d7f5204693122d06abee77b99fce86e12c51e6a460d5b47a0f19dfc5e0b6fbdb454abd151efbea1bc514074405497308a7278da302e9f64b033f78df23a31ecf071bf1f9cb30d9a7ea1cc87dd0066f3c1aaa0222caa580f8333ddffbdcb795da1869882ba55497b33ea610e38031de9923e1ef1f2cd48af494507a7765c7e67734e81a4d3683823dc7d15e8364280f255b8bdc7972c6d5f1385d11ea8bd5d7225fc5987a3a6d65bcd20b5334fb7036785950dda89bbcfd337ac286d87bf5447f3c7d16930a07995236970a65acb5c0cb56cb6294046296711b7bf3d7c1d40d26efb9550a50d653cea6844caf567dde9e78786b91a21eca728ef80f4b066962edd50144f2a0e7f7a36934a6ad42ccb51bfe75c66839af77456a126d71f09b40640fbc3eca319b16c525f422fefc83e4a2c9c2ae18f1c967a77660dc3acb57bc12e1f6692fdf1ee034fe8e0f5808143c4f342c5e6a37c520dc3a4c14e77ffe260e1027ec91bb4682417cfcd505b5c45e01e1532e8925eeeaa48ab5fd80e28dad7034aab8afdf96c6234842aca004f0aced6022c4e2f067b928d4908de20aa3f2d14307bacc6ec685b026858d06f5e98da3f120d5e8ab830248c49c3c4a4f0830298100999cbae5419d5ef0e557f0";
+
+function p256_key(ikm: string): hpke.P256Key {
+  match (hpke.p256_derive_key_pair(b(ikm))) {
+    Ok(k) => {
+      return k;
+    },
+    Err(e) => {
+      eprint(e.message());
+      exit(95);
+    }
+  }
+  return hpke.P256Key { scalar: [], public_key: [] };
+}
+
+function test_p256_derive(): test.TestOutcome {
+  let r = p256_key(A51_IKM_R);
+  if (hex.encode(r.scalar) != A51_SK_R || hex.encode(r.public_key) != A51_PK_R) {
+    return test.fail("the key of ikmR");
+  }
+  let e = p256_key(A51_IKM_E);
+  if (hex.encode(e.scalar) != A51_SK_E) {
+    return test.fail("the scalar of ikmE");
+  }
+  return test.assert_eq(hex.encode(e.public_key), A51_ENC);
+}
+
+function test_p256_encap_decap(): test.TestOutcome {
+  let Ok(e) = hpke.p256_encap_derand(b(A51_PK_R), b(A51_SK_E)) else {
+    return test.fail("encap refused");
+  };
+  if (hex.encode(e.enc) != A51_ENC || hex.encode(e.shared_secret) != A51_SHARED_SECRET) {
+    return test.fail("encap");
+  }
+  return test.assert_eq(
+    match (hpke.p256_decap(p256_key(A51_IKM_R), b(A51_ENC))) {
+      Ok(ss) => hex.encode(ss),
+      Err(e) => e.message(),
+    },
+    A51_SHARED_SECRET,
+  );
+}
+
+function test_p256_context(): test.TestOutcome {
+  let Ok(e) = hpke.p256_encap_derand(b(A51_PK_R), b(A51_SK_E)) else {
+    return test.fail("encap refused");
+  };
+  let s = hpke.sender_of(hpke.KEM_P256, e, b(A51_INFO));
+  let c = s.context;
+  let r = hpke.key_schedule(hpke.KEM_P256, b(A51_SHARED_SECRET), b(A51_INFO));
+  for i in 0..3 {
+    let aad = ("Count-" + i.to_string()).as_bytes();
+    let (ct, next) = c.seal(aad, b(A51_PT));
+    if (hex.encode(ct) != A51_CT[i]) {
+      return test.fail("ciphertext " + i.to_string());
+    }
+    let Ok(opened) = r.open(aad, ct) else {
+      return test.fail("open " + i.to_string());
+    };
+    if (hex.encode(opened.0) != A51_PT) {
+      return test.fail("plaintext " + i.to_string());
+    }
+    c = next;
+    r = opened.1;
+  }
+  let exports = [hex.encode(c.export([], 32)), hex.encode(c.export([0u8], 32)), hex.encode(c.export("TestContext".as_bytes(), 32))];
+  return test.assert_eq_array(exports, [
+    "9b13c510416ac977b553bf1741018809c246a695f45eff6d3b0356dbefe1e660",
+    "6c8b7be3a20a5684edecb4253619d9051ce8583baf850e0cb53c402bdcaf8ebb",
+    "477a50d804c7c51941f69b8e32fe8288386ee1a84905fe4938d58972f24ac938",
+  ]);
+}
+
+function test_p256_refusals(): test.TestOutcome {
+  let pk = b(A51_PK_R);
+  let off_curve = pk.with(64, pk[64] ^ 1u8);
+  let n = "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551";
+  let got = [
+    refusal(hpke.p256_encap_derand(off_curve, b(A51_SK_E))),
+    refusal(hpke.p256_encap_derand(pk[0:64], b(A51_SK_E))),
+    refusal(hpke.p256_encap_derand(pk, b(n))),
+    refusal(hpke.p256_encap_derand(pk, __alloc_u8(32))),
+    refusal(hpke.p256_decap(p256_key(A51_IKM_R), off_curve)),
+    refusal(hpke.p256_decap(p256_key(A51_IKM_R), pk[0:64])),
+    refusal(hpke.p256_key(b(n))),
+    refusal(hpke.p256_check_public_key(pk)),
+  ];
+  return test.assert_eq_array(got, [
+    "hpke: the P-256 point is not on the curve",
+    "hpke: the public key is 64 bytes, want 65",
+    "hpke: the P-256 scalar is zero or not below n",
+    "hpke: the P-256 scalar is zero or not below n",
+    "hpke: the P-256 point is not on the curve",
+    "hpke: the encapsulated key is 64 bytes, want 65",
+    "hpke: the P-256 scalar is zero or not below n",
+    "accepted",
+  ]);
+}
+
+function pq256_key(): hpke.HybridP256Key {
+  match (hpke.mlkem768p256_key(b(PQ256_SEED))) {
+    Ok(k) => {
+      return k;
+    },
+    Err(e) => {
+      eprint(e.message());
+      exit(94);
+    }
+  }
+  return hpke.HybridP256Key { public_key: [], decapsulation_key: [], scalar: [] };
+}
+
+function test_pq256_vector(): test.TestOutcome {
+  let k = pq256_key();
+  if (__h(k.public_key) != PQ256_PUBLIC_KEY_HASH) {
+    return test.fail("public key");
+  }
+  return test.assert_eq(
+    match (hpke.mlkem768p256_decap(k, b(PQ256_ENC))) {
+      Ok(ss) => hex.encode(ss),
+      Err(e) => e.message(),
+    },
+    PQ256_SHARED_SECRET,
+  );
+}
+
+// The keys of age-plugin-tagtest: DeriveKeyPair of "age-plugin-tagtest" for
+// each KEM, as filippo.io/hpke v0.4.0 derives them.
+function test_derive_tagtest(): test.TestOutcome {
+  let ikm = "age-plugin-tagtest".as_bytes();
+  let Ok(c) = hpke.p256_derive_key_pair(ikm) else {
+    return test.fail("P-256 refused");
+  };
+  if (hex.encode(c.public_key) != "04b2fb753090fa3aacdbd5f209dc29e21021bd0c14c5e4b08830fe02bf94d81412e179bcd60f215f3d8274dee3fe406a17c06b09c273433fbff7312a19810e6981") {
+    return test.fail("P-256 public key");
+  }
+  let Ok(h) = hpke.mlkem768p256_derive_key_pair(ikm) else {
+    return test.fail("MLKEM768-P256 refused");
+  };
+  return test.assert_eq(__h(h.public_key), "8d67f829ef6168560fdbebebba1762b998682c872ac87e47f5424f61aa34c4d3");
+}
+
+function test_pq256_round_trip(): test.TestOutcome {
+  let k = pq256_key();
+  let Ok(e) = hpke.mlkem768p256_encap_derand(k.public_key, b(IKM_E)) else {
+    return test.fail("encap refused");
+  };
+  let s = hpke.sender_of(hpke.KEM_MLKEM768_P256, e, b(INFO));
+  let (sealed, _) = s.context.seal([], b(PT));
+  let Ok(ss) = hpke.mlkem768p256_decap(k, s.enc) else {
+    return test.fail("decap refused");
+  };
+  let r = hpke.key_schedule(hpke.KEM_MLKEM768_P256, ss, b(INFO));
+  return test.assert_eq(
+    match (r.open([], sealed)) {
+      Ok(o) => hex.encode(o.0),
+      Err(e) => e.message(),
+    },
+    PT,
+  );
+}
+
+function test_pq256_refusals(): test.TestOutcome {
+  let k = pq256_key();
+  let pk = k.public_key;
+  let enc = b(PQ256_ENC);
+  let off_curve = pk.with(1248, pk[1248] ^ 1u8);
+  let high = pk.with(0, 0xff as u8).with(1, pk[1] | 0x0f as u8);
+  let got = [
+    refusal(hpke.mlkem768p256_check_public_key(pk)),
+    refusal(hpke.mlkem768p256_check_public_key(pk[0:1248])),
+    refusal(hpke.mlkem768p256_check_public_key(off_curve)),
+    refusal(hpke.mlkem768p256_check_public_key(high)),
+    refusal(hpke.mlkem768p256_encap_derand(off_curve, b(IKM_E))),
+    refusal(hpke.mlkem768p256_encap_derand(pk, b(IKM_E)[0:63])),
+    refusal(hpke.mlkem768p256_decap(k, enc[0:1152])),
+    refusal(hpke.mlkem768p256_decap(k, enc.with(1152, enc[1152] ^ 1u8))),
+    refusal(hpke.mlkem768p256_key(b(PQ256_SEED)[0:31])),
+  ];
+  return test.assert_eq_array(got, [
+    "accepted",
+    "hpke: the public key is 1248 bytes, want 1249",
+    "hpke: the P-256 point is not on the curve",
+    "hpke: the ML-KEM-768 encapsulation key has a coefficient not below q",
+    "hpke: the P-256 point is not on the curve",
+    "hpke: the randomness is 63 bytes, want 64",
+    "hpke: the encapsulated key is 1152 bytes, want 1153",
+    "hpke: the P-256 point is not on the curve",
+    "hpke: the seed is 31 bytes, want 32",
+  ]);
+}
+
 function main(): i32 {
   let r = test.new("std/crypto/hpke");
   r = r.it("MLKEM768-X25519 public key of a seed", test_key);
@@ -217,5 +444,13 @@ function main(): i32 {
   r = r.it("open in sequence", test_open_sequence);
   r = r.it("refusals on the recipient side", test_refusals);
   r = r.it("lengths and bad public keys", test_lengths);
+  r = r.it("P-256 DeriveKeyPair of RFC 9180 A.5.1", test_p256_derive);
+  r = r.it("P-256 encapsulation and decapsulation of RFC 9180 A.5.1", test_p256_encap_decap);
+  r = r.it("P-256 seal, open and export of RFC 9180 A.5.1", test_p256_context);
+  r = r.it("P-256 refusals", test_p256_refusals);
+  r = r.it("MLKEM768-P256 public key and decapsulation", test_pq256_vector);
+  r = r.it("MLKEM768-P256 seal and open", test_pq256_round_trip);
+  r = r.it("DeriveKeyPair of the keys of age-plugin-tagtest", test_derive_tagtest);
+  r = r.it("MLKEM768-P256 refusals", test_pq256_refusals);
   return r.finish();
 }

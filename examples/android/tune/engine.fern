@@ -254,16 +254,6 @@ function open_vorbis(bytes: u8[]): Option[Deck] {
   return vorbis_deck(index, bytes, bytes.len());
 }
 
-// An Ogg Vorbis file that `source` reads. The index needs one read through
-// the file, and the packets come from the window as they play.
-function open_vorbis_source(head: u8[], size: i32, source: (i64, i32) => u8[]): Option[Deck] {
-  let read = (at: i64, n: i32): Result[u8[], IoError] => Ok(source(at, n));
-  let Ok(index) = vorbis_seek.inspect_with(size as i64, read, ogg_limits()) else {
-    return None;
-  };
-  return vorbis_deck(index, head, size);
-}
-
 // The deck of the first link of `index`, for a file of `size` bytes whose
 // start is `bytes`.
 function vorbis_deck(own index: vorbis_seek.Index, bytes: u8[], size: i32): Option[Deck] {
@@ -275,15 +265,41 @@ function vorbis_deck(own index: vorbis_seek.Index, bytes: u8[], size: i32): Opti
   return Some(Deck { ...blank(VORBIS, bytes), size: size, rate: info.sample_rate, channels: info.channels, total: link.frames, codec: Vorbis(vorbis_seek.cursor(index)) });
 }
 
+function opus_limits(): opusfile.SeekLimits {
+  return opusfile.SeekLimits { ...opusfile.default_seek_limits(), max_input_bytes: OGG_BYTES };
+}
+
 function open_opus(bytes: u8[]): Option[Deck] {
-  let Ok(index) = opusfile.inspect_seek(bytes, opusfile.SeekLimits { ...opusfile.default_seek_limits(), max_input_bytes: OGG_BYTES }) else {
+  let Ok(index) = opusfile.inspect_seek(bytes, opus_limits()) else {
     return None;
   };
+  return opus_deck(index, bytes, bytes.len());
+}
+
+// The deck of the first link of `index`, for a file of `size` bytes whose
+// start is `bytes`.
+function opus_deck(own index: opusfile.SeekIndex, bytes: u8[], size: i32): Option[Deck] {
   if (index.tracks.len() == 0) {
     return None;
   }
   let track = index.tracks[0];
-  return Some(Deck { ...blank(OPUS, bytes), rate: 48000, channels: track.info.header.channels, total: track.frames, codec: Opus(opusfile.seek_reader(index)) });
+  return Some(Deck { ...blank(OPUS, bytes), size: size, rate: 48000, channels: track.info.header.channels, total: track.frames, codec: Opus(opusfile.seek_reader(index)) });
+}
+
+// An Ogg file that `source` reads. The index needs one read through the
+// file, and the packets come from the window as they play.
+function open_ogg_source(head: u8[], size: i32, source: (i64, i32) => u8[]): Option[Deck] {
+  let read = (at: i64, n: i32): Result[u8[], IoError] => Ok(source(at, n));
+  if (is_opus(head)) {
+    let Ok(index) = opusfile.inspect_seek_with(size as i64, read, opus_limits()) else {
+      return None;
+    };
+    return opus_deck(index, head, size);
+  }
+  let Ok(index) = vorbis_seek.inspect_with(size as i64, read, ogg_limits()) else {
+    return None;
+  };
+  return vorbis_deck(index, head, size);
 }
 
 // An Ogg file has Vorbis sound or Opus sound: its first packet starts at
@@ -312,7 +328,7 @@ function opened(bytes: u8[]): Option[Deck] {
   if (starts_with(bytes, "OggS")) {
     return open_ogg(bytes);
   }
-  if (whole_file(bytes)) {
+  if (is_m4a(bytes)) {
     return open_m4a(bytes);
   }
   return open_mp3(bytes, n, -1);
@@ -320,12 +336,6 @@ function opened(bytes: u8[]): Option[Deck] {
 
 function is_m4a(head: [u8]): boolean {
   return head.len() >= 12 && head[4] == b'f' && head[5] == b't' && head[6] == b'y' && head[7] == b'p';
-}
-
-// An M4A or an Ogg file: the player reads an Opus file whole, and an M4A
-// or an Ogg Vorbis file whole when the source gives no index.
-function whole_file(head: [u8]): boolean {
-  return is_m4a(head) || starts_with(head, "OggS");
 }
 
 // The deck, when it has a rate and one or two channels.
@@ -374,23 +384,16 @@ function streamed(head: u8[], n: i32, source: (i64, i32) => u8[]): Option[Deck] 
 }
 
 // A deck for a file of `size` bytes that `source` reads a part at a time,
-// at most `window` bytes at a time. A WAV, a FLAC, an MP3, an M4A and an
-// Ogg Vorbis file play from a window of the file. An Opus file is read
-// whole. The bytes of the deck are the start of the file when it opens.
+// at most `window` bytes at a time. Each file plays from a window of the
+// file. The bytes of the deck are the start of the file when it opens.
 pub function open_file(size: i64, source: (i64, i32) => u8[], window: i32): Option[Deck] {
   if (size <= 0i64 || size > 2147483647i64 || window < 4096) {
     return None;
   }
   let n = size as i32;
   let head = source(0i64, HEAD.min(n));
-  let deck = if (is_m4a(head)) { checked(open_m4a_source(head, n, source)) } else if (starts_with(head, "OggS") && !is_opus(head)) { checked(open_vorbis_source(head, n, source)) } else { None };
-  if (deck.is_none() && whole_file(head)) {
-    return open(source(0i64, n));
-  }
-  if (deck.is_none()) {
-    deck = checked(streamed(head, n, source));
-  }
-  let Some(d) = deck else {
+  let deck = if (is_m4a(head)) { open_m4a_source(head, n, source) } else if (starts_with(head, "OggS")) { open_ogg_source(head, n, source) } else { streamed(head, n, source) };
+  let Some(d) = checked(deck) else {
     return None;
   };
   return Some(Deck { ...d, source: source, window: window });
@@ -628,10 +631,7 @@ function pull_ogg(own d: Deck): (Deck, i32[]) {
       return pull_vorbis(rest, cursor);
     },
     Opus(cursor) => {
-      let Ok((next, Some(audio))) = cursor.next(rest.bytes) else {
-        return ended(rest);
-      };
-      return (Deck { ...rest, at: audio.position + audio.frames as i64, codec: Opus(next) }, from_floats(audio.samples));
+      return pull_opus(rest, cursor);
     },
     _ => {
       return ended(rest);
@@ -661,6 +661,32 @@ function pull_vorbis(own rest: Deck, own cursor: vorbis_seek.Cursor): (Deck, i32
         return ended(d);
       },
       vorbis_seek.Pending => {}
+    }
+  }
+  return ended(d);
+}
+
+// The next packet of an Opus file, as for an Ogg Vorbis file.
+function pull_opus(own rest: Deck, own cursor: opusfile.SeekCursor): (Deck, i32[]) {
+  let d = rest;
+  let c = cursor;
+  for steps in 0..64 {
+    let (from, count) = c.want();
+    if (count > 0) {
+      d = windowed(d, from as i32, count);
+    }
+    let Ok((next, event)) = c.step_view(d.bytes, d.base as i64) else {
+      return ended(d);
+    };
+    c = next;
+    match (event) {
+      opusfile.SeekSamples(audio) => {
+        return (Deck { ...d, at: audio.position + audio.frames as i64, codec: Opus(c) }, from_floats(audio.samples));
+      },
+      opusfile.SeekEnd => {
+        return ended(d);
+      },
+      opusfile.SeekPending => {}
     }
   }
   return ended(d);

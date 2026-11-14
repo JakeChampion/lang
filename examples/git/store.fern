@@ -6,49 +6,51 @@ import "./objects";
 import "./pack";
 
 // One packfile. `idx` is its index. `data` is the packfile, which the store
-// reads when it needs an object of it.
-// One packfile. Until `loaded`, a read takes only the bytes of one object
-// from the file: `order` holds the offsets of the objects in their order,
-// and `reads` counts those reads.
-pub struct Packed { path: string, idx: u8[], data: u8[], loaded: boolean, cache: pack.Cache, order: i32[], reads: i32, file: Reader[] }
+// reads when it needs an object of it. Until `loaded`, a read takes only
+// the bytes of one object from the file: `order` holds the offsets of the
+// objects in their order, and `reads` counts those reads.
+pub struct Packed { path: string, idx: pack.Index, data: u8[], loaded: boolean, cache: pack.Cache, order: i32[], reads: i32, file: Reader[] }
 
 // A packfile of this size or less is read whole.
 const SMALL_PACK: i64 = 1048576;
 
+// `width` is the count of bytes of a name: 20 with SHA-1, and 32 with SHA-256.
 // `shallow` holds the commits whose parents a shallow clone does not have.
 // With `listed`, `loose` holds the name of each loose object in order.
 // `hot` is the packfile that had the last object, which is where the next
 // search starts.
-pub struct Store { objects: string, packs: Packed[], shallow: string[], loose: string[], listed: boolean, hot: i32 }
+pub struct Store { objects: string, width: i32, packs: Packed[], shallow: string[], loose: string[], listed: boolean, hot: i32 }
 
 // The result of a read: the object, and the store with the packfile that
 // the read loaded.
 pub struct Found { store: Store, object: Result[objects.Object, string] }
 
 // The store of the directory `objects`, with the index of each packfile.
-pub function open(dir: string): Store {
+// The names of the store have `width` bytes.
+pub function open(dir: string, width: i32): Store {
   let shallow: string[] = [];
   if let Ok(text) = read_file(dir + "/../shallow") {
-    shallow = text.split("\n").filter((line: string): boolean => line.len() == 40);
+    shallow = text.split("\n").filter((line: string): boolean => line.len() == 2 * width);
   }
   let packs: Packed[] = [];
   let names = match (read_dir(dir + "/pack")) {
     Ok(ns) => ns,
     Err(_) => {
-      return Store { objects: dir, packs: packs, shallow: shallow, loose: [], listed: false, hot: 0 };
+      return Store { objects: dir, width: width, packs: packs, shallow: shallow, loose: [], listed: false, hot: 0 };
     },
   };
   for n in names {
     if (n.ends_with(".idx")) {
       let path = dir + "/pack/" + objects.part(n, 0, n.len() - 4) + ".pack";
-      if let Ok(idx) = read_file_bytes(dir + "/pack/" + n) {
+      if let Ok(bytes) = read_file_bytes(dir + "/pack/" + n) {
+        let idx = pack.Index { bytes: bytes, width: width };
         if (pack.index_ok(idx)) {
           packs = packs.append(Packed { path: path, idx: idx, data: [], loaded: false, cache: pack.cache_new(), order: [], reads: 0, file: [] });
         }
       }
     }
   }
-  return Store { objects: dir, packs: packs, shallow: shallow, loose: [], listed: false, hot: 0 };
+  return Store { objects: dir, width: width, packs: packs, shallow: shallow, loose: [], listed: false, hot: 0 };
 }
 
 // The least length of a short name, as git sets it: half of the bits of
@@ -100,7 +102,7 @@ function offsets_in_order(p: Packed): i32[] {
   let offsets: i32[] = [];
   let rev_path = objects.part(p.path, 0, p.path.len() - 5) + ".rev";
   if let Ok(rev) = read_file_bytes(rev_path) {
-    if (rev.len() == 12 + 4 * n + 40 && rev[0] == b'R' && rev[1] == b'I' && rev[2] == b'D' && rev[3] == b'X' && rev[7] == 1) {
+    if (rev.len() == 12 + 4 * n + 2 * p.idx.width && rev[0] == b'R' && rev[1] == b'I' && rev[2] == b'D' && rev[3] == b'X' && rev[7] == 1) {
       let last = -1;
       let ok = true;
       for k in 0..n {
@@ -164,7 +166,7 @@ const LINK_BYTES: i32 = 64;
 // The bytes of the object at the offset `from` of the open packfile, `most`
 // bytes at most. They end where the next object of `order` starts, or at
 // the end of the file.
-function part_at(file: Reader[], order: i32[], from: i32, most: i32): pack.Window {
+function part_at(file: Reader[], order: i32[], from: i32, most: i32, width: i32): pack.Window {
   let lo = 0;
   let hi = order.len();
   while (lo < hi) {
@@ -178,7 +180,7 @@ function part_at(file: Reader[], order: i32[], from: i32, most: i32): pack.Windo
   let want = (if (lo < order.len()) { order[lo] - from } else { 2147483647 - from }).min(most);
   let bytes: u8[] = [];
   if (file.len() == 0) {
-    return pack.Window { bytes: bytes, shift: from };
+    return pack.Window { bytes: bytes, shift: from, width: width };
   }
   let r = file[0];
   if let Ok(_) = r.seek(from as i64, 0) {
@@ -196,7 +198,7 @@ function part_at(file: Reader[], order: i32[], from: i32, most: i32): pack.Windo
       }
     }
   }
-  return pack.Window { bytes: bytes, shift: from };
+  return pack.Window { bytes: bytes, shift: from, width: width };
 }
 
 // The packfile that has the name `raw` and the place of the name in its
@@ -235,7 +237,8 @@ pub function read(s: Store, name: string): Found {
       let data = p.data;
       let file = p.file;
       let order = p.order;
-      let part = if (p.loaded) { (from: i32): pack.Window => pack.Window { bytes: data, shift: 0 } } else { (from: i32): pack.Window => part_at(file, order, from, WHOLE) };
+      let width = s.width;
+      let part = if (p.loaded) { (from: i32): pack.Window => pack.whole(data, width) } else { (from: i32): pack.Window => part_at(file, order, from, WHOLE, width) };
       let (object, cache) = pack.object_cached(part, (base: u8[]): i32 => pack.offset_of(idx, base), offset, p.cache);
       return Found { store: Store { ...s, packs: s.packs.with(i, Packed { ...p, cache: cache, reads: p.reads + 1 }) }, object: object };
     }
@@ -263,14 +266,15 @@ pub function info(s: Store, name: string): Info {
       let data = p.data;
       let file = p.file;
       let order = p.order;
+      let width = s.width;
       // The start of an object holds its header and the start of a delta.
       let base = (name: u8[]): i32 => pack.offset_of(idx, name);
-      let head = if (p.loaded) { (from: i32): pack.Window => pack.Window { bytes: data, shift: 0 } } else { (from: i32): pack.Window => part_at(file, order, from, HEAD_BYTES) };
-      let link = if (p.loaded) { (from: i32): pack.Window => pack.Window { bytes: data, shift: 0 } } else { (from: i32): pack.Window => part_at(file, order, from, LINK_BYTES) };
+      let head = if (p.loaded) { (from: i32): pack.Window => pack.whole(data, width) } else { (from: i32): pack.Window => part_at(file, order, from, HEAD_BYTES, width) };
+      let link = if (p.loaded) { (from: i32): pack.Window => pack.whole(data, width) } else { (from: i32): pack.Window => part_at(file, order, from, LINK_BYTES, width) };
       if let Ok((kind, size)) = pack.info_in(head, link, base, offset) {
         return Info { store: s, kind: kind, size: size, why: "" };
       }
-      let part = if (p.loaded) { (from: i32): pack.Window => pack.Window { bytes: data, shift: 0 } } else { (from: i32): pack.Window => part_at(file, order, from, WHOLE) };
+      let part = if (p.loaded) { (from: i32): pack.Window => pack.whole(data, width) } else { (from: i32): pack.Window => part_at(file, order, from, WHOLE, width) };
       return match (pack.info_in(part, link, base, offset)) {
         Ok((kind, size)) => Info { store: s, kind: kind, size: size, why: "" },
         Err(why) => Info { store: s, kind: "", size: 0, why: why },
@@ -311,7 +315,7 @@ function loose_with_prefix(s: Store, short: string): string[] {
   };
   let rest = objects.part(short, 2, short.len());
   for n in names {
-    if (n.len() == 38 && n.starts_with(rest)) {
+    if (n.len() == 2 * s.width - 2 && n.starts_with(rest)) {
       found = found.append(objects.part(short, 0, 2) + n);
     }
   }
@@ -328,7 +332,7 @@ pub function listed(s: Store): Store {
       let dir = objects.part(digits, a, a + 1) + objects.part(digits, b, b + 1);
       if let Ok(found) = read_dir(s.objects + "/" + dir) {
         for n in found {
-          if (n.len() == 38) {
+          if (n.len() == 2 * s.width - 2) {
             names = names.append(dir + n);
           }
         }

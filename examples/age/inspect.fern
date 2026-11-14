@@ -1,0 +1,257 @@
+// age-inspect — show the header and the sizes of an age file, with no key.
+// A port of age-inspect 1.3.2.
+//
+//   $ age-inspect file.age
+//   $ age-inspect --json file.age
+import "std/array";
+import "./format";
+import "./goflag";
+import "./source";
+import "./text";
+
+const USAGE: string = "Usage:\n    age-inspect [--json] [INPUT]\n\nOptions:\n    --json                      Output machine-readable JSON.\n\nINPUT defaults to standard input. \"-\" may be used as INPUT to explicitly\nread from standard input.";
+
+const NAMES: goflag.Names = goflag.Names { bools: ["version", "json"], values: [] };
+
+// age's inspect.Metadata. The minimum and the maximum of the payload are the
+// same, and the padding is zero.
+struct Metadata { postquantum: string, armor: boolean, stanza_types: string[], header: i64, armor_size: i64, overhead: i64, payload: i64 }
+
+function q(s: string): string {
+  return text.quote(s.as_bytes());
+}
+
+function fail(msg: string): i32 {
+  eprint("age-inspect: error: " + msg);
+  return 1;
+}
+
+// age's choice of "yes", "no" or "unknown" for the stanza types.
+function postquantum(types: string[]): string {
+  let pq = "yes";
+  for t in types {
+    if (t == "X25519" || t == "ssh-rsa" || t == "ssh-ed25519" || t == "p256tag" || t == "piv-p256") {
+      pq = "no";
+    } else if (t != "mlkem768x25519" && t != "scrypt" && t != "mlkem768p256tag" && pq != "no") {
+      pq = "unknown";
+    }
+  }
+  return pq;
+}
+
+const CHUNK: i64 = 65536;
+
+const SEALED: i64 = 65552;
+
+// age's stream.PlaintextSize.
+function plaintext_size(encrypted: i64): Result[i64, string] {
+  if (encrypted < 0i64 || encrypted > 9223372036854775807i64 - SEALED + 1i64) {
+    return Err(f"invalid encrypted payload size: {encrypted}");
+  }
+  let chunks = (encrypted + SEALED - 1i64) / SEALED;
+  let plain = encrypted - chunks * 16i64;
+  let expected = if (plain == 0i64) { 1i64 } else { (plain + CHUNK - 1i64) / CHUNK };
+  if (expected != chunks) {
+    return Err(f"invalid encrypted payload size: {encrypted}");
+  }
+  return Ok(plain);
+}
+
+// age's streamOverhead.
+function overhead(payload: i64): Result[i64, string] {
+  if (payload < 16i64) {
+    return Err(f"encrypted size too small: {payload}");
+  }
+  let plain = plaintext_size(payload - 16i64)?;
+  return Ok(payload - plain);
+}
+
+// The bytes after the header, to the end of the input.
+function rest_size(own s: source.Src): (source.Src, Result[i64, string]) {
+  let n = 0i64;
+  loop {
+    let (t, b, f) = source.read_full(s, 65536);
+    s = t;
+    n += b.len() as i64;
+    if let Some(e) = f {
+      if (e.is_end()) {
+        return (s, Ok(n));
+      }
+      return (s, Err("failed to read rest of file: " + e.message()));
+    }
+  }
+  return (s, Ok(n));
+}
+
+// age's inspect.Inspect. size is the size of a regular file, or -1.
+function inspect(own raw: source.Raw, size: i64): Result[Metadata, string] {
+  let s = source.start(raw);
+  let armor = s.armored;
+  let (t, parsed) = format.parse(s);
+  let h = match (parsed) {
+    Ok(h) => h,
+    Err(why) => {
+      return Err("failed to read header: " + why);
+    },
+  };
+  let header = format.marshal(h).len() as i64;
+  let types: string[] = [];
+  for st in h.stanzas {
+    types = types.append(st.kind);
+  }
+  let file_size = size;
+  let armor_size = 0i64;
+  if (size == -1i64 || armor) {
+    let (u, got) = rest_size(t);
+    let n = match (got) {
+      Ok(n) => n,
+      Err(why) => {
+        return Err(why);
+      },
+    };
+    file_size = header + n;
+    if (armor) {
+      armor_size = u.raw.read - file_size;
+    }
+  }
+  let o = match (overhead(file_size - header)) {
+    Ok(o) => o,
+    Err(why) => {
+      return Err("failed to compute stream overhead: " + why);
+    },
+  };
+  return Ok(Metadata { postquantum: postquantum(types), armor: armor, stanza_types: types, header: header, armor_size: armor_size, overhead: o, payload: file_size - header - o });
+}
+
+// Go's %12d with the space flag.
+function column(n: i64): string {
+  let s = " " + n.to_string();
+  while (s.len() < 12) {
+    s = " " + s;
+  }
+  return s;
+}
+
+function text_output(name: string, m: Metadata): string {
+  let out = f"{name} is an age file, version \"age-encryption.org/v1\".\n\n";
+  if (m.armor) {
+    out += "This file is ASCII-armored.\n\n";
+  }
+  out += "This file is encrypted to the following recipient types:\n";
+  for t in m.stanza_types {
+    out += f"  - {q(t)}\n";
+  }
+  out += "\n";
+  out += match (m.postquantum) {
+    "yes" => "This file uses post-quantum encryption.\n\n",
+    "no" => "This file does NOT use post-quantum encryption.\n\n",
+    _ => "It is unknown whether this file uses post-quantum encryption.\n\n",
+  };
+  out += "Size breakdown (assuming it decrypts successfully):\n\n";
+  out += f"    Header              {column(m.header)} bytes\n";
+  if (m.armor) {
+    out += f"    Armor overhead      {column(m.armor_size)} bytes\n";
+  }
+  out += f"    Encryption overhead {column(m.overhead)} bytes\n";
+  out += f"    Payload             {column(m.payload)} bytes\n";
+  out += "                        -------------------\n";
+  out += f"    Total               {column(m.header + m.overhead + m.payload + m.armor_size)} bytes\n\n";
+  return out + "Tip: for machine-readable output, use --json.\n";
+}
+
+const JSON_HEX: string = "0123456789abcdef";
+
+// Go's encoding/json string, which escapes <, > and & for HTML.
+function json_string(s: string): string {
+  let out = "\"";
+  for c in s.bytes() {
+    if (c == b'"' || c == b'\\') {
+      out += "\\" + text.ascii([c]);
+    } else if (c == b'<' || c == b'>' || c == b'&' || c < 32u8) {
+      out += "\\u00" + JSON_HEX[(c >> 4) as i32:(c >> 4) as i32 + 1].unwrap_or("") + JSON_HEX[(c & 15u8) as i32:(c & 15u8) as i32 + 1].unwrap_or("");
+    } else {
+      out += text.ascii([c]);
+    }
+  }
+  return out + "\"";
+}
+
+// json.Encoder with an indent of four spaces.
+function json_output(m: Metadata): string {
+  let types = "null";
+  if (m.stanza_types.len() > 0) {
+    let items: string[] = [];
+    for t in m.stanza_types {
+      items = items.append("        " + json_string(t));
+    }
+    types = "[\n" + items.join(",\n") + "\n    ]";
+  }
+  return f"{{\n    \"version\": \"age-encryption.org/v1\",\n    \"postquantum\": {json_string(m.postquantum)},\n    \"armor\": {m.armor},\n    \"stanza_types\": {types},\n    \"sizes\": {{\n        \"header\": {m.header},\n        \"armor\": {m.armor_size},\n        \"overhead\": {m.overhead},\n        \"min_payload\": {m.payload},\n        \"max_payload\": {m.payload},\n        \"min_padding\": 0,\n        \"max_padding\": 0\n    }}\n}}\n";
+}
+
+function run(json: boolean, inputs: string[]): i32 {
+  if (inputs.len() > 1) {
+    eprint(USAGE);
+    return 1;
+  }
+  let name = if (inputs.len() == 1) { inputs[0] } else { "" };
+  let raw = source.open_raw(stdin(), "/dev/stdin");
+  let size = -1i64;
+  if (name != "" && name != "-") {
+    let r = match (open_reader(name)) {
+      Ok(r) => r,
+      Err(e) => {
+        return fail(f"failed to open input file {q(name)}: open {name}: {text.errno_text(e)}");
+      },
+    };
+    if let Ok(st) = r.stat() {
+      if (st.is_file) {
+        size = st.size;
+      }
+    }
+    raw = source.open_raw(r, name);
+  }
+  let m = match (inspect(raw, size)) {
+    Ok(m) => m,
+    Err(why) => {
+      return fail("inspection failed: " + why);
+    },
+  };
+  print_raw(if (json) { json_output(m) } else { text_output(if (name == "") { "<stdin>" } else { name }, m) });
+  return 0;
+}
+
+function print_raw(s: string): void {
+  stdout().write(s);
+}
+
+function main(): i32 {
+  let argv = args();
+  match (goflag.parse(NAMES, array.slice(argv, 1, argv.len()))) {
+    goflag.Help => {
+      eprint(USAGE);
+      return 0;
+    },
+    goflag.Bad(why) => {
+      eprint(why);
+      eprint(USAGE);
+      return 2;
+    },
+    goflag.Run(flags, rest) => {
+      let json = false;
+      for f in flags {
+        if let goflag.BoolFlag(n, v) = f {
+          if (n == "version" && v) {
+            print("v1.3.2-fern");
+            return 0;
+          }
+          if (n == "json") {
+            json = v;
+          }
+        }
+      }
+      return run(json, rest);
+    }
+  }
+  return 0;
+}

@@ -367,8 +367,8 @@ func TestDWARFNestedStructVars(t *testing.T) {
 						if pt, ok = origin.Type.(*dwarf.StructType); !ok {
 							t.Fatalf("origin type = %T, want *dwarf.StructType held in place", origin.Type)
 						}
-						if origin.ByteOffset != 8 {
-							t.Errorf("origin at offset %d, want 8", origin.ByteOffset)
+						if origin.ByteOffset != 0 {
+							t.Errorf("origin at offset %d, want 0", origin.ByteOffset)
 						}
 					} else {
 						optr, ok := origin.Type.(*dwarf.PtrType)
@@ -388,7 +388,7 @@ func TestDWARFNestedStructVars(t *testing.T) {
 					if c.inPlace && (pt.Field[0].ByteOffset != 0 || pt.Field[1].ByteOffset != 8) {
 						t.Errorf("in-place Point members at %d and %d, want 0 and 8", pt.Field[0].ByteOffset, pt.Field[1].ByteOffset)
 					}
-					for n, off := range map[string]int64{"w": 24, "h": 32} {
+					for n, off := range map[string]int64{"w": 16, "h": 24} {
 						f := byName[n]
 						if f == nil {
 							t.Errorf("missing scalar member %q", n)
@@ -443,9 +443,9 @@ func TestDWARFInPlaceOptionVars(t *testing.T) {
 				got = append(got, fmt.Sprintf("%s@%d:%s", f.Name, f.ByteOffset, dwarfShape(f.Type)))
 			}
 			want := []string{
-				"timeout@8:Option[i64]{some@0:boolean value@8:i64}",
-				"since@24:Option[Gap]{some@0:boolean value@8:Gap{nanos@0:i64}}",
-				"n@40:i32",
+				"timeout@0:Option[i64]{some@0:boolean value@8:i64}",
+				"since@16:Option[Gap]{some@0:boolean value@8:Gap{nanos@0:i64}}",
+				"n@32:i32",
 			}
 			if strings.Join(got, " ") != strings.Join(want, " ") {
 				t.Errorf("Wait members\n got %v\nwant %v", got, want)

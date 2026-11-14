@@ -23,11 +23,11 @@ pub function caller(f: ssa.SFunc, producers: ssa.SFunc[], shape: string): origin
     }
     names = names.append(p.name);
     let checked = origin.producer(p, shape, [true, true]);
-    if (!checked.proof.ok || checked.words != 3) {
+    if (!checked.proof.ok || checked.words != 2) {
       return refused(f, "unproved caller allocation producer");
     }
   }
-  let checked = flow_graph.check(f, producers, 3);
+  let checked = flow_graph.check(f, producers, 2);
   if (checked.error != "") {
     return refused(f, checked.error);
   }
@@ -94,13 +94,13 @@ pub function caller(f: ssa.SFunc, producers: ssa.SFunc[], shape: string): origin
               return refused(f, "duplicate caller allocation credit");
             }
             balance = balance.with(root, 1);
-            value = Value { kind: 1, identity: root, words: 3 };
+            value = Value { kind: 1, identity: root, words: 2 };
           }
           row = row.with(util.index_of_i32(checked.values, op.result), value);
         }
         if (b.term.kind_tag == ssa.TERM_RET) {
           let result = row[util.index_of_i32(checked.values, b.term.value)];
-          if (result.kind != 1 || result.identity < 2 || result.words != 3 || balance[result.identity] != 1) {
+          if (result.kind != 1 || result.identity < 2 || result.words != 2 || balance[result.identity] != 1) {
             return refused(f, "owned caller allocation return required");
           }
           balance = balance.with(result.identity, 0);
@@ -127,5 +127,5 @@ pub function caller(f: ssa.SFunc, producers: ssa.SFunc[], shape: string): origin
       return refused(f, "caller allocation return missing");
     }
   }
-  return origin.Origin { proof: helper.Proof { ok: true, function_name: f.name, message: "proved caller allocation origin" }, words: 3 };
+  return origin.Origin { proof: helper.Proof { ok: true, function_name: f.name, message: "proved caller allocation origin" }, words: 2 };
 }

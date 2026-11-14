@@ -56,7 +56,7 @@ pub function drop_body(f: ssa.SFunc, layout: FlatChild): Proof {
 pub function drop_body_many(f: ssa.SFunc, layout: FlatChildren): Proof {
   let seen: i32[] = [];
   for offset in layout.offsets {
-    if (offset < 8 || offset % 8 != 0 || util.index_of_i32(seen, offset) >= 0) {
+    if (offset < 0 || offset % 8 != 0 || util.index_of_i32(seen, offset) >= 0) {
       return refused(f, "unsupported child layout");
     }
     seen = seen.append(offset);

@@ -144,6 +144,50 @@ function escaped(own out: u8[], s: [u8], at: i32, r: i32, n: i32): u8[] {
   return escape(out, r);
 }
 
+// Go's %q of a byte: strconv.QuoteRune of the byte as a rune below U+0100.
+pub function quote_rune(r: i32): string {
+  let out: u8[] = [39u8];
+  if (r == 39 || r == 92) {
+    out = out.append(92u8).append(r as u8);
+  } else if (r >= 32 && r < 127) {
+    out = out.append(r as u8);
+  } else if (r > 127 && printable(r)) {
+    out = out.append((0xc0 | r >> 6) as u8).append((0x80 | r & 63) as u8);
+  } else {
+    out = escape(out, r);
+  }
+  return ascii(out.append(39u8));
+}
+
+// Go's %#U of a rune below U+0100: U+0067 'g', or U+0000 for a rune that
+// does not print.
+pub function go_rune(r: i32): string {
+  let code = ascii(hex_digits("U+".bytes(), r, 4)).to_ascii_upper();
+  if (r >= 32 && r < 127 || r > 127 && printable(r)) {
+    return code + " " + quote_rune(r);
+  }
+  return code;
+}
+
+// Go's strings.Map of a terminal prompt in age: each control character, and
+// each byte that is not valid UTF-8, becomes U+FFFD.
+pub function without_controls(s: [u8]): string {
+  let out: u8[] = [];
+  let at = 0;
+  while (at < s.len()) {
+    let (r, n) = rune_at(s, at);
+    if (r < 32 || r >= 127 && r < 160 || r == 0xfffd && n == 1) {
+      out = out.append(0xefu8).append(0xbfu8).append(0xbdu8);
+    } else {
+      for i in 0..n {
+        out = out.append(s[at + i]);
+      }
+    }
+    at += n;
+  }
+  return ascii(out);
+}
+
 // Go's strconv.Quote, which the %q verb uses.
 pub function quote(s: [u8]): string {
   let out: u8[] = [b'"'];

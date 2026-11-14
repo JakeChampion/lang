@@ -129,8 +129,8 @@ function object_read(s: State, w: Word, offset: i32, width: i32): Word {
   if (offset == -8 && width == 32) {
     return number(1);
   }
-  if (offset >= 8 && offset % 8 == 0 && offset / 8 <= s.objects[i].fields.len()) {
-    return narrow(s.objects[i].fields[offset / 8 - 1], width);
+  if (offset >= 0 && offset % 8 == 0 && offset / 8 < s.objects[i].fields.len()) {
+    return narrow(s.objects[i].fields[offset / 8], width);
   }
   return token(10, 0);
 }
@@ -211,7 +211,7 @@ function construct(s: State, r: flow.Relation, e: flow.Event, register_entry: bo
     fields = fields.append(arg);
     i += 1;
   }
-  let n = heap.construct(r.words - 1, s.heap);
+  let n = heap.construct(heap.capacity_of(r.words), s.heap);
   if (!n.ok) {
     return State { ...s, ok: false };
   }
@@ -233,14 +233,14 @@ function consume(s: State, r: flow.Relation, e: flow.Event, register_entry: bool
     return State { ...s, ok: false };
   }
   let obj = s.objects[i];
-  let n = heap.consume(r.words - 1, s.heap, obj.address, obj.generation);
+  let n = heap.consume(heap.capacity_of(r.words), s.heap, obj.address, obj.generation);
   if (!n.ok) {
     return State { ...s, ok: false };
   }
   let next = State { ...s, heap: n.heap, objects: s.objects.with(i, Object { ...obj, live: false }) };
   // The box release gives the array release the address one word above the
   // box, so %rax does not hold the box at the return.
-  next = write(write(next, 0, token(10, 0)), 1, number((r.words + 1) as i64));
+  next = write(write(next, 0, token(10, 0)), 1, number((heap.capacity_of(r.words) + 2) as i64));
   next = write(write(next, 2, number(obj.address)), 7, number(s.heap.head));
   return write(next, 8, token(8, 0));
 }
@@ -422,7 +422,7 @@ function finished_memory(s: State, original: State, r: flow.Relation): boolean {
       return false;
     }
   }
-  return heap.valid(r.words - 1, s.heap);
+  return heap.valid(heap.capacity_of(r.words), s.heap);
 }
 
 function path(p: isa.ArrayProgram, r: flow.Relation, producer: string, params: i32, h: heap.Heap, register_entry: boolean): boolean {
@@ -465,7 +465,7 @@ function execute(p: isa.ArrayProgram, r: flow.Relation, producer: string, origin
 
 pub function check(output: ssaprepare.Output, caller: string, producer: string, initial_heap: heap.Heap): boolean {
   let r = flow.derive(output, caller, producer);
-  if (r.error != "" || !heap.valid(r.words - 1, initial_heap)) {
+  if (r.error != "" || !heap.valid(heap.capacity_of(r.words), initial_heap)) {
     return false;
   }
   let row = retained.resolve(output, caller);

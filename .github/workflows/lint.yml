@@ -52,6 +52,22 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: scripts/check-changed-programs "$BASE"
+      # The checkout of a pull request is a merge of the pull request into
+      # main. Its first parent is the main that the merge has, which can be
+      # newer than the base that the event names.
+      - name: Ratchets against the base commit
+        if: ${{ !cancelled() && (github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before) && (fromJSON(inputs.selection || '{"full":true}').full || fromJSON(inputs.selection).lint.fern || fromJSON(inputs.selection).lint.compiler) }}
+        env:
+          EVENT_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          FERN_RATCHET_BASE_TREE: ${{ runner.temp }}/ratchet-base
+        run: |
+          base=$EVENT_BASE
+          parents=$(git cat-file -p HEAD | awk '$1 == "parent" { print $2 }')
+          if [ "$(printf '%s\n' "$parents" | grep -c .)" -eq 2 ]; then
+            base=$(printf '%s\n' "$parents" | head -n 1)
+          fi
+          make bin/fern
+          scripts/check-ratchets "$base"
       - name: fern test cache
         if: ${{ !cancelled() && (fromJSON(inputs.selection || '{"full":true}').full || fromJSON(inputs.selection).lint.cache) }}
         run: make fern-test-cache

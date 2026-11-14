@@ -120,8 +120,13 @@ type strippedSource struct {
 
 func selfHostStripped(t *testing.T) []strippedSource {
 	t.Helper()
-	paths, err := filepath.Glob(langSrcAbs(t, filepath.Join("compiler", "*.fern")))
-	inDrivers, _ := filepath.Glob(langSrcAbs(t, filepath.Join("compiler", "drivers", "*.fern")))
+	return strippedSourcesIn(t, langSrcAbs(t, "compiler"))
+}
+
+func strippedSourcesIn(t *testing.T, compilerDir string) []strippedSource {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join(compilerDir, "*.fern"))
+	inDrivers, _ := filepath.Glob(filepath.Join(compilerDir, "drivers", "*.fern"))
 	paths = append(paths, inDrivers...)
 	if err != nil {
 		t.Fatalf("globbing self-host sources: %v", err)
@@ -342,16 +347,6 @@ func atLeast(t *testing.T, c census, name string, want int, why string) {
 	}
 }
 
-func atMost(t *testing.T, c census, name string, limit, measured int, why string) {
-	t.Helper()
-	if got := c.n(name); got > limit {
-		t.Errorf("%s: census counts %d, ceiling %d (measured %d, plus deliberate headroom).\n"+
-			"    %s\n"+
-			"    Re-measure with `go test ./internal/testing/e2ecompiler/ -run TestSelfHostFeatureCensus -v`. Then either convert the new call sites, or — if the growth is legitimate — move the ceiling and say in the commit message what added the sites.\n"+
-			"    sites:\n        %s", name, got, limit, measured, why, c.where(name))
-	}
-}
-
 func TestSelfHostFeatureCensus(t *testing.T) {
 	srcs := selfHostStripped(t)
 	assertNoLiteralResidue(t, srcs)
@@ -362,10 +357,6 @@ func TestSelfHostFeatureCensus(t *testing.T) {
 		"Nine on astwalk's fold spine, six on its accumulator-carrying map spine (map_expr_where / map_exprs_where / map_stmt_where / map_stmts_where / map_stmts_where_changed / map_pattern_where, which maps the expressions of a literal pattern, #15603), util.append_all, and util.sorted_by. The diagnostics source-order sort added sorted_by in #12993. This code exercises generic function monomorphisation on the fixpoint path.")
 	pinned(t, c, "generic structs", 0,
 		"The self-host declares no generic struct, so nothing on the fixpoint path monomorphises a generic TYPE — only generic functions. This is load-bearing, not incidental: a generic struct in a signature promotes its type param to the monomorphiser, and the per-module emit path runs no monomorphiser, so the un-cloned template fails IR verify there — the accumulator spine returns bare tuples for exactly that reason.")
-	pinned(t, c, "arrow lambdas", 24,
-		"Arrow lambdas in the compiler are traversal callbacks in astwalk, checker and parser, and the identity finish hook of the shared AST splicer. A new arrow lambda moves this row and the row in docs/SELFHOST-LANGUAGE-FRICTION.md.")
-	pinned(t, c, "nested named fns", 89,
-		"Nested named functions are visitors in astwalk, checker, parser, lift, wasm_ir, cover, treeshake and interp. A visitor that moves onto the shared folds lowers this row. A new visitor raises it.")
 	pinned(t, c, "try op", 0,
 		"The self-host propagates errors by hand, so `?` has NO fixpoint coverage. A rise here is good news and means this row and the doc's have to move.")
 	pinned(t, c, "Map type spellings", 14,
@@ -375,11 +366,27 @@ func TestSelfHostFeatureCensus(t *testing.T) {
 		"A floor on `for x in xs` loops. A conversion from a hand-written index loop raises the count: move the floor to the new measurement. A fold onto astwalk or a table index can remove loops: lower the floor and say which change it was in the commit message.")
 	atLeast(t, c, "astwalk call sites", 514,
 		"Hand-written AST walkers that move onto the shared fold spine raise this count. A fall means that a walker went back to its own traversal. Move the floor to the new measurement after each conversion.")
+}
 
-	atMost(t, c, "wildcard match arms", 1635, 1632,
-		"A `_ =>` arm does not name its cases, so a new AST node can pass through it with no diagnostic. Some arms are necessary: a match over strings needs one (E030), and an arm that picks one shape out of a large sum is not safer when it names every variant. The ceiling is the measurement plus 3. Re-measure main when you move it, because a stale measurement gives the headroom to the next change.")
-	atMost(t, c, "increment by one", 2296, 2293,
-		"Each `x = x + 1` is usually a hand-written index loop that `for x in xs` can replace. The count is the size of that migration. The ceiling is the measurement plus 3.")
+// A count that only has to stop growing is compared with the tree of the
+// base commit, not with a pinned number. Two pull requests that each add one
+// site and pin the same new count pass alone and fail together.
+// scripts/check-ratchets gives the tree.
+func TestSelfHostFeatureCensusDelta(t *testing.T) {
+	baseTree := os.Getenv("FERN_RATCHET_BASE_TREE")
+	if baseTree == "" {
+		t.Skip("FERN_RATCHET_BASE_TREE is not set: scripts/check-ratchets runs this test with the tree of the base commit")
+	}
+	head := takeCensus(t, selfHostStripped(t))
+	base := takeCensus(t, strippedSourcesIn(t, filepath.Join(baseTree, "compiler")))
+	for _, row := range []struct{ name, why string }{
+		{"wildcard match arms", "A `_ =>` arm does not name its cases, so a new AST node can pass through it with no diagnostic. Name the cases of the new match, or remove a wildcard arm in the same change."},
+		{"increment by one", "Each `x = x + 1` is usually a hand-written index loop that `for x in xs` can replace. Write the new loop with `for`, or convert a loop in the same change."},
+	} {
+		if got, was := head.n(row.name), base.n(row.name); got > was {
+			t.Errorf("%s: this change raises the count from %d to %d.\n    %s", row.name, was, got, row.why)
+		}
+	}
 }
 
 func assertNoLiteralResidue(t *testing.T, srcs []strippedSource) {

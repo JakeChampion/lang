@@ -2,7 +2,6 @@
 // object file, the lines of a tree, the deltas, and the text of a commit.
 import "std/test";
 import "std/array";
-import "std/crypto";
 import "std/deflate";
 import "std/hex";
 import "./index";
@@ -17,15 +16,29 @@ function unhex(s: string): u8[] {
   return b;
 }
 
+// The name of the blob "hello\n" with SHA-1 and with SHA-256.
+const HELLO: string = "ce013625030ba8dba906f756967f9e9ca394464a";
+
+const HELLO_256: string = "2cf8d83d9ee29543b34a87727421fdecb7e3f3a183d337639025de576db9ebb4";
+
 function test_names(): test.TestOutcome {
-  if (objects.hash_of("blob", "".bytes()) != "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391") {
+  if (objects.hash_of(20, "blob", "".bytes()) != "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391") {
     return test.fail("the empty blob");
   }
-  if (objects.hash_of("blob", "hello\n".bytes()) != "ce013625030ba8dba906f756967f9e9ca394464a") {
+  if (objects.hash_of(20, "blob", "hello\n".bytes()) != HELLO) {
     return test.fail("the blob of hello");
   }
-  if (objects.hash_of("tree", "".bytes()) != "4b825dc642cb6eb9a060e54bf8d69288fbee4904") {
+  if (objects.hash_of(20, "tree", "".bytes()) != "4b825dc642cb6eb9a060e54bf8d69288fbee4904") {
     return test.fail("the empty tree");
+  }
+  if (objects.hash_of(32, "blob", "".bytes()) != "473a0f4c3be8a93681a267e3b1e9a7dcda1185436fe141f7749120a303721813") {
+    return test.fail("the empty blob with SHA-256");
+  }
+  if (objects.hash_of(32, "blob", "hello\n".bytes()) != HELLO_256) {
+    return test.fail("the blob of hello with SHA-256");
+  }
+  if (objects.hash_of(32, "tree", "".bytes()) != "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321") {
+    return test.fail("the empty tree with SHA-256");
   }
   return test.assert_eq(hex.encode(objects.header("blob", 1234)), "626c6f62203132333400");
 }
@@ -38,6 +51,27 @@ function test_hex_names(): test.TestOutcome {
     return test.fail("is_kind");
   }
   return test.assert_eq(objects.loose_path("/r/objects", "ce013625030ba8dba906f756967f9e9ca394464a"), "/r/objects/ce/013625030ba8dba906f756967f9e9ca394464a");
+}
+
+// The hash of a repository, from the text of its `config` file.
+function test_object_format(): test.TestOutcome {
+  let sha256 = "[core]\n\trepositoryformatversion = 1\n\tbare = false\n[extensions]\n\tobjectformat = sha256\n";
+  if (objects.object_format(sha256) != "sha256" || objects.object_format("[Extensions]\r\n  ObjectFormat=sha1\r\n") != "sha1") {
+    return test.fail("the value of the key");
+  }
+  if (objects.object_format("[core]\n\tbare = false\n") != "" || objects.object_format("[core]\n\tobjectformat = sha256\n") != "" || objects.object_format("") != "") {
+    return test.fail("a file that does not set the key");
+  }
+  if (objects.object_format("[extensions]\n\tobjectformatx = sha256\n") != "") {
+    return test.fail("a key with a longer name");
+  }
+  if (objects.width_of("") != 20 || objects.width_of("sha1") != 20 || objects.width_of("sha256") != 32 || objects.width_of("bogus") != 0) {
+    return test.fail("the width of a hash");
+  }
+  if (hex.encode(objects.digest(20, "abc".bytes())) != "a9993e364706816aba3e25717850c26c9cd0d89d") {
+    return test.fail("the SHA-1 of abc");
+  }
+  return test.assert_eq(hex.encode(objects.digest(32, "abc".bytes())), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
 }
 
 // A file that `encode` makes gives the same object back. A file with a wrong
@@ -81,7 +115,7 @@ function test_tree_lines(): test.TestOutcome {
   let body = entry("100644", "a.txt".bytes(), a).concat(entry("40000", "d".bytes(), d)).concat(entry("160000", "sub".bytes(), a));
   body = body.concat(entry("100755", [116, 9, 98], a)).concat(entry("120000", [195, 169, 34, 92], a));
   let want = "100644 blob " + a + "\ta.txt\n040000 tree " + d + "\td\n160000 commit " + a + "\tsub\n100755 blob " + a + "\t\"t\\tb\"\n120000 blob " + a + "\t\"\\303\\251\\\"\\\\\"\n";
-  let got = match (objects.tree_text(body)) {
+  let got = match (objects.tree_text(body, 20)) {
     Ok(text) => text,
     Err(why) => {
       return test.fail("tree_text: " + why);
@@ -90,8 +124,19 @@ function test_tree_lines(): test.TestOutcome {
   if (hex.encode(got) != hex.encode(want.bytes())) {
     return test.fail("the lines differ: " + hex.encode(got));
   }
-  if let Ok(_) = objects.tree_text(array.slice(body, 0, body.len() - 1)) {
+  if let Ok(_) = objects.tree_text(array.slice(body, 0, body.len() - 1), 20) {
     return test.fail("a short tree is accepted");
+  }
+  // With SHA-256, the name of an entry has 32 bytes.
+  let wide = entry("100644", "a.txt".bytes(), HELLO_256).concat(entry("40000", "d".bytes(), HELLO_256));
+  let Ok(lines) = objects.tree_text(wide, 32) else {
+    return test.fail("a tree with SHA-256 names is refused");
+  };
+  if (hex.encode(lines) != hex.encode(("100644 blob " + HELLO_256 + "\ta.txt\n040000 tree " + HELLO_256 + "\td\n").bytes())) {
+    return test.fail("the lines with SHA-256 names differ: " + hex.encode(lines));
+  }
+  if let Ok(_) = objects.tree_text(wide, 20) {
+    return test.fail("a tree with SHA-256 names is accepted as a tree with SHA-1 names");
   }
   return test.pass();
 }
@@ -134,22 +179,27 @@ function test_entry(): test.TestOutcome {
   let zero = __alloc_u8(12);
   // A blob of 5 + 16 * 3 bytes.
   let blob = zero.append(181).append(3);
-  let e = pack.entry_at(blob, 12);
+  let e = pack.entry_in(pack.whole(blob, 20), 12);
   if (!e.ok || e.kind != 3 || e.size != 53 || e.data_at != 14) {
     return test.fail("the header of a blob");
   }
   // An OFS_DELTA of 7 bytes whose base is 300 bytes before: 0x81 0x2c.
   let ofs = __alloc_u8(400).append(103).append(129).append(44);
-  let d = pack.entry_at(ofs, 400);
+  let d = pack.entry_in(pack.whole(ofs, 20), 400);
   if (!d.ok || d.kind != pack.OFS_DELTA || d.size != 7 || d.base_offset != 100 || d.data_at != 403) {
     return test.fail("the header of an OFS_DELTA: base " + d.base_offset.to_string());
   }
   let ref_delta = zero.append(119).concat(unhex("ce013625030ba8dba906f756967f9e9ca394464a"));
-  let r = pack.entry_at(ref_delta, 12);
+  let r = pack.entry_in(pack.whole(ref_delta, 20), 12);
   if (!r.ok || r.kind != pack.REF_DELTA || hex.encode(r.base_name) != "ce013625030ba8dba906f756967f9e9ca394464a" || r.data_at != 33) {
     return test.fail("the header of a REF_DELTA");
   }
-  if (pack.entry_at(zero.append(181), 12).ok || pack.entry_at(blob, 4).ok || pack.entry_at(zero.append(103).append(140), 12).ok) {
+  // With SHA-256, the name of the base has 32 bytes.
+  let wide = pack.entry_in(pack.whole(zero.append(119).concat(unhex(HELLO_256)), 32), 12);
+  if (!wide.ok || hex.encode(wide.base_name) != HELLO_256 || wide.data_at != 45 || pack.entry_in(pack.whole(ref_delta, 32), 12).ok) {
+    return test.fail("the header of a REF_DELTA with a SHA-256 name");
+  }
+  if (pack.entry_in(pack.whole(zero.append(181), 20), 12).ok || pack.entry_in(pack.whole(blob, 20), 4).ok || pack.entry_in(pack.whole(zero.append(103).append(140), 20), 12).ok) {
     return test.fail("a short header is accepted");
   }
   return test.pass();
@@ -208,13 +258,13 @@ function test_commit_text(): test.TestOutcome {
 }
 
 // A packfile of one blob with the content `body`, which is shorter than
-// 16 bytes.
-function tiny_pack(body: u8[]): u8[] {
+// 16 bytes. Its checksum has `width` bytes.
+function tiny_pack(body: u8[], width: i32): u8[] {
   let sum = deflate.adler32(body);
   let data: u8[] = [b'P', b'A', b'C', b'K', 0, 0, 0, 2, 0, 0, 0, 1, (48 + body.len()) as u8, 120, 156];
   data = data.concat(deflate.deflate(body));
   data = data.append((sum >> 24) as u8).append((sum >> 16 & 255) as u8).append((sum >> 8 & 255) as u8).append((sum & 255) as u8);
-  return data.concat(crypto.sha1(data));
+  return data.concat(objects.digest(width, data));
 }
 
 // The bytes of a zlib stream of `body`.
@@ -235,7 +285,7 @@ function test_info(): test.TestOutcome {
   data = data.concat(base);
   let second = data.len();
   data = data.append((96 + delta.len()) as u8).append((second - 12) as u8).concat(zlib_of(delta));
-  let whole = (at: i32): pack.Window => pack.Window { bytes: data, shift: 0 };
+  let whole = (at: i32): pack.Window => pack.whole(data, 20);
   let none = (name: u8[]): i32 => -1;
   let Ok((kind, size)) = pack.info_in(whole, whole, none, 12) else {
     return test.fail("no kind and size for a blob");
@@ -262,50 +312,81 @@ function test_info(): test.TestOutcome {
   return test.pass();
 }
 
-// The index that the port makes for a packfile.
+// The index that the port makes for a packfile with SHA-1 names.
 function test_index(): test.TestOutcome {
-  let data = tiny_pack("hello\n".bytes());
-  let Ok(built) = index.build(data) else {
+  return index_case(20, HELLO);
+}
+
+function test_index_256(): test.TestOutcome {
+  return index_case(32, HELLO_256);
+}
+
+// The index of a packfile of the blob "hello\n", whose name is `hello` in
+// a repository with names of `width` bytes.
+function index_case(width: i32, hello: string): test.TestOutcome {
+  let data = tiny_pack("hello\n".bytes(), width);
+  let Ok(built) = index.build(pack.whole(data, width)) else {
     return test.fail("a packfile of one blob is refused");
   };
-  let name = unhex("ce013625030ba8dba906f756967f9e9ca394464a");
-  if (!pack.index_ok(built.idx) || pack.count(built.idx) != 1 || pack.offset_of(built.idx, name) != 12) {
+  let idx = pack.Index { bytes: built.idx, width: width };
+  let name = unhex(hello);
+  if (!pack.index_ok(idx) || pack.count(idx) != 1 || pack.offset_of(idx, name) != 12 || pack.hex_name_at(idx, 0) != hello) {
     return test.fail("the index of one blob");
   }
-  if (built.name != hex.encode(array.slice(data, data.len() - 20, data.len())) || built.rev.len() != 12 + 4 + 40) {
+  // An index is not sound for the other width, and has no name of a
+  // different length.
+  let other = pack.Index { bytes: built.idx, width: 52 - width };
+  if (pack.index_ok(other) || pack.find(other, name) != -1 || pack.find(idx, array.slice(name, 0, 12)) != -1) {
+    return test.fail("the index with the other width");
+  }
+  if (built.name != hex.encode(array.slice(data, data.len() - width, data.len())) || built.rev.len() != 12 + 4 + 2 * width) {
     return test.fail("the checksum and the reverse index");
   }
-  let Ok(o) = pack.object_at(data, (base: u8[]): i32 => pack.offset_of(built.idx, base), 12) else {
+  // The reverse index names its hash, and each file ends with its checksum.
+  if (built.rev[11] != (if (width == 32) { 2 } else { 1 }) as u8) {
+    return test.fail("the hash of the reverse index");
+  }
+  let end = built.idx.len() - width;
+  if (hex.encode(objects.digest(width, array.slice(built.idx, 0, end))) != hex.encode(array.slice(built.idx, end, end + width))) {
+    return test.fail("the checksum of the index");
+  }
+  let Ok(o) = pack.object_at(pack.whole(data, width), (base: u8[]): i32 => pack.offset_of(idx, base), 12) else {
     return test.fail("the object is not read with the index");
   };
   if (o.kind != "blob" || o.body.len() != 6) {
     return test.fail("the object of the index");
   }
   // A short name finds the object, and digits that no name has find none.
-  let names = pack.with_prefix(built.idx, "ce01", 2);
-  if (names.len() != 1 || names[0] != "ce013625030ba8dba906f756967f9e9ca394464a") {
-    return test.fail("the name for the digits ce01");
+  let names = pack.with_prefix(idx, objects.part(hello, 0, 4), 2);
+  if (names.len() != 1 || names[0] != hello) {
+    return test.fail("the name for the first four digits");
   }
-  if (pack.with_prefix(built.idx, "CE0136250", 2).len() != 1 || pack.with_prefix(built.idx, "ce02", 2).len() != 0 || pack.with_prefix(built.idx, "cd", 2).len() != 0) {
+  if (pack.with_prefix(idx, objects.part(hello, 0, 9).to_ascii_upper(), 2).len() != 1 || pack.with_prefix(idx, hello, 2).len() != 1 || pack.with_prefix(idx, hello + "0", 2).len() != 0) {
+    return test.fail("the names for capital digits, for each digit, and for one digit more");
+  }
+  if (pack.with_prefix(idx, objects.part(hello, 0, 3) + "f", 2).len() != 0 || pack.with_prefix(idx, "cd", 2).len() != 0) {
     return test.fail("the names for other digits");
   }
   // A part of the packfile that starts at the object gives the same object.
   let tail = array.slice(data, 12, data.len());
-  let (part, cache) = pack.object_cached((at: i32): pack.Window => pack.Window { bytes: tail, shift: 12 }, (base: u8[]): i32 => -1, 12, pack.cache_new());
+  let (part, cache) = pack.object_cached((at: i32): pack.Window => pack.Window { bytes: tail, shift: 12, width: width }, (base: u8[]): i32 => -1, 12, pack.cache_new());
   let Ok(same) = part else {
     return test.fail("the object is not read from a part of the packfile");
   };
   if (same.kind != "blob" || hex.encode(same.body) != hex.encode(o.body) || cache.bytes != 0) {
     return test.fail("the object of a part of the packfile");
   }
-  if (pack.entry_in(pack.Window { bytes: tail, shift: 12 }, 11).ok || pack.entry_in(pack.Window { bytes: tail, shift: 13 }, 12).ok) {
+  if (pack.entry_in(pack.Window { bytes: tail, shift: 12, width: width }, 11).ok || pack.entry_in(pack.Window { bytes: tail, shift: 13, width: width }, 12).ok) {
     return test.fail("an offset out of the part is accepted");
   }
   let bad = data.with(14, data[14] ^ 1);
-  if let Ok(_) = index.build(bad) {
+  if let Ok(_) = index.build(pack.whole(bad, width)) {
     return test.fail("a packfile with a changed byte is accepted");
   }
-  if let Ok(_) = index.build(array.slice(data, 0, 20)) {
+  if let Ok(_) = index.build(pack.whole(data, 52 - width)) {
+    return test.fail("a packfile with a checksum of the other hash is accepted");
+  }
+  if let Ok(_) = index.build(pack.whole(array.slice(data, 0, 20), width)) {
     return test.fail("a short packfile is accepted");
   }
   return test.pass();
@@ -315,6 +396,7 @@ function main(): i32 {
   let r = test.new("git");
   r = r.it("the names of objects", test_names);
   r = r.it("hexadecimal names, kinds and paths", test_hex_names);
+  r = r.it("the hash of a repository", test_object_format);
   r = r.it("the loose object file", test_loose_file);
   r = r.it("the lines of a tree", test_tree_lines);
   r = r.it("a delta", test_delta);
@@ -322,6 +404,7 @@ function main(): i32 {
   r = r.it("the fields of a commit", test_commit_fields);
   r = r.it("the text of a commit", test_commit_text);
   r = r.it("the index of a packfile", test_index);
+  r = r.it("the index of a packfile with SHA-256 names", test_index_256);
   r = r.it("the kind and the size of a packed object", test_info);
   return r.finish();
 }

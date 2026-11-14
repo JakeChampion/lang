@@ -1,0 +1,613 @@
+// The plugin protocol of age (age-encryption.org/v1/plugin): the names and
+// encodings of plugin recipients and identities, the stanzas on the pipes
+// to a plugin, and the client side of the recipient-v1 and identity-v1 state
+// machines. A port of age's plugin/client.go, plugin/encode.go and
+// plugin/tui.go.
+import "std/rand";
+import "./bech32";
+import "./format";
+import "./source";
+import "./text";
+import "./tty";
+
+const NAME_BYTES: string = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+-._";
+
+// age's validPluginName.
+pub function valid_name(name: string): boolean {
+  if (name.len() == 0) {
+    return false;
+  }
+  for i in 0..name.len() {
+    if (NAME_BYTES.index_of(name[i:i + 1].unwrap_or("")).is_none()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function q(s: string): string {
+  return text.quote(s.as_bytes());
+}
+
+// age's EncodeIdentity: "" for a name that is not valid.
+pub function encode_identity(name: string, data: [u8]): string {
+  if (!valid_name(name)) {
+    return "";
+  }
+  return bech32.encode("AGE-PLUGIN-" + name.to_ascii_upper() + "-", data);
+}
+
+// age's EncodeRecipient: "" for a name that is not valid.
+pub function encode_recipient(name: string, data: [u8]): string {
+  if (!valid_name(name)) {
+    return "";
+  }
+  return bech32.encode("age1" + name.to_ascii_lower(), data);
+}
+
+// The name of the plugin and the data of an encoding.
+pub struct Decoded { name: string, data: u8[] }
+
+// age's ParseRecipient.
+pub function parse_recipient(s: string): Result[Decoded, string] {
+  let d = match (bech32.decode(s.as_bytes())) {
+    Ok(d) => d,
+    Err(why) => {
+      return Err("invalid recipient encoding: " + why);
+    },
+  };
+  if (!d.hrp.starts_with("age1")) {
+    return Err("not a plugin recipient: <nil>");
+  }
+  let name = d.hrp[4:d.hrp.len()].unwrap_or("").to_owned();
+  if (!valid_name(name)) {
+    return Err("invalid plugin name: " + q(name));
+  }
+  return Ok(Decoded { name: name, data: d.data });
+}
+
+// age's ParseIdentity. The name is in lower case.
+pub function parse_identity(s: string): Result[Decoded, string] {
+  let d = match (bech32.decode(s.as_bytes())) {
+    Ok(d) => d,
+    Err(why) => {
+      return Err("invalid identity encoding: " + why);
+    },
+  };
+  if (!d.hrp.starts_with("AGE-PLUGIN-") || !d.hrp.ends_with("-")) {
+    return Err("not a plugin identity: <nil>");
+  }
+  let name = d.hrp[11:d.hrp.len() - 1].unwrap_or("").to_ascii_lower();
+  if (!valid_name(name)) {
+    return Err("invalid plugin name: " + q(name));
+  }
+  return Ok(Decoded { name: name, data: d.data });
+}
+
+// Go's strconv.Atoi for a stanza index: an optional sign and decimal digits.
+pub function go_atoi(s: string): Option[i64] {
+  let at = if (s.len() > 0 && (s[0] == b'+' || s[0] == b'-')) { 1 } else { 0 };
+  if (at == s.len()) {
+    return None;
+  }
+  let v = 0i64;
+  for i in at..s.len() {
+    let c = s[i];
+    if (c < b'0' || c > b'9') {
+      return None;
+    }
+    if (v > 922337203685477580i64) {
+      return None;
+    }
+    v = v * 10i64 + (c - b'0') as i64;
+    if (v < 0i64) {
+      return None;
+    }
+  }
+  return Some(if (s[0] == b'-') { 0i64 - v } else { v });
+}
+
+// age's writeGrease: no stanza in one case of three, else a stanza with a
+// random type, up to two random arguments and sometimes a random body.
+pub function grease(): Option[format.Stanza] {
+  if (rand.between(0, 3) == 0) {
+    return None;
+  }
+  let r = rand.bytes(8);
+  let v = 0u64;
+  for b in r {
+    v = v << 8u64 | b as u64;
+  }
+  let kind = "grease-" + __hex(v >> 1u64);
+  let args: string[] = [];
+  let i = 0;
+  while (i < rand.between(0, 3)) {
+    args = args.append(rand.between(0, 100).to_string());
+    i += 1;
+  }
+  let body = if (rand.between(0, 2) == 0) { rand.bytes(rand.between(0, 100)) } else { [] };
+  return Some(format.Stanza { kind: kind, args: args, body: body });
+}
+
+function __hex(v: u64): string {
+  if (v == 0u64) {
+    return "0";
+  }
+  let digits = "0123456789abcdef";
+  let out = "";
+  let x = v;
+  while (x != 0u64) {
+    let d = (x & 15u64) as i32;
+    out = digits[d:d + 1].unwrap_or("") + out;
+    x = x >> 4u64;
+  }
+  return out;
+}
+
+// One side of a conversation with a plugin: where stanzas go, and the
+// stanzas that come back.
+pub struct Conn { w: Writer, r: Reader, src: source.Src, fd: i32, pid: i32, name: string, debug: boolean }
+
+pub function conn_of(r: Reader, w: Writer, name: string): Conn {
+  return Conn { w: w, r: r, src: source.plain(source.open_raw(r, "|0")), fd: r.fd, pid: 0, name: name, debug: false };
+}
+
+// Writes one stanza. The error is the message of the failed write.
+pub function send(c: Conn, st: format.Stanza): Option[string] {
+  let s = format.marshal_stanza(st);
+  if (c.debug) {
+    stderr().write(s);
+  }
+  return match (c.w.write(s)) {
+    Ok(_) => None,
+    Err(e) => Some("write |1: " + text.errno_text(e)),
+  };
+}
+
+pub function send_plain(c: Conn, kind: string, args: string[]): Option[string] {
+  return send(c, format.Stanza { kind: kind, args: args, body: [] });
+}
+
+pub function send_body(c: Conn, kind: string, body: u8[]): Option[string] {
+  return send(c, format.Stanza { kind: kind, args: [], body: body });
+}
+
+// age's StanzaReader.ReadStanza on the input of a conversation.
+pub function receive(own c: Conn): (Conn, Result[format.Stanza, string]) {
+  let (s, got) = format.read_stanza(c.src, 0);
+  let c2 = Conn { ...c, src: s };
+  return match (got) {
+    Ok(p) => {
+      if (c2.debug) {
+        stderr().write(format.marshal_stanza(p.stanza));
+      }
+      (c2, Ok(p.stanza))
+    },
+    Err(why) => (c2, Err(why)),
+  };
+}
+
+// age's ClientUI.readStanza: after 5 seconds with no input, the message
+// that the plugin is slow.
+function receive_waiting(own c: Conn): (Conn, Result[format.Stanza, string]) {
+  if (source.avail(c.src) == 0 && poll([c.fd], 5000) < 0) {
+    eprint(f"age: waiting on {c.name} plugin...");
+  }
+  return receive(c);
+}
+
+// The failure to start a plugin. A plugin that is not on the PATH gets
+// age's hints.
+pub struct StartFailure { msg: string, missing: boolean }
+
+const SIGINT: i32 = 2;
+
+const SIGPIPE: i32 = 13;
+
+// Go's exec.LookPath: the first executable regular file in the directories
+// of PATH. An empty entry is the current directory.
+function look_path(file: string): Result[string, string] {
+  let path = env("PATH").unwrap_or("");
+  if (path.len() == 0) {
+    return Err(f"exec: {q(file)}: executable file not found in $PATH");
+  }
+  for dir in path.split(":") {
+    let d = if (dir.len() == 0) { "." } else { dir.to_owned() };
+    let candidate = d + "/" + file;
+    if let Ok(st) = stat(candidate) {
+      if (!st.is_dir && (st.mode & 73u32) != 0u32) {
+        if (!candidate.starts_with("/")) {
+          return Err(f"exec: {q(file)}: cannot run executable found relative to current directory");
+        }
+        return Ok(candidate);
+      }
+    }
+  }
+  return Err(f"exec: {q(file)}: executable file not found in $PATH");
+}
+
+// The directory of Go's os.TempDir.
+function temp_directory(): string {
+  let t = env("TMPDIR").unwrap_or("");
+  return if (t.len() == 0) { "/tmp" } else { t };
+}
+
+// The child side of a start: the pipes on fds 0 and 1, fd 2 on /dev/null
+// unless AGEDEBUG asks for it, and the temporary directory. An exec that
+// fails writes its errno to the status pipe.
+function exec_plugin(path: string, argv: string[], to_plugin: Pipe, from_plugin: Pipe, status: Pipe, debug: boolean): void {
+  to_plugin.r.dup_onto(0);
+  from_plugin.w.dup_onto(1);
+  if (!debug) {
+    if let Ok(null) = open_writer("/dev/null") {
+      null.dup_onto(2);
+    }
+  }
+  chdir(temp_directory());
+  signal_default(SIGPIPE);
+  let rc = proc_exec_as(path, argv, environ());
+  let code = 0 - rc;
+  status.w.write_bytes(__alloc_u8(1).with(0, (code & 255) as u8));
+  exit(127);
+}
+
+function errno_message(n: i32): string {
+  return match (n) {
+    2 => "no such file or directory",
+    8 => "exec format error",
+    13 => "permission denied",
+    20 => "not a directory",
+    _ => "errno " + n.to_string(),
+  };
+}
+
+// age's openClientConnection: age-plugin-NAME --age-plugin=PROTOCOL with
+// pipes for its standard input and output.
+pub function start(name: string, protocol: string): Result[Conn, StartFailure] {
+  let file = "age-plugin-" + name;
+  let path = match (look_path(file)) {
+    Ok(p) => p,
+    Err(why) => {
+      return Err(StartFailure { msg: why, missing: why.ends_with("not found in $PATH") });
+    },
+  };
+  let debug = env("AGEDEBUG").unwrap_or("") == "plugin";
+  let Ok(to_plugin) = pipe() else {
+    return Err(StartFailure { msg: "pipe: too many open files", missing: false });
+  };
+  let Ok(from_plugin) = pipe() else {
+    return Err(StartFailure { msg: "pipe: too many open files", missing: false });
+  };
+  let Ok(status) = pipe() else {
+    return Err(StartFailure { msg: "pipe: too many open files", missing: false });
+  };
+  signal_ignore(SIGPIPE);
+  let pid = proc_fork();
+  if (pid == 0) {
+    exec_plugin(path, [file, "--age-plugin=" + protocol], to_plugin, from_plugin, status, debug);
+  }
+  to_plugin.r.close();
+  from_plugin.w.close();
+  status.w.close();
+  let failed = status.r.read_chunk_bytes(1);
+  status.r.close();
+  if let Ok(b) = failed {
+    if (b.len() == 1) {
+      proc_waitpid(pid);
+      to_plugin.w.close();
+      from_plugin.r.close();
+      return Err(StartFailure { msg: f"fork/exec {path}: {errno_message(b[0] as i32)}", missing: false });
+    }
+  }
+  return Ok(Conn { ...conn_of(from_plugin.r, to_plugin.w, name), pid: pid, debug: debug });
+}
+
+// age's clientConnection.Close: close the pipes, interrupt the plugin and
+// wait for it.
+pub function close(own c: Conn): void {
+  c.w.close();
+  c.r.close();
+  signal_send(c.pid, SIGINT);
+  proc_waitpid(c.pid);
+  signal_default(SIGPIPE);
+}
+
+// age's NotFoundError.
+function start_failure(f: StartFailure, name: string): Failure {
+  if (f.missing) {
+    return Failure { msg: f"couldn't start plugin: {q(name)} plugin not found: {f.msg}", missing: name };
+  }
+  return Failure { msg: "couldn't start plugin: " + f.msg, missing: "" };
+}
+
+// A failure of a plugin, after "NAME plugin: ". missing names a plugin that
+// is not on the PATH.
+pub struct Failure { msg: string, missing: string }
+
+function failure(msg: string): Failure {
+  return Failure { msg: msg, missing: "" };
+}
+
+// The stanzas and the labels of a recipient. labels is None when the plugin
+// sends no labels stanza.
+pub struct Wrapped { stanzas: format.Stanza[], labels: Option[string[]] }
+
+// The answer of the client to a stanza that is not part of the state
+// machine: true when the client handled it.
+function handled(c: Conn, st: format.Stanza): Result[boolean, string] {
+  if (st.kind == "msg") {
+    let line = f"age: {c.name} plugin: {text.ascii(st.body)}";
+    stderr().write(if (line.ends_with("\n")) { line } else { line + "\n" });
+    return written(send_plain(c, "ok", []));
+  }
+  if (st.kind == "request-secret" || st.kind == "request-public") {
+    let value = if (st.kind == "request-secret") { tty.read_secret(text.ascii(st.body)) } else { tty.read_public(text.ascii(st.body)) };
+    return match (value) {
+      Ok(v) => written(send_body(c, "ok", v)),
+      Err(why) => {
+        eprint(f"age: warning: could not read value for age-plugin-{c.name}: {why}");
+        written(send_plain(c, "fail", []))
+      },
+    };
+  }
+  if (st.kind == "confirm") {
+    return confirm(c, st);
+  }
+  return Ok(false);
+}
+
+function written(f: Option[string]): Result[boolean, string] {
+  return match (f) {
+    Some(why) => Err(why),
+    None => Ok(true),
+  };
+}
+
+// age's TerminalUI.Confirm.
+function confirm(c: Conn, st: format.Stanza): Result[boolean, string] {
+  if (st.args.len() != 1 && st.args.len() != 2) {
+    return Err("malformed confirm stanza: unexpected number of arguments");
+  }
+  let yes = match (text.decode_string(st.args[0].as_bytes())) {
+    Ok(b) => text.ascii(b),
+    Err(_) => {
+      return Err("malformed confirm stanza: invalid YES option encoding");
+    },
+  };
+  let no = "";
+  if (st.args.len() == 2) {
+    no = match (text.decode_string(st.args[1].as_bytes())) {
+      Ok(b) => text.ascii(b),
+      Err(_) => {
+        return Err("malformed confirm stanza: invalid NO option encoding");
+      },
+    };
+  }
+  return match (choose(c.name, text.ascii(st.body), yes, no)) {
+    Ok(chose_yes) => written(send_plain(c, "ok", [if (chose_yes) { "yes" } else { "no" }])),
+    Err(why) => {
+      eprint(f"age: warning: could not read value for age-plugin-{c.name}: {why}");
+      written(send_plain(c, "fail", []))
+    },
+  };
+}
+
+function choose(name: string, prompt: string, yes: string, no: string): Result[boolean, string] {
+  if (no.len() == 0) {
+    tty.read_secret(prompt + f" (press enter for {q(yes)})")?;
+    return Ok(true);
+  }
+  let shown = prompt + f" (press [1] for {q(yes)} or [2] for {q(no)})";
+  loop {
+    let c = tty.read_character(shown)?;
+    if (c == b'1') {
+      return Ok(true);
+    }
+    if (c == b'2') {
+      return Ok(false);
+    }
+    if (c == 3u8) {
+      return Err("user cancelled prompt");
+    }
+    eprint(f"age: warning: reading value for age-plugin-{name}: invalid selection {text.quote_rune(c as i32)}");
+  }
+  return Ok(false);
+}
+
+// The index argument of a stanza from the plugin: 0, as Go's strconv.Atoi
+// reads it.
+function index_zero(arg: string, what: string): Option[string] {
+  return match (go_atoi(arg)) {
+    None => Some(f"malformed {what} stanza: invalid index"),
+    Some(n) => if (n != 0i64) { Some(f"malformed {what} stanza: unexpected index") } else { None },
+  };
+}
+
+function send_all(c: Conn, stanzas: format.Stanza[]): Option[string] {
+  for st in stanzas {
+    if let Some(why) = send(c, st) {
+      return Some(why);
+    }
+  }
+  return None;
+}
+
+function greased(stanzas: format.Stanza[]): format.Stanza[] {
+  return match (grease()) {
+    Some(g) => stanzas.append(g),
+    None => stanzas,
+  };
+}
+
+// The state of a client machine: the stanzas and labels of recipient-v1, or
+// the file key of identity-v1.
+struct Machine { stanzas: format.Stanza[], labels: Option[string[]], key: Option[u8[]] }
+
+// The step after a stanza of the plugin: read the next one, or stop with
+// the verdict.
+enum Step {
+  Next(Machine),
+  Stop(Machine, Option[string]),
+}
+
+function acked(m: Machine, c: Conn): Step {
+  return match (send_plain(c, "ok", [])) {
+    Some(why) => Stop(m, Some(why)),
+    None => Next(m),
+  };
+}
+
+// A stanza that is the same in both machines: error, done, and the stanzas
+// of the user interface.
+function common_step(c: Conn, st: format.Stanza, m: Machine): Step {
+  if (st.kind == "error") {
+    if let Some(why) = send_plain(c, "ok", []) {
+      return Stop(m, Some(why));
+    }
+    return Stop(m, Some(text.ascii(st.body)));
+  }
+  if (st.kind == "done") {
+    return Stop(m, None);
+  }
+  return match (handled(c, st)) {
+    Err(why) => Stop(m, Some(why)),
+    Ok(true) => Next(m),
+    Ok(false) => match (send_plain(c, "unsupported", [])) {
+      Some(why) => Stop(m, Some(why)),
+      None => Next(m),
+    },
+  };
+}
+
+// One stanza of the plugin in the recipient-v1 machine.
+function wrap_step(c: Conn, st: format.Stanza, m: Machine): Step {
+  if (st.kind == "recipient-stanza") {
+    if (st.args.len() < 2) {
+      return Stop(m, Some("malformed recipient stanza: unexpected argument count"));
+    }
+    if let Some(why) = index_zero(st.args[0], "recipient") {
+      return Stop(m, Some(why));
+    }
+    let args: string[] = [];
+    for i in 2..st.args.len() {
+      args = args.append(st.args[i]);
+    }
+    return acked(Machine { ...m, stanzas: m.stanzas.append(format.Stanza { kind: st.args[1], args: args, body: st.body }) }, c);
+  }
+  if (st.kind == "labels") {
+    if (m.labels.is_some()) {
+      return Stop(m, Some("repeated labels stanza"));
+    }
+    return acked(Machine { ...m, labels: Some(st.args) }, c);
+  }
+  return common_step(c, st, m);
+}
+
+// One stanza of the plugin in the identity-v1 machine.
+function unwrap_step(c: Conn, st: format.Stanza, m: Machine): Step {
+  if (st.kind == "file-key") {
+    if (st.args.len() != 1) {
+      return Stop(m, Some("malformed file-key stanza: unexpected arguments count"));
+    }
+    if let Some(why) = index_zero(st.args[0], "file-key") {
+      return Stop(m, Some(why));
+    }
+    if (m.key.is_some()) {
+      return Stop(m, Some("received duplicated file-key stanza"));
+    }
+    __ct_secret(st.body);
+    return acked(Machine { ...m, key: Some(st.body) }, c);
+  }
+  return common_step(c, st, m);
+}
+
+// The stanzas of the plugin, up to done or a failure.
+function converse(own c: Conn, wrapping: boolean): (Conn, Machine, Option[string]) {
+  let m = Machine { stanzas: [], labels: None, key: None };
+  loop {
+    let (c2, got) = receive_waiting(c);
+    c = c2;
+    let st = match (got) {
+      Ok(st) => st,
+      Err(why) => {
+        return (c, m, Some(why));
+      },
+    };
+    let step = if (wrapping) { wrap_step(c, st, m) } else { unwrap_step(c, st, m) };
+    match (step) {
+      Next(next) => {
+        m = next;
+      },
+      Stop(last, why) => {
+        return (c, last, why);
+      }
+    }
+  }
+  return (c, m, None);
+}
+
+// age's plugin Recipient.WrapWithLabels. identity is true for the recipient
+// of a plugin identity, which the plugin gets as add-identity.
+pub function wrap(name: string, encoding: string, identity: boolean, file_key: [u8]): Result[Wrapped, Failure] {
+  let c = match (start(name, "recipient-v1")) {
+    Ok(c) => c,
+    Err(f) => {
+      return Err(start_failure(f, name));
+    },
+  };
+  let add = if (identity) { "add-identity" } else { "add-recipient" };
+  let opening = greased([format.Stanza { kind: add, args: [encoding], body: [] }]).concat([
+    format.Stanza { kind: "wrap-file-key", args: [], body: text.copy(file_key) },
+    format.Stanza { kind: "extension-labels", args: [], body: [] },
+    format.Stanza { kind: "done", args: [], body: [] },
+  ]);
+  if let Some(why) = send_all(c, opening) {
+    close(c);
+    return Err(failure(why));
+  }
+  let (done, m, failed) = converse(c, true);
+  close(done);
+  if let Some(why) = failed {
+    return Err(failure(why));
+  }
+  if (m.stanzas.len() == 0) {
+    return Err(failure("received zero recipient stanzas"));
+  }
+  return Ok(Wrapped { stanzas: m.stanzas, labels: m.labels });
+}
+
+// The end of an unwrap: the file key, age's ErrIncorrectIdentity, or a
+// failure.
+pub enum Unwrapped {
+  Key(u8[]),
+  NoMatch,
+  Failed(Failure),
+}
+
+// age's plugin Identity.Unwrap.
+pub function unwrap(name: string, encoding: string, stanzas: format.Stanza[]): Unwrapped {
+  let c = match (start(name, "identity-v1")) {
+    Ok(c) => c,
+    Err(f) => {
+      return Failed(start_failure(f, name));
+    },
+  };
+  let opening = greased([format.Stanza { kind: "add-identity", args: [encoding], body: [] }]);
+  for st in stanzas {
+    opening = opening.append(format.Stanza { kind: "recipient-stanza", args: ["0", st.kind].concat(st.args), body: st.body });
+  }
+  opening = opening.append(format.Stanza { kind: "done", args: [], body: [] });
+  if let Some(why) = send_all(c, opening) {
+    close(c);
+    return Failed(failure(why));
+  }
+  let (done, m, failed) = converse(c, false);
+  close(done);
+  if let Some(why) = failed {
+    return Failed(failure(why));
+  }
+  return match (m.key) {
+    Some(k) => Key(k),
+    None => NoMatch,
+  };
+}

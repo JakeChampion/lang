@@ -63,5 +63,5 @@ func countUserStrFreeReclaims(asm []byte) int {
 // An inline reuse allocation has one call for a null token. That call is not
 // an allocation site of its own.
 func countUserArrBoxAllocs(asm []byte) int {
-	return countUserCalls(asm, "__fern_arr_box") + countUserCalls(asm, "__fern_rec_box") - countUserLines(asm, "cmpl %esi, -4(%rax)")
+	return countUserCalls(asm, "__fern_arr_box") + countUserCalls(asm, "__fern_rec_box") - countUserLines(asm, "cmpw %si, -4(%rax)")
 }

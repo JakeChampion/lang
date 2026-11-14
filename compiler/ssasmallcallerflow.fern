@@ -76,7 +76,7 @@ function parameter(s: State, op: ssa.SInst): State {
 }
 
 function allocate(s: State, args: Value[], words: i32): State {
-  if (args.len() != words - 1) {
+  if (args.len() != words) {
     return State { ...s, ok: false };
   }
   for arg in args {
@@ -104,10 +104,10 @@ function load(s: State, op: ssa.SInst, args: Value[]): State {
     return State { ...s, ok: false };
   }
   let fields = s.objects[args[0].identity].fields;
-  if (op.imm < 8 || op.imm > fields.len() * 8 || op.imm % 8 != 0) {
+  if (op.imm < 0 || op.imm >= fields.len() * 8 || op.imm % 8 != 0) {
     return State { ...s, ok: false };
   }
-  return define(s, fields[op.imm / 8 - 1]);
+  return define(s, fields[op.imm / 8]);
 }
 
 function operation(s: State, op: ssa.SInst, args: Value[], name: string, words: i32): State {

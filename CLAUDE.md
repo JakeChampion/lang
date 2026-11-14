@@ -194,9 +194,11 @@ than one each.
 **A baseline a PR moves is re-banked in that PR, without asking.** The perf,
 cliff, emitted-size and allocation lanes each pin one (`.github/*-baseline.txt`).
 When a lane reports a row moved, in either direction, pin the lane's measured
-value and push. The reason goes in the commit message, never in the file: a
+value (`scripts/rebank FILE` takes the rows of the job summary) and push. The reason goes in the commit message, never in the file: a
 note per move makes each open PR conflict. The owner has said so. Do not ask
-again.
+again. A row that your change does not move belongs to main: the `rebank-main`
+job of the Perf lane sets it after the merge (5% a row at most), so bring main
+in and do not pin it.
 
 **One red lane cancels the rest.** When a lane concludes `failure` the rest of
 the run is cancelled to hand the lock to the next PR — so a red PR shows one
@@ -442,10 +444,10 @@ it.
 - **Linter** (`fern -lint`, cyclomatic complexity, change risk from a `-cover`
   run, `[lint]` config, `// fern-lint: allow` suppression) — `docs/LINT.md`. Engine: `compiler/lint.fern`. It runs on the
   PARSE tree, so a rule needing types belongs in the checker instead. This
-  repository's own Fern sources are held to a complexity RATCHET
-  (`internal/testing/e2ecompiler/self_host_lint_ratchet_test.go`): its two numbers per tree may not move in
-  either direction, and a per-function exception is an `allow` comment on the
-  function, never a row in that table.
+  repository's own Fern sources are held to ratchets that compare a change
+  with its base commit (`scripts/check-ratchets`, in the Lint lane and the
+  pre-push hook). No count is pinned. A per-function exception is an `allow`
+  comment on the function.
 - **Bootstrap** (`make bootstrap`, `bootstrap/stage0.lock`, `make distcheck`) —
   `docs/BOOTSTRAP.md`. The pin is a release asset, refreshed by dispatching
   `bootstrap.yml` with `publish` on the branch that needs it, never by hand.

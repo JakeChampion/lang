@@ -90,7 +90,7 @@ pub function child_offsets(m: physicalbody.Metadata, t: typeinfo.Type): i32[] {
       return [];
     }
     if (!semtypes.concrete_scalar(field.ty)) {
-      offsets = offsets.append((i + 1) * 8);
+      offsets = offsets.append(i * 8);
     }
     i += 1;
   }
@@ -167,7 +167,7 @@ pub function fields(m: physicalbody.Metadata, d: ssasem.Contract): reuse.ScalarF
     if let typeinfo.TypeI32(n) = field.ty {
       if (n.width == 32 && !n.unsigned && !n.is_char && !n.polymorphic) {
         for root in [3, 4, 5] {
-          result = result.append(reuse.ScalarField { root: root, offset: (i + 1) * 8 });
+          result = result.append(reuse.ScalarField { root: root, offset: i * 8 });
         }
       }
     }

@@ -16,7 +16,6 @@ import "std/string";
 import "std/worker";
 import "core/cmp";
 import "core/map";
-import "std/crypto";
 import "std/hex";
 import "./index";
 import "./log";
@@ -72,6 +71,15 @@ function repo_or_fail(): (refs.Repo[], i32) {
   };
 }
 
+// The width of the names for a command that needs no repository: that of
+// the repository of the current directory, or SHA-1 with no repository.
+function width_here(): i32 {
+  return match (refs.find()) {
+    Ok(r) => r.width,
+    Err(_) => objects.SHA1,
+  };
+}
+
 // ---- hash-object ----
 
 struct HashArgs { write: boolean, stdin: boolean, kind: string, files: string[], bad: string }
@@ -112,14 +120,14 @@ function hash_one(a: HashArgs, body: u8[]): i32 {
     return fatal("this port writes blobs only: it does not check the form of a " + a.kind);
   }
   if (!a.write) {
-    put_line(objects.hash_of(a.kind, body));
+    put_line(objects.hash_of(width_here(), a.kind, body));
     return 0;
   }
   let (repo, status) = repo_or_fail();
   if (status != 0) {
     return status;
   }
-  return match (objects.write_loose(repo[0].objects(), a.kind, body)) {
+  return match (objects.write_loose(repo[0].objects(), repo[0].width, a.kind, body)) {
     Ok(name) => {
       put_line(name);
       0
@@ -175,15 +183,15 @@ function shown_path(file: string): string {
 
 // The text of `cat-file -p`: the lines of a tree, or the body of each other
 // kind.
-function pretty(o: objects.Object): Result[u8[], string] {
+function pretty(o: objects.Object, width: i32): Result[u8[], string] {
   if (o.kind == "tree") {
-    return objects.tree_text(o.body);
+    return objects.tree_text(o.body, width);
   }
   return Ok(o.body);
 }
 
 function cat_one(r: refs.Repo, mode: string, name: string): i32 {
-  let found = rev.parse(r, store.open(r.objects()), name);
+  let found = rev.parse(r, r.store(), name);
   let hash = found.hash;
   if (hash.len() == 0) {
     return fatal(if (found.message.len() > 0) { found.message } else { "Not a valid object name " + name });
@@ -208,7 +216,7 @@ function cat_one(r: refs.Repo, mode: string, name: string): i32 {
   } else if (mode == "-s") {
     put_line(o.body.len().to_string());
   } else if (mode == "-p") {
-    match (pretty(o)) {
+    match (pretty(o, r.width)) {
       Ok(text) => {
         put(text);
       },
@@ -231,7 +239,7 @@ function cat_batch(r: refs.Repo, contents: boolean): i32 {
   };
   let lines = input.split("\n");
   let count = if (input.ends_with("\n") || input.len() == 0) { lines.len() - 1 } else { lines.len() };
-  let s = store.open(r.objects());
+  let s = r.store();
   let buf: u8[] = [];
   for i in 0..count {
     let name = lines[i];
@@ -311,10 +319,8 @@ function short_length(s: store.Store, flag: string): i32 {
   if (n < 4) {
     return 4;
   }
-  if (n > 40) {
-    return 40;
-  }
-  return n;
+  // git 2.43 gives 40 digits at most, with SHA-256 names also.
+  return n.min(40);
 }
 
 function rev_parse(argv: string[]): i32 {
@@ -323,7 +329,7 @@ function rev_parse(argv: string[]): i32 {
     return status;
   }
   let r = repo[0];
-  let s = store.open(r.objects());
+  let s = r.store();
   let verify = false;
   let short = 0;
   for x in argv {
@@ -475,7 +481,7 @@ function ls_walk(own l: Listing, hash: string, prefix: u8[], plain: boolean, o: 
   let ok = l.ok;
   let got = store.read(l.store, hash);
   let entries = match (got.object) {
-    Ok(t) => if (t.kind == "tree") { objects.tree_entries(t.body) } else { Err("not a tree") },
+    Ok(t) => if (t.kind == "tree") { objects.tree_entries(t.body, got.store.width) } else { Err("not a tree") },
     Err(why) => Err(why),
   };
   let Ok(list) = entries else {
@@ -551,7 +557,7 @@ function ls_tree(argv: string[]): i32 {
     return status;
   }
   let r = repo[0];
-  let named = rev.parse(r, store.open(r.objects()), names[0]);
+  let named = rev.parse(r, r.store(), names[0]);
   if (named.hash.len() == 0) {
     return fatal("Not a valid object name " + names[0]);
   }
@@ -711,12 +717,12 @@ function log_command(argv: string[]): i32 {
     return fatal("unrecognized argument: " + o.bad);
   }
   let r = repo[0];
-  let named = rev.parse(r, store.open(r.objects()), o.name);
+  let named = rev.parse(r, r.store(), o.name);
   if (named.hash.len() == 0) {
     return fatal(if (named.message.len() > 0) { named.message } else { "ambiguous argument '" + o.name + AMBIGUOUS });
   }
   // git shows no commit for a tree or a blob.
-  let start = rev.parse(r, store.open(r.objects()), o.name + "^{commit}");
+  let start = rev.parse(r, r.store(), o.name + "^{commit}");
   if (start.hash.len() == 0) {
     return 0;
   }
@@ -762,7 +768,7 @@ const MIN_PARALLEL: i32 = 32;
 
 // The names of the parts from `part`, in order. A worker makes the names
 // of each part but the last, which this process makes.
-function index_parts(data: u8[], offsets: i32[], cuts: i32[], part: i32): string[][] {
+function index_parts(data: pack.Window, offsets: i32[], cuts: i32[], part: i32): string[][] {
   let first = cuts[part];
   let end = cuts[part + 1];
   if (part + 2 >= cuts.len()) {
@@ -774,7 +780,7 @@ function index_parts(data: u8[], offsets: i32[], cuts: i32[], part: i32): string
 }
 
 // The names of the objects of a packfile: one part for each CPU.
-function index_names(data: u8[], offsets: i32[]): string[][] {
+function index_names(data: pack.Window, offsets: i32[]): string[][] {
   let count = offsets.len() - 1;
   let parts = if (worker.parallel() && count >= MIN_PARALLEL) { (cpu_count() as i32).max(1).min(16) } else { 1 };
   return index_parts(data, offsets, index.parts_of(offsets, parts), 0);
@@ -811,7 +817,7 @@ function index_pack(argv: string[]): i32 {
     return fatal("packfile name '" + out + "' does not end with '.idx'");
   }
   let stem = if (out.len() > 0) { objects.part(out, 0, out.len() - 4) } else { objects.part(file, 0, file.len() - 5) };
-  let built = match (index.build_with(data, index_names)) {
+  let built = match (index.build_with(pack.whole(data, width_here()), index_names)) {
     Ok(b) => b,
     Err(message) => {
       return fatal(message);
@@ -842,7 +848,7 @@ function pack_path(file: string): string {
 }
 
 // The places of the index in the order of the offsets in the packfile.
-function by_offset(idx: u8[]): i32[] {
+function by_offset(idx: pack.Index): i32[] {
   let keys: i64[] = [];
   for i in 0..pack.count(idx) {
     keys = keys.append(pack.offset_at(idx, i) as i64 << 32 | i as i64);
@@ -856,7 +862,7 @@ function by_offset(idx: u8[]): i32[] {
 }
 
 // The place in `order` of the object at `offset`, or -1.
-function at_offset(idx: u8[], order: i32[], offset: i32): i32 {
+function at_offset(idx: pack.Index, order: i32[], offset: i32): i32 {
   let lo = 0;
   let hi = order.len();
   while (lo < hi) {
@@ -874,19 +880,21 @@ function at_offset(idx: u8[], order: i32[], offset: i32): i32 {
   return -1;
 }
 
-// True if the two checksums of the files hold: the SHA-1 of the packfile at
-// its end and in the index, and the SHA-1 of the index at its end.
-function checksums_ok(data: u8[], idx: u8[]): boolean {
+// True if the two checksums of the files hold: the hash of the packfile at
+// its end and in the index, and the hash of the index at its end.
+function checksums_ok(data: u8[], index: pack.Index): boolean {
+  let idx = index.bytes;
+  let width = index.width;
   let n = data.len();
   let m = idx.len();
-  if (n < 32 || data[0] != b'P' || data[1] != b'A' || data[2] != b'C' || data[3] != b'K') {
+  if (n < 12 + width || data[0] != b'P' || data[1] != b'A' || data[2] != b'C' || data[3] != b'K') {
     return false;
   }
-  let sum = hex.encode(crypto.sha1(array.slice(data, 0, n - 20)));
-  if (sum != hex.encode(array.slice(data, n - 20, n)) || sum != hex.encode(array.slice(idx, m - 40, m - 20))) {
+  let sum = hex.encode(objects.digest(width, array.slice(data, 0, n - width)));
+  if (sum != hex.encode(array.slice(data, n - width, n)) || sum != hex.encode(array.slice(idx, m - 2 * width, m - width))) {
     return false;
   }
-  return hex.encode(crypto.sha1(array.slice(idx, 0, m - 20))) == hex.encode(array.slice(idx, m - 20, m));
+  return hex.encode(objects.digest(width, array.slice(idx, 0, m - width))) == hex.encode(array.slice(idx, m - width, m));
 }
 
 // Checks each object of one packfile: its chain of deltas gives an object
@@ -898,10 +906,12 @@ function verify_one(file: string, verbose: boolean): boolean {
     eprint("fatal: Cannot open existing pack file '" + file + "'");
     return false;
   };
-  let Ok(idx) = read_file_bytes(objects.part(path, 0, path.len() - 5) + ".idx") else {
+  let Ok(bytes) = read_file_bytes(objects.part(path, 0, path.len() - 5) + ".idx") else {
     eprint("fatal: Cannot open existing pack file '" + file + "'");
     return false;
   };
+  let idx = pack.Index { bytes: bytes, width: width_here() };
+  let whole = pack.whole(data, idx.width);
   if (!pack.index_ok(idx) || !checksums_ok(data, idx)) {
     return false;
   }
@@ -911,13 +921,13 @@ function verify_one(file: string, verbose: boolean): boolean {
   for k in 0..order.len() {
     let name = pack.hex_name_at(idx, order[k]);
     let offset = pack.offset_at(idx, order[k]);
-    let Ok(chain) = pack.chain_of(data, (name: u8[]): i32 => pack.offset_of(idx, name), offset) else {
+    let Ok(chain) = pack.chain_in((at: i32): pack.Window => whole, (name: u8[]): i32 => pack.offset_of(idx, name), offset) else {
       return false;
     };
-    let Ok(o) = pack.object_at(data, (name: u8[]): i32 => pack.offset_of(idx, name), offset) else {
+    let Ok(o) = pack.object_at(whole, (name: u8[]): i32 => pack.offset_of(idx, name), offset) else {
       return false;
     };
-    if (objects.hash_of(o.kind, o.body) != name) {
+    if (objects.hash_of(idx.width, o.kind, o.body) != name) {
       return false;
     }
     let depth = chain.len() - 1;
@@ -925,8 +935,8 @@ function verify_one(file: string, verbose: boolean): boolean {
       chains = chains.append(0);
     }
     chains = chains.with(depth, chains[depth] + 1);
-    let end = if (k + 1 < order.len()) { pack.offset_at(idx, order[k + 1]) } else { data.len() - 20 };
-    let line = name + " " + (o.kind + "      ").take(6) + " " + pack.entry_at(data, offset).size.to_string() + " " + (end - offset).to_string() + " " + offset.to_string();
+    let end = if (k + 1 < order.len()) { pack.offset_at(idx, order[k + 1]) } else { data.len() - idx.width };
+    let line = name + " " + (o.kind + "      ").take(6) + " " + pack.entry_in(whole, offset).size.to_string() + " " + (end - offset).to_string() + " " + offset.to_string();
     if (depth > 0) {
       let base = at_offset(idx, order, chain[1]);
       line = line + " " + depth.to_string() + " " + pack.hex_name_at(idx, base);

@@ -15,6 +15,8 @@ It preserves prefix and suffix SEI arrays after the parameter sets.
 Other HEVC configuration array types return `Unsupported`.
 
 The functions validate framing and parameter-set NAL types.
+AVC SPS, PPS, and SPS extension headers require a nonzero reference indicator.
+This rule follows ITU-T H.264 (August 2024), clause 7.4.1.
 HEVC VPS and SPS headers require temporal identifier zero. PPS and SEI headers retain temporal identifiers zero through six.
 These header rules follow ITU-T H.265 (July 2024), clause 7.4.2.2.
 
@@ -185,7 +187,7 @@ function unit_kind_ok(input: [u8], pos: i32, nal_type: i32, hevc: boolean): bool
     return false;
   }
   if (!hevc) {
-    return true;
+    return (input[pos] & 96u8) != 0u8;
   }
   let temporal = input[pos + 1] & 7u8;
   return temporal != 0u8 && (nal_type >= 34 || temporal == 1u8);

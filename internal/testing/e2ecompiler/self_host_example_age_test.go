@@ -156,6 +156,8 @@ func TestSelfHostExampleAgeCLI(t *testing.T) {
 			t.Run("passphrase", func(t *testing.T) { agePassphrase(t, oracle, port, dir, keygen, r1) })
 			t.Run("ssh", func(t *testing.T) { ageSSH(t, oracle, port, dir) })
 			t.Run("hybrid", func(t *testing.T) { ageHybrid(t, oracle, port, dir, keygen, r1) })
+			t.Run("plugins", func(t *testing.T) { agePlugins(t, oracle, port, cli, target, keygen) })
+			t.Run("terminal input", func(t *testing.T) { ageTerminalInput(t, oracle, port, dir) })
 		})
 	}
 }
@@ -784,6 +786,11 @@ func ageCtGateSecrets(t *testing.T, valgrind, bin, dir string, plain []byte) {
 		{"an SSH key that does not match", nil, []string{"-d", "-i", "ed25519_other", "ssh.age"}, 1},
 		{"a passphrase", []string{"password"}, []string{"-d", "-o", "p6", "s.age"}, 0},
 		{"a wrong passphrase", []string{"wrong"}, []string{"-d", "s.age"}, 1},
+		{"decrypt with a DES-EDE3-CBC PEM key", []string{"ssh pass"}, []string{"-d", "-i", "rsa2048_pem_3des", "-o", "p9", "ssh.age"}, 0},
+		{"decrypt with an AES-256-CBC PEM key", []string{"ssh pass"}, []string{"-d", "-i", "rsa2048_pem_aes256", "-o", "p10", "ssh.age"}, 0},
+		{"a wrong passphrase for a PEM key", []string{"wrong"}, []string{"-d", "-i", "rsa2048_pem_3des", "ssh.age"}, 1},
+		{"encrypt to a P-256 tag recipient", nil, []string{"-r", ageTagClassic, "-o", "t1.age", "plain"}, 0},
+		{"encrypt to a hybrid tag recipient", nil, []string{"-r", ageTagHybrid, "-o", "t2.age", "plain"}, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, stderr, _, code := gate.runTTY(t, dir, nil, tc.lines, tc.args...)
@@ -792,7 +799,7 @@ func ageCtGateSecrets(t *testing.T, valgrind, bin, dir string, plain []byte) {
 			}
 		})
 	}
-	for _, p := range []string{"p3", "p4", "p5"} {
+	for _, p := range []string{"p3", "p4", "p5", "p9", "p10"} {
 		if got, err := os.ReadFile(filepath.Join(dir, p)); err != nil || !bytes.Equal(got, plain) {
 			t.Errorf("%s differs from the plaintext", p)
 		}

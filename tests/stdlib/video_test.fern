@@ -470,6 +470,56 @@ function hevc_temporal_config(): test.TestOutcome {
   return test.pass();
 }
 
+function avc_reference_record(at: i32, header: u8): u8[] {
+  let record: u8[] = [1, 100, 0, 40, 255, 225, 0, 2, 103, 42, 1, 0, 2, 104, 19, 253, 248, 248, 1, 0, 2, 109, 99];
+  return record.with(at, header);
+}
+
+function avc_reference_case(kind: i32, at: i32, reference: i32, forbidden: i32): test.TestOutcome {
+  let header = (kind | reference << 5 | forbidden) as u8;
+  let record = avc_reference_record(at, header);
+  let valid = reference != 0 && forbidden == 0;
+  match (nal.avc_config(record, frame.default_limits())) {
+    Ok(config) => {
+      if (!valid) {
+        return test.fail("invalid AVC configuration reference header");
+      }
+      let sps: u8[] = [0, 0, 0, 1, record[8], record[9], 0, 0, 0, 1, record[21], record[22]];
+      let pps: u8[] = [0, 0, 0, 1, record[13], record[14]];
+      if (config.length_size != 4 || config.csd0 != sps || config.csd1 != pps) {
+        return test.fail("AVC configuration preserves reference header bytes");
+      }
+    },
+    Err(error) => {
+      if (valid || error != frame.Header) {
+        return test.fail("AVC configuration reference header category");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function avc_reference_headers(): test.TestOutcome {
+  for (kind, at) in [(7, 8), (8, 13), (13, 21)] {
+    for reference in 0..4 {
+      for forbidden in [0, 128] {
+        if let test.Fail(message) = avc_reference_case(kind, at, reference, forbidden) {
+          return test.fail(message);
+        }
+      }
+    }
+  }
+  let record = avc_reference_record(8, 7u8);
+  let limits = frame.Limits { max_pixels: 1, max_packet_bytes: record.len() - 1 };
+  match (nal.avc_config(record, limits)) {
+    Err(frame.Limit) => {},
+    _ => {
+      return test.fail("AVC packet budget precedes invalid reference header");
+    }
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let r = test.new("video codecs");
   r = r.it("QTRLE matches FFmpeg pixels and roundtrips delta frames", reference);
@@ -479,5 +529,6 @@ function main(): i32 {
   r = r.it("IVF packets, timestamps, and resource limits", ivf_packets);
   r = r.it("AVC and HEVC configuration and Annex B packets", nal_packets);
   r = r.it("HEVC configuration temporal headers", hevc_temporal_config);
+  r = r.it("AVC configuration reference headers", avc_reference_headers);
   return r.finish();
 }
