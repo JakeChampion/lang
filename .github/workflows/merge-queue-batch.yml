@@ -1,0 +1,68 @@
+name: Merge queue batch
+
+# The suite of one batch of the merge queue (scripts/merge-queue, and
+# merge-queue.yml for the design). merge-queue.yml dispatches this workflow on
+# the branch `merge-queue/batch`, which is main with the pull requests of the
+# batch merged on it.
+#
+# `validate` is the same call that ci-main.yml makes, so the batch gets every
+# lane. `CI verdict` gives the tested commit the check that a ruleset on main
+# requires. `land` then moves main to that commit, or splits a red batch.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# The branch is the lock of the queue, so there is one batch at a time. A
+# second dispatch waits.
+concurrency:
+  group: merge-queue-batch
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate
+    if: ${{ github.ref == 'refs/heads/merge-queue/batch' }}
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+    permissions:
+      contents: write
+      actions: write
+      pull-requests: read
+
+  verdict:
+    name: CI verdict
+    needs: [validate]
+    if: ${{ always() && github.ref == 'refs/heads/merge-queue/batch' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: The suite of the batch passed
+        env:
+          RESULT: ${{ needs.validate.result }}
+        run: |
+          echo "the suite of the batch concluded $RESULT"
+          [ "$RESULT" = success ]
+
+  land:
+    name: Land the batch
+    needs: [validate, verdict]
+    if: ${{ always() && github.ref == 'refs/heads/merge-queue/batch' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.AUTO_REBASE_TOKEN || secrets.GITHUB_TOKEN }}
+      - name: Land the batch
+        env:
+          GH_TOKEN: ${{ secrets.AUTO_REBASE_TOKEN || secrets.GITHUB_TOKEN }}
+          MERGE_QUEUE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RESULT: ${{ needs.validate.result }}
+        run: scripts/merge-queue land "$RESULT"

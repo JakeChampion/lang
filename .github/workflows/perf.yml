@@ -86,9 +86,12 @@ jobs:
       # Strict, unlike the self-host lanes below: `.text` is a static count
       # that moves only when codegen does, and the `.ir` rows whose spread is
       # not zero (the string-keyed map's hash seed) carry their own tolerance.
+      # A batch of the merge queue is not strict. Its pull requests each
+      # passed this gate alone, and the rebank-main job sets the rows that
+      # they move together.
       - name: Compare against the baseline
         env:
-          FERN_CI_PERF_GATE_STRICT: "1"
+          FERN_CI_PERF_GATE_STRICT: ${{ github.ref == 'refs/heads/merge-queue/batch' && '0' || '1' }}
           FERN_PERF_CORRECTED_OUT: ${{ runner.temp }}/corrected/perf-baseline.txt
         run: scripts/ci-check-perf .github/perf-baseline.txt "${{ runner.temp }}/perf-report.txt"
 

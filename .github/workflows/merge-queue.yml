@@ -1,0 +1,63 @@
+name: Merge queue
+
+# The merge queue of this repository (scripts/merge-queue). GitHub has merge
+# queues only for a repository of an organization, so a label, a branch and
+# these two workflows do the same work.
+#
+# A pull request enters the queue with the `merge-queue` label. This workflow
+# makes the next batch: it merges the labelled pull requests whose own
+# `CI verdict` is green on the tip of main, pushes the result to
+# `merge-queue/batch`, and dispatches merge-queue-batch.yml there. That
+# workflow runs the full suite and moves main to the tested commit.
+#
+# It runs when something can make a pull request ready: a label, the end of a
+# CI run, the end of a batch (merge-queue-batch.yml dispatches it), and a
+# schedule that catches a lost event.
+#
+# `pull_request_target` runs the script of main, not the script of the pull
+# request, with a token that can write. The job checks out main and never the
+# head of the pull request as code.
+#
+# THE TOKEN. A push with the default token cannot change a file in
+# .github/workflows/, so a batch with such a change needs AUTO_REBASE_TOKEN
+# with the workflow scope.
+on:
+  pull_request_target:
+    types: [labeled]
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+  schedule:
+    - cron: "11,41 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+  checks: read
+
+# One run at a time, and one waiter. A waiter that a newer event replaces loses
+# nothing: each run reads the whole queue.
+concurrency:
+  group: merge-queue
+  cancel-in-progress: false
+
+jobs:
+  form:
+    name: Form the next batch
+    if: >-
+      ${{ (github.event_name != 'pull_request_target' || github.event.label.name == 'merge-queue')
+          && (github.event_name != 'workflow_run' || github.event.workflow_run.event == 'pull_request') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.AUTO_REBASE_TOKEN || secrets.GITHUB_TOKEN }}
+      - name: Form the next batch
+        env:
+          GH_TOKEN: ${{ secrets.AUTO_REBASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: scripts/merge-queue form
