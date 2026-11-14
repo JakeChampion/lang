@@ -100,7 +100,7 @@ function live_blocks(c: i32): void {
   for count in [-1, 0, 2, 2147483647] {
     require(!heap.valid(c, heap.Heap { ...live, blocks: [heap.Block { ...b, rc: count }] }), "unsupported live credit count");
   }
-  require(!heap.valid(c, heap.Heap { ...live, blocks: [heap.Block { ...b, header: 0 as i64 }] }), "overwritten capacity");
+  require(!heap.valid(c, heap.Heap { ...live, blocks: [heap.Block { ...b, header: (c + 1) as i64 }] }), "overwritten capacity");
   for address in [b.address - 8, b.address + 1, b.address + 8, live.cursor, 9223372036854775807 as i64] {
     require(!heap.valid(c, heap.Heap { ...live, blocks: [heap.Block { ...b, address: address }] }), "block extent");
   }
