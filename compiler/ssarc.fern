@@ -4755,7 +4755,7 @@ function with_update(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Pla
 function update_base(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, defer0: boolean, link: Link, keep: i32): irtables.LowerState {
   let scratch_start = r.scratch_start;
   if (link.root >= 0) {
-    return linked_base(r, f, ins, link, keep);
+    return linked_base(r, f, p, ins, link, keep);
   }
   if (defer0 && p.grows[ins.result] >= 0) {
     return field_base(r, f, p, ins, keep);
@@ -4772,7 +4772,10 @@ function update_base(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Pla
   return sole_owned_base(r, f, ins.args[0], scratch, keep);
 }
 
-function linked_base(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, link: Link, keep: i32): irtables.LowerState {
+// Once the receiver is not the parameter's box, it is a box of the frame's
+// own. When the plan proves that no other unit holds it, the update writes
+// it with no test.
+function linked_base(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, link: Link, keep: i32): irtables.LowerState {
   let scratch_start = r.scratch_start;
   let scratch = scratch_start;
   r = reserve(r, scratch + 1);
@@ -4782,7 +4785,12 @@ function linked_base(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst,
   r = emit(r, ir.op_if(0));
   r = borrowed_with_base(r, f, ins, scratch, link.out, keep);
   r = emit(r, ir.op_else());
-  r = sole_owned_base(r, f, ins.args[0], scratch, keep);
+  if (p.linked_receivers[ins.result]) {
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_store_local(scratch));
+  } else {
+    r = sole_owned_base(r, f, ins.args[0], scratch, keep);
+  }
   return emit(r, ir.op_end());
 }
 
