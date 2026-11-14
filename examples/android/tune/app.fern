@@ -208,12 +208,12 @@ function part(path: string, at: i64, n: i32): u8[] {
   return out;
 }
 
-function stream(s: tune.Sound): audio.Music {
-  return audio.Music { ptr: s.ptr, rate: s.rate, channels: s.channels, ring: s.ring };
+function stream(s: tune.Sound): audio.Buffered {
+  return audio.Buffered { ptr: s.ptr, rate: s.rate, channels: s.channels, ring: s.ring };
 }
 
 function open(rate: i32, channels: i32): tune.Sound {
-  let m = audio.music(rate, channels);
+  let m = audio.buffered(rate, channels);
   if (m.ptr != 0 as usize && m.rate != rate) {
     // The engine gives samples at the rate of the file only.
     m.close();

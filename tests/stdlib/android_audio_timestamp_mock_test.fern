@@ -10,7 +10,7 @@ function calls(): i32;
 function available(value: i32, position: i64, time_ns: i64, channels: i32): boolean {
   mode(value);
   let stream = audio.Stream { ptr: 123 as usize, rate: 48000 };
-  let stamp = if (channels == 0) { stream.timestamp() } else { audio.Music { ptr: stream.ptr, rate: stream.rate, channels: channels, ring: 0 as usize }.timestamp() };
+  let stamp = if (channels == 0) { stream.timestamp() } else { audio.Music { ptr: stream.ptr, rate: stream.rate, channels: channels }.timestamp() };
   let Some(anchor) = stamp else {
     return false;
   };
@@ -20,7 +20,7 @@ function available(value: i32, position: i64, time_ns: i64, channels: i32): bool
 function unavailable(value: i32, channels: i32): boolean {
   mode(value);
   let stream = audio.Stream { ptr: 123 as usize, rate: 48000 };
-  let stamp = if (channels == 0) { stream.timestamp() } else { audio.Music { ptr: stream.ptr, rate: stream.rate, channels: channels, ring: 0 as usize }.timestamp() };
+  let stamp = if (channels == 0) { stream.timestamp() } else { audio.Music { ptr: stream.ptr, rate: stream.rate, channels: channels }.timestamp() };
   if let Some(_) = stamp {
     return false;
   }
@@ -60,7 +60,7 @@ function repeated(channels: i32): i32 {
 function main(): i32 {
   for channels in [0, 1, 2] {
     mode(0);
-    let absent = if (channels == 0) { audio.Stream { ptr: 0 as usize, rate: 0 }.timestamp() } else { audio.Music { ptr: 0 as usize, rate: 0, channels: channels, ring: 0 as usize }.timestamp() };
+    let absent = if (channels == 0) { audio.Stream { ptr: 0 as usize, rate: 0 }.timestamp() } else { audio.Music { ptr: 0 as usize, rate: 0, channels: channels }.timestamp() };
     if (absent.is_some() || calls() != 0) {
       return 101;
     }
