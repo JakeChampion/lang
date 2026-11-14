@@ -42,13 +42,18 @@ function text_unit(output: string, architecture: string): Unit {
       lines = lines.append(line);
     }
   }
-  if (names.index(labels).duplicate >= 0 || lines.len() < 2 || lines[0] != ".text") {
+  // An arm64 unit starts with the .arch line of the baseline.
+  let head = if (architecture == "arm64") { 1 } else { 0 };
+  if (names.index(labels).duplicate >= 0 || lines.len() < head + 2 || lines[head] != ".text") {
+    return Unit { lines: [], ok: false };
+  }
+  if (head == 1 && lines[0] != util.ARM64_ARCH) {
     return Unit { lines: [], ok: false };
   }
   let body: string[] = [];
   let tail: string[] = [];
   let in_pools = false;
-  for i in 1..lines.len() {
+  for i in head + 1..lines.len() {
     let line = lines[i];
     if (line == ".section .data") {
       in_pools = true;
