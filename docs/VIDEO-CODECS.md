@@ -298,6 +298,7 @@ They do not identify access units or supply timestamps. A muxer still needs pack
 
 It reads version-one AVC and HEVC configuration records for Android codec configuration data.
 AVC includes SPS, PPS, and optional SPS extensions.
+Their reference indicator must be nonzero under ITU-T H.264 (August 2024), clause 7.4.1.
 
 HEVC includes VPS, SPS, PPS, and prefix or suffix SEI arrays.
 The conversion preserves NAL payload bytes. It does not validate their coded syntax.
@@ -592,6 +593,10 @@ Native and WASI ranges match an independent parser. Converted streams retain ide
 It also extracts fresh HEVC Main and Main 10 configuration records from FFmpeg MP4 output.
 Forty-eight native and WASI controls check their VPS, SPS, and PPS temporal headers against clause 7.4.2.2.
 CBS traces those headers separately from specification-based refusal decisions. Reconstructed configuration prefixes preserve every decoded plane.
+
+Four AVC configuration records add 32 native and WASI reference-header controls.
+SPS and PPS header fields match independent CBS traces. Native configuration prefixes retain all decoded planes.
+Synthetic unit controls also cover SPS extension headers and forbidden bits.
 
 `scripts/check-video-qtrle-mov-interop` compares five fresh MOV files with FFprobe and FFmpeg.
 Native and real WASI input preserve every packet field and decoded ARGB sample.
