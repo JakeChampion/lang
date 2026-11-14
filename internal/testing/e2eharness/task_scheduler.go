@@ -41,10 +41,9 @@ function main(): i32 {
   let st: async.TaskStatus[i32] = async.task_start(t);
   let parks: i32 = 0;
   let out: i32 = 0 - 1;
-  let going: boolean = true;
-  while (going) {
+  while (true) {
     match (st) {
-      Done(v) => { out = v; going = false; },
+      Done(v) => { out = v; break; },
       Suspended(w) => {
         parks = parks + 1;
         let woke: async.Wake = async.wait_any(w.set, w.until);
