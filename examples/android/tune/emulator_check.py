@@ -146,6 +146,21 @@ def main(apk, out):
         if session_state() != state:
             fail(f"the widget button {action} did not reach the player with no window: " + session_text()[:400])
 
+    # The headphones come out: Android sends AUDIO_BECOMING_NOISY, and the
+    # track stops. Only root can send that broadcast. The widget button
+    # then starts the track again.
+    rooted = adb("root", check=False)
+    if "cannot run as root" in rooted:
+        fail("adb root failed, so the check cannot send AUDIO_BECOMING_NOISY: " + rooted.strip())
+    else:
+        adb("wait-for-device")
+        adb("shell", "am", "broadcast", "-a", "android.media.AUDIO_BECOMING_NOISY")
+        time.sleep(2)
+        if session_state() != 2:
+            fail("the track did not stop when the headphones came out: " + session_text()[:400])
+        adb("shell", "am", "broadcast", "-a", "dev.fern.tune.widget.PLAY", "-n", PACKAGE + "/.Widget")
+        time.sleep(2)
+
     # The back key closes the app when no track plays. The app tells where
     # the player was. The media key for the track before starts a track at
     # its start, and the stop comes 3 seconds later. The shortest tune

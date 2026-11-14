@@ -14,7 +14,7 @@ The two threads take turns in the Fern code of the library: `__fern_busy` is a l
 
 The app draws the pixels itself: `lock` gives the frame of the window, `std/android/draw` draws rectangles and text on it, and `post` shows it. `request_frame` asks the display for its next frame, and the loop then gives `Vsync` to `step` at that vsync, so an app draws each frame of an animation at the time the display shows it. The window covers the whole screen, and `ContentRect` gives the part of it that the system bars and the keyboard leave free. `asset` reads a file that `fern -apk -apk-asset` put in the APK.
 
-Other modules send their own events to the loop thread with `tell`, and the loop gives them to `step` as `Posted` events. `tell` sends to the live loop of the process, which `live_loop` names. `std/android/service` runs a foreground service, `std/android/p2p` uses Wi-Fi Direct, and `std/android/focus` asks for the audio focus. Each one decodes its `Posted` events. An app that uses none of them does not carry their code.
+Other modules send their own events to the loop thread with `tell`, and the loop gives them to `step` as `Posted` events. `tell` sends to the live loop of the process, which `live_loop` names. `std/android/service` runs a foreground service, `std/android/p2p` uses Wi-Fi Direct, `std/android/focus` asks for the audio focus, and `std/android/noisy` tells when the headphones come out. Each one decodes its `Posted` events. An app that uses none of them does not carry their code.
 
 `keep_alive` keeps the loop running after the Destroy of its activity. A music player keeps its loop alive while a track plays: then the loop gives the events of its media session and of its service to `step` with no window. A new activity of the app takes that loop over, and `start` starts no second loop.
 
@@ -218,7 +218,7 @@ function c_mutex_unlock(mutex: usize): i32;
 
 `ContentRect` has the left, top, right and bottom edges, in pixels of the window, of the part of the window that the status bar, the navigation bar and the keyboard leave free. It comes after the window shows and each time that part changes, for example when the keyboard opens. The keyboard counts only for an activity with `android:windowSoftInputMode` set to adjust its size, as `fern -apk` sets it.
 
-`Posted` has the kind and the argument of a message that another module sent with `send`. The kinds from 1 to 12 and from 24 to 27 belong to this module. The kinds from 13 to 23 belong to `std/android/service`, `std/android/p2p`, `std/android/focus` and `std/android/player`. The kinds from 28 to 33 belong to `std/android/session`. The kinds from 100 are free for the app.
+`Posted` has the kind and the argument of a message that another module sent with `send`. The kinds from 1 to 12 and from 24 to 27 belong to this module. The kinds from 13 to 23 belong to `std/android/service`, `std/android/p2p`, `std/android/focus` and `std/android/player`. The kinds from 28 to 33 belong to `std/android/session`, and kind 34 belongs to `std/android/noisy`. The kinds from 100 are free for the app.
 
 ```fern
 <<events>>=

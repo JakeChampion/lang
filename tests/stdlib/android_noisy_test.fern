@@ -1,0 +1,23 @@
+import "std/android";
+import "std/android/noisy";
+import "std/test";
+
+function the_noisy_event(): test.TestOutcome {
+  return test.assert_true(noisy.event(android.Posted(34, 0 as usize)));
+}
+
+function other_events(): test.TestOutcome {
+  for e in [android.Posted(18, 2 as usize), android.Posted(33, 0 as usize), android.Posted(100, 34 as usize), android.Resume] {
+    if (noisy.event(e)) {
+      return test.fail("an event of another kind is noisy");
+    }
+  }
+  return test.assert_true(true);
+}
+
+function main(): i32 {
+  let suite = test.new("Android audio that becomes noisy");
+  suite = suite.it("kind 34 is the noisy broadcast", the_noisy_event);
+  suite = suite.it("other events are not", other_events);
+  return suite.finish();
+}
