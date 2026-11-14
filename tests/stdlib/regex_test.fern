@@ -225,7 +225,7 @@ function test_word_boundary_errors(): test.TestOutcome {
   return test.assert_eq_array(got, [
     "regex byte 1: unknown word boundary",
     "regex byte 0: unknown word boundary",
-    "regex byte 0: unknown word boundary",
+    "regex byte 2: invalid repetition count",
   ]);
 }
 

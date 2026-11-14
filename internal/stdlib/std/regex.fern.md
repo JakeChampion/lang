@@ -127,6 +127,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<36 function __rx_replace_captures(text: string, tmpl: string, all: RCaps[]): u8[]>>
 <<typed decode errors>>
+
+<<errors of regex-syntax>>
 ```
 
 
@@ -340,11 +342,14 @@ function __rx_greed(n: RNode, lazy: boolean): RNode {
 // repetition is there, and -2 after an error.
 struct RBounds { n: i32, m: i32, inf: boolean, end: i32 }
 
-// The decimal at `at`, and the offset after it. A missing number gives -1,
-// and a number over MAX_REPEAT records an error and gives -2.
-function __rx_decimal(cx: RCtx, at: i32, pos: i32): (i32, i32) {
+// The decimal at `at`, and the offset after it. As in regex-syntax, white
+// space can come before and after the digits, and under `(?x)` between
+// them. A missing number gives -1, and a number over MAX_REPEAT records an
+// error and gives -2.
+function __rx_decimal(cx: RCtx, at: i32, pos: i32, f: i32): (i32, i32) {
   let p = cx.p;
-  let j = at;
+  let j = __rx_white(p, at, 0);
+  let start = j;
   let n = 0;
   while (j < p.len() && p[j] >= 48 && p[j] <= 57) {
     n = n * 10 + (p[j] as i32 - 48);
@@ -352,39 +357,56 @@ function __rx_decimal(cx: RCtx, at: i32, pos: i32): (i32, i32) {
       __rx_error(cx, RepeatLimit, pos);
       return (-2, j);
     }
-    j += 1;
+    j = __rx_skip(p, j + 1, f);
   }
-  if (j == at) {
+  if (j == start) {
     return (-1, j);
   }
-  return (n, j);
+  return (n, __rx_white(p, j, f));
+}
+
+// The offset after the white space at `i`, and under `(?x)` after the
+// comments too.
+function __rx_white(p: string, i: i32, f: i32): i32 {
+  let j = i;
+  while (j < p.len() && __sx_is_ws(__sx_cp(p, j))) {
+    j = __rx_skip(p, j + __sx_len(p, j), f);
+  }
+  return j;
 }
 
 // `{n}`, `{n,}` or `{n,m}` at `pos`.
-function __rx_bounds(cx: RCtx, pos: i32): RBounds {
+function __rx_bounds(cx: RCtx, pos: i32, f: i32): RBounds {
   let p = cx.p;
   let bad = RBounds { n: 0, m: 0, inf: false, end: -2 };
-  let (n, j) = __rx_decimal(cx, pos + 1, pos);
+  let (n, j) = __rx_decimal(cx, __rx_skip(p, pos + 1, f), pos, f);
   if (n == -2) {
     return bad;
   }
   let b = RBounds { n: n, m: n, inf: false, end: j + 1 };
   if (n >= 0 && j < p.len() && p[j] == 44) {  // ','
-    let (m, k) = __rx_decimal(cx, j + 1, pos);
-    if (m == -2) {
+    b = __rx_upper_bound(cx, pos, f, n, j);
+    if (b.end == -2) {
       return bad;
     }
-    b = RBounds { n: n, m: m, inf: m < 0, end: k + 1 };
   }
   if (n < 0 || b.end > p.len() || p[b.end - 1] != 125 || !b.inf && b.m < n) {
     __rx_error(cx, InvalidRepeat, pos);
     return bad;
   }
-  return b;
+  return RBounds { ...b, end: __rx_skip(p, b.end, f) };
+}
+
+// The bounds `{n,}` or `{n,m}` from the `,` at `comma`.
+function __rx_upper_bound(cx: RCtx, pos: i32, f: i32, n: i32, comma: i32): RBounds {
+  let p = cx.p;
+  let k = __rx_skip(p, comma + 1, f);
+  let (m, e) = if (k < p.len() && p[k] == 125) { (-1, k) } else { __rx_decimal(cx, k, pos, f) };
+  return RBounds { n: n, m: m, inf: m < 0, end: if (m == -2) { -2 } else { e + 1 } };
 }
 
 // The repetition at `pos`: `*`, `+`, `?` or a count.
-function __rx_quantifier(cx: RCtx, pos: i32): RBounds {
+function __rx_quantifier(cx: RCtx, pos: i32, f: i32): RBounds {
   let c = cx.p[pos] as i32;
   if (c == 42) {
     return RBounds { n: 0, m: 0, inf: true, end: pos + 1 };
@@ -396,7 +418,7 @@ function __rx_quantifier(cx: RCtx, pos: i32): RBounds {
     return RBounds { n: 0, m: 1, inf: false, end: pos + 1 };
   }
   if (c == 123) {  // '{'
-    return __rx_bounds(cx, pos);
+    return __rx_bounds(cx, pos, f);
   }
   return RBounds { n: 0, m: 0, inf: false, end: -1 };
 }
@@ -410,7 +432,7 @@ function __rx_quant(cx: RCtx, depth: i32, i: i32, g: i32, f: i32): RParse {
     if (pos >= cx.p.len()) {
       return r;
     }
-    let b = __rx_quantifier(cx, pos);
+    let b = __rx_quantifier(cx, pos, r.f);
     if (b.end == -1) {
       return r;
     }
@@ -2863,8 +2885,9 @@ function __rx_prop(name: string): i32[] {
   return rs;
 }
 
-// `\pL`, `\p{...}`, `\PL` or `\P{...}` at `i`. `\P` and `!=` give the
-// complement. A property needs `(?u)`.
+// `\pL`, `\p{...}`, `\PL` or `\P{...}` at `i`. `\P` gives the complement.
+// `!=` selects a value as `=` does, as in regex-syntax 0.8.2. A property
+// needs `(?u)`.
 function __rx_property(cx: RCtx, i: i32, f: i32): RItem {
   let p = cx.p;
   let lo = i + 2;
@@ -2879,11 +2902,6 @@ function __rx_property(cx: RCtx, i: i32, f: i32): RItem {
   }
   let name = slice_unchecked(p, lo, hi) + "";
   let negated = p[i + 1] == 80;
-  let bang = __memchr(name, 33, 0);
-  if (bang >= 0 && bang + 1 < name.len() && name[bang + 1] == 61) {
-    name = slice_unchecked(name, 0, bang) + slice_unchecked(name, bang + 1, name.len());
-    negated = !negated;
-  }
   let Some(found) = unicode.property_ranges(name) else {
     __rx_error(cx, UnknownProperty, i);
     return __rx_bad_item();
@@ -2918,6 +2936,9 @@ function __rx_char_escape(cx: RCtx, i: i32, f: i32): RItem {
 function __rx_hex_escape(cx: RCtx, i: i32, f: i32): RItem {
   let p = cx.p;
   let width = if (p[i + 1] == 120) { 2 } else if (p[i + 1] == 117) { 4 } else { 8 };
+  if ((f & RX_X) != 0) {
+    return __rx_hex_spaced(cx, i, f, width);
+  }
   let lo = i + 2;
   let hi = lo + width;
   let end = hi;
@@ -2926,12 +2947,37 @@ function __rx_hex_escape(cx: RCtx, i: i32, f: i32): RItem {
     hi = __memchr(p, 125, lo);
     end = hi + 1;
   }
-  let cp = if (hi < lo || hi > p.len()) { -1 } else { __rx_hex(p, lo, hi) };
+  return __rx_hex_item(cx, i, f, if (hi < lo || hi > p.len()) { -1 } else { __rx_hex(p, lo, hi) }, end);
+}
+
+// The item of the code point `cp` of a hexadecimal escape at `i`, or an
+// error for a value that is not a character.
+function __rx_hex_item(cx: RCtx, i: i32, f: i32, cp: i32, end: i32): RItem {
   if (cp < 0 || cp > __rx_top(f) || cp >= 55296 && cp <= 57343) {
     __rx_error(cx, UnknownEscape, i);
     return __rx_bad_item();
   }
   return RItem { rs: [], cp: cp, pos: end };
+}
+
+// A hexadecimal escape under `(?x)`, where white space and comments can
+// come between its parts.
+function __rx_hex_spaced(cx: RCtx, i: i32, f: i32, width: i32): RItem {
+  let p = cx.p;
+  let j = __rx_skip(p, i + 2, f);
+  let brace = j < p.len() && p[j] == 123;
+  let hex = "";
+  if (brace) {
+    j = __rx_skip(p, j + 1, f);
+  }
+  while (j < p.len() && (if (brace) { p[j] != 125 } else { hex.len() < width })) {
+    hex += slice_unchecked(p, j, j + 1);
+    j = __rx_skip(p, j + 1, f);
+  }
+  if (brace) {
+    j = if (j < p.len()) { __rx_skip(p, j + 1, f) } else { p.len() + 1 };
+  }
+  return __rx_hex_item(cx, i, f, if (j > p.len()) { -1 } else { __rx_hex(hex, 0, hex.len()) }, j);
 }
 
 // The value of the hexadecimal digits from `lo` to `hi`, or -1.
@@ -2962,7 +3008,9 @@ function __rx_assertion(cx: RCtx, i: i32, g: i32, f: i32): RParse {
   }
   let k = at;
   let pos = i + 2;
-  if (at == 2 && pos < p.len() && p[pos] == 123) {
+  let after = __rx_skip(p, pos + 1, f);
+  let named = after < p.len() && __sx_boundary_char(p[after]);
+  if (at == 2 && pos < p.len() && p[pos] == 123 && named) {
     let close = __memchr(p, 125, pos);
     k = if (close < 0) { -1 } else { __rx_boundary_kind(slice_unchecked(p, pos + 1, close) + "") };
     if (k < 0) {
@@ -3070,7 +3118,7 @@ function __rx_class_range(cx: RCtx, pos: i32, f: i32): RItem {
   let p = cx.p;
   let lo = __rx_class_item(cx, pos, f);
   let dash = lo.pos;
-  if (lo.pos < 0 || lo.cp < 0 || dash + 1 >= p.len() || p[dash] != 45 || p[dash + 1] == 93) {
+  if (lo.pos < 0 || lo.cp < 0 || dash + 1 >= p.len() || p[dash] != 45 || p[dash + 1] == 93 || p[dash + 1] == 45) {
     if (lo.cp < 0) {
       return lo;
     }
@@ -4130,6 +4178,1080 @@ pub struct Regex {
   full: i32[],
   rfull: i32[],
 }
+```
+
+### Errors of regex-syntax
+
+`check` parses a pattern with the rules of regex-syntax 0.8.2, the parser of the `regex` crate. It gives the first error that regex-syntax reports, with the same text and the same span. ripgrep writes these errors, and a tool that reads the patterns of ripgrep can write them too. The parse follows the order of regex-syntax: a parse error comes first, then a group that is too deep, then a Unicode class that regex-syntax does not find. `report` writes the error as regex-syntax does, with a line of `^` under each span.
+
+```fern
+<<errors of regex-syntax>>=
+// An error of a pattern as the regex crate reports it: the text of the
+// error, the pattern, the span of the error in bytes, and a second span, or
+// -1 for none.
+pub struct SyntaxError { message: string, pattern: string, start: i32, end: i32, aux_start: i32, aux_end: i32 }
+
+// A class to look up after the parse: a Unicode class (kind 0) with the
+// text of its name, or a literal outside ASCII in a set (kind 1). `unicode`
+// says whether `(?u)` is on there.
+struct SxCheck { kind: i32, start: i32, end: i32, text: string, unicode: boolean }
+
+// The state of a check: the pattern, the first error, the names of the
+// groups with their spans, the classes to look up, and the span of the
+// first group that is too deep.
+struct SxCtx {
+  p: string,
+  err: Cell[Option[SyntaxError]],
+  names: Cell[string[]],
+  name_spans: Cell[i32[]],
+  checks: Cell[SxCheck[]],
+  deep: Cell[i32[]],
+}
+
+// An item of a set, or a primitive: its kind, its offsets, and for a
+// literal its code point. `hex` marks a byte that `\x` gives.
+struct SxItem { kind: i32, start: i32, end: i32, cp: i32, hex: boolean }
+
+const SX_LITERAL: i32 = 0;
+
+const SX_ASSERTION: i32 = 1;
+
+const SX_CLASS: i32 = 2;
+
+const SX_NEST_LIMIT: i32 = 250;
+
+const SX_EOF: string = "incomplete escape sequence, reached end of pattern prematurely";
+
+const SX_REPEAT_MISSING: string = "repetition operator missing expression";
+
+const SX_UNCLOSED_COUNT: string = "unclosed counted repetition";
+
+const SX_UNCLOSED_CLASS: string = "unclosed character class";
+
+// check gives the first error of `pattern` that the regex crate reports,
+// or None when it accepts the pattern. `unicode` is false for a pattern
+// that starts in the mode of `(?-u)`. A property that the crate knows, but
+// that this module does not, is not an error here.
+pub function check(pattern: string, unicode: boolean): Option[SyntaxError] {
+  let none: string[] = [];
+  let spans: i32[] = [];
+  let checks: SxCheck[] = [];
+  let cx = SxCtx { p: pattern, err: cell_new(None), names: cell_new(none), name_spans: cell_new(spans), checks: cell_new(checks), deep: cell_new(spans) };
+  if (__sx_alt(cx, 0, -1, false, unicode, 0) < 0) {
+    return cx.err.get();
+  }
+  let deep = cx.deep.get();
+  if (deep.len() == 2) {
+    return Some(__sx_error(cx, "exceed the maximum number of nested parentheses/brackets (250)", deep[0], deep[1]));
+  }
+  for c in cx.checks.get() {
+    let why = __sx_lookup(c);
+    if (why != "") {
+      return Some(__sx_error(cx, why, c.start, c.end));
+    }
+  }
+  return None;
+}
+
+function __sx_error(cx: SxCtx, message: string, start: i32, end: i32): SyntaxError {
+  return SyntaxError { message: message, pattern: cx.p, start: start, end: end, aux_start: -1, aux_end: -1 };
+}
+
+// Records the first error and gives -1.
+function __sx_fail(cx: SxCtx, message: string, start: i32, end: i32): i32 {
+  return __sx_fail2(cx, message, start, end, -1, -1);
+}
+
+function __sx_fail2(cx: SxCtx, message: string, start: i32, end: i32, aux_start: i32, aux_end: i32): i32 {
+  if let None = cx.err.get() {
+    cx.err.set(Some(SyntaxError { message: message, pattern: cx.p, start: start, end: end, aux_start: aux_start, aux_end: aux_end }));
+  }
+  return -1;
+}
+
+// The count of bytes of the character of UTF-8 at `i`.
+function __sx_len(p: string, i: i32): i32 {
+  let c = p[i];
+  let n = if (c < 192u8) { 1 } else if (c < 224u8) { 2 } else if (c < 240u8) { 3 } else { 4 };
+  return if (i + n > p.len()) { p.len() - i } else { n };
+}
+
+// The code point at `i`.
+function __sx_cp(p: string, i: i32): i32 {
+  let Some(dec) = utf8.decode_at(p, i) else {
+    return p[i] as i32;
+  };
+  return dec.0;
+}
+
+// Whether the code point is White_Space, as Rust's char::is_whitespace.
+function __sx_is_ws(cp: i32): boolean {
+  if (cp < 128) {
+    return cp == 32 || cp >= 9 && cp <= 13;
+  }
+  return __rx_in([133, 133, 160, 160, 5760, 5760, 8192, 8202, 8232, 8233, 8239, 8239, 8287, 8287, 12288, 12288], cp);
+}
+
+// The offset after the white space and the comments at `i`, under `(?x)`.
+function __sx_space(p: string, i0: i32, ws: boolean): i32 {
+  if (!ws) {
+    return i0;
+  }
+  let i = i0;
+  while (i < p.len()) {
+    if (__sx_is_ws(__sx_cp(p, i))) {
+      i += __sx_len(p, i);
+    } else if (p[i] == 35u8) {
+      let nl = __memchr(p, 10, i);
+      i = if (nl < 0) { p.len() } else { nl + 1 };
+    } else {
+      return i;
+    }
+  }
+  return i;
+}
+
+// The offset after the character at `i` and the space after it.
+function __sx_bump(p: string, i: i32, ws: boolean): i32 {
+  if (i >= p.len()) {
+    return i;
+  }
+  return __sx_space(p, i + __sx_len(p, i), ws);
+}
+
+function __sx_at(p: string, i: i32, text: string): boolean {
+  if (i + text.len() > p.len()) {
+    return false;
+  }
+  for k in 0..text.len() {
+    if (p[i + k] != text[k]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The alternation from `i0` to the `)` of the group that opens at `open`,
+// or to the end of the pattern when `open` is -1. It gives the offset of
+// that `)` or of the end, or -1 after an error. `last` is 0 for an empty
+// concatenation, 1 after flags, and 2 after an expression.
+function __sx_alt(cx: SxCtx, i0: i32, open: i32, ws0: boolean, u0: boolean, depth: i32): i32 {
+  let p = cx.p;
+  let i = i0;
+  let ws = ws0;
+  let u = u0;
+  let last = 0;
+  while (true) {
+    i = __sx_space(p, i, ws);
+    if (i >= p.len() || p[i] == 41u8) {
+      return __sx_end(cx, i, open);
+    }
+    if (p[i] == 124u8) {
+      i += 1;
+      last = 0;
+    } else if (p[i] == 40u8) {
+      let (next, nws, nu, flags) = __sx_group(cx, i, ws, u, depth + 1);
+      i = next;
+      ws = nws;
+      u = nu;
+      last = if (flags) { 1 } else { 2 };
+    } else {
+      i = __sx_simple(cx, i, ws, u, last);
+      last = 2;
+    }
+    if (i < 0) {
+      return -1;
+    }
+  }
+  return -1;
+}
+
+// The end of an alternation at `i`: the end of the pattern, or a `)`. The
+// group that opens at `open` must close there, and only there.
+function __sx_end(cx: SxCtx, i: i32, open: i32): i32 {
+  if (i >= cx.p.len()) {
+    return if (open >= 0) { __sx_fail(cx, "unclosed group", open, open + 1) } else { i };
+  }
+  return if (open < 0) { __sx_fail(cx, "unopened group", i, i + 1) } else { i };
+}
+
+// A repetition, a class or a primitive at `i`.
+function __sx_simple(cx: SxCtx, i: i32, ws: boolean, u: boolean, last: i32): i32 {
+  let p = cx.p;
+  let c = p[i];
+  if (c == 63u8 || c == 42u8 || c == 43u8) {
+    if (last != 2) {
+      return __sx_fail(cx, SX_REPEAT_MISSING, i, i);
+    }
+    return if (i + 1 < p.len() && p[i + 1] == 63u8) { i + 2 } else { i + 1 };
+  }
+  if (c == 123u8) {
+    return __sx_counted(cx, i, ws, last);
+  }
+  if (c == 91u8) {
+    return __sx_class(cx, i, ws, u);
+  }
+  if (c == 92u8) {
+    return __sx_escape(cx, i, ws, u).end;
+  }
+  return i + __sx_len(p, i);
+}
+
+// The group at `i`: the offset after it, the flags `x` and `u` after it,
+// and whether it only sets flags.
+function __sx_group(cx: SxCtx, open: i32, ws: boolean, u: boolean, depth: i32): (i32, boolean, boolean, boolean) {
+  let p = cx.p;
+  let j = __sx_space(p, open + 1, ws);
+  if (__sx_look(cx, open, j) < 0) {
+    return (-1, ws, u, false);
+  }
+  if (__sx_at(p, j, "?P<") || __sx_at(p, j, "?<")) {
+    let body = __sx_capture_name(cx, if (p[j + 1] == 80u8) { j + 3 } else { j + 2 });
+    return (__sx_body(cx, open, body, ws, u, depth), ws, u, false);
+  }
+  if (!__sx_at(p, j, "?")) {
+    return (__sx_body(cx, open, j, ws, u, depth), ws, u, false);
+  }
+  if (j + 1 >= p.len()) {
+    return (__sx_fail(cx, "unclosed group", open, open + 1), ws, u, false);
+  }
+  let (end, fws, fu, count) = __sx_flags(cx, j + 1, ws, u);
+  if (end < 0 || p[end] == 58u8) {
+    return (__sx_body(cx, open, if (end < 0) { -1 } else { end + 1 }, fws, fu, depth), ws, u, false);
+  }
+  if (count == 0) {
+    return (__sx_fail(cx, SX_REPEAT_MISSING, j, j), ws, u, false);
+  }
+  return (end + 1, fws, fu, true);
+}
+
+// Records the error of a look-around at `j` in the group that opens at
+// `open`, and gives -1, or gives `j`.
+function __sx_look(cx: SxCtx, open: i32, j: i32): i32 {
+  for look in ["?=", "?!", "?<=", "?<!"] {
+    if (__sx_at(cx.p, j, look)) {
+      return __sx_fail(cx, "look-around, including look-ahead and look-behind, is not supported", open, j + look.len());
+    }
+  }
+  return j;
+}
+
+// The body of the group that opens at `open`, from `body`, and the offset
+// after its `)`, or -1. The first group deeper than the limit is recorded.
+function __sx_body(cx: SxCtx, open: i32, body: i32, ws: boolean, u: boolean, depth: i32): i32 {
+  if (body < 0) {
+    return -1;
+  }
+  if (depth > SX_NEST_LIMIT && cx.deep.get().len() == 0) {
+    cx.deep.set([open, -1]);
+  }
+  let close = __sx_alt(cx, body, open, ws, u, depth);
+  if (close < 0) {
+    return -1;
+  }
+  let deep = cx.deep.get();
+  if (deep.len() == 2 && deep[0] == open) {
+    cx.deep.set([open, close + 1]);
+  }
+  return close + 1;
+}
+
+// The name of a capture group at `j`, and the offset after its `>`.
+function __sx_capture_name(cx: SxCtx, j0: i32): i32 {
+  let p = cx.p;
+  let j = j0;
+  while (j < p.len() && p[j] != 62u8) {
+    if (!__sx_name_char(__sx_cp(p, j), j == j0)) {
+      return __sx_fail(cx, "invalid capture group character", j, j + __sx_len(p, j));
+    }
+    j += __sx_len(p, j);
+  }
+  if (j >= p.len()) {
+    return __sx_fail(cx, "unclosed capture group name", j, j);
+  }
+  if (j == j0) {
+    return __sx_fail(cx, "empty capture group name", j0, j0);
+  }
+  let name = slice_unchecked(p, j0, j) + "";
+  let names = cx.names.get();
+  for k in 0..names.len() {
+    if (names[k] == name) {
+      let s = cx.name_spans.get();
+      return __sx_fail2(cx, "duplicate capture group name", j0, j, s[2 * k], s[2 * k + 1]);
+    }
+  }
+  cx.names.set(names.append(name));
+  cx.name_spans.set(cx.name_spans.get().append(j0).append(j));
+  return j + 1;
+}
+
+// Whether a character can be in the name of a group: a letter or `_` first,
+// and after it also a digit, `.`, `[` or `]`.
+function __sx_name_char(cp: i32, first: boolean): boolean {
+  if (cp >= 128) {
+    return __rx_in(__rx_prop("Alphabetic"), cp) || !first && __rx_in(__rx_prop("N"), cp);
+  }
+  if (cp == 95 || __rx_in([65, 90, 97, 122], cp)) {
+    return true;
+  }
+  return !first && __rx_in([46, 46, 48, 57, 91, 91, 93, 93], cp);
+}
+
+// The flags of `(?flags)` or `(?flags:` from `j`: the offset of the `)` or
+// the `:`, the flags `x` and `u` after them, and the count of items.
+function __sx_flags(cx: SxCtx, j0: i32, ws: boolean, u: boolean): (i32, boolean, boolean, i32) {
+  let p = cx.p;
+  let j = j0;
+  let items: i32[] = [];
+  let neg = -1;
+  let fws = ws;
+  let fu = u;
+  while (p[j] != 58u8 && p[j] != 41u8) {
+    let c = p[j] as i32;
+    neg = if (c == 45) { j } else { -1 };
+    let why = __sx_flag_error(p, j, items);
+    if (why != "") {
+      let first = __sx_first_flag(p, j, items);
+      return (__sx_fail2(cx, why, j, j + __sx_len(p, j), first, if (first < 0) { -1 } else { first + 1 }), ws, u, 0);
+    }
+    let off = __memchr(slice_unchecked(p, j0, j) + "", 45, 0) >= 0;
+    fws = if (c == 120) { !off } else { fws };
+    fu = if (c == 117) { !off } else { fu };
+    items = items.append(j);
+    j += __sx_len(p, j);
+    if (j >= p.len()) {
+      return (__sx_fail(cx, "expected flag but got end of regex", j, j), ws, u, 0);
+    }
+  }
+  if (neg >= 0) {
+    return (__sx_fail(cx, "dangling flag negation operator", neg, neg + 1), ws, u, 0);
+  }
+  return (j, fws, fu, items.len());
+}
+
+// The message of the flag at `j` when it is not valid, or "".
+function __sx_flag_error(p: string, j: i32, items: i32[]): string {
+  let c = p[j] as i32;
+  if (c != 45 && __memchr("imsUuRx", c, 0) < 0) {
+    return "unrecognized flag";
+  }
+  if (__sx_first_flag(p, j, items) < 0) {
+    return "";
+  }
+  return if (c == 45) { "flag negation operator repeated" } else { "duplicate flag" };
+}
+
+// The offset of the earlier item with the same flag as the one at `j`, or
+// -1. An entry of -1 in `items` is not an item.
+function __sx_first_flag(p: string, j: i32, items: i32[]): i32 {
+  for k in items {
+    if (k >= 0 && p[k] == p[j]) {
+      return k;
+    }
+  }
+  return -1;
+}
+
+// The counted repetition at `i`, and the offset after it.
+function __sx_counted(cx: SxCtx, start: i32, ws: boolean, last: i32): i32 {
+  let p = cx.p;
+  if (last != 2) {
+    return __sx_fail(cx, SX_REPEAT_MISSING, start, start);
+  }
+  let j = __sx_bump(p, start, ws);
+  if (j >= p.len()) {
+    return __sx_fail(cx, SX_UNCLOSED_COUNT, start, j);
+  }
+  let (lo, a) = __sx_decimal(cx, j, ws);
+  if (a < 0) {
+    return -1;
+  }
+  let (hi, b) = if (a < p.len() && p[a] == 44u8) { __sx_upper(cx, start, a, ws) } else { (lo, a) };
+  if (b < 0) {
+    return -1;
+  }
+  return __sx_count_end(cx, start, b, ws, lo > hi);
+}
+
+// The `}` of a counted repetition at `b`, a `?` after it, and the offset
+// after them. `inverted` says that the range is not valid.
+function __sx_count_end(cx: SxCtx, start: i32, b: i32, ws: boolean, inverted: boolean): i32 {
+  let p = cx.p;
+  if (b >= p.len() || p[b] != 125u8) {
+    return __sx_fail(cx, SX_UNCLOSED_COUNT, start, b);
+  }
+  let j = __sx_bump(p, b, ws);
+  if (j < p.len() && p[j] == 63u8) {
+    j += 1;
+  }
+  if (inverted) {
+    return __sx_fail(cx, "invalid repetition count range, the start must be <= the end", start, j);
+  }
+  return j;
+}
+
+// The upper bound of a counted repetition from the `,` at `comma`, or the
+// largest value for none, and the offset after it.
+function __sx_upper(cx: SxCtx, start: i32, comma: i32, ws: boolean): (i64, i32) {
+  let p = cx.p;
+  let j = __sx_bump(p, comma, ws);
+  if (j >= p.len()) {
+    return (0i64, __sx_fail(cx, SX_UNCLOSED_COUNT, start, j));
+  }
+  if (p[j] == 125u8) {
+    return (4294967295i64, j);
+  }
+  return __sx_decimal(cx, j, ws);
+}
+
+// The decimal number at `j` with the white space around it, and the
+// offset after it, or -1.
+function __sx_decimal(cx: SxCtx, j0: i32, ws: boolean): (i64, i32) {
+  let p = cx.p;
+  let start = __sx_white(p, j0, false);
+  let j = start;
+  let v = 0i64;
+  while (j < p.len() && p[j] >= 48u8 && p[j] <= 57u8) {
+    v = if (v > 4294967295i64) { v } else { v * 10i64 + (p[j] as i64 - 48i64) };
+    j = __sx_bump(p, j, ws);
+  }
+  let end = j;
+  j = __sx_white(p, j, ws);
+  if (end == start) {
+    return (0i64, __sx_fail(cx, "repetition quantifier expects a valid decimal", start, end));
+  }
+  if (v > 4294967295i64) {
+    return (0i64, __sx_fail(cx, "decimal literal invalid", start, end));
+  }
+  return (v, j);
+}
+
+// The offset after the white space at `j`. With `ws`, a comment after a
+// space is skipped too.
+function __sx_white(p: string, j0: i32, ws: boolean): i32 {
+  let j = j0;
+  while (j < p.len() && __sx_is_ws(__sx_cp(p, j))) {
+    j = if (ws) { __sx_bump(p, j, ws) } else { j + __sx_len(p, j) };
+  }
+  return j;
+}
+
+// The escape at `start`. A Unicode class is recorded for the lookup.
+function __sx_escape(cx: SxCtx, start: i32, ws: boolean, u: boolean): SxItem {
+  let p = cx.p;
+  let bad = SxItem { kind: -1, start: start, end: -1, cp: 0, hex: false };
+  let j = start + 1;
+  if (j >= p.len()) {
+    __sx_fail(cx, SX_EOF, start, j);
+    return bad;
+  }
+  let c = p[j] as i32;
+  if (c >= 48 && c <= 57) {
+    __sx_fail(cx, "backreferences are not supported", start, j + 1);
+    return bad;
+  }
+  if (c == 120 || c == 117 || c == 85) {
+    return __sx_hex(cx, start, j, ws);
+  }
+  if (c == 112 || c == 80) {
+    return __sx_unicode(cx, start, j, ws, u);
+  }
+  if (__memchr("dswDSW", c, 0) >= 0) {
+    return SxItem { kind: SX_CLASS, start: start, end: j + 1, cp: 0, hex: false };
+  }
+  return __sx_escaped_char(cx, start, j, ws);
+}
+
+// The escape of one character at `j`: a literal, an assertion, or an
+// escape that regex-syntax does not know.
+function __sx_escaped_char(cx: SxCtx, start: i32, j: i32, ws: boolean): SxItem {
+  let p = cx.p;
+  let c = p[j] as i32;
+  let end = j + __sx_len(p, j);
+  let item = SxItem { kind: SX_LITERAL, start: start, end: end, cp: c, hex: false };
+  let special = __memchr("aftnrv", c, 0);
+  if (__sx_escapable(c) || special >= 0) {
+    return SxItem { ...item, cp: if (special >= 0) { [7, 12, 9, 10, 13, 11][special] } else { c } };
+  }
+  if (__memchr("AzB<>", c, 0) >= 0) {
+    return SxItem { ...item, kind: SX_ASSERTION };
+  }
+  if (c == 98) {
+    let after = if (end < p.len() && p[end] == 123u8) { __sx_word_boundary(cx, start, end, ws) } else { end };
+    return SxItem { ...item, kind: if (after < 0) { -1 } else { SX_ASSERTION }, end: after };
+  }
+  __sx_fail(cx, "unrecognized escape sequence", start, end);
+  return SxItem { ...item, kind: -1, end: -1 };
+}
+
+// Whether `\c` is a literal: a mark of the syntax, or another ASCII
+// character that is not a letter, a digit, `<` or `>`.
+function __sx_escapable(c: i32): boolean {
+  if (c >= 128 || c == 60 || c == 62) {
+    return false;
+  }
+  return !(c >= 48 && c <= 57 || c >= 65 && c <= 90 || c >= 97 && c <= 122);
+}
+
+// `\b{...}` from the `{` at `brace`, and the offset after it. A `{` that a
+// letter or a `-` does not follow starts a repetition.
+function __sx_word_boundary(cx: SxCtx, start: i32, brace: i32, ws: boolean): i32 {
+  let p = cx.p;
+  let k = __sx_bump(p, brace, ws);
+  if (k >= p.len()) {
+    return __sx_fail(cx, "found either the beginning of a special word boundary or a bounded repetition on a \\b with an opening brace, but no closing brace", start, k);
+  }
+  if (!__sx_boundary_char(p[k])) {
+    return brace;
+  }
+  let contents = k;
+  let name = "";
+  while (k < p.len() && __sx_boundary_char(p[k])) {
+    name += slice_unchecked(p, k, k + 1);
+    k = __sx_bump(p, k, ws);
+  }
+  if (k >= p.len() || p[k] != 125u8) {
+    return __sx_fail(cx, "special word boundary assertion is either unclosed or contains an invalid character", brace, k);
+  }
+  if (!__sx_has("start end start-half end-half", name)) {
+    return __sx_fail(cx, "unrecognized special word boundary assertion, valid choices are: start, end, start-half or end-half", contents, k);
+  }
+  return k + 1;
+}
+
+function __sx_boundary_char(c: u8): boolean {
+  return c >= 65u8 && c <= 90u8 || c >= 97u8 && c <= 122u8 || c == 45u8;
+}
+
+function __sx_hex_digit(c: u8): i32 {
+  let l = c | 32u8;
+  if (c >= 48u8 && c <= 57u8) {
+    return c as i32 - 48;
+  }
+  return if (l >= 97u8 && l <= 102u8) { l as i32 - 87 } else { -1 };
+}
+
+// `\x`, `\u` or `\U` from the letter at `j`.
+function __sx_hex(cx: SxCtx, start: i32, j: i32, ws: boolean): SxItem {
+  let p = cx.p;
+  let bad = SxItem { kind: -1, start: start, end: -1, cp: 0, hex: false };
+  let k = __sx_bump(p, j, ws);
+  if (k >= p.len()) {
+    __sx_fail(cx, SX_EOF, k, k);
+    return bad;
+  }
+  let x = p[j] == 120u8;
+  if (p[k] == 123u8) {
+    return __sx_hex_brace(cx, start, k, ws, x);
+  }
+  let first = k;
+  let v = 0i64;
+  for n in 0..__sx_hex_width(p[j]) {
+    k = if (n > 0) { __sx_bump(p, k, ws) } else { k };
+    let d = if (k < p.len()) { __sx_hex_digit(p[k]) } else { -2 };
+    if (d < 0) {
+      __sx_fail(cx, if (d == -2) { SX_EOF } else { "invalid hexadecimal digit" }, k, if (d == -2) { k } else { k + __sx_len(p, k) });
+      return bad;
+    }
+    v = v * 16i64 + d as i64;
+  }
+  return __sx_hex_value(cx, start, first, __sx_bump(p, k, ws), v, x);
+}
+
+// The literal of the value `v` of the digits from `first` to `end`, or an
+// error for a value that is not a character.
+function __sx_hex_value(cx: SxCtx, start: i32, first: i32, end: i32, v: i64, x: boolean): SxItem {
+  if (!__sx_scalar(v)) {
+    __sx_fail(cx, "hexadecimal literal is not a Unicode scalar value", first, end);
+    return SxItem { kind: -1, start: start, end: -1, cp: 0, hex: false };
+  }
+  return SxItem { kind: SX_LITERAL, start: start, end: end, cp: v as i32, hex: x && v <= 255i64 };
+}
+
+// The count of digits of `\x`, `\u` or `\U`.
+function __sx_hex_width(c: u8): i32 {
+  return if (c == 120u8) { 2 } else if (c == 117u8) { 4 } else { 8 };
+}
+
+function __sx_scalar(v: i64): boolean {
+  return v <= 1114111i64 && (v < 55296i64 || v > 57343i64);
+}
+
+// The digits of `\x{...}` from the `{` at `brace`.
+function __sx_hex_brace(cx: SxCtx, start: i32, brace: i32, ws: boolean, x: boolean): SxItem {
+  let p = cx.p;
+  let bad = SxItem { kind: -1, start: start, end: -1, cp: 0, hex: false };
+  let k = __sx_bump(p, brace, ws);
+  let v = 0i64;
+  let count = 0;
+  while (k < p.len() && p[k] != 125u8) {
+    let d = __sx_hex_digit(p[k]);
+    if (d < 0) {
+      __sx_fail(cx, "invalid hexadecimal digit", k, k + __sx_len(p, k));
+      return bad;
+    }
+    count += 1;
+    v = if (count > 8) { 4294967296i64 } else { v * 16i64 + d as i64 };
+    k = __sx_bump(p, k, ws);
+  }
+  if (k >= p.len()) {
+    __sx_fail(cx, SX_EOF, brace, k);
+    return bad;
+  }
+  if (count == 0) {
+    __sx_fail(cx, "hexadecimal literal empty", brace, __sx_bump(p, k, ws));
+    return bad;
+  }
+  let item = __sx_hex_value(cx, start, brace + 1, k, v, x);
+  return if (item.end < 0) { item } else { SxItem { ...item, end: __sx_bump(p, k, ws) } };
+}
+
+// `\pN`, `\p{...}`, `\PN` or `\P{...}` from the letter at `j`.
+function __sx_unicode(cx: SxCtx, start: i32, j: i32, ws: boolean, u: boolean): SxItem {
+  let p = cx.p;
+  let bad = SxItem { kind: -1, start: start, end: -1, cp: 0, hex: false };
+  let k = __sx_bump(p, j, ws);
+  if (k >= p.len()) {
+    __sx_fail(cx, SX_EOF, k, k);
+    return bad;
+  }
+  let name = "";
+  if (p[k] == 123u8) {
+    while (true) {
+      k = __sx_bump(p, k, ws);
+      if (k >= p.len() || p[k] == 125u8) {
+        break;
+      }
+      name += slice_unchecked(p, k, k + __sx_len(p, k));
+    }
+    if (k >= p.len()) {
+      __sx_fail(cx, SX_EOF, k, k);
+      return bad;
+    }
+    k += 1;
+  } else {
+    if (p[k] == 92u8) {
+      __sx_fail(cx, "invalid Unicode character class", k, k + 1);
+      return bad;
+    }
+    name = slice_unchecked(p, k, k + __sx_len(p, k)) + "";
+    k = __sx_bump(p, k, ws);
+  }
+  cx.checks.set(cx.checks.get().append(SxCheck { kind: 0, start: start, end: k, text: name, unicode: u }));
+  return SxItem { kind: SX_CLASS, start: start, end: k, cp: 0, hex: false };
+}
+
+// The bracketed class at `i`, and the offset after its last `]`. `opens`
+// holds the first and the end offset of each open bracket.
+function __sx_class(cx: SxCtx, i: i32, ws: boolean, u: boolean): i32 {
+  let p = cx.p;
+  let j = __sx_class_open(cx, i, ws);
+  let opens = [i, j];
+  while (j >= 0) {
+    j = __sx_space(p, j, ws);
+    if (j >= p.len()) {
+      return __sx_fail(cx, SX_UNCLOSED_CLASS, opens[opens.len() - 2], opens[opens.len() - 1]);
+    }
+    if (p[j] == 93u8) {
+      opens = opens.take(opens.len() - 2);
+      j += 1;
+      if (opens.len() == 0) {
+        return j;
+      }
+    } else if (p[j] == 91u8 && __sx_posix(p, j) == 0) {
+      let next = __sx_class_open(cx, j, ws);
+      opens = opens.append(j).append(next);
+      j = next;
+    } else {
+      j = __sx_set_step(cx, j, ws, u, opens[opens.len() - 2], opens[opens.len() - 1]);
+    }
+  }
+  return -1;
+}
+
+// One step in a set at `j` that does not open or close a bracket: a class
+// of POSIX, a set operation, an item or a range.
+function __sx_set_step(cx: SxCtx, j: i32, ws: boolean, u: boolean, os: i32, oe: i32): i32 {
+  let p = cx.p;
+  let c = p[j];
+  if (c == 91u8) {
+    return __sx_posix(p, j);
+  }
+  if ((c == 38u8 || c == 45u8 || c == 126u8) && j + 1 < p.len() && p[j + 1] == c) {
+    return j + 2;
+  }
+  return __sx_class_range(cx, j, ws, u, os, oe);
+}
+
+// The `[` at `start`, a `^`, and the `-` and the `]` after it that are
+// literals. It gives the offset after them.
+function __sx_class_open(cx: SxCtx, start: i32, ws: boolean): i32 {
+  let p = cx.p;
+  let j = __sx_bump(p, start, ws);
+  if (j >= p.len()) {
+    return __sx_fail(cx, SX_UNCLOSED_CLASS, start, j);
+  }
+  if (p[j] == 94u8) {
+    j = __sx_bump(p, j, ws);
+    if (j >= p.len()) {
+      return __sx_fail(cx, SX_UNCLOSED_CLASS, start, j);
+    }
+  }
+  let dash = false;
+  while (p[j] == 45u8) {
+    dash = true;
+    j = __sx_bump(p, j, ws);
+    if (j >= p.len()) {
+      return __sx_fail(cx, SX_UNCLOSED_CLASS, start, start);
+    }
+  }
+  if (!dash && p[j] == 93u8) {
+    j = __sx_bump(p, j, ws);
+    if (j >= p.len()) {
+      return __sx_fail(cx, SX_UNCLOSED_CLASS, start, j);
+    }
+  }
+  return j;
+}
+
+// `[:name:]` or `[:^name:]` at `j` with a name of POSIX, and the offset
+// after it, or 0.
+function __sx_posix(p: string, j: i32): i32 {
+  if (j + 2 >= p.len() || p[j + 1] != 58u8) {
+    return 0;
+  }
+  let from = if (p[j + 2] == 94u8) { j + 3 } else { j + 2 };
+  let colon = __memchr(p, 58, from);
+  if (colon < 0 || !__sx_at(p, colon, ":]")) {
+    return 0;
+  }
+  return if (__rx_posix_ranges(slice_unchecked(p, from, colon) + "").len() == 0) { 0 } else { colon + 2 };
+}
+
+// An item of a set at `j`, or a range of two literals.
+function __sx_class_range(cx: SxCtx, j: i32, ws: boolean, u: boolean, os: i32, oe: i32): i32 {
+  let p = cx.p;
+  let a = __sx_set_item(cx, j, ws, u);
+  let k = if (a.end < 0) { -1 } else { __sx_space(p, a.end, ws) };
+  if (k >= p.len()) {
+    return __sx_fail(cx, SX_UNCLOSED_CLASS, os, oe);
+  }
+  let next = if (k < 0) { 0 } else { __sx_peek(p, k, ws) };
+  if (k < 0 || p[k] != 45u8 || next == 93 || next == 45) {
+    return __sx_set_single(cx, a, k, u);
+  }
+  k = __sx_bump(p, k, ws);
+  if (k >= p.len()) {
+    return __sx_fail(cx, SX_UNCLOSED_CLASS, os, oe);
+  }
+  let b = __sx_set_item(cx, k, ws, u);
+  if (b.end < 0) {
+    return -1;
+  }
+  return __sx_set_range(cx, a, b, u);
+}
+
+// One item of a set that is not in a range, and the offset after it.
+function __sx_set_single(cx: SxCtx, a: SxItem, k: i32, u: boolean): i32 {
+  if (k < 0) {
+    return -1;
+  }
+  if (a.kind == SX_ASSERTION) {
+    return __sx_fail(cx, "invalid escape sequence found in character class", a.start, a.end);
+  }
+  __sx_set_literal(cx, a, u);
+  return k;
+}
+
+// The range of the items `a` and `b`, and the offset after it.
+function __sx_set_range(cx: SxCtx, a: SxItem, b: SxItem, u: boolean): i32 {
+  for x in [a, b] {
+    if (x.kind != SX_LITERAL) {
+      return __sx_fail(cx, "invalid range boundary, must be a literal", x.start, x.end);
+    }
+  }
+  if (a.cp > b.cp) {
+    return __sx_fail(cx, "invalid character class range, the start must be <= the end", a.start, b.end);
+  }
+  __sx_set_literal(cx, a, u);
+  __sx_set_literal(cx, b, u);
+  return b.end;
+}
+
+function __sx_set_item(cx: SxCtx, j: i32, ws: boolean, u: boolean): SxItem {
+  let p = cx.p;
+  if (p[j] == 92u8) {
+    return __sx_escape(cx, j, ws, u);
+  }
+  let n = __sx_len(p, j);
+  return SxItem { kind: SX_LITERAL, start: j, end: j + n, cp: __sx_cp(p, j), hex: false };
+}
+
+// Records a literal of a set outside ASCII, which `(?-u)` does not allow.
+function __sx_set_literal(cx: SxCtx, x: SxItem, u: boolean): void {
+  if (x.kind == SX_LITERAL && x.cp > 127 && !x.hex) {
+    cx.checks.set(cx.checks.get().append(SxCheck { kind: 1, start: x.start, end: x.end, text: "", unicode: u }));
+  }
+}
+
+// The character after the one at `k`, as regex-syntax peeks it under
+// `(?x)`, or -1 at the end.
+function __sx_peek(p: string, k: i32, ws: boolean): i32 {
+  let start = k + __sx_len(p, k);
+  if (!ws) {
+    return if (start < p.len()) { __sx_cp(p, start) } else { -1 };
+  }
+  let i = start;
+  let comment = false;
+  while (i < p.len()) {
+    let cp = __sx_cp(p, i);
+    if (__sx_is_ws(cp)) {
+      i += __sx_len(p, i);
+    } else if (!comment && cp == 35) {
+      comment = true;
+      i += 1;
+    } else {
+      return cp;
+    }
+  }
+  return if (start < p.len()) { __sx_cp(p, start) } else { -1 };
+}
+
+// The message of a class that the lookup does not find, or "".
+function __sx_lookup(c: SxCheck): string {
+  if (!c.unicode) {
+    return "Unicode not allowed here";
+  }
+  if (c.kind != 0) {
+    return "";
+  }
+  return __sx_property(c.text);
+}
+
+// The message of a property that regex-syntax does not find, or "". A
+// property that it knows and this module does not is not an error here.
+function __sx_property(text: string): string {
+  if let Some(_) = unicode.property_ranges(text) {
+    return "";
+  }
+  let (op, width) = __sx_op(text);
+  if (op < 0) {
+    let key = __sx_key(text);
+    let canon = __sx_canonical(key);
+    let binary = !__sx_has("cf sc lc", key) && canon != "" && __sx_has(SX_BOOLS, canon);
+    return if (binary) { "" } else { "Unicode property not found" };
+  }
+  let canon = __sx_canonical(__sx_key(slice_unchecked(text, 0, op) + ""));
+  if (canon == "") {
+    return "Unicode property not found";
+  }
+  let value = __sx_key(slice_unchecked(text, op + width, text.len()) + "");
+  return if (__sx_known_value(canon, value)) { "" } else { "Unicode property value not found" };
+}
+
+// Whether regex-syntax knows the value of a property that this module does
+// not find.
+function __sx_known_value(canon: string, value: string): boolean {
+  return match (canon) {
+    "Age" => __sx_has(SX_AGES, value),
+    "Grapheme_Cluster_Break" => __sx_has(SX_GCB, value),
+    "Sentence_Break" => __sx_has(SX_SB, value),
+    "Word_Break" => __sx_has(SX_WB, value),
+    "Script_Extensions" => unicode.property_ranges("sc=" + value) != None,
+    _ => false,
+  };
+}
+
+function __sx_op(text: string): (i32, i32) {
+  for i in 0..text.len() {
+    if (text[i] == 33u8 && i + 1 < text.len() && text[i + 1] == 61u8) {
+      return (i, 2);
+    }
+  }
+  let colon = __memchr(text, 58, 0);
+  if (colon >= 0) {
+    return (colon, 1);
+  }
+  return (__memchr(text, 61, 0), 1);
+}
+
+// The loose form of a name, as regex-syntax makes it.
+function __sx_key(name: string): string {
+  let from = if (name.len() >= 2 && (name[0] | 32u8) == 105u8 && (name[1] | 32u8) == 115u8) { 2 } else { 0 };
+  let out = "";
+  for i in from..name.len() {
+    if (__sx_name_byte(name[i])) {
+      out += slice_unchecked(name, i, i + 1).to_ascii_lower();
+    }
+  }
+  return if (from == 2 && out == "c") { "isc" } else { out };
+}
+
+// Whether a byte of a name counts: not a space, an underscore, a hyphen or
+// a byte outside ASCII.
+function __sx_name_byte(c: u8): boolean {
+  return c != 32u8 && c != 95u8 && c != 45u8 && c < 128u8;
+}
+
+// Whether the list of names with a space between them holds `name`.
+function __sx_has(list: string, name: string): boolean {
+  let at = 0;
+  while (at <= list.len()) {
+    let sp = __memchr(list, 32, at);
+    let end = if (sp < 0) { list.len() } else { sp };
+    if (end - at == name.len() && __sx_at(list, at, name)) {
+      return true;
+    }
+    if (sp < 0) {
+      return false;
+    }
+    at = sp + 1;
+  }
+  return false;
+}
+
+// The canonical name of the property of a loose name, or "".
+function __sx_canonical(key: string): string {
+  let at = 0;
+  while (at < SX_PROPERTIES.len()) {
+    let eq = __memchr(SX_PROPERTIES, 61, at);
+    let semi = __memchr(SX_PROPERTIES, 59, eq);
+    if (eq - at == key.len() && __sx_at(SX_PROPERTIES, at, key)) {
+      return slice_unchecked(SX_PROPERTIES, eq + 1, semi) + "";
+    }
+    at = semi + 1;
+  }
+  return "";
+}
+
+// The line and the column from 1 of the byte offset `at` of the pattern.
+// A column counts characters.
+function __sx_position(p: string, at: i32): (i32, i32) {
+  let line = 1;
+  let col = 1;
+  let i = 0;
+  while (i < at && i < p.len()) {
+    if (p[i] == 10u8) {
+      line += 1;
+      col = 1;
+    } else {
+      col += 1;
+    }
+    i += __sx_len(p, i);
+  }
+  return (line, col);
+}
+
+// The lines of the pattern as Rust's str::lines gives them: a CR before a
+// line feed does not count, and a last empty line is not there.
+function __sx_lines(p: string): string[] {
+  let out: string[] = [];
+  let at = 0;
+  while (at < p.len()) {
+    let nl = __memchr(p, 10, at);
+    let end = if (nl < 0) { p.len() } else { nl };
+    let stop = if (nl >= 0 && end > at && p[end - 1] == 13u8) { end - 1 } else { end };
+    out = out.append(slice_unchecked(p, at, stop) + "");
+    at = end + 1;
+  }
+  return out;
+}
+
+// report gives the text of the error as the regex crate writes it: the
+// pattern with a line of `^` under each span, and the message.
+pub function (e: SyntaxError) report(): string {
+  let p = e.pattern;
+  let spans = [e.start, e.end];
+  if (e.aux_start >= 0) {
+    spans = if (e.aux_start < e.start) { [e.aux_start, e.aux_end, e.start, e.end] } else { spans.append(e.aux_start).append(e.aux_end) };
+  }
+  let notes = __sx_notes(p, spans);
+  if (__memchr(p, 10, 0) < 0) {
+    return "regex parse error:\n" + notes + "error: " + e.message;
+  }
+  let divider = "~".repeat(79);
+  let out = "regex parse error:\n" + divider + "\n" + notes + divider + "\n";
+  let multi = __sx_multi_line(p, spans);
+  if (multi.len() > 0) {
+    out += multi.join("\n") + "\n";
+  }
+  return out + "error: " + e.message;
+}
+
+// Each line of the pattern after its number, with the line of `^` under
+// the spans on it.
+function __sx_notes(p: string, spans: i32[]): string {
+  let lines = __sx_lines(p);
+  let count = lines.len() + (if (p.len() > 0 && p[p.len() - 1] == 10u8) { 1 } else { 0 });
+  let width = if (count <= 1) { 0 } else { count.to_string().len() };
+  let notes = "";
+  for i in 0..lines.len() {
+    let n = (i + 1).to_string();
+    notes += if (width > 0) { " ".repeat(width - n.len()) + n + ": " } else { "    " };
+    notes += lines[i] + "\n";
+    let marks = __sx_marks(p, spans, i + 1, if (width == 0) { 4 } else { 2 + width });
+    notes += if (marks != "") { marks + "\n" } else { "" };
+  }
+  return notes;
+}
+
+// The notes of the spans that cover more than one line.
+function __sx_multi_line(p: string, spans: i32[]): string[] {
+  let out: string[] = [];
+  let k = 0;
+  while (k < spans.len()) {
+    let (sl, sc) = __sx_position(p, spans[k]);
+    let (el, ec) = __sx_position(p, spans[k + 1]);
+    if (sl != el) {
+      out = out.append(f"on line {sl} (column {sc}) through line {el} (column {ec - 1})");
+    }
+    k += 2;
+  }
+  return out;
+}
+
+// The line of `^` under the spans on line `n`, or "".
+function __sx_marks(p: string, spans: i32[], n: i32, pad: i32): string {
+  let out = "";
+  let pos = 0;
+  let k = 0;
+  while (k < spans.len()) {
+    let (sl, sc) = __sx_position(p, spans[k]);
+    let (el, ec) = __sx_position(p, spans[k + 1]);
+    if (sl == n && el == n) {
+      if (out == "") {
+        out = " ".repeat(pad);
+      }
+      while (pos < sc - 1) {
+        out += " ";
+        pos += 1;
+      }
+      let len = if (ec - sc > 1) { ec - sc } else { 1 };
+      out += "^".repeat(len);
+      pos += len;
+    }
+    k += 2;
+  }
+  return out;
+}
+
+// The loose names of the properties that regex-syntax 0.8.2 knows, each with "=", its canonical name and ";".
+const SX_PROPERTIES: string = "age=Age;ahex=ASCII_Hex_Digit;alpha=Alphabetic;alphabetic=Alphabetic;asciihexdigit=ASCII_Hex_Digit;bc=Bidi_Class;bidic=Bidi_Control;bidiclass=Bidi_Class;bidicontrol=Bidi_Control;bidim=Bidi_Mirrored;bidimirrored=Bidi_Mirrored;bidimirroringglyph=Bidi_Mirroring_Glyph;bidipairedbracket=Bidi_Paired_Bracket;bidipairedbrackettype=Bidi_Paired_Bracket_Type;blk=Block;block=Block;bmg=Bidi_Mirroring_Glyph;bpb=Bidi_Paired_Bracket;bpt=Bidi_Paired_Bracket_Type;canonicalcombiningclass=Canonical_Combining_Class;cased=Cased;casefolding=Case_Folding;caseignorable=Case_Ignorable;ccc=Canonical_Combining_Class;ce=Composition_Exclusion;cf=Case_Folding;changeswhencasefolded=Changes_When_Casefolded;changeswhencasemapped=Changes_When_Casemapped;changeswhenlowercased=Changes_When_Lowercased;changeswhennfkccasefolded=Changes_When_NFKC_Casefolded;changeswhentitlecased=Changes_When_Titlecased;changeswhenuppercased=Changes_When_Uppercased;ci=Case_Ignorable;cjkaccountingnumeric=kAccountingNumeric;cjkcompatibilityvariant=kCompatibilityVariant;cjkiicore=kIICore;cjkirggsource=kIRG_GSource;cjkirghsource=kIRG_HSource;cjkirgjsource=kIRG_JSource;cjkirgkpsource=kIRG_KPSource;cjkirgksource=kIRG_KSource;cjkirgmsource=kIRG_MSource;cjkirgssource=kIRG_SSource;cjkirgtsource=kIRG_TSource;cjkirguksource=kIRG_UKSource;cjkirgusource=kIRG_USource;cjkirgvsource=kIRG_VSource;cjkothernumeric=kOtherNumeric;cjkprimarynumeric=kPrimaryNumeric;cjkrsunicode=kRSUnicode;compex=Full_Composition_Exclusion;compositionexclusion=Composition_Exclusion;cwcf=Changes_When_Casefolded;cwcm=Changes_When_Casemapped;cwkcf=Changes_When_NFKC_Casefolded;cwl=Changes_When_Lowercased;cwt=Changes_When_Titlecased;cwu=Changes_When_Uppercased;dash=Dash;decompositionmapping=Decomposition_Mapping;decompositiontype=Decomposition_Type;defaultignorablecodepoint=Default_Ignorable_Code_Point;dep=Deprecated;deprecated=Deprecated;di=Default_Ignorable_Code_Point;dia=Diacritic;diacritic=Diacritic;dm=Decomposition_Mapping;dt=Decomposition_Type;ea=East_Asian_Width;eastasianwidth=East_Asian_Width;ebase=Emoji_Modifier_Base;ecomp=Emoji_Component;emod=Emoji_Modifier;emoji=Emoji;emojicomponent=Emoji_Component;emojimodifier=Emoji_Modifier;emojimodifierbase=Emoji_Modifier_Base;emojipresentation=Emoji_Presentation;epres=Emoji_Presentation;equideo=Equivalent_Unified_Ideograph;equivalentunifiedideograph=Equivalent_Unified_Ideograph;expandsonnfc=Expands_On_NFC;expandsonnfd=Expands_On_NFD;expandsonnfkc=Expands_On_NFKC;expandsonnfkd=Expands_On_NFKD;ext=Extender;extendedpictographic=Extended_Pictographic;extender=Extender;extpict=Extended_Pictographic;fcnfkc=FC_NFKC_Closure;fcnfkcclosure=FC_NFKC_Closure;fullcompositionexclusion=Full_Composition_Exclusion;gc=General_Category;gcb=Grapheme_Cluster_Break;generalcategory=General_Category;graphemebase=Grapheme_Base;graphemeclusterbreak=Grapheme_Cluster_Break;graphemeextend=Grapheme_Extend;graphemelink=Grapheme_Link;grbase=Grapheme_Base;grext=Grapheme_Extend;grlink=Grapheme_Link;hangulsyllabletype=Hangul_Syllable_Type;hex=Hex_Digit;hexdigit=Hex_Digit;hst=Hangul_Syllable_Type;hyphen=Hyphen;idc=ID_Continue;idcontinue=ID_Continue;ideo=Ideographic;ideographic=Ideographic;ids=ID_Start;idsb=IDS_Binary_Operator;idsbinaryoperator=IDS_Binary_Operator;idst=IDS_Trinary_Operator;idstart=ID_Start;idstrinaryoperator=IDS_Trinary_Operator;indicpositionalcategory=Indic_Positional_Category;indicsyllabiccategory=Indic_Syllabic_Category;inpc=Indic_Positional_Category;insc=Indic_Syllabic_Category;isc=ISO_Comment;jamoshortname=Jamo_Short_Name;jg=Joining_Group;joinc=Join_Control;joincontrol=Join_Control;joininggroup=Joining_Group;joiningtype=Joining_Type;jsn=Jamo_Short_Name;jt=Joining_Type;kaccountingnumeric=kAccountingNumeric;kcompatibilityvariant=kCompatibilityVariant;kiicore=kIICore;kirggsource=kIRG_GSource;kirghsource=kIRG_HSource;kirgjsource=kIRG_JSource;kirgkpsource=kIRG_KPSource;kirgksource=kIRG_KSource;kirgmsource=kIRG_MSource;kirgssource=kIRG_SSource;kirgtsource=kIRG_TSource;kirguksource=kIRG_UKSource;kirgusource=kIRG_USource;kirgvsource=kIRG_VSource;kothernumeric=kOtherNumeric;kprimarynumeric=kPrimaryNumeric;krsunicode=kRSUnicode;lb=Line_Break;lc=Lowercase_Mapping;linebreak=Line_Break;loe=Logical_Order_Exception;logicalorderexception=Logical_Order_Exception;lower=Lowercase;lowercase=Lowercase;lowercasemapping=Lowercase_Mapping;math=Math;na=Name;na1=Unicode_1_Name;name=Name;namealias=Name_Alias;nchar=Noncharacter_Code_Point;nfcqc=NFC_Quick_Check;nfcquickcheck=NFC_Quick_Check;nfdqc=NFD_Quick_Check;nfdquickcheck=NFD_Quick_Check;nfkccasefold=NFKC_Casefold;nfkccf=NFKC_Casefold;nfkcqc=NFKC_Quick_Check;nfkcquickcheck=NFKC_Quick_Check;nfkdqc=NFKD_Quick_Check;nfkdquickcheck=NFKD_Quick_Check;noncharactercodepoint=Noncharacter_Code_Point;nt=Numeric_Type;numerictype=Numeric_Type;numericvalue=Numeric_Value;nv=Numeric_Value;oalpha=Other_Alphabetic;ocomment=ISO_Comment;odi=Other_Default_Ignorable_Code_Point;ogrext=Other_Grapheme_Extend;oidc=Other_ID_Continue;oids=Other_ID_Start;olower=Other_Lowercase;omath=Other_Math;otheralphabetic=Other_Alphabetic;otherdefaultignorablecodepoint=Other_Default_Ignorable_Code_Point;othergraphemeextend=Other_Grapheme_Extend;otheridcontinue=Other_ID_Continue;otheridstart=Other_ID_Start;otherlowercase=Other_Lowercase;othermath=Other_Math;otheruppercase=Other_Uppercase;oupper=Other_Uppercase;patsyn=Pattern_Syntax;patternsyntax=Pattern_Syntax;patternwhitespace=Pattern_White_Space;patws=Pattern_White_Space;pcm=Prepended_Concatenation_Mark;prependedconcatenationmark=Prepended_Concatenation_Mark;qmark=Quotation_Mark;quotationmark=Quotation_Mark;radical=Radical;regionalindicator=Regional_Indicator;ri=Regional_Indicator;sb=Sentence_Break;sc=Script;scf=Simple_Case_Folding;script=Script;scriptextensions=Script_Extensions;scx=Script_Extensions;sd=Soft_Dotted;sentencebreak=Sentence_Break;sentenceterminal=Sentence_Terminal;sfc=Simple_Case_Folding;simplecasefolding=Simple_Case_Folding;simplelowercasemapping=Simple_Lowercase_Mapping;simpletitlecasemapping=Simple_Titlecase_Mapping;simpleuppercasemapping=Simple_Uppercase_Mapping;slc=Simple_Lowercase_Mapping;softdotted=Soft_Dotted;space=White_Space;stc=Simple_Titlecase_Mapping;sterm=Sentence_Terminal;suc=Simple_Uppercase_Mapping;tc=Titlecase_Mapping;term=Terminal_Punctuation;terminalpunctuation=Terminal_Punctuation;titlecasemapping=Titlecase_Mapping;uc=Uppercase_Mapping;uideo=Unified_Ideograph;unicode1name=Unicode_1_Name;unicoderadicalstroke=kRSUnicode;unifiedideograph=Unified_Ideograph;upper=Uppercase;uppercase=Uppercase;uppercasemapping=Uppercase_Mapping;urs=kRSUnicode;variationselector=Variation_Selector;verticalorientation=Vertical_Orientation;vo=Vertical_Orientation;vs=Variation_Selector;wb=Word_Break;whitespace=White_Space;wordbreak=Word_Break;wspace=White_Space;xidc=XID_Continue;xidcontinue=XID_Continue;xids=XID_Start;xidstart=XID_Start;xonfc=Expands_On_NFC;xonfd=Expands_On_NFD;xonfkc=Expands_On_NFKC;xonfkd=Expands_On_NFKD;";
+
+// The canonical names of the binary properties of regex-syntax 0.8.2.
+const SX_BOOLS: string = "ASCII_Hex_Digit Alphabetic Bidi_Control Bidi_Mirrored Case_Ignorable Cased Changes_When_Casefolded Changes_When_Casemapped Changes_When_Lowercased Changes_When_Titlecased Changes_When_Uppercased Dash Default_Ignorable_Code_Point Deprecated Diacritic Emoji Emoji_Component Emoji_Modifier Emoji_Modifier_Base Emoji_Presentation Extended_Pictographic Extender Grapheme_Base Grapheme_Extend Grapheme_Link Hex_Digit Hyphen IDS_Binary_Operator IDS_Trinary_Operator ID_Continue ID_Start Ideographic Join_Control Logical_Order_Exception Lowercase Math Noncharacter_Code_Point Other_Alphabetic Other_Default_Ignorable_Code_Point Other_Grapheme_Extend Other_ID_Continue Other_ID_Start Other_Lowercase Other_Math Other_Uppercase Pattern_Syntax Pattern_White_Space Prepended_Concatenation_Mark Quotation_Mark Radical Regional_Indicator Sentence_Terminal Soft_Dotted Terminal_Punctuation Unified_Ideograph Uppercase Variation_Selector White_Space XID_Continue XID_Start";
+
+// The loose values of Age in regex-syntax 0.8.2 that select code points.
+const SX_AGES: string = "1.1 10.0 11.0 12.0 12.1 13.0 14.0 15.0 2.0 2.1 3.0 3.1 3.2 4.0 4.1 5.0 5.1 5.2 6.0 6.1 6.2 6.3 7.0 8.0 9.0 v100 v11 v110 v120 v121 v130 v140 v150 v20 v21 v30 v31 v32 v40 v41 v50 v51 v52 v60 v61 v62 v63 v70 v80 v90";
+
+// The loose values of Grapheme_Cluster_Break in regex-syntax 0.8.2 other than Other.
+const SX_GCB: string = "cn control cr eb ebase ebasegaz ebg em emodifier ex extend gaz glueafterzwj l lf lv lvt pp prepend regionalindicator ri sm spacingmark t v zwj";
+
+// The loose values of Sentence_Break in regex-syntax 0.8.2 other than Other.
+const SX_SB: string = "at aterm cl close cr ex extend fo format le lf lo lower nu numeric oletter sc scontinue se sep sp st sterm up upper";
+
+// The loose values of Word_Break in regex-syntax 0.8.2 other than Other.
+const SX_WB: string = "aletter cr doublequote dq eb ebase ebasegaz ebg em emodifier ex extend extendnumlet fo format gaz glueafterzwj hebrewletter hl ka katakana le lf mb midletter midnum midnumlet ml mn newline nl nu numeric regionalindicator ri singlequote sq wsegspace zwj";
 ```
 
 ### Module introduction
