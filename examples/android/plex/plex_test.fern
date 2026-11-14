@@ -100,8 +100,11 @@ function test_stream_choice(): test.TestOutcome {
   // The phone has no DTS decoder, so the server converts the sound and
   // copies the video, with no limit of the bitrate.
   let s = plex.stream_for(client(), base(), it, original, 60000i64, "s1", phone);
-  if (!s.transcode || !s.url.contains("/video/:/transcode/universal/start.m3u8?") || !s.url.contains("offset=60") || !s.url.contains("session=s1") || s.url.contains("maxVideoBitrate")) {
+  if (!s.transcode || s.offset_ms != 60000i64 || !s.url.contains("/video/:/transcode/universal/start.m3u8?") || s.url.contains("offset=") || !s.url.contains("session=s1") || !s.url.contains("directStream=1") || !s.url.contains("X-Plex-Platform=Generic") || s.url.contains("add-limitation")) {
     return test.fail("transcode " + s.url);
+  }
+  if (!s.url.contains("X-Plex-Client-Profile-Extra=add-settings%28DirectPlayStreamSelection%3Dtrue%29%2Badd-transcode-target%28type%3DvideoProfile%26context%3Dstreaming%26protocol%3Dhls%26container%3Dmpegts%26videoCodec%3Dh264%26audioCodec%3Daac%29")) {
+    return test.fail("profile " + s.url);
   }
   let eac3 = plex.Item { ...it, media: [plex.Media { ...it.media[0], audio: "eac3" }] };
   if (!plex.direct_playable(eac3, phone) || plex.direct_playable(eac3, ["video/avc", "audio/mp4a-latm"]) || plex.direct_playable(eac3, [])) {
@@ -109,7 +112,7 @@ function test_stream_choice(): test.TestOutcome {
   }
   let hevc = plex.Item { ...it, media: [plex.Media { ...it.media[0], video: "hevc" }] };
   let full = plex.stream_for(client(), base(), hevc, original, 0i64, "s3", phone);
-  if (!full.url.contains("maxVideoBitrate=8000")) {
+  if (!full.url.contains("name%3Dvideo.bitrate%26value%3D8000") || !full.url.contains("directStream=0") || !full.url.contains("videoQuality=60")) {
     return test.fail("no HEVC decoder, so the server converts the video too: " + full.url);
   }
   let aac = plex.Item { ...it, media: [plex.Media { ...it.media[0], audio: "aac" }] };
@@ -118,10 +121,10 @@ function test_stream_choice(): test.TestOutcome {
     return test.fail("direct " + d.url);
   }
   let low = plex.stream_for(client(), base(), aac, plex.qualities()[3], 0i64, "s2", phone);
-  if (!low.url.contains("maxVideoBitrate=4000") || !low.url.contains("videoResolution=1280x720")) {
+  if (!low.url.contains("value%3D4000") || !low.url.contains("videoResolution=1280x720") || !low.url.contains("videoQuality=100")) {
     return test.fail("720p " + low.url);
   }
-  return test.assert_eq(d.url, "https://10-0-0-5.abc.plex.direct:32400/library/parts/11/1/file.mkv?X-Plex-Token=srv");
+  return test.assert_eq(d.url, "https://10-0-0-5.abc.plex.direct:32400/library/parts/11/1/file.mkv?X-Plex-Session-Identifier=s1&X-Plex-Token=srv");
 }
 
 const HUBS: string = "{\"MediaContainer\":{\"size\":2,\"Hub\":[{\"title\":\"Continue Watching\",\"hubIdentifier\":\"home.continue\",\"size\":1,\"Metadata\":[{\"ratingKey\":\"77\",\"type\":\"episode\",\"title\":\"Pilot\",\"grandparentTitle\":\"Lost\",\"grandparentThumb\":\"/library/metadata/70/thumb/2\",\"thumb\":\"/library/metadata/77/thumb/3\",\"index\":1,\"parentIndex\":1,\"duration\":2500000,\"viewOffset\":100000}]},{\"title\":\"Empty\",\"hubIdentifier\":\"x\",\"size\":0},{\"title\":\"Recently Added Movies\",\"hubIdentifier\":\"home.movies.recent\",\"Metadata\":[{\"ratingKey\":\"501\",\"type\":\"movie\",\"title\":\"Inception\",\"year\":2010},{\"ratingKey\":\"9\",\"type\":\"photo\",\"title\":\"Beach\"}]}]}}";
@@ -156,9 +159,16 @@ function test_urls(): test.TestOutcome {
   if (!img.starts_with("https://10-0-0-5.abc.plex.direct:32400/photo/:/transcode?width=240&height=360") || !img.contains("url=%2Flibrary%2Fmetadata%2F501%2Fthumb%2F1")) {
     return test.fail(img);
   }
-  let tl = plex.timeline(client(), base(), "501", "paused", 1000i64, 9000i64).url;
-  if (!tl.contains("/:/timeline?ratingKey=501&key=%2Flibrary%2Fmetadata%2F501&state=paused&time=1000&duration=9000")) {
-    return test.fail(tl);
+  if (!img.contains("upscale=0")) {
+    return test.fail("an image grows past its source: " + img);
+  }
+  let tr = plex.timeline(client(), base(), "501", "paused", 1000i64, 9000i64, "s1");
+  if (!tr.url.contains("/:/timeline?ratingKey=501&key=%2Flibrary%2Fmetadata%2F501&state=paused&time=1000&duration=9000") || !tr.headers.contains(("X-Plex-Session-Identifier", "s1"))) {
+    return test.fail(tr.url);
+  }
+  let ping = plex.ping_transcode(client(), base(), "s1").url;
+  if (ping != "https://10-0-0-5.abc.plex.direct:32400/video/:/transcode/universal/ping?session=s1") {
+    return test.fail(ping);
   }
   let q = plex.search(client(), base(), "star wars").url;
   return test.assert_eq(q, "https://10-0-0-5.abc.plex.direct:32400/hubs/search?query=star+wars&limit=20&includeCollections=0");

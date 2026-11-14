@@ -41,7 +41,9 @@ The app reads the list of the decoders of the phone from Android. The
 player plays the file as it is when the phone decodes its video and its
 sound. When the phone decodes only the video, the server copies the video
 and converts the sound. Otherwise the server transcodes the file to HLS at
-the quality of the settings.
+the quality of the settings. A transcode is of the whole item, and the
+player seeks in it, as Plezy does. While the player is paused, the app pings
+the transcode so that the server keeps it.
 
 Search and settings:
 
