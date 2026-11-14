@@ -18,6 +18,10 @@ $ ./cmp --version
 cmp (Fern diffutils) 0.1
 $ fern -O -target x86-64-linux -o diff diffutils/diff.fern
 $ ./diff -u a b
+$ fern -O -target x86-64-linux -o diff3 diffutils/diff3.fern
+$ ./diff3 -m mine older yours
+$ fern -O -target x86-64-linux -o sdiff diffutils/sdiff.fern
+$ ./sdiff -o merged a b
 ```
 
 ## Programs
@@ -25,8 +29,9 @@ $ ./diff -u a b
 | Program | Status | Issue |
 |---|---|---|
 | `cmp` | Done. All options. | #15586 |
-| `diff` | Done for the normal, context and unified formats. Refer to [diff](#diff). | #15586 |
-| `diff3`, `sdiff` | Not started. | #15586 |
+| `diff` | Done. All options. Refer to [diff](#diff). | #15586 |
+| `diff3` | Done. All options. Refer to [diff3](#diff3). | #15586 |
+| `sdiff` | Done. All options, with the interactive merge. Refer to [sdiff](#sdiff). | #15586 |
 
 ## diff
 
@@ -50,31 +55,82 @@ same hunks as GNU diff, also when more than one shortest diff is possible:
 
 5. It moves each run of changes as `shift_boundaries` does.
 
-These options are in the port:
+The port has each option of GNU diff 3.10. These are the formats:
 
-- The formats: normal (`--normal`), context (`-c`, `-C NUM`,
-  `--context[=NUM]`) and unified (`-u`, `-U NUM`, `--unified[=NUM]`), with
-  the obsolete `-NUM` form of the context.
-- `-q`, `-s`, `-i`, `-b`, `-w`, `-B`, `-a`, `-N`, `-P`, `-r`, `-L`
-  (`--label`), `-d`, `-H` and `--horizon-lines`.
-- `--binary`, `--palette`, `--no-ignore-file-name-case` and `-h`. They have
-  no effect, as in GNU diff without `--color`.
+- Normal, context (`-c`, `-C`) and unified (`-u`, `-U`), with the
+  obsolete `-NUM` form of the context.
+- Ed (`-e`), forward ed (`-f`) and RCS (`-n`).
+- Side by side (`-y`), with `-W`, `--left-column` and
+  `--suppress-common-lines`.
+- `-D`, and the group and line formats with each `%` directive.
 
-These options are not in the port:
+These are the other options:
 
-- The other formats: `-e`, `-f`, `-n`, `-y`, `-W`, `--left-column`,
-  `--suppress-common-lines`, `-D` and the group and line formats.
 - The output changes: `-p`, `-F`, `-t`, `-T`, `--tabsize`,
-  `--suppress-blank-empty`, `-l` and `--color`.
-- The file selection: `-x`, `-X`, `-S`, `--from-file`, `--to-file`,
-  `--no-dereference` and `--ignore-file-name-case`.
-- The input changes: `-E`, `-Z`, `-I` and `--strip-trailing-cr`.
-- `--inhibit-hunk-merge` and `--sdiff-merge-assist`.
+  `--suppress-blank-empty`, `-l`, `--color`, `--palette` and `-L`.
+- The file selection: `-r`, `-N`, `-P`, `-x`, `-X`, `-S`, `--from-file`,
+  `--to-file`, `--no-dereference` and `--ignore-file-name-case`.
+- The input changes: `-i`, `-b`, `-w`, `-E`, `-Z`, `-B`, `-I`, `-a` and
+  `--strip-trailing-cr`.
+- `-q`, `-s`, `-d`, `-H` and `--horizon-lines`.
+- The hidden options `--sdiff-merge-assist` and `---no-directory`, which
+  sdiff and diff3 give to diff.
+- `--binary`, `-h` and `--inhibit-hunk-merge`, which have no effect.
 
-The port parses these options as GNU diff does. Thus a prefix and a
-conflict of output styles give the same errors. Then the port stops with
-exit status 2 and the message `this port does not have the option
-'--NAME'`.
+GNU diff 3.10 also gives the same output with and without
+`--inhibit-hunk-merge`.
+
+`-l` sends the output of each comparison to `/usr/bin/pr -h HEADER`, as
+GNU diff does. The messages, such as "Only in", come after all the pages.
+On WASI, `-l` fails with "could not be invoked", because WASI cannot
+start a process.
+
+GNU diff 3.10 differs from its manual in some places. The port does as
+the binary does:
+
+- With `-E` and `-Z` together, the tabs are not expanded.
+- In the ed formats, a file without a final newline gives the error
+  "No newline at end of file" and exit status 2. The last line then
+  compares as a complete line.
+- When only `--changed-group-format` is given, the old and new groups
+  also use it.
+- In `--palette`, `^?` gives a DEL and then a `?`.
+
+## diff3
+
+The port of diff3 has each option of GNU diff3 3.10: `-e`, `-E`, `-x`,
+`-X`, `-3`, `-m`, `-A`, `-i`, `-a`, `-T`, `--strip-trailing-cr`, `-L` and
+`--diff-program`. The exit status is 0, 1 when a block is a conflict, and
+2 for trouble.
+
+GNU diff3 runs diff two times and reads its normal output. The port runs
+its own diff in the same process and reads the same output. Thus an
+error of diff gives the messages of GNU diff3. `--diff-program` runs the
+program in a child process. On WASI that option fails.
+
+GNU diff3 3.10 differs from its manual in two places. The port does as
+the binary does. `-X` does not bracket the conflicts, so it is the same
+as `-x`. A merge of a file without a final newline writes its last line
+with no newline before the next marker.
+
+## sdiff
+
+The port of sdiff has each option of GNU sdiff 3.10, with the
+interactive merge of `-o`.
+
+Without `-o`, GNU sdiff runs `diff -y` with the options that it gives to
+diff. The port runs its own diff with the same arguments. The output,
+the diagnostics and the exit status are thus those of diff. GNU sdiff
+finds diff in `PATH`, and the port does not. `--diff-program` runs the
+program in place of sdiff, as GNU sdiff does.
+
+With `-o`, the port runs `diff --sdiff-merge-assist` in a child process.
+Then it reads the commands of the user from standard input: `l`, `r`,
+`1`, `2`, `s`, `v`, `q`, and `e` in each of its forms. The `e` commands
+run the program of `EDITOR` (by default `ed`) on a temporary file in
+`TMPDIR`. On WASI, the merge runs diff in the same process. There, the
+`e` commands fail, and an error of diff stops sdiff before its own
+message.
 
 ## Tests
 
@@ -101,24 +157,54 @@ cache. The value is the best of seven runs on a 4-core x86-64 container,
 | GNU cmp 3.10 | 0.135 s | 0.130 s |
 | Fern cmp | 0.118 s | 0.123 s |
 
-`diff` on two files of 1,000,000 lines (23 MB each) with 1% of the lines
-changed. Also `diff` on two unrelated files of 10,000 lines from a small set
-of words. The files are in the page cache. The value is the best of five
-runs on a 4-core x86-64 container, 2026-11-13. The two programs give the
-same output. On this container, the times of one input can change by 20%
-from one set of runs to the next.
+The tables below are the best of five runs on a 4-core x86-64 container
+that other jobs share, 2026-11-14. The files are in the page cache, and
+each port gives the same output as the GNU program. The inputs:
 
-| Input | GNU diff 3.10 | Fern diff |
+- r1, r2: 1,000,000 lines (28 MB each), with 1% of the lines changed.
+- big0: 1,000,000 lines (40 MB). big1 and big2 each change, delete or
+  insert 1% of the lines of big0, at other places.
+- un0, un1, un2: unrelated files of 10,000 lines from 32 words.
+
+On this container the time of one input can change by 20% from one set
+of runs to the next. In one set of runs on r1 and r2, the diff of
+`origin/main` before this work took 0.303 s. This diff took 0.244 s, and
+GNU diff took 0.186 s.
+
+| Command | GNU 3.10 | Fern |
 |---|--:|--:|
-| 1,000,000 lines, 1% changed | 0.334 s | 0.266 s |
-| 1,000,000 lines, 1% changed, `-u` | 0.323 s | 0.267 s |
-| 10,000 unrelated lines | 0.111 s | 0.227 s |
-| 10,000 unrelated lines, `-u` | 0.135 s | 0.214 s |
+| `diff r1 r2` | 0.196 s | 0.254 s |
+| `diff -u r1 r2` | 0.210 s | 0.263 s |
+| `diff big1 big2` | 0.237 s | 0.318 s |
+| `diff un0 un1` | 0.165 s | 0.255 s |
+| `diff -e big1 big2` | 0.216 s | 0.328 s |
+| `diff -f big1 big2` | 0.222 s | 0.314 s |
+| `diff -n big1 big2` | 0.224 s | 0.327 s |
+| `diff -y big1 big2` | 0.362 s | 0.463 s |
+| `diff -y un0 un1` | 0.169 s | 0.262 s |
+| `diff -DX big1 big2` | 0.224 s | 0.341 s |
+| `diff --line-format='%dn %L' big1 big2` | 0.290 s | 0.393 s |
+| `diff -u -p big1 big2` | 0.241 s | 0.328 s |
+| `diff --color=always -u big1 big2` | 0.229 s | 0.340 s |
+| `diff -E big1 big2` | 0.385 s | 0.317 s |
+| `diff -Z big1 big2` | 0.485 s | 0.416 s |
+| `diff -I changed big1 big2` | 0.223 s | 0.328 s |
+| `diff3 big1 big0 big2` | 0.463 s | 0.566 s |
+| `diff3 -m big1 big0 big2` | 0.557 s | 0.583 s |
+| `diff3 -e big1 big0 big2` | 0.451 s | 0.543 s |
+| `diff3 un0 un1 un2` | 0.353 s | 0.506 s |
+| `sdiff big1 big2` | 0.366 s | 0.397 s |
+| `sdiff un0 un1` | 0.162 s | 0.249 s |
 
-The port is faster on the large files. Most lines of the second file get
-their class without a hash table lookup. The port first compares
-each line with the line after the last match. A lookup in a table of
-2,000,000 lines is a cache miss.
+The ports are slower than GNU except for `-E` and `-Z`. The cost is in
+the diff engine, which each format and diff3 and sdiff share. The format
+code adds less than the engine for each command.
+
+On r1 and r2 the port runs 1.00 G instructions and GNU diff runs 0.67 G
+(callgrind). The port also reads 435 M words of data, and GNU diff reads
+198 M. Native `i32` arrays use eight-byte slots. Thus each table of line
+numbers and classes is two times as large as in GNU diff. The port uses
+193 MB at the peak, and GNU diff uses 138 MB.
 
 The time of the unrelated files is in the search for the middle snake, the
 `diag` function. There the port runs 4.07 G instructions and GNU diff runs
@@ -138,5 +224,5 @@ and 32 in GNU diff:
   dead. Interference that follows liveness can remove more of these
   (#15650).
 
-Native `i32` arrays use eight-byte slots. Thus the port uses more memory:
-201 MB at the peak for the large files, where GNU diff uses 125 MB.
+These are causes in the compiler and its array layout, and this work does
+not remove them.

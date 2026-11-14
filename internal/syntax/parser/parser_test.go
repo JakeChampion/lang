@@ -337,15 +337,19 @@ func TestForInRangeDesugars(t *testing.T) {
 	if !ok {
 		t.Fatalf("range-for should desugar to Block, got %T", prog.Funcs[0].Body.Stmts[1])
 	}
-	if len(blk.Stmts) != 2 {
-		t.Fatalf("expected 2 inner stmts (hi-bind / for), got %d", len(blk.Stmts))
+	if len(blk.Stmts) != 3 {
+		t.Fatalf("expected 3 inner stmts (lo / hi / for), got %d", len(blk.Stmts))
 	}
-	if _, ok := blk.Stmts[0].(*ast.Var); !ok {
-		t.Errorf("first stmt should bind HIGH once (Var), got %T", blk.Stmts[0])
-	}
-	loop, ok := blk.Stmts[1].(*ast.For)
+	lo, ok := blk.Stmts[0].(*ast.Var)
 	if !ok {
-		t.Fatalf("second stmt should be a For (so continue advances), got %T", blk.Stmts[1])
+		t.Fatalf("first stmt must bind LOW once (Var), got %T", blk.Stmts[0])
+	}
+	if _, ok := blk.Stmts[1].(*ast.Var); !ok {
+		t.Errorf("second stmt must bind HIGH once (Var), got %T", blk.Stmts[1])
+	}
+	loop, ok := blk.Stmts[2].(*ast.For)
+	if !ok {
+		t.Fatalf("third stmt must be a For (so continue advances), got %T", blk.Stmts[2])
 	}
 	if loop.Init == nil || loop.Cond == nil || loop.Step == nil {
 		t.Errorf("desugared For must have Init/Cond/Step; got %+v", loop)
@@ -355,6 +359,10 @@ func TestForInRangeDesugars(t *testing.T) {
 	}
 	if loop.RangeIndex != "i" {
 		t.Errorf("range loop must name its index for the checker, got %q", loop.RangeIndex)
+	}
+	init := loop.Init.(*ast.Var)
+	if id, ok := init.Init.(*ast.Ident); !ok || id.Name != lo.Name {
+		t.Errorf("range index must use the lower-bound value")
 	}
 }
 
@@ -373,21 +381,25 @@ func TestForInInclusiveRangeDesugars(t *testing.T) {
 	if !ok {
 		t.Fatalf("inclusive range-for should desugar to Block, got %T", prog.Funcs[0].Body.Stmts[1])
 	}
-	if len(blk.Stmts) != 4 {
-		t.Fatalf("expected 4 inner stmts (hi / i / go / for), got %d", len(blk.Stmts))
+	if len(blk.Stmts) != 5 {
+		t.Fatalf("expected 5 inner stmts (lo / hi / i / go / for), got %d", len(blk.Stmts))
 	}
-	hi, ok1 := blk.Stmts[0].(*ast.Var)
-	iv, ok2 := blk.Stmts[1].(*ast.Var)
-	gv, ok3 := blk.Stmts[2].(*ast.Var)
-	if !ok1 || !ok2 || !ok3 || iv.Name != "i" {
-		t.Fatalf("expected `let hi; let i; let go`, got %T %T %T", blk.Stmts[0], blk.Stmts[1], blk.Stmts[2])
+	lo, ok0 := blk.Stmts[0].(*ast.Var)
+	hi, ok1 := blk.Stmts[1].(*ast.Var)
+	iv, ok2 := blk.Stmts[2].(*ast.Var)
+	gv, ok3 := blk.Stmts[3].(*ast.Var)
+	if !ok0 || !ok1 || !ok2 || !ok3 || iv.Name != "i" {
+		t.Fatalf("expected `let lo; let hi; let i; let go`, got %T %T %T %T", blk.Stmts[0], blk.Stmts[1], blk.Stmts[2], blk.Stmts[3])
+	}
+	if id, ok := iv.Init.(*ast.Ident); !ok || id.Name != lo.Name {
+		t.Errorf("range index must use the lower-bound value")
 	}
 	if b, ok := gv.Init.(*ast.Binary); !ok || b.Op != "<=" {
 		t.Errorf("go flag should start as `i <= hi` (empty when LOW > HIGH), got %T", gv.Init)
 	}
-	loop, ok := blk.Stmts[3].(*ast.For)
+	loop, ok := blk.Stmts[4].(*ast.For)
 	if !ok {
-		t.Fatalf("fourth stmt should be a For (so continue runs the step), got %T", blk.Stmts[3])
+		t.Fatalf("fifth stmt must be a For (so continue runs the step), got %T", blk.Stmts[4])
 	}
 	if loop.Init != nil {
 		t.Errorf("the loop let is declared before the go flag, not in Init; got %T", loop.Init)

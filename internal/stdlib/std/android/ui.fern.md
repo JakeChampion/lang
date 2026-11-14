@@ -16,7 +16,7 @@ The executable example below is such an app.
 
 `column` puts its elements one below the other, `row` puts them side by side, and `stack` puts them one over the other. `text` shows a text, which wraps at the width of its box. `picture` shows an image, and `canvas` shows what a function of the app draws. `box` is an empty rectangle, and `space` takes the room that is left.
 
-Each element has a width and a height. `Hug` takes the size of what the element holds, and `Grow` takes a share of the room that is left. `Exact` is a size in dp.
+Each element has a width and a height. `Hug` takes the size of what the element holds, and `Grow` takes a share of the room that is left. `Exact` is a size in dp. `square` makes an element the largest square that fits in its room, so a picture that grows keeps its shape on a short screen.
 
 The methods of `El` set them, and they set the padding, the gap, the background, the corners and the border. Sizes are in dp, and text sizes are in sp: a text grows with the font size that the person set for the system. `align` sets where a column or a row puts its elements across it, and `justify` sets where it puts them along it.
 
@@ -322,10 +322,12 @@ pub struct El[M] {
   // the message of a row that a finger swiped away.
   moves: Option[(i32, i32) => M],
   swipes: Option[(i32) => M],
+  // The element is the largest square that fits in its room.
+  square: boolean,
 }
 
 function element[M](kind: i32, kids: El[M][]): El[M] {
-  return El { kind: kind, kids: kids, w: Hug, h: Hug, pad: Edges { left: 0.0, top: 0.0, right: 0.0, bottom: 0.0 }, gap: 0.0, align: START, justify: START, bg: 0, radius: 0.0, edge: 0, edge_width: 0.0, tap: None, long: None, barrier: false, say: "", list: "", content: "", size: 14.0, weight: 400, ink: INK, lines: 0, key: "", image: None, paint: None, count: 0, row: 0.0, build: None, field: "", hint: "", edit: None, submit: None, slide: None, moves: None, swipes: None };
+  return El { kind: kind, kids: kids, w: Hug, h: Hug, pad: Edges { left: 0.0, top: 0.0, right: 0.0, bottom: 0.0 }, gap: 0.0, align: START, justify: START, bg: 0, radius: 0.0, edge: 0, edge_width: 0.0, tap: None, long: None, barrier: false, say: "", list: "", content: "", size: 14.0, weight: 400, ink: INK, lines: 0, key: "", image: None, paint: None, count: 0, row: 0.0, build: None, field: "", hint: "", edit: None, submit: None, slide: None, moves: None, swipes: None, square: false };
 }
 
 // The elements one below the other.
@@ -463,6 +465,13 @@ pub function (e: El[M]) wide(): El[M] {
 
 pub function (e: El[M]) tall(): El[M] {
   return El { ...e, h: Grow(1.0) };
+}
+
+// The element as the largest square that fits in its room, and no wider
+// than its exact width. With `tall`, a picture in a column takes the
+// height that the other elements leave, and keeps its shape.
+pub function (e: El[M]) square(): El[M] {
+  return El { ...e, square: true };
 }
 
 // Padding of `dp` on each side.
@@ -741,11 +750,12 @@ function shared[M](env: Env, e: El[M], own out: (i32, i32)[], rest: i32, total: 
     }
     let k = e.kids[i];
     let share = (rest as f64 * weight_along(k, across) / total) as i32;
-    if (across) {
-      let (_, h) = measure(env, k, share, ih);
+    let (w, h) = if (across) { measure(env, k, share, ih) } else { measure(env, k, iw, share) };
+    if (k.square) {
+      sized = sized.with(i, (w, h));
+    } else if (across) {
       sized = sized.with(i, (share, h));
     } else {
-      let (w, _) = measure(env, k, iw, share);
       sized = sized.with(i, (w, share));
     }
   }
@@ -870,6 +880,18 @@ function content[M](env: Env, e: El[M], iw: i32, ih: i32): (i32, i32) {
   return stack_size(env, e, iw, ih);
 }
 
+// The side of the largest square in the room ow by oh. A side with no
+// bound does not limit it.
+function square_side(ow: i32, oh: i32): i32 {
+  if (!bounded(ow)) {
+    return oh.max(0);
+  }
+  if (!bounded(oh)) {
+    return ow.max(0);
+  }
+  return ow.min(oh).max(0);
+}
+
 // The size of `e` in the room aw by ah.
 function measure[M](env: Env, e: El[M], aw: i32, ah: i32): (i32, i32) {
   let ew = exact(env, e.w);
@@ -896,6 +918,10 @@ function measure[M](env: Env, e: El[M], aw: i32, ah: i32): (i32, i32) {
     h = eh;
   } else if (weight_of(e.h) > 0.0 && bounded(ah)) {
     h = ah;
+  }
+  if (e.square) {
+    let side = square_side(ow, oh);
+    return (side, side);
   }
   return (w, h);
 }

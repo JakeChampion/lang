@@ -1,0 +1,907 @@
+import "../coreutils/lib/gnu";
+import "diff";
+
+const EXIT_TROUBLE: i32 = 2;
+
+const OPT_DIFF_PROGRAM: i32 = 1;
+
+const OPT_EASY_ONLY: i32 = 2;
+
+const OPT_ED: i32 = 3;
+
+const OPT_INITIAL_TAB: i32 = 4;
+
+const OPT_LABEL: i32 = 5;
+
+const OPT_MERGE: i32 = 6;
+
+const OPT_OVERLAP_ONLY: i32 = 7;
+
+const OPT_SHOW_ALL: i32 = 8;
+
+const OPT_SHOW_OVERLAP: i32 = 9;
+
+const OPT_STRIP_CR: i32 = 10;
+
+const OPT_TEXT: i32 = 11;
+
+const OPT_X: i32 = 12;
+
+const OPT_FINAL_WRITE: i32 = 13;
+
+// The kinds of a block of three files: each file differs, or one file
+// differs from the two others, which are the same.
+const DIFF_ALL: i32 = 0;
+
+const DIFF_1ST: i32 = 1;
+
+const DIFF_2ND: i32 = 2;
+
+const DIFF_3RD: i32 = 3;
+
+// The files of a block, inside the program: the two files that each diff
+// compares with the common file, then the common file.
+const FILE0: i32 = 0;
+
+const FILE1: i32 = 1;
+
+const FILEC: i32 = 2;
+
+function help_text(): string {
+  let out = "Usage: " + gnu.prog() + " [OPTION]... MYFILE OLDFILE YOURFILE\n";
+  out += "Compare three files line by line.\n";
+  out += "\n";
+  out += "Mandatory arguments to long options are mandatory for short options too.\n";
+  out += "  -A, --show-all              output all changes, bracketing conflicts\n";
+  out += "\n";
+  out += "  -e, --ed                    output ed script incorporating changes\n";
+  out += "                                from OLDFILE to YOURFILE into MYFILE\n";
+  out += "  -E, --show-overlap          like -e, but bracket conflicts\n";
+  out += "  -3, --easy-only             like -e, but incorporate only nonoverlapping changes\n";
+  out += "  -x, --overlap-only          like -e, but incorporate only overlapping changes\n";
+  out += "  -X                          like -x, but bracket conflicts\n";
+  out += "  -i                          append 'w' and 'q' commands to ed scripts\n";
+  out += "\n";
+  out += "  -m, --merge                 output actual merged file, according to\n";
+  out += "                                -A if no other options are given\n";
+  out += "\n";
+  out += "  -a, --text                  treat all files as text\n";
+  out += "      --strip-trailing-cr     strip trailing carriage return on input\n";
+  out += "  -T, --initial-tab           make tabs line up by prepending a tab\n";
+  out += "      --diff-program=PROGRAM  use PROGRAM to compare files\n";
+  out += "  -L, --label=LABEL           use LABEL instead of file name\n";
+  out += "                                (can be repeated up to three times)\n";
+  out += "\n";
+  out += "      --help                  display this help and exit\n";
+  out += "  -v, --version               output version information and exit\n";
+  out += "\n";
+  out += "The default output format is a somewhat human-readable representation of\n";
+  out += "the changes.\n";
+  out += "\n";
+  out += "The -e, -E, -x, -X (and corresponding long) options cause an ed script\n";
+  out += "to be output instead of the default.\n";
+  out += "\n";
+  out += "Finally, the -m (--merge) option causes diff3 to do the merge internally\n";
+  out += "and output the actual merged file.  For unusual input, this is more\n";
+  out += "robust than using ed.\n";
+  out += "\n";
+  out += "If a FILE is '-', read standard input.\n";
+  out += "Exit status is 0 if successful, 1 if conflicts, 2 if trouble.\n";
+  return out;
+}
+
+// The options. `incompat` counts the options of -AeExX3, of which one at
+// most is valid.
+struct Cfg { incompat: i32, merge: boolean, show_2nd: boolean, flagging: boolean, overlap_only: boolean, simple_only: boolean, final_write: boolean, text: boolean, strip_cr: boolean, initial_tab: boolean, labels: string[], program: string[] }
+
+// The options of GNU diff3 in the order of its table, which is the order of
+// the names in an ambiguity message.
+function options(): gnu.Opt[] {
+  return [
+    gnu.valued("", "diff-program", OPT_DIFF_PROGRAM), gnu.flag("3", "easy-only", OPT_EASY_ONLY), gnu.flag("e", "ed", OPT_ED), gnu.flag("", "help", gnu.help_id()),
+    gnu.flag("T", "initial-tab", OPT_INITIAL_TAB), gnu.valued("L", "label", OPT_LABEL), gnu.flag("m", "merge", OPT_MERGE), gnu.flag("x", "overlap-only", OPT_OVERLAP_ONLY),
+    gnu.flag("A", "show-all", OPT_SHOW_ALL), gnu.flag("E", "show-overlap", OPT_SHOW_OVERLAP), gnu.flag("", "strip-trailing-cr", OPT_STRIP_CR), gnu.flag("a", "text", OPT_TEXT),
+    gnu.flag("v", "version", gnu.version_id()), gnu.flag("X", "", OPT_X), gnu.flag("i", "", OPT_FINAL_WRITE),
+  ];
+}
+
+function usage_error(msg: string): void {
+  gnu.error(msg);
+  gnu.try_help_in("diffutils", EXIT_TROUBLE);
+}
+
+function fatal(msg: string): void {
+  gnu.error(msg);
+  exit(EXIT_TROUBLE);
+}
+
+function apply(cfg: Cfg, m: gnu.OptMatch): Cfg {
+  let more = cfg.incompat + 1;
+  return match (m.id) {
+    OPT_SHOW_ALL => Cfg { ...cfg, show_2nd: true, flagging: true, incompat: more },
+    OPT_SHOW_OVERLAP => Cfg { ...cfg, flagging: true, incompat: more },
+    OPT_ED => Cfg { ...cfg, incompat: more },
+    OPT_OVERLAP_ONLY | OPT_X => Cfg { ...cfg, overlap_only: true, incompat: more },
+    OPT_EASY_ONLY => Cfg { ...cfg, simple_only: true, incompat: more },
+    OPT_FINAL_WRITE => Cfg { ...cfg, final_write: true },
+    OPT_MERGE => Cfg { ...cfg, merge: true },
+    OPT_INITIAL_TAB => Cfg { ...cfg, initial_tab: true },
+    OPT_STRIP_CR => Cfg { ...cfg, strip_cr: true },
+    OPT_TEXT => Cfg { ...cfg, text: true },
+    OPT_DIFF_PROGRAM => Cfg { ...cfg, program: [m.value] },
+    _ => label_option(cfg, m.value),
+  };
+}
+
+function label_option(cfg: Cfg, v: string): Cfg {
+  if (cfg.labels.len() >= 3) {
+    usage_error("too many file label options");
+  }
+  return Cfg { ...cfg, labels: cfg.labels.append(v) };
+}
+
+function parse(argv: string[]): (Cfg, string[]) {
+  let none: string[] = [];
+  let cfg = Cfg { incompat: 0, merge: false, show_2nd: false, flagging: false, overlap_only: false, simple_only: false, final_write: false, text: false, strip_cr: false, initial_tab: false, labels: none, program: none };
+  let g = gnu.getopt_new(argv, options(), "diff3", help_text(), EXIT_TROUBLE).in_package("diffutils");
+  while (true) {
+    let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
+    g = r.1;
+    let Some(m) = r.0 else {
+      break;
+    };
+    cfg = apply(cfg, m);
+  }
+  if (cfg.merge && cfg.incompat == 0) {
+    cfg = Cfg { ...cfg, show_2nd: true, flagging: true };
+  }
+  if (cfg.incompat > 1 || cfg.final_write && cfg.merge || cfg.labels.len() > 0 && !cfg.flagging) {
+    usage_error("incompatible options");
+  }
+  let ops = g.operands();
+  if (ops.len() < 3) {
+    usage_error("missing operand after '" + argv[argv.len() - 1] + "'");
+  }
+  if (ops.len() > 3) {
+    usage_error("extra operand '" + ops[3] + "'");
+  }
+  return (cfg, ops);
+}
+
+// A block of a two-way diff: the first and last line in the other file
+// (index 0) and in the common file (index 1), counted from 1. An empty
+// range has its last line just before its first. `lines` holds a reference
+// to each line in the output of the diffs.
+struct Block { lo: i32[], hi: i32[], lines: i64[][] }
+
+// A block of the three-way diff, indexed by FILE0, FILE1 and FILEC.
+struct Block3 { kind: i32, lo: i32[], hi: i32[], lines: i64[][] }
+
+// A line of the output of the diffs: its offset in `text` and its length.
+function line_ref(off: i32, len: i32): i64 {
+  return off as i64 << 32i64 | len as i64;
+}
+
+function ref_off(r: i64): i32 {
+  return (r >> 32i64) as i32;
+}
+
+function ref_len(r: i64): i32 {
+  return (r & 4294967295i64) as i32;
+}
+
+// The output of the two diffs, and where each one starts.
+struct Diffs { text: u8[], start1: i32 }
+
+function diff_argv(cfg: Cfg, prog: string, a: string, b: string): string[] {
+  let argv: string[] = [prog];
+  if (cfg.text) {
+    argv = argv.append("-a");
+  }
+  if (cfg.strip_cr) {
+    argv = argv.append("--strip-trailing-cr");
+  }
+  return argv.append("--horizon-lines=100").append("---no-directory").append("--").append(a).append(b);
+}
+
+// read_diff: the output of the diff program for the files a and b.
+function read_diff(cfg: Cfg, a: string, b: string): u8[] {
+  if (cfg.program.len() == 0) {
+    let r = diff.capture_diff(diff_argv(cfg, "diff", a, b));
+    check_status("diff", r.0 << 8);
+    return r.1;
+  }
+  let prog = cfg.program[0];
+  if (target_os() == "wasi") {
+    fatal("subsidiary program '" + prog + "' could not be invoked");
+    return __alloc_u8(0);
+  } else {
+    return spawn_diff(prog, diff_argv(cfg, prog, a, b));
+  }
+}
+
+function spawn_diff(prog: string, argv: string[]): u8[] {
+  let p = match (pipe()) {
+    Ok(p) => p,
+    Err(e) => {
+      fatal("pipe: " + gnu.io_error_text(e));
+      return __alloc_u8(0);
+    },
+  };
+  let pid = proc_fork();
+  if (pid == 0) {
+    p.w.dup_onto(1);
+    let rc = gnu.exec_command(prog, argv, environ());
+    exit(if (rc == 2) { 127 } else { 126 });
+  }
+  if (pid < 0) {
+    fatal("fork: " + gnu.exec_errno_text(-pid));
+  }
+  p.w.close();
+  let h = buf_new(65536);
+  while (true) {
+    match (p.r.read_chunk_bytes(65536)) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          break;
+        }
+        buf_push_bytes_range(h, chunk, 0, chunk.len());
+      },
+      Err(e) => {
+        fatal("read failed: " + gnu.io_error_text(e));
+      }
+    }
+  }
+  p.r.close();
+  let out = buf_take_bytes(h);
+  buf_free(h);
+  check_status(prog, proc_waitpid_status(pid));
+  return out;
+}
+
+// The diff program failed when it did not exit with status 0 or 1.
+function check_status(prog: string, st: i32): void {
+  let code = st >> 8 & 255;
+  if ((st & 127) == 0 && code < 2) {
+    return;
+  }
+  let what = "subsidiary program '" + prog + "' ";
+  if ((st & 127) != 0) {
+    fatal(what + "failed");
+  }
+  if (code == 126) {
+    fatal(what + "could not be invoked");
+  }
+  if (code == 127) {
+    fatal(what + "not found");
+  }
+  fatal(what + "failed (exit status " + code.to_string() + ")");
+}
+
+function byte_at(t: u8[], i: i32): i32 {
+  if (i < t.len()) {
+    return t[i] as i32;
+  }
+  return 0;
+}
+
+function skip_white(t: u8[], i: i32): i32 {
+  let k = i;
+  while (byte_at(t, k) == 32 || byte_at(t, k) == 9) {
+    k += 1;
+  }
+  return k;
+}
+
+// A number of a control line, and the index after it, or -1.
+function read_num(t: u8[], i: i32): (i32, i32) {
+  let c = byte_at(t, i);
+  if (c < 48 || c > 57) {
+    return (0, -1);
+  }
+  let v = 0;
+  let k = i;
+  while (byte_at(t, k) >= 48 && byte_at(t, k) <= 57) {
+    v = v * 10 + byte_at(t, k) - 48;
+    k += 1;
+  }
+  return (v, k);
+}
+
+// A range of a control line: the first and last line and the index after it.
+function read_range(t: u8[], at: i32): (i32, i32, i32) {
+  let i = skip_white(t, at);
+  let a = read_num(t, i);
+  if (a.1 < 0) {
+    return (0, 0, -1);
+  }
+  i = skip_white(t, a.1);
+  if (byte_at(t, i) != 44) {
+    return (a.0, a.0, i);
+  }
+  let b = read_num(t, i + 1);
+  if (b.1 < 0) {
+    return (0, 0, -1);
+  }
+  return (a.0, b.0, b.1);
+}
+
+// diff failed: the rest of the line where the control line goes wrong.
+function diff_failed(t: u8[], at: i32): void {
+  let h = buf_new(64);
+  buf_push(h, gnu.prog() + ": diff failed: ");
+  let i = at;
+  while (i < t.len()) {
+    buf_push_byte(h, t[i] as i32);
+    i += 1;
+    if (t[i - 1] == b'\n') {
+      break;
+    }
+  }
+  let bytes = buf_take_bytes(h);
+  buf_free(h);
+  stderr().write_bytes(bytes);
+  exit(EXIT_TROUBLE);
+}
+
+// scan_diff_line: a line of a block after its two marker bytes. A line that
+// the note of GNU diff follows has no newline, but an ed script keeps it
+// and warns.
+function scan_line(t: u8[], at: i32, base: i32, lead: i32, edscript: boolean): (i64, i32) {
+  if (byte_at(t, at) != lead || byte_at(t, at + 1) != 32) {
+    fatal("invalid diff format; incorrect leading line chars");
+  }
+  let start = at + 2;
+  let i = __memchr_bytes(t, 10, start) + 1;
+  let len = i - start;
+  if (i < t.len() && t[i] == b'\\') {
+    let end = __memchr_bytes(t, 10, i) + 1;
+    if (edscript) {
+      let h = buf_new(64);
+      buf_push(h, gnu.prog() + ":");
+      buf_push_bytes_range(h, t, i + 1, end);
+      let bytes = buf_take_bytes(h);
+      buf_free(h);
+      stderr().write_bytes(bytes);
+    } else {
+      len -= 1;
+    }
+    i = end;
+  }
+  return (line_ref(base + start, len), i);
+}
+
+// process_diff: the blocks of the output `t` of one diff. `base` is where
+// the output starts in the text of both diffs.
+function process_diff(t: u8[], base: i32, edscript: boolean): Block[] {
+  let blocks: Block[] = [];
+  let i = 0;
+  while (i < t.len()) {
+    let r0 = read_range(t, i);
+    if (r0.2 < 0) {
+      diff_failed(t, i);
+    }
+    let k = skip_white(t, r0.2);
+    let kind = byte_at(t, k);
+    if (kind != 97 && kind != 99 && kind != 100) {
+      diff_failed(t, i);
+    }
+    let r1 = read_range(t, k + 1);
+    if (r1.2 < 0) {
+      diff_failed(t, i);
+    }
+    if (byte_at(t, r1.2) != 10) {
+      diff_failed(t, r1.2);
+    }
+    i = r1.2 + 1;
+    let lo0 = r0.0;
+    let lo1 = r1.0;
+    if (kind == 97) {
+      lo0 += 1;
+    } else if (kind == 100) {
+      lo1 += 1;
+    }
+    let lines0: i64[] = [];
+    let lines1: i64[] = [];
+    if (kind != 97) {
+      for _ in lo0..r0.1 + 1 {
+        let s = scan_line(t, i, base, 60, edscript);
+        lines0 = lines0.append(s.0);
+        i = s.1;
+      }
+    }
+    if (kind == 99) {
+      if (byte_at(t, i) != 45 || byte_at(t, i + 1) != 45 || byte_at(t, i + 2) != 45 || byte_at(t, i + 3) != 10) {
+        fatal("invalid diff format; invalid change separator");
+      }
+      i += 4;
+    }
+    if (kind != 100) {
+      for _ in lo1..r1.1 + 1 {
+        let s = scan_line(t, i, base, 62, edscript);
+        lines1 = lines1.append(s.0);
+        i = s.1;
+      }
+    }
+    blocks = blocks.append(Block { lo: [lo0, lo1], hi: [r0.1, r1.1], lines: [lines0, lines1] });
+  }
+  return blocks;
+}
+
+// The lines `from` of the text of the diffs, written at `at` of `to`. A line
+// that is there already must be the same line.
+function copy_lines(text: u8[], own to: i64[], at: i32, from: i64[]): (i64[], boolean) {
+  for k in 0..from.len() {
+    let old = to[at + k];
+    if (old != 0i64) {
+      let n = ref_len(old);
+      if (n != ref_len(from[k]) || __mismatch_bytes(text, ref_off(old), text, ref_off(from[k]), n) < n) {
+        return (to, false);
+      }
+    } else {
+      to = to.with(at + k, from[k]);
+    }
+  }
+  return (to, true);
+}
+
+function same_lines(text: u8[], a: i64[], b: i64[]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for k in 0..a.len() {
+    let n = ref_len(a[k]);
+    if (n != ref_len(b[k]) || __mismatch_bytes(text, ref_off(a[k]), text, ref_off(b[k]), n) < n) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// using_to_diff3_block: the three-way block of the blocks from..to of each
+// thread. A thread with no block there has the lines of the common file,
+// at the line numbers that the block before gives.
+function using_block(text: u8[], threads: Block[][], from: i32[], to: i32[], low: i32, high: i32, last: Block3): Block3 {
+  let lowc = threads[low][from[low]].lo[1];
+  let highc = threads[high][to[high] - 1].hi[1];
+  let lo: i32[] = [0, 0, lowc];
+  let hi: i32[] = [0, 0, highc];
+  for d in 0..2 {
+    if (from[d] >= 0) {
+      let u = threads[d][from[d]];
+      let lu = threads[d][to[d] - 1];
+      lo = lo.with(d, lowc - u.lo[1] + u.lo[0]);
+      hi = hi.with(d, highc - lu.hi[1] + lu.hi[0]);
+    } else {
+      lo = lo.with(d, lowc - last.hi[FILEC] + last.hi[d]);
+      hi = hi.with(d, highc - last.hi[FILEC] + last.hi[d]);
+    }
+  }
+  let common = __alloc_i64(highc - lowc + 1);
+  for d in 0..2 {
+    if (from[d] < 0) {
+      continue;
+    }
+    for k in from[d]..to[d] {
+      let b = threads[d][k];
+      let r = copy_lines(text, common, b.lo[1] - lowc, b.lines[1]);
+      if (!r.1) {
+        fatal("internal error: screwup in format of diff blocks");
+      }
+      common = r.0;
+    }
+  }
+  let lines: i64[][] = [];
+  for d in 0..2 {
+    let mine = __alloc_i64(hi[d] - lo[d] + 1);
+    let first = if (from[d] >= 0) { threads[d][from[d]].lo[0] } else { hi[d] + 1 };
+    let i = 0;
+    while (i + lo[d] < first) {
+      mine = mine.with(i, common[i]);
+      i += 1;
+    }
+    if (from[d] >= 0) {
+      for k in from[d]..to[d] {
+        let b = threads[d][k];
+        let r = copy_lines(text, mine, b.lo[0] - lo[d], b.lines[0]);
+        if (!r.1) {
+          fatal("internal error: screwup in format of diff blocks");
+        }
+        mine = r.0;
+        let linec = b.hi[1] + 1 - lowc;
+        let next = if (k + 1 < to[d]) { threads[d][k + 1].lo[0] } else { hi[d] + 1 };
+        let j = b.hi[0] + 1 - lo[d];
+        while (j < next - lo[d]) {
+          mine = mine.with(j, common[linec]);
+          linec += 1;
+          j += 1;
+        }
+      }
+    }
+    lines = lines.append(mine);
+  }
+  lines = lines.append(common);
+  let kind = DIFF_ALL;
+  if (from[0] < 0) {
+    kind = DIFF_2ND;
+  } else if (from[1] < 0) {
+    kind = DIFF_1ST;
+  } else if (same_lines(text, lines[0], lines[1])) {
+    kind = DIFF_3RD;
+  }
+  return Block3 { kind: kind, lo: lo, hi: hi, lines: lines };
+}
+
+function low_c(b: Block): i32 {
+  return b.lo[1];
+}
+
+// make_3way_diff: the three-way diff of two diffs onto one common file. It
+// takes the next block of the thread that starts first in the common file,
+// then each block of either thread that overlaps or touches the blocks it
+// has, until none does.
+function make_3way(text: u8[], t0: Block[], t1: Block[]): Block3[] {
+  let threads: Block[][] = [t0, t1];
+  let cur: i32[] = [0, 0];
+  let none: i64[] = [];
+  let last = Block3 { kind: DIFF_ALL, lo: [0, 0, 0], hi: [0, 0, 0], lines: [none, none, none] };
+  let out: Block3[] = [];
+  while (cur[0] < t0.len() || cur[1] < t1.len()) {
+    let from: i32[] = [-1, -1];
+    let to: i32[] = [-1, -1];
+    let base = 0;
+    if (cur[0] >= t0.len()) {
+      base = 1;
+    } else if (cur[1] < t1.len() && low_c(t0[cur[0]]) > low_c(t1[cur[1]])) {
+      base = 1;
+    }
+    let high = base;
+    let mark = threads[high][cur[high]].hi[1];
+    from = from.with(high, cur[high]);
+    to = to.with(high, cur[high] + 1);
+    cur = cur.with(high, cur[high] + 1);
+    let other = 1 - high;
+    while (cur[other] < threads[other].len() && low_c(threads[other][cur[other]]) <= mark + 1) {
+      if (from[other] < 0) {
+        from = from.with(other, cur[other]);
+      }
+      to = to.with(other, cur[other] + 1);
+      let b = threads[other][cur[other]];
+      cur = cur.with(other, cur[other] + 1);
+      if (mark < b.hi[1]) {
+        high = other;
+        mark = b.hi[1];
+      }
+      other = 1 - high;
+    }
+    last = using_block(text, threads, from, to, base, high, last);
+    out = out.append(last);
+  }
+  return out;
+}
+
+// The state of the output: the text of the diffs and the buffer.
+struct Out { text: u8[], buf: usize }
+
+function put(o: Out, s: string): void {
+  buf_push(o.buf, s);
+  if (buf_len(o.buf) >= 65536) {
+    flush(o);
+  }
+}
+
+function put_line(o: Out, r: i64): void {
+  buf_push_bytes_range(o.buf, o.text, ref_off(r), ref_off(r) + ref_len(r));
+  if (buf_len(o.buf) >= 65536) {
+    flush(o);
+  }
+}
+
+function flush(o: Out): void {
+  if (buf_len(o.buf) == 0) {
+    return;
+  }
+  let bytes = buf_take_bytes(o.buf);
+  if let Err(e) = stdout().write_bytes(bytes) {
+    gnu.error("standard output: " + gnu.io_error_text(e));
+    exit(EXIT_TROUBLE);
+  }
+}
+
+function ends_line(o: Out, r: i64): boolean {
+  return ref_len(r) > 0 && o.text[ref_off(r) + ref_len(r) - 1] == b'\n';
+}
+
+// output_diff3: the default format. A block starts with "====", and the
+// number of the file that differs when the two others are the same. Of the
+// two that are the same, the lines of the first one in the order are not
+// written.
+function output_normal(o: Out, cfg: Cfg, blocks: Block3[], mapping: i32[], rev: i32[]): void {
+  let prefix = if (cfg.initial_tab) { "\t" } else { "  " };
+  for b in blocks {
+    let odd = 3;
+    let skip = 3;
+    if (b.kind == DIFF_ALL) {
+      put(o, "====\n");
+    } else {
+      odd = rev[b.kind - DIFF_1ST];
+      put(o, "====" + (odd + 1).to_string() + "\n");
+      skip = if (odd == 0) { 1 } else { 0 };
+    }
+    let i = 0;
+    while (i < 3) {
+      let real = mapping[i];
+      let lo = b.lo[real];
+      let hi = b.hi[real];
+      if (lo - hi == 1) {
+        put(o, (i + 1).to_string() + ":" + (lo - 1).to_string() + "a\n");
+      } else if (lo == hi) {
+        put(o, (i + 1).to_string() + ":" + lo.to_string() + "c\n");
+      } else {
+        put(o, (i + 1).to_string() + ":" + lo.to_string() + "," + hi.to_string() + "c\n");
+      }
+      if (i != skip && lo <= hi) {
+        let lines = b.lines[real];
+        for r in lines {
+          put(o, prefix);
+          put_line(o, r);
+        }
+        if (!ends_line(o, lines[lines.len() - 1])) {
+          put(o, "\n\\ No newline at end of file\n");
+        }
+      }
+      i = if (odd == 1) { [2, 3, 1][i] } else { i + 1 };
+    }
+  }
+}
+
+// The kind of a block with the files numbered as the user gives them.
+function user_kind(b: Block3, rev: i32[]): i32 {
+  if (b.kind == DIFF_ALL) {
+    return DIFF_ALL;
+  }
+  return DIFF_1ST + rev[b.kind - DIFF_1ST];
+}
+
+// Whether the output takes the block, and whether it is a conflict.
+function take_block(cfg: Cfg, kind: i32): (boolean, boolean) {
+  if (kind == DIFF_2ND) {
+    return (cfg.show_2nd, true);
+  }
+  if (kind == DIFF_3RD) {
+    return (!cfg.overlap_only, false);
+  }
+  if (kind == DIFF_ALL) {
+    return (!cfg.simple_only, cfg.flagging);
+  }
+  return (false, false);
+}
+
+// dotlines: the lines of a file of the block, with each initial '.' doubled.
+// It gives whether it doubled one.
+function dot_lines(o: Out, b: Block3, f: i32): boolean {
+  let doubled = false;
+  for r in b.lines[f] {
+    if (ref_len(r) > 0 && o.text[ref_off(r)] == b'.') {
+      doubled = true;
+      put(o, ".");
+    }
+    put_line(o, r);
+  }
+  return doubled;
+}
+
+// undotlines: the end of the text of a command, then a command that removes
+// the doubled dots of `num` lines from line `start`.
+function undot_lines(o: Out, doubled: boolean, start: i32, num: i32): void {
+  put(o, ".\n");
+  if (!doubled) {
+    return;
+  }
+  if (num == 1) {
+    put(o, start.to_string() + "s/^\\.//\n");
+  } else if (num > 1) {
+    put(o, start.to_string() + "," + (start + num - 1).to_string() + "s/^\\.//\n");
+  }
+}
+
+function count(b: Block3, f: i32): i32 {
+  return b.hi[f] - b.lo[f] + 1;
+}
+
+// output_diff3_edscript: an ed script that puts the changes into the first
+// file, from its last block to its first. It gives whether a block is a
+// conflict.
+function output_ed(o: Out, cfg: Cfg, blocks: Block3[], mapping: i32[], rev: i32[], tags: string[]): boolean {
+  let conflicts = false;
+  let k = blocks.len();
+  while (k > 0) {
+    k -= 1;
+    let b = blocks[k];
+    let kind = user_kind(b, rev);
+    let take = take_block(cfg, kind);
+    if (!take.0) {
+      continue;
+    }
+    let low0 = b.lo[mapping[0]];
+    let high0 = b.hi[mapping[0]];
+    if (take.1) {
+      conflicts = true;
+      put(o, high0.to_string() + "a\n");
+      let doubled = false;
+      if (kind == DIFF_ALL) {
+        if (cfg.show_2nd) {
+          put(o, "||||||| " + tags[1] + "\n");
+          doubled = dot_lines(o, b, mapping[1]);
+        }
+        put(o, "=======\n");
+        doubled = dot_lines(o, b, mapping[2]) || doubled;
+      }
+      put(o, ">>>>>>> " + tags[2] + "\n");
+      undot_lines(o, doubled, high0 + 2, count(b, mapping[1]) + count(b, mapping[2]) + 1);
+      put(o, (low0 - 1).to_string() + "a\n<<<<<<< " + (if (kind == DIFF_ALL) { tags[0] } else { tags[1] }) + "\n");
+      doubled = false;
+      if (kind == DIFF_2ND) {
+        doubled = dot_lines(o, b, mapping[1]);
+        put(o, "=======\n");
+      }
+      undot_lines(o, doubled, low0 + 1, count(b, mapping[1]));
+    } else if (count(b, mapping[2]) == 0) {
+      if (low0 == high0) {
+        put(o, low0.to_string() + "d\n");
+      } else {
+        put(o, low0.to_string() + "," + high0.to_string() + "d\n");
+      }
+    } else {
+      if (high0 - low0 == -1) {
+        put(o, high0.to_string() + "a\n");
+      } else if (high0 == low0) {
+        put(o, high0.to_string() + "c\n");
+      } else {
+        put(o, low0.to_string() + "," + high0.to_string() + "c\n");
+      }
+      undot_lines(o, dot_lines(o, b, mapping[2]), low0, count(b, mapping[2]));
+    }
+  }
+  if (cfg.final_write) {
+    put(o, "w\nq\n");
+  }
+  return conflicts;
+}
+
+function put_lines(o: Out, lines: i64[]): void {
+  for r in lines {
+    put_line(o, r);
+  }
+}
+
+// The first file, which the merge copies around the blocks.
+struct Source { bytes: u8[], pos: i32 }
+
+// The first file of the merge, which GNU diff3 opens again by its name.
+function open_source(name: string): u8[] {
+  return match (read_file_bytes(name)) {
+    Ok(b) => b,
+    Err(e) => {
+      fatal("failed to reopen " + gnu.quote(name) + " with mode 'r': " + gnu.io_error_text(e));
+      __alloc_u8(0)
+    },
+  };
+}
+
+// output_diff3_merge: the first file with the blocks put in. It gives
+// whether a block is a conflict.
+function output_merge(o: Out, cfg: Cfg, blocks: Block3[], mapping: i32[], rev: i32[], tags: string[], src: u8[]): boolean {
+  let conflicts = false;
+  let pos = 0;
+  let read = 0;
+  for n in 0..blocks.len() {
+    let b = blocks[n];
+    let kind = user_kind(b, rev);
+    let take = take_block(cfg, kind);
+    if (!take.0) {
+      continue;
+    }
+    let copy = b.lo[FILE0] - read - 1;
+    read += copy;
+    for _ in 0..copy {
+      let end = __memchr_bytes(src, 10, pos);
+      if (end < 0) {
+        flush_source(o, src, pos, src.len());
+        flush(o);
+        fatal("input file shrank");
+      }
+      flush_source(o, src, pos, end + 1);
+      pos = end + 1;
+    }
+    if (take.1) {
+      conflicts = true;
+      if (kind == DIFF_ALL) {
+        put(o, "<<<<<<< " + tags[0] + "\n");
+        put_lines(o, b.lines[mapping[0]]);
+      }
+      if (cfg.show_2nd) {
+        put(o, (if (kind == DIFF_ALL) { "||||||| " } else { "<<<<<<< " }) + tags[1] + "\n");
+        put_lines(o, b.lines[mapping[1]]);
+      }
+      put(o, "=======\n");
+    }
+    put_lines(o, b.lines[mapping[2]]);
+    if (take.1) {
+      put(o, ">>>>>>> " + tags[2] + "\n");
+    }
+    let skip = count(b, FILE0);
+    read += skip;
+    let k = skip;
+    while (k > 0) {
+      k -= 1;
+      let end = __memchr_bytes(src, 10, pos);
+      if (end < 0) {
+        if (k > 0 || n + 1 < blocks.len()) {
+          flush(o);
+          fatal("input file shrank");
+        }
+        return conflicts;
+      }
+      pos = end + 1;
+    }
+  }
+  flush_source(o, src, pos, src.len());
+  return conflicts;
+}
+
+function flush_source(o: Out, src: u8[], from: i32, to: i32): void {
+  buf_push_bytes_range(o.buf, src, from, to);
+  if (buf_len(o.buf) >= 65536) {
+    flush(o);
+  }
+}
+
+function main(): i32 {
+  let argv = args();
+  let parsed = parse(argv);
+  let cfg = parsed.0;
+  let files = parsed.1;
+  let edscript = cfg.incompat > 0 && !cfg.merge;
+  let common = if (edscript || cfg.merge) { 1 } else { 2 };
+  if (files[common] == "-") {
+    common = 3 - common;
+    if (files[0] == "-" || files[common] == "-") {
+      fatal("'-' specified for more than one input file");
+    }
+  }
+  let mapping: i32[] = [0, 3 - common, common];
+  let rev: i32[] = [0, 0, 0];
+  for i in 0..3 {
+    rev = rev.with(mapping[i], i);
+  }
+  let tags: string[] = [];
+  for i in 0..3 {
+    tags = tags.append(if (i < cfg.labels.len()) { cfg.labels[i] } else { files[i] });
+  }
+  let out1 = read_diff(cfg, files[rev[FILE1]], files[rev[FILEC]]);
+  let t1 = process_diff(out1, 0, edscript);
+  let out0 = read_diff(cfg, files[rev[FILE0]], files[rev[FILEC]]);
+  let t0 = process_diff(out0, out1.len(), edscript);
+  let text = out1;
+  if (out0.len() > 0) {
+    let h = buf_new(out1.len() + out0.len());
+    buf_push_bytes_range(h, out1, 0, out1.len());
+    buf_push_bytes_range(h, out0, 0, out0.len());
+    text = buf_take_bytes(h);
+    buf_free(h);
+  }
+  let blocks = make_3way(text, t0, t1);
+  let o = Out { text: text, buf: buf_new(131072) };
+  let conflicts = false;
+  if (edscript) {
+    conflicts = output_ed(o, cfg, blocks, mapping, rev, tags);
+  } else if (cfg.merge) {
+    conflicts = output_merge(o, cfg, blocks, mapping, rev, tags, open_source(files[rev[FILE0]]));
+  } else {
+    output_normal(o, cfg, blocks, mapping, rev);
+  }
+  flush(o);
+  buf_free(o.buf);
+  return if (conflicts) { 1 } else { 0 };
+}

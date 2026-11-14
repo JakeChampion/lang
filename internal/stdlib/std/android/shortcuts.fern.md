@@ -8,13 +8,15 @@ A long press on the icon of an app shows its shortcuts. A shortcut has an id, a 
 
 `set` gives the launcher the shortcuts of the app. They stay until the next `set`, also while the app does not run.
 
-`action` gives the action of the intent that started the activity. An activity that the icon of the app started has the action `android.intent.action.MAIN`.
+`action` gives the action of the intent that started the activity. An activity that the icon of the app started has the action `android.intent.action.MAIN`. `action` takes the action, so the next call gives "" until a new intent comes. Thus an app can call it at each Resume event, and do the action of each intent one time.
+
+`fern -apk` gives the activity the launch mode `singleTask`. Thus a start of the app while it runs gives the new intent to the activity that runs, through its `onNewIntent` method. `NativeActivity` does not keep that intent. An app that wants it declares a subclass of `NativeActivity` with `onNewIntent`, and calls `keep_intent` there. Android calls `onNewIntent` before the Resume event.
 
 The module needs API level 25.
 
 ## Contracts
 
-Call each function on the loop thread, while the activity is valid. An action has the name of the package of the app before it, such as `dev.fern.tune.SHUFFLE`. A launcher shows at most four shortcuts of an app.
+Call `keep_intent` on the UI thread. Call each other function on the loop thread, while the activity is valid. `action` gives "" while the loop has no activity. An action has the name of the package of the app before it, such as `dev.fern.tune.SHUFFLE`. A launcher shows at most four shortcuts of an app.
 
 ## Module assembly
 
@@ -109,8 +111,12 @@ pub function set(ctx: usize, items: Shortcut[]): boolean {
   return taken != 0 && !failed;
 }
 
-// The action of the intent that started the activity, or "".
+// The action of the intent that started the activity, or "". It takes the
+// action, so the next call gives "" until a new intent comes.
 pub function action(ctx: usize): string {
+  if (android.detached(ctx)) {
+    return "";
+  }
   let e: usize = android.env(ctx);
   let intent: usize = jni.call_object(e, android.activity_object(ctx), "getIntent", "()Landroid/content/Intent;", []);
   if (threw(e) || intent == 0 as usize) {
@@ -118,12 +124,25 @@ pub function action(ctx: usize): string {
   }
   let name: usize = jni.call_object(e, intent, "getAction", "()Ljava/lang/String;", []);
   if (threw(e) || name == 0 as usize) {
+    let dropped: usize = jni.delete_local_ref(e, intent);
     return "";
   }
   let text: string = jni.string_of(e, name);
-  for local in [name, intent] {
-    let dropped: usize = jni.delete_local_ref(e, local);
+  let taken: usize = jni.call_object(e, intent, "setAction", "(Ljava/lang/String;)Landroid/content/Intent;", [0 as usize]);
+  let failed: boolean = threw(e);
+  for local in [taken, name, intent] {
+    if (local != 0 as usize) {
+      let dropped: usize = jni.delete_local_ref(e, local);
+    }
   }
   return text;
+}
+
+// Makes `intent` the intent of the activity `activity`, so that `action`
+// gives its action. Call it from the `onNewIntent` method of a subclass of
+// NativeActivity, with the arguments of that method.
+pub function keep_intent(env: usize, activity: usize, intent: usize): void {
+  let kept: boolean = jni.call_void(env, activity, "setIntent", "(Landroid/content/Intent;)V", [intent]);
+  let failed: boolean = threw(env);
 }
 ```
