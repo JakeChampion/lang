@@ -7978,6 +7978,7 @@ function word_load_contracts(): ssasem.Contract[] {
   return [
     ssasem.Contract { name: "__raw_arr_ptr", params: [typeinfo.TypeArray { elem: typeinfo.t_u8(), view: false }], modes: [b], result: typeinfo.t_usize() },
     ssasem.Contract { name: "__raw_data", params: [typeinfo.t_string()], modes: [b], result: typeinfo.t_usize() },
+    ssasem.Contract { name: "__load_u16", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_i32() },
     ssasem.Contract { name: "__load_i32", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_i32() },
     ssasem.Contract { name: "__load_i64", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_i64() },
     ssasem.Contract { name: ssabytes.word_name(4), params: [view, typeinfo.t_i32()], modes: [b, v], result: typeinfo.t_i32() },
