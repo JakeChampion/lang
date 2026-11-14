@@ -231,30 +231,42 @@ function cat_batch(r: refs.Repo, contents: boolean): i32 {
   let lines = input.split("\n");
   let count = if (input.ends_with("\n") || input.len() == 0) { lines.len() - 1 } else { lines.len() };
   let s = store.open(r.objects());
+  let buf: u8[] = [];
   for i in 0..count {
     let name = lines[i];
     let named = rev.parse(r, s, name);
     s = named.store;
     let hash = named.hash;
-    let found: Result[objects.Object, string] = Err("missing");
-    if (hash.len() > 0) {
+    let line = name + " missing";
+    let body: u8[] = [];
+    let has = false;
+    if (hash.len() > 0 && contents) {
       let got = store.read(s, hash);
       s = got.store;
-      found = got.object;
-    }
-    match (found) {
-      Ok(o) => {
-        put_line(hash + " " + o.kind + " " + o.body.len().to_string());
-        if (contents) {
-          put(o.body);
-          put("\n".bytes());
-        }
-      },
-      Err(_) => {
-        put_line(name + " missing");
+      if let Ok(o) = got.object {
+        line = hash + " " + o.kind + " " + o.body.len().to_string();
+        body = o.body;
+        has = true;
+      }
+    } else if (hash.len() > 0) {
+      // The kind and the size need no content.
+      let got = store.info(s, hash);
+      s = got.store;
+      if (got.why.len() == 0) {
+        line = hash + " " + got.kind + " " + got.size.to_string();
       }
     }
+    buf = buf.concat(line.bytes()).append(b'\n');
+    if (has) {
+      put(buf);
+      put(body);
+      buf = [b'\n'];
+    } else if (buf.len() > 65536) {
+      put(buf);
+      buf = [];
+    }
   }
+  put(buf);
   return 0;
 }
 
@@ -350,11 +362,8 @@ function size_column(l: Listing, e: objects.TreeEntry): (store.Store, string) {
   if (objects.entry_kind(e.mode) != "blob") {
     return (l.store, "       -");
   }
-  let got = store.read(l.store, e.hash);
-  let size = match (got.object) {
-    Ok(o) => o.body.len().to_string(),
-    Err(_) => "-",
-  };
+  let got = store.info(l.store, e.hash);
+  let size = if (got.why.len() == 0) { got.size.to_string() } else { "-" };
   return (got.store, " " + size.pad_start_str(7, " "));
 }
 

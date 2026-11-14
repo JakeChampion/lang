@@ -1,0 +1,386 @@
+// The CommonMark of a node tree, as cmark writes it.
+import "./markdown";
+import "./nodes";
+import "./out";
+
+pub function render(t: nodes.Tree, o: markdown.Options): u8[] {
+  let width = o.width;
+  if (o.hardbreaks) {
+    width = 0;
+  }
+  let r = out.new(out.COMMONMARK, o, width);
+  let s = nodes.Step { node: 0, exit: false };
+  while (s.node != nodes.NONE) {
+    let (r2, skip) = node(r, t, s.node, !s.exit);
+    r = r2;
+    if (skip) {
+      s = nodes.Step { node: s.node, exit: true };
+    }
+    s = t.step(s);
+  }
+  return r.bytes();
+}
+
+function is_block(k: i32): boolean {
+  return k <= nodes.RULE;
+}
+
+function tight(t: nodes.Tree, list: i32): boolean {
+  return t.kind(list) == nodes.LIST && t.has(list, nodes.TIGHT);
+}
+
+// True when the block that holds `x` is an item of a tight list, or is in
+// one.
+function in_tight_item(t: nodes.Tree, x: i32): boolean {
+  let b = x;
+  while (!is_block(t.kind(b))) {
+    b = t.parent(b);
+  }
+  if (t.kind(b) == nodes.ITEM && tight(t, t.parent(b))) {
+    return true;
+  }
+  let p = t.parent(b);
+  return p != nodes.NONE && t.kind(p) == nodes.ITEM && tight(t, t.parent(p));
+}
+
+// Writes the node `x` as cmark does. Gives true when the walk skips the
+// children of the node.
+function node(r0: out.R, t: nodes.Tree, x: i32, entering: boolean): (out.R, boolean) {
+  let k = t.kind(x);
+  let r = r0;
+  if (!(k == nodes.ITEM && t.prev(x) == nodes.NONE && entering)) {
+    r = out.R { ...r, in_tight_list_item: in_tight_item(t, x) };
+  }
+  if (k == nodes.QUOTE || k == nodes.LIST || k == nodes.ITEM || k == nodes.HEADING) {
+    return (container(r, t, x, k, entering), false);
+  }
+  if (k <= nodes.RULE) {
+    return (leaf_block(r, t, x, k, entering), false);
+  }
+  return inline(r, t, x, k, entering);
+}
+
+// A block quote, a list, a list item or a heading.
+function container(r: out.R, t: nodes.Tree, x: i32, k: i32, entering: boolean): out.R {
+  if (k == nodes.ITEM) {
+    return item(r, t, x, entering);
+  }
+  if (k == nodes.HEADING) {
+    return heading(r, t.value(x), entering);
+  }
+  if (k == nodes.LIST) {
+    let n = t.next(x);
+    if (!entering && n != nodes.NONE && t.kind(n) == nodes.LIST) {
+      return r.cr().lit("<!-- end list -->").blankline();
+    }
+    return r;
+  }
+  if (entering) {
+    let q = r.lit("> ");
+    return out.R { ...q, begin_content: true, prefix: q.prefix + "> " };
+  }
+  return out.R { ...r, prefix: slice_unchecked(r.prefix, 0, r.prefix.len() - 2).to_owned() }.blankline();
+}
+
+// An ATX heading. Its text has no line breaks.
+function heading(r0: out.R, level: i32, entering: boolean): out.R {
+  if (!entering) {
+    return out.R { ...r0, no_linebreaks: false }.blankline();
+  }
+  let r = r0;
+  for _ in 0..level {
+    r = r.lit("#");
+  }
+  r = r.lit(" ");
+  return out.R { ...r, begin_content: true, no_linebreaks: true };
+}
+
+function leaf_block(r: out.R, t: nodes.Tree, x: i32, k: i32, entering: boolean): out.R {
+  if (k == nodes.CODE_BLOCK) {
+    return code_block(r, t, x);
+  }
+  if (k == nodes.HTML_BLOCK) {
+    return r.blankline().out(t.lit(t.text, x), false, out.LITERAL).blankline();
+  }
+  if (k == nodes.RULE) {
+    return r.blankline().lit("-----").blankline();
+  }
+  if (k == nodes.PARAGRAPH && !entering) {
+    return r.blankline();
+  }
+  return r;
+}
+
+function allow_wrap(r: out.R): boolean {
+  return r.width > 0 && !r.o.nobreaks && !r.o.hardbreaks;
+}
+
+function inline(r: out.R, t: nodes.Tree, x: i32, k: i32, entering: boolean): (out.R, boolean) {
+  if (k == nodes.STRONG) {
+    return (r.lit("**"), false);
+  }
+  if (k == nodes.EMPH) {
+    // Emphasis that is the only child of emphasis uses `_`, because `**`
+    // is strong emphasis.
+    let p = t.parent(x);
+    if (t.kind(p) == nodes.EMPH && t.next(x) == nodes.NONE && t.prev(x) == nodes.NONE) {
+      return (r.lit("_"), false);
+    }
+    return (r.lit("*"), false);
+  }
+  if (k == nodes.LINK || k == nodes.IMAGE) {
+    return link(r, t, x, k, entering);
+  }
+  return (leaf_inline(r, t, x, k), false);
+}
+
+// Text, a line break, a code span or raw HTML.
+function leaf_inline(r: out.R, t: nodes.Tree, x: i32, k: i32): out.R {
+  if (k == nodes.TEXT) {
+    return r.out(t.lit(t.text, x), allow_wrap(r), out.NORMAL);
+  }
+  if (k == nodes.LINEBREAK || k == nodes.SOFTBREAK) {
+    return line_break(r, k == nodes.LINEBREAK);
+  }
+  if (k == nodes.CODE) {
+    return code(r, t.lit(t.text, x));
+  }
+  return r.out(t.lit(t.text, x), false, out.LITERAL);
+}
+
+// A hard line break is two spaces and a line feed, and the option
+// `hardbreaks` makes a soft line break one. Without it, a hard line break
+// is a line feed. A soft line break is a line feed, or a space where a line
+// can wrap.
+function line_break(r: out.R, hard: boolean): out.R {
+  if (hard != r.o.hardbreaks) {
+    return r.lit("  ").cr();
+  }
+  if (hard || !r.no_linebreaks && r.width == 0 && !r.o.nobreaks) {
+    return r.cr();
+  }
+  return r.out(" ", allow_wrap(r), out.LITERAL);
+}
+
+// A link or an image. An autolink is written as one, and the walk skips its
+// text.
+function link(r: out.R, t: nodes.Tree, x: i32, k: i32, entering: boolean): (out.R, boolean) {
+  if (k == nodes.LINK && is_autolink(t, x)) {
+    if (!entering) {
+      return (r, false);
+    }
+    let url = t.lit(t.text, x);
+    if (url.starts_with("mailto:")) {
+      url = slice_unchecked(url, 7, url.len());
+    }
+    return (r.lit("<").lit(url).lit(">"), true);
+  }
+  if (entering && k == nodes.LINK) {
+    return (r.lit("["), false);
+  }
+  if (entering) {
+    return (r.lit("!["), false);
+  }
+  return (link_end(r, t, x, k), false);
+}
+
+function link_end(r0: out.R, t: nodes.Tree, x: i32, k: i32): out.R {
+  let r = r0.lit("](").out(t.lit(t.text, x), false, out.URL);
+  let title = t.extra(t.text, x);
+  if (title.len() > 0) {
+    if (k == nodes.IMAGE) {
+      r = r.out(" \"", allow_wrap(r), out.LITERAL);
+    } else {
+      r = r.lit(" \"");
+    }
+    r = r.out(title, false, out.TITLE).lit("\"");
+  }
+  return r.lit(")");
+}
+
+// A link is an autolink when its destination has a scheme, it has no
+// title, and the text of its first child is the destination without
+// `mailto:`.
+function is_autolink(t: nodes.Tree, x: i32): boolean {
+  let url = t.lit(t.text, x);
+  if (scheme_length(url) == 0 || t.extra(t.text, x).len() > 0) {
+    return false;
+  }
+  let first = t.first(x);
+  if (first == nodes.NONE) {
+    return false;
+  }
+  let fk = t.kind(first);
+  if (fk != nodes.TEXT && fk != nodes.CODE && fk != nodes.HTML) {
+    return false;
+  }
+  let bare = url;
+  if (url.starts_with("mailto:")) {
+    bare = slice_unchecked(url, 7, url.len());
+  }
+  return bare == t.lit(t.text, first);
+}
+
+// The length of a scheme and its `:` at the start of `s`, or 0: a letter,
+// then 1 to 31 letters, digits, `.`, `+` and `-`.
+pub function scheme_length(s: string): i32 {
+  if (s.len() == 0 || !is_letter(s[0] as i32)) {
+    return 0;
+  }
+  let i = 1;
+  while (i < s.len() && i <= 32 && is_scheme_char(s[i] as i32)) {
+    i += 1;
+  }
+  if (i < 2 || i > 32 || i >= s.len() || s[i] != b':') {
+    return 0;
+  }
+  return i + 1;
+}
+
+function is_letter(c: i32): boolean {
+  return c >= 65 && c <= 90 || c >= 97 && c <= 122;
+}
+
+function is_scheme_char(c: i32): boolean {
+  return is_letter(c) || c >= 48 && c <= 57 || c == 46 || c == 43 || c == 45;
+}
+
+// A list item: a bullet `  - ` or a number, and a prefix of the width of
+// its marker for the lines after the first.
+function item(r0: out.R, t: nodes.Tree, x: i32, entering: boolean): out.R {
+  let list = t.parent(x);
+  let marker = "  - ";
+  if (t.has(list, nodes.ORDERED)) {
+    let n = t.value(list);
+    let p = t.prev(x);
+    while (p != nodes.NONE) {
+      n += 1;
+      p = t.prev(p);
+    }
+    marker = n.to_string() + ".";
+    if (t.has(list, nodes.PAREN)) {
+      marker = n.to_string() + ")";
+    }
+    if (n < 10) {
+      marker += "  ";
+    } else {
+      marker += " ";
+    }
+  }
+  let r = r0;
+  if (!entering) {
+    r = out.R { ...r, prefix: slice_unchecked(r.prefix, 0, r.prefix.len() - marker.len()).to_owned() };
+    return r.cr();
+  }
+  r = r.lit(marker);
+  let pad = "";
+  for _ in 0..marker.len() {
+    pad += " ";
+  }
+  return out.R { ...r, begin_content: true, prefix: r.prefix + pad };
+}
+
+// A code block is always fenced. The fence is longer than each string of
+// backticks in the code, and is made of `~` when the info string has a
+// backtick.
+function code_block(r0: out.R, t: nodes.Tree, x: i32): out.R {
+  let r = r0;
+  let p = t.parent(x);
+  if (!(t.prev(x) == nodes.NONE && p != nodes.NONE && t.kind(p) == nodes.ITEM)) {
+    r = r.blankline();
+  }
+  let info = t.extra(t.text, x);
+  let fence = "`";
+  if (__memchr(info, 96, 0) >= 0) {
+    fence = "~";
+  }
+  let text = t.lit(t.text, x);
+  let n = longest_ticks(text) + 1;
+  if (n < 3) {
+    n = 3;
+  }
+  for _ in 0..n {
+    r = r.lit(fence);
+  }
+  r = r.lit(" ").out(info, false, out.LITERAL).cr().out(text, false, out.LITERAL).cr();
+  for _ in 0..n {
+    r = r.lit(fence);
+  }
+  return r.blankline();
+}
+
+function longest_ticks(s: string): i32 {
+  let longest = 0;
+  let cur = 0;
+  for i in 0..s.len() {
+    if (s[i] == b'`') {
+      cur += 1;
+      if (cur > longest) {
+        longest = cur;
+      }
+    } else {
+      cur = 0;
+    }
+  }
+  return longest;
+}
+
+// The shortest string of backticks that is not in `s`, or 32.
+function shortest_unused_ticks(s: string): i32 {
+  let used = 1;
+  let cur = 0;
+  for i in 0..s.len() + 1 {
+    if (i < s.len() && s[i] == b'`') {
+      cur += 1;
+    } else {
+      if (cur > 0 && cur < 32) {
+        used |= 1 << cur;
+      }
+      cur = 0;
+    }
+  }
+  let n = 0;
+  while (n < 32 && (used >> n & 1) != 0) {
+    n += 1;
+  }
+  return n;
+}
+
+// True when a code span needs a space at each end: its text is empty,
+// starts or ends with a backtick, or has spaces at both ends and other text.
+function padded(s: string): boolean {
+  let len = s.len();
+  if (len == 0 || s[0] == b'`' || s[len - 1] == b'`') {
+    return true;
+  }
+  if (s[0] != b' ' || s[len - 1] != b' ') {
+    return false;
+  }
+  for i in 0..len {
+    if (s[i] != b' ') {
+      return true;
+    }
+  }
+  return false;
+}
+
+// A code span, with a string of backticks that its text does not have.
+function code(r0: out.R, s: string): out.R {
+  let n = shortest_unused_ticks(s);
+  let extra = padded(s);
+  let r = r0;
+  for _ in 0..n {
+    r = r.lit("`");
+  }
+  if (extra) {
+    r = r.lit(" ");
+  }
+  r = r.out(s, allow_wrap(r), out.LITERAL);
+  if (extra) {
+    r = r.lit(" ");
+  }
+  for _ in 0..n {
+    r = r.lit("`");
+  }
+  return r;
+}

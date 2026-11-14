@@ -431,7 +431,46 @@ function rewrite_term(t: STerm, resolved: i32[]): STerm {
   return t;
 }
 
-function inst_is_call(k: i32): boolean {
+// A call_word copies a word of the last call's result out of its register.
+// It calls nothing.
+pub function result_word(ins: SInst): boolean {
+  return ins.kind_tag == FLAT_OP && ins.str == "call_word";
+}
+
+// For each position, bit n is set where a later call_word of the block still
+// reads word n from its register: from the position after the call to that
+// call_word. No other value may hold that register there.
+pub function result_word_masks(f: SFunc, ops: ir.Op[]): i32[] {
+  let masks: i32[] = [];
+  for blk in f.blocks {
+    let row = __alloc_i32(blk.insts.len() + 1);
+    let held = 0;
+    let k = blk.insts.len() - 1;
+    while (k >= 0) {
+      let ins = blk.insts[k];
+      if (result_word(ins)) {
+        let slot = ops[ins.imm].i32_imm;
+        if (slot >= 0 && slot < 3) {
+          held = held | 1 << slot;
+        }
+        row = row.with(k, held);
+      } else if (inst_is_call(ins)) {
+        held = 0;
+      } else {
+        row = row.with(k, held);
+      }
+      k -= 1;
+    }
+    masks = util.append_all(masks, row);
+  }
+  return masks;
+}
+
+function inst_is_call(ins: SInst): boolean {
+  if (result_word(ins)) {
+    return false;
+  }
+  let k = ins.kind_tag;
   if (k == CALL || k == CALL_INDIRECT || k == CONCAT || k == STREQ || k == ARR_BOX || k == STR_CALL || k == RT_CALL || k == STR_VIEW || k == CALL_IND || k == FLAT_OP || k == DYN_DISPATCH) {
     return true;
   }
@@ -440,7 +479,7 @@ function inst_is_call(k: i32): boolean {
 
 // A runtime abort exits the process, so no value has to survive it.
 pub function never_returns(ins: SInst): boolean {
-  return inst_is_call(ins.kind_tag) && ins.args.len() == 0
+  return inst_is_call(ins) && ins.args.len() == 0
     && (ins.str == "__fern_oob_abort" || ins.str == "__fern_str_oob_abort" || ins.str == "__fern_slice_abort" || ins.str == "__fern_alloc_size_abort");
 }
 
@@ -490,7 +529,7 @@ pub function alloc_inline(ins: SInst, size: boolean): boolean {
 // block's own return value.
 pub function counted_call(blk: SBlock, k: i32): boolean {
   let ins = blk.insts[k];
-  return inst_is_call(ins.kind_tag) && !never_returns(ins) && !returns_call(blk, k);
+  return inst_is_call(ins) && !never_returns(ins) && !returns_call(blk, k);
 }
 
 // For each position, whether a counted call there clobbers the caller
@@ -548,7 +587,7 @@ function cold_kind(blk: SBlock, k: i32, cold: boolean, size: boolean, back: bool
 // A call in a cold block, or an allocation for a null token.
 function cold_branch(blk: SBlock, k: i32, cold: boolean): boolean {
   let ins = blk.insts[k];
-  return (cold || fresh_alloc_call(ins)) && inst_is_call(ins.kind_tag) && !never_returns(ins) && !returns_call(blk, k);
+  return (cold || fresh_alloc_call(ins)) && inst_is_call(ins) && !never_returns(ins) && !returns_call(blk, k);
 }
 
 pub function cold_blocks(f: SFunc): boolean[] {
@@ -723,7 +762,7 @@ pub function calls_out(f: SFunc): boolean {
 }
 
 pub function calls(ins: SInst): boolean {
-  return inst_is_call(ins.kind_tag) && !rc_inlined(ins) && !never_returns(ins);
+  return inst_is_call(ins) && !rc_inlined(ins) && !never_returns(ins);
 }
 
 pub function rc_inlined(ins: SInst): boolean {
@@ -1389,7 +1428,7 @@ function float_def(ins: SInst): boolean {
 }
 
 function float_load(ins: SInst): boolean {
-  return ins.kind_tag == LD_AT || ins.kind_tag == ARR_AT && ins.str != "u8";
+  return ins.kind_tag == LD_AT || ins.kind_tag == ARR_AT && ins.str != "u8" && ins.str != "i32" && ins.str != "u32";
 }
 
 function float_use(ins: SInst): boolean {
@@ -1453,7 +1492,7 @@ function unhomed_call_results(f: SFunc, own no_home: boolean[]): boolean[] {
   let uses = use_counts(f);
   for b in f.blocks {
     for ins in b.insts {
-      if (inst_is_call(ins.kind_tag) && ins.result >= 0 && uses[ins.result] == 0) {
+      if (inst_is_call(ins) && ins.result >= 0 && uses[ins.result] == 0) {
         no_home = no_home.with(ins.result, true);
       }
     }
@@ -1543,7 +1582,7 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
         }
         a += 1;
       }
-      if (inst_is_call(ins.kind_tag) && !never_returns(ins)) {
+      if (inst_is_call(ins) && !never_returns(ins)) {
         if (counted_call(blk, k)) {
           all_calls = all_calls.append(pos);
           let kind = COLD_NONE;
@@ -2083,7 +2122,7 @@ pub function print_alloc_costs(f: SFunc, a: Alloc, costs: SpillCosts): string {
     out += "\n";
     for k in 0..blk.insts.len() {
       let ins = blk.insts[k];
-      if (inst_is_call(ins.kind_tag)) {
+      if (inst_is_call(ins)) {
         let kind = COLD_NONE;
         if (start + k < a.cold.len()) {
           kind = a.cold[start + k];
@@ -4754,7 +4793,7 @@ function tested_by_call(head: SBlock, cond: i32): boolean {
       return tested_by_call(head, ins.args[0]);
     }
     if (ins.result == cond) {
-      return inst_is_call(ins.kind_tag);
+      return inst_is_call(ins);
     }
   }
   return false;
@@ -5661,8 +5700,9 @@ function ext_transfer(f: SFunc, def_b: i32[], def_k: i32[], facts: i32[], ins: S
   if (k == SELECT) {
     return shared_facts(facts, ins.args, 1);
   }
-  if (byte_source(f, def_b, def_k, ins)) {
-    return EXT_BYTE;
+  let loaded = source_facts(f, def_b, def_k, ins);
+  if (loaded != 0) {
+    return loaded;
   }
   if (k == BINARY) {
     return binary_facts(f, def_b, def_k, facts, ins);
@@ -5800,17 +5840,28 @@ function unary_facts(ins: SInst, held: i32): i32 {
   return 0;
 }
 
-function byte_source(f: SFunc, def_b: i32[], def_k: i32[], ins: SInst): boolean {
+// What a load or a byte mask leaves in its register, or 0.
+function source_facts(f: SFunc, def_b: i32[], def_k: i32[], ins: SInst): i32 {
   if (ins.kind_tag == LD_BYTE) {
-    return true;
+    return EXT_BYTE;
   }
   if (ins.kind_tag == ARR_AT || ins.kind_tag == STR_AT) {
-    return ins.imm != 2 && (ins.kind_tag == STR_AT || ins.str == "u8");
+    return if (ins.imm == 2) { 0 } else { elem_facts(ins) };
   }
-  if (ins.kind_tag == BINARY && ins.str == "and" && ins.args.len() == 2) {
-    return const_in(f, def_b, def_k, ins.args[0], 0i64, 255i64) || const_in(f, def_b, def_k, ins.args[1], 0i64, 255i64);
+  if (ins.kind_tag == BINARY && ins.str == "and" && ins.args.len() == 2 && (const_in(f, def_b, def_k, ins.args[0], 0i64, 255i64) || const_in(f, def_b, def_k, ins.args[1], 0i64, 255i64))) {
+    return EXT_BYTE;
   }
-  return false;
+  return 0;
+}
+
+function elem_facts(ins: SInst): i32 {
+  if (ins.kind_tag == STR_AT || ins.str == "u8") {
+    return EXT_BYTE;
+  }
+  if (ins.str == "i32") {
+    return EXT_I32;
+  }
+  return if (ins.str == "u32") { EXT_U32 } else { 0 };
 }
 
 function const_zero(f: SFunc, def_b: i32[], def_k: i32[], v: i32): boolean {
@@ -6150,17 +6201,28 @@ function constant_bits(ins: SInst): i32 {
   return 64;
 }
 
+// The low bits of operand `k` that a store of a byte or a 4-byte element
+// writes, or 0. An append takes its element as operand 1.
+function stored_bits(ins: SInst, k: i32): i32 {
+  let mark = ins.str;
+  if (ins.kind_tag == RT_CALL && k == 1 && ins.str.starts_with("arr_push")) {
+    mark = if (ins.str.ends_with("_u8")) { "u8" } else if (ins.str.ends_with("_u32")) { "i32" } else { "" };
+  } else if (!(ins.kind_tag == ST_AT && k == 1 || ins.kind_tag == ARR_ST && k == 2)) {
+    return 0;
+  }
+  if (mark == "u8") {
+    return 8;
+  }
+  return if (mark == "i32" || mark == "u32") { 32 } else { 0 };
+}
+
 // The low result bits of arithmetic and logic depend only on the same
 // low operand bits. A constant right shift can bring higher bits down;
 // variable right shifts conservatively observe the whole source.
 function operand_bits(ins: SInst, k: i32, result: i32, f: SFunc, def_b: i32[], def_k: i32[]): i32 {
-  if (ins.kind_tag == ST_AT && k == 1) {
-    if (ins.str == "u8") {
-      return 8;
-    }
-    if (ins.str == "i32") {
-      return 32;
-    }
+  let stored = stored_bits(ins, k);
+  if (stored > 0) {
+    return stored;
   }
   if (ins.kind_tag == COPY || ins.kind_tag == PHI) {
     return result;

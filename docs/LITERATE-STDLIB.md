@@ -79,6 +79,7 @@ They are outside the public library inventory below.
 | `std/crypto/ecdsa` | [ECDSA signatures and key agreement](../internal/stdlib/std/crypto/ecdsa.fern.md) |
 | `std/crypto/ed25519` | [Ed25519 signatures](../internal/stdlib/std/crypto/ed25519.fern.md) |
 | `std/crypto/field25519` | [Arithmetic for Curve25519](../internal/stdlib/std/crypto/field25519.fern.md) |
+| `std/crypto/hpke` | [HPKE with the MLKEM768-X25519 KEM](../internal/stdlib/std/crypto/hpke.fern.md) |
 | `std/crypto/mlkem768` | [ML-KEM-768 key encapsulation](../internal/stdlib/std/crypto/mlkem768.fern.md) |
 | `std/crypto/montgomery` | [Montgomery modular arithmetic](../internal/stdlib/std/crypto/montgomery.fern.md) |
 | `std/crypto/p256` | [NIST P-256 arithmetic](../internal/stdlib/std/crypto/p256.fern.md) |

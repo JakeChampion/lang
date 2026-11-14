@@ -142,6 +142,29 @@ func (c *checker) settleArrayLiteral(al *ast.ArrayLit, want ast.Type) {
 	al.ElemType = want
 }
 
+// settleComparedArrayLiteral gives an array literal on one side of == or !=
+// the element type of the array on the other side, as an assignment does.
+func (c *checker) settleComparedArrayLiteral(n *ast.Binary, lt, rt ast.Type) (ast.Type, ast.Type) {
+	la, lok := lt.(ast.ArrayType)
+	ra, rok := rt.(ast.ArrayType)
+	if !lok || !rok || ast.Equal(lt, rt) {
+		return lt, rt
+	}
+	if al, ok := n.Right.(*ast.ArrayLit); ok {
+		c.settleArrayLiteral(al, la.Elem)
+		if ast.Equal(al.ElemType, la.Elem) {
+			return lt, lt
+		}
+	}
+	if al, ok := n.Left.(*ast.ArrayLit); ok {
+		c.settleArrayLiteral(al, ra.Elem)
+		if ast.Equal(al.ElemType, ra.Elem) {
+			return rt, rt
+		}
+	}
+	return lt, rt
+}
+
 func settledBranchJoin(a, b ast.Type) ast.Type {
 	if joined := unifyIfArms(a, b); joined != nil {
 		return joined

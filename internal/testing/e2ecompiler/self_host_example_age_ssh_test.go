@@ -59,7 +59,7 @@ func ageSSHString(b []byte) []byte {
 }
 
 // ageSSH checks ssh-ed25519 and ssh-rsa recipients and identities against
-// age 1.1.1.
+// age 1.3.2.
 func ageSSH(t *testing.T, oracle, port ageTool, dir string) {
 	ageSSHKeys(t, dir)
 	plain := ageRandom(t, 70000)
@@ -274,8 +274,41 @@ func ageSSHMessages(t *testing.T, oracle, port ageTool, dir string) {
 
 var ageKeygenOutput = regexp.MustCompile(`^# created: (\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:Z|[+-]\d\d:\d\d))\n# public key: (age1[02-9ac-hj-np-z]{58})\n(AGE-SECRET-KEY-1[02-9AC-HJ-NP-Z]{58})\n$`)
 
+var ageKeygenHybridOutput = regexp.MustCompile(`^# created: [^\n]+\n# public key: (age1pq1[02-9ac-hj-np-z]+)\n(AGE-SECRET-KEY-PQ-1[02-9AC-HJ-NP-Z]{58})\n$`)
+
+// ageKeygenHybrid checks -pq: age decrypts with the hybrid key of the port,
+// and the two tools give the same recipients for each other's keys.
+func ageKeygenHybrid(t *testing.T, oracle, keygen, port ageTool, dir string) {
+	out, stderr, code := port.run(t, dir, nil, "-pq")
+	m := ageKeygenHybridOutput.FindStringSubmatch(string(out))
+	if code != 0 || m == nil || len(m[1]) != 1959 || stderr != "Public key: "+m[1]+"\n" {
+		t.Fatalf("fern age-keygen -pq: exit %d %q %q", code, out, stderr)
+	}
+	ageWrite(t, filepath.Join(dir, "pq"), out)
+	if r, _, _ := keygen.run(t, dir, nil, "-y", "pq"); strings.TrimSpace(string(r)) != m[1] {
+		t.Errorf("age-keygen -y of the fern age-keygen -pq key gives %q, want %q", r, m[1])
+	}
+	sealed, _, _ := oracle.run(t, dir, []byte("hello"), "-r", m[1])
+	if got, stderr, code := oracle.run(t, dir, sealed, "-d", "-i", "pq"); code != 0 || string(got) != "hello" {
+		t.Errorf("age -d with the -pq key of fern age-keygen: exit %d %s", code, stderr)
+	}
+	os.Remove(filepath.Join(dir, "pq-age"))
+	if _, stderr, code := keygen.run(t, dir, nil, "-pq", "-o", "pq-age"); code != 0 {
+		t.Fatalf("age-keygen -pq: exit %d %s", code, stderr)
+	}
+	want, _, _ := keygen.run(t, dir, nil, "-y", "pq-age")
+	if got, stderr, code := port.run(t, dir, nil, "-y", "pq-age"); code != 0 || !bytes.Equal(got, want) {
+		t.Errorf("fern age-keygen -y of an age-keygen -pq key: exit %d %q %s, want %q", code, got, stderr, want)
+	}
+	ageWrite(t, filepath.Join(dir, "mixed"), []byte(ageRead(t, filepath.Join(dir, "pq"))+ageRead(t, filepath.Join(dir, "k"))))
+	want, _, _ = keygen.run(t, dir, nil, "-y", "mixed")
+	if got, _, code := port.run(t, dir, nil, "-y", "mixed"); code != 0 || !bytes.Equal(got, want) {
+		t.Errorf("fern age-keygen -y of a hybrid and an X25519 key: %q, want %q", got, want)
+	}
+}
+
 // TestSelfHostExampleAgeKeygen checks the age-keygen port against
-// age-keygen 1.1.1 on x86-64 and arm64.
+// age-keygen 1.3.2 on x86-64 and arm64.
 func TestSelfHostExampleAgeKeygen(t *testing.T) {
 	oracle, keygenPath := ageOracle(t)
 	keygen := ageTool{name: "age-keygen", cmd: func(args ...string) *exec.Cmd { return exec.Command(keygenPath, args...) }}
@@ -317,6 +350,7 @@ func ageKeygen(t *testing.T, oracle, keygen, port ageTool, dir string) {
 			t.Errorf("age -d with the key of fern age-keygen: exit %d %s", code, stderr)
 		}
 	}
+	ageKeygenHybrid(t, oracle, keygen, port, dir)
 	os.Remove(filepath.Join(dir, "new"))
 	if _, stderr, code := port.run(t, dir, nil, "-o", "new"); code != 0 || !strings.HasPrefix(stderr, "Public key: age1") {
 		t.Fatalf("fern age-keygen -o: exit %d %s", code, stderr)
@@ -334,6 +368,7 @@ func ageKeygen(t *testing.T, oracle, keygen, port ageTool, dir string) {
 	for _, args := range [][]string{
 		{"-y", "two"}, {"-y", "-o", "y-out", "two"}, {"-y", "empty"}, {"-y", "garbage"}, {"-y", "lower"}, {"-y", "ssh"}, {"-y", "nosuch"}, {"-y", "sub"},
 		{"-y", "a", "b"}, {"x"}, {"-o", "new"}, {"-o", "nodir/x"}, {"--bogus"}, {"-o"}, {"-y=maybe"}, {"-h"},
+		{"-pq", "-y", "two"}, {"-y", "-pq"}, {"-pq", "x"}, {"-pq=false", "-o", "new"}, {"-y", "-o", "y-out", "garbage"}, {"-y", "-o", "new", "nosuch"},
 	} {
 		os.Remove(filepath.Join(dir, "y-out"))
 		wantOut, want, wantCode := keygen.run(t, dir, nil, args...)

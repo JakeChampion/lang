@@ -1,0 +1,115 @@
+// An element read `.0` or `.1` of a call result that no name holds is owned,
+// as the element that a destructure `let (_, r) = f(x);` binds is. So it can
+// go to an `own` parameter, an `own` result, a struct literal and a match.
+// The struct holds a handle, so the checker cannot treat it as a copy.
+
+struct Run { args: string[], tag: string, n: i32, tty: Option[Reader] }
+
+struct Wrap { run: Run, k: i32 }
+
+function bump(own r: Run): (string, Run) {
+  return ("tag " + r.tag, Run { ...r, n: r.n + 1 });
+}
+
+function swap(own r: Run): (Run, string) {
+  return (Run { ...r, args: r.args.append("x"), n: r.n + 2 }, "left " + r.tag);
+}
+
+function nest(own r: Run): (string, (string, Run)) {
+  return ("outer", ("inner", Run { ...r, n: r.n + 3 }));
+}
+
+function maybe(own r: Run): (i32, Option[Run]) {
+  return (1, Some(r));
+}
+
+function eat(own r: Run): i32 {
+  return r.n * 100 + r.args.len() as i32 * 10 + r.tag.len() as i32;
+}
+
+function take(own s: string): i32 {
+  return s.len() as i32;
+}
+
+function eat_wrap(own w: Wrap): i32 {
+  return w.k + eat(w.run);
+}
+
+function rebind(own run: Run): i32 {
+  run = bump(run).1;
+  return eat(run);
+}
+
+function direct(own run: Run): i32 {
+  return eat(bump(run).1);
+}
+
+function first(own run: Run): i32 {
+  return take(bump(run).0);
+}
+
+function local_zero(own run0: Run): i32 {
+  let run = Run { ...run0, tag: "local" };
+  run = swap(run).0;
+  return eat(run);
+}
+
+function local_let(own run0: Run): i32 {
+  let run = Run { ...run0, tag: "local" };
+  let next = bump(run).1;
+  return eat(next);
+}
+
+function local_nested(own run0: Run): i32 {
+  let run = Run { ...run0, tag: "local" };
+  run = nest(run).1.1;
+  return eat(run);
+}
+
+function looped(own run0: Run): i32 {
+  let run = Run { ...run0, n: 0 };
+  let i = 0;
+  while (i < 4) {
+    run = bump(run).1;
+    i += 1;
+  }
+  return eat(run);
+}
+
+function result_own(own run: Run): own Run {
+  return bump(run).1;
+}
+
+function in_literal(own run: Run): i32 {
+  return eat_wrap(Wrap { run: bump(run).1, k: 1000 });
+}
+
+function payload(own run: Run): i32 {
+  match (maybe(run).1) {
+    Some(r) => {
+      return eat(r);
+    },
+    None => {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+function let_else(own run: Run): i32 {
+  let Some(r) = maybe(run).1 else {
+    return 0;
+  };
+  return eat(r);
+}
+
+function mk(): Run {
+  return Run { args: ["a"], tag: "t" + "1", n: 1, tty: None };
+}
+
+function main(): i32 {
+  print(f"{rebind(mk())} {direct(mk())} {first(mk())}");
+  print(f"{local_zero(mk())} {local_let(mk())} {local_nested(mk())} {looped(mk())}");
+  print(f"{eat(result_own(mk()))} {in_literal(mk())} {payload(mk())} {let_else(mk())}");
+  return 0;
+}

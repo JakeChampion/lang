@@ -126,8 +126,13 @@ has four threads for `index-pack`, and the port has one.
 | `cat-file --batch` (34,339 objects, 1.2 GB) | 5.9 s | 3.8 s |
 | `log` (978 commits) | 0.02 s | 0.04 s |
 | `ls-tree -r HEAD` | 0.02 s | 0.05 s |
+| `ls-tree -r -l HEAD` | 0.05 s | 0.26 s |
+| `cat-file --batch-check` (34,339 objects) | 0.07 s | 0.45 s |
 | `index-pack` (3.3 MB) | 0.14 s | 0.16 s |
 | `index-pack` (275 MB) | 3.0 s | 7.9 s |
+
+The port does not inflate a packed object for its kind and its size. They
+come from the header of the object and from the start of its delta.
 
 The port keeps the bases of the deltas in a cache of 96 MB. For a packfile
 above 1 MiB, it reads the bytes of one object from the file. It reads the

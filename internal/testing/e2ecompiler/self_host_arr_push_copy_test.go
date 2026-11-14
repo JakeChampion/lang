@@ -8,11 +8,12 @@ import (
 	"testing"
 )
 
-const arrPushCopyProg = `function check(xs: i32[], n: i32): boolean {
+// A usize is a word, so its array uses the word append. An i32[] packs.
+const arrPushCopyProg = `function check(xs: usize[], n: i32): boolean {
     if (xs.len() != n) { return false; }
     let i: i32 = 0;
     while (i < n) {
-        if (xs[i] != i * 7 + 1) { return false; }
+        if (xs[i] != (i * 7 + 1) as usize) { return false; }
         i = i + 1;
     }
     return true;
@@ -21,12 +22,12 @@ const arrPushCopyProg = `function check(xs: i32[], n: i32): boolean {
 function main(): i32 {
     let n: i32 = 1;
     while (n <= 70) {
-        let xs: i32[] = [];
+        let xs: usize[] = [];
         let i: i32 = 0;
-        while (i < n) { xs = xs.append(i * 7 + 1); i = i + 1; }
+        while (i < n) { xs = xs.append((i * 7 + 1) as usize); i = i + 1; }
         if (!check(xs, n)) { return 1; }
-        let shared: i32[] = xs;
-        let grown: i32[] = xs.append(n * 7 + 1);
+        let shared: usize[] = xs;
+        let grown: usize[] = xs.append((n * 7 + 1) as usize);
         if (!check(grown, n + 1)) { return 2; }
         if (!check(shared, n)) { return 3; }
         n = n + 1;

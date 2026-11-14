@@ -468,6 +468,54 @@ pub function object_cached(part: (i32) => Window, base: (u8[]) => i32, offset: i
   return (Ok(now), cache);
 }
 
+// The size of the object that the delta of the entry `e` makes, or -1. It
+// is the second number of the delta, so a short start of the stream gives it.
+function delta_size(w: Window, e: Entry): i64 {
+  let from = e.data_at - w.shift + 2;
+  if (from < 0 || from >= w.bytes.len()) {
+    return -1;
+  }
+  let Ok(reader) = deflate.inflate_reader(array.slice(w.bytes, from, w.bytes.len().min(from + 4096)), 32768) else {
+    return -1;
+  };
+  let read = reader.read;
+  let Ok(chunk) = read(32.min(e.size.max(1)), (): boolean => false) else {
+    return -1;
+  };
+  let (_, a) = delta_number(chunk.bytes, 0);
+  let (size, _) = delta_number(chunk.bytes, a);
+  return size;
+}
+
+// The kind and the size of the object at `offset`, with no inflate of a
+// whole object.
+pub function info_in(part: (i32) => Window, base: (u8[]) => i32, offset: i32): Result[(string, i64), string] {
+  let w = part(offset);
+  let e = entry_in(w, offset);
+  if (!e.ok) {
+    return Err("a packed object has a bad header");
+  }
+  let size = e.size as i64;
+  let kind = e.kind;
+  if (e.kind == OFS_DELTA || e.kind == REF_DELTA) {
+    size = delta_size(w, e);
+    if (size < 0) {
+      let (delta, _) = inflated_in(w, e)?;
+      let (_, a) = delta_number(delta, 0);
+      let (whole, _) = delta_number(delta, a);
+      size = whole;
+    }
+    let chain = chain_in(part, base, offset)?;
+    let last = chain[chain.len() - 1];
+    kind = entry_in(part(last), last).kind;
+  }
+  let name = kind_name(kind);
+  if (name.len() == 0 || size < 0) {
+    return Err("a packed object has an unknown kind");
+  }
+  return Ok((name, size));
+}
+
 // The object at `offset` of the packfile `data`, with each delta applied.
 pub function object_at(data: u8[], base: (u8[]) => i32, offset: i32): Result[objects.Object, string] {
   let chain = chain_of(data, base, offset)?;

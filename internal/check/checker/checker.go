@@ -1029,6 +1029,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	for _, n := range []string{"__chacha20_poly1305_seal_into", "__chacha20_poly1305_open_into"} {
 		c.info.FuncSigs[n] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8Arr, rangeBound, rangeBound, rangeBound, rangeBound}, Result: u8Arr}
 	}
+	limbView := ast.SliceType{Elem: ast.NumberType{Width: 64, Signed: true}}
+	limbArr := ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}}
+	c.info.FuncSigs["__mont_mul"] = &ast.FuncType{Params: []ast.Type{limbView, limbView, limbView}, Result: limbArr}
+	c.info.FuncSigs["__scrypt_block_mix"] = &ast.FuncType{Params: []ast.Type{limbArr, rangeBound, rangeBound, rangeBound, rangeBound}, Result: limbArr}
 	c.info.FuncSigs["__sha256_hw"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.BoolType{}}
 	c.info.FuncSigs["__sha256_hw_blocks"] = &ast.FuncType{Params: []ast.Type{u8View, u8View}, Result: u8Arr}
 	c.info.FuncSigs["__sha1_hw"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.BoolType{}}
@@ -9919,6 +9923,9 @@ type escapeEnv struct {
 	// outlives names the locals that a store check leaves out of locals:
 	// their storage lives as long as the target of the store.
 	outlives map[string]bool
+	// places holds the initialiser of each local that is declared once and
+	// never assigned, so that paramPlace can follow it to a parameter.
+	places map[string]ast.Expr
 }
 
 func (c *checker) escapeEnv(fn *ast.FuncDecl) *escapeEnv {
@@ -9956,7 +9963,38 @@ func (c *checker) escapeEnv(fn *ast.FuncDecl) *escapeEnv {
 		}
 		return true
 	})
+	env.places = map[string]ast.Expr{}
+	decls := map[string]int{}
+	for _, v := range c.info.Locals[fn] {
+		decls[v.Name]++
+	}
+	for _, v := range c.info.Locals[fn] {
+		if decls[v.Name] == 1 && v.Init != nil && !env.reassigned[v.Name] {
+			env.places[v.Name] = v.Init
+		}
+	}
 	return env
+}
+
+// paramPlace is the parameter that e names: the parameter itself, a field of
+// it at any depth, or a local of env.places bound to such a place.
+func paramPlace(e ast.Expr, env *escapeEnv) (int, bool) {
+	switch x := e.(type) {
+	case *ast.FieldAccess:
+		return paramPlace(x.Target, env)
+	case *ast.Ident:
+		if i, ok := env.params[x.Name]; ok {
+			return i, true
+		}
+		init, ok := env.places[x.Name]
+		if !ok || env.visiting[x.Name] {
+			return 0, false
+		}
+		env.visiting[x.Name] = true
+		defer delete(env.visiting, x.Name)
+		return paramPlace(init, env)
+	}
+	return 0, false
 }
 
 func (c *checker) escapeEnvs(prog *ast.Program, wants func(ast.Type) bool) (map[*ast.FuncDecl]*escapeEnv, []*ast.FuncDecl) {
@@ -10060,27 +10098,28 @@ func isViewReturn(t ast.Type) bool {
 
 // viewLeaf is one kind of view (`[T]` or `str`) the escape analysis follows
 // into an aggregate: the roots of an expression in a slot of that type, and of
-// an argument the callee's returned value may view.
+// argument i of a callee whose returned value may view it.
 type viewLeaf struct {
 	is   func(ast.Type) bool
 	slot func(ast.Expr) viewRoots
-	arg  func(ast.Expr) viewRoots
+	arg  func(callee string, i int, e ast.Expr) viewRoots
 }
 
 func (c *checker) sliceLeaf(env *escapeEnv, sums map[string]viewSummary) viewLeaf {
 	return viewLeaf{
 		is:   func(t ast.Type) bool { _, ok := t.(ast.SliceType); return ok },
 		slot: func(e ast.Expr) viewRoots { return c.sliceViewRoots(e, env, sums) },
-		arg:  func(e ast.Expr) viewRoots { return c.sliceSourceRoots(e, env, sums) },
+		arg:  func(_ string, _ int, e ast.Expr) viewRoots { return c.sliceSourceRoots(e, env, sums) },
 	}
 }
 
 func (c *checker) strLeaf(env *escapeEnv, sums map[string]viewSummary) viewLeaf {
-	roots := func(e ast.Expr) viewRoots { return c.strViewRoots(e, env, sums) }
 	return viewLeaf{
 		is:   func(t ast.Type) bool { _, ok := t.(ast.StrType); return ok },
-		slot: roots,
-		arg:  roots,
+		slot: func(e ast.Expr) viewRoots { return c.strViewRoots(e, env, sums) },
+		arg: func(callee string, i int, e ast.Expr) viewRoots {
+			return c.strArgRoots(callee, i, e, env, sums)
+		},
 	}
 }
 
@@ -10241,7 +10280,7 @@ func (c *checker) aggregateCallRoots(e *ast.Call, env *escapeEnv, sums map[strin
 	sum := sums[id.Name]
 	for i := range sum.params {
 		if i < len(e.Args) {
-			out.merge(leaf.arg(e.Args[i]))
+			out.merge(leaf.arg(id.Name, i, e.Args[i]))
 		}
 	}
 	sig := c.info.FuncSigs[id.Name]
@@ -10581,13 +10620,19 @@ func (c *checker) stringSourceRoots(expr ast.Expr, env *escapeEnv, sums map[stri
 	switch e := expr.(type) {
 	case *ast.StringLit:
 		return out
+	case *ast.FieldAccess:
+		if i, ok := paramPlace(e, env); ok {
+			out.params[i] = true
+			return out
+		}
 	case *ast.Ident:
-		if i, ok := env.params[e.Name]; ok {
+		if i, ok := paramPlace(e, env); ok {
 			out.params[i] = true
 			return out
 		}
 		if v, ok := env.locals[e.Name]; ok {
-			if _, isString := v.Type.(ast.StringType); isString {
+			switch v.Type.(type) {
+			case ast.StringType, ast.StructType:
 				out.local = true
 				return out
 			}
@@ -10617,6 +10662,17 @@ func (c *checker) stringSourceRoots(expr ast.Expr, env *escapeEnv, sums map[stri
 	return out
 }
 
+// strArgRoots is the storage that argument i of callee lends to a `str` that
+// the callee returns. A record lends the storage of its fields.
+func (c *checker) strArgRoots(callee string, i int, arg ast.Expr, env *escapeEnv, sums map[string]viewSummary) viewRoots {
+	if sig := c.info.FuncSigs[callee]; sig != nil && i < len(sig.Params) {
+		if _, isRecord := sig.Params[i].(ast.StructType); isRecord {
+			return c.stringSourceRoots(arg, env, sums)
+		}
+	}
+	return c.strViewRoots(arg, env, sums)
+}
+
 func (c *checker) strViewRoots(expr ast.Expr, env *escapeEnv, sums map[string]viewSummary) viewRoots {
 	out := viewRoots{params: map[int]bool{}}
 	switch e := expr.(type) {
@@ -10632,7 +10688,7 @@ func (c *checker) strViewRoots(expr ast.Expr, env *escapeEnv, sums map[string]vi
 			}
 			for i := range sums[id.Name].params {
 				if i < len(e.Args) {
-					out.merge(c.strViewRoots(e.Args[i], env, sums))
+					out.merge(c.strArgRoots(id.Name, i, e.Args[i], env, sums))
 				}
 			}
 		}
@@ -10643,7 +10699,7 @@ func (c *checker) strViewRoots(expr ast.Expr, env *escapeEnv, sums map[string]vi
 			defer delete(env.visiting, e.Name)
 			return c.strViewRoots(src, env, sums)
 		}
-		if i, ok := env.params[e.Name]; ok {
+		if i, ok := paramPlace(e, env); ok {
 			out.params[i] = true
 			return out
 		}
@@ -11048,6 +11104,14 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		case *ast.FieldAccess:
 			if _, isVariant := c.info.EnumConstructions[x]; isVariant {
 				return true
+			}
+			// An element of a value that no name holds is owned as that value is.
+			switch root := projectionRoot(x).(type) {
+			case *ast.Ident, *ast.FieldAccess:
+			default:
+				if isOwnedExpr(root) {
+					return true
+				}
 			}
 			if id, ok := enclosingField(x).Target.(*ast.Ident); ok && !borrowedParam[id.Name] && atLastUse(e) {
 				return true
@@ -16546,6 +16610,8 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				c.settleNumeric(n.Right, common)
 				lt = c.postSettleType(n.Left, lt)
 				rt = c.postSettleType(n.Right, rt)
+			} else {
+				lt, rt = c.settleComparedArrayLiteral(n, lt, rt)
 			}
 			if lt != nil && rt != nil && !ast.Equal(lt, rt) && !(isStringLike(lt) && isStringLike(rt)) {
 				c.errfCode(n.P, "E041", "cannot compare %s with %s: both sides of %q must have the same type", lt, rt, n.Op)
