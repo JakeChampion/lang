@@ -32,6 +32,30 @@ func ageQuiet(master *os.File) {
 // result has the transcript of the terminal.
 func (a ageTool) runTTY(t *testing.T, dir string, stdin []byte, lines []string, args ...string) ([]byte, string, string, int) {
 	t.Helper()
+	typed := make([]string, len(lines))
+	for i, l := range lines {
+		typed[i] = l + "\n"
+	}
+	return a.runTTYPrompt(t, dir, stdin, agePrompt, typed, args...)
+}
+
+// runTTYPrompt is runTTY with another prompt. It types each input after the
+// prompt as it is, with no new line after it.
+func (a ageTool) runTTYPrompt(t *testing.T, dir string, stdin []byte, prompt *regexp.Regexp, lines []string, args ...string) ([]byte, string, string, int) {
+	t.Helper()
+	return a.runPTY(t, dir, ptyStreams{stdin: stdin}, prompt, lines, args...)
+}
+
+// ptyStreams says which standard streams are the terminal. With stdinTTY,
+// the test types pre at the terminal before the first prompt.
+type ptyStreams struct {
+	stdin               []byte
+	stdinTTY, stdoutTTY bool
+	pre                 string
+}
+
+func (a ageTool) runPTY(t *testing.T, dir string, streams ptyStreams, prompt *regexp.Regexp, lines []string, args ...string) ([]byte, string, string, int) {
+	t.Helper()
 	master, slave, err := tty.OpenPTY()
 	if err != nil {
 		t.Fatalf("open a pseudo-terminal: %v", err)
@@ -39,15 +63,24 @@ func (a ageTool) runTTY(t *testing.T, dir string, stdin []byte, lines []string, 
 	defer master.Close()
 	cmd := a.cmd(args...)
 	cmd.Dir = dir
-	cmd.Stdin = bytes.NewReader(stdin)
+	cmd.Stdin = bytes.NewReader(streams.stdin)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if streams.stdinTTY {
+		cmd.Stdin = slave
+	}
+	if streams.stdoutTTY {
+		cmd.Stdout = slave
+	}
 	cmd.ExtraFiles = []*os.File{slave}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 3}
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("%s did not start: %v", a.name, err)
 	}
 	slave.Close()
+	if streams.pre != "" {
+		go master.Write([]byte(streams.pre))
+	}
 	var screen bytes.Buffer
 	done := make(chan struct{})
 	go func() {
@@ -57,9 +90,9 @@ func (a ageTool) runTTY(t *testing.T, dir string, stdin []byte, lines []string, 
 		for {
 			n, err := master.Read(buf)
 			screen.Write(buf[:n])
-			for typed < len(lines) && len(agePrompt.FindAll(screen.Bytes(), -1)) > typed {
+			for typed < len(lines) && len(prompt.FindAll(screen.Bytes(), -1)) > typed {
 				ageQuiet(master)
-				master.Write([]byte(lines[typed] + "\n"))
+				master.Write([]byte(lines[typed]))
 				typed++
 			}
 			if err != nil {
@@ -76,6 +109,34 @@ func (a ageTool) runTTY(t *testing.T, dir string, stdin []byte, lines []string, 
 		msg = strings.ReplaceAll(msg, a.bin, "age")
 	}
 	return stdout.Bytes(), msg, screen.String(), cmd.ProcessState.ExitCode()
+}
+
+// ageTerminalInput checks an armored file that the user types at the
+// terminal: both tools read it up to the end of the armor before they ask
+// for the passphrase, and hold the plaintext for a terminal until the end.
+func ageTerminalInput(t *testing.T, oracle, port ageTool, dir string) {
+	plain := []byte("typed at the terminal\n")
+	ageWrite(t, filepath.Join(dir, "typed"), plain)
+	if _, stderr, _, code := oracle.runTTY(t, dir, nil, []string{"pass", "pass"}, "-p", "-a", "-o", "typed.age", "typed"); code != 0 {
+		t.Fatalf("age -p -a: exit %d %s", code, stderr)
+	}
+	armored := ageRead(t, filepath.Join(dir, "typed.age"))
+	for _, c := range []struct {
+		streams ptyStreams
+		lines   []string
+		args    []string
+	}{
+		{ptyStreams{stdinTTY: true, pre: armored}, []string{"pass\n"}, []string{"-d"}},
+		{ptyStreams{stdinTTY: true, stdoutTTY: true, pre: armored}, []string{"pass\n"}, []string{"-d"}},
+		{ptyStreams{stdinTTY: true, stdoutTTY: true, pre: armored}, []string{"pass\n"}, []string{"-d", "-o", "-"}},
+		{ptyStreams{stdinTTY: true, pre: armored}, []string{"wrong\n"}, []string{"-d"}},
+	} {
+		wantOut, want, wantScreen, wantCode := oracle.runPTY(t, dir, c.streams, agePrompt, c.lines, c.args...)
+		gotOut, got, screen, gotCode := port.runPTY(t, dir, c.streams, agePrompt, c.lines, c.args...)
+		if gotCode != wantCode || got != want || screen != wantScreen || !bytes.Equal(gotOut, wantOut) {
+			t.Errorf("age %v with %v: age exit %d %q %q %q; fern age exit %d %q %q %q", c.args, c.lines, wantCode, want, wantScreen, wantOut, gotCode, got, screen, gotOut)
+		}
+	}
 }
 
 // runDetached runs the tool in a new session with no controlling terminal.

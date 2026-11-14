@@ -45,14 +45,15 @@ pub function (f: Fail) is_end(): boolean {
 }
 
 // The bytes of a file. With no reader, the bytes in buf are all there is.
-pub struct Raw { r: Option[Reader], name: string, buf: u8[], pos: i32, fail: Option[Fail] }
+// read counts the bytes of the reads from the file.
+pub struct Raw { r: Option[Reader], name: string, buf: u8[], pos: i32, fail: Option[Fail], read: i64 }
 
 pub function open_raw(r: Reader, name: string): Raw {
-  return Raw { r: Some(r), name: name, buf: [], pos: 0, fail: None };
+  return Raw { r: Some(r), name: name, buf: [], pos: 0, fail: None, read: 0i64 };
 }
 
 pub function raw_bytes(b: u8[]): Raw {
-  return Raw { r: None, name: "", buf: b, pos: 0, fail: None };
+  return Raw { r: None, name: "", buf: b, pos: 0, fail: None, read: b.len() as i64 };
 }
 
 // One read of up to n bytes. An empty result is the end of the file.
@@ -80,7 +81,7 @@ function raw_more(own s: Raw): Raw {
       if (b.len() == 0) {
         return Raw { ...s, fail: Some(Eof) };
       }
-      return Raw { ...s, buf: array.slice(s.buf, s.pos, s.buf.len()).concat(b), pos: 0 };
+      return Raw { ...s, buf: array.slice(s.buf, s.pos, s.buf.len()).concat(b), pos: 0, read: s.read + b.len() as i64 };
     },
     Err(f) => {
       return Raw { ...s, fail: Some(f) };

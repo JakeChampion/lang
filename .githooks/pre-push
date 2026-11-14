@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # pre-push — the cheap lint gates, before a slip costs a CI round trip.
+# The source lints are here because they hold the tables that a new fixture,
+# document or stdlib module needs a row in.
 #
 # Installed per clone by `make hooks` (core.hooksPath). Runs the part of
 # `make lint-all` that finishes in seconds and fails CI most often;
@@ -7,8 +9,9 @@
 # rebuilds bin/fern, and that compiles the compiler with the stage0 pin when
 # compiler/ or the stdlib changed, so a construct that stage0 cannot compile
 # fails here. The hook also checks each program file that the push changes
-# alone (scripts/check-changed-programs), for a push of the checked-out
-# branch. Keeps going after a failure and reports the set, like lint-all.
+# alone (scripts/check-changed-programs), and compares the lint ratchets with
+# the commit that the push starts from (scripts/check-ratchets), for a push of
+# the checked-out branch. Keeps going after a failure and reports the set, like lint-all.
 # `git push --no-verify` skips it.
 set -uo pipefail
 
@@ -34,7 +37,8 @@ cd "$(git rev-parse --show-toplevel)" || exit 1
 
 status=0
 for gate in "go build ./..." "go vet ./..." "make gofmt-check" "make fmt-check" \
-            "make actionlint" "make testnames"; do
+            "make actionlint" "make testnames" \
+            "go test ./internal/testing/sourcelint/"; do
   echo "pre-push ==> $gate"
   if ! sh -c "$gate"; then echo "pre-push FAILED: $gate"; status=1; fi
 done
@@ -43,6 +47,8 @@ if [ "${#ranges[@]}" -gt 0 ]; then
     echo "pre-push ==> scripts/check-changed-programs $range"
     # shellcheck disable=SC2086
     if ! scripts/check-changed-programs $range; then echo "pre-push FAILED: check-changed-programs"; status=1; fi
+    echo "pre-push ==> scripts/check-ratchets ${range%% *}"
+    if ! scripts/check-ratchets "${range%% *}"; then echo "pre-push FAILED: check-ratchets"; status=1; fi
   done
 fi
 if [ "$status" -ne 0 ]; then

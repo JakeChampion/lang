@@ -2,9 +2,8 @@
 
 Status: [tracker] active; the progress table below gains a row per slice.
 
-`fern -lint` measures cyclomatic complexity and
-`internal/testing/e2ecompiler/self_host_lint_ratchet_test.go` ratchets this
-repository's own Fern sources against it (`docs/LINT.md`). This file is the
+`fern -lint` measures cyclomatic complexity and `scripts/check-ratchets` holds
+each change to this repository's own Fern sources against it (`docs/LINT.md`). This file is the
 campaign that number tracks: what has been done, what is next, and the two
 things that make the work safe rather than brave.
 

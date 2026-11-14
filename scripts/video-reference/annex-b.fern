@@ -24,26 +24,31 @@ function emit(bytes: [u8]): i32 {
   return 0;
 }
 
-function configuration(bytes: [u8]): i32 {
-  let config = match (nal.hevc_config(bytes, frame.default_limits())) {
+function configuration(bytes: [u8], hevc: boolean): i32 {
+  let result = if (hevc) { nal.hevc_config(bytes, frame.default_limits()) } else { nal.avc_config(bytes, frame.default_limits()) };
+  let config = match (result) {
     Ok(value) => value,
     Err(error) => { eprint(error.message()); return 6; },
   };
-  if (config.csd1.len() != 0) {
+  if (hevc && config.csd1.len() != 0) {
     return 7;
   }
-  print("C " + config.length_size.to_string() + " " + hex.encode(config.csd0));
+  let output = (if (hevc) { "C " } else { "A " }) + config.length_size.to_string() + " " + hex.encode(config.csd0);
+  if (!hevc) {
+    output += " " + hex.encode(config.csd1);
+  }
+  print(output);
   return 0;
 }
 
 function main(): i32 {
   let argv = args();
-  let config = argv.len() == 3 && argv[1] == "--hevc-config";
+  let config = argv.len() == 3 && (argv[1] == "--hevc-config" || argv[1] == "--avc-config");
   if (argv.len() != 2 && !config) {
     return 1;
   }
   let Ok(bytes) = read_file_bytes(argv[if (config) { 2 } else { 1 }]) else {
     return 5;
   };
-  return if (config) { configuration(bytes) } else { emit(bytes) };
+  return if (config) { configuration(bytes, argv[1] == "--hevc-config") } else { emit(bytes) };
 }

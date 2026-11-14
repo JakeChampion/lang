@@ -118,16 +118,19 @@ func ageSSH(t *testing.T, oracle, port ageTool, dir string) {
 // ageSSHEncrypted checks the keys that need a passphrase: age asks for it
 // only when a stanza is for the key.
 func ageSSHEncrypted(t *testing.T, oracle, port ageTool, dir string, plain []byte) {
-	for _, key := range []string{"ed25519_encrypted", "rsa_encrypted"} {
+	for _, key := range []string{"ed25519_encrypted", "rsa_encrypted", "ed25519_cbc"} {
 		sealed, stderr, code := oracle.run(t, dir, plain, "-R", key+".pub")
 		if code != 0 {
 			t.Fatalf("age -R %s.pub: exit %d %s", key, code, stderr)
 		}
 		ageWrite(t, filepath.Join(dir, key+".age"), sealed)
-		if got, stderr, _, code := port.runTTY(t, dir, nil, []string{"ssh pass"}, "-d", "-i", key, key+".age"); code != 0 || !bytes.Equal(got, plain) {
-			t.Errorf("fern age -d -i %s: exit %d %s", key, code, stderr)
+		for _, tool := range []ageTool{oracle, port} {
+			if got, stderr, _, code := tool.runTTY(t, dir, nil, []string{"ssh pass"}, "-d", "-i", key, key+".age"); code != 0 || !bytes.Equal(got, plain) {
+				t.Errorf("%s -d -i %s: exit %d %s", tool.name, key, code, stderr)
+			}
 		}
 	}
+	ageSSHLegacy(t, oracle, port, dir, plain)
 	sealed, _, _ := oracle.run(t, dir, []byte("hello"), "-R", "ed25519.pub")
 	ageWrite(t, filepath.Join(dir, "other.age"), sealed)
 	// A key in the old PEM format that needs a passphrase: age reads the
@@ -170,6 +173,99 @@ func ageSSHEncrypted(t *testing.T, oracle, port ageTool, dir string, plain []byt
 		got, code := port.runDetached(t, dir, nil, args...)
 		if code != wantCode || got != want {
 			t.Errorf("%v with no terminal: age exit %d %q; fern age exit %d %q", args, wantCode, want, code, got)
+		}
+	}
+}
+
+// ageSSHLegacy checks RSA keys in the old PEM format with the
+// Proc-Type: 4,ENCRYPTED header, for each cipher of x509's DecryptPEMBlock,
+// and the malformed headers of such a key.
+func ageSSHLegacy(t *testing.T, oracle, port ageTool, dir string, plain []byte) {
+	k, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub := append(ageSSHString([]byte("ssh-rsa")), ageSSHString(ageBigEndian(k.E))...)
+	pub = append(pub, ageSSHString(append([]byte{0}, k.N.Bytes()...))...)
+	pubLine := []byte("ssh-rsa " + base64.StdEncoding.EncodeToString(pub) + " legacy\n")
+	ageWrite(t, filepath.Join(dir, "pem.pub"), pubLine)
+	sealed, stderr, code := oracle.run(t, dir, plain, "-R", "pem.pub")
+	if code != 0 {
+		t.Fatalf("age -R pem.pub: exit %d %s", code, stderr)
+	}
+	ageWrite(t, filepath.Join(dir, "pem.age"), sealed)
+	var names []string
+	write := func(name string, block *pem.Block) {
+		ageWrite(t, filepath.Join(dir, name), pem.EncodeToMemory(block))
+		ageWrite(t, filepath.Join(dir, name+".pub"), pubLine)
+		names = append(names, name)
+	}
+	der := x509.MarshalPKCS1PrivateKey(k)
+	for name, c := range map[string]x509.PEMCipher{"des": x509.PEMCipherDES, "3des": x509.PEMCipher3DES, "aes128": x509.PEMCipherAES128, "aes192": x509.PEMCipherAES192, "aes256": x509.PEMCipherAES256} {
+		block, err := x509.EncryptPEMBlock(rand.Reader, "RSA PRIVATE KEY", der, []byte("pem pass"), c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		write("pem-"+name, block)
+	}
+	base, _ := x509.EncryptPEMBlock(rand.Reader, "RSA PRIVATE KEY", der, []byte("pem pass"), x509.PEMCipherAES128)
+	edit := func(name string, change func(b *pem.Block)) {
+		b := &pem.Block{Type: base.Type, Headers: map[string]string{}, Bytes: append([]byte{}, base.Bytes...)}
+		for key, v := range base.Headers {
+			b.Headers[key] = v
+		}
+		change(b)
+		write(name, b)
+	}
+	iv := strings.SplitN(base.Headers["DEK-Info"], ",", 2)[1]
+	edit("pem-no-comma", func(b *pem.Block) { b.Headers["DEK-Info"] = "AES-128-CBC" })
+	edit("pem-mode", func(b *pem.Block) { b.Headers["DEK-Info"] = "AES-512-CBC," + iv })
+	edit("pem-iv-hex", func(b *pem.Block) { b.Headers["DEK-Info"] = "AES-128-CBC,zz" + iv[2:] })
+	edit("pem-iv-odd", func(b *pem.Block) { b.Headers["DEK-Info"] = "AES-128-CBC," + iv[1:] })
+	edit("pem-iv-short", func(b *pem.Block) { b.Headers["DEK-Info"] = "AES-128-CBC," + iv[2:] })
+	edit("pem-no-dek", func(b *pem.Block) { delete(b.Headers, "DEK-Info") })
+	edit("pem-ragged", func(b *pem.Block) { b.Bytes = b.Bytes[:len(b.Bytes)-1] })
+	edit("pem-ec", func(b *pem.Block) { b.Type = "EC PRIVATE KEY" })
+	edit("pem-other", func(b *pem.Block) { b.Type = "FOO PRIVATE KEY" })
+	ec, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ecDER, err := x509.MarshalECPrivateKey(ec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	version := append([]byte{}, ecDER...)
+	version[4] = 2
+	dsaDER := []byte{0x30, 18, 2, 1, 0, 2, 1, 1, 2, 1, 2, 2, 1, 3, 2, 1, 4, 2, 1, 5}
+	var plainNames []string
+	for name, block := range map[string]*pem.Block{
+		"ec-ok":       {Type: "EC PRIVATE KEY", Bytes: ecDER},
+		"ec-version":  {Type: "EC PRIVATE KEY", Bytes: version},
+		"ec-pkcs1":    {Type: "EC PRIVATE KEY", Bytes: der},
+		"dsa-ok":      {Type: "DSA PRIVATE KEY", Bytes: dsaDER},
+		"dsa-garbage": {Type: "DSA PRIVATE KEY", Bytes: append(append([]byte{}, dsaDER...), 0)},
+		"dsa-pkcs1":   {Type: "DSA PRIVATE KEY", Bytes: der},
+	} {
+		ageWrite(t, filepath.Join(dir, name), pem.EncodeToMemory(block))
+		plainNames = append(plainNames, name)
+	}
+	for _, name := range plainNames {
+		args := []string{"-d", "-i", name, "pem.age"}
+		wantOut, want, wantCode := oracle.run(t, dir, nil, args...)
+		gotOut, got, code := port.run(t, dir, nil, args...)
+		if code != wantCode || got != want || !bytes.Equal(gotOut, wantOut) {
+			t.Errorf("%v: age exit %d %q; fern age exit %d %q", args, wantCode, want, code, got)
+		}
+	}
+	for _, name := range names {
+		for _, pass := range []string{"pem pass", "wrong"} {
+			args := []string{"-d", "-i", name, "pem.age"}
+			wantOut, want, wantScreen, wantCode := oracle.runTTY(t, dir, nil, []string{pass}, args...)
+			gotOut, got, screen, code := port.runTTY(t, dir, nil, []string{pass}, args...)
+			if code != wantCode || got != want || screen != wantScreen || !bytes.Equal(gotOut, wantOut) {
+				t.Errorf("%v %q: age exit %d %q %q; fern age exit %d %q %q", args, pass, wantCode, want, wantScreen, code, got, screen)
+			}
 		}
 	}
 }

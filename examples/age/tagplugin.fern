@@ -1,0 +1,43 @@
+// The plugins age-plugin-tag and age-plugin-tagpq: the age plugins for the tag
+// recipients, for a client of age that does not have them. A port of age's
+// extra/age-plugin-tag and extra/age-plugin-tagpq, which plugin_tag.fern and
+// plugin_tagpq.fern build.
+import "std/array";
+import "./format";
+import "./goflag";
+import "./pluginserver";
+import "./tag";
+
+const TAG_USAGE: string = "age-plugin-tag is an age plugin for P-256 tagged recipients. These are supported\nnatively by age v1.3.0 and later, but this plugin can be placed in $PATH to add\nsupport to any version and implementation of age that supports plugins.\n\nUsually, tagged recipients are the public side of private keys held in hardware,\nwhere the identity side is handled by a different plugin.";
+
+const TAGPQ_USAGE: string = "age-plugin-tagpq is an age plugin for ML-KEM-768 + P-256 post-quantum hybrid\ntagged recipients. These are supported natively by age v1.3.0 and later, but\nthis plugin can be placed in $PATH to add support to any version and\nimplementation of age that supports plugins.\n\nUsually, tagged recipients are the public side of private keys held in hardware,\nwhere the identity side is handled by a different plugin.";
+
+function wrap(own s: pluginserver.Session, k: tag.TagKey, file_key: u8[]): (pluginserver.Session, Result[pluginserver.Wrapped, string]) {
+  return match (tag.wrap_random(file_key, k)) {
+    Ok(st) => (s, Ok(pluginserver.Wrapped { stanzas: [st], labels: tag.labels(k) })),
+    Err(why) => (s, Err(why)),
+  };
+}
+
+function unwrap(own s: pluginserver.Session, k: tag.TagKey, stanzas: format.Stanza[]): (pluginserver.Session, format.Unwrapped) {
+  return (s, format.Incorrect);
+}
+
+pub function run(hybrid: boolean): i32 {
+  let argv = args();
+  let usage = if (hybrid) { TAGPQ_USAGE } else { TAG_USAGE };
+  let flags = match (pluginserver.flags(goflag.Names { bools: [], values: [] }, usage, array.slice(argv, 1, argv.len()))) {
+    Ok(f) => f,
+    Err(code) => {
+      return code;
+    },
+  };
+  let (machine, version) = pluginserver.machine_of(flags);
+  if (version) {
+    print(pluginserver.VERSION);
+    return 0;
+  }
+  let recipient = if (hybrid) { (d: u8[]): Result[tag.TagKey, string] => tag.hybrid(d) } else { (d: u8[]): Result[tag.TagKey, string] => tag.classic(d) };
+  let h = pluginserver.Handlers { name: if (hybrid) { "tagpq" } else { "tag" }, recipient: Some(recipient), identity_as_recipient: None, identity: None, wrap: wrap, unwrap: unwrap };
+  return pluginserver.serve(h, machine);
+}
