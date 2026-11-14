@@ -182,6 +182,7 @@ pub function builtin_sigs(): string[] {
     "proc_exec(string, string[]): i32",
     "proc_exec_as(string, string[], string[]): i32",
     "proc_fork(): i32",
+    "proc_wait_any(): i64",
     "proc_waitpid(i32): i32",
     "proc_waitpid_nohang(i32): i32",
     "proc_waitpid_status(i32): i32",

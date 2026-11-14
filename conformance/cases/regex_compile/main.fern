@@ -11,7 +11,7 @@ function main(): i32 {
     Bad { pattern: "a[b", kind: UnclosedClass, offset: 1 },
     Bad { pattern: "a)", kind: UnexpectedClose, offset: 1 },
     Bad { pattern: "*a", kind: MissingAtom, offset: 0 },
-    Bad { pattern: "a**", kind: MissingAtom, offset: 2 },
+    Bad { pattern: "a|*", kind: MissingAtom, offset: 2 },
     Bad { pattern: "a{3,2}", kind: InvalidRepeat, offset: 1 },
     Bad { pattern: "a{1,x}", kind: InvalidRepeat, offset: 1 },
     Bad { pattern: "a{", kind: InvalidRepeat, offset: 1 },
@@ -20,7 +20,11 @@ function main(): i32 {
     Bad { pattern: "a{999999999999999999999999}", kind: RepeatLimit, offset: 1 },
     Bad { pattern: "(?=a)", kind: UnsupportedGroup, offset: 0 },
     Bad { pattern: "(?<=a)", kind: UnsupportedGroup, offset: 0 },
-    Bad { pattern: "a(?i)b", kind: UnsupportedGroup, offset: 1 },
+    Bad { pattern: "a(?q)b", kind: UnsupportedGroup, offset: 1 },
+    Bad { pattern: "a(?i-)b", kind: UnsupportedGroup, offset: 1 },
+    Bad { pattern: "x\\y", kind: UnknownEscape, offset: 1 },
+    Bad { pattern: "\\p{Nope}", kind: UnknownProperty, offset: 0 },
+    Bad { pattern: "(?-u)\\pL", kind: UnknownProperty, offset: 5 },
     Bad { pattern: "[z-a]", kind: InvalidClassRange, offset: 1 },
     Bad { pattern: "[a-\\d]", kind: InvalidClassRange, offset: 1 },
     Bad { pattern: "(a{1000}){1000}", kind: ProgramLimit, offset: 15 },
@@ -112,7 +116,7 @@ function main(): i32 {
   if (!match (caps.group_bytes(2)) { None => true, _ => false }) {
     return 14;
   }
-  let Ok(dot) = regex.compile(".") else {
+  let Ok(dot) = regex.compile("(?-u).") else {
     return 15;
   };
   let Some(bytes) = dot.captures("é") else {
@@ -129,6 +133,12 @@ function main(): i32 {
   }
   if (dot.replace_bytes("é", "x").len() != 2) {
     return 20;
+  }
+  let Ok(char_dot) = regex.compile(".") else {
+    return 22;
+  };
+  if (!match (char_dot.replace("é", "x")) { Ok(text) => text == "x", _ => false }) {
+    return 23;
   }
   for i in 0..3 {
     if (empty.count("aaa") != 3 || !empty.is_match("a") || empty.is_match("z")) {
