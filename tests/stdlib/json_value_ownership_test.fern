@@ -1,0 +1,35 @@
+import "std/json";
+import "std/test";
+
+// A run state that a callback takes and gives back, with a JSON value in it.
+struct State { n: i32, last: json.JsonValue }
+
+function keep(own s: State): State {
+  return State { ...s, n: s.n + 1 };
+}
+
+// A borrowed JSON value can go into an owned construction: a JSON value holds
+// no handle, so the construction takes a reference of its own.
+function stored(v: json.JsonValue, own s: State): State {
+  return keep(State { ...s, last: v });
+}
+
+function test_borrowed_value_in_an_owned_record(): test.TestOutcome {
+  let v = json.JObject(json.object().insert("a", json.JNumber("1")));
+  let s = stored(v, State { n: 0, last: json.JNull });
+  return test.assert_eq(json.encode(s.last) + " " + s.n.to_string() + " " + json.encode(v), "{\"a\":1} 1 {\"a\":1}");
+}
+
+// `insert` on an object that is still in use elsewhere gives a new object.
+function test_insert_keeps_a_shared_object(): test.TestOutcome {
+  let o = json.object().insert("a", json.JNumber("1"));
+  let p = o.insert("b", json.JNumber("2"));
+  return test.assert_eq(json.encode(json.JObject(o)) + " " + json.encode(json.JObject(p)), "{\"a\":1} {\"a\":1,\"b\":2}");
+}
+
+function main(): i32 {
+  let r = test.new("json value ownership");
+  r = r.it("a borrowed value goes into an owned record", test_borrowed_value_in_an_owned_record);
+  r = r.it("insert keeps a shared object", test_insert_keeps_a_shared_object);
+  return r.finish();
+}

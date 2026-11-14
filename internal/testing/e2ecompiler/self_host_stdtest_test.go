@@ -601,6 +601,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"helpers", langSrcAbs(t, "tests/stdlib/helpers_test.fern"), ""},
 		{"json_detail", langSrcAbs(t, "tests/stdlib/json_detail_test.fern"), ""},
 		{"json_parse_at", langSrcAbs(t, "tests/stdlib/json_parse_at_test.fern"), ""},
+		{"json_value_ownership", langSrcAbs(t, "tests/stdlib/json_value_ownership_test.fern"), ""},
 		{"one_of_none_of", langSrcAbs(t, "tests/stdlib/one_of_none_of_test.fern"), ""},
 		{"set_eq", langSrcAbs(t, "tests/stdlib/set_eq_test.fern"), ""},
 		{"string_count_and_dir_listing", langSrcAbs(t, "tests/stdlib/string_count_and_dir_listing_test.fern"), ""},

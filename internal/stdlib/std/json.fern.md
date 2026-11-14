@@ -342,7 +342,7 @@ pub function (o: JsonObject) get_or(key: string, fallback: JsonValue): JsonValue
   return o.items[at];
 }
 
-pub function (own o: JsonObject) insert(key: string, value: JsonValue): JsonObject {
+pub function (o: JsonObject) insert(key: string, value: JsonValue): JsonObject {
   let at = __json_member_at(o, key);
   if (at >= 0) {
     return JsonObject { ...o, items: o.items.with(at, value) };
@@ -379,12 +379,12 @@ pub function (o: JsonObject) remove(key: string): JsonObject {
   return object_of(keys, values);
 }
 
-pub function (own o: JsonObject) update(key: string, init: JsonValue, f: (JsonValue) => JsonValue): JsonObject {
+pub function (o: JsonObject) update(key: string, init: JsonValue, f: (JsonValue) => JsonValue): JsonObject {
   let v = f(o.get_or(key, init));
   return o.insert(key, v);
 }
 
-pub function (own o: JsonObject) merge(other: JsonObject): JsonObject {
+pub function (o: JsonObject) merge(other: JsonObject): JsonObject {
   let out = o;
   let i = 0;
   while (i < other.names.len()) {
