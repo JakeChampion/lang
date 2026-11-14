@@ -1,31 +1,58 @@
-// The timetable of -q. Request k (from 0) is due at `start + k / rate`
-// seconds. A request goes out when it is due and a connection is free, and
-// its latency starts at the time it was due: a request that waits for a busy
-// connection adds the wait to its latency.
+// The timetable of -q and of --burst-delay. With -q, request k (from 0) is
+// due at `start + k / rate` seconds. With a burst of B requests each D,
+// request k is due at `start + (k / B) * D`, with integer division. A request
+// goes out when it is due and a connection is free. With
+// --latency-correction its latency starts at the time it was due: a request
+// that waits for a busy connection adds the wait to its latency.
+//
+// Each reactor sends a part of the requests of the run: requests `first`,
+// `first + stride`, `first + 2 * stride` and so on. Its request k is request
+// `first + k * stride` of the run, so the parts together keep the timetable
+// of the run.
 import "std/time";
 
-// With no rate, each request starts when a connection is free.
-pub struct Schedule { start: i64, rate: Option[f64] }
+// With no rate and no burst, each request starts when a connection is free.
+pub struct Schedule { start: i64, rate: Option[f64], burst: i64, delay: i64, first: i64, stride: i64 }
 
 pub function closed(start: i64): Schedule {
-  return Schedule { start: start, rate: None };
+  return Schedule { start: start, rate: None, burst: 0, delay: 0, first: 0, stride: 1 };
 }
 
 pub function fixed(start: i64, rate: f64): Schedule {
-  return Schedule { start: start, rate: Some(rate) };
+  return Schedule { ...closed(start), rate: Some(rate) };
+}
+
+pub function bursts(start: i64, burst: i64, delay: Duration): Schedule {
+  return Schedule { ...closed(start), burst: burst, delay: delay.as_nanos() };
+}
+
+// The part of the timetable that holds requests `first`, `first + stride`,
+// and so on.
+pub function (s: Schedule) part(first: i64, stride: i64): Schedule {
+  return Schedule { ...s, first: first, stride: stride };
+}
+
+// Whether the requests have times at which they are due.
+pub function (s: Schedule) timed(): boolean {
+  return s.rate.is_some() || s.burst > 0;
 }
 
 pub function (s: Schedule) due(k: i64): i64 {
-  let Some(rate) = s.rate else {
-    return s.start;
-  };
-  return s.start + (k as f64 * 1000000000.0 / rate) as i64;
+  let n = s.first + k * s.stride;
+  if let Some(rate) = s.rate {
+    return s.start + (n as f64 * 1000000000.0 / rate) as i64;
+  }
+  if (s.burst > 0) {
+    return s.start + n / s.burst * s.delay;
+  }
+  return s.start;
 }
 
-// The time from which the latency of request `k` counts, when a connection
-// is free at `now` to send it, or None when request `k` is not due yet.
+// The time from which the corrected latency of request `k` counts, when a
+// connection is free at `now` to send it, or None when request `k` is not
+// due yet.
 pub function (s: Schedule) starts(k: i64, now: i64): Option[i64] {
-  if (s.rate.is_none()) {
+  if (!s.timed()) {
     return Some(now);
   }
   let due = s.due(k);
