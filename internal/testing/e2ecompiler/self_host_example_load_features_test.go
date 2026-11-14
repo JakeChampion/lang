@@ -523,6 +523,89 @@ print("ok")
 	})
 }
 
+// ptyScript runs a command in a pseudo-terminal of 30 rows and 100 columns
+// and writes what the command wrote. With a first argument other than "-",
+// it types that key after half a second.
+const ptyScript = `import fcntl, os, pty, select, struct, sys, termios, time
+key, cmd = sys.argv[1], sys.argv[2:]
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp(cmd[0], cmd)
+fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
+out, start, sent = b"", time.time(), key == "-"
+while time.time() - start < 20:
+    if not sent and time.time() - start > 0.5:
+        os.write(fd, key.encode())
+        sent = True
+    r, _, _ = select.select([fd], [], [], 0.05)
+    if r:
+        try:
+            chunk = os.read(fd, 65536)
+        except OSError:
+            break
+        if not chunk:
+            break
+        out += chunk
+_, status = os.waitpid(pid, 0)
+sys.stdout.buffer.write(out)
+sys.exit(os.waitstatus_to_exitcode(status))
+`
+
+// inTerminal runs the command in a pseudo-terminal, and types `key` unless
+// it is "-".
+func inTerminal(t *testing.T, python, key string, cmd ...string) string {
+	t.Helper()
+	out, err := exec.Command(python, append([]string{"-c", ptyScript, key}, cmd...)...).Output()
+	if err != nil {
+		t.Fatalf("%v in a terminal: %v\n%q", cmd, err, out)
+	}
+	return string(out)
+}
+
+// loadTerminalTests runs the tool on a terminal: the live display of oha,
+// and the colors of its summary. bin is the tool, or for arm64 the command
+// of qemu and the tool.
+func loadTerminalTests(t *testing.T, bin []string) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 makes the pseudo-terminal")
+	}
+	s := startFeatureServer(t, false)
+	t.Run("live display", func(t *testing.T) {
+		out := inTerminal(t, python, "-", append(bin, "-n", "300", "-c", "2", "-q", "500", s.URL+"/")...)
+		for _, want := range []string{"\x1b[?1049h", "┌Progress", "┌Stats for last", "Requests : ", "┌Status code distribution", "[200] ", "┌Error distribution", "┌Requests / past", "(auto). press -/+/a to change", "┌Response time histogram", "\x1b[?1049l", "Status code distribution:"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("the display has no %q\n%q", want, out)
+			}
+		}
+		if strings.Index(out, "\x1b[?1049l") > strings.Index(out, "Summary:") {
+			t.Errorf("the summary comes before the display ends\n%q", out)
+		}
+	})
+	t.Run("quit", func(t *testing.T) {
+		started := time.Now()
+		out := inTerminal(t, python, "q", append(bin, "-z", "10s", "-c", "1", "-q", "100", s.URL+"/")...)
+		if time.Since(started) > 5*time.Second || !strings.Contains(out, "Summary:") || !strings.Contains(out, "[200] ") {
+			t.Errorf("q did not stop the run with a summary after %v\n%q", time.Since(started), out)
+		}
+	})
+	t.Run("colors", func(t *testing.T) {
+		out := inTerminal(t, python, "-", append(bin, "--no-tui", "-n", "20", "-c", "1", s.URL+"/")...)
+		for _, want := range []string{"\x1b[1m\x1b[4mSummary:\x1b[0m", "\x1b[38;5;10m\x1b[1m  Success rate:\t100.00%\x1b[0m", "\x1b[38;5;11m  Slowest:\t", "\x1b[38;5;10m  [200] 20 responses\x1b[39m"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("the summary on a terminal has no %q\n%q", want, out)
+			}
+		}
+		if strings.Contains(out, "┌Progress") {
+			t.Errorf("--no-tui showed the display\n%q", out)
+		}
+		plain := inTerminal(t, python, "-", append(bin, "--no-tui", "--no-color", "-n", "5", "-c", "1", s.URL+"/")...)
+		if strings.Contains(plain, "\x1b[") {
+			t.Errorf("--no-color has colors\n%q", plain)
+		}
+	})
+}
+
 // checkSigV4 checks the AWS signature of r with the rules of the
 // aws-sign-v4 crate of oha, and gives what is wrong, or "".
 func checkSigV4(r *seenRequest, secret string) string {

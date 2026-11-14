@@ -761,6 +761,29 @@ function test_breakdown(): test.TestOutcome {
   return test.assert_eq_array(got, ["true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true", "true"]);
 }
 
+// The colors of the summary on a terminal, as oha 1.16 wrote them in a
+// pseudo-terminal.
+function test_styled_summary(): test.TestOutcome {
+  let t = report.tally().response(reply(200, 1000000, 400000, 1000000)).response(reply(503, 500000000, -1, 600000000));
+  let lines = t.styled_summary(1000000000, "ms", report.Style { on: true }).split("\n");
+  let want = [
+    "\x1b[1m\x1b[4mSummary:\x1b[0m",
+    "\x1b[38;5;10m\x1b[1m  Success rate:\t100.00%\x1b[0m",
+    "\x1b[38;5;11m  Slowest:\t500.0000 ms\x1b[39m",
+    "\x1b[38;5;10m  Fastest:\t1.0000 ms\x1b[39m",
+    "\x1b[38;5;14m  Average:\t250.5000 ms\x1b[39m",
+    "\x1b[38;5;10m    1.000 ms [1] |\x1b[39m" + "\x1b[38;5;10m■\x1b[39m".repeat(32),
+    "\x1b[38;5;9m  500.000 ms [1] |\x1b[39m" + "\x1b[38;5;9m■\x1b[39m".repeat(32),
+    "\x1b[38;5;9m  99.99% in 500.0000 ms\x1b[39m",
+    "\x1b[38;5;9m  [503] 1 responses\x1b[39m",
+  ];
+  let got: string[] = [];
+  for w in want {
+    got = got.append(lines.contains(w).to_string());
+  }
+  return test.assert_eq_array(got, ["true", "true", "true", "true", "true", "true", "true", "true", "true"]);
+}
+
 // A run with no request that ended has a success rate of NaN, as in oha.
 function test_no_requests(): test.TestOutcome {
   let s = report.tally().summary(1000, "");
@@ -830,6 +853,7 @@ function main(): i32 {
   r = r.it("--output-format csv has a record of each response", test_csv);
   r = r.it("--stats-success-breakdown splits the latencies", test_breakdown);
   r = r.it("a run with no request has a success rate of NaN", test_no_requests);
+  r = r.it("the summary on a terminal has the colors of oha", test_styled_summary);
   r = r.it("--debug writes the request and the response as oha does", test_debug_text);
   r = r.it("durations, counts and URL patterns as oha reads them", test_values);
   return r.finish();

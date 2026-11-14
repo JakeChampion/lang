@@ -359,6 +359,7 @@ func TestSelfHostExampleLoadHTTP(t *testing.T) {
 			}
 
 			t.Run("features", func(t *testing.T) { loadFeatureTests(t, run) })
+			t.Run("terminal", func(t *testing.T) { loadTerminalTests(t, load().Args) })
 			if target == "x86-64-linux" {
 				t.Run("oha", func(t *testing.T) { loadOhaTests(t, run) })
 			}

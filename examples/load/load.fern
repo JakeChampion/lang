@@ -26,6 +26,7 @@ import "./report";
 import "./schedule";
 import "./sigv4";
 import "./sqlite";
+import "./tui";
 import "./urls";
 
 const CLOSED: i32 = 0;
@@ -141,6 +142,8 @@ struct Run {
   rng: i64,
   // With --debug: the response of the request.
   seen: Option[Seen],
+  // The live display on a terminal.
+  live: Option[tui.Live],
 }
 
 // A response of --debug: its status, its version, its fields and its body.
@@ -433,7 +436,9 @@ function run(given: options.Options): i32 {
     return debug_run(o, j);
   }
   let tally = report.tally_for(o.breakdown, o.format == "csv" || o.db_url.len() > 0);
-  if (j.connections > 0) {
+  if (o.tui && stdout().isatty() && j.connections > 0) {
+    tally = shown(j);
+  } else if (j.connections > 0) {
     tally = parts(j, 0, reactors(o, j.connections));
   }
   let elapsed = monotonic_ns() - j.start;
@@ -446,7 +451,7 @@ function finish(o: options.Options, tally: report.Tally, elapsed: i64, run: i64)
     let text = match (o.format) {
       "json" => tally.json(elapsed),
       "csv" => tally.csv(),
-      _ => tally.summary(elapsed, o.unit),
+      _ => tally.styled_summary(elapsed, o.unit, report.Style { on: o.color && !env_set("NO_COLOR") && o.output.len() == 0 && stdout().isatty() }),
     };
     if (o.output.len() == 0) {
       let _ = stdout().write(text);
@@ -570,15 +575,83 @@ function started(job: Job): Run {
   let request = options.request(o, o.origin());
   let tally = report.tally_for(o.breakdown, o.format == "csv" || o.db_url.len() > 0);
   let id = identity_of(job.cert_pem, job.key_pem).unwrap_or(None);
-  return Run { job: job, identity: id, base: base, request: request, fixed: fixed, h2: speaks_h2(o), limit: job.limit, deadline: job.deadline, issued: 0, busy: 0, conns: conns, by_fd: none, ready: ready, parked: parked, parked_n: 0, check: 0, names: job.names, addrs: job.addrs, tally: tally, drv: async.real_driver(), rng: rand.rng_seed_from_os(), seen: None };
+  return Run { job: job, identity: id, base: base, request: request, fixed: fixed, h2: speaks_h2(o), limit: job.limit, deadline: job.deadline, issued: 0, busy: 0, conns: conns, by_fd: none, ready: ready, parked: parked, parked_n: 0, check: 0, names: job.names, addrs: job.addrs, tally: tally, drv: async.real_driver(), rng: rand.rng_seed_from_os(), seen: None, live: None };
+}
+
+// The run with the live display of oha, in one reactor, which draws the
+// display between its events. The display ends before the summary.
+function shown(job: Job): report.Tally {
+  let o = job.o;
+  let duration = if let Some(d) = o.duration { d.as_nanos() } else { 0 };
+  let start = started(job);
+  let live = tui.start(job.start, o.requests, duration, o.fps, o.color && !env_set("NO_COLOR"));
+  let r = drive(Run { ...start, live: Some(live) });
+  for i in 0..r.conns.len() {
+    r = shut(r, i);
+  }
+  if let Some(l) = r.live {
+    l.stop();
+  }
+  return r.tally;
+}
+
+function env_set(name: string): boolean {
+  return env(name).unwrap_or("").len() > 0;
+}
+
+// Draws a frame of the live display when one is due, and gives the wait to
+// the next frame, or None.
+function draw_live(own r: Run, now: i64): (Run, Option[i64]) {
+  let Some(l) = r.live else {
+    return (r, None);
+  };
+  if (now < l.next_frame) {
+    return (r, Some(l.next_frame));
+  }
+  let rows = 24;
+  let cols = 80;
+  if let Ok(size) = window_size(1) {
+    rows = size.rows as i32;
+    cols = size.cols as i32;
+  }
+  let text = l.frame(now, rows, cols, r.tally.codes(), report.ranked_errors(r.tally));
+  let _ = stdout().write(text);
+  let next = now + l.frame_ns;
+  return (Run { ...r, live: Some(tui.Live { ...l, next_frame: next }) }, Some(next));
+}
+
+// The keys of the live display, from the standard input.
+function keys(own r: Run): Run {
+  let Some(l) = r.live else {
+    return r;
+  };
+  match (stdin().read_chunk_bytes(64)) {
+    Ok(got) => {
+      return Run { ...r, live: Some(l.keys(got, monotonic_ns())) };
+    },
+    Err(_) => {
+      return r;
+    }
+  }
+  return r;
 }
 
 // Runs the requests until none is left in flight and none is left to send.
 function drive(own r: Run): Run {
   let wait = r.job.o.wait || r.h2;
+  if (r.live.is_some()) {
+    r.drv.watch(0, 1);
+  }
   while (true) {
     r = start_ready(r);
     let now = monotonic_ns();
+    let (drawn, frame) = draw_live(r, now);
+    r = drawn;
+    if let Some(l) = r.live {
+      if (l.quit) {
+        return r;
+      }
+    }
     if (r.deadline > 0 && now >= r.deadline) {
       r = stop(r, wait);
     }
@@ -588,7 +661,13 @@ function drive(own r: Run): Run {
     if (r.busy == 0 && (r.issued >= r.limit || r.parked_n == 0)) {
       return r;
     }
-    let events = r.drv.wait(r.conns.len(), timeout(r));
+    let wait_for = timeout(r);
+    if let Some(at) = frame {
+      if (wait_for.is_none() || wait_for.unwrap_or(time.duration_nanos(0)).as_nanos() > at - now) {
+        wait_for = Some(time.duration_nanos(at - now));
+      }
+    }
+    let events = r.drv.wait(r.conns.len() + 1, wait_for);
     r = dispatch(r, events);
   }
   return r;
@@ -701,6 +780,8 @@ function dispatch(own r: Run, events: i32[]): Run {
     let at = if (fd >= 0 && fd < r.by_fd.len()) { r.by_fd[fd] } else { -1 };
     if (at >= 0) {
       r = step(r, at);
+    } else if (fd == 0) {
+      r = keys(r);
     }
     k += 2;
   }
@@ -1397,6 +1478,14 @@ function response_of(r: Run, status: i32, started: i64, sent: i64, first: i64, b
   return report.Response { status: status, latency: now - started, first_byte: first_byte, bytes: bytes, dialup: dialup, sent: sent - r.job.start, due: due, ended: now - r.job.start, url: text };
 }
 
+// Counts `done` in the tally, and in the live display.
+function counted(own r: Run, done: report.Response): Run {
+  if let Some(l) = r.live {
+    return Run { ...r, tally: r.tally.response(done), live: Some(l.response(done)) };
+  }
+  return Run { ...r, tally: r.tally.response(done) };
+}
+
 // Counts the response to the request of connection `i`, and starts the next
 // request on it, on the same connection when `keep` is true. With -r, a
 // response with a Location field sends the request again to that location.
@@ -1407,7 +1496,7 @@ function complete(own r: Run, i: i32, reply: report.Reply, keep: boolean): Run {
   }
   let c = r.conns[i];
   let done = response_of(r, reply.status, c.started, c.sent, c.first, reply.body, c.dialup, c.url);
-  r = Run { ...r, busy: r.busy - 1, tally: r.tally.response(done) };
+  r = counted(Run { ...r, busy: r.busy - 1 }, done);
   if (!keep || !o.keep_alive) {
     r = shut(r, i);
   }
@@ -1683,7 +1772,8 @@ function h2_done(own r: Run, i: i32, id: i32, resp: HttpResponse, now: i64): Run
     r = Run { ...r, seen: Some(Seen { status: resp.status, http: options.HTTP_2, fields: fields_of(resp.headers), body: resp.body_bytes() }) };
   }
   let done = response_of(r, resp.status, s.started, s.sent, first, bytes, c.dialup, s.url);
-  return Run { ...r, busy: r.busy - 1, tally: r.tally.response(done), conns: r.conns.with(i, Conn { ...c, streams: without(c.streams, k) }) };
+  r = counted(Run { ...r, busy: r.busy - 1 }, done);
+  return Run { ...r, conns: r.conns.with(i, Conn { ...c, streams: without(c.streams, k) }) };
 }
 
 function h2_failed(own r: Run, i: i32, id: i32, why: string): Run {

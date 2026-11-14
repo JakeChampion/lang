@@ -298,23 +298,82 @@ function ranked(labels: string[], counts: i64[]): (i64, string)[] {
 // The summary of a run that took `elapsed_ns`. `unit_name` is the unit of
 // -u, or "" to select the unit from the slowest response.
 pub function (t: Tally) summary(elapsed_ns: i64, unit_name: string): string {
+  return t.styled_summary(elapsed_ns, unit_name, Style { on: false });
+}
+
+// The colors of the summary of oha on a terminal, or none when `on` is
+// false.
+pub struct Style { on: boolean }
+
+const GREEN: string = "10";
+
+const YELLOW: string = "11";
+
+const RED: string = "9";
+
+const CYAN: string = "14";
+
+const WHITE: string = "15";
+
+function (s: Style) heading(text: string): string {
+  return if (s.on) { "\x1b[1m\x1b[4m" + text + "\x1b[0m" } else { text };
+}
+
+function (s: Style) color(code: string, text: string): string {
+  return if (s.on) { f"\x1b[38;5;{code}m" + text + "\x1b[39m" } else { text };
+}
+
+function (s: Style) bold(code: string, text: string): string {
+  return if (s.on) { f"\x1b[38;5;{code}m\x1b[1m" + text + "\x1b[0m" } else { text };
+}
+
+// The color of a latency of `seconds`, as oha selects it.
+function latency_color(seconds: f64): string {
+  if (seconds <= 0.1) {
+    return GREEN;
+  }
+  if (seconds <= 0.4) {
+    return YELLOW;
+  }
+  return RED;
+}
+
+function status_color(code: i32): string {
+  if (code >= 200 && code < 300) {
+    return GREEN;
+  }
+  if (code >= 400 && code < 500) {
+    return YELLOW;
+  }
+  if (code >= 500 && code < 600) {
+    return RED;
+  }
+  return WHITE;
+}
+
+// The summary, with the colors of oha when `style` is on.
+pub function (t: Tally) styled_summary(elapsed_ns: i64, unit_name: string, style: Style): string {
   let h = t.latency;
   let u = if (unit_name.len() > 0) { unit_named(unit_name) } else { unit(h.max) };
-  let out = t.totals(elapsed_ns, u) + "\n" + t.sizes(elapsed_ns);
-  out += "\nResponse time histogram:\n" + bars(h, u);
-  out += "\nResponse time distribution:\n" + distribution(h, u);
+  let out = t.totals(elapsed_ns, u, style) + "\n" + t.sizes(elapsed_ns);
+  out += "\n" + style.heading("Response time histogram:") + "\n" + bars(h, u, style);
+  out += "\n" + style.heading("Response time distribution:") + "\n" + distribution(h, u, style);
   if (t.split) {
-    out += "\nResponse time histogram (2xx only):\n" + bars(t.ok, u);
-    out += "\nResponse time distribution (2xx only):\n" + distribution(t.ok, u);
-    out += "\nResponse time histogram (4xx + 5xx only):\n" + bars(t.not_ok, u);
-    out += "\nResponse time distribution (4xx + 5xx only):\n" + distribution(t.not_ok, u);
+    out += "\n" + style.heading("Response time histogram (2xx only):") + "\n" + bars(t.ok, u, style);
+    out += "\n" + style.heading("Response time distribution (2xx only):") + "\n" + distribution(t.ok, u, style);
+    out += "\n" + style.heading("Response time histogram (4xx + 5xx only):") + "\n" + bars(t.not_ok, u, style);
+    out += "\n" + style.heading("Response time distribution (4xx + 5xx only):") + "\n" + distribution(t.not_ok, u, style);
   }
-  out += "\n\nDetails (average, fastest, slowest):\n";
+  out += "\n\n" + style.heading("Details (average, fastest, slowest):") + "\n";
   out += "  DNS+dialup:\t" + triple(t.dialup, u) + "\n";
   out += "  DNS-lookup:\t" + triple(t.lookup(), u) + "\n";
-  out += "\nStatus code distribution:\n";
+  out += "\n" + style.heading("Status code distribution:") + "\n";
   for row in t.codes() {
-    out += f"  [{row.1}] {row.0} responses\n";
+    let code = match (i32.parse_i32(row.1)) {
+      Ok(n) => n,
+      Err(_) => 0,
+    };
+    out += style.color(status_color(code), f"  [{row.1}] {row.0} responses") + "\n";
   }
   if (t.errors.len() > 0) {
     out += "\nError distribution:\n";
@@ -341,21 +400,22 @@ function triple(s: Stat, u: (string, f64)): string {
 }
 
 // The latency at each percentile of the summary.
-function distribution(h: histogram.Histogram, u: (string, f64)): string {
+function distribution(h: histogram.Histogram, u: (string, f64), style: Style): string {
   let out = "";
   for p in PERCENTS {
     let percent = (p as f64 / 100.0).to_string_prec(2);
     let at = if (h.total == 0) { f"NaN {u.0}" } else { in_unit(h.at(p), u) };
-    out += f"  {percent}% in {at}\n";
+    let seconds = if (h.total == 0) { f64.NAN } else { h.at(p) as f64 / 1000000000.0 };
+    out += style.color(latency_color(seconds), f"  {percent}% in {at}") + "\n";
   }
   return out;
 }
 
 // The response time histogram of oha: each bin, its count and a bar of up to
 // 32 squares. With no values, each bin has the label NaN.
-function bars(h: histogram.Histogram, u: (string, f64)): string {
+function bars(h: histogram.Histogram, u: (string, f64), style: Style): string {
   if (h.total == 0) {
-    return f"    NaN {u.0} [0] |\n".repeat(BINS);
+    return (style.color(RED, f"    NaN {u.0} [0] |") + "\n").repeat(BINS);
   }
   let counts = h.bins(BINS);
   let labels = bin_labels(h);
@@ -375,7 +435,8 @@ function bars(h: histogram.Histogram, u: (string, f64)): string {
   for i in 0..BINS {
     let label = (labels[i] / (u.1 / 1000000000.0)).to_string_prec(3);
     let count = counts[i].to_string();
-    out += "  " + " ".repeat(wide + 4 - label.len()) + label + f" {u.0} [{count}]" + " ".repeat(digits - count.len()) + " |" + "■".repeat((counts[i] * 32 / most) as i32) + "\n";
+    let tone = latency_color(labels[i]);
+    out += style.color(tone, "  " + " ".repeat(wide + 4 - label.len()) + label + f" {u.0} [{count}]" + " ".repeat(digits - count.len()) + " |") + style.color(tone, "■").repeat((counts[i] * 32 / most) as i32) + "\n";
   }
   return out;
 }
@@ -392,7 +453,7 @@ function bin_labels(h: histogram.Histogram): f64[] {
 }
 
 // The count of each status code, the largest first: (count, code).
-function (t: Tally) codes(): (i64, string)[] {
+pub function (t: Tally) codes(): (i64, string)[] {
   let codes: string[] = [];
   let counts: i64[] = [];
   for code in 0..t.statuses.len() {
@@ -405,19 +466,19 @@ function (t: Tally) codes(): (i64, string)[] {
 }
 
 // The first block of the summary.
-function (t: Tally) totals(elapsed_ns: i64, u: (string, f64)): string {
+function (t: Tally) totals(elapsed_ns: i64, u: (string, f64), style: Style): string {
   let h = t.latency;
-  let out = "Summary:\n";
+  let out = style.heading("Summary:") + "\n";
   let rate = t.success() * 100.0;
-  out += "  Success rate:\t" + (if (rate.is_nan()) { "NaN" } else { rate.to_string_prec(2) }) + "%\n";
+  let tone = if (rate >= 100.0) { GREEN } else if (rate >= 99.0) { YELLOW } else { RED };
+  out += style.bold(tone, "  Success rate:\t" + (if (rate.is_nan()) { "NaN" } else { rate.to_string_prec(2) }) + "%") + "\n";
   out += "  Total:\t" + in_unit(elapsed_ns, u) + "\n";
-  if (h.total > 0) {
-    out += "  Slowest:\t" + in_unit(h.max, u) + "\n";
-    out += "  Fastest:\t" + in_unit(h.min, u) + "\n";
-    out += "  Average:\t" + in_unit(h.mean(), u) + "\n";
-  } else {
-    out += f"  Slowest:\t-inf {u.0}\n  Fastest:\tinf {u.0}\n  Average:\tNaN {u.0}\n";
-  }
+  let slowest = if (h.total > 0) { in_unit(h.max, u) } else { f"-inf {u.0}" };
+  let fastest = if (h.total > 0) { in_unit(h.min, u) } else { f"inf {u.0}" };
+  let average = if (h.total > 0) { in_unit(h.mean(), u) } else { f"NaN {u.0}" };
+  out += style.color(YELLOW, "  Slowest:\t" + slowest) + "\n";
+  out += style.color(GREEN, "  Fastest:\t" + fastest) + "\n";
+  out += style.color(CYAN, "  Average:\t" + average) + "\n";
   return out + "  Requests/sec:\t" + t.rps(elapsed_ns).to_string_prec(4) + "\n";
 }
 
@@ -704,6 +765,11 @@ pub function (t: Tally) json(elapsed_ns: i64): string {
     ("errorDistribution", counts(errors_by_name(t))),
   ]);
   return json.encode_pretty(json.JObject(json.from(parts)), 2);
+}
+
+// The errors, the largest count first: (count, message).
+pub function ranked_errors(t: Tally): (i64, string)[] {
+  return ranked(t.errors, t.error_counts);
 }
 
 // The errors in the order of their messages, as the BTreeMap of oha has
