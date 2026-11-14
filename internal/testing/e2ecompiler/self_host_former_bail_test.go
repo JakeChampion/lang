@@ -52,7 +52,7 @@ function main(): i32 { return probe(args().len() as i64); }
 					}
 					body := selfHostFnBody(t, asm, tc.body)
 					heap := tc.body == "probe"
-					for _, helper := range []string{"__fern_arr_box", "__fn___fern_arr_dec"} {
+					for _, helper := range []string{"__fern_arr_box", "__fn___fern_box_dec"} {
 						if strings.Contains(body, helper) != heap {
 							t.Errorf("%s in %s: want %t\n%s", helper, tc.body, heap, body)
 						}

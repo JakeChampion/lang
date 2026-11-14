@@ -456,6 +456,13 @@ jobs:
           - { runner: ubuntu-24.04,     host: x86_64,  slug: dns,    pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdDNS,        wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: protobuf, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdProtobuf,   wasmtime: "false" }
           - { runner: ubuntu-24.04,     host: x86_64,  slug: jpeg,   pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdJPEG,       wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: elf,    pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdELF,        wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: cpio, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdCpio, wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: classfile, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdClassFile, wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: fdt, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdFdt, wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: truetype, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdTrueType, wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: tzif, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdTZif, wasmtime: "false" }
+          - { runner: ubuntu-24.04,     host: x86_64,  slug: csv, pkg: ./internal/testing/e2ecompiler, target: FuzzSelfHostStdCSV, wasmtime: "false" }
     name: nightly-fuzz-${{ matrix.slug }}-${{ matrix.host }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 65

@@ -42,7 +42,7 @@ function bounds(c: i32): void {
   }
   let full = heap.Heap { ...h, cursor: h.end };
   require(heap.valid(c, full) && !heap.trace(c, full, [action(0, h.end, 1)]), "opaque prefix and exhausted bump");
-  let last = heap.Heap { ...h, cursor: h.end - 8 as i64 * ((c + 3) as i64) };
+  let last = heap.Heap { ...h, cursor: h.end - 8 as i64 * ((c + 2) as i64) };
   require(heap.trace(c, last, [action(0, last.cursor, 1), action(1, last.cursor, 1), action(0, last.cursor, 2)]), "last exact interval then recycle");
   let high = 140720308486136 as i64;
   let canonical = heap.Heap { ...h, base: high, cursor: high, end: high + 17179869184 as i64 };
@@ -52,7 +52,7 @@ function bounds(c: i32): void {
 function sequences(c: i32): void {
   let h = empty();
   let p = h.base;
-  let q = p + 8 as i64 * ((c + 3) as i64);
+  let q = p + 8 as i64 * ((c + 2) as i64);
   let alloc = action(0, p, 1);
   let free = action(1, p, 1);
   require(heap.trace(c, h, [alloc, free, action(0, p, 2), action(1, p, 2)]), "capacity restored after link overwrite");
@@ -70,7 +70,7 @@ function sequences(c: i32): void {
 
 function lists(c: i32): void {
   let h = empty();
-  let size = 8 as i64 * ((c + 3) as i64);
+  let size = 8 as i64 * ((c + 2) as i64);
   let p = h.base;
   let q = p + size;
   let a = block(p, q, false);
@@ -92,7 +92,7 @@ function lists(c: i32): void {
 
 function live_blocks(c: i32): void {
   let h = empty();
-  let size = 8 as i64 * ((c + 3) as i64);
+  let size = 8 as i64 * ((c + 2) as i64);
   let b = block(h.base, c as i64, true);
   let live = heap.Heap { ...h, cursor: h.base + size, blocks: [b] };
   require(heap.valid(c, live) && heap.trace(c, live, [action(1, b.address, 1), action(0, b.address, 2)]), "initial live credit");

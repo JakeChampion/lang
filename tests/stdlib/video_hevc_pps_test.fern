@@ -77,11 +77,32 @@ function envelope(): test.TestOutcome {
   let Ok(sps) = hex.decode(v.sps) else {
     return test.fail("SPS hex");
   };
-  let controls = [bytes.with(0, 196u8), bytes.with(1, 0u8), bytes.with(1, 2u8), bytes.with(0, 66u8), bytes.with(0, 69u8), bytes.with(1, 9u8)];
-  let errors = ["Header", "Header", "Header", "Unsupported", "Unsupported", "Unsupported"];
+  let controls = [bytes.with(0, 196u8), bytes.with(1, 0u8), bytes.with(0, 66u8), bytes.with(0, 69u8), bytes.with(1, 9u8)];
+  let errors = ["Header", "Header", "Unsupported", "Unsupported", "Unsupported"];
   for i in 0..controls.len() {
     if (error_name(pps.inspect(controls[i], sps, frame.default_limits())) != errors[i]) {
       return test.fail("NAL envelope");
+    }
+  }
+  return test.pass();
+}
+
+function temporal_layers(): test.TestOutcome {
+  for v in vectors.vectors() {
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("PPS hex");
+    };
+    let Ok(sps) = hex.decode(v.sps) else {
+      return test.fail("SPS hex");
+    };
+    for plus_one in 1..8 {
+      let changed = bytes.with(1, plus_one as u8);
+      let Ok(value) = pps.inspect(changed, sps, frame.default_limits()) else {
+        return test.fail("all seven PPS temporal identifiers " + v.name);
+      };
+      if (check.values(value) != v.values) {
+        return test.fail("temporal identifier preserves PPS syntax " + v.name);
+      }
     }
   }
   return test.pass();
@@ -186,6 +207,7 @@ function main(): i32 {
   r = r.it("all compact prefixes and dense-list boundaries", prefixes);
   r = r.it("syntax and normative context bounds", syntax_errors);
   r = r.it("NAL envelope", envelope);
+  r = r.it("all legal PPS temporal identifiers preserve metadata", temporal_layers);
   r = r.it("packet and coded-picture budgets", exact_limits);
   r = r.it("exact trailing bits", trailing);
   r = r.it("PPS ceiling and early limit checks", ceilings);

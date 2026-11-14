@@ -6,7 +6,7 @@
 //   $ git cat-file (--batch | --batch-check)       # names on the standard input
 //   $ git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...
 //   $ git verify-pack [-v] FILE.idx...
-//   $ git ls-tree [-r] [-t] [-d] [-l] [--name-only] [--full-tree] TREE
+//   $ git ls-tree [-r] [-t] [-d] [-l] [--name-only] [--full-tree] TREE [PATH...]
 //
 // The port reads loose objects and packfiles, and writes loose objects.
 import "std/array";
@@ -26,7 +26,7 @@ import "./refs";
 import "./rev";
 import "./store";
 
-const USAGE: string = "usage: git hash-object [-w] [-t KIND] [--stdin] [FILE...]\n   or: git cat-file (-t | -s | -p | -e) NAME\n   or: git cat-file (--batch | --batch-check)\n   or: git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...\n   or: git verify-pack [-v] FILE.idx...\n   or: git ls-tree [-r] [-t] [-d] [-l] [--name-only] [--full-tree] TREE\n   or: git log [-n N] [--oneline] [--format=FORMAT] [NAME]\n   or: git index-pack [-o FILE.idx] FILE.pack";
+const USAGE: string = "usage: git hash-object [-w] [-t KIND] [--stdin] [FILE...]\n   or: git cat-file (-t | -s | -p | -e) NAME\n   or: git cat-file (--batch | --batch-check)\n   or: git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...\n   or: git verify-pack [-v] FILE.idx...\n   or: git ls-tree [-r] [-t] [-d] [-l] [--name-only] [--full-tree] TREE [PATH...]\n   or: git log [-n N] [--oneline] [--format=FORMAT] [NAME]\n   or: git index-pack [-o FILE.idx] FILE.pack";
 
 function fatal(message: string): i32 {
   eprint("fatal: " + message);
@@ -352,7 +352,67 @@ function rev_parse(argv: string[]): i32 {
 
 // ---- ls-tree ----
 
-struct LsOpts { recurse: boolean, trees: boolean, only_trees: boolean, long: boolean, names: boolean, full: boolean }
+// `paths` holds the paths after the tree, with no `/` at the end. `dirs`
+// tells for each one that it had a `/` at the end.
+struct LsOpts { recurse: boolean, trees: boolean, only_trees: boolean, long: boolean, names: boolean, full: boolean, paths: string[], dirs: boolean[] }
+
+// True when `path` and a `/` start the text `spec`.
+function below(spec: string, path: u8[]): boolean {
+  if (spec.len() <= path.len() || spec[path.len()] != b'/') {
+    return false;
+  }
+  for i in 0..path.len() {
+    if (spec[i] != path[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// True when `path` is `spec` or is in the directory `spec`.
+function within(spec: string, path: u8[]): boolean {
+  if (path.len() < spec.len() || path.len() > spec.len() && path[spec.len()] != b'/') {
+    return false;
+  }
+  for i in 0..spec.len() {
+    if (spec[i] != path[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// True when a path after the tree goes into the directory `path`.
+function ls_reaches(o: LsOpts, path: u8[]): boolean {
+  for i in 0..o.paths.len() {
+    if (below(o.paths[i], path) || o.dirs[i] && o.paths[i].len() == path.len() && within(o.paths[i], path)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// True when the entry `path` is one that the paths after the tree ask for.
+// A path with a `/` at the end names a directory only.
+function ls_asked(o: LsOpts, path: u8[], is_tree: boolean): boolean {
+  if (o.paths.len() == 0) {
+    return true;
+  }
+  for i in 0..o.paths.len() {
+    let spec = o.paths[i];
+    // The current directory asks for each entry.
+    if (spec.len() == 0) {
+      return true;
+    }
+    if (is_tree && below(spec, path)) {
+      return true;
+    }
+    if (within(spec, path) && (is_tree || !o.dirs[i] || path.len() > spec.len())) {
+      return true;
+    }
+  }
+  return false;
+}
 
 // The lines of a tree so far, and the store after the reads.
 struct Listing { store: store.Store, out: u8[], ok: boolean }
@@ -426,18 +486,36 @@ function ls_walk(own l: Listing, hash: string, prefix: u8[], plain: boolean, o: 
     let path = prefix.concat(e.name);
     let path_plain = plain && objects.plain_name(e.name);
     let is_tree = e.mode == "40000";
-    if (is_tree && (!o.recurse || o.trees || o.only_trees) || !is_tree && !o.only_trees) {
+    if (!ls_asked(o, path, is_tree)) {
+      continue;
+    }
+    let into = is_tree && (o.recurse || ls_reaches(o, path));
+    if (is_tree && (!into || o.trees || o.only_trees && o.recurse) || !is_tree && !o.only_trees) {
       now = ls_line(now, e, path, path_plain, o);
     }
-    if (is_tree && o.recurse) {
+    if (into) {
       now = ls_walk(now, e.hash, path.append(b'/'), path_plain, o);
     }
   }
   return now;
 }
 
+// A path after the tree with no `./` at the start and no `/` at the end,
+// the fact that it had a `/` at the end, and the cause when the port does
+// not take it.
+function ls_path(text: string): (string, boolean, string) {
+  if (text.len() == 0) {
+    return ("", false, "empty string is not a valid pathspec. please use . instead if you meant to match all paths");
+  }
+  let parts = text.split("/").filter((p: string): boolean => p.len() > 0 && p != ".");
+  if (parts.contains("..") || text.starts_with("/") || text.starts_with(":")) {
+    return ("", false, "this port takes a path below the current directory only: " + text);
+  }
+  return (parts.join("/"), text.ends_with("/") || text.ends_with("/."), "");
+}
+
 function ls_tree(argv: string[]): i32 {
-  let o = LsOpts { recurse: false, trees: false, only_trees: false, long: false, names: false, full: false };
+  let o = LsOpts { recurse: false, trees: false, only_trees: false, long: false, names: false, full: false, paths: [], dirs: [] };
   let names: string[] = [];
   for x in argv {
     if (x == "-r") {
@@ -461,8 +539,12 @@ function ls_tree(argv: string[]): i32 {
   if (names.len() == 0) {
     return usage();
   }
-  if (names.len() > 1) {
-    return fatal("this port lists a whole tree: a path after the tree is not in it yet");
+  for i in 1..names.len() {
+    let (path, dir, why) = ls_path(names[i]);
+    if (why.len() > 0) {
+      return fatal(why);
+    }
+    o = LsOpts { ...o, paths: o.paths.append(path), dirs: o.dirs.append(dir) };
   }
   let (repo, status) = repo_or_fail();
   if (status != 0) {

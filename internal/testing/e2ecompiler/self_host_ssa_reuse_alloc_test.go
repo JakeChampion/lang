@@ -23,7 +23,7 @@ func TestSelfHostSSAReuseAllocIsInline(t *testing.T) {
 	if err := os.WriteFile(fresh, []byte(ssaBoxedCountProg), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	size := map[string]string{"x86-64-linux": "cmpq %rdi, -16(%rax)", "arm64-linux": "ldur x30, [x0, #-16]"}
+	size := map[string]string{"x86-64-linux": "cmpl %esi, -4(%rax)", "arm64-linux": "ldur w30, [x0, #-4]"}
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
 			asm, err := os.ReadFile(cli.emit(t, inline, target))
@@ -31,7 +31,7 @@ func TestSelfHostSSAReuseAllocIsInline(t *testing.T) {
 				t.Fatal(err)
 			}
 			sink := tailCallBody(t, string(asm), "sink")
-			for _, want := range []string{size[target], "__fn___fern_alloc_reuse.r", "__fern_arr_box"} {
+			for _, want := range []string{size[target], "__fn___fern_alloc_reuse.r", "__fern_rec_box"} {
 				if !strings.Contains(sink, want) {
 					t.Fatalf("sink has no %q:\n%s", want, sink)
 				}

@@ -9835,6 +9835,13 @@ function mc_if_is_block(f: ast.StmtIf): boolean {
   return false;
 }
 
+function mc_always_runs(w: ast.StmtWhile): boolean {
+  if let ast.ExprBool(b) = w.cond {
+    return b.value;
+  }
+  return false;
+}
+
 function mc_seq(stmts: ast.Stmt[], from: i32, name: string, tname: string, structs: parser.StructDecl[], enums: parser.EnumDecl[]): (boolean, boolean, util.Diag[]) {
   let out: util.Diag[] = [];
   for i in from..stmts.len() {
@@ -9870,6 +9877,17 @@ function mc_seq(stmts: ast.Stmt[], from: i32, name: string, tname: string, struc
         }
         if (tc && (f.else_body.len() > 0 && ec || mc_if_is_block(f))) {
           return (true, false, out);
+        }
+      },
+      ast.StmtWhile(w) => {
+        // `loop` and a loop with the condition `true` run the body once or
+        // more.
+        if (mc_always_runs(w)) {
+          let (wc, wv, wd) = mc_seq(w.body, 0, name, tname, structs, enums);
+          out = util.append_diags(out, wd);
+          if (wc || wv) {
+            return (wc, wv, out);
+          }
         }
       },
       ast.StmtMatch(m) => {

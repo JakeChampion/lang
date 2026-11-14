@@ -39,6 +39,11 @@ def slice_nal(kind=1, first=True, parameter=0, temporal=0, dependent=False):
     return value[:1] + bytes([temporal + 1]) + value[2:]
 
 
+def temporal_pps(temporal, **options):
+    value = pps.make(**options)
+    return value[:1] + bytes([temporal + 1]) + value[2:]
+
+
 def controls():
     s, p = sequence(), pps.make()
     yield "multiple slices and repeated first flags", [[s, p, slice_nal(), slice_nal(first=False)], [slice_nal()]]
@@ -47,6 +52,16 @@ def controls():
     yield "VCL types and temporal layers", [[sequence(sub=2), p, slice_nal(kind=0, temporal=2),
                                             slice_nal(kind=0, temporal=2, first=False)],
                                            [slice_nal(temporal=1)], [slice_nal(kind=6)], [slice_nal(kind=8, temporal=1)]]
+    yield "PPS temporal identifiers follow their pictures", [[sequence(sub=6), p, slice_nal()]] + [
+        [temporal_pps(temporal), slice_nal(temporal=temporal)] for temporal in range(1, 7)]
+    yield "unused higher PPS does not reject a lower picture", [
+        [sequence(sub=6), p, temporal_pps(5, id=1), slice_nal()], [slice_nal(temporal=5, parameter=1)]]
+    yield "stale PPS retains its temporal identifier", [
+        [sequence(sub=6), temporal_pps(3), pps.make(id=1), slice_nal(temporal=3)],
+        [sequence(sub=4), slice_nal(parameter=1)], [slice_nal(temporal=3)]]
+    yield "PPS replacement updates its temporal identifier", [
+        [sequence(sub=6), temporal_pps(3), slice_nal(temporal=3)],
+        [temporal_pps(1), slice_nal(temporal=1)], [p, slice_nal()]]
     aud = opaque(35, b"\x50")
     yield "AUD and leading metadata", [[aud, hevc.vps(), s, p, opaque(39), slice_nal(kind=19)],
                                        [aud, opaque(39), slice_nal()]]
@@ -96,6 +111,13 @@ def invalid():
         yield f"reserved NAL type {kind}", [opaque(kind)], "Unsupported"
     yield "IRAP temporal layer must be zero", [s, p, slice_nal(kind=19, temporal=1)], "Header"
     yield "temporal layer must fit its SPS", [s, p, slice_nal(temporal=1)], "Header"
+    yield "VPS temporal identifier must be zero", [opaque(32, temporal=1)], "Header"
+    higher_sps = sequence(sub=6)
+    yield "SPS temporal identifier must be zero", [higher_sps[:1] + b"\x02" + higher_sps[2:]], "Header"
+    yield "active PPS cannot exceed its picture temporal identifier", [higher_sps, temporal_pps(1), slice_nal()], "Header"
+    yield "IRAP cannot activate a higher temporal PPS", [higher_sps, temporal_pps(1), slice_nal(kind=19)], "Header"
+    yield "cached PPS temporal identifier survives SPS replacement", [
+        higher_sps, temporal_pps(3), slice_nal(temporal=3), sequence(sub=4), slice_nal()], "Header"
     yield "separate color planes remain unsupported", [sequence(chroma=3, separate=1)], "Unsupported"
     yield "a picture needs its first segment", [s, p, slice_nal(first=False)], "Header"
     yield "subsequent segment keeps its PPS", [s, p, pps.make(id=1), slice_nal(), slice_nal(first=False, parameter=1)], "Header"

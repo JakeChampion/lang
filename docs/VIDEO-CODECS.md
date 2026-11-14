@@ -202,6 +202,11 @@ The 8 KiB SPS and 64 KiB PPS ceilings bound raw parameter payloads to 4,325,376 
 Separate byte, unit, packet, input-window, and operation limits remain active.
 Each step performs at most one source read and emits at most one event.
 
+PPS temporal identifiers can range from zero through six.
+The active PPS temporal identifier cannot exceed the picture's temporal identifier, including after cached PPS revalidation.
+VPS and SPS still require temporal identifier zero.
+These rules follow [ITU-T H.265](https://www.itu.int/rec/T-REC-H.265-202407-S/en), clauses 7.4.2.2 and 7.4.7.1.
+
 Packets preserve original prefix offsets and use canonical four-byte prefixes.
 IRAP identifies types 16 through 21. IDR identifies types 19 and 20 only, without a general random-access safety claim.
 Slice inspection copies at most eight unescaped bytes. The limits do not define an exact process-memory bound.
@@ -297,6 +302,9 @@ AVC includes SPS, PPS, and optional SPS extensions.
 HEVC includes VPS, SPS, PPS, and prefix or suffix SEI arrays.
 The conversion preserves NAL payload bytes. It does not validate their coded syntax.
 Other HEVC configuration array types return `Unsupported`.
+
+VPS and SPS configuration headers require temporal identifier zero. PPS and SEI retain temporal identifiers zero through six.
+This header check follows ITU-T H.265 (July 2024), clause 7.4.2.2.
 
 ```fern
 import "std/video/frame";
@@ -569,6 +577,7 @@ Synthetic headers establish syntax only. Four malformed controls require explici
 `scripts/check-video-hevc-pps-interop` compares 44 native and real WASI metadata fields with FFmpeg CBS.
 Eight lossless streams preserve all three source frames. Thirty-two synthetic parameter pairs cover tiles, quantizers, scaling, and range extensions.
 Synthetic pairs contain no coded pictures. Four malformed controls require explicit independent field and parse-failure diagnostics.
+Seven PPS header variants independently match CBS temporal identifiers and preserve all metadata fields.
 
 Twenty-four FFmpeg packets cover RGB24, ARGB32, alpha, keyframes, partial rows, and unchanged frames.
 
@@ -577,8 +586,12 @@ Fern decodes each packet to the expected ARGB CRC.
 FFmpeg also decodes twenty-four Fern packets with exact equality to the original ARGB bytes.
 AVC and HEVC configuration and packet conversions preserve FFmpeg decoded pixels in two additional streams.
 
-`scripts/check-video-annex-b-interop` creates five fresh AVC and HEVC streams, including 10-bit profiles.
+`scripts/check-video-annex-b-interop` creates six fresh AVC and HEVC streams, including 10-bit profiles and a long AVC stream.
 Native and WASI ranges match an independent parser. Converted streams retain identical decoded 8-bit or 10-bit YUV planes in FFmpeg.
+
+It also extracts fresh HEVC Main and Main 10 configuration records from FFmpeg MP4 output.
+Forty-eight native and WASI controls check their VPS, SPS, and PPS temporal headers against clause 7.4.2.2.
+CBS traces those headers separately from specification-based refusal decisions. Reconstructed configuration prefixes preserve every decoded plane.
 
 `scripts/check-video-qtrle-mov-interop` compares five fresh MOV files with FFprobe and FFmpeg.
 Native and real WASI input preserve every packet field and decoded ARGB sample.
@@ -595,10 +608,13 @@ That comparison requires a C compiler, the FFmpeg development headers, and `pkg-
 Normal native and WASI tests use checked-in references and malformed syntax controls, without an FFmpeg dependency.
 The malformed-input cases cover packet truncation, runs, skips, dimensions, output budgets, and integer overflow.
 
-`scripts/check-video-hevc-input-interop` compares twelve cases with 234 coded pictures from fresh x265 streams.
+`scripts/check-video-hevc-input-interop` compares thirteen cases with 252 coded pictures from fresh x265 streams.
 Native and real WASI output match FFprobe picture positions, canonical payloads, and all FFmpeg decoded planes.
 FFprobe versions can report the three-byte suffix of a four-byte start prefix as the packet position.
 The comparison resolves the complete prefix from source bytes and verifies every payload byte.
+
+A two-layer stream replaces PPS headers at temporal identifiers zero and one.
+CBS confirms those headers. All decoded planes also match the original stream before PPS replacement.
 
 For terminal EOS/EOB, FFprobe emits a separate control-only packet.
 The comparison joins only the exact empty EOS/EOB pair to the preceding picture and verifies every byte.

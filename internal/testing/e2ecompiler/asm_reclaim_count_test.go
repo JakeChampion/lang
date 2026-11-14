@@ -11,13 +11,12 @@ func countUserCalls(asm []byte, callee string) int {
 
 func countUserLines(asm []byte, text string) int {
 	needle := []byte(text)
-	helperPrefix := []byte("__fn___fern_")
 	count := 0
 	inHelper := false
 	for _, line := range bytes.Split(asm, []byte("\n")) {
 		trimmed := bytes.TrimSpace(line)
 		if isFunctionLabel(line, trimmed) {
-			inHelper = bytes.HasPrefix(trimmed, helperPrefix)
+			inHelper = bytes.HasPrefix(trimmed, []byte("__fn___fern_")) || bytes.HasPrefix(trimmed, []byte("__fern_"))
 			continue
 		}
 		if !inHelper && bytes.Contains(line, needle) {
@@ -64,5 +63,5 @@ func countUserStrFreeReclaims(asm []byte) int {
 // An inline reuse allocation has one call for a null token. That call is not
 // an allocation site of its own.
 func countUserArrBoxAllocs(asm []byte) int {
-	return countUserCalls(asm, "__fern_arr_box") - countUserLines(asm, "cmpq %rdi, -16(%rax)")
+	return countUserCalls(asm, "__fern_arr_box") + countUserCalls(asm, "__fern_rec_box") - countUserLines(asm, "cmpl %esi, -4(%rax)")
 }
