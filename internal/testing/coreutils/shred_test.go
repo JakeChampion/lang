@@ -1,7 +1,6 @@
 package coreutils
 
 import (
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,19 +64,7 @@ func shredTypesSeed(t *testing.T, dir string) {
 		t.Fatalf("open fifo for reading: %v", err)
 	}
 	t.Cleanup(func() { syscall.Close(fd) })
-	shortDir, err := os.MkdirTemp("", "s")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(shortDir) })
-	ln, err := net.Listen("unix", filepath.Join(shortDir, "s"))
-	if err != nil {
-		t.Fatalf("unix socket: %v", err)
-	}
-	t.Cleanup(func() { ln.Close() })
-	if err := os.Rename(filepath.Join(shortDir, "s"), filepath.Join(dir, "sock")); err != nil {
-		t.Fatalf("move the socket into the fixture tree: %v", err)
-	}
+	seedSocket(t, filepath.Join(dir, "sock"))
 	if err := os.WriteFile(filepath.Join(dir, "f"), []byte("hello world"), 0o644); err != nil {
 		t.Fatal(err)
 	}
