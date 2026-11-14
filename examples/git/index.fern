@@ -1,0 +1,119 @@
+// The index of a packfile, made from the packfile.
+import "std/array";
+import "std/crypto";
+import "std/hex";
+import "std/hash/crc32";
+import "core/cmp";
+import "core/map";
+import "./objects";
+import "./pack";
+
+// The index (version 2) and the reverse index of one packfile, and the
+// checksum of the packfile.
+pub struct Built { idx: u8[], rev: u8[], name: string }
+
+function be32(out: u8[], n: i64): u8[] {
+  return out.append((n >> 24 & 255) as u8).append((n >> 16 & 255) as u8).append((n >> 8 & 255) as u8).append((n & 255) as u8);
+}
+
+// The offset of each object of the packfile, and the place after the last.
+function offsets_of(data: u8[], count: i32): Result[i32[], string] {
+  let offsets: i32[] = [];
+  let at = 12;
+  for i in 0..count {
+    let end = pack.end_of(data, at);
+    if (end <= at || end > data.len() - 20) {
+      return Err("pack has bad object at offset " + at.to_string());
+    }
+    offsets = offsets.append(at);
+    at = end;
+  }
+  if (at != data.len() - 20) {
+    return Err("pack has junk at the end");
+  }
+  return Ok(offsets.append(at));
+}
+
+// The name of each object in the order of the packfile. A delta by name
+// can come before its base, so the names come in rounds.
+function names_of(data: u8[], offsets: i32[]): Result[string[], string] {
+  let count = offsets.len() - 1;
+  let names: string[] = [];
+  for i in 0..count {
+    names = names.append("");
+  }
+  let known: Map[string, i32] = Map { };
+  let left = count;
+  while (left > 0) {
+    let before = left;
+    for i in 0..count {
+      if (names[i].len() == 0) {
+        let found = pack.object_at(data, (base: u8[]): i32 => known.get_or(hex.encode(base), -1), offsets[i]);
+        if let Ok(o) = found {
+          let name = objects.hash_of(o.kind, o.body);
+          names = names.with(i, name);
+          known = known.insert(name, offsets[i]);
+          left -= 1;
+        }
+      }
+    }
+    if (left == before) {
+      return Err("pack has " + left.to_string() + " unresolved deltas");
+    }
+  }
+  return Ok(names);
+}
+
+// The index of the packfile `data`.
+pub function build(data: u8[]): Result[Built, string] {
+  let n = data.len();
+  if (n < 32 || data[0] != b'P' || data[1] != b'A' || data[2] != b'C' || data[3] != b'K') {
+    return Err("pack signature mismatch");
+  }
+  if (data[4] != 0 || data[5] != 0 || data[6] != 0 || data[7] != 2) {
+    return Err("pack version " + data[7].to_string() + " unsupported");
+  }
+  let sum = array.slice(data, n - 20, n);
+  if (hex.encode(crypto.sha1(array.slice(data, 0, n - 20))) != hex.encode(sum)) {
+    return Err("pack is corrupted (SHA1 mismatch)");
+  }
+  let count = data[8] as i32 << 24 | data[9] as i32 << 16 | data[10] as i32 << 8 | data[11] as i32;
+  let offsets = offsets_of(data, count)?;
+  let names = names_of(data, offsets)?;
+  let order: i32[] = [];
+  for i in 0..count {
+    order = order.append(i);
+  }
+  let sorted = cmp.sort_by(order, (a: i32, b: i32): i32 => names[a].cmp(names[b]));
+  let fanout = __alloc_i32(256);
+  let place = __alloc_i32(count);
+  let table: u8[] = [];
+  let crcs: u8[] = [];
+  let at: u8[] = [];
+  for k in 0..count {
+    let i = sorted[k];
+    let Ok(raw) = hex.decode(names[i]) else {
+      return Err("a bad name");
+    };
+    fanout = fanout.with(raw[0] as i32, fanout[raw[0] as i32] + 1);
+    place = place.with(i, k);
+    table = table.concat(raw);
+    crcs = be32(crcs, crc32.of(array.slice(data, offsets[i], offsets[i + 1])) as i64);
+    at = be32(at, offsets[i] as i64);
+  }
+  let idx: u8[] = [255, b't', b'O', b'c', 0, 0, 0, 2];
+  let total = 0;
+  for b in 0..256 {
+    total += fanout[b];
+    idx = be32(idx, total as i64);
+  }
+  idx = idx.concat(table).concat(crcs).concat(at).concat(sum);
+  idx = idx.concat(crypto.sha1(idx));
+  let rev: u8[] = [b'R', b'I', b'D', b'X', 0, 0, 0, 1, 0, 0, 0, 1];
+  for i in 0..count {
+    rev = be32(rev, place[i] as i64);
+  }
+  rev = rev.concat(sum);
+  rev = rev.concat(crypto.sha1(rev));
+  return Ok(Built { idx: idx, rev: rev, name: hex.encode(sum) });
+}

@@ -402,15 +402,15 @@ x86_64/string_rfind_byte.ir	43695768
 x86_64/string_scan.text	2227
 x86_64/string_scan.ir	52670002
 x86_64/string_slice.text	944
-x86_64/string_slice.ir	38460093
+x86_64/string_slice.ir	23340107
 x86_64/struct_drop.text	2402
 x86_64/struct_drop.ir	197940612
-x86_64/tokenize.text	1247
-x86_64/tokenize.ir	37860093
+x86_64/tokenize.text	1193
+x86_64/tokenize.ir	32840107
 x86_64/utf8_ingest_unchecked.text	7735
-x86_64/utf8_ingest_unchecked.ir	2207993
+x86_64/utf8_ingest_unchecked.ir	2141652
 x86_64/utf8_ingest_validated.text	8318
-x86_64/utf8_ingest_validated.ir	5207391
+x86_64/utf8_ingest_validated.ir	5152651
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
@@ -697,15 +697,15 @@ aarch64/string_rfind_byte.ir	55941911
 aarch64/string_scan.text	2556
 aarch64/string_scan.ir	59787692
 aarch64/string_slice.text	1188
-aarch64/string_slice.ir	43620107
+aarch64/string_slice.ir	25140119
 aarch64/struct_drop.text	2663
 aarch64/struct_drop.ir	218300904
-aarch64/tokenize.text	1444
-aarch64/tokenize.ir	38350109
+aarch64/tokenize.text	1426
+aarch64/tokenize.ir	33490121
 aarch64/utf8_ingest_unchecked.text	8188
-aarch64/utf8_ingest_unchecked.ir	2689511
+aarch64/utf8_ingest_unchecked.ir	2624121
 aarch64/utf8_ingest_validated.text	8735
-aarch64/utf8_ingest_validated.ir	6229114
+aarch64/utf8_ingest_validated.ir	6137721
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
 x86_64/perceus_cfold.text	1938
@@ -756,6 +756,11 @@ aarch64/video_qtrle.ir 1559097809
 # from #14910 changes the string-count rows. Parent 97af82fc and IVF head
 # cbed65e0 produce identical assembly, binaries, and Callgrind counts.
 # Pin both measured rows. Keep the 1% tolerance.
+# 2026-11-13: PR #15783, for the Perf lane of main (#15788). #15769 reads the arguments and the
+# frames through views: string_slice.ir falls 39% to 42%, tokenize.ir 13%, tokenize.text 1.2% to
+# 4.3%, and the two utf8_ingest rows 1.0% to 3.0%. x86-64: a local perf-bench run on a merge with
+# main 38768eb2. aarch64: perf-aarch64 job 132155696051 of main run 43503448872 on 5cf07b37.
+# Tolerances are unchanged.
 # 2026-11-13: main f29fcfdf. #15752 adds the adopt path to __fern_string_from_bytes_u8:
 # 63 more aarch64 lines in map_string, sort_strings, string_build, string_scan and
 # struct_drop. The string .ir rows fall, string_build up to 9.7%. aarch64: perf-aarch64
