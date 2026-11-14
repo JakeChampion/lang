@@ -480,6 +480,15 @@ These maximum dimensions do not supply each frame's coded or render dimensions.
 Operating-point relationships, profile/level conformance, reference state, and reconstructed pictures remain outside this metadata API.
 The native AV1 decode column remains unchanged.
 
+`std/video/av1/metadata.inspect` reads one complete content-light or mastering-display metadata OBU through the same bounded reader.
+It preserves unsigned light levels and RGB/white chromaticity values without input bytes or payload copies.
+Chromaticity retains 0.16 fixed-point form. Maximum and minimum luminance retain 24.8 and 18.14 fixed-point form, respectively.
+The luminance units are candelas per square meter.
+
+The reader checks field extents, exact trailing bits, zero padding, and the prohibition on layer extensions for both HDR types.
+Other metadata types return `Unsupported`. Packet limits apply before access.
+This API does not configure an Android display, apply tone mapping, decode pixels, or establish physical display behavior.
+
 Android MediaExtractor supplies its supported containers through the Android adapter.
 The native MP4 indexer above supports self-contained AVC, HEVC, VP9, AV1, and QTRLE tracks.
 Other MOV codecs, Matroska, WebM, MPEG-TS, and fragmented streams remain future work.

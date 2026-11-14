@@ -183,6 +183,19 @@ function test_a_file_plays_from_a_window(): test.TestOutcome {
   return test.assert_eq(got.join(" "), "true,true,true true,true,true true,true,true true,true,true true,true,true");
 }
 
+// An M4A file with AAC sound plays from a window as it plays whole: the
+// index comes from its boxes, and each packet from the window.
+function test_an_m4a_file_plays_from_a_window(): test.TestOutcome {
+  let file = fixture.m4a();
+  let Some(whole) = streamed(file, file.len() + 4096) else {
+    return test.fail("the whole file did not open");
+  };
+  let Some(part) = streamed(file, 4096) else {
+    return test.fail("the file did not open from a window");
+  };
+  return test.assert_eq([same(part.samples, whole.samples) && part.samples.len() > 20000, part.most <= 4096, part.half == whole.half && same(part.after, whole.after)].map((b: boolean): string => b.to_string()).join(","), "true,true,true");
+}
+
 function test_other_bytes_do_not_open(): test.TestOutcome {
   let text: u8[] = [104u8, 101u8, 108u8, 108u8, 111u8, 32u8, 102u8, 101u8, 114u8, 110u8];
   let empty: u8[] = [];
@@ -253,6 +266,7 @@ function main(): i32 {
   r = r.it("bytes that are not sound do not open", test_other_bytes_do_not_open);
   r = r.it("an MP3 file tells its length in frames of samples", test_mp3_length);
   r = r.it("an M4A, an Ogg Vorbis and an Opus file play", test_m4a_ogg_and_opus_play);
+  r = r.it("an M4A file with AAC sound plays from a window", test_an_m4a_file_plays_from_a_window);
   r = r.it("an M4A file with ALAC sound plays", test_alac_plays);
   r = r.it("a file plays from a window of it", test_a_file_plays_from_a_window);
   return r.finish();
