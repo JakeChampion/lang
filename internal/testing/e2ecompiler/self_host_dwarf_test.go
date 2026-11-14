@@ -619,7 +619,7 @@ func TestSelfHostDWARFStructVars(t *testing.T) {
 	if err := os.WriteFile(src, []byte(dwarfStructsSrc), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	point := [][3]string{{"x", "8", "i32"}, {"y", "16", "i32"}, {"a", "24", "i32"}, {"b", "32", "i32"}, {"c", "40", "i32"}}
+	point := [][3]string{{"x", "0", "i32"}, {"y", "8", "i32"}, {"a", "16", "i32"}, {"b", "24", "i32"}, {"c", "32", "i32"}}
 	bins := map[string]string{}
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
@@ -629,13 +629,13 @@ func TestSelfHostDWARFStructVars(t *testing.T) {
 				t.Fatalf("-g build: %v\n%s", err, o)
 			}
 			bins[target] = out
-			checkDwarfStruct(t, dwarfVarStruct(t, out, "main", "pt"), "Point", 48, point)
-			checkDwarfStruct(t, dwarfVarStruct(t, out, "describe", "p"), "Person", 32, [][3]string{{"age", "16", "i32"}, {"score", "24", "i32"}})
+			checkDwarfStruct(t, dwarfVarStruct(t, out, "main", "pt"), "Point", 40, point)
+			checkDwarfStruct(t, dwarfVarStruct(t, out, "describe", "p"), "Person", 24, [][3]string{{"age", "8", "i32"}, {"score", "16", "i32"}})
 			rect := dwarfVarStruct(t, out, "area", "r")
-			checkDwarfStruct(t, rect, "Rect", 32, [][3]string{{"origin", "8", "*struct Point"}, {"w", "16", "i32"}, {"h", "24", "i32"}})
+			checkDwarfStruct(t, rect, "Rect", 24, [][3]string{{"origin", "0", "*struct Point"}, {"w", "8", "i32"}, {"h", "16", "i32"}})
 			if p, ok := rect.Field[0].Type.(*dwarf.PtrType); ok {
 				if st, ok := p.Type.(*dwarf.StructType); ok {
-					checkDwarfStruct(t, st, "Point", 48, point)
+					checkDwarfStruct(t, st, "Point", 40, point)
 				}
 			}
 		})
