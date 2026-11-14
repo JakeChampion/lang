@@ -9915,10 +9915,10 @@ function mc_seq(stmts: ast.Stmt[], from: i32, name: string, tname: string, struc
   return (false, false, out);
 }
 
-// The arms of an if-let are the arms of the source. The statements after a
-// let-else continue its first arm, so the walk does not read its arms.
+// The arms of an if-let are the arms of the source. The first arm of a
+// let-else holds the statements after it, and its other arm is the else.
 function mc_reads_arms(origin: string): boolean {
-  return ordinary_match_origin(origin) || origin == "if_let";
+  return ordinary_match_origin(origin) || origin == "if_let" || origin == "let_else";
 }
 
 function mc_check_binding(stmts: ast.Stmt[], from: i32, name: string, tname: string, bline: i32, bcol: i32, structs: parser.StructDecl[], enums: parser.EnumDecl[]): util.Diag[] {
@@ -9970,7 +9970,9 @@ function mc_walk_body(stmts: ast.Stmt[], s: Scope, structs: parser.StructDecl[],
     let st = stmts[i];
     match (st) {
       ast.StmtVar(v) => {
-        let tn = mc_var_type_name(v, cur, structs, enums);
+        // A match on a struct pattern consumes its subject. The local that
+        // holds the subject is not a binding of the program.
+        let tn = if (parser.is_struct_match_subject(v.name)) { "" } else { mc_var_type_name(v, cur, structs, enums) };
         if (tn.len() > 0) {
           out = util.append_diags(out, mc_check_binding(stmts, i + 1, v.name, tn, v.line, v.col, structs, enums));
         }

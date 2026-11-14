@@ -67,6 +67,9 @@ it claims:
    `while` with the condition `true`, run the body once or more, so
    they have no such path: the walk reads their body as the next
    statements. An `if let` with an `else` is a match with two arms.
+   A `let ... else` is a match also: its first arm holds the statements
+   after it, and its other arm is the else. A match on a struct pattern
+   consumes its subject.
    A `for` loop binds each element, and the walk checks that binding
    over the body.
 2. Field reads on the value are neutral (neither consume nor

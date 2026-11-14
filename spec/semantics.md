@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**153 of 156** claims are pinned by a conformance case. The remaining
+**156 of 159** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -164,6 +164,9 @@ of them.
 | `MC-05` | `docs/MUST-CONSUME.md` | A consuming call inside an `if` condition, or in the scrutinee of a match on literals, is a consuming use | `must_consume_in_if_condition` |
 | `MC-06` | `docs/MUST-CONSUME.md` | A value that each arm of an `if let` with an `else` consumes is consumed | `must_consume_if_let_arms` |
 | `MC-07` | `docs/MUST-CONSUME.md` | A `for` loop binding of a `@must_consume` element that the body does not consume is rejected (`E067`) | `diag_e067_for_binding` |
+| `MC-08` | `docs/MUST-CONSUME.md` | A value that the statements after a `let ... else` consume, and that its else arm consumes, is consumed | `must_consume_let_else` |
+| `MC-09` | `docs/MUST-CONSUME.md` | An else arm of a `let ... else` that leaves the function before it consumes a `@must_consume` value is rejected (`E067`) | `diag_e067_let_else_return` |
+| `MC-10` | `docs/MUST-CONSUME.md` | A match on a struct pattern consumes its subject | `must_consume_struct_pattern` |
 | `WK-01` | `docs/WORKERS.md` | A `send` parameter admits only a send-safe argument; a closure written at the call crosses with send-safe captures and result, and a function value does not (`E100`) | `diag_e100` |
 | `WK-02` | `docs/WORKERS.md` | `worker.spawn` runs its closure once and `join` returns the result, with the same contents on every engine | `worker_spawn_join` |
 | `WK-03` | `docs/WORKERS.md` | A `Worker` is `@must_consume`, so a spawned worker that is not joined is rejected (`E067`) | `diag_e067_worker_unjoined` |

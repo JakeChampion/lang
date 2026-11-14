@@ -679,9 +679,11 @@ must_consume_if_let_arms                             0
 must_consume_in_a_loop_that_always_runs              0
 must_consume_in_if_condition                         0
 must_consume_in_match_tag                            0
+must_consume_let_else                                0
 must_consume_method_receiver                         0
 must_consume_own_sink                                0
 must_consume_sibling_bindings_share_a_name           0
+must_consume_struct_pattern                          0
 mutual_recursion                                     0
 named_args                                           0
 narrowing_cast_of_expression                         0
